@@ -412,6 +412,12 @@ void mime_vec_mask_free(MimeVecMask *m);
 void mime_vec_mask_clear(MimeVecMask *m);
 int mime_vec_mask_copy(MimeVecMask *dst, const MimeVecMask *src);
 int mime_vec_mask_set_rect(MimeVecMask *m, const MimeVecRect *r);
+/*
+ * row by row building for callers with their own rasterizer. clear the mask, add the rows from top to bottom
+ * with coverage 0..255 for count pixels from x, then finish. a row with no coverage may be left out.
+ */
+int mime_vec_mask_add_row(MimeVecMask *m, int y, int x, int count, const uint8_t *cov);
+void mime_vec_mask_finish(MimeVecMask *m);
 /* rasterizes a shape and keeps only the pixels inside clip. */
 int mime_vec_mask_set_polys(MimeVecMask *m, const MimeVecPolys *polys, int rule, int aa, const MimeVecRect *clip);
 /*

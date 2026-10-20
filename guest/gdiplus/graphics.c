@@ -1,681 +1,1333 @@
 /*
- * graphics: drawing bitmaps onto a device context or into another bitmap.
- * a device context target gets a 32 bpp premultiplied dib section blended
- * by gdi32. a bitmap target is drawn in software straight into its pixels,
- * so no gdi object mirrors it.
+ * graphics: the Graphics object: where it draws, its modes, transforms, clip and the stack of saved states.
  */
-#include "gdiplus_private.h"
+#include "gp_private.h"
 
-static GpStatus device_rect(GpGraphics *g, float x, float y, float width, float height, INT *left, INT *top,
-                            INT *right, INT *bottom);
-
-static GpGraphics *graphics_cast(GpGraphics *graphics)
+GGraphics *gp_graphics_cast(const void *p)
 {
-    return graphics && graphics->Magic == GP_GRAPHICS_MAGIC ? graphics : nullptr;
+    return GP_CAST(GGraphics, GP_TAG_GRAPHICS, p);
 }
 
-static GpStatus graphics_create(HDC hdc, GpBitmap *target, GpGraphics **graphics)
+#define GFX(g, p)                   \
+    GGraphics *g = gp_graphics_cast(p); \
+    if (!g)                         \
+        return InvalidParameter
+
+#define GFX_FREE(g, p)                  \
+    GFX(g, p);                          \
+    if (g->got_dc)                      \
+        return ObjectBusy
+
+/* ------------------------------------------------------------------ transforms */
+
+void gp_graphics_page_scale(const GGraphics *g, float *sx, float *sy)
 {
-    GpGraphics *g = gp_alloc_zero(sizeof(*g));
-    if (!g)
-        return OutOfMemory;
-    g->Magic = GP_GRAPHICS_MAGIC;
-    g->Hdc = hdc;
-    g->Target = target;
-    g->Interpolation = InterpolationModeBilinear;
-    g->Smoothing = SmoothingModeNone;
-    g->Compositing = CompositingModeSourceOver;
-    g->CompositingQuality = CompositingQualityDefault;
-    g->PixelOffset = PixelOffsetModeNone;
-    g->PageUnit = UnitPixel;
-    g->PageScale = 1.0f;
-    g->World[0] = g->World[3] = 1.0f;
-    *graphics = g;
-    return Ok;
+    float k = g->page_scale;
+    switch (g->page_unit) {
+    case UnitDisplay:
+        if (g->target || g->hdc) {
+            /* a display device counts its unit in pixels */
+            *sx = *sy = k;
+            return;
+        }
+        *sx = k * g->dpi_x / 100.0f;
+        *sy = k * g->dpi_y / 100.0f;
+        return;
+    case UnitPoint:
+        *sx = k * g->dpi_x / 72.0f;
+        *sy = k * g->dpi_y / 72.0f;
+        return;
+    case UnitInch:
+        *sx = k * g->dpi_x;
+        *sy = k * g->dpi_y;
+        return;
+    case UnitDocument:
+        *sx = k * g->dpi_x / 300.0f;
+        *sy = k * g->dpi_y / 300.0f;
+        return;
+    case UnitMillimeter:
+        *sx = k * g->dpi_x / 25.4f;
+        *sy = k * g->dpi_y / 25.4f;
+        return;
+    default:
+        *sx = *sy = k;
+    }
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipCreateFromHDC(HDC hdc, GpGraphics **graphics)
+MimeVecMatrix gp_graphics_w2d_base(const GGraphics *g)
+{
+    float sx, sy;
+    gp_graphics_page_scale(g, &sx, &sy);
+    MimeVecMatrix m = g->world;
+    m.m11 *= sx;
+    m.m12 *= sy;
+    m.m21 *= sx;
+    m.m22 *= sy;
+    m.dx *= sx;
+    m.dy *= sy;
+    if (!mime_vec_matrix_is_identity(&g->container))
+        mime_vec_matrix_multiply(&m, &m, &g->container);
+    return m;
+}
+
+const MimeVecMatrix *gp_graphics_w2d(GGraphics *g)
+{
+    if (!g->w2d_valid) {
+        MimeVecMatrix m = gp_graphics_w2d_base(g);
+        /* the pixel offset modes that put the pixel centers at half integers move the picture back by half a pixel */
+        if (g->pixel_offset == PixelOffsetModeHighQuality || g->pixel_offset == PixelOffsetModeHalf) {
+            m.dx -= 0.5f;
+            m.dy -= 0.5f;
+        }
+        g->w2d = m;
+        g->w2d_valid = TRUE;
+    }
+    return &g->w2d;
+}
+
+float gp_graphics_unit_to_world(const GGraphics *g, GpUnit unit)
+{
+    if (unit == UnitWorld)
+        return 1.0f;
+    /* pixels of the unit, then back to world units through the page scale (the world transform is left out) */
+    float px = gp_unit_to_pixels(unit, g->dpi_x);
+    float sx, sy;
+    gp_graphics_page_scale(g, &sx, &sy);
+    return sx > 0.0f ? px / sx : px;
+}
+
+/* ------------------------------------------------------------------ creation */
+
+static void graphics_defaults(GGraphics *g)
+{
+    g->interpolation = InterpolationModeBilinear;
+    g->smoothing = SmoothingModeDefault;
+    g->compositing_mode = CompositingModeSourceOver;
+    g->compositing_quality = CompositingQualityDefault;
+    g->pixel_offset = PixelOffsetModeDefault;
+    g->text_hint = TextRenderingHintSystemDefault;
+    g->text_contrast = 4;
+    g->page_unit = UnitPixel;
+    g->page_scale = 1.0f;
+    mime_vec_matrix_identity(&g->world);
+    mime_vec_matrix_identity(&g->container);
+    mime_vec_mask_init(&g->clip, &gp_allocator);
+    g->next_state_id = 1;
+}
+
+static GpStatus graphics_from_hdc(HDC hdc, HWND hwnd, BOOL owns, GpGraphics **graphics)
 {
     if (!graphics)
         return InvalidParameter;
     if (!hdc)
         return OutOfMemory;
-    return graphics_create(hdc, nullptr, graphics);
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageGraphicsContext(GpImage *image, GpGraphics **graphics)
-{
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !graphics)
-        return InvalidParameter;
-    return graphics_create(nullptr, b, graphics);
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipDeleteGraphics(GpGraphics *graphics)
-{
-    GpGraphics *g = graphics_cast(graphics);
+    if (GetObjectType(hdc) == 0)
+        return OutOfMemory;
+    GGraphics *g = gp_alloc_zero(sizeof(*g));
     if (!g)
+        return OutOfMemory;
+    g->tag = GP_TAG_GRAPHICS;
+    g->hdc = hdc;
+    g->hwnd = hwnd;
+    g->owns_dc = owns;
+    graphics_defaults(g);
+    g->dpi_x = (float)GetDeviceCaps(hdc, LOGPIXELSX);
+    g->dpi_y = (float)GetDeviceCaps(hdc, LOGPIXELSY);
+    if (g->dpi_x <= 0.0f)
+        g->dpi_x = 96.0f;
+    if (g->dpi_y <= 0.0f)
+        g->dpi_y = 96.0f;
+    /* the extent of the surface: a bitmap in a memory device context, else the display */
+    HGDIOBJ obj = GetCurrentObject(hdc, OBJ_BITMAP);
+    BITMAP bm;
+    if (GetObjectType(hdc) == OBJ_MEMDC && obj && GetObjectW(obj, sizeof(bm), &bm)) {
+        g->width = bm.bmWidth;
+        g->height = bm.bmHeight;
+    } else {
+        g->width = GetDeviceCaps(hdc, HORZRES);
+        g->height = GetDeviceCaps(hdc, VERTRES);
+    }
+    *graphics = g;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipCreateFromHDC(HDC hdc, GpGraphics **graphics)
+{
+    return graphics_from_hdc(hdc, nullptr, FALSE, graphics);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipCreateFromHDC2(HDC hdc, HANDLE device, GpGraphics **graphics)
+{
+    return graphics_from_hdc(hdc, nullptr, FALSE, graphics);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipCreateFromHWND(HWND hwnd, GpGraphics **graphics)
+{
+    if (!graphics)
         return InvalidParameter;
-    g->Magic = 0;
+    HDC hdc = GetDC(hwnd);
+    if (!hdc)
+        return OutOfMemory;
+    GpStatus st = graphics_from_hdc(hdc, hwnd, TRUE, graphics);
+    if (st != Ok)
+        ReleaseDC(hwnd, hdc);
+    return st;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipCreateFromHWNDICM(HWND hwnd, GpGraphics **graphics)
+{
+    return GdipCreateFromHWND(hwnd, graphics);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetImageGraphicsContext(GpImage *image, GpGraphics **graphics)
+{
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!graphics)
+        return InvalidParameter;
+    if (!b) {
+        GImage *im = gp_image_cast(image);
+        return im ? NotImplemented : InvalidParameter;
+    }
+    if (b->locked)
+        return ObjectBusy;
+    switch (b->format) {
+    case PixelFormat1bppIndexed:
+    case PixelFormat4bppIndexed:
+    case PixelFormat8bppIndexed:
+    case PixelFormat16bppGrayScale:
+    case PixelFormat32bppCMYK:
+        return OutOfMemory;
+    default:
+        break;
+    }
+    GGraphics *g = gp_alloc_zero(sizeof(*g));
+    if (!g)
+        return OutOfMemory;
+    g->tag = GP_TAG_GRAPHICS;
+    g->target = b;
+    graphics_defaults(g);
+    g->width = b->width;
+    g->height = b->height;
+    g->dpi_x = b->dpi_x > 0 ? b->dpi_x : 96.0f;
+    g->dpi_y = b->dpi_y > 0 ? b->dpi_y : 96.0f;
+    b->graphics_refs++;
+    *graphics = g;
+    return Ok;
+}
+
+static void state_free(GState *s)
+{
+    mime_vec_mask_free(&s->clip);
+    gp_free(s);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipDeleteGraphics(GpGraphics *graphics)
+{
+    GFX(g, graphics);
+    if (g->got_dc && g->hdc && !g->target && g->meta == nullptr) {
+        /* a dc taken from a bitmap is dropped with it */
+    }
+    if (g->bitmap_dc)
+        gp_graphics_release_bitmap_dc(g, g->bitmap_dc, FALSE);
+    while (g->states) {
+        GState *s = g->states;
+        g->states = s->next;
+        state_free(s);
+    }
+    mime_vec_mask_free(&g->clip);
+    if (g->target && --g->target->graphics_refs == 0 && g->target->disposed)
+        gp_bitmap_free(g->target);
+    if (g->owns_dc)
+        ReleaseDC(g->hwnd, g->hdc);
+    g->tag = 0;
     gp_free(g);
     return Ok;
 }
 
-/* the quality modes resolve to the mode they stand for, like gdi+. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipSetInterpolationMode(GpGraphics *graphics, InterpolationMode mode)
+WINGDIPAPI GpStatus WINAPI GdipFlush(GpGraphics *graphics, GpFlushIntention intention)
 {
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || mode <= InterpolationModeInvalid || mode > InterpolationModeHighQualityBicubic)
+    GFX(g, graphics);
+    if (g->hdc && !g->target)
+        GdiFlush();
+    return Ok;
+}
+
+/* ------------------------------------------------------------------ the device context of a graphics */
+
+WINGDIPAPI GpStatus WINAPI GdipGetDC(GpGraphics *graphics, HDC *hdc)
+{
+    GFX(g, graphics);
+    if (!hdc)
+        return InvalidParameter;
+    if (g->got_dc)
+        return ObjectBusy;
+    if (g->hdc && !g->target) {
+        g->got_dc = TRUE;
+        /* the clip of the graphics follows the context while it is out */
+        *hdc = g->hdc;
+        return Ok;
+    }
+    if (!g->target)
+        return GenericError;
+    HDC dc;
+    GpStatus st = gp_graphics_make_bitmap_dc(g, &dc);
+    if (st != Ok)
+        return st;
+    g->got_dc = TRUE;
+    *hdc = dc;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipReleaseDC(GpGraphics *graphics, HDC hdc)
+{
+    GFX(g, graphics);
+    if (!g->got_dc)
+        return InvalidParameter;
+    if (g->bitmap_dc) {
+        if (hdc != g->bitmap_dc)
+            return InvalidParameter;
+        gp_graphics_release_bitmap_dc(g, hdc, TRUE);
+    } else if (hdc != g->hdc) {
+        return InvalidParameter;
+    }
+    g->got_dc = FALSE;
+    return Ok;
+}
+
+/* ------------------------------------------------------------------ modes */
+
+WINGDIPAPI GpStatus WINAPI GdipSetCompositingMode(GpGraphics *graphics, GpCompositingMode mode)
+{
+    GFX_FREE(g, graphics);
+    if (mode != CompositingModeSourceOver && mode != CompositingModeSourceCopy)
+        return InvalidParameter;
+    g->compositing_mode = mode;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetCompositingMode(GpGraphics *graphics, GpCompositingMode *mode)
+{
+    GFX(g, graphics);
+    if (!mode)
+        return InvalidParameter;
+    *mode = g->compositing_mode;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetRenderingOrigin(GpGraphics *graphics, INT x, INT y)
+{
+    GFX_FREE(g, graphics);
+    g->origin.x = x;
+    g->origin.y = y;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetRenderingOrigin(GpGraphics *graphics, INT *x, INT *y)
+{
+    GFX(g, graphics);
+    if (!x || !y)
+        return InvalidParameter;
+    *x = g->origin.x;
+    *y = g->origin.y;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetCompositingQuality(GpGraphics *graphics, GpCompositingQuality quality)
+{
+    GFX_FREE(g, graphics);
+    if (quality < CompositingQualityDefault || quality > CompositingQualityAssumeLinear)
+        return InvalidParameter;
+    g->compositing_quality = quality;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetCompositingQuality(GpGraphics *graphics, GpCompositingQuality *quality)
+{
+    GFX(g, graphics);
+    if (!quality)
+        return InvalidParameter;
+    *quality = g->compositing_quality;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetSmoothingMode(GpGraphics *graphics, GpSmoothingMode mode)
+{
+    GFX_FREE(g, graphics);
+    if (mode < SmoothingModeDefault || mode > SmoothingModeAntiAlias8x8)
+        return InvalidParameter;
+    g->smoothing = mode;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetSmoothingMode(GpGraphics *graphics, GpSmoothingMode *mode)
+{
+    GFX(g, graphics);
+    if (!mode)
+        return InvalidParameter;
+    *mode = g->smoothing;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetPixelOffsetMode(GpGraphics *graphics, GpPixelOffsetMode mode)
+{
+    GFX_FREE(g, graphics);
+    if (mode < PixelOffsetModeDefault || mode > PixelOffsetModeHalf)
+        return InvalidParameter;
+    g->pixel_offset = mode;
+    g->w2d_valid = FALSE;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetPixelOffsetMode(GpGraphics *graphics, GpPixelOffsetMode *mode)
+{
+    GFX(g, graphics);
+    if (!mode)
+        return InvalidParameter;
+    *mode = g->pixel_offset;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetTextRenderingHint(GpGraphics *graphics, GpTextRenderingHint hint)
+{
+    GFX_FREE(g, graphics);
+    if (hint < TextRenderingHintSystemDefault || hint > TextRenderingHintClearTypeGridFit)
+        return InvalidParameter;
+    g->text_hint = hint;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetTextRenderingHint(GpGraphics *graphics, GpTextRenderingHint *hint)
+{
+    GFX(g, graphics);
+    if (!hint)
+        return InvalidParameter;
+    *hint = g->text_hint;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetTextContrast(GpGraphics *graphics, UINT contrast)
+{
+    GFX_FREE(g, graphics);
+    if (contrast > 12)
+        return InvalidParameter;
+    g->text_contrast = contrast;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetTextContrast(GpGraphics *graphics, UINT *contrast)
+{
+    GFX(g, graphics);
+    if (!contrast)
+        return InvalidParameter;
+    *contrast = g->text_contrast;
+    return Ok;
+}
+
+/* the quality modes resolve to the mode they stand for, like gdi+ has it. */
+WINGDIPAPI GpStatus WINAPI GdipSetInterpolationMode(GpGraphics *graphics, GpInterpolationMode mode)
+{
+    GFX_FREE(g, graphics);
+    if (mode <= InterpolationModeInvalid || mode > InterpolationModeHighQualityBicubic)
         return InvalidParameter;
     if (mode == InterpolationModeDefault || mode == InterpolationModeLowQuality)
         mode = InterpolationModeBilinear;
     else if (mode == InterpolationModeHighQuality)
         mode = InterpolationModeHighQualityBicubic;
-    g->Interpolation = mode;
+    g->interpolation = mode;
     return Ok;
 }
 
-/* ------------------------------------------------------------------ drawing */
-
-/* n / d for a quotient below 2^32, without the 64 bit division helpers x86 lacks here. */
-static UINT divide(ULONGLONG n, ULONGLONG d)
+WINGDIPAPI GpStatus WINAPI GdipGetInterpolationMode(GpGraphics *graphics, GpInterpolationMode *mode)
 {
-    UINT q = 0;
-    for (int bit = 31; bit >= 0; bit--) {
-        if ((n >> bit) >= d) {
-            n -= d << bit;
-            q |= 1u << bit;
-        }
+    GFX(g, graphics);
+    if (!mode)
+        return InvalidParameter;
+    *mode = g->interpolation;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGraphicsSetAbort(GpGraphics *graphics, GdiplusAbort *abort)
+{
+    GFX(g, graphics);
+    return Ok;
+}
+
+/* ------------------------------------------------------------------ transforms */
+
+static void world_changed(GGraphics *g) { g->w2d_valid = FALSE; }
+
+WINGDIPAPI GpStatus WINAPI GdipSetWorldTransform(GpGraphics *graphics, GpMatrix *matrix)
+{
+    GFX_FREE(g, graphics);
+    GMatrix *m = gp_matrix_cast(matrix);
+    if (!m || !gp_matrix_invertible(&m->m))
+        return InvalidParameter;
+    g->world = m->m;
+    world_changed(g);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipResetWorldTransform(GpGraphics *graphics)
+{
+    GFX_FREE(g, graphics);
+    mime_vec_matrix_identity(&g->world);
+    world_changed(g);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipMultiplyWorldTransform(GpGraphics *graphics, const GpMatrix *matrix, GpMatrixOrder order)
+{
+    GFX_FREE(g, graphics);
+    GMatrix *m = gp_matrix_cast(matrix);
+    if (!m || (order != MatrixOrderPrepend && order != MatrixOrderAppend))
+        return InvalidParameter;
+    gp_matrix_apply(&g->world, &m->m, order);
+    world_changed(g);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipTranslateWorldTransform(GpGraphics *graphics, REAL dx, REAL dy, GpMatrixOrder order)
+{
+    GFX_FREE(g, graphics);
+    if (order != MatrixOrderPrepend && order != MatrixOrderAppend)
+        return InvalidParameter;
+    MimeVecMatrix op = {1, 0, 0, 1, dx, dy};
+    gp_matrix_apply(&g->world, &op, order);
+    world_changed(g);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipScaleWorldTransform(GpGraphics *graphics, REAL sx, REAL sy, GpMatrixOrder order)
+{
+    GFX_FREE(g, graphics);
+    if (order != MatrixOrderPrepend && order != MatrixOrderAppend)
+        return InvalidParameter;
+    MimeVecMatrix op = {sx, 0, 0, sy, 0, 0};
+    gp_matrix_apply(&g->world, &op, order);
+    world_changed(g);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipRotateWorldTransform(GpGraphics *graphics, REAL angle, GpMatrixOrder order)
+{
+    GFX_FREE(g, graphics);
+    if (order != MatrixOrderPrepend && order != MatrixOrderAppend)
+        return InvalidParameter;
+    GMatrix tmp;
+    tmp.tag = GP_TAG_MATRIX;
+    mime_vec_matrix_identity(&tmp.m);
+    GdipRotateMatrix(&tmp, angle, MatrixOrderPrepend);
+    gp_matrix_apply(&g->world, &tmp.m, order);
+    world_changed(g);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetWorldTransform(GpGraphics *graphics, GpMatrix *matrix)
+{
+    GFX(g, graphics);
+    GMatrix *m = gp_matrix_cast(matrix);
+    if (!m)
+        return InvalidParameter;
+    m->m = g->world;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipResetPageTransform(GpGraphics *graphics)
+{
+    GFX_FREE(g, graphics);
+    g->page_unit = UnitPixel;
+    g->page_scale = 1.0f;
+    world_changed(g);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetPageUnit(GpGraphics *graphics, GpUnit *unit)
+{
+    GFX(g, graphics);
+    if (!unit)
+        return InvalidParameter;
+    *unit = g->page_unit;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetPageScale(GpGraphics *graphics, REAL *scale)
+{
+    GFX(g, graphics);
+    if (!scale)
+        return InvalidParameter;
+    *scale = g->page_scale;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetPageUnit(GpGraphics *graphics, GpUnit unit)
+{
+    GFX_FREE(g, graphics);
+    if (unit == UnitWorld || unit < UnitWorld || unit > UnitMillimeter)
+        return InvalidParameter;
+    g->page_unit = unit;
+    world_changed(g);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetPageScale(GpGraphics *graphics, REAL scale)
+{
+    GFX_FREE(g, graphics);
+    if (scale <= 0.0f || scale > 1.0e8f)
+        return InvalidParameter;
+    g->page_scale = scale;
+    world_changed(g);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetDpiX(GpGraphics *graphics, REAL *dpi)
+{
+    GFX(g, graphics);
+    if (!dpi)
+        return InvalidParameter;
+    *dpi = g->dpi_x;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetDpiY(GpGraphics *graphics, REAL *dpi)
+{
+    GFX(g, graphics);
+    if (!dpi)
+        return InvalidParameter;
+    *dpi = g->dpi_y;
+    return Ok;
+}
+
+/* the matrix from one coordinate space to another. */
+static BOOL space_matrix(GGraphics *g, GpCoordinateSpace dst, GpCoordinateSpace src, MimeVecMatrix *out)
+{
+    float sx, sy;
+    gp_graphics_page_scale(g, &sx, &sy);
+    MimeVecMatrix scale = {sx, 0, 0, sy, 0, 0};
+    MimeVecMatrix up;
+    mime_vec_matrix_identity(&up);
+    /* src to device */
+    if (src == CoordinateSpaceWorld) {
+        mime_vec_matrix_multiply(&up, &g->world, &scale);
+    } else if (src == CoordinateSpacePage) {
+        up = scale;
     }
-    return q;
+    if (dst == CoordinateSpaceDevice) {
+        *out = up;
+        return TRUE;
+    }
+    MimeVecMatrix down;
+    if (dst == CoordinateSpacePage) {
+        if (!gp_matrix_inverse(&down, &scale))
+            return FALSE;
+    } else {
+        MimeVecMatrix w2d;
+        mime_vec_matrix_multiply(&w2d, &g->world, &scale);
+        if (!gp_matrix_inverse(&down, &w2d))
+            return FALSE;
+    }
+    mime_vec_matrix_multiply(out, &up, &down);
+    return TRUE;
 }
 
-/* the source pixel sampled by destination pixel i of count, for a source of size pixels. */
-static INT source_index(INT i, INT count, INT size, BOOL flip)
+WINGDIPAPI GpStatus WINAPI GdipTransformPoints(GpGraphics *graphics, GpCoordinateSpace dst, GpCoordinateSpace src,
+                                               GpPointF *points, INT count)
 {
-    UINT s = divide(((ULONGLONG)(UINT)i * 2 + 1) * (UINT)size, (ULONGLONG)(UINT)count * 2);
-    if (s >= (UINT)size)
-        s = (UINT)size - 1;
-    return flip ? size - 1 - (INT)s : (INT)s;
+    GFX(g, graphics);
+    if (!points || count <= 0 || dst < CoordinateSpaceWorld || dst > CoordinateSpaceDevice ||
+        src < CoordinateSpaceWorld || src > CoordinateSpaceDevice)
+        return InvalidParameter;
+    if (g->got_dc)
+        return ObjectBusy;
+    MimeVecMatrix m;
+    if (!space_matrix(g, dst, src, &m))
+        return GenericError;
+    for (INT i = 0; i < count; i++) {
+        MimeVecPoint p = mime_vec_xform(&m, points[i].X, points[i].Y);
+        points[i].X = p.x;
+        points[i].Y = p.y;
+    }
+    return Ok;
 }
 
-/* nearest neighbor scaling, composited source over destination. */
-static GpStatus draw_to_bitmap(GpBitmap *dst, GpBitmap *src, INT x, INT y, INT width, INT height, BOOL flip_x,
-                               BOOL flip_y)
+WINGDIPAPI GpStatus WINAPI GdipTransformPointsI(GpGraphics *graphics, GpCoordinateSpace dst, GpCoordinateSpace src,
+                                                GpPoint *points, INT count)
 {
-    LONGLONG left = x > 0 ? x : 0, top = y > 0 ? y : 0;
-    LONGLONG right = (LONGLONG)x + width, bottom = (LONGLONG)y + height;
-    if (right > dst->Width)
-        right = dst->Width;
-    if (bottom > dst->Height)
-        bottom = dst->Height;
-    if (left >= right || top >= bottom)
+    GFX(g, graphics);
+    if (!points || count <= 0 || dst < CoordinateSpaceWorld || dst > CoordinateSpaceDevice ||
+        src < CoordinateSpaceWorld || src > CoordinateSpaceDevice)
+        return InvalidParameter;
+    MimeVecMatrix m;
+    if (!space_matrix(g, dst, src, &m))
+        return GenericError;
+    for (INT i = 0; i < count; i++) {
+        MimeVecPoint p = mime_vec_xform(&m, (float)points[i].X, (float)points[i].Y);
+        points[i].X = (INT)mime_vec_floorf(p.x + 0.5f);
+        points[i].Y = (INT)mime_vec_floorf(p.y + 0.5f);
+    }
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetNearestColor(GpGraphics *graphics, ARGB *color)
+{
+    GFX(g, graphics);
+    if (!color)
+        return InvalidParameter;
+    if (g->target) {
+        /* a bitmap of fewer bits keeps what the format can hold */
+        UINT32 c = *color;
+        BYTE row[8];
+        gp_row_from_argb(row, g->target->format, g->target->palette, 0, 1, &c);
+        UINT32 back;
+        gp_row_to_argb(row, g->target->format, g->target->palette, 0, 1, &back);
+        if (IsAlphaPixelFormat(g->target->format))
+            *color = back;
+        else
+            *color = (c & 0xff000000u) | (back & 0x00ffffffu);
+    } else if (g->hdc) {
+        COLORREF ref = (COLORREF)((*color & 0xff) << 16 | (*color & 0xff00) | ((*color >> 16) & 0xff));
+        COLORREF near_ = GetNearestColor(g->hdc, ref);
+        if (near_ != CLR_INVALID)
+            *color = (*color & 0xff000000u) | ((near_ & 0xff) << 16) | (near_ & 0xff00) | ((near_ >> 16) & 0xff);
+    }
+    return Ok;
+}
+
+WINGDIPAPI HPALETTE WINAPI GdipCreateHalftonePalette(void)
+{
+    HDC dc = GetDC(nullptr);
+    if (!dc)
+        return nullptr;
+    HPALETTE pal = CreateHalftonePalette(dc);
+    ReleaseDC(nullptr, dc);
+    return pal;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipComment(GpGraphics *graphics, UINT size, const BYTE *data)
+{
+    GFX(g, graphics);
+    return Ok;
+}
+
+/* ------------------------------------------------------------------ clip */
+
+/* the device rectangle of the whole target, as a vector rectangle. */
+static MimeVecRect target_rect(const GGraphics *g)
+{
+    RECT b;
+    gp_graphics_bounds(g, &b);
+    MimeVecRect r = {b.left, b.top, b.right, b.bottom};
+    return r;
+}
+
+/* the clip in effect as a mask, the whole target when none is set. */
+static GpStatus clip_current(GGraphics *g, MimeVecMask *out)
+{
+    if (g->clip_set)
+        return mime_vec_mask_copy(out, &g->clip) == MIME_VEC_OK ? Ok : OutOfMemory;
+    MimeVecRect r = target_rect(g);
+    return mime_vec_mask_set_rect(out, &r) == MIME_VEC_OK ? Ok : OutOfMemory;
+}
+
+/* installs a mask as the clip under a combine mode. the mask is taken over. */
+static GpStatus clip_apply(GGraphics *g, MimeVecMask *mask, CombineMode mode)
+{
+    GpStatus st = Ok;
+    if (mode == CombineModeReplace) {
+        mime_vec_mask_free(&g->clip);
+        g->clip = *mask;
+        memset(mask, 0, sizeof(*mask));
+        mask->alloc = &gp_allocator;
+        g->clip_set = TRUE;
         return Ok;
-    INT columns = (INT)(right - left);
-    INT *map = gp_alloc((SIZE_T)columns * sizeof(INT));
-    if (!map)
+    }
+    MimeVecMask cur, out;
+    mime_vec_mask_init(&cur, &gp_allocator);
+    mime_vec_mask_init(&out, &gp_allocator);
+    st = clip_current(g, &cur);
+    if (st == Ok && mime_vec_mask_combine(&out, &cur, mask, (int)mode) != MIME_VEC_OK)
+        st = OutOfMemory;
+    if (st == Ok) {
+        mime_vec_mask_free(&g->clip);
+        g->clip = out;
+        g->clip_set = TRUE;
+    } else {
+        mime_vec_mask_free(&out);
+    }
+    mime_vec_mask_free(&cur);
+    mime_vec_mask_free(mask);
+    return st;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetClipRect(GpGraphics *graphics, REAL x, REAL y, REAL w, REAL h, GpCombineMode mode)
+{
+    GFX_FREE(g, graphics);
+    if (mode < CombineModeReplace || mode > CombineModeComplement)
+        return InvalidParameter;
+    GRegion *r = gp_region_new_infinite();
+    if (!r)
         return OutOfMemory;
-    for (INT i = 0; i < columns; i++)
-        map[i] = source_index((INT)left + i - x, width, src->Width, flip_x);
-    for (INT row = (INT)top; row < (INT)bottom; row++) {
-        INT sy = source_index(row - y, height, src->Height, flip_y);
-        const BYTE *s = src->Bits + (INT_PTR)sy * src->Stride;
-        BYTE *d = dst->Bits + (INT_PTR)row * dst->Stride;
-        for (INT i = 0; i < columns; i++) {
-            INT dx = (INT)left + i;
-            ARGB c = gp_read_pixel(s, map[i], src->Format);
-            UINT alpha = c >> 24;
-            if (!alpha)
-                continue;
-            if (alpha != 255) {
-                ARGB sp = gp_premultiply(c), dp = gp_premultiply(gp_read_pixel(d, dx, dst->Format));
-                UINT inverse = 255 - alpha;
-                c = 0;
-                for (UINT shift = 0; shift < 32; shift += 8)
-                    c |= ((sp >> shift & 0xff) + ((dp >> shift & 0xff) * inverse + 127) / 255) << shift;
-                c = gp_unpremultiply(c);
-            }
-            gp_write_pixel(d, dx, dst->Format, c);
+    GpRectF rc = {x, y, w, h};
+    GpStatus st = GdipCombineRegionRect(r, &rc, CombineModeReplace);
+    if (st == Ok)
+        st = GdipSetClipRegion(graphics, r, mode);
+    gp_region_free(r);
+    return st;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetClipRectI(GpGraphics *graphics, INT x, INT y, INT w, INT h, GpCombineMode mode)
+{
+    return GdipSetClipRect(graphics, (float)x, (float)y, (float)w, (float)h, mode);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetClipPath(GpGraphics *graphics, GpPath *path, GpCombineMode mode)
+{
+    GFX_FREE(g, graphics);
+    GPath *p = gp_path_cast(path);
+    if (!p || mode < CombineModeReplace || mode > CombineModeComplement)
+        return InvalidParameter;
+    GRegion *r;
+    GpStatus st = GdipCreateRegionPath(path, (GpRegion **)&r);
+    if (st != Ok)
+        return st;
+    st = GdipSetClipRegion(graphics, r, mode);
+    gp_region_free(r);
+    return st;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetClipRegion(GpGraphics *graphics, GpRegion *region, GpCombineMode mode)
+{
+    GFX_FREE(g, graphics);
+    GRegion *r = gp_region_cast(region);
+    if (!r || mode < CombineModeReplace || mode > CombineModeComplement)
+        return InvalidParameter;
+    MimeVecMask mask;
+    mime_vec_mask_init(&mask, &gp_allocator);
+    MimeVecRect clip = target_rect(g);
+    GpStatus st = gp_region_to_mask(r, gp_graphics_w2d(g), &clip, &mask);
+    if (st != Ok) {
+        mime_vec_mask_free(&mask);
+        return st;
+    }
+    return clip_apply(g, &mask, mode);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetClipHrgn(GpGraphics *graphics, HRGN hrgn, GpCombineMode mode)
+{
+    GFX_FREE(g, graphics);
+    if (!hrgn || mode < CombineModeReplace || mode > CombineModeComplement)
+        return InvalidParameter;
+    DWORD size = GetRegionData(hrgn, 0, nullptr);
+    if (!size)
+        return InvalidParameter;
+    RGNDATA *data = gp_alloc(size);
+    if (!data)
+        return OutOfMemory;
+    if (!GetRegionData(hrgn, size, data)) {
+        gp_free(data);
+        return InvalidParameter;
+    }
+    MimeVecMask mask, one, tmp;
+    mime_vec_mask_init(&mask, &gp_allocator);
+    mime_vec_mask_init(&one, &gp_allocator);
+    mime_vec_mask_init(&tmp, &gp_allocator);
+    const RECT *rects = (const RECT *)data->Buffer;
+    GpStatus st = Ok;
+    for (DWORD i = 0; i < data->rdh.nCount && st == Ok; i++) {
+        MimeVecRect r = {rects[i].left, rects[i].top, rects[i].right, rects[i].bottom};
+        if (mime_vec_mask_set_rect(&one, &r) != MIME_VEC_OK ||
+            mime_vec_mask_combine(&tmp, &mask, &one, MIME_VEC_COMBINE_UNION) != MIME_VEC_OK)
+            st = OutOfMemory;
+        else {
+            mime_vec_mask_free(&mask);
+            mask = tmp;
+            mime_vec_mask_init(&tmp, &gp_allocator);
         }
     }
-    gp_free(map);
+    gp_free(data);
+    mime_vec_mask_free(&one);
+    mime_vec_mask_free(&tmp);
+    if (st != Ok) {
+        mime_vec_mask_free(&mask);
+        return st;
+    }
+    return clip_apply(g, &mask, mode);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSetClipGraphics(GpGraphics *graphics, GpGraphics *other, GpCombineMode mode)
+{
+    GFX_FREE(g, graphics);
+    GGraphics *o = gp_graphics_cast(other);
+    if (!o || mode < CombineModeReplace || mode > CombineModeComplement)
+        return InvalidParameter;
+    MimeVecMask mask;
+    mime_vec_mask_init(&mask, &gp_allocator);
+    GpStatus st = clip_current(o, &mask);
+    if (st != Ok) {
+        mime_vec_mask_free(&mask);
+        return st;
+    }
+    return clip_apply(g, &mask, mode);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipResetClip(GpGraphics *graphics)
+{
+    GFX_FREE(g, graphics);
+    g->clip_set = FALSE;
+    mime_vec_mask_clear(&g->clip);
     return Ok;
 }
 
-/*
- * copies the source into a premultiplied top-down dib section, then lets
- * gdi32 stretch it: StretchBlt for opaque pixels, GdiAlphaBlend otherwise.
- * nearest neighbor mode uses COLORONCOLOR stretching, the others HALFTONE.
- */
-static GpStatus draw_to_hdc(GpGraphics *g, GpBitmap *src, INT x, INT y, INT width, INT height, BOOL flip_x,
-                            BOOL flip_y)
+WINGDIPAPI GpStatus WINAPI GdipTranslateClip(GpGraphics *graphics, REAL dx, REAL dy)
 {
+    GFX_FREE(g, graphics);
+    if (!g->clip_set)
+        return Ok;
+    const MimeVecMatrix *m = gp_graphics_w2d(g);
+    float x = dx * m->m11 + dy * m->m21, y = dx * m->m12 + dy * m->m22;
+    mime_vec_mask_translate(&g->clip, (int)mime_vec_floorf(x + 0.5f), (int)mime_vec_floorf(y + 0.5f));
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipTranslateClipI(GpGraphics *graphics, INT dx, INT dy)
+{
+    return GdipTranslateClip(graphics, (float)dx, (float)dy);
+}
+
+/* the clip as a region in world units: a rectangle when the device mask is one, else a union of its runs. */
+WINGDIPAPI GpStatus WINAPI GdipGetClip(GpGraphics *graphics, GpRegion *region)
+{
+    GFX(g, graphics);
+    GRegion *r = gp_region_cast(region);
+    if (!r)
+        return InvalidParameter;
+    if (!g->clip_set)
+        return GdipSetInfinite(region);
+    const MimeVecMatrix *m = gp_graphics_w2d(g);
+    MimeVecMatrix inv;
+    if (!mime_vec_matrix_invert(&inv, m))
+        return GenericError;
+    GpStatus st = GdipSetEmpty(region);
+    for (UINT b = 0; b < g->clip.nbands && st == Ok; b++) {
+        const MimeVecBand *band = &g->clip.bands[b];
+        for (UINT i = 0; i < band->count && st == Ok; i++) {
+            const MimeVecRun *run = &g->clip.runs[band->first + i];
+            GPath *p = gp_path_new(FillModeWinding);
+            if (!p)
+                return OutOfMemory;
+            mime_vec_path_add_rect(&p->path, (float)run->x0, (float)band->y0, (float)(run->x1 - run->x0),
+                                   (float)(band->y1 - band->y0));
+            mime_vec_path_transform(&p->path, &inv);
+            GpRegion *one;
+            st = GdipCreateRegionPath(p, &one);
+            gp_path_free(p);
+            if (st == Ok) {
+                st = GdipCombineRegionRegion(region, one, CombineModeUnion);
+                gp_region_free(one);
+            }
+        }
+    }
+    return st;
+}
+
+static void clip_world_bounds(GGraphics *g, BOOL visible, GpRectF *out)
+{
+    if (!g->clip_set && !visible) {
+        out->X = out->Y = -4194304.0f;
+        out->Width = out->Height = 8388608.0f;
+        return;
+    }
+    MimeVecRect b = target_rect(g);
+    if (g->clip_set) {
+        MimeVecRect cb = mime_vec_mask_bounds(&g->clip);
+        if (cb.left > b.left)
+            b.left = cb.left;
+        if (cb.top > b.top)
+            b.top = cb.top;
+        if (cb.right < b.right)
+            b.right = cb.right;
+        if (cb.bottom < b.bottom)
+            b.bottom = cb.bottom;
+    }
+    if (b.right <= b.left || b.bottom <= b.top) {
+        memset(out, 0, sizeof(*out));
+        return;
+    }
+    MimeVecMatrix inv;
+    const MimeVecMatrix *m = gp_graphics_w2d(g);
+    float x0 = (float)b.left, y0 = (float)b.top, x1 = (float)b.right, y1 = (float)b.bottom;
+    if (mime_vec_matrix_invert(&inv, m)) {
+        MimeVecPoint p[4] = {mime_vec_xform(&inv, x0, y0), mime_vec_xform(&inv, x1, y0), mime_vec_xform(&inv, x1, y1),
+                             mime_vec_xform(&inv, x0, y1)};
+        float lx = p[0].x, hx = p[0].x, ly = p[0].y, hy = p[0].y;
+        for (INT i = 1; i < 4; i++) {
+            if (p[i].x < lx)
+                lx = p[i].x;
+            if (p[i].x > hx)
+                hx = p[i].x;
+            if (p[i].y < ly)
+                ly = p[i].y;
+            if (p[i].y > hy)
+                hy = p[i].y;
+        }
+        x0 = lx;
+        x1 = hx;
+        y0 = ly;
+        y1 = hy;
+    }
+    out->X = x0;
+    out->Y = y0;
+    out->Width = x1 - x0;
+    out->Height = y1 - y0;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetClipBounds(GpGraphics *graphics, GpRectF *rect)
+{
+    GFX(g, graphics);
+    if (!rect)
+        return InvalidParameter;
+    clip_world_bounds(g, FALSE, rect);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetClipBoundsI(GpGraphics *graphics, GpRect *rect)
+{
+    GFX(g, graphics);
+    if (!rect)
+        return InvalidParameter;
+    GpRectF f;
+    clip_world_bounds(g, FALSE, &f);
+    INT l = (INT)mime_vec_floorf(f.X), t = (INT)mime_vec_floorf(f.Y);
+    rect->X = l;
+    rect->Y = t;
+    rect->Width = (INT)mime_vec_ceilf(f.X + f.Width) - l;
+    rect->Height = (INT)mime_vec_ceilf(f.Y + f.Height) - t;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipIsClipEmpty(GpGraphics *graphics, BOOL *result)
+{
+    GFX(g, graphics);
+    if (!result)
+        return InvalidParameter;
+    *result = g->clip_set && mime_vec_mask_is_empty(&g->clip);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetVisibleClipBounds(GpGraphics *graphics, GpRectF *rect)
+{
+    GFX(g, graphics);
+    if (!rect)
+        return InvalidParameter;
+    clip_world_bounds(g, TRUE, rect);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetVisibleClipBoundsI(GpGraphics *graphics, GpRect *rect)
+{
+    GFX(g, graphics);
+    if (!rect)
+        return InvalidParameter;
+    GpRectF f;
+    clip_world_bounds(g, TRUE, &f);
+    INT l = (INT)mime_vec_floorf(f.X), t = (INT)mime_vec_floorf(f.Y);
+    rect->X = l;
+    rect->Y = t;
+    rect->Width = (INT)mime_vec_ceilf(f.X + f.Width) - l;
+    rect->Height = (INT)mime_vec_ceilf(f.Y + f.Height) - t;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipIsVisibleClipEmpty(GpGraphics *graphics, BOOL *result)
+{
+    GFX(g, graphics);
+    if (!result)
+        return InvalidParameter;
+    GpRectF f;
+    clip_world_bounds(g, TRUE, &f);
+    *result = f.Width <= 0.0f || f.Height <= 0.0f || (g->clip_set && mime_vec_mask_is_empty(&g->clip));
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipIsVisiblePoint(GpGraphics *graphics, REAL x, REAL y, BOOL *result)
+{
+    GFX(g, graphics);
+    if (!result)
+        return InvalidParameter;
+    MimeVecPoint p = mime_vec_xform(gp_graphics_w2d(g), x, y);
+    INT px = (INT)mime_vec_floorf(p.x), py = (INT)mime_vec_floorf(p.y);
+    RECT b;
+    gp_graphics_bounds(g, &b);
+    BOOL in = px >= b.left && px < b.right && py >= b.top && py < b.bottom;
+    if (in && g->clip_set)
+        in = mime_vec_mask_coverage_at(&g->clip, px, py) != 0;
+    *result = in;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipIsVisiblePointI(GpGraphics *graphics, INT x, INT y, BOOL *result)
+{
+    return GdipIsVisiblePoint(graphics, (float)x, (float)y, result);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipIsVisibleRect(GpGraphics *graphics, REAL x, REAL y, REAL w, REAL h, BOOL *result)
+{
+    GFX(g, graphics);
+    if (!result)
+        return InvalidParameter;
+    const MimeVecMatrix *m = gp_graphics_w2d(g);
+    MimeVecPoint p0 = mime_vec_xform(m, x, y), p1 = mime_vec_xform(m, x + w, y + h);
+    float lx = p0.x < p1.x ? p0.x : p1.x, hx = p0.x < p1.x ? p1.x : p0.x;
+    float ly = p0.y < p1.y ? p0.y : p1.y, hy = p0.y < p1.y ? p1.y : p0.y;
+    MimeVecRect r = {(INT)mime_vec_floorf(lx), (INT)mime_vec_floorf(ly), (INT)mime_vec_ceilf(hx), (INT)mime_vec_ceilf(hy)};
+    if (r.right <= r.left)
+        r.right = r.left + 1;
+    if (r.bottom <= r.top)
+        r.bottom = r.top + 1;
+    MimeVecRect b = target_rect(g);
+    if (r.left < b.left)
+        r.left = b.left;
+    if (r.top < b.top)
+        r.top = b.top;
+    if (r.right > b.right)
+        r.right = b.right;
+    if (r.bottom > b.bottom)
+        r.bottom = b.bottom;
+    if (r.right <= r.left || r.bottom <= r.top) {
+        *result = FALSE;
+        return Ok;
+    }
+    *result = !g->clip_set || mime_vec_mask_test_rect(&g->clip, &r) != MIME_VEC_TEST_OUTSIDE;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipIsVisibleRectI(GpGraphics *graphics, INT x, INT y, INT w, INT h, BOOL *result)
+{
+    return GdipIsVisibleRect(graphics, (float)x, (float)y, (float)w, (float)h, result);
+}
+
+/* ------------------------------------------------------------------ states and containers */
+
+static GpStatus push_state(GGraphics *g, INT kind, UINT *id)
+{
+    GState *s = gp_alloc_zero(sizeof(*s));
+    if (!s)
+        return OutOfMemory;
+    s->kind = kind;
+    s->id = g->next_state_id++;
+    s->world = g->world;
+    s->container = g->container;
+    s->page_unit = g->page_unit;
+    s->page_scale = g->page_scale;
+    s->smoothing = g->smoothing;
+    s->compositing_mode = g->compositing_mode;
+    s->compositing_quality = g->compositing_quality;
+    s->interpolation = g->interpolation;
+    s->pixel_offset = g->pixel_offset;
+    s->text_hint = g->text_hint;
+    s->text_contrast = g->text_contrast;
+    s->origin = g->origin;
+    s->clip_set = g->clip_set;
+    mime_vec_mask_init(&s->clip, &gp_allocator);
+    if (g->clip_set && mime_vec_mask_copy(&s->clip, &g->clip) != MIME_VEC_OK) {
+        state_free(s);
+        return OutOfMemory;
+    }
+    s->next = g->states;
+    g->states = s;
+    *id = s->id;
+    return Ok;
+}
+
+static void restore_state(GGraphics *g, const GState *s)
+{
+    g->world = s->world;
+    g->container = s->container;
+    g->page_unit = s->page_unit;
+    g->page_scale = s->page_scale;
+    g->smoothing = s->smoothing;
+    g->compositing_mode = s->compositing_mode;
+    g->compositing_quality = s->compositing_quality;
+    g->interpolation = s->interpolation;
+    g->pixel_offset = s->pixel_offset;
+    g->text_hint = s->text_hint;
+    g->text_contrast = s->text_contrast;
+    g->origin = s->origin;
+    mime_vec_mask_free(&g->clip);
+    mime_vec_mask_init(&g->clip, &gp_allocator);
+    g->clip_set = s->clip_set;
+    if (s->clip_set)
+        mime_vec_mask_copy(&g->clip, &s->clip);
+    g->w2d_valid = FALSE;
+}
+
+static GpStatus pop_to(GGraphics *g, UINT id, INT kind)
+{
+    GState *s = g->states;
+    while (s && s->id != id)
+        s = s->next;
+    if (!s || s->kind != kind)
+        return Ok;
+    /* the states above it go too */
+    while (g->states != s) {
+        GState *top = g->states;
+        g->states = top->next;
+        state_free(top);
+    }
+    restore_state(g, s);
+    g->states = s->next;
+    state_free(s);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipSaveGraphics(GpGraphics *graphics, GraphicsState *state)
+{
+    GFX_FREE(g, graphics);
+    if (!state)
+        return InvalidParameter;
+    UINT id;
+    GpStatus st = push_state(g, 0, &id);
+    if (st == Ok)
+        *state = id;
+    return st;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipRestoreGraphics(GpGraphics *graphics, GraphicsState state)
+{
+    GFX_FREE(g, graphics);
+    return pop_to(g, state, 0);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipBeginContainer2(GpGraphics *graphics, GraphicsContainer *container)
+{
+    GFX_FREE(g, graphics);
+    if (!container)
+        return InvalidParameter;
+    UINT id;
+    GpStatus st = push_state(g, 1, &id);
+    if (st != Ok)
+        return st;
+    /* the new container starts with no world transform, but draws where its parent does */
+    MimeVecMatrix total = gp_graphics_w2d_base(g);
+    g->container = total;
+    mime_vec_matrix_identity(&g->world);
+    g->page_unit = UnitPixel;
+    g->page_scale = 1.0f;
+    g->w2d_valid = FALSE;
+    *container = id;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipBeginContainer(GpGraphics *graphics, const GpRectF *dst, const GpRectF *src, GpUnit unit,
+                                              GraphicsContainer *container)
+{
+    GFX_FREE(g, graphics);
+    if (!dst || !src || !container || unit < UnitPixel || unit > UnitMillimeter || src->Width == 0.0f ||
+        src->Height == 0.0f)
+        return InvalidParameter;
+    GpStatus st = GdipBeginContainer2(graphics, container);
+    if (st != Ok)
+        return st;
+    /* the source rectangle is in the unit, the destination in the world of the parent */
+    float k = unit == UnitPixel ? 1.0f : gp_unit_to_pixels(unit, g->dpi_x);
+    MimeVecMatrix map;
+    float sx = dst->Width / (src->Width * k), sy = dst->Height / (src->Height * k);
+    map.m11 = sx;
+    map.m12 = 0;
+    map.m21 = 0;
+    map.m22 = sy;
+    map.dx = dst->X - src->X * k * sx;
+    map.dy = dst->Y - src->Y * k * sy;
+    mime_vec_matrix_multiply(&g->container, &map, &g->container);
+    g->w2d_valid = FALSE;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipBeginContainerI(GpGraphics *graphics, const GpRect *dst, const GpRect *src, GpUnit unit,
+                                               GraphicsContainer *container)
+{
+    if (!dst || !src)
+        return InvalidParameter;
+    GpRectF d = {(float)dst->X, (float)dst->Y, (float)dst->Width, (float)dst->Height};
+    GpRectF s = {(float)src->X, (float)src->Y, (float)src->Width, (float)src->Height};
+    return GdipBeginContainer(graphics, &d, &s, unit, container);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipEndContainer(GpGraphics *graphics, GraphicsContainer container)
+{
+    GFX_FREE(g, graphics);
+    return pop_to(g, container, 1);
+}
+
+/* ------------------------------------------------------------------ a device context for a bitmap */
+
+GpStatus gp_graphics_make_bitmap_dc(GGraphics *g, HDC *out)
+{
+    GBitmap *b = g->target;
     BITMAPINFO info = {};
     info.bmiHeader.biSize = sizeof(info.bmiHeader);
-    info.bmiHeader.biWidth = src->Width;
-    info.bmiHeader.biHeight = -src->Height;
+    info.bmiHeader.biWidth = b->width;
+    info.bmiHeader.biHeight = -b->height;
     info.bmiHeader.biPlanes = 1;
     info.bmiHeader.biBitCount = 32;
     info.bmiHeader.biCompression = BI_RGB;
     BYTE *bits = nullptr;
-    HBITMAP dib = CreateDIBSection(g->Hdc, &info, DIB_RGB_COLORS, (void **)&bits, nullptr, 0);
+    HBITMAP dib = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, (void **)&bits, nullptr, 0);
     if (!dib || !bits) {
         if (dib)
             DeleteObject(dib);
         return OutOfMemory;
     }
-    BOOL opaque = TRUE;
-    for (INT row = 0; row < src->Height; row++) {
-        const BYTE *s = src->Bits + (INT_PTR)(flip_y ? src->Height - 1 - row : row) * src->Stride;
-        BYTE *d = bits + (SIZE_T)row * src->Width * 4;
-        for (INT col = 0; col < src->Width; col++) {
-            ARGB c = gp_premultiply(gp_read_pixel(s, flip_x ? src->Width - 1 - col : col, src->Format));
-            if (c >> 24 != 255)
-                opaque = FALSE;
-            d[col * 4] = (BYTE)c;
-            d[col * 4 + 1] = (BYTE)(c >> 8);
-            d[col * 4 + 2] = (BYTE)(c >> 16);
-            d[col * 4 + 3] = (BYTE)(c >> 24);
-        }
-    }
-    GpStatus status = OutOfMemory;
-    HDC mem = CreateCompatibleDC(g->Hdc);
-    if (mem) {
-        HGDIOBJ old = SelectObject(mem, dib);
-        int mode = SetStretchBltMode(g->Hdc, g->Interpolation == InterpolationModeNearestNeighbor ? COLORONCOLOR
-                                                                                                  : HALFTONE);
-        BOOL done;
-        if (opaque) {
-            done = StretchBlt(g->Hdc, x, y, width, height, mem, 0, 0, src->Width, src->Height, SRCCOPY);
-        } else {
-            BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-            done = GdiAlphaBlend(g->Hdc, x, y, width, height, mem, 0, 0, src->Width, src->Height, blend);
-        }
-        if (mode)
-            SetStretchBltMode(g->Hdc, mode);
-        SelectObject(mem, old);
-        DeleteDC(mem);
-        status = done ? Ok : GenericError;
-    }
-    DeleteObject(dib);
-    return status;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipDrawImageRectI(GpGraphics *graphics, GpImage *image, INT x, INT y, INT width,
-                                                   INT height)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    GpBitmap *src = gp_bitmap_cast(image);
-    if (!g || !src)
-        return InvalidParameter;
-    if (!width || !height)
-        return Ok;
-    if (width < -0x7fffffff || height < -0x7fffffff)
-        return InvalidParameter;
-    /* a negative size mirrors the image. The rectangle goes through the world and page transforms to pixels. */
-    BOOL flip_x = width < 0, flip_y = height < 0;
-    INT left, top, right, bottom;
-    GpStatus status = device_rect(g, (float)x, (float)y, (float)width, (float)height, &left, &top, &right, &bottom);
-    if (status != Ok)
-        return status;
-    x = left;
-    y = top;
-    width = right - left;
-    height = bottom - top;
-    if (!width || !height)
-        return Ok;
-    if (g->Target)
-        return draw_to_bitmap(g->Target, src, x, y, width, height, flip_x, flip_y);
-    return draw_to_hdc(g, src, x, y, width, height, flip_x, flip_y);
-}
-
-/* the image is drawn at its pixel size; its resolution is not taken into account. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipDrawImageI(GpGraphics *graphics, GpImage *image, INT x, INT y)
-{
-    GpBitmap *src = gp_bitmap_cast(image);
-    if (!src)
-        return InvalidParameter;
-    return GdipDrawImageRectI(graphics, image, x, y, src->Width, src->Height);
-}
-
-/* ------------------------------------------------------------------ state */
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetInterpolationMode(GpGraphics *graphics, InterpolationMode *mode)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !mode)
-        return InvalidParameter;
-    *mode = g->Interpolation;
-    return Ok;
-}
-
-/* the smoothing modes are hints; they are kept, and nothing here draws with anti aliasing. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipSetSmoothingMode(GpGraphics *graphics, SmoothingMode mode)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || mode <= SmoothingModeInvalid || mode > SmoothingModeAntiAlias8x8)
-        return InvalidParameter;
-    g->Smoothing = mode == SmoothingModeDefault ? SmoothingModeNone : mode == SmoothingModeHighSpeed
-                                                                       ? SmoothingModeNone
-                                                                       : mode == SmoothingModeHighQuality
-                                                                             ? SmoothingModeAntiAlias8x4
-                                                                             : mode;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetSmoothingMode(GpGraphics *graphics, SmoothingMode *mode)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !mode)
-        return InvalidParameter;
-    *mode = g->Smoothing;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipSetCompositingMode(GpGraphics *graphics, CompositingMode mode)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || (UINT)mode > CompositingModeSourceCopy)
-        return InvalidParameter;
-    g->Compositing = mode;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetCompositingMode(GpGraphics *graphics, CompositingMode *mode)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !mode)
-        return InvalidParameter;
-    *mode = g->Compositing;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipSetCompositingQuality(GpGraphics *graphics, CompositingQuality quality)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || quality <= CompositingQualityInvalid || quality > CompositingQualityAssumeLinear)
-        return InvalidParameter;
-    g->CompositingQuality = quality;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetCompositingQuality(GpGraphics *graphics, CompositingQuality *quality)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !quality)
-        return InvalidParameter;
-    *quality = g->CompositingQuality;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipSetPixelOffsetMode(GpGraphics *graphics, PixelOffsetMode mode)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || mode <= PixelOffsetModeInvalid || mode > PixelOffsetModeHalf)
-        return InvalidParameter;
-    g->PixelOffset = mode;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetPixelOffsetMode(GpGraphics *graphics, PixelOffsetMode *mode)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !mode)
-        return InvalidParameter;
-    *mode = g->PixelOffset;
-    return Ok;
-}
-
-/* the world unit cannot be a page unit, and a scale must be positive. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipSetPageUnit(GpGraphics *graphics, GpUnit unit)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || unit <= UnitWorld || unit > UnitMillimeter)
-        return InvalidParameter;
-    g->PageUnit = unit;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetPageUnit(GpGraphics *graphics, GpUnit *unit)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !unit)
-        return InvalidParameter;
-    *unit = g->PageUnit;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipSetPageScale(GpGraphics *graphics, float scale)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !(scale > 0))
-        return InvalidParameter;
-    g->PageScale = scale;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetPageScale(GpGraphics *graphics, float *scale)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !scale)
-        return InvalidParameter;
-    *scale = g->PageScale;
-    return Ok;
-}
-
-/* ------------------------------------------------------------------ world transform */
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipSetWorldTransform(GpGraphics *graphics, GpMatrix *matrix)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !matrix || matrix->Magic != GP_MATRIX_MAGIC)
-        return InvalidParameter;
-    /* a matrix that cannot be inverted is refused, as the transform has to map back. */
-    float det = matrix->M[0] * matrix->M[3] - matrix->M[1] * matrix->M[2];
-    if (det < 1.0e-6f && det > -1.0e-6f)
-        return InvalidParameter;
-    memcpy(g->World, matrix->M, sizeof(g->World));
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetWorldTransform(GpGraphics *graphics, GpMatrix *matrix)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !matrix || matrix->Magic != GP_MATRIX_MAGIC)
-        return InvalidParameter;
-    memcpy(matrix->M, g->World, sizeof(g->World));
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipResetWorldTransform(GpGraphics *graphics)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g)
-        return InvalidParameter;
-    static const float identity[6] = {1, 0, 0, 1, 0, 0};
-    memcpy(g->World, identity, sizeof(identity));
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipMultiplyWorldTransform(GpGraphics *graphics, const GpMatrix *matrix,
-                                                           MatrixOrder order)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !matrix || matrix->Magic != GP_MATRIX_MAGIC || (order != MatrixOrderPrepend && order != MatrixOrderAppend))
-        return InvalidParameter;
-    if (order == MatrixOrderPrepend)
-        gp_matrix_multiply(matrix->M, g->World, g->World);
-    else
-        gp_matrix_multiply(g->World, matrix->M, g->World);
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipTranslateWorldTransform(GpGraphics *graphics, float dx, float dy,
-                                                            MatrixOrder order)
-{
-    GpMatrix m = {GP_MATRIX_MAGIC, {1, 0, 0, 1, dx, dy}};
-    return GdipMultiplyWorldTransform(graphics, &m, order);
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipScaleWorldTransform(GpGraphics *graphics, float sx, float sy, MatrixOrder order)
-{
-    GpMatrix m = {GP_MATRIX_MAGIC, {sx, 0, 0, sy, 0, 0}};
-    return GdipMultiplyWorldTransform(graphics, &m, order);
-}
-
-/* ------------------------------------------------------------------ filling */
-
-static INT round_to_int(float v)
-{
-    float t = (float)(long long)v;
-    if (t > v)
-        t -= 1;
-    return (INT)(t + 0.5f > v ? t : t + 1);
-}
-
-/* the pixels per unit of the page, from the resolution of the device. */
-static float unit_scale(GpGraphics *g)
-{
-    float dpi = 96.0f;
-    if (g->Target)
-        dpi = g->Target->DpiX;
-    else if (g->Hdc)
-        dpi = (float)GetDeviceCaps(g->Hdc, LOGPIXELSX);
-    float scale;
-    switch (g->PageUnit) {
-    case UnitDisplay:
-        scale = dpi / 75.0f;
-        break;
-    case UnitPoint:
-        scale = dpi / 72.0f;
-        break;
-    case UnitInch:
-        scale = dpi;
-        break;
-    case UnitDocument:
-        scale = dpi / 300.0f;
-        break;
-    case UnitMillimeter:
-        scale = dpi / 25.4f;
-        break;
-    default:
-        scale = 1.0f;
-        break;
-    }
-    return scale * g->PageScale;
-}
-
-/*
- * the rectangle in pixels, from the world through the page. A transform with a rotation or a shear turns the
- * rectangle into a parallelogram, which this library has no means of filling.
- */
-static GpStatus device_rect(GpGraphics *g, float x, float y, float width, float height, INT *left, INT *top,
-                            INT *right, INT *bottom)
-{
-    if (g->World[1] != 0 || g->World[2] != 0)
-        return NotImplemented;
-    float scale = unit_scale(g);
-    float x0 = (x * g->World[0] + g->World[4]) * scale, x1 = ((x + width) * g->World[0] + g->World[4]) * scale;
-    float y0 = (y * g->World[3] + g->World[5]) * scale, y1 = ((y + height) * g->World[3] + g->World[5]) * scale;
-    *left = round_to_int(x0 < x1 ? x0 : x1);
-    *right = round_to_int(x0 < x1 ? x1 : x0);
-    *top = round_to_int(y0 < y1 ? y0 : y1);
-    *bottom = round_to_int(y0 < y1 ? y1 : y0);
-    return Ok;
-}
-
-static ARGB over(ARGB source, ARGB destination)
-{
-    UINT alpha = source >> 24;
-    if (alpha == 255)
-        return source;
-    if (!alpha)
-        return destination;
-    ARGB sp = gp_premultiply(source), dp = gp_premultiply(destination);
-    UINT inverse = 255 - alpha;
-    ARGB c = 0;
-    for (UINT shift = 0; shift < 32; shift += 8)
-        c |= ((sp >> shift & 0xff) + ((dp >> shift & 0xff) * inverse + 127) / 255) << shift;
-    return gp_unpremultiply(c);
-}
-
-/* the color over a rectangle of device pixels: composed over what is there, or replacing it for source copy. */
-GpStatus gp_fill_rect(GpGraphics *g, ARGB color, INT left, INT top, INT right, INT bottom)
-{
-    if (left >= right || top >= bottom)
-        return Ok;
-    if (g->Target) {
-        GpBitmap *b = g->Target;
-        if (left < 0)
-            left = 0;
-        if (top < 0)
-            top = 0;
-        if (right > b->Width)
-            right = b->Width;
-        if (bottom > b->Height)
-            bottom = b->Height;
-        for (INT y = top; y < bottom; y++) {
-            BYTE *row = b->Bits + (INT_PTR)y * b->Stride;
-            for (INT x = left; x < right; x++)
-                gp_write_pixel(row, x, b->Format,
-                               g->Compositing == CompositingModeSourceCopy ? color
-                                                                           : over(color, gp_read_pixel(row, x, b->Format)));
-        }
-        return Ok;
-    }
-    UINT alpha = color >> 24;
-    if (!alpha)
-        return Ok;
-    if (alpha == 255 || g->Compositing == CompositingModeSourceCopy) {
-        HBRUSH brush = CreateSolidBrush(RGB(color >> 16 & 0xff, color >> 8 & 0xff, color & 0xff));
-        if (!brush)
-            return OutOfMemory;
-        RECT r = {left, top, right, bottom};
-        BOOL ok = FillRect(g->Hdc, &r, brush);
-        DeleteObject(brush);
-        return ok ? Ok : GenericError;
-    }
-    /* a translucent color is one premultiplied pixel stretched over the rectangle and blended. */
-    BITMAPINFO info = {};
-    info.bmiHeader.biSize = sizeof(info.bmiHeader);
-    info.bmiHeader.biWidth = 1;
-    info.bmiHeader.biHeight = -1;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    BYTE *bits = nullptr;
-    HBITMAP dib = CreateDIBSection(g->Hdc, &info, DIB_RGB_COLORS, (void **)&bits, nullptr, 0);
-    HDC mem = dib ? CreateCompatibleDC(g->Hdc) : nullptr;
-    GpStatus status = OutOfMemory;
-    if (mem && bits) {
-        ARGB p = gp_premultiply(color);
-        bits[0] = (BYTE)p;
-        bits[1] = (BYTE)(p >> 8);
-        bits[2] = (BYTE)(p >> 16);
-        bits[3] = (BYTE)(p >> 24);
-        HGDIOBJ old = SelectObject(mem, dib);
-        BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-        status = GdiAlphaBlend(g->Hdc, left, top, right - left, bottom - top, mem, 0, 0, 1, 1, blend) ? Ok
-                                                                                                    : GenericError;
-        SelectObject(mem, old);
-    }
-    if (mem)
-        DeleteDC(mem);
-    if (dib)
+    HDC dc = CreateCompatibleDC(nullptr);
+    UINT32 *copy = gp_alloc((SIZE_T)b->width * b->height * 4);
+    if (!dc || !copy) {
+        if (dc)
+            DeleteDC(dc);
+        gp_free(copy);
         DeleteObject(dib);
-    return status;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipFillRectangle(GpGraphics *graphics, GpBrush *brush, float x, float y, float width,
-                                                  float height)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !brush || brush->Magic != GP_BRUSH_MAGIC)
-        return InvalidParameter;
-    INT left, top, right, bottom;
-    GpStatus status = device_rect(g, x, y, width, height, &left, &top, &right, &bottom);
-    return status == Ok ? gp_fill_rect(g, brush->Color, left, top, right, bottom) : status;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipFillRectangleI(GpGraphics *graphics, GpBrush *brush, INT x, INT y, INT width,
-                                                   INT height)
-{
-    return GdipFillRectangle(graphics, brush, (float)x, (float)y, (float)width, (float)height);
-}
-
-/*
- * the outline of a rectangle is four strips as wide as the pen, centered on the path: a one pixel pen on a whole
- * number rectangle covers its sides and its far corner. Dashes and the other dash styles are not drawn.
- */
-DECLSPEC_EXPORT GpStatus WINAPI GdipDrawRectangle(GpGraphics *graphics, GpPen *pen, float x, float y, float width,
-                                                  float height)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    if (!g || !pen || pen->Magic != GP_PEN_MAGIC)
-        return InvalidParameter;
-    if (pen->Dash != DashStyleSolid)
-        return NotImplemented;
-    float w = pen->Width * (pen->Unit == UnitWorld || pen->Unit == UnitPixel ? 1.0f : unit_scale(g));
-    if (pen->Unit == UnitWorld && g->World[1] == 0 && g->World[2] == 0)
-        w = pen->Width * g->World[0] * unit_scale(g);
-    float half = w / 2;
-    INT ol, ot, or_, ob, il, it, ir, ib;
-    GpStatus status = device_rect(g, x - half, y - half, width + w, height + w, &ol, &ot, &or_, &ob);
-    if (status != Ok)
-        return status;
-    status = device_rect(g, x + half, y + half, width - w, height - w, &il, &it, &ir, &ib);
-    if (status != Ok)
-        return status;
-    ARGB color = pen->Brush->Color;
-    if (il >= ir || it >= ib)
-        return gp_fill_rect(g, color, ol, ot, or_, ob);
-    status = gp_fill_rect(g, color, ol, ot, or_, it);
-    if (status == Ok)
-        status = gp_fill_rect(g, color, ol, ib, or_, ob);
-    if (status == Ok)
-        status = gp_fill_rect(g, color, ol, it, il, ib);
-    if (status == Ok)
-        status = gp_fill_rect(g, color, ir, it, or_, ib);
-    return status;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipDrawRectangleI(GpGraphics *graphics, GpPen *pen, INT x, INT y, INT width,
-                                                   INT height)
-{
-    return GdipDrawRectangle(graphics, pen, (float)x, (float)y, (float)width, (float)height);
-}
-
-/* ------------------------------------------------------------------ drawing part of an image */
-
-/* the source rectangle in pixels; only pixel units name one here. */
-static GpStatus source_pixels(GpBitmap *src, GpUnit unit, INT x, INT y, INT width, INT height, GpRect *rect)
-{
-    if (unit != UnitPixel)
-        return NotImplemented;
-    if (x < 0 || y < 0 || width <= 0 || height <= 0 || x > src->Width - width || y > src->Height - height)
-        return InvalidParameter;
-    rect->X = x;
-    rect->Y = y;
-    rect->Width = width;
-    rect->Height = height;
+        return OutOfMemory;
+    }
+    for (INT y = 0; y < b->height; y++) {
+        UINT32 *row = (UINT32 *)(bits + (SIZE_T)y * b->width * 4);
+        gp_row_to_argb(b->bits + (SSIZE_T)y * b->stride, b->format, b->palette, 0, b->width, row);
+        memcpy(copy + (SSIZE_T)y * b->width, row, (SIZE_T)b->width * 4);
+    }
+    g->bitmap_old = SelectObject(dc, dib);
+    g->bitmap_dc = dc;
+    g->bitmap_dib = dib;
+    g->bitmap_bits = bits;
+    g->bitmap_copy = copy;
+    *out = dc;
     return Ok;
 }
 
-/* a view of the rectangle of a bitmap, sharing its pixels. */
-static GpBitmap view_of(const GpBitmap *src, const GpRect *r)
+void gp_graphics_release_bitmap_dc(GGraphics *g, HDC dc, BOOL write_back)
 {
-    GpBitmap view = *src;
-    view.Width = r->Width;
-    view.Height = r->Height;
-    view.Bits = src->Bits + (INT_PTR)r->Y * src->Stride + (INT_PTR)r->X * (GetPixelFormatSize(src->Format) / 8);
-    view.Owned = nullptr;
-    view.LockBuffer = nullptr;
-    view.Properties = nullptr;
-    view.PropertyCount = 0;
-    return view;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipDrawImageRectRectI(GpGraphics *graphics, GpImage *image, INT dst_x, INT dst_y,
-                                                       INT dst_width, INT dst_height, INT src_x, INT src_y,
-                                                       INT src_width, INT src_height, GpUnit src_unit,
-                                                       void *attributes, void *callback, void *data)
-{
-    GpGraphics *g = graphics_cast(graphics);
-    GpBitmap *src = gp_bitmap_cast(image);
-    if (!g || !src)
-        return InvalidParameter;
-    GpRect rect;
-    GpStatus status = source_pixels(src, src_unit, src_x, src_y, src_width, src_height, &rect);
-    if (status != Ok)
-        return status;
-    GpBitmap view = view_of(src, &rect);
-    return GdipDrawImageRectI(graphics, &view.Image, dst_x, dst_y, dst_width, dst_height);
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipDrawImagePointRectI(GpGraphics *graphics, GpImage *image, INT x, INT y,
-                                                        INT src_x, INT src_y, INT src_width, INT src_height,
-                                                        GpUnit src_unit)
-{
-    return GdipDrawImageRectRectI(graphics, image, x, y, src_width, src_height, src_x, src_y, src_width, src_height,
-                                  src_unit, nullptr, nullptr, nullptr);
+    GBitmap *b = g->target;
+    if (write_back && b) {
+        GdiFlush();
+        for (INT y = 0; y < b->height; y++) {
+            UINT32 *row = (UINT32 *)(g->bitmap_bits + (SIZE_T)y * b->width * 4);
+            UINT32 *orig = g->bitmap_copy + (SSIZE_T)y * b->width;
+            BOOL changed = FALSE;
+            for (INT x = 0; x < b->width; x++) {
+                /* what GDI drew has no alpha of its own, it is opaque */
+                if ((row[x] & 0x00ffffffu) != (orig[x] & 0x00ffffffu)) {
+                    row[x] |= 0xff000000u;
+                    changed = TRUE;
+                } else {
+                    row[x] = orig[x];
+                }
+            }
+            if (changed)
+                gp_row_from_argb(b->bits + (SSIZE_T)y * b->stride, b->format, b->palette, 0, b->width, row);
+        }
+    }
+    SelectObject(g->bitmap_dc, g->bitmap_old);
+    DeleteDC(g->bitmap_dc);
+    DeleteObject(g->bitmap_dib);
+    gp_free(g->bitmap_copy);
+    g->bitmap_dc = nullptr;
+    g->bitmap_dib = nullptr;
+    g->bitmap_bits = nullptr;
+    g->bitmap_copy = nullptr;
 }

@@ -187,6 +187,37 @@ static void collect_row(void *user, int y, int x, int count, const uint8_t *cov)
     end_band(m);
 }
 
+int mime_vec_mask_add_row(MimeVecMask *m, int y, int x, int count, const uint8_t *cov)
+{
+    if (m->nbands && m->bands[m->nbands - 1].y1 > y)
+        return MIME_VEC_INVALID;
+    int err = add_band(m, y, y + 1);
+    if (err)
+        goto fail;
+    for (int i = 0; i < count;) {
+        uint8_t v = cov[i];
+        int j = i + 1;
+        while (j < count && cov[j] == v)
+            j++;
+        if (v) {
+            err = add_run(m, x + i, x + j, v);
+            if (err)
+                goto fail;
+        }
+        i = j;
+    }
+    end_band(m);
+    return MIME_VEC_OK;
+fail:
+    m->failed = true;
+    return err;
+}
+
+void mime_vec_mask_finish(MimeVecMask *m)
+{
+    finish(m);
+}
+
 int mime_vec_mask_set_polys(MimeVecMask *m, const MimeVecPolys *polys, int rule, int aa, const MimeVecRect *clip)
 {
     MimeVecMask t;

@@ -3,17 +3,19 @@
  * point goes through x' = x m11 + y m21 + dx and y' = x m12 + y m22 + dy, and prepending an operation applies it
  * to the points before the ones already in the matrix.
  */
-#include "gdiplus_private.h"
+#include "gp_private.h"
 
 #define MATRIX_ELEMENTS 6
 
 /* a determinant below this is a matrix that cannot be inverted, a guess at the limit windows uses. */
 #define DETERMINANT_LIMIT 1.0e-6f
 
-static GpMatrix *matrix_cast(const GpMatrix *matrix)
+static GMatrix *matrix_cast(const void *matrix)
 {
-    return matrix && matrix->Magic == GP_MATRIX_MAGIC ? (GpMatrix *)matrix : nullptr;
+    return GP_CAST(GMatrix, GP_TAG_MATRIX, matrix);
 }
+
+GMatrix *gp_matrix_cast(const void *p) { return matrix_cast(p); }
 
 /* a followed by b: the product that applies a to a point first. */
 void gp_matrix_multiply(const float *a, const float *b, float *out)
@@ -36,10 +38,10 @@ void gp_matrix_point(const float *m, float x, float y, float *ox, float *oy)
 
 static GpStatus matrix_new(float m11, float m12, float m21, float m22, float dx, float dy, GpMatrix **out)
 {
-    GpMatrix *m = gp_alloc(sizeof(*m));
+    GMatrix *m = gp_alloc(sizeof(*m));
     if (!m)
         return OutOfMemory;
-    m->Magic = GP_MATRIX_MAGIC;
+    m->tag = GP_TAG_MATRIX;
     m->M[0] = m11;
     m->M[1] = m12;
     m->M[2] = m21;
@@ -98,7 +100,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix3I(const GpRect *rect, const GpP
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipCloneMatrix(GpMatrix *matrix, GpMatrix **clone)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m || !clone)
         return InvalidParameter;
     return matrix_new(m->M[0], m->M[1], m->M[2], m->M[3], m->M[4], m->M[5], clone);
@@ -106,10 +108,10 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCloneMatrix(GpMatrix *matrix, GpMatrix **clo
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipDeleteMatrix(GpMatrix *matrix)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m)
         return InvalidParameter;
-    m->Magic = 0;
+    m->tag = 0;
     gp_free(m);
     return Ok;
 }
@@ -119,7 +121,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipDeleteMatrix(GpMatrix *matrix)
 DECLSPEC_EXPORT GpStatus WINAPI GdipSetMatrixElements(GpMatrix *matrix, float m11, float m12, float m21, float m22,
                                                       float dx, float dy)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m)
         return InvalidParameter;
     m->M[0] = m11;
@@ -133,7 +135,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipSetMatrixElements(GpMatrix *matrix, float m1
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipGetMatrixElements(const GpMatrix *matrix, float *elements)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m || !elements)
         return InvalidParameter;
     memcpy(elements, m->M, sizeof(m->M));
@@ -144,7 +146,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipGetMatrixElements(const GpMatrix *matrix, fl
 
 static GpStatus apply(GpMatrix *matrix, const float *op, MatrixOrder order)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m || (order != MatrixOrderPrepend && order != MatrixOrderAppend))
         return InvalidParameter;
     if (order == MatrixOrderPrepend)
@@ -154,9 +156,9 @@ static GpStatus apply(GpMatrix *matrix, const float *op, MatrixOrder order)
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipMultiplyMatrix(GpMatrix *matrix, const GpMatrix *other, MatrixOrder order)
+DECLSPEC_EXPORT GpStatus WINAPI GdipMultiplyMatrix(GpMatrix *matrix, GpMatrix *other, GpMatrixOrder order)
 {
-    GpMatrix *o = matrix_cast(other);
+    GMatrix *o = matrix_cast(other);
     if (!o)
         return InvalidParameter;
     float copy[MATRIX_ELEMENTS];
@@ -254,7 +256,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipShearMatrix(GpMatrix *matrix, float shear_x,
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipInvertMatrix(GpMatrix *matrix)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m)
         return InvalidParameter;
     float det = determinant(m->M);
@@ -276,7 +278,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipInvertMatrix(GpMatrix *matrix)
 
 static GpStatus transform_points(GpMatrix *matrix, GpPointF *points, INT count, BOOL translate)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m || !points || count <= 0)
         return InvalidParameter;
     for (INT i = 0; i < count; i++) {
@@ -294,7 +296,7 @@ static INT round_float(float v)
 
 static GpStatus transform_points_int(GpMatrix *matrix, GpPoint *points, INT count, BOOL translate)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m || !points || count <= 0)
         return InvalidParameter;
     for (INT i = 0; i < count; i++) {
@@ -329,7 +331,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipVectorTransformMatrixPointsI(GpMatrix *matri
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipIsMatrixInvertible(const GpMatrix *matrix, BOOL *result)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m || !result)
         return InvalidParameter;
     *result = fabs_float(determinant(m->M)) >= DETERMINANT_LIMIT;
@@ -338,7 +340,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipIsMatrixInvertible(const GpMatrix *matrix, B
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipIsMatrixIdentity(const GpMatrix *matrix, BOOL *result)
 {
-    GpMatrix *m = matrix_cast(matrix);
+    GMatrix *m = matrix_cast(matrix);
     if (!m || !result)
         return InvalidParameter;
     *result = m->M[0] == 1 && m->M[1] == 0 && m->M[2] == 0 && m->M[3] == 1 && m->M[4] == 0 && m->M[5] == 0;
@@ -347,10 +349,41 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipIsMatrixIdentity(const GpMatrix *matrix, BOO
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipIsMatrixEqual(const GpMatrix *matrix, const GpMatrix *other, BOOL *result)
 {
-    GpMatrix *a = matrix_cast(matrix), *b = matrix_cast(other);
+    GMatrix *a = matrix_cast(matrix), *b = matrix_cast(other);
     if (!a || !b || !result)
         return InvalidParameter;
     *result = !memcmp(a->M, b->M, sizeof(a->M)) || (a->M[0] == b->M[0] && a->M[1] == b->M[1] && a->M[2] == b->M[2] &&
                                                     a->M[3] == b->M[3] && a->M[4] == b->M[4] && a->M[5] == b->M[5]);
     return Ok;
+}
+
+/* ------------------------------------------------------------------ helpers of the other modules */
+
+BOOL gp_matrix_invertible(const MimeVecMatrix *m)
+{
+    return fabs_float(m->m11 * m->m22 - m->m12 * m->m21) >= DETERMINANT_LIMIT;
+}
+
+void gp_matrix_apply(MimeVecMatrix *m, const MimeVecMatrix *op, MatrixOrder order)
+{
+    if (order == MatrixOrderPrepend)
+        gp_matrix_multiply(&op->m11, &m->m11, &m->m11);
+    else
+        gp_matrix_multiply(&m->m11, &op->m11, &m->m11);
+}
+
+BOOL gp_matrix_inverse(MimeVecMatrix *out, const MimeVecMatrix *m)
+{
+    float det = m->m11 * m->m22 - m->m12 * m->m21;
+    if (fabs_float(det) < DETERMINANT_LIMIT)
+        return FALSE;
+    MimeVecMatrix r;
+    r.m11 = m->m22 / det;
+    r.m12 = -m->m12 / det;
+    r.m21 = -m->m21 / det;
+    r.m22 = m->m11 / det;
+    r.dx = (m->m21 * m->dy - m->m22 * m->dx) / det;
+    r.dy = (m->m12 * m->dx - m->m11 * m->dy) / det;
+    *out = r;
+    return TRUE;
 }

@@ -1,440 +1,414 @@
 /*
- * the information gdi+ keeps about an image beyond its pixels: resolution, flags, the format it came from, frames
- * and properties, the thumbnail, rotation and flipping, the list of codecs and saving. A bitmap here has one frame
- * and no properties unless a program sets them. Only windows bitmaps and png images are written and read.
+ * what an image knows about itself besides its pixels: its size, flags, resolution and format, its frames and
+ * properties, the thumbnail, turning and flipping, and the list of codecs.
  */
-#include "gdiplus_private.h"
+#include "gp_private.h"
 
-const GUID gp_format_memory_bmp = {0xb96b3caa, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
-const GUID gp_format_bmp = {0xb96b3cab, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
-const GUID gp_format_png = {0xb96b3caf, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
-
-static const GUID g_dimension_page = {0x7462dc86, 0x6180, 0x4c7e, {0x8e, 0x3f, 0xee, 0x73, 0x33, 0xa7, 0xa4, 0x83}};
-static const GUID g_dimension_time = {0x6aedbd6d, 0x3fb5, 0x418a, {0x83, 0xa6, 0x7f, 0x45, 0x22, 0x9d, 0xc8, 0x72}};
-static const GUID g_dimension_resolution = {0x84236f7b, 0x3bd3, 0x428f, {0x8d, 0xab, 0x4e, 0xa1, 0x43, 0x9c, 0xa3, 0x15}};
-
-static const CLSID g_clsid_bmp = {0x557cf400, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
-static const CLSID g_clsid_png = {0x557cf406, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
-/* the encoders windows has that are not written here: jpeg, gif, emf, wmf, tiff and icon. */
-static const CLSID g_clsid_other[] = {
-    {0x557cf401, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
-    {0x557cf402, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
-    {0x557cf403, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
-    {0x557cf404, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
-    {0x557cf405, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
-    {0x557cf407, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
-};
-
-static BOOL same_guid(const GUID *a, const GUID *b)
-{
-    return !memcmp(a, b, sizeof(GUID));
-}
-
-/* ------------------------------------------------------------------ resource and device bitmaps */
-
-/*
- * the bitmap resource of a module, loaded as a dib section and taken over by pixels. A name that is no bitmap
- * resource is an invalid parameter, as it is for windows.
- */
-DECLSPEC_EXPORT GpStatus WINAPI GdipCreateBitmapFromResource(HINSTANCE instance, const WCHAR *name, GpBitmap **bitmap)
-{
-    if (!bitmap)
-        return InvalidParameter;
-    HANDLE image = LoadImageW(instance, name, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
-    if (!image)
-        return InvalidParameter;
-    GpStatus status = GdipCreateBitmapFromHBITMAP((HBITMAP)image, nullptr, bitmap);
-    DeleteObject(image);
-    return status;
-}
-
-/*
- * a 32 bit dib section, bottom up, filled with the background color and drawn over with the bitmap. The alpha of
- * the background is ignored, and so is the alpha channel of the result: it is opaque (a guess for the byte).
- */
-DECLSPEC_EXPORT GpStatus WINAPI GdipCreateHBITMAPFromBitmap(GpBitmap *bitmap, HBITMAP *hbitmap, ARGB background)
-{
-    GpBitmap *b = gp_bitmap_cast((GpImage *)bitmap);
-    if (!b || !hbitmap)
-        return InvalidParameter;
-    BITMAPINFO info = {};
-    info.bmiHeader.biSize = sizeof(info.bmiHeader);
-    info.bmiHeader.biWidth = b->Width;
-    info.bmiHeader.biHeight = b->Height;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    BYTE *bits = nullptr;
-    HDC screen = GetDC(nullptr);
-    HBITMAP dib = CreateDIBSection(screen, &info, DIB_RGB_COLORS, (void **)&bits, nullptr, 0);
-    if (screen)
-        ReleaseDC(nullptr, screen);
-    if (!dib || !bits) {
-        if (dib)
-            DeleteObject(dib);
-        return GenericError;
-    }
-    UINT bg_r = background >> 16 & 0xff, bg_g = background >> 8 & 0xff, bg_b = background & 0xff;
-    for (INT y = 0; y < b->Height; y++) {
-        const BYTE *source = b->Bits + (INT_PTR)y * b->Stride;
-        BYTE *row = bits + (SIZE_T)(b->Height - 1 - y) * b->Width * 4;
-        for (INT x = 0; x < b->Width; x++) {
-            ARGB c = gp_read_pixel(source, x, b->Format);
-            UINT a = c >> 24;
-            UINT r = ((c >> 16 & 0xff) * a + bg_r * (255 - a) + 127) / 255;
-            UINT g = ((c >> 8 & 0xff) * a + bg_g * (255 - a) + 127) / 255;
-            UINT bl = ((c & 0xff) * a + bg_b * (255 - a) + 127) / 255;
-            row[x * 4] = (BYTE)bl;
-            row[x * 4 + 1] = (BYTE)g;
-            row[x * 4 + 2] = (BYTE)r;
-            row[x * 4 + 3] = 0xff;
-        }
-    }
-    *hbitmap = dib;
-    return Ok;
-}
-
-/* ------------------------------------------------------------------ loading images */
-
-/* every image here is a bitmap, so loading an image is loading a bitmap. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipLoadImageFromFile(const WCHAR *file, GpImage **image)
-{
-    if (!file || !image)
-        return InvalidParameter;
-    GpBitmap *b;
-    GpStatus status = GdipCreateBitmapFromFile(file, &b);
-    if (status == Ok)
-        *image = &b->Image;
-    return status;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipLoadImageFromFileICM(const WCHAR *file, GpImage **image)
-{
-    return GdipLoadImageFromFile(file, image);
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipLoadImageFromStream(IStream *stream, GpImage **image)
-{
-    if (!stream || !image)
-        return InvalidParameter;
-    GpBitmap *b;
-    GpStatus status = GdipCreateBitmapFromStream(stream, &b);
-    if (status == Ok)
-        *image = &b->Image;
-    return status;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipLoadImageFromStreamICM(IStream *stream, GpImage **image)
-{
-    return GdipLoadImageFromStream(stream, image);
-}
+static BOOL same_guid(const GUID *a, const GUID *b) { return !memcmp(a, b, sizeof(GUID)); }
 
 /* ------------------------------------------------------------------ queries */
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageType(GpImage *image, ImageType *type)
+WINGDIPAPI GpStatus WINAPI GdipGetImageType(GpImage *image, ImageType *type)
 {
-    if (!gp_bitmap_cast(image) || !type)
+    GImage *i = gp_image_cast(image);
+    if (!i || !type)
         return InvalidParameter;
-    *type = ImageTypeBitmap;
+    *type = i->type;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetImageWidth(GpImage *image, UINT *width)
+{
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!b) {
+        float w, h;
+        if (!width || !gp_image_cast(image))
+            return InvalidParameter;
+        GpStatus st = gp_metafile_dimension(image, &w, &h);
+        if (st == Ok)
+            *width = (UINT)w;
+        return st;
+    }
+    if (!width)
+        return InvalidParameter;
+    *width = (UINT)b->width;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetImageHeight(GpImage *image, UINT *height)
+{
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!b) {
+        float w, h;
+        if (!height || !gp_image_cast(image))
+            return InvalidParameter;
+        GpStatus st = gp_metafile_dimension(image, &w, &h);
+        if (st == Ok)
+            *height = (UINT)h;
+        return st;
+    }
+    if (!height)
+        return InvalidParameter;
+    *height = (UINT)b->height;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetImagePixelFormat(GpImage *image, PixelFormat *format)
+{
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!format)
+        return InvalidParameter;
+    if (!b) {
+        if (!gp_image_cast(image))
+            return InvalidParameter;
+        *format = PixelFormat32bppARGB;
+        return Ok;
+    }
+    *format = b->format;
     return Ok;
 }
 
 /* the size in the units of the image, which are pixels for a bitmap. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageDimension(GpImage *image, float *width, float *height)
+WINGDIPAPI GpStatus WINAPI GdipGetImageDimension(GpImage *image, REAL *width, REAL *height)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !width || !height)
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!width || !height)
         return InvalidParameter;
-    *width = (float)b->Width;
-    *height = (float)b->Height;
+    if (!b) {
+        if (!gp_image_cast(image))
+            return InvalidParameter;
+        return gp_metafile_dimension(image, width, height);
+    }
+    *width = (float)b->width;
+    *height = (float)b->height;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageBounds(GpImage *image, GpRectF *bounds, GpUnit *unit)
+WINGDIPAPI GpStatus WINAPI GdipGetImageBounds(GpImage *image, GpRectF *bounds, GpUnit *unit)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !bounds || !unit)
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!bounds || !unit)
         return InvalidParameter;
+    if (!b) {
+        if (!gp_image_cast(image))
+            return InvalidParameter;
+        return gp_metafile_bounds(image, bounds, unit);
+    }
     bounds->X = bounds->Y = 0;
-    bounds->Width = (float)b->Width;
-    bounds->Height = (float)b->Height;
+    bounds->Width = (float)b->width;
+    bounds->Height = (float)b->height;
     *unit = UnitPixel;
     return Ok;
 }
 
-/*
- * the colors are rgb; an image with an alpha channel says so, and one that was loaded from a file knows its
- * resolution and size and is read only. The translucent flag is not set, a guess.
- */
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageFlags(GpImage *image, UINT *flags)
+WINGDIPAPI GpStatus WINAPI GdipGetImageFlags(GpImage *image, UINT *flags)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !flags)
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!flags)
         return InvalidParameter;
-    UINT f = ImageFlagsColorSpaceRGB;
-    if (IsAlphaPixelFormat(b->Format))
-        f |= ImageFlagsHasAlpha;
-    if (b->Decoded)
-        f |= ImageFlagsHasRealDPI | ImageFlagsHasRealPixelSize | ImageFlagsReadOnly;
-    *flags = f;
+    if (!b) {
+        if (!gp_image_cast(image))
+            return InvalidParameter;
+        *flags = ImageFlagsScalable | ImageFlagsHasRealPixelSize | ImageFlagsHasRealDPI | ImageFlagsColorSpaceRGB |
+                 ImageFlagsReadOnly;
+        return Ok;
+    }
+    *flags = b->flags;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageRawFormat(GpImage *image, GUID *format)
+WINGDIPAPI GpStatus WINAPI GdipGetImageRawFormat(GpImage *image, GUID *format)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !format)
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!format)
         return InvalidParameter;
-    *format = b->RawFormat;
+    if (!b) {
+        if (!gp_image_cast(image))
+            return InvalidParameter;
+        return gp_metafile_raw_format(image, format);
+    }
+    *format = b->raw_format;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageHorizontalResolution(GpImage *image, float *resolution)
+WINGDIPAPI GpStatus WINAPI GdipGetImageHorizontalResolution(GpImage *image, REAL *resolution)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !resolution)
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!resolution)
         return InvalidParameter;
-    *resolution = b->DpiX;
+    if (!b) {
+        if (!gp_image_cast(image))
+            return InvalidParameter;
+        return gp_metafile_resolution(image, resolution, nullptr);
+    }
+    *resolution = b->dpi_x;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageVerticalResolution(GpImage *image, float *resolution)
+WINGDIPAPI GpStatus WINAPI GdipGetImageVerticalResolution(GpImage *image, REAL *resolution)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !resolution)
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!resolution)
         return InvalidParameter;
-    *resolution = b->DpiY;
-    return Ok;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipBitmapSetResolution(GpBitmap *bitmap, float xdpi, float ydpi)
-{
-    GpBitmap *b = gp_bitmap_cast((GpImage *)bitmap);
-    if (!b || !(xdpi > 0) || !(ydpi > 0))
-        return InvalidParameter;
-    b->DpiX = xdpi;
-    b->DpiY = ydpi;
+    if (!b) {
+        if (!gp_image_cast(image))
+            return InvalidParameter;
+        return gp_metafile_resolution(image, nullptr, resolution);
+    }
+    *resolution = b->dpi_y;
     return Ok;
 }
 
 /* ------------------------------------------------------------------ frames */
 
-/* a bitmap has the page dimension, with one frame; gif's time and tiff's resolution are accepted for one frame. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipImageGetFrameDimensionsCount(GpImage *image, UINT *count)
+static BOOL dimension_known(const GUID *d)
 {
-    if (!gp_bitmap_cast(image) || !count)
+    return same_guid(d, &FrameDimensionPage) || same_guid(d, &FrameDimensionTime) ||
+           same_guid(d, &FrameDimensionResolution);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipImageGetFrameDimensionsCount(GpImage *image, UINT *count)
+{
+    if (!gp_image_cast(image) || !count)
         return InvalidParameter;
     *count = 1;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipImageGetFrameDimensionsList(GpImage *image, GUID *dimensions, UINT count)
+WINGDIPAPI GpStatus WINAPI GdipImageGetFrameDimensionsList(GpImage *image, GUID *dimensions, UINT count)
 {
-    if (!gp_bitmap_cast(image) || !dimensions || count != 1)
+    GImage *i = gp_image_cast(image);
+    if (!i || !dimensions || count != 1)
         return InvalidParameter;
-    dimensions[0] = g_dimension_page;
+    GBitmap *b = gp_bitmap_cast(image);
+    dimensions[0] = b ? *gp_frame_dimension(b) : FrameDimensionPage;
     return Ok;
 }
 
-static BOOL dimension_known(const GUID *dimension)
+WINGDIPAPI GpStatus WINAPI GdipImageGetFrameCount(GpImage *image, const GUID *dimension, UINT *count)
 {
-    return same_guid(dimension, &g_dimension_page) || same_guid(dimension, &g_dimension_time) ||
-           same_guid(dimension, &g_dimension_resolution);
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipImageGetFrameCount(GpImage *image, const GUID *dimension, UINT *count)
-{
-    if (!gp_bitmap_cast(image) || !count)
+    GImage *i = gp_image_cast(image);
+    if (!i || !count)
         return InvalidParameter;
     if (dimension && !dimension_known(dimension))
         return InvalidParameter;
-    *count = 1;
+    GBitmap *b = gp_bitmap_cast(image);
+    if (b && (!dimension || same_guid(dimension, gp_frame_dimension(b))))
+        *count = gp_frame_count(b);
+    else
+        *count = 1;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipImageSelectActiveFrame(GpImage *image, const GUID *dimension, UINT index)
+WINGDIPAPI GpStatus WINAPI GdipImageSelectActiveFrame(GpImage *image, const GUID *dimension, UINT index)
 {
-    if (!gp_bitmap_cast(image) || !dimension || !dimension_known(dimension) || index != 0)
+    GImage *i = gp_image_cast(image);
+    if (!i || !dimension || !dimension_known(dimension))
         return InvalidParameter;
-    return Ok;
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!b)
+        return index == 0 ? Ok : InvalidParameter;
+    if (b->locked)
+        return WrongState;
+    if (!same_guid(dimension, gp_frame_dimension(b)))
+        return index == 0 ? Ok : InvalidParameter;
+    return gp_select_frame(b, index);
 }
 
 /* ------------------------------------------------------------------ properties */
 
-static GpProperty *find_property(GpBitmap *b, ULONG id)
+static GProperty *find_property(GBitmap *b, ULONG id)
 {
-    for (UINT i = 0; i < b->PropertyCount; i++)
-        if (b->Properties[i].Id == id)
-            return &b->Properties[i];
+    for (UINT i = 0; i < b->prop_count; i++)
+        if (b->props[i].id == id)
+            return &b->props[i];
     return nullptr;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetPropertyCount(GpImage *image, UINT *count)
+WINGDIPAPI GpStatus WINAPI GdipGetPropertyCount(GpImage *image, UINT *count)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
+    GBitmap *b = gp_bitmap_cast(image);
     if (!b || !count)
         return InvalidParameter;
-    *count = b->PropertyCount;
+    *count = b->prop_count;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetPropertyIdList(GpImage *image, UINT count, ULONG *ids)
+WINGDIPAPI GpStatus WINAPI GdipGetPropertyIdList(GpImage *image, UINT count, PROPID *ids)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !ids || count != b->PropertyCount)
+    GBitmap *b = gp_bitmap_cast(image);
+    if (!b || !ids || count != b->prop_count)
         return InvalidParameter;
     for (UINT i = 0; i < count; i++)
-        ids[i] = b->Properties[i].Id;
+        ids[i] = b->props[i].id;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetPropertyItemSize(GpImage *image, ULONG id, UINT *size)
+WINGDIPAPI GpStatus WINAPI GdipGetPropertyItemSize(GpImage *image, PROPID id, UINT *size)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
+    GBitmap *b = gp_bitmap_cast(image);
     if (!b || !size)
         return InvalidParameter;
-    GpProperty *p = find_property(b, id);
+    GProperty *p = find_property(b, id);
     if (!p)
         return PropertyNotFound;
-    *size = (UINT)(sizeof(PropertyItem) + p->Length);
+    *size = (UINT)(sizeof(PropertyItem) + p->length);
     return Ok;
 }
 
 /* the item is written at the start of the buffer, its value follows it. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetPropertyItem(GpImage *image, ULONG id, UINT size, PropertyItem *item)
+WINGDIPAPI GpStatus WINAPI GdipGetPropertyItem(GpImage *image, PROPID id, UINT size, PropertyItem *item)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
+    GBitmap *b = gp_bitmap_cast(image);
     if (!b || !item)
         return InvalidParameter;
-    GpProperty *p = find_property(b, id);
+    GProperty *p = find_property(b, id);
     if (!p)
         return PropertyNotFound;
-    if (size != sizeof(PropertyItem) + p->Length)
+    if (size != sizeof(PropertyItem) + p->length)
         return InvalidParameter;
-    item->id = p->Id;
-    item->length = p->Length;
-    item->type = p->Type;
-    item->value = p->Length ? (BYTE *)(item + 1) : nullptr;
-    memcpy(item + 1, p->Value, p->Length);
+    item->id = p->id;
+    item->length = p->length;
+    item->type = p->type;
+    item->value = p->length ? (BYTE *)(item + 1) : nullptr;
+    memcpy(item + 1, p->value, p->length);
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetPropertySize(GpImage *image, UINT *total, UINT *count)
+WINGDIPAPI GpStatus WINAPI GdipGetPropertySize(GpImage *image, UINT *total, UINT *count)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
+    GBitmap *b = gp_bitmap_cast(image);
     if (!b || !total || !count)
         return InvalidParameter;
     UINT sum = 0;
-    for (UINT i = 0; i < b->PropertyCount; i++)
-        sum += (UINT)(sizeof(PropertyItem) + b->Properties[i].Length);
+    for (UINT i = 0; i < b->prop_count; i++)
+        sum += (UINT)(sizeof(PropertyItem) + b->props[i].length);
     *total = sum;
-    *count = b->PropertyCount;
+    *count = b->prop_count;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetAllPropertyItems(GpImage *image, UINT total, UINT count, PropertyItem *items)
+WINGDIPAPI GpStatus WINAPI GdipGetAllPropertyItems(GpImage *image, UINT total, UINT count, PropertyItem *items)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
+    GBitmap *b = gp_bitmap_cast(image);
     if (!b || !items)
         return InvalidParameter;
     UINT sum = 0;
-    for (UINT i = 0; i < b->PropertyCount; i++)
-        sum += (UINT)(sizeof(PropertyItem) + b->Properties[i].Length);
-    if (total != sum || count != b->PropertyCount)
+    for (UINT i = 0; i < b->prop_count; i++)
+        sum += (UINT)(sizeof(PropertyItem) + b->props[i].length);
+    if (total != sum || count != b->prop_count)
         return InvalidParameter;
     BYTE *values = (BYTE *)(items + count);
     for (UINT i = 0; i < count; i++) {
-        GpProperty *p = &b->Properties[i];
-        items[i].id = p->Id;
-        items[i].length = p->Length;
-        items[i].type = p->Type;
-        items[i].value = p->Length ? values : nullptr;
-        memcpy(values, p->Value, p->Length);
-        values += p->Length;
+        GProperty *p = &b->props[i];
+        items[i].id = p->id;
+        items[i].length = p->length;
+        items[i].type = p->type;
+        items[i].value = p->length ? values : nullptr;
+        memcpy(values, p->value, p->length);
+        values += p->length;
     }
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipSetPropertyItem(GpImage *image, const PropertyItem *item)
+WINGDIPAPI GpStatus WINAPI GdipSetPropertyItem(GpImage *image, GDIPCONST PropertyItem *item)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
+    GBitmap *b = gp_bitmap_cast(image);
     if (!b || !item || (item->length && !item->value))
         return InvalidParameter;
     BYTE *value = gp_alloc(item->length);
     if (!value)
         return OutOfMemory;
     memcpy(value, item->value, item->length);
-    GpProperty *p = find_property(b, item->id);
+    GProperty *p = find_property(b, item->id);
     if (p) {
-        gp_free(p->Value);
+        gp_free(p->value);
     } else {
-        GpProperty *bigger = b->Properties ? HeapReAlloc(GetProcessHeap(), 0, b->Properties,
-                                                         sizeof(GpProperty) * (b->PropertyCount + 1))
-                                           : gp_alloc(sizeof(GpProperty));
+        GProperty *bigger = gp_realloc(b->props, sizeof(GProperty) * (b->prop_count + 1));
         if (!bigger) {
             gp_free(value);
             return OutOfMemory;
         }
-        b->Properties = bigger;
-        p = &b->Properties[b->PropertyCount++];
+        b->props = bigger;
+        p = &b->props[b->prop_count++];
     }
-    p->Id = item->id;
-    p->Type = item->type;
-    p->Length = item->length;
-    p->Value = value;
+    p->id = item->id;
+    p->type = item->type;
+    p->length = item->length;
+    p->value = value;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipRemovePropertyItem(GpImage *image, ULONG id)
+WINGDIPAPI GpStatus WINAPI GdipRemovePropertyItem(GpImage *image, PROPID id)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
+    GBitmap *b = gp_bitmap_cast(image);
     if (!b)
         return InvalidParameter;
-    GpProperty *p = find_property(b, id);
+    GProperty *p = find_property(b, id);
     if (!p)
         return PropertyNotFound;
-    gp_free(p->Value);
-    *p = b->Properties[--b->PropertyCount];
+    gp_free(p->value);
+    *p = b->props[--b->prop_count];
     return Ok;
 }
 
-/* ------------------------------------------------------------------ rotating, flipping, thumbnails */
+/* ------------------------------------------------------------------ turning, flipping, thumbnails */
+
+static UINT get_index(const BYTE *row, INT x, INT bits)
+{
+    if (bits == 1)
+        return (row[x >> 3] >> (7 - (x & 7))) & 1;
+    return (x & 1) ? row[x >> 1] & 15 : row[x >> 1] >> 4;
+}
+
+static void set_index(BYTE *row, INT x, INT bits, UINT v)
+{
+    if (bits == 1) {
+        BYTE bit = (BYTE)(0x80 >> (x & 7));
+        row[x >> 3] = v ? (row[x >> 3] | bit) : (row[x >> 3] & (BYTE)~bit);
+    } else if (x & 1) {
+        row[x >> 1] = (row[x >> 1] & 0xf0) | (BYTE)v;
+    } else {
+        row[x >> 1] = (row[x >> 1] & 0x0f) | (BYTE)(v << 4);
+    }
+}
 
 /* a quarter turn clockwise for each of rotate by 90, 180 and 270, then a mirror across the vertical axis. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipImageRotateFlip(GpImage *image, RotateFlipType type)
+WINGDIPAPI GpStatus WINAPI GdipImageRotateFlip(GpImage *image, RotateFlipType type)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
+    GBitmap *b = gp_bitmap_cast(image);
     if (!b)
         return InvalidParameter;
     if ((UINT)type > Rotate270FlipX)
         return InvalidParameter;
-    if (b->Locked)
+    if (b->locked)
         return WrongState;
     INT turns = type & 3;
     BOOL flip = (type & 4) != 0;
     if (!turns && !flip)
         return Ok;
-    INT width = turns & 1 ? b->Height : b->Width, height = turns & 1 ? b->Width : b->Height;
-    GpBitmap *t;
-    GpStatus status = gp_bitmap_create(width, height, b->Format, &t);
-    if (status != Ok)
-        return status;
-    INT depth = GetPixelFormatSize(b->Format) / 8;
-    for (INT y = 0; y < b->Height; y++) {
-        for (INT x = 0; x < b->Width; x++) {
+    INT width = turns & 1 ? b->height : b->width, height = turns & 1 ? b->width : b->height;
+    GBitmap *t;
+    GpStatus st = gp_bitmap_create(width, height, b->format, &t);
+    if (st != Ok)
+        return st;
+    INT bits = GetPixelFormatSize(b->format);
+    INT depth = bits / 8;
+    for (INT y = 0; y < b->height; y++) {
+        for (INT x = 0; x < b->width; x++) {
             INT nx, ny;
             switch (turns) {
             case 1:
-                nx = b->Height - 1 - y;
+                nx = b->height - 1 - y;
                 ny = x;
                 break;
             case 2:
-                nx = b->Width - 1 - x;
-                ny = b->Height - 1 - y;
+                nx = b->width - 1 - x;
+                ny = b->height - 1 - y;
                 break;
             case 3:
                 nx = y;
-                ny = b->Width - 1 - x;
+                ny = b->width - 1 - x;
                 break;
             default:
                 nx = x;
@@ -443,26 +417,29 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipImageRotateFlip(GpImage *image, RotateFlipTy
             }
             if (flip)
                 nx = width - 1 - nx;
-            memcpy(t->Bits + (INT_PTR)ny * t->Stride + (INT_PTR)nx * depth,
-                   b->Bits + (INT_PTR)y * b->Stride + (INT_PTR)x * depth, depth);
+            if (bits >= 8)
+                memcpy(t->bits + (SSIZE_T)ny * t->stride + (SSIZE_T)nx * depth,
+                       b->bits + (SSIZE_T)y * b->stride + (SSIZE_T)x * depth, depth);
+            else
+                set_index(t->bits + (SSIZE_T)ny * t->stride, nx, bits,
+                          get_index(b->bits + (SSIZE_T)y * b->stride, x, bits));
         }
     }
     /* the new pixels replace the old ones; the bitmap is the same object. */
-    BYTE *old = b->Owned;
-    b->Owned = t->Owned;
-    b->Bits = t->Bits;
-    b->Stride = t->Stride;
-    b->Width = width;
-    b->Height = height;
+    BYTE *old = b->owned;
+    b->owned = t->owned;
+    b->bits = t->bits;
+    b->stride = t->stride;
+    b->width = width;
+    b->height = height;
     if (turns & 1) {
-        float dpi = b->DpiX;
-        b->DpiX = b->DpiY;
-        b->DpiY = dpi;
+        float dpi = b->dpi_x;
+        b->dpi_x = b->dpi_y;
+        b->dpi_y = dpi;
     }
     gp_free(old);
-    t->Owned = nullptr;
-    t->Image.Magic = 0;
-    gp_free(t);
+    t->owned = nullptr;
+    gp_bitmap_free(t);
     return Ok;
 }
 
@@ -471,271 +448,315 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipImageRotateFlip(GpImage *image, RotateFlipTy
  * image keeps its proportions in the width and height given only when one of them is zero, which is how windows
  * treats it as well.
  */
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageThumbnail(GpImage *image, UINT width, UINT height, GpImage **thumbnail,
-                                                      GetThumbnailImageAbort callback, void *data)
+WINGDIPAPI GpStatus WINAPI GdipGetImageThumbnail(GpImage *image, UINT width, UINT height, GpImage **thumbnail,
+                                                 GetThumbnailImageAbort callback, VOID *data)
 {
-    GpBitmap *b = gp_bitmap_cast(image);
+    GBitmap *b = gp_bitmap_cast(image);
     if (!b || !thumbnail)
         return InvalidParameter;
     if (!width && !height) {
-        if (b->Width >= b->Height) {
+        if (b->width >= b->height) {
             width = 120;
-            height = (UINT)(((ULONGLONG)120 * b->Height + b->Width / 2) / b->Width);
+            height = (UINT)(((ULONGLONG)120 * b->height + b->width / 2) / b->width);
         } else {
             height = 120;
-            width = (UINT)(((ULONGLONG)120 * b->Width + b->Height / 2) / b->Height);
+            width = (UINT)(((ULONGLONG)120 * b->width + b->height / 2) / b->height);
         }
     } else if (!width) {
-        width = (UINT)(((ULONGLONG)height * b->Width + b->Height / 2) / b->Height);
+        width = (UINT)(((ULONGLONG)height * b->width + b->height / 2) / b->height);
     } else if (!height) {
-        height = (UINT)(((ULONGLONG)width * b->Height + b->Width / 2) / b->Width);
+        height = (UINT)(((ULONGLONG)width * b->height + b->width / 2) / b->width);
     }
     if (!width)
         width = 1;
     if (!height)
         height = 1;
-    GpBitmap *t;
-    GpStatus status = gp_bitmap_create((INT)width, (INT)height, PixelFormat32bppPARGB, &t);
-    if (status != Ok)
-        return status;
+    GBitmap *t;
+    GpStatus st = gp_bitmap_create((INT)width, (INT)height, PixelFormat32bppPARGB, &t);
+    if (st != Ok)
+        return st;
     GpGraphics *g;
-    status = GdipGetImageGraphicsContext(&t->Image, &g);
-    if (status == Ok) {
-        status = GdipDrawImageRectI(g, image, 0, 0, (INT)width, (INT)height);
+    st = GdipGetImageGraphicsContext(&t->image, &g);
+    if (st == Ok) {
+        st = GdipDrawImageRectI(g, image, 0, 0, (INT)width, (INT)height);
         GdipDeleteGraphics(g);
     }
-    if (status != Ok) {
-        GdipDisposeImage(&t->Image);
-        return status;
+    if (st != Ok) {
+        gp_bitmap_free(t);
+        return st;
     }
-    *thumbnail = &t->Image;
+    *thumbnail = &t->image;
     return Ok;
 }
 
 /* ------------------------------------------------------------------ codecs */
 
-typedef struct CODEC {
-    const CLSID *Clsid;
-    const GUID *Format;
-    const WCHAR *Name;
-    const WCHAR *Description;
-    const WCHAR *Extensions;
-    const WCHAR *Mime;
-    const BYTE *Signature;
-    UINT SignatureSize;
-} CODEC;
+typedef struct Codec {
+    CLSID clsid;
+    GUID format;
+    const WCHAR *name;
+    const WCHAR *description;
+    const WCHAR *extensions;
+    const WCHAR *mime;
+    DWORD flags;
+    UINT sig_count, sig_size;
+    const BYTE *pattern, *mask;
+} Codec;
 
-static const BYTE g_signature_bmp[2] = {'B', 'M'};
-static const BYTE g_signature_png[8] = {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
-static const BYTE g_mask_full[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+static const BYTE bmp_p[] = {'B', 'M'}, bmp_m[] = {0xff, 0xff};
+static const BYTE jpg_p[] = {0xff, 0xd8}, jpg_m[] = {0xff, 0xff};
+static const BYTE gif_p[] = {'G', 'I', 'F', '8', '9', 'a', 'G', 'I', 'F', '8', '7', 'a'};
+static const BYTE gif_m[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+static const BYTE emf_p[44] = {[40] = 0x20, 'E', 'M', 'F'};
+static const BYTE emf_m[44] = {[40] = 0xff, 0xff, 0xff, 0xff};
+static const BYTE wmf_p[] = {0xd7, 0xcd, 0xc6, 0x9a}, wmf_m[] = {0xff, 0xff, 0xff, 0xff};
+static const BYTE tif_p[] = {'I', 'I', 'M', 'M'}, tif_m[] = {0xff, 0xff, 0xff, 0xff};
+static const BYTE png_p[] = {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+static const BYTE png_m[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+static const BYTE ico_p[] = {0, 0, 1, 0}, ico_m[] = {0xff, 0xff, 0xff, 0xff};
 
-static const CODEC g_codecs[] = {
-    {&g_clsid_bmp, &gp_format_bmp, L"Built-in BMP Codec", L"BMP", L"*.BMP;*.DIB;*.RLE", L"image/bmp", g_signature_bmp,
-     2},
-    {&g_clsid_png, &gp_format_png, L"Built-in PNG Codec", L"PNG", L"*.PNG", L"image/png", g_signature_png, 8},
+#define FLAGS_BOTH (ImageCodecFlagsEncoder | ImageCodecFlagsDecoder | ImageCodecFlagsSupportBitmap | ImageCodecFlagsBuiltin)
+#define FLAGS_DEC (ImageCodecFlagsDecoder | ImageCodecFlagsSupportBitmap | ImageCodecFlagsBuiltin)
+
+static const Codec g_codecs[] = {
+    {{0x557cf400, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
+     {0xb96b3cab, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}}, L"Built-in BMP Codec", L"BMP",
+     L"*.BMP;*.DIB;*.RLE", L"image/bmp", FLAGS_BOTH, 1, 2, bmp_p, bmp_m},
+    {{0x557cf401, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
+     {0xb96b3cae, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}}, L"Built-in JPEG Codec", L"JPEG",
+     L"*.JPG;*.JPEG;*.JPE;*.JFIF", L"image/jpeg", FLAGS_BOTH, 1, 2, jpg_p, jpg_m},
+    {{0x557cf402, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
+     {0xb96b3cb0, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}}, L"Built-in GIF Codec", L"GIF",
+     L"*.GIF", L"image/gif", FLAGS_BOTH, 2, 6, gif_p, gif_m},
+    {{0x557cf403, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
+     {0xb96b3cac, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}}, L"Built-in EMF Codec", L"EMF",
+     L"*.EMF", L"image/x-emf", (FLAGS_DEC & ~ImageCodecFlagsSupportBitmap) | ImageCodecFlagsSupportVector, 1, 44, emf_p, emf_m},
+    {{0x557cf404, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
+     {0xb96b3cad, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}}, L"Built-in WMF Codec", L"WMF",
+     L"*.WMF", L"image/x-wmf", (FLAGS_DEC & ~ImageCodecFlagsSupportBitmap) | ImageCodecFlagsSupportVector, 1, 4, wmf_p, wmf_m},
+    {{0x557cf405, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
+     {0xb96b3cb1, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}}, L"Built-in TIFF Codec", L"TIFF",
+     L"*.TIF;*.TIFF", L"image/tiff", FLAGS_BOTH, 2, 2, tif_p, tif_m},
+    {{0x557cf406, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
+     {0xb96b3caf, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}}, L"Built-in PNG Codec", L"PNG",
+     L"*.PNG", L"image/png", FLAGS_BOTH, 1, 8, png_p, png_m},
+    {{0x557cf407, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}},
+     {0xb96b3cb5, 0x0728, 0x11d3, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}}, L"Built-in ICO Codec", L"ICO",
+     L"*.ICO", L"image/x-icon", FLAGS_DEC, 1, 4, ico_p, ico_m},
 };
 
-static SIZE_T string_bytes(const WCHAR *s)
+static SIZE_T string_bytes(const WCHAR *s) { return (wcslen(s) + 1) * sizeof(WCHAR); }
+
+static SIZE_T codec_extra(const Codec *c)
 {
-    return (wcslen(s) + 1) * sizeof(WCHAR);
+    return string_bytes(c->name) + string_bytes(c->description) + string_bytes(c->extensions) + string_bytes(c->mime) +
+           2 * (SIZE_T)c->sig_count * c->sig_size;
 }
 
-static SIZE_T codec_extra(const CODEC *c)
-{
-    return string_bytes(c->Name) + string_bytes(c->Description) + string_bytes(c->Extensions) + string_bytes(c->Mime) +
-           2 * c->SignatureSize;
-}
+static BOOL codec_wanted(const Codec *c, DWORD flag) { return (c->flags & flag) != 0; }
 
-static GpStatus codec_sizes(UINT *count, UINT *size)
+static GpStatus codec_sizes(DWORD flag, UINT *count, UINT *size)
 {
     SIZE_T total = 0;
-    for (UINT i = 0; i < RTL_NUMBER_OF(g_codecs); i++)
+    UINT n = 0;
+    for (UINT i = 0; i < sizeof(g_codecs) / sizeof(g_codecs[0]); i++) {
+        if (!codec_wanted(&g_codecs[i], flag))
+            continue;
         total += sizeof(ImageCodecInfo) + codec_extra(&g_codecs[i]);
-    *count = RTL_NUMBER_OF(g_codecs);
+        n++;
+    }
+    *count = n;
     *size = (UINT)total;
     return Ok;
 }
 
 /* the list is the structures, then the strings and signatures they point at. */
-static GpStatus codec_list(UINT count, UINT size, ImageCodecInfo *list)
+static GpStatus codec_list(DWORD flag, UINT count, UINT size, ImageCodecInfo *list)
 {
     UINT want_count, want_size;
-    codec_sizes(&want_count, &want_size);
+    codec_sizes(flag, &want_count, &want_size);
     if (!list || count != want_count || size != want_size)
         return GenericError;
     BYTE *extra = (BYTE *)(list + count);
-    for (UINT i = 0; i < count; i++) {
-        const CODEC *c = &g_codecs[i];
-        ImageCodecInfo *info = &list[i];
+    UINT k = 0;
+    for (UINT i = 0; i < sizeof(g_codecs) / sizeof(g_codecs[0]); i++) {
+        const Codec *c = &g_codecs[i];
+        if (!codec_wanted(c, flag))
+            continue;
+        ImageCodecInfo *info = &list[k++];
         memset(info, 0, sizeof(*info));
-        info->Clsid = *c->Clsid;
-        info->FormatID = *c->Format;
-        const WCHAR *strings[4] = {c->Name, c->Description, c->Extensions, c->Mime};
-        const WCHAR **slots[4] = {&info->CodecName, &info->FormatDescription, &info->FilenameExtension,
-                                  &info->MimeType};
-        for (int k = 0; k < 4; k++) {
-            SIZE_T bytes = string_bytes(strings[k]);
-            memcpy(extra, strings[k], bytes);
-            *slots[k] = (const WCHAR *)extra;
+        info->Clsid = c->clsid;
+        info->FormatID = c->format;
+        const WCHAR *strings[4] = {c->name, c->description, c->extensions, c->mime};
+        WCHAR **slots[4] = {&info->CodecName, &info->FormatDescription, &info->FilenameExtension, &info->MimeType};
+        for (int s = 0; s < 4; s++) {
+            SIZE_T bytes = string_bytes(strings[s]);
+            memcpy(extra, strings[s], bytes);
+            *slots[s] = (WCHAR *)extra;
             extra += bytes;
         }
-        info->Flags = ImageCodecFlagsEncoder | ImageCodecFlagsDecoder | ImageCodecFlagsSupportBitmap |
-                      ImageCodecFlagsBuiltin;
+        info->Flags = c->flags;
         info->Version = 1;
-        info->SigCount = 1;
-        info->SigSize = c->SignatureSize;
-        memcpy(extra, c->Signature, c->SignatureSize);
+        info->SigCount = c->sig_count;
+        info->SigSize = c->sig_size;
+        SIZE_T sig_bytes = (SIZE_T)c->sig_count * c->sig_size;
+        memcpy(extra, c->pattern, sig_bytes);
         info->SigPattern = extra;
-        extra += c->SignatureSize;
-        memcpy(extra, g_mask_full, c->SignatureSize);
+        extra += sig_bytes;
+        memcpy(extra, c->mask, sig_bytes);
         info->SigMask = extra;
-        extra += c->SignatureSize;
+        extra += sig_bytes;
     }
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageEncodersSize(UINT *count, UINT *size)
+WINGDIPAPI GpStatus WINAPI GdipGetImageEncodersSize(UINT *count, UINT *size)
 {
     if (!count || !size)
         return InvalidParameter;
-    return codec_sizes(count, size);
+    return codec_sizes(ImageCodecFlagsEncoder, count, size);
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageEncoders(UINT count, UINT size, ImageCodecInfo *encoders)
+WINGDIPAPI GpStatus WINAPI GdipGetImageEncoders(UINT count, UINT size, ImageCodecInfo *encoders)
 {
-    return codec_list(count, size, encoders);
+    return codec_list(ImageCodecFlagsEncoder, count, size, encoders);
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageDecodersSize(UINT *count, UINT *size)
+WINGDIPAPI GpStatus WINAPI GdipGetImageDecodersSize(UINT *count, UINT *size)
 {
     if (!count || !size)
         return InvalidParameter;
-    return codec_sizes(count, size);
+    return codec_sizes(ImageCodecFlagsDecoder, count, size);
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetImageDecoders(UINT count, UINT size, ImageCodecInfo *decoders)
+WINGDIPAPI GpStatus WINAPI GdipGetImageDecoders(UINT count, UINT size, ImageCodecInfo *decoders)
 {
-    return codec_list(count, size, decoders);
+    return codec_list(ImageCodecFlagsDecoder, count, size, decoders);
 }
 
-/* the encoder of a class id: found, a codec windows has that is absent here, or unknown. */
-static const CODEC *encoder_of(const CLSID *clsid, GpStatus *status)
+/* the encoder of a class id. */
+const GUID *gp_encoder_format(const CLSID *clsid)
 {
-    for (UINT i = 0; i < RTL_NUMBER_OF(g_codecs); i++)
-        if (same_guid(clsid, g_codecs[i].Clsid))
-            return &g_codecs[i];
-    *status = InvalidParameter;
-    for (UINT i = 0; i < RTL_NUMBER_OF(g_clsid_other); i++)
-        if (same_guid(clsid, &g_clsid_other[i]))
-            *status = NotImplemented;
+    for (UINT i = 0; i < sizeof(g_codecs) / sizeof(g_codecs[0]); i++) {
+        if ((g_codecs[i].flags & ImageCodecFlagsEncoder) && same_guid(clsid, &g_codecs[i].clsid))
+            return &g_codecs[i].format;
+    }
     return nullptr;
 }
 
-/* the encoders take no parameters here: the list is its count of zero, in the room of the structure up to it. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetEncoderParameterListSize(GpImage *image, const CLSID *encoder, UINT *size)
+/* ------------------------------------------------------------------ the parameters of the encoders */
+
+/* the lists of the encoders, in the sizes gdiplus.dll has for them: the structures, then the values. */
+static UINT parameter_list_size(const GUID *format)
 {
-    if (!gp_bitmap_cast(image) || !encoder || !size)
+    UINT header = (UINT)offsetof(EncoderParameters, Parameter);
+    UINT p = (UINT)sizeof(EncoderParameter);
+    UINT values = 0, count = 0;
+    if (same_guid(format, &ImageFormatJPEG)) {
+        count = 5;
+        values = 5 * 4 + 2 * 4;
+    } else if (same_guid(format, &ImageFormatTIFF)) {
+        count = 4;
+        values = 5 * 4 + 5 * 4 + 4 + 4;
+    } else if (same_guid(format, &ImageFormatGIF)) {
+        count = 2;
+        values = 4;
+    } else if (same_guid(format, &ImageFormatPNG)) {
+        count = 1;
+        values = 0;
+    } else {
+        return 0;
+    }
+    UINT total = header + count * p + values;
+    return (total + 7) & ~7u;
+}
+
+static void fill_parameter(EncoderParameter *p, const GUID *guid, ULONG count, ULONG type, void *value)
+{
+    p->Guid = *guid;
+    p->NumberOfValues = count;
+    p->Type = type;
+    p->Value = value;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetEncoderParameterListSize(GpImage *image, const CLSID *encoder, UINT *size)
+{
+    if (!gp_image_cast(image) || !encoder || !size)
         return InvalidParameter;
-    GpStatus status = Ok;
-    if (!encoder_of(encoder, &status))
-        return status;
-    *size = offsetof(EncoderParameters, Parameter);
+    const GUID *format = gp_encoder_format(encoder);
+    if (!format)
+        return InvalidParameter;
+    UINT n = parameter_list_size(format);
+    if (!n) {
+        *size = 0;
+        return NotImplemented;
+    }
+    *size = n;
     return Ok;
 }
 
-DECLSPEC_EXPORT GpStatus WINAPI GdipGetEncoderParameterList(GpImage *image, const CLSID *encoder, UINT size,
-                                                            EncoderParameters *parameters)
+WINGDIPAPI GpStatus WINAPI GdipGetEncoderParameterList(GpImage *image, const CLSID *encoder, UINT size,
+                                                       EncoderParameters *parameters)
 {
-    if (!gp_bitmap_cast(image) || !encoder || !parameters)
+    if (!gp_image_cast(image) || !encoder || !parameters)
         return InvalidParameter;
-    GpStatus status = Ok;
-    if (!encoder_of(encoder, &status))
-        return status;
-    if (size < offsetof(EncoderParameters, Parameter))
-        return InsufficientBuffer;
-    parameters->Count = 0;
+    const GUID *format = gp_encoder_format(encoder);
+    if (!format)
+        return InvalidParameter;
+    UINT want = parameter_list_size(format);
+    if (!want)
+        return NotImplemented;
+    if (size != want)
+        return InvalidParameter;
+    memset(parameters, 0, size);
+    BYTE *values = (BYTE *)parameters + offsetof(EncoderParameters, Parameter);
+    EncoderParameter *p = parameters->Parameter;
+    LONG *v;
+    if (same_guid(format, &ImageFormatJPEG)) {
+        parameters->Count = 5;
+        values += 5 * sizeof(EncoderParameter);
+        v = (LONG *)values;
+        for (INT i = 0; i < 5; i++)
+            v[i] = EncoderValueTransformRotate90 + i;
+        fill_parameter(&p[0], &EncoderTransformation, 5, EncoderParameterValueTypeLong, v);
+        v += 5;
+        v[0] = 0;
+        v[1] = 100;
+        fill_parameter(&p[1], &EncoderQuality, 1, EncoderParameterValueTypeLongRange, v);
+        fill_parameter(&p[2], &EncoderLuminanceTable, 0, EncoderParameterValueTypeShort, nullptr);
+        fill_parameter(&p[3], &EncoderChrominanceTable, 0, EncoderParameterValueTypeShort, nullptr);
+        fill_parameter(&p[4], &EncoderImageItems, 0, EncoderParameterValueTypePointer, nullptr);
+    } else if (same_guid(format, &ImageFormatTIFF)) {
+        parameters->Count = 4;
+        values += 4 * sizeof(EncoderParameter);
+        v = (LONG *)values;
+        static const LONG compressions[5] = {EncoderValueCompressionLZW, EncoderValueCompressionCCITT3,
+                                             EncoderValueCompressionRle, EncoderValueCompressionCCITT4,
+                                             EncoderValueCompressionNone};
+        for (INT i = 0; i < 5; i++)
+            v[i] = compressions[i];
+        fill_parameter(&p[0], &EncoderCompression, 5, EncoderParameterValueTypeLong, v);
+        v += 5;
+        static const LONG depths[5] = {1, 4, 8, 24, 32};
+        for (INT i = 0; i < 5; i++)
+            v[i] = depths[i];
+        fill_parameter(&p[1], &EncoderColorDepth, 5, EncoderParameterValueTypeLong, v);
+        v += 5;
+        v[0] = EncoderValueMultiFrame;
+        fill_parameter(&p[2], &EncoderSaveFlag, 1, EncoderParameterValueTypeLong, v);
+        v += 1;
+        v[0] = 1;
+        fill_parameter(&p[3], &EncoderSaveAsCMYK, 1, EncoderParameterValueTypeLong, v);
+    } else if (same_guid(format, &ImageFormatGIF)) {
+        parameters->Count = 2;
+        values += 2 * sizeof(EncoderParameter);
+        v = (LONG *)values;
+        v[0] = EncoderValueMultiFrame;
+        fill_parameter(&p[0], &EncoderImageItems, 0, EncoderParameterValueTypePointer, nullptr);
+        fill_parameter(&p[1], &EncoderSaveFlag, 1, EncoderParameterValueTypeLong, v);
+    } else {
+        parameters->Count = 1;
+        fill_parameter(&p[0], &EncoderImageItems, 0, EncoderParameterValueTypePointer, nullptr);
+    }
     return Ok;
-}
-
-/* ------------------------------------------------------------------ saving */
-
-static GpStatus encode(GpBitmap *b, const CLSID *clsid, GpBuffer *out)
-{
-    GpStatus status = Ok;
-    const CODEC *codec = encoder_of(clsid, &status);
-    if (!codec)
-        return status;
-    return codec->Clsid == &g_clsid_bmp ? gp_encode_bmp(b, out) : gp_encode_png(b, out);
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipSaveImageToStream(GpImage *image, IStream *stream, const CLSID *encoder,
-                                                      const EncoderParameters *parameters)
-{
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !stream || !encoder)
-        return InvalidParameter;
-    GpBuffer out = {};
-    GpStatus status = encode(b, encoder, &out);
-    if (status == Ok) {
-        SIZE_T done = 0;
-        while (done < out.Size) {
-            ULONG chunk = out.Size - done > 0x10000000 ? 0x10000000 : (ULONG)(out.Size - done), written = 0;
-            HRESULT hr = stream->lpVtbl->Write(stream, out.Data + done, chunk, &written);
-            if (FAILED(hr) || !written) {
-                status = Win32Error;
-                break;
-            }
-            done += written;
-        }
-    }
-    gp_free(out.Data);
-    return status;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipSaveImageToFile(GpImage *image, const WCHAR *file, const CLSID *encoder,
-                                                    const EncoderParameters *parameters)
-{
-    GpBitmap *b = gp_bitmap_cast(image);
-    if (!b || !file || !encoder)
-        return InvalidParameter;
-    GpBuffer out = {};
-    GpStatus status = encode(b, encoder, &out);
-    if (status == Ok) {
-        HANDLE h = CreateFileW(file, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h == INVALID_HANDLE_VALUE) {
-            DWORD error = GetLastError();
-            status = error == ERROR_ACCESS_DENIED || error == ERROR_SHARING_VIOLATION ? AccessDenied : Win32Error;
-        } else {
-            SIZE_T done = 0;
-            while (done < out.Size) {
-                DWORD written = 0;
-                DWORD chunk = out.Size - done > 0x10000000 ? 0x10000000 : (DWORD)(out.Size - done);
-                if (!WriteFile(h, out.Data + done, chunk, &written, nullptr) || !written) {
-                    status = Win32Error;
-                    break;
-                }
-                done += written;
-            }
-            CloseHandle(h);
-            if (status != Ok)
-                DeleteFileW(file);
-        }
-    }
-    gp_free(out.Data);
-    return status;
-}
-
-/* multiple frames are written by tiff and gif only, which this library has no encoder for. */
-DECLSPEC_EXPORT GpStatus WINAPI GdipSaveAdd(GpImage *image, const EncoderParameters *parameters)
-{
-    if (!gp_bitmap_cast(image) || !parameters)
-        return InvalidParameter;
-    return WrongState;
-}
-
-DECLSPEC_EXPORT GpStatus WINAPI GdipSaveAddImage(GpImage *image, GpImage *added, const EncoderParameters *parameters)
-{
-    if (!gp_bitmap_cast(image) || !gp_bitmap_cast(added) || !parameters)
-        return InvalidParameter;
-    return WrongState;
 }
