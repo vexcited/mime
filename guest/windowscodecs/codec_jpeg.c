@@ -77,8 +77,8 @@ static HRESULT jpeg_frame_info(void *state, UINT index, WicFrameInfo *info)
         info->dpi_x = (double)(float)s->info.x_density;
         info->dpi_y = (double)(float)s->info.y_density;
     } else if (s->info.jfif && s->info.density_unit == 2) {
-        info->dpi_x = (double)(float)((double)s->info.x_density * 2.54);
-        info->dpi_y = (double)(float)((double)s->info.y_density * 2.54);
+        info->dpi_x = WicDpiFromCentimeter(s->info.x_density);
+        info->dpi_y = WicDpiFromCentimeter(s->info.y_density);
     }
     return S_OK;
 }

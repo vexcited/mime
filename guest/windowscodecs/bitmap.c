@@ -2,6 +2,7 @@
  * IWICBitmap: pixels in memory, and the locks that give programs the memory to read or write.
  */
 #include "wic_private.h"
+#include "convert.h"
 #include <mime/win32/wingdi.h>
 #include <mime/win32/winuser.h>
 
@@ -559,11 +560,9 @@ HRESULT WicBitmapFromHBITMAP(HBITMAP hbitmap, HPALETTE hpalette, WICBitmapAlphaC
                     BYTE b = s[x * 4], g = s[x * 4 + 1], r = s[x * 4 + 2];
                     if (option == WICBitmapUseAlpha && info.bmBitsPixel == 32 && has_alpha && a != 255 && a) {
                         /* a 32 bit bitmap holds premultiplied color, which straight alpha wants undone. */
-                        UINT m = (UINT)(((UINT64)255 << 16) / a);
-                        UINT rr = (r * m) >> 16, gg = (g * m) >> 16, bb = (b * m) >> 16;
-                        r = rr > 255 ? 255 : (BYTE)rr;
-                        g = gg > 255 ? 255 : (BYTE)gg;
-                        b = bb > 255 ? 255 : (BYTE)bb;
+                        r = WicStraightChannel(r, a);
+                        g = WicStraightChannel(g, a);
+                        b = WicStraightChannel(b, a);
                     }
                     d[x * 4] = b;
                     d[x * 4 + 1] = g;

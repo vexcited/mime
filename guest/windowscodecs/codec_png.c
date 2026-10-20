@@ -121,10 +121,10 @@ static HRESULT png_frame_info(void *state, UINT index, WicFrameInfo *info)
     info->height = s->info->height;
     info->format = s->format;
     info->dpi_x = info->dpi_y = 96.0;
-    /* the resolution counts only when it is in meters, and goes through a float. */
+    /* the resolution counts only when it is per meter. */
     if (s->info->has_phys && s->info->phys_unit == 1) {
-        info->dpi_x = (double)(float)((double)(INT)s->info->phys_x * 254.0 / 10000.0);
-        info->dpi_y = (double)(float)((double)(INT)s->info->phys_y * 254.0 / 10000.0);
+        info->dpi_x = WicDpiFromMeter((INT)s->info->phys_x);
+        info->dpi_y = WicDpiFromMeter((INT)s->info->phys_y);
     }
     info->has_palette = s->indexed;
     info->palette = s->palette;

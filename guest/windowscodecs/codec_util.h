@@ -27,4 +27,11 @@ HRESULT WicDibParse(const BYTE *header, SIZE_T size, BOOL icon, WicDib *dib);
 /* decodes the bits to rows in the format of the bitmap, top down. */
 HRESULT WicDibDecode(const WicDib *dib, const BYTE *bits, SIZE_T bits_size, BYTE *dest, UINT stride);
 
+/*
+ * the resolution of a picture in dots per inch, as a single precision number like the ones the metadata carries.
+ * An inch is 25.4 millimeters, so a density per meter scales by 0.0254 and one per centimeter by 2.54.
+ */
+static inline double WicDpiFromMeter(INT per_meter) { return (double)(float)((double)per_meter * 254.0 / 10000.0); }
+static inline double WicDpiFromCentimeter(UINT per_cm) { return (double)(float)((double)per_cm * 2.54); }
+
 #endif
