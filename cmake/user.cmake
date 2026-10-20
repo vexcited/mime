@@ -334,7 +334,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_d3d10_1core ${arch}-d3d10core:guest/d3d10core/kmt.c)
     set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib)
     set(libs_msacm32 ${MIME_LIB_${arch}}/winmm.lib)
-    set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib)
+    set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
+    # setupapi unpacks cabinets with the reader of guest/lib/cabinet.
+    set(objects_setupapi ${arch}-lib-cabinet)
     # shell32 appends to paths with the path functions of kernelbase.
     set(libs_shell32 ${MIME_LIB_${arch}}/kernelbase.lib)
     set(libs_propsys ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)

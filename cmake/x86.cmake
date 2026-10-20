@@ -112,7 +112,8 @@ set(crypt ntdll kernel32 crypt32)
 set(acm ntdll kernel32 user32 gdi32 winmm)
 # direct3d 1 to 7 in ddraw, whose front end takes its math from msvcrt as windows' does.
 set(direct3d ntdll kernel32 user32 gdi32 win32u msvcrt)
-set(setup ntdll kernel32 cfgmgr32)
+set(setup ntdll kernel32 cfgmgr32 advapi32 version)
+set(objects_setupapi x86-lib-cabinet)
 set(xinput ntdll kernel32 user32 setupapi)
 set(http ntdll kernel32 user32 ws2_32)
 # wininet combines urls with the engine of kernelbase.

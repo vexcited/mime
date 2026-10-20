@@ -30,6 +30,7 @@ EXPORTS
     SetupDiOpenDeviceInterfaceW
     SetupDiOpenDeviceInterfaceRegKey
     SetupDiSetDeviceRegistryPropertyW
+    SetupDiSetDeviceRegistryPropertyA
     CM_Locate_DevNodeW=cfgmgr32.CM_Locate_DevNodeW
     CM_Locate_DevNodeA=cfgmgr32.CM_Locate_DevNodeA
     CM_Get_Parent=cfgmgr32.CM_Get_Parent
@@ -49,3 +50,77 @@ EXPORTS
     CM_Get_Device_Interface_PropertyW=cfgmgr32.CM_Get_Device_Interface_PropertyW
     CM_Open_DevNode_Key=cfgmgr32.CM_Open_DevNode_Key
     CM_MapCrToWin32Err=cfgmgr32.CM_MapCrToWin32Err
+    SetupOpenInfFileW
+    SetupOpenInfFileA
+    SetupOpenMasterInf
+    SetupOpenAppendInfFileW
+    SetupOpenAppendInfFileA
+    SetupCloseInfFile
+    SetupGetInfInformationW
+    SetupGetInfInformationA
+    SetupQueryInfFileInformationW
+    SetupQueryInfFileInformationA
+    SetupQueryInfVersionInformationW
+    SetupQueryInfVersionInformationA
+    SetupGetInfFileListW
+    SetupGetInfFileListA
+    SetupFindFirstLineW
+    SetupFindFirstLineA
+    SetupFindNextLine
+    SetupFindNextMatchLineW
+    SetupFindNextMatchLineA
+    SetupGetLineByIndexW
+    SetupGetLineByIndexA
+    SetupGetLineCountW
+    SetupGetLineCountA
+    SetupGetLineTextW
+    SetupGetLineTextA
+    SetupGetFieldCount
+    SetupGetStringFieldW
+    SetupGetStringFieldA
+    SetupGetIntField
+    SetupGetMultiSzFieldW
+    SetupGetMultiSzFieldA
+    SetupGetBinaryField
+    SetupInstallFromInfSectionW
+    SetupInstallFromInfSectionA
+    SetupInstallFilesFromInfSectionW
+    SetupInstallFilesFromInfSectionA
+    SetupOpenFileQueue
+    SetupCloseFileQueue
+    SetupQueueCopyW
+    SetupQueueCopyA
+    SetupQueueCopySectionW
+    SetupQueueCopySectionA
+    SetupQueueDeleteW
+    SetupQueueDeleteA
+    SetupQueueDeleteSectionW
+    SetupQueueDeleteSectionA
+    SetupQueueRenameW
+    SetupQueueRenameA
+    SetupQueueRenameSectionW
+    SetupQueueRenameSectionA
+    SetupCommitFileQueueW
+    SetupCommitFileQueueA
+    SetupInitDefaultQueueCallback
+    SetupInitDefaultQueueCallbackEx
+    SetupTermDefaultQueueCallback
+    SetupDefaultQueueCallbackW
+    SetupDefaultQueueCallbackA
+    SetupIterateCabinetW
+    SetupIterateCabinetA
+    SetupGetTargetPathW
+    SetupGetTargetPathA
+    SetupGetSourceFileLocationW
+    SetupGetSourceFileLocationA
+    SetupGetSourceInfoW
+    SetupGetSourceInfoA
+    SetupSetDirectoryIdW
+    SetupSetDirectoryIdA
+    SetupCopyOEMInfW
+    SetupCopyOEMInfA
+    SetupDecompressOrCopyFileW
+    SetupDecompressOrCopyFileA
+    SetupRegisterOsComponent
+    SetupQueryRegisteredOsComponent
+    SetupUnRegisterOsComponent
