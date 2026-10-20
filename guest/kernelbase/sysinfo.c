@@ -28,12 +28,14 @@ static ULONG processor_count(void)
 
 /* ------------------------------------------------------------------ system info */
 
-void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
+/* the processor of the machine for GetNativeSystemInfo, the one a translated program is shown for GetSystemInfo. */
+static void system_info(LPSYSTEM_INFO info, BOOL native)
 {
     SYSTEM_BASIC_INFORMATION basic;
     SYSTEM_PROCESSOR_INFORMATION cpu = {PROCESSOR_ARCHITECTURE_ARM64, 8, 0, 1, 0};
     basic_information(&basic);
     NtQuerySystemInformation(SystemProcessorInformation, &cpu, sizeof(cpu), nullptr);
+    USHORT machine = cpu.ProcessorArchitecture;
 #if (defined(__x86_64__) && !defined(MIME_X64_NATIVE)) || defined(__i386__)
     /* the processor the translator presents, family 6 model 0x9e stepping 10 as its cpuid says. */
 #ifdef __i386__
@@ -45,29 +47,37 @@ void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
     cpu.ProcessorRevision = 0x9E0A;
 #endif
     memset(info, 0, sizeof(*info));
-    info->wProcessorArchitecture = cpu.ProcessorArchitecture;
+    info->wProcessorArchitecture = native ? machine : cpu.ProcessorArchitecture;
     info->dwPageSize = basic.PageSize;
     info->lpMinimumApplicationAddress = (LPVOID)basic.MinimumUserModeAddress;
     info->lpMaximumApplicationAddress = (LPVOID)basic.MaximumUserModeAddress;
     info->dwActiveProcessorMask = basic.ActiveProcessorsAffinityMask;
     info->dwNumberOfProcessors = (DWORD)(UCHAR)basic.NumberOfProcessors;
-#ifdef __x86_64__
-    info->dwProcessorType = PROCESSOR_AMD_X8664;
-#elifdef __i386__
-    info->dwProcessorType = PROCESSOR_INTEL_PENTIUM;
-#else
-    info->dwProcessorType = 0;
-#endif
+    switch (info->wProcessorArchitecture) {
+    case PROCESSOR_ARCHITECTURE_AMD64:
+        info->dwProcessorType = PROCESSOR_AMD_X8664;
+        break;
+    case PROCESSOR_ARCHITECTURE_INTEL:
+        info->dwProcessorType = PROCESSOR_INTEL_PENTIUM;
+        break;
+    default:
+        info->dwProcessorType = 0;
+        break;
+    }
     info->dwAllocationGranularity = basic.AllocationGranularity;
     info->wProcessorLevel = cpu.ProcessorLevel;
     info->wProcessorRevision = cpu.ProcessorRevision;
 }
 
+void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
+{
+    system_info(info, FALSE);
+}
+
+/* the machine the system runs on: a 32-bit program on a 64-bit system, or an emulated one, is told the machine's. */
 void WINAPI GetNativeSystemInfo(LPSYSTEM_INFO info)
 {
-    GetSystemInfo(info);
-    info->wProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM64;
-    info->dwProcessorType = 0;
+    system_info(info, TRUE);
 }
 
 /* ------------------------------------------------------------------ versions */
