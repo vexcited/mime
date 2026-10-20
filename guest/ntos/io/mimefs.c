@@ -346,6 +346,27 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     }
     /* what handles keep for this name is written before the host looks at the file: its size, its time, or a truncation. */
     FsWbSyncPath(vol->HostVolume, &file->FileName, FALSE);
+    /*
+     * a file with a section in use is not made shorter by an open that truncates it, as it is not by a change of its
+     * size: a view would read what is no longer there, and where the pages are the host's that is a fault the host
+     * cannot take. The file is looked up by name first, without a handle, to know which one it is.
+     */
+    if ((disposition == FILE_SUPERSEDE || disposition == FILE_OVERWRITE || disposition == FILE_OVERWRITE_IF) &&
+        FsWbAnyMapped()) {
+        ULONG saved_flags = req->flags, saved_disposition = req->disposition;
+        req->flags = MIME_FS_OPEN_STAT_ONLY;
+        req->disposition = MIME_FS_DISP_OPEN;
+        ULONG64 probe = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
+        BOOLEAN mapped = probe == MIME_HC_STATUS_OK && FsWbIsMapped(vol->HostVolume, req->info_out.file_id);
+        if (probe == MIME_HC_STATUS_OK && req->handle_out)
+            HalHypercallUnlocked(MIME_HC_FS_CLOSE, req->handle_out, 0, 0, 0, 0, 0, nullptr);
+        req->flags = saved_flags;
+        req->disposition = saved_disposition;
+        if (mapped) {
+            ExFreePool(req);
+            return complete(irp, STATUS_USER_MAPPED_FILE, 0);
+        }
+    }
     ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
