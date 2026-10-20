@@ -1215,15 +1215,29 @@ BOOL WndThreadHasWindows(W32THREAD *t)
     return FALSE;
 }
 
+/*
+ * a window of the thread anywhere below the desktop: a child of a window of another thread is the thread's own, and a
+ * thread that ends with one left behind leaves the window pointing at a thread that is gone. one that was being
+ * destroyed counts too, the thread ended inside a callback of its destruction and nobody finishes it.
+ */
+static WND *find_thread_window(WND *parent, W32THREAD *t)
+{
+    for (WND *c = parent->FirstChild; c; c = c->Next) {
+        if (c->Thread == t)
+            return c;
+        WND *inner = find_thread_window(c, t);
+        if (inner)
+            return inner;
+    }
+    return nullptr;
+}
+
 void WndDestroyThreadWindows(W32THREAD *t)
 {
     if (!g_desktop)
         return;
     for (;;) {
-        WND *found = nullptr;
-        for (WND *c = g_desktop->FirstChild; c && !found; c = c->Next)
-            if (c->Thread == t && !(c->Flags & WNDF_DESTROYING))
-                found = c;
+        WND *found = find_thread_window(g_desktop, t);
         if (!found)
             break;
         /* the thread is going away: no callbacks, just tear the tree down. */
