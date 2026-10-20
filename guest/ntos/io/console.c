@@ -312,12 +312,23 @@ static void set_output_paused(MIME_CONSOLE *c, BOOLEAN paused)
         KeSetEvent(&c->OutputResumed, 0, FALSE);
 }
 
+/* the pause key and ctrl+s, which line input turns into a stop of the output. */
+static BOOLEAN is_pause_request(const MIME_CONDRV_RECORD *r)
+{
+    if (r->Key.VirtualKey == CON_VK_PAUSE)
+        return TRUE;
+    ULONG state = r->Key.ControlKeyState;
+    return r->Key.VirtualKey == 'S' && (state & (CON_LEFT_CTRL | CON_RIGHT_CTRL)) && !(state & (CON_LEFT_ALT | CON_RIGHT_ALT));
+}
+
 /*
- * the pause key in line input pauses the output and any other key press
- * resumes it, as on windows; both are taken out. returns the records left.
+ * output pausing by the keyboard. the records are taken one by one, each seeing the state the ones before left. a
+ * pressed key that is not a system key resumes paused output and is swallowed, and while line input is on the keys that
+ * ask for a pause pause it and are swallowed. what stays moves to the front of the array and is counted.
  */
 static ULONG take_pause_keys(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count)
 {
+    BOOLEAN line = (c->InputMode & CON_LINE_INPUT) != 0;
     ULONG kept = 0;
     for (ULONG i = 0; i < count; i++) {
         if (r[i].EventType == CON_KEY_EVENT && r[i].Key.KeyDown) {
@@ -325,7 +336,7 @@ static ULONG take_pause_keys(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count
                 set_output_paused(c, FALSE);
                 continue;
             }
-            if ((c->InputMode & CON_LINE_INPUT) && r[i].Key.VirtualKey == CON_VK_PAUSE) {
+            if (line && is_pause_request(&r[i])) {
                 set_output_paused(c, TRUE);
                 continue;
             }
@@ -334,6 +345,7 @@ static ULONG take_pause_keys(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count
     }
     return kept;
 }
+
 
 /*
  * writes records the way the console takes written and typed events: in
@@ -490,22 +502,20 @@ static void apply_mouse(MIME_CONSOLE *c)
 }
 
 /*
- * the mode is stored, and the flags of the extended bits are taken from it,
- * before it is checked: a mode that is refused has changed the console.
+ * the mode is kept even when it is refused. the four bits of the extended flags are not part of the stored mode: they
+ * set the three booleans when any of them is given, and only then are they reported back.
  */
 NTSTATUS ConSetInputMode(MIME_CONSOLE *c, ULONG mode)
 {
-    c->InputMode = mode & ~(ULONG)INPUT_MODE_EXTENDED;
-    if (mode & INPUT_MODE_EXTENDED) {
+    c->InputMode = mode & ~INPUT_MODE_EXTENDED;
+    c->ExtendedGiven = (mode & INPUT_MODE_EXTENDED) != 0;
+    if (c->ExtendedGiven) {
+        c->InsertDefault = (mode & ENABLE_INSERT_MODE) != 0;
         c->QuickEdit = (mode & ENABLE_QUICK_EDIT_MODE) != 0;
         c->AutoPosition = (mode & ENABLE_AUTO_POSITION) != 0;
-        c->InsertDefault = (mode & ENABLE_INSERT_MODE) != 0;
-        c->ExtendedGiven = TRUE;
-    } else {
-        c->ExtendedGiven = FALSE;
     }
     apply_mouse(c);
-    if ((mode & ~(ULONG)INPUT_MODE_MASK) || ((mode & ENABLE_ECHO_INPUT) && !(mode & ENABLE_LINE_INPUT)))
+    if ((mode & ~INPUT_MODE_MASK) || ((mode & ENABLE_ECHO_INPUT) && !(mode & ENABLE_LINE_INPUT)))
         return STATUS_INVALID_PARAMETER;
     return STATUS_SUCCESS;
 }
@@ -524,6 +534,7 @@ ULONG ConGetInputMode(MIME_CONSOLE *c)
     }
     return mode;
 }
+
 
 /* a ctrl+c or ctrl+break ends the reads that wait; ctrl+break empties the input first. */
 void ConAbortReads(MIME_CONSOLE *c, BOOLEAN flush)

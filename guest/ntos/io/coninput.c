@@ -523,152 +523,229 @@ ULONG ConDecodeInput(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN more,
     return i;
 }
 
-/* ------------------------------------------------------------------ vt input */
 
-typedef struct VT_KEY {
-    USHORT vk;
-    UCHAR modifiers; /* 0 for any, else the shift, alt and ctrl a key must have exactly */
-    const char *seq;
-} VT_KEY;
+/* ------------------------------------------------------------------ keys as vt sequences */
 
-static const VT_KEY g_cursor_normal[] = {
-    {VK_UP, 0, "\x1b[A"}, {VK_DOWN, 0, "\x1b[B"}, {VK_RIGHT, 0, "\x1b[C"},
-    {VK_LEFT, 0, "\x1b[D"}, {VK_HOME, 0, "\x1b[H"}, {VK_END, 0, "\x1b[F"},
-};
+/*
+ * A key becomes the sequence a terminal sends for it. Every sequence has one of four shapes, so they are built from
+ * the key's shape and its modifiers instead of being listed.
+ *
+ *   cursor    ESC [ final, or ESC O final in application mode, with modifiers ESC [ 1 ; m final
+ *   function  ESC O final for F1 to F4, with modifiers ESC [ 1 ; m final
+ *   tilde     ESC [ number ~, with modifiers ESC [ number ; m ~
+ *   plain     a few characters
+ *
+ * The digit m is the character '1' plus 1 for shift, 2 for alt and 4 for ctrl.
+ */
+typedef struct VT_TEXT {
+    char Chars[16];
+    ULONG Length;
+} VT_TEXT;
 
-static const VT_KEY g_cursor_application[] = {
-    {VK_UP, 0, "\x1bOA"}, {VK_DOWN, 0, "\x1bOB"}, {VK_RIGHT, 0, "\x1bOC"},
-    {VK_LEFT, 0, "\x1bOD"}, {VK_HOME, 0, "\x1bOH"}, {VK_END, 0, "\x1bOF"},
-};
-
-/* the same in numeric and application keypad modes. */
-static const VT_KEY g_keypad[] = {
-    {VK_TAB, 0, "\t"},          {VK_BACK, 0, "\x7f"},       {CON_VK_PAUSE, 0, "\x1a"},  {VK_ESCAPE, 0, "\x1b"},
-    {VK_INSERT, 0, "\x1b[2~"},  {VK_DELETE, 0, "\x1b[3~"},  {VK_PRIOR, 0, "\x1b[5~"},   {VK_NEXT, 0, "\x1b[6~"},
-    {VK_F1, 0, "\x1bOP"},       {VK_F2, 0, "\x1bOQ"},       {VK_F3, 0, "\x1bOR"},       {VK_F4, 0, "\x1bOS"},
-    {VK_F5, 0, "\x1b[15~"},     {VK_F6, 0, "\x1b[17~"},     {VK_F7, 0, "\x1b[18~"},     {VK_F8, 0, "\x1b[19~"},
-    {VK_F9, 0, "\x1b[20~"},     {VK_F10, 0, "\x1b[21~"},    {VK_F11, 0, "\x1b[23~"},    {VK_F12, 0, "\x1b[24~"},
-};
-
-/* with a modifier: the m becomes 1 plus 1 for shift, 2 for alt and 4 for ctrl. */
-static const VT_KEY g_modified[] = {
-    {VK_UP, 0, "\x1b[1;mA"},    {VK_DOWN, 0, "\x1b[1;mB"},  {VK_RIGHT, 0, "\x1b[1;mC"},  {VK_LEFT, 0, "\x1b[1;mD"},
-    {VK_HOME, 0, "\x1b[1;mH"},  {VK_END, 0, "\x1b[1;mF"},   {VK_F1, 0, "\x1b[1;mP"},     {VK_F2, 0, "\x1b[1;mQ"},
-    {VK_F3, 0, "\x1b[1;mR"},    {VK_F4, 0, "\x1b[1;mS"},    {VK_INSERT, 0, "\x1b[2;m~"}, {VK_DELETE, 0, "\x1b[3;m~"},
-    {VK_PRIOR, 0, "\x1b[5;m~"}, {VK_NEXT, 0, "\x1b[6;m~"},  {VK_F5, 0, "\x1b[15;m~"},    {VK_F6, 0, "\x1b[17;m~"},
-    {VK_F7, 0, "\x1b[18;m~"},   {VK_F8, 0, "\x1b[19;m~"},   {VK_F9, 0, "\x1b[20;m~"},    {VK_F10, 0, "\x1b[21;m~"},
-    {VK_F11, 0, "\x1b[23;m~"},  {VK_F12, 0, "\x1b[24;m~"},
-};
-
-static const VT_KEY g_simple_modified[] = {
-    {VK_BACK, CTRL, "\x08"},          {VK_BACK, ALT, "\x1b\x7f"}, {VK_BACK, CTRL | ALT, "\x1b\x08"},
-    {VK_TAB, CTRL, "\t"},             {VK_TAB, CON_SHIFT, "\x1b[Z"}, {VK_DIVIDE, CTRL, "\x1f"},
-};
-
-static const VT_KEY *find_key(const VT_KEY *keys, ULONG count, USHORT vk, ULONG state)
+static void text_char(VT_TEXT *t, char ch)
 {
-    for (ULONG i = 0; i < count; i++) {
-        if (keys[i].vk != vk)
-            continue;
-        ULONG m = keys[i].modifiers;
-        if (!m || (!(m & CON_SHIFT) == !(state & CON_SHIFT) && !(m & ALT) == !(state & ALT) &&
-                   !(m & CTRL) == !(state & CTRL)))
-            return &keys[i];
+    t->Chars[t->Length++] = ch;
+}
+
+static void text_number(VT_TEXT *t, unsigned n)
+{
+    if (n >= 10)
+        text_char(t, (char)('0' + n / 10));
+    text_char(t, (char)('0' + n % 10));
+}
+
+typedef enum { SHAPE_NONE, SHAPE_CURSOR, SHAPE_FUNCTION, SHAPE_TILDE } KEY_SHAPE;
+
+/* the final character of a cursor or function key and the number of a tilde key. */
+static KEY_SHAPE key_shape(USHORT vk, char *final, unsigned *number)
+{
+    static const char cursor_finals[] = {'F', 'H', 'D', 'A', 'C', 'B'}; /* end, home, left, up, right, down */
+    if (vk >= VK_END && vk <= VK_DOWN) {
+        *final = cursor_finals[vk - VK_END];
+        return SHAPE_CURSOR;
     }
-    return nullptr;
+    if (vk >= VK_F1 && vk <= VK_F4) {
+        *final = (char)('P' + (vk - VK_F1));
+        return SHAPE_FUNCTION;
+    }
+    if (vk == VK_PRIOR || vk == VK_NEXT)
+        *number = vk - 0x1C;
+    else if (vk == VK_INSERT || vk == VK_DELETE)
+        *number = vk - 0x2B;
+    else if (vk == VK_F5)
+        *number = 15;
+    else if (vk >= VK_F6 && vk <= VK_F10)
+        *number = 17 + (vk - VK_F6);
+    else if (vk == VK_F11 || vk == VK_F12)
+        *number = 23 + (vk - VK_F11);
+    else
+        return SHAPE_NONE;
+    return SHAPE_TILDE;
 }
 
-/* a typed character as vt input reports it: a press of no key. */
-static void vt_char(MIME_CONDRV_RECORD *out, WCHAR ch)
+static void shaped_sequence(VT_TEXT *t, KEY_SHAPE shape, char final, unsigned number, char modifier, BOOLEAN application)
 {
-    key_record(out, TRUE, 0, 0, ch, 0);
+    text_char(t, 0x1B);
+    if (shape == SHAPE_TILDE) {
+        text_char(t, '[');
+        text_number(t, number);
+        if (modifier) {
+            text_char(t, ';');
+            text_char(t, modifier);
+        }
+        text_char(t, '~');
+        return;
+    }
+    if (modifier) {
+        text_char(t, '[');
+        text_char(t, '1');
+        text_char(t, ';');
+        text_char(t, modifier);
+    } else {
+        text_char(t, shape == SHAPE_FUNCTION || application ? 'O' : '[');
+    }
+    text_char(t, final);
 }
 
-static ULONG vt_sequence(MIME_CONDRV_RECORD *out, const char *seq, char modifier)
+/* the keys whose sequence depends on exactly which of shift, alt and ctrl are held. */
+static BOOLEAN exact_sequence(VT_TEXT *t, USHORT vk, BOOLEAN shift, BOOLEAN alt, BOOLEAN ctrl)
 {
-    ULONG n = 0;
-    for (; *seq && n < CON_MAX_SEQUENCE; seq++)
-        vt_char(&out[n++], (WCHAR)(UCHAR)(*seq == 'm' && modifier ? modifier : *seq));
-    return n;
+    /* ctrl with a digit or space, as terminals fill the gap: 2 and space are NUL, 3 to 7 follow ESC, 8 is DEL. */
+    if (ctrl && !alt && !shift && (vk == VK_SPACE || (vk >= '2' && vk <= '8'))) {
+        text_char(t, vk == VK_SPACE || vk == '2' ? 0 : vk == '8' ? 0x7F : (char)(0x1B + (vk - '3')));
+        return TRUE;
+    }
+    switch (vk) {
+    case VK_BACK:
+        if (shift || (!alt && !ctrl))
+            return FALSE;
+        if (alt)
+            text_char(t, 0x1B);
+        text_char(t, ctrl ? 0x08 : 0x7F);
+        return TRUE;
+    case VK_TAB:
+        if (ctrl && !alt && !shift) {
+            text_char(t, 0x09);
+        } else if (shift && !alt && !ctrl) {
+            text_char(t, 0x1B);
+            text_char(t, '[');
+            text_char(t, 'Z');
+        } else {
+            return FALSE;
+        }
+        return TRUE;
+    case VK_DIVIDE:
+    case VK_OEM_2:
+        if (!ctrl || alt)
+            return FALSE;
+        if (vk == VK_OEM_2 && shift)
+            text_char(t, 0x7F);
+        else if (!shift)
+            text_char(t, 0x1F);
+        else
+            return FALSE;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/* the keys that send the same characters whatever is held. */
+static BOOLEAN fixed_sequence(VT_TEXT *t, USHORT vk)
+{
+    switch (vk) {
+    case VK_TAB:
+        text_char(t, 0x09);
+        return TRUE;
+    case VK_BACK:
+        text_char(t, 0x7F);
+        return TRUE;
+    case CON_VK_PAUSE:
+        text_char(t, 0x1A);
+        return TRUE;
+    case VK_ESCAPE:
+        text_char(t, 0x1B);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static BOOLEAN key_sequence(VT_TEXT *t, const MIME_CONDRV_RECORD *r, BOOLEAN application)
+{
+    ULONG state = r->Key.ControlKeyState;
+    USHORT vk = r->Key.VirtualKey;
+    /* right alt with left ctrl is how a layout types its third level characters. */
+    if ((state & CON_RIGHT_ALT) && (state & CON_LEFT_CTRL))
+        state &= ~(ULONG)(CON_RIGHT_ALT | CON_LEFT_CTRL);
+    BOOLEAN shift = (state & CON_SHIFT) != 0, alt = (state & ALT) != 0, ctrl = (state & CTRL) != 0;
+
+    if (ctrl && alt && ((vk >= 'A' && vk <= 'Z') || vk == VK_SPACE)) {
+        text_char(t, 0x1B);
+        text_char(t, vk == VK_SPACE ? 0 : (char)(vk - 0x40));
+        return TRUE;
+    }
+    char final = 0;
+    unsigned number = 0;
+    KEY_SHAPE shape = key_shape(vk, &final, &number);
+    if (shape != SHAPE_NONE) {
+        char modifier = shift || alt || ctrl ? (char)('1' + shift + 2 * alt + 4 * ctrl) : 0;
+        shaped_sequence(t, shape, final, number, modifier, application && shape == SHAPE_CURSOR);
+        return TRUE;
+    }
+    if (exact_sequence(t, vk, shift, alt, ctrl) || fixed_sequence(t, vk))
+        return TRUE;
+    if (alt && r->Key.Char) {
+        text_char(t, 0x1B);
+        text_char(t, (char)r->Key.Char);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void sequence_records(MIME_CONDRV_RECORD *out, const VT_TEXT *t)
+{
+    for (ULONG i = 0; i < t->Length; i++) {
+        memset(&out[i], 0, sizeof(out[i]));
+        out[i].EventType = CON_KEY_EVENT;
+        out[i].Key.KeyDown = TRUE;
+        out[i].Key.RepeatCount = 1;
+        out[i].Key.Char = (UCHAR)t->Chars[i];
+    }
 }
 
 BOOLEAN ConTranslateKey(const MIME_CONDRV_RECORD *r, BOOLEAN cursor_application, MIME_CONDRV_RECORD *out,
                         ULONG *count)
 {
-    *count = 0;
     if (r->EventType != CON_KEY_EVENT || !r->Key.KeyDown)
         return FALSE;
-    USHORT vk = r->Key.VirtualKey;
-    WCHAR ch = r->Key.Char;
-    ULONG state = r->Key.ControlKeyState;
-    /* altgr is right alt with left ctrl: neither counts as a modifier. */
-    if ((state & CON_LEFT_CTRL) && (state & CON_RIGHT_ALT))
-        state &= ~(CON_LEFT_CTRL | CON_RIGHT_ALT);
-    BOOLEAN alt = (state & ALT) != 0, ctrl = (state & CTRL) != 0, shift = (state & CON_SHIFT) != 0;
-
-    /* ctrl+alt+letter is escape then the control character. */
-    if (alt && ctrl && (ch & ~0x20) == 0 && (vk == VK_SPACE || (vk >= 'A' && vk <= 'Z'))) {
-        vt_char(&out[0], 0x1B);
-        vt_char(&out[1], vk == VK_SPACE ? 0 : (WCHAR)(vk - '@'));
-        *count = 2;
-        return TRUE;
-    }
-    if (state & (ALT | CTRL | CON_SHIFT)) {
-        const VT_KEY *k = find_key(g_modified, RTL_NUMBER_OF(g_modified), vk, state);
-        if (k) {
-            *count = vt_sequence(out, k->seq, (char)('1' + shift + 2 * alt + 4 * ctrl));
-            return TRUE;
-        }
-        k = find_key(g_simple_modified, RTL_NUMBER_OF(g_simple_modified), vk, state);
-        if (k) {
-            *count = vt_sequence(out, k->seq, 0);
-            return TRUE;
-        }
-        if (vk == VK_OEM_2 && ctrl) {
-            vt_char(&out[0], 0x1F);
-            *count = 1;
-            return TRUE;
-        }
-    }
-    if (ch && alt) {
-        vt_char(&out[0], 0x1B);
-        vt_char(&out[1], ch);
-        *count = 2;
-        return TRUE;
-    }
-    if (ctrl && (ch == ' ' || (!ch && vk == VK_NUL_KEY))) {
-        key_record(&out[0], TRUE, VK_NUL_KEY, 0, 0, state);
-        *count = 1;
-        return TRUE;
-    }
-    if (vk == VK_CANCEL || (vk >= '0' && vk <= 'Z')) {
-        if (ch)
-            vt_char(&out[(*count)++], ch);
-        return TRUE;
-    }
-    const VT_KEY *k = vk >= VK_END && vk <= VK_DOWN
-                          ? find_key(cursor_application ? g_cursor_application : g_cursor_normal, 6, vk, state)
-                          : find_key(g_keypad, RTL_NUMBER_OF(g_keypad), vk, state);
-    if (!k)
+    VT_TEXT t = {};
+    if (!key_sequence(&t, r, cursor_application))
         return FALSE;
-    *count = vt_sequence(out, k->seq, 0);
+    sequence_records(out, &t);
+    *count = t.Length;
     return TRUE;
 }
 
 /* ------------------------------------------------------------------ merging */
 
-/* east asian wide characters take two cells and are not merged. */
+/* characters that take two cells. */
 static BOOLEAN is_wide(WCHAR c)
 {
     static const struct {
-        WCHAR first, last;
-    } wide[] = {
-        {0x1100, 0x115F}, {0x2E80, 0x303E}, {0x3041, 0x33FF}, {0x3400, 0x4DBF}, {0x4E00, 0x9FFF},
-        {0xA000, 0xA4CF}, {0xAC00, 0xD7A3}, {0xF900, 0xFAFF}, {0xFE30, 0xFE4F}, {0xFF00, 0xFF60},
-        {0xFFE0, 0xFFE6},
+        WCHAR First, Last;
+    } ranges[] = {
+        {0x1100, 0x115F}, /* hangul jamo, the leading consonants */
+        {0x2E80, 0x303E}, /* cjk radicals, kangxi, ideographic punctuation */
+        {0x3041, 0x33FF}, /* hiragana, katakana, bopomofo, hangul compatibility, enclosed cjk */
+        {0x3400, 0x4DBF}, /* cjk extension a */
+        {0x4E00, 0xA4CF}, /* cjk unified ideographs and yi */
+        {0xAC00, 0xD7A3}, /* hangul syllables */
+        {0xF900, 0xFAFF}, /* cjk compatibility ideographs */
+        {0xFE30, 0xFE6F}, /* cjk compatibility forms and small forms */
+        {0xFF00, 0xFF60}, /* full width forms */
+        {0xFFE0, 0xFFE6}, /* full width signs */
     };
-    for (ULONG i = 0; i < RTL_NUMBER_OF(wide); i++) {
-        if (c >= wide[i].first && c <= wide[i].last)
+    for (ULONG i = 0; i < sizeof(ranges) / sizeof(ranges[0]); i++) {
+        if (c >= ranges[i].First && c <= ranges[i].Last)
             return TRUE;
     }
     return FALSE;
@@ -676,23 +753,21 @@ static BOOLEAN is_wide(WCHAR c)
 
 BOOLEAN ConMergeRecord(MIME_CONDRV_RECORD *last, const MIME_CONDRV_RECORD *next)
 {
-    /* a mouse move only moves the one before it. */
-    if (last->EventType == CON_MOUSE_EVENT && next->EventType == CON_MOUSE_EVENT) {
+    if (last->EventType != next->EventType)
+        return FALSE;
+    if (last->EventType == CON_MOUSE_EVENT) {
         if (last->Mouse.EventFlags != CON_MOUSE_MOVED || next->Mouse.EventFlags != CON_MOUSE_MOVED)
             return FALSE;
         last->Mouse.X = next->Mouse.X;
         last->Mouse.Y = next->Mouse.Y;
         return TRUE;
     }
-    if (last->EventType != CON_KEY_EVENT || next->EventType != CON_KEY_EVENT)
+    if (last->EventType != CON_KEY_EVENT || !last->Key.KeyDown || !next->Key.KeyDown)
         return FALSE;
-    if (!last->Key.KeyDown || !next->Key.KeyDown || is_wide(next->Key.Char))
+    if (last->Key.Char != next->Key.Char || last->Key.ControlKeyState != next->Key.ControlKeyState ||
+        is_wide(next->Key.Char))
         return FALSE;
-    /* the same key pressed again: by its character under an ime, else by its scan code too. */
-    ULONG state = next->Key.ControlKeyState;
-    BOOLEAN same = next->Key.Char == last->Key.Char && state == last->Key.ControlKeyState &&
-                   ((state & CON_IME_CONVERSION) || next->Key.ScanCode == last->Key.ScanCode);
-    if (!same)
+    if (last->Key.ScanCode != next->Key.ScanCode && !(next->Key.ControlKeyState & CON_IME_CONVERSION))
         return FALSE;
     last->Key.RepeatCount += next->Key.RepeatCount;
     return TRUE;
