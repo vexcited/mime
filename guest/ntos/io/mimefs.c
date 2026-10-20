@@ -346,6 +346,31 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     }
     /* what handles keep for this name is written before the host looks at the file: its size, its time, or a truncation. */
     FsWbSyncPath(vol->HostVolume, &file->FileName, FALSE);
+    /*
+     * a file with a section in use is not made shorter by an open that truncates it, as it is not by a change of its
+     * size: a view would read what is no longer there, and where the pages are the host's that is a fault the host
+     * cannot take. The file is looked up by name first, without a handle, to know which one it is, and what the cache
+     * of its pages holds is dropped before the host truncates it, not after: a read that comes between would take
+     * pages that are gone from the window of the host's file.
+     */
+    if (disposition == FILE_SUPERSEDE || disposition == FILE_OVERWRITE || disposition == FILE_OVERWRITE_IF) {
+        ULONG saved_flags = req->flags, saved_disposition = req->disposition;
+        req->flags = MIME_FS_OPEN_STAT_ONLY;
+        req->disposition = MIME_FS_DISP_OPEN;
+        ULONG64 probe = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
+        ULONG64 id = req->info_out.file_id;
+        if (probe == MIME_HC_STATUS_OK && req->handle_out)
+            HalHypercallUnlocked(MIME_HC_FS_CLOSE, req->handle_out, 0, 0, 0, 0, 0, nullptr);
+        req->flags = saved_flags;
+        req->disposition = saved_disposition;
+        if (probe == MIME_HC_STATUS_OK) {
+            if (FsWbIsMapped(vol->HostVolume, id)) {
+                ExFreePool(req);
+                return complete(irp, STATUS_USER_MAPPED_FILE, 0);
+            }
+            FsCacheInvalidate(vol->HostVolume, id);
+        }
+    }
     ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
@@ -790,8 +815,40 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         ExFreePool(from.Buffer);
         return complete(irp, status, 0);
     }
-    case FileBasicInformation:
-        return complete(irp, STATUS_SUCCESS, 0);
+    case FileBasicInformation: {
+        if (length < sizeof(FILE_BASIC_INFORMATION))
+            return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
+        const FILE_BASIC_INFORMATION *basic = (const void *)in;
+        MimeFsBasic *change = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*change), KI_TAG('M', 'f', 'B', 's'));
+        if (!change)
+            return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+        memset(change, 0, sizeof(*change));
+        /* a time of 0 is left as it is, and so is -1, which on windows also keeps later writes from changing it. */
+        if (basic->LastAccessTime.QuadPart > 0) {
+            change->access_time = (ULONG64)basic->LastAccessTime.QuadPart;
+            change->mask |= MIME_FS_BASIC_ACCESS;
+        }
+        if (basic->LastWriteTime.QuadPart > 0) {
+            change->write_time = (ULONG64)basic->LastWriteTime.QuadPart;
+            change->mask |= MIME_FS_BASIC_WRITE;
+        }
+        if (basic->FileAttributes) {
+            change->attributes = basic->FileAttributes;
+            change->mask |= MIME_FS_BASIC_READONLY;
+        }
+        NTSTATUS status = STATUS_SUCCESS;
+        if (change->mask && !fcb->StatOnly) {
+            /* what this handle kept is written first, or the host would give the file the time of that write. */
+            FsWbSync(&fcb->Wb);
+            status = host_status(HalHypercallUnlocked(MIME_HC_FS_SET_BASIC, fcb->HostHandle, HalPhysicalOf(change), 0, 0, 0, 0,
+                                                       nullptr), FALSE);
+            if (NT_SUCCESS(status))
+                FsNotifyReport(fcb->Volume, &stack->FileObject->FileName, FILE_ACTION_MODIFIED,
+                               FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_ATTRIBUTES);
+        }
+        ExFreePool(change);
+        return complete(irp, status, 0);
+    }
     default:
         return complete(irp, STATUS_INVALID_INFO_CLASS, 0);
     }

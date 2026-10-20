@@ -3,7 +3,35 @@
 static void clear_field(MIME_MSI_FIELD *field)
 {
     MimeMsiFree(field->String);
+    MimeMsiBlobRelease(field->Stream);
     memset(field, 0, sizeof(*field));
+}
+
+MIME_MSI_BLOB *MimeMsiBlobCreate(const void *data, SIZE_T size)
+{
+    MIME_MSI_BLOB *blob = MimeMsiAllocate(sizeof(*blob) + size);
+    if (!blob)
+        return nullptr;
+    blob->References = 1;
+    blob->Size = size;
+    if (size)
+        memcpy(blob->Data, data, size);
+    return blob;
+}
+
+void MimeMsiBlobRelease(MIME_MSI_BLOB *blob)
+{
+    if (blob && !--blob->References)
+        MimeMsiFree(blob);
+}
+
+UINT MimeMsiFieldStream(MIME_MSI_FIELD *field, MIME_MSI_BLOB *blob)
+{
+    clear_field(field);
+    field->Kind = FIELD_STREAM;
+    field->Stream = blob;
+    blob->References++;
+    return ERROR_SUCCESS;
 }
 
 static void destroy_record(MIME_MSI_OBJECT *object)
@@ -29,6 +57,7 @@ MIME_MSI_RECORD *MimeMsiRecordCreate(UINT count)
 
 MSIHANDLE WINAPI MsiCreateRecord(UINT count)
 {
+    MIME_REMOTE(PROXY_CreateRecord, MSIHANDLE, MIME_ARG(count));
     MIME_MSI_RECORD *record = MimeMsiRecordCreate(count);
     if (!record)
         return 0;
@@ -51,6 +80,7 @@ UINT WINAPI MsiRecordGetFieldCount(MSIHANDLE handle)
 
 UINT WINAPI MsiRecordSetInteger(MSIHANDLE handle, UINT index, int value)
 {
+    MIME_REMOTE(PROXY_RecordSetInteger, UINT, MIME_ARG(handle), MIME_ARG(index), MIME_ARG(value));
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
     UINT error = !record ? ERROR_INVALID_HANDLE : index > record->Count ? ERROR_INVALID_PARAMETER : ERROR_SUCCESS;
@@ -64,6 +94,7 @@ UINT WINAPI MsiRecordSetInteger(MSIHANDLE handle, UINT index, int value)
 
 UINT WINAPI MsiRecordSetStringW(MSIHANDLE handle, UINT index, LPCWSTR value)
 {
+    MIME_REMOTE(PROXY_RecordSetStringW, UINT, MIME_ARG(handle), MIME_ARG(index), MIME_ARG(value));
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
     UINT error = !record ? ERROR_INVALID_HANDLE : index > record->Count ? ERROR_INVALID_PARAMETER : ERROR_SUCCESS;
@@ -91,6 +122,7 @@ static int string_integer(PCWSTR value)
 
 int WINAPI MsiRecordGetInteger(MSIHANDLE handle, UINT index)
 {
+    MIME_REMOTE(PROXY_RecordGetInteger, int, MIME_ARG(handle), MIME_ARG(index));
     int result = MSI_NULL_INTEGER;
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
@@ -104,6 +136,7 @@ int WINAPI MsiRecordGetInteger(MSIHANDLE handle, UINT index)
 
 UINT WINAPI MsiRecordGetStringW(MSIHANDLE handle, UINT index, LPWSTR out, LPDWORD size)
 {
+    MIME_REMOTE(PROXY_RecordGetStringW, UINT, MIME_ARG(handle), MIME_ARG(index), MIME_ARG(out), MIME_ARG(size));
     if (!out || !size)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockShared(&MimeMsiLock);
@@ -135,6 +168,7 @@ UINT WINAPI MsiRecordGetStringW(MSIHANDLE handle, UINT index, LPWSTR out, LPDWOR
 
 BOOL WINAPI MsiRecordIsNull(MSIHANDLE handle, UINT index)
 {
+    MIME_REMOTE(PROXY_RecordIsNull, BOOL, MIME_ARG(handle), MIME_ARG(index));
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
     BOOL result = !record || index > record->Count || record->Fields[index].Kind == FIELD_NULL;
@@ -160,7 +194,8 @@ UINT WINAPI MsiRecordDataSize(MSIHANDLE handle, UINT index)
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
     if (record && index <= record->Count) {
         MIME_MSI_FIELD *field = &record->Fields[index];
-        size = field->Kind == FIELD_STRING ? (UINT)wcslen(field->String) : field->Kind == FIELD_INTEGER ? sizeof(int) : 0;
+        size = field->Kind == FIELD_STRING ? (UINT)wcslen(field->String) : field->Kind == FIELD_INTEGER ? sizeof(int) :
+               field->Kind == FIELD_STREAM ? (UINT)field->Stream->Size : 0;
     }
     ReleaseSRWLockShared(&MimeMsiLock);
     return size;

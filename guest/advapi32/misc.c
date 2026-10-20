@@ -62,6 +62,164 @@ ADVAPI BOOL WINAPI DeregisterEventSource(HANDLE h)
     return TRUE;
 }
 
+/* ---------------------------------------------------------------- reading event logs */
+
+#define EVENT_LOG_MAGIC 0x474C5645 /* "EVLG" */
+#define EVENTLOG_SEQUENTIAL_READ_ 0x0001
+#define EVENTLOG_SEEK_READ_ 0x0002
+#define EVENTLOG_FORWARDS_READ_ 0x0004
+#define EVENTLOG_BACKWARDS_READ_ 0x0008
+
+typedef struct EVENT_LOG {
+    DWORD Magic;
+    WCHAR Name[];
+} EVENT_LOG;
+
+/*
+ * Mime keeps no event log: a log can be opened and closed, and always holds no record. A name no log has opens the
+ * Application log, which is what windows does for a source it does not know, so the name is kept as it is.
+ */
+ADVAPI HANDLE WINAPI OpenEventLogW(LPCWSTR server, LPCWSTR source)
+{
+    if (!source) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    if (!AdvIsLocalSystem(server)) {
+        AdvSetError(RPC_S_SERVER_UNAVAILABLE);
+        return nullptr;
+    }
+    SIZE_T n = wcslen(source);
+    EVENT_LOG *log = AdvAlloc(sizeof(*log) + (n + 1) * sizeof(WCHAR));
+    if (!log) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return nullptr;
+    }
+    log->Magic = EVENT_LOG_MAGIC;
+    memcpy(log->Name, source, (n + 1) * sizeof(WCHAR));
+    return log;
+}
+
+ADVAPI HANDLE WINAPI OpenEventLogA(LPCSTR server, LPCSTR source)
+{
+    if (!source) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    PWSTR s = AdvAnsiToWide(server), n = AdvAnsiToWide(source);
+    HANDLE h = (!server || s) && n ? OpenEventLogW(s, n) : nullptr;
+    AdvFree(s);
+    AdvFree(n);
+    return h;
+}
+
+static EVENT_LOG *event_log(HANDLE h)
+{
+    EVENT_LOG *log = h;
+    if (!log || log->Magic != EVENT_LOG_MAGIC) {
+        AdvSetError(ERROR_INVALID_HANDLE);
+        return nullptr;
+    }
+    return log;
+}
+
+ADVAPI BOOL WINAPI CloseEventLog(HANDLE h)
+{
+    EVENT_LOG *log = event_log(h);
+    if (!log)
+        return FALSE;
+    log->Magic = 0;
+    AdvFree(log);
+    return TRUE;
+}
+
+/* a read has to say how to read and in which direction, each once; there is never a record, so it ends at once. */
+ADVAPI BOOL WINAPI ReadEventLogW(HANDLE h, DWORD flags, DWORD offset, LPVOID buffer, DWORD bytes, DWORD *read, DWORD *needed)
+{
+    if (read)
+        *read = 0;
+    if (needed)
+        *needed = 0;
+    if (!event_log(h))
+        return FALSE;
+    DWORD how = flags & (EVENTLOG_SEQUENTIAL_READ_ | EVENTLOG_SEEK_READ_);
+    DWORD way = flags & (EVENTLOG_FORWARDS_READ_ | EVENTLOG_BACKWARDS_READ_);
+    if ((how != EVENTLOG_SEQUENTIAL_READ_ && how != EVENTLOG_SEEK_READ_) ||
+        (way != EVENTLOG_FORWARDS_READ_ && way != EVENTLOG_BACKWARDS_READ_) || !buffer || !read || !needed) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    AdvSetError(ERROR_HANDLE_EOF);
+    return FALSE;
+}
+
+ADVAPI BOOL WINAPI ReadEventLogA(HANDLE h, DWORD flags, DWORD offset, LPVOID buffer, DWORD bytes, DWORD *read, DWORD *needed)
+{
+    return ReadEventLogW(h, flags, offset, buffer, bytes, read, needed);
+}
+
+ADVAPI BOOL WINAPI GetNumberOfEventLogRecords(HANDLE h, PDWORD count)
+{
+    if (!event_log(h))
+        return FALSE;
+    if (!count) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *count = 0;
+    return TRUE;
+}
+
+/* an empty log has no oldest record: the number the first one will have. */
+ADVAPI BOOL WINAPI GetOldestEventLogRecord(HANDLE h, PDWORD record)
+{
+    if (!event_log(h))
+        return FALSE;
+    if (!record) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *record = 1;
+    return TRUE;
+}
+
+ADVAPI BOOL WINAPI ClearEventLogW(HANDLE h, LPCWSTR backup)
+{
+    if (!event_log(h))
+        return FALSE;
+    /* nothing to save, and nothing that a backup file could hold. */
+    if (backup) {
+        AdvSetError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+ADVAPI BOOL WINAPI ClearEventLogA(HANDLE h, LPCSTR backup)
+{
+    PWSTR wide = AdvAnsiToWide(backup);
+    BOOL ok;
+    if (backup && !wide) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    ok = ClearEventLogW(h, wide);
+    AdvFree(wide);
+    return ok;
+}
+
+/* the event is never signalled, as no record is ever added. */
+ADVAPI BOOL WINAPI NotifyChangeEventLog(HANDLE h, HANDLE event)
+{
+    if (!event_log(h))
+        return FALSE;
+    if (!event) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static PCWSTR event_type(WORD type)
 {
     switch (type) {
@@ -455,4 +613,43 @@ ADVAPI LSTATUS WINAPI RegConnectRegistryExA(LPCSTR machine, HKEY key, ULONG flag
 ADVAPI LSTATUS WINAPI RegConnectRegistryA(LPCSTR machine, HKEY key, HKEY *result)
 {
     return RegConnectRegistryExA(machine, key, 0, result);
+}
+
+/*
+ * the registry reflection of 32-bit and 64-bit views, which windows' 64-bit systems had in their first versions and
+ * dropped: the calls remain, and 32-bit programs that were written for it call them. No key is reflected, so disabling
+ * and enabling succeed and none is ever found disabled; native 64-bit callers get what windows answers them.
+ */
+ADVAPI LSTATUS WINAPI RegDisableReflectionKey(HKEY key)
+{
+    (void)key;
+#ifdef _WIN64
+    return ERROR_CALL_NOT_IMPLEMENTED;
+#else
+    return ERROR_SUCCESS;
+#endif
+}
+
+ADVAPI LSTATUS WINAPI RegEnableReflectionKey(HKEY key)
+{
+    (void)key;
+#ifdef _WIN64
+    return ERROR_CALL_NOT_IMPLEMENTED;
+#else
+    return ERROR_SUCCESS;
+#endif
+}
+
+ADVAPI LSTATUS WINAPI RegQueryReflectionKey(HKEY key, BOOL *disabled)
+{
+    (void)key;
+#ifdef _WIN64
+    (void)disabled;
+    return ERROR_CALL_NOT_IMPLEMENTED;
+#else
+    if (!disabled)
+        return ERROR_INVALID_PARAMETER;
+    *disabled = FALSE;
+    return ERROR_SUCCESS;
+#endif
 }

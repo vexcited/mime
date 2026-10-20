@@ -4,11 +4,15 @@ EXPORTS
     DrawStatusTextA @5
     CreateStatusWindowA @6
     CreateToolbar @7
+    CreatePropertySheetPage=CreatePropertySheetPageA @12
     CreateUpDownControl @16
     InitCommonControls @17
+    CreatePropertySheetPageA @21
+    CreatePropertySheetPageW @22
     CreateStatusWindow=CreateStatusWindowA @23
     CreateStatusWindowW @24
     CreateToolbarEx @25
+    DestroyPropertySheetPage @26
     DllGetVersion @27
     DrawShadowText @29
     DrawStatusText=DrawStatusTextA @30
@@ -62,6 +66,9 @@ EXPORTS
     ImageList_WriteEx @93
     InitCommonControlsEx @94
     InitMUILanguage @95
+    PropertySheet=PropertySheetA @97
+    PropertySheetA @98
+    PropertySheetW @99
     RegisterClassNameW @100
     _TrackMouseEvent @102
     Str_GetPtrA @233 NONAME

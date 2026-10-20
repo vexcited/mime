@@ -557,13 +557,6 @@ WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object,
     if (!entry)
         return E_OUTOFMEMORY;
     AcquireSRWLockExclusive(&g_class_lock);
-    for (CLASS_ENTRY *e = g_classes; e; e = e->Next) {
-        if (IsEqualCLSID(&e->Clsid, clsid) && (e->Context & context)) {
-            ReleaseSRWLockExclusive(&g_class_lock);
-            OleFree(entry);
-            return CO_E_OBJISREG;
-        }
-    }
     entry->Clsid = *clsid;
     entry->Object = object;
     entry->Context = context;

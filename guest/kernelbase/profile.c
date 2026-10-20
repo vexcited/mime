@@ -10,7 +10,7 @@ typedef struct {
 
 typedef struct {
     SIZE_T Start, Next, Name, NameEnd, Value, ValueEnd;
-    BOOL Section, Key;
+    BOOL Section, Key, Equals;
 } PROFILE_LINE;
 
 static volatile LONG temporary_id;
@@ -182,6 +182,7 @@ static PROFILE_LINE next_line(const PROFILE *profile, SIZE_T at)
         line.Value++;
     line.ValueEnd = end;
     line.Key = line.NameEnd > line.Name;
+    line.Equals = equals < end;
     return line;
 }
 
@@ -493,7 +494,7 @@ BOOL WINAPI WritePrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR val
 /*
  * the keys of a section as a list of "key=value" strings ended by an empty one: the key without its trailing
  * blanks, an equals sign and the value without its leading blanks, comments and blank lines left out. A line
- * with no equals sign gives its text followed by an equals sign, a guess.
+ * with no equals sign gives its text alone, as dxupdate needs.
  */
 DWORD WINAPI GetPrivateProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size, LPCWSTR filename)
 {
@@ -523,11 +524,13 @@ DWORD WINAPI GetPrivateProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size, 
             found |= active;
         } else if (line.Key && active) {
             SIZE_T key = line.NameEnd - line.Name, value = line.ValueEnd - line.Value;
-            SIZE_T entry = key + 1 + value + 1;
+            /* a line with no equals sign is given as it is, the way dxupdate reads its install lists. */
+            BOOL equals = line.Equals;
+            SIZE_T entry = key + (equals ? 1 + value : 0) + 1;
             SIZE_T copy = entry <= room - used ? entry : room - used;
             /* the entry piece by piece: the key, the equals sign, the value and the null. */
             for (SIZE_T i = 0; i < copy; i++) {
-                WCHAR c = i < key ? profile.Text[line.Name + i] : i == key ? L'=' : i < key + 1 + value ? profile.Text[line.Value + i - key - 1] : 0;
+                WCHAR c = i < key ? profile.Text[line.Name + i] : !equals ? 0 : i == key ? L'=' : i < key + 1 + value ? profile.Text[line.Value + i - key - 1] : 0;
                 out[used + i] = c;
             }
             used += (DWORD)copy;

@@ -126,6 +126,12 @@ WINUSERAPI LONG WINAPI DisplayConfigGetDeviceInfo(void *info)
     return info ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
 }
 
+/* nothing of the display configuration can be changed from here, as it cannot be read. */
+WINUSERAPI LONG WINAPI DisplayConfigSetDeviceInfo(void *info)
+{
+    return info ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
+}
+
 #define WDA_NONE 0x0
 #define WDA_MONITOR 0x1
 #define WDA_EXCLUDEFROMCAPTURE 0x11

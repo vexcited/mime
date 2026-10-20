@@ -386,9 +386,13 @@ typedef void(CALLBACK *MSGBOXCALLBACK)(struct tagHELPINFO *info);
 #define GWLP_ID (-12)
 #define GWL_ID (-12)
 #define DWLP_MSGRESULT 0
-#define DWLP_DLGPROC 8
-#define DWLP_USER 16
+#define DWLP_DLGPROC (DWLP_MSGRESULT + (int)sizeof(LRESULT))
+#define DWLP_USER (DWLP_DLGPROC + (int)sizeof(DLGPROC))
 #define DWL_MSGRESULT 0
+#ifndef _WIN64
+#define DWL_DLGPROC 4
+#define DWL_USER 8
+#endif
 
 #define GCL_MENUNAME (-8)
 #define GCLP_HBRBACKGROUND (-10)
@@ -1562,6 +1566,7 @@ WINUSERAPI ATOM WINAPI RegisterClassA(const WNDCLASSA *wc);
 WINUSERAPI BOOL WINAPI UnregisterClassW(LPCWSTR name, HINSTANCE instance);
 WINUSERAPI BOOL WINAPI UnregisterClassA(LPCSTR name, HINSTANCE instance);
 WINUSERAPI BOOL WINAPI GetClassInfoExW(HINSTANCE instance, LPCWSTR name, LPWNDCLASSEXW wc);
+WINUSERAPI BOOL WINAPI GetClassInfoW(HINSTANCE instance, LPCWSTR name, LPWNDCLASSW wc);
 WINUSERAPI HWND WINAPI CreateWindowExW(DWORD ex_style, LPCWSTR class_name, LPCWSTR window_name, DWORD style, int x,
                                        int y, int width, int height, HWND parent, HMENU menu, HINSTANCE instance,
                                        LPVOID param);

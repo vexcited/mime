@@ -42,7 +42,7 @@ static PCWSTR field_text(const MIME_MSI_FIELD *field, WCHAR number[16])
 }
 
 static UINT substitute(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record, PCWSTR token,
-                       BOOL properties, MSI_TEXT *out)
+                       BOOL properties, MSI_TEXT *out, BOOL *empty)
 {
     WCHAR number[16];
     if (!properties) {
@@ -63,12 +63,27 @@ static UINT substitute(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record,
         return append_text(out, token + 1, token[1] ? 1 : 0);
     if (!wcscmp(token, L"~"))
         return append_text(out, L"", 1);
-    if (*token == L'#' || *token == L'!' || *token == L'$')
-        return ERROR_CALL_NOT_IMPLEMENTED;
+    if (*token == L'#' || *token == L'!' || *token == L'$') {
+        /* the place of a file, or of the directory of a component. */
+        PWSTR path = nullptr;
+        UINT error = *token == L'$' ? MimeMsiComponentDirectory(package, token + 1, &path) :
+                                      MimeMsiFileTargetPath(package, token + 1, &path);
+        if (error == ERROR_INSTALL_PACKAGE_INVALID || error == ERROR_DIRECTORY) {
+            *empty = TRUE;
+            return ERROR_SUCCESS;
+        }
+        if (error)
+            return error;
+        error = append_text(out, path, wcslen(path));
+        MimeMsiFree(path);
+        return error;
+    }
     if (*token == L'%') {
         DWORD capacity = GetEnvironmentVariableW(token + 1, nullptr, 0);
-        if (!capacity)
+        if (!capacity) {
+            *empty = TRUE;
             return ERROR_SUCCESS;
+        }
         PWSTR value = MimeMsiAllocate((SIZE_T)capacity * sizeof(WCHAR));
         if (!value)
             return ERROR_NOT_ENOUGH_MEMORY;
@@ -78,18 +93,38 @@ static UINT substitute(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record,
         return error;
     }
     PCWSTR value = MimeMsiGetProperty(package, token);
+    if (!*value)
+        *empty = TRUE;
     return append_text(out, value, wcslen(value));
 }
 
 static UINT format_part(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record, PCWSTR *cursor,
-                        BOOL properties, ULONG depth, MSI_TEXT *out)
+                        BOOL properties, ULONG depth, WCHAR end, MSI_TEXT *out, BOOL *empty)
 {
     if (depth > 32)
         return ERROR_INVALID_PARAMETER;
-    while (**cursor && (!depth || **cursor != L']')) {
+    while (**cursor && **cursor != end) {
+        if (properties && **cursor == L'{') {
+            /* a group whose properties are all set is kept, any other one is dropped. */
+            PCWSTR close = wcschr(*cursor, L'}'), open = wcschr(*cursor, L'[');
+            if (close && open && open < close) {
+                (*cursor)++;
+                MSI_TEXT group = {};
+                BOOL group_empty = FALSE;
+                UINT error = append_text(&group, L"", 0);
+                if (!error)
+                    error = format_part(package, record, cursor, properties, depth + 1, L'}', &group, &group_empty);
+                if (!error && **cursor == L'}')
+                    (*cursor)++;
+                if (!error && !group_empty)
+                    error = append_text(out, group.Text, group.Length);
+                MimeMsiFree(group.Text);
+                if (error)
+                    return error;
+                continue;
+            }
+        }
         if (**cursor != L'[') {
-            if (properties && **cursor == L'{' && wcschr(*cursor, L'['))
-                return ERROR_CALL_NOT_IMPLEMENTED;
             UINT error = append_text(out, (*cursor)++, 1);
             if (error)
                 return error;
@@ -97,12 +132,13 @@ static UINT format_part(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record
         }
         (*cursor)++;
         MSI_TEXT token = {};
+        BOOL ignored = FALSE;
         UINT error = append_text(&token, L"", 0);
         if (!error)
-            error = format_part(package, record, cursor, properties, depth + 1, &token);
+            error = format_part(package, record, cursor, properties, depth + 1, L']', &token, &ignored);
         if (!error && **cursor == L']') {
             (*cursor)++;
-            error = substitute(package, record, token.Text, properties, out);
+            error = substitute(package, record, token.Text, properties, out, empty);
         } else if (!error) {
             error = append_text(out, L"[", 1);
             if (!error)
@@ -119,6 +155,7 @@ UINT MimeMsiFormatRecord(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *recor
 {
     MSI_TEXT numeric = {}, formatted = {};
     WCHAR number[16];
+    BOOL unused = FALSE;
     PCWSTR template = field_text(&record->Fields[0], number);
     UINT error = append_text(&numeric, L"", 0);
     if (!error && !*template) {
@@ -131,12 +168,12 @@ UINT MimeMsiFormatRecord(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *recor
                 error = append_text(&numeric, value, wcslen(value));
         }
     } else if (!error)
-        error = format_part(package, record, &template, FALSE, 0, &numeric);
+        error = format_part(package, record, &template, FALSE, 0, 0, &numeric, &unused);
     if (!error && package) {
         template = numeric.Text;
         error = append_text(&formatted, L"", 0);
         if (!error)
-            error = format_part(package, record, &template, TRUE, 0, &formatted);
+            error = format_part(package, record, &template, TRUE, 0, 0, &formatted, &unused);
         MimeMsiFree(numeric.Text);
         numeric = formatted;
     }
@@ -151,6 +188,7 @@ UINT MimeMsiFormatRecord(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *recor
 
 UINT WINAPI MsiFormatRecordW(MSIHANDLE install, MSIHANDLE handle, LPWSTR out, LPDWORD size)
 {
+    MIME_REMOTE(PROXY_FormatRecordW, UINT, MIME_ARG(install), MIME_ARG(handle), MIME_ARG(out), MIME_ARG(size));
     if (!out || !size)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockShared(&MimeMsiLock);

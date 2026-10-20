@@ -99,6 +99,29 @@ UINT MimeMsiDirectoryPath(MIME_MSI_PACKAGE *package, PCWSTR name, BOOL source, P
     return error ? error : directory_path(package, table, name, source, 0, out);
 }
 
+/* once costing is done every directory of the package is a property with its path, the way a format reaches one. */
+UINT MimeMsiPublishDirectories(MIME_MSI_PACKAGE *package)
+{
+    MIME_MSI_TABLE *table;
+    UINT error = MimeMsiLoadTable(package->Database, L"Directory", &table);
+    if (error)
+        return error;
+    ULONG id = MimeMsiColumn(table, L"Directory", TRUE);
+    if (id == UINT32_MAX)
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    for (ULONG row = 0; row < table->Rows && !error; row++) {
+        PCWSTR name = MimeMsiText(package->Database, table, row, id);
+        if (!name || !*name)
+            return ERROR_INSTALL_PACKAGE_INVALID;
+        PWSTR path = nullptr;
+        error = directory_path(package, table, name, FALSE, 0, &path);
+        if (!error)
+            error = MimeMsiSetProperty(package, name, path);
+        MimeMsiFree(path);
+    }
+    return error;
+}
+
 static UINT get_path(MSIHANDLE handle, LPCWSTR name, BOOL source, LPWSTR out, LPDWORD size)
 {
     if (!name || !*name)
@@ -116,11 +139,13 @@ static UINT get_path(MSIHANDLE handle, LPCWSTR name, BOOL source, LPWSTR out, LP
 
 UINT WINAPI MsiGetTargetPathW(MSIHANDLE handle, LPCWSTR name, LPWSTR out, LPDWORD size)
 {
+    MIME_REMOTE(PROXY_GetTargetPathW, UINT, MIME_ARG(handle), MIME_ARG(name), MIME_ARG(out), MIME_ARG(size));
     return get_path(handle, name, FALSE, out, size);
 }
 
 UINT WINAPI MsiGetSourcePathW(MSIHANDLE handle, LPCWSTR name, LPWSTR out, LPDWORD size)
 {
+    MIME_REMOTE(PROXY_GetSourcePathW, UINT, MIME_ARG(handle), MIME_ARG(name), MIME_ARG(out), MIME_ARG(size));
     return get_path(handle, name, TRUE, out, size);
 }
 

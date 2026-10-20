@@ -1161,6 +1161,7 @@ void FsWbFlushAll(void);
 /* a file with a section or a window of it in use keeps no writes back, see io/fswrite.c. */
 void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta);
 BOOLEAN FsWbIsMapped(ULONG volume, ULONG64 file_id);
+BOOLEAN FsWbAnyMapped(void);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
 void IopInitializeCompletion(void);
 void IopInitializeNamedPipes(void);

@@ -172,10 +172,110 @@ SHSTDAPI HICON WINAPI ExtractIconW(HINSTANCE instance, LPCWSTR file, UINT index)
     return icon;
 }
 
+/*
+ * icons of a file at the sizes of a large and a small icon. With no array it counts the icons, as an index of -1
+ * does for ExtractIconW; a negative index names a resource id and takes one icon; else `count` icons from the
+ * index on. The result counts the icons that were made, large and small each, which is a guess from how programs use it
+ * (two for one icon of both sizes). An icon file has the one icon.
+ */
+SHSTDAPI UINT WINAPI ExtractIconExW(LPCWSTR file, int index, HICON *large, HICON *small, UINT count)
+{
+    if (large)
+        for (UINT i = 0; i < count; i++)
+            large[i] = nullptr;
+    if (small)
+        for (UINT i = 0; i < count; i++)
+            small[i] = nullptr;
+    if (!file)
+        return 0;
+    WCHAR path[MAX_PATH];
+    DWORD n = SearchPathW(nullptr, file, nullptr, MAX_PATH, path, nullptr);
+    if (!n || n >= MAX_PATH)
+        return 0;
+    int lx = GetSystemMetrics(SM_CXICON), ly = GetSystemMetrics(SM_CYICON);
+    int sx = GetSystemMetrics(SM_CXSMICON), sy = GetSystemMetrics(SM_CYSMICON);
+    LPCWSTR dot = wcsrchr(path, L'.');
+    BOOL icon_file = dot && !_wcsicmp(dot, L".ico");
+    HMODULE module = icon_file ? nullptr : LoadLibraryExW(path, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    if (!icon_file && !module)
+        return 0;
+    /* the groups of icons of the file, counted. */
+    ICON_SEARCH total = {(UINT)-1, 0, nullptr};
+    if (module)
+        EnumResourceNamesW(module, MAKEINTRESOURCEW(14), find_icon_group, (LONG_PTR)&total);
+    UINT groups = icon_file ? 1 : total.Seen;
+    UINT made = 0;
+    if (!large && !small) {
+        if (module)
+            FreeLibrary(module);
+        return groups;
+    }
+    if (index < 0) {
+        count = 1;
+    } else if ((UINT)index >= groups) {
+        count = 0;
+    } else if (count > groups - (UINT)index) {
+        count = groups - (UINT)index;
+    }
+    for (UINT i = 0; i < count; i++) {
+        HANDLE big = nullptr, little = nullptr;
+        if (icon_file) {
+            if (large)
+                big = LoadImageW(nullptr, path, IMAGE_ICON, lx, ly, LR_LOADFROMFILE);
+            if (small)
+                little = LoadImageW(nullptr, path, IMAGE_ICON, sx, sy, LR_LOADFROMFILE);
+        } else {
+            LPWSTR name = nullptr;
+            ICON_SEARCH search = {(UINT)index + i, 0, nullptr};
+            if (index < 0) {
+                name = MAKEINTRESOURCEW(-index);
+            } else {
+                EnumResourceNamesW(module, MAKEINTRESOURCEW(14), find_icon_group, (LONG_PTR)&search);
+                name = search.Name;
+            }
+            if (name) {
+                if (large)
+                    big = LoadImageW(module, name, IMAGE_ICON, lx, ly, 0);
+                if (small)
+                    little = LoadImageW(module, name, IMAGE_ICON, sx, sy, 0);
+            }
+            if (index >= 0 && search.Name && !IS_INTRESOURCE(search.Name))
+                ShFree(search.Name);
+        }
+        if (large && big) {
+            large[i] = (HICON)big;
+            made++;
+        }
+        if (small && little) {
+            small[i] = (HICON)little;
+            made++;
+        }
+    }
+    if (module)
+        FreeLibrary(module);
+    return made;
+}
+
+SHSTDAPI UINT WINAPI ExtractIconExA(LPCSTR file, int index, HICON *large, HICON *small, UINT count)
+{
+    LPWSTR wide = ShWiden(file);
+    UINT made = wide ? ExtractIconExW(wide, index, large, small, count) : 0;
+    ShFree(wide);
+    return made;
+}
+
 SHSTDAPI HICON WINAPI ExtractIconA(HINSTANCE instance, LPCSTR file, UINT index)
 {
     LPWSTR wide = ShWiden(file);
     HICON icon = wide ? ExtractIconW(instance, wide, index) : nullptr;
     ShFree(wide);
     return icon;
+}
+
+/* there is no dialog to choose a program in: the call fails as if the user had cancelled it. */
+SHSTDAPI HRESULT WINAPI SHOpenWithDialog(HWND parent, const OPENASINFO *info)
+{
+    if (!info || (!info->pcszFile && !info->pcszClass))
+        return E_INVALIDARG;
+    return HRESULT_FROM_WIN32(ERROR_CANCELLED);
 }

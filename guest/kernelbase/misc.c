@@ -515,6 +515,97 @@ DECLSPEC_EXPORT LONG WINAPI GetPackagePath(const void *id, const UINT32 reserved
     return ERROR_NOT_FOUND;
 }
 
+/*
+ * the policies of an application: the process of a package has them from its manifest, the others have the ones of a
+ * classic desktop program. The values are a guess of what windows answers a program that is no package, from the
+ * names of the enumerations the sdk documents.
+ */
+static LONG app_policy(HANDLE token, UINT32 *policy, UINT32 value)
+{
+    if (!policy)
+        return ERROR_INVALID_PARAMETER;
+    if (!token)
+        return ERROR_INVALID_PARAMETER;
+    *policy = value;
+    return ERROR_SUCCESS;
+}
+
+DECLSPEC_EXPORT LONG WINAPI AppPolicyGetClrCompat(HANDLE token, UINT32 *policy)
+{
+    return app_policy(token, policy, 1); /* AppPolicyClrCompat_ClassicDesktop */
+}
+
+DECLSPEC_EXPORT LONG WINAPI AppPolicyGetCreateFileAccess(HANDLE token, UINT32 *policy)
+{
+    return app_policy(token, policy, 0); /* AppPolicyCreateFileAccess_Full */
+}
+
+DECLSPEC_EXPORT LONG WINAPI AppPolicyGetLifecycleManagement(HANDLE token, UINT32 *policy)
+{
+    return app_policy(token, policy, 0); /* AppPolicyLifecycleManagement_Unmanaged */
+}
+
+DECLSPEC_EXPORT LONG WINAPI AppPolicyGetMediaFoundationCodecLoading(HANDLE token, UINT32 *policy)
+{
+    return app_policy(token, policy, 0); /* AppPolicyMediaFoundationCodecLoading_All */
+}
+
+DECLSPEC_EXPORT LONG WINAPI AppPolicyGetProcessTerminationMethod(HANDLE token, UINT32 *policy)
+{
+    return app_policy(token, policy, 0); /* AppPolicyProcessTerminationMethod_ExitProcess */
+}
+
+DECLSPEC_EXPORT LONG WINAPI AppPolicyGetShowDeveloperDiagnostic(HANDLE token, UINT32 *policy)
+{
+    return app_policy(token, policy, 1); /* AppPolicyShowDeveloperDiagnostic_ShowUI */
+}
+
+DECLSPEC_EXPORT LONG WINAPI AppPolicyGetThreadInitializationType(HANDLE token, UINT32 *policy)
+{
+    return app_policy(token, policy, 0); /* AppPolicyThreadInitializationType_None */
+}
+
+DECLSPEC_EXPORT LONG WINAPI AppPolicyGetWindowingModel(HANDLE token, UINT32 *policy)
+{
+    return app_policy(token, policy, 2); /* AppPolicyWindowingModel_ClassicDesktop */
+}
+
+/* the other lookups of the package contracts: no process or token belongs to a package. */
+DECLSPEC_EXPORT LONG WINAPI GetCurrentPackageInfo(UINT32 flags, UINT32 *length, BYTE *buffer, UINT32 *count)
+{
+    if (!length || (*length && !buffer))
+        return ERROR_INVALID_PARAMETER;
+    return APPMODEL_ERROR_NO_PACKAGE;
+}
+
+DECLSPEC_EXPORT LONG WINAPI GetCurrentPackagePath(UINT32 *length, PWSTR path)
+{
+    if (!length)
+        return ERROR_INVALID_PARAMETER;
+    return APPMODEL_ERROR_NO_PACKAGE;
+}
+
+DECLSPEC_EXPORT LONG WINAPI GetPackageId(HANDLE process, UINT32 *length, BYTE *buffer)
+{
+    if (!process || !length)
+        return ERROR_INVALID_PARAMETER;
+    return APPMODEL_ERROR_NO_PACKAGE;
+}
+
+DECLSPEC_EXPORT LONG WINAPI GetPackageFullNameFromToken(HANDLE token, UINT32 *length, PWSTR name)
+{
+    if (!token || !length)
+        return ERROR_INVALID_PARAMETER;
+    return APPMODEL_ERROR_NO_PACKAGE;
+}
+
+DECLSPEC_EXPORT LONG WINAPI GetPackageFamilyNameFromToken(HANDLE token, UINT32 *length, PWSTR name)
+{
+    if (!token || !length)
+        return ERROR_INVALID_PARAMETER;
+    return APPMODEL_ERROR_NO_PACKAGE;
+}
+
 DECLSPEC_EXPORT BOOL WINAPI Wow64GetThreadContext(HANDLE thread, PVOID context)
 {
 #ifdef _WIN64

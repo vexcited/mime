@@ -1,7 +1,6 @@
 /*
- * compound document storage. only the signature test and the class helpers
- * that work over any IStorage or IStream are implemented; mime has no
- * structured storage of its own yet.
+ * compound document storage: the signature test, the class helpers that work over any IStorage or IStream, and the
+ * helpers of files. The documents themselves are in docfile.c.
  */
 #include "ole32_private.h"
 #include <mime/stub.h>
@@ -145,45 +144,6 @@ WINOLEAPI HRESULT WINAPI WriteClassStm(IStream *stream, REFCLSID clsid)
     if (!stream || !clsid)
         return E_INVALIDARG;
     return stream->lpVtbl->Write(stream, clsid, sizeof(CLSID), nullptr);
-}
-
-WINOLEAPI HRESULT WINAPI StgCreateDocfile(LPCOLESTR name, DWORD mode, DWORD reserved, IStorage **storage)
-{
-    MIME_STUB("ole32");
-    if (!storage)
-        return STG_E_INVALIDPOINTER;
-    *storage = nullptr;
-    return STG_E_INVALIDFUNCTION;
-}
-
-WINOLEAPI HRESULT WINAPI StgOpenStorage(LPCOLESTR name, IStorage *priority, DWORD mode, SNB exclude,
-                                        DWORD reserved, IStorage **storage)
-{
-    MIME_STUB("ole32");
-    if (!storage)
-        return STG_E_INVALIDPOINTER;
-    *storage = nullptr;
-    return STG_E_INVALIDFUNCTION;
-}
-
-WINOLEAPI HRESULT WINAPI StgCreateDocfileOnILockBytes(ILockBytes *bytes, DWORD mode, DWORD reserved,
-                                                      IStorage **storage)
-{
-    MIME_STUB("ole32");
-    if (!storage)
-        return STG_E_INVALIDPOINTER;
-    *storage = nullptr;
-    return STG_E_INVALIDFUNCTION;
-}
-
-WINOLEAPI HRESULT WINAPI StgOpenStorageOnILockBytes(ILockBytes *bytes, IStorage *priority, DWORD mode,
-                                                    SNB exclude, DWORD reserved, IStorage **storage)
-{
-    MIME_STUB("ole32");
-    if (!storage)
-        return STG_E_INVALIDPOINTER;
-    *storage = nullptr;
-    return STG_E_INVALIDFUNCTION;
 }
 
 WINOLEAPI HRESULT WINAPI ReadFmtUserTypeStg(IStorage *storage, CLIPFORMAT *format, LPOLESTR *user_type)

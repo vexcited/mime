@@ -36,17 +36,23 @@ D3D11API HRESULT WINAPI D3D11CreateDevice(IDXGIAdapter *adapter, D3D_DRIVER_TYPE
         *level = 0;
     if (context)
         *context = nullptr;
-    if ((adapter && type != D3D_DRIVER_TYPE_UNKNOWN) || (!adapter && type == D3D_DRIVER_TYPE_UNKNOWN))
+    if ((adapter && type != D3D_DRIVER_TYPE_UNKNOWN) || (!adapter && type == D3D_DRIVER_TYPE_UNKNOWN)) {
+        D3dLog("d3d11: no device, an adapter %p with driver type %u", (void *)adapter, (unsigned)type);
         return E_INVALIDARG;
+    }
     if (type == D3D_DRIVER_TYPE_SOFTWARE && !software)
         return E_INVALIDARG;
-    if (flags & D3D11_CREATE_DEVICE_DEBUG)
+    if (flags & D3D11_CREATE_DEVICE_DEBUG) {
+        D3dLog("d3d11: no device, the debug layer is not installed (flags %x)", flags);
         return DXGI_ERROR_SDK_COMPONENT_MISSING;
+    }
     HRESULT hr;
     if (adapter)
         adapter->lpVtbl->AddRef(adapter);
-    else if (FAILED(hr = first_adapter(&adapter)))
+    else if (FAILED(hr = first_adapter(&adapter))) {
+        D3dLog("d3d11: no device, no adapter, %08lx", (unsigned long)hr);
         return hr;
+    }
     D3dDevice *object;
     ULONGLONG began = GetTickCount64();
     hr = D3dCreateDevice(adapter, flags, levels, count, &object);
@@ -54,8 +60,11 @@ D3D11API HRESULT WINAPI D3D11CreateDevice(IDXGIAdapter *adapter, D3D_DRIVER_TYPE
     /* a device is a connection to the host's driver, and a browser makes several before its first frame. */
     if (GetTickCount64() - began >= 20)
         D3dLog("d3d11: a device took %lu ms", (unsigned long)(GetTickCount64() - began));
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        D3dLog("d3d11: no device, %08lx, driver type %u, flags %x, %u feature levels from %x", (unsigned long)hr,
+               (unsigned)type, flags, count, count ? (unsigned)levels[0] : 0u);
         return hr;
+    }
     if (level)
         *level = object->feature_level;
     if (context) {

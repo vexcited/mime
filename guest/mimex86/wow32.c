@@ -42,6 +42,22 @@ static MIME_STRING32 copy_string32(PUCHAR *cursor, const UNICODE_STRING *source)
     return (MIME_STRING32){source->Length, (USHORT)(source->Length + sizeof(WCHAR)), (ULONG)(ULONG_PTR)text};
 }
 
+/* the current directory with room for a path of the longest length, so SetCurrentDirectory can change it in place. */
+#define CURRENT_DIRECTORY_CHARS 261
+
+static MIME_STRING32 copy_directory32(PUCHAR *cursor, const UNICODE_STRING *source)
+{
+    PWSTR text = (PWSTR)*cursor;
+    SIZE_T room = CURRENT_DIRECTORY_CHARS * sizeof(WCHAR);
+    ULONG length = source->Length;
+    if (length > room - sizeof(WCHAR))
+        length = (ULONG)(room - sizeof(WCHAR));
+    memcpy(text, source->Buffer, length);
+    text[length / sizeof(WCHAR)] = 0;
+    *cursor += room;
+    return (MIME_STRING32){(USHORT)length, (USHORT)room, (ULONG)(ULONG_PTR)text};
+}
+
 /* fills a 32-bit peb from the native one, its process parameters and environment in memory below 2 GiB. */
 BOOLEAN MxFillPeb32(PVOID memory)
 {
@@ -49,7 +65,7 @@ BOOLEAN MxFillPeb32(PVOID memory)
     PRTL_USER_PROCESS_PARAMETERS pp = native->ProcessParameters;
     SIZE_T strings = pp->ImagePathName.Length + pp->CommandLine.Length + pp->CurrentDirectory.DosPath.Length +
                      pp->DllPath.Length + pp->WindowTitle.Length + pp->DesktopInfo.Length + pp->ShellInfo.Length +
-                     pp->RuntimeData.Length + 32;
+                     pp->RuntimeData.Length + CURRENT_DIRECTORY_CHARS * sizeof(WCHAR) + 32;
     SIZE_T size = sizeof(MIME_PARAMETERS32) + strings + pp->EnvironmentSize;
     MIME_PARAMETERS32 *out = allocate32(size);
     if (!out)
@@ -83,7 +99,7 @@ BOOLEAN MxFillPeb32(PVOID memory)
     out->ShowWindowFlags = pp->ShowWindowFlags;
     out->ImagePathName = copy_string32(&cursor, &pp->ImagePathName);
     out->CommandLine = copy_string32(&cursor, &pp->CommandLine);
-    out->CurrentDirectory = copy_string32(&cursor, &pp->CurrentDirectory.DosPath);
+    out->CurrentDirectory = copy_directory32(&cursor, &pp->CurrentDirectory.DosPath);
     out->DllPath = copy_string32(&cursor, &pp->DllPath);
     out->WindowTitle = copy_string32(&cursor, &pp->WindowTitle);
     out->DesktopInfo = copy_string32(&cursor, &pp->DesktopInfo);
@@ -581,6 +597,80 @@ static NTSTATUS access_check32(const ULONG *a)
     return status;
 }
 
+/*
+ * the redirection of files for a 32-bit program, as the wow64 of windows does it in its system calls: a path in
+ * System32 is the same path in SysWOW64, where the 32-bit libraries and programs live. Mime guesses a few things the
+ * real one does not do. The folders config and drivers and the ones windows leaves alone keep their path. A file that
+ * only System32 has is still found there, as SysWOW64 holds just what Mime builds for 32 bits. A path that neither
+ * has goes to SysWOW64, so what a program creates in System32 lands next to the 32-bit libraries. A program turns it
+ * off for itself with Wow64DisableWow64FsRedirection, which sets a word of its teb, see wow32.h.
+ */
+static BOOL redirection_off32(void)
+{
+    PUCHAR teb = MxCurrentTeb32();
+    return teb && *(PULONG)(teb + MIME_TEB32_FSREDIR_OFFSET) != 0;
+}
+
+static BOOL path_exists32(PUNICODE_STRING name)
+{
+    OBJECT_ATTRIBUTES oa = {sizeof(oa), nullptr, name, OBJ_CASE_INSENSITIVE};
+    FILE_BASIC_INFORMATION basic;
+    return NtQueryAttributesFile(&oa, &basic) == STATUS_SUCCESS;
+}
+
+static BOOL starts_with_nocase32(PCWSTR text, SIZE_T chars, PCWSTR prefix, SIZE_T prefix_chars)
+{
+    if (chars < prefix_chars)
+        return FALSE;
+    for (SIZE_T i = 0; i < prefix_chars; i++) {
+        WCHAR a = text[i], b = prefix[i];
+        if (a >= 'a' && a <= 'z')
+            a -= 32;
+        if (b >= 'a' && b <= 'z')
+            b -= 32;
+        if (a != b)
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/* the name of a file call is changed in place to the redirected one, kept in the buffer given. */
+static void redirect_file32(OBJECT_ATTRIBUTES *oa, UNICODE_STRING *name, WCHAR *buffer, SIZE_T chars)
+{
+    if (!oa->ObjectName || oa->RootDirectory || redirection_off32())
+        return;
+    static const WCHAR system32[] = L"\\System32", syswow64[] = L"\\SysWOW64";
+    PCWSTR root = (PCWSTR)USER_SHARED_DATA->NtSystemRoot;
+    SIZE_T root_chars = wcslen(root), length = name->Length / sizeof(WCHAR);
+    SIZE_T prefix = 4 + root_chars;
+    if (length < prefix + 9 || !starts_with_nocase32(name->Buffer, length, L"\\??\\", 4) ||
+        !starts_with_nocase32(name->Buffer + 4, length - 4, root, root_chars) ||
+        !starts_with_nocase32(name->Buffer + prefix, length - prefix, system32, 9))
+        return;
+    SIZE_T after = prefix + 9;
+    if (after < length && name->Buffer[after] != '\\')
+        return;
+    static const PCWSTR kept[] = {L"\\config", L"\\drivers", L"\\catroot", L"\\catroot2", L"\\driverstore",
+                                  L"\\logfiles", L"\\spool"};
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(kept); i++) {
+        SIZE_T n = wcslen(kept[i]);
+        if (starts_with_nocase32(name->Buffer + after, length - after, kept[i], n) &&
+            (after + n == length || name->Buffer[after + n] == '\\'))
+            return;
+    }
+    SIZE_T target = prefix + 9 + (length - after);
+    if (target + 1 > chars)
+        return;
+    memcpy(buffer, name->Buffer, prefix * sizeof(WCHAR));
+    memcpy(buffer + prefix, syswow64, 9 * sizeof(WCHAR));
+    memcpy(buffer + prefix + 9, name->Buffer + after, (length - after) * sizeof(WCHAR));
+    buffer[target] = 0;
+    UNICODE_STRING moved = {(USHORT)(target * sizeof(WCHAR)), (USHORT)((target + 1) * sizeof(WCHAR)), buffer};
+    if (!path_exists32(&moved) && path_exists32(name))
+        return;
+    *name = moved;
+}
+
 NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 {
     UNICODE_STRING name;
@@ -588,6 +678,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     IO_STATUS_BLOCK io = {};
     HANDLE handle = nullptr;
     NTSTATUS status;
+    WCHAR redirected[MAX_PATH * 2];
     if ((number >> 12) == 1)
         return (NTSTATUS)Mx32Win32kCall(number, a);
     switch (number) {
@@ -1010,6 +1101,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtOpenFile:
     case MIME_SVC_NtCreateFile:
         oa = attributes32(a[2], &name);
+        redirect_file32(&oa, &name, redirected, RTL_NUMBER_OF(redirected));
         if (number == MIME_SVC_NtOpenFile)
             status = NtOpenFile(&handle, a[1], &oa, &io, a[4], a[5]);
         else
@@ -1105,9 +1197,11 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return status;
     case MIME_SVC_NtQueryAttributesFile:
         oa = attributes32(a[0], &name);
+        redirect_file32(&oa, &name, redirected, RTL_NUMBER_OF(redirected));
         return NtQueryAttributesFile(&oa, pointer32(a[1]));
     case MIME_SVC_NtQueryFullAttributesFile:
         oa = attributes32(a[0], &name);
+        redirect_file32(&oa, &name, redirected, RTL_NUMBER_OF(redirected));
         return NtQueryFullAttributesFile(&oa, pointer32(a[1]));
 
     /* sections. */
@@ -1299,6 +1393,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtSetSystemInformation((SYSTEM_INFORMATION_CLASS)a[0], pointer32(a[1]), a[2]);
     case MIME_SVC_NtShutdownSystem:
         return NtShutdownSystem((SHUTDOWN_ACTION)a[0]);
+    case MIME_SVC_NtInitiatePowerAction:
+        return NtInitiatePowerAction(a[0], a[1], a[2], (BOOLEAN)a[3]);
     case MIME_SVC_NtQueryPerformanceCounter:
         return NtQueryPerformanceCounter(pointer32(a[0]), pointer32(a[1]));
     case MIME_SVC_NtQuerySystemTime:

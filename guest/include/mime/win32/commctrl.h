@@ -1,7 +1,8 @@
 /*
  * common controls of comctl32.dll version 6: initialization, subclassing,
  * image lists, the progress bar, header, list view, status bar, tooltips,
- * up down, trackbar, tab, tree view and toolbar controls, and task dialogs.
+ * up down, trackbar, tab, tree view and toolbar controls, task dialogs and,
+ * through prsht.h, property sheets.
  */
 #ifndef MIME_WIN32_COMMCTRL_H
 #define MIME_WIN32_COMMCTRL_H
@@ -9,6 +10,7 @@
 #include <mime/win32/winuser.h>
 #include <mime/win32/wingdi.h>
 #include <mime/win32/objbase.h>
+#include <mime/win32/prsht.h>
 
 #ifndef WINCOMMCTRLAPI
 #define WINCOMMCTRLAPI DECLSPEC_IMPORT
@@ -1115,6 +1117,21 @@ typedef struct tagNMLVCUSTOMDRAW {
 /* ------------------------------------------------------------------ progress bar */
 
 #define PROGRESS_CLASSA "msctls_progress32"
+#define ANIMATE_CLASSW L"SysAnimate32"
+#define ANIMATE_CLASS ANIMATE_CLASSW
+#define ACS_CENTER 0x0001
+#define ACS_TRANSPARENT 0x0002
+#define ACS_AUTOPLAY 0x0004
+#define ACS_TIMER 0x0008
+#define ACM_OPENA (WM_USER + 100)
+#define ACM_PLAY (WM_USER + 101)
+#define ACM_STOP (WM_USER + 102)
+#define ACM_OPENW (WM_USER + 103)
+#define ACM_ISPLAYING (WM_USER + 104)
+#define ACN_START 1
+#define ACN_STOP 2
+#define ACM_OPEN ACM_OPENW
+
 #define PROGRESS_CLASSW L"msctls_progress32"
 #define PROGRESS_CLASS PROGRESS_CLASSW
 

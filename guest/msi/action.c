@@ -6,49 +6,30 @@ static BOOL string_column(const MIME_MSI_TABLE *table, ULONG column, PCWSTR name
            (table->Columns[column].Type & 0x0c00) == 0x0c00;
 }
 
-static UINT custom_action(MIME_MSI_PACKAGE *package, PCWSTR name, PWSTR *message)
+/* the description and the template of the data of an action, when the package has them. */
+static void action_text(MSIHANDLE handle, PCWSTR action, PWSTR *description, PWSTR *template)
 {
-    MIME_MSI_DATABASE *database = package->Database;
-    MIME_MSI_TABLE *table;
-    UINT error = MimeMsiLoadTable(database, L"CustomAction", &table);
-    if (error)
-        return error == ERROR_BAD_QUERY_SYNTAX ? ERROR_FUNCTION_NOT_CALLED : error;
-    if (!string_column(table, 0, L"Action") || table->Count < 4 ||
-        wcscmp(table->Columns[1].Name, L"Type") || table->Columns[1].Width != 2 ||
-        !string_column(table, 2, L"Source") || !string_column(table, 3, L"Target"))
-        return ERROR_INSTALL_PACKAGE_INVALID;
-    ULONG row;
-    for (row = 0; row < table->Rows; row++) {
-        PCWSTR action = database->Strings[MimeMsiCell(table, row, 0)];
-        if (action && !wcscmp(action, name))
-            break;
+    *description = *template = nullptr;
+    MSIHANDLE view;
+    WCHAR query[512];
+    _snwprintf(query, RTL_NUMBER_OF(query), L"SELECT `Description`, `Template` FROM `ActionText` WHERE `Action` = '%s'", action);
+    if (MsiDatabaseOpenViewW(handle, query, &view))
+        return;
+    MSIHANDLE record;
+    if (!MsiViewExecute(view, 0) && !MsiViewFetch(view, &record)) {
+        for (UINT field = 1; field <= 2; field++) {
+            DWORD size = 0;
+            if (MsiRecordGetStringW(record, field, (LPWSTR)L"", &size) != ERROR_MORE_DATA || !size)
+                continue;
+            PWSTR text = MimeMsiAllocate((size + 1) * sizeof(WCHAR));
+            if (text && !MsiRecordGetStringW(record, field, text, &(DWORD){size + 1}))
+                *(field == 1 ? description : template) = text;
+            else
+                MimeMsiFree(text);
+        }
+        MsiCloseHandle(record);
     }
-    if (row == table->Rows)
-        return ERROR_FUNCTION_NOT_CALLED;
-    ULONG type = MimeMsiCell(table, row, 1) ^ 0x8000;
-    PCWSTR source = database->Strings[MimeMsiCell(table, row, 2)];
-    PCWSTR target = database->Strings[MimeMsiCell(table, row, 3)];
-    if (type != 51 && type != 19)
-        return ERROR_CALL_NOT_IMPLEMENTED;
-    if (type == 51 && (!source || !*source))
-        return ERROR_INSTALL_PACKAGE_INVALID;
-    MIME_MSI_RECORD *record = MimeMsiRecordCreate(0);
-    if (!record)
-        return ERROR_NOT_ENOUGH_MEMORY;
-    error = MimeMsiFieldString(&record->Fields[0], target);
-    PWSTR formatted = nullptr;
-    DWORD length;
-    if (!error)
-        error = MimeMsiFormatRecord(package, record, &formatted, &length);
-    record->Object.Destroy(&record->Object);
-    if (!error && type == 51)
-        error = MimeMsiSetProperty(package, source, formatted);
-    if (!error && type == 19) {
-        *message = formatted;
-        return ERROR_INSTALL_FAILURE;
-    }
-    MimeMsiFree(formatted);
-    return error;
+    MsiCloseHandle(view);
 }
 
 static UINT action_start(MSIHANDLE handle, PCWSTR action)
@@ -56,9 +37,15 @@ static UINT action_start(MSIHANDLE handle, PCWSTR action)
     MSIHANDLE record = MsiCreateRecord(3);
     if (!record)
         return ERROR_NOT_ENOUGH_MEMORY;
+    PWSTR description, template;
+    action_text(handle, action, &description, &template);
     UINT error = MsiRecordSetStringW(record, 1, action);
     if (!error)
-        error = MsiRecordSetStringW(record, 2, action);
+        error = MsiRecordSetStringW(record, 2, description ? description : action);
+    if (!error && template)
+        error = MsiRecordSetStringW(record, 3, template);
+    MimeMsiFree(description);
+    MimeMsiFree(template);
     if (!error) {
         int response = MsiProcessMessage(handle, INSTALLMESSAGE_ACTIONSTART, record);
         if (response == 2)
@@ -72,6 +59,7 @@ static UINT action_start(MSIHANDLE handle, PCWSTR action)
 
 UINT WINAPI MsiDoActionW(MSIHANDLE handle, LPCWSTR action)
 {
+    MIME_REMOTE(PROXY_DoActionW, UINT, MIME_ARG(handle), MIME_ARG(action));
     if (!action || !*action)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockExclusive(&MimeMsiLock);
@@ -83,11 +71,53 @@ UINT WINAPI MsiDoActionW(MSIHANDLE handle, LPCWSTR action)
         return ERROR_INVALID_HANDLE;
     UINT error = action_start(handle, action);
     PWSTR message = nullptr;
+    MIME_MSI_CA_ROW row = {};
+    BOOL custom = FALSE;
+    BOOL finalize = !wcscmp(action, L"InstallFinalize");
     AcquireSRWLockExclusive(&MimeMsiLock);
     if (!error) {
         error = MimeMsiStandardAction(package, action);
         if (error == UINT32_MAX)
-            error = custom_action(package, action, &message);
+            error = MimeMsiExtraAction(package, action);
+        if (error == UINT32_MAX) {
+            error = MimeMsiCustomActionLookup(package, action, &row);
+            custom = !error;
+        }
+    }
+    ReleaseSRWLockExclusive(&MimeMsiLock);
+    if (error == MIME_MSI_UNLOCKED_PENDING)
+        error = MimeMsiRunUnlocked(handle, package, action);
+    else if (error == MIME_MSI_SCRIPT_PENDING) {
+        /* the script runs without the lock, its actions call the installer. */
+        UINT script_error = MimeMsiRunScript(handle, package);
+        if (script_error) {
+            MimeMsiRunRollback(package);
+            AcquireSRWLockExclusive(&MimeMsiLock);
+            UINT rollback = MimeMsiFinishTransaction(package, FALSE);
+            if (rollback)
+                DbgPrint("msi: script rollback failed with error %u\n", rollback);
+            MimeMsiClearScript(package);
+            ReleaseSRWLockExclusive(&MimeMsiLock);
+            error = script_error;
+        } else if (finalize) {
+            AcquireSRWLockExclusive(&MimeMsiLock);
+            error = MimeMsiFinishTransaction(package, TRUE);
+            ReleaseSRWLockExclusive(&MimeMsiLock);
+            if (!error)
+                error = MimeMsiRunCommit(package);
+            AcquireSRWLockExclusive(&MimeMsiLock);
+            MimeMsiClearScript(package);
+            ReleaseSRWLockExclusive(&MimeMsiLock);
+        } else
+            error = ERROR_SUCCESS;
+    } else if (custom) {
+        error = MimeMsiRunCustomAction(handle, package, &row, &message);
+        MimeMsiCustomActionFree(&row);
+    }
+    AcquireSRWLockExclusive(&MimeMsiLock);
+    if (!message && error && package->LaunchMessage) {
+        message = package->LaunchMessage;
+        package->LaunchMessage = nullptr;
     }
     MimeMsiRelease(&package->Object);
     ReleaseSRWLockExclusive(&MimeMsiLock);
@@ -161,10 +191,17 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
         }
     }
     ReleaseSRWLockExclusive(&MimeMsiLock);
+    BOOL ended = FALSE;
     if (!error) {
-        for (ULONG sequence = 1; sequence < 32768 && !error; sequence++)
-            for (ULONG row = heads[sequence]; row != UINT32_MAX && !error; row = next[row])
+        for (ULONG sequence = 1; sequence < 32768 && !error && !ended; sequence++)
+            for (ULONG row = heads[sequence]; row != UINT32_MAX && !error && !ended; row = next[row]) {
                 error = run_sequence_row(handle, package, table, row);
+                /* an action can end the sequence early and well. */
+                if (error == ERROR_NO_MORE_ITEMS) {
+                    error = ERROR_SUCCESS;
+                    ended = TRUE;
+                }
+            }
         int exit_sequence = error == ERROR_INSTALL_USEREXIT ? -2 : error ? -3 : -1;
         for (ULONG row = 0; row < table->Rows; row++) {
             if ((int)MimeMsiCell(table, row, 2) - 0x8000 == exit_sequence) {
@@ -179,7 +216,11 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
     MimeMsiFree(heads);
     AcquireSRWLockExclusive(&MimeMsiLock);
     if (error && package->TransactionActive) {
+        ReleaseSRWLockExclusive(&MimeMsiLock);
+        MimeMsiRunRollback(package);
+        AcquireSRWLockExclusive(&MimeMsiLock);
         UINT rollback = MimeMsiFinishTransaction(package, FALSE);
+        MimeMsiClearScript(package);
         if (rollback)
             DbgPrint("msi: sequence rollback failed with error %u\n", rollback);
     }

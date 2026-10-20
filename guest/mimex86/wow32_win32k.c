@@ -40,10 +40,10 @@ static OBJECT_ATTRIBUTES oa32(ULONG value, UNICODE_STRING *name)
     return out;
 }
 
+/* the x86 MSG ends with the point: 28 bytes, a word more would be written over what follows it. */
 typedef struct MSG32 {
     ULONG Hwnd, Message, Wparam, Lparam, Time;
     POINT Point;
-    ULONG Private;
 } MSG32;
 
 typedef struct PAINT32 {
@@ -56,7 +56,7 @@ typedef struct PAINT32 {
 
 static MSG message64(const MSG32 *m)
 {
-    return (MSG){ptr32(m->Hwnd), m->Message, m->Wparam, (LONG_PTR)(ULONG_PTR)m->Lparam, m->Time, m->Point, m->Private};
+    return (MSG){ptr32(m->Hwnd), m->Message, m->Wparam, (LONG_PTR)(ULONG_PTR)m->Lparam, m->Time, m->Point, 0};
 }
 
 /* a counted string's length back into the x86 one the call filled. */
@@ -631,7 +631,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         ULONG result = (ULONG)MxCallService(number, v);
         if (result != (ULONG)-1 && (result || number == MIME_SVC_NtUserGetMessage))
             *(MSG32 *)ptr32(a[0]) = (MSG32){(ULONG)(ULONG_PTR)msg.hwnd, msg.message, (ULONG)msg.wParam,
-                                          (ULONG)msg.lParam, msg.time, msg.pt, msg.lPrivate};
+                                          (ULONG)msg.lParam, msg.time, msg.pt};
         return result;
     }
     case MIME_SVC_NtUserDispatchMessage:

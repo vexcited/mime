@@ -9,7 +9,6 @@
 #define SA_PREFIX 16
 #define FADF_NOT_OWNED (FADF_AUTO | FADF_STATIC | FADF_EMBEDDED)
 
-
 static ULONG element_size(VARTYPE vt)
 {
     switch (vt) {

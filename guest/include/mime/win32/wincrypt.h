@@ -1153,6 +1153,16 @@ WINCRYPT32API void WINAPI CryptMemFree(LPVOID pv);
 
 WINCRYPT32API PCCERT_CONTEXT WINAPI CertCreateCertificateContext(DWORD dwCertEncodingType, const BYTE *pbCertEncoded,
                                                                  DWORD cbCertEncoded);
+WINCRYPT32API PCCERT_CONTEXT WINAPI CertCreateSelfSignCertificate(ULONG_PTR hCryptProvOrNCryptKey,
+                                                                  PCERT_NAME_BLOB pSubjectIssuerBlob, DWORD dwFlags,
+                                                                  void *pKeyProvInfo, void *pSignatureAlgorithm,
+                                                                  const SYSTEMTIME *pStartTime, const SYSTEMTIME *pEndTime,
+                                                                  void *pExtensions);
+WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfo(HCRYPTPROV hCryptProv, DWORD dwCertEncodingType,
+                                                  PCERT_PUBLIC_KEY_INFO pInfo, HCRYPTKEY *phKey);
+WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfoEx(HCRYPTPROV hCryptProv, DWORD dwCertEncodingType,
+                                                    PCERT_PUBLIC_KEY_INFO pInfo, ALG_ID aiKeyAlg, DWORD dwFlags,
+                                                    void *pvAuxInfo, HCRYPTKEY *phKey);
 WINCRYPT32API PCCERT_CONTEXT WINAPI CertDuplicateCertificateContext(PCCERT_CONTEXT pCertContext);
 WINCRYPT32API BOOL WINAPI CertFreeCertificateContext(PCCERT_CONTEXT pCertContext);
 WINCRYPT32API BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD dwPropId, void *pvData,

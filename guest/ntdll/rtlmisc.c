@@ -272,3 +272,29 @@ NTDLL_EXPORT LONG NTAPI RtlUnhandledExceptionFilter(PEXCEPTION_POINTERS pointers
 {
     return RtlUnhandledExceptionFilter2(pointers, 0);
 }
+
+/* ------------------------------------------------------------------ the transaction of a thread */
+
+/*
+ * the transaction handle that the file functions of the thread use, kept in the thread's block. -1 is refused, any
+ * other value is stored without a check and the answer is TRUE, as ntdll build 26300 does. Mime has no transaction
+ * manager, so nothing reads the handle but the transacted functions of kernel32.
+ */
+NTDLL_EXPORT PVOID NTAPI RtlGetCurrentTransaction(void)
+{
+    return NtCurrentTeb()->CurrentTransactionHandle;
+}
+
+NTDLL_EXPORT LOGICAL NTAPI RtlSetCurrentTransaction(PVOID transaction)
+{
+    if (transaction == (PVOID)(LONG_PTR)-1)
+        return FALSE;
+    NtCurrentTeb()->CurrentTransactionHandle = transaction;
+    return TRUE;
+}
+
+/* a processor that runs arm64 code in an x64 process is never this one. */
+NTDLL_EXPORT BOOLEAN NTAPI RtlIsEcCode(ULONG_PTR address)
+{
+    return FALSE;
+}

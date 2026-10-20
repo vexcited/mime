@@ -183,6 +183,12 @@ void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta)
     ExReleaseFastMutex(&g_lock);
 }
 
+/* whether any file has a section or a window in use. */
+BOOLEAN FsWbAnyMapped(void)
+{
+    return __atomic_load_n(&g_mapped_total, __ATOMIC_SEQ_CST) != 0;
+}
+
 /* whether a section or a window of the file is in use. */
 BOOLEAN FsWbIsMapped(ULONG volume, ULONG64 file_id)
 {

@@ -338,3 +338,15 @@ EXPORTS
     LPSAFEARRAY_Unmarshal @297
     DllGetClassObject @302
     DllCanUnloadNow @301
+    OleLoadPictureEx @401
+    OleLoadPictureFileEx @402
+    OleIconToCursor @415
+    OleCreatePropertyFrameIndirect @416
+    OleCreatePropertyFrame @417
+    OleLoadPicture @418
+    OleCreatePictureIndirect @419
+    OleCreateFontIndirect @420
+    OleTranslateColor @421
+    OleLoadPictureFile @422
+    OleSavePictureFile @423
+    OleLoadPicturePath @424

@@ -81,7 +81,18 @@ static int rank(const DxgiGpu *gpu)
 static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
 {
     DxgiVulkan *vk = &g_vulkan;
-    HMODULE module = LoadLibraryW(L"vulkan-1.dll");
+    /*
+     * mime's own vulkan-1.dll, from the system directory: programs that bring a loader of their own (Chromium's
+     * embedded browsers do, with an empty list of drivers) have it in their directory, which a name alone would find
+     * first, and then no adapter would be found.
+     */
+    WCHAR path[MAX_PATH + 16];
+    UINT length = GetSystemDirectoryW(path, MAX_PATH);
+    HMODULE module = nullptr;
+    if (length && length < MAX_PATH) {
+        lstrcpyW(path + length, L"\\vulkan-1.dll");
+        module = LoadLibraryW(path);
+    }
     if (!module)
         return TRUE;
     vk->get_instance_proc = (PFN_vkGetInstanceProcAddr)(void *)GetProcAddress(module, "vkGetInstanceProcAddr");

@@ -24,6 +24,11 @@ void MimeMsiCloseLog(void)
     log_lines = 0;
 }
 
+BOOL MimeMsiLogEnabled(void)
+{
+    return log_file != nullptr;
+}
+
 INSTALLUILEVEL WINAPI MsiSetInternalUI(INSTALLUILEVEL level, HWND *window)
 {
     if (((UINT)level & 0x1f) > INSTALLUILEVEL_FULL || ((UINT)level & ~0x3ffu))
@@ -160,6 +165,7 @@ static PCWSTR message_template(MIME_MSI_PACKAGE *package, UINT kind, const MIME_
 
 int WINAPI MsiProcessMessage(MSIHANDLE install, INSTALLMESSAGE type, MSIHANDLE handle)
 {
+    MIME_REMOTE(PROXY_ProcessMessage, int, MIME_ARG(install), MIME_ARG(type), MIME_ARG(handle));
     UINT kind = (UINT)type >> 24;
     if (kind > 27 || (kind > 15 && kind < 25))
         return -1;

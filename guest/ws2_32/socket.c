@@ -1083,6 +1083,13 @@ static int WSAAPI wsa_send_msg(SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD sent
                     overlapped, routine);
 }
 
+/* the entry the extension pointer of WSAIoctl gives, as ws2_32 exports it too. */
+int WSAAPI WSASendMsg(SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD sent, LPWSAOVERLAPPED overlapped,
+                      LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
+{
+    return wsa_send_msg(s, msg, flags, sent, overlapped, routine);
+}
+
 static PVOID extension(const GUID *id)
 {
     if (!memcmp(id, &guid_accept_ex, sizeof(GUID)))

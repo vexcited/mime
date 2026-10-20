@@ -75,7 +75,10 @@ typedef struct tagTHREADENTRY32 {
     DWORD dwFlags;
 } THREADENTRY32, *LPTHREADENTRY32;
 
-/* the snapshot lives in a section, like windows keeps it, so the handle can be duplicated. */
+/*
+ * the snapshot lives in a section, like windows keeps it, so the handle can be duplicated. A header with the counts and
+ * the positions of the three lists, then the entries of the modules, the processes and the threads one after the other.
+ */
 typedef struct SNAPSHOT {
     ULONG ModuleCount;
     ULONG ProcessCount;
@@ -83,49 +86,295 @@ typedef struct SNAPSHOT {
     ULONG ModulePos;
     ULONG ProcessPos;
     ULONG ThreadPos;
-    MODULEENTRY32W Modules[64];
-    PROCESSENTRY32W Processes[1];
-    THREADENTRY32 Threads[1];
+    ULONG Reserved[2];
 } SNAPSHOT;
 
-static void fill_modules(SNAPSHOT *s, DWORD pid)
+#define SNAPSHOT_MODULES(s) ((MODULEENTRY32W *)((PUCHAR)(s) + sizeof(SNAPSHOT)))
+#define SNAPSHOT_PROCESSES(s) ((PROCESSENTRY32W *)(SNAPSHOT_MODULES(s) + (s)->ModuleCount))
+#define SNAPSHOT_THREADS(s) ((THREADENTRY32 *)(SNAPSHOT_PROCESSES(s) + (s)->ProcessCount))
+
+#define TH32CS_INHERIT 0x80000000u
+#define TH32CS_ALL (TH32CS_SNAPHEAPLIST | TH32CS_SNAPPROCESS | TH32CS_SNAPTHREAD | TH32CS_SNAPMODULE)
+#define MAX_SNAPSHOT_MODULES 4096
+
+/* the modules a snapshot collects before it knows how many there are. */
+typedef struct MODULE_LIST {
+    MODULEENTRY32W *Entries;
+    ULONG Count, Capacity;
+} MODULE_LIST;
+
+static MODULEENTRY32W *add_module(MODULE_LIST *list, DWORD pid)
+{
+    if (list->Count >= MAX_SNAPSHOT_MODULES)
+        return nullptr;
+    if (list->Count == list->Capacity) {
+        ULONG capacity = list->Capacity ? list->Capacity * 2 : 64;
+        MODULEENTRY32W *grown = KbAlloc(capacity * sizeof(*grown));
+        if (!grown)
+            return nullptr;
+        if (list->Entries) {
+            memcpy(grown, list->Entries, list->Count * sizeof(*grown));
+            KbFree(list->Entries);
+        }
+        list->Entries = grown;
+        list->Capacity = capacity;
+    }
+    MODULEENTRY32W *m = &list->Entries[list->Count++];
+    memset(m, 0, sizeof(*m));
+    m->dwSize = sizeof(*m);
+    m->th32ModuleID = 1;
+    m->th32ProcessID = pid;
+    m->GlblcntUsage = 0xFFFF;
+    m->ProccntUsage = 0xFFFF;
+    return m;
+}
+
+static void copy_name(WCHAR *out, SIZE_T chars_max, PCWSTR in, SIZE_T bytes)
+{
+    SIZE_T n = bytes / sizeof(WCHAR);
+    if (n >= chars_max)
+        n = chars_max - 1;
+    memcpy(out, in, n * sizeof(WCHAR));
+    out[n] = 0;
+}
+
+/* the modules of this process, from the loader's list. */
+static void own_modules(MODULE_LIST *list, DWORD pid)
 {
     PPEB_LDR_DATA ldr = KbPeb()->Ldr;
     RtlEnterCriticalSection(KbPeb()->LoaderLock);
-    for (PLIST_ENTRY l = ldr->InLoadOrderModuleList.Flink; l != &ldr->InLoadOrderModuleList && s->ModuleCount < 64;
-         l = l->Flink) {
+    for (PLIST_ENTRY l = ldr->InLoadOrderModuleList.Flink; l != &ldr->InLoadOrderModuleList; l = l->Flink) {
         PLDR_DATA_TABLE_ENTRY e = CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-        MODULEENTRY32W *m = &s->Modules[s->ModuleCount++];
-        m->dwSize = sizeof(*m);
-        m->th32ModuleID = 1;
-        m->th32ProcessID = pid;
-        m->GlblcntUsage = 0xFFFF;
-        m->ProccntUsage = 0xFFFF;
+        MODULEENTRY32W *m = add_module(list, pid);
+        if (!m)
+            break;
         m->modBaseAddr = e->DllBase;
         m->modBaseSize = e->SizeOfImage;
         m->hModule = e->DllBase;
-        SIZE_T n = e->BaseDllName.Length / sizeof(WCHAR);
-        if (n > MAX_MODULE_NAME32)
-            n = MAX_MODULE_NAME32;
-        memcpy(m->szModule, e->BaseDllName.Buffer, n * sizeof(WCHAR));
-        n = e->FullDllName.Length / sizeof(WCHAR);
-        if (n >= MAX_PATH)
-            n = MAX_PATH - 1;
-        memcpy(m->szExePath, e->FullDllName.Buffer, n * sizeof(WCHAR));
+        copy_name(m->szModule, MAX_MODULE_NAME32 + 1, e->BaseDllName.Buffer, e->BaseDllName.Length);
+        copy_name(m->szExePath, MAX_PATH, e->FullDllName.Buffer, e->FullDllName.Length);
     }
     RtlLeaveCriticalSection(KbPeb()->LoaderLock);
+}
+
+static BOOL read_memory(HANDLE process, ULONG64 address, PVOID out, SIZE_T size)
+{
+    SIZE_T done = 0;
+    if ((ULONG64)(ULONG_PTR)address != address)
+        return FALSE;
+    return NT_SUCCESS(NtReadVirtualMemory(process, (PVOID)(ULONG_PTR)address, out, size, &done)) && done == size;
+}
+
+/* a string of the other process's loader entry, read as far as the entry says it goes. */
+static void read_name(HANDLE process, ULONG64 buffer, ULONG bytes, WCHAR *out, SIZE_T chars_max)
+{
+    SIZE_T n = bytes / sizeof(WCHAR);
+    out[0] = 0;
+    if (!buffer || !n)
+        return;
+    if (n >= chars_max)
+        n = chars_max - 1;
+    if (!read_memory(process, buffer, out, n * sizeof(WCHAR)))
+        n = 0;
+    out[n] = 0;
+}
+
+/* the walk of a loader list of another process: its entries by their layout, which is the one of a process of the same width or the 32-bit one of a wow64 process. */
+typedef struct LDR_LAYOUT {
+    ULONG PointerSize;
+    ULONG LdrOffset;       /* in the peb. */
+    ULONG ListOffset;      /* of the load order list in the loader data. */
+    ULONG BaseOffset;      /* in an entry, from its start. */
+    ULONG SizeOffset;
+    ULONG FullNameOffset;  /* the unicode strings: length and maximum length, then the buffer after the padding. */
+    ULONG BaseNameOffset;
+    ULONG StringBufferOffset;
+} LDR_LAYOUT;
+
+static BOOL read_pointer(HANDLE process, ULONG64 address, ULONG size, ULONG64 *value)
+{
+    *value = 0;
+    return read_memory(process, address, value, size);
+}
+
+static BOOL other_modules(HANDLE process, ULONG64 peb, const LDR_LAYOUT *layout, MODULE_LIST *list, DWORD pid)
+{
+    ULONG64 ldr;
+    if (!read_pointer(process, peb + layout->LdrOffset, layout->PointerSize, &ldr) || !ldr)
+        return FALSE;
+    ULONG64 head = ldr + layout->ListOffset, link;
+    if (!read_pointer(process, head, layout->PointerSize, &link))
+        return FALSE;
+    for (ULONG guard = 0; link && link != head && guard < MAX_SNAPSHOT_MODULES; guard++) {
+        UCHAR entry[0x80];
+        if (!read_memory(process, link, entry, sizeof(entry)))
+            return FALSE;
+        MODULEENTRY32W *m = add_module(list, pid);
+        if (!m)
+            return TRUE;
+        ULONG64 base = 0, name_buffer;
+        ULONG size_of_image = 0;
+        memcpy(&base, entry + layout->BaseOffset, layout->PointerSize);
+        memcpy(&size_of_image, entry + layout->SizeOffset, 4);
+        m->modBaseAddr = (BYTE *)(ULONG_PTR)base;
+        m->modBaseSize = size_of_image;
+        m->hModule = (HMODULE)(ULONG_PTR)base;
+        name_buffer = 0;
+        memcpy(&name_buffer, entry + layout->BaseNameOffset + layout->StringBufferOffset, layout->PointerSize);
+        read_name(process, name_buffer, *(USHORT *)(entry + layout->BaseNameOffset), m->szModule, MAX_MODULE_NAME32 + 1);
+        name_buffer = 0;
+        memcpy(&name_buffer, entry + layout->FullNameOffset + layout->StringBufferOffset, layout->PointerSize);
+        read_name(process, name_buffer, *(USHORT *)(entry + layout->FullNameOffset), m->szExePath, MAX_PATH);
+        if (!read_pointer(process, link, layout->PointerSize, &link))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/*
+ * the modules of another process, read from its memory. The caller's width decides what is seen, as on windows: a
+ * 64-bit caller lists the 64-bit modules of any process with the module flag, and the 32-bit ones of a wow64 process
+ * with the 32-bit module flag; a 32-bit caller lists only the modules of a 32-bit process.
+ */
+static BOOL modules_of(DWORD pid, DWORD flags, MODULE_LIST *list)
+{
+    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (!process)
+        return FALSE;
+    BOOL ok = TRUE;
+    PROCESS_BASIC_INFORMATION basic;
+    ULONG_PTR peb32 = 0;
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessBasicInformation, &basic, sizeof(basic), nullptr);
+    if (NT_SUCCESS(status))
+        NtQueryInformationProcess(process, ProcessWow64Information, &peb32, sizeof(peb32), nullptr);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
+        ok = FALSE;
+    }
+#ifdef _WIN64
+    /* the 64-bit layout of a loader entry. */
+    static const LDR_LAYOUT native = {8, offsetof(PEB, Ldr), offsetof(PEB_LDR_DATA, InLoadOrderModuleList),
+                                      offsetof(LDR_DATA_TABLE_ENTRY, DllBase), offsetof(LDR_DATA_TABLE_ENTRY, SizeOfImage),
+                                      offsetof(LDR_DATA_TABLE_ENTRY, FullDllName), offsetof(LDR_DATA_TABLE_ENTRY, BaseDllName),
+                                      8};
+    /* the 32-bit one: the links, the base at 0x18, the size at 0x20, the names at 0x24 and 0x2C with the buffer 4 bytes in. */
+    static const LDR_LAYOUT wow = {4, 0x0C, 0x0C, 0x18, 0x20, 0x24, 0x2C, 4};
+    if (ok && (flags & TH32CS_SNAPMODULE))
+        ok = other_modules(process, (ULONG64)(ULONG_PTR)basic.PebBaseAddress, &native, list, pid);
+    if (ok && (flags & TH32CS_SNAPMODULE32) && peb32)
+        ok = other_modules(process, peb32, &wow, list, pid);
+#else
+    static const LDR_LAYOUT native = {4, offsetof(PEB, Ldr), offsetof(PEB_LDR_DATA, InLoadOrderModuleList),
+                                      offsetof(LDR_DATA_TABLE_ENTRY, DllBase), offsetof(LDR_DATA_TABLE_ENTRY, SizeOfImage),
+                                      offsetof(LDR_DATA_TABLE_ENTRY, FullDllName), offsetof(LDR_DATA_TABLE_ENTRY, BaseDllName),
+                                      4};
+    /* a 32-bit caller reads only the memory of a 32-bit process: the peb of a 64-bit one is out of its reach. */
+    BOOL wow_target = FALSE;
+    if (ok && (!IsWow64Process(process, &wow_target) || !wow_target)) {
+        KbSetError(ERROR_PARTIAL_COPY);
+        ok = FALSE;
+    }
+    if (ok)
+        ok = other_modules(process, peb32 ? peb32 : (ULONG64)(ULONG_PTR)basic.PebBaseAddress, &native, list, pid);
+#endif
+    if (!ok && list->Count == 0 && NT_SUCCESS(status))
+        KbSetError(ERROR_PARTIAL_COPY);
+    NtClose(process);
+    return ok;
+}
+
+/* what the process list of the system says. */
+static PSYSTEM_PROCESS_INFORMATION process_list(PVOID *memory)
+{
+    SIZE_T size = 0x20000;
+    for (int round = 0; round < 8; round++, size *= 2) {
+        PVOID buffer = KbAlloc(size);
+        if (!buffer)
+            return nullptr;
+        ULONG need = 0;
+        NTSTATUS status = NtQuerySystemInformation(SystemProcessInformation, buffer, (ULONG)size, &need);
+        if (NT_SUCCESS(status)) {
+            *memory = buffer;
+            return buffer;
+        }
+        KbFree(buffer);
+        if (status != STATUS_INFO_LENGTH_MISMATCH)
+            break;
+        if (need > size)
+            size = need;
+    }
+    return nullptr;
 }
 
 WINBASEAPI HANDLE WINAPI CreateToolhelp32Snapshot(DWORD flags, DWORD pid)
 {
     DWORD self = GetCurrentProcessId();
+    if (flags & ~(TH32CS_INHERIT | TH32CS_ALL | TH32CS_SNAPMODULE32)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    BOOL module_list = (flags & (TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32)) != 0;
     if (!pid)
         pid = self;
+    MODULE_LIST modules = {};
+    PVOID memory = nullptr;
+    PSYSTEM_PROCESS_INFORMATION info = nullptr;
+    ULONG processes = 0, threads = 0;
+    if (flags & (TH32CS_SNAPPROCESS | TH32CS_SNAPTHREAD) || module_list) {
+        info = process_list(&memory);
+        if (!info && (flags & (TH32CS_SNAPPROCESS | TH32CS_SNAPTHREAD))) {
+            KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return INVALID_HANDLE_VALUE;
+        }
+    }
+    if (info) {
+        for (PSYSTEM_PROCESS_INFORMATION p = info;; p = (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)p + p->NextEntryOffset)) {
+            processes++;
+            threads += p->NumberOfThreads;
+            if (!p->NextEntryOffset)
+                break;
+        }
+    }
+    if (module_list) {
+        BOOL found = pid == self;
+        for (PSYSTEM_PROCESS_INFORMATION p = info; p && !found;
+             p = p->NextEntryOffset ? (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)p + p->NextEntryOffset) : nullptr)
+            found = (DWORD)(ULONG_PTR)p->UniqueProcessId == pid;
+        if (!found) {
+            KbFree(memory);
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return INVALID_HANDLE_VALUE;
+        }
+        BOOL ok = TRUE;
+        if (pid == self) {
+#ifdef _WIN64
+            if (flags & TH32CS_SNAPMODULE)
+                own_modules(&modules, pid);
+#else
+            own_modules(&modules, pid);
+#endif
+        } else {
+            ok = modules_of(pid, flags, &modules);
+        }
+        if (!ok && modules.Count == 0) {
+            KbFree(modules.Entries);
+            KbFree(memory);
+            return INVALID_HANDLE_VALUE;
+        }
+    }
+    if (!(flags & TH32CS_SNAPPROCESS))
+        processes = 0;
+    if (!(flags & TH32CS_SNAPTHREAD))
+        threads = 0;
+    SIZE_T total = sizeof(SNAPSHOT) + modules.Count * sizeof(MODULEENTRY32W) + processes * sizeof(PROCESSENTRY32W) +
+                   threads * sizeof(THREADENTRY32);
     LARGE_INTEGER size;
-    size.QuadPart = sizeof(SNAPSHOT);
+    size.QuadPart = (LONGLONG)total;
     HANDLE section;
     NTSTATUS status = NtCreateSection(&section, SECTION_ALL_ACCESS, nullptr, &size, PAGE_READWRITE, SEC_COMMIT, nullptr);
     if (!NT_SUCCESS(status)) {
+        KbFree(modules.Entries);
+        KbFree(memory);
         KbSetStatus(status);
         return INVALID_HANDLE_VALUE;
     }
@@ -134,37 +383,49 @@ WINBASEAPI HANDLE WINAPI CreateToolhelp32Snapshot(DWORD flags, DWORD pid)
     status = NtMapViewOfSection(section, NtCurrentProcess(), &view, 0, 0, nullptr, &view_size, ViewShare, 0, PAGE_READWRITE);
     if (!NT_SUCCESS(status)) {
         NtClose(section);
+        KbFree(modules.Entries);
+        KbFree(memory);
         KbSetStatus(status);
         return INVALID_HANDLE_VALUE;
     }
     SNAPSHOT *s = view;
-    /* only the calling process is visible: other processes cannot be enumerated yet. */
-    if ((flags & (TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32)) && pid == self)
-        fill_modules(s, pid);
-    if (flags & TH32CS_SNAPPROCESS) {
-        PROCESSENTRY32W *p = &s->Processes[0];
-        p->dwSize = sizeof(*p);
-        p->th32ProcessID = self;
-        p->cntThreads = 1;
-        p->pcPriClassBase = 8;
-        PCWSTR image = KbParams()->ImagePathName.Buffer;
-        PCWSTR name = image ? wcsrchr(image, '\\') : nullptr;
-        name = name ? name + 1 : image ? image : L"";
-        SIZE_T n = wcslen(name);
-        if (n >= MAX_PATH)
-            n = MAX_PATH - 1;
-        memcpy(p->szExeFile, name, n * sizeof(WCHAR));
-        s->ProcessCount = 1;
-    }
-    if (flags & TH32CS_SNAPTHREAD) {
-        THREADENTRY32 *t = &s->Threads[0];
-        t->dwSize = sizeof(*t);
-        t->th32ThreadID = GetCurrentThreadId();
-        t->th32OwnerProcessID = self;
-        t->tpBasePri = 8;
-        s->ThreadCount = 1;
+    s->ModuleCount = modules.Count;
+    s->ProcessCount = processes;
+    s->ThreadCount = threads;
+    if (modules.Count)
+        memcpy(SNAPSHOT_MODULES(s), modules.Entries, modules.Count * sizeof(MODULEENTRY32W));
+    PROCESSENTRY32W *out_process = SNAPSHOT_PROCESSES(s);
+    THREADENTRY32 *out_thread = SNAPSHOT_THREADS(s);
+    for (PSYSTEM_PROCESS_INFORMATION p = info; p;
+         p = p->NextEntryOffset ? (PSYSTEM_PROCESS_INFORMATION)((PUCHAR)p + p->NextEntryOffset) : nullptr) {
+        if (processes) {
+            memset(out_process, 0, sizeof(*out_process));
+            out_process->dwSize = sizeof(*out_process);
+            out_process->th32ProcessID = (DWORD)(ULONG_PTR)p->UniqueProcessId;
+            out_process->cntThreads = p->NumberOfThreads;
+            out_process->th32ParentProcessID = (DWORD)(ULONG_PTR)p->InheritedFromUniqueProcessId;
+            out_process->pcPriClassBase = p->BasePriority;
+            if (p->ImageName.Buffer)
+                copy_name(out_process->szExeFile, MAX_PATH, p->ImageName.Buffer, p->ImageName.Length);
+            out_process++;
+        }
+        if (threads) {
+            PSYSTEM_THREAD_INFORMATION t = (PSYSTEM_THREAD_INFORMATION)(p + 1);
+            for (ULONG i = 0; i < p->NumberOfThreads; i++, t++) {
+                out_thread->dwSize = sizeof(*out_thread);
+                out_thread->cntUsage = 0;
+                out_thread->th32ThreadID = (DWORD)(ULONG_PTR)t->ClientId.UniqueThread;
+                out_thread->th32OwnerProcessID = (DWORD)(ULONG_PTR)t->ClientId.UniqueProcess;
+                out_thread->tpBasePri = t->BasePriority;
+                out_thread->tpDeltaPri = 0;
+                out_thread->dwFlags = 0;
+                out_thread++;
+            }
+        }
     }
     NtUnmapViewOfSection(NtCurrentProcess(), view);
+    KbFree(modules.Entries);
+    KbFree(memory);
     return section;
 }
 
@@ -202,7 +463,7 @@ static BOOL next_module(HANDLE handle, LPMODULEENTRY32W entry, BOOL first)
         s->ModulePos = 0;
     BOOL ok = s->ModulePos < s->ModuleCount;
     if (ok)
-        *entry = s->Modules[s->ModulePos++];
+        *entry = SNAPSHOT_MODULES(s)[s->ModulePos++];
     else
         KbSetError(ERROR_NO_MORE_FILES);
     unmap_snapshot(s);
@@ -264,7 +525,7 @@ static BOOL next_process(HANDLE handle, LPPROCESSENTRY32W entry, BOOL first)
         s->ProcessPos = 0;
     BOOL ok = s->ProcessPos < s->ProcessCount;
     if (ok)
-        *entry = s->Processes[s->ProcessPos++];
+        *entry = SNAPSHOT_PROCESSES(s)[s->ProcessPos++];
     else
         KbSetError(ERROR_NO_MORE_FILES);
     unmap_snapshot(s);
@@ -320,7 +581,7 @@ static BOOL next_thread(HANDLE handle, LPTHREADENTRY32 entry, BOOL first)
         s->ThreadPos = 0;
     BOOL ok = s->ThreadPos < s->ThreadCount;
     if (ok)
-        *entry = s->Threads[s->ThreadPos++];
+        *entry = SNAPSHOT_THREADS(s)[s->ThreadPos++];
     else
         KbSetError(ERROR_NO_MORE_FILES);
     unmap_snapshot(s);

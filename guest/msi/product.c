@@ -119,6 +119,7 @@ done:
 
 UINT WINAPI MsiEnumRelatedProductsW(LPCWSTR upgrade, DWORD reserved, DWORD index, LPWSTR product)
 {
+    MIME_REMOTE(PROXY_EnumRelatedProductsW, UINT, MIME_ARG(upgrade), MIME_ARG(reserved), MIME_ARG(index), MIME_ARG(product));
     WCHAR packed[33];
     if (reserved || !product || !MimeMsiPackGuid(upgrade, packed))
         return ERROR_INVALID_PARAMETER;

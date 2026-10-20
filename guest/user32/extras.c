@@ -202,3 +202,61 @@ WINUSERAPI UINT WINAPI UserRealizePalette(HDC dc)
 {
     return 0;
 }
+
+/* ------------------------------------------------------------------ small functions */
+
+/* the type that older programs passed is not used. */
+WINUSERAPI void WINAPI SetLastErrorEx(DWORD error, DWORD type)
+{
+    SetLastError(error);
+}
+
+/* turns the character to the wide one of the code page of the layout's locale, then asks as the wide form does. */
+WINUSERAPI SHORT WINAPI VkKeyScanExA(CHAR ch, HKL layout)
+{
+    UINT page = 0;
+    WCHAR wide = 0;
+    if (!GetLocaleInfoW(LOWORD((ULONG_PTR)layout), LOCALE_IDEFAULTANSICODEPAGE | LOCALE_RETURN_NUMBER, (LPWSTR)&page, 2))
+        return -1;
+    if (IsDBCSLeadByteEx(page, (BYTE)ch) || MultiByteToWideChar(page, 0, &ch, 1, &wide, 1) == 0)
+        return -1;
+    return VkKeyScanExW(wide, layout);
+}
+
+/* ------------------------------------------------------------------ touch injection */
+
+#define TOUCH_FEEDBACK_DEFAULT_ 1
+#define TOUCH_FEEDBACK_NONE_ 3
+#define TOUCH_MAX_CONTACTS 256
+
+static volatile LONG g_touch_contacts;
+
+/*
+ * the contacts the process may inject at once, 1 to 256, and how the feedback shows, default, indirect or none; read
+ * from the documentation, the exact checks are a guess.
+ */
+WINUSERAPI BOOL WINAPI InitializeTouchInjection(UINT32 max_contacts, DWORD mode)
+{
+    if (max_contacts < 1 || max_contacts > TOUCH_MAX_CONTACTS || mode < TOUCH_FEEDBACK_DEFAULT_ ||
+        mode > TOUCH_FEEDBACK_NONE_) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    InterlockedExchange(&g_touch_contacts, (LONG)max_contacts);
+    return TRUE;
+}
+
+/*
+ * there is no pointer input stack to deliver a contact to, so an injection that is well formed is refused with
+ * ERROR_NOT_SUPPORTED. One before the initialization, with no contacts, too many or a null array is a bad parameter.
+ */
+WINUSERAPI BOOL WINAPI InjectTouchInput(UINT32 count, const VOID *contacts)
+{
+    UINT32 allowed = (UINT32)g_touch_contacts;
+    if (!allowed || !count || count > allowed || !contacts) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}

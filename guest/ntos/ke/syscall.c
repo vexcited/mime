@@ -158,6 +158,30 @@ static void timeline_path(ULONG64 attributes, char out[32])
     out[n] = 0;
 }
 
+/* the name in an OBJECT_ATTRIBUTES as ascii, whole up to the room there is, for the system call trace. */
+static void trace_name(ULONG64 attributes, char *out, ULONG room)
+{
+    out[0] = 0;
+    ULONG64 attrs[3];
+    if (!attributes || !NT_SUCCESS(KiCopyFromUser(attrs, (PVOID)attributes, sizeof(attrs))) || !attrs[2])
+        return;
+    struct {
+        USHORT Length, Maximum;
+        ULONG Pad;
+        ULONG64 Buffer;
+    } name;
+    if (!NT_SUCCESS(KiCopyFromUser(&name, (PVOID)attrs[2], sizeof(name))) || !name.Length || !name.Buffer)
+        return;
+    ULONG chars = name.Length / 2, n = chars < room - 1 ? chars : room - 1;
+    for (ULONG i = 0; i < n; i++) {
+        WCHAR c;
+        if (!NT_SUCCESS(KiCopyFromUser(&c, (PVOID)(name.Buffer + i * 2), 2)))
+            break;
+        out[i] = c < 0x80 && c >= 0x20 ? (char)c : '?';
+        out[i + 1] = 0;
+    }
+}
+
 /* records a page fault of the traced image as a call to the pseudo service 0x2000 + kind. */
 void KiTimelineFault(ULONG64 started, ULONG kind, ULONG address_page)
 {
@@ -357,6 +381,23 @@ void KiSystemService(PKTRAP_FRAME frame)
                         (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), args[0],
                         args[1], args[2], args[3], shown > 4 ? args[4] : 0, shown > 5 ? args[5] : 0,
                         shown > 6 ? args[6] : 0, caller);
+            /* the name a call on a file or a key is for, which the arguments only point to. */
+            {
+                const char *name = service_name(table, index);
+                int object = !strcmp(name, "NtCreateFile") || !strcmp(name, "NtOpenFile") || !strcmp(name, "NtOpenKey") ||
+                             !strcmp(name, "NtOpenKeyEx") || !strcmp(name, "NtCreateKey") ||
+                             !strcmp(name, "NtCreateSection") || !strcmp(name, "NtCreateMutant") ||
+                             !strcmp(name, "NtOpenMutant") || !strcmp(name, "NtCreateEvent") || !strcmp(name, "NtOpenEvent");
+                int first = !strcmp(name, "NtQueryAttributesFile") || !strcmp(name, "NtQueryFullAttributesFile") ||
+                            !strcmp(name, "NtDeleteFile");
+                if (object || first) {
+                    char text[200];
+                    trace_name(object ? args[2] : args[0], text, sizeof(text));
+                    if (text[0])
+                        KiLogPrintf("svc %u.%u   name %s", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
+                                    (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, text);
+                }
+            }
             if (KiTraceStackService[0] && !strcmp(service_name(table, index), KiTraceStackService))
                 KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
         }

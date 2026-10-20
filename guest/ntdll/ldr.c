@@ -197,8 +197,11 @@ static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
     return e;
 }
 
+static void release_tls(PLDR_DATA_TABLE_ENTRY e);
+
 static void destroy_entry(PLDR_DATA_TABLE_ENTRY e)
 {
+    release_tls(e);
     RtlReleaseActivationContext(e->EntryPointActivationContext);
     RemoveEntryList(&e->InLoadOrderLinks);
     RemoveEntryList(&e->InMemoryOrderLinks);
@@ -316,6 +319,7 @@ static const API_SET_RULE g_api_sets[] = {
     {L"api-ms-win-core-synch-", L"kernelbase.dll", 0},
     {L"api-ms-win-core-rtlsupport-", L"ntdll.dll", 0},
     {L"api-ms-win-core-", L"kernelbase.dll", 0},
+    {L"api-ms-win-appmodel-runtime-", L"kernelbase.dll", 0},
     {L"api-ms-win-eventing-consumer-", L"sechost.dll", 0},
     {L"api-ms-win-eventing-controller-", L"sechost.dll", 0},
     {L"api-ms-win-eventing-obsolete-", L"sechost.dll", 0},
@@ -780,9 +784,21 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
         return;
     ULONG size;
     IMAGE_TLS_DIRECTORY *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
-    if (!tls || g_tls_count >= RTL_NUMBER_OF(g_tls_modules))
+    if (!tls)
         return;
-    ULONG index = g_tls_count++;
+    /* the place of a library that was unloaded is used again, a program may load and free one many times. */
+    ULONG index = g_tls_count;
+    for (ULONG i = 0; i < g_tls_count; i++) {
+        if (!g_tls_modules[i].Directory) {
+            index = i;
+            break;
+        }
+    }
+    if (index == g_tls_count) {
+        if (g_tls_count >= RTL_NUMBER_OF(g_tls_modules))
+            return;
+        g_tls_count++;
+    }
     g_tls_modules[index].Entry = e;
     g_tls_modules[index].Directory = tls;
     e->TlsIndex = (USHORT)index;
@@ -790,11 +806,27 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
         *(PULONG)tls->AddressOfIndex = index;
 }
 
+/* a library that goes takes its blocks of every thread, and its place in the table is free for the next one. */
+static void release_tls(PLDR_DATA_TABLE_ENTRY e)
+{
+    for (ULONG i = 0; i < g_tls_count; i++) {
+        if (g_tls_modules[i].Entry != e || !g_tls_modules[i].Directory)
+            continue;
+        g_tls_modules[i].Entry = nullptr;
+        g_tls_modules[i].Directory = nullptr;
+        for (PLIST_ENTRY l = g_tls_vectors.Flink; l != &g_tls_vectors; l = l->Flink) {
+            TLS_VECTOR *v = CONTAINING_RECORD(l, TLS_VECTOR, Link);
+            heap_free(v->Slots[i]);
+            v->Slots[i] = nullptr;
+        }
+    }
+}
+
 /* fills the empty slots of a thread with fresh copies of the static tls blocks. */
 static NTSTATUS fill_tls(TLS_VECTOR *v)
 {
     for (ULONG i = 0; i < g_tls_count; i++) {
-        if (v->Slots[i])
+        if (v->Slots[i] || !g_tls_modules[i].Directory)
             continue;
         IMAGE_TLS_DIRECTORY *tls = g_tls_modules[i].Directory;
         SIZE_T raw = (SIZE_T)(tls->EndAddressOfRawData - tls->StartAddressOfRawData);
@@ -895,6 +927,56 @@ static NTSTATUS run_initializers(PVOID reserved)
         e->Flags |= LDRP_PROCESS_ATTACH_CALLED;
     }
     return STATUS_SUCCESS;
+}
+
+/* initializes one module after the modules it imports, the ones a DllMain that loads a library has to wait for. */
+static NTSTATUS init_module(PLDR_DATA_TABLE_ENTRY e, PVOID reserved)
+{
+    if (e->Flags & (LDRP_PROCESS_ATTACH_CALLED | LDRP_ENTRY_PROCESSED))
+        return STATUS_SUCCESS;
+    e->Flags |= LDRP_ENTRY_PROCESSED;
+    ULONG size;
+    IMAGE_IMPORT_DESCRIPTOR *desc = (e->Flags & LDRP_COR_ILONLY) ? nullptr :
+                                    LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_IMPORT, &size);
+    for (; desc && desc->Name; desc++) {
+        PCSTR name = (PCSTR)((PUCHAR)e->DllBase + desc->Name);
+        WCHAR wide[MAX_PATH];
+        SIZE_T n = strlen(name);
+        if (n >= RTL_NUMBER_OF(wide))
+            continue;
+        for (SIZE_T i = 0; i <= n; i++)
+            wide[i] = (UCHAR)name[i];
+        PCWSTR full = resolve_api_set(wide);
+        PCWSTR base_name = full + wcslen(full);
+        while (base_name > full && base_name[-1] != '\\' && base_name[-1] != '/')
+            base_name--;
+        PLDR_DATA_TABLE_ENTRY dependency = find_by_name(base_name);
+        if (dependency && dependency != e) {
+            NTSTATUS status = init_module(dependency, reserved);
+            if (!NT_SUCCESS(status))
+                return status;
+        }
+    }
+    if (!(e->Flags & LDRP_IMAGE_DLL))
+        return STATUS_SUCCESS;
+    if (!call_entry(e, DLL_PROCESS_ATTACH, reserved)) {
+        DbgPrint("ntdll: initialization of %wZ failed\n", &e->BaseDllName);
+        return STATUS_DLL_INIT_FAILED;
+    }
+    e->Flags |= LDRP_PROCESS_ATTACH_CALLED;
+    return STATUS_SUCCESS;
+}
+
+/*
+ * what a load or a lookup added to the initialization list, and what it was asked for: a DllMain that loads a
+ * library or looks up a procedure must not start the modules that wait for the outer load.
+ */
+static NTSTATUS run_new_initializers(PLIST_ENTRY before, PLDR_DATA_TABLE_ENTRY target)
+{
+    NTSTATUS status = target ? init_module(target, nullptr) : STATUS_SUCCESS;
+    for (PLIST_ENTRY l = before->Flink; NT_SUCCESS(status) && l != &g_ldr.InInitializationOrderModuleList; l = l->Flink)
+        status = init_module(CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InInitializationOrderLinks), nullptr);
+    return status;
 }
 
 /* ------------------------------------------------------------------ load */
@@ -1173,10 +1255,11 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrLoadDll(PCWSTR search_path, PULONG flags, PCUNICO
     LOAD_CONTEXT ctx = {FALSE, ((ULONG_PTR)search_path & ~(ULONG_PTR)0xFFFF) ? search_path : nullptr};
     RtlEnterCriticalSection(&LdrpLoaderLock);
     PLDR_DATA_TABLE_ENTRY e;
+    PLIST_ENTRY before = g_ldr.InInitializationOrderModuleList.Blink;
     NTSTATUS status = load_dll(dll, &ctx, &e);
     if (NT_SUCCESS(status)) {
         allocate_process_tls();
-        status = run_initializers(nullptr);
+        status = run_new_initializers(before, e);
         if (NT_SUCCESS(status))
             *base = e->DllBase;
     }
@@ -1312,9 +1395,10 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressEx(PVOID base, PCANSI_STRING n
     NTSTATUS status = STATUS_DLL_NOT_FOUND;
     if (e) {
         LOAD_CONTEXT ctx = {FALSE, nullptr};
+        PLIST_ENTRY before = g_ldr.InInitializationOrderModuleList.Blink;
         status = resolve_export(e, cname, 0, ordinal, address, &ctx, 0);
         if (NT_SUCCESS(status))
-            status = run_initializers(nullptr);
+            status = run_new_initializers(before, nullptr);
     }
     RtlLeaveCriticalSection(&LdrpLoaderLock);
     return status;

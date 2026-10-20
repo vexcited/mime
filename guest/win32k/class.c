@@ -167,6 +167,20 @@ WND_CLASS *ClassFind(W32PROCESS *p, PCWSTR name, ATOM atom, HINSTANCE instance)
     return nullptr;
 }
 
+/*
+ * the procedure a process runs for a class. The built in classes are one set for the whole machine, but their
+ * procedures live in the user32 of each process, a 32 bit one or a 64 bit one, so the process gives its own.
+ */
+WNDPROC ClassProc(const WND_CLASS *c, W32PROCESS *p)
+{
+    if (c->System && !c->Process) {
+        WNDPROC own = W32ClientProc(p, c->Fnid);
+        if (own)
+            return own;
+    }
+    return c->Proc;
+}
+
 static void free_class(WND_CLASS *c)
 {
     RemoveEntryList(&c->Links);
@@ -307,7 +321,7 @@ BOOL NTAPI NtUserGetClassInfoEx(HINSTANCE instance, PUNICODE_STRING user_name, L
     if (c) {
         wc.cbSize = sizeof(wc);
         wc.style = c->Style;
-        wc.lpfnWndProc = c->Proc;
+        wc.lpfnWndProc = ClassProc(c, W32GetProcess());
         wc.cbClsExtra = c->ClassExtra;
         wc.cbWndExtra = c->WindowExtra;
         wc.hInstance = c->Instance;
@@ -391,6 +405,7 @@ static WND_CLASS *private_class(WND *w, W32PROCESS *p)
     copy->Extra = c->ClassExtra ? W32Alloc((SIZE_T)c->ClassExtra) : nullptr;
     if (copy->Extra && c->Extra)
         memcpy(copy->Extra, c->Extra, (SIZE_T)c->ClassExtra);
+    copy->Proc = ClassProc(c, p);
     copy->Process = p;
     copy->Windows = 0;
     InsertTailList(&p->Classes, &copy->Links);

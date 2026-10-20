@@ -70,6 +70,7 @@ LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCC
     for (DWORD i = length; i < certificate_size; i++)
         if (bytes[certificate + i])
             return TRUST_E_SUBJECT_NOT_TRUSTED;
-    return WtVerifySignedData((WT_BYTES){bytes + certificate + 8, length - 8}, bytes, size,
-                              optional + 64, directory, certificate, options, chain);
+    WT_SUBJECT subject = {.image = bytes, .size = size, .checksum = optional + 64, .directory = directory,
+                          .certificate = certificate};
+    return WtVerifySignedData((WT_BYTES){bytes + certificate + 8, length - 8}, &subject, options, chain);
 }

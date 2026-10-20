@@ -5,7 +5,7 @@
 #define MIME_OLEAUT32_PRIVATE_H
 
 #define WINOLEAUTAPI DECLSPEC_EXPORT
-#include <mime/win32/oleauto.h>
+#include <mime/win32/olectl.h>
 #include <rtl.h>
 
 /*
@@ -88,6 +88,14 @@ BOOL AutRoundHalfEven(double x, double *rounded);
 /* calls a function with its arguments in slots. A result in a float or a double register comes back in *fp_value:
  * fp_kind is 0 for none, 1 for a float and 2 for a double (x86 takes it off the x87 stack, x64 reads xmm0). */
 ULONGLONG AutCallEx(void *function, const ULONG_PTR *slots, ULONG count, ULONG fp_kind, ULONGLONG *fp_value);
+
+WINOLEAUTAPI HRESULT WINAPI LoadRegTypeLib(REFGUID id, WORD major, WORD minor, LCID locale, void **result);
+
+/* olefont.c and olepic.c */
+LONGLONG AutRoundDiv64(LONGLONG numerator, LONGLONG denominator);
+HRESULT AutStdOleTypeInfo(UINT index, REFGUID id, ITypeInfo **info);
+HRESULT AutNamesToIds(const WCHAR *const *table, const DISPID *ids, int count, REFIID riid, LPOLESTR *names, UINT cnames,
+                      DISPID *result);
 
 void AutErrorAttach(void);
 void AutErrorDetach(void);

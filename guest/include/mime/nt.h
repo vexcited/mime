@@ -1743,7 +1743,9 @@ typedef struct _TEB {
     ULONG GuaranteedStackBytes;
     UCHAR Reserved4[0xF94 - 0xF7C];
     PVOID *TlsExpansionSlots;
-    UCHAR Reserved5[0xFB4 - 0xF98];
+    UCHAR Reserved5[0xFAC - 0xF98];
+    PVOID CurrentTransactionHandle;
+    PVOID ActiveFrame;
     PVOID FlsData;
     UCHAR Reserved6[0xFCA - 0xFB8];
     USHORT SameTebFlags;
@@ -1763,6 +1765,7 @@ MIME_FIELD_AT(TEB, Win32ClientInfo, 0x6CC);
 MIME_FIELD_AT(TEB, LastStatusValue, 0xBF4);
 MIME_FIELD_AT(TEB, ActivityId, 0xF50);
 MIME_FIELD_AT(TEB, TlsSlots, 0xE10);
+MIME_FIELD_AT(TEB, CurrentTransactionHandle, 0xFAC);
 MIME_FIELD_AT(TEB, FlsData, 0xFB4);
 MIME_FIELD_AT(TEB, SameTebFlags, 0xFCA);
 #else
@@ -1901,6 +1904,7 @@ MIME_FIELD_AT(TEB, TlsLinks, 0x1680);
 MIME_FIELD_AT(TEB, HardErrorMode, 0x16B0);
 MIME_FIELD_AT(TEB, GdiBatchCount, 0x1740);
 MIME_FIELD_AT(TEB, TlsExpansionSlots, 0x1780);
+MIME_FIELD_AT(TEB, CurrentTransactionHandle, 0x17B8);
 MIME_FIELD_AT(TEB, FlsData, 0x17C8);
 MIME_FIELD_AT(TEB, SameTebFlags, 0x17EE);
 MIME_FIELD_AT(TEB, WowTebOffset, 0x180C);

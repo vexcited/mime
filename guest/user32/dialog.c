@@ -4,8 +4,8 @@
  */
 #include "user32_private.h"
 
-/* private dialog state, at DWLP_USER + sizeof(LONG_PTR) in the window extra bytes. */
-#define DWLP_MIME (DWLP_USER + 16)
+/* private dialog state, two pointers after DWLP_USER in the window extra bytes. */
+#define DWLP_MIME (DWLP_USER + 2 * (int)sizeof(LONG_PTR))
 
 typedef struct DIALOG {
     HFONT Font;

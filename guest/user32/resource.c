@@ -421,6 +421,40 @@ static HICON create_icon_object(const ICON_IMAGE *img, BOOL icon, POINT hotspot,
     return h;
 }
 
+/* scales an image to the size asked for with a box filter, when no exact size exists; 0 keeps the size it has. */
+static void scale_image(ICON_IMAGE *img, int cx, int cy, POINT *hotspot)
+{
+    if ((!cx || img->Width == cx) && (!cy || img->Height == cy))
+        return;
+    int tw = cx ? cx : img->Width, th = cy ? cy : img->Height;
+    PULONG scaled = UserAlloc((SIZE_T)tw * (SIZE_T)th * 4);
+    if (!scaled)
+        return;
+    for (int y = 0; y < th; y++)
+        for (int x = 0; x < tw; x++) {
+            int x0 = x * img->Width / tw, x1 = (x + 1) * img->Width / tw;
+            int y0 = y * img->Height / th, y1 = (y + 1) * img->Height / th;
+            if (x1 <= x0)
+                x1 = x0 + 1;
+            if (y1 <= y0)
+                y1 = y0 + 1;
+            ULONG sum[4] = {0, 0, 0, 0}, n = 0;
+            for (int sy = y0; sy < y1; sy++)
+                for (int sx = x0; sx < x1; sx++, n++) {
+                    ULONG p = img->Pixels[sy * img->Width + sx];
+                    for (int c = 0; c < 4; c++)
+                        sum[c] += (p >> (c * 8)) & 0xFF;
+                }
+            scaled[y * tw + x] = (sum[0] / n) | ((sum[1] / n) << 8) | ((sum[2] / n) << 16) | ((sum[3] / n) << 24);
+        }
+    hotspot->x = hotspot->x * tw / img->Width;
+    hotspot->y = hotspot->y * th / img->Height;
+    UserFree(img->Pixels);
+    img->Pixels = scaled;
+    img->Width = tw;
+    img->Height = th;
+}
+
 /* the best entry of an icon group for a size: exact size first, then the closest larger, then the deepest color. */
 static WORD pick_icon(const GRPICONDIR *dir, DWORD size, int cx, int cy, BOOL icon)
 {
@@ -510,36 +544,7 @@ HICON UserLoadIconFromResources(USER_RESFILE *file, HINSTANCE module, LPCWSTR na
     ICON_IMAGE img;
     if (!decode_icon_image(data, data_size, &img))
         return nullptr;
-    /* scale to the requested size with a box filter when no exact size exists. */
-    if ((cx && img.Width != cx) || (cy && img.Height != cy)) {
-        int tw = cx ? cx : img.Width, th = cy ? cy : img.Height;
-        PULONG scaled = UserAlloc((SIZE_T)tw * (SIZE_T)th * 4);
-        if (scaled) {
-            for (int y = 0; y < th; y++)
-                for (int x = 0; x < tw; x++) {
-                    int x0 = x * img.Width / tw, x1 = (x + 1) * img.Width / tw;
-                    int y0 = y * img.Height / th, y1 = (y + 1) * img.Height / th;
-                    if (x1 <= x0)
-                        x1 = x0 + 1;
-                    if (y1 <= y0)
-                        y1 = y0 + 1;
-                    ULONG sum[4] = {0, 0, 0, 0}, n = 0;
-                    for (int sy = y0; sy < y1; sy++)
-                        for (int sx = x0; sx < x1; sx++, n++) {
-                            ULONG p = img.Pixels[sy * img.Width + sx];
-                            for (int c = 0; c < 4; c++)
-                                sum[c] += (p >> (c * 8)) & 0xFF;
-                        }
-                    scaled[y * tw + x] = (sum[0] / n) | ((sum[1] / n) << 8) | ((sum[2] / n) << 16) | ((sum[3] / n) << 24);
-                }
-            hotspot.x = hotspot.x * tw / img.Width;
-            hotspot.y = hotspot.y * th / img.Height;
-            UserFree(img.Pixels);
-            img.Pixels = scaled;
-            img.Width = tw;
-            img.Height = th;
-        }
-    }
+    scale_image(&img, cx, cy, &hotspot);
     HICON h = create_icon_object(&img, icon, hotspot, 0);
     UserFree(img.Pixels);
     return h;
@@ -647,8 +652,146 @@ HICON UserLoadIconWithScaleDown(HINSTANCE instance, LPCWSTR name, int cx, int cy
     return LoadImageW(instance, name, IMAGE_ICON, cx, cy, 0);
 }
 
+/* the whole of a file in memory, up to 32 MiB; the caller frees it. */
+static UCHAR *read_file(LPCWSTR path, DWORD *size)
+{
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return nullptr;
+    DWORD length = GetFileSize(file, nullptr), got = 0;
+    UCHAR *data = length != INVALID_FILE_SIZE && length >= 8 && length <= 0x2000000 ? UserAlloc(length) : nullptr;
+    if (data && (!ReadFile(file, data, length, &got, nullptr) || got != length)) {
+        UserFree(data);
+        data = nullptr;
+    }
+    if (!data && length != INVALID_FILE_SIZE && (length < 8 || length > 0x2000000))
+        SetLastError(ERROR_INVALID_DATA);
+    CloseHandle(file);
+    *size = length;
+    return data;
+}
+
+typedef struct FILE_ICON_ENTRY {
+    BYTE Width, Height, Colors, Reserved;
+    WORD Planes, BitCount;
+    DWORD Bytes, Offset;
+} FILE_ICON_ENTRY;
+
+/*
+ * an icon or cursor file: a directory of images, of which the one nearest to the size asked for is taken, as it is
+ * from a group in a resource. A cursor's hot spot is in the directory entry, where an icon has planes and bits.
+ */
+static HICON load_icon_file(LPCWSTR path, int cx, int cy, BOOL icon)
+{
+    /* a size of 0 keeps the size of the image, and picks the one that suits the system's. */
+    int want_cx = cx ? cx : GetSystemMetrics(icon ? SM_CXICON : SM_CXCURSOR);
+    int want_cy = cy ? cy : GetSystemMetrics(icon ? SM_CYICON : SM_CYCURSOR);
+    DWORD size;
+    UCHAR *data = read_file(path, &size);
+    if (!data)
+        return nullptr;
+    HICON result = nullptr;
+    const WORD *directory = (const WORD *)data;
+    WORD kind = directory[1], count = directory[2];
+    if (directory[0] != 0 || (kind != 1 && kind != 2) || !count || 6 + (SIZE_T)count * 16 > size) {
+        SetLastError(ERROR_INVALID_DATA);
+        goto done;
+    }
+    const FILE_ICON_ENTRY *entries = (const FILE_ICON_ENTRY *)(data + 6);
+    int best = -1, best_score = 0x7FFFFFFF;
+    for (int i = 0; i < count; i++) {
+        const FILE_ICON_ENTRY *e = &entries[i];
+        if ((SIZE_T)e->Offset + e->Bytes > size || e->Bytes == 0)
+            continue;
+        int w = e->Width ? e->Width : 256, h = e->Height ? e->Height : 256;
+        int dist = w >= want_cx ? (w - want_cx) * 2 : (want_cx - w) * 3;
+        dist += h >= want_cy ? (h - want_cy) * 2 : (want_cy - h) * 3;
+        int score = dist * 64 - (kind == 1 ? e->BitCount : 0);
+        if (score < best_score) {
+            best_score = score;
+            best = i;
+        }
+    }
+    if (best < 0) {
+        SetLastError(ERROR_INVALID_DATA);
+        goto done;
+    }
+    ICON_IMAGE image;
+    POINT hotspot = {0, 0};
+    if (kind == 2) {
+        hotspot.x = entries[best].Planes;
+        hotspot.y = entries[best].BitCount;
+    }
+    if (!decode_icon_image(data + entries[best].Offset, entries[best].Bytes, &image)) {
+        SetLastError(ERROR_INVALID_DATA);
+        goto done;
+    }
+    scale_image(&image, cx, cy, &hotspot);
+    result = create_icon_object(&image, icon, hotspot, 0);
+    UserFree(image.Pixels);
+done:
+    UserFree(data);
+    return result;
+}
+
+/* a bitmap file: the file header, the dib and its bits at the offset the header gives; a dib section with the flag. */
+static HBITMAP load_bitmap_file(LPCWSTR path, UINT flags)
+{
+    DWORD size;
+    UCHAR *data = read_file(path, &size);
+    if (!data)
+        return nullptr;
+    HBITMAP bitmap = nullptr;
+    const BITMAPFILEHEADER *file = (const BITMAPFILEHEADER *)data;
+    if (size < sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) || file->bfType != 0x4D42 ||
+        file->bfOffBits >= size) {
+        SetLastError(ERROR_INVALID_DATA);
+        goto done;
+    }
+    const BITMAPINFO *info = (const BITMAPINFO *)(data + sizeof(BITMAPFILEHEADER));
+    if (info->bmiHeader.biSize < sizeof(BITMAPINFOHEADER) || info->bmiHeader.biSize > 124 ||
+        info->bmiHeader.biCompression > BI_BITFIELDS) {
+        SetLastError(ERROR_INVALID_DATA);
+        goto done;
+    }
+    const void *bits = data + file->bfOffBits;
+    if (flags & LR_CREATEDIBSECTION) {
+        void *dib_bits;
+        bitmap = CreateDIBSection(nullptr, info, DIB_RGB_COLORS, &dib_bits, nullptr, 0);
+        if (bitmap) {
+            LONG h = info->bmiHeader.biHeight < 0 ? -info->bmiHeader.biHeight : info->bmiHeader.biHeight;
+            SIZE_T stride = (SIZE_T)((info->bmiHeader.biWidth * info->bmiHeader.biBitCount + 31) / 32 * 4);
+            SIZE_T have = size - file->bfOffBits;
+            memcpy(dib_bits, bits, stride * (SIZE_T)h < have ? stride * (SIZE_T)h : have);
+        }
+    } else {
+        HDC screen = GetDC(nullptr);
+        bitmap = CreateDIBitmap(screen, &info->bmiHeader, CBM_INIT, bits, info, DIB_RGB_COLORS);
+        ReleaseDC(nullptr, screen);
+    }
+done:
+    UserFree(data);
+    return bitmap;
+}
+
 WINUSERAPI HANDLE WINAPI LoadImageW(HINSTANCE instance, LPCWSTR name, UINT type, int cx, int cy, UINT flags)
 {
+    if (flags & LR_LOADFROMFILE) {
+        if (IS_INTRESOURCE(name)) {
+            SetLastError(ERROR_INVALID_PARAMETER);
+            return nullptr;
+        }
+        if (type == IMAGE_BITMAP)
+            return load_bitmap_file(name, flags);
+        UINT dpi = GetDpiForSystem();
+        BOOL icon = type == IMAGE_ICON;
+        if (!cx && (flags & LR_DEFAULTSIZE))
+            cx = GetSystemMetricsForDpi(icon ? SM_CXICON : SM_CXCURSOR, dpi);
+        if (!cy && (flags & LR_DEFAULTSIZE))
+            cy = GetSystemMetricsForDpi(icon ? SM_CYICON : SM_CYCURSOR, dpi);
+        return load_icon_file(name, cx, cy, icon);
+    }
     if (type == IMAGE_BITMAP) {
         HRSRC res = FindResourceW(instance, name, RTW_BITMAP);
         const BITMAPINFO *bi = res ? LockResource(LoadResource(instance, res)) : nullptr;
@@ -835,6 +978,38 @@ WINUSERAPI HCURSOR WINAPI CreateCursor(HINSTANCE instance, int hot_x, int hot_y,
     DeleteObject(mask);
     (void)instance;
     return cursor;
+}
+
+/*
+ * the image of an icon or cursor resource, at the size asked for: a size of 0 is the one the image has, or with
+ * LR_DEFAULTSIZE the system's. Nothing is returned, and no error is set, for no data, fewer bytes than a header
+ * and an image take, or a version that is not 2.0 or 3.0. Animated cursors, which start with RIFF, are not read.
+ */
+WINUSERAPI HICON WINAPI CreateIconFromResourceEx(PBYTE data, DWORD size, BOOL icon, DWORD version, int cx, int cy,
+                                                 UINT flags)
+{
+    if (!data || size < 0x28 || version - 0x20000 > 0x10000)
+        return nullptr;
+    if ((flags & LR_DEFAULTSIZE) && !cx)
+        cx = GetSystemMetrics(icon ? SM_CXICON : SM_CXCURSOR);
+    if ((flags & LR_DEFAULTSIZE) && !cy)
+        cy = GetSystemMetrics(icon ? SM_CYICON : SM_CYCURSOR);
+    if (*(const DWORD *)data == 0x46464952)
+        return nullptr;
+    POINT hotspot = {0, 0};
+    if (!icon) {
+        hotspot.x = ((WORD *)data)[0];
+        hotspot.y = ((WORD *)data)[1];
+        data += 4;
+        size -= 4;
+    }
+    ICON_IMAGE image;
+    if (!decode_icon_image(data, size, &image))
+        return nullptr;
+    scale_image(&image, cx, cy, &hotspot);
+    HICON result = create_icon_object(&image, icon, hotspot, 0);
+    UserFree(image.Pixels);
+    return result;
 }
 
 WINUSERAPI HICON WINAPI CreateIconFromResource(PBYTE data, DWORD size, BOOL icon, DWORD version)
