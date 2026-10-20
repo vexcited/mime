@@ -454,26 +454,24 @@ static DECLSPEC_NORETURN void unhandled32(const MIME_EXCEPTION32 *record, const 
         ;
 }
 
-/*
- * one system call of 32-bit code: the number with windows' fast path in
- * its upper word, the arguments after the caller's return address. the
- * calls that replace the 32-bit state return the eax of the new one.
- */
-WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
+/* the calls that replace the 32-bit state or are served here; true when number is one of them. */
+static BOOLEAN special_service(ULONG number, PULONG a, LONG *result)
 {
     PWOW64_CPURESERVED cpu = Wow64CpuArea();
     WOW64_THREAD *t = current_thread();
-    number &= 0xFFFF;
     switch (number) {
     case MIME_SVC_NtContinue:
         set_context32(cpu, (const I386_CONTEXT *)(ULONG_PTR)a[0]);
         if (a[1])
             NtTestAlert();
-        return (LONG)cpu->Context.Eax;
+        *result = (LONG)cpu->Context.Eax;
+        return TRUE;
     case MIME_SVC_NtCallbackReturn: {
         WOW64_FRAME *f = t ? t->Frame : nullptr;
-        if (!f || !f->Callback)
-            return STATUS_NO_CALLBACK_ACTIVE;
+        if (!f || !f->Callback) {
+            *result = STATUS_NO_CALLBACK_ACTIVE;
+            return TRUE;
+        }
         f->Result = a[0];
         f->ResultLength = a[1];
         f->Status = (NTSTATUS)a[2];
@@ -493,10 +491,12 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
             memcpy(t->Context.ExtendedRegisters, state, sizeof(state));
         }
         deliver_exception(t);
-        return (LONG)cpu->Context.Eax;
+        *result = (LONG)cpu->Context.Eax;
+        return TRUE;
     }
     case MIME_SVC_NtQueueApcThread:
-        return queue_apc32(a);
+        *result = queue_apc32(a);
+        return TRUE;
     case MIME_SVC_NtGetContextThread:
     case MIME_SVC_NtSetContextThread: {
         BOOLEAN setting = number == MIME_SVC_NtSetContextThread;
@@ -505,11 +505,34 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
         NTSTATUS status = thread_context32(thread, context, setting);
         if (!setting && thread == NtCurrentThread())
             context->Eax = 0;
-        if (NT_SUCCESS(status) && setting && thread == NtCurrentThread())
-            return (LONG)cpu->Context.Eax;
-        return status;
+        *result = NT_SUCCESS(status) && setting && thread == NtCurrentThread() ? (LONG)cpu->Context.Eax : status;
+        return TRUE;
     }
     }
+    return FALSE;
+}
+
+/*
+ * one system call of 32-bit code: the number with windows' fast path in
+ * its upper word, the arguments after the caller's return address. the
+ * calls that replace the 32-bit state return the eax of the new one.
+ */
+WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
+{
+    number &= 0xFFFF;
+    LONG result;
+    BOOLEAN handled = FALSE;
+    __try {
+        handled = special_service(number, a, &result);
+    } __except (_exception_code() == STATUS_ACCESS_VIOLATION || _exception_code() == STATUS_IN_PAGE_ERROR ||
+                        _exception_code() == STATUS_GUARD_PAGE_VIOLATION
+                    ? 1 /* EXCEPTION_EXECUTE_HANDLER */
+                    : 0 /* EXCEPTION_CONTINUE_SEARCH */) {
+        result = (LONG)_exception_code();
+        handled = TRUE;
+    }
+    if (handled)
+        return result;
     PULONG last_error = (PULONG)(Wow64CurrentTeb32() + MIME_TEB32_LAST_ERROR);
     PTEB teb = NtCurrentTeb();
     teb->LastErrorValue = *last_error;
