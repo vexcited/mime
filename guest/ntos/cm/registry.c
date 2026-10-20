@@ -1166,6 +1166,26 @@ static NTSTATUS delete_key(CM_NODE *node)
     return status;
 }
 
+/*
+ * a deletion in the journal takes the keys below with it. The journal that was compacted no longer holds the deletions
+ * of the keys below a key that was deleted later, and those may be in the hive the journal replays onto.
+ */
+static NTSTATUS delete_tree(CM_NODE *node)
+{
+    for (;;) {
+        CM_NODE *leaf = node;
+        NTSTATUS status = CmpLoadChildren(leaf);
+        while (NT_SUCCESS(status) && leaf->Child) {
+            leaf = leaf->Child;
+            status = CmpLoadChildren(leaf);
+        }
+        if (NT_SUCCESS(status))
+            status = delete_key(leaf);
+        if (!NT_SUCCESS(status) || leaf == node)
+            return status;
+    }
+}
+
 NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload)
 {
     /* the path is worked on by the walk, which wants room to follow a link. replay is one thread at boot. */
@@ -1206,7 +1226,7 @@ NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload)
             status = STATUS_SUCCESS;
         break;
     case CM_JOURNAL_DELETE_KEY:
-        status = delete_key(node);
+        status = delete_tree(node);
         break;
     case CM_JOURNAL_SET_SECURITY: {
         SD_BLOB *sd;
