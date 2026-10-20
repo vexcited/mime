@@ -668,7 +668,8 @@ WINOLEAPI HRESULT WINAPI CoGetPSClsid(REFIID iid, CLSID *clsid)
     OleFormatGuid(iid, path + 10);
     wcscat(path, L"\\ProxyStubClsid32");
     DWORD size = sizeof(text);
-    if (RegGetValueW(HKEY_CLASSES_ROOT, path, nullptr, RRF_RT_REG_SZ, nullptr, text, &size))
-        return REGDB_E_IIDNOTREG;
-    return OleParseGuid(text, clsid) ? S_OK : REGDB_E_IIDNOTREG;
+    if (!RegGetValueW(HKEY_CLASSES_ROOT, path, nullptr, RRF_RT_REG_SZ, nullptr, text, &size) && OleParseGuid(text, clsid))
+        return S_OK;
+    /* the interfaces of automation have classes a system registers by itself, which nothing here needs registered. */
+    return OrpcAutomationClass(iid, clsid) ? S_OK : REGDB_E_IIDNOTREG;
 }

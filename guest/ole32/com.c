@@ -495,8 +495,12 @@ static HRESULT get_inproc_class_object(REFCLSID clsid, REFIID riid, void **objec
     wcscpy(subkey, L"CLSID\\");
     OleFormatGuid(clsid, subkey + 6);
     wcscat(subkey, L"\\InprocServer32");
-    if (!read_class_string(subkey, nullptr, path, RTL_NUMBER_OF(path)) || !path[0])
-        return REGDB_E_CLASSNOTREG;
+    if (!read_class_string(subkey, nullptr, path, RTL_NUMBER_OF(path)) || !path[0]) {
+        const WCHAR *builtin;
+        if (!OrpcBuiltinServer(clsid, &builtin))
+            return REGDB_E_CLASSNOTREG;
+        wcscpy(path, builtin);
+    }
     HMODULE module = LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!module) {
         DWORD error = GetLastError();

@@ -235,8 +235,8 @@ static void free_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
         } else {
             uchar *walk = object;
             NdrpWalkTop(m, NDR_FREE, &walk, type, 0);
-            /* the memory of a simple reference pointer's pointee is the stub's to free, if it allocated it. */
-            if ((prm.Attrs & PA_IS_SIMPLE_REF) && !(prm.Attrs & PA_IS_BY_VALUE) && prm.Attrs < 0x2000 && object &&
+            /* the pointee of a simple reference pointer is the stub's to free when it allocated it, which it did only for an [in] one. */
+            if ((prm.Attrs & PA_IS_SIMPLE_REF) && (prm.Attrs & PA_IS_IN) && !(prm.Attrs & PA_IS_BY_VALUE) && prm.Attrs < 0x2000 && object &&
                 !NdrpInBuffer(m, object))
                 NdrpFree(m, object);
         }

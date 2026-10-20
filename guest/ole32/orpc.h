@@ -103,8 +103,12 @@ HRESULT OrpcUnmarshalAfterHead(IStream *stream, const OBJREF_HEAD *head, REFIID 
 HRESULT OrpcReleaseMarshalData(IStream *stream);
 /* the factory of the proxies and stubs of an interface, referenced, or null. */
 IPSFactoryBuffer *OrpcFactoryFor(REFIID iid);
+BOOL OrpcAutomationClass(REFIID iid, CLSID *clsid);
+BOOL OrpcBuiltinServer(REFCLSID clsid, const WCHAR **dll);
 /* the class that marshals an interface ole32 carries itself. */
 BOOL OrpcBuiltinClass(REFIID iid, CLSID *clsid);
+BOOL OrpcAutomationClass(REFIID iid, CLSID *clsid);
+BOOL OrpcBuiltinServer(REFCLSID clsid, const WCHAR **dll);
 /* CoDisconnectObject: the object is no longer served. */
 HRESULT OrpcDisconnectObject(IUnknown *object);
 /* the proxy manager an interface pointer belongs to, referenced, or null for any other pointer. */

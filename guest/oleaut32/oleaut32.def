@@ -333,3 +333,5 @@ EXPORTS
     LPSAFEARRAY_Size @295
     LPSAFEARRAY_Marshal @296
     LPSAFEARRAY_Unmarshal @297
+    DllGetClassObject @302
+    DllCanUnloadNow @301
