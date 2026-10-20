@@ -416,4 +416,27 @@ WINOLEAPI HRESULT WINAPI CoInitializeSecurity(PSECURITY_DESCRIPTOR descriptor, L
 WINOLEAPI HRESULT WINAPI CoSetProxyBlanket(IUnknown *proxy, DWORD authn_service, DWORD authz_service,
                                            OLECHAR *server_principal, DWORD authn_level, DWORD imp_level,
                                            void *auth_info, DWORD capabilities);
+
+/* ------------------------------------------------------------------ marshaling */
+
+#ifndef MSHLFLAGS_NORMAL
+#define MSHLFLAGS_NORMAL 0
+#define MSHLFLAGS_TABLESTRONG 1
+#define MSHLFLAGS_TABLEWEAK 2
+#define MSHLFLAGS_NOPING 4
+#define MSHCTX_LOCAL 0
+#define MSHCTX_NOSHAREDMEM 1
+#define MSHCTX_DIFFERENTMACHINE 2
+#define MSHCTX_INPROC 3
+#endif
+
+WINOLEAPI HRESULT WINAPI CoMarshalInterface(IStream *stream, REFIID iid, IUnknown *object, DWORD destination,
+                                            void *context, DWORD flags);
+WINOLEAPI HRESULT WINAPI CoUnmarshalInterface(IStream *stream, REFIID iid, void **object);
+WINOLEAPI HRESULT WINAPI CoReleaseMarshalData(IStream *stream);
+WINOLEAPI HRESULT WINAPI CoGetMarshalSizeMax(ULONG *size, REFIID iid, IUnknown *object, DWORD destination,
+                                             void *context, DWORD flags);
+WINOLEAPI HRESULT WINAPI CoRegisterPSClsid(REFIID iid, REFCLSID clsid);
+WINOLEAPI HRESULT WINAPI CoGetPSClsid(REFIID iid, CLSID *clsid);
+
 #endif

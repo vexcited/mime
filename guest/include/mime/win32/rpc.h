@@ -966,6 +966,9 @@ RPCRTAPI void RPC_ENTRY I_RpcFree(void *object);
 RPCRTAPI void RPC_ENTRY I_RpcPauseExecution(ULONG milliseconds);
 RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcGetExtendedError(void);
 RPCRTAPI RPC_BINDING_HANDLE RPC_ENTRY I_RpcGetCurrentCallHandle(void);
+/* Mime's own: the function the calling thread waits for replies with, so that it can serve its windows meanwhile. */
+RPCRTAPI void RPC_ENTRY I_RpcMimeSetWaitFunction(DWORD(WINAPI *function)(DWORD, const HANDLE *, DWORD, void *),
+                                                 void *context, void *previous[2]);
 RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcAsyncSetHandle(PRPC_MESSAGE message, PRPC_ASYNC_STATE async);
 RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcAsyncAbortCall(PRPC_ASYNC_STATE async, ULONG code);
 RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcOpenClientProcess(void *binding, ULONG access, void **process);

@@ -48,6 +48,12 @@ typedef struct {
     RPC_SYNTAX_IDENTIFIER Transfer;
     BOOL Used;
     BOOL Checked;
+    /*
+     * an interface of com, bound by the interface id of the com interface it carries: calls are made to the one ole
+     * dispatch function with a description that names that interface.
+     */
+    BOOL Ole;
+    RPC_SERVER_INTERFACE OleIface;
 } SCONTEXT;
 
 typedef struct SCONN {
@@ -897,6 +903,13 @@ static SIF *interface_for(const PDU_SYNTAX *abstract)
             found = s;
             break;
         }
+    /* a com interface is not registered by its own id: the interface registered for com serves them all. */
+    if (!found)
+        for (SIF *s = g_interfaces; s; s = s->Next)
+            if (!s->Unregistering && (s->Flags & RPC_IF_OLE)) {
+                found = s;
+                break;
+            }
     ReleaseSRWLockShared(&g_lock);
     return found;
 }
@@ -974,10 +987,18 @@ static void handle_bind(SCONN *c, const unsigned char *pdu, ULONG length)
                     accepted.Major = chosen.SyntaxVersion.MajorVersion;
                     accepted.Minor = chosen.SyntaxVersion.MinorVersion;
                     if (id < MAX_CONTEXTS) {
-                        c->Context[id].If = sif;
-                        c->Context[id].Transfer = chosen;
-                        c->Context[id].Used = TRUE;
-                        c->Context[id].Checked = FALSE;
+                        SCONTEXT *ctx = &c->Context[id];
+                        ctx->If = sif;
+                        ctx->Transfer = chosen;
+                        ctx->Used = TRUE;
+                        ctx->Checked = FALSE;
+                        ctx->Ole = !interface_matches(sif->Iface, &(RPC_SYNTAX_IDENTIFIER){abstract->Uuid,
+                                                      {abstract->Major, abstract->Minor}});
+                        if (ctx->Ole) {
+                            ctx->OleIface = *sif->Iface;
+                            ctx->OleIface.InterfaceId.SyntaxGUID = abstract->Uuid;
+                            ctx->OleIface.InterfaceId.SyntaxVersion = (RPC_VERSION){abstract->Major, abstract->Minor};
+                        }
                     }
                     break;
                 }
@@ -1224,7 +1245,8 @@ static void serve(SCONN *c, ULONG call_id, USHORT context_id, USHORT opnum, cons
     if (!status)
         epv = manager_for(sif, object, &status);
     const RPC_DISPATCH_TABLE *table = sif->Iface->DispatchTable;
-    if (!status && (!table || opnum >= table->DispatchTableCount))
+    /* the one function of com takes every method. */
+    if (!status && (!table || (!ctx->Ole && opnum >= table->DispatchTableCount)))
         status = RPC_S_PROCNUM_OUT_OF_RANGE;
     if (status) {
         send_fault(c, call_id, context_id, status, TRUE);
@@ -1236,7 +1258,7 @@ static void serve(SCONN *c, ULONG call_id, USHORT context_id, USHORT opnum, cons
         m.BufferLength = length;
         m.ProcNum = opnum;
         m.TransferSyntax = &ctx->Transfer;
-        m.RpcInterfaceInformation = (void *)sif->Iface;
+        m.RpcInterfaceInformation = ctx->Ole ? (void *)&ctx->OleIface : (void *)sif->Iface;
         m.ManagerEpv = epv;
         m.RpcFlags = RPC_BUFFER_COMPLETE | RPCFLG_LOCAL_CALL;
         RPC_THREAD *thread = RpcpThread();
@@ -1245,7 +1267,7 @@ static void serve(SCONN *c, ULONG call_id, USHORT context_id, USHORT opnum, cons
             thread->Call = &call;
         ULONG fault = 0;
         __try {
-            table->DispatchTable[opnum](&m);
+            table->DispatchTable[ctx->Ole ? 0 : opnum](&m);
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {
             fault = exception_status(GetExceptionCode());

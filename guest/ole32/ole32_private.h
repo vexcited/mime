@@ -45,6 +45,12 @@ typedef struct _OLE_THREAD {
     /* the logical thread, a guid made when first asked for. */
     GUID LogicalThread;
     BOOL HasLogicalThread;
+    /* the apartment of a single threaded thread, made when the first object leaves it, see orpc_export.c. */
+    struct APARTMENT *Apartment;
+    /* an event for the calls the thread makes into the apartment of another thread. */
+    HANDLE OrpcEvent;
+    /* the call of another process this thread is serving. */
+    void *OrpcCall;
 } OLE_THREAD;
 
 OLE_THREAD *OleThreadState(BOOL create);
@@ -81,10 +87,6 @@ LSTATUS OleOpenClassesKey(LPCWSTR subkey, REGSAM access, HKEY *key);
 /* opens HKCR\CLSID\{clsid} or one of its subkeys. */
 LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key);
 
-/* localserver.c: classes served to other processes, and the proxy of one served by another. */
-void OleLocalServerPublish(REFCLSID clsid, IUnknown *factory, DWORD cookie);
-void OleLocalServerRevoke(DWORD cookie);
-HRESULT OleLocalServerGetClassObject(REFCLSID clsid, REFIID riid, void **object);
 /* com.c: the classes registered suspended are offered. */
 void OleLocalServersResume(void);
 

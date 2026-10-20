@@ -6,16 +6,8 @@
  * which builds a proxy. objects implementing IMarshal, such as the free
  * threaded marshaler, write custom OBJREFs as on windows.
  */
-#include "ole32_private.h"
-#include <mime/win32/objidl.h>
+#include "orpc.h"
 
-#define OBJREF_SIGNATURE 0x574F454D /* "MEOW" */
-#define OBJREF_STANDARD 0x1
-#define OBJREF_CUSTOM 0x4
-#define MSHLFLAGS_NORMAL 0
-#define MSHLFLAGS_TABLESTRONG 1
-#define MSHLFLAGS_TABLEWEAK 2
-#define MSHCTX_INPROC 3
 #define CO_E_OBJNOTCONNECTED ((HRESULT)0x800401FDL)
 #define RPC_E_CALL_COMPLETE ((HRESULT)0x80010117L)
 #define RPC_E_INVALID_OBJREF ((HRESULT)0x8001011DL)
@@ -42,13 +34,6 @@ static const IID IID_IMarshal = {0x00000003, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46
 static const IID IID_IAgileObject = {0x94ea2b94, 0xe9cc, 0x49e0, {0xc0, 0xff, 0xee, 0x64, 0xca, 0x8f, 0x5b, 0x90}};
 static const IID IID_IAgileReference = {0xc03f6a43, 0x65a4, 0x9818, {0x98, 0x7e, 0xe0, 0xb8, 0x10, 0xd2, 0xa6, 0xf2}};
 static const CLSID CLSID_InProcFreeMarshaler = {0x0000033A, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
-
-/* the common head of every OBJREF. */
-typedef struct OBJREF_HEAD {
-    DWORD Signature;
-    DWORD Flags;
-    IID Iid;
-} OBJREF_HEAD;
 
 /* the standard part: where windows names an exporter, mime names the object and its marshaling. */
 typedef struct OBJREF_DIRECT {
@@ -101,7 +86,7 @@ typedef struct FTM_DATA {
 
 static const GUID g_ftm_check = {0x4d494d45, 0x4654, 0x4d31, {0x6d, 0x69, 0x6d, 0x65, 0x66, 0x74, 0x6d, 0x31}};
 
-static HRESULT marshal_standard(IStream *stream, REFIID iid, IUnknown *object, DWORD flags);
+static HRESULT marshal_standard(IStream *stream, REFIID iid, IUnknown *object, DWORD destination, DWORD flags);
 
 static FTM *ftm_from_marshal(IMarshal *m)
 {
@@ -279,13 +264,24 @@ static HRESULT unmarshaler(REFCLSID clsid, IMarshal **out)
 
 /* ------------------------------------------------------------------ OBJREFs */
 
-static HRESULT marshal_standard(IStream *stream, REFIID iid, IUnknown *object, DWORD flags)
+static HRESULT marshal_standard(IStream *stream, REFIID iid, IUnknown *object, DWORD destination, DWORD flags)
 {
     IUnknown *unknown;
     HRESULT hr = object->lpVtbl->QueryInterface(object, iid, (void **)&unknown);
     if (FAILED(hr))
         return hr;
-    OBJREF_HEAD head = {OBJREF_SIGNATURE, OBJREF_STANDARD, *iid};
+    /*
+     * outside the process the object is served over rpc, through the stub of the interface. An interface that has none
+     * can still be handed to the process itself, as a pointer; that is a difference from windows, which fails.
+     */
+    if (destination != MSHCTX_INPROC) {
+        hr = OrpcMarshal(stream, iid, unknown, destination, flags);
+        if (hr != E_NOINTERFACE) {
+            unknown->lpVtbl->Release(unknown);
+            return hr;
+        }
+    }
+    OBJREF_HEAD head = {OBJREF_SIGNATURE, OBJREF_MIME_DIRECT, *iid};
     OBJREF_DIRECT direct = {flags, GetCurrentProcessId(), (ULONG64)(ULONG_PTR)unknown, {}};
     hr = write_all(stream, &head, sizeof(head));
     if (SUCCEEDED(hr))
@@ -322,6 +318,11 @@ WINOLEAPI HRESULT WINAPI CoGetMarshalSizeMax(ULONG *size, REFIID iid, IUnknown *
         }
     }
     *size = sizeof(OBJREF_HEAD) + sizeof(OBJREF_DIRECT);
+    if (destination != MSHCTX_INPROC) {
+        ULONG standard;
+        if (SUCCEEDED(OrpcMarshalSizeMax(&standard, iid, object, destination, flags)) && standard > *size)
+            *size = standard;
+    }
     return S_OK;
 }
 
@@ -353,7 +354,7 @@ WINOLEAPI HRESULT WINAPI CoMarshalInterface(IStream *stream, REFIID iid, IUnknow
         }
         marshal->lpVtbl->Release(marshal);
     }
-    return marshal_standard(stream, iid, object, flags);
+    return marshal_standard(stream, iid, object, destination, flags);
 }
 
 static HRESULT read_objref(IStream *stream, OBJREF_HEAD *head)
@@ -362,7 +363,7 @@ static HRESULT read_objref(IStream *stream, OBJREF_HEAD *head)
     if (FAILED(hr))
         return hr;
     if (head->Signature != OBJREF_SIGNATURE ||
-        (head->Flags != OBJREF_STANDARD && head->Flags != OBJREF_CUSTOM))
+        (head->Flags != OBJREF_STANDARD && head->Flags != OBJREF_CUSTOM && head->Flags != OBJREF_MIME_DIRECT))
         return RPC_E_INVALID_OBJREF;
     return S_OK;
 }
@@ -394,6 +395,8 @@ WINOLEAPI HRESULT WINAPI CoUnmarshalInterface(IStream *stream, REFIID iid, void 
         marshal->lpVtbl->Release(marshal);
         return hr;
     }
+    if (head.Flags == OBJREF_STANDARD)
+        return OrpcUnmarshalAfterHead(stream, &head, wanted, result);
     OBJREF_DIRECT direct;
     hr = read_all(stream, &direct, sizeof(direct));
     if (FAILED(hr))
@@ -427,6 +430,8 @@ WINOLEAPI HRESULT WINAPI CoReleaseMarshalData(IStream *stream)
         marshal->lpVtbl->Release(marshal);
         return hr;
     }
+    if (head.Flags == OBJREF_STANDARD)
+        return OrpcReleaseMarshalData(stream);
     OBJREF_DIRECT direct;
     hr = read_all(stream, &direct, sizeof(direct));
     if (FAILED(hr))
@@ -656,6 +661,8 @@ WINOLEAPI HRESULT WINAPI CoGetPSClsid(REFIID iid, CLSID *clsid)
         }
     }
     ReleaseSRWLockShared(&g_ps_lock);
+    if (OrpcBuiltinClass(iid, clsid))
+        return S_OK;
     WCHAR path[96], text[64];
     wcscpy(path, L"Interface\\");
     OleFormatGuid(iid, path + 10);

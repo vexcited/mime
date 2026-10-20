@@ -43,6 +43,8 @@ typedef struct CCALL {
     RPC_CONN *Conn;
     USHORT ContextId;
     BOOL Ndr64;
+    /* the object the call is made to, which the call has chosen when it asked for its buffer. */
+    UUID Object;
 } CCALL;
 
 static SRWLOCK g_pool_lock = SRWLOCK_INIT;
@@ -445,6 +447,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcGetBufferWithObject(RPC_MESSAGE *message, UUI
     }
     message->Buffer = buffer;
     message->ReservedForRuntime = call;
+    call->Object = object ? *object : b->Object;
     return RPC_S_OK;
 }
 
@@ -618,7 +621,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcSendReceive(RPC_MESSAGE *message)
     ULONG id = ++c->CallId;
     c->Stream.Timeout = b->CallTimeout ? b->CallTimeout : 0;
 
-    RPC_STATUS status = send_request(c, message, call, RpcpIsNil(&b->Object) ? nullptr : &b->Object, id);
+    RPC_STATUS status = send_request(c, message, call, RpcpIsNil(&call->Object) ? nullptr : &call->Object, id);
     unsigned char *reply = nullptr;
     ULONG length = 0;
     if (!status)
@@ -635,4 +638,23 @@ RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcSendReceive(RPC_MESSAGE *message)
     message->BufferLength = length;
     /* the reply is a buffer without a call: the stub frees it with I_RpcFreeBuffer. */
     return RPC_S_OK;
+}
+
+/*
+ * Mime's own: the function a thread waits for the replies of its calls with. A thread that has windows has to go on
+ * serving them while it waits, and the function does that. It is called as WaitForMultipleObjects would be, without the
+ * wait for all.
+ */
+RPCRTAPI void RPC_ENTRY I_RpcMimeSetWaitFunction(DWORD(WINAPI *function)(DWORD, const HANDLE *, DWORD, void *), void *context,
+                                                 void *previous[2])
+{
+    RPC_THREAD *t = RpcpThread();
+    if (!t)
+        return;
+    if (previous) {
+        previous[0] = (void *)t->WaitFn;
+        previous[1] = t->WaitContext;
+    }
+    t->WaitFn = function;
+    t->WaitContext = context;
 }

@@ -1,6 +1,5 @@
 /* unsupported marshaling paths fail before exposing an unusable interface. */
-#include "ole32_private.h"
-#include <mime/win32/objidl.h>
+#include "orpc.h"
 
 WINOLEAPI HRESULT WINAPI CoGetContextToken(ULONG_PTR *token)
 {
@@ -106,6 +105,5 @@ WINOLEAPI HRESULT WINAPI CoDisconnectObject(IUnknown *object, DWORD reserved)
 {
     if (!object)
         return E_INVALIDARG;
-    /* without marshaling no stub holds the object, so nothing is disconnected. */
-    return S_OK;
+    return OrpcDisconnectObject(object);
 }

@@ -5,7 +5,7 @@
  * on windows ole32 forwards these to combase.dll; mime keeps them in
  * ole32 itself.
  */
-#include "ole32_private.h"
+#include "orpc.h"
 
 static DWORD g_tls = TLS_OUT_OF_INDEXES;
 static SRWLOCK g_lock = SRWLOCK_INIT;
@@ -44,6 +44,8 @@ static void release_call_state(OLE_THREAD *t)
 
 static void leave_apartment(OLE_THREAD *t)
 {
+    if (t->Sta)
+        OrpcApartmentLeave(t);
     IMessageFilter *filter = t->MessageFilter;
     t->MessageFilter = nullptr;
     if (filter)
@@ -569,7 +571,7 @@ WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object,
     entry->Published = publish;
     ReleaseSRWLockExclusive(&g_class_lock);
     if (publish)
-        OleLocalServerPublish(clsid, object, entry->Cookie);
+        OrpcClassPublish(clsid, object, flags, entry->Cookie);
     return S_OK;
 }
 
@@ -588,7 +590,7 @@ WINOLEAPI HRESULT WINAPI CoRevokeClassObject(DWORD cookie)
     if (!entry)
         return E_INVALIDARG;
     if (entry->Published)
-        OleLocalServerRevoke(entry->Cookie);
+        OrpcClassRevoke(entry->Cookie);
     entry->Object->lpVtbl->Release(entry->Object);
     OleFree(entry);
     return S_OK;
@@ -763,7 +765,7 @@ WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *s
     }
     if (!(context & CLSCTX_LOCAL_SERVER))
         return REGDB_E_CLASSNOTREG;
-    return OleLocalServerGetClassObject(clsid, riid, object);
+    return OrpcClassGet(clsid, riid, object);
 }
 
 /* the classes registered suspended are offered to other processes. */
@@ -781,7 +783,7 @@ void OleLocalServersResume(void)
         ReleaseSRWLockExclusive(&g_class_lock);
         if (!pending)
             return;
-        OleLocalServerPublish(&pending->Clsid, pending->Object, pending->Cookie);
+        OrpcClassPublish(&pending->Clsid, pending->Object, pending->Flags, pending->Cookie);
     }
 }
 

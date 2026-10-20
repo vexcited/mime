@@ -154,7 +154,9 @@ static RPC_STATUS wait_io(RPC_STREAM *stream, OVERLAPPED *ov, DWORD *bytes, BOOL
     RPC_THREAD *thread = alertable ? RpcpThread() : nullptr;
     HANDLE handles[2] = {stream->Event, thread ? thread->CancelEvent : nullptr};
     DWORD count = handles[1] ? 2 : 1;
-    DWORD wait = WaitForMultipleObjects(count, handles, FALSE, stream->Timeout ? stream->Timeout : INFINITE);
+    DWORD timeout = stream->Timeout ? stream->Timeout : INFINITE;
+    DWORD wait = thread && thread->WaitFn ? thread->WaitFn(count, handles, timeout, thread->WaitContext)
+                                          : WaitForMultipleObjects(count, handles, FALSE, timeout);
     if (wait == WAIT_OBJECT_0) {
         if (GetOverlappedResult(stream->Handle, ov, bytes, FALSE))
             return RPC_S_OK;

@@ -186,6 +186,9 @@ typedef struct RPC_THREAD {
     HANDLE CancelEvent;
     LONG Cancelled;
     unsigned char *Scratch;
+    /* how the thread waits for a reply, when its owner has to do more than wait. */
+    DWORD(WINAPI *WaitFn)(DWORD count, const HANDLE *handles, DWORD timeout, void *context);
+    void *WaitContext;
 } RPC_THREAD;
 
 RPC_THREAD *RpcpThread(void);
