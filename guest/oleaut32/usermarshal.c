@@ -345,35 +345,43 @@ static void iface_read(RD *r, IUnknown **pp, REFIID iid)
     r->Cur = end;
 }
 
-/* ------------------------------------------------------------------ safe arrays */
-
+/* the kind an array has on the wire, taken from its descriptor: records first, then the size of an element. */
 static ULONG discr_of(const SAFEARRAY *sa)
 {
-    USHORT f = sa->fFeatures;
-    if (f & FADF_RECORD)
+    if (sa->fFeatures & FADF_RECORD)
         return SF_RECORD;
-    /* the elements that are pointers are told from numbers of their size by what the array says it holds. */
+    /* an element the size of a pointer is told from a plain integer by what the array holds. */
     if (sa->cbElements == sizeof(void *)) {
-        switch (f & 0xF40) {
-        case 0x100: return VT_BSTR;
-        case 0x200: return VT_UNKNOWN;
-        case 0x240: return SF_HAVEIID;
-        case 0x400: return VT_DISPATCH;
-        case 0x440: return SF_HAVEIID;
-        default: break;
+        switch (sa->fFeatures & (FADF_BSTR | FADF_UNKNOWN | FADF_DISPATCH | FADF_HAVEIID | FADF_VARIANT)) {
+        case FADF_BSTR:
+            return VT_BSTR;
+        case FADF_UNKNOWN:
+            return VT_UNKNOWN;
+        case FADF_DISPATCH:
+            return VT_DISPATCH;
+        case FADF_UNKNOWN | FADF_HAVEIID:
+        case FADF_DISPATCH | FADF_HAVEIID:
+            return SF_HAVEIID;
+        default:
+            break;
         }
     }
     switch (sa->cbElements) {
-    case 1: return VT_I1;
-    case 2: return VT_I2;
-    case 4: return VT_I4;
-    case 8: return VT_I8;
+    case 1:
+        return VT_I1;
+    case 2:
+        return VT_I2;
+    case 4:
+        return VT_I4;
+    case 8:
+        return VT_I8;
     default:
-        if (sa->cbElements == sizeof(VARIANT) && (f & 0xF00) == FADF_VARIANT)
-            return VT_VARIANT;
-        raise(E_INVALIDARG);
-        return 0;
+        break;
     }
+    if (sa->cbElements == sizeof(VARIANT) && (sa->fFeatures & 0xF00) == FADF_VARIANT)
+        return VT_VARIANT;
+    raise(E_INVALIDARG);
+    return 0;
 }
 
 /* the elements of the array, as many as its bounds make; an overflow means nothing was allocated that way. */

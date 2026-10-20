@@ -66,7 +66,8 @@ static RECINFO *self_of(IRecordInfo *p)
 /* ------------------------------------------------------------------ the types of fields */
 
 static void ft_free(FT *t);
-static HRESULT ft_build(ITypeInfo *scope, const TYPEDESC *td, BOOL pointee, int depth, FT **out);
+static HRESULT ft_build(ITypeInfo *scope, const TYPEDESC *td, BOOL behind_pointer, int depth, FT **out);
+static ULONG stride_of(const FT *elem);
 
 static ULONG scalar_size(VARTYPE vt)
 {
@@ -108,36 +109,9 @@ static void ft_free(FT *t)
     AutFree(t);
 }
 
-static BOOL kind_is_dispatch(ITypeInfo *info, TYPEATTR *ta)
+static BOOL kind_is_dispatch(const TYPEATTR *ta)
 {
-    (void)info;
     return ta->typekind == TKIND_DISPATCH || (ta->wTypeFlags & TYPEFLAG_FDUAL) != 0;
-}
-
-/* an interface a pointer field points to, followed through aliases: its id and whether it dispatches. */
-static HRESULT pointee_interface(ITypeInfo *scope, HREFTYPE ref, int depth, GUID *iid, BOOL *dispatch)
-{
-    if (depth > MAX_DEPTH)
-        return TYPE_E_UNSUPFORMAT_;
-    ITypeInfo *info;
-    HRESULT hr = scope->lpVtbl->GetRefTypeInfo(scope, ref, &info);
-    if (FAILED(hr))
-        return hr;
-    TYPEATTR *ta;
-    hr = info->lpVtbl->GetTypeAttr(info, &ta);
-    if (SUCCEEDED(hr)) {
-        if (ta->typekind == TKIND_INTERFACE || ta->typekind == TKIND_DISPATCH) {
-            *iid = ta->guid;
-            *dispatch = kind_is_dispatch(info, ta);
-        } else if (ta->typekind == TKIND_ALIAS && ta->tdescAlias.vt == VT_USERDEFINED) {
-            hr = pointee_interface(info, ta->tdescAlias.hreftype, depth + 1, iid, dispatch);
-        } else {
-            hr = TYPE_E_UNSUPFORMAT_;
-        }
-        info->lpVtbl->ReleaseTypeAttr(info, ta);
-    }
-    info->lpVtbl->Release(info);
-    return hr;
 }
 
 static HRESULT ft_scalar(VARTYPE vt, FT **out)
@@ -153,13 +127,56 @@ static HRESULT ft_scalar(VARTYPE vt, FT **out)
     return S_OK;
 }
 
-static HRESULT ft_build_user(ITypeInfo *scope, HREFTYPE ref, BOOL pointee, int depth, FT **out)
+static HRESULT ft_make(VARTYPE vt, ULONG size, ULONG align, FT **out)
+{
+    FT *t = AutAllocZero(sizeof(FT));
+    if (!t)
+        return E_OUTOFMEMORY;
+    t->Vt = vt;
+    t->Size = size;
+    t->Align = align;
+    *out = t;
+    return S_OK;
+}
+
+/* a field that holds an interface, as a plain pointer or declared as a pointer to a named interface. */
+static HRESULT ft_interface(const TYPEATTR *ta, BOOL named, FT **out)
+{
+    HRESULT hr = ft_make(kind_is_dispatch(ta) ? VT_DISPATCH : VT_UNKNOWN, sizeof(void *),
+                         sizeof(void *), out);
+    if (SUCCEEDED(hr)) {
+        (*out)->Iid = ta->guid;
+        (*out)->ViaPointer = named;
+    }
+    return hr;
+}
+
+static HRESULT ft_record(ITypeInfo *info, FT **out)
+{
+    IRecordInfo *record;
+    HRESULT hr = GetRecordInfoFromTypeInfo(info, &record);
+    if (FAILED(hr))
+        return hr;
+    RECINFO *r = self_of(record);
+    hr = ft_make(VT_RECORD, r->Size, r->Align, out);
+    if (FAILED(hr))
+        record->lpVtbl->Release(record);
+    else
+        (*out)->Rec = r;
+    return hr;
+}
+
+/*
+ * A type named by the library. Behind a pointer only an interface is accepted, an enumeration or a record has to be
+ * held by value.
+ */
+static HRESULT ft_build_user(ITypeInfo *scope, HREFTYPE ref, BOOL behind_pointer, int depth, FT **out)
 {
     ITypeInfo *info;
+    TYPEATTR *ta;
     HRESULT hr = scope->lpVtbl->GetRefTypeInfo(scope, ref, &info);
     if (FAILED(hr))
         return hr;
-    TYPEATTR *ta;
     hr = info->lpVtbl->GetTypeAttr(info, &ta);
     if (FAILED(hr)) {
         info->lpVtbl->Release(info);
@@ -167,32 +184,17 @@ static HRESULT ft_build_user(ITypeInfo *scope, HREFTYPE ref, BOOL pointee, int d
     }
     switch (ta->typekind) {
     case TKIND_ENUM:
-        hr = pointee ? TYPE_E_UNSUPFORMAT_ : ft_scalar(VT_I4, out);
+        hr = behind_pointer ? TYPE_E_UNSUPFORMAT_ : ft_make(VT_I4, 4, 4, out);
         break;
     case TKIND_RECORD:
-        if (pointee) {
-            hr = TYPE_E_UNSUPFORMAT_;
-            break;
-        } else {
-            IRecordInfo *record;
-            hr = GetRecordInfoFromTypeInfo(info, &record);
-            if (SUCCEEDED(hr)) {
-                FT *t = AutAllocZero(sizeof(FT));
-                if (!t) {
-                    record->lpVtbl->Release(record);
-                    hr = E_OUTOFMEMORY;
-                } else {
-                    t->Vt = VT_RECORD;
-                    t->Rec = self_of(record);
-                    t->Size = t->Rec->Size;
-                    t->Align = t->Rec->Align ? t->Rec->Align : 1;
-                    *out = t;
-                }
-            }
-        }
+        hr = behind_pointer ? TYPE_E_UNSUPFORMAT_ : ft_record(info, out);
         break;
     case TKIND_ALIAS:
-        hr = ft_build(info, &ta->tdescAlias, pointee, depth + 1, out);
+        hr = ft_build(info, &ta->tdescAlias, behind_pointer, depth + 1, out);
+        break;
+    case TKIND_INTERFACE:
+    case TKIND_DISPATCH:
+        hr = ft_interface(ta, behind_pointer, out);
         break;
     default:
         hr = TYPE_E_UNSUPFORMAT_;
@@ -213,113 +215,88 @@ static HRESULT elem_vt(FT *e, VARTYPE *vt)
     }
 }
 
-static HRESULT ft_build(ITypeInfo *scope, const TYPEDESC *td, BOOL pointee, int depth, FT **out)
+static HRESULT ft_safearray(ITypeInfo *scope, const TYPEDESC *td, int depth, FT **out)
+{
+    FT *elem = nullptr;
+    VARTYPE vt = VT_EMPTY;
+    HRESULT hr = ft_build(scope, td->lptdesc, FALSE, depth + 1, &elem);
+    if (SUCCEEDED(hr))
+        hr = elem_vt(elem, &vt);
+    if (SUCCEEDED(hr))
+        hr = ft_make(VT_SAFEARRAY, sizeof(void *), sizeof(void *), out);
+    if (FAILED(hr)) {
+        if (elem)
+            ft_free(elem);
+        return hr;
+    }
+    (*out)->Elem = elem;
+    (*out)->ElemVt = vt;
+    return S_OK;
+}
+
+static HRESULT ft_fixed_array(ITypeInfo *scope, const TYPEDESC *td, int depth, FT **out)
+{
+    const ARRAYDESC *desc = td->lpadesc;
+    FT *elem = nullptr;
+    VARTYPE vt = VT_EMPTY;
+    HRESULT hr = ft_build(scope, &desc->tdescElem, FALSE, depth + 1, &elem);
+    if (SUCCEEDED(hr))
+        hr = elem_vt(elem, &vt);
+    ULONG64 count = 1;
+    for (USHORT i = 0; SUCCEEDED(hr) && i < desc->cDims; i++) {
+        count *= desc->rgbounds[i].cElements;
+        if (count > 0xFFFFFFFFull)
+            hr = TYPE_E_UNSUPFORMAT_;
+    }
+    if (SUCCEEDED(hr) && count * stride_of(elem) > 0xFFFFFFFFull)
+        hr = TYPE_E_UNSUPFORMAT_;
+    if (SUCCEEDED(hr))
+        hr = ft_make(VT_CARRAY, (ULONG)(count * stride_of(elem)), elem->Align, out);
+    if (SUCCEEDED(hr)) {
+        (*out)->Bounds = AutAlloc((desc->cDims ? desc->cDims : 1) * sizeof(SAFEARRAYBOUND));
+        if (!(*out)->Bounds) {
+            AutFree(*out);
+            hr = E_OUTOFMEMORY;
+        }
+    }
+    if (FAILED(hr)) {
+        ft_free(elem);
+        return hr;
+    }
+    memcpy((*out)->Bounds, desc->rgbounds, desc->cDims * sizeof(SAFEARRAYBOUND));
+    (*out)->Dims = desc->cDims;
+    (*out)->Elem = elem;
+    (*out)->ElemVt = vt;
+    return S_OK;
+}
+
+/* behind_pointer is set while the type is what a pointer points to. */
+static HRESULT ft_build(ITypeInfo *scope, const TYPEDESC *td, BOOL behind_pointer, int depth, FT **out)
 {
     *out = nullptr;
-    if (depth > MAX_DEPTH)
-        return TYPE_E_UNSUPFORMAT_;
-    if (pointee && td->vt != VT_USERDEFINED)
+    if (depth > MAX_DEPTH || (behind_pointer && td->vt != VT_USERDEFINED))
         return TYPE_E_UNSUPFORMAT_;
     switch (td->vt) {
-    case VT_PTR: {
+    case VT_USERDEFINED:
+        return ft_build_user(scope, td->hreftype, behind_pointer, depth, out);
+    case VT_PTR:
         if (td->lptdesc->vt != VT_USERDEFINED)
             return TYPE_E_UNSUPFORMAT_;
-        GUID iid;
-        BOOL dispatch;
-        HRESULT hr = pointee_interface(scope, td->lptdesc->hreftype, depth, &iid, &dispatch);
-        if (FAILED(hr))
-            return hr;
-        FT *t = AutAllocZero(sizeof(FT));
-        if (!t)
-            return E_OUTOFMEMORY;
-        t->Vt = dispatch ? VT_DISPATCH : VT_UNKNOWN;
-        t->ViaPointer = TRUE;
-        t->Iid = iid;
-        t->Size = t->Align = sizeof(void *);
-        *out = t;
-        return S_OK;
-    }
-    case VT_SAFEARRAY: {
-        FT *e;
-        HRESULT hr = ft_build(scope, td->lptdesc, FALSE, depth + 1, &e);
-        if (FAILED(hr))
-            return hr;
-        FT *t = AutAllocZero(sizeof(FT));
-        if (!t) {
-            ft_free(e);
-            return E_OUTOFMEMORY;
-        }
-        t->Vt = VT_SAFEARRAY;
-        t->Elem = e;
-        hr = elem_vt(e, &t->ElemVt);
-        if (FAILED(hr)) {
-            ft_free(t);
-            return hr;
-        }
-        t->Size = t->Align = sizeof(void *);
-        *out = t;
-        return S_OK;
-    }
-    case VT_CARRAY: {
-        const ARRAYDESC *a = td->lpadesc;
-        FT *e;
-        HRESULT hr = ft_build(scope, &a->tdescElem, FALSE, depth + 1, &e);
-        if (FAILED(hr))
-            return hr;
-        FT *t = AutAllocZero(sizeof(FT));
-        if (!t) {
-            ft_free(e);
-            return E_OUTOFMEMORY;
-        }
-        t->Vt = VT_CARRAY;
-        t->Elem = e;
-        t->Dims = a->cDims;
-        t->Bounds = AutAllocZero((SIZE_T)(a->cDims ? a->cDims : 1) * sizeof(SAFEARRAYBOUND));
-        if (!t->Bounds) {
-            ft_free(t);
-            return E_OUTOFMEMORY;
-        }
-        memcpy(t->Bounds, a->rgbounds, a->cDims * sizeof(SAFEARRAYBOUND));
-        hr = elem_vt(e, &t->ElemVt);
-        if (FAILED(hr)) {
-            ft_free(t);
-            return hr;
-        }
-        ULONG stride = e->Size, align = e->Align ? e->Align : 1;
-        if (stride % align)
-            stride += align - stride % align;
-        ULONG64 total = stride;
-        for (USHORT i = 0; i < a->cDims; i++)
-            total *= a->rgbounds[i].cElements;
-        t->Size = total > 0xFFFFFFFFull ? 0xFFFFFFFFu : (ULONG)total;
-        t->Align = align;
-        *out = t;
-        return S_OK;
-    }
-    case VT_USERDEFINED:
-        return ft_build_user(scope, td->hreftype, pointee, depth, out);
+        return ft_build(scope, td->lptdesc, TRUE, depth + 1, out);
     case VT_LPSTR:
     case VT_LPWSTR:
         return TYPE_E_UNSUPFORMAT_;
     case VT_BSTR:
     case VT_UNKNOWN:
     case VT_DISPATCH:
-    case VT_VARIANT: {
-        FT *t = AutAllocZero(sizeof(FT));
-        if (!t)
-            return E_OUTOFMEMORY;
-        t->Vt = td->vt;
-        if (td->vt == VT_UNKNOWN)
-            t->Iid = IID_IUnknown;
-        else if (td->vt == VT_DISPATCH)
-            t->Iid = IID_IDispatch;
-        t->Size = td->vt == VT_VARIANT ? sizeof(VARIANT) : sizeof(void *);
-        t->Align = td->vt == VT_VARIANT ? 8 : sizeof(void *);
-        *out = t;
-        return S_OK;
-    }
+        return ft_make(td->vt, sizeof(void *), sizeof(void *), out);
+    case VT_VARIANT:
+        return ft_make(VT_VARIANT, sizeof(VARIANT), 8, out);
+    case VT_SAFEARRAY:
+        return ft_safearray(scope, td, depth, out);
+    case VT_CARRAY:
+        return ft_fixed_array(scope, td, depth, out);
     default:
-        /* the rest is what a plain value is: a type nothing is known of has no size and is left alone. */
         return ft_scalar(td->vt, out);
     }
 }
@@ -515,6 +492,7 @@ static HRESULT WINAPI ri_clear(IRecordInfo *self, PVOID record)
     return hr;
 }
 
+/* copies every field into storage that holds nothing, and puts it back to nothing if one field fails. */
 static HRESULT copy_fields(RECINFO *r, const BYTE *source, BYTE *dest)
 {
     for (USHORT i = 0; i < r->FieldCount; i++) {
@@ -530,7 +508,6 @@ static HRESULT copy_fields(RECINFO *r, const BYTE *source, BYTE *dest)
 
 static HRESULT WINAPI ri_copy(IRecordInfo *self, PVOID source, PVOID dest)
 {
-    RECINFO *r = self_of(self);
     if (!source || !dest)
         return E_INVALIDARG;
     if (source == dest)
@@ -538,12 +515,7 @@ static HRESULT WINAPI ri_copy(IRecordInfo *self, PVOID source, PVOID dest)
     HRESULT hr = ri_clear(self, dest);
     if (FAILED(hr))
         return hr;
-    /* the bytes between the fields come along too, the way a copy of the structure would. */
-    memcpy(dest, source, r->Size);
-    for (USHORT i = 0; i < r->FieldCount; i++)
-        if (ft_owns(r->Fields[i].Type))
-            memset((BYTE *)dest + r->Fields[i].Offset, 0, r->Fields[i].Type->Size);
-    return copy_fields(r, source, dest);
+    return copy_fields(self_of(self), source, dest);
 }
 
 static HRESULT WINAPI ri_get_guid(IRecordInfo *self, GUID *guid)
@@ -861,181 +833,216 @@ static BOOL array_fits(const FT *t, const VARIANT *v)
     return TRUE;
 }
 
-/* assigns the value of an object to the default property of the one a field holds, as the language does for a Let. */
-static HRESULT let_dispatch(IUnknown *target, VARIANT *value)
-{
-    if (!target)
-        return TYPE_E_INVALIDSTATE_;
-    IDispatch *disp;
-    HRESULT hr = target->lpVtbl->QueryInterface(target, &IID_IDispatch, (void **)&disp);
-    if (FAILED(hr))
-        return hr;
-    DISPID put = DISPID_PROPERTYPUT;
-    DISPPARAMS params = {value, &put, 1, 1};
-    hr = disp->lpVtbl->Invoke(disp, DISPID_VALUE, &IID_NULL, 0x800, DISPATCH_PROPERTYPUT, &params, nullptr, nullptr,
-                              nullptr);
-    disp->lpVtbl->Release(disp);
-    return hr;
-}
-
-/* the value of an object that stands for a value: its default property. */
+/* the default property of an object, as the value it stands for. */
 static HRESULT default_value(VARIANT *v)
 {
-    if (v->vt != VT_DISPATCH || !v->pdispVal)
-        return S_OK;
+    IDispatch *object = v->pdispVal;
     DISPPARAMS none = {nullptr, nullptr, 0, 0};
-    VARIANT result;
-    VariantInit(&result);
-    HRESULT hr = v->pdispVal->lpVtbl->Invoke(v->pdispVal, DISPID_VALUE, &IID_NULL, 0x800, DISPATCH_PROPERTYGET, &none,
-                                             &result, nullptr, nullptr);
+    VARIANT value;
+    VariantInit(&value);
+    HRESULT hr = object->lpVtbl->Invoke(object, DISPID_VALUE, &IID_NULL, 0x800, DISPATCH_PROPERTYGET, &none, &value,
+                                        nullptr, nullptr);
     if (FAILED(hr))
         return hr;
     VariantClear(v);
-    *v = result;
+    *v = value;
     return S_OK;
 }
 
-/* a property put: the value is converted and replaces what the field holds. */
-static HRESULT put_value(RECINFO *r, FIELD *f, void *p, VARIANT *source)
+/* assigns to the default property of the object a field already holds, which is how a value is put into an object. */
+static HRESULT let_dispatch(IDispatch *target, VARIANT *value)
+{
+    DISPID named = DISPID_PROPERTYPUT;
+    DISPPARAMS params = {value, &named, 1, 1};
+    return target->lpVtbl->Invoke(target, DISPID_VALUE, &IID_NULL, 0x800, DISPATCH_PROPERTYPUT, &params, nullptr,
+                                  nullptr, nullptr);
+}
+
+static HRESULT convert_in_place(VARIANT *v, VARTYPE vt)
+{
+    if (v->vt == vt)
+        return S_OK;
+    return VariantChangeTypeEx(v, v, 0x400, VARIANT_NOVALUEPROP, vt);
+}
+
+/* takes the object out of a variant that holds one, to be the new content of a field. */
+static void take_object(IUnknown **slot, VARIANT *v)
+{
+    AutRelease(*slot);
+    *slot = v->punkVal;
+    v->vt = VT_EMPTY;
+}
+
+/* the elements of an array value, copied over a fixed array of a field. */
+static HRESULT put_fixed_array(const FT *t, void *p, const VARIANT *v)
+{
+    const SAFEARRAY *array = v->parray;
+    ULONG stride = stride_of(t->Elem);
+    ULONG count = stride ? t->Size / stride : 0;
+    BYTE *fresh = AutAllocZero(t->Size ? t->Size : 1);
+    if (!fresh)
+        return E_OUTOFMEMORY;
+    for (ULONG i = 0; i < count; i++) {
+        HRESULT hr = ft_copy(t->Elem, (BYTE *)array->pvData + (SIZE_T)i * array->cbElements,
+                             fresh + (SIZE_T)i * stride);
+        if (FAILED(hr)) {
+            while (i--)
+                ft_clear(t->Elem, fresh + (SIZE_T)i * stride);
+            AutFree(fresh);
+            return hr;
+        }
+    }
+    HRESULT hr = ft_clear(t, p);
+    if (SUCCEEDED(hr))
+        memcpy(p, fresh, t->Size);
+    else
+        ft_clear(t, fresh);
+    AutFree(fresh);
+    return hr;
+}
+
+/*
+ * Puts the value in v into a field. v belongs to this function: what the field takes is moved out of it, and what is
+ * left is cleared by the caller. exact says that a string field takes only a string.
+ */
+static HRESULT put_by_value(FIELD *f, void *p, VARIANT *v, BOOL exact)
 {
     const FT *t = f->Type;
-    (void)r;
-    VARIANT v;
-    VariantInit(&v);
-    HRESULT hr = VariantCopyInd(&v, source);
-    if (FAILED(hr))
-        return hr;
-    if (v.vt == VT_DISPATCH && t->Vt != VT_DISPATCH) {
-        hr = default_value(&v);
+    HRESULT hr;
+    if (v->vt == VT_DISPATCH && v->pdispVal && t->Vt != VT_DISPATCH) {
+        hr = default_value(v);
         if (FAILED(hr))
-            goto done;
+            return hr;
     }
     switch (t->Vt) {
     case VT_BSTR:
-        hr = VariantChangeTypeEx(&v, &v, 0x400, VARIANT_NOVALUEPROP, VT_BSTR);
-        if (SUCCEEDED(hr)) {
-            SysFreeString(*(BSTR *)p);
-            *(BSTR *)p = v.bstrVal;
-            v.vt = VT_EMPTY;
-        }
-        break;
+        if (exact && v->vt != VT_BSTR)
+            return DISP_E_TYPEMISMATCH;
+        hr = convert_in_place(v, VT_BSTR);
+        if (FAILED(hr))
+            return hr;
+        SysFreeString(*(BSTR *)p);
+        *(BSTR *)p = v->bstrVal;
+        v->vt = VT_EMPTY;
+        return S_OK;
     case VT_VARIANT:
         hr = VariantClear(p);
-        if (SUCCEEDED(hr))
-            hr = VariantCopy(p, &v);
-        break;
+        if (FAILED(hr))
+            return hr;
+        *(VARIANT *)p = *v;
+        v->vt = VT_EMPTY;
+        return S_OK;
     case VT_UNKNOWN:
-        if (t->ViaPointer) {
-            hr = E_INVALIDARG;
-            break;
-        }
-        hr = VariantChangeTypeEx(&v, &v, 0x400, VARIANT_NOVALUEPROP, VT_UNKNOWN);
-        if (SUCCEEDED(hr)) {
-            AutRelease(*(IUnknown **)p);
-            *(IUnknown **)p = v.punkVal;
-            v.vt = VT_EMPTY;
-        }
-        break;
+        if (t->ViaPointer)
+            return E_INVALIDARG;
+        hr = convert_in_place(v, VT_UNKNOWN);
+        if (FAILED(hr))
+            return hr;
+        take_object((IUnknown **)p, v);
+        return S_OK;
     case VT_DISPATCH:
-        hr = let_dispatch(*(IUnknown **)p, &v);
-        break;
+        if (!*(IDispatch **)p)
+            return TYPE_E_INVALIDSTATE_;
+        return let_dispatch(*(IDispatch **)p, v);
     case VT_SAFEARRAY:
-        if (!(v.vt & VT_ARRAY) || (VARTYPE)(v.vt & ~VT_ARRAY) != t->ElemVt) {
-            hr = E_INVALIDARG;
-            break;
+        if (!(v->vt & VT_ARRAY) || (v->vt & VT_BYREF) || !v->parray || (VARTYPE)(v->vt & ~VT_ARRAY) != t->ElemVt)
+            return E_INVALIDARG;
+        if (*(SAFEARRAY **)p) {
+            hr = SafeArrayDestroy(*(SAFEARRAY **)p);
+            *(SAFEARRAY **)p = nullptr;
+            if (FAILED(hr))
+                return hr;
         }
-        hr = ft_clear(t, p);
-        if (SUCCEEDED(hr))
-            hr = v.parray ? SafeArrayCopy(v.parray, (SAFEARRAY **)p) : S_OK;
-        break;
+        *(SAFEARRAY **)p = v->parray;
+        v->vt = VT_EMPTY;
+        return S_OK;
     case VT_CARRAY:
-        if (!array_fits(t, &v)) {
-            hr = E_INVALIDARG;
-            break;
-        }
-        hr = ft_clear(t, p);
-        if (SUCCEEDED(hr)) {
-            ULONG stride = stride_of(t->Elem), count = stride ? t->Size / stride : 0;
-            for (ULONG i = 0; i < count && SUCCEEDED(hr); i++)
-                hr = ft_copy(t->Elem, (BYTE *)v.parray->pvData + (SIZE_T)i * v.parray->cbElements,
-                             (BYTE *)p + (SIZE_T)i * stride);
-        }
-        break;
+        if (!array_fits(t, v))
+            return E_INVALIDARG;
+        return put_fixed_array(t, p, v);
     case VT_RECORD:
-        if (v.vt != VT_RECORD || !v.pRecInfo || !v.pvRecord ||
-            !t->Rec->lpVtbl->IsMatchingType((IRecordInfo *)t->Rec, v.pRecInfo)) {
-            hr = E_INVALIDARG;
-            break;
-        }
-        hr = v.pRecInfo->lpVtbl->RecordCopy(v.pRecInfo, v.pvRecord, p);
-        break;
+        if (v->vt != VT_RECORD || !v->pRecInfo || !v->pvRecord)
+            return E_INVALIDARG;
+        if (!((IRecordInfo *)t->Rec)->lpVtbl->IsMatchingType((IRecordInfo *)t->Rec, v->pRecInfo))
+            return E_INVALIDARG;
+        return ((IRecordInfo *)t->Rec)->lpVtbl->RecordCopy((IRecordInfo *)t->Rec, v->pvRecord, p);
     default:
-        hr = t->Size ? store_scalar(t, p, &v) : TYPE_E_UNDEFINEDTYPE_;
-        break;
+        if (!t->Size)
+            return TYPE_E_UNDEFINEDTYPE_;
+        return store_scalar(t, p, v);
     }
-done:
-    VariantClear(&v);
-    return hr;
 }
 
-/* a property put by reference: only the fields that hold objects take one. */
-static HRESULT put_ref(RECINFO *r, FIELD *f, void *p, VARIANT *source)
+/* a field that holds an object takes a new one without going through its default property. */
+static HRESULT put_by_reference(FIELD *f, void *p, VARIANT *v)
 {
     const FT *t = f->Type;
-    (void)r;
-    VARIANT v;
-    VariantInit(&v);
-    HRESULT hr = VariantCopyInd(&v, source);
-    if (FAILED(hr))
-        return hr;
+    HRESULT hr;
     switch (t->Vt) {
     case VT_VARIANT:
-        if (v.vt == VT_DISPATCH || v.vt == VT_UNKNOWN) {
-            hr = VariantClear(p);
-            if (SUCCEEDED(hr))
-                hr = VariantCopy(p, &v);
-        } else {
-            hr = E_INVALIDARG;
-        }
-        break;
+        if (v->vt != VT_DISPATCH && v->vt != VT_UNKNOWN)
+            return E_INVALIDARG;
+        hr = VariantClear(p);
+        if (FAILED(hr))
+            return hr;
+        *(VARIANT *)p = *v;
+        v->vt = VT_EMPTY;
+        return S_OK;
     case VT_UNKNOWN:
     case VT_DISPATCH:
-        hr = VariantChangeTypeEx(&v, &v, 0x400, VARIANT_NOVALUEPROP, t->Vt);
-        if (SUCCEEDED(hr) && t->ViaPointer && v.punkVal) {
-            /* a pointer to a type takes only objects that are one. */
-            IUnknown *check;
-            hr = v.punkVal->lpVtbl->QueryInterface(v.punkVal, &t->Iid, (void **)&check);
-            if (SUCCEEDED(hr))
-                check->lpVtbl->Release(check);
+        hr = convert_in_place(v, t->Vt);
+        if (FAILED(hr))
+            return hr;
+        if (t->ViaPointer && v->punkVal) {
+            IUnknown *wanted;
+            hr = v->punkVal->lpVtbl->QueryInterface(v->punkVal, &t->Iid, (void **)&wanted);
+            if (FAILED(hr))
+                return hr;
+            v->punkVal->lpVtbl->Release(v->punkVal);
+            v->punkVal = wanted;
         }
-        if (SUCCEEDED(hr)) {
-            AutRelease(*(IUnknown **)p);
-            AutAddRef(v.punkVal);
-            *(IUnknown **)p = v.punkVal;
-        }
-        break;
+        take_object((IUnknown **)p, v);
+        return S_OK;
     default:
-        hr = E_INVALIDARG;
-        break;
+        return E_INVALIDARG;
     }
-    VariantClear(&v);
-    return hr;
 }
 
-static HRESULT put_field(RECINFO *r, ULONG flags, PVOID record, LPCOLESTR name, VARIANT *value, BOOL take)
+static HRESULT put_field(RECINFO *r, ULONG flags, PVOID record, LPCOLESTR name, VARIANT *value, BOOL consume)
 {
     ULONG index;
-    if (!record || !value || !name || (flags != DISPATCH_PROPERTYPUT && flags != DISPATCH_PROPERTYPUTREF))
+    VARIANT work;
+    HRESULT hr;
+    if ((flags != DISPATCH_PROPERTYPUT && flags != DISPATCH_PROPERTYPUTREF) || !record || !name || !value)
         return E_INVALIDARG;
-    HRESULT hr = field_index(r, name, &index);
+    hr = field_index(r, name, &index);
     if (FAILED(hr))
         return hr;
+    /* a value that is consumed is worked on where it is, so nothing is copied unless it is held by reference. */
+    BOOL shallow = consume && !(value->vt & VT_BYREF);
+    if (shallow) {
+        work = *value;
+    } else {
+        VariantInit(&work);
+        hr = VariantCopyInd(&work, value);
+        if (FAILED(hr))
+            return hr;
+    }
     FIELD *f = &r->Fields[index];
-    void *p = (BYTE *)record + f->Offset;
-    hr = flags == DISPATCH_PROPERTYPUT ? put_value(r, f, p, value) : put_ref(r, f, p, value);
-    /* the value the caller gave up is cleared now that the field has its own. */
-    if (SUCCEEDED(hr) && take)
-        VariantClear(value);
+    BYTE *p = (BYTE *)record + f->Offset;
+    if (flags == DISPATCH_PROPERTYPUT)
+        hr = put_by_value(f, p, &work, consume);
+    else
+        hr = put_by_reference(f, p, &work);
+    if (!shallow) {
+        VariantClear(&work);
+    } else if (SUCCEEDED(hr)) {
+        VariantClear(&work);
+        value->vt = VT_EMPTY;
+    } else {
+        /* what was converted on the way is what the variant holds now. */
+        *value = work;
+    }
     return hr;
 }
 
@@ -1044,8 +1051,7 @@ static HRESULT WINAPI ri_put_field(IRecordInfo *self, ULONG flags, PVOID record,
     return put_field(self_of(self), flags, record, name, value, FALSE);
 }
 
-static HRESULT WINAPI ri_put_field_no_copy(IRecordInfo *self, ULONG flags, PVOID record, LPCOLESTR name,
-                                           VARIANT *value)
+static HRESULT WINAPI ri_put_field_no_copy(IRecordInfo *self, ULONG flags, PVOID record, LPCOLESTR name, VARIANT *value)
 {
     return put_field(self_of(self), flags, record, name, value, TRUE);
 }
@@ -1059,21 +1065,45 @@ static HRESULT WINAPI ri_get_field_names(IRecordInfo *self, ULONG *count, BSTR *
         *count = r->FieldCount;
         return S_OK;
     }
-    memset(names, 0, (SIZE_T)*count * sizeof(BSTR));
+    memset(names, 0, *count * sizeof(BSTR));
     if (*count > r->FieldCount)
         *count = r->FieldCount;
     for (ULONG i = 0; i < *count; i++) {
-        names[i] = SysAllocStringLen(r->Fields[i].Name, SysStringLen(r->Fields[i].Name));
+        BSTR name = r->Fields[i].Name;
+        names[i] = SysAllocStringLen(name, SysStringLen(name));
         if (!names[i]) {
-            while (i--) {
-                SysFreeString(names[i]);
-                names[i] = nullptr;
+            for (ULONG j = i; j--;) {
+                SysFreeString(names[j]);
+                names[j] = nullptr;
             }
-            *count = 0;
+            if (i)
+                *count = i;
             return E_OUTOFMEMORY;
         }
     }
     return S_OK;
+}
+
+/* the library a record type is declared in, for a record information of another implementation. */
+static BOOL library_of(IRecordInfo *record, TLIBATTR *out)
+{
+    ITypeInfo *info;
+    ITypeLib *lib;
+    UINT index;
+    TLIBATTR *attr;
+    BOOL found = FALSE;
+    if (FAILED(record->lpVtbl->GetTypeInfo(record, &info)) || !info)
+        return FALSE;
+    if (SUCCEEDED(info->lpVtbl->GetContainingTypeLib(info, &lib, &index))) {
+        if (SUCCEEDED(lib->lpVtbl->GetLibAttr(lib, &attr))) {
+            *out = *attr;
+            lib->lpVtbl->ReleaseTLibAttr(lib, attr);
+            found = TRUE;
+        }
+        lib->lpVtbl->Release(lib);
+    }
+    info->lpVtbl->Release(info);
+    return found;
 }
 
 static BOOL WINAPI ri_is_matching_type(IRecordInfo *self, IRecordInfo *other)
@@ -1081,24 +1111,26 @@ static BOOL WINAPI ri_is_matching_type(IRecordInfo *self, IRecordInfo *other)
     RECINFO *r = self_of(self);
     if (!other)
         return FALSE;
-    /* two of this library's objects are told apart by what they hold, any other implementation by its answers. */
-    if (other->lpVtbl == r->lpVtbl) {
+    if (other->lpVtbl == self->lpVtbl) {
         RECINFO *o = self_of(other);
-        return IsEqualGUID(&o->Guid, &r->Guid) && IsEqualGUID(&o->LibGuid, &r->LibGuid) && o->Major == r->Major &&
-               o->Minor == r->Minor && o->Lcid == r->Lcid && o->Size == r->Size;
+        return IsEqualGUID(&r->Guid, &o->Guid) && IsEqualGUID(&r->LibGuid, &o->LibGuid) && r->Major == o->Major &&
+               r->Minor == o->Minor && r->Lcid == o->Lcid && r->Size == o->Size;
     }
+    /* another implementation is asked for the same things. */
     GUID guid;
     ULONG size;
-    ITypeInfo *info;
+    TLIBATTR lib;
     if (FAILED(other->lpVtbl->GetGuid(other, &guid)) || !IsEqualGUID(&guid, &r->Guid))
         return FALSE;
     if (FAILED(other->lpVtbl->GetSize(other, &size)) || size != r->Size)
         return FALSE;
-    if (FAILED(other->lpVtbl->GetTypeInfo(other, &info)))
-        return FALSE;
-    info->lpVtbl->Release(info);
-    return TRUE;
+    if (!library_of(other, &lib))
+        return TRUE;
+    return IsEqualGUID(&lib.guid, &r->LibGuid) && lib.wMajorVerNum == r->Major && lib.wMinorVerNum == r->Minor &&
+           lib.lcid == r->Lcid;
 }
+
+
 
 static PVOID WINAPI ri_create(IRecordInfo *self)
 {

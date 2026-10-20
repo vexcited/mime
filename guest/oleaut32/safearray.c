@@ -645,48 +645,58 @@ WINOLEAUTAPI HRESULT WINAPI VectorFromBstr(BSTR bstr, SAFEARRAY **out)
 
 /* ------------------------------------------------------------------ the rest of the creating and the references */
 
-static HRESULT features_of(VARTYPE vt, IRecordInfo *record, USHORT *size, USHORT *features)
+/* the size of an element and the features that go with its type, or false when no array holds the type. */
+static BOOL element_traits(VARTYPE vt, IRecordInfo *record, ULONG *size, USHORT *features)
 {
-    ULONG bytes = element_size(vt);
     *features = 0;
     switch (vt) {
-    case VT_BSTR: *features = FADF_BSTR; break;
-    case VT_UNKNOWN: *features = FADF_UNKNOWN; break;
-    case VT_DISPATCH: *features = FADF_DISPATCH; break;
-    case VT_VARIANT: *features = FADF_VARIANT; break;
-    case VT_RECORD:
+    case VT_BSTR:
+        *features = FADF_BSTR;
+        break;
+    case VT_DISPATCH:
+        *features = FADF_DISPATCH;
+        break;
+    case VT_UNKNOWN:
+        *features = FADF_UNKNOWN;
+        break;
+    case VT_VARIANT:
+        *features = FADF_VARIANT;
+        break;
+    case VT_RECORD: {
+        ULONG bytes = 0;
         if (!record)
-            return E_INVALIDARG;
-        *features = FADF_RECORD;
+            return FALSE;
         record->lpVtbl->GetSize(record, &bytes);
         if (bytes > 0xFFFF)
-            return E_INVALIDARG;
-        break;
+            return FALSE;
+        *size = bytes;
+        *features = FADF_RECORD;
+        return TRUE;
+    }
     default:
-        if (!bytes)
-            return E_INVALIDARG;
         break;
     }
-    *size = (USHORT)bytes;
-    return S_OK;
+    *size = element_size(vt);
+    return *size != 0;
 }
 
 WINOLEAUTAPI SAFEARRAY *WINAPI SafeArrayCreateEx(VARTYPE vt, UINT dims, SAFEARRAYBOUND *bounds, PVOID extra)
 {
-    if (!bounds || !dims || dims > 0xFFFF)
-        return nullptr;
-    IRecordInfo *record = vt == VT_RECORD ? extra : nullptr;
-    const GUID *iid = vt == VT_UNKNOWN || vt == VT_DISPATCH ? extra : nullptr;
-    USHORT size, features;
+    ULONG size;
+    USHORT features;
     SAFEARRAY *array;
-    if (FAILED(features_of(vt, record, &size, &features)) || FAILED(SafeArrayAllocDescriptorEx(vt, dims, &array)))
+    if (!bounds || !dims || dims > 0xFFFF || !element_traits(vt, extra, &size, &features))
+        return nullptr;
+    if (FAILED(SafeArrayAllocDescriptorEx(vt, dims, &array)))
         return nullptr;
     array->cbElements = size;
     array->fFeatures |= features;
-    if (vt == VT_RECORD)
-        SafeArraySetRecordInfo(array, record);
-    else if (iid)
-        SafeArraySetIID(array, iid);
+    if (vt == VT_RECORD) {
+        AutAddRef(extra);
+        *record_slot(array) = extra;
+    } else if (extra && (vt == VT_UNKNOWN || vt == VT_DISPATCH)) {
+        memcpy(prefix(array), extra, sizeof(GUID));
+    }
     for (UINT i = 0; i < dims; i++)
         array->rgsabound[dims - 1 - i] = bounds[i];
     if (FAILED(SafeArrayAllocData(array))) {
