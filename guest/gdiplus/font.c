@@ -1,1126 +1,714 @@
 /*
- * fonts: the families of the installed collection and of private collections, their faces, and the font objects of
- * the flat api. the installed families come from the font enumeration of gdi and their faces are read through
- * GetFontData when a font is first used; a private collection holds the files and memory images it was given.
+ * fonts: the font files, the families made of them, the collections that hold the families and the font objects
+ * of the flat api. The installed collection is what gdi32 lists, read through its font data calls the first time
+ * a face is needed. A private collection reads font files and memory itself.
  */
 #include "text_private.h"
-#include <ttf/ttf_internal.h>
 
-/* ------------------------------------------------------------------ the lock */
+/* the tag of a font table as GetFontData takes it, the first letter in the lowest byte. */
+#define TABLE_TAG(a, b, c, d) ((DWORD)(a) | (DWORD)(b) << 8 | (DWORD)(c) << 16 | (DWORD)(d) << 24)
 
-/* the families, faces and outline caches are shared by the threads of a program. the lock is recursive. */
-static volatile LONG g_owner;
-static LONG g_depth;
+/* ------------------------------------------------------------------ the lock of the shared state */
+
+static volatile LONG g_lock;
 
 static void text_lock(void)
 {
-    LONG me = (LONG)GetCurrentThreadId();
-    if (g_owner == me) {
-        g_depth++;
-        return;
-    }
-    while (InterlockedCompareExchange(&g_owner, me, 0) != 0)
+    while (InterlockedCompareExchange(&g_lock, 1, 0) != 0)
         Sleep(0);
-    g_depth = 1;
 }
 
-static void text_unlock(void)
-{
-    if (--g_depth == 0)
-        InterlockedExchange(&g_owner, 0);
-}
+static void text_unlock(void) { InterlockedExchange(&g_lock, 0); }
 
-/* ------------------------------------------------------------------ strings */
+/* ------------------------------------------------------------------ names */
 
-/* gdi+ compares names after raising a to z only, in at most 31 characters. */
-static void name_copy(WCHAR *dst, const WCHAR *src)
-{
-    INT i = 0;
-    for (; i < LF_FACESIZE - 1 && src[i]; i++)
-        dst[i] = src[i];
-    for (; i < LF_FACESIZE; i++)
-        dst[i] = 0;
-}
+static WCHAR raise_ascii(WCHAR c) { return c >= 'a' && c <= 'z' ? (WCHAR)(c - 32) : c; }
 
-static void name_upper(WCHAR *dst, const WCHAR *src)
+/* names are equal when their first 31 characters are, with only a to z raised. */
+static int name_compare(const WCHAR *a, const WCHAR *b)
 {
-    INT i = 0;
-    for (; i < LF_FACESIZE - 1 && src[i]; i++)
-        dst[i] = src[i] >= 'a' && src[i] <= 'z' ? (WCHAR)(src[i] - 32) : src[i];
-    for (; i < LF_FACESIZE; i++)
-        dst[i] = 0;
-}
-
-static INT name_compare(const WCHAR *a, const WCHAR *b)
-{
-    for (INT i = 0; i < LF_FACESIZE; i++) {
-        if (a[i] != b[i])
-            return a[i] < b[i] ? -1 : 1;
-        if (!a[i])
-            break;
+    for (INT i = 0; i < LF_FACESIZE - 1; i++) {
+        WCHAR x = raise_ascii(a[i]), y = raise_ascii(b[i]);
+        if (x != y)
+            return x < y ? -1 : 1;
+        if (!x)
+            return 0;
     }
     return 0;
 }
 
-/* ------------------------------------------------------------------ faces */
+/* ------------------------------------------------------------------ files and faces */
 
-static void face_metrics(GFace *f)
+static GFontBlob *blob_new(BYTE *bytes, SIZE_T size)
 {
-    MimeTtfMetrics m;
-    mime_ttf_metrics(&f->ttf, &m);
-    f->upem = (UINT16)(m.units_per_em > 0 ? m.units_per_em : 2048);
-    /* the design metrics come from hhea, or from the typographic ones the font asks for. */
-    INT ascent = m.ascender, descent = -m.descender, gap = m.line_gap;
-    if (m.use_typo_metrics && (m.typo_ascender || m.typo_descender)) {
-        ascent = m.typo_ascender;
-        descent = -m.typo_descender;
-        gap = m.typo_line_gap;
-    }
-    if (ascent <= 0 && descent <= 0) {
-        ascent = m.win_ascent;
-        descent = m.win_descent;
-        gap = 0;
-    }
-    f->ascent = (UINT16)(ascent < 0 ? 0 : ascent);
-    f->descent = (UINT16)(descent < 0 ? 0 : descent);
-    f->gap = (UINT16)(gap < 0 ? 0 : gap);
-    f->underline_pos = m.underline_position;
-    f->underline_thickness = m.underline_thickness > 0 ? m.underline_thickness : f->upem / 20;
-    f->strike_pos = m.strikeout_position;
-    f->strike_thickness = m.strikeout_size > 0 ? m.strikeout_size : f->underline_thickness;
-    f->bold = m.weight > 500;
-    f->italic = m.italic;
-    f->symbol = f->ttf.cmap_symbol;
-    f->space_glyph = mime_ttf_glyph_index(&f->ttf, 0x20);
-}
-
-/* a face over the bytes of a font file, which stay valid as long as the face. NULL when they are no font. */
-static GFace *face_open(BYTE *data, SIZE_T size, BOOL owns, UINT index)
-{
-    GFace *f = gp_alloc_zero(sizeof(*f));
-    if (!f)
+    GFontBlob *blob = gp_alloc_zero(sizeof(*blob));
+    if (!blob)
         return nullptr;
-    f->data = data;
-    f->size = size;
-    f->owns_data = owns;
-    if (!mime_ttf_open(&f->ttf, data, size, index)) {
-        gp_free(f);
+    blob->refs = 1;
+    blob->bytes = bytes;
+    blob->size = size;
+    return blob;
+}
+
+static void blob_release(GFontBlob *blob)
+{
+    if (blob && InterlockedDecrement(&blob->refs) == 0) {
+        gp_free(blob->bytes);
+        gp_free(blob);
+    }
+}
+
+static void face_free(GFace *face)
+{
+    if (face) {
+        blob_release(face->blob);
+        gp_free(face);
+    }
+}
+
+/* the design numbers of a face: the horizontal header's, or the typographic ones when the font asks for them. */
+static void face_metrics(GFace *face)
+{
+    const MimeTtfMetrics *m = &face->metrics;
+    face->em = m->units_per_em;
+    face->ascent = m->ascender;
+    face->descent = m->descender < 0 ? -m->descender : m->descender;
+    face->gap = m->line_gap;
+    if (m->use_typo_metrics && (m->typo_ascender || m->typo_descender)) {
+        face->ascent = m->typo_ascender;
+        face->descent = m->typo_descender < 0 ? -m->typo_descender : m->typo_descender;
+        face->gap = m->typo_line_gap;
+    }
+    if (!face->ascent && !face->descent) {
+        face->ascent = m->win_ascent;
+        face->descent = m->win_descent;
+        face->gap = 0;
+    }
+    face->underline_pos = m->underline_position ? m->underline_position : -face->em / 10;
+    face->underline_size = m->underline_thickness > 0 ? m->underline_thickness : face->em / 20;
+    face->strike_pos = m->strikeout_position ? m->strikeout_position : face->em / 4;
+    face->strike_size = m->strikeout_size > 0 ? m->strikeout_size : face->em / 20;
+}
+
+/* parses face number index of the bytes; the face keeps a reference on them. */
+static GFace *face_open(GFontBlob *blob, unsigned index)
+{
+    GFace *face = gp_alloc_zero(sizeof(*face));
+    if (!face)
+        return nullptr;
+    if (!mime_ttf_open(&face->ttf, blob->bytes, blob->size, index) || !face->ttf.units_per_em) {
+        gp_free(face);
         return nullptr;
     }
-    f->valid = TRUE;
-    face_metrics(f);
-    return f;
+    mime_ttf_metrics(&face->ttf, &face->metrics);
+    face_metrics(face);
+    InterlockedIncrement(&blob->refs);
+    face->blob = blob;
+    return face;
 }
 
-UINT16 gp_face_glyph(GFace *face, UINT32 cp)
+/* ------------------------------------------------------------------ families and collections */
+
+static int slot_of(BOOL bold, BOOL italic) { return (bold ? 1 : 0) + (italic ? 2 : 0); }
+
+static GFamily *family_new(const WCHAR *name, BOOL installed)
 {
-    UINT16 g = mime_ttf_glyph_index(&face->ttf, cp);
-    if (!g && face->symbol && cp >= 0x20 && cp <= 0xFF)
-        g = mime_ttf_glyph_index(&face->ttf, 0xF000 + cp);
-    return g;
+    GFamily *family = gp_alloc_zero(sizeof(*family));
+    if (!family)
+        return nullptr;
+    family->tag = GP_TAG_FAMILY;
+    family->refs = 1;
+    family->installed = installed;
+    family->charset = DEFAULT_CHARSET;
+    lstrcpynW(family->name, name, LF_FACESIZE);
+    return family;
 }
 
-INT gp_face_advance(GFace *face, UINT16 glyph)
+static void family_free(GFamily *family)
 {
-    INT advance = 0, bearing = 0;
-    mime_ttf_glyph_hmetrics(&face->ttf, glyph, &advance, &bearing);
-    return advance;
+    for (INT i = 0; i < GP_SLOT_COUNT; i++)
+        face_free(family->slot[i].face);
+    family->tag = 0;
+    gp_free(family);
 }
 
-/* ------------------------------------------------------------------ outlines */
-
-typedef struct OutlineBuilder {
-    MimeVecPath *path;
-    MimeVecPoint *pts;
-    bool *on;
-    UINT count, cap;
-    BOOL failed;
-} OutlineBuilder;
-
-static void outline_point(void *ctx, float x, float y, bool on_curve)
+static void family_release(GFamily *family)
 {
-    OutlineBuilder *b = ctx;
-    if (b->failed)
-        return;
-    if (b->count == b->cap) {
-        UINT cap = b->cap ? b->cap * 2 : 64;
-        MimeVecPoint *pts = gp_realloc(b->pts, cap * sizeof(*pts));
-        if (!pts) {
-            b->failed = TRUE;
-            return;
+    /* the installed families live as long as the process. */
+    if (family && !family->installed && InterlockedDecrement(&family->refs) == 0)
+        family_free(family);
+}
+
+static void family_retain(GFamily *family)
+{
+    if (!family->installed)
+        InterlockedIncrement(&family->refs);
+}
+
+/* the index a name is or would be at in the sorted families of a collection. */
+static INT collection_lower_bound(const GCollection *c, const WCHAR *name, BOOL *found)
+{
+    INT lo = 0, hi = c->count;
+    *found = FALSE;
+    while (lo < hi) {
+        INT mid = (lo + hi) / 2;
+        int cmp = name_compare(c->families[mid]->name, name);
+        if (cmp == 0) {
+            *found = TRUE;
+            return mid;
         }
-        b->pts = pts;
-        bool *on = gp_realloc(b->on, cap * sizeof(*on));
-        if (!on) {
-            b->failed = TRUE;
-            return;
-        }
-        b->on = on;
-        b->cap = cap;
+        if (cmp < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
     }
-    b->pts[b->count].x = x;
-    b->pts[b->count].y = y;
-    b->on[b->count] = on_curve;
-    b->count++;
+    return lo;
 }
 
-/* the quadratic arc through a control point, as a cubic with the two thirds rule. */
-static void outline_quad(MimeVecPath *p, MimeVecPoint a, MimeVecPoint c, MimeVecPoint b)
+static GFamily *collection_find(const GCollection *c, const WCHAR *name)
 {
-    mime_vec_path_bezier_to(p, a.x + (c.x - a.x) * (2.0f / 3.0f), a.y + (c.y - a.y) * (2.0f / 3.0f),
-                            b.x + (c.x - b.x) * (2.0f / 3.0f), b.y + (c.y - b.y) * (2.0f / 3.0f), b.x, b.y);
+    BOOL found;
+    INT at = collection_lower_bound(c, name, &found);
+    return found ? c->families[at] : nullptr;
 }
 
-static void outline_end(void *ctx)
+/* the family of that name, made when the collection does not have it yet. */
+static GFamily *collection_add_family(GCollection *c, const WCHAR *name, BOOL installed)
 {
-    OutlineBuilder *b = ctx;
-    UINT n = b->count;
-    b->count = 0;
-    if (b->failed || n < 2)
-        return;
-    MimeVecPoint start;
-    UINT first, last;
-    if (b->on[0]) {
-        start = b->pts[0];
-        first = 1;
-        last = n;
-    } else if (b->on[n - 1]) {
-        start = b->pts[n - 1];
-        first = 0;
-        last = n - 1;
-    } else {
-        start.x = (b->pts[n - 1].x + b->pts[0].x) * 0.5f;
-        start.y = (b->pts[n - 1].y + b->pts[0].y) * 0.5f;
-        first = 0;
-        last = n;
+    BOOL found;
+    INT at = collection_lower_bound(c, name, &found);
+    if (found)
+        return c->families[at];
+    if (c->count == c->capacity) {
+        INT capacity = c->capacity ? c->capacity * 2 : 64;
+        GFamily **grown = gp_realloc(c->families, sizeof(GFamily *) * (SIZE_T)capacity);
+        if (!grown)
+            return nullptr;
+        c->families = grown;
+        c->capacity = capacity;
     }
-    mime_vec_path_move_to(b->path, start.x, start.y);
-    MimeVecPoint cur = start, off = {0, 0};
-    BOOL have_off = FALSE;
-    for (UINT i = first; i < last; i++) {
-        MimeVecPoint p = b->pts[i];
-        if (b->on[i]) {
-            if (have_off)
-                outline_quad(b->path, cur, off, p);
-            else
-                mime_vec_path_line_to(b->path, p.x, p.y);
-            cur = p;
-            have_off = FALSE;
-        } else if (have_off) {
-            MimeVecPoint mid = {(off.x + p.x) * 0.5f, (off.y + p.y) * 0.5f};
-            outline_quad(b->path, cur, off, mid);
-            cur = mid;
-            off = p;
-        } else {
-            off = p;
-            have_off = TRUE;
-        }
-    }
-    if (have_off)
-        outline_quad(b->path, cur, off, start);
-    mime_vec_path_close_figure(b->path);
-}
-
-const MimeVecPath *gp_face_outline(GFace *face, UINT16 glyph)
-{
-    if (!face->valid || glyph >= mime_ttf_glyph_count(&face->ttf))
+    GFamily *family = family_new(name, installed);
+    if (!family)
         return nullptr;
-    text_lock();
-    const MimeVecPath *result = nullptr;
-    if (!face->outlines) {
-        face->outline_count = mime_ttf_glyph_count(&face->ttf);
-        face->outlines = gp_alloc_zero(face->outline_count * sizeof(MimeVecPath *));
-    }
-    if (face->outlines) {
-        MimeVecPath *cached = face->outlines[glyph];
-        if (!cached) {
-            cached = gp_alloc_zero(sizeof(*cached));
-            if (cached) {
-                mime_vec_path_init(cached, &gp_allocator);
-                OutlineBuilder b = {cached, nullptr, nullptr, 0, 0, FALSE};
-                MimeTtfSink sink = {outline_point, outline_end, &b};
-                BOOL ok = mime_ttf_walk_outline(&face->ttf, glyph, &sink) && !b.failed;
-                gp_free(b.pts);
-                gp_free(b.on);
-                if (!ok)
-                    mime_vec_path_clear(cached);
-                face->outlines[glyph] = cached;
-            }
-        }
-        result = cached && cached->count ? cached : nullptr;
-    }
-    text_unlock();
-    return result;
+    memmove(c->families + at + 1, c->families + at, sizeof(GFamily *) * (SIZE_T)(c->count - at));
+    c->families[at] = family;
+    c->count++;
+    return family;
 }
 
-/* ------------------------------------------------------------------ the device context for font data */
+static GCollection g_installed = {GP_TAG_COLLECTION, TRUE};
 
-static HDC g_dc;
+/* ------------------------------------------------------------------ the installed collection */
 
-static HDC font_dc(void)
+static int CALLBACK list_family(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD type, LPARAM param)
 {
-    if (!g_dc)
-        g_dc = CreateCompatibleDC(nullptr);
-    return g_dc;
-}
-
-/* a table of the font selected in the device context, NULL when it has none. */
-static BYTE *read_table(HDC dc, DWORD tag, SIZE_T *size)
-{
-    DWORD n = GetFontData(dc, tag, 0, nullptr, 0);
-    if (n == GDI_ERROR || !n)
-        return nullptr;
-    BYTE *data = gp_alloc(n);
-    if (data && GetFontData(dc, tag, 0, data, n) != n) {
-        gp_free(data);
-        data = nullptr;
-    }
-    if (data)
-        *size = n;
-    return data;
-}
-
-/*
- * the bytes of the face a logical font stands for, through GetFontData. a face of a collection comes as the whole
- * collection, and the face is the one whose header table is the one of the font in the context.
- */
-static BYTE *read_font_data(const LOGFONTW *lf, SIZE_T *size, UINT *index)
-{
-    HDC dc = font_dc();
-    *index = 0;
-    if (!dc)
-        return nullptr;
-    HFONT font = CreateFontIndirectW(lf);
-    if (!font)
-        return nullptr;
-    HGDIOBJ old = SelectObject(dc, font);
-    BYTE *data = read_table(dc, 0x66637474, size);
-    if (data) {
-        SIZE_T head_size = 0;
-        BYTE *head = read_table(dc, 0x64616568, &head_size);
-        UINT faces = mime_ttf_face_count(data, *size);
-        for (UINT i = 0; head && i < faces; i++) {
-            MimeTtfFont ttf;
-            if (mime_ttf_open(&ttf, data, *size, i) && ttf.head.size == head_size &&
-                !memcmp(ttf.head.data, head, head_size)) {
-                *index = i;
-                break;
-            }
-        }
-        gp_free(head);
-    } else {
-        data = read_table(dc, 0, size);
-    }
-    SelectObject(dc, old);
-    DeleteObject(font);
-    return data;
-}
-
-/* ------------------------------------------------------------------ collections and families */
-
-struct GBlob {
-    struct GBlob *next;
-    BYTE *data;
-    SIZE_T size;
-    WCHAR path[MAX_PATH];
-};
-
-static GCollection g_installed = {GP_TAG_COLLECTION, TRUE, FALSE, nullptr, 0, nullptr};
-
-static GFamily *family_new(GCollection *c, const WCHAR *name)
-{
-    GFamily *f = gp_alloc_zero(sizeof(*f));
-    if (!f)
-        return nullptr;
-    f->tag = GP_TAG_FAMILY;
-    name_copy(f->name, name);
-    name_upper(f->upper, name);
-    f->collection = c;
-    for (INT i = 0; i < 4; i++)
-        f->slot[i].lf.lfCharSet = DEFAULT_CHARSET;
-    return f;
-}
-
-/* adds a family in the order of the names, ignoring a name the collection has. */
-static GFamily *collection_add(GCollection *c, const WCHAR *name)
-{
-    WCHAR upper[LF_FACESIZE];
-    name_upper(upper, name);
-    GFamily **link = &c->first;
-    while (*link) {
-        INT order = name_compare(upper, (*link)->upper);
-        if (order == 0)
-            return *link;
-        if (order < 0)
-            break;
-        link = &(*link)->next;
-    }
-    GFamily *f = family_new(c, name);
-    if (!f)
-        return nullptr;
-    f->next = *link;
-    *link = f;
-    c->family_count++;
-    return f;
-}
-
-static GFamily *collection_find(GCollection *c, const WCHAR *name)
-{
-    WCHAR upper[LF_FACESIZE];
-    name_upper(upper, name);
-    for (GFamily *f = c->first; f; f = f->next)
-        if (!name_compare(upper, f->upper))
-            return f;
-    return nullptr;
-}
-
-static int CALLBACK enum_family_proc(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD type, LPARAM param)
-{
-    if (!(type & TRUETYPE_FONTTYPE) || !lf->lfFaceName[0] || lf->lfFaceName[0] == '@')
-        return 1;
-    collection_add((GCollection *)param, lf->lfFaceName);
+    GCollection *c = (GCollection *)param;
+    if ((type & TRUETYPE_FONTTYPE) && lf->lfFaceName[0] && lf->lfFaceName[0] != '@')
+        collection_add_family(c, lf->lfFaceName, TRUE);
     return 1;
 }
 
-static void installed_load(void)
+static void installed_build(void)
 {
-    if (g_installed.loaded)
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc)
         return;
-    HDC dc = font_dc();
-    if (dc) {
-        LOGFONTW lf;
-        memset(&lf, 0, sizeof(lf));
-        lf.lfCharSet = DEFAULT_CHARSET;
-        EnumFontFamiliesExW(dc, &lf, enum_family_proc, (LPARAM)&g_installed, 0);
-    }
-    g_installed.loaded = TRUE;
+    LOGFONTW lf;
+    memset(&lf, 0, sizeof(lf));
+    lf.lfCharSet = DEFAULT_CHARSET;
+    EnumFontFamiliesExW(dc, &lf, list_family, (LPARAM)&g_installed, 0);
+    DeleteDC(dc);
 }
 
-static BOOL collection_load(GCollection *c)
+static GCollection *installed_collection(void)
 {
-    if (c->installed) {
-        text_lock();
-        installed_load();
-        text_unlock();
+    text_lock();
+    if (!g_installed.ready) {
+        installed_build();
+        g_installed.ready = TRUE;
     }
-    return TRUE;
+    text_unlock();
+    return &g_installed;
 }
+
+/* a weight is closer to the regular or the bold weight of its slot. */
+static int weight_distance(int weight, int slot)
+{
+    int ideal = slot & 1 ? 700 : 400;
+    return weight > ideal ? weight - ideal : ideal - weight;
+}
+
 
 typedef struct FaceEnum {
     GFamily *family;
+    BOOL first;
 } FaceEnum;
 
-static INT slot_of(INT weight, BOOL italic)
-{
-    return (weight > 500 ? 1 : 0) | (italic ? 2 : 0);
-}
-
-/* how close a face is to the regular or the bold of its slot, for picking among several. */
-static INT slot_distance(INT weight, INT slot)
-{
-    INT want = slot & 1 ? 700 : 400;
-    return weight > want ? weight - want : want - weight;
-}
-
-static int CALLBACK enum_face_proc(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD type, LPARAM param)
+static int CALLBACK list_face(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD type, LPARAM param)
 {
     FaceEnum *e = (FaceEnum *)param;
-    GFamily *f = e->family;
-    if (!(type & TRUETYPE_FONTTYPE))
+    GFamily *family = e->family;
+    if (!(type & TRUETYPE_FONTTYPE) || name_compare(lf->lfFaceName, family->name) != 0)
         return 1;
-    WCHAR upper[LF_FACESIZE];
-    name_upper(upper, lf->lfFaceName);
-    if (name_compare(upper, f->upper))
+    if (e->first) {
+        family->charset = lf->lfCharSet;
+        e->first = FALSE;
+    }
+    int weight = lf->lfWeight ? lf->lfWeight : 400;
+    int slot = slot_of(weight > 500, lf->lfItalic != 0);
+    GFaceSlot *s = &family->slot[slot];
+    if (s->present && weight_distance(s->lf.lfWeight, slot) <= weight_distance(weight, slot))
         return 1;
-    INT s = slot_of(lf->lfWeight ? lf->lfWeight : 400, lf->lfItalic != 0);
-    GSlot *slot = &f->slot[s];
-    if (slot->present && slot_distance(slot->lf.lfWeight, s) <= slot_distance(lf->lfWeight, s))
-        return 1;
-    slot->present = TRUE;
-    slot->lf = *lf;
-    slot->lf.lfHeight = -64;
-    slot->lf.lfWidth = 0;
-    slot->lf.lfEscapement = slot->lf.lfOrientation = 0;
-    slot->lf.lfUnderline = slot->lf.lfStrikeOut = 0;
-    slot->lf.lfOutPrecision = OUT_TT_PRECIS;
-    slot->lf.lfClipPrecision = CLIP_DEFAULT_PRECIS;
-    slot->lf.lfQuality = DEFAULT_QUALITY;
-    slot->lf.lfPitchAndFamily = DEFAULT_PITCH;
+    s->present = TRUE;
+    s->lf = *lf;
+    s->lf.lfWeight = weight;
+    s->lf.lfHeight = -2048;
+    s->lf.lfWidth = 0;
     return 1;
 }
 
-/* the styles a family has. a family with no regular face takes one of its other faces as the regular one. */
-static BOOL family_load(GFamily *f)
+/* the slots of an installed family come from the faces gdi32 lists under its name. Called with the lock held. */
+static void family_load_slots(GFamily *family)
 {
-    BOOL ok = TRUE;
-    text_lock();
-    if (!f->loaded) {
-        if (f->collection->installed) {
-            HDC dc = font_dc();
-            if (dc) {
-                FaceEnum e = {f};
-                LOGFONTW lf;
-                memset(&lf, 0, sizeof(lf));
-                lf.lfCharSet = DEFAULT_CHARSET;
-                name_copy(lf.lfFaceName, f->name);
-                EnumFontFamiliesExW(dc, &lf, enum_face_proc, (LPARAM)&e, 0);
-            }
-        }
-        if (!f->slot[0].present) {
-            static const INT order[3] = {2, 1, 3};
-            for (INT i = 0; i < 3; i++) {
-                if (f->slot[order[i]].present) {
-                    f->slot[0] = f->slot[order[i]];
-                    f->slot[0].face = nullptr;
-                    f->slot[0].failed = FALSE;
-                    f->synthesized_regular = TRUE;
-                    break;
-                }
-            }
-        }
-        f->loaded = TRUE;
-    }
-    if (!f->slot[0].present)
-        ok = FALSE;
-    text_unlock();
-    return ok;
+    if (family->slots_loaded)
+        return;
+    family->slots_loaded = TRUE;
+    if (!family->installed)
+        return;
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc)
+        return;
+    LOGFONTW lf;
+    memset(&lf, 0, sizeof(lf));
+    lf.lfCharSet = DEFAULT_CHARSET;
+    lstrcpynW(lf.lfFaceName, family->name, LF_FACESIZE);
+    FaceEnum e = {family, TRUE};
+    EnumFontFamiliesExW(dc, &lf, list_face, (LPARAM)&e, 0);
+    DeleteDC(dc);
 }
 
-static GFace *slot_face(GFamily *f, INT s)
+/* which face of a collection file the device context has selected: the one with the same header table. */
+static unsigned collection_face_index(HDC dc, const GFontBlob *blob, const LOGFONTW *lf)
 {
-    GSlot *slot = &f->slot[s];
-    if (!slot->present || slot->failed)
-        return nullptr;
-    if (slot->face)
-        return slot->face;
-    GFace *face = nullptr;
-    if (f->collection->installed) {
-        SIZE_T size = 0;
-        UINT index = 0;
-        BYTE *data = read_font_data(&slot->lf, &size, &index);
-        if (data) {
-            face = face_open(data, size, TRUE, index);
-            if (!face)
-                gp_free(data);
+    unsigned count = mime_ttf_face_count(blob->bytes, blob->size);
+    BYTE head[54];
+    if (GetFontData(dc, TABLE_TAG('h', 'e', 'a', 'd'), 0, head, sizeof(head)) == sizeof(head)) {
+        for (unsigned i = 0; i < count; i++) {
+            MimeTtfFont probe;
+            if (mime_ttf_open(&probe, blob->bytes, blob->size, i) && probe.head.size >= sizeof(head) &&
+                !memcmp(probe.head.data, head, sizeof(head)))
+                return i;
         }
-    } else if (slot->blob) {
-        face = face_open(slot->blob, slot->blob_size, FALSE, slot->face_index);
     }
-    if (!face) {
-        slot->failed = TRUE;
+    for (unsigned i = 0; i < count; i++) {
+        MimeTtfFont probe;
+        WCHAR name[LF_FACESIZE];
+        size_t length = 0;
+        if (mime_ttf_open(&probe, blob->bytes, blob->size, i) &&
+            mime_ttf_name(&probe, 1, (uint16_t *)name, LF_FACESIZE, &length) && length < LF_FACESIZE &&
+            name_compare(name, lf->lfFaceName) == 0)
+            return i;
+    }
+    return 0;
+}
+
+/* reads the face gdi32 realizes for a logical font from its font data. */
+static GFace *load_installed_face(const LOGFONTW *lf)
+{
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc)
         return nullptr;
+    GFace *face = nullptr;
+    HFONT font = CreateFontIndirectW(lf);
+    if (font) {
+        HGDIOBJ old = SelectObject(dc, font);
+        DWORD tag = TABLE_TAG('t', 't', 'c', 'f');
+        DWORD size = GetFontData(dc, tag, 0, nullptr, 0);
+        BOOL collection = size != GDI_ERROR;
+        if (!collection) {
+            tag = 0;
+            size = GetFontData(dc, 0, 0, nullptr, 0);
+        }
+        if (size != GDI_ERROR && size > 0) {
+            BYTE *bytes = gp_alloc(size);
+            GFontBlob *blob = nullptr;
+            if (bytes && GetFontData(dc, tag, 0, bytes, size) == size)
+                blob = blob_new(bytes, size);
+            if (blob) {
+                face = face_open(blob, collection ? collection_face_index(dc, blob, lf) : 0);
+                blob_release(blob);
+            } else {
+                gp_free(bytes);
+            }
+        }
+        SelectObject(dc, old);
+        DeleteObject(font);
     }
-    slot->face = face;
+    DeleteDC(dc);
     return face;
 }
 
-GFace *gp_family_face(GFamily *f, INT style)
+/* the face of a slot, read the first time it is asked for. Called with the lock held. */
+static const GFace *slot_face(GFamily *family, int index)
 {
-    if (!f || !family_load(f))
+    GFaceSlot *s = &family->slot[index];
+    if (!s->present)
         return nullptr;
-    /* the order gdi+ tries: the style itself, then what a missing bold or italic is shown with. */
-    static const INT order[4][4] = {{0, -1, -1, -1}, {1, 0, -1, -1}, {2, 0, -1, -1}, {3, 1, 2, 0}};
+    if (!s->face && !s->tried) {
+        s->tried = TRUE;
+        if (family->installed)
+            s->face = load_installed_face(&s->lf);
+    }
+    return s->face;
+}
+
+const GFace *gp_family_face(GFamily *family, INT style, INT *slot)
+{
+    /* the slots tried for each of the four styles, in order, -1 ends the list. */
+    static const signed char order[4][4] = {{0, -1, -1, -1}, {1, 0, -1, -1}, {2, 0, -1, -1}, {3, 1, 2, 0}};
+    const GFace *face = nullptr;
     text_lock();
-    GFace *face = nullptr;
-    for (INT i = 0; i < 4 && !face; i++) {
-        INT s = order[style & 3][i];
-        if (s < 0)
+    family_load_slots(family);
+    for (int k = 0; k < 4 && !face; k++) {
+        int index = order[style & 3][k];
+        if (index < 0)
             break;
-        face = slot_face(f, s);
+        face = slot_face(family, index);
+        if (face) {
+            if (slot)
+                *slot = index;
+            break;
+        }
+        if (index == 0) {
+            /* a family with no regular face uses its italic, else its bold, else its bold italic one in its place. */
+            static const signed char stand_in[3] = {2, 1, 3};
+            for (int j = 0; j < 3 && !face; j++) {
+                face = slot_face(family, stand_in[j]);
+                if (face && slot)
+                    *slot = stand_in[j];
+            }
+        }
     }
     text_unlock();
     return face;
 }
 
-/* ------------------------------------------------------------------ names and substitution */
+/* ------------------------------------------------------------------ lookups */
 
-/* the names programs use for fonts that windows maps to others. */
-static const WCHAR *const g_subst[][2] = {
-    {L"MS Shell Dlg", L"Microsoft Sans Serif"},
-    {L"MS Shell Dlg 2", L"Tahoma"},
-    {L"MS Sans Serif", L"Microsoft Sans Serif"},
-    {L"Helv", L"Microsoft Sans Serif"},
-    {L"Helvetica", L"Arial"},
-    {L"Tms Rmn", L"Times New Roman"},
-    {L"Times", L"Times New Roman"},
-    {L"MS Serif", L"Times New Roman"},
+static const struct {
+    const WCHAR *from;
+    const WCHAR *to;
+} g_substitutes[] = {
+    {L"MS Shell Dlg", L"Microsoft Sans Serif"}, {L"MS Shell Dlg 2", L"Tahoma"},
+    {L"MS Sans Serif", L"Microsoft Sans Serif"}, {L"Helv", L"Microsoft Sans Serif"},
+    {L"Helvetica", L"Arial"},                     {L"Tms Rmn", L"Times New Roman"},
+    {L"Times", L"Times New Roman"},               {L"MS Serif", L"Times New Roman"},
     {L"Courier", L"Courier New"},
-    {L"Arial Baltic", L"Arial"},
-    {L"Arial CE", L"Arial"},
-    {L"Arial CYR", L"Arial"},
-    {L"Arial Greek", L"Arial"},
-    {L"Arial TUR", L"Arial"},
-    {L"Courier New Baltic", L"Courier New"},
-    {L"Courier New CE", L"Courier New"},
-    {L"Courier New CYR", L"Courier New"},
-    {L"Courier New Greek", L"Courier New"},
-    {L"Courier New TUR", L"Courier New"},
-    {L"Times New Roman Baltic", L"Times New Roman"},
-    {L"Times New Roman CE", L"Times New Roman"},
-    {L"Times New Roman CYR", L"Times New Roman"},
-    {L"Times New Roman Greek", L"Times New Roman"},
-    {L"Times New Roman TUR", L"Times New Roman"},
 };
 
-static GFamily *family_by_name(GCollection *c, const WCHAR *name)
+/* the western script variants of three families are those families. */
+static const WCHAR *const g_script_bases[] = {L"Arial", L"Courier New", L"Times New Roman"};
+static const WCHAR *const g_script_suffixes[] = {L" Baltic", L" CE", L" CYR", L" Greek", L" TUR"};
+
+static const WCHAR *substitute_for(const WCHAR *name)
 {
-    GFamily *f = collection_find(c, name);
-    if (f)
-        return f;
-    WCHAR upper[LF_FACESIZE];
-    name_upper(upper, name);
-    for (UINT i = 0; i < sizeof(g_subst) / sizeof(g_subst[0]); i++) {
-        WCHAR from[LF_FACESIZE];
-        name_upper(from, g_subst[i][0]);
-        if (!name_compare(from, upper))
-            return collection_find(&g_installed, g_subst[i][1]);
+    for (size_t i = 0; i < sizeof(g_substitutes) / sizeof(g_substitutes[0]); i++) {
+        if (name_compare(name, g_substitutes[i].from) == 0)
+            return g_substitutes[i].to;
+    }
+    for (size_t b = 0; b < sizeof(g_script_bases) / sizeof(g_script_bases[0]); b++) {
+        for (size_t s = 0; s < sizeof(g_script_suffixes) / sizeof(g_script_suffixes[0]); s++) {
+            WCHAR full[48];
+            lstrcpynW(full, g_script_bases[b], 32);
+            lstrcatW(full, g_script_suffixes[s]);
+            if (name_compare(name, full) == 0)
+                return g_script_bases[b];
+        }
     }
     return nullptr;
 }
 
-GFamily *gp_family_find(const WCHAR *name)
+static GFamily *installed_find(const WCHAR *name)
 {
-    collection_load(&g_installed);
+    GCollection *c = installed_collection();
     text_lock();
-    GFamily *f = family_by_name(&g_installed, name);
+    GFamily *family = collection_find(c, name);
     text_unlock();
-    return f;
+    return family;
 }
 
-static GFamily *find_first(const WCHAR *const *names, UINT count)
+GFamily *gp_family_by_name(const WCHAR *name)
 {
-    for (UINT i = 0; i < count; i++) {
-        GFamily *f = gp_family_find(names[i]);
-        if (f && family_load(f))
-            return f;
+    GFamily *family = installed_find(name);
+    if (!family) {
+        const WCHAR *other = substitute_for(name);
+        if (other)
+            family = installed_find(other);
     }
-    return nullptr;
+    return family;
 }
 
-static GFamily *generic_sans(void)
+static GFamily *first_installed_family(void)
 {
-    static const WCHAR *const names[] = {L"Microsoft Sans Serif", L"Arial", L"Tahoma"};
-    GFamily *f = find_first(names, 3);
-    if (!f) {
-        collection_load(&g_installed);
-        f = g_installed.first;
+    GCollection *c = installed_collection();
+    return c->count ? c->families[0] : nullptr;
+}
+
+static GFamily *generic_family(const void *kind)
+{
+    static const WCHAR *const sans[] = {L"Microsoft Sans Serif", L"Arial", L"Tahoma", nullptr};
+    static const WCHAR *const serif[] = {L"Times New Roman", nullptr};
+    static const WCHAR *const mono[] = {L"Courier New", L"Lucida Console", nullptr};
+    const WCHAR *const *names = kind == GP_FAMILY_SANS_SERIF ? sans : (kind == GP_FAMILY_SERIF ? serif : mono);
+    for (; *names; names++) {
+        GFamily *family = installed_find(*names);
+        if (family)
+            return family;
     }
-    return f;
+    if (kind != GP_FAMILY_SANS_SERIF)
+        return generic_family(GP_FAMILY_SANS_SERIF);
+    return first_installed_family();
 }
 
-static GFamily *generic_serif(void)
+static BOOL is_generic(const void *p)
 {
-    static const WCHAR *const names[] = {L"Times New Roman"};
-    GFamily *f = find_first(names, 1);
-    return f ? f : generic_sans();
+    return p == GP_FAMILY_SANS_SERIF || p == GP_FAMILY_SERIF || p == GP_FAMILY_MONOSPACE;
 }
 
-static GFamily *generic_mono(void)
+GFamily *gp_family_resolve(const void *family)
 {
-    static const WCHAR *const names[] = {L"Courier New", L"Lucida Console"};
-    GFamily *f = find_first(names, 2);
-    return f ? f : generic_sans();
+    if (!family)
+        return nullptr;
+    if (is_generic(family))
+        return generic_family(family);
+    return GP_CAST(GFamily, GP_TAG_FAMILY, family);
 }
 
-GFamily *gp_family_cast(const void *p)
+/* a family argument: InvalidParameter for what is none, FontFamilyNotFound for a generic one nothing stands for. */
+static GpStatus family_arg(const void *p, GFamily **out)
 {
-    if (p == GP_FAMILY_SANS_SERIF)
-        return generic_sans();
-    if (p == GP_FAMILY_SERIF)
-        return generic_serif();
-    if (p == GP_FAMILY_MONOSPACE)
-        return generic_mono();
-    return GP_CAST(GFamily, GP_TAG_FAMILY, p);
-}
-
-/* the fonts programs reach for when the one asked has no glyph, in the order they are tried. */
-static const WCHAR *const g_fallbacks[] = {
-    L"Segoe UI",         L"Microsoft YaHei",   L"Microsoft JhengHei", L"Yu Gothic",      L"Malgun Gothic",
-    L"MS Gothic",        L"Segoe UI Symbol",   L"Segoe UI Emoji",     L"Nirmala UI",     L"Leelawadee UI",
-    L"Ebrima",           L"Gadugi",            L"Sylfaen",            L"Cambria Math",   L"Arial Unicode MS",
-    L"Arial",
-};
-
-GFamily *gp_family_fallback(UINT32 cp, const GFamily *avoid)
-{
-    for (UINT i = 0; i < sizeof(g_fallbacks) / sizeof(g_fallbacks[0]); i++) {
-        GFamily *f = gp_family_find(g_fallbacks[i]);
-        if (!f || f == avoid)
-            continue;
-        GFace *face = gp_family_face(f, 0);
-        if (face && gp_face_glyph(face, cp))
-            return f;
-    }
-    return nullptr;
+    if (!p)
+        return InvalidParameter;
+    *out = gp_family_resolve(p);
+    if (*out)
+        return Ok;
+    return is_generic(p) ? FontFamilyNotFound : InvalidParameter;
 }
 
 /* ------------------------------------------------------------------ private collections */
 
-static void blob_free_all(GCollection *c)
+static GCollection *collection_cast(const void *p) { return GP_CAST(GCollection, GP_TAG_COLLECTION, p); }
+
+/* a collection with its list of families ready. */
+static GCollection *collection_use(const void *p)
 {
-    while (c->blobs) {
-        struct GBlob *b = c->blobs;
-        c->blobs = b->next;
-        gp_free(b->data);
-        gp_free(b);
-    }
+    GCollection *c = collection_cast(p);
+    if (c && c->installed)
+        installed_collection();
+    return c;
 }
 
-static void family_free(GFamily *f)
+static GCollection *private_cast(const void *p)
 {
-    for (INT i = 0; i < 4; i++) {
-        GFace *face = f->slot[i].face;
+    GCollection *c = collection_cast(p);
+    return c && !c->installed ? c : nullptr;
+}
+
+static GpStatus collection_add_blob(GCollection *c, GFontBlob *blob)
+{
+    unsigned count = mime_ttf_face_count(blob->bytes, blob->size);
+    BOOL added = FALSE;
+    GpStatus status = Ok;
+    text_lock();
+    for (unsigned i = 0; i < count; i++) {
+        GFace *face = face_open(blob, i);
         if (!face)
             continue;
-        /* a face may serve two slots, free it from the first one only. */
-        BOOL shared = FALSE;
-        for (INT j = 0; j < i; j++)
-            shared |= f->slot[j].face == face;
-        if (shared)
-            continue;
-        if (face->outlines) {
-            for (UINT g = 0; g < face->outline_count; g++) {
-                if (face->outlines[g]) {
-                    mime_vec_path_free(face->outlines[g]);
-                    gp_free(face->outlines[g]);
-                }
-            }
-            gp_free(face->outlines);
-        }
-        if (face->owns_data)
-            gp_free(face->data);
-        gp_free(face);
-    }
-    gp_free(f);
-}
-
-static void collection_free(GCollection *c)
-{
-    GFamily *f = c->first;
-    while (f) {
-        GFamily *next = f->next;
-        family_free(f);
-        f = next;
-    }
-    blob_free_all(c);
-    c->tag = 0;
-    gp_free(c);
-}
-
-/* the families a font file holds go into the collection by the family name of their win32 names. */
-static GpStatus collection_add_blob(GCollection *c, BYTE *data, SIZE_T size, const WCHAR *path)
-{
-    UINT faces = mime_ttf_face_count(data, size);
-    if (!faces) {
-        gp_free(data);
-        return GenericError;
-    }
-    struct GBlob *blob = gp_alloc_zero(sizeof(*blob));
-    if (!blob) {
-        gp_free(data);
-        return OutOfMemory;
-    }
-    blob->data = data;
-    blob->size = size;
-    if (path) {
-        SIZE_T n = 0;
-        while (path[n] && n < MAX_PATH - 1) {
-            blob->path[n] = path[n] >= 'a' && path[n] <= 'z' ? (WCHAR)(path[n] - 32) : path[n];
-            n++;
-        }
-        blob->path[n] = 0;
-    }
-    blob->next = c->blobs;
-    c->blobs = blob;
-    for (UINT i = 0; i < faces; i++) {
-        MimeTtfFont ttf;
-        if (!mime_ttf_open(&ttf, data, size, i))
-            continue;
-        MimeTtfMetrics m;
-        mime_ttf_metrics(&ttf, &m);
-        uint16_t name[64];
+        WCHAR name[LF_FACESIZE];
         size_t length = 0;
-        if (!mime_ttf_name(&ttf, 1, name, 64, &length) || !length)
-            if (!mime_ttf_name(&ttf, 16, name, 64, &length) || !length)
-                continue;
-        WCHAR family[LF_FACESIZE];
-        for (UINT k = 0; k < LF_FACESIZE; k++)
-            family[k] = k < length && k < 63 ? name[k] : 0;
-        family[LF_FACESIZE - 1] = 0;
-        GFamily *f = collection_add(c, family);
-        if (!f)
-            return OutOfMemory;
-        INT s = slot_of(m.weight, m.italic);
-        GSlot *slot = &f->slot[s];
-        if (slot->present && slot_distance(slot->lf.lfWeight, s) <= slot_distance(m.weight, s))
+        if (!mime_ttf_name(&face->ttf, 1, (uint16_t *)name, LF_FACESIZE, &length) || !name[0] || length >= LF_FACESIZE) {
+            face_free(face);
             continue;
-        slot->present = TRUE;
-        slot->lf.lfWeight = m.weight;
-        slot->blob = data;
-        slot->blob_size = size;
-        slot->face_index = i;
-        slot->face = nullptr;
-        slot->failed = FALSE;
-        f->loaded = FALSE;
-        f->synthesized_regular = FALSE;
-    }
-    return Ok;
-}
-
-/* ------------------------------------------------------------------ fonts */
-
-GFont *gp_font_cast(const void *p)
-{
-    GFont *f = GP_CAST(GFont, GP_TAG_FONT, p);
-    return f && f->family ? f : nullptr;
-}
-
-float gp_font_world_size(const GFont *font, const GGraphics *g)
-{
-    float k = 1.0f;
-    switch (font->unit) {
-    case UnitPoint:
-    case UnitInch:
-    case UnitDocument:
-    case UnitMillimeter: {
-        /* gdi+ takes the vertical resolution and the vertical page scale for both axes. */
-        float px = gp_unit_to_pixels(font->unit, g ? g->dpi_y : 96.0f);
-        float sx = 1.0f, sy = 1.0f;
-        if (g)
-            gp_graphics_page_scale(g, &sx, &sy);
-        k = sy > 0.0f ? px / sy : px;
-        break;
-    }
-    default:
-        break;
-    }
-    return font->size * k;
-}
-
-/* the size of the font in pixels at a resolution, for the unit it was made in. */
-static float font_pixels_at(const GFont *font, float dpi)
-{
-    switch (font->unit) {
-    case UnitPoint:
-        return font->size * dpi / 72.0f;
-    case UnitInch:
-        return font->size * dpi;
-    case UnitDocument:
-        return font->size * dpi / 300.0f;
-    case UnitMillimeter:
-        return font->size * dpi / 25.4f;
-    default:
-        return font->size;
-    }
-}
-
-static GFont *font_new(GFamily *family, float size, INT style, Unit unit)
-{
-    GFont *font = gp_alloc_zero(sizeof(*font));
-    if (!font)
-        return nullptr;
-    font->tag = GP_TAG_FONT;
-    font->family = family;
-    font->size = size;
-    font->style = style;
-    font->unit = unit;
-    return font;
-}
-
-/* a font as the device context holds it: the size without the internal leading, and the style flags. */
-static GFont *font_from_dc(HDC dc)
-{
-    TEXTMETRICW tm;
-    WCHAR name[LF_FACESIZE + 1];
-    memset(name, 0, sizeof(name));
-    if (!GetTextMetricsW(dc, &tm))
-        return nullptr;
-    GetTextFaceW(dc, LF_FACESIZE, name);
-    name[LF_FACESIZE - 1] = 0;
-    INT style = 0;
-    if (tm.tmWeight > 400)
-        style |= FontStyleBold;
-    if (tm.tmItalic)
-        style |= FontStyleItalic;
-    if (tm.tmUnderlined)
-        style |= FontStyleUnderline;
-    if (tm.tmStruckOut)
-        style |= FontStyleStrikeout;
-    GFamily *family = gp_family_find(name);
-    if (family && !gp_family_face(family, style))
-        family = nullptr;
-    if (!family)
-        return nullptr;
-    return font_new(family, (float)(tm.tmHeight - tm.tmInternalLeading), style, UnitWorld);
-}
-
-WINGDIPAPI GpStatus WINAPI GdipCreateFont(const GpFontFamily *family, REAL size, INT style, Unit unit,
-                                          GpFont **font)
-{
-    GP_REQUIRE_INIT();
-    if (!font)
-        return InvalidParameter;
-    if (size <= 0.0f || unit == UnitDisplay || (UINT)unit > UnitMillimeter)
-        return InvalidParameter;
-    GFamily *f = gp_family_cast(family);
-    if (!f)
-        return InvalidParameter;
-    GFont *created = font_new(f, size, style, unit);
-    if (!created)
-        return OutOfMemory;
-    if (!gp_family_face(f, style)) {
-        gp_free(created);
-        *font = nullptr;
-        return FontStyleNotFound;
-    }
-    *font = created;
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipCloneFont(GpFont *font, GpFont **clone)
-{
-    if (!clone)
-        return InvalidParameter;
-    GFont *f = gp_font_cast(font);
-    if (!f)
-        return InvalidParameter;
-    GFont *copy = font_new(f->family, f->size, f->style, f->unit);
-    if (!copy)
-        return OutOfMemory;
-    *clone = copy;
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipDeleteFont(GpFont *font)
-{
-    GFont *f = GP_CAST(GFont, GP_TAG_FONT, font);
-    if (!f)
-        return InvalidParameter;
-    f->tag = 0;
-    gp_free(f);
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetFamily(GpFont *font, GpFontFamily **family)
-{
-    if (!family)
-        return InvalidParameter;
-    GFont *f = gp_font_cast(font);
-    if (!f)
-        return InvalidParameter;
-    *family = f->family;
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetFontStyle(GpFont *font, INT *style)
-{
-    if (!style)
-        return InvalidParameter;
-    GFont *f = gp_font_cast(font);
-    if (!f)
-        return InvalidParameter;
-    *style = f->style;
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetFontSize(GpFont *font, REAL *size)
-{
-    if (!size)
-        return InvalidParameter;
-    GFont *f = gp_font_cast(font);
-    if (!f)
-        return InvalidParameter;
-    *size = f->size;
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetFontUnit(GpFont *font, Unit *unit)
-{
-    if (!unit)
-        return InvalidParameter;
-    GFont *f = gp_font_cast(font);
-    if (!f)
-        return InvalidParameter;
-    *unit = f->unit;
-    return Ok;
-}
-
-/* the line spacing of a font in pixels of the given size. */
-static GpStatus font_line_spacing(const GFont *f, float pixels, float *height)
-{
-    GFace *face = gp_family_face(f->family, f->style);
-    if (!face)
-        return InvalidParameter;
-    *height = (float)(UINT16)(face->ascent + face->descent + face->gap) * pixels / (float)face->upem;
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetFontHeight(const GpFont *font, const GpGraphics *graphics, REAL *height)
-{
-    if (!height)
-        return InvalidParameter;
-    const GGraphics *g = nullptr;
-    if (graphics) {
-        g = gp_graphics_cast(graphics);
-        if (!g)
-            return InvalidParameter;
-        if (g->got_dc)
-            return ObjectBusy;
-    }
-    GFont *f = gp_font_cast(font);
-    if (!f)
-        return InvalidParameter;
-    return font_line_spacing(f, gp_font_world_size(f, g), height);
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetFontHeightGivenDPI(const GpFont *font, REAL dpi, REAL *height)
-{
-    if (!height)
-        return InvalidParameter;
-    GFont *f = gp_font_cast(font);
-    if (!f)
-        return InvalidParameter;
-    return font_line_spacing(f, font_pixels_at(f, dpi), height);
-}
-
-/* the charset gdi lists the family with, the first truetype entry of its enumeration. */
-static int CALLBACK charset_proc(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD type, LPARAM param)
-{
-    if (!(type & TRUETYPE_FONTTYPE))
-        return 1;
-    *(BYTE *)param = lf->lfCharSet;
-    return 0;
-}
-
-static BYTE family_charset(const GFamily *family)
-{
-    BYTE charset = DEFAULT_CHARSET;
-    text_lock();
-    HDC dc = font_dc();
-    if (dc) {
-        LOGFONTW lf;
-        memset(&lf, 0, sizeof(lf));
-        lf.lfCharSet = DEFAULT_CHARSET;
-        name_copy(lf.lfFaceName, family->name);
-        EnumFontFamiliesExW(dc, &lf, charset_proc, (LPARAM)&charset, 0);
+        }
+        GFamily *family = collection_add_family(c, name, FALSE);
+        if (!family) {
+            face_free(face);
+            status = OutOfMemory;
+            break;
+        }
+        int weight = face->metrics.weight;
+        int slot = slot_of(weight > 500, face->metrics.italic);
+        GFaceSlot *s = &family->slot[slot];
+        added = TRUE;
+        family->slots_loaded = TRUE;
+        if (s->present && weight_distance(weight, slot) >= weight_distance(s->lf.lfWeight, slot)) {
+            face_free(face);
+            continue;
+        }
+        face_free(s->face);
+        s->present = TRUE;
+        s->tried = TRUE;
+        s->face = face;
+        s->lf.lfWeight = weight;
     }
     text_unlock();
-    return charset;
-}
-
-static GpStatus font_logfont(const GFont *f, const GGraphics *g, LOGFONTW *lf)
-{
-    if (!gp_family_face(f->family, f->style))
-        return GenericError;
-    /* the size in device pixels, and the turn of the world transform in tenths of a degree. */
-    const MimeVecMatrix *m = gp_graphics_w2d((GGraphics *)g);
-    float sy = mime_vec_sqrtf(m->m21 * m->m21 + m->m22 * m->m22);
-    float angle = mime_vec_atan2f(m->m12, m->m11);
-    INT turn = (INT)(angle * 1800.0f / 3.14159265358979f);
-    INT tenths = turn ? 3600 - turn : 0;
-    float px = gp_font_world_size(f, g) * sy;
-    memset(lf, 0, sizeof(*lf));
-    lf->lfHeight = -(LONG)mime_vec_floorf(px + 0.5f);
-    lf->lfEscapement = tenths;
-    lf->lfOrientation = tenths;
-    lf->lfWeight = f->style & FontStyleBold ? 700 : 400;
-    lf->lfItalic = (f->style & FontStyleItalic) != 0;
-    lf->lfUnderline = (f->style & FontStyleUnderline) != 0;
-    lf->lfStrikeOut = (f->style & FontStyleStrikeout) != 0;
-    lf->lfCharSet = family_charset(f->family);
-    name_copy(lf->lfFaceName, f->family->name);
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetLogFontW(GpFont *font, GpGraphics *graphics, LOGFONTW *logfont)
-{
-    if (!logfont)
-        return InvalidParameter;
-    GGraphics *g = gp_graphics_cast(graphics);
-    if (!g)
-        return InvalidParameter;
-    if (g->got_dc)
-        return ObjectBusy;
-    GFont *f = gp_font_cast(font);
-    if (!f)
-        return InvalidParameter;
-    return font_logfont(f, g, logfont);
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetLogFontA(GpFont *font, GpGraphics *graphics, LOGFONTA *logfont)
-{
-    if (!logfont)
-        return InvalidParameter;
-    LOGFONTW w;
-    GpStatus status = GdipGetLogFontW(font, graphics, &w);
     if (status != Ok)
         return status;
-    memcpy(logfont, &w, offsetof(LOGFONTW, lfFaceName));
-    memset(logfont->lfFaceName, 0, sizeof(logfont->lfFaceName));
-    WideCharToMultiByte(CP_ACP, 0, w.lfFaceName, -1, logfont->lfFaceName, LF_FACESIZE, nullptr, nullptr);
-    logfont->lfFaceName[LF_FACESIZE - 1] = 0;
+    return added ? Ok : GenericError;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipNewPrivateFontCollection(GpFontCollection **collection)
+{
+    GP_REQUIRE_INIT();
+    if (!collection)
+        return InvalidParameter;
+    GCollection *c = gp_alloc_zero(sizeof(*c));
+    if (!c)
+        return OutOfMemory;
+    c->tag = GP_TAG_COLLECTION;
+    *collection = c;
     return Ok;
 }
 
-/* the font a logical font is realized as in the device context, the one gdi would draw with. */
-static GpStatus font_from_logfont(HDC dc, const LOGFONTW *lf, GpFont **out)
+WINGDIPAPI GpStatus WINAPI GdipDeletePrivateFontCollection(GpFontCollection **collection)
 {
-    if (!dc || !lf || !out)
+    GP_REQUIRE_INIT();
+    if (!collection)
         return InvalidParameter;
-    GFont *font = nullptr;
-    /* a device context of its own, so that the font selected does not meet what the caller's context kept. */
-    HDC scratch = CreateCompatibleDC(dc);
-    HFONT hf = scratch ? CreateFontIndirectW(lf) : nullptr;
-    if (hf) {
-        HGDIOBJ old = SelectObject(scratch, hf);
-        font = font_from_dc(scratch);
-        SelectObject(scratch, old);
-        DeleteObject(hf);
-    }
-    if (scratch)
-        DeleteDC(scratch);
-    if (!font) {
-        *out = nullptr;
-        return NotTrueTypeFont;
-    }
-    *out = font;
+    GCollection *c = private_cast(*collection);
+    if (!c)
+        return InvalidParameter;
+    for (INT i = 0; i < c->count; i++)
+        family_release(c->families[i]);
+    for (INT i = 0; i < c->file_count; i++)
+        gp_free(c->files[i]);
+    gp_free(c->families);
+    gp_free(c->files);
+    c->tag = 0;
+    gp_free(c);
+    *collection = nullptr;
     return Ok;
 }
 
-WINGDIPAPI GpStatus WINAPI GdipCreateFontFromDC(HDC hdc, GpFont **font)
+WINGDIPAPI GpStatus WINAPI GdipNewInstalledFontCollection(GpFontCollection **collection)
 {
-    GP_REQUIRE_INIT();
-    if (!hdc || !font)
+    if (!collection)
         return InvalidParameter;
-    GFont *created = font_from_dc(hdc);
-    if (!created) {
-        *font = nullptr;
-        return NotTrueTypeFont;
-    }
-    *font = created;
+    *collection = &g_installed;
     return Ok;
 }
 
-WINGDIPAPI GpStatus WINAPI GdipCreateFontFromLogfontW(HDC hdc, const LOGFONTW *logfont, GpFont **font)
+WINGDIPAPI GpStatus WINAPI GdipGetFontCollectionFamilyCount(GpFontCollection *collection, INT *count)
 {
-    GP_REQUIRE_INIT();
-    return font_from_logfont(hdc, logfont, font);
-}
-
-WINGDIPAPI GpStatus WINAPI GdipCreateFontFromLogfontA(HDC hdc, const LOGFONTA *logfont, GpFont **font)
-{
-    GP_REQUIRE_INIT();
-    if (!hdc || !logfont || !font)
+    GCollection *c = collection_use(collection);
+    if (!c || !count)
         return InvalidParameter;
-    LOGFONTW w;
-    memcpy(&w, logfont, offsetof(LOGFONTA, lfFaceName));
-    memset(w.lfFaceName, 0, sizeof(w.lfFaceName));
-    MultiByteToWideChar(CP_ACP, 0, logfont->lfFaceName, -1, w.lfFaceName, LF_FACESIZE);
-    w.lfFaceName[LF_FACESIZE - 1] = 0;
-    return font_from_logfont(hdc, &w, font);
+    *count = c->count;
+    return Ok;
 }
 
-/* ------------------------------------------------------------------ font families */
+WINGDIPAPI GpStatus WINAPI GdipGetFontCollectionFamilyList(GpFontCollection *collection, INT sought,
+                                                           GpFontFamily **families, INT *found)
+{
+    GCollection *c = collection_use(collection);
+    if (!c || !families || !found)
+        return InvalidParameter;
+    INT n = sought < c->count ? sought : c->count;
+    if (n < 0)
+        n = 0;
+    text_lock();
+    for (INT i = 0; i < n; i++) {
+        families[i] = c->families[i];
+        family_retain(c->families[i]);
+    }
+    text_unlock();
+    *found = n;
+    return Ok;
+}
+
+/* the path a font file name stands for: whole paths as they are, other names in the Fonts directory, then on the path. */
+static BOOL font_file_path(const WCHAR *name, WCHAR *path)
+{
+    BOOL absolute = name[0] == '\\' || ((name[0] | 0x20) >= 'a' && (name[0] | 0x20) <= 'z' && name[1] == ':' && name[2] == '\\');
+    if (absolute) {
+        if (lstrlenW(name) >= MAX_PATH)
+            return FALSE;
+        lstrcpyW(path, name);
+        return TRUE;
+    }
+    WCHAR fonts[MAX_PATH];
+    UINT n = GetWindowsDirectoryW(fonts, MAX_PATH);
+    if (n && n + 8 + (UINT)lstrlenW(name) < MAX_PATH) {
+        lstrcatW(fonts, L"\\Fonts\\");
+        lstrcatW(fonts, name);
+        if (GetFileAttributesW(fonts) != INVALID_FILE_ATTRIBUTES) {
+            lstrcpyW(path, fonts);
+            return TRUE;
+        }
+    }
+    DWORD found = SearchPathW(nullptr, name, nullptr, MAX_PATH, path, nullptr);
+    return found && found < MAX_PATH;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipPrivateAddFontFile(GpFontCollection *collection, const WCHAR *filename)
+{
+    GCollection *c = private_cast(collection);
+    if (!c || !filename)
+        return InvalidParameter;
+    WCHAR path[MAX_PATH];
+    if (!font_file_path(filename, path))
+        return FileNotFound;
+    CharUpperBuffW(path, (DWORD)lstrlenW(path));
+    for (INT i = 0; i < c->file_count; i++) {
+        if (!lstrcmpW(c->files[i], path))
+            return Ok;
+    }
+    BYTE *bytes = nullptr;
+    SIZE_T size = 0;
+    GpStatus status = gp_read_file(path, &bytes, &size);
+    if (status != Ok)
+        return status;
+    GFontBlob *blob = blob_new(bytes, size);
+    if (!blob) {
+        gp_free(bytes);
+        return OutOfMemory;
+    }
+    status = collection_add_blob(c, blob);
+    blob_release(blob);
+    if (status != Ok)
+        return status;
+    WCHAR **grown = gp_realloc(c->files, sizeof(WCHAR *) * (SIZE_T)(c->file_count + 1));
+    WCHAR *copy = gp_dup(path, sizeof(WCHAR) * (SIZE_T)(lstrlenW(path) + 1));
+    if (!grown || !copy) {
+        if (grown)
+            c->files = grown;
+        gp_free(copy);
+        return OutOfMemory;
+    }
+    c->files = grown;
+    c->files[c->file_count++] = copy;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipPrivateAddMemoryFont(GpFontCollection *collection, const void *memory, INT length)
+{
+    GCollection *c = private_cast(collection);
+    if (!c || !memory || length <= 0)
+        return InvalidParameter;
+    BYTE *bytes = gp_dup(memory, (SIZE_T)length);
+    if (!bytes)
+        return OutOfMemory;
+    GFontBlob *blob = blob_new(bytes, (SIZE_T)length);
+    if (!blob) {
+        gp_free(bytes);
+        return OutOfMemory;
+    }
+    GpStatus status = collection_add_blob(c, blob);
+    blob_release(blob);
+    return status;
+}
+
+/* ------------------------------------------------------------------ families */
 
 WINGDIPAPI GpStatus WINAPI GdipCreateFontFamilyFromName(const WCHAR *name, GpFontCollection *collection,
                                                         GpFontFamily **family)
@@ -1128,44 +716,48 @@ WINGDIPAPI GpStatus WINAPI GdipCreateFontFamilyFromName(const WCHAR *name, GpFon
     GP_REQUIRE_INIT();
     if (!name || !family)
         return InvalidParameter;
-    GCollection *c = &g_installed;
-    if (collection) {
-        c = GP_CAST(GCollection, GP_TAG_COLLECTION, collection);
-        if (!c)
-            return InvalidParameter;
+    GCollection *c = collection ? collection_use(collection) : installed_collection();
+    if (!c)
+        return InvalidParameter;
+    GFamily *found;
+    if (c->installed) {
+        found = gp_family_by_name(name);
+    } else {
+        text_lock();
+        found = collection_find(c, name);
+        text_unlock();
     }
-    collection_load(c);
-    text_lock();
-    GFamily *f = family_by_name(c, name);
-    text_unlock();
-    if (!f) {
-        *family = nullptr;
+    if (!found)
         return FontFamilyNotFound;
-    }
-    *family = f;
+    family_retain(found);
+    *family = found;
     return Ok;
 }
 
 WINGDIPAPI GpStatus WINAPI GdipDeleteFontFamily(GpFontFamily *family)
 {
-    if (!family)
-        return InvalidParameter;
-    if (family == GP_FAMILY_SANS_SERIF || family == GP_FAMILY_SERIF || family == GP_FAMILY_MONOSPACE)
+    if (is_generic(family))
         return Ok;
-    return GP_CAST(GFamily, GP_TAG_FAMILY, family) ? Ok : InvalidParameter;
+    GFamily *f = family ? GP_CAST(GFamily, GP_TAG_FAMILY, family) : nullptr;
+    if (!f)
+        return InvalidParameter;
+    family_release(f);
+    return Ok;
 }
 
 WINGDIPAPI GpStatus WINAPI GdipCloneFontFamily(GpFontFamily *family, GpFontFamily **clone)
 {
-    if (!clone)
+    if (!family || !clone)
         return InvalidParameter;
-    if (family == GP_FAMILY_SANS_SERIF || family == GP_FAMILY_SERIF || family == GP_FAMILY_MONOSPACE) {
+    if (is_generic(family)) {
         *clone = family;
         return Ok;
     }
-    if (!GP_CAST(GFamily, GP_TAG_FAMILY, family))
+    GFamily *f = GP_CAST(GFamily, GP_TAG_FAMILY, family);
+    if (!f)
         return InvalidParameter;
-    *clone = family;
+    family_retain(f);
+    *clone = f;
     return Ok;
 }
 
@@ -1173,9 +765,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetGenericFontFamilySansSerif(GpFontFamily **fami
 {
     if (!family)
         return InvalidParameter;
-    if (!generic_sans())
-        return FontFamilyNotFound;
-    *family = GP_FAMILY_SANS_SERIF;
+    *family = (GpFontFamily *)GP_FAMILY_SANS_SERIF;
     return Ok;
 }
 
@@ -1183,9 +773,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetGenericFontFamilySerif(GpFontFamily **family)
 {
     if (!family)
         return InvalidParameter;
-    if (!generic_serif())
-        return FontFamilyNotFound;
-    *family = GP_FAMILY_SERIF;
+    *family = (GpFontFamily *)GP_FAMILY_SERIF;
     return Ok;
 }
 
@@ -1193,65 +781,68 @@ WINGDIPAPI GpStatus WINAPI GdipGetGenericFontFamilyMonospace(GpFontFamily **fami
 {
     if (!family)
         return InvalidParameter;
-    if (!generic_mono())
-        return FontFamilyNotFound;
-    *family = GP_FAMILY_MONOSPACE;
+    *family = (GpFontFamily *)GP_FAMILY_MONOSPACE;
     return Ok;
 }
 
 WINGDIPAPI GpStatus WINAPI GdipGetFamilyName(const GpFontFamily *family, WCHAR name[LF_FACESIZE], LANGID language)
 {
-    GFamily *f = gp_family_cast(family);
-    if (!f || !name)
+    GFamily *f;
+    GpStatus status = family_arg(family, &f);
+    if (status != Ok)
+        return status;
+    if (!name)
         return InvalidParameter;
-    name_copy(name, f->name);
+    lstrcpynW(name, f->name, LF_FACESIZE);
     return Ok;
 }
 
 WINGDIPAPI GpStatus WINAPI GdipIsStyleAvailable(const GpFontFamily *family, INT style, BOOL *available)
 {
+    GFamily *f;
+    GpStatus status = family_arg(family, &f);
+    if (status != Ok)
+        return status;
     if (!available)
         return InvalidParameter;
-    GFamily *f = gp_family_cast(family);
-    if (!f)
-        return InvalidParameter;
-    *available = gp_family_face(f, style) != nullptr;
+    *available = gp_family_face(f, style, nullptr) != nullptr;
     return Ok;
 }
 
-/* the metrics of a family in design units, 0 when no face of it can be read. */
+/* the design number of a family for a style, 0 when the style has no face. */
 static GpStatus family_metric(const GpFontFamily *family, INT style, UINT16 *out, INT which)
 {
+    GFamily *f;
+    GpStatus status = family_arg(family, &f);
+    if (status != Ok)
+        return status;
     if (!out)
         return InvalidParameter;
-    GFamily *f = gp_family_cast(family);
-    if (!f)
-        return InvalidParameter;
-    GFace *face = gp_family_face(f, style);
-    UINT16 v = 0;
+    const GFace *face = gp_family_face(f, style, nullptr);
+    INT value = 0;
     if (face) {
         switch (which) {
         case 0:
-            v = face->upem;
+            value = face->em;
             break;
         case 1:
-            v = face->ascent;
+            value = face->ascent;
             break;
         case 2:
-            v = face->descent;
+            value = face->descent;
             break;
         default:
-            v = (UINT16)(face->ascent + face->descent + face->gap);
+            value = face->ascent + face->descent + face->gap;
             break;
         }
     }
-    *out = v;
+    *out = (UINT16)value;
     return Ok;
 }
 
-WINGDIPAPI GpStatus WINAPI GdipGetEmHeight(const GpFontFamily *family, INT style, UINT16 *height)
+WINGDIPAPI GpStatus WINAPI GdipGetEmHeight(const GpFontFamily *family, INT style, UINT16 *em)
 {
-    return family_metric(family, style, height, 0);
+    return family_metric(family, style, em, 0);
 }
 
 WINGDIPAPI GpStatus WINAPI GdipGetCellAscent(const GpFontFamily *family, INT style, UINT16 *ascent)
@@ -1269,163 +860,481 @@ WINGDIPAPI GpStatus WINAPI GdipGetLineSpacing(const GpFontFamily *family, INT st
     return family_metric(family, style, spacing, 3);
 }
 
-/* ------------------------------------------------------------------ collections */
+/* ------------------------------------------------------------------ glyphs */
 
-WINGDIPAPI GpStatus WINAPI GdipNewInstalledFontCollection(GpFontCollection **collection)
+UINT16 gp_face_glyph(const GFace *face, UINT32 cp) { return mime_ttf_glyph_index(&face->ttf, cp); }
+
+INT gp_face_advance(const GFace *face, UINT16 glyph)
 {
-    if (!collection)
-        return InvalidParameter;
-    *collection = &g_installed;
+    int advance = 0;
+    mime_ttf_glyph_hmetrics(&face->ttf, glyph, &advance, nullptr);
+    return advance;
+}
+
+/* the points of the contour being walked. */
+typedef struct OutlineBuilder {
+    MimeVecPath *path;
+    float ox, oy, ux, uy, vx, vy;
+    MimeVecPoint *points;
+    bool *on_curve;
+    uint32_t count, capacity;
+    bool failed;
+} OutlineBuilder;
+
+static void outline_point(void *ctx, float x, float y, bool on_curve)
+{
+    OutlineBuilder *b = ctx;
+    if (b->failed)
+        return;
+    if (b->count == b->capacity) {
+        uint32_t capacity = b->capacity ? b->capacity * 2 : 64;
+        MimeVecPoint *points = gp_realloc(b->points, sizeof(MimeVecPoint) * capacity);
+        if (points)
+            b->points = points;
+        bool *flags = points ? gp_realloc(b->on_curve, sizeof(bool) * capacity) : nullptr;
+        if (flags)
+            b->on_curve = flags;
+        if (!points || !flags) {
+            b->failed = true;
+            return;
+        }
+        b->capacity = capacity;
+    }
+    b->points[b->count].x = b->ox + x * b->ux + y * b->vx;
+    b->points[b->count].y = b->oy + x * b->uy + y * b->vy;
+    b->on_curve[b->count] = on_curve;
+    b->count++;
+}
+
+static MimeVecPoint midpoint(MimeVecPoint a, MimeVecPoint b)
+{
+    MimeVecPoint m = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
+    return m;
+}
+
+/* a quadratic curve from a through control to b is the cubic with controls two thirds of the way. */
+static int outline_quad(MimeVecPath *path, MimeVecPoint a, MimeVecPoint control, MimeVecPoint b)
+{
+    const float k = 2.0f / 3.0f;
+    return mime_vec_path_bezier_to(path, a.x + k * (control.x - a.x), a.y + k * (control.y - a.y),
+                                   b.x + k * (control.x - b.x), b.y + k * (control.y - b.y), b.x, b.y);
+}
+
+/* turns the contour of on and off curve points into a closed figure. */
+static void outline_end(void *ctx)
+{
+    OutlineBuilder *b = ctx;
+    uint32_t n = b->count;
+    b->count = 0;
+    if (b->failed || n < 2)
+        return;
+    MimeVecPoint start, current;
+    uint32_t first, last;
+    if (b->on_curve[0]) {
+        start = b->points[0];
+        first = 1;
+        last = n;
+    } else if (b->on_curve[n - 1]) {
+        start = b->points[n - 1];
+        first = 0;
+        last = n - 1;
+    } else {
+        start = midpoint(b->points[0], b->points[n - 1]);
+        first = 0;
+        last = n;
+    }
+    int e = mime_vec_path_move_to(b->path, start.x, start.y);
+    current = start;
+    bool pending = false;
+    MimeVecPoint control = {0, 0};
+    for (uint32_t i = first; i < last && e == MIME_VEC_OK; i++) {
+        MimeVecPoint p = b->points[i];
+        if (b->on_curve[i]) {
+            e = pending ? outline_quad(b->path, current, control, p) : mime_vec_path_line_to(b->path, p.x, p.y);
+            pending = false;
+            current = p;
+        } else if (pending) {
+            MimeVecPoint m = midpoint(control, p);
+            e = outline_quad(b->path, current, control, m);
+            current = m;
+            control = p;
+        } else {
+            control = p;
+            pending = true;
+        }
+    }
+    if (e == MIME_VEC_OK && pending)
+        e = outline_quad(b->path, current, control, start);
+    if (e == MIME_VEC_OK)
+        e = mime_vec_path_close_figure(b->path);
+    if (e != MIME_VEC_OK)
+        b->failed = true;
+}
+
+GpStatus gp_face_outline(const GFace *face, UINT16 glyph, MimeVecPath *path, float ox, float oy, float ux, float uy,
+                         float vx, float vy)
+{
+    OutlineBuilder b;
+    memset(&b, 0, sizeof(b));
+    b.path = path;
+    b.ox = ox;
+    b.oy = oy;
+    b.ux = ux;
+    b.uy = uy;
+    b.vx = vx;
+    b.vy = vy;
+    MimeTtfSink sink = {outline_point, outline_end, &b};
+    mime_ttf_walk_outline(&face->ttf, glyph, &sink);
+    gp_free(b.points);
+    gp_free(b.on_curve);
+    return b.failed ? OutOfMemory : Ok;
+}
+
+/* ------------------------------------------------------------------ fallback */
+
+/* the families a character the font lacks is looked for in, in the order of Windows' font linking. */
+static const WCHAR *const g_fallback_names[] = {
+    L"Segoe UI",        L"Microsoft YaHei", L"Microsoft JhengHei", L"Yu Gothic",   L"Malgun Gothic", L"MS Gothic",
+    L"Segoe UI Symbol", L"Segoe UI Emoji",  L"Nirmala UI",         L"Leelawadee UI", L"Ebrima",       L"Gadugi",
+    L"Sylfaen",         L"Cambria Math",    L"Arial Unicode MS",   L"Arial",
+};
+enum { FALLBACK_COUNT = sizeof(g_fallback_names) / sizeof(g_fallback_names[0]) };
+
+/* 0 not looked up yet, 1 found, 2 not installed. */
+static volatile LONG g_fallback_state[FALLBACK_COUNT];
+static GFamily *g_fallback_family[FALLBACK_COUNT];
+
+const GFace *gp_fallback_face(UINT32 cp, INT style, UINT16 *glyph)
+{
+    for (INT i = 0; i < FALLBACK_COUNT; i++) {
+        if (g_fallback_state[i] == 0) {
+            g_fallback_family[i] = installed_find(g_fallback_names[i]);
+            InterlockedExchange(&g_fallback_state[i], g_fallback_family[i] ? 1 : 2);
+        }
+        if (g_fallback_state[i] != 1)
+            continue;
+        const GFace *face = gp_family_face(g_fallback_family[i], style, nullptr);
+        if (!face)
+            continue;
+        UINT16 g = gp_face_glyph(face, cp);
+        if (g) {
+            *glyph = g;
+            return face;
+        }
+    }
+    return nullptr;
+}
+
+/* ------------------------------------------------------------------ fonts */
+
+GFont *gp_font_cast(const void *p) { return GP_CAST(GFont, GP_TAG_FONT, p); }
+
+static GpStatus font_make(GFamily *family, const void *as_given, float size, INT style, GpUnit unit, GpFont **out)
+{
+    if (!gp_family_face(family, style, nullptr))
+        return FontStyleNotFound;
+    GFont *font = gp_alloc_zero(sizeof(*font));
+    if (!font)
+        return OutOfMemory;
+    font->tag = GP_TAG_FONT;
+    font->family = as_given;
+    font->size = size;
+    font->style = style;
+    font->unit = unit;
+    if (!is_generic(as_given))
+        family_retain(family);
+    *out = font;
     return Ok;
 }
 
-WINGDIPAPI GpStatus WINAPI GdipNewPrivateFontCollection(GpFontCollection **collection)
+float gp_font_world_size(float size, GpUnit unit, const GGraphics *g)
+{
+    if (unit == UnitWorld || unit == UnitPixel)
+        return size;
+    float dpi = g ? g->dpi_y : 96.0f;
+    float factor = gp_unit_to_pixels(unit, dpi);
+    if (g) {
+        float sx, sy;
+        gp_graphics_page_scale(g, &sx, &sy);
+        if (sy > 0.0f)
+            factor /= sy;
+    }
+    return size * factor;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipCreateFont(const GpFontFamily *family, REAL size, INT style, Unit unit, GpFont **font)
 {
     GP_REQUIRE_INIT();
-    if (!collection)
+    if (!family || !font)
         return InvalidParameter;
-    GCollection *c = gp_alloc_zero(sizeof(*c));
-    if (!c) {
-        *collection = nullptr;
+    if (!(size > 0.0f))
+        return InvalidParameter;
+    if (unit != UnitWorld && (unit < UnitPixel || unit > UnitMillimeter))
+        return InvalidParameter;
+    GFamily *f;
+    GpStatus status = family_arg(family, &f);
+    if (status != Ok)
+        return status;
+    return font_make(f, family, size, style, unit, font);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipCloneFont(GpFont *font, GpFont **clone)
+{
+    GFont *f = gp_font_cast(font);
+    if (!f || !clone)
+        return InvalidParameter;
+    GFamily *family = gp_family_resolve(f->family);
+    if (!family)
+        return FontFamilyNotFound;
+    return font_make(family, f->family, f->size, f->style, f->unit, clone);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipDeleteFont(GpFont *font)
+{
+    GFont *f = gp_font_cast(font);
+    if (!f)
+        return InvalidParameter;
+    if (!is_generic(f->family))
+        family_release((GFamily *)f->family);
+    f->tag = 0;
+    gp_free(f);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetFamily(GpFont *font, GpFontFamily **family)
+{
+    GFont *f = gp_font_cast(font);
+    if (!f || !family)
+        return InvalidParameter;
+    if (!is_generic(f->family))
+        family_retain((GFamily *)f->family);
+    *family = (GpFontFamily *)f->family;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetFontStyle(GpFont *font, INT *style)
+{
+    GFont *f = gp_font_cast(font);
+    if (!f || !style)
+        return InvalidParameter;
+    *style = f->style;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetFontSize(GpFont *font, REAL *size)
+{
+    GFont *f = gp_font_cast(font);
+    if (!f || !size)
+        return InvalidParameter;
+    *size = f->size;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetFontUnit(GpFont *font, Unit *unit)
+{
+    GFont *f = gp_font_cast(font);
+    if (!f || !unit)
+        return InvalidParameter;
+    *unit = f->unit;
+    return Ok;
+}
+
+/* the line spacing of the font's face in design units, and the em it is measured in. */
+static GpStatus font_line_spacing(const GFont *f, INT *spacing, INT *em)
+{
+    GFamily *family = gp_family_resolve(f->family);
+    if (!family)
+        return FontFamilyNotFound;
+    const GFace *face = gp_family_face(family, f->style, nullptr);
+    *spacing = face ? face->ascent + face->descent + face->gap : 0;
+    *em = face ? face->em : 1;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetFontHeight(const GpFont *font, const GpGraphics *graphics, REAL *height)
+{
+    const GGraphics *g = gp_graphics_cast(graphics);
+    if (!g)
+        return InvalidParameter;
+    if (g->got_dc)
+        return ObjectBusy;
+    const GFont *f = gp_font_cast(font);
+    if (!f || !height)
+        return InvalidParameter;
+    INT spacing, em;
+    GpStatus status = font_line_spacing(f, &spacing, &em);
+    if (status != Ok)
+        return status;
+    *height = (float)spacing * gp_font_world_size(f->size, f->unit, g) / (float)em;
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetFontHeightGivenDPI(const GpFont *font, REAL dpi, REAL *height)
+{
+    const GFont *f = gp_font_cast(font);
+    if (!f || !height)
+        return InvalidParameter;
+    INT spacing, em;
+    GpStatus status = font_line_spacing(f, &spacing, &em);
+    if (status != Ok)
+        return status;
+    float pixels = f->unit == UnitWorld || f->unit == UnitPixel ? f->size : f->size * gp_unit_to_pixels(f->unit, dpi);
+    *height = (float)spacing * pixels / (float)em;
+    return Ok;
+}
+
+/* ------------------------------------------------------------------ logical fonts */
+
+/* the font a device context has realized, in world units. */
+static GpStatus font_from_dc(HDC dc, GpFont **out)
+{
+    TEXTMETRICW tm;
+    WCHAR face[LF_FACESIZE];
+    if (!GetTextMetricsW(dc, &tm) || !GetTextFaceW(dc, LF_FACESIZE, face))
+        return Win32Error;
+    if (!(tm.tmPitchAndFamily & TMPF_TRUETYPE))
+        return NotTrueTypeFont;
+    GFamily *family = gp_family_by_name(face);
+    if (!family)
+        return FontFamilyNotFound;
+    INT style = (tm.tmWeight > 400 ? FontStyleBold : 0) | (tm.tmItalic ? FontStyleItalic : 0) |
+                (tm.tmUnderlined ? FontStyleUnderline : 0) | (tm.tmStruckOut ? FontStyleStrikeout : 0);
+    float size = (float)(tm.tmHeight - tm.tmInternalLeading);
+    if (!(size > 0.0f))
+        size = 1.0f;
+    return font_make(family, family, size, style, UnitWorld, out);
+}
+
+/* the font of a logical font is realized in a context of its own, which is not changed by it. */
+static GpStatus font_from_logfont(HDC hdc, const LOGFONTW *lf, GpFont **out)
+{
+    HDC dc = CreateCompatibleDC(hdc);
+    if (!dc)
+        return OutOfMemory;
+    /* the height of the logical font is in the units of the context it came with */
+    SIZE window, viewport;
+    if (GetWindowExtEx(hdc, &window) && GetViewportExtEx(hdc, &viewport)) {
+        SetMapMode(dc, MM_ANISOTROPIC);
+        SetWindowExtEx(dc, window.cx, window.cy, nullptr);
+        SetViewportExtEx(dc, viewport.cx, viewport.cy, nullptr);
+    }
+    HFONT hf = CreateFontIndirectW(lf);
+    if (!hf) {
+        DeleteDC(dc);
         return OutOfMemory;
     }
-    c->tag = GP_TAG_COLLECTION;
-    c->loaded = TRUE;
-    *collection = c;
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipDeletePrivateFontCollection(GpFontCollection **collection)
-{
-    GP_REQUIRE_INIT();
-    if (!collection)
-        return InvalidParameter;
-    GCollection *c = GP_CAST(GCollection, GP_TAG_COLLECTION, *collection);
-    if (*collection && !c)
-        return InvalidParameter;
-    if (c && !c->installed)
-        collection_free(c);
-    *collection = nullptr;
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetFontCollectionFamilyCount(GpFontCollection *collection, INT *count)
-{
-    GCollection *c = GP_CAST(GCollection, GP_TAG_COLLECTION, collection);
-    if (!count || !c)
-        return InvalidParameter;
-    collection_load(c);
-    *count = (INT)c->family_count;
-    return Ok;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipGetFontCollectionFamilyList(GpFontCollection *collection, INT sought,
-                                                           GpFontFamily **families, INT *found)
-{
-    GCollection *c = GP_CAST(GCollection, GP_TAG_COLLECTION, collection);
-    if (!families || !found || !c)
-        return InvalidParameter;
-    collection_load(c);
-    INT n = 0;
-    for (GFamily *f = c->first; f && n < sought; f = f->next)
-        families[n++] = f;
-    *found = n;
-    return Ok;
-}
-
-/* the file a name stands for: the fonts directory first for a relative name, then the usual search. */
-static BOOL resolve_font_path(const WCHAR *name, WCHAR *path)
-{
-    BOOL absolute = name[0] == '\\' || (name[0] && name[1] == ':' && name[2] == '\\');
-    WCHAR *part = nullptr;
-    DWORD n = 0;
-    if (!absolute) {
-        WCHAR fonts[MAX_PATH];
-        UINT w = GetWindowsDirectoryW(fonts, MAX_PATH - 8);
-        if (w && w < MAX_PATH - 8) {
-            memcpy(fonts + w, L"\\Fonts", 7 * sizeof(WCHAR));
-            n = SearchPathW(fonts, name, nullptr, MAX_PATH, path, &part);
-        }
-    }
-    if (!n)
-        n = SearchPathW(nullptr, name, nullptr, MAX_PATH, path, &part);
-    return n && n < MAX_PATH;
-}
-
-static BOOL path_equal(const WCHAR *a, const WCHAR *b)
-{
-    while (*a && *a == *b) {
-        a++;
-        b++;
-    }
-    return *a == *b;
-}
-
-static BYTE *read_whole_file(const WCHAR *path, SIZE_T *size)
-{
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (h == INVALID_HANDLE_VALUE)
-        return nullptr;
-    LARGE_INTEGER len;
-    BYTE *data = nullptr;
-    if (GetFileSizeEx(h, &len) && len.QuadPart > 0 && len.QuadPart < 0x10000000ll) {
-        data = gp_alloc((SIZE_T)len.QuadPart);
-        SIZE_T got = 0;
-        while (data && got < (SIZE_T)len.QuadPart) {
-            DWORD n = 0;
-            if (!ReadFile(h, data + got, (DWORD)((SIZE_T)len.QuadPart - got), &n, nullptr) || !n) {
-                gp_free(data);
-                data = nullptr;
-                break;
-            }
-            got += n;
-        }
-        if (data)
-            *size = got;
-    }
-    CloseHandle(h);
-    return data;
-}
-
-WINGDIPAPI GpStatus WINAPI GdipPrivateAddFontFile(GpFontCollection *collection, const WCHAR *filename)
-{
-    GCollection *c = GP_CAST(GCollection, GP_TAG_COLLECTION, collection);
-    if (!filename || !c || c->installed)
-        return InvalidParameter;
-    WCHAR path[MAX_PATH];
-    if (!resolve_font_path(filename, path))
-        return FileNotFound;
-    WCHAR upper[MAX_PATH];
-    SIZE_T n = 0;
-    for (; path[n] && n < MAX_PATH - 1; n++)
-        upper[n] = path[n] >= 'a' && path[n] <= 'z' ? (WCHAR)(path[n] - 32) : path[n];
-    upper[n] = 0;
-    text_lock();
-    for (struct GBlob *b = c->blobs; b; b = b->next) {
-        if (b->path[0] && path_equal(b->path, upper)) {
-            text_unlock();
-            return Ok;
-        }
-    }
-    SIZE_T size = 0;
-    BYTE *data = read_whole_file(path, &size);
-    GpStatus status = FileNotFound;
-    if (data)
-        status = collection_add_blob(c, data, size, path);
-    text_unlock();
+    HGDIOBJ old = SelectObject(dc, hf);
+    GpStatus status = font_from_dc(dc, out);
+    SelectObject(dc, old);
+    DeleteObject(hf);
+    DeleteDC(dc);
     return status;
 }
 
-WINGDIPAPI GpStatus WINAPI GdipPrivateAddMemoryFont(GpFontCollection *collection, const void *memory, INT length)
+WINGDIPAPI GpStatus WINAPI GdipCreateFontFromDC(HDC hdc, GpFont **font)
 {
-    GCollection *c = GP_CAST(GCollection, GP_TAG_COLLECTION, collection);
-    if (!memory || !c || c->installed || length <= 0)
+    GP_REQUIRE_INIT();
+    if (!hdc || !font)
         return InvalidParameter;
-    BYTE *copy = gp_dup(memory, (SIZE_T)length);
-    if (!copy)
-        return OutOfMemory;
-    text_lock();
-    GpStatus status = collection_add_blob(c, copy, (SIZE_T)length, nullptr);
-    text_unlock();
-    return status;
+    return font_from_dc(hdc, font);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipCreateFontFromLogfontW(HDC hdc, const LOGFONTW *lf, GpFont **font)
+{
+    GP_REQUIRE_INIT();
+    if (!hdc || !lf || !font)
+        return InvalidParameter;
+    return font_from_logfont(hdc, lf, font);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipCreateFontFromLogfontA(HDC hdc, const LOGFONTA *lf, GpFont **font)
+{
+    GP_REQUIRE_INIT();
+    if (!hdc || !lf || !font)
+        return InvalidParameter;
+    LOGFONTW wide;
+    memset(&wide, 0, sizeof(wide));
+    wide.lfHeight = lf->lfHeight;
+    wide.lfWidth = lf->lfWidth;
+    wide.lfEscapement = lf->lfEscapement;
+    wide.lfOrientation = lf->lfOrientation;
+    wide.lfWeight = lf->lfWeight;
+    wide.lfItalic = lf->lfItalic;
+    wide.lfUnderline = lf->lfUnderline;
+    wide.lfStrikeOut = lf->lfStrikeOut;
+    wide.lfCharSet = lf->lfCharSet;
+    wide.lfOutPrecision = lf->lfOutPrecision;
+    wide.lfClipPrecision = lf->lfClipPrecision;
+    wide.lfQuality = lf->lfQuality;
+    wide.lfPitchAndFamily = lf->lfPitchAndFamily;
+    MultiByteToWideChar(CP_ACP, 0, lf->lfFaceName, -1, wide.lfFaceName, LF_FACESIZE);
+    wide.lfFaceName[LF_FACESIZE - 1] = 0;
+    return font_from_logfont(hdc, &wide, font);
+}
+
+static GpStatus logfont_of(GpFont *font, GpGraphics *graphics, LOGFONTW *lf)
+{
+    GGraphics *g = gp_graphics_cast(graphics);
+    GFont *f = gp_font_cast(font);
+    if (!f || !g || !lf)
+        return InvalidParameter;
+    if (g->got_dc)
+        return ObjectBusy;
+    GFamily *family = gp_family_resolve(f->family);
+    if (!family)
+        return FontFamilyNotFound;
+    gp_family_face(family, f->style, nullptr);
+    const MimeVecMatrix *m = gp_graphics_w2d(g);
+    float row = mime_vec_sqrtf(m->m21 * m->m21 + m->m22 * m->m22);
+    float device = gp_font_world_size(f->size, f->unit, g) * row;
+    memset(lf, 0, sizeof(*lf));
+    lf->lfHeight = -(LONG)mime_vec_floorf(device + 0.5f);
+    /* the turn of the world transform in tenths of a degree, counted the way gdi counts them. */
+    LONG tenths = (LONG)(mime_vec_atan2f(m->m12, m->m11) * (1800.0f / 3.14159265f));
+    if (tenths) {
+        tenths = 3600 - tenths;
+        if (tenths >= 3600)
+            tenths -= 3600;
+    }
+    lf->lfEscapement = tenths;
+    lf->lfOrientation = tenths;
+    lf->lfWeight = f->style & FontStyleBold ? 700 : 400;
+    lf->lfItalic = (f->style & FontStyleItalic) != 0;
+    lf->lfUnderline = (f->style & FontStyleUnderline) != 0;
+    lf->lfStrikeOut = (f->style & FontStyleStrikeout) != 0;
+    lf->lfCharSet = family->charset;
+    lstrcpynW(lf->lfFaceName, family->name, LF_FACESIZE);
+    return Ok;
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetLogFontW(GpFont *font, GpGraphics *graphics, LOGFONTW *lf)
+{
+    return logfont_of(font, graphics, lf);
+}
+
+WINGDIPAPI GpStatus WINAPI GdipGetLogFontA(GpFont *font, GpGraphics *graphics, LOGFONTA *lf)
+{
+    LOGFONTW wide;
+    if (!lf)
+        return InvalidParameter;
+    GpStatus status = logfont_of(font, graphics, &wide);
+    if (status != Ok)
+        return status;
+    memset(lf, 0, sizeof(*lf));
+    lf->lfHeight = wide.lfHeight;
+    lf->lfWidth = wide.lfWidth;
+    lf->lfEscapement = wide.lfEscapement;
+    lf->lfOrientation = wide.lfOrientation;
+    lf->lfWeight = wide.lfWeight;
+    lf->lfItalic = wide.lfItalic;
+    lf->lfUnderline = wide.lfUnderline;
+    lf->lfStrikeOut = wide.lfStrikeOut;
+    lf->lfCharSet = wide.lfCharSet;
+    lf->lfOutPrecision = wide.lfOutPrecision;
+    lf->lfClipPrecision = wide.lfClipPrecision;
+    lf->lfQuality = wide.lfQuality;
+    lf->lfPitchAndFamily = wide.lfPitchAndFamily;
+    WideCharToMultiByte(CP_ACP, 0, wide.lfFaceName, -1, lf->lfFaceName, LF_FACESIZE, nullptr, nullptr);
+    lf->lfFaceName[LF_FACESIZE - 1] = 0;
+    return Ok;
 }

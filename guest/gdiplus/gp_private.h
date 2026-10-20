@@ -481,6 +481,12 @@ INT gp_smoothing_samples(SmoothingMode mode);
  * aa is 0, 1 or 2 as above. the clip of the graphics and of the device context apply.
  */
 GpStatus gp_fill_polys(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, const GBrush *brush);
+/*
+ * the fill of text: glyph outlines wound the non zero way. map, when given, turns the coverage 0 to 255 of a pixel
+ * into the alpha it gets, and clip is a second device mask the fill is cut to.
+ */
+GpStatus gp_fill_polys_text(GGraphics *g, const MimeVecPolys *polys, INT aa, const GBrush *brush, const UINT8 *map,
+                            const MimeVecMask *clip);
 /* the same with a ready source and the area it was made for. */
 GpStatus gp_fill_polys_src(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, GSource *src,
                            const RECT *area);

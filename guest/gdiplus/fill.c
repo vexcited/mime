@@ -88,11 +88,20 @@ typedef struct FillCtx {
     INT cap;
     BOOL modified;
     CompositingMode mode;
+    const UINT8 *map;           /* coverage 0 to 255 to alpha, for text */
+    const MimeVecMask *extra;   /* a second clip, for the rectangle text is cut to */
 } FillCtx;
 
 /* every byte of the pixels scaled by cov / cmax, rounded: the way the scan converter's output meets the brush. */
 static void scale_by_coverage(UINT32 *px, const UINT8 *cov, INT count, UINT cmax)
 {
+    if (cmax == 255) {
+        for (INT i = 0; i < count; i++) {
+            if (cov[i] != 255)
+                px[i] = gp_scale_pargb(px[i], cov[i]);
+        }
+        return;
+    }
     UINT half = cmax / 2;
     UINT shift = cmax == 32 ? 5 : (cmax == 64 ? 6 : 0);
     UINT32 add = (half << 16) | half;
@@ -119,6 +128,16 @@ static void fill_span(void *user, INT y, INT x0, INT count, const UINT8 *cov, UI
     while (left > 0) {
         INT n = left > c->cap ? c->cap : left;
         const UINT8 *cv = cov + (x - x0);
+        UINT8 mapped[1024];
+        UINT cm = cmax;
+        if (c->map) {
+            for (INT i = 0; i < n; i++) {
+                UINT v = cmax > 1 ? (cv[i] * 255u + cmax / 2) / cmax : (cv[i] ? 255u : 0u);
+                mapped[i] = c->map[v];
+            }
+            cv = mapped;
+            cm = 255;
+        }
         if (c->src->constant) {
             for (INT i = 0; i < n; i++)
                 c->buf[i] = c->src->color;
@@ -126,11 +145,14 @@ static void fill_span(void *user, INT y, INT x0, INT count, const UINT8 *cov, UI
             c->src->fetch(c->src, x, y, n, c->buf);
         }
         if (c->mode == CompositingModeSourceOver) {
-            if (cmax > 1)
-                scale_by_coverage(c->buf, cv, n, cmax);
-            if (c->mask) {
+            if (cm > 1)
+                scale_by_coverage(c->buf, cv, n, cm);
+            if (c->mask || c->extra) {
                 memset(c->mrow, 255, n);
-                mime_vec_mask_apply_row(c->mask, y, x, n, c->mrow);
+                if (c->mask)
+                    mime_vec_mask_apply_row(c->mask, y, x, n, c->mrow);
+                if (c->extra)
+                    mime_vec_mask_apply_row(c->extra, y, x, n, c->mrow);
                 for (INT i = 0; i < n; i++) {
                     if (c->mrow[i] != 255)
                         c->buf[i] = gp_scale_pargb(c->buf[i], c->mrow[i]);
@@ -143,13 +165,16 @@ static void fill_span(void *user, INT y, INT x0, INT count, const UINT8 *cov, UI
             INT m = n > 1024 ? 1024 : n;
             for (INT i = 0; i < m; i++)
                 cc[i] = cv[i];
-            if (c->mask) {
+            if (c->mask || c->extra) {
                 memset(c->mrow, 255, m);
-                mime_vec_mask_apply_row(c->mask, y, x, m, c->mrow);
+                if (c->mask)
+                    mime_vec_mask_apply_row(c->mask, y, x, m, c->mrow);
+                if (c->extra)
+                    mime_vec_mask_apply_row(c->extra, y, x, m, c->mrow);
                 for (INT i = 0; i < m; i++)
                     cc[i] = (UINT8)((cc[i] * (UINT)c->mrow[i] + 127) / 255);
             }
-            gp_compose_copy(&c->surf, x, y, m, c->buf, cc, cmax);
+            gp_compose_copy(&c->surf, x, y, m, c->buf, cc, cm);
             n = m;
         }
         c->modified = TRUE;
@@ -158,8 +183,8 @@ static void fill_span(void *user, INT y, INT x0, INT count, const UINT8 *cov, UI
     }
 }
 
-GpStatus gp_fill_polys_src(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, GSource *src,
-                           const RECT *area_in)
+static GpStatus fill_polys_src(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, GSource *src,
+                               const RECT *area_in, const UINT8 *map, const MimeVecMask *extra)
 {
     RECT area = *area_in;
     const MimeVecMask *mask;
@@ -170,6 +195,8 @@ GpStatus gp_fill_polys_src(GGraphics *g, const MimeVecPolys *polys, INT fill_rul
     c.g = g;
     c.src = src;
     c.mask = mask;
+    c.map = map;
+    c.extra = extra;
     c.mode = g->compositing_mode;
     c.cap = 1024;
     c.buf = gp_alloc(sizeof(UINT32) * c.cap);
@@ -213,7 +240,14 @@ static BOOL polys_area(const MimeVecPolys *polys, INT aa, RECT *area)
     return TRUE;
 }
 
-GpStatus gp_fill_polys(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, const GBrush *brush)
+GpStatus gp_fill_polys_src(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, GSource *src,
+                           const RECT *area)
+{
+    return fill_polys_src(g, polys, fill_rule, aa, src, area, nullptr, nullptr);
+}
+
+static GpStatus fill_polys(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, const GBrush *brush,
+                           const UINT8 *map, const MimeVecMask *extra)
 {
     RECT area;
     if (!polys_area(polys, aa, &area))
@@ -226,9 +260,20 @@ GpStatus gp_fill_polys(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, I
     GpStatus status = gp_source_create(g, brush, &narrowed, &src);
     if (status != Ok)
         return status;
-    status = gp_fill_polys_src(g, polys, fill_rule, aa, src, &narrowed);
+    status = fill_polys_src(g, polys, fill_rule, aa, src, &narrowed, map, extra);
     gp_source_free(src);
     return status;
+}
+
+GpStatus gp_fill_polys(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, const GBrush *brush)
+{
+    return fill_polys(g, polys, fill_rule, aa, brush, nullptr, nullptr);
+}
+
+GpStatus gp_fill_polys_text(GGraphics *g, const MimeVecPolys *polys, INT aa, const GBrush *brush, const UINT8 *map,
+                            const MimeVecMask *clip)
+{
+    return fill_polys(g, polys, MIME_VEC_FILL_WINDING, aa, brush, map, clip);
 }
 
 GpStatus gp_fill_path_xform(GGraphics *g, const MimeVecPath *path, const MimeVecMatrix *extra, FillMode mode,
