@@ -55,3 +55,33 @@ double gp_pow(double x, double y)
         return 0.0;
     return gp_exp(y * gp_log(x));
 }
+
+/*
+ * the first half of the sigma bell shape: how far a blend has come, in 1/65536, at the first 128 of 256 steps. the
+ * shape is the rising half of a gaussian bell summed up, a gaussian one sixth wide centered in the middle, scaled to
+ * run from 0 to 65536 over the 256 steps. the second half is the mirror image. the form of the curve is a guess.
+ */
+static double bell_area(double upto, INT steps)
+{
+    const double sigma = 1.0 / 6.0;
+    double h = upto / steps, sum = 0.0;
+    for (INT i = 0; i <= steps; i++) {
+        double u = i * h - 0.5;
+        double weight = (i == 0 || i == steps) ? 1.0 : (i & 1) ? 4.0 : 2.0;
+        sum += weight * gp_exp(-(u * u) / (2.0 * sigma * sigma));
+    }
+    return sum * h / 3.0;
+}
+
+const float *gp_sigma_table(void)
+{
+    static float table[128];
+    static BOOL ready;
+    if (!ready) {
+        double total = bell_area(1.0, 256);
+        for (INT i = 0; i < 128; i++)
+            table[i] = i == 0 ? 0.0f : (float)(65536.0 * bell_area(i / 255.0, 64) / total);
+        ready = TRUE;
+    }
+    return table;
+}

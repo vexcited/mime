@@ -72,6 +72,8 @@ void *gp_dup(const void *p, SIZE_T bytes);
 double gp_log(double x);
 double gp_exp(double x);
 double gp_pow(double x, double y);
+/* the 128 steps of the rising half of the sigma bell blend shape, scaled to 0..65536 over 256 steps. */
+const float *gp_sigma_table(void);
 
 /* ------------------------------------------------------------------ matrices */
 

@@ -3,8 +3,6 @@
  */
 #include "gp_private.h"
 
-#include "sigma_table.inc"
-
 GBrush *gp_brush_cast(const void *p)
 {
     return GP_CAST(GBrush, GP_TAG_BRUSH, p);
@@ -581,6 +579,7 @@ static GpStatus blend_sigma(GBrush *b, float focus, float scale)
     }
     INT n;
     float k = scale / 65536.0f;
+    const float *sigma_table = gp_sigma_table();
     if (focus <= 0.0f || focus >= 1.0f) {
         INT i;
         if (focus == 1.0f) {
