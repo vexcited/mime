@@ -1731,70 +1731,88 @@ WINGDIPAPI GpStatus WINAPI GdipRecordMetafileStreamI(IStream *stream, HDC ref, E
 
 /* ------------------------------------------------------------------ conversion to emf+ */
 
+/* a windows metafile as an enhanced one in a metafile object of its own, through the placeable header of its box. */
+static GMetafile *wmf_as_enhanced(const GMetafile *source)
+{
+    WmfPlaceableFileHeader placeable;
+    if (!gp_meta_placeable_for(source, &placeable))
+        return nullptr;
+    HMETAFILE wmf = (HMETAFILE)source->handle;
+    UINT size = GetMetaFileBitsEx(wmf, 0, nullptr);
+    BYTE *bits = size ? gp_alloc(size) : nullptr;
+    if (!bits)
+        return nullptr;
+    HENHMETAFILE emf = nullptr;
+    if (GetMetaFileBitsEx(wmf, size, bits) == size)
+        emf = gp_emf_from_wmf_data(wmf, &placeable, bits, size, source->compat);
+    gp_free(bits);
+    GMetafile *made = emf ? gp_meta_new() : nullptr;
+    if (!made) {
+        if (emf)
+            DeleteEnhMetaFile(emf);
+        return nullptr;
+    }
+    if (gp_meta_init_emf(made, emf, TRUE) != Ok) {
+        gp_meta_free(made);
+        return nullptr;
+    }
+    return made;
+}
+
 /*
- * an enhanced metafile of gdi records is recorded again as an emf+ metafile of the type asked for. the gdi
- * records are kept as they are, behind a request for the device context, so a player that knows emf+ plays them
- * through gdi and one that does not plays them as its own. a guess: the real library turns the records into emf+
- * drawing where it can and keeps the gdi ones for the rest.
+ * records the picture again as the type asked for. the gdi records of the source are kept as they are, in the gdi
+ * part of the new metafile behind a record that asks for the device context, and the frame is the pixel bounds of
+ * the source on the screen. this is a guess at what the library does with the gdi records.
  */
 static GpStatus convert(const GpGraphics *graphics, GpMetafile *metafile, BOOL *success, const WCHAR *file,
                         IStream *stream, EmfType type, const WCHAR *description, GpMetafile **out)
 {
-    GP_REQUIRE_INIT();
-    GGraphics *g = gp_graphics_cast(graphics);
-    GMetafile *m = gp_meta_cast(metafile);
     if (success)
         *success = FALSE;
-    if (!g || !m || !out || m->state < GM_RECORDING || m->state == 4 || m->header.Type >= MetafileTypeEmfPlusOnly)
+    GGraphics *g = gp_graphics_cast(graphics);
+    GMetafile *source = gp_meta_cast(metafile);
+    if (!g || !source || !out || source->state < GM_RECORDING || source->header.Type >= MetafileTypeEmfPlusOnly)
         return InvalidParameter;
     if ((UINT)type - 3 > 2)
         return InvalidParameter;
-    if (m->state != GM_READY)
+    if (source->state != GM_READY)
         return WrongState;
-    *out = nullptr;
-    GMetafile *source = m;
-    if (m->header.Type < MetafileTypeEmf) {
-        /* a windows metafile is made into an enhanced one first */
-        WmfPlaceableFileHeader h;
-        BOOL has = gp_meta_placeable_for(m, &h);
-        GpStatus st = GdipCreateMetafileFromWmf((HMETAFILE)m->handle, FALSE, has ? &h : nullptr, (GpMetafile **)&source);
-        if (st != Ok)
-            return st;
-        if (source->header.Type < MetafileTypeEmf) {
-            GdipDisposeImage(&source->image);
+    GMetafile *enhanced = source;
+    GMetafile *made_from_wmf = nullptr;
+    if (source->header.Type < MetafileTypeEmf) {
+        made_from_wmf = wmf_as_enhanced(source);
+        if (!made_from_wmf)
             return GenericError;
-        }
+        enhanced = made_from_wmf;
     }
     float bx, by, bw, bh;
-    gp_meta_real_bounds(source, &bx, &by, &bw, &bh);
+    gp_meta_real_bounds(enhanced, &bx, &by, &bw, &bh);
     GpRectF frame = {bx, by, bw, bh};
-    HDC ref = GetDC(nullptr);
-    if (!ref) {
-        if (source != m)
-            GdipDisposeImage(&source->image);
-        return GenericError;
-    }
-    GMetafile *rec;
-    GpStatus st = record(ref, type, &frame, MetafileFrameUnitPixel, description, file, stream, (GpMetafile **)&rec);
-    ReleaseDC(nullptr, ref);
+    HDC screen = GetDC(nullptr);
+    GpMetafile *recording = nullptr;
+    GpStatus st = record(screen, type, &frame, MetafileFrameUnitPixel, description, file, stream, &recording);
+    if (screen)
+        ReleaseDC(nullptr, screen);
     if (st == Ok) {
-        GGraphics *rg = gp_meta_recording_graphics(rec);
-        st = rg ? play_into(rg, (HENHMETAFILE)source->handle, &source->header) : GenericError;
+        GMetafile *m = gp_meta_cast(recording);
+        GGraphics *rg = gp_meta_recording_graphics(m);
+        st = rg ? play_into(rg, (HENHMETAFILE)enhanced->handle, &enhanced->header) : GenericError;
+        /* deleting the graphics completes the metafile. */
         if (rg)
-            gp_meta_end_recording(rec);
-        if (st == Ok && rec->state == GM_READY) {
-            *out = rec;
+            GdipDeleteGraphics(rg);
+        if (st == Ok && m->state == GM_READY) {
+            *out = recording;
             if (success)
                 *success = TRUE;
         } else {
-            gp_meta_free(rec);
-            st = st == Ok ? GenericError : st;
+            gp_meta_free(m);
+            st = GenericError;
         }
     }
-    if (source != m)
-        GdipDisposeImage(&source->image);
+    gp_meta_free(made_from_wmf);
     return st;
 }
+
 
 WINGDIPAPI GpStatus WINAPI GdipConvertToEmfPlus(const GpGraphics *graphics, GpMetafile *metafile, BOOL *success,
                                                 EmfType type, const WCHAR *description, GpMetafile **out)
@@ -1825,54 +1843,57 @@ WINGDIPAPI GpStatus WINAPI GdipConvertToEmfPlusToStream(const GpGraphics *graphi
 /* ------------------------------------------------------------------ down level */
 
 /*
- * a windows metafile from an enhanced one, with the placeable header in front when the flags ask for it. a size of
- * zero or no buffer gives the size. the box of the header follows the frame, a guess for the resolution it uses.
+ * the placeable header for the bits of a windows metafile made from an enhanced one. the box is the frame of the
+ * enhanced metafile scaled by half the pixels per hundredth of a millimeter of its device, the unit of the inch is
+ * that scale for an inch. both are guesses that follow what the library gives. a metafile whose header cannot be read
+ * gets a box of 2000 units square and 96 for an inch.
  */
+static void wmf_placeable_for(HENHMETAFILE emf, BYTE out[PLACEABLE_SIZE])
+{
+    INT16 box[4] = {0, 0, 2000, 2000}, inch = 96;
+    ENHMETAHEADER eh;
+    if (GetEnhMetaFileHeader(emf, sizeof(eh), &eh) >= sizeof(eh) && eh.szlMillimeters.cx > 0 && eh.szlMillimeters.cy > 0) {
+        float across = (float)eh.szlDevice.cx / (float)eh.szlMillimeters.cx;
+        float down = (float)eh.szlDevice.cy / (float)eh.szlMillimeters.cy;
+        float scale = (across + down) * 0.25f / 100.0f;
+        box[0] = (INT16)((float)eh.rclFrame.left * scale);
+        box[1] = (INT16)((float)eh.rclFrame.top * scale);
+        box[2] = (INT16)((float)eh.rclFrame.right * scale);
+        box[3] = (INT16)((float)eh.rclFrame.bottom * scale);
+        inch = (INT16)(scale * HIMETRIC_PER_INCH);
+    }
+    UINT32 key = PLACEABLE_KEY, reserved = 0;
+    INT16 hmf = 0;
+    memcpy(out, &key, 4);
+    memcpy(out + 4, &hmf, 2);
+    memcpy(out + 6, box, 8);
+    memcpy(out + 14, &inch, 2);
+    memcpy(out + 16, &reserved, 4);
+    UINT16 sum = 0, word;
+    for (INT i = 0; i < 10; i++) {
+        memcpy(&word, out + 2 * i, 2);
+        sum ^= word;
+    }
+    memcpy(out + 20, &sum, 2);
+}
+
 WINGDIPAPI UINT WINAPI GdipEmfToWmfBits(HENHMETAFILE emf, UINT size, LPBYTE buffer, INT map_mode, INT flags)
 {
-    UINT header = (flags & EmfToWmfBitsFlagsIncludePlaceable) ? PLACEABLE_SIZE : 0;
-    if (map_mode < 1 || map_mode > 8 || !emf || GetObjectType(emf) != OBJ_ENHMETAFILE)
+    if (map_mode < MM_TEXT || map_mode > MM_ANISOTROPIC || !emf || GetObjectType(emf) != OBJ_ENHMETAFILE)
         return 0;
-    BYTE *body = buffer;
-    UINT room = buffer ? size : 0;
-    if (buffer && header) {
-        if (size < header)
-            return 0;
-        body = buffer + header;
-        room = size - header;
-    }
+    BOOL placeable = (flags & EmfToWmfBitsFlagsIncludePlaceable) != 0;
+    UINT lead = placeable ? PLACEABLE_SIZE : 0;
+    if (buffer && size < lead)
+        return 0;
     HDC ref = GetDC(nullptr);
-    UINT n = GetWinMetaFileBits(emf, room, body, map_mode, ref);
+    UINT bits = GetWinMetaFileBits(emf, buffer ? size - lead : 0, buffer ? buffer + lead : nullptr, map_mode, ref);
     if (ref)
         ReleaseDC(nullptr, ref);
-    if (!n || !header)
-        return n;
-    if (buffer) {
-        ENHMETAHEADER eh = {};
-        WmfPlaceableFileHeader h = {};
-        h.Key = PLACEABLE_KEY;
-        if (GetEnhMetaFileHeader(emf, sizeof(eh), &eh)) {
-            float k = (((float)eh.szlDevice.cx / (float)eh.szlMillimeters.cx) +
-                       ((float)eh.szlDevice.cy / (float)eh.szlMillimeters.cy)) * 0.25f / 100.0f;
-            h.BoundingBox.Left = (INT16)((float)eh.rclFrame.left * k);
-            h.BoundingBox.Top = (INT16)((float)eh.rclFrame.top * k);
-            h.BoundingBox.Right = (INT16)((float)eh.rclFrame.right * k);
-            h.BoundingBox.Bottom = (INT16)((float)eh.rclFrame.bottom * k);
-            h.Inch = (INT16)(k * HIMETRIC_PER_INCH);
-        } else {
-            h.BoundingBox.Right = 2000;
-            h.BoundingBox.Bottom = 2000;
-            h.Inch = 96;
-        }
-        h.Checksum = gp_wmf_placeable_checksum(&h);
-        memcpy(buffer, &h.Key, 4);
-        memcpy(buffer + 4, &h.Hmf, 2);
-        memcpy(buffer + 6, &h.BoundingBox, 8);
-        memcpy(buffer + 14, &h.Inch, 2);
-        memcpy(buffer + 16, &h.Reserved, 4);
-        memcpy(buffer + 20, &h.Checksum, 2);
-    }
-    return n + header;
+    if (!bits)
+        return 0;
+    if (buffer && placeable)
+        wmf_placeable_for(emf, buffer);
+    return bits + lead;
 }
 
 /* ------------------------------------------------------------------ the rasterization limit */
