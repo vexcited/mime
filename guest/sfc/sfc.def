@@ -1,0 +1,19 @@
+; sfc.dll of windows forwards its sixteen exports to sfc_os.dll, the first nine by ordinal alone.
+LIBRARY sfc.dll
+EXPORTS
+    SfcInitProt=sfc_os.SfcInitProt @1 NONAME
+    SfcTerminateWatcherThread=sfc_os.SfcTerminateWatcherThread @2 NONAME
+    SfcConnectToServer=sfc_os.SfcConnectToServer @3 NONAME
+    SfcClose=sfc_os.SfcClose @4 NONAME
+    SfcFileException=sfc_os.SfcFileException @5 NONAME
+    SfcInitiateScan=sfc_os.SfcInitiateScan @6 NONAME
+    SfcInstallProtectedFiles=sfc_os.SfcInstallProtectedFiles @7 NONAME
+    SfpInstallCatalog=sfc_os.SfpInstallCatalog @8 NONAME
+    SfpDeleteCatalog=sfc_os.SfpDeleteCatalog @9 NONAME
+    SRSetRestorePoint=sfc_os.SRSetRestorePointA @10
+    SRSetRestorePointA=sfc_os.SRSetRestorePointA @11
+    SRSetRestorePointW=sfc_os.SRSetRestorePointW @12
+    SfcGetNextProtectedFile=sfc_os.SfcGetNextProtectedFile @13
+    SfcIsFileProtected=sfc_os.SfcIsFileProtected @14
+    SfcIsKeyProtected=sfc_os.SfcIsKeyProtected @15
+    SfpVerifyFile=sfc_os.SfpVerifyFile @16
