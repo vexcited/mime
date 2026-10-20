@@ -641,7 +641,22 @@ static void *vcpu_main(void *arg)
                 }
                 continue;
             }
-            mime_error("KVM_RUN failed: %s", strerror(errno));
+            if (errno == EFAULT && vcpu->run->exit_reason == KVM_EXIT_MEMORY_FAULT) {
+                /* the kernel could not get the page behind a guest address: the file of a window was made shorter. */
+                uint64_t gpa = vcpu->run->memory_fault.gpa;
+                if (gpa >= MIME_WINDOW_BASE && gpa - MIME_WINDOW_BASE < MIME_WINDOW_SIZE && vm->window_host &&
+                    mime_window_bus_fault(vm->window_host + (gpa - MIME_WINDOW_BASE))) {
+                    mime_warn("vcpu %u: the page of a window at %#llx was gone, replaced by zeros", vcpu->index,
+                              (unsigned long long)gpa);
+                    continue;
+                }
+                mime_error("KVM_RUN failed: no memory behind %#llx (%llu bytes, flags %#llx)", (unsigned long long)gpa,
+                           (unsigned long long)vcpu->run->memory_fault.size,
+                           (unsigned long long)vcpu->run->memory_fault.flags);
+            } else {
+                mime_error("KVM_RUN failed: %s (exit reason %u)", strerror(errno), vcpu->run->exit_reason);
+            }
+            dump_state(vcpu, "KVM_RUN failed");
             mime_vm_request_stop(vm, 1);
             break;
         }
