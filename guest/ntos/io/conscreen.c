@@ -170,11 +170,49 @@ static bool ext_equal(const CsExt *e, const CsExt *x)
            (e->FgKind == CS_COLOR_DEFAULT || e->Fg == x->Fg) && (e->BgKind == CS_COLOR_DEFAULT || e->Bg == x->Bg);
 }
 
+static unsigned ext_hash(const CsExt *e)
+{
+    uint32_t h = e->FgKind * 0x9E3779B1u ^ (e->BgKind + 7u) * 0x85EBCA6Bu ^ (uint32_t)e->Style * 0xC2B2AE35u;
+    if (e->FgKind != CS_COLOR_DEFAULT)
+        h = (h ^ e->Fg) * 0x27D4EB2Fu;
+    if (e->BgKind != CS_COLOR_DEFAULT)
+        h = (h ^ (e->Bg + 0x165667B1u)) * 0x9E3779B1u;
+    return h ^ (h >> 15);
+}
+
+/* puts every attribute in a table of 4 slots for each, so that a lookup ends at the first empty slot. */
+static bool ext_rehash(CsTerminal *term)
+{
+    unsigned size = 256;
+    while (size < term->ExtCap * 4)
+        size *= 2;
+    uint16_t *table = CsAllocate(sizeof(uint16_t) * size);
+    if (!table)
+        return false;
+    memset(table, 0, sizeof(uint16_t) * size);
+    for (unsigned i = 0; i < term->ExtCount; i++) {
+        unsigned slot = ext_hash(&term->Ext[i]) & (size - 1);
+        while (table[slot])
+            slot = (slot + 1) & (size - 1);
+        table[slot] = (uint16_t)(i + 1);
+    }
+    CsFree(term->ExtHash);
+    term->ExtHash = table;
+    term->ExtHashSize = size;
+    return true;
+}
+
 uint16_t CsExtIntern(CsTerminal *term, const CsExt *ext)
 {
-    for (unsigned i = 0; i < term->ExtCount; i++)
-        if (ext_equal(&term->Ext[i], ext))
-            return (uint16_t)i;
+    if (term->ExtHash) {
+        unsigned slot = ext_hash(ext) & (term->ExtHashSize - 1);
+        while (term->ExtHash[slot]) {
+            unsigned i = term->ExtHash[slot] - 1u;
+            if (ext_equal(&term->Ext[i], ext))
+                return (uint16_t)i;
+            slot = (slot + 1) & (term->ExtHashSize - 1);
+        }
+    }
     if (term->ExtCount >= CS_MAX_EXT)
         return CS_EXT_DEFAULT;
     if (term->ExtCount == term->ExtCap) {
@@ -188,14 +226,24 @@ uint16_t CsExtIntern(CsTerminal *term, const CsExt *ext)
         }
         term->Ext = grown;
         term->ExtCap = cap;
+        if (!ext_rehash(term)) {
+            return CS_EXT_DEFAULT;
+        }
     }
-    term->Ext[term->ExtCount] = *ext;
     CsExt *stored = &term->Ext[term->ExtCount];
+    *stored = *ext;
     if (stored->FgKind == CS_COLOR_DEFAULT)
         stored->Fg = 0;
     if (stored->BgKind == CS_COLOR_DEFAULT)
         stored->Bg = 0;
-    return (uint16_t)term->ExtCount++;
+    uint16_t index = (uint16_t)term->ExtCount++;
+    if (!term->ExtHash && !ext_rehash(term))
+        return index;
+    unsigned slot = ext_hash(stored) & (term->ExtHashSize - 1);
+    while (term->ExtHash[slot])
+        slot = (slot + 1) & (term->ExtHashSize - 1);
+    term->ExtHash[slot] = (uint16_t)(index + 1);
+    return index;
 }
 
 /* the index of the 16 colors of the attribute word that a color is shown as. */
@@ -930,6 +978,7 @@ void CsTerminalDestroy(CsTerminal *t)
     if (t->ShadowValid)
         CsGridFree(&t->Shadow);
     CsFree(t->Ext);
+    CsFree(t->ExtHash);
     CsFree(t->Out);
     CsFree(t->Reply);
     memset(t, 0, sizeof(*t));

@@ -135,7 +135,7 @@ struct CsTerminal;
 
 #define CS_MAX_PARAMS 32
 #define CS_MAX_OSC 2048
-#define CS_MAX_EXT 4096
+#define CS_MAX_EXT 60000
 
 typedef struct CsBuffer {
     struct CsTerminal *Term;
@@ -204,6 +204,8 @@ typedef struct CsTerminal {
 
     CsExt *Ext;
     unsigned ExtCount, ExtCap;
+    uint16_t *ExtHash; /* the index plus one of an attribute, by the hash of its fields; a power of two long */
+    unsigned ExtHashSize;
 
     /* what the host terminal is believed to show: the viewport of the shown buffer */
     CsGrid Shadow;
