@@ -66,49 +66,9 @@
 
 /* ------------------------------------------------------------------ IDispatch */
 
-typedef LONG DISPID;
-typedef DISPID MEMBERID;
-typedef struct ITypeInfo ITypeInfo;
-
-#define DISPID_UNKNOWN ((DISPID)-1)
-#define DISPID_VALUE ((DISPID)0)
-#define DISPID_PROPERTYPUT ((DISPID)-3)
-#define DISPATCH_METHOD 0x1
-#define DISPATCH_PROPERTYGET 0x2
-#define DISPATCH_PROPERTYPUT 0x4
-#define DISPATCH_PROPERTYPUTREF 0x8
-
-typedef struct tagDISPPARAMS {
-    VARIANTARG *rgvarg;
-    DISPID *rgdispidNamedArgs;
-    UINT cArgs;
-    UINT cNamedArgs;
-} DISPPARAMS;
-
-typedef struct tagEXCEPINFO {
-    WORD wCode;
-    WORD wReserved;
-    BSTR bstrSource;
-    BSTR bstrDescription;
-    BSTR bstrHelpFile;
-    DWORD dwHelpContext;
-    PVOID pvReserved;
-    HRESULT(STDMETHODCALLTYPE *pfnDeferredFillIn)(struct tagEXCEPINFO *);
-    SCODE scode;
-} EXCEPINFO;
-
-#define IDispatch_METHODS(T)                                                                                           \
-    MIME_IUNKNOWN_METHODS(T)                                                                                           \
-    HRESULT(STDMETHODCALLTYPE *GetTypeInfoCount)(T * This, UINT * pctinfo);                                            \
-    HRESULT(STDMETHODCALLTYPE *GetTypeInfo)(T * This, UINT itinfo, LCID lcid, ITypeInfo * *pptinfo);                   \
-    HRESULT(STDMETHODCALLTYPE *GetIDsOfNames)(T * This, REFIID riid, LPOLESTR * names, UINT count, LCID lcid,          \
-                                              DISPID * ids);                                                           \
-    HRESULT(STDMETHODCALLTYPE *Invoke)(T * This, DISPID id, REFIID riid, LCID lcid, WORD flags, DISPPARAMS * params,   \
-                                       VARIANT * result, EXCEPINFO * excepinfo, UINT * arg_error);
-MIME_COM_INTERFACE(IDispatch)
+/* the dispatch interface and its structures are those of oleauto.h. */
 typedef IDispatch *LPDISPATCH;
 typedef IStream *LPSTREAM;
-MIME_DEFINE_GUID(IID_IDispatch, 0x00020400, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 
 /* ------------------------------------------------------------------ fonts */
 

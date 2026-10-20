@@ -350,3 +350,11 @@ EXPORTS
     OleLoadPictureFile @422
     OleSavePictureFile @423
     OleLoadPicturePath @424
+    HWND_UserFree=ole32.HWND_UserFree @445
+    HWND_UserMarshal=ole32.HWND_UserMarshal @446
+    HWND_UserSize=ole32.HWND_UserSize @447
+    HWND_UserUnmarshal=ole32.HWND_UserUnmarshal @448
+    HWND_UserFree64=ole32.HWND_UserFree64 @449
+    HWND_UserMarshal64=ole32.HWND_UserMarshal64 @450
+    HWND_UserSize64=ole32.HWND_UserSize64 @451
+    HWND_UserUnmarshal64=ole32.HWND_UserUnmarshal64 @452

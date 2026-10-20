@@ -850,13 +850,12 @@ HRESULT AutStdOleTypeInfo(UINT index, REFGUID id, ITypeInfo **info)
 {
     if (index != 0)
         return DISP_E_BADINDEX;
-    void *library = nullptr;
+    ITypeLib *library = nullptr;
     HRESULT hr = LoadRegTypeLib(&IID_StdOle, 2, 0, 0, &library);
     if (FAILED(hr))
         return hr;
-    void **table = *(void ***)library;
-    hr = ((HRESULT(STDMETHODCALLTYPE *)(void *, REFGUID, ITypeInfo **))table[6])(library, id, info);
-    ((ULONG(STDMETHODCALLTYPE *)(void *))table[2])(library);
+    hr = library->lpVtbl->GetTypeInfoOfGuid(library, id, info);
+    library->lpVtbl->Release(library);
     return hr;
 }
 
