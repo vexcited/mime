@@ -1,7 +1,7 @@
 /*
  * pseudo consoles: a console whose screen is carried to a terminal as the
  * bytes it speaks, and whose keys are carried back as the bytes it sends.
- * the console is a file of the console driver (\Device\ConDrv\Pty); two
+ * the console is a file of the console driver \Device\ConDrv\Pty, and two
  * threads of the process that made it move the bytes between the driver
  * and the pipes of the terminal. the processes made with the pseudo console
  * attribute are attached to the console of that file.

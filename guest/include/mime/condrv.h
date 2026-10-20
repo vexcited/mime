@@ -8,7 +8,7 @@
  * and reads and writes them with ReadFile and WriteFile.
  *
  * a console is shown on the terminal of a host run, or on a pseudo console
- * (\Pty) whose owner carries its bytes, or on nothing.
+ * \Pty whose owner carries its bytes, or on nothing.
  */
 #ifndef MIME_CONDRV_H
 #define MIME_CONDRV_H
@@ -123,7 +123,7 @@ typedef struct MIME_CONDRV_CODE_PAGES {
 #define MIME_CONDRV_READ_NOEDIT 0x2 /* ReadFile: line input as the mode says, none of the ReadConsole control */
 typedef struct MIME_CONDRV_READ {
     ULONG Flags;
-    ULONG Length;        /* characters (wide) or bytes the caller has room for */
+    ULONG Length;        /* characters when wide, else bytes, that the caller has room for */
     ULONG InitialChars;  /* characters of the buffer that start the line */
     ULONG WakeupMask;    /* control characters that end a line read */
     ULONG Control;       /* 1 when WakeupMask and InitialChars are meant */

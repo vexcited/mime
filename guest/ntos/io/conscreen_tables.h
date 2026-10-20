@@ -1,7 +1,7 @@
 /*
  * how the windows console shows a color in the sixteen colors of an
  * attribute word, as measured from the reference console: the legacy color
- * index (blue is bit 0, red bit 2, intensity bit 3) that a 256 color
+ * index, where blue is bit 0, red bit 2 and intensity bit 3, that a 256 color
  * palette index and a 3 bits red, 3 bits green, 2 bits blue color are
  * reported as. the palette index 0 to 15 is the index of a terminal, whose
  * red is bit 0.

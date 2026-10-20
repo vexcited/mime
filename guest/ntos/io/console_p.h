@@ -1,4 +1,4 @@
-/* the console driver's state, shared by console.c (the consoles) and condev.c (the device that programs open). */
+/* the console driver's state, shared by console.c, the consoles, and condev.c, the device that programs open. */
 #ifndef MIME_CONSOLE_P_H
 #define MIME_CONSOLE_P_H
 

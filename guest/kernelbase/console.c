@@ -1,6 +1,6 @@
 /*
  * console: the standard handles of a console program are files of the
- * console driver (\Device\ConDrv, mime/condrv.h): \CurrentIn for the input
+ * console driver, \Device\ConDrv, see mime/condrv.h: \CurrentIn for the input
  * and \CurrentOut for the screen buffer that is shown. kernelbase asks them
  * its questions with device controls and reads and writes them as files. a
  * program `mime run` started shares that terminal, and ctrl+c, ctrl+break
@@ -177,7 +177,7 @@ static PCWSTR exe_name(ULONG *length)
     return g_exe_name;
 }
 
-/* the text a read gives back, as characters (wide) or bytes of the input code page. */
+/* the text a read gives back, as wide characters or as bytes of the input code page. */
 static BOOL read_text(HANDLE console, BOOL wide, PVOID buffer, DWORD count, LPDWORD read, PCONSOLE_READCONSOLE_CONTROL control_in)
 {
     ULONG exe_length;

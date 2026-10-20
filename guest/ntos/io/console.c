@@ -1,7 +1,7 @@
 /*
  * the consoles of the console driver, \Device\ConDrv, see condev.c for the
  * device programs open. a console has an input buffer of records, a
- * terminal with its screen buffers (conscreen.c) and a backend that carries
+ * terminal with its screen buffers, see conscreen.c, and a backend that carries
  * the terminal's bytes: the terminal of a host run, a pseudo console, or
  * nothing. a console program is attached to the console it is created in; a
  * gui program is not, but may attach with AttachConsole or AllocConsole.

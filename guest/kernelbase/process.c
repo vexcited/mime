@@ -984,7 +984,15 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
     pp.CountCharsX = startup->dwXCountChars;
     pp.CountCharsY = startup->dwYCountChars;
     pp.FillAttribute = startup->dwFillAttribute;
-    if (startup->dwFlags & STARTF_USESTDHANDLES) {
+    /* handles named without inheriting them, or a parent to take them from, are not the child's: it gets none. */
+    BOOL named_parent = FALSE;
+    if ((flags & EXTENDED_STARTUPINFO_PRESENT) && startup->cb >= sizeof(STARTUPINFOEXW) &&
+        ((LPSTARTUPINFOEXW)startup)->lpAttributeList) {
+        LPPROC_THREAD_ATTRIBUTE_LIST given = ((LPSTARTUPINFOEXW)startup)->lpAttributeList;
+        for (DWORD i = 0; i < given->Used; i++)
+            named_parent |= given->Attributes[i].Attribute == PROC_THREAD_ATTRIBUTE_PARENT_PROCESS;
+    }
+    if ((startup->dwFlags & STARTF_USESTDHANDLES) && (inherit || named_parent)) {
         pp.StandardInput = startup->hStdInput;
         pp.StandardOutput = startup->hStdOutput;
         pp.StandardError = startup->hStdError;

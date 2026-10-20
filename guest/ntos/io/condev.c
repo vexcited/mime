@@ -4,7 +4,7 @@
  * \CurrentOut the screen buffer that is shown, \ScreenBuffer makes a
  * screen buffer and \Pty a pseudo console. the file objects carry what they
  * belong to, and kernelbase asks them its questions with device controls
- * (mime/condrv.h), reads and writes them with ReadFile and WriteFile.
+ * with the controls of mime/condrv.h, reads and writes them with ReadFile and WriteFile.
  *
  * a standard stream `mime run` was given a pipe or a file for is no
  * console: \Device\ConDrvStream\Input, Output and Error are its ends,
