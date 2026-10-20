@@ -13,7 +13,7 @@ const RPC_SYNTAX_IDENTIFIER g_ndr20_syntax = {{0x8A885D04, 0x1CEB, 0x11C9, {0x9F
 const RPC_SYNTAX_IDENTIFIER g_ndr64_syntax = {{0x71710533, 0xBEBA, 0x4937, {0x83, 0x19, 0xB5, 0xDB, 0xEF, 0x9C, 0xCC, 0x36}},
                                               {1, 0}};
 
-#define MAX_CONTEXTS 16
+#define MAX_CONTEXTS 64
 #define MAX_IDLE_PER_KEY 8
 #define IDLE_LIFETIME_MS 30000
 

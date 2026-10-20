@@ -8,7 +8,7 @@
  */
 #include "rpcrt4_private.h"
 
-#define MAX_CONTEXTS 16
+#define MAX_CONTEXTS 64
 #define MAX_ENDPOINTS 64
 
 /* ------------------------------------------------------------------ the state */
