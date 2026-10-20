@@ -1339,8 +1339,10 @@ static BOOL is_dialog_message(SHEET *s, MSG *msg)
         }
     }
     if (!switching) {
-        if (msg->message - WM_KEYFIRST > WM_KEYLAST - WM_KEYFIRST || !msg->hwnd ||
-            (IsChild(s->Hwnd, msg->hwnd) && !IsChild(s->Current, msg->hwnd)) ||
+        /* only keys are the dialog's business. */
+        if (msg->message - WM_KEYFIRST > 9)
+            return FALSE;
+        if (!msg->hwnd || (IsChild(s->Hwnd, msg->hwnd) && !IsChild(s->Current, msg->hwnd)) ||
             notify_current(s, PSN_TRANSLATEACCELERATOR, (LPARAM)msg) != PSNRET_MESSAGEHANDLED)
             return IsDialogMessageW(s->Hwnd, msg);
         return TRUE;
