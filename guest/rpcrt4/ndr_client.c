@@ -245,7 +245,7 @@ extern void NdrpProxyBegin(void *interface_pointer, PRPC_MESSAGE msg, PMIDL_STUB
                            ULONG proc_num);
 extern void NdrpProxyEnd(PMIDL_STUB_MESSAGE m);
 
-static CLIENT_CALL_RETURN client_call(PMIDL_STUB_DESC desc, PFORMAT_STRING format, uchar *args, BOOL promoted_floats)
+CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, uchar *args, BOOL promoted_floats)
 {
     NDR_PROC p;
     NdrpParseProc(format, &p);
@@ -288,6 +288,8 @@ static CLIENT_CALL_RETURN client_call(PMIDL_STUB_DESC desc, PFORMAT_STRING forma
             msg.Handle = handle;
         }
         size_params(&m, &p);
+        /* a format that undercounts the padding between its parts must not overrun the buffer. */
+        m.BufferLength += NDR_BUFFER_SLACK;
         if (object) {
             msg.BufferLength = m.BufferLength;
             NdrpChannelGetBuffer(&m);
@@ -367,7 +369,7 @@ RPCRTAPI CLIENT_CALL_RETURN RPC_VAR_ENTRY NdrClientCall2(PMIDL_STUB_DESC desc, P
     uchar *args = va_arg(ap, uchar *);
     BOOL promoted = FALSE;
 #endif
-    CLIENT_CALL_RETURN r = client_call(desc, format, args, promoted);
+    CLIENT_CALL_RETURN r = NdrpClientCall(desc, format, args, promoted);
     va_end(ap);
     return r;
 }

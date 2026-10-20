@@ -43,13 +43,7 @@ void NdrpInitStubMessage(PMIDL_STUB_MESSAGE m, PRPC_MESSAGE msg, PMIDL_STUB_DESC
 /* the stack frame calls: the manager routine of a server and the stub of an object. */
 ULONG_PTR NdrpInvoke(void *function, const ULONG_PTR *slots, ULONG count);
 
-/* the parts of com that the interpreter reaches. */
-typedef struct {
-    void *This;
-    struct IRpcChannelBuffer *Channel;
-    const IID *Iid;
-} NDR_PROXY;
-
-BOOL NdrpProxyOf(void *interface_pointer, NDR_PROXY *proxy);
+/* the call of a client, shared by the stubs of the rpc runtime and the thunks of stubless proxies. */
+CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, uchar *args, BOOL promoted_floats);
 
 #endif

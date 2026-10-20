@@ -345,6 +345,7 @@ LONG RPC_ENTRY NdrStubCall2(IRpcStubBuffer *stub, IRpcChannelBuffer *channel, PR
         }
         *phase = 2;
         size_out(&m, &p);
+        m.BufferLength += NDR_BUFFER_SLACK;
         if (channel) {
             msg->BufferLength = m.BufferLength;
             NdrStubGetBuffer(stub, channel, &m);

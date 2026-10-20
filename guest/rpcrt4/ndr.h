@@ -32,6 +32,9 @@ typedef enum {
 /* an enclosing construct reserved the counts of conformance. */
 #define NDRF_CONF_DONE 0x04
 
+/* the bytes added to the size of a buffer, for the alignment that the sizes in a format may not count. */
+#define NDR_BUFFER_SLACK 8
+
 /* the memory of an object that the pass measuring does not have. */
 #define NDR_DUMMY ((uchar *)16)
 
@@ -87,6 +90,20 @@ void NdrpTraceRaise(ULONG status, const char *file, int line);
 
 /* where a pointer's referent stands on the wire: at the cursor, or at an address in the object copied already. */
 #define NDR_WIRE_CURSOR ((uchar *)1)
+
+/*
+ * the interface pointers of the buffer, which com marshals: sizing and marshaling one, unmarshaling it, releasing it, and
+ * skipping it while measuring memory.
+ */
+typedef struct {
+    void (*Size)(NDRC *c, uchar *pointer, PFORMAT_STRING format);
+    void (*Marshal)(NDRC *c, uchar *pointer, PFORMAT_STRING format);
+    void (*Unmarshal)(NDRC *c, uchar **pointer, PFORMAT_STRING format);
+    void (*Free)(NDRC *c, uchar *pointer, PFORMAT_STRING format);
+    void (*Skip)(NDRC *c);
+} NDR_OLE_HOOKS;
+
+const NDR_OLE_HOOKS *NdrpOleHooks(void);
 
 /* ------------------------------------------------------------------ ndr_core.c */
 

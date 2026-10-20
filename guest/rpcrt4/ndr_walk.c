@@ -246,20 +246,6 @@ uchar *NdrpAllocObject(NDRC *c, uchar **memory, SIZE_T size, ULONG flags)
 
 /* ------------------------------------------------------------------ pointers */
 
-/*
- * the interface pointer hooks of ole32, set when com is in the process: sizing and marshaling an interface pointer into
- * the buffer, unmarshaling it, and releasing it.
- */
-typedef struct {
-    void (*Size)(PMIDL_STUB_MESSAGE m, uchar *pointer, PFORMAT_STRING format);
-    void (*Marshal)(PMIDL_STUB_MESSAGE m, uchar *pointer, PFORMAT_STRING format);
-    void (*Unmarshal)(PMIDL_STUB_MESSAGE m, uchar **pointer, PFORMAT_STRING format);
-    void (*Free)(PMIDL_STUB_MESSAGE m, uchar *pointer, PFORMAT_STRING format);
-    void (*Skip)(PMIDL_STUB_MESSAGE m);
-} NDR_OLE_HOOKS;
-
-extern const NDR_OLE_HOOKS *NdrpOleHooks(void);
-
 static BOOL may_free(PMIDL_STUB_MESSAGE m, uchar type, uchar attrs, uchar *pointer)
 {
     if (attrs & (FC_DONT_FREE | FC_ALLOCED_ON_STACK))
@@ -287,19 +273,19 @@ static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING p
             NDR_RAISE(RPC_E_UNEXPECTED);
         switch (c->Pass) {
         case NDR_SIZE:
-            hooks->Size(m, pointer, pf);
+            hooks->Size(c, pointer, pf);
             break;
         case NDR_MARSHAL:
-            hooks->Marshal(m, pointer, pf);
+            hooks->Marshal(c, pointer, pf);
             break;
         case NDR_UNMARSHAL:
-            hooks->Unmarshal(m, slot, pf);
+            hooks->Unmarshal(c, slot, pf);
             break;
         case NDR_MEMSIZE:
-            hooks->Skip(m);
+            hooks->Skip(c);
             break;
         case NDR_FREE:
-            hooks->Free(m, pointer, pf);
+            hooks->Free(c, pointer, pf);
             break;
         }
         return;

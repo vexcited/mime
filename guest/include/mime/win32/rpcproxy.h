@@ -179,12 +179,23 @@ RPCRTAPI void RPC_ENTRY NdrStubInitialize(PRPC_MESSAGE message, PMIDL_STUB_MESSA
 RPCRTAPI void RPC_ENTRY NdrStubInitializePartial(PRPC_MESSAGE message, PMIDL_STUB_MESSAGE m, PMIDL_STUB_DESC desc,
                                                  IRpcChannelBuffer *channel, ULONG requested);
 RPCRTAPI void RPC_ENTRY NdrStubGetBuffer(IRpcStubBuffer *This, IRpcChannelBuffer *channel, PMIDL_STUB_MESSAGE m);
-RPCRTAPI HRESULT RPC_ENTRY NdrStubErrorHandler(DWORD code);
 RPCRTAPI void __RPC_STUB NdrStubForwardingFunction(IRpcStubBuffer *This, IRpcChannelBuffer *channel, PRPC_MESSAGE message,
                                                    DWORD *phase);
 RPCRTAPI HRESULT WINAPI CStdStubBuffer_QueryInterface(IRpcStubBuffer *This, REFIID riid, void **object);
 RPCRTAPI ULONG WINAPI CStdStubBuffer_AddRef(IRpcStubBuffer *This);
-RPCRTAPI ULONG WINAPI CStdStubBuffer_Release(IRpcStubBuffer *This);
+/* the Release of a stub vtable is defined in each proxy dll, which knows its factory, by these. */
+ULONG WINAPI CStdStubBuffer_Release(IRpcStubBuffer *This);
+ULONG WINAPI CStdStubBuffer2_Release(IRpcStubBuffer *This);
+#define CSTDSTUBBUFFERRELEASE(factory)                                                                                \
+    ULONG WINAPI CStdStubBuffer_Release(IRpcStubBuffer *This)                                                         \
+    {                                                                                                                 \
+        return NdrCStdStubBuffer_Release(This, (IPSFactoryBuffer *)(factory));                                       \
+    }
+#define CSTDSTUBBUFFER2RELEASE(factory)                                                                               \
+    ULONG WINAPI CStdStubBuffer2_Release(IRpcStubBuffer *This)                                                        \
+    {                                                                                                                 \
+        return NdrCStdStubBuffer2_Release(This, (IPSFactoryBuffer *)(factory));                                      \
+    }
 RPCRTAPI ULONG WINAPI NdrCStdStubBuffer_Release(IRpcStubBuffer *This, IPSFactoryBuffer *factory);
 RPCRTAPI ULONG WINAPI NdrCStdStubBuffer2_Release(IRpcStubBuffer *This, IPSFactoryBuffer *factory);
 RPCRTAPI HRESULT WINAPI CStdStubBuffer_Connect(IRpcStubBuffer *This, IUnknown *server);
@@ -202,6 +213,13 @@ RPCRTAPI HRESULT RPC_ENTRY NdrDllRegisterProxy(HMODULE module, const ProxyFileIn
                                                const CLSID *proxy_clsid);
 RPCRTAPI HRESULT RPC_ENTRY NdrDllUnregisterProxy(HMODULE module, const ProxyFileInfo **proxy_file_list,
                                                  const CLSID *proxy_clsid);
+#define CStdStubBuffer_METHODS                                                                                        \
+    CStdStubBuffer_QueryInterface, CStdStubBuffer_AddRef, CStdStubBuffer_Release, CStdStubBuffer_Connect,             \
+        CStdStubBuffer_Disconnect, CStdStubBuffer_Invoke, CStdStubBuffer_IsIIDSupported, CStdStubBuffer_CountRefs,    \
+        CStdStubBuffer_DebugServerQueryInterface, CStdStubBuffer_DebugServerRelease
+/* a stub of an interface with a base that has a stub of its own: the empty places are the runtime's to fill. */
+#define CStdStubBuffer_DELEGATING_METHODS 0, 0, CStdStubBuffer2_Release, 0, 0, 0, 0, 0, 0, 0
+
 RPCRTAPI HRESULT WINAPI IUnknown_QueryInterface_Proxy(IUnknown *This, REFIID riid, void **object);
 RPCRTAPI ULONG WINAPI IUnknown_AddRef_Proxy(IUnknown *This);
 RPCRTAPI ULONG WINAPI IUnknown_Release_Proxy(IUnknown *This);
