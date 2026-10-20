@@ -817,6 +817,7 @@ NTSTATUS SeSdAssign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING ma
                     KPROCESSOR_MODE mode, SD_BLOB **out);
 /* a child of a parent as the user of the machine would have made it, which is how an untouched file or key shows. */
 ULONG SeSdIntegrityLevel(const SD_BLOB *sd);
+ULONG64 SeSessionTokenStamp(void);
 NTSTATUS SeSdAddInheritedLabel(SD_BLOB *sd, ULONG rid, SD_BLOB **out);
 NTSTATUS SeSdDerive(const SD_BLOB *parent, SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
 /* whether the calling thread makes things the way the user of the machine does, with nothing to record. */
@@ -824,7 +825,7 @@ BOOLEAN SeSdSubjectIsDefault(void);
 /* the same with nothing from the creator or the parent, for a thread acting as one token: cached. */
 NTSTATUS SeSdDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
 /* a descriptor with an entry added to its list for a sid, if it has none for it. */
-NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mask, SD_BLOB **out);
+NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mask, UCHAR flags, SD_BLOB **out);
 /* what the objects the kernel makes at boot show, see sd.c. */
 #define SE_BOOT_PLAIN 0
 #define SE_BOOT_CREATABLE 1
@@ -894,6 +895,7 @@ NTSTATUS MimeFsRomSecurity(SD_BLOB **out);
 NTSTATUS MimeFsEffectiveSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULONG up, BOOLEAN directory,
                                  SD_BLOB **out);
 NTSTATUS MimeFsStoreSecurity(ULONG64 host, SD_BLOB *sd);
+void MimeFsSecurityChanged(void);
 #ifndef STATUS_MORE_PROCESSING_REQUIRED
 #define STATUS_MORE_PROCESSING_REQUIRED ((NTSTATUS)0xC0000016L)
 #endif

@@ -108,7 +108,7 @@ static void build_seeds(void)
     SeSdBuild(SeSidTrustedInstaller, SeSidTrustedInstaller, SE_DACL_AUTO_INHERITED, rom, 6, &g_rom_file);
 }
 
-static FAST_MUTEX g_lock;
+static FAST_MUTEX g_lock, g_effective_lock;
 static BOOLEAN g_ready;
 
 static void ready(void)
@@ -116,6 +116,7 @@ static void ready(void)
     if (g_ready)
         return;
     ExInitializeFastMutex(&g_lock);
+    ExInitializeFastMutex(&g_effective_lock);
     ExAcquireFastMutex(&g_lock);
     if (!g_ready) {
         build_seeds();
@@ -266,6 +267,37 @@ static NTSTATUS stored_for(const MIMEFS_STORED *known, ULONG64 host, ULONG up, S
 }
 
 /*
+ * what the files with no descriptor of their own show is the same until a descriptor is stored somewhere or a name is
+ * moved, so the answers are kept by the name and the kind, with the count of those changes and the stamp of the
+ * session token they were made with.
+ */
+#define EFFECTIVE_CACHE 512
+
+typedef struct {
+    ULONG64 Hash, Epoch, Stamp;
+    SD_BLOB *Sd;
+} EFFECTIVE_ENTRY;
+
+static EFFECTIVE_ENTRY g_effective[EFFECTIVE_CACHE];
+static volatile ULONG64 g_epoch = 1;
+
+void MimeFsSecurityChanged(void)
+{
+    __atomic_fetch_add(&g_epoch, 1, __ATOMIC_SEQ_CST);
+}
+
+static ULONG64 name_hash(ULONG volume, const PATH *p, ULONG count, BOOLEAN directory)
+{
+    ULONG64 h = 1469598103934665603ull ^ volume ^ ((ULONG64)directory << 40) ^ ((ULONG64)count << 48);
+    for (ULONG i = 0; i < count; i++) {
+        for (ULONG c = 0; c < p->Length[i]; c++)
+            h = (h ^ (ULONG64)towupper(p->Start[i][c])) * 1099511628211ull;
+        h = (h ^ '\\') * 1099511628211ull;
+    }
+    return h | 1;
+}
+
+/*
  * the descriptor of the file `up` levels above the one open, whole. volume is the host volume, path the name
  * of the open file inside it. known is what the open told of the stored descriptors, if it was asked.
  */
@@ -283,6 +315,21 @@ static NTSTATUS effective(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULO
     NTSTATUS status = stored_for(known, host, up, &stored, &distance);
     if (!NT_SUCCESS(status))
         return status;
+    ULONG64 key = 0, stamp = 0, epoch = 0;
+    if (!stored) {
+        /* nothing is stored above: the answer is what the name alone gives, which is kept. */
+        key = name_hash(volume, &p, count, directory);
+        epoch = g_epoch;
+        stamp = SeSessionTokenStamp();
+        EFFECTIVE_ENTRY *e = &g_effective[key % EFFECTIVE_CACHE];
+        ExAcquireFastMutex(&g_effective_lock);
+        if (e->Sd && e->Hash == key && e->Epoch == epoch && e->Stamp == stamp) {
+            *out = SeSdReference(e->Sd);
+            ExReleaseFastMutex(&g_effective_lock);
+            return STATUS_SUCCESS;
+        }
+        ExReleaseFastMutex(&g_effective_lock);
+    }
     LONG stored_depth = stored && distance <= count ? (LONG)(count - distance) : -1;
     LONG seed_depth = 0;
     SD_BLOB *seed = g_root;
@@ -314,6 +361,18 @@ static NTSTATUS effective(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULO
     }
     if (!NT_SUCCESS(status))
         return status;
+    if (key) {
+        EFFECTIVE_ENTRY *e = &g_effective[key % EFFECTIVE_CACHE];
+        ExAcquireFastMutex(&g_effective_lock);
+        SD_BLOB *old = e->Sd;
+        e->Hash = key;
+        e->Epoch = epoch;
+        e->Stamp = stamp;
+        e->Sd = SeSdReference(base);
+        ExReleaseFastMutex(&g_effective_lock);
+        if (old)
+            SeSdDereference(old);
+    }
     *out = base;
     return STATUS_SUCCESS;
 }
@@ -326,6 +385,7 @@ NTSTATUS MimeFsEffectiveSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING pa
 
 NTSTATUS MimeFsStoreSecurity(ULONG64 host, SD_BLOB *sd)
 {
+    MimeFsSecurityChanged();
     ULONG64 hs = HalHypercall(MIME_HC_FS_SET_SD, host, HalPhysicalOf(sd->Data), sd->Length, 0, 0, 0, nullptr);
     return host_status(hs);
 }

@@ -728,8 +728,8 @@ static uint64_t sd_nearest(MimeVm *vm, uint32_t volume, const char *host_path, v
     uint8_t scratch[16];
     for (;;) {
         size_t length = strlen(path);
-        /* only a directory above the file is remembered as having none: the file itself is asked every time. */
-        bool above = system && (distance > 0 || up > 0);
+        /* what has none is remembered until a descriptor is set or a name is moved, for the file as for a directory above it. */
+        bool above = system;
         ssize_t n = above && sd_known_empty(path, length) ? 0 : sd_read_path(path, !system, buf ? buf : scratch, buf ? capacity : 0);
         if (n > 0) {
             *result = (distance << 32) | (uint64_t)n;

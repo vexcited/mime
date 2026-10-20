@@ -31,6 +31,8 @@ typedef struct CM_PARSE_CONTEXT {
 } CM_PARSE_CONTEXT;
 
 #define KEY_CREATE_SUB_KEY_ 0x0004
+#define KEY_WOW64_64KEY_ 0x0100
+#define KEY_WOW64_32KEY_ 0x0200
 #define REG_OPTION_BACKUP_RESTORE_ 0x00000004
 
 static WCHAR upcase(WCHAR c)
@@ -420,7 +422,7 @@ static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
                 UCHAR user[28];
                 SD_BLOB *owned;
                 MimeUserSid(user);
-                if (NT_SUCCESS(SeSdAppendAllowAce(sd, user, 0xF003F, &owned))) {
+                if (NT_SUCCESS(SeSdAppendAllowAce(sd, user, 0xF003F, 0x2 /* container inherit */, &owned))) {
                     SeSdDereference(sd);
                     sd = owned;
                 }
@@ -441,7 +443,7 @@ static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
     SeSdDereference(parent);
     if (NT_SUCCESS(status) && in_installer_catalog(node)) {
         SD_BLOB *open_to_users;
-        if (NT_SUCCESS(SeSdAppendAllowAce(*out, SeSidAuthenticatedUsers, 0x3003F, &open_to_users))) {
+        if (NT_SUCCESS(SeSdAppendAllowAce(*out, SeSidAuthenticatedUsers, 0x3003F, 0, &open_to_users))) {
             SeSdDereference(*out);
             *out = open_to_users;
         }
@@ -649,7 +651,8 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
         SD_BLOB *sd;
         status = effective_sd(node, &sd);
         if (NT_SUCCESS(status)) {
-            status = SeCheckAccess(sd, key_mapping(), ctx->Access, 0,
+            /* the flags that pick the view of a 32-bit program are no rights, the descriptor knows nothing of them. */
+            status = SeCheckAccess(sd, key_mapping(), ctx->Access & ~(ACCESS_MASK)(KEY_WOW64_64KEY_ | KEY_WOW64_32KEY_), 0,
                                    (ctx->Options & REG_OPTION_BACKUP_RESTORE_) ? SE_ACCESS_BACKUP_INTENT : 0, &ctx->Granted);
             SeSdDereference(sd);
         }
@@ -1447,6 +1450,10 @@ void CmInitSystem1(void)
     link_key(L"\\REGISTRY\\USER\\S-1-5-18", L"\\REGISTRY\\USER\\.DEFAULT");
     /* the catalog of the installer exists from the start, for the rule of who may write in it. */
     CmpOpenPath(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Mime\\Installer", TRUE);
+    /* and the key of the user that low integrity programs write in, which a profile has from the start. */
+    WCHAR low_path[200] = {};
+    _snwprintf(low_path, RTL_NUMBER_OF(low_path) - 1, L"\\REGISTRY\\USER\\%s\\Software\\AppDataLow", sid);
+    CmpOpenPath(low_path, TRUE);
     g_machine_key = machine;
 
     CmpUnlock();

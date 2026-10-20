@@ -603,7 +603,7 @@ static void append_ace(PTOKEN token, ACCESS_MASK mask, const UCHAR *sid)
     SD_BLOB *sd, *made;
     if (!NT_SUCCESS(ObReferenceSecurity(token, &sd)) || !sd)
         return;
-    if (NT_SUCCESS(SeSdAppendAllowAce(sd, sid, mask, &made))) {
+    if (NT_SUCCESS(SeSdAppendAllowAce(sd, sid, mask, 0, &made))) {
         if (made != sd)
             ObStoreSecurity(token, made);
         SeSdDereference(made);

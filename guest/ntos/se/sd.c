@@ -358,7 +358,7 @@ NTSTATUS SeSdAddInheritedLabel(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
  * the descriptor with an entry added to the end of its list that lets a sid have the access, unless the list has an
  * entry for the sid already. A list that is not there stays so: everyone has everything.
  */
-NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mask, SD_BLOB **out)
+NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mask, UCHAR flags, SD_BLOB **out)
 {
     const SECURITY_DESCRIPTOR_RELATIVE *r = (const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data;
     if (!(r->Control & SE_DACL_PRESENT) || !r->Dacl) {
@@ -406,7 +406,7 @@ NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mas
     acl[0] = old->AclRevision > ACL_REVISION ? old->AclRevision : ACL_REVISION;
     UCHAR *end = acl + old_size;
     end[0] = ACCESS_ALLOWED_ACE_TYPE;
-    end[1] = 0;
+    end[1] = flags;
     *(USHORT *)(end + 2) = (USHORT)ace_size;
     *(ULONG *)(end + 4) = mask;
     memcpy(end + 8, sid, sid_size);
@@ -574,6 +574,15 @@ typedef struct {
 static DERIVED_ENTRY g_derived[SD_CACHE_ENTRIES * 4];
 static FAST_MUTEX g_derived_lock;
 static BOOLEAN g_derived_ready;
+
+/* what the session token is, as one number that changes when it does, for what is kept by it. */
+ULONG64 SeSessionTokenStamp(void)
+{
+    PTOKEN session = SepReferenceSessionToken();
+    ULONG64 stamp = session->TokenId * 0x9E3779B97F4A7C15ull ^ session->ModifiedId;
+    ObDereferenceObject(session);
+    return stamp;
+}
 
 NTSTATUS SeSdDerive(const SD_BLOB *parent, SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out)
 {

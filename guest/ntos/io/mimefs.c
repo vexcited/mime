@@ -885,7 +885,9 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
             memcpy(from.Buffer, file->FileName.Buffer, file->FileName.Length);
             from.Length = from.MaximumLength = file->FileName.Length;
         }
+        MimeFsSecurityChanged();
         NTSTATUS status = rename_in_directory(device, file, fcb, stack, in, length);
+        MimeFsSecurityChanged();
         if (NT_SUCCESS(status) && from.Buffer)
             FsNotifyRename(fcb->Volume, &from, &file->FileName, fcb->Directory);
         ExFreePool(from.Buffer);
