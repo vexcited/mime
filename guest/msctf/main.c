@@ -62,40 +62,50 @@ void CtfObjectDestroyed(void)
 HRESULT SinksAdvise(SINKS *sinks, const IID *const *allowed, ULONG allowed_count, REFIID iid, IUnknown *sink,
                     DWORD *cookie)
 {
-    IUnknown *typed = nullptr;
-    ULONG index;
-    if (!iid || !sink || !cookie)
+    if (!cookie)
         return E_INVALIDARG;
     *cookie = TF_INVALID_COOKIE;
-    for (index = 0; index < allowed_count; index++)
-        if (IsEqualIID(allowed[index], iid))
-            break;
-    if (index == allowed_count || index >= 16) {
-        CTF_TRACE("msctf: sink %08lx-%04x refused\n", iid->Data1, iid->Data2);
+    if (!sink)
+        return E_INVALIDARG;
+
+    ULONG position = 0;
+    while (position < allowed_count && !IsEqualIID(allowed[position], iid))
+        position++;
+    if (position == allowed_count)
         return CONNECT_E_CANNOTCONNECT;
+
+    /* the number of a new sink follows the highest one of its interface still advised. */
+    DWORD highest = 0;
+    for (ULONG i = 0; i < sinks->Count; i++) {
+        if (sinks->Items[i].Index == position && (sinks->Items[i].Cookie & 0xFFFFFF) > highest)
+            highest = sinks->Items[i].Cookie & 0xFFFFFF;
     }
-    if (sinks->Last[index] >= 0xFFFFFF)
+    if (highest >= 0xFFFFFF)
         return CONNECT_E_ADVISELIMIT;
-    if (FAILED(sink->lpVtbl->QueryInterface(sink, iid, (void **)&typed)) || !typed)
+
+    void *as_iface;
+    if (FAILED(sink->lpVtbl->QueryInterface(sink, iid, &as_iface)))
         return E_FAIL;
+
     if (sinks->Count == sinks->Capacity) {
-        ULONG capacity = sinks->Capacity ? sinks->Capacity * 2 : 4;
-        SINK *items = CtfAlloc(capacity * sizeof(SINK));
-        if (!items) {
-            typed->lpVtbl->Release(typed);
+        ULONG capacity = sinks->Capacity ? sinks->Capacity * 2 : 8;
+        SINK *grown = CtfAlloc(capacity * sizeof(*grown));
+        if (!grown) {
+            ((IUnknown *)as_iface)->lpVtbl->Release(as_iface);
             return E_OUTOFMEMORY;
         }
-        if (sinks->Items)
-            memcpy(items, sinks->Items, sinks->Count * sizeof(SINK));
+        if (sinks->Count)
+            memcpy(grown, sinks->Items, sinks->Count * sizeof(*grown));
         CtfFree(sinks->Items);
-        sinks->Items = items;
+        sinks->Items = grown;
         sinks->Capacity = capacity;
     }
+
     SINK *entry = &sinks->Items[sinks->Count++];
-    entry->Index = index;
-    entry->Cookie = index << 24 | ++sinks->Last[index];
+    entry->Cookie = position << 24 | (highest + 1);
+    entry->Index = position;
     entry->Iid = *iid;
-    entry->Sink = typed;
+    entry->Sink = as_iface;
     *cookie = entry->Cookie;
     return S_OK;
 }

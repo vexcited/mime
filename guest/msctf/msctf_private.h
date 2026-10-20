@@ -34,7 +34,6 @@ typedef struct SINK {
 typedef struct SINKS {
     SINK *Items;
     ULONG Count, Capacity;
-    DWORD Last[16];
 } SINKS;
 
 /*
@@ -96,7 +95,7 @@ typedef struct PENDING {
     DWORD Flags;
     TfClientId Client;
     HRESULT *Result;
-    BOOL Done;
+    BOOL Done, Waited;
     struct PENDING *Next;
 } PENDING;
 

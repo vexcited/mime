@@ -256,14 +256,23 @@ static HRESULT run_session(CTX *ctx, ITfEditSession *session, TfClientId client,
     return hr;
 }
 
-static void run_entry(CTX *ctx, PENDING *p)
+/* the session of a queue entry has run or was refused: its requester gets the answer. */
+static void finish_entry(PENDING *p, HRESULT hr)
 {
-    HRESULT hr = run_session(ctx, p->Session, p->Client, pending_writes(p));
     if (p->Result)
         *p->Result = hr;
     p->Done = TRUE;
     p->Session->lpVtbl->Release(p->Session);
-    CtfFree(p);
+    /* an entry somebody waits for is freed by that one. */
+    if (!p->Waited)
+        CtfFree(p);
+}
+
+static HRESULT run_entry(CTX *ctx, PENDING *p)
+{
+    HRESULT hr = run_session(ctx, p->Session, p->Client, pending_writes(p));
+    finish_entry(p, hr);
+    return hr;
 }
 
 static void unlink_pending(CTX *ctx, PENDING *p)
@@ -276,59 +285,68 @@ static void unlink_pending(CTX *ctx, PENDING *p)
     }
 }
 
-/* the store grants its lock: the sessions waiting for it run, the oldest first. */
+static PENDING *pending_tail(CTX *ctx)
+{
+    PENDING *tail = ctx->Pending;
+    while (tail && tail->Next)
+        tail = tail->Next;
+    return tail;
+}
+
+/* a lock for the entries still waiting is asked for later, from the message loop. */
+static void post_lock_for_rest(CTX *ctx)
+{
+    if (ctx->Pending && !ctx->LockPosted && ServicePostLock(ctx))
+        ctx->LockPosted = TRUE;
+}
+
+/* the store grants the lock it was asked for: the sessions that waited for it run. */
 static HRESULT grant(CTX *ctx, DWORD flags)
 {
-    HRESULT result = S_OK;
-    if ((flags & ~7u) || !(flags & TS_LF_READ))
+    if ((flags & ~(DWORD)(TS_LF_SYNC | TS_LF_READWRITE)) || !(flags & TS_LF_READWRITE))
         return E_INVALIDARG;
-    DWORD lock = (flags & TS_LF_READWRITE) == TS_LF_READWRITE ? TS_LF_READWRITE : TS_LF_READ;
-    if (ctx->Lock || !ctx->Doc)
+    if (!ctx->Doc)
         return E_UNEXPECTED;
+
+    BOOL write = (flags & TS_LF_READWRITE) == TS_LF_READWRITE;
+    /* a grant inside another one does not own the lock state and leaves it as it found it. */
+    DWORD outer = ctx->Lock;
+    if (!outer || write)
+        ctx->Lock = write ? TS_LF_READWRITE : TS_LF_READ;
     CtxAddRef(ctx);
-    ctx->Lock = lock;
-    CTF_TRACE("msctf: lock granted %lx\n", lock);
-    PENDING *last = ctx->Pending;
-    while (last && last->Next)
-        last = last->Next;
-    if (last && (last->Flags & TF_ES_SYNC)) {
-        /* a synchronous request waits at the end and is the one this grant is for. */
-        unlink_pending(ctx, last);
-        if (pending_writes(last) && lock != TS_LF_READWRITE) {
-            if (last->Result)
-                *last->Result = E_UNEXPECTED;
-            result = E_UNEXPECTED;
-            last->Session->lpVtbl->Release(last->Session);
-            CtfFree(last);
+
+    HRESULT answer = S_OK;
+    PENDING *tail = pending_tail(ctx);
+    if (tail && (tail->Flags & TF_ES_SYNC)) {
+        /* the request this grant answers is the newest one, and only it runs. */
+        unlink_pending(ctx, tail);
+        if (pending_writes(tail) && !write) {
+            finish_entry(tail, E_UNEXPECTED);
+            answer = E_UNEXPECTED;
         } else {
-            HRESULT hr = run_session(ctx, last->Session, last->Client, pending_writes(last));
-            if (last->Result)
-                *last->Result = hr;
-            result = hr;
-            last->Session->lpVtbl->Release(last->Session);
-            CtfFree(last);
+            answer = run_entry(ctx, tail);
         }
     } else {
-        while (ctx->Pending) {
-            PENDING *p = ctx->Pending;
-            if (pending_writes(p) && lock != TS_LF_READWRITE) {
-                /* the write waits for a lock of its own. */
-                DWORD more = TS_LF_READWRITE;
-                HRESULT session_hr = E_FAIL;
-                ctx->Lock = 0;
-                ctx->Store->lpVtbl->RequestLock(ctx->Store, more, &session_hr);
-                ctx->Lock = lock;
+        /* the entries that came after the grant do not run under it. */
+        ULONG left = 0;
+        for (PENDING *p = ctx->Pending; p; p = p->Next)
+            left++;
+        while (ctx->Pending && left--) {
+            PENDING *head = ctx->Pending;
+            if (pending_writes(head) && !write) {
+                HRESULT ignored = E_FAIL;
+                ctx->Store->lpVtbl->RequestLock(ctx->Store, TS_LF_READWRITE, &ignored);
                 break;
             }
-            ctx->Pending = p->Next;
-            run_entry(ctx, p);
+            ctx->Pending = head->Next;
+            run_entry(ctx, head);
         }
     }
-    ctx->Lock = 0;
-    if (ctx->Pending)
-        ServicePostLock(ctx);
+
+    ctx->Lock = outer;
+    post_lock_for_rest(ctx);
     CtxRelease(ctx);
-    return result;
+    return answer;
 }
 
 /* the lock asked for earlier, from the message loop, for the sessions that cannot run in the call that queued them. */
@@ -355,6 +373,29 @@ static void queue_pending(CTX *ctx, PENDING *p)
     *link = p;
 }
 
+/* the bits a request may carry besides the documented ones: a marker Windows tolerates. */
+#define REQUEST_INTERNAL_BIT 0x10
+#define REQUEST_WRITE_BIT 0x4
+#define REQUEST_KNOWN_BITS (TF_ES_SYNC | TF_ES_READWRITE | TF_ES_ASYNC | REQUEST_INTERNAL_BIT)
+
+/* a request that is not answered yet is kept as an ordinary queued entry from now on. */
+static void detach_waiter(PENDING *p)
+{
+    p->Waited = FALSE;
+    p->Result = nullptr;
+}
+
+/* a session asked for inside the one running: it joins that one when the lock held covers it. */
+static HRESULT run_inside_session(CTX *ctx, TfClientId tid, ITfEditSession *session, BOOL write, HRESULT *result)
+{
+    if (tid != ctx->SessionClient || (write && !ctx->SessionWrite)) {
+        *result = TF_E_LOCKED;
+        return TF_E_LOCKED;
+    }
+    *result = session->lpVtbl->DoEditSession(session, ctx->SessionCookie);
+    return S_OK;
+}
+
 HRESULT CtxRequestSession(CTX *ctx, TfClientId tid, ITfEditSession *session, DWORD flags, HRESULT *result)
 {
     if (!result)
@@ -362,81 +403,64 @@ HRESULT CtxRequestSession(CTX *ctx, TfClientId tid, ITfEditSession *session, DWO
     *result = E_FAIL;
     if (!ctx->Doc)
         return TF_E_DISCONNECTED;
-    if (!session || (flags & 0xFFFFFFE2u) != 2 || (flags & (TF_ES_SYNC | TF_ES_ASYNC)) == (TF_ES_SYNC | TF_ES_ASYNC))
+    if (!session || !(flags & TF_ES_READ) || (flags & ~(DWORD)REQUEST_KNOWN_BITS) ||
+        (flags & (TF_ES_SYNC | TF_ES_ASYNC)) == (TF_ES_SYNC | TF_ES_ASYNC))
         return E_INVALIDARG;
-    BOOL write = (flags & TF_ES_READWRITE) == TF_ES_READWRITE;
-    BOOL sync = (flags & TF_ES_SYNC) != 0;
     if (!ctx->Store)
         return S_OK;
 
-    /* inside the sinks of the end of an edit, a write cannot be waited for. */
-    if (ctx->InNotify && write && sync) {
+    BOOL write = (flags & REQUEST_WRITE_BIT) != 0;
+    /* no preference means synchronous unless sessions already wait or a lock is held. */
+    BOOL sync = (flags & TF_ES_SYNC) || (!(flags & TF_ES_ASYNC) && !ctx->Pending && !ctx->Lock);
+
+    /* inside a session or its end, only a request that insists on being synchronous is answered at once. */
+    if ((flags & TF_ES_SYNC) && ctx->InNotify) {
         *result = TS_E_SYNCHRONOUS;
         return S_OK;
     }
-    if (ctx->Lock && (ctx->InSession || ctx->InNotify)) {
-        BOOL covered = ctx->Lock == TS_LF_READWRITE || !write;
-        if (sync && !ctx->InNotify) {
-            if (!covered || (write && !ctx->SessionWrite)) {
-                *result = TF_E_LOCKED;
-                return TF_E_LOCKED;
-            }
-            /* the same lock serves it at once. */
-            *result = session->lpVtbl->DoEditSession(session, ctx->SessionCookie);
-            return S_OK;
-        }
-    }
+    if ((flags & TF_ES_SYNC) && ctx->InSession)
+        return run_inside_session(ctx, tid, session, write, result);
     if (write && CtxStoreReadOnly(ctx)) {
         *result = TS_E_READONLY;
         return S_OK;
     }
-    PENDING *p = CtfAlloc(sizeof(*p));
-    if (!p)
-        return E_OUTOFMEMORY;
-    p->Session = session;
-    session->lpVtbl->AddRef(session);
-    p->Flags = flags;
-    p->Client = tid;
-    p->Result = result;
 
-    /* an asynchronous request, or one behind others, waits for a lock asked for from the message loop. */
-    if ((flags & TF_ES_ASYNC) || ctx->Pending || ctx->Lock) {
-        p->Result = nullptr;
-        queue_pending(ctx, p);
-        if (!ctx->Lock && !ctx->LockPosted)
-            ctx->LockPosted = ServicePostLock(ctx);
-        if (!ctx->LockPosted && !ctx->Lock)
-            CtxRunPostponed(ctx);
+    PENDING *entry = CtfAlloc(sizeof(*entry));
+    if (!entry)
+        return E_OUTOFMEMORY;
+    session->lpVtbl->AddRef(session);
+    entry->Session = session;
+    entry->Client = tid;
+    entry->Flags = sync ? flags | TF_ES_SYNC : flags;
+    queue_pending(ctx, entry);
+
+    if (!sync) {
         *result = TS_S_ASYNC;
+        post_lock_for_rest(ctx);
         return S_OK;
     }
 
-    queue_pending(ctx, p);
-    DWORD lock_flags = (write ? TS_LF_READWRITE : TS_LF_READ) | (sync ? TS_LF_SYNC : 0);
+    /* the store sees the request as it was made, so that it may still answer asynchronously when none was asked. */
+    DWORD lock_flags = flags & (TF_ES_SYNC | TF_ES_READWRITE);
     HRESULT session_hr = E_FAIL;
+    entry->Waited = TRUE;
     CtxAddRef(ctx);
     HRESULT hr = ctx->Store->lpVtbl->RequestLock(ctx->Store, lock_flags, &session_hr);
-    CTF_TRACE("msctf: request lock %lx -> %lx session %lx\n", lock_flags, hr, session_hr);
-    BOOL queued = FALSE;
-    for (PENDING *q = ctx->Pending; q; q = q->Next)
-        queued = queued || q == p;
-    if (queued) {
-        if (FAILED(hr) || FAILED(session_hr)) {
-            unlink_pending(ctx, p);
-            session->lpVtbl->Release(session);
-            CtfFree(p);
-            *result = session_hr;
-        } else {
-            /* granted later: the caller's result is not written then. */
-            p->Result = nullptr;
-            *result = TS_S_ASYNC;
-        }
+    CTF_TRACE("msctf: lock %lx -> %lx session %lx\n", lock_flags, hr, session_hr);
+    *result = session_hr;
+
+    if (entry->Done) {
+        CtfFree(entry);
+    } else if ((FAILED(hr) || FAILED(session_hr)) && pending_tail(ctx) == entry) {
+        unlink_pending(ctx, entry);
+        session->lpVtbl->Release(session);
+        CtfFree(entry);
+    } else {
+        detach_waiter(entry);
     }
     CtxRelease(ctx);
     return hr;
 }
-
-/* ------------------------------------------------------------------ ITextStoreACPSink */
 
 static CTX *from_sink(ITextStoreACPSink *This)
 {

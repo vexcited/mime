@@ -222,69 +222,93 @@ const ITfCompositionViewVtbl g_view_vtbl = {view_query, view_add_ref, view_relea
 
 /* ------------------------------------------------------------------ starting and finding */
 
+/* the composition's sink is told it ended, then it goes. */
+static void end_through_sink(CTX *ctx, COMP *comp, TfEditCookie cookie)
+{
+    comp_add_ref(comp);
+    if (comp->Sink)
+        comp->Sink->lpVtbl->OnCompositionTerminated(comp->Sink, cookie, &comp->Iface);
+    finish(ctx, comp);
+    comp_release(comp);
+}
+
+static COMP *comp_create(CTX *ctx, const RNG *extent, ITfCompositionSink *sink, const CLSID *owner)
+{
+    COMP *comp = CtfAlloc(sizeof(*comp));
+    if (!comp)
+        return nullptr;
+    if (FAILED(RngCreateWeak(ctx, extent->Start, extent->End, &comp->Range))) {
+        CtfFree(comp);
+        return nullptr;
+    }
+    comp->Iface.lpVtbl = &g_composition_vtbl;
+    comp->View.lpVtbl = &g_view_vtbl;
+    comp->Refs = 1;
+    comp->Context = ctx;
+    comp->Owner = *owner;
+    comp->Sink = sink;
+    sink->lpVtbl->AddRef(sink);
+    CtfObjectCreated();
+    return comp;
+}
+
+/* whether the context's owner lets the composition start. a context with no owner sink allows anything. */
+static HRESULT owner_allows(CTX *ctx, COMP *comp, BOOL *allowed)
+{
+    *allowed = TRUE;
+    if (!ctx->OwnerSink)
+        return S_OK;
+    return ctx->OwnerSink->lpVtbl->OnStartComposition(ctx->OwnerSink, &comp->View, allowed);
+}
+
 HRESULT CompStart(CTX *ctx, TfEditCookie cookie, ITfRange *range, ITfCompositionSink *sink, const CLSID *owner,
                   ITfComposition **out)
 {
-    RNG *rng = range ? RngFromInterface(range) : nullptr;
-    if (!out || !range || !sink)
+    if (!out)
         return E_INVALIDARG;
     *out = nullptr;
-    if (!rng || rng->Context != ctx)
+    if (!range || !sink)
+        return E_INVALIDARG;
+    RNG *extent = RngFromInterface(range);
+    if (!extent || extent->Context != ctx)
         return E_INVALIDARG;
     if (!ctx->Doc)
         return TF_E_DISCONNECTED;
     if (!CtxCheckCookie(ctx, cookie, TRUE))
         return TS_E_NOLOCK;
-    COMP *comp = CtfAlloc(sizeof(*comp));
+
+    COMP *comp = comp_create(ctx, extent, sink, owner);
     if (!comp)
         return E_OUTOFMEMORY;
-    comp->Iface.lpVtbl = &g_composition_vtbl;
-    comp->View.lpVtbl = &g_view_vtbl;
-    comp->Refs = 1;
-    comp->Context = ctx;
-    if (owner)
-        comp->Owner = *owner;
-    if (FAILED(RngCreateWeak(ctx, rng->Start, rng->End, &comp->Range))) {
-        CtfFree(comp);
-        return E_OUTOFMEMORY;
-    }
-    comp->Sink = sink;
-    sink->lpVtbl->AddRef(sink);
-    CtfObjectCreated();
 
-    BOOL accepted = TRUE;
-    if (ctx->OwnerSink) {
-        HRESULT hr = ctx->OwnerSink->lpVtbl->OnStartComposition(ctx->OwnerSink, &comp->View, &accepted);
-        CTF_TRACE("msctf: owner start composition %lx accepted %d\n", hr, accepted);
-        if (FAILED(hr)) {
-            comp->Ended = TRUE;
-            comp_release(comp);
-            return E_FAIL;
-        }
-        if (!accepted && ctx->Compositions) {
-            /* an earlier composition makes way for the new one, if the owner agrees to that. */
-            CompAbortAll(ctx);
-            accepted = TRUE;
-            hr = ctx->OwnerSink->lpVtbl->OnStartComposition(ctx->OwnerSink, &comp->View, &accepted);
-            if (FAILED(hr))
-                accepted = FALSE;
-        }
+    BOOL allowed;
+    HRESULT hr = owner_allows(ctx, comp, &allowed);
+    if (FAILED(hr)) {
+        comp_release(comp);
+        return E_FAIL;
     }
-    if (!accepted) {
-        comp->Ended = TRUE;
+    if (!allowed && ctx->Compositions) {
+        /* the newest composition makes room for this one, and the owner is asked again. */
+        end_through_sink(ctx, ctx->Compositions, cookie);
+        hr = owner_allows(ctx, comp, &allowed);
+        if (FAILED(hr))
+            allowed = FALSE;
+    }
+    if (!allowed) {
         comp_release(comp);
         return S_OK;
     }
-    comp->Next = ctx->Compositions;
-    ctx->Compositions = comp;
-    comp_add_ref(comp);
-    if (rng->End > rng->Start) {
+
+    if (comp->Range->End > comp->Range->Start) {
         VARIANT one;
         VariantInit(&one);
         V_VT(&one) = VT_I4;
         V_I4(&one) = 1;
-        PropsSet(ctx, &GUID_PROP_COMPOSING, rng->Start, rng->End, &one);
+        PropsSet(ctx, &GUID_PROP_COMPOSING, comp->Range->Start, comp->Range->End, &one);
     }
+    comp->Next = ctx->Compositions;
+    ctx->Compositions = comp;
+    comp_add_ref(comp);
     *out = &comp->Iface;
     return S_OK;
 }
@@ -396,11 +420,7 @@ static HRESULT STDMETHODCALLTYPE term_do(ITfEditSession *This, TfEditCookie cook
             comp = comp->Next;
         if (!comp)
             break;
-        comp_add_ref(comp);
-        if (comp->Sink)
-            comp->Sink->lpVtbl->OnCompositionTerminated(comp->Sink, cookie, &comp->Iface);
-        finish(ctx, comp);
-        comp_release(comp);
+        end_through_sink(ctx, comp, cookie);
         if (t->Only)
             break;
     }

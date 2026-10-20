@@ -7,87 +7,86 @@
 
 /* ------------------------------------------------------------------ guid atoms */
 
-static CRITICAL_SECTION g_atom_lock;
-static LONG g_atom_lock_state;
-static GUID *g_atoms;
-static ULONG g_atom_count, g_atom_capacity;
+/*
+ * the atoms of the three guids Windows knows in advance are 32, 64 and 96. any other guid falls in one of 31 groups
+ * by its first word, and its atom is 32 times its place in the group plus the group number plus one, so the low
+ * five bits of an ordinary atom are never zero.
+ */
+#define ATOM_GROUPS 31
+#define ATOM_RESERVED 3
 
-static void atom_lock(void)
-{
-    /* the lock is made on first use, by whichever thread comes first. */
-    if (InterlockedCompareExchange(&g_atom_lock_state, 1, 0) == 0) {
-        InitializeCriticalSection(&g_atom_lock);
-        InterlockedExchange(&g_atom_lock_state, 2);
-    }
-    while (g_atom_lock_state != 2)
-        Sleep(0);
-    EnterCriticalSection(&g_atom_lock);
-}
-
-/* the atoms of windows' own client ids, multiples of 32; the others are the slot plus 4 shifted by 5 with a check. */
-static const GUID g_reserved_atoms[3] = {
+static const GUID g_reserved_guids[ATOM_RESERVED] = {
     {0x626761ad, 0x78d2, 0x44d2, {0xbe, 0x8b, 0x75, 0x2c, 0xf1, 0x22, 0xac, 0xec}},
     {0x78cb5b0e, 0x26ed, 0x4fcc, {0x85, 0x4c, 0x77, 0xe8, 0xf3, 0xd1, 0xaa, 0x80}},
     {0x5f4feb92, 0xd37d, 0x449e, {0x83, 0x93, 0x76, 0xb2, 0x6f, 0xfe, 0x60, 0x21}},
 };
 
-static TfGuidAtom make_atom(ULONG slot, REFGUID guid)
+typedef struct ATOM_GROUP {
+    GUID *Guids;
+    ULONG Count, Capacity;
+} ATOM_GROUP;
+
+static ATOM_GROUP g_groups[ATOM_GROUPS];
+static SRWLOCK g_groups_lock = SRWLOCK_INIT;
+
+static BOOL group_add(ATOM_GROUP *group, REFGUID guid)
 {
-    return (slot + 4) << 5 | (guid->Data1 % 31 + 1);
+    if (group->Count == group->Capacity) {
+        ULONG capacity = group->Capacity ? group->Capacity * 2 : 4;
+        GUID *grown = CtfAlloc(capacity * sizeof(*grown));
+        if (!grown)
+            return FALSE;
+        if (group->Count)
+            memcpy(grown, group->Guids, group->Count * sizeof(*grown));
+        CtfFree(group->Guids);
+        group->Guids = grown;
+        group->Capacity = capacity;
+    }
+    group->Guids[group->Count++] = *guid;
+    return TRUE;
 }
 
 TfGuidAtom CtfGuidAtom(REFGUID guid)
 {
-    TfGuidAtom atom = 0;
-    for (ULONG i = 0; i < 3; i++)
-        if (IsEqualGUID(&g_reserved_atoms[i], guid))
+    for (ULONG i = 0; i < ATOM_RESERVED; i++) {
+        if (IsEqualGUID(guid, &g_reserved_guids[i]))
             return (i + 1) << 5;
-    atom_lock();
-    for (ULONG i = 0; i < g_atom_count; i++) {
-        if (IsEqualGUID(&g_atoms[i], guid)) {
-            atom = make_atom(i, guid);
-            break;
-        }
     }
-    if (!atom) {
-        if (g_atom_count == g_atom_capacity) {
-            ULONG capacity = g_atom_capacity ? g_atom_capacity * 2 : 16;
-            GUID *items = CtfAlloc(capacity * sizeof(GUID));
-            if (items) {
-                if (g_atoms)
-                    memcpy(items, g_atoms, g_atom_count * sizeof(GUID));
-                CtfFree(g_atoms);
-                g_atoms = items;
-                g_atom_capacity = capacity;
-            }
-        }
-        if (g_atom_count < g_atom_capacity) {
-            g_atoms[g_atom_count++] = *guid;
-            atom = make_atom(g_atom_count - 1, guid);
-        }
+
+    ULONG group_number = guid->Data1 % ATOM_GROUPS;
+    ATOM_GROUP *group = &g_groups[group_number];
+    TfGuidAtom atom = 0;
+    AcquireSRWLockExclusive(&g_groups_lock);
+    for (ULONG n = 0; n < group->Count && !atom; n++) {
+        if (IsEqualGUID(&group->Guids[n], guid))
+            atom = n << 5 | (group_number + 1);
     }
-    LeaveCriticalSection(&g_atom_lock);
+    if (!atom && group_add(group, guid))
+        atom = (group->Count - 1) << 5 | (group_number + 1);
+    ReleaseSRWLockExclusive(&g_groups_lock);
     return atom;
 }
 
 BOOL CtfAtomGuid(TfGuidAtom atom, GUID *guid)
 {
-    BOOL found = FALSE;
-    if (atom && !(atom & 31) && (atom >> 5) <= 3) {
-        *guid = g_reserved_atoms[(atom >> 5) - 1];
+    ULONG low = atom & 31, high = atom >> 5;
+    if (!low) {
+        if (!high || high > ATOM_RESERVED)
+            return FALSE;
+        *guid = g_reserved_guids[high - 1];
         return TRUE;
     }
-    if ((atom >> 5) < 4)
-        return FALSE;
-    atom_lock();
-    ULONG slot = (atom >> 5) - 4;
-    if (slot < g_atom_count && make_atom(slot, &g_atoms[slot]) == atom) {
-        *guid = g_atoms[slot];
-        found = TRUE;
-    }
-    LeaveCriticalSection(&g_atom_lock);
-    return found;
+
+    ATOM_GROUP *group = &g_groups[low - 1];
+    BOOL known;
+    AcquireSRWLockShared(&g_groups_lock);
+    known = high < group->Count;
+    if (known)
+        *guid = group->Guids[high];
+    ReleaseSRWLockShared(&g_groups_lock);
+    return known;
 }
+
 
 /* ------------------------------------------------------------------ display attributes */
 
@@ -419,7 +418,7 @@ static HRESULT STDMETHODCALLTYPE cat_register_guid(ITfCategoryMgr *This, REFGUID
     if (!guid || !atom)
         return E_INVALIDARG;
     *atom = CtfGuidAtom(guid);
-    return *atom ? S_OK : E_OUTOFMEMORY;
+    return *atom ? S_OK : E_FAIL;
 }
 
 static HRESULT STDMETHODCALLTYPE cat_get_guid(ITfCategoryMgr *This, TfGuidAtom atom, GUID *guid)
@@ -436,12 +435,13 @@ static HRESULT STDMETHODCALLTYPE cat_get_guid(ITfCategoryMgr *This, TfGuidAtom a
 static HRESULT STDMETHODCALLTYPE cat_is_equal(ITfCategoryMgr *This, TfGuidAtom atom, REFGUID guid, BOOL *equal)
 {
     GUID other;
-    if (!guid || !equal)
+    if (!equal)
         return E_INVALIDARG;
-    if (!CtfAtomGuid(atom, &other)) {
-        *equal = FALSE;
+    *equal = FALSE;
+    if (!guid)
+        return E_INVALIDARG;
+    if (!CtfAtomGuid(atom, &other))
         return E_FAIL;
-    }
     *equal = IsEqualGUID(&other, guid);
     return S_OK;
 }
