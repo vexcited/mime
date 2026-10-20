@@ -307,11 +307,11 @@ static inline int32_t fixed_mul(int32_t a, int32_t b)
 
 /*
  * the conversion of section 21 of the specification. a code is first stretched from its reference black and white
- * to the nominal range, 0 to 255 for the luma and -127 to 127 for the chroma, and then
- *     R = Y + Cr * (2 - 2 * LumaRed)        B = Y + Cb * (2 - 2 * LumaBlue)
- *     G = (Y - LumaBlue * B - LumaRed * R) / LumaGreen
- * where putting the first two into the third leaves G = Y - Cb * gb - Cr * gr, gb being LumaBlue times the weight
- * of B over LumaGreen and gr the same for red. an empty reference range falls back to the default one.
+ * to the nominal range, 0 to 255 for the luma and minus 127 to 127 for the chroma, and then red is the luma plus Cr
+ * times twice the weight left by LumaRed, blue the same with Cb and LumaBlue, and green is the luma less LumaBlue
+ * times blue and LumaRed times red, over LumaGreen. putting the first two into the third leaves green as the luma
+ * less Cb times gb and Cr times gr, gb being LumaBlue times the weight of blue over LumaGreen and gr the same for
+ * red. an empty reference range falls back to the default one.
  */
 static void ycc_prepare(Dec *d)
 {

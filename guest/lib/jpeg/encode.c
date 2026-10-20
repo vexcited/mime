@@ -32,9 +32,9 @@ static void *enc_alloc_array(Enc *e, uint64_t count, uint64_t item)
 /* ------------------------------------------------------------------ color */
 
 /*
- * the transform of JFIF with 15 bit fractions: Y = 0.299 R + 0.587 G + 0.114 B and the differences of blue and red
- * from it, halved and centered on 128, so 0.5 (B - Y) / 0.886 and 0.5 (R - Y) / 0.701. the weights of each sum to
- * the unit, which keeps gray at the same level and 128 for the chroma.
+ * the transform of JFIF with 15 bit fractions. the luma is 0.299 red, 0.587 green and 0.114 blue, and the chroma are
+ * the differences of blue and of red from it, scaled to the range and centered on 128. the weights of each add up to
+ * the unit, which keeps gray at the same level and the chroma of gray at 128.
  */
 #define Y_R 9798
 #define Y_G 19235
@@ -93,7 +93,7 @@ static inline void ycc8(const uint8_t *src, int bpp, uint8_t *y, uint8_t *cb, ui
     __m128i rg_lo = _mm_unpacklo_epi16(r, g), rg_hi = _mm_unpackhi_epi16(r, g);
     __m128i bz_lo = _mm_unpacklo_epi16(b, _mm_set1_epi16(1)), bz_hi = _mm_unpackhi_epi16(b, _mm_set1_epi16(1));
     const __m128i bias = _mm_set1_epi32(C_BIAS);
-    /* pairs of (r, g) against two weights, and (b, 1) against the weight of blue and the rounding. */
+    /* pairs of red and green against two weights, and blue and one against the weight of blue and the rounding. */
 #define WEIGHTS(wr, wg) _mm_set1_epi32((int)(((uint32_t)(uint16_t)(wg) << 16) | (uint16_t)(wr)))
     const __m128i krg_y = WEIGHTS(Y_R, Y_G), kb_y = WEIGHTS(Y_B, Y_ROUND);
     const __m128i krg_cb = WEIGHTS(CB_R, CB_G), kb_cb = WEIGHTS(CB_B, 0);

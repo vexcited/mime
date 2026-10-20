@@ -1,8 +1,9 @@
 /*
  * the inverse transform of a block, in floating point. a block is dequantized on loading, transformed down the
  * columns and then along the rows, the two passes being the same one dimensional transform of the even and odd
- * parts of the eight inputs: x[n] is the sum over the coefficients X[u] of c(u) X[u] cos((2n+1) u pi / 16), and the
- * outputs n and 7 - n differ only in the sign of the odd coefficients' share.
+ * parts of the eight inputs. the output n is the sum over the coefficients u of c_u X_u cos of the angle
+ * 2n plus 1 times u pi over 16, and the output 7 minus n differs only in the sign of the share of the odd
+ * coefficients.
  *
  * the transforms to a smaller size give the averages of the groups of samples of the full one, see below.
  */
@@ -194,7 +195,8 @@ static void idct_full(const int16_t *coef, const float *dq, int last, uint8_t *o
 /*
  * the smaller decodes are the averages of the groups of 8 / n samples of the full decode, which is to say the full
  * transform followed by a box filter, written as one matrix: row i holds, for each frequency u, the mean over group i
- * of the one dimensional basis function c(u) / 2 * cos((2x + 1) u pi / 16).
+ * of the one dimensional basis function, which is c_u over 2 times the cosine of the angle 2x plus 1 times u pi
+ * over 16.
  */
 static const float r4[4][8] = {
     {0.35355339f, 0.45306372f, 0.32664074f, 0.15909482f, 0.0f, -0.10630376f, -0.13529903f, -0.09011998f},

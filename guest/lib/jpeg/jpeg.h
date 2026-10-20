@@ -1,5 +1,5 @@
 /*
- * jpeg codec written from ITU-T T.81 (ISO 10918-1): baseline, extended sequential and progressive huffman coded
+ * jpeg codec written from ITU-T T.81, which is ISO 10918-1: baseline, extended sequential and progressive huffman coded
  * images of 8 bits in one, three or four components, with the JFIF, Exif, ICC and Adobe conventions around them.
  * freestanding: needs only memcpy, memmove, memset, memcmp and the allocator interface.
  *

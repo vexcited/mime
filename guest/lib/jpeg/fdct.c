@@ -1,6 +1,6 @@
 /*
  * the forward transform of a block and its quantization. the transform is the transpose of the one in idct.c: the
- * sums of the samples at n and 7 - n give the even coefficients and their differences the odd ones, the odd part
+ * sums of the samples at n and 7 minus n give the even coefficients and their differences the odd ones, the odd part
  * being a 4 by 4 matrix of cosines.
  */
 #include "internal.h"

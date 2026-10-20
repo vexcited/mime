@@ -33,8 +33,10 @@ static void plan_axis(uint32_t x, uint32_t num, uint32_t den, uint32_t limit, bo
         *frac = 0;
         return;
     }
-    /* the center of output pixel x is at x + 1/2, in samples that is (x + 1/2) * num / den and the sample i has
-     * its center at i + 1/2. */
+    /*
+     * the center of output pixel x is at x plus a half, which in samples is that times num over den, and the
+     * center of sample i is at i plus a half.
+     */
     int64_t pos = (int64_t)(((uint64_t)(2 * x + 1) * num) << 15) / (int64_t)den - 0x8000;
     int64_t i = pos >> 16;
     int a = (int)(i < 0 ? 0 : i >= (int64_t)limit ? (int64_t)limit - 1 : i);
@@ -183,9 +185,10 @@ static inline uint8_t clamp_u8(int v)
 }
 
 /*
- * the transform of JFIF with 14 bit fractions: R = Y + 1.402 (Cr - 128), B = Y + 1.772 (Cb - 128) and
- * G = Y - 0.344136 (Cb - 128) - 0.714136 (Cr - 128), rounded to the nearest. each product fits in 16 bits by 16 bits,
- * so the vector code adds the pairs of products in one step.
+ * the transform of JFIF with 14 bit fractions. red is the luma plus 1.402 times the red difference Cr less 128, blue
+ * the luma plus 1.772 times the blue difference Cb less 128, and green the luma less 0.344136 times the blue difference
+ * and 0.714136 times the red one, each product rounded to the nearest. a product fits in 16 bits by 16 bits, so
+ * the vector code adds the pairs of products in one step.
  */
 #define K_CR_R 22970
 #define K_CB_B 29032
@@ -218,7 +221,7 @@ static void ycc_to_bgr(const uint8_t *y, const uint8_t *cb, const uint8_t *cr, u
     uint32_t x = 0;
 #ifdef MIME_JPEG_SSE2
     const __m128i zero = _mm_setzero_si128(), c128 = _mm_set1_epi16(128), round = _mm_set1_epi32(K_ROUND);
-    /* a pair of (Cb - 128, Cr - 128) against a pair of weights, summed. */
+    /* a pair of the differences, blue then red, against a pair of weights, summed. */
     const __m128i kr = _mm_set1_epi32((int)((uint32_t)K_CR_R << 16));
     const __m128i kb = _mm_set1_epi32(K_CB_B);
     const __m128i kg = _mm_set1_epi32((int)(((uint32_t)(uint16_t)-K_CR_G << 16) | (uint16_t)-K_CB_G));
