@@ -92,6 +92,7 @@ typedef struct SHEET {
     /* where the pages go, in the client area of the sheet, and the size of the tab control when it was made. */
     RECT PageRect;
     int BaseCx, BaseCy;
+    WORD Lang;
     int HeaderHeight, TitleHeight;
     HFONT HeaderFont;
     HBITMAP Watermark, HeaderBitmap;
@@ -461,13 +462,29 @@ static SIZE_T template_size(const void *tmpl)
     return (SIZE_T)(p - (const BYTE *)tmpl);
 }
 
-static const void *find_template(const PAGE *p, SIZE_T *size)
+static BOOL CALLBACK first_language(HMODULE module, LPCWSTR type, LPCWSTR name, WORD language, LONG_PTR param)
+{
+    *(WORD *)param = language;
+    return FALSE;
+}
+
+/* the language the pages are loaded in: with PSH_USEPAGELANG the first one the first page's dialog is found in. */
+static WORD page_language(const SHEET *s)
+{
+    WORD language = 0;
+    if ((s->Flags & PSH_USEPAGELANG) && s->Count && !(s->Pages[0]->Psp.dwFlags & PSP_DLGINDIRECT))
+        EnumResourceLanguagesW(s->Pages[0]->Psp.hInstance, RT_DIALOGW, s->Pages[0]->Psp.pszTemplate, first_language,
+                               (LONG_PTR)&language);
+    return language;
+}
+
+static const void *find_template(const SHEET *s, const PAGE *p, SIZE_T *size)
 {
     if (p->Psp.dwFlags & PSP_DLGINDIRECT) {
         *size = template_size(p->Psp.pResource);
         return p->Psp.pResource;
     }
-    HRSRC res = FindResourceExW(p->Psp.hInstance, RT_DIALOGW, p->Psp.pszTemplate, 0);
+    HRSRC res = FindResourceExW(p->Psp.hInstance, RT_DIALOGW, p->Psp.pszTemplate, s->Lang);
     if (!res)
         res = FindResourceW(p->Psp.hInstance, p->Psp.pszTemplate, RT_DIALOGW);
     if (!res)
@@ -491,7 +508,7 @@ static BOOL get_page_info(const SHEET *s, const PAGE *p, PAGE_INFO *info, UINT w
                                     GetSystemMetrics(SM_CYSMICON), 0);
     }
     SIZE_T size = 0;
-    const void *tmpl = find_template(p, &size);
+    const void *tmpl = find_template(s, p, &size);
     TEMPLATE_INFO t;
     if (!tmpl || !parse_template(tmpl, &t))
         return FALSE;
@@ -866,7 +883,7 @@ static HWND create_page(SHEET *s, PAGE *p)
         return nullptr;
     rethunk_shadow(p);
     SIZE_T size = 0;
-    const void *tmpl = find_template(p, &size);
+    const void *tmpl = find_template(s, p, &size);
     if (!tmpl || !size)
         return nullptr;
     DLGTEMPLATE *copy = CcAlloc(size);
@@ -1142,6 +1159,8 @@ static void remove_page(SHEET *s, UINT index, HPROPSHEETPAGE handle)
         DestroyWindow(window);
     }
     remove_page_data(s, at);
+    if (at < s->CurIndex)
+        s->CurIndex--;
 }
 
 static LRESULT query_siblings(SHEET *s, WPARAM wparam, LPARAM lparam)
@@ -1488,7 +1507,7 @@ static void paint_header(SHEET *s, const PAGE *p, HDC dc)
             SetBkColor(dc, GetSysColor(COLOR_WINDOW));
             SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
         } else {
-            SendMessageW(s->Hwnd, WM_CTLCOLORDLG, (WPARAM)dc, (LPARAM)s->Hwnd);
+            SendMessageW(s->Hwnd, WM_CTLCOLORSTATIC, (WPARAM)dc, (LPARAM)s->Hwnd);
         }
     }
     SetBkMode(dc, TRANSPARENT);
@@ -1843,6 +1862,7 @@ static void init_sheet(HWND hwnd, SHEET *s)
     if ((s->Flags & (PSH_USEHICON | PSH_USEICONID)) && s->H.hIcon)
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)s->H.hIcon);
     s->Tab = GetDlgItem(hwnd, IDC_TAB);
+    s->Lang = page_language(s);
 
     UINT start = s->H.nStartPage;
     const WCHAR *start_title = nullptr;
@@ -2101,7 +2121,7 @@ static INT_PTR on_notify(SHEET *s, HWND hwnd, NMHDR *hdr)
     switch (hdr->code) {
     case TCN_GETOBJECT: {
         NMOBJECTNOTIFY_ *n = (NMOBJECTNOTIFY_ *)hdr;
-        n->hResult = E_FAIL;
+        n->hResult = (HRESULT)0x8000FFFF;
         n->pObject = nullptr;
         if (n->iItem >= 0 && (UINT)n->iItem < s->Count) {
             PAGE *p = s->Pages[n->iItem];
@@ -2123,6 +2143,11 @@ static INT_PTR on_notify(SHEET *s, HWND hwnd, NMHDR *hdr)
             SendMessageW(p->Hwnd, WM_NOTIFY, query.hdr.idFrom, (LPARAM)&query);
             n->hResult = query.hResult;
             n->pObject = query.hResult >= 0 ? query.pObject : nullptr;
+            /* an object the page handed out with a failure is let go. */
+            if (query.hResult < 0 && query.pObject) {
+                void **vtable = *(void ***)query.pObject;
+                ((ULONG(WINAPI *)(void *))vtable[2])(query.pObject);
+            }
         }
         return TRUE;
     }
