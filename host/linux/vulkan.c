@@ -7,6 +7,7 @@
  * writes. command buffers arrive whole and are recorded here when the
  * guest ends them.
  */
+#include "display.h"
 #include "mvk_host.h"
 #include "video.h"
 
@@ -2545,6 +2546,18 @@ void mime_vk_kick(uint64_t index)
     pthread_mutex_unlock(&g_lock);
 }
 
+static pthread_mutex_t g_teardown_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void mime_gpu_teardown_enter(void)
+{
+    pthread_mutex_lock(&g_teardown_lock);
+}
+
+void mime_gpu_teardown_leave(void)
+{
+    pthread_mutex_unlock(&g_teardown_lock);
+}
+
 /* returns once the host and the gpu no longer use the connection's memory, as the guest frees it next. */
 void mime_vk_close(uint64_t index)
 {
@@ -2569,11 +2582,16 @@ void mime_vk_close(uint64_t index)
         c->fn.vkDeviceWaitIdle(c->device);
         mvk_video_close(c);
         destroy_leftovers(c);
+        mime_gpu_teardown_enter();
         c->fn.vkDestroyDevice(c->device, nullptr);
+        mime_gpu_teardown_leave();
     }
     free(c->live);
-    if (c->instance)
+    if (c->instance) {
+        mime_gpu_teardown_enter();
         c->fn.vkDestroyInstance(c->instance, nullptr);
+        mime_gpu_teardown_leave();
+    }
     if (c->library)
         dlclose(c->library);
     free(c->watches);

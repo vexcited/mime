@@ -846,12 +846,14 @@ static void destroy_host_window(UiWindow *w)
         w->vk = false;
         w->vk_whole = false;
     }
+    mime_gpu_teardown_enter();
     if (w->texture)
         SDL_DestroyTexture(w->texture);
     if (w->renderer)
         SDL_DestroyRenderer(w->renderer);
     if (w->window)
         SDL_DestroyWindow(w->window);
+    mime_gpu_teardown_leave();
     w->texture = nullptr;
     w->renderer = nullptr;
     w->window = nullptr;

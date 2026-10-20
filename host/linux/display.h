@@ -44,4 +44,12 @@ bool mime_ui_vk_copy(uint32_t id, uint8_t *dst, uint32_t width, uint32_t height,
 /* vkwsi.c: called on the main thread before a host window the presenter may own goes away. */
 void mime_vk_window_lost(uint32_t id);
 
+/*
+ * vulkan.c: the driver's own teardown of a device and of a window's surfaces take locks in an order of their own, and
+ * one thread destroying a device while the main thread destroys a window deadlocked the NVIDIA driver, hanging the
+ * daemon when a program that had both ended. one at a time.
+ */
+void mime_gpu_teardown_enter(void);
+void mime_gpu_teardown_leave(void);
+
 #endif
