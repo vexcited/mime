@@ -1137,7 +1137,7 @@ typedef struct _FS_WB {
     ULONG64 FileId;
     ULONG64 Host;        /* the host handle the flushes write to */
     PCUNICODE_STRING Name;
-    NTSTATUS Error;      /* a flush that failed, told to the next write or flush of the handle */
+    NTSTATUS Failed;     /* the first flush that failed, told to every write and flush of the handle after it: none lands past the gap */
     BOOLEAN Kept;
 } FS_WB;
 NTSTATUS MimeFsHostStatus(ULONG64 host_status, BOOLEAN path_missing);

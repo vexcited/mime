@@ -39,14 +39,20 @@ static NTSTATUS flush(void)
 
 static NTSTATUS truncate_tail(void)
 {
+    /* a file shorter than the records counted would be made longer with zeros: a hole with records after it. */
+    ULONG64 length;
+    NTSTATUS status = IoQueryFileSize(CmpJournalFile, &length);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (length < CmpJournalOffset)
+        return STATUS_REGISTRY_CORRUPT;
     /* the flush that follows makes the whole file durable up to the new end. */
     FILE_END_OF_FILE_INFORMATION end;
     end.EndOfFile.QuadPart = (LONGLONG)CmpJournalOffset;
     IO_STACK_LOCATION params = {};
     params.Parameters.SetFile.Length = sizeof(end);
     params.Parameters.SetFile.FileInformationClass = FileEndOfFileInformation;
-    NTSTATUS status = IopSynchronousRequest(CmpJournalFile, IRP_MJ_SET_INFORMATION, 0, &end, sizeof(end),
-                                            &params, nullptr);
+    status = IopSynchronousRequest(CmpJournalFile, IRP_MJ_SET_INFORMATION, 0, &end, sizeof(end), &params, nullptr);
     if (NT_SUCCESS(status))
         status = flush();
     if (NT_SUCCESS(status))
@@ -191,7 +197,8 @@ void CmpJournalInitialize(void)
     IO_STATUS_BLOCK io;
     CmpJournalStatus = IopCreateFile(&handle, FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE, &attributes,
                                      &io, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_OPEN_IF,
-                                     FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, KernelMode);
+                                     FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_WRITE_THROUGH,
+                                     KernelMode);
     if (NT_SUCCESS(CmpJournalStatus)) {
         CmpJournalStatus = ObReferenceHandle(handle, IoFileObjectTypeObject, KernelMode,
                                               (PVOID *)&CmpJournalFile, nullptr);

@@ -66,14 +66,22 @@ static NTSTATUS flush_locked(FS_WB *wb)
     if (!wb->Length)
         return STATUS_SUCCESS;
     ULONG64 got = 0;
-    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_WRITE, wb->Host, wb->Start, HalPhysicalOf(wb->Buffer), wb->Length, 0, 0, &got);
+    ULONG sent = wb->Length;
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_WRITE, wb->Host, wb->Start, HalPhysicalOf(wb->Buffer), sent, 0, 0, &got);
     NTSTATUS status = MimeFsHostStatus(hs, FALSE);
-    if (NT_SUCCESS(status) && got < wb->Length)
+    if (NT_SUCCESS(status) && got < sent) {
+        KiLogPrintf("fs: the host wrote %llu of %u bytes at %llu of file %llu, the buffer now holds %u", got, (unsigned)sent,
+                    wb->Start, wb->FileId, (unsigned)wb->Length);
         status = STATUS_DISK_FULL;
+    }
     wb->Length = 0;
     mark_clean(wb);
-    if (!NT_SUCCESS(status))
-        wb->Error = status;
+    if (!NT_SUCCESS(status)) {
+        /* what was kept is gone, so a write that follows would leave a hole in the file: none follows. */
+        if (NT_SUCCESS(wb->Failed))
+            wb->Failed = status;
+        KiLogPrintf("fs: %u bytes at %llu of file %llu were not written: %08x", (unsigned)sent, wb->Start, wb->FileId, status);
+    }
     return status;
 }
 
@@ -215,10 +223,9 @@ BOOLEAN FsWbWrite(FS_WB *wb, ULONG64 offset, const void *data, ULONG length, NTS
         ExReleaseFastMutex(&g_lock);
         return FALSE;
     }
-    if (wb->Error) {
-        /* a flush of what this handle wrote failed after its write returned: this is where it is told. */
-        *status = wb->Error;
-        wb->Error = STATUS_SUCCESS;
+    if (!NT_SUCCESS(wb->Failed)) {
+        /* a flush of what this handle wrote failed after its write returned: every write after it says so, none lands. */
+        *status = wb->Failed;
         ExReleaseFastMutex(&g_lock);
         return TRUE;
     }
@@ -243,7 +250,6 @@ BOOLEAN FsWbWrite(FS_WB *wb, ULONG64 offset, const void *data, ULONG length, NTS
         }
         *status = flush_locked(wb);
         if (!NT_SUCCESS(*status)) {
-            wb->Error = STATUS_SUCCESS;
             ExReleaseFastMutex(&g_lock);
             return TRUE;
         }
@@ -292,7 +298,7 @@ void FsWbSyncOthers(FS_WB *wb)
 
 NTSTATUS FsWbSync(FS_WB *wb)
 {
-    if (!wb->Host || (!wb->Error && !__atomic_load_n(&g_pending[bucket(wb->Volume, wb->FileId)], __ATOMIC_SEQ_CST)))
+    if (!wb->Host || (NT_SUCCESS(wb->Failed) && !__atomic_load_n(&g_pending[bucket(wb->Volume, wb->FileId)], __ATOMIC_SEQ_CST)))
         return STATUS_SUCCESS;
     NTSTATUS status = STATUS_SUCCESS;
     ExAcquireFastMutex(&g_lock);
@@ -304,9 +310,8 @@ NTSTATUS FsWbSync(FS_WB *wb)
                 status = st;
         }
     }
-    if (NT_SUCCESS(status) && wb->Error) {
-        status = wb->Error;
-        wb->Error = STATUS_SUCCESS;
+    if (NT_SUCCESS(status) && !NT_SUCCESS(wb->Failed)) {
+        status = wb->Failed;
     }
     ExReleaseFastMutex(&g_lock);
     return status;

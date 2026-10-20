@@ -116,7 +116,8 @@ void CmpCompactFinish(PVOID context, PFILE_OBJECT *journal, ULONG64 *offset, ULO
     IO_STATUS_BLOCK io;
     NTSTATUS status = IopCreateFile(&handle, FILE_READ_DATA | FILE_WRITE_DATA | DELETE | SYNCHRONIZE, &attributes, &io,
                                     FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_OVERWRITE_IF,
-                                    FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_DELETE_ON_CLOSE,
+                                    FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_DELETE_ON_CLOSE |
+                                        FILE_WRITE_THROUGH,
                                     KernelMode);
     PFILE_OBJECT file = nullptr;
     if (NT_SUCCESS(status)) {
