@@ -271,3 +271,11 @@ SHSTDAPI HICON WINAPI ExtractIconA(HINSTANCE instance, LPCSTR file, UINT index)
     ShFree(wide);
     return icon;
 }
+
+/* there is no dialog to choose a program in: the call fails as if the user had cancelled it. */
+SHSTDAPI HRESULT WINAPI SHOpenWithDialog(HWND parent, const OPENASINFO *info)
+{
+    if (!info || (!info->pcszFile && !info->pcszClass))
+        return E_INVALIDARG;
+    return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+}
