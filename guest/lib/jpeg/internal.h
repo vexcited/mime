@@ -1,3 +1,6 @@
+/*
+ * what the parts of the jpeg codec share.
+ */
 #ifndef MIME_LIB_JPEG_INTERNAL_H
 #define MIME_LIB_JPEG_INTERNAL_H
 
@@ -8,48 +11,51 @@
 #include <emmintrin.h>
 #endif
 
-#define JPEG_MAX_COMPS 4
+/* markers. */
+#define M_SOF0 0xC0
+#define M_SOF1 0xC1
+#define M_SOF2 0xC2
+#define M_DHT 0xC4
+#define M_JPG 0xC8
+#define M_DAC 0xCC
+#define M_RST0 0xD0
+#define M_SOI 0xD8
+#define M_EOI 0xD9
+#define M_SOS 0xDA
+#define M_DQT 0xDB
+#define M_DNL 0xDC
+#define M_DRI 0xDD
+#define M_APP0 0xE0
+#define M_APP1 0xE1
+#define M_APP2 0xE2
+#define M_APP14 0xEE
+#define M_COM 0xFE
 
-/* tables.c */
-extern const uint8_t mime_jpeg_natural_order[80];
-extern const uint8_t mime_jpeg_std_quant_luma[64];
-extern const uint8_t mime_jpeg_std_quant_chroma[64];
-extern const uint8_t mime_jpeg_std_dc_luma_bits[16];
-extern const uint8_t mime_jpeg_std_dc_luma_vals[12];
-extern const uint8_t mime_jpeg_std_ac_luma_bits[16];
-extern const uint8_t mime_jpeg_std_ac_luma_vals[162];
-extern const uint8_t mime_jpeg_std_dc_chroma_bits[16];
-extern const uint8_t mime_jpeg_std_dc_chroma_vals[12];
-extern const uint8_t mime_jpeg_std_ac_chroma_bits[16];
-extern const uint8_t mime_jpeg_std_ac_chroma_vals[162];
+/* the zigzag position k of the standard to the position in an 8 by 8 block in row order. */
+extern const uint8_t jpeg_zigzag[64];
 
-/* idct.c: inverse transform of nblocks adjacent blocks of coefficients, dct is 8, 4, 2 or 1. */
-void mime_jpeg_idct_blocks(int dct, const int16_t *coef, size_t nblocks, const uint16_t *qt, uint8_t *out,
-                           size_t stride);
+/* a huffman table as a file carries it: the counts of the codes of each length and the symbols in code order. */
+typedef struct JpegHuffSpec {
+    uint8_t bits[17]; /* [1] to [16]. */
+    uint8_t vals[256];
+    int count;
+} JpegHuffSpec;
 
-/* upsample.c */
-void mime_jpeg_up_h2v1_fancy(const uint8_t *in, uint8_t *out, uint32_t n);
-void mime_jpeg_up_h2v2_fancy(const uint8_t *nrow, const uint8_t *frow, uint8_t *out, uint32_t n);
-void mime_jpeg_up_h1v2_fancy(const uint8_t *nrow, const uint8_t *frow, uint8_t *out, uint32_t n, int lower);
-void mime_jpeg_up_replicate(const uint8_t *in, uint8_t *out, uint32_t n, uint32_t hexp);
-void mime_jpeg_up_nearest(const uint8_t *in, uint8_t *out, uint32_t out_n, uint32_t num, uint32_t den);
+extern const JpegHuffSpec jpeg_std_dc[2], jpeg_std_ac[2];
+extern const uint8_t jpeg_std_qtable[2][64]; /* annex K, natural order, luma then chroma. */
 
-/* color.c: planar rows to interleaved output. */
-void mime_jpeg_row_ycc_bgr(const uint8_t *y, const uint8_t *cb, const uint8_t *cr, uint8_t *out, uint32_t n);
-void mime_jpeg_row_rgb_bgr(const uint8_t *r, const uint8_t *g, const uint8_t *b, uint8_t *out, uint32_t n);
-/* inverted 1 undoes the Adobe inversion, ycck 1 converts YCC to CMY first. */
-void mime_jpeg_row_cmyk(const uint8_t *p0, const uint8_t *p1, const uint8_t *p2, const uint8_t *p3, uint8_t *out,
-                        uint32_t n, int ycck, int inverted);
+static inline int jpeg_min(int a, int b) { return a < b ? a : b; }
+static inline int jpeg_max(int a, int b) { return a > b ? a : b; }
+static inline uint8_t jpeg_clamp8(int v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
+static inline uint32_t jpeg_ceil_div(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
-/* encoder side, fdct.c */
-typedef struct MimeJpegQuantizer {
-    uint16_t mul[64];   /* reciprocal of the divisor, see fdct.c. */
-    uint16_t bias[64];  /* half the divisor, added before dividing. */
-    uint16_t scale[64]; /* second stage multiplier that completes the shift. */
-} MimeJpegQuantizer;
+/* the idct of one block at a time: coefficients in natural order, an output of n by n samples, n 8, 4, 2 or 1. */
+void jpeg_idct(const int16_t *coef, const float *dequant, int last, int n, uint8_t *out, size_t stride);
+/* the dequantization factors of a table, folding in whatever the transform of size n expects. */
+void jpeg_idct_prepare(const uint16_t *qtable, float *dequant);
 
-void mime_jpeg_make_quantizer(const uint16_t qt_natural[64], MimeJpegQuantizer *qz);
-/* forward dct and quantization of one block of 8 bit samples, result in natural order. */
-void mime_jpeg_fdct_quant(const uint8_t *src, size_t stride, const MimeJpegQuantizer *qz, int16_t out[64]);
+/* the forward transform of a block of 8 by 8 samples, centered on 0, and its quantization. */
+void jpeg_fdct_quant(const uint8_t *samples, size_t stride, const float *inv_quant, int16_t *out);
+void jpeg_fdct_prepare(const uint16_t *qtable, float *inv_quant);
 
 #endif
