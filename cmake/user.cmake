@@ -35,7 +35,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-crt ${arch} SOURCES ${crt_sources} OPTIONS -fno-builtin)
     mime_objects(${arch}-chkstk ${arch} SOURCES ${MIME_CHKSTK_${arch}})
     set(lib_includes guest/lib third_party/SPIRV-Cross)
-    foreach(lib privdata dxbc dxil png msstyles compound cabinet audio dinput xinput richedit crypto ttf)
+    foreach(lib privdata dxbc dxil png pngio jpeg tiff gif bcn vector msstyles compound cabinet audio dinput xinput richedit crypto ttf)
         mime_glob(lib_sources guest/lib/${lib}/*.c)
         mime_objects(${arch}-lib-${lib} ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes})
     endforeach()
@@ -261,7 +261,8 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     dhcpcsvc:0x7FF160000000 esent:0x7FF150000000 uiautomationcore:0x7FF140000000
     msctf:0x7FF0D0000000 riched20:0x7FF0C0000000 msftedit:0x7FF0B0000000 riched32:0x7FF0A0000000
     dcomp:0x7FF030000000 prntvpt:0x7FF020000000 psapi:0x7FF0E0000000 lz32:0x7FF0F0000000
-    activeds:0x7FF070000000 advpack:0x7FF110000000 mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000 coremessaging:0x7FF090000000)
+    activeds:0x7FF070000000 advpack:0x7FF110000000 mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000 coremessaging:0x7FF090000000
+    windowscodecs:0x7FF740000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
@@ -283,6 +284,11 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         set(libs_${xinput} ${MIME_LIB_${arch}}/setupapi.lib)
     endforeach()
     set(objects_gdiplus ${arch}-lib-png)
+    # the imaging component reads and writes images with the codec libraries.
+    set(objects_windowscodecs ${arch}-lib-png:guest/lib/png/inflate.c ${arch}-lib-png:guest/lib/png/deflate.c
+        ${arch}-lib-pngio ${arch}-lib-jpeg ${arch}-lib-tiff ${arch}-lib-gif ${arch}-lib-bcn)
+    set(includes_windowscodecs guest/lib)
+    set(libs_windowscodecs ${MIME_LIB_${arch}}/ole32.lib)
     # dwrite reads and draws fonts with the truetype library of the font engine.
     set(objects_dwrite ${arch}-lib-ttf)
     set(includes_dwrite guest/lib)

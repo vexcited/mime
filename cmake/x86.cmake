@@ -82,7 +82,7 @@ set(MIME_X86_DLLS
     uiautomationcore:0x1C000000:all_five iphlpapi:0x1B000000:base bcrypt:0x1A000000:all_five
     mfplat:0x12400000:mfplat_imports mf:0x12200000:mf_imports mfreadwrite:0x12000000:mfreadwrite_imports
     mfcaptureengine:0x12100000:mfce_imports
-    schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports)
+    schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports windowscodecs:0x4B000000:wic_imports)
 set(base ntdll kernel32)
 # rpcrt4 catches exceptions with frame handlers of the c runtime.
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
@@ -93,6 +93,8 @@ set(depends_oleaut32 mime-gen-oleaut32)
 # oleaut32 makes objects with ole32 and asks it for guid strings.
 set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
+# the imaging component makes bitmaps of handles with gdi, and reads icons with user32.
+set(wic_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(dialog_imports ntdll kernel32 user32 gdi32 win32u comctl32 shell32 shlwapi ole32 advapi32)
 set(storage_imports ntdll kernel32 user32 gdi32 win32u ole32 shell32 shlwapi propsys)
@@ -133,6 +135,8 @@ foreach(xinput xinput1_4 xinput1_3 xinput1_2 xinput1_1)
     set(objects_${xinput} x86-lib-xinput)
 endforeach()
 set(objects_gdiplus x86-lib-png)
+set(objects_windowscodecs x86-lib-png:guest/lib/png/inflate.c x86-lib-png:guest/lib/png/deflate.c x86-lib-pngio x86-lib-jpeg x86-lib-tiff x86-lib-gif x86-lib-bcn x86-div)
+set(includes_windowscodecs guest/lib)
 set(objects_bcrypt x86-lib-crypto)
 set(objects_crypt32 x86-lib-crypto)
 set(objects_secur32 x86-lib-crypto)
