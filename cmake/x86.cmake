@@ -67,7 +67,7 @@ set(MIME_X86_DLLS
     netapi32:0x6a000000:all_five wtsapi32:0x69000000:all_five secur32:0x68000000:all_five
     crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:ole32_imports oleaut32:0x64000000:all_five
     rpcrt4:0x63000000:rpcrt4_imports imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
-    msi:0x5f000000:user mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
+    msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
     gdiplus:0x5b000000:user_gdi wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
     oleacc:0x57000000:oleacc_imports oledlg:0x56000000:user combase:0x54000000:all_five usp10:0x51000000:gdi
     cfgmgr32:0x39000000:base setupapi:0x46000000:setup msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
@@ -82,7 +82,7 @@ set(MIME_X86_DLLS
     uiautomationcore:0x1C000000:all_five iphlpapi:0x1B000000:base bcrypt:0x1A000000:all_five
     mfplat:0x12400000:mfplat_imports mf:0x12200000:mf_imports mfreadwrite:0x12000000:mfreadwrite_imports
     mfcaptureengine:0x12100000:mfce_imports
-    schannel:0x19000000:base msctf:0x0E000000:ctf_imports)
+    schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports)
 set(base ntdll kernel32)
 # rpcrt4 catches exceptions with frame handlers of the c runtime.
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
@@ -99,6 +99,9 @@ set(mfreadwrite_imports ntdll kernel32 mfplat ole32)
 set(mf_imports ntdll kernel32 mfplat cfgmgr32 ole32)
 set(mfce_imports ntdll kernel32 mfplat mf ole32)
 set(user ntdll kernel32 user32)
+set(ads_imports ntdll kernel32)
+# the installer makes shortcuts and users, reads versions and loads the custom actions of its packages.
+set(msi_imports ntdll kernel32 user32 gdi32 win32u advapi32 shell32 ole32 version)
 set(oleacc_imports ntdll kernel32 user32 ole32 oleaut32)
 set(ctf_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
 set(gdi ntdll kernel32 gdi32)
@@ -113,7 +116,7 @@ set(http ntdll kernel32 user32 ws2_32)
 # wininet combines urls with the engine of kernelbase.
 set(wininet_imports ntdll kernel32 user32 ws2_32 kernelbase)
 set(urlmon_imports ntdll kernel32 user32 wininet ole32 oleaut32)
-set(objects_msi x86-lib-compound)
+set(objects_msi x86-lib-compound x86-lib-cabinet)
 set(objects_winmm x86-lib-audio)
 set(objects_dsound x86-lib-audio)
 set(objects_dinput8 x86-lib-dinput)

@@ -62,3 +62,39 @@ EXPORTS
     MsiReinstallProductW @131
     MsiConfigureProductExW @190
     MsiApplyPatchW @175
+    MsiViewGetColumnInfo @166
+    MsiDatabaseGetPrimaryKeysW @26
+    MsiViewGetErrorW @162
+    MsiGetPropertyA @73
+    MsiSetPropertyA @144
+    MsiRecordSetStringA @124
+    MsiRecordGetStringA @117
+    MsiOpenDatabaseA @91
+    MsiDatabaseOpenViewA @31
+    MsiOpenPackageExA @231
+    MsiOpenPackageA @93
+    MsiInstallProductA @87
+    MsiEvaluateConditionA @46
+    MsiDoActionA @33
+    MsiSequenceA @132
+    MsiGetTargetPathA @79
+    MsiGetSourcePathA @75
+    MsiSetTargetPathA @146
+    MsiFormatRecordA @170
+    MsiGetProductInfoA @67
+    MsiQueryProductStateA @112
+    MsiEnumRelatedProductsA @204
+    MsiConfigureProductExA @189
+    MsiConfigureProductW @16
+    MsiConfigureProductA @15
+    MsiReinstallProductA @130
+    MsiRecordReadStream @120
+    MsiRecordSetStreamW @123
+    MsiRecordSetStreamA @122
+    MsiGetMode @64
+    MsiSetMode @143
+    MsiGetLanguage @63
+    MsiGetComponentStateW @51
+    MsiGetComponentStateA @50
+    MsiViewModify @163
+    MsiCustomActionServer

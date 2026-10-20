@@ -50,6 +50,7 @@ void MimeMsiRelease(MIME_MSI_OBJECT *object)
 
 UINT WINAPI MsiCloseHandle(MSIHANDLE handle)
 {
+    MIME_REMOTE(PROXY_CloseHandle, UINT, MIME_ARG(handle));
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_OBJECT *object = MimeMsiGetHandle(handle, 0);
     if (object) {
@@ -80,6 +81,7 @@ UINT WINAPI MsiCloseAllHandles(void)
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
 {
     if (reason == DLL_PROCESS_DETACH && !reserved) {
+        MimeMsiShutDownHost();
         MimeMsiCloseLog();
         for (ULONG i = 1; i < RTL_NUMBER_OF(handles); i++) {
             if (handles[i].Object) {

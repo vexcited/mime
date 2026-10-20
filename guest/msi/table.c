@@ -18,10 +18,11 @@ static int name_digit(WCHAR ch)
     return -1;
 }
 
-static BOOL table_name(PCWSTR name, WCHAR out[32])
+static BOOL encode_name(PCWSTR name, BOOL table, WCHAR out[32])
 {
     ULONG count = 0;
-    out[count++] = 0x4840;
+    if (table)
+        out[count++] = 0x4840;
     while (*name) {
         int first = name_digit(*name++);
         int second = *name ? name_digit(*name) : -1;
@@ -38,6 +39,20 @@ static BOOL table_name(PCWSTR name, WCHAR out[32])
     }
     out[count] = 0;
     return TRUE;
+}
+
+static BOOL table_name(PCWSTR name, WCHAR out[32])
+{
+    return encode_name(name, TRUE, out);
+}
+
+/* a binary column keeps its bytes in a stream named after the table and the key of the row, in the packed alphabet. */
+UINT MimeMsiReadBinary(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size)
+{
+    WCHAR encoded[32];
+    if (!encode_name(name, FALSE, encoded))
+        return ERROR_INVALID_PARAMETER;
+    return MimeMsiReadStream(database, encoded, out, size);
 }
 
 UINT MimeMsiReadStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size)
@@ -108,20 +123,34 @@ UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database)
         error = ERROR_CALL_NOT_IMPLEMENTED;
         goto done;
     }
-    ULONG count = (ULONG)(pool_size / 4);
+    /* an entry is a length and a count of uses; a long string has length zero and a count, then its length in four bytes. */
+    ULONG count = 1;
+    for (SIZE_T at = 4; at < pool_size; count++) {
+        if (at + 4 > pool_size) {
+            error = ERROR_INSTALL_PACKAGE_INVALID;
+            goto done;
+        }
+        BOOL big = !read_number(pool + at, 2) && read_number(pool + at + 2, 2);
+        at += big ? 8 : 4;
+    }
     database->Strings = MimeMsiAllocate(count * sizeof(PWSTR));
     if (!database->Strings) {
         error = ERROR_NOT_ENOUGH_MEMORY;
         goto done;
     }
     database->StringCount = count;
-    SIZE_T offset = 0;
+    SIZE_T offset = 0, at = 4;
     for (ULONG i = 1; i < count; i++) {
-        ULONG length = read_number(pool + i * 4, 2);
-        ULONG references = read_number(pool + i * 4 + 2, 2);
+        ULONG length = read_number(pool + at, 2);
+        ULONG references = read_number(pool + at + 2, 2);
+        at += 4;
         if (!length && references) {
-            error = ERROR_CALL_NOT_IMPLEMENTED;
-            break;
+            if (at + 4 > pool_size) {
+                error = ERROR_INSTALL_PACKAGE_INVALID;
+                break;
+            }
+            length = read_number(pool + at, 4);
+            at += 4;
         }
         if (offset > data_size || length > data_size - offset) {
             error = ERROR_INSTALL_PACKAGE_INVALID;

@@ -35,7 +35,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-crt ${arch} SOURCES ${crt_sources} OPTIONS -fno-builtin)
     mime_objects(${arch}-chkstk ${arch} SOURCES ${MIME_CHKSTK_${arch}})
     set(lib_includes guest/lib third_party/SPIRV-Cross)
-    foreach(lib privdata dxbc dxil png msstyles compound audio dinput xinput richedit crypto ttf)
+    foreach(lib privdata dxbc dxil png msstyles compound cabinet audio dinput xinput richedit crypto ttf)
         mime_glob(lib_sources guest/lib/${lib}/*.c)
         mime_objects(${arch}-lib-${lib} ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes})
     endforeach()
@@ -261,11 +261,14 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     dhcpcsvc:0x7FF160000000 esent:0x7FF150000000 uiautomationcore:0x7FF140000000
     msctf:0x7FF0D0000000 riched20:0x7FF0C0000000 msftedit:0x7FF0B0000000 riched32:0x7FF0A0000000
     dcomp:0x7FF030000000 prntvpt:0x7FF020000000 psapi:0x7FF0E0000000 lz32:0x7FF0F0000000
-    mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000 coremessaging:0x7FF090000000)
+    activeds:0x7FF070000000 mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000 coremessaging:0x7FF090000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
-    set(objects_msi ${arch}-lib-compound)
+    set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet)
+    # the installer registers shortcuts and users, reads file versions and runs custom actions.
+    set(libs_msi ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/shell32.lib ${MIME_LIB_${arch}}/ole32.lib
+        ${MIME_LIB_${arch}}/version.lib)
     set(objects_winmm ${arch}-lib-audio)
     set(objects_dsound ${arch}-lib-audio)
     # dinput8 and dinput are revisions of one engine.
@@ -412,6 +415,25 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
         mime_link(${MIME_OUT_${arch}}/svchost.exe ${arch} OBJECTS ${arch}-svchost ${arch}-chkstk LIBS ${svchost_libs}
             FLAGS ${svchost_flags} RESOURCE svchost.exe GROUPS guest)
         mime_rom_file(${MIME_OUT_${arch}}/svchost.exe ${MIME_ROM_${arch}}/svchost.exe)
+    endif()
+endforeach()
+
+# msiexec.exe, the command line of the installer: the processor of the machine in System32, and the 32-bit one in
+# SysWOW64, which also hosts the 32-bit custom actions of a package.
+mime_glob(msiexec_sources guest/msiexec/*.c)
+foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
+    if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
+        mime_objects(${arch}-msiexec ${arch} SOURCES ${msiexec_sources} INCLUDES guest/msiexec)
+        set(msiexec_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/user32.lib
+            ${MIME_LIB_${arch}}/msi.lib)
+        set(msiexec_flags /subsystem:windows,10.0 /entry:entry /base:0x7FF6AA000000 /highentropyva /dynamicbase
+            /stack:0x100000,0x4000)
+        if(arch STREQUAL "x86")
+            set(msiexec_flags /subsystem:windows,6.0 /entry:entry /base:0x00400000 /dynamicbase /stack:0x100000,0x4000)
+        endif()
+        mime_link(${MIME_OUT_${arch}}/msiexec.exe ${arch} OBJECTS ${arch}-msiexec ${arch}-chkstk LIBS ${msiexec_libs}
+            FLAGS ${msiexec_flags} RESOURCE msiexec.exe GROUPS guest)
+        mime_rom_file(${MIME_OUT_${arch}}/msiexec.exe ${MIME_ROM_${arch}}/msiexec.exe)
     endif()
 endforeach()
 

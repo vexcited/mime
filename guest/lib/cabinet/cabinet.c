@@ -2,6 +2,9 @@
 #include "cabinet.h"
 #ifdef _WIN32
 #include <rtl.h>
+/* a guest library has no heap of its own: the caller gives the allocators. */
+#define malloc(size) ((void *)0)
+#define free(memory) ((void)(memory))
 #else
 #include <stdlib.h>
 #include <string.h>

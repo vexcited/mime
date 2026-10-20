@@ -119,6 +119,28 @@ done:
     return error;
 }
 
+/* one property of the summary information of a database, read without a handle. */
+UINT MimeMsiSummaryProperty(MIME_MSI_DATABASE *database, UINT id, MIME_MSI_SUMMARY_VALUE *value)
+{
+    memset(value, 0, sizeof(*value));
+    if (!id || id == 17 || id >= 20)
+        return ERROR_INVALID_PARAMETER;
+    MIME_MSI_SUMMARY *summary = MimeMsiAllocate(sizeof(*summary));
+    if (!summary)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    UINT error = read_summary(database, summary);
+    if (!error) {
+        MIME_MSI_SUMMARY_PROPERTY *property = &summary->Properties[id];
+        value->Type = property->Type;
+        value->Number = property->Number;
+        value->Time = property->Time;
+        value->Text = property->Text;
+        property->Text = nullptr;
+    }
+    destroy_summary(&summary->Object);
+    return error;
+}
+
 UINT MimeMsiCreateSummary(MIME_MSI_DATABASE *database, MSIHANDLE *out)
 {
     *out = 0;

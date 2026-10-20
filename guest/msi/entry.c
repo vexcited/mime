@@ -1,6 +1,31 @@
 #include "msi_private.h"
 
 static volatile LONG installing;
+static volatile DWORD installing_thread;
+static ULONG nested_installs;
+
+/* one installation at a time, but the one that is running may start another from the same thread, as an upgrade does. */
+static BOOL begin_install(void)
+{
+    if (!InterlockedCompareExchange(&installing, 1, 0)) {
+        installing_thread = GetCurrentThreadId();
+        return TRUE;
+    }
+    if (installing_thread != GetCurrentThreadId())
+        return FALSE;
+    nested_installs++;
+    return TRUE;
+}
+
+static void end_install(void)
+{
+    if (nested_installs) {
+        nested_installs--;
+        return;
+    }
+    installing_thread = 0;
+    InterlockedExchange(&installing, 0);
+}
 
 static UINT command_properties(MSIHANDLE package, PCWSTR command)
 {
@@ -177,10 +202,13 @@ UINT WINAPI MsiInstallProductW(LPCWSTR path, LPCWSTR command)
 {
     if (!path || !*path)
         return ERROR_INVALID_PARAMETER;
-    if (InterlockedCompareExchange(&installing, 1, 0))
+    if (!begin_install())
         return ERROR_INSTALL_ALREADY_RUNNING;
     MSIHANDLE handle = 0;
     UINT error = MsiOpenPackageW(path, &handle);
+    /* a package that is not there, or not a package, is one that could not be opened. */
+    if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+        error = ERROR_INSTALL_PACKAGE_OPEN_FAILED;
     if (!error)
         error = command_properties(handle, command);
     if (!error)
@@ -191,7 +219,7 @@ UINT WINAPI MsiInstallProductW(LPCWSTR path, LPCWSTR command)
         error = execute_package(handle);
     if (handle)
         MsiCloseHandle(handle);
-    InterlockedExchange(&installing, 0);
+    end_install();
     return error;
 }
 
@@ -203,7 +231,7 @@ UINT WINAPI MsiReinstallProductW(LPCWSTR product, DWORD mode)
     if (mode & (REINSTALLMODE_FILEOLDERVERSION | REINSTALLMODE_FILEEQUALVERSION | REINSTALLMODE_FILEEXACT |
                 REINSTALLMODE_FILEVERIFY | REINSTALLMODE_PACKAGE))
         return ERROR_CALL_NOT_IMPLEMENTED;
-    if (InterlockedCompareExchange(&installing, 1, 0))
+    if (!begin_install())
         return ERROR_INSTALL_ALREADY_RUNNING;
     MSIHANDLE handle = 0;
     UINT error = MsiOpenProductW(product, &handle);
@@ -224,7 +252,7 @@ UINT WINAPI MsiReinstallProductW(LPCWSTR product, DWORD mode)
         error = execute_package(handle);
     if (handle)
         MsiCloseHandle(handle);
-    InterlockedExchange(&installing, 0);
+    end_install();
     return error;
 }
 
@@ -234,9 +262,9 @@ UINT WINAPI MsiConfigureProductExW(LPCWSTR product, int level, INSTALLSTATE stat
     if (!MimeMsiPackGuid(product, packed) || state < INSTALLSTATE_ADVERTISED || state > INSTALLSTATE_DEFAULT ||
         (state == INSTALLSTATE_DEFAULT && (level < 0 || level > 32767)))
         return ERROR_INVALID_PARAMETER;
-    if (state != INSTALLSTATE_LOCAL && state != INSTALLSTATE_DEFAULT)
+    if (state != INSTALLSTATE_LOCAL && state != INSTALLSTATE_DEFAULT && state != INSTALLSTATE_ABSENT)
         return ERROR_CALL_NOT_IMPLEMENTED;
-    if (InterlockedCompareExchange(&installing, 1, 0))
+    if (!begin_install())
         return ERROR_INSTALL_ALREADY_RUNNING;
     MSIHANDLE handle = 0;
     UINT error = MsiOpenProductW(product, &handle);
@@ -248,7 +276,14 @@ UINT WINAPI MsiConfigureProductExW(LPCWSTR product, int level, INSTALLSTATE stat
         error = ERROR_INVALID_HANDLE;
     if (!error) {
         package->ConfigureDefaults = TRUE;
-        if (state == INSTALLSTATE_LOCAL) {
+        if (state == INSTALLSTATE_ABSENT) {
+            /* the product goes with all of its features. */
+            if (*MimeMsiGetProperty(package, L"ADDLOCAL") || *MimeMsiGetProperty(package, L"ADDSOURCE") ||
+                *MimeMsiGetProperty(package, L"REINSTALL"))
+                error = ERROR_INVALID_PARAMETER;
+            else if (!*MimeMsiGetProperty(package, L"REMOVE"))
+                error = MimeMsiSetProperty(package, L"REMOVE", L"ALL");
+        } else if (state == INSTALLSTATE_LOCAL) {
             if (*MimeMsiGetProperty(package, L"ADDLOCAL") || *MimeMsiGetProperty(package, L"REMOVE") ||
                 *MimeMsiGetProperty(package, L"ADDSOURCE") || *MimeMsiGetProperty(package, L"REINSTALL"))
                 error = ERROR_INVALID_PARAMETER;
@@ -265,6 +300,6 @@ UINT WINAPI MsiConfigureProductExW(LPCWSTR product, int level, INSTALLSTATE stat
         error = execute_package(handle);
     if (handle)
         MsiCloseHandle(handle);
-    InterlockedExchange(&installing, 0);
+    end_install();
     return error;
 }

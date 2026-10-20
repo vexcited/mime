@@ -262,6 +262,7 @@ MSICONDITION MimeMsiEvaluateCondition(MIME_MSI_PACKAGE *package, PCWSTR conditio
 
 MSICONDITION WINAPI MsiEvaluateConditionW(MSIHANDLE handle, LPCWSTR condition)
 {
+    MIME_REMOTE(PROXY_EvaluateConditionW, MSICONDITION, MIME_ARG(handle), MIME_ARG(condition));
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     MSICONDITION result = handle && !package ? MSICONDITION_ERROR : MimeMsiEvaluateCondition(package, condition);

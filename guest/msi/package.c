@@ -65,9 +65,10 @@ UINT MimeMsiSetProperty(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR value)
     return ERROR_SUCCESS;
 }
 
-static void destroy_package(MIME_MSI_OBJECT *object)
+void MimeMsiDestroyPackage(MIME_MSI_OBJECT *object)
 {
     MIME_MSI_PACKAGE *package = (void *)object;
+    MimeMsiClearScript(package);
     UINT rollback = MimeMsiFinishTransaction(package, FALSE);
     if (rollback)
         DbgPrint("msi: package close rollback failed with error %u\n", rollback);
@@ -81,6 +82,7 @@ static void destroy_package(MIME_MSI_OBJECT *object)
     if (package->Database)
         MimeMsiRelease(&package->Database->Object);
     MimeMsiFree(package->ActionFormat);
+    MimeMsiFree(package->ComponentInstalled);
     MimeMsiFree(package->Features);
     MimeMsiFree(package);
 }
@@ -89,7 +91,10 @@ static UINT load_properties(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_DATABASE *database = package->Database;
     MIME_MSI_TABLE *table;
-    UINT error = MimeMsiLoadTable(database, L"Property", &table);
+    UINT error = MimeMsiInitializeSystem(package);
+    if (error)
+        return error;
+    error = MimeMsiLoadTable(database, L"Property", &table);
     if (error)
         return error;
     if (table->Count != 2 || wcscmp(table->Columns[0].Name, L"Property") ||
@@ -105,7 +110,9 @@ static UINT load_properties(MIME_MSI_PACKAGE *package)
         if (error)
             return error;
     }
-    error = MimeMsiSetProperty(package, L"OriginalDatabase", database->Path);
+    error = MimeMsiSetScopeFolders(package);
+    if (!error)
+        error = MimeMsiSetProperty(package, L"OriginalDatabase", database->Path);
     PWSTR directory = MimeMsiDuplicate(database->Path);
     if (!directory)
         return ERROR_NOT_ENOUGH_MEMORY;
@@ -152,7 +159,7 @@ UINT WINAPI MsiOpenPackageExW(LPCWSTR path, DWORD options, MSIHANDLE *out)
         error = ERROR_NOT_ENOUGH_MEMORY;
     if (!error) {
         package->Object.Kind = MIME_MSI_KIND_PACKAGE;
-        package->Object.Destroy = destroy_package;
+        package->Object.Destroy = MimeMsiDestroyPackage;
         package->Database = database;
         package->Options = options;
         database->Object.References++;
@@ -161,7 +168,7 @@ UINT WINAPI MsiOpenPackageExW(LPCWSTR path, DWORD options, MSIHANDLE *out)
             error = ERROR_NOT_ENOUGH_MEMORY;
     }
     if (error && package)
-        destroy_package(&package->Object);
+        MimeMsiDestroyPackage(&package->Object);
     ReleaseSRWLockExclusive(&MimeMsiLock);
     if (!borrowed)
         MsiCloseHandle(handle);
@@ -175,6 +182,7 @@ UINT WINAPI MsiOpenPackageW(LPCWSTR path, MSIHANDLE *out)
 
 MSIHANDLE WINAPI MsiGetActiveDatabase(MSIHANDLE handle)
 {
+    MIME_REMOTE(PROXY_GetActiveDatabase, MSIHANDLE, MIME_ARG(handle));
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     MSIHANDLE result = package ? MimeMsiAddHandle(&package->Database->Object) : 0;
@@ -184,6 +192,7 @@ MSIHANDLE WINAPI MsiGetActiveDatabase(MSIHANDLE handle)
 
 UINT WINAPI MsiGetPropertyW(MSIHANDLE handle, LPCWSTR name, LPWSTR out, LPDWORD size)
 {
+    MIME_REMOTE(PROXY_GetPropertyW, UINT, MIME_ARG(handle), MIME_ARG(name), MIME_ARG(out), MIME_ARG(size));
     if (!name)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockShared(&MimeMsiLock);
@@ -195,6 +204,7 @@ UINT WINAPI MsiGetPropertyW(MSIHANDLE handle, LPCWSTR name, LPWSTR out, LPDWORD 
 
 UINT WINAPI MsiSetPropertyW(MSIHANDLE handle, LPCWSTR name, LPCWSTR value)
 {
+    MIME_REMOTE(PROXY_SetPropertyW, UINT, MIME_ARG(handle), MIME_ARG(name), MIME_ARG(value));
     if (!name || !*name)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockExclusive(&MimeMsiLock);

@@ -100,6 +100,7 @@ UINT MimeMsiRegistryText(HKEY key, PCWSTR name, PWSTR *out)
 
 UINT WINAPI MsiGetProductInfoW(LPCWSTR product, LPCWSTR attribute, LPWSTR out, LPDWORD size)
 {
+    MIME_REMOTE(PROXY_GetProductInfoW, UINT, MIME_ARG(product), MIME_ARG(attribute), MIME_ARG(out), MIME_ARG(size));
     if (!attribute || (out && !size))
         return ERROR_INVALID_PARAMETER;
     HKEY key;
