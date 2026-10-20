@@ -197,8 +197,11 @@ static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
     return e;
 }
 
+static void release_tls(PLDR_DATA_TABLE_ENTRY e);
+
 static void destroy_entry(PLDR_DATA_TABLE_ENTRY e)
 {
+    release_tls(e);
     RtlReleaseActivationContext(e->EntryPointActivationContext);
     RemoveEntryList(&e->InLoadOrderLinks);
     RemoveEntryList(&e->InMemoryOrderLinks);
@@ -780,9 +783,21 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
         return;
     ULONG size;
     IMAGE_TLS_DIRECTORY *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
-    if (!tls || g_tls_count >= RTL_NUMBER_OF(g_tls_modules))
+    if (!tls)
         return;
-    ULONG index = g_tls_count++;
+    /* the place of a library that was unloaded is used again, a program may load and free one many times. */
+    ULONG index = g_tls_count;
+    for (ULONG i = 0; i < g_tls_count; i++) {
+        if (!g_tls_modules[i].Directory) {
+            index = i;
+            break;
+        }
+    }
+    if (index == g_tls_count) {
+        if (g_tls_count >= RTL_NUMBER_OF(g_tls_modules))
+            return;
+        g_tls_count++;
+    }
     g_tls_modules[index].Entry = e;
     g_tls_modules[index].Directory = tls;
     e->TlsIndex = (USHORT)index;
@@ -790,11 +805,27 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
         *(PULONG)tls->AddressOfIndex = index;
 }
 
+/* a library that goes takes its blocks of every thread, and its place in the table is free for the next one. */
+static void release_tls(PLDR_DATA_TABLE_ENTRY e)
+{
+    for (ULONG i = 0; i < g_tls_count; i++) {
+        if (g_tls_modules[i].Entry != e || !g_tls_modules[i].Directory)
+            continue;
+        g_tls_modules[i].Entry = nullptr;
+        g_tls_modules[i].Directory = nullptr;
+        for (PLIST_ENTRY l = g_tls_vectors.Flink; l != &g_tls_vectors; l = l->Flink) {
+            TLS_VECTOR *v = CONTAINING_RECORD(l, TLS_VECTOR, Link);
+            heap_free(v->Slots[i]);
+            v->Slots[i] = nullptr;
+        }
+    }
+}
+
 /* fills the empty slots of a thread with fresh copies of the static tls blocks. */
 static NTSTATUS fill_tls(TLS_VECTOR *v)
 {
     for (ULONG i = 0; i < g_tls_count; i++) {
-        if (v->Slots[i])
+        if (v->Slots[i] || !g_tls_modules[i].Directory)
             continue;
         IMAGE_TLS_DIRECTORY *tls = g_tls_modules[i].Directory;
         SIZE_T raw = (SIZE_T)(tls->EndAddressOfRawData - tls->StartAddressOfRawData);
