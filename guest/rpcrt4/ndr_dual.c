@@ -18,17 +18,13 @@ const MIDL_SYNTAX_INFO *NdrpOldSyntax(const MIDL_SYNTAX_INFO *list, ULONG_PTR co
     return nullptr;
 }
 
+#ifdef _WIN64
 RPCRTAPI CLIENT_CALL_RETURN RPC_VAR_ENTRY NdrClientCall3(MIDL_STUBLESS_PROXY_INFO *info, ULONG proc, void *return_value, ...)
 {
     va_list ap;
     va_start(ap, return_value);
-#ifdef _WIN64
     uchar *args = (uchar *)ap;
     BOOL promoted = TRUE;
-#else
-    uchar *args = va_arg(ap, uchar *);
-    BOOL promoted = FALSE;
-#endif
     MIDL_STUB_DESC desc = *info->pStubDesc;
     PFORMAT_STRING procs = info->ProcFormatString;
     const unsigned short *offsets = info->FormatStringOffset;
@@ -47,3 +43,45 @@ RPCRTAPI CLIENT_CALL_RETURN RPC_VAR_ENTRY NdrClientCall3(MIDL_STUBLESS_PROXY_INF
     /* the return value comes back as the result of the call; where the stub says it keeps it is not written. */
     return r;
 }
+#else
+/*
+ * on x86 the arguments of the procedure follow the three of the call on the stack, as the next of its variable arguments,
+ * and nothing is widened.
+ */
+RPCRTAPI CLIENT_CALL_RETURN RPC_VAR_ENTRY NdrClientCall4(MIDL_STUBLESS_PROXY_INFO *info, ULONG proc, void *return_value, ...)
+{
+    va_list ap;
+    va_start(ap, return_value);
+    uchar *args = (uchar *)ap;
+    MIDL_STUB_DESC desc = *info->pStubDesc;
+    PFORMAT_STRING procs = info->ProcFormatString;
+    const unsigned short *offsets = info->FormatStringOffset;
+    if (info->pSyntaxInfo) {
+        const MIDL_SYNTAX_INFO *old = NdrpOldSyntax(info->pSyntaxInfo, info->nCount ? info->nCount : 2);
+        if (!old)
+            RpcRaiseException(RPC_S_UNSUPPORTED_TRANS_SYN);
+        procs = old->ProcString;
+        offsets = old->FmtStringOffset;
+        desc.pFormatTypes = old->TypeString;
+        if (old->aUserMarshalQuadruple)
+            desc.aUserMarshalQuadruple = (const USER_MARSHAL_ROUTINE_QUADRUPLE *)old->aUserMarshalQuadruple;
+    }
+    CLIENT_CALL_RETURN r = NdrpClientCall(&desc, procs + offsets[proc], args, FALSE);
+    va_end(ap);
+    return r;
+}
+#endif
+
+#ifdef _WIN64
+/* a server that carries both syntaxes dispatches to these, and a com stub that does to the next. */
+RPCRTAPI void RPC_ENTRY NdrServerCallAll(PRPC_MESSAGE msg)
+{
+    NdrServerCall2(msg);
+}
+
+RPCRTAPI LONG RPC_ENTRY NdrStubCall3(struct IRpcStubBuffer *stub, struct IRpcChannelBuffer *channel, PRPC_MESSAGE msg,
+                                     ULONG *phase)
+{
+    return NdrStubCall2(stub, channel, msg, phase);
+}
+#endif

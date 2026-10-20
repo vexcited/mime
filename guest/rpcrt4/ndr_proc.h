@@ -48,6 +48,9 @@ static inline ULONG_PTR NdrpInvoke(void *function, const ULONG_PTR *slots, ULONG
     return (ULONG_PTR)NdrpInvokeEx(function, slots, count, 0, nullptr);
 }
 
+/* the description of the older transfer syntax among those of a stub that carries two, or null. */
+const MIDL_SYNTAX_INFO *NdrpOldSyntax(const MIDL_SYNTAX_INFO *list, ULONG_PTR count);
+
 /* the call of a client, shared by the stubs of the rpc runtime and the thunks of stubless proxies. */
 CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, uchar *args, BOOL promoted_floats);
 

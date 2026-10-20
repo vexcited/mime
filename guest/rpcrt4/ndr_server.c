@@ -270,14 +270,31 @@ LONG RPC_ENTRY NdrStubCall2(IRpcStubBuffer *stub, IRpcChannelBuffer *channel, PR
         info = iface->InterpreterInfo;
         epv = msg->ManagerEpv ? msg->ManagerEpv : (void **)info->DispatchTable;
     }
-    if (msg->ProcNum >= (ULONG)info->nCount && info->nCount)
-        NDR_RAISE(RPC_S_PROCNUM_OUT_OF_RANGE);
-    PFORMAT_STRING format = info->ProcString + info->FmtStringOffset[msg->ProcNum];
+    /* the procedure number was checked against the dispatch table of the interface by the runtime, or the stub vtable. */
+    PMIDL_STUB_DESC desc = info->pStubDesc;
+    PFORMAT_STRING procs = info->ProcString;
+    const unsigned short *offsets = info->FmtStringOffset;
+    PFORMAT_STRING types = desc->pFormatTypes;
+    MIDL_STUB_DESC old_desc;
+    /* a stub of two transfer syntaxes keeps the older one's formats in its table of syntaxes. */
+    if (info->pSyntaxInfo) {
+        const MIDL_SYNTAX_INFO *old = NdrpOldSyntax(info->pSyntaxInfo, info->nCount ? info->nCount : 2);
+        if (!old)
+            NDR_RAISE(RPC_S_UNSUPPORTED_TRANS_SYN);
+        procs = old->ProcString;
+        offsets = old->FmtStringOffset;
+        types = old->TypeString;
+        old_desc = *desc;
+        old_desc.pFormatTypes = types;
+        if (old->aUserMarshalQuadruple)
+            old_desc.aUserMarshalQuadruple = (const USER_MARSHAL_ROUTINE_QUADRUPLE *)old->aUserMarshalQuadruple;
+        desc = &old_desc;
+    }
+    PFORMAT_STRING format = procs + offsets[msg->ProcNum];
 
     NDR_PROC p;
     NdrpParseProc(format, &p);
-    p.Types = info->pStubDesc->pFormatTypes;
-    PMIDL_STUB_DESC desc = info->pStubDesc;
+    p.Types = types;
 
     MIDL_STUB_MESSAGE m;
     NdrpInitStubMessage(&m, msg, desc, FALSE, &p);

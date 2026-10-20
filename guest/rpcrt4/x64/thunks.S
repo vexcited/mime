@@ -3,12 +3,37 @@
  * which puts the arguments in a frame the interpreter reads. A method of a base interface that has a proxy of its own goes
  * to that proxy, with the proxy's own interface pointer as this. Thunk i is at the start of its table plus 16 times i.
  */
+    .altmacro
     .text
+
+/* a thunk, and for the methods 3 to 32 a name that windows' proxy dlls call through combase, which forwards here. */
+    .macro  stubless_thunk n
+    .if \n >= 3 && \n <= 32
+    .globl  ObjectStublessClient\n
+    .section .drectve,"yn"
+    .ascii  " /EXPORT:ObjectStublessClient\n"
+    .text
+ObjectStublessClient\n:
+    .endif
+    movl    $\n, %eax
+    jmp     NdrpStublessCommon
+    .p2align 4
+    .endm
+
+    .macro  stubless_thunks first, last
+    stubless_thunk %first
+    .if \first < \last
+    stubless_thunks %(\first + 1), \last
+    .endif
+    .endm
+
     .p2align 4
     .globl  NdrpStublessThunks
 NdrpStublessThunks:
-    .set    i, 0
-    .rept   1024
+    stubless_thunks 0, 15
+    stubless_thunks 16, 32
+    .set    i, 33
+    .rept   991
     movl    $i, %eax
     jmp     NdrpStublessCommon
     .p2align 4
@@ -42,11 +67,34 @@ NdrpStublessCommon:
     ret
     .seh_endproc
 
+    .macro  delegate_thunk n
+    .if \n >= 3 && \n <= 32
+    .globl  NdrProxyForwardingFunction\n
+    .section .drectve,"yn"
+    .ascii  " /EXPORT:NdrProxyForwardingFunction\n"
+    .text
+NdrProxyForwardingFunction\n:
+    .endif
+    movq    8(%rcx), %rcx
+    movq    (%rcx), %rax
+    jmp     *(\n * 8)(%rax)
+    .p2align 5
+    .endm
+
+    .macro  delegate_thunks first, last
+    delegate_thunk %first
+    .if \first < \last
+    delegate_thunks %(\first + 1), \last
+    .endif
+    .endm
+
     .p2align 5
     .globl  NdrpDelegateThunks
 NdrpDelegateThunks:
-    .set    i, 0
-    .rept   128
+    delegate_thunks 0, 15
+    delegate_thunks 16, 32
+    .set    i, 33
+    .rept   95
     movq    8(%rcx), %rcx
     movq    (%rcx), %rax
     jmp     *(i * 8)(%rax)

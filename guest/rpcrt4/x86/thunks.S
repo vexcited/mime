@@ -2,12 +2,34 @@
  * the thunks of proxies, as in the x64 file. The methods are stdcall, so after the call the common code takes the
  * arguments off the stack for the caller, as many bytes as the procedure's frame is.
  */
+    .altmacro
     .text
+
+/* a thunk, and for the methods 3 to 32 a name that windows' proxy dlls call through combase, which forwards here. */
+    .macro  stubless_thunk n
+    .if \n >= 3 && \n <= 32
+    .globl  _ObjectStublessClient\n
+_ObjectStublessClient\n:
+    .endif
+    pushl   $\n
+    jmp     NdrpStublessCommon
+    .p2align 4
+    .endm
+
+    .macro  stubless_thunks first, last
+    stubless_thunk %first
+    .if \first < \last
+    stubless_thunks %(\first + 1), \last
+    .endif
+    .endm
+
     .p2align 4
     .globl  _NdrpStublessThunks
 _NdrpStublessThunks:
-    .set    i, 0
-    .rept   1024
+    stubless_thunks 0, 15
+    stubless_thunks 16, 32
+    .set    i, 33
+    .rept   991
     pushl   $i
     jmp     NdrpStublessCommon
     .p2align 4
@@ -33,11 +55,33 @@ NdrpStublessCommon:
     movl    %edx, (%esp)
     ret
 
+    .macro  delegate_thunk n
+    .if \n >= 3 && \n <= 32
+    .globl  _NdrProxyForwardingFunction\n
+_NdrProxyForwardingFunction\n:
+    .endif
+    movl    4(%esp), %eax
+    movl    4(%eax), %eax
+    movl    %eax, 4(%esp)
+    movl    (%eax), %eax
+    jmp     *(\n * 4)(%eax)
+    .p2align 5
+    .endm
+
+    .macro  delegate_thunks first, last
+    delegate_thunk %first
+    .if \first < \last
+    delegate_thunks %(\first + 1), \last
+    .endif
+    .endm
+
     .p2align 5
     .globl  _NdrpDelegateThunks
 _NdrpDelegateThunks:
-    .set    i, 0
-    .rept   128
+    delegate_thunks 0, 15
+    delegate_thunks 16, 32
+    .set    i, 33
+    .rept   95
     movl    4(%esp), %eax
     movl    4(%eax), %eax
     movl    %eax, 4(%esp)
