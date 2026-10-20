@@ -1074,6 +1074,13 @@ SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderW(LPBROWSEINFOW info)
     return nullptr;
 }
 
+SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderA(LPBROWSEINFOA info)
+{
+    if (info && info->pszDisplayName)
+        info->pszDisplayName[0] = 0;
+    return nullptr;
+}
+
 SHSTDAPI void WINAPI SHChangeNotify(LONG event, UINT flags, LPCVOID item1, LPCVOID item2)
 {
 }
