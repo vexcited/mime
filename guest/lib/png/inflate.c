@@ -32,6 +32,27 @@ enum { K_LIT, K_BASE, K_EOB, K_SLOW };
 
 enum { T_CL, T_LIT, T_DIST };
 
+#if defined(__has_builtin)
+#if !__has_builtin(__builtin_bitreverse32)
+#define NO_BITREVERSE_BUILTIN
+#endif
+#else
+#define NO_BITREVERSE_BUILTIN
+#endif
+
+#ifdef NO_BITREVERSE_BUILTIN
+static inline uint32_t bitreverse32(uint32_t v)
+{
+    v = ((v >> 1) & 0x55555555u) | ((v & 0x55555555u) << 1);
+    v = ((v >> 2) & 0x33333333u) | ((v & 0x33333333u) << 2);
+    v = ((v >> 4) & 0x0f0f0f0fu) | ((v & 0x0f0f0f0fu) << 4);
+    v = ((v >> 8) & 0x00ff00ffu) | ((v & 0x00ff00ffu) << 8);
+    return v >> 16 | v << 16;
+}
+#else
+#define bitreverse32 __builtin_bitreverse32
+#endif
+
 static constexpr uint16_t len_base[29] = {
     3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
     31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258,
@@ -120,7 +141,7 @@ static bool build_table(const uint8_t *lens, unsigned n, int type, uint32_t *tab
             if (len > tbits)
                 continue;
             uint32_t e = sym_entry(type, sym[k], len);
-            for (unsigned idx = __builtin_bitreverse32(code) >> (32 - len); idx < size; idx += 1u << len)
+            for (unsigned idx = bitreverse32(code) >> (32 - len); idx < size; idx += 1u << len)
                 table[idx] = e;
         }
         code <<= 1;
