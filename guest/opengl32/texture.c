@@ -604,6 +604,21 @@ static BOOL face_of(GLenum target, uint32_t *slice)
     return FALSE;
 }
 
+/* the mip chain of a texture, made on the host. */
+static void generate_mipmaps(GlContext *ctx, GlTexture *t)
+{
+    uint32_t want = full_levels(t->width, t->height, t->mtl_type == MTL_TEX_3D ? t->depth : 1);
+    if (t->levels < want)
+        create_host(t, want);
+    t->defined_levels = (uint16_t)((1u << want) - 1);
+    outside_pass(ctx);
+    gl_device_lock();
+    MimeGpuObject *o = gl_emit(MIME_GPU_TEXTURE_MIPMAPS, sizeof(MimeGpuObject));
+    o->id = t->id;
+    gl_device_unlock();
+    t->sampler_id = 0;
+}
+
 GLAPI void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internal, GLsizei w, GLsizei h, GLint border,
                                  GLenum format, GLenum type, const void *pixels)
 {
@@ -623,6 +638,8 @@ GLAPI void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internal, GLs
     }
     if (pixels || ctx->pixel_unpack)
         upload(ctx, t, level, slice, 0, 0, 0, (uint32_t)w, (uint32_t)h, 1, format, type, pixels);
+    if (t->generate_mipmap && level == 0 && t->id && !t->compressed)
+        generate_mipmaps(ctx, t);
 }
 
 GLAPI void APIENTRY glTexImage1D(GLenum target, GLint level, GLint internal, GLsizei w, GLint border, GLenum format,
@@ -669,6 +686,8 @@ GLAPI void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y
     uint32_t slice;
     face_of(target, &slice);
     upload(ctx, t, level, slice, x, y, 0, (uint32_t)w, (uint32_t)h, 1, format, type, pixels);
+    if (t->generate_mipmap && level == 0 && !t->compressed)
+        generate_mipmaps(ctx, t);
 }
 
 GLAPI void APIENTRY glTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLenum type,
@@ -799,16 +818,7 @@ GLAPI void APIENTRY glGenerateMipmap(GLenum target)
     GlTexture *t = bound(ctx, target);
     if (!t || !t->id || t->compressed)
         return;
-    uint32_t want = full_levels(t->width, t->height, t->mtl_type == MTL_TEX_3D ? t->depth : 1);
-    if (t->levels < want)
-        create_host(t, want);
-    t->defined_levels = (uint16_t)((1u << want) - 1);
-    outside_pass(ctx);
-    gl_device_lock();
-    MimeGpuObject *o = gl_emit(MIME_GPU_TEXTURE_MIPMAPS, sizeof(MimeGpuObject));
-    o->id = t->id;
-    gl_device_unlock();
-    t->sampler_id = 0;
+    generate_mipmaps(ctx, t);
 }
 
 /* copies from the read framebuffer, through the host's blit. */
@@ -911,6 +921,8 @@ static void tex_parameter(GlContext *ctx, GlTexture *t, GLenum pname, const GLfl
         memcpy(s->border, v, sizeof(s->border));
         break;
     case GL_GENERATE_MIPMAP:
+        t->generate_mipmap = v[0] != 0;
+        break;
     case GL_DEPTH_TEXTURE_MODE:
     case GL_TEXTURE_PRIORITY:
         break;
@@ -1037,6 +1049,9 @@ GLAPI void APIENTRY glGetTexParameteriv(GLenum target, GLenum pname, GLint *para
         break;
     case GL_TEXTURE_IMMUTABLE_FORMAT:
         *params = 0;
+        break;
+    case GL_GENERATE_MIPMAP:
+        *params = t->generate_mipmap;
         break;
     default:
         *params = 0;

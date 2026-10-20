@@ -138,6 +138,7 @@ typedef struct GlTexture {
     GLenum component_swizzle[4];
     BOOL bgra;            /* stored as bgra */
     BOOL compressed;
+    BOOL generate_mipmap; /* GL_GENERATE_MIPMAP: level 0 uploads rebuild the chain. */
     uint16_t defined_levels;
     GlSamplerState sampler;
     uint32_t sampler_id;  /* 0 when the state changed */
