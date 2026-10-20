@@ -21,6 +21,8 @@ static WORD rd16(const BYTE *p)
 }
 
 static INT iabs(INT v) { return v < 0 ? -v : v; }
+static INT min_int(INT a, INT b) { return a < b ? a : b; }
+static INT max_int(INT a, INT b) { return a > b ? a : b; }
 
 /* ------------------------------------------------------------------ the object */
 
@@ -94,14 +96,6 @@ const BYTE *gp_meta_bytes(GMetafile *m, DWORD *size)
 
 /* ------------------------------------------------------------------ headers */
 
-/* an enhanced metafile header of 88 bytes: its type, signature, version and the sizes it must have. */
-static BOOL emf_header_valid(const BYTE *h)
-{
-    return rd32(h) == EMR_HEADER && rd32(h + 40) == ENHMETA_SIGNATURE && rd32(h + 4) >= EMF_HEADER3_SIZE &&
-           rd16(h + 56) != 0 && rd32(h + 52) >= 2 && (rd32(h + 48) & 3) == 0 && (INT)rd32(h + 72) > 0 &&
-           (INT)rd32(h + 76) > 0 && (INT)rd32(h + 80) > 0 && (INT)rd32(h + 84) > 0;
-}
-
 static BOOL wmf_header_valid(const BYTE *h)
 {
     WORD type = rd16(h), size = rd16(h + 2), version = rd16(h + 4);
@@ -128,23 +122,29 @@ static void placeable_bytes(const WmfPlaceableFileHeader *h, BYTE out[PLACEABLE_
     memcpy(out + 20, &h->Checksum, 2);
 }
 
+/* an enhanced metafile header is good when it says what it is and describes something that can be played. */
+static BOOL emf_header_valid(const BYTE *h)
+{
+    return rd32(h) == 1 && rd32(h + 40) == 0x464d4520 && rd32(h + 4) >= EMF_HEADER3_SIZE && rd16(h + 56) != 0 &&
+           rd32(h + 52) >= 2 && (rd32(h + 48) & 3) == 0 && (INT)rd32(h + 72) > 0 && (INT)rd32(h + 76) > 0 &&
+           (INT)rd32(h + 80) > 0 && (INT)rd32(h + 84) > 0;
+}
+
+/* the 22 bytes of a placeable header: the key, a checksum that xors the words before it to the stored one, a box. */
 static BOOL placeable_bytes_valid(const BYTE *p)
 {
-    if (rd32(p) != PLACEABLE_KEY)
-        return FALSE;
     WORD sum = 0;
     for (INT i = 0; i < 10; i++)
-        sum ^= rd16(p + i * 2);
-    return sum == rd16(p + 20) && (INT16)rd16(p + 6) != (INT16)rd16(p + 10) && (INT16)rd16(p + 8) != (INT16)rd16(p + 12);
+        sum ^= rd16(p + 2 * i);
+    return rd32(p) == PLACEABLE_KEY && sum == rd16(p + 20) && (INT16)rd16(p + 6) != (INT16)rd16(p + 10) &&
+           (INT16)rd16(p + 8) != (INT16)rd16(p + 12);
 }
 
 BOOL gp_wmf_placeable_valid(const WmfPlaceableFileHeader *h)
 {
-    BYTE b[PLACEABLE_SIZE];
-    if (!h)
-        return FALSE;
-    placeable_bytes(h, b);
-    return placeable_bytes_valid(b);
+    BYTE bytes[PLACEABLE_SIZE];
+    placeable_bytes(h, bytes);
+    return placeable_bytes_valid(bytes);
 }
 
 /* the record of the emf+ header in the second record of an enhanced metafile, when there is one. */
@@ -160,42 +160,6 @@ static BOOL find_plus_header(const BYTE *bytes, DWORD size, const BYTE **plus)
         return FALSE;
     *plus = r + 16;
     return TRUE;
-}
-
-/* the header of an enhanced metafile: from its own header and, when there is one, the emf+ header record. */
-static GpStatus fill_emf_header(MetafileHeader *h, const BYTE *eh, const BYTE *plus)
-{
-    memset(h, 0, sizeof(*h));
-    if (plus && rd16(plus) == EmfPlusRecordTypeHeader && rd32(plus + 4) >= EMFPLUS_HEADER_RECORD &&
-        rd32(plus + 8) == rd32(plus + 4) - 12 && (rd32(plus + 12) & EMFPLUS_VERSION_MASK) == EMFPLUS_VERSION_BASE &&
-        (INT)rd32(plus + 20) > 0 && (INT)rd32(plus + 24) > 0) {
-        h->Type = (rd16(plus + 2) & 1) + MetafileTypeEmfPlusOnly;
-        h->EmfPlusHeaderSize = (INT)rd32(plus + 4);
-        h->Version = rd32(plus + 12);
-        h->EmfPlusFlags = rd32(plus + 16);
-        h->LogicalDpiX = (INT)rd32(plus + 20);
-        h->LogicalDpiY = (INT)rd32(plus + 24);
-    } else {
-        h->Type = MetafileTypeEmf;
-        h->Version = rd32(eh + 44);
-    }
-    h->Size = rd32(eh + 48);
-    float px = (float)(INT)rd32(eh + 72) / (float)(INT)rd32(eh + 80);
-    float py = (float)(INT)rd32(eh + 76) / (float)(INT)rd32(eh + 84);
-    float kx = px * 0.0099999998f, ky = py * 0.0099999998f;
-    h->DpiX = px * 25.4f;
-    h->DpiY = py * 25.4f;
-    INT l = (INT)rd32(eh + 24), t = (INT)rd32(eh + 28), r = (INT)rd32(eh + 32), b = (INT)rd32(eh + 36);
-    INT x0 = l < r ? l : r, x1 = l < r ? r : l;
-    INT y0 = t < b ? t : b, y1 = t < b ? b : t;
-    float fw = (float)(x1 - x0), fh = (float)(y1 - y0);
-    h->X = (INT)mime_vec_floorf((float)x0 * kx + 0.5f);
-    h->Y = (INT)mime_vec_floorf((float)y0 * ky + 0.5f);
-    float w = fw * kx + 1.0f, hh = fh * ky + 1.0f;
-    h->Width = (INT)mime_vec_floorf(w + 0.5f);
-    h->Height = (INT)mime_vec_floorf(hh + 0.5f);
-    memcpy(&h->EmfHeader, eh, EMF_HEADER3_SIZE);
-    return h->Width == 0 || h->Height == 0 ? InvalidParameter : Ok;
 }
 
 /* a windows metafile with a placeable header: the box in the header is the size. */
@@ -214,6 +178,44 @@ static void fill_wmf_header(MetafileHeader *h, const BYTE *wmf, const BYTE *plac
     h->Width = iabs((INT)r - l);
     h->Y = t < b ? t : b;
     h->Height = iabs((INT)b - t);
+}
+
+/*
+ * the header the sdk reports for an enhanced metafile, from its 88 byte header and the first emf+ record when the
+ * metafile starts with one. the header is filled even when it is refused for a frame that is empty.
+ */
+static GpStatus fill_emf_header(MetafileHeader *h, const BYTE *eh, const BYTE *plus)
+{
+    memset(h, 0, sizeof(*h));
+    BOOL has_plus = plus && rd32(plus + 4) >= EMFPLUS_HEADER_RECORD && rd16(plus) == 0x4001 &&
+                    rd32(plus + 8) == rd32(plus + 4) - 12 && (rd32(plus + 12) & EMFPLUS_VERSION_MASK) == EMFPLUS_VERSION_BASE &&
+                    (INT)rd32(plus + 20) > 0 && (INT)rd32(plus + 24) > 0;
+    if (has_plus) {
+        h->Type = (MetafileType)(MetafileTypeEmfPlusOnly + (rd16(plus + 2) & 1));
+        h->EmfPlusHeaderSize = (INT)rd32(plus + 4);
+        h->Version = rd32(plus + 12);
+        h->EmfPlusFlags = rd32(plus + 16);
+        h->LogicalDpiX = (INT)rd32(plus + 20);
+        h->LogicalDpiY = (INT)rd32(plus + 24);
+    } else {
+        h->Type = MetafileTypeEmf;
+        h->Version = rd32(eh + 44);
+    }
+    h->Size = rd32(eh + 48);
+    /* pixels per hundredth of a millimeter on the device of the metafile */
+    float px = (float)(INT)rd32(eh + 72) / (float)(INT)rd32(eh + 80);
+    float py = (float)(INT)rd32(eh + 76) / (float)(INT)rd32(eh + 84);
+    h->DpiX = px * 25.4f;
+    h->DpiY = py * 25.4f;
+    float kx = px * 0.01f, ky = py * 0.01f;
+    INT x0 = (INT)rd32(eh + 24), y0 = (INT)rd32(eh + 28), x1 = (INT)rd32(eh + 32), y1 = (INT)rd32(eh + 36);
+    INT left = min_int(x0, x1), right = max_int(x0, x1), top = min_int(y0, y1), bottom = max_int(y0, y1);
+    h->X = (INT)mime_vec_floorf((float)left * kx + 0.5f);
+    h->Y = (INT)mime_vec_floorf((float)top * ky + 0.5f);
+    h->Width = (INT)mime_vec_floorf(((float)(right - left) * kx + 1.0f) + 0.5f);
+    h->Height = (INT)mime_vec_floorf(((float)(bottom - top) * ky + 1.0f) + 0.5f);
+    memcpy(&h->EmfHeader, eh, EMF_HEADER3_SIZE);
+    return h->Width && h->Height ? Ok : InvalidParameter;
 }
 
 /* the bytes of an enhanced metafile from its handle, for the header and the emf+ record in it. */
@@ -269,56 +271,40 @@ static BOOL wmf_first_bytes(HMETAFILE wmf, BYTE out[WMF_HEADER_SIZE])
     return ok;
 }
 
+/*
+ * the 18 byte header of a windows metafile as the sdk takes it: the one in the bits when it is a good one, else one
+ * that is made up from the size of the bits, a version 3 header of 9 words with nothing else set.
+ */
+static void wmf_header_or_made_up(HMETAFILE wmf, BYTE out[WMF_HEADER_SIZE])
+{
+    if (wmf_first_bytes(wmf, out) && wmf_header_valid(out))
+        return;
+    UINT bytes = GetMetaFileBitsEx(wmf, 0, nullptr);
+    memset(out, 0, WMF_HEADER_SIZE);
+    WORD kind = 1, header_words = 9, version = 0x300;
+    DWORD words = bytes / 2;
+    memcpy(out, &kind, 2);
+    memcpy(out + 2, &header_words, 2);
+    memcpy(out + 4, &version, 2);
+    memcpy(out + 6, &words, 4);
+}
+
 /* ------------------------------------------------------------------ windows metafiles to enhanced ones */
 
 /*
- * a windows metafile can carry an enhanced one in its comment records, in pieces. the pieces are put together
- * when the sum of all the 16 bit words of the file is zero, as the checksum makes it.
+ * a windows metafile can carry an enhanced one in its comment records, cut into pieces that follow each other. the
+ * pieces are put together when the sum of all the 16 bit words of the file is zero, as the checksum makes it.
+ *
+ * a piece is a record of words: the size in words, the function 0x0626 of an escape, the escape 15 that is a comment,
+ * the identifier 'WMFC' at byte 10 and the comment type 1 at byte 14. a flags field at byte 24 is zero, the length of
+ * the piece is at byte 32, the length of the whole enhanced metafile at byte 40, and the data starts at byte 44.
  */
-static BOOL wmf_escape_emf(const BYTE *r, DWORD avail)
+static BOOL is_piece(const BYTE *r, DWORD room)
 {
-    return avail >= 44 && rd32(r) > 0x16 && rd16(r + 4) == 0x626 && rd16(r + 6) == 15 && rd32(r + 10) == 0x43464d57 &&
+    if (room < 44)
+        return FALSE;
+    return rd32(r) > 0x16 && rd16(r + 4) == 0x626 && rd16(r + 6) == 15 && rd32(r + 10) == 0x43464d57 &&
            rd32(r + 14) == 1;
-}
-
-static HENHMETAFILE emf_from_comments(const BYTE *bits, UINT size)
-{
-    if (size <= 0x3e)
-        return nullptr;
-    const BYTE *r = bits + WMF_HEADER_SIZE;
-    DWORD avail = size - WMF_HEADER_SIZE;
-    if (!wmf_escape_emf(r, avail) || rd32(r + 24) != 0)
-        return nullptr;
-    WORD sum = 0;
-    for (UINT i = 0; i + 1 < size; i += 2)
-        sum += rd16(bits + i);
-    if (sum != 0)
-        return nullptr;
-    DWORD total = rd32(r + 40);
-    if (!total)
-        return nullptr;
-    BYTE *emf = gp_alloc(total);
-    if (!emf)
-        return nullptr;
-    DWORD got = 0;
-    HENHMETAFILE out = nullptr;
-    for (;;) {
-        DWORD piece = rd32(r + 32);
-        UINT64 words = 2ull * rd32(r);
-        if (piece + got < got || piece + got > total || words > avail || piece > 0xffffffd4u || piece + 44 > words)
-            break;
-        memcpy(emf + got, r + 44, piece);
-        got += piece;
-        avail -= (DWORD)words;
-        r += words;
-        if (avail < 0x2c || !wmf_escape_emf(r, avail)) {
-            if (got == total)
-                out = SetEnhMetaFileBits(total, emf);
-            break;
-        }
-    }
-    gp_free(emf);
-    return out;
 }
 
 /*
@@ -387,14 +373,54 @@ static BOOL wmf_scan(const BYTE *bits, UINT size, WmfScan *s)
 
 static INT round_to_int(float v) { return (INT)mime_vec_floorf(v + 0.5f); }
 
+static HENHMETAFILE emf_from_comments(const BYTE *bits, UINT size)
+{
+    if (size < WMF_HEADER_SIZE + 44)
+        return nullptr;
+    const BYTE *first = bits + WMF_HEADER_SIZE;
+    DWORD room = size - WMF_HEADER_SIZE;
+    if (!is_piece(first, room) || rd32(first + 24) != 0)
+        return nullptr;
+    WORD sum = 0;
+    for (UINT i = 0; i + 1 < size; i += 2)
+        sum = (WORD)(sum + rd16(bits + i));
+    DWORD total = rd32(first + 40);
+    if (sum != 0 || total == 0)
+        return nullptr;
+    BYTE *whole = gp_alloc(total);
+    if (!whole)
+        return nullptr;
+    DWORD got = 0;
+    const BYTE *r = first;
+    for (;;) {
+        DWORD piece = rd32(r + 32), record_bytes = 2 * rd32(r);
+        BOOL bad = got + piece < got || got + piece > total || record_bytes > room || piece >= 0xffffffd4u ||
+                   piece + 44 > record_bytes;
+        if (bad) {
+            gp_free(whole);
+            return nullptr;
+        }
+        memcpy(whole + got, r + 44, piece);
+        got += piece;
+        room -= record_bytes;
+        r += record_bytes;
+        if (!is_piece(r, room))
+            break;
+    }
+    HENHMETAFILE emf = got == total ? SetEnhMetaFileBits(total, whole) : nullptr;
+    gp_free(whole);
+    return emf;
+}
+
 /*
- * the enhanced metafile that plays the windows one. its frame is the placeable box, or what the scan finds,
- * or the whole screen. the mapping is one pixel per unit and the records of the picture set their own window.
+ * the enhanced metafile that stands for the records of a windows metafile: the one it carries when it does, else
+ * the records played into a new enhanced metafile on the screen. the size of the picture comes from the placeable
+ * box, which is in inches of the box's own unit, or from the window the records set, or is the whole screen.
  */
 HENHMETAFILE gp_emf_from_wmf_data(HMETAFILE wmf, const WmfPlaceableFileHeader *placeable, const BYTE *bits, UINT size,
                                   INT compat)
 {
-    if (!bits || !wmf || size < WMF_HEADER_SIZE)
+    if (!wmf || !bits || size < WMF_HEADER_SIZE)
         return nullptr;
     HENHMETAFILE embedded = emf_from_comments(bits, size);
     if (embedded)
@@ -402,66 +428,63 @@ HENHMETAFILE gp_emf_from_wmf_data(HMETAFILE wmf, const WmfPlaceableFileHeader *p
     HDC screen = GetDC(nullptr);
     if (!screen)
         return nullptr;
-    float mm_w = (float)GetDeviceCaps(screen, HORZSIZE), mm_h = (float)GetDeviceCaps(screen, VERTSIZE);
-    float px_w = (float)GetDeviceCaps(screen, HORZRES), px_h = (float)GetDeviceCaps(screen, VERTRES);
-    if (mm_w == 0.0f)
-        mm_w = 320.0f;
-    if (mm_h == 0.0f)
-        mm_h = 240.0f;
-    /* pixels in 0.01 mm */
-    float kx = (px_w / mm_w) / 100.0f, ky = (px_h / mm_h) / 100.0f;
-    float left = 0, top = 0, width = 0, height = 0;
+    INT screen_w = GetDeviceCaps(screen, HORZRES), screen_h = GetDeviceCaps(screen, VERTRES);
+    INT mm_w = GetDeviceCaps(screen, HORZSIZE), mm_h = GetDeviceCaps(screen, VERTSIZE);
+    /* pixels per hundredth of a millimeter, with a size of 320 by 240 millimeters for a device that has none */
+    float kx = ((float)screen_w / (float)(mm_w ? mm_w : 320)) / 100.0f;
+    float ky = ((float)screen_h / (float)(mm_h ? mm_h : 240)) / 100.0f;
+    float left = 0.0f, top = 0.0f, width = 0.0f, height = 0.0f;
     BOOL framed = FALSE;
-    if (placeable) {
+    if (placeable && placeable->Inch != 0) {
         float inch = (float)placeable->Inch;
-        left = (float)placeable->BoundingBox.Left * kx * 2540.0f / inch;
-        top = (float)placeable->BoundingBox.Top * ky * 2540.0f / inch;
-        width = (float)placeable->BoundingBox.Right * kx * 2540.0f / inch - left;
-        height = (float)placeable->BoundingBox.Bottom * ky * 2540.0f / inch - top;
+        left = ((float)placeable->BoundingBox.Left * kx * 2540.0f) / inch;
+        top = ((float)placeable->BoundingBox.Top * ky * 2540.0f) / inch;
+        width = ((float)placeable->BoundingBox.Right * kx * 2540.0f) / inch - left;
+        height = ((float)placeable->BoundingBox.Bottom * ky * 2540.0f) / inch - top;
         framed = width > 20.0f && height > 20.0f;
     }
+    WmfScan window;
     if (!framed) {
-        WmfScan scan;
-        if ((compat == 2 || compat == 0) && wmf_scan(bits, size, &scan)) {
-            left = (float)scan.org_x;
-            top = (float)scan.org_y;
-            width = (float)scan.ext_x;
-            height = (float)scan.ext_y;
-            if (width < 0) {
+        if ((compat == 0 || compat == 2) && wmf_scan(bits, size, &window)) {
+            left = (float)window.org_x;
+            top = (float)window.org_y;
+            width = (float)window.ext_x;
+            height = (float)window.ext_y;
+            if (width < 0.0f) {
                 left += width;
                 width = -width;
             }
-            if (height < 0) {
+            if (height < 0.0f) {
                 top += height;
                 height = -height;
             }
             framed = TRUE;
         } else {
-            left = top = 0;
-            width = px_w;
-            height = px_h;
+            left = top = 0.0f;
+            width = (float)screen_w;
+            height = (float)screen_h;
         }
     }
-    RECT frame;
-    frame.left = round_to_int(left / kx);
-    frame.right = round_to_int((left + width - 1.0f) / kx);
-    frame.top = round_to_int(top / ky);
-    frame.bottom = round_to_int((top + height - 1.0f) / ky);
-    HDC dc = CreateEnhMetaFileA(screen, nullptr, framed ? &frame : nullptr, nullptr);
-    BOOL ok = FALSE;
-    if (dc) {
-        INT ox = round_to_int(left), oy = round_to_int(top), cx = round_to_int(width), cy = round_to_int(height);
-        ok = SetMapMode(dc, MM_ANISOTROPIC) && SetViewportOrgEx(dc, ox, oy, nullptr) &&
-             SetViewportExtEx(dc, cx, cy, nullptr) && SetWindowOrgEx(dc, ox, oy, nullptr) &&
-             SetWindowExtEx(dc, cx, cy, nullptr) && PlayMetaFile(dc, wmf);
-    }
-    HENHMETAFILE out = dc ? CloseEnhMetaFile(dc) : nullptr;
-    if (!ok && out) {
-        DeleteEnhMetaFile(out);
-        out = nullptr;
+    /* the frame of the new metafile keeps the last pixel of the picture out, in hundredths of a millimeter */
+    RECT frame = {round_to_int(left / kx), round_to_int(top / ky), round_to_int((left + width - 1.0f) / kx),
+                  round_to_int((top + height - 1.0f) / ky)};
+    HDC dc = CreateEnhMetaFileW(screen, nullptr, framed ? &frame : nullptr, nullptr);
+    BOOL ok = dc != nullptr;
+    if (ok) {
+        INT x = round_to_int(left), y = round_to_int(top), w = round_to_int(width), h = round_to_int(height);
+        ok = SetMapMode(dc, MM_ANISOTROPIC) != 0 && SetViewportOrgEx(dc, x, y, nullptr) &&
+             SetViewportExtEx(dc, w, h, nullptr) && SetWindowOrgEx(dc, x, y, nullptr) &&
+             SetWindowExtEx(dc, w, h, nullptr) && PlayMetaFile(dc, wmf);
+        HENHMETAFILE made = CloseEnhMetaFile(dc);
+        if (!ok && made) {
+            DeleteEnhMetaFile(made);
+            made = nullptr;
+        }
+        ReleaseDC(nullptr, screen);
+        return made;
     }
     ReleaseDC(nullptr, screen);
-    return out;
+    return nullptr;
 }
 
 /* ------------------------------------------------------------------ setting an object up */
@@ -485,46 +508,40 @@ GpStatus gp_meta_init_emf(GMetafile *m, HENHMETAFILE hemf, BOOL owned)
     return Ok;
 }
 
+/*
+ * sets the object up for a windows metafile. one with a good placeable header stays a windows metafile, with the box
+ * of the header as its frame. any other becomes an enhanced metafile, which the records are played into.
+ */
 GpStatus gp_meta_init_wmf(GMetafile *m, HMETAFILE wmf, const WmfPlaceableFileHeader *placeable, BOOL owned)
 {
-    if (GetObjectType(wmf) != OBJ_METAFILE)
-        return GenericError;
     BOOL valid = placeable && gp_wmf_placeable_valid(placeable);
-    GpStatus st = GenericError;
     if (valid && m->compat == 0) {
-        BYTE hdr[WMF_HEADER_SIZE];
-        BYTE pb[PLACEABLE_SIZE];
-        if (!wmf_first_bytes(wmf, hdr) || !wmf_header_valid(hdr)) {
-            /* a header made up for metafiles that do not say what they are */
-            memset(hdr, 0, sizeof(hdr));
-            hdr[0] = 1;
-            hdr[2] = 9;
-            hdr[4] = 0;
-            hdr[5] = 3;
-            DWORD words = GetMetaFileBitsEx(wmf, 0, nullptr) >> 1;
-            memcpy(hdr + 6, &words, 4);
-        }
-        placeable_bytes(placeable, pb);
-        fill_wmf_header(&m->header, hdr, pb);
+        BYTE header[WMF_HEADER_SIZE], box[PLACEABLE_SIZE];
+        wmf_header_or_made_up(wmf, header);
+        placeable_bytes(placeable, box);
+        fill_wmf_header(&m->header, header, box);
         m->handle = wmf;
         m->owns_handle = owned;
         m->state = GM_READY;
         return Ok;
     }
+    GpStatus st = GenericError;
     UINT n = GetMetaFileBitsEx(wmf, 0, nullptr);
     BYTE *bits = n ? gp_alloc(n) : nullptr;
     if (bits && GetMetaFileBitsEx(wmf, n, bits) == n) {
         HENHMETAFILE emf = gp_emf_from_wmf_data(wmf, valid ? placeable : nullptr, bits, n, m->compat);
         if (emf) {
             MetafileHeader h;
-            if (gp_meta_header_of_emf(emf, &h, nullptr) != Ok) {
-                DeleteEnhMetaFile(emf);
-            } else {
+            BOOL damaged;
+            if (gp_meta_header_of_emf(emf, &h, &damaged) == Ok) {
                 m->header = h;
                 m->handle = emf;
                 m->owns_handle = TRUE;
                 m->state = GM_READY;
                 st = Ok;
+            } else {
+                DeleteEnhMetaFile(emf);
+                m->state = damaged ? GM_CORRUPT : GM_INVALID;
             }
         }
     }
@@ -700,36 +717,39 @@ static GMetafile *ready_cast(GpImage *image)
     return m && (m->state == GM_READY || m->state == GM_PLAYING) ? m : nullptr;
 }
 
+/* the frame in the pixels of the resolution of the metafile. an enhanced one reaches a pixel further than its frame. */
 void gp_meta_real_bounds(const GMetafile *m, float *x, float *y, float *w, float *h)
 {
     const MetafileHeader *hd = &m->header;
-    if (hd->Type >= MetafileTypeEmf) {
-        float kx = hd->DpiX / HIMETRIC_PER_INCH, ky = hd->DpiY / HIMETRIC_PER_INCH;
-        *x = kx * (float)hd->EmfHeader.rclFrame.left;
-        *y = ky * (float)hd->EmfHeader.rclFrame.top;
-        *w = (float)(hd->EmfHeader.rclFrame.right - hd->EmfHeader.rclFrame.left) * kx + 1.0f;
-        *h = (float)(hd->EmfHeader.rclFrame.bottom - hd->EmfHeader.rclFrame.top) * ky + 1.0f;
-    } else {
+    if (hd->Type < MetafileTypeEmf) {
         *x = (float)hd->X;
         *y = (float)hd->Y;
         *w = (float)hd->Width;
         *h = (float)hd->Height;
+        return;
     }
+    float kx = hd->DpiX / HIMETRIC_PER_INCH, ky = hd->DpiY / HIMETRIC_PER_INCH;
+    const RECTL *f = &hd->EmfHeader.rclFrame;
+    *x = kx * (float)f->left;
+    *y = ky * (float)f->top;
+    *w = (float)(f->right - f->left) * kx + 1.0f;
+    *h = (float)(f->bottom - f->top) * ky + 1.0f;
 }
 
-/* the size in hundredths of a millimeter, which is what a metafile says it measures. */
+/* the physical size in hundredths of a millimeter. */
 GpStatus gp_metafile_dimension(GpImage *image, float *width, float *height)
 {
-    GMetafile *m = gp_meta_cast(image);
-    if (!m || m->state < GM_RECORDING)
+    GMetafile *m = ready_cast(image);
+    if (!m)
         return InvalidParameter;
     const MetafileHeader *hd = &m->header;
     if (hd->Type < MetafileTypeEmf) {
-        *width = ((float)hd->Width / hd->DpiX) * HIMETRIC_PER_INCH;
-        *height = ((float)hd->Height / hd->DpiY) * HIMETRIC_PER_INCH;
+        *width = (float)hd->Width / hd->DpiX * HIMETRIC_PER_INCH;
+        *height = (float)hd->Height / hd->DpiY * HIMETRIC_PER_INCH;
     } else {
-        *width = (float)(hd->EmfHeader.rclFrame.right - hd->EmfHeader.rclFrame.left) + HIMETRIC_PER_INCH / hd->DpiX;
-        *height = (float)(hd->EmfHeader.rclFrame.bottom - hd->EmfHeader.rclFrame.top) + HIMETRIC_PER_INCH / hd->DpiY;
+        const RECTL *f = &hd->EmfHeader.rclFrame;
+        *width = (float)(f->right - f->left) + HIMETRIC_PER_INCH / hd->DpiX;
+        *height = (float)(f->bottom - f->top) + HIMETRIC_PER_INCH / hd->DpiY;
     }
     return Ok;
 }
@@ -918,17 +938,19 @@ BOOL gp_meta_unit_factor(const GMetafile *m, GpUnit unit, float *fx, float *fy)
     }
 }
 
+/* the placeable header that stands for the bounds of a windows metafile, for the ones that are one. */
 BOOL gp_meta_placeable_for(const GMetafile *m, WmfPlaceableFileHeader *out)
 {
-    if (!out || (m->header.Type != MetafileTypeWmf && m->header.Type != MetafileTypeWmfPlaceable))
+    const MetafileHeader *hd = &m->header;
+    if (hd->Type >= MetafileTypeEmf)
         return FALSE;
     memset(out, 0, sizeof(*out));
     out->Key = PLACEABLE_KEY;
-    out->BoundingBox.Left = (INT16)m->header.X;
-    out->BoundingBox.Top = (INT16)m->header.Y;
-    out->BoundingBox.Right = (INT16)(m->header.X + m->header.Width);
-    out->BoundingBox.Bottom = (INT16)(m->header.Y + m->header.Height);
-    out->Inch = (INT16)mime_vec_floorf((m->header.DpiX + m->header.DpiY) * 0.5f + 0.5f);
+    out->BoundingBox.Left = (INT16)hd->X;
+    out->BoundingBox.Top = (INT16)hd->Y;
+    out->BoundingBox.Right = (INT16)(hd->X + hd->Width);
+    out->BoundingBox.Bottom = (INT16)(hd->Y + hd->Height);
+    out->Inch = (INT16)mime_vec_floorf((hd->DpiX + hd->DpiY) * 0.5f + 0.5f);
     out->Checksum = gp_wmf_placeable_checksum(out);
     return TRUE;
 }
@@ -1047,17 +1069,10 @@ WINGDIPAPI GpStatus WINAPI GdipGetMetafileHeaderFromWmf(HMETAFILE hwmf, const Wm
     memset(header, 0, sizeof(*header));
     if (!gp_wmf_placeable_valid(placeable))
         return InvalidParameter;
-    BYTE hdr[WMF_HEADER_SIZE], pb[PLACEABLE_SIZE];
-    if (!wmf_first_bytes(hwmf, hdr) || !wmf_header_valid(hdr)) {
-        memset(hdr, 0, sizeof(hdr));
-        hdr[0] = 1;
-        hdr[2] = 9;
-        hdr[5] = 3;
-        DWORD words = GetMetaFileBitsEx(hwmf, 0, nullptr) >> 1;
-        memcpy(hdr + 6, &words, 4);
-    }
-    placeable_bytes(placeable, pb);
-    fill_wmf_header(header, hdr, pb);
+    BYTE wmf[WMF_HEADER_SIZE], box[PLACEABLE_SIZE];
+    wmf_header_or_made_up(hwmf, wmf);
+    placeable_bytes(placeable, box);
+    fill_wmf_header(header, wmf, box);
     return Ok;
 }
 

@@ -1339,7 +1339,8 @@ GpStatus gp_plus_record(GPlayer *p, UINT type, UINT flags, UINT size, const BYTE
         return r.bad ? Ok : GdipSetRenderingOrigin(gfx, x, y);
     }
     case EmfPlusRecordTypeSetAntiAliasMode: {
-        UINT mode = p->mf->header.Version < EMFPLUS_VERSION ? (flags & 1) + 3 : (flags >> 1) & 0xf;
+        /* an older stream has one bit that says whether to smooth, the newer ones name the mode. */
+        INT mode = p->mf->header.Version < EMFPLUS_VERSION ? (INT)(flags & 1) + 3 : (INT)((flags >> 1) & 0xf);
         return GdipSetSmoothingMode(gfx, (SmoothingMode)mode);
     }
     case EmfPlusRecordTypeSetTextRenderingHint:
