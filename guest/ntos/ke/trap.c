@@ -91,12 +91,14 @@ void KiTraceUserStack(ULONG64 pc, ULONG64 sp)
     if (KiDescribeUserAddress(pc, text, sizeof(text)))
         KiLogPrintf("  at %s", text);
     ULONG shown = 0;
-    for (ULONG i = 0; i < 512 && shown < 24 && sp && !(sp & 7); i++, sp += 8) {
-        ULONG64 word;
-        if (!MmIsAddressValid((PVOID)sp) || !NT_SUCCESS(KiCopyFromUser(&word, (PVOID)sp, sizeof(word))))
+    /* the stack of a 32-bit program lies below 4 GiB and holds words of four bytes. */
+    ULONG step = sp && sp < 0x100000000ull ? 4 : 8;
+    for (ULONG i = 0; i < 512 && shown < 24 && sp && !(sp & (step - 1)); i++, sp += step) {
+        ULONG64 word = 0;
+        if (!MmIsAddressValid((PVOID)sp) || !NT_SUCCESS(KiCopyFromUser(&word, (PVOID)sp, step)))
             break;
         if (KiDescribeUserAddress(word, text, sizeof(text))) {
-            KiLogPrintf("  stack +0x%x: %s", i * 8, text);
+            KiLogPrintf("  stack +0x%x: %s", i * step, text);
             shown++;
         }
     }
