@@ -403,6 +403,18 @@ static GpStatus draw_bitmap(const DrawCall *c, const float *src_in, Affine mat, 
 {
     GGraphics *g = c->g;
     GBitmap *b = c->b;
+    /* a picture drawn onto itself is read from a copy */
+    if (g->target == b) {
+        GBitmap *copy;
+        GpStatus cst = gp_bitmap_copy(b, &copy);
+        if (cst != Ok)
+            return cst;
+        DrawCall other = *c;
+        other.b = copy;
+        cst = draw_bitmap(&other, src_in, mat, unit);
+        gp_bitmap_free(copy);
+        return cst;
+    }
     float sx, sy, sw, sh;
     if (!src_in) {
         sx = sy = 0.0f;
@@ -866,8 +878,6 @@ static GpStatus enter(GpGraphics *graphics, GpImage *image, GGraphics **gp, GIma
     if (!i)
         return InvalidParameter;
     GBitmap *b = gp_bitmap_cast(i);
-    if (b && b->locked && (b->lock_flags & ImageLockModeWrite))
-        return ObjectBusy;
     *gp = g;
     *ip = i;
     *bp = b;

@@ -38,6 +38,13 @@ GpStatus gp_metafile_page_size(struct GGraphics *gfx, GpImage *image, float widt
     float sx, sy;
     gp_graphics_page_scale(g, &sx, &sy);
     if (unit == UnitPixel) {
+        /* the picture's own size is its whole pixels */
+        float bx, by, bw, bh;
+        gp_meta_real_bounds(m, &bx, &by, &bw, &bh);
+        if (width == bw && height == bh) {
+            width = (float)m->header.Width;
+            height = (float)m->header.Height;
+        }
         *out_w = (g->dpi_x * width) / (m->header.DpiX * sx);
         *out_h = (g->dpi_y * height) / (m->header.DpiY * sy);
         return Ok;

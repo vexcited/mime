@@ -656,6 +656,11 @@ void ShIconSourceForPath(LPCWSTR path, DWORD attributes, BOOL disk, BOOL open, S
     BOOL program = has_extension(path, L".exe") || has_extension(path, L".scr") || has_extension(path, L".com");
     if (registered_icon(dot, text, RTL_NUMBER_OF(text)) && parse_location(text, path, source)) {
         source->Fallback = program ? SIID_APPLICATION : extension_registered(dot) ? SIID_DOCASSOC : SIID_DOCNOASSOC;
+        /* the first icons of shell32 are the stock icons, and are told apart from the library's own. */
+        if (is_shell32(source->Path) && source->Index >= 0 && source->Index <= SIID_MYNETWORK) {
+            int stock = source->Index;
+            ShIconSourceStock(stock, source);
+        }
         return;
     }
     if (program || has_extension(path, L".ico") || has_extension(path, L".cur")) {

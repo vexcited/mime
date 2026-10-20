@@ -821,23 +821,18 @@ GpStatus gp_metafile_to_bitmap(GImage *image, GBitmap **bitmap)
     if (!m)
         return InvalidParameter;
     const MetafileHeader *hd = &m->header;
-    INT w, h;
-    float bx, by, bw, bh;
-    gp_meta_real_bounds(m, &bx, &by, &bw, &bh);
-    if (hd->Type >= MetafileTypeEmf) {
-        w = (INT)mime_vec_floorf(bw + 0.5f);
-        h = (INT)mime_vec_floorf(bh + 0.5f);
-    } else {
+    INT w = hd->Width, h = hd->Height;
+    if (hd->Type < MetafileTypeEmf) {
         if (hd->DpiX <= 0.0f || hd->DpiY <= 0.0f)
             return GenericError;
         HDC dc = GetDC(nullptr);
         float sx = dc ? (float)GetDeviceCaps(dc, LOGPIXELSX) : 96.0f, sy = dc ? (float)GetDeviceCaps(dc, LOGPIXELSY) : 96.0f;
         if (dc)
             ReleaseDC(nullptr, dc);
-        w = (INT)mime_vec_floorf((bw / hd->DpiX) * sx + 0.5f);
-        h = (INT)mime_vec_floorf((bh / hd->DpiY) * sy + 0.5f);
+        w = (INT)mime_vec_floorf(((float)hd->Width / hd->DpiX) * sx + 0.5f);
+        h = (INT)mime_vec_floorf(((float)hd->Height / hd->DpiY) * sy + 0.5f);
     }
-    return render_bitmap(m, w, h, bx, by, bw, bh, bitmap);
+    return render_bitmap(m, w, h, (float)hd->X, (float)hd->Y, (float)hd->Width, (float)hd->Height, bitmap);
 }
 
 /* a thumbnail: both sizes, or neither for 120 by 120. a picture cannot keep its proportions from one size. */
@@ -850,10 +845,9 @@ GpStatus gp_metafile_thumbnail(GpImage *image, UINT width, UINT height, GpImage 
         width = height = 120;
     if (!width || !height)
         return OutOfMemory;
-    float bx, by, bw, bh;
-    gp_meta_real_bounds(m, &bx, &by, &bw, &bh);
     GBitmap *b;
-    GpStatus st = render_bitmap(m, (INT)width, (INT)height, bx, by, bw, bh, &b);
+    GpStatus st = render_bitmap(m, (INT)width, (INT)height, (float)m->header.X, (float)m->header.Y,
+                                (float)m->header.Width, (float)m->header.Height, &b);
     if (st != Ok)
         return st;
     *thumbnail = &b->image;
