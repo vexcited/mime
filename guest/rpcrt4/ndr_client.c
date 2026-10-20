@@ -144,9 +144,11 @@ static void zero_out(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
                     memset(object, 0, NdrSimpleMem[type[2]]);
                     continue;
                 }
-                NDRC c = {m, NDR_SIZE, nullptr};
-                memset(object, 0, NdrpMemorySize(&c, object, type + 2 + *(const short *)(type + 2)));
+                type = type + 2 + *(const short *)(type + 2);
             }
+            SIZE_T size = NdrpOutMemory(m, type);
+            if (size <= NDR_MAX_ALLOC)
+                memset(object, 0, size);
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {
         }
@@ -299,6 +301,9 @@ CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, u
                 !*(void **)(args + *(const USHORT *)(d + 2)))
                 NDR_RAISE(RPC_X_NULL_REF_POINTER);
         }
+        /* what a method of an object returns in its [out] parameters is nothing until the reply says. */
+        if (object)
+            zero_out(&m, &p);
         size_params(&m, &p);
         /* a format that undercounts the padding between its parts must not overrun the buffer. */
         m.BufferLength += NDR_BUFFER_SLACK;

@@ -432,6 +432,13 @@ void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar 
             if (c->Q->HasPreset && slot)
                 *slot = c->Q->Preset;
             c->Q->HasPreset = FALSE;
+            /* the client lets go of the interface a pointer held before the reply gives it another. */
+            if (type == FC_IP && c->Pass == NDR_UNMARSHAL && m->IsClient && slot && *slot) {
+                const NDR_OLE_HOOKS *hooks = NdrpOleHooks();
+                if (hooks)
+                    hooks->Free(c, *slot, pf);
+                *slot = nullptr;
+            }
             present = refid != 0;
             if (!present && c->Pass == NDR_UNMARSHAL)
                 *slot = nullptr;
