@@ -12,6 +12,10 @@
 #define STG_E_FILENOTFOUND ((HRESULT)0x80030002L)
 #endif
 
+#ifndef LAYOUT_RTL
+#define LAYOUT_RTL 1
+#endif
+
 /* the biggest bitmap a request may ask for, by its long side. */
 #define LARGEST_REQUEST 8192
 /* the sizes of the thumbnail cache of Windows, which a request is taken up to when it does not shrink to fit. */
@@ -269,18 +273,6 @@ static BOOL carries_thumbnail(LPCWSTR path)
     return FALSE;
 }
 
-/* a thumbnail matches its picture when the other side differs by less than one pixel. */
-static BOOL thumbnail_matches(UINT tw, UINT th, UINT fw, UINT fh)
-{
-    if (!tw || !th || !fw || !fh)
-        return FALSE;
-    double difference;
-    if (tw >= th)
-        difference = (double)th - (double)fh * (double)tw / (double)fw;
-    else
-        difference = (double)tw - (double)fw * (double)th / (double)fh;
-    return difference > -1.0 && difference < 1.0;
-}
 
 /* the 32 bit top down dib that holds the pixels of a source. */
 static HRESULT bitmap_from_source(IWICBitmapSource *source, HBITMAP *out)
@@ -319,6 +311,48 @@ static UINT long_side(IWICBitmapSource *source)
     return w > h ? w : h;
 }
 
+/*
+ * the part of the picture a crop flag keeps, and the size the result is scaled to. A square takes the middle of a wide
+ * picture and the part starting a third down a tall one. The wide shape is 19 by 13 and is cut the same way when the
+ * ratio is off by more than a hundredth. The offsets are unsigned, so a half is a shift.
+ */
+static void crop_area(UINT w, UINT h, int request, int flags, WICRect *area, UINT *out_w, UINT *out_h)
+{
+    area->X = area->Y = 0;
+    area->Width = (INT)w;
+    area->Height = (INT)h;
+    if (flags & SIIGBF_CROPTOSQUARE) {
+        *out_w = *out_h = (UINT)request;
+        if (w < h) {
+            area->Y = (INT)((h - w) / 3);
+            area->Height = (INT)w;
+        } else if (w > h) {
+            area->X = (INT)((w - h) >> 1);
+            area->Width = (INT)h;
+        }
+        return;
+    }
+    *out_w = (UINT)request;
+    *out_h = (UINT)MulDiv(request, 13, 19);
+    if (!h)
+        return;
+    const double shape = 19.0 / 13.0;
+    double ratio = (double)w / (double)h;
+    if (ratio - shape > 0.01) {
+        UINT width = (UINT)MulDiv((int)h, 19, 13);
+        if (width < w) {
+            area->Width = (INT)width;
+            area->X = (INT)((w - width) >> 1);
+        }
+    } else if (shape - ratio > 0.01) {
+        UINT height = (UINT)MulDiv((int)w, 13, 19);
+        if (height < h) {
+            area->Height = (INT)height;
+            area->Y = (INT)((h - height) / 3);
+        }
+    }
+}
+
 /* shapes the picture for the flags: a square or wide crop, the size asked for or the one the cache would give. */
 static HRESULT shape(IWICImagingFactory *factory, IWICBitmapSource *picture, int request, int flags, BOOL natural,
                      IWICBitmapSource **out)
@@ -327,56 +361,24 @@ static HRESULT shape(IWICImagingFactory *factory, IWICBitmapSource *picture, int
     HRESULT hr = picture->lpVtbl->GetSize(picture, &w, &h);
     if (FAILED(hr))
         return hr;
-    IWICBitmapSource *cropped = picture;
-    cropped->lpVtbl->AddRef(cropped);
-    UINT cw = w, ch = h;
-    if (flags & SIIGBF_CROPTOSQUARE) {
-        WICRect rect = {0, 0, (INT)w, (INT)h};
-        if (w != h) {
-            if (w <= h) {
-                rect.Y = (INT)((h - w) / 3);
-                rect.Height = (INT)w;
-            } else {
-                rect.X = (INT)((w - h) >> 1);
-                rect.Width = (INT)h;
-            }
-            release_source(cropped);
-            cropped = nullptr;
-            hr = clip(factory, picture, &rect, &cropped);
+    if (flags & (SIIGBF_CROPTOSQUARE | SIIGBF_WIDETHUMBNAILS)) {
+        WICRect area;
+        UINT box_w, box_h;
+        crop_area(w, h, request, flags, &area, &box_w, &box_h);
+        IWICBitmapSource *part = picture;
+        part->lpVtbl->AddRef(part);
+        if (area.X || area.Y || area.Width != (INT)w || area.Height != (INT)h) {
+            IWICBitmapSource *clipped;
+            hr = clip(factory, picture, &area, &clipped);
+            release_source(part);
             if (FAILED(hr))
                 return hr;
+            part = clipped;
         }
-        hr = scale_exact(factory, cropped, (UINT)request, (UINT)request, out);
-        release_source(cropped);
+        hr = scale_exact(factory, part, box_w, box_h, out);
+        release_source(part);
         return hr;
     }
-    if (flags & SIIGBF_WIDETHUMBNAILS) {
-        double ratio = (double)w / (double)h, wide = 19.0 / 13.0;
-        WICRect rect = {0, 0, (INT)w, (INT)h};
-        BOOL crop = FALSE;
-        if (ratio - wide > 0.01) {
-            rect.Width = MulDiv((int)h, 19, 13);
-            rect.X = (INT)((w - (UINT)rect.Width) >> 1);
-            crop = TRUE;
-        } else if (wide - ratio > 0.01) {
-            rect.Height = MulDiv((int)w, 13, 19);
-            rect.Y = (INT)((h - (UINT)rect.Height) / 3);
-            crop = TRUE;
-        }
-        if (crop) {
-            release_source(cropped);
-            cropped = nullptr;
-            hr = clip(factory, picture, &rect, &cropped);
-            if (FAILED(hr))
-                return hr;
-        }
-        cropped->lpVtbl->GetSize(cropped, &cw, &ch);
-        hr = cw == (UINT)request ? (cropped->lpVtbl->AddRef(cropped), *out = cropped, S_OK)
-                                 : scale_exact(factory, cropped, (UINT)request, (UINT)MulDiv(request, 13, 19), out);
-        release_source(cropped);
-        return hr;
-    }
-    release_source(cropped);
     /* the picture as it is is kept when the cache's size is asked for and it already has that long side. */
     int target = request;
     if (flags & SIIGBF_BIGGERSIZEOK) {
@@ -395,6 +397,22 @@ static HRESULT shape(IWICImagingFactory *factory, IWICBitmapSource *picture, int
         *out = SUCCEEDED(hr) ? bigger : nullptr;
     }
     return hr;
+}
+
+/*
+ * a carried thumbnail suits the picture when the side that is not its long one is within a pixel of what the picture's
+ * proportions give for it. A size of 0 never suits.
+ */
+static BOOL thumbnail_matches(UINT tw, UINT th, UINT fw, UINT fh)
+{
+    if (!tw || !th || !fw || !fh)
+        return FALSE;
+    double gap;
+    if (tw >= th)
+        gap = (double)th - (double)fh * (double)tw / (double)fw;
+    else
+        gap = (double)tw - (double)fw * (double)th / (double)fh;
+    return gap > -1.0 && gap < 1.0;
 }
 
 /* the thumbnail a jpeg or tiff file carries, upright, when it is as big as the request and fits the picture. */
@@ -539,49 +557,76 @@ static HRESULT icon_bitmap(const SH_ICON_SOURCE *source, int cx, HBITMAP *out)
 #define TILE_GREEN 120
 #define TILE_BLUE 215
 
-/* the icon centered on a tile of a color, with a lighter frame around it. */
+
+/* a channel of the frame of a tile, lifted towards white. */
+static DWORD frame_color(DWORD color)
+{
+    DWORD out = 0xff000000u;
+    for (int shift = 0; shift < 24; shift += 8)
+        out |= (228 * ((color >> shift) & 255) / 255 + 27) << shift;
+    return out;
+}
+
+/* a pixel of the icon, premultiplied, over an opaque one. */
+static DWORD over_opaque(DWORD icon, DWORD under)
+{
+    DWORD inverse = 255 - (icon >> 24);
+    DWORD out = 0xff000000u;
+    for (int shift = 0; shift < 24; shift += 8)
+        out |= (((icon >> shift) & 255) + (((under >> shift) & 255) * inverse + 127) / 255) << shift;
+    return out;
+}
+
+/* the icon on a tile of a color with a lighter frame, centered with a margin of half the free space. */
 static HRESULT tile_bitmap(const SH_ICON_SOURCE *source, int cx, int cy, BOOL wide, HBITMAP *out)
 {
     if (wide)
         cy = MulDiv(cx, 13, 19);
-    if (cy <= 0)
-        cy = 1;
-    int icon_size = wide ? MulDiv(cx, 48, 190) : MulDiv(cx, 32, 40);
-    if (icon_size < 1)
-        icon_size = 1;
+    if (cx <= 0 || cy <= 0)
+        return E_INVALIDARG;
+    UINT side = (UINT)(wide ? MulDiv(cx, 48, 190) : MulDiv(cx, 32, 40));
+    if (!side)
+        side = 1;
     DWORD *tile = ShAlloc((SIZE_T)cx * (SIZE_T)cy * sizeof(DWORD));
     if (!tile)
         return E_OUTOFMEMORY;
-    DWORD fill = 0xFF000000u | (TILE_RED << 16) | (TILE_GREEN << 8) | TILE_BLUE;
-    DWORD frame = 0xFF000000u | ((DWORD)(228 * TILE_RED / 255 + 27) << 16) | ((DWORD)(228 * TILE_GREEN / 255 + 27) << 8) |
-                  (DWORD)(228 * TILE_BLUE / 255 + 27);
+    const DWORD fill = 0xff000000u | (TILE_RED << 16) | (TILE_GREEN << 8) | TILE_BLUE;
+    const DWORD edge = frame_color(fill);
     for (int y = 0; y < cy; y++)
         for (int x = 0; x < cx; x++)
-            tile[y * cx + x] = x == 0 || y == 0 || x == cx - 1 || y == cy - 1 ? frame : fill;
-    HICON icon = ShLoadIconSource(source, icon_size, icon_size);
-    int w, h;
-    DWORD *pixels = icon ? ShIconPixels(icon, &w, &h) : nullptr;
+            tile[(SIZE_T)y * cx + x] = (x == 0 || y == 0 || x == cx - 1 || y == cy - 1) ? edge : fill;
+
+    HRESULT hr = S_OK;
+    HICON icon = ShLoadIconSource(source, (int)side, (int)side);
+    int iw = 0, ih = 0;
+    DWORD *art = icon ? ShIconPixels(icon, &iw, &ih) : nullptr;
     if (icon)
         DestroyIcon(icon);
-    if (pixels && w == icon_size && h == icon_size) {
-        UINT margin_x = (UINT)(cx - icon_size) >> 1, margin_y = (UINT)(cy - icon_size) >> 1;
-        if (margin_x > (UINT)icon_size || margin_y > (UINT)icon_size)
-            margin_x = margin_y = (UINT)icon_size >> 2;
-        for (int y = 0; y < icon_size; y++)
-            for (int x = 0; x < icon_size; x++) {
-                int tx = (int)margin_x + x, ty = (int)margin_y + y;
-                if (tx >= cx || ty >= cy || tx < 0 || ty < 0)
+    if (art && iw > 0 && ih > 0) {
+        UINT free_x = (UINT)cx - side, free_y = (UINT)cy - side;
+        UINT left = free_x >> 1, top = free_y >> 1;
+        if (left > side || top > side)
+            left = top = side >> 2;
+        DWORD layout = 0;
+        if (GetProcessDefaultLayout(&layout) && (layout & LAYOUT_RTL))
+            left = free_x - left;
+        for (UINT y = 0; y < side; y++) {
+            for (UINT x = 0; x < side; x++) {
+                int px = (int)(left + x), py = (int)(top + y);
+                if (px >= cx || py >= cy)
                     continue;
-                DWORD p = pixels[y * icon_size + x], inverse = 255 - (p >> 24), under = tile[ty * cx + tx], out_pixel = 0;
-                for (int shift = 0; shift < 24; shift += 8) {
-                    DWORD v = ((p >> shift) & 0xFF) + (((under >> shift) & 0xFF) * inverse + 127) / 255;
-                    out_pixel |= (v > 255 ? 255 : v) << shift;
-                }
-                tile[ty * cx + tx] = out_pixel | 0xFF000000u;
+                DWORD pixel = art[(SIZE_T)(y * (UINT)ih / side) * (UINT)iw + x * (UINT)iw / side];
+                DWORD *under = &tile[(SIZE_T)py * cx + px];
+                *under = over_opaque(pixel, *under);
             }
+        }
+    } else {
+        hr = E_FAIL;
     }
-    ShFree(pixels);
-    HRESULT hr = bitmap_from_pixels(tile, cx, cy, out);
+    if (art)
+        ShFree(art);
+    if (SUCCEEDED(hr))
+        hr = bitmap_from_pixels(tile, cx, cy, out);
     ShFree(tile);
     return hr;
 }
