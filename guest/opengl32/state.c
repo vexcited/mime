@@ -46,7 +46,7 @@ void gl_error(GlContext *ctx, GLenum error)
 
 GLAPI GLenum APIENTRY glGetError(void)
 {
-    GL_CONTEXT_OR_RETURN(GL_INVALID_OPERATION);
+    GL_CONTEXT_ALLOWED_IN_BEGIN(GL_INVALID_OPERATION);
     GLenum e = ctx->error;
     ctx->error = GL_NO_ERROR;
     return e;
@@ -81,6 +81,7 @@ void gl_context_init(GlContext *ctx)
     ctx->draw_buffer = ctx->read_buffer = GL_BACK;
     ctx->dirty = DIRTY_ALL;
     ctx->swap_interval = 1;
+    gl_ff_init(ctx);
 }
 
 /* ---------------------------------------------------------------- capabilities */
@@ -133,48 +134,13 @@ static BOOL *capability(GlContext *ctx, GLenum cap, uint32_t *dirty)
     }
 }
 
-/* the fixed function capabilities: accepted, with nothing to do. */
-static BOOL legacy_capability(GLenum cap)
-{
-    switch (cap) {
-    case GL_TEXTURE_2D:
-    case GL_TEXTURE_1D:
-    case GL_LIGHTING:
-    case GL_LIGHT0:
-    case GL_ALPHA_TEST:
-    case GL_FOG:
-    case GL_COLOR_MATERIAL:
-    case GL_NORMALIZE:
-    case GL_LINE_SMOOTH:
-    case GL_POINT_SMOOTH:
-    case GL_POLYGON_SMOOTH:
-    case GL_LINE_STIPPLE:
-    case GL_POLYGON_STIPPLE:
-    case GL_TEXTURE_CUBE_MAP_SEAMLESS:
-    case GL_POLYGON_OFFSET_LINE:
-    case GL_POLYGON_OFFSET_POINT:
-    case GL_COLOR_LOGIC_OP:
-    case GL_SAMPLE_COVERAGE:
-    case GL_SAMPLE_ALPHA_TO_ONE:
-    case GL_DEBUG_OUTPUT:
-    case GL_DEBUG_OUTPUT_SYNCHRONOUS:
-    case GL_RASTERIZER_DISCARD:
-    case GL_POINT_SPRITE:
-    case GL_CLIP_DISTANCE0:
-    case GL_CLIP_DISTANCE1:
-        return TRUE;
-    default:
-        return FALSE;
-    }
-}
-
 static void set_capability(GLenum cap, BOOL on)
 {
     GL_CONTEXT_OR_RETURN();
     uint32_t dirty = 0;
     BOOL *p = capability(ctx, cap, &dirty);
     if (!p) {
-        if (!legacy_capability(cap))
+        if (!gl_ff_capability(ctx, cap, on))
             gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
@@ -200,9 +166,11 @@ GLAPI GLboolean APIENTRY glIsEnabled(GLenum cap)
     uint32_t dirty;
     BOOL *p = capability(ctx, cap, &dirty);
     if (!p) {
-        if (!legacy_capability(cap))
+        BOOL known;
+        BOOL on = gl_ff_is_enabled(ctx, cap, &known);
+        if (!known)
             gl_error(ctx, GL_INVALID_ENUM);
-        return GL_FALSE;
+        return on ? GL_TRUE : GL_FALSE;
     }
     return *p ? GL_TRUE : GL_FALSE;
 }
@@ -932,13 +900,6 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
     case GL_PRIMITIVE_RESTART_INDEX:
         v[0] = 0xFFFFFFFF;
         return 1;
-    case GL_MAX_MODELVIEW_STACK_DEPTH:
-    case GL_MAX_PROJECTION_STACK_DEPTH:
-        v[0] = 32;
-        return 1;
-    case GL_MAX_TEXTURE_STACK_DEPTH:
-        v[0] = 10;
-        return 1;
     case GL_MAX_LIGHTS:
         v[0] = 8;
         return 1;
@@ -957,11 +918,7 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
             v[0] = b;
             return 1;
         }
-        if (legacy_capability(pname)) {
-            v[0] = 0;
-            return 1;
-        }
-        return 0;
+        return gl_ff_get(ctx, pname, v, colors);
     }
     }
 }
@@ -1054,7 +1011,14 @@ GLAPI void APIENTRY glGetBooleani_v(GLenum target, GLuint index, GLboolean *data
 
 GLAPI void APIENTRY glGetPointerv(GLenum pname, void **params)
 {
+    GL_CONTEXT_OR_RETURN();
     *params = nullptr;
+    int array = pname == GL_VERTEX_ARRAY_POINTER ? 0 : pname == GL_COLOR_ARRAY_POINTER ? 1
+                : pname == GL_NORMAL_ARRAY_POINTER ? 2 : pname == GL_TEXTURE_COORD_ARRAY_POINTER ? 3 : -1;
+    if (array == 3)
+        array += ctx->ff.client_unit < FF_UNITS ? (int)ctx->ff.client_unit : 0;
+    if (array >= 0)
+        *params = (void *)ctx->vao->legacy[array].pointer;
 }
 
 /* ---------------------------------------------------------------- debug */

@@ -225,6 +225,23 @@ static void destroy_program(GlContext *ctx, GlProgram *p)
     gl_free(p);
 }
 
+/* a program that has no name, as the fixed function one: the host object and the memory go. */
+void gl_program_free_internal(GlProgram *p)
+{
+    gl_program_ready(p);
+    if (p->id) {
+        gl_device_lock();
+        MimeGpuObject *o = gl_emit(MIME_GPU_PROGRAM_DESTROY, sizeof(MimeGpuObject));
+        o->id = p->id;
+        gl_device_unlock();
+        gl_free_id(ID_PROGRAM, p->id);
+    }
+    gl_heap_free(&p->info, gl_batch_fence());
+    free_reflection(p);
+    gl_free(p->bindings);
+    gl_free(p);
+}
+
 GLAPI void APIENTRY glDeleteProgram(GLuint name)
 {
     GL_CONTEXT_OR_RETURN();
@@ -311,23 +328,10 @@ GLAPI void APIENTRY glBindFragDataLocation(GLuint program, GLuint color, const G
 {
 }
 
-GLAPI void APIENTRY glLinkProgram(GLuint name)
+/* sends both stages to the host compiler; the program is usable once gl_program_ready says so. */
+BOOL gl_program_link_sources(GlProgram *p, const char *vs, const char *fs)
 {
     static uint32_t link_serial;
-    GL_CONTEXT_OR_RETURN();
-    GlProgram *p = gl_program(ctx, name);
-    if (!p) {
-        gl_error(ctx, GL_INVALID_VALUE);
-        return;
-    }
-    const char *vs = nullptr, *fs = nullptr;
-    for (uint32_t i = 0; i < p->shader_count; i++) {
-        GlShader *s = p->shaders[i];
-        if (s->type == GL_VERTEX_SHADER && !vs)
-            vs = s->source;
-        else if (s->type == GL_FRAGMENT_SHADER && !fs)
-            fs = s->source;
-    }
     gl_program_ready(p);
     free_reflection(p);
     p->linked = p->link_status = FALSE;
@@ -337,12 +341,12 @@ GLAPI void APIENTRY glLinkProgram(GLuint name)
     if (!vs || !fs) {
         p->log = gl_strdup(vs ? "no fragment shader\n" : "no vertex shader\n");
         p->linked = TRUE;
-        return;
+        return FALSE;
     }
     if (!p->info.ptr && !gl_heap_alloc(INFO_CAPACITY, &p->info)) {
         p->log = gl_strdup("out of memory\n");
         p->linked = TRUE;
-        return;
+        return FALSE;
     }
     if (!p->id)
         p->id = gl_new_id(ID_PROGRAM);
@@ -365,6 +369,26 @@ GLAPI void APIENTRY glLinkProgram(GLuint name)
     gl_publish();
     gl_device_unlock();
     p->linking = TRUE;
+    return TRUE;
+}
+
+GLAPI void APIENTRY glLinkProgram(GLuint name)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlProgram *p = gl_program(ctx, name);
+    if (!p) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    const char *vs = nullptr, *fs = nullptr;
+    for (uint32_t i = 0; i < p->shader_count; i++) {
+        GlShader *s = p->shaders[i];
+        if (s->type == GL_VERTEX_SHADER && !vs)
+            vs = s->source;
+        else if (s->type == GL_FRAGMENT_SHADER && !fs)
+            fs = s->source;
+    }
+    gl_program_link_sources(p, vs, fs);
 }
 
 /* reads the host's reflection once the link finished. */

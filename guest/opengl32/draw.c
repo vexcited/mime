@@ -544,12 +544,67 @@ typedef struct DrawRange {
     uint32_t rebase;       /* first when anything is copied, else 0 */
 } DrawRange;
 
+/*
+ * integer data that feeds a float input is converted to floats in the copy when the host cannot do it on the way:
+ * metal has no normalized 32 bit formats, vulkan reads integer formats as integers and has no three component 8 and
+ * 16 bit ones everywhere.
+ */
+static BOOL widened(const GlVertexAttrib *a)
+{
+    if (a->integer)
+        return FALSE;
+    switch (a->type) {
+    case GL_INT:
+    case GL_UNSIGNED_INT:
+        return TRUE;
+    case GL_BYTE:
+    case GL_UNSIGNED_BYTE:
+    case GL_SHORT:
+    case GL_UNSIGNED_SHORT:
+        return a->size == 3 || (a->size != GL_BGRA && !a->normalized);
+    default:
+        return FALSE;
+    }
+}
+
+static double widen(const uint8_t *p, GLenum type, BOOL normalized)
+{
+    switch (type) {
+    case GL_BYTE: {
+        int8_t v = (int8_t)*p;
+        return normalized ? (2.0 * v + 1.0) / 255.0 : v;
+    }
+    case GL_UNSIGNED_BYTE:
+        return normalized ? *p / 255.0 : *p;
+    case GL_SHORT: {
+        int16_t v;
+        memcpy(&v, p, 2);
+        return normalized ? (2.0 * v + 1.0) / 65535.0 : v;
+    }
+    case GL_UNSIGNED_SHORT: {
+        uint16_t v;
+        memcpy(&v, p, 2);
+        return normalized ? v / 65535.0 : v;
+    }
+    case GL_INT: {
+        int32_t v;
+        memcpy(&v, p, 4);
+        return normalized ? (2.0 * v + 1.0) / 4294967295.0 : v;
+    }
+    default: {
+        uint32_t v;
+        memcpy(&v, p, 4);
+        return normalized ? v / 4294967295.0 : v;
+    }
+    }
+}
+
 /* copies count vertices from vertex first on into the stream, tightly and aligned. */
 static BOOL copy_attrib(const GlVertexAttrib *a, const uint8_t *base, uint32_t first, uint32_t count, Source *s)
 {
     uint32_t elem = element_bytes(a);
     uint32_t src_stride = a->stride ? (uint32_t)a->stride : elem;
-    BOOL dbl = a->type == GL_DOUBLE;
+    BOOL dbl = a->type == GL_DOUBLE || widened(a);
     uint32_t out_elem = dbl ? (uint32_t)a->size * 4 : elem;
     uint32_t stride = (out_elem + 3) & ~3u;
     GlMem mem;
@@ -559,11 +614,16 @@ static BOOL copy_attrib(const GlVertexAttrib *a, const uint8_t *base, uint32_t f
     for (uint32_t v = 0; v < count; v++) {
         uint8_t *d = mem.ptr + (uint64_t)v * stride;
         const uint8_t *p = src + (uint64_t)v * src_stride;
-        if (dbl) {
+        if (a->type == GL_DOUBLE) {
             for (int c = 0; c < a->size; c++) {
                 double x;
                 memcpy(&x, p + c * 8, 8);
                 float f = (float)x;
+                memcpy(d + c * 4, &f, 4);
+            }
+        } else if (dbl) {
+            for (int c = 0; c < a->size; c++) {
+                float f = (float)widen(p + c * type_bytes(a->type), a->type, a->normalized);
                 memcpy(d + c * 4, &f, 4);
             }
         } else {
@@ -573,19 +633,31 @@ static BOOL copy_attrib(const GlVertexAttrib *a, const uint8_t *base, uint32_t f
     s->copied = TRUE;
     s->mem = gl_mem(&mem);
     s->stride = stride;
+    if (widened(a))
+        s->format = (uint8_t)(28 + a->size - 1);
     return TRUE;
 }
 
 /* resolves every attribute location the program reads; FALSE when the draw cannot run. */
-static BOOL setup_vertices(GlContext *ctx, GlProgram *p, const DrawRange *r, Source *src)
+static BOOL setup_vertices(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const DrawRange *r, Source *src)
 {
     memset(src, 0, sizeof(Source) * MIME_GPU_MAX_ATTRIBS);
     uint64_t batch = gl_batch_fence();
-    for (uint32_t m = p->attrib_mask, l; m; m &= m - 1) {
+    for (uint32_t m = in->mask, l; m; m &= m - 1) {
         l = (uint32_t)__builtin_ctz(m);
-        GlVertexAttrib *a = &ctx->vao->attribs[l];
+        const GlVertexAttrib *a = &in->attribs[l];
         Source *s = &src[l];
         s->used = TRUE;
+        if (!a->enabled && in->constants) {
+            GlMem mem;
+            if (!gl_stream_alloc(16, 16, &mem))
+                return FALSE;
+            memcpy(mem.ptr, in->constants[l], 16);
+            s->constant = TRUE;
+            s->mem = gl_mem(&mem);
+            s->format = 31;
+            continue;
+        }
         if (!a->enabled) {
             GlMem mem;
             if (!gl_stream_alloc(16, 16, &mem))
@@ -629,7 +701,7 @@ static BOOL setup_vertices(GlContext *ctx, GlProgram *p, const DrawRange *r, Sou
                 return FALSE;
             b->last_use = batch;
             uint64_t offset = (uint64_t)(ULONG_PTR)a->pointer;
-            BOOL direct = !(offset & 3) && !(stride & 3) && a->type != GL_DOUBLE;
+            BOOL direct = !(offset & 3) && !(stride & 3) && a->type != GL_DOUBLE && !widened(a);
             if (direct) {
                 s->mem = gl_mem(&b->mem);
                 s->mem.offset += offset;
@@ -651,21 +723,21 @@ static BOOL setup_vertices(GlContext *ctx, GlProgram *p, const DrawRange *r, Sou
 }
 
 /* whether an attribute the program reads cannot be bound where it is. */
-static BOOL needs_copy(GlContext *ctx, GlProgram *p)
+static BOOL needs_copy(const GlVertexInput *in)
 {
-    for (uint32_t m = p->attrib_mask, l; m; m &= m - 1) {
+    for (uint32_t m = in->mask, l; m; m &= m - 1) {
         l = (uint32_t)__builtin_ctz(m);
-        GlVertexAttrib *a = &ctx->vao->attribs[l];
+        const GlVertexAttrib *a = &in->attribs[l];
         if (!a->enabled || a->divisor)
             continue;
         uint32_t stride = a->stride ? (uint32_t)a->stride : element_bytes(a);
-        if (!a->buffer || ((ULONG_PTR)a->pointer & 3) || (stride & 3) || a->type == GL_DOUBLE)
+        if (!a->buffer || ((ULONG_PTR)a->pointer & 3) || (stride & 3) || a->type == GL_DOUBLE || widened(a))
             return TRUE;
     }
     return FALSE;
 }
 
-static void emit_pipeline(GlContext *ctx, GlProgram *p, const Source *src)
+static void emit_pipeline(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const Source *src)
 {
     MimeGpuPipelineDesc d;
     memset(&d, 0, sizeof(d));
@@ -699,7 +771,7 @@ static void emit_pipeline(GlContext *ctx, GlProgram *p, const Source *src)
         d.attribs[l].format = src[l].format;
         d.attribs[l].slot = (uint8_t)l;
         d.layouts[l].stride = src[l].constant ? 0 : src[l].stride;
-        d.layouts[l].instance_divisor = src[l].constant ? 0 : ctx->vao->attribs[l].divisor;
+        d.layouts[l].instance_divisor = src[l].constant ? 0 : in->attribs[l].divisor;
     }
     if (ctx->pipeline_id && !memcmp(&d, &ctx->pipeline_desc, sizeof(d)))
         return;
@@ -810,7 +882,7 @@ static void emit_textures(GlContext *ctx, GlProgram *p)
 }
 
 /* sends the state the host does not have yet, before a draw. */
-static BOOL prepare(GlContext *ctx, GlProgram *p, const Source *src)
+static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const Source *src)
 {
     for (uint32_t i = 0; i < p->block_count; i++) {
         GlUniformBlock *block = &p->blocks[i];
@@ -823,7 +895,7 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const Source *src)
         }
     }
     uint32_t dirty = ctx->dirty;
-    emit_pipeline(ctx, p, src);
+    emit_pipeline(ctx, p, in, src);
     if ((dirty & DIRTY_DEPTH) || !ctx->depth_id)
         emit_depth(ctx);
     if (dirty & DIRTY_RASTER)
@@ -922,81 +994,200 @@ static uint32_t read_index(const void *indices, GLenum type, uint32_t i)
     }
 }
 
-/* lists the vertices of fans, loops, quads and polygons as triangles or a strip; NULL indices count from first. */
-static BOOL convert_primitive(GLenum mode, const void *indices, GLenum type, uint32_t first, uint32_t count,
-                              GlMem *out, uint32_t *out_count, uint32_t *primitive)
+/*
+ * flat shading takes the color of one vertex of each primitive, the last one of lines, triangles and quads and the
+ * first one of polygons. metal takes the first vertex of what it draws, so flat draws are listed with the vertex that
+ * gl picks first, in an order that keeps the winding.
+ */
+static BOOL flat_mode(GLenum mode)
 {
-    uint32_t n = 0;
     switch (mode) {
-    case GL_TRIANGLE_FAN:
-    case GL_POLYGON:
-        n = count >= 3 ? (count - 2) * 3 : 0;
-        *primitive = 3;
-        break;
-    case GL_LINE_LOOP:
-        n = count >= 2 ? count + 1 : 0;
-        *primitive = 2;
-        break;
-    case GL_QUADS:
-        n = count / 4 * 6;
-        *primitive = 3;
-        break;
+    case GL_LINES:
+    case GL_LINE_STRIP:
+    case GL_TRIANGLES:
+    case GL_TRIANGLE_STRIP:
+    case GL_QUAD_STRIP:
+        return TRUE;
     default:
         return FALSE;
     }
+}
+
+static BOOL needs_conversion(GLenum mode, BOOL flat)
+{
+    return mode == GL_TRIANGLE_FAN || mode == GL_LINE_LOOP || mode == GL_QUADS || mode == GL_POLYGON ||
+           (flat && flat_mode(mode));
+}
+
+/* the number of indices a converted draw has, and the primitive they make. */
+static uint32_t converted_count(GLenum mode, BOOL flat, uint32_t count, uint32_t *primitive)
+{
+    *primitive = 3;
+    switch (mode) {
+    case GL_TRIANGLE_FAN:
+    case GL_POLYGON:
+    case GL_TRIANGLE_STRIP:
+        return count >= 3 ? (count - 2) * 3 : 0;
+    case GL_TRIANGLES:
+        return count / 3 * 3;
+    case GL_QUADS:
+        return count / 4 * 6;
+    case GL_QUAD_STRIP:
+        return count >= 4 ? (count / 2 - 1) * 6 : 0;
+    case GL_LINES:
+        *primitive = 1;
+        return count / 2 * 2;
+    case GL_LINE_STRIP:
+        *primitive = 1;
+        return count >= 2 ? (count - 1) * 2 : 0;
+    case GL_LINE_LOOP:
+        if (flat) {
+            *primitive = 1;
+            return count >= 2 ? count * 2 : 0;
+        }
+        *primitive = 2;
+        return count >= 2 ? count + 1 : 0;
+    default:
+        return 0;
+    }
+}
+
+/* lists the vertices of fans, loops, quads and polygons, and for flat shading everything else, as triangles, lines or a
+ * strip; NULL indices count from first. */
+static BOOL convert_primitive(GLenum mode, BOOL flat, const void *indices, GLenum type, uint32_t first, uint32_t count,
+                              GlMem *out, uint32_t *out_count, uint32_t *primitive)
+{
+    uint32_t n = converted_count(mode, flat, count, primitive);
     if (!n || !gl_stream_alloc((uint64_t)n * 4, 16, out))
         return FALSE;
     uint32_t *d = (uint32_t *)out->ptr;
 #define IDX(i) (indices ? read_index(indices, type, (i)) : first + (i))
     uint32_t k = 0;
-    if (mode == GL_LINE_LOOP) {
-        for (uint32_t i = 0; i < count; i++)
-            d[k++] = IDX(i);
-        d[k++] = IDX(0);
-    } else if (mode == GL_QUADS) {
-        for (uint32_t q = 0; q + 3 < count; q += 4) {
-            d[k++] = IDX(q);
-            d[k++] = IDX(q + 1);
-            d[k++] = IDX(q + 2);
-            d[k++] = IDX(q);
-            d[k++] = IDX(q + 2);
-            d[k++] = IDX(q + 3);
+    switch (mode) {
+    case GL_LINE_LOOP:
+        if (flat) {
+            for (uint32_t i = 0; i + 1 < count; i++) {
+                d[k++] = IDX(i + 1);
+                d[k++] = IDX(i);
+            }
+            d[k++] = IDX(0);
+            d[k++] = IDX(count - 1);
+        } else {
+            for (uint32_t i = 0; i < count; i++)
+                d[k++] = IDX(i);
+            d[k++] = IDX(0);
         }
-    } else {
+        break;
+    case GL_LINES:
+        for (uint32_t i = 0; i + 1 < count; i += 2) {
+            d[k++] = IDX(i + 1);
+            d[k++] = IDX(i);
+        }
+        break;
+    case GL_LINE_STRIP:
+        for (uint32_t i = 0; i + 1 < count; i++) {
+            d[k++] = IDX(i + 1);
+            d[k++] = IDX(i);
+        }
+        break;
+    case GL_TRIANGLES:
+        for (uint32_t i = 0; i + 2 < count; i += 3) {
+            d[k++] = IDX(i + 2);
+            d[k++] = IDX(i);
+            d[k++] = IDX(i + 1);
+        }
+        break;
+    case GL_TRIANGLE_STRIP:
+        for (uint32_t i = 0; i + 2 < count; i++) {
+            d[k++] = IDX(i + 2);
+            d[k++] = IDX(i + (i & 1 ? 1 : 0));
+            d[k++] = IDX(i + (i & 1 ? 0 : 1));
+        }
+        break;
+    case GL_TRIANGLE_FAN:
+        for (uint32_t i = 1; i + 1 < count; i++) {
+            if (flat) {
+                d[k++] = IDX(i + 1);
+                d[k++] = IDX(0);
+                d[k++] = IDX(i);
+            } else {
+                d[k++] = IDX(0);
+                d[k++] = IDX(i);
+                d[k++] = IDX(i + 1);
+            }
+        }
+        break;
+    case GL_POLYGON:
         for (uint32_t i = 1; i + 1 < count; i++) {
             d[k++] = IDX(0);
             d[k++] = IDX(i);
             d[k++] = IDX(i + 1);
         }
+        break;
+    case GL_QUADS:
+        for (uint32_t q = 0; q + 3 < count; q += 4) {
+            if (flat) {
+                /* both triangles hold the last vertex, which gl takes the color of. */
+                d[k++] = IDX(q + 3);
+                d[k++] = IDX(q);
+                d[k++] = IDX(q + 1);
+                d[k++] = IDX(q + 3);
+                d[k++] = IDX(q + 1);
+                d[k++] = IDX(q + 2);
+            } else {
+                d[k++] = IDX(q);
+                d[k++] = IDX(q + 1);
+                d[k++] = IDX(q + 2);
+                d[k++] = IDX(q);
+                d[k++] = IDX(q + 2);
+                d[k++] = IDX(q + 3);
+            }
+        }
+        break;
+    case GL_QUAD_STRIP:
+        for (uint32_t q = 0; q + 3 < count; q += 2) {
+            d[k++] = IDX(q + 3);
+            d[k++] = IDX(q);
+            d[k++] = IDX(q + 1);
+            d[k++] = IDX(q + 3);
+            d[k++] = IDX(q + 2);
+            d[k++] = IDX(q);
+        }
+        break;
+    default:
+        break;
     }
 #undef IDX
     *out_count = k;
     return TRUE;
 }
 
-static BOOL needs_conversion(GLenum mode)
-{
-    return mode == GL_TRIANGLE_FAN || mode == GL_LINE_LOOP || mode == GL_QUADS || mode == GL_POLYGON;
-}
-
 /* the program a draw uses and an open pass on its target, or NULL when it draws nothing. */
-static GlProgram *begin_draw(GlContext *ctx)
+static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate)
 {
     GlProgram *p = ctx->current_program;
-    if (!p) {
-        static BOOL warned;
-        if (!warned) {
-            gl_log("draws without a program (fixed function) are not supported");
-            warned = TRUE;
-        }
+    if (p && immediate)
         return nullptr;
+    if (p) {
+        in->attribs = ctx->vao->attribs;
+        in->mask = p->attrib_mask;
+        in->constants = nullptr;
+        in->fixed = in->flat = FALSE;
+        if (!gl_program_ready(p))
+            return nullptr;
+    } else {
+        p = gl_ff_begin_draw(ctx, in, immediate);
+        if (!p)
+            return nullptr;
     }
-    if (!gl_program_ready(p))
-        return nullptr;
     if (ctx->cull_face && ctx->cull_mode == GL_FRONT_AND_BACK)
         return nullptr;
     gl_begin_pass(ctx);
-    return ctx->pass_open ? p : nullptr;
+    if (!ctx->pass_open)
+        return nullptr;
+    if (in->fixed)
+        gl_ff_prepare(ctx, p);
+    return p;
 }
 
 static void draw_arrays(GLenum mode, GLint first, GLsizei count, GLsizei instances, GLuint base_instance)
@@ -1006,32 +1197,37 @@ static void draw_arrays(GLenum mode, GLint first, GLsizei count, GLsizei instanc
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
+    if (mode > GL_POLYGON) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     if (!count || !instances)
         return;
     gl_device_lock();
-    GlProgram *p = begin_draw(ctx);
+    GlVertexInput in;
+    GlProgram *p = begin_draw(ctx, &in, FALSE);
     if (!p) {
         gl_device_unlock();
         return;
     }
     DrawRange r = {(uint32_t)first, (uint32_t)count, (uint32_t)instances, base_instance, 0};
-    BOOL copy = needs_copy(ctx, p);
+    BOOL copy = needs_copy(&in);
     if (copy)
         r.rebase = r.first;
     Source src[MIME_GPU_MAX_ATTRIBS];
-    if (!setup_vertices(ctx, p, &r, src)) {
+    if (!setup_vertices(ctx, p, &in, &r, src)) {
         gl_device_unlock();
         return;
     }
-    if (!prepare(ctx, p, src)) {
+    if (!prepare(ctx, p, &in, src)) {
         gl_device_unlock();
         return;
     }
     uint32_t start = copy ? 0 : r.first;
-    if (needs_conversion(mode)) {
+    if (needs_conversion(mode, in.flat)) {
         GlMem idx;
         uint32_t n, prim;
-        if (convert_primitive(mode, nullptr, 0, start, r.count, &idx, &n, &prim)) {
+        if (convert_primitive(mode, in.flat, nullptr, 0, start, r.count, &idx, &n, &prim)) {
             MimeGpuDrawIndexed *d = gl_emit(MIME_GPU_DRAW_INDEXED, sizeof(MimeGpuDrawIndexed));
             d->primitive = prim;
             d->count = n;
@@ -1090,10 +1286,15 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
+    if (mode > GL_POLYGON) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     if (!count || !instances)
         return;
     gl_device_lock();
-    GlProgram *p = begin_draw(ctx);
+    GlVertexInput in;
+    GlProgram *p = begin_draw(ctx, &in, FALSE);
     if (!p) {
         gl_device_unlock();
         return;
@@ -1116,7 +1317,7 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
     }
 
     DrawRange r = {0, 0, (uint32_t)instances, base_instance, 0};
-    BOOL copy = needs_copy(ctx, p);
+    BOOL copy = needs_copy(&in);
     if (copy) {
         uint32_t lo = 0xFFFFFFFF, hi = 0;
         for (GLsizei i = 0; i < count; i++) {
@@ -1135,20 +1336,20 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
         r.rebase = r.first;
     }
     Source src[MIME_GPU_MAX_ATTRIBS];
-    if (!setup_vertices(ctx, p, &r, src)) {
+    if (!setup_vertices(ctx, p, &in, &r, src)) {
         gl_device_unlock();
         return;
     }
-    if (!prepare(ctx, p, src)) {
+    if (!prepare(ctx, p, &in, src)) {
         gl_device_unlock();
         return;
     }
 
     MimeGpuMem mem;
     uint32_t n = (uint32_t)count, itype, prim = mtl_primitive(mode);
-    if (needs_conversion(mode)) {
+    if (needs_conversion(mode, in.flat)) {
         GlMem idx;
-        if (!convert_primitive(mode, data, type, 0, (uint32_t)count, &idx, &n, &prim)) {
+        if (!convert_primitive(mode, in.flat, data, type, 0, (uint32_t)count, &idx, &n, &prim)) {
             gl_device_unlock();
             return;
         }
@@ -1226,4 +1427,133 @@ GLAPI void APIENTRY glMultiDrawElements(GLenum mode, const GLsizei *count, GLenu
 {
     for (GLsizei i = 0; i < n; i++)
         draw_elements(mode, count[i], type, indices[i], 1, 0, 0);
+}
+
+/* ---------------------------------------------------------------- glBegin and glEnd */
+
+static const GlVertexAttrib g_no_attribs[MIME_GPU_MAX_ATTRIBS];
+
+/* draws the vertices collected between glBegin and glEnd with the fixed function pipeline, in one draw. */
+void gl_draw_immediate(GlContext *ctx)
+{
+    GlFixed *f = &ctx->ff;
+    GLenum mode = f->begin_mode;
+    uint32_t count = f->vertex_count;
+    uint32_t minimum = 1;
+    switch (mode) {
+    case GL_LINES:
+        count &= ~1u;
+        minimum = 2;
+        break;
+    case GL_LINE_STRIP:
+    case GL_LINE_LOOP:
+        minimum = 2;
+        break;
+    case GL_TRIANGLES:
+        count -= count % 3;
+        minimum = 3;
+        break;
+    case GL_TRIANGLE_STRIP:
+    case GL_TRIANGLE_FAN:
+    case GL_POLYGON:
+        minimum = 3;
+        break;
+    case GL_QUADS:
+        count &= ~3u;
+        minimum = 4;
+        break;
+    case GL_QUAD_STRIP:
+        count &= ~1u;
+        minimum = 4;
+        break;
+    default:
+        break;
+    }
+    f->vertex_count = 0;
+    if (count < minimum)
+        return;
+    gl_device_lock();
+    GlVertexInput in;
+    GlProgram *p = begin_draw(ctx, &in, TRUE);
+    if (!p) {
+        gl_device_unlock();
+        return;
+    }
+    /* what changes between the vertices goes into the vertices, the rest is a constant. */
+    uint32_t stride = 16, color = 0, normal = 0, texcoord = 0;
+    if (f->varying & 1) {
+        color = stride;
+        stride += 16;
+    }
+    if (f->varying & 2) {
+        normal = stride;
+        stride += 16;
+    }
+    if (f->varying & 4) {
+        texcoord = stride;
+        stride += 16;
+    }
+    uint64_t bytes = (uint64_t)count * stride;
+    BOOL heap = bytes > (1u << 20);
+    GlMem mem, constants;
+    if (!(heap ? gl_heap_alloc(bytes, &mem) : gl_stream_alloc(bytes, 16, &mem)) ||
+        !gl_stream_alloc(48, 16, &constants)) {
+        gl_device_unlock();
+        return;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        const GlFfVertex *v = &f->vertices[i];
+        uint8_t *d = mem.ptr + (uint64_t)i * stride;
+        memcpy(d, v->position, 16);
+        if (color)
+            memcpy(d + color, v->color, 16);
+        if (normal)
+            memcpy(d + normal, v->normal, 16);
+        if (texcoord)
+            memcpy(d + texcoord, v->texcoord, 16);
+    }
+    memcpy(constants.ptr, f->vertices[0].color, 16);
+    memcpy(constants.ptr + 16, f->vertices[0].normal, 16);
+    memcpy(constants.ptr + 32, f->vertices[0].texcoord, 16);
+    Source src[MIME_GPU_MAX_ATTRIBS];
+    memset(src, 0, sizeof(src));
+    const uint32_t at[4] = {0, color, normal, texcoord};
+    for (int l = 0; l < 4; l++) {
+        src[l].used = TRUE;
+        src[l].format = 31;
+        if (l && !at[l]) {
+            src[l].constant = TRUE;
+            src[l].mem = gl_mem(&constants);
+            src[l].mem.offset += (uint64_t)(l - 1) * 16;
+            continue;
+        }
+        src[l].copied = TRUE;
+        src[l].mem = gl_mem(&mem);
+        src[l].mem.offset += at[l];
+        src[l].stride = stride;
+    }
+    in.attribs = g_no_attribs;
+    if (prepare(ctx, p, &in, src)) {
+        if (needs_conversion(mode, in.flat)) {
+            GlMem idx;
+            uint32_t n, prim;
+            if (convert_primitive(mode, in.flat, nullptr, 0, 0, count, &idx, &n, &prim)) {
+                MimeGpuDrawIndexed *d = gl_emit(MIME_GPU_DRAW_INDEXED, sizeof(MimeGpuDrawIndexed));
+                d->primitive = prim;
+                d->count = n;
+                d->index_type = 1;
+                d->instances = 1;
+                d->indices = gl_mem(&idx);
+            }
+        } else {
+            MimeGpuDraw *d = gl_emit(MIME_GPU_DRAW, sizeof(MimeGpuDraw));
+            d->primitive = mtl_primitive(mode);
+            d->first = 0;
+            d->count = count;
+            d->instances = 1;
+        }
+    }
+    if (heap)
+        gl_heap_free(&mem, gl_batch_fence());
+    gl_device_unlock();
 }

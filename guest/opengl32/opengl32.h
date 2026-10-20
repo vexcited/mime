@@ -241,9 +241,14 @@ typedef struct GlVertexAttrib {
     GLuint divisor;
 } GlVertexAttrib;
 
+/* the fixed function arrays: vertex, color, normal, then a texture coordinate array per unit. */
+#define FF_UNITS 8
+#define FF_ARRAYS (3 + FF_UNITS)
+
 typedef struct GlVertexArray {
     GLuint name;
     GlVertexAttrib attribs[MIME_GPU_MAX_ATTRIBS];
+    GlVertexAttrib legacy[FF_ARRAYS];
     GLuint element_buffer;
 } GlVertexArray;
 
@@ -310,6 +315,92 @@ typedef struct GlBlend {
     GLenum src_rgb, dst_rgb, src_alpha, dst_alpha;
     GLenum eq_rgb, eq_alpha;
 } GlBlend;
+
+/* ---------------------------------------------------------------- fixed function */
+
+#define FF_MODELVIEW_DEPTH 32
+#define FF_PROJECTION_DEPTH 10
+#define FF_TEXTURE_DEPTH 10
+#define FF_LIGHTS 8
+#define FF_STORED_CAPS 64
+#define FF_UNIFORM_SLOTS 96
+
+typedef struct GlLight {
+    GLfloat ambient[4], diffuse[4], specular[4];
+    GLfloat position[4];        /* eye coordinates. */
+    GLfloat spot_direction[3];  /* eye coordinates. */
+    GLfloat spot_exponent, spot_cutoff;
+    GLfloat attenuation[3];
+    BOOL enabled;
+} GlLight;
+
+typedef struct GlMaterial {
+    GLfloat ambient[4], diffuse[4], specular[4], emission[4];
+    GLfloat shininess;
+} GlMaterial;
+
+/* one vertex of glBegin: position, then the current color, normal and texture coordinate. */
+typedef struct GlFfVertex {
+    GLfloat position[4], color[4], normal[4], texcoord[4];
+} GlFfVertex;
+
+typedef struct GlFixed {
+    GLenum matrix_mode;
+    GLfloat modelview[FF_MODELVIEW_DEPTH][16];
+    GLfloat projection[FF_PROJECTION_DEPTH][16];
+    GLfloat texture[FF_UNITS][FF_TEXTURE_DEPTH][16];
+    GLint modelview_depth, projection_depth, texture_depth[FF_UNITS]; /* entries below the top one. */
+
+    /* current values: color, normal and the texture coordinate of unit 0 stay together for the vertex copy. */
+    GLfloat current[3][4];
+    GLfloat texcoord[FF_UNITS][4];
+    GLboolean edge_flag;
+
+    /* between glBegin and glEnd. */
+    BOOL in_begin;
+    GLenum begin_mode;
+    GlFfVertex *vertices;
+    uint32_t vertex_count, vertex_cap;
+    uint32_t varying; /* bit 0 color, 1 normal, 2 texture coordinate: set while the batch is open. */
+
+    GLenum shade_model;
+    GLenum alpha_func;
+    GLfloat alpha_ref;
+    BOOL alpha_test, lighting, color_material, normalize, rescale_normal, fog;
+    BOOL texture_2d[FF_UNITS], texture_1d[FF_UNITS], texture_3d[FF_UNITS];
+    GLenum color_material_face, color_material_mode;
+    GLenum tex_env_mode[FF_UNITS];
+    GLfloat tex_env_color[FF_UNITS][4];
+    GLenum fog_mode;
+    GLfloat fog_density, fog_start, fog_end, fog_color[4];
+    GLfloat model_ambient[4];
+    BOOL local_viewer, two_side;
+    GLenum color_control;
+    GlMaterial material[2];
+    GlLight lights[FF_LIGHTS];
+    GLuint client_unit;
+    GLenum render_mode;
+    BOOL select_buffer, feedback_buffer;
+    GLint name_depth;
+    BOOL stored[FF_STORED_CAPS]; /* capabilities that only read back what was set. */
+    BOOL unused_arrays[4];
+
+    /* the built-in program and what it was last given. */
+    struct GlProgram *program;
+    BOOL program_failed, dirty;
+    BOOL uniform_found;
+    uint32_t uniform_offset, uniform_stride;
+    GLfloat uniforms[FF_UNIFORM_SLOTS][4];
+    GLfloat constants[4][4];
+} GlFixed;
+
+/* where a draw reads its vertices: a table of attributes by location, and the values of disabled ones. */
+typedef struct GlVertexInput {
+    const GlVertexAttrib *attribs;
+    uint32_t mask;
+    const GLfloat (*constants)[4]; /* NULL: the generic attribute values of the context. */
+    BOOL fixed, flat;
+} GlVertexInput;
 
 typedef struct GlContext {
     GlShared *shared;
@@ -403,6 +494,8 @@ typedef struct GlContext {
     } pending_clear;
     BOOL dummy_texture_ready;
     uint32_t dummy_texture;
+
+    GlFixed ff;
 } GlContext;
 
 static inline GlContext *gl_current(void)
@@ -450,11 +543,36 @@ BOOL gl_read_pixels_into(GlContext *ctx, GLint x, GLint y, GLsizei w, GLsizei h,
 /* programs, program.c. */
 GlProgram *gl_program(GlContext *ctx, GLuint name);
 BOOL gl_program_ready(GlProgram *p);
+BOOL gl_program_link_sources(GlProgram *p, const char *vs, const char *fs);
+void gl_program_free_internal(GlProgram *p);
 
 /* draws, draw.c. */
 void gl_invalidate_bindings(GlContext *ctx);
+void gl_draw_immediate(GlContext *ctx);
 
+/* the fixed function pipeline, fixed.c, immediate.c and fixedshader.c. */
+void gl_ff_init(GlContext *ctx);
+void gl_ff_destroy(GlContext *ctx);
+BOOL gl_ff_capability(GlContext *ctx, GLenum cap, BOOL on);
+BOOL gl_ff_is_enabled(GlContext *ctx, GLenum cap, BOOL *known);
+int gl_ff_get(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors);
+void gl_ff_track_color(GlContext *ctx);
+int gl_ff_unused_array(GLenum cap);
+GlProgram *gl_ff_begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate);
+void gl_ff_prepare(GlContext *ctx, GlProgram *p);
+
+/* between glBegin and glEnd only the vertex commands run: any other one is a GL_INVALID_OPERATION. */
 #define GL_CONTEXT_OR_RETURN(...)                                                                                      \
+    GlContext *ctx = gl_current();                                                                                     \
+    if (!ctx)                                                                                                          \
+        return __VA_ARGS__;                                                                                            \
+    if (ctx->ff.in_begin) {                                                                                            \
+        gl_error(ctx, GL_INVALID_OPERATION);                                                                           \
+        return __VA_ARGS__;                                                                                            \
+    }
+
+/* the commands allowed between glBegin and glEnd. */
+#define GL_CONTEXT_ALLOWED_IN_BEGIN(...)                                                                               \
     GlContext *ctx = gl_current();                                                                                     \
     if (!ctx)                                                                                                          \
         return __VA_ARGS__;

@@ -455,6 +455,7 @@ GLAPI BOOL WINAPI wglDeleteContext(HGLRC rc)
     /* the share group's objects stay with the other contexts; their memory is kept for now. */
     __atomic_fetch_sub(&ctx->shared->refs, 1, __ATOMIC_ACQ_REL);
     gl_queries_destroy(ctx);
+    gl_ff_destroy(ctx);
     gl_free(ctx);
     return TRUE;
 }
