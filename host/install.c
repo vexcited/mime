@@ -111,6 +111,10 @@ bool mime_prepare_drive(const MimePaths *paths)
     snprintf(dir, sizeof(dir), "%s/Windows/System32", paths->drive_c);
     if (!mime_mkdir_p(dir, 0755))
         return false;
+    /* where 32-bit programs see System32, so files they make there have somewhere to go. */
+    snprintf(dir, sizeof(dir), "%s/Windows/SysWOW64", paths->drive_c);
+    if (!mime_mkdir_p(dir, 0755))
+        return false;
     /* copies written by older versions are shadowed by the rom, remove them. */
     const MimeRomHeader *h = mime_rom_header();
     for (uint32_t i = 0; i < h->count; i++) {
