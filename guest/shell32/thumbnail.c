@@ -589,8 +589,8 @@ static HRESULT tile_bitmap(const SH_ICON_SOURCE *source, int cx, int cy, BOOL wi
 /* ------------------------------------------------------------------ the request */
 
 /*
- * the bitmap of an item. path is the file the item is, or NULL for the desktop (virtual_kind 1), "This PC" (2) and the
- * other folders of the shell (3).
+ * the bitmap of an item. path is the file the item is, or NULL for the desktop, which is virtual kind 1, "This PC",
+ * which is 2, and the other folders of the shell, which are 3.
  *
  * a request for icons or for what is in memory never makes a thumbnail, and one that wants only a thumbnail then
  * fails with E_PENDING. Otherwise the thumbnail is tried first and the icon stands in for it, unless only the

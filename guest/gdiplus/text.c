@@ -1317,6 +1317,19 @@ static GpStatus draw_string(GGraphics *g, const WCHAR *string, INT length, GFont
         layout_free(&L);
         return st;
     }
+    if (g->meta) {
+        /* a recording graphics keeps the glyphs as the filled outline of the text, in world space */
+        MimeVecMatrix identity;
+        mime_vec_matrix_identity(&identity);
+        MimeVecPath outline;
+        mime_vec_path_init(&outline, &gp_allocator);
+        st = layout_emit(&L, rc->X, rc->Y, rc->Width, rc->Height, &identity, FALSE, nullptr, &outline);
+        if (st == Ok && outline.count)
+            st = gp_rec_fill_path(g, &outline, FillModeWinding, brush);
+        mime_vec_path_free(&outline);
+        layout_free(&L);
+        return st;
+    }
     TextRenderingHint hint = effective_hint(g);
     BOOL aliased = hint == TextRenderingHintSingleBitPerPixelGridFit || hint == TextRenderingHintSingleBitPerPixel;
     BOOL gridfit = hint == TextRenderingHintSingleBitPerPixelGridFit || hint == TextRenderingHintAntiAliasGridFit ||
@@ -1753,6 +1766,27 @@ WINGDIPAPI GpStatus WINAPI GdipDrawDriverString(GpGraphics *graphics, const UINT
         return InvalidParameter;
     GlyphRun run;
     GpStatus st = run_make(&run, g, text, length, f, positions, flags, m);
+    if (st == Ok && g->meta) {
+        MimeVecPath outline;
+        mime_vec_path_init(&outline, &gp_allocator);
+        Emit E;
+        memset(&E, 0, sizeof(E));
+        E.path = &outline;
+        E.size = run.size;
+        E.bold_sim = (f->style & FontStyleBold) && !run.face->bold;
+        E.italic_sim = (f->style & FontStyleItalic) && !run.face->italic;
+        if (m)
+            E.post = m->m;
+        else
+            mime_vec_matrix_identity(&E.post);
+        for (INT i = 0; i < run.count && st == Ok; i++)
+            st = emit_glyph(&E, run.face, run.glyph[i], run.origin[i].x, run.origin[i].y);
+        if (st == Ok && outline.count)
+            st = gp_rec_fill_path(g, &outline, FillModeWinding, b);
+        mime_vec_path_free(&outline);
+        run_free(&run);
+        return st;
+    }
     if (st == Ok) {
         MimeVecPolys polys;
         mime_vec_polys_init(&polys, &gp_allocator);
