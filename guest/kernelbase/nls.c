@@ -149,7 +149,7 @@ static BOOL fill_cp_info(UINT cp, LPCPINFO info, WCHAR *unicode_default, UINT *n
     memset(info, 0, sizeof(*info));
     info->DefaultChar[0] = '?';
     if (p) {
-        info->MaxCharSize = p->Kind == NLS_KIND_SBCS ? 1 : 2;
+        info->MaxCharSize = p->Kind == NLS_KIND_SBCS ? 1 : p->Kind == NLS_KIND_GB18030 ? 4 : 2;
         info->DefaultChar[0] = (BYTE)p->DefaultChar;
         memcpy(info->LeadByte, p->LeadBytes, MAX_LEADBYTES);
         *unicode_default = p->UnicodeDefault;
@@ -608,6 +608,58 @@ static WCHAR single_with_glyphs(const NLS_CPDATA *p, UINT b, DWORD flags)
     return single_to_wide(p, b);
 }
 
+/* ------------------------------------------------------------------ gb18030 */
+
+#define GB_SUPPLEMENTARY_POINTER 189000
+
+/* the character of a four byte code, or 0 when the pointer stands for none. */
+static ULONG gb_char_of_pointer(ULONG pointer)
+{
+    if (pointer == 7457)
+        return 0xE7C7;
+    if (pointer >= GB_SUPPLEMENTARY_POINTER)
+        return pointer <= GB_SUPPLEMENTARY_POINTER + 0xFFFFF ? 0x10000 + pointer - GB_SUPPLEMENTARY_POINTER : 0;
+    LONG lo = 0, hi = (LONG)RTL_NUMBER_OF(g_nls_gb_pointer) - 1, found = -1;
+    while (lo <= hi) {
+        LONG mid = (lo + hi) / 2;
+        if (g_nls_gb_pointer[mid] <= pointer) {
+            found = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if (found < 0 || g_nls_gb_pointer[found] >= GB_SUPPLEMENTARY_POINTER)
+        return 0;
+    ULONG c = g_nls_gb_char[found] + pointer - g_nls_gb_pointer[found];
+    return c <= 0xFFFF ? c : 0;
+}
+
+/* the four byte pointer of a character, or -1. */
+static LONG gb_pointer_of_char(ULONG c)
+{
+    if (c >= 0x10000)
+        return c <= 0x10FFFF ? (LONG)(GB_SUPPLEMENTARY_POINTER + c - 0x10000) : -1;
+    if (c == 0xE7C7)
+        return 7457;
+    LONG lo = 0, hi = (LONG)RTL_NUMBER_OF(g_nls_gb_char) - 1, found = -1;
+    while (lo <= hi) {
+        LONG mid = (lo + hi) / 2;
+        if (g_nls_gb_char[mid] <= c) {
+            found = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if (found < 0 || g_nls_gb_pointer[found] >= GB_SUPPLEMENTARY_POINTER)
+        return -1;
+    ULONG length = g_nls_gb_pointer[found + 1] - g_nls_gb_pointer[found];
+    if (c - g_nls_gb_char[found] >= length)
+        return -1;
+    return (LONG)(g_nls_gb_pointer[found] + c - g_nls_gb_char[found]);
+}
+
 /* returns FALSE for a byte the code page does not define when the flags ask for an error. */
 static BOOL table_to_wide(const NLS_CPDATA *p, DWORD flags, const UCHAR *s, int n, WIDE_OUT *o)
 {
@@ -615,9 +667,36 @@ static BOOL table_to_wide(const NLS_CPDATA *p, DWORD flags, const UCHAR *s, int 
     for (int i = 0; i < n && !o->Overflow; i++) {
         UINT b = s[i];
         if (!is_lead(p, b)) {
+            WCHAR c = single_with_glyphs(p, b, flags);
+            if (c == 0xFFFF) {
+                /* a byte that is no character of gb18030. */
+                if (strict)
+                    return FALSE;
+                put_wide(o, p->UnicodeDefault);
+                continue;
+            }
             if (strict && is_undefined_byte(p, b))
                 return FALSE;
-            put_table_wide(o, single_with_glyphs(p, b, flags), flags);
+            put_table_wide(o, c, flags);
+            continue;
+        }
+        if (p->Kind == NLS_KIND_GB18030 && i + 1 < n && s[i + 1] >= 0x30 && s[i + 1] <= 0x39) {
+            ULONG c = 0;
+            if (i + 3 < n && s[i + 2] >= 0x81 && s[i + 2] <= 0xFE && s[i + 3] >= 0x30 && s[i + 3] <= 0x39)
+                c = gb_char_of_pointer(((b - 0x81) * 10 + (s[i + 1] - 0x30)) * 1260 + (s[i + 2] - 0x81) * 10 + (s[i + 3] - 0x30));
+            if (!c) {
+                if (strict)
+                    return FALSE;
+                put_wide(o, p->UnicodeDefault);
+                continue;
+            }
+            i += 3;
+            if (c >= 0x10000) {
+                put_wide(o, (WCHAR)(0xD800 + ((c - 0x10000) >> 10)));
+                put_wide(o, (WCHAR)(0xDC00 + ((c - 0x10000) & 0x3FF)));
+            } else {
+                put_table_wide(o, (WCHAR)c, flags);
+            }
             continue;
         }
         /* a lead byte at the end of the text, or one a null byte follows, is a lone one. */
@@ -658,10 +737,32 @@ static void put_default(TABLE_OUT *t)
     t->Used = TRUE;
 }
 
+static void put_four_bytes(TABLE_OUT *t, ULONG pointer)
+{
+    put_byte(t->Out, (CHAR)(0x81 + pointer / 12600));
+    put_byte(t->Out, (CHAR)(0x30 + pointer / 1260 % 10));
+    put_byte(t->Out, (CHAR)(0x81 + pointer / 10 % 126));
+    put_byte(t->Out, (CHAR)(0x30 + pointer % 10));
+}
+
+/* a character of gb18030 that has no two byte code. */
+static void put_gb_extra(TABLE_OUT *t, ULONG c)
+{
+    LONG pointer = gb_pointer_of_char(c);
+    if (pointer < 0)
+        put_default(t);
+    else
+        put_four_bytes(t, (ULONG)pointer);
+}
+
 /* one character: its code, the code of its best fit, or the default character. */
 static void put_table_char(TABLE_OUT *t, WCHAR c)
 {
     LONG code = wide_to_code(t->Page, c);
+    if (code < 0 && t->Page->Kind == NLS_KIND_GB18030 && !(c >= 0xD800 && c <= 0xDFFF) && c != 0xE5E5) {
+        put_gb_extra(t, c);
+        return;
+    }
     if (code < 0 || ((t->Flags & WC_NO_BEST_FIT_CHARS) && !code_round_trips(t->Page, c, (ULONG)code))) {
         put_default(t);
         return;
@@ -674,8 +775,14 @@ static void put_table_char(TABLE_OUT *t, WCHAR c)
 static void wide_to_table(TABLE_OUT *t, const WCHAR *s, int n)
 {
     DWORD flags = t->Flags;
+    BOOL gb = t->Page->Kind == NLS_KIND_GB18030;
     for (int i = 0; i < n && !t->Out->Overflow; i++) {
         WCHAR c = s[i];
+        if (gb && c >= 0xD800 && c <= 0xDBFF && i + 1 < n && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) {
+            put_gb_extra(t, 0x10000 + (((ULONG)c - 0xD800) << 10) + (s[i + 1] - 0xDC00));
+            i++;
+            continue;
+        }
         if (!(flags & WC_COMPOSITECHECK)) {
             put_table_char(t, c);
             continue;

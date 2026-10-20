@@ -219,31 +219,38 @@ WINUSERAPI LPWSTR WINAPI CharPrevW(LPCWSTR start, LPCWSTR s)
 
 WINUSERAPI LPSTR WINAPI CharNextA(LPCSTR s)
 {
-    return (LPSTR)(*s ? s + 1 : s);
+    if (!*s)
+        return (LPSTR)s;
+    /* a lead byte takes its trail byte along, unless the string ends there. */
+    if (IsDBCSLeadByte((BYTE)s[0]) && s[1])
+        return (LPSTR)(s + 2);
+    return (LPSTR)(s + 1);
+}
+
+DWORD CharUpperLowerBuffA(LPSTR text, DWORD length, BOOL upper);
+
+/* a character or a string through the case mapping of the ansi code page. */
+static LPSTR map_ansi_case(LPSTR s, BOOL upper)
+{
+    if (IS_INTRESOURCE(s)) {
+        char c = (char)(ULONG_PTR)s;
+        if (IsDBCSLeadByte((BYTE)c))
+            return s;
+        CharUpperLowerBuffA(&c, 1, upper);
+        return (LPSTR)(ULONG_PTR)(UCHAR)c;
+    }
+    CharUpperLowerBuffA(s, (DWORD)strlen(s), upper);
+    return s;
 }
 
 WINUSERAPI LPSTR WINAPI CharUpperA(LPSTR s)
 {
-    if (IS_INTRESOURCE(s)) {
-        char c = (char)(ULONG_PTR)s;
-        return (LPSTR)(ULONG_PTR)(UCHAR)(c >= 'a' && c <= 'z' ? c - 32 : c);
-    }
-    for (LPSTR p = s; *p; p++)
-        if (*p >= 'a' && *p <= 'z')
-            *p -= 32;
-    return s;
+    return map_ansi_case(s, TRUE);
 }
 
 WINUSERAPI LPSTR WINAPI CharLowerA(LPSTR s)
 {
-    if (IS_INTRESOURCE(s)) {
-        char c = (char)(ULONG_PTR)s;
-        return (LPSTR)(ULONG_PTR)(UCHAR)(c >= 'A' && c <= 'Z' ? c + 32 : c);
-    }
-    for (LPSTR p = s; *p; p++)
-        if (*p >= 'A' && *p <= 'Z')
-            *p += 32;
-    return s;
+    return map_ansi_case(s, FALSE);
 }
 
 WINUSERAPI BOOL WINAPI IsCharAlphaW(WCHAR c)

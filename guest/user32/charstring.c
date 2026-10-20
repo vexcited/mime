@@ -21,12 +21,15 @@ static DWORD map_buffer(LPSTR text, DWORD length, DWORD flag)
         /* a character the mapping does not know stays as it was. */
         if (LCMapStringEx(nullptr, flag, wide, count, mapped, count, nullptr, nullptr, 0) != count)
             memcpy(mapped, wide, count * sizeof(WCHAR));
-        ULONG written = 0;
-        RtlUnicodeToMultiByteN(text, length, &written, mapped, count * sizeof(WCHAR));
-        result = written;
+        result = (DWORD)WideCharToMultiByte(CP_ACP, 0, mapped, count, text, (int)length, nullptr, nullptr);
     }
     RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, wide);
     return result;
+}
+
+DWORD CharUpperLowerBuffA(LPSTR text, DWORD length, BOOL upper)
+{
+    return map_buffer(text, length, upper ? LCMAP_UPPERCASE : LCMAP_LOWERCASE);
 }
 
 WINUSERAPI DWORD WINAPI CharUpperBuffA(LPSTR text, DWORD length)
@@ -39,19 +42,17 @@ WINUSERAPI DWORD WINAPI CharLowerBuffA(LPSTR text, DWORD length)
     return map_buffer(text, length, LCMAP_LOWERCASE);
 }
 
-/* the character before a position, which is two bytes back when it ends a double byte character. */
+/* the character before a position: the walk from the start tells a trail byte from a lead byte. */
 WINUSERAPI LPSTR WINAPI CharPrevA(LPCSTR start, LPCSTR current)
 {
     if (current <= start)
         return (LPSTR)current;
-    LPCSTR previous = current - 1;
-    if (previous - 1 < start)
-        return (LPSTR)previous;
-    /* an odd number of lead bytes in a row before it makes it a trail byte. */
-    BOOL trail = FALSE;
-    for (LPCSTR p = previous - 1; p >= start && IsDBCSLeadByte((BYTE)*p); p--)
-        trail = !trail;
-    return (LPSTR)(trail ? previous - 1 : previous);
+    LPCSTR p = start, previous = start;
+    while (p < current && *p) {
+        previous = p;
+        p = CharNextA(p);
+    }
+    return (LPSTR)previous;
 }
 
 static BOOL character_type(CHAR c, WORD mask)
@@ -60,8 +61,8 @@ static BOOL character_type(CHAR c, WORD mask)
     if (IsDBCSLeadByte(byte))
         return FALSE;
     WCHAR wide = 0;
-    ULONG written;
-    RtlMultiByteToUnicodeN(&wide, sizeof(wide), &written, (PCCH)&byte, 1);
+    if (MultiByteToWideChar(CP_ACP, 0, (LPCCH)&byte, 1, &wide, 1) != 1)
+        return FALSE;
     WORD type = 0;
     GetStringTypeW(CT_CTYPE1, &wide, 1, &type);
     return (type & mask) != 0;
