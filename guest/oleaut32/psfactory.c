@@ -257,8 +257,3 @@ WINOLEAUTAPI HRESULT WINAPI DllCanUnloadNow(void)
 {
     return NdrDllCanUnloadNow(&oaproxy_PSFactory);
 }
-
-HRESULT AutUniversalFactory(REFIID iid, void **object)
-{
-    return CLASS_E_CLASSNOTAVAILABLE;
-}
