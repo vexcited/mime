@@ -779,10 +779,30 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         }
         if (nr == MIME_HC_FS_WRITE)
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
-        ssize_t n = nr == MIME_HC_FS_READ ? pread(fh->fd, buf, (size_t)a[4], (off_t)a[2])
-                                          : pwrite(fh->fd, buf, (size_t)a[4], (off_t)a[2]);
-        if (nr == MIME_HC_FS_WRITE)
+        ssize_t n;
+        if (nr == MIME_HC_FS_READ) {
+            n = pread(fh->fd, buf, (size_t)a[4], (off_t)a[2]);
+        } else {
+            /* a write that comes back short is asked again for the rest: the guest takes a short count for a full disk. */
+            n = 0;
+            while ((uint64_t)n < a[4]) {
+                ssize_t part = pwrite(fh->fd, (const char *)buf + n, (size_t)(a[4] - (uint64_t)n), (off_t)(a[2] + (uint64_t)n));
+                if (part < 0 && errno == EINTR)
+                    continue;
+                if (part == 0)
+                    errno = ENOSPC;
+                if (part <= 0) {
+                    if (part < 0 && n == 0)
+                        n = -1;
+                    break;
+                }
+                n += part;
+            }
+            if (n >= 0 && (uint64_t)n < a[4])
+                mime_warn("fs: write of %llu bytes at %llu to %s stopped after %lld bytes: %s", (unsigned long long)a[4],
+                          (unsigned long long)a[2], fh->host_path, (long long)n, strerror(errno));
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        }
         if (n < 0)
             status = errno_status(errno);
         else
