@@ -293,3 +293,47 @@ WINOLEAPI HRESULT WINAPI CoGetCurrentLogicalThreadId(GUID *guid)
     *guid = t->LogicalThread;
     return S_OK;
 }
+
+/*
+ * A stub tells the channel the result of the application's call when it has made it, with nothing to tell about the
+ * channel itself: the result is kept for the call being served, where nothing reads it yet.
+ */
+WINOLEAPI HRESULT WINAPI DcomChannelSetHResult(void *reserved1, ULONG *reserved2, HRESULT application)
+{
+    if (reserved1 || reserved2)
+        return E_INVALIDARG;
+    OLE_THREAD *t = OleThreadState(FALSE);
+    if (t)
+        t->CallResult = application;
+    return S_OK;
+}
+
+/*
+ * The questions the marshaling of variants asks of the other side of a call. The peer of a call here speaks the version of
+ * the protocol windows has today, so it does not need the padding after a variant that older ones read, and it takes the
+ * records of the user defined types. Outside a call nothing is asked of anyone: no padding, records allowed.
+ */
+WINOLEAPI BOOL WINAPI CoDoesOtherSideVariantMarshalingNeedTrailingPadding(ULONG *flags)
+{
+    return FALSE;
+}
+
+WINOLEAPI BOOL WINAPI CoDoesOtherSideSupportUDTMarshaling(ULONG *flags)
+{
+    return TRUE;
+}
+
+/*
+ * The context of the call being served when the call is one to the object given, else nothing and no error. Guess: the
+ * object is not compared, a call is the one that is served.
+ */
+WINOLEAPI HRESULT WINAPI CoGetCallContextOfObject(IUnknown *server, REFIID iid, void **context)
+{
+    if (!context)
+        return E_POINTER;
+    *context = nullptr;
+    OLE_THREAD *t = OleThreadState(FALSE);
+    if (!t || !t->OrpcCall)
+        return S_OK;
+    return CoGetCallContext(iid, context);
+}

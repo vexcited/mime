@@ -138,10 +138,24 @@ static HRESULT manager_add_interface(PROXYMGR *m, REFIID iid, const GUID *ipid, 
         HRESULT hr = OrpcChannelCreate(m->Server, ipid, iid, &channel);
         if (SUCCEEDED(hr)) {
             hr = factory->lpVtbl->CreateProxy(factory, (IUnknown *)m, iid, &ifp->Proxy, &ifp->Interface);
+            /*
+             * the factory of oleaut32 in windows makes a wrapper that has no interface to give until it is connected: it makes
+             * the proxy it stands for then.
+             */
+            BOOL connected = FALSE;
+            if (SUCCEEDED(hr) && ifp->Proxy && !ifp->Interface) {
+                hr = ifp->Proxy->lpVtbl->Connect(ifp->Proxy, channel);
+                connected = SUCCEEDED(hr);
+                if (SUCCEEDED(hr))
+                    hr = ifp->Proxy->lpVtbl->QueryInterface(ifp->Proxy, iid, &ifp->Interface);
+            }
+            if (SUCCEEDED(hr) && (!ifp->Proxy || !ifp->Interface))
+                hr = E_NOINTERFACE;
             if (SUCCEEDED(hr)) {
                 /* the interface was referenced through the manager; the manager is kept alive by the caller. */
                 ((IUnknown *)ifp->Interface)->lpVtbl->Release((IUnknown *)ifp->Interface);
-                hr = ifp->Proxy->lpVtbl->Connect(ifp->Proxy, channel);
+                if (!connected)
+                    hr = ifp->Proxy->lpVtbl->Connect(ifp->Proxy, channel);
             }
             channel->lpVtbl->Release(channel);
         }

@@ -269,6 +269,8 @@ WINOLEAPI HRESULT WINAPI CoRegisterPSClsid(REFIID iid, REFCLSID clsid);
 WINOLEAPI HRESULT WINAPI CoGetPSClsid(REFIID iid, CLSID *clsid);
 WINOLEAPI HRESULT WINAPI CoRegisterMessageFilter(IMessageFilter *filter, IMessageFilter **previous);
 WINOLEAPI HRESULT WINAPI CoDisconnectObject(IUnknown *object, DWORD reserved);
+/* a stub tells the channel the result of the call it made for the application. */
+WINOLEAPI HRESULT WINAPI DcomChannelSetHResult(void *reserved1, ULONG *reserved2, HRESULT application);
 
 
 /* the wire forms of the pointers to interfaces and of the handles, with the 64 bit forms of the second transfer syntax. */

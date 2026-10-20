@@ -44,6 +44,7 @@ typedef struct PROXY {
     IRpcChannelBuffer *Channel;
     IPSFactoryBuffer *Factory;
     IRpcProxyBuffer *Delegate;
+    const IID *DelegatedIid;
 } PROXY;
 
 #define PROXY_OF_INTERFACE(p) ((PROXY *)(p))
@@ -267,8 +268,15 @@ static HRESULT STDMETHODCALLTYPE proxy_connect(IRpcProxyBuffer *This, IRpcChanne
     IRpcChannelBuffer *old = InterlockedExchangePointer((void *volatile *)&p->Channel, channel);
     if (old)
         old->lpVtbl->Release(old);
-    if (p->Delegate)
-        return p->Delegate->lpVtbl->Connect(p->Delegate, channel);
+    if (p->Delegate) {
+        HRESULT hr = p->Delegate->lpVtbl->Connect(p->Delegate, channel);
+        if (SUCCEEDED(hr) && !p->DelegateInterface) {
+            hr = p->Delegate->lpVtbl->QueryInterface(p->Delegate, p->DelegatedIid, &p->DelegateInterface);
+            if (SUCCEEDED(hr))
+                ((IUnknown *)p->DelegateInterface)->lpVtbl->Release((IUnknown *)p->DelegateInterface);
+        }
+        return hr;
+    }
     return S_OK;
 }
 
@@ -326,12 +334,19 @@ static HRESULT proxy_create(IPSFactoryBuffer *factory, const ProxyFileInfo **lis
         }
         HRESULT hr = base->lpVtbl->CreateProxy(base, p->Outer, e.Delegated, &p->Delegate, &p->DelegateInterface);
         base->lpVtbl->Release(base);
+        if (SUCCEEDED(hr) && !p->Delegate)
+            hr = E_NOINTERFACE;
         if (FAILED(hr)) {
             proxy_release((IRpcProxyBuffer *)&p->lpVtbl);
             return hr;
         }
-        /* the delegate was referenced through the outer unknown, which the interface of this proxy is going to be. */
-        ((IUnknown *)p->DelegateInterface)->lpVtbl->Release((IUnknown *)p->DelegateInterface);
+        p->DelegatedIid = e.Delegated;
+        /*
+         * the delegate was referenced through the outer unknown, which the interface of this proxy is going to be. A factory
+         * may leave the interface to be asked for once the proxy is connected, which is when this one gets it.
+         */
+        if (p->DelegateInterface)
+            ((IUnknown *)p->DelegateInterface)->lpVtbl->Release((IUnknown *)p->DelegateInterface);
     }
     *proxy_out = (IRpcProxyBuffer *)&p->lpVtbl;
     *object = &p->Vtbl;
@@ -535,7 +550,11 @@ RPCRTAPI HRESULT WINAPI CStdStubBuffer_Invoke(IRpcStubBuffer *This, RPCOLEMESSAG
     DWORD phase = 0;
     HRESULT hr = S_OK;
     __try {
-        header->pDispatchTable[message->iMethod](This, channel, (PRPC_MESSAGE)message, &phase);
+        /* a table midl leaves out serves every method with the interpreter, which the server information describes. */
+        if (header->pDispatchTable)
+            header->pDispatchTable[message->iMethod](This, channel, (PRPC_MESSAGE)message, &phase);
+        else
+            NdrStubCall2(This, channel, (PRPC_MESSAGE)message, &phase);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         ULONG code = __exception_code();

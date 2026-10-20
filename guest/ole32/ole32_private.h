@@ -51,6 +51,8 @@ typedef struct _OLE_THREAD {
     HANDLE OrpcEvent;
     /* the call of another process this thread is serving. */
     void *OrpcCall;
+    /* the result of the application's call that the stub being run reported, see DcomChannelSetHResult. */
+    HRESULT CallResult;
 } OLE_THREAD;
 
 OLE_THREAD *OleThreadState(BOOL create);
