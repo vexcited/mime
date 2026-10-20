@@ -35,12 +35,15 @@ foreach(name CopyFileTransacted:28 CreateDirectoryTransacted:16 CreateFileTransa
 endforeach()
 list(APPEND kernel32_own FindFirstFileNameTransactedW@20 FindFirstStreamTransactedW@20 GetBinaryTypeA@8 GetBinaryTypeW@8
     GetBinaryType@8 SetSystemPowerState@8)
-add_custom_command(OUTPUT ${gen86}/kernel32.def ${gen86}/kernel32.imports.def
+add_custom_command(OUTPUT ${gen86}/kernel32.def ${gen86}/kernel32.imports.def ${gen86}/kernel32_thunks.S
     COMMAND Python3::Interpreter tools/gendef.py forward32 ${gen86}/kernel32.def ${gen86}/kernel32.imports.def
-        ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def ${kernel32_own}
-    DEPENDS tools/gendef.py ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def
+        ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def --thunks ${gen86}/kernel32_thunks.S
+        guest/kernel32/forwarded.txt ${kernel32_own}
+    DEPENDS tools/gendef.py guest/kernel32/forwarded.txt ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} VERBATIM)
+mime_objects(x86-kernel32-thunks x86 SOURCES ${gen86}/kernel32_thunks.S)
 mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel32/transacted.c guest/kernel32/binary.c
+    OBJECTS x86-kernel32-thunks
     OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS kernelbase ntdll DEF ${gen86}/kernel32.def
     IMPORTS_DEF ${gen86}/kernel32.imports.def DEPENDS ${gen86}/kernel32.imports.def)
 

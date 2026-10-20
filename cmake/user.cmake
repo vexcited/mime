@@ -206,12 +206,17 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
             RtlZeroMemory RtlRaiseException RtlIsEcCode)
     endif()
     list(TRANSFORM kernel32_ntdll REPLACE "^(.+)$" "\\1=ntdll.\\1")
-    add_custom_command(OUTPUT ${MIME_GEN}/${arch}/kernel32.def
+    # the exports of windows' kernel32 are functions but for those of guest/kernel32/forwarded.txt: a program that reads
+    # the export table itself finds the code of a function there, and a name that stands for another library's is
+    # a string it cannot call.
+    add_custom_command(OUTPUT ${MIME_GEN}/${arch}/kernel32.def ${MIME_GEN}/${arch}/kernel32_thunks.S
         COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/gendef.py forward kernel32.dll ${MIME_GEN}/${arch}/kernel32.def
-            ${MIME_OUT_${arch}}/kernelbase.dll kernelbase ${kernel32_ntdll}
-        DEPENDS tools/gendef.py ${MIME_OUT_${arch}}/kernelbase.dll VERBATIM)
+            ${MIME_OUT_${arch}}/kernelbase.dll kernelbase --thunks ${MIME_GEN}/${arch}/kernel32_thunks.S ${arch}
+            ${CMAKE_SOURCE_DIR}/guest/kernel32/forwarded.txt ${kernel32_ntdll}
+        DEPENDS tools/gendef.py guest/kernel32/forwarded.txt ${MIME_OUT_${arch}}/kernelbase.dll VERBATIM)
+    mime_objects(${arch}-kernel32-thunks ${arch} SOURCES ${MIME_GEN}/${arch}/kernel32_thunks.S)
     mime_sources(sources kernel32 ${arch})
-    mime_dll(kernel32 ${arch} BASE 0x7FFA00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk
+    mime_dll(kernel32 ${arch} BASE 0x7FFA00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk ${arch}-kernel32-thunks
         OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS ntdll kernelbase DEF ${MIME_GEN}/${arch}/kernel32.def)
 
     mime_sources(sources gdi32 ${arch})
