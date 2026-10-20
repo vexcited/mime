@@ -19,12 +19,62 @@ static void destroy_database(MIME_MSI_OBJECT *object)
         MimeMsiFree(table);
     }
     MimeCfbClose(&database->File);
-    if (database->OwnedData)
+    if (database->Parent)
+        MimeMsiRelease(&database->Parent->Object);
+    else if (database->OwnedData)
         MimeMsiFree(database->Data);
     else if (database->Data)
         UnmapViewOfFile(database->Data);
+    for (ULONG i = 0; i < database->PatchCount; i++)
+        MimeMsiRelease(&database->Patches[i]->Object);
+    MimeMsiFree(database->Patches);
     MimeMsiFree(database->Path);
     MimeMsiFree(database);
+}
+
+/* a storage of the file, such as a transform inside a patch, as a database whose root is that storage. */
+UINT MimeMsiOpenSubStorage(MIME_MSI_DATABASE *parent, PCWSTR name, MIME_MSI_DATABASE **out)
+{
+    *out = nullptr;
+    ULONG *list, count;
+    UINT error = MimeMsiChildren(parent, &list, &count);
+    if (error)
+        return error;
+    ULONG index = UINT32_MAX;
+    for (ULONG i = 0; i < count && index == UINT32_MAX; i++) {
+        MIME_CFB_ENTRY entry;
+        if (MimeCfbEntry(&parent->File, list[i], &entry) && entry.Type == 1 && !wcscmp((PCWSTR)entry.Name, name))
+            index = list[i];
+    }
+    MimeMsiFree(list);
+    if (index == UINT32_MAX)
+        return ERROR_FILE_NOT_FOUND;
+    MIME_MSI_DATABASE *database = MimeMsiAllocate(sizeof(*database));
+    if (!database)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    database->Data = parent->Data;
+    database->Root = index;
+    if (!MimeCfbOpen(&database->File, parent->Data, parent->File.Size, MimeMsiAllocate, MimeMsiFree)) {
+        MimeMsiFree(database);
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    }
+    database->Path = MimeMsiDuplicate(parent->Path);
+    if (!database->Path) {
+        MimeCfbClose(&database->File);
+        MimeMsiFree(database);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    database->Parent = parent;
+    parent->Object.References++;
+    database->Object.Kind = MIME_MSI_KIND_DATABASE;
+    database->Object.Destroy = destroy_database;
+    error = MimeMsiLoadStrings(database);
+    if (error) {
+        destroy_database(&database->Object);
+        return error;
+    }
+    *out = database;
+    return ERROR_SUCCESS;
 }
 
 UINT MimeMsiOpenStorageFile(PCWSTR path, BYTE kind, MIME_MSI_DATABASE **out)

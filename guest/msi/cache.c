@@ -14,7 +14,7 @@ UINT MimeMsiCacheTransforms(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product
             return ERROR_BAD_CONFIGURATION;
         characters += wcslen(entry->Database->Path) + 1;
     }
-    if (count != package->Database->Revision || characters > 512 * 1024)
+    if (count + package->Database->PatchTransforms != package->Database->Revision || characters > 512 * 1024)
         return ERROR_BAD_CONFIGURATION;
     if (!count)
         return ERROR_SUCCESS;
@@ -156,5 +156,77 @@ UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list)
     }
     MimeMsiFree(directory);
     MimeMsiFree(copy);
+    return error;
+}
+
+/* the patches applied stay with the product as files, in the order they were applied, so that it opens again with them. */
+UINT MimeMsiCachePatches(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_path, PCWSTR cache)
+{
+    MIME_MSI_DATABASE *database = package->Database;
+    if (!database->PatchCount)
+        return ERROR_SUCCESS;
+    WCHAR path[160], name[32], filename[MAX_PATH + 32];
+    _snwprintf(path, RTL_NUMBER_OF(path), L"%s\\Patches", product_path);
+    SIZE_T base_length = wcslen(cache);
+    if (base_length < 4 || base_length >= MAX_PATH)
+        return ERROR_BAD_PATHNAME;
+    UINT error = ERROR_SUCCESS;
+    for (ULONG index = 0; !error && index < database->PatchCount; index++) {
+        MIME_MSI_DATABASE *patch = database->Patches[index];
+        wcscpy(filename, cache);
+        _snwprintf(filename + base_length - 4, RTL_NUMBER_OF(filename) - base_length + 4, L"-%08u.msp", index + 1);
+        error = MimeMsiWriteInstalledFile(package, patch->Data, patch->File.Size, filename);
+        _snwprintf(name, RTL_NUMBER_OF(name), L"%u", index + 1);
+        if (!error)
+            error = write_text(package, root, path, name, filename);
+    }
+    if (!error)
+        error = MimeMsiWriteRegistry(package, root, path, L"Count", REG_DWORD, &database->PatchCount, sizeof(database->PatchCount));
+    return error;
+}
+
+UINT MimeMsiRestorePatches(MSIHANDLE database, HKEY product)
+{
+    HKEY key;
+    UINT error = RegOpenKeyExW(product, L"Patches", 0, KEY_READ, &key);
+    if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+        return ERROR_SUCCESS;
+    if (error)
+        return error;
+    DWORD count;
+    error = read_number(key, L"Count", &count);
+    if (!error && (!count || count > 256))
+        error = ERROR_BAD_CONFIGURATION;
+    PWSTR list = nullptr;
+    SIZE_T length = 0;
+    for (DWORD index = 1; !error && index <= count; index++) {
+        WCHAR name[32];
+        PWSTR path = nullptr;
+        _snwprintf(name, RTL_NUMBER_OF(name), L"%u", index);
+        error = MimeMsiRegistryText(key, name, &path);
+        if (!error && (!*path || wcslen(path) > 32767 || wcschr(path, L';')))
+            error = ERROR_BAD_CONFIGURATION;
+        if (!error) {
+            SIZE_T add = wcslen(path) + 1;
+            PWSTR grown = MimeMsiAllocate((length + add + 1) * sizeof(WCHAR));
+            if (!grown)
+                error = ERROR_NOT_ENOUGH_MEMORY;
+            else {
+                if (length)
+                    memcpy(grown, list, length * sizeof(WCHAR));
+                if (length)
+                    grown[length++] = L';';
+                wcscpy(grown + length, path);
+                length += add - 1;
+                MimeMsiFree(list);
+                list = grown;
+            }
+        }
+        MimeMsiFree(path);
+    }
+    RegCloseKey(key);
+    if (!error)
+        error = MimeMsiApplyPatches(database, nullptr, list);
+    MimeMsiFree(list);
     return error;
 }

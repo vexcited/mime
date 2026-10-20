@@ -206,6 +206,8 @@ UINT WINAPI MsiOpenProductW(LPCWSTR product, MSIHANDLE *out)
         error = MsiOpenDatabaseW(path, MSIDBOPEN_READONLY, &database);
     if (!error)
         error = MimeMsiRestoreTransforms(database, key);
+    if (!error)
+        error = MimeMsiRestorePatches(database, key);
     if (!error) {
         WCHAR borrowed[32];
         _snwprintf(borrowed, RTL_NUMBER_OF(borrowed), L"#%u", database);

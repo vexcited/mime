@@ -584,9 +584,10 @@ UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *di
         return ERROR_INSTALL_FAILURE;
     if (result == MSICONDITION_FALSE)
         *selected = FALSE;
-    /* the components of the source and the ones of data sources are not made; the rest is read as it is met. */
+    /* the components of the source and the ones of data sources are not made; the rest is read as it is met. A
+       transitive component, which a reinstallation tests again, is installed as any other. */
     int flags = MimeMsiInteger(components, row, attributes);
-    if (*selected && flags != MSI_NULL_INTEGER && (flags & ~(2 | 4 | 8 | 16 | 128 | 256 | 512 | 1024 | 2048)))
+    if (*selected && flags != MSI_NULL_INTEGER && (flags & ~(2 | 4 | 8 | 16 | 64 | 128 | 256 | 512 | 1024 | 2048)))
         return ERROR_CALL_NOT_IMPLEMENTED;
     return ERROR_SUCCESS;
 }
@@ -796,8 +797,6 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
             flags = 0;
         if (file_size < 0 || flags < 0)
             return ERROR_INSTALL_PACKAGE_INVALID;
-        if (flags & 0x1000) /* added by a patch */
-            return ERROR_CALL_NOT_IMPLEMENTED;
         PCWSTR long_name = wcschr(filename, L'|');
         if (long_name)
             filename = long_name + 1;
@@ -1254,6 +1253,9 @@ static UINT extract_cabinet(MIME_MSI_PACKAGE *package, PCWSTR cabinet)
     SIZE_T size = 0;
     if (cabinet[0] == L'#') {
         error = MimeMsiReadBinary(package->Database, cabinet + 1, &stream, &size);
+        /* a cabinet of a patch is a stream of the patch file. */
+        for (ULONG i = 0; error == ERROR_FILE_NOT_FOUND && i < package->Database->PatchCount; i++)
+            error = MimeMsiReadBinary(package->Database->Patches[i], cabinet + 1, &stream, &size);
         if (error == ERROR_FILE_NOT_FOUND)
             error = ERROR_INSTALL_SOURCE_ABSENT;
         data = stream;

@@ -61,7 +61,7 @@ UINT MimeMsiReadStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZ
     MIME_CFB_ENTRY entry;
     *out = nullptr;
     *size = 0;
-    if (!MimeCfbEntry(file, 0, &entry))
+    if (!MimeCfbEntry(file, database->Root, &entry))
         return ERROR_INSTALL_PACKAGE_INVALID;
     ULONG stack[64], count = 0;
     SIZE_T remaining = file->DirectorySize / 128;
@@ -94,7 +94,45 @@ UINT MimeMsiReadStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZ
     return ERROR_FILE_NOT_FOUND;
 }
 
-static UINT table_stream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size)
+/* the directory entries directly below the root of the database, in the order of the tree. */
+UINT MimeMsiChildren(MIME_MSI_DATABASE *database, ULONG **list, ULONG *count)
+{
+    MIME_CFB *file = &database->File;
+    MIME_CFB_ENTRY entry;
+    *list = nullptr;
+    *count = 0;
+    SIZE_T entries = file->DirectorySize / 128;
+    if (!MimeCfbEntry(file, database->Root, &entry))
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    ULONG *found = MimeMsiAllocate((entries ? entries : 1) * sizeof(ULONG));
+    ULONG stack[64], depth = 0;
+    if (!found)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    /* a walk in order of the tree: left, the entry, right. */
+    ULONG at = entry.Child;
+    SIZE_T steps = 0;
+    while (at != UINT32_MAX || depth) {
+        while (at != UINT32_MAX) {
+            if (depth == RTL_NUMBER_OF(stack) || steps++ > entries || !MimeCfbEntry(file, at, &entry)) {
+                MimeMsiFree(found);
+                return ERROR_INSTALL_PACKAGE_INVALID;
+            }
+            stack[depth++] = at;
+            at = entry.Left;
+        }
+        at = stack[--depth];
+        if (*count >= entries || !MimeCfbEntry(file, at, &entry)) {
+            MimeMsiFree(found);
+            return ERROR_INSTALL_PACKAGE_INVALID;
+        }
+        found[(*count)++] = at;
+        at = entry.Right;
+    }
+    *list = found;
+    return ERROR_SUCCESS;
+}
+
+UINT MimeMsiTableStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size)
 {
     WCHAR encoded[32];
     if (!table_name(name, encoded))
@@ -106,9 +144,9 @@ UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database)
 {
     BYTE *pool = nullptr, *data = nullptr;
     SIZE_T pool_size, data_size;
-    UINT error = table_stream(database, L"_StringPool", &pool, &pool_size);
+    UINT error = MimeMsiTableStream(database, L"_StringPool", &pool, &pool_size);
     if (!error)
-        error = table_stream(database, L"_StringData", &data, &data_size);
+        error = MimeMsiTableStream(database, L"_StringData", &data, &data_size);
     if (error)
         goto done;
     if (pool_size < 4 || pool_size % 4 || pool_size / 4 > UINT32_MAX) {
@@ -246,7 +284,7 @@ UINT MimeMsiLoadTable(MIME_MSI_DATABASE *database, PCWSTR name, MIME_MSI_TABLE *
     UINT error = load_schema(database, table);
     SIZE_T size = 0;
     if (!error) {
-        error = table_stream(database, name, &table->Data, &size);
+        error = MimeMsiTableStream(database, name, &table->Data, &size);
         if (error == ERROR_FILE_NOT_FOUND)
             error = ERROR_SUCCESS;
     }

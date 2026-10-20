@@ -113,6 +113,41 @@ static UINT install_transforms(MSIHANDLE *handle, PCWSTR command)
     return error;
 }
 
+/* the patches of the PATCH property go into the database of the package, which then opens again with them. */
+static UINT install_patches(MSIHANDLE *handle, PCWSTR command)
+{
+    AcquireSRWLockShared(&MimeMsiLock);
+    MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(*handle, MIME_MSI_KIND_PACKAGE);
+    PWSTR list = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"PATCH")) : nullptr;
+    PWSTR product = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"ProductCode")) : nullptr;
+    PWSTR transforms = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"TRANSFORMS")) : nullptr;
+    BOOL maintenance = package && package->Maintenance;
+    UINT error = !package ? ERROR_INVALID_HANDLE : !list || !product || !transforms ? ERROR_NOT_ENOUGH_MEMORY : ERROR_SUCCESS;
+    ReleaseSRWLockShared(&MimeMsiLock);
+    if (!error && *list && !maintenance) {
+        MSIHANDLE database = MsiGetActiveDatabase(*handle), patched = 0;
+        error = database ? MimeMsiApplyPatches(database, product, list) : ERROR_NOT_ENOUGH_MEMORY;
+        if (!error) {
+            WCHAR borrowed[32];
+            _snwprintf(borrowed, RTL_NUMBER_OF(borrowed), L"#%u", database);
+            error = MsiOpenPackageW(borrowed, &patched);
+        }
+        if (!error) {
+            MsiCloseHandle(*handle);
+            *handle = patched;
+            error = command_properties(*handle, command);
+            if (!error && *transforms)
+                error = MsiSetPropertyW(*handle, L"TRANSFORMS", transforms);
+        }
+        if (database)
+            MsiCloseHandle(database);
+    }
+    MimeMsiFree(list);
+    MimeMsiFree(product);
+    MimeMsiFree(transforms);
+    return error;
+}
+
 static UINT execute_package(MSIHANDLE handle)
 {
     UINT error = ERROR_SUCCESS;
@@ -127,7 +162,7 @@ static UINT execute_package(MSIHANDLE handle)
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     if (!error) {
         PCWSTR action = MimeMsiGetProperty(package, L"ACTION");
-        if (*MimeMsiGetProperty(package, L"PATCH") ||
+        if ((*MimeMsiGetProperty(package, L"PATCH") && !package->Database->PatchCount) ||
             (*action && wcscmp(action, L"INSTALL")))
             error = ERROR_CALL_NOT_IMPLEMENTED;
         else
@@ -215,6 +250,8 @@ UINT WINAPI MsiInstallProductW(LPCWSTR path, LPCWSTR command)
         error = reopen_installed(&handle, command);
     if (!error)
         error = install_transforms(&handle, command);
+    if (!error)
+        error = install_patches(&handle, command);
     if (!error)
         error = execute_package(handle);
     if (handle)

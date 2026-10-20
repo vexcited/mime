@@ -75,3 +75,131 @@ UINT WINAPI MsiApplyPatchW(LPCWSTR path, LPCWSTR package, INSTALLTYPE type, LPCW
         error = ERROR_PATCH_PACKAGE_UNSUPPORTED;
     return error;
 }
+
+/*
+ * the patches of the PATCH property of an installation: each is a file of the patch class whose summary names the products
+ * it can be applied to (the template) and the transforms it holds (the last author), as storages of the file written
+ * with a colon before the name. The transforms are applied to the database of the package in that order, and the file
+ * stays with the database, as the cabinet the media of the transforms name is a stream of it.
+ */
+static BOOL listed(PCWSTR list, PCWSTR code)
+{
+    SIZE_T length = wcslen(code);
+    while (*list) {
+        PCWSTR end = wcschr(list, L';');
+        SIZE_T part = end ? (SIZE_T)(end - list) : wcslen(list);
+        if (part == length && !_wcsnicmp(list, code, length))
+            return TRUE;
+        if (!end)
+            break;
+        list = end + 1;
+    }
+    return FALSE;
+}
+
+static UINT apply_one(MIME_MSI_DATABASE *database, PCWSTR product, PCWSTR path)
+{
+    MIME_MSI_DATABASE *patch;
+    UINT error = MimeMsiOpenStorageFile(path, 0x86, &patch);
+    if (error)
+        return error == ERROR_INSTALL_PACKAGE_INVALID ? ERROR_PATCH_PACKAGE_INVALID : ERROR_PATCH_PACKAGE_OPEN_FAILED;
+    MIME_MSI_SUMMARY_VALUE targets = {}, transforms = {};
+    error = MimeMsiSummaryProperty(patch, 7, &targets);
+    if (!error)
+        error = MimeMsiSummaryProperty(patch, 8, &transforms);
+    if (error || targets.Type != 30 || transforms.Type != 30 || !targets.Text || !transforms.Text) {
+        MimeMsiFree(targets.Text);
+        MimeMsiFree(transforms.Text);
+        patch->Object.Destroy(&patch->Object);
+        return ERROR_PATCH_PACKAGE_INVALID;
+    }
+    /* held here while the transforms are open, as they hold the file. */
+    patch->Object.References++;
+    if (product && !listed(targets.Text, product))
+        error = ERROR_PATCH_TARGET_NOT_FOUND;
+    PWSTR cursor = transforms.Text;
+    while (!error && *cursor) {
+        PWSTR end = wcschr(cursor, L';');
+        if (end)
+            *end = 0;
+        /* only the transforms inside the patch are known. */
+        if (*cursor != L':' || !cursor[1]) {
+            error = ERROR_CALL_NOT_IMPLEMENTED;
+            break;
+        }
+        MIME_MSI_DATABASE *transform;
+        error = MimeMsiOpenSubStorage(patch, cursor + 1, &transform);
+        if (error == ERROR_FILE_NOT_FOUND)
+            error = ERROR_PATCH_PACKAGE_INVALID;
+        if (!error) {
+            transform->Object.References++;
+            error = MimeMsiApplyTransformStorage(database, transform, 0x3f);
+            if (!error)
+                database->PatchTransforms++;
+            MimeMsiRelease(&transform->Object);
+        }
+        if (!end)
+            break;
+        cursor = end + 1;
+    }
+    MimeMsiFree(targets.Text);
+    MimeMsiFree(transforms.Text);
+    if (!error) {
+        MIME_MSI_DATABASE **patches = MimeMsiAllocate(((SIZE_T)database->PatchCount + 1) * sizeof(*patches));
+        if (!patches)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+        else {
+            memcpy(patches, database->Patches, (SIZE_T)database->PatchCount * sizeof(*patches));
+            MimeMsiFree(database->Patches);
+            database->Patches = patches;
+            patches[database->PatchCount++] = patch;
+            patch->Object.References++;
+        }
+    }
+    MimeMsiRelease(&patch->Object);
+    return error;
+}
+
+UINT MimeMsiApplyPatches(MSIHANDLE handle, PCWSTR product, PCWSTR list)
+{
+    PWSTR copy = MimeMsiDuplicate(list);
+    if (!copy)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    UINT error = ERROR_SUCCESS;
+    AcquireSRWLockExclusive(&MimeMsiLock);
+    MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
+    PWSTR directory = database ? MimeMsiDuplicate(database->Path) : nullptr;
+    if (!database)
+        error = ERROR_INVALID_HANDLE;
+    else if (!directory)
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    else {
+        PWSTR separator = wcsrchr(directory, L'\\');
+        if (separator)
+            separator[1] = 0;
+    }
+    for (PWSTR cursor = copy; !error && *cursor;) {
+        PWSTR end = wcschr(cursor, L';');
+        if (end)
+            *end = 0;
+        if (*cursor) {
+            SIZE_T length = wcslen(cursor);
+            BOOL absolute = (length > 2 && cursor[1] == L':' && (cursor[2] == L'\\' || cursor[2] == L'/')) ||
+                            (length > 1 && cursor[0] == L'\\' && cursor[1] == L'\\');
+            PWSTR path = absolute ? MimeMsiDuplicate(cursor) : MimeMsiJoinPath(directory, cursor);
+            if (!path)
+                error = ERROR_NOT_ENOUGH_MEMORY;
+            else {
+                error = apply_one(database, product, path);
+                MimeMsiFree(path);
+            }
+        }
+        if (!end)
+            break;
+        cursor = end + 1;
+    }
+    ReleaseSRWLockExclusive(&MimeMsiLock);
+    MimeMsiFree(directory);
+    MimeMsiFree(copy);
+    return error;
+}
