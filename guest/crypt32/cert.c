@@ -111,6 +111,31 @@ PCCERT_CONTEXT WINAPI CertCreateCertificateContext(DWORD dwCertEncodingType, con
     return &cert->context;
 }
 
+/*
+ * a certificate for a subject that signs itself with its own key: the public key of the provider's key is put in a
+ * version 3 certificate with a random serial number, a validity of a year from now by default, and the signature
+ * of the key. Mime has no private keys in its providers to make or sign with, so after the arguments are checked it
+ * fails with NTE_NO_KEY (0x8009000D), the error of a container without one, and creates nothing. The last error is kept when a
+ * step ends without one, as the binary keeps 0x8000FFFF for it.
+ */
+PCCERT_CONTEXT WINAPI CertCreateSelfSignCertificate(ULONG_PTR hCryptProvOrNCryptKey, PCERT_NAME_BLOB pSubjectIssuerBlob,
+                                                    DWORD dwFlags, void *pKeyProvInfo, void *pSignatureAlgorithm,
+                                                    const SYSTEMTIME *pStartTime, const SYSTEMTIME *pEndTime,
+                                                    void *pExtensions)
+{
+    if (!pSubjectIssuerBlob) {
+        SetLastError(E_INVALIDARG);
+        return nullptr;
+    }
+    FILETIME start, end;
+    if (pStartTime && !SystemTimeToFileTime(pStartTime, &start))
+        return nullptr;
+    if (pEndTime && !SystemTimeToFileTime(pEndTime, &end))
+        return nullptr;
+    SetLastError(0x8009000D); /* NTE_NO_KEY */
+    return nullptr;
+}
+
 PCCERT_CONTEXT WINAPI CertDuplicateCertificateContext(PCCERT_CONTEXT pCertContext)
 {
     if (!pCertContext)
