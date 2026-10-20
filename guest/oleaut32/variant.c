@@ -82,7 +82,7 @@ WINOLEAUTAPI HRESULT WINAPI VariantCopy(VARIANTARG *dst, const VARIANTARG *src)
             AutAddRef(src->punkVal);
         } else if (src->vt == VT_RECORD) {
             IRecordInfo *info = src->pRecInfo;
-            if (!info)
+            if (!info && src->pvRecord)
                 return E_INVALIDARG;
             copy.pvRecord = nullptr;
             if (src->pvRecord) {
@@ -95,7 +95,8 @@ WINOLEAUTAPI HRESULT WINAPI VariantCopy(VARIANTARG *dst, const VARIANTARG *src)
                     return hr;
                 }
             }
-            info->lpVtbl->AddRef(info);
+            if (info)
+                info->lpVtbl->AddRef(info);
         }
     }
     *dst = copy;
@@ -473,6 +474,8 @@ WINOLEAUTAPI HRESULT WINAPI VariantChangeTypeEx(VARIANTARG *dest, const VARIANTA
     VARIANT borrowed, extracted, result;
     const VARIANT *s = src;
     extracted.vt = VT_EMPTY;
+    if (svt == VT_VARIANT)
+        return DISP_E_TYPEMISMATCH;
     if (!valid_type(svt))
         return DISP_E_BADVARTYPE;
     if (svt & VT_BYREF) {
