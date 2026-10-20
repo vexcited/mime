@@ -647,6 +647,7 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
         MimeIpcHeader h;
         void *msg;
         if (!mime_ipc_recv(fd, &h, &msg)) {
+            restore_terminal();
             mime_error("lost connection to the machine");
             break;
         }
@@ -706,6 +707,7 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
             }
             break;
         case MIME_IPC_ERROR:
+            restore_terminal();
             mime_error("%s", (char *)msg);
             done = true;
             break;

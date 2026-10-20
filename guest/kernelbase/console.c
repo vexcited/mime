@@ -636,6 +636,26 @@ static DWORD WINAPI ctrl_routine(LPVOID parameter)
     return 0;
 }
 
+/* a handle of the console driver, whatever the handle of a pipe or a file is. */
+static BOOL is_console_device(HANDLE h)
+{
+    if (!h || h == INVALID_HANDLE_VALUE || KbIsPseudoHandle(h))
+        return FALSE;
+    FILE_FS_DEVICE_INFORMATION info;
+    IO_STATUS_BLOCK io;
+    return NT_SUCCESS(NtQueryVolumeInformationFile(h, &io, &info, sizeof(info), FileFsDeviceInformation)) &&
+           info.DeviceType == 0x50 /* FILE_DEVICE_CONSOLE */;
+}
+
+/* a program that is no console program has no use for the console handles it was given. */
+static void close_console_handle(PHANDLE slot)
+{
+    if (is_console_device(*slot)) {
+        NtClose(*slot);
+        *slot = nullptr;
+    }
+}
+
 void KbInitializeConsole(void)
 {
     UNICODE_STRING name = RTL_CONSTANT_STRING(MIME_CONDRV_DEVICE);
@@ -647,6 +667,13 @@ void KbInitializeConsole(void)
         g_condrv = nullptr;
     MIME_CONDRV_REGISTER r = {(ULONG64)(ULONG_PTR)ctrl_routine, 0};
     process_control(IOCTL_CONDRV_REGISTER, &r, sizeof(r), nullptr, 0, nullptr);
+    if (KbPeb()->ImageSubsystem != IMAGE_SUBSYSTEM_WINDOWS_CUI) {
+        PRTL_USER_PROCESS_PARAMETERS pp = KbParams();
+        close_console_handle(&pp->StandardInput);
+        close_console_handle(&pp->StandardOutput);
+        close_console_handle(&pp->StandardError);
+        return;
+    }
     set_console_handles(TRUE);
 }
 
@@ -1151,21 +1178,30 @@ static BOOL rect_transfer(HANDLE console, BOOL write, PCHAR_INFO buffer, COORD s
         KbSetError(ERROR_INVALID_ACCESS);
         return FALSE;
     }
-    if (size.X <= 0 || size.Y <= 0 || origin.X < 0 || origin.Y < 0 || origin.X >= size.X || origin.Y >= size.Y) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    int w = region->Right - region->Left + 1, h = region->Bottom - region->Top + 1;
-    if (w <= 0 || h <= 0) {
-        region->Right = (SHORT)(region->Left - 1);
-        region->Bottom = (SHORT)(region->Top - 1);
-        return TRUE;
-    }
-    /* what the array has room for from the origin on. */
+    /*
+     * the size of the rectangle is cut to what the caller's array has room for from the origin on. a read of
+     * nothing, or of nothing that is in the buffer, fails with the error of a server that does not know the
+     * call; a write of nothing is a bad parameter.
+     */
+    int w = (SHORT)(region->Right - region->Left + 1), h = (SHORT)(region->Bottom - region->Top + 1);
     if (w > size.X - origin.X)
         w = size.X - origin.X;
     if (h > size.Y - origin.Y)
         h = size.Y - origin.Y;
+    if (w <= 0 || h <= 0) {
+        if (write) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        region->Right = (SHORT)(region->Left + w - 1);
+        region->Bottom = (SHORT)(region->Top + h - 1);
+        KbSetError(ERROR_INVALID_FUNCTION);
+        return FALSE;
+    }
+    if (origin.X < 0 || origin.Y < 0) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
     UINT cp = ansi ? code_page(FALSE) : 0;
     int rows_per_call = h;
     if ((DWORD)w * (DWORD)rows_per_call > MAX_TRANSFER_CELLS)
@@ -1241,13 +1277,17 @@ static BOOL rect_transfer(HANDLE console, BOOL write, PCHAR_INFO buffer, COORD s
         }
         KbFree(block);
     }
-    if (any)
+    if (any) {
         *region = total;
-    else {
-        region->Right = (SHORT)(region->Left - 1);
-        region->Bottom = (SHORT)(region->Top - 1);
+        return TRUE;
     }
-    return TRUE;
+    /* the server read nothing of the buffer. */
+    region->Right = (SHORT)(region->Left - 1);
+    region->Bottom = (SHORT)(region->Top - 1);
+    if (write)
+        return TRUE;
+    KbSetError(ERROR_INVALID_FUNCTION);
+    return FALSE;
 }
 
 BOOL WINAPI ReadConsoleOutputW(HANDLE console, PCHAR_INFO buffer, COORD size, COORD origin, PSMALL_RECT region)

@@ -1720,6 +1720,9 @@ static NTSTATUS NTAPI con_read_write(PDEVICE_OBJECT device, PIRP irp)
                 return complete(irp, STATUS_ACCESS_DENIED, 0);
             ULONG got = 0, key_state = 0;
             status = read_bytes(c, length, irp->UserBuffer, nullptr, 0, nullptr, 0, 0, &got, &key_state);
+            /* ReadFile, unlike ReadConsole, takes a read that starts with ctrl+z as the end of the input. */
+            if (NT_SUCCESS(status) && got && (c->InputMode & ENABLE_PROCESSED_INPUT) && ((PUCHAR)irp->UserBuffer)[0] == 0x1A)
+                got = 0;
             information = got;
         }
         return complete(irp, status, information);
