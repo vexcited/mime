@@ -411,6 +411,17 @@ WINUSERAPI BOOL WINAPI IsIconic(HWND hwnd)
     return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISICONIC);
 }
 
+/* minimizes a window: the name is older than the one of the button, nothing is destroyed. A window that is none fails. */
+WINUSERAPI BOOL WINAPI CloseWindow(HWND hwnd)
+{
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    ShowWindow(hwnd, SW_MINIMIZE);
+    return TRUE;
+}
+
 WINUSERAPI BOOL WINAPI IsZoomed(HWND hwnd)
 {
     return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISZOOMED);
