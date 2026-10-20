@@ -108,6 +108,7 @@ typedef struct CsRow {
     bool Wrapped;                  /* the text goes on in the next row */
     bool Force;                    /* paint the span even where it equals what the terminal shows */
     bool Touched;                  /* a program wrote here, so the row is more than what the terminal had before */
+    bool Known;                    /* of the terminal's copy: the console has painted the whole row, so the cells are what it shows */
 } CsRow;
 
 typedef struct CsGrid {
@@ -283,6 +284,9 @@ CsBuffer *CsEffective(CsBuffer *buffer);
 
 /* the output of the program: UTF-16 text with escape sequences and controls. */
 void CsWrite(CsBuffer *buffer, const uint16_t *text, size_t count);
+
+/* forgets an escape sequence that was cut off. */
+void CsParserReset(CsBuffer *buffer);
 
 /* text as a program without escape sequences writes it, whatever the mode: for what the console shows of its own. */
 void CsPutLegacy(CsBuffer *buffer, const uint16_t *text, size_t count);

@@ -1069,8 +1069,7 @@ static void alt_screen(CsBuffer *b, bool enter)
                 t->HostAlt = true;
                 t->HostKnown = false;
                 t->HostAttrKnown = false;
-                CsGridFree(&t->Shadow);
-                t->ShadowValid = CsGridInit(&t->Shadow, t->Cols, t->Rows, CsBlankOf((CsAttr){CS_DEFAULT_ATTRIBUTES, CS_EXT_DEFAULT}));
+                CsShadowBlank(t);
             }
             CsMarkRows(alt, 0, alt->Grid.Height - 1, false);
         }

@@ -39,7 +39,6 @@
 #define VK_F11 0x7A
 #define VK_F12 0x7B
 #define VK_OEM_2 0xBF
-#define VK_PACKET 0xE7
 
 /* the virtual key of the key that types NUL with ctrl, 2 on the us layout. */
 #define VK_NUL_KEY 0x32
@@ -61,8 +60,43 @@ static void key_record(MIME_CONDRV_RECORD *r, BOOLEAN down, USHORT vk, USHORT sc
     r->Key.ControlKeyState = state;
 }
 
-/* a key press and release, as the console reports a typed key. */
+/*
+ * a key press and release, as the console reports a typed key. when the key is typed with shift, alt or
+ * ctrl the presses of those keys go around it, in that order, and their releases after it in the other.
+ */
 static ULONG key_pair(MIME_CONDRV_RECORD *out, ULONG room, USHORT vk, USHORT scan, WCHAR ch, ULONG state)
+{
+    static const struct {
+        ULONG bit;
+        USHORT vk, scan;
+    } modifiers[] = {{CON_SHIFT, 0x10, 0x2A}, {CON_LEFT_ALT, 0x12, 0x38}, {CON_LEFT_CTRL, 0x11, 0x1D}};
+    ULONG held = state & (CON_SHIFT | CON_LEFT_ALT | CON_LEFT_CTRL);
+    ULONG count = 0;
+    for (ULONG i = 0; i < 3; i++)
+        if (held & modifiers[i].bit)
+            count++;
+    if (room < 2 + 2 * count)
+        return 0;
+    ULONG n = 0, accumulated = 0;
+    for (ULONG i = 0; i < 3; i++) {
+        if (!(held & modifiers[i].bit))
+            continue;
+        accumulated |= modifiers[i].bit;
+        key_record(&out[n++], TRUE, modifiers[i].vk, modifiers[i].scan, 0, accumulated);
+    }
+    key_record(&out[n++], TRUE, vk, scan, ch, state);
+    key_record(&out[n++], FALSE, vk, scan, ch, state);
+    for (ULONG i = 3; i-- > 0;) {
+        if (!(held & modifiers[i].bit))
+            continue;
+        accumulated &= ~modifiers[i].bit;
+        key_record(&out[n++], FALSE, modifiers[i].vk, modifiers[i].scan, 0, accumulated);
+    }
+    return n;
+}
+
+/* a key press and release with no keys around it, as the console reports ctrl+c. */
+static ULONG plain_pair(MIME_CONDRV_RECORD *out, ULONG room, USHORT vk, USHORT scan, WCHAR ch, ULONG state)
 {
     if (room < 2)
         return 0;
@@ -128,7 +162,7 @@ static const struct {
     {"OC", VK_RIGHT, 0x4D},    {"OD", VK_LEFT, 0x4B},    {"OH", VK_HOME, 0x47},    {"OF", VK_END, 0x4F},
     {"OP", VK_F1, 0x3B},       {"OQ", VK_F2, 0x3C},      {"OR", VK_F3, 0x3D},      {"OS", VK_F4, 0x3E},
     {"[1~", VK_HOME, 0x47},    {"[2~", VK_INSERT, 0x52}, {"[3~", VK_DELETE, 0x53}, {"[4~", VK_END, 0x4F},
-    {"[5~", VK_PRIOR, 0x49},   {"[6~", VK_NEXT, 0x51},   {"[7~", VK_HOME, 0x47},   {"[8~", VK_END, 0x4F},
+    {"[5~", VK_PRIOR, 0x49},   {"[6~", VK_NEXT, 0x51},
     {"[15~", VK_F5, 0x3F},     {"[17~", VK_F6, 0x40},    {"[18~", VK_F7, 0x41},    {"[19~", VK_F8, 0x42},
     {"[20~", VK_F9, 0x43},     {"[21~", VK_F10, 0x44},   {"[23~", VK_F11, 0x57},   {"[24~", VK_F12, 0x58},
     {"[Z", VK_TAB, 0x0F},
@@ -175,7 +209,10 @@ static BOOLEAN escape_key(const UCHAR *p, ULONG length, ULONG *used, USHORT *vk,
             continue;
         *vk = g_escape_keys[k].vk;
         *scan = g_escape_keys[k].scan;
-        *state = g_escape_keys[k].vk == VK_TAB ? CON_SHIFT : CON_ENHANCED_KEY;
+        /* the keys of the cursor pad are enhanced when a csi sequence sends them, the function keys never. */
+        BOOLEAN pad = (g_escape_keys[k].vk >= VK_PRIOR && g_escape_keys[k].vk <= VK_DOWN) ||
+                      g_escape_keys[k].vk == VK_INSERT || g_escape_keys[k].vk == VK_DELETE;
+        *state = g_escape_keys[k].vk == VK_TAB ? CON_SHIFT : pad && seq[0] == '[' ? CON_ENHANCED_KEY : 0;
         if (modifier > 1) {
             ULONG m = modifier - 1;
             if (m & 1)
@@ -218,7 +255,7 @@ static ULONG utf8_char(const UCHAR *p, ULONG length, BOOLEAN more, WCHAR w[2], U
 #define BUTTON_MIDDLE 0x4
 #define BUTTON_FOURTH 0x8
 #define BUTTON_FIFTH 0x10
-#define WHEEL_DELTA 120
+#define WHEEL_DELTA 128
 
 /*
  * the sequence that starts at p, ESC [ then parameters then a final byte.
@@ -282,13 +319,12 @@ static ULONG mouse_records(CON_DECODE *st, LONG b, LONG x, LONG y, BOOLEAN relea
     r->Mouse.ControlKeyState = mouse_modifiers(b);
     if (b & 64) {
         /* the wheel: the sign of the high word says which way, and the flag whether it is the horizontal wheel. */
-        LONG wheel = b & 3;
-        BOOLEAN horizontal = wheel >= 2;
-        LONG delta = (wheel & 1) ? -WHEEL_DELTA : WHEEL_DELTA;
-        if (horizontal)
-            delta = -delta;
+        /* the console of windows ignores the horizontal wheel. */
+        if ((b & 3) >= 2)
+            return 0;
+        LONG delta = (b & 1) ? -WHEEL_DELTA : WHEEL_DELTA;
         r->Mouse.ButtonState = st->Buttons | ((ULONG)(delta & 0xFFFF) << 16);
-        r->Mouse.EventFlags = horizontal ? CON_MOUSE_HWHEELED : CON_MOUSE_WHEELED;
+        r->Mouse.EventFlags = CON_MOUSE_WHEELED;
         return 1;
     }
     ULONG button = 0;
@@ -392,35 +428,19 @@ ULONG ConDecodeInput(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN more,
             if (c == 0x1B && length - i < 6 && more)
                 break;
         }
-        if (vt && c >= 0x80) {
-            WCHAR w[2];
-            ULONG units = utf8_char(p + i, length - i, more, w, &used);
-            if (!units || room - *count < units * 2)
+        if (vt) {
+            /* the characters as they came: a press of no key for each unit, the program reads the sequences itself. */
+            WCHAR w[2] = {c, 0};
+            ULONG units = 1;
+            if (c >= 0x80) {
+                units = utf8_char(p + i, length - i, more, w, &used);
+                if (!units)
+                    break;
+            }
+            if (room - *count < units)
                 break;
             for (ULONG u = 0; u < units; u++)
-                made += key_pair(out + *count + made, room - *count - made, VK_PACKET, 0, w[u], 0);
-        } else if (vt) {
-            /* the character as it came: the program reads the sequences itself. */
-            if (c == 0x1B) {
-                vk = VK_ESCAPE;
-                scan = 0x01;
-            } else if (c == '\r' || c == '\n') {
-                vk = VK_RETURN;
-                scan = 0x1C;
-            } else if (c == 0x7F || c == 0x08) {
-                vk = VK_BACK;
-                scan = 0x0E;
-            } else if (c == '\t') {
-                vk = VK_TAB;
-                scan = 0x0F;
-            } else if (c < 0x20) {
-                ascii_key(c ? (UCHAR)(c + 'a' - 1) : ' ', &vk, &scan, &shift);
-                state = CON_LEFT_CTRL;
-            } else {
-                ascii_key(c, &vk, &scan, &shift);
-                state = shift ? CON_SHIFT : 0;
-            }
-            made = key_pair(out + *count, room - *count, vk, scan, c == '\n' ? '\r' : c, state);
+                key_record(&out[*count + made++], TRUE, 0, 0, w[u], 0);
         } else if (c == 0x1B && !st->Paste) {
             BOOLEAN partial = FALSE;
             int special = -1;
@@ -481,7 +501,8 @@ ULONG ConDecodeInput(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN more,
         } else if (c < 0x20) {
             /* ctrl+letter. */
             ascii_key((UCHAR)(c + 'a' - 1), &vk, &scan, &shift);
-            made = key_pair(out + *count, room - *count, vk, scan, c, CON_LEFT_CTRL);
+            made = c == 3 ? plain_pair(out + *count, room - *count, vk, scan, c, CON_LEFT_CTRL)
+                          : key_pair(out + *count, room - *count, vk, scan, c, CON_LEFT_CTRL);
         } else if (c < 0x80) {
             ascii_key(c, &vk, &scan, &shift);
             made = key_pair(out + *count, room - *count, vk, scan, c, shift ? CON_SHIFT : 0);
@@ -492,7 +513,7 @@ ULONG ConDecodeInput(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN more,
             if (!units || room - *count < units * 2)
                 break;
             for (ULONG u = 0; u < units; u++)
-                made += key_pair(out + *count + made, room - *count - made, VK_PACKET, 0, w[u], 0);
+                made += key_pair(out + *count + made, room - *count - made, 0, 0, w[u], 0);
         }
         if (!made)
             break;

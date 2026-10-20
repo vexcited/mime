@@ -118,6 +118,7 @@ void CsGridScroll(CsGrid *grid, int top, int bottom, int count, bool up, CsCell 
             CsRowFill(&rows[i], 0, grid->Width - 1, fill);
             rows[i].Wrapped = false;
             rows[i].Touched = false;
+            rows[i].Known = true;
         }
     } else {
         memcpy(spare, rows + height - count, sizeof(CsRow) * (size_t)count);
@@ -127,6 +128,7 @@ void CsGridScroll(CsGrid *grid, int top, int bottom, int count, bool up, CsCell 
             CsRowFill(&rows[i], 0, grid->Width - 1, fill);
             rows[i].Wrapped = false;
             rows[i].Touched = false;
+            rows[i].Known = true;
         }
     }
     if (spare != saved)
@@ -605,9 +607,13 @@ void CsShadowFill(CsTerminal *t, int y0, int y1, int x0, int x1, CsCell cell)
 {
     if (!t->ShadowValid)
         return;
-    for (int y = CS_MAX(y0, 0); y <= y1 && y < t->Shadow.Height; y++)
+    for (int y = CS_MAX(y0, 0); y <= y1 && y < t->Shadow.Height; y++) {
         for (int x = CS_MAX(x0, 0); x <= x1 && x < t->Shadow.Width; x++)
             t->Shadow.Rows[y].Cells[x] = cell;
+        /* the terminal erased the whole row. */
+        if (x0 <= 0 && x1 >= t->Shadow.Width - 1)
+            t->Shadow.Rows[y].Known = true;
+    }
 }
 
 /* ------------------------------------------------------------------ rendering */
@@ -657,6 +663,8 @@ static void paint_row(CsTerminal *t, CsBuffer *b, int y, int x0, int x1, bool fo
 {
     CsRow *model = &b->Grid.Rows[b->Window.Top + y];
     CsRow *shadow = &t->Shadow.Rows[y];
+    /* a row the console never painted is all different from what it holds. */
+    force = !shadow->Known;
     int base = b->Window.Left;
     int width = b->Window.Right - b->Window.Left + 1;
     int x = x0;
@@ -685,6 +693,8 @@ static void paint_row(CsTerminal *t, CsBuffer *b, int y, int x0, int x1, bool fo
                 CsOutString(t, "\x1b[K");
                 for (int k = start; k < width; k++)
                     shadow->Cells[k] = model->Cells[base + k];
+                if (x0 <= 0 && width == t->Cols)
+                    shadow->Known = true;
                 return;
             }
         }
@@ -720,10 +730,12 @@ static void paint_row(CsTerminal *t, CsBuffer *b, int y, int x0, int x1, bool fo
         }
         x = k;
     }
+    if (force && x0 <= 0 && x1 >= width - 1)
+        shadow->Known = true;
 }
 
 /* the terminal shows nothing known: the shadow becomes a blank screen, or the screen of the main buffer again. */
-static void shadow_reset(CsTerminal *t)
+static void shadow_reset_known(CsTerminal *t, bool known)
 {
     if (t->ShadowValid) {
         CsGridFree(&t->Shadow);
@@ -731,6 +743,20 @@ static void shadow_reset(CsTerminal *t)
     }
     CsCell blank = CsBlankOf((CsAttr){CS_DEFAULT_ATTRIBUTES, CS_EXT_DEFAULT});
     t->ShadowValid = CsGridInit(&t->Shadow, t->Cols, t->Rows, blank);
+    if (t->ShadowValid && known)
+        for (int y = 0; y < t->Shadow.Height; y++)
+            t->Shadow.Rows[y].Known = true;
+}
+
+static void shadow_reset(CsTerminal *t)
+{
+    shadow_reset_known(t, false);
+}
+
+/* the terminal has a blank screen, which an alternate screen starts as. */
+void CsShadowBlank(CsTerminal *t)
+{
+    shadow_reset_known(t, true);
 }
 
 void CsRender(CsTerminal *t)
@@ -986,7 +1012,7 @@ void CsShow(CsTerminal *t, CsBuffer *buffer)
         t->Main = buffer;
     t->Shown = buffer;
     CsBuffer *now = CsDisplayed(t);
-    if (old == now || t->Headless)
+    if (!old || old == now || t->Headless)
         return;
     CsRepaint(t);
 }

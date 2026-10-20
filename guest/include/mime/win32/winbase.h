@@ -1275,6 +1275,14 @@ typedef struct _INPUT_RECORD {
 #define CONSOLE_READ_NOWAIT 0x0002
 
 #define CONSOLE_TEXTMODE_BUFFER 1
+#define CONSOLE_GRAPHICS_BUFFER 2
+#define COMMON_LVB_LEADING_BYTE 0x0100
+#define COMMON_LVB_TRAILING_BYTE 0x0200
+#define COMMON_LVB_GRID_HORIZONTAL 0x0400
+#define COMMON_LVB_GRID_LVERTICAL 0x0800
+#define COMMON_LVB_GRID_RVERTICAL 0x1000
+#define COMMON_LVB_REVERSE_VIDEO 0x4000
+#define COMMON_LVB_UNDERSCORE 0x8000
 #define CONSOLE_FULLSCREEN_MODE 1
 #define CONSOLE_WINDOWED_MODE 2
 #define HISTORY_NO_DUP_FLAG 1
@@ -1382,6 +1390,41 @@ WINBASEAPI BOOL WINAPI ScrollConsoleScreenBufferW(HANDLE console, const SMALL_RE
 WINBASEAPI BOOL WINAPI ScrollConsoleScreenBufferA(HANDLE console, const SMALL_RECT *source, const SMALL_RECT *clip,
                                                   COORD destination, const CHAR_INFO *fill);
 WINBASEAPI BOOL WINAPI SetConsoleScreenBufferInfoEx(HANDLE console, PCONSOLE_SCREEN_BUFFER_INFOEX info);
+WINBASEAPI BOOL WINAPI SetCurrentConsoleFontEx(HANDLE console, BOOL maximum, PCONSOLE_FONT_INFOEX info);
+WINBASEAPI COORD WINAPI GetConsoleFontSize(HANDLE console, DWORD font);
+WINBASEAPI BOOL WINAPI GetConsoleSelectionInfo(PCONSOLE_SELECTION_INFO info);
+WINBASEAPI BOOL WINAPI GetConsoleDisplayMode(LPDWORD flags);
+WINBASEAPI BOOL WINAPI SetConsoleDisplayMode(HANDLE console, DWORD flags, PCOORD dimensions);
+WINBASEAPI BOOL WINAPI GetNumberOfConsoleMouseButtons(LPDWORD buttons);
+WINBASEAPI DWORD WINAPI GetConsoleOriginalTitleW(LPWSTR title, DWORD size);
+WINBASEAPI DWORD WINAPI GetConsoleOriginalTitleA(LPSTR title, DWORD size);
+WINBASEAPI BOOL WINAPI GetConsoleHistoryInfo(PCONSOLE_HISTORY_INFO info);
+WINBASEAPI BOOL WINAPI SetConsoleHistoryInfo(PCONSOLE_HISTORY_INFO info);
+WINBASEAPI DWORD WINAPI GetConsoleCommandHistoryW(LPWSTR commands, DWORD length, LPCWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleCommandHistoryA(LPSTR commands, DWORD length, LPCSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleCommandHistoryLengthW(LPCWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleCommandHistoryLengthA(LPCSTR exe);
+WINBASEAPI VOID WINAPI ExpungeConsoleCommandHistoryW(LPCWSTR exe);
+WINBASEAPI VOID WINAPI ExpungeConsoleCommandHistoryA(LPCSTR exe);
+WINBASEAPI BOOL WINAPI SetConsoleNumberOfCommandsW(DWORD number, LPCWSTR exe);
+WINBASEAPI BOOL WINAPI SetConsoleNumberOfCommandsA(DWORD number, LPCSTR exe);
+WINBASEAPI BOOL WINAPI AddConsoleAliasW(LPWSTR source, LPWSTR target, LPWSTR exe);
+WINBASEAPI BOOL WINAPI AddConsoleAliasA(LPSTR source, LPSTR target, LPSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasW(LPWSTR source, LPWSTR buffer, DWORD length, LPWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasA(LPSTR source, LPSTR buffer, DWORD length, LPSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasesW(LPWSTR buffer, DWORD length, LPWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasesA(LPSTR buffer, DWORD length, LPSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasesLengthW(LPWSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasesLengthA(LPSTR exe);
+WINBASEAPI DWORD WINAPI GetConsoleAliasExesW(LPWSTR buffer, DWORD length);
+WINBASEAPI DWORD WINAPI GetConsoleAliasExesA(LPSTR buffer, DWORD length);
+WINBASEAPI DWORD WINAPI GetConsoleAliasExesLengthW(void);
+WINBASEAPI DWORD WINAPI GetConsoleAliasExesLengthA(void);
+WINBASEAPI BOOL WINAPI SetConsoleInputExeNameW(LPCWSTR name);
+WINBASEAPI BOOL WINAPI SetConsoleInputExeNameA(LPCSTR name);
+WINBASEAPI DWORD WINAPI GetConsoleInputExeNameW(DWORD size, LPWSTR buffer);
+WINBASEAPI DWORD WINAPI GetConsoleInputExeNameA(DWORD size, LPSTR buffer);
+
 
 /* ------------------------------------------------------------------ processes and threads */
 

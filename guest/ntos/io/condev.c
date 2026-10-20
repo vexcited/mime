@@ -1014,8 +1014,50 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
         break;
     }
 
+    /* ---- the mode, of the input or of a screen buffer */
+    case IOCTL_CONDRV_IN_MODE: {
+        if (in_len < sizeof(MIME_CONDRV_MODE) || out_len < sizeof(MIME_CONDRV_MODE)) {
+            status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        if (h->Kind != CH_INPUT && h->Kind != CH_OUTPUT) {
+            status = STATUS_INVALID_HANDLE;
+            break;
+        }
+        MIME_CONDRV_MODE *m = (MIME_CONDRV_MODE *)buf;
+        if (m->Set ? !can_write : !can_read) {
+            status = STATUS_ACCESS_DENIED;
+            break;
+        }
+        ExAcquireFastMutex(&g_con_lock);
+        if (h->Kind == CH_INPUT) {
+            if (m->Set)
+                status = ConSetInputMode(c, m->Mode);
+            m->Mode = ConGetInputMode(c);
+        } else {
+            CsBuffer *e = CsEffective(h->Buffer);
+            if (m->Set) {
+                if (m->Mode & ~(ULONG)CS_OUTPUT_MODE_MASK) {
+                    status = STATUS_INVALID_PARAMETER;
+                } else {
+                    BOOLEAN vt_was = (e->Mode & CS_VIRTUAL_TERMINAL_PROCESSING) != 0;
+                    e->Mode = m->Mode;
+                    /* an escape sequence cut by turning the sequences off is dropped. */
+                    if (vt_was && !(m->Mode & CS_VIRTUAL_TERMINAL_PROCESSING))
+                        CsParserReset(e);
+                }
+            }
+            m->Mode = e->Mode;
+        }
+        ExReleaseFastMutex(&g_con_lock);
+        information = sizeof(*m);
+        break;
+    }
+    case IOCTL_CONDRV_OUT_MODE:
+        status = STATUS_INVALID_DEVICE_REQUEST;
+        break;
+
     /* ---- the input */
-    case IOCTL_CONDRV_IN_MODE:
     case IOCTL_CONDRV_IN_READ:
     case IOCTL_CONDRV_IN_PEEK:
     case IOCTL_CONDRV_IN_RECORDS:
@@ -1029,24 +1071,6 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
             break;
         }
         switch (code) {
-        case IOCTL_CONDRV_IN_MODE: {
-            if (in_len < sizeof(MIME_CONDRV_MODE) || out_len < sizeof(MIME_CONDRV_MODE)) {
-                status = STATUS_INVALID_PARAMETER;
-                break;
-            }
-            MIME_CONDRV_MODE *m = (MIME_CONDRV_MODE *)buf;
-            if (m->Set ? !can_write : !can_read) {
-                status = STATUS_ACCESS_DENIED;
-                break;
-            }
-            ExAcquireFastMutex(&g_con_lock);
-            if (m->Set)
-                status = ConSetInputMode(c, m->Mode);
-            m->Mode = ConGetInputMode(c);
-            ExReleaseFastMutex(&g_con_lock);
-            information = sizeof(*m);
-            break;
-        }
         case IOCTL_CONDRV_IN_READ: {
             if (in_len < sizeof(MIME_CONDRV_READ) || out_len < sizeof(MIME_CONDRV_READ_RESULT)) {
                 status = STATUS_INVALID_PARAMETER;
@@ -1227,7 +1251,6 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
 
     /* ---- the screen buffers */
     case IOCTL_CONDRV_OUT_WRITE:
-    case IOCTL_CONDRV_OUT_MODE:
     case IOCTL_CONDRV_OUT_INFO:
     case IOCTL_CONDRV_OUT_SIZE:
     case IOCTL_CONDRV_OUT_CURSOR:
@@ -1259,27 +1282,6 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
             }
             status = write_text(c, b, bytes, buf + sizeof(rq), rq.Length);
             information = rq.Length;
-            break;
-        }
-        case IOCTL_CONDRV_OUT_MODE: {
-            if (in_len < sizeof(MIME_CONDRV_MODE) || out_len < sizeof(MIME_CONDRV_MODE)) {
-                status = STATUS_INVALID_PARAMETER;
-                break;
-            }
-            MIME_CONDRV_MODE *m = (MIME_CONDRV_MODE *)buf;
-            if (m->Set ? !can_write : !can_read) {
-                status = STATUS_ACCESS_DENIED;
-                break;
-            }
-            ExAcquireFastMutex(&g_con_lock);
-            if (m->Set) {
-                CsBuffer *e = CsEffective(b);
-                b->Mode = m->Mode & CS_OUTPUT_MODE_MASK;
-                e->Mode = b->Mode;
-            }
-            m->Mode = b->Mode;
-            ExReleaseFastMutex(&g_con_lock);
-            information = sizeof(*m);
             break;
         }
         case IOCTL_CONDRV_OUT_INFO: {

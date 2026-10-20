@@ -60,6 +60,7 @@ void CsMarkRows(CsBuffer *buffer, int y0, int y1, bool force);
 
 /* the shadow: what the host terminal is believed to show. */
 void CsShadowFill(CsTerminal *term, int y0, int y1, int x0, int x1, CsCell cell);
+void CsShadowBlank(CsTerminal *term);
 
 /* the viewport row of an absolute row, or -1 when it is outside. */
 static inline int CsViewRow(const CsBuffer *b, int y)
