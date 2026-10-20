@@ -428,6 +428,7 @@ enum {
     MIME_HC_FS_SET_SD = 0x1F,   /* (handle, pa, length) stores a security descriptor, none for length 0 */
     MIME_HC_FS_WARM = 0x61,     /* (pa) maps a file window into the guest's tables ahead of its first reads, without waiting for it */
     MIME_HC_FS_RENAME = 0x60,   /* (handle, directory handle, pa, chars, MIME_FS_RENAME_*) moves a file or directory to a name in a directory */
+    MIME_HC_FS_SET_BASIC = 0x66, /* (handle, MimeFsBasic pa) sets the times and the read only attribute the mask names */
     MIME_HC_FS_WINDOW_LOST = 0xA0, /* (pa of MimeWindowLost) the next range of window pages whose file lost them, after MIME_IRQ_WINDOW */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
@@ -868,6 +869,18 @@ typedef struct MimeFsInfo {
     uint32_t attributes; /* FILE_ATTRIBUTE_* */
     uint32_t links;
 } MimeFsInfo;
+
+/* what MIME_HC_FS_SET_BASIC changes: the access and write times (filetimes) and the read only attribute. */
+#define MIME_FS_BASIC_ACCESS 1u
+#define MIME_FS_BASIC_WRITE 2u
+#define MIME_FS_BASIC_READONLY 4u /* attributes has FILE_ATTRIBUTE_READONLY or not */
+
+typedef struct MimeFsBasic {
+    uint64_t access_time;
+    uint64_t write_time;
+    uint32_t attributes;
+    uint32_t mask;
+} MimeFsBasic;
 
 typedef struct MimeFsOpen {
     uint32_t volume;

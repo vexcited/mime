@@ -162,6 +162,16 @@ static uint64_t ts_to_filetime(struct timespec ts)
     return ((uint64_t)ts.tv_sec + 11644473600ull) * 10000000ull + (uint64_t)ts.tv_nsec / 100;
 }
 
+static struct timespec filetime_to_ts(uint64_t filetime)
+{
+    uint64_t ticks = filetime;
+    /* a time before 1970 is the start of it. */
+    if (ticks < 11644473600ull * 10000000ull)
+        ticks = 11644473600ull * 10000000ull;
+    ticks -= 11644473600ull * 10000000ull;
+    return (struct timespec){.tv_sec = (time_t)(ticks / 10000000ull), .tv_nsec = (long)(ticks % 10000000ull) * 100};
+}
+
 static void fill_info(const struct stat *st, const char *name, MimeFsInfo *info)
 {
     memset(info, 0, sizeof(*info));
@@ -360,6 +370,38 @@ static void free_handle(MimeVm *vm, uint64_t h)
     free(fh->host_path);
     free(fh->dir_entries);
     free(fh);
+}
+
+/* the times and the read only attribute of an open file, as a program sets them. */
+static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
+{
+    const MimeFsBasic *basic = mime_vm_phys(vm, pa, sizeof(*basic));
+    if (!basic || fh->fd < 0)
+        return MIME_HC_STATUS_INVALID;
+    MimeFsBasic b = *basic;
+    if (b.mask & (MIME_FS_BASIC_ACCESS | MIME_FS_BASIC_WRITE)) {
+        struct timespec times[2] = {{.tv_nsec = UTIME_OMIT}, {.tv_nsec = UTIME_OMIT}};
+        if (b.mask & MIME_FS_BASIC_ACCESS)
+            times[0] = filetime_to_ts(b.access_time);
+        if (b.mask & MIME_FS_BASIC_WRITE)
+            times[1] = filetime_to_ts(b.write_time);
+        if (futimens(fh->fd, times) != 0)
+            return errno_status(errno);
+    }
+    /* a directory without write permission cannot have files made in it, which is not what read only means for it. */
+    if ((b.mask & MIME_FS_BASIC_READONLY) && !fh->is_dir) {
+        struct stat st;
+        if (fstat(fh->fd, &st) != 0)
+            return errno_status(errno);
+        mode_t mode = st.st_mode & 07777;
+        if (b.attributes & FILE_ATTRIBUTE_READONLY)
+            mode &= ~(mode_t)(S_IWUSR | S_IWGRP | S_IWOTH);
+        else
+            mode |= S_IWUSR;
+        if (mode != (st.st_mode & 07777) && fchmod(fh->fd, mode) != 0)
+            return errno_status(errno);
+    }
+    return MIME_HC_STATUS_OK;
 }
 
 static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
@@ -932,6 +974,13 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
                 status = errno_status(errno);
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         }
+        break;
+    }
+    case MIME_HC_FS_SET_BASIC: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        status = fh ? fs_set_basic(vm, fh, a[2]) : MIME_HC_STATUS_INVALID;
+        if (status == MIME_HC_STATUS_OK && fh->host_path)
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         break;
     }
     case MIME_HC_FS_WATCH: {
