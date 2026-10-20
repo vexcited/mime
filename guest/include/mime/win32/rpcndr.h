@@ -357,6 +357,7 @@ typedef struct _FULL_PTR_XLAT_TABLES {
 
 typedef struct _NDR_USER_MARSHAL_INFO_LEVEL1 {
     void *Buffer;
+    ULONG BufferSize;
     void *(__RPC_API *pfnAllocate)(size_t);
     void(__RPC_API *pfnFree)(void *);
     struct IRpcChannelBuffer *pRpcChannelBuffer;

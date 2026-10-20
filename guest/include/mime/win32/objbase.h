@@ -270,4 +270,40 @@ WINOLEAPI HRESULT WINAPI CoGetPSClsid(REFIID iid, CLSID *clsid);
 WINOLEAPI HRESULT WINAPI CoRegisterMessageFilter(IMessageFilter *filter, IMessageFilter **previous);
 WINOLEAPI HRESULT WINAPI CoDisconnectObject(IUnknown *object, DWORD reserved);
 
+
+/* the wire forms of the pointers to interfaces and of the handles, with the 64 bit forms of the second transfer syntax. */
+WINOLEAPI ULONG WINAPI WdtpInterfacePointer_UserSize(ULONG *flags, ULONG context, ULONG offset, IUnknown *punk,
+                                                     REFIID iid);
+WINOLEAPI BYTE *WINAPI WdtpInterfacePointer_UserMarshal(ULONG *flags, ULONG context, BYTE *buffer, IUnknown *punk,
+                                                        REFIID iid);
+WINOLEAPI BYTE *WINAPI WdtpInterfacePointer_UserUnmarshal(ULONG *flags, BYTE *buffer, IUnknown **punk, REFIID iid);
+WINOLEAPI void WINAPI WdtpInterfacePointer_UserFree(IUnknown *punk);
+WINOLEAPI ULONG WINAPI WdtpInterfacePointer_UserSize64(ULONG *flags, ULONG context, ULONG offset, IUnknown *punk,
+                                                       REFIID iid);
+WINOLEAPI BYTE *WINAPI WdtpInterfacePointer_UserMarshal64(ULONG *flags, ULONG context, BYTE *buffer, IUnknown *punk,
+                                                          REFIID iid);
+WINOLEAPI BYTE *WINAPI WdtpInterfacePointer_UserUnmarshal64(ULONG *flags, BYTE *buffer, IUnknown **punk, REFIID iid);
+WINOLEAPI void WINAPI WdtpInterfacePointer_UserFree64(IUnknown *punk);
+
+
+/* the wire forms of the handles and of global memory that a stub names, each with its form for the second syntax. */
+#define MIME_WIRE_ROUTINES(prefix, type)                                                                               \
+    WINOLEAPI ULONG WINAPI prefix##_UserSize(ULONG *flags, ULONG offset, type *value);                                 \
+    WINOLEAPI BYTE *WINAPI prefix##_UserMarshal(ULONG *flags, BYTE *buffer, type *value);                              \
+    WINOLEAPI BYTE *WINAPI prefix##_UserUnmarshal(ULONG *flags, BYTE *buffer, type *value);                            \
+    WINOLEAPI void WINAPI prefix##_UserFree(ULONG *flags, type *value);                                                \
+    WINOLEAPI ULONG WINAPI prefix##_UserSize64(ULONG *flags, ULONG offset, type *value);                               \
+    WINOLEAPI BYTE *WINAPI prefix##_UserMarshal64(ULONG *flags, BYTE *buffer, type *value);                            \
+    WINOLEAPI BYTE *WINAPI prefix##_UserUnmarshal64(ULONG *flags, BYTE *buffer, type *value);                          \
+    WINOLEAPI void WINAPI prefix##_UserFree64(ULONG *flags, type *value);
+MIME_WIRE_ROUTINES(HWND, HWND)
+MIME_WIRE_ROUTINES(HICON, HICON)
+MIME_WIRE_ROUTINES(HMENU, HMENU)
+MIME_WIRE_ROUTINES(HACCEL, HANDLE)
+MIME_WIRE_ROUTINES(HBRUSH, HBRUSH)
+MIME_WIRE_ROUTINES(HDC, HDC)
+MIME_WIRE_ROUTINES(HMONITOR, HMONITOR)
+MIME_WIRE_ROUTINES(HGLOBAL, HGLOBAL)
+MIME_WIRE_ROUTINES(HBITMAP, HBITMAP)
+
 #endif

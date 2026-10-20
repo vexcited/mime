@@ -121,7 +121,9 @@ RPCRTAPI RPC_STATUS RPC_ENTRY NdrGetUserMarshalInfo(ULONG *flags, ULONG level, N
     PMIDL_STUB_MESSAGE m = cb->pStubMsg;
     memset(&info->Level1, 0, sizeof(info->Level1));
     info->InformationLevel = 1;
-    info->Level1.Buffer = m->Buffer;
+    /* the whole buffer of the message, so that a routine can check what it reads against its end. */
+    info->Level1.Buffer = m->BufferStart ? m->BufferStart : m->Buffer;
+    info->Level1.BufferSize = m->BufferStart ? (ULONG)(m->BufferEnd - m->BufferStart) : 0;
     info->Level1.pfnAllocate = m->pfnAllocate;
     info->Level1.pfnFree = m->pfnFree;
     info->Level1.pRpcChannelBuffer = m->pRpcChannelBuffer;

@@ -295,7 +295,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_msftedit guest/lib)
     set(libs_riched32 ${MIME_LIB_${arch}}/riched20.lib)
     # oleaut32 makes objects with ole32 and asks it for guid strings.
-    set(libs_oleaut32 ${MIME_LIB_${arch}}/ole32.lib)
+    set(libs_oleaut32 ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     # ole32 carries objects between processes over the rpc runtime.
     set(libs_ole32 ${MIME_LIB_${arch}}/rpcrt4.lib)
     # and has the proxies and stubs of the interfaces it knows by itself written at build time.

@@ -1319,6 +1319,22 @@ WINOLEAUTAPI ULONG WINAPI LPSAFEARRAY_UserSize(ULONG *flags, ULONG offset, LPSAF
 WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_UserMarshal(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value);
 WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_UserUnmarshal(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value);
 WINOLEAUTAPI void WINAPI LPSAFEARRAY_UserFree(ULONG *flags, LPSAFEARRAY *value);
+WINOLEAUTAPI ULONG WINAPI BSTR_UserSize64(ULONG *flags, ULONG offset, BSTR *value);
+WINOLEAUTAPI BYTE *WINAPI BSTR_UserMarshal64(ULONG *flags, BYTE *buffer, BSTR *value);
+WINOLEAUTAPI BYTE *WINAPI BSTR_UserUnmarshal64(ULONG *flags, BYTE *buffer, BSTR *value);
+WINOLEAUTAPI void WINAPI BSTR_UserFree64(ULONG *flags, BSTR *value);
+WINOLEAUTAPI ULONG WINAPI VARIANT_UserSize64(ULONG *flags, ULONG offset, VARIANT *value);
+WINOLEAUTAPI BYTE *WINAPI VARIANT_UserMarshal64(ULONG *flags, BYTE *buffer, VARIANT *value);
+WINOLEAUTAPI BYTE *WINAPI VARIANT_UserUnmarshal64(ULONG *flags, BYTE *buffer, VARIANT *value);
+WINOLEAUTAPI void WINAPI VARIANT_UserFree64(ULONG *flags, VARIANT *value);
+WINOLEAUTAPI ULONG WINAPI LPSAFEARRAY_UserSize64(ULONG *flags, ULONG offset, LPSAFEARRAY *value);
+WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_UserMarshal64(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value);
+WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_UserUnmarshal64(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value);
+WINOLEAUTAPI void WINAPI LPSAFEARRAY_UserFree64(ULONG *flags, LPSAFEARRAY *value);
+/* the forms that take the interface of the elements of an array of objects, which the array may not know. */
+WINOLEAUTAPI ULONG WINAPI LPSAFEARRAY_Size(ULONG *flags, ULONG offset, LPSAFEARRAY *value, const GUID *iid);
+WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_Marshal(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value, const GUID *iid);
+WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_Unmarshal(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value, const GUID *iid);
 
 /* the layouts the mingw headers and windows' own libraries have. */
 #define MIME_OA_SIZE(T, x86, x64) MIME_STATIC_ASSERT(sizeof(T) == (sizeof(void *) == 4 ? (x86) : (x64)), #T " size")

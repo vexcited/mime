@@ -306,3 +306,30 @@ EXPORTS
     SafeArrayReleaseData @354
     SafeArrayReleaseDescriptor @355
     GetRecordInfoFromGuids @322
+    BSTR_UserSize @283
+    BSTR_UserMarshal @284
+    BSTR_UserUnmarshal @285
+    BSTR_UserFree @286
+    BSTR_UserSize64 @151
+    BSTR_UserMarshal64 @145
+    BSTR_UserUnmarshal64 @300
+    BSTR_UserFree64 @144
+    VARIANT_UserSize @287
+    VARIANT_UserMarshal @288
+    VARIANT_UserUnmarshal @289
+    VARIANT_UserFree @290
+    VARIANT_UserSize64 @380
+    VARIANT_UserMarshal64 @359
+    VARIANT_UserUnmarshal64 @381
+    VARIANT_UserFree64 @358
+    LPSAFEARRAY_UserSize @291
+    LPSAFEARRAY_UserMarshal @292
+    LPSAFEARRAY_UserUnmarshal @293
+    LPSAFEARRAY_UserFree @294
+    LPSAFEARRAY_UserSize64 @350
+    LPSAFEARRAY_UserMarshal64 @328
+    LPSAFEARRAY_UserUnmarshal64 @351
+    LPSAFEARRAY_UserFree64 @324
+    LPSAFEARRAY_Size @295
+    LPSAFEARRAY_Marshal @296
+    LPSAFEARRAY_Unmarshal @297
