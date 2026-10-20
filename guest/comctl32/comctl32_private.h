@@ -15,6 +15,8 @@
 
 /* user32 exports that winuser.h does not declare yet. */
 WINUSERAPI DWORD WINAPI GetWindowThreadProcessId(HWND hwnd, LPDWORD process);
+WINUSERAPI HWND WINAPI CreateDialogIndirectParamA(HINSTANCE instance, LPCDLGTEMPLATEA tmpl, HWND parent, DLGPROC proc,
+                                                  LPARAM param);
 
 /* 32-bit windows has no pointer sized window longs, the macros of its headers name the 32-bit ones. */
 #ifndef _WIN64

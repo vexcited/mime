@@ -1,7 +1,8 @@
 /*
  * common controls of comctl32.dll version 6: initialization, subclassing,
  * image lists, the progress bar, header, list view, status bar, tooltips,
- * up down, trackbar, tab, tree view and toolbar controls, and task dialogs.
+ * up down, trackbar, tab, tree view and toolbar controls, task dialogs and,
+ * through prsht.h, property sheets.
  */
 #ifndef MIME_WIN32_COMMCTRL_H
 #define MIME_WIN32_COMMCTRL_H
@@ -9,6 +10,7 @@
 #include <mime/win32/winuser.h>
 #include <mime/win32/wingdi.h>
 #include <mime/win32/objbase.h>
+#include <mime/win32/prsht.h>
 
 #ifndef WINCOMMCTRLAPI
 #define WINCOMMCTRLAPI DECLSPEC_IMPORT
