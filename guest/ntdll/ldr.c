@@ -319,6 +319,7 @@ static const API_SET_RULE g_api_sets[] = {
     {L"api-ms-win-core-synch-", L"kernelbase.dll", 0},
     {L"api-ms-win-core-rtlsupport-", L"ntdll.dll", 0},
     {L"api-ms-win-core-", L"kernelbase.dll", 0},
+    {L"api-ms-win-appmodel-runtime-", L"kernelbase.dll", 0},
     {L"api-ms-win-eventing-consumer-", L"sechost.dll", 0},
     {L"api-ms-win-eventing-controller-", L"sechost.dll", 0},
     {L"api-ms-win-eventing-obsolete-", L"sechost.dll", 0},
