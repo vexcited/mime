@@ -31,6 +31,10 @@ HRESULT CbUISettingsFactory(REFIID riid, void **factory);
 extern const WCHAR CbApiInformationClass[];
 HRESULT CbApiInformationFactory(REFIID riid, void **factory);
 
+/* regionpolicy.c */
+extern const WCHAR CbRegionPolicyClass[];
+HRESULT CbRegionPolicyFactory(REFIID riid, void **factory);
+
 /* capture.c: Windows.Graphics.Capture. */
 extern const WCHAR CbCaptureItemClass[], CbCaptureSessionClass[], CbCapturePoolClass[];
 HRESULT CbCaptureItemFactory(REFIID riid, void **factory);

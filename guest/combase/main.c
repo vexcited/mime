@@ -62,6 +62,7 @@ static const struct {
     {CbPropertyValueClass, CbPropertyValueFactory},
     {CbToastManagerClass, CbToastManagerFactory},
     {CbToastClass, CbToastFactory},
+    {CbRegionPolicyClass, CbRegionPolicyFactory},
 };
 
 ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void **factory)
