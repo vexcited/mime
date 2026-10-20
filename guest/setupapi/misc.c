@@ -146,6 +146,26 @@ static void guid_text(const GUID *g, WCHAR *out)
               g->Data4[0], g->Data4[1], g->Data4[2], g->Data4[3], g->Data4[4], g->Data4[5], g->Data4[6], g->Data4[7]);
 }
 
+/* the record is kept without its trailing zeros, which the names it holds make most of it, and read back with them. */
+static LSTATUS set_record(HKEY key, PCWSTR name, const void *record, DWORD size)
+{
+    const BYTE *bytes = record;
+    while (size > sizeof(DWORD) && !bytes[size - 1])
+        size--;
+    return RegSetValueExW(key, name, 0, REG_BINARY, bytes, size);
+}
+
+static BOOL get_record(HKEY key, PCWSTR name, void *record, DWORD size)
+{
+    BYTE *bytes = record;
+    DWORD got = size;
+    memset(bytes, 0, size);
+    if (RegQueryValueExW(key, name, nullptr, nullptr, bytes, &got) != ERROR_SUCCESS || got < sizeof(DWORD))
+        return FALSE;
+    *(DWORD *)bytes = size;
+    return TRUE;
+}
+
 SETUPAPI BOOL WINAPI SetupRegisterOsComponent(PSETUP_OS_COMPONENT_DATA component, PSETUP_OS_EXCEPTION_DATA exception)
 {
     if (!component || component->Size < sizeof(*component)) {
@@ -161,9 +181,9 @@ SETUPAPI BOOL WINAPI SetupRegisterOsComponent(PSETUP_OS_COMPONENT_DATA component
         SetLastError((DWORD)r);
         return FALSE;
     }
-    RegSetValueExW(key, L"Component", 0, REG_BINARY, (const BYTE *)component, sizeof(*component));
+    set_record(key, L"Component", component, sizeof(*component));
     if (exception && exception->Size >= sizeof(*exception))
-        RegSetValueExW(key, L"Exception", 0, REG_BINARY, (const BYTE *)exception, sizeof(*exception));
+        set_record(key, L"Exception", exception, sizeof(*exception));
     else
         RegDeleteValueW(key, L"Exception");
     RegCloseKey(key);
@@ -185,14 +205,9 @@ SETUPAPI BOOL WINAPI SetupQueryRegisteredOsComponent(const GUID *guid, PSETUP_OS
         SetLastError(ERROR_NOT_FOUND);
         return FALSE;
     }
-    DWORD size = sizeof(*component);
-    BOOL ok = RegQueryValueExW(key, L"Component", nullptr, nullptr, (BYTE *)component, &size) == ERROR_SUCCESS &&
-              size == sizeof(*component);
-    if (ok && exception && exception->Size >= sizeof(*exception)) {
-        size = sizeof(*exception);
-        if (RegQueryValueExW(key, L"Exception", nullptr, nullptr, (BYTE *)exception, &size) != ERROR_SUCCESS)
-            memset((BYTE *)exception + sizeof(DWORD), 0, sizeof(*exception) - sizeof(DWORD));
-    }
+    BOOL ok = get_record(key, L"Component", component, sizeof(*component));
+    if (ok && exception && exception->Size >= sizeof(*exception) && !get_record(key, L"Exception", exception, sizeof(*exception)))
+        memset((BYTE *)exception + sizeof(DWORD), 0, sizeof(*exception) - sizeof(DWORD));
     RegCloseKey(key);
     if (!ok)
         SetLastError(ERROR_NOT_FOUND);
