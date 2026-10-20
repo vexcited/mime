@@ -205,6 +205,12 @@ RPCRTAPI IRpcStubBuffer *WINAPI CStdStubBuffer_IsIIDSupported(IRpcStubBuffer *Th
 RPCRTAPI ULONG WINAPI CStdStubBuffer_CountRefs(IRpcStubBuffer *This);
 RPCRTAPI HRESULT WINAPI CStdStubBuffer_DebugServerQueryInterface(IRpcStubBuffer *This, void **object);
 RPCRTAPI void WINAPI CStdStubBuffer_DebugServerRelease(IRpcStubBuffer *This, void *object);
+/* proxies and stubs made from a type library's description of an interface: ITypeInfo is declared by oleauto.h. */
+struct ITypeInfo;
+RPCRTAPI HRESULT WINAPI CreateProxyFromTypeInfo(struct ITypeInfo *info, IUnknown *outer, REFIID riid,
+                                                IRpcProxyBuffer **proxy, void **object);
+RPCRTAPI HRESULT WINAPI CreateStubFromTypeInfo(struct ITypeInfo *info, REFIID riid, IUnknown *server,
+                                               IRpcStubBuffer **stub);
 RPCRTAPI HRESULT RPC_ENTRY NdrDllGetClassObject(REFCLSID clsid, REFIID iid, void **object,
                                                 const ProxyFileInfo **proxy_file_list, const CLSID *proxy_clsid,
                                                 CStdPSFactoryBuffer *factory);
