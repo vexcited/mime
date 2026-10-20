@@ -85,10 +85,8 @@ function(mime_dll name arch)
     endforeach()
     # a module's own resources, as the command tables of mci drivers, sit beside its sources.
     set(script)
-    set(resource)
     if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
         set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
-        set(resource RESOURCE ${arg_FILE})
     endif()
     if(arch STREQUAL "x86")
         set(def ${arg_DEF})
@@ -118,11 +116,11 @@ function(mime_dll name arch)
         endif()
         if(arg_NOIMPLIB)
             mime_link(${output} x86 OBJECTS ${objects} LIBS ${libs} FLAGS ${flags} /def:${def} /noimplib
-                DEPENDS ${def} ${depends} ${resource} ${script} GROUPS guest)
+                DEPENDS ${def} ${depends} RESOURCE ${arg_FILE} ${script} GROUPS guest)
         else()
             mime_link(${output} x86 OBJECTS ${objects} LIBS ${libs} FLAGS ${flags} /def:${def}
-                DEPENDS ${def} ${imports_def} ${depends} IMPLIB ${implib} IMPORTS ${imports_def} ${resource} ${script}
-                GROUPS guest)
+                DEPENDS ${def} ${imports_def} ${depends} IMPLIB ${implib} IMPORTS ${imports_def}
+                RESOURCE ${arg_FILE} ${script} GROUPS guest)
         endif()
     else()
         if(NOT arg_DEF AND EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.def)

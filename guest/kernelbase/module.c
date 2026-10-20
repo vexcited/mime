@@ -420,7 +420,8 @@ static HMODULE load_datafile(LPCWSTR name, DWORD flags)
     }
     WCHAR path[MAX_PATH * 2];
     if (!SearchPathW(nullptr, name, wcschr(name, '.') ? nullptr : L".dll", RTL_NUMBER_OF(path), path, nullptr)) {
-        KbSetError(ERROR_MOD_NOT_FOUND);
+        /* a name with a path is a file that is not there, a bare name a module that is not found. */
+        KbSetError(wcschr(name, '\\') || wcschr(name, '/') ? ERROR_FILE_NOT_FOUND : ERROR_MOD_NOT_FOUND);
         return nullptr;
     }
     HANDLE file = CreateFileW(path, GENERIC_READ,
