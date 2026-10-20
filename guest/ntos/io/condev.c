@@ -758,7 +758,9 @@ static NTSTATUS history_op(MIME_CONSOLE *c, PUCHAR buf, ULONG in_len, ULONG out_
         return STATUS_INVALID_PARAMETER;
     MIME_CONDRV_HISTORY rq = *(MIME_CONDRV_HISTORY *)buf;
     const WCHAR *exe = (const WCHAR *)(buf + sizeof(rq));
-    if (in_len < sizeof(rq) + rq.ExeNameLength * sizeof(WCHAR))
+    /* the settings carry their flags where the other requests have the length of a name. */
+    BOOLEAN has_name = rq.Op != MIME_CONDRV_HISTORY_GET_INFO && rq.Op != MIME_CONDRV_HISTORY_SET_INFO;
+    if (has_name && (ULONG64)in_len < sizeof(rq) + (ULONG64)rq.ExeNameLength * sizeof(WCHAR))
         return STATUS_INVALID_PARAMETER;
     NTSTATUS status = STATUS_SUCCESS;
     ExAcquireFastMutex(&g_con_lock);
@@ -1089,7 +1091,8 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
     case IOCTL_CONDRV_IN_ANSI_CARRY:
     case IOCTL_CONDRV_IN_HISTORY:
     case IOCTL_CONDRV_IN_ALIAS:
-        if (h->Kind != CH_INPUT) {
+        /* the history and the aliases belong to the console, and are asked of it by any file. */
+        if (h->Kind != CH_INPUT && code != IOCTL_CONDRV_IN_HISTORY && code != IOCTL_CONDRV_IN_ALIAS) {
             status = STATUS_INVALID_HANDLE;
             break;
         }

@@ -1681,7 +1681,7 @@ static BOOL history_call(ULONG op, ULONG value, ULONG value2, PCWSTR exe, ULONG 
     rq->ExeNameLength = exe_length;
     memcpy(rq + 1, exe, exe_length * sizeof(WCHAR));
     ULONG_PTR got = 0;
-    NTSTATUS status = process_control(IOCTL_CONDRV_IN_HISTORY, block, in_size, block, size, &got);
+    NTSTATUS status = process_control(IOCTL_CONDRV_IN_HISTORY, block, in_size, block, out_size, &got);
     BOOL ok = NT_SUCCESS(status);
     if (ok && out)
         memcpy(out, block, got < out_size ? got : out_size);
@@ -1844,7 +1844,7 @@ static BOOL alias_call(ULONG op, PCWSTR source, PCWSTR target, PCWSTR exe, void 
     memcpy(text + sl, target, tl * sizeof(WCHAR));
     memcpy(text + sl + tl, exe, el * sizeof(WCHAR));
     ULONG_PTR got = 0;
-    NTSTATUS status = process_control(IOCTL_CONDRV_IN_ALIAS, block, in_size, block, size, &got);
+    NTSTATUS status = process_control(IOCTL_CONDRV_IN_ALIAS, block, in_size, block, out_size, &got);
     if (NT_SUCCESS(status) || status == STATUS_BUFFER_OVERFLOW) {
         if (out)
             memcpy(out, block, got < out_size ? got : out_size);
