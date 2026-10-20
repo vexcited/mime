@@ -765,8 +765,8 @@ typedef struct MimeCtrlRun {
     uint32_t cmdline_chars;
     uint32_t cwd_chars;
     uint32_t flags;        /* MIME_RUN_... */
-    uint32_t console_size; /* columns | rows << 16 of the terminal, 0 when unknown */
-    uint32_t pad;
+    uint32_t console_size;   /* columns | rows << 16 of the terminal, 0 when unknown */
+    uint32_t console_cursor; /* the cursor of the terminal, column + 1 | row + 1 << 16, 0 when unknown */
     /* uint16_t image[image_chars], cmdline[cmdline_chars], cwd[cwd_chars] */
 } MimeCtrlRun;
 

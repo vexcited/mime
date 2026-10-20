@@ -81,12 +81,6 @@ static HANDLE open_device_name(LPCWSTR name, DWORD access)
     PCWSTR base = name;
     if (!wcsncmp(base, L"\\\\.\\", 4))
         base += 4;
-    if (!_wcsicmp(base, L"CONIN$"))
-        return KB_CONSOLE_INPUT;
-    if (!_wcsicmp(base, L"CONOUT$"))
-        return KB_CONSOLE_OUTPUT;
-    if (!_wcsicmp(base, L"CON"))
-        return (access & GENERIC_WRITE) ? KB_CONSOLE_OUTPUT : KB_CONSOLE_INPUT;
     if (!_wcsicmp(base, L"NUL"))
         return KB_NULL_DEVICE;
     return nullptr;
@@ -100,6 +94,13 @@ HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_AT
         return INVALID_HANDLE_VALUE;
     }
     HANDLE device = open_device_name(name, access);
+    if (device) {
+        KbSetError(ERROR_SUCCESS);
+        return device;
+    }
+    device = KbOpenConsoleDevice(name, access, share, sa, disposition);
+    if (device == INVALID_HANDLE_VALUE)
+        return device;
     if (device) {
         KbSetError(ERROR_SUCCESS);
         return device;
@@ -414,19 +415,8 @@ BOOL WINAPI ReadFile(HANDLE file, LPVOID buffer, DWORD length, LPDWORD read, LPO
 {
     if (read)
         *read = 0;
-    if (KbIsPseudoHandle(file)) {
-        if (file == KB_NULL_DEVICE)
-            return TRUE;
-        if (file == KB_CONSOLE_INPUT) {
-            DWORD got = 0;
-            BOOL ok = KbConsoleRead(file, buffer, length, &got);
-            if (read)
-                *read = got;
-            return ok;
-        }
-        KbSetError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
+    if (KbIsPseudoHandle(file))
+        return TRUE;
     IO_STATUS_BLOCK local;
     NTSTATUS status;
     if (overlapped) {
@@ -469,13 +459,6 @@ BOOL WINAPI WriteFile(HANDLE file, LPCVOID buffer, DWORD length, LPDWORD written
     if (written)
         *written = 0;
     if (KbIsPseudoHandle(file)) {
-        if (file == KB_NULL_DEVICE) {
-            if (written)
-                *written = length;
-            return TRUE;
-        }
-        if (!KbConsoleWriteBytes(file, buffer, length))
-            return FALSE;
         if (written)
             *written = length;
         return TRUE;
@@ -776,9 +759,8 @@ BOOL WINAPI FlushFileBuffers(HANDLE file)
 
 DWORD WINAPI GetFileType(HANDLE file)
 {
-    /* a standard handle redirected to a pipe or a file on the host is a pipe to the program. */
     if (KbIsPseudoHandle(file))
-        return KbConsoleIsRedirected(file) ? FILE_TYPE_PIPE : FILE_TYPE_CHAR;
+        return FILE_TYPE_CHAR;
     if (file == INVALID_HANDLE_VALUE || !file) {
         KbSetError(ERROR_INVALID_HANDLE);
         return FILE_TYPE_UNKNOWN;

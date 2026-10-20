@@ -247,6 +247,7 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
 static int g_signal_pipe[2] = {-1, -1};
 static struct termios g_saved_termios;
 static bool g_termios_saved;
+static bool g_raw_terminal;
 
 static void on_run_signal(int sig)
 {
@@ -257,8 +258,138 @@ static void on_run_signal(int sig)
     errno = saved;
 }
 
+/*
+ * what the guest turned on in the terminal, kept from the output as it passes: the escape sequences that set
+ * the modes a program leaves on when it ends or is killed.
+ */
+typedef struct TerminalModes {
+    bool alt_screen, cursor_hidden, wrap_off, keypad_application, cursor_application;
+    bool mouse_9, mouse_1000, mouse_1002, mouse_1003, mouse_1005, mouse_1006, mouse_1007, mouse_1015;
+    bool paste, focus, win32_input, cursor_style;
+    int state;
+    char buffer[64];
+    int length;
+} TerminalModes;
+
+static TerminalModes g_modes;
+static int g_modes_fd = -1; /* the terminal the guest's escape sequences went to */
+
+static void note_mode(TerminalModes *m, int mode, bool on)
+{
+    switch (mode) {
+    case 1: m->cursor_application = on; break;
+    case 7: m->wrap_off = !on; break;
+    case 9: m->mouse_9 = on; break;
+    case 25: m->cursor_hidden = !on; break;
+    case 1000: m->mouse_1000 = on; break;
+    case 1002: m->mouse_1002 = on; break;
+    case 1003: m->mouse_1003 = on; break;
+    case 1004: m->focus = on; break;
+    case 1005: m->mouse_1005 = on; break;
+    case 1006: m->mouse_1006 = on; break;
+    case 1007: m->mouse_1007 = on; break;
+    case 1015: m->mouse_1015 = on; break;
+    case 1049: m->alt_screen = on; break;
+    case 2004: m->paste = on; break;
+    case 9001: m->win32_input = on; break;
+    default: break;
+    }
+}
+
+static void track_output(int fd, const uint8_t *data, size_t size)
+{
+    TerminalModes *m = &g_modes;
+    g_modes_fd = fd;
+    for (size_t i = 0; i < size; i++) {
+        uint8_t c = data[i];
+        switch (m->state) {
+        case 0:
+            if (c == 0x1B)
+                m->state = 1;
+            break;
+        case 1:
+            m->length = 0;
+            if (c == '[')
+                m->state = 2;
+            else if (c == '=') {
+                m->keypad_application = true;
+                m->state = 0;
+            } else if (c == '>') {
+                m->keypad_application = false;
+                m->state = 0;
+            } else if (c == ']' || c == 'P' || c == '_' || c == '^' || c == 'X')
+                m->state = 3;
+            else
+                m->state = c == 0x1B ? 1 : 0;
+            break;
+        case 2:
+            if (c >= 0x40 && c <= 0x7E) {
+                m->buffer[m->length] = 0;
+                if (m->buffer[0] == '?' && (c == 'h' || c == 'l')) {
+                    int value = 0;
+                    for (int k = 1; k <= m->length; k++) {
+                        char ch = m->buffer[k];
+                        if (ch >= '0' && ch <= '9') {
+                            value = value * 10 + (ch - '0');
+                        } else {
+                            note_mode(m, value, c == 'h');
+                            value = 0;
+                        }
+                    }
+                } else if (c == 'q' && m->length >= 2 && m->buffer[m->length - 1] == ' ') {
+                    m->cursor_style = m->buffer[0] != '0';
+                }
+                m->state = 0;
+            } else if (m->length < (int)sizeof(m->buffer) - 1) {
+                m->buffer[m->length++] = (char)c;
+            }
+            break;
+        default:
+            /* a string ends with the bell or the escape that starts its terminator. */
+            if (c == 0x07)
+                m->state = 0;
+            else if (c == 0x1B)
+                m->state = 1;
+            break;
+        }
+    }
+}
+
+/* puts the terminal back the way the program found it, as far as it changed it. */
+static void restore_terminal_modes(void)
+{
+    TerminalModes *m = &g_modes;
+    char out[512];
+    int n = 0;
+    if (m->mouse_9) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?9l");
+    if (m->mouse_1000) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1000l");
+    if (m->mouse_1002) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1002l");
+    if (m->mouse_1003) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1003l");
+    if (m->mouse_1005) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1005l");
+    if (m->mouse_1006) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1006l");
+    if (m->mouse_1007) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1007l");
+    if (m->mouse_1015) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1015l");
+    if (m->paste) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?2004l");
+    if (m->focus) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1004l");
+    if (m->win32_input) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?9001l");
+    if (m->cursor_application) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1l");
+    if (m->keypad_application) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b>");
+    if (m->wrap_off) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?7h");
+    if (m->cursor_style) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[0 q");
+    if (m->alt_screen) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?1049l");
+    if (m->cursor_hidden) n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[?25h");
+    if (g_modes_fd >= 0 && n > 0) {
+        n += snprintf(out + n, sizeof(out) - (size_t)n, "\x1b[0m");
+        ssize_t w = write(g_modes_fd, out, (size_t)n);
+        (void)w;
+    }
+    memset(m, 0, sizeof(*m));
+}
+
 static void restore_terminal(void)
 {
+    restore_terminal_modes();
+    g_raw_terminal = false;
     if (g_termios_saved)
         tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_termios);
 }
@@ -266,7 +397,7 @@ static void restore_terminal(void)
 /* the terminal does the line editing, echo and ctrl+c a windows console's input mode asks for. */
 static void apply_console_mode(uint32_t mode)
 {
-    if (!g_termios_saved)
+    if (!g_termios_saved || g_raw_terminal)
         return;
     struct termios t = g_saved_termios;
     if (mode & ENABLE_LINE_INPUT) {
@@ -281,6 +412,30 @@ static void apply_console_mode(uint32_t mode)
     }
     t.c_lflag = (mode & ENABLE_PROCESSED_INPUT) ? t.c_lflag | ISIG : t.c_lflag & ~(tcflag_t)ISIG;
     tcsetattr(STDIN_FILENO, TCSANOW, &t);
+}
+
+/*
+ * the console is in charge of the terminal: the guest edits the line, echoes it and turns ctrl+c into
+ * a ctrl event, so the terminal sends every key as it is typed. ctrl+backslash stays a signal, as ctrl+break.
+ */
+static void enter_raw_terminal(void)
+{
+    if (!g_termios_saved || g_raw_terminal)
+        return;
+    struct termios t = g_saved_termios;
+    t.c_lflag &= ~(tcflag_t)(ICANON | ECHO | ECHONL | IEXTEN);
+    t.c_lflag |= ISIG;
+    t.c_iflag &= ~(tcflag_t)(ICRNL | INLCR | IGNCR | IXON | IXOFF | ISTRIP | BRKINT | PARMRK);
+    t.c_oflag &= ~(tcflag_t)OPOST;
+    t.c_cc[VMIN] = 1;
+    t.c_cc[VTIME] = 0;
+    t.c_cc[VINTR] = _POSIX_VDISABLE;
+    t.c_cc[VSUSP] = _POSIX_VDISABLE;
+#ifdef VDSUSP
+    t.c_cc[VDSUSP] = _POSIX_VDISABLE;
+#endif
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &t) == 0)
+        g_raw_terminal = true;
 }
 
 static uint32_t terminal_size(void)
@@ -320,6 +475,51 @@ static void write_all(int fd, const void *data, size_t size)
     }
 }
 
+/*
+ * asks the terminal where its cursor is, so that the console of the program starts there and does not paint
+ * over what the shell left above it. returns column + 1 | row + 1 << 16, or 0 when the terminal does not say.
+ */
+static uint32_t terminal_cursor(void)
+{
+    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO))
+        return 0;
+    struct termios saved, t;
+    if (tcgetattr(STDIN_FILENO, &saved) != 0)
+        return 0;
+    t = saved;
+    t.c_lflag &= ~(tcflag_t)(ICANON | ECHO);
+    t.c_cc[VMIN] = 0;
+    t.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &t) != 0)
+        return 0;
+    uint32_t result = 0;
+    static const char query[] = "\x1b[6n";
+    if (write(STDOUT_FILENO, query, sizeof(query) - 1) == (ssize_t)(sizeof(query) - 1)) {
+        char reply[32];
+        size_t length = 0;
+        uint64_t give_up = mime_now_ns() + 200ull * 1000000ull;
+        while (length < sizeof(reply) - 1) {
+            int64_t left = (int64_t)(give_up - mime_now_ns()) / 1000000;
+            struct pollfd p = {.fd = STDIN_FILENO, .events = POLLIN};
+            if (left <= 0 || poll(&p, 1, (int)left) <= 0)
+                break;
+            ssize_t got = read(STDIN_FILENO, reply + length, 1);
+            if (got <= 0)
+                break;
+            length++;
+            if (reply[length - 1] == 'R')
+                break;
+        }
+        reply[length] = 0;
+        unsigned row, column;
+        const char *start = strstr(reply, "\x1b[");
+        if (start && sscanf(start, "\x1b[%u;%uR", &row, &column) == 2 && row && column && row < 0x7FFF && column < 0x7FFF)
+            result = column | (row << 16);
+    }
+    tcsetattr(STDIN_FILENO, TCSANOW, &saved);
+    return result;
+}
+
 int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
 {
     bool wait_gui = false;
@@ -350,6 +550,7 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
     if (isatty(STDERR_FILENO))
         header.flags |= MIME_RUN_TTY_ERROR;
     header.console_size = terminal_size();
+    header.console_cursor = terminal_cursor();
 
     size_t total = sizeof(header) + strlen(cwd) + 1;
     for (int i = 0; i < argc; i++)
@@ -451,11 +652,29 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
         }
         switch (h.type) {
         case MIME_IPC_OUTPUT:
+            track_output(STDOUT_FILENO, msg, h.size);
             write_all(STDOUT_FILENO, msg, h.size);
             break;
         case MIME_IPC_STDERR:
-        case MIME_IPC_DEBUG:
+            track_output(STDERR_FILENO, msg, h.size);
             write_all(STDERR_FILENO, msg, h.size);
+            break;
+        case MIME_IPC_DEBUG:
+            if (g_raw_terminal) {
+                /* the terminal no longer turns a line feed into a return too. */
+                const char *text = msg;
+                size_t from = 0;
+                for (size_t i = 0; i < h.size; i++) {
+                    if (text[i] == '\n') {
+                        write_all(STDERR_FILENO, text + from, i - from);
+                        write_all(STDERR_FILENO, "\r\n", 2);
+                        from = i + 1;
+                    }
+                }
+                write_all(STDERR_FILENO, text + from, h.size - from);
+            } else {
+                write_all(STDERR_FILENO, msg, h.size);
+            }
             break;
         case MIME_IPC_STARTED: {
             uint32_t subsystem = 0;
@@ -472,6 +691,9 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
                 if (header.flags & MIME_RUN_TTY_INPUT) {
                     g_termios_saved = tcgetattr(STDIN_FILENO, &g_saved_termios) == 0;
                     atexit(restore_terminal);
+                    /* the console edits the line itself when it shows it on this terminal. */
+                    if (header.flags & (MIME_RUN_TTY_OUTPUT | MIME_RUN_TTY_ERROR))
+                        enter_raw_terminal();
                 }
             }
             break;

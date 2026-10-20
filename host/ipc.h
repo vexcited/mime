@@ -34,7 +34,8 @@ typedef struct MimeIpcStop {
 
 typedef struct MimeIpcRun {
     uint32_t flags;        /* MIME_RUN_TTY_... */
-    uint32_t console_size; /* columns | rows << 16 */
+    uint32_t console_size;   /* columns | rows << 16 */
+    uint32_t console_cursor; /* column + 1 | row + 1 << 16 of the cursor, 0 when unknown */
 } MimeIpcRun;
 
 typedef struct MimeIpcHeader {

@@ -1137,6 +1137,11 @@ WINBASEAPI BOOLEAN WINAPI Wow64EnableWow64FsRedirection(BOOLEAN enable);
 #define BACKGROUND_RED 0x0040
 #define BACKGROUND_INTENSITY 0x0080
 
+#ifndef SHRT_MAX
+#define SHRT_MAX 32767
+#define SHRT_MIN (-32768)
+#endif
+
 #define CTRL_C_EVENT 0
 #define CTRL_BREAK_EVENT 1
 #define CTRL_CLOSE_EVENT 2
@@ -1269,6 +1274,24 @@ typedef struct _INPUT_RECORD {
 #define CONSOLE_READ_NOREMOVE 0x0001
 #define CONSOLE_READ_NOWAIT 0x0002
 
+#define CONSOLE_TEXTMODE_BUFFER 1
+#define CONSOLE_FULLSCREEN_MODE 1
+#define CONSOLE_WINDOWED_MODE 2
+#define HISTORY_NO_DUP_FLAG 1
+
+typedef struct _CONSOLE_SELECTION_INFO {
+    DWORD dwFlags;
+    COORD dwSelectionAnchor;
+    SMALL_RECT srSelection;
+} CONSOLE_SELECTION_INFO, *PCONSOLE_SELECTION_INFO;
+
+typedef struct _CONSOLE_HISTORY_INFO {
+    UINT cbSize;
+    UINT HistoryBufferSize;
+    UINT NumberOfHistoryBuffers;
+    DWORD dwFlags;
+} CONSOLE_HISTORY_INFO, *PCONSOLE_HISTORY_INFO;
+
 typedef struct _CONSOLE_READCONSOLE_CONTROL {
     ULONG nLength;
     ULONG nInitialChars;
@@ -1340,6 +1363,25 @@ WINBASEAPI DWORD WINAPI GetConsoleProcessList(LPDWORD list, DWORD count);
 WINBASEAPI HANDLE WINAPI CreateConsoleScreenBuffer(DWORD access, DWORD share, const SECURITY_ATTRIBUTES *sa,
                                                    DWORD flags, LPVOID data);
 WINBASEAPI BOOL WINAPI SetConsoleActiveScreenBuffer(HANDLE console);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputW(HANDLE console, PCHAR_INFO buffer, COORD size, COORD origin, PSMALL_RECT region);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputA(HANDLE console, PCHAR_INFO buffer, COORD size, COORD origin, PSMALL_RECT region);
+WINBASEAPI BOOL WINAPI WriteConsoleOutputW(HANDLE console, const CHAR_INFO *buffer, COORD size, COORD origin,
+                                           PSMALL_RECT region);
+WINBASEAPI BOOL WINAPI WriteConsoleOutputA(HANDLE console, const CHAR_INFO *buffer, COORD size, COORD origin,
+                                           PSMALL_RECT region);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputAttribute(HANDLE console, LPWORD attributes, DWORD length, COORD start,
+                                                  LPDWORD read);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputCharacterW(HANDLE console, LPWSTR chars, DWORD length, COORD start, LPDWORD read);
+WINBASEAPI BOOL WINAPI ReadConsoleOutputCharacterA(HANDLE console, LPSTR chars, DWORD length, COORD start, LPDWORD read);
+WINBASEAPI BOOL WINAPI WriteConsoleOutputCharacterA(HANDLE console, LPCSTR text, DWORD length, COORD start,
+                                                    LPDWORD written);
+WINBASEAPI BOOL WINAPI WriteConsoleOutputAttribute(HANDLE console, const WORD *attributes, DWORD length, COORD start,
+                                                   LPDWORD written);
+WINBASEAPI BOOL WINAPI ScrollConsoleScreenBufferW(HANDLE console, const SMALL_RECT *source, const SMALL_RECT *clip,
+                                                  COORD destination, const CHAR_INFO *fill);
+WINBASEAPI BOOL WINAPI ScrollConsoleScreenBufferA(HANDLE console, const SMALL_RECT *source, const SMALL_RECT *clip,
+                                                  COORD destination, const CHAR_INFO *fill);
+WINBASEAPI BOOL WINAPI SetConsoleScreenBufferInfoEx(HANDLE console, PCONSOLE_SCREEN_BUFFER_INFOEX info);
 
 /* ------------------------------------------------------------------ processes and threads */
 

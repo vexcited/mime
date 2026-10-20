@@ -1024,7 +1024,7 @@ typedef struct _EPROCESS {
     struct _MIME_CONSOLE *Console; /* the console the process is attached to, io/console.c */
     PVOID ConsoleCtrlRoutine;      /* kernelbase's, started on a new thread for each ctrl event */
     ULONG ConsoleGroup;            /* process group of GenerateConsoleCtrlEvent */
-    PKEVENT ConsoleInputEvent;     /* kernelbase's, set while console input waits */
+    struct _MIME_CONSOLE *ConsoleHint; /* the terminal of the run the process descends from, which AllocConsole may take */
     ULONG TimerResolution; /* what NtSetTimerResolution asked for, 0 when nothing, ex/sysinfo.c */
     UCHAR PriorityClass;   /* PROCESS_PRIORITY_CLASS_*, ps/priority.c */
     BOOLEAN Foreground;
@@ -1388,7 +1388,11 @@ void MimeSendConsole(ULONG type, ULONG64 request, ULONG value, const void *data,
 
 /* the console driver, io/console.c. */
 void IopInitializeConsole(void);
-MIME_CONSOLE *ConsoleCreate(ULONG64 request, ULONG run_flags, ULONG size);
+void IopInitializeConsoleDevice(void);
+MIME_CONSOLE *ConsoleCreate(ULONG64 request, ULONG run_flags, ULONG size, ULONG cursor);
+MIME_CONSOLE *ConsoleCreateNew(void);
+void ConsoleSetHint(PEPROCESS process, MIME_CONSOLE *console);
+void ConsoleInitialTitle(MIME_CONSOLE *console, PCUNICODE_STRING title);
 void ConsoleDereference(MIME_CONSOLE *console);
 NTSTATUS ConsoleAttach(PEPROCESS process, MIME_CONSOLE *console);
 void ConsoleDetach(PEPROCESS process);

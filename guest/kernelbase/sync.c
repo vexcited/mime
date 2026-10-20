@@ -353,12 +353,9 @@ static DWORD wait_result(NTSTATUS status)
 
 DWORD WINAPI WaitForSingleObjectEx(HANDLE handle, DWORD milliseconds, BOOL alertable)
 {
-    /* console input is signaled while input waits; the other pseudo handles always are. */
-    if (KbIsPseudoHandle(handle)) {
-        handle = KbConsoleWaitHandle(handle);
-        if (!handle)
-            return WAIT_OBJECT_0;
-    }
+    /* the NUL device is always signaled. */
+    if (KbIsPseudoHandle(handle))
+        return WAIT_OBJECT_0;
     LARGE_INTEGER storage;
     PLARGE_INTEGER timeout = KbTimeout(&storage, milliseconds);
     NTSTATUS status;
@@ -394,12 +391,9 @@ DWORD WINAPI WaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, BOOL a
     for (DWORD i = 0; i < count; i++) {
         HANDLE h = handles[i];
         if (KbIsPseudoHandle(h)) {
-            h = KbConsoleWaitHandle(h);
-            if (!h) {
-                if (!all)
-                    return WAIT_OBJECT_0 + i;
-                continue;
-            }
+            if (!all)
+                return WAIT_OBJECT_0 + i;
+            continue;
         }
         map[n] = i;
         copy[n++] = h;
