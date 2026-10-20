@@ -1339,6 +1339,63 @@ static UINT launch_conditions(MIME_MSI_PACKAGE *package, PWSTR *message)
     return error;
 }
 
+/* ------------------------------------------------------------------ actions of tables */
+
+/* the standard actions that work on rows of their own tables. A package that has no rows in the tables has nothing for
+ * the action to do, and the action succeeds. Rows are not carried out by any of them yet. */
+static const struct {
+    PCWSTR Action;
+    PCWSTR Tables[3];
+} TABLE_ACTIONS[] = {
+    {L"SetODBCFolders", {L"ODBCDriver", L"ODBCTranslator", L"ODBCDataSource"}},
+    {L"PublishComponents", {L"PublishComponent"}},
+    {L"UnpublishComponents", {L"PublishComponent"}},
+    {L"MsiPublishAssemblies", {L"MsiAssembly"}},
+    {L"MsiUnpublishAssemblies", {L"MsiAssembly"}},
+    {L"RegisterComPlus", {L"Complus"}},
+    {L"UnregisterComPlus", {L"Complus"}},
+    {L"SelfRegModules", {L"SelfReg"}},
+    {L"SelfUnregModules", {L"SelfReg"}},
+    {L"RegisterTypeLibraries", {L"TypeLib"}},
+    {L"UnregisterTypeLibraries", {L"TypeLib"}},
+    {L"RegisterFonts", {L"Font"}},
+    {L"UnregisterFonts", {L"Font"}},
+    {L"RegisterClassInfo", {L"Class"}},
+    {L"UnregisterClassInfo", {L"Class"}},
+    {L"RegisterMIMEInfo", {L"MIME"}},
+    {L"UnregisterMIMEInfo", {L"MIME"}},
+    {L"WriteIniValues", {L"IniFile"}},
+    {L"RemoveIniValues", {L"IniFile", L"RemoveIniFile"}},
+    {L"DuplicateFiles", {L"DuplicateFile"}},
+    {L"RemoveDuplicateFiles", {L"DuplicateFile"}},
+    {L"MoveFiles", {L"MoveFile"}},
+    {L"BindImage", {L"BindImage"}},
+    {L"InstallServices", {L"ServiceInstall"}},
+    {L"DeleteServices", {L"ServiceInstall"}},
+    {L"StartServices", {L"ServiceControl"}},
+    {L"StopServices", {L"ServiceControl"}},
+    {L"CCPSearch", {L"CCPSearch"}},
+    {L"RMCCPSearch", {L"CCPSearch"}},
+};
+
+static UINT table_action(MIME_MSI_PACKAGE *package, PCWSTR action)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(TABLE_ACTIONS); i++) {
+        if (wcscmp(action, TABLE_ACTIONS[i].Action))
+            continue;
+        for (ULONG j = 0; j < RTL_NUMBER_OF(TABLE_ACTIONS[i].Tables) && TABLE_ACTIONS[i].Tables[j]; j++) {
+            MIME_MSI_TABLE *table;
+            UINT error = MimeMsiLoadTable(package->Database, TABLE_ACTIONS[i].Tables[j], &table);
+            if (error && error != ERROR_BAD_QUERY_SYNTAX)
+                return error;
+            if (!error && table->Rows)
+                return ERROR_CALL_NOT_IMPLEMENTED;
+        }
+        return ERROR_SUCCESS;
+    }
+    return UINT32_MAX;
+}
+
 /* ------------------------------------------------------------------ dispatch */
 
 UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action)
@@ -1387,5 +1444,5 @@ UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     }
     if (!wcscmp(action, L"RemoveExistingProducts"))
         return MIME_MSI_UNLOCKED_PENDING;
-    return UINT32_MAX;
+    return table_action(package, action);
 }

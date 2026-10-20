@@ -139,6 +139,16 @@ UINT MimeMsiInitializeSystem(MIME_MSI_PACKAGE *package)
         error = error ? error : MimeMsiSetProperty(package, L"ROOTDRIVE", volume);
     }
     length = GetSystemDirectoryW(path, RTL_NUMBER_OF(path));
+#ifndef _WIN64
+    /* a 32-bit installer sees the 32-bit system directory, the machine has the 64-bit one by its own name. */
+    if (length && length < RTL_NUMBER_OF(path) && GetSystemWow64DirectoryW(path, RTL_NUMBER_OF(path))) {
+        length = GetWindowsDirectoryW(path, RTL_NUMBER_OF(path));
+        if (length && length + 9 < RTL_NUMBER_OF(path)) {
+            wcscpy(path + length, L"\\System32");
+            length += 9;
+        }
+    }
+#endif
     if (!error && length && length < RTL_NUMBER_OF(path)) {
         /* the system directory of the processor of the package: a 32-bit package sees the 32-bit one. */
         if (is64) {

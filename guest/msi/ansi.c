@@ -313,6 +313,19 @@ INSTALLSTATE WINAPI MsiLocateComponentA(LPCSTR component, LPSTR out, LPDWORD siz
     return state;
 }
 
+UINT WINAPI MsiSourceListAddSourceExA(LPCSTR product, LPCSTR sid, MSIINSTALLCONTEXT context, DWORD options,
+                                      LPCSTR source, DWORD index)
+{
+    PWSTR wide_product = to_wide(product), wide_sid = to_wide(sid), wide_source = to_wide(source);
+    UINT error = (product && !wide_product) || (sid && !wide_sid) || (source && !wide_source) ?
+                 ERROR_NOT_ENOUGH_MEMORY :
+                 MsiSourceListAddSourceExW(wide_product, wide_sid, context, options, wide_source, index);
+    MimeMsiFree(wide_product);
+    MimeMsiFree(wide_sid);
+    MimeMsiFree(wide_source);
+    return error;
+}
+
 UINT WINAPI MsiConfigureProductExA(LPCSTR product, int level, INSTALLSTATE state, LPCSTR command)
 {
     PWSTR wide_product = to_wide(product), wide_command = to_wide(command);

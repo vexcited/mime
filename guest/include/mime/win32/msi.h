@@ -212,6 +212,10 @@ typedef enum {
 #define ERROR_UNKNOWN_PATCH 1647L
 #define ERROR_BAD_USERNAME 2202L
 MSIAPI UINT WINAPI MsiSourceListAddSourceW(LPCWSTR product, LPCWSTR user, DWORD reserved, LPCWSTR source);
+MSIAPI UINT WINAPI MsiSourceListAddSourceExW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
+                                           DWORD options, LPCWSTR source, DWORD index);
+MSIAPI UINT WINAPI MsiSourceListAddSourceExA(LPCSTR product, LPCSTR sid, MSIINSTALLCONTEXT context,
+                                           DWORD options, LPCSTR source, DWORD index);
 MSIAPI UINT WINAPI MsiSourceListSetInfoW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
                                        DWORD options, LPCWSTR property, LPCWSTR value);
 MSIAPI UINT WINAPI MsiSourceListGetInfoW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
