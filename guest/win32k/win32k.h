@@ -549,6 +549,21 @@ typedef struct W32THREAD {
     HWND TsfSink;          /* the window the text services framework takes the host's input method through, ime.c */
 } W32THREAD;
 
+/* the user interface limits of the job of the caller, JOB_OBJECT_UILIMIT_*. */
+#define W32_UILIMIT_HANDLES 0x01
+#define W32_UILIMIT_READCLIPBOARD 0x02
+#define W32_UILIMIT_WRITECLIPBOARD 0x04
+#define W32_UILIMIT_SYSTEMPARAMETERS 0x08
+#define W32_UILIMIT_DISPLAYSETTINGS 0x10
+#define W32_UILIMIT_GLOBALATOMS 0x20
+#define W32_UILIMIT_DESKTOP 0x40
+#define W32_UILIMIT_EXITWINDOWS 0x80
+
+static inline BOOLEAN W32UiLimited(ULONG limit)
+{
+    return (MimeProcessUiLimits(PsGetCurrentProcess()) & limit) != 0;
+}
+
 W32THREAD *W32GetThread(void);  /* current thread, created on demand */
 W32PROCESS *W32GetProcess(void);
 /* winsta.c: dropping the window station and desktop of a process or thread that goes. */

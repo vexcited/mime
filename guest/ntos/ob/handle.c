@@ -312,6 +312,17 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
     return ObInsertObject(object, access, attrs, handle);
 }
 
+/*
+ * a process with strict handle checks gets an exception, as the system call returns, for a handle that is not
+ * one. The null handle is left out, guessed.
+ */
+static NTSTATUS invalid_handle(HANDLE handle, KPROCESSOR_MODE mode)
+{
+    if (mode == UserMode && handle && PsGetCurrentProcess()->MitigationPolicy[MIME_POLICY_STRICT_HANDLE_CHECK] & MIME_STRICT_HANDLE_RAISE)
+        PsCurrentThread()->PendingException = STATUS_INVALID_HANDLE;
+    return STATUS_INVALID_HANDLE;
+}
+
 NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mode, PVOID *object,
                            ACCESS_MASK *granted)
 {
@@ -341,7 +352,7 @@ NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mod
     KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
     if (!handle || index >= table->Capacity || !table->Entries[index].Object) {
         KeReleaseSpinLock(&table->Lock, irql);
-        return STATUS_INVALID_HANDLE;
+        return invalid_handle(handle, mode);
     }
     PVOID obj = table->Entries[index].Object;
     ACCESS_MASK access = table->Entries[index].GrantedAccess;
@@ -401,7 +412,8 @@ NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode)
     KeReleaseSpinLock(&table->Lock, irql);
     if (protected)
         return STATUS_HANDLE_NOT_CLOSABLE;
-    return close_in_table(owner, table, index);
+    NTSTATUS status = close_in_table(owner, table, index);
+    return status == STATUS_INVALID_HANDLE ? invalid_handle(handle, mode) : status;
 }
 
 typedef struct OBJECT_HANDLE_FLAGS {

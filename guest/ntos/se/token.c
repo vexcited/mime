@@ -759,6 +759,33 @@ NTSTATUS SepReferenceTokenByHandle(HANDLE handle, ACCESS_MASK required, PTOKEN *
  * a new process gets a copy of its parent's token, with a number of its own; the system process, which the
  * processes of the host's requests are children of, gives the user's.
  */
+/*
+ * the descriptors of a new process and its first thread: made with the token the process runs with as the subject, not
+ * the creator's, so a sandbox that gives a process a token of another identity gets processes that identity can use,
+ * and the offers of the creator are held to that subject. The creator's token is the subject only for the checks of
+ * what the offers name.
+ */
+NTSTATUS SepAssignNewProcessSecurity(PEPROCESS process, PETHREAD thread, SD_BLOB *process_offer, SD_BLOB *thread_offer,
+                                     KPROCESSOR_MODE mode)
+{
+    PTOKEN token = SepReferencePrimaryToken(process);
+    if (!token)
+        return STATUS_NO_TOKEN;
+    SD_BLOB *process_sd = nullptr, *thread_sd = nullptr;
+    NTSTATUS status = SeSdAssignForToken(process_offer, PsProcessTypeObject->Init.GenericMapping, mode, token, &process_sd);
+    if (NT_SUCCESS(status))
+        status = SeSdAssignForToken(thread_offer, PsThreadTypeObject->Init.GenericMapping, mode, token, &thread_sd);
+    ObDereferenceObject(token);
+    if (!NT_SUCCESS(status)) {
+        if (process_sd)
+            SeSdDereference(process_sd);
+        return status;
+    }
+    ObAttachSecurity(process, process_sd);
+    ObAttachSecurity(thread, thread_sd);
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS SepAssignProcessToken(PEPROCESS child, PEPROCESS parent)
 {
     ExAcquireFastMutex(&SeLock);

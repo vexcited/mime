@@ -424,8 +424,22 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
     }
 }
 
+/* whether a SPI_ action changes a setting: the old ones are numbered get then set, the newer ones the other way, and the work area is the odd one out. */
+static BOOL sets_parameter(UINT action)
+{
+    if (action == 0x2F)
+        return TRUE;
+    if (action == 0x30)
+        return FALSE;
+    return action >= 0x1000 ? (action & 1) : !(action & 1);
+}
+
 BOOL NTAPI NtUserSystemParametersInfo(UINT action, UINT param, PVOID data, UINT ini)
 {
+    if (sets_parameter(action) && W32UiLimited(W32_UILIMIT_SYSTEMPARAMETERS)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
     UserEnter();
     BOOL ok = MetricsParametersInfo(action, param, data, ini, 0);
     UserLeave();
@@ -434,6 +448,10 @@ BOOL NTAPI NtUserSystemParametersInfo(UINT action, UINT param, PVOID data, UINT 
 
 BOOL NTAPI NtUserSystemParametersInfoForDpi(UINT action, UINT param, PVOID data, UINT ini, UINT dpi)
 {
+    if (sets_parameter(action) && W32UiLimited(W32_UILIMIT_SYSTEMPARAMETERS)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
     UserEnter();
     BOOL ok = MetricsParametersInfo(action, param, data, ini, dpi);
     UserLeave();

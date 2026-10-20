@@ -420,6 +420,15 @@ HWINSTA NTAPI NtUserCreateWindowStation(POBJECT_ATTRIBUTES attributes, ACCESS_MA
         W32SetLastError(status == STATUS_OBJECT_NAME_COLLISION ? ERROR_ALREADY_EXISTS : status_error(status));
         return nullptr;
     }
+    /* the security attributes the caller gave are the descriptor of a window station it made. */
+    if (created && oa.SecurityDescriptor) {
+        status = ObReplaceSecurity(w, &oa, UserMode);
+        if (!NT_SUCCESS(status)) {
+            W32SetLastError(status_error(status));
+            ObDereferenceObject(w);
+            return nullptr;
+        }
+    }
     HANDLE h = created ? insert(w, access, oa.Attributes) : insert_open(w, access, oa.Attributes);
     ObDereferenceObject(w);
     if (h)
@@ -474,6 +483,10 @@ static W32WINSTA *root_winsta(HANDLE root)
 HDESK NTAPI NtUserCreateDesktopEx(POBJECT_ATTRIBUTES attributes, PUNICODE_STRING device, PVOID devmode, DWORD flags,
                                   ACCESS_MASK access, ULONG heap_kb)
 {
+    if (W32UiLimited(W32_UILIMIT_DESKTOP)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return nullptr;
+    }
     types();
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING name = {};
@@ -671,6 +684,10 @@ BOOL NTAPI NtUserCloseDesktop(HDESK handle)
 
 BOOL NTAPI NtUserSwitchDesktop(HDESK handle, DWORD flags, DWORD fade)
 {
+    if (W32UiLimited(W32_UILIMIT_DESKTOP)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
     types();
     W32DESKTOP *d;
     if (!NT_SUCCESS(ObReferenceHandle(handle, g_desktop_type, UserMode, (PVOID *)&d, nullptr))) {

@@ -180,6 +180,9 @@ NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD index, DE
  */
 LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mode, DWORD flags, PVOID lparam)
 {
+    /* the answer of a refusal is guessed. */
+    if (W32UiLimited(W32_UILIMIT_DISPLAYSETTINGS))
+        return DISP_CHANGE_FAILED;
     if (flags & ~(CDS_UPDATEREGISTRY | CDS_TEST | CDS_FULLSCREEN | CDS_GLOBAL | CDS_SET_PRIMARY | CDS_VIDEOPARAMETERS |
                   CDS_ENABLE_UNSAFE_MODES | CDS_DISABLE_UNSAFE_MODES | CDS_RESET | CDS_RESET_EX | CDS_NORESET))
         return DISP_CHANGE_BADFLAGS;

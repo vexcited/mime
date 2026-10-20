@@ -299,12 +299,17 @@ void KiSystemService(PKTRAP_FRAME frame)
     if (table < 2)
         g_calls[table][index]++;
     KI_SERVICE_TABLE *t = table < 2 ? &g_tables[table] : nullptr;
-    if (table == 1 && !thread->Win32Thread && g_win32.ThreadCallout) {
+    /* a process with the win32k system calls disabled never becomes a gui process: its first call fails, guessed from the audit only mode of the policy. */
+    BOOLEAN locked = table == 1 && !thread->Win32Thread &&
+                     (PsCurrentProcess()->MitigationPolicy[MIME_POLICY_SYSTEM_CALL_DISABLE] & MIME_SYSTEM_CALL_DISABLE_WIN32K);
+    if (table == 1 && !locked && !thread->Win32Thread && g_win32.ThreadCallout) {
         NTSTATUS status = convert_to_gui_thread();
         if (!NT_SUCCESS(status))
             KiLogPrintf("cannot convert thread to a gui thread: %08x", status);
     }
-    if (!t || !t->Table || index >= t->Count || !t->Table[index].Routine) {
+    if (locked) {
+        result = (ULONG64)(LONG64)STATUS_INVALID_SYSTEM_SERVICE;
+    } else if (!t || !t->Table || index >= t->Count || !t->Table[index].Routine) {
         if (table < 2 && !(g_reported[table][index / 8] & (1u << (index % 8)))) {
             g_reported[table][index / 8] |= (UCHAR)(1u << (index % 8));
             KiLogPrintf("unimplemented system service %s (0x%04x) called by %s", service_name(table, index), number,
@@ -447,6 +452,20 @@ void KiSystemService(PKTRAP_FRAME frame)
         pcr->Irql = PASSIVE_LEVEL;
     }
     KI_SERVICE_RESULT(frame) = result;
+    PETHREAD ethread = PsCurrentThread();
+    if (ethread->PendingException) {
+        EXCEPTION_RECORD record = {};
+        record.ExceptionCode = ethread->PendingException;
+        record.ExceptionAddress = (PVOID)KI_TRAP_PC(frame);
+        ethread->PendingException = 0;
+        if (PspIsWow64Process(PsCurrentProcess())) {
+            /* the program is emulated, so the emulator raises it for the code that made the call, told by the code in the teb. */
+            ULONG code = (ULONG)record.ExceptionCode;
+            KiCopyToUser(&ethread->Tcb.Teb->ExceptionCode, &code, sizeof(code));
+        } else if (!KiDispatchUserException(&record, frame)) {
+            PspTerminateProcess(PsCurrentProcess(), record.ExceptionCode);
+        }
+    }
     KiExitToUserMode(frame);
 }
 

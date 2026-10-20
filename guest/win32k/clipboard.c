@@ -695,6 +695,10 @@ BOOL NTAPI NtUserCloseClipboard(void)
 
 BOOL NTAPI NtUserEmptyClipboard(void)
 {
+    if (W32UiLimited(W32_UILIMIT_WRITECLIPBOARD)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
     UserEnter();
     W32THREAD *t = W32GetThread();
     BOOL ok = caller_has_open(t);
@@ -717,6 +721,10 @@ BOOL NTAPI NtUserEmptyClipboard(void)
 
 HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_DATA *user_data)
 {
+    if (W32UiLimited(W32_UILIMIT_WRITECLIPBOARD)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return nullptr;
+    }
     MIME_CLIPBOARD_DATA d = {nullptr, 0, 0, FALSE};
     if (user_data && !NT_SUCCESS(MimeCopyFromUser(&d, user_data, sizeof(d)))) {
         W32SetLastError(ERROR_NOACCESS);
@@ -799,6 +807,10 @@ static void render_format(CLIP_FORMAT *f)
 
 HANDLE NTAPI NtUserGetClipboardData(UINT format, MIME_CLIPBOARD_DATA *user_data)
 {
+    if (W32UiLimited(W32_UILIMIT_READCLIPBOARD)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return nullptr;
+    }
     MIME_CLIPBOARD_DATA d;
     if (!user_data || !NT_SUCCESS(MimeCopyFromUser(&d, user_data, sizeof(d)))) {
         W32SetLastError(ERROR_NOACCESS);
@@ -859,6 +871,10 @@ HANDLE NTAPI NtUserGetClipboardData(UINT format, MIME_CLIPBOARD_DATA *user_data)
 
 BOOL NTAPI NtUserIsClipboardFormatAvailable(UINT format)
 {
+    if (W32UiLimited(W32_UILIMIT_READCLIPBOARD)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
     UserEnter();
     BOOL r = find_format(format) != nullptr;
     UserLeave();
@@ -902,6 +918,10 @@ int NTAPI NtUserCountClipboardFormats(void)
 
 UINT NTAPI NtUserEnumClipboardFormats(UINT format)
 {
+    if (W32UiLimited(W32_UILIMIT_READCLIPBOARD)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return 0;
+    }
     UserEnter();
     W32THREAD *t = W32GetThread();
     UINT next = 0;

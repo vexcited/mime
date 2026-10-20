@@ -30,6 +30,7 @@
 #define JOB_OBJECT_LIMIT_VALID 0x00007FFF
 #define JOB_OBJECT_UILIMIT_VALID 0x000000FF
 #define JOB_OBJECT_UILIMIT_GLOBALATOMS 0x00000020
+#define JOB_OBJECT_UILIMIT_HANDLES 0x00000001
 #define SEM_NOGPFAULTERRORBOX 0x0002
 #define JOB_OBJECT_LIMIT_BREAKAWAY_OK 0x00000800
 #define JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK 0x00001000
@@ -123,6 +124,26 @@ ULONG NTAPI MimeProcessUiLimits(PEPROCESS process)
         limits |= job->UiRestrictions;
     KeReleaseSpinLock(&g_lock, irql);
     return limits;
+}
+
+/*
+ * whether a process may use the user handles of another: not when a job it is in holds its processes to their own
+ * handles and the other is not in that job.
+ */
+BOOLEAN NTAPI MimeProcessMayUseUserHandles(PEPROCESS user, PEPROCESS owner)
+{
+    BOOLEAN allowed = TRUE;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    for (EJOB *job = user->Job; job && allowed; job = job->Parent) {
+        if (!(job->UiRestrictions & JOB_OBJECT_UILIMIT_HANDLES))
+            continue;
+        allowed = FALSE;
+        for (EJOB *other = owner->Job; other && !allowed; other = other->Parent)
+            allowed = other == job;
+    }
+    KeReleaseSpinLock(&g_lock, irql);
+    return allowed;
 }
 
 #define JOB_CHAIN_MAX 16
@@ -390,8 +411,12 @@ NTSTATUS PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags)
     ULONG limits = job->Limits.BasicLimitInformation.LimitFlags;
     if (limits & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)
         return STATUS_SUCCESS;
-    if ((flags & PROCESS_CREATE_FLAGS_BREAKAWAY) && (limits & JOB_OBJECT_LIMIT_BREAKAWAY_OK))
-        return STATUS_SUCCESS;
+    if (flags & PROCESS_CREATE_FLAGS_BREAKAWAY) {
+        /* a job that does not allow it refuses the creation, it does not quietly keep the process. */
+        if (limits & JOB_OBJECT_LIMIT_BREAKAWAY_OK)
+            return STATUS_SUCCESS;
+        return STATUS_ACCESS_DENIED;
+    }
     NTSTATUS status = join(job, process);
     if (!NT_SUCCESS(status))
         post(job, JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS, process);

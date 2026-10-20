@@ -134,6 +134,7 @@ void SepMakeSid(void *sid, UCHAR authority, ULONG count, const ULONG *sub);
 BOOLEAN SepIsElevatedGroup(const SEP_GROUP *group);
 
 /* sd.c */
+NTSTATUS SeSdAssignForToken(const SD_BLOB *creator, SD_MAPPING mapping, KPROCESSOR_MODE mode, PTOKEN token, SD_BLOB **out);
 NTSTATUS SeSdForToken(PTOKEN token, SD_MAPPING mapping, SD_BLOB **out);
 
 /* token.c */

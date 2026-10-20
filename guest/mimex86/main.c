@@ -704,11 +704,18 @@ static void env_syscall(X86Cpu *c)
         }
         PULONG last_error = (PULONG)((PUCHAR)t->teb32 + 0x34);
         NtCurrentTeb()->LastErrorValue = *last_error;
+        NtCurrentTeb()->ExceptionCode = 0;
         suspend_gate(t, 0);
         NTSTATUS status = Mx32SystemCall(number, a);
         suspend_gate(t, 1);
         *last_error = NtCurrentTeb()->LastErrorValue;
         c->r[X86_RAX] = (ULONG)status;
+        /* the kernel leaves its exception for a program with strict handle checks in the teb, to be raised in the emulated code. */
+        if (NtCurrentTeb()->ExceptionCode) {
+            EXCEPTION_RECORD record = {.ExceptionCode = NtCurrentTeb()->ExceptionCode};
+            NtCurrentTeb()->ExceptionCode = 0;
+            raise_from_cpu(t->frame, &record);
+        }
         if (status == STATUS_NOT_IMPLEMENTED)
             Mx32Unsupported(number);
         if (number == MIME_SVC_NtFreeVirtualMemory || number == MIME_SVC_NtUnmapViewOfSection ||

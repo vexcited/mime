@@ -544,6 +544,7 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
      * learn that it is one.
      */
     NTSTATUS status;
+    teb->ExceptionCode = 0;
     __try {
         status = Mx32SystemCall(number, a);
     } __except (_exception_code() == STATUS_ACCESS_VIOLATION || _exception_code() == STATUS_IN_PAGE_ERROR ||
@@ -555,6 +556,26 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
     *last_error = teb->LastErrorValue;
     if (status == STATUS_NOT_IMPLEMENTED)
         Mx32Unsupported(number);
+    /*
+     * a program with strict handle checks gets an exception for a handle that is none: the kernel leaves its code in the
+     * teb, and it is raised in the code that made the call, as it would after the call returned.
+     */
+    WOW64_THREAD *thread = current_thread();
+    if (teb->ExceptionCode && thread) {
+        PWOW64_CPURESERVED cpu = Wow64CpuArea();
+        memset(&thread->Record, 0, sizeof(thread->Record));
+        thread->Record.Code = (ULONG)teb->ExceptionCode;
+        thread->Record.Address = cpu->Context.Eip;
+        teb->ExceptionCode = 0;
+        memcpy(&thread->Context, &cpu->Context, sizeof(thread->Context));
+        thread->Context.Eax = (ULONG)status;
+        DECLSPEC_ALIGN(16) UCHAR state[512];
+        __asm__ volatile("fxsave %0" : "=m"(state));
+        memcpy(thread->Context.ExtendedRegisters, state, sizeof(state));
+        thread->Context.ContextFlags = CONTEXT_I386_FULL | CONTEXT_I386_EXTENDED_REGISTERS;
+        deliver_exception(thread);
+        return (LONG)cpu->Context.Eax;
+    }
     return status;
 }
 

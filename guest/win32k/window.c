@@ -18,6 +18,10 @@ WND *WndLookup(HWND hwnd)
     WND *w = (WND *)UserLookup(hwnd, USER_TYPE_WINDOW);
     if (!w && g_desktop && (hwnd == WndHandle(g_desktop)))
         return g_desktop;
+    /* a job can hold its processes to the windows of the job. */
+    if (w && w->Thread && w->Thread->Process && w->Thread->Process->Process != PsGetCurrentProcess() &&
+        !MimeProcessMayUseUserHandles(PsGetCurrentProcess(), w->Thread->Process->Process))
+        return nullptr;
     return w;
 }
 

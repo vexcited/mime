@@ -343,7 +343,7 @@ ULONG NTAPI NtUserShutdownBlockReasonQuery(HWND hwnd, LPWSTR buffer, PULONG coun
 /* ------------------------------------------------------------------ ExitWindowsEx */
 
 /* JOB_OBJECT_UILIMIT_EXITWINDOWS: a process in a job with it cannot start a shutdown, and is told no without an error. */
-#define UILIMIT_EXITWINDOWS 0x80
+#define UILIMIT_EXITWINDOWS W32_UILIMIT_EXITWINDOWS
 
 ULONG NTAPI NtUserPrepareForLogoff(void)
 {

@@ -376,6 +376,20 @@ static SD_MAPPING key_mapping(void)
  * hands down to a key of the user's. lock held.
  */
 static CM_HIVE *g_user_hive;
+static CM_NODE *g_user_key;
+
+static BOOLEAN node_is(const CM_NODE *node, PCWSTR name)
+{
+    ULONG chars = (ULONG)wcslen(name);
+    return node && node->NameLength == chars && compare_names(node->Name, chars, name, chars) == 0;
+}
+
+/* HKCU\Software\AppDataLow, where low integrity programs may write, as the folder LocalLow is for files. */
+static BOOLEAN is_low_integrity_key(const CM_NODE *node)
+{
+    return node_is(node, L"AppDataLow") && node->Parent && node_is(node->Parent, L"Software") &&
+           node->Parent->Parent && node->Parent->Parent->Parent == g_user_key && g_user_key;
+}
 
 static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
 {
@@ -410,6 +424,13 @@ static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
         return status;
     status = SeSdDerive(parent, key_mapping(), TRUE, out);
     SeSdDereference(parent);
+    if (NT_SUCCESS(status) && is_low_integrity_key(node)) {
+        SD_BLOB *labelled;
+        if (NT_SUCCESS(SeSdAddInheritedLabel(*out, 0x1000, &labelled))) {
+            SeSdDereference(*out);
+            *out = labelled;
+        }
+    }
     return status;
 }
 
@@ -1384,6 +1405,7 @@ void CmInitSystem1(void)
              HalBootInfo->user_sid[2]);
     _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\??\\C:\\Users\\%hs\\NTUSER.DAT", HalBootInfo->user_name);
     g_user_hive = mount(user, sid, path);
+    g_user_key = user;
     KiBootStamp("hives");
     CmpJournalInitialize();
     KiBootStamp("journal");

@@ -222,6 +222,19 @@ NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVO
     return STATUS_SUCCESS;
 }
 
+/* the descriptor of an object that has one already, replaced by what its maker offered. */
+NTSTATUS ObReplaceSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, KPROCESSOR_MODE mode)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    SD_BLOB *sd;
+    NTSTATUS status = ObComputeSecurity(h->Type, attributes, nullptr, mode, &sd);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObStoreSecurity(object, sd);
+    SeSdDereference(sd);
+    return status;
+}
+
 /* ---------------------------------------------------------------- checks on open */
 
 static void trace_open_denial(PVOID object, ACCESS_MASK desired, NTSTATUS status)

@@ -288,7 +288,7 @@ static const UCHAR *find_label(const SECURITY_DESCRIPTOR_RELATIVE *sd)
 }
 
 /* the sd with the label ace of the integrity level added to its sacl, which a low integrity creator leaves. */
-static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
+static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **out)
 {
     const SECURITY_DESCRIPTOR_RELATIVE *r = (const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data;
     const ACL *old = (r->Control & SE_SACL_PRESENT) && r->Sacl ? (const ACL *)(sd->Data + r->Sacl) : nullptr;
@@ -315,7 +315,7 @@ static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
         memcpy(acl + 8, old + 1, old_size - 8);
     UCHAR *ace = acl + old_size;
     ace[0] = SYSTEM_MANDATORY_LABEL_ACE_TYPE;
-    ace[1] = 0;
+    ace[1] = flags;
     *(USHORT *)(ace + 2) = (USHORT)ace_size;
     *(ULONG *)(ace + 4) = 1; /* no write up */
     ace[8] = 1;
@@ -341,6 +341,17 @@ static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
     }
     *out = made;
     return STATUS_SUCCESS;
+}
+
+static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
+{
+    return add_label_flags(sd, rid, 0, out);
+}
+
+/* the descriptor with a label of the level added that what is made inside inherits. */
+NTSTATUS SeSdAddInheritedLabel(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
+{
+    return add_label_flags(sd, rid, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE, out);
 }
 
 /*
@@ -536,6 +547,12 @@ NTSTATUS SeSdForToken(PTOKEN token, SD_MAPPING mapping, SD_BLOB **out)
     return assign(nullptr, nullptr, mapping, FALSE, KernelMode, token, out);
 }
 
+/* the same with the descriptor its maker offered, which the token is held to as the subject. */
+NTSTATUS SeSdAssignForToken(const SD_BLOB *creator, SD_MAPPING mapping, KPROCESSOR_MODE mode, PTOKEN token, SD_BLOB **out)
+{
+    return assign(nullptr, creator, mapping, FALSE, mode, token, out);
+}
+
 NTSTATUS SeSdAssign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING mapping, BOOLEAN container,
                     KPROCESSOR_MODE mode, SD_BLOB **out)
 {
@@ -684,9 +701,11 @@ NTSTATUS SeSdBootDefault(SD_MAPPING mapping, BOOLEAN container, ULONG kind, SD_B
         everyone |= 0xC; /* create object, create subdirectory */
     if (kind == SE_BOOT_INTERACTIVE)
         everyone = mapping[3] & ~(ACCESS_MASK)0xC0000;
-    SD_ACE aces[3] = {{0, mapping[3], SeSidSystem}, {0, mapping[3], SeSidAdministrators}, {0, everyone, SeSidEveryone}};
+    /* a program in an app container reaches what everyone does through the sid that names all packages. */
+    SD_ACE aces[4] = {{0, mapping[3], SeSidSystem}, {0, mapping[3], SeSidAdministrators}, {0, everyone, SeSidEveryone},
+                      {0, everyone, SeSidAllAppPackages}};
     SD_BLOB *sd;
-    NTSTATUS status = SeSdBuild(SeSidSystem, SeSidSystem, 0, aces, kind == SE_BOOT_PLAIN_SYSTEM ? 2 : 3, &sd);
+    NTSTATUS status = SeSdBuild(SeSidSystem, SeSidSystem, 0, aces, kind == SE_BOOT_PLAIN_SYSTEM ? 2 : 4, &sd);
     if (!NT_SUCCESS(status) || kind == SE_BOOT_PLAIN || kind == SE_BOOT_PLAIN_SYSTEM) {
         *out = sd;
         return status;

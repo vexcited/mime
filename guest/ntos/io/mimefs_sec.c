@@ -27,7 +27,7 @@ static SD_MAPPING file_mapping(void)
     return IoFileObjectTypeObject->Init.GenericMapping;
 }
 
-static SD_BLOB *g_root, *g_system_directory, *g_profile, *g_rom_file;
+static SD_BLOB *g_root, *g_system_directory, *g_profile, *g_locallow, *g_rom_file;
 
 /* the sid of the user, S-1-5-21-a-b-c-1001, and his primary group, None. */
 static void user_sids(UCHAR user[28], UCHAR none[28])
@@ -79,6 +79,9 @@ static void build_seeds(void)
                         {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
                         {ACE_OI_CI, FILE_ALL, user}};
     SeSdBuild(user, none, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, profile, 3, &g_profile);
+    /* the folder low integrity programs write in is the profile's, labelled low for all it holds. */
+    if (g_profile && !NT_SUCCESS(SeSdAddInheritedLabel(g_profile, 0x1000, &g_locallow)))
+        g_locallow = nullptr;
 
     SD_ACE rom[] = {{INHERITED_ACE, FILE_ALL, SeSidTrustedInstaller},
                     {INHERITED_ACE, FILE_READ_EXECUTE, SeSidSystem},
@@ -157,6 +160,15 @@ static SD_BLOB *seed_at(const PATH *p, ULONG depth)
         name[n] = 0;
         if (component_is(p, 1, name))
             return g_profile;
+    }
+    if (depth == 4 && component_is(p, 0, L"Users") && component_is(p, 2, L"AppData") && component_is(p, 3, L"LocalLow")) {
+        WCHAR name[24];
+        ULONG n = 0;
+        for (; n < RTL_NUMBER_OF(name) - 1 && HalBootInfo->user_name[n]; n++)
+            name[n] = (UCHAR)HalBootInfo->user_name[n];
+        name[n] = 0;
+        if (component_is(p, 1, name))
+            return g_locallow;
     }
     return nullptr;
 }
@@ -307,6 +319,34 @@ NTSTATUS MimeFsStoreSecurity(ULONG64 host, SD_BLOB *sd)
 #define DELETE_ 0x00010000
 #define MAXIMUM_ALLOWED_ 0x02000000
 
+#define FILE_TRAVERSE_ 0x0020
+
+/*
+ * every directory on the way to a file must let the program through, unless the program holds the privilege that
+ * skips the check. The volume's root is one of them.
+ */
+static NTSTATUS check_traverse(ULONG volume, ULONG64 host, PCUNICODE_STRING path, const MIMEFS_STORED *known, ULONG flags)
+{
+    PATH p;
+    split_path(path, &p);
+    for (ULONG up = 1; up <= p.Count; up++) {
+        SD_BLOB *dir;
+        NTSTATUS status = effective(volume, host, path, up, TRUE, known, &dir);
+        if (!NT_SUCCESS(status))
+            return status == STATUS_OBJECT_PATH_NOT_FOUND ? STATUS_SUCCESS : status;
+        ACCESS_MASK unused;
+        status = SeCheckAccess(dir, file_mapping(), FILE_TRAVERSE_, 0, flags, &unused);
+        if (!NT_SUCCESS(status) && SeTraceAccess) {
+            KiLogPrintf("  the directory %u levels above has no traverse", up);
+            SeTraceDescriptor(dir);
+        }
+        SeSdDereference(dir);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    return STATUS_SUCCESS;
+}
+
 /*
  * whether a program in user mode may open a file the way it asks to, and with what rights its handle is made.
  *
@@ -329,6 +369,11 @@ NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOL
     ACCESS_MASK result;
     NTSTATUS status;
     ready();
+    if (!SeThreadBypassesTraverse()) {
+        status = check_traverse(volume, host, path, known, flags);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
     if (created) {
         ACCESS_MASK right = directory ? FILE_ADD_SUBDIRECTORY_ : FILE_WRITE_DATA_;
         status = effective(volume, host, path, 1, TRUE, known, &parent);

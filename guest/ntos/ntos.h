@@ -816,6 +816,8 @@ NTSTATUS SeSdFromBytes(const void *descriptor, ULONG length, SD_BLOB **out);
 NTSTATUS SeSdAssign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING mapping, BOOLEAN container,
                     KPROCESSOR_MODE mode, SD_BLOB **out);
 /* a child of a parent as the user of the machine would have made it, which is how an untouched file or key shows. */
+ULONG SeSdIntegrityLevel(const SD_BLOB *sd);
+NTSTATUS SeSdAddInheritedLabel(SD_BLOB *sd, ULONG rid, SD_BLOB **out);
 NTSTATUS SeSdDerive(const SD_BLOB *parent, SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
 /* whether the calling thread makes things the way the user of the machine does, with nothing to record. */
 BOOLEAN SeSdSubjectIsDefault(void);
@@ -970,6 +972,7 @@ typedef struct _ETHREAD {
     PVOID ParseRootObject;      /* the object a name is being looked up from a handle to, whose rights ParseRootAccess has */
     ACCESS_MASK ParseRootAccess;
     BOOLEAN HideFromDebugger;
+    NTSTATUS PendingException;  /* raised in the thread as the system call returns, for a strict handle check that failed */
 } ETHREAD;
 
 #define MIME_IMAGE_NAME_CHARS 260
@@ -1131,6 +1134,8 @@ NTSTATUS SepAssignProcessToken(PEPROCESS child, PEPROCESS parent);
 void SepSetProcessToken(PEPROCESS process, struct _TOKEN *token);
 struct _TOKEN *SepCreateServiceControllerToken(void);
 struct _TOKEN *SepCreateElevatedUserToken(void);
+NTSTATUS SepAssignNewProcessSecurity(PEPROCESS process, PETHREAD thread, SD_BLOB *process_offer, SD_BLOB *thread_offer,
+                                     KPROCESSOR_MODE mode);
 ULONG SepTokenSessionId(PEPROCESS process);
 void SepFreeProcessToken(PEPROCESS process);
 void SepFreeThreadToken(PETHREAD thread);

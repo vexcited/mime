@@ -1205,6 +1205,18 @@ NTSTATUS NTAPI NtCreateSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
     }
     PSECTION section;
     if (allocation & SEC_IMAGE) {
+        /* a process that refuses images with a low label does not get a section of one. */
+        if (file && (PsGetCurrentProcess()->MitigationPolicy[MIME_POLICY_IMAGE_LOAD] & MIME_IMAGE_LOAD_NO_LOW_LABEL)) {
+            SD_BLOB *sd;
+            if (NT_SUCCESS(ObReferenceSecurity(file, &sd)) && sd) {
+                BOOLEAN low = SeSdIntegrityLevel(sd) < 0x2000;
+                SeSdDereference(sd);
+                if (low) {
+                    ObDereferenceObject(file);
+                    return STATUS_ACCESS_DENIED;
+                }
+            }
+        }
         status = file ? MiCreateImageSection(file, &section) : STATUS_INVALID_FILE_FOR_SECTION;
     } else {
         status = MiCreateDataSection(file, (ULONG64)size.QuadPart, protect, allocation, &section);

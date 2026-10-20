@@ -179,6 +179,14 @@ static void sd_label(const UCHAR *sd, ULONG *level, ULONG *policy)
     }
 }
 
+/* the integrity level of the label of a descriptor, medium for one without. */
+ULONG SeSdIntegrityLevel(const SD_BLOB *sd)
+{
+    ULONG level, policy;
+    sd_label(sd->Data, &level, &policy);
+    return level;
+}
+
 typedef struct {
     ACCESS_MASK Granted;    /* with the rights the privileges add */
     ACCESS_MASK ByList;     /* without them */
