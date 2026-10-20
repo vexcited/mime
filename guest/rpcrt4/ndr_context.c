@@ -48,7 +48,7 @@ RPCRTAPI void RPC_ENTRY NDRCContextUnmarshall(NDR_CCONTEXT *context, RPC_BINDING
     if (wire_is_null(buffer)) {
         if (c) {
             if (c->Magic == CCTX_MAGIC) {
-                RpcpBindingRelease(c->Binding);
+                RpcpBindingFree(c->Binding);
                 c->Magic = 0;
                 HeapFree(GetProcessHeap(), 0, c);
             }
@@ -78,7 +78,7 @@ RPCRTAPI void RPC_ENTRY RpcSsDestroyClientContext(void **context)
 {
     CCTX *c = context ? *context : nullptr;
     if (c && c->Magic == CCTX_MAGIC) {
-        RpcpBindingRelease(c->Binding);
+        RpcpBindingFree(c->Binding);
         c->Magic = 0;
         HeapFree(GetProcessHeap(), 0, c);
     }

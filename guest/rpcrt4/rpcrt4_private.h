@@ -45,6 +45,7 @@ typedef struct BINDING {
 BINDING *RpcpBindingNew(BINDING_KIND kind);
 BINDING *RpcpBindingLookup(RPC_BINDING_HANDLE handle);
 void RpcpBindingRelease(BINDING *b);
+void RpcpBindingFree(BINDING *b);
 BINDING *RpcpBindingCopy(const BINDING *b);
 PWSTR RpcpCopyString(PCWSTR s);
 void RpcpFreeString(PWSTR s);
