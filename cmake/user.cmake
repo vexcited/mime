@@ -35,7 +35,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-crt ${arch} SOURCES ${crt_sources} OPTIONS -fno-builtin)
     mime_objects(${arch}-chkstk ${arch} SOURCES ${MIME_CHKSTK_${arch}})
     set(lib_includes guest/lib third_party/SPIRV-Cross)
-    foreach(lib privdata dxbc dxil png msstyles compound cabinet audio dinput xinput richedit crypto ttf)
+    foreach(lib privdata dxbc dxil png msstyles compound cabinet audio dinput xinput richedit crypto ttf xmldom)
         mime_glob(lib_sources guest/lib/${lib}/*.c)
         mime_objects(${arch}-lib-${lib} ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes})
     endforeach()
@@ -260,7 +260,7 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     msctf:0x7FF0D0000000 riched20:0x7FF0C0000000 msftedit:0x7FF0B0000000 riched32:0x7FF0A0000000
     dcomp:0x7FF030000000 prntvpt:0x7FF020000000 psapi:0x7FF0E0000000 lz32:0x7FF0F0000000
     activeds:0x7FF070000000 advpack:0x7FF110000000 mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000 coremessaging:0x7FF090000000
-    cabinet:0x7FF740000000 sfc:0x7FF750000000 sfc_os:0x7FF760000000)
+    cabinet:0x7FF740000000 sfc:0x7FF750000000 sfc_os:0x7FF760000000 msxml3:0x7FF780000000 msxml6:0x7FF790000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
@@ -269,6 +269,12 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_sfc_os ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
     # cabinet.dll reads cabinets with the same reader.
     set(objects_cabinet ${arch}-lib-cabinet)
+    # msxml3 and msxml6 are two faces of one dom engine.
+    foreach(msxml msxml3 msxml6)
+        set(objects_${msxml} ${arch}-lib-xmldom)
+        set(includes_${msxml} guest/lib)
+        set(libs_${msxml} ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/advapi32.lib)
+    endforeach()
     # advpack takes files out of cabinets and reads the versions of files.
     set(objects_advpack ${arch}-lib-cabinet)
     set(libs_advpack ${MIME_LIB_${arch}}/version.lib ${MIME_LIB_${arch}}/advapi32.lib)
