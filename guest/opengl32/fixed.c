@@ -73,6 +73,9 @@ void gl_ff_destroy(GlContext *ctx)
     GlFixed *f = &ctx->ff;
     gl_free(f->vertices);
     f->vertices = nullptr;
+    gl_free(ctx->attrib_stack);
+    gl_free(ctx->client_attrib_stack);
+    ctx->attrib_stack = ctx->client_attrib_stack = nullptr;
     if (f->program) {
         gl_program_free_internal(f->program);
         f->program = nullptr;
@@ -1579,6 +1582,16 @@ int gl_ff_get(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_MAX_NAME_STACK_DEPTH:
         v[0] = NAME_STACK_DEPTH;
+        return 1;
+    case GL_ATTRIB_STACK_DEPTH:
+        v[0] = ctx->attrib_depth;
+        return 1;
+    case GL_CLIENT_ATTRIB_STACK_DEPTH:
+        v[0] = ctx->client_attrib_depth;
+        return 1;
+    case GL_MAX_ATTRIB_STACK_DEPTH:
+    case GL_MAX_CLIENT_ATTRIB_STACK_DEPTH:
+        v[0] = 16;
         return 1;
     case GL_MAX_MODELVIEW_STACK_DEPTH:
         v[0] = FF_MODELVIEW_DEPTH;

@@ -497,6 +497,10 @@ typedef struct GlContext {
     uint32_t dummy_texture;
 
     GlFixed ff;
+
+    /* glPushAttrib and glPushClientAttrib, see attrib.c. */
+    void *attrib_stack, *client_attrib_stack;
+    int attrib_depth, client_attrib_depth;
 } GlContext;
 
 static inline GlContext *gl_current(void)
