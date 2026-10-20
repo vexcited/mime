@@ -83,7 +83,8 @@ set(MIME_X86_DLLS
     mfplat:0x12400000:mfplat_imports mf:0x12200000:mf_imports mfreadwrite:0x12000000:mfreadwrite_imports
     mfcaptureengine:0x12100000:mfce_imports
     schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports
-    cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports)
+    cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
+    dnsapi:0x04000000:base)
 set(base ntdll kernel32)
 # rpcrt4 catches exceptions with frame handlers of the c runtime.
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
