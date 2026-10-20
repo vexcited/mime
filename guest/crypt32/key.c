@@ -16,6 +16,7 @@ typedef BOOL(WINAPI *SET_PROV_PARAM)(HCRYPTPROV, DWORD, const BYTE *, DWORD);
 typedef BOOL(WINAPI *GET_USER_KEY)(HCRYPTPROV, DWORD, HCRYPTKEY *);
 typedef BOOL(WINAPI *EXPORT_KEY)(HCRYPTKEY, HCRYPTKEY, DWORD, DWORD, BYTE *, DWORD *);
 typedef BOOL(WINAPI *DESTROY_KEY)(HCRYPTKEY);
+typedef BOOL(WINAPI *IMPORT_KEY)(HCRYPTPROV, const BYTE *, DWORD, HCRYPTKEY, DWORD, HCRYPTKEY *);
 typedef LONG(WINAPI *OPEN_PROVIDER)(ULONG_PTR *, LPCWSTR, DWORD);
 typedef LONG(WINAPI *OPEN_KEY)(ULONG_PTR, ULONG_PTR *, LPCWSTR, DWORD, DWORD);
 typedef LONG(WINAPI *FREE_OBJECT)(ULONG_PTR);
@@ -28,6 +29,7 @@ static struct {
     GET_USER_KEY get_user_key;
     EXPORT_KEY export_key;
     DESTROY_KEY destroy_key;
+    IMPORT_KEY import_key;
     OPEN_PROVIDER open_provider;
     OPEN_KEY open_key;
     FREE_OBJECT free_object;
@@ -46,6 +48,7 @@ static BOOL WINAPI load_api(INIT_ONCE *once, void *param, void **context)
         g_api.get_user_key = (GET_USER_KEY)(void *)GetProcAddress(advapi32, "CryptGetUserKey");
         g_api.export_key = (EXPORT_KEY)(void *)GetProcAddress(advapi32, "CryptExportKey");
         g_api.destroy_key = (DESTROY_KEY)(void *)GetProcAddress(advapi32, "CryptDestroyKey");
+        g_api.import_key = (IMPORT_KEY)(void *)GetProcAddress(advapi32, "CryptImportKey");
     }
     HMODULE ncrypt = LoadLibraryW(L"ncrypt.dll");
     if (ncrypt) {
@@ -340,4 +343,72 @@ BOOL WINAPI CryptAcquireCertificatePrivateKey(PCCERT_CONTEXT pCert, DWORD dwFlag
         *pfCallerFreeProvOrNCryptKey = !cache;
     SetLastError(ERROR_SUCCESS);
     return TRUE;
+}
+
+/*
+ * the public key of a certificate as a key of a legacy provider: the modulus and exponent of an RSA key are made a
+ * public key blob, which the provider imports. The algorithm is the one given, or key exchange for an RSA key. Keys of
+ * other algorithms are not made: Mime's providers have no use for them.
+ */
+BOOL WINAPI CryptImportPublicKeyInfoEx(HCRYPTPROV hCryptProv, DWORD dwCertEncodingType, PCERT_PUBLIC_KEY_INFO pInfo,
+                                       ALG_ID aiKeyAlg, DWORD dwFlags, void *pvAuxInfo, HCRYPTKEY *phKey)
+{
+    if (!pInfo || !phKey || dwFlags || pvAuxInfo)
+        return CrFail(dwFlags || pvAuxInfo ? ERROR_INVALID_PARAMETER : E_INVALIDARG);
+    if ((dwCertEncodingType & 0xFFFF) != X509_ASN_ENCODING)
+        return CrFail(ERROR_FILE_NOT_FOUND);
+    *phKey = 0;
+    InitOnceExecuteOnce(&g_api_once, load_api, nullptr, nullptr);
+    if (!g_api.import_key)
+        return CrFail(ERROR_PROC_NOT_FOUND);
+    if (!pInfo->Algorithm.pszObjId || strcmp(pInfo->Algorithm.pszObjId, szOID_RSA_RSA))
+        return CrFail(NTE_BAD_ALGID);
+    der_reader r = {pInfo->PublicKey.pbData, pInfo->PublicKey.cbData};
+    der_item seq, n, e;
+    if (DerExpect(&r, ASN_SEQUENCE, &seq))
+        return CrFail(NTE_BAD_DATA);
+    DerOpen(&r, &seq);
+    if (DerExpect(&r, ASN_INTEGER, &n) || DerExpect(&r, ASN_INTEGER, &e))
+        return CrFail(NTE_BAD_DATA);
+    const BYTE *modulus = n.content;
+    DWORD modulus_size = n.length;
+    while (modulus_size > 1 && !*modulus) {
+        modulus++;
+        modulus_size--;
+    }
+    if (!modulus_size || e.length == 0 || e.length > 4)
+        return CrFail(NTE_BAD_DATA);
+    DWORD exponent = 0;
+    for (DWORD i = 0; i < e.length; i++)
+        exponent = exponent << 8 | e.content[i];
+    DWORD bits = modulus_size * 8;
+    for (BYTE top = modulus[0]; top && !(top & 0x80); top <<= 1)
+        bits--;
+    DWORD bytes = (bits + 7) / 8;
+    if (bytes < modulus_size)
+        modulus += modulus_size - bytes;
+    else if (bytes > modulus_size)
+        bytes = modulus_size;
+    DWORD size = 8 + 12 + bytes;
+    BYTE *blob = CrAlloc(size);
+    if (!blob)
+        return CrFail(ERROR_OUTOFMEMORY);
+    blob[0] = PUBLICKEYBLOB;
+    blob[1] = 2;
+    *(WORD *)(blob + 2) = 0;
+    *(DWORD *)(blob + 4) = aiKeyAlg ? aiKeyAlg : CALG_RSA_KEYX;
+    memcpy(blob + 8, "RSA1", 4);
+    *(DWORD *)(blob + 12) = bits;
+    *(DWORD *)(blob + 16) = exponent;
+    for (DWORD i = 0; i < bytes; i++)
+        blob[20 + i] = modulus[bytes - 1 - i];
+    BOOL ok = g_api.import_key(hCryptProv, blob, size, 0, 0, phKey);
+    CrFree(blob);
+    return ok;
+}
+
+BOOL WINAPI CryptImportPublicKeyInfo(HCRYPTPROV hCryptProv, DWORD dwCertEncodingType, PCERT_PUBLIC_KEY_INFO pInfo,
+                                     HCRYPTKEY *phKey)
+{
+    return CryptImportPublicKeyInfoEx(hCryptProv, dwCertEncodingType, pInfo, 0, 0, nullptr, phKey);
 }
