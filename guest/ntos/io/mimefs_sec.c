@@ -27,7 +27,7 @@ static SD_MAPPING file_mapping(void)
     return IoFileObjectTypeObject->Init.GenericMapping;
 }
 
-static SD_BLOB *g_root, *g_system_directory, *g_profile, *g_rom_file;
+static SD_BLOB *g_root, *g_system_directory, *g_installer_cache, *g_profile, *g_locallow, *g_rom_file;
 
 /* the sid of the user, S-1-5-21-a-b-c-1001, and his primary group, None. */
 static void user_sids(UCHAR user[28], UCHAR none[28])
@@ -40,6 +40,13 @@ static void user_sids(UCHAR user[28], UCHAR none[28])
     memcpy(user + 8, sub, sizeof(sub));
     memcpy(none, user, 28);
     *(ULONG *)(none + 24) = 513;
+}
+
+/* the sid of the user of the machine, 28 bytes. */
+void MimeUserSid(UCHAR sid[28])
+{
+    UCHAR none[28];
+    user_sids(sid, none);
 }
 
 static void build_seeds(void)
@@ -68,10 +75,29 @@ static void build_seeds(void)
     SeSdBuild(SeSidTrustedInstaller, SeSidTrustedInstaller, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, system, 12,
               &g_system_directory);
 
+    /*
+     * the packages the installer of Mime keeps for repair: anyone may put one there, as a program installed for a user
+     * keeps its own, and no one changes what another put there. This is Mime's folder, not one windows has for users.
+     */
+    SD_ACE cache[] = {{0, FILE_ALL, SeSidTrustedInstaller},
+                      {CONTAINER_INHERIT_ACE | INHERIT_ONLY_ACE, GENERIC_ALL_, SeSidTrustedInstaller},
+                      {0, FILE_MODIFY, SeSidSystem},
+                      {ACE_INHERIT_ONLY, GENERIC_ALL_, SeSidSystem},
+                      {0, FILE_MODIFY, SeSidAdministrators},
+                      {ACE_INHERIT_ONLY, GENERIC_ALL_, SeSidAdministrators},
+                      {0, FILE_READ_EXECUTE | 0x2 /* add file */, SeSidAuthenticatedUsers},
+                      {ACE_INHERIT_ONLY, GENERIC_RX, SeSidUsers},
+                      {ACE_INHERIT_ONLY, GENERIC_ALL_, SeSidCreatorOwner}};
+    SeSdBuild(SeSidTrustedInstaller, SeSidTrustedInstaller, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, cache, 9,
+              &g_installer_cache);
+
     SD_ACE profile[] = {{ACE_OI_CI, FILE_ALL, SeSidSystem},
                         {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
                         {ACE_OI_CI, FILE_ALL, user}};
     SeSdBuild(user, none, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, profile, 3, &g_profile);
+    /* the folder low integrity programs write in is the profile's, labelled low for all it holds. */
+    if (g_profile && !NT_SUCCESS(SeSdAddInheritedLabel(g_profile, 0x1000, &g_locallow)))
+        g_locallow = nullptr;
 
     SD_ACE rom[] = {{INHERITED_ACE, FILE_ALL, SeSidTrustedInstaller},
                     {INHERITED_ACE, FILE_READ_EXECUTE, SeSidSystem},
@@ -82,7 +108,7 @@ static void build_seeds(void)
     SeSdBuild(SeSidTrustedInstaller, SeSidTrustedInstaller, SE_DACL_AUTO_INHERITED, rom, 6, &g_rom_file);
 }
 
-static FAST_MUTEX g_lock;
+static FAST_MUTEX g_lock, g_effective_lock;
 static BOOLEAN g_ready;
 
 static void ready(void)
@@ -90,6 +116,7 @@ static void ready(void)
     if (g_ready)
         return;
     ExInitializeFastMutex(&g_lock);
+    ExInitializeFastMutex(&g_effective_lock);
     ExAcquireFastMutex(&g_lock);
     if (!g_ready) {
         build_seeds();
@@ -142,6 +169,8 @@ static SD_BLOB *seed_at(const PATH *p, ULONG depth)
     if (depth == 1 && (component_is(p, 0, L"Windows") || component_is(p, 0, L"Program Files") ||
                        component_is(p, 0, L"Program Files (x86)")))
         return g_system_directory;
+    if (depth == 2 && component_is(p, 0, L"Windows") && component_is(p, 1, L"Installer"))
+        return g_installer_cache;
     if (depth == 2 && component_is(p, 0, L"Users")) {
         WCHAR name[24];
         ULONG n = 0;
@@ -150,6 +179,15 @@ static SD_BLOB *seed_at(const PATH *p, ULONG depth)
         name[n] = 0;
         if (component_is(p, 1, name))
             return g_profile;
+    }
+    if (depth == 4 && component_is(p, 0, L"Users") && component_is(p, 2, L"AppData") && component_is(p, 3, L"LocalLow")) {
+        WCHAR name[24];
+        ULONG n = 0;
+        for (; n < RTL_NUMBER_OF(name) - 1 && HalBootInfo->user_name[n]; n++)
+            name[n] = (UCHAR)HalBootInfo->user_name[n];
+        name[n] = 0;
+        if (component_is(p, 1, name))
+            return g_locallow;
     }
     return nullptr;
 }
@@ -186,7 +224,10 @@ static NTSTATUS read_stored(ULONG64 host, ULONG up, SD_BLOB **stored, ULONG *dis
             room = length;
             continue;
         }
-        NTSTATUS status = hs == MIME_HC_STATUS_OK ? STATUS_SUCCESS : host_status(hs);
+        /* a volume that keeps descriptors only for the files themselves has none to show above one: the answer is none. */
+        NTSTATUS status = hs == MIME_HC_STATUS_OK || hs == MIME_HC_STATUS_NOT_FOUND ? STATUS_SUCCESS : host_status(hs);
+        if (hs == MIME_HC_STATUS_NOT_FOUND)
+            length = 0;
         if (NT_SUCCESS(status) && length) {
             /* something the host holds that is no descriptor is as good as nothing. */
             if (!NT_SUCCESS(SeSdFromBytes(buffer, length, stored)))
@@ -207,12 +248,61 @@ NTSTATUS MimeFsRomSecurity(SD_BLOB **out)
     return STATUS_SUCCESS;
 }
 
+/* what the host said of the stored descriptors when it opened a file, or nothing. */
+static NTSTATUS stored_for(const MIMEFS_STORED *known, ULONG64 host, ULONG up, SD_BLOB **stored, ULONG *distance)
+{
+    *stored = nullptr;
+    if (known && known->Status == MIME_HC_STATUS_OK && (!known->Length || known->Distance >= up)) {
+        if (known->Length) {
+            if (!NT_SUCCESS(SeSdFromBytes(known->Data, known->Length, stored)))
+                *stored = nullptr;
+            else
+                *distance = known->Distance - up;
+        }
+        return STATUS_SUCCESS;
+    }
+    if (!host)
+        return STATUS_MORE_PROCESSING_REQUIRED;
+    return read_stored(host, up, stored, distance);
+}
+
+/*
+ * what the files with no descriptor of their own show is the same until a descriptor is stored somewhere or a name is
+ * moved, so the answers are kept by the name and the kind, with the count of those changes and the stamp of the
+ * session token they were made with.
+ */
+#define EFFECTIVE_CACHE 512
+
+typedef struct {
+    ULONG64 Hash, Epoch, Stamp;
+    SD_BLOB *Sd;
+} EFFECTIVE_ENTRY;
+
+static EFFECTIVE_ENTRY g_effective[EFFECTIVE_CACHE];
+static volatile ULONG64 g_epoch = 1;
+
+void MimeFsSecurityChanged(void)
+{
+    __atomic_fetch_add(&g_epoch, 1, __ATOMIC_SEQ_CST);
+}
+
+static ULONG64 name_hash(ULONG volume, const PATH *p, ULONG count, BOOLEAN directory)
+{
+    ULONG64 h = 1469598103934665603ull ^ volume ^ ((ULONG64)directory << 40) ^ ((ULONG64)count << 48);
+    for (ULONG i = 0; i < count; i++) {
+        for (ULONG c = 0; c < p->Length[i]; c++)
+            h = (h ^ (ULONG64)towupper(p->Start[i][c])) * 1099511628211ull;
+        h = (h ^ '\\') * 1099511628211ull;
+    }
+    return h | 1;
+}
+
 /*
  * the descriptor of the file `up` levels above the one open, whole. volume is the host volume, path the name
- * of the open file inside it.
+ * of the open file inside it. known is what the open told of the stored descriptors, if it was asked.
  */
-NTSTATUS MimeFsEffectiveSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULONG up, BOOLEAN directory,
-                                 SD_BLOB **out)
+static NTSTATUS effective(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULONG up, BOOLEAN directory,
+                          const MIMEFS_STORED *known, SD_BLOB **out)
 {
     ready();
     PATH p;
@@ -222,9 +312,24 @@ NTSTATUS MimeFsEffectiveSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING pa
     ULONG count = p.Count - up;
     SD_BLOB *stored;
     ULONG distance = 0;
-    NTSTATUS status = read_stored(host, up, &stored, &distance);
+    NTSTATUS status = stored_for(known, host, up, &stored, &distance);
     if (!NT_SUCCESS(status))
         return status;
+    ULONG64 key = 0, stamp = 0, epoch = 0;
+    if (!stored) {
+        /* nothing is stored above: the answer is what the name alone gives, which is kept. */
+        key = name_hash(volume, &p, count, directory);
+        epoch = g_epoch;
+        stamp = SeSessionTokenStamp();
+        EFFECTIVE_ENTRY *e = &g_effective[key % EFFECTIVE_CACHE];
+        ExAcquireFastMutex(&g_effective_lock);
+        if (e->Sd && e->Hash == key && e->Epoch == epoch && e->Stamp == stamp) {
+            *out = SeSdReference(e->Sd);
+            ExReleaseFastMutex(&g_effective_lock);
+            return STATUS_SUCCESS;
+        }
+        ExReleaseFastMutex(&g_effective_lock);
+    }
     LONG stored_depth = stored && distance <= count ? (LONG)(count - distance) : -1;
     LONG seed_depth = 0;
     SD_BLOB *seed = g_root;
@@ -256,14 +361,186 @@ NTSTATUS MimeFsEffectiveSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING pa
     }
     if (!NT_SUCCESS(status))
         return status;
+    if (key) {
+        EFFECTIVE_ENTRY *e = &g_effective[key % EFFECTIVE_CACHE];
+        ExAcquireFastMutex(&g_effective_lock);
+        SD_BLOB *old = e->Sd;
+        e->Hash = key;
+        e->Epoch = epoch;
+        e->Stamp = stamp;
+        e->Sd = SeSdReference(base);
+        ExReleaseFastMutex(&g_effective_lock);
+        if (old)
+            SeSdDereference(old);
+    }
     *out = base;
     return STATUS_SUCCESS;
 }
 
+NTSTATUS MimeFsEffectiveSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULONG up, BOOLEAN directory,
+                                 SD_BLOB **out)
+{
+    return effective(volume, host, path, up, directory, nullptr, out);
+}
+
 NTSTATUS MimeFsStoreSecurity(ULONG64 host, SD_BLOB *sd)
 {
+    MimeFsSecurityChanged();
     ULONG64 hs = HalHypercall(MIME_HC_FS_SET_SD, host, HalPhysicalOf(sd->Data), sd->Length, 0, 0, 0, nullptr);
     return host_status(hs);
+}
+
+/* ---------------------------------------------------------------- the check of an open */
+
+#define FILE_LIST_DIRECTORY_ 0x0001
+#define FILE_WRITE_DATA_ 0x0002
+#define FILE_ADD_SUBDIRECTORY_ 0x0004
+#define FILE_DELETE_CHILD_ 0x0040
+#define FILE_READ_ATTRIBUTES_ 0x0080
+#define DELETE_ 0x00010000
+#define MAXIMUM_ALLOWED_ 0x02000000
+
+#define FILE_TRAVERSE_ 0x0020
+
+/*
+ * every directory on the way to a file must let the program through, unless the program holds the privilege that
+ * skips the check. The volume's root is one of them.
+ */
+static NTSTATUS check_traverse(ULONG volume, ULONG64 host, PCUNICODE_STRING path, const MIMEFS_STORED *known, ULONG flags)
+{
+    PATH p;
+    split_path(path, &p);
+    for (ULONG up = 1; up <= p.Count; up++) {
+        SD_BLOB *dir;
+        NTSTATUS status = effective(volume, host, path, up, TRUE, known, &dir);
+        if (!NT_SUCCESS(status))
+            return status == STATUS_OBJECT_PATH_NOT_FOUND ? STATUS_SUCCESS : status;
+        ACCESS_MASK unused;
+        status = SeCheckAccess(dir, file_mapping(), FILE_TRAVERSE_, 0, flags, &unused);
+        if (!NT_SUCCESS(status) && SeTraceAccess) {
+            KiLogPrintf("  the directory %u levels above has no traverse", up);
+            SeTraceDescriptor(dir);
+        }
+        SeSdDereference(dir);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    return STATUS_SUCCESS;
+}
+
+/*
+ * whether a program in user mode may open a file the way it asks to, and with what rights its handle is made.
+ *
+ * A file that is made needs the right to add a file or a directory to the one it goes into, and the maker gets
+ * what it asked for. A file that exists is checked against its own descriptor, with what the disposition adds: an
+ * overwrite writes the data, a supersede deletes, delete on close deletes. Two rights also come from the directory
+ * above, as on ntfs: delete child there is delete here, and list directory there is read attributes here.
+ * Backup intent opens up to the privileges for backup and restore. (From the documentation of the file system's
+ * behaviour, not read from the driver: the exact set the privileges grant is a guess.)
+ *
+ * STATUS_MORE_PROCESSING_REQUIRED says the answer needs the descriptor of the directory and the open has no handle to ask
+ * the host with; the caller opens again with one.
+ */
+NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, ACCESS_MASK desired,
+                         ULONG options, ULONG disposition, BOOLEAN created, const MIMEFS_STORED *known, ACCESS_MASK *granted)
+{
+    SD_MAPPING mapping = file_mapping();
+    ULONG flags = (options & FILE_OPEN_FOR_BACKUP_INTENT) ? SE_ACCESS_BACKUP_INTENT : 0;
+    SD_BLOB *sd = nullptr, *parent = nullptr;
+    ACCESS_MASK result;
+    NTSTATUS status;
+    ready();
+    if (!SeThreadBypassesTraverse()) {
+        status = check_traverse(volume, host, path, known, flags);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    if (created) {
+        ACCESS_MASK right = directory ? FILE_ADD_SUBDIRECTORY_ : FILE_WRITE_DATA_;
+        status = effective(volume, host, path, 1, TRUE, known, &parent);
+        if (status == STATUS_OBJECT_PATH_NOT_FOUND)
+            status = STATUS_SUCCESS;
+        else if (NT_SUCCESS(status))
+            status = SeCheckAccess(parent, mapping, right, 0, flags, &result);
+        if (parent)
+            SeSdDereference(parent);
+        if (NT_SUCCESS(status)) {
+            /* the maker has what it asked for, whatever the descriptor it just got says. */
+            ACCESS_MASK mapped = desired & ~(ACCESS_MASK)MAXIMUM_ALLOWED_;
+            RtlMapGenericMask(&mapped, (const GENERIC_MAPPING *)mapping);
+            *granted = (desired & MAXIMUM_ALLOWED_) ? mapped | mapping[3] : mapped;
+        }
+        return status;
+    }
+    ACCESS_MASK want = desired;
+    if (disposition == FILE_OVERWRITE || disposition == FILE_OVERWRITE_IF)
+        want |= FILE_WRITE_DATA_;
+    if (disposition == FILE_SUPERSEDE || (options & FILE_DELETE_ON_CLOSE))
+        want |= DELETE_;
+    status = effective(volume, host, path, 0, directory, known, &sd);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = SeCheckAccess(sd, mapping, want, 0, flags, granted);
+    if (NT_SUCCESS(status) && !(desired & MAXIMUM_ALLOWED_)) {
+        SeSdDereference(sd);
+        return status;
+    }
+    if (!NT_SUCCESS(status) && SeTraceAccess) {
+        KiLogPrintf("  the file");
+        SeTraceDescriptor(sd);
+    }
+    /* the rights the directory above lends: what is left to ask for, or with the maximum what is added. */
+    ACCESS_MASK mapped = want & ~(ACCESS_MASK)MAXIMUM_ALLOWED_;
+    RtlMapGenericMask(&mapped, (const GENERIC_MAPPING *)mapping);
+    BOOLEAN wants_loan = (mapped & (DELETE_ | FILE_READ_ATTRIBUTES_)) != 0 || (desired & MAXIMUM_ALLOWED_);
+    if (status != STATUS_ACCESS_DENIED && !NT_SUCCESS(status)) {
+        SeSdDereference(sd);
+        return status;
+    }
+    if (!wants_loan) {
+        SeSdDereference(sd);
+        return status;
+    }
+    NTSTATUS up = effective(volume, host, path, 1, TRUE, known, &parent);
+    if (!NT_SUCCESS(up)) {
+        SeSdDereference(sd);
+        return up == STATUS_MORE_PROCESSING_REQUIRED ? up : status;
+    }
+    ACCESS_MASK lent = 0, unused;
+    if (SeTraceAccess) {
+        KiLogPrintf("  the directory above");
+        SeTraceDescriptor(parent);
+    }
+    if (SeCheckAccess(parent, mapping, FILE_DELETE_CHILD_, 0, flags, &unused) == STATUS_SUCCESS)
+        lent |= DELETE_;
+    if (SeCheckAccess(parent, mapping, FILE_LIST_DIRECTORY_, 0, flags, &unused) == STATUS_SUCCESS)
+        lent |= FILE_READ_ATTRIBUTES_;
+    SeSdDereference(parent);
+    if (desired & MAXIMUM_ALLOWED_) {
+        /* the maximum of the file, and the two rights if the directory lends them. */
+        ACCESS_MASK own = 0;
+        if (SeCheckAccess(sd, mapping, MAXIMUM_ALLOWED_, 0, flags, &own) != STATUS_SUCCESS)
+            own = 0;
+        ACCESS_MASK have = own | lent;
+        *granted = have;
+        status = have && !(mapped & ~have) ? STATUS_SUCCESS : STATUS_ACCESS_DENIED;
+    } else {
+        ACCESS_MASK rest = mapped & ~lent;
+        if (rest != mapped)
+            status = rest ? SeCheckAccess(sd, mapping, rest, 0, flags, granted) : STATUS_SUCCESS;
+        if (NT_SUCCESS(status))
+            *granted = mapped;
+    }
+    SeSdDereference(sd);
+    return status;
+}
+
+/* the same for a file of the rom, which is read only: its descriptor is the one all of them share. */
+NTSTATUS MimeFsCheckRomOpen(ACCESS_MASK desired, ULONG options, ACCESS_MASK *granted)
+{
+    ready();
+    ULONG flags = (options & FILE_OPEN_FOR_BACKUP_INTENT) ? SE_ACCESS_BACKUP_INTENT : 0;
+    return SeCheckAccess(g_rom_file, file_mapping(), desired, 0, flags, granted);
 }
 
 /*

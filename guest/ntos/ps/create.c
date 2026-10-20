@@ -238,7 +238,8 @@ static NTSTATUS dos_to_nt(PCUNICODE_STRING dos, PUNICODE_STRING nt)
 }
 
 static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG64 request_id, MIME_CONSOLE *console,
-                               BOOLEAN suspended, PEPROCESS parent, PEPROCESS *out, PETHREAD *initial_thread)
+                               BOOLEAN suspended, PEPROCESS parent, PEPROCESS *out, PETHREAD *initial_thread,
+                               SD_BLOB *process_offer, SD_BLOB *thread_offer, KPROCESSOR_MODE mode)
 {
     PCUNICODE_STRING image = &p->Image;
     UNICODE_STRING nt_path;
@@ -349,6 +350,14 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         ObDereferenceObject(process);
         return status;
     }
+    /* the descriptors come from the identity the process runs as. */
+    status = SepAssignNewProcessSecurity(process, thread, process_offer, thread_offer, mode);
+    if (!NT_SUCCESS(status)) {
+        PspTerminateProcess(process, status);
+        ObDereferenceObject(thread);
+        ObDereferenceObject(process);
+        return status;
+    }
     PspNotifyProcess(process, TRUE);
     /* the arguments help to tell the processes of one program apart. */
     UNICODE_STRING shown = p->CommandLine;
@@ -377,7 +386,7 @@ NTSTATUS PsStartServiceController(void)
     if (!token)
         return STATUS_INSUFFICIENT_RESOURCES;
     PEPROCESS process;
-    NTSTATUS status = create_process(&p, token, 0, nullptr, FALSE, PsCurrentProcess(), &process, nullptr);
+    NTSTATUS status = create_process(&p, token, 0, nullptr, FALSE, PsCurrentProcess(), &process, nullptr, nullptr, nullptr, KernelMode);
     ObDereferenceObject(token);
     if (!NT_SUCCESS(status)) {
         KiLogPrintf("cannot start the service control manager: %08x", status);
@@ -397,7 +406,7 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
     struct _TOKEN *token = elevated ? SepCreateElevatedUserToken() : nullptr;
     if (elevated && !token)
         return STATUS_INSUFFICIENT_RESOURCES;
-    NTSTATUS status = create_process(&p, token, request_id, console, FALSE, PsCurrentProcess(), out, nullptr);
+    NTSTATUS status = create_process(&p, token, request_id, console, FALSE, PsCurrentProcess(), out, nullptr, nullptr, nullptr, KernelMode);
     if (token)
         ObDereferenceObject(token);
     return status;
@@ -801,13 +810,12 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     KiFreeCapturedString(&thread_name);
     if (!NT_SUCCESS(attribute_status))
         return attribute_status;
-    /* and what they get is worked out first, so a refused descriptor starts nothing. */
+    /* the descriptors they offer are read first, so one that cannot be read starts nothing. */
     SD_BLOB *process_sd = nullptr, *thread_sd = nullptr;
-    attribute_status = ObComputeSecurity(PsProcessTypeObject, process_attributes ? &process_oa : nullptr, nullptr,
-                                         KeGetPreviousMode(), &process_sd);
-    if (NT_SUCCESS(attribute_status))
-        attribute_status = ObComputeSecurity(PsThreadTypeObject, thread_attributes ? &thread_oa : nullptr, nullptr,
-                                             KeGetPreviousMode(), &thread_sd);
+    if (process_attributes && process_oa.SecurityDescriptor)
+        attribute_status = SeSdCapture(process_oa.SecurityDescriptor, KeGetPreviousMode(), &process_sd);
+    if (NT_SUCCESS(attribute_status) && thread_attributes && thread_oa.SecurityDescriptor)
+        attribute_status = SeSdCapture(thread_oa.SecurityDescriptor, KeGetPreviousMode(), &thread_sd);
     if (!NT_SUCCESS(attribute_status)) {
         if (process_sd)
             SeSdDereference(process_sd);
@@ -849,14 +857,12 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     PEPROCESS process = nullptr;
     PETHREAD thread = nullptr;
     if (NT_SUCCESS(status))
-        status = create_process(&params, token, 0, creator->Console, TRUE, parent, &process, &thread);
+        status = create_process(&params, token, 0, creator->Console, TRUE, parent, &process, &thread, process_sd, thread_sd,
+                                KeGetPreviousMode());
     free_params(&params);
     if (token)
         ObDereferenceObject(token);
     if (NT_SUCCESS(status)) {
-        ObAttachSecurity(process, process_sd);
-        ObAttachSecurity(thread, thread_sd);
-        process_sd = thread_sd = nullptr;
         apply_attributes(process, parent, &attrs);
         if (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES)
             status = attrs.HasHandleList ? ObInheritHandleList(parent, process, attrs.HandleList, attrs.HandleCount)

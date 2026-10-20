@@ -192,7 +192,8 @@ NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHAN
         access = mapped;
     }
     if (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_SD_PENDING) {
-        NTSTATUS status = ObAssignSecurity(object, nullptr, nullptr, KernelMode);
+        NTSTATUS status = (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_BOOT) ? ObAssignBootSecurity(object)
+                                                                            : ObAssignSecurity(object, nullptr, nullptr, KernelMode);
         if (!NT_SUCCESS(status)) {
             ObDereferenceObject(object);
             return status;
@@ -271,9 +272,15 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         leaf.Length = leaf.MaximumLength = (USHORT)((len - slash) * 2);
     }
 
+    /* a name that is free is made only where the caller may make objects, one that is taken is found as it is. */
+    NTSTATUS may_create = ObCheckCreateAccess(parent, mode);
     status = ObAssignSecurity(object, attributes, parent, mode);
-    if (NT_SUCCESS(status))
-        status = ObInsertIntoDirectory(parent, object, &leaf);
+    if (NT_SUCCESS(status)) {
+        if (NT_SUCCESS(may_create))
+            status = ObInsertIntoDirectory(parent, object, &leaf);
+        else
+            status = ObDirectoryHasName(parent, &leaf) ? STATUS_OBJECT_NAME_COLLISION : may_create;
+    }
     if (status == STATUS_OBJECT_NAME_COLLISION && (attrs & OBJ_OPENIF)) {
         PVOID existing;
         UNICODE_STRING full = name;
@@ -283,7 +290,14 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         ObDereferenceObject(object);
         if (!NT_SUCCESS(st))
             return st == STATUS_OBJECT_TYPE_MISMATCH ? st : STATUS_OBJECT_NAME_COLLISION;
-        st = ObInsertObject(existing, access, attrs, handle);
+        /* the one that exists is opened like any other, with the check of what is asked of it. */
+        ACCESS_MASK granted;
+        st = ObCheckOpenAccess(existing, access, mode, &granted);
+        if (!NT_SUCCESS(st)) {
+            ObDereferenceObject(existing);
+            return st;
+        }
+        st = ObInsertObject(existing, granted, attrs, handle);
         return NT_SUCCESS(st) ? STATUS_OBJECT_NAME_EXISTS : st;
     }
     ObDereferenceObject(parent);
@@ -296,6 +310,17 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         ObReferenceObject(object);
     }
     return ObInsertObject(object, access, attrs, handle);
+}
+
+/*
+ * a process with strict handle checks gets an exception, as the system call returns, for a handle that is not
+ * one. The null handle is left out, guessed.
+ */
+static NTSTATUS invalid_handle(HANDLE handle, KPROCESSOR_MODE mode)
+{
+    if (mode == UserMode && handle && PsGetCurrentProcess()->MitigationPolicy[MIME_POLICY_STRICT_HANDLE_CHECK] & MIME_STRICT_HANDLE_RAISE)
+        PsCurrentThread()->PendingException = STATUS_INVALID_HANDLE;
+    return STATUS_INVALID_HANDLE;
 }
 
 NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mode, PVOID *object,
@@ -327,7 +352,7 @@ NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mod
     KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
     if (!handle || index >= table->Capacity || !table->Entries[index].Object) {
         KeReleaseSpinLock(&table->Lock, irql);
-        return STATUS_INVALID_HANDLE;
+        return invalid_handle(handle, mode);
     }
     PVOID obj = table->Entries[index].Object;
     ACCESS_MASK access = table->Entries[index].GrantedAccess;
@@ -387,7 +412,8 @@ NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode)
     KeReleaseSpinLock(&table->Lock, irql);
     if (protected)
         return STATUS_HANDLE_NOT_CLOSABLE;
-    return close_in_table(owner, table, index);
+    NTSTATUS status = close_in_table(owner, table, index);
+    return status == STATUS_INVALID_HANDLE ? invalid_handle(handle, mode) : status;
 }
 
 typedef struct OBJECT_HANDLE_FLAGS {
@@ -467,7 +493,13 @@ NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KP
     ULONG attrs = attributes->Attributes;
     if (mode == UserMode)
         attrs &= ~OBJ_KERNEL_HANDLE;
-    return ObInsertObject(object, access, attrs, handle);
+    ACCESS_MASK granted;
+    status = ObCheckOpenAccess(object, access, mode, &granted);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(object);
+        return status;
+    }
+    return ObInsertObject(object, granted, attrs, handle);
 }
 
 NTSTATUS NTAPI ObOpenObjectByPointer(PVOID object, ULONG attributes, PVOID access_state, ACCESS_MASK access,

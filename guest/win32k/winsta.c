@@ -226,10 +226,16 @@ static void interactive(void)
         return;
     w->Flags = WSF_VISIBLE;
     W32DESKTOP *d, *logon;
-    if (NT_SUCCESS(desktop_in(w, L"Default", 7, TRUE, &d, nullptr)))
+    /* everyone at the console works on the station and its default desktop; the logon desktop is the system's. */
+    ObSetInteractiveSecurity(w, TRUE);
+    if (NT_SUCCESS(desktop_in(w, L"Default", 7, TRUE, &d, nullptr))) {
+        ObSetInteractiveSecurity(d, TRUE);
         g_default = d;
-    if (NT_SUCCESS(desktop_in(w, L"Winlogon", 8, TRUE, &logon, nullptr)))
-        (void)logon;
+    }
+    if (NT_SUCCESS(desktop_in(w, L"Winlogon", 8, TRUE, &logon, nullptr))) {
+        ObSetInteractiveSecurity(logon, FALSE);
+        ObDereferenceObject(logon);
+    }
     g_winsta0 = w;
 }
 
@@ -364,6 +370,29 @@ static HANDLE insert(PVOID object, ACCESS_MASK access, ULONG attributes)
     return h;
 }
 
+/* a handle to a window station or desktop that was there: the descriptor says what the caller may have of it. */
+static HANDLE insert_open(PVOID object, ACCESS_MASK access, ULONG attributes)
+{
+    ACCESS_MASK granted;
+    NTSTATUS status = ObCheckOpenAccess(object, access, UserMode, &granted);
+    if (!NT_SUCCESS(status)) {
+        W32SetLastError(status_error(status));
+        return nullptr;
+    }
+    return insert(object, granted, attributes);
+}
+
+/* the descriptor of one the caller made, from the security attributes it gave. */
+static BOOL assign_new(PVOID object, OBJECT_ATTRIBUTES *oa)
+{
+    NTSTATUS status = ObAssignSecurity(object, oa, nullptr, UserMode);
+    if (!NT_SUCCESS(status)) {
+        W32SetLastError(status_error(status));
+        return FALSE;
+    }
+    return TRUE;
+}
+
 HWINSTA NTAPI NtUserCreateWindowStation(POBJECT_ATTRIBUTES attributes, ACCESS_MASK access, HANDLE keyboard,
                                         DWORD offset, PVOID table, PUNICODE_STRING klid, DWORD locale)
 {
@@ -391,7 +420,16 @@ HWINSTA NTAPI NtUserCreateWindowStation(POBJECT_ATTRIBUTES attributes, ACCESS_MA
         W32SetLastError(status == STATUS_OBJECT_NAME_COLLISION ? ERROR_ALREADY_EXISTS : status_error(status));
         return nullptr;
     }
-    HANDLE h = insert(w, access, oa.Attributes);
+    /* the security attributes the caller gave are the descriptor of a window station it made. */
+    if (created && oa.SecurityDescriptor) {
+        status = ObReplaceSecurity(w, &oa, UserMode);
+        if (!NT_SUCCESS(status)) {
+            W32SetLastError(status_error(status));
+            ObDereferenceObject(w);
+            return nullptr;
+        }
+    }
+    HANDLE h = created ? insert(w, access, oa.Attributes) : insert_open(w, access, oa.Attributes);
     ObDereferenceObject(w);
     if (h)
         W32SetLastError(created ? ERROR_SUCCESS : ERROR_ALREADY_EXISTS);
@@ -423,7 +461,7 @@ HWINSTA NTAPI NtUserOpenWindowStation(POBJECT_ATTRIBUTES attributes, ACCESS_MASK
         W32SetLastError(ERROR_FILE_NOT_FOUND);
         return nullptr;
     }
-    HANDLE h = insert(w, access, oa.Attributes);
+    HANDLE h = insert_open(w, access, oa.Attributes);
     ObDereferenceObject(w);
     return (HWINSTA)h;
 }
@@ -445,6 +483,10 @@ static W32WINSTA *root_winsta(HANDLE root)
 HDESK NTAPI NtUserCreateDesktopEx(POBJECT_ATTRIBUTES attributes, PUNICODE_STRING device, PVOID devmode, DWORD flags,
                                   ACCESS_MASK access, ULONG heap_kb)
 {
+    if (W32UiLimited(W32_UILIMIT_DESKTOP)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return nullptr;
+    }
     types();
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING name = {};
@@ -470,8 +512,13 @@ HDESK NTAPI NtUserCreateDesktopEx(POBJECT_ATTRIBUTES attributes, PUNICODE_STRING
         d->Flags = flags;
         if (heap_kb)
             d->HeapKb = heap_kb;
+        /* what the caller gave as the security of the desktop is its descriptor; a refusal leaves no desktop. */
+        if (!assign_new(d, &oa)) {
+            ObDereferenceObject(d);
+            return nullptr;
+        }
     }
-    HANDLE h = insert(d, access, oa.Attributes);
+    HANDLE h = created ? insert(d, access, oa.Attributes) : insert_open(d, access, oa.Attributes);
     ObDereferenceObject(d);
     if (h)
         W32SetLastError(created ? ERROR_SUCCESS : ERROR_ALREADY_EXISTS);
@@ -500,7 +547,7 @@ HDESK NTAPI NtUserOpenDesktop(POBJECT_ATTRIBUTES attributes, DWORD flags, ACCESS
         W32SetLastError(ERROR_FILE_NOT_FOUND);
         return nullptr;
     }
-    HANDLE h = insert(d, access, oa.Attributes);
+    HANDLE h = insert_open(d, access, oa.Attributes);
     ObDereferenceObject(d);
     return (HDESK)h;
 }
@@ -513,7 +560,7 @@ HDESK NTAPI NtUserOpenInputDesktop(DWORD flags, BOOL inherit, ACCESS_MASK access
         W32SetLastError(ERROR_ACCESS_DENIED);
         return nullptr;
     }
-    return (HDESK)insert(g_default, access, inherit ? OBJ_INHERIT : 0);
+    return (HDESK)insert_open(g_default, access, inherit ? OBJ_INHERIT : 0);
 }
 
 HWINSTA NTAPI NtUserGetProcessWindowStation(void)
@@ -637,6 +684,10 @@ BOOL NTAPI NtUserCloseDesktop(HDESK handle)
 
 BOOL NTAPI NtUserSwitchDesktop(HDESK handle, DWORD flags, DWORD fade)
 {
+    if (W32UiLimited(W32_UILIMIT_DESKTOP)) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
     types();
     W32DESKTOP *d;
     if (!NT_SUCCESS(ObReferenceHandle(handle, g_desktop_type, UserMode, (PVOID *)&d, nullptr))) {

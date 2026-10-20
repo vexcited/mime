@@ -1545,7 +1545,7 @@ void entry(void)
     ShutdownInit();
 
     /* the clients wait for this event: it is created here, or it was by the first of them. */
-    HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, SCM_START_EVENT);
+    HANDLE ready = SvcCreateWorldEvent(SCM_START_EVENT);
     if (ready)
         SetEvent(ready);
     BootStart();

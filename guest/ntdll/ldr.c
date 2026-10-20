@@ -3,6 +3,7 @@
  * import binding, thread local storage and dll notifications.
  */
 #include "sxs.h"
+#include <mime/mitigation.h>
 
 #define LDRP_DONT_CALL_FOR_THREADS 0x00040000
 #define LDRP_LOAD_IN_PROGRESS 0x00001000
@@ -576,6 +577,18 @@ static BOOLEAN search_list(PCWSTR list, PCWSTR name, PWSTR out, SIZE_T out_chars
     return FALSE;
 }
 
+/* whether the process asked to find a dll of a plain name in System32 before anywhere else, read once. */
+static BOOLEAN prefers_system32(void)
+{
+    static LONG answer = -1;
+    if (answer < 0) {
+        ULONG policy[2] = {MIME_POLICY_IMAGE_LOAD, 0};
+        NTSTATUS status = NtQueryInformationProcess(NtCurrentProcess(), ProcessMitigationPolicy, policy, sizeof(policy), nullptr);
+        answer = NT_SUCCESS(status) && (policy[1] & MIME_IMAGE_LOAD_PREFER_SYSTEM32) ? 1 : 0;
+    }
+    return answer == 1;
+}
+
 /* finds a dll the way windows does for desktop applications with safe search. */
 static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_chars)
 {
@@ -596,6 +609,8 @@ static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_
 #endif
         return file_exists(out) ? STATUS_SUCCESS : STATUS_DLL_NOT_FOUND;
     }
+    if (prefers_system32() && try_directory(g_system32, wcslen(g_system32), name, out, out_chars))
+        return STATUS_SUCCESS;
     if (search_path && search_list(search_path, name, out, out_chars))
         return STATUS_SUCCESS;
     PRTL_USER_PROCESS_PARAMETERS pp = NtCurrentPeb()->ProcessParameters;

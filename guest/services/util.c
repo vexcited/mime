@@ -86,3 +86,18 @@ void SvcSleepChanged(DWORD ms)
 {
     SleepConditionVariableCS(&g_changed, &g_lock, ms);
 }
+
+/* a manual reset event the programs of the session wait on, made with the descriptor of SCM_EVENT_SDDL. */
+HANDLE SvcCreateWorldEvent(const WCHAR *name)
+{
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, FALSE};
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(SCM_EVENT_SDDL, SDDL_REVISION_1, &sd, nullptr))
+        sa.lpSecurityDescriptor = sd;
+    HANDLE event = CreateEventW(&sa, TRUE, FALSE, name);
+    DWORD error = GetLastError();
+    if (sd)
+        LocalFree(sd);
+    SetLastError(error);
+    return event;
+}

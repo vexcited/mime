@@ -8,10 +8,12 @@
  * second a child of the first (when it has no parent, no process and no child of its own), and goes on being
  * in the first. a process is in its job and every job above it: each job counts the processes of the jobs
  * below, hears of them on its port, ends them with its own end and keeps the limit of active processes over
- * all of them. limits are recorded and reported; enforced are the kill on close, the breakaway flags and the
- * limit of active processes. a process that would be one too many is not created, or not assigned, with
- * STATUS_QUOTA_EXCEEDED, and the port is told as windows does: the limit was hit, and the process that was
- * refused left.
+ * all of them. enforced are the kill on close, the breakaway flags, the limit of active processes, the limits of the
+ * memory a process and the job may commit, the error mode that die on unhandled exception forces, the private table
+ * of global atoms, and the restrictions of the user interface, which win32k reads with MimeProcessUiLimits; the
+ * limits of time, the affinity and the priority are recorded and reported. a process that would be one too many is
+ * not created, or not assigned, with STATUS_QUOTA_EXCEEDED, and the port is told as windows does: the limit was
+ * hit, and the process that was refused left.
  */
 #include "../ntos.h"
 
@@ -22,13 +24,22 @@
 #define JOB_OBJECT_ALL_ACCESS (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x3F)
 
 #define JOB_OBJECT_LIMIT_ACTIVE_PROCESS 0x00000008
+#define JOB_OBJECT_LIMIT_PROCESS_MEMORY 0x00000100
+#define JOB_OBJECT_LIMIT_JOB_MEMORY 0x00000200
+#define JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION 0x00000400
 #define JOB_OBJECT_LIMIT_VALID 0x00007FFF
+#define JOB_OBJECT_UILIMIT_VALID 0x000000FF
+#define JOB_OBJECT_UILIMIT_GLOBALATOMS 0x00000020
+#define JOB_OBJECT_UILIMIT_HANDLES 0x00000001
+#define SEM_NOGPFAULTERRORBOX 0x0002
 #define JOB_OBJECT_LIMIT_BREAKAWAY_OK 0x00000800
 #define JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK 0x00001000
 #define JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE 0x00002000
 
 #define JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT 3
 #define JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO 4
+#define JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT 9
+#define JOB_OBJECT_MSG_JOB_MEMORY_LIMIT 10
 #define JOB_OBJECT_MSG_NEW_PROCESS 6
 #define JOB_OBJECT_MSG_EXIT_PROCESS 7
 #define JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS 8
@@ -84,6 +95,10 @@ typedef struct EJOB {
     ULONG UiRestrictions;
     PVOID Port; /* referenced io completion object */
     PVOID Key;
+    LONG64 CommitPages;        /* the commit charge of the processes in it and below, for the limit of the job's memory */
+    LONG64 PeakCommitPages;
+    SIZE_T PeakProcessCommit;  /* the largest commit charge a process of it had, in bytes */
+    PVOID Atoms;               /* the private table of global atoms, made when the first one is asked for */
 } EJOB;
 
 POBJECT_TYPE PsJobType;
@@ -111,6 +126,117 @@ ULONG NTAPI MimeProcessUiLimits(PEPROCESS process)
     return limits;
 }
 
+/*
+ * whether a process may use the user handles of another: not when a job it is in holds its processes to their own
+ * handles and the other is not in that job.
+ */
+BOOLEAN NTAPI MimeProcessMayUseUserHandles(PEPROCESS user, PEPROCESS owner)
+{
+    BOOLEAN allowed = TRUE;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    for (EJOB *job = user->Job; job && allowed; job = job->Parent) {
+        if (!(job->UiRestrictions & JOB_OBJECT_UILIMIT_HANDLES))
+            continue;
+        allowed = FALSE;
+        for (EJOB *other = owner->Job; other && !allowed; other = other->Parent)
+            allowed = other == job;
+    }
+    KeReleaseSpinLock(&g_lock, irql);
+    return allowed;
+}
+
+#define JOB_CHAIN_MAX 16
+
+/* the jobs from this one up to the root, at most JOB_CHAIN_MAX; call with the lock. */
+static ULONG chain_of(EJOB *job, EJOB **chain)
+{
+    ULONG n = 0;
+    for (; job && n < JOB_CHAIN_MAX; job = job->Parent)
+        chain[n++] = job;
+    return n;
+}
+
+/* the error mode bits the jobs of a process force: no error box for a crash, with die on unhandled exception. */
+ULONG PspJobForcedErrorMode(PEPROCESS process)
+{
+    ULONG bits = 0;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    for (EJOB *job = process->Job; job; job = job->Parent)
+        if (job->Limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION)
+            bits |= SEM_NOGPFAULTERRORBOX;
+    KeReleaseSpinLock(&g_lock, irql);
+    return bits;
+}
+
+/* the job whose private table of global atoms the process uses, or NULL for the table of the session. */
+PVOID *PspJobAtomTableSlot(PEPROCESS process)
+{
+    PVOID *slot = nullptr;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    for (EJOB *job = process->Job; job; job = job->Parent) {
+        if (job->UiRestrictions & JOB_OBJECT_UILIMIT_GLOBALATOMS) {
+            slot = &job->Atoms;
+            break;
+        }
+    }
+    KeReleaseSpinLock(&g_lock, irql);
+    return slot;
+}
+
+/*
+ * a process commits memory: pages more on top of the held ones. A limit of the memory of a process or of the job it
+ * is in, or of one above it, refuses with the port told of it as windows does. The pages count for every job it
+ * is in otherwise.
+ */
+BOOLEAN PspJobChargeCommit(PEPROCESS process, SIZE_T held_pages, SIZE_T pages)
+{
+    EJOB *chain[JOB_CHAIN_MAX];
+    EJOB *refused = nullptr;
+    ULONG message = 0, n = 0;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    n = chain_of(process->Job, chain);
+    for (ULONG i = 0; i < n && !refused; i++) {
+        ULONG flags = chain[i]->Limits.BasicLimitInformation.LimitFlags;
+        if ((flags & JOB_OBJECT_LIMIT_PROCESS_MEMORY) &&
+            (held_pages + pages) * PAGE_SIZE > chain[i]->Limits.ProcessMemoryLimit) {
+            refused = chain[i];
+            message = JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT;
+        } else if ((flags & JOB_OBJECT_LIMIT_JOB_MEMORY) &&
+                   (SIZE_T)(chain[i]->CommitPages + (LONG64)pages) * PAGE_SIZE > chain[i]->Limits.JobMemoryLimit) {
+            refused = chain[i];
+            message = JOB_OBJECT_MSG_JOB_MEMORY_LIMIT;
+        }
+    }
+    if (!refused) {
+        for (ULONG i = 0; i < n; i++) {
+            chain[i]->CommitPages += (LONG64)pages;
+            if (chain[i]->CommitPages > chain[i]->PeakCommitPages)
+                chain[i]->PeakCommitPages = chain[i]->CommitPages;
+            if ((held_pages + pages) * PAGE_SIZE > chain[i]->PeakProcessCommit)
+                chain[i]->PeakProcessCommit = (held_pages + pages) * PAGE_SIZE;
+        }
+    }
+    KeReleaseSpinLock(&g_lock, irql);
+    if (refused)
+        post(refused, message, process);
+    return refused == nullptr;
+}
+
+void PspJobReturnCommit(PEPROCESS process, SIZE_T pages)
+{
+    EJOB *chain[JOB_CHAIN_MAX];
+    KIRQL irql;
+    KeAcquireSpinLock(&g_lock, &irql);
+    ULONG n = chain_of(process->Job, chain);
+    for (ULONG i = 0; i < n; i++)
+        chain[i]->CommitPages -= (LONG64)pages < chain[i]->CommitPages ? (LONG64)pages : chain[i]->CommitPages;
+    KeReleaseSpinLock(&g_lock, irql);
+}
+
 /* a job by handle, which must grant the rights asked of a caller in user mode. */
 static NTSTATUS reference_job(HANDLE handle, ACCESS_MASK access, EJOB **job)
 {
@@ -124,17 +250,6 @@ static NTSTATUS reference_job(HANDLE handle, ACCESS_MASK access, EJOB **job)
         status = STATUS_ACCESS_DENIED;
     }
     return status;
-}
-
-#define JOB_CHAIN_MAX 16
-
-/* the jobs from this one up to the root, at most JOB_CHAIN_MAX; call with the lock. */
-static ULONG chain_of(EJOB *job, EJOB **chain)
-{
-    ULONG n = 0;
-    for (; job && n < JOB_CHAIN_MAX; job = job->Parent)
-        chain[n++] = job;
-    return n;
 }
 
 /* every process of the job and the jobs below it, referenced; call with the lock. */
@@ -191,6 +306,8 @@ static void job_delete(PVOID object)
     }
     if (job->Port)
         ObDereferenceObject(job->Port);
+    if (job->Atoms)
+        ExpFreeAtomTable(job->Atoms);
 }
 
 void PspInitializeJobs(void)
@@ -257,6 +374,9 @@ static NTSTATUS join(EJOB *job, PEPROCESS process)
             for (ULONG i = 0; i < entered; i++) {
                 chain[i]->Active++;
                 chain[i]->Total++;
+                chain[i]->CommitPages += (LONG64)process->AddressSpace.CommitCharge;
+                if (chain[i]->CommitPages > chain[i]->PeakCommitPages)
+                    chain[i]->PeakCommitPages = chain[i]->CommitPages;
             }
             ObReferenceObject(job);
             if (old)
@@ -272,6 +392,8 @@ static NTSTATUS join(EJOB *job, PEPROCESS process)
         return status;
     if (old)
         ObDereferenceObject(old);
+    /* a job that does not let a process crash with a box makes the process know it. */
+    process->DefaultHardErrorMode |= PspJobForcedErrorMode(process);
     for (ULONG i = 0; i < entered; i++)
         post(chain[i], JOB_OBJECT_MSG_NEW_PROCESS, process);
     return STATUS_SUCCESS;
@@ -289,8 +411,12 @@ NTSTATUS PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags)
     ULONG limits = job->Limits.BasicLimitInformation.LimitFlags;
     if (limits & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)
         return STATUS_SUCCESS;
-    if ((flags & PROCESS_CREATE_FLAGS_BREAKAWAY) && (limits & JOB_OBJECT_LIMIT_BREAKAWAY_OK))
-        return STATUS_SUCCESS;
+    if (flags & PROCESS_CREATE_FLAGS_BREAKAWAY) {
+        /* a job that does not allow it refuses the creation, it does not quietly keep the process. */
+        if (limits & JOB_OBJECT_LIMIT_BREAKAWAY_OK)
+            return STATUS_SUCCESS;
+        return STATUS_ACCESS_DENIED;
+    }
     NTSTATUS status = join(job, process);
     if (!NT_SUCCESS(status))
         post(job, JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS, process);
@@ -333,8 +459,13 @@ void PspJobProcessExit(PEPROCESS process)
     EJOB *leaf = process->Job;
     if (leaf) {
         n = chain_of(leaf, chain);
-        for (ULONG i = 0; i < n; i++)
+        SIZE_T held = process->AddressSpace.CommitCharge, peak = process->AddressSpace.PeakCommitCharge * PAGE_SIZE;
+        for (ULONG i = 0; i < n; i++) {
             emptied[i] = --chain[i]->Active == 0;
+            chain[i]->CommitPages -= (LONG64)held < chain[i]->CommitPages ? (LONG64)held : chain[i]->CommitPages;
+            if (peak > chain[i]->PeakProcessCommit)
+                chain[i]->PeakProcessCommit = peak;
+        }
         RemoveEntryList(&process->JobLinks);
         process->Job = nullptr;
     }
@@ -523,8 +654,21 @@ NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID i
             break;
         }
         case JobObjectBasicUIRestrictions:
-            job->UiRestrictions = in.ui;
+            if (in.ui & ~JOB_OBJECT_UILIMIT_VALID)
+                status = STATUS_INVALID_PARAMETER;
+            else
+                job->UiRestrictions = in.ui;
             break;
+        }
+        /* a limit that forbids the box of a crash reaches the processes that are in the job already. */
+        if (NT_SUCCESS(status) && (klass == JobObjectBasicLimitInformation || klass == JobObjectExtendedLimitInformation) &&
+            (job->Limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION)) {
+            PEPROCESS members[256];
+            ULONG n = snapshot(job, members, 256);
+            for (ULONG i = 0; i < n; i++) {
+                members[i]->DefaultHardErrorMode |= SEM_NOGPFAULTERRORBOX;
+                ObDereferenceObject(members[i]);
+            }
         }
     }
     ObDereferenceObject(job);
@@ -582,6 +726,8 @@ NTSTATUS NTAPI NtQueryInformationJobObject(HANDLE job_handle, ULONG klass, PVOID
         break;
     case JobObjectExtendedLimitInformation:
         out.extended = job->Limits;
+        out.extended.PeakProcessMemoryUsed = job->PeakProcessCommit;
+        out.extended.PeakJobMemoryUsed = (SIZE_T)job->PeakCommitPages * PAGE_SIZE;
         size = sizeof(out.extended);
         break;
     case JobObjectBasicUIRestrictions:

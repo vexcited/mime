@@ -745,6 +745,7 @@ MIME_STATIC_ASSERT(sizeof(OBJECT_HEADER) == 64, "OBJECT_HEADER");
 #define OB_FLAG_PERMANENT 0x1
 #define OB_FLAG_KERNEL 0x2
 #define OB_FLAG_SD_PENDING 0x4 /* made, no security descriptor assigned yet */
+#define OB_FLAG_BOOT 0x8       /* put in the namespace by the kernel itself: it gets the descriptor of the system's own objects */
 
 #define OBJECT_TO_HEADER(o) ((OBJECT_HEADER *)((PUCHAR)(o) - sizeof(OBJECT_HEADER)))
 #define HEADER_TO_OBJECT(h) ((PVOID)((PUCHAR)(h) + sizeof(OBJECT_HEADER)))
@@ -794,6 +795,7 @@ void ObpFreeSecurity(PVOID header);
 typedef struct _SD_BLOB {
     volatile LONG Refs;
     ULONG Length;
+    ULONG64 Serial; /* never the same for two blobs, so a result kept for a blob cannot meet another */
     UCHAR Data[1];
 } SD_BLOB;
 
@@ -814,11 +816,22 @@ NTSTATUS SeSdFromBytes(const void *descriptor, ULONG length, SD_BLOB **out);
 NTSTATUS SeSdAssign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING mapping, BOOLEAN container,
                     KPROCESSOR_MODE mode, SD_BLOB **out);
 /* a child of a parent as the user of the machine would have made it, which is how an untouched file or key shows. */
+ULONG SeSdIntegrityLevel(const SD_BLOB *sd);
+ULONG64 SeSessionTokenStamp(void);
+NTSTATUS SeSdAddInheritedLabel(SD_BLOB *sd, ULONG rid, SD_BLOB **out);
 NTSTATUS SeSdDerive(const SD_BLOB *parent, SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
 /* whether the calling thread makes things the way the user of the machine does, with nothing to record. */
 BOOLEAN SeSdSubjectIsDefault(void);
 /* the same with nothing from the creator or the parent, for a thread acting as one token: cached. */
 NTSTATUS SeSdDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
+/* a descriptor with an entry added to its list for a sid, if it has none for it. */
+NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mask, UCHAR flags, SD_BLOB **out);
+/* what the objects the kernel makes at boot show, see sd.c. */
+#define SE_BOOT_PLAIN 0
+#define SE_BOOT_CREATABLE 1
+#define SE_BOOT_INTERACTIVE 2
+#define SE_BOOT_PLAIN_SYSTEM 3 /* the system and the administrators only */
+NTSTATUS SeSdBootDefault(SD_MAPPING mapping, BOOLEAN container, ULONG kind, SD_BLOB **out);
 /* what an object nobody gave a descriptor gets: the system and the administrators own it. */
 NTSTATUS SeSdSystemDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
 /* a descriptor changed by the parts of the information; the checks of the kernel for a caller in user mode. */
@@ -843,11 +856,57 @@ extern const UCHAR SeSidSystem[12], SeSidAdministrators[16], SeSidUsers[16], SeS
     SeSidAuthenticatedUsers[12], SeSidCreatorOwner[12], SeSidTrustedInstaller[32], SeSidAllAppPackages[16],
     SeSidRestrictedPackages[16];
 
+/*
+ * access checks against descriptors, se/access.c. The subject is the token the calling thread acts with, the
+ * primary one with SE_ACCESS_AS_SELF. Callers in kernel mode are not checked, the callers decide that.
+ */
+#define SE_ACCESS_AS_SELF 0x1       /* the process's token, as OpenThreadToken with OpenAsSelf asks */
+#define SE_ACCESS_BACKUP_INTENT 0x2 /* a file or key opened for backup or restore, which those privileges open up */
+#ifndef SE_BACKUP_PRIVILEGE
+#define SE_BACKUP_PRIVILEGE 17
+#define SE_RESTORE_PRIVILEGE 18
+#define SE_DEBUG_PRIVILEGE 20
+#endif
+extern BOOLEAN SeAccessEnforced;
+/*
+ * what the calling thread may do with an object that has this descriptor: STATUS_ACCESS_DENIED, the status of a
+ * privilege it lacks, STATUS_BAD_IMPERSONATION_LEVEL for a thread that may only identify a client. The access
+ * asked for may hold MAXIMUM_ALLOWED and generic rights; *granted is what a handle gets, previous added.
+ * A NULL descriptor and the system's own token pass.
+ */
+NTSTATUS SeCheckAccess(const SD_BLOB *sd, SD_MAPPING mapping, ACCESS_MASK desired, ACCESS_MASK previous, ULONG flags,
+                       ACCESS_MASK *granted);
+/* whether the calling thread's token is one the descriptors apply to: not when the kernel is told not to, nor for the system's own. */
+BOOLEAN SeAccessCheckRequired(void);
+/* whether the thread acts with an enabled privilege of this luid, or the system token. */
+BOOLEAN SeThreadHasPrivilege(ULONG luid);
+/* whether the thread's token may skip the checks of every directory on the way to an object. */
+BOOLEAN SeThreadBypassesTraverse(void);
+/* the integrity level of the thread's token and of its process, as a rid. */
+ULONG SeThreadIntegrityRid(void);
+/* writes a refusal to the log when the kernel option trace-access is set. */
+void SeTraceDescriptor(const SD_BLOB *sd);
+void SeTraceDenial(PCSTR what, const UNICODE_STRING *name, ACCESS_MASK desired, NTSTATUS status);
+extern BOOLEAN SeTraceAccess;
+
 /* the descriptors of the files of mimefs, io/mimefs_sec.c. */
+void MimeUserSid(UCHAR sid[28]);
 NTSTATUS MimeFsRomSecurity(SD_BLOB **out);
 NTSTATUS MimeFsEffectiveSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULONG up, BOOLEAN directory,
                                  SD_BLOB **out);
 NTSTATUS MimeFsStoreSecurity(ULONG64 host, SD_BLOB *sd);
+void MimeFsSecurityChanged(void);
+#ifndef STATUS_MORE_PROCESSING_REQUIRED
+#define STATUS_MORE_PROCESSING_REQUIRED ((NTSTATUS)0xC0000016L)
+#endif
+/* what the host told of the stored descriptors when it opened a file: MimeFsOpen's sd_ fields. */
+typedef struct _MIMEFS_STORED {
+    ULONG Status, Length, Distance;
+    const UCHAR *Data;
+} MIMEFS_STORED;
+NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, ACCESS_MASK desired,
+                         ULONG options, ULONG disposition, BOOLEAN created, const MIMEFS_STORED *known, ACCESS_MASK *granted);
+NTSTATUS MimeFsCheckRomOpen(ACCESS_MASK desired, ULONG options, ACCESS_MASK *granted);
 NTSTATUS MimeFsAssignNewFile(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, SD_BLOB *creator,
                              KPROCESSOR_MODE mode);
 
@@ -857,6 +916,12 @@ NTSTATUS ObComputeSecurity(POBJECT_TYPE type, const OBJECT_ATTRIBUTES *attribute
 void ObAttachSecurity(PVOID object, SD_BLOB *sd);
 /* stores the descriptor of a new object, from the attributes of its creation and the directory it joins. */
 NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode);
+NTSTATUS ObAssignBootSecurity(PVOID object);
+/* the open of an object that exists by a caller in user mode, checked against its descriptor; *granted is what the handle gets. */
+NTSTATUS ObCheckOpenAccess(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mode, ACCESS_MASK *granted);
+NTSTATUS ObCheckOpenAccessEx(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mode, ULONG flags, ACCESS_MASK *granted);
+/* the right to make a named object in a directory. */
+NTSTATUS ObCheckCreateAccess(PVOID directory, KPROCESSOR_MODE mode);
 /* the descriptor of an object, whole, in a blob of its own (the object's or its file system's). */
 NTSTATUS ObReferenceSecurity(PVOID object, SD_BLOB **sd);
 NTSTATUS ObStoreSecurity(PVOID object, SD_BLOB *sd);
@@ -867,6 +932,7 @@ NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode);
 NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes, POBJECT_TYPE type,
                             KPROCESSOR_MODE mode, PVOID parse_context, PVOID *object);
 NTSTATUS ObInsertIntoDirectory(POBJECT_DIRECTORY dir, PVOID object, PCUNICODE_STRING name);
+BOOLEAN ObDirectoryHasName(POBJECT_DIRECTORY dir, PCUNICODE_STRING name);
 NTSTATUS ObCreateDirectory(PCWSTR path, POBJECT_DIRECTORY *out);
 NTSTATUS ObCreateSymbolicLink(PCWSTR link, PCWSTR target);
 NTSTATUS ObInitializeHandleTable(PHANDLE_TABLE table);
@@ -905,7 +971,10 @@ typedef struct _ETHREAD {
     UCHAR CreateQos;            /* impersonation level asked by the file being created plus one, 0 for none */
     BOOLEAN CreateQosEffective;
     BOOLEAN DynamicCodeAllowed; /* ThreadDynamicCodePolicyInfo: this thread may opt out of a ban on dynamic code */
+    PVOID ParseRootObject;      /* the object a name is being looked up from a handle to, whose rights ParseRootAccess has */
+    ACCESS_MASK ParseRootAccess;
     BOOLEAN HideFromDebugger;
+    NTSTATUS PendingException;  /* raised in the thread as the system call returns, for a strict handle check that failed */
 } ETHREAD;
 
 #define MIME_IMAGE_NAME_CHARS 260
@@ -960,6 +1029,7 @@ typedef struct _EPROCESS {
     UCHAR PriorityClass;   /* PROCESS_PRIORITY_CLASS_*, ps/priority.c */
     BOOLEAN Foreground;
     BOOLEAN DisableBoost;
+    ULONG DefaultHardErrorMode; /* SetErrorMode, with the bits a job forces */
     ULONG64 CreateTime;
     ULONG64 ExitTime;
     KEVENT ExitEvent;
@@ -984,6 +1054,12 @@ typedef struct _EPROCESS {
 
 extern LIST_ENTRY PsActiveProcessHead;
 void ExReleaseTimerResolution(PEPROCESS process);
+/* ps/job.c: what the jobs of a process make of it. */
+ULONG PspJobForcedErrorMode(PEPROCESS process);
+PVOID *PspJobAtomTableSlot(PEPROCESS process);
+BOOLEAN PspJobChargeCommit(PEPROCESS process, SIZE_T held_pages, SIZE_T pages);
+void PspJobReturnCommit(PEPROCESS process, SIZE_T pages);
+void ExpFreeAtomTable(PVOID table);
 extern PEPROCESS PsIdleProcess;
 extern POBJECT_TYPE PsProcessTypeObject;
 extern POBJECT_TYPE PsThreadTypeObject;
@@ -1060,6 +1136,8 @@ NTSTATUS SepAssignProcessToken(PEPROCESS child, PEPROCESS parent);
 void SepSetProcessToken(PEPROCESS process, struct _TOKEN *token);
 struct _TOKEN *SepCreateServiceControllerToken(void);
 struct _TOKEN *SepCreateElevatedUserToken(void);
+NTSTATUS SepAssignNewProcessSecurity(PEPROCESS process, PETHREAD thread, SD_BLOB *process_offer, SD_BLOB *thread_offer,
+                                     KPROCESSOR_MODE mode);
 ULONG SepTokenSessionId(PEPROCESS process);
 void SepFreeProcessToken(PEPROCESS process);
 void SepFreeThreadToken(PETHREAD thread);

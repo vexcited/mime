@@ -12,6 +12,8 @@
 #include <mime/scm.h>
 
 ADVAPI BOOL WINAPI IsValidSecurityDescriptor(PSECURITY_DESCRIPTOR sd);
+ADVAPI BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorW(LPCWSTR text, DWORD revision,
+                                                                        PSECURITY_DESCRIPTOR *result, PULONG size);
 ADVAPI DWORD WINAPI GetSecurityDescriptorLength(PSECURITY_DESCRIPTOR sd);
 ADVAPI BOOL WINAPI GetSecurityDescriptorControl(PSECURITY_DESCRIPTOR sd, PSECURITY_DESCRIPTOR_CONTROL control,
                                                 LPDWORD revision);
@@ -268,6 +270,21 @@ static DWORD call_simple(SCM_WRITER *w)
     return error;
 }
 
+/* the event as the manager makes it, open to everyone to wait on: whoever gets there first makes it. */
+static HANDLE create_start_event(void)
+{
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, FALSE};
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(SCM_EVENT_SDDL, 1, &sd, nullptr))
+        sa.lpSecurityDescriptor = sd;
+    HANDLE event = CreateEventW(&sa, TRUE, FALSE, SCM_START_EVENT);
+    DWORD error = GetLastError();
+    if (sd)
+        LocalFree(sd);
+    SetLastError(error);
+    return event;
+}
+
 /* the manager is up when its event is set, the first time anyone asks; windows waits three minutes for it. */
 static DWORD wait_ready(void)
 {
@@ -279,7 +296,7 @@ static DWORD wait_ready(void)
         if (error != ERROR_FILE_NOT_FOUND)
             return error;
         /* nobody has made it yet: the first client does, so that there is one to wait for. */
-        event = CreateEventW(nullptr, TRUE, FALSE, SCM_START_EVENT);
+        event = create_start_event();
         if (!event) {
             error = GetLastError();
             if (error != ERROR_ALREADY_EXISTS)

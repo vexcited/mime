@@ -21,6 +21,9 @@ typedef struct _OPEN_PACKET {
     IO_STATUS_BLOCK Iosb;
     BOOLEAN StatOnly; /* only the attributes of the name are wanted, see SL_OPEN_STAT_ONLY */
     SD_BLOB *Creator; /* the descriptor the creator offered, a file made by the open gets it */
+    BOOLEAN UserMode; /* a program asked for the open, which the file system holds to the descriptors */
+    BOOLEAN Checked;  /* the file system checked it, and GrantedAccess is what the handle gets */
+    ACCESS_MASK GrantedAccess;
 } OPEN_PACKET, *POPEN_PACKET;
 
 #define OPEN_PACKET_MAGIC 0x4F50454Eu
@@ -329,7 +332,11 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
     params.Parameters.Create.ShareAccess = (USHORT)op->ShareAccess;
     if (op->StatOnly)
         params.Flags |= SL_OPEN_STAT_ONLY;
+    if (op->UserMode)
+        params.Flags |= SL_FORCE_ACCESS_CHECK;
     status = IopSynchronousRequest(file, IRP_MJ_CREATE, 0, nullptr, 0, &params, &op->Iosb);
+    op->Checked = security.Checked;
+    op->GrantedAccess = security.GrantedAccess;
     if (!NT_SUCCESS(status)) {
         file->DeviceObject = nullptr; /* never opened, no close irp */
         ObDereferenceObject(file);
@@ -405,6 +412,7 @@ static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     op.Options = options;
     op.FileAttributes = file_attributes;
     op.ShareAccess = share;
+    op.UserMode = mode == UserMode;
     PFILE_OBJECT related = nullptr;
     if (attributes->RootDirectory) {
         NTSTATUS st = ObReferenceHandle(attributes->RootDirectory, nullptr, mode, (PVOID *)&related, nullptr);
@@ -438,7 +446,8 @@ static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
                 *iosb = op.Iosb;
             if (!NT_SUCCESS(st))
                 return st;
-            return ObInsertObject(found, access, mode == UserMode ? (attributes->Attributes & ~OBJ_KERNEL_HANDLE) : attributes->Attributes, handle);
+            return ObInsertObject(found, op.Checked ? op.GrantedAccess : access,
+                                  mode == UserMode ? (attributes->Attributes & ~OBJ_KERNEL_HANDLE) : attributes->Attributes, handle);
         }
         ObDereferenceObject(related);
     }
@@ -456,7 +465,7 @@ static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     ULONG attrs = attributes->Attributes;
     if (mode == UserMode)
         attrs &= ~OBJ_KERNEL_HANDLE;
-    return ObInsertObject(found, access, attrs, handle);
+    return ObInsertObject(found, op.Checked ? op.GrantedAccess : access, attrs, handle);
 }
 
 NTSTATUS IopCreateFileEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,

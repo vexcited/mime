@@ -133,6 +133,10 @@ BOOLEAN SepSidEqual(const void *a, const void *b);
 void SepMakeSid(void *sid, UCHAR authority, ULONG count, const ULONG *sub);
 BOOLEAN SepIsElevatedGroup(const SEP_GROUP *group);
 
+/* sd.c */
+NTSTATUS SeSdAssignForToken(const SD_BLOB *creator, SD_MAPPING mapping, KPROCESSOR_MODE mode, PTOKEN token, SD_BLOB **out);
+NTSTATUS SeSdForToken(PTOKEN token, SD_MAPPING mapping, SD_BLOB **out);
+
 /* token.c */
 ULONG64 SepAllocateLuid(void);
 ULONG SepPrivilegeCount(const TOKEN *t);
@@ -143,6 +147,10 @@ PTOKEN SepDuplicate(const PTOKEN source, ULONG type, ULONG level, BOOLEAN effect
 NTSTATUS SepFilter(const PTOKEN source, ULONG flags, ULONG disable_count, const SEP_GROUP *disable, ULONG delete_count,
                    const ULONG *delete_luids, ULONG restrict_count, const SEP_GROUP *restricting, PTOKEN *out);
 NTSTATUS SepInsertToken(PTOKEN token, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
+NTSTATUS SepAssignTokenSecurity(PTOKEN token, const OBJECT_ATTRIBUTES *attributes, BOOLEAN own_subject);
+void SepFinalizeTokenSecurity(PTOKEN token);
+void SepAddPackageToDefaultList(PTOKEN token);
+NTSTATUS SepOpenToken(PTOKEN token, ACCESS_MASK access, ULONG attributes, BOOLEAN as_self, PHANDLE handle);
 ACCESS_MASK SepMapTokenAccess(ACCESS_MASK access);
 BOOLEAN SepCanImpersonate(PTOKEN process_token, PTOKEN token, ULONG level);
 NTSTATUS SepReferenceTokenByHandle(HANDLE handle, ACCESS_MASK required, PTOKEN *token, ACCESS_MASK *granted);

@@ -404,6 +404,8 @@ static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
     return MIME_HC_STATUS_OK;
 }
 
+static void open_fill_sd(MimeVm *vm, MimeFsOpen *req, const char *path);
+
 static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
 {
     char path[MIME_PATH_MAX];
@@ -433,6 +435,7 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
         fill_info(&st, leaf ? leaf + 1 : path, &req->info_out);
         req->handle_out = 0;
         req->action_out = FILE_OPENED;
+        open_fill_sd(vm, req, path);
         return MIME_HC_STATUS_OK;
     }
     bool want_dir = req->flags & MIME_FS_OPEN_DIRECTORY;
@@ -523,6 +526,7 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
     fill_info(&st, leaf ? leaf + 1 : path, &req->info_out);
     req->handle_out = h;
     req->action_out = action;
+    open_fill_sd(vm, req, path);
     return MIME_HC_STATUS_OK;
 }
 
@@ -653,6 +657,9 @@ static ssize_t sd_read_path(const char *path, bool memory_only, void *buf, size_
                 return n;
         }
     }
+    /* the table only holds what a file system that keeps no attributes could not keep, usually nothing. */
+    if (!g_sd_memory_count)
+        return 0;
     struct stat st;
     if (stat(path, &st) != 0)
         return 0;
@@ -665,17 +672,49 @@ static ssize_t sd_read_path(const char *path, bool memory_only, void *buf, size_
 }
 
 /*
+ * the directories known to have no descriptor of their own, by a hash of their path. Nearly every open asks the
+ * directories above its file, and nearly none has one, so a hit saves a call to the file system for each. A new
+ * generation, from every change the guest makes to a descriptor or to a name, forgets them all; a descriptor set
+ * on the files by a program of the host in the meantime is not seen until then.
+ */
+#define SD_NEGATIVE_SLOTS 4096
+static struct {
+    uint64_t hash;
+    uint32_t generation;
+} g_sd_negative[SD_NEGATIVE_SLOTS];
+static uint32_t g_sd_generation = 1;
+
+static uint64_t path_hash(const char *path, size_t length)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < length; i++)
+        h = (h ^ (uint8_t)path[i]) * 1099511628211ull;
+    return h | 1;
+}
+
+static bool sd_known_empty(const char *path, size_t length)
+{
+    uint64_t h = path_hash(path, length);
+    return g_sd_negative[h % SD_NEGATIVE_SLOTS].hash == h && g_sd_negative[h % SD_NEGATIVE_SLOTS].generation == g_sd_generation;
+}
+
+static void sd_note_empty(const char *path, size_t length)
+{
+    uint64_t h = path_hash(path, length);
+    g_sd_negative[h % SD_NEGATIVE_SLOTS].hash = h;
+    g_sd_negative[h % SD_NEGATIVE_SLOTS].generation = g_sd_generation;
+}
+
+/*
  * the nearest descriptor from a file up: the file's own, else its parent's and so on to the volume root. The
  * answer is the distance in levels in the upper half and the length in the lower, 0 length for none.
  */
-static uint64_t fs_get_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t capacity, uint64_t up, uint64_t *result)
+static uint64_t sd_nearest(MimeVm *vm, uint32_t volume, const char *host_path, void *buf, uint64_t capacity, uint64_t up,
+                           uint64_t *result)
 {
-    bool system = fh->volume == MIME_FS_VOLUME_SYSTEM;
-    void *buf = capacity ? mime_vm_phys(vm, pa, capacity) : NULL;
-    if (capacity && !buf)
-        return MIME_HC_STATUS_INVALID;
+    bool system = volume == MIME_FS_VOLUME_SYSTEM;
     char path[MIME_PATH_MAX];
-    mime_strlcpy(path, fh->host_path, sizeof(path));
+    mime_strlcpy(path, host_path, sizeof(path));
     size_t root = system ? strlen(vm->paths->drive_c) : 0;
     uint64_t distance = 0;
     for (uint64_t i = 0; i < up; i++) {
@@ -688,12 +727,17 @@ static uint64_t fs_get_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t ca
     }
     uint8_t scratch[16];
     for (;;) {
-        ssize_t n = sd_read_path(path, !system, buf ? buf : scratch, buf ? capacity : 0);
+        size_t length = strlen(path);
+        /* what has none is remembered until a descriptor is set or a name is moved, for the file as for a directory above it. */
+        bool above = system;
+        ssize_t n = above && sd_known_empty(path, length) ? 0 : sd_read_path(path, !system, buf ? buf : scratch, buf ? capacity : 0);
         if (n > 0) {
             *result = (distance << 32) | (uint64_t)n;
             return (uint64_t)n > capacity ? MIME_HC_STATUS_NO_MEMORY : MIME_HC_STATUS_OK;
         }
-        if (!system || strlen(path) <= root)
+        if (above && n == 0)
+            sd_note_empty(path, length);
+        if (!system || length <= root)
             break;
         char *slash = strrchr(path, '/');
         if (!slash || (size_t)(slash - path) < root)
@@ -705,8 +749,34 @@ static uint64_t fs_get_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t ca
     return MIME_HC_STATUS_OK;
 }
 
+/* the nearest stored descriptor of an open that asked for it, so that the guest which checks the open needs no second exit. */
+static void open_fill_sd(MimeVm *vm, MimeFsOpen *req, const char *path)
+{
+    req->sd_length = 0;
+    req->sd_distance = 0;
+    req->sd_status = MIME_HC_STATUS_OK;
+    if (!(req->flags & MIME_FS_OPEN_WANT_SD))
+        return;
+    uint64_t result = 0;
+    pthread_mutex_lock(&vm->fs_lock);
+    uint64_t status = sd_nearest(vm, req->volume, path, req->sd_data, sizeof(req->sd_data), 0, &result);
+    pthread_mutex_unlock(&vm->fs_lock);
+    req->sd_status = (uint32_t)status;
+    req->sd_length = (uint32_t)result;
+    req->sd_distance = (uint32_t)(result >> 32);
+}
+
+static uint64_t fs_get_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t capacity, uint64_t up, uint64_t *result)
+{
+    void *buf = capacity ? mime_vm_phys(vm, pa, capacity) : NULL;
+    if (capacity && !buf)
+        return MIME_HC_STATUS_INVALID;
+    return sd_nearest(vm, fh->volume, fh->host_path, buf, capacity, up, result);
+}
+
 static uint64_t fs_set_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t length)
 {
+    g_sd_generation++;
     const void *buf = length ? mime_vm_phys(vm, pa, length) : NULL;
     if (length > SD_MAX_BYTES || (length && !buf))
         return MIME_HC_STATUS_INVALID;
@@ -803,6 +873,7 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
 
     char *old = mime_xstrdup(src->host_path);
     pthread_mutex_lock(&vm->fs_lock);
+    g_sd_generation++;
     for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
         MimeFsHandle *fh = vm->fs_handles[i];
         if (!fh || !fh->host_path)

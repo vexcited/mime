@@ -499,7 +499,29 @@ static void pipe_name(PFILE_OBJECT file, PUNICODE_STRING name)
     }
 }
 
-static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *creator)
+#ifndef FILE_CREATE_PIPE_INSTANCE
+#define FILE_CREATE_PIPE_INSTANCE 0x0004
+#endif
+
+/*
+ * a program that opens a pipe is held to its descriptor: a client to the rights it asks for, which become the rights
+ * of its handle, and a server that makes another instance of a pipe to the right to make one.
+ */
+static NTSTATUS check_pipe(PIO_STACK_LOCATION stack, NP_PIPE *p, ACCESS_MASK asked, BOOLEAN client)
+{
+    PIO_SECURITY_CONTEXT context = stack->Parameters.Create.SecurityContext;
+    if (!(stack->Flags & SL_FORCE_ACCESS_CHECK) || !p->Sd || !context)
+        return STATUS_SUCCESS;
+    ACCESS_MASK granted;
+    NTSTATUS status = SeCheckAccess(p->Sd, IoFileObjectTypeObject->Init.GenericMapping, asked, 0, 0, &granted);
+    if (NT_SUCCESS(status) && client) {
+        context->GrantedAccess = granted;
+        context->Checked = TRUE;
+    }
+    return status;
+}
+
+static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *creator, PIO_STACK_LOCATION stack)
 {
     UNICODE_STRING name;
     pipe_name(file, &name);
@@ -513,6 +535,9 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *cr
             return STATUS_INSTANCE_NOT_AVAILABLE;
         if (c->Type != p->Type)
             return STATUS_ACCESS_DENIED;
+        NTSTATUS allowed = check_pipe(stack, p, FILE_CREATE_PIPE_INSTANCE, FALSE);
+        if (!NT_SUCCESS(allowed))
+            return allowed;
     } else {
         if (c->Disposition == FILE_OPEN)
             return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -575,7 +600,7 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *cr
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS open_client(PFILE_OBJECT file)
+static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
 {
     UNICODE_STRING name;
     pipe_name(file, &name);
@@ -586,6 +611,10 @@ static NTSTATUS open_client(PFILE_OBJECT file)
     NP_PIPE *p = find_pipe(&name);
     if (!p)
         return STATUS_OBJECT_NAME_NOT_FOUND;
+    PIO_SECURITY_CONTEXT context = stack->Parameters.Create.SecurityContext;
+    NTSTATUS allowed = check_pipe(stack, p, context ? context->DesiredAccess : 0, TRUE);
+    if (!NT_SUCCESS(allowed))
+        return allowed;
     NP_INSTANCE *in = listening_instance(p);
     if (!in)
         return STATUS_PIPE_NOT_AVAILABLE;
@@ -626,9 +655,10 @@ static NTSTATUS NTAPI np_create(PDEVICE_OBJECT device, PIRP irp)
     NTSTATUS status;
     if (g_create_owner == KiCurrentThread() && g_create_owner_params)
         status = create_server(file, g_create_owner_params,
-                               stack->Parameters.Create.SecurityContext ? stack->Parameters.Create.SecurityContext->SecurityDescriptor : nullptr);
+                               stack->Parameters.Create.SecurityContext ? stack->Parameters.Create.SecurityContext->SecurityDescriptor : nullptr,
+                               stack);
     else
-        status = open_client(file);
+        status = open_client(file, stack);
     unlock();
     return complete_irp(irp, status, NT_SUCCESS(status) ? FILE_OPENED : 0);
 }

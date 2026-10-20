@@ -211,19 +211,21 @@ ULONG WINAPI BaseSetLastNTError(NTSTATUS status)
     return error;
 }
 
-static UINT g_error_mode;
+/* the mode lives in the process, where a job can force bits on. */
+UINT WINAPI GetErrorMode(void)
+{
+    ULONG mode = 0;
+    NtQueryInformationProcess(NtCurrentProcess(), ProcessDefaultHardErrorMode, &mode, sizeof(mode), nullptr);
+    return mode;
+}
 
 UINT WINAPI SetErrorMode(UINT mode)
 {
-    UINT old = g_error_mode;
+    UINT old = GetErrorMode();
     /* SEM_NOALIGNMENTFAULTEXCEPT cannot be cleared once set. */
-    g_error_mode = mode | (old & SEM_NOALIGNMENTFAULTEXCEPT);
+    ULONG next = mode | (old & SEM_NOALIGNMENTFAULTEXCEPT);
+    NtSetInformationProcess(NtCurrentProcess(), ProcessDefaultHardErrorMode, &next, sizeof(next));
     return old;
-}
-
-UINT WINAPI GetErrorMode(void)
-{
-    return g_error_mode;
 }
 
 BOOL WINAPI SetThreadErrorMode(DWORD mode, LPDWORD old)

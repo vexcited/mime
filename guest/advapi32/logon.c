@@ -199,7 +199,14 @@ ADVAPI BOOL WINAPI CreateProcessWithTokenW(HANDLE token, DWORD logon_flags, LPCW
     memset(info, 0, sizeof(*info));
     HANDLE primary;
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, nullptr, 0, nullptr, nullptr);
+    /* the copy is open to whoever the token was: it keeps the descriptor of the token it came from, as the one who made it set it. */
+    UCHAR descriptor[1024];
+    ULONG needed;
+    PVOID sd = NT_SUCCESS(NtQuerySecurityObject(token, 0x1F /* owner, group, dacl, sacl, label */ & ~8u, descriptor,
+                                                sizeof(descriptor), &needed))
+                   ? descriptor
+                   : nullptr;
+    InitializeObjectAttributes(&oa, nullptr, 0, nullptr, sd);
     NTSTATUS status = NtDuplicateToken(token, TOKEN_ALL_ACCESS, &oa, FALSE, TokenPrimary, &primary);
     if (!NT_SUCCESS(status))
         return AdvSetStatus(status);

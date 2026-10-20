@@ -39,12 +39,14 @@ static RPC_STATUS table_open(void)
         return RPC_S_OK;
     AcquireSRWLockExclusive(&g_init_lock);
     if (!g_table) {
-        PSECURITY_DESCRIPTOR sd = RpcpEveryoneDescriptor(0x1F0003);
-        SECURITY_ATTRIBUTES sa = {sizeof(sa), sd, FALSE};
+        /* everyone may use both, each with all the rights of its kind. */
+        PSECURITY_DESCRIPTOR sd = RpcpEveryoneDescriptor(0x1F0001), section_sd = RpcpEveryoneDescriptor(0xF001F);
+        SECURITY_ATTRIBUTES sa = {sizeof(sa), sd, FALSE}, section_sa = {sizeof(section_sa), section_sd, FALSE};
         HANDLE mutex = CreateMutexW(&sa, FALSE, L"Global\\MimeRpcEndpointMapperLock");
-        HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(EP_TABLE),
+        HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, &section_sa, PAGE_READWRITE, 0, sizeof(EP_TABLE),
                                             L"Global\\MimeRpcEndpointMapper");
         HeapFree(GetProcessHeap(), 0, sd);
+        HeapFree(GetProcessHeap(), 0, section_sd);
         EP_TABLE *table = section ? MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(EP_TABLE)) : nullptr;
         if (mutex && table) {
             g_mutex = mutex;

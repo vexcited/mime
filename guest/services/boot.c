@@ -225,7 +225,7 @@ static DWORD WINAPI autostart_thread(LPVOID unused)
 void BootStart(void)
 {
     /* programs wait for the services to be done with their start on this event. */
-    g_autostart_event = CreateEventW(nullptr, TRUE, FALSE, SCM_AUTOSTART_EVENT);
+    g_autostart_event = SvcCreateWorldEvent(SCM_AUTOSTART_EVENT);
     HANDLE t = CreateThread(nullptr, 0, autostart_thread, nullptr, 0, nullptr);
     if (t)
         CloseHandle(t);

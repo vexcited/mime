@@ -28,12 +28,15 @@ const UCHAR SeSidRestrictedPackages[16] = {1, 2, 0, 0, 0, 0, 0, 15, 2, 0, 0, 0, 
 
 /* ---------------------------------------------------------------- blobs */
 
+static volatile ULONG64 g_serial;
+
 SD_BLOB *SeSdAllocate(ULONG length)
 {
     SD_BLOB *sd = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(SD_BLOB) + length, KI_TAG('S', 'e', 'S', 'd'));
     if (sd) {
         sd->Refs = 1;
         sd->Length = length;
+        sd->Serial = __atomic_add_fetch(&g_serial, 1, __ATOMIC_RELAXED);
     }
     return sd;
 }
@@ -285,7 +288,7 @@ static const UCHAR *find_label(const SECURITY_DESCRIPTOR_RELATIVE *sd)
 }
 
 /* the sd with the label ace of the integrity level added to its sacl, which a low integrity creator leaves. */
-static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
+static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **out)
 {
     const SECURITY_DESCRIPTOR_RELATIVE *r = (const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data;
     const ACL *old = (r->Control & SE_SACL_PRESENT) && r->Sacl ? (const ACL *)(sd->Data + r->Sacl) : nullptr;
@@ -312,7 +315,7 @@ static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
         memcpy(acl + 8, old + 1, old_size - 8);
     UCHAR *ace = acl + old_size;
     ace[0] = SYSTEM_MANDATORY_LABEL_ACE_TYPE;
-    ace[1] = 0;
+    ace[1] = flags;
     *(USHORT *)(ace + 2) = (USHORT)ace_size;
     *(ULONG *)(ace + 4) = 1; /* no write up */
     ace[8] = 1;
@@ -336,6 +339,80 @@ static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
         memcpy(made->Data + at, sd->Data + r->Dacl, dacl);
         *(ULONG *)(made->Data + 16) = at;
     }
+    *out = made;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
+{
+    return add_label_flags(sd, rid, 0, out);
+}
+
+/* the descriptor with a label of the level added that what is made inside inherits. */
+NTSTATUS SeSdAddInheritedLabel(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
+{
+    return add_label_flags(sd, rid, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE, out);
+}
+
+/*
+ * the descriptor with an entry added to the end of its list that lets a sid have the access, unless the list has an
+ * entry for the sid already. A list that is not there stays so: everyone has everything.
+ */
+NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mask, UCHAR flags, SD_BLOB **out)
+{
+    const SECURITY_DESCRIPTOR_RELATIVE *r = (const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data;
+    if (!(r->Control & SE_DACL_PRESENT) || !r->Dacl) {
+        *out = SeSdReference((SD_BLOB *)sd);
+        return STATUS_SUCCESS;
+    }
+    const ACL *old = (const ACL *)(sd->Data + r->Dacl);
+    const UCHAR *ace = (const UCHAR *)(old + 1);
+    for (ULONG i = 0; i < old->AceCount; i++, ace += *(const USHORT *)(ace + 2)) {
+        if ((ace[0] == ACCESS_ALLOWED_ACE_TYPE || ace[0] == ACCESS_DENIED_ACE_TYPE) && SepSidEqual(ace + 8, sid)) {
+            *out = SeSdReference((SD_BLOB *)sd);
+            return STATUS_SUCCESS;
+        }
+    }
+    ULONG sid_size = 8 + 4 * (ULONG)sid[1], ace_size = 8 + sid_size;
+    ULONG old_size = old->AclSize;
+    ULONG acl_size = (old_size + ace_size + 3) & ~3u;
+    ULONG owner = r->Owner ? (8 + 4 * (ULONG)sd->Data[r->Owner + 1] + 3) & ~3u : 0;
+    ULONG group = r->Group ? (8 + 4 * (ULONG)sd->Data[r->Group + 1] + 3) & ~3u : 0;
+    ULONG sacl = (r->Control & SE_SACL_PRESENT) && r->Sacl ? (((const ACL *)(sd->Data + r->Sacl))->AclSize + 3) & ~3u : 0;
+    SD_BLOB *made = SeSdAllocate(20 + owner + group + sacl + acl_size);
+    if (!made)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memset(made->Data, 0, made->Length);
+    made->Data[0] = 1;
+    *(USHORT *)(made->Data + 2) = r->Control;
+    ULONG at = 20;
+    if (owner) {
+        memcpy(made->Data + at, sd->Data + r->Owner, owner);
+        *(ULONG *)(made->Data + 4) = at;
+        at += owner;
+    }
+    if (group) {
+        memcpy(made->Data + at, sd->Data + r->Group, group);
+        *(ULONG *)(made->Data + 8) = at;
+        at += group;
+    }
+    if (sacl) {
+        memcpy(made->Data + at, sd->Data + r->Sacl, sacl);
+        *(ULONG *)(made->Data + 12) = at;
+        at += sacl;
+    }
+    UCHAR *acl = made->Data + at;
+    memcpy(acl, old, old_size);
+    acl[0] = old->AclRevision > ACL_REVISION ? old->AclRevision : ACL_REVISION;
+    UCHAR *end = acl + old_size;
+    end[0] = ACCESS_ALLOWED_ACE_TYPE;
+    end[1] = flags;
+    *(USHORT *)(end + 2) = (USHORT)ace_size;
+    *(ULONG *)(end + 4) = mask;
+    memcpy(end + 8, sid, sid_size);
+    *(USHORT *)(acl + 2) = (USHORT)acl_size;
+    *(USHORT *)(acl + 4) = old->AceCount + 1;
+    *(ULONG *)(made->Data + 16) = at;
     *out = made;
     return STATUS_SUCCESS;
 }
@@ -464,18 +541,86 @@ static NTSTATUS assign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING
     return STATUS_SUCCESS;
 }
 
+/* the descriptor a token has as the object it is: what its own default list and integrity level give it. */
+NTSTATUS SeSdForToken(PTOKEN token, SD_MAPPING mapping, SD_BLOB **out)
+{
+    return assign(nullptr, nullptr, mapping, FALSE, KernelMode, token, out);
+}
+
+/* the same with the descriptor its maker offered, which the token is held to as the subject. */
+NTSTATUS SeSdAssignForToken(const SD_BLOB *creator, SD_MAPPING mapping, KPROCESSOR_MODE mode, PTOKEN token, SD_BLOB **out)
+{
+    return assign(nullptr, creator, mapping, FALSE, mode, token, out);
+}
+
 NTSTATUS SeSdAssign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING mapping, BOOLEAN container,
                     KPROCESSOR_MODE mode, SD_BLOB **out)
 {
     return assign(parent, creator, mapping, container, mode, nullptr, out);
 }
 
+/*
+ * what the files of a directory that have no descriptor of their own show is the same every time: it follows from the
+ * descriptor of the directory alone. It is kept by that descriptor's serial, so the files of a directory share one
+ * blob, which is also what lets the results of access checks be kept for it.
+ */
+typedef struct {
+    ULONG64 Parent, TokenId, ModifiedId;
+    SD_MAPPING Mapping;
+    BOOLEAN Container;
+    SD_BLOB *Child;
+} DERIVED_ENTRY;
+
+static DERIVED_ENTRY g_derived[SD_CACHE_ENTRIES * 4];
+static FAST_MUTEX g_derived_lock;
+static BOOLEAN g_derived_ready;
+
+/* what the session token is, as one number that changes when it does, for what is kept by it. */
+ULONG64 SeSessionTokenStamp(void)
+{
+    PTOKEN session = SepReferenceSessionToken();
+    ULONG64 stamp = session->TokenId * 0x9E3779B97F4A7C15ull ^ session->ModifiedId;
+    ObDereferenceObject(session);
+    return stamp;
+}
+
 NTSTATUS SeSdDerive(const SD_BLOB *parent, SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out)
 {
     PTOKEN session = SepReferenceSessionToken();
-    NTSTATUS status = assign(parent, nullptr, mapping, container, KernelMode, session, out);
+    ULONG64 id = session->TokenId, modified = session->ModifiedId;
+    if (!g_derived_ready) {
+        ExInitializeFastMutex(&g_derived_lock);
+        g_derived_ready = TRUE;
+    }
+    ULONG slot = (ULONG)((parent->Serial * 31 + ((ULONG_PTR)mapping >> 4) + container) % RTL_NUMBER_OF(g_derived));
+    ExAcquireFastMutex(&g_derived_lock);
+    DERIVED_ENTRY *e = &g_derived[slot];
+    if (e->Child && e->Parent == parent->Serial && e->Mapping == mapping && e->Container == container &&
+        e->TokenId == id && e->ModifiedId == modified) {
+        *out = SeSdReference(e->Child);
+        ExReleaseFastMutex(&g_derived_lock);
+        ObDereferenceObject(session);
+        return STATUS_SUCCESS;
+    }
+    ExReleaseFastMutex(&g_derived_lock);
+    SD_BLOB *child;
+    NTSTATUS status = assign(parent, nullptr, mapping, container, KernelMode, session, &child);
     ObDereferenceObject(session);
-    return status;
+    if (!NT_SUCCESS(status))
+        return status;
+    ExAcquireFastMutex(&g_derived_lock);
+    e = &g_derived[slot];
+    SD_BLOB *old = e->Child;
+    e->Parent = parent->Serial;
+    e->Mapping = mapping;
+    e->Container = container;
+    e->TokenId = id;
+    e->ModifiedId = modified;
+    e->Child = SeSdReference(child);
+    ExReleaseFastMutex(&g_derived_lock);
+    SeSdDereference(old);
+    *out = child;
+    return STATUS_SUCCESS;
 }
 
 BOOLEAN SeSdSubjectIsDefault(void)
@@ -549,6 +694,34 @@ NTSTATUS SeSdDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out)
     SeSdDereference(old);
     *out = sd;
     return STATUS_SUCCESS;
+}
+
+/*
+ * what the objects the kernel makes before any program runs show: owned by the system, open to everyone for reading
+ * and running, to the system and the administrators for everything. A directory programs make named objects in
+ * (kind creatable) lets everyone make them, as does the window station and desktop everyone works at (kind
+ * interactive, which takes everything but changing the descriptor). Both are labelled low, so a program at low
+ * integrity can still write where it is meant to, and one below it cannot.
+ */
+NTSTATUS SeSdBootDefault(SD_MAPPING mapping, BOOLEAN container, ULONG kind, SD_BLOB **out)
+{
+    ACCESS_MASK everyone = mapping[0] | mapping[2];
+    if (kind == SE_BOOT_CREATABLE && container)
+        everyone |= 0xC; /* create object, create subdirectory */
+    if (kind == SE_BOOT_INTERACTIVE)
+        everyone = mapping[3] & ~(ACCESS_MASK)0xC0000;
+    /* a program in an app container reaches what everyone does through the sid that names all packages. */
+    SD_ACE aces[4] = {{0, mapping[3], SeSidSystem}, {0, mapping[3], SeSidAdministrators}, {0, everyone, SeSidEveryone},
+                      {0, everyone, SeSidAllAppPackages}};
+    SD_BLOB *sd;
+    NTSTATUS status = SeSdBuild(SeSidSystem, SeSidSystem, 0, aces, kind == SE_BOOT_PLAIN_SYSTEM ? 2 : 4, &sd);
+    if (!NT_SUCCESS(status) || kind == SE_BOOT_PLAIN || kind == SE_BOOT_PLAIN_SYSTEM) {
+        *out = sd;
+        return status;
+    }
+    status = add_label(sd, 0x1000, out);
+    SeSdDereference(sd);
+    return status;
 }
 
 NTSTATUS SeSdSystemDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out)

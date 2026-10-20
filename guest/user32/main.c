@@ -2,6 +2,7 @@
  * user32 initialization, the kernel callback table and string conversion.
  */
 #include "user32_private.h"
+#include <mime/mitigation.h>
 
 HINSTANCE User32Instance;
 MIME_CLIENT_INFO User32Client;
@@ -204,8 +205,13 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH) {
         User32Instance = instance;
-        initialize_process();
-        UserInitializeDpiAwareness();
+        /* a process without the win32k system calls loads user32 and connects to nothing. */
+        ULONG policy[2] = {MIME_POLICY_SYSTEM_CALL_DISABLE, 0};
+        NtQueryInformationProcess(NtCurrentProcess(), ProcessMitigationPolicy, policy, sizeof(policy), nullptr);
+        if (!(policy[1] & MIME_SYSTEM_CALL_DISABLE_WIN32K)) {
+            initialize_process();
+            UserInitializeDpiAwareness();
+        }
     }
     return TRUE;
 }

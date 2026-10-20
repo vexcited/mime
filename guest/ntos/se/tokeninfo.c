@@ -183,7 +183,7 @@ NTSTATUS NTAPI NtOpenProcessTokenEx(HANDLE process_handle, ACCESS_MASK access, U
     ObDereferenceObject(process);
     if (!t)
         return STATUS_NO_TOKEN;
-    return SepInsertToken(t, access, attributes, token_handle);
+    return SepOpenToken(t, access, attributes, FALSE, token_handle);
 }
 
 NTSTATUS NTAPI NtOpenProcessToken(HANDLE process, ACCESS_MASK access, PHANDLE token)
@@ -229,7 +229,7 @@ NTSTATUS NTAPI NtOpenThreadTokenEx(HANDLE thread_handle, ACCESS_MASK access, BOO
         return status;
     if (dup)
         ObDereferenceObject(dup);
-    return SepInsertToken(t, access, attributes, token_handle);
+    return SepOpenToken(t, access, attributes, open_as_self, token_handle);
 }
 
 NTSTATUS NTAPI NtOpenThreadToken(HANDLE thread, ACCESS_MASK access, BOOLEAN open_as_self, PHANDLE token)
@@ -289,6 +289,12 @@ NTSTATUS NTAPI NtDuplicateToken(HANDLE token_handle, ACCESS_MASK access, POBJECT
     ObDereferenceObject(source);
     if (!dup)
         return status;
+    /* the copy has the descriptor its maker offered, else its own default; the process that runs with it can open it. */
+    status = SepAssignTokenSecurity(dup, &oa, FALSE);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(dup);
+        return status;
+    }
     return SepInsertToken(dup, access ? access : granted, oa.Attributes & OBJ_INHERIT, new_token);
 }
 
@@ -413,6 +419,12 @@ NTSTATUS NTAPI NtCreateLowBoxToken(PHANDLE new_token, HANDLE token_handle, ACCES
     }
     if (!t)
         return status;
+    SepAddPackageToDefaultList(t);
+    status = SepAssignTokenSecurity(t, &oa, FALSE);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(t);
+        return status;
+    }
     return SepInsertToken(t, access ? access : granted, oa.Attributes & OBJ_INHERIT, new_token);
 }
 
@@ -460,6 +472,11 @@ NTSTATUS NTAPI NtFilterToken(HANDLE token_handle, ULONG flags, PVOID sids_to_dis
         ExFreePool(luids);
     if (!NT_SUCCESS(status))
         return status;
+    status = SepAssignTokenSecurity(filtered, nullptr, FALSE);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(filtered);
+        return status;
+    }
     return SepInsertToken(filtered, TOKEN_ALL_ACCESS, 0, new_token);
 }
 

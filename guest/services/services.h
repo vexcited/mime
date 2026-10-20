@@ -259,6 +259,7 @@ static inline void SvcCopyName(WCHAR *dst, const WCHAR *src, SIZE_T max)
 void *SvcAlloc(SIZE_T size);
 void *SvcAllocZero(SIZE_T size);
 void SvcFree(void *p);
+HANDLE SvcCreateWorldEvent(const WCHAR *name);
 WCHAR *SvcDup(const WCHAR *s);
 WCHAR *SvcDupN(const WCHAR *s, SIZE_T chars);
 DWORD SvcMultiSzChars(const WCHAR *m);
