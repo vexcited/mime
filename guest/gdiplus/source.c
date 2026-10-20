@@ -148,13 +148,23 @@ static void hatch_fetch(GSource *s, INT x, INT y, INT count, UINT32 *out)
     }
 }
 
-static UINT32 blend_quarter(UINT32 fore, UINT32 back)
+/* the sample between the two colors, three parts of the background and one of the foreground, byte by byte. */
+static UINT32 hatch_between(UINT32 fore, UINT32 back)
 {
-    /* a quarter of the foreground and three quarters of the background in each channel, rounded down */
     UINT32 out = 0;
-    for (INT sh = 0; sh < 32; sh += 8) {
-        UINT32 f = (fore >> sh) & 255, b = (back >> sh) & 255;
-        out |= ((b + f + 2 * b) >> 2) << sh;
+    for (INT shift = 0; shift < 32; shift += 8)
+        out |= ((3 * ((back >> shift) & 255) + ((fore >> shift) & 255)) >> 2) << shift;
+    return out;
+}
+
+/* the foreground of the diagonal styles, moved a little way from the background. */
+static UINT32 hatch_diagonal_fore(UINT32 fore, UINT32 back)
+{
+    UINT32 out = 0;
+    for (INT shift = 0; shift < 32; shift += 8) {
+        float f = (float)((fore >> shift) & 255), b = (float)((back >> shift) & 255);
+        INT v = (INT)((f - b) * 0.91421354f + b);
+        out |= (UINT32)(v > 255 ? 255 : v) << shift;
     }
     return out;
 }
@@ -167,22 +177,12 @@ static GpStatus hatch_create(GGraphics *g, const GBrush *brush, GSource **out)
     UINT32 fore = gp_premultiply(brush->hatch_fore), back = gp_premultiply(brush->hatch_back);
     h->pattern = hatch_patterns[brush->hatch_style];
     h->back = back;
-    h->mid = blend_quarter(fore, back);
-    /* the diagonal patterns are drawn with a color pulled towards the background, as gdiplus.dll does */
-    HatchStyle st = brush->hatch_style;
-    if (st == HatchStyleForwardDiagonal || st == HatchStyleBackwardDiagonal || st == HatchStyleDiagonalCross) {
-        float k = 0.91421354f;
-        UINT32 nf = 0;
-        for (INT sh = 0; sh < 32; sh += 8) {
-            float f = (float)((fore >> sh) & 255), b = (float)((back >> sh) & 255);
-            float v = (f - b) * k + b;
-            if (v > 255.0f)
-                v = 255.0f;
-            nf |= (UINT32)v << sh;
-        }
-        fore = nf;
-    }
-    h->fore = fore;
+    h->mid = hatch_between(fore, back);
+    HatchStyle style = brush->hatch_style;
+    h->fore = style == HatchStyleForwardDiagonal || style == HatchStyleBackwardDiagonal ||
+                      style == HatchStyleDiagonalCross
+                  ? hatch_diagonal_fore(fore, back)
+                  : fore;
     h->ox = g->origin.x;
     h->oy = g->origin.y;
     h->base.fetch = hatch_fetch;
