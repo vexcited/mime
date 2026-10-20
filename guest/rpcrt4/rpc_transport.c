@@ -163,12 +163,12 @@ static RPC_STATUS wait_io(RPC_STREAM *stream, OVERLAPPED *ov, DWORD *bytes, BOOL
     CancelIoEx(stream->Handle, ov);
     GetOverlappedResult(stream->Handle, ov, bytes, TRUE);
     stream->Broken = TRUE;
+    /* a cancel of the thread and the call time out of the binding both cancel the call. */
     if (wait == WAIT_OBJECT_0 + 1) {
         InterlockedExchange(&thread->Cancelled, 0);
         ResetEvent(thread->CancelEvent);
-        return RPC_S_CALL_CANCELLED;
     }
-    return RPC_S_CALL_FAILED;
+    return RPC_S_CALL_CANCELLED;
 }
 
 RPC_STATUS RpcpStreamSend(RPC_STREAM *stream, const void *data, ULONG length)

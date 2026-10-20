@@ -118,8 +118,8 @@ RPC_STATUS RpcpEpResolve(BINDING *b, const RPC_SYNTAX_IDENTIFIER *interface_id)
 {
     RPC_STATUS status = table_open();
     if (status)
-        return RPC_S_NO_ENDPOINT_FOUND;
-    status = RPC_S_NO_ENDPOINT_FOUND;
+        return EPT_S_NOT_REGISTERED;
+    status = EPT_S_NOT_REGISTERED;
     table_lock();
     for (ULONG i = 0; i < EP_COUNT; i++) {
         EP_ENTRY *e = &g_table->Entries[i];

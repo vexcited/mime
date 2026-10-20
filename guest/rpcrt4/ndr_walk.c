@@ -310,24 +310,8 @@ static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING p
     if (c->Pass == NDR_UNMARSHAL)
         c->Q->PendingRefId = type == FC_FP ? refid : 0;
 
-    if (attrs & FC_SIMPLE_POINTER) {
-        uchar fc = pf[2];
-        if (NDR_WIRE_READ(c->Pass)) {
-            uchar *object = c->Pass == NDR_UNMARSHAL ? *slot : nullptr;
-            NdrpAllocObject(c, &object, NdrSimpleMem[fc], 0);
-            NdrpSimple(c, object, fc);
-            if (c->Pass == NDR_UNMARSHAL)
-                *slot = object;
-        } else {
-            NdrpSimple(c, pointer, fc);
-            if (c->Pass == NDR_FREE && may_free(m, type, attrs, pointer))
-                NdrpFree(m, pointer);
-        }
-        c->Q->Depth--;
-        return;
-    }
-
-    PFORMAT_STRING pointee = pf + 2 + *(const short *)(pf + 2);
+    /* a simple pointer carries the description of its pointee inline: a base type or a string. */
+    PFORMAT_STRING pointee = (attrs & FC_SIMPLE_POINTER) ? pf + 2 : pf + 2 + *(const short *)(pf + 2);
     if (NDR_WIRE_READ(c->Pass)) {
         uchar *object = c->Pass == NDR_UNMARSHAL ? *slot : nullptr;
         if (attrs & FC_POINTER_DEREF) {
