@@ -1,49 +1,18 @@
 /*
- * code pages: the ansi and oem tables, utf-8, utf-7 and the conversion
- * functions between them and utf-16.
+ * code pages: the tables of the ansi, oem and mac code pages, utf-8, utf-7 and the conversion functions between them and
+ * utf-16. The tables come from tools/nls/gencp.py.
  */
 #include "kernelbase_private.h"
+#include "nls_cpdata.h"
 
-typedef struct CODE_PAGE {
-    UINT Id;
-    UINT MaxCharSize;
-    const WCHAR *High; /* 128 entries for bytes 0x80..0xFF, NULL when not a table code page. */
-    const WCHAR *Name;
-} CODE_PAGE;
-
-#include <mime/cp1252.h>
-
-#include <mime/cp437.h>
-
-/* the glyphs MB_USEGLYPHCHARS substitutes for the oem control characters 0x00..0x1F. */
-static constexpr WCHAR g_cp437_glyphs[32] = {
-    0x0000, 0x263A, 0x263B, 0x2665, 0x2666, 0x2663, 0x2660, 0x2022, 0x25D8, 0x25CB, 0x25D9,
-    0x2642, 0x2640, 0x266A, 0x266B, 0x263C, 0x25BA, 0x25C4, 0x2195, 0x203C, 0x00B6, 0x00A7,
-    0x25AC, 0x21A8, 0x2191, 0x2193, 0x2192, 0x2190, 0x221F, 0x2194, 0x25B2, 0x25BC,
-};
-
-static WCHAR g_latin1[128];
-static WCHAR g_ascii_high[128];
-
-static const CODE_PAGE g_code_pages[] = {
-    {1252, 1, g_cp1252, L"1252  (ANSI - Latin I)"},
-    {437, 1, g_cp437, L"437   (OEM - United States)"},
-    {28591, 1, g_latin1, L"28591 (ISO 8859-1 Latin I)"},
-    {20127, 1, g_ascii_high, L"20127 (US-ASCII)"},
-    {CP_UTF8, 4, nullptr, L"65001 (UTF-8)"},
-    {CP_UTF7, 5, nullptr, L"65000 (UTF-7)"},
-    {CP_SYMBOL, 1, nullptr, L"42    (Symbol)"},
-};
+#define CP_ALIAS_EUC_KR 51949
+#define CP_ALIAS_EUC_KR_TARGET 20949
 
 static UINT g_acp = 1252;
 static UINT g_oemcp = 437;
 
 void KbInitializeNls(void)
 {
-    for (UINT i = 0; i < 128; i++) {
-        g_latin1[i] = (WCHAR)(0x80 + i);
-        g_ascii_high[i] = (WCHAR)i;
-    }
     PPEB peb = KbPeb();
     if (peb->ActiveCodePage)
         g_acp = peb->ActiveCodePage;
@@ -51,26 +20,97 @@ void KbInitializeNls(void)
         g_oemcp = peb->OemCodePage;
 }
 
+/* ------------------------------------------------------------------ the tables */
+
+static const NLS_CPDATA *find_table_page(UINT cp)
+{
+    if (cp == CP_ALIAS_EUC_KR)
+        cp = CP_ALIAS_EUC_KR_TARGET;
+    LONG lo = 0, hi = (LONG)RTL_NUMBER_OF(g_nls_codepages) - 1;
+    while (lo <= hi) {
+        LONG mid = (lo + hi) / 2;
+        if (g_nls_codepages[mid].Id == cp)
+            return &g_nls_codepages[mid];
+        if (g_nls_codepages[mid].Id < cp)
+            lo = mid + 1;
+        else
+            hi = mid - 1;
+    }
+    return nullptr;
+}
+
+static WCHAR single_to_wide(const NLS_CPDATA *p, UINT b)
+{
+    return g_nls_to_wide[p->ToWide + b];
+}
+
+static BOOL is_lead(const NLS_CPDATA *p, UINT b)
+{
+    return p->Kind != NLS_KIND_SBCS && g_nls_lead_row[p->LeadRow + b] != 0;
+}
+
+/* the character of a lead and trail byte, or 0xFFFF. */
+static WCHAR pair_to_wide(const NLS_CPDATA *p, UINT lead, UINT trail)
+{
+    UINT row = g_nls_lead_row[p->LeadRow + lead];
+    if (!row || trail < p->TrailMin || trail > p->TrailMax)
+        return 0xFFFF;
+    return g_nls_rows[p->Rows + (row - 1) * (p->TrailMax - p->TrailMin + 1) + (trail - p->TrailMin)];
+}
+
+static BOOL is_undefined_byte(const NLS_CPDATA *p, UINT b)
+{
+    return (g_nls_undefined[p->Undefined + (b >> 5)] >> (b & 31)) & 1;
+}
+
+/* the byte or double byte code of a character, or -1. */
+static LONG wide_to_code(const NLS_CPDATA *p, WCHAR c)
+{
+    UINT block = g_nls_dir[p->Dir + (c >> 8)];
+    if (block == 0xFFFF)
+        return -1;
+    UINT v = p->Kind == NLS_KIND_SBCS ? g_nls_pages8[block * 256 + (c & 255)] : g_nls_pages16[block * 256 + (c & 255)];
+    return (!v && c) ? -1 : (LONG)v;
+}
+
+/* whether a code stands for the character itself and not for a best fit of it. */
+static BOOL code_round_trips(const NLS_CPDATA *p, WCHAR c, ULONG code)
+{
+    if (code > 0xFF)
+        return pair_to_wide(p, code >> 8, code & 255) == c;
+    if (is_lead(p, code))
+        return FALSE;
+    return single_to_wide(p, code) == c;
+}
+
+/* the pseudo code pages and the code page of the locale. */
+UINT KbLocaleCodePage(LCID lcid, UINT kind);
+
 static UINT resolve_code_page(UINT cp)
 {
     switch (cp) {
     case CP_ACP:
-    case CP_THREAD_ACP:
         return g_acp;
     case CP_OEMCP:
         return g_oemcp;
+    case CP_MACCP:
+        return KbLocaleCodePage(LOCALE_SYSTEM_DEFAULT, 2);
+    case CP_THREAD_ACP:
+        return KbLocaleCodePage(NtCurrentTeb()->CurrentLocale, 0);
     default:
         return cp;
     }
 }
 
-static const CODE_PAGE *find_code_page(UINT cp)
+UINT KbResolveCodePage(UINT cp)
 {
-    cp = resolve_code_page(cp);
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_code_pages); i++)
-        if (g_code_pages[i].Id == cp)
-            return &g_code_pages[i];
-    return nullptr;
+    return resolve_code_page(cp);
+}
+
+/* the table code pages and the unicode ones, which GetCPInfo knows. */
+static BOOL known_code_page(UINT cp)
+{
+    return cp == CP_UTF8 || cp == CP_UTF7 || find_table_page(cp) != nullptr;
 }
 
 UINT WINAPI GetACP(void)
@@ -85,27 +125,49 @@ UINT WINAPI GetOEMCP(void)
 
 BOOL WINAPI IsValidCodePage(UINT cp)
 {
-    /* the pseudo code pages are not valid code page numbers here. */
-    if (cp == CP_ACP || cp == CP_OEMCP || cp == CP_MACCP || cp == CP_THREAD_ACP)
+    /* the pseudo code pages and the symbol one are not valid code page numbers here. */
+    if (cp <= CP_THREAD_ACP || cp == CP_SYMBOL)
         return FALSE;
-    return find_code_page(cp) != nullptr;
+    return known_code_page(cp);
+}
+
+static const WCHAR *code_page_name(const NLS_CPDATA *p, UINT cp)
+{
+    if (p)
+        return p->Name;
+    return cp == CP_UTF8 ? L"65001 (UTF-8)" : L"65000 (UTF-7)";
+}
+
+static BOOL fill_cp_info(UINT cp, LPCPINFO info, WCHAR *unicode_default, UINT *number, const WCHAR **name)
+{
+    UINT resolved = resolve_code_page(cp);
+    if (!info || !known_code_page(resolved)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    const NLS_CPDATA *p = find_table_page(resolved);
+    memset(info, 0, sizeof(*info));
+    info->DefaultChar[0] = '?';
+    if (p) {
+        info->MaxCharSize = p->Kind == NLS_KIND_SBCS ? 1 : 2;
+        info->DefaultChar[0] = (BYTE)p->DefaultChar;
+        memcpy(info->LeadByte, p->LeadBytes, MAX_LEADBYTES);
+        *unicode_default = p->UnicodeDefault;
+    } else {
+        info->MaxCharSize = resolved == CP_UTF8 ? 4 : 5;
+        *unicode_default = 0xFFFD;
+    }
+    *number = resolved;
+    *name = code_page_name(p, resolved);
+    return TRUE;
 }
 
 BOOL WINAPI GetCPInfo(UINT cp, LPCPINFO info)
 {
-    if (!info) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    const CODE_PAGE *page = find_code_page(cp);
-    if (!page) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    memset(info, 0, sizeof(*info));
-    info->MaxCharSize = page->MaxCharSize;
-    info->DefaultChar[0] = '?';
-    return TRUE;
+    WCHAR u;
+    UINT n;
+    const WCHAR *name;
+    return fill_cp_info(cp, info, &u, &n, &name);
 }
 
 BOOL WINAPI GetCPInfoExW(UINT cp, DWORD flags, LPCPINFOEXW info)
@@ -114,17 +176,25 @@ BOOL WINAPI GetCPInfoExW(UINT cp, DWORD flags, LPCPINFOEXW info)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    const CODE_PAGE *page = find_code_page(cp);
-    if (!page) {
-        KbSetError(ERROR_INVALID_PARAMETER);
+    WCHAR u;
+    UINT n;
+    const WCHAR *name;
+    CPINFO basic;
+    UINT resolved = resolve_code_page(cp);
+    if (!fill_cp_info(cp, &basic, &u, &n, &name))
+        return FALSE;
+    /* the unicode code pages answer whatever the flags are. */
+    if (flags && resolved != CP_UTF8 && resolved != CP_UTF7) {
+        KbSetError(ERROR_INVALID_FLAGS);
         return FALSE;
     }
     memset(info, 0, sizeof(*info));
-    info->MaxCharSize = page->MaxCharSize;
-    info->DefaultChar[0] = '?';
-    info->UnicodeDefaultChar = (page->Id == CP_UTF8 || page->Id == CP_UTF7) ? 0xFFFD : '?';
-    info->CodePage = page->Id;
-    wcscpy(info->CodePageName, page->Name);
+    info->MaxCharSize = basic.MaxCharSize;
+    memcpy(info->DefaultChar, basic.DefaultChar, sizeof(info->DefaultChar));
+    memcpy(info->LeadByte, basic.LeadByte, sizeof(info->LeadByte));
+    info->UnicodeDefaultChar = u;
+    info->CodePage = n;
+    wcscpy(info->CodePageName, name);
     return TRUE;
 }
 
@@ -148,9 +218,20 @@ BOOL WINAPI EnumSystemCodePagesW(CODEPAGE_ENUMPROCW proc, DWORD flags)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_code_pages); i++) {
+    if (flags != CP_INSTALLED && flags != CP_SUPPORTED) {
+        KbSetError(ERROR_INVALID_FLAGS);
+        return FALSE;
+    }
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_nls_codepages); i++) {
         WCHAR buf[16];
-        KbFormat(buf, RTL_NUMBER_OF(buf), L"%u", g_code_pages[i].Id);
+        KbFormat(buf, RTL_NUMBER_OF(buf), L"%u", g_nls_codepages[i].Id);
+        if (!proc(buf))
+            return TRUE;
+    }
+    static const UINT unicode[] = {CP_UTF7, CP_UTF8};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(unicode); i++) {
+        WCHAR buf[16];
+        KbFormat(buf, RTL_NUMBER_OF(buf), L"%u", unicode[i]);
         if (!proc(buf))
             break;
     }
@@ -163,9 +244,20 @@ BOOL WINAPI EnumSystemCodePagesA(CODEPAGE_ENUMPROCA proc, DWORD flags)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_code_pages); i++) {
+    if (flags != CP_INSTALLED && flags != CP_SUPPORTED) {
+        KbSetError(ERROR_INVALID_FLAGS);
+        return FALSE;
+    }
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_nls_codepages); i++) {
         char buf[16];
-        KbFormatA(buf, sizeof(buf), "%u", g_code_pages[i].Id);
+        KbFormatA(buf, sizeof(buf), "%u", g_nls_codepages[i].Id);
+        if (!proc(buf))
+            return TRUE;
+    }
+    static const UINT unicode[] = {CP_UTF7, CP_UTF8};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(unicode); i++) {
+        char buf[16];
+        KbFormatA(buf, sizeof(buf), "%u", unicode[i]);
         if (!proc(buf))
             break;
     }
@@ -174,16 +266,19 @@ BOOL WINAPI EnumSystemCodePagesA(CODEPAGE_ENUMPROCA proc, DWORD flags)
 
 BOOL WINAPI IsDBCSLeadByte(BYTE c)
 {
-    return FALSE;
+    const NLS_CPDATA *p = find_table_page(g_acp);
+    return p && is_lead(p, c);
 }
 
 BOOL WINAPI IsDBCSLeadByteEx(UINT cp, BYTE c)
 {
-    if (!find_code_page(cp)) {
+    UINT resolved = resolve_code_page(cp);
+    if (!known_code_page(resolved)) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return FALSE;
+    const NLS_CPDATA *p = find_table_page(resolved);
+    return p && is_lead(p, c);
 }
 
 /* ------------------------------------------------------------------ output helper */
@@ -421,97 +516,208 @@ static void wide_to_utf7(const WCHAR *s, int n, BYTE_OUT *o)
     }
 }
 
-/* ------------------------------------------------------------------ best fit */
+/* ------------------------------------------------------------------ table code pages to utf-16 */
 
-static constexpr char g_best_fit_latin1[] = "AAAAAA?CEEEEIIIIDNOOOOO?OUUUUY??aaaaaa?ceeeeiiiidnooooo?ouuuuy?y";
-static const char g_best_fit_latin_a[] =
-    "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIi??JjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUu"
-    "UuUuUuWwYyYZzZzZzs";
-MIME_STATIC_ASSERT(sizeof(g_best_fit_latin1) == 65, "latin1 best fit");
-MIME_STATIC_ASSERT(sizeof(g_best_fit_latin_a) == 129, "latin extended best fit");
+/* the characters the control codes of an oem code page show as, for MB_USEGLYPHCHARS. */
+static constexpr WCHAR g_glyphs[32] = {
+    0x0000, 0x263A, 0x263B, 0x2665, 0x2666, 0x2663, 0x2660, 0x2022, 0x25D8, 0x25CB, 0x25D9,
+    0x2642, 0x2640, 0x266A, 0x266B, 0x263C, 0x25BA, 0x25C4, 0x2195, 0x203C, 0x00B6, 0x00A7,
+    0x25AC, 0x21A8, 0x2191, 0x2193, 0x2192, 0x2190, 0x221F, 0x2194, 0x25B2, 0x25BC,
+};
 
-static WCHAR best_fit(WCHAR c)
+/*
+ * The decomposition MB_COMPOSITE makes: the canonical one of Unicode but for a few characters. The letters with a stroke
+ * and the Greek ones with a tonos have another mark, and a few have none.
+ */
+typedef struct COMPOSITE_FORM {
+    WCHAR Char;
+    WCHAR Base;
+    WCHAR Mark;
+} COMPOSITE_FORM;
+
+static const COMPOSITE_FORM g_composite_forms[] = {
+    {0x00D8, 0x004F, 0x0338}, {0x00F8, 0x006F, 0x0338}, {0x0110, 0x0044, 0x0335}, {0x0111, 0x0064, 0x0335},
+    {0x0126, 0x0048, 0x0335}, {0x0127, 0x0068, 0x0335}, {0x0141, 0x004C, 0x0337}, {0x0142, 0x006C, 0x0337},
+    {0x0166, 0x0054, 0x0335}, {0x0167, 0x0074, 0x0335}, {0x0386, 0x0391, 0x030D}, {0x0388, 0x0395, 0x030D},
+    {0x0389, 0x0397, 0x030D}, {0x038A, 0x0399, 0x030D}, {0x038C, 0x039F, 0x030D}, {0x038E, 0x03A5, 0x030D},
+    {0x038F, 0x03A9, 0x030D}, {0x0390, 0x03B9, 0x0344}, {0x03AC, 0x03B1, 0x030D}, {0x03AD, 0x03B5, 0x030D},
+    {0x03AE, 0x03B7, 0x030D}, {0x03AF, 0x03B9, 0x030D}, {0x03B0, 0x03C5, 0x0344}, {0x03CC, 0x03BF, 0x030D},
+    {0x03CD, 0x03C5, 0x030D}, {0x03CE, 0x03C9, 0x030D},
+};
+
+/* the character a base and a mark compose to, or 0. */
+static ULONG compose_pair(WCHAR base, WCHAR mark)
 {
-    if (c >= 0xC0 && c <= 0xFF)
-        return (WCHAR)(UCHAR)g_best_fit_latin1[c - 0xC0];
-    if (c >= 0x100 && c <= 0x17F)
-        return (WCHAR)(UCHAR)g_best_fit_latin_a[c - 0x100];
-    if (c >= 0xFF01 && c <= 0xFF5E)
-        return (WCHAR)(c - 0xFF01 + 0x21);
-    switch (c) {
-    case 0x00A0:
-    case 0x2002:
-    case 0x2003:
-    case 0x2009:
-    case 0x3000:
-        return ' ';
-    case 0x2010:
-    case 0x2011:
-    case 0x2012:
-    case 0x2013:
-    case 0x2014:
-    case 0x2212:
-        return '-';
-    case 0x2018:
-    case 0x2019:
-    case 0x201A:
-    case 0x2032:
-        return '\'';
-    case 0x201C:
-    case 0x201D:
-    case 0x201E:
-    case 0x2033:
-        return '"';
-    case 0x2022:
-    case 0x2026:
-        return '.';
-    case 0x00A9:
-        return 'c';
-    case 0x00AE:
-        return 'R';
-    case 0x00AB:
-        return '<';
-    case 0x00BB:
-        return '>';
-    default:
-        return '?';
-    }
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_composite_forms); i++)
+        if (g_composite_forms[i].Base == base && g_composite_forms[i].Mark == mark)
+            return g_composite_forms[i].Char;
+    ULONG r = KbUniCompose(base, mark, FALSE);
+    if (!r)
+        return 0;
+    /* the composites Windows decomposes another way are not composed this way. */
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_composite_forms); i++)
+        if (g_composite_forms[i].Char == r)
+            return 0;
+    return r;
 }
 
-/* ------------------------------------------------------------------ single byte tables */
-
-static WCHAR sbcs_to_wide(const CODE_PAGE *page, UCHAR b, DWORD flags)
+/* the characters Windows leaves whole although Unicode decomposes them. */
+static BOOL composite_exempt(WCHAR c)
 {
-    if (page->Id == CP_SYMBOL)
-        return b < 0x20 ? b : (WCHAR)(0xF000 + b);
-    if (b < 0x80) {
-        if ((flags & MB_USEGLYPHCHARS) && page->High == g_cp437) {
-            if (b < 0x20 && b)
-                return g_cp437_glyphs[b];
-            if (b == 0x7F)
-                return 0x2302;
+    return c == 0x0385 || (c >= 0x0622 && c <= 0x0626) || c == 0x2260;
+}
+
+static int composite_parts(WCHAR c, WCHAR *out)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_composite_forms); i++)
+        if (g_composite_forms[i].Char == c) {
+            out[0] = g_composite_forms[i].Base;
+            out[1] = g_composite_forms[i].Mark;
+            return 2;
         }
-        return b;
-    }
-    return page->High[b - 0x80];
+    if (composite_exempt(c))
+        return 0;
+    int n = KbUniDecompose(c, FALSE, out);
+    /* a character whose decomposition is another one, such as the ohm sign, stays as it is. */
+    return n > 1 ? n : 0;
 }
 
-/* returns the byte for a character, or -1 when the code page cannot represent it. */
-static int wide_to_sbcs(const CODE_PAGE *page, WCHAR c)
+/* one character of a table, decomposed when the caller asked for it. */
+static void put_table_wide(WIDE_OUT *o, WCHAR c, DWORD flags)
 {
-    if (page->Id == CP_SYMBOL) {
-        if (c < 0x20)
-            return c;
-        if (c >= 0xF020 && c <= 0xF0FF)
-            return c - 0xF000;
-        return -1;
+    if ((flags & MB_COMPOSITE) && c >= 0xC0) {
+        WCHAR parts[20];
+        int n = composite_parts(c, parts);
+        if (n) {
+            for (int i = 0; i < n; i++)
+                put_wide(o, parts[i]);
+            return;
+        }
     }
-    if (c < 0x80)
-        return c;
-    for (int i = 0; i < 128; i++)
-        if (page->High[i] == c)
-            return 0x80 + i;
-    return -1;
+    put_wide(o, c);
+}
+
+static WCHAR single_with_glyphs(const NLS_CPDATA *p, UINT b, DWORD flags)
+{
+    if ((flags & MB_USEGLYPHCHARS) && (p->Flags & (NLS_CP_GLYPHS | NLS_CP_GLYPH_DEL))) {
+        if ((p->Flags & NLS_CP_GLYPHS) && b < 0x20 && b)
+            return g_glyphs[b];
+        if (b == 0x7F)
+            return 0x2302;
+    }
+    return single_to_wide(p, b);
+}
+
+/* returns FALSE for a byte the code page does not define when the flags ask for an error. */
+static BOOL table_to_wide(const NLS_CPDATA *p, DWORD flags, const UCHAR *s, int n, WIDE_OUT *o)
+{
+    BOOL strict = (flags & MB_ERR_INVALID_CHARS) != 0;
+    for (int i = 0; i < n && !o->Overflow; i++) {
+        UINT b = s[i];
+        if (!is_lead(p, b)) {
+            if (strict && is_undefined_byte(p, b))
+                return FALSE;
+            put_table_wide(o, single_with_glyphs(p, b, flags), flags);
+            continue;
+        }
+        /* a lead byte at the end of the text, or one a null byte follows, is a lone one. */
+        if (i + 1 >= n || !s[i + 1]) {
+            if (strict)
+                return FALSE;
+            put_wide(o, p->UnicodeDefault);
+            continue;
+        }
+        WCHAR c = pair_to_wide(p, b, s[i + 1]);
+        i++;
+        if (c == 0xFFFF) {
+            if (strict)
+                return FALSE;
+            put_wide(o, p->UnicodeDefault);
+            continue;
+        }
+        put_table_wide(o, c, flags);
+    }
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ utf-16 to table code pages */
+
+typedef struct TABLE_OUT {
+    BYTE_OUT *Out;
+    const NLS_CPDATA *Page;
+    DWORD Flags;
+    UCHAR Default[2];
+    int DefaultLength;
+    BOOL Used;
+} TABLE_OUT;
+
+static void put_default(TABLE_OUT *t)
+{
+    for (int i = 0; i < t->DefaultLength; i++)
+        put_byte(t->Out, (CHAR)t->Default[i]);
+    t->Used = TRUE;
+}
+
+/* one character: its code, the code of its best fit, or the default character. */
+static void put_table_char(TABLE_OUT *t, WCHAR c)
+{
+    LONG code = wide_to_code(t->Page, c);
+    if (code < 0 || ((t->Flags & WC_NO_BEST_FIT_CHARS) && !code_round_trips(t->Page, c, (ULONG)code))) {
+        put_default(t);
+        return;
+    }
+    if (code > 0xFF)
+        put_byte(t->Out, (CHAR)(code >> 8));
+    put_byte(t->Out, (CHAR)(code & 0xFF));
+}
+
+static void wide_to_table(TABLE_OUT *t, const WCHAR *s, int n)
+{
+    DWORD flags = t->Flags;
+    for (int i = 0; i < n && !t->Out->Overflow; i++) {
+        WCHAR c = s[i];
+        if (!(flags & WC_COMPOSITECHECK)) {
+            put_table_char(t, c);
+            continue;
+        }
+        /* a character and the nonspacing marks after it. The first mark composes with the character when Unicode has
+           the composite, the others and the marks of a cluster with no character are left over. */
+        int j = i + 1;
+        BOOL lone_marks = KbUniIsNonspacing(c);
+        if (lone_marks)
+            j = i;
+        while (j < n && KbUniIsNonspacing(s[j]))
+            j++;
+        int marks = j - (lone_marks ? i : i + 1);
+        if (!marks) {
+            put_table_char(t, c);
+            continue;
+        }
+        int first_leftover = lone_marks ? i : i + 1;
+        WCHAR composite = 0;
+        if (!lone_marks) {
+            ULONG r = compose_pair(c, s[i + 1]);
+            if (r && r < 0x10000) {
+                composite = (WCHAR)r;
+                first_leftover++;
+            }
+        }
+        int leftover = j - first_leftover;
+        if (!leftover) {
+            put_table_char(t, composite ? composite : c);
+        } else if (flags & WC_DISCARDNS) {
+            if (!lone_marks)
+                put_table_char(t, composite ? composite : c);
+        } else if (flags & WC_DEFAULTCHAR) {
+            put_default(t);
+        } else {
+            if (!lone_marks)
+                put_table_char(t, composite ? composite : c);
+            for (int k = first_leftover; k < j; k++)
+                put_table_char(t, s[k]);
+        }
+        i = j - 1;
+    }
 }
 
 /* ------------------------------------------------------------------ public conversions */
@@ -522,17 +728,18 @@ int WINAPI MultiByteToWideChar(UINT cp, DWORD flags, LPCCH src, int src_len, LPW
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    const CODE_PAGE *page = find_code_page(cp);
-    if (!page) {
+    UINT resolved = resolve_code_page(cp);
+    const NLS_CPDATA *page = find_table_page(resolved);
+    if (!page && resolved != CP_UTF8 && resolved != CP_UTF7 && resolved != CP_SYMBOL) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    if (page->Id == CP_UTF7 || page->Id == CP_SYMBOL) {
+    if (resolved == CP_UTF7 || resolved == CP_SYMBOL) {
         if (flags) {
             KbSetError(ERROR_INVALID_FLAGS);
             return 0;
         }
-    } else if (page->Id == CP_UTF8) {
+    } else if (resolved == CP_UTF8) {
         if (flags & ~(DWORD)MB_ERR_INVALID_CHARS) {
             KbSetError(ERROR_INVALID_FLAGS);
             return 0;
@@ -546,16 +753,19 @@ int WINAPI MultiByteToWideChar(UINT cp, DWORD flags, LPCCH src, int src_len, LPW
         src_len = (int)strlen(src) + 1;
     WIDE_OUT o = {dst, dst_len, 0, FALSE};
     const UCHAR *s = (const UCHAR *)src;
-    if (page->Id == CP_UTF8) {
+    if (resolved == CP_UTF8) {
         if (!utf8_to_wide(s, src_len, &o, (flags & MB_ERR_INVALID_CHARS) != 0)) {
             KbSetError(ERROR_NO_UNICODE_TRANSLATION);
             return 0;
         }
-    } else if (page->Id == CP_UTF7) {
+    } else if (resolved == CP_UTF7) {
         utf7_to_wide(s, src_len, &o);
-    } else {
+    } else if (resolved == CP_SYMBOL) {
         for (int i = 0; i < src_len && !o.Overflow; i++)
-            put_wide(&o, sbcs_to_wide(page, s[i], flags));
+            put_wide(&o, s[i] < 0x20 ? s[i] : (WCHAR)(0xF000 + s[i]));
+    } else if (!table_to_wide(page, flags, s, src_len, &o)) {
+        KbSetError(ERROR_NO_UNICODE_TRANSLATION);
+        return 0;
     }
     if (o.Overflow) {
         KbSetError(ERROR_INSUFFICIENT_BUFFER);
@@ -571,58 +781,53 @@ int WINAPI WideCharToMultiByte(UINT cp, DWORD flags, LPCWCH src, int src_len, LP
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    const CODE_PAGE *page = find_code_page(cp);
-    if (!page) {
+    UINT resolved = resolve_code_page(cp);
+    const NLS_CPDATA *page = find_table_page(resolved);
+    if (!page && resolved != CP_UTF8 && resolved != CP_UTF7 && resolved != CP_SYMBOL) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    BOOL unicode = page->Id == CP_UTF8 || page->Id == CP_UTF7;
-    if (unicode) {
+    if (!page) {
         if (default_char || used_default) {
             KbSetError(ERROR_INVALID_PARAMETER);
             return 0;
         }
-        if ((page->Id == CP_UTF7 && flags) || (page->Id == CP_UTF8 && (flags & ~(DWORD)WC_ERR_INVALID_CHARS))) {
+        if (resolved == CP_UTF8 ? (flags & ~(DWORD)WC_ERR_INVALID_CHARS) : flags) {
             KbSetError(ERROR_INVALID_FLAGS);
             return 0;
         }
-    } else if (flags & ~(DWORD)(WC_COMPOSITECHECK | WC_DISCARDNS | WC_SEPCHARS | WC_DEFAULTCHAR |
-                                WC_NO_BEST_FIT_CHARS)) {
+    } else if ((flags & ~(DWORD)(WC_COMPOSITECHECK | WC_DISCARDNS | WC_SEPCHARS | WC_DEFAULTCHAR | WC_NO_BEST_FIT_CHARS)) ||
+               ((flags & (WC_DISCARDNS | WC_SEPCHARS | WC_DEFAULTCHAR)) && !(flags & WC_COMPOSITECHECK))) {
         KbSetError(ERROR_INVALID_FLAGS);
         return 0;
     }
     if (src_len < 0)
         src_len = (int)wcslen(src) + 1;
     BYTE_OUT o = {dst, dst_len, 0, FALSE};
-    if (page->Id == CP_UTF8) {
+    if (resolved == CP_UTF8) {
         if (!wide_to_utf8(src, src_len, &o, (flags & WC_ERR_INVALID_CHARS) != 0)) {
             KbSetError(ERROR_NO_UNICODE_TRANSLATION);
             return 0;
         }
-    } else if (page->Id == CP_UTF7) {
+    } else if (resolved == CP_UTF7) {
         wide_to_utf7(src, src_len, &o);
-    } else {
-        CHAR fallback = default_char ? *default_char : '?';
-        BOOL used = FALSE;
+    } else if (resolved == CP_SYMBOL) {
         for (int i = 0; i < src_len && !o.Overflow; i++) {
             WCHAR c = src[i];
-            int b = wide_to_sbcs(page, c);
-            if (b < 0 && !(flags & WC_NO_BEST_FIT_CHARS) && !default_char) {
-                WCHAR fit = best_fit(c);
-                if (fit != '?')
-                    b = wide_to_sbcs(page, fit);
-            }
-            if (b < 0) {
-                /* a surrogate pair yields a single default character. */
-                if (c >= 0xD800 && c <= 0xDBFF && i + 1 < src_len && src[i + 1] >= 0xDC00 && src[i + 1] <= 0xDFFF)
-                    i++;
-                used = TRUE;
-                b = (UCHAR)fallback;
-            }
-            put_byte(&o, (CHAR)b);
+            put_byte(&o, (CHAR)(c < 0x20 ? c : (c >= 0xF020 && c <= 0xF0FF ? c - 0xF000 : '?')));
         }
+    } else {
+        TABLE_OUT t = {&o, page, flags, {(UCHAR)page->DefaultChar, 0}, 1, FALSE};
+        if (default_char) {
+            t.Default[0] = (UCHAR)default_char[0];
+            if (is_lead(page, t.Default[0]) && default_char[1]) {
+                t.Default[1] = (UCHAR)default_char[1];
+                t.DefaultLength = 2;
+            }
+        }
+        wide_to_table(&t, src, src_len);
         if (used_default)
-            *used_default = used;
+            *used_default = t.Used;
     }
     if (o.Overflow) {
         KbSetError(ERROR_INSUFFICIENT_BUFFER);

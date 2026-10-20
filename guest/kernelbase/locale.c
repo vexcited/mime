@@ -229,6 +229,15 @@ static const LOCALE_DATA *find_locale(LCID lcid)
     return nullptr;
 }
 
+/* the ansi, oem or mac code page of a locale: 0, 1 or 2. */
+UINT KbLocaleCodePage(LCID lcid, UINT kind)
+{
+    const LOCALE_DATA *l = find_locale(lcid);
+    if (!l)
+        l = &g_en_us;
+    return kind == 0 ? l->AnsiCodePage : kind == 1 ? l->OemCodePage : l->MacCodePage;
+}
+
 BOOL KbIsSupportedLcid(LCID lcid)
 {
     return find_locale(lcid) != nullptr;

@@ -109,6 +109,15 @@ PIMAGE_NT_HEADERS KbImageNtHeader(PVOID base);
 LCID KbResolveLcid(LCID lcid);
 BOOL KbIsSupportedLcid(LCID lcid);
 
+/* unidata.c: Unicode data of the national language support. */
+UINT KbUniCcc(ULONG cp);
+BOOL KbUniIsNonspacing(ULONG cp);
+int KbUniDecompose(ULONG cp, BOOL compat, WCHAR *out); /* up to 20 units */
+ULONG KbUniCompose(ULONG first, ULONG second, BOOL hangul);
+ULONG KbUniUpper(ULONG cp);
+ULONG KbUniLower(ULONG cp);
+ULONG KbUniFold(ULONG cp);
+
 /* character classification shared by string functions. */
 WORD KbCharType1(WCHAR c);
 WCHAR KbUpcase(WCHAR c);
