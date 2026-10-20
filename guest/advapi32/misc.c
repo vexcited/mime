@@ -614,3 +614,42 @@ ADVAPI LSTATUS WINAPI RegConnectRegistryA(LPCSTR machine, HKEY key, HKEY *result
 {
     return RegConnectRegistryExA(machine, key, 0, result);
 }
+
+/*
+ * the registry reflection of 32-bit and 64-bit views, which windows' 64-bit systems had in their first versions and
+ * dropped: the calls remain, and 32-bit programs that were written for it call them. No key is reflected, so disabling
+ * and enabling succeed and none is ever found disabled; native 64-bit callers get what windows answers them.
+ */
+ADVAPI LSTATUS WINAPI RegDisableReflectionKey(HKEY key)
+{
+    (void)key;
+#ifdef _WIN64
+    return ERROR_CALL_NOT_IMPLEMENTED;
+#else
+    return ERROR_SUCCESS;
+#endif
+}
+
+ADVAPI LSTATUS WINAPI RegEnableReflectionKey(HKEY key)
+{
+    (void)key;
+#ifdef _WIN64
+    return ERROR_CALL_NOT_IMPLEMENTED;
+#else
+    return ERROR_SUCCESS;
+#endif
+}
+
+ADVAPI LSTATUS WINAPI RegQueryReflectionKey(HKEY key, BOOL *disabled)
+{
+    (void)key;
+#ifdef _WIN64
+    (void)disabled;
+    return ERROR_CALL_NOT_IMPLEMENTED;
+#else
+    if (!disabled)
+        return ERROR_INVALID_PARAMETER;
+    *disabled = FALSE;
+    return ERROR_SUCCESS;
+#endif
+}

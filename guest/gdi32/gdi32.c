@@ -688,6 +688,32 @@ WINGDIAPI NTSTATUS APIENTRY D3DKMTDestroyDCFromMemory(const D3DKMT_DESTROYDCFROM
     return NtGdiDdDDIDestroyDCFromMemory(desc);
 }
 
+/*
+ * the scheduling class of a process on the display's gpu. Mime has no gpu scheduler for programs to ask for time from,
+ * so every process runs in the normal class, and a request for another is accepted and kept so that a query of it
+ * answers what was asked.
+ */
+static volatile LONG g_gpu_priority_class = 1; /* D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL */
+
+WINGDIAPI NTSTATUS APIENTRY D3DKMTSetProcessSchedulingPriorityClass(HANDLE process, LONG priority_class)
+{
+    /* the classes run from idle (0) to realtime (5). */
+    if (!process || priority_class < 0 || priority_class > 5)
+        return (NTSTATUS)0xC000000D; /* STATUS_INVALID_PARAMETER */
+    /* only the process itself is kept, which is all a program asking for its own class needs. */
+    if (process == (HANDLE)(LONG_PTR)-1)
+        g_gpu_priority_class = priority_class;
+    return 0;
+}
+
+WINGDIAPI NTSTATUS APIENTRY D3DKMTGetProcessSchedulingPriorityClass(HANDLE process, LONG *priority_class)
+{
+    if (!process || !priority_class)
+        return (NTSTATUS)0xC000000D;
+    *priority_class = process == (HANDLE)(LONG_PTR)-1 ? g_gpu_priority_class : 1;
+    return 0;
+}
+
 /* ------------------------------------------------------------------ gamma */
 
 /* a dc of the display, which windows maps to its monitor; printers and metafiles have no ramp. */
