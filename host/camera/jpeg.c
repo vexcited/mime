@@ -721,12 +721,14 @@ size_t mime_jpeg_encode(const uint8_t *y, int y_stride, const uint8_t *cb, const
         quality = 1;
     if (quality > 100)
         quality = 100;
-    int scale = quality < 50 ? 5000 / quality : 200 - quality * 2;
+    /* the tables of annex K scaled by a power of the distance from 50, the mapping of guest/lib/jpeg. */
+    float u = quality >= 50 ? (float)(100 - quality) / 50.0f : 50.0f / (float)quality;
+    float scale = u * powf(u, 0.125f);
     uint8_t q[2][64];
     float recip[2][64];
     for (int t = 0; t < 2; t++)
         for (int i = 0; i < 64; i++) {
-            int v = ((t ? std_quant_chroma[i] : std_quant_luma[i]) * scale + 50) / 100;
+            int v = (int)((t ? std_quant_chroma[i] : std_quant_luma[i]) * scale + 0.5f);
             q[t][i] = (uint8_t)(v < 1 ? 1 : v > 255 ? 255 : v);
             recip[t][i] = 1.0f / q[t][i];
         }
