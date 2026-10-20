@@ -199,6 +199,22 @@ static HRESULT num_to_int(const AUT_NUM *n, const ITYPE *t, LONGLONG *out)
     return S_OK;
 }
 
+/*
+ * a currency as a 64 bit integer: windows rounds with the low half of the value only, so a negative one that fits in 32
+ * bits is always taken one further from zero and a large one is nudged by whatever the low half leaves. Kept as it is.
+ */
+static HRESULT cy_to_i8(LONGLONG cy, LONGLONG *out)
+{
+    LONGLONG q = cy / 10000;
+    LONGLONG multiple = 10000 * q;
+    LONGLONG low = (LONGLONG)(ULONG)cy - multiple;
+    LONGLONG distance = low >= 0 ? low : multiple - (LONGLONG)(ULONG)cy;
+    if ((q & 1) + distance > 5000)
+        q += cy < 0 ? -1 : 1;
+    *out = q;
+    return S_OK;
+}
+
 #define DEFINE_INT_STORE(Name, CT, TYPE)                                                                               \
     static HRESULT store_##Name(const AUT_NUM *n, CT *out)                                                             \
     {                                                                                                                  \
@@ -214,8 +230,31 @@ DEFINE_INT_STORE(I2, SHORT, T_I2)
 DEFINE_INT_STORE(UI2, USHORT, T_UI2)
 DEFINE_INT_STORE(I4, LONG, T_I4)
 DEFINE_INT_STORE(UI4, ULONG, T_UI4)
-DEFINE_INT_STORE(I8, LONGLONG, T_I8)
-DEFINE_INT_STORE(UI8, ULONGLONG, T_UI8)
+static HRESULT store_I8(const AUT_NUM *n, LONGLONG *out)
+{
+    if (n->Kind == NK_CY)
+        return cy_to_i8(n->I, out);
+    return num_to_int(n, &T_I8, out);
+}
+/*
+ * an unsigned 64 bit integer from a decimal: without a scale the words are taken as they are, and only a negative one
+ * with both low words set is refused, so minus one is one. With a scale the value goes through a double.
+ */
+static HRESULT store_UI8(const AUT_NUM *n, ULONGLONG *out)
+{
+    if (n->Kind == NK_DEC && AutDecimalValid(&n->D) && !n->D.scale) {
+        const DECIMAL *d = &n->D;
+        if (d->Hi32 || (d->sign && (ULONG)d->Lo64 && (ULONG)(d->Lo64 >> 32)))
+            return DISP_E_OVERFLOW;
+        *out = d->Lo64;
+        return S_OK;
+    }
+    LONGLONG v;
+    HRESULT hr = num_to_int(n, &T_UI8, &v);
+    if (SUCCEEDED(hr))
+        *out = (ULONGLONG)v;
+    return hr;
+}
 
 /* ------------------------------------------------------------------ floats */
 
@@ -250,7 +289,11 @@ static HRESULT store_R4(const AUT_NUM *n, FLOAT *out)
     HRESULT hr = num_to_r8(n, &d);
     if (FAILED(hr))
         return hr;
-    if (d < -FLT_LIMIT || d > FLT_LIMIT)
+    /* the lower limit is one step above minus the upper one, and a not a number is outside both. */
+    static const ULONGLONG low_bits = 0xC7EFFFFFEFFFFFFFull;
+    double low;
+    memcpy(&low, &low_bits, 8);
+    if (!(d >= low && d <= FLT_LIMIT))
         return DISP_E_OVERFLOW;
     *out = (float)d;
     return S_OK;
@@ -262,7 +305,7 @@ static HRESULT store_Date(const AUT_NUM *n, DATE *out)
     HRESULT hr = num_to_r8(n, &d);
     if (FAILED(hr))
         return hr;
-    if (!(d < 2958466.0 && d > -657435.0))
+    if (d >= 2958466.0 || d <= -657435.0)
         return DISP_E_OVERFLOW;
     *out = d;
     return S_OK;
@@ -322,6 +365,11 @@ static HRESULT store_Cy(const AUT_NUM *n, CY *out)
     case NK_UINT: return DISP_E_OVERFLOW;
     case NK_REAL: {
         double d = n->R;
+        /* a not a number passes the limits and comes out as the smallest value, which is what windows' arithmetic does. */
+        if (d != d) {
+            out->int64 = (LONGLONG)0x8000000000000000ull;
+            return S_OK;
+        }
         if (!(d < 9.223372036854776e14 && d > -9.223372036854776e14))
             return DISP_E_OVERFLOW;
         double r = round_even(d * 10000.0);
@@ -333,6 +381,134 @@ static HRESULT store_Cy(const AUT_NUM *n, CY *out)
     case NK_CY: out->int64 = n->I; return S_OK;
     default: return cy_from_dec(&n->D, out);
     }
+}
+
+/* ten to a small power, as the double that windows has in a table. */
+static double pow10_double(int n)
+{
+    static const double table[30] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11, 1e12, 1e13, 1e14,
+                                     1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22, 1e23, 1e24, 1e25, 1e26, 1e27, 1e28, 1e29};
+    double r = 1.0;
+    while (n >= 30) {
+        r *= 1e29;
+        n -= 29;
+    }
+    return r * table[n];
+}
+
+/* the digits times ten to a power, as the three words of a decimal; FALSE when they do not fit. */
+static BOOL mul_pow10_96(ULONGLONG mantissa, int power, DECIMAL *out)
+{
+    ULONG w[3] = {(ULONG)mantissa, (ULONG)(mantissa >> 32), 0};
+    for (int i = 0; i < power; i++) {
+        ULONGLONG carry = 0;
+        for (int j = 0; j < 3; j++) {
+            ULONGLONG t = (ULONGLONG)w[j] * 10 + carry;
+            w[j] = (ULONG)t;
+            carry = t >> 32;
+        }
+        if (carry)
+            return FALSE;
+    }
+    out->Lo64 = ((ULONGLONG)w[1] << 32) | w[0];
+    out->Hi32 = w[2];
+    return TRUE;
+}
+
+/*
+ * a float or a double as a decimal, the way windows does it and not by the shortest digits: the value is scaled by a
+ * power of ten, taken from an estimate of its size, to seven or fifteen digits, rounded half to even, and then trailing
+ * zeros are taken off but never more than the digits the type has, so a carry that makes eight digits of a float keeps
+ * a zero. The estimate of the power is the exponent times log10(2) as a fraction of 65536.
+ */
+static HRESULT dec_from_real(double value, BOOL is_float, DECIMAL *out)
+{
+    ULONGLONG bits;
+    memcpy(&bits, &value, 8);
+    int exponent;
+    int digits;
+    double upper, normal;
+    if (is_float) {
+        float f = (float)value;
+        ULONG fb;
+        memcpy(&fb, &f, 4);
+        exponent = (int)((fb >> 23) & 0xFF);
+        if (exponent < 0x20)
+            goto zero;
+        if (exponent > 0xDE)
+            return DISP_E_OVERFLOW;
+        digits = 6;
+        upper = 1e7;
+        normal = 1e6;
+        exponent -= 126;
+    } else {
+        exponent = (int)((bits >> 52) & 0x7FF);
+        if (exponent < 0x3A0)
+            goto zero;
+        if (exponent > 0x45E)
+            return DISP_E_OVERFLOW;
+        digits = 14;
+        upper = 1e15;
+        normal = 1e14;
+        exponent -= 1022;
+    }
+    {
+        int estimate = (19728 * exponent) >> 16;
+        int scale = digits - estimate;
+        double v = value < 0 ? -value : value;
+        if (scale < 0) {
+            if (scale == -1 && v < upper)
+                scale = 0;
+            else
+                v = v / pow10_double(estimate - digits);
+        } else {
+            if (scale > 28)
+                scale = 28;
+            v = v * pow10_double(scale);
+        }
+        if (v < normal && scale < 28) {
+            v *= 10.0;
+            scale++;
+        }
+        ULONGLONG m = (ULONGLONG)(LONGLONG)v;
+        double fraction = v - (double)(LONGLONG)m;
+        if (fraction > 0.5 || (fraction == 0.5 && (m & 1)))
+            m++;
+        if (!m)
+            goto zero;
+        out->wReserved = 0;
+        out->sign = (bits >> 63) ? 0x80 : 0;
+        if (scale >= 0) {
+            int room = scale < digits ? scale : digits;
+            for (int chunk = is_float ? 4 : 8; chunk; chunk >>= 1) {
+                if (chunk <= room) {
+                    ULONGLONG p = 1;
+                    for (int i = 0; i < chunk; i++)
+                        p *= 10;
+                    if (m % p == 0) {
+                        scale -= chunk;
+                        m /= p;
+                        room -= chunk;
+                    }
+                }
+            }
+            out->Lo64 = m;
+            out->Hi32 = 0;
+            out->scale = (BYTE)scale;
+            return S_OK;
+        }
+        if (!mul_pow10_96(m, -scale, out))
+            return DISP_E_OVERFLOW;
+        out->scale = 0;
+        return S_OK;
+    }
+zero:
+    out->wReserved = 0;
+    out->scale = 0;
+    out->sign = 0;
+    out->Hi32 = 0;
+    out->Lo64 = 0;
+    return S_OK;
 }
 
 static HRESULT store_Dec(const AUT_NUM *n, DECIMAL *out)
@@ -352,32 +528,7 @@ static HRESULT store_Dec(const AUT_NUM *n, DECIMAL *out)
         out->Hi32 = 0;
         out->Lo64 = n->U;
         return S_OK;
-    case NK_REAL: {
-        char digits[48];
-        int point;
-        double d = n->R;
-        int count = AutDoubleDigits(d, n->Precision, digits, &point);
-        ULONGLONG bits;
-        memcpy(&bits, &d, 8);
-        if (((bits >> 52) & 0x7FF) == 0x7FF || (bits & 0x7FFFFFFFFFFFFFFFull) >= 0x44F0000000000000ull)
-            return DISP_E_OVERFLOW;
-        if (!count || point < -28) {
-            out->wReserved = 0;
-            out->scale = 0;
-            out->sign = 0;
-            out->Hi32 = 0;
-            out->Lo64 = 0;
-            return S_OK;
-        }
-        AUT_NUMBER num;
-        memset(&num, 0, sizeof(num));
-        num.Count = count;
-        for (int i = 0; i < count; i++)
-            num.Digits[i] = (BYTE)(digits[i] - '0');
-        num.Exponent = point - count;
-        num.Negative = d < 0;
-        return AutDecimalFromNumber(&num, out);
-    }
+    case NK_REAL: return dec_from_real(n->R, n->Precision == 7, out);
     case NK_CY:
         out->wReserved = 0;
         out->scale = 4;
@@ -450,6 +601,16 @@ HRESULT AutNumStore(const AUT_NUM *n, VARTYPE vt, VARIANT *dest, LCID lcid, ULON
 
 /* ------------------------------------------------------------------ the exports from numbers */
 
+/* a boolean is a short that the small types take as it is, the 32 and 64 bit ones sign extended: -1 is all ones. */
+#define FROM_BOOL(To, ToT, value)                                                                                      \
+    WINOLEAUTAPI HRESULT WINAPI Var##To##FromBool(VARIANT_BOOL in, ToT *out)                                           \
+    {                                                                                                                  \
+        if (!out)                                                                                                      \
+            return E_INVALIDARG;                                                                                       \
+        *out = value;                                                                                                  \
+        return S_OK;                                                                                                   \
+    }
+
 #define CONV(To, ToT, Src, SrcT, MK)                                                                                   \
     WINOLEAUTAPI HRESULT WINAPI Var##To##From##Src(SrcT in, ToT *out)                                                  \
     {                                                                                                                  \
@@ -470,7 +631,7 @@ CONV(UI1, BYTE, R4, FLOAT, MK_R4)
 CONV(UI1, BYTE, R8, DOUBLE, MK_R8)
 CONV(UI1, BYTE, Date, DATE, MK_R8)
 CONV(UI1, BYTE, Cy, CY, MK_CY)
-CONV(UI1, BYTE, Bool, VARIANT_BOOL, MK_INT)
+FROM_BOOL(UI1, BYTE, (BYTE)in)
 CONV(UI1, BYTE, Dec, const DECIMAL *, MK_DEC)
 CONV(I2, SHORT, UI1, BYTE, MK_INT)
 CONV(I2, SHORT, I4, LONG, MK_INT)
@@ -521,7 +682,7 @@ CONV(UI2, USHORT, R4, FLOAT, MK_R4)
 CONV(UI2, USHORT, R8, DOUBLE, MK_R8)
 CONV(UI2, USHORT, Date, DATE, MK_R8)
 CONV(UI2, USHORT, Cy, CY, MK_CY)
-CONV(UI2, USHORT, Bool, VARIANT_BOOL, MK_INT)
+FROM_BOOL(UI2, USHORT, (USHORT)in)
 CONV(UI2, USHORT, Dec, const DECIMAL *, MK_DEC)
 CONV(UI4, ULONG, UI1, BYTE, MK_INT)
 CONV(UI4, ULONG, I2, SHORT, MK_INT)
@@ -534,7 +695,7 @@ CONV(UI4, ULONG, R4, FLOAT, MK_R4)
 CONV(UI4, ULONG, R8, DOUBLE, MK_R8)
 CONV(UI4, ULONG, Date, DATE, MK_R8)
 CONV(UI4, ULONG, Cy, CY, MK_CY)
-CONV(UI4, ULONG, Bool, VARIANT_BOOL, MK_INT)
+FROM_BOOL(UI4, ULONG, (ULONG)(LONG)in)
 CONV(UI4, ULONG, Dec, const DECIMAL *, MK_DEC)
 CONV(UI8, ULONGLONG, UI1, BYTE, MK_INT)
 CONV(UI8, ULONGLONG, I2, SHORT, MK_INT)
@@ -546,7 +707,7 @@ CONV(UI8, ULONGLONG, R4, FLOAT, MK_R4)
 CONV(UI8, ULONGLONG, R8, DOUBLE, MK_R8)
 CONV(UI8, ULONGLONG, Date, DATE, MK_R8)
 CONV(UI8, ULONGLONG, Cy, CY, MK_CY)
-CONV(UI8, ULONGLONG, Bool, VARIANT_BOOL, MK_INT)
+FROM_BOOL(UI8, ULONGLONG, (ULONGLONG)(LONGLONG)in)
 CONV(UI8, ULONGLONG, Dec, const DECIMAL *, MK_DEC)
 CONV(I1, CHAR, UI1, BYTE, MK_INT)
 CONV(I1, CHAR, I2, SHORT, MK_INT)
@@ -559,7 +720,7 @@ CONV(I1, CHAR, R4, FLOAT, MK_R4)
 CONV(I1, CHAR, R8, DOUBLE, MK_R8)
 CONV(I1, CHAR, Date, DATE, MK_R8)
 CONV(I1, CHAR, Cy, CY, MK_CY)
-CONV(I1, CHAR, Bool, VARIANT_BOOL, MK_INT)
+FROM_BOOL(I1, CHAR, (CHAR)in)
 CONV(I1, CHAR, Dec, const DECIMAL *, MK_DEC)
 CONV(R4, FLOAT, UI1, BYTE, MK_INT)
 CONV(R4, FLOAT, I2, SHORT, MK_INT)
@@ -638,63 +799,210 @@ CONV(Dec, DECIMAL, R4, FLOAT, MK_R4)
 CONV(Dec, DECIMAL, R8, DOUBLE, MK_R8)
 CONV(Dec, DECIMAL, Date, DATE, MK_R8)
 CONV(Dec, DECIMAL, Cy, CY, MK_CY)
-CONV(Dec, DECIMAL, Bool, VARIANT_BOOL, MK_INT)
+WINOLEAUTAPI HRESULT WINAPI VarDecFromBool(VARIANT_BOOL in, DECIMAL *out)
+{
+    if (!out)
+        return E_INVALIDARG;
+    out->wReserved = 0;
+    out->scale = 0;
+    out->sign = in ? 0x80 : 0;
+    out->Hi32 = 0;
+    out->Lo64 = in ? 1 : 0;
+    return S_OK;
+}
 
 /* ------------------------------------------------------------------ the exports from strings */
 
-static HRESULT str_number(LPCOLESTR text, LCID lcid, ULONG flags, AUT_NUMBER *n)
+/*
+ * the conversions from text parse the digits and ask for the value as the types of the function: the widths of the buffer
+ * of digits and the types asked for are the ones windows uses, which is what decides how far a hexadecimal number reaches
+ * and whether a fraction rounds away. The 32 and 64 bit signed integers add up the digits themselves.
+ */
+static HRESULT str_parse(LPCOLESTR in, LCID lcid, ULONG flags, int digit_count, NUMPARSE *np, BYTE *digits)
 {
-    return AutNumberFromString(text, lcid, flags, NUMPRS_STD, n, nullptr, nullptr);
+    memset(np, 0, sizeof(*np));
+    np->dwInFlags = NUMPRS_STD;
+    np->cDig = digit_count;
+    return VarParseNumFromStr(in, lcid, flags, np, digits);
 }
 
-static HRESULT str_to_int(LPCOLESTR text, LCID lcid, ULONG flags, const ITYPE *t, LONGLONG *out)
+static HRESULT str_variant(LPCOLESTR in, LCID lcid, ULONG flags, int digit_count, ULONG type_bits, VARIANT *v)
 {
-    AUT_NUMBER n;
-    HRESULT hr = str_number(text, lcid, flags, &n);
+    NUMPARSE np;
+    BYTE digits[40];
+    HRESULT hr = str_parse(in, lcid, flags, digit_count, &np, digits);
     if (FAILED(hr))
         return hr;
-    ULONG high;
-    ULONGLONG low;
-    if (!AutNumberToU96(&n, 0, &high, &low) || high)
+    memset(v, 0, sizeof(*v));
+    return VarNumFromParseNum(&np, digits, type_bits, v);
+}
+
+/* the digits rounded to a whole number, half to even, once the whole part has been read from them. */
+static BOOL str_rounds_up(const NUMPARSE *np, const BYTE *rest, int left, ULONGLONG whole)
+{
+    if (left <= 0)
+        return FALSE;
+    if (rest[0] > 5)
+        return TRUE;
+    if (rest[0] < 5)
+        return FALSE;
+    if (np->dwOutFlags & NUMPRS_INEXACT)
+        return TRUE;
+    for (int i = 1; i < left; i++)
+        if (rest[i])
+            return TRUE;
+    return (whole & 1) != 0;
+}
+
+static ULONGLONG pow10_u64(int n)
+{
+    ULONGLONG r = 1;
+    while (n-- > 0)
+        r *= 10;
+    return r;
+}
+
+/* a signed integer of 32 or 64 bits, bits being the width and digit_count what the buffer of digits holds. */
+static HRESULT str_signed(LPCOLESTR in, LCID lcid, ULONG flags, int digit_count, int bits, LONGLONG *out)
+{
+    NUMPARSE np;
+    BYTE rg[40];
+    HRESULT hr = str_parse(in, lcid, flags, digit_count, &np, rg);
+    if (FAILED(hr))
+        return hr;
+    ULONGLONG v = 0;
+    const BYTE *p = rg;
+    if (np.nBaseShift) {
+        int left = np.cDig;
+        if (bits == 32 ? !(left * np.nBaseShift <= 33 && (left * np.nBaseShift != 33 || rg[0] <= 3)) : left * np.nBaseShift > 65)
+            return DISP_E_OVERFLOW;
+        while (left-- > 0)
+            v = *p++ + (v << np.nBaseShift);
+        *out = bits == 32 ? (LONGLONG)(LONG)(ULONG)v : (LONGLONG)v;
+        return S_OK;
+    }
+    int left = np.cDig, whole_digits = np.cDig + np.nPwr10;
+    if (bits == 32 ? whole_digits >= 10 && (whole_digits != 10 || rg[0] > 2) : whole_digits > 19)
         return DISP_E_OVERFLOW;
-    BOOL neg = n.Negative && low;
-    if (neg ? low > 0 - (ULONGLONG)t->Min : low > t->Max)
+    BOOL scale = FALSE;
+    if (whole_digits > 0) {
+        do {
+            if (left <= 0)
+                break;
+            v = *p++ + 10 * v;
+            whole_digits--;
+            left--;
+        } while (whole_digits > 0);
+        if (whole_digits > 0) {
+            v *= pow10_u64(whole_digits);
+            scale = TRUE;
+        }
+    }
+    if (!scale && left > 0 && whole_digits == 0 && str_rounds_up(&np, p, left, v))
+        v++;
+    LONGLONG signed_v = bits == 32 ? (LONGLONG)(LONG)(ULONG)v : (LONGLONG)v;
+    if (np.dwOutFlags & NUMPRS_NEG) {
+        signed_v = bits == 32 ? (LONGLONG)(LONG)(0 - (ULONG)v) : (LONGLONG)(0 - v);
+        if (signed_v > 0)
+            return DISP_E_OVERFLOW;
+    } else if (signed_v < 0) {
         return DISP_E_OVERFLOW;
-    *out = neg ? (LONGLONG)(0 - low) : (LONGLONG)low;
+    }
+    *out = signed_v;
     return S_OK;
 }
 
-#define STR_INT(Name, CT, TYPE)                                                                                        \
-    WINOLEAUTAPI HRESULT WINAPI Var##Name##FromStr(LPCOLESTR in, LCID lcid, ULONG flags, CT *out)                      \
-    {                                                                                                                  \
-        LONGLONG v;                                                                                                    \
-        if (!out)                                                                                                      \
-            return E_INVALIDARG;                                                                                       \
-        HRESULT hr = str_to_int(in, lcid, flags, &TYPE, &v);                                                           \
-        if (SUCCEEDED(hr))                                                                                             \
-            *out = (CT)v;                                                                                              \
-        return hr;                                                                                                     \
-    }
-STR_INT(I1, CHAR, T_I1)
-STR_INT(UI1, BYTE, T_UI1)
-STR_INT(I2, SHORT, T_I2)
-STR_INT(UI2, USHORT, T_UI2)
-STR_INT(I4, LONG, T_I4)
-STR_INT(UI4, ULONG, T_UI4)
-STR_INT(I8, LONGLONG, T_I8)
-STR_INT(UI8, ULONGLONG, T_UI8)
+WINOLEAUTAPI HRESULT WINAPI VarI4FromStr(LPCOLESTR in, LCID lcid, ULONG flags, LONG *out)
+{
+    LONGLONG v;
+    if (!out)
+        return E_INVALIDARG;
+    HRESULT hr = str_signed(in, lcid, flags, 11, 32, &v);
+    if (SUCCEEDED(hr))
+        *out = (LONG)v;
+    return hr;
+}
+
+WINOLEAUTAPI HRESULT WINAPI VarI8FromStr(LPCOLESTR in, LCID lcid, ULONG flags, LONGLONG *out)
+{
+    if (!out)
+        return E_INVALIDARG;
+    return str_signed(in, lcid, flags, 21, 64, out);
+}
+
+WINOLEAUTAPI HRESULT WINAPI VarI2FromStr(LPCOLESTR in, LCID lcid, ULONG flags, SHORT *out)
+{
+    VARIANT v;
+    if (!out)
+        return E_INVALIDARG;
+    HRESULT hr = str_variant(in, lcid, flags, 12, VTBIT_I2, &v);
+    if (SUCCEEDED(hr))
+        *out = v.iVal;
+    return hr;
+}
+
+/* the one byte types read a short first, as windows does. */
+WINOLEAUTAPI HRESULT WINAPI VarI1FromStr(LPCOLESTR in, LCID lcid, ULONG flags, CHAR *out)
+{
+    SHORT v = 0;
+    if (!out)
+        return E_INVALIDARG;
+    HRESULT hr = VarI2FromStr(in, lcid, flags, &v);
+    return SUCCEEDED(hr) ? VarI1FromI2(v, out) : hr;
+}
+
+WINOLEAUTAPI HRESULT WINAPI VarUI1FromStr(LPCOLESTR in, LCID lcid, ULONG flags, BYTE *out)
+{
+    SHORT v = 0;
+    if (!out)
+        return E_INVALIDARG;
+    HRESULT hr = VarI2FromStr(in, lcid, flags, &v);
+    return SUCCEEDED(hr) ? VarUI1FromUI2((USHORT)v, out) : hr;
+}
+
+WINOLEAUTAPI HRESULT WINAPI VarUI2FromStr(LPCOLESTR in, LCID lcid, ULONG flags, USHORT *out)
+{
+    LONG v = 0;
+    if (!out)
+        return E_INVALIDARG;
+    HRESULT hr = VarI4FromStr(in, lcid, flags, &v);
+    if (FAILED(hr))
+        return hr;
+    if ((ULONG)v > 0xFFFF)
+        return DISP_E_OVERFLOW;
+    *out = (USHORT)v;
+    return S_OK;
+}
+
+WINOLEAUTAPI HRESULT WINAPI VarUI4FromStr(LPCOLESTR in, LCID lcid, ULONG flags, ULONG *out)
+{
+    VARIANT v;
+    if (!out)
+        return E_INVALIDARG;
+    HRESULT hr = str_variant(in, lcid, flags, 11, VTBIT_UI4, &v);
+    if (SUCCEEDED(hr))
+        *out = v.ulVal;
+    return hr;
+}
+
+WINOLEAUTAPI HRESULT WINAPI VarUI8FromStr(LPCOLESTR in, LCID lcid, ULONG flags, ULONGLONG *out)
+{
+    VARIANT v;
+    if (!out)
+        return E_INVALIDARG;
+    HRESULT hr = str_variant(in, lcid, flags, 21, VTBIT_UI8, &v);
+    if (SUCCEEDED(hr))
+        *out = v.ullVal;
+    return hr;
+}
 
 static HRESULT str_to_r8(LPCOLESTR in, LCID lcid, ULONG flags, double *out)
 {
-    AUT_NUMBER n;
-    HRESULT hr = str_number(in, lcid, flags, &n);
-    if (FAILED(hr))
-        return hr;
-    double d = AutNumberToDouble(&n);
-    if (!(d >= -1.7976931348623157e308 && d <= 1.7976931348623157e308))
-        return DISP_E_OVERFLOW;
-    *out = d;
-    return S_OK;
+    VARIANT v;
+    HRESULT hr = str_variant(in, lcid, flags, 20, VTBIT_R8, &v);
+    if (SUCCEEDED(hr))
+        *out = v.dblVal;
+    return hr;
 }
 
 WINOLEAUTAPI HRESULT WINAPI VarR8FromStr(LPCOLESTR in, LCID lcid, ULONG flags, DOUBLE *out)
@@ -704,57 +1012,98 @@ WINOLEAUTAPI HRESULT WINAPI VarR8FromStr(LPCOLESTR in, LCID lcid, ULONG flags, D
 
 WINOLEAUTAPI HRESULT WINAPI VarR4FromStr(LPCOLESTR in, LCID lcid, ULONG flags, FLOAT *out)
 {
-    double d;
+    VARIANT v;
     if (!out)
         return E_INVALIDARG;
-    HRESULT hr = str_to_r8(in, lcid, flags, &d);
-    if (FAILED(hr))
-        return hr;
-    if (d < -FLT_LIMIT || d > FLT_LIMIT)
-        return DISP_E_OVERFLOW;
-    *out = (float)d;
-    return S_OK;
+    HRESULT hr = str_variant(in, lcid, flags, 12, VTBIT_R4, &v);
+    if (SUCCEEDED(hr))
+        *out = v.fltVal;
+    return hr;
 }
 
 WINOLEAUTAPI HRESULT WINAPI VarCyFromStr(LPCOLESTR in, LCID lcid, ULONG flags, CY *out)
 {
-    AUT_NUMBER n;
+    VARIANT v;
     if (!out)
         return E_INVALIDARG;
-    HRESULT hr = str_number(in, lcid, flags, &n);
-    if (FAILED(hr))
-        return hr;
-    ULONG high;
-    ULONGLONG low;
-    if (!AutNumberToU96(&n, 4, &high, &low) || high || low > (n.Negative ? 0x8000000000000000ull : 0x7FFFFFFFFFFFFFFFull))
-        return DISP_E_OVERFLOW;
-    out->int64 = n.Negative ? (LONGLONG)(0 - low) : (LONGLONG)low;
-    return S_OK;
+    HRESULT hr = str_variant(in, lcid, flags, 21, VTBIT_CY, &v);
+    if (SUCCEEDED(hr))
+        *out = v.cyVal;
+    return hr;
 }
 
 WINOLEAUTAPI HRESULT WINAPI VarDecFromStr(LPCOLESTR in, LCID lcid, ULONG flags, DECIMAL *out)
 {
-    AUT_NUMBER n;
+    VARIANT v;
     if (!out)
         return E_INVALIDARG;
-    HRESULT hr = str_number(in, lcid, flags, &n);
-    if (FAILED(hr))
-        return hr;
-    return AutDecimalFromNumber(&n, out);
+    HRESULT hr = str_variant(in, lcid, flags, 30, VTBIT_DECIMAL, &v);
+    if (SUCCEEDED(hr))
+        *out = v.decVal;
+    return hr;
 }
 
-/* the names of a boolean: windows keeps a list by language, English is first and the rest are a guess left out. */
-static const WCHAR g_false_name[] = L"False", g_true_name[] = L"True";
+/*
+ * the names of a boolean: windows keeps a list of 25 languages, the first being English, which is the one used unless the
+ * flag for the local names is set. A language is found by its primary language or, where that is zero, by the locale.
+ */
+typedef struct {
+    WORD Lcid, Language;
+    const WCHAR *False, *True;
+} BOOL_NAMES;
+
+static const BOOL_NAMES g_bool_names[25] = {
+    {0x409, 9, L"False", L"True"},
+    {0x401, 1, L"False", L"True"},
+    {0x804, 0, L"False", L"True"},
+    {0x404, 4, L"False", L"True"},
+    {0x405, 5, L"Nepravda", L"Pravda"},
+    {0x406, 6, L"Falsk", L"Sand"},
+    {0x407, 7, L"Falsch", L"Wahr"},
+    {0x408, 8, L"\u03a8\u03b5\u03c5\u03b4\u03ad\u03c2", L"\u0391\u03bb\u03b7\u03b8\u03ad\u03c2"},
+    {0x40a, 0xa, L"Falso", L"Verdadero"},
+    {0x40b, 0xb, L"Ep\u00e4tosi", L"Tosi"},
+    {0x40c, 0xc, L"Faux", L"Vrai"},
+    {0x40d, 0xd, L"False", L"True"},
+    {0x40e, 0xe, L"Hamis", L"Igaz"},
+    {0x410, 0x10, L"Falso", L"Vero"},
+    {0x411, 0x11, L"False", L"True"},
+    {0x412, 0x12, L"False", L"True"},
+    {0x413, 0x13, L"Onwaar", L"Waar"},
+    {0x414, 0x14, L"Usann", L"Sann"},
+    {0x415, 0x15, L"Fa\u0142sz", L"Prawda"},
+    {0x816, 0, L"Falso", L"Verdadeiro"},
+    {0x416, 0x16, L"Falso", L"Verdadeiro"},
+    {0x419, 0x19, L"\u041b\u043e\u0436\u044c", L"\u0418\u0441\u0442\u0438\u043d\u0430"},
+    {0x41d, 0x1d, L"Falskt", L"Sant"},
+    {0x41f, 0x1f, L"Yanl\u0131\u015f", L"Do\u011fru"},
+    {0x424, 0x24, L"Neresni\u010dno", L"Resni\u010dno"},
+};
+
+static const BOOL_NAMES *bool_names(LCID lcid, ULONG flags)
+{
+    if (!(flags & VARIANT_LOCALBOOL))
+        return &g_bool_names[0];
+    if (lcid == LOCALE_USER_DEFAULT)
+        lcid = GetUserDefaultLCID();
+    else if (lcid == LOCALE_SYSTEM_DEFAULT)
+        lcid = GetSystemDefaultLCID();
+    for (int i = 0; i < 25; i++)
+        if ((g_bool_names[i].Language && g_bool_names[i].Language == (lcid & 0x3FF)) || lcid == g_bool_names[i].Lcid)
+            return &g_bool_names[i];
+    return &g_bool_names[0];
+}
 
 WINOLEAUTAPI HRESULT WINAPI VarBoolFromStr(LPCOLESTR in, LCID lcid, ULONG flags, VARIANT_BOOL *out)
 {
     if (!out || !in)
         return E_INVALIDARG;
-    if (!wcscmp(in, L"#FALSE#") || !_wcsicmp(in, g_false_name)) {
+    const BOOL_NAMES *names = bool_names(lcid, flags);
+    if (!wcscmp(in, L"#FALSE#") || !_wcsicmp(in, names->False)) {
         *out = VARIANT_FALSE;
         return S_OK;
     }
-    if (!wcscmp(in, L"#TRUE#") || !_wcsicmp(in, g_true_name)) {
+    if (!wcscmp(in, L"#TRUE#") || !_wcsicmp(in, names->True)) {
         *out = VARIANT_TRUE;
         return S_OK;
     }
@@ -862,7 +1211,8 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromBool(VARIANT_BOOL in, LCID lcid, ULONG fl
 {
     if (!out)
         return E_INVALIDARG;
-    *out = SysAllocString(in ? g_true_name : g_false_name);
+    const BOOL_NAMES *names = bool_names(lcid, flags);
+    *out = SysAllocString(in ? names->True : names->False);
     return *out ? S_OK : E_OUTOFMEMORY;
 }
 
@@ -873,22 +1223,23 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromCy(CY value, LCID lcid, ULONG flags, BSTR
     BOOL negative = value.int64 < 0;
     ULONGLONG magnitude = negative ? 0 - (ULONGLONG)value.int64 : (ULONGLONG)value.int64;
     if (flags & LOCALE_USE_NLS) {
-        /* the currency format of the locale, from the plain digits. */
-        WCHAR digits[32];
-        int n = AutFormatInteger((LONGLONG)(magnitude / 10000), TRUE, digits + (negative ? 1 : 0));
-        if (negative)
-            digits[0] = L'-';
-        n += negative;
+        /* the digits with a point put in four from the end. */
+        WCHAR whole[32];
+        int length = AutFormatInteger(value.int64, FALSE, whole);
+        /* with fewer than four digits windows works in front of its buffer, and what comes out depends on what was there. */
+        if (length < 4)
+            return E_INVALIDARG;
+        WCHAR digits[40];
+        int n = 0;
+        int at = length - 4;
+        for (int i = 0; i < at; i++)
+            digits[n++] = whole[i];
         digits[n++] = L'.';
-        ULONG frac = (ULONG)(magnitude % 10000);
-        digits[n++] = (WCHAR)(L'0' + frac / 1000);
-        digits[n++] = (WCHAR)(L'0' + frac / 100 % 10);
-        digits[n++] = (WCHAR)(L'0' + frac / 10 % 10);
-        digits[n++] = (WCHAR)(L'0' + frac % 10);
+        for (int i = at; i < length; i++)
+            digits[n++] = whole[i];
         digits[n] = 0;
         WCHAR text[200];
-        int written = GetCurrencyFormatW(lcid ? lcid : LOCALE_USER_DEFAULT, flags & LOCALE_NOUSEROVERRIDE, digits,
-                                         nullptr, text, 200);
+        int written = GetCurrencyFormatW(lcid, flags & ~(ULONG)LOCALE_USE_NLS, digits, nullptr, text, 200);
         if (!written)
             return E_INVALIDARG;
         *out = SysAllocString(text);

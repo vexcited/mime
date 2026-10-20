@@ -241,7 +241,8 @@ static BOOL copy_integer_bits(const VARIANT *s, VARTYPE dvt, VARIANT *d)
         d->vt = dvt;
         return TRUE;
     }
-    if (!same_size && !(svt == VT_I2 && dvt == VT_BOOL))
+    /* a boolean is true as -1, so a number becomes one by its value. */
+    if (!same_size || dvt == VT_BOOL)
         return FALSE;
     memcpy(&d->llVal, &s->llVal, ssize);
     d->vt = dvt;
@@ -361,10 +362,9 @@ static HRESULT change_value(const VARIANT *s, VARTYPE dvt, VARIANT *d, LCID lcid
     }
     if (dvt == VT_EMPTY || dvt == VT_NULL) {
         /* anything but the types that have no value of their own turns into the empty or null variant. */
-        if ((svt == VT_EMPTY || svt == VT_NULL) || svt == VT_ERROR || (svt & (VT_ARRAY | VT_VECTOR)) ||
-            svt == VT_RECORD)
+        if (svt == VT_NULL || svt == VT_ERROR || (svt & (VT_ARRAY | VT_VECTOR)) || svt == VT_RECORD)
             return DISP_E_TYPEMISMATCH;
-        if (!is_number_vt(svt) && svt != VT_BSTR && svt != VT_DISPATCH && svt != VT_UNKNOWN)
+        if (svt != VT_EMPTY && !is_number_vt(svt) && svt != VT_BSTR && svt != VT_DISPATCH && svt != VT_UNKNOWN)
             return DISP_E_TYPEMISMATCH;
         d->vt = dvt;
         return S_OK;
@@ -439,6 +439,9 @@ static HRESULT change_value(const VARIANT *s, VARTYPE dvt, VARIANT *d, LCID lcid
         return convert_to_string(s, d, lcid, flags);
     }
     if (!is_number_vt(dvt))
+        return DISP_E_TYPEMISMATCH;
+    /* an int has no way to a 64 bit integer in the table of windows, which an unsigned int has. */
+    if (svt == VT_INT && (dvt == VT_I8 || dvt == VT_UI8))
         return DISP_E_TYPEMISMATCH;
     if (copy_integer_bits(s, dvt, d))
         return S_OK;

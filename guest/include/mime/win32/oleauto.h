@@ -215,6 +215,8 @@ WINOLEAUTAPI BSTR WINAPI SysAllocStringByteLen(LPCSTR string, UINT length);
 WINOLEAUTAPI INT WINAPI SysReAllocString(BSTR *bstr, const OLECHAR *string);
 WINOLEAUTAPI INT WINAPI SysReAllocStringLen(BSTR *bstr, const OLECHAR *string, UINT length);
 WINOLEAUTAPI void WINAPI SysFreeString(BSTR bstr);
+WINOLEAUTAPI HRESULT WINAPI SysAddRefString(BSTR bstr);
+WINOLEAUTAPI void WINAPI SysReleaseString(BSTR bstr);
 WINOLEAUTAPI UINT WINAPI SysStringLen(BSTR bstr);
 WINOLEAUTAPI UINT WINAPI SysStringByteLen(BSTR bstr);
 

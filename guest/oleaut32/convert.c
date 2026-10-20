@@ -256,6 +256,59 @@ WINOLEAUTAPI HRESULT WINAPI VarDateFromStr(LPCOLESTR string, LCID lcid, ULONG fl
     return S_OK;
 }
 
+/*
+ * the short date of a day, also for the years before 1601 that the formatting of dates does not take: the day is formatted
+ * in a year of the same calendar 400 years on, which has the same weekdays, and the year of the pattern is written in as
+ * a literal, as many digits as the number has.
+ */
+static int format_short_date(LCID locale, DWORD override, const SYSTEMTIME *time, WCHAR *text, int size)
+{
+    if (time->wYear >= 1601)
+        return GetDateFormatW(locale, DATE_SHORTDATE | override, time, nullptr, text, size);
+    WCHAR pattern[80], format[160];
+    if (!GetLocaleInfoW(locale, LOCALE_SSHORTDATE | override, pattern, 80))
+        return 0;
+    int n = 0;
+    for (const WCHAR *p = pattern; *p && n < 140;) {
+        if (*p == L'\'') {
+            format[n++] = *p++;
+            while (*p && n < 140) {
+                format[n++] = *p;
+                if (*p++ == L'\'')
+                    break;
+            }
+        } else if (*p == L'y') {
+            int run = 0;
+            while (*p == L'y') {
+                run++;
+                p++;
+            }
+            WCHAR number[8];
+            int digits = 0;
+            LONG year = run <= 2 ? time->wYear % 100 : time->wYear;
+            WCHAR reversed[8];
+            do {
+                reversed[digits++] = (WCHAR)(L'0' + year % 10);
+                year /= 10;
+            } while (year);
+            if (run == 2 && digits < 2)
+                reversed[digits++] = L'0';
+            for (int i = 0; i < digits; i++)
+                number[i] = reversed[digits - 1 - i];
+            format[n++] = L'\'';
+            for (int i = 0; i < digits; i++)
+                format[n++] = number[i];
+            format[n++] = L'\'';
+        } else {
+            format[n++] = *p++;
+        }
+    }
+    format[n] = 0;
+    SYSTEMTIME shifted = *time;
+    shifted.wYear = (WORD)(time->wYear + 400 * ((1601 - time->wYear + 399) / 400));
+    return GetDateFormatW(locale, override, &shifted, format, text, size);
+}
+
 WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, BSTR *out)
 {
     if (!out)
@@ -263,6 +316,21 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, B
     *out = nullptr;
     LONG days, seconds;
     SYSTEMTIME time;
+    if (flags & LOCALE_USE_NLS) {
+        /* the formats of the locale, the date and the time, always both, with the flags handed on as they are. */
+        memset(&time, 0, sizeof(time));
+        VariantTimeToSystemTime(date, &time);
+        DWORD pass = flags & ~(ULONG)LOCALE_USE_NLS;
+        WCHAR buffer[256];
+        int written = GetDateFormatW(lcid, pass, &time, nullptr, buffer, 256);
+        if (!written)
+            return E_INVALIDARG;
+        buffer[written - 1] = L' ';
+        if (!GetTimeFormatW(lcid, pass, &time, nullptr, buffer + written, 255 - written))
+            return E_INVALIDARG;
+        *out = SysAllocString(buffer);
+        return *out ? S_OK : E_OUTOFMEMORY;
+    }
     if (!split_date(date, &days, &seconds) || !VariantTimeToSystemTime(date, &time))
         return E_INVALIDARG;
     BOOL show_date = !(flags & VAR_TIMEVALUEONLY) && (days || (flags & VAR_DATEVALUEONLY));
@@ -272,7 +340,7 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, B
     WCHAR text[160];
     int n = 0;
     if (show_date) {
-        int written = GetDateFormatW(locale, DATE_SHORTDATE | override, &time, nullptr, text, 80);
+        int written = format_short_date(locale, override, &time, text, 80);
         if (!written)
             return E_INVALIDARG;
         n = written - 1;

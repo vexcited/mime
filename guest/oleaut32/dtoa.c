@@ -272,7 +272,8 @@ int AutDoubleDigits(double x, int ndigits, char *digits, int *point)
     int keep = total < ndigits ? total : ndigits;
     if (total > ndigits) {
         char c = all[ndigits];
-        BOOL up = c > '5' || (c == '5' && (more || ((all[ndigits - 1] - '0') & 1)));
+        /* a tie goes away from zero, as the runtime of C that windows' text comes from rounds it. */
+        BOOL up = c >= '5';
         if (up) {
             int i = ndigits - 1;
             for (; i >= 0; i--) {

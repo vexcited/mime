@@ -22,12 +22,15 @@ EXPORTS
     SafeArrayPutElement @26
     SafeArrayUnaccessData @24
     SafeArrayUnlock @22
+    SysAddRefString @356
     SysAllocString @2
     SysAllocStringByteLen @150
     SysAllocStringLen @4
     SysFreeString @6
     SysReAllocString @3
     SysReAllocStringLen @5
+    SysReleaseString @357
+    SetOaNoCache @327
     SysStringByteLen @149
     SysStringLen @7
     VariantClear @9

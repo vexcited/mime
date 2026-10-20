@@ -44,6 +44,8 @@ FORCEINLINE void AutAddRef(void *object)
 typedef struct {
     BOOL Negative;
     BOOL Inexact;
+    /* digits, if only zeros, were read. */
+    BOOL Seen;
     /* 0 for a decimal number, 3 for octal and 4 for hexadecimal digits, which have no exponent. */
     int Shift;
     int Count;
