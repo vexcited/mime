@@ -210,9 +210,108 @@ BOOL OrpcBuiltinServer(REFCLSID clsid, const WCHAR **dll)
     return FALSE;
 }
 
+/* ------------------------------------------------------------------ the global options of a process */
+
+/* the options that programs set and ask for through CLSID_GlobalOptions, which this system keeps and reads nowhere. */
+typedef struct IGlobalOptions IGlobalOptions;
+typedef struct IGlobalOptionsVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IGlobalOptions *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IGlobalOptions *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IGlobalOptions *This);
+    HRESULT(STDMETHODCALLTYPE *Set)(IGlobalOptions *This, DWORD property, ULONG_PTR value);
+    HRESULT(STDMETHODCALLTYPE *Query)(IGlobalOptions *This, DWORD property, ULONG_PTR *value);
+} IGlobalOptionsVtbl;
+struct IGlobalOptions {
+    const IGlobalOptionsVtbl *lpVtbl;
+};
+
+static const GUID g_clsid_global_options = {0x0000034B, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
+static const GUID g_iid_global_options = {0x0000015B, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
+/* the settings of the runtime start with 0x100, the catalog of classes being the machine's alone, as the reference reads it. */
+static ULONG_PTR g_global_options[6] = {0, 0, 0, 0, 0x100, 0};
+
+static HRESULT STDMETHODCALLTYPE gopt_query(IGlobalOptions *This, REFIID riid, void **object)
+{
+    if (!IsEqualGUID(riid, &IID_IUnknown) && !IsEqualGUID(riid, &g_iid_global_options)) {
+        *object = nullptr;
+        return E_NOINTERFACE;
+    }
+    *object = This;
+    return S_OK;
+}
+
+static ULONG STDMETHODCALLTYPE gopt_add_ref(IGlobalOptions *This)
+{
+    return 2;
+}
+
+static ULONG STDMETHODCALLTYPE gopt_release(IGlobalOptions *This)
+{
+    return 1;
+}
+
+static HRESULT STDMETHODCALLTYPE gopt_set(IGlobalOptions *This, DWORD property, ULONG_PTR value)
+{
+    if (property < 1 || property > 5)
+        return E_INVALIDARG;
+    g_global_options[property] = value;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE gopt_get(IGlobalOptions *This, DWORD property, ULONG_PTR *value)
+{
+    if (property < 1 || property > 5 || !value)
+        return E_INVALIDARG;
+    *value = g_global_options[property];
+    return S_OK;
+}
+
+static const IGlobalOptionsVtbl g_gopt_vtbl = {gopt_query, gopt_add_ref, gopt_release, gopt_set, gopt_get};
+static IGlobalOptions g_gopt = {&g_gopt_vtbl};
+
+static HRESULT STDMETHODCALLTYPE gfac_query(IClassFactory *This, REFIID riid, void **object)
+{
+    if (!IsEqualGUID(riid, &IID_IUnknown) && !IsEqualGUID(riid, &IID_IClassFactory)) {
+        *object = nullptr;
+        return E_NOINTERFACE;
+    }
+    *object = This;
+    return S_OK;
+}
+
+static ULONG STDMETHODCALLTYPE gfac_add_ref(IClassFactory *This)
+{
+    return 2;
+}
+
+static ULONG STDMETHODCALLTYPE gfac_release(IClassFactory *This)
+{
+    return 1;
+}
+
+static HRESULT STDMETHODCALLTYPE gfac_create(IClassFactory *This, IUnknown *outer, REFIID riid, void **object)
+{
+    *object = nullptr;
+    if (outer)
+        return CLASS_E_NOAGGREGATION;
+    return gopt_query(&g_gopt, riid, object);
+}
+
+static HRESULT STDMETHODCALLTYPE gfac_lock(IClassFactory *This, BOOL lock)
+{
+    return S_OK;
+}
+
+static const IClassFactoryVtbl g_gfac_vtbl = {gfac_query, gfac_add_ref, gfac_release, gfac_create, gfac_lock};
+static IClassFactory g_gfac = {&g_gfac_vtbl};
+
 /* the class object of the class that marshals them: the factory of this file. */
 BOOL OrpcBuiltinClassObject(REFCLSID clsid, REFIID iid, void **object, HRESULT *hr)
 {
+    if (IsEqualGUID(clsid, &g_clsid_global_options)) {
+        *hr = gfac_query(&g_gfac, iid, object);
+        return TRUE;
+    }
     if (!IsEqualGUID(clsid, &orpcbuiltin_ProxyClsid))
         return FALSE;
     *hr = orpcbuiltin_DllGetClassObject(clsid, iid, object);

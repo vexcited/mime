@@ -1321,6 +1321,21 @@ BOOL WINAPI IsWow64Process2(HANDLE process, USHORT *process_machine, USHORT *nat
     return TRUE;
 }
 
+/*
+ * The machine that code the thread loads and runs as a guest is made for, unless it names one: the machine of the process
+ * to begin with. It answers with the machine it had. Guess: the setting is the process's here, not the thread's.
+ */
+USHORT WINAPI Wow64SetThreadDefaultGuestMachine(USHORT machine)
+{
+    static volatile LONG current;
+    if (!current) {
+        USHORT process_machine = 0, native = 0;
+        IsWow64Process2(GetCurrentProcess(), &process_machine, &native);
+        current = process_machine ? process_machine : native;
+    }
+    return (USHORT)InterlockedExchange(&current, machine);
+}
+
 /* ------------------------------------------------------------------ miscellaneous process information */
 
 BOOL WINAPI GetProcessHandleCount(HANDLE process, PDWORD count)

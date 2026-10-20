@@ -562,8 +562,8 @@ static DWORD type_flag(DWORD type)
 LSTATUS WINAPI RegGetValueW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD flags, LPDWORD type, PVOID data,
                             LPDWORD size)
 {
-    if ((data && !size) || !(flags & RRF_RT_ANY) ||
-        ((flags & RRF_RT_REG_EXPAND_SZ) && !(flags & RRF_NOEXPAND) && (flags & RRF_RT_ANY) != RRF_RT_ANY))
+    /* an expandable value is expanded and reported as a string, so a request for expandable ones alone finds none. */
+    if ((data && !size) || !(flags & RRF_RT_ANY))
         return ERROR_INVALID_PARAMETER;
     DWORD capacity = data ? *size : 0;
     if (data && (flags & RRF_ZEROONFAILURE))

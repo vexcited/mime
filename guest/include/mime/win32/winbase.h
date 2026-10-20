@@ -1646,6 +1646,7 @@ WINBASEAPI BOOL WINAPI QueryThreadCycleTime(HANDLE thread, PULONG64 cycles);
 WINBASEAPI DWORD WINAPI QueueUserAPC(PAPCFUNC apc, HANDLE thread, ULONG_PTR data);
 WINBASEAPI BOOL WINAPI IsWow64Process(HANDLE process, PBOOL wow64);
 WINBASEAPI BOOL WINAPI IsWow64Process2(HANDLE process, USHORT *process_machine, USHORT *native_machine);
+WINBASEAPI USHORT WINAPI Wow64SetThreadDefaultGuestMachine(USHORT machine);
 WINBASEAPI DWORD WINAPI GetCurrentProcessorNumber(void);
 WINBASEAPI void WINAPI GetCurrentProcessorNumberEx(PPROCESSOR_NUMBER number);
 WINBASEAPI BOOL WINAPI GetProcessHandleCount(HANDLE process, PDWORD count);

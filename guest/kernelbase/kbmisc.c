@@ -17,6 +17,11 @@ NTSYSAPI NTSTATUS NTAPI RtlIsApiSetImplemented(PCSTR contract);
 DECLSPEC_EXPORT PVOID WINAPI DelayLoadFailureHook(LPCSTR dll, LPCSTR procedure)
 {
     ULONG_PTR arguments[2] = {(ULONG_PTR)dll, (ULONG_PTR)procedure};
+    char text[200];
+    if (!IsBadReadPtr(dll, 1) && !IsBadReadPtr(procedure, 1)) {
+        _snprintf(text, sizeof(text), "kernelbase: the delay load of %s from %s failed\n", procedure, dll);
+        OutputDebugStringA(text);
+    }
     RaiseException(DELAY_LOAD_FAILURE_EXCEPTION, EXCEPTION_NONCONTINUABLE, 2, arguments);
     return nullptr;
 }

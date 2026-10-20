@@ -1492,6 +1492,65 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllFullName(PVOID base, PUNICODE_STRING name)
     return name->MaximumLength >= e->FullDllName.Length ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
 }
 
+/*
+ * The directories a dll of a name is looked for in, as the strings the loader searches: the first is the part that is
+ * searched for dlls named without a path, the second the whole list with the directory of the program, the system
+ * directories, the current one and the path. A caller releases both with RtlReleasePath.
+ */
+NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllPath(PCWSTR dll_name, ULONG flags, PWSTR *dll_path, PWSTR *search_path)
+{
+    PRTL_USER_PROCESS_PARAMETERS pp = NtCurrentPeb()->ProcessParameters;
+    WCHAR path_value[2048];
+    UNICODE_STRING var = RTL_CONSTANT_STRING(L"PATH");
+    UNICODE_STRING value = {0, sizeof(path_value) - sizeof(WCHAR), path_value};
+    path_value[0] = 0;
+    if (NT_SUCCESS(RtlQueryEnvironmentVariable_U(nullptr, &var, &value)))
+        path_value[value.Length / sizeof(WCHAR)] = 0;
+    SIZE_T chars = pp->DllPath.Length / sizeof(WCHAR) + wcslen(g_system32) + wcslen(g_windows) +
+                   pp->CurrentDirectory.DosPath.Length / sizeof(WCHAR) + wcslen(path_value) + 8;
+    PWSTR list = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, chars * sizeof(WCHAR));
+    PWSTR first = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, (wcslen(g_system32) + wcslen(g_windows) + 4) * sizeof(WCHAR));
+    if (!list || !first) {
+        if (list)
+            RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, list);
+        if (first)
+            RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, first);
+        return STATUS_NO_MEMORY;
+    }
+    PWSTR out = list;
+    if (pp->DllPath.Length) {
+        memcpy(out, pp->DllPath.Buffer, pp->DllPath.Length);
+        out += pp->DllPath.Length / sizeof(WCHAR);
+        *out++ = ';';
+    }
+    wcscpy(out, g_system32);
+    out += wcslen(out);
+    *out++ = ';';
+    wcscpy(out, g_windows);
+    out += wcslen(out);
+    *out++ = ';';
+    memcpy(out, pp->CurrentDirectory.DosPath.Buffer, pp->CurrentDirectory.DosPath.Length);
+    out += pp->CurrentDirectory.DosPath.Length / sizeof(WCHAR);
+    if (path_value[0]) {
+        *out++ = ';';
+        wcscpy(out, path_value);
+        out += wcslen(out);
+    }
+    *out = 0;
+    wcscpy(first, g_system32);
+    wcscat(first, L";");
+    wcscat(first, g_windows);
+    *dll_path = first;
+    *search_path = list;
+    return STATUS_SUCCESS;
+}
+
+NTDLL_EXPORT void NTAPI RtlReleasePath(PWSTR path)
+{
+    if (path)
+        RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, path);
+}
+
 /* ------------------------------------------------------------------ thread start and exit */
 
 typedef ULONG(NTAPI *PTHREAD_START_ROUTINE)(PVOID parameter);
