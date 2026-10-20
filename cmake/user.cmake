@@ -339,6 +339,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_d3d10_1 ${arch}-d3d10:guest/d3d10/create.c)
     set(objects_d3d10_1core ${arch}-d3d10core:guest/d3d10core/kmt.c)
     set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib)
+    # wintrust reads the streams of installer packages with the compound file reader.
+    set(objects_wintrust ${arch}-lib-compound)
     set(libs_msacm32 ${MIME_LIB_${arch}}/winmm.lib)
     set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
     # setupapi unpacks cabinets with the reader of guest/lib/cabinet.

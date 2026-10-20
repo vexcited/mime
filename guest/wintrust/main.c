@@ -134,7 +134,9 @@ static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
     if (owned)
         CloseHandle(file);
     if (!result)
-        result = size.QuadPart >= 4 && !memcmp(bytes, "MSCF", 4) ? WtVerifyCab(bytes, (DWORD)size.QuadPart, data, chain)
+        result = size.QuadPart >= 8 && !memcmp(bytes, "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", 8) ?
+                     WtVerifyInstaller(bytes, (DWORD)size.QuadPart, data, chain) :
+                 size.QuadPart >= 4 && !memcmp(bytes, "MSCF", 4) ? WtVerifyCab(bytes, (DWORD)size.QuadPart, data, chain)
                                                                   : WtVerifyPe(bytes, (DWORD)size.QuadPart, data, chain);
     LocalFree(bytes);
     return result;

@@ -5,6 +5,7 @@ static constexpr BYTE oid_indirect[] = {0x2b,6,1,4,1,0x82,0x37,2,1,4};
 static constexpr BYTE oid_pe[] = {0x2b,6,1,4,1,0x82,0x37,2,1,15};
 static constexpr BYTE oid_cab[] = {0x2b,6,1,4,1,0x82,0x37,2,1,25};
 static constexpr BYTE oid_cab_enhanced[] = {0x2b,6,1,4,1,0x82,0x37,2,1,28};
+static constexpr BYTE oid_sip_info[] = {0x2b,6,1,4,1,0x82,0x37,2,1,30};
 static constexpr BYTE oid_counter[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,6};
 static constexpr BYTE oid_time[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,5};
 static constexpr BYTE oid_rsa_sha1[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,5};
@@ -81,7 +82,8 @@ static LONG file_digest(WT_DER content, const WT_SUBJECT *subject)
     /* the cabinet's data comes in two kinds, the second with the digests of more parts of the file in its link,
        which are not checked. */
     WT_BYTES probe = data.value;
-    if (cabinet ? !take_oid(&probe, oid_cab, sizeof(oid_cab)) &&
+    if (subject->installer ? !take_oid(&probe, oid_sip_info, sizeof(oid_sip_info))
+        : cabinet ? !take_oid(&probe, oid_cab, sizeof(oid_cab)) &&
                       !(probe = data.value, take_oid(&probe, oid_cab_enhanced, sizeof(oid_cab_enhanced)))
                 : !take_oid(&data.value, oid_pe, sizeof(oid_pe)))
         return TRUST_E_SUBJECT_FORM_UNKNOWN;

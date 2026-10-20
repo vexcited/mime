@@ -108,6 +108,7 @@ set(ads_imports ntdll kernel32)
 set(advpack_imports ntdll kernel32 advapi32 version)
 set(objects_advpack x86-lib-cabinet)
 set(objects_cabinet x86-lib-cabinet)
+set(objects_wintrust x86-lib-compound)
 set(sfc_os_imports ntdll kernel32 advapi32 version)
 # the installer makes shortcuts and users, reads versions and loads the custom actions of its packages.
 set(msi_imports ntdll kernel32 user32 gdi32 win32u advapi32 shell32 ole32 version)
