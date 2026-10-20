@@ -53,6 +53,65 @@ static BYTE *prefix(SAFEARRAY *array)
     return (BYTE *)array - SA_PREFIX;
 }
 
+static IRecordInfo **record_slot(SAFEARRAY *array)
+{
+    return &((IRecordInfo **)array)[-1];
+}
+
+/*
+ * descriptors and data that something outside took a reference to, with SafeArrayAddRef. They are freed when the last
+ * reference goes, whoever destroyed the array first. A data entry also remembers what is needed to free its elements.
+ */
+typedef struct {
+    void *Key;
+    LONG Refs;
+    /* data only. */
+    USHORT Features;
+    ULONG Elements;
+    ULONG ElementSize;
+    IRecordInfo *Record;
+} REFENTRY;
+
+typedef struct {
+    REFENTRY *Items;
+    ULONG Count, Capacity;
+} REFMAP;
+
+static SRWLOCK g_ref_lock = SRWLOCK_INIT;
+static REFMAP g_descriptors, g_data;
+
+static REFENTRY *ref_find(REFMAP *map, void *key)
+{
+    for (ULONG i = 0; i < map->Count; i++)
+        if (map->Items[i].Key == key)
+            return &map->Items[i];
+    return nullptr;
+}
+
+static REFENTRY *ref_add(REFMAP *map, void *key)
+{
+    if (map->Count == map->Capacity) {
+        ULONG capacity = map->Capacity ? map->Capacity * 2 : 8;
+        REFENTRY *items = AutAllocZero((SIZE_T)capacity * sizeof(REFENTRY));
+        if (!items)
+            return nullptr;
+        if (map->Count)
+            memcpy(items, map->Items, map->Count * sizeof(REFENTRY));
+        AutFree(map->Items);
+        map->Items = items;
+        map->Capacity = capacity;
+    }
+    REFENTRY *entry = &map->Items[map->Count++];
+    memset(entry, 0, sizeof(*entry));
+    entry->Key = key;
+    return entry;
+}
+
+static void ref_remove(REFMAP *map, REFENTRY *entry)
+{
+    *entry = map->Items[--map->Count];
+}
+
 static SIZE_T element_count(SAFEARRAY *array)
 {
     SIZE_T count = 1;
@@ -84,12 +143,19 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayAllocDescriptor(UINT dims, SAFEARRAY **out)
 
 WINOLEAUTAPI HRESULT WINAPI SafeArrayAllocDescriptorEx(VARTYPE vt, UINT dims, SAFEARRAY **out)
 {
-    if (vt == VT_RECORD || !element_size(vt))
+    if (out)
+        *out = nullptr;
+    if (vt != VT_RECORD && !element_size(vt))
         return E_INVALIDARG;
     HRESULT hr = SafeArrayAllocDescriptor(dims, out);
     if (FAILED(hr))
         return hr;
     SAFEARRAY *array = *out;
+    if (vt == VT_RECORD) {
+        /* the size of an element is the one of the record, which is set with its information. */
+        array->fFeatures = FADF_RECORD;
+        return S_OK;
+    }
     array->cbElements = element_size(vt);
     switch (vt) {
     case VT_BSTR:
@@ -149,30 +215,46 @@ WINOLEAUTAPI SAFEARRAY *WINAPI SafeArrayCreateVector(VARTYPE vt, LONG lower, ULO
 }
 
 /* releases what the elements own and zeroes them. */
-static void clear_elements(SAFEARRAY *array)
+static void clear_block(USHORT features, void *data, SIZE_T count, ULONG size, IRecordInfo *record)
 {
-    if (!array->pvData)
+    if (!data)
         return;
-    SIZE_T count = element_count(array);
-    if (count == (SIZE_T)-1)
-        return;
-    if (array->fFeatures & FADF_BSTR) {
-        BSTR *items = array->pvData;
+    if (features & FADF_BSTR) {
+        BSTR *items = data;
         for (SIZE_T i = 0; i < count; i++) {
             SysFreeString(items[i]);
             items[i] = nullptr;
         }
-    } else if (array->fFeatures & (FADF_UNKNOWN | FADF_DISPATCH)) {
-        IUnknown **items = array->pvData;
+    } else if (features & (FADF_UNKNOWN | FADF_DISPATCH)) {
+        IUnknown **items = data;
         for (SIZE_T i = 0; i < count; i++) {
             AutRelease(items[i]);
             items[i] = nullptr;
         }
-    } else if (array->fFeatures & FADF_VARIANT) {
-        VARIANT *items = array->pvData;
+    } else if (features & FADF_VARIANT) {
+        VARIANT *items = data;
         for (SIZE_T i = 0; i < count; i++)
             VariantClear(&items[i]);
+    } else if (features & FADF_RECORD) {
+        for (SIZE_T i = 0; record && i < count; i++)
+            record->lpVtbl->RecordClear(record, (BYTE *)data + i * size);
     }
+}
+
+static void clear_elements(SAFEARRAY *array)
+{
+    SIZE_T count = element_count(array);
+    if (array->pvData && count != (SIZE_T)-1)
+        clear_block(array->fFeatures, array->pvData, count, array->cbElements,
+                    (array->fFeatures & FADF_RECORD) ? *record_slot(array) : nullptr);
+}
+
+static void free_descriptor(SAFEARRAY *array)
+{
+    if (array->fFeatures & FADF_RECORD)
+        AutRelease(*record_slot(array));
+    if (!(array->fFeatures & FADF_NOT_OWNED))
+        AutFree(prefix(array));
 }
 
 WINOLEAUTAPI HRESULT WINAPI SafeArrayDestroyData(SAFEARRAY *array)
@@ -181,6 +263,23 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayDestroyData(SAFEARRAY *array)
         return E_INVALIDARG;
     if (array->cLocks)
         return DISP_E_ARRAYISLOCKED;
+    /* data that others hold a reference to stays with them, and the elements go when they let it go. */
+    if (array->pvData && g_data.Count) {
+        BOOL kept = FALSE;
+        AcquireSRWLockExclusive(&g_ref_lock);
+        REFENTRY *entry = ref_find(&g_data, array->pvData);
+        if (entry && --entry->Refs > 0) {
+            kept = TRUE;
+        } else if (entry) {
+            AutRelease(entry->Record);
+            ref_remove(&g_data, entry);
+        }
+        ReleaseSRWLockExclusive(&g_ref_lock);
+        if (kept) {
+            array->pvData = nullptr;
+            return S_OK;
+        }
+    }
     clear_elements(array);
     if (!(array->fFeatures & FADF_NOT_OWNED)) {
         AutFree(array->pvData);
@@ -195,8 +294,19 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayDestroyDescriptor(SAFEARRAY *array)
         return E_INVALIDARG;
     if (array->cLocks)
         return DISP_E_ARRAYISLOCKED;
-    if (!(array->fFeatures & FADF_NOT_OWNED))
-        AutFree(prefix(array));
+    if (g_descriptors.Count) {
+        BOOL kept = FALSE;
+        AcquireSRWLockExclusive(&g_ref_lock);
+        REFENTRY *entry = ref_find(&g_descriptors, array);
+        if (entry && --entry->Refs > 0)
+            kept = TRUE;
+        else if (entry)
+            ref_remove(&g_descriptors, entry);
+        ReleaseSRWLockExclusive(&g_ref_lock);
+        if (kept)
+            return S_OK;
+    }
+    free_descriptor(array);
     return S_OK;
 }
 
@@ -346,6 +456,11 @@ static HRESULT copy_element(SAFEARRAY *array, void *to, const void *from)
     } else if (array->fFeatures & FADF_VARIANT) {
         ((VARIANT *)to)->vt = VT_EMPTY;
         return VariantCopy(to, from);
+    } else if (array->fFeatures & FADF_RECORD) {
+        IRecordInfo *record = *record_slot(array);
+        if (!record)
+            return E_INVALIDARG;
+        return record->lpVtbl->RecordCopy(record, (void *)from, to);
     } else {
         memcpy(to, from, array->cbElements);
     }
@@ -360,6 +475,11 @@ static void free_element(SAFEARRAY *array, void *element)
         AutRelease(*(IUnknown **)element);
     else if (array->fFeatures & FADF_VARIANT)
         VariantClear(element);
+    else if (array->fFeatures & FADF_RECORD) {
+        IRecordInfo *record = *record_slot(array);
+        if (record)
+            record->lpVtbl->RecordClear(record, element);
+    }
 }
 
 /* strings and interfaces are passed by value, every other type through a pointer. */
@@ -374,7 +494,9 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayPutElement(SAFEARRAY *array, LONG *indices,
     if (FAILED(hr))
         return hr;
     hr = SafeArrayPtrOfIndex(array, indices, &element);
-    if (SUCCEEDED(hr)) {
+    if (SUCCEEDED(hr) && (array->fFeatures & FADF_RECORD)) {
+        hr = copy_element(array, element, value);
+    } else if (SUCCEEDED(hr)) {
         union {
             VARIANT variant;
             DECIMAL decimal;
@@ -433,14 +555,17 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayCopy(SAFEARRAY *array, SAFEARRAY **out)
     *out = nullptr;
     if (!array)
         return S_OK;
-    if (array->fFeatures & FADF_RECORD)
-        return E_NOTIMPL;
     SAFEARRAY *copy;
     HRESULT hr = SafeArrayAllocDescriptor(array->cDims, &copy);
     if (FAILED(hr))
         return hr;
     memcpy(prefix(copy), prefix(array), SA_PREFIX);
     copy->fFeatures = array->fFeatures & ~FADF_NOT_OWNED;
+    if (array->fFeatures & FADF_RECORD) {
+        /* the copy holds a reference of its own, not the one the bytes of the prefix were. */
+        *record_slot(copy) = nullptr;
+        SafeArraySetRecordInfo(copy, *record_slot(array));
+    }
     copy->cbElements = array->cbElements;
     memcpy(copy->rgsabound, array->rgsabound, array->cDims * sizeof(SAFEARRAYBOUND));
     if (array->pvData) {
@@ -517,4 +642,165 @@ WINOLEAUTAPI HRESULT WINAPI VectorFromBstr(BSTR bstr, SAFEARRAY **out)
         memcpy(array->pvData, bstr, length);
     *out = array;
     return S_OK;
+}
+
+/* ------------------------------------------------------------------ the rest of the creating and the references */
+
+static HRESULT features_of(VARTYPE vt, IRecordInfo *record, USHORT *size, USHORT *features)
+{
+    ULONG bytes = element_size(vt);
+    *features = 0;
+    switch (vt) {
+    case VT_BSTR: *features = FADF_BSTR; break;
+    case VT_UNKNOWN: *features = FADF_UNKNOWN; break;
+    case VT_DISPATCH: *features = FADF_DISPATCH; break;
+    case VT_VARIANT: *features = FADF_VARIANT; break;
+    case VT_RECORD:
+        if (!record)
+            return E_INVALIDARG;
+        *features = FADF_RECORD;
+        record->lpVtbl->GetSize(record, &bytes);
+        if (bytes > 0xFFFF)
+            return E_INVALIDARG;
+        break;
+    default:
+        if (!bytes)
+            return E_INVALIDARG;
+        break;
+    }
+    *size = (USHORT)bytes;
+    return S_OK;
+}
+
+WINOLEAUTAPI SAFEARRAY *WINAPI SafeArrayCreateEx(VARTYPE vt, UINT dims, SAFEARRAYBOUND *bounds, PVOID extra)
+{
+    if (!bounds || !dims || dims > 0xFFFF)
+        return nullptr;
+    IRecordInfo *record = vt == VT_RECORD ? extra : nullptr;
+    const GUID *iid = vt == VT_UNKNOWN || vt == VT_DISPATCH ? extra : nullptr;
+    USHORT size, features;
+    SAFEARRAY *array;
+    if (FAILED(features_of(vt, record, &size, &features)) || FAILED(SafeArrayAllocDescriptorEx(vt, dims, &array)))
+        return nullptr;
+    array->cbElements = size;
+    array->fFeatures |= features;
+    if (vt == VT_RECORD)
+        SafeArraySetRecordInfo(array, record);
+    else if (iid)
+        SafeArraySetIID(array, iid);
+    for (UINT i = 0; i < dims; i++)
+        array->rgsabound[dims - 1 - i] = bounds[i];
+    if (FAILED(SafeArrayAllocData(array))) {
+        SafeArrayDestroyDescriptor(array);
+        return nullptr;
+    }
+    return array;
+}
+
+WINOLEAUTAPI SAFEARRAY *WINAPI SafeArrayCreateVectorEx(VARTYPE vt, LONG lower, ULONG count, PVOID extra)
+{
+    SAFEARRAYBOUND bound = {count, lower};
+    return SafeArrayCreateEx(vt, 1, &bound, extra);
+}
+
+WINOLEAUTAPI HRESULT WINAPI SafeArrayGetIID(SAFEARRAY *array, GUID *iid)
+{
+    if (!array || !iid || !(array->fFeatures & FADF_HAVEIID))
+        return E_INVALIDARG;
+    memcpy(iid, prefix(array), sizeof(GUID));
+    return S_OK;
+}
+
+WINOLEAUTAPI HRESULT WINAPI SafeArraySetIID(SAFEARRAY *array, REFGUID iid)
+{
+    if (!array || !(array->fFeatures & FADF_HAVEIID))
+        return E_INVALIDARG;
+    memcpy(prefix(array), iid, sizeof(GUID));
+    return S_OK;
+}
+
+WINOLEAUTAPI HRESULT WINAPI SafeArrayAddRef(SAFEARRAY *array, PVOID *data)
+{
+    if (!array || !data)
+        return E_INVALIDARG;
+    *data = nullptr;
+    HRESULT hr = S_OK;
+    AcquireSRWLockExclusive(&g_ref_lock);
+    REFENTRY *entry = ref_find(&g_descriptors, array);
+    if (!entry) {
+        entry = ref_add(&g_descriptors, array);
+        if (entry)
+            entry->Refs = 1;
+    }
+    if (!entry) {
+        hr = E_OUTOFMEMORY;
+    } else {
+        entry->Refs++;
+        /* only data the array owns is kept, a static one is the caller's to keep alive. */
+        if (!(array->fFeatures & FADF_NOT_OWNED) && array->pvData) {
+            REFENTRY *d = ref_find(&g_data, array->pvData);
+            if (!d) {
+                d = ref_add(&g_data, array->pvData);
+                if (d) {
+                    SIZE_T count = element_count(array);
+                    d->Refs = 1;
+                    d->Features = array->fFeatures;
+                    d->Elements = count == (SIZE_T)-1 ? 0 : (ULONG)count;
+                    d->ElementSize = array->cbElements;
+                    if (array->fFeatures & FADF_RECORD) {
+                        d->Record = *record_slot(array);
+                        AutAddRef(d->Record);
+                    }
+                }
+            }
+            if (!d) {
+                entry->Refs--;
+                hr = E_OUTOFMEMORY;
+            } else {
+                d->Refs++;
+                *data = array->pvData;
+            }
+        }
+    }
+    ReleaseSRWLockExclusive(&g_ref_lock);
+    return hr;
+}
+
+WINOLEAUTAPI void WINAPI SafeArrayReleaseData(PVOID data)
+{
+    if (!data)
+        return;
+    REFENTRY gone = {0};
+    BOOL last = FALSE;
+    AcquireSRWLockExclusive(&g_ref_lock);
+    REFENTRY *entry = ref_find(&g_data, data);
+    if (entry && --entry->Refs <= 0) {
+        gone = *entry;
+        ref_remove(&g_data, entry);
+        last = TRUE;
+    }
+    ReleaseSRWLockExclusive(&g_ref_lock);
+    if (last) {
+        clear_block(gone.Features, data, gone.Elements, gone.ElementSize, gone.Record);
+        AutRelease(gone.Record);
+        AutFree(data);
+    }
+}
+
+WINOLEAUTAPI void WINAPI SafeArrayReleaseDescriptor(SAFEARRAY *array)
+{
+    if (!array)
+        return;
+    BOOL last = TRUE;
+    AcquireSRWLockExclusive(&g_ref_lock);
+    REFENTRY *entry = ref_find(&g_descriptors, array);
+    if (entry) {
+        if (--entry->Refs > 0)
+            last = FALSE;
+        else
+            ref_remove(&g_descriptors, entry);
+    }
+    ReleaseSRWLockExclusive(&g_ref_lock);
+    if (last)
+        free_descriptor(array);
 }

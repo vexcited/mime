@@ -297,3 +297,12 @@ EXPORTS
     CreateTypeLib @160
     CreateTypeLib2 @180
     OACreateTypeLib2 @352
+    SafeArrayCreateEx @42
+    SafeArrayCreateVectorEx @43
+    SafeArrayGetRecordInfo @45
+    SafeArraySetIID @57
+    SafeArrayGetIID @67
+    SafeArrayAddRef @353
+    SafeArrayReleaseData @354
+    SafeArrayReleaseDescriptor @355
+    GetRecordInfoFromGuids @322

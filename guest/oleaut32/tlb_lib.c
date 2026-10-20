@@ -764,8 +764,10 @@ static BOOL looks_like_path(const WCHAR *file)
 static HRESULT resolve_path(LPCOLESTR file, WCHAR *full, int *resource_id)
 {
     WCHAR path[MAX_PATH];
+    if (!*file)
+        return STG_E_FILENOTFOUND;
     if (wcslen(file) >= MAX_PATH)
-        return TYPE_E_CANTLOADLIBRARY;
+        return E_INVALIDARG;
     wcscpy(path, file);
     *resource_id = -1;
     if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
@@ -801,9 +803,9 @@ static HRESULT map_file(const WCHAR *path, IMAGE_HOLD **hold, const BYTE **image
     if (file == INVALID_HANDLE_VALUE)
         return TYPE_E_CANTLOADLIBRARY;
     LARGE_INTEGER length;
-    if (!GetFileSizeEx(file, &length) || length.QuadPart < 16 || length.QuadPart > 0x7FFFFFFF) {
+    if (!GetFileSizeEx(file, &length) || length.QuadPart < 1 || length.QuadPart > 0x7FFFFFFF) {
         CloseHandle(file);
-        return TYPE_E_INVDATAREAD;
+        return TYPE_E_CANTLOADLIBRARY;
     }
     IMAGE_HOLD *h = AutAllocZero(sizeof(*h));
     if (!h) {
@@ -895,6 +897,10 @@ HRESULT TlLoadFile(LPCOLESTR file, SYSKIND kind, TL_LIB **result)
         hr = load_resource(full, resource_id, &hold, &image, &size);
         if (FAILED(hr))
             return hr;
+    } else if (size < 4 || (memcmp(image, "MSFT", 4) && memcmp(image, "SLTG", 4))) {
+        /* a file that is neither a program nor a type library is not one the loader gets as far as reading. */
+        release_image(hold, image);
+        return TYPE_E_CANTLOADLIBRARY;
     }
     TL_LIB *lib;
     hr = TlReadImage(image, size, kind == (SYSKIND)-1 ? (SYSKIND)0 : kind, release_image, hold, &lib);
