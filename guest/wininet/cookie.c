@@ -451,3 +451,116 @@ DECLSPEC_EXPORT BOOL WINAPI InternetSetCookieA(LPCSTR url, LPCSTR name, LPCSTR d
 {
     return InternetSetCookieExA(url, name, data, 0, 0) == COOKIE_STATE_ACCEPT;
 }
+
+/* ------------------------------------------------------------------ cookies of the second kind */
+
+/* a cookie as the second kind of structure gives it. */
+typedef struct {
+    PWSTR Name, Value, Domain, Path;
+    DWORD Flags;
+    FILETIME Expires;
+    BOOL ExpiresSet;
+} INET_COOKIE2;
+
+#define COOKIE2_SECURE 0x1
+#define COOKIE2_SESSION 0x2
+#define COOKIE2_NON_SCRIPT 0x40
+#define COOKIE2_HOST_ONLY 0x80
+
+static PWSTR Widen2(char **cursor, const char *text)
+{
+    int n = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    PWSTR out = (PWSTR)*cursor;
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, out, n);
+    *cursor += n * sizeof(WCHAR);
+    return out;
+}
+
+DECLSPEC_EXPORT DWORD WINAPI InternetGetCookieEx2(LPCWSTR url, LPCWSTR name, DWORD flags, INET_COOKIE2 **cookies,
+                                                  DWORD *count)
+{
+    if (!url || !cookies || !count || (flags & ~(DWORD)0x2000))
+        return ERROR_INVALID_PARAMETER;
+    *cookies = nullptr;
+    *count = 0;
+    char *host, *path, *narrow_name = name ? InetNarrow(name, -1) : nullptr;
+    BOOL secure;
+    if (!CrackCookieUrl(url, &host, &path, &secure)) {
+        InetFree(host);
+        InetFree(path);
+        InetFree(narrow_name);
+        return ERROR_INVALID_PARAMETER;
+    }
+    ULONGLONG now = Now();
+    DWORD matched = 0, total = 0;
+    SIZE_T bytes = 0;
+    INET_COOKIE *chosen[256];
+    AcquireSRWLockShared(&JarLock);
+    for (INET_COOKIE *cookie = Jar; cookie && matched < ARRAYSIZE(chosen); cookie = cookie->Next) {
+        if ((cookie->Expires && cookie->Expires <= now) || !DomainMatch(host, cookie->Domain, cookie->HostOnly) ||
+            !PathMatch(path, cookie->Path) || (cookie->Secure && !secure) ||
+            (cookie->HttpOnly && !(flags & INTERNET_COOKIE_HTTPONLY)) || (narrow_name && strcmp(narrow_name, cookie->Name)))
+            continue;
+        chosen[matched++] = cookie;
+        bytes += (strlen(cookie->Name) + strlen(cookie->Value) + strlen(cookie->Domain) + strlen(cookie->Path) + 4) *
+                 sizeof(WCHAR);
+    }
+    INET_COOKIE2 *list = matched ? InetAlloc(matched * sizeof(INET_COOKIE2) + bytes) : nullptr;
+    if (list) {
+        char *cursor = (char *)(list + matched);
+        for (DWORD i = 0; i < matched; i++) {
+            INET_COOKIE *cookie = chosen[i];
+            list[i].Name = Widen2(&cursor, cookie->Name);
+            list[i].Value = Widen2(&cursor, cookie->Value);
+            list[i].Domain = Widen2(&cursor, cookie->Domain);
+            list[i].Path = Widen2(&cursor, cookie->Path);
+            list[i].Flags = (cookie->Secure ? COOKIE2_SECURE : 0) | (cookie->Expires ? 0 : COOKIE2_SESSION) |
+                            (cookie->HttpOnly ? COOKIE2_NON_SCRIPT : 0) | (cookie->HostOnly ? COOKIE2_HOST_ONLY : 0);
+            list[i].Expires.dwLowDateTime = (DWORD)cookie->Expires;
+            list[i].Expires.dwHighDateTime = (DWORD)(cookie->Expires >> 32);
+            list[i].ExpiresSet = cookie->Expires != 0;
+            total++;
+        }
+    }
+    ReleaseSRWLockShared(&JarLock);
+    InetFree(host);
+    InetFree(path);
+    InetFree(narrow_name);
+    if (matched && !list)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    if (!total)
+        return ERROR_NO_MORE_ITEMS;
+    *cookies = list;
+    *count = total;
+    return ERROR_SUCCESS;
+}
+
+/* the array comes from one block. */
+DECLSPEC_EXPORT VOID WINAPI InternetFreeCookies(INET_COOKIE2 *cookies, DWORD count)
+{
+    InetFree(cookies);
+}
+
+/* ------------------------------------------------------------------ the url cache */
+
+/* the cache of the pages a program fetched is not kept: it is empty for whoever asks, and has no entry to count off. */
+DECLSPEC_EXPORT HANDLE WINAPI FindFirstUrlCacheEntryA(LPCSTR pattern, LPVOID entry, LPDWORD size)
+{
+    SetLastError(size ? ERROR_NO_MORE_ITEMS : ERROR_INVALID_PARAMETER);
+    return nullptr;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FindNextUrlCacheEntryA(HANDLE handle, LPVOID entry, LPDWORD size)
+{
+    return InetFail(ERROR_INVALID_HANDLE);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FindCloseUrlCache(HANDLE handle)
+{
+    return InetFail(ERROR_INVALID_HANDLE);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI DeleteUrlCacheContainerW(LPCWSTR name, DWORD options)
+{
+    return InetFail(ERROR_FILE_NOT_FOUND);
+}

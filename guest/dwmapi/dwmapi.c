@@ -292,3 +292,17 @@ DWMAPI DwmGetCompositionTimingInfo(HWND hwnd, void *info)
     t->FramesOutstanding = 1;
     return S_OK;
 }
+
+/* the thumbnail and the live preview of a minimized window are shown by the taskbar and the switcher, which are not here, so
+   the bitmaps a window gives are accepted and kept by nobody. */
+DWMAPI DwmSetIconicThumbnail(HWND hwnd, HBITMAP bitmap, DWORD flags)
+{
+    if (!IsWindow(hwnd) || !bitmap || (flags & ~1u))
+        return E_INVALIDARG;
+    return S_OK;
+}
+
+DWMAPI DwmInvalidateIconicBitmaps(HWND hwnd)
+{
+    return IsWindow(hwnd) ? S_OK : E_INVALIDARG;
+}

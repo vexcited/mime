@@ -406,6 +406,38 @@ WINUSERAPI BOOL WINAPI IsWindowEnabled(HWND hwnd)
     return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISENABLED);
 }
 
+/* a minimized window comes back to the size and place it had. */
+WINUSERAPI BOOL WINAPI OpenIcon(HWND hwnd)
+{
+    if (!IsIconic(hwnd))
+        return FALSE;
+    ShowWindow(hwnd, SW_RESTORE);
+    return TRUE;
+}
+
+/* a window that asks for the messages of the shell about the windows of other programs gets none: nothing here makes them. */
+WINUSERAPI BOOL WINAPI RegisterShellHookWindow(HWND hwnd)
+{
+    return IsWindow(hwnd);
+}
+
+WINUSERAPI BOOL WINAPI DeregisterShellHookWindow(HWND hwnd)
+{
+    return IsWindow(hwnd);
+}
+
+/* icons are read from the resources of a file by the shell, whose function this stands behind: the file has none here. */
+WINUSERAPI UINT WINAPI PrivateExtractIconsW(LPCWSTR file, int index, int cx, int cy, HICON *icons, UINT *ids, UINT count,
+                                           UINT flags)
+{
+    if (!file || !*file) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0xFFFFFFFFu;
+    }
+    SetLastError(ERROR_RESOURCE_DATA_NOT_FOUND);
+    return 0;
+}
+
 WINUSERAPI BOOL WINAPI IsIconic(HWND hwnd)
 {
     return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISICONIC);
@@ -813,6 +845,15 @@ WINUSERAPI HWND WINAPI FindWindowExW(HWND parent, HWND after, LPCWSTR class_name
     init_ustring(&cls, class_name);
     init_ustring(&title, name);
     return NtUserFindWindowEx(parent, after, class_name ? &cls : nullptr, name ? &title : nullptr, 0);
+}
+
+WINUSERAPI HWND WINAPI FindWindowExA(HWND parent, HWND after, LPCSTR class_name, LPCSTR name)
+{
+    LPWSTR c = UserAtoW(class_name), n = UserAtoW(name);
+    HWND h = FindWindowExW(parent, after, c, n);
+    UserFreeConverted(c, class_name);
+    UserFreeConverted(n, name);
+    return h;
 }
 
 WINUSERAPI HWND WINAPI FindWindowW(LPCWSTR class_name, LPCWSTR name)
