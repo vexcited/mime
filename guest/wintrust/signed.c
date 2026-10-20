@@ -380,14 +380,19 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
         para.cbSize = sizeof(para);
         para.RequestedUsage.Usage.cUsageIdentifier = 1;
         para.RequestedUsage.Usage.rgpszUsageIdentifier = usages;
+        /* the flags of the provider only narrow a check that fdwRevocationChecks asks for: none asked means none done,
+           whatever the flags say, and the whole chain is the check when they say nothing. */
         DWORD flags = 0;
-        if (options->fdwRevocationChecks == WTD_REVOKE_WHOLECHAIN ||
-            (options->dwProvFlags & WTD_REVOCATION_CHECK_CHAIN))
-            flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN;
-        else if (options->dwProvFlags & WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT)
-            flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT;
-        else if (options->dwProvFlags & WTD_REVOCATION_CHECK_END_CERT)
-            flags = CERT_CHAIN_REVOCATION_CHECK_END_CERT;
+        if (options->fdwRevocationChecks == WTD_REVOKE_WHOLECHAIN) {
+            if (options->dwProvFlags & WTD_REVOCATION_CHECK_NONE)
+                flags = 0;
+            else if (options->dwProvFlags & WTD_REVOCATION_CHECK_END_CERT)
+                flags = CERT_CHAIN_REVOCATION_CHECK_END_CERT;
+            else if (options->dwProvFlags & WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT)
+                flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT;
+            else
+                flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN;
+        }
         /* a signature with a valid time stamp is judged as of that time, else as of now. */
         FILETIME stamp;
         BOOL stamped = unsigned_attributes.value.size && stamp_time(unsigned_attributes, encrypted, store, &stamp);
