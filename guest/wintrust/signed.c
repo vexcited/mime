@@ -3,6 +3,12 @@
 static constexpr BYTE oid_signed[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,7,2};
 static constexpr BYTE oid_indirect[] = {0x2b,6,1,4,1,0x82,0x37,2,1,4};
 static constexpr BYTE oid_pe[] = {0x2b,6,1,4,1,0x82,0x37,2,1,15};
+static constexpr BYTE oid_cab[] = {0x2b,6,1,4,1,0x82,0x37,2,1,25};
+static constexpr BYTE oid_cab_enhanced[] = {0x2b,6,1,4,1,0x82,0x37,2,1,28};
+static constexpr BYTE oid_counter[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,6};
+static constexpr BYTE oid_time[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,5};
+static constexpr BYTE oid_rsa_sha1[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,5};
+static constexpr BYTE oid_rsa_sha256[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,11};
 static constexpr BYTE oid_sha256[] = {0x60,0x86,0x48,1,0x65,3,4,2,1};
 static constexpr BYTE oid_sha1[] = {0x2b,0x0e,3,2,0x1a};
 static constexpr BYTE oid_rsa[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,1};
@@ -65,17 +71,30 @@ static BOOL hash_matches(ALG_ID alg, WT_BYTES data, WT_BYTES expected)
            length == expected.size && !memcmp(hash, expected.data, length);
 }
 
-static LONG file_digest(WT_DER content, const BYTE *image, DWORD checksum, DWORD directory, DWORD certificate)
+static LONG file_digest(WT_DER content, const WT_SUBJECT *subject)
 {
     WT_BYTES input = content.value;
     WT_DER data, digest, alg, hash;
-    if (!WtTake(&input, 0x30, &data) || !WtTake(&input, 0x30, &digest) || input.size ||
-        !take_oid(&data.value, oid_pe, sizeof(oid_pe)) ||
-        !WtTake(&digest.value, 0x30, &alg) || !WtTake(&digest.value, 4, &hash) || digest.value.size)
+    if (!WtTake(&input, 0x30, &data) || !WtTake(&input, 0x30, &digest) || input.size)
+        return TRUST_E_SUBJECT_FORM_UNKNOWN;
+    BOOL cabinet = subject->digest_input != nullptr;
+    /* the cabinet's data comes in two kinds, the second with the digests of more parts of the file in its link,
+       which are not checked. */
+    WT_BYTES probe = data.value;
+    if (cabinet ? !take_oid(&probe, oid_cab, sizeof(oid_cab)) &&
+                      !(probe = data.value, take_oid(&probe, oid_cab_enhanced, sizeof(oid_cab_enhanced)))
+                : !take_oid(&data.value, oid_pe, sizeof(oid_pe)))
+        return TRUST_E_SUBJECT_FORM_UNKNOWN;
+    if (!WtTake(&digest.value, 0x30, &alg) || !WtTake(&digest.value, 4, &hash) || digest.value.size)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     ALG_ID id = algorithm(alg);
     if (!id)
         return NTE_BAD_ALGID;
+    if (cabinet)
+        return hash_matches(id, (WT_BYTES){subject->digest_input, subject->digest_size}, hash.value) ? 0 :
+               TRUST_E_BAD_DIGEST;
+    DWORD checksum = subject->checksum, directory = subject->directory, certificate = subject->certificate;
+    const BYTE *image = subject->image;
     BYTE *bytes = LocalAlloc(LMEM_FIXED, certificate - 12);
     if (!bytes)
         return E_OUTOFMEMORY;
@@ -134,21 +153,180 @@ static LONG signature(WT_DER attributes, WT_DER encrypted, ALG_ID alg, PCCERT_CO
     return error;
 }
 
+/* the certificate of the store that has the issuer and the serial number, big endian without leading zeros. */
+static PCCERT_CONTEXT find_cert(HCERTSTORE store, WT_DER issuer, WT_DER serial)
+{
+    CERT_NAME_BLOB name = {issuer.encoded.size, (BYTE *)issuer.encoded.data};
+    while (serial.value.size > 1 && !serial.value.data[0]) {
+        serial.value.data++;
+        serial.value.size--;
+    }
+    PCCERT_CONTEXT cert = nullptr;
+    while ((cert = CertEnumCertificatesInStore(store, cert))) {
+        CRYPT_INTEGER_BLOB number = cert->pCertInfo->SerialNumber;
+        while (number.cbData > 1 && !number.pbData[number.cbData - 1])
+            number.cbData--;
+        if (number.cbData != serial.value.size ||
+            !CertCompareCertificateName(X509_ASN_ENCODING, &name, &cert->pCertInfo->Issuer))
+            continue;
+        DWORD i;
+        for (i = 0; i < number.cbData; i++)
+            if (number.pbData[i] != serial.value.data[number.cbData - 1 - i])
+                break;
+        if (i == number.cbData)
+            return cert;
+    }
+    return nullptr;
+}
+
+/* a signature made with rsa, named by the key or by the key and the digest. */
+static BOOL rsa_algorithm(WT_DER sequence, ALG_ID alg)
+{
+    WT_BYTES input = sequence.value;
+    WT_DER oid, null;
+    if (!WtTake(&input, 6, &oid) || (input.size && (!WtTake(&input, 5, &null) || null.value.size)) || input.size)
+        return FALSE;
+    return WtOid(oid, oid_rsa, sizeof(oid_rsa)) ||
+           (alg == CALG_SHA1 && WtOid(oid, oid_rsa_sha1, sizeof(oid_rsa_sha1))) ||
+           (alg == CALG_SHA_256 && WtOid(oid, oid_rsa_sha256, sizeof(oid_rsa_sha256)));
+}
+
+static BOOL two_digits(const BYTE *text, DWORD *value)
+{
+    if (text[0] < '0' || text[0] > '9' || text[1] < '0' || text[1] > '9')
+        return FALSE;
+    *value = (text[0] - '0') * 10 + (text[1] - '0');
+    return TRUE;
+}
+
+/* a UTCTime or a GeneralizedTime, ending with Z, as a file time. */
+static BOOL asn_time(WT_DER time, FILETIME *out)
+{
+    const BYTE *t = time.value.data;
+    DWORD v[5], size = time.value.size;
+    SYSTEMTIME st = {};
+    if (time.tag == 0x17 && (size == 13 || size == 11)) {
+        DWORD year;
+        if (!two_digits(t, &year))
+            return FALSE;
+        st.wYear = (WORD)(year >= 50 ? 1900 + year : 2000 + year);
+        t += 2;
+        size -= 2;
+    } else if (time.tag == 0x18 && (size == 15 || size == 13)) {
+        DWORD high, low;
+        if (!two_digits(t, &high) || !two_digits(t + 2, &low))
+            return FALSE;
+        st.wYear = (WORD)(high * 100 + low);
+        t += 4;
+        size -= 4;
+    } else
+        return FALSE;
+    /* month, day, hour and minute, then the seconds when there are some, then the Z. */
+    DWORD count = size == 11 ? 5 : 4;
+    if (size != (count == 5 ? 11 : 9) || t[size - 1] != 'Z')
+        return FALSE;
+    for (DWORD i = 0; i < count; i++)
+        if (!two_digits(t + i * 2, &v[i]))
+            return FALSE;
+    st.wMonth = (WORD)v[0];
+    st.wDay = (WORD)v[1];
+    st.wHour = (WORD)v[2];
+    st.wMinute = (WORD)v[3];
+    st.wSecond = count == 5 ? (WORD)v[4] : 0;
+    return SystemTimeToFileTime(&st, out);
+}
+
+/*
+ * the time of a counter signature on the signature of a signer: a signer information of its own, signed by a time
+ * stamp service, whose message digest is the digest of the signature it stamps. A stamp that verifies, to a trusted
+ * root as of the time it names, tells when the signature was made, which lets a certificate that has expired since
+ * still vouch for it.
+ */
+static BOOL stamp_time(WT_DER attributes, WT_DER stamped, HCERTSTORE store, FILETIME *when)
+{
+    WT_BYTES attrs = attributes.value;
+    while (attrs.size) {
+        WT_DER attribute, oid, values, info;
+        if (!WtTake(&attrs, 0x30, &attribute) || !WtTake(&attribute.value, 6, &oid) ||
+            !WtTake(&attribute.value, 0x31, &values) || attribute.value.size)
+            return FALSE;
+        if (!WtOid(oid, oid_counter, sizeof(oid_counter)))
+            continue;
+        WT_BYTES input;
+        WT_DER version, sid, issuer, serial, digest_alg, signed_attrs, sign_alg, encrypted, junk;
+        if (!WtTake(&values.value, 0x30, &info) || values.value.size)
+            return FALSE;
+        input = info.value;
+        if (!WtTake(&input, 2, &version) || version.value.size != 1 || version.value.data[0] != 1 ||
+            !WtTake(&input, 0x30, &sid) || !WtTake(&sid.value, 0x30, &issuer) || !WtTake(&sid.value, 2, &serial) ||
+            sid.value.size || !serial.value.size || (serial.value.data[0] & 0x80) ||
+            !WtTake(&input, 0x30, &digest_alg) || !WtTake(&input, 0xa0, &signed_attrs) ||
+            !WtTake(&input, 0x30, &sign_alg) || !WtTake(&input, 4, &encrypted) ||
+            (input.size && !WtTake(&input, 0xa1, &junk)) || input.size)
+            return FALSE;
+        ALG_ID alg = algorithm(digest_alg);
+        if (!alg || !rsa_algorithm(sign_alg, alg))
+            return FALSE;
+        BOOL have_time = FALSE, have_digest = FALSE;
+        WT_BYTES list = signed_attrs.value;
+        while (list.size) {
+            WT_DER item, item_oid, item_values, value;
+            if (!WtTake(&list, 0x30, &item) || !WtTake(&item.value, 6, &item_oid) ||
+                !WtTake(&item.value, 0x31, &item_values) || item.value.size)
+                return FALSE;
+            if (WtOid(item_oid, oid_time, sizeof(oid_time))) {
+                if (have_time ||
+                    (!WtTake(&item_values.value, 0x17, &value) && !WtTake(&item_values.value, 0x18, &value)) ||
+                    item_values.value.size || !asn_time(value, when))
+                    return FALSE;
+                have_time = TRUE;
+            } else if (WtOid(item_oid, oid_digest, sizeof(oid_digest))) {
+                if (have_digest || !WtTake(&item_values.value, 4, &value) || item_values.value.size ||
+                    !hash_matches(alg, stamped.value, value.value))
+                    return FALSE;
+                have_digest = TRUE;
+            }
+        }
+        if (!have_time || !have_digest)
+            return FALSE;
+        PCCERT_CONTEXT cert = find_cert(store, issuer, serial);
+        if (!cert)
+            return FALSE;
+        BOOL ok = signature(signed_attrs, encrypted, alg, cert) == 0;
+        if (ok) {
+            /* the service's certificate must chain to a trusted root as of the time it stamped. */
+            CERT_CHAIN_PARA para = {};
+            para.cbSize = sizeof(para);
+            PCCERT_CHAIN_CONTEXT chain = nullptr;
+            ok = CertGetCertificateChain(nullptr, cert, when, store, &para, 0, nullptr, &chain);
+            if (ok) {
+                CERT_CHAIN_POLICY_PARA policy = {sizeof(policy)};
+                CERT_CHAIN_POLICY_STATUS status = {sizeof(status)};
+                ok = CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_BASE, chain, &policy, &status) &&
+                     !status.dwError;
+                CertFreeCertificateChain(chain);
+            }
+        }
+        CertFreeCertificateContext(cert);
+        return ok;
+    }
+    return FALSE;
+}
+
 static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE store, const WINTRUST_DATA *options,
                    PCCERT_CHAIN_CONTEXT *kept)
 {
     WT_BYTES input = encoded.value;
-    WT_DER version, sid, issuer, serial, digest_alg, attributes, sign_alg, encrypted, tail;
+    WT_DER version, sid, issuer, serial, digest_alg, attributes, sign_alg, encrypted, unsigned_attributes = {};
     if (!WtTake(&input, 2, &version) || version.value.size != 1 || version.value.data[0] != 1 ||
         !WtTake(&input, 0x30, &sid) || !WtTake(&sid.value, 0x30, &issuer) ||
         !WtTake(&sid.value, 2, &serial) || sid.value.size || !serial.value.size || (serial.value.data[0] & 0x80) ||
         !WtTake(&input, 0x30, &digest_alg) || !WtTake(&input, 0xa0, &attributes) ||
         !WtTake(&input, 0x30, &sign_alg) || !WtTake(&input, 4, &encrypted) ||
-        (input.size && !WtTake(&input, 0xa1, &tail)) || input.size)
+        (input.size && !WtTake(&input, 0xa1, &unsigned_attributes)) || input.size)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     ALG_ID alg = algorithm(digest_alg);
-    if (!alg || alg != declared || !take_oid(&sign_alg.value, oid_rsa, sizeof(oid_rsa)) ||
-        (sign_alg.value.size && (!WtTake(&sign_alg.value, 5, &tail) || tail.value.size)) || sign_alg.value.size)
+    if (!alg || alg != declared || !rsa_algorithm(sign_alg, alg))
         return NTE_BAD_ALGID;
     BOOL have_type = FALSE, have_digest = FALSE;
     WT_BYTES attrs = attributes.value;
@@ -171,26 +349,7 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
     }
     if (!have_type || !have_digest)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
-    CERT_NAME_BLOB name = {issuer.encoded.size, (BYTE *)issuer.encoded.data};
-    while (serial.value.size > 1 && !serial.value.data[0]) {
-        serial.value.data++;
-        serial.value.size--;
-    }
-    PCCERT_CONTEXT cert = nullptr;
-    while ((cert = CertEnumCertificatesInStore(store, cert))) {
-        CRYPT_INTEGER_BLOB number = cert->pCertInfo->SerialNumber;
-        while (number.cbData > 1 && !number.pbData[number.cbData - 1])
-            number.cbData--;
-        if (number.cbData != serial.value.size ||
-            !CertCompareCertificateName(X509_ASN_ENCODING, &name, &cert->pCertInfo->Issuer))
-            continue;
-        DWORD i;
-        for (i = 0; i < number.cbData; i++)
-            if (number.pbData[i] != serial.value.data[number.cbData - 1 - i])
-                break;
-        if (i == number.cbData)
-            break;
-    }
+    PCCERT_CONTEXT cert = find_cert(store, issuer, serial);
     if (!cert)
         return TRUST_E_SUBJECT_NOT_TRUSTED;
     LONG result = signature(attributes, encrypted, alg, cert);
@@ -208,8 +367,11 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
             flags = CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT;
         else if (options->dwProvFlags & WTD_REVOCATION_CHECK_END_CERT)
             flags = CERT_CHAIN_REVOCATION_CHECK_END_CERT;
+        /* a signature with a valid time stamp is judged as of that time, else as of now. */
+        FILETIME stamp;
+        BOOL stamped = unsigned_attributes.value.size && stamp_time(unsigned_attributes, encrypted, store, &stamp);
         PCCERT_CHAIN_CONTEXT chain = nullptr;
-        if (!CertGetCertificateChain(nullptr, cert, nullptr, store, &para, flags, nullptr, &chain))
+        if (!CertGetCertificateChain(nullptr, cert, stamped ? &stamp : nullptr, store, &para, flags, nullptr, &chain))
             result = TRUST_E_SUBJECT_NOT_TRUSTED;
         else {
             CERT_CHAIN_POLICY_PARA policy = {sizeof(policy)};
@@ -229,8 +391,8 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
     return result;
 }
 
-LONG WtVerifySignedData(WT_BYTES encoded, const BYTE *image, DWORD size, DWORD checksum, DWORD directory,
-                       DWORD certificate, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
+LONG WtVerifySignedData(WT_BYTES encoded, const WT_SUBJECT *subject, const WINTRUST_DATA *options,
+                        PCCERT_CHAIN_CONTEXT *chain)
 {
     WT_DER envelope, wrapper, data, version, algorithms, content_info, content_wrapper, content, certs, signers, one;
     if (!WtTake(&encoded, 0x30, &envelope))
@@ -257,7 +419,7 @@ LONG WtVerifySignedData(WT_BYTES encoded, const BYTE *image, DWORD size, DWORD c
     ALG_ID declared = algorithm(digest_algorithm);
     if (!declared)
         return NTE_BAD_ALGID;
-    LONG result = file_digest(content, image, checksum, directory, certificate);
+    LONG result = file_digest(content, subject);
     if (result)
         return result;
     HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, nullptr);
