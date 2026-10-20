@@ -260,11 +260,13 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     msctf:0x7FF0D0000000 riched20:0x7FF0C0000000 msftedit:0x7FF0B0000000 riched32:0x7FF0A0000000
     dcomp:0x7FF030000000 prntvpt:0x7FF020000000 psapi:0x7FF0E0000000 lz32:0x7FF0F0000000
     activeds:0x7FF070000000 advpack:0x7FF110000000 mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000 coremessaging:0x7FF090000000
-    cabinet:0x7FF740000000)
+    cabinet:0x7FF740000000 sfc:0x7FF750000000 sfc_os:0x7FF760000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     # what some take from guest/lib or from another dll's sources.
     set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet)
+    # sfc_os reads the version resources of files and the security of keys.
+    set(libs_sfc_os ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
     # cabinet.dll reads cabinets with the same reader.
     set(objects_cabinet ${arch}-lib-cabinet)
     # advpack takes files out of cabinets and reads the versions of files.

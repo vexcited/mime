@@ -219,4 +219,31 @@ MSIAPI UINT WINAPI MsiSourceListGetInfoW(LPCWSTR product, LPCWSTR sid, MSIINSTAL
 MSIAPI UINT WINAPI MsiSourceListEnumSourcesW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
                                            DWORD options, DWORD index, LPWSTR out, LPDWORD size);
 
+
+#define MSIPATCHSTATE_APPLIED 1
+#define MSIPATCHSTATE_SUPERSEDED 2
+#define MSIPATCHSTATE_OBSOLETED 4
+#define MSIPATCHSTATE_REGISTERED 8
+#define MSIPATCHSTATE_ALL 15
+typedef enum { MSIPATCH_DATATYPE_PATCHFILE = 0, MSIPATCH_DATATYPE_XMLPATH, MSIPATCH_DATATYPE_XMLBLOB } MSIPATCHDATATYPE;
+typedef struct {
+    LPCWSTR szPatchData;
+    MSIPATCHDATATYPE ePatchDataType;
+    DWORD dwOrder;
+    UINT uStatus;
+} MSIPATCHSEQUENCEINFOW;
+MSIAPI UINT WINAPI MsiEnumProductsExW(LPCWSTR product, LPCWSTR sid, DWORD contexts, DWORD index, WCHAR installed[39],
+                                      MSIINSTALLCONTEXT *context, LPWSTR user_sid, LPDWORD sid_size);
+MSIAPI UINT WINAPI MsiGetFileVersionW(LPCWSTR path, LPWSTR version, LPDWORD version_size, LPWSTR language,
+                                      LPDWORD language_size);
+MSIAPI UINT WINAPI MsiIsProductElevatedW(LPCWSTR product, BOOL *elevated);
+MSIAPI UINT WINAPI MsiDeterminePatchSequenceW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context, DWORD count,
+                                              MSIPATCHSEQUENCEINFOW *patches);
+MSIAPI UINT WINAPI MsiEnumPatchesExW(LPCWSTR product, LPCWSTR sid, DWORD contexts, DWORD filter, DWORD index,
+                                     WCHAR patch[39], WCHAR target[39], MSIINSTALLCONTEXT *context, LPWSTR user_sid,
+                                     LPDWORD sid_size);
+MSIAPI UINT WINAPI MsiGetPatchInfoExW(LPCWSTR patch, LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
+                                      LPCWSTR property, LPWSTR value, LPDWORD size);
+MSIAPI UINT WINAPI MsiExtractPatchXMLDataW(LPCWSTR patch, DWORD reserved, LPWSTR xml, LPDWORD size);
+
 #endif

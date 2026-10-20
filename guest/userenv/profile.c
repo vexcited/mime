@@ -248,3 +248,86 @@ USERENV BOOL WINAPI GetAllUsersProfileDirectoryA(LPSTR buffer, LPDWORD size)
     }
     return list_directory(L"ProgramData", path) && return_path_ansi(path, buffer, size);
 }
+
+/* ------------------------------------------------------------------ loading and unloading a profile */
+
+typedef struct {
+    DWORD dwSize;
+    DWORD dwFlags;
+    LPWSTR lpUserName;
+    LPWSTR lpProfilePath;
+    LPWSTR lpDefaultPath;
+    LPWSTR lpServerName;
+    LPWSTR lpPolicyPath;
+    HANDLE hProfile;
+} PROFILEINFOW_;
+
+typedef struct {
+    DWORD dwSize;
+    DWORD dwFlags;
+    LPSTR lpUserName;
+    LPSTR lpProfilePath;
+    LPSTR lpDefaultPath;
+    LPSTR lpServerName;
+    LPSTR lpPolicyPath;
+    HANDLE hProfile;
+} PROFILEINFOA_;
+
+/*
+ * the hive of the user is loaded by the kernel with the session, so a profile is loaded when its key under HKEY_USERS
+ * is there, and loading it hands that key out. A user without one has no profile on this machine.
+ */
+USERENV BOOL WINAPI LoadUserProfileW(HANDLE token, PROFILEINFOW_ *info)
+{
+    if (!info || info->dwSize != sizeof(*info) || !info->lpUserName || !*info->lpUserName) {
+        set_error(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!token || token == INVALID_HANDLE_VALUE) {
+        set_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    WCHAR sid[200];
+    if (!token_sid_string(token, sid, RTL_NUMBER_OF(sid))) {
+        set_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    HKEY key;
+    LONG error = RegOpenKeyExW(HKEY_USERS, sid, 0, KEY_ALL_ACCESS, &key);
+    if (error) {
+        set_error(error);
+        return FALSE;
+    }
+    info->hProfile = key;
+    return TRUE;
+}
+
+USERENV BOOL WINAPI LoadUserProfileA(HANDLE token, PROFILEINFOA_ *info)
+{
+    if (!info || info->dwSize != sizeof(*info) || !info->lpUserName || !*info->lpUserName) {
+        set_error(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    WCHAR name[260];
+    if (!MultiByteToWideChar(CP_ACP, 0, info->lpUserName, -1, name, RTL_NUMBER_OF(name)))
+        return FALSE;
+    PROFILEINFOW_ wide = {sizeof(wide), info->dwFlags, name};
+    if (!LoadUserProfileW(token, &wide))
+        return FALSE;
+    info->hProfile = wide.hProfile;
+    return TRUE;
+}
+
+USERENV BOOL WINAPI UnloadUserProfile(HANDLE token, HANDLE profile)
+{
+    if (!token || token == INVALID_HANDLE_VALUE || !profile || profile == INVALID_HANDLE_VALUE) {
+        set_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    LONG error = RegCloseKey((HKEY)profile);
+    if (error) {
+        set_error(error);
+        return FALSE;
+    }
+    return TRUE;
+}

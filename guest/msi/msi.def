@@ -104,3 +104,10 @@ EXPORTS
     MsiLocateComponentA @89
     MsiRemovePatchesW @238
     MsiRemovePatchesA @237
+    MsiEnumProductsExW @246
+    MsiGetFileVersionW @195
+    MsiIsProductElevatedW @215
+    MsiExtractPatchXMLDataW @242
+    MsiGetPatchInfoExW @244
+    MsiDeterminePatchSequenceW @254
+    MsiEnumPatchesExW @270

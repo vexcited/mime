@@ -388,6 +388,64 @@ BOOL WINAPI CryptMsgGetParam(HCRYPTMSG handle, DWORD type, DWORD index, void *ou
     return error ? CrFail(error) : TRUE;
 }
 
+#define CMSG_TRUSTED_SIGNER_FLAG 0x1
+#define CMSG_SIGNER_ONLY_FLAG 0x2
+#define CMSG_USE_SIGNER_INDEX_FLAG 0x4
+
+/*
+ * the certificate of a signer of the message, found by issuer and serial number in the stores given. The signature is
+ * not checked: only a caller that asks for the signer alone (or trusts it) gets an answer, any other fails because the
+ * check is not made here.
+ */
+BOOL WINAPI CryptMsgGetAndVerifySigner(HCRYPTMSG handle, DWORD store_count, HCERTSTORE *stores, DWORD flags,
+                                       PCCERT_CONTEXT *signer, DWORD *signer_index)
+{
+    if (signer)
+        *signer = nullptr;
+    if ((flags & ~(DWORD)(CMSG_TRUSTED_SIGNER_FLAG | CMSG_SIGNER_ONLY_FLAG | CMSG_USE_SIGNER_INDEX_FLAG)) ||
+        (store_count && !stores))
+        return CrFail(E_INVALIDARG);
+    if (!(flags & (CMSG_TRUSTED_SIGNER_FLAG | CMSG_SIGNER_ONLY_FLAG)))
+        return CrFail(ERROR_NOT_SUPPORTED);
+    DWORD count = 0, size = sizeof(count);
+    if (!CryptMsgGetParam(handle, CMSG_SIGNER_COUNT_PARAM, 0, &count, &size))
+        return FALSE;
+    DWORD first = 0, last = count;
+    if (flags & CMSG_USE_SIGNER_INDEX_FLAG) {
+        if (!signer_index || *signer_index >= count)
+            return CrFail(CRYPT_E_INVALID_INDEX);
+        first = *signer_index;
+        last = first + 1;
+    }
+    for (DWORD index = first; index < last; index++) {
+        DWORD bytes = 0;
+        if (!CryptMsgGetParam(handle, CMSG_SIGNER_CERT_INFO_PARAM, index, nullptr, &bytes))
+            return FALSE;
+        CERT_INFO *info = CrAlloc(bytes);
+        if (!info)
+            return CrFail(ERROR_OUTOFMEMORY);
+        if (!CryptMsgGetParam(handle, CMSG_SIGNER_CERT_INFO_PARAM, index, info, &bytes)) {
+            CrFree(info);
+            return FALSE;
+        }
+        for (DWORD at = 0; at < store_count; at++) {
+            PCCERT_CONTEXT found = CertGetSubjectCertificateFromStore(stores[at], X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, info);
+            if (found) {
+                CrFree(info);
+                if (signer)
+                    *signer = found;
+                else
+                    CertFreeCertificateContext(found);
+                if (signer_index)
+                    *signer_index = index;
+                return TRUE;
+            }
+        }
+        CrFree(info);
+    }
+    return CrFail(CRYPT_E_NOT_FOUND);
+}
+
 static DWORD read_object(DWORD type, const void *object, BYTE **bytes, DWORD *size)
 {
     if (!object)
