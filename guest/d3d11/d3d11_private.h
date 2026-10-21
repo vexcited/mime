@@ -837,6 +837,7 @@ struct D3dContext {
     ID3D11VideoContext1 video;
     D3dChild child;
     D3D11_DEVICE_CONTEXT_TYPE type;
+    /* the device's one recursive lock, held by Enter and by every call while protected_ is set. */
     CRITICAL_SECTION lock;
     BOOL protected_;
 
@@ -964,9 +965,44 @@ struct D3dContext {
 
 extern const MimeAllocator g_d3d_allocator;
 
+/*
+ * the device's lock for the length of a call. the calls of the immediate context take it while the program has multithread
+ * protection on, which costs a load and a branch while it is off, and the device's calls that make objects and ask
+ * questions always, unless the device is single threaded. put D3D_SYNC at the top of a method of the immediate context or
+ * D3D_DEVICE_SYNC at the top of one of the device's: the lock is let go when the scope ends, whatever way it ends.
+ */
+static inline CRITICAL_SECTION *D3dSyncEnter(D3dContext *context)
+{
+    if (!__atomic_load_n(&context->protected_, __ATOMIC_RELAXED))
+        return nullptr;
+    EnterCriticalSection(&context->lock);
+    return &context->lock;
+}
+
+static inline CRITICAL_SECTION *D3dDeviceSyncEnter(D3dDevice *device)
+{
+    if ((device->flags & D3D11_CREATE_DEVICE_SINGLETHREADED) || !device->immediate)
+        return nullptr;
+    EnterCriticalSection(&device->immediate->lock);
+    return &device->immediate->lock;
+}
+
+static inline void D3dSyncLeave(CRITICAL_SECTION **held)
+{
+    if (*held)
+        LeaveCriticalSection(*held);
+}
+
+#define D3D_SYNC(context) CRITICAL_SECTION *d3d_held_ __attribute__((cleanup(D3dSyncLeave))) = D3dSyncEnter(context)
+#define D3D_DEVICE_SYNC(device)                                                                                        \
+    CRITICAL_SECTION *d3d_held_ __attribute__((cleanup(D3dSyncLeave))) = D3dDeviceSyncEnter(device)
+
 HRESULT D3dCreateContext(D3dDevice *device, D3D11_DEVICE_CONTEXT_TYPE type, D3dContext **out);
 void D3dContextDestroy(D3dContext *context);
 D3dContext *D3dContextFrom(ID3D11DeviceContext *iface);
+/* the ID3D11Multithread of an immediate context that has one, and its state, which the device shares. */
+void *D3dMultithreadInterface(D3dContext *context);
+BOOL D3dSetProtected(D3dContext *context, BOOL protect);
 /* records into the context's command buffer, ending rendering for transfers. */
 VkCommandBuffer D3dContextCommands(D3dContext *context, BOOL transfer);
 void D3dContextFlush(D3dContext *context);

@@ -261,6 +261,7 @@ static UINT format_flags(D3dDevice *device, DXGI_FORMAT format)
 
 static HRESULT STDMETHODCALLTYPE enum_check_format(void *iface, DXGI_FORMAT format, UINT *flags)
 {
+    D3D_DEVICE_SYNC(enum_impl(iface)->child.device);
     if (!flags)
         return E_INVALIDARG;
     *flags = format_flags(enum_impl(iface)->child.device, format);
@@ -269,6 +270,7 @@ static HRESULT STDMETHODCALLTYPE enum_check_format(void *iface, DXGI_FORMAT form
 
 static HRESULT STDMETHODCALLTYPE enum_get_caps(void *iface, D3D11_VIDEO_PROCESSOR_CAPS *caps)
 {
+    D3D_DEVICE_SYNC(enum_impl(iface)->child.device);
     if (!caps)
         return E_INVALIDARG;
     memset(caps, 0, sizeof(*caps));
@@ -284,6 +286,7 @@ static HRESULT STDMETHODCALLTYPE enum_get_caps(void *iface, D3D11_VIDEO_PROCESSO
 static HRESULT STDMETHODCALLTYPE enum_get_rate_conversion_caps(void *iface, UINT index,
                                                                D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS *caps)
 {
+    D3D_DEVICE_SYNC(enum_impl(iface)->child.device);
     if (!caps || index >= 1)
         return E_INVALIDARG;
     memset(caps, 0, sizeof(*caps));
@@ -293,12 +296,14 @@ static HRESULT STDMETHODCALLTYPE enum_get_rate_conversion_caps(void *iface, UINT
 static HRESULT STDMETHODCALLTYPE enum_get_custom_rate(void *iface, UINT type, UINT index,
                                                       D3D11_VIDEO_PROCESSOR_CUSTOM_RATE *rate)
 {
+    D3D_DEVICE_SYNC(enum_impl(iface)->child.device);
     return E_INVALIDARG;
 }
 
 static HRESULT STDMETHODCALLTYPE enum_get_filter_range(void *iface, D3D11_VIDEO_PROCESSOR_FILTER filter,
                                                        D3D11_VIDEO_PROCESSOR_FILTER_RANGE *range)
 {
+    D3D_DEVICE_SYNC(enum_impl(iface)->child.device);
     if (!range)
         return E_INVALIDARG;
     memset(range, 0, sizeof(*range));
@@ -311,6 +316,7 @@ static HRESULT STDMETHODCALLTYPE enum_check_conversion(void *iface, DXGI_FORMAT 
                                                        DXGI_COLOR_SPACE_TYPE in_space, DXGI_FORMAT out_format,
                                                        DXGI_COLOR_SPACE_TYPE out_space, BOOL *supported)
 {
+    D3D_DEVICE_SYNC(enum_impl(iface)->child.device);
     if (!supported)
         return E_INVALIDARG;
     *supported = FALSE;
@@ -676,6 +682,7 @@ static BOOL stream_ok(VideoProcessor *p, UINT stream) { return p && stream < MAX
 static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputTargetRect(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      BOOL enable, const RECT *rect)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p || (enable && !rect))
         return;
@@ -687,6 +694,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputTargetRect(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputTargetRect(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      BOOL *enabled, RECT *rect)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p || !enabled || !rect)
         return;
@@ -697,6 +705,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputTargetRect(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputBackgroundColor(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                           BOOL ycbcr, const D3D11_VIDEO_COLOR *color)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p || !color)
         return;
@@ -707,6 +716,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputBackgroundColor(ID3D11Vi
 static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputBackgroundColor(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                           BOOL *ycbcr, D3D11_VIDEO_COLOR *color)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p || !ycbcr || !color)
         return;
@@ -717,6 +727,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputBackgroundColor(ID3D11Vi
 static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputColorSpace(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      const D3D11_VIDEO_PROCESSOR_COLOR_SPACE *space)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p || !space)
         return;
@@ -728,6 +739,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputColorSpace(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputColorSpace(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      D3D11_VIDEO_PROCESSOR_COLOR_SPACE *space)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p || !space)
         return;
@@ -739,6 +751,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputColorSpace(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputColorSpace1(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                       DXGI_COLOR_SPACE_TYPE space)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     VpSpace s;
     if (!p || !space_of(space, &s))
@@ -750,6 +763,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputColorSpace1(ID3D11VideoC
 static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputColorSpace1(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                       DXGI_COLOR_SPACE_TYPE *space)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (p && space)
         *space = p->has_output_space ? p->output_space : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
@@ -758,6 +772,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputColorSpace1(ID3D11VideoC
 static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputAlphaFillMode(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                         D3D11_VIDEO_PROCESSOR_ALPHA_FILL_MODE mode, UINT stream)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p)
         return;
@@ -768,6 +783,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputAlphaFillMode(ID3D11Vide
 static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputAlphaFillMode(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                         D3D11_VIDEO_PROCESSOR_ALPHA_FILL_MODE *mode, UINT *stream)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p || !mode || !stream)
         return;
@@ -778,6 +794,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputAlphaFillMode(ID3D11Vide
 static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputConstriction(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                        BOOL enable, SIZE size)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p)
         return;
@@ -788,6 +805,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputConstriction(ID3D11Video
 static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputConstriction(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                        BOOL *enabled, SIZE *size)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!p || !enabled || !size)
         return;
@@ -798,6 +816,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputConstriction(ID3D11Video
 static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputStereoMode(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      BOOL enable)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (p)
         p->stereo_output = enable;
@@ -806,6 +825,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputStereoMode(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputStereoMode(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      BOOL *enabled)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (p && enabled)
         *enabled = p->stereo_output;
@@ -814,6 +834,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputStereoMode(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputShaderUsage(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                       BOOL shader_usage)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (p)
         p->shader_usage = shader_usage;
@@ -822,6 +843,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetOutputShaderUsage(ID3D11VideoC
 static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputShaderUsage(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                       BOOL *shader_usage)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (p && shader_usage)
         *shader_usage = p->shader_usage;
@@ -831,6 +853,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputShaderUsage(ID3D11VideoC
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamFrameFormat(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                       UINT stream, D3D11_VIDEO_FRAME_FORMAT format)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (stream_ok(p, stream) && format <= D3D11_VIDEO_FRAME_FORMAT_INTERLACED_BOTTOM_FIELD_FIRST)
         p->streams[stream].frame_format = format;
@@ -839,6 +862,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamFrameFormat(ID3D11VideoC
 static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamFrameFormat(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                       UINT stream, D3D11_VIDEO_FRAME_FORMAT *format)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (stream_ok(p, stream) && format)
         *format = p->streams[stream].frame_format;
@@ -847,6 +871,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamFrameFormat(ID3D11VideoC
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamColorSpace(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      UINT stream, const D3D11_VIDEO_PROCESSOR_COLOR_SPACE *space)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !space)
         return;
@@ -858,6 +883,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamColorSpace(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamColorSpace(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      UINT stream, D3D11_VIDEO_PROCESSOR_COLOR_SPACE *space)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !space)
         return;
@@ -869,6 +895,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamColorSpace(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamColorSpace1(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                       UINT stream, DXGI_COLOR_SPACE_TYPE space)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     VpSpace s;
     if (!stream_ok(p, stream) || !space_of(space, &s))
@@ -880,6 +907,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamColorSpace1(ID3D11VideoC
 static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamColorSpace1(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                       UINT stream, DXGI_COLOR_SPACE_TYPE *space)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (stream_ok(p, stream) && space)
         *space = p->streams[stream].has_space ? p->streams[stream].space : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601;
@@ -889,6 +917,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamOutputRate(ID3D11VideoCo
                                                      UINT stream, D3D11_VIDEO_PROCESSOR_OUTPUT_RATE rate,
                                                      BOOL repeat, const DXGI_RATIONAL *custom)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream))
         return;
@@ -902,6 +931,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamOutputRate(ID3D11VideoCo
                                                      UINT stream, D3D11_VIDEO_PROCESSOR_OUTPUT_RATE *rate,
                                                      BOOL *repeat, DXGI_RATIONAL *custom)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !rate || !repeat || !custom)
         return;
@@ -913,6 +943,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamOutputRate(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamSourceRect(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      UINT stream, BOOL enable, const RECT *rect)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || (enable && !rect))
         return;
@@ -924,6 +955,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamSourceRect(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamSourceRect(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                      UINT stream, BOOL *enabled, RECT *rect)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !enabled || !rect)
         return;
@@ -934,6 +966,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamSourceRect(ID3D11VideoCo
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamDestRect(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                    UINT stream, BOOL enable, const RECT *rect)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || (enable && !rect))
         return;
@@ -945,6 +978,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamDestRect(ID3D11VideoCont
 static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamDestRect(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                    UINT stream, BOOL *enabled, RECT *rect)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !enabled || !rect)
         return;
@@ -955,6 +989,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamDestRect(ID3D11VideoCont
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamAlpha(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                 UINT stream, BOOL enable, FLOAT alpha)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream))
         return;
@@ -965,6 +1000,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamAlpha(ID3D11VideoContext
 static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamAlpha(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                 UINT stream, BOOL *enabled, FLOAT *alpha)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !enabled || !alpha)
         return;
@@ -975,6 +1011,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamAlpha(ID3D11VideoContext
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamLumaKey(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                   UINT stream, BOOL enable, FLOAT lower, FLOAT upper)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream))
         return;
@@ -986,6 +1023,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamLumaKey(ID3D11VideoConte
 static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamLumaKey(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                   UINT stream, BOOL *enabled, FLOAT *lower, FLOAT *upper)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !enabled || !lower || !upper)
         return;
@@ -998,6 +1036,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamPixelAspectRatio(ID3D11V
                                                            UINT stream, BOOL enable, const DXGI_RATIONAL *source,
                                                            const DXGI_RATIONAL *dest)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || (enable && (!source || !dest)))
         return;
@@ -1012,6 +1051,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamPixelAspectRatio(ID3D11V
                                                            UINT stream, BOOL *enabled, DXGI_RATIONAL *source,
                                                            DXGI_RATIONAL *dest)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !enabled || !source || !dest)
         return;
@@ -1024,6 +1064,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamAutoProcessingMode(ID3D1
                                                              ID3D11VideoProcessor *processor, UINT stream,
                                                              BOOL enable)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (stream_ok(p, stream))
         p->streams[stream].auto_processing = enable;
@@ -1033,6 +1074,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamAutoProcessingMode(ID3D1
                                                              ID3D11VideoProcessor *processor, UINT stream,
                                                              BOOL *enabled)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (stream_ok(p, stream) && enabled)
         *enabled = p->streams[stream].auto_processing;
@@ -1041,6 +1083,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamAutoProcessingMode(ID3D1
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamRotation(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                    UINT stream, BOOL enable, D3D11_VIDEO_PROCESSOR_ROTATION rotation)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream))
         return;
@@ -1051,6 +1094,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamRotation(ID3D11VideoCont
 static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamRotation(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                    UINT stream, BOOL *enabled, D3D11_VIDEO_PROCESSOR_ROTATION *rotation)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !enabled || !rotation)
         return;
@@ -1061,6 +1105,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamRotation(ID3D11VideoCont
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamMirror(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                  UINT stream, BOOL enable, BOOL flip_horizontal, BOOL flip_vertical)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream))
         return;
@@ -1073,6 +1118,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamMirror(ID3D11VideoContex
                                                  UINT stream, BOOL *enabled, BOOL *flip_horizontal,
                                                  BOOL *flip_vertical)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || !enabled || !flip_horizontal || !flip_vertical)
         return;
@@ -1085,6 +1131,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamFilter(ID3D11VideoContex
                                                  UINT stream, D3D11_VIDEO_PROCESSOR_FILTER filter, BOOL enable,
                                                  INT level)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || (UINT)filter >= 8)
         return;
@@ -1096,6 +1143,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamFilter(ID3D11VideoContex
                                                  UINT stream, D3D11_VIDEO_PROCESSOR_FILTER filter, BOOL *enabled,
                                                  INT *level)
 {
+    D3D_SYNC(context_of(iface));
     PROCESSOR(processor);
     if (!stream_ok(p, stream) || (UINT)filter >= 8 || !enabled || !level)
         return;
@@ -1495,6 +1543,7 @@ static HRESULT STDMETHODCALLTYPE vc_VideoProcessorBlt(ID3D11VideoContext1 *iface
                                                       ID3D11VideoProcessorOutputView *output, UINT frame, UINT count,
                                                       const D3D11_VIDEO_PROCESSOR_STREAM *streams)
 {
+    D3D_SYNC(context_of(iface));
     D3dContext *c = CONTAINING_RECORD(iface, D3dContext, video);
     PROCESSOR(processor);
     if (!p || !output || count > MAX_STREAMS || (count && !streams))
@@ -1539,6 +1588,7 @@ static HRESULT STDMETHODCALLTYPE vc_VideoProcessorSetStreamExtension(ID3D11Video
                                                                      ID3D11VideoProcessor *processor, UINT stream,
                                                                      const GUID *guid, UINT size, void *data)
 {
+    D3D_SYNC(context_of(iface));
     return E_NOTIMPL;
 }
 

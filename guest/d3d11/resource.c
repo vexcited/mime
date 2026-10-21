@@ -526,12 +526,14 @@ void D3dContextUnmapSurface(D3dContext *context, D3dResource *r);
 static HRESULT STDMETHODCALLTYPE surface_map(IDXGISurface2 *iface, DXGI_MAPPED_RECT *rect, UINT flags)
 {
     D3dResource *r = surface_impl(iface);
+    D3D_SYNC(r->child.device->immediate);
     return D3dContextMapSurface(r->child.device->immediate, r, rect, flags);
 }
 
 static HRESULT STDMETHODCALLTYPE surface_unmap(IDXGISurface2 *iface)
 {
     D3dResource *r = surface_impl(iface);
+    D3D_SYNC(r->child.device->immediate);
     D3dContextUnmapSurface(r->child.device->immediate, r);
     return S_OK;
 }

@@ -543,55 +543,65 @@ static void get_shader(D3dContext *c, D3dStage stage, void **shader, ID3D11Class
 
 /* the methods of each stage, alike but for the stage. */
 #define STAGE_METHODS(prefix, stage, type)                                                                             \
-    static void STDMETHODCALLTYPE prefix##_set_constant_buffers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,  \
+    static void STDMETHODCALLTYPE prefix##_set_constant_buffers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,    \
                                                                 ID3D11Buffer *const *buffers)                          \
     {                                                                                                                  \
-        set_constant_buffers(impl(iface), stage, slot, count, buffers, nullptr, nullptr);                                    \
+        D3D_SYNC(impl(iface));                                                                                         \
+        set_constant_buffers(impl(iface), stage, slot, count, buffers, nullptr, nullptr);                              \
     }                                                                                                                  \
-    static void STDMETHODCALLTYPE prefix##_set_constant_buffers1(ID3D11DeviceContext4 *iface, UINT slot, UINT count, \
+    static void STDMETHODCALLTYPE prefix##_set_constant_buffers1(ID3D11DeviceContext4 *iface, UINT slot, UINT count,   \
                                                                  ID3D11Buffer *const *buffers, const UINT *first,      \
                                                                  const UINT *num)                                      \
     {                                                                                                                  \
+        D3D_SYNC(impl(iface));                                                                                         \
         set_constant_buffers(impl(iface), stage, slot, count, buffers, first, num);                                    \
     }                                                                                                                  \
-    static void STDMETHODCALLTYPE prefix##_set_shader_resources(ID3D11DeviceContext4 *iface, UINT slot, UINT count,  \
+    static void STDMETHODCALLTYPE prefix##_set_shader_resources(ID3D11DeviceContext4 *iface, UINT slot, UINT count,    \
                                                                 ID3D11ShaderResourceView *const *views)                \
     {                                                                                                                  \
+        D3D_SYNC(impl(iface));                                                                                         \
         set_shader_resources(impl(iface), stage, slot, count, views);                                                  \
     }                                                                                                                  \
-    static void STDMETHODCALLTYPE prefix##_set_samplers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,          \
+    static void STDMETHODCALLTYPE prefix##_set_samplers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,            \
                                                         ID3D11SamplerState *const *samplers)                           \
     {                                                                                                                  \
+        D3D_SYNC(impl(iface));                                                                                         \
         set_samplers(impl(iface), stage, slot, count, samplers);                                                       \
     }                                                                                                                  \
-    static void STDMETHODCALLTYPE prefix##_set_shader(ID3D11DeviceContext4 *iface, type *shader,                     \
+    static void STDMETHODCALLTYPE prefix##_set_shader(ID3D11DeviceContext4 *iface, type *shader,                       \
                                                       ID3D11ClassInstance *const *instances, UINT count)               \
     {                                                                                                                  \
+        D3D_SYNC(impl(iface));                                                                                         \
         set_shader(impl(iface), stage, shader);                                                                        \
     }                                                                                                                  \
-    static void STDMETHODCALLTYPE prefix##_get_constant_buffers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,  \
+    static void STDMETHODCALLTYPE prefix##_get_constant_buffers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,    \
                                                                 ID3D11Buffer **buffers)                                \
     {                                                                                                                  \
-        get_constant_buffers(impl(iface), stage, slot, count, buffers, nullptr, nullptr);                                    \
+        D3D_SYNC(impl(iface));                                                                                         \
+        get_constant_buffers(impl(iface), stage, slot, count, buffers, nullptr, nullptr);                              \
     }                                                                                                                  \
-    static void STDMETHODCALLTYPE prefix##_get_constant_buffers1(ID3D11DeviceContext4 *iface, UINT slot, UINT count, \
+    static void STDMETHODCALLTYPE prefix##_get_constant_buffers1(ID3D11DeviceContext4 *iface, UINT slot, UINT count,   \
                                                                  ID3D11Buffer **buffers, UINT *first, UINT *num)       \
     {                                                                                                                  \
+        D3D_SYNC(impl(iface));                                                                                         \
         get_constant_buffers(impl(iface), stage, slot, count, buffers, first, num);                                    \
     }                                                                                                                  \
-    static void STDMETHODCALLTYPE prefix##_get_shader_resources(ID3D11DeviceContext4 *iface, UINT slot, UINT count,  \
+    static void STDMETHODCALLTYPE prefix##_get_shader_resources(ID3D11DeviceContext4 *iface, UINT slot, UINT count,    \
                                                                 ID3D11ShaderResourceView **views)                      \
     {                                                                                                                  \
+        D3D_SYNC(impl(iface));                                                                                         \
         get_shader_resources(impl(iface), stage, slot, count, views);                                                  \
     }                                                                                                                  \
-    static void STDMETHODCALLTYPE prefix##_get_samplers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,          \
+    static void STDMETHODCALLTYPE prefix##_get_samplers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,            \
                                                         ID3D11SamplerState **samplers)                                 \
     {                                                                                                                  \
+        D3D_SYNC(impl(iface));                                                                                         \
         get_samplers(impl(iface), stage, slot, count, samplers);                                                       \
     }                                                                                                                  \
-    static void STDMETHODCALLTYPE prefix##_get_shader(ID3D11DeviceContext4 *iface, type **shader,                    \
+    static void STDMETHODCALLTYPE prefix##_get_shader(ID3D11DeviceContext4 *iface, type **shader,                      \
                                                       ID3D11ClassInstance **instances, UINT *count)                    \
     {                                                                                                                  \
+        D3D_SYNC(impl(iface));                                                                                         \
         get_shader(impl(iface), stage, (void **)shader, instances, count);                                             \
     }
 
@@ -606,6 +616,7 @@ STAGE_METHODS(cs, D3D_CS, ID3D11ComputeShader)
 
 static void STDMETHODCALLTYPE ia_set_input_layout(ID3D11DeviceContext4 *iface, ID3D11InputLayout *layout)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dInputLayout *l = D3dInputLayoutFrom(layout);
     if (c->layout != l) {
@@ -618,6 +629,7 @@ static void STDMETHODCALLTYPE ia_set_vertex_buffers(ID3D11DeviceContext4 *iface,
                                                     ID3D11Buffer *const *buffers, const UINT *strides,
                                                     const UINT *offsets)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (slot >= D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT)
         return;
@@ -642,6 +654,7 @@ static void STDMETHODCALLTYPE ia_set_vertex_buffers(ID3D11DeviceContext4 *iface,
 static void STDMETHODCALLTYPE ia_set_index_buffer(ID3D11DeviceContext4 *iface, ID3D11Buffer *buffer,
                                                   DXGI_FORMAT format, UINT offset)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dResource *r = D3dResourceFrom((ID3D11Resource *)buffer);
     ref_resource(&c->ib, bound_as_output(c, r) ? nullptr : r);
@@ -654,6 +667,7 @@ static void STDMETHODCALLTYPE ia_set_index_buffer(ID3D11DeviceContext4 *iface, I
 static void STDMETHODCALLTYPE ia_set_primitive_topology(ID3D11DeviceContext4 *iface,
                                                         D3D11_PRIMITIVE_TOPOLOGY topology)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (c->topology != topology) {
         c->topology = topology;
@@ -663,6 +677,7 @@ static void STDMETHODCALLTYPE ia_set_primitive_topology(ID3D11DeviceContext4 *if
 
 static void STDMETHODCALLTYPE ia_get_input_layout(ID3D11DeviceContext4 *iface, ID3D11InputLayout **layout)
 {
+    D3D_SYNC(impl(iface));
     D3dInputLayout *l = impl(iface)->layout;
     *layout = l ? &l->iface : nullptr;
     if (l)
@@ -672,6 +687,7 @@ static void STDMETHODCALLTYPE ia_get_input_layout(ID3D11DeviceContext4 *iface, I
 static void STDMETHODCALLTYPE ia_get_vertex_buffers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,
                                                     ID3D11Buffer **buffers, UINT *strides, UINT *offsets)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     for (UINT i = 0; i < count; i++) {
         UINT k = slot + i;
@@ -692,6 +708,7 @@ static void STDMETHODCALLTYPE ia_get_vertex_buffers(ID3D11DeviceContext4 *iface,
 static void STDMETHODCALLTYPE ia_get_index_buffer(ID3D11DeviceContext4 *iface, ID3D11Buffer **buffer,
                                                   DXGI_FORMAT *format, UINT *offset)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (buffer) {
         *buffer = c->ib ? &c->ib->u.buffer : nullptr;
@@ -707,6 +724,7 @@ static void STDMETHODCALLTYPE ia_get_index_buffer(ID3D11DeviceContext4 *iface, I
 static void STDMETHODCALLTYPE ia_get_primitive_topology(ID3D11DeviceContext4 *iface,
                                                         D3D11_PRIMITIVE_TOPOLOGY *topology)
 {
+    D3D_SYNC(impl(iface));
     *topology = impl(iface)->topology;
 }
 
@@ -714,6 +732,7 @@ static void STDMETHODCALLTYPE ia_get_primitive_topology(ID3D11DeviceContext4 *if
 
 static void STDMETHODCALLTYPE rs_set_state(ID3D11DeviceContext4 *iface, ID3D11RasterizerState *state)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dRasterizerState *s = D3dRasterizerFrom(state);
     if (c->rasterizer != s) {
@@ -725,6 +744,7 @@ static void STDMETHODCALLTYPE rs_set_state(ID3D11DeviceContext4 *iface, ID3D11Ra
 static void STDMETHODCALLTYPE rs_set_viewports(ID3D11DeviceContext4 *iface, UINT count,
                                                const D3D11_VIEWPORT *viewports)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     count = D3D_MIN(count, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE);
     memcpy(c->viewports, viewports, count * sizeof(*viewports));
@@ -734,6 +754,7 @@ static void STDMETHODCALLTYPE rs_set_viewports(ID3D11DeviceContext4 *iface, UINT
 
 static void STDMETHODCALLTYPE rs_set_scissor_rects(ID3D11DeviceContext4 *iface, UINT count, const D3D11_RECT *rects)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     count = D3D_MIN(count, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE);
     memcpy(c->scissors, rects, count * sizeof(*rects));
@@ -743,6 +764,7 @@ static void STDMETHODCALLTYPE rs_set_scissor_rects(ID3D11DeviceContext4 *iface, 
 
 static void STDMETHODCALLTYPE rs_get_state(ID3D11DeviceContext4 *iface, ID3D11RasterizerState **state)
 {
+    D3D_SYNC(impl(iface));
     D3dRasterizerState *s = impl(iface)->rasterizer;
     *state = s ? (ID3D11RasterizerState *)&s->iface : nullptr;
     if (s)
@@ -751,6 +773,7 @@ static void STDMETHODCALLTYPE rs_get_state(ID3D11DeviceContext4 *iface, ID3D11Ra
 
 static void STDMETHODCALLTYPE rs_get_viewports(ID3D11DeviceContext4 *iface, UINT *count, D3D11_VIEWPORT *viewports)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (viewports)
         for (UINT i = 0; i < *count; i++)
@@ -761,6 +784,7 @@ static void STDMETHODCALLTYPE rs_get_viewports(ID3D11DeviceContext4 *iface, UINT
 
 static void STDMETHODCALLTYPE rs_get_scissor_rects(ID3D11DeviceContext4 *iface, UINT *count, D3D11_RECT *rects)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (rects)
         for (UINT i = 0; i < *count; i++)
@@ -772,6 +796,7 @@ static void STDMETHODCALLTYPE rs_get_scissor_rects(ID3D11DeviceContext4 *iface, 
 static void STDMETHODCALLTYPE om_set_blend_state(ID3D11DeviceContext4 *iface, ID3D11BlendState *state,
                                                  const FLOAT factor[4], UINT mask)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     ref_D3dBlendState(c, &c->blend, D3dBlendFrom(state));
     static const FLOAT ones[4] = {1, 1, 1, 1};
@@ -783,6 +808,7 @@ static void STDMETHODCALLTYPE om_set_blend_state(ID3D11DeviceContext4 *iface, ID
 static void STDMETHODCALLTYPE om_set_depth_stencil_state(ID3D11DeviceContext4 *iface, ID3D11DepthStencilState *state,
                                                          UINT ref)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     ref_D3dDepthStencilState(c, &c->depth_stencil, D3dDepthStencilFrom(state));
     c->stencil_ref = ref;
@@ -827,6 +853,7 @@ static void STDMETHODCALLTYPE om_set_render_targets(ID3D11DeviceContext4 *iface,
                                                     ID3D11RenderTargetView *const *views,
                                                     ID3D11DepthStencilView *depth)
 {
+    D3D_SYNC(impl(iface));
     set_render_targets(impl(iface), count, views, depth);
 }
 
@@ -837,6 +864,7 @@ static void STDMETHODCALLTYPE om_set_render_targets_and_uavs(ID3D11DeviceContext
                                                              ID3D11UnorderedAccessView *const *uavs,
                                                              const UINT *initial_counts)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (count != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)
         set_render_targets(c, count, views, depth);
@@ -847,6 +875,7 @@ static void STDMETHODCALLTYPE om_set_render_targets_and_uavs(ID3D11DeviceContext
 static void STDMETHODCALLTYPE om_get_render_targets(ID3D11DeviceContext4 *iface, UINT count,
                                                     ID3D11RenderTargetView **views, ID3D11DepthStencilView **depth)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (views)
         for (UINT i = 0; i < count; i++) {
@@ -867,6 +896,7 @@ static void STDMETHODCALLTYPE om_get_render_targets_and_uavs(ID3D11DeviceContext
                                                              ID3D11DepthStencilView **depth, UINT uav_slot,
                                                              UINT uav_count, ID3D11UnorderedAccessView **uavs)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     om_get_render_targets(iface, count, views, depth);
     if (uavs)
@@ -881,6 +911,7 @@ static void STDMETHODCALLTYPE om_get_render_targets_and_uavs(ID3D11DeviceContext
 static void STDMETHODCALLTYPE om_get_blend_state(ID3D11DeviceContext4 *iface, ID3D11BlendState **state,
                                                  FLOAT factor[4], UINT *mask)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (state) {
         *state = c->blend ? (ID3D11BlendState *)&c->blend->iface : nullptr;
@@ -896,6 +927,7 @@ static void STDMETHODCALLTYPE om_get_blend_state(ID3D11DeviceContext4 *iface, ID
 static void STDMETHODCALLTYPE om_get_depth_stencil_state(ID3D11DeviceContext4 *iface,
                                                          ID3D11DepthStencilState **state, UINT *ref)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (state) {
         *state = c->depth_stencil ? &c->depth_stencil->iface : nullptr;
@@ -910,6 +942,7 @@ static void STDMETHODCALLTYPE cs_set_unordered_access_views(ID3D11DeviceContext4
                                                             ID3D11UnorderedAccessView *const *views,
                                                             const UINT *initial_counts)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (slot >= D3D11_1_UAV_SLOT_COUNT)
         return;
@@ -927,6 +960,7 @@ static void STDMETHODCALLTYPE cs_set_unordered_access_views(ID3D11DeviceContext4
 static void STDMETHODCALLTYPE cs_get_unordered_access_views(ID3D11DeviceContext4 *iface, UINT slot, UINT count,
                                                             ID3D11UnorderedAccessView **views)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     for (UINT i = 0; i < count; i++) {
         D3dView *v = slot + i < D3D11_1_UAV_SLOT_COUNT ? c->stages[D3D_CS].uav[slot + i] : nullptr;
@@ -944,6 +978,7 @@ static void STDMETHODCALLTYPE cs_get_unordered_access_views(ID3D11DeviceContext4
 static void STDMETHODCALLTYPE so_set_targets(ID3D11DeviceContext4 *iface, UINT count, ID3D11Buffer *const *buffers,
                                              const UINT *offsets)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dDevice *device = c->child.device;
     if (c->xfb_active)
@@ -969,6 +1004,7 @@ static void STDMETHODCALLTYPE so_set_targets(ID3D11DeviceContext4 *iface, UINT c
 
 static void STDMETHODCALLTYPE so_get_targets(ID3D11DeviceContext4 *iface, UINT count, ID3D11Buffer **buffers)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     for (UINT i = 0; i < count; i++) {
         D3dResource *r = i < D3D11_SO_BUFFER_SLOT_COUNT ? c->so[i] : nullptr;
@@ -1726,6 +1762,7 @@ static void finish_draw(D3dContext *c)
 
 static void STDMETHODCALLTYPE draw(ID3D11DeviceContext4 *iface, UINT count, UINT start)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (!count || !prepare_draw(c))
         return;
@@ -1735,6 +1772,7 @@ static void STDMETHODCALLTYPE draw(ID3D11DeviceContext4 *iface, UINT count, UINT
 
 static void STDMETHODCALLTYPE draw_indexed(ID3D11DeviceContext4 *iface, UINT count, UINT start, INT base)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (!count || !c->ib || !prepare_draw(c))
         return;
@@ -1745,6 +1783,7 @@ static void STDMETHODCALLTYPE draw_indexed(ID3D11DeviceContext4 *iface, UINT cou
 static void STDMETHODCALLTYPE draw_instanced(ID3D11DeviceContext4 *iface, UINT count, UINT instances, UINT start,
                                              UINT start_instance)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (!count || !instances || !prepare_draw(c))
         return;
@@ -1755,6 +1794,7 @@ static void STDMETHODCALLTYPE draw_instanced(ID3D11DeviceContext4 *iface, UINT c
 static void STDMETHODCALLTYPE draw_indexed_instanced(ID3D11DeviceContext4 *iface, UINT count, UINT instances,
                                                      UINT start, INT base, UINT start_instance)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (!count || !instances || !c->ib || !prepare_draw(c))
         return;
@@ -1765,6 +1805,7 @@ static void STDMETHODCALLTYPE draw_indexed_instanced(ID3D11DeviceContext4 *iface
 /* draws as many vertices as stream output wrote to the buffer of the first vertex slot, past its offset. */
 static void STDMETHODCALLTYPE draw_auto(ID3D11DeviceContext4 *iface)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dResource *r = c->vb[0];
     if (!r || !r->buf.so_counter || !c->vb_stride[0] || !c->child.device->has_transform_feedback || !prepare_draw(c))
@@ -1778,6 +1819,7 @@ static void STDMETHODCALLTYPE draw_auto(ID3D11DeviceContext4 *iface)
 static void STDMETHODCALLTYPE draw_indexed_instanced_indirect(ID3D11DeviceContext4 *iface, ID3D11Buffer *buffer,
                                                               UINT offset)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dResource *r = D3dResourceFrom((ID3D11Resource *)buffer);
     if (!r || !c->ib || !prepare_draw(c))
@@ -1793,6 +1835,7 @@ static void STDMETHODCALLTYPE draw_indexed_instanced_indirect(ID3D11DeviceContex
 static void STDMETHODCALLTYPE draw_instanced_indirect(ID3D11DeviceContext4 *iface, ID3D11Buffer *buffer,
                                                       UINT offset)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dResource *r = D3dResourceFrom((ID3D11Resource *)buffer);
     if (!r || !prepare_draw(c))
@@ -1824,6 +1867,7 @@ static BOOL prepare_dispatch(D3dContext *c)
 
 static void STDMETHODCALLTYPE dispatch(ID3D11DeviceContext4 *iface, UINT x, UINT y, UINT z)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (!x || !y || !z || !prepare_dispatch(c))
         return;
@@ -1833,6 +1877,7 @@ static void STDMETHODCALLTYPE dispatch(ID3D11DeviceContext4 *iface, UINT x, UINT
 
 static void STDMETHODCALLTYPE dispatch_indirect(ID3D11DeviceContext4 *iface, ID3D11Buffer *buffer, UINT offset)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dResource *r = D3dResourceFrom((ID3D11Resource *)buffer);
     if (!r || !prepare_dispatch(c))
@@ -1849,6 +1894,7 @@ static void STDMETHODCALLTYPE dispatch_indirect(ID3D11DeviceContext4 *iface, ID3
 
 static void STDMETHODCALLTYPE begin(ID3D11DeviceContext4 *iface, ID3D11Asynchronous *async)
 {
+    D3D_SYNC(impl(iface));
     D3dQuery *q = D3dQueryFrom(async);
     if (q)
         D3dQueryBegin(impl(iface), q);
@@ -1856,6 +1902,7 @@ static void STDMETHODCALLTYPE begin(ID3D11DeviceContext4 *iface, ID3D11Asynchron
 
 static void STDMETHODCALLTYPE end(ID3D11DeviceContext4 *iface, ID3D11Asynchronous *async)
 {
+    D3D_SYNC(impl(iface));
     D3dQuery *q = D3dQueryFrom(async);
     if (q)
         D3dQueryEnd(impl(iface), q);
@@ -1864,12 +1911,14 @@ static void STDMETHODCALLTYPE end(ID3D11DeviceContext4 *iface, ID3D11Asynchronou
 static HRESULT STDMETHODCALLTYPE get_data(ID3D11DeviceContext4 *iface, ID3D11Asynchronous *async, void *data,
                                           UINT size, UINT flags)
 {
+    D3D_SYNC(impl(iface));
     D3dQuery *q = D3dQueryFrom(async);
     return q ? D3dQueryGetData(impl(iface), q, data, size, flags) : E_INVALIDARG;
 }
 
 static void STDMETHODCALLTYPE set_predication(ID3D11DeviceContext4 *iface, ID3D11Predicate *predicate, BOOL value)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (predicate)
         predicate->lpVtbl->AddRef(predicate);
@@ -1882,6 +1931,7 @@ static void STDMETHODCALLTYPE set_predication(ID3D11DeviceContext4 *iface, ID3D1
 static void STDMETHODCALLTYPE get_predication(ID3D11DeviceContext4 *iface, ID3D11Predicate **predicate,
                                               BOOL *value)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (predicate) {
         *predicate = c->predicate;
@@ -1896,12 +1946,14 @@ static void STDMETHODCALLTYPE get_predication(ID3D11DeviceContext4 *iface, ID3D1
 
 static void STDMETHODCALLTYPE map_unmap(ID3D11DeviceContext4 *iface, ID3D11Resource *resource, UINT sub)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxUnmap(impl(iface), resource, sub);
 }
 
 static HRESULT STDMETHODCALLTYPE map(ID3D11DeviceContext4 *iface, ID3D11Resource *resource, UINT sub,
                                      D3D11_MAP type, UINT flags, D3D11_MAPPED_SUBRESOURCE *mapped)
 {
+    D3D_SYNC(impl(iface));
     return D3dCtxMap(impl(iface), resource, sub, type, flags, mapped);
 }
 
@@ -1909,6 +1961,7 @@ static void STDMETHODCALLTYPE copy_subresource_region(ID3D11DeviceContext4 *ifac
                                                       UINT dst_sub, UINT x, UINT y, UINT z, ID3D11Resource *src,
                                                       UINT src_sub, const D3D11_BOX *box)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxCopySubresourceRegion(impl(iface), dst, dst_sub, x, y, z, src, src_sub, box, 0);
 }
 
@@ -1916,11 +1969,13 @@ static void STDMETHODCALLTYPE copy_subresource_region1(ID3D11DeviceContext4 *ifa
                                                        UINT dst_sub, UINT x, UINT y, UINT z, ID3D11Resource *src,
                                                        UINT src_sub, const D3D11_BOX *box, UINT flags)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxCopySubresourceRegion(impl(iface), dst, dst_sub, x, y, z, src, src_sub, box, flags);
 }
 
 static void STDMETHODCALLTYPE copy_resource(ID3D11DeviceContext4 *iface, ID3D11Resource *dst, ID3D11Resource *src)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxCopyResource(impl(iface), dst, src);
 }
 
@@ -1928,6 +1983,7 @@ static void STDMETHODCALLTYPE update_subresource(ID3D11DeviceContext4 *iface, ID
                                                  const D3D11_BOX *box, const void *data, UINT row_pitch,
                                                  UINT depth_pitch)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxUpdateSubresource(impl(iface), dst, dst_sub, box, data, row_pitch, depth_pitch, 0);
 }
 
@@ -1935,41 +1991,48 @@ static void STDMETHODCALLTYPE update_subresource1(ID3D11DeviceContext4 *iface, I
                                                   const D3D11_BOX *box, const void *data, UINT row_pitch,
                                                   UINT depth_pitch, UINT flags)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxUpdateSubresource(impl(iface), dst, dst_sub, box, data, row_pitch, depth_pitch, flags);
 }
 
 static void STDMETHODCALLTYPE copy_structure_count(ID3D11DeviceContext4 *iface, ID3D11Buffer *dst, UINT offset,
                                                    ID3D11UnorderedAccessView *src)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxCopyStructureCount(impl(iface), dst, offset, src);
 }
 
 static void STDMETHODCALLTYPE clear_render_target_view(ID3D11DeviceContext4 *iface, ID3D11RenderTargetView *view,
                                                        const FLOAT color[4])
 {
+    D3D_SYNC(impl(iface));
     D3dCtxClearRenderTargetView(impl(iface), view, color);
 }
 
 static void STDMETHODCALLTYPE clear_uav_uint(ID3D11DeviceContext4 *iface, ID3D11UnorderedAccessView *view,
                                              const UINT values[4])
 {
+    D3D_SYNC(impl(iface));
     D3dCtxClearUnorderedAccessViewUint(impl(iface), view, values);
 }
 
 static void STDMETHODCALLTYPE clear_uav_float(ID3D11DeviceContext4 *iface, ID3D11UnorderedAccessView *view,
                                               const FLOAT values[4])
 {
+    D3D_SYNC(impl(iface));
     D3dCtxClearUnorderedAccessViewFloat(impl(iface), view, values);
 }
 
 static void STDMETHODCALLTYPE clear_depth_stencil_view(ID3D11DeviceContext4 *iface, ID3D11DepthStencilView *view,
                                                        UINT flags, FLOAT depth, UINT8 stencil)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxClearDepthStencilView(impl(iface), view, flags, depth, stencil);
 }
 
 static void STDMETHODCALLTYPE generate_mips(ID3D11DeviceContext4 *iface, ID3D11ShaderResourceView *view)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxGenerateMips(impl(iface), view);
 }
 
@@ -1985,6 +2048,7 @@ static FLOAT STDMETHODCALLTYPE get_resource_min_lod(ID3D11DeviceContext4 *iface,
 static void STDMETHODCALLTYPE resolve_subresource(ID3D11DeviceContext4 *iface, ID3D11Resource *dst, UINT dst_sub,
                                                   ID3D11Resource *src, UINT src_sub, DXGI_FORMAT format)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxResolveSubresource(impl(iface), dst, dst_sub, src, src_sub, format);
 }
 
@@ -2084,6 +2148,7 @@ static void clear_state(D3dContext *c);
 static void STDMETHODCALLTYPE execute_command_list(ID3D11DeviceContext4 *iface, ID3D11CommandList *iface_list,
                                                    BOOL restore)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     if (!iface_list)
         return;
@@ -2149,9 +2214,15 @@ static void clear_state(D3dContext *c)
     c->rs_dirty = c->om_dirty = c->viewports_dirty = TRUE;
 }
 
-static void STDMETHODCALLTYPE context_clear_state(ID3D11DeviceContext4 *iface) { clear_state(impl(iface)); }
+static void STDMETHODCALLTYPE context_clear_state(ID3D11DeviceContext4 *iface) {
+    D3D_SYNC(impl(iface));
+    clear_state(impl(iface));
+}
 
-static void STDMETHODCALLTYPE flush(ID3D11DeviceContext4 *iface) { D3dContextFlush(impl(iface)); }
+static void STDMETHODCALLTYPE flush(ID3D11DeviceContext4 *iface) {
+    D3D_SYNC(impl(iface));
+    D3dContextFlush(impl(iface));
+}
 
 static D3D11_DEVICE_CONTEXT_TYPE STDMETHODCALLTYPE get_type(ID3D11DeviceContext4 *iface) { return impl(iface)->type; }
 
@@ -2161,6 +2232,7 @@ static UINT STDMETHODCALLTYPE get_context_flags(ID3D11DeviceContext4 *iface) { r
 static HRESULT STDMETHODCALLTYPE finish_command_list(ID3D11DeviceContext4 *iface, BOOL restore,
                                                      ID3D11CommandList **out)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dDevice *device = c->child.device;
     if (out)
@@ -2240,6 +2312,7 @@ static void STDMETHODCALLTYPE discard_view(ID3D11DeviceContext4 *iface, ID3D11Vi
 static void STDMETHODCALLTYPE discard_view1(ID3D11DeviceContext4 *iface, ID3D11View *view, const D3D11_RECT *rects,
                                             UINT count)
 {
+    D3D_SYNC(impl(iface));
 }
 
 static void STDMETHODCALLTYPE swap_device_context_state(ID3D11DeviceContext4 *iface, ID3DDeviceContextState *state,
@@ -2252,6 +2325,7 @@ static void STDMETHODCALLTYPE swap_device_context_state(ID3D11DeviceContext4 *if
 static void STDMETHODCALLTYPE clear_view(ID3D11DeviceContext4 *iface, ID3D11View *view, const FLOAT color[4],
                                          const D3D11_RECT *rects, UINT count)
 {
+    D3D_SYNC(impl(iface));
     D3dCtxClearView(impl(iface), view, color, rects, count);
 }
 
@@ -2307,6 +2381,7 @@ static void STDMETHODCALLTYPE end_event(ID3D11DeviceContext4 *iface) {}
 
 static void STDMETHODCALLTYPE flush1(ID3D11DeviceContext4 *iface, D3D11_CONTEXT_TYPE type, HANDLE event)
 {
+    D3D_SYNC(impl(iface));
     D3dContext *c = impl(iface);
     D3dContextFlush(c);
     if (event) {
@@ -2325,11 +2400,13 @@ static void STDMETHODCALLTYPE get_hardware_protection_state(ID3D11DeviceContext4
 
 static HRESULT STDMETHODCALLTYPE signal_fence(ID3D11DeviceContext4 *iface, ID3D11Fence *fence, UINT64 value)
 {
+    D3D_SYNC(impl(iface));
     return D3dFenceSignal(impl(iface), fence, value);
 }
 
 static HRESULT STDMETHODCALLTYPE wait_fence(ID3D11DeviceContext4 *iface, ID3D11Fence *fence, UINT64 value)
 {
+    D3D_SYNC(impl(iface));
     return D3dFenceWait(impl(iface), fence, value);
 }
 
@@ -2349,7 +2426,7 @@ static HRESULT STDMETHODCALLTYPE context_query(ID3D11DeviceContext4 *iface, REFI
     else if (IsEqualGUID(riid, &IID_ID3DUserDefinedAnnotation))
         *out = &c->annotation;
     else if (IsEqualGUID(riid, &IID_ID3D11Multithread))
-        *out = &c->multithread;
+        *out = D3dMultithreadInterface(c);
     else
         *out = D3dVideoContextInterface(c, riid);
     if (!*out)
@@ -2614,15 +2691,32 @@ static void STDMETHODCALLTYPE mt_enter(ID3D11Multithread *iface) { EnterCritical
 
 static void STDMETHODCALLTYPE mt_leave(ID3D11Multithread *iface) { LeaveCriticalSection(&mt_impl(iface)->lock); }
 
-static BOOL STDMETHODCALLTYPE mt_set_protected(ID3D11Multithread *iface, BOOL protect)
+BOOL D3dSetProtected(D3dContext *c, BOOL protect)
 {
-    D3dContext *c = mt_impl(iface);
+    EnterCriticalSection(&c->lock);
     BOOL old = c->protected_;
-    c->protected_ = protect;
+    __atomic_store_n(&c->protected_, protect != 0, __ATOMIC_RELAXED);
+    LeaveCriticalSection(&c->lock);
     return old;
 }
 
-static BOOL STDMETHODCALLTYPE mt_get_protected(ID3D11Multithread *iface) { return mt_impl(iface)->protected_; }
+static BOOL STDMETHODCALLTYPE mt_set_protected(ID3D11Multithread *iface, BOOL protect)
+{
+    return D3dSetProtected(mt_impl(iface), protect);
+}
+
+static BOOL STDMETHODCALLTYPE mt_get_protected(ID3D11Multithread *iface)
+{
+    return __atomic_load_n(&mt_impl(iface)->protected_, __ATOMIC_RELAXED) != 0;
+}
+
+/* only the immediate context of a device that is not single threaded answers for it. */
+void *D3dMultithreadInterface(D3dContext *c)
+{
+    if (c->type != D3D11_DEVICE_CONTEXT_IMMEDIATE || (c->child.device->flags & D3D11_CREATE_DEVICE_SINGLETHREADED))
+        return nullptr;
+    return &c->multithread;
+}
 
 static const ID3D11MultithreadVtbl mt_vtbl = {
     mt_query, mt_add_ref, mt_release, mt_enter, mt_leave, mt_set_protected, mt_get_protected,

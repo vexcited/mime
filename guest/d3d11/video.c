@@ -374,6 +374,7 @@ static ULONG STDMETHODCALLTYPE vd_Release(ID3D11VideoDevice1 *iface)
 
 static UINT STDMETHODCALLTYPE vd_GetVideoDecoderProfileCount(ID3D11VideoDevice1 *iface)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     D3dDevice *device = device_of(iface);
     D3dVideoProbe(device);
     UINT n = 0;
@@ -384,6 +385,7 @@ static UINT STDMETHODCALLTYPE vd_GetVideoDecoderProfileCount(ID3D11VideoDevice1 
 
 static HRESULT STDMETHODCALLTYPE vd_GetVideoDecoderProfile(ID3D11VideoDevice1 *iface, UINT index, GUID *guid)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     D3dDevice *device = device_of(iface);
     if (!guid)
         return E_INVALIDARG;
@@ -398,6 +400,7 @@ static HRESULT STDMETHODCALLTYPE vd_GetVideoDecoderProfile(ID3D11VideoDevice1 *i
 static HRESULT STDMETHODCALLTYPE vd_CheckVideoDecoderFormat(ID3D11VideoDevice1 *iface, const GUID *guid,
                                                             DXGI_FORMAT format, BOOL *supported)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     D3dDevice *device = device_of(iface);
     if (!supported || !guid)
         return E_INVALIDARG;
@@ -434,6 +437,7 @@ static BOOL size_supported(D3dDevice *device, const Profile *p, UINT width, UINT
 static HRESULT STDMETHODCALLTYPE vd_GetVideoDecoderConfigCount(ID3D11VideoDevice1 *iface,
                                                                const D3D11_VIDEO_DECODER_DESC *desc, UINT *count)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     D3dDevice *device = device_of(iface);
     if (!desc || !count)
         return E_INVALIDARG;
@@ -450,6 +454,7 @@ static HRESULT STDMETHODCALLTYPE vd_GetVideoDecoderConfig(ID3D11VideoDevice1 *if
                                                           const D3D11_VIDEO_DECODER_DESC *desc, UINT index,
                                                           D3D11_VIDEO_DECODER_CONFIG *config)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     D3dDevice *device = device_of(iface);
     if (!desc || !config)
         return E_INVALIDARG;
@@ -475,6 +480,7 @@ static HRESULT STDMETHODCALLTYPE vd_GetVideoDecoderCaps(ID3D11VideoDevice1 *ifac
                                                         UINT height, const DXGI_RATIONAL *rate, UINT bit_rate,
                                                         const GUID *crypto, UINT *caps)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     D3dDevice *device = device_of(iface);
     if (caps)
         *caps = 0;
@@ -498,6 +504,7 @@ static HRESULT STDMETHODCALLTYPE vd_CheckVideoDecoderDownsampling(ID3D11VideoDev
                                                                   const D3D11_VIDEO_SAMPLE_DESC *output,
                                                                   BOOL *supported, BOOL *real_time)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     D3dDevice *device = device_of(iface);
     if (!desc || !config || !output || !rate || !supported || !real_time)
         return E_INVALIDARG;
@@ -529,6 +536,7 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoDecoder(ID3D11VideoDevice1 *iface
                                                        const D3D11_VIDEO_DECODER_CONFIG *config,
                                                        ID3D11VideoDecoder **out)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     D3dDevice *device = device_of(iface);
     if (!out || !config || !desc)
         return E_INVALIDARG;
@@ -566,6 +574,7 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoDecoderOutputView(ID3D11VideoDevi
                                                                  const D3D11_VIDEO_DECODER_OUTPUT_VIEW_DESC *desc,
                                                                  ID3D11VideoDecoderOutputView **out)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     D3dDevice *device = device_of(iface);
     if (out)
         *out = nullptr;
@@ -609,6 +618,7 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoProcessorEnumerator(ID3D11VideoDe
                                                                    const D3D11_VIDEO_PROCESSOR_CONTENT_DESC *desc,
                                                                    ID3D11VideoProcessorEnumerator **out)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     return D3dVideoCreateEnumerator(device_of(iface), desc, out);
 }
 
@@ -616,6 +626,7 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoProcessor(ID3D11VideoDevice1 *ifa
                                                          ID3D11VideoProcessorEnumerator *enumerator, UINT rate_index,
                                                          ID3D11VideoProcessor **out)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     return D3dVideoCreateProcessor(device_of(iface), enumerator, rate_index, out);
 }
 
@@ -624,6 +635,7 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoProcessorInputView(ID3D11VideoDev
                                                                   const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC *desc,
                                                                   ID3D11VideoProcessorInputView **out)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     return D3dVideoCreateInputView(device_of(iface), resource, enumerator, desc, out);
 }
 
@@ -632,6 +644,7 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoProcessorOutputView(ID3D11VideoDe
                                                                    const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC *desc,
                                                                    ID3D11VideoProcessorOutputView **out)
 {
+    D3D_DEVICE_SYNC(device_of(iface));
     return D3dVideoCreateOutputView(device_of(iface), resource, enumerator, desc, out);
 }
 
@@ -723,6 +736,7 @@ static BOOL buffer_type_ok(UINT type) { return type < BUFFER_TYPES && BUFFER_SIZ
 static HRESULT STDMETHODCALLTYPE vc_GetDecoderBuffer(ID3D11VideoContext1 *iface, ID3D11VideoDecoder *decoder,
                                                      D3D11_VIDEO_DECODER_BUFFER_TYPE type, UINT *size, void **buffer)
 {
+    D3D_SYNC(context_of(iface));
     VideoDecoder *d = decoder_of(context_of(iface), decoder);
     if (!d || !size || !buffer || !buffer_type_ok(type))
         return E_INVALIDARG;
@@ -742,6 +756,7 @@ static HRESULT STDMETHODCALLTYPE vc_GetDecoderBuffer(ID3D11VideoContext1 *iface,
 static HRESULT STDMETHODCALLTYPE vc_ReleaseDecoderBuffer(ID3D11VideoContext1 *iface, ID3D11VideoDecoder *decoder,
                                                          D3D11_VIDEO_DECODER_BUFFER_TYPE type)
 {
+    D3D_SYNC(context_of(iface));
     VideoDecoder *d = decoder_of(context_of(iface), decoder);
     if (!d || !buffer_type_ok(type))
         return E_INVALIDARG;
@@ -755,6 +770,7 @@ static HRESULT STDMETHODCALLTYPE vc_DecoderBeginFrame(ID3D11VideoContext1 *iface
                                                       ID3D11VideoDecoderOutputView *view, UINT key_size,
                                                       const void *key)
 {
+    D3D_SYNC(context_of(iface));
     D3dContext *c = context_of(iface);
     VideoDecoder *d = decoder_of(c, decoder);
     if (!d || !view || d->in_frame)
@@ -800,6 +816,7 @@ static HRESULT keep(BYTE **data, UINT *size, UINT *capacity, const BYTE *from, U
 static HRESULT STDMETHODCALLTYPE vc_SubmitDecoderBuffers(ID3D11VideoContext1 *iface, ID3D11VideoDecoder *decoder,
                                                          UINT count, const D3D11_VIDEO_DECODER_BUFFER_DESC *descs)
 {
+    D3D_SYNC(context_of(iface));
     D3dContext *c = context_of(iface);
     VideoDecoder *d = decoder_of(c, decoder);
     if (!d || !count || !descs || !d->in_frame)
@@ -889,6 +906,7 @@ static HRESULT STDMETHODCALLTYPE vc_SubmitDecoderBuffers(ID3D11VideoContext1 *if
 /* the picture, decoded by the host once the graphics work submitted before it is done, which its texture may be in. */
 static HRESULT STDMETHODCALLTYPE vc_DecoderEndFrame(ID3D11VideoContext1 *iface, ID3D11VideoDecoder *decoder)
 {
+    D3D_SYNC(context_of(iface));
     D3dContext *c = context_of(iface);
     VideoDecoder *d = decoder_of(c, decoder);
     if (!d || !d->in_frame)
@@ -943,6 +961,7 @@ static HRESULT STDMETHODCALLTYPE vc_DecoderEndFrame(ID3D11VideoContext1 *iface, 
 static HRESULT STDMETHODCALLTYPE vc_DecoderExtension(ID3D11VideoContext1 *iface, ID3D11VideoDecoder *decoder,
                                                      const D3D11_VIDEO_DECODER_EXTENSION *extension)
 {
+    D3D_SYNC(context_of(iface));
     VideoDecoder *d = decoder_of(context_of(iface), decoder);
     if (!d || !extension)
         return E_INVALIDARG;
