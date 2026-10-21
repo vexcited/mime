@@ -8,6 +8,10 @@
 
 #define MAX_FORMALS 64
 
+#ifndef DISP_E_NOTCOLLECTION
+#define DISP_E_NOTCOLLECTION ((HRESULT)0x80020011L)
+#endif
+
 /* ------------------------------------------------------------------ slots */
 
 typedef struct {
@@ -274,6 +278,9 @@ static HRESULT vt_of(TL_TYPE *scope, const TYPEDESC *td, int depth, FORMAL *f)
         HRESULT hr = vt_of(scope, inner, depth + 1, &g);
         if (FAILED(hr))
             return hr;
+        /* a reference to a reference has no type of a variant. */
+        if (g.Vt & VT_BYREF)
+            return DISP_E_BADVARTYPE;
         f->Vt = g.Vt | VT_BYREF;
         f->Size = g.Size;
         return S_OK;
@@ -304,511 +311,558 @@ static HRESULT vt_of(TL_TYPE *scope, const TYPEDESC *td, int depth, FORMAL *f)
 
 /* ------------------------------------------------------------------ the arguments of one call */
 
-typedef struct {
-    /* what was converted for the formal, to be given back after the call. */
-    VARIANT Temp;
-    VARIANT *Source;
-    BOOL WriteBack;
-    BOOL Owned;
-} ARG;
-
-static BOOL is_lcid(const TL_PARAM *p)
+/* whether automation hands the parameter over: the locale and the value that comes back are made up by the call. */
+static BOOL from_caller(const TL_PARAM *p)
 {
-    return (p->Flags & PARAMFLAG_FLCID) != 0;
+    return !(p->Flags & (PARAMFLAG_FLCID | PARAMFLAG_FRETVAL));
 }
 
-static BOOL is_retval(const TL_PARAM *p)
+static UINT caller_params(const TL_FUNC *f)
 {
-    return (p->Flags & PARAMFLAG_FRETVAL) != 0;
+    UINT n = 0;
+    for (USHORT i = 0; i < f->ParamCount; i++)
+        n += from_caller(&f->Params[i]);
+    return n;
 }
 
-/* the variant an actual argument stands for: a reference to a variant is the variant. */
-static const VARIANT *actual_value(const VARIANT *a, VARIANT *scratch)
+/*
+ * What the function and the number of arguments say about a call, in the order windows judges it: a restricted function
+ * is not there for a member id that is not negative, one that takes any number of arguments has no names for them, and
+ * one with too many arguments for its parameters may be a property that holds a collection. DISP_E_NOTCOLLECTION says
+ * that the call is to be made on the object that the getter returns, and which getter.
+ */
+static HRESULT judge_arguments(const TL_TYPE *type, const TL_FUNC *f, WORD flags, const DISPPARAMS *params,
+                               const TL_FUNC **getter)
 {
-    if ((a->vt & VT_BYREF) && (a->vt & VT_TYPEMASK) == VT_VARIANT && !(a->vt & VT_ARRAY)) {
-        if (!a->pvarVal)
-            return nullptr;
-        a = a->pvarVal;
+    *getter = nullptr;
+    UINT v = caller_params(f);
+    BOOL hidden = f->Id >= 0 && (f->Flags & FUNCFLAG_FRESTRICTED);
+    if (f->OptCount == -1) {
+        if (params->cNamedArgs && !(params->cNamedArgs == 1 && params->rgdispidNamedArgs[0] == DISPID_PROPERTYPUT))
+            return DISP_E_NONAMEDARGS;
+    } else if (params->cArgs > v) {
+        if ((flags & DISPATCH_PROPERTYGET) && !v) {
+            *getter = f;
+        } else if ((flags & (DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF)) && !(flags & DISPATCH_PROPERTYGET)) {
+            for (UINT i = 0; i < type->FuncCount; i++) {
+                const TL_FUNC *g = &type->Funcs[i];
+                if (g->Id != f->Id || g->Invoke != INVOKE_PROPERTYGET)
+                    continue;
+                UINT gv = caller_params(g);
+                if (!gv || gv == params->cArgs - 1)
+                    *getter = g;
+                break;
+            }
+        }
+        if (!*getter)
+            return DISP_E_BADPARAMCOUNT;
+        return hidden ? DISP_E_MEMBERNOTFOUND : DISP_E_NOTCOLLECTION;
     }
-    return a;
+    return hidden ? DISP_E_MEMBERNOTFOUND : S_OK;
 }
 
-static HRESULT fill_exception(IUnknown *instance, EXCEPINFO *excep, HRESULT failure, REFIID iid)
+/*
+ * The argument that belongs to a parameter, as an index into the array of the call: the one named for its position, or
+ * else the one that stands at its position counted from the end, if that is not among the named ones.
+ */
+static int find_argument(const DISPPARAMS *params, int position)
 {
-    ISupportErrorInfo *support;
+    for (UINT k = 0; k < params->cNamedArgs; k++)
+        if (params->rgdispidNamedArgs[k] == position)
+            return (int)k;
+    int index = (int)params->cArgs - position - 1;
+    return index >= (int)params->cNamedArgs ? index : -1;
+}
+
+/* one value as the function takes it. */
+typedef struct {
+    VARTYPE Vt;
+    /* the value in the field of the variant that Vt names. */
+    VARIANT Pass;
+    /* what a pointer that is passed points at when the argument is not a reference of the right kind. */
+    VARIANT Box;
+    VARTYPE BoxVt;
+    /* the box holds a copy that is cleared after the call, as a variant of its own when it stands for one. */
+    BOOL BoxOwned, BoxIsVariant;
+    /* a converted value, and a copy of a default, which are cleared when the call is over. */
+    VARIANT Own;
+    VARIANT Default;
+} SLOT;
+
+static void release_slot(SLOT *slot)
+{
+    VariantClear(&slot->Own);
+    VariantClear(&slot->Default);
+    if (slot->BoxOwned) {
+        if (!slot->BoxIsVariant)
+            slot->Box.vt = slot->BoxVt;
+        VariantClear(&slot->Box);
+    }
+}
+
+/* the variant that an argument stands for, which is the target of a reference to a variant. */
+static const VARIANT *target_of(const VARIANT *arg)
+{
+    return arg->vt == (VT_BYREF | VT_VARIANT) ? arg->pvarVal : arg;
+}
+
+static void set_missing_error(VARIANT *v)
+{
+    VariantInit(v);
+    v->vt = VT_ERROR;
+    v->scode = DISP_E_PARAMNOTFOUND;
+}
+
+/* a copy of a value to point at, in which a string that is not there is an empty one. */
+static HRESULT box_copy(SLOT *slot, const VARIANT *value, VARTYPE as)
+{
+    HRESULT hr = VariantCopy(&slot->Box, value);
+    if (FAILED(hr))
+        return hr;
+    if (slot->Box.vt == VT_BSTR && !slot->Box.bstrVal && !(value->vt & VT_BYREF)) {
+        slot->Box.bstrVal = SysAllocString(L"");
+        if (!slot->Box.bstrVal)
+            return E_OUTOFMEMORY;
+    }
+    slot->BoxOwned = TRUE;
+    slot->BoxVt = as;
+    slot->BoxIsVariant = as == VT_VARIANT;
+    return S_OK;
+}
+
+/*
+ * Makes the slot of a parameter out of an argument. A value that is already of the type of the parameter is passed as
+ * it is and any other is converted first. A parameter that is a reference gets the address of the argument when that
+ * is a reference of the same kind, and a box with a copy of the value, converted, when the argument is not a
+ * reference at all. An argument that is a reference of another kind does not fit.
+ */
+static HRESULT fill_slot(const TL_LIB *lib, const FORMAL *formal, const VARIANT *arg, SLOT *slot)
+{
+    VARTYPE vt = formal->Vt;
+    slot->Vt = vt;
+    if (vt == VT_VARIANT) {
+        slot->Pass = *arg;
+        return S_OK;
+    }
+    if (vt == (VT_BYREF | VT_VARIANT)) {
+        if (arg->vt == vt && arg->pvarVal) {
+            slot->Pass.byref = arg->pvarVal;
+            return S_OK;
+        }
+        HRESULT hr = box_copy(slot, arg, VT_VARIANT);
+        slot->Pass.byref = &slot->Box;
+        return hr;
+    }
+    BOOL by_ref = (vt & VT_BYREF) != 0;
+    VARTYPE base = vt & ~VT_BYREF;
+    if (by_ref && (arg->vt & VT_BYREF)) {
+        if (arg->vt != vt)
+            return DISP_E_TYPEMISMATCH;
+        slot->Pass.byref = arg->byref;
+        return S_OK;
+    }
+    const VARIANT *src = target_of(arg);
+    if (!src)
+        return DISP_E_TYPEMISMATCH;
+    if (base & VT_ARRAY) {
+        if (!(src->vt & VT_ARRAY) || (src->vt & VT_TYPEMASK) != (base & VT_TYPEMASK))
+            return DISP_E_TYPEMISMATCH;
+        SAFEARRAY *array = (src->vt & VT_BYREF) ? *src->pparray : src->parray;
+        if (!by_ref) {
+            slot->Pass.parray = array;
+            return S_OK;
+        }
+        slot->Box.vt = base;
+        slot->Box.parray = array;
+        slot->Pass.byref = &slot->Box.byref;
+        return S_OK;
+    }
+    if (src->vt == (VT_BYREF | VT_VARIANT))
+        return E_INVALIDARG;
+    if (base == VT_RECORD) {
+        if (src->vt != VT_RECORD)
+            return DISP_E_TYPEMISMATCH;
+        slot->Pass.byref = src->pvRecord;
+        return S_OK;
+    }
+    if (by_ref) {
+        VARIANT converted;
+        VariantInit(&converted);
+        const VARIANT *value = src;
+        if (src->vt != base) {
+            HRESULT hr = VariantChangeTypeEx(&converted, src, LOCALE_USER_DEFAULT, 0, base);
+            if (FAILED(hr))
+                return hr;
+            value = &converted;
+        }
+        HRESULT hr = box_copy(slot, value, base);
+        VariantClear(&converted);
+        slot->Pass.byref = &slot->Box.byref;
+        return hr;
+    }
+    const VARIANT *value = src;
+    if (src->vt != base) {
+        HRESULT hr = VariantChangeTypeEx(&slot->Own, src, LOCALE_USER_DEFAULT, VARIANT_ALPHABOOL, base);
+        if (FAILED(hr))
+            return hr;
+        value = &slot->Own;
+    }
+    if (base == VT_DECIMAL)
+        slot->Pass = *value;
+    else
+        memcpy(&slot->Pass.byref, &value->byref, sizeof(value->llVal));
+    return S_OK;
+}
+
+/*
+ * The arguments from a position on, as a safe array of variants in the order they were written: what a function that
+ * takes any number of arguments gets in its last parameter.
+ */
+static HRESULT collect_rest(const DISPPARAMS *params, int position, BYTE *used, UINT *matched, SAFEARRAY **out)
+{
+    int first = (int)params->cArgs - 1 - position;
+    int count = first - (int)params->cNamedArgs + 1;
+    if (count < 0)
+        count = 0;
+    SAFEARRAYBOUND bound = {(ULONG)count, 0};
+    SAFEARRAY *array = SafeArrayCreate(VT_VARIANT, 1, &bound);
+    if (!array)
+        return E_OUTOFMEMORY;
+    for (int e = 0; e < count; e++) {
+        int index = first - e;
+        LONG at = e;
+        const VARIANT *value = target_of(&params->rgvarg[index]);
+        HRESULT hr = value ? SafeArrayPutElement(array, &at, (void *)value) : DISP_E_TYPEMISMATCH;
+        if (FAILED(hr)) {
+            SafeArrayDestroy(array);
+            return hr;
+        }
+        if (!used[index]) {
+            used[index] = 1;
+            (*matched)++;
+        }
+    }
+    *out = array;
+    return S_OK;
+}
+
+/* ------------------------------------------------------------------ calling the function */
+
+/* a value that a function wrote through a pointer, as a variant of the type that the pointer was for. */
+static HRESULT variant_from_storage(VARTYPE vt, const void *storage, VARIANT *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (vt == VT_VARIANT) {
+        *out = *(const VARIANT *)storage;
+        return S_OK;
+    }
+    if (vt == VT_DECIMAL) {
+        out->decVal = *(const DECIMAL *)storage;
+        out->vt = VT_DECIMAL;
+        return S_OK;
+    }
+    if (vt == VT_HRESULT)
+        vt = VT_ERROR;
+    out->vt = vt;
+    if (vt & (VT_BYREF | VT_ARRAY)) {
+        out->byref = *(void *const *)storage;
+        return S_OK;
+    }
+    switch (vt) {
+    case VT_I1: out->cVal = *(const CHAR *)storage; break;
+    case VT_UI1: out->bVal = *(const BYTE *)storage; break;
+    case VT_I2:
+    case VT_UI2:
+    case VT_BOOL: out->uiVal = *(const USHORT *)storage; break;
+    case VT_I4:
+    case VT_UI4:
+    case VT_INT:
+    case VT_UINT:
+    case VT_ERROR:
+    case VT_R4: out->ulVal = *(const ULONG *)storage; break;
+    case VT_I8:
+    case VT_UI8:
+    case VT_R8:
+    case VT_DATE:
+    case VT_CY: out->ullVal = *(const ULONGLONG *)storage; break;
+    case VT_BSTR:
+    case VT_DISPATCH:
+    case VT_UNKNOWN: out->byref = *(void *const *)storage; break;
+    default: out->vt = VT_EMPTY; return DISP_E_BADVARTYPE;
+    }
+    return S_OK;
+}
+
+static HRESULT exception_from_failure(EXCEPINFO *excep, HRESULT failure)
+{
+    if (!excep)
+        return failure;
     memset(excep, 0, sizeof(*excep));
     excep->scode = failure;
-    if (FAILED(instance->lpVtbl->QueryInterface(instance, &IID_ISupportErrorInfo, (void **)&support)))
-        return failure;
-    HRESULT hr = support->lpVtbl->InterfaceSupportsErrorInfo(support, iid);
-    support->lpVtbl->Release(support);
-    if (hr != S_OK)
-        return failure;
     IErrorInfo *info;
-    if (GetErrorInfo(0, &info) != S_OK)
-        return failure;
-    info->lpVtbl->GetSource(info, &excep->bstrSource);
-    info->lpVtbl->GetDescription(info, &excep->bstrDescription);
-    info->lpVtbl->GetHelpFile(info, &excep->bstrHelpFile);
-    info->lpVtbl->GetHelpContext(info, &excep->dwHelpContext);
-    info->lpVtbl->Release(info);
+    if (GetErrorInfo(0, &info) == S_OK) {
+        info->lpVtbl->GetSource(info, &excep->bstrSource);
+        info->lpVtbl->GetDescription(info, &excep->bstrDescription);
+        info->lpVtbl->GetHelpFile(info, &excep->bstrHelpFile);
+        info->lpVtbl->GetHelpContext(info, &excep->dwHelpContext);
+        info->lpVtbl->Release(info);
+    }
     return DISP_E_EXCEPTION;
 }
 
-static HRESULT invoke_function(TL_TYPE *type, TL_FUNC *f, PVOID instance, WORD flags, DISPPARAMS *dp,
-                               VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
+/* the address and the instance a call goes to: through the table of the object, or a function of a module. */
+static HRESULT call_target(ITypeInfo *self, const TL_TYPE *type, const TL_FUNC *f, PVOID instance, PVOID *object,
+                           ULONG_PTR *where)
 {
-    UINT n = f->ParamCount;
-    if (n > MAX_FORMALS)
-        return DISP_E_BADPARAMCOUNT;
-    if (f->Kind == FUNC_STATIC || f->Kind == FUNC_NONVIRTUAL)
+    if (f->Kind == FUNC_STATIC || type->Kind == TKIND_MODULE) {
+        PVOID address;
+        HRESULT hr = self->lpVtbl->AddressOfMember(self, f->Id, f->Invoke, &address);
+        if (FAILED(hr))
+            return hr;
+        *object = nullptr;
+        *where = (ULONG_PTR)address;
+        return S_OK;
+    }
+    if (f->Kind != FUNC_PUREVIRTUAL && f->Kind != FUNC_VIRTUAL)
         return DISP_E_BADCALLEE;
-    LCID lcid = GetUserDefaultLCID();
-    SIZE_T bytes = sizeof(CALL) + (SIZE_T)(n + 2) * (sizeof(ARG) + sizeof(FORMAL) + sizeof(VARIANT) * 2);
+    *object = instance;
+    *where = (ULONG_PTR)(USHORT)TlNativeVtOffset(type->Lib, f->VtOffset);
+    return S_OK;
+}
+
+/*
+ * Calls one function of a type with the arguments of an automation call. Each parameter takes the argument that
+ * belongs to it or, when there is none, the value that its flags and its type give it. Whatever the function returns in
+ * its value parameter, or as its own value, is the result.
+ */
+static HRESULT call_function(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *f, PVOID instance, WORD flags,
+                             const DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
+{
+    TL_LIB *lib = type->Lib;
+    UINT count = f->ParamCount;
+    if (count > MAX_FORMALS)
+        return DISP_E_BADPARAMCOUNT;
+    SIZE_T bytes = (SIZE_T)(count + 1) * (sizeof(SLOT) + sizeof(VARTYPE) + sizeof(VARIANT *) + sizeof(FORMAL)) + params->cArgs;
     BYTE *memory = AutAllocZero(bytes);
     if (!memory)
         return E_OUTOFMEMORY;
-    CALL *call = (CALL *)memory;
-    ARG *args = (ARG *)(call + 1);
-    FORMAL *formals = (FORMAL *)(args + n + 2);
-    VARIANT *copies = (VARIANT *)(formals + n + 2);
-    VARIANT *retstore = copies + n + 2;
+    SLOT *slots = (SLOT *)memory;
+    VARTYPE *vts = (VARTYPE *)(slots + count + 1);
+    VARIANT **pointers = (VARIANT **)(vts + count + 1);
+    FORMAL *formals = (FORMAL *)(pointers + count + 1);
+    BYTE *used = (BYTE *)(formals + count + 1);
+    UINT matched = 0;
+    VARIANT retval_box;
+    VariantInit(&retval_box);
+    const TL_PARAM *retval = nullptr;
+    FORMAL retval_formal = {0, 0};
     HRESULT hr = S_OK;
-    UINT visible[MAX_FORMALS], nvisible = 0;
-    int retval_index = -1;
-    for (UINT i = 0; i < n && SUCCEEDED(hr); i++) {
-        hr = vt_of(type, &f->Params[i].Type, 0, &formals[i]);
-        if (is_retval(&f->Params[i]) && retval_index < 0)
-            retval_index = (int)i;
-        else if (!is_lcid(&f->Params[i]))
-            visible[nvisible++] = i;
-    }
-    if (FAILED(hr))
-        goto done;
-
-    UINT cargs = dp ? dp->cArgs : 0, cnamed = dp ? dp->cNamedArgs : 0;
-    VARIANT *rg = dp ? dp->rgvarg : nullptr;
-    if ((cargs && !rg) || cnamed > cargs) {
-        hr = DISP_E_BADPARAMCOUNT;
-        goto done;
-    }
-    /* a function that takes any number of arguments takes no named ones, but the value of a property. */
-    if (f->OptCount == -1 && cnamed && !(cnamed == 1 && dp->rgdispidNamedArgs[0] == DISPID_PROPERTYPUT)) {
-        hr = DISP_E_NONAMEDARGS;
-        goto done;
-    }
-    BOOL varargs = f->OptCount == -1 && nvisible > 0;
-    if (f->OptCount != -1 && cargs > nvisible) {
-        hr = DISP_E_BADPARAMCOUNT;
-        /* arguments to a property that takes none: its value is what they index. */
-        if (flags & DISPATCH_PROPERTYGET) {
-            if (!nvisible)
-                hr = DISP_E_NOTACOLLECTION;
-        } else if (flags & (DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF)) {
-            for (UINT k = 0; k < type->FuncCount; k++) {
-                const TL_FUNC *g = &type->Funcs[k];
-                if (g->Id != f->Id || g->Invoke != INVOKE_PROPERTYGET)
-                    continue;
-                UINT gv = 0;
-                for (UINT j = 0; j < g->ParamCount; j++)
-                    if (!is_lcid(&g->Params[j]) && !is_retval(&g->Params[j]))
-                        gv++;
-                if (gv == 0 || gv == cargs - 1)
-                    hr = DISP_E_NOTACOLLECTION;
-                break;
-            }
-        }
-        goto done;
-    }
-    if (f->Id >= 0 && (f->Flags & FUNCFLAG_FRESTRICTED)) {
-        hr = DISP_E_MEMBERNOTFOUND;
-        goto done;
-    }
-    BOOL put = f->Invoke == INVOKE_PROPERTYPUT || f->Invoke == INVOKE_PROPERTYPUTREF;
-    VARIANT *put_value_arg = nullptr;
-    UINT first_named = 0;
-    if (put) {
-        if (!nvisible) {
-            hr = DISP_E_PARAMNOTOPTIONAL;
-            goto done;
-        }
-        if (!cnamed || dp->rgdispidNamedArgs[0] != DISPID_PROPERTYPUT) {
-            hr = DISP_E_PARAMNOTFOUND;
-            goto done;
-        }
-        put_value_arg = &rg[0];
-        first_named = 1;
-    }
-    UINT positional = cargs - cnamed;
-    /* the actual for each visible formal. */
-    const VARIANT *actual[MAX_FORMALS];
-    UINT actual_index[MAX_FORMALS];
-    for (UINT i = 0; i < nvisible; i++) {
-        actual[i] = nullptr;
-        actual_index[i] = 0;
-    }
-    UINT vararg_count = 0;
-    UINT fixed_visible = varargs ? nvisible - 1 : nvisible;
-    UINT value_slots = nvisible - (put && nvisible ? 1 : 0);
-    for (UINT p = 0; p < positional; p++) {
-        if (p < (put ? value_slots : fixed_visible)) {
-            actual[p] = &rg[cargs - 1 - p];
-            actual_index[p] = cargs - 1 - p;
-        } else if (varargs && !put) {
-            vararg_count++;
-        } else {
-            hr = DISP_E_BADPARAMCOUNT;
-            goto done;
-        }
-    }
-    if (put) {
-        if (!nvisible) {
-            hr = DISP_E_BADPARAMCOUNT;
-            goto done;
-        }
-        actual[nvisible - 1] = put_value_arg;
-        actual_index[nvisible - 1] = 0;
-    }
-    for (UINT k = first_named; k < cnamed; k++) {
-        DISPID id = dp->rgdispidNamedArgs[k];
-        if (id < 0 || (UINT)id >= nvisible) {
-            if (arg_err)
-                *arg_err = k;
-            hr = DISP_E_PARAMNOTFOUND;
-            goto done;
-        }
-        actual[id] = &rg[k];
-        actual_index[id] = k;
-    }
-
-    /* the formals in order, converted. */
-    UINT vi = 0;
-    VARIANT *vararray_holder = nullptr;
-    for (UINT i = 0; i < n && SUCCEEDED(hr); i++) {
-        TL_PARAM *prm = &f->Params[i];
-        FORMAL *fm = &formals[i];
-        ARG *arg = &args[i];
-        VARIANT *tmp = &arg->Temp;
-        VARTYPE value_vt = fm->Vt & ~VT_BYREF;
-        BOOL byref = (fm->Vt & VT_BYREF) != 0;
-        if (is_lcid(prm)) {
-            VARIANT v;
-            memset(&v, 0, sizeof(v));
-            v.ulVal = lcid;
-            hr = put_value(call, VT_I4, &v, nullptr);
-            continue;
-        }
-        if ((int)i == retval_index) {
-            memset(retstore, 0, sizeof(*retstore));
-            VARTYPE rv = value_vt;
-            VARIANT v;
-            memset(&v, 0, sizeof(v));
-            v.byref = rv == VT_DECIMAL ? (PVOID)&retstore->decVal : rv == VT_VARIANT ? (PVOID)retstore : (PVOID)&retstore->llVal;
-            put_slot(call, (ULONG_PTR)v.byref);
-            /* a variant is filled in by the function, the others get the type it is declared with. */
-            if (rv != VT_VARIANT)
-                retstore->vt = rv;
-            continue;
-        }
-        const VARIANT *a = actual[vi];
-        UINT index = actual_index[vi];
-        BOOL last_vararg = varargs && vi == nvisible - 1;
-        vi++;
-        if (last_vararg) {
-            /* the arguments past the others are one array of variants. */
-            SAFEARRAYBOUND bound = {vararg_count, 0};
-            SAFEARRAY *array = SafeArrayCreate(VT_VARIANT, 1, &bound);
-            if (!array) {
-                hr = E_OUTOFMEMORY;
-                break;
-            }
-            for (UINT e = 0; e < vararg_count; e++) {
-                LONG at = (LONG)e;
-                const VARIANT *src = &rg[cargs - 1 - (fixed_visible + e)];
-                VARIANT inner;
-                VariantInit(&inner);
-                const VARIANT *value = actual_value(src, nullptr);
-                if (value) {
-                    VariantCopyInd(&inner, value->vt & VT_BYREF ? value : value);
-                }
-                SafeArrayPutElement(array, &at, &inner);
-                VariantClear(&inner);
-            }
-            tmp->vt = VT_ARRAY | VT_VARIANT;
-            tmp->parray = array;
-            arg->Owned = TRUE;
-            vararray_holder = tmp;
-            put_slot(call, (ULONG_PTR)array);
-            continue;
-        }
-        const VARIANT *value = a ? actual_value(a, nullptr) : nullptr;
-        if (a && !value) {
-            hr = DISP_E_TYPEMISMATCH;
-            if (arg_err)
-                *arg_err = index;
+    /* the last parameter that the caller gives takes the value of a property, or the arguments that are left. */
+    int value_last = -1;
+    for (UINT i = 0; i < count; i++)
+        if (from_caller(&f->Params[i]))
+            value_last = (int)i;
+    int value_position = f->Invoke == INVOKE_PROPERTYPUT || f->Invoke == INVOKE_PROPERTYPUTREF ? value_last : -1;
+    if (f->OptCount == -1 && params->cNamedArgs && value_position < 0)
+        hr = DISP_E_PARAMNOTFOUND;
+    for (UINT i = 0; i < count && SUCCEEDED(hr); i++) {
+        const TL_PARAM *p = &f->Params[i];
+        SLOT *slot = &slots[i];
+        FORMAL *formal = &formals[i];
+        VariantInit(&slot->Own);
+        VariantInit(&slot->Default);
+        hr = vt_of(type, &p->Type, 0, formal);
+        if (FAILED(hr))
             break;
-        }
-        /* an argument left out: the default, a variant that says it is missing, or nothing. */
-        BOOL missing = !a;
-        BOOL says_missing = a && value->vt == VT_ERROR && value->scode == DISP_E_PARAMNOTFOUND &&
-                            (prm->Flags & PARAMFLAG_FOPT) &&
-                            !(value_vt == VT_VARIANT && !(prm->Flags & PARAMFLAG_FHASDEFAULT));
-        if (missing || says_missing) {
-            BOOL by_count = f->OptCount > 0 && i >= n - (UINT)f->OptCount;
-            if (missing && !by_count && !(prm->Flags & PARAMFLAG_FOPT)) {
-                hr = DISP_E_BADPARAMCOUNT;
-                break;
-            }
-            if (missing && by_count && value_vt == VT_VARIANT) {
-                tmp->vt = VT_ERROR;
-                tmp->scode = DISP_E_PARAMNOTFOUND;
-            } else if (prm->Flags & PARAMFLAG_FHASDEFAULT) {
-                hr = VariantCopy(tmp, &prm->Default);
-                arg->Owned = TRUE;
-            } else if (value_vt == VT_VARIANT) {
-                tmp->vt = VT_ERROR;
-                tmp->scode = DISP_E_PARAMNOTFOUND;
-            } else {
-                tmp->vt = VT_EMPTY;
-            }
-            if (FAILED(hr))
-                break;
-            value = tmp;
-        }
-        if (value_vt == VT_VARIANT) {
-            VARIANT *target;
-            if (byref) {
-                /* a variant by reference: the actual itself when it is one, or the copy of its value. */
-                if (a && (a->vt == (VT_BYREF | VT_VARIANT)) && a->pvarVal) {
-                    target = a->pvarVal;
-                } else if (a && a == value && a->vt != (VT_BYREF | VT_VARIANT)) {
-                    target = (VARIANT *)a;
-                } else {
-                    *tmp = *value;
-                    target = tmp;
-                }
-                put_slot(call, (ULONG_PTR)target);
-            } else {
-                hr = put_value(call, VT_VARIANT, value, &copies[i]);
-            }
+        slot->Vt = formal->Vt;
+        if (p->Flags & PARAMFLAG_FLCID) {
+            slot->Pass.lVal = (LONG)lib->Lcid;
             continue;
         }
-        if (value_vt == VT_RECORD) {
-            if (byref) {
-                put_slot(call, (ULONG_PTR)value->pvRecord);
-            } else {
-                put_block(call, value->pvRecord, fm->Size, &copies[i]);
-            }
+        if (p->Flags & PARAMFLAG_FRETVAL) {
+            retval = p;
+            if (p->Type.vt == VT_PTR)
+                hr = vt_of(type, p->Type.lptdesc, 0, &retval_formal);
+            else
+                hr = DISP_E_BADVARTYPE;
+            slot->Vt = VT_BYREF | VT_I4;
+            slot->Pass.byref = &retval_box;
             continue;
         }
-        if (value_vt == VT_UNKNOWN || value_vt == VT_DISPATCH) {
-            /* an interface pointer: the actual's own, asked for the interface of the formal. */
-            VARIANT converted;
-            VariantInit(&converted);
-            const VARIANT *source = value;
-            if (byref) {
-                if (a && (a->vt & VT_BYREF) && (a->vt & VT_TYPEMASK) == value_vt) {
-                    put_slot(call, (ULONG_PTR)a->byref);
-                    continue;
-                }
-            }
-            if ((value->vt & VT_BYREF) && !(value->vt & VT_ARRAY)) {
-                VariantCopyInd(&converted, value);
-                source = &converted;
-            }
-            if (source->vt == VT_NULL || source->vt == VT_EMPTY || ((source->vt == VT_UNKNOWN || source->vt == VT_DISPATCH) && !source->punkVal)) {
-                tmp->vt = value_vt;
-                tmp->punkVal = nullptr;
-            } else {
-                hr = VariantChangeTypeEx(tmp, source, lcid, 0, value_vt);
-                arg->Owned = TRUE;
-            }
-            VariantClear(&converted);
-            if (FAILED(hr)) {
-                hr = DISP_E_TYPEMISMATCH;
-                if (arg_err)
-                    *arg_err = index;
-                break;
-            }
-            if (byref) {
-                arg->WriteBack = a && (a->vt & VT_BYREF);
-                arg->Source = (VARIANT *)a;
-                put_slot(call, (ULONG_PTR)&tmp->punkVal);
-            } else {
-                put_slot(call, (ULONG_PTR)tmp->punkVal);
-            }
-            continue;
-        }
-        if (value_vt & VT_ARRAY) {
-            if (byref) {
-                if (a && (a->vt & VT_BYREF) && (a->vt & ~VT_BYREF) == value_vt) {
-                    put_slot(call, (ULONG_PTR)a->byref);
-                } else if (value->vt == value_vt) {
-                    tmp->vt = value->vt;
-                    tmp->parray = value->parray;
-                    put_slot(call, (ULONG_PTR)&tmp->parray);
-                } else {
-                    hr = DISP_E_TYPEMISMATCH;
-                    if (arg_err)
-                        *arg_err = index;
-                }
-            } else {
-                const VARIANT *src = value;
-                VARIANT in;
-                if ((src->vt & VT_BYREF) && (src->vt & VT_ARRAY)) {
-                    in.vt = src->vt & ~VT_BYREF;
-                    in.parray = src->pparray ? *src->pparray : nullptr;
-                    src = &in;
-                }
-                if (src->vt != value_vt) {
-                    hr = DISP_E_TYPEMISMATCH;
-                    if (arg_err)
-                        *arg_err = index;
-                } else {
-                    put_slot(call, (ULONG_PTR)src->parray);
+        if (f->OptCount == -1 && (int)i == value_last && (formal->Vt & VT_ARRAY)) {
+            SAFEARRAY *rest;
+            hr = collect_rest(params, (int)i, used, &matched, &rest);
+            if (SUCCEEDED(hr)) {
+                slot->Own.vt = formal->Vt & ~VT_BYREF;
+                slot->Own.parray = rest;
+                slot->Pass.parray = rest;
+                if (formal->Vt & VT_BYREF) {
+                    slot->Box.parray = rest;
+                    slot->Pass.byref = &slot->Box.byref;
                 }
             }
             continue;
         }
-        /* plain values: a pointer to a value of the type, or the value. */
-        if (byref) {
-            if (a && (a->vt & VT_BYREF) && (a->vt & VT_TYPEMASK) == value_vt && !(a->vt & VT_ARRAY)) {
-                put_slot(call, (ULONG_PTR)a->byref);
+        int index;
+        if ((int)i == value_position) {
+            /* the value of a property is the argument that is named as such, and there is no other way to give it. */
+            if (!params->cNamedArgs || params->rgdispidNamedArgs[0] != DISPID_PROPERTYPUT) {
+                hr = DISP_E_PARAMNOTFOUND;
                 continue;
             }
-            if (a && (a->vt & VT_BYREF) && (a->vt & VT_TYPEMASK) != VT_VARIANT && !(prm->Flags & PARAMFLAG_FOUT)) {
-                /* a reference to another type, only read. */
-            }
-            const VARIANT *inner = value;
-            if (!(value_vt == VT_PTR) && (value->vt != value_vt || (value->vt & VT_BYREF))) {
-                VARIANT converted;
-                VariantInit(&converted);
-                const VARIANT *source = value;
-                if (value->vt & VT_BYREF) {
-                    hr = VariantCopyInd(&converted, value);
-                    source = &converted;
-                }
-                if (SUCCEEDED(hr))
-                    hr = VariantChangeTypeEx(tmp, source, lcid, 0, value_vt);
-                VariantClear(&converted);
-                arg->Owned = TRUE;
-                inner = tmp;
-            } else {
-                *tmp = *value;
-                inner = tmp;
-            }
-            if (FAILED(hr)) {
-                hr = DISP_E_TYPEMISMATCH;
+            index = 0;
+        } else {
+            index = find_argument(params, (int)i);
+        }
+        const VARIANT *arg = index >= 0 ? &params->rgvarg[index] : nullptr;
+        BOOL optional = (p->Flags & PARAMFLAG_FOPT) != 0;
+        BOOL has_default = (p->Flags & PARAMFLAG_FHASDEFAULT) != 0;
+        BOOL is_variant = formal->Vt == VT_VARIANT || formal->Vt == (VT_BYREF | VT_VARIANT);
+        if (arg && !used[index]) {
+            used[index] = 1;
+            matched++;
+        }
+        /* an argument that says it is missing is one, when the parameter can do without it. */
+        if (arg && arg->vt == VT_ERROR && arg->scode == (SCODE)DISP_E_PARAMNOTFOUND) {
+            if (optional && (!is_variant || has_default)) {
+                arg = nullptr;
+            } else if (!optional && !is_variant) {
+                hr = DISP_E_PARAMNOTOPTIONAL;
                 if (arg_err)
-                    *arg_err = index;
-                break;
+                    *arg_err = (UINT)index;
+                continue;
             }
-            arg->WriteBack = (prm->Flags & PARAMFLAG_FOUT) && a && ((a->vt & VT_BYREF) != 0);
-            arg->Source = (VARIANT *)a;
-            put_slot(call, (ULONG_PTR)(value_vt == VT_DECIMAL ? (PVOID)&tmp->decVal : (PVOID)&tmp->llVal));
-            (void)inner;
+        }
+        if (arg) {
+            hr = fill_slot(lib, formal, arg, slot);
+            if (FAILED(hr) && arg_err)
+                *arg_err = (UINT)index;
             continue;
         }
-        if (value_vt == VT_PTR || value_vt == VT_LPSTR || value_vt == VT_LPWSTR) {
-            put_slot(call, (ULONG_PTR)(value->vt & VT_BYREF ? value->byref : (PVOID)value->byref));
-            continue;
-        }
-        {
-            VARIANT converted;
-            VariantInit(&converted);
-            const VARIANT *source = value;
-            if (value->vt & VT_BYREF) {
-                hr = VariantCopyInd(&converted, value);
-                source = &converted;
-            }
-            if (SUCCEEDED(hr)) {
-                if (source->vt == value_vt || (value_vt == VT_INT && source->vt == VT_I4) ||
-                    (value_vt == VT_UINT && source->vt == VT_UI4)) {
-                    hr = VariantCopy(tmp, source);
-                } else {
-                    hr = VariantChangeTypeEx(tmp, source, lcid, 0, value_vt);
-                }
-                arg->Owned = TRUE;
-            }
-            VariantClear(&converted);
-            if (FAILED(hr)) {
-                hr = hr == DISP_E_OVERFLOW ? hr : DISP_E_TYPEMISMATCH;
-                if (arg_err)
-                    *arg_err = index;
-                break;
-            }
-            hr = put_value(call, value_vt, tmp, &copies[i]);
+        VARIANT missing;
+        if (f->OptCount > 0 && i >= (UINT)count - (UINT)f->OptCount) {
+            set_missing_error(&missing);
+            hr = fill_slot(lib, formal, &missing, slot);
+        } else if (!optional) {
+            hr = DISP_E_BADPARAMCOUNT;
+        } else if (has_default) {
+            hr = VariantCopy(&slot->Default, &p->Default);
+            if (SUCCEEDED(hr))
+                hr = fill_slot(lib, formal, &slot->Default, slot);
+        } else if (is_variant) {
+            set_missing_error(&missing);
+            hr = fill_slot(lib, formal, &missing, slot);
+        } else {
+            memset(&slot->Pass, 0, sizeof(slot->Pass));
+            if (formal->Vt & VT_BYREF)
+                slot->Pass.byref = &slot->Box.byref;
         }
     }
-    (void)vararray_holder;
-    if (FAILED(hr))
-        goto cleanup;
-
-    {
-        void *function = (*(void ***)instance)[TlNativeVtOffset(type->Lib, f->VtOffset) / sizeof(void *)];
-        /* the function comes before everything: this first. */
-        ULONG_PTR slots[sizeof(call->Slot) / sizeof(call->Slot[0])];
-        slots[0] = (ULONG_PTR)instance;
-        memcpy(slots + 1, call->Slot, call->Count * sizeof(ULONG_PTR));
-        VARTYPE rv_vt = VT_EMPTY;
-        FORMAL ret_formal;
-        ret_formal.Vt = VT_EMPTY;
-        ret_formal.Size = 0;
-        if (f->Ret.vt != VT_HRESULT && f->Ret.vt != VT_VOID)
-            vt_of(type, &f->Ret, 0, &ret_formal);
-        rv_vt = ret_formal.Vt;
-        ULONGLONG fp = 0;
-        ULONGLONG raw = AutCallEx(function, slots, call->Count + 1, fp_kind_of(rv_vt), &fp);
-        HRESULT callee = S_OK;
-        if (f->Ret.vt == VT_HRESULT)
-            callee = (HRESULT)raw;
-        if (FAILED(callee)) {
-            hr = callee;
-            if (excep && callee != DISP_E_EXCEPTION)
-                hr = fill_exception((IUnknown *)instance, excep, callee, &type->Guid);
-            goto cleanup;
-        }
-        /* the outputs: references to converted values go back, and the result is taken. */
-        for (UINT i = 0; i < n; i++) {
-            ARG *arg = &args[i];
-            if (arg->WriteBack && arg->Source) {
-                VARIANT *dst = arg->Source;
-                VARTYPE vt = formals[i].Vt & ~VT_BYREF;
-                if ((dst->vt & VT_TYPEMASK) == VT_VARIANT && (dst->vt & VT_BYREF) && dst->pvarVal) {
-                    VariantClear(dst->pvarVal);
-                    *dst->pvarVal = arg->Temp;
-                    arg->Owned = FALSE;
-                } else if (dst->vt & VT_BYREF) {
-                    (void)vt;
-                }
-            }
-        }
-        if (result) {
-            VariantInit(result);
-            if (retval_index >= 0) {
-                *result = *retstore;
-                if (retstore->vt == VT_DECIMAL)
-                    result->vt = VT_DECIMAL;
-                retstore->vt = VT_EMPTY;
-            } else if (rv_vt != VT_EMPTY && rv_vt != VT_VOID) {
-                take_result(rv_vt & ~VT_BYREF, raw, fp, result);
-            }
-        } else if (retval_index >= 0) {
-            VariantClear(retstore);
+    /* arguments that no parameter took, next to ones that were taken, are not the arguments of this function. */
+    if (SUCCEEDED(hr) && f->OptCount != -1 && matched && matched < params->cArgs)
+        hr = DISP_E_PARAMNOTFOUND;
+    VARTYPE return_vt = VT_EMPTY;
+    FORMAL return_formal = {0, 0};
+    if (SUCCEEDED(hr) && f->Ret.vt != VT_VOID && f->Ret.vt != VT_EMPTY) {
+        if (f->Ret.vt == VT_HRESULT) {
+            return_vt = VT_ERROR;
+        } else {
+            hr = vt_of(type, &f->Ret, 0, &return_formal);
+            return_vt = return_formal.Vt;
         }
     }
-cleanup:
-    for (UINT i = 0; i < n; i++) {
-        if (args[i].Owned && !args[i].WriteBack)
-            VariantClear(&args[i].Temp);
-        else if (args[i].Owned && args[i].WriteBack)
-            ;
+    PVOID object = nullptr;
+    ULONG_PTR where = 0;
+    if (SUCCEEDED(hr))
+        hr = call_target(self, type, f, instance, &object, &where);
+    VARIANT raw;
+    VariantInit(&raw);
+    BOOL failed_inside = FALSE;
+    if (SUCCEEDED(hr)) {
+        for (UINT i = 0; i < count; i++) {
+            vts[i] = slots[i].Vt;
+            pointers[i] = &slots[i].Pass;
+        }
+        /* only what the function itself leaves as error information is its. */
+        SetErrorInfo(0, nullptr);
+        hr = DispCallFunc(object, where, f->Conv, return_vt, count, vts, pointers, &raw);
     }
-    if (FAILED(hr) && retval_index >= 0)
-        VariantClear(retstore);
-done:
+    VARIANT value;
+    VariantInit(&value);
+    if (SUCCEEDED(hr)) {
+        if (return_vt == VT_ERROR) {
+            hr = raw.scode;
+            failed_inside = FAILED(hr);
+        } else if (return_vt != VT_EMPTY) {
+            value = raw;
+        }
+        if (SUCCEEDED(hr) && retval)
+            hr = variant_from_storage(retval_formal.Vt, &retval_box, &value);
+        else if (FAILED(hr))
+            VariantInit(&value);
+    }
+    for (UINT i = 0; i < count; i++)
+        release_slot(&slots[i]);
     AutFree(memory);
+    if (FAILED(hr)) {
+        VariantClear(&value);
+        return failed_inside ? exception_from_failure(excep, hr) : hr;
+    }
+    if (result)
+        *result = value;
+    else
+        VariantClear(&value);
     return hr;
+}
+
+/* a property that holds an object is called on the object it holds, with the arguments the property could not take. */
+static HRESULT forward_to_default(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *getter, PVOID instance, WORD flags,
+                                  const DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
+{
+    DISPPARAMS getter_params = {nullptr, nullptr, 0, 0};
+    DISPPARAMS forwarded = *params;
+    DISPID put = DISPID_PROPERTYPUT;
+    if (!(flags & DISPATCH_PROPERTYGET)) {
+        UINT v = caller_params(getter);
+        if (v) {
+            getter_params.rgvarg = params->rgvarg + 1;
+            getter_params.cArgs = params->cArgs - 1;
+        }
+        if (v == params->cArgs - 1) {
+            forwarded.cArgs = 1;
+            forwarded.cNamedArgs = 1;
+            forwarded.rgdispidNamedArgs = &put;
+        }
+    }
+    VARIANT held;
+    VariantInit(&held);
+    HRESULT hr = call_function(self, type, getter, instance, DISPATCH_PROPERTYGET, &getter_params, &held, excep, arg_err);
+    if (FAILED(hr))
+        return hr;
+    if (held.vt != VT_DISPATCH) {
+        VariantClear(&held);
+        return DISP_E_NOTCOLLECTION;
+    }
+    IDispatch *object = held.pdispVal;
+    if (!object)
+        return DISP_E_MEMBERNOTFOUND;
+    hr = object->lpVtbl->Invoke(object, 0, &IID_NULL, type->Lib->Lcid, flags, &forwarded, result, excep, arg_err);
+    object->lpVtbl->Release(object);
+    return hr;
+}
+
+static HRESULT invoke_function(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *f, PVOID instance, WORD flags,
+                               DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
+{
+    if (!params)
+        return E_INVALIDARG;
+    const TL_FUNC *getter;
+    HRESULT hr = judge_arguments(type, f, flags, params, &getter);
+    if (hr == DISP_E_NOTCOLLECTION)
+        return forward_to_default(self, type, getter, instance, flags, params, result, excep, arg_err);
+    if (FAILED(hr))
+        return hr;
+    return call_function(self, type, f, instance, flags, params, result, excep, arg_err);
 }
 
 /* ------------------------------------------------------------------ ITypeInfo::Invoke */
@@ -823,8 +877,9 @@ HRESULT TlInvokeOnType(ITypeInfo *self, TL_TYPE *type, BOOL dual_dispatch_view, 
 {
     if (!instance && type->Kind != TKIND_MODULE)
         return E_INVALIDARG;
-    if (arg_err)
-        *arg_err = 0;
+    /* the kinds of call are the only flags, and one of them is needed. */
+    if (!flags || (flags & ~(WORD)(DISPATCH_METHOD | DISPATCH_PROPERTYGET | DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF)))
+        return E_INVALIDARG;
     HRESULT hr = TlLoadMembers(type);
     if (FAILED(hr))
         return hr;
@@ -845,7 +900,7 @@ HRESULT TlInvokeOnType(ITypeInfo *self, TL_TYPE *type, BOOL dual_dispatch_view, 
             break;
         }
     if (found)
-        return invoke_function(type, found, instance, flags, params, result, excep, arg_err);
+        return invoke_function(self, type, found, instance, flags, params, result, excep, arg_err);
     /* the base: asked with the same call. */
     HREFTYPE ref;
     ITypeInfo2 *info2 = (ITypeInfo2 *)self;

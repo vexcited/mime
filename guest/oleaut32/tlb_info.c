@@ -192,34 +192,47 @@ static SIZE_T td_extra(const TYPEDESC *td)
     }
 }
 
-/* copies a type description, its nodes taken from the blob; references get the depth of the base they came from. */
-static void td_copy(BYTE **cursor, TYPEDESC *to, const TYPEDESC *from, USHORT tag)
+/* the bytes a node of an array description takes, with its bounds. */
+static SIZE_T array_node_size(const ARRAYDESC *array)
+{
+    SIZE_T dims = array->cDims ? array->cDims : 1;
+    return (sizeof(ARRAYDESC) + (dims - 1) * sizeof(SAFEARRAYBOUND) + 7) & ~(SIZE_T)7;
+}
+
+/*
+ * A type description copied into the memory that follows a description, which has the room td_extra counted. The nodes
+ * below it are taken from the cursor. A reference to a type that has no level in its top byte gets the level of the
+ * type the description is listed for, which tells a base type what to do with the handle it is given back.
+ */
+static void td_copy(BYTE **cursor, TYPEDESC *to, const TYPEDESC *from, USHORT level)
 {
     *to = *from;
     switch (from->vt) {
     case VT_PTR:
     case VT_SAFEARRAY: {
-        TYPEDESC *inner = (TYPEDESC *)*cursor;
+        TYPEDESC *node = (TYPEDESC *)*cursor;
         *cursor += sizeof(TYPEDESC);
-        to->lptdesc = inner;
-        td_copy(cursor, inner, from->lptdesc, tag);
+        to->lptdesc = node;
+        td_copy(cursor, node, from->lptdesc, level);
         break;
     }
     case VT_CARRAY: {
-        SIZE_T size = sizeof(ARRAYDESC) + (from->lpadesc->cDims - 1) * sizeof(SAFEARRAYBOUND);
-        ARRAYDESC *desc = (ARRAYDESC *)*cursor;
-        *cursor += (size + 7) & ~(SIZE_T)7;
-        memcpy(desc, from->lpadesc, size);
-        to->lpadesc = desc;
-        td_copy(cursor, &desc->tdescElem, &from->lpadesc->tdescElem, tag);
+        ARRAYDESC *node = (ARRAYDESC *)*cursor;
+        *cursor += array_node_size(from->lpadesc);
+        SIZE_T dims = from->lpadesc->cDims ? from->lpadesc->cDims : 1;
+        memcpy(node, from->lpadesc, sizeof(ARRAYDESC) + (dims - 1) * sizeof(SAFEARRAYBOUND));
+        to->lpadesc = node;
+        td_copy(cursor, &node->tdescElem, &from->lpadesc->tdescElem, level);
         break;
     }
     case VT_USERDEFINED:
-        if (tag && !(from->hreftype & 0xFF000000))
-            to->hreftype = from->hreftype | ((ULONG)tag << 24);
+        if (level && !HREF_DEPTH(from->hreftype))
+            to->hreftype = from->hreftype | (HREFTYPE)level << 24;
         break;
+    default: break;
     }
 }
+
 
 static SHORT visible_params(const TL_FUNC *f, BOOL dispatch, const TL_PARAM **retval)
 {
@@ -398,81 +411,87 @@ static TYPEINFO *ours(ITypeInfo *i)
     return nullptr;
 }
 
-/* the functions of the type itself, then those of the base. */
-static HRESULT func_desc_flags(TYPEINFO *info, UINT index, FUNCDESC **out, BOOL inherited, BOOL dispatch)
+/*
+ * The description of a function of a type. With the bases listed the functions of the bases come first, as the dispatch
+ * side of an interface counts them, the bases being asked for theirs in the same way and in the same form, the one of
+ * a call by automation. Their handles are marked with the level of the type they are in, so that whoever gets one back
+ * knows which type it is relative to.
+ */
+static HRESULT listed_func_desc(TYPEINFO *info, UINT index, BOOL list_bases, BOOL automation_form, FUNCDESC **out)
 {
     TL_TYPE *t = info->Type;
     HRESULT hr = TlLoadMembers(t);
     if (FAILED(hr))
         return hr;
-    USHORT tag = 0;
-    if (inherited) {
-        if (index < t->InheritedFuncs) {
-            ITypeInfo *base;
-            hr = base_info(info, &base);
-            if (FAILED(hr))
-                return hr;
-            TYPEINFO *mine = ours(base);
-            if (mine)
-                hr = func_desc_flags(mine, index, out, TRUE, dispatch);
-            else
-                hr = base->lpVtbl->GetFuncDesc(base, index, out);
-            base->lpVtbl->Release(base);
+    if (list_bases && index < t->InheritedFuncs) {
+        ITypeInfo *base;
+        hr = base_info(info, &base);
+        if (FAILED(hr))
             return hr;
-        }
-        index -= t->InheritedFuncs;
-        tag = (USHORT)(t->InheritedImpls + 1);
+        TYPEINFO *mine = ours(base);
+        if (mine)
+            hr = listed_func_desc(mine, index, TRUE, automation_form, out);
+        else
+            hr = base->lpVtbl->GetFuncDesc(base, index, out);
+        base->lpVtbl->Release(base);
+        return hr;
     }
+    if (list_bases)
+        index -= t->InheritedFuncs;
     if (index >= t->FuncCount)
         return TYPE_E_ELEMENTNOTFOUND;
-    return TlBuildFuncDesc(t, &t->Funcs[index], dispatch, tag, out);
+    return TlBuildFuncDesc(t, &t->Funcs[index], automation_form, list_bases ? t->InheritedImpls + 1 : 0, out);
 }
 
+
 /* ------------------------------------------------------------------ ITypeInfo */
+
+/* the flags a dispatch interface reports: it is not a class, a control or a licensed thing, whatever the library says. */
+#define DISPATCH_REPORTED_FLAGS 0x5AD0
 
 static HRESULT WINAPI ti_get_type_attr(ITypeInfo2 *self, TYPEATTR **out)
 {
     TYPEINFO *info = from_info(self);
     TL_TYPE *t = info->Type;
     if (!out)
-        return E_POINTER;
+        return E_INVALIDARG;
     *out = nullptr;
-    HRESULT hr = TlLoadMembers(t);
+    HRESULT hr = TlEnsureLayout(t);
     if (FAILED(hr))
         return hr;
     TYPEKIND kind = view_kind(info);
-    SIZE_T extra = kind == TKIND_ALIAS ? td_extra(&t->Alias) : 0;
-    TYPEATTR *attr = AutAllocZero(((sizeof(TYPEATTR) + 7) & ~(SIZE_T)7) + extra);
+    BOOL dispatch = kind == TKIND_DISPATCH;
+    SIZE_T size = (sizeof(TYPEATTR) + 7) & ~(SIZE_T)7;
+    if (kind == TKIND_ALIAS)
+        size += td_extra(&t->Alias);
+    TYPEATTR *attr = AutAllocZero(size);
     if (!attr)
         return E_OUTOFMEMORY;
     if (t->HasGuid)
         attr->guid = t->Guid;
     attr->lcid = t->Lib->Lcid;
-    attr->memidConstructor = MEMBERID_NIL;
-    attr->memidDestructor = MEMBERID_NIL;
+    attr->memidConstructor = t->Constructor;
+    attr->memidDestructor = t->Destructor;
+    attr->lpstrSchema = t->Schema;
     attr->cbSizeInstance = t->SizeInstance;
     attr->typekind = kind;
+    attr->cFuncs = (WORD)(t->FuncCount + (dispatch ? t->InheritedFuncs : 0));
     attr->cVars = t->VarCount;
     attr->cImplTypes = t->ImplCount;
+    attr->cbSizeVft = dispatch ? 7 * sizeof(void *) : TlNativeVtSize(t->Lib, t->SizeVft);
     attr->cbAlignment = t->Alignment;
+    attr->wTypeFlags = dispatch ? t->Flags & DISPATCH_REPORTED_FLAGS : t->Flags;
     attr->wMajorVerNum = t->Major;
     attr->wMinorVerNum = t->Minor;
-    if (kind == TKIND_DISPATCH) {
-        attr->cFuncs = (WORD)(t->FuncCount + (dispatch_view(info) ? t->InheritedFuncs : 0));
-        attr->cbSizeVft = (WORD)(7 * sizeof(void *));
-        attr->wTypeFlags = t->Flags & 0x5AD0;
-    } else {
-        attr->cFuncs = t->FuncCount;
-        attr->cbSizeVft = TlNativeVtSize(t->Lib, t->SizeVft);
-        attr->wTypeFlags = t->Flags;
-        if (kind == TKIND_ALIAS) {
-            BYTE *cursor = (BYTE *)attr + ((sizeof(TYPEATTR) + 7) & ~(SIZE_T)7);
-            td_copy(&cursor, &attr->tdescAlias, &t->Alias, 0);
-        }
+    attr->idldescType.wIDLFlags = t->IdlFlags;
+    if (kind == TKIND_ALIAS) {
+        BYTE *cursor = (BYTE *)attr + ((sizeof(TYPEATTR) + 7) & ~(SIZE_T)7);
+        td_copy(&cursor, &attr->tdescAlias, &t->Alias, 0);
     }
     *out = attr;
     return S_OK;
 }
+
 
 static HRESULT WINAPI ti_get_type_comp(ITypeInfo2 *self, ITypeComp **out)
 {
@@ -490,8 +509,8 @@ static HRESULT WINAPI ti_get_func_desc(ITypeInfo2 *self, UINT index, FUNCDESC **
     if (!out)
         return E_POINTER;
     *out = nullptr;
-    BOOL dispatch = dispatch_view(info) && view_kind(info) == TKIND_DISPATCH;
-    return func_desc_flags(info, index, out, dispatch, dispatch);
+    BOOL automation = dispatch_view(info);
+    return listed_func_desc(info, index, automation, automation, out);
 }
 
 static HRESULT WINAPI ti_get_var_desc(ITypeInfo2 *self, UINT index, VARDESC **out)
@@ -586,30 +605,121 @@ static HRESULT WINAPI ti_get_names(ITypeInfo2 *self, MEMBERID id, BSTR *names, U
     return S_OK;
 }
 
+
+/* the handle the other half of a dual interface goes by. */
+#define HREF_OTHER_HALF 0xFFFFFFFEu
+#define HREF_INVALID 0xFFFFFFFFu
+#define HREF_VTABLE_HALF 2u
+
 static HRESULT WINAPI ti_get_ref_type_of_impl_type(ITypeInfo2 *self, UINT index, HREFTYPE *ref)
 {
     TYPEINFO *info = from_info(self);
     TL_TYPE *t = info->Type;
     if (!ref)
-        return E_POINTER;
+        return E_INVALIDARG;
     HRESULT hr = TlLoadMembers(t);
     if (FAILED(hr))
         return hr;
     if (index >= t->ImplCount) {
-        if (index != 0xFFFFFFFF || !(t->Flags & TYPEFLAG_FDUAL))
-            return TYPE_E_ELEMENTNOTFOUND;
-        *ref = (HREFTYPE)-2;
-        return S_OK;
+        if (index == 0xFFFFFFFFu && (t->Flags & TYPEFLAG_FDUAL)) {
+            *ref = HREF_OTHER_HALF;
+            return S_OK;
+        }
+        return TYPE_E_ELEMENTNOTFOUND;
     }
     switch (view_kind(info)) {
-    case TKIND_INTERFACE: *ref = t->Impls[0].Ref | 2; break;
+    case TKIND_INTERFACE: *ref = t->Impls[index].Ref | HREF_VTABLE_HALF; break;
     case TKIND_DISPATCH: *ref = t->Lib->DispatchRef; break;
-    case TKIND_COCLASS: *ref = t->Impls[index].Ref & ~(ULONG)2; break;
+    case TKIND_COCLASS: *ref = t->Impls[index].Ref & ~HREF_VTABLE_HALF; break;
     default: *ref = 0; break;
     }
-    if (view_kind(info) == TKIND_DISPATCH && t->Impls && t->Impls[0].Ref != 0xFFFFFFFF && t->Impls[0].Ref != t->Lib->DispatchRef)
-        *ref = t->Impls[0].Ref;
     return S_OK;
+}
+
+/* a type of another library, found through the table of imports; the vtable half when the handle asks and there is one. */
+static HRESULT imported_type(TL_TYPE *from, HREFTYPE handle, ITypeInfo **out)
+{
+    TL_LIB *lib = from->Lib;
+    ULONG offset = handle & ~3u;
+    if (offset % 12 || offset / 12 >= lib->ImportCount)
+        return E_FAIL;
+    ITypeInfo *type;
+    HRESULT hr = TlResolveHref(from, offset | 1, &type);
+    if (FAILED(hr) || !(handle & HREF_VTABLE_HALF)) {
+        *out = FAILED(hr) ? nullptr : type;
+        return hr;
+    }
+    /* the imported type tells itself where its other half is, and is its own when it has none. */
+    HREFTYPE other;
+    hr = type->lpVtbl->GetRefTypeOfImplType(type, 0xFFFFFFFFu, &other);
+    if (hr == TYPE_E_ELEMENTNOTFOUND) {
+        *out = type;
+        return S_OK;
+    }
+    if (SUCCEEDED(hr)) {
+        ITypeInfo *half;
+        hr = type->lpVtbl->GetRefTypeInfo(type, other, &half);
+        type->lpVtbl->Release(type);
+        *out = SUCCEEDED(hr) ? half : nullptr;
+        return hr;
+    }
+    type->lpVtbl->Release(type);
+    return hr;
+}
+
+/* the type a handle that is not for this one is handed to: the base of an interface, the first interface of a class. */
+static HRESULT handle_base(TYPEINFO *info, ITypeInfo **base)
+{
+    TL_TYPE *t = info->Type;
+    if (view_kind(info) != TKIND_COCLASS)
+        return base_info(info, base);
+    if (!t->ImplCount)
+        return TYPE_E_ELEMENTNOTFOUND;
+    return TlResolveHref(t, t->Impls[0].Ref, base);
+}
+
+static HRESULT WINAPI ti_get_ref_type_info(ITypeInfo2 *self, HREFTYPE handle, ITypeInfo **out)
+{
+    TYPEINFO *info = from_info(self);
+    TL_TYPE *t = info->Type;
+    if (!out || handle == HREF_INVALID)
+        return E_INVALIDARG;
+    *out = nullptr;
+    if (handle == HREF_OTHER_HALF) {
+        if (!info->Twin)
+            return TYPE_E_ELEMENTNOTFOUND;
+        *out = (ITypeInfo *)info->Twin;
+        ti_addref((ITypeInfo2 *)info->Twin);
+        return S_OK;
+    }
+    HRESULT hr = TlLoadMembers(t);
+    if (FAILED(hr))
+        return hr;
+    /* a handle that carries the level of another type was made by a base of this one. */
+    ULONG level = HREF_DEPTH(handle);
+    if (level) {
+        TYPEKIND kind = view_kind(info);
+        if (kind != TKIND_INTERFACE && kind != TKIND_DISPATCH && kind != TKIND_COCLASS)
+            return E_UNEXPECTED;
+        if (level != (ULONG)t->InheritedImpls + 1) {
+            ITypeInfo *base;
+            hr = handle_base(info, &base);
+            if (FAILED(hr))
+                return E_INVALIDARG;
+            hr = base->lpVtbl->GetRefTypeInfo(base, handle, out);
+            base->lpVtbl->Release(base);
+            return hr;
+        }
+    }
+    handle &= 0xFFFFFF;
+    if (handle & 1)
+        return imported_type(t, handle, out);
+    ULONG index;
+    if ((handle & 0x7C) || !TlIndexOfHref(handle, &index) || index >= t->Lib->TypeCount)
+        return E_FAIL;
+    if (t->Lib->Types[index]->Kind == TKIND_MAX)
+        return TYPE_E_UNDEFINEDTYPE;
+    return TlGetTypeInfo(t->Lib, index, (handle & HREF_VTABLE_HALF) != 0, out);
 }
 
 static HRESULT WINAPI ti_get_impl_type_flags(ITypeInfo2 *self, UINT index, INT *flags)
@@ -808,37 +918,6 @@ static HRESULT WINAPI ti_get_dll_entry(ITypeInfo2 *self, MEMBERID id, INVOKEKIND
     return S_OK;
 }
 
-static HRESULT WINAPI ti_get_ref_type_info(ITypeInfo2 *self, HREFTYPE ref, ITypeInfo **out)
-{
-    TYPEINFO *info = from_info(self);
-    if (!out || ref == 0xFFFFFFFF)
-        return E_INVALIDARG;
-    *out = nullptr;
-    if (ref == (HREFTYPE)-2) {
-        if (!info->Twin)
-            return TYPE_E_ELEMENTNOTFOUND;
-        ITypeInfo *twin = (ITypeInfo *)info->Twin;
-        twin->lpVtbl->AddRef(twin);
-        *out = twin;
-        return S_OK;
-    }
-    TL_TYPE *t = info->Type;
-    HRESULT hr = TlLoadMembers(t);
-    if (FAILED(hr))
-        return hr;
-    /* a reference from a base carries how deep that base is: it names a type of the base's own library. */
-    ULONG depth = HREF_DEPTH(ref);
-    if (depth && depth != (ULONG)t->InheritedImpls + 1) {
-        ITypeInfo *base;
-        hr = base_info(info, &base);
-        if (FAILED(hr))
-            return hr;
-        hr = base->lpVtbl->GetRefTypeInfo(base, ref, out);
-        base->lpVtbl->Release(base);
-        return hr;
-    }
-    return TlResolveHref(t, ref & 0xFFFFFF, out);
-}
 
 static HRESULT WINAPI ti_address_of_member(ITypeInfo2 *self, MEMBERID id, INVOKEKIND kind, PVOID *address)
 {
@@ -955,14 +1034,15 @@ static HRESULT WINAPI ti_get_type_kind(ITypeInfo2 *self, TYPEKIND *kind)
     return S_OK;
 }
 
+/* the flags of the type as the library has them, which the attributes of a dispatch interface hide some of. */
 static HRESULT WINAPI ti_get_type_flags(ITypeInfo2 *self, ULONG *flags)
 {
-    TYPEINFO *info = from_info(self);
     if (!flags)
-        return E_POINTER;
-    *flags = view_kind(info) == TKIND_DISPATCH ? info->Type->Flags & 0x5AD0 : info->Type->Flags;
+        return E_INVALIDARG;
+    *flags = from_info(self)->Type->Flags;
     return S_OK;
 }
+
 
 static HRESULT WINAPI ti_get_func_index_of_memid(ITypeInfo2 *self, MEMBERID id, INVOKEKIND kind, UINT *index)
 {

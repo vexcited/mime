@@ -1824,6 +1824,27 @@ static ULONG funcdesc_size(WRITER *w, const TL_FUNC *f)
     return size;
 }
 
+/*
+ * The functions of one member id, the get, the put and the put by reference of a property, are chained in the file:
+ * each record names the function that comes next in the order of the kinds of call from the highest to the lowest,
+ * the lowest one names the highest, and a function that is alone names itself. A reader finds the others by it.
+ */
+static ULONG chained_function(const TL_TYPE *t, ULONG k)
+{
+    const TL_FUNC *f = &t->Funcs[k];
+    ULONG next = k, highest = k;
+    for (ULONG j = 0; j < t->FuncCount; j++) {
+        const TL_FUNC *g = &t->Funcs[j];
+        if (j == k || g->Id != f->Id)
+            continue;
+        if (g->Invoke > t->Funcs[highest].Invoke)
+            highest = j;
+        if (g->Invoke < f->Invoke && (next == k || g->Invoke > t->Funcs[next].Invoke))
+            next = j;
+    }
+    return next != k ? next : highest;
+}
+
 static void write_members(WRITER *w, TL_TYPE *t, ULONG *memoff)
 {
     ULONG cf = t->FuncCount, cv = t->VarCount, total = cf + cv;
@@ -1856,7 +1877,7 @@ static void write_members(WRITER *w, TL_TYPE *t, ULONG *memoff)
             ULONG nargs = f->ParamCount;
             ULONG size = 24 + 24 + (cust ? 4 * (nargs + 2) : 0) + nargs * (defaults ? 16 : 12);
             ULONG fk = (ULONG)f->Kind | ((ULONG)f->Invoke << 3) | (cust ? 0x80 : 0) | ((ULONG)f->Conv << 8) |
-                       (defaults ? 0x1000 : 0) | (f->HasOrdinal ? 0x2000 : 0) | ((hidden > 3 ? 3 : hidden) << 14) | (k << 16);
+                       (defaults ? 0x1000 : 0) | (f->HasOrdinal ? 0x2000 : 0) | ((hidden > 3 ? 3 : hidden) << 14) | (chained_function(t, k) << 16);
             buf_u32(&recs, size | (k << 16));
             buf_u32(&recs, enc_typedesc(w, &f->Ret));
             buf_u32(&recs, f->Flags);
