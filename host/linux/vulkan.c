@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -538,6 +539,7 @@ static bool request_copy(Request *to, const Request *from)
 typedef struct Spare {
     MvkConnection *shell;
     Request key;
+    uint64_t made; /* when, in the host's nanoseconds */
 } Spare;
 
 typedef struct HostInstance {
@@ -1088,6 +1090,7 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
 #define LEARNED_HEADER "mime vulkan device requests 1"
 #define UUID_TEXT (2 * VK_UUID_SIZE * 2 + 1)
 #define REFILL_DELAY_NS 1500000000ull
+#define SPARE_IDLE_NS (600ull * 1000000000ull) /* a device nobody took in this long is given back, a gpu kept open keeps the card awake */
 #define FILL_ARENA (1u << 20)
 
 typedef struct Learned {
@@ -1456,6 +1459,7 @@ static void spare_make_on(const Learned *want, uint8_t *arena)
         for (unsigned i = 0; i < SPARES_MAX && s; i++) {
             if (!hi->spares[i].shell && request_copy(&hi->spares[i].key, &want->device)) {
                 hi->spares[i].shell = s;
+                hi->spares[i].made = mime_now_ns();
                 s = nullptr;
             }
         }
@@ -1497,6 +1501,28 @@ static void spare_prune(const Learned *want, unsigned n)
             for (unsigned j = 0; j < n && spare->shell; j++)
                 keep |= request_same(&spare->key, &want[j].device);
             if (spare->shell && !keep) {
+                doomed[count++] = spare->shell;
+                spare->shell = nullptr;
+                request_free(&spare->key);
+            }
+        }
+    }
+    pthread_mutex_unlock(&g_instance_lock);
+    for (unsigned i = 0; i < count; i++)
+        shell_destroy(doomed[i]);
+}
+
+/* the devices nobody took for a long time are destroyed, and made again when a process makes a device the way they were made. */
+static void spare_expire(void)
+{
+    MvkConnection *doomed[SPARES_MAX * SPARES_MAX];
+    unsigned count = 0;
+    uint64_t now = mime_now_ns();
+    pthread_mutex_lock(&g_instance_lock);
+    for (unsigned h = 0; h < SPARES_MAX; h++) {
+        for (unsigned i = 0; g_pool[h] && i < SPARES_MAX; i++) {
+            Spare *spare = &g_pool[h]->spares[i];
+            if (spare->shell && now - spare->made > SPARE_IDLE_NS) {
                 doomed[count++] = spare->shell;
                 spare->shell = nullptr;
                 request_free(&spare->key);
@@ -1606,6 +1632,55 @@ static void destroy_device(MvkCall *call)
 
 /* ------------------------------------------------------------------ memory */
 
+#ifndef MADV_POPULATE_WRITE
+#define MADV_POPULATE_WRITE 23
+#endif
+#define PREFAULT_MIN (8ull << 20)
+#define PREFAULT_THREADS 4
+#define PREFAULT_STEP (4ull << 20)
+
+typedef struct Prefault {
+    uint8_t *start;
+    size_t length;
+} Prefault;
+
+/* a few megabytes at a time: the host's page faults of the guest's processors wait while one call holds the map of the memory. */
+static void *prefault_main(void *arg)
+{
+    const Prefault *p = arg;
+    for (size_t at = 0; at < p->length; at += PREFAULT_STEP)
+        if (madvise(p->start + at, MIME_MIN((size_t)PREFAULT_STEP, p->length - at), MADV_POPULATE_WRITE) != 0)
+            break;
+    return nullptr;
+}
+
+/*
+ * The driver pins the pages of memory it imports, and makes those the guest never touched one by one, 25 ms for 64
+ * MiB and up to 100 in the machine, with the guest's other threads' faults waiting behind it. Several threads make
+ * them first, 5 ms in all. The pages were going to be pinned anyway, so no more memory is used.
+ */
+static void prefault(void *host, uint64_t span)
+{
+    if (span < PREFAULT_MIN)
+        return;
+    uint64_t share = MIME_ALIGN_UP(span / PREFAULT_THREADS, 2ull << 20);
+    Prefault parts[PREFAULT_THREADS];
+    pthread_t threads[PREFAULT_THREADS];
+    bool started[PREFAULT_THREADS] = {};
+    uint32_t count = 0;
+    for (uint64_t at = 0; at < span; at += share)
+        parts[count++] = (Prefault){(uint8_t *)host + at, (size_t)MIME_MIN(share, span - at)};
+    for (uint32_t i = 1; i < count; i++)
+        started[i] = pthread_create(&threads[i], nullptr, prefault_main, &parts[i]) == 0;
+    prefault_main(&parts[0]);
+    for (uint32_t i = 1; i < count; i++) {
+        if (started[i])
+            pthread_join(threads[i], nullptr);
+        else
+            prefault_main(&parts[i]);
+    }
+}
+
 /*
  * memory the guest maps lives in its ram, physically contiguous: the host
  * imports it. other memory is the driver's own.
@@ -1627,6 +1702,7 @@ static void allocate_memory(MvkCall *call)
         if (pa) {
             void *host = mime_vm_phys(c->vm, pa, span);
             if (host && c->host_import && span % c->import_alignment == 0 && span >= info.allocationSize) {
+                prefault(host, span);
                 import.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
                 import.pHostPointer = host;
                 import.pNext = info.pNext;
@@ -3268,6 +3344,8 @@ static void warm_wait(void);
 void mime_vk_close_all(void)
 {
     warm_wait();
+    /* the requests of a machine that stops before the thread wrote them are kept all the same. */
+    learned_save();
     for (uint64_t i = 0; i < MAX_CONNECTIONS; i++)
         mime_vk_close(i);
     pool_release();
@@ -3300,19 +3378,26 @@ static void *warm_main(void *arg)
     maker_request(0);
     for (;;) {
         pthread_mutex_lock(&g_maker_lock);
-        while (!g_maker_stop && !g_maker_at)
-            pthread_cond_wait(&g_maker_wake, &g_maker_lock);
+        /* a minute at most without a request, to give back the devices nobody took. */
+        uint64_t idle_until = realtime_ns() + 60000000000ull;
+        while (!g_maker_stop && !g_maker_at && realtime_ns() < idle_until) {
+            struct timespec until = {(time_t)(idle_until / 1000000000ull), (long)(idle_until % 1000000000ull)};
+            pthread_cond_timedwait(&g_maker_wake, &g_maker_lock, &until);
+        }
         while (!g_maker_stop && g_maker_at > realtime_ns()) {
             struct timespec until = {(time_t)(g_maker_at / 1000000000ull), (long)(g_maker_at % 1000000000ull)};
             pthread_cond_timedwait(&g_maker_wake, &g_maker_lock, &until);
         }
-        bool stop = g_maker_stop;
+        bool stop = g_maker_stop, fill = g_maker_at != 0;
         g_maker_at = 0;
         pthread_mutex_unlock(&g_maker_lock);
         if (stop)
             break;
-        learned_save();
-        spare_fill();
+        if (fill) {
+            learned_save();
+            spare_fill();
+        }
+        spare_expire();
     }
     return nullptr;
 }
