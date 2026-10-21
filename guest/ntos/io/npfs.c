@@ -1166,7 +1166,7 @@ static NTSTATUS wait_pipe(const FILE_PIPE_WAIT_FOR_BUFFER *w, ULONG in_len)
         LARGE_INTEGER step;
         step.QuadPart = -100000; /* 10 ms */
         NTSTATUS st = KeDelayExecutionThread(UserMode, TRUE, &step);
-        if (st == STATUS_USER_APC || st == STATUS_ALERTED)
+        if (st != STATUS_SUCCESS)
             return st;
         remaining += 100000;
         if (remaining >= 0)

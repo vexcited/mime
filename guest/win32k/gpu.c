@@ -161,7 +161,7 @@ NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms)
             return STATUS_TIMEOUT;
         LARGE_INTEGER t = {.QuadPart = -100000}; /* 10 ms */
         NTSTATUS s = KeWaitForSingleObject(event, UserRequest, UserMode, TRUE, &t);
-        if (s == STATUS_USER_APC || s == STATUS_ALERTED)
+        if (s != STATUS_SUCCESS && s != STATUS_TIMEOUT)
             return s;
     }
     ULONG64 expected = fence;

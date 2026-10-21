@@ -203,7 +203,8 @@ static LONG wait_event(ULONG timeout_ms, PUCHAR out)
             t.QuadPart = -(LONGLONG)(deadline - now);
         }
         NTSTATUS s = KeWaitForSingleObject(&g_event, UserRequest, UserMode, TRUE, &t);
-        if (s == STATUS_USER_APC || s == STATUS_ALERTED)
+        /* an apc, an alert or the thread being ended is for the caller, which the wait must give back to be ended. */
+        if (s != STATUS_SUCCESS && s != STATUS_TIMEOUT)
             return (LONG)s;
     }
 }
