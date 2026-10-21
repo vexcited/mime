@@ -72,12 +72,6 @@ BOOL AutRoundHalfEven(double x, double *rounded);
  * fp_kind is 0 for none, 1 for a float and 2 for a double (x86 takes it off the x87 stack, x64 reads xmm0). */
 ULONGLONG AutCallEx(void *function, const ULONG_PTR *slots, ULONG count, ULONG fp_kind, ULONGLONG *fp_value);
 
-/* olefont.c and olepic.c */
-LONGLONG AutRoundDiv64(LONGLONG numerator, LONGLONG denominator);
-HRESULT AutStdOleTypeInfo(UINT index, REFGUID id, ITypeInfo **info);
-HRESULT AutNamesToIds(const WCHAR *const *table, const DISPID *ids, int count, REFIID riid, LPOLESTR *names, UINT cnames,
-                      DISPID *result);
-
 /* LOCALE_NOUSEROVERRIDE when SetVarConversionLocaleSetting asked for the locale without the user's changes. */
 extern ULONG g_process_nls_flags;
 
