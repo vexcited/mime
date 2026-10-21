@@ -15,7 +15,7 @@ typedef struct MimeIdentity {
     uint64_t install_filetime;
     char machine_serial[20]; /* serial of the case, as firmware reports it */
     char machine_uuid[40];   /* smbios uuid, text form */
-    char locale[32];         /* name of the locale of the user, empty until chosen */
+    char locale[32];         /* name of the locale of the user, empty until chosen. */
 } MimeIdentity;
 
 /*

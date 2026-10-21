@@ -138,12 +138,12 @@ PCWSTR KbCalendarEraName(UINT locale, CALID cal, int era, BOOL abbreviated);
 UINT KbCalendarLocale(UINT locale, CALID cal);
 PCWSTR KbCalendarDayName(UINT locale, CALID cal, int weekday, BOOL abbreviated);
 int KbCalendarInfo(UINT locale, CALID calendar, CALTYPE type, LPWSTR data, int size, LPDWORD value);
-PCWSTR KbCalendarPicture(UINT locale, CALID cal, UINT kind); /* kind: 0 short, 1 long, 2 year and month, 3 month and day */
+PCWSTR KbCalendarPicture(UINT locale, CALID cal, UINT kind); /* kind: 0 short, 1 long, 2 year and month, 3 month and day. */
 
 /* unidata.c: Unicode data of the national language support. */
 UINT KbUniCcc(ULONG cp);
 BOOL KbUniIsNonspacing(ULONG cp);
-int KbUniDecompose(ULONG cp, BOOL compat, WCHAR *out); /* up to 20 units */
+int KbUniDecompose(ULONG cp, BOOL compat, WCHAR *out); /* up to 20 units. */
 ULONG KbUniCompose(ULONG first, ULONG second, BOOL hangul);
 ULONG KbUniUpper(ULONG cp);
 ULONG KbUniLower(ULONG cp);
