@@ -270,46 +270,52 @@ static DWORD call_simple(SCM_WRITER *w)
     return error;
 }
 
-/* the event as the manager makes it, open to everyone to wait on: whoever gets there first makes it. */
-static HANDLE create_start_event(void)
+/*
+ * the first call into the manager of a process waits for the event services.exe signals when its pipe is ready.
+ * a process that comes before the manager makes the event itself: everyone may wait for it, the system owns it.
+ */
+#define SCM_READY_TIMEOUT_MS 180000
+
+static HANDLE open_ready_event(DWORD *error)
 {
-    SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, FALSE};
+    HANDLE event = OpenEventW(SYNCHRONIZE, FALSE, SCM_START_EVENT);
+    if (event || GetLastError() != ERROR_FILE_NOT_FOUND) {
+        *error = event ? ERROR_SUCCESS : GetLastError();
+        return event;
+    }
+
     PSECURITY_DESCRIPTOR sd = nullptr;
-    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(SCM_EVENT_SDDL, 1, &sd, nullptr))
-        sa.lpSecurityDescriptor = sd;
-    HANDLE event = CreateEventW(&sa, TRUE, FALSE, SCM_START_EVENT);
-    DWORD error = GetLastError();
-    if (sd)
-        LocalFree(sd);
-    SetLastError(error);
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;;0x100000;;;WD)(A;;GA;;;SY)", 1, &sd, nullptr)) {
+        *error = GetLastError();
+        return nullptr;
+    }
+    SECURITY_ATTRIBUTES attributes = {sizeof(attributes), sd, FALSE};
+    event = CreateEventW(&attributes, TRUE, FALSE, SCM_START_EVENT);
+    DWORD created = GetLastError();
+    LocalFree(sd);
+    if (event && created == ERROR_ALREADY_EXISTS) {
+        CloseHandle(event);
+        event = OpenEventW(SYNCHRONIZE, FALSE, SCM_START_EVENT);
+        created = event ? ERROR_SUCCESS : GetLastError();
+    }
+    *error = event ? ERROR_SUCCESS : created;
     return event;
 }
 
-/* the manager is up when its event is set, the first time anyone asks; windows waits three minutes for it. */
-static DWORD wait_ready(void)
+static DWORD scm_wait_until_ready(void)
 {
     if (g_ready)
         return ERROR_SUCCESS;
-    HANDLE event = OpenEventW(SYNCHRONIZE, FALSE, SCM_START_EVENT);
-    if (!event) {
-        DWORD error = GetLastError();
-        if (error != ERROR_FILE_NOT_FOUND)
-            return error;
-        /* nobody has made it yet: the first client does, so that there is one to wait for. */
-        event = create_start_event();
-        if (!event) {
-            error = GetLastError();
-            if (error != ERROR_ALREADY_EXISTS)
-                return error;
-            event = OpenEventW(SYNCHRONIZE, FALSE, SCM_START_EVENT);
-            if (!event)
-                return GetLastError();
-        }
-    }
-    DWORD wait = WaitForSingleObject(event, 180000);
+    DWORD error;
+    HANDLE event = open_ready_event(&error);
+    if (!event)
+        return error;
+    DWORD waited = WaitForSingleObject(event, SCM_READY_TIMEOUT_MS);
     CloseHandle(event);
-    if (wait == WAIT_TIMEOUT)
+    if (waited == WAIT_TIMEOUT)
         return ERROR_TIMEOUT;
+    if (waited != WAIT_OBJECT_0)
+        return GetLastError();
     g_ready = 1;
     return ERROR_SUCCESS;
 }
@@ -324,7 +330,7 @@ static BOOL fail(DWORD error)
 
 ADVAPI SC_HANDLE WINAPI OpenSCManagerW(LPCWSTR machine, LPCWSTR database, DWORD access)
 {
-    DWORD error = wait_ready();
+    DWORD error = scm_wait_until_ready();
     if (error) {
         AdvSetError(error);
         return nullptr;
@@ -1809,7 +1815,7 @@ ADVAPI BOOL WINAPI GetServiceKeyNameA(SC_HANDLE manager, LPCSTR display, LPSTR n
 ADVAPI BOOL WINAPI NotifyBootConfigStatus(BOOL acceptable)
 {
     (void)acceptable;
-    DWORD error = wait_ready();
+    DWORD error = scm_wait_until_ready();
     if (error)
         return fail(error);
     SCM_WRITER w;
@@ -1940,62 +1946,84 @@ static DWORD start_notifications(void)
     return thread ? ERROR_SUCCESS : GetLastError();
 }
 
+#define NOTIFY_STATE_BITS 0x27F
+#define NOTIFY_OBJECT_BITS 0x180
+#define NOTIFY_KNOWN_BITS 0x3FF
+
+/* the checks of a registration; every failure is an invalid parameter, answered before anything is registered. */
+static DWORD notify_check(SC_HANDLE handle, DWORD mask, const SERVICE_NOTIFYW *notify)
+{
+    SC_OBJECT *object = handle ? object_any(handle) : nullptr;
+    if (!object || (object->Kind != SCK_SERVICE && object->Kind != SCK_MANAGER))
+        return ERROR_INVALID_PARAMETER;
+    if (!(mask & NOTIFY_KNOWN_BITS))
+        return ERROR_INVALID_PARAMETER;
+    if ((mask & NOTIFY_STATE_BITS) && (mask & NOTIFY_OBJECT_BITS))
+        return ERROR_INVALID_PARAMETER;
+    if (!notify || (notify->dwVersion != SERVICE_NOTIFY_STATUS_CHANGE_1 &&
+                    notify->dwVersion != SERVICE_NOTIFY_STATUS_CHANGE_2))
+        return ERROR_INVALID_PARAMETER;
+    if (notify->dwVersion == SERVICE_NOTIFY_STATUS_CHANGE_1 && (mask & NOTIFY_OBJECT_BITS))
+        return ERROR_INVALID_PARAMETER;
+    if (!notify->pfnNotifyCallback)
+        return ERROR_INVALID_PARAMETER;
+    return ERROR_SUCCESS;
+}
+
+/* asks the manager to complete the block when the services change. the callback runs in this thread, as an APC. */
 static DWORD notify_change(SC_HANDLE handle, DWORD mask, PSERVICE_NOTIFYW notify)
 {
-    SC_OBJECT *o = object_any(handle);
-    if (!handle || !o || (o->Kind != SCK_SERVICE && o->Kind != SCK_MANAGER))
-        return ERROR_INVALID_PARAMETER;
-    /* a mask of states and one of creations and deletions cannot be mixed, and the second needs version 2. */
-    if ((mask & 0x3FF) == 0 || ((mask & 0x27F) != 0 && (mask & 0x180) != 0) || !notify || notify->dwVersion - 1 > 1 ||
-        (notify->dwVersion < 2 && (mask & 0x180) != 0) || !notify->pfnNotifyCallback)
-        return ERROR_INVALID_PARAMETER;
-    DWORD error = start_notifications();
+    DWORD error = notify_check(handle, mask, notify);
     if (error)
         return error;
-    notify->dwNotificationStatus = 0;
-    memset(&notify->ServiceStatus, 0, sizeof(notify->ServiceStatus));
-    if (notify->dwVersion >= 2) {
-        notify->dwNotificationTriggered = 0;
-        notify->pszServiceNames = nullptr;
-    }
+    SC_OBJECT *object = object_any(handle);
+    error = scm_wait_until_ready();
+    if (!error)
+        error = start_notifications();
+    if (error)
+        return error;
+
     NOTIFY_REG *reg = AdvAllocZero(sizeof(*reg));
     if (!reg)
         return ERROR_NOT_ENOUGH_MEMORY;
-    reg->Notify = notify;
-    reg->Version = notify->dwVersion;
-    reg->Thread = OpenThread(THREAD_SET_CONTEXT_, FALSE, GetCurrentThreadId());
-    if (!reg->Thread) {
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &reg->Thread,
+                         THREAD_SET_CONTEXT_, FALSE, 0)) {
         error = GetLastError();
         AdvFree(reg);
         return error;
     }
+    reg->Notify = notify;
+    reg->Version = notify->dwVersion;
     AcquireSRWLockExclusive(&g_notify_lock);
     reg->Block = g_notify_block++;
     reg->Next = g_notifies;
     g_notifies = reg;
     ReleaseSRWLockExclusive(&g_notify_lock);
+
     SCM_WRITER w;
     ScmWriterInit(&w, SCM_OP_NOTIFY_STATUS_CHANGE);
-    ScmPutU64(&w, o->Id);
+    ScmPutU64(&w, object->Id);
     ScmPutU64(&w, reg->Block);
     ScmPutU32(&w, mask);
     ScmPutU32(&w, notify->dwVersion);
     error = call_simple(&w);
-    if (error) {
-        AcquireSRWLockExclusive(&g_notify_lock);
-        BOOL still = FALSE;
-        for (NOTIFY_REG **link = &g_notifies; *link; link = &(*link)->Next) {
-            if (*link == reg) {
-                *link = reg->Next;
-                still = TRUE;
-                break;
-            }
+    if (!error)
+        return ERROR_SUCCESS;
+
+    /* the completion of a refused registration never comes: take it out of the list unless it already came. */
+    AcquireSRWLockExclusive(&g_notify_lock);
+    BOOL listed = FALSE;
+    for (NOTIFY_REG **link = &g_notifies; *link; link = &(*link)->Next) {
+        if (*link == reg) {
+            *link = reg->Next;
+            listed = TRUE;
+            break;
         }
-        ReleaseSRWLockExclusive(&g_notify_lock);
-        if (still) {
-            CloseHandle(reg->Thread);
-            AdvFree(reg);
-        }
+    }
+    ReleaseSRWLockExclusive(&g_notify_lock);
+    if (listed) {
+        CloseHandle(reg->Thread);
+        AdvFree(reg);
     }
     return error;
 }
@@ -2128,171 +2156,256 @@ static DWORD answer(HANDLE pipe, DWORD code)
     return pipe_write(pipe, &h, sizeof(h));
 }
 
-static DWORD handler_result(DISPATCH_ENTRY *e, DWORD control, DWORD event_type, void *event_data)
+/* ------------------------------------------------------------------ the controls of the manager */
+
+/* a control as the manager wrote it on the channel. the pieces are copies that the block owns. */
+typedef struct CONTROL_MESSAGE {
+    DWORD Control;
+    WCHAR *Name;
+    DWORD EventType;
+    BYTE *EventData; /* null when there is none */
+    UINT64 StatusId;
+    DWORD ArgumentCount;
+    WCHAR **Arguments;
+} CONTROL_MESSAGE;
+
+static void control_release(CONTROL_MESSAGE *c)
 {
-    LPHANDLER_FUNCTION_EX ex = e->HandlerEx;
-    LPHANDLER_FUNCTION plain = e->Handler;
-    if (ex)
-        return ex(control, event_type, event_data, e->Context);
-    if (!plain)
-        return ERROR_SERVICE_CANNOT_ACCEPT_CTRL;
-    /* a handler of the old kind knows the controls up to the network ones and the controls of its own. */
-    if ((control - 1) > 9 && (control - 128) > 0x7F)
-        return ERROR_CALL_NOT_IMPLEMENTED;
-    plain(control);
-    return ERROR_SUCCESS;
+    for (DWORD i = 0; i < c->ArgumentCount; i++)
+        AdvFree(c->Arguments ? c->Arguments[i] : nullptr);
+    AdvFree(c->Arguments);
+    AdvFree(c->EventData);
+    AdvFree(c->Name);
+    memset(c, 0, sizeof(*c));
 }
 
-static void dispatch_loop(HANDLE pipe)
+static WCHAR *copy_chars(const WCHAR *chars, UINT32 count)
+{
+    WCHAR *copy = AdvAlloc((count + 1) * sizeof(WCHAR));
+    if (copy) {
+        memcpy(copy, chars, count * sizeof(WCHAR));
+        copy[count] = 0;
+    }
+    return copy;
+}
+
+static BOOL control_parse(const void *message, UINT32 size, CONTROL_MESSAGE *c)
+{
+    memset(c, 0, sizeof(*c));
+    SCM_READER r;
+    ScmReaderInit(&r, message, size);
+    c->Control = ((const SCM_HEADER *)message)->Code;
+    UINT32 chars, data_size;
+    const WCHAR *name = ScmGetChars(&r, &chars);
+    c->Name = copy_chars(name ? name : L"", name ? chars : 0);
+    c->EventType = ScmGetU32(&r);
+    const void *data = ScmGetBytes(&r, &data_size);
+    if (data_size) {
+        c->EventData = AdvAlloc(data_size);
+        if (c->EventData)
+            memcpy(c->EventData, data, data_size);
+    }
+    c->StatusId = ScmGetU64(&r);
+    DWORD count = ScmGetU32(&r);
+    if (r.Failed || !c->Name || (data_size && !c->EventData) || count > 4096) {
+        control_release(c);
+        return FALSE;
+    }
+    c->Arguments = count ? AdvAllocZero(count * sizeof(WCHAR *)) : nullptr;
+    if (count && !c->Arguments) {
+        control_release(c);
+        return FALSE;
+    }
+    c->ArgumentCount = count;
+    for (DWORD i = 0; i < count; i++) {
+        const WCHAR *argument = ScmGetChars(&r, &chars);
+        c->Arguments[i] = copy_chars(argument ? argument : L"", argument ? chars : 0);
+        if (r.Failed || !c->Arguments[i]) {
+            control_release(c);
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+/* a handler of the plain kind is told of the controls up to the network ones and of those a service defines. */
+static BOOL plain_handler_knows(DWORD control)
+{
+    return (control >= 1 && control <= 10) || (control >= 128 && control <= 255);
+}
+
+/* the control goes to the handler the named service registered. the lock is not held while the handler runs. */
+static DWORD deliver_control(const CONTROL_MESSAGE *c)
+{
+    LPHANDLER_FUNCTION plain = nullptr;
+    LPHANDLER_FUNCTION_EX extended = nullptr;
+    PVOID context = nullptr;
+    AcquireSRWLockShared(&g_entries_lock);
+    DISPATCH_ENTRY *entry = find_entry(c->Name);
+    if (entry) {
+        plain = entry->Handler;
+        extended = entry->HandlerEx;
+        context = entry->Context;
+    }
+    ReleaseSRWLockShared(&g_entries_lock);
+    if (!plain && !extended)
+        return ERROR_SERVICE_CANNOT_ACCEPT_CTRL;
+
+    DWORD result;
+    if (extended) {
+        result = extended(c->Control, c->EventType, c->EventData, context);
+    } else if (plain_handler_knows(c->Control)) {
+        plain(c->Control);
+        result = ERROR_SUCCESS;
+    } else {
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    }
+
+    /* a service that was told to stop takes no more controls until it registers a handler again. */
+    if (c->Control == SERVICE_CONTROL_STOP || c->Control == SERVICE_CONTROL_SHUTDOWN ||
+        c->Control == SERVICE_CONTROL_PRESHUTDOWN) {
+        AcquireSRWLockExclusive(&g_entries_lock);
+        entry = find_entry(c->Name);
+        if (entry) {
+            entry->Handler = nullptr;
+            entry->HandlerEx = nullptr;
+        }
+        ReleaseSRWLockExclusive(&g_entries_lock);
+    }
+    return result;
+}
+
+/* the arguments of the main function: the name, then those of StartService, in the form the table was made for. */
+static START_PARAMS *start_params_make(DISPATCH_ENTRY *entry, const CONTROL_MESSAGE *c)
+{
+    START_PARAMS *p = AdvAllocZero(sizeof(*p));
+    if (!p)
+        return nullptr;
+    p->Entry = entry;
+    p->Count = c->ArgumentCount + 1;
+    p->Wide = AdvAllocZero(p->Count * sizeof(WCHAR *));
+    p->Narrow = g_ansi_table ? AdvAllocZero(p->Count * sizeof(CHAR *)) : nullptr;
+    BOOL ok = p->Wide && (!g_ansi_table || p->Narrow);
+    for (DWORD i = 0; ok && i < p->Count; i++) {
+        const WCHAR *text = i ? c->Arguments[i - 1] : c->Name;
+        size_t bytes = (wcslen(text) + 1) * sizeof(WCHAR);
+        p->Wide[i] = AdvAlloc(bytes);
+        ok = p->Wide[i] != nullptr;
+        if (ok)
+            memcpy(p->Wide[i], text, bytes);
+        if (ok && g_ansi_table) {
+            p->Narrow[i] = AdvWideToAnsi(text);
+            ok = p->Narrow[i] != nullptr;
+        }
+    }
+    if (!ok) {
+        for (DWORD i = 0; i < p->Count; i++) {
+            AdvFree(p->Wide ? p->Wide[i] : nullptr);
+            AdvFree(p->Narrow ? p->Narrow[i] : nullptr);
+        }
+        AdvFree(p->Wide);
+        AdvFree(p->Narrow);
+        AdvFree(p);
+        return nullptr;
+    }
+    return p;
+}
+
+/*
+ * the manager starts a service. a process of one service takes the first entry whatever the name, and then answers
+ * to the name it was given. the main function runs on a thread of its own, the answer says only that it has begun.
+ */
+static DWORD control_start(const CONTROL_MESSAGE *c)
+{
+    AcquireSRWLockExclusive(&g_entries_lock);
+    DISPATCH_ENTRY *entry = nullptr;
+    if (c->Control == SCM_CTRL_START_OWN) {
+        entry = g_entries;
+        if (entry && _wcsicmp(entry->Name, c->Name) && !entry->Alias)
+            entry->Alias = copy_chars(c->Name, (UINT32)wcslen(c->Name));
+    } else {
+        entry = find_entry(c->Name);
+    }
+    DWORD error = ERROR_SUCCESS;
+    START_PARAMS *params = nullptr;
+    if (!entry)
+        error = ERROR_SERVICE_NOT_IN_EXE;
+    else if (entry->Started)
+        error = ERROR_SERVICE_ALREADY_RUNNING;
+    else if (!(params = start_params_make(entry, c)))
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    SC_OBJECT *status = error ? nullptr : object_new(SCK_STATUS, c->StatusId);
+    if (!error && !status)
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    if (!error) {
+        entry->Status = status;
+        entry->Started = TRUE;
+        entry->Handler = nullptr;
+        entry->HandlerEx = nullptr;
+    }
+    ReleaseSRWLockExclusive(&g_entries_lock);
+
+    if (!error) {
+        HANDLE thread = CreateThread(nullptr, 0, service_main_thread, params, 0, nullptr);
+        if (thread) {
+            CloseHandle(thread);
+            return ERROR_SUCCESS;
+        }
+        error = GetLastError();
+        AcquireSRWLockExclusive(&g_entries_lock);
+        entry->Status = nullptr;
+        entry->Started = FALSE;
+        ReleaseSRWLockExclusive(&g_entries_lock);
+        object_free(status);
+    }
+    if (error != ERROR_SUCCESS && params) {
+        for (DWORD i = 0; i < params->Count; i++) {
+            AdvFree(params->Wide[i]);
+            AdvFree(params->Narrow ? params->Narrow[i] : nullptr);
+        }
+        AdvFree(params->Wide);
+        AdvFree(params->Narrow);
+        AdvFree(params);
+    }
+    return error;
+}
+
+/* reads the controls of the manager and answers each, until the manager says the process is done or goes away. */
+static void run_controls(HANDLE pipe)
 {
     for (;;) {
         SCM_HEADER header;
-        if (pipe_read(pipe, &header, sizeof(header)))
+        if (pipe_read(pipe, &header, sizeof(header)) || header.Magic != SCM_MAGIC || header.Size < sizeof(header) ||
+            header.Size > SCM_MAX_MESSAGE)
             return;
-        if (header.Magic != SCM_MAGIC || header.Size < sizeof(header) || header.Size > SCM_MAX_MESSAGE)
+        BYTE *message = AdvAlloc(header.Size);
+        if (!message)
             return;
-        BYTE *data = AdvAlloc(header.Size);
-        if (!data)
-            return;
-        memcpy(data, &header, sizeof(header));
-        if (header.Size > sizeof(header) && pipe_read(pipe, data + sizeof(header), header.Size - (DWORD)sizeof(header))) {
-            AdvFree(data);
-            return;
+        memcpy(message, &header, sizeof(header));
+        DWORD error = header.Size > sizeof(header)
+                          ? pipe_read(pipe, message + sizeof(header), header.Size - (DWORD)sizeof(header))
+                          : ERROR_SUCCESS;
+        CONTROL_MESSAGE control;
+        if (error || !control_parse(message, header.Size, &control)) {
+            AdvFree(message);
+            if (error)
+                return;
+            if (answer(pipe, ERROR_INVALID_DATA))
+                return;
+            continue;
         }
-        SCM_READER r;
-        ScmReaderInit(&r, data, header.Size);
-        UINT32 name_n;
-        const WCHAR *name_chars = ScmGetChars(&r, &name_n);
-        DWORD event_type = ScmGetU32(&r);
-        UINT32 event_size;
-        const void *event_data = ScmGetBytes(&r, &event_size);
-        UINT64 status_id = ScmGetU64(&r);
-        DWORD count = ScmGetU32(&r);
-        DWORD control = header.Code;
-        WCHAR *name = name_chars ? AdvAlloc((name_n + 1) * sizeof(WCHAR)) : nullptr;
-        if (name) {
-            memcpy(name, name_chars, name_n * sizeof(WCHAR));
-            name[name_n] = 0;
-        }
-        DWORD result = ERROR_SUCCESS;
-        BOOL quit = FALSE;
-        if (r.Failed || !name) {
-            result = ERROR_INVALID_DATA;
-        } else if (control == SCM_CTRL_QUIT && !*name) {
-            quit = TRUE;
-        } else if (control == SCM_CTRL_START_OWN || control == SCM_CTRL_START_SHARE) {
-            AcquireSRWLockExclusive(&g_entries_lock);
-            DISPATCH_ENTRY *e = control == SCM_CTRL_START_OWN ? (g_entry_count ? &g_entries[0] : nullptr) : find_entry(name);
-            if (!e) {
-                result = ERROR_SERVICE_NOT_IN_EXE;
-            } else if (e->Started) {
-                result = ERROR_SERVICE_ALREADY_RUNNING;
-            } else {
-                /* an own process service is called by the name the manager gives it, whatever the table says. */
-                if (control == SCM_CTRL_START_OWN && _wcsicmp(e->Name, name)) {
-                    AdvFree(e->Alias);
-                    e->Alias = AdvAlloc((wcslen(name) + 1) * sizeof(WCHAR));
-                    if (e->Alias)
-                        wcscpy(e->Alias, name);
-                }
-                START_PARAMS *p = AdvAllocZero(sizeof(*p));
-                SC_OBJECT *status = object_new(SCK_STATUS, status_id);
-                if (!p || !status) {
-                    AdvFree(p);
-                    if (status)
-                        object_free(status);
-                    result = ERROR_NOT_ENOUGH_MEMORY;
-                } else {
-                    p->Entry = e;
-                    p->Count = count + 1;
-                    p->Wide = AdvAllocZero(p->Count * sizeof(WCHAR *));
-                    p->Narrow = g_ansi_table ? AdvAllocZero(p->Count * sizeof(CHAR *)) : nullptr;
-                    BOOL good = p->Wide != nullptr && (!g_ansi_table || p->Narrow);
-                    if (good) {
-                        p->Wide[0] = AdvAlloc((wcslen(name) + 1) * sizeof(WCHAR));
-                        if (p->Wide[0])
-                            wcscpy(p->Wide[0], name);
-                        for (DWORD i = 0; i < count && good; i++) {
-                            UINT32 n;
-                            const WCHAR *arg = ScmGetChars(&r, &n);
-                            p->Wide[i + 1] = AdvAlloc((n + 1) * sizeof(WCHAR));
-                            if (p->Wide[i + 1] && arg) {
-                                memcpy(p->Wide[i + 1], arg, n * sizeof(WCHAR));
-                                p->Wide[i + 1][n] = 0;
-                            } else {
-                                good = FALSE;
-                            }
-                        }
-                        good = good && p->Wide[0] != nullptr;
-                        if (good && g_ansi_table)
-                            for (DWORD i = 0; i < p->Count; i++)
-                                p->Narrow[i] = AdvWideToAnsi(p->Wide[i]);
-                    }
-                    if (!good) {
-                        for (DWORD i = 0; p->Wide && i < p->Count; i++)
-                            AdvFree(p->Wide[i]);
-                        AdvFree(p->Wide);
-                        AdvFree(p->Narrow);
-                        AdvFree(p);
-                        object_free(status);
-                        result = ERROR_NOT_ENOUGH_MEMORY;
-                    } else {
-                        e->Status = status;
-                        e->Started = TRUE;
-                        e->Handler = nullptr;
-                        e->HandlerEx = nullptr;
-                        HANDLE thread = CreateThread(nullptr, 0, service_main_thread, p, 0, nullptr);
-                        if (thread) {
-                            CloseHandle(thread);
-                        } else {
-                            e->Started = FALSE;
-                            e->Status = nullptr;
-                            object_free(status);
-                            for (DWORD i = 0; i < p->Count; i++) {
-                                AdvFree(p->Wide[i]);
-                                if (p->Narrow)
-                                    AdvFree(p->Narrow[i]);
-                            }
-                            AdvFree(p->Wide);
-                            AdvFree(p->Narrow);
-                            AdvFree(p);
-                            result = ERROR_SERVICE_NO_THREAD;
-                        }
-                    }
-                }
-            }
-            ReleaseSRWLockExclusive(&g_entries_lock);
-        } else {
-            AcquireSRWLockShared(&g_entries_lock);
-            DISPATCH_ENTRY *e = find_entry(name);
-            LPHANDLER_FUNCTION plain = e ? e->Handler : nullptr;
-            LPHANDLER_FUNCTION_EX ex = e ? e->HandlerEx : nullptr;
-            PVOID context = e ? e->Context : nullptr;
-            ReleaseSRWLockShared(&g_entries_lock);
-            if (!e || (!plain && !ex)) {
-                result = ERROR_SERVICE_CANNOT_ACCEPT_CTRL;
-            } else {
-                DISPATCH_ENTRY copy = *e;
-                copy.Handler = plain;
-                copy.HandlerEx = ex;
-                copy.Context = context;
-                void *payload = event_size ? (void *)event_data : nullptr;
-                result = handler_result(&copy, control, event_type, payload);
-                /* a service that was told to stop, or to shut down, takes no more controls of the kind. */
-                if (control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_SHUTDOWN ||
-                    control == SERVICE_CONTROL_PRESHUTDOWN) {
-                    AcquireSRWLockExclusive(&g_entries_lock);
-                    e->Handler = nullptr;
-                    e->HandlerEx = nullptr;
-                    ReleaseSRWLockExclusive(&g_entries_lock);
-                }
-            }
-        }
-        AdvFree(name);
-        AdvFree(data);
-        if (answer(pipe, result))
-            return;
-        if (quit)
+        AdvFree(message);
+
+        BOOL finished = control.Control == SCM_CTRL_QUIT && !control.Name[0];
+        DWORD result;
+        if (finished)
+            result = ERROR_SUCCESS;
+        else if (control.Control == SCM_CTRL_START_OWN || control.Control == SCM_CTRL_START_SHARE)
+            result = control_start(&control);
+        else
+            result = deliver_control(&control);
+        control_release(&control);
+        if (answer(pipe, result) || finished)
             return;
     }
 }
@@ -2336,7 +2449,7 @@ static BOOL start_dispatcher(const WCHAR *const *names, void *const *mains, DWOR
     }
     /* the services are taken down before the system goes: below the programs' level, after services.exe's. */
     SetProcessShutdownParameters(0x100, 0);
-    dispatch_loop(pipe);
+    run_controls(pipe);
     CloseHandle(pipe);
     free_entries();
     return TRUE;
@@ -2522,7 +2635,7 @@ ADVAPI DWORD WINAPI MimeLaunchElevated(LPCWSTR application, LPCWSTR command_line
     if (!command_line || !info)
         return ERROR_INVALID_PARAMETER;
     memset(info, 0, sizeof(*info));
-    DWORD error = wait_ready();
+    DWORD error = scm_wait_until_ready();
     if (error)
         return error;
     SCM_WRITER w;
