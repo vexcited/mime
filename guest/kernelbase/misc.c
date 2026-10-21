@@ -608,7 +608,7 @@ DECLSPEC_EXPORT LONG WINAPI GetPackageFamilyNameFromToken(HANDLE token, UINT32 *
 
 DECLSPEC_EXPORT BOOL WINAPI Wow64GetThreadContext(HANDLE thread, PVOID context)
 {
-#ifdef _WIN64
+#ifdef __x86_64__
     NTSTATUS status = RtlWow64GetThreadContext(thread, context);
 #else
     NTSTATUS status = STATUS_NOT_SUPPORTED;
@@ -618,7 +618,7 @@ DECLSPEC_EXPORT BOOL WINAPI Wow64GetThreadContext(HANDLE thread, PVOID context)
 
 DECLSPEC_EXPORT BOOL WINAPI Wow64SetThreadContext(HANDLE thread, const void *context)
 {
-#ifdef _WIN64
+#ifdef __x86_64__
     NTSTATUS status = RtlWow64SetThreadContext(thread, context);
 #else
     NTSTATUS status = STATUS_NOT_SUPPORTED;
