@@ -2,10 +2,9 @@
  * exception raising and first chance dispatch.
  *
  * dispatch order: vectored exception handlers, then frame based handlers,
- * then vectored continue handlers. frame based dispatch needs the arm64
- * unwinder, which is not written yet, so there unhandled exceptions go
- * straight to the top level filter and then back to the kernel as second
- * chance.
+ * then the top level filter, and back to the kernel as second chance if none
+ * took the exception. the frame based handlers are in x64/unwind.c,
+ * x86/seh.c and arm64/unwind.c.
  */
 #include "ntdll_private.h"
 
@@ -99,18 +98,14 @@ static LONG call_handlers(PLIST_ENTRY list, PEXCEPTION_RECORD record, PCONTEXT c
     return result;
 }
 
-#if defined(__x86_64__) || defined(__i386__)
 BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCONTEXT context);
-#endif
 
 NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchException(PEXCEPTION_RECORD record, PCONTEXT context)
 {
     if (call_handlers(&g_vectored, record, context) == EXCEPTION_CONTINUE_EXECUTION)
         return TRUE;
-#if defined(__x86_64__) || defined(__i386__)
     if (RtlDispatchFrameException(record, context))
         return TRUE;
-#endif
     if (g_unhandled_filter) {
         EXCEPTION_POINTERS info = {record, context};
         if (g_unhandled_filter(&info) == EXCEPTION_CONTINUE_EXECUTION)
@@ -139,21 +134,6 @@ void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context
     RtlRaiseException(&nested);
 }
 
-#ifdef __aarch64__
-/* the x64 build raises from x64/entry.S. */
-NTDLL_EXPORT void NTAPI RtlRaiseException(PEXCEPTION_RECORD record)
-{
-    CONTEXT context;
-    RtlCaptureContext(&context);
-    /* resume, if ever, right after the call to this function. */
-    context.Pc = (ULONG64)__builtin_return_address(0);
-    context.Sp = (ULONG64)__builtin_frame_address(0) + 16;
-    record->ExceptionAddress = (PVOID)context.Pc;
-    NTSTATUS status = NtRaiseException(record, &context, TRUE);
-    RtlRaiseStatus(status);
-}
-#endif
-
 NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlRaiseStatus(NTSTATUS status)
 {
     EXCEPTION_RECORD record = {};
@@ -164,47 +144,3 @@ NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlRaiseStatus(NTSTATUS status)
     for (;;)
         ;
 }
-
-#ifdef __aarch64__
-/* the x64 build unwinds in x64/unwind.c, the x86 one in x86/seh.c. */
-NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value)
-{
-    DbgPrint("RtlUnwind: frame based unwinding is not supported yet\n");
-    NtTerminateProcess(NtCurrentProcess(), STATUS_NOT_IMPLEMENTED);
-}
-
-NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value,
-                                    PCONTEXT context, PVOID history)
-{
-    RtlUnwind(target_frame, target_ip, record, value);
-}
-
-NTDLL_EXPORT PVOID NTAPI RtlLookupFunctionEntry(ULONG64 pc, PULONG64 image_base, PVOID history)
-{
-    PLDR_DATA_TABLE_ENTRY entry;
-    if (!NT_SUCCESS(LdrFindEntryForAddress((PVOID)pc, &entry)))
-        return nullptr;
-    ULONG size;
-    IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY *table = LdrpImageDirectory(entry->DllBase, IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size);
-    if (!table)
-        return nullptr;
-    ULONG rva = (ULONG)(pc - (ULONG64)entry->DllBase);
-    ULONG lo = 0, hi = size / sizeof(*table);
-    while (lo < hi) {
-        ULONG mid = (lo + hi) / 2;
-        ULONG begin = table[mid].BeginAddress;
-        ULONG length = (table[mid].UnwindData & 3) ? ((table[mid].UnwindData >> 2) & 0x7FF) * 4 : 0;
-        if (rva < begin) {
-            hi = mid;
-        } else if (length && rva >= begin + length) {
-            lo = mid + 1;
-        } else if (!length && mid + 1 < size / sizeof(*table) && rva >= table[mid + 1].BeginAddress) {
-            lo = mid + 1;
-        } else {
-            *image_base = (ULONG64)entry->DllBase;
-            return &table[mid];
-        }
-    }
-    return nullptr;
-}
-#endif

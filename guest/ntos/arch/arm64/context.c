@@ -73,7 +73,7 @@ void KiInitializeUserContext(PCONTEXT context, ULONG64 pc, ULONG64 sp, ULONG64 a
 void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *ctx, ULONG flags)
 {
     memset(ctx, 0, sizeof(*ctx));
-    ctx->ContextFlags = flags;
+    ctx->ContextFlags = flags & ~(ULONG)CONTEXT_UNWOUND_TO_CALL;
     for (int i = 0; i < 31; i++)
         ctx->X[i] = frame->X[i];
     ctx->Sp = frame->Sp;
@@ -84,6 +84,9 @@ void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *ctx, ULONG flags)
         ctx->Fpcr = frame->Fpcr;
         ctx->Fpsr = frame->Fpsr;
     }
+    /* a software exception raised from a call has the return address for its pc, which only the caller knows. */
+    if ((flags & CONTEXT_UNWOUND_TO_CALL) && (frame->Flags & KTRAP_FLAG_UNWOUND_TO_CALL))
+        ctx->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
 }
 
 void KiContextToTrapFrame(const CONTEXT *ctx, PKTRAP_FRAME frame, ULONG flags, KPROCESSOR_MODE mode)
@@ -99,6 +102,10 @@ void KiContextToTrapFrame(const CONTEXT *ctx, PKTRAP_FRAME frame, ULONG flags, K
         frame->Pc = ctx->Pc;
         /* user mode may only change the condition flags. */
         frame->Spsr = (mode == UserMode) ? ((ctx->Cpsr & 0xF0000000u) | PSR_MODE_EL0) : ctx->Cpsr;
+        if (ctx->ContextFlags & CONTEXT_UNWOUND_TO_CALL)
+            frame->Flags |= KTRAP_FLAG_UNWOUND_TO_CALL;
+        else
+            frame->Flags &= ~(ULONG64)KTRAP_FLAG_UNWOUND_TO_CALL;
     }
     if ((flags & CONTEXT_FLOATING_POINT) == CONTEXT_FLOATING_POINT) {
         memcpy(frame->V, ctx->V, sizeof(frame->V));
@@ -129,7 +136,7 @@ BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE ro
 BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RECORD record)
 {
     CONTEXT ctx;
-    KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL);
+    KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL | CONTEXT_UNWOUND_TO_CALL);
     ULONG64 sp = (frame->Sp - sizeof(CONTEXT) - sizeof(EXCEPTION_RECORD) - 64) & ~15ull;
     ULONG64 ctx_addr = sp;
     ULONG64 rec_addr = sp + ((sizeof(CONTEXT) + 15) & ~15ull);

@@ -160,7 +160,7 @@ set(MIME_SYSCALLS_arm64 ${MIME_GEN}/ntdll_syscalls.S)
 set(MIME_SYSCALLS_x64 ${MIME_GEN}/ntdll_syscalls_x64.S)
 set(MIME_WIN32K_SYSCALLS_arm64 ${MIME_GEN}/win32u_syscalls.S)
 set(MIME_WIN32K_SYSCALLS_x64 ${MIME_GEN}/win32u_syscalls_x64.S)
-set(nt_export_code_arm64 "${nt_export_code}")
+set(nt_export_code_arm64 "${nt_export_code}|^__C_specific_handler$")
 set(nt_export_code_x64 "${nt_export_code}|^__C_specific_handler$")
 
 add_custom_command(OUTPUT ${MIME_GEN}/win32u.def
@@ -177,7 +177,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     if(arch STREQUAL "x64")
         mime_glob(ntdll_sources guest/ntdll/*.c guest/ntdll/x64/*.c guest/ntdll/x64/*.S)
     else()
-        mime_glob(ntdll_sources guest/ntdll/*.c guest/ntdll/*.S)
+        mime_glob(ntdll_sources guest/ntdll/*.c guest/ntdll/arm64/*.c guest/ntdll/arm64/*.S)
     endif()
     mime_objects(${arch}-ntdll ${arch} SOURCES ${ntdll_sources} guest/lib/crypto/hash.c INCLUDES guest/ntdll guest/lib)
     set(ntdll_objects ${arch}-ntdll ${arch}-ntsyscalls ${MIME_RUNTIME_${arch}})
@@ -197,13 +197,14 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     mime_dll(kernelbase ${arch} BASE 0x7FFB00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk
         OPTIONS -DMIME_BUILD_KERNELBASE IMPORTS ntdll)
 
-    # kernel32 forwards to kernelbase like windows' does, and a few functions to ntdll, x64 the unwinding ones too.
+    # kernel32 forwards to kernelbase like windows' does, and a few functions to ntdll, the unwinding ones too.
     set(kernel32_ntdll RtlPcToFileHeader VerSetConditionMask)
+    list(PREPEND kernel32_ntdll RtlCaptureContext RtlLookupFunctionEntry RtlUnwindEx RtlVirtualUnwind
+        RtlAddFunctionTable RtlDeleteFunctionTable RtlInstallFunctionTableCallback RtlRestoreContext RtlUnwind
+        __C_specific_handler RtlCaptureStackBackTrace RtlCompareMemory RtlCopyMemory RtlFillMemory RtlMoveMemory
+        RtlZeroMemory RtlRaiseException)
     if(arch STREQUAL "x64")
-        list(PREPEND kernel32_ntdll RtlCaptureContext RtlLookupFunctionEntry RtlUnwindEx RtlVirtualUnwind
-            RtlAddFunctionTable RtlDeleteFunctionTable RtlInstallFunctionTableCallback RtlRestoreContext RtlUnwind
-            __C_specific_handler RtlCaptureStackBackTrace RtlCompareMemory RtlCopyMemory RtlFillMemory RtlMoveMemory
-            RtlZeroMemory RtlRaiseException RtlIsEcCode)
+        list(APPEND kernel32_ntdll RtlIsEcCode)
     endif()
     list(TRANSFORM kernel32_ntdll REPLACE "^(.+)$" "\\1=ntdll.\\1")
     # the exports of windows' kernel32 are functions but for those of guest/kernel32/forwarded.txt: a program that reads

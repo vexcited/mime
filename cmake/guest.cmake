@@ -26,7 +26,8 @@ function(mime_flavor name arch)
 endfunction()
 
 mime_flavor(kernel ${MIME_GUEST_ARCH})
-mime_flavor(arm64 arm64)
+# unwind tables for every function: exceptions are unwound through any dll, and -ffreestanding drops them.
+mime_flavor(arm64 arm64 -fasynchronous-unwind-tables)
 # -ffreestanding drops the x64 unwind tables, which exception unwinding walks through every dll.
 if(MIME_GUEST_ARCH STREQUAL "x64")
     # on an x64 machine these are the system's own dlls, run natively, not by the translator.

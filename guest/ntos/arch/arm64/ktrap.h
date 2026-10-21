@@ -18,6 +18,8 @@
 #define KTRAP_FRAME_SIZE 0x340
 
 #define KTRAP_FLAG_FP_SAVED 1
+/* the pc is a return address, see CONTEXT_UNWOUND_TO_CALL. */
+#define KTRAP_FLAG_UNWOUND_TO_CALL 2
 
 /* callee saved frame pushed by KiSwapContext and KiCallUserMode, the switch frame also keeps fpcr. */
 #define KSWITCH_FRAME_SIZE 0xB0

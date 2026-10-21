@@ -103,8 +103,7 @@ typedef PVOID(WINAPI *PFUNCTION_TABLE_ACCESS_ROUTINE64)(HANDLE, DWORD64);
 typedef DWORD64(WINAPI *PGET_MODULE_BASE_ROUTINE64)(HANDLE, DWORD64);
 typedef DWORD64(WINAPI *PTRANSLATE_ADDRESS_ROUTINE64)(HANDLE, HANDLE, LPADDRESS64);
 
-#ifdef __x86_64__
-typedef struct _RUNTIME_FUNCTION RUNTIME_FUNCTION_, *PRUNTIME_FUNCTION_;
+#if defined(__x86_64__) || defined(__aarch64__)
 NTSYSAPI PVOID NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base, ULONG64 pc, PVOID function, PCONTEXT context,
                                       PVOID *handler_data, PULONG64 establisher, PVOID pointers);
 #endif
@@ -364,14 +363,20 @@ static BOOL unwind(CONTEXT *c)
     }
     return c->Rip != 0;
 #else
-    /* windows arm64 code keeps the frame chain: fp points at the saved fp and lr. */
-    ULONG64 fp = c->Fp;
-    if (!fp || (fp & 7))
-        return FALSE;
-    c->Pc = ((ULONG64 *)fp)[1];
-    c->Fp = ((ULONG64 *)fp)[0];
-    c->Sp = fp + 16;
-    return c->Pc != 0 && c->Fp > fp;
+    /* the pc of an unwound frame is the return address, the call the instruction before it. */
+    ULONG64 base;
+    ULONG64 stack = c->Sp, pc = c->Pc;
+    PVOID function = RtlLookupFunctionEntry((c->ContextFlags & CONTEXT_UNWOUND_TO_CALL) ? pc - 4 : pc, &base, nullptr);
+    if (function) {
+        PVOID data;
+        ULONG64 establisher;
+        RtlVirtualUnwind(0, base, pc, function, c, &data, &establisher, nullptr);
+    } else {
+        /* a leaf without unwind data returns through lr. */
+        c->Pc = c->Lr;
+        c->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
+    }
+    return c->Pc != 0 && (c->Sp > stack || (c->Sp == stack && c->Pc != pc));
 #endif
 }
 

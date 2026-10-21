@@ -552,8 +552,23 @@ typedef struct _DISPATCHER_CONTEXT {
     void *HandlerData;
     void *HistoryTable;
     ULONG ScopeIndex;
+#ifdef __aarch64__
+    BOOLEAN ControlPcIsUnwound;
+    void *NonVolatileRegisters;
+#else
     ULONG Fill0;
+#endif
 } DISPATCHER_CONTEXT;
+
+/* the pc to find the state of a function by: on arm64 an unwound frame's pc is the instruction after its call. */
+static ULONG_PTR control_pc(const DISPATCHER_CONTEXT *dc)
+{
+#ifdef __aarch64__
+    if (dc->ControlPcIsUnwound)
+        return dc->ControlPc - 1;
+#endif
+    return dc->ControlPc;
+}
 
 
 typedef ULONG_PTR (*funclet_t)(ULONG_PTR, ULONG_PTR);
@@ -608,7 +623,7 @@ static void locate(const EH_FUNCTION *f, ULONG_PTR establisher, const DISPATCHER
 {
     w->frame = establisher;
     w->catch_try = nullptr;
-    w->state = state_from_ip(f, dc->ControlPc);
+    w->state = state_from_ip(f, control_pc(dc));
     if (f->is_catch) {
         /* __CxxFrameHandler4 describes the funclet itself: the innermost catch its state is in. */
         w->frame = *(const ULONG_PTR *)(establisher + f->catch_frame);
