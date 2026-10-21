@@ -90,6 +90,8 @@ BOOLEAN MxFillPeb32(PVOID memory)
     peb->HeapDeCommitFreeBlockThreshold = (ULONG)native->HeapDeCommitFreeBlockThreshold;
     peb->MaximumNumberOfHeaps = native->MaximumNumberOfHeaps;
     peb->SessionId = native->SessionId;
+    *(USHORT *)((PUCHAR)peb + MIME_PEB32_ACTIVE_CODE_PAGE) = native->ActiveCodePage;
+    *(USHORT *)((PUCHAR)peb + MIME_PEB32_OEM_CODE_PAGE) = native->OemCodePage;
     out->MaximumLength = out->Length = sizeof(*out);
     out->Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
     out->ConsoleHandle = (ULONG)(ULONG_PTR)pp->ConsoleHandle;

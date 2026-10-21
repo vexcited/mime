@@ -307,6 +307,29 @@ void CmRefreshTimeZoneRules(ULONG year)
     ExReleaseFastMutex(&CmpLock);
 }
 
+/*
+ * the language of the installation, which the host chose: the system and user locale, the code pages that go with it
+ * and the locale of the user's settings. The language of the installed system itself stays English.
+ */
+static void locale(PCWSTR sid)
+{
+    WCHAR text[16], name[40], hex8[16], path[160] = {};
+    ULONG lcid = HalBootInfo->locale_lcid ? HalBootInfo->locale_lcid : 0x0409;
+    widen(name, RTL_NUMBER_OF(name), HalBootInfo->locale_name[0] ? HalBootInfo->locale_name : "en-US");
+    _snwprintf(text, RTL_NUMBER_OF(text) - 1, L"%04x", lcid & 0xFFFF);
+    set_sz(CONTROL L"\\Nls\\Language", L"Default", REG_SZ, text);
+    _snwprintf(text, RTL_NUMBER_OF(text) - 1, L"%u", HalBootInfo->ansi_code_page ? HalBootInfo->ansi_code_page : 1252);
+    set_sz(CONTROL L"\\Nls\\CodePage", L"ACP", REG_SZ, text);
+    _snwprintf(text, RTL_NUMBER_OF(text) - 1, L"%u", HalBootInfo->oem_code_page ? HalBootInfo->oem_code_page : 437);
+    set_sz(CONTROL L"\\Nls\\CodePage", L"OEMCP", REG_SZ, text);
+    _snwprintf(hex8, RTL_NUMBER_OF(hex8) - 1, L"%08x", lcid & 0xFFFF);
+    set_sz(L"\\REGISTRY\\USER\\.DEFAULT\\Control Panel\\International", L"LocaleName", REG_SZ, name);
+    set_sz(L"\\REGISTRY\\USER\\.DEFAULT\\Control Panel\\International", L"Locale", REG_SZ, hex8);
+    _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\REGISTRY\\USER\\%ls\\Control Panel\\International", sid);
+    set_sz(path, L"LocaleName", REG_SZ, name);
+    set_sz(path, L"Locale", REG_SZ, hex8);
+}
+
 /* the processor variables the session manager writes at boot. */
 static void processor_environment(void)
 {
@@ -341,6 +364,7 @@ void CmpSpecialize(void)
     firmware();
     machine_guid();
     time_zone();
+    locale(sid);
     hardware();
     processor_environment();
     CmpUnlock();

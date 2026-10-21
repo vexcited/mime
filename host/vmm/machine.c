@@ -6,6 +6,7 @@
 #include "input_queue.h"
 
 #include "../identity.h"
+#include "../locale.h"
 #include "../rom.h"
 
 #include <stdio.h>
@@ -73,6 +74,16 @@ static void fill_identity(MimeVm *vm)
     mime_strlcpy(boot->system_serial, id.machine_serial, sizeof(boot->system_serial));
     parse_uuid(id.machine_uuid, boot->system_uuid);
     mime_host_volume_label(boot->host_volume_label, sizeof(boot->host_volume_label));
+
+    /* the language of the installation, which MIME_LOCALE sets for one start, as the tests do to keep en-US. */
+    MimeLocale locale;
+    const char *forced = getenv("MIME_LOCALE");
+    if (!(forced && forced[0] && mime_locale_find(forced, &locale)) && !mime_locale_find(id.locale, &locale))
+        mime_locale_find("en-US", &locale);
+    boot->locale_lcid = locale.lcid;
+    boot->ansi_code_page = locale.ansi_code_page;
+    boot->oem_code_page = locale.oem_code_page;
+    mime_strlcpy(boot->locale_name, locale.name, sizeof(boot->locale_name));
 }
 
 /* the boot information at the start of ram; the platform adds its timer and interrupt controller. */

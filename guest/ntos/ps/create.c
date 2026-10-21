@@ -150,8 +150,8 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     peb->HeapDeCommitFreeBlockThreshold = 0x1000;
     peb->MaximumNumberOfHeaps = 16;
     peb->SessionId = process->SessionId;
-    peb->ActiveCodePage = 1252;
-    peb->OemCodePage = 437;
+    peb->ActiveCodePage = HalBootInfo->ansi_code_page ? HalBootInfo->ansi_code_page : 1252;
+    peb->OemCodePage = HalBootInfo->oem_code_page ? HalBootInfo->oem_code_page : 437;
 
     pp->Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
     pp->ShowWindowFlags = p->ShowWindowFlags;

@@ -1,4 +1,5 @@
 #include "identity.h"
+#include "locale.h"
 
 #include <pwd.h>
 #include <stdio.h>
@@ -154,13 +155,13 @@ static void make_user_name(char *out, size_t size)
 
 static void save(const MimePaths *paths, const MimeIdentity *id)
 {
-    char path[MIME_PATH_MAX], text[512];
+    char path[MIME_PATH_MAX], text[600];
     ini_path(paths, path, sizeof(path));
     int n = snprintf(text, sizeof(text),
                      "[machine]\ncomputer=%s\nuser=%s\nsid=S-1-5-21-%u-%u-%u\nserial=%08X\ninstalled=%llu\n"
-                     "machineserial=%s\nuuid=%s\n",
+                     "machineserial=%s\nuuid=%s\nlocale=%s\n",
                      id->computer_name, id->user_name, id->sid[0], id->sid[1], id->sid[2], id->volume_serial,
-                     (unsigned long long)id->install_filetime, id->machine_serial, id->machine_uuid);
+                     (unsigned long long)id->install_filetime, id->machine_serial, id->machine_uuid, id->locale);
     mime_write_file(path, text, (size_t)n);
 }
 
@@ -192,6 +193,8 @@ bool mime_identity_load(const MimePaths *paths, MimeIdentity *out)
                 mime_strlcpy(out->machine_serial, v, sizeof(out->machine_serial));
             else if (strcmp(line, "uuid") == 0)
                 mime_strlcpy(out->machine_uuid, v, sizeof(out->machine_uuid));
+            else if (strcmp(line, "locale") == 0)
+                mime_strlcpy(out->locale, v, sizeof(out->locale));
         }
         free(text);
     }
@@ -226,7 +229,26 @@ bool mime_identity_load(const MimePaths *paths, MimeIdentity *out)
         make_machine_uuid(out->machine_uuid, sizeof(out->machine_uuid));
         changed = true;
     }
+    /* like the language setup asks for, taken from the settings of the host the first time. */
+    MimeLocale locale;
+    if (!out->locale[0] || !mime_locale_find(out->locale, &locale)) {
+        mime_locale_from_host(&locale);
+        mime_strlcpy(out->locale, locale.name, sizeof(out->locale));
+        changed = true;
+    }
     if (changed)
         save(paths, out);
+    return true;
+}
+
+bool mime_identity_set_locale(const MimePaths *paths, const char *name)
+{
+    MimeLocale locale;
+    if (!mime_locale_find(name, &locale))
+        return false;
+    MimeIdentity id;
+    mime_identity_load(paths, &id);
+    mime_strlcpy(id.locale, locale.name, sizeof(id.locale));
+    save(paths, &id);
     return true;
 }

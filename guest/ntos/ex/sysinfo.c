@@ -766,9 +766,10 @@ NTSTATUS NTAPI ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     return status;
 }
 
+/* the locale of the installation, which the host chose and passed on. */
 NTSTATUS NTAPI NtQueryDefaultLocale(BOOLEAN user, LCID *locale)
 {
-    LCID l = 0x0409;
+    LCID l = HalBootInfo->locale_lcid ? HalBootInfo->locale_lcid : 0x0409;
     return KiCopyToUser(locale, &l, sizeof(l));
 }
 

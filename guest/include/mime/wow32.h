@@ -65,6 +65,9 @@ typedef struct MIME_PEB32 {
     ULONG TlsExpansionBitmapBits[32], SessionId;
 } MIME_PEB32;
 MIME_FIELD_AT(MIME_PEB32, SessionId, 0x1D4);
+/* where the 32-bit PEB of nt.h keeps the code pages, which kernelbase of the x86 runtime reads. */
+#define MIME_PEB32_ACTIVE_CODE_PAGE 0x228
+#define MIME_PEB32_OEM_CODE_PAGE 0x22A
 
 #define MIME_TEB32_EXCEPTION_LIST 0x0
 #define MIME_TEB32_STACK_BASE 0x4

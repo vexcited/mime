@@ -9,7 +9,7 @@ static void usage(void)
 {
     printf("mime %s, windows compatibility machine\n\n", MIME_VERSION_STRING);
     printf("usage:\n");
-    printf("  mime setup [windows.iso] [--image N]   import assets from a windows iso\n");
+    printf("  mime setup [windows.iso] [--image N] [--locale NAME]   import assets from a windows iso\n");
     printf("  mime up                                start the machine\n");
     printf("  mime run [--wait] <program.exe> [args] run a program, host or C:\\ paths; --wait waits for\n");
     printf("                                         a gui program instead of returning like cmd.exe\n");

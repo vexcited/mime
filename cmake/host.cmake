@@ -101,7 +101,8 @@ else()
     add_dependencies(mime mime-gen-vulkan)
 endif()
 
-target_include_directories(mime PRIVATE include)
+target_include_directories(mime PRIVATE include ${MIME_GEN})
+add_dependencies(mime mime-gen-hostlocales)
 target_compile_options(mime PRIVATE $<$<COMPILE_LANGUAGE:C>:${host_warnings}>)
 set_target_properties(mime PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS ${host_gnu}
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

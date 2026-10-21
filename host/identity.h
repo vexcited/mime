@@ -15,6 +15,7 @@ typedef struct MimeIdentity {
     uint64_t install_filetime;
     char machine_serial[20]; /* serial of the case, as firmware reports it */
     char machine_uuid[40];   /* smbios uuid, text form */
+    char locale[32];         /* name of the locale of the user, empty until chosen */
 } MimeIdentity;
 
 /*
@@ -39,5 +40,8 @@ const MimeHardwareProfile *mime_hardware_profile(void);
 
 /* reads machine.ini, creating it with fresh values the first time. */
 bool mime_identity_load(const MimePaths *paths, MimeIdentity *out);
+
+/* sets the locale of the user in machine.ini; false when the name is not a locale of the system. */
+bool mime_identity_set_locale(const MimePaths *paths, const char *name);
 
 #endif

@@ -351,6 +351,11 @@ typedef struct MimeBootInfo {
      */
     uint32_t display_ready;
     uint32_t pad2;
+    /* the locale of the user and the code pages that follow from it, set at setup, see host/locale.c. */
+    uint32_t locale_lcid;
+    uint16_t ansi_code_page;
+    uint16_t oem_code_page;
+    char locale_name[32];
 } MimeBootInfo;
 
 /*
