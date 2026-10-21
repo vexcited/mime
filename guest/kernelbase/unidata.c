@@ -54,7 +54,7 @@ BOOL KbUniIsNonspacing(ULONG cp)
 /* the units of the full decomposition of a character, or 0 when it has none. */
 int KbUniDecompose(ULONG cp, BOOL compat, WCHAR *out)
 {
-    if (cp < 0xC0)
+    if (cp < (compat ? 0xA0u : 0xC0u))
         return 0;
     if (cp >= HANGUL_S_BASE && cp < HANGUL_S_BASE + HANGUL_S_COUNT) {
         ULONG s = cp - HANGUL_S_BASE;

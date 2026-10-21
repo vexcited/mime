@@ -5,70 +5,15 @@
 
 /* ------------------------------------------------------------------ case mapping */
 
-typedef struct CASE_RANGE {
-    WCHAR First;
-    WCHAR Last;
-    SHORT Delta;  /* added to an upper case character to get its lower case form. */
-    UCHAR Paired; /* 1: alternating upper and lower code points, upper on even ones; 2: upper on odd ones. */
-} CASE_RANGE;
-
-/* ranges of upper case letters and how they map to lower case. */
-static const CASE_RANGE g_case_ranges[] = {
-    {0x0041, 0x005A, 32, 0},  {0x00C0, 0x00D6, 32, 0},  {0x00D8, 0x00DE, 32, 0},  {0x0100, 0x012F, 1, 1},
-    {0x0132, 0x0137, 1, 1},   {0x0139, 0x0148, 1, 2},   {0x014A, 0x0177, 1, 1},   {0x0179, 0x017E, 1, 2},
-    {0x0386, 0x0386, 38, 0},  {0x0388, 0x038A, 37, 0},  {0x038C, 0x038C, 64, 0},  {0x038E, 0x038F, 63, 0},
-    {0x0391, 0x03A1, 32, 0},  {0x03A3, 0x03AB, 32, 0},  {0x03E2, 0x03EF, 1, 1},   {0x0400, 0x040F, 80, 0},
-    {0x0410, 0x042F, 32, 0},  {0x0460, 0x0481, 1, 1},   {0x048A, 0x04BF, 1, 1},   {0x04C1, 0x04CE, 1, 2},
-    {0x04D0, 0x052F, 1, 1},   {0x0531, 0x0556, 48, 0},  {0x10A0, 0x10C5, 7264, 0}, {0x1E00, 0x1E95, 1, 1},
-    {0x1EA0, 0x1EFF, 1, 1},   {0x1F08, 0x1F0F, -8, 0},  {0x1F18, 0x1F1D, -8, 0},  {0x1F28, 0x1F2F, -8, 0},
-    {0x1F38, 0x1F3F, -8, 0},  {0x1F48, 0x1F4D, -8, 0},  {0x1F68, 0x1F6F, -8, 0},  {0x2160, 0x216F, 16, 0},
-    {0x24B6, 0x24CF, 26, 0},  {0x2C00, 0x2C2E, 48, 0},  {0xFF21, 0xFF3A, 32, 0},
-};
-
-static BOOL range_contains(const CASE_RANGE *r, WCHAR c)
-{
-    if (c < r->First || c > r->Last)
-        return FALSE;
-    if (r->Paired == 1)
-        return (c & 1) == 0;
-    if (r->Paired == 2)
-        return (c & 1) == 1;
-    return TRUE;
-}
-
+/* the simple case mappings of the Unicode standard, from the tables of unidata.c. */
 WCHAR KbDowncase(WCHAR c)
 {
-    if (c < 0x80)
-        return (c >= 'A' && c <= 'Z') ? (WCHAR)(c + 32) : c;
-    if (c == 0x0178)
-        return 0x00FF;
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_case_ranges); i++)
-        if (range_contains(&g_case_ranges[i], c))
-            return (WCHAR)(c + g_case_ranges[i].Delta);
-    return c;
+    return (WCHAR)KbUniLower(c);
 }
 
 WCHAR KbUpcase(WCHAR c)
 {
-    if (c < 0x80)
-        return (c >= 'a' && c <= 'z') ? (WCHAR)(c - 32) : c;
-    switch (c) {
-    case 0x00FF:
-        return 0x0178;
-    case 0x0131:
-        return 'I';
-    case 0x03C2:
-        return 0x03A3;
-    case 0x00B5:
-        return 0x039C;
-    }
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_case_ranges); i++) {
-        const CASE_RANGE *r = &g_case_ranges[i];
-        WCHAR upper = (WCHAR)(c - r->Delta);
-        if (upper != c && range_contains(r, upper))
-            return upper;
-    }
-    return c;
+    return (WCHAR)KbUniUpper(c);
 }
 
 /* ------------------------------------------------------------------ classification */

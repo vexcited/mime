@@ -959,149 +959,123 @@ int WINAPI GetStringScripts(DWORD flags, LPCWSTR string, int length, LPWSTR scri
 
 /* ------------------------------------------------------------------ normalization */
 
-/* compatibility mappings used by the kc and kd forms; values may hold two characters. */
-static int compatibility(WCHAR c, WCHAR out[3])
-{
-    if (c >= 0xFF01 && c <= 0xFF5E) {
-        out[0] = (WCHAR)(c - 0xFF01 + 0x21);
-        return 1;
-    }
-    switch (c) {
-    case 0x00A0:
-    case 0x3000:
-    case 0x2002:
-    case 0x2003:
-        out[0] = ' ';
-        return 1;
-    case 0x00A8:
-        out[0] = ' ', out[1] = DIAERESIS;
-        return 2;
-    case 0x00AA:
-        out[0] = 'a';
-        return 1;
-    case 0x00AF:
-        out[0] = ' ', out[1] = MACRON;
-        return 2;
-    case 0x00B2:
-    case 0x00B3:
-        out[0] = (WCHAR)('2' + c - 0xB2);
-        return 1;
-    case 0x00B4:
-        out[0] = ' ', out[1] = ACUTE;
-        return 2;
-    case 0x00B5:
-        out[0] = 0x03BC;
-        return 1;
-    case 0x00B8:
-        out[0] = ' ', out[1] = CEDILLA;
-        return 2;
-    case 0x00B9:
-        out[0] = '1';
-        return 1;
-    case 0x00BA:
-        out[0] = 'o';
-        return 1;
-    case 0x00BC:
-        out[0] = '1', out[1] = 0x2044, out[2] = '4';
-        return 3;
-    case 0x00BD:
-        out[0] = '1', out[1] = 0x2044, out[2] = '2';
-        return 3;
-    case 0x00BE:
-        out[0] = '3', out[1] = 0x2044, out[2] = '4';
-        return 3;
-    case 0x0132:
-        out[0] = 'I', out[1] = 'J';
-        return 2;
-    case 0x0133:
-        out[0] = 'i', out[1] = 'j';
-        return 2;
-    case 0x013F:
-        out[0] = 'L', out[1] = 0x00B7;
-        return 2;
-    case 0x0140:
-        out[0] = 'l', out[1] = 0x00B7;
-        return 2;
-    case 0x0149:
-        out[0] = 0x02BC, out[1] = 'n';
-        return 2;
-    case 0x017F:
-        out[0] = 's';
-        return 1;
-    case 0x2026:
-        out[0] = '.', out[1] = '.', out[2] = '.';
-        return 3;
-    case 0x2122:
-        out[0] = 'T', out[1] = 'M';
-        return 2;
-    case 0xFB00:
-        out[0] = 'f', out[1] = 'f';
-        return 2;
-    case 0xFB01:
-        out[0] = 'f', out[1] = 'i';
-        return 2;
-    case 0xFB02:
-        out[0] = 'f', out[1] = 'l';
-        return 2;
-    }
-    return 0;
-}
-
+/*
+ * the normalization forms of the Unicode standard: the characters are decomposed, as far as their canonical decomposition
+ * goes or their compatibility one for the forms of that name, the marks are put in the order of their combining classes,
+ * and the composed forms put the characters together again where the standard allows.
+ */
 static int normalize(NORM_FORM form, LPCWSTR src, int len, LPWSTR dst, int dst_len)
 {
     BOOL compat = form == NormalizationKC || form == NormalizationKD;
     BOOL composed = form == NormalizationC || form == NormalizationKC;
-    WIDE_OUT o = {dst, dst_len, 0, FALSE};
-    WCHAR pending = 0; /* a starter waiting for a combining mark, composed forms only. */
-    BOOL have_pending = FALSE;
     for (int i = 0; i < len; i++) {
         WCHAR c = src[i];
-        if (c >= 0xD800 && c <= 0xDBFF) {
-            if (i + 1 >= len || src[i + 1] < 0xDC00 || src[i + 1] > 0xDFFF) {
-                KbSetError(ERROR_NO_UNICODE_TRANSLATION);
-                return -(i + 1);
-            }
-        } else if (c >= 0xDC00 && c <= 0xDFFF && (i == 0 || src[i - 1] < 0xD800 || src[i - 1] > 0xDBFF)) {
+        BOOL bad = FALSE;
+        if (c >= 0xD800 && c <= 0xDBFF)
+            bad = i + 1 >= len || src[i + 1] < 0xDC00 || src[i + 1] > 0xDFFF;
+        else if (c >= 0xDC00 && c <= 0xDFFF)
+            bad = i == 0 || src[i - 1] < 0xD800 || src[i - 1] > 0xDBFF;
+        if (bad) {
             KbSetError(ERROR_NO_UNICODE_TRANSLATION);
             return -(i + 1);
         }
-        WCHAR seq[4];
-        int count = 0;
-        WCHAR extra[3];
-        int e = compat ? compatibility(c, extra) : 0;
-        if (e) {
-            for (int k = 0; k < e; k++)
-                seq[count++] = extra[k];
+    }
+    ULONG *cps = nullptr;
+    SIZE_T count = 0, capacity = 0;
+    for (int i = 0; i < len; i++) {
+        ULONG c = src[i];
+        if (c >= 0xD800 && c <= 0xDBFF) {
+            c = 0x10000 + ((c - 0xD800) << 10) + (src[i + 1] - 0xDC00);
+            i++;
+        }
+        WCHAR parts[20];
+        int n = c >= 0xA0 ? KbUniDecompose(c, compat, parts) : 0;
+        ULONG decoded[20];
+        int m = 0;
+        if (!n) {
+            decoded[m++] = c;
         } else {
-            const DECOMPOSITION *d = find_decomposition(c);
-            if (d) {
-                seq[count++] = d->Base;
-                seq[count++] = d->Mark;
-            } else {
-                seq[count++] = c;
+            for (int k = 0; k < n; k++) {
+                ULONG p = parts[k];
+                if (p >= 0xD800 && p <= 0xDBFF && k + 1 < n) {
+                    p = 0x10000 + ((p - 0xD800) << 10) + (parts[k + 1] - 0xDC00);
+                    k++;
+                }
+                decoded[m++] = p;
             }
         }
-        for (int k = 0; k < count; k++) {
-            WCHAR x = seq[k];
-            if (!composed) {
-                put_wide(&o, x);
-                continue;
+        if (count + (SIZE_T)m > capacity) {
+            SIZE_T grown = (capacity ? capacity * 2 : 64) + (SIZE_T)m;
+            ULONG *bigger = KbAlloc(grown * sizeof(ULONG));
+            if (!bigger) {
+                KbFree(cps);
+                KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+                return 0;
             }
-            if (have_pending && is_combining(x)) {
-                WCHAR combined = compose(pending, x);
-                if (combined) {
-                    pending = combined;
+            if (cps)
+                memcpy(bigger, cps, count * sizeof(ULONG));
+            KbFree(cps);
+            cps = bigger;
+            capacity = grown;
+        }
+        for (int k = 0; k < m; k++)
+            cps[count++] = decoded[k];
+    }
+    /* the marks of each run in the order of their classes. */
+    for (SIZE_T i = 0; i < count;) {
+        if (!KbUniCcc(cps[i])) {
+            i++;
+            continue;
+        }
+        SIZE_T j = i;
+        while (j < count && KbUniCcc(cps[j]))
+            j++;
+        for (SIZE_T a = i + 1; a < j; a++) {
+            ULONG c = cps[a];
+            UINT cc = KbUniCcc(c);
+            SIZE_T b = a;
+            while (b > i && KbUniCcc(cps[b - 1]) > cc) {
+                cps[b] = cps[b - 1];
+                b--;
+            }
+            cps[b] = c;
+        }
+        i = j;
+    }
+    if (composed && count) {
+        SIZE_T out = 0, starter = (SIZE_T)-1;
+        UINT last_class = 0;
+        for (SIZE_T i = 0; i < count; i++) {
+            ULONG c = cps[i];
+            UINT cc = KbUniCcc(c);
+            if (starter != (SIZE_T)-1 && (out - 1 == starter || last_class < cc)) {
+                ULONG pair = KbUniCompose(cps[starter], c, TRUE);
+                if (pair) {
+                    cps[starter] = pair;
                     continue;
                 }
             }
-            if (have_pending)
-                put_wide(&o, pending);
-            pending = x;
-            have_pending = TRUE;
+            if (!cc) {
+                starter = out;
+                last_class = 0;
+            } else {
+                last_class = cc;
+            }
+            cps[out++] = c;
+        }
+        count = out;
+    }
+    WIDE_OUT o = {dst, dst_len, 0, FALSE};
+    for (SIZE_T i = 0; i < count; i++) {
+        ULONG c = cps[i];
+        if (c >= 0x10000) {
+            put_wide(&o, (WCHAR)(0xD800 + ((c - 0x10000) >> 10)));
+            put_wide(&o, (WCHAR)(0xDC00 + ((c - 0x10000) & 0x3FF)));
+        } else {
+            put_wide(&o, (WCHAR)c);
         }
     }
-    if (have_pending)
-        put_wide(&o, pending);
+    KbFree(cps);
     if (o.Overflow) {
         KbSetError(ERROR_INSUFFICIENT_BUFFER);
         return 0;
