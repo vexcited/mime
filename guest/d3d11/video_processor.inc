@@ -104,7 +104,7 @@ static VpSpace legacy_space(const D3D11_VIDEO_PROCESSOR_COLOR_SPACE *cs, BOOL rg
     if (rgb)
         s.full = cs->RGB_Range == 0;
     else
-        s.full = cs->Nominal_Range == 1;
+        s.full = cs->Nominal_Range == D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
     return s;
 }
 
@@ -589,6 +589,47 @@ static HRESULT vp_create_processor(D3dDevice *device, ID3D11VideoProcessorEnumer
     return S_OK;
 }
 
+/* ------------------------------------------------------------------ making a view */
+
+/* the binds that let a texture be the input of a processor, besides none at all. */
+#define VP_INPUT_BINDS (D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_DECODER | \
+                        D3D11_BIND_VIDEO_ENCODER | 0x800)
+#define VP_WHOLE_ARRAY 0xFFFFFFFFu
+
+/* whether the texture and the view of it fit an input of the processor. */
+static BOOL input_view_fits(const D3dResource *r, const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC *desc)
+{
+    if (r->bind && !(r->bind & VP_INPUT_BINDS))
+        return FALSE;
+    if (r->usage == D3D11_USAGE_STAGING)
+        return FALSE;
+    return desc->ViewDimension == D3D11_VPIV_DIMENSION_TEXTURE2D && desc->Texture2D.ArraySlice < r->tex.layers &&
+           desc->Texture2D.MipSlice < r->tex.mips;
+}
+
+/* whether the texture and the view of it fit the output of the processor. a stereo output would take two layers. */
+static BOOL output_view_fits(const D3dResource *r, const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC *desc)
+{
+    if (!(r->bind & D3D11_BIND_RENDER_TARGET))
+        return FALSE;
+    switch (desc->ViewDimension) {
+    case D3D11_VPOV_DIMENSION_TEXTURE2D:
+        return desc->Texture2D.MipSlice < r->tex.mips;
+    case D3D11_VPOV_DIMENSION_TEXTURE2DARRAY: {
+        const D3D11_TEX2D_ARRAY_VPOV *a = &desc->Texture2DArray;
+        UINT layers = a->ArraySize == VP_WHOLE_ARRAY ? r->tex.layers : a->ArraySize;
+        return a->MipSlice < r->tex.mips && a->FirstArraySlice < r->tex.layers &&
+               layers <= r->tex.layers - a->FirstArraySlice && layers == 1;
+    }
+    default:
+        return FALSE;
+    }
+}
+
+/*
+ * CreateVideoProcessorInputView and OutputView. every refusal is E_INVALIDARG. a call without a place for the view
+ * only checks and answers S_FALSE when the view would be made.
+ */
 static HRESULT vp_create_view(D3dDevice *device, BOOL is_output, ID3D11Resource *resource,
                               ID3D11VideoProcessorEnumerator *enumerator, const void *desc, void **out)
 {
@@ -597,53 +638,31 @@ static HRESULT vp_create_view(D3dDevice *device, BOOL is_output, ID3D11Resource 
     if (!resource || !desc || !enumerator)
         return E_INVALIDARG;
     D3dResource *r = D3dResourceFrom(resource);
-    if (r->dimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D)
+    if (!r || r->dimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D || r->tex.samples != 1)
         return E_INVALIDARG;
-    UINT flags = 0;
-    enumerator->lpVtbl->CheckVideoProcessorFormat(enumerator, r->tex.format, &flags);
-    if (r->tex.samples > 1)
+
+    UINT wanted = is_output ? 2 : 1;
+    if (!(format_flags(enum_of(enumerator)->child.device, r->tex.format) & wanted))
         return E_INVALIDARG;
-    if (is_output) {
-        const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC *d = desc;
-        if (!(r->bind & D3D11_BIND_RENDER_TARGET) || !(flags & 2))
-            return E_INVALIDARG;
-        if (d->ViewDimension == D3D11_VPOV_DIMENSION_TEXTURE2D) {
-            if (d->Texture2D.MipSlice >= r->tex.mips)
-                return E_INVALIDARG;
-        } else if (d->ViewDimension == D3D11_VPOV_DIMENSION_TEXTURE2DARRAY) {
-            UINT size = d->Texture2DArray.ArraySize == ~0u ? r->tex.layers : d->Texture2DArray.ArraySize;
-            if (d->Texture2DArray.MipSlice >= r->tex.mips || d->Texture2DArray.FirstArraySlice >= r->tex.layers ||
-                size != 1 || d->Texture2DArray.FirstArraySlice + size > r->tex.layers)
-                return E_INVALIDARG;
-        } else {
-            return E_INVALIDARG;
-        }
-    } else {
-        const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC *d = desc;
-        /* what a stream may be: a decoder's picture, or a texture a program renders to or writes. */
-        if (!(r->bind & (D3D11_BIND_DECODER | D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS | 0x400 | 0x800)) &&
-            r->bind)
-            return E_INVALIDARG;
-        if (r->usage == D3D11_USAGE_STAGING || !(flags & 1))
-            return E_INVALIDARG;
-        if (d->ViewDimension != D3D11_VPIV_DIMENSION_TEXTURE2D || d->Texture2D.ArraySlice >= r->tex.layers ||
-            d->Texture2D.MipSlice >= r->tex.mips)
-            return E_INVALIDARG;
-    }
+    if (is_output ? !output_view_fits(r, desc) : !input_view_fits(r, desc))
+        return E_INVALIDARG;
     if (!out)
         return S_FALSE;
+
     VpView *v = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*v));
     if (!v)
         return E_OUTOFMEMORY;
-    v->is_output = is_output;
-    *(const void **)&v->iface = is_output ? (const void *)&output_view_vtbl : (const void *)&input_view_vtbl;
+    if (is_output) {
+        v->iface.output.lpVtbl = &output_view_vtbl;
+        v->output_desc = *(const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC *)desc;
+    } else {
+        v->iface.input.lpVtbl = &input_view_vtbl;
+        v->input_desc = *(const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC *)desc;
+    }
     D3dChildInit(&v->child, device);
+    v->is_output = is_output;
     v->resource = r;
     D3dResourceAddRef(r);
-    if (is_output)
-        v->output_desc = *(const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC *)desc;
-    else
-        v->input_desc = *(const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC *)desc;
     *out = is_output ? (void *)&v->iface.output : (void *)&v->iface.input;
     return S_OK;
 }

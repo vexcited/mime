@@ -295,6 +295,10 @@ static HRESULT STDMETHODCALLTYPE keyed_get_device(IDXGIKeyedMutex *iface, REFIID
 
 void D3dContextFlush(D3dContext *c);
 
+/* the answers AcquireSync gives besides S_OK: the constants of WaitForSingleObject, returned as they are. */
+#define KEYED_WAIT_ABANDONED ((HRESULT)0x00000080L)
+#define KEYED_WAIT_TIMEOUT ((HRESULT)0x00000102L)
+
 /*
  * Acquiring waits for the key. A mutex that is held already, here, is an invalid call, and the work the program
  * recorded is submitted first, as d3d11.dll flushes its context before it acquires.
@@ -315,13 +319,13 @@ static HRESULT STDMETHODCALLTYPE keyed_acquire_sync(IDXGIKeyedMutex *iface, UINT
     if (status == STATUS_SUCCESS)
         r->keyed_acquired = TRUE;
     /*
-     * d3d11.dll turns the status of the kernel's acquire into an error as it turns every one, so a timeout is
-     * DXGI_ERROR_WAIT_TIMEOUT and an abandoned mutex DXGI_ERROR_ACCESS_LOST, and neither marks the resource as acquired.
+     * A timeout and an abandoned mutex are not errors but the wait constants, as documented for AcquireSync: the
+     * values 0x102 and 0x80 are non negative, so SUCCEEDED holds for them, and neither means the key was acquired.
      */
     if (status == STATUS_TIMEOUT)
-        return DXGI_ERROR_WAIT_TIMEOUT;
+        return KEYED_WAIT_TIMEOUT;
     if (status == STATUS_ABANDONED)
-        return DXGI_ERROR_ACCESS_LOST;
+        return KEYED_WAIT_ABANDONED;
     return MimeShareHResult(status);
 }
 
