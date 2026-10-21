@@ -1141,51 +1141,71 @@ static HWND *top_level_windows(ULONG *count)
     return list;
 }
 
-/* the messages that may not cross to a window of another process at all. */
-static BOOLEAN refused_across(WND *w, UINT msg)
+/* the messages that never cross to a window of another process, whatever the window. */
+#define MSG_INITDIALOG 0x0110
+#define MSG_NOTIFY 0x004E
+
+/*
+ * whether the send or post of the message to a window in another process is refused. a dialog init and a notification
+ * are sent only inside a process, and what a password edit control keeps does not leave its process.
+ */
+static BOOLEAN stays_in_process(const WND *w, UINT msg)
 {
-    if (msg == WM_INITDIALOG || msg == WM_NOTIFY)
+    if (msg == MSG_INITDIALOG || msg == MSG_NOTIFY)
         return TRUE;
-    /* what a password edit keeps does not leave its process. */
-    return (msg == WM_GETTEXT || msg == EM_GETLINE || msg == EM_SETPASSWORDCHAR) && w->Class &&
-           w->Class->Fnid == MIME_FNID_EDIT && (w->Style & ES_PASSWORD);
+    BOOLEAN reveals_password = msg == WM_GETTEXT || msg == EM_GETLINE || msg == EM_SETPASSWORDCHAR;
+    BOOLEAN password_edit = w->Class && w->Class->Fnid == MIME_FNID_EDIT && (w->Style & ES_PASSWORD);
+    return reveals_password && password_edit;
+}
+
+/* both ends of a block can be read, which is how far the sender's memory is trusted before a write into it is tried. */
+static BOOLEAN ends_readable(LPARAM user, SIZE_T size)
+{
+    UCHAR byte;
+    if (!size)
+        return TRUE;
+    return NT_SUCCESS(MimeCopyFromUser(&byte, (PVOID)user, 1)) &&
+           NT_SUCCESS(MimeCopyFromUser(&byte, (PVOID)(user + size - 1), 1));
+}
+
+/* a structure that carries its own size: the size has to be the one the message needs. */
+static BOOLEAN sized_struct_usable(LPARAM lparam, ULONG expected)
+{
+    DWORD claimed;
+    if (!lparam || !NT_SUCCESS(MimeCopyFromUser(&claimed, (PVOID)lparam, sizeof(claimed))))
+        return FALSE;
+    if (claimed != expected) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return ends_readable(lparam, expected);
+}
+
+/* the device changes whose lparam is the data of the change, so that without it there is nothing to deliver. */
+static BOOLEAN device_change_needs_data(WPARAM event)
+{
+    return event == 0x8000 || event == 0x8004 || (event >= 0x8007 && event <= 0x800A);
 }
 
 /*
- * a send between threads of one process runs on the sender's memory, but a program that sends a null
- * pointer or a structure that cannot be right gets nothing done, as with a copy.
+ * a send between two threads of one process hands the receiver the sender's own pointers, but the pointers still have to
+ * be the kind the message needs: a send that could not have been copied is not delivered either.
  */
-static BOOLEAN readable(LPARAM user, SIZE_T size)
-{
-    UCHAR byte;
-    return size == 0 || (NT_SUCCESS(MimeCopyFromUser(&byte, (PVOID)user, 1)) &&
-                         NT_SUCCESS(MimeCopyFromUser(&byte, (PVOID)(user + size - 1), 1)));
-}
-
-static BOOLEAN pointers_fit(MSG_RULE rule, WPARAM wparam, LPARAM lparam)
+static BOOLEAN local_pointers_usable(MSG_RULE rule, WPARAM wparam, LPARAM lparam)
 {
     switch (rule.Class) {
     case MC_STRUCT_IN:
     case MC_STRUCT_INOUT:
     case MC_STRUCT_OUT:
-        return lparam && readable(lparam, rule.Size);
+        return lparam && ends_readable(lparam, rule.Size);
     case MC_TITLEBAR:
-    case MC_HELP: {
-        /* these say how large they are, and are refused if they do not say it right. */
-        DWORD size;
-        if (!lparam || !NT_SUCCESS(MimeCopyFromUser(&size, (PVOID)lparam, sizeof(size))))
-            return FALSE;
-        if (size != rule.Size) {
-            W32SetLastError(ERROR_INVALID_PARAMETER);
-            return FALSE;
-        }
-        return readable(lparam, rule.Size);
-    }
+    case MC_HELP:
+        return sized_struct_usable(lparam, rule.Size);
     case MC_COPYDATA: {
-        COPYDATASTRUCT cd;
-        if (!lparam || !NT_SUCCESS(MimeCopyFromUser(&cd, (PVOID)lparam, sizeof(cd))))
+        COPYDATASTRUCT data;
+        if (!lparam || !NT_SUCCESS(MimeCopyFromUser(&data, (PVOID)lparam, sizeof(data))))
             return FALSE;
-        return !cd.lpData || readable((LPARAM)cd.lpData, cd.cbData);
+        return !data.lpData || ends_readable((LPARAM)data.lpData, data.cbData);
     }
     case MC_NCCALCSIZE:
     case MC_MDICREATE:
@@ -1195,8 +1215,7 @@ static BOOLEAN pointers_fit(MSG_RULE rule, WPARAM wparam, LPARAM lparam)
     case MC_STRING_OUT:
         return wparam <= 0x3FFFFFFF && (lparam || !wparam);
     case MC_DEVCHANGE:
-        /* some device changes are nothing without what they tell of. */
-        if (!lparam && (wparam == 0x8000 || wparam == 0x8004 || (wparam >= 0x8007 && wparam <= 0x800A))) {
+        if (!lparam && device_change_needs_data(wparam)) {
             W32SetLastError(ERROR_INVALID_PARAMETER);
             return FALSE;
         }
@@ -1244,7 +1263,7 @@ static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD ty
     }
     BOOLEAN cross_thread = target && target != self;
     BOOLEAN cross_process = cross_thread && (!self || target->Process != self->Process);
-    if (cross_thread && (rule.Class == MC_CREATE || (cross_process && refused_across(w, msg)))) {
+    if (cross_thread && (rule.Class == MC_CREATE || (cross_process && stays_in_process(w, msg)))) {
         W32SetLastError(ERROR_ACCESS_DENIED);
         return 0;
     }
@@ -1258,7 +1277,7 @@ static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD ty
     local.TimedOut = local.Aborted = local.Refused = local.Taken = FALSE;
     LRESULT r;
     if (!marshal) {
-        if (cross_thread && !pointers_fit(rule, wparam, lparam))
+        if (cross_thread && !local_pointers_usable(rule, wparam, lparam))
             return 0;
         r = deliver(w, msg, wparam, lparam, MIME_LPARAM_VALUE, 0, type, &local);
     } else {
@@ -1301,6 +1320,32 @@ static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD ty
     return failed ? 0 : r;
 }
 
+/* the range of the messages programs define for themselves, which no window can be sent without a recipient. */
+#define MSG_PROGRAM_FIRST 0x0400
+#define MSG_PROGRAM_LAST 0xBFFF
+
+/*
+ * the send form of a broadcast: every top level window gets the message through the rules of a single send, except
+ * that the messages of programs reach nobody, which is told as an invalid parameter while the call itself succeeds.
+ */
+static LRESULT broadcast_send(UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, SEND_OPTS *opts)
+{
+    if (msg >= MSG_PROGRAM_FIRST && msg <= MSG_PROGRAM_LAST) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return 1;
+    }
+    ULONG count;
+    HWND *windows = top_level_windows(&count);
+    for (ULONG i = 0; i < count; i++) {
+        WND *w = WndLookup(windows[i]);
+        BOOLEAN delivered;
+        if (w && !(w->Flags & WNDF_DESTROYING) && w->Thread)
+            send_one(w, msg, wparam, lparam, type, opts, &delivered);
+    }
+    W32Free(windows);
+    return 1;
+}
+
 /* the kernel changed the offset of the clock at a change of daylight time; windows send WM_TIMECHANGE then, here it is posted. */
 void NTAPI W32TimeChange(void)
 {
@@ -1314,25 +1359,6 @@ void NTAPI W32TimeChange(void)
     }
     W32Free(list);
     UserLeave();
-}
-
-static LRESULT broadcast_send(UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, SEND_OPTS *opts)
-{
-    /* messages of programs have no place in a broadcast, only the system's and the registered ones do. */
-    if (msg >= 0x400 && msg <= 0xBFFF) {
-        W32SetLastError(ERROR_INVALID_PARAMETER);
-        return 1;
-    }
-    ULONG count;
-    HWND *list = top_level_windows(&count);
-    for (ULONG i = 0; i < count; i++) {
-        WND *w = WndLookup(list[i]);
-        BOOLEAN ok;
-        if (w && !(w->Flags & WNDF_DESTROYING) && w->Thread)
-            send_one(w, msg, wparam, lparam, type, opts, &ok);
-    }
-    W32Free(list);
-    return 1;
 }
 
 static LRESULT send_user(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, ULONG_PTR info)
@@ -1457,10 +1483,13 @@ LRESULT NTAPI NtUserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     return r;
 }
 
-/* a message with a pointer or a handle in it is not sent to a queue that reads it later. */
+/*
+ * whether a program may post the message to anything: the messages the window manager keeps for itself are refused, and
+ * so are those that carry something of the sender, which cannot be posted.
+ */
 static BOOLEAN post_allowed(UINT msg, WPARAM wparam)
 {
-    if (msg < 0x400 && MimeMsgIsPrivate(msg)) {
+    if (msg < MSG_PROGRAM_FIRST && MimeMsgIsPrivate(msg)) {
         W32SetLastError(ERROR_ACCESS_DENIED);
         return FALSE;
     }
@@ -1471,51 +1500,72 @@ static BOOLEAN post_allowed(UINT msg, WPARAM wparam)
     return TRUE;
 }
 
+/* the messages of touch and gesture input, which only the input stack may post to a window. */
+static BOOLEAN input_signal(UINT msg)
+{
+    return msg == 0x0119 || msg == 0x011B || (msg >= 0x0241 && msg <= 0x0244);
+}
+
+/* the broadcast form of a post: every top level window that has a queue. */
+static BOOL post_to_all(UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    if (MimeMsgIsSyncOnly(msg, wparam, TRUE)) {
+        W32SetLastError(ERROR_MESSAGE_SYNC_ONLY);
+        return FALSE;
+    }
+    if (msg >= MSG_PROGRAM_FIRST && msg <= MSG_PROGRAM_LAST) {
+        /* nobody can be meant by a message of the program, and the call still succeeds. */
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return TRUE;
+    }
+    ULONG count;
+    HWND *windows = top_level_windows(&count);
+    for (ULONG i = 0; i < count; i++) {
+        WND *w = WndLookup(windows[i]);
+        if (w && w->Thread)
+            QueuePost(w->Thread, windows[i], msg, wparam, lparam);
+    }
+    W32Free(windows);
+    return TRUE;
+}
+
+/*
+ * the checks of PostMessage, the first that fails deciding: a message number beyond 17 bits, one the window manager keeps
+ * for itself, then what the window is. the window of another process takes only what may cross.
+ */
 BOOL NTAPI NtUserPostMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     if (msg & 0xFFFE0000u) {
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (msg < 0x400 && MimeMsgIsPrivate(msg)) {
+    if (msg < MSG_PROGRAM_FIRST && MimeMsgIsPrivate(msg)) {
         W32SetLastError(ERROR_ACCESS_DENIED);
         return FALSE;
     }
     UserEnter();
     BOOL ok = FALSE;
     if (is_broadcast(hwnd)) {
-        if (!post_allowed(msg, wparam)) {
-            ok = FALSE;
-        } else if (msg >= 0x400 && msg <= 0xBFFF) {
-            W32SetLastError(ERROR_INVALID_PARAMETER);
-            ok = TRUE;
-        } else {
-            ULONG count;
-            HWND *list = top_level_windows(&count);
-            for (ULONG i = 0; i < count; i++) {
-                WND *w = WndLookup(list[i]);
-                if (w && w->Thread)
-                    QueuePost(w->Thread, list[i], msg, wparam, lparam);
-            }
-            W32Free(list);
-            ok = TRUE;
-        }
+        ok = post_to_all(msg, wparam, lparam);
     } else if (!hwnd) {
-        ok = post_allowed(msg, wparam) && QueuePost(W32GetThread(), nullptr, msg, wparam, lparam);
+        W32THREAD *self = W32GetThread();
+        if (MimeMsgIsSyncOnly(msg, wparam, TRUE))
+            W32SetLastError(ERROR_MESSAGE_SYNC_ONLY);
+        else if (self)
+            ok = QueuePost(self, nullptr, msg, wparam, lparam);
     } else {
         WND *w = WndLookup(hwnd);
-        if (!w || !w->Thread) {
+        W32THREAD *self = W32GetThread();
+        if (!w || !w->Thread)
             W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        } else if (msg == 0x119 || msg == 0x11B || (msg >= 0x241 && msg <= 0x244)) {
-            /* gestures and pointer input come from the system. */
+        else if (input_signal(msg))
             W32SetLastError(ERROR_SIGNAL_REFUSED);
-        } else if (post_allowed(msg, wparam)) {
-            W32THREAD *self = W32GetThread();
-            if (w->Thread->Process != (self ? self->Process : nullptr) && refused_across(w, msg))
-                W32SetLastError(ERROR_ACCESS_DENIED);
-            else
-                ok = QueuePost(w->Thread, hwnd, msg, wparam, lparam);
-        }
+        else if (MimeMsgIsSyncOnly(msg, wparam, TRUE))
+            W32SetLastError(ERROR_MESSAGE_SYNC_ONLY);
+        else if (w->Thread->Process != (self ? self->Process : nullptr) && stays_in_process(w, msg))
+            W32SetLastError(ERROR_ACCESS_DENIED);
+        else
+            ok = QueuePost(w->Thread, hwnd, msg, wparam, lparam);
     }
     UserLeave();
     return ok;

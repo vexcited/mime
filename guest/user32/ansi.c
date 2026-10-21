@@ -439,20 +439,27 @@ LRESULT UserConvEnd(CONV *c, LRESULT result)
 
 /* ------------------------------------------------------------------ the entry points that send */
 
+/*
+ * a copy of global memory for a window of another process: the memory is locked here, in the sender's process, and the
+ * window manager is given the address. whether or not the receiver took it, the sender's handle is used up by the send.
+ */
+static LRESULT send_global_copy(HWND hwnd, WPARAM size, HGLOBAL memory, ULONG_PTR info, DWORD type)
+{
+    if (!size)
+        return 0;
+    void *data = GlobalLock(memory);
+    if (!data)
+        return 0;
+    LRESULT result = NtUserMessageCall(hwnd, WM_COPYGLOBALDATA, size, (LPARAM)data, info, type, FALSE);
+    GlobalUnlock(memory);
+    GlobalFree(memory);
+    return result;
+}
+
 LRESULT UserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG_PTR info, DWORD type, BOOL ansi)
 {
-    if (msg == WM_COPYGLOBALDATA && type == MIME_MSGCALL_SEND) {
-        /* the memory behind a handle is what is copied; the handle is spent with the message. */
-        if (!wparam)
-            return 0;
-        void *memory = GlobalLock((HGLOBAL)lparam);
-        if (!memory)
-            return 0;
-        LRESULT copy = NtUserMessageCall(hwnd, msg, wparam, (LPARAM)memory, info, type, FALSE);
-        GlobalUnlock((HGLOBAL)lparam);
-        GlobalFree((HGLOBAL)lparam);
-        return copy;
-    }
+    if (msg == WM_COPYGLOBALDATA && type != MIME_MSGCALL_DEFWINDOWPROC && type != MIME_MSGCALL_BROADCAST)
+        return send_global_copy(hwnd, wparam, (HGLOBAL)lparam, info, type);
     if (!ansi)
         return NtUserMessageCall(hwnd, msg, wparam, lparam, info, type, FALSE);
     CONV c;

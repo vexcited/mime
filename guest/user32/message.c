@@ -15,19 +15,27 @@ WINUSERAPI LRESULT WINAPI SendMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARA
     return UserSendMessage(hwnd, msg, wparam, lparam, TRUE);
 }
 
+/* the flags of SendMessageTimeout that are not refused: the defined ones, and a few more that are passed on. */
+#define SMTO_ACCEPTED_FLAGS 0x7F
+#define MSG_BEYOND_ALL_MESSAGES 0x20000
+
+/*
+ * SendMessageTimeout. a message number beyond 17 bits, or a flag outside the accepted ones, fails with nothing said and
+ * the result left as it was. otherwise the result is cleared and the window manager answers whether the message came
+ * back in time.
+ */
 static LRESULT send_timeout(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT flags, UINT timeout,
                             ULONG_PTR *result, BOOL ansi)
 {
-    /* what windows refuses here it refuses silently, without an error. */
-    if ((msg & 0xFFFE0000) || (flags & ~0x7Fu))
+    if ((msg & ~(UINT)(MSG_BEYOND_ALL_MESSAGES - 1)) || (flags & ~(UINT)SMTO_ACCEPTED_FLAGS))
         return 0;
     if (result)
         *result = 0;
-    MIME_SEND_TIMEOUT st = {flags, timeout, 0};
-    LRESULT ok = UserMessageCall(hwnd, msg, wparam, lparam, (ULONG_PTR)&st, MIME_MSGCALL_SENDTIMEOUT, ansi);
-    if (result)
-        *result = st.Result;
-    return ok;
+    MIME_SEND_TIMEOUT call = {flags, timeout, 0};
+    LRESULT arrived = UserMessageCall(hwnd, msg, wparam, lparam, (ULONG_PTR)&call, MIME_MSGCALL_SENDTIMEOUT, ansi);
+    if (arrived && result)
+        *result = call.Result;
+    return arrived;
 }
 
 WINUSERAPI LRESULT WINAPI SendMessageTimeoutW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT flags,
@@ -66,27 +74,39 @@ WINUSERAPI BOOL WINAPI SendMessageCallbackA(HWND hwnd, UINT msg, WPARAM wparam, 
     return (BOOL)UserMessageCall(hwnd, msg, wparam, lparam, (ULONG_PTR)&cb, MIME_MSGCALL_SENDCALLBACK, TRUE);
 }
 
-/* a directory listing posted to a list is filled in by the list when it gets there. */
-static WPARAM post_wparam(UINT msg, WPARAM wparam)
+#define MSG_CB_DIR 0x0145
+#define MSG_LB_DIR 0x018D
+#define MSG_DROPFILES 0x0233
+/* DDL_POSTMSGS: the list fills itself from the messages the control receives, so that a posted directory listing works. */
+#define DIR_POST_MESSAGES 0x2000
+
+/*
+ * the handle of the files dropped is the sender's global memory, which a window of another process cannot read. the
+ * window's process is asked to make a copy of the bytes, and the post carries the handle of the copy.
+ */
+static BOOL drop_handle_for_other_process(HWND hwnd, WPARAM *wparam)
 {
-    return msg == CB_DIR || msg == LB_DIR ? wparam | DDL_POSTMSGS : wparam;
+    DWORD owner = 0;
+    if (!hwnd || !GetWindowThreadProcessId(hwnd, &owner) || owner == GetCurrentProcessId())
+        return TRUE;
+    HGLOBAL sent = (HGLOBAL)*wparam;
+    SIZE_T size = GlobalSize(sent);
+    LRESULT copy = SendMessageW(hwnd, WM_COPYGLOBALDATA, size, (LPARAM)sent);
+    if (!copy)
+        return FALSE;
+    *wparam = (WPARAM)copy;
+    return TRUE;
 }
 
 static BOOL post(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi)
 {
-    if (msg == WM_DROPFILES) {
-        /* the memory of a drop is the sender's: the window's process makes a copy that is its own. */
-        DWORD pid = 0;
-        if (hwnd && GetWindowThreadProcessId(hwnd, &pid) && pid != GetCurrentProcessId()) {
-            SIZE_T size = GlobalSize((HGLOBAL)wparam);
-            wparam = (WPARAM)SendMessageW(hwnd, WM_COPYGLOBALDATA, size, (LPARAM)wparam);
-            if (!wparam)
-                return FALSE;
-        }
-    }
     if (ansi)
         wparam = UserCharWparam(msg, wparam, TRUE);
-    return NtUserPostMessage(hwnd, msg, post_wparam(msg, wparam), lparam);
+    if (msg == MSG_CB_DIR || msg == MSG_LB_DIR)
+        wparam |= DIR_POST_MESSAGES;
+    else if (msg == MSG_DROPFILES && !drop_handle_for_other_process(hwnd, &wparam))
+        return FALSE;
+    return NtUserPostMessage(hwnd, msg, wparam, lparam);
 }
 
 WINUSERAPI BOOL WINAPI PostMessageW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -109,52 +129,66 @@ WINUSERAPI BOOL WINAPI PostThreadMessageA(DWORD thread, UINT msg, WPARAM wparam,
     return NtUserPostThreadMessage(thread, msg, UserCharWparam(msg, wparam, TRUE), lparam);
 }
 
+/* what BroadcastSystemMessage may be asked for. */
+#define BSF_DEFINED_FLAGS 0x7FF
+#define BSM_COMPONENTS 0x0F
+#define BSM_DEFINED_RECIPIENTS 0x1F
+#define BSM_BAD_RECIPIENTS (~(ULONG)BSM_DEFINED_RECIPIENTS)
+#define MSG_PROGRAM_FIRST 0x0400
+#define MSG_PROGRAM_LAST 0xBFFF
+#define BROADCAST_NOBODY ((long)-1)
+
+static long refuse_broadcast(DWORD error)
+{
+    SetLastError(error);
+    return 0;
+}
+
 /*
- * BroadcastSystemMessage: the recipients and flags are checked here, then every top level window gets the message
- * the way the flags say. it answers the number of recipients that took it, -1 if the message could not be sent,
- * and 0 if a query was denied.
+ * BroadcastSystemMessage and its Ex form. the parameters are judged here, in this order: the message number, the flags,
+ * the structure the flags ask for, the size of that structure and the message being one a program defines for itself. a
+ * query never posts, and a message that carries data of the sender cannot be posted or sent without waiting. the
+ * answer is 0 for a refusal or a denied query, -1 when no recipient the system serves was named, and else positive.
  */
 static long broadcast_system(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam, LPARAM lparam, PBSMINFO info,
                              BOOL ansi)
 {
-    if ((msg & 0xFFFE0000) || (flags & ~0x7FFu) || ((flags & (BSF_RETURNHDESK | BSF_LUID)) && !info) ||
-        (info && info->cbSize != sizeof(*info)) || (msg >= 0x400 && msg <= 0xBFFF)) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return 0;
-    }
+    if (msg & ~(UINT)(MSG_BEYOND_ALL_MESSAGES - 1))
+        return refuse_broadcast(ERROR_INVALID_PARAMETER);
+    if (flags & ~(DWORD)BSF_DEFINED_FLAGS)
+        return refuse_broadcast(ERROR_INVALID_PARAMETER);
+    if ((flags & (BSF_RETURNHDESK | BSF_LUID)) && !info)
+        return refuse_broadcast(ERROR_INVALID_PARAMETER);
+    if (info && info->cbSize != sizeof(BSMINFO))
+        return refuse_broadcast(ERROR_INVALID_PARAMETER);
+    if (msg >= MSG_PROGRAM_FIRST && msg <= MSG_PROGRAM_LAST)
+        return refuse_broadcast(ERROR_INVALID_PARAMETER);
+
     if (flags & BSF_FORCEIFHUNG)
         flags |= BSF_NOHANG;
     if (flags & BSF_QUERY)
-        flags &= ~(BSF_POSTMESSAGE | BSF_SENDNOTIFYMESSAGE);
-    if ((flags & (BSF_POSTMESSAGE | BSF_SENDNOTIFYMESSAGE)) && msg < 0x400 && MimeMsgIsSyncOnly(msg, wparam, TRUE)) {
-        SetLastError(ERROR_MESSAGE_SYNC_ONLY);
-        return 0;
-    }
-    DWORD who = recipients ? *recipients : 0;
-    if (!(who & 0xF))
-        who |= 0xF;
-    if (who & 0xFFFFFFE0u) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return 0;
-    }
-    if (!(who & BSM_APPLICATIONS))
-        return -1;
-    MIME_BROADCAST b = {who, flags, nullptr, nullptr};
-    CONV c;
-    BOOL converted = ansi && !(flags & BSF_POSTMESSAGE);
-    if (converted)
-        UserConvBegin(&c, nullptr, msg, wparam, lparam);
-    LRESULT r = NtUserMessageCall(nullptr, msg, converted ? c.wparam : wparam, converted ? c.lparam : lparam,
-                                  (ULONG_PTR)&b, MIME_MSGCALL_BROADCAST, FALSE);
-    if (converted)
-        UserConvEnd(&c, 0);
+        flags &= ~(DWORD)(BSF_POSTMESSAGE | BSF_SENDNOTIFYMESSAGE);
+    if ((flags & (BSF_POSTMESSAGE | BSF_SENDNOTIFYMESSAGE)) && msg < MSG_PROGRAM_FIRST &&
+        MimeMsgIsSyncOnly(msg, wparam, FALSE))
+        return refuse_broadcast(ERROR_MESSAGE_SYNC_ONLY);
+
+    ULONG named = recipients ? *recipients : 0;
+    if (!(named & BSM_COMPONENTS))
+        named |= BSM_COMPONENTS;
+    if (named & BSM_BAD_RECIPIENTS)
+        return refuse_broadcast(ERROR_INVALID_PARAMETER);
+    if (!(named & BSM_APPLICATIONS))
+        return BROADCAST_NOBODY;
+
+    MIME_BROADCAST call = {named, flags, nullptr, nullptr};
+    long result = (long)UserMessageCall(nullptr, msg, wparam, lparam, (ULONG_PTR)&call, MIME_MSGCALL_BROADCAST, ansi);
     if (recipients)
-        *recipients = b.Recipients;
-    if (!r && (flags & BSF_QUERY) && info) {
-        info->hwnd = b.Hwnd;
-        info->hdesk = b.Desktop;
+        *recipients = call.Recipients;
+    if (!result && (flags & BSF_QUERY) && info) {
+        info->hwnd = call.Hwnd;
+        info->hdesk = call.Desktop;
     }
-    return (long)r;
+    return result;
 }
 
 WINUSERAPI long WINAPI BroadcastSystemMessageW(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam,
