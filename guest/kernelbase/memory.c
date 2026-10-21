@@ -642,6 +642,22 @@ static PVOID data_block(MOVEABLE *m)
     return m->Pointer ? (PUCHAR)m->Pointer - sizeof(DATA_HEADER) : nullptr;
 }
 
+/*
+ * the descriptor of the moveable block whose data starts at p, or null. a program that locked a handle holds this
+ * pointer, and the size and the flags of the block can be asked of it as of the handle.
+ */
+static MOVEABLE *moveable_of_data(LPCVOID p)
+{
+    if (!p || ((ULONG_PTR)p & 0xF))
+        return nullptr;
+    const DATA_HEADER *h = (const DATA_HEADER *)p - 1;
+    if (RtlSizeHeap(KbPeb()->ProcessHeap, 0, h) == (SIZE_T)-1)
+        return nullptr;
+    if (h->Magic == DATA_MAGIC && h->Owner && h->Owner->Magic == MOVEABLE_MAGIC && h->Owner->Pointer == p)
+        return h->Owner;
+    return nullptr;
+}
+
 static PVOID allocate_data(MOVEABLE *m, SIZE_T size, BOOL zero)
 {
     DATA_HEADER *h = RtlAllocateHeap(KbPeb()->ProcessHeap, zero ? HEAP_ZERO_MEMORY : 0, size + sizeof(DATA_HEADER));
@@ -757,6 +773,11 @@ static SIZE_T global_size(HGLOBAL h)
     }
     SIZE_T size = RtlSizeHeap(heap, 0, h);
     if (size == (SIZE_T)-1) {
+        m = moveable_of_data(h);
+        if (m) {
+            PVOID block = data_block(m);
+            return RtlSizeHeap(heap, 0, block) - sizeof(DATA_HEADER);
+        }
         KbSetError(ERROR_INVALID_HANDLE);
         return 0;
     }
@@ -771,11 +792,9 @@ static HGLOBAL global_handle(LPCVOID p)
     }
     if (moveable_of((HGLOBAL)p))
         return (HGLOBAL)p;
-    if (!((ULONG_PTR)p & 0xF)) {
-        const DATA_HEADER *h = (const DATA_HEADER *)p - 1;
-        if (h->Magic == DATA_MAGIC && h->Owner && h->Owner->Magic == MOVEABLE_MAGIC && h->Owner->Pointer == p)
-            return &h->Owner->Pointer;
-    }
+    MOVEABLE *owner = moveable_of_data(p);
+    if (owner)
+        return &owner->Pointer;
     if (RtlSizeHeap(KbPeb()->ProcessHeap, 0, p) == (SIZE_T)-1) {
         KbSetError(ERROR_INVALID_HANDLE);
         return nullptr;
@@ -863,10 +882,14 @@ static UINT global_flags(HGLOBAL h, UINT discardable_value, UINT invalid_value)
     MOVEABLE *m = moveable_of(h);
     if (!m) {
         if (!h || RtlSizeHeap(KbPeb()->ProcessHeap, 0, h) == (SIZE_T)-1) {
-            KbSetError(ERROR_INVALID_HANDLE);
-            return invalid_value;
+            m = moveable_of_data(h);
+            if (!m) {
+                KbSetError(ERROR_INVALID_HANDLE);
+                return invalid_value;
+            }
+        } else {
+            return 0;
         }
-        return 0;
     }
     UINT flags = m->LockCount;
     if (!m->Pointer)
