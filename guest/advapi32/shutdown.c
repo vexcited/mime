@@ -45,13 +45,33 @@ static BOOL request(MX_SHUTDOWN_REQUEST *r)
     return FALSE;
 }
 
-/* the checks of the client, in its order: the message, the timeout, then the machine. */
-static BOOL initiate(LPCWSTR machine, LPCWSTR message, DWORD timeout, ULONG flags, DWORD reason)
+/* what the message and the timeout of a request come to, before the machine is looked at. */
+typedef enum REQUEST_VERDICT {
+    REQUEST_FINE,
+    REQUEST_REFUSED_QUIETLY, /* too long to be sent at all: the call fails and the last error stays as it was */
+    REQUEST_INVALID,         /* a message of 512 characters or more, or a timeout of ten years */
+} REQUEST_VERDICT;
+
+#define MAX_MESSAGE_BYTES 0xFFFE
+#define MAX_MESSAGE_CHARS 511
+
+static REQUEST_VERDICT judge_request(LPCWSTR message, DWORD timeout)
 {
     SIZE_T chars = message ? wcslen(message) : 0;
-    if (chars * sizeof(WCHAR) > 0xFFFE)
+    if (chars * sizeof(WCHAR) > MAX_MESSAGE_BYTES)
+        return REQUEST_REFUSED_QUIETLY;
+    if (chars > MAX_MESSAGE_CHARS || timeout >= MAX_TIMEOUT)
+        return REQUEST_INVALID;
+    return REQUEST_FINE;
+}
+
+/* the checks of the client, in its order: the message and the timeout, then the machine. */
+static BOOL initiate(LPCWSTR machine, LPCWSTR message, DWORD timeout, ULONG flags, DWORD reason)
+{
+    REQUEST_VERDICT verdict = judge_request(message, timeout);
+    if (verdict == REQUEST_REFUSED_QUIETLY)
         return FALSE;
-    if ((chars * sizeof(WCHAR) & 0xFFFE) >= 0x400 || timeout >= MAX_TIMEOUT) {
+    if (verdict == REQUEST_INVALID) {
         AdvSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
@@ -120,10 +140,7 @@ ADVAPI BOOL WINAPI AbortSystemShutdownA(LPSTR machine)
 /* InitiateShutdown: the flags say what happens and whether the programs are forced, the grace period is the timeout. */
 ADVAPI DWORD WINAPI InitiateShutdownW(LPWSTR machine, LPWSTR message, DWORD grace, DWORD flags, DWORD reason)
 {
-    SIZE_T chars = message ? wcslen(message) : 0;
-    if (chars * sizeof(WCHAR) > 0xFFFE)
-        return ERROR_INVALID_PARAMETER;
-    if ((chars * sizeof(WCHAR) & 0xFFFE) >= 0x400 || grace >= MAX_TIMEOUT)
+    if (judge_request(message, grace) != REQUEST_FINE)
         return ERROR_INVALID_PARAMETER;
     if (!AdvIsLocalSystem(machine))
         return RPC_S_SERVER_UNAVAILABLE;

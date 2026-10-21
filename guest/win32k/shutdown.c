@@ -20,10 +20,68 @@ enum {
     NOTIFY_CANCELLED, /* the shutdown was aborted. */
 };
 
-/* the windows the shutdown asks, which are the top level windows of the thread that are not message only. */
-static BOOLEAN askable(WND *c, W32THREAD *t)
+/* ------------------------------------------------------------------ which window is asked */
+
+#define MESSAGE_ONLY_STYLE 0x80000000u
+#define IME_CLASS_PREFIX_CHARS 3
+
+static BOOLEAN class_is_ime(const WND *w)
 {
-    return c->Thread == t && !(c->Flags & WNDF_DESTROYING) && !(c->ExStyle & 0x80000000u);
+    static const WCHAR prefix[IME_CLASS_PREFIX_CHARS] = {L'I', L'M', L'E'};
+    const WCHAR *name = w->Class ? w->Class->Name : nullptr;
+    if (!name)
+        return FALSE;
+    for (ULONG i = 0; i < IME_CLASS_PREFIX_CHARS; i++)
+        if (name[i] != prefix[i])
+            return FALSE;
+    return TRUE;
+}
+
+/* a window the shutdown may ask the thread through: alive, not message only, and not an input method window. */
+static BOOLEAN askable(WND *w, W32THREAD *t)
+{
+    return w->Thread == t && !(w->Flags & WNDF_DESTROYING) && !(w->ExStyle & MESSAGE_ONLY_STYLE) && !class_is_ime(w);
+}
+
+/* the window a thread is asked through: its top one, or the owner of that when the owner qualifies as well. */
+static WND *shutdown_window(W32THREAD *t)
+{
+    WND *desktop = WndDesktop();
+    WND *chosen = desktop ? desktop->FirstChild : nullptr;
+    while (chosen && !askable(chosen, t))
+        chosen = chosen->Next;
+    for (ULONG depth = 0; chosen && chosen->Owner && depth < 64; depth++) {
+        WND *owner = chosen->Owner;
+        if (!WndIsVisible(owner) || !askable(owner, t))
+            break;
+        chosen = owner;
+    }
+    return chosen;
+}
+
+/* the word of WM_CLIENTSHUTDOWN, from the flags of the request and the shutdown flags kept for the process. */
+#define EWX_MACHINE_BITS 0x2040580Bu
+#define PROCESS_SHUTDOWN_NORETRY 0x1u
+
+static ULONG client_flags(ULONG ewx, ULONG process_flags)
+{
+    static const struct {
+        ULONG Request;
+        ULONG Word;
+    } carried[] = {
+        {EWX_FORCEIFHUNG, MX_WMCS_FORCEIFHUNG}, {EWX_RESTARTAPPS, MX_WMCS_CLOSEAPP},
+        {EWX_FORCE, MX_WMCS_CRITICAL},          {EWX_SHUTDOWN, MX_WMCS_SHUTDOWN},
+        {EWX_REBOOT, MX_WMCS_REBOOT},           {EWX_QUICKRESOLVE, MX_WMCS_QUICK},
+    };
+    ULONG word = MX_WMCS_ENDING | MX_WMCS_USERPROCESS;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(carried); i++)
+        if (ewx & carried[i].Request)
+            word |= carried[i].Word;
+    if ((process_flags & PROCESS_SHUTDOWN_NORETRY) || (ewx & EWX_FORCE))
+        word |= MX_WMCS_NORETRY;
+    if (!(ewx & EWX_MACHINE_BITS))
+        word |= MX_WMCS_LOGOFF;
+    return word;
 }
 
 /* IME windows and tool windows of the shell are not asked first; this is the filter winsrv's FindWindowFromThread has. */
@@ -36,25 +94,6 @@ static BOOLEAN thread_qualifies(W32THREAD *t)
     return FALSE;
 }
 
-/*
- * the window a thread is asked through: the topmost one, then the visible owner of it and so on up, so that
- * the owner of a dialog hears first.
- */
-static WND *shutdown_window(W32THREAD *t)
-{
-    WND *desktop = WndDesktop();
-    WND *found = nullptr;
-    for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next) {
-        if (!askable(c, t) || (c->Class && !wcsncmp(c->Class->Name, L"IME", 3)))
-            continue;
-        found = c;
-        break;
-    }
-    while (found && found->Owner && WndIsVisible(found->Owner) && askable(found->Owner, t))
-        found = found->Owner;
-    return found;
-}
-
 /* whether a window of the thread says it blocks the shutdown, with ShutdownBlockReasonCreate. */
 static BOOLEAN thread_blocks(W32THREAD *t)
 {
@@ -63,35 +102,6 @@ static BOOLEAN thread_blocks(W32THREAD *t)
         if (askable(c, t) && c->ShutdownReason)
             return TRUE;
     return FALSE;
-}
-
-/*
- * the flags of WM_CLIENTSHUTDOWN for a request, from winsrvext's UserClientShutdown. shutting down is
- * 0x4, ending the user's programs 0x8, a program that must be asked again without a dialog 0x80, and whether
- * the session is really ending 0x100, which is the wparam of WM_ENDSESSION. the lparam of both messages
- * is the top bits and the lowest of them: logoff, forced, close for a restart.
- */
-static ULONG client_flags(ULONG ewx, ULONG process_flags)
-{
-    ULONG f = MX_WMCS_ENDING;
-    if ((process_flags & MX_SHUTDOWN_NORETRY) || (ewx & EWX_FORCE))
-        f |= MX_WMCS_NORETRY;
-    if (!(ewx & (MX_EWX_MACHINE | 0x2040580B)))
-        f |= MX_WMCS_LOGOFF;
-    if (ewx & EWX_FORCEIFHUNG)
-        f |= MX_WMCS_FORCEIFHUNG;
-    f |= MX_WMCS_USERPROCESS;
-    if (ewx & EWX_RESTARTAPPS)
-        f |= MX_WMCS_CLOSEAPP;
-    if (ewx & EWX_FORCE)
-        f |= MX_WMCS_CRITICAL;
-    if (ewx & EWX_SHUTDOWN)
-        f |= MX_WMCS_SHUTDOWN;
-    if (ewx & EWX_REBOOT)
-        f |= MX_WMCS_REBOOT;
-    if (ewx & EWX_QUICKRESOLVE)
-        f |= MX_WMCS_QUICK;
-    return f;
 }
 
 static ULONG64 ms_left(const MX_SHUTDOWN_CONTEXT *ctx, ULONG64 wanted)
@@ -201,143 +211,151 @@ ULONG NTAPI W32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *ctx
 }
 
 /*
- * the default processing of WM_CLIENTSHUTDOWN, in the thread that is asked: the query goes to the windows of
- * the thread one at a time, from the top of the stack of windows, and stops at the first that refuses; the end of
- * the session goes to all of them, after which the timers of a window that was told the session ends are gone.
+ * the default processing of WM_CLIENTSHUTDOWN, in the thread that was asked. the windows of the thread, hidden ones
+ * included, hear WM_QUERYENDSESSION from the top down until one refuses, or WM_ENDSESSION all of them.
  */
+#define CLIENT_QUERIED 1
+#define CLIENT_ENDED 2
+#define CLIENT_REFUSED 3
+
 LRESULT ClientShutdown(WND *w, ULONG flags)
 {
     W32THREAD *t = w->Thread;
     WND *desktop = WndDesktop();
-    HWND list[MAX_WINDOWS];
-    ULONG n = 0;
-    for (WND *c = desktop ? desktop->FirstChild : nullptr; c && n < MAX_WINDOWS; c = c->Next)
-        if (askable(c, t))
-            list[n++] = WndHandle(c);
-    if (!n)
-        return 1;
-    LPARAM lparam = (LPARAM)(flags & (MX_WMCS_LOGOFF | MX_WMCS_CRITICAL | MX_WMCS_CLOSEAPP));
-    BOOLEAN query = (flags & MX_WMCS_QUERY) != 0;
-    for (ULONG i = 0; i < n; i++) {
-        WND *c = WndLookup(list[i]);
-        if (!c || c->Thread != t)
-            continue;
-        if (query) {
-            if (!MsgSend(c, WM_QUERYENDSESSION, 0, lparam))
-                return 3;
-        } else {
-            MsgSend(c, WM_ENDSESSION, (flags & MX_WMCS_ENDING) != 0, lparam);
-            if ((flags & (MX_WMCS_ENDING | MX_WMCS_USERPROCESS)) == (MX_WMCS_ENDING | MX_WMCS_USERPROCESS) && (c = WndLookup(list[i])) != nullptr)
-                TimerRemoveWindow(c);
-        }
+    ULONG capacity = 0, count = 0;
+    for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next)
+        capacity++;
+    HWND *windows = capacity ? W32Alloc(capacity * sizeof(HWND)) : nullptr;
+    for (WND *c = windows ? desktop->FirstChild : nullptr; c && count < capacity; c = c->Next)
+        if (c->Thread == t && !(c->Flags & WNDF_DESTROYING) && !(c->ExStyle & MESSAGE_ONLY_STYLE))
+            windows[count++] = WndHandle(c);
+    if (!count) {
+        W32Free(windows);
+        return CLIENT_QUERIED;
     }
-    return query ? 1 : 2;
+
+    LPARAM reasons = flags & (MX_WMCS_LOGOFF | MX_WMCS_CRITICAL | MX_WMCS_CLOSEAPP);
+    LRESULT result = (flags & MX_WMCS_QUERY) ? CLIENT_QUERIED : CLIENT_ENDED;
+    for (ULONG i = 0; i < count && result != CLIENT_REFUSED; i++) {
+        WND *target = WndLookup(windows[i]);
+        if (!target || target->Thread != t)
+            continue;
+        if (flags & MX_WMCS_QUERY) {
+            if (!MsgSend(target, WM_QUERYENDSESSION, 0, reasons))
+                result = CLIENT_REFUSED;
+            continue;
+        }
+        MsgSend(target, WM_ENDSESSION, (flags & MX_WMCS_ENDING) ? 1 : 0, reasons);
+        /* a process that ends with its windows takes no more timers; the window may be gone by now. */
+        target = WndLookup(windows[i]);
+        if (target && (flags & MX_WMCS_ENDING) && (flags & MX_WMCS_USERPROCESS))
+            TimerRemoveWindow(target);
+    }
+    W32Free(windows);
+    return result;
 }
 
 /* ------------------------------------------------------------------ block reasons */
 
-static BOOLEAN own_window(WND *w)
-{
-    W32PROCESS *p = PsGetProcessWin32Process(PsGetCurrentProcess());
-    return p && w->Thread && w->Thread->Process == p;
-}
+/* a window of another process answers with 5 and no error: the caller sees a result that looks like success. */
+#define BLOCK_FOREIGN_RESULT 5
+#define MAX_BLOCK_REASON_CHARS 0x101
 
-/*
- * ShutdownBlockReasonCreate. a window of another process is answered with 5 and nothing is done, which is
- * what win32kfull.sys returns there without setting an error, so the caller sees a nonzero result.
- */
-ULONG NTAPI NtUserShutdownBlockReasonCreate(HWND hwnd, LPCWSTR reason, ULONG length)
+/* the window a block reason call names, or the error and the result to give instead. */
+static WND *reason_window(HWND hwnd, BOOLEAN own_process_only, ULONG *result)
 {
-    ULONG r = 0;
-    UserEnter();
     WND *w = WndLookup(hwnd);
+    *result = 0;
     if (!w) {
         W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-    } else if (!own_window(w)) {
-        r = 5;
-    } else if (w->Parent != WndDesktop() || length > 0x101) {
-        W32SetLastError(ERROR_INVALID_PARAMETER);
-    } else {
-        PWSTR copy = W32Alloc((length + 1) * sizeof(WCHAR));
-        if (!copy) {
-            W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return nullptr;
+    }
+    if (own_process_only && (!w->Thread || w->Thread->Process != W32GetProcess())) {
+        *result = BLOCK_FOREIGN_RESULT;
+        return nullptr;
+    }
+    return w;
+}
+
+ULONG NTAPI NtUserShutdownBlockReasonCreate(HWND hwnd, LPCWSTR reason, ULONG length)
+{
+    UserEnter();
+    ULONG result;
+    WND *w = reason_window(hwnd, TRUE, &result);
+    if (w) {
+        PWSTR copy = nullptr;
+        ULONG error = 0;
+        if (!WndIsTopLevel(w) || length > MAX_BLOCK_REASON_CHARS) {
+            error = ERROR_INVALID_PARAMETER;
+        } else if (!(copy = W32Alloc((length + 1) * sizeof(WCHAR)))) {
+            error = ERROR_NOT_ENOUGH_MEMORY;
         } else if (length && !NT_SUCCESS(MimeCopyFromUser(copy, reason, length * sizeof(WCHAR)))) {
+            error = ERROR_INVALID_PARAMETER;
             W32Free(copy);
-            W32SetLastError(ERROR_INVALID_PARAMETER);
+        }
+        if (error) {
+            W32SetLastError(error);
         } else {
             W32Free(w->ShutdownReason);
             w->ShutdownReason = copy;
-            r = 1;
+            result = 1;
         }
     }
     UserLeave();
-    return r;
+    return result;
 }
 
 ULONG NTAPI NtUserShutdownReasonDestroy(HWND hwnd)
 {
-    ULONG r = 0;
     UserEnter();
-    WND *w = WndLookup(hwnd);
-    if (!w) {
-        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-    } else if (!own_window(w)) {
-        r = 5;
-    } else if (!w->ShutdownReason) {
+    ULONG result;
+    WND *w = reason_window(hwnd, TRUE, &result);
+    if (w && !w->ShutdownReason) {
         W32SetLastError(ERROR_INVALID_PARAMETER);
-    } else {
+    } else if (w) {
         W32Free(w->ShutdownReason);
         w->ShutdownReason = nullptr;
-        r = 1;
+        result = 1;
     }
     UserLeave();
-    return r;
+    return result;
 }
 
-/*
- * ShutdownBlockReasonQuery of any window of any process. the buffer gets as much of the text as fits, the count
- * is always the length it needs, and a count of 0 with a buffer is an error.
- */
+/* the reason of a window of any process: as much as fits, and always how much room all of it needs. */
 ULONG NTAPI NtUserShutdownBlockReasonQuery(HWND hwnd, LPWSTR buffer, PULONG count)
 {
-    ULONG have;
-    if (!count || !NT_SUCCESS(MimeCopyFromUser(&have, count, sizeof(have)))) {
-        W32SetLastError(ERROR_NOACCESS);
-        return 0;
-    }
-    if (have > 0x101)
-        have = 0x101;
-    ULONG r = 0;
     UserEnter();
-    WND *w = WndLookup(hwnd);
-    if (!w) {
-        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-    } else if (!w->ShutdownReason) {
+    ULONG result;
+    WND *w = reason_window(hwnd, FALSE, &result);
+    ULONG room = 0;
+    if (w && !w->ShutdownReason) {
         W32SetLastError(ERROR_INVALID_PARAMETER);
-    } else if (buffer && have == 0) {
+        w = nullptr;
+    }
+    if (w && (!count || !NT_SUCCESS(MimeCopyFromUser(&room, count, sizeof(room))))) {
         W32SetLastError(ERROR_INVALID_PARAMETER);
-    } else {
+        w = nullptr;
+    }
+    if (w) {
+        if (room > MAX_BLOCK_REASON_CHARS)
+            room = MAX_BLOCK_REASON_CHARS;
         ULONG length = (ULONG)wcslen(w->ShutdownReason);
-        BOOLEAN ok = TRUE;
-        if (buffer) {
-            ULONG copy = length < have ? length : have - 1;
-            WCHAR *tmp = W32Alloc((copy + 1) * sizeof(WCHAR));
-            if (tmp) {
-                memcpy(tmp, w->ShutdownReason, copy * sizeof(WCHAR));
-                ok = NT_SUCCESS(MimeCopyToUser(buffer, tmp, (copy + 1) * sizeof(WCHAR)));
-                W32Free(tmp);
-            } else {
-                ok = FALSE;
-            }
-        }
         ULONG needed = length + 1;
-        if (ok && NT_SUCCESS(MimeCopyToUser(count, &needed, sizeof(needed))))
-            r = 1;
-        else
-            W32SetLastError(ERROR_NOACCESS);
+        if (buffer && !room) {
+            W32SetLastError(ERROR_INVALID_PARAMETER);
+        } else {
+            ULONG copied = buffer ? (length < room - 1 ? length : room - 1) : 0;
+            WCHAR end = 0;
+            BOOLEAN ok = !buffer || (NT_SUCCESS(MimeCopyToUser(buffer, w->ShutdownReason, copied * sizeof(WCHAR))) &&
+                                     NT_SUCCESS(MimeCopyToUser(buffer + copied, &end, sizeof(end))));
+            if (ok && NT_SUCCESS(MimeCopyToUser(count, &needed, sizeof(needed))))
+                result = 1;
+            else
+                W32SetLastError(ERROR_INVALID_PARAMETER);
+        }
     }
     UserLeave();
-    return r;
+    return result;
 }
 
 /* ------------------------------------------------------------------ ExitWindowsEx */

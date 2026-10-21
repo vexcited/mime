@@ -14,60 +14,67 @@ typedef struct EXIT_REQUEST {
     DWORD Reason;
 } EXIT_REQUEST;
 
-static BOOL exit_windows_worker(UINT flags, DWORD reason, BOOL helper);
+static BOOL ask_for_shutdown(UINT flags, DWORD reason, BOOL from_helper);
 
-static DWORD WINAPI exit_windows_thread(LPVOID parameter)
+/* what the helper thread runs: the same request, ending with 0 for a success and else with its last error. */
+static DWORD WINAPI helper_thread(LPVOID parameter)
 {
-    EXIT_REQUEST *request = parameter;
-    BOOL ok = exit_windows_worker(request->Flags, request->Reason, TRUE);
-    DWORD error = 0;
-    if (!ok)
-        error = GetLastError();
-    ExitThread(error);
+    const EXIT_REQUEST *request = parameter;
+    if (ask_for_shutdown(request->Flags, request->Reason, TRUE))
+        return 0;
+    return RtlGetLastWin32Error();
 }
 
-/*
- * a thread with windows cannot wait for the shutdown, which sends them messages: the work goes to a thread of
- * its own while this one serves its messages. that thread's last error is what comes back, so a shutdown the
- * windows refused, which sets none, answers TRUE here.
- */
-static BOOL exit_windows_worker(UINT flags, DWORD reason, BOOL helper)
+/* the thread has windows, so it cannot wait for the shutdown: another thread asks while this one serves its messages. */
+static BOOL ask_from_helper(UINT flags, DWORD reason)
 {
-    if (!NtUserPrepareForLogoff())
-        return FALSE;
-    LONG status = NtUserMimeExitWindows(flags, reason);
-    if (status >= 0)
-        return TRUE;
-    if (status != STATUS_CANT_WAIT || helper) {
-        /* a shutdown that was cancelled leaves the last error as it was. */
-        if (status != STATUS_CANCELLED)
-            RtlSetLastWin32Error(RtlNtStatusToDosError(status));
-        return FALSE;
-    }
     EXIT_REQUEST request = {flags, reason};
-    DWORD id;
-    HANDLE thread = CreateThread(nullptr, 0, exit_windows_thread, &request, 0, &id);
+    HANDLE thread = CreateThread(nullptr, 0, helper_thread, &request, 0, nullptr);
     if (!thread)
         return FALSE;
-    while (MsgWaitForMultipleObjectsEx(1, &thread, INFINITE, QS_ALLINPUT | QS_ALLPOSTMESSAGE | QS_SENDMESSAGE, 0) !=
-           WAIT_OBJECT_0) {
-        MSG msg;
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
-            DispatchMessageW(&msg);
+    for (;;) {
+        DWORD woken = MsgWaitForMultipleObjectsEx(1, &thread, INFINITE, QS_ALLINPUT | QS_ALLPOSTMESSAGE | QS_SENDMESSAGE,
+                                                  MWMO_INPUTAVAILABLE);
+        if (woken == WAIT_OBJECT_0)
+            break;
+        if (woken == WAIT_FAILED) {
+            WaitForSingleObject(thread, INFINITE);
+            break;
+        }
+        MSG message;
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
     }
-    DWORD code = ERROR_GEN_FAILURE;
+    DWORD code = 0;
     GetExitCodeThread(thread, &code);
     CloseHandle(thread);
     if (code) {
-        SetLastError(code);
+        RtlSetLastWin32Error(code);
         return FALSE;
     }
     return TRUE;
 }
 
+static BOOL ask_for_shutdown(UINT flags, DWORD reason, BOOL from_helper)
+{
+    /* a process in a job that forbids it may not log off, and is not told why. */
+    if (!NtUserPrepareForLogoff())
+        return FALSE;
+    LONG status = NtUserMimeExitWindows(flags, reason);
+    if (status >= 0)
+        return TRUE;
+    if (status == STATUS_CANT_WAIT && !from_helper)
+        return ask_from_helper(flags, reason);
+    if (status != STATUS_CANCELLED)
+        RtlSetLastWin32Error(RtlNtStatusToDosError(status));
+    return FALSE;
+}
+
 WINUSERAPI BOOL WINAPI ExitWindowsEx(UINT flags, DWORD reason)
 {
-    return exit_windows_worker(flags, reason, FALSE);
+    return ask_for_shutdown(flags, reason, FALSE);
 }
 
 /* ------------------------------------------------------------------ block reasons */

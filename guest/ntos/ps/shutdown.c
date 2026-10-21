@@ -3,8 +3,7 @@
  * from the highest shutdown level down and asks winsrv to tell the windows of each one, then the console
  * routine of the ones left, before services and the kernel finish the job. here the kernel does it all on one
  * system thread, with a worker thread for each process of a level; the window manager has its part in a callout.
- * the order, the flags and the timeouts are those of winsrvext.dll and csrsrv.dll of build 26300, see
- * docs/shutdown.md for what was read and what was guessed.
+ * docs/shutdown.md has the order, the flags and the timeouts.
  */
 #include "../ntos.h"
 #include "../cm/cm.h"
@@ -99,26 +98,32 @@ static ULONG read_number(PCWSTR key, PCWSTR name, ULONG fallback)
     return fallback;
 }
 
+/* where the timeouts are kept. */
+#define KEY_DESKTOP_FORMAT L"\\REGISTRY\\USER\\S-1-5-21-%u-%u-%u-1001\\Control Panel\\Desktop"
+#define KEY_CONTROL L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control"
+#define KEY_POLICY L"\\REGISTRY\\MACHINE\\Software\\Policies\\Microsoft\\Windows\\System"
+#define SERVICE_TIMEOUT_CAP 30000
+
+/* the timeouts of a shutdown, read when it starts, each with the value it has when the registry says nothing. */
 static void load_settings(SHUTDOWN_SETTINGS *s)
 {
-    WCHAR desktop[160];
-    _snwprintf(desktop, RTL_NUMBER_OF(desktop) - 1, L"\\REGISTRY\\USER\\S-1-5-21-%u-%u-%u-1001\\Control Panel\\Desktop",
-               HalBootInfo->user_sid[0], HalBootInfo->user_sid[1], HalBootInfo->user_sid[2]);
+    WCHAR desktop[128];
+    _snwprintf(desktop, RTL_NUMBER_OF(desktop) - 1, KEY_DESKTOP_FORMAT, HalBootInfo->user_sid[0],
+               HalBootInfo->user_sid[1], HalBootInfo->user_sid[2]);
     desktop[RTL_NUMBER_OF(desktop) - 1] = 0;
+
     s->HungAppTimeout = read_number(desktop, L"HungAppTimeout", 5000);
     s->WaitToKillTimeout = read_number(desktop, L"WaitToKillAppTimeout", 20000);
     s->AutoEndTasks = read_number(desktop, L"AutoEndTasks", 0) != 0;
     s->QuickTimeout = read_number(desktop, L"CriticalAppShutdownTimeout", 500);
     if (!s->QuickTimeout)
         s->QuickTimeout = 500;
-    s->TerminateTimeout =
-        read_number(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control", L"ProcessTerminateTimeout", 500);
-    s->ServiceTimeout =
-        read_number(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control", L"WaitToKillServiceTimeout", 20000);
-    if (s->ServiceTimeout > 30000)
-        s->ServiceTimeout = 30000;
-    s->AllowBlocking = read_number(L"\\REGISTRY\\MACHINE\\Software\\Policies\\Microsoft\\Windows\\System",
-                                   L"AllowBlockingAppsAtShutdown", 0) != 0;
+
+    s->TerminateTimeout = read_number(KEY_CONTROL, L"ProcessTerminateTimeout", 500);
+    s->ServiceTimeout = read_number(KEY_CONTROL, L"WaitToKillServiceTimeout", 20000);
+    if (s->ServiceTimeout > SERVICE_TIMEOUT_CAP)
+        s->ServiceTimeout = SERVICE_TIMEOUT_CAP;
+    s->AllowBlocking = read_number(KEY_POLICY, L"AllowBlockingAppsAtShutdown", 0) != 0;
 }
 
 /* ------------------------------------------------------------------ waiting */
@@ -161,50 +166,51 @@ static void kill_process(PEPROCESS process, NTSTATUS status)
                     process->ImageFileName, g.Settings.TerminateTimeout);
 }
 
+/* what the manager of services has beyond its service timeout: the services are asked to prepare first. */
+#define SERVICE_PREPARE_ALLOWANCE_MS 10000
+#define HANDLER_EXIT_GRACE_MS 1000
+
 /*
- * the console routine of a process on a thread of its own, with the event of a logoff or a shutdown, and the
- * time of WaitToKillAppTimeout for it. a handler that took the event ends its thread with the event as its exit
- * code and the process is ended by the system, as csrss does, and a process that has no handler ends itself
- * in the default one.
+ * a process with no window to ask, or whose windows did not end it, is told by its console routine, which runs on a new
+ * thread. the thread ending with the event as its code is the routine saying it took the event, and the process is
+ * then ended here. a process with no routine, or that does not end in time, is ended at once.
  */
 static void ctrl_shutdown(PEPROCESS process)
 {
     ULONG event = (g.Flags & MX_EWX_MACHINE) ? CTRL_SHUTDOWN_EVENT : CTRL_LOGOFF_EVENT;
-    PETHREAD thread = nullptr;
+    PETHREAD handler = nullptr;
     PVOID routine = process->ConsoleCtrlRoutine;
-    NTSTATUS created = routine ? PspCreateUserThread(process, routine, (PVOID)(ULONG_PTR)event, FALSE, 0, 0, &thread)
-                               : STATUS_NOT_FOUND;
-    if (!NT_SUCCESS(created)) {
-        KiLogPrintf("shutdown: process %u (%s) takes no console event: %08x", (ULONG)(ULONG_PTR)process->UniqueProcessId,
-                    process->ImageFileName, created);
+    if (!routine || !NT_SUCCESS(PspCreateUserThread(process, routine, (PVOID)(ULONG_PTR)event, FALSE, 0, 0, &handler))) {
         kill_process(process, STATUS_CONTROL_C_EXIT);
         return;
     }
+
     ULONG64 wait = g.Settings.WaitToKillTimeout;
-    if ((g.Flags & EWX_QUICKRESOLVE) && wait > g.Settings.QuickTimeout)
+    if ((g.Flags & EWX_QUICKRESOLVE) && g.Settings.QuickTimeout < wait)
         wait = g.Settings.QuickTimeout;
-    /* the services are given the time they ask the manager for: the preshutdown controls, then the shutdown ones. */
     if (process->ServiceController)
-        wait = (ULONG64)g.Settings.ServiceTimeout + MX_SHUTDOWN_PRESHUTDOWN_MS;
-    PVOID objects[4] = {&process->Pcb, &thread->Tcb, &g.Cancel, &g.Expire};
-    NTSTATUS status = wait_objects(objects, 4, allowed(wait));
-    if (status == STATUS_WAIT_0 || status == (NTSTATUS)2) {
-        /* it ended, or the shutdown was aborted. */
-    } else if (status == STATUS_WAIT_1) {
-        /* the thread is done: the process ends with it or is ended once the handler said it took the event. */
-        if (!process->Exited) {
-            BOOLEAN handled = thread->ExitStatus == (NTSTATUS)event;
-            PVOID again[3] = {&process->Pcb, &g.Cancel, &g.Expire};
-            if (handled || wait_objects(again, 3, allowed(1000)) == STATUS_TIMEOUT)
-                kill_process(process, STATUS_CONTROL_C_EXIT);
-        }
-    } else {
-        /* nobody answered in time. */
-        KiLogPrintf("shutdown: process %u (%s) did not end in %u ms, wait status %08x", (ULONG)(ULONG_PTR)process->UniqueProcessId,
-                    process->ImageFileName, (ULONG)wait, status);
-        kill_process(process, STATUS_CONTROL_C_EXIT);
+        wait = (ULONG64)g.Settings.ServiceTimeout + SERVICE_PREPARE_ALLOWANCE_MS;
+
+    enum { PROCESS_ENDED, HANDLER_ENDED };
+    PVOID objects[4] = {&process->Pcb, &handler->Tcb, &g.Cancel, &g.Expire};
+    NTSTATUS woken = wait_objects(objects, 4, allowed(wait));
+    if (woken == STATUS_WAIT_0 + PROCESS_ENDED) {
+        ObDereferenceObject(handler);
+        return;
     }
-    ObDereferenceObject(thread);
+    if (woken == STATUS_WAIT_0 + HANDLER_ENDED) {
+        if ((ULONG)handler->ExitStatus == event) {
+            ObDereferenceObject(handler);
+            PspTerminateProcess(process, STATUS_CONTROL_C_EXIT);
+            return;
+        }
+        /* the routine ended without taking the event: the program may still be leaving by itself. */
+        PVOID leaving[1] = {&process->Pcb};
+        wait_objects(leaving, 1, HANDLER_EXIT_GRACE_MS);
+    }
+    ObDereferenceObject(handler);
+    if (!process->Exited)
+        kill_process(process, STATUS_CONTROL_C_EXIT);
 }
 
 static void NTAPI process_worker(PVOID context)
