@@ -229,6 +229,9 @@ static ExeHistory *get_history(ConLineState *s, const ConChar *exe, size_t n)
     ExeHistory *h = find_history(s, exe, n);
     if (h)
         return h;
+    /* no buffers at all keeps no history. */
+    if (!s->Buffers)
+        return nullptr;
     unsigned count = 0;
     for (ExeHistory *x = s->Histories; x; x = x->Next)
         count++;
