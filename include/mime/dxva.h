@@ -442,7 +442,7 @@ _Static_assert(sizeof(DxvaTileAV1) == 16, "DXVA_Tile_AV1 is 16 bytes");
 /* ------------------------------------------------------------------ h.265 */
 
 /*
- * the picture parameters of the specification of dxva for h.265 (main and main 10), 232 bytes packed by one. They are the
+ * the picture parameters of the specification of dxva for h.265, main and main 10, 232 bytes packed by one. They are the
  * syntax elements of the sequence and picture parameter sets in use, and the reference picture set already resolved:
  * the lists of the reference pictures of the dpb, and for the picture the indices into that list of those it
  * predicts from. the slice control is the short form, DxvaSliceShort, one entry for each slice segment.
