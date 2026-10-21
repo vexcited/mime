@@ -838,6 +838,9 @@ enum {
     MIME_FS_CHANGE_OVERFLOW = 0x100,
 };
 
+/* watch ids above this one are the guest's own, made for the attributes it keeps of names: the host also tells when their directory is gone. */
+#define MIME_FS_WATCH_ID_ATTRIBUTES 0x40000000u
+
 typedef struct MimeFsChange {
     uint32_t size; /* of the record, a multiple of 4 */
     uint32_t watch;

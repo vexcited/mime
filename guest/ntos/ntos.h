@@ -1302,6 +1302,16 @@ NTSTATUS IopPendUserRequest(IO_USER_REQUEST *r);
 #define FILE_ACTION_RENAMED_OLD_NAME 0x00000004
 #define FILE_ACTION_RENAMED_NEW_NAME 0x00000005
 void FsNotifyInitialize(void);
+/* io/fsattr.c: the attributes of names kept for a short time, see there. */
+void FsAttrInitialize(void);
+void FsAttrChanged(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN tree);
+BOOLEAN FsAttrBegin(ULONG volume, PCUNICODE_STRING name, PLONG token);
+BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, MimeFsInfo *info);
+void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, BOOLEAN missing, const MimeFsInfo *info, LONG token);
+void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BOOLEAN overflow);
+BOOLEAN FsAttrIsHostWatch(ULONG id);
+/* fsnotify.c: starts the thread that fetches what the host's programs changed. */
+void FsNotifyHostStart(void);
 void FsNotifyReport(ULONG volume, PCUNICODE_STRING path, ULONG action, ULONG filter);
 void FsNotifyRename(ULONG volume, PCUNICODE_STRING from, PCUNICODE_STRING to, BOOLEAN directory);
 void FsNotifyCleanup(PFILE_OBJECT file);

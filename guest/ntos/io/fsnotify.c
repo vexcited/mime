@@ -258,6 +258,9 @@ static void flush_all(void)
 /* a path of the volume as the file object holds it, a backslash first. */
 void FsNotifyReport(ULONG volume, PCUNICODE_STRING path, ULONG action, ULONG filter)
 {
+    if (path && path->Length)
+        FsAttrChanged(volume, path->Buffer, path->Length / sizeof(WCHAR),
+                      action == FILE_ACTION_REMOVED && (filter & FILE_NOTIFY_CHANGE_DIR_NAME));
     /* nothing watched, the usual case, costs no lock: a watch made at this very moment misses what it did not see. */
     if (!path || !path->Length || IsListEmpty(&g_watches))
         return;
@@ -276,6 +279,8 @@ void FsNotifyRename(ULONG volume, PCUNICODE_STRING from, PCUNICODE_STRING to, BO
     if (!from || !to || !from->Length || !to->Length)
         return;
     ULONG filter = directory ? FILE_NOTIFY_CHANGE_DIR_NAME : FILE_NOTIFY_CHANGE_FILE_NAME;
+    FsAttrChanged(volume, from->Buffer, from->Length / sizeof(WCHAR), directory);
+    FsAttrChanged(volume, to->Buffer, to->Length / sizeof(WCHAR), directory);
     if (IsListEmpty(&g_watches))
         return;
     lock();
@@ -351,6 +356,10 @@ static void host_records(const UCHAR *buffer, ULONG length)
         if (r->size < sizeof(*r) || at + r->size > length || r->name_chars > (r->size - sizeof(*r)) / sizeof(WCHAR))
             break;
         at += r->size;
+        if (FsAttrIsHostWatch(r->watch)) {
+            FsAttrHostChange(r->watch, r->action, (const WCHAR *)r->name, r->name_chars, r->action == MIME_FS_CHANGE_OVERFLOW);
+            continue;
+        }
         FS_WATCH *w = nullptr;
         for (PLIST_ENTRY e = g_watches.Flink; e != &g_watches; e = e->Flink) {
             FS_WATCH *candidate = CONTAINING_RECORD(e, FS_WATCH, Links);
@@ -391,6 +400,14 @@ void FsNotifyHostInterrupt(void)
     KeSetEvent(&g_host_event, IO_NO_INCREMENT, FALSE);
 }
 
+void FsNotifyHostStart(void)
+{
+    if (__atomic_exchange_n(&g_host_thread, TRUE, __ATOMIC_SEQ_CST))
+        return;
+    if (!NT_SUCCESS(PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, host_worker, nullptr)))
+        __atomic_store_n(&g_host_thread, FALSE, __ATOMIC_SEQ_CST);
+}
+
 /* has the host watch the directory for this request's filter, with the lock held; a host that cannot leaves the guest's own. */
 static void host_watch(FS_WATCH *w, ULONG64 host_handle)
 {
@@ -404,11 +421,7 @@ static void host_watch(FS_WATCH *w, ULONG64 host_handle)
         w->HostId = id;
         w->HostFilter = w->Filter;
         w->HostTree = w->Tree;
-        if (!g_host_thread) {
-            g_host_thread = TRUE;
-            if (!NT_SUCCESS(PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, host_worker, nullptr)))
-                g_host_thread = FALSE;
-        }
+        FsNotifyHostStart();
     } else if (status == MIME_HC_STATUS_UNSUPPORTED) {
         g_host_unsupported = TRUE;
     }

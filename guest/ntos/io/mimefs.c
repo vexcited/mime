@@ -362,10 +362,33 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     default: host_disposition = MIME_FS_DISP_OPEN; break;
     }
     req->disposition = host_disposition;
-    /* what handles keep for this name is written before the host looks at the file: its size, its time, or a truncation. */
-    FsWbSyncPath(vol->HostVolume, &file->FileName, FALSE);
+    /*
+     * a name asked about lately is answered as it was, see io/fsattr.c. what is not is asked of the host, and kept if its
+     * directory is watched for changes of the host's programs.
+     */
+    BOOLEAN keep = FALSE;
+    LONG keep_token = 0;
+    ULONG64 hs;
     ACCESS_MASK granted = access;
     BOOLEAN checked = FALSE;
+    if (stat_only && !check && disposition == FILE_OPEN && !(options & (FILE_DIRECTORY_FILE | FILE_NON_DIRECTORY_FILE))) {
+        BOOLEAN missing;
+        MimeFsInfo known;
+        if (FsAttrLookup(vol->HostVolume, &file->FileName, &missing, &known)) {
+            if (missing) {
+                ExFreePool(req);
+                return complete(irp, host_status(MIME_HC_STATUS_NOT_FOUND, FALSE), 0);
+            }
+            req->info_out = known;
+            req->handle_out = 0;
+            req->action_out = FILE_OPENED;
+            hs = MIME_HC_STATUS_OK;
+            goto opened;
+        }
+        keep = FsAttrBegin(vol->HostVolume, &file->FileName, &keep_token);
+    }
+    /* what handles keep for this name is written before the host looks at the file: its size, its time, or a truncation. */
+    FsWbSyncPath(vol->HostVolume, &file->FileName, FALSE);
     /*
      * a file with a section in use is not made shorter by an open that truncates it, as it is not by a change of its
      * size: a view would read what is no longer there, and where the pages are the host's that is a fault the host
@@ -411,9 +434,13 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
             FsCacheInvalidate(vol->HostVolume, id);
         }
     }
-    ULONG64 hs;
 reopen:
     hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
+opened:
+    if (keep && hs == MIME_HC_STATUS_OK && !req->handle_out)
+        FsAttrKeep(vol->HostVolume, &file->FileName, FALSE, &req->info_out, keep_token);
+    else if (keep && hs == MIME_HC_STATUS_NOT_FOUND && req->action_out == 0)
+        FsAttrKeep(vol->HostVolume, &file->FileName, TRUE, nullptr, keep_token);
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
         if (SeTraceAccess)
@@ -1314,6 +1341,7 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
     g_driver = driver;
     FsCacheInitialize();
+    FsAttrInitialize();
     FsWbInitialize();
     FsNotifyInitialize();
     driver->MajorFunction[IRP_MJ_CREATE] = mimefs_create;

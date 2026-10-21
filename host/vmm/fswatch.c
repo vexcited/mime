@@ -355,6 +355,11 @@ static void handle_events(const char *buffer, ssize_t size)
             Watch *w = &g_watches[d->watch];
             if (e->mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED)) {
                 /* the directory is gone or moved; the watch of the guest stays, with nothing to tell. */
+                if (w->id > MIME_FS_WATCH_ID_ATTRIBUTES) {
+                    /* the guest keeps attributes of the names in it, which it is told no longer hold. */
+                    g_overflow[d->watch] = true;
+                    queue_raise();
+                }
                 if (e->mask & IN_IGNORED) {
                     free(d->relative);
                     memset(d, 0, sizeof(*d));
