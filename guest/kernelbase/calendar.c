@@ -1,0 +1,731 @@
+/*
+ * calendars: the arithmetic of the calendars windows has, their names for a locale, and the functions that answer about
+ * them. Every calendar is reached through the day number of the Gregorian date, which the system time carries.
+ */
+#include "kernelbase_private.h"
+#include "nls_locslots.h"
+
+/* ------------------------------------------------------------------ day numbers */
+
+#define JDN_UNIX_EPOCH 2440588
+#define JDN_1601 2305814 /* 1 January 1601. */
+
+/* the day number of a Gregorian date, counted from the noon of 24 November 4714 BC. */
+static LONG gregorian_to_jdn(int year, int month, int day)
+{
+    int a = (14 - month) / 12;
+    int y = year + 4800 - a;
+    int m = month + 12 * a - 3;
+    return day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
+}
+
+static void jdn_to_gregorian(LONG jdn, int *year, int *month, int *day)
+{
+    LONG a = jdn + 32044;
+    LONG b = (4 * a + 3) / 146097;
+    LONG c = a - 146097 * b / 4;
+    LONG d = (4 * c + 3) / 1461;
+    LONG e = c - 1461 * d / 4;
+    LONG m = (5 * e + 2) / 153;
+    *day = (int)(e - (153 * m + 2) / 5 + 1);
+    *month = (int)(m + 3 - 12 * (m / 10));
+    *year = (int)(100 * b + d - 4800 + m / 10);
+}
+
+static int day_of_week(LONG jdn)
+{
+    return (int)((jdn + 1) % 7);
+}
+
+static BOOL gregorian_leap(int y)
+{
+    return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+}
+
+/* ------------------------------------------------------------------ the dates of a calendar */
+
+/* the supported range of each calendar, as day numbers. */
+static constexpr LONG g_jdn_first_persian = 1948321;          /* 1 Farvardin 1, 22 March 622. */
+
+static LONG islamic_to_jdn(int y, int m, int d)
+{
+    return d + 29 * (m - 1) + m / 2 + 354 * (y - 1) + (3 + 11 * y) / 30 + 1948440 - 1;
+}
+
+static void jdn_to_islamic(LONG jdn, int *y, int *m, int *d)
+{
+    LONG year = (30 * (jdn - 1948440) + 10646) / 10631;
+    LONG start = islamic_to_jdn((int)year, 1, 1);
+    LONG day = jdn - start;
+    int month = 1;
+    while (month < 12 && day >= 29 * month + (month + 1) / 2)
+        month++;
+    *y = (int)year;
+    *m = month;
+    *d = (int)(day - (29 * (month - 1) + month / 2) + 1);
+}
+
+/* the months of the calendar Um Al Qura, which a table gives. */
+#define UMALQURA_FIRST_YEAR 1318
+#define UMALQURA_MONTHS 2196
+
+static UINT16 g_umalqura_start[UMALQURA_MONTHS + 1]; /* days from the first day of the table. */
+static LONG g_umalqura_jdn0;
+static volatile LONG g_umalqura_ready;
+
+extern const UINT8 g_nls_umalqura_bits[]; /* one bit per month, 1 for a month of 30 days. */
+extern UINT KbLocaleCount(void);
+
+static void umalqura_setup(void)
+{
+    if (g_umalqura_ready)
+        return;
+    UINT16 days = 0;
+    for (int i = 0; i < UMALQURA_MONTHS; i++) {
+        g_umalqura_start[i] = days;
+        days = (UINT16)(days + 29 + ((g_nls_umalqura_bits[i >> 3] >> (i & 7)) & 1));
+    }
+    g_umalqura_start[UMALQURA_MONTHS] = days;
+    g_umalqura_jdn0 = gregorian_to_jdn(1900, 4, 30);
+    InterlockedExchange(&g_umalqura_ready, 1);
+}
+
+static BOOL jdn_to_umalqura(LONG jdn, int *y, int *m, int *d)
+{
+    umalqura_setup();
+    LONG day = jdn - g_umalqura_jdn0;
+    if (day < 0 || day >= g_umalqura_start[UMALQURA_MONTHS])
+        return FALSE;
+    int lo = 0, hi = UMALQURA_MONTHS - 1;
+    while (lo < hi) {
+        int mid = (lo + hi + 1) / 2;
+        if (g_umalqura_start[mid] <= day)
+            lo = mid;
+        else
+            hi = mid - 1;
+    }
+    *y = UMALQURA_FIRST_YEAR + lo / 12;
+    *m = lo % 12 + 1;
+    *d = (int)(day - g_umalqura_start[lo]) + 1;
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ the Hebrew calendar */
+
+static LONG hebrew_elapsed_days(int year)
+{
+    LONG months = (235L * year - 234) / 19;
+    LONG parts = 12084 + 13753L * months;
+    LONG day = 29 * months + parts / 25920;
+    if ((3 * (day + 1)) % 7 < 3)
+        day++;
+    return day;
+}
+
+static int hebrew_new_year_delay(int year)
+{
+    LONG previous = hebrew_elapsed_days(year - 1), this_year = hebrew_elapsed_days(year), next = hebrew_elapsed_days(year + 1);
+    if (next - this_year == 356)
+        return 2;
+    if (this_year - previous == 382)
+        return 1;
+    return 0;
+}
+
+/* the day number of the first of Tishri. */
+static LONG hebrew_new_year(int year)
+{
+    return -1373427 + 1721425 + hebrew_elapsed_days(year) + hebrew_new_year_delay(year);
+}
+
+static BOOL hebrew_leap(int year)
+{
+    return (7 * year + 1) % 19 < 7;
+}
+
+static int hebrew_months_in_year(int year)
+{
+    return hebrew_leap(year) ? 13 : 12;
+}
+
+/* the days of a month, the months numbered from Tishri with the two Adars of a leap year as the sixth and seventh. */
+static int hebrew_days_in_month(int year, int month)
+{
+    int length = (int)(hebrew_new_year(year + 1) - hebrew_new_year(year));
+    BOOL leap = hebrew_leap(year);
+    if (!leap && month >= 7)
+        month++; /* the numbers after Adar are one up in a leap year. */
+    switch (month) {
+    case 1:
+    case 5:
+    case 8:
+    case 10:
+    case 12:
+        return 30;
+    case 2:
+        return length % 10 == 5 ? 30 : 29;
+    case 3:
+        return length % 10 == 3 ? 29 : 30;
+    case 4:
+    case 9:
+    case 11:
+    case 13:
+        return 29;
+    case 6:
+        return leap ? 30 : 29;
+    case 7:
+        return 29;
+    default:
+        return 29;
+    }
+}
+
+static void jdn_to_hebrew(LONG jdn, int *y, int *m, int *d)
+{
+    int year = (int)((jdn - (-1373427 + 1721425)) * 98496 / 35975351) + 1;
+    while (hebrew_new_year(year) > jdn)
+        year--;
+    while (hebrew_new_year(year + 1) <= jdn)
+        year++;
+    LONG day = jdn - hebrew_new_year(year);
+    int month = 1;
+    int months = hebrew_months_in_year(year);
+    while (month < months && day >= hebrew_days_in_month(year, month)) {
+        day -= hebrew_days_in_month(year, month);
+        month++;
+    }
+    *y = year;
+    *m = month;
+    *d = (int)day + 1;
+}
+
+/* ------------------------------------------------------------------ the Persian calendar */
+
+static BOOL persian_leap(int year)
+{
+    return (25 * year + 11) % 33 < 8;
+}
+
+static LONG persian_to_jdn(int year, int month, int day)
+{
+    LONG leaps = 0;
+    /* the leap years from 1 up to the one before, counted from the cycle of 33 years. */
+    LONG cycles = (year - 1) / 33;
+    leaps = cycles * 8;
+    for (int y = (int)cycles * 33 + 1; y < year; y++)
+        if (persian_leap(y))
+            leaps++;
+    LONG days = 365L * (year - 1) + leaps;
+    days += month <= 7 ? 31 * (month - 1) : 186 + 30 * (month - 7);
+    return g_jdn_first_persian + days + day - 1;
+}
+
+static void jdn_to_persian(LONG jdn, int *y, int *m, int *d)
+{
+    int year = (int)((jdn - g_jdn_first_persian) * 33 / 12053) + 1;
+    while (persian_to_jdn(year, 1, 1) > jdn)
+        year--;
+    while (persian_to_jdn(year + 1, 1, 1) <= jdn)
+        year++;
+    LONG day = jdn - persian_to_jdn(year, 1, 1);
+    int month = 1;
+    for (;;) {
+        int length = month <= 6 ? 31 : month <= 11 ? 30 : persian_leap(year) ? 30 : 29;
+        if (day < length || month == 12)
+            break;
+        day -= length;
+        month++;
+    }
+    *y = year;
+    *m = month;
+    *d = (int)day + 1;
+}
+
+/* ------------------------------------------------------------------ the eras of the Japanese calendar */
+
+typedef struct JAPANESE_ERA {
+    int Year, Month, Day; /* the first day of the era. */
+} JAPANESE_ERA;
+
+/* the newest first, as windows lists them: the era a date is in is the first whose start is not after it. */
+static constexpr JAPANESE_ERA g_japanese_eras[] = {
+    {2019, 5, 1}, {1989, 1, 8}, {1926, 12, 25}, {1912, 7, 30}, {1868, 1, 1},
+};
+#define JAPANESE_ERAS 5
+
+/* ------------------------------------------------------------------ the calendars */
+
+static BOOL gregorian_calendar(CALID cal)
+{
+    return cal == CAL_GREGORIAN || cal == CAL_GREGORIAN_US || cal == CAL_GREGORIAN_ME_FRENCH ||
+           cal == CAL_GREGORIAN_ARABIC || cal == CAL_GREGORIAN_XLIT_ENGLISH || cal == CAL_GREGORIAN_XLIT_FRENCH;
+}
+
+BOOL KbValidCalendar(CALID cal)
+{
+    return gregorian_calendar(cal) || cal == CAL_JAPAN || cal == CAL_TAIWAN || cal == CAL_KOREA || cal == CAL_HIJRI ||
+           cal == CAL_THAI || cal == CAL_HEBREW || cal == CAL_PERSIAN || cal == CAL_UMALQURA;
+}
+
+/* the first and the last day number a calendar can be asked about. */
+static void calendar_range(CALID cal, LONG *first, LONG *last)
+{
+    *first = JDN_1601;
+    *last = gregorian_to_jdn(30827, 12, 31);
+    switch (cal) {
+    case CAL_HIJRI:
+        *last = gregorian_to_jdn(9999, 12, 31);
+        break;
+    case CAL_PERSIAN:
+        *last = gregorian_to_jdn(9999, 12, 31);
+        break;
+    case CAL_HEBREW:
+        *first = gregorian_to_jdn(1583, 1, 1);
+        *last = gregorian_to_jdn(2239, 9, 29);
+        if (*first < JDN_1601)
+            *first = JDN_1601;
+        break;
+    case CAL_UMALQURA:
+        *first = gregorian_to_jdn(1900, 4, 30);
+        *last = gregorian_to_jdn(2077, 11, 16);
+        break;
+    case CAL_TAIWAN:
+    case CAL_KOREA:
+    case CAL_THAI:
+    case CAL_JAPAN:
+        *last = gregorian_to_jdn(9999, 12, 31);
+        break;
+    default:
+        break;
+    }
+}
+
+LONG KbGregorianToJdn(int year, int month, int day)
+{
+    return gregorian_to_jdn(year, month, day);
+}
+
+int KbDaysInGregorianMonth(int year, int month)
+{
+    static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    return month == 2 && gregorian_leap(year) ? 29 : days[month - 1];
+}
+
+/* a date of a calendar, with the era and the year of it for the calendars that have them. */
+BOOL KbCalendarDate(CALID cal, LONG jdn, KB_CALDATE *out)
+{
+    LONG first, last;
+    calendar_range(cal, &first, &last);
+    if (jdn < first || jdn > last)
+        return FALSE;
+    memset(out, 0, sizeof(*out));
+    out->DayOfWeek = day_of_week(jdn);
+    int y, m, d;
+    switch (cal) {
+    case CAL_HIJRI:
+        jdn_to_islamic(jdn, &y, &m, &d);
+        out->Era = 1;
+        break;
+    case CAL_UMALQURA:
+        if (!jdn_to_umalqura(jdn, &y, &m, &d))
+            return FALSE;
+        out->Era = 1;
+        break;
+    case CAL_HEBREW:
+        jdn_to_hebrew(jdn, &y, &m, &d);
+        out->Era = 1;
+        break;
+    case CAL_PERSIAN:
+        jdn_to_persian(jdn, &y, &m, &d);
+        out->Era = 1;
+        break;
+    default:
+        jdn_to_gregorian(jdn, &y, &m, &d);
+        out->Era = 1;
+        break;
+    }
+    out->Year = y;
+    out->Month = m;
+    out->Day = d;
+    out->EraYear = y;
+    switch (cal) {
+    case CAL_THAI:
+        out->Year = y + 543;
+        out->EraYear = out->Year;
+        break;
+    case CAL_KOREA:
+        out->Year = y + 2333;
+        out->EraYear = out->Year;
+        break;
+    case CAL_TAIWAN:
+        if (y >= 1912) {
+            out->Year = y - 1911;
+            out->Era = 1;
+        } else {
+            out->Year = 1912 - y;
+            out->Era = 2;
+        }
+        out->EraYear = out->Year;
+        break;
+    case CAL_JAPAN: {
+        out->Era = JAPANESE_ERAS;
+        out->EraYear = y;
+        for (int i = 0; i < JAPANESE_ERAS; i++) {
+            if (jdn >= gregorian_to_jdn(g_japanese_eras[i].Year, g_japanese_eras[i].Month, g_japanese_eras[i].Day)) {
+                out->Era = JAPANESE_ERAS - i;
+                out->EraYear = y - g_japanese_eras[i].Year + 1;
+                break;
+            }
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    return TRUE;
+}
+
+/* the months and days of a year of a calendar, for the functions that ask for them. */
+int KbCalendarMonthsInYear(CALID cal, int year)
+{
+    if (cal == CAL_HEBREW)
+        return hebrew_months_in_year(year);
+    return 12;
+}
+
+/* ------------------------------------------------------------------ the data of the calendars */
+
+/* the kind of record a calendar keeps its names in, or -1 for the calendars that use the names of the Gregorian one. */
+static int calendar_kind(CALID cal)
+{
+    switch (cal) {
+    case CAL_HIJRI:
+    case CAL_UMALQURA:
+        return NLS_CALKIND_HIJRI;
+    case CAL_HEBREW:
+        return NLS_CALKIND_HEBREW;
+    case CAL_PERSIAN:
+        return NLS_CALKIND_PERSIAN;
+    case CAL_JAPAN:
+        return NLS_CALKIND_JAPAN;
+    case CAL_TAIWAN:
+        return NLS_CALKIND_TAIWAN;
+    case CAL_THAI:
+        return NLS_CALKIND_THAI;
+    case CAL_KOREA:
+        return NLS_CALKIND_KOREA;
+    default:
+        return -1;
+    }
+}
+
+BOOL KbLocaleSupportsCalendar(UINT locale, CALID cal)
+{
+    const UINT8 *list = KbLocaleCalendars(locale);
+    for (int i = 0; i < 8 && list[i]; i++)
+        if (list[i] == cal)
+            return TRUE;
+    return FALSE;
+}
+
+/*
+ * The locale whose names and pictures a calendar answers with. The Gregorian calendars of the English, the French and
+ * the Arabic language have those languages in every locale, and the Hijri calendars have the Arabic names in the
+ * locales of the other languages.
+ */
+UINT KbCalendarLocale(UINT locale, CALID cal)
+{
+    PCWSTR name = nullptr;
+    switch (cal) {
+    case CAL_GREGORIAN_US:
+        name = L"en-US";
+        break;
+    case CAL_GREGORIAN_ME_FRENCH:
+        name = L"fr-FR";
+        break;
+    case CAL_GREGORIAN_ARABIC:
+        name = L"ar-SY";
+        break;
+    case CAL_HIJRI:
+    case CAL_UMALQURA: {
+        PCWSTR language = KbLocaleText(locale, NLS_S_SISO639LANGNAME);
+        if (wcscmp(language, L"ar") && wcscmp(language, L"fa"))
+            name = L"ar-SA";
+        break;
+    }
+    default:
+        break;
+    }
+    if (!name)
+        return locale;
+    UINT l = KbLocaleFromName(name);
+    return l == 0xFFFFFFFFu ? locale : l;
+}
+
+PCWSTR KbCalendarDayName(UINT locale, CALID cal, int weekday, BOOL abbreviated)
+{
+    locale = KbCalendarLocale(locale, cal);
+    return KbLocaleText(locale, (abbreviated ? NLS_S_SABBREVDAYNAME1 : NLS_S_SDAYNAME1) + weekday);
+}
+
+/* the text of a calendar's record, or of the Gregorian items when the calendar has no record for the locale. */
+static PCWSTR record_text(UINT locale, CALID cal, UINT record_slot)
+{
+    int kind = calendar_kind(cal);
+    return kind < 0 ? nullptr : KbLocaleCalendarText(KbCalendarLocale(locale, cal), (UINT)kind, record_slot);
+}
+
+PCWSTR KbCalendarMonthName(UINT locale, CALID cal, int month, BOOL abbreviated, BOOL genitive)
+{
+    if (month < 1 || month > 13)
+        return L"";
+    PCWSTR text = record_text(locale, cal, (abbreviated ? NLS_CAL_ABBREV1 : NLS_CAL_MONTH1) + month - 1);
+    if (text)
+        return text;
+    if (month == 13)
+        return L"";
+    locale = KbCalendarLocale(locale, cal);
+    if (genitive)
+        return KbLocaleText(locale, (abbreviated ? NLS_S_GENABBREV1 : NLS_S_GENMONTH1) + month - 1);
+    return KbLocaleText(locale, (abbreviated ? NLS_S_SABBREVMONTHNAME1 : NLS_S_SMONTHNAME1) + month - 1);
+}
+
+/* the name of an era; the era of a Gregorian date is the one of anno domini. */
+PCWSTR KbCalendarEraName(UINT locale, CALID cal, int era, BOOL abbreviated)
+{
+    if (cal == CAL_JAPAN && era >= 1 && era <= JAPANESE_ERAS) {
+        PCWSTR text = record_text(locale, cal, (abbreviated ? NLS_CAL_JABBREV1 : NLS_CAL_JERA1) + (JAPANESE_ERAS - era));
+        if (text && *text)
+            return text;
+    }
+    PCWSTR text = record_text(locale, cal, abbreviated ? NLS_CAL_ABBREV_ERA : NLS_CAL_ERA);
+    if (text && *text)
+        return text;
+    return KbLocaleText(KbCalendarLocale(locale, cal), abbreviated ? NLS_S_GREGERAABBR : NLS_S_GREGERA);
+}
+
+/* ------------------------------------------------------------------ calendar information */
+
+typedef struct YEAR_FACTS {
+    int OffsetRange;
+    int TwoDigitYearMax;
+} YEAR_FACTS;
+
+static YEAR_FACTS year_facts(CALID cal)
+{
+    switch (cal) {
+    case CAL_JAPAN:
+        return (YEAR_FACTS){2019, 99};
+    case CAL_TAIWAN:
+        return (YEAR_FACTS){1912, 99};
+    case CAL_KOREA:
+        return (YEAR_FACTS){2333, 4382};
+    case CAL_THAI:
+        return (YEAR_FACTS){543, 2592};
+    case CAL_HIJRI:
+    case CAL_UMALQURA:
+        return (YEAR_FACTS){0, 1451};
+    case CAL_HEBREW:
+        return (YEAR_FACTS){0, 5810};
+    case CAL_PERSIAN:
+        return (YEAR_FACTS){0, 1429};
+    default:
+        return (YEAR_FACTS){0, 2049};
+    }
+}
+
+/* the picture a calendar has for a kind of date in a locale. */
+PCWSTR KbCalendarPicture(UINT locale, CALID cal, UINT kind)
+{
+    static const UINT record_slots[] = {NLS_CAL_SHORTDATE, NLS_CAL_LONGDATE, NLS_CAL_YEARMONTH, NLS_CAL_MONTHDAY};
+    static const UINT locale_slots[] = {NLS_S_SSHORTDATE, NLS_S_SLONGDATE, NLS_S_SYEARMONTH, NLS_S_SMONTHDAY};
+    /* the Gregorian calendars of other languages have the same pictures in every locale. */
+    if (cal == CAL_GREGORIAN_US || (cal >= CAL_GREGORIAN_ME_FRENCH && cal <= CAL_GREGORIAN_XLIT_FRENCH)) {
+        static const PCWSTR fixed[2][4] = {{L"M/d/yyyy", L"dddd, MMMM dd, yyyy", L"MMMM, yyyy", L"MMMM dd"},
+                                           {L"MM/dd/yyyy", L"dddd, MMMM dd, yyyy", L"MMMM, yyyy", L"dd MMMM"}};
+        return fixed[cal != CAL_GREGORIAN_US][kind];
+    }
+    PCWSTR text = record_text(locale, cal, record_slots[kind]);
+    return text && *text ? text : KbLocaleText(KbCalendarLocale(locale, cal), locale_slots[kind]);
+}
+
+/*
+ * The answer for one type: a text, or a number when the type is numeric. Returns FALSE for a type the calendar has no
+ * answer for.
+ */
+static BOOL calendar_value(UINT locale, CALID cal, CALTYPE base, BOOL genitive, PCWSTR *text, DWORD *number)
+{
+    *text = nullptr;
+    YEAR_FACTS facts = year_facts(cal);
+    UINT names = KbCalendarLocale(locale, cal);
+    if (base >= CAL_SDAYNAME1 && base < CAL_SDAYNAME1 + 7) {
+        *text = KbLocaleText(names, NLS_S_SDAYNAME1 + (base - CAL_SDAYNAME1));
+    } else if (base >= CAL_SABBREVDAYNAME1 && base < CAL_SABBREVDAYNAME1 + 7) {
+        *text = KbLocaleText(names, NLS_S_SABBREVDAYNAME1 + (base - CAL_SABBREVDAYNAME1));
+    } else if (base >= CAL_SSHORTESTDAYNAME1 && base < CAL_SSHORTESTDAYNAME1 + 7) {
+        *text = KbLocaleText(names, NLS_S_SSHORTESTDAYNAME1 + (base - CAL_SSHORTESTDAYNAME1));
+    } else if (base >= CAL_SMONTHNAME1 && base <= CAL_SMONTHNAME13) {
+        *text = KbCalendarMonthName(locale, cal, base - CAL_SMONTHNAME1 + 1, FALSE, genitive);
+    } else if (base >= CAL_SABBREVMONTHNAME1 && base <= CAL_SABBREVMONTHNAME13) {
+        *text = KbCalendarMonthName(locale, cal, base - CAL_SABBREVMONTHNAME1 + 1, TRUE, genitive);
+    } else {
+        switch (base) {
+        case CAL_ICALINTVALUE:
+            *number = cal;
+            break;
+        case CAL_SCALNAME: {
+            PCWSTR name = record_text(locale, cal, NLS_CAL_NAME);
+            *text = name && *name ? name : KbLocaleText(names, NLS_S_GREGCALNAME);
+            break;
+        }
+        case CAL_IYEAROFFSETRANGE:
+            *number = (DWORD)facts.OffsetRange;
+            break;
+        case CAL_SERASTRING:
+            *text = KbCalendarEraName(locale, cal, cal == CAL_JAPAN ? JAPANESE_ERAS : 1, FALSE);
+            break;
+        case CAL_SABBREVERASTRING:
+            *text = KbCalendarEraName(locale, cal, cal == CAL_JAPAN ? JAPANESE_ERAS : 1, TRUE);
+            break;
+        case CAL_SSHORTDATE:
+            *text = KbCalendarPicture(locale, cal, 0);
+            break;
+        case CAL_SLONGDATE:
+            *text = KbCalendarPicture(locale, cal, 1);
+            break;
+        case CAL_SYEARMONTH:
+            *text = KbCalendarPicture(locale, cal, 2);
+            break;
+        case CAL_SMONTHDAY:
+            *text = KbCalendarPicture(locale, cal, 3);
+            break;
+        case CAL_SRELATIVELONGDATE:
+            if (cal == CAL_GREGORIAN_US)
+                *text = L"dddd, MMMM dd";
+            else if (cal >= CAL_GREGORIAN_ME_FRENCH && cal <= CAL_GREGORIAN_XLIT_FRENCH)
+                *text = L"dddd, dd MMMM";
+            else
+                *text = KbLocaleText(names, NLS_S_SRELATIVELONGDATE);
+            break;
+        case CAL_ITWODIGITYEARMAX:
+            *number = (DWORD)facts.TwoDigitYearMax;
+            break;
+        default:
+            return FALSE;
+        }
+        return TRUE;
+    }
+    return TRUE;
+}
+
+static BOOL numeric_calendar_type(CALTYPE base)
+{
+    return base == CAL_ICALINTVALUE || base == CAL_IYEAROFFSETRANGE || base == CAL_ITWODIGITYEARMAX;
+}
+
+int KbCalendarInfo(UINT locale, CALID calendar, CALTYPE type, LPWSTR data, int size, LPDWORD value)
+{
+    BOOL want_number = (type & CAL_RETURN_NUMBER) != 0;
+    BOOL genitive = (type & LOCALE_RETURN_GENITIVE_NAMES) != 0;
+    CALTYPE base = type & ~(CAL_RETURN_NUMBER | CAL_NOUSEROVERRIDE | CAL_USE_CP_ACP | LOCALE_RETURN_GENITIVE_NAMES);
+    if (size < 0 || (size && !data)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (base != CAL_ITWODIGITYEARMAX && (!KbValidCalendar(calendar) || !KbLocaleSupportsCalendar(locale, calendar))) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    PCWSTR text;
+    DWORD number = 0;
+    if (!KbValidCalendar(calendar) || !calendar_value(locale, calendar, base, genitive, &text, &number)) {
+        KbSetError(ERROR_INVALID_FLAGS);
+        return 0;
+    }
+    BOOL numeric = numeric_calendar_type(base);
+    if (want_number) {
+        if (!numeric) {
+            KbSetError(ERROR_INVALID_FLAGS);
+            return 0;
+        }
+        if (value)
+            *value = number;
+        return sizeof(DWORD) / sizeof(WCHAR);
+    }
+    WCHAR buffer[16];
+    if (numeric) {
+        KbFormat(buffer, RTL_NUMBER_OF(buffer), L"%u", number);
+        text = buffer;
+    }
+    int n = (int)wcslen(text) + 1;
+    if (!size)
+        return n;
+    if (size < n) {
+        KbSetError(ERROR_INSUFFICIENT_BUFFER);
+        return 0;
+    }
+    memcpy(data, text, (SIZE_T)n * sizeof(WCHAR));
+    return n;
+}
+
+static UINT locale_or_error(LCID lcid)
+{
+    UINT l = KbLocaleFromLcid(lcid, TRUE);
+    if (l == 0xFFFFFFFFu)
+        KbSetError(ERROR_INVALID_PARAMETER);
+    return l;
+}
+
+int WINAPI GetCalendarInfoW(LCID locale, CALID calendar, CALTYPE type, LPWSTR data, int size, LPDWORD value)
+{
+    UINT l = locale_or_error(locale);
+    return l == 0xFFFFFFFFu ? 0 : KbCalendarInfo(l, calendar, type, data, size, value);
+}
+
+int WINAPI GetCalendarInfoEx(LPCWSTR name, CALID calendar, LPCWSTR reserved, CALTYPE type, LPWSTR data, int size,
+                             LPDWORD value)
+{
+    UINT l = KbLocaleFromName(name);
+    if (l == 0xFFFFFFFFu) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    return KbCalendarInfo(l, calendar, type, data, size, value);
+}
+
+int WINAPI GetCalendarInfoA(LCID locale, CALID calendar, CALTYPE type, LPSTR data, int size, LPDWORD value)
+{
+    UINT l = locale_or_error(locale);
+    if (l == 0xFFFFFFFFu)
+        return 0;
+    if (size < 0 || (size && !data)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (type & CAL_RETURN_NUMBER)
+        return KbCalendarInfo(l, calendar, type, nullptr, 0, value);
+    WCHAR w[256];
+    if (!KbCalendarInfo(l, calendar, type, w, RTL_NUMBER_OF(w), value))
+        return 0;
+    UINT cp = (type & CAL_USE_CP_ACP) ? CP_ACP : KbLocaleCodePage(locale, 0);
+    int need = WideCharToMultiByte(cp, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    if (!size)
+        return need;
+    if (size < need) {
+        KbSetError(ERROR_INSUFFICIENT_BUFFER);
+        return 0;
+    }
+    return WideCharToMultiByte(cp, 0, w, -1, data, size, nullptr, nullptr);
+}
+
+BOOL WINAPI SetCalendarInfoW(LCID locale, CALID calendar, CALTYPE type, LPCWSTR data)
+{
+    KbSetError(ERROR_ACCESS_DENIED);
+    return FALSE;
+}
+
+BOOL WINAPI SetCalendarInfoA(LCID locale, CALID calendar, CALTYPE type, LPCSTR data)
+{
+    KbSetError(ERROR_ACCESS_DENIED);
+    return FALSE;
+}

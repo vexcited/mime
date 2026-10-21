@@ -331,6 +331,18 @@ WINBASEAPI BOOL WINAPI IsDBCSLeadByteEx(UINT code_page, BYTE c);
 #define ENUM_ALL_CALENDARS 0xFFFFFFFF
 #define CAL_GREGORIAN 1
 #define CAL_GREGORIAN_US 2
+#define CAL_JAPAN 3
+#define CAL_TAIWAN 4
+#define CAL_KOREA 5
+#define CAL_HIJRI 6
+#define CAL_THAI 7
+#define CAL_HEBREW 8
+#define CAL_GREGORIAN_ME_FRENCH 9
+#define CAL_GREGORIAN_ARABIC 10
+#define CAL_GREGORIAN_XLIT_ENGLISH 11
+#define CAL_GREGORIAN_XLIT_FRENCH 12
+#define CAL_PERSIAN 22
+#define CAL_UMALQURA 23
 #define CAL_ICALINTVALUE 0x00000001
 #define CAL_SCALNAME 0x00000002
 #define CAL_IYEAROFFSETRANGE 0x00000003
@@ -348,6 +360,7 @@ WINBASEAPI BOOL WINAPI IsDBCSLeadByteEx(UINT code_page, BYTE c);
 #define CAL_SSHORTESTDAYNAME1 0x00000031
 #define CAL_SMONTHDAY 0x00000038
 #define CAL_SABBREVERASTRING 0x00000039
+#define CAL_SRELATIVELONGDATE 0x0000003A
 #define CAL_RETURN_NUMBER LOCALE_RETURN_NUMBER
 #define CAL_NOUSEROVERRIDE LOCALE_NOUSEROVERRIDE
 #define CAL_USE_CP_ACP LOCALE_USE_CP_ACP
@@ -501,6 +514,17 @@ typedef struct _numberfmtA {
     UINT NegativeOrder;
 } NUMBERFMTA, *LPNUMBERFMTA;
 
+typedef struct _currencyfmtA {
+    UINT NumDigits;
+    UINT LeadingZero;
+    UINT Grouping;
+    LPSTR lpDecimalSep;
+    LPSTR lpThousandSep;
+    UINT NegativeOrder;
+    UINT PositiveOrder;
+    LPSTR lpCurrencySymbol;
+} CURRENCYFMTA, *LPCURRENCYFMTA;
+
 typedef struct _currencyfmtW {
     UINT NumDigits;
     UINT LeadingZero;
@@ -519,6 +543,16 @@ typedef BOOL(CALLBACK *UILANGUAGE_ENUMPROCW)(LPWSTR language, LONG_PTR param);
 typedef BOOL(CALLBACK *DATEFMT_ENUMPROCW)(LPWSTR format);
 typedef BOOL(CALLBACK *TIMEFMT_ENUMPROCW)(LPWSTR format);
 typedef BOOL(CALLBACK *CALINFO_ENUMPROCW)(LPWSTR info);
+typedef BOOL(CALLBACK *CALINFO_ENUMPROCA)(LPSTR info);
+typedef BOOL(CALLBACK *CALINFO_ENUMPROCEXW)(LPWSTR info, CALID calendar);
+typedef BOOL(CALLBACK *CALINFO_ENUMPROCEXA)(LPSTR info, CALID calendar);
+typedef BOOL(CALLBACK *CALINFO_ENUMPROCEXEX)(LPWSTR info, CALID calendar, LPWSTR reserved, LPARAM param);
+typedef BOOL(CALLBACK *DATEFMT_ENUMPROCA)(LPSTR format);
+typedef BOOL(CALLBACK *DATEFMT_ENUMPROCEXW)(LPWSTR format, CALID calendar);
+typedef BOOL(CALLBACK *DATEFMT_ENUMPROCEXA)(LPSTR format, CALID calendar);
+typedef BOOL(CALLBACK *DATEFMT_ENUMPROCEXEX)(LPWSTR format, CALID calendar, LPARAM param);
+typedef BOOL(CALLBACK *TIMEFMT_ENUMPROCA)(LPSTR format);
+typedef BOOL(CALLBACK *TIMEFMT_ENUMPROCEX)(LPWSTR format, LPARAM param);
 typedef BOOL(CALLBACK *GEO_ENUMPROC)(GEOID id);
 typedef DWORD LGRPID;
 typedef BOOL(CALLBACK *LANGUAGEGROUP_ENUMPROCW)(LGRPID group, LPWSTR id_string, LPWSTR name, DWORD flags,
@@ -528,6 +562,22 @@ typedef BOOL(CALLBACK *LANGGROUPLOCALE_ENUMPROCW)(LGRPID group, LCID locale, LPW
 #define LGRPID_INSTALLED 0x00000001
 #define LGRPID_SUPPORTED 0x00000002
 #define LGRPID_WESTERN_EUROPE 0x0001
+#define LGRPID_CENTRAL_EUROPE 0x0002
+#define LGRPID_BALTIC 0x0003
+#define LGRPID_GREEK 0x0004
+#define LGRPID_CYRILLIC 0x0005
+#define LGRPID_TURKIC 0x0006
+#define LGRPID_JAPANESE 0x0007
+#define LGRPID_KOREAN 0x0008
+#define LGRPID_TRADITIONAL_CHINESE 0x0009
+#define LGRPID_SIMPLIFIED_CHINESE 0x000A
+#define LGRPID_THAI 0x000B
+#define LGRPID_HEBREW 0x000C
+#define LGRPID_ARABIC 0x000D
+#define LGRPID_VIETNAMESE 0x000E
+#define LGRPID_INDIC 0x000F
+#define LGRPID_GEORGIAN 0x0010
+#define LGRPID_ARMENIAN 0x0011
 
 /* ------------------------------------------------------------------ functions */
 
@@ -567,6 +617,10 @@ WINBASEAPI BOOL WINAPI SetLocaleInfoW(LCID locale, LCTYPE type, LPCWSTR data);
 WINBASEAPI BOOL WINAPI SetLocaleInfoA(LCID locale, LCTYPE type, LPCSTR data);
 WINBASEAPI int WINAPI GetCalendarInfoW(LCID locale, CALID calendar, CALTYPE type, LPWSTR data, int size,
                                        LPDWORD value);
+WINBASEAPI int WINAPI GetCalendarInfoA(LCID locale, CALID calendar, CALTYPE type, LPSTR data, int size,
+                                       LPDWORD value);
+WINBASEAPI BOOL WINAPI SetCalendarInfoW(LCID locale, CALID calendar, CALTYPE type, LPCWSTR data);
+WINBASEAPI BOOL WINAPI SetCalendarInfoA(LCID locale, CALID calendar, CALTYPE type, LPCSTR data);
 WINBASEAPI int WINAPI GetCalendarInfoEx(LPCWSTR name, CALID calendar, LPCWSTR reserved, CALTYPE type, LPWSTR data,
                                         int size, LPDWORD value);
 WINBASEAPI int WINAPI GetDateFormatW(LCID locale, DWORD flags, const SYSTEMTIME *date, LPCWSTR format, LPWSTR buffer,
@@ -589,6 +643,12 @@ WINBASEAPI int WINAPI GetNumberFormatEx(LPCWSTR name, DWORD flags, LPCWSTR value
                                         LPWSTR buffer, int size);
 WINBASEAPI int WINAPI GetCurrencyFormatW(LCID locale, DWORD flags, LPCWSTR value, const CURRENCYFMTW *format,
                                          LPWSTR buffer, int size);
+WINBASEAPI int WINAPI GetCurrencyFormatA(LCID locale, DWORD flags, LPCSTR value, const CURRENCYFMTA *format,
+                                         LPSTR buffer, int size);
+WINBASEAPI int WINAPI GetDurationFormat(LCID locale, DWORD flags, const SYSTEMTIME *duration, ULONGLONG ticks,
+                                        LPCWSTR format, LPWSTR buffer, int size);
+WINBASEAPI int WINAPI GetDurationFormatEx(LPCWSTR name, DWORD flags, const SYSTEMTIME *duration, ULONGLONG ticks,
+                                          LPCWSTR format, LPWSTR buffer, int size);
 WINBASEAPI int WINAPI GetCurrencyFormatEx(LPCWSTR name, DWORD flags, LPCWSTR value, const CURRENCYFMTW *format,
                                           LPWSTR buffer, int size);
 WINBASEAPI int WINAPI CompareStringW(LCID locale, DWORD flags, PCNZWCH a, int alen, PCNZWCH b, int blen);
@@ -634,6 +694,17 @@ WINBASEAPI BOOL WINAPI EnumUILanguagesW(UILANGUAGE_ENUMPROCW proc, DWORD flags, 
 WINBASEAPI BOOL WINAPI EnumDateFormatsW(DATEFMT_ENUMPROCW proc, LCID locale, DWORD flags);
 WINBASEAPI BOOL WINAPI EnumTimeFormatsW(TIMEFMT_ENUMPROCW proc, LCID locale, DWORD flags);
 WINBASEAPI BOOL WINAPI EnumCalendarInfoW(CALINFO_ENUMPROCW proc, LCID locale, CALID calendar, CALTYPE type);
+WINBASEAPI BOOL WINAPI EnumCalendarInfoA(CALINFO_ENUMPROCA proc, LCID locale, CALID calendar, CALTYPE type);
+WINBASEAPI BOOL WINAPI EnumCalendarInfoExW(CALINFO_ENUMPROCEXW proc, LCID locale, CALID calendar, CALTYPE type);
+WINBASEAPI BOOL WINAPI EnumCalendarInfoExA(CALINFO_ENUMPROCEXA proc, LCID locale, CALID calendar, CALTYPE type);
+WINBASEAPI BOOL WINAPI EnumCalendarInfoExEx(CALINFO_ENUMPROCEXEX proc, LPCWSTR name, CALID calendar, LPCWSTR reserved,
+                                            CALTYPE type, LPARAM param);
+WINBASEAPI BOOL WINAPI EnumDateFormatsA(DATEFMT_ENUMPROCA proc, LCID locale, DWORD flags);
+WINBASEAPI BOOL WINAPI EnumDateFormatsExW(DATEFMT_ENUMPROCEXW proc, LCID locale, DWORD flags);
+WINBASEAPI BOOL WINAPI EnumDateFormatsExA(DATEFMT_ENUMPROCEXA proc, LCID locale, DWORD flags);
+WINBASEAPI BOOL WINAPI EnumDateFormatsExEx(DATEFMT_ENUMPROCEXEX proc, LPCWSTR name, DWORD flags, LPARAM param);
+WINBASEAPI BOOL WINAPI EnumTimeFormatsA(TIMEFMT_ENUMPROCA proc, LCID locale, DWORD flags);
+WINBASEAPI BOOL WINAPI EnumTimeFormatsEx(TIMEFMT_ENUMPROCEX proc, LPCWSTR name, DWORD flags, LPARAM param);
 WINBASEAPI BOOL WINAPI GetUserPreferredUILanguages(DWORD flags, PULONG count, PZZWSTR buffer, PULONG size);
 WINBASEAPI BOOL WINAPI GetSystemPreferredUILanguages(DWORD flags, PULONG count, PZZWSTR buffer, PULONG size);
 WINBASEAPI BOOL WINAPI GetThreadPreferredUILanguages(DWORD flags, PULONG count, PZZWSTR buffer, PULONG size);

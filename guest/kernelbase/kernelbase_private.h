@@ -105,9 +105,40 @@ BOOL KbRunPendingApcs(void);
 /* pe headers of a mapped image, or NULL. */
 PIMAGE_NT_HEADERS KbImageNtHeader(PVOID base);
 
-/* locale helpers shared by nls and formatting code. */
+/* locale helpers shared by the national language support. A locale is the index of its entry in the generated tables. */
 LCID KbResolveLcid(LCID lcid);
 BOOL KbIsSupportedLcid(LCID lcid);
+UINT KbLocaleFromLcid(LCID lcid, BOOL allow_neutral);
+UINT KbLocaleFromName(LPCWSTR name);
+UINT KbLocaleCodePage(LCID lcid, UINT kind);
+UINT KbResolveCodePage(UINT cp);
+UINT KbLocaleCount(void);
+PCWSTR KbLocaleName(UINT locale);
+PCWSTR KbLocaleText(UINT locale, UINT slot);
+INT KbLocaleNumber(UINT locale, UINT slot);
+BOOL KbLocaleIsNeutral(UINT locale);
+UINT KbLocaleSpecific(UINT locale);
+const UINT8 *KbLocaleCalendars(UINT locale);
+PCWSTR KbLocaleCalendarText(UINT locale, UINT kind, UINT slot);
+
+/* calendar.c: the dates of the calendars of windows. */
+typedef struct KB_CALDATE {
+    int Year, Month, Day;
+    int Era, EraYear;
+    int DayOfWeek; /* Sunday is 0. */
+} KB_CALDATE;
+
+BOOL KbValidCalendar(CALID cal);
+BOOL KbLocaleSupportsCalendar(UINT locale, CALID cal);
+BOOL KbCalendarDate(CALID cal, LONG jdn, KB_CALDATE *out);
+LONG KbGregorianToJdn(int year, int month, int day);
+int KbDaysInGregorianMonth(int year, int month);
+PCWSTR KbCalendarMonthName(UINT locale, CALID cal, int month, BOOL abbreviated, BOOL genitive);
+PCWSTR KbCalendarEraName(UINT locale, CALID cal, int era, BOOL abbreviated);
+UINT KbCalendarLocale(UINT locale, CALID cal);
+PCWSTR KbCalendarDayName(UINT locale, CALID cal, int weekday, BOOL abbreviated);
+int KbCalendarInfo(UINT locale, CALID calendar, CALTYPE type, LPWSTR data, int size, LPDWORD value);
+PCWSTR KbCalendarPicture(UINT locale, CALID cal, UINT kind); /* kind: 0 short, 1 long, 2 year and month, 3 month and day */
 
 /* unidata.c: Unicode data of the national language support. */
 UINT KbUniCcc(ULONG cp);
