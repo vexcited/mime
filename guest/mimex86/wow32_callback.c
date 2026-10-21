@@ -1,3 +1,5 @@
+#define MIME_NTDLL
+#define NTSYSCALLAPI
 #include <mime/ntrtl.h>
 #include "wow32_callback.h"
 #include "wow32_layout.h"
