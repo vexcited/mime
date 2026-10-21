@@ -1242,8 +1242,14 @@ static void dispatch(const MIME_SHELL_EVENT *e)
         break;
     }
     case MIME_SHELL_EVENT_TOAST_DISMISSED:
-        if (table_remove(t))
+        if (e->Arg == 2) {
+            /* a popup that timed out stays in the history, as in the action center, with no popup left to hide. */
+            EnterCriticalSection(&g_table_lock);
+            t->HostId = 0;
+            LeaveCriticalSection(&g_table_lock);
+        } else if (table_remove(t)) {
             toast_unref(t);
+        }
         raise_dismissed(t, e->Arg == 1 ? 1 : e->Arg == 2 ? 2 : 0);
         break;
     case MIME_SHELL_EVENT_TOAST_FAILED:
@@ -1279,6 +1285,36 @@ static void ensure_event_thread(void)
 
 /* ------------------------------------------------------------------ showing and hiding */
 
+/* what the notification server is told of a toast. */
+static void fill_message(MimeShellToast *m, NOTIFIER *n, TOAST *t, const CONTENT *c)
+{
+    m->op = MIME_SHELL_TOAST_SHOW;
+    if (c->Silent)
+        m->flags |= MIME_TOAST_SILENT;
+    if (c->Urgent || t->Priority == 1)
+        m->flags |= MIME_TOAST_URGENT;
+    if (c->Resident)
+        m->flags |= MIME_TOAST_RESIDENT;
+    if (c->Reply)
+        m->flags |= MIME_TOAST_REPLY;
+    m->timeout_ms = c->Timeout;
+    m->action_count = c->ActionCount;
+    WCHAR app[64];
+    application_name(app, RTL_NUMBER_OF(app), n->Aumid);
+    put_text(m->aumid, RTL_NUMBER_OF(m->aumid), n->Aumid);
+    put_text(m->app, RTL_NUMBER_OF(m->app), app);
+    put_text(m->tag, RTL_NUMBER_OF(m->tag), t->Tag);
+    put_text(m->group, RTL_NUMBER_OF(m->group), t->Group);
+    put_text(m->title, RTL_NUMBER_OF(m->title), c->Title);
+    put_text(m->body, RTL_NUMBER_OF(m->body), c->Body);
+    put_text(m->logo, RTL_NUMBER_OF(m->logo), c->Logo);
+    put_text(m->hero, RTL_NUMBER_OF(m->hero), c->Hero);
+    put_text(m->picture, RTL_NUMBER_OF(m->picture), c->Picture);
+    put_text(m->placeholder, RTL_NUMBER_OF(m->placeholder), c->Placeholder);
+    for (ULONG i = 0; i < c->ActionCount; i++)
+        put_text(m->actions[i].label, RTL_NUMBER_OF(m->actions[i].label), c->Labels[i]);
+}
+
 static HRESULT show_toast(NOTIFIER *n, TOAST *t)
 {
     CONTENT c;
@@ -1287,42 +1323,18 @@ static HRESULT show_toast(NOTIFIER *n, TOAST *t)
         content_free(&c);
         return hr;
     }
-    if (t->SuppressPopup) {
-        /* it only goes to the history, which the desktop's notification server has no room for. */
-        content_free(&c);
-        return S_OK;
+    /* a toast with no popup only goes to the history, which the desktop's notification server has no room for. */
+    BOOL quiet = t->SuppressPopup;
+    MimeShellToast *m = nullptr;
+    if (!quiet) {
+        m = CbAlloc(sizeof(*m));
+        if (!m) {
+            content_free(&c);
+            return E_OUTOFMEMORY;
+        }
+        memset(m, 0, sizeof(*m));
+        fill_message(m, n, t, &c);
     }
-    MimeShellToast *m = CbAlloc(sizeof(*m));
-    if (!m) {
-        content_free(&c);
-        return E_OUTOFMEMORY;
-    }
-    memset(m, 0, sizeof(*m));
-    m->op = MIME_SHELL_TOAST_SHOW;
-    if (c.Silent)
-        m->flags |= MIME_TOAST_SILENT;
-    if (c.Urgent || t->Priority == 1)
-        m->flags |= MIME_TOAST_URGENT;
-    if (c.Resident)
-        m->flags |= MIME_TOAST_RESIDENT;
-    if (c.Reply)
-        m->flags |= MIME_TOAST_REPLY;
-    m->timeout_ms = c.Timeout;
-    m->action_count = c.ActionCount;
-    WCHAR app[64];
-    application_name(app, RTL_NUMBER_OF(app), n->Aumid);
-    put_text(m->aumid, RTL_NUMBER_OF(m->aumid), n->Aumid);
-    put_text(m->app, RTL_NUMBER_OF(m->app), app);
-    put_text(m->tag, RTL_NUMBER_OF(m->tag), t->Tag);
-    put_text(m->group, RTL_NUMBER_OF(m->group), t->Group);
-    put_text(m->title, RTL_NUMBER_OF(m->title), c.Title);
-    put_text(m->body, RTL_NUMBER_OF(m->body), c.Body);
-    put_text(m->logo, RTL_NUMBER_OF(m->logo), c.Logo);
-    put_text(m->hero, RTL_NUMBER_OF(m->hero), c.Hero);
-    put_text(m->picture, RTL_NUMBER_OF(m->picture), c.Picture);
-    put_text(m->placeholder, RTL_NUMBER_OF(m->placeholder), c.Placeholder);
-    for (ULONG i = 0; i < c.ActionCount; i++)
-        put_text(m->actions[i].label, RTL_NUMBER_OF(m->actions[i].label), c.Labels[i]);
     /* an earlier toast of the same tag and group is replaced by the host; the table forgets it too. */
     TOAST *replaced = nullptr;
     if (t->Tag && t->Tag[0]) {
@@ -1351,6 +1363,13 @@ static HRESULT show_toast(NOTIFIER *n, TOAST *t)
     }
     t->ActionCount = c.ActionCount;
     content_free(&c);
+    if (quiet) {
+        if (table_remove(t))
+            toast_unref(t);
+        t->HostId = 0;
+        table_add(t);
+        return S_OK;
+    }
     ensure_event_thread();
     /* the table has the toast before the host can answer for it, the number being filled in when the call returns. */
     if (table_remove(t))
@@ -1375,8 +1394,14 @@ static HRESULT show_toast(NOTIFIER *n, TOAST *t)
 
 static HRESULT hide_toast(TOAST *t)
 {
-    if (!t->HostId)
+    if (!t->HostId) {
+        /* in the history only: no popup was made, or it timed out. */
+        if (table_remove(t)) {
+            raise_dismissed(t, 1);
+            toast_unref(t);
+        }
         return S_OK;
+    }
     MimeShellToast m;
     memset(&m, 0, sizeof(m));
     m.op = MIME_SHELL_TOAST_HIDE;
@@ -1385,8 +1410,35 @@ static HRESULT hide_toast(TOAST *t)
     return r < 0 ? status_hr(r) : S_OK;
 }
 
+/* the toasts that have no popup on the host, in the history only, that a removal names. */
+static void forget_quiet(const WCHAR *aumid, const WCHAR *tag, const WCHAR *group)
+{
+    TOAST *gone = nullptr;
+    init();
+    EnterCriticalSection(&g_table_lock);
+    for (TOAST **p = &g_shown; *p;) {
+        TOAST *t = *p;
+        if (!t->HostId && !t->Showing && same_text(t->Aumid, aumid) && (!tag || same_text(t->Tag, tag)) &&
+            (!group || same_text(t->Group, group))) {
+            *p = t->Next;
+            t->Next = gone;
+            gone = t;
+        } else {
+            p = &t->Next;
+        }
+    }
+    LeaveCriticalSection(&g_table_lock);
+    while (gone) {
+        TOAST *next = gone->Next;
+        gone->Next = nullptr;
+        toast_unref(gone);
+        gone = next;
+    }
+}
+
 static HRESULT remove_toasts(const WCHAR *aumid, const WCHAR *tag, const WCHAR *group)
 {
+    forget_quiet(aumid, tag, group);
     MimeShellToast m;
     memset(&m, 0, sizeof(m));
     m.op = MIME_SHELL_TOAST_REMOVE;
