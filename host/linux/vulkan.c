@@ -474,6 +474,179 @@ static void instance_extensions(MvkCall *call)
     mvk_reply_end(call);
 }
 
+/* ------------------------------------------------------------------ shared instances */
+
+/*
+ * a request of the guest as it came, with the ids it carries zeroed, so that two requests for the same thing compare
+ * equal with memcmp, whichever process sent them.
+ */
+typedef struct Request {
+    uint8_t *bytes;
+    size_t size;
+} Request;
+
+static void request_free(Request *r)
+{
+    free(r->bytes);
+    *r = (Request){};
+}
+
+static bool request_same(const Request *a, const Request *b)
+{
+    return a->size && a->size == b->size && !memcmp(a->bytes, b->bytes, a->size);
+}
+
+/* a copy of the call's payload with the 64 bit ids at the offsets zeroed. */
+static bool request_make(Request *r, const MvkDecoder *d, const size_t *ids, size_t count)
+{
+    size_t size = (size_t)(d->end - d->start);
+    uint8_t *bytes = size ? malloc(size) : nullptr;
+    if (!bytes)
+        return false;
+    memcpy(bytes, d->start, size);
+    for (size_t i = 0; i < count; i++) {
+        if (ids[i] > size || size - ids[i] < 8) {
+            free(bytes);
+            return false;
+        }
+        memset(bytes + ids[i], 0, 8);
+    }
+    r->bytes = bytes;
+    r->size = size;
+    return true;
+}
+
+static bool request_copy(Request *to, const Request *from)
+{
+    to->bytes = malloc(from->size ? from->size : 1);
+    if (!to->bytes)
+        return false;
+    memcpy(to->bytes, from->bytes, from->size);
+    to->size = from->size;
+    return true;
+}
+
+/*
+ * the host's instance of a request, shared by the connections that sent the same one: the processes of a browser make
+ * the same instance, and a device made ahead of time can only go to a process that has the instance it was
+ * made on. The last connection to let go destroys it, and so does the end of the machine for the one the spare device
+ * keeps alive.
+ */
+#define SPARES_MAX 2
+
+/* a device made ahead, with what the host keeps of it and the request it was made for. */
+typedef struct Spare {
+    MvkConnection *shell;
+    Request key;
+} Spare;
+
+typedef struct HostInstance {
+    struct HostInstance *next;
+    Request key;
+    uint32_t refs;
+    MvkConnection base; /* the library, the instance and its commands, never a device */
+    Spare spares[SPARES_MAX];
+} HostInstance;
+
+static HostInstance *g_instances;
+static pthread_mutex_t g_instance_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void mime_gpu_teardown_enter(void);
+void mime_gpu_teardown_leave(void);
+static void spare_destroy(HostInstance *hi);
+
+/* makes the instance of a request, with the layers the host lacks left out and only the extensions it has. */
+static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkResult *result)
+{
+    *result = VK_ERROR_INITIALIZATION_FAILED;
+    HostInstance *hi = calloc(1, sizeof(*hi));
+    if (!hi) {
+        *result = VK_ERROR_OUT_OF_HOST_MEMORY;
+        return nullptr;
+    }
+    MvkConnection *b = &hi->base;
+    if (!load_library(b)) {
+        free(hi);
+        return nullptr;
+    }
+    PFN_vkEnumerateInstanceExtensionProperties enumerate =
+        (PFN_vkEnumerateInstanceExtensionProperties)b->gipa(nullptr, "vkEnumerateInstanceExtensionProperties");
+    uint32_t count = 0;
+    enumerate(nullptr, &count, nullptr);
+    VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
+    enumerate(nullptr, &count, list);
+    const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 8));
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < info.enabledExtensionCount; i++)
+        if (host_has(list, count, info.ppEnabledExtensionNames[i]) &&
+            strcmp(info.ppEnabledExtensionNames[i], VK_KHR_SURFACE_EXTENSION_NAME))
+            names[n++] = info.ppEnabledExtensionNames[i];
+    /* the host surfaces the presenter makes on the guest's behalf. */
+    for (const char *const *x = mvk_wsi_instance_extensions; *x; x++)
+        if (host_has(list, count, *x))
+            names[n++] = *x;
+    free(list);
+    info.enabledLayerCount = 0;
+    info.ppEnabledLayerNames = nullptr;
+    info.enabledExtensionCount = n;
+    info.ppEnabledExtensionNames = names;
+    PFN_vkCreateInstance create = (PFN_vkCreateInstance)b->gipa(nullptr, "vkCreateInstance");
+    *result = create(&info, nullptr, &b->instance);
+    if (*result != VK_SUCCESS) {
+        dlclose(b->library);
+        free(hi);
+        return nullptr;
+    }
+    mvk_load_dispatch(&b->fn, b->gipa, b->instance, nullptr, nullptr);
+    hi->refs = 1;
+    return hi;
+}
+
+/* the instance of a request with a count held for the caller: one the connections hold already, else a new one. */
+static HostInstance *instance_hold(Request *key, VkInstanceCreateInfo info, MvkDecoder *d, VkResult *result)
+{
+    pthread_mutex_lock(&g_instance_lock);
+    for (HostInstance *hi = g_instances; hi; hi = hi->next) {
+        if (request_same(&hi->key, key)) {
+            hi->refs++;
+            pthread_mutex_unlock(&g_instance_lock);
+            *result = VK_SUCCESS;
+            return hi;
+        }
+    }
+    HostInstance *hi = instance_make(info, d, result);
+    if (hi) {
+        hi->key = *key;
+        *key = (Request){};
+        hi->next = g_instances;
+        g_instances = hi;
+    }
+    pthread_mutex_unlock(&g_instance_lock);
+    return hi;
+}
+
+static void instance_release(HostInstance *hi)
+{
+    pthread_mutex_lock(&g_instance_lock);
+    bool last = --hi->refs == 0;
+    if (last)
+        for (HostInstance **link = &g_instances; *link; link = &(*link)->next)
+            if (*link == hi) {
+                *link = hi->next;
+                break;
+            }
+    pthread_mutex_unlock(&g_instance_lock);
+    if (!last)
+        return;
+    spare_destroy(hi);
+    mime_gpu_teardown_enter();
+    hi->base.fn.vkDestroyInstance(hi->base.instance, nullptr);
+    mime_gpu_teardown_leave();
+    dlclose(hi->base.library);
+    request_free(&hi->key);
+    free(hi);
+}
+
 static void create_instance(MvkCall *call)
 {
     MvkConnection *c = call->conn;
@@ -484,32 +657,15 @@ static void create_instance(MvkCall *call)
     MvkEncoder *e = mvk_reply_begin(call);
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
     if (!d->error && load_library(c) && !c->instance) {
-        /* the guest's layers do not exist here, and only extensions the host has go through. */
-        PFN_vkEnumerateInstanceExtensionProperties enumerate =
-            (PFN_vkEnumerateInstanceExtensionProperties)c->gipa(nullptr, "vkEnumerateInstanceExtensionProperties");
-        uint32_t count = 0;
-        enumerate(nullptr, &count, nullptr);
-        VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
-        enumerate(nullptr, &count, list);
-        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 8));
-        uint32_t n = 0;
-        for (uint32_t i = 0; i < info.enabledExtensionCount; i++)
-            if (host_has(list, count, info.ppEnabledExtensionNames[i]) &&
-                strcmp(info.ppEnabledExtensionNames[i], VK_KHR_SURFACE_EXTENSION_NAME))
-                names[n++] = info.ppEnabledExtensionNames[i];
-        /* the host surfaces the presenter makes on the guest's behalf. */
-        for (const char *const *x = mvk_wsi_instance_extensions; *x; x++)
-            if (host_has(list, count, *x))
-                names[n++] = *x;
-        free(list);
-        info.enabledLayerCount = 0;
-        info.ppEnabledLayerNames = nullptr;
-        info.enabledExtensionCount = n;
-        info.ppEnabledExtensionNames = names;
-        PFN_vkCreateInstance create = (PFN_vkCreateInstance)c->gipa(nullptr, "vkCreateInstance");
-        result = create(&info, nullptr, &c->instance);
-        if (result == VK_SUCCESS) {
-            mvk_load_dispatch(&c->fn, c->gipa, c->instance, nullptr, nullptr);
+        Request key = {};
+        static const size_t id_at = 0;
+        request_make(&key, d, &id_at, 1);
+        HostInstance *hi = instance_hold(&key, info, d, &result);
+        request_free(&key);
+        if (hi) {
+            c->host_instance = hi;
+            c->instance = hi->base.instance;
+            c->fn = hi->base.fn;
             bind(c, id, (uint64_t)(uintptr_t)c->instance);
         }
     }
@@ -762,16 +918,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL create_importable_buffer(VkDevice device, 
     return g_create_buffer(device, &copy, allocator, buffer);
 }
 
-static void create_device(MvkCall *call)
+/*
+ * makes the device of a request on the connection's instance, and binds the ids of the queues that follow the request
+ * in d. The ids of a device made ahead are all zero and bind nothing.
+ */
+static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice physical, uint64_t id,
+                              VkDeviceCreateInfo info, uint32_t queues)
 {
-    MvkConnection *c = call->conn;
-    MvkDecoder *d = &call->in;
-    VkPhysicalDevice physical = (VkPhysicalDevice)mvk_get_handle(d, 1);
-    uint64_t id = mvk_get_u64(d);
-    VkDeviceCreateInfo info;
-    mvk_get_VkDeviceCreateInfo(d, &info);
-    uint32_t queues = mvk_get_u32(d);
-    MvkEncoder *e = mvk_reply_begin(call);
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
     if (!d->error && physical && !c->device) {
         uint32_t count = 0;
@@ -916,6 +1069,514 @@ static void create_device(MvkCall *call)
                     c->queues[c->queue_count++] = (typeof(c->queues[0])){q, family};
             }
         }
+    }
+    return result;
+}
+
+/* ------------------------------------------------------------------ the spare device */
+
+/*
+ * A browser's gpu process waits for the driver to make its device at every start, 78 ms with one queue. The requests
+ * the processes made last time are kept on disk, and as soon as the driver is loaded the machine makes the devices of the
+ * last two ahead of them, on the instance that the processes share. A process whose request is the same takes the device
+ * it finds: the same extensions, features and queues, so that nothing differs but the wait. A new one is made a while
+ * after one was taken, for the next process or the next start of the browser. The ones left over are destroyed with
+ * the machine.
+ */
+#define LEARNED_MAX 4
+#define LEARNED_NAME "vulkan-device-requests"
+#define LEARNED_HEADER "mime vulkan device requests 1"
+#define UUID_TEXT (2 * VK_UUID_SIZE * 2 + 1)
+#define REFILL_DELAY_NS 1500000000ull
+#define FILL_ARENA (1u << 20)
+
+typedef struct Learned {
+    char uuids[UUID_TEXT];
+    Request instance, device;
+} Learned;
+
+static Learned g_learned[LEARNED_MAX]; /* the most recent first */
+static unsigned g_learned_count;
+static bool g_learned_dirty;
+static pthread_mutex_t g_learned_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void learned_path(char *out, size_t size)
+{
+    const MimePaths *paths = mime_daemon_paths();
+    snprintf(out, size, "%s/%s", paths ? paths->cache : "", LEARNED_NAME);
+}
+
+static bool hex_get(const char *text, Request *r)
+{
+    size_t digits = strlen(text);
+    if (!digits || digits % 2)
+        return false;
+    r->bytes = malloc(digits / 2);
+    if (!r->bytes)
+        return false;
+    for (size_t i = 0; i < digits / 2; i++) {
+        unsigned byte;
+        if (sscanf(text + i * 2, "%2x", &byte) != 1) {
+            request_free(r);
+            return false;
+        }
+        r->bytes[i] = (uint8_t)byte;
+    }
+    r->size = digits / 2;
+    return true;
+}
+
+/* a line that does not parse is left out, and so is a file of another format. */
+static void learned_load(void)
+{
+    char path[MIME_PATH_MAX];
+    learned_path(path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return;
+    char *line = nullptr;
+    size_t capacity = 0;
+    bool valid = getline(&line, &capacity, f) > 0 && !strncmp(line, LEARNED_HEADER, strlen(LEARNED_HEADER));
+    pthread_mutex_lock(&g_learned_lock);
+    while (valid && g_learned_count < LEARNED_MAX && getline(&line, &capacity, f) > 0) {
+        char *save = nullptr;
+        char *uuids = strtok_r(line, " \n", &save), *instance = strtok_r(nullptr, " \n", &save),
+             *device = strtok_r(nullptr, " \n", &save);
+        Learned l = {};
+        if (!uuids || !instance || !device || strlen(uuids) >= sizeof(l.uuids))
+            continue;
+        strcpy(l.uuids, uuids);
+        if (!hex_get(instance, &l.instance))
+            continue;
+        if (!hex_get(device, &l.device)) {
+            request_free(&l.instance);
+            continue;
+        }
+        g_learned[g_learned_count++] = l;
+    }
+    pthread_mutex_unlock(&g_learned_lock);
+    free(line);
+    fclose(f);
+}
+
+static void hex_put(FILE *f, const Request *r)
+{
+    for (size_t i = 0; i < r->size; i++)
+        fprintf(f, "%02x", r->bytes[i]);
+}
+
+/* the file is written aside and moved over the old, so a machine that stops in the middle leaves a whole one. */
+static void learned_save(void)
+{
+    pthread_mutex_lock(&g_learned_lock);
+    if (g_learned_dirty) {
+        g_learned_dirty = false;
+        char path[MIME_PATH_MAX], aside[MIME_PATH_MAX + 8];
+        learned_path(path, sizeof(path));
+        snprintf(aside, sizeof(aside), "%s.new", path);
+        FILE *f = fopen(aside, "w");
+        if (f) {
+            fprintf(f, "%s\n", LEARNED_HEADER);
+            for (unsigned i = 0; i < g_learned_count; i++) {
+                fprintf(f, "%s ", g_learned[i].uuids);
+                hex_put(f, &g_learned[i].instance);
+                fputc(' ', f);
+                hex_put(f, &g_learned[i].device);
+                fputc('\n', f);
+            }
+            if (fclose(f) == 0)
+                rename(aside, path);
+            else
+                unlink(aside);
+        }
+    }
+    pthread_mutex_unlock(&g_learned_lock);
+}
+
+/* the request of a device that was made, put first. */
+static void learned_note(const char *uuids, const Request *instance, const Request *device)
+{
+    pthread_mutex_lock(&g_learned_lock);
+    unsigned at = 0;
+    bool found = false;
+    for (unsigned i = 0; i < g_learned_count && !found; i++) {
+        found = !strcmp(g_learned[i].uuids, uuids) && request_same(&g_learned[i].instance, instance) &&
+                request_same(&g_learned[i].device, device);
+        at = i;
+    }
+    if (found && at == 0) {
+        pthread_mutex_unlock(&g_learned_lock);
+        return;
+    }
+    Learned l = {};
+    if (found) {
+        l = g_learned[at];
+    } else {
+        snprintf(l.uuids, sizeof(l.uuids), "%s", uuids);
+        if (!request_copy(&l.instance, instance) || !request_copy(&l.device, device)) {
+            request_free(&l.instance);
+            request_free(&l.device);
+            pthread_mutex_unlock(&g_learned_lock);
+            return;
+        }
+        if (g_learned_count == LEARNED_MAX) {
+            request_free(&g_learned[LEARNED_MAX - 1].instance);
+            request_free(&g_learned[LEARNED_MAX - 1].device);
+            at = LEARNED_MAX - 1;
+        } else {
+            at = g_learned_count++;
+        }
+    }
+    memmove(&g_learned[1], &g_learned[0], at * sizeof(g_learned[0]));
+    g_learned[0] = l;
+    g_learned_dirty = true;
+    pthread_mutex_unlock(&g_learned_lock);
+}
+
+static uint32_t g_shells_destroyed;
+
+static void shell_destroy(MvkConnection *s)
+{
+    __atomic_fetch_add(&g_shells_destroyed, 1, __ATOMIC_RELAXED);
+    s->fn.vkDeviceWaitIdle(s->device);
+    mvk_video_close(s);
+    mime_gpu_teardown_enter();
+    s->fn.vkDestroyDevice(s->device, nullptr);
+    mime_gpu_teardown_leave();
+    free(s);
+}
+
+static void spare_destroy(HostInstance *hi)
+{
+    MvkConnection *doomed[SPARES_MAX];
+    pthread_mutex_lock(&g_instance_lock);
+    for (unsigned i = 0; i < SPARES_MAX; i++) {
+        doomed[i] = hi->spares[i].shell;
+        hi->spares[i].shell = nullptr;
+        request_free(&hi->spares[i].key);
+    }
+    pthread_mutex_unlock(&g_instance_lock);
+    for (unsigned i = 0; i < SPARES_MAX; i++)
+        if (doomed[i])
+            shell_destroy(doomed[i]);
+}
+
+/* the instances the spare devices are made on, held for the machine's life, and the device being made. */
+static HostInstance *g_pool[SPARES_MAX];
+static bool g_building;
+static const Request *g_building_key;
+static pthread_cond_t g_spare_made = PTHREAD_COND_INITIALIZER;
+
+static void pool_release(void)
+{
+    uint32_t before = __atomic_load_n(&g_shells_destroyed, __ATOMIC_RELAXED);
+    HostInstance *held[SPARES_MAX];
+    pthread_mutex_lock(&g_instance_lock);
+    for (unsigned i = 0; i < SPARES_MAX; i++) {
+        held[i] = g_pool[i];
+        g_pool[i] = nullptr;
+    }
+    pthread_mutex_unlock(&g_instance_lock);
+    for (unsigned i = 0; i < SPARES_MAX; i++)
+        if (held[i])
+            instance_release(held[i]);
+    uint32_t left = __atomic_load_n(&g_shells_destroyed, __ATOMIC_RELAXED) - before;
+    if (left)
+        mime_info("vulkan: %u devices made ahead were not taken and are destroyed with the machine", left);
+}
+
+/* the spare of the request on the instance, with the lock held. */
+static Spare *spare_find(HostInstance *hi, const Request *key)
+{
+    for (unsigned i = 0; i < SPARES_MAX; i++)
+        if (hi->spares[i].shell && request_same(&hi->spares[i].key, key))
+            return &hi->spares[i];
+    return nullptr;
+}
+
+/* the device made ahead for this request, if there is one, waiting for it when it is being made now. */
+static MvkConnection *spare_take(HostInstance *hi, const Request *key, VkPhysicalDevice physical, uint32_t queues)
+{
+    struct timespec limit;
+    clock_gettime(CLOCK_REALTIME, &limit);
+    limit.tv_nsec += 400000000;
+    if (limit.tv_nsec >= 1000000000) {
+        limit.tv_sec++;
+        limit.tv_nsec -= 1000000000;
+    }
+    pthread_mutex_lock(&g_instance_lock);
+    while (g_building && request_same(g_building_key, key) &&
+           pthread_cond_timedwait(&g_spare_made, &g_instance_lock, &limit) == 0)
+        ;
+    MvkConnection *s = nullptr;
+    Spare *spare = spare_find(hi, key);
+    if (spare && spare->shell->physical_device == physical && spare->shell->queue_count == queues) {
+        s = spare->shell;
+        spare->shell = nullptr;
+        request_free(&spare->key);
+    }
+    pthread_mutex_unlock(&g_instance_lock);
+    return s;
+}
+
+/* takes the device made ahead and the ids of the queues the request names. */
+static void device_adopt(MvkConnection *c, MvkDecoder *d, uint64_t id, MvkConnection *s, uint32_t queues)
+{
+    c->device = s->device;
+    c->physical_device = s->physical_device;
+    c->timelines = s->timelines;
+    c->host_import = s->host_import;
+    c->import_alignment = s->import_alignment;
+    c->video = s->video;
+    c->fn = s->fn;
+    bind(c, id, (uint64_t)(uintptr_t)c->device);
+    for (uint32_t i = 0; i < queues; i++) {
+        mvk_get_u32(d);
+        mvk_get_u32(d);
+        bind(c, mvk_get_u64(d), (uint64_t)(uintptr_t)s->queues[i].queue);
+        c->queues[c->queue_count++] = s->queues[i];
+    }
+    free(s);
+}
+
+/* the payload of a device request with the ids of the physical device, the device and the queues zeroed. */
+static bool device_request(Request *key, const MvkDecoder *d, uint32_t queues)
+{
+    size_t ids[2 + sizeof(((MvkConnection *)0)->queues) / sizeof(((MvkConnection *)0)->queues[0])];
+    size_t n = 0;
+    ids[n++] = 0;
+    ids[n++] = 8;
+    if (queues > sizeof(ids) / sizeof(ids[0]) - 2)
+        return false;
+    MvkDecoder scan = *d;
+    for (uint32_t i = 0; i < queues; i++) {
+        mvk_get_u32(&scan);
+        mvk_get_u32(&scan);
+        mvk_get_u64(&scan);
+        ids[n++] = (size_t)(scan.p - 8 - scan.start);
+    }
+    return !scan.error && request_make(key, d, ids, n);
+}
+
+static uint64_t realtime_ns(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    return (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
+}
+
+static pthread_mutex_t g_maker_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_maker_wake = PTHREAD_COND_INITIALIZER;
+static uint64_t g_maker_at; /* when the next device is due, in realtime nanoseconds, 0 for none */
+static bool g_maker_stop;
+
+static void maker_request(uint64_t delay)
+{
+    pthread_mutex_lock(&g_maker_lock);
+    uint64_t at = realtime_ns() + delay;
+    if (!g_maker_stop && (!g_maker_at || at < g_maker_at)) {
+        g_maker_at = at;
+        pthread_cond_signal(&g_maker_wake);
+    }
+    pthread_mutex_unlock(&g_maker_lock);
+}
+
+/* makes the device of the request on the instance of its request, if no spare of it is there. */
+static void spare_make_on(const Learned *want, uint8_t *arena)
+{
+    MvkConnection owner = {};
+    MvkDecoder d = {want->instance.bytes, want->instance.bytes, want->instance.bytes + want->instance.size, 0, &owner,
+                    arena, 0, FILL_ARENA};
+    mvk_get_u64(&d);
+    VkInstanceCreateInfo iinfo;
+    mvk_get_VkInstanceCreateInfo(&d, &iinfo);
+    Request key = {};
+    VkResult r = VK_ERROR_INITIALIZATION_FAILED;
+    HostInstance *hi = nullptr;
+    if (!d.error && request_copy(&key, &want->instance))
+        hi = instance_hold(&key, iinfo, &d, &r);
+    request_free(&key);
+    if (!hi)
+        return;
+    /* the machine holds the instance, so that the processes find it with its devices, and the count taken above is its own. */
+    bool pooled = false, placed = false;
+    pthread_mutex_lock(&g_instance_lock);
+    for (unsigned i = 0; i < SPARES_MAX; i++)
+        pooled |= g_pool[i] == hi;
+    for (unsigned i = 0; i < SPARES_MAX && !pooled && !placed; i++) {
+        if (!g_pool[i]) {
+            g_pool[i] = hi;
+            placed = true;
+        }
+    }
+    pthread_mutex_unlock(&g_instance_lock);
+    if (!placed)
+        instance_release(hi);
+    if (!placed && !pooled)
+        return;
+
+    VkPhysicalDevice devices[MAX_PHYSICAL_DEVICES], physical = VK_NULL_HANDLE;
+    uint32_t count = MAX_PHYSICAL_DEVICES;
+    if (hi->base.fn.vkEnumeratePhysicalDevices(hi->base.instance, &count, devices) >= 0) {
+        for (uint32_t i = 0; i < count && !physical; i++) {
+            char uuids[UUID_TEXT];
+            import_uuids(&hi->base, devices[i], uuids);
+            if (!strcmp(uuids[0] ? uuids : "-", want->uuids))
+                physical = devices[i];
+        }
+    }
+    pthread_mutex_lock(&g_instance_lock);
+    bool have = spare_find(hi, &want->device) != nullptr;
+    bool room = false;
+    for (unsigned i = 0; i < SPARES_MAX; i++)
+        room |= !hi->spares[i].shell;
+    pthread_mutex_unlock(&g_instance_lock);
+    if (have || !room || !physical)
+        return;
+
+    MvkConnection *s = calloc(1, sizeof(*s));
+    if (!s)
+        return;
+    s->library = hi->base.library;
+    s->gipa = hi->base.gipa;
+    s->instance = hi->base.instance;
+    s->fn = hi->base.fn;
+    d = (MvkDecoder){want->device.bytes, want->device.bytes, want->device.bytes + want->device.size, 0, s, arena, 0,
+                     FILL_ARENA};
+    mvk_get_u64(&d);
+    mvk_get_u64(&d);
+    VkDeviceCreateInfo dinfo;
+    mvk_get_VkDeviceCreateInfo(&d, &dinfo);
+    uint32_t queues = mvk_get_u32(&d);
+    uint64_t began = mime_now_ns();
+    r = d.error ? VK_ERROR_INITIALIZATION_FAILED : device_create(s, &d, physical, 0, dinfo, queues);
+    uint64_t took = (mime_now_ns() - began) / 1000000;
+    if (r == VK_SUCCESS && s->queue_count == queues) {
+        pthread_mutex_lock(&g_instance_lock);
+        for (unsigned i = 0; i < SPARES_MAX && s; i++) {
+            if (!hi->spares[i].shell && request_copy(&hi->spares[i].key, &want->device)) {
+                hi->spares[i].shell = s;
+                s = nullptr;
+            }
+        }
+        pthread_mutex_unlock(&g_instance_lock);
+    }
+    mime_info("vulkan: a device is made ahead, %llu ms, %s", (unsigned long long)took, s ? "not kept" : "kept");
+    if (s) {
+        if (s->device)
+            shell_destroy(s);
+        else
+            free(s);
+    }
+}
+
+/* a process that asks for the same device while it is being made waits for it. */
+static void spare_make(const Learned *want, uint8_t *arena)
+{
+    pthread_mutex_lock(&g_instance_lock);
+    g_building = true;
+    g_building_key = &want->device;
+    pthread_mutex_unlock(&g_instance_lock);
+    spare_make_on(want, arena);
+    pthread_mutex_lock(&g_instance_lock);
+    g_building = false;
+    pthread_cond_broadcast(&g_spare_made);
+    pthread_mutex_unlock(&g_instance_lock);
+}
+
+/* the spares of requests that are no longer among the last ones are destroyed to make room. */
+static void spare_prune(const Learned *want, unsigned n)
+{
+    MvkConnection *doomed[SPARES_MAX * SPARES_MAX];
+    unsigned count = 0;
+    pthread_mutex_lock(&g_instance_lock);
+    for (unsigned h = 0; h < SPARES_MAX; h++) {
+        for (unsigned i = 0; g_pool[h] && i < SPARES_MAX; i++) {
+            Spare *spare = &g_pool[h]->spares[i];
+            bool keep = false;
+            for (unsigned j = 0; j < n && spare->shell; j++)
+                keep |= request_same(&spare->key, &want[j].device);
+            if (spare->shell && !keep) {
+                doomed[count++] = spare->shell;
+                spare->shell = nullptr;
+                request_free(&spare->key);
+            }
+        }
+    }
+    pthread_mutex_unlock(&g_instance_lock);
+    for (unsigned i = 0; i < count; i++)
+        shell_destroy(doomed[i]);
+}
+
+static void spare_fill(void)
+{
+    Learned want[SPARES_MAX] = {};
+    unsigned n = 0;
+    pthread_mutex_lock(&g_learned_lock);
+    for (; n < g_learned_count && n < SPARES_MAX; n++) {
+        if (!request_copy(&want[n].instance, &g_learned[n].instance) ||
+            !request_copy(&want[n].device, &g_learned[n].device))
+            break;
+        memcpy(want[n].uuids, g_learned[n].uuids, sizeof(want[n].uuids));
+    }
+    pthread_mutex_unlock(&g_learned_lock);
+    uint8_t *arena = malloc(FILL_ARENA);
+    if (arena) {
+        spare_prune(want, n);
+        for (unsigned i = 0; i < n; i++)
+            spare_make(&want[i], arena);
+    }
+    free(arena);
+    for (unsigned i = 0; i < SPARES_MAX; i++) {
+        request_free(&want[i].instance);
+        request_free(&want[i].device);
+    }
+}
+
+/* a device was made for a process: its request is kept, and the next one is made after a while if none is waiting. */
+static void device_learn(MvkConnection *c, VkPhysicalDevice physical, const Request *key)
+{
+    HostInstance *hi = c->host_instance;
+    if (!hi || !hi->key.size || !key->size)
+        return;
+    char uuids[UUID_TEXT];
+    import_uuids(c, physical, uuids);
+    learned_note(uuids[0] ? uuids : "-", &hi->key, key);
+    pthread_mutex_lock(&g_instance_lock);
+    bool missing = !spare_find(hi, key);
+    pthread_mutex_unlock(&g_instance_lock);
+    if (missing)
+        maker_request(REFILL_DELAY_NS);
+}
+
+static void create_device(MvkCall *call)
+{
+    MvkConnection *c = call->conn;
+    MvkDecoder *d = &call->in;
+    VkPhysicalDevice physical = (VkPhysicalDevice)mvk_get_handle(d, 1);
+    uint64_t id = mvk_get_u64(d);
+    VkDeviceCreateInfo info;
+    mvk_get_VkDeviceCreateInfo(d, &info);
+    uint32_t queues = mvk_get_u32(d);
+    MvkEncoder *e = mvk_reply_begin(call);
+    VkResult result = VK_ERROR_INITIALIZATION_FAILED;
+    if (!d->error && physical && !c->device) {
+        Request key = {};
+        HostInstance *hi = c->host_instance;
+        bool known = device_request(&key, d, queues);
+        uint64_t began = mime_now_ns();
+        MvkConnection *spare = known && hi ? spare_take(hi, &key, physical, queues) : nullptr;
+        if (spare) {
+            device_adopt(c, d, id, spare, queues);
+            result = VK_SUCCESS;
+        } else {
+            result = device_create(c, d, physical, id, info, queues);
+        }
+        mime_info("vulkan: connection %u has its device after %llu us, %s", c->index,
+                  (unsigned long long)((mime_now_ns() - began) / 1000), spare ? "made ahead" : "made now");
+        if (result == VK_SUCCESS && known)
+            device_learn(c, physical, &key);
+        request_free(&key);
     }
     mvk_put_u32(e, (uint32_t)result);
     mvk_reply_end(call);
@@ -2587,11 +3248,8 @@ void mime_vk_close(uint64_t index)
         mime_gpu_teardown_leave();
     }
     free(c->live);
-    if (c->instance) {
-        mime_gpu_teardown_enter();
-        c->fn.vkDestroyInstance(c->instance, nullptr);
-        mime_gpu_teardown_leave();
-    }
+    if (c->host_instance)
+        instance_release(c->host_instance);
     if (c->library)
         dlclose(c->library);
     free(c->watches);
@@ -2612,6 +3270,7 @@ void mime_vk_close_all(void)
     warm_wait();
     for (uint64_t i = 0; i < MAX_CONNECTIONS; i++)
         mime_vk_close(i);
+    pool_release();
 }
 
 /*
@@ -2636,6 +3295,25 @@ static void *warm_main(void *arg)
     uint64_t done = mime_now_ns();
     __atomic_store_n(&g_warm_done, done, __ATOMIC_RELEASE);
     mime_info("vulkan: the driver is warm after %llu ms", (unsigned long long)((done - began) / 1000000));
+    /* the device of the last run is made ahead as soon as the driver is loaded, and again after one was taken. */
+    learned_load();
+    maker_request(0);
+    for (;;) {
+        pthread_mutex_lock(&g_maker_lock);
+        while (!g_maker_stop && !g_maker_at)
+            pthread_cond_wait(&g_maker_wake, &g_maker_lock);
+        while (!g_maker_stop && g_maker_at > realtime_ns()) {
+            struct timespec until = {(time_t)(g_maker_at / 1000000000ull), (long)(g_maker_at % 1000000000ull)};
+            pthread_cond_timedwait(&g_maker_wake, &g_maker_lock, &until);
+        }
+        bool stop = g_maker_stop;
+        g_maker_at = 0;
+        pthread_mutex_unlock(&g_maker_lock);
+        if (stop)
+            break;
+        learned_save();
+        spare_fill();
+    }
     return nullptr;
 }
 
@@ -2656,6 +3334,10 @@ static void warm_wait(void)
     if (!g_warm_started)
         return;
     g_warm_started = false;
+    pthread_mutex_lock(&g_maker_lock);
+    g_maker_stop = true;
+    pthread_cond_signal(&g_maker_wake);
+    pthread_mutex_unlock(&g_maker_lock);
     /* a driver that hangs must not hang the machine's end. */
     struct timespec limit;
     clock_gettime(CLOCK_REALTIME, &limit);

@@ -44,6 +44,7 @@ struct MvkConnection {
     void *library;
     PFN_vkGetInstanceProcAddr gipa;
     VkInstance instance;
+    struct HostInstance *host_instance; /* the instance above when the guest's request for it is shared, see vulkan.c */
     VkDevice device;
     VkPhysicalDevice physical_device;
     MvkDispatch fn;
