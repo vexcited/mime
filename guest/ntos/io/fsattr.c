@@ -25,7 +25,7 @@
 
 #define ATTR_BUCKETS 1024
 #define ATTR_MAX 4096
-#define ATTR_LIFE (5000000ll) /* 500 ms, in 100 nanosecond units */
+#define ATTR_LIFE 5000000ll /* 500 ms, in 100 nanosecond units */
 #define ATTR_WATCHES 24
 #define ATTR_RING 128
 #define ATTR_VISITS 32

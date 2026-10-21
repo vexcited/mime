@@ -1210,7 +1210,7 @@ static HRESULT create_buffer(D12Device *device, D12Resource *resource, D12Heap *
      * committed resources start zeroed, as windows makes them, even where memory is reused. mapped memory that no resource
      * had before is zero already, vulkan-1.dll makes it of new pages, and the pass over it would fault in what the
      * program has not asked for yet and may write over at once, as an upload of 64 MiB does. A program that says the contents may
-     * be anything (D3D12_HEAP_FLAG_CREATE_NOT_ZEROED, which Dawn does for the staging buffers of its uploads) is not given the pass either.
+     * be anything, with the flag that makes a heap not zeroed, is not given the pass either.
      */
     if (resource->mapped && (resource->alloc.fresh || (resource->heap_flags & D3D12_HEAP_FLAG_CREATE_NOT_ZEROED)))
         ;

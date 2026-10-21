@@ -1090,7 +1090,7 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
 #define LEARNED_HEADER "mime vulkan device requests 1"
 #define UUID_TEXT (2 * VK_UUID_SIZE * 2 + 1)
 #define REFILL_DELAY_NS 1500000000ull
-#define SPARE_IDLE_NS (600ull * 1000000000ull) /* a device nobody took in this long is given back, a gpu kept open keeps the card awake */
+#define SPARE_IDLE_NS 600000000000ull /* a device nobody took in this long is given back, as a gpu kept open keeps the card awake */
 #define FILL_ARENA (1u << 20)
 
 typedef struct Learned {
