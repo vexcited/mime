@@ -43,12 +43,12 @@ static const MSG_ENTRY g_classified[] = {
     {0x0046, MC_STRUCT_INOUT, 1, 40},  /* WM_WINDOWPOSCHANGING, the receiver may change it */
     {0x0047, MC_STRUCT_IN, 1, 40},     /* WM_WINDOWPOSCHANGED */
     {0x0049, MC_COPYGLOBAL, 0, 0},     /* a copy of global memory for a window of another process */
-    {0x004A, MC_COPYDATA, 0, 0},       /* WM_COPYDATA */
+    {0x004A, MC_COPYDATA, 1, 0},       /* WM_COPYDATA, a 32-bit program has a block with narrow fields */
     {0x0053, MC_HELP, 1, 40},          /* WM_HELP, says how large it is */
     {0x007C, MC_STRUCT_INOUT, 0, 8},   /* WM_STYLECHANGING */
     {0x007D, MC_STRUCT_INOUT, 0, 8},   /* WM_STYLECHANGED */
     {0x0081, MC_CREATE, 0, 0},         /* WM_NCCREATE */
-    {0x0083, MC_NCCALCSIZE, 0, 0},     /* WM_NCCALCSIZE, a rectangle or the parameters with a position */
+    {0x0083, MC_NCCALCSIZE, 1, 0},     /* WM_NCCALCSIZE, a rectangle or the parameters with a position */
     {0x0087, MC_OPTMSG, 1, 48},        /* WM_GETDLGCODE, a message of the key being tested, or none */
     {0x008B, MC_STRUCT_INOUT, 0, 16},  /* a rectangle, undocumented */
     {0x00B0, MC_PTR2, 0, 0},           /* EM_GETSEL */
@@ -94,7 +94,7 @@ static const MSG_ENTRY g_classified[] = {
     {0x0216, MC_STRUCT_INOUT, 0, 16},  /* WM_MOVING */
     {0x0218, MC_POWER, 0, 0},          /* WM_POWERBROADCAST */
     {0x0219, MC_DEVCHANGE, 0, 0},      /* WM_DEVICECHANGE */
-    {0x0220, MC_MDICREATE, 0, 0},      /* WM_MDICREATE */
+    {0x0220, MC_MDICREATE, 1, 0},      /* WM_MDICREATE, with a class, a title and an owner */
     {0x0229, MC_PTR2, 0, 0},           /* WM_MDIGETACTIVE, both parameters may point at an answer */
     {0x022A, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops */
     {0x022B, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops */
