@@ -235,44 +235,6 @@ static int block_dc_refine(Bits *bp, int al, int16_t *blk)
     return 0;
 }
 
-static int block_ac_first(Bits *bp, const JpegHuff *ac, int ss, int se, int al, uint32_t *eobrun, int16_t *blk)
-{
-    if (*eobrun) {
-        (*eobrun)--;
-        return 0;
-    }
-    Bits b = *bp;
-    for (int k = ss; k <= se;) {
-        if (b.cnt < 32)
-            bits_fill(&b);
-        int rs = bits_symbol(&b, ac);
-        if (rs < 0)
-            goto bad;
-        int r = rs >> 4, s = rs & 15;
-        if (s) {
-            k += r;
-            if (k > se)
-                goto bad;
-            blk[jpeg_zigzag[k]] = (int16_t)(extend(bits_take(&b, s), s) * (1 << al));
-            k++;
-        } else if (r == 15) {
-            k += 16;
-        } else {
-            /* a run of 2^r blocks plus r more bits without anything left in the band, this one first. */
-            uint32_t run = 1u << r;
-            if (r)
-                run += (uint32_t)bits_take(&b, r);
-            *eobrun = run - 1;
-            break;
-        }
-    }
-    *bp = b;
-    return 0;
-bad:
-    *bp = b;
-    return -1;
-}
-
 /* a correction bit for a coefficient that already is not zero. */
 static inline void refine_coef(Bits *b, int16_t *c, int bit)
 {
@@ -283,59 +245,110 @@ static inline void refine_coef(Bits *b, int16_t *c, int bit)
     }
 }
 
+/* a run of blocks without coefficients left in the band: 2 to the power r, and r more bits to add to it. */
+static inline uint32_t band_run_length(Bits *b, int r)
+{
+    return (1u << r) + (r ? (uint32_t)bits_take(b, r) : 0);
+}
+
+/*
+ * the first scan of a band of coefficients (T.81 G.1.2.2). Every symbol is a run of zeros and the size of the next
+ * coefficient, which is stored shifted up by the successive approximation position. A symbol of size 0 either skips
+ * 16 coefficients or ends the band of this block and of the blocks the run it announces covers.
+ */
+static int block_ac_first(Bits *bp, const JpegHuff *ac, int ss, int se, int al, uint32_t *eobrun, int16_t *blk)
+{
+    if (*eobrun) {
+        --*eobrun;
+        return 0;
+    }
+    Bits b = *bp;
+    int rc = 0;
+    for (int k = ss; k <= se; k++) {
+        if (b.cnt < 32)
+            bits_fill(&b);
+        int symbol = bits_symbol(&b, ac);
+        if (symbol < 0) {
+            rc = -1;
+            break;
+        }
+        int run = symbol >> 4, size = symbol & 15;
+        if (size) {
+            k += run;
+            if (k > 63) {
+                rc = -1;
+                break;
+            }
+            blk[jpeg_zigzag[k]] = (int16_t)(extend(bits_take(&b, size), size) * (1 << al));
+        } else if (run == 15) {
+            k += 15; /* the loop step makes it sixteen. */
+        } else {
+            *eobrun = band_run_length(&b, run) - 1;
+            break;
+        }
+    }
+    *bp = b;
+    return rc;
+}
+
+/* one correction bit for the coefficient at k when it is not zero, read when it is passed. */
+static inline void correct_if_set(Bits *b, int16_t *c, int bit)
+{
+    if (!*c)
+        return;
+    if (b->cnt < 16)
+        bits_fill(b);
+    refine_coef(b, c, bit);
+}
+
+/*
+ * a later scan of a band (T.81 G.1.2.3). Coefficients that are not zero yet get one more bit each time they are
+ * passed. Between them a symbol places at most one new coefficient of magnitude one, after the number of zero
+ * coefficients it announces, and a band end gives the remaining blocks of its run only the correction bits.
+ */
 static int block_ac_refine(Bits *bp, const JpegHuff *ac, int ss, int se, int al, uint32_t *eobrun, int16_t *blk)
 {
     Bits b = *bp;
-    int bit = 1 << al;
+    const int one = 1 << al;
     int k = ss;
     if (!*eobrun) {
         for (; k <= se; k++) {
             if (b.cnt < 32)
                 bits_fill(&b);
-            int rs = bits_symbol(&b, ac);
-            if (rs < 0)
-                goto bad;
-            int r = rs >> 4, s = rs & 15;
-            int value = 0;
-            if (s) {
-                if (s != 1)
-                    goto bad;
-                value = bits_take(&b, 1) ? bit : -bit;
-            } else if (r != 15) {
-                uint32_t run = 1u << r;
-                if (r)
-                    run += (uint32_t)bits_take(&b, r);
-                *eobrun = run;
+            int symbol = bits_symbol(&b, ac);
+            if (symbol < 0)
+                goto corrupt;
+            int zeros = symbol >> 4, size = symbol & 15;
+            int placed = 0;
+            if (size) {
+                if (size != 1)
+                    goto corrupt;
+                placed = bits_take(&b, 1) ? one : -one;
+            } else if (zeros != 15) {
+                *eobrun = band_run_length(&b, zeros);
                 break;
             }
-            /* r coefficients that are zero so far are passed, and the nonzero ones on the way get their bit. */
+            /* past the coefficients that already have a value, and zeros of them to the place of the new one. */
             for (; k <= se; k++) {
                 int16_t *c = &blk[jpeg_zigzag[k]];
-                if (b.cnt < 16)
-                    bits_fill(&b);
                 if (*c) {
-                    refine_coef(&b, c, bit);
-                } else if (--r < 0) {
+                    correct_if_set(&b, c, one);
+                } else if (zeros-- == 0) {
                     break;
                 }
             }
-            if (value && k <= se)
-                blk[jpeg_zigzag[k]] = (int16_t)value;
+            if (placed && k <= se)
+                blk[jpeg_zigzag[k]] = (int16_t)placed;
         }
     }
     if (*eobrun) {
-        for (; k <= se; k++) {
-            int16_t *c = &blk[jpeg_zigzag[k]];
-            if (b.cnt < 16)
-                bits_fill(&b);
-            if (*c)
-                refine_coef(&b, c, bit);
-        }
-        (*eobrun)--;
+        for (; k <= se; k++)
+            correct_if_set(&b, &blk[jpeg_zigzag[k]], one);
+        --*eobrun;
     }
     *bp = b;
     return 0;
-bad:
+corrupt:
     *bp = b;
     return -1;
 }

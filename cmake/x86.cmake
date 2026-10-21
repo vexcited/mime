@@ -139,8 +139,9 @@ set(http ntdll kernel32 user32 ws2_32)
 # wininet combines urls with the engine of kernelbase.
 set(wininet_imports ntdll kernel32 user32 ws2_32 kernelbase)
 set(urlmon_imports ntdll kernel32 user32 wininet ole32 oleaut32)
-# oleaut32 divides 64 bit numbers by one another in its conversions.
-set(objects_oleaut32 x86-div)
+# oleaut32 divides 64 bit numbers by one another in its conversions, and decodes jpeg pictures with the jpeg library.
+set(objects_oleaut32 x86-div x86-lib-jpeg)
+set(includes_oleaut32 guest/lib)
 set(objects_msi x86-lib-compound x86-lib-cabinet)
 set(objects_winmm x86-lib-audio)
 set(objects_dsound x86-lib-audio)
