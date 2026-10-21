@@ -114,7 +114,7 @@ DWORD NotifyRegister(CLIENT *client, SCHANDLE *handle, UINT64 block, DWORD mask,
     if (s) {
         if (s->Type & (SERVICE_KERNEL_DRIVER | SERVICE_FILE_SYSTEM_DRIVER | SERVICE_RECOGNIZER_DRIVER | SERVICE_ADAPTER))
             return ERROR_INVALID_PARAMETER;
-        if (s->Flags & SVF_DELETE_PENDING)
+        if (s->MarkedForDelete)
             return ERROR_SERVICE_MARKED_FOR_DELETE;
     }
     if (!client->NotifyPipe)

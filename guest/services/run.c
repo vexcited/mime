@@ -378,7 +378,8 @@ static void service_gone(SERVICE *s, IMAGE *img, DWORD exit_code, BOOL crash)
     s->Status.dwServiceSpecificExitCode = 0;
     s->Status.dwServiceType = s->Type;
     s->StatusId = 0;
-    s->Flags &= ~(SVF_STOP_SENT | SVF_STOPPING_ALL);
+    s->StopRequested = FALSE;
+    s->ShutdownStopping = FALSE;
     s->Image = nullptr;
     if (img && img->Services)
         img->Services--;
@@ -418,65 +419,89 @@ void RunProcessExited(IMAGE *img)
 
 /* ------------------------------------------------------------------ setting the status */
 
-/* the checks of RSetServiceStatus: the state and the type must be known, the controls only the known ones. */
-static BOOL valid_status(const SERVICE_STATUS *st)
+/* the types a service may report, with the interactive bit ignored. */
+static BOOL reportable_type(DWORD type)
 {
-    if (st->dwCurrentState < 1 || st->dwCurrentState > 7)
-        return FALSE;
-    DWORD t = st->dwServiceType & ~0x100u;
-    BOOL type_ok = t == 0x10 || t == 0x20 || t == 0x30 || t == 0x50 || t == 0x60 || t == 0xD0 || t == 0xE0 ||
-                   t == 0x210 || st->dwServiceType == 11;
-    if (!type_ok)
-        return FALSE;
-    return (st->dwControlsAccepted & 0xFFFF8800) == 0;
+    switch (type & ~(DWORD)SERVICE_INTERACTIVE_PROCESS) {
+    case SERVICE_WIN32_OWN_PROCESS:
+    case SERVICE_WIN32_SHARE_PROCESS:
+    case SERVICE_WIN32:
+    case SERVICE_USER_OWN_PROCESS:
+    case SERVICE_USER_SHARE_PROCESS:
+    case 0xD0: /* a user own process instance */
+    case 0xE0: /* a user share process instance */
+    case 0x210: /* an own process of a package */
+        return TRUE;
+    default:
+        return type == 11;
+    }
 }
 
-DWORD RunSetStatus(UINT64 status_id, DWORD pid, const SERVICE_STATUS *in)
+/* the bits of dwControlsAccepted that are defined, a few of them for the newest systems only. */
+#define REPORTED_CONTROLS_REFUSED 0xFFFF8800u
+
+static BOOL report_acceptable(const SERVICE_STATUS *report)
 {
-    SERVICE_STATUS st = *in;
-    if (!status_id)
-        return ERROR_INVALID_HANDLE;
-    SERVICE *s = nullptr;
-    for (SERVICE *m = g_services; m; m = m->Next)
-        if (m->StatusId == status_id && m->Image && m->Image->Pid == pid) {
-            s = m;
-            break;
-        }
+    return report->dwCurrentState >= SERVICE_STOPPED && report->dwCurrentState <= SERVICE_PAUSED &&
+           reportable_type(report->dwServiceType) && !(report->dwControlsAccepted & REPORTED_CONTROLS_REFUSED);
+}
+
+static SERVICE *service_of_status(UINT64 status_id, DWORD pid)
+{
+    for (SERVICE *s = g_services; s; s = s->Next)
+        if (status_id && s->StatusId == status_id && s->Image && s->Image->Pid == pid)
+            return s;
+    return nullptr;
+}
+
+/*
+ * what a service process reports. exit codes only mean something once the service stops, and a checkpoint with a wait
+ * hint only while it is on its way somewhere. a stopped service accepts no control. a service that has stopped lets go of its handle, and its process
+ * is ended once no other service lives in it.
+ */
+DWORD RunSetStatus(UINT64 status_id, DWORD pid, const SERVICE_STATUS *report)
+{
+    SERVICE *s = service_of_status(status_id, pid);
     if (!s)
         return ERROR_INVALID_HANDLE;
-    if (!valid_status(&st)) {
-        SvcLog("service %ls reported a state of %lu", s->Name, st.dwCurrentState);
+    if (!report_acceptable(report))
         return ERROR_INVALID_DATA;
+
+    SERVICE_STATUS stored = *report;
+    stored.dwServiceType = s->Type;
+    BOOL ending = stored.dwCurrentState == SERVICE_STOPPED || stored.dwCurrentState == SERVICE_STOP_PENDING;
+    if (!ending)
+        stored.dwWin32ExitCode = stored.dwServiceSpecificExitCode = 0;
+    BOOL settled = stored.dwCurrentState == SERVICE_STOPPED || stored.dwCurrentState == SERVICE_RUNNING ||
+                   stored.dwCurrentState == SERVICE_PAUSED;
+    if (settled)
+        stored.dwCheckPoint = stored.dwWaitHint = 0;
+    if (stored.dwCurrentState == SERVICE_STOPPED)
+        stored.dwControlsAccepted = 0;
+
+    DWORD before = s->Status.dwCurrentState;
+    s->Status = stored;
+    IMAGE *image = s->Image;
+    BOOL stopped = stored.dwCurrentState == SERVICE_STOPPED;
+    if (stopped) {
+        s->StatusId = 0;
+        s->StopRequested = FALSE;
+        s->ShutdownStopping = FALSE;
+        s->Image = nullptr;
+        if (image->Services)
+            image->Services--;
     }
-    /* exit codes only mean something to a service that is stopping or stopped, wait hints to one that is pending. */
-    if (st.dwCurrentState != SERVICE_STOPPED && st.dwCurrentState != SERVICE_STOP_PENDING &&
-        (st.dwWin32ExitCode || st.dwServiceSpecificExitCode)) {
-        st.dwWin32ExitCode = 0;
-        st.dwServiceSpecificExitCode = 0;
-    }
-    if (st.dwCurrentState == SERVICE_STOPPED || st.dwCurrentState == SERVICE_RUNNING || st.dwCurrentState == SERVICE_PAUSED) {
-        st.dwCheckPoint = 0;
-        st.dwWaitHint = 0;
-    }
-    DWORD old = s->Status.dwCurrentState;
-    IMAGE *img = s->Image;
-    if (st.dwCurrentState == SERVICE_STOPPED) {
-        /* a stop with a failure code is a failure when the service asked for actions on those. */
-        BOOL failure = st.dwWin32ExitCode != 0 && (s->Flags & SVF_FAILURE_NON_CRASH) && !g_shutdown;
-        service_gone(s, img, st.dwWin32ExitCode, FALSE);
-        s->Status.dwServiceSpecificExitCode = st.dwServiceSpecificExitCode;
-        if (failure)
-            handle_failure(s);
-        if (img && !img->Services)
-            image_quit(img);
-        return ERROR_SUCCESS;
-    }
-    s->Status = st;
-    s->ServiceFlags = in->dwServiceType == 0 ? 0 : s->ServiceFlags;
-    if (old != st.dwCurrentState)
-        state_changed(s, old);
+    if (before != stored.dwCurrentState)
+        state_changed(s, before);
     else
         WakeAllConditionVariable(&g_changed);
+
+    if (stopped) {
+        if (stored.dwWin32ExitCode != 0 && s->FailureOnNonCrash && !g_shutdown)
+            handle_failure(s);
+        if (!image->Services)
+            image_quit(image);
+    }
     return ERROR_SUCCESS;
 }
 
@@ -939,7 +964,7 @@ static DWORD start_dependencies(SERVICE *s, DWORD depth, DWORD reason)
     DWORD result = ERROR_SUCCESS;
     for (const WCHAR *d = s->DepServices; d && *d && !result; d += wcslen(d) + 1) {
         SERVICE *dep = DbFind(d);
-        if (!dep || !DbLoadRecord(dep) || (dep->Flags & SVF_DELETE_PENDING)) {
+        if (!dep || !DbLoadRecord(dep) || dep->MarkedForDelete) {
             result = ERROR_SERVICE_DEPENDENCY_DELETED;
             break;
         }
@@ -1013,7 +1038,7 @@ DWORD RunStart(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD rea
         return ERROR_SHUTDOWN_IN_PROGRESS;
     if (s->Start == SERVICE_DISABLED)
         return ERROR_SERVICE_DISABLED;
-    if (s->Flags & SVF_DELETE_PENDING)
+    if (s->MarkedForDelete)
         return ERROR_SERVICE_MARKED_FOR_DELETE;
     if (s->Status.dwCurrentState != SERVICE_STOPPED && !(s->Type & SERVICE_DRIVER))
         return ERROR_SERVICE_ALREADY_RUNNING;
@@ -1027,95 +1052,91 @@ DWORD RunStart(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD rea
 
 /* ------------------------------------------------------------------ controls */
 
-static DWORD access_for_control(DWORD control, DWORD *accepts)
+/* the bit of dwControlsAccepted a control needs, or 0 for a control that needs none. */
+static DWORD accepted_bit_of(DWORD control)
 {
-    *accepts = 0;
     switch (control) {
     case SERVICE_CONTROL_STOP:
-        *accepts = SERVICE_ACCEPT_STOP;
-        return SERVICE_STOP;
+        return SERVICE_ACCEPT_STOP;
     case SERVICE_CONTROL_PAUSE:
     case SERVICE_CONTROL_CONTINUE:
-        *accepts = SERVICE_ACCEPT_PAUSE_CONTINUE;
-        return SERVICE_PAUSE_CONTINUE;
-    case SERVICE_CONTROL_INTERROGATE:
-        return SERVICE_INTERROGATE;
+        return SERVICE_ACCEPT_PAUSE_CONTINUE;
     case SERVICE_CONTROL_PARAMCHANGE:
-        *accepts = SERVICE_ACCEPT_PARAMCHANGE;
-        return SERVICE_PAUSE_CONTINUE;
+        return SERVICE_ACCEPT_PARAMCHANGE;
     case SERVICE_CONTROL_NETBINDADD:
     case SERVICE_CONTROL_NETBINDREMOVE:
     case SERVICE_CONTROL_NETBINDENABLE:
     case SERVICE_CONTROL_NETBINDDISABLE:
-        *accepts = SERVICE_ACCEPT_NETBINDCHANGE;
-        return SERVICE_PAUSE_CONTINUE;
+        return SERVICE_ACCEPT_NETBINDCHANGE;
     default:
-        if (control >= 128 && control <= 255)
-            return SERVICE_USER_DEFINED_CONTROL;
-        return 0xFFFFFFFF;
+        return 0;
     }
+}
+
+/* whether a service that depends on this one is up, or on its way. */
+static BOOL has_running_dependents(SERVICE *s)
+{
+    SERVICE **list = nullptr;
+    DWORD count = 0;
+    DbDependents(s, &list, &count, TRUE);
+    SvcFree(list);
+    return count != 0;
+}
+
+/*
+ * what state a control meets: the answer the manager gives without asking the service, or ERROR_SUCCESS when the
+ * control is to go to the process. the second value tells that an interrogation is answered here.
+ */
+static DWORD judge_control(SERVICE *s, DWORD control, BOOL *answered_here)
+{
+    *answered_here = FALSE;
+    DWORD state = s->Status.dwCurrentState;
+    if (state == SERVICE_STOPPED || !s->Image)
+        return ERROR_SERVICE_NOT_ACTIVE;
+    if (state == SERVICE_STOP_PENDING)
+        return ERROR_SERVICE_CANNOT_ACCEPT_CTRL;
+    if (state == SERVICE_START_PENDING && control != SERVICE_CONTROL_STOP) {
+        if (control != SERVICE_CONTROL_INTERROGATE)
+            return ERROR_SERVICE_CANNOT_ACCEPT_CTRL;
+        *answered_here = TRUE;
+        return ERROR_SUCCESS;
+    }
+    DWORD needed = accepted_bit_of(control);
+    if (needed && !(s->Status.dwControlsAccepted & needed))
+        return ERROR_INVALID_SERVICE_CONTROL;
+    if (control == SERVICE_CONTROL_STOP && !g_shutdown && has_running_dependents(s))
+        return ERROR_DEPENDENT_SERVICES_RUNNING;
+    return ERROR_SUCCESS;
+}
+
+/* sends a control to the process of a service, with the lock released while it waits. */
+DWORD RunControl(SERVICE *s, DWORD control, DWORD event_type, const void *event_data, DWORD event_size, DWORD *result)
+{
+    *result = 0;
+    BOOL answered_here;
+    DWORD verdict = judge_control(s, control, &answered_here);
+    if (verdict || answered_here)
+        return verdict;
+
+    IMAGE *image = s->Image;
+    UINT64 status_id = s->StatusId;
+    WCHAR name[SVC_NAME_MAX + 1];
+    SvcCopyName(name, s->Name, SVC_NAME_MAX);
+    image->Refs++;
+    LeaveCriticalSection(&g_lock);
+    DWORD error = send_control(image, control, name, event_type, event_data, event_size, status_id, 0, nullptr,
+                               g_handler_timeout, result);
+    EnterCriticalSection(&g_lock);
+    image_release(image);
+
+    if (!error && control == SERVICE_CONTROL_STOP)
+        s->StopRequested = TRUE;
+    return error;
 }
 
 BOOL RunStopSent(SERVICE *s)
 {
-    return (s->Flags & SVF_STOP_SENT) != 0;
-}
-
-/*
- * sends a control to a service. the checks come in the order windows makes them: whether it is running at all,
- * whether it is on its way down, whether it takes the control, and, for a stop, whether others depend on it.
- */
-DWORD RunControl(SERVICE *s, DWORD control, DWORD event_type, const void *event_data, DWORD event_size, DWORD *result)
-{
-    if (result)
-        *result = 0;
-    DWORD accepts = 0;
-    DWORD needed_access = access_for_control(control, &accepts);
-    (void)needed_access;
-    if (s->Type & SERVICE_DRIVER) {
-        SERVICE_STATUS_PROCESS p;
-        RunStatusSnapshot(s, &p);
-        if (control == SERVICE_CONTROL_INTERROGATE)
-            return p.dwCurrentState == SERVICE_STOPPED ? ERROR_SERVICE_NOT_ACTIVE : ERROR_SUCCESS;
-        return p.dwCurrentState == SERVICE_STOPPED ? ERROR_SERVICE_NOT_ACTIVE : ERROR_INVALID_SERVICE_CONTROL;
-    }
-    DWORD state = s->Status.dwCurrentState;
-    IMAGE *img = s->Image;
-    if (state == SERVICE_STOPPED || !img)
-        return ERROR_SERVICE_NOT_ACTIVE;
-    if (state == SERVICE_STOP_PENDING)
-        return ERROR_SERVICE_CANNOT_ACCEPT_CTRL;
-    if (state == SERVICE_START_PENDING && control != SERVICE_CONTROL_STOP)
-        return control == SERVICE_CONTROL_INTERROGATE ? ERROR_SUCCESS : ERROR_SERVICE_CANNOT_ACCEPT_CTRL;
-    if (accepts && (s->Status.dwControlsAccepted & accepts) != accepts)
-        return ERROR_INVALID_SERVICE_CONTROL;
-    if (control == SERVICE_CONTROL_STOP && !g_shutdown) {
-        SERVICE **list;
-        DWORD n;
-        DbDependents(s, &list, &n, TRUE);
-        SvcFree(list);
-        if (n)
-            return ERROR_DEPENDENT_SERVICES_RUNNING;
-    }
-    if (img->Exited || img->Broken)
-        return ERROR_SERVICE_CANNOT_ACCEPT_CTRL;
-    WCHAR name[SVC_NAME_MAX + 1];
-    SvcCopyName(name, s->Name, SVC_NAME_MAX);
-    name[SVC_NAME_MAX] = 0;
-    img->Refs++;
-    DWORD timeout = g_control_timeout;
-    DWORD reply = 0;
-    LeaveCriticalSection(&g_lock);
-    DWORD error = send_control(img, control, name, event_type, event_data, event_size, 0, 0, nullptr, timeout, &reply);
-    EnterCriticalSection(&g_lock);
-    image_release(img);
-    if (control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_SHUTDOWN || control == SERVICE_CONTROL_PRESHUTDOWN)
-        s->Flags |= SVF_STOP_SENT;
-    if (error)
-        return error == ERROR_SERVICE_REQUEST_TIMEOUT ? ERROR_SERVICE_REQUEST_TIMEOUT : ERROR_SERVICE_CANNOT_ACCEPT_CTRL;
-    if (result)
-        *result = reply;
-    return ERROR_SUCCESS;
+    return s->StopRequested;
 }
 
 /* waits for a state; the lock is held. */

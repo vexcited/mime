@@ -134,13 +134,6 @@ WINBASEAPI NTSTATUS NTAPI NtCreateToken(PHANDLE token, ACCESS_MASK access, POBJE
 #define MAX_PATH_ 260
 #define SVC_MAX_FAILURE_ACTIONS 16
 
-/* ServiceFlags of a record. */
-#define SVF_DELETE_PENDING 0x0001 /* DeleteService was called, the key goes when the last handle closes */
-#define SVF_FAILURE_NON_CRASH 0x0020
-#define SVF_DELAYED 0x0008        /* started after the others, DelayedAutostart */
-#define SVF_STOP_SENT 0x0010      /* a stopping control was given to the service */
-#define SVF_STOPPING_ALL 0x0100   /* the shutdown is stopping it */
-
 typedef struct SERVICE SERVICE;
 typedef struct IMAGE IMAGE;
 typedef struct CLIENT CLIENT;
@@ -154,7 +147,11 @@ struct SERVICE {
     WCHAR *DepServices; /* DependOnService, a multi sz */
     WCHAR *DepGroups;   /* DependOnGroup */
     DWORD Type, Start, ErrorControl, Tag;
-    DWORD Flags;
+    BOOL MarkedForDelete;   /* DeleteService was called: the record goes once nothing holds it and it has stopped */
+    BOOL DelayedStart;      /* DelayedAutostart of an automatic service, started after the others */
+    BOOL FailureOnNonCrash; /* the failure actions also apply when the service stops with an error */
+    BOOL StopRequested;     /* a stopping control was given to the service */
+    BOOL ShutdownStopping;  /* the shutdown is stopping it */
     BOOL Loaded;
     /* the running state, as the service reports it. */
     SERVICE_STATUS Status;

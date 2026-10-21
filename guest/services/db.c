@@ -216,9 +216,9 @@ BOOL DbLoadRecord(SERVICE *s)
     s->ErrorControl = error_control;
     s->Tag = tag;
     if (DbReadDword(key, L"DelayedAutostart", &delayed) && delayed && start == SERVICE_AUTO_START)
-        s->Flags |= SVF_DELAYED;
+        s->DelayedStart = TRUE;
     if (DbReadDword(key, L"FailureActionsOnNonCrashFailures", &flag) && flag)
-        s->Flags |= SVF_FAILURE_NON_CRASH;
+        s->FailureOnNonCrash = TRUE;
     WCHAR *display = DbReadString(key, L"DisplayName", nullptr);
     /* an indirect string names a resource the service control manager would load; the key name stands for it. */
     if (display && (!*display || display[0] == L'@')) {
@@ -372,10 +372,21 @@ DWORD DbReadFailureActions(SERVICE *s, SERVICE_FAILURE_ACTIONSW *actions, SC_ACT
 
 /* ------------------------------------------------------------------ the parameters of a service */
 
-static BOOL win32_type(DWORD type)
+/* a type that names a program, which may be interactive. drivers are told apart by the caller. */
+static BOOL is_program_type(DWORD type)
 {
-    DWORD t = type & ~0x100u;
-    return t == 0x10 || t == 0x20 || t == 0x50 || t == 0x60 || t == 0xD0 || t == 0xE0 || t == 0x210;
+    switch (type & ~(DWORD)SERVICE_INTERACTIVE_PROCESS) {
+    case SERVICE_WIN32_OWN_PROCESS:
+    case SERVICE_WIN32_SHARE_PROCESS:
+    case SERVICE_USER_OWN_PROCESS:
+    case SERVICE_USER_SHARE_PROCESS:
+    case 0xD0: /* a user own process instance */
+    case 0xE0: /* a user share process instance */
+    case 0x210: /* an own process of a package */
+        return TRUE;
+    default:
+        return FALSE;
+    }
 }
 
 /* the rules of ScCheckServiceConfigParms: a value of SERVICE_NO_CHANGE is left alone, a creation lacks none. */
@@ -387,7 +398,7 @@ DWORD DbCheckParameters(BOOL creating, const WCHAR *name, DWORD type, DWORD star
     if (creating && (type == SERVICE_NO_CHANGE || start == SERVICE_NO_CHANGE || error_control == SERVICE_NO_CHANGE ||
                      !path || !*path))
         return ERROR_INVALID_PARAMETER;
-    if (type != SERVICE_NO_CHANGE && !win32_type(type) && type != SERVICE_KERNEL_DRIVER &&
+    if (type != SERVICE_NO_CHANGE && !is_program_type(type) && type != SERVICE_KERNEL_DRIVER &&
         type != SERVICE_FILE_SYSTEM_DRIVER)
         return ERROR_INVALID_PARAMETER;
     if (start != SERVICE_NO_CHANGE) {
@@ -523,7 +534,7 @@ DWORD DbCreate(const WCHAR *name, const WCHAR *display, DWORD type, DWORD start,
         existing = nullptr;
     }
     if (existing)
-        return existing->Flags & SVF_DELETE_PENDING ? ERROR_SERVICE_MARKED_FOR_DELETE : ERROR_SERVICE_EXISTS;
+        return existing->MarkedForDelete ? ERROR_SERVICE_MARKED_FOR_DELETE : ERROR_SERVICE_EXISTS;
     if (display && *display) {
         if (wcsnlen(display, SVC_NAME_MAX + 1) > SVC_NAME_MAX)
             return ERROR_INVALID_NAME;
@@ -703,7 +714,7 @@ DWORD DbChange(SERVICE *s, DWORD type, DWORD start, DWORD error_control, const W
     if (start != SERVICE_NO_CHANGE) {
         s->Start = start;
         if (start != SERVICE_AUTO_START)
-            s->Flags &= ~SVF_DELAYED;
+            s->DelayedStart = FALSE;
     }
     if (error_control != SERVICE_NO_CHANGE)
         s->ErrorControl = error_control;

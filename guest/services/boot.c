@@ -172,8 +172,8 @@ static DWORD WINAPI autostart_thread(LPVOID unused)
     for (SERVICE *s = g_services; s && normal && delayed; s = s->Next) {
         if (!autostart_candidate(s))
             continue;
-        SERVICE ***target = (s->Flags & SVF_DELAYED) ? &delayed : &normal;
-        DWORD *count = (s->Flags & SVF_DELAYED) ? &delayed_count : &normal_count;
+        SERVICE ***target = s->DelayedStart ? &delayed : &normal;
+        DWORD *count = s->DelayedStart ? &delayed_count : &normal_count;
         if (*count == capacity) {
             /* both lists grow together: they are of one capacity. */
             capacity *= 2;
@@ -233,150 +233,202 @@ void BootStart(void)
 
 /* ------------------------------------------------------------------ the end */
 
-typedef struct ORDERED {
-    SERVICE *Service;
-    ULONGLONG Sent;
-    BOOL Failed;
-} ORDERED;
+#define POLL_MS 10
+#define PRESHUTDOWN_TIME_MS 10000
+#define SHUTDOWN_HINT_MS 20000
+#define SHUTDOWN_LIMIT_MS 30000
+#define IN_FLIGHT_GRACE_MS 1000
 
-static DWORD preshutdown_timeout(SERVICE *s)
+/* a set of services the end of the machine works on. */
+typedef struct SERVICE_SET {
+    SERVICE **Items;
+    DWORD Count;
+    DWORD Capacity;
+} SERVICE_SET;
+
+static BOOL set_has(const SERVICE_SET *set, const SERVICE *s)
 {
-    DWORD timeout = 10000;
+    for (DWORD i = 0; i < set->Count; i++)
+        if (set->Items[i] == s)
+            return TRUE;
+    return FALSE;
+}
+
+static void set_add(SERVICE_SET *set, SERVICE *s)
+{
+    if (set->Count == set->Capacity) {
+        DWORD capacity = set->Capacity ? set->Capacity * 2 : 32;
+        SERVICE **grown = SvcAlloc(capacity * sizeof(*grown));
+        if (!grown)
+            return;
+        if (set->Count)
+            memcpy(grown, set->Items, set->Count * sizeof(*grown));
+        SvcFree(set->Items);
+        set->Items = grown;
+        set->Capacity = capacity;
+    }
+    set->Items[set->Count++] = s;
+}
+
+/* a program with a process that has not stopped yet and is not on its way to. */
+static BOOL still_up(const SERVICE *s)
+{
+    DWORD state = s->Status.dwCurrentState;
+    return s->Loaded && (s->Type & SERVICE_WIN32) && s->Image && state != SERVICE_STOPPED &&
+           state != SERVICE_STOP_PENDING;
+}
+
+static BOOL takes(const SERVICE *s, DWORD accepted_bit)
+{
+    return (s->Status.dwControlsAccepted & accepted_bit) != 0;
+}
+
+/* a record that is deleted while the lock is let go of must not go; the handle count keeps it. */
+static void pin(SERVICE *s)
+{
+    s->OpenHandles++;
+}
+
+static void unpin(SERVICE *s)
+{
+    if (s->OpenHandles)
+        s->OpenHandles--;
+}
+
+/* waits, with the lock let go of in between, for the service to stop or for the time to pass. */
+static BOOL stopped_within(SERVICE *s, DWORD ms)
+{
+    ULONGLONG limit = GetTickCount64() + ms;
+    pin(s);
+    while (s->Status.dwCurrentState != SERVICE_STOPPED && GetTickCount64() < limit)
+        SvcSleepChanged(POLL_MS);
+    unpin(s);
+    return s->Status.dwCurrentState == SERVICE_STOPPED;
+}
+
+/* the time the key of a service allows its preparation for the end, in milliseconds. */
+static DWORD preshutdown_allowance(const SERVICE *s)
+{
+    DWORD allowance = PRESHUTDOWN_TIME_MS;
     HKEY key = DbOpenKey(s->Name, KEY_READ, FALSE);
     if (key) {
-        DbReadDword(key, L"PreshutdownTimeout", &timeout);
+        DWORD configured;
+        if (DbReadDword(key, L"PreshutdownTimeout", &configured))
+            allowance = configured;
         RegCloseKey(key);
     }
-    return timeout;
+    return allowance;
 }
 
-/*
- * waits for a service to stop after the control, polling as windows does every ten milliseconds, for the time its
- * key gives it. a service that counts a checkpoint while it stops is given more time, but never more than the whole.
- */
-static BOOL wait_stopped(SERVICE *s, DWORD timeout)
+/* the services the configuration names to be prepared first, in its order. */
+static void collect_named_preshutdown(SERVICE_SET *named)
 {
-    ULONGLONG deadline = GetTickCount64() + timeout;
-    for (;;) {
-        DWORD state = s->Status.dwCurrentState;
-        if (state == SERVICE_STOPPED)
-            return TRUE;
-        if (GetTickCount64() >= deadline)
-            return FALSE;
-        SvcSleepChanged(10);
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control", 0, KEY_READ, &key) != ERROR_SUCCESS)
+        return;
+    WCHAR *order = DbReadString(key, L"PreshutdownOrder", nullptr);
+    RegCloseKey(key);
+    for (const WCHAR *name = order; name && *name; name += wcslen(name) + 1) {
+        SERVICE *s = DbFind(name);
+        if (s && DbLoadRecord(s) && still_up(s) && takes(s, SERVICE_ACCEPT_PRESHUTDOWN) && !set_has(named, s))
+            set_add(named, s);
     }
-}
-
-typedef struct SHUTDOWN_JOB {
-    SERVICE *Service;
-    HANDLE Done;
-} SHUTDOWN_JOB;
-
-static DWORD WINAPI shutdown_control(LPVOID context)
-{
-    SHUTDOWN_JOB *job = context;
-    EnterCriticalSection(&g_lock);
-    DWORD result;
-    RunControl(job->Service, SERVICE_CONTROL_SHUTDOWN, 0, nullptr, 0, &result);
-    LeaveCriticalSection(&g_lock);
-    SetEvent(job->Done);
-    return 0;
+    SvcFree(order);
 }
 
 static void preshutdown(void)
 {
-    /* the services that take the control, those the order names first. */
-    DWORD capacity = 32, n = 0, ordered = 0;
-    SERVICE **list = SvcAlloc(capacity * sizeof(*list));
-    if (!list)
-        return;
-    HKEY key;
-    WCHAR *order = nullptr;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control", 0, KEY_READ, &key) == ERROR_SUCCESS) {
-        order = DbReadString(key, L"PreshutdownOrder", nullptr);
-        RegCloseKey(key);
+    SERVICE_SET named = {};
+    collect_named_preshutdown(&named);
+    DWORD ignored;
+    for (DWORD i = 0; i < named.Count; i++) {
+        SERVICE *s = named.Items[i];
+        if (RunControl(s, SERVICE_CONTROL_PRESHUTDOWN, 0, nullptr, 0, &ignored) == ERROR_SUCCESS)
+            stopped_within(s, preshutdown_allowance(s));
     }
-    for (const WCHAR *name = order; name && *name; name += wcslen(name) + 1) {
-        SERVICE *s = DbFind(name);
-        if (s && DbLoadRecord(s) && (s->Type & SERVICE_WIN32) && s->Image &&
-            (s->Status.dwControlsAccepted & SERVICE_ACCEPT_PRESHUTDOWN) &&
-            s->Status.dwCurrentState != SERVICE_STOPPED && s->Status.dwCurrentState != SERVICE_STOP_PENDING && n < capacity)
-            list[n++] = s;
+
+    /* the others are all asked first, and then waited for one after the other. */
+    SERVICE_SET others = {};
+    for (SERVICE *s = g_services; s; s = s->Next)
+        if (still_up(s) && takes(s, SERVICE_ACCEPT_PRESHUTDOWN) && !set_has(&named, s))
+            set_add(&others, s);
+    SERVICE_SET asked = {};
+    for (DWORD i = 0; i < others.Count; i++)
+        if (RunControl(others.Items[i], SERVICE_CONTROL_PRESHUTDOWN, 0, nullptr, 0, &ignored) == ERROR_SUCCESS)
+            set_add(&asked, others.Items[i]);
+    for (DWORD i = 0; i < asked.Count; i++)
+        stopped_within(asked.Items[i], preshutdown_allowance(asked.Items[i]));
+
+    SvcFree(named.Items);
+    SvcFree(others.Items);
+    SvcFree(asked.Items);
+}
+
+/* how long the machine waits for the services it told to shut down: the slowest of them, within the limit. */
+static DWORD shutdown_budget(const SERVICE_SET *set)
+{
+    DWORD budget = 0;
+    for (DWORD i = 0; i < set->Count; i++) {
+        DWORD hint = set->Items[i]->Status.dwWaitHint;
+        DWORD needs = hint ? hint : SHUTDOWN_HINT_MS;
+        if (needs > budget)
+            budget = needs;
     }
-    ordered = n;
-    for (SERVICE *s = g_services; s; s = s->Next) {
-        if (!(s->Loaded && (s->Type & SERVICE_WIN32) && s->Image && (s->Status.dwControlsAccepted & SERVICE_ACCEPT_PRESHUTDOWN)) ||
-            s->Status.dwCurrentState == SERVICE_STOPPED || s->Status.dwCurrentState == SERVICE_STOP_PENDING)
-            continue;
-        BOOL there = FALSE;
-        for (DWORD i = 0; i < ordered; i++)
-            there |= list[i] == s;
-        if (!there && n < capacity)
-            list[n++] = s;
-    }
-    SvcFree(order);
-    DWORD result;
-    /* the ordered ones one at a time, each given its time to stop before the next is asked. */
-    for (DWORD i = 0; i < ordered; i++) {
-        if (RunControl(list[i], SERVICE_CONTROL_PRESHUTDOWN, 0, nullptr, 0, &result) == ERROR_SUCCESS)
-            wait_stopped(list[i], preshutdown_timeout(list[i]));
-    }
-    /* the others are all asked, and then waited for. */
-    BOOL sent[32] = {};
-    for (DWORD i = ordered; i < n; i++)
-        sent[i] = RunControl(list[i], SERVICE_CONTROL_PRESHUTDOWN, 0, nullptr, 0, &result) == ERROR_SUCCESS;
-    for (DWORD i = ordered; i < n; i++)
-        if (sent[i])
-            wait_stopped(list[i], preshutdown_timeout(list[i]));
-    SvcFree(list);
+    return budget < SHUTDOWN_LIMIT_MS ? budget : SHUTDOWN_LIMIT_MS;
+}
+
+/* one shutdown control on its own thread, so that a slow handler holds up nobody else. */
+static DWORD WINAPI send_shutdown(LPVOID context)
+{
+    SERVICE *s = context;
+    DWORD ignored;
+    EnterCriticalSection(&g_lock);
+    RunControl(s, SERVICE_CONTROL_SHUTDOWN, 0, nullptr, 0, &ignored);
+    unpin(s);
+    LeaveCriticalSection(&g_lock);
+    return 0;
+}
+
+static BOOL all_stopped(const SERVICE_SET *set)
+{
+    for (DWORD i = 0; i < set->Count; i++)
+        if (set->Items[i]->Status.dwCurrentState != SERVICE_STOPPED)
+            return FALSE;
+    return TRUE;
 }
 
 static void shutdown_services(void)
 {
-    DWORD capacity = 64, n = 0, timeout = 0;
-    SHUTDOWN_JOB *jobs = SvcAllocZero(capacity * sizeof(*jobs));
-    if (!jobs)
-        return;
-    for (SERVICE *s = g_services; s; s = s->Next) {
-        if (!s->Loaded || !(s->Type & SERVICE_WIN32) || !s->Image || !(s->Status.dwControlsAccepted & SERVICE_ACCEPT_SHUTDOWN) ||
-            s->Status.dwCurrentState == SERVICE_STOPPED || s->Status.dwCurrentState == SERVICE_STOP_PENDING || n == capacity)
-            continue;
-        jobs[n].Service = s;
-        jobs[n].Done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        DWORD hint = s->Status.dwWaitHint;
-        if (hint)
-            timeout = hint > timeout ? hint : timeout;
-        else if (timeout <= 20000)
-            timeout = 20000;
-        n++;
+    SERVICE_SET chosen = {};
+    for (SERVICE *s = g_services; s; s = s->Next)
+        if (still_up(s) && takes(s, SERVICE_ACCEPT_SHUTDOWN))
+            set_add(&chosen, s);
+
+    HANDLE *senders = chosen.Count ? SvcAllocZero(chosen.Count * sizeof(*senders)) : nullptr;
+    for (DWORD i = 0; senders && i < chosen.Count; i++) {
+        SERVICE *s = chosen.Items[i];
+        s->ShutdownStopping = TRUE;
+        pin(s);
+        senders[i] = CreateThread(nullptr, 0, send_shutdown, s, 0, nullptr);
+        if (!senders[i])
+            unpin(s);
     }
-    if (timeout > 30000)
-        timeout = 30000;
-    for (DWORD i = 0; i < n; i++) {
-        HANDLE t = CreateThread(nullptr, 0, shutdown_control, &jobs[i], 0, nullptr);
-        if (t)
-            CloseHandle(t);
-        else
-            SetEvent(jobs[i].Done);
-    }
-    ULONGLONG deadline = GetTickCount64() + timeout;
-    for (;;) {
-        BOOL all = TRUE;
-        for (DWORD i = 0; i < n; i++)
-            if (jobs[i].Service->Status.dwCurrentState != SERVICE_STOPPED)
-                all = FALSE;
-        if (all || GetTickCount64() >= deadline)
-            break;
-        SvcSleepChanged(10);
-    }
-    /* the controls in flight are given a moment to return, and the services left are not waited for. */
+
+    ULONGLONG limit = GetTickCount64() + shutdown_budget(&chosen);
+    while (chosen.Count && !all_stopped(&chosen) && GetTickCount64() < limit)
+        SvcSleepChanged(POLL_MS);
+
+    /* a control still being sent gets a moment to come back, the lock free for it to finish. */
     LeaveCriticalSection(&g_lock);
-    for (DWORD i = 0; i < n; i++) {
-        WaitForSingleObject(jobs[i].Done, 1000);
-        CloseHandle(jobs[i].Done);
+    for (DWORD i = 0; senders && i < chosen.Count; i++) {
+        if (senders[i]) {
+            WaitForSingleObject(senders[i], IN_FLIGHT_GRACE_MS);
+            CloseHandle(senders[i]);
+        }
     }
     EnterCriticalSection(&g_lock);
-    SvcFree(jobs);
+    SvcFree(senders);
+    SvcFree(chosen.Items);
 }
 
 static BOOL WINAPI console_handler(DWORD event)

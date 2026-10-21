@@ -106,7 +106,7 @@ static SCHANDLE *handle_new(CLIENT *cl, DWORD kind, DWORD access, SERVICE *s)
 /* a service that was deleted goes when nothing holds it and it has stopped. */
 static void remove_if_done(SERVICE *s)
 {
-    if (!(s->Flags & SVF_DELETE_PENDING) || s->OpenHandles || s->StartPending || s->Status.dwCurrentState != SERVICE_STOPPED)
+    if (!s->MarkedForDelete || s->OpenHandles || s->StartPending || s->Status.dwCurrentState != SERVICE_STOPPED)
         return;
     WCHAR name[SVC_NAME_MAX + 1];
     SvcCopyName(name, s->Name, SVC_NAME_MAX);
@@ -409,9 +409,9 @@ static DWORD op_delete(CLIENT *cl, SCM_READER *r)
     if (!need(h, DELETE))
         return ERROR_ACCESS_DENIED;
     SERVICE *s = h->Service;
-    if (s->Flags & SVF_DELETE_PENDING)
+    if (s->MarkedForDelete)
         return ERROR_SERVICE_MARKED_FOR_DELETE;
-    s->Flags |= SVF_DELETE_PENDING;
+    s->MarkedForDelete = TRUE;
     NotifyServiceDeleting(s, FALSE);
     return ERROR_SUCCESS;
 }
@@ -447,7 +447,7 @@ static DWORD op_change_config(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
         goto done;
     }
     SERVICE *s = h->Service;
-    if (s->Flags & SVF_DELETE_PENDING) {
+    if (s->MarkedForDelete) {
         error = ERROR_SERVICE_MARKED_FOR_DELETE;
         goto done;
     }
@@ -519,7 +519,7 @@ static DWORD op_change_config2(CLIENT *cl, SCM_READER *r)
     if (!need(h, SERVICE_CHANGE_CONFIG))
         return ERROR_ACCESS_DENIED;
     SERVICE *s = h->Service;
-    if (s->Flags & SVF_DELETE_PENDING)
+    if (s->MarkedForDelete)
         return ERROR_SERVICE_MARKED_FOR_DELETE;
     HKEY key = DbOpenKey(s->Name, KEY_ALL_ACCESS, FALSE);
     if (!key)
@@ -579,9 +579,9 @@ static DWORD op_change_config2(CLIENT *cl, SCM_READER *r)
             error = DbWriteDword(key, L"DelayedAutostart", delayed != 0);
             if (!error) {
                 if (delayed)
-                    s->Flags |= SVF_DELAYED;
+                    s->DelayedStart = TRUE;
                 else
-                    s->Flags &= ~SVF_DELAYED;
+                    s->DelayedStart = FALSE;
             }
         }
         break;
@@ -591,9 +591,9 @@ static DWORD op_change_config2(CLIENT *cl, SCM_READER *r)
         error = DbWriteDword(key, L"FailureActionsOnNonCrashFailures", flag != 0);
         if (!error) {
             if (flag)
-                s->Flags |= SVF_FAILURE_NON_CRASH;
+                s->FailureOnNonCrash = TRUE;
             else
-                s->Flags &= ~SVF_FAILURE_NON_CRASH;
+                s->FailureOnNonCrash = FALSE;
         }
         break;
     }
