@@ -6,6 +6,8 @@
 #include "../mime_host.h"
 #include "../mime_cli.h"
 #include "udf.h"
+#include "../identity.h"
+#include "../locale.h"
 #include "wim.h"
 
 #include <errno.h>
@@ -37,6 +39,8 @@ static const ExtractRule g_rules[] = {
     {"Windows/System32/en-US/kernelbase.dll.mui", "Windows/System32/en-US/kernelbase.dll.mui", true},
     {"Windows/System32/en-US/kernel32.dll.mui", "Windows/System32/en-US/kernel32.dll.mui", true},
     {"Windows/Media", "Windows/Media", true},
+    /* the sort order of windows, which only the tests that compare Mime with it read. */
+    {"Windows/Globalization/Sorting/SortDefault.nls", "Windows/Globalization/Sorting/SortDefault.nls", true},
     /* the sound set of the gs wavetable synth. */
     {"Windows/System32/drivers/gm.dls", "Windows/System32/drivers/gm.dls", true},
     /* the registry hives of a fresh install, which the kernel loads and specializes at boot. */
@@ -49,6 +53,7 @@ static const ExtractRule g_rules[] = {
 
 static const char *const g_skeleton[] = {
     "Windows/System32/en-US",
+    "Windows/Globalization/Sorting",
     "Windows/SystemResources",
     "Windows/Fonts",
     "Windows/Temp",
@@ -253,15 +258,29 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
 {
     char iso[MIME_PATH_MAX] = {};
     uint32_t image_index = 0;
+    const char *locale_name = nullptr;
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
             image_index = (uint32_t)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--locale") == 0 && i + 1 < argc) {
+            locale_name = argv[++i];
         } else if (argv[i][0] == '-') {
             mime_error("unknown option %s", argv[i]);
             return 2;
         } else {
             mime_strlcpy(iso, argv[i], sizeof(iso));
         }
+    }
+    MimeLocale locale;
+    if (locale_name && !mime_locale_find(locale_name, &locale)) {
+        mime_error("%s is not a locale of the system", locale_name);
+        return 2;
+    }
+    /* the language alone changes the installation that is already there. */
+    if (locale_name && !iso[0] && mime_is_setup(paths)) {
+        mime_identity_set_locale(paths, locale_name);
+        printf("The locale of the user is %s.\n", locale.name);
+        return 0;
     }
     if (!iso[0] && !prompt_iso(iso, sizeof(iso))) {
         mime_error("no iso given");
@@ -273,6 +292,8 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
     }
     if (!mime_paths_ensure(paths))
         return 1;
+    if (locale_name)
+        mime_identity_set_locale(paths, locale_name);
 
     MimeUdf *udf = mime_udf_open(iso);
     if (!udf)

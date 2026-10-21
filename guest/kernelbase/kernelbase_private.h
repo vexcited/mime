@@ -149,6 +149,11 @@ ULONG KbUniUpper(ULONG cp);
 ULONG KbUniLower(ULONG cp);
 ULONG KbUniFold(ULONG cp);
 
+/* collation.c: the order of strings by the collation elements. */
+int KbCompareStrings(UINT collator, BOOL turkic, DWORD flags, PCWSTR a, int alen, PCWSTR b, int blen);
+UINT KbCollatorByName(const char *name);
+int KbSortKey(UINT collator, BOOL turkic, DWORD flags, PCWSTR src, int len, PBYTE key, int size);
+
 /* character classification shared by string functions. */
 WORD KbCharType1(WCHAR c);
 WCHAR KbUpcase(WCHAR c);

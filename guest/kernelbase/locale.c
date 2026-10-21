@@ -687,7 +687,8 @@ static BOOL locale_value(UINT locale, LCTYPE type, BOOL genitive, LOCALE_VALUE *
         v->Text = KbLocaleText(locale, NLS_S_GENABBREV1 + (type - LOCALE_SABBREVMONTHNAME1));
         return TRUE;
     }
-    const NLS_ITEM *item = find_item(type);
+    /* the types above the ones of windows are the data the system keeps for itself. */
+    const NLS_ITEM *item = type >= 0x3000 ? nullptr : find_item(type);
     if (!item)
         return FALSE;
     if (item->Kind == 0)

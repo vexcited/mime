@@ -3,6 +3,7 @@
  * normalization.
  */
 #include "kernelbase_private.h"
+#include "nls_locslots.h"
 
 /* ------------------------------------------------------------------ decomposition data */
 
@@ -83,49 +84,6 @@ static BOOL is_combining(WCHAR c)
            (c >= 0x20D0 && c <= 0x20FF) || (c >= 0xFE20 && c <= 0xFE2F);
 }
 
-/* letters without a decomposition that still sort with a base letter. */
-static WCHAR base_letter(WCHAR c, BOOL *accented)
-{
-    const DECOMPOSITION *d = find_decomposition(c);
-    *accented = TRUE;
-    if (d)
-        return d->Base;
-    switch (c) {
-    case 0xD8:
-        return 'O';
-    case 0xF8:
-        return 'o';
-    case 0xD0:
-    case 0x110:
-        return 'D';
-    case 0xF0:
-    case 0x111:
-        return 'd';
-    case 0x126:
-        return 'H';
-    case 0x127:
-        return 'h';
-    case 0x131:
-        return 'i';
-    case 0x138:
-        return 'k';
-    case 0x13F:
-    case 0x141:
-        return 'L';
-    case 0x140:
-    case 0x142:
-        return 'l';
-    case 0x166:
-        return 'T';
-    case 0x167:
-        return 't';
-    case 0x17F:
-        return 's';
-    }
-    *accented = FALSE;
-    return c;
-}
-
 /* ligatures that expand to two letters. */
 static BOOL expand_ligature(WCHAR c, WCHAR out[2])
 {
@@ -199,273 +157,90 @@ static int string_length(LPCWSTR s, int len)
     return len < 0 ? (int)wcslen(s) : len;
 }
 
-/* ------------------------------------------------------------------ sort weights */
+/* ------------------------------------------------------------------ sort orders */
 
-enum { CLASS_IGNORE, CLASS_SPECIAL, CLASS_SYMBOL, CLASS_DIGIT, CLASS_LETTER, CLASS_OTHER };
+/* the sort order a locale name or an identifier stands for, and whether its language casts i and I in the Turkish way. */
+typedef struct SORT_ORDER {
+    UINT Collator;
+    BOOL Turkic;
+} SORT_ORDER;
 
-typedef struct SORT_ELEMENT {
-    ULONG Primary;   /* class in the top bits. */
-    USHORT Secondary;
-    USHORT Tertiary;
-    BYTE Class;
-    USHORT Position; /* index in the source, for word sort specials. */
-} SORT_ELEMENT;
+#define NO_LOCALE_INDEX 0xFFFFFFFFu
 
-#define TERTIARY_UPPER 1
-#define TERTIARY_WIDE 2
-#define TERTIARY_KATAKANA 4
-
-typedef struct SORT_LIST {
-    SORT_ELEMENT *Items;
-    int Count;
-    int Capacity;
-    SORT_ELEMENT Inline[128];
-} SORT_LIST;
-
-static BOOL list_push(SORT_LIST *l, const SORT_ELEMENT *e)
+static SORT_ORDER sort_of_locale(UINT locale, PCSTR alternate)
 {
-    if (l->Count == l->Capacity) {
-        int capacity = l->Capacity * 2;
-        SORT_ELEMENT *items = KbAlloc((SIZE_T)capacity * sizeof(SORT_ELEMENT));
-        if (!items)
-            return FALSE;
-        memcpy(items, l->Items, (SIZE_T)l->Count * sizeof(SORT_ELEMENT));
-        if (l->Items != l->Inline)
-            KbFree(l->Items);
-        l->Items = items;
-        l->Capacity = capacity;
-    }
-    l->Items[l->Count++] = *e;
-    return TRUE;
+    SORT_ORDER o = {0, FALSE};
+    if (locale == NO_LOCALE_INDEX)
+        return o;
+    PCWSTR language = KbLocaleText(locale, NLS_S_SISO639LANGNAME);
+    o.Turkic = !wcscmp(language, L"tr") || !wcscmp(language, L"az");
+    o.Collator = alternate ? KbCollatorByName(alternate) : 0;
+    if (!o.Collator)
+        o.Collator = (UINT)KbLocaleNumber(locale, NLS_N_COLLATOR);
+    return o;
 }
 
-static void list_free(SORT_LIST *l)
+/* the sorts that have a name of their own, written after an underscore in the name of the locale. */
+static PCSTR alternate_of_suffix(PCWSTR suffix)
 {
-    if (l->Items != l->Inline)
-        KbFree(l->Items);
+    static const struct {
+        PCWSTR Suffix;
+        PCSTR Collator;
+    } sorts[] = {{L"phoneb", "de@phonebook"}, {L"tradnl", "es@traditional"}};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(sorts); i++)
+        if (!_wcsicmp(suffix, sorts[i].Suffix))
+            return sorts[i].Collator;
+    return nullptr;
 }
 
-static int digit_value(WCHAR c)
+static SORT_ORDER sort_of_name(PCWSTR name)
 {
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 0xFF10 && c <= 0xFF19)
-        return c - 0xFF10;
-    return -1;
+    SORT_ORDER none = {0, FALSE};
+    if (!name || !*name)
+        return sort_of_locale(KbLocaleFromLcid(LOCALE_USER_DEFAULT, TRUE), nullptr);
+    if (!_wcsicmp(name, LOCALE_NAME_SYSTEM_DEFAULT))
+        return sort_of_locale(KbLocaleFromLcid(LOCALE_SYSTEM_DEFAULT, TRUE), nullptr);
+    WCHAR base[LOCALE_NAME_MAX_LENGTH];
+    PCWSTR underscore = wcsrchr(name, '_');
+    PCSTR alternate = nullptr;
+    if (underscore && alternate_of_suffix(underscore + 1)) {
+        alternate = alternate_of_suffix(underscore + 1);
+        SIZE_T n = (SIZE_T)(underscore - name);
+        if (n >= RTL_NUMBER_OF(base))
+            return none;
+        memcpy(base, name, n * sizeof(WCHAR));
+        base[n] = 0;
+        name = base;
+    }
+    return sort_of_locale(KbLocaleFromName(name), alternate);
 }
 
-/* builds the sort elements of a string under the given flags. */
-static BOOL build_elements(LPCWSTR s, int len, DWORD flags, SORT_LIST *out)
+static SORT_ORDER sort_of_lcid(LCID lcid)
 {
-    out->Items = out->Inline;
-    out->Count = 0;
-    out->Capacity = RTL_NUMBER_OF(out->Inline);
-    for (int i = 0; i < len; i++) {
-        WCHAR c = s[i];
-        SORT_ELEMENT e = {};
-        e.Position = (USHORT)(i < 0xFFFF ? i : 0xFFFF);
-        if (!c)
-            continue;
-        if (flags & NORM_IGNOREWIDTH)
-            c = narrow(c);
-        else if (is_fullwidth(c)) {
-            e.Tertiary |= TERTIARY_WIDE;
-            c = narrow(c);
-        }
-        if (is_katakana(c)) {
-            if (!(flags & NORM_IGNOREKANATYPE))
-                e.Tertiary |= TERTIARY_KATAKANA;
-            c = (WCHAR)(c - 0x60);
-        }
-        if (is_combining(c)) {
-            /* a mark after a plain letter weighs like the precomposed letter. */
-            if (out->Count) {
-                SORT_ELEMENT *prev = &out->Items[out->Count - 1];
-                WCHAR composed = prev->Class == CLASS_LETTER && !prev->Secondary
-                                     ? compose((WCHAR)(prev->Primary & 0xFFFF), c)
-                                     : 0;
-                if (composed) {
-                    prev->Secondary = composed;
-                    continue;
-                }
-            }
-            e.Class = CLASS_IGNORE;
-            e.Secondary = c;
-            if (!list_push(out, &e))
-                return FALSE;
-            continue;
-        }
-        WORD type = KbCharType1(c);
-        if (!(flags & SORT_STRINGSORT) && (c == '-' || c == '\'' || c == 0x2010 || c == 0x2011 || c == 0xAD)) {
-            e.Class = CLASS_SPECIAL;
-            e.Primary = c;
-            if (!(flags & NORM_IGNORESYMBOLS) && !list_push(out, &e))
-                return FALSE;
-            continue;
-        }
-        int digit = digit_value(c);
-        if (digit >= 0) {
-            e.Class = CLASS_DIGIT;
-            if (flags & SORT_DIGITSASNUMBERS) {
-                /* a run of digits compares by numeric value: its length first, then its digits. */
-                int j = i;
-                while (j < len && digit_value(s[j]) == 0 && j + 1 < len && digit_value(s[j + 1]) >= 0)
-                    j++;
-                int start = j;
-                while (j < len && digit_value(s[j]) >= 0)
-                    j++;
-                SORT_ELEMENT lengthe = e;
-                lengthe.Primary = ((ULONG)CLASS_DIGIT << 24) | (ULONG)(j - start);
-                if (!list_push(out, &lengthe))
-                    return FALSE;
-                for (int k = start; k < j; k++) {
-                    SORT_ELEMENT d = e;
-                    d.Primary = ((ULONG)CLASS_DIGIT << 24) | 0x10000 | (ULONG)digit_value(s[k]);
-                    if (!list_push(out, &d))
-                        return FALSE;
-                }
-                i = j - 1;
-                continue;
-            }
-            e.Primary = ((ULONG)CLASS_DIGIT << 24) | (ULONG)digit;
-            if (!list_push(out, &e))
-                return FALSE;
-            continue;
-        }
-        if (type & C1_ALPHA) {
-            WCHAR pair[2];
-            BOOL upper = (type & C1_UPPER) != 0;
-            if (upper)
-                e.Tertiary |= TERTIARY_UPPER;
-            e.Class = CLASS_LETTER;
-            if (expand_ligature(c, pair)) {
-                for (int k = 0; k < 2; k++) {
-                    SORT_ELEMENT x = e;
-                    x.Primary = ((ULONG)CLASS_LETTER << 24) | KbDowncase(pair[k]);
-                    x.Secondary = k == 0 ? 1 : 0;
-                    if (!list_push(out, &x))
-                        return FALSE;
-                }
-                continue;
-            }
-            BOOL accented;
-            WCHAR base = base_letter(c, &accented);
-            e.Primary = ((ULONG)CLASS_LETTER << 24) | KbDowncase(base);
-            if (accented)
-                e.Secondary = KbDowncase(c);
-            if (!list_push(out, &e))
-                return FALSE;
-            continue;
-        }
-        if (type & (C1_PUNCT | C1_SPACE | C1_CNTRL)) {
-            if (flags & NORM_IGNORESYMBOLS)
-                continue;
-            e.Class = CLASS_SYMBOL;
-            e.Primary = ((ULONG)CLASS_SYMBOL << 24) | c;
-            if (!list_push(out, &e))
-                return FALSE;
-            continue;
-        }
-        e.Class = CLASS_OTHER;
-        e.Primary = ((ULONG)CLASS_OTHER << 24) | c;
-        if (!list_push(out, &e))
-            return FALSE;
+    lcid = KbResolveLcid(lcid);
+    PCSTR alternate = nullptr;
+    switch (lcid) {
+    case 0x10407:
+        alternate = "de@phonebook";
+        break;
+    case 0x040A:
+        /* the traditional Spanish order is the sort of its own identifier, 0x040A. */
+        alternate = "es@traditional";
+        break;
     }
-    return TRUE;
+    return sort_of_locale(KbLocaleFromLcid(lcid, TRUE), alternate);
 }
 
-static BOOL counts_at(const SORT_ELEMENT *e, int level)
+static int compare_strings(SORT_ORDER order, DWORD flags, LPCWSTR a, int alen, LPCWSTR b, int blen)
 {
-    if (level == 3)
-        return e->Class == CLASS_SPECIAL;
-    if (e->Class == CLASS_SPECIAL)
-        return FALSE;
-    if (e->Class == CLASS_IGNORE)
-        return level == 1;
-    return TRUE;
-}
-
-static ULONG level_weight(const SORT_ELEMENT *e, int level, DWORD flags)
-{
-    switch (level) {
-    case 0:
-        return e->Primary;
-    case 1:
-        return (flags & (NORM_IGNORENONSPACE | LINGUISTIC_IGNOREDIACRITIC)) ? 0 : e->Secondary;
-    case 2: {
-        USHORT t = e->Tertiary;
-        if (flags & (NORM_IGNORECASE | LINGUISTIC_IGNORECASE))
-            t &= (USHORT)~TERTIARY_UPPER;
-        return t;
-    }
-    default:
-        return ((ULONG)e->Position << 16) | (e->Primary & 0xFFFF);
-    }
-}
-
-static int compare_level(const SORT_LIST *a, const SORT_LIST *b, int level, DWORD flags)
-{
-    int i = 0, j = 0;
-    for (;;) {
-        while (i < a->Count && (!counts_at(&a->Items[i], level) || (level == 0 && a->Items[i].Class == CLASS_IGNORE)))
-            i++;
-        while (j < b->Count && (!counts_at(&b->Items[j], level) || (level == 0 && b->Items[j].Class == CLASS_IGNORE)))
-            j++;
-        if (i >= a->Count || j >= b->Count)
-            break;
-        ULONG wa = level_weight(&a->Items[i], level, flags);
-        ULONG wb = level_weight(&b->Items[j], level, flags);
-        /* an element without an accent weight still takes part at the accent level. */
-        if (wa != wb)
-            return wa < wb ? CSTR_LESS_THAN : CSTR_GREATER_THAN;
-        i++;
-        j++;
-    }
-    /* trailing elements weigh nothing when ignored at this level. */
-    BOOL more_a = FALSE, more_b = FALSE;
-    for (; i < a->Count; i++)
-        if (counts_at(&a->Items[i], level) && !(level == 0 && a->Items[i].Class == CLASS_IGNORE) &&
-            (level == 0 || level == 3 || level_weight(&a->Items[i], level, flags)))
-            more_a = TRUE;
-    for (; j < b->Count; j++)
-        if (counts_at(&b->Items[j], level) && !(level == 0 && b->Items[j].Class == CLASS_IGNORE) &&
-            (level == 0 || level == 3 || level_weight(&b->Items[j], level, flags)))
-            more_b = TRUE;
-    if (more_a != more_b)
-        return more_a ? CSTR_GREATER_THAN : CSTR_LESS_THAN;
-    return CSTR_EQUAL;
-}
-
-static int compare_strings(DWORD flags, LPCWSTR a, int alen, LPCWSTR b, int blen)
-{
-    SORT_LIST la, lb;
-    int result = 0;
-    if (!build_elements(a, alen, flags, &la)) {
-        list_free(&la);
-        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return 0;
-    }
-    if (!build_elements(b, blen, flags, &lb)) {
-        list_free(&la);
-        list_free(&lb);
-        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return 0;
-    }
-    for (int level = 0; level < 4; level++) {
-        result = compare_level(&la, &lb, level, flags);
-        if (result != CSTR_EQUAL)
-            break;
-    }
-    list_free(&la);
-    list_free(&lb);
-    return result;
+    return KbCompareStrings(order.Collator, order.Turkic, flags, a, alen, b, blen);
 }
 
 #define COMPARE_FLAGS                                                                                             \
     (NORM_IGNORECASE | NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS | SORT_DIGITSASNUMBERS | LINGUISTIC_IGNORECASE | \
      LINGUISTIC_IGNOREDIACRITIC | SORT_STRINGSORT | NORM_IGNOREKANATYPE | NORM_IGNOREWIDTH | NORM_LINGUISTIC_CASING)
 
-static int compare_checked(DWORD flags, LPCWSTR a, int alen, LPCWSTR b, int blen)
+static int compare_checked(SORT_ORDER order, DWORD flags, LPCWSTR a, int alen, LPCWSTR b, int blen)
 {
     if (!a || !b) {
         KbSetError(ERROR_INVALID_PARAMETER);
@@ -475,7 +250,7 @@ static int compare_checked(DWORD flags, LPCWSTR a, int alen, LPCWSTR b, int blen
         KbSetError(ERROR_INVALID_FLAGS);
         return 0;
     }
-    return compare_strings(flags, a, string_length(a, alen), b, string_length(b, blen));
+    return compare_strings(order, flags, a, string_length(a, alen), b, string_length(b, blen));
 }
 
 int WINAPI CompareStringEx(LPCWSTR name, DWORD flags, LPCWCH a, int alen, LPCWCH b, int blen,
@@ -489,13 +264,12 @@ int WINAPI CompareStringEx(LPCWSTR name, DWORD flags, LPCWCH a, int alen, LPCWCH
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    return compare_checked(flags, a, alen, b, blen);
+    return compare_checked(sort_of_name(name), flags, a, alen, b, blen);
 }
 
 int WINAPI CompareStringW(LCID locale, DWORD flags, PCNZWCH a, int alen, PCNZWCH b, int blen)
 {
-    /* every locale shares the default sort table. */
-    return compare_checked(flags, a, alen, b, blen);
+    return compare_checked(sort_of_lcid(locale), flags, a, alen, b, blen);
 }
 
 int WINAPI CompareStringA(LCID locale, DWORD flags, LPCSTR a, int alen, LPCSTR b, int blen)
@@ -526,7 +300,7 @@ int WINAPI CompareStringA(LCID locale, DWORD flags, LPCSTR a, int alen, LPCSTR b
             wa_len--;
         if (blen < 0 && wb_len)
             wb_len--;
-        result = compare_checked(flags & ~(DWORD)LOCALE_USE_CP_ACP, wa, wa_len, wb, wb_len);
+        result = compare_checked(sort_of_lcid(locale), flags & ~(DWORD)LOCALE_USE_CP_ACP, wa, wa_len, wb, wb_len);
     } else {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
     }
@@ -558,7 +332,7 @@ int WINAPI CompareStringOrdinal(LPCWCH a, int alen, LPCWCH b, int blen, BOOL ign
 
 /* ------------------------------------------------------------------ searching */
 
-static int find_nls(DWORD flags, LPCWSTR source, int source_len, LPCWSTR value, int value_len, LPINT found_len)
+static int find_nls(SORT_ORDER order, DWORD flags, LPCWSTR source, int source_len, LPCWSTR value, int value_len, LPINT found_len)
 {
     DWORD position = flags & (FIND_STARTSWITH | FIND_ENDSWITH | FIND_FROMSTART | FIND_FROMEND);
     DWORD compare = flags & ~position;
@@ -585,7 +359,7 @@ static int find_nls(DWORD flags, LPCWSTR source, int source_len, LPCWSTR value, 
                 continue;
             if (end == start && m)
                 continue;
-            if (compare_strings(compare, source + start, end - start, value, m) == CSTR_EQUAL) {
+            if (compare_strings(order, compare, source + start, end - start, value, m) == CSTR_EQUAL) {
                 if (found_len)
                     *found_len = end - start;
                 return start;
@@ -599,7 +373,7 @@ static int find_nls(DWORD flags, LPCWSTR source, int source_len, LPCWSTR value, 
 int WINAPI FindNLSString(LCID locale, DWORD flags, LPCWSTR source, int source_len, LPCWSTR value, int value_len,
                          LPINT found_len)
 {
-    return find_nls(flags, source, source_len, value, value_len, found_len);
+    return find_nls(sort_of_lcid(locale), flags, source, source_len, value, value_len, found_len);
 }
 
 int WINAPI FindNLSStringEx(LPCWSTR name, DWORD flags, LPCWSTR source, int source_len, LPCWSTR value, int value_len,
@@ -609,7 +383,7 @@ int WINAPI FindNLSStringEx(LPCWSTR name, DWORD flags, LPCWSTR source, int source
         KbSetError(ERROR_INVALID_PARAMETER);
         return -1;
     }
-    return find_nls(flags, source, source_len, value, value_len, found_len);
+    return find_nls(sort_of_name(name), flags, source, source_len, value, value_len, found_len);
 }
 
 int WINAPI FindStringOrdinal(DWORD flags, LPCWSTR source, int source_len, LPCWSTR value, int value_len,
@@ -646,89 +420,6 @@ typedef struct BYTE_OUT {
     int Length;
 } BYTE_OUT;
 
-static void put_byte(BYTE_OUT *o, BYTE b)
-{
-    if (o->Size && o->Length < o->Size)
-        o->Buffer[o->Length] = b;
-    o->Length++;
-}
-
-/* a sort key holds the primary, accent, case and special weights, each list closed by 1 and the key by 0. */
-static int sort_key(DWORD flags, LPCWSTR src, int len, PBYTE key, int size)
-{
-    SORT_LIST l;
-    BYTE_OUT o = {key, size, 0};
-    if (!build_elements(src, len, flags, &l)) {
-        list_free(&l);
-        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-        return 0;
-    }
-    for (int i = 0; i < l.Count; i++) {
-        const SORT_ELEMENT *e = &l.Items[i];
-        if (e->Class == CLASS_IGNORE || e->Class == CLASS_SPECIAL)
-            continue;
-        /* class and a sixteen bit weight; digit runs keep their length marker apart. */
-        put_byte(&o, (BYTE)(e->Class + 1 + ((e->Primary >> 16) & 1)));
-        put_byte(&o, (BYTE)(e->Primary >> 8));
-        put_byte(&o, (BYTE)e->Primary);
-    }
-    put_byte(&o, 1);
-    if (!(flags & (NORM_IGNORENONSPACE | LINGUISTIC_IGNOREDIACRITIC))) {
-        /* accent weights are trimmed when all trailing ones are empty. */
-        int last = -1, k = 0;
-        for (int i = 0; i < l.Count; i++)
-            if (l.Items[i].Class != CLASS_SPECIAL && l.Items[i].Secondary)
-                last = i;
-        for (int i = 0; i <= last; i++, k++) {
-            const SORT_ELEMENT *e = &l.Items[i];
-            if (e->Class == CLASS_SPECIAL)
-                continue;
-            USHORT s = e->Secondary;
-            put_byte(&o, (BYTE)(2 + (s >> 8)));
-            put_byte(&o, (BYTE)s);
-        }
-    }
-    put_byte(&o, 1);
-    {
-        int last = -1;
-        for (int i = 0; i < l.Count; i++)
-            if (l.Items[i].Class != CLASS_SPECIAL && l.Items[i].Class != CLASS_IGNORE &&
-                level_weight(&l.Items[i], 2, flags))
-                last = i;
-        for (int i = 0; i <= last; i++) {
-            const SORT_ELEMENT *e = &l.Items[i];
-            if (e->Class == CLASS_SPECIAL || e->Class == CLASS_IGNORE)
-                continue;
-            put_byte(&o, (BYTE)(2 + level_weight(e, 2, flags)));
-        }
-    }
-    put_byte(&o, 1);
-    for (int i = 0; i < l.Count; i++) {
-        const SORT_ELEMENT *e = &l.Items[i];
-        if (e->Class != CLASS_SPECIAL)
-            continue;
-        put_byte(&o, (BYTE)(e->Position >> 8));
-        put_byte(&o, (BYTE)e->Position);
-        put_byte(&o, (BYTE)(e->Primary >> 8));
-        put_byte(&o, (BYTE)e->Primary);
-    }
-    put_byte(&o, 0);
-    list_free(&l);
-    if (o.Size && o.Length > o.Size) {
-        KbSetError(ERROR_INSUFFICIENT_BUFFER);
-        return 0;
-    }
-    return o.Length;
-}
-
-static BOOL is_word_start(LPCWSTR s, int i)
-{
-    if (i == 0)
-        return TRUE;
-    WORD prev = KbCharType1(s[i - 1]);
-    return !(prev & C1_ALPHA) && s[i - 1] != '\'';
-}
-
 #define LCMAP_CASE_FLAGS (LCMAP_LOWERCASE | LCMAP_UPPERCASE)
 #define LCMAP_VALID                                                                                               \
     (LCMAP_LOWERCASE | LCMAP_UPPERCASE | LCMAP_SORTKEY | LCMAP_BYTEREV | LCMAP_HASH | LCMAP_HIRAGANA |            \
@@ -737,7 +428,7 @@ static BOOL is_word_start(LPCWSTR s, int i)
      NORM_IGNOREWIDTH | SORT_STRINGSORT | SORT_DIGITSASNUMBERS | LINGUISTIC_IGNORECASE |                         \
      LINGUISTIC_IGNOREDIACRITIC | NORM_LINGUISTIC_CASING)
 
-static int map_string(DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst_len)
+static int map_string(SORT_ORDER order, DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst_len)
 {
     if (!src || !src_len || src_len < -1 || dst_len < 0 || (dst_len && !dst)) {
         KbSetError(ERROR_INVALID_PARAMETER);
@@ -770,11 +461,11 @@ static int map_string(DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst
     int len = src_len < 0 ? (int)wcslen(src) + 1 : src_len;
     if (sortkey) {
         int key_len = src_len < 0 ? len - 1 : len;
-        return sort_key(flags & ~(DWORD)LCMAP_SORTKEY, src, key_len, (PBYTE)dst, dst_len);
+        return KbSortKey(order.Collator, order.Turkic, flags & ~(DWORD)LCMAP_SORTKEY, src, key_len, (PBYTE)dst, dst_len);
     }
     if (hash) {
         int key_len = src_len < 0 ? len - 1 : len;
-        int need = sort_key(flags & ~(DWORD)LCMAP_HASH, src, key_len, nullptr, 0);
+        int need = KbSortKey(order.Collator, order.Turkic, flags & ~(DWORD)LCMAP_HASH, src, key_len, nullptr, 0);
         if (!dst_len)
             return sizeof(DWORD);
         if (dst_len < (int)sizeof(DWORD)) {
@@ -786,7 +477,7 @@ static int map_string(DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst
             KbSetError(ERROR_NOT_ENOUGH_MEMORY);
             return 0;
         }
-        sort_key(flags & ~(DWORD)LCMAP_HASH, src, key_len, key, need);
+        KbSortKey(order.Collator, order.Turkic, flags & ~(DWORD)LCMAP_HASH, src, key_len, key, need);
         DWORD h = 2166136261u;
         for (int i = 0; i < need; i++)
             h = (h ^ key[i]) * 16777619u;
@@ -807,41 +498,66 @@ static int map_string(DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst
             return len;
     }
     int out = 0;
+    BOOL turkic = order.Turkic && (flags & LCMAP_LINGUISTIC_CASING);
+    BOOL word_start = TRUE;
     for (int i = 0; i < len; i++) {
-        WCHAR c = src[i];
-        if ((flags & NORM_IGNORESYMBOLS) && (KbCharType1(c) & (C1_PUNCT | C1_SPACE)))
-            continue;
-        if ((flags & NORM_IGNORENONSPACE) && is_combining(c))
-            continue;
-        if (flags & NORM_IGNORENONSPACE) {
-            const DECOMPOSITION *d = find_decomposition(c);
-            if (d)
-                c = d->Base;
+        ULONG c = src[i];
+        if (c >= 0xD800 && c < 0xDC00 && i + 1 < len && src[i + 1] >= 0xDC00 && src[i + 1] < 0xE000) {
+            c = 0x10000 + ((c - 0xD800) << 10) + (src[i + 1] - 0xDC00);
+            i++;
         }
-        if (casing == LCMAP_TITLECASE)
-            c = is_word_start(src, i) ? KbUpcase(c) : KbDowncase(c);
-        else if (casing == LCMAP_LOWERCASE)
-            c = KbDowncase(c);
-        else if (casing == LCMAP_UPPERCASE)
-            c = KbUpcase(c);
-        if ((flags & LCMAP_HIRAGANA) && is_katakana(c))
-            c = (WCHAR)(c - 0x60);
-        else if ((flags & LCMAP_KATAKANA) && is_hiragana(c))
-            c = (WCHAR)(c + 0x60);
+        if ((flags & NORM_IGNORESYMBOLS) && c < 0x10000 && (KbCharType1((WCHAR)c) & (C1_PUNCT | C1_SPACE)))
+            continue;
+        if ((flags & NORM_IGNORENONSPACE) && KbUniIsNonspacing(c))
+            continue;
+        WCHAR units[24];
+        int count = 0;
+        BOOL letter = KbUniUpper(c) != c || KbUniLower(c) != c;
+        BOOL upper = casing == LCMAP_UPPERCASE || (casing == LCMAP_TITLECASE && word_start);
+        BOOL lower = casing == LCMAP_LOWERCASE || (casing == LCMAP_TITLECASE && !word_start);
+        word_start = !letter && c != '\'';
+        if (upper)
+            c = (turkic && c == 'i') ? 0x130 : KbUniUpper(c);
+        else if (lower)
+            c = (turkic && c == 'I') ? 0x131 : (turkic && c == 0x130) ? 'i' : KbUniLower(c);
+        if ((flags & LCMAP_HIRAGANA) && c >= 0x30A1 && c <= 0x30F6)
+            c -= 0x60;
+        else if ((flags & LCMAP_KATAKANA) && c >= 0x3041 && c <= 0x3096)
+            c += 0x60;
         if (flags & (LCMAP_HALFWIDTH | NORM_IGNOREWIDTH))
-            c = narrow(c);
+            c = narrow(c < 0x10000 ? (WCHAR)c : 0);
         else if (flags & LCMAP_FULLWIDTH)
-            c = widen(c);
-        if (flags & LCMAP_BYTEREV)
-            c = (WCHAR)((c >> 8) | (c << 8));
-        if (dst_len) {
-            if (out >= dst_len) {
-                KbSetError(ERROR_INSUFFICIENT_BUFFER);
-                return 0;
+            c = widen(c < 0x10000 ? (WCHAR)c : 0);
+        if (c >= 0x10000) {
+            units[count++] = (WCHAR)(0xD800 + ((c - 0x10000) >> 10));
+            units[count++] = (WCHAR)(0xDC00 + ((c - 0x10000) & 0x3FF));
+        } else if (flags & NORM_IGNORENONSPACE) {
+            /* the letter without its marks. */
+            WCHAR parts[20];
+            int n = (c >= 0xC0 && !(c >= 0xAC00 && c < 0xD7A4)) ? KbUniDecompose(c, FALSE, parts) : 0;
+            if (n) {
+                for (int k = 0; k < n; k++)
+                    if (!KbUniIsNonspacing(parts[k]))
+                        units[count++] = parts[k];
+            } else {
+                units[count++] = (WCHAR)c;
             }
-            dst[out] = c;
+        } else {
+            units[count++] = (WCHAR)c;
         }
-        out++;
+        for (int k = 0; k < count; k++) {
+            WCHAR u = units[k];
+            if (flags & LCMAP_BYTEREV)
+                u = (WCHAR)((u >> 8) | (u << 8));
+            if (dst_len) {
+                if (out >= dst_len) {
+                    KbSetError(ERROR_INSUFFICIENT_BUFFER);
+                    return 0;
+                }
+                dst[out] = u;
+            }
+            out++;
+        }
     }
     return out;
 }
@@ -857,12 +573,12 @@ int WINAPI LCMapStringEx(LPCWSTR name, DWORD flags, LPCWSTR src, int src_len, LP
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    return map_string(flags, src, src_len, dst, dst_len);
+    return map_string(sort_of_name(name), flags, src, src_len, dst, dst_len);
 }
 
 int WINAPI LCMapStringW(LCID locale, DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst_len)
 {
-    return map_string(flags, src, src_len, dst, dst_len);
+    return map_string(sort_of_lcid(locale), flags, src, src_len, dst, dst_len);
 }
 
 int WINAPI LCMapStringA(LCID locale, DWORD flags, LPCSTR src, int src_len, LPSTR dst, int dst_len)
@@ -890,12 +606,12 @@ int WINAPI LCMapStringA(LCID locale, DWORD flags, LPCSTR src, int src_len, LPSTR
     MultiByteToWideChar(cp, 0, src, src_len, wsrc, wlen);
     int result = 0;
     if (flags & (LCMAP_SORTKEY | LCMAP_HASH)) {
-        result = map_string(flags, wsrc, src_len < 0 ? -1 : wlen, (LPWSTR)dst, dst_len);
+        result = map_string(sort_of_lcid(locale), flags, wsrc, src_len < 0 ? -1 : wlen, (LPWSTR)dst, dst_len);
     } else {
-        int need = map_string(flags, wsrc, wlen, nullptr, 0);
+        int need = map_string(sort_of_lcid(locale), flags, wsrc, wlen, nullptr, 0);
         PWSTR wdst = need ? KbAlloc((SIZE_T)need * sizeof(WCHAR)) : nullptr;
         if (wdst) {
-            map_string(flags, wsrc, wlen, wdst, need);
+            map_string(sort_of_lcid(locale), flags, wsrc, wlen, wdst, need);
             result = WideCharToMultiByte(cp, 0, wdst, need, nullptr, 0, nullptr, nullptr);
             if (dst_len) {
                 if (result > dst_len) {
