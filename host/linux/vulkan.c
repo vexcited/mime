@@ -1368,15 +1368,26 @@ static uint64_t realtime_ns(void)
     return (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
 }
 
+static bool g_no_spare;
 static pthread_mutex_t g_maker_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_maker_wake = PTHREAD_COND_INITIALIZER;
 static uint64_t g_maker_at; /* when the next device is due, in realtime nanoseconds, 0 for none */
 static bool g_maker_stop;
+static bool g_maker_quiet; /* the device asked for is made when the connections are quiet, not at once */
+static uint64_t g_vk_busy; /* when a connection last ran a call of the guest, in the host's nanoseconds */
 
-static void maker_request(uint64_t delay)
+/*
+ * a device made while the guest's processes call the driver slows their calls: the driver does one thing at a time for a
+ * device, and a webgpu page that started a second after its browser waited 70 ms for its device instead of 6.
+ */
+#define QUIET_NS 10000000000ull
+static uint64_t g_quiet_ns = QUIET_NS; /* MIME_VK_SPARE_QUIET_MS changes it, for the test */
+
+static void maker_request(uint64_t delay, bool quiet)
 {
     pthread_mutex_lock(&g_maker_lock);
     uint64_t at = realtime_ns() + delay;
+    g_maker_quiet |= quiet;
     if (!g_maker_stop && (!g_maker_at || at < g_maker_at)) {
         g_maker_at = at;
         pthread_cond_signal(&g_maker_wake);
@@ -1534,7 +1545,8 @@ static void spare_expire(void)
         shell_destroy(doomed[i]);
 }
 
-static void spare_fill(void)
+/* the first request is made at once, the others once the guest's calls to the driver are quiet. */
+static void spare_fill(bool quiet)
 {
     Learned want[SPARES_MAX] = {};
     unsigned n = 0;
@@ -1549,7 +1561,7 @@ static void spare_fill(void)
     uint8_t *arena = malloc(FILL_ARENA);
     if (arena) {
         spare_prune(want, n);
-        for (unsigned i = 0; i < n; i++)
+        for (unsigned i = 0; i < n && (quiet || !i); i++)
             spare_make(&want[i], arena);
     }
     free(arena);
@@ -1572,7 +1584,7 @@ static void device_learn(MvkConnection *c, VkPhysicalDevice physical, const Requ
     bool missing = !spare_find(hi, key);
     pthread_mutex_unlock(&g_instance_lock);
     if (missing)
-        maker_request(REFILL_DELAY_NS);
+        maker_request(REFILL_DELAY_NS, true);
 }
 
 static void create_device(MvkCall *call)
@@ -1589,7 +1601,7 @@ static void create_device(MvkCall *call)
     if (!d->error && physical && !c->device) {
         Request key = {};
         HostInstance *hi = c->host_instance;
-        bool known = device_request(&key, d, queues);
+        bool known = !g_no_spare && device_request(&key, d, queues);
         uint64_t began = mime_now_ns();
         MvkConnection *spare = known && hi ? spare_take(hi, &key, physical, queues) : nullptr;
         if (spare) {
@@ -3146,6 +3158,7 @@ static void *connection_main(void *arg)
             call.in = (MvkDecoder){c->call + sizeof(header), c->call + sizeof(header), c->call + header.size, 0, c,
                                    c->arena, 0, ARENA_SIZE};
             run_call(&call);
+            __atomic_store_n(&g_vk_busy, mime_now_ns(), __ATOMIC_RELAXED);
         }
         get += header.size;
         __atomic_store_n(&h->get, get, __ATOMIC_RELEASE);
@@ -3374,8 +3387,16 @@ static void *warm_main(void *arg)
     __atomic_store_n(&g_warm_done, done, __ATOMIC_RELEASE);
     mime_info("vulkan: the driver is warm after %llu ms", (unsigned long long)((done - began) / 1000000));
     /* the device of the last run is made ahead as soon as the driver is loaded, and again after one was taken. */
-    learned_load();
-    maker_request(0);
+    if (getenv("MIME_VK_SPARE_QUIET_MS"))
+        g_quiet_ns = strtoull(getenv("MIME_VK_SPARE_QUIET_MS"), nullptr, 10) * 1000000ull;
+    if (getenv("MIME_VK_NO_SPARE")) {
+        /* the processes make their own devices, to tell what a problem depends on. */
+        g_no_spare = true;
+        g_maker_stop = true;
+    } else {
+        learned_load();
+        maker_request(0, false);
+    }
     for (;;) {
         pthread_mutex_lock(&g_maker_lock);
         /* a minute at most without a request, to give back the devices nobody took. */
@@ -3388,14 +3409,25 @@ static void *warm_main(void *arg)
             struct timespec until = {(time_t)(g_maker_at / 1000000000ull), (long)(g_maker_at % 1000000000ull)};
             pthread_cond_timedwait(&g_maker_wake, &g_maker_lock, &until);
         }
-        bool stop = g_maker_stop, fill = g_maker_at != 0;
+        bool stop = g_maker_stop, fill = g_maker_at != 0, quiet = g_maker_quiet;
         g_maker_at = 0;
         pthread_mutex_unlock(&g_maker_lock);
         if (stop)
             break;
         if (fill) {
             learned_save();
-            spare_fill();
+            if (quiet && mime_now_ns() - __atomic_load_n(&g_vk_busy, __ATOMIC_RELAXED) < g_quiet_ns) {
+                /* the guest is calling the driver: asked again in a second. */
+                maker_request(1000000000ull, true);
+            } else {
+                pthread_mutex_lock(&g_maker_lock);
+                g_maker_quiet = false;
+                pthread_mutex_unlock(&g_maker_lock);
+                spare_fill(quiet);
+                /* a second device is for the next program, and made when no program is starting. */
+                if (!quiet)
+                    maker_request(REFILL_DELAY_NS, true);
+            }
         }
         spare_expire();
     }
