@@ -398,7 +398,8 @@ HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 s
             continue;
         UINT64 offset;
         if (take_range(heap, size, align, &offset)) {
-            *out = (D12Allocation){heap, offset, size};
+            *out = (D12Allocation){heap, offset, size, offset >= heap->handed_out};
+            heap->handed_out = D12_MAX(heap->handed_out, offset + size);
             ReleaseSRWLockExclusive(&device->memory_lock);
             return S_OK;
         }
@@ -426,7 +427,8 @@ HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 s
     device->internal_heaps = heap;
     UINT64 offset = 0;
     take_range(heap, size, align, &offset);
-    *out = (D12Allocation){heap, offset, size};
+    *out = (D12Allocation){heap, offset, size, offset >= heap->handed_out};
+    heap->handed_out = D12_MAX(heap->handed_out, offset + size);
     ReleaseSRWLockExclusive(&device->memory_lock);
     return S_OK;
 }
@@ -1204,8 +1206,14 @@ static HRESULT create_buffer(D12Device *device, D12Resource *resource, D12Heap *
     resource->offset = resource->alloc.offset;
     resource->va = h->va + resource->alloc.offset;
     resource->mapped = h->mapped ? h->mapped + resource->alloc.offset : nullptr;
-    /* committed resources start zeroed, as windows makes them, even where memory is reused. */
-    if (resource->mapped)
+    /*
+     * committed resources start zeroed, as windows makes them, even where memory is reused. mapped memory that no resource
+     * had before is zero already, vulkan-1.dll makes it of new pages, and the pass over it would fault in what the
+     * program has not asked for yet and may write over at once, as an upload of 64 MiB does.
+     */
+    if (resource->mapped && resource->alloc.fresh)
+        ;
+    else if (resource->mapped)
         memset(resource->mapped, 0, (SIZE_T)size);
     else if (!(resource->heap_flags & D3D12_HEAP_FLAG_CREATE_NOT_ZEROED)) {
         VkCommandBuffer cmd = D12InitCommands(device);

@@ -236,6 +236,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateMemory(VkDevice device, const VkMemoryA
     ULONG64 pa = 0;
     VkDeviceSize span = 0;
     if (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+        /* new pages of the kernel's, which it hands over zeroed: d3d12 relies on that for the buffers it makes. */
         span = (info->allocationSize + 0xFFFF) & ~(VkDeviceSize)0xFFFF;
         m->base = mvk_block_alloc((SIZE_T)span, &pa);
         if (!m->base) {

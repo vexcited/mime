@@ -274,6 +274,7 @@ struct D12Heap {
     struct D12Heap *next;
     struct D12Range *free;
     UINT free_count, free_capacity;
+    UINT64 handed_out; /* past this offset no range was ever given out */
 };
 
 HRESULT D12CreateHeap(D12Device *device, const D3D12_HEAP_DESC *desc, D12Heap **out);
@@ -283,6 +284,7 @@ D12Heap *D12HeapFrom(ID3D12Heap *iface);
 typedef struct D12Allocation {
     D12Heap *heap;
     UINT64 offset, size;
+    BOOL fresh; /* no one had the range before: its memory is as the driver gave it, which for mapped memory is zero */
 } D12Allocation;
 
 HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 size, UINT64 align, BOOL image,
