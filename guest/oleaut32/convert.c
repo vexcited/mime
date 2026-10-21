@@ -306,7 +306,7 @@ static int format_short_date(LCID locale, DWORD override, const SYSTEMTIME *time
     format[n] = 0;
     SYSTEMTIME shifted = *time;
     shifted.wYear = (WORD)(time->wYear + 400 * ((1601 - time->wYear + 399) / 400));
-    return GetDateFormatW(locale, override, &shifted, format, text, size);
+    return GetDateFormatW(locale, 0, &shifted, format, text, size);
 }
 
 WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, BSTR *out)
