@@ -12,6 +12,7 @@
 #include <mime/mvk_video.h>
 #include <vk_video/vulkan_video_codec_av1std_decode.h>
 #include <vk_video/vulkan_video_codec_h264std_decode.h>
+#include <vk_video/vulkan_video_codec_h265std_decode.h>
 #include <vk_video/vulkan_video_codec_vp9std_decode.h>
 
 #define VIDEO_MAX_INDEX 128
@@ -88,6 +89,7 @@ typedef struct MvkVideo {
     MvkVideoCaps caps[8];
     VkVideoCapabilitiesKHR vk_caps[8];
     VkVideoDecodeCapabilityFlagsKHR decode_flags[8];
+    StdVideoH265LevelIdc h265_level[8]; /* the highest level the gpu decodes, of the h.265 profiles */
     VkPhysicalDeviceMemoryProperties memory;
     VideoSession *sessions;
 } MvkVideo;
@@ -108,7 +110,7 @@ struct VideoSession {
     uint32_t max_dpb_slots, max_active;
     VkFormat format;
     /* the parameter sets the current parameters object holds, to compare with. */
-    uint8_t key[2048];
+    uint8_t key[4096];
     uint32_t key_size;
     /* codec state. */
     struct {
@@ -144,6 +146,12 @@ typedef struct VideoFrame {
             VkVideoDecodeH264DpbSlotInfoKHR slots[VIDEO_MAX_DPB + 1];
             StdVideoDecodeH264ReferenceInfo std_refs[VIDEO_MAX_DPB + 1];
         } h264;
+        struct {
+            VkVideoDecodeH265PictureInfoKHR picture;
+            StdVideoDecodeH265PictureInfo std_picture;
+            VkVideoDecodeH265DpbSlotInfoKHR slots[VIDEO_MAX_DPB + 1];
+            StdVideoDecodeH265ReferenceInfo std_refs[VIDEO_MAX_DPB + 1];
+        } h265;
         struct {
             VkVideoDecodeVP9PictureInfoKHR picture;
             StdVideoDecodeVP9PictureInfo std_picture;
@@ -190,6 +198,8 @@ bool video_mirror(MvkConnection *c, VideoSession *s, VideoPicture *p);
 
 /* the codecs: fill the frame from the dxva buffers, false when they do not describe a picture to decode. */
 bool video_h264_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeInfo *in, uint64_t image, uint32_t layer,
+                        VideoFrame *f);
+bool video_h265_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeInfo *in, uint64_t image, uint32_t layer,
                         VideoFrame *f);
 bool video_vp9_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeInfo *in, uint64_t image, uint32_t layer,
                        VideoFrame *f);

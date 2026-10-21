@@ -439,4 +439,146 @@ typedef struct DxvaTileAV1 {
 
 _Static_assert(sizeof(DxvaTileAV1) == 16, "DXVA_Tile_AV1 is 16 bytes");
 
+/* ------------------------------------------------------------------ h.265 */
+
+/*
+ * the picture parameters of the specification of dxva for h.265 (main and main 10), 232 bytes packed by one. They are the
+ * syntax elements of the sequence and picture parameter sets in use, and the reference picture set already resolved:
+ * the lists of the reference pictures of the dpb, and for the picture the indices into that list of those it
+ * predicts from. the slice control is the short form, DxvaSliceShort, one entry for each slice segment.
+ */
+typedef struct DxvaPicParamsHEVC {
+    uint16_t pic_width_in_min_cbs;
+    uint16_t pic_height_in_min_cbs;
+    union {
+        struct {
+            uint16_t chroma_format_idc : 2;
+            uint16_t separate_colour_plane_flag : 1;
+            uint16_t bit_depth_luma_minus8 : 3;
+            uint16_t bit_depth_chroma_minus8 : 3;
+            uint16_t log2_max_pic_order_cnt_lsb_minus4 : 4;
+            uint16_t no_pic_reordering_flag : 1;
+            uint16_t no_bi_pred_flag : 1;
+            uint16_t reserved1 : 1;
+        };
+        uint16_t format_and_sequence_info_flags;
+    };
+    DxvaPicEntry curr_pic;
+    uint8_t sps_max_dec_pic_buffering_minus1;
+    uint8_t log2_min_luma_coding_block_size_minus3;
+    uint8_t log2_diff_max_min_luma_coding_block_size;
+    uint8_t log2_min_transform_block_size_minus2;
+    uint8_t log2_diff_max_min_transform_block_size;
+    uint8_t max_transform_hierarchy_depth_inter;
+    uint8_t max_transform_hierarchy_depth_intra;
+    uint8_t num_short_term_ref_pic_sets;
+    uint8_t num_long_term_ref_pics_sps;
+    uint8_t num_ref_idx_l0_default_active_minus1;
+    uint8_t num_ref_idx_l1_default_active_minus1;
+    int8_t init_qp_minus26;
+    /* NumDeltaPocs of the set the slice header's own set predicts from, 0 when it does not predict. */
+    uint8_t num_delta_pocs_of_ref_rps_idx;
+    /* the bits the slice header's own short term set takes, 0 when it names one of the sequence's. */
+    uint16_t num_bits_for_short_term_rps_in_slice;
+    uint16_t reserved2;
+    union {
+        struct {
+            uint32_t scaling_list_enabled_flag : 1;
+            uint32_t amp_enabled_flag : 1;
+            uint32_t sample_adaptive_offset_enabled_flag : 1;
+            uint32_t pcm_enabled_flag : 1;
+            uint32_t pcm_sample_bit_depth_luma_minus1 : 4;
+            uint32_t pcm_sample_bit_depth_chroma_minus1 : 4;
+            uint32_t log2_min_pcm_luma_coding_block_size_minus3 : 2;
+            uint32_t log2_diff_max_min_pcm_luma_coding_block_size : 2;
+            uint32_t pcm_loop_filter_disabled_flag : 1;
+            uint32_t long_term_ref_pics_present_flag : 1;
+            uint32_t sps_temporal_mvp_enabled_flag : 1;
+            uint32_t strong_intra_smoothing_enabled_flag : 1;
+            uint32_t dependent_slice_segments_enabled_flag : 1;
+            uint32_t output_flag_present_flag : 1;
+            uint32_t num_extra_slice_header_bits : 3;
+            uint32_t sign_data_hiding_enabled_flag : 1;
+            uint32_t cabac_init_present_flag : 1;
+            uint32_t reserved3 : 5;
+        };
+        uint32_t coding_param_tool_flags;
+    };
+    union {
+        struct {
+            uint32_t constrained_intra_pred_flag : 1;
+            uint32_t transform_skip_enabled_flag : 1;
+            uint32_t cu_qp_delta_enabled_flag : 1;
+            uint32_t pps_slice_chroma_qp_offsets_present_flag : 1;
+            uint32_t weighted_pred_flag : 1;
+            uint32_t weighted_bipred_flag : 1;
+            uint32_t transquant_bypass_enabled_flag : 1;
+            uint32_t tiles_enabled_flag : 1;
+            uint32_t entropy_coding_sync_enabled_flag : 1;
+            uint32_t uniform_spacing_flag : 1;
+            uint32_t loop_filter_across_tiles_enabled_flag : 1;
+            uint32_t pps_loop_filter_across_slices_enabled_flag : 1;
+            uint32_t deblocking_filter_override_enabled_flag : 1;
+            uint32_t pps_deblocking_filter_disabled_flag : 1;
+            uint32_t lists_modification_present_flag : 1;
+            uint32_t slice_segment_header_extension_present_flag : 1;
+            uint32_t irap_pic_flag : 1;
+            uint32_t idr_pic_flag : 1;
+            uint32_t intra_pic_flag : 1;
+            uint32_t reserved4 : 13;
+        };
+        uint32_t coding_setting_picture_property_flags;
+    };
+    int8_t pps_cb_qp_offset;
+    int8_t pps_cr_qp_offset;
+    uint8_t num_tile_columns_minus1;
+    uint8_t num_tile_rows_minus1;
+    uint16_t column_width_minus1[19];
+    uint16_t row_height_minus1[21];
+    uint8_t diff_cu_qp_delta_depth;
+    int8_t pps_beta_offset_div2;
+    int8_t pps_tc_offset_div2;
+    uint8_t log2_parallel_merge_level_minus2;
+    int32_t curr_pic_order_cnt_val;
+    /* the reference pictures of the dpb: their surface indices, the long term ones marked. */
+    DxvaPicEntry ref_pic_list[15];
+    uint8_t reserved5;
+    int32_t pic_order_cnt_val_list[15];
+    /* the pictures the picture predicts from, as indices into ref_pic_list, 0xFF for none. */
+    uint8_t ref_pic_set_st_curr_before[8];
+    uint8_t ref_pic_set_st_curr_after[8];
+    uint8_t ref_pic_set_lt_curr[8];
+    uint16_t reserved6;
+    uint16_t reserved7;
+    uint32_t status_report_feedback_number;
+} __attribute__((packed)) DxvaPicParamsHEVC;
+
+_Static_assert(sizeof(DxvaPicParamsHEVC) == 232, "DXVA_PicParams_HEVC is 232 bytes");
+_Static_assert(offsetof(DxvaPicParamsHEVC, curr_pic) == 6 && offsetof(DxvaPicParamsHEVC, num_delta_pocs_of_ref_rps_idx) == 19 &&
+                   offsetof(DxvaPicParamsHEVC, coding_param_tool_flags) == 24 &&
+                   offsetof(DxvaPicParamsHEVC, coding_setting_picture_property_flags) == 28 &&
+                   offsetof(DxvaPicParamsHEVC, pps_cb_qp_offset) == 32 &&
+                   offsetof(DxvaPicParamsHEVC, column_width_minus1) == 36 &&
+                   offsetof(DxvaPicParamsHEVC, row_height_minus1) == 74 &&
+                   offsetof(DxvaPicParamsHEVC, diff_cu_qp_delta_depth) == 116 &&
+                   offsetof(DxvaPicParamsHEVC, curr_pic_order_cnt_val) == 120 &&
+                   offsetof(DxvaPicParamsHEVC, ref_pic_list) == 124 &&
+                   offsetof(DxvaPicParamsHEVC, pic_order_cnt_val_list) == 140 &&
+                   offsetof(DxvaPicParamsHEVC, ref_pic_set_st_curr_before) == 200 &&
+                   offsetof(DxvaPicParamsHEVC, status_report_feedback_number) == 228,
+               "layout of DXVA_PicParams_HEVC");
+
+/* the scaling lists in use, in the order of the bitstream: sizeId 0 to 3 and the dc values of 16x16 and 32x32. */
+typedef struct DxvaQmatrixHEVC {
+    uint8_t lists_4x4[6][16];
+    uint8_t lists_8x8[6][64];
+    uint8_t lists_16x16[6][64];
+    uint8_t lists_32x32[2][64];
+    uint8_t dc_16x16[6];
+    uint8_t dc_32x32[2];
+} DxvaQmatrixHEVC;
+
+_Static_assert(sizeof(DxvaQmatrixHEVC) == 1000, "DXVA_Qmatrix_HEVC is 1000 bytes");
+
+
 #endif

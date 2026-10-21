@@ -24,6 +24,7 @@ typedef struct Profile {
     VkVideoDecodeUsageInfoKHR usage;
     union {
         VkVideoDecodeH264ProfileInfoKHR h264;
+        VkVideoDecodeH265ProfileInfoKHR h265;
         VkVideoDecodeVP9ProfileInfoKHR vp9;
         VkVideoDecodeAV1ProfileInfoKHR av1;
     } u;
@@ -34,6 +35,8 @@ static const struct {
     uint32_t codec, profile, bit_depth;
 } g_profiles[] = {
     {MVK_VIDEO_CODEC_H264, MVK_VIDEO_H264_HIGH, 8},
+    {MVK_VIDEO_CODEC_H265, MVK_VIDEO_H265_MAIN, 8},
+    {MVK_VIDEO_CODEC_H265, MVK_VIDEO_H265_MAIN10, 10},
     {MVK_VIDEO_CODEC_VP9, 0, 8},
     {MVK_VIDEO_CODEC_VP9, 2, 10},
     {MVK_VIDEO_CODEC_AV1, 0, 8},
@@ -58,6 +61,12 @@ static void make_profile(Profile *p, uint32_t codec, uint32_t profile, uint32_t 
                                                       VK_VIDEO_DECODE_H264_PICTURE_LAYOUT_PROGRESSIVE_KHR};
         p->info.pNext = &p->u.h264;
         break;
+    case MVK_VIDEO_CODEC_H265:
+        p->info.videoCodecOperation = VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR;
+        p->u.h265 = (VkVideoDecodeH265ProfileInfoKHR){VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_PROFILE_INFO_KHR, &p->usage,
+                                                      (StdVideoH265ProfileIdc)profile};
+        p->info.pNext = &p->u.h265;
+        break;
     case MVK_VIDEO_CODEC_VP9:
         p->info.videoCodecOperation = VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR;
         p->u.vp9 = (VkVideoDecodeVP9ProfileInfoKHR){VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_PROFILE_INFO_KHR, &p->usage,
@@ -76,9 +85,10 @@ static void make_profile(Profile *p, uint32_t codec, uint32_t profile, uint32_t 
 
 static VkVideoCodecOperationFlagBitsKHR codec_operation(uint32_t codec)
 {
-    return codec == MVK_VIDEO_CODEC_H264  ? VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR
-           : codec == MVK_VIDEO_CODEC_VP9 ? VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR
-                                          : VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
+    return codec == MVK_VIDEO_CODEC_H264   ? VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR
+           : codec == MVK_VIDEO_CODEC_H265 ? VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR
+           : codec == MVK_VIDEO_CODEC_VP9  ? VK_VIDEO_CODEC_OPERATION_DECODE_VP9_BIT_KHR
+                                           : VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR;
 }
 
 static VkFormat picture_format(uint32_t bit_depth)
@@ -88,16 +98,20 @@ static VkFormat picture_format(uint32_t bit_depth)
 
 /* what the gpu says of a profile, false when it cannot decode it into the usual picture format. */
 static bool query_caps(MvkConnection *c, uint32_t codec, uint32_t profile, uint32_t bit_depth, VkVideoCapabilitiesKHR *caps,
-                       VkVideoDecodeCapabilityFlagsKHR *flags)
+                       VkVideoDecodeCapabilityFlagsKHR *flags, StdVideoH265LevelIdc *h265_level)
 {
     MvkVideo *v = c->video;
     Profile p;
     make_profile(&p, codec, profile, bit_depth);
     VkVideoDecodeH264CapabilitiesKHR h264 = {VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_CAPABILITIES_KHR};
+    VkVideoDecodeH265CapabilitiesKHR h265 = {VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_CAPABILITIES_KHR};
     VkVideoDecodeVP9CapabilitiesKHR vp9 = {VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_CAPABILITIES_KHR};
     VkVideoDecodeAV1CapabilitiesKHR av1 = {VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR};
     VkVideoDecodeCapabilitiesKHR decode = {VK_STRUCTURE_TYPE_VIDEO_DECODE_CAPABILITIES_KHR};
-    decode.pNext = codec == MVK_VIDEO_CODEC_H264 ? (void *)&h264 : codec == MVK_VIDEO_CODEC_VP9 ? (void *)&vp9 : (void *)&av1;
+    decode.pNext = codec == MVK_VIDEO_CODEC_H264   ? (void *)&h264
+                   : codec == MVK_VIDEO_CODEC_H265 ? (void *)&h265
+                   : codec == MVK_VIDEO_CODEC_VP9  ? (void *)&vp9
+                                                   : (void *)&av1;
     *caps = (VkVideoCapabilitiesKHR){VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR, &decode};
     if (v->fn.get_caps(c->physical_device, &p.info, caps) != VK_SUCCESS)
         return false;
@@ -106,6 +120,7 @@ static bool query_caps(MvkConnection *c, uint32_t codec, uint32_t profile, uint3
     if (!(decode.flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR))
         return false;
     *flags = decode.flags;
+    *h265_level = h265.maxLevelIdc;
     VkVideoProfileListInfoKHR list = {VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR, nullptr, 1, &p.info};
     VkPhysicalDeviceVideoFormatInfoKHR info = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR, &list,
                                                VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR |
@@ -150,6 +165,7 @@ static const struct {
     const char *name;
 } g_codec_extensions[] = {
     {MVK_VIDEO_CODEC_H264, VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME},
+    {MVK_VIDEO_CODEC_H265, VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME},
     {MVK_VIDEO_CODEC_VP9, VK_KHR_VIDEO_DECODE_VP9_EXTENSION_NAME},
     {MVK_VIDEO_CODEC_AV1, VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME},
 };
@@ -265,15 +281,20 @@ void mvk_video_device_created(MvkConnection *c, PFN_vkGetDeviceProcAddr gdpa, bo
     for (size_t i = 0; i < PROFILE_COUNT; i++) {
         VkVideoCapabilitiesKHR caps;
         VkVideoDecodeCapabilityFlagsKHR flags = 0;
+        StdVideoH265LevelIdc level = STD_VIDEO_H265_LEVEL_IDC_6_2;
         if (!(codecs & (1u << g_profiles[i].codec)))
             continue;
         uint32_t family = decode_family(c, c->physical_device, codec_operation(g_profiles[i].codec));
         if (family == ~0u ||
-            !query_caps(c, g_profiles[i].codec, g_profiles[i].profile, g_profiles[i].bit_depth, &caps, &flags))
+            !query_caps(c, g_profiles[i].codec, g_profiles[i].profile, g_profiles[i].bit_depth, &caps, &flags, &level))
             continue;
+        mime_debug("video: codec %u profile %u at %u bits decodes %ux%u to %ux%u, %u slots, %u references", g_profiles[i].codec,
+                   g_profiles[i].profile, g_profiles[i].bit_depth, caps.minCodedExtent.width, caps.minCodedExtent.height,
+                   caps.maxCodedExtent.width, caps.maxCodedExtent.height, caps.maxDpbSlots, caps.maxActiveReferencePictures);
         v->supported |= 1u << i;
         v->vk_caps[i] = caps;
         v->decode_flags[i] = flags;
+        v->h265_level[i] = level;
         v->caps[i] = (MvkVideoCaps){g_profiles[i].codec,
                                     g_profiles[i].profile,
                                     g_profiles[i].bit_depth,
@@ -936,9 +957,10 @@ void mvk_video_decode(MvkCall *call)
     VideoFrame *f = calloc(1, sizeof(*f));
     if (!f)
         return;
-    bool ok = s->codec == MVK_VIDEO_CODEC_H264  ? video_h264_prepare(c, s, &in, image, layer, f)
-              : s->codec == MVK_VIDEO_CODEC_VP9 ? video_vp9_prepare(c, s, &in, image, layer, f)
-                                                : video_av1_prepare(c, s, &in, image, layer, f);
+    bool ok = s->codec == MVK_VIDEO_CODEC_H264   ? video_h264_prepare(c, s, &in, image, layer, f)
+              : s->codec == MVK_VIDEO_CODEC_H265 ? video_h265_prepare(c, s, &in, image, layer, f)
+              : s->codec == MVK_VIDEO_CODEC_VP9  ? video_vp9_prepare(c, s, &in, image, layer, f)
+                                                 : video_av1_prepare(c, s, &in, image, layer, f);
     VideoJob *job = ok ? take_job(c, s, (in.bitstream_size + 255u) & ~255u) : nullptr;
     if (!job) {
         mime_warn("video: a picture was not decoded");

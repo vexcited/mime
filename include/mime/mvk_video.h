@@ -23,8 +23,10 @@
 /* the video extensions the host offers, as the device's extension list shows them. */
 #define MVK_VIDEO_DECODE_EXTENSION "VK_KHR_video_decode_queue"
 
-/* the profiles of each codec, as dxva names them: h.264 by profile_idc, vp9 and av1 by their profile number. */
+/* the profiles of each codec, as dxva names them: h.264 and h.265 by profile_idc, vp9 and av1 by their profile number. */
 #define MVK_VIDEO_H264_HIGH 100
+#define MVK_VIDEO_H265_MAIN 1
+#define MVK_VIDEO_H265_MAIN10 2
 
 /* one decoding profile the gpu supports. */
 typedef struct MvkVideoCaps {
