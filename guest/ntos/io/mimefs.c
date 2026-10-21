@@ -437,10 +437,12 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
 reopen:
     hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
 opened:
-    if (keep && hs == MIME_HC_STATUS_OK && !req->handle_out)
-        FsAttrKeep(vol->HostVolume, &file->FileName, FALSE, &req->info_out, keep_token);
-    else if (keep && hs == MIME_HC_STATUS_NOT_FOUND && req->action_out == 0)
-        FsAttrKeep(vol->HostVolume, &file->FileName, TRUE, nullptr, keep_token);
+    if (keep) {
+        BOOLEAN found = hs == MIME_HC_STATUS_OK && !req->handle_out;
+        BOOLEAN missing = hs == MIME_HC_STATUS_NOT_FOUND && req->action_out == 0;
+        FsAttrKeep(vol->HostVolume, &file->FileName, found ? ATTR_KEEP_FILE : missing ? ATTR_KEEP_MISSING : ATTR_KEEP_NOTHING,
+                   &req->info_out, keep_token);
+    }
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
         if (SeTraceAccess)

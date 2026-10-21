@@ -27,6 +27,7 @@
 #define ATTR_MAX 4096
 #define ATTR_LIFE (5000000ll) /* 500 ms, in 100 nanosecond units */
 #define ATTR_WATCHES 24
+#define ATTR_RING 128
 #define ATTR_VISITS 32
 #define ATTR_VISIT_LIFE (20000000ll)
 
@@ -57,7 +58,18 @@ static FAST_MUTEX g_lock;
 static ATTR_ENTRY *g_buckets[ATTR_BUCKETS];
 static LIST_ENTRY g_lru;
 static ULONG g_entries;
-static volatile LONG g_changes; /* every change that came, to tell an answer that crossed one */
+/*
+ * the changes that came lately, to tell an answer of the host that crossed one that touches it: an answer is kept only if no
+ * change to its name, or to a name below it for a directory, counted between its question and its answer. a change of other
+ * names, which a browser makes all the time, does not stop it.
+ */
+typedef struct ATTR_CHANGE {
+    ULONG Volume, Name, Parent;
+    BOOLEAN Tree;
+} ATTR_CHANGE;
+static ATTR_CHANGE g_ring[ATTR_RING];
+static LONG g_seq;           /* changes counted, with the lock */
+static volatile LONG g_fills; /* questions of the host asked and not answered */
 static ATTR_WATCH g_watches[ATTR_WATCHES];
 static ULONG g_next_id = MIME_FS_WATCH_ID_ATTRIBUTES;
 static BOOLEAN g_disabled; /* the host cannot watch a directory */
@@ -73,18 +85,23 @@ void FsAttrInitialize(void)
     InitializeListHead(&g_lru);
 }
 
+static inline WCHAR upper(WCHAR c)
+{
+    return c < 0x80 ? (c >= 'a' && c <= 'z' ? (WCHAR)(c - 32) : c) : RtlUpcaseUnicodeChar(c);
+}
+
 static ULONG hash_of(const WCHAR *name, ULONG chars)
 {
     ULONG h = 2166136261u;
     for (ULONG i = 0; i < chars; i++)
-        h = (h ^ RtlUpcaseUnicodeChar(name[i])) * 16777619u;
+        h = (h ^ upper(name[i])) * 16777619u;
     return h;
 }
 
 static BOOLEAN same_name(const WCHAR *a, const WCHAR *b, ULONG chars)
 {
     for (ULONG i = 0; i < chars; i++)
-        if (a[i] != b[i] && RtlUpcaseUnicodeChar(a[i]) != RtlUpcaseUnicodeChar(b[i]))
+        if (a[i] != b[i] && upper(a[i]) != upper(b[i]))
             return FALSE;
     return TRUE;
 }
@@ -120,9 +137,9 @@ static ATTR_ENTRY *find_entry(ULONG volume, const WCHAR *name, ULONG chars, ULON
 }
 
 /* with the lock held. */
-static void drop_name(ULONG volume, const WCHAR *name, ULONG chars)
+static void drop_name(ULONG volume, const WCHAR *name, ULONG chars, ULONG hash)
 {
-    ATTR_ENTRY *e = find_entry(volume, name, chars, hash_of(name, chars));
+    ATTR_ENTRY *e = find_entry(volume, name, chars, hash);
     if (e)
         unlink_entry(e);
 }
@@ -139,24 +156,65 @@ static void drop_below(ULONG volume, const WCHAR *name, ULONG chars)
     }
 }
 
-/* the names a change of `name` touches: itself and its directory, whose times and size follow it. */
+static void drop_watch(LONG slot);
+
+/*
+ * the names a change of `name` touches: itself and its directory, whose times and size follow it. A directory that goes or
+ * moves takes the watches of it and of the directories below it, which stay with the directory of the host and not with its
+ * name, and a directory made later under that name is not what they watch. The change is also written down for the answers
+ * that are on their way.
+ */
 static void changed_locked(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN tree)
 {
-    if (tree)
+    ULONG parent = parent_chars(name, chars);
+    ATTR_CHANGE *c = &g_ring[(ULONG)g_seq % ATTR_RING];
+    c->Volume = volume;
+    c->Tree = tree;
+    c->Name = hash_of(name, chars);
+    c->Parent = parent == chars ? c->Name : hash_of(name, parent);
+    g_seq++;
+    if (!g_entries)
+        return;
+    if (tree) {
         drop_below(volume, name, chars);
-    else
-        drop_name(volume, name, chars);
-    drop_name(volume, name, parent_chars(name, chars));
+        for (LONG i = 0; i < ATTR_WATCHES; i++) {
+            ATTR_WATCH *w = &g_watches[i];
+            if (w->Used && w->Volume == volume && w->Chars >= chars && same_name(w->Path, name, chars) &&
+                (w->Chars == chars || w->Path[chars] == '\\' || chars == 1))
+                drop_watch(i);
+        }
+    } else {
+        drop_name(volume, name, chars, c->Name);
+    }
+    drop_name(volume, name, parent, c->Parent);
 }
 
 void FsAttrChanged(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN tree)
 {
-    __atomic_add_fetch(&g_changes, 1, __ATOMIC_SEQ_CST);
-    if (!__atomic_load_n(&g_entries, __ATOMIC_ACQUIRE) || !chars)
+    /* nothing kept and no question on its way: nothing to drop and no one to tell. */
+    if (!__atomic_load_n(&g_entries, __ATOMIC_ACQUIRE) && !__atomic_load_n(&g_fills, __ATOMIC_ACQUIRE))
+        return;
+    if (!chars)
         return;
     ExAcquireFastMutex(&g_lock);
     changed_locked(volume, name, chars, tree);
     ExReleaseFastMutex(&g_lock);
+}
+
+/* whether a change touched a name since the question, with the lock held. */
+static BOOLEAN crossed(ULONG volume, ULONG hash, LONG token)
+{
+    LONG n = g_seq - token;
+    if (n <= 0)
+        return FALSE;
+    if (n > ATTR_RING)
+        return TRUE;
+    for (LONG i = token; i < g_seq; i++) {
+        const ATTR_CHANGE *c = &g_ring[(ULONG)i % ATTR_RING];
+        if (c->Tree || (c->Volume == volume && (c->Name == hash || c->Parent == hash)))
+            return TRUE;
+    }
+    return FALSE;
 }
 
 /* with the lock held. */
@@ -172,6 +230,9 @@ static void drop_watch(LONG slot)
     ExFreePool(w->Path);
     HalHypercallUnlocked(MIME_HC_FS_UNWATCH, w->Id, 0, 0, 0, 0, 0, nullptr);
     memset(w, 0, sizeof(*w));
+    /* an answer on its way from that directory is not kept. */
+    g_ring[(ULONG)g_seq % ATTR_RING].Tree = TRUE;
+    g_seq++;
 }
 
 /* the watch of a directory, with the lock held. */
@@ -265,29 +326,29 @@ static LONG make_watch(ULONG volume, const WCHAR *dir, ULONG chars, ULONG hash)
 }
 
 /*
- * the start of a query that may be kept: when a directory that was asked about lately is not watched, the host is asked to
- * watch it before the question, so that nothing can change unseen between the answer and the watch. the answer is kept
- * only if the watch is there and nothing changed meanwhile, see FsAttrKeep.
+ * the start of a query that may be kept. When a directory that was asked about lately is not watched, the host is asked to
+ * watch it before the question, so that nothing can change unseen between the answer and the watch. TRUE means the answer
+ * may be kept, and FsAttrKeep is called with it, whatever the answer was.
  */
 BOOLEAN FsAttrBegin(ULONG volume, PCUNICODE_STRING name, PLONG token)
 {
     ULONG chars = name->Length / sizeof(WCHAR);
-    *token = __atomic_load_n(&g_changes, __ATOMIC_SEQ_CST);
-    if (g_disabled || !chars || chars > 400)
+    *token = 0;
+    if (g_disabled || (KiOptions & KI_OPT_NO_ATTR_CACHE) || !chars || chars > 400)
         return FALSE;
     ULONG dir = parent_chars(name->Buffer, chars);
     ULONG hash = hash_of(name->Buffer, dir);
-    BOOLEAN covered;
     ExAcquireFastMutex(&g_lock);
     LONG slot = watch_of(volume, name->Buffer, dir, hash);
     if (slot < 0 && seen_lately(volume, hash))
         slot = make_watch(volume, name->Buffer, dir, hash);
-    covered = slot >= 0;
-    if (covered)
+    BOOLEAN covered = slot >= 0;
+    if (covered) {
         g_watches[slot].Used_At = (LONGLONG)KeQueryInterruptTime();
+        __atomic_add_fetch(&g_fills, 1, __ATOMIC_SEQ_CST);
+        *token = g_seq;
+    }
     ExReleaseFastMutex(&g_lock);
-    /* a change that counted while the watch was being made is before the question. */
-    *token = __atomic_load_n(&g_changes, __ATOMIC_SEQ_CST);
     return covered;
 }
 
@@ -319,20 +380,23 @@ BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, Mime
     return found;
 }
 
-/* keeps an answer of the host, if nothing changed since the question and its directory is watched. */
-void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, BOOLEAN missing, const MimeFsInfo *info, LONG token)
+/*
+ * ends a question of the host that FsAttrBegin allowed to keep, and keeps its answer if no change touched the name since and its
+ * directory is still watched.
+ */
+void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInfo *info, LONG token)
 {
     ULONG chars = name->Length / sizeof(WCHAR);
-    if (!chars || chars > 400)
-        return;
-    ULONG dir = parent_chars(name->Buffer, chars);
     ULONG hash = hash_of(name->Buffer, chars);
-    ATTR_ENTRY *fresh = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATTR_ENTRY) + chars * sizeof(WCHAR), KI_TAG('F', 's', 'A', 'e'));
-    if (!fresh)
-        return;
+    ATTR_ENTRY *fresh = nullptr;
+    if (kind != ATTR_KEEP_NOTHING)
+        fresh = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATTR_ENTRY) + chars * sizeof(WCHAR), KI_TAG('F', 's', 'A', 'e'));
     ExAcquireFastMutex(&g_lock);
-    LONG slot = watch_of(volume, name->Buffer, dir, hash_of(name->Buffer, dir));
-    if (slot < 0 || __atomic_load_n(&g_changes, __ATOMIC_SEQ_CST) != token) {
+    __atomic_sub_fetch(&g_fills, 1, __ATOMIC_SEQ_CST);
+    LONG slot = fresh ? watch_of(volume, name->Buffer, parent_chars(name->Buffer, chars),
+                                 hash_of(name->Buffer, parent_chars(name->Buffer, chars)))
+                      : -1;
+    if (slot < 0 || crossed(volume, hash, token)) {
         ExReleaseFastMutex(&g_lock);
         ExFreePool(fresh);
         return;
@@ -346,7 +410,7 @@ void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, BOOLEAN missing, const Mime
     fresh->Hash = hash;
     fresh->Watch = slot;
     fresh->Born = (LONGLONG)KeQueryInterruptTime();
-    fresh->Missing = missing;
+    fresh->Missing = kind == ATTR_KEEP_MISSING;
     fresh->Chars = (USHORT)chars;
     if (info)
         fresh->Info = *info;
@@ -361,7 +425,6 @@ void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, BOOLEAN missing, const Mime
 /* a change the host's programs made to a name of a directory it watches for the entries, or more than it could tell. */
 void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BOOLEAN overflow)
 {
-    __atomic_add_fetch(&g_changes, 1, __ATOMIC_SEQ_CST);
     ExAcquireFastMutex(&g_lock);
     for (LONG i = 0; i < ATTR_WATCHES; i++) {
         ATTR_WATCH *w = &g_watches[i];

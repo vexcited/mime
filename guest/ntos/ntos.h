@@ -326,6 +326,7 @@ FORCEINLINE void KiReleaseDispatcherLock(ULONG64 state)
 #define KI_OPT_NO_SECTION_FAULT 0x2
 #define KI_OPT_NO_IDLE_SPIN 0x4
 #define KI_OPT_EAGER_TIMER 0x8
+#define KI_OPT_NO_ATTR_CACHE 0x10
 extern ULONG KiOptions;
 extern UCHAR KiNoLockFlush;
 
@@ -1307,7 +1308,10 @@ void FsAttrInitialize(void);
 void FsAttrChanged(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN tree);
 BOOLEAN FsAttrBegin(ULONG volume, PCUNICODE_STRING name, PLONG token);
 BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, MimeFsInfo *info);
-void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, BOOLEAN missing, const MimeFsInfo *info, LONG token);
+#define ATTR_KEEP_NOTHING 0
+#define ATTR_KEEP_FILE 1
+#define ATTR_KEEP_MISSING 2
+void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInfo *info, LONG token);
 void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BOOLEAN overflow);
 BOOLEAN FsAttrIsHostWatch(ULONG id);
 /* fsnotify.c: starts the thread that fetches what the host's programs changed. */

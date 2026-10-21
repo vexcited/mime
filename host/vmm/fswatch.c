@@ -81,6 +81,7 @@ static bool g_armed = true; /* the guest fetched to the end: the next record rai
 /* entries the guest is changing itself. */
 typedef struct Self {
     char *path;
+    uint32_t hash; /* of the path, compared before the path is */
     uint32_t created, removed, moved_from, moved_to; /* events to come that are the guest's own */
     int64_t modified_until;                          /* ns of the monotonic clock */
     int64_t expires;
@@ -97,9 +98,18 @@ static int64_t now_ns(void)
 
 /* ------------------------------------------------------------------ the guest's own changes */
 
+static uint32_t path_hash(const char *path)
+{
+    uint32_t h = 2166136261u;
+    for (const unsigned char *p = (const unsigned char *)path; *p; p++)
+        h = (h ^ *p) * 16777619u;
+    return h;
+}
+
 static Self *self_find(const char *path, bool make)
 {
     int64_t now = now_ns();
+    uint32_t hash = path_hash(path);
     Self *free_slot = nullptr, *oldest = &g_self[0];
     for (int i = 0; i < SELF_SLOTS; i++) {
         Self *s = &g_self[i];
@@ -107,7 +117,7 @@ static Self *self_find(const char *path, bool make)
             free(s->path);
             memset(s, 0, sizeof(*s));
         }
-        if (s->path && !strcmp(s->path, path))
+        if (s->path && s->hash == hash && !strcmp(s->path, path))
             return s;
         if (!s->path && !free_slot)
             free_slot = s;
@@ -120,8 +130,27 @@ static Self *self_find(const char *path, bool make)
     free(s->path);
     memset(s, 0, sizeof(*s));
     s->path = strdup(path);
+    s->hash = hash;
     s->expires = now + NOTE_LIFE_NS;
     return s->path ? s : nullptr;
+}
+
+/* whether a watch looks at the directory of a path: the events of an entry nobody watches are not waited for, and need no note. with the lock held. */
+static bool watched_path(const char *path)
+{
+    for (int i = 0; i < WATCHES; i++) {
+        const Watch *w = &g_watches[i];
+        if (!w->used || !w->base)
+            continue;
+        size_t n = strlen(w->base);
+        while (n > 1 && w->base[n - 1] == '/')
+            n--;
+        if (strncmp(path, w->base, n) || (n > 1 && path[n] != '/'))
+            continue;
+        if (w->tree || !strchr(path + n + (n > 1 ? 1 : 0), '/'))
+            return true;
+    }
+    return false;
 }
 
 void mime_fswatch_self(const char *path, int kind)
@@ -129,7 +158,7 @@ void mime_fswatch_self(const char *path, int kind)
     if (!__atomic_load_n(&g_watching, __ATOMIC_ACQUIRE) || !path)
         return;
     pthread_mutex_lock(&g_lock);
-    Self *s = self_find(path, true);
+    Self *s = watched_path(path) ? self_find(path, true) : nullptr;
     if (s) {
         s->expires = now_ns() + NOTE_LIFE_NS;
         switch (kind) {
@@ -226,8 +255,15 @@ static void queue_push(uint32_t watch_id, uint32_t action, const char *relative)
 
 /* ------------------------------------------------------------------ directories and their watches */
 
-static uint32_t mask_of(uint32_t filter)
+static uint32_t mask_of(uint32_t filter, bool attributes)
 {
+    /*
+     * the guest's cache of attributes wants a file told when the program that wrote it closes it, not at each of its
+     * writes: a log written a line at a time would be a flood of events to say that the file is not what it was.
+     */
+    if (attributes)
+        return IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_ATTRIB | IN_CLOSE_WRITE | IN_DELETE_SELF |
+               IN_MOVE_SELF | IN_ONLYDIR | IN_DONT_FOLLOW;
     uint32_t mask = 0;
     if (filter & (CHANGE_FILE_NAME | CHANGE_DIR_NAME))
         mask |= IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO;
@@ -250,7 +286,8 @@ static bool wd_shared(int wd, const Directory *except)
 /* watches a directory for a watch, whose events add to those other watches of it ask for. with the lock held. */
 static bool add_directory(int watch, const char *path, const char *relative)
 {
-    int wd = inotify_add_watch(g_inotify, path, mask_of(g_watches[watch].filter) | IN_MASK_ADD);
+    int wd = inotify_add_watch(g_inotify, path,
+                               mask_of(g_watches[watch].filter, g_watches[watch].id > MIME_FS_WATCH_ID_ATTRIBUTES) | IN_MASK_ADD);
     if (wd < 0)
         return false;
     for (uint32_t i = 0; i < g_directory_high; i++)
@@ -348,7 +385,7 @@ static void handle_events(const char *buffer, ssize_t size)
             queue_raise();
             continue;
         }
-        for (uint32_t di = 0; di < DIRECTORIES; di++) {
+        for (uint32_t di = 0; di < g_directory_high; di++) {
             Directory *d = &g_directories[di];
             if (!d->wd || d->wd != e->wd)
                 continue;
@@ -424,7 +461,8 @@ static void handle_events(const char *buffer, ssize_t size)
                     queue_push(w->id, MIME_FS_CHANGE_ADDED, rel);
                 }
             } else if (!directory && (((e->mask & IN_MODIFY) && (w->filter & (CHANGE_SIZE | CHANGE_LAST_WRITE))) ||
-                                       ((e->mask & IN_ATTRIB) && (w->filter & CHANGE_ATTRIBUTES)))) {
+                                       ((e->mask & IN_ATTRIB) && (w->filter & CHANGE_ATTRIBUTES)) ||
+                                       ((e->mask & IN_CLOSE_WRITE) && w->id > MIME_FS_WATCH_ID_ATTRIBUTES))) {
                 queue_push(w->id, MIME_FS_CHANGE_MODIFIED, rel);
             }
         }
