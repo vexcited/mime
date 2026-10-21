@@ -846,25 +846,74 @@ BOOL WINAPI SetLocaleInfoA(LCID locale, LCTYPE type, LPCSTR data)
 
 /* ------------------------------------------------------------------ enumeration */
 
+/* the identifiers of the locales and of the alternate sort orders, in increasing order, as the flags ask for them. */
+static BOOL enumerate_identifiers(DWORD flags, BOOL (*emit)(LCID, PVOID), PVOID context)
+{
+    DWORD kind = flags & (LCID_INSTALLED | LCID_SUPPORTED);
+    if ((flags & ~(DWORD)(LCID_INSTALLED | LCID_SUPPORTED | LCID_ALTERNATE_SORTS)) || kind == (LCID_INSTALLED | LCID_SUPPORTED) ||
+        !flags) {
+        KbSetError(ERROR_INVALID_FLAGS);
+        return FALSE;
+    }
+    /* the locales, among them the traditional sort order of Spanish that has an identifier of its own. */
+    ULONG i = 0, k = 0;
+    while (kind && (i < RTL_NUMBER_OF(g_nls_lcids) || k < RTL_NUMBER_OF(g_alternate_sorts))) {
+        LCID next = 0xFFFFFFFFu;
+        if (i < RTL_NUMBER_OF(g_nls_lcids))
+            next = g_nls_lcids[i];
+        while (k < RTL_NUMBER_OF(g_alternate_sorts) && (g_alternate_sorts[k].Lcid >> 16))
+            k++;
+        if (k < RTL_NUMBER_OF(g_alternate_sorts) && g_alternate_sorts[k].Lcid < next) {
+            next = g_alternate_sorts[k].Lcid;
+            k++;
+        } else if (i < RTL_NUMBER_OF(g_nls_lcids)) {
+            i++;
+        } else {
+            break;
+        }
+        if (next == LOCALE_INVARIANT)
+            continue;
+        if (!emit(next, context))
+            return TRUE;
+    }
+    if (flags & LCID_ALTERNATE_SORTS) {
+        for (k = 0; k < RTL_NUMBER_OF(g_alternate_sorts); k++)
+            if ((g_alternate_sorts[k].Lcid >> 16) && !emit(g_alternate_sorts[k].Lcid, context))
+                return TRUE;
+    }
+    return TRUE;
+}
+
+typedef struct ENUM_WIDE {
+    LOCALE_ENUMPROCW Proc;
+} ENUM_WIDE;
+
+static BOOL emit_wide(LCID lcid, PVOID context)
+{
+    WCHAR buf[16];
+    KbFormat(buf, RTL_NUMBER_OF(buf), L"%08x", lcid);
+    return ((ENUM_WIDE *)context)->Proc(buf);
+}
+
 BOOL WINAPI EnumSystemLocalesW(LOCALE_ENUMPROCW proc, DWORD flags)
 {
     if (!proc) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (flags & ~(DWORD)(LCID_INSTALLED | LCID_SUPPORTED | LCID_ALTERNATE_SORTS)) {
-        KbSetError(ERROR_INVALID_FLAGS);
-        return FALSE;
-    }
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_nls_lcids); i++) {
-        if (g_nls_lcids[i] == LOCALE_INVARIANT)
-            continue;
-        WCHAR buf[16];
-        KbFormat(buf, RTL_NUMBER_OF(buf), L"%08x", g_nls_lcids[i]);
-        if (!proc(buf))
-            break;
-    }
-    return TRUE;
+    ENUM_WIDE context = {proc};
+    return enumerate_identifiers(flags, emit_wide, &context);
+}
+
+typedef struct ENUM_NARROW {
+    LOCALE_ENUMPROCA Proc;
+} ENUM_NARROW;
+
+static BOOL emit_narrow(LCID lcid, PVOID context)
+{
+    char buf[16];
+    KbFormatA(buf, sizeof(buf), "%08x", lcid);
+    return ((ENUM_NARROW *)context)->Proc(buf);
 }
 
 BOOL WINAPI EnumSystemLocalesA(LOCALE_ENUMPROCA proc, DWORD flags)
@@ -873,19 +922,8 @@ BOOL WINAPI EnumSystemLocalesA(LOCALE_ENUMPROCA proc, DWORD flags)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (flags & ~(DWORD)(LCID_INSTALLED | LCID_SUPPORTED | LCID_ALTERNATE_SORTS)) {
-        KbSetError(ERROR_INVALID_FLAGS);
-        return FALSE;
-    }
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_nls_lcids); i++) {
-        if (g_nls_lcids[i] == LOCALE_INVARIANT)
-            continue;
-        char buf[16];
-        KbFormatA(buf, sizeof(buf), "%08x", g_nls_lcids[i]);
-        if (!proc(buf))
-            break;
-    }
-    return TRUE;
+    ENUM_NARROW context = {proc};
+    return enumerate_identifiers(flags, emit_narrow, &context);
 }
 
 BOOL WINAPI EnumSystemLocalesEx(LOCALE_ENUMPROCEX proc, DWORD flags, LPARAM param, LPVOID reserved)

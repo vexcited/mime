@@ -194,7 +194,7 @@ static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID 
     t[MIME_TEB32_REAL_CLIENT_ID / 4] = (ULONG)(ULONG_PTR)thread->Cid.UniqueProcess;
     t[MIME_TEB32_REAL_CLIENT_ID / 4 + 1] = (ULONG)(ULONG_PTR)thread->Cid.UniqueThread;
     t[MIME_TEB32_PEB / 4] = (ULONG)(ULONG_PTR)process->Wow64Peb;
-    t[MIME_TEB32_LOCALE / 4] = 0x0409;
+    t[MIME_TEB32_LOCALE / 4] = HalBootInfo->locale_lcid ? HalBootInfo->locale_lcid : 0x0409;
     t[MIME_TEB32_DEALLOCATION_STACK / 4] = (ULONG)(ULONG_PTR)stack;
     t[MIME_TEB32_WOW_TEB_OFFSET / 4] = (ULONG)-MIME_TEB_SIZE;
     MIME_STRING32 *string = (MIME_STRING32 *)(teb32 + MIME_TEB32_STATIC_STRING);
@@ -278,7 +278,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     teb->ClientId = thread->Cid;
     teb->RealClientId = thread->Cid;
     teb->ProcessEnvironmentBlock = process->Peb;
-    teb->CurrentLocale = 0x0409;
+    teb->CurrentLocale = HalBootInfo->locale_lcid ? HalBootInfo->locale_lcid : 0x0409;
     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
     InitializeListHead(&teb->TlsLinks);
