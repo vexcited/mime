@@ -30,6 +30,7 @@ makes the arm64 guest only. `cmake --preset arm64` builds the arm64 guest on any
 | `cmake --build build --target test-x86` | Builds and runs the 32-bit suite, `tools/runtime32/run.py`.                               |
 | `cmake --build build --target test-shutdown` | Shuts the machine down and logs the user off with programs running, and checks what they saw, `tools/runtime32/run_shutdown.py`; the 32-bit suite runs it too. |
 | `cmake --build build --target test-services` | Runs the service control manager across processors, the services of DLLs that `svchost.exe` hosts, and a shutdown and a start of the machine with services, `tools/runtime32/run_services.py`; the 32-bit suite runs it too. |
+| `cmake --build build --target test-vkspare` | Makes Direct3D 11 devices in programs of the machine and checks which ones the host made ahead and which they made themselves, `tools/runtime32/run_vkspare.py`. |
 | `cmake --build build --target test-console` | Runs the x64 tests that need standard streams (`stdio`, on a pipe) and a terminal (`coninput`, on a pseudo terminal), `tools/runtime32/run_console.py`. |
 | `cmake --build build --target clean`    | Removes what the build made.                                                              |
 
