@@ -289,6 +289,41 @@ static void link_attribute(XNODE *element, XNODE *attribute)
     *link = attribute;
 }
 
+/*
+ * the children of an attribute are one text node holding its value, as the document model of Windows has them, and
+ * programs read an attribute through it. the node is made at the first look and follows the value afterwards. an empty
+ * value has no child, a guess.
+ */
+static void attribute_text(XNODE *a)
+{
+    if (a->Type != NodeType_AttributeNode)
+        return;
+    const WCHAR *value = a->Value ? a->Value : L"";
+    XNODE *t = a->First;
+    if (!value[0]) {
+        if (t)
+            unlink_child(t);
+        return;
+    }
+    if (!t) {
+        XNODE *made = node_new(a->Ctx, NodeType_TextNode, nullptr, 0, value, wcslen(value));
+        if (!made)
+            return;
+        AcquireSRWLockExclusive(&g_lock);
+        if (!a->First)
+            link_child(a, made, nullptr);
+        ReleaseSRWLockExclusive(&g_lock);
+        return;
+    }
+    if (t->Value && !wcscmp(t->Value, value))
+        return;
+    WCHAR *copy = dup_n(value, wcslen(value));
+    if (!copy)
+        return;
+    CbFree(t->Value);
+    t->Value = copy;
+}
+
 /* the interface of a node a query asks for, without a reference. */
 static WRT_IFACE *find_iface(XNODE *n, REFIID riid)
 {
@@ -1158,16 +1193,19 @@ static HRESULT new_list(XNODE *owner, XNODE **items, UINT32 count, IXmlNodeList 
 
 static HRESULT STDMETHODCALLTYPE node_get_children(IXmlNode *This, IXmlNodeList **value)
 {
+    attribute_text(node_of(This));
     return new_list(node_of(This), nullptr, 0, value);
 }
 
 static HRESULT STDMETHODCALLTYPE node_get_first(IXmlNode *This, IXmlNode **value)
 {
+    attribute_text(node_of(This));
     return out_node(node_of(This)->First, value);
 }
 
 static HRESULT STDMETHODCALLTYPE node_get_last(IXmlNode *This, IXmlNode **value)
 {
+    attribute_text(node_of(This));
     return out_node(node_of(This)->Last, value);
 }
 
@@ -1202,6 +1240,7 @@ static HRESULT STDMETHODCALLTYPE node_get_attributes(IXmlNode *This, IXmlNamedNo
 
 static HRESULT STDMETHODCALLTYPE node_has_children(IXmlNode *This, BOOLEAN *value)
 {
+    attribute_text(node_of(This));
     *value = node_of(This)->First != nullptr;
     return S_OK;
 }
