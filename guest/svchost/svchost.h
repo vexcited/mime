@@ -1,6 +1,5 @@
 /*
- * svchost.exe, the process that hosts services which live in DLLs. see docs/services.md for what it does and
- * where it follows windows' svchost.exe of build 26300 and where it is a guess.
+ * svchost.exe, the process that hosts services which live in DLLs. docs/services.md says what it does.
  *
  * a command line `svchost.exe -k <group>` names a group of services in the registry. the process offers every
  * service of the group to the service control manager and loads the ServiceDll of one when the manager starts it.
@@ -16,57 +15,41 @@
 WINBASEAPI BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorW(LPCWSTR text, DWORD revision,
                                                                             PSECURITY_DESCRIPTOR *sd, PULONG size);
 
-typedef struct HOSTED_DLL {
-    WCHAR *Path;     /* the ServiceDll, expanded and in lower case */
-    WCHAR *Manifest; /* the ServiceManifest, empty when there is none */
-    HMODULE Module;  /* null while the dll is not loaded */
-    HANDLE ActCtx;   /* the activation context of the manifest, null for none */
-} HOSTED_DLL;
+typedef void(WINAPI *HOST_STOP_FN)(void *context, BOOLEAN timed_out);
 
-typedef void(WINAPI *SVCHOST_STOP_CALLBACK)(void *context, BOOLEAN timed_out);
+/* one service of the group, with the DLL that runs it. the lock guards every field from `module` on. */
+typedef struct HOST_SERVICE {
+    WCHAR *name;
+    SRWLOCK lock;
+    CONDITION_VARIABLE unloaded; /* woken when the DLL has been freed */
+    WCHAR *dll_path;             /* null until the first start, then kept */
+    WCHAR *manifest_path;        /* null when the service has none */
+    CHAR *main_export;           /* the ServiceMain value of the key, null for the default name */
+    HMODULE module;              /* null while the DLL is not loaded */
+    HANDLE context;              /* activation context of the manifest, null for none */
+    LONG users;                  /* the running ServiceMain and a registered stop callback each hold the DLL */
+    BOOL unload_on_stop;
+    HOST_STOP_FN stop_fn;        /* the one registered callback, null for none */
+    void *stop_arg;
+} HOST_SERVICE;
 
-typedef struct HOSTED {
-    WCHAR *Name;
-    HOSTED_DLL *Dll;
-    CHAR *MainName;       /* the ServiceMain value, null for the default */
-    SRWLOCK Lock;         /* guards everything below and the dll */
-    CONDITION_VARIABLE Unloaded;
-    SVCHOST_STOP_CALLBACK StopCallback;
-    LONG Refs;            /* the services main, and a registered stop callback, each hold the dll */
-    BOOL UnloadOnStop;
-} HOSTED;
-
-/* what the command line and the group key give. */
+/* what the command line gives. the strings point into the copy of the line. */
 typedef struct HOST_OPTIONS {
-    WCHAR *Line;    /* the writable copy the pieces below point into */
-    WCHAR *Group;   /* -k */
-    WCHAR *Service; /* -s, one service of the group */
-    BOOL Mitigation; /* -p */
-    /* values of the key of the group. */
-    BOOL SecurityParam, SystemCritical;
-    DWORD AuthenticationLevel, ImpersonationLevel, AuthenticationCapabilities;
-    DWORD Flags;
-    PSECURITY_DESCRIPTOR AccessSd;
-    DWORD DynamicCode, BinarySignature, RedirectionTrust, ExtensionPoints;
-    WCHAR *Names; /* a multi sz, the services of the group */
+    WCHAR *Line;
+    WCHAR *Group;
+    WCHAR *Service;
+    BOOL Mitigation;
 } HOST_OPTIONS;
 
-#define HOST_ALLOW_LOWBOX 0x02
-#define HOST_NO_GUI 0x08
-#define HOST_ALLOW_INTERACTIVE 0x10
-#define HOST_ALLOW_COM_CAPABILITY 0x20
-#define HOST_ALLOW_CROSS_CONTAINER 0x40
-
 /* main.c */
-extern HOSTED *g_hosted;
-extern DWORD g_hosted_count;
-extern BOOL g_com_uninit;
+extern HOST_SERVICE *g_services;
+extern DWORD g_service_count;
+extern BOOL g_wait_for_unloads;
 void HostLog(const char *format, ...);
 WCHAR *HostDup(const WCHAR *s);
 
 /* host.c */
 VOID WINAPI HostService(DWORD argc, LPWSTR *argv);
 void HostWaitForUnloads(void);
-void HostAbort(const WCHAR *name, DWORD error);
 
 #endif

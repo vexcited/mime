@@ -6,11 +6,10 @@
 
 #define SVCHOST_KEY L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Svchost"
 
-HOSTED *g_hosted;
-DWORD g_hosted_count;
-/* COM is shut down at the end unless a service asked for the old behavior. */
-BOOL g_com_uninit = TRUE;
-static BOOL g_com_started;
+HOST_SERVICE *g_services;
+DWORD g_service_count;
+/* the process waits for the DLLs to unload before it ends, unless a service asked for the old COM behavior. */
+BOOL g_wait_for_unloads = TRUE;
 
 void HostLog(const char *format, ...)
 {
@@ -43,7 +42,7 @@ static BOOL is_blank(WCHAR c)
 }
 
 /*
- * `<program> [-k <group>] [-s <service>] [-p]`, with - or / before each option and no case (read: BuildCommandOptions).
+ * `<program> [-k <group>] [-s <service>] [-p]`, with - or / before each option and no case.
  * the program name ends at the first blank; the group and the service may be quoted. the options are taken
  * from the copy of the line, which is cut into the words.
  */
@@ -101,253 +100,279 @@ static BOOL parse_command(const WCHAR *line, HOST_OPTIONS *o)
     return o->Group != nullptr;
 }
 
+
 /* ------------------------------------------------------------------ the group */
 
-static BOOL read_dword(HKEY key, const WCHAR *name, DWORD *out)
+#define GROUP_FLAG_ALLOW_LOWBOX 0x02
+#define GROUP_FLAG_NO_GUI 0x08
+#define GROUP_FLAG_ALLOW_INTERACTIVE 0x10
+#define GROUP_FLAG_ALLOW_COM_CAPABILITY 0x20
+#define GROUP_FLAG_ALLOW_CROSS_CONTAINER 0x40
+
+#define POLICY_DYNAMIC_CODE 2
+#define POLICY_EXTENSION_POINTS 6
+#define POLICY_SIGNATURE 8
+#define POLICY_REDIRECTION_TRUST 16
+
+#define MAX_SERVICE_NAME 256
+
+WINADVAPI BOOL WINAPI IsValidSecurityDescriptor(PSECURITY_DESCRIPTOR descriptor);
+
+/* what the key of the group says about the setup of the process. */
+typedef struct GROUP_SETTINGS {
+    BOOL init_com_security;
+    DWORD authn_level;
+    DWORD impersonation_level;
+    DWORD capabilities;
+    DWORD flags;
+    void *access_descriptor; /* a self relative descriptor of the registry, null for none */
+    DWORD dynamic_code;
+    DWORD signature;
+    DWORD extension_points;
+    DWORD redirection_trust;
+} GROUP_SETTINGS;
+
+typedef struct NAME_LIST {
+    WCHAR **items;
+    DWORD count;
+    DWORD capacity;
+} NAME_LIST;
+
+static BOOL add_name(NAME_LIST *list, WCHAR *name)
 {
-    DWORD type = 0, size = sizeof(DWORD), value = 0;
-    if (RegQueryValueExW(key, name, nullptr, &type, (BYTE *)&value, &size) != ERROR_SUCCESS || type != REG_DWORD)
-        return FALSE;
-    *out = value;
+    if (list->count == list->capacity) {
+        DWORD capacity = list->capacity ? list->capacity * 2 : 16;
+        WCHAR **grown = list->items ? HeapReAlloc(GetProcessHeap(), 0, list->items, capacity * sizeof(WCHAR *))
+                                    : HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(WCHAR *));
+        if (!grown)
+            return FALSE;
+        list->items = grown;
+        list->capacity = capacity;
+    }
+    list->items[list->count++] = name;
     return TRUE;
 }
 
-/* the multi sz value of a group, in a block of its own. */
-static WCHAR *read_multi(HKEY key, const WCHAR *name, DWORD *chars)
+/* a value that is a DWORD, or nothing. */
+static BOOL get_dword(HKEY key, const WCHAR *name, DWORD *out)
 {
-    DWORD type = 0, bytes = 0;
-    *chars = 0;
-    if (RegQueryValueExW(key, name, nullptr, &type, nullptr, &bytes) != ERROR_SUCCESS || type != REG_MULTI_SZ ||
-        bytes < sizeof(WCHAR))
-        return nullptr;
-    WCHAR *text = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bytes + 2 * sizeof(WCHAR));
-    if (!text)
-        return nullptr;
-    if (RegQueryValueExW(key, name, nullptr, &type, (BYTE *)text, &bytes) != ERROR_SUCCESS) {
-        HeapFree(GetProcessHeap(), 0, text);
-        return nullptr;
-    }
-    *chars = bytes / sizeof(WCHAR);
-    return text;
-}
-
-/* adds a name to a multi sz that is being built; false when it is there already. */
-static BOOL add_name(WCHAR **names, DWORD *chars, const WCHAR *name)
-{
-    for (const WCHAR *n = *names; n && *n; n += wcslen(n) + 1)
-        if (CompareStringOrdinal(n, -1, name, -1, TRUE) == 2)
-            return TRUE;
-    DWORD add = (DWORD)wcslen(name) + 1;
-    WCHAR *grown = *names ? HeapReAlloc(GetProcessHeap(), 0, *names, (*chars + add + 1) * sizeof(WCHAR))
-                          : HeapAlloc(GetProcessHeap(), 0, (add + 1) * sizeof(WCHAR));
-    if (!grown)
+    DWORD type = 0, data = 0, size = sizeof(data);
+    if (RegQueryValueExW(key, name, nullptr, &type, (BYTE *)&data, &size) != ERROR_SUCCESS || type != REG_DWORD)
         return FALSE;
-    memcpy(grown + *chars, name, add * sizeof(WCHAR));
-    *chars += add;
-    grown[*chars] = 0;
-    *names = grown;
+    *out = data;
     return TRUE;
 }
 
-/*
- * the services of a group are the strings of the value of its name in the Svchost key and the names of the
- * keys below the key of that name; the key also holds how the process is to be set up (read: ReadPerInstanceRegistryParameters).
- */
-static BOOL read_group(HOST_OPTIONS *o)
+/* the strings of the multi string value named like the group. */
+static void names_from_value(HKEY svchost, const WCHAR *group, NAME_LIST *list)
 {
-    HKEY root, key = nullptr;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, SVCHOST_KEY, 0, KEY_READ, &root) != ERROR_SUCCESS)
-        return FALSE;
-    DWORD listed;
-    WCHAR *names = read_multi(root, o->Group, &listed);
-    DWORD chars = names ? listed - 1 : 0;
-    /* a list is as long as its text, without the last terminator. */
-    if (names && chars && names[chars - 1] == 0)
-        chars--;
-    if (names)
-        names[chars] = 0;
-    if (names && chars)
-        chars++;
-    if (RegOpenKeyExW(root, o->Group, 0, KEY_READ, &key) == ERROR_SUCCESS) {
-        for (DWORD i = 0;; i++) {
-            WCHAR name[257];
-            DWORD n = RTL_NUMBER_OF(name);
-            if (RegEnumKeyExW(key, i, name, &n, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
-                break;
-            if (!add_name(&names, &chars, name))
-                break;
-        }
+    DWORD type = 0, size = 0;
+    if (RegQueryValueExW(svchost, group, nullptr, &type, nullptr, &size) != ERROR_SUCCESS || type != REG_MULTI_SZ ||
+        !size)
+        return;
+    WCHAR *data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size + 2 * sizeof(WCHAR));
+    if (!data)
+        return;
+    if (RegQueryValueExW(svchost, group, nullptr, &type, (BYTE *)data, &size) != ERROR_SUCCESS || type != REG_MULTI_SZ) {
+        HeapFree(GetProcessHeap(), 0, data);
+        return;
     }
-    RegCloseKey(root);
-    if (!names || !names[0]) {
-        if (key)
-            RegCloseKey(key);
-        HeapFree(GetProcessHeap(), 0, names);
-        return FALSE;
+    for (WCHAR *s = data; *s; s += wcslen(s) + 1)
+        add_name(list, s);
+}
+
+/* the names of the keys below the key of the group. */
+static void names_from_subkeys(HKEY group_key, NAME_LIST *list)
+{
+    for (DWORD index = 0;; index++) {
+        WCHAR name[MAX_SERVICE_NAME + 1];
+        DWORD chars = RTL_NUMBER_OF(name);
+        if (RegEnumKeyExW(group_key, index, name, &chars, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+            break;
+        WCHAR *copy = HostDup(name);
+        if (copy)
+            add_name(list, copy);
     }
-    o->Names = names;
-    o->AuthenticationLevel = 4;
-    o->ImpersonationLevel = 2;
-    o->AuthenticationCapabilities = 0x3000;
+}
+
+static BOOL mitigation_switch_on(void)
+{
+    HKEY key;
+    DWORD on = 0;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Control\\SCMConfig", 0, KEY_READ, &key) !=
+        ERROR_SUCCESS)
+        return FALSE;
+    get_dword(key, L"EnableSvchostMitigationPolicy", &on);
+    RegCloseKey(key);
+    return on != 0;
+}
+
+/* a policy takes the value of the key, and else the default of the process. */
+static DWORD policy_value(HKEY group, const WCHAR *name, DWORD fallback)
+{
     DWORD value;
-    if (key) {
-        o->SecurityParam = read_dword(key, L"CoInitializeSecurityParam", &value) && value;
-        if (read_dword(key, L"CoInitializeSecurityAllowLowBox", &value) && value)
-            o->Flags |= HOST_ALLOW_LOWBOX;
-        if (read_dword(key, L"CoInitializeSecurityAllowInteractiveUsers", &value) && value)
-            o->Flags |= HOST_ALLOW_INTERACTIVE;
-        if (read_dword(key, L"CoInitializeSecurityAllowComCapability", &value) && value)
-            o->Flags |= HOST_ALLOW_COM_CAPABILITY;
-        if (read_dword(key, L"CoInitializeSecurityAllowCrossContainer", &value) && value)
-            o->Flags |= HOST_ALLOW_CROSS_CONTAINER;
-        if (read_dword(key, L"AuthenticationLevel", &value))
-            o->AuthenticationLevel = value;
-        if (read_dword(key, L"ImpersonationLevel", &value))
-            o->ImpersonationLevel = value;
-        if (read_dword(key, L"AuthenticationCapabilities", &value))
-            o->AuthenticationCapabilities = value;
-        /* the mitigations: a value of the group wins, else the defaults of -p when the machine asks for them. */
-        BOOL by_default = FALSE;
-        HKEY config;
-        if (o->Mitigation && RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Control\\SCMConfig", 0,
-                                           KEY_READ, &config) == ERROR_SUCCESS) {
-            by_default = read_dword(config, L"EnableSvchostMitigationPolicy", &value) && value;
-            RegCloseKey(config);
-        }
-        o->DynamicCode = read_dword(key, L"DynamicCodePolicy", &value) ? value : by_default;
-        o->BinarySignature = read_dword(key, L"BinarySignaturePolicy", &value) ? value : by_default;
-        o->RedirectionTrust = read_dword(key, L"RedirectionTrustPolicy", &value) ? value : 2;
-        o->ExtensionPoints = read_dword(key, L"ExtensionPointsPolicy", &value) ? value : by_default;
-        DWORD type = 0, bytes = 0;
-        if (RegQueryValueExW(key, L"COMAccessPermissionsSD", nullptr, &type, nullptr, &bytes) == ERROR_SUCCESS &&
-            type == REG_BINARY && bytes) {
-            void *sd = HeapAlloc(GetProcessHeap(), 0, bytes);
-            if (sd && RegQueryValueExW(key, L"COMAccessPermissionsSD", nullptr, &type, sd, &bytes) == ERROR_SUCCESS)
-                o->AccessSd = sd;
-            else
-                HeapFree(GetProcessHeap(), 0, sd);
-        }
-        RegCloseKey(key);
+    return get_dword(group, name, &value) ? value : fallback;
+}
+
+static void read_settings(HKEY group, const HOST_OPTIONS *o, GROUP_SETTINGS *g)
+{
+    static const struct {
+        const WCHAR *name;
+        DWORD bit;
+    } flag_values[] = {
+        {L"CoInitializeSecurityAllowLowBox", GROUP_FLAG_ALLOW_LOWBOX},
+        {L"NoGuiAccess", GROUP_FLAG_NO_GUI},
+        {L"CoInitializeSecurityAllowInteractiveUsers", GROUP_FLAG_ALLOW_INTERACTIVE},
+        {L"CoInitializeSecurityAllowComCapability", GROUP_FLAG_ALLOW_COM_CAPABILITY},
+        {L"CoInitializeSecurityAllowCrossContainer", GROUP_FLAG_ALLOW_CROSS_CONTAINER},
+    };
+    DWORD value = 0;
+    g->init_com_security = get_dword(group, L"CoInitializeSecurityParam", &value) && value;
+    g->authn_level = policy_value(group, L"AuthenticationLevel", 4);
+    g->impersonation_level = policy_value(group, L"ImpersonationLevel", 2);
+    g->capabilities = policy_value(group, L"AuthenticationCapabilities", 0x3000);
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(flag_values); i++)
+        if (get_dword(group, flag_values[i].name, &value) && value)
+            g->flags |= flag_values[i].bit;
+
+    DWORD type = 0, size = 0;
+    if (RegQueryValueExW(group, L"COMAccessPermissionsSD", nullptr, &type, nullptr, &size) == ERROR_SUCCESS &&
+        type == REG_BINARY && size) {
+        void *sd = HeapAlloc(GetProcessHeap(), 0, size);
+        if (sd && RegQueryValueExW(group, L"COMAccessPermissionsSD", nullptr, &type, sd, &size) == ERROR_SUCCESS &&
+            IsValidSecurityDescriptor(sd))
+            g->access_descriptor = sd;
+        else if (sd)
+            HeapFree(GetProcessHeap(), 0, sd);
     }
-    return TRUE;
+
+    DWORD asked = o->Mitigation && mitigation_switch_on() ? 1 : 0;
+    g->dynamic_code = policy_value(group, L"DynamicCodePolicy", asked);
+    g->signature = policy_value(group, L"BinarySignaturePolicy", asked);
+    g->extension_points = policy_value(group, L"ExtensionPointsPolicy", asked);
+    g->redirection_trust = policy_value(group, L"RedirectionTrustPolicy", 2);
+}
+
+/* the services of the group: the value and the subkeys, and the one of `-s` when the line has it. */
+static BOOL load_group(const HOST_OPTIONS *o, NAME_LIST *list, GROUP_SETTINGS *settings)
+{
+    HKEY svchost, group;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, SVCHOST_KEY, 0, KEY_READ, &svchost) != ERROR_SUCCESS)
+        return FALSE;
+    names_from_value(svchost, o->Group, list);
+    if (RegOpenKeyExW(svchost, o->Group, 0, KEY_READ, &group) == ERROR_SUCCESS) {
+        names_from_subkeys(group, list);
+        read_settings(group, o, settings);
+        RegCloseKey(group);
+    }
+    RegCloseKey(svchost);
+
+    if (o->Service) {
+        DWORD kept = 0;
+        for (DWORD i = 0; i < list->count; i++)
+            if (CompareStringOrdinal(list->items[i], -1, o->Service, -1, TRUE) == CSTR_EQUAL)
+                list->items[kept++] = list->items[i];
+        list->count = kept;
+    }
+    return list->count != 0;
+}
+
+/* ------------------------------------------------------------------ COM and the mitigation policies */
+
+typedef HRESULT(WINAPI *CO_INITIALIZE_EX)(void *reserved, DWORD model);
+typedef void(WINAPI *CO_UNINITIALIZE)(void);
+typedef HRESULT(WINAPI *CO_INITIALIZE_SECURITY)(PSECURITY_DESCRIPTOR sd, LONG count, void *services, void *reserved1,
+                                                DWORD authn_level, DWORD impersonation, void *auth_list,
+                                                DWORD capabilities, void *reserved3);
+typedef BOOL(WINAPI *SET_MITIGATION_POLICY)(int policy, void *buffer, SIZE_T length);
+
+static CO_UNINITIALIZE g_co_uninitialize; /* set once this process has initialized COM */
+
+/* the descriptor COM checks callers against when the registry gives none: services and administrators. */
+static PSECURITY_DESCRIPTOR default_access_descriptor(DWORD flags)
+{
+    WCHAR text[160] = L"O:SYG:SYD:(A;;0x3;;;SY)(A;;0x3;;;BA)(A;;0x3;;;LS)(A;;0x3;;;NS)";
+    if (flags & GROUP_FLAG_ALLOW_INTERACTIVE)
+        wcscat(text, L"(A;;0x3;;;IU)");
+    if (flags & GROUP_FLAG_ALLOW_LOWBOX)
+        wcscat(text, L"(A;;0x3;;;AC)");
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    return ConvertStringSecurityDescriptorToSecurityDescriptorW(text, 1, &sd, nullptr) ? sd : nullptr;
+}
+
+static void start_com(const GROUP_SETTINGS *g)
+{
+    HMODULE ole = LoadLibraryW(L"ole32.dll");
+    CO_INITIALIZE_EX initialize = ole ? (CO_INITIALIZE_EX)GetProcAddress(ole, "CoInitializeEx") : nullptr;
+    CO_INITIALIZE_SECURITY secure = ole ? (CO_INITIALIZE_SECURITY)GetProcAddress(ole, "CoInitializeSecurity") : nullptr;
+    CO_UNINITIALIZE uninitialize = ole ? (CO_UNINITIALIZE)GetProcAddress(ole, "CoUninitialize") : nullptr;
+    if (!initialize || !secure || !uninitialize) {
+        HostLog("svchost: ole32 cannot start COM");
+        return;
+    }
+    if (initialize(nullptr, 0) >= 0)
+        g_co_uninitialize = uninitialize;
+    PSECURITY_DESCRIPTOR sd = g->access_descriptor ? g->access_descriptor : default_access_descriptor(g->flags);
+    HRESULT hr = secure(sd, -1, nullptr, nullptr, g->authn_level, g->impersonation_level, nullptr, g->capabilities,
+                        nullptr);
+    if (hr < 0)
+        HostLog("svchost: COM security failed, %08lx", (unsigned long)hr);
+}
+
+static void apply_mitigations(const GROUP_SETTINGS *g)
+{
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    SET_MITIGATION_POLICY set = kernel ? (SET_MITIGATION_POLICY)GetProcAddress(kernel, "SetProcessMitigationPolicy")
+                                       : nullptr;
+    if (!set)
+        return;
+    const struct {
+        int policy;
+        DWORD flags;
+    } wanted[] = {
+        {POLICY_DYNAMIC_CODE, g->dynamic_code},
+        {POLICY_SIGNATURE, g->signature},
+        {POLICY_EXTENSION_POINTS, g->extension_points},
+        {POLICY_REDIRECTION_TRUST, g->redirection_trust},
+    };
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(wanted); i++)
+        if (wanted[i].flags && !set(wanted[i].policy, (void *)&wanted[i].flags, sizeof(DWORD)))
+            HostLog("svchost: policy %d refused, error %lu", wanted[i].policy, GetLastError());
 }
 
 /* ------------------------------------------------------------------ the process */
 
-typedef BOOL(WINAPI *SET_MITIGATION)(int policy, void *buffer, SIZE_T length);
-
-static void apply_mitigations(const HOST_OPTIONS *o)
-{
-    DWORD flags;
-    if (o->DynamicCode) {
-        flags = o->DynamicCode;
-        SetProcessMitigationPolicy(ProcessDynamicCodePolicy, &flags, sizeof(flags));
-    }
-    if (o->BinarySignature) {
-        flags = o->BinarySignature;
-        SetProcessMitigationPolicy(ProcessSignaturePolicy, &flags, sizeof(flags));
-    }
-    if (o->RedirectionTrust) {
-        flags = o->RedirectionTrust;
-        SetProcessMitigationPolicy(ProcessRedirectionTrustPolicy, &flags, sizeof(flags));
-    }
-    if (o->ExtensionPoints) {
-        flags = 1;
-        SetProcessMitigationPolicy(ProcessExtensionPointDisablePolicy, &flags, sizeof(flags));
-    }
-}
-
-/* the security of the process' com, for the groups whose services serve com objects: a guess at the access list. */
-static void initialize_security(const HOST_OPTIONS *o)
-{
-    typedef HRESULT(WINAPI * CO_INITIALIZE_EX)(void *reserved, DWORD model);
-    typedef HRESULT(WINAPI * CO_INITIALIZE_SECURITY)(PSECURITY_DESCRIPTOR sd, LONG count, void *names, void *reserved1,
-                                                     DWORD level, DWORD impersonation, void *auth, DWORD capabilities,
-                                                     void *reserved3);
-    HMODULE ole = LoadLibraryW(L"ole32.dll");
-    CO_INITIALIZE_EX initialize = ole ? (CO_INITIALIZE_EX)GetProcAddress(ole, "CoInitializeEx") : nullptr;
-    CO_INITIALIZE_SECURITY secure = ole ? (CO_INITIALIZE_SECURITY)GetProcAddress(ole, "CoInitializeSecurity") : nullptr;
-    if (!initialize || !secure)
-        return;
-    PSECURITY_DESCRIPTOR sd = o->AccessSd;
-    PSECURITY_DESCRIPTOR built = nullptr;
-    if (!sd) {
-        WCHAR text[160] = L"O:SYG:SYD:(A;;0xb;;;SY)(A;;0xb;;;BA)";
-        if (o->Flags & HOST_ALLOW_LOWBOX)
-            wcscat(text, L"(A;;0x3;;;AC)");
-        if (o->Flags & HOST_ALLOW_INTERACTIVE)
-            wcscat(text, L"(A;;0x3;;;IU)");
-        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(text, 1, &built, nullptr))
-            return;
-        sd = built;
-    }
-    HRESULT result = initialize(nullptr, 0 /* COINIT_MULTITHREADED */);
-    if (result >= 0) {
-        g_com_started = TRUE;
-        result = secure(sd, -1, nullptr, nullptr, o->AuthenticationLevel, o->ImpersonationLevel, nullptr,
-                        o->AuthenticationCapabilities, nullptr);
-    }
-    if (result < 0)
-        HostLog("svchost: the security of com is not set: %08lx", (unsigned long)result);
-    if (built)
-        LocalFree(built);
-}
-
-static SERVICE_TABLE_ENTRYW *build_table(const HOST_OPTIONS *o)
-{
-    DWORD count = 0;
-    for (const WCHAR *n = o->Names; *n; n += wcslen(n) + 1)
-        count++;
-    SERVICE_TABLE_ENTRYW *table = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (count + 1) * sizeof(*table));
-    g_hosted = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (count ? count : 1) * sizeof(*g_hosted));
-    if (!table || !g_hosted)
-        return nullptr;
-    for (const WCHAR *n = o->Names; *n; n += wcslen(n) + 1) {
-        /* a process of one service of its group takes that one alone. */
-        if (o->Service && CompareStringOrdinal(n, -1, o->Service, -1, TRUE) != 2)
-            continue;
-        HOSTED *s = &g_hosted[g_hosted_count];
-        s->Name = (WCHAR *)n;
-        InitializeSRWLock(&s->Lock);
-        InitializeConditionVariable(&s->Unloaded);
-        table[g_hosted_count].lpServiceName = s->Name;
-        table[g_hosted_count].lpServiceProc = HostService;
-        g_hosted_count++;
-    }
-    return g_hosted_count ? table : nullptr;
-}
-
 void entry(void)
 {
-    HOST_OPTIONS o = {};
-    SetErrorMode(SEM_FAILCRITICALERRORS);
-    RegDisablePredefinedCacheEx();
-    if (!parse_command(GetCommandLineW(), &o)) {
-        HostLog("svchost: no group on the command line");
+    HOST_OPTIONS options = {};
+    NAME_LIST names = {};
+    GROUP_SETTINGS settings = {};
+    if (!parse_command(GetCommandLineW(), &options) || !load_group(&options, &names, &settings)) {
+        HostLog("svchost: no services to host");
         ExitProcess(0);
     }
-    if (!read_group(&o)) {
-        HostLog("svchost: no services in the group %ls", o.Group);
+
+    g_services = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, names.count * sizeof(*g_services));
+    SERVICE_TABLE_ENTRYW *table = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (names.count + 1) * sizeof(*table));
+    if (!g_services || !table)
         ExitProcess(0);
+    g_service_count = names.count;
+    for (DWORD i = 0; i < names.count; i++) {
+        g_services[i].name = names.items[i];
+        table[i].lpServiceName = names.items[i];
+        table[i].lpServiceProc = HostService;
     }
-    SERVICE_TABLE_ENTRYW *table = build_table(&o);
-    if (!table) {
-        HostLog("svchost: the group %ls has no service to host", o.Group);
-        ExitProcess(0);
-    }
-    HeapSetInformation(nullptr, HeapEnableTerminationOnCorruption, nullptr, 0);
-    if (o.SecurityParam)
-        initialize_security(&o);
-    apply_mitigations(&o);
-    StartServiceCtrlDispatcherW(table);
-    if (g_com_uninit) {
+
+    apply_mitigations(&settings);
+    if (settings.init_com_security)
+        start_com(&settings);
+    if (!StartServiceCtrlDispatcherW(table))
+        HostLog("svchost: the dispatcher failed, error %lu", GetLastError());
+
+    if (g_wait_for_unloads) {
         HostWaitForUnloads();
-        if (g_com_started) {
-            HMODULE ole = GetModuleHandleW(L"ole32.dll");
-            void(WINAPI * uninitialize)(void) = ole ? (void(WINAPI *)(void))GetProcAddress(ole, "CoUninitialize") : nullptr;
-            if (uninitialize)
-                uninitialize();
-        }
+        if (g_co_uninitialize)
+            g_co_uninitialize();
     }
     ExitProcess(0);
 }

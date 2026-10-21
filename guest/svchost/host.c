@@ -1,14 +1,15 @@
 /*
- * the services of a group: loading the ServiceDll of one when the manager starts it, the functions a dll can take
- * from the host (SvchostPushServiceGlobals) and the unloading of the dll once the service is done.
+ * the services of a group: loading the ServiceDll of one when the manager starts it, the functions a DLL can take
+ * from the host and the unloading of the DLL once the service is done.
  */
 #include "svchost.h"
 
-#define CSTR_EQUAL_ 2
-#define ERROR_INVALID_DATA_ 13
-#define SERVICE_WIN32_ 0x30
+#define STATUS_NOT_IMPLEMENTED_ ((LONG)0xC0000002)
+#define RPC_S_DUPLICATE_ENDPOINT_ 1740
+#define RPC_S_ALREADY_LISTENING_ 1713
+#define UNLOAD_WAIT_MS 5000
 
-/* ------------------------------------------------------------------ the globals a dll may ask for */
+/* ------------------------------------------------------------------ the globals a DLL may ask for */
 
 typedef LONG(WINAPI *RPC_START_FUNCTION)(const WCHAR *endpoint, void *interface_spec);
 typedef LONG(WINAPI *RPC_STOP_FUNCTION)(void *interface_spec);
@@ -18,9 +19,8 @@ typedef DWORD(WINAPI *UNREGISTER_STOP_FUNCTION)(HANDLE wait);
 typedef void(WINAPI *PUSH_GLOBALS)(void *globals);
 
 /*
- * what SvchostPushServiceGlobals and SvchostPushServiceGlobalsEx of a service dll are given (read: SvchostBuildSharedGlobals):
- * the old function gets the pointer to the first sid, the new one the whole block. the three rpc functions are
- * the host's, which is a pointer to rpcrt4's server functions in a process that has them.
+ * what SvchostPushServiceGlobals and SvchostPushServiceGlobalsEx of a service DLL are given: the old function gets
+ * the pointer to the first sid, the new one the whole block. the DLL calls the functions at the end by address.
  */
 typedef struct SVCHOST_GLOBAL_DATA {
     ULONG Version;
@@ -41,109 +41,113 @@ WINBASEAPI BOOL WINAPI ConvertStringSidToSidW(LPCWSTR text, PSID *sid);
 static SRWLOCK g_globals_lock = SRWLOCK_INIT;
 static SVCHOST_GLOBAL_DATA *g_globals;
 
-/* ------------------------------------------------------------------ the hosted services */
-
-static HOSTED *find_hosted(const WCHAR *name)
+static HOST_SERVICE *find_service(const WCHAR *name)
 {
-    for (DWORD i = 0; i < g_hosted_count; i++)
-        if (CompareStringOrdinal(name, -1, g_hosted[i].Name, -1, TRUE) == CSTR_EQUAL_)
-            return &g_hosted[i];
+    for (DWORD i = 0; i < g_service_count; i++)
+        if (CompareStringOrdinal(name, -1, g_services[i].name, -1, TRUE) == CSTR_EQUAL)
+            return &g_services[i];
     return nullptr;
 }
 
-/* the stop callback of a service: the event it waits for, the function to run once it is set and its argument. */
-typedef struct STOP_CONTEXT {
-    PVOID Context;
-    HOSTED *Service;
-} STOP_CONTEXT;
+/* ------------------------------------------------------------------ the use count of the DLL */
 
-/* the dll leaves when the last of its users has: the service's main, and the stop callback it registered. */
-static void release_dll(HOSTED *s)
+/* drops one use. the last one frees the DLL when the service asked for that. */
+static void drop_use(HOST_SERVICE *svc)
 {
-    AcquireSRWLockExclusive(&s->Lock);
-    LONG refs = --s->Refs;
-    if (!s->UnloadOnStop || refs != 0 || !s->Dll || !s->Dll->Module) {
-        ReleaseSRWLockExclusive(&s->Lock);
+    AcquireSRWLockExclusive(&svc->lock);
+    svc->users--;
+    if (svc->users > 0 || !svc->unload_on_stop || !svc->module) {
+        ReleaseSRWLockExclusive(&svc->lock);
         return;
     }
     ULONG_PTR cookie = 0;
-    if (s->Dll->ActCtx && !ActivateActCtx(s->Dll->ActCtx, &cookie)) {
-        HostLog("svchost: %ls stays loaded, its context cannot be activated: %lu", s->Name, GetLastError());
-        ReleaseSRWLockExclusive(&s->Lock);
+    if (svc->context && !ActivateActCtx(svc->context, &cookie)) {
+        HostLog("svchost: %ls cannot activate its context to unload, error %lu", svc->name, GetLastError());
+        ReleaseSRWLockExclusive(&svc->lock);
         return;
     }
-    FreeLibrary(s->Dll->Module);
-    s->Dll->Module = nullptr;
-    if (s->Dll->ActCtx)
+    FreeLibrary(svc->module);
+    svc->module = nullptr;
+    if (svc->context)
         DeactivateActCtx(0, cookie);
-    ReleaseSRWLockExclusive(&s->Lock);
-    WakeAllConditionVariable(&s->Unloaded);
+    ReleaseSRWLockExclusive(&svc->lock);
+    WakeAllConditionVariable(&svc->unloaded);
 }
 
-static void CALLBACK stop_fired(PVOID parameter, BOOLEAN timed_out)
+/* the wait of a registered stop callback has ended. */
+static void CALLBACK stop_event_fired(PVOID parameter, BOOLEAN timed_out)
 {
-    STOP_CONTEXT *c = parameter;
-    HOSTED *s = c->Service;
-    AcquireSRWLockExclusive(&s->Lock);
-    SVCHOST_STOP_CALLBACK callback = s->StopCallback;
-    s->StopCallback = nullptr;
-    ReleaseSRWLockExclusive(&s->Lock);
-    if (callback)
-        callback(c->Context, timed_out);
-    release_dll(s);
-    HeapFree(GetProcessHeap(), 0, c);
+    HOST_SERVICE *svc = parameter;
+    AcquireSRWLockExclusive(&svc->lock);
+    HOST_STOP_FN fn = svc->stop_fn;
+    void *arg = svc->stop_arg;
+    svc->stop_fn = nullptr;
+    svc->stop_arg = nullptr;
+    ReleaseSRWLockExclusive(&svc->lock);
+    if (!fn)
+        return;
+    fn(arg, timed_out);
+    drop_use(svc);
 }
 
-/*
- * a service asks to be told when an event is set, which is how it learns that it must stop: only one wait for
- * each, and the dll is held until it has run. the old function was the same but for the flags of the wait.
- */
-static DWORD register_stop(HANDLE *wait, const WCHAR *service, HANDLE event, void *callback, void *context, DWORD flags)
+void HostWaitForUnloads(void)
 {
-    if (!wait || !service || !event || !callback)
+    for (DWORD i = 0; i < g_service_count; i++) {
+        HOST_SERVICE *svc = &g_services[i];
+        AcquireSRWLockExclusive(&svc->lock);
+        while (svc->module && svc->unload_on_stop) {
+            if (!SleepConditionVariableSRW(&svc->unloaded, &svc->lock, UNLOAD_WAIT_MS, 0)) {
+                HostLog("svchost: %ls did not unload, error %lu", svc->name, GetLastError());
+                break;
+            }
+        }
+        ReleaseSRWLockExclusive(&svc->lock);
+    }
+}
+
+/* ------------------------------------------------------------------ stop callbacks */
+
+/* long_only: the new flavour of the function honours only the long function flag of the wait flags. */
+static DWORD register_stop(HANDLE *wait, const WCHAR *name, HANDLE event, void *callback, void *context, DWORD flags,
+                           BOOL long_only)
+{
+    if (!wait || !name || !event || !callback)
         return ERROR_INVALID_PARAMETER;
-    HOSTED *s = find_hosted(service);
-    if (!s)
-        return ERROR_INVALID_DATA_;
-    AcquireSRWLockExclusive(&s->Lock);
-    if (s->StopCallback) {
-        ReleaseSRWLockExclusive(&s->Lock);
-        return ERROR_INVALID_DATA_;
+    HOST_SERVICE *svc = find_service(name);
+    if (!svc)
+        return ERROR_INVALID_DATA;
+    if (long_only)
+        flags &= WT_EXECUTELONGFUNCTION;
+    flags |= WT_EXECUTEONLYONCE;
+
+    DWORD error = ERROR_SUCCESS;
+    AcquireSRWLockExclusive(&svc->lock);
+    if (svc->stop_fn) {
+        error = ERROR_INVALID_DATA;
+    } else if (!RegisterWaitForSingleObject(wait, event, stop_event_fired, svc, INFINITE, flags)) {
+        error = GetLastError();
+    } else {
+        svc->users++;
+        svc->stop_fn = (HOST_STOP_FN)callback;
+        svc->stop_arg = context;
     }
-    STOP_CONTEXT *c = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*c));
-    if (!c) {
-        ReleaseSRWLockExclusive(&s->Lock);
-        return ERROR_NOT_ENOUGH_MEMORY;
-    }
-    c->Context = context;
-    c->Service = s;
-    HANDLE registered = nullptr;
-    if (!RegisterWaitForSingleObject(&registered, event, stop_fired, c, INFINITE, WT_EXECUTEONLYONCE | flags)) {
-        DWORD error = GetLastError();
-        ReleaseSRWLockExclusive(&s->Lock);
-        HeapFree(GetProcessHeap(), 0, c);
-        return error ? error : ERROR_INVALID_DATA_;
-    }
-    *wait = registered;
-    s->Refs++;
-    s->StopCallback = (SVCHOST_STOP_CALLBACK)callback;
-    ReleaseSRWLockExclusive(&s->Lock);
-    return ERROR_SUCCESS;
+    ReleaseSRWLockExclusive(&svc->lock);
+    return error;
 }
 
-static DWORD WINAPI SvcRegisterStopCallback(HANDLE *wait, const WCHAR *service, HANDLE event, void *callback,
-                                            void *context, DWORD flags)
+static DWORD WINAPI register_stop_old(HANDLE *wait, const WCHAR *name, HANDLE event, void *callback, void *context,
+                                      DWORD flags)
 {
-    return register_stop(wait, service, event, callback, context, flags & WT_EXECUTELONGFUNCTION);
+    return register_stop(wait, name, event, callback, context, flags, FALSE);
 }
 
-static DWORD WINAPI SvcDeprecatedRegisterStopCallback(HANDLE *wait, const WCHAR *service, HANDLE event, void *callback,
-                                                      void *context, DWORD flags)
+static DWORD WINAPI register_stop_new(HANDLE *wait, const WCHAR *name, HANDLE event, void *callback, void *context,
+                                      DWORD flags)
 {
-    return register_stop(wait, service, event, callback, context, flags);
+    return register_stop(wait, name, event, callback, context, flags, TRUE);
 }
 
-static DWORD WINAPI SvcUnregisterStopCallback(HANDLE wait)
+static DWORD WINAPI unregister_stop(HANDLE wait)
 {
     if (!wait)
         return ERROR_INVALID_PARAMETER;
@@ -151,39 +155,47 @@ static DWORD WINAPI SvcUnregisterStopCallback(HANDLE wait)
     return ERROR_SUCCESS;
 }
 
-/* the rpc functions need rpcrt4's servers, which a process takes from the library when it has them. */
-static HMODULE rpc_module(void)
+/* ------------------------------------------------------------------ the RPC servers of a DLL */
+
+typedef LONG(WINAPI *USE_PROTSEQ_EP)(const WCHAR *protseq, UINT max_calls, const WCHAR *endpoint, void *sd);
+typedef LONG(WINAPI *REGISTER_IF)(void *interface_spec, void *type_uuid, void *manager_epv);
+typedef LONG(WINAPI *UNREGISTER_IF)(void *interface_spec, void *type_uuid, UINT wait_for_calls);
+typedef LONG(WINAPI *LISTEN)(UINT min_threads, UINT max_calls, UINT dont_wait);
+typedef LONG(WINAPI *STOP_LISTENING)(void *binding);
+typedef LONG(WINAPI *WAIT_LISTEN)(void);
+
+static LONG g_rpc_interfaces;
+
+static HMODULE rpc_runtime(void)
 {
-    static HMODULE module;
-    static BOOL tried;
-    if (!tried) {
-        module = LoadLibraryW(L"rpcrt4.dll");
-        tried = TRUE;
-    }
-    return module;
+    HMODULE module = GetModuleHandleW(L"rpcrt4.dll");
+    return module ? module : LoadLibraryW(L"rpcrt4.dll");
 }
 
 static LONG WINAPI start_rpc_server(const WCHAR *endpoint, void *interface_spec)
 {
-    typedef LONG(WINAPI * USE_PROTSEQ)(WCHAR *protocol, UINT max_calls, WCHAR *endpoint, void *sd);
-    typedef LONG(WINAPI * REGISTER_IF)(void *spec, void *uuid, void *manager);
-    typedef LONG(WINAPI * LISTEN)(UINT minimum, UINT maximum, UINT dont_wait);
-    HMODULE rpc = rpc_module();
-    USE_PROTSEQ use = rpc ? (USE_PROTSEQ)GetProcAddress(rpc, "RpcServerUseProtseqEpW") : nullptr;
-    REGISTER_IF registerif = rpc ? (REGISTER_IF)GetProcAddress(rpc, "RpcServerRegisterIf") : nullptr;
+    HMODULE rpc = rpc_runtime();
+    USE_PROTSEQ_EP use_protseq = rpc ? (USE_PROTSEQ_EP)GetProcAddress(rpc, "RpcServerUseProtseqEpW") : nullptr;
+    REGISTER_IF register_if = rpc ? (REGISTER_IF)GetProcAddress(rpc, "RpcServerRegisterIf") : nullptr;
     LISTEN listen = rpc ? (LISTEN)GetProcAddress(rpc, "RpcServerListen") : nullptr;
-    if (!use || !registerif || !listen)
-        return (LONG)0xC0000002; /* STATUS_NOT_IMPLEMENTED */
-    WCHAR name[260];
-    _snwprintf(name, RTL_NUMBER_OF(name) - 1, L"\\PIPE\\%ls", endpoint);
-    name[RTL_NUMBER_OF(name) - 1] = 0;
-    WCHAR protocol[] = L"ncacn_np";
-    LONG status = use(protocol, 10, name, nullptr);
-    if (status == 0 || status == 1740 /* RPC_S_DUPLICATE_ENDPOINT */)
-        status = registerif(interface_spec, nullptr, nullptr);
-    if (status == 0) {
+    if (!use_protseq || !register_if || !listen)
+        return STATUS_NOT_IMPLEMENTED_;
+
+    WCHAR pipe[MAX_PATH];
+    if (!endpoint || wcslen(endpoint) + 7 > RTL_NUMBER_OF(pipe))
+        return ERROR_INVALID_PARAMETER;
+    wcscpy(pipe, L"\\PIPE\\");
+    wcscat(pipe, endpoint);
+
+    LONG status = use_protseq(L"ncacn_np", 10, pipe, nullptr);
+    if (status && status != RPC_S_DUPLICATE_ENDPOINT_)
+        return status;
+    status = register_if(interface_spec, nullptr, nullptr);
+    if (status)
+        return status;
+    if (InterlockedIncrement(&g_rpc_interfaces) == 1) {
         status = listen(1, 12345, 1);
-        if (status == 1713 /* RPC_S_ALREADY_LISTENING */)
+        if (status == RPC_S_ALREADY_LISTENING_)
             status = 0;
     }
     return status;
@@ -191,10 +203,22 @@ static LONG WINAPI start_rpc_server(const WCHAR *endpoint, void *interface_spec)
 
 static LONG WINAPI stop_rpc_server(void *interface_spec)
 {
-    typedef LONG(WINAPI * UNREGISTER_IF)(void *spec, void *uuid, UINT wait);
-    HMODULE rpc = rpc_module();
+    HMODULE rpc = rpc_runtime();
     UNREGISTER_IF unregister = rpc ? (UNREGISTER_IF)GetProcAddress(rpc, "RpcServerUnregisterIf") : nullptr;
-    return unregister ? unregister(interface_spec, nullptr, 1) : (LONG)0xC0000002;
+    STOP_LISTENING stop = rpc ? (STOP_LISTENING)GetProcAddress(rpc, "RpcMgmtStopServerListening") : nullptr;
+    WAIT_LISTEN wait = rpc ? (WAIT_LISTEN)GetProcAddress(rpc, "RpcMgmtWaitServerListen") : nullptr;
+    if (!unregister || !stop || !wait)
+        return STATUS_NOT_IMPLEMENTED_;
+
+    LONG status = unregister(interface_spec, nullptr, 1);
+    if (status)
+        return status;
+    if (g_rpc_interfaces > 0 && InterlockedDecrement(&g_rpc_interfaces) == 0) {
+        status = stop(nullptr);
+        if (!status)
+            status = wait();
+    }
+    return status;
 }
 
 static BOOL build_globals(void)
@@ -216,255 +240,243 @@ static BOOL build_globals(void)
     data->StartRpcServer = start_rpc_server;
     data->StopRpcServer = stop_rpc_server;
     data->StopRpcServerEx = stop_rpc_server;
-    data->RegisterStopCallbackDeprecated = SvcDeprecatedRegisterStopCallback;
-    data->RegisterStopCallback = SvcRegisterStopCallback;
-    data->UnregisterStopCallback = SvcUnregisterStopCallback;
+    data->RegisterStopCallbackDeprecated = register_stop_old;
+    data->RegisterStopCallback = register_stop_new;
+    data->UnregisterStopCallback = unregister_stop;
     g_globals = data;
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ finding the dll of a service */
-
-/* the key of the service's values: Parameters, or the key of the service when it has none. */
-static DWORD open_parameters(const WCHAR *service, HKEY *out)
+/* the block is made by the first service that needs it. */
+static BOOL globals_ready(void)
 {
-    HKEY services, key, parameters;
-    DWORD error = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Services", 0, KEY_READ, &services);
-    if (error)
-        return error;
-    error = RegOpenKeyExW(services, service, 0, KEY_READ, &key);
-    RegCloseKey(services);
-    if (error)
-        return error;
-    error = RegOpenKeyExW(key, L"Parameters", 0, KEY_READ, &parameters);
+    AcquireSRWLockExclusive(&g_globals_lock);
+    BOOL ok = g_globals != nullptr || build_globals();
+    ReleaseSRWLockExclusive(&g_globals_lock);
+    return ok;
+}
+
+/* ------------------------------------------------------------------ finding the DLL of a service */
+
+#define ROOT_OF_SERVICES L"System\\CurrentControlSet\\Services\\"
+#define DLL_PATH_CHARS 260
+
+/* the values of a service live in its Parameters key, or in the key of the service when that is not there. */
+static DWORD open_values(const WCHAR *name, HKEY *key)
+{
+    WCHAR path[MAX_PATH];
+    if (wcslen(name) + RTL_NUMBER_OF(ROOT_OF_SERVICES) + RTL_NUMBER_OF(L"\\Parameters") > RTL_NUMBER_OF(path))
+        return ERROR_FILENAME_EXCED_RANGE;
+    wcscpy(path, ROOT_OF_SERVICES);
+    wcscat(path, name);
+    SIZE_T base = wcslen(path);
+    wcscat(path, L"\\Parameters");
+    DWORD error = RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, key);
     if (error == ERROR_FILE_NOT_FOUND) {
-        *out = key;
-        return ERROR_SUCCESS;
+        path[base] = 0;
+        error = RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, key);
     }
-    RegCloseKey(key);
-    if (!error)
-        *out = parameters;
     return error;
 }
 
-static BOOL read_flag(HKEY key, const WCHAR *name)
+static BOOL read_nonzero_dword(HKEY key, const WCHAR *value)
 {
-    DWORD type = 0, size = sizeof(DWORD), value = 0;
-    return RegQueryValueExW(key, name, nullptr, &type, (BYTE *)&value, &size) == ERROR_SUCCESS && type == REG_DWORD &&
-           value != 0;
+    DWORD type = 0, data = 0, size = sizeof(data);
+    if (RegQueryValueExW(key, value, nullptr, &type, (BYTE *)&data, &size) != ERROR_SUCCESS)
+        return FALSE;
+    return type == REG_DWORD && data != 0;
 }
 
-/* a path value that names a file: it has to be REG_EXPAND_SZ and not empty, and is expanded and put in lower case. */
-static DWORD read_path(HKEY key, const WCHAR *name, WCHAR *out, BOOL optional)
+/*
+ * a path value: it has to be a non empty expandable string. what comes back is expanded with the environment of the
+ * process and in lower case, in a block of the heap. `optional` lets a value that is missing give no path and no error.
+ */
+static DWORD read_path_value(HKEY key, const WCHAR *value, BOOL optional, WCHAR **path)
 {
-    WCHAR raw[MAX_PATH + 1];
-    DWORD type = 0, size = sizeof(raw);
-    LONG status = RegQueryValueExW(key, name, nullptr, &type, (BYTE *)raw, &size);
-    if (status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND)
-        return optional ? ERROR_SUCCESS : (DWORD)status;
-    if (status)
-        return (DWORD)status;
-    if (type != REG_EXPAND_SZ || size < sizeof(WCHAR) || !raw[0])
+    WCHAR raw[DLL_PATH_CHARS + 2];
+    DWORD type = 0, size = DLL_PATH_CHARS * sizeof(WCHAR) + sizeof(WCHAR);
+    *path = nullptr;
+    DWORD error = RegQueryValueExW(key, value, nullptr, &type, (BYTE *)raw, &size);
+    if (optional && (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND))
+        return ERROR_SUCCESS;
+    if (error)
+        return error;
+    DWORD chars = size / sizeof(WCHAR);
+    raw[chars < RTL_NUMBER_OF(raw) ? chars : RTL_NUMBER_OF(raw) - 1] = 0;
+    if (type != REG_EXPAND_SZ || !raw[0])
         return ERROR_FILE_NOT_FOUND;
-    raw[MAX_PATH] = 0;
-    ExpandEnvironmentStringsW(raw, out, MAX_PATH);
-    out[MAX_PATH - 1] = 0;
-    LCMapStringW(0x400, LCMAP_LOWERCASE, out, -1, out, MAX_PATH);
+
+    DWORD need = ExpandEnvironmentStringsW(raw, nullptr, 0);
+    if (!need)
+        return GetLastError();
+    WCHAR *expanded = HeapAlloc(GetProcessHeap(), 0, need * sizeof(WCHAR));
+    if (!expanded)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    if (!ExpandEnvironmentStringsW(raw, expanded, need)) {
+        error = GetLastError();
+        HeapFree(GetProcessHeap(), 0, expanded);
+        return error;
+    }
+    LCMapStringW(LOCALE_INVARIANT, LCMAP_LOWERCASE, expanded, -1, expanded, (int)need);
+    *path = expanded;
     return ERROR_SUCCESS;
 }
 
-/* the value ServiceMain names the function of a dll by, as an ansi name. */
-static CHAR *read_main_name(HKEY key)
+/* the ServiceMain value names another function than ServiceMain. */
+static CHAR *read_main_export(HKEY key)
 {
-    WCHAR raw[MAX_PATH + 1];
-    DWORD type = 0, size = sizeof(raw) - sizeof(WCHAR);
-    if (RegQueryValueExW(key, L"ServiceMain", nullptr, &type, (BYTE *)raw, &size) || type != REG_SZ)
+    WCHAR text[128];
+    DWORD type = 0, size = sizeof(text) - sizeof(WCHAR);
+    if (RegQueryValueExW(key, L"ServiceMain", nullptr, &type, (BYTE *)text, &size) != ERROR_SUCCESS || type != REG_SZ)
         return nullptr;
-    raw[size / sizeof(WCHAR)] = 0;
-    int bytes = WideCharToMultiByte(CP_ACP, 0x400 /* WC_NO_BEST_FIT_CHARS */, raw, -1, nullptr, 0, nullptr, nullptr);
-    CHAR *name = bytes > 1 ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)bytes) : nullptr;
-    if (name && !WideCharToMultiByte(CP_ACP, 0x400, raw, -1, name, bytes, nullptr, nullptr)) {
+    text[size / sizeof(WCHAR)] = 0;
+    if (!text[0])
+        return nullptr;
+    int bytes = WideCharToMultiByte(CP_ACP, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    CHAR *name = bytes > 0 ? HeapAlloc(GetProcessHeap(), 0, bytes) : nullptr;
+    if (name && !WideCharToMultiByte(CP_ACP, 0, text, -1, name, bytes, nullptr, nullptr)) {
         HeapFree(GetProcessHeap(), 0, name);
         name = nullptr;
     }
     return name;
 }
 
-/* the dll of a service the first time it starts, and whenever it was unloaded and needs its context again. */
-static DWORD prepare_dll(HOSTED *s)
+static DWORD make_context(HOST_SERVICE *svc)
 {
-    if (s->Dll) {
-        HOSTED_DLL *dll = s->Dll;
-        if (!dll->Module && dll->Manifest && dll->Manifest[0]) {
-            ACTCTXW context = {sizeof(context)};
-            context.lpSource = dll->Manifest;
-            HANDLE made = CreateActCtxW(&context);
-            if (made == INVALID_HANDLE_VALUE)
-                return GetLastError();
-            if (dll->ActCtx)
-                ReleaseActCtx(dll->ActCtx);
-            dll->ActCtx = made;
-        }
-        return ERROR_SUCCESS;
-    }
-    HKEY key;
-    DWORD error = open_parameters(s->Name, &key);
-    if (error)
-        return error;
-    WCHAR path[MAX_PATH], manifest[MAX_PATH];
-    manifest[0] = 0;
-    error = read_path(key, L"ServiceDll", path, FALSE);
-    if (!error)
-        error = read_path(key, L"ServiceManifest", manifest, TRUE);
-    CHAR *main_name = error ? nullptr : read_main_name(key);
-    RegCloseKey(key);
-    if (error)
-        return error;
-    HOSTED_DLL *dll = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*dll));
-    if (!dll) {
-        HeapFree(GetProcessHeap(), 0, main_name);
-        return ERROR_NOT_ENOUGH_MEMORY;
-    }
-    dll->Path = HostDup(path);
-    dll->Manifest = HostDup(manifest);
-    if (!dll->Path || !dll->Manifest) {
-        HeapFree(GetProcessHeap(), 0, dll->Path);
-        HeapFree(GetProcessHeap(), 0, dll->Manifest);
-        HeapFree(GetProcessHeap(), 0, dll);
-        HeapFree(GetProcessHeap(), 0, main_name);
-        return ERROR_NOT_ENOUGH_MEMORY;
-    }
-    if (manifest[0]) {
-        ACTCTXW context = {sizeof(context)};
-        context.lpSource = dll->Manifest;
-        dll->ActCtx = CreateActCtxW(&context);
-        if (dll->ActCtx == INVALID_HANDLE_VALUE) {
-            error = GetLastError();
-            HeapFree(GetProcessHeap(), 0, dll->Path);
-            HeapFree(GetProcessHeap(), 0, dll->Manifest);
-            HeapFree(GetProcessHeap(), 0, dll);
-            HeapFree(GetProcessHeap(), 0, main_name);
-            return error;
-        }
-    }
-    s->Dll = dll;
-    s->MainName = main_name;
+    ACTCTXW request = {sizeof(request)};
+    request.lpSource = svc->manifest_path;
+    HANDLE context = CreateActCtxW(&request);
+    if (context == INVALID_HANDLE_VALUE)
+        return GetLastError();
+    if (svc->context)
+        ReleaseActCtx(svc->context);
+    svc->context = context;
     return ERROR_SUCCESS;
 }
 
-/* a function of the dll, loading it first: its error is the last one when it has none. */
-static FARPROC dll_function(HOSTED *s, const CHAR *name, DWORD *error)
+/* the first start learns where the DLL is. a later start only renews the context of a DLL that was unloaded. */
+static DWORD locate_dll(HOST_SERVICE *svc, HKEY values)
 {
-    HOSTED_DLL *dll = s->Dll;
+    if (!svc->dll_path) {
+        WCHAR *dll = nullptr, *manifest = nullptr;
+        DWORD error = read_path_value(values, L"ServiceDll", FALSE, &dll);
+        if (!error)
+            error = read_path_value(values, L"ServiceManifest", TRUE, &manifest);
+        if (error) {
+            HeapFree(GetProcessHeap(), 0, dll);
+            return error;
+        }
+        svc->dll_path = dll;
+        svc->manifest_path = manifest;
+        svc->main_export = read_main_export(values);
+        return manifest ? make_context(svc) : ERROR_SUCCESS;
+    }
+    if (!svc->module && svc->manifest_path)
+        return make_context(svc);
+    return ERROR_SUCCESS;
+}
+
+typedef struct ENTRY_POINTS {
+    LPSERVICE_MAIN_FUNCTIONW main;
+    PUSH_GLOBALS push;
+    PUSH_GLOBALS push_ex;
+} ENTRY_POINTS;
+
+/* loads the DLL when needed and finds its functions, all inside the activation context of the manifest. */
+static DWORD find_entry_points(HOST_SERVICE *svc, ENTRY_POINTS *found)
+{
     ULONG_PTR cookie = 0;
-    FARPROC function = nullptr;
-    if (error)
-        *error = ERROR_SUCCESS;
-    if (dll->ActCtx && !ActivateActCtx(dll->ActCtx, &cookie)) {
-        if (error)
-            *error = GetLastError();
-        return nullptr;
-    }
-    if (!dll->Module)
-        dll->Module = LoadLibraryExW(dll->Path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-    if (!dll->Module) {
-        if (error)
-            *error = GetLastError();
+    if (svc->context && !ActivateActCtx(svc->context, &cookie))
+        return GetLastError();
+
+    DWORD error = ERROR_SUCCESS;
+    if (!svc->module)
+        svc->module = LoadLibraryExW(svc->dll_path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!svc->module) {
+        error = GetLastError();
     } else {
-        function = GetProcAddress(dll->Module, name);
-        if (!function && error)
-            *error = GetLastError();
+        found->main = (LPSERVICE_MAIN_FUNCTIONW)GetProcAddress(svc->module,
+                                                               svc->main_export ? svc->main_export : "ServiceMain");
+        if (!found->main) {
+            error = GetLastError();
+        } else {
+            found->push_ex = (PUSH_GLOBALS)GetProcAddress(svc->module, "SvchostPushServiceGlobalsEx");
+            if (!found->push_ex)
+                found->push = (PUSH_GLOBALS)GetProcAddress(svc->module, "SvchostPushServiceGlobals");
+        }
     }
-    if (dll->ActCtx)
+    if (svc->context)
         DeactivateActCtx(0, cookie);
-    return function;
+    return error;
 }
 
 /* ------------------------------------------------------------------ starting a service */
 
-static void WINAPI dummy_handler(DWORD control)
+static void WINAPI ignore_control(DWORD control)
 {
     (void)control;
 }
 
-/* a service that cannot be started says so in the only way the manager hears: it stops, with the error as its exit code. */
-void HostAbort(const WCHAR *name, DWORD error)
+/* a service that cannot start is reported as stopped, with the reason as its exit code. */
+static void report_stopped(const WCHAR *name, DWORD error)
 {
-    SERVICE_STATUS status = {SERVICE_WIN32_, SERVICE_STOPPED, SERVICE_ACCEPT_STOP, error, 0, 0, 0};
-    HostLog("svchost: %ls does not start: %lu", name, error);
-    SERVICE_STATUS_HANDLE handle = RegisterServiceCtrlHandlerW(name, dummy_handler);
-    if (handle)
-        SetServiceStatus(handle, &status);
+    SERVICE_STATUS_HANDLE handle = RegisterServiceCtrlHandlerW(name, ignore_control);
+    if (!handle)
+        return;
+    SERVICE_STATUS status = {};
+    status.dwServiceType = SERVICE_WIN32;
+    status.dwCurrentState = SERVICE_STOPPED;
+    status.dwControlsAccepted = SERVICE_ACCEPT_STOP;
+    status.dwWin32ExitCode = error;
+    SetServiceStatus(handle, &status);
 }
 
-/*
- * the dispatcher calls this for every service of the group, in a thread of its own, with the name of the one the
- * manager starts as the first argument.
- */
+/* the two switches of the key that can be set once and stay. */
+static void read_switches(HOST_SERVICE *svc, HKEY values)
+{
+    if (read_nonzero_dword(values, L"ServiceDllUnloadOnStop"))
+        svc->unload_on_stop = TRUE;
+    if (read_nonzero_dword(values, L"LegacyCOMBehavior"))
+        g_wait_for_unloads = FALSE;
+}
+
 VOID WINAPI HostService(DWORD argc, LPWSTR *argv)
 {
-    if (!argc || !argv[0])
+    if (!argc)
         return;
-    HOSTED *s = find_hosted(argv[0]);
-    if (!s)
+    HOST_SERVICE *svc = find_service(argv[0]);
+    if (!svc)
         return;
-    AcquireSRWLockExclusive(&s->Lock);
-    DWORD error = prepare_dll(s);
-    LPSERVICE_MAIN_FUNCTIONW service_main = nullptr;
-    PUSH_GLOBALS push = nullptr, push_ex = nullptr;
-    if (!error) {
-        service_main = (LPSERVICE_MAIN_FUNCTIONW)dll_function(s, s->MainName ? s->MainName : "ServiceMain", &error);
-        if (!error) {
-            push_ex = (PUSH_GLOBALS)dll_function(s, "SvchostPushServiceGlobalsEx", nullptr);
-            if (!push_ex)
-                push = (PUSH_GLOBALS)dll_function(s, "SvchostPushServiceGlobals", nullptr);
-        }
-    }
-    if (error || !service_main) {
-        ReleaseSRWLockExclusive(&s->Lock);
-        HostAbort(s->Name, error ? error : ERROR_PROC_NOT_FOUND);
-        return;
-    }
-    if (push || push_ex) {
-        AcquireSRWLockExclusive(&g_globals_lock);
-        if (!g_globals)
-            build_globals();
-        ReleaseSRWLockExclusive(&g_globals_lock);
-    }
-    s->Refs++;
-    HKEY key;
-    if (!open_parameters(s->Name, &key)) {
-        if (read_flag(key, L"ServiceDllUnloadOnStop"))
-            s->UnloadOnStop = TRUE;
-        if (read_flag(key, L"LegacyCOMBehavior"))
-            g_com_uninit = FALSE;
-        RegCloseKey(key);
-    }
-    ReleaseSRWLockExclusive(&s->Lock);
-    if (g_globals) {
-        if (push_ex)
-            push_ex(g_globals);
-        else if (push)
-            push(&g_globals->NullSid);
-    }
-    service_main(argc, argv);
-    release_dll(s);
-}
 
-/* once the dispatcher is done: the dlls that leave on a stop are given time to go before COM is shut down. */
-void HostWaitForUnloads(void)
-{
-    for (DWORD i = 0; i < g_hosted_count; i++) {
-        HOSTED *s = &g_hosted[i];
-        AcquireSRWLockExclusive(&s->Lock);
-        if (s->Dll && s->Dll->Module && s->UnloadOnStop) {
-            while (s->Dll->Module) {
-                if (!SleepConditionVariableSRW(&s->Unloaded, &s->Lock, 5000, 0)) {
-                    HostLog("svchost: the dll of %ls is still loaded", s->Name);
-                    break;
-                }
-            }
-        }
-        ReleaseSRWLockExclusive(&s->Lock);
+    ENTRY_POINTS found = {};
+    HKEY values = nullptr;
+    AcquireSRWLockExclusive(&svc->lock);
+    DWORD error = open_values(svc->name, &values);
+    if (!error)
+        error = locate_dll(svc, values);
+    if (!error)
+        error = find_entry_points(svc, &found);
+    if (!error && !found.main)
+        error = ERROR_PROC_NOT_FOUND;
+    if (!error && (found.push || found.push_ex) && !globals_ready())
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    if (error) {
+        if (values)
+            RegCloseKey(values);
+        ReleaseSRWLockExclusive(&svc->lock);
+        HostLog("svchost: %ls cannot start, error %lu", svc->name, error);
+        report_stopped(svc->name, error);
+        return;
     }
+    svc->users++;
+    read_switches(svc, values);
+    RegCloseKey(values);
+    ReleaseSRWLockExclusive(&svc->lock);
+
+    if (found.push_ex)
+        found.push_ex(g_globals);
+    else if (found.push)
+        found.push(&g_globals->NullSid);
+    found.main(argc, argv);
+    drop_use(svc);
 }
