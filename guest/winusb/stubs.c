@@ -1,4 +1,4 @@
-/* the calls on interface handles, of which mime never has one. */
+/* interface calls fail because no winusb interface handles exist. */
 #include <mime/stubexport.h>
 
 MIME_STUB_ERROR("winusb", BOOL, WinUsb_AbortPipe, 2, ERROR_INVALID_HANDLE, FALSE)

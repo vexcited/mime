@@ -1,14 +1,14 @@
 /*
  * cryptographic primitives shared by bcrypt, crypt32 and advapi32, written
- * from their public specifications: fips 180-4 and rfc 1320/1321 for the
+ * from the public specifications: fips 180-4 and rfc 1320/1321 for the
  * hashes, rfc 2104 for hmac, fips 197 and sp 800-38a/b/c/d for aes and its
  * modes, fips 46-3 for des, rfc 8018, rfc 5869 and sp 800-108 for the key
  * derivations, rfc 8017 for rsa, fips 186-4 and sec 1 for the elliptic
  * curves, rfc 7748 for x25519 and rfc 7919 for the finite field groups.
  *
- * freestanding: the hashes and ciphers need only memcpy, memset and memcmp.
- * the big number code, rsa, the curves and diffie-hellman also need the three
- * hooks below, which the module linking them defines.
+ * the hashes and ciphers need only memcpy, memset and memcmp. big numbers,
+ * rsa, the curves and diffie-hellman also need the hooks below, which the
+ * linking module defines.
  */
 #ifndef MIME_LIB_CRYPTO_H
 #define MIME_LIB_CRYPTO_H
@@ -62,7 +62,7 @@ typedef union MimeHashCtx {
 typedef struct MimeHashAlg {
     uint32_t digest_size;
     uint32_t block_size;
-    /* the bytes of chaining state, saved and resumed by hmac. */
+    /* size of the chaining state hmac saves and resumes. */
     uint32_t state_size;
     /* the der DigestInfo prefix of pkcs #1 v1.5 signatures. */
     const uint8_t *digest_info;
@@ -75,7 +75,7 @@ typedef struct MimeHashAlg {
 extern const MimeHashAlg mime_md4, mime_md5, mime_sha1, mime_sha256, mime_sha384, mime_sha512;
 
 void mime_hash(const MimeHashAlg *alg, const void *data, size_t size, uint8_t *out);
-/* the chaining state of a context that absorbed whole blocks only, and the way back. */
+/* save and resume the chaining state of a context that absorbed whole blocks only. */
 void mime_hash_save(const MimeHashAlg *alg, const MimeHashCtx *ctx, uint8_t *state);
 void mime_hash_resume(const MimeHashAlg *alg, MimeHashCtx *ctx, const uint8_t *state, uint64_t blocks);
 
@@ -89,7 +89,7 @@ typedef struct MimeHmac {
     MimeHashCtx ctx;
 } MimeHmac;
 
-/* the bytes a context or an hmac of alg uses. */
+/* bytes used by a hash context or an hmac for alg. */
 size_t mime_hash_ctx_size(const MimeHashAlg *alg);
 size_t mime_hmac_size(const MimeHashAlg *alg);
 
@@ -121,7 +121,7 @@ void mime_tls_prf(const MimeHashAlg *alg, const void *secret, size_t secret_size
 
 /* ------------------------------------------------------------------ block ciphers */
 
-/* the round keys in byte order, dk the decryption keys of the equivalent inverse cipher. */
+/* round keys in byte order; dk holds the keys of the equivalent inverse cipher. */
 typedef struct MimeAes {
     uint8_t ek[240];
     uint8_t dk[240];
@@ -301,7 +301,7 @@ int mime_rsa_pkcs1_sign(const MimeRsa *rsa, const MimeHashAlg *alg, const uint8_
                         uint8_t *sig);
 int mime_rsa_pkcs1_verify(const MimeRsa *rsa, const MimeHashAlg *alg, const uint8_t *hash, size_t hash_size,
                           const uint8_t *sig, size_t sig_size);
-/* the same with a der DigestInfo prefix of the caller's choice, empty for a bare hash. */
+/* the same with a caller chosen der DigestInfo prefix, empty for a bare hash. */
 int mime_rsa_pkcs1_sign_prefix(const MimeRsa *rsa, const uint8_t *prefix, size_t prefix_size, const uint8_t *hash,
                                size_t hash_size, uint8_t *sig);
 int mime_rsa_pkcs1_verify_prefix(const MimeRsa *rsa, const uint8_t *prefix, size_t prefix_size,
@@ -327,7 +327,7 @@ extern const MimeEcCurve mime_p256, mime_p384, mime_p521;
 uint32_t mime_ec_bits(const MimeEcCurve *curve);
 uint32_t mime_ec_size(const MimeEcCurve *curve);
 const char *mime_ec_name(const MimeEcCurve *curve);
-/* the prime, a, b, the generator, the order and the cofactor, each size bytes but the cofactor. */
+/* p, a, b, the generator, the order and the cofactor; all but the cofactor are size bytes. */
 void mime_ec_parameters(const MimeEcCurve *curve, uint8_t *p, uint8_t *a, uint8_t *b, uint8_t *gx, uint8_t *gy,
                         uint8_t *n);
 
@@ -338,7 +338,6 @@ typedef struct MimeEcKey {
 } MimeEcKey;
 
 int mime_ec_generate(MimeEcKey *key, const MimeEcCurve *curve);
-/* fills the public point from d. */
 int mime_ec_derive_public(MimeEcKey *key);
 /* the point lies on the curve, in range, and is not infinity. */
 int mime_ec_check_public(const MimeEcKey *key);
@@ -367,7 +366,6 @@ MimeDh *mime_dh_new(void);
 void mime_dh_free(MimeDh *dh);
 /* the rfc 7919 group of 2048, 3072 or 4096 bits, or a generated one below 2048. */
 int mime_dh_group(MimeDh *dh, uint32_t bits);
-/* a private value for the group of dh and its public value. */
 int mime_dh_generate(MimeDh *dh);
 int mime_dh_derive_public(MimeDh *dh);
 /* the peer's value must lie in [2, p - 2]; the secret is size bytes, big endian. */

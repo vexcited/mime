@@ -1,6 +1,5 @@
 /*
- * what the tables of a font file say: its table directory, names, style,
- * metrics and coverage.
+ * reads a font file's tables: directory, names, style, metrics and coverage.
  */
 #include "dw_private.h"
 
@@ -149,7 +148,7 @@ DwStrings *DwFontDataNames(const DwFontData *d, UINT32 name_id)
     DwStrings *result = DwStringsNew();
     if (!result)
         return nullptr;
-    /* the windows records first, so that the macintosh ones only fill the languages they add. */
+    /* windows records first, so the macintosh ones only fill in languages they add. */
     for (int pass = 0; pass < 2; pass++) {
         for (UINT32 i = 0; i < count; i++) {
             const BYTE *r = name + 6 + 12ull * i;
@@ -241,7 +240,7 @@ void DwFontDataMetrics(const DwFontData *d, DWRITE_FONT_METRICS1 *m)
     m->hasTypographicMetrics = t->use_typo_metrics;
 }
 
-/* the box of a glyph's outline in font units, zero for a glyph without one. */
+/* the glyph's outline box in font units, zero for a glyph without one. */
 static BOOL glyph_box(const DwFontData *d, UINT16 glyph, int *x_min, int *y_min, int *x_max, int *y_max)
 {
     const MimeTtfFont *f = &d->ttf;
@@ -296,7 +295,7 @@ typedef struct Ranges {
     UINT32 previous_last;
 } Ranges;
 
-/* ranges that touch merge, and the count is the number there are even past the room given. */
+/* touching ranges merge, and the count keeps going past the room given. */
 static void add_range(Ranges *r, UINT32 first, UINT32 last)
 {
     if (r->count && first == r->previous_last + 1) {

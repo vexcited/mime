@@ -134,7 +134,7 @@ static void clear_status(void)
     __asm__ __volatile__("fnclex");
 }
 
-/* the sse status flags become the ones of a status word, the x87 ones are cleared. */
+/* sets the sse status flags from a status word and clears the x87 ones. */
 static void set_status(unsigned sw)
 {
     unsigned m = get_mxcsr() & ~0x3fu;
@@ -231,7 +231,7 @@ static unsigned read_status(void)
     return x87_read_status() | sse_read_status();
 }
 
-/* the two units apart, for the code that has to tell the old unit from the new one. */
+/* the x87 and sse units separately, for code that needs to tell them apart. */
 DECLSPEC_EXPORT int __cdecl __control87_2(unsigned new_control, unsigned mask, unsigned *x87, unsigned *sse2)
 {
     if (x87) {
@@ -413,7 +413,7 @@ unsigned int __cdecl _control87(unsigned int value, unsigned int mask)
     return cw;
 }
 
-/* _controlfp ignores the denormal exception mask, and the precision but on x86, like msvcrt. */
+/* like msvcrt, _controlfp ignores the denormal exception mask, and the precision except on x86. */
 unsigned int __cdecl _controlfp(unsigned int value, unsigned int mask)
 {
 #ifdef __i386__
@@ -483,7 +483,7 @@ typedef struct {
     unsigned long Status;
 } FENV;
 
-/* the exception flags of fenv.h are the ones of _statusfp, the denormal one left out. */
+/* the fenv.h exception flags are the _statusfp ones without the denormal flag. */
 unsigned MsvcrtFpGetStatus(void)
 {
     return read_status();
@@ -494,7 +494,7 @@ void MsvcrtFpSetStatus(unsigned flags)
     set_status(flags);
 }
 
-/* does the arithmetic that sets the flags, so a trap that is unmasked is taken as it would be. */
+/* does arithmetic that sets the flags, so an unmasked trap is taken as it would be. */
 void MsvcrtFpRaise(unsigned flags)
 {
     volatile double zero = 0, one = 1, three = 3, big = DBL_MAX, small = DBL_MIN;
@@ -547,7 +547,6 @@ DECLSPEC_EXPORT int __cdecl fegetround(void)
     return (int)(read_control() & _MCW_RC);
 }
 
-/* anything but one of the four modes is refused. */
 DECLSPEC_EXPORT int __cdecl fesetround(int mode)
 {
     if ((mode & FE_ROUND_MASK) != mode)
@@ -556,7 +555,7 @@ DECLSPEC_EXPORT int __cdecl fesetround(int mode)
     return fegetround() != mode;
 }
 
-/* the layout of the structure is the control word and the status of this runtime, its own. */
+/* the structure holds this runtime's own control word and status. */
 DECLSPEC_EXPORT int __cdecl fegetenv(FENV *env)
 {
     env->Control = read_control();
@@ -571,7 +570,6 @@ DECLSPEC_EXPORT int __cdecl fesetenv(const FENV *env)
     return read_control() != env->Control || read_status() != env->Status;
 }
 
-/* saves the environment, clears the flags and masks every exception. */
 DECLSPEC_EXPORT int __cdecl feholdexcept(FENV *env)
 {
     fegetenv(env);

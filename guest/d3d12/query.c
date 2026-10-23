@@ -1,8 +1,7 @@
 /*
- * query heaps and command signatures. a query heap is a vulkan query pool,
- * pools per stream for stream output statistics. queries are reset when
- * the heap is made and after each resolve, outside any render pass, so a
- * query is ready for its next use once its result was copied out.
+ * query heaps and command signatures. a query heap is a Vulkan query pool, with a pool per stream for stream output
+ * statistics. queries are reset at heap creation and after each resolve, outside render passes, so a query is
+ * ready again once its result was copied out.
  */
 #include "d3d12_private.h"
 
@@ -84,7 +83,7 @@ static const struct ID3D12QueryHeapVtbl g_heap_vtbl = {
     heap_get_device,
 };
 
-/* the statistics direct3d 12 counts, in the order vulkan writes them, which is direct3d's own. */
+/* the statistics Direct3D 12 counts, in the order Vulkan writes them, which matches Direct3D's. */
 static const VkQueryPipelineStatisticFlags STATISTICS =
     VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT | VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT |
     VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT |
@@ -164,7 +163,6 @@ HRESULT D12CreateQueryHeap(D12Device *device, const D3D12_QUERY_HEAP_DESC *desc,
     return S_OK;
 }
 
-/* the pool a query of a type lives in. */
 static VkQueryPool query_pool(D12QueryHeap *heap, D3D12_QUERY_TYPE type, UINT *stream)
 {
     *stream = 0;
@@ -204,7 +202,7 @@ void D12EndQuery(D12CommandList *list, D12QueryHeap *heap, D3D12_QUERY_TYPE type
         vk->vkCmdEndQuery(list->cmd, pool, index);
 }
 
-/* copies results as direct3d lays them out, waiting for them, then resets the queries for their next use. */
+/* copies results in Direct3D's layout, waiting for them, then resets the queries for reuse. */
 void D12ResolveQueries(D12CommandList *list, D12QueryHeap *heap, D3D12_QUERY_TYPE type, UINT start, UINT count,
                        D12Resource *dst, UINT64 offset)
 {
@@ -223,7 +221,7 @@ void D12ResolveQueries(D12CommandList *list, D12QueryHeap *heap, D3D12_QUERY_TYP
     vk->vkCmdCopyQueryPoolResults(list->cmd, pool, start, count, dst->buffer, dst->offset + offset, stride,
                                   VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
     vk->vkCmdResetQueryPool(list->cmd, pool, start, count);
-    /* binary occlusion asks for 0 or 1: any nonzero count is clamped by a min with 1 through a fill, not done; the count stays. */
+    /* binary occlusion should give 0 or 1, but nonzero counts are not clamped to 1. */
 }
 
 /* ------------------------------------------------------------------ command signatures */
@@ -309,7 +307,7 @@ static const struct ID3D12CommandSignatureVtbl g_signature_vtbl = {
     signature_get_device,
 };
 
-/* the bytes an argument takes in the argument buffer. */
+/* the size of an argument in the argument buffer. */
 static UINT argument_size(const D3D12_INDIRECT_ARGUMENT_DESC *a)
 {
     switch (a->Type) {
@@ -329,11 +327,9 @@ static UINT argument_size(const D3D12_INDIRECT_ARGUMENT_DESC *a)
 }
 
 /*
- * the layout of generated commands doing what a signature does: root
- * arguments are push constants at their parameter's place, vertex and
- * index buffer views have vulkan's layout, index formats read as dxgi's,
- * and the draw or dispatch comes last. NULL when the device has no
- * generated commands or the signature has an argument they cannot take.
+ * generated commands doing what a signature does: root arguments are push constants at their parameter's offset,
+ * vertex and index buffer views use Vulkan's layout with dxgi index formats, and the draw or dispatch comes last.
+ * NULL when the device has no generated commands or an argument cannot be expressed.
  */
 static VkIndirectCommandsLayoutEXT command_layout(D12Device *device, const D3D12_COMMAND_SIGNATURE_DESC *desc,
                                                  D12RootSignature *root, VkShaderStageFlags *stages)
@@ -426,7 +422,7 @@ HRESULT D12CreateCommandSignature(D12Device *device, const D3D12_COMMAND_SIGNATU
 {
     if (!desc->NumArgumentDescs || !desc->pArgumentDescs)
         return E_INVALIDARG;
-    /* the last argument is what each command does; the ones before it change state, which needs the root signature. */
+    /* the last argument is the command itself; any state changing ones before it need the root signature. */
     D3D12_INDIRECT_ARGUMENT_TYPE last = desc->pArgumentDescs[desc->NumArgumentDescs - 1].Type;
     if (last != D3D12_INDIRECT_ARGUMENT_TYPE_DRAW && last != D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED &&
         last != D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH && last != D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH &&
@@ -458,7 +454,7 @@ HRESULT D12CreateCommandSignature(D12Device *device, const D3D12_COMMAND_SIGNATU
     signature->root = root;
     if (root)
         root->iface.lpVtbl->AddRef(&root->iface);
-    /* a dispatch alone goes straight to vulkan but for its count, which generated commands read. */
+    /* a lone dispatch maps to Vulkan directly except for its count, which needs generated commands. */
     signature->layout = command_layout(device, desc, root, &signature->stages);
     signature->child.refs = 1;
     D12ChildInit(&signature->child, device);

@@ -1,10 +1,9 @@
 /*
- * surfaces direct3d draws to or samples, and their copies in the
- * backend. a copy follows the surface's memory: drawing makes the copy
- * newer, and the cpu reading or writing the memory reads it back first;
- * writes to the memory reach the copy before the next use. formats the
- * backend has no match for go through 32-bit pixels, as do textures whose
- * color key becomes alpha.
+ * surfaces direct3d draws to or samples, and their backend copies. a copy
+ * follows the surface's memory: drawing makes the copy newer and cpu access
+ * reads it back first, while memory writes reach the copy before its next
+ * use. formats the backend lacks, and textures whose color key becomes
+ * alpha, go through 32-bit pixels.
  */
 #include "d3d_private.h"
 
@@ -137,7 +136,7 @@ static BOOL decoder(DDSURF *s, DECODE *d)
     return TRUE;
 }
 
-/* a texel matching the key, compared raw as windows' rasterizer does, keeps its color with alpha 0. */
+/* a texel matching the key, compared raw like windows' rasterizer, keeps its color with alpha 0. */
 static DWORD decode(const DECODE *d, DWORD v)
 {
     DWORD argb;
@@ -186,7 +185,6 @@ void D3dSurfFree(DDSURF *s)
     s->d3d = nullptr;
 }
 
-/* the next smaller level of a mipmap. */
 static DDSURF *next_level(DDSURF *s)
 {
     for (LIST_ENTRY *e = s->attached.Flink; e != &s->attached; e = e->Flink) {
@@ -207,7 +205,7 @@ static UINT level_count(DDSURF *s)
     return n;
 }
 
-/* changes of the pixels of every level, and of the palette the pixels index. */
+/* changes to every level's pixels and to the palette they index. */
 static DWORD chain_generation(DDSURF *s, UINT levels)
 {
     DWORD g = 0;
@@ -219,7 +217,7 @@ static DWORD chain_generation(DDSURF *s, UINT levels)
     return g;
 }
 
-/* one level's rows into the image, through 32-bit pixels when the backend lacks the format or keys it. */
+/* goes through 32-bit pixels when the backend lacks the format or the texture is keyed. */
 static BOOL upload_level(D3DSURFX *x, DDSURF *s, UINT level)
 {
     if (!s->memory)
@@ -266,7 +264,7 @@ void D3dSurfQuantize(DDSURF *s, const BYTE *cube)
         memcpy(x->cube, cube, sizeof(x->cube));
 }
 
-/* the entry closest to a color, found once per 15-bit color and palette. */
+/* cached per 15-bit color and palette. */
 static BYTE nearest_entry(D3DSURFX *x, const DECODE *d, DDPAL *pal, DWORD argb)
 {
     DWORD key = (argb >> 9 & 0x7C00) | (argb >> 6 & 0x3E0) | (argb >> 3 & 0x1F);
@@ -296,7 +294,7 @@ static BYTE nearest_entry(D3DSURFX *x, const DECODE *d, DDPAL *pal, DWORD argb)
     return (BYTE)best;
 }
 
-/* a color of a palettized target as an index, the color cube's as d3dim quantizes to it. */
+/* quantizes to the color cube like d3dim when there is one. */
 static DWORD quantize(D3DSURFX *x, const DECODE *d, DDPAL *pal, DWORD argb)
 {
     if (!x->cubed)
@@ -306,7 +304,7 @@ static DWORD quantize(D3DSURFX *x, const DECODE *d, DDPAL *pal, DWORD argb)
     return x->cube[36 * r + 6 * g + b];
 }
 
-/* direct3d's drawing back in the memory. */
+/* copies direct3d's drawing back into the memory. */
 static void read_back(D3DSURFX *x, DDSURF *s)
 {
     x->gpu_newer = FALSE;
@@ -354,7 +352,7 @@ void D3dSurfReplaced(DDSURF *s)
     }
 }
 
-/* the format and usage the copy needs now; a changed need makes a new copy. */
+/* a change in the format or usage needed makes a new copy. */
 DbImage *D3dSurfImage(D3DDEV *dev, DDSURF *s, DWORD usage)
 {
     DbDevice *db = dev->db;
@@ -395,7 +393,7 @@ DbImage *D3dSurfImage(D3DDEV *dev, DDSURF *s, DWORD usage)
         x->key = key;
         x->gpu_newer = FALSE;
         if (usage & DB_DEPTH) {
-            /* a new depth buffer starts as the far plane, its memory never reaching it. */
+            /* a new depth buffer starts at the far plane; its memory never reaches it. */
             x->fill = TRUE;
             x->fill_z = 1.0f;
             x->fill_stencil = 0;
@@ -424,7 +422,7 @@ void D3dSurfDepthFill(DDSURF *s, const RECT *rect, DWORD value)
                                                           : (1u << s->format.pf.dwZBufferBitDepth) - 1);
     DWORD max = z.bits >= 32 ? 0xFFFFFFFF : (1u << z.bits) - 1;
     x->fill_z = (float)((double)((value & z.mask) >> z.shift) / (double)max);
-    /* a fill of part of the buffer after another waiting one takes both. */
+    /* a partial fill after another pending one covers both. */
     if (x->fill)
         UnionRect(&x->fill_rect, &x->fill_rect, rect);
     else

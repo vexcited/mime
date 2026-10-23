@@ -1,8 +1,6 @@
 /*
- * cfgmgr32: the device tree as the kernel keeps it, read through
- * NtPlugPlayControl, and device properties from the Enum keys of the
- * registry. device node handles are this process's: an index into the
- * instance ids it has met, the root being the first.
+ * cfgmgr32: the kernel's device tree read through NtPlugPlayControl, and device properties from the registry Enum
+ * keys. a DEVINST is per process: an index into the instance ids seen so far, the root first.
  */
 #define MIME_BUILD_CFGMGR32
 #include <mime/nt.h>
@@ -11,7 +9,6 @@
 #include <mime/win32/cfgmgr32.h>
 #include "cfgmgr32_private.h"
 
-/* ROOT_ID is in cfgmgr32_private.h */
 #define MAX_NODES 1024
 
 static WCHAR *g_nodes[MAX_NODES];
@@ -25,7 +22,7 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
     return TRUE;
 }
 
-/* the handle of an instance id, made the first time it is met. */
+/* assigns a handle the first time an id is seen. */
 DEVINST node_of(PCWSTR id)
 {
     RtlEnterCriticalSection(&g_lock);
@@ -61,7 +58,7 @@ BOOL is_root(PCWSTR id)
     return !lstrcmpiW(id, ROOT_ID);
 }
 
-/* a request of the kernel; *out holds the answer, to be freed. */
+/* the caller frees *out. */
 NTSTATUS request(MIME_PNP_CLASS klass, ULONG flags, const GUID *guid, PCWSTR in, MIME_PNP_REQUEST **out)
 {
     ULONG chars = 1024;
@@ -155,7 +152,7 @@ static CONFIGRET related(PDEVINST out, DEVINST devinst, ULONG relation)
     if (is_root(id)) {
         if (relation != MIME_PNP_CHILD)
             return CR_NO_SUCH_DEVNODE;
-        /* the root's first child: the first device without a parent. */
+        /* the root's first child is the first device without a parent. */
         if (!NT_SUCCESS(request(MIME_PNP_LIST_DEVICES, 0, nullptr, nullptr, &r)))
             return CR_NO_SUCH_DEVNODE;
         CONFIGRET cr = CR_NO_SUCH_DEVNODE;
@@ -210,7 +207,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_ID_Size(PULONG length, DEVINST devinst, ULO
     return CR_SUCCESS;
 }
 
-/* the id, truncated with CR_BUFFER_SMALL when it does not fit, ended by a null when there is room. */
+/* truncates with CR_BUFFER_SMALL, and terminates only when there is room. */
 CMAPI CONFIGRET WINAPI CM_Get_Device_IDW(DEVINST devinst, PWSTR buffer, ULONG length, ULONG flags)
 {
     if (!buffer)
@@ -247,7 +244,7 @@ CMAPI CONFIGRET WINAPI CM_Get_DevNode_Status(PULONG status, PULONG problem, DEVI
         return CR_INVALID_DEVNODE;
     if (!present(id))
         return CR_NO_SUCH_DEVINST;
-    /* the devices are the ones the drivers of Mime keep, which cannot be disabled. */
+    /* every device belongs to a mime driver and cannot be disabled. */
     *status = DN_DRIVER_LOADED | DN_STARTED | DN_NT_ENUMERATOR | DN_NT_DRIVER;
     *problem = 0;
     return CR_SUCCESS;
@@ -285,7 +282,7 @@ static PCWSTR value_name(ULONG property)
     }
 }
 
-/* the enumerator, the first part of the instance id. */
+/* the enumerator is the first part of the instance id. */
 static CONFIGRET enumerator(PCWSTR id, PULONG type, PVOID buffer, PULONG length)
 {
     ULONG n = 0;
@@ -478,7 +475,7 @@ CMAPI CONFIGRET WINAPI CM_Get_DevNode_PropertyW(DEVINST devinst, const DEVPROPKE
         BYTE data[2048];
         ULONG length = sizeof(data), kind;
         CONFIGRET cr = CM_Get_DevNode_Registry_PropertyW(devinst, REGISTRY[i].property, &kind, data, &length, 0);
-        /* a name falls back to the description, as windows' DEVPKEY_NAME does. */
+        /* like windows' DEVPKEY_NAME, the name falls back to the description. */
         if (cr == CR_NO_SUCH_VALUE && key_is(key, &DEVPKEY_NAME)) {
             length = sizeof(data);
             cr = CM_Get_DevNode_Registry_PropertyW(devinst, CM_DRP_DEVICEDESC, &kind, data, &length, 0);
@@ -596,7 +593,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_ListA(GUID *klass, PCSTR device, 
     return cr;
 }
 
-/* an interface's device, then the device's properties. */
+/* looks up the interface's device, then reads that device's properties. */
 CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_PropertyW(PCWSTR path, const DEVPROPKEY *key, DEVPROPTYPE *type,
                                                          PBYTE buffer, PULONG size, ULONG flags)
 {
@@ -687,7 +684,7 @@ static BOOL id_wanted(PCWSTR id, PCWSTR filter, ULONG flags)
     return TRUE;
 }
 
-/* the matching device ids as a list of strings, the root first when nothing filters it out. */
+/* a multi string of matching ids, the root first unless filtered out. */
 static CONFIGRET id_list(PCWSTR filter, ULONG flags, PWSTR buffer, ULONG *length)
 {
     if (flags & ~CM_GETIDLIST_FILTER_BITS)

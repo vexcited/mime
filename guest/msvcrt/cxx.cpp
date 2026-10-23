@@ -1,16 +1,13 @@
 /*
- * the c++ part of msvcrt: type_info, whose objects are the type
- * descriptors compilers emit, the exception classes programs derive
- * from, operator new and delete, terminate and unexpected, and the
- * casts of run time type information. written in c++ so the compiler's
- * microsoft abi gives the exported names, vtables and type information
- * programs were built against.
+ * the C++ part of msvcrt: type_info, whose objects are the type descriptors compilers emit, the exception classes
+ * programs derive from, operator new and delete, terminate and unexpected, and the RTTI casts. written in C++ so the
+ * compiler's Microsoft ABI produces the exported names, vtables and type information programs were built against.
  */
 #include "cxx.h"
 
 /* ------------------------------------------------------------------ operator new and delete */
 
-/* msvcrt's operator new returns null when the new handler gives up, it never throws. */
+/* msvcrt's operator new returns NULL when the new handler gives up, it never throws. */
 void *__cdecl operator new(size_t size)
 {
     for (;;) {
@@ -36,14 +33,14 @@ new_handler_t __cdecl _query_new_handler(void) { return MsvcrtQueryNewHandler();
 int __cdecl _set_new_mode(int mode) { return MsvcrtSetNewMode(mode); }
 int __cdecl _query_new_mode(void) { return MsvcrtQueryNewMode(); }
 
-/* the standard handler is not kept: only null may be set, as in msvcrt. */
+/* like msvcrt, the handler is not stored: only NULL may be set. */
 std_new_handler_t __cdecl set_new_handler(std_new_handler_t handler) { return nullptr; }
 
 /* ------------------------------------------------------------------ type_info */
 
 type_info::~type_info() {}
 
-/* the undecorated name, made the first time and kept in the descriptor's spare field. */
+/* the undecorated name, built on first use and cached in the descriptor's spare field. */
 const char *type_info::name(__type_info_node *) const
 {
     if (!_m_data) {
@@ -61,8 +58,8 @@ int type_info::operator==(const type_info &other) const { return this == &other 
 int type_info::operator!=(const type_info &other) const { return !(*this == other); }
 
 /*
- * type_info's vtable, which the compiler does not emit for the class
- * itself: no locator before it, then the scalar deleting destructor.
+ * type_info's vtable, which the compiler does not emit for the class itself: no locator before it, then the scalar
+ * deleting destructor.
  */
 extern "C" void *__thiscall_member MsvcrtTypeInfoDeleting(type_info *self, unsigned flags) MSVCRT_NAME(TYPE_INFO_DELETING);
 extern "C" void *__thiscall_member MsvcrtTypeInfoDeleting(type_info *self, unsigned flags)
@@ -98,7 +95,7 @@ exception::exception(const char *const &what) : _m_what(nullptr), _m_doFree(0)
     }
 }
 
-/* the message kept as it is, not copied. */
+/* the message is kept, not copied. */
 exception::exception(const char *const &what, int) : _m_what(what), _m_doFree(0) {}
 
 exception::exception(const exception &other) : _m_what(nullptr), _m_doFree(0) { *this = other; }
@@ -164,9 +161,8 @@ extern "C" void __thiscall_member MsvcrtBadTypeidDefault(bad_typeid *self) MSVCR
 extern "C" void __thiscall_member MsvcrtBadTypeidDefault(bad_typeid *self) { new (self) bad_typeid("bad typeid"); }
 
 /*
- * the vector deleting destructors, which vtables of the compiler's own
- * have in place of the scalar ones: flags bit 2 destroys an array whose
- * count precedes it, bit 1 frees the memory.
+ * the vector deleting destructors that the compiler's own vtables use in place of the scalar ones: flags bit 2
+ * destroys an array whose count precedes it, bit 1 frees the memory.
  */
 template <class T> static void *vector_deleting(T *self, unsigned flags)
 {
@@ -240,7 +236,7 @@ terminate_function __cdecl set_unexpected(terminate_function handler)
 extern "C" terminate_function __cdecl _get_terminate(void) { return (terminate_function)MsvcrtEhThread()->terminate; }
 extern "C" terminate_function __cdecl _get_unexpected(void) { return (terminate_function)MsvcrtEhThread()->unexpected; }
 
-/* the handler set, then abort, as terminate does when the handler returns or there is none. */
+/* calls the handler, then aborts if it returns or there is none. */
 void __cdecl terminate(void)
 {
     terminate_function handler = (terminate_function)MsvcrtEhThread()->terminate;
@@ -301,7 +297,7 @@ static const RTTI_LOCATOR *locator_of(const void *object)
     return static_cast<const RTTI_LOCATOR *>(vtable[-1]);
 }
 
-/* the image whose rvas a locator's fields count from: on x86 they are addresses. */
+/* the image base a locator's rvas are relative to. on x86 they are addresses. */
 static ULONG_PTR locator_base(const RTTI_LOCATOR *locator)
 {
 #ifdef _WIN64
@@ -317,7 +313,7 @@ static ULONG_PTR locator_base(const RTTI_LOCATOR *locator)
 
 #define RTTI_PTR(base, field) ((const void *)((base) + (ULONG_PTR)(field)))
 
-/* the complete object from a pointer to a subobject, its locator's offsets undone. */
+/* the complete object from a subobject pointer, undoing its locator's offsets. */
 static const char *complete_object(const void *object, const RTTI_LOCATOR *locator)
 {
     const char *p = static_cast<const char *>(object) - locator->offset;
@@ -372,9 +368,8 @@ static bool same_type(ULONG_PTR base, int a, const type_info *b)
 }
 
 /*
- * dynamic_cast: the complete object, then, in its class hierarchy, the
- * target as a public base found once (or the subobject the source is
- * part of, for a cast across), its offset from the complete object.
+ * dynamic_cast: find the complete object, then in its class hierarchy the target as a public base found once, or for
+ * a cross cast the subobject the source is part of, and return its offset from the complete object.
  */
 extern "C" void *__cdecl __RTDynamicCast(void *object, LONG vfdelta, const type_info *source, const type_info *target,
                                          int is_reference)
@@ -392,7 +387,7 @@ extern "C" void *__cdecl __RTDynamicCast(void *object, LONG vfdelta, const type_
         const RTTI_BASE *b = base_at(base, hierarchy, i);
         if (!same_type(base, b->type, target))
             continue;
-        /* bases that are not public or are ambiguous are no answer. */
+        /* skip bases that are not public or are ambiguous. */
         if (b->attributes & (RTTI_BASE_NOT_VISIBLE | RTTI_BASE_AMBIGUOUS))
             continue;
         result = const_cast<char *>(complete + base_offset(complete, b->where));

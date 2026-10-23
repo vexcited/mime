@@ -1,13 +1,11 @@
 /*
  * vertex arrays and draws.
  *
- * a draw sends only what changed since the last one: the pipeline (program,
- * vertex formats, blending and targets, deduplicated by content), depth and
- * stencil, rasterizer state, viewport, scissor, uniforms, textures and
- * vertex buffers. each attribute location has its own vertex buffer slot.
- * buffer objects are bound where they are; client arrays, unaligned data
- * and doubles are copied to the stream for the vertices the draw reads, and
- * the primitives metal lacks become indexed triangles or line strips.
+ * a draw sends only what changed since the last one: the pipeline, made of program, vertex formats, blending and
+ * targets and deduplicated by content, then depth and stencil, rasterizer state, viewport, scissor, uniforms, textures
+ * and vertex buffers. each attribute location has its own vertex buffer slot. buffer objects are bound in place;
+ * client arrays, unaligned data and doubles are copied to the stream for the vertices the draw reads, and primitives
+ * Metal lacks become indexed triangles or line strips.
  */
 #include "opengl32.h"
 
@@ -379,7 +377,7 @@ static uint32_t element_bytes(const GlVertexAttrib *a)
     return (a->size == GL_BGRA ? 4 : (uint32_t)a->size) * type_bytes(a->type);
 }
 
-/* the metal vertex format of an attribute, as stored after any copy. */
+/* the Metal vertex format of an attribute, after any copy. */
 static uint8_t vertex_format(const GlVertexAttrib *a)
 {
     int n = a->size == GL_BGRA ? 4 : a->size;
@@ -537,17 +535,17 @@ typedef struct Source {
     uint8_t format;
 } Source;
 
-/* copied vertex data starts at vertex rebase, so data bound in place is moved by as many vertices. */
+/* copied vertex data starts at vertex rebase, so data bound in place is shifted by as many vertices. */
 typedef struct DrawRange {
-    uint32_t first, count; /* vertices the draw reads */
+    uint32_t first, count; /* vertices the draw reads. */
     uint32_t instances, base_instance;
-    uint32_t rebase;       /* first when anything is copied, else 0 */
+    uint32_t rebase;       /* first when anything is copied, else 0. */
 } DrawRange;
 
 /*
- * integer data that feeds a float input is converted to floats in the copy when the host cannot do it on the way:
- * metal has no normalized 32 bit formats, vulkan reads integer formats as integers and has no three component 8 and
- * 16 bit ones everywhere.
+ * integer data feeding a float input is converted to floats in the copy when the host cannot do it on the way: Metal
+ * has no normalized 32-bit formats, Vulkan reads integer formats as integers and lacks three component 8 and 16-bit
+ * ones on some devices.
  */
 static BOOL widened(const GlVertexAttrib *a)
 {
@@ -599,7 +597,7 @@ static double widen(const uint8_t *p, GLenum type, BOOL normalized)
     }
 }
 
-/* copies count vertices from vertex first on into the stream, tightly and aligned. */
+/* copies count vertices starting at first into the stream, tightly packed and aligned. */
 static BOOL copy_attrib(const GlVertexAttrib *a, const uint8_t *base, uint32_t first, uint32_t count, Source *s)
 {
     uint32_t elem = element_bytes(a);
@@ -828,7 +826,7 @@ static void emit_raster(GlContext *ctx)
 {
     MimeGpuSetRaster *r = gl_emit(MIME_GPU_SET_RASTER, sizeof(MimeGpuSetRaster));
     r->cull = !ctx->cull_face ? 0 : ctx->cull_mode == GL_FRONT ? 1 : ctx->cull_mode == GL_BACK ? 2 : 0;
-    /* rows are flipped on the way to metal, which turns the winding around. */
+    /* rows are flipped on the way to Metal, which reverses the winding. */
     r->winding = ctx->front_face == GL_CCW ? 0 : 1;
     r->fill = ctx->polygon_mode == GL_LINE ? 1 : 0;
     r->depth_clip = !ctx->depth_clamp;
@@ -995,9 +993,9 @@ static uint32_t read_index(const void *indices, GLenum type, uint32_t i)
 }
 
 /*
- * flat shading takes the color of one vertex of each primitive, the last one of lines, triangles and quads and the
- * first one of polygons. metal takes the first vertex of what it draws, so flat draws are listed with the vertex that
- * gl picks first, in an order that keeps the winding.
+ * flat shading takes the color of the last vertex of lines, triangles and quads and the first vertex of polygons. Metal
+ * takes the first vertex of each primitive, so flat draws list the vertex GL picks first, in an order that keeps the
+ * winding.
  */
 static BOOL flat_mode(GLenum mode)
 {
@@ -1019,7 +1017,6 @@ static BOOL needs_conversion(GLenum mode, BOOL flat)
            (flat && flat_mode(mode));
 }
 
-/* the number of indices a converted draw has, and the primitive they make. */
 static uint32_t converted_count(GLenum mode, BOOL flat, uint32_t count, uint32_t *primitive)
 {
     *primitive = 3;
@@ -1052,8 +1049,10 @@ static uint32_t converted_count(GLenum mode, BOOL flat, uint32_t count, uint32_t
     }
 }
 
-/* lists the vertices of fans, loops, quads and polygons, and for flat shading everything else, as triangles, lines or a
- * strip; NULL indices count from first. */
+/*
+ * lists fans, loops, quads and polygons, and every primitive when flat shading, as triangles, lines or a strip. NULL
+ * indices count from first.
+ */
 static BOOL convert_primitive(GLenum mode, BOOL flat, const void *indices, GLenum type, uint32_t first, uint32_t count,
                               GlMem *out, uint32_t *out_count, uint32_t *primitive)
 {
@@ -1127,7 +1126,7 @@ static BOOL convert_primitive(GLenum mode, BOOL flat, const void *indices, GLenu
     case GL_QUADS:
         for (uint32_t q = 0; q + 3 < count; q += 4) {
             if (flat) {
-                /* both triangles hold the last vertex, which gl takes the color of. */
+                /* both triangles hold the last vertex, whose color GL takes. */
                 d[k++] = IDX(q + 3);
                 d[k++] = IDX(q);
                 d[k++] = IDX(q + 1);
@@ -1433,7 +1432,7 @@ GLAPI void APIENTRY glMultiDrawElements(GLenum mode, const GLsizei *count, GLenu
 
 static const GlVertexAttrib g_no_attribs[MIME_GPU_MAX_ATTRIBS];
 
-/* draws the vertices collected between glBegin and glEnd with the fixed function pipeline, in one draw. */
+/* one fixed function draw for the vertices collected between glBegin and glEnd. */
 void gl_draw_immediate(GlContext *ctx)
 {
     GlFixed *f = &ctx->ff;
@@ -1479,7 +1478,7 @@ void gl_draw_immediate(GlContext *ctx)
         gl_device_unlock();
         return;
     }
-    /* what changes between the vertices goes into the vertices, the rest is a constant. */
+    /* attributes that vary per vertex go into the vertices, the rest become constants. */
     uint32_t stride = 16, color = 0, normal = 0, texcoord = 0;
     if (f->varying & 1) {
         color = stride;

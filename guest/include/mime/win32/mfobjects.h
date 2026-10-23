@@ -1,7 +1,6 @@
 /*
- * media foundation's core objects: attribute stores, media types, buffers,
- * samples, events, asynchronous results and the dxgi device manager, with
- * the errors of mferror.h. methods are in windows' vtable order.
+ * media foundation core objects: attributes, media types, buffers, samples, events, async results
+ * and the dxgi device manager, plus mferror.h errors. methods follow windows' vtable order.
  */
 #ifndef MIME_WIN32_MFOBJECTS_H
 #define MIME_WIN32_MFOBJECTS_H

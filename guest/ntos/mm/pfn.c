@@ -1,9 +1,7 @@
-/*
- * physical memory: pfn database and buddy allocator.
- */
+/* physical memory: pfn database and buddy allocator. */
 #include "../ntos.h"
 
-#define MM_MAX_ORDER 16 /* 256 MiB runs, for window surfaces of large displays */
+#define MM_MAX_ORDER 16 /* 256 MiB runs, for the window surfaces of large displays. */
 
 static PMMPFN g_pfn;
 static ULONG64 g_ram_base;
@@ -12,15 +10,14 @@ static LIST_ENTRY g_free[MM_MAX_ORDER + 1];
 static SIZE_T g_free_pages;
 static SIZE_T g_total_pages;
 static volatile SIZE_T g_freed_since_discard;
-static BOOLEAN g_discard_enabled = TRUE; /* the kernel option "nodiscard" keeps freed memory in the guest, for measuring */
-static ULONG g_discard_min_order = 4; /* 64 KiB blocks, or the host's memory block */
-#define DISCARD_BATCH (16ull << 8) /* pages freed between discard passes, 16 MiB */
-#define DISCARD_IDLE (1ull << 8)   /* pages freed before the machine idles, 1 MiB */
+static BOOLEAN g_discard_enabled = TRUE; /* the "nodiscard" kernel option keeps freed memory in the guest, for measuring. */
+static ULONG g_discard_min_order = 4; /* 64 KiB blocks, or the host's memory block. */
+#define DISCARD_BATCH (16ull << 8) /* pages freed between discard passes, 16 MiB. */
+#define DISCARD_IDLE (1ull << 8)   /* pages freed before an idle discard, 1 MiB. */
 
 /*
- * the free lists and the counters are guarded by a ticket lock taken with interrupts off. page faults
- * of user mode run without the kernel lock (MmFastFault), so the lock is real: it is the innermost
- * one, taken for a few list operations and never held across anything that waits.
+ * ticket lock over the free lists and counters, taken with interrupts off. user page faults run
+ * without the kernel lock, see MmFastFault, so it is the innermost lock and never held across a wait.
  */
 static volatile ULONG g_pfn_next, g_pfn_serving;
 
@@ -53,10 +50,9 @@ static ULONG64 index_to_pa(ULONG64 index)
 }
 
 /*
- * a block the host was handed back holds zeros and costs no host memory:
- * it stays so while its buddies merge only with blocks like it, and its
- * parts are still zero after a split. such blocks wait at the tail of the
- * free lists, so allocations reuse memory the host already backs.
+ * a block handed back to the host reads as zeros and costs no host memory. it stays so while it merges
+ * only with blocks like it, and its halves stay zero after a split. such blocks sit at the tail of the
+ * free lists so allocations reuse memory the host already backs.
  */
 static void insert_free(PMMPFN p, ULONG order, BOOLEAN discarded)
 {
@@ -86,7 +82,7 @@ static void free_block(ULONG64 index, ULONG order, BOOLEAN discarded)
     insert_free(&g_pfn[index], order, discarded);
 }
 
-/* returns whether the block is known to hold zeros. */
+/* *zeroed tells whether the block is known to hold zeros. */
 static BOOLEAN alloc_block(ULONG order, ULONG64 *out_index, BOOLEAN *zeroed)
 {
     ULONG o = order;
@@ -119,13 +115,10 @@ static void mark_allocated(ULONG64 index, ULONG64 count)
 }
 
 /*
- * hands the free blocks of 64 KiB and more back to the host, which drops
- * their memory until the guest writes them again. a block is taken off its
- * list while the host works on it, so the lock is not held meanwhile and
- * no page changes hands under it; blocks already handed back are skipped.
- * a pass hands back a bounded amount, so the kernel lock is never held
- * long; the rest waits for the next pass. a block larger than a pass goes
- * alone, when the machine idles.
+ * hands free blocks of 64 KiB and more back to the host, which drops their memory until the guest
+ * writes them again. a block is off its list while the host works on it, so the lock is not held.
+ * a pass is bounded so the kernel lock is never held long. a block larger than a pass goes alone,
+ * when the machine idles.
  */
 #define DISCARD_PASS_BYTES (64ull << 20)
 
@@ -138,7 +131,7 @@ static void discard_free(BOOLEAN idle)
         for (;;) {
             ULONG64 state = pfn_lock();
             PMMPFN p = nullptr;
-            /* blocks that were not handed back yet wait at the head, those that were at the tail. */
+            /* blocks not handed back yet sit at the head. */
             if (!IsListEmpty(&g_free[order])) {
                 p = CONTAINING_RECORD(g_free[order].Flink, MMPFN, ListEntry);
                 if (p->Flags & MM_PFN_DISCARDED)
@@ -146,7 +139,7 @@ static void discard_free(BOOLEAN idle)
             }
             ULONG64 bytes = (1ull << order) << PAGE_SHIFT;
             if (p && bytes > budget && !(idle && budget == DISCARD_PASS_BYTES)) {
-                /* the rest goes on the next idle pass, not at every free until then. */
+                /* leave the rest for the next idle pass, not every free until then. */
                 g_freed_since_discard = DISCARD_IDLE;
                 pfn_unlock(state);
                 return;
@@ -175,10 +168,7 @@ void MmDiscardIdle(void)
         discard_free(TRUE);
 }
 
-/*
- * a page of zeros, written past the caches where the processor allows it: the program that gets it reads
- * little of it at first, and filling a page the usual way first reads it from memory.
- */
+/* non-temporal stores: a normal fill first reads the page from memory, and the new owner touches little of it at first. */
 static void zero_page(void *page)
 {
 #ifdef __x86_64__
@@ -202,12 +192,10 @@ static void zero_page(void *page)
 }
 
 /*
- * each processor keeps a few pages of its own, handed out without any lock: a fault wants pages
- * a few at a time, and one lock that every processor takes for each of them was where the faults
- * of a process stopped adding up. a cache is filled and emptied by whole runs of the free lists,
- * and the processor that owns it holds Busy while it uses it, which only another processor
- * emptying it for memory that ran short can find taken. a page in a cache counts as free; the
- * lowest bit of its address says whether the host is known to have left it zero.
+ * per processor page caches, so faults on several processors do not contend on the pfn lock. a cache
+ * is filled and emptied in runs. its owner holds Busy while using it, so only another processor
+ * draining it under memory pressure can find it taken. cached pages count as free, and bit 0 of an
+ * entry says the host left the page zero.
  */
 #define CACHE_RUN 32
 #define CACHE_MAX 96
@@ -232,7 +220,7 @@ static void cache_unlock(MM_PAGE_CACHE *c)
     __atomic_store_n(&c->Busy, 0, __ATOMIC_RELEASE);
 }
 
-/* takes up to CACHE_RUN pages off the free lists, in runs as long as they are found. the pfn lock is held. */
+/* the pfn lock is held. */
 static ULONG take_run(ULONG64 *pages)
 {
     ULONG got = 0;
@@ -251,7 +239,7 @@ static ULONG take_run(ULONG64 *pages)
     return got;
 }
 
-/* gives pages back to the free lists. the pfn lock is held. */
+/* the pfn lock is held. */
 static void return_run(const ULONG64 *pages, ULONG count)
 {
     for (ULONG i = 0; i < count; i++) {
@@ -262,7 +250,6 @@ static void return_run(const ULONG64 *pages, ULONG count)
     g_free_pages += count;
 }
 
-/* the other processors' caches back to the lists, for an allocation that found them empty. */
 static void drain_caches(void)
 {
     PKPRCB self = KeGetCurrentPrcb();
@@ -278,7 +265,7 @@ static void drain_caches(void)
     }
 }
 
-/* a page of this processor's cache, refilled from the lists when it is empty. interrupts are off. */
+/* interrupts are off. */
 static ULONG64 cache_pop(MM_PAGE_CACHE *c)
 {
     if (!c->Count) {
@@ -286,7 +273,7 @@ static ULONG64 cache_pop(MM_PAGE_CACHE *c)
         c->Count = take_run(c->Pages);
         pfn_unlock(state);
         if (!c->Count) {
-            /* the lists are empty: the caches of the others may hold what is left. */
+            /* the lists are empty, but other processors' caches may not be. */
             cache_unlock(c);
             drain_caches();
             cache_lock(c);
@@ -300,7 +287,7 @@ static ULONG64 cache_pop(MM_PAGE_CACHE *c)
     return c->Pages[--c->Count];
 }
 
-/* up to count pages, one lock held for them all, none cleared. returns how many; flags[i] tells that page i is zero. */
+/* pages are not cleared. returns how many it got, and zero[i] says page i is known zero. */
 static ULONG allocate_pages(ULONG count, ULONG64 *pages, BOOLEAN *zero)
 {
     ULONG64 state = KiDisableInterrupts();
@@ -338,7 +325,6 @@ ULONG64 MmAllocatePage(void)
     return pa;
 }
 
-/* up to count pages, each zeroed, as a fault wants them. returns how many it found. */
 ULONG MmAllocateZeroedPages(ULONG count, ULONG64 *pages)
 {
     BOOLEAN zero[MM_BATCH_PAGES];
@@ -351,10 +337,7 @@ ULONG MmAllocateZeroedPages(ULONG count, ULONG64 *pages)
     return got;
 }
 
-/*
- * frees pages without looking at how much has been freed, for the paths that run without the kernel
- * lock. a page that is known to hold zeros can say so.
- */
+/* never triggers a discard pass, for paths that run without the kernel lock. */
 static void free_pages(const ULONG64 *pages, ULONG count, BOOLEAN zero)
 {
     ULONG64 state = KiDisableInterrupts();
@@ -367,7 +350,6 @@ static void free_pages(const ULONG64 *pages, ULONG count, BOOLEAN zero)
             continue;
         }
         if (c->Count == CACHE_MAX) {
-            /* the oldest half goes back to the lists. */
             ULONG64 lock = pfn_lock();
             return_run(c->Pages, CACHE_MAX / 2);
             pfn_unlock(lock);
@@ -386,7 +368,7 @@ void MmFreePagesQuiet(const ULONG64 *pages, ULONG count)
     free_pages(pages, count, FALSE);
 }
 
-/* pages taken for a fault and not used: they are still zero. */
+/* for pages taken for a fault and never used, which are still zero. */
 void MmFreeZeroedPagesQuiet(const ULONG64 *pages, ULONG count)
 {
     free_pages(pages, count, TRUE);
@@ -418,14 +400,13 @@ ULONG64 MmAllocateContiguous(SIZE_T pages)
     BOOLEAN zeroed;
     BOOLEAN ok = alloc_block(order, &index, &zeroed);
     if (!ok) {
-        /* the caches of the processors may hold what keeps a run from forming. */
+        /* cached pages may be what keeps a run from forming. */
         pfn_unlock(state);
         drain_caches();
         state = pfn_lock();
         ok = alloc_block(order, &index, &zeroed);
     }
     if (ok) {
-        /* give back the tail that exceeds the request. */
         for (ULONG64 i = pages; i < (1ull << order); i++)
             free_block(index + i, 0, zeroed);
         mark_allocated(index, pages);
@@ -500,23 +481,18 @@ void MmInitialize(MimeBootInfo *boot)
     for (int i = 0; i <= MM_MAX_ORDER; i++)
         InitializeListHead(&g_free[i]);
 
-    /*
-     * the pfn database lives right after everything the loader used. the host
-     * hands over zeroed ram, so the database starts zeroed without touching
-     * it: entries are only written as their pages are used, and the free
-     * memory is released as the largest aligned blocks.
-     */
+    /* the pfn database follows what the loader used. the host's ram starts zeroed, so it needs no clearing. */
     ULONG64 db_phys = boot->first_free_phys;
     ULONG64 db_bytes = ROUND_TO_PAGES(g_ram_pages * sizeof(MMPFN));
     g_pfn = (PMMPFN)HalPhysmap(db_phys);
-    /* entries are written sparsely, one per free block, which huge pages would each commit whole. */
+    /* entries are written sparsely, one per free block, and huge pages would commit each one whole. */
     HalHypercall(MIME_HC_MEM_ADVISE, db_phys, db_bytes, MIME_MEM_SPARSE, 0, 0, 0, nullptr);
     if (boot->memory_block_shift > PAGE_SHIFT + 4 && boot->memory_block_shift - PAGE_SHIFT <= MM_MAX_ORDER)
         g_discard_min_order = boot->memory_block_shift - PAGE_SHIFT;
     ULONG64 start = (db_phys + db_bytes - g_ram_base) >> PAGE_SHIFT;
     for (ULONG64 i = 0; i < start; i++)
         g_pfn[i].Flags = MM_PFN_RESERVED;
-    /* the host has never been given this memory: it is all zeros. */
+    /* the host never backed this memory, so it is all zeros. */
     for (ULONG64 i = start; i < g_ram_pages;) {
         ULONG order = MM_MAX_ORDER;
         while (order && ((i & ((1ull << order) - 1)) || i + (1ull << order) > g_ram_pages))

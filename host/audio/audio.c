@@ -1,7 +1,6 @@
 /*
- * audio output streams. each guest stream is a default output unit whose
- * render callback reads frames straight from the guest's ring (mime/audio.h).
- * core audio converts the guest's format, rate and channels to the device.
+ * each guest stream uses a default output unit reading directly from the ring in mime/audio.h. Core Audio converts
+ * its format, rate and channel count to the output device.
  */
 #include "audio.h"
 

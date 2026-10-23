@@ -1,11 +1,10 @@
 /*
- * mciqtz32.dll, the mpegvideo and digitalvideo device windows plays
- * through directshow. mime has no directshow, so the driver plays the
- * audio files it is opened for itself: mp3 through the acm's layer 3
- * decoder and wave files directly or through the acm. video files are
- * refused. positions round up to whole milliseconds, notifications are
- * posted straight to the callback window, and the device reports video
- * and the digitalvideo type even for audio, as windows' does.
+ * mciqtz32.dll, the mpegvideo and digitalvideo device. windows plays these
+ * through directshow, which mime lacks, so this driver plays audio files
+ * itself: mp3 through the acm layer 3 decoder, wave directly or through the
+ * acm. video files are refused. positions round up to whole milliseconds,
+ * notifications go straight to the callback window, and like windows the
+ * device reports video and the digitalvideo type even for audio.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
@@ -55,16 +54,16 @@ typedef struct MEDIA {
     WCHAR file[MAX_PATH];
     WAVEFORMATEX pcm;
     BYTE *data;
-    DWORD size;           /* the decoded length */
-    volatile DWORD ready; /* what the decoder has made of it */
+    DWORD size;           /* decoded length. */
+    volatile DWORD ready; /* bytes decoded so far. */
     BYTE *source;
     DWORD source_size, source_start;
-    WAVEFORMATEX *coded;  /* the compressed format, null for pcm */
+    WAVEFORMATEX *coded;  /* the compressed format, null for pcm. */
     HANDLE decoder;
     DWORD time_format;
     DWORD volume, speed;
     BOOL mute_left, mute_right;
-    /* playing */
+    /* playback state. */
     HWAVEOUT out;
     HANDLE thread, event;
     volatile BOOL quit;
@@ -113,7 +112,7 @@ static MCIERROR done(MEDIA *m, MCIERROR r, DWORD flags, DWORD_PTR parms)
 
 static DWORD to_ms(const MEDIA *m, DWORD bytes)
 {
-    /* directshow's reference time in 100 ns, rounded up to milliseconds. */
+    /* directshow reference time in 100 ns units, rounded up to milliseconds. */
     ULONG64 t = (ULONG64)(bytes / m->pcm.nBlockAlign) * 10000000 / m->pcm.nSamplesPerSec;
     return (DWORD)((t + 9999) / 10000);
 }
@@ -146,7 +145,6 @@ static const WORD BITRATES[2][15] = {
 };
 static const DWORD RATES[3][3] = {{44100, 48000, 32000}, {22050, 24000, 16000}, {11025, 12000, 8000}};
 
-/* a layer 3 header: its frame length, rate and channels. */
 static DWORD frame_header(const BYTE *p, DWORD *rate, WORD *channels, DWORD *samples)
 {
     DWORD h = (DWORD)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3];
@@ -162,7 +160,7 @@ static DWORD frame_header(const BYTE *p, DWORD *rate, WORD *channels, DWORD *sam
     return (lsf ? 72000 : 144000) * BITRATES[lsf][index] / *rate + ((h >> 9) & 1);
 }
 
-/* finds the frames of an mp3 file, past any id3 tag, and the length they decode to. */
+/* finds the mp3 frames past any id3 tag, and the length they decode to. */
 static MCIERROR scan_mp3(MEDIA *m)
 {
     const BYTE *p = m->source, *end = p + m->source_size;
@@ -181,7 +179,7 @@ static MCIERROR scan_mp3(MEDIA *m)
             p++;
             continue;
         }
-        /* a first header counts only with a second after it. */
+        /* a first header only counts if another follows it. */
         if (!first) {
             DWORD r2, s2;
             WORD c2;
@@ -267,7 +265,7 @@ static MCIERROR scan_wave(MEDIA *m)
     return MMSYSERR_NOERROR;
 }
 
-/* decodes the whole file ahead of playing; what is ready may be played while the rest follows. */
+/* decodes the whole file ahead of playing, what is ready may play while the rest follows. */
 static DWORD WINAPI decode(void *arg)
 {
     MEDIA *m = arg;
@@ -309,7 +307,7 @@ static DWORD WINAPI decode(void *arg)
     acmStreamClose(s, 0);
     HeapFree(GetProcessHeap(), 0, in);
     HeapFree(GetProcessHeap(), 0, out);
-    /* the rest, if the stream gave less than its frames promised, is silence. */
+    /* if the stream gave less than its frames promised, the rest is silence. */
     RtlEnterCriticalSection(&m->lock);
     if (m->ready < m->size)
         memset(m->data + m->ready, m->pcm.wBitsPerSample == 8 ? 0x80 : 0, m->size - m->ready);

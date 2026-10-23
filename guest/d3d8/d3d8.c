@@ -1,8 +1,6 @@
 /*
- * IDirect3D8: the adapters of direct3d 9, with the display modes
- * direct3d 8 lists, its checks of formats and its capabilities, which
- * are those of a directx 8.1 card: the first part of direct3d 9's, with
- * the runtime's masks and its shader versions.
+ * IDirect3D8 over Direct3D 9's adapters, with the display modes Direct3D 8 lists, its format checks and the caps of
+ * a DirectX 8.1 card: the first part of Direct3D 9's, with the runtime's masks and shader versions.
  */
 #include "d3d8_private.h"
 
@@ -85,7 +83,7 @@ BOOL D8HasStencil(D3DFORMAT format)
            format == D3DFMT_D24X4S4;
 }
 
-/* the size of a level laid out in memory: rows of whole dwords, the compressed formats by rows of blocks. */
+/* rows padded to whole dwords, compressed formats by rows of blocks. */
 UINT D8LevelSize(D3DFORMAT format, UINT width, UINT height, UINT depth)
 {
     UINT bytes = D8FormatBytes(format);
@@ -130,7 +128,7 @@ static BOOL display_format(D3DFORMAT f)
 
 /* ------------------------------------------------------------------ modes */
 
-/* the modes windows reports, 16 bit ones in the one format of the adapter, without 8 and 24 bit ones. */
+/* the modes windows reports: no 8 or 24 bit ones, and 16 bit ones only in the adapter's one format. */
 static void build_modes(D8Adapter *a)
 {
     DEVMODEA dm;
@@ -188,7 +186,7 @@ HRESULT D8GetCaps(D8Direct3D *d3d, UINT adapter, D3DDEVTYPE type, D3DCAPS8 *caps
     caps->DeviceType = type;
     caps->AdapterOrdinal = adapter;
     caps->Caps &= 0x02020000;
-    /* a directx 8 driver renders into windows; the runtime never lets the driver manage resources. */
+    /* a DirectX 8 driver renders into windows; the runtime never lets the driver manage resources. */
     caps->Caps2 = (c9.Caps2 | D3DCAPS2_CANRENDERWINDOWED) & 0x220A0002;
     caps->Caps3 &= D3DCAPS3_ALPHA_FULLSCREEN_FLIP_OR_DISCARD;
     caps->PresentationIntervals = D3DPRESENT_INTERVAL_IMMEDIATE | D3DPRESENT_INTERVAL_ONE |
@@ -197,7 +195,7 @@ HRESULT D8GetCaps(D8Direct3D *d3d, UINT adapter, D3DDEVTYPE type, D3DCAPS8 *caps
         caps->CursorCaps = 0;
     caps->DevCaps = (caps->DevCaps & ~0x06000000u) | D3DDEVCAPS_HWRASTERIZATION;
     caps->PrimitiveMiscCaps &= 0x0FFE;
-    /* direct3d 9's depth bias is direct3d 8's z bias. */
+    /* Direct3D 9's depth bias is Direct3D 8's z bias. */
     caps->RasterCaps &= 0x00FFFFFF;
     if (c9.RasterCaps & D3DPRASTERCAPS_DEPTHBIAS)
         caps->RasterCaps |= D3DPRASTERCAPS_ZBIAS;

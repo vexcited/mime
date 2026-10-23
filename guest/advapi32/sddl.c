@@ -1,12 +1,11 @@
 /*
- * the security descriptor definition language: security descriptors, lists, aces, sids and conditions as text.
+ * the security descriptor definition language: descriptors, acls, aces, sids and conditions as text.
  *
- * the text is parsed and written the way advapi32 does on windows: the same tokens in the same tables, the same
- * order of the fields, the same errors. conditional aces keep their condition in the binary form of the
- * "artx" token stream, compiled by the parser here and written back by the printer.
+ * parsing and printing follow windows: the same token tables, field order and errors. conditional aces keep their
+ * condition in the binary "artx" token stream, which the parser here compiles and the printer writes back.
  *
- * resource attribute aces hold one attribute in its relative form. the trailing data of audit and label aces
- * of kinds the tables do not know is not supported.
+ * resource attribute aces hold one attribute in its relative form. trailing data on audit and label aces of kinds the
+ * tables do not know is not supported.
  */
 #include "advapi32_private.h"
 
@@ -110,15 +109,15 @@ static int hex_value(WCHAR c)
     return -1;
 }
 
-/* whether the text starts with the token, ignoring case. */
+/* case insensitive prefix match. */
 static BOOL starts_with(PCWSTR text, PCWSTR token, DWORD length)
 {
     return _wcsnicmp(text, token, length) == 0;
 }
 
 /*
- * a number as c writes it: 0x for hex, a leading 0 for octal, else decimal. returns the end or NULL when no digit
- * is there; a value above the limit is clamped.
+ * a number as c writes it: 0x for hex, a leading 0 for octal, else decimal. returns the end, or NULL when there is
+ * no digit; a value above the limit is clamped.
  */
 static PCWSTR scan_number(PCWSTR s, ULONGLONG limit, ULONGLONG *value, BOOL *overflow, BOOL octal)
 {
@@ -150,8 +149,8 @@ static PCWSTR scan_number(PCWSTR s, ULONGLONG limit, ULONGLONG *value, BOOL *ove
 /* ---------------------------------------------------------------- sid aliases */
 
 /*
- * the sids the language names with two letters. a kind says what the sid is made of: a relative id in the
- * domain of the caller, in the root domain or in this machine's domain, or after a fixed prefix.
+ * the two letter sid aliases. the kind says how the sid is built: a relative id in the caller's domain, the root
+ * domain or this machine's domain, or after a fixed prefix.
  */
 enum {
     KIND_DOMAIN = 0,
@@ -220,7 +219,7 @@ static BOOL domain_relative(const SID *domain, DWORD rid, SID *out)
     return TRUE;
 }
 
-/* the sid an alias stands for in a context, or FALSE when the domain it needs is not known. */
+/* the alias's sid in a context, or FALSE when the domain it needs is unknown. */
 static BOOL alias_sid(const SDDL_ALIAS *a, const SDDL_CONTEXT *context, SID *out)
 {
     switch (a->Kind) {
@@ -263,7 +262,7 @@ static BOOL alias_sid(const SDDL_ALIAS *a, const SDDL_CONTEXT *context, SID *out
     return FALSE;
 }
 
-/* the alias that starts the text, if its sid is known. */
+/* the alias at the start of the text, if its sid is known. */
 static const SDDL_ALIAS *find_alias(PCWSTR text, const SDDL_CONTEXT *context, SID *sid)
 {
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_aliases); i++)
@@ -274,7 +273,7 @@ static const SDDL_ALIAS *find_alias(PCWSTR text, const SDDL_CONTEXT *context, SI
 
 /* ---------------------------------------------------------------- sids as text */
 
-/* where a sid in a longer text stops: the end, a space, a parenthesis, a comma, a semicolon or the next part. */
+/* a sid inside longer text stops at the end, a space, a parenthesis, a comma, a semicolon or the next part. */
 static BOOL sid_stop(PCWSTR s)
 {
     WCHAR c = *s;
@@ -283,7 +282,7 @@ static BOOL sid_stop(PCWSTR s)
     return s[1] == L':' && (c == L'D' || c == L'G' || c == L'O' || c == L'S');
 }
 
-/* S-R-A-s-s...: the revision, then the 48 bit authority, then at least one sub authority. */
+/* S-R-A-s-s...: revision, 48-bit authority, then at least one sub authority. */
 static PCWSTR parse_numeric_sid(PCWSTR s, SID *sid)
 {
     if ((s[0] != L'S' && s[0] != L's') || s[1] != L'-')
@@ -333,7 +332,7 @@ DWORD AdvParseSidString(PCWSTR string, const SDDL_CONTEXT *context, void *storag
     return ERROR_SUCCESS;
 }
 
-/* writes a sid as its alias when a context knows one, else as S-1-.... */
+/* writes a sid as its alias when the context knows one, else as S-1-.... */
 static void sb_sid(SB *sb, const SID *sid, const SDDL_CONTEXT *context)
 {
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_aliases); i++) {
@@ -381,7 +380,7 @@ typedef struct COND_OP {
     PCWSTR Name;
     BYTE Token;
     BYTE Kind;
-    BOOL Word; /* spelled with letters, so a whole word of the text */
+    BOOL Word; /* spelled with letters, so it must match a whole word. */
 } COND_OP;
 
 static const COND_OP g_operators[] = {
@@ -419,13 +418,13 @@ static const COND_OP *operator_by_token(BYTE token)
     return nullptr;
 }
 
-/* where the name of a word operator ends in the text. */
+/* characters that end a word operator's name. */
 static BOOL word_end(WCHAR c)
 {
     return c == 0 || is_space(c) || c == L'(' || c == L')' || c == L'{' || c == L'}';
 }
 
-/* the operator of the kind that starts the text, symbols by their characters and words as whole words. */
+/* the operator of the wanted kind at the start of the text: symbols by their characters, words as whole words. */
 static const COND_OP *match_operator(PCWSTR s, BOOL (*wanted)(const COND_OP *), DWORD *length)
 {
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_operators); i++) {
@@ -506,7 +505,7 @@ static void cond_skip(COND *c)
         c->Text++;
 }
 
-/* the characters an attribute name may be made of: those of the bare name, or those after an at sign. */
+/* characters allowed in an attribute name: those of a bare name, or after an at sign. */
 static BOOL bare_name_char(WCHAR c)
 {
     return c <= 0xFF && (is_alnum(c) || c == L':' || c == L'.' || c == L'/' || c == L'_' || c == L'@');
@@ -517,7 +516,7 @@ static BOOL at_name_char(WCHAR c)
     return c != 0 && !(c < 0x7F && wcschr(L" !\"&)(<>=|", c));
 }
 
-/* a character that a name has to write as % and four hex digits. */
+/* characters a name must write as % and four hex digits. */
 static BOOL needs_encoding(WCHAR c)
 {
     if (c >= 0x7F)
@@ -595,7 +594,7 @@ static DWORD parse_attribute(COND *c)
     return error;
 }
 
-/* the end of a bare literal: a space, a closing bracket, a bar, an and sign, a comma or the end. */
+/* a bare literal ends at a space, a closing bracket, a bar, an ampersand, a comma or the end. */
 static PCWSTR literal_end(PCWSTR s)
 {
     while (*s && *s != L')' && *s != L'}' && *s != L'|' && *s != L'&' && *s != L',' && *s != L' ')
@@ -737,7 +736,7 @@ static DWORD parse_primary(COND *c)
         c->Text += length;
         DWORD mark = c->Length;
         error = parse_operand(c, op->Kind == OP_UNARY_ATTRIBUTE, FALSE);
-        /* the existence of the token, user and device claims is not asked of a condition. */
+        /* the existence operators reject user, device and token claims. */
         if (!error && op->Kind == OP_UNARY_ATTRIBUTE &&
             (c->Buffer[mark] == CT_ATTR_USER || c->Buffer[mark] == CT_ATTR_DEVICE || c->Buffer[mark] == CT_ATTR_TOKEN))
             error = ERROR_INVALID_ACL;
@@ -806,8 +805,8 @@ static DWORD parse_or(COND *c)
 }
 
 /*
- * compiles "(expression)" to the token stream. with end the text may go on after the closing parenthesis and the
- * parse stops there, else nothing may follow. the stream is LocalAlloc'd and has no padding.
+ * compiles "(expression)" to the token stream. with end the text may continue after the closing parenthesis and
+ * parsing stops there, else nothing may follow. the stream is LocalAlloc'd and unpadded.
  */
 static DWORD condition_compile(PCWSTR text, const SDDL_CONTEXT *context, PVOID *binary, DWORD *size, PCWSTR *end)
 {
@@ -861,7 +860,7 @@ static PWSTR sb_take(SB *sb)
     return sb->Text;
 }
 
-/* wraps an operand text in parentheses unless it already starts with one. */
+/* wraps operand text in parentheses unless it already starts with one. */
 static DWORD enclose(PWSTR *text)
 {
     if ((*text)[0] == L'(')
@@ -878,7 +877,7 @@ static DWORD enclose(PWSTR *text)
     return ERROR_SUCCESS;
 }
 
-/* an operand at the start of the bytes into text; used is how many bytes it took. */
+/* prints the operand at the start of the bytes; used gets how many bytes it took. */
 static DWORD print_operand(const BYTE *p, DWORD left, const SDDL_CONTEXT *context, PWSTR *text, DWORD *used, BOOL nested)
 {
     SB sb = {};
@@ -1112,7 +1111,7 @@ static DWORD condition_text(const BYTE *binary, DWORD size, const SDDL_CONTEXT *
     return error;
 }
 
-/* the text of a compiled condition, undocumented in windows: (condition, size, unused, LocalAlloc'd text). */
+/* undocumented on windows; prints a compiled condition into LocalAlloc'd text. */
 ADVAPI BOOL WINAPI GetStringConditionFromBinary(PVOID binary, DWORD size, PVOID unused, LPWSTR *text)
 {
     PWSTR out;
@@ -1217,7 +1216,7 @@ static const struct {
     WCHAR Name[3];
     BYTE Value;
     BYTE Kinds;
-    /* the ace types the flag is written for, none listed meaning all of them */
+    /* ace types the flag applies to; none listed means all. */
     BYTE Types[8];
     BYTE TypeCount;
 } g_ace_flags[] = {
@@ -1226,7 +1225,7 @@ static const struct {
     {L"NP", NO_PROPAGATE_INHERIT_ACE, KIND_DACL | KIND_SACL, {0}, 0},
     {L"IO", INHERIT_ONLY_ACE, KIND_DACL | KIND_SACL, {0}, 0},
     {L"ID", INHERITED_ACE, KIND_DACL | KIND_SACL, {0}, 0},
-    /* the critical flag is listed for no ace type, so the text can neither read nor write it. */
+    /* the critical flag applies to no ace type, so text can neither read nor write it. */
     {L"CR", CRITICAL_ACE_FLAG, KIND_DACL, {255}, 1},
     {L"TP", 0x40, KIND_SACL, {SYSTEM_ACCESS_FILTER_ACE_TYPE}, 1},
     {L"SA", SUCCESSFUL_ACCESS_ACE_FLAG, KIND_SACL, {2, 3, 7, 8, 13, 14, 15, 16}, 8},
@@ -1301,16 +1300,16 @@ static BOOL is_object_type(BYTE type)
     return type == 5 || type == 6 || type == 7 || type == 8 || type == 11;
 }
 
-/* the aces that end in a condition. */
+/* aces that end in a condition. */
 static BOOL has_condition(BYTE type)
 {
     return type == 9 || type == 10 || type == 11 || type == 13 || type == 18 || type == 21;
 }
 
 /*
- * a resource attribute ace carries one attribute in its relative form after the sid: the offset of the name, the
- * type, the flags, the number of values, the offset of each value, then the name and the values one after the other.
- * as text it is ("name",type,0xflags,value,...) with the types TI, TU, TS, TD, TX and TB.
+ * a resource attribute ace holds one attribute in relative form after the sid: name offset, type, flags, value count,
+ * each value's offset, then the name and the values in order. as text it is ("name",type,0xflags,value,...) with the
+ * types TI, TU, TS, TD, TX and TB.
  */
 #define RA_INT64 1
 #define RA_UINT64 2
@@ -1332,7 +1331,7 @@ typedef struct RA_VALUES {
     DWORD OffsetsCapacity;
 } RA_VALUES;
 
-/* appends bytes to the values and notes where they began. */
+/* appends bytes to the values and records where they start. */
 static BOOL ra_add(RA_VALUES *v, const void *data, DWORD size, DWORD prefix_length)
 {
     DWORD total = size + (prefix_length ? 4 : 0);
@@ -1385,7 +1384,7 @@ static BOOL ra_digit(WCHAR c, BYTE *value)
     return TRUE;
 }
 
-/* the attribute of the text standing at its opening parenthesis, as the relative form in a new block. */
+/* parses the attribute at its opening parenthesis into the relative form, in a new block. */
 static DWORD parse_resource_attribute(PCWSTR p, const SDDL_CONTEXT *context, PVOID *result, DWORD *size, PCWSTR *end)
 {
     RA_VALUES values = {};
@@ -1526,7 +1525,7 @@ static DWORD parse_resource_attribute(PCWSTR p, const SDDL_CONTEXT *context, PVO
                 error = ERROR_NOT_ENOUGH_MEMORY;
                 goto done;
             }
-            /* the digits are taken from the right, so a lone first digit is the low half of the first byte. */
+            /* digits are taken from the right, so a lone first digit is the low half of the first byte. */
             for (DWORD i = 0; i < bytes; i++) {
                 BYTE low = 0, high = 0;
                 LONG at = (LONG)digits - 1 - 2 * (LONG)(bytes - 1 - i);
@@ -1582,7 +1581,7 @@ done:
     return error;
 }
 
-/* the text of a relative attribute, which is checked as it is read. */
+/* prints a relative attribute, validating it as it goes. */
 static DWORD print_resource_attribute(const BYTE *d, DWORD n, const SDDL_CONTEXT *context, SB *sb)
 {
     if (n < 20)
@@ -1764,7 +1763,7 @@ static DWORD add_ace_text(ACL *acl, BYTE type, BYTE flags, ACCESS_MASK mask, con
     return NT_SUCCESS(status) ? ERROR_SUCCESS : RtlNtStatusToDosError(status);
 }
 
-/* one ace between the parentheses, the text standing after the opening one. */
+/* parses one ace; the text starts after its opening parenthesis. */
 static DWORD parse_ace(PCWSTR *pp, BYTE kind, const SDDL_CONTEXT *context, ACL *acl)
 {
     PCWSTR p = *pp;
@@ -1783,7 +1782,7 @@ static DWORD parse_ace(PCWSTR *pp, BYTE kind, const SDDL_CONTEXT *context, ACL *
         acl->AclRevision = ACL_REVISION_DS;
     while (*p == L' ')
         p++;
-    /* the flags, up to the semicolon that ends them. */
+    /* flags, up to their semicolon. */
     BYTE flags = 0;
     while (*p != L';') {
         while (*p == L' ')
@@ -1800,7 +1799,7 @@ static DWORD parse_ace(PCWSTR *pp, BYTE kind, const SDDL_CONTEXT *context, ACL *
         p += 2;
     }
     p++;
-    /* the rights: names and numbers, up to the next semicolon. */
+    /* rights: names and numbers, up to the next semicolon. */
     while (*p == L' ')
         p++;
     ACCESS_MASK mask = 0;
@@ -1828,7 +1827,7 @@ static DWORD parse_ace(PCWSTR *pp, BYTE kind, const SDDL_CONTEXT *context, ACL *
         }
     }
     p++;
-    /* the object and inherited object guids, each with its semicolon. */
+    /* object and inherited object guids, each followed by a semicolon. */
     GUID guids[2];
     const GUID *given[2] = {nullptr, nullptr};
     for (int j = 0; j < 2; j++) {
@@ -1899,8 +1898,8 @@ static BOOL section_start(PCWSTR p)
 }
 
 /*
- * the list of one D: or S: part. a null list is written NO_ACCESS_CONTROL; the text ends at the next part. the list
- * comes back trimmed to the bytes its aces use, LocalAlloc'd, or NULL for the null list.
+ * parses the list of a D: or S: part, which ends at the next part. NO_ACCESS_CONTROL is a null list. the list comes
+ * back trimmed to the bytes its aces use, LocalAlloc'd, or NULL for the null list.
  */
 static DWORD parse_acl_text(PCWSTR *pp, BYTE kind, const SDDL_CONTEXT *context, ACL **result)
 {
@@ -1975,7 +1974,7 @@ static void sb_rights(SB *sb, BYTE kind, ACCESS_MASK mask)
             return;
         }
     }
-    /* a mask of single bit names, or the number when one of its bits has none. */
+    /* bit names, or the number when some bit has no name. */
     SB names = {};
     for (int bit = 0; bit < 32; bit++) {
         if (!(mask & (1u << bit)))
@@ -1996,7 +1995,7 @@ static void sb_rights(SB *sb, BYTE kind, ACCESS_MASK mask)
     AdvFree(names.Text);
 }
 
-/* an ace of the list as "(type;flags;rights;object;inherited;sid[;condition])". */
+/* writes an ace as "(type;flags;rights;object;inherited;sid[;condition])". */
 static DWORD sb_ace(SB *sb, const BYTE *ace, BYTE kind, const SDDL_CONTEXT *context)
 {
     BYTE type = ace[0];
@@ -2079,7 +2078,7 @@ static DWORD acl_text(const ACL *acl, BYTE kind, const SDDL_CONTEXT *context, SB
 
 /* ---------------------------------------------------------------- descriptors as text */
 
-/* the control letters of a part, P for protected and AR and AI for the auto inherit bits. */
+/* control letters: P for protected, AR and AI for the auto inherit bits. */
 static void parse_control(PCWSTR *pp, BYTE kind, WORD *control)
 {
     PCWSTR p = *pp;
@@ -2098,7 +2097,7 @@ static void parse_control(PCWSTR *pp, BYTE kind, WORD *control)
     *pp = p;
 }
 
-/* the sid of an O: or G: part, with the text left after it. */
+/* the sid of an O: or G: part, leaving the text after it. */
 static DWORD parse_owner(PCWSTR *pp, const SDDL_CONTEXT *context, BYTE *sid)
 {
     PCWSTR p = *pp;
@@ -2200,7 +2199,7 @@ static DWORD sd_from_text(PCWSTR text, const SDDL_CONTEXT *context, PSECURITY_DE
     return error;
 }
 
-/* the aces of a system list the requested information keeps. */
+/* whether the requested information keeps a system list ace of this type. */
 static BOOL sacl_ace_wanted(BYTE type, SECURITY_INFORMATION info)
 {
     switch (type) {
@@ -2227,8 +2226,8 @@ static void sb_control(SB *sb, WORD control, BYTE kind)
 }
 
 /*
- * the descriptor as text, O: G: D: S: in that order, for the parts the information asks for. the length counts
- * the characters the way windows reports it: one extra for each ace and for each null list.
+ * the descriptor as text, O: G: D: S: in that order, for the requested parts. the length counts characters like
+ * windows reports it: one extra per ace and per null list.
  */
 static DWORD sd_to_text(PSECURITY_DESCRIPTOR sd, SECURITY_INFORMATION info, const SDDL_CONTEXT *context, PWSTR *result,
                         ULONG *length)
@@ -2354,7 +2353,7 @@ ADVAPI BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorA(LPCSTR t
     return ok;
 }
 
-/* the domain aware forms: the first sid is the domain, the second is optional and the root of the forest. */
+/* domain aware forms: the first sid is the domain, the optional second one the forest root. */
 ADVAPI BOOL WINAPI ConvertStringSDToSDDomainW(PSID domain, PSID root, LPCWSTR text, DWORD revision,
                                               PSECURITY_DESCRIPTOR *result, PULONG size)
 {
@@ -2412,7 +2411,7 @@ ADVAPI BOOL WINAPI ConvertSecurityDescriptorToStringSecurityDescriptorW(PSECURIT
                                                                        PULONG length)
 {
     if (!sd || !info) {
-        /* no descriptor or nothing asked of it is the empty string, if a place for it was given. */
+        /* no descriptor or nothing requested gives the empty string, if there is a place for it. */
         if (!text)
             return finish(ERROR_INVALID_PARAMETER);
         PWSTR empty = LocalAlloc(LMEM_FIXED, sizeof(WCHAR));

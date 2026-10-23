@@ -1,9 +1,7 @@
 /*
- * the guest network: sockets of the host, kept non blocking. the guest
- * kernel asks what is ready with MIME_HC_NET_POLL and arms a watch on what
- * would block; a kqueue or epoll thread queues the sockets whose watch fired and
- * raises MIME_IRQ_NET. host names resolve on their own threads, so a slow
- * dns server never stalls the vcpu.
+ * nonblocking host sockets for the guest. MIME_HC_NET_POLL checks readiness and arms watches; a kqueue or
+ * epoll thread queues ready sockets and raises MIME_IRQ_NET. DNS lookups run on separate threads so slow
+ * resolvers never stall vCPUs.
  */
 #include "vmm.h"
 
@@ -36,7 +34,7 @@
 #define NET_MAX_POLL 1024
 #define NET_MAX_ANSWERS 64
 
-/* the windows values the guest speaks. */
+/* Windows socket constants used by the guest. */
 #define WIN_AF_INET 2
 #define WIN_AF_INET6 23
 #define WIN_SOCK_STREAM 1
@@ -46,11 +44,11 @@
 #define WIN_MSG_DONTROUTE 4
 
 typedef struct NetSocket {
-    int fd; /* -1 when the slot is free */
+    int fd; /* -1 when the slot is free. */
     uint32_t gen;
     bool stream;
     bool listening;
-    bool queued; /* in the ring */
+    bool queued; /* in the ring. */
 } NetSocket;
 
 typedef struct NetResolve {
@@ -66,7 +64,7 @@ typedef struct NetResolve {
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static MimeVm *g_vm;
-static int g_kq = -1; /* the kqueue, or the epoll instance on linux */
+static int g_kq = -1; /* the kqueue, or the epoll instance on Linux. */
 #ifndef __APPLE__
 static int g_stop_fd = -1;
 #define STOP_WATCH UINT64_MAX
@@ -164,7 +162,7 @@ static uint64_t fail_errno(uint64_t *value)
     return fail(value, wsa_error(errno));
 }
 
-/* ------------------------------------------------------------ addresses */
+/* ------------------------------------------------------------ addresses. */
 
 static bool to_host(const MimeNetAddr *a, struct sockaddr_storage *ss, socklen_t *len)
 {
@@ -219,7 +217,7 @@ static MimeNetAddr *guest_addr(MimeVm *vm, uint64_t pa)
     return pa ? mime_vm_phys(vm, pa, sizeof(MimeNetAddr)) : nullptr;
 }
 
-/* ------------------------------------------------------------ the socket table and the ring */
+/* ------------------------------------------------------------ the socket table and the ring. */
 
 static NetSocket *lookup(uint64_t id)
 {
@@ -391,7 +389,7 @@ static void close_socket(NetSocket *s)
     s->queued = false;
 }
 
-/* ------------------------------------------------------------ operations */
+/* ------------------------------------------------------------ operations. */
 
 static int host_flags(uint64_t flags)
 {
@@ -448,7 +446,7 @@ static uint64_t net_recv(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, ui
     memset(&ss, 0, sizeof(ss));
     ssize_t n = recvmsg(s->fd, &msg, host_flags(flags));
     if (n < 0) {
-        /* an icmp port unreachable of a datagram reports as a reset on windows. */
+        /* an ICMP port unreachable of a datagram reports as a reset on windows. */
         if (!s->stream && errno == ECONNREFUSED)
             return fail(value, 10054);
         return fail_errno(value);
@@ -460,7 +458,7 @@ static uint64_t net_recv(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, ui
             memset(a, 0, sizeof(*a));
     }
     if (!s->stream && (msg.msg_flags & MSG_TRUNC))
-        return fail(value, 10040); /* WSAEMSGSIZE, the buffer is full */
+        return fail(value, 10040); /* WSAEMSGSIZE, the buffer is full. */
     *value = (uint64_t)n;
     return MIME_HC_STATUS_OK;
 }
@@ -529,7 +527,7 @@ static uint64_t net_option(NetSocket *s, uint64_t option, bool set, uint64_t v, 
         break;
     case MIME_NET_OPT_LINGER: {
         struct linger l = {(int)((v >> 16) & 1), (int)(v & 0xFFFF)};
-        /* a lingering close would block the vcpu, so only an abortive one reaches the host. */
+        /* a lingering close would block the vCPU, so only an abortive one reaches the host. */
         if (set && l.l_linger)
             l.l_onoff = 0;
         if (set) {
@@ -558,7 +556,7 @@ static uint64_t net_option(NetSocket *s, uint64_t option, bool set, uint64_t v, 
             r = ioctl(fd, FIONREAD, &n);
         }
 #else
-        /* linux answers the size of the next datagram for a datagram socket. */
+        /* Linux answers the size of the next datagram for a datagram socket. */
         r = ioctl(fd, FIONREAD, &n);
 #endif
         *value = (uint64_t)(uint32_t)n;
@@ -578,7 +576,7 @@ static uint64_t net_option(NetSocket *s, uint64_t option, bool set, uint64_t v, 
     return MIME_HC_STATUS_OK;
 }
 
-/* what a socket is ready for; the error is taken from the socket. */
+/* reports readiness and retrieves the pending socket error. */
 static uint16_t readiness(NetSocket *s, short revents, int32_t *error)
 {
     uint16_t r = 0;
@@ -702,7 +700,7 @@ static uint64_t net_events(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *valu
     return MIME_HC_STATUS_OK;
 }
 
-/* ------------------------------------------------------------ names and interfaces */
+/* ------------------------------------------------------------ names and interfaces. */
 
 static int32_t resolve_error(int e)
 {
@@ -868,7 +866,7 @@ static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *
                 e->flags |= MIME_NET_IF_RUNNING;
             e->prefix = prefix_bits(ifa->ifa_netmask);
             from_host(ifa->ifa_addr, &e->addr);
-            /* the link entry of the same interface has the mtu and the hardware address. */
+            /* the link entry of the same interface has the MTU and the hardware address. */
             for (struct ifaddrs *link = list; link; link = link->ifa_next) {
 #ifdef __APPLE__
                 if (!link->ifa_addr || link->ifa_addr->sa_family != AF_LINK || strcmp(link->ifa_name, ifa->ifa_name))
@@ -908,7 +906,7 @@ static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *
     return MIME_HC_STATUS_OK;
 }
 
-/* ------------------------------------------------------------ dispatch */
+/* ------------------------------------------------------------ dispatch. */
 
 uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 {

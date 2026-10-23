@@ -1,11 +1,10 @@
 /*
- * the running object table across processes. An object that a program registers in the table is marshaled, as a
- * standard object reference, into a table the whole machine shares, under the key of its moniker; a program that asks for
- * the object finds the reference there and unmarshals it into a proxy. The table is a named section and a mutex, as the
- * one of the classes in orpc_class.c; Windows' is a service's (rpcss).
+ * the machine wide running object table. registering an object marshals it as a standard object reference into a
+ * shared table under its moniker's key, and a program asking for it finds the reference there and unmarshals a proxy.
+ * like the class table in orpc_class.c it is a named section and a mutex, where windows uses rpcss.
  *
- * A moniker is told apart by its key: the class of the moniker and its display name in lower case. Two monikers of one key
- * are one in the table, which is what IsEqual means for the monikers here (item, file and composite).
+ * a moniker's key is its class and lower case display name, so two monikers with one key share an entry. that matches
+ * IsEqual for the item, file and composite monikers here.
  */
 #include "orpc.h"
 
@@ -37,7 +36,7 @@ static ROT_TABLE *g_table;
 static HANDLE g_mutex;
 static SRWLOCK g_open_lock = SRWLOCK_INIT;
 
-/* the registrations of this process, whose marshaled references hold the objects. */
+/* this process's registrations, whose marshaled references keep the objects alive. */
 typedef struct LOCAL_ENTRY {
     struct LOCAL_ENTRY *Next;
     DWORD Cookie;
@@ -61,7 +60,7 @@ static ULONG64 creation_time(DWORD pid)
     return value;
 }
 
-/* a registration of a process that is gone is not one. */
+/* registrations of processes that are gone do not count. */
 static BOOL alive(const ROT_ENTRY_SHARED *e)
 {
     return e->Pid == GetCurrentProcessId() || (e->Created && creation_time(e->Pid) == e->Created);
@@ -211,7 +210,7 @@ void OrpcRotRevoke(DWORD cookie)
     ReleaseSRWLockExclusive(&g_local_lock);
     if (!local)
         return;
-    /* the reference the table held lets go of the object. */
+    /* dropping the table's reference releases the object. */
     release_objref(local->Objref, local->Size);
     OleFree(local);
 }
@@ -229,7 +228,7 @@ void OrpcRotNoteChange(DWORD cookie, const FILETIME *time)
     table_unlock();
 }
 
-/* the entry of another process under the key: its reference is copied out and its time when asked for. */
+/* copies out another process's reference under the key, and its time when asked for. */
 BOOL OrpcRotLookup(const WCHAR *key, BYTE *objref, ULONG *size, FILETIME *time)
 {
     if (FAILED(table_open()))

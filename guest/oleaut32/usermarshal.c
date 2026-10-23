@@ -1,10 +1,10 @@
 /*
- * the wire forms of strings, variants and safe arrays. An interface of automation passes them to a proxy and a stub as
- * user marshaled types: a pair of routines to size and to write one, one to read it back, one to free what reading made.
- * The same forms, with another alignment and 8 byte values where a pointer stood, are used by the second transfer syntax.
+ * wire forms of BSTRs, variants and safe arrays, marshaled for automation proxies and stubs as user marshaled types:
+ * size, marshal, unmarshal and free routines. NDR64 uses the same forms with other alignment and 8-byte values where
+ * a pointer stood.
  *
- * Sizing and writing are one piece of code that is run twice, so that the two cannot disagree: a cursor either counts or
- * writes. Reading checks every step against the end of the message.
+ * sizing and writing share one code path run twice, so they cannot disagree: the cursor either counts or writes.
+ * Reading checks every step against the end of the message.
  */
 #include "oleaut32_private.h"
 #include <mime/win32/rpc.h>
@@ -33,10 +33,10 @@ static ULONG add_size(ULONG a, ULONG b)
     return sum;
 }
 
-/* ------------------------------------------------------------------ the cursor that counts or writes */
+/* ------------------------------------------------------------------ counting or writing cursor */
 
 typedef struct {
-    /* null while counting, else the start of the buffer. */
+    /* NULL while counting. */
     BYTE *Base;
     ULONG Off;
     ULONG *Flags;
@@ -57,7 +57,7 @@ static void out_align(WCUR *o, ULONG mask)
     o->Off = add_size(o->Off, gap);
 }
 
-/* the place of the next n bytes, or null when counting. */
+/* reserves n bytes, returns NULL when counting. */
 static BYTE *out_take(WCUR *o, ULONG n)
 {
     BYTE *p = o->Base ? o->Base + o->Off : nullptr;
@@ -83,7 +83,7 @@ static void put64(BYTE *p, ULONGLONG v)
         memcpy(p, &v, 8);
 }
 
-/* what stands for a pointer on the wire: its value, or marker when it is there and 0 when it is not. */
+/* a pointer placeholder: nonzero when present, 0 when NULL. */
 static void out_referent(WCUR *o, const void *pointer)
 {
     if (o->W64) {
@@ -106,7 +106,7 @@ static void out_marker(WCUR *o)
     }
 }
 
-/* ------------------------------------------------------------------ the cursor that reads */
+/* ------------------------------------------------------------------ reading cursor */
 
 typedef struct {
     const BYTE *Cur;
@@ -169,7 +169,7 @@ static USHORT rd16(RD *r)
     return v;
 }
 
-/* the value that stands for a pointer: whether it is there. */
+/* true when the pointer placeholder says the pointer is present. */
 static BOOL rd_referent(RD *r)
 {
     if (r->W64) {
@@ -239,7 +239,7 @@ static void bstr_read(RD *r, BSTR *pb)
     if (len > 0x7FFFFFFF)
         raise(ARITH_OVERFLOW);
     if (flags_word == 0xFFFFFFFF) {
-        /* a null string; the count that follows its marker is of nothing. */
+        /* a NULL string: skip the data its count covers. */
         rd_take(r, (SIZE_T)len * 2);
         SysFreeString(*pb);
         *pb = nullptr;
@@ -345,12 +345,12 @@ static void iface_read(RD *r, IUnknown **pp, REFIID iid)
     r->Cur = end;
 }
 
-/* the kind an array has on the wire, taken from its descriptor: records first, then the size of an element. */
+/* the wire discriminant: records first, then by element size. */
 static ULONG discr_of(const SAFEARRAY *sa)
 {
     if (sa->fFeatures & FADF_RECORD)
         return SF_RECORD;
-    /* an element the size of a pointer is told from a plain integer by what the array holds. */
+    /* pointer sized elements are told apart from integers by the feature flags. */
     if (sa->cbElements == sizeof(void *)) {
         switch (sa->fFeatures & (FADF_BSTR | FADF_UNKNOWN | FADF_DISPATCH | FADF_HAVEIID | FADF_VARIANT)) {
         case FADF_BSTR:
@@ -384,7 +384,7 @@ static ULONG discr_of(const SAFEARRAY *sa)
     return 0;
 }
 
-/* the elements of the array, as many as its bounds make; an overflow means nothing was allocated that way. */
+/* an overflowing count cannot describe a real allocation. */
 static ULONG count_of(const SAFEARRAY *sa)
 {
     ULONGLONG count = 1;
@@ -451,7 +451,7 @@ static void safearray_emit_body(WCUR *o, SAFEARRAY *sa, const GUID *iid_hint, UL
         iid_hint = &iid;
         discr = VT_UNKNOWN;
     }
-    /* the bounds in the order of the dimensions of the array, the first dimension first. */
+    /* bounds go in dimension order, first dimension first. */
     for (int d = sa->cDims - 1; d >= 0; d--) {
         BYTE *b = out_take(o, 8);
         put32(b, sa->rgsabound[d].cElements);
@@ -476,7 +476,7 @@ static void safearray_emit_body(WCUR *o, SAFEARRAY *sa, const GUID *iid_hint, UL
     }
     if (discr == SF_RECORD)
         raise(E_NOTIMPL);
-    /* the other kinds: a pointer for each element, then what the elements that are there hold. */
+    /* other kinds: a placeholder per element, then the contents of the present ones. */
     for (ULONG i = 0; i < count; i++) {
         if (discr == VT_VARIANT)
             out_marker(o);
@@ -513,7 +513,7 @@ static void safearray_write(WCUR *o, SAFEARRAY **pp, const GUID *iid_hint)
         put32(out_take(o, 4), sa != nullptr);
     if (!sa)
         return;
-    /* the array is held while it is read, and the locks it is sent with are those before that. */
+    /* the array is locked while being written, so send the lock count from before. */
     ULONG locks = sa->cLocks;
     HRESULT hr = SafeArrayLock(sa);
     if (FAILED(hr))
@@ -522,7 +522,7 @@ static void safearray_write(WCUR *o, SAFEARRAY **pp, const GUID *iid_hint)
     SafeArrayUnlock(sa);
 }
 
-/* ------------------------------------------------------------------ the variant */
+/* ------------------------------------------------------------------ variants */
 
 static void variant_emit(WCUR *o, const VARIANT *v)
 {
@@ -936,7 +936,7 @@ static void safearray_read(RD *r, SAFEARRAY **pp, const GUID *iid_hint)
                 AutFree(bounds);
             raise(E_OUTOFMEMORY);
         }
-        /* the features of the sender, except those about who owns the memory. */
+        /* the sender's features, minus the memory ownership ones. */
         sa->fFeatures |= features & ~(FADF_OWNERSHIP | 0x2000 | 0x1000);
         if ((sa->fFeatures & (FADF_HAVEIID | FADF_HAVEVARTYPE)) == (FADF_HAVEIID | FADF_HAVEVARTYPE))
             sa->fFeatures &= ~FADF_HAVEVARTYPE;
@@ -1020,7 +1020,7 @@ static void safearray_free(SAFEARRAY **pp)
     *pp = nullptr;
 }
 
-/* the contents of a variant that reading made, and the memory it allocated for what the variant refers to. */
+/* frees what reading put in a variant, including memory allocated for the value it refers to. */
 static void value_free(VARTYPE base, void *data)
 {
     switch (base) {
@@ -1063,7 +1063,7 @@ static void variant_free(VARIANT *v)
     memset(v, 0, sizeof(*v));
 }
 
-/* ------------------------------------------------------------------ the routines a stub names */
+/* ------------------------------------------------------------------ exported user marshal routines */
 
 static void variant_emit_thunk(WCUR *o, void *value)
 {

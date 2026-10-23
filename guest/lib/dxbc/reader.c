@@ -1,7 +1,7 @@
 /*
  * decodes shader model 4 and 5 instructions: the opcode token and its
- * extensions, then operands until the instruction's length, except for
- * declarations, whose words after their one operand are kept raw.
+ * extensions, then operands up to the instruction length. declarations
+ * keep the words after their operands raw.
  */
 #include "internal.h"
 
@@ -116,7 +116,7 @@ static int read_operand(DxbcInstruction *ins, const uint32_t **p, const uint32_t
     return 0;
 }
 
-/* how many operands a declaration has before its raw words. */
+/* operands a declaration has before its raw words. */
 static int declaration_operands(uint32_t opcode)
 {
     switch (opcode) {
@@ -207,7 +207,7 @@ int dxbc_read(DxbcReader *r, DxbcInstruction *ins)
         uint32_t ext = *p++;
         switch (ext & 0x3F) {
         case EXT_SAMPLE_CONTROLS:
-            /* 4 bit signed offsets. */
+            /* 4-bit signed offsets. */
             for (int i = 0; i < 3; i++)
                 ins->offset[i] = (int8_t)((int32_t)(ext << (32 - 13 - 4 * i)) >> 28);
             break;

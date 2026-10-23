@@ -1,6 +1,6 @@
 /*
- * calendars: the arithmetic of the calendars windows has, their names for a locale, and the functions that answer about
- * them. Every calendar is reached through the day number of the Gregorian date, which the system time carries.
+ * calendar arithmetic, calendar names per locale and the calendar info functions. every calendar converts through the
+ * Julian day number of the Gregorian date the system time carries.
  */
 #include "kernelbase_private.h"
 #include "nls_locslots.h"
@@ -10,7 +10,7 @@
 #define JDN_UNIX_EPOCH 2440588
 #define JDN_1601 2305814 /* 1 January 1601. */
 
-/* the day number of a Gregorian date, counted from the noon of 24 November 4714 BC. */
+/* Julian day number of a Gregorian date, counted from noon on 24 November 4714 BC. */
 static LONG gregorian_to_jdn(int year, int month, int day)
 {
     int a = (14 - month) / 12;
@@ -42,9 +42,8 @@ static BOOL gregorian_leap(int y)
     return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
 }
 
-/* ------------------------------------------------------------------ the dates of a calendar */
+/* ------------------------------------------------------------------ calendar dates */
 
-/* the supported range of each calendar, as day numbers. */
 static constexpr LONG g_jdn_first_persian = 1948321;          /* 1 Farvardin 1, 22 March 622. */
 
 static LONG islamic_to_jdn(int y, int m, int d)
@@ -65,11 +64,11 @@ static void jdn_to_islamic(LONG jdn, int *y, int *m, int *d)
     *d = (int)(day - (29 * (month - 1) + month / 2) + 1);
 }
 
-/* the months of the calendar Um Al Qura, which a table gives. */
+/* Um Al Qura months come from a table. */
 #define UMALQURA_FIRST_YEAR 1318
 #define UMALQURA_MONTHS 2196
 
-static UINT16 g_umalqura_start[UMALQURA_MONTHS + 1]; /* days from the first day of the table. */
+static UINT16 g_umalqura_start[UMALQURA_MONTHS + 1]; /* days since the first day of the table. */
 static LONG g_umalqura_jdn0;
 static volatile LONG g_umalqura_ready;
 
@@ -110,7 +109,7 @@ static BOOL jdn_to_umalqura(LONG jdn, int *y, int *m, int *d)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the Hebrew calendar */
+/* ------------------------------------------------------------------ Hebrew calendar */
 
 static LONG hebrew_elapsed_days(int year)
 {
@@ -132,7 +131,7 @@ static int hebrew_new_year_delay(int year)
     return 0;
 }
 
-/* the day number of the first of Tishri. */
+/* the day number of 1 Tishri. */
 static LONG hebrew_new_year(int year)
 {
     return -1373427 + 1721425 + hebrew_elapsed_days(year) + hebrew_new_year_delay(year);
@@ -148,13 +147,13 @@ static int hebrew_months_in_year(int year)
     return hebrew_leap(year) ? 13 : 12;
 }
 
-/* the days of a month, the months numbered from Tishri with the two Adars of a leap year as the sixth and seventh. */
+/* months count from Tishri, a leap year's two Adars being the sixth and seventh. */
 static int hebrew_days_in_month(int year, int month)
 {
     int length = (int)(hebrew_new_year(year + 1) - hebrew_new_year(year));
     BOOL leap = hebrew_leap(year);
     if (!leap && month >= 7)
-        month++; /* the numbers after Adar are one up in a leap year. */
+        month++; /* months after Adar are numbered one higher in a leap year. */
     switch (month) {
     case 1:
     case 5:
@@ -199,7 +198,7 @@ static void jdn_to_hebrew(LONG jdn, int *y, int *m, int *d)
     *d = (int)day + 1;
 }
 
-/* ------------------------------------------------------------------ the Persian calendar */
+/* ------------------------------------------------------------------ Persian calendar */
 
 static BOOL persian_leap(int year)
 {
@@ -209,7 +208,7 @@ static BOOL persian_leap(int year)
 static LONG persian_to_jdn(int year, int month, int day)
 {
     LONG leaps = 0;
-    /* the leap years from 1 up to the one before, counted from the cycle of 33 years. */
+    /* leap years before this one, counted with the 33 year cycle. */
     LONG cycles = (year - 1) / 33;
     leaps = cycles * 8;
     for (int y = (int)cycles * 33 + 1; y < year; y++)
@@ -241,19 +240,19 @@ static void jdn_to_persian(LONG jdn, int *y, int *m, int *d)
     *d = (int)day + 1;
 }
 
-/* ------------------------------------------------------------------ the eras of the Japanese calendar */
+/* ------------------------------------------------------------------ Japanese eras */
 
 typedef struct JAPANESE_ERA {
     int Year, Month, Day; /* the first day of the era. */
 } JAPANESE_ERA;
 
-/* the newest first, as windows lists them: the era a date is in is the first whose start is not after it. */
+/* newest first, as windows lists them: a date's era is the first one that does not start after it. */
 static constexpr JAPANESE_ERA g_japanese_eras[] = {
     {2019, 5, 1}, {1989, 1, 8}, {1926, 12, 25}, {1912, 7, 30}, {1868, 1, 1},
 };
 #define JAPANESE_ERAS 5
 
-/* ------------------------------------------------------------------ the calendars */
+/* ------------------------------------------------------------------ calendars */
 
 static BOOL gregorian_calendar(CALID cal)
 {
@@ -267,7 +266,7 @@ BOOL KbValidCalendar(CALID cal)
            cal == CAL_THAI || cal == CAL_HEBREW || cal == CAL_PERSIAN || cal == CAL_UMALQURA;
 }
 
-/* the first and the last day number a calendar can be asked about. */
+/* the first and last day number a calendar supports. */
 static void calendar_range(CALID cal, LONG *first, LONG *last)
 {
     *first = JDN_1601;
@@ -311,7 +310,7 @@ int KbDaysInGregorianMonth(int year, int month)
     return month == 2 && gregorian_leap(year) ? 29 : days[month - 1];
 }
 
-/* a date of a calendar, with the era and the year of it for the calendars that have them. */
+/* a date in a calendar, with era and era year for calendars that have them. */
 BOOL KbCalendarDate(CALID cal, LONG jdn, KB_CALDATE *out)
 {
     LONG first, last;
@@ -385,7 +384,6 @@ BOOL KbCalendarDate(CALID cal, LONG jdn, KB_CALDATE *out)
     return TRUE;
 }
 
-/* the months and days of a year of a calendar, for the functions that ask for them. */
 int KbCalendarMonthsInYear(CALID cal, int year)
 {
     if (cal == CAL_HEBREW)
@@ -393,9 +391,9 @@ int KbCalendarMonthsInYear(CALID cal, int year)
     return 12;
 }
 
-/* ------------------------------------------------------------------ the data of the calendars */
+/* ------------------------------------------------------------------ calendar data */
 
-/* the kind of record a calendar keeps its names in, or -1 for the calendars that use the names of the Gregorian one. */
+/* the record kind holding a calendar's names, or -1 for calendars that use the Gregorian names. */
 static int calendar_kind(CALID cal)
 {
     switch (cal) {
@@ -429,9 +427,8 @@ BOOL KbLocaleSupportsCalendar(UINT locale, CALID cal)
 }
 
 /*
- * The locale whose names and pictures a calendar answers with. The Gregorian calendars of the English, the French and
- * the Arabic language have those languages in every locale, and the Hijri calendars have the Arabic names in the
- * locales of the other languages.
+ * the locale a calendar takes its names and date formats from. the English, French and Arabic Gregorian calendars use
+ * those languages in every locale, and the Hijri calendars use Arabic names in other languages' locales.
  */
 UINT KbCalendarLocale(UINT locale, CALID cal)
 {
@@ -468,7 +465,7 @@ PCWSTR KbCalendarDayName(UINT locale, CALID cal, int weekday, BOOL abbreviated)
     return KbLocaleText(locale, (abbreviated ? NLS_S_SABBREVDAYNAME1 : NLS_S_SDAYNAME1) + weekday);
 }
 
-/* the text of a calendar's record, or of the Gregorian items when the calendar has no record for the locale. */
+/* a calendar's record text, or the Gregorian one when the calendar has no record for the locale. */
 static PCWSTR record_text(UINT locale, CALID cal, UINT record_slot)
 {
     int kind = calendar_kind(cal);
@@ -490,7 +487,7 @@ PCWSTR KbCalendarMonthName(UINT locale, CALID cal, int month, BOOL abbreviated, 
     return KbLocaleText(locale, (abbreviated ? NLS_S_SABBREVMONTHNAME1 : NLS_S_SMONTHNAME1) + month - 1);
 }
 
-/* the name of an era; the era of a Gregorian date is the one of anno domini. */
+/* Gregorian dates are in the anno domini era. */
 PCWSTR KbCalendarEraName(UINT locale, CALID cal, int era, BOOL abbreviated)
 {
     if (cal == CAL_JAPAN && era >= 1 && era <= JAPANESE_ERAS) {
@@ -534,12 +531,12 @@ static YEAR_FACTS year_facts(CALID cal)
     }
 }
 
-/* the picture a calendar has for a kind of date in a locale. */
+/* a calendar's date format of the given kind in a locale. */
 PCWSTR KbCalendarPicture(UINT locale, CALID cal, UINT kind)
 {
     static const UINT record_slots[] = {NLS_CAL_SHORTDATE, NLS_CAL_LONGDATE, NLS_CAL_YEARMONTH, NLS_CAL_MONTHDAY};
     static const UINT locale_slots[] = {NLS_S_SSHORTDATE, NLS_S_SLONGDATE, NLS_S_SYEARMONTH, NLS_S_SMONTHDAY};
-    /* the Gregorian calendars of other languages have the same pictures in every locale. */
+    /* other languages' Gregorian calendars use the same formats in every locale. */
     if (cal == CAL_GREGORIAN_US || (cal >= CAL_GREGORIAN_ME_FRENCH && cal <= CAL_GREGORIAN_XLIT_FRENCH)) {
         static const PCWSTR fixed[2][4] = {{L"M/d/yyyy", L"dddd, MMMM dd, yyyy", L"MMMM, yyyy", L"MMMM dd"},
                                            {L"MM/dd/yyyy", L"dddd, MMMM dd, yyyy", L"MMMM, yyyy", L"dd MMMM"}};
@@ -549,10 +546,7 @@ PCWSTR KbCalendarPicture(UINT locale, CALID cal, UINT kind)
     return text && *text ? text : KbLocaleText(KbCalendarLocale(locale, cal), locale_slots[kind]);
 }
 
-/*
- * The answer for one type: a text, or a number when the type is numeric. Returns FALSE for a type the calendar has no
- * answer for.
- */
+/* the value of one type: text, or a number for numeric types. FALSE when the calendar has none. */
 static BOOL calendar_value(UINT locale, CALID cal, CALTYPE base, BOOL genitive, PCWSTR *text, DWORD *number)
 {
     *text = nullptr;

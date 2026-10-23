@@ -82,9 +82,8 @@ NTSTATUS IopQueueCompletion(PVOID port, PVOID key, PVOID apc_context, NTSTATUS s
 }
 
 /*
- * called when a request of a user completes: posts its packet when the file
- * is bound to a port, unless it succeeded before going pending on a file
- * that asked to skip the port then (FILE_SKIP_COMPLETION_PORT_ON_SUCCESS).
+ * posts the packet of a completed user request when the file is bound to a port, unless it succeeded synchronously
+ * and the file set FILE_SKIP_COMPLETION_PORT_ON_SUCCESS.
  */
 void IopPostCompletion(PFILE_OBJECT file, PVOID apc_context, NTSTATUS status, ULONG_PTR information, BOOLEAN synchronous)
 {
@@ -103,7 +102,7 @@ void IopSignalFile(PFILE_OBJECT file)
         KeSetEvent(&file->Event, IO_NO_INCREMENT, FALSE);
 }
 
-/* binds a file object to a port, once, like windows. */
+/* like windows, a file object can be bound to a port only once. */
 NTSTATUS IopSetCompletion(PFILE_OBJECT file, HANDLE port_handle, PVOID key)
 {
     IO_COMPLETION *port;
@@ -125,7 +124,6 @@ NTSTATUS IopSetCompletion(PFILE_OBJECT file, HANDLE port_handle, PVOID key)
     return STATUS_INVALID_PARAMETER;
 }
 
-/* drops the port reference of a closing file object. */
 void IopReleaseCompletion(PFILE_OBJECT file)
 {
     IO_COMPLETION_CONTEXT *ctx = file->CompletionContext;
@@ -222,7 +220,7 @@ static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *ou
         ExFreePool(p);
         if (++n == count)
             break;
-        /* more only when they are already queued. */
+        /* after the first packet, take only the ones already queued. */
         LARGE_INTEGER zero = {};
         if (KeWaitForSingleObject(&port->Packets, UserRequest, mode, FALSE, &zero) != STATUS_SUCCESS)
             break;
@@ -316,7 +314,7 @@ static void NTAPI apc_free(PKAPC apc, PKNORMAL_ROUTINE *normal, PVOID *context, 
     ExFreePool(apc);
 }
 
-/* runs routine(context, iosb, 0) in the requesting thread at its next alertable wait. */
+/* a low bit on the apc routine marks a 32-bit status block: the mark moves to the iosb. */
 void IopTakeIosb32(PVOID *apc_routine, PIO_STATUS_BLOCK *iosb)
 {
     if (!((ULONG_PTR)*apc_routine & 1))
@@ -326,7 +324,7 @@ void IopTakeIosb32(PVOID *apc_routine, PIO_STATUS_BLOCK *iosb)
         *iosb = (PIO_STATUS_BLOCK)((ULONG_PTR)*iosb | 1);
 }
 
-/* the bytes of a status block and where they go, the 32-bit layout for a marked one. */
+/* the status block bytes and their address, in the 32-bit layout when the iosb is marked. */
 ULONG IopIosbImage(PIO_STATUS_BLOCK iosb, NTSTATUS status, ULONG_PTR information, PVOID *address, ULONG64 image[2])
 {
     *address = (PVOID)((ULONG_PTR)iosb & ~(ULONG_PTR)1);

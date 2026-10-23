@@ -1,11 +1,9 @@
 /*
- * command line splitting of msvcrt's parse_cmdline, included by
- * startup.c once per character type with CHAR_T and PARSE_NAME defined.
- * the program name ends at the first blank outside quotes and keeps its
- * backslashes. arguments follow the 2n backslashes rule; inside quotes a
- * doubled quote gives a literal quote and ends the quoted part. with argv
- * NULL it only counts arguments and characters. quoted[i] tells whether
- * argument i contained quotes, which keeps it from wildcard expansion.
+ * msvcrt's parse_cmdline, included by startup.c once per character type with CHAR_T and PARSE_NAME defined. the
+ * program name ends at the first blank outside quotes and keeps its backslashes. arguments follow the 2n backslashes
+ * rule, and inside quotes a doubled quote gives a literal quote and ends the quoted part. with argv NULL it only
+ * counts arguments and characters. quoted[i] tells whether argument i had quotes, which exempts it from wildcard
+ * expansion.
  */
 static void PARSE_NAME(const CHAR_T *p, CHAR_T **argv, CHAR_T *args, int *quoted, int *argc, size_t *chars)
 {

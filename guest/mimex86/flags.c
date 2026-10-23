@@ -85,7 +85,7 @@ void x86_set_flags(X86Cpu *c, uint32_t flags)
     c->lf_op = X86_LF_NONE;
 }
 
-/* materializes sf, zf and pf from a result, with the other arithmetic flags given. */
+/* computes sf, zf and pf from res. others supplies the remaining arithmetic flags. */
 void x86_set_szp(X86Cpu *c, uint64_t res, int size, uint32_t others)
 {
     uint64_t mask = x86_mask(size);
@@ -103,7 +103,7 @@ int x86_cond(X86Cpu *c, int cc)
 {
     uint32_t op = c->lf_op;
     int r;
-    /* the common compare and test cases without materializing. */
+    /* handle the common compare and test cases without materializing. */
     if ((op >> 2) == X86_LF_SUB && (cc & 0xE) != 0 && (cc & 0xE) != 0xA && (cc & 0xE) != 8) {
         int size = 1 << (op & 3);
         uint64_t mask = x86_mask(size);

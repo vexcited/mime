@@ -1,16 +1,14 @@
 /*
- * msvcp_win.dll, the C++ runtime of windows' own dlls: the mutexes of
- * std::mutex, the errors the standard library throws, and the threads of
- * the parallel algorithms, which run serially here.
+ * msvcp_win.dll, the C++ runtime of Windows' own dlls: std::mutex, the errors the standard library throws, and the
+ * parallel algorithm threads, which run serially here.
  */
 #include <mime/win32/winbase.h>
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
 
 /*
- * a mutex in the 80 bytes the caller reserves: its type first, as the
- * library's inline constructor writes it, the lock, then the owner and
- * the depth of recursive locking. a zeroed mutex is an unlocked one.
+ * a mutex in the 80 bytes the caller reserves: its type first, as the library's inline constructor writes it, then
+ * the lock, the owner and the recursion depth. a zeroed mutex is unlocked.
  */
 typedef struct MUTEX {
     int type;
@@ -55,7 +53,7 @@ DECLSPEC_EXPORT int __cdecl _Mtx_unlock(MUTEX *mutex)
     return 0;
 }
 
-/* the errors the library throws, which end the process as an unhandled exception would. */
+/* library errors end the process like an unhandled exception would. */
 void __cdecl throw_cpp_error(int code)
 {
     OutputDebugStringA("msvcp_win: std::system_error thrown\n");
@@ -68,7 +66,7 @@ void __cdecl xlength_error(const char *message)
     TerminateProcess(GetCurrentProcess(), 3);
 }
 
-/* one thread: the parallel algorithms take their serial path and never ask for work items. */
+/* one thread, so the parallel algorithms take their serial path and never ask for work items. */
 DECLSPEC_EXPORT DWORD __stdcall __std_parallel_algorithms_hw_threads(void) { return 1; }
 
 DECLSPEC_EXPORT void *__stdcall __std_create_threadpool_work(void *callback, void *context, void *environment)

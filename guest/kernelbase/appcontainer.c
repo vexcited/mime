@@ -1,6 +1,6 @@
 /*
- * the app container registry of kernelbase: a sid registered to a name, which userenv's profiles and the
- * sandbox of a browser use. the mappings are the ones userenv writes.
+ * app container registry: a sid registered under a name, used by userenv profiles and browser sandboxes. the
+ * mappings are the ones userenv writes.
  */
 #include "kernelbase_private.h"
 
@@ -48,7 +48,7 @@ DECLSPEC_EXPORT VOID WINAPI AppContainerFreeMemory(PVOID memory)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, memory);
 }
 
-/* registers the sid under a name; one that is there is ERROR_ALREADY_EXISTS. */
+/* an existing registration fails with ERROR_ALREADY_EXISTS. */
 DECLSPEC_EXPORT HRESULT WINAPI AppContainerRegisterSid(PSID sid, PCWSTR moniker, PCWSTR display_name)
 {
     WCHAR path[MAX_PATH];
@@ -80,7 +80,7 @@ DECLSPEC_EXPORT HRESULT WINAPI AppContainerUnregisterSid(PSID sid)
     return error ? HRESULT_FROM_WIN32(error == ERROR_FILE_NOT_FOUND ? ERROR_NOT_FOUND : error) : S_OK;
 }
 
-/* the name a sid is registered to, from the process heap; free it with AppContainerFreeMemory. */
+/* the moniker comes from the process heap, free it with AppContainerFreeMemory. */
 DECLSPEC_EXPORT HRESULT WINAPI AppContainerLookupMoniker(PSID sid, PWSTR *moniker)
 {
     if (!moniker)
@@ -119,8 +119,8 @@ DECLSPEC_EXPORT HRESULT WINAPI AppContainerDeriveSidFromMoniker(PCWSTR moniker, 
 }
 
 /*
- * \Sessions\<n>\AppContainerNamedObjects\<sid>, the directory an app container makes its named objects in.
- * the sid is the one given or the token's, the session that of the token.
+ * \Sessions\<n>\AppContainerNamedObjects\<sid>, where an app container creates its named objects. the sid defaults
+ * to the token's, the session is the token's.
  */
 DECLSPEC_EXPORT BOOL WINAPI GetAppContainerNamedObjectPath(HANDLE token, PSID sid, ULONG length, PWSTR path, PULONG required)
 {
@@ -163,10 +163,7 @@ DECLSPEC_EXPORT BOOL WINAPI GetAppContainerNamedObjectPath(HANDLE token, PSID si
 
 NTSYSAPI NTSTATUS NTAPI RtlDeriveCapabilitySidsFromName(PCUNICODE_STRING name, PSID group, PSID capability);
 
-/*
- * the group sid and the capability sid of a capability name, each in an array of one, the arrays and the sids
- * in blocks of local memory.
- */
+/* the group and capability sids of a name, each in a one element array; arrays and sids are local memory. */
 DECLSPEC_EXPORT BOOL WINAPI DeriveCapabilitySidsFromName(PCWSTR name, PSID **groups, DWORD *group_count, PSID **capabilities,
                                                          DWORD *capability_count)
 {

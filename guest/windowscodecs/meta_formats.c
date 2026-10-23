@@ -1,7 +1,4 @@
-/*
- * the metadata formats this library knows: their short names, the classes of their readers and writers, the schemas of
- * xmp, and the information objects that describe a handler.
- */
+/* metadata format names, handler classes, XMP schemas and information objects. */
 #include "wic_codec.h"
 #include "wic_meta.h"
 #include "meta_internal.h"
@@ -78,7 +75,7 @@ const GUID *WicFormatFromShortName(const WCHAR *name)
     return nullptr;
 }
 
-/* ------------------------------------------------------------------ exports */
+/* exports. */
 
 DECLSPEC_EXPORT HRESULT WINAPI WICMapGuidToShortName(REFGUID guid, UINT size, WCHAR *name, UINT *actual)
 {
@@ -135,7 +132,6 @@ DECLSPEC_EXPORT HRESULT WINAPI WICMapSchemaToName(REFGUID format, LPWSTR schema,
     return WINCODEC_ERR_PROPERTYNOTFOUND;
 }
 
-/* the uri of an xmp schema by its prefix, and the prefix of a uri. */
 const WCHAR *WicSchemaUri(const GUID *format, const WCHAR *prefix, SIZE_T prefix_length)
 {
     for (UINT g = 0; g < WIC_ARRAY_SIZE(g_schema_groups); g++) {
@@ -164,7 +160,7 @@ const WCHAR *WicSchemaPrefix(const GUID *format, const WCHAR *uri)
     return nullptr;
 }
 
-/* ------------------------------------------------------------------ handler information */
+/* handler information. */
 
 typedef struct WicHandlerInfo {
     WicBase base;
@@ -255,7 +251,7 @@ static HRESULT STDMETHODCALLTYPE hi_containers(void *This, UINT count, GUID *for
 {
     if (!actual)
         return E_INVALIDARG;
-    /* the containers a handler is known to live in, which is a guess: the three that carry the most. */
+    /* guessed container support: the three containers carrying most metadata. */
     static const GUID *const containers[] = {&GUID_ContainerFormatJpeg, &GUID_ContainerFormatTiff,
                                               &GUID_ContainerFormatPng};
     *actual = 3;
@@ -416,7 +412,7 @@ HRESULT WicMetadataInfoList(DWORD types, IUnknown ***list, UINT *count)
     return S_OK;
 }
 
-/* the format a class id makes a handler of, for the factory. */
+/* map a handler class id to its format. */
 const GUID *WicFormatOfClass(const GUID *clsid)
 {
     for (UINT i = 0; i < WIC_ARRAY_SIZE(g_classes); i++) {

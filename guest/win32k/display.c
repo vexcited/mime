@@ -1,11 +1,8 @@
 /*
- * display modes. the host's display is the one real mode; a program may
- * change to the others windows lists, smaller sizes and 8, 16 or 32 bits,
- * which then become the screen windows see. the host shows a fullscreen
- * window of a smaller mode scaled to its screen, as a monitor would, and
- * drawing stays 32 bits. a mode set with CDS_FULLSCREEN goes back when the
- * process that set it ends, as windows does. the gamma ramps are kept
- * here too.
+ * display modes and gamma ramps. the host display is the one real mode, but a program may switch to the smaller
+ * sizes and 8, 16 or 32 bit modes windows lists. the host scales a fullscreen window of a smaller mode to its
+ * screen like a monitor would, and drawing stays 32 bits. like windows, a CDS_FULLSCREEN mode reverts when the
+ * process that set it ends.
  */
 #include "win32k.h"
 #include <mime/win32/winspool.h>
@@ -14,12 +11,12 @@
 static struct {
     BOOLEAN active;
     DWORD width, height, bits;
-    HANDLE owner; /* the process a temporary mode goes back with */
+    HANDLE owner; /* a temporary mode reverts when this process ends. */
 } g_mode;
 
 static LONG g_native_width, g_native_height;
 
-/* the modes in windows' order: by bits, then width, then height; each size up to the native one. */
+/* modes in windows' order: by bits, then width, then height, each size up to the native one. */
 static BOOLEAN mode_at(DWORD index, DWORD *width, DWORD *height, DWORD *bits)
 {
     static const DWORD BITS[] = {8, 16, 32};
@@ -61,7 +58,7 @@ static BOOLEAN mode_exists(DWORD width, DWORD height, DWORD bits)
     return FALSE;
 }
 
-/* W32Display holds the host's display: the mode set replaces its size, its work area the whole screen. */
+/* W32Display comes in as the host display. a set mode replaces its size, and the work area becomes the whole screen. */
 void DisplayApplyMode(void)
 {
     g_native_width = W32Display.Width;
@@ -99,7 +96,7 @@ void DisplayProcessExited(HANDLE pid)
     gamma_process_exited(pid);
 }
 
-/* the monitor a device name is of, the primary one for none; -1 for a name that is no monitor's. */
+/* no name means the primary monitor, -1 means the name is no monitor's. */
 static LONG device_monitor(PUNICODE_STRING user_device)
 {
     PWSTR device;
@@ -132,11 +129,7 @@ static void fill(DEVMODEW *m, LONG monitor, DWORD width, DWORD height, DWORD bit
     m->dmPosition = (POINTL){info.Rect.left, info.Rect.top};
 }
 
-/*
- * a mode by index, ENUM_CURRENT_SETTINGS for the one set now, or
- * ENUM_REGISTRY_SETTINGS for the one the system starts in. what is
- * written stops at the caller's dmSize.
- */
+/* ENUM_REGISTRY_SETTINGS is the mode the system starts in. only the caller's dmSize bytes are written. */
 NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD index, DEVMODEW *user_mode, DWORD flags)
 {
     WORD size;
@@ -153,7 +146,7 @@ NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD index, DE
     if (!MonitorGet((ULONG)monitor, &info)) {
         status = STATUS_INVALID_PARAMETER;
     } else if (monitor > 0) {
-        /* the other monitors have the mode they have, their own size at 32 bits. */
+        /* the other monitors only have their own size at 32 bits. */
         if (index == ENUM_CURRENT_SETTINGS || index == ENUM_REGISTRY_SETTINGS || index == 0)
             fill(&m, monitor, (DWORD)(info.Rect.right - info.Rect.left), (DWORD)(info.Rect.bottom - info.Rect.top), 32);
         else
@@ -174,13 +167,12 @@ NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD index, DE
 }
 
 /*
- * windows' ChangeDisplaySettingsEx. fields a mode leaves out keep the
- * current mode's; a null mode goes back to the registry's. the native
- * size at 32 bits is no mode of its own, only the display.
+ * fields a mode leaves out keep the current values, and a null mode goes back to the registry mode. the native
+ * size at 32 bits is not a mode of its own, just the display.
  */
 LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mode, DWORD flags, PVOID lparam)
 {
-    /* the answer of a refusal is guessed. */
+    /* the result code for a refusal is a guess. */
     if (W32UiLimited(W32_UILIMIT_DISPLAYSETTINGS))
         return DISP_CHANGE_FAILED;
     if (flags & ~(CDS_UPDATEREGISTRY | CDS_TEST | CDS_FULLSCREEN | CDS_GLOBAL | CDS_SET_PRIMARY | CDS_VIDEOPARAMETERS |
@@ -205,7 +197,7 @@ LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mo
     UserEnter();
     LONG result = DISP_CHANGE_SUCCESSFUL;
     if (monitor > 0) {
-        /* the other monitors keep their mode: it is only the one they have that is accepted. */
+        /* the other monitors only accept the mode they already have. */
         MIME_MONITOR_INFO info;
         if (!reset && MonitorGet((ULONG)monitor, &info) &&
             (((m.dmFields & DM_PELSWIDTH) && m.dmPelsWidth != (DWORD)(info.Rect.right - info.Rect.left)) ||
@@ -246,10 +238,8 @@ LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mo
 /* ------------------------------------------------------------------ gamma */
 
 /*
- * the display's gamma as windows composes it: gdi's ramp belongs to the
- * session and stays when its process ends, and a fullscreen program's
- * device ramp replaces it until the program drops it or ends. the host
- * shows everything through the result.
+ * gamma composes like on windows: the gdi ramp belongs to the session and outlives its process, and a fullscreen
+ * program's device ramp replaces it until the program drops it or ends. the host applies the result.
  */
 #define RAMP_VALUES (3 * 256)
 
@@ -257,7 +247,7 @@ static USHORT g_gdi_ramp[RAMP_VALUES];
 static BOOLEAN g_gdi_ramp_set;
 static USHORT g_device_ramp[RAMP_VALUES];
 static HANDLE g_device_owner;
-static USHORT *g_host_ramp; /* contiguous, as the host reads it */
+static USHORT *g_host_ramp; /* contiguous, as the host reads it. */
 
 static void identity_ramp(USHORT *ramp)
 {

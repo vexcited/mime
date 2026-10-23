@@ -80,7 +80,7 @@ HRESULT WINAPI SHStrDupA(LPCSTR string, LPWSTR *copy)
     return S_OK;
 }
 
-/* the characters written, the terminator included; a short buffer keeps what fits. */
+/* returns the characters written, terminator included. a short buffer keeps what fits. */
 int WINAPI SHAnsiToUnicode(LPCSTR source, LPWSTR buffer, int length)
 {
     if (!buffer || length <= 0)
@@ -142,7 +142,7 @@ int WINAPI SHUnicodeToUnicode(LPCWSTR source, LPWSTR buffer, int length)
 
 /* ------------------------------------------------------------------ the app id of the process */
 
-/* kept in the process parameters as a title marked STARTF_TITLEISAPPID, where GetStartupInfo shows it. */
+/* kept in the process parameters as a STARTF_TITLEISAPPID title, where GetStartupInfo shows it. */
 HRESULT WINAPI SetCurrentProcessExplicitAppUserModelID(LPCWSTR id)
 {
     if (id && wcslen(id) >= 128)
@@ -244,7 +244,7 @@ static ULONG WINAPI ref_release(IUnknown *iface)
 
 static const IUnknownVtbl ref_vtbl = {ref_query, ref_add_ref, ref_release};
 
-/* an object counting into the caller's *refs, which starts at one. */
+/* the object counts in the caller's *refs, which starts at one. */
 HRESULT WINAPI SHCreateThreadRef(LONG *refs, IUnknown **unknown)
 {
     if (!refs || !unknown)
@@ -313,8 +313,8 @@ static DWORD WINAPI thread_main(void *param)
     return result;
 }
 
-/* a callback runs on the new thread before this returns; a thread that cannot start runs the work here when
-   CTF_INSECURE asks for it. */
+/* the callback runs on the new thread before this returns. with CTF_INSECURE, a thread that cannot start runs the
+   work here. */
 BOOL WINAPI SHCreateThreadWithHandle(THREAD_START start, void *data, DWORD flags, THREAD_START callback,
                                      HANDLE *handle)
 {
@@ -466,7 +466,7 @@ HRESULT WINAPI IUnknown_SetSite(IUnknown *unknown, IUnknown *site)
     return hr;
 }
 
-/* an object that is no service provider fails with E_NOTIMPL. */
+/* an object that is not a service provider fails with E_NOTIMPL. */
 HRESULT WINAPI IUnknown_QueryService(IUnknown *unknown, REFGUID service, REFIID riid, void **object)
 {
     *object = nullptr;
@@ -480,7 +480,7 @@ HRESULT WINAPI IUnknown_QueryService(IUnknown *unknown, REFGUID service, REFIID 
 
 /* ------------------------------------------------------------------ IsOS */
 
-/* a workstation of the nt line, newer than every version the OS_ constants name. */
+/* an NT workstation newer than every version the OS_ constants name. */
 BOOL WINAPI IsOS(DWORD os)
 {
     switch (os) {

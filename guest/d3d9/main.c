@@ -1,7 +1,4 @@
-/*
- * the exports of d3d9.dll: the direct3d 9 objects, and the markers of
- * performance tools, which nothing here listens to.
- */
+/* d3d9.dll exports. nothing listens to the D3DPERF markers. */
 #include "d3d9_private.h"
 
 int _fltused = 0x9875;
@@ -38,7 +35,7 @@ __declspec(dllexport) HRESULT WINAPI Direct3DCreate9Ex(UINT sdk, IDirect3D9Ex **
     return D9CreateDirect3D(sdk, TRUE, out);
 }
 
-/* direct3d 9 on 12 is direct3d 9 here: the device and queue given are not used. */
+/* the given direct3d 12 device and queue are ignored. */
 __declspec(dllexport) IDirect3D9 *WINAPI Direct3DCreate9On12(UINT sdk, void *args, UINT count)
 {
     return Direct3DCreate9(sdk);
@@ -64,7 +61,7 @@ __declspec(dllexport) void WINAPI DebugSetMute(void) {}
 
 __declspec(dllexport) int WINAPI Direct3D9EnableMaximizedWindowedModeShim(UINT enable) { return 0; }
 
-/* without a capture tool listening, events have no depth to report, as on windows. */
+/* like windows with no capture tool attached, there is no event depth to report. */
 __declspec(dllexport) int WINAPI D3DPERF_BeginEvent(D3DCOLOR color, LPCWSTR name) { return -1; }
 
 __declspec(dllexport) int WINAPI D3DPERF_EndEvent(void) { return -1; }

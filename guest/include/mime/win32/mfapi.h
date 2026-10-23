@@ -1,8 +1,4 @@
-/*
- * mfplat.dll: platform startup, the object factories, attribute
- * serialization, work queues, format helpers and the attribute and
- * media type guids.
- */
+/* mfplat.dll: startup, object factories, attribute serialization, work queues, format helpers and guids. */
 #ifndef MIME_WIN32_MFAPI_H
 #define MIME_WIN32_MFAPI_H
 
@@ -116,7 +112,7 @@ MIME_DEFINE_GUID(MFSampleExtension_Discontinuity, 0x9CDF01D9, 0xA0F0, 0x43BA, 0x
 #define MFNominalRange_16_235 2
 #define MFNominalRange_48_208 3
 
-/* when the device captured a sample, on the clock of MFGetSystemTime, and whether it came damaged. */
+/* when the device captured a sample on the MFGetSystemTime clock, and whether it came damaged. */
 MIME_DEFINE_GUID(MFSampleExtension_DeviceReferenceSystemTime, 0x6523775A, 0xBA2D, 0x405F, 0xB2, 0xC5, 0x01, 0xFF, 0x88,
                  0xE2, 0xE8, 0xF6);
 MIME_DEFINE_GUID(MFSampleExtension_FrameCorruption, 0xB4DD4A8C, 0x0BEB, 0x44C4, 0x8B, 0x75, 0xB0, 0x2B, 0x91, 0x3B, 0x04,

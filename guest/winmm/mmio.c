@@ -1,10 +1,7 @@
 /*
- * mmio: buffered file i/o and the riff chunks of wave and avi files. a
- * file is read and written through an i/o procedure: the dos one for
- * files, the mem one for memory, or one the program installs or passes.
- * the buffer is the program's to read too, through mmioGetInfo and
- * mmioAdvance: pchNext is the position, the data before pchEndRead is the
- * file's from lBufOffset on, and a written buffer is marked MMIO_DIRTY.
+ * buffered file I/O and RIFF chunks. procedures provide disk, memory or application-defined I/O. mmioGetInfo and
+ * mmioAdvance expose the buffer: pchNext is the cursor, pchEndRead ends readable data from lBufOffset, and
+ * MMIO_DIRTY marks writes.
  */
 #define MIME_BUILD_WINMM
 #include <mime/nt.h>
@@ -189,7 +186,7 @@ WINMMAPI LPMMIOPROC WINAPI mmioInstallIOProcW(FOURCC fcc, LPMMIOPROC proc, DWORD
     return install(fcc, proc, flags, TRUE);
 }
 
-/* the four characters of text, padded with spaces, upper case when asked. */
+/* packs four characters, padding with spaces and optionally converting to uppercase. */
 static FOURCC to_fourcc(const char text[4], int length, UINT flags)
 {
     char c[4] = {' ', ' ', ' ', ' '};
@@ -213,7 +210,7 @@ WINMMAPI FOURCC WINAPI mmioStringToFOURCCW(LPCWSTR text, UINT flags)
 
 /* ------------------------------------------------------------------ opening and closing */
 
-/* the procedure of a name like file.ext+element: its extension's, if installed. */
+/* a name like file.ext+element selects the installed procedure for its extension. */
 static FOURCC proc_of_name(LPCWSTR name)
 {
     const WCHAR *plus = name ? wcschr(name, L'+') : nullptr;
@@ -280,7 +277,6 @@ static HMMIO open_common(LPWSTR name, LPMMIOINFO user, DWORD flags)
     UINT error = MMSYSERR_NOERROR;
     if (!m->info.pIOProc)
         error = MMIOERR_FILENOTFOUND;
-    /* the buffer: the caller's, or one mmio allocates. */
     if (!error && m->info.fccIOProc == FOURCC_MEM && !m->info.pchBuffer && !(flags & MMIO_ALLOCBUF))
         error = MMIOERR_OUTOFMEMORY;
     if (!error && !m->info.pchBuffer && ((flags & MMIO_ALLOCBUF) || m->info.cchBuffer)) {
@@ -335,7 +331,6 @@ WINMMAPI HMMIO WINAPI mmioOpenA(LPSTR file, LPMMIOINFO info, DWORD flags)
 
 /* ------------------------------------------------------------------ the buffer */
 
-/* writes what the buffer holds of the file, if changed. */
 static MMRESULT flush_buffer(MMIO *m, BOOL force)
 {
     MMIOINFO *i = &m->info;
@@ -350,14 +345,14 @@ static MMRESULT flush_buffer(MMIO *m, BOOL force)
     return MMSYSERR_NOERROR;
 }
 
-/* the logical position: in the buffer, or the disk's without one. */
+/* the logical position is in the buffer, or on disk when unbuffered. */
 static LONG position(const MMIO *m)
 {
     const MMIOINFO *i = &m->info;
     return i->pchBuffer ? i->lBufOffset + (LONG)(i->pchNext - i->pchBuffer) : i->lDiskOffset;
 }
 
-/* empties the buffer at the logical position, the disk's from then on. */
+/* empties the buffer and positions the file at the logical cursor. */
 static MMRESULT refill_at(MMIO *m, LONG at, BOOL read)
 {
     MMIOINFO *i = &m->info;
@@ -506,7 +501,7 @@ WINMMAPI MMRESULT WINAPI mmioGetInfo(HMMIO h, LPMMIOINFO info, UINT flags)
     return MMSYSERR_NOERROR;
 }
 
-/* the program's view of the buffer back: its position, end of data and whether it wrote. */
+/* accepts the application's buffer position, data end and dirty flag. */
 WINMMAPI MMRESULT WINAPI mmioSetInfo(HMMIO h, LPCMMIOINFO info, UINT flags)
 {
     MMIO *m = mmio_of(h);
@@ -573,10 +568,8 @@ WINMMAPI MMRESULT WINAPI mmioFlush(HMMIO h, UINT flags)
 }
 
 /*
- * the next buffer: written ones go to the file first; for reading the
- * buffer fills from where the last one ended, for writing it starts
- * empty there. at the end of a file reading still succeeds, with
- * pchNext equal to pchEndRead.
+ * flushes writes, then prepares the next buffer at the previous one's end. reads fill it; writes start empty.
+ * reading at EOF succeeds with pchNext equal to pchEndRead.
  */
 WINMMAPI MMRESULT WINAPI mmioAdvance(HMMIO h, LPMMIOINFO info, UINT flags)
 {
@@ -650,9 +643,8 @@ WINMMAPI MMRESULT WINAPI mmioRenameA(LPCSTR from, LPCSTR to, LPCMMIOINFO info, D
 /* ------------------------------------------------------------------ riff chunks */
 
 /*
- * the next chunk, or the next of an id or form type when asked, within
- * the parent: its header read, the position left at its data, past the
- * form type of riff and list chunks.
+ * finds the next matching chunk within the parent, leaving the cursor at its data, past the form type for RIFF and
+ * LIST chunks.
  */
 WINMMAPI MMRESULT WINAPI mmioDescend(HMMIO h, LPMMCKINFO ck, const MMCKINFO *parent, UINT flags)
 {
@@ -685,13 +677,12 @@ WINMMAPI MMRESULT WINAPI mmioDescend(HMMIO h, LPMMCKINFO ck, const MMCKINFO *par
             match = ck->ckid == FOURCC_LIST && ck->fccType == want_type;
         if (match)
             return MMSYSERR_NOERROR;
-        /* the chunk and its pad byte skipped. */
         if (mmioSeek(h, (LONG)(ck->dwDataOffset + ck->cksize + (ck->cksize & 1)), SEEK_SET) < 0)
             return MMIOERR_CHUNKNOTFOUND;
     }
 }
 
-/* out of a chunk: a created one gets its size written and a pad byte; the position goes past its end. */
+/* writes a created chunk's size and pad byte, then seeks past its end. */
 WINMMAPI MMRESULT WINAPI mmioAscend(HMMIO h, LPMMCKINFO ck, UINT flags)
 {
     MMIO *m = mmio_of(h);

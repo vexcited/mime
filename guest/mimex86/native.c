@@ -1,9 +1,9 @@
 /*
- * x64 system dll exports run natively. the heap, the locks and the memory
- * and string primitives are a large share of what x64 programs execute,
- * and the same code built for arm64 runs them many times faster than the
- * interpreter. the x64 images stay untouched: a block that starts at a
- * hooked export calls the native function, see x86_set_native.
+ * runs x64 system dll exports natively. the heap, the locks and the memory
+ * and string primitives are a large share of what x64 programs execute, and
+ * arm64 builds of them run many times faster than the interpreter. the x64
+ * images stay untouched: a block that starts at a hooked export calls the
+ * native function, see x86_set_native.
  */
 #define MIME_NTDLL
 #define NTSYSCALLAPI
@@ -285,7 +285,7 @@ static ULONG64 code_export(PVOID base, PIMAGE_NT_HEADERS64 nt, const char *name)
     return 0;
 }
 
-/* mime's own x64 msvcrt, whose allocator is the process heap; not an msvcrt a program ships. */
+/* mime's own x64 msvcrt, whose allocator is the process heap, not one a program ships. */
 static BOOLEAN is_system_msvcrt(PVOID base, PIMAGE_NT_HEADERS64 nt)
 {
     IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];

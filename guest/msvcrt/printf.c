@@ -1,5 +1,5 @@
 /*
- * the printf family over msvcrt's formatting engine (format.h).
+ * the printf family over msvcrt's formatting engine in format.h.
  */
 #include "msvcrt_private.h"
 
@@ -25,7 +25,7 @@ void MsvcrtFormatDouble(double value, int fmt, int prec, int caps, int alt, char
 enum { ST_NORMAL, ST_PERCENT, ST_FLAG, ST_WIDTH, ST_DOT, ST_PRECIS, ST_SIZE, ST_TYPE };
 enum { CL_OTHER, CL_PERCENT, CL_DOT, CL_STAR, CL_ZERO, CL_DIGIT, CL_FLAG, CL_SIZE, CL_TYPE };
 
-/* character classes from ' ' to 'z' and the state transitions, read from msvcrt's __lookuptable. */
+/* character classes from ' ' to 'z' and the state transitions, matching msvcrt's __lookuptable. */
 static constexpr unsigned char g_class['z' - ' ' + 1] = {
     /*   ! " # $ % & ' ( ) * + , - . / */
     6, 0, 0, 6, 0, 1, 0, 0, 0, 0, 3, 6, 0, 6, 2, 0,
@@ -669,9 +669,9 @@ int __cdecl _get_printf_count_output(void)
 /* ------------------------------------------------------------------ positional parameters */
 
 /*
- * the _p functions: the format may number its arguments with n$, also the ones of a width or precision written *n$. A
- * format that cannot be put in order is an invalid parameter. The output goes where the plain function's would, the
- * string forms with the checks of the _s forms.
+ * the _p functions: the format may number its arguments with n$, including widths and precisions written *n$. a format
+ * that cannot be put in order is an invalid parameter. output goes where the plain function's would, and the string
+ * forms get the checks of the _s forms.
  */
 int MsvcrtFormatPositionalA(FILE *f, const char *fmt, va_list ap)
 {

@@ -1,10 +1,8 @@
 /*
- * the glyphs of a layout as outlines: where each glyph, underline and strikeout goes, the table that turns coverage
- * into the alpha of a pixel of text, and the hint a graphics draws text with.
+ * layout glyphs as outlines: placing glyphs, underlines and strikeouts, the coverage to alpha contrast tables, and
+ * the text hint a graphics resolves to.
  */
 #include "text_private.h"
-
-/* ------------------------------------------------------------------ hints and contrast */
 
 TextRenderingHint gp_text_resolved_hint(const GGraphics *g)
 {
@@ -19,7 +17,7 @@ TextRenderingHint gp_text_resolved_hint(const GGraphics *g)
     } else {
         hint = TextRenderingHintSingleBitPerPixelGridFit;
     }
-    /* a target of eight bits or fewer cannot show the gray levels. */
+    /* targets of 8 bits or fewer cannot show gray levels. */
     INT bits = 32;
     if (g->target)
         bits = (INT)((g->target->format >> 8) & 0xff);
@@ -36,9 +34,8 @@ static UINT8 g_contrast[CONTRAST_ROWS][256];
 static volatile LONG g_contrast_built;
 
 /*
- * the table of contrast k lifts the dark end of a coverage ramp. Its entry i is 255 times i over 255 raised to the
- * power 1 over 1 plus a tenth of k, rounded, and a pixel of coverage c gets the alpha 255 less the entry 255 - c. The
- * tables are made the first time one is asked for.
+ * contrast k lifts the dark end of the coverage ramp:
+ * map[c] = 255 - round(255 * ((255 - c) / 255) ^ (1 / (1 + k / 10))). rows are built on first use.
  */
 const UINT8 *gp_text_contrast_map(UINT contrast)
 {
@@ -57,9 +54,7 @@ const UINT8 *gp_text_contrast_map(UINT contrast)
     return g_contrast[row];
 }
 
-/* ------------------------------------------------------------------ placing glyphs */
-
-/* where a line sits: the pen at its start, and the directions along it and up from its baseline. */
+/* a line's pen start, and its directions along the line and up from the baseline. */
 typedef struct Frame {
     float ox, oy;
     float ux, uy;
@@ -118,7 +113,7 @@ static MimeVecPoint map_vector(const MimeVecMatrix *m, float x, float y)
 
 static float round_to_unit(float v) { return mime_vec_floorf(v + 0.5f); }
 
-/* a slanted copy of the up direction, which is how a face with no italic is made to lean. */
+/* shear added to the up direction to slant faces that have no italic. */
 #define ITALIC_SHEAR 0.2126f
 
 typedef struct Emit {
@@ -148,7 +143,7 @@ static GpStatus emit_glyph(const Emit *e, const Frame *frame, const GTextGlyph *
     }
     GpStatus status = gp_face_outline(face, g->glyph, e->path, o.x, o.y, u.x, u.y, v.x, v.y);
     if (status == Ok && e->style->simulate_bold) {
-        /* a second copy a thirty second of the em along the line. */
+        /* simulated bold draws a second copy 1/32 em along the line. */
         float shift = (float)face->em / 32.0f;
         status = gp_face_outline(face, g->glyph, e->path, o.x + u.x * shift, o.y + u.y * shift, u.x, u.y, v.x, v.y);
     }
@@ -156,8 +151,8 @@ static GpStatus emit_glyph(const Emit *e, const Frame *frame, const GTextGlyph *
 }
 
 /*
- * a bar along the line from gx0 to gx1 with its top gy_top and bottom gy_bottom above the baseline, in font units.
- * The corners run the way the outer contours of a glyph do, so bars and glyphs never cancel where they overlap.
+ * a bar from gx0 to gx1 along the line, gy_top to gy_bottom above the baseline, in font units. its corners wind like
+ * a glyph's outer contours, so bars and glyphs never cancel where they overlap.
  */
 static GpStatus emit_bar(const Emit *e, const Frame *frame, float line_start, float gx0, float gx1, float gy_top,
                          float gy_bottom)
@@ -178,7 +173,7 @@ static GpStatus emit_bar(const Emit *e, const Frame *frame, float line_start, fl
             p[i].x = round_to_unit(p[i].x);
             p[i].y = round_to_unit(p[i].y);
         }
-        /* a bar is at least one unit of the target thick. */
+        /* a bar is at least one target unit thick. */
         if (p[0].y == p[3].y) {
             p[2].y += 1.0f;
             p[3].y += 1.0f;
@@ -207,7 +202,7 @@ GpStatus gp_text_emit(const GTextLayout *layout, const GTextStyle *style, const 
         line_frame(layout, line, &frame);
         for (INT j = 0; j < line->count && status == Ok; j++)
             status = emit_glyph(&e, &frame, &layout->glyphs[line->first + j]);
-        /* a hotkey is underlined across the advance of its character. */
+        /* a hotkey underline spans its character's advance. */
         float under_top = (float)face->underline_pos;
         float under_bottom = under_top - (float)face->underline_size;
         for (INT j = 0; j < line->count && status == Ok; j++) {

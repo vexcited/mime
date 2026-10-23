@@ -1,6 +1,4 @@
-/*
- * user definitions shared by user32, win32k and applications.
- */
+/* user definitions shared by user32, win32k and applications. */
 #ifndef MIME_WIN32_WINUSER_H
 #define MIME_WIN32_WINUSER_H
 
@@ -2025,7 +2023,7 @@ typedef struct tagMONITORINFOEXW {
 #define STN_DISABLE 3
 
 #define WM_SYSTIMER 0x0118
-/* posted to a window or a thread for drag and drop with the host and between processes; user32 handles it. */
+/* drag and drop with the host and between processes, posted to a window or thread and handled by user32. */
 #define WM_MIME_HOSTDND 0x03F7
 
 #define ES_LEFT 0x0000L

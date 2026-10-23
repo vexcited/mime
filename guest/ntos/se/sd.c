@@ -1,11 +1,10 @@
 /*
- * security descriptors of objects: the one a new object gets from its creator, its parent and the token of the
- * thread that makes it, the parts of it a program reads and changes, and the checks windows makes on the way.
- * Access is not checked against any descriptor, only what the owner, privilege and label rules say about
- * setting one.
+ * security descriptors of objects: the one a new object gets from its creator, its parent and the creating thread's
+ * token, the parts a program reads and changes, and the checks windows makes on the way. no access is checked here,
+ * only the owner, privilege and label rules for setting a descriptor.
  *
- * A descriptor is a blob: self relative, shared by reference count and never changed once made. The algorithms
- * on lists and parts are the rtl's, shared with ntdll.
+ * a descriptor is a self relative blob, reference counted and never changed once made. the list and part
+ * algorithms are the rtl's, shared with ntdll.
  */
 #include "se.h"
 #include <mime/ntrtlsec.h>
@@ -53,7 +52,7 @@ void SeSdDereference(SD_BLOB *sd)
         ExFreePool(sd);
 }
 
-/* a blob of a descriptor the rtl made in its own memory, which is freed. */
+/* wraps a descriptor the rtl made in its own memory as a blob, and frees the rtl copy. */
 static NTSTATUS blob_of_rtl(PSECURITY_DESCRIPTOR made, SD_BLOB **out)
 {
     ULONG length = RtlLengthSecurityDescriptor(made);
@@ -95,7 +94,7 @@ static NTSTATUS copy_in(KPROCESSOR_MODE mode, void *to, const void *from, SIZE_T
     return STATUS_SUCCESS;
 }
 
-/* the size of a sid or an acl at an address of the caller, 0 when it cannot be one. */
+/* the size of a sid or acl at a caller address, 0 when it cannot be one. */
 static ULONG part_length(KPROCESSOR_MODE mode, const void *address, BOOLEAN sid)
 {
     UCHAR first[8];
@@ -146,8 +145,8 @@ NTSTATUS SeSdCapture(const void *descriptor, KPROCESSOR_MODE mode, SD_BLOB **out
         return STATUS_SUCCESS;
     }
     /*
-     * absolute: the owner, group, sacl and dacl are pointers after the header. A 32-bit program's descriptor
-     * keeps them where the offsets of a relative one are, as 32-bit addresses.
+     * absolute: owner, group, sacl and dacl are pointers after the header. a 32-bit program keeps them as 32-bit
+     * addresses where a relative descriptor has its offsets.
      */
     BOOLEAN narrow = mode == UserMode && PspIsWow64Process(PsCurrentProcess());
     status = copy_in(mode, head, descriptor, narrow ? 20 : sizeof(head));
@@ -181,7 +180,7 @@ NTSTATUS SeSdCapture(const void *descriptor, KPROCESSOR_MODE mode, SD_BLOB **out
         if (!lengths[i])
             continue;
         status = copy_in(mode, sd->Data + at, pointers[i], lengths[i]);
-        /* the offsets sit in the order owner, group, sacl, dacl. */
+        /* the offsets go in the order owner, group, sacl, dacl. */
         *(ULONG *)(sd->Data + 4 + 4 * i) = at;
         at += (lengths[i] + 3) & ~3u;
     }
@@ -248,8 +247,8 @@ NTSTATUS SeSdBuild(const UCHAR *owner, const UCHAR *group, USHORT control, const
 /* ---------------------------------------------------------------- the token defaults */
 
 typedef struct {
-    PTOKEN Owner; /* gives the owner and the group: the token of the thread, else the process's */
-    PTOKEN Dacl;  /* gives the default dacl */
+    PTOKEN Owner; /* gives the owner and group: the thread's token, else the process's. */
+    PTOKEN Dacl;  /* gives the default dacl. */
 } SUBJECT;
 
 static NTSTATUS fetch_default(void *context, ULONG which, PVOID *value)
@@ -268,7 +267,7 @@ static NTSTATUS fetch_default(void *context, ULONG which, PVOID *value)
     }
 }
 
-/* the sid of a label, S-1-16-rid, as the rid. */
+/* the rid of a label sid S-1-16-rid. */
 static ULONG label_rid(const UCHAR *label)
 {
     return label[1] ? ((const ULONG *)(label + 8))[label[1] - 1] : 0;
@@ -287,7 +286,7 @@ static const UCHAR *find_label(const SECURITY_DESCRIPTOR_RELATIVE *sd)
     return nullptr;
 }
 
-/* the sd with the label ace of the integrity level added to its sacl, which a low integrity creator leaves. */
+/* the sd with an integrity label ace added to its sacl, as a low integrity creator leaves on what it makes. */
 static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **out)
 {
     const SECURITY_DESCRIPTOR_RELATIVE *r = (const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data;
@@ -317,7 +316,7 @@ static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **o
     ace[0] = SYSTEM_MANDATORY_LABEL_ACE_TYPE;
     ace[1] = flags;
     *(USHORT *)(ace + 2) = (USHORT)ace_size;
-    *(ULONG *)(ace + 4) = 1; /* no write up */
+    *(ULONG *)(ace + 4) = 1; /* no write up. */
     ace[8] = 1;
     ace[9] = 1;
     ace[15] = 16;
@@ -348,15 +347,15 @@ static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
     return add_label_flags(sd, rid, 0, out);
 }
 
-/* the descriptor with a label of the level added that what is made inside inherits. */
+/* adds a label of the level that objects made inside inherit. */
 NTSTATUS SeSdAddInheritedLabel(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
 {
     return add_label_flags(sd, rid, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE, out);
 }
 
 /*
- * the descriptor with an entry added to the end of its list that lets a sid have the access, unless the list has an
- * entry for the sid already. A list that is not there stays so: everyone has everything.
+ * appends an ace allowing the sid the access, unless the list already has one for the sid. a missing list stays
+ * missing: everyone has everything.
  */
 NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mask, UCHAR flags, SD_BLOB **out)
 {
@@ -417,7 +416,7 @@ NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mas
     return STATUS_SUCCESS;
 }
 
-/* whether a sid is the user of the token, or a group that may own what it makes. */
+/* a sid may own what the token makes when it is the token's user or a group allowed to own. */
 static BOOLEAN owner_allowed(const TOKEN *t, const UCHAR *sid)
 {
     if (t->Present & t->Enabled & (1ull << 18)) /* SeRestorePrivilege */
@@ -440,7 +439,7 @@ static BOOLEAN privilege_held(const TOKEN *t, ULONG luid)
 
 /* ---------------------------------------------------------------- new objects */
 
-/* with a token given, that one is the whole subject, else it is the calling thread. */
+/* a token given is the whole subject, else the calling thread is. */
 static NTSTATUS assign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING mapping, BOOLEAN container,
                        KPROCESSOR_MODE mode, PTOKEN fixed, SD_BLOB **out)
 {
@@ -457,7 +456,7 @@ static NTSTATUS assign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING
             ObDereferenceObject(primary);
         return STATUS_NO_TOKEN;
     }
-    /* what a server makes while it only identifies a client is owned as the server. */
+    /* what a server makes while only identifying a client is owned by the server. */
     BOOLEAN server = effective->Type == TokenImpersonation && effective->ImpersonationLevel < SecurityImpersonation;
     SUBJECT subject = {server ? primary : effective, effective};
     MIME_SEC_DEFAULTS defaults = {fetch_default, &subject};
@@ -465,7 +464,7 @@ static NTSTATUS assign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING
     ULONG flags = 0;
     const SECURITY_DESCRIPTOR_RELATIVE *c = creator ? (const SECURITY_DESCRIPTOR_RELATIVE *)creator->Data : nullptr;
     const SECURITY_DESCRIPTOR_RELATIVE *p = parent ? (const SECURITY_DESCRIPTOR_RELATIVE *)parent->Data : nullptr;
-    /* a parent whose lists were inherited themselves hands down by auto inheritance, unless the creator brings a list. */
+    /* a parent with auto inherited lists hands down by auto inheritance, unless the creator brings a list. */
     if (p && (p->Control & SE_DACL_AUTO_INHERITED) && !(c && (c->Control & SE_DACL_PRESENT)))
         flags |= SEF_DACL_AUTO_INHERIT;
     if (p && (p->Control & SE_SACL_AUTO_INHERITED) && !(c && (c->Control & SE_SACL_PRESENT)))
@@ -480,7 +479,7 @@ static NTSTATUS assign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING
     NTSTATUS status = STATUS_SUCCESS;
     ExAcquireFastMutex(&SeLock);
     if (mode == UserMode && c) {
-        /* an owner the caller may not give, a sacl without the security privilege, a label above its own. */
+        /* refused: an owner the caller may not give, a sacl without the security privilege, a label above its own. */
         PSID owner = nullptr;
         BOOLEAN defaulted;
         RtlGetOwnerSecurityDescriptor((PSECURITY_DESCRIPTOR)c, &owner, &defaulted);
@@ -503,7 +502,7 @@ static NTSTATUS assign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING
         }
         const UCHAR *label = c ? find_label(c) : nullptr;
         if (NT_SUCCESS(status) && label) {
-            /* a label may not be above the creator's level, a rid beyond what an integrity sid is, or odd flags. */
+            /* refuse a label above the creator's level, a rid out of the integrity range, or unknown flags. */
             const UCHAR *sid = label + 8;
             if (label[1] & 0xE0 || *(const ULONG *)(label + 4) & ~7u || sid[1] != 1 || sid[7] != 16 || sid[2] || sid[3] ||
                 sid[4] || sid[5] || sid[6])
@@ -541,13 +540,13 @@ static NTSTATUS assign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING
     return STATUS_SUCCESS;
 }
 
-/* the descriptor a token has as the object it is: what its own default list and integrity level give it. */
+/* the descriptor a token object gets from its own default dacl and integrity level. */
 NTSTATUS SeSdForToken(PTOKEN token, SD_MAPPING mapping, SD_BLOB **out)
 {
     return assign(nullptr, nullptr, mapping, FALSE, KernelMode, token, out);
 }
 
-/* the same with the descriptor its maker offered, which the token is held to as the subject. */
+/* the same with a descriptor offered by its maker, checked with the token as the subject. */
 NTSTATUS SeSdAssignForToken(const SD_BLOB *creator, SD_MAPPING mapping, KPROCESSOR_MODE mode, PTOKEN token, SD_BLOB **out)
 {
     return assign(nullptr, creator, mapping, FALSE, mode, token, out);
@@ -560,9 +559,8 @@ NTSTATUS SeSdAssign(const SD_BLOB *parent, const SD_BLOB *creator, SD_MAPPING ma
 }
 
 /*
- * what the files of a directory that have no descriptor of their own show is the same every time: it follows from the
- * descriptor of the directory alone. It is kept by that descriptor's serial, so the files of a directory share one
- * blob, which is also what lets the results of access checks be kept for it.
+ * the descriptor files without their own show depends only on the directory's descriptor. it is cached by that
+ * descriptor's serial, so the files of a directory share one blob, which also lets access check results be cached.
  */
 typedef struct {
     ULONG64 Parent, TokenId, ModifiedId;
@@ -575,7 +573,7 @@ static DERIVED_ENTRY g_derived[SD_CACHE_ENTRIES * 4];
 static FAST_MUTEX g_derived_lock;
 static BOOLEAN g_derived_ready;
 
-/* what the session token is, as one number that changes when it does, for what is kept by it. */
+/* a number that changes whenever the session token does, for caches keyed by it. */
 ULONG64 SeSessionTokenStamp(void)
 {
     PTOKEN session = SepReferenceSessionToken();
@@ -644,8 +642,8 @@ BOOLEAN SeSdSubjectIsDefault(void)
 }
 
 /*
- * the descriptor most objects get, made once for a token and a type: cached by the token's id and the id of its
- * last change, so creating an event costs a lookup.
+ * the descriptor most objects get, cached per token and type by the token's id and modified id, so creating an event
+ * costs a lookup.
  */
 typedef struct {
     ULONG64 TokenId, ModifiedId;
@@ -697,20 +695,20 @@ NTSTATUS SeSdDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out)
 }
 
 /*
- * what the objects the kernel makes before any program runs show: owned by the system, open to everyone for reading
- * and running, to the system and the administrators for everything. A directory programs make named objects in
- * (kind creatable) lets everyone make them, as does the window station and desktop everyone works at (kind
- * interactive, which takes everything but changing the descriptor). Both are labelled low, so a program at low
- * integrity can still write where it is meant to, and one below it cannot.
+ * objects the kernel makes before any program runs: owned by the system, readable and executable by everyone, full
+ * access for the system and administrators. a directory for named objects, kind creatable, lets everyone create in
+ * it, and so does the window station and desktop everyone works at, kind interactive, which grants everything but
+ * changing the descriptor. both are labelled low, so a low integrity program can still write where it should and
+ * one below it cannot.
  */
 NTSTATUS SeSdBootDefault(SD_MAPPING mapping, BOOLEAN container, ULONG kind, SD_BLOB **out)
 {
     ACCESS_MASK everyone = mapping[0] | mapping[2];
     if (kind == SE_BOOT_CREATABLE && container)
-        everyone |= 0xC; /* create object, create subdirectory */
+        everyone |= 0xC; /* create object, create subdirectory. */
     if (kind == SE_BOOT_INTERACTIVE)
         everyone = mapping[3] & ~(ACCESS_MASK)0xC0000;
-    /* a program in an app container reaches what everyone does through the sid that names all packages. */
+    /* app container programs reach what everyone does through the all packages sid. */
     SD_ACE aces[4] = {{0, mapping[3], SeSidSystem}, {0, mapping[3], SeSidAdministrators}, {0, everyone, SeSidEveryone},
                       {0, everyone, SeSidAllAppPackages}};
     SD_BLOB *sd;
@@ -790,8 +788,8 @@ NTSTATUS SeSdSet(ULONG info, const SD_BLOB *modification, const SD_BLOB *old, SD
             status = STATUS_INVALID_OWNER;
         if (NT_SUCCESS(status) && (parts & LABEL_SECURITY_INFORMATION)) {
             /*
-             * a label can be set as high as the caller's own level, or higher with the relabel privilege; with none
-             * given the label goes, which takes the level of medium.
+             * a label may be set up to the caller's own level, or higher with the relabel privilege. with none given
+             * the label goes, which means medium.
              */
             const UCHAR *label = find_label(m);
             ULONG wanted = label ? label_rid(label + 8) : 0x2000;
@@ -821,7 +819,7 @@ NTSTATUS SeSdSet(ULONG info, const SD_BLOB *modification, const SD_BLOB *old, SD
     return blob_of_rtl(work, out);
 }
 
-/* the layout windows uses: header, owner, group, dacl, sacl, each padded to four. */
+/* windows' layout: header, owner, group, dacl, sacl, each padded to four bytes. */
 NTSTATUS SeSdQuery(ULONG info, const SD_BLOB *sd, PVOID buffer, PULONG length)
 {
     ULONG room = *length;

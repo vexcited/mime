@@ -1,10 +1,6 @@
 /*
- * window objects: the tree, creation and destruction, positioning, z order,
- * visibility, activation, focus and the window services.
- *
- * rectangles are kept in screen coordinates. every visible top level window
- * owns a surface covering its window rectangle; child windows draw into the
- * surface of their top level window, clipped by their visible region.
+ * window tree, lifetime, positioning, visibility and focus. rectangles use screen coordinates. each visible top level
+ * window owns a surface; children draw into it through their visible regions.
  */
 #include "win32k.h"
 
@@ -18,7 +14,7 @@ WND *WndLookup(HWND hwnd)
     WND *w = (WND *)UserLookup(hwnd, USER_TYPE_WINDOW);
     if (!w && g_desktop && (hwnd == WndHandle(g_desktop)))
         return g_desktop;
-    /* a job can hold its processes to the windows of the job. */
+    /* jobs can restrict processes to windows belonging to the job. */
     if (w && w->Thread && w->Thread->Process && w->Thread->Process->Process != PsGetCurrentProcess() &&
         !MimeProcessMayUseUserHandles(PsGetCurrentProcess(), w->Thread->Process->Process))
         return nullptr;
@@ -84,7 +80,7 @@ UINT WndGetDpi(WND *w)
     return w && w->Dpi ? w->Dpi : W32SystemDpi();
 }
 
-/* ------------------------------------------------------------------ tree links */
+/* tree links. */
 
 static void unlink_window(WND *w)
 {
@@ -125,7 +121,7 @@ static void link_window(WND *parent, WND *w, HWND after)
     if (after == HWND_BOTTOM) {
         above = parent->LastChild;
         if (topmost_band && !(w->ExStyle & WS_EX_TOPMOST))
-            ; /* the bottom of the whole list is fine for a normal window */
+            ; /* the bottom of the whole list is fine for a normal window. */
         else if (topmost_band) {
             /* topmost windows stay above every normal window. */
             above = nullptr;
@@ -191,7 +187,7 @@ static void parent_to_screen(WND *parent, RECT *r)
         RectOffset(r, parent->ClientRect.left, parent->ClientRect.top);
 }
 
-/* ------------------------------------------------------------------ text */
+/* text. */
 
 void WndSetText(WND *w, PCWSTR text, ULONG chars)
 {
@@ -212,7 +208,7 @@ void WndSetText(WND *w, PCWSTR text, ULONG chars)
         WndUpdateHostConfig(w, FALSE);
 }
 
-/* ------------------------------------------------------------------ visible regions */
+/* visible regions. */
 
 static void subtract_siblings_above(WND *w, REGION *rgn)
 {
@@ -246,7 +242,7 @@ void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out)
     RgnCombineRect(out, out, &surface, RGN_AND);
 }
 
-/* ------------------------------------------------------------------ invalidation */
+/* invalidation. */
 
 static void wake_paint(WND *w)
 {
@@ -381,7 +377,7 @@ WND *WndFindNeedsPaint(W32THREAD *t, HWND filter)
     return find_paint(g_desktop->FirstChild, t);
 }
 
-/* ------------------------------------------------------------------ host configuration */
+/* host configuration. */
 
 void WndUpdateHostConfig(WND *w, BOOLEAN activate)
 {
@@ -423,7 +419,7 @@ void WndEnsureSurface(WND *w)
     }
 }
 
-/* ------------------------------------------------------------------ messages helpers */
+/* messages helpers. */
 
 static BOOLEAN alive(WND *w)
 {
@@ -435,7 +431,7 @@ static LRESULT send_kernel(WND *w, UINT msg, WPARAM wparam, PVOID data, ULONG ki
     return MsgSendKernel(w, msg, wparam, (LPARAM)data, kind, size);
 }
 
-/* where a window counts as being for its monitor: a minimized one is where it will come back to. */
+/* minimized windows belong to the monitor containing their restore rectangle. */
 static RECT monitor_rect(const WND *w)
 {
     return (w->Style & WS_MINIMIZE) && WndIsTopLevel((WND *)w) ? w->NormalRect : w->WindowRect;
@@ -495,7 +491,7 @@ static void calc_client(WND *w, const RECT *window, const RECT *old_window, RECT
     *client = data.p.rgrc[0];
 }
 
-/* ------------------------------------------------------------------ positioning */
+/* positioning. */
 
 static void notify_parent(WND *w, UINT event)
 {
@@ -667,7 +663,7 @@ static void maximized_rect(WND *w, RECT *r)
     r->bottom = r->top + mmi.ptMaxSize.y;
 }
 
-/* the desktop takes the new display size, maximized windows the new work area, and every top level window hears of it. */
+/* resize the desktop to the display and maximized windows to the work area, then notify top level windows. */
 void WndDisplayChanged(void)
 {
     if (!g_desktop)
@@ -686,8 +682,7 @@ void WndDisplayChanged(void)
             QueuePost(c->Thread, WndHandle(c), WM_DISPLAYCHANGE, W32Display.Bits,
                       MAKELPARAM((WORD)W32Display.Width, (WORD)W32Display.Height));
     }
-    /* a monitor with another dpi than a window was drawn for: the windows are looked up again, a program may
-       destroy some while it answers. */
+    /* look up windows again after each DPI notification; application callbacks may destroy them. */
     HWND top[64];
     ULONG count = 0;
     for (WND *c = g_desktop->FirstChild; c && count < RTL_NUMBER_OF(top); c = c->Next)
@@ -700,7 +695,7 @@ void WndDisplayChanged(void)
     }
 }
 
-/* the dpi a window's pixels are drawn in: its own for a program aware of each monitor's dpi, the system's else. */
+/* per-monitor-aware windows use their own DPI; others use system DPI. */
 UINT WndHostDpi(WND *w)
 {
     WND *top = WndTopLevel(w);
@@ -717,8 +712,8 @@ static void set_tree_dpi(WND *w, UINT dpi)
 }
 
 /*
- * a program aware of each monitor's dpi hears WM_DPICHANGED when its window is mostly on a monitor with another
- * dpi than it was drawn for, with the rectangle the window would have there: the same corner at the new dpi's size.
+ * send WM_DPICHANGED when a per-monitor-aware window moves mostly onto a monitor with a different DPI. suggest a
+ * rectangle keeping the corner and scaling the size.
  */
 void WndCheckMonitorDpi(WND *w)
 {
@@ -740,9 +735,8 @@ void WndCheckMonitorDpi(WND *w)
 }
 
 /*
- * the compositor shows a window on a monitor: its rectangle goes there, at the same distance from the monitor's
- * corner as it was from the corner of the monitor it had, kept inside the work area, and a maximized one
- * fills the new monitor's work area.
+ * move to the new monitor, preserving the offset from the monitor corner within its work area. maximized windows fill
+ * the new work area.
  */
 void WndHostDisplay(WND *w, ULONG monitor)
 {
@@ -772,10 +766,7 @@ void WndHostDisplay(WND *w, ULONG monitor)
     }
 }
 
-/*
- * the compositor sized a window, by a drag of its border, a tiling or a maximize: its host window is width by height
- * guest pixels, and the rectangle is that and what the window has around the part the host window covers.
- */
+/* the compositor reports its window size in guest pixels. add the window bounds outside the host-covered area. */
 void WndHostSize(WND *w, LONG width, LONG height)
 {
     if (!w || !WndIsTopLevel(w) || (w->Style & WS_MINIMIZE) || (w->Flags & (WNDF_DESTROYING | WNDF_FULLSCREEN)) ||
@@ -931,9 +922,8 @@ void WndFullscreen(WND *w, BOOLEAN enter, const RECT *rect)
         w->FullscreenRestoreFlags = w->Flags & WNDF_RESTORETOMAX;
         w->Flags |= WNDF_FULLSCREEN;
         /*
-         * a program that made its own fullscreen keeps its styles and its
-         * rectangle: godot, for one, leaves fullscreen once its window stops
-         * matching the screen.
+         * preserve application-managed fullscreen styles and bounds. Godot leaves fullscreen if its window no longer
+         * matches the screen.
          */
         if ((w->Style & WS_CAPTION) != WS_CAPTION && !(w->Style & WS_THICKFRAME)) {
             w->Flags |= WNDF_APP_FULLSCREEN;
@@ -966,7 +956,6 @@ void WndCenterOnOwner(WND *w)
     RECT ref = screen;
     if (w->Owner && (w->Owner->Style & WS_VISIBLE) && !(w->Owner->Style & WS_MINIMIZE)) {
         ref = w->Owner->WindowRect;
-        /* the monitor the owner is on. */
         screen = MonitorWorkOfRect(&ref);
     }
     LONG width = w->WindowRect.right - w->WindowRect.left;
@@ -978,9 +967,9 @@ void WndCenterOnOwner(WND *w)
     WndSetPos(w, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-/* ------------------------------------------------------------------ activation and focus */
+/* activation and focus. */
 
-/* the window the host's desktop has just given the focus: the host already has it in front, so it is not asked to. */
+/* the host already focused and raised this window; do not ask it to raise again. */
 BOOLEAN WndActivatedByHost;
 
 void WndActivate(WND *w, BOOLEAN click)
@@ -1057,7 +1046,7 @@ void WndSetFocus(WND *w)
         UserDereference(&w->Header);
 }
 
-/* ------------------------------------------------------------------ hit testing */
+/* hit testing. */
 
 WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled)
 {
@@ -1072,10 +1061,8 @@ WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled)
 }
 
 /*
- * deepest window under pt, starting at a top level window. a disabled top
- * level window is the answer itself, children included; a disabled child is
- * not hit at all, the window below it or its parent is, so mouse input
- * passes through the child windows another process keeps over a window.
+ * find the deepest window under pt. a disabled top level window is returned even over its children; disabled children
+ * are skipped so input passes to the window below or their parent.
  */
 WND *WndFromPoint(WND *top, POINT pt)
 {
@@ -1093,7 +1080,7 @@ WND *WndFromPoint(WND *top, POINT pt)
     }
 }
 
-/* ------------------------------------------------------------------ destruction */
+/* destruction. */
 
 static void free_window(WND *w)
 {
@@ -1195,7 +1182,7 @@ done:
     UserDereference(&w->Header);
 }
 
-/* the windows of a process, top level and children, counted as its user objects. */
+/* count top level and child windows as process USER objects. */
 static ULONG count_tree(WND *w, W32PROCESS *p)
 {
     ULONG n = 0;
@@ -1220,9 +1207,8 @@ BOOL WndThreadHasWindows(W32THREAD *t)
 }
 
 /*
- * a window of the thread anywhere below the desktop: a child of a window of another thread is the thread's own, and a
- * thread that ends with one left behind leaves the window pointing at a thread that is gone. one that was being
- * destroyed counts too, the thread ended inside a callback of its destruction and nobody finishes it.
+ * find every window owned by the thread, including children of other threads' windows and partially destroyed
+ * windows. the thread may have exited during a destruction callback, leaving cleanup unfinished.
  */
 static WND *find_thread_window(WND *parent, W32THREAD *t)
 {
@@ -1244,7 +1230,7 @@ void WndDestroyThreadWindows(W32THREAD *t)
         WND *found = find_thread_window(g_desktop, t);
         if (!found)
             break;
-        /* the thread is going away: no callbacks, just tear the tree down. */
+        /* the thread is exiting; tear down its windows without callbacks. */
         found->Flags |= WNDF_DESTROYING;
         WND *stack[64];
         int depth = 0;
@@ -1265,7 +1251,7 @@ void WndDestroyThreadWindows(W32THREAD *t)
     }
 }
 
-/* ------------------------------------------------------------------ creation */
+/* creation. */
 
 static NTSTATUS capture_class_name(PUNICODE_STRING user, PWSTR *name, ATOM *atom)
 {
@@ -1333,7 +1319,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
             return nullptr;
         }
         if (!s.Length && s.Buffer && (ULONG_PTR)s.Buffer < 0x10000) {
-            /* a resource ordinal as window name, as dialog templates give it: 0xFFFF then the ordinal. */
+            /* dialog templates may name a resource with 0xFFFF followed by its ordinal. */
             name = W32Alloc(3 * sizeof(WCHAR));
             if (name) {
                 name[0] = 0xFFFF;
@@ -1366,7 +1352,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
             owner = p == desktop ? nullptr : WndTopLevel(p);
     } else if (style & WS_CHILD) {
         if (!message_only)
-            goto out; /* children need a parent */
+            goto out; /* children need a parent. */
         style &= ~WS_CHILD;
     }
 
@@ -1394,7 +1380,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     if (cls->Fnid == MIME_FNID_DIALOG)
         w->Flags |= WNDF_DIALOG;
     if (message_only)
-        ex_style |= 0x80000000u; /* private marker: message only window, never visible */
+        ex_style |= 0x80000000u; /* private marker: message only window, never visible. */
     if (!(style & WS_CHILD)) {
         style |= WS_CLIPSIBLINGS;
         if (!(style & WS_POPUP))
@@ -1442,7 +1428,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     parent_to_screen(parent, &rect);
     w->WindowRect = rect;
     w->ClientRect = rect;
-    /* a program aware of the dpi of each monitor starts in the dpi of the one its window is on. */
+    /* per-monitor-aware windows start with their monitor's DPI. */
     if (parent == desktop && t && t->Process && t->Process->DpiAwareness >= 2 && !message_only)
         w->Dpi = MonitorDpiOfRect(&rect);
     UserReference(&w->Header);
@@ -1531,7 +1517,7 @@ out:
     return result;
 }
 
-/* ------------------------------------------------------------------ services */
+/* services. */
 
 static BOOLEAN can_touch(WND *w)
 {
@@ -1767,7 +1753,7 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
         if (is_style) {
             DWORD visible = w->Style & WS_VISIBLE;
             w->Style = (ss.styleNew & ~WS_VISIBLE) | visible;
-            /* a program leaving its own fullscreen gives its frame back: the host leaves the space. */
+            /* restoring the application frame ends its fullscreen host space. */
             if ((w->Flags & WNDF_APP_FULLSCREEN) &&
                 ((w->Style & WS_CAPTION) == WS_CAPTION || (w->Style & WS_THICKFRAME)))
                 w->Flags &= ~(WNDF_FULLSCREEN | WNDF_APP_FULLSCREEN);
@@ -2095,7 +2081,7 @@ HWND NTAPI NtUserGetForegroundWindow(void)
     return h;
 }
 
-/* ------------------------------------------------------------------ hwnd multiplexers */
+/* hwnd multiplexers. */
 
 static ULONG text_length(WND *w)
 {
@@ -2318,7 +2304,7 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
                 LONG tx = to && to != g_desktop ? to->ClientRect.left : 0, ty = to && to != g_desktop ? to->ClientRect.top : 0;
                 r = (ULONG_PTR)MAKELONG((WORD)(fx - tx), (WORD)(fy - ty));
                 if (!r)
-                    r = 0x80000000u; /* nonzero success marker for a zero offset */
+                    r = 0x80000000u; /* nonzero success marker for a zero offset. */
             }
         }
         if (pts != local)
@@ -2406,7 +2392,7 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         r = w->DisplayAffinity;
         break;
     case MIME_HWNDPARAM_GETCLASSWORD: {
-        /* the atom, or a word of the extra bytes that lies inside them whole. */
+        /* the atom, or a whole word within the extra bytes. */
         WND_CLASS *c = w->Class;
         int index = (int)param;
         if (!c)

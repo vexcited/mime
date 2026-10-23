@@ -1,7 +1,6 @@
 /*
- * what dcomp.dll offers beyond windows' interfaces: a way for tests to read
- * the pixels of the frame last composed into a target's window, which the
- * host shows but a program cannot read back from the window itself.
+ * private dcomp.dll extension: reads back the frame last composed into a target's window, which the host shows but
+ * a program cannot read from the window itself.
  */
 #ifndef MIME_DCOMP_MIME_H
 #define MIME_DCOMP_MIME_H

@@ -1,9 +1,7 @@
 /*
- * D3D10ReflectShader: ID3D10ShaderReflection over a shader model 4
- * container, as d3d10.dll's CShaderReflection reads it: the RDEF chunk
- * when there is one, then STAT, ISGN, OSGN and SHDR, which must be there.
- * what is out of range or not found is one of the invalid objects, whose
- * GetDesc fails with E_FAIL.
+ * D3D10ReflectShader over a shader model 4 container: the optional RDEF
+ * chunk, then STAT, ISGN, OSGN and SHDR, which are required. lookups out of
+ * range or not found give an invalid object whose GetDesc fails with E_FAIL.
  */
 #include "d3d10_private.h"
 #include "../lib/dxbc/dxbc.h"
@@ -46,7 +44,7 @@ typedef struct Reflection {
     RBuffer *buffers;
     D3D10_SHADER_INPUT_BIND_DESC *bindings;
     D3D10_SIGNATURE_PARAMETER_DESC *inputs, *outputs;
-    /* the container, which names point into. */
+    /* names point into the container. */
     BYTE *code;
     const BYTE *end;
     RBlock *blocks;
@@ -177,7 +175,7 @@ static const ID3D10ShaderReflectionConstantBufferVtbl buffer_vtbl = {buffer_get_
 
 /* ------------------------------------------------------------------ reading */
 
-/* a name inside the chunk, NULL when it runs past the container. */
+/* NULL when the name runs past the container. */
 static const char *string_at(Reflection *r, const BYTE *chunk, UINT offset)
 {
     const BYTE *s = chunk + offset;
@@ -189,7 +187,6 @@ static const char *string_at(Reflection *r, const BYTE *chunk, UINT offset)
     return nullptr;
 }
 
-/* whether count entries of size bytes at offset fit in the container. */
 static BOOL fits(Reflection *r, const BYTE *chunk, UINT offset, UINT count, UINT size)
 {
     const BYTE *p = chunk + offset;
@@ -311,7 +308,7 @@ static HRESULT read_resources(Reflection *r, const BYTE *chunk)
     return S_OK;
 }
 
-/* a pixel shader's outputs without a system value named SV_TARGET or SV_DEPTH, in capitals, get theirs. */
+/* pixel shader outputs named SV_TARGET or SV_DEPTH, in capitals, get that system value when they have none. */
 static HRESULT read_signature(Reflection *r, const BYTE *chunk, D3D10_SIGNATURE_PARAMETER_DESC **out, UINT *total)
 {
     if (!fits(r, chunk, 0, 1, 8))
@@ -345,7 +342,7 @@ static HRESULT read_signature(Reflection *r, const BYTE *chunk, D3D10_SIGNATURE_
     return S_OK;
 }
 
-/* the version, and a geometry shader's output topology and vertex count, from its declarations. */
+/* the version, and for geometry shaders the output topology and vertex count from the declarations. */
 static HRESULT read_code(Reflection *r, const BYTE *code)
 {
     if (!fits(r, code, 0, 1, 8))
@@ -372,7 +369,7 @@ static HRESULT read_code(Reflection *r, const BYTE *code)
     return S_OK;
 }
 
-/* the statistics chunk, in its own order. */
+/* the STAT chunk has its own field order. */
 static void read_statistics(Reflection *r, const BYTE *stat, UINT size)
 {
     UINT *const fields[] = {&r->desc.InstructionCount,
@@ -528,7 +525,7 @@ static const ID3D10ShaderReflectionVtbl reflection_vtbl = {
     reflection_buffer_by_name, reflection_binding, reflection_input,   reflection_output,
 };
 
-/* a container that does not read is an invalid argument. */
+/* a container that fails to parse is an invalid argument. */
 D3D10API HRESULT WINAPI D3D10ReflectShader(const void *bytecode, SIZE_T length, ID3D10ShaderReflection **out)
 {
     if (!out || !bytecode)

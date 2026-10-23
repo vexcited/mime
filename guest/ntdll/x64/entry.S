@@ -11,10 +11,10 @@
     .text
 
 /*
- * mimex86 leaves 0x30 bytes, the CONTEXT, the EXCEPTION_RECORD in 0xa0
- * bytes and a machine frame above the stack pointer. the unwind codes say
- * so, as on windows: an unwind through the dispatcher restores the
- * nonvolatile registers from the context and goes on at the faulting rip
+ * above the stack pointer: 0x30 bytes, the CONTEXT, the EXCEPTION_RECORD
+ * in 0xa0 bytes and a machine frame. like windows, the unwind codes
+ * describe this, so an unwind through the dispatcher restores the
+ * nonvolatile registers from the context and resumes at the faulting rip
  * and rsp.
  */
     .globl  KiUserExceptionDispatcher
@@ -35,7 +35,7 @@ KiUserExceptionDispatcher:
     movq    %rcx, %rbx
     movq    %rdx, %rsi
     call    KiUserExceptionDispatcherC
-    /* not reached unless the c dispatcher returns: raise as second chance. */
+    /* only reached if the c dispatcher returns: raise as second chance. */
     movq    %rbx, %rcx
     movq    %rsi, %rdx
     xorl    %r8d, %r8d
@@ -44,9 +44,10 @@ KiUserExceptionDispatcher:
     .seh_endproc
 
 /*
- * the kernel leaves the interrupted CONTEXT at the stack pointer, P1Home
- * to P4Home holding the context, both arguments and the routine, then a
- * machine frame, so an unwind through here goes on at the interrupted code.
+ * the kernel leaves the interrupted CONTEXT at the stack pointer, with
+ * P1Home to P4Home holding the context, both arguments and the routine,
+ * then a machine frame, so an unwind through here resumes the interrupted
+ * code.
  */
     .globl  KiUserApcDispatcher
     .p2align 4
@@ -105,7 +106,7 @@ RtlCaptureContext:
     movq    %rcx, 0x80(%rcx)
     movq    %rdx, 0x88(%rcx)
     movq    %rbx, 0x90(%rcx)
-    leaq    16(%rsp), %rax          /* the caller's rsp, past the return address and the flags */
+    leaq    16(%rsp), %rax          /* the caller's rsp, past the return address and the flags. */
     movq    %rax, 0x98(%rcx)
     movq    %rbp, 0xa0(%rcx)
     movq    %rsi, 0xa8(%rcx)
@@ -144,9 +145,9 @@ RtlRaiseException:
     call    RtlCaptureContext
     leaq    0x30(%rsp), %rdx
     leaq    0x508+8(%rsp), %rax
-    movq    %rax, 0x98(%rdx)        /* Rsp as the caller left it */
+    movq    %rax, 0x98(%rdx)        /* Rsp as the caller left it. */
     movq    0x508(%rsp), %rax
-    movq    %rax, 0xf8(%rdx)        /* Rip: resume after the call */
+    movq    %rax, 0xf8(%rdx)        /* Rip, resume after the call. */
     movq    0x508+0x08(%rsp), %rcx
     movq    %rcx, 0x80(%rdx)
     movq    %rax, 0x10(%rcx)        /* record->ExceptionAddress */
@@ -159,10 +160,10 @@ RtlRaiseException:
 /*
  * PVOID RtlpCallConsolidate(PCONTEXT context, PVOID (*callback)(PEXCEPTION_RECORD), PEXCEPTION_RECORD record)
  *
- * runs the callback of STATUS_UNWIND_CONSOLIDATE, the catch block of a c++
- * exception, with the nonvolatile registers of the target frame. a machine
- * frame holding the target's rip and rsp makes an unwind from inside the
- * callback continue straight at the target frame, as on windows.
+ * runs the STATUS_UNWIND_CONSOLIDATE callback, the catch block of a c++
+ * exception, with the target frame's nonvolatile registers. like windows,
+ * a machine frame holding the target's rip and rsp makes an unwind from
+ * inside the callback continue straight at the target frame.
  */
     .globl  RtlpCallConsolidate
     .p2align 4
@@ -174,7 +175,7 @@ RtlpCallConsolidate:
     movq    0x98(%rcx), %rax        /* context->Rsp */
     movq    %rax, 0x18(%rsp)
     .seh_pushframe
-    subq    $0x100, %rsp            /* the shadow space, seven registers, xmm6 to xmm15 */
+    subq    $0x100, %rsp            /* shadow space, seven registers, xmm6 to xmm15. */
     .seh_stackalloc 0x100
     .seh_endprologue
     movq    %rbx, 0x20(%rsp)

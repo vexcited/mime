@@ -1,7 +1,4 @@
-/*
- * data protection, dpapi.h: CryptProtectData and CryptProtectMemory with
- * their flags, prompts and structures.
- */
+/* data protection api: CryptProtectData, CryptProtectMemory and their types. */
 #ifndef MIME_WIN32_DPAPI_H
 #define MIME_WIN32_DPAPI_H
 

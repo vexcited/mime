@@ -1,12 +1,6 @@
 /*
- * the clipboard shared with the host programs of the desktop. a host program's copy tells the guest which kinds
- * of contents there are, and the data is read and converted only when a guest program asks for a kind; the
- * guest's copy offers kinds to the host in the same way and is asked for the data of one when another program
- * pastes.
- *
- * the formats and their conversions are in convert.c. sdl does the protocol: with wayland the host holds the
- * selection only while one of its windows has the keyboard, which is also when the desktop shows its contents to
- * the guest.
+ * shares clipboard formats with the desktop using SDL. offers advertise types; data is read and converted on demand
+ * through convert.c. on Wayland, selection ownership and visibility require a window with keyboard focus.
  */
 #include "convert.h"
 #include "ui_internal.h"
@@ -47,17 +41,17 @@ typedef struct Request {
 
 static struct {
     pthread_mutex_t lock;
-    char **mimes;             /* what the host clipboard offers */
+    char **mimes;             /* what the host clipboard offers. */
     size_t mime_count;
-    uint32_t mask;            /* the MIME_CLIP_* kinds that gives */
+    uint32_t mask;            /* the MIME_CLIP_* kinds that gives. */
     uint32_t generation;
-    Cached cache[KINDS];      /* converted contents of this generation */
-    uint32_t offered;         /* kinds the guest renders */
-    bool owned;               /* the guest's offer is the host selection */
+    Cached cache[KINDS];      /* converted contents of this generation. */
+    uint32_t offered;         /* kinds the guest renders. */
+    bool owned;               /* the guest's offer is the host selection. */
     uint32_t next_request;
     Request *requests;
-    uint8_t *served;          /* the last answer given to a host program, kept while it reads it */
-    char *legacy;             /* the text set through the text only calls */
+    uint8_t *served;          /* the last answer given to a host program, kept while it reads it. */
+    char *legacy;             /* the text set through the text only calls. */
 } g = {.lock = PTHREAD_MUTEX_INITIALIZER};
 
 static uint32_t mask_of_locked(void)
@@ -96,8 +90,8 @@ void mime_clipboard_event(const SDL_ClipboardEvent *e)
     pthread_mutex_lock(&g.lock);
     g.owned = false;
     /*
-     * a window that loses the keyboard loses sight of the selection, which sdl reports as a change to nothing. the
-     * guest keeps what it shows until another program really copies.
+     * SDL reports an empty selection when keyboard focus is lost. keep guest contents until another program actually
+     * copies.
      */
     if (e->num_mime_types <= 0) {
         pthread_mutex_unlock(&g.lock);
@@ -118,7 +112,7 @@ void mime_clipboard_event(const SDL_ClipboardEvent *e)
     mime_ui_emit(&ev);
 }
 
-/* the bytes of a host mime type, null when the program does not give them; main thread. */
+/* reads host MIME-type data on the main thread, returning null if unavailable. */
 static uint8_t *read_mime(const char *mime, size_t *size)
 {
     void *raw = SDL_GetClipboardData(mime, size);
@@ -135,7 +129,7 @@ static uint8_t *read_mime(const char *mime, size_t *size)
     return copy;
 }
 
-/* the host contents in a kind, converted for the guest; main thread. */
+/* converts host data to a guest format on the main thread. */
 static uint8_t *read_host(uint32_t kind, size_t *out_size)
 {
     pthread_mutex_lock(&g.lock);
@@ -263,7 +257,6 @@ uint64_t mime_ui_clipboard_provide(uint32_t id, const void *src, uint64_t length
         r = r->next;
     uint64_t status = MIME_HC_STATUS_OK;
     if (!r) {
-        /* it timed out already. */
         pthread_mutex_unlock(&g.lock);
         return MIME_HC_STATUS_NOT_FOUND;
     }
@@ -296,7 +289,7 @@ uint64_t mime_ui_clipboard_provide(uint32_t id, const void *src, uint64_t length
     return status;
 }
 
-/* the answer for a host program that pastes, from the guest's kinds; main thread. */
+/* renders a requested host type from guest formats on the main thread. */
 static const void *serve(void *userdata, const char *mime, size_t *size)
 {
     *size = 0;
@@ -307,7 +300,7 @@ static const void *serve(void *userdata, const char *mime, size_t *size)
     if (!kind)
         return nullptr;
     size_t raw_size = 0, out_size = 0;
-    /* files are cut or copied, which a file manager reads from the type: the guest says which first. */
+    /* file-manager MIME types distinguish cut and copy; get the guest's drop effect first. */
     uint32_t effect = 0;
     if ((offered & MIME_CLIP_DROPEFFECT) && mime_conv_needs_effect(mime)) {
         size_t effect_size = 0;
@@ -348,7 +341,7 @@ static void offer_main(void *arg)
     bool owned = g.owned;
     pthread_mutex_unlock(&g.lock);
     if (!n) {
-        /* the guest emptied the clipboard, which holds a host program's contents as well as its own. */
+        /* emptying the guest clipboard also clears contents owned by host programs. */
         pthread_mutex_lock(&g.lock);
         bool held = g.mask != 0;
         g.mask = 0;
@@ -358,9 +351,8 @@ static void offer_main(void *arg)
             SDL_ClearClipboardData();
         } else if (held) {
             /*
-             * sdl can only clear a selection of its own, so the contents of another program are replaced by
-             * a selection of a type nobody reads, which a paste finds empty and which ends the other program's
-             * hold on it.
+             * SDL cannot clear another client's selection. replace it with an unreadable type so pasting is empty
+             * and the old owner releases it.
              */
             static const char *const nothing[] = {"application/x-mime-empty"};
             bool ok = SDL_SetClipboardData(serve, serve_cleanup, nullptr, nothing, 1);
@@ -389,7 +381,7 @@ uint64_t mime_ui_clipboard_offer(uint32_t mask)
 
 /* ------------------------------------------------------------------ the text only calls */
 
-/* the text of the host clipboard, for guests that know nothing of kinds. */
+/* legacy text-only clipboard read. */
 size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count)
 {
     pthread_mutex_lock(&g.lock);
@@ -408,7 +400,7 @@ static void legacy_main(void *arg)
     free(utf8);
 }
 
-/* sets the host clipboard to text at once, for guests that know nothing of kinds. */
+/* legacy text-only clipboard write. */
 void mime_ui_clipboard_set(const uint16_t *text, size_t chars)
 {
     size_t len;

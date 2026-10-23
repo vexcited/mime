@@ -1,8 +1,8 @@
 /*
- * requests of user mode that a driver of mime answers itself and may
- * leave pending: the caller's status block, event, apc or completion
- * port, filled when the answer comes, as windows' i/o manager does for
- * an irp; a synchronous file's caller sleeps until then.
+ * user mode requests a mime driver answers itself and may leave pending.
+ * like windows' i/o manager does for an irp, the caller's status block,
+ * event, apc or completion port are filled when the answer comes; the
+ * caller of a synchronous file sleeps until then.
  */
 #include "../ntos.h"
 
@@ -67,7 +67,7 @@ NTSTATUS IopCopyToProcess(PEPROCESS process, PVOID dst, const void *src, SIZE_T 
     return status;
 }
 
-/* copies into the requesting process, from whatever thread the answer comes on. */
+/* works from whatever thread the answer comes on. */
 NTSTATUS IopCopyToRequester(IO_USER_REQUEST *r, PVOID dst, const void *src, SIZE_T length)
 {
     return IopCopyToProcess(r->Process, dst, src, length);
@@ -112,7 +112,7 @@ NTSTATUS IopImmediateUserRequest(IO_USER_REQUEST *r, NTSTATUS status, ULONG_PTR 
     return status;
 }
 
-/* with the driver's lock released: a synchronous caller sleeps until the answer, others go on. */
+/* called with the driver's lock released: a synchronous caller sleeps until the answer, others go on. */
 NTSTATUS IopPendUserRequest(IO_USER_REQUEST *r)
 {
     if (!r->Waiter)

@@ -1,17 +1,16 @@
 /*
  * process mitigation options, shared by the kernel and kernelbase.
  *
- * a program gives CreateProcess two words of PROCESS_CREATION_MITIGATION_POLICY flags, each field two bits
- * wide at a multiple of four. kernelbase repacks them into the three words the kernel takes as the
- * mitigation options attribute of NtCreateUserProcess, and the kernel unpacks them again into the flag
- * word of each PROCESS_MITIGATION_POLICY class.
+ * CreateProcess takes two words of PROCESS_CREATION_MITIGATION_POLICY flags, each field two bits wide at a multiple
+ * of four. kernelbase repacks them into the three words NtCreateUserProcess takes as its mitigation options
+ * attribute, and the kernel unpacks those into each PROCESS_MITIGATION_POLICY class's flag word.
  */
 #ifndef MIME_MITIGATION_H
 #define MIME_MITIGATION_H
 
 #include <mime/nt.h>
 
-/* a field of a word of creation flags: where it is in the program's two words and in the kernel's three. */
+/* where a creation flag field sits in the program's two words and in the kernel's three. */
 typedef struct MIME_MITIGATION_FIELD {
     UCHAR Word;        /* 0 or 1 */
     UCHAR Shift;

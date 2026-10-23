@@ -1,8 +1,6 @@
 /*
- * directwrite: fonts, their metrics and their glyphs. the interfaces and
- * their method order are windows', as programs call them through the
- * vtables. text layout and the text analyzer are declared only as far as the
- * factory's table needs them.
+ * directwrite: fonts, metrics and glyphs, in windows' vtable order. text layout and
+ * the text analyzer are declared only as far as the factory's vtable needs them.
  */
 #ifndef MIME_WIN32_DWRITE_H
 #define MIME_WIN32_DWRITE_H
@@ -337,7 +335,7 @@ typedef struct DWRITE_GLYPH_RUN {
     UINT32 bidiLevel;
 } DWRITE_GLYPH_RUN;
 
-/* direct2d's simplified geometry, which outlines are described with. */
+/* direct2d's simplified geometry, used to describe glyph outlines. */
 typedef struct D2D1_POINT_2F {
     FLOAT x, y;
 } D2D1_POINT_2F;

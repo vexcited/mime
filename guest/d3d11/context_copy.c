@@ -1,13 +1,13 @@
 /*
- * what the context does to resources outside draws: mapping them, which
- * waits for the gpu only when the program asks to read or to overwrite in
- * place, updates, copies, clears, mip generation and resolves.
+ * context work on resources outside draws: maps, updates, copies, clears, mip
+ * generation and resolves. mapping waits for the gpu only to read or to
+ * overwrite in place.
  */
 #include "d3d11_private.h"
 
 /* ------------------------------------------------------------------ waiting for the gpu */
 
-/* waits until the gpu is done with the resource, submitting first if it is still recorded. */
+/* submits first when recorded commands still use the resource. */
 static HRESULT wait_idle(D3dContext *c, D3dResource *r, UINT flags)
 {
     D3dDevice *device = c->child.device;
@@ -26,8 +26,8 @@ static HRESULT wait_idle(D3dContext *c, D3dResource *r, UINT flags)
 /* ------------------------------------------------------------------ map */
 
 /*
- * renamed ranges come back once the gpu ran past them: when many were
- * taken new, what was recorded is submitted so later renames find some.
+ * renamed ranges are reused once the gpu is past them. after many renames,
+ * the recording is submitted so later renames find free ranges.
  */
 static void renaming(D3dContext *c)
 {
@@ -64,7 +64,7 @@ HRESULT D3dCtxMap(D3dContext *c, ID3D11Resource *resource, UINT sub, D3D11_MAP t
             return S_OK;
         }
         if (type == D3D11_MAP_WRITE_DISCARD) {
-            /* a range the gpu does not use, so the program never waits. */
+            /* a range the gpu is not using, so the program never waits. */
             BOOL retired;
             if (D3dBufferDiscardCb(device, r, &retired)) {
                 if (retired)
@@ -119,7 +119,7 @@ HRESULT D3dCtxMap(D3dContext *c, ID3D11Resource *resource, UINT sub, D3D11_MAP t
     return S_OK;
 }
 
-/* a dynamic texture's mapped bytes, copied to its image where the gpu reads them. */
+/* copies a dynamic texture's mapped bytes to its image, where the gpu reads them. */
 void D3dCtxUnmap(D3dContext *c, ID3D11Resource *resource, UINT sub)
 {
     D3dResource *r = D3dResourceFrom(resource);
@@ -179,7 +179,7 @@ static void update_buffer(D3dContext *c, D3dResource *r, UINT offset, UINT size,
         return;
     size = D3D_MIN(size, r->buf.size - offset);
     if (r->buf.mapped) {
-        /* mapped memory the gpu may be reading: a new range, the old bytes carried over. */
+        /* the gpu may be reading the mapped memory: take a new range and carry the old bytes over. */
         if (r->last_use > device->completed) {
             renaming(c);
             BYTE *old = r->buf.mapped;
@@ -229,7 +229,7 @@ static void update_texture(D3dContext *c, D3dResource *r, UINT sub, const D3D11_
     UINT row = (width + f->block - 1) / f->block * f->block_bytes;
     UINT rows = (height + f->block - 1) / f->block;
     if (r->tex.staging.mapped && !r->tex.image) {
-        /* a staging texture: its packed bytes, once the gpu is done with them. */
+        /* a staging texture: write its packed bytes once the gpu is done with them. */
         wait_idle(c, r, 0);
         BYTE *dst = r->tex.staging.mapped + r->tex.sub_offset[sub] + (SIZE_T)b.front * r->tex.sub_slice_pitch[sub] +
                     (SIZE_T)(b.top / f->block) * r->tex.sub_row_pitch[sub] + (SIZE_T)(b.left / f->block) * f->block_bytes;
@@ -241,7 +241,7 @@ static void update_texture(D3dContext *c, D3dResource *r, UINT sub, const D3D11_
         return;
     }
     if (f->flags & D3D_FORMAT_PLANAR) {
-        /* a video picture is updated whole: its planes follow each other in the data, the chroma half as tall. */
+        /* video pictures update whole: the planes follow each other in the data, chroma half as tall. */
         if (b.left || b.top || width != e.width || height != e.height)
             return;
         UINT total_rows = rows + (rows + 1) / 2;
@@ -303,7 +303,7 @@ void D3dCtxUpdateSubresource(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, c
 
 /* ------------------------------------------------------------------ copies */
 
-/* a box of a staging texture's packed bytes as a buffer region seen from an image copy. */
+/* a box of a staging texture's packed bytes, as an image copy's buffer region. */
 static VkBufferImageCopy staging_copy(const D3dResource *staging, UINT sub, VkOffset3D at)
 {
     const D3dFormat *f = staging->tex.fmt;
@@ -317,7 +317,7 @@ static VkBufferImageCopy staging_copy(const D3dResource *staging, UINT sub, VkOf
     return c;
 }
 
-/* a video picture, whole, plane by plane: images copy their planes, staging copies are the planes packed. */
+/* copies a whole video picture plane by plane. staging textures hold the planes packed. */
 static void copy_planar(D3dContext *c, D3dResource *dst, UINT dst_sub, D3dResource *src, UINT src_sub)
 {
     D3dVk *vk = &c->child.device->vk;
@@ -510,7 +510,7 @@ void D3dCtxCopyStructureCount(D3dContext *c, ID3D11Buffer *dst, UINT offset, ID3
 
 /* ------------------------------------------------------------------ clears */
 
-/* a clear color as the view's format takes it: integer formats get the floats cast. */
+/* integer formats get the floats cast. */
 static VkClearColorValue clear_color(const D3dView *view, const FLOAT color[4])
 {
     VkClearColorValue value;
@@ -528,7 +528,7 @@ static VkClearColorValue clear_color(const D3dView *view, const FLOAT color[4])
     return value;
 }
 
-/* runs a rendering of the single view that only clears it, rects or all of it. */
+/* a rendering of just this view that only clears it, whole or in rects. */
 static void clear_attachment(D3dContext *c, D3dView *view, const VkClearValue *value, VkImageAspectFlags aspects,
                              const D3D11_RECT *rects, UINT rect_count)
 {
@@ -609,7 +609,7 @@ void D3dCtxClearDepthStencilView(D3dContext *c, ID3D11DepthStencilView *iface, U
     D3dCtxClearDepthStencilRects(c, iface, flags, depth, stencil, nullptr, 0);
 }
 
-/* d3d9.dll's clears of depth buffers, which its viewport and rectangles bound. */
+/* depth clears for d3d9.dll, bounded by its viewport and rectangles. */
 void D3dCtxClearDepthStencilRects(D3dContext *c, ID3D11DepthStencilView *iface, UINT flags, FLOAT depth,
                                   UINT8 stencil, const D3D11_RECT *rects, UINT count)
 {
@@ -629,7 +629,7 @@ void D3dCtxClearDepthStencilRects(D3dContext *c, ID3D11DepthStencilView *iface, 
     clear_attachment(c, view, &value, aspects, rects, count);
 }
 
-/* a range of a buffer filled with an element repeated: a copy of it from the ring, past 4 bytes. */
+/* elements wider than 4 bytes are copied from the ring. */
 static void fill_pattern(D3dContext *c, VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size,
                          const BYTE *element, UINT element_size)
 {
@@ -658,11 +658,10 @@ static void fill_pattern(D3dContext *c, VkCommandBuffer cmd, VkBuffer buffer, Vk
 }
 
 /*
- * clears of unordered access views. uints go to each channel as their low
- * bits, whatever the format; floats are converted, on float and normalized
- * formats only. raw and structured buffers take the first uint. a texture
- * whose view has another format than the image clears to the value that
- * writes the view's bits in the image's format.
+ * uint clears write each channel's low bits whatever the format. float clears
+ * convert, on float and normalized formats only. raw and structured buffers
+ * take the first uint. when a texture view's format differs from the image's,
+ * the clear value is the one that writes the view's bits in the image format.
  */
 static void clear_uav(D3dContext *c, D3dView *view, const UINT *uints, const FLOAT *floats)
 {
@@ -710,11 +709,10 @@ void D3dCtxClearUnorderedAccessViewFloat(D3dContext *c, ID3D11UnorderedAccessVie
 }
 
 /*
- * ClearView of unordered access views: the color converted to the view's
- * format, integer formats taking it as integers. rectangles are element
- * ranges of buffers; on textures each row of one is a copy of a row of
- * the element repeated, which writes the view's bits whatever the image's
- * format.
+ * ClearView on unordered access views converts the color to the view's
+ * format, integer formats taking it as integers. on buffers a rectangle is an
+ * element range. on textures each row is copied from a row of the repeated
+ * element, which writes the view's bits whatever the image format.
  */
 static void clear_uav_view(D3dContext *c, D3dView *view, const FLOAT color[4], const D3D11_RECT *rects, UINT count)
 {
@@ -779,7 +777,6 @@ static void clear_uav_view(D3dContext *c, D3dView *view, const FLOAT color[4], c
     D3dContextUse(c, r);
 }
 
-/* ClearView of render targets and unordered access views, whole or in rectangles. */
 void D3dCtxClearView(D3dContext *c, ID3D11View *iface, const FLOAT color[4], const D3D11_RECT *rects, UINT count)
 {
     if (!color)
@@ -798,7 +795,7 @@ void D3dCtxClearView(D3dContext *c, ID3D11View *iface, const FLOAT color[4], con
 
 /* ------------------------------------------------------------------ mips and resolves */
 
-/* each mip of the view from the one above with a linear blit. */
+/* each mip comes from the one above with a linear blit. */
 void D3dCtxGenerateMips(D3dContext *c, ID3D11ShaderResourceView *iface)
 {
     D3dView *view = D3dViewFrom(iface, D3D_VIEW_SRV);
@@ -854,9 +851,8 @@ void D3dCtxResolveSubresource(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, 
 }
 
 /*
- * d3d9.dll's StretchRect and presents: a rectangle of a subresource to a
- * rectangle of another, scaled and converted by a blit, multisampled
- * sources of the same size resolved.
+ * StretchRect and presents for d3d9.dll: a blit scales and converts the
+ * rectangle. multisampled sources of the same size are resolved.
  */
 void D3dCtxBlit(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, const RECT *dst_rect, ID3D11Resource *src,
                 UINT src_sub, const RECT *src_rect, BOOL linear)

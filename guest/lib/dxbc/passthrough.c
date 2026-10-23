@@ -1,9 +1,9 @@
 /*
- * the geometry shader direct3d implies when stream output is made from a
- * vertex or domain shader: every vertex of a primitive passes through as
- * it is, the primitive cut after it. written as a container of its own,
- * with the source's outputs as inputs and outputs, so it compiles as any
- * geometry shader does.
+ * the geometry shader direct3d implies when stream output comes from a
+ * vertex or domain shader: each vertex of a primitive passes through
+ * unchanged and the primitive is cut after it. it is built as its own
+ * container, with the source's outputs as inputs and outputs, so it
+ * compiles like any geometry shader.
  */
 #include "dxbc.h"
 #include "tokens.h"
@@ -46,7 +46,7 @@ static void set32(Writer *w, size_t at, uint32_t v)
         __builtin_memcpy(w->data + at, &v, 4);
 }
 
-/* a signature chunk's contents: the elements, then their names. */
+/* the elements, then their names. */
 static void put_signature(Writer *w, const DxbcSignature *sig)
 {
     size_t start = w->size;
@@ -79,7 +79,7 @@ static void put_code(Writer *w, const DxbcSignature *sig, uint32_t primitive)
     static const uint32_t TOPOLOGY[4] = {0, 1, 3, 5};
     uint32_t vertices = VERTICES[primitive & 7];
     uint32_t passed = PASSED_COUNT[primitive & 7];
-    /* the registers the outputs fill, each with its components and system value. */
+    /* registers the outputs fill, with their components and system value. */
     uint8_t masks[32] = {};
     uint32_t svs[32] = {};
     for (uint32_t i = 0; i < sig->count; i++) {

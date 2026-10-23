@@ -1,4 +1,3 @@
-/* what the parts of winmm share. */
 #ifndef WINMM_PRIVATE_H
 #define WINMM_PRIVATE_H
 
@@ -9,13 +8,12 @@
 #include <mime/win32/mmsystem.h>
 #include <mime/win32/objbase.h>
 
-/* the text of an MMSYSERR_, WAVERR_ or MIDIERR_ value, as winmm's error functions give it. */
+/* error text for MMSYSERR_, WAVERR_ and MIDIERR_ values. */
 MMRESULT MmErrorTextW(MMRESULT error, LPWSTR text, UINT size);
 MMRESULT MmErrorTextA(MMRESULT error, LPSTR text, UINT size);
 
-/* the module, which directinput is created for. */
+/* the module, which DirectInput is created for. */
 extern HINSTANCE WinmmModule;
-/* the joysticks closed as the dll goes. */
 void WinmmJoyDetach(void);
 
 #endif

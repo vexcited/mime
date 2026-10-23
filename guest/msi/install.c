@@ -50,7 +50,7 @@ static UINT restore_registry(MIME_MSI_CHANGE *change)
     }
     HKEY key;
     UINT error = RegOpenKeyExW(change->Root, change->Path, 0, KEY_SET_VALUE | change->View, &key);
-    /* a value that was removed with its key comes back with it. */
+    /* a value removed along with its key is restored with it. */
     if (error && change->HadValue && absent(error))
         error = RegCreateKeyExW(change->Root, change->Path, 0, nullptr, 0, KEY_SET_VALUE | change->View, nullptr, &key, nullptr);
     if (error)
@@ -255,7 +255,7 @@ static void push_change(MIME_MSI_PACKAGE *package, MIME_MSI_CHANGE *change)
     package->Changes = change;
 }
 
-/* a file the package made that is not one of the installed files, which a rollback deletes. */
+/* records a file the package created outside the installed files, for a rollback to delete. */
 UINT MimeMsiNoteNewFile(MIME_MSI_PACKAGE *package, PCWSTR path)
 {
     MIME_MSI_CHANGE *change = new_change(package, path);
@@ -265,7 +265,7 @@ UINT MimeMsiNoteNewFile(MIME_MSI_PACKAGE *package, PCWSTR path)
     return ERROR_SUCCESS;
 }
 
-/* the old copy of a file about to be replaced or removed, kept until the transaction ends. */
+/* keeps the old copy of a file about to be replaced or removed until the transaction ends. */
 UINT MimeMsiBackupFile(MIME_MSI_PACKAGE *package, PCWSTR path, BOOL *existed)
 {
     *existed = FALSE;
@@ -301,7 +301,7 @@ UINT MimeMsiBackupFile(MIME_MSI_PACKAGE *package, PCWSTR path, BOOL *existed)
     return ERROR_SUCCESS;
 }
 
-/* a file that goes is moved out of the way and not copied, so that its folder can be empty before the transaction ends. */
+/* the file is moved aside rather than copied, so its folder can be emptied before the transaction ends. */
 UINT MimeMsiRemoveFile(MIME_MSI_PACKAGE *package, PCWSTR path)
 {
     DWORD attributes = GetFileAttributesW(path);
@@ -344,7 +344,7 @@ UINT MimeMsiRemoveFile(MIME_MSI_PACKAGE *package, PCWSTR path)
     return ERROR_SUCCESS;
 }
 
-/* a directory that is empty goes; one that is not stays and it is no failure. */
+/* only an empty directory is removed, a non empty one is not an error. */
 UINT MimeMsiRemoveDirectory(MIME_MSI_PACKAGE *package, PCWSTR path)
 {
     DWORD attributes = GetFileAttributesW(path);
@@ -360,7 +360,7 @@ UINT MimeMsiRemoveDirectory(MIME_MSI_PACKAGE *package, PCWSTR path)
     return ERROR_SUCCESS;
 }
 
-/* a value that is gone comes back when the transaction is rolled back. */
+/* a rollback restores the deleted value. */
 UINT MimeMsiDeleteRegistryValue(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, PCWSTR name)
 {
     HKEY key;
@@ -406,7 +406,7 @@ UINT MimeMsiDeleteRegistryValue(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR pat
     return ERROR_SUCCESS;
 }
 
-/* a key and everything under it, value by value so that a rollback can put it back. */
+/* deletes a key tree value by value, so a rollback can restore it. */
 UINT MimeMsiDeleteRegistryTree(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, ULONG depth)
 {
     if (depth > 64)
@@ -446,7 +446,7 @@ UINT MimeMsiDeleteRegistryTree(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path
     RegCloseKey(key);
     if (error)
         return error;
-    /* the key itself comes back as a key made new, so that deleting it undoes nothing but its absence. */
+    /* a rollback recreates the key as a new one, undoing only its absence. */
     error = RegDeleteKeyExW(root, path, package->RegistryView, 0);
     return absent(error) ? ERROR_SUCCESS : error;
 }
@@ -526,7 +526,7 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
         if (!wcscmp(feature->Name, name) && feature->Requested != INSTALLSTATE_UNKNOWN)
             *selected = level && feature->Requested == INSTALLSTATE_LOCAL;
     }
-    /* the attributes of a feature say how it may be advertised and what it follows, and a local installation reads none. */
+    /* feature attributes cover advertising and following the parent, which a local install ignores. */
     (void)attributes_column;
     return ERROR_SUCCESS;
 }
@@ -584,8 +584,8 @@ UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *di
         return ERROR_INSTALL_FAILURE;
     if (result == MSICONDITION_FALSE)
         *selected = FALSE;
-    /* the components of the source and the ones of data sources are not made; the rest is read as it is met. A
-       transitive component, which a reinstallation tests again, is installed as any other. */
+    /* source and data source components are not installed, the rest are read as met. a transitive component, which a
+       reinstall tests again, is installed like any other. */
     int flags = MimeMsiInteger(components, row, attributes);
     if (*selected && flags != MSI_NULL_INTEGER && (flags & ~(2 | 4 | 8 | 16 | 64 | 128 | 256 | 512 | 1024 | 2048)))
         return ERROR_CALL_NOT_IMPLEMENTED;
@@ -717,7 +717,7 @@ static UINT component_requested(MIME_MSI_PACKAGE *package, PCWSTR name, DWORD mo
     return ERROR_SUCCESS;
 }
 
-/* the cabinet of the medium that holds the file of a sequence number, or none when that medium has no cabinet. */
+/* the cabinet of the medium holding a sequence number, or none when that medium has no cabinet. */
 static PCWSTR media_cabinet(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *media, int sequence)
 {
     ULONG last_column = MimeMsiColumn(media, L"LastSequence", FALSE);
@@ -819,7 +819,7 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
             file->Mode = mode;
             file->Key = MimeMsiText(package->Database, table, row, key_column);
             file->Version = file_version && *file_version ? file_version : nullptr;
-            /* a file the media put in a cabinet is read from it, any other one from the source tree. */
+            /* compressed files come from their cabinet, the rest from the source tree. */
             if (media && !(flags & 0x2000) && sequence_column != UINT32_MAX)
                 file->Cabinet = media_cabinet(package, media, MimeMsiInteger(table, row, sequence_column));
             if (!file->Source || !file->Target)
@@ -920,14 +920,14 @@ UINT MimeMsiRefreshFilePlan(MIME_MSI_PACKAGE *package)
     return error;
 }
 
-/* the file being installed: the target is made and backed up first, the data comes after. */
+/* the target is created and backed up before the data is written. */
 typedef struct INSTALL_TARGET {
     MIME_MSI_FILE_PLAN *File;
     HANDLE Output;
     BOOL Skip;
 } INSTALL_TARGET;
 
-/* the version of a file as four words in two numbers, or false when it has none. */
+/* packs a file's four version words into one number, FALSE when it has none. */
 static BOOL file_version_of(PCWSTR path, ULONGLONG *version)
 {
     DWORD handle;
@@ -948,7 +948,7 @@ static BOOL file_version_of(PCWSTR path, ULONGLONG *version)
     return found;
 }
 
-/* a version written as text, such as 24.21.0.0, as the same number. */
+/* parses a version string such as 24.21.0.0 into the same packed number. */
 static ULONGLONG parse_version(PCWSTR text)
 {
     ULONGLONG parts[4] = {};
@@ -965,7 +965,7 @@ static ULONGLONG parse_version(PCWSTR text)
     return (parts[0] << 48) | (parts[1] << 32) | (parts[2] << 16) | parts[3];
 }
 
-/* whether an existing file keeps its place under the rules of file versions, see the notes on installing files. */
+/* whether the file versioning rules keep the existing file. */
 static BOOL keeps_existing(const MIME_MSI_FILE_PLAN *file)
 {
     DWORD mode = file->Mode;
@@ -1013,7 +1013,7 @@ static UINT target_open(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *file, INS
             return ERROR_SUCCESS;
         }
         if (attributes & FILE_ATTRIBUTE_READONLY) {
-            /* a read only file is replaced like any other, and comes back read only if the package asks. */
+            /* read only files get replaced too, and stay read only if the package asks. */
             if (!SetFileAttributesW(file->Target, attributes & ~FILE_ATTRIBUTE_READONLY))
                 return ERROR_ACCESS_DENIED;
         }
@@ -1094,7 +1094,7 @@ static UINT target_write(INSTALL_TARGET *target, const BYTE *data, SIZE_T length
     return ERROR_SUCCESS;
 }
 
-/* the file is whole: its time and its attributes are set, and the handle goes. */
+/* sets the finished file's time and attributes, then closes it. */
 static UINT target_close(INSTALL_TARGET *target, const FILETIME *time, UINT error)
 {
     if (target->Output == INVALID_HANDLE_VALUE)
@@ -1170,7 +1170,7 @@ static UINT copy_planned_file(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *fil
     return error;
 }
 
-/* the files that come out of a cabinet: one pass over the folders gives each of them to its target. */
+/* one pass over a cabinet's folders hands each file to its target. */
 typedef struct EXTRACT_CONTEXT {
     MIME_MSI_PACKAGE *Package;
     MIME_MSI_FILE_PLAN *Plan;
@@ -1253,7 +1253,7 @@ static UINT extract_cabinet(MIME_MSI_PACKAGE *package, PCWSTR cabinet)
     SIZE_T size = 0;
     if (cabinet[0] == L'#') {
         error = MimeMsiReadBinary(package->Database, cabinet + 1, &stream, &size);
-        /* a cabinet of a patch is a stream of the patch file. */
+        /* a patch's cabinet is a stream in the patch file. */
         for (ULONG i = 0; error == ERROR_FILE_NOT_FOUND && i < package->Database->PatchCount; i++)
             error = MimeMsiReadBinary(package->Database->Patches[i], cabinet + 1, &stream, &size);
         if (error == ERROR_FILE_NOT_FOUND)
@@ -1430,7 +1430,7 @@ UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
         return error;
     }
     UINT error = execute_files(package);
-    /* actions held back for the script run now, without the lock, and end the transaction when they are done. */
+    /* deferred actions run now, without the lock, and the transaction ends after them. */
     if (!error && (package->Deferred || (finalize && package->Commit)))
         return MIME_MSI_SCRIPT_PENDING;
     if (!error && finalize) {

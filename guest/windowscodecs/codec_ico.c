@@ -1,7 +1,4 @@
-/*
- * the ico and cur codecs: each image of the directory is a frame in 32 bit color, whether the file stores it as a bitmap
- * with a mask or as a png.
- */
+/* ICO and CUR decoder: each directory entry becomes a 32-bit frame from a masked bitmap or PNG. */
 #include "wic_codec.h"
 #include "codec_util.h"
 #include <pngio/pngio.h>
@@ -168,7 +165,7 @@ static HRESULT decode_dib(const IconEntry *e, const BYTE *data, BYTE *dest, UINT
         return hr;
     BOOL has_alpha = FALSE;
     if (dib.bpp == 32) {
-        /* the high byte of a pixel is its alpha, when any pixel has some. */
+        /* use the high byte as alpha if any pixel has nonzero alpha. */
         for (UINT y = 0; y < h && !has_alpha; y++) {
             const BYTE *line = bits + (SIZE_T)y * xor_stride;
             for (UINT x = 0; x < w; x++) {

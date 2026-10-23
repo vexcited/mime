@@ -16,7 +16,7 @@ typedef void(NTAPI *PRTL_THREAD_START)(PVOID entry, PVOID parameter);
 
 extern PVOID LdrpNtdllBase;
 extern RTL_CRITICAL_SECTION LdrpLoaderLock;
-extern PVOID LdrpKernel32ThreadInitThunk; /* BaseThreadInitThunk, set when kernel32 loads */
+extern PVOID LdrpKernel32ThreadInitThunk; /* BaseThreadInitThunk, set when kernel32 loads. */
 
 #if defined(__x86_64__) || defined(__i386__)
 #define YieldProcessor() __asm__ volatile("pause")

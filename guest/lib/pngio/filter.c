@@ -43,7 +43,7 @@ static void paeth_scalar(uint8_t *cur, const uint8_t *prev, size_t n, size_t bpp
 
 #if PNGIO_SSE2
 
-/* pixels of 3, 4, 6 and 8 bytes are handled in one register, the 3 and 6 byte ones with a spare lane. */
+/* pixels of 3, 4, 6 and 8 bytes fit one register, 3 and 6 byte ones with a spare lane. */
 static inline bool simd_bpp(size_t bpp)
 {
     return bpp == 3 || bpp == 4 || bpp == 6 || bpp == 8;
@@ -254,7 +254,7 @@ bool pngio_unfilter_row(uint8_t *cur, const uint8_t *prev, size_t n, unsigned bp
     }
 }
 
-/* filtering for the encoder, every output byte depends on raw bytes only. */
+/* encoder side: every output byte depends on raw bytes only. */
 
 static void filter_scalar(uint8_t *dst, const uint8_t *cur, const uint8_t *prev, size_t n, size_t bpp,
                           unsigned type, size_t i)
@@ -291,7 +291,7 @@ void pngio_filter_row(uint8_t *dst, const uint8_t *cur, const uint8_t *prev, siz
     }
 #if PNGIO_SSE2
     if (pngio_use_simd()) {
-        /* the bytes of the first pixel have no left neighbour. */
+        /* the first pixel has no left neighbour. */
         size_t first = bpp < n ? bpp : n;
         if (type != 2 && first) {
             filter_scalar(dst, cur, prev, first, bpp, type, 0);

@@ -1,11 +1,10 @@
 #include "msi_private.h"
 
 /*
- * the custom actions of a package: the rows of the CustomAction table, run now or held back for the script. A type is
- * read in parts: the low three bits tell what runs (1 a library, 2 a program, 3 text, 5 and 6 scripts), bits 4 and 5
- * where it comes from (0 the Binary table, 0x10 a file of the package, 0x20 a directory, 0x30 a property), and the
- * flags above them how: 0x40 ignores the result, 0x80 does not wait, 0x400 holds the action back for the script, with
- * 0x100 for its rollback and 0x200 for its commit.
+ * custom actions, the rows of the CustomAction table, run now or deferred to the script. the low three bits of the
+ * type say what runs: 1 a library, 2 a program, 3 text, 5 and 6 scripts. bits 4 and 5 say where it comes from: 0 the
+ * Binary table, 0x10 a package file, 0x20 a directory, 0x30 a property. the flags above: 0x40 ignores the result,
+ * 0x80 does not wait, 0x400 defers the action to the script, with 0x100 for rollback and 0x200 for commit.
  */
 
 #if defined(__x86_64__)
@@ -86,7 +85,7 @@ UINT MimeMsiCustomActionLookup(MIME_MSI_PACKAGE *package, PCWSTR name, MIME_MSI_
     return ERROR_FUNCTION_NOT_CALLED;
 }
 
-/* a line for the log, shown as it is: the text is a field of the record, and not a template. */
+/* logs the text verbatim: it goes in a record field, not the template, so it is not formatted. */
 static void info_message(MSIHANDLE handle, PCWSTR text)
 {
     MSIHANDLE record = MsiCreateRecord(1);
@@ -108,13 +107,13 @@ static UINT machine_of_image(const BYTE *data, SIZE_T size, WORD *machine)
     return ERROR_SUCCESS;
 }
 
-/* a file of the temporary directory holding bytes, named so that a loader or a shell takes it for what it is. */
+/* writes bytes to a temporary file with an extension the loader or the shell recognizes. */
 static UINT write_temporary(const BYTE *data, SIZE_T size, PCWSTR extension, WCHAR path[MAX_PATH])
 {
     WCHAR directory[MAX_PATH], name[MAX_PATH];
     if (!GetTempPathW(RTL_NUMBER_OF(directory), directory) || !GetTempFileNameW(directory, L"MSI", 0, name))
         return GetLastError();
-    /* the unique name has its own extension: the one wanted replaces it. */
+    /* replace the unique name's extension with the wanted one. */
     wcscpy(path, name);
     SIZE_T length = wcslen(path);
     if (length > 4 && path[length - 4] == L'.')
@@ -137,7 +136,6 @@ static UINT write_temporary(const BYTE *data, SIZE_T size, PCWSTR extension, WCH
     return error;
 }
 
-/* the path of a file of the package once it is installed. */
 static UINT installed_file_path(MIME_MSI_PACKAGE *package, PCWSTR key, PWSTR *out)
 {
     MIME_MSI_TABLE *files;
@@ -174,7 +172,7 @@ static UINT installed_file_path(MIME_MSI_PACKAGE *package, PCWSTR key, PWSTR *ou
     return ERROR_INSTALL_PACKAGE_INVALID;
 }
 
-/* the result of a library or a program, as the action sequence takes it. */
+/* maps a library or program result to what the action sequence expects. */
 static UINT translate_result(UINT result)
 {
     switch (result) {
@@ -225,7 +223,7 @@ static UINT run_library(MIME_MSI_PACKAGE *package, MSIHANDLE session, const MIME
             error = write_temporary(bytes, size, L".dll", path);
         temporary = !error;
     } else if (!error) {
-        /* an installed library is read for its machine too. */
+        /* an installed library is also checked for its machine type. */
         HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
         BYTE header[0x400];
         DWORD read = 0;
@@ -317,7 +315,7 @@ static UINT run_program(MIME_MSI_PACKAGE *package, const MIME_MSI_CA_ROW *row, P
     if (!command_line)
         return ERROR_NOT_ENOUGH_MEMORY;
     if (source == SOURCE_DIRECTORY) {
-        /* the target is the whole command line, whose first word names the program inside the directory. */
+        /* the target is the full command line, its first word naming the program in the directory. */
         _snwprintf(command_line, capacity, L"%s%s", path, arguments);
     } else
         _snwprintf(command_line, capacity, L"\"%s\" %s", path, arguments);
@@ -343,7 +341,7 @@ static UINT run_program(MIME_MSI_PACKAGE *package, const MIME_MSI_CA_ROW *row, P
     return error;
 }
 
-/* a session for a deferred action: its properties are the data it was scheduled with and three of the package. */
+/* a deferred action's session only has its scheduled data and three package properties. */
 static UINT open_session(MIME_MSI_PACKAGE *parent, PCWSTR data, ULONG kind, MSIHANDLE *handle)
 {
     *handle = 0;
@@ -373,7 +371,7 @@ static UINT open_session(MIME_MSI_PACKAGE *parent, PCWSTR data, ULONG kind, MSIH
     return error;
 }
 
-/* a library or a program of a script, run with a session of its own. */
+/* runs a script's library or program in a session of its own. */
 static UINT run_scheduled(MIME_MSI_PACKAGE *package, MIME_MSI_SCRIPT_ACTION *action, ULONG kind)
 {
     MSIHANDLE session;
@@ -433,14 +431,14 @@ static UINT schedule(MIME_MSI_PACKAGE *package, const MIME_MSI_CA_ROW *row)
     action->Row.Name = MimeMsiDuplicate(row->Name);
     action->Row.Source = MimeMsiDuplicate(row->Source);
     action->Row.Target = MimeMsiDuplicate(row->Target);
-    /* the data of an action is the property named like it, as it is when the action is scheduled. */
+    /* the action's data is the property named after it, captured when scheduled. */
     action->Data = MimeMsiDuplicate(MimeMsiGetProperty(package, row->Name));
     if (!action->Row.Name || !action->Row.Source || !action->Row.Target || !action->Data) {
         free_action(action);
         return ERROR_NOT_ENOUGH_MEMORY;
     }
     if (row->Type & CA_ROLLBACK) {
-        /* the last to be scheduled is the first to be rolled back. */
+        /* the last scheduled is the first rolled back. */
         action->Next = package->Rollback;
         package->Rollback = action;
     } else if (row->Type & CA_COMMIT) {
@@ -523,7 +521,7 @@ UINT MimeMsiRunCustomAction(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_MS
     UINT error = ERROR_SUCCESS;
     if ((type & CA_INSCRIPT) && base != CA_TEXT) {
         AcquireSRWLockExclusive(&MimeMsiLock);
-        /* a script action outside of the script has nothing to be held back for. */
+        /* outside a transaction there is no script to defer to. */
         error = package->TransactionActive ? schedule(package, row) : ERROR_SUCCESS;
         ReleaseSRWLockExclusive(&MimeMsiLock);
         return error;
@@ -538,7 +536,7 @@ UINT MimeMsiRunCustomAction(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_MS
             else
                 error = MimeMsiSetProperty(package, row->Source, formatted);
         } else if (!error && source == SOURCE_DIRECTORY) {
-            /* the target path of the directory, which costing has to know about. */
+            /* sets the directory's target path, which costing needs. */
             error = *row->Source ? MimeMsiSetProperty(package, row->Source, formatted) : ERROR_INSTALL_PACKAGE_INVALID;
         } else if (!error && source == SOURCE_FILE) {
             *message = formatted;

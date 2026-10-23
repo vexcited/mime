@@ -1,8 +1,8 @@
 /*
- * the internal pcm converter: 8 and 16 bit, mono and stereo, at any rate,
- * converted as windows' converter does: samples widened to 16 bits,
- * channels summed and clamped, 8 bit output the high byte, and the rate
- * changed by repeating or dropping the nearest sample.
+ * the internal pcm converter: 8 and 16 bit, mono and stereo, any rate.
+ * like windows' converter, samples are widened to 16 bits, channels summed
+ * and clamped, 8-bit output takes the high byte, and the rate changes by
+ * repeating or dropping the nearest sample.
  */
 #include "msacm32_private.h"
 
@@ -162,7 +162,7 @@ static LRESULT stream_size(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMSIZE *siz
     return ACMERR_NOTPOSSIBLE;
 }
 
-/* a frame as 16 bit left and right samples. */
+/* reads a frame as 16-bit left and right samples. */
 static const BYTE *read_frame(const BYTE *p, const WAVEFORMATEX *f, int *l, int *r)
 {
     if (f->wBitsPerSample == 8) {
@@ -180,7 +180,7 @@ static int clamp16(int v)
     return v > 32767 ? 32767 : v < -32768 ? -32768 : v;
 }
 
-/* the frame in the destination's layout, as the bytes it writes. */
+/* writes the frame's bytes in the destination's layout. */
 static void make_frame(BYTE *out, const WAVEFORMATEX *src, const WAVEFORMATEX *dst, int l, int r)
 {
     if (dst->nChannels == 1)
@@ -204,7 +204,7 @@ static BYTE *write_frame(BYTE *p, BYTE *end, const BYTE *frame, DWORD size)
     return p + size;
 }
 
-/* converts frames, the last one filling the rest of the destination when fill is set; the bytes written. */
+/* returns the bytes written. with fill set, the last frame fills the rest of the destination. */
 static DWORD convert(const WAVEFORMATEX *src, const BYTE *in, const WAVEFORMATEX *dst, BYTE *out, DWORD frames,
                      BOOL fill, BYTE *end)
 {
@@ -246,7 +246,7 @@ static DWORD convert(const WAVEFORMATEX *src, const BYTE *in, const WAVEFORMATEX
     return (DWORD)(out - start);
 }
 
-/* as many whole source frames as the destination holds, every frame when it holds them exactly. */
+/* converts as many whole source frames as the destination holds, all of them when it holds them exactly. */
 static LRESULT stream_convert(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMHEADER *h)
 {
     const WAVEFORMATEX *src = in->pwfxSrc, *dst = in->pwfxDst;
@@ -274,7 +274,7 @@ LRESULT CALLBACK AcmPcmDriverProc(DWORD_PTR id, HDRVR driver, UINT message, LPAR
     case DRV_FREE:
         return 1;
     case DRV_OPEN: {
-        /* the open without a description is the driver id's; others must be the acm's. */
+        /* the open without a description is the driver id's, other opens must come from the acm. */
         ACMDRVOPENDESCW *desc = (ACMDRVOPENDESCW *)param2;
         if (!desc)
             return 1;

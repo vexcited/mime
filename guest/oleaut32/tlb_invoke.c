@@ -1,8 +1,7 @@
 /*
- * calls: DispCallFunc, which calls a function with arguments of the types of variants, and ITypeInfo::Invoke, which
- * finds the function a member id and the kind of call name in a type, turns the arguments of an automation call (in
- * reverse order, some named, some missing) into the arguments of that function, calls it through the virtual table of
- * the object, and returns its result. DispInvoke, DispGetIDsOfNames, DispGetParam and CreateStdDispatch sit on top.
+ * DispCallFunc, and ITypeInfo::Invoke: find the function for a member id and call kind, map the automation arguments,
+ * which come reversed, partly named and partly missing, onto its parameters, call it through the object's vtable and
+ * return its result. DispInvoke, DispGetIDsOfNames, DispGetParam and CreateStdDispatch sit on top.
  */
 #include "typelib.h"
 
@@ -35,7 +34,7 @@ static void put_u64(CALL *c, ULONGLONG value)
     }
 }
 
-/* the bytes of a value that is passed inline: on 64 bits as a pointer to a copy when it does not fit a register. */
+/* on 64-bit, a value that does not fit a register is passed as a pointer to a copy. */
 static void put_block(CALL *c, const void *data, SIZE_T size, void *copy)
 {
     if (sizeof(void *) == 8) {
@@ -58,7 +57,6 @@ static void put_block(CALL *c, const void *data, SIZE_T size, void *copy)
     }
 }
 
-/* a value of vt from a variant's storage into the slots. */
 static HRESULT put_value(CALL *c, VARTYPE vt, const VARIANT *v, VARIANT *copy)
 {
     if (vt & (VT_BYREF | VT_ARRAY)) {
@@ -101,7 +99,6 @@ static HRESULT put_value(CALL *c, VARTYPE vt, const VARIANT *v, VARIANT *copy)
     return S_OK;
 }
 
-/* the value a function returned, in a variant. */
 static void take_result(VARTYPE vt, ULONGLONG raw, ULONGLONG fp, VARIANT *out)
 {
     memset(out, 0, sizeof(*out));
@@ -187,7 +184,7 @@ WINOLEAUTAPI HRESULT WINAPI DispCallFunc(PVOID instance, ULONG_PTR vtable_offset
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ types of arguments */
+/* ------------------------------------------------------------------ parameter types */
 
 typedef struct {
     VARTYPE Vt;
@@ -214,7 +211,7 @@ static HRESULT user_defined(TL_TYPE *scope, HREFTYPE ref, BOOL via_pointer, int 
         break;
     case TKIND_ALIAS: {
         TYPEDESC alias = attr->tdescAlias;
-        /* an alias is followed in the library it belongs to. */
+        /* resolve the alias within its own library. */
         ITypeLib *lib;
         UINT index;
         hr = info->lpVtbl->GetContainingTypeLib(info, &lib, &index);
@@ -269,7 +266,7 @@ static HRESULT vt_of(TL_TYPE *scope, const TYPEDESC *td, int depth, FORMAL *f)
             HRESULT hr = user_defined(scope, inner->hreftype, TRUE, depth + 1, &g);
             if (FAILED(hr))
                 return hr;
-            /* the pointer to an interface is the interface; to anything else, a reference to it. */
+            /* a pointer to an interface is the interface itself; to anything else, a reference. */
             f->Vt = g.Vt;
             f->Size = g.Size;
             return S_OK;
@@ -278,7 +275,7 @@ static HRESULT vt_of(TL_TYPE *scope, const TYPEDESC *td, int depth, FORMAL *f)
         HRESULT hr = vt_of(scope, inner, depth + 1, &g);
         if (FAILED(hr))
             return hr;
-        /* a reference to a reference has no type of a variant. */
+        /* no variant type can express a reference to a reference. */
         if (g.Vt & VT_BYREF)
             return DISP_E_BADVARTYPE;
         f->Vt = g.Vt | VT_BYREF;
@@ -309,9 +306,9 @@ static HRESULT vt_of(TL_TYPE *scope, const TYPEDESC *td, int depth, FORMAL *f)
     }
 }
 
-/* ------------------------------------------------------------------ the arguments of one call */
+/* ------------------------------------------------------------------ argument mapping */
 
-/* whether automation hands the parameter over: the locale and the value that comes back are made up by the call. */
+/* the lcid and retval parameters are supplied by the call, not the caller. */
 static BOOL from_caller(const TL_PARAM *p)
 {
     return !(p->Flags & (PARAMFLAG_FLCID | PARAMFLAG_FRETVAL));
@@ -326,10 +323,9 @@ static UINT caller_params(const TL_FUNC *f)
 }
 
 /*
- * What the function and the number of arguments say about a call, in the order windows judges it: a restricted function
- * is not there for a member id that is not negative, one that takes any number of arguments has no names for them, and
- * one with too many arguments for its parameters may be a property that holds a collection. DISP_E_NOTCOLLECTION says
- * that the call is to be made on the object that the getter returns, and which getter.
+ * checks in the order windows does: a restricted function is invisible to a nonnegative member id, a vararg function
+ * takes no named arguments, and too many arguments may target a collection property. DISP_E_NOTCOLLECTION means the
+ * call goes to the object the returned getter yields.
  */
 static HRESULT judge_arguments(const TL_TYPE *type, const TL_FUNC *f, WORD flags, const DISPPARAMS *params,
                                const TL_FUNC **getter)
@@ -362,8 +358,8 @@ static HRESULT judge_arguments(const TL_TYPE *type, const TL_FUNC *f, WORD flags
 }
 
 /*
- * The argument that belongs to a parameter, as an index into the array of the call: the one named for its position, or
- * else the one that stands at its position counted from the end, if that is not among the named ones.
+ * the rgvarg index for a parameter: the argument named for its position, else the one at its position counted from
+ * the end, unless that one is named.
  */
 static int find_argument(const DISPPARAMS *params, int position)
 {
@@ -374,17 +370,17 @@ static int find_argument(const DISPPARAMS *params, int position)
     return index >= (int)params->cNamedArgs ? index : -1;
 }
 
-/* one value as the function takes it. */
+/* one argument as the function takes it. */
 typedef struct {
     VARTYPE Vt;
-    /* the value in the field of the variant that Vt names. */
+    /* the value, in the variant field Vt names. */
     VARIANT Pass;
-    /* what a pointer that is passed points at when the argument is not a reference of the right kind. */
+    /* what a by reference parameter points at when the argument is not a reference of the right kind. */
     VARIANT Box;
     VARTYPE BoxVt;
-    /* the box holds a copy that is cleared after the call, as a variant of its own when it stands for one. */
+    /* Box holds a copy cleared after the call, as a full variant when it stands for one. */
     BOOL BoxOwned, BoxIsVariant;
-    /* a converted value, and a copy of a default, which are cleared when the call is over. */
+    /* a converted value and a copy of the default, both cleared after the call. */
     VARIANT Own;
     VARIANT Default;
 } SLOT;
@@ -400,7 +396,7 @@ static void release_slot(SLOT *slot)
     }
 }
 
-/* the variant that an argument stands for, which is the target of a reference to a variant. */
+/* follows a VT_VARIANT reference to its target. */
 static const VARIANT *target_of(const VARIANT *arg)
 {
     return arg->vt == (VT_BYREF | VT_VARIANT) ? arg->pvarVal : arg;
@@ -413,7 +409,7 @@ static void set_missing_error(VARIANT *v)
     v->scode = DISP_E_PARAMNOTFOUND;
 }
 
-/* a copy of a value to point at, in which a string that is not there is an empty one. */
+/* a NULL BSTR is copied as an empty string. */
 static HRESULT box_copy(SLOT *slot, const VARIANT *value, VARTYPE as)
 {
     HRESULT hr = VariantCopy(&slot->Box, value);
@@ -431,10 +427,9 @@ static HRESULT box_copy(SLOT *slot, const VARIANT *value, VARTYPE as)
 }
 
 /*
- * Makes the slot of a parameter out of an argument. A value that is already of the type of the parameter is passed as
- * it is and any other is converted first. A parameter that is a reference gets the address of the argument when that
- * is a reference of the same kind, and a box with a copy of the value, converted, when the argument is not a
- * reference at all. An argument that is a reference of another kind does not fit.
+ * a value already of the parameter type is passed as is, others are converted. A by reference parameter gets the
+ * argument's address when it is a reference of the same kind, or a box with a converted copy when the argument is
+ * not a reference. A reference of another kind does not fit.
  */
 static HRESULT fill_slot(const TL_LIB *lib, const FORMAL *formal, const VARIANT *arg, SLOT *slot)
 {
@@ -514,10 +509,7 @@ static HRESULT fill_slot(const TL_LIB *lib, const FORMAL *formal, const VARIANT 
     return S_OK;
 }
 
-/*
- * The arguments from a position on, as a safe array of variants in the order they were written: what a function that
- * takes any number of arguments gets in its last parameter.
- */
+/* the arguments from a position on as a safe array of variants in source order, for a vararg function's last parameter. */
 static HRESULT collect_rest(const DISPPARAMS *params, int position, BYTE *used, UINT *matched, SAFEARRAY **out)
 {
     int first = (int)params->cArgs - 1 - position;
@@ -546,9 +538,9 @@ static HRESULT collect_rest(const DISPPARAMS *params, int position, BYTE *used, 
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ calling the function */
+/* ------------------------------------------------------------------ calling */
 
-/* a value that a function wrote through a pointer, as a variant of the type that the pointer was for. */
+/* reads back a value the function wrote through a pointer. */
 static HRESULT variant_from_storage(VARTYPE vt, const void *storage, VARIANT *out)
 {
     memset(out, 0, sizeof(*out));
@@ -610,7 +602,7 @@ static HRESULT exception_from_failure(EXCEPINFO *excep, HRESULT failure)
     return DISP_E_EXCEPTION;
 }
 
-/* the address and the instance a call goes to: through the table of the object, or a function of a module. */
+/* the object's vtable slot, or a module function. */
 static HRESULT call_target(ITypeInfo *self, const TL_TYPE *type, const TL_FUNC *f, PVOID instance, PVOID *object,
                            ULONG_PTR *where)
 {
@@ -631,9 +623,8 @@ static HRESULT call_target(ITypeInfo *self, const TL_TYPE *type, const TL_FUNC *
 }
 
 /*
- * Calls one function of a type with the arguments of an automation call. Each parameter takes the argument that
- * belongs to it or, when there is none, the value that its flags and its type give it. Whatever the function returns in
- * its value parameter, or as its own value, is the result.
+ * each parameter takes its argument or, without one, the value its flags and type give it. The result is the retval
+ * parameter or the return value.
  */
 static HRESULT call_function(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *f, PVOID instance, WORD flags,
                              const DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
@@ -657,7 +648,7 @@ static HRESULT call_function(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *f, P
     const TL_PARAM *retval = nullptr;
     FORMAL retval_formal = {0, 0};
     HRESULT hr = S_OK;
-    /* the last parameter that the caller gives takes the value of a property, or the arguments that are left. */
+    /* the last caller parameter takes a property put value, or the remaining varargs. */
     int value_last = -1;
     for (UINT i = 0; i < count; i++)
         if (from_caller(&f->Params[i]))
@@ -705,7 +696,7 @@ static HRESULT call_function(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *f, P
         }
         int index;
         if ((int)i == value_position) {
-            /* the value of a property is the argument that is named as such, and there is no other way to give it. */
+            /* a put value can only come as the DISPID_PROPERTYPUT named argument. */
             if (!params->cNamedArgs || params->rgdispidNamedArgs[0] != DISPID_PROPERTYPUT) {
                 hr = DISP_E_PARAMNOTFOUND;
                 continue;
@@ -722,7 +713,7 @@ static HRESULT call_function(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *f, P
             used[index] = 1;
             matched++;
         }
-        /* an argument that says it is missing is one, when the parameter can do without it. */
+        /* DISP_E_PARAMNOTFOUND marks a missing argument, accepted when the parameter can do without. */
         if (arg && arg->vt == VT_ERROR && arg->scode == (SCODE)DISP_E_PARAMNOTFOUND) {
             if (optional && (!is_variant || has_default)) {
                 arg = nullptr;
@@ -758,7 +749,7 @@ static HRESULT call_function(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *f, P
                 slot->Pass.byref = &slot->Box.byref;
         }
     }
-    /* arguments that no parameter took, next to ones that were taken, are not the arguments of this function. */
+    /* leftover arguments next to matched ones mean the call does not fit this function. */
     if (SUCCEEDED(hr) && f->OptCount != -1 && matched && matched < params->cArgs)
         hr = DISP_E_PARAMNOTFOUND;
     VARTYPE return_vt = VT_EMPTY;
@@ -783,7 +774,7 @@ static HRESULT call_function(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *f, P
             vts[i] = slots[i].Vt;
             pointers[i] = &slots[i].Pass;
         }
-        /* only what the function itself leaves as error information is its. */
+        /* keep only error info the function itself sets. */
         SetErrorInfo(0, nullptr);
         hr = DispCallFunc(object, where, f->Conv, return_vt, count, vts, pointers, &raw);
     }
@@ -815,7 +806,7 @@ static HRESULT call_function(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *f, P
     return hr;
 }
 
-/* a property that holds an object is called on the object it holds, with the arguments the property could not take. */
+/* calls the object a property returns, with the arguments the property could not take. */
 static HRESULT forward_to_default(ITypeInfo *self, TL_TYPE *type, const TL_FUNC *getter, PVOID instance, WORD flags,
                                   const DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
 {
@@ -877,7 +868,7 @@ HRESULT TlInvokeOnType(ITypeInfo *self, TL_TYPE *type, BOOL dual_dispatch_view, 
 {
     if (!instance && type->Kind != TKIND_MODULE)
         return E_INVALIDARG;
-    /* the kinds of call are the only flags, and one of them is needed. */
+    /* only call kind flags are allowed, and at least one. */
     if (!flags || (flags & ~(WORD)(DISPATCH_METHOD | DISPATCH_PROPERTYGET | DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF)))
         return E_INVALIDARG;
     HRESULT hr = TlLoadMembers(type);
@@ -901,7 +892,7 @@ HRESULT TlInvokeOnType(ITypeInfo *self, TL_TYPE *type, BOOL dual_dispatch_view, 
         }
     if (found)
         return invoke_function(self, type, found, instance, flags, params, result, excep, arg_err);
-    /* the base: asked with the same call. */
+    /* not found here: pass the same call to the base. */
     HREFTYPE ref;
     ITypeInfo2 *info2 = (ITypeInfo2 *)self;
     if (type->Kind == TKIND_MODULE || FAILED(info2->lpVtbl->GetRefTypeOfImplType(info2, 0, &ref)))

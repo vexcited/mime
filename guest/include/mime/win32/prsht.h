@@ -1,7 +1,4 @@
-/*
- * property sheets and wizards of comctl32.dll: pages, headers, the messages
- * a sheet answers and the notifications it sends its pages.
- */
+/* comctl32.dll property sheets and wizards: pages, headers, sheet messages and page notifications. */
 #ifndef MIME_WIN32_PRSHT_H
 #define MIME_WIN32_PRSHT_H
 

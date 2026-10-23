@@ -1,7 +1,7 @@
 /*
- * prntvpt.dll: the print ticket provider, which tells programs what a printer can do as an XML document
- * (the print capabilities) and turns device modes into print tickets and back. programs ask a printer by
- * name; the answers come from its device capabilities and its device mode, which winspool.drv keeps.
+ * prntvpt.dll: the print ticket provider. it describes what a printer can do as an XML print capabilities document and
+ * turns device modes into print tickets and back. programs name the printer; answers come from its device capabilities
+ * and device mode, which winspool.drv keeps.
  */
 #include <mime/win32/objidl.h>
 #include <mime/win32/winbase.h>
@@ -103,7 +103,7 @@ static HRESULT text_write(TEXT *t, IStream *stream)
     return hr;
 }
 
-/* the whole of a stream, from its start, as text; the caller frees it. */
+/* the whole stream from its start, as text; the caller frees it. */
 static char *stream_text(IStream *stream)
 {
     if (!stream)
@@ -133,7 +133,7 @@ static char *stream_text(IStream *stream)
     return data;
 }
 
-/* ------------------------------------------------------------------ the keywords of a print schema */
+/* ------------------------------------------------------------------ print schema keywords */
 
 static const struct {
     WORD Paper;
@@ -176,7 +176,7 @@ static void narrow(const WCHAR *wide, char *out, int size)
     out[size - 1] = 0;
 }
 
-/* ------------------------------------------------------------------ the provider */
+/* ------------------------------------------------------------------ provider */
 
 static PROVIDER *provider_of(void *handle)
 {
@@ -241,7 +241,7 @@ PTAPI PTQuerySchemaVersionSupport(PCWSTR printer, DWORD *version)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the capabilities */
+/* ------------------------------------------------------------------ capabilities */
 
 static void add_display_name(TEXT *t, const char *name)
 {
@@ -416,7 +416,7 @@ static BOOL ticket_number(const char *xml, const char *parameter, int *value)
     return TRUE;
 }
 
-/* the settings of a printer, the user's default merged with a device mode. */
+/* the printer's settings: the user's default merged with a device mode. */
 static DEVMODEW *settings(PROVIDER *p, const DEVMODEW *input)
 {
     HANDLE spool;
@@ -525,7 +525,7 @@ PTAPI PTConvertPrintTicketToDevMode(void *handle, IStream *ticket, int base, int
         dm->dmCopies = (short)value;
     }
     HeapFree(GetProcessHeap(), 0, xml);
-    /* the device mode is checked against the printer's once more, which drops what it cannot do. */
+    /* checked against the printer's device mode again, which drops what it cannot do. */
     DEVMODEW *checked = settings(p, dm);
     if (checked) {
         HeapFree(GetProcessHeap(), 0, dm);
@@ -550,7 +550,7 @@ PTAPI PTMergeAndValidatePrintTicket(void *handle, IStream *base, IStream *delta,
     char *xml_delta = stream_text(delta);
     HRESULT hr = E_OUTOFMEMORY;
     if (xml_base) {
-        /* the settings of both go through the device mode of the printer, so what is left is what it supports. */
+        /* both go through the printer's device mode, so what is left is what it supports. */
         DEVMODEW *dm = settings(p, nullptr);
         TEXT t = {};
         if (dm) {

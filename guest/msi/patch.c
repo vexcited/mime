@@ -77,10 +77,10 @@ UINT WINAPI MsiApplyPatchW(LPCWSTR path, LPCWSTR package, INSTALLTYPE type, LPCW
 }
 
 /*
- * the patches of the PATCH property of an installation: each is a file of the patch class whose summary names the products
- * it can be applied to (the template) and the transforms it holds (the last author), as storages of the file written
- * with a colon before the name. The transforms are applied to the database of the package in that order, and the file
- * stays with the database, as the cabinet the media of the transforms name is a stream of it.
+ * the patches of an installation's PATCH property. each is a patch class file whose summary names the products it
+ * applies to in the template, and the transforms it holds in the last author, as storages written with a leading
+ * colon. the transforms apply to the package database in that order, and the file stays with the database since the
+ * transforms' Media cabinet is a stream of it.
  */
 static BOOL listed(PCWSTR list, PCWSTR code)
 {
@@ -113,7 +113,7 @@ static UINT apply_one(MIME_MSI_DATABASE *database, PCWSTR product, PCWSTR path)
         patch->Object.Destroy(&patch->Object);
         return ERROR_PATCH_PACKAGE_INVALID;
     }
-    /* held here while the transforms are open, as they hold the file. */
+    /* held while the transforms are open, since they need the file. */
     patch->Object.References++;
     if (product && !listed(targets.Text, product))
         error = ERROR_PATCH_TARGET_NOT_FOUND;
@@ -122,7 +122,7 @@ static UINT apply_one(MIME_MSI_DATABASE *database, PCWSTR product, PCWSTR path)
         PWSTR end = wcschr(cursor, L';');
         if (end)
             *end = 0;
-        /* only the transforms inside the patch are known. */
+        /* only transforms stored inside the patch are supported. */
         if (*cursor != L':' || !cursor[1]) {
             error = ERROR_CALL_NOT_IMPLEMENTED;
             break;

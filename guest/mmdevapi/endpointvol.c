@@ -1,6 +1,6 @@
 /*
- * IAudioEndpointVolume of the two endpoints. the levels are kept in the process and reported to the callbacks
- * that registered, the host's own mixer is not touched.
+ * IAudioEndpointVolume of the two endpoints. levels are kept in the process and reported to registered callbacks,
+ * the host's own mixer is not touched.
  */
 #include "mmdevapi_private.h"
 
@@ -27,7 +27,7 @@ typedef struct ENDPOINT_VOLUME {
 
 static ENDPOINT_VOLUME g_volumes[2];
 
-/* the decibels of an amplitude and back, computed without a math library. */
+/* amplitude to decibels and back, without a math library. */
 static double ln_of(double x)
 {
     union {

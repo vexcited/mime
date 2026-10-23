@@ -1,9 +1,7 @@
 /*
- * the pixel formats of every dc, described by gdi32 and opengl32 alike.
- * the first ones are the gpu formats opengl32 renders through, double
- * buffered with a back buffer that persists across swaps; the generic ones
- * after them are those of windows' gdi implementation of opengl, which
- * can be selected but render nothing.
+ * the pixel formats of every dc, shared by gdi32 and opengl32. the first ones are the gpu formats opengl32 renders
+ * through, double buffered with a back buffer that persists across swaps. the generic ones after them match
+ * windows' gdi opengl: they can be selected but render nothing.
  */
 #ifndef MIME_PIXELFORMAT_H
 #define MIME_PIXELFORMAT_H
@@ -43,7 +41,7 @@ static const MIME_PIXEL_FORMAT MimePixelFormats[] = {
 
 #define MIME_PIXEL_FORMAT_COUNT ((int)(sizeof(MimePixelFormats) / sizeof(MimePixelFormats[0])))
 
-/* index is 1 based. */
+/* index is 1-based. */
 static inline void MimeDescribePixelFormat(int index, PIXELFORMATDESCRIPTOR *pfd)
 {
     const MIME_PIXEL_FORMAT *f = &MimePixelFormats[index - 1];
@@ -81,7 +79,7 @@ static inline void MimeDescribePixelFormat(int index, PIXELFORMATDESCRIPTOR *pfd
     pfd->iLayerType = PFD_MAIN_PLANE;
 }
 
-/* the best match for the requested flags, color depth, alpha, depth and stencil bits, 0 if none. */
+/* returns 0 when nothing matches. */
 static inline int MimeChoosePixelFormat(const PIXELFORMATDESCRIPTOR *want)
 {
     DWORD required = want->dwFlags & (PFD_DRAW_TO_WINDOW | PFD_DRAW_TO_BITMAP | PFD_SUPPORT_GDI | PFD_SUPPORT_OPENGL);
@@ -109,7 +107,7 @@ static inline int MimeChoosePixelFormat(const PIXELFORMATDESCRIPTOR *want)
             score += 500;
         if (want->cStencilBits > pfd.cStencilBits)
             score += 500;
-        /* without a request, the formats without the buffers. */
+        /* prefer formats without depth or stencil buffers nobody asked for. */
         if (!want->cDepthBits && pfd.cDepthBits)
             score += 2;
         if (!want->cStencilBits && pfd.cStencilBits)

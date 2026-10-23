@@ -1,7 +1,6 @@
 /*
- * name resolution: the host name of the machine identity, localhost,
- * numeric addresses, and the service and protocol databases. other names
- * go to the resolver of the host through the socket driver.
+ * local and numeric names, service and protocol databases, and host-backed name resolution through the socket
+ * driver.
  */
 #include "ws2_32_private.h"
 
@@ -52,7 +51,6 @@ BOOL WsIsLocalName(const char *name)
     return GetComputerNameExA(ComputerNameNetBIOS, netbios, &n) && same_name(name, netbios);
 }
 
-/* the canonical name of a local name. */
 static void local_canonical(const char *name, char *buffer, SIZE_T size)
 {
     if (same_name(name, "localhost"))
@@ -108,8 +106,8 @@ int WSAAPI GetHostNameW(PWSTR name, int namelen)
 /* ------------------------------------------------------------------ services and protocols */
 
 /*
- * the common entries of %SystemRoot%\System32\drivers\etc\services, which
- * mime does not ship; recalled from windows, not read from a file.
+ * common entries normally supplied by %SystemRoot%\System32\drivers\etc\services. this built-in table is recalled
+ * from Windows; no file is shipped or read.
  */
 typedef struct {
     const char *name;
@@ -503,7 +501,7 @@ struct servent *WSAAPI getservbyport(int port, const char *proto)
     return fill_servent(s);
 }
 
-/* %SystemRoot%\System32\drivers\etc\protocol, recalled from windows. */
+/* built-in protocol table, recalled from Windows' drivers\etc\protocol. */
 typedef struct {
     const char *name;
     short number;
@@ -816,7 +814,7 @@ static int set_canonname(PADDRINFOW first, const char *name)
     return first->ai_canonname ? 0 : WSA_NOT_ENOUGH_MEMORY;
 }
 
-/* the resolver behind getaddrinfo and GetAddrInfoW; node and service are ascii here. */
+/* the resolver behind getaddrinfo and GetAddrInfoW; node and service are ASCII here. */
 static int lookup(const char *node, const char *service, const ADDRINFOW *hints, PADDRINFOW *result)
 {
     int flags = 0, family = AF_UNSPEC;
@@ -854,7 +852,7 @@ static int lookup(const char *node, const char *service, const ADDRINFOW *hints,
         return 0;
     }
 
-    /* numeric hosts: the canonical name is the address text, the fqdn the node itself. */
+    /* numeric hosts: the canonical name is the address text, the FQDN the node itself. */
     PADDRINFOW numeric = nullptr;
     IN6_ADDR a6;
     ULONG scope;
@@ -948,7 +946,7 @@ INT WSAAPI GetAddrInfoW(PCWSTR node, PCWSTR service, const ADDRINFOW *hints, PAD
     int error = WsCheckStarted();
     if (error)
         return finish_lookup(error, result);
-    /* names outside ascii would need idn encoding, and no resolver could find them anyway. */
+    /* non-ASCII names require IDN encoding, which is not implemented here. */
     char narrow_node[1024], narrow_service[256];
     if (node && !WsNarrow(node, narrow_node, sizeof(narrow_node)))
         return finish_lookup(WSAHOST_NOT_FOUND, result);
@@ -968,7 +966,7 @@ INT WSAAPI getaddrinfo(PCSTR node, PCSTR service, const ADDRINFOA *hints, PADDRI
     if (error)
         return finish_lookup(error, wide);
     error = lookup(node, service, (const ADDRINFOW *)hints, wide);
-    /* the canonical names come back in the ansi code page. */
+    /* the canonical names come back in the ANSI code page. */
     for (PADDRINFOW ai = *wide; !error && ai; ai = ai->ai_next) {
         if (!ai->ai_canonname)
             continue;

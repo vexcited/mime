@@ -1,6 +1,5 @@
 /*
- * the matrices of image drawing. Each one carries a kind that says which parts of it matter, so the samplers can skip
- * the work of the parts that do not. The tolerances are the ones in docs/gdiplus.md.
+ * image drawing matrices. each carries a kind saying which parts of it matter, so the samplers can skip the rest.
  */
 #include "image_private.h"
 
@@ -19,7 +18,7 @@ void mat_classify(ImgMat *m)
     float limit = mag(big) * KIND_TOLERANCE;
     UINT kind;
     if (limit <= mag(m->m12) || limit <= mag(m->m21)) {
-        /* the off diagonal part counts. Equal diagonals and opposite off diagonals make a turn with a uniform scale. */
+        /* the off diagonal part counts. equal diagonals and opposite off diagonals make a turn with a uniform scale. */
         kind = MAT_SHIFT | MAT_SCALE | MAT_ROTATE | MAT_SHEAR;
         if (limit > mag(m->m11 - m->m22) && limit > mag(m->m21 + m->m12)) {
             kind = MAT_SHIFT | MAT_SCALE | MAT_ROTATE;

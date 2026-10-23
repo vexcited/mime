@@ -1,5 +1,5 @@
 /*
- * the service control manager api of advapi32.dll: the client side that opens, creates, starts and controls
+ * service control manager api of advapi32.dll: the client side that opens, creates, starts and controls
  * services, and the service side that runs in the process the manager started.
  */
 #ifndef MIME_WIN32_WINSVC_H
@@ -19,7 +19,7 @@ typedef SC_HANDLE *LPSC_HANDLE;
 typedef HANDLE SERVICE_STATUS_HANDLE;
 typedef PVOID SC_LOCK;
 
-/* the access rights of the manager and of a service. */
+/* access rights of the manager and of services. */
 #define SC_MANAGER_CONNECT 0x0001
 #define SC_MANAGER_CREATE_SERVICE 0x0002
 #define SC_MANAGER_ENUMERATE_SERVICE 0x0004

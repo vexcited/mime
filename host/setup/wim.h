@@ -1,6 +1,4 @@
-/*
- * windows imaging format reader, for both wim and esd files.
- */
+/* Windows Imaging Format reader for WIM and ESD files. */
 #ifndef MIME_WIM_H
 #define MIME_WIM_H
 
@@ -17,7 +15,7 @@ typedef struct MimeWim MimeWim;
 typedef struct MimeWimDentry {
     char *name;
     uint32_t attributes;
-    uint8_t hash[20]; /* sha-1 of the unnamed data stream, zero when empty */
+    uint8_t hash[20]; /* SHA-1 of the unnamed data stream, zero when empty. */
     uint64_t creation_time;
     uint64_t write_time;
     struct MimeWimDentry *parent;
@@ -26,7 +24,7 @@ typedef struct MimeWimDentry {
 } MimeWimDentry;
 
 typedef struct MimeWimImageInfo {
-    uint32_t index; /* 1 based */
+    uint32_t index; /* 1 based. */
     char name[128];
     char edition[64];
     char arch[16];
@@ -46,10 +44,7 @@ bool mime_wim_select_image(MimeWim *wim, uint32_t index);
 MimeWimDentry *mime_wim_root(MimeWim *wim);
 MimeWimDentry *mime_wim_lookup(MimeWim *wim, const char *path);
 uint64_t mime_wim_blob_size(MimeWim *wim, const uint8_t hash[20]);
-/*
- * sorting extractions by this key reads the wim front to back, which
- * matters for solid resources where one chunk holds many files.
- */
+/* sort extractions by this key to read front to back and reuse solid chunks containing multiple files. */
 uint64_t mime_wim_blob_order(MimeWim *wim, const uint8_t hash[20]);
 
 typedef bool (*MimeWimSink)(void *ctx, const void *data, size_t size);

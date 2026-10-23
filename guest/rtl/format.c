@@ -1,6 +1,5 @@
 /*
- * printf engine shared by DbgPrint, the kernel logger and the crt style
- * _snprintf family. supports the msvc conventions: %S and %ls are wide
+ * printf engine shared by DbgPrint, the kernel logger and the _snprintf family. follows msvc: %S and %ls are wide
  * strings, %wZ is a PUNICODE_STRING, %Z a PANSI_STRING.
  */
 #include "rtl.h"
@@ -23,7 +22,7 @@ static void put(Sink *s, unsigned c)
     s->pos++;
 }
 
-/* emits a code point; narrow sinks get utf-8. */
+/* narrow sinks get utf-8. */
 static void put_cp(Sink *s, unsigned c)
 {
     if (s->wbuf || c < 0x80) {
@@ -123,7 +122,6 @@ static void put_wstr(Sink *s, const wchar_t *str, int len, int width, bool left)
         put_pad(s, width - n, ' ');
 }
 
-/* the format string is narrow or wide depending on the sink. */
 static int format(Sink *s, const void *fmt_ptr, bool wide_fmt, va_list ap)
 {
     const char *fn = fmt_ptr;
@@ -177,7 +175,7 @@ static int format(Sink *s, const void *fmt_ptr, bool wide_fmt, va_list ap)
                     precision = precision * 10 + (int)(FCH(i++) - '0');
             }
         }
-        int size = 0; /* 0 int, 1 long (32 bit), 2 long long, 3 size_t/ptr, -1 short */
+        int size = 0; /* 0 int, 1 long, 2 long long, 3 size_t or pointer, -1 short. */
         bool wide_arg = false, narrow_arg = false;
         for (;;) {
             c = FCH(i);

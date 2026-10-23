@@ -1,13 +1,11 @@
 #include "trust_private.h"
 
 /*
- * a cabinet's signature sits after its data, found through the four byte header of the reserved space of the
- * cabinet header: the length of what comes before the signature's description, the length of the description,
- * which is sixteen bytes, then the description, whose first two words are the signature's offset and size. The
- * offset is the cabinet's size as its header gives it, and the signature runs to the end of the file. What the
- * signature covers is the signature of the cabinet and its size and the fields after the reserved ones of its
- * header, the first words of the reserved space that tell what comes before the description and what it is, the
- * names of the cabinets before and after, and everything from the end of the header to the signature.
+ * a cabinet signature follows its data. the reserved header gives the prefix and description lengths; the 16-byte
+ * description starts with signature offset and size. the offset equals the cabinet header's size and the signature
+ * extends to EOF. the digest covers the cabinet signature and size, header fields after the reserved fields, the
+ * reserved prefix and description lengths, neighboring cabinet names, and all data from the header's end to the
+ * signature.
  */
 static WORD word(const BYTE *p)
 {
@@ -43,7 +41,7 @@ LONG WtVerifyCab(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PC
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     if (!description)
         return TRUST_E_NOSIGNATURE;
-    /* a signature inside the reserved space instead of after the data is not made by the tools that sign. */
+    /* signing tools place the signature after the data, not inside the reserved space. */
     if (description != 16)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     DWORD offset = dword(area + 4 + before), length = dword(area + 8 + before);

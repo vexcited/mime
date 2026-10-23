@@ -1,5 +1,5 @@
 /*
- * IDWriteGdiInterop: fonts by their GDI description and back.
+ * IDWriteGdiInterop: converts between DirectWrite fonts and GDI LOGFONTs.
  */
 #include "dw_private.h"
 

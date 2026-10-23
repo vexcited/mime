@@ -1,8 +1,7 @@
 /*
- * shader resource, render target, depth stencil and unordered access
- * views. each is a vulkan view and, for shaders, a descriptor in the heap.
- * views of dynamic buffers follow their renames: a new texel view and
- * descriptor for each new range, the old ones freed once the gpu is done.
+ * shader resource, render target, depth stencil and unordered access views. each is a vulkan view, plus a heap
+ * descriptor for shader views. views of dynamic buffers follow renames: each new range gets a new texel view and
+ * descriptor, and the old ones are freed once the gpu is done.
  */
 #include "d3d11_private.h"
 
@@ -107,7 +106,7 @@ static void STDMETHODCALLTYPE srv_get_desc1(void *iface, D3D11_SHADER_RESOURCE_V
     *desc = impl(iface)->desc.srv;
 }
 
-/* the 11.0 description: the plane slices of the 11.3 one dropped. */
+/* the 11.0 description drops the 11.3 plane slices. */
 static void STDMETHODCALLTYPE srv_get_desc(void *iface, D3D11_SHADER_RESOURCE_VIEW_DESC *desc)
 {
     const D3D11_SHADER_RESOURCE_VIEW_DESC1 *d = &impl(iface)->desc.srv;
@@ -179,7 +178,7 @@ static const ID3D11UnorderedAccessView1Vtbl uav_vtbl = {VIEW_METHODS, VTBL_FN(ua
 
 /* ------------------------------------------------------------------ defaults */
 
-/* the view a null description asks for: the whole resource, in its format. */
+/* a NULL description means the whole resource in its own format. */
 static void default_desc(D3dViewKind kind, const D3dResource *r, void *out)
 {
     UINT layers = r->tex.layers;
@@ -276,7 +275,7 @@ static void default_desc(D3dViewKind kind, const D3dResource *r, void *out)
 
 /* ------------------------------------------------------------------ vulkan views */
 
-/* the view's format and aspect on its image, depth formats seen through their depth or stencil plane. */
+/* depth formats are viewed through their depth or stencil plane. */
 static BOOL view_format(const D3dResource *r, DXGI_FORMAT format, BOOL attachment, VkFormat *vk,
                         VkImageAspectFlags *aspect, VkComponentMapping *swizzle)
 {
@@ -293,7 +292,7 @@ static BOOL view_format(const D3dResource *r, DXGI_FORMAT format, BOOL attachmen
         if (attachment) {
             *aspect = r->tex.aspect;
         } else if (f->flags & D3D_FORMAT_STENCIL && !(f->flags & D3D_FORMAT_DEPTH)) {
-            /* the stencil reads in green, as direct3d's G8 says. */
+            /* stencil reads in green, like direct3d's G8 formats. */
             *aspect = VK_IMAGE_ASPECT_STENCIL_BIT;
             *swizzle = (VkComponentMapping){VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_R,
                                             VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_ONE};
@@ -327,7 +326,7 @@ static VkResult image_view(D3dDevice *device, D3dView *view, VkImageViewType typ
     return device->vk.vkCreateImageView(device->vk.device, &info, nullptr, &view->image_view);
 }
 
-/* a texel view of the buffer's current range, written to the view's own heap index. */
+/* writes the texel view of the buffer's current range to the view's own heap index. */
 static BOOL buffer_view(D3dDevice *device, D3dView *view)
 {
     D3dResource *r = view->resource;
@@ -343,7 +342,7 @@ static BOOL buffer_view(D3dDevice *device, D3dView *view)
     return TRUE;
 }
 
-/* follows a rename of the buffer: a new view and descriptor, the old ones kept until the gpu is done. */
+/* after a buffer rename: a new view and descriptor, the old ones kept until the gpu is done. */
 void D3dViewRefresh(D3dView *view)
 {
     D3dResource *r = view->resource;
@@ -358,7 +357,7 @@ void D3dViewRefresh(D3dView *view)
         buffer_view(device, view);
 }
 
-/* the bytes a buffer view covers and its texel format: raw and structured views read 4 byte words. */
+/* raw and structured views read 4 byte words. */
 static BOOL buffer_range(D3dView *view, DXGI_FORMAT format, UINT first, UINT count, BOOL raw)
 {
     D3dResource *r = view->resource;
@@ -385,9 +384,8 @@ static BOOL buffer_range(D3dView *view, DXGI_FORMAT format, UINT first, UINT cou
 }
 
 /*
- * a view of a video format reads one plane, which its format names: the luma plane in one channel, the chroma
- * plane in two, as the format of NV12 or P010 is only a resource's and never a shader's. a plane slice that
- * says otherwise is refused.
+ * a view of a video format reads the one plane its format names: luma in one channel, chroma in two. NV12 and
+ * P010 are resource formats, never shader formats. a plane slice that disagrees is refused.
  */
 static BOOL planar_plane_format(const D3dResource *r, DXGI_FORMAT view_format, UINT slice, VkFormat *format,
                                 VkImageAspectFlags *aspect)
@@ -452,7 +450,7 @@ static HRESULT init_srv(D3dDevice *device, D3dView *view, const D3D11_SHADER_RES
     } else if (!view_format(r, d->Format, FALSE, &format, &aspect, &mapping)) {
         return E_INVALIDARG;
     }
-    /* d3d9.dll's swizzles take the place of the format's own. */
+    /* swizzles from d3d9.dll replace the format's own. */
     if (swizzle)
         mapping = (VkComponentMapping){swizzle & 0xF, (swizzle >> 4) & 0xF, (swizzle >> 8) & 0xF, (swizzle >> 12) & 0xF};
     UINT mip = 0, mips = 1, layer = 0, layers = 1;
@@ -512,7 +510,6 @@ static HRESULT init_srv(D3dDevice *device, D3dView *view, const D3D11_SHADER_RES
     return S_OK;
 }
 
-/* the mip and layers of a render target or depth view, from the description's union. */
 static HRESULT attachment_range(D3dView *view, UINT dimension_1d, UINT dimension, UINT mip, UINT layer, UINT layers,
                                 VkImageViewType *type)
 {
@@ -520,7 +517,7 @@ static HRESULT attachment_range(D3dView *view, UINT dimension_1d, UINT dimension
     if (layers == ~0u)
         layers = r->tex.layers - layer;
     if (r->dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D) {
-        /* slices of a volume, seen as layers of a 2d array. */
+        /* volume slices are seen as layers of a 2d array. */
         VkExtent3D e = D3dMipExtent(r, mip);
         if (layers == ~0u || layer + layers > e.depth)
             layers = e.depth - layer;
@@ -550,7 +547,7 @@ static HRESULT init_rtv(D3dDevice *device, D3dView *view, const D3D11_RENDER_TAR
     VkImageAspectFlags aspect;
     VkComponentMapping swizzle = {};
     if (r->tex.fmt->flags & D3D_FORMAT_PLANAR) {
-        /* a video texture is drawn to a plane at a time, as the format of the view says. */
+        /* video textures render one plane at a time, chosen by the view format. */
         UINT slice = d->ViewDimension == D3D11_RTV_DIMENSION_TEXTURE2D        ? d->Texture2D.PlaneSlice
                      : d->ViewDimension == D3D11_RTV_DIMENSION_TEXTURE2DARRAY ? d->Texture2DArray.PlaneSlice
                                                                               : 0;
@@ -588,7 +585,6 @@ static HRESULT init_rtv(D3dDevice *device, D3dView *view, const D3D11_RENDER_TAR
         hr = attachment_range(view, 0, 1, d->Texture3D.MipSlice, d->Texture3D.FirstWSlice, d->Texture3D.WSize,
                               &type);
         if (SUCCEEDED(hr)) {
-            /* a volume's slices are the layers of its 2d array view. */
             view->range.baseArrayLayer = d->Texture3D.FirstWSlice;
             view->range.layerCount = view->extent.depth;
         }
@@ -665,7 +661,7 @@ static HRESULT init_uav(D3dDevice *device, D3dView *view, const D3D11_UNORDERED_
         if (!(view->heap_index = D3dHeapAlloc(device, view->heap_kind)) || !buffer_view(device, view))
             return E_OUTOFMEMORY;
         if (d->Buffer.Flags & (D3D11_BUFFER_UAV_FLAG_APPEND | D3D11_BUFFER_UAV_FLAG_COUNTER)) {
-            /* the hidden counter: a word of the gpu's memory, a texel view for the shader's atomics. */
+            /* the hidden counter: a word of device memory, with a texel view for the shader's atomics. */
             if (FAILED(D3dAllocBuffer(device, D3D_MEMORY_DEVICE, 16, 256, &view->counter)))
                 return E_OUTOFMEMORY;
             VkBufferViewCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO};
@@ -706,7 +702,7 @@ static HRESULT init_uav(D3dDevice *device, D3dView *view, const D3D11_UNORDERED_
         layer = d->Texture2DArray.FirstArraySlice, layers = d->Texture2DArray.ArraySize;
         break;
     case D3D11_UAV_DIMENSION_TEXTURE3D:
-        /* the whole volume: shaders address its slices themselves. */
+        /* the whole volume, shaders address its slices themselves. */
         type = VK_IMAGE_VIEW_TYPE_3D, mip = d->Texture3D.MipSlice;
         break;
     default:
@@ -753,7 +749,7 @@ HRESULT D3dCreateView(D3dDevice *device, D3dViewKind kind, ID3D11Resource *resou
     } else {
         default_desc(kind, r, &d);
     }
-    /* an unknown format is the resource's own. */
+    /* DXGI_FORMAT_UNKNOWN means the resource's format. */
     DXGI_FORMAT *format = &d.srv.Format;
     if (*format == DXGI_FORMAT_UNKNOWN && r->dimension != D3D11_RESOURCE_DIMENSION_BUFFER)
         *format = r->tex.format;

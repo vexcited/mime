@@ -1,6 +1,4 @@
-/*
- * the Static control: text, icons, bitmaps, frames and rectangles.
- */
+/* the Static control: text, icons, bitmaps, frames and rectangles. */
 #include "user32_private.h"
 
 typedef struct STATIC_DATA {
@@ -48,7 +46,7 @@ static void size_to_image(HWND hwnd, STATIC_DATA *s)
         SetWindowPos(hwnd, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-/* CStatic::LoadImageW of comctl32 v6. */
+/* like CStatic::LoadImageW of comctl32 v6. */
 static void load_icon(HWND hwnd, STATIC_DATA *s, const CREATESTRUCTW *cs, HINSTANCE inst, LPCWSTR name)
 {
     s->ImageType = IMAGE_ICON;
@@ -64,7 +62,7 @@ static void load_icon(HWND hwnd, STATIC_DATA *s, const CREATESTRUCTW *cs, HINSTA
         cy = cs->cy;
     }
     s->Image = UserLoadIconWithScaleDown(inst, name, cx, cy);
-    /* our user32 resolves its own module to the system cursors, real user32 has none. */
+    /* our user32 maps its own module to the system cursors, real user32 has none. */
     if (!s->Image && inst) {
         s->Image = inst != User32Instance ? LoadCursorW(inst, name) : nullptr;
         if (s->Image) {
@@ -251,7 +249,7 @@ LRESULT CALLBACK StaticProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         CREATESTRUCTW *cs = (CREATESTRUCTW *)lparam;
         UINT type = (UINT)cs->style & SS_TYPEMASK;
         if (type == SS_ICON || type == SS_BITMAP) {
-            /* the window text names the image resource; it is not shown. */
+            /* the window text names the image resource and is not shown. */
             LPCWSTR name = cs->lpszName;
             if (name && !IS_INTRESOURCE(name) && name[0] == 0xFFFF)
                 name = MAKEINTRESOURCEW(name[1]);

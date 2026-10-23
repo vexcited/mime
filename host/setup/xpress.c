@@ -8,7 +8,7 @@
 #define XPRESS_MIN_MATCH 3
 
 typedef struct XpressTable {
-    uint16_t fast[1 << XPRESS_FAST_BITS]; /* symbol << 4 | length, 0 for slow path */
+    uint16_t fast[1 << XPRESS_FAST_BITS]; /* symbol << 4 | length, 0 for slow path. */
     uint16_t count[XPRESS_MAX_LEN + 1];
     uint16_t offset[XPRESS_MAX_LEN + 1];
     uint32_t first[XPRESS_MAX_LEN + 1];
@@ -16,9 +16,8 @@ typedef struct XpressTable {
 } XpressTable;
 
 /*
- * the bit window keeps at least 16 valid bits on top; spare counts the
- * valid bits beyond those 16. length bytes are read from pos, which
- * already moved past every word loaded into the window.
+ * the bit window keeps at least 16 high bits valid; spare counts the rest. length bytes come from pos, after
+ * all words already loaded into the window.
  */
 typedef struct XpressInput {
     const uint8_t *in;

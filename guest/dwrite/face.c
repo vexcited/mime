@@ -1,6 +1,6 @@
 /*
- * IDWriteFontFace: one face of a font file, with the metrics and tables
- * its data gives and the glyph runs it draws.
+ * IDWriteFontFace: one face of a font file, its metrics, tables and glyph
+ * runs.
  */
 #include "dw_private.h"
 
@@ -107,7 +107,7 @@ static HRESULT WINAPI face_try_table(IDWriteFontFace2 *This, UINT32 tag, const v
     DwFace *f = (DwFace *)This;
     if (!data || !size || !context || !exists)
         return E_POINTER;
-    /* the tag comes with its first letter in the low byte. */
+    /* tags come with the first letter in the low byte. */
     UINT32 swapped = (tag << 24) | ((tag & 0xff00) << 8) | ((tag >> 8) & 0xff00) | (tag >> 24);
     UINT32 length = 0;
     const BYTE *table = DwFontDataTable(f->data, swapped, &length);
@@ -156,7 +156,7 @@ static HRESULT WINAPI face_recommended(IDWriteFontFace2 *This, FLOAT em_size, FL
     return S_OK;
 }
 
-/* the metrics GDI would have: sizes in whole pixels, given back in design units. */
+/* GDI's metrics: whole pixel sizes, given back in design units. */
 static void gdi_round_metrics(const DwFace *f, FLOAT em_size, FLOAT pixels_per_dip, DWRITE_FONT_METRICS1 *out)
 {
     *out = f->metrics;
@@ -206,7 +206,7 @@ static HRESULT WINAPI face_gdi_glyph_metrics(IDWriteFontFace2 *This, FLOAT em_si
         }
         DwFontDataGlyphMetrics(f->data, glyphs[i], &metrics[i]);
         if (scale > 0) {
-            /* the advance is a whole number of pixels, and the bearings keep the outline where it was. */
+            /* the advance is whole pixels, and the bearings keep the outline in place. */
             float advance = round_f((float)metrics[i].advanceWidth * scale);
             int delta = (int)round_f(advance / scale) - (int)metrics[i].advanceWidth;
             metrics[i].advanceWidth = (UINT32)((int)metrics[i].advanceWidth + delta);

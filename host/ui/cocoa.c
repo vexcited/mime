@@ -1,10 +1,9 @@
 /*
- * cocoa backend, written against the objective-c runtime so the whole
- * code base stays plain c. every guest top level window becomes a
- * borderless, transparent NSWindow whose layer shows the guest pixels.
+ * Cocoa backend using the Objective-C runtime from plain C. each guest top level window becomes a borderless
+ * transparent NSWindow displaying guest pixels.
  *
- * objc_msgSend must always be cast to the exact prototype of the method:
- * on arm64 variadic arguments travel on the stack, unlike real arguments.
+ * objc_msgSend must always be cast to the exact method prototype: ARM64 passes variadic arguments on the
+ * stack, unlike fixed arguments.
  */
 #include "ui.h"
 #include "app_identity.h"
@@ -86,7 +85,7 @@ typedef struct UiWindow {
     bool used;
     id window;
     id view;
-    id content; /* the rounded layer showing the visible part, inside any resize border */
+    id content; /* the rounded layer showing the visible part, inside any resize border. */
     MimeWinConfig config;
     bool configured;
     bool shown;
@@ -98,7 +97,7 @@ typedef struct UiWindow {
     bool fullscreen;
     bool fullscreen_synced;
     bool fullscreen_config_pending;
-    bool space_declined; /* the user left the space while the guest window still covers the screen */
+    bool space_declined; /* the user left the space while the guest window still covers the screen. */
     MimeWinConfig fullscreen_config;
     MimeWinConfig pending_config;
     bool config_queued;
@@ -108,15 +107,15 @@ typedef struct UiWindow {
     bool scroll_precise;
 
     pthread_mutex_t lock;
-    IOSurfaceRef surface; /* the guest pixels, read by the compositor in place */
+    IOSurfaceRef surface; /* the guest pixels, read by the compositor in place. */
     uint32_t width, height;
     bool dirty;
     bool update_queued;
     bool shadow_dirty;
-    id chrome;        /* a child window below, drawing the shadow and the outer outline */
-    id chrome_shadow; /* its layer casting the shadow */
+    id chrome;        /* a child window below, drawing the shadow and the outer outline. */
+    id chrome_shadow; /* its layer casting the shadow. */
     id chrome_outline;
-    uint32_t anim_gen; /* bumped by every show or hide animation */
+    uint32_t anim_gen; /* bumped by every show or hide animation. */
 } UiWindow;
 
 static UiWindow g_windows[MAX_WINDOWS];
@@ -129,9 +128,9 @@ static void (*g_toggle_fullscreen)(id, SEL, id);
 static id g_delegate;
 static double g_scale = 2.0;
 static double g_screen_height_pts;
-static MimeDisplayInfo g_display; /* as last reported */
-static double g_screen_band; /* the menu bar or camera housing at the top of the main screen */
-static NSRect g_work_points;  /* the work area in points from the top left of the guest screen */
+static MimeDisplayInfo g_display; /* as last reported. */
+static double g_screen_band; /* the menu bar or camera housing at the top of the main screen. */
+static NSRect g_work_points;  /* the work area in points from the top left of the guest screen. */
 static CGColorSpaceRef g_colorspace;
 static bool g_suppress_move;
 static uint32_t g_cursor;
@@ -190,7 +189,7 @@ static uint64_t now_ms(void)
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
-/* converts a guest screen rectangle (pixels, y down) to a cocoa frame (points, y up). */
+/* converts guest screen pixels with Y down to Cocoa points with Y up. */
 static NSRect guest_to_frame(MimeRect r)
 {
     double x = r.left / g_scale;
@@ -247,7 +246,7 @@ static void emit_mouse(id self, id event, uint32_t type, uint32_t button)
     emit(&ev);
 }
 
-/* the window relative part of the guest window that is drawn. */
+/* visible rectangle relative to the guest window. */
 static MimeRect visible_part(const MimeWinConfig *c)
 {
     MimeRect v = c->visible;
@@ -256,7 +255,7 @@ static MimeRect visible_part(const MimeWinConfig *c)
     return v;
 }
 
-/* the window relative part the host window covers: the drawn part and the resize border around it. */
+/* host window bounds: visible rectangle plus resize border. */
 static MimeRect host_part(const MimeWinConfig *c)
 {
     MimeRect v = visible_part(c), in = c->input;
@@ -273,7 +272,7 @@ static MimeRect host_screen_rect(const MimeWinConfig *c)
     return (MimeRect){c->rect.left + h.left, c->rect.top + h.top, c->rect.left + h.right, c->rect.top + h.bottom};
 }
 
-/* ---------------------------------------------------------------- windows 11 chrome */
+/* ---------------------------------------------------------------- windows 11 chrome. */
 
 #define CHROME_MARGIN 64.0
 
@@ -372,10 +371,7 @@ static void chrome_create(UiWindow *w)
     w->chrome = window;
 }
 
-/*
- * the shadow and the dark outline the dwm draws around a window: macos
- * draws neither, its own shadow and rim look nothing like them.
- */
+/* draws the Windows DWM shadow and outline; the native macOS shadow and rim look different. */
 static void chrome_update(UiWindow *w)
 {
     const MimeWinConfig *c = &w->config;
@@ -489,7 +485,7 @@ static void view_mouse_down(id self, SEL sel, id event)
     UiWindow *w = find_by_nswindow(MSG_ID(self, "window"));
     if (w && !(w->config.flags & (MIME_WIN_MAXIMIZED | MIME_WIN_FULLSCREEN)) &&
         in_drag_area(w, event) && ((NSInteger(*)(id, SEL))objc_msgSend)(event, SEL_("clickCount")) == 1) {
-        /* tell the guest about the click so it activates, then let macos move the window. */
+        /* tell the guest about the click so it activates, then let macOS move the window. */
         emit_mouse(self, event, MIME_INPUT_MOUSE_DOWN, MIME_MOUSE_LEFT);
         emit_mouse(self, event, MIME_INPUT_MOUSE_UP, MIME_MOUSE_LEFT);
         MSG_V_ID(w->window, "performWindowDragWithEvent:", event);
@@ -529,9 +525,8 @@ static void view_mouse_dragged(id self, SEL sel, id event)
 }
 
 /*
- * macos hands mouseMoved: to the key window wherever the pointer is, so a
- * move goes to the guest window under the pointer instead, like windows
- * does: an open popup menu is never key but must see the hover.
+ * macOS sends mouseMoved: to the key window regardless of pointer location. route it to the guest window
+ * under the pointer so unfocused popup menus receive hover events, as on Windows.
  */
 static void view_mouse_moved(id self, SEL sel, id event)
 {
@@ -697,7 +692,7 @@ static const KeyMap g_keymap[] = {
     {0x7B, 0x25, 0x14B}, {0x7C, 0x27, 0x14D}, {0x7D, 0x28, 0x150}, {0x7E, 0x26, 0x148},
 };
 
-/* the text input sources api, declared here rather than through all of carbon. */
+/* the text input sources API, declared here rather than through all of carbon. */
 typedef struct __TISInputSource *TISInputSourceRef;
 extern TISInputSourceRef TISCopyCurrentKeyboardLayoutInputSource(void);
 extern void *TISGetInputSourceProperty(TISInputSourceRef source, CFStringRef key);
@@ -707,9 +702,8 @@ extern OSStatus UCKeyTranslate(const void *layout, UInt16 code, UInt16 action, U
 extern UInt8 LMGetKbdType(void);
 
 /*
- * the letter a key types in the current macos layout, 0 for other keys.
- * windows gives letter keys the virtual key of their letter in the active
- * layout, so ctrl+z is the key labelled z on an azerty or qwertz keyboard.
+ * returns the letter typed by a key in the current macOS layout, or 0 for other keys. Windows maps letter
+ * keys to their active-layout virtual keys, so Ctrl+Z follows Z on AZERTY and QWERTZ too.
  */
 static uint32_t layout_letter(uint16_t mac)
 {
@@ -1027,7 +1021,7 @@ static void app_became_active(id self, SEL sel, id notification);
 static void app_resigned_active(id self, SEL sel, id notification);
 static void (*g_app_send_event)(id, SEL, id);
 
-/* appkit drops key up events while command is held; the guest needs them to release its keys. */
+/* AppKit drops key up events while command is held; the guest needs them to release its keys. */
 static void app_send_event(id self, SEL sel, id event)
 {
     NSUInteger type = MSG_UINT(event, "type");
@@ -1178,10 +1172,8 @@ static void update_screen_metrics(void)
     if (g_scale < 1)
         g_scale = 1;
     /*
-     * the guest screen starts below the menu bar or camera housing, where
-     * macos windows and spaces start. our spaces and fullscreen presentation
-     * and dock, which must not move the guest screen or its work area: they
-     * are measured once for each screen size.
+     * the guest screen starts below the menu bar or camera housing. measure screen and work area once per
+     * screen size so Spaces, fullscreen presentation and Dock changes do not move them.
      */
     static double band_w, band_h;
     if (frame.size.width != band_w || frame.size.height != band_h) {
@@ -1528,9 +1520,8 @@ static void config_main(void *arg)
     w->configured = true;
 
     /*
-     * rounded corners and the 1 pixel border are drawn by the compositor, over
-     * the guest pixels. a resize border around them stays all but transparent:
-     * macos sends clicks on fully transparent pixels to the window below.
+     * the compositor draws rounded corners and the 1-pixel border over guest pixels. leave the resize border
+     * slightly opaque because macOS passes clicks through fully transparent pixels.
      */
     MimeRect vis = visible_part(cfg), host = host_part(cfg);
     id ca = CLS("CATransaction");
@@ -1619,7 +1610,7 @@ static void config_main(void *arg)
     /* the shadow follows the shape, which a new corner radius or border changes. */
     if (cropping_changed)
         MSG_V(w->window, "invalidateShadow");
-    /* a program covering the screen without a frame gets its own space, like a macos game. */
+    /* a program covering the screen without a frame gets its own space, like a macOS game. */
     uint32_t shown = w->config.flags & (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE | MIME_WIN_MINIMIZED);
     if (!(shown & MIME_WIN_FULLSCREEN))
         w->space_declined = false;
@@ -1672,9 +1663,8 @@ void mime_ui_window_config(const MimeWinConfig *cfg)
 }
 
 /*
- * shows the visible part of the window surface. the compositor reads the
- * surface itself, so a present costs no copy here; contentsChanged tells it
- * the pixels moved on.
+ * the compositor reads the surface directly, avoiding a present copy. contentsChanged announces changed
+ * pixels.
  */
 static void present_main(void *arg)
 {
@@ -1881,17 +1871,17 @@ void mime_ui_set_cursor(uint32_t cursor)
     on_main(cursor_main, (void *)(uintptr_t)cursor);
 }
 
-/* the pointer stays free: locking and confining it are not done on macos yet. */
+/* the pointer stays free: locking and confining it are not done on macOS yet. */
 void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect)
 {
 }
 
-/* game controllers are not read on macos yet. */
+/* game controllers are not read on macOS yet. */
 void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high)
 {
 }
 
-/* the display's gamma ramp is not applied on macos yet. */
+/* the display's gamma ramp is not applied on macOS yet. */
 void mime_ui_gamma(const uint16_t *ramp)
 {
 }
@@ -1906,15 +1896,12 @@ void mime_ui_beep(uint32_t type)
     on_main(beep_main, nullptr);
 }
 
-/* ------------------------------------------------------------------ clipboard */
+/* ------------------------------------------------------------------ clipboard. */
 
 /*
- * macos has no pasteboard change notification. other applications copy
- * while mime is in the background, so the change count is checked when
- * mime becomes active, and polled slowly only while it stays active for
- * the copies that happen meanwhile, such as universal clipboard. a change
- * only tells the guest whether there is text: the text itself is read when
- * a guest program asks for it, so vcpu threads never touch the pasteboard.
+ * macOS provides no pasteboard change notification. check its counter on activation and poll slowly while
+ * active for changes such as Universal Clipboard. notify the guest only whether text exists; read text on
+ * demand on the main thread so vCPUs never touch the pasteboard.
  */
 typedef struct NSRange {
     NSUInteger location, length;
@@ -1927,8 +1914,8 @@ extern void objc_autoreleasePoolPop(void *pool);
 static pthread_mutex_t g_clip_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint16_t *g_clip_text;
 static size_t g_clip_chars;
-static bool g_clip_stale;           /* the pasteboard changed since g_clip_text was read */
-static NSInteger g_clip_seen = -1;  /* main thread only */
+static bool g_clip_stale;           /* the pasteboard changed since g_clip_text was read. */
+static NSInteger g_clip_seen = -1;  /* main thread only. */
 static dispatch_source_t g_clip_timer;
 static bool g_clip_polling;
 
@@ -1992,7 +1979,7 @@ static void clip_start(void *arg)
     dispatch_source_set_event_handler_f(g_clip_timer, clip_check);
     dispatch_source_set_timer(g_clip_timer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC,
                               250 * NSEC_PER_MSEC);
-    /* once the run loop starts, when the machine exists. */
+    /* called after the run loop starts and the machine exists. */
     dispatch_async_f(dispatch_get_main_queue(), nullptr, clip_check);
 }
 
@@ -2074,7 +2061,7 @@ size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count)
     pthread_mutex_lock(&g_clip_lock);
     bool stale = g_clip_stale;
     pthread_mutex_unlock(&g_clip_lock);
-    /* the main thread never waits for a vcpu, so this cannot deadlock. */
+    /* the main thread never waits for a vCPU, so this cannot deadlock. */
     if (stale)
         dispatch_sync_f(dispatch_get_main_queue(), nullptr, clip_read_main);
     pthread_mutex_lock(&g_clip_lock);
@@ -2154,12 +2141,11 @@ uint64_t mime_ui_dnd_stop(uint32_t session)
     return MIME_HC_STATUS_UNSUPPORTED;
 }
 
-/* ---------------------------------------------------------------- metal layers */
+/* ---------------------------------------------------------------- Metal layers. */
 
 /*
- * layers the gpu channels present to, placed over the windows' views. the
- * guest renders rows bottom first, as gl stores them, so each layer is
- * flipped by its transform instead of a copy.
+ * GPU channels present through layers over window views. flip their transforms to display OpenGL bottom-first
+ * rows without copying.
  */
 typedef struct CATransform3D {
     double m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44;
@@ -2175,7 +2161,7 @@ typedef struct MetalLayer {
 
 #define MAX_METAL_LAYERS 64
 
-static MetalLayer g_metal[MAX_METAL_LAYERS]; /* main thread only */
+static MetalLayer g_metal[MAX_METAL_LAYERS]; /* main thread only. */
 
 static void metal_layout(MetalLayer *m)
 {
@@ -2294,9 +2280,8 @@ void mime_ui_metal_layer_destroy(void *layer)
 }
 
 /*
- * a display was added, removed or changed mode. host windows keep their
- * guest rectangles, placed again with the new mapping, and the guest learns
- * the new display size.
+ * after a display change, remap host windows using their existing guest rectangles and report the new guest
+ * display size.
  */
 static void screens_changed(id self, SEL cmd, id note)
 {
@@ -2340,5 +2325,5 @@ static void screens_changed(id self, SEL cmd, id note)
         g_sink(g_sink_ctx, &ev);
 }
 
-/* vulkan presents on macos go to metal layers, which keep no image to read back yet. */
+/* Vulkan presents on macOS go to Metal layers, which keep no image to read back yet. */
 bool mime_ui_window_readback(MimeWinReadback *r, void *pixels) { return false; }

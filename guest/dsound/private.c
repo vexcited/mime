@@ -1,21 +1,21 @@
 /*
- * CLSID_DirectSoundPrivate: the property set dsound's own tools and
- * xinput read the devices with, DSPROPSETID_DirectSoundDevice. the one
- * render device mime has is described as windows describes a wdm one.
+ * CLSID_DirectSoundPrivate: DSPROPSETID_DirectSoundDevice, which dsound's
+ * tools and xinput read devices with. mime's single render device is
+ * described the way windows describes a wdm one.
  */
 #include "dsound_private.h"
 
 typedef struct PRIVATE {
     IKsPropertySet iface;
     LONG ref;
-    /* what the descriptions point at, alive as long as the object. */
+    /* the descriptions point here, so these live as long as the object. */
     WCHAR description[0x100], module[MAX_PATH], interface[MAX_PATH];
     CHAR description_a[0x100], module_a[MAX_PATH], interface_a[MAX_PATH];
 } PRIVATE;
 
 static const IKsPropertySetVtbl private_vtbl;
 
-/* the endpoint's interface path, as the audio stack names a render endpoint. */
+/* the interface path follows how the audio stack names a render endpoint. */
 static void fill_strings(PRIVATE *p)
 {
     lstrcpynW(p->description, DsDeviceName, RTL_NUMBER_OF(p->description));
@@ -66,7 +66,7 @@ static ULONG STDMETHODCALLTYPE private_release(IKsPropertySet *This)
     return ref;
 }
 
-/* the render device, the only one: a default id or its own names it. */
+/* the only render device: a default id or its own id names it. */
 static BOOL is_device(const GUID *id)
 {
     GUID resolved;

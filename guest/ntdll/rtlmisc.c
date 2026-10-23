@@ -1,6 +1,6 @@
 /*
- * runtime functions of ntdll that belong to no larger part: a privilege taken for a while and given back, the
- * shape of the installation as the shared data tells it, and the filter of exceptions nothing handled.
+ * small ntdll runtime functions: temporary privileges, installation info from the shared data, and the
+ * unhandled exception filter.
  */
 #include "ntdll_private.h"
 
@@ -30,12 +30,9 @@ typedef struct {
     } Privileges[1];
 } PRIVILEGES;
 
-/* ------------------------------------------------------------------ one privilege */
+/* ------------------------------------------------------------------ single privilege */
 
-/*
- * enables or disables a privilege of the token of the process, or of the thread when current_thread is 1, and
- * says whether it was enabled before. A privilege the token does not have is STATUS_PRIVILEGE_NOT_HELD.
- */
+/* adjusts the thread token when current_thread is 1, else the process token. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlAdjustPrivilege(ULONG privilege, BOOLEAN enable, BOOLEAN current_thread,
                                                PBOOLEAN was_enabled)
 {
@@ -59,27 +56,26 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlAdjustPrivilege(ULONG privilege, BOOLEAN enable, 
     return status;
 }
 
-/* ------------------------------------------------------------------ privileges for a while */
+/* ------------------------------------------------------------------ temporary privileges */
 
-#define ACQUIRE_THREAD_TOKEN 1 /* the thread's token is the one adjusted, and was set up here */
+#define ACQUIRE_THREAD_TOKEN 1 /* the thread token is adjusted and was set up here. */
 #define ACQUIRE_PROCESS_TOKEN 2
 #define ACQUIRE_FLAGS_MASK 3
 
 typedef struct {
-    HANDLE Token;          /* the token that was adjusted */
-    HANDLE SavedToken;     /* the impersonation the thread had, to give back */
+    HANDLE Token;
+    HANDLE SavedToken;     /* the thread's previous impersonation, restored on release. */
     ULONG Flags;
-    PRIVILEGES *Previous;  /* what the token had, as it was */
+    PRIVILEGES *Previous;  /* the token's privileges before the change. */
     PRIVILEGES *Wanted;
-    ULONG Capacity;        /* of Previous, in bytes */
+    ULONG Capacity;        /* of Previous, in bytes. */
     BOOLEAN PreviousOwned;
 } PRIVILEGE_STATE;
 
 /*
- * enables privileges and keeps what they were. With flag 2 the process token is adjusted, which every thread
- * sees; otherwise the thread impersonates itself first, so only it is changed. A thread that already
- * impersonates keeps its token when flag 1 is not given, and is reverted for the while when it is.
- * One privilege that is not held is STATUS_PRIVILEGE_NOT_HELD; several, a success with what could be had.
+ * flag 2 adjusts the process token, seen by every thread. otherwise the thread impersonates itself first so only
+ * it changes. a thread that already impersonates keeps its token without flag 1, and is reverted until release
+ * with it. a single missing privilege is STATUS_PRIVILEGE_NOT_HELD, with several it succeeds with what it got.
  */
 NTDLL_EXPORT NTSTATUS NTAPI RtlAcquirePrivilege(PULONG privileges, ULONG count, ULONG flags, PVOID *state)
 {
@@ -164,11 +160,10 @@ fail:
     return status;
 }
 
-/* gives the privileges back as they were and puts the impersonation of the thread back. */
 NTDLL_EXPORT void NTAPI RtlReleasePrivilege(PVOID state)
 {
     PRIVILEGE_STATE *s = state;
-    /* a thread that impersonated itself for this has nothing to restore, its token goes away. */
+    /* a self impersonation token is simply dropped, nothing to restore on it. */
     if ((s->Flags & ACQUIRE_FLAGS_MASK) != ACQUIRE_THREAD_TOKEN)
         NtAdjustPrivilegesToken(s->Token, FALSE, s->Previous, 0, nullptr, nullptr);
     if (s->Flags & ACQUIRE_THREAD_TOKEN) {
@@ -182,26 +177,25 @@ NTDLL_EXPORT void NTAPI RtlReleasePrivilege(PVOID state)
     RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, s);
 }
 
-/* ------------------------------------------------------------------ the installation */
+/* ------------------------------------------------------------------ installation */
 
 NTDLL_EXPORT ULONG NTAPI RtlGetSuiteMask(void)
 {
     return USER_SHARED_DATA->SuiteMask;
 }
 
-/* the session that services run in, which is 0 outside of a server silo. */
+/* always 0 outside a server silo. */
 NTDLL_EXPORT ULONG NTAPI RtlGetCurrentServiceSessionId(void)
 {
     return 0;
 }
 
-/* the session whose desktop is at the console. */
 NTDLL_EXPORT ULONG NTAPI RtlGetActiveConsoleId(void)
 {
     return USER_SHARED_DATA->ActiveConsoleId;
 }
 
-/* the second byte of the shared data flags: bit 0 of it tells a sku that has several interactive sessions. */
+/* bit 8 of the shared data flags marks a sku with several interactive sessions. */
 NTDLL_EXPORT BOOLEAN NTAPI RtlIsMultiSessionSku(void)
 {
     return (USER_SHARED_DATA->SharedDataFlags >> 8) & 1;
@@ -223,11 +217,8 @@ static BOOLEAN debugger_present(void)
     return NtCurrentPeb()->BeingDebugged || USER_SHARED_DATA->KdDebuggerEnabled;
 }
 
-/*
- * what the last chance filter of a process does with an exception nothing handled: with a debugger attached
- * it describes the fault on the debug output and stops there. The answer is EXCEPTION_CONTINUE_SEARCH, but for
- * a possible deadlock of a critical section, which continues the execution.
- */
+/* with a debugger attached, prints the fault to the debug output and breaks. a possible critical section deadlock
+   continues execution, anything else continues the search. */
 NTDLL_EXPORT LONG NTAPI RtlUnhandledExceptionFilter2(PEXCEPTION_POINTERS pointers, ULONG flags)
 {
     PEXCEPTION_RECORD record = pointers->ExceptionRecord;
@@ -273,13 +264,10 @@ NTDLL_EXPORT LONG NTAPI RtlUnhandledExceptionFilter(PEXCEPTION_POINTERS pointers
     return RtlUnhandledExceptionFilter2(pointers, 0);
 }
 
-/* ------------------------------------------------------------------ the transaction of a thread */
+/* ------------------------------------------------------------------ thread transaction */
 
-/*
- * the transaction handle that the file functions of the thread use, kept in the thread's block. -1 is refused, any
- * other value is stored without a check and the answer is TRUE, as ntdll build 26300 does. Mime has no transaction
- * manager, so nothing reads the handle but the transacted functions of kernel32.
- */
+/* the file functions' transaction handle lives in the teb. like windows, set refuses -1 and stores anything else
+   unchecked. Mime has no transaction manager, only kernel32's transacted functions read it. */
 NTDLL_EXPORT PVOID NTAPI RtlGetCurrentTransaction(void)
 {
     return NtCurrentTeb()->CurrentTransactionHandle;
@@ -293,7 +281,7 @@ NTDLL_EXPORT LOGICAL NTAPI RtlSetCurrentTransaction(PVOID transaction)
     return TRUE;
 }
 
-/* a processor that runs arm64 code in an x64 process is never this one. */
+/* this is never arm64ec code. */
 NTDLL_EXPORT BOOLEAN NTAPI RtlIsEcCode(ULONG_PTR address)
 {
     return FALSE;

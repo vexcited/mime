@@ -1,4 +1,4 @@
-/* xinput1_2.dll: an older redistributable's xinput, on the engine the xinput dlls share. */
+/* xinput1_2.dll, an older redistributable XInput, using the shared engine. */
 #include "../lib/xinput/xinput_private.h"
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)

@@ -1,4 +1,4 @@
-/* variants and answers as the dom's methods read and give them. */
+/* variant conversions and return value helpers for the dom methods. */
 #include <xmldom/xmldom.h>
 
 const VARIANT *xv_deref(const VARIANT *v)

@@ -1,19 +1,16 @@
 /*
- * the lsa client calls, the per thread call data and the target info
- * marshaling of sspicli.
+ * lsa client calls, per thread call data and target info marshaling.
  *
- * these talk to lsa over a local rpc connection. mime runs no lsa, so a
- * connection can never be made: the functions fail the way sspicli fails
- * when lsa is not running, and no lsa handle is ever handed out.
+ * these talk to lsa over local rpc. there is no lsa, so they fail the way windows does when lsa is not running, and no
+ * lsa handle is ever handed out.
  */
 #include "secur32_private.h"
 
 static constexpr WCHAR g_lsa_ready[] = L"\\SECURITY\\LSA_AUTHENTICATION_INITIALIZED";
 
 /*
- * sspicli opens the event lsa sets once it accepts clients and returns the
- * failure of that open. mime never creates the event; if something else
- * did, there would still be no lsa behind it.
+ * windows opens the event lsa sets once it accepts clients and returns the failure of that open. mime never creates the
+ * event; if something else did, there would still be no lsa behind it.
  */
 static NTSTATUS connect_lsa(void)
 {
@@ -55,7 +52,7 @@ SECURITYAPI NTSTATUS NTAPI LsaLookupAuthenticationPackage(HANDLE handle, PLSA_ST
         return STATUS_INVALID_PARAMETER;
     if (name->Length > 127)
         return STATUS_NAME_TOO_LONG;
-    /* sspicli stores the package id of the reply even when the call fails. */
+    /* windows stores the reply's package id even when the call fails. */
     if (package)
         *package = 0;
     return STATUS_INVALID_HANDLE;
@@ -109,9 +106,7 @@ SECURITYAPI NTSTATUS NTAPI GetSecurityUserInfo(PSSPI_LUID logon_id, ULONG flags,
     return STATUS_NOT_IMPLEMENTED;
 }
 
-/* ------------------------------------------------------------------ call data */
-
-/* what a thread tells lsa about the call it makes next, kept until SeciFreeCallContext. */
+/* what a thread tells lsa about its next call, kept until SeciFreeCallContext. */
 typedef struct SEC_CALL_DATA {
     ULONG Flags;
     ULONG AddressLength;
@@ -178,8 +173,6 @@ SECURITYAPI void SEC_ENTRY SeciFreeCallContext(void)
     TlsSetValue(SecTlsCallData, nullptr);
 }
 
-/* ------------------------------------------------------------------ target information */
-
 /* the packed form kerberos and ntlm keep with credential manager targets; not implemented. */
 SECURITYAPI NTSTATUS NTAPI CredMarshalTargetInfo(PVOID target, PUSHORT *buffer, PULONG size)
 {
@@ -190,7 +183,7 @@ SECURITYAPI NTSTATUS NTAPI CredMarshalTargetInfo(PVOID target, PUSHORT *buffer, 
 
 SECURITYAPI NTSTATUS NTAPI CredUnmarshalTargetInfo(PUSHORT buffer, ULONG size, PVOID *target, PULONG target_size)
 {
-    /* sspicli's checks on the trailer: more than its 12 bytes, whole characters and no wrap. */
+    /* the trailer must exceed its 12 bytes, hold whole characters and not wrap. */
     if (!buffer || size <= 12 || (size & 1) || (ULONG_PTR)buffer + size < (ULONG_PTR)buffer)
         return STATUS_INVALID_PARAMETER;
     return STATUS_NOT_SUPPORTED;

@@ -1,8 +1,6 @@
 /*
- * audio output streams. each guest stream is an sdl audio stream on the
- * default output whose callback reads frames straight from the guest's
- * ring (mime/audio.h). sdl converts the guest's format, rate and channels
- * to the device, through pipewire, pulseaudio or alsa.
+ * each guest stream uses an SDL stream on the default output, reading directly from the ring in mime/audio.h. SDL
+ * converts format, rate and channels through PipeWire, PulseAudio or ALSA.
  */
 #include "../audio/audio.h"
 
@@ -21,7 +19,7 @@ typedef struct Stream {
     MimeAudioHeader *hdr;
     uint8_t *ring;
     uint32_t frames, frame_bytes, out_frame_bytes;
-    bool packed24; /* 24 bit samples, which sdl takes widened to 32 bits */
+    bool packed24; /* 24 bit samples, which SDL takes widened to 32 bits. */
     uint32_t volume;
     bool running;
     bool capture;
@@ -82,8 +80,8 @@ static void SDLCALL render(void *ref, SDL_AudioStream *stream, int additional, i
 }
 
 /*
- * the input device delivered frames: they go to the ring after the ones already there, narrowing 24 bit samples back to
- * three bytes, and the frames that do not fit are dropped and counted.
+ * appends captured frames to the ring, narrowing 24-bit samples to three bytes. excess frames are dropped and
+ * counted.
  */
 static void SDLCALL capture_render(void *ref, SDL_AudioStream *stream, int additional, int total)
 {

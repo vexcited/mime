@@ -214,7 +214,7 @@ static PVOID allocate_locked(PHEAP heap, SIZE_T size)
     }
     remove_free(heap, b);
     if (b->Size >= granules + 2) {
-        /* split, the tail stays free. */
+        /* split: the tail stays free. */
         ULONG rest = b->Size - granules;
         UCHAR last = b->Flags & BLOCK_LAST;
         b->Flags &= (UCHAR)~BLOCK_LAST;
@@ -424,7 +424,7 @@ NTDLL_EXPORT PVOID NTAPI RtlReAllocateHeap(PVOID handle, ULONG flags, PVOID p, S
             granules = 2;
         HEAP_BLOCK *n = next_block(b);
         if (granules > b->Size && n && !(n->Flags & BLOCK_BUSY) && b->Size + n->Size >= granules) {
-            /* absorb the free neighbour. */
+            /* grow in place into the free next block. */
             remove_free(heap, n);
             b->Flags |= n->Flags & BLOCK_LAST;
             n->Magic = 0;
@@ -478,9 +478,9 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlUnlockHeap(PVOID handle)
 }
 
 /*
- * the walk: every segment of the heap with its blocks, free ones included, then the blocks that have a region of their
- * own. The entry says where the walk is, by the address and flags of the entry it was given last. A segment is an entry
- * with RTL_HEAP_SEGMENT whose address is its start, a block one whose address is its data.
+ * the walk: every segment with its blocks, free ones included, then the blocks that have their own region. the
+ * entry holds the position as the address and flags of the last entry returned. a segment entry has RTL_HEAP_SEGMENT
+ * and its start as address, a block entry its data.
  */
 #define WALK_BUSY 0x0001
 #define WALK_SEGMENT 0x0002

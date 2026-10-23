@@ -1,6 +1,4 @@
-/*
- * native system service prototypes, shared by user mode and the kernel.
- */
+/* native system service prototypes, shared by user mode and the kernel. */
 #ifndef MIME_NTAPI_H
 #define MIME_NTAPI_H
 
@@ -79,7 +77,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtResumeProcess(HANDLE process);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetSecurityObject(HANDLE handle, ULONG info, PVOID descriptor);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenThread(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid);
 NTSYSCALLAPI NTSTATUS NTAPI NtCreateLowBoxToken(PHANDLE new_token, HANDLE token, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PVOID package_sid, ULONG capability_count, PVOID capabilities, ULONG handle_count, PHANDLE handles);
-/* access tokens: copies, filters, identities of threads. NtDuplicateToken and NtAdjustPrivilegesToken are advapi32's. */
+/* access tokens. advapi32 declares NtDuplicateToken and NtAdjustPrivilegesToken itself. */
 NTSYSCALLAPI NTSTATUS NTAPI NtAdjustGroupsToken(HANDLE token, BOOLEAN reset_to_default, PVOID state, ULONG length, PVOID previous, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtAllocateLocallyUniqueId(PLUID luid);
 NTSYSCALLAPI NTSTATUS NTAPI NtFilterToken(HANDLE token, ULONG flags, PVOID sids_to_disable, PVOID privileges_to_delete, PVOID restricted_sids, PHANDLE new_token);
@@ -182,7 +180,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtNotifyChangeMultipleKeys(HANDLE key, ULONG count, 
                                                        HANDLE event, PVOID apc_routine, PVOID apc_context,
                                                        PIO_STATUS_BLOCK iosb, ULONG filter, BOOLEAN subtree,
                                                        PVOID buffer, ULONG buffer_length, BOOLEAN async);
-/* ------------------------------------------------------------------ windows notification facility */
+/* windows notification facility. */
 
 typedef struct _WNF_STATE_NAME {
     ULONG Data[2];

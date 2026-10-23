@@ -1,18 +1,11 @@
 /*
- * the vulkan wire of mime, shared by the guest's vulkan-1.dll and the host.
+ * Vulkan wire protocol shared by guest vulkan-1.dll and the host. each process has a contiguous guest-memory
+ * connection with a header, call ring and reply space, accessed directly by the host. calls run in ring
+ * order. guest-assigned object ids mean creations never wait for the host; queries wait for replies. command
+ * buffers are transferred as complete streams when ended.
  *
- * a guest process talks to the host through one connection: a block of
- * physically contiguous guest memory holding a header, a call ring and
- * reply space, seen by the host in place. calls are encoded by the guest
- * and run by a host thread in ring order. creations name their objects
- * with ids the guest picks, so they never wait for the host; only queries
- * wait, for their reply. command buffers are recorded into guest memory
- * and handed over whole when they end.
- *
- * values cross as aligned items, see tools/genvk.py: scalars at their
- * size, handles as 64-bit ids, structs member by member, pointed data
- * behind a presence word, pnext chains as sType tagged structs ending with
- * a zero sType.
+ * items use natural alignment: scalars at their width, handles as 64-bit ids, structs member by member,
+ * pointed data after a presence word. pNext chains use sType tags and end with zero sType.
  */
 #ifndef MIME_MVK_WIRE_H
 #define MIME_MVK_WIRE_H
@@ -28,13 +21,13 @@ size_t strlen(const char *s);
 #include <string.h>
 #endif
 
-/* the guest implements the api, the host calls its driver through tables. */
+/* the guest implements the API, the host calls its driver through tables. */
 #ifndef MVK_GUEST
 #define VK_NO_PROTOTYPES 1
 #endif
 #include <vulkan/vulkan_core.h>
 
-#define MVK_CONNECTION_SIZE (32u << 20) /* the header, the call ring, then reply space */
+#define MVK_CONNECTION_SIZE (32u << 20) /* the header, the call ring, then reply space. */
 #define MVK_HEADER_SIZE 4096u
 #define MVK_RING_OFFSET MVK_HEADER_SIZE
 #define MVK_RING_SIZE (16u << 20)
@@ -46,43 +39,43 @@ size_t strlen(const char *s);
 
 typedef struct MvkHeader {
     /* written by the guest. */
-    volatile uint64_t put;         /* bytes written to the ring since creation */
-    volatile uint64_t wait_serial; /* a thread sleeps until done reaches this, 0 when none */
+    volatile uint64_t put;         /* bytes written to the ring since creation. */
+    volatile uint64_t wait_serial; /* a thread sleeps until done reaches this, 0 when none. */
     uint64_t guest_pad[6];
     /* written by the host. */
-    volatile uint64_t get;         /* bytes run */
-    volatile uint64_t done;        /* serial of the last call run */
-    volatile uint32_t host_idle;   /* the host sleeps until kicked */
-    volatile uint32_t lost;        /* the host stopped running this connection after an error */
-    volatile uint64_t events;      /* counts the watched semaphores that reached their values */
+    volatile uint64_t get;         /* bytes run. */
+    volatile uint64_t done;        /* serial of the last call run. */
+    volatile uint32_t host_idle;   /* the host sleeps until kicked. */
+    volatile uint32_t lost;        /* the host stopped running this connection after an error. */
+    volatile uint64_t events;      /* counts the watched semaphores that reached their values. */
     uint64_t host_pad[4];
-    /* the values of mirrored timeline semaphores, kept by the host as they advance, never ahead. */
+    /* mirrored timeline values advance with the host and never run ahead. */
     volatile uint64_t mirror[MVK_MIRRORS];
 } MvkHeader;
 
 _Static_assert(sizeof(MvkHeader) <= MVK_HEADER_SIZE, "the header fits its page");
 
-/* NtGdiMimeVkWait of a serial with this bit: until events differs from the rest of it. */
+/* NtGdiMimeVkWait with this serial bit waits for events to differ from the remaining bits. */
 #define MVK_WAIT_EVENTS (1ull << 63)
 
 /*
- * a call: this header, then its arguments. serial counts calls; a call
- * waiting for its reply names the place of the reply in the reply space.
+ * calls contain a header followed by arguments. serial counts calls; reply_offset locates any expected result
+ * in reply space.
  */
 typedef struct MvkCallHeader {
     uint32_t op;
-    uint32_t size;      /* bytes, header included, multiple of 8 */
+    uint32_t size;      /* bytes, header included, multiple of 8. */
     uint64_t serial;
-    uint32_t reply;     /* offset in the reply space, or MVK_NO_REPLY */
+    uint32_t reply;     /* offset in the reply space, or MVK_NO_REPLY. */
     uint32_t reply_size;
 } MvkCallHeader;
 
 #define MVK_NO_REPLY 0xFFFFFFFFu
 
-/* the calls the generator does not describe, numbered from here. */
+/* handwritten protocol operations start here. */
 enum {
     MVK_OP_HAND = 0x10000,
-    MVK_OP_NOP = MVK_OP_HAND,       /* padding to the end of the ring */
+    MVK_OP_NOP = MVK_OP_HAND,       /* padding to the end of the ring. */
     MVK_OP_CREATE_INSTANCE,
     MVK_OP_DESTROY_INSTANCE,
     MVK_OP_INSTANCE_EXTENSIONS,
@@ -95,7 +88,7 @@ enum {
     MVK_OP_FREE_MEMORY,
     MVK_OP_ALLOCATE_COMMAND_BUFFERS,
     MVK_OP_FREE_COMMAND_BUFFERS,
-    MVK_OP_RECORD,                  /* a command buffer's commands, from its stream */
+    MVK_OP_RECORD,                  /* a command buffer's commands, from its stream. */
     MVK_OP_RESET_COMMAND_BUFFER,
     MVK_OP_RESET_COMMAND_POOL,
     MVK_OP_DESTROY_COMMAND_POOL,
@@ -130,39 +123,39 @@ enum {
     MVK_OP_ACQUIRE_IMAGE,
     MVK_OP_PRESENT,
     MVK_OP_GET_DESCRIPTOR,
-    MVK_OP_WATCH_SEMAPHORES,        /* timeline values whose reaching counts in events */
-    MVK_OP_MIRROR_SEMAPHORE,        /* a timeline semaphore whose value the host keeps in a header slot */
-    MVK_OP_VIDEO_CAPS,              /* the decoding profiles of the gpu, see mvk_video.h */
-    MVK_OP_VIDEO_CREATE,            /* a decoder session */
+    MVK_OP_WATCH_SEMAPHORES,        /* timeline values counted in events when reached. */
+    MVK_OP_MIRROR_SEMAPHORE,        /* timeline semaphore mirrored into a header slot. */
+    MVK_OP_VIDEO_CAPS,              /* the decoding profiles of the GPU, see mvk_video.h. */
+    MVK_OP_VIDEO_CREATE,            /* a decoder session. */
     MVK_OP_VIDEO_DESTROY,
-    MVK_OP_VIDEO_DECODE,            /* a picture, from dxva buffers */
-    MVK_OP_SHARE_EXPORT_MEMORY,     /* memory of the device, kept for other processes under the id of a shared object */
-    MVK_OP_SHARE_IMPORT_MEMORY,     /* memory of a shared object, imported as a new memory of this device */
-    MVK_OP_SHARE_EXPORT_SEMAPHORE,  /* a timeline semaphore, kept for other processes */
-    MVK_OP_SHARE_IMPORT_SEMAPHORE,  /* a shared timeline semaphore's payload, becoming a semaphore's of this device */
+    MVK_OP_VIDEO_DECODE,            /* a picture, from DXVA buffers. */
+    MVK_OP_SHARE_EXPORT_MEMORY,     /* device memory retained for other processes under a shared object id. */
+    MVK_OP_SHARE_IMPORT_MEMORY,     /* shared object memory imported into this device. */
+    MVK_OP_SHARE_EXPORT_SEMAPHORE,  /* a timeline semaphore, kept for other processes. */
+    MVK_OP_SHARE_IMPORT_SEMAPHORE,  /* shared semaphore payload imported into this device. */
     MVK_OP_HAND_END,
 };
 
 /* the stream of a command buffer: chunks of guest memory linked by guest physical address. */
 #define MVK_STREAM_CHUNK (64u << 10)
 typedef struct MvkStreamChunk {
-    uint64_t next_pa; /* 0 at the end */
-    uint32_t used;    /* bytes of commands after this header */
+    uint64_t next_pa; /* 0 at the end. */
+    uint32_t used;    /* bytes of commands after this header. */
     uint32_t pad;
 } MvkStreamChunk;
 
-/* a command of a stream: its op, and its size, this header included, a multiple of 8. */
+/* stream command opcode and byte size, including this header, aligned to 8 bytes. */
 typedef struct MvkStreamCommand {
     uint32_t op;
     uint32_t size;
 } MvkStreamCommand;
 
-/* ------------------------------------------------------------------ items */
+/* ------------------------------------------------------------------ items. */
 
 typedef struct MvkEncoder {
     uint8_t *start, *p, *end;
     int overflow;
-    void *owner; /* the side's own context */
+    void *owner; /* the side's own context. */
     /* makes room for n more bytes, for encoders over memory that can grow. */
     int (*grow)(struct MvkEncoder *e, size_t n);
 } MvkEncoder;
@@ -171,7 +164,7 @@ typedef struct MvkDecoder {
     const uint8_t *start, *p, *end;
     int error;
     void *owner;
-    /* the arena pointed data is decoded into, reset after each call. */
+    /* arena for decoded pointed data, reset after each call. */
     uint8_t *arena;
     size_t arena_used, arena_size;
 } MvkDecoder;

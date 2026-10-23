@@ -83,10 +83,7 @@ int mime_tiff_open_exif(MimeTiff *t, const void *data, size_t size)
     return mime_tiff_open(t, d, size);
 }
 
-/*
- * the entry count and the next offset of the ifd at an offset, without the checks of the entry table that
- * mime_tiff_ifd_at makes.
- */
+/* the entry count and next offset of an ifd, without the entry table checks of mime_tiff_ifd_at. */
 static bool ifd_header(const MimeTiff *t, uint64_t off, uint32_t *count, uint64_t *next)
 {
     unsigned hdr = header_len(t);

@@ -1,6 +1,6 @@
 /*
- * x64 definitions of the kernel: barriers, interrupt masking, the trap
- * frame and the page table entries.
+ * x64 kernel definitions: barriers, interrupt masking, the trap frame and
+ * the page table entries.
  */
 #ifndef MIME_ARCH_X64_H
 #define MIME_ARCH_X64_H
@@ -148,14 +148,14 @@ MIME_STATIC_ASSERT(sizeof(KTRAP_FRAME) == KTRAP_FRAME_SIZE, "trap size");
 #define KI_TRAP_FROM_USER(f) (((f)->Cs & RPL_USER) == RPL_USER)
 #define KI_TRAP_INTERRUPTS_ENABLED(f) (((f)->Rflags & 0x200) != 0)
 
-/* system calls: eax = number, r10 rdx r8 r9 then the stack past the home area, the result in rax. */
+/* system calls: eax = number, r10 rdx r8 r9 then the stack past the home area, result in rax. */
 #define KI_SERVICE_REGISTER_ARGS 4
 #define KI_SERVICE_NUMBER(f) ((ULONG)(f)->Rax & 0xFFFF)
 #define KI_SERVICE_STACK_ARGS(f) ((f)->Rsp + 0x28)
 #define KI_SERVICE_RESULT(f) ((f)->Rax)
 #define KI_SERVICE_REGISTER_ARG(f, i) ((i) == 0 ? (f)->R10 : (i) == 1 ? (f)->Rdx : (i) == 2 ? (f)->R8 : (f)->R9)
 
-#define EFLAGS_USER_MASK 0x00000DD5ull /* cf pf af zf sf tf df of, what user mode may set */
+#define EFLAGS_USER_MASK 0x00000DD5ull /* cf pf af zf sf tf df of, what user mode may set. */
 #define EFLAGS_IF 0x200ull
 
 typedef struct _KJUMP_BUFFER {
@@ -164,8 +164,8 @@ typedef struct _KJUMP_BUFFER {
 } KJUMP_BUFFER;
 
 /*
- * the extended processor state of a user thread, saved at each switch
- * away from it: xsaveopt with the components of xcr0.
+ * a user thread's extended state is saved with xsaveopt for the xcr0
+ * components at each switch away from it.
  */
 extern ULONG KiXsaveSize;
 extern ULONG64 KiXsaveMask;
@@ -181,9 +181,9 @@ extern ULONG64 KiXsaveMask;
 #define MM_PTE_LARGE (1ull << 7)
 #define MM_PTE_GLOBAL (1ull << 8)
 #define MM_PTE_SW_COW (1ull << 9)
-#define MM_PTE_SW_SHARED (1ull << 10) /* page belongs to a section, never freed by the pte */
-#define MM_PTE_SW_WATCH (1ull << 11)  /* a writable page of a write watched allocation, mapped read only until it is written */
-#define MM_PTE_SW_GUARD (1ull << 52)  /* a guard page, kept from user mode until first touched */
+#define MM_PTE_SW_SHARED (1ull << 10) /* section page, never freed through the pte. */
+#define MM_PTE_SW_WATCH (1ull << 11)  /* write watched page, mapped read only until written. */
+#define MM_PTE_SW_GUARD (1ull << 52)  /* guard page, hidden from user mode until first touched. */
 #define MM_PTE_NX (1ull << 63)
 #define MM_PTE_ADDR_MASK 0x000FFFFFFFFFF000ull
 /* no leaf marker on x64: present without the large bit at the last level. */
@@ -192,7 +192,7 @@ extern ULONG64 KiXsaveMask;
 /* invalid ptes with this bit describe committed but not yet present pages. */
 #define MM_SWPTE_COMMITTED (1ull << 1)
 #define MM_SWPTE_GUARD (1ull << 2)
-#define MM_SWPTE_SECTION (1ull << 3) /* committed view page, built from the section on first touch */
+#define MM_SWPTE_SECTION (1ull << 3) /* committed view page, built from the section on first touch. */
 #define MM_SWPTE_PROT_SHIFT 4
 #define MM_SWPTE_PROT_MASK (0x7FFull << MM_SWPTE_PROT_SHIFT)
 
@@ -205,12 +205,12 @@ extern ULONG64 KiXsaveMask;
 #define MI_PTE_IS_RO(p) (((p) & MM_PTE_RW) == 0)
 #define MI_PTE_IS_USER(p) (((p) & MM_PTE_USER) != 0)
 #define MI_PTE_USER_EXEC(p) (((p) & MM_PTE_NX) == 0)
-/* a present user page that user mode cannot reach: no access, or a guard page until its first touch. */
+/* a present user page that user mode cannot reach: no access, or a guard page before its first touch. */
 #define MI_PTE_IS_GUARD(p) (((p) & MM_PTE_SW_GUARD) != 0)
 #define MI_PTE_CLEAR_GUARD(p) (((p) & ~MM_PTE_SW_GUARD) | MM_PTE_USER)
-/* an entry above the last level that points to a table rather than mapping a large page. */
+/* a non leaf entry that points to a table rather than mapping a large page. */
 #define MI_PTE_IS_TABLE(e, level) ((level) < 3 && !((e) & MM_PTE_LARGE))
-/* the first root entries a process owns; the upper half is the kernel's, shared by every process. */
+/* root entries a process owns, the upper half is the kernel's, shared by every process. */
 #define MI_USER_ROOT_ENTRIES 256
 
 #endif

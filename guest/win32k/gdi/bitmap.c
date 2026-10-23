@@ -252,25 +252,22 @@ void SurfacePutPixel(SURFACE *s, LONG x, LONG y, ULONG pixel)
 
 typedef struct DIB_DESC {
     LONG Width;
-    LONG Height; /* positive */
+    LONG Height; /* positive. */
     BOOLEAN TopDown;
     UCHAR Bpp;
     LONG Stride;
     ULONG Compression;
     ULONG Colors;
-    ULONG HeaderSize; /* bytes of header plus color table or masks */
+    ULONG HeaderSize; /* header plus color table or masks, in bytes. */
 } DIB_DESC;
 
-/*
- * allow_rle accepts the run length formats, which only a source can be: 8 or 4 bits, bottom up, whose size is in
- * biSizeImage.
- */
+/* allow_rle accepts the run length formats, only valid for a source: 8 or 4 bits, bottom up, sized by biSizeImage. */
 static BOOLEAN describe_dib_rle(const BITMAPINFO *info, UINT usage, DIB_DESC *d, BOOLEAN allow_rle)
 {
     const BITMAPINFOHEADER *h = &info->bmiHeader;
     if (h->biSize < sizeof(BITMAPINFOHEADER) && h->biSize != 12)
         return FALSE;
-    if (h->biSize == 12) /* BITMAPCOREHEADER is not supported */
+    if (h->biSize == 12) /* BITMAPCOREHEADER is not supported. */
         return FALSE;
     if (h->biWidth <= 0 || h->biHeight == 0 || h->biWidth > 32768 || h->biHeight > 32768 || h->biHeight < -32768)
         return FALSE;
@@ -302,7 +299,6 @@ static BOOLEAN describe_dib(const BITMAPINFO *info, UINT usage, DIB_DESC *d)
     return describe_dib_rle(info, usage, d, FALSE);
 }
 
-/* captures a BITMAPINFO with its color table from user mode. */
 static BITMAPINFO *capture_info(const BITMAPINFO *user, UINT usage, DIB_DESC *d, BOOLEAN allow_rle)
 {
     BITMAPINFOHEADER h;
@@ -458,9 +454,8 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
 }
 
 /*
- * the color table of the dib section in a dc, as GetDIBColorTable and SetDIBColorTable ask for it. Only a dib
- * section of 8 bits a pixel or fewer has one; the result is the number of entries read or written, 0 for
- * anything else or entries past the table.
+ * for GetDIBColorTable and SetDIBColorTable. only a dib section of 8 bits a pixel or fewer has a color table.
+ * returns the number of entries read or written, 0 for anything else or for entries past the table.
  */
 ULONG NTAPI NtGdiDoPalette(HGDIOBJ object, WORD start, WORD count, PVOID user_entries, DWORD function, BOOL inbound)
 {
@@ -492,10 +487,8 @@ ULONG NTAPI NtGdiDoPalette(HGDIOBJ object, WORD start, WORD count, PVOID user_en
 /* ------------------------------------------------------------------ dcs over caller memory */
 
 /*
- * D3DKMTCreateDCFromMemory: a memory dc whose bitmap is the caller's
- * memory, rows top down at the caller's pitch, for the formats windows
- * takes. ddraw draws on its surfaces with gdi this way. the memory stays
- * the caller's.
+ * D3DKMTCreateDCFromMemory: a memory dc over the caller's memory, rows top down at the caller's pitch. ddraw draws
+ * on its surfaces with gdi this way. the memory stays the caller's.
  */
 NTSTATUS NTAPI NtGdiDdDDICreateDCFromMemory(D3DKMT_CREATEDCFROMMEMORY *user_desc)
 {
@@ -596,7 +589,6 @@ NTSTATUS NTAPI NtGdiDdDDIDestroyDCFromMemory(const D3DKMT_DESTROYDCFROMMEMORY *u
     return status;
 }
 
-/* copies scanlines of a bitmap into a caller dib, converting formats. */
 int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines, PVOID bits, BITMAPINFO *user_info,
                                  UINT usage, UINT max_bits, UINT max_info)
 {
@@ -611,7 +603,7 @@ int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines
         return 0;
     }
     if (h.biBitCount == 0) {
-        /* query: fill in the header from the bitmap. */
+        /* a query: fill in the header from the bitmap. */
         BITMAPINFOHEADER out = {sizeof(BITMAPINFOHEADER), s->Width, s->Height, 1, s->Bpp, BI_RGB, 0, 0, 0, 0, 0};
         out.biSizeImage = (DWORD)(dib_stride(s->Width, s->Bpp) * s->Height);
         UserLeave();
@@ -662,10 +654,10 @@ int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines
 }
 
 /*
- * decodes run length coded rows into a 32 bit bottom up buffer: the pixels a code covers get alpha 255, the others
- * stay 0 so that blending the result leaves what a skip or an early end of line did not cover as it was, which is
- * what drawing a coded bitmap does to the device. Rows are counted from the bottom, as the codes are. Truncated or
- * out of range codes end the decoding, with what was drawn kept.
+ * decodes run length coded rows into a 32 bit bottom up buffer. pixels a code covers get alpha 255, the others stay
+ * 0, so blending the result leaves whatever a skip or an early end of line did not cover untouched, as drawing a
+ * coded bitmap does. rows count from the bottom, like the codes. truncated or out of range codes stop the decoding
+ * and keep what was drawn.
  */
 static void decode_rle(const UCHAR *code, SIZE_T size, BOOLEAN four, LONG width, LONG height, const RGBQUAD *colors,
                        ULONG color_count, PULONG out)
@@ -727,8 +719,8 @@ static void decode_rle(const UCHAR *code, SIZE_T size, BOOLEAN four, LONG width,
 }
 
 /*
- * captures caller dib bits and returns a temporary surface in kernel memory. A run length coded source comes back
- * as a 32 bit surface with alpha, and *rle is set: it has to be blended, not copied.
+ * captures caller dib bits into a temporary kernel surface. a run length coded source comes back as 32 bits with
+ * alpha and sets *rle: it has to be blended, not copied.
  */
 static SURFACE *capture_dib(const void *bits, const BITMAPINFO *user_info, UINT usage, ULONG lines, PVOID *buffer,
                             BITMAPINFO **info_out, BOOLEAN *rle)
@@ -855,7 +847,7 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
         RgnInit(&clip);
         if (DcGetClip(dc, &clip)) {
             if (coded) {
-                /* what the codes skip stays as it was whatever the raster operation is, a guess for the others. */
+                /* what the codes skip stays as it was, whatever the rop. a guess for the other rops. */
                 if (src_rect.left >= 0 && src_rect.top >= 0 && src_rect.right <= src->Width &&
                     src_rect.bottom <= src->Height)
                     AlphaBlendSurface(dc->Surface, &clip, &dst_rect, src, &src_rect,

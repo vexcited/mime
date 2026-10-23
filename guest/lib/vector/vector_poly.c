@@ -1,6 +1,4 @@
-/*
- * polylines, flattening of paths and hit testing.
- */
+/* polylines, flattening of paths and hit testing. */
 #include "vector_internal.h"
 
 void mime_vec_polys_init(MimeVecPolys *p, const MimeAllocator *alloc)
@@ -190,7 +188,7 @@ static int flatten_cubic(MimeVecPolys *out, const MimeVecPoint *p0, const MimeVe
     return MIME_VEC_OK;
 }
 
-/* ends the current subpath, a closed one does not repeat its first point. */
+/* a closed subpath does not repeat its first point. */
 static int finish_sub(MimeVecPolys *out, bool closed)
 {
     if (closed && out->npts - out->cur_first > 1) {

@@ -1,7 +1,4 @@
-/*
- * printer handles: opening and closing, and every function that works on an
- * open printer, a print job or a form.
- */
+/* printer handles, settings, jobs and forms. */
 #include "winspool_private.h"
 #include "info.h"
 #include <stddef.h>
@@ -25,7 +22,7 @@ SpoolHandle *SpoolLookup(HANDLE printer)
     return found;
 }
 
-/* the server handle is not a printer: what needs one fails on it as on any bad handle. */
+/* operations requiring a printer reject the server handle. */
 SpoolHandle *SpoolLookupPrinter(HANDLE printer)
 {
     SpoolHandle *h = SpoolLookup(printer);
@@ -72,7 +69,7 @@ DECLSPEC_EXPORT BOOL WINAPI OpenPrinter2W(LPCWSTR name, LPHANDLE printer, PPRINT
         h->access = defaults && defaults->DesiredAccess ? defaults->DesiredAccess : PRINTER_ACCESS_USE;
         if (defaults && defaults->pDatatype)
             _snwprintf(h->datatype, ARRAYSIZE(h->datatype), L"%ls", defaults->pDatatype);
-        /* a device mode given with the defaults is a copy of what the program asked for, taken as is when valid. */
+        /* copies valid default device modes unchanged. */
         if (defaults && defaults->pDevMode && defaults->pDevMode->dmSize >= offsetof(DEVMODEW, dmFields) + sizeof(DWORD)) {
             SIZE_T bytes = defaults->pDevMode->dmSize + defaults->pDevMode->dmDriverExtra;
             h->devmode = SpoolAlloc(bytes < sizeof(DEVMODEW) ? sizeof(DEVMODEW) : bytes);
@@ -121,7 +118,7 @@ DECLSPEC_EXPORT BOOL WINAPI OpenPrinterA(LPSTR name, LPHANDLE printer, LPPRINTER
     return ok;
 }
 
-/* the ansi form is not implemented by windows either. */
+/* the ANSI form is not implemented by windows either. */
 DECLSPEC_EXPORT BOOL WINAPI OpenPrinter2A(LPCSTR name, LPHANDLE printer, PPRINTER_DEFAULTSA defaults,
                                                 PPRINTER_OPTIONSA options)
 {
@@ -142,7 +139,7 @@ DECLSPEC_EXPORT BOOL WINAPI ClosePrinter(HANDLE printer)
     ReleaseSRWLockExclusive(&g_lock);
     if (!found)
         return SpoolFail(ERROR_INVALID_HANDLE);
-    /* a document that was not ended is given up. */
+    /* abandons any unfinished document. */
     SpoolAbortJob(found);
     SpoolFree(found->devmode);
     SpoolFree(found);
@@ -151,7 +148,7 @@ DECLSPEC_EXPORT BOOL WINAPI ClosePrinter(HANDLE printer)
 
 /* ------------------------------------------------------------------ printer state */
 
-/* the handle, then the size pointer, then the level, in the order windows checks them. */
+/* validates the handle, size pointer and level, in that order. */
 static BOOL SpoolGetPrinter(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed, BOOL ansi)
 {
     SpoolHandle *h = SpoolLookupPrinter(printer);
@@ -175,8 +172,8 @@ DECLSPEC_EXPORT BOOL WINAPI GetPrinterA(HANDLE printer, DWORD level, LPBYTE buff
 }
 
 /*
- * the settings of a printer are those the user chooses, kept per user: level 9 changes them, level 0
- * commands are accepted, everything that would install or reconfigure a printer needs rights nobody has here.
+ * level 9 saves per-user settings and level 0 accepts commands. installing or reconfiguring printers requires rights
+ * unavailable here.
  */
 static BOOL SpoolSetPrinter(HANDLE printer, DWORD level, LPBYTE buffer, DWORD command, BOOL ansi)
 {
@@ -215,7 +212,7 @@ DECLSPEC_EXPORT BOOL WINAPI SetPrinterA(HANDLE printer, DWORD level, LPBYTE buff
     return SpoolSetPrinter(printer, level, buffer, command, TRUE);
 }
 
-/* the handle is made again with the defaults, which for a printer here means the same printer. */
+/* reopening with defaults keeps the same built-in printer. */
 DECLSPEC_EXPORT BOOL WINAPI ResetPrinterW(HANDLE printer, LPPRINTER_DEFAULTSW defaults)
 {
     SpoolHandle *h = SpoolLookupPrinter(printer);
@@ -293,7 +290,6 @@ DECLSPEC_EXPORT BOOL WINAPI GetPrinterDriver2A(HWND window, HANDLE printer, LPST
     return SpoolFail(ERROR_NOT_SUPPORTED);
 }
 
-/* the printing preferences, which are the device mode the user can change. */
 DECLSPEC_EXPORT BOOL WINAPI PrinterProperties(HWND window, HANDLE printer)
 {
     SpoolHandle *h = SpoolLookupPrinter(printer);
@@ -344,7 +340,7 @@ DECLSPEC_EXPORT BOOL WINAPI FreePrinterNotifyInfo(PPRINTER_NOTIFY_INFO info)
 
 /* ------------------------------------------------------------------ jobs */
 
-/* the documents of this process are listed, and can be told to stop. */
+/* lists or cancels this process's documents. */
 static BOOL SpoolEnumJobs(HANDLE printer, DWORD first, DWORD count, DWORD level, LPBYTE buffer, DWORD size,
                           LPDWORD needed, LPDWORD returned, BOOL ansi)
 {
@@ -407,7 +403,7 @@ DECLSPEC_EXPORT BOOL WINAPI SetJobA(HANDLE printer, DWORD job, DWORD level, LPBY
     return SetJobW(printer, job, level, buffer, command);
 }
 
-/* jobs made with AddJob are files of the spool directory that nothing here picks up. */
+/* AddJob creates spool files, but no service here processes them. */
 DECLSPEC_EXPORT BOOL WINAPI AddJobW(HANDLE printer, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed)
 {
     if (!SpoolLookupPrinter(printer))
@@ -595,7 +591,6 @@ DECLSPEC_EXPORT BOOL WINAPI SetFormA(HANDLE printer, LPSTR name, DWORD level, LP
 
 /* ------------------------------------------------------------------ printer data */
 
-/* the print server values a program may ask for. */
 static DWORD SpoolServerData(LPCWSTR name, LPDWORD type, LPBYTE data, DWORD size, LPDWORD needed, BOOL ansi)
 {
     if (!name || !needed)

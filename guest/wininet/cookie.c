@@ -1,7 +1,6 @@
 /*
- * cookies: the jar of the process, filled from Set-Cookie headers and InternetSetCookie, read for Cookie
- * headers and InternetGetCookie, after rfc 6265. windows keeps persistent cookies on disk; mime keeps them
- * for the life of the process.
+ * RFC 6265 cookies from Set-Cookie and InternetSetCookie, used by Cookie headers and InternetGetCookie. storage lasts
+ * only for the process; Windows also persists cookies on disk.
  */
 #include "wininet_private.h"
 
@@ -56,7 +55,7 @@ static BOOL IsAddress(const char *host)
     return TRUE;
 }
 
-/* rfc 6265 5.1.3. */
+/* RFC 6265 5.1.3. */
 static BOOL DomainMatch(const char *host, const char *domain, BOOL host_only)
 {
     if (!lstrcmpiA(host, domain))
@@ -68,7 +67,7 @@ static BOOL DomainMatch(const char *host, const char *domain, BOOL host_only)
            !lstrcmpiA(host + host_length - domain_length, domain);
 }
 
-/* rfc 6265 5.1.4. */
+/* RFC 6265 5.1.4. */
 static BOOL PathMatch(const char *path, const char *cookie_path)
 {
     SIZE_T length = strlen(cookie_path);
@@ -95,7 +94,7 @@ static const char *Trim(const char *start, const char *end, DWORD *length)
     return start;
 }
 
-/* stores one Set-Cookie line for a request to host and path, as rfc 6265 5.2 and 5.3 read it. */
+/* parse Set-Cookie for host and path under RFC 6265 sections 5.2 and 5.3. */
 static BOOL Store(const char *host, const char *path, const char *line, BOOL from_script)
 {
     const char *semicolon = strchr(line, ';');
@@ -109,7 +108,7 @@ static BOOL Store(const char *host, const char *path, const char *line, BOOL fro
         name = Trim(line, equals, &name_length);
         value = Trim(equals + 1, pair_end, &value_length);
     } else {
-        /* a cookie without a name, as windows accepts. */
+        /* Windows accepts nameless cookies. */
         name = "";
         name_length = 0;
         value = Trim(line, pair_end, &value_length);
@@ -218,7 +217,7 @@ void InetCookieStore(LPCWSTR host, LPCWSTR path, const char *set_cookie)
     InetFree(narrow_path);
 }
 
-/* the cookies for a request, longest paths first, then oldest first, as "a=b; c=d". */
+/* order cookies by longest path then oldest creation time, as "a=b; c=d". */
 static char *Collect(const char *host, const char *path, BOOL secure, BOOL http, const char *name)
 {
     ULONGLONG now = Now();
@@ -283,7 +282,7 @@ char *InetCookiesFor(LPCWSTR host, LPCWSTR path, BOOL secure)
     return text;
 }
 
-/* the host, path and security of a cookie url. */
+/* extract cookie host, path and secure scheme. */
 static BOOL CrackCookieUrl(LPCWSTR url, char **host, char **path, BOOL *secure)
 {
     URL_COMPONENTSW parts = {sizeof(parts)};
@@ -388,7 +387,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetGetCookieA(LPCSTR url, LPCSTR name, LPSTR da
     return InternetGetCookieExA(url, name, data, size, 0, nullptr);
 }
 
-/* a cookie set by name gets the name in front of its data. */
+/* prepend the supplied cookie name to its data. */
 static DWORD SetCookie(LPCWSTR url, LPCWSTR name, LPCWSTR data, DWORD flags)
 {
     if (!url || !*url || !data)
@@ -452,9 +451,8 @@ DECLSPEC_EXPORT BOOL WINAPI InternetSetCookieA(LPCSTR url, LPCSTR name, LPCSTR d
     return InternetSetCookieExA(url, name, data, 0, 0) == COOKIE_STATE_ACCEPT;
 }
 
-/* ------------------------------------------------------------------ cookies of the second kind */
+/* extended cookie structures. */
 
-/* a cookie as the second kind of structure gives it. */
 typedef struct {
     PWSTR Name, Value, Domain, Path;
     DWORD Flags;
@@ -541,9 +539,9 @@ DECLSPEC_EXPORT VOID WINAPI InternetFreeCookies(INET_COOKIE2 *cookies, DWORD cou
     InetFree(cookies);
 }
 
-/* ------------------------------------------------------------------ the url cache */
+/* the URL cache. */
 
-/* the cache of the pages a program fetched is not kept: it is empty for whoever asks, and has no entry to count off. */
+/* the URL cache is unimplemented and always enumerates as empty. */
 DECLSPEC_EXPORT HANDLE WINAPI FindFirstUrlCacheEntryA(LPCSTR pattern, LPVOID entry, LPDWORD size)
 {
     SetLastError(size ? ERROR_NO_MORE_ITEMS : ERROR_INVALID_PARAMETER);

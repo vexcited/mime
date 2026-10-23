@@ -1,4 +1,4 @@
-/* the parts of the screen buffer module that its source files share. */
+/* internals shared by the screen buffer module's source files. */
 #ifndef MIME_CONSCREEN_P_H
 #define MIME_CONSCREEN_P_H
 
@@ -7,14 +7,12 @@
 #define CS_MIN(a, b) ((a) < (b) ? (a) : (b))
 #define CS_MAX(a, b) ((a) > (b) ? (a) : (b))
 
-/* the attribute with the terminal's colors and no flags, which the table of attributes starts with. */
+/* the terminal's colors with no flags, the first entry of the attribute table. */
 #define CS_EXT_DEFAULT 0
 
-/* the most a window or a buffer is wide or high. */
+/* the largest window or buffer width or height. */
 #define CS_MAX_DIMENSION 32767
 #define CS_MAX_CELLS (4u * 1024 * 1024)
-
-/* ---- cells and grids */
 
 CsCell CsBlank(const CsBuffer *buffer);
 CsCell CsBlankOf(CsAttr attr);
@@ -26,8 +24,6 @@ void CsGridFree(CsGrid *grid);
 void CsRowFill(CsRow *row, int from, int to, CsCell cell);
 void CsGridScroll(CsGrid *grid, int top, int bottom, int count, bool up, CsCell fill);
 
-/* ---- attributes */
-
 uint16_t CsExtIntern(CsTerminal *term, const CsExt *ext);
 const CsExt *CsExtGet(const CsTerminal *term, unsigned index);
 CsAttr CsAttrOf(CsTerminal *term, const CsExt *ext);
@@ -38,8 +34,6 @@ uint32_t CsAnsiToLegacy(uint32_t index);
 unsigned CsReduceRgb(unsigned r, unsigned g, unsigned b);
 unsigned CsReduceTrueColor(uint32_t rgb);
 unsigned CsReduceIndex(unsigned n);
-
-/* ---- the terminal */
 
 void CsOutBytes(CsTerminal *term, const void *data, size_t length);
 void CsOutString(CsTerminal *term, const char *text);
@@ -57,7 +51,7 @@ void CsHostWrap(CsTerminal *term, bool wrap);
 void CsHostPrintCell(CsTerminal *term, const CsBuffer *buffer, const CsCell *lead, const CsCell *trail);
 void CsHostCursor(CsTerminal *term, const CsBuffer *buffer);
 
-/* marks cells that were changed without the terminal being told. */
+/* marks cells changed without the terminal being sent them. */
 void CsMark(CsBuffer *buffer, int y, int x0, int x1, bool force);
 void CsMarkRows(CsBuffer *buffer, int y0, int y1, bool force);
 
@@ -65,18 +59,18 @@ void CsMarkRows(CsBuffer *buffer, int y0, int y1, bool force);
 void CsShadowFill(CsTerminal *term, int y0, int y1, int x0, int x1, CsCell cell);
 void CsShadowBlank(CsTerminal *term);
 
-/* the viewport row of an absolute row, or -1 when it is outside. */
+/* -1 when the absolute row is outside the viewport. */
 static inline int CsViewRow(const CsBuffer *b, int y)
 {
     return y >= b->Window.Top && y <= b->Window.Bottom ? y - b->Window.Top : -1;
 }
 
-/* ---- escape sequences and text, convt.c */
+/* escape sequences and text, in convt.c. */
 
 void CsPutText(CsBuffer *buffer, const uint16_t *text, size_t count);
 void CsParserReset(CsBuffer *buffer);
 
-/* ---- operations shared by the sequences and the calls */
+/* shared by the sequences and the calls. */
 
 void CsNewline(CsBuffer *buffer, bool carriage);
 void CsEraseCells(CsBuffer *buffer, int y, int x0, int x1);

@@ -27,7 +27,7 @@ NTDLL_EXPORT RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(PCWSTR path)
     return RtlPathTypeRelative;
 }
 
-/* removes "." and ".." components in place, never above the root of `start`. */
+/* never goes above root. */
 static SIZE_T collapse(PWSTR path, SIZE_T root)
 {
     SIZE_T in = root, out = root;
@@ -95,7 +95,7 @@ static NTSTATUS full_path(PCWSTR name, PWSTR out, SIZE_T out_chars, SIZE_T *leng
         goto done;
     case RtlPathTypeUncAbsolute: {
         memcpy(buf, name, (name_len + 1) * sizeof(WCHAR));
-        /* root covers \\server\share\ */
+        /* root covers \\server\share\. */
         SIZE_T i = 2, seps = 0;
         while (buf[i] && seps < 2) {
             if (is_sep(buf[i]))
@@ -159,7 +159,7 @@ done:
     return STATUS_SUCCESS;
 }
 
-/* returns the length in bytes, or the needed size including the terminator if too small. */
+/* returns the length in bytes, or the size needed with the terminator when the buffer is too small. */
 NTDLL_EXPORT ULONG NTAPI RtlGetFullPathName_U(PCWSTR name, ULONG size, PWSTR buffer, PWSTR *file_part)
 {
     if (!name || !*name)
@@ -240,7 +240,7 @@ NTDLL_EXPORT ULONG NTAPI RtlGetCurrentDirectory_U(ULONG size, PWSTR buffer)
     RtlAcquirePebLock();
     PCUNICODE_STRING cwd = &NtCurrentPeb()->ProcessParameters->CurrentDirectory.DosPath;
     ULONG len = cwd->Length;
-    /* the stored path ends with a backslash; report it without, except for a drive root. */
+    /* the stored path ends with a backslash, report it without one except for a drive root. */
     if (len > 3 * sizeof(WCHAR) && cwd->Buffer[len / sizeof(WCHAR) - 1] == '\\')
         len -= sizeof(WCHAR);
     ULONG result = len;
@@ -308,7 +308,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDoesFileExists_U(PCWSTR name)
     return NT_SUCCESS(status);
 }
 
-/* searches `path` (';' separated) for `name` with an optional default extension. */
+/* path is ';' separated, extension is an optional default. */
 NTDLL_EXPORT ULONG NTAPI RtlDosSearchPath_U(PCWSTR path, PCWSTR name, PCWSTR extension, ULONG size, PWSTR buffer,
                                             PWSTR *file_part)
 {

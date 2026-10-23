@@ -1,9 +1,8 @@
 /*
- * shaders and programs. sources are kept until a link, when both stages
- * go to the host compiler; the link is asynchronous and only a query or a
- * draw waits for its result. uniforms live in a block laid out by the
- * host's reflection, written here and sent with the draws that need it.
- * a location is the uniform's index times 4096 plus the array element.
+ * shaders and programs. sources are kept until a link, when both stages go to the host compiler; the link is
+ * asynchronous and only a query or a draw waits for it. uniforms live in a block laid out by the host's reflection,
+ * written here and sent with the draws that need it. a location is the uniform's index times 4096 plus the array
+ * element.
  */
 #include "opengl32.h"
 
@@ -21,7 +20,7 @@ static GlShader *shader(GlContext *ctx, GLuint name)
     return s == GL_RESERVED ? nullptr : s;
 }
 
-/* programs and shaders share one name space, as gl requires. */
+/* programs and shaders share one name space, as GL requires. */
 static GLuint new_name(GlContext *ctx)
 {
     GLuint a = gl_name_new(&ctx->shared->programs);
@@ -225,7 +224,7 @@ static void destroy_program(GlContext *ctx, GlProgram *p)
     gl_free(p);
 }
 
-/* a program that has no name, as the fixed function one: the host object and the memory go. */
+/* frees an unnamed program such as the fixed function one: its host object and memory. */
 void gl_program_free_internal(GlProgram *p)
 {
     gl_program_ready(p);

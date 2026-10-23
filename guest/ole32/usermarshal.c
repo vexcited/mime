@@ -1,11 +1,10 @@
 /*
- * the wire forms of the types an interface passes that are not plain data: handles, global memory, bitmaps and pointers
- * to interfaces. A stub holds a routine for each of them to size, write, read and free it, as a type with the
- * user_marshal attribute asks, and these are the routines every standard proxy file of windows names. Each has a 64 bit
- * form for the second transfer syntax, which the same routines of the first one differ from only in alignment and in the
- * width of the values that stand for pointers.
+ * wire forms for the non plain data interfaces pass: handles, global memory, bitmaps and interface pointers. a stub
+ * calls these routines to size, write, read and free each user_marshal type, and every standard windows proxy file
+ * names them. each has a 64-bit form for the second transfer syntax, differing only in alignment and in the width of
+ * values that stand for pointers.
  *
- * The handles do not travel: the value is sent and means something to a peer on the same machine only, as windows has it.
+ * handles do not travel: the value is sent and only means something to a peer on the same machine, as on windows.
  */
 #include "orpc.h"
 #include <mime/win32/rpcndr.h>
@@ -20,7 +19,7 @@
 #define RPC_NULL_REF 1780
 #define ARITH_OVERFLOW ((RPC_STATUS)0x80010010)
 
-/* the context of a call is the low byte of the flags a routine gets. */
+/* a call's context is the low byte of the flags. */
 static BYTE context_of(const ULONG *flags)
 {
     return (BYTE)*flags;
@@ -47,7 +46,7 @@ static ULONG align_size(ULONG offset, ULONG mask)
     return aligned;
 }
 
-/* the gap that alignment leaves is written as zeros, as the buffer may hold anything. */
+/* alignment gaps are zeroed, since the buffer may hold anything. */
 static BYTE *align_zero(BYTE *p, ULONG mask)
 {
     BYTE *aligned = (BYTE *)(((ULONG_PTR)p + mask) & ~(ULONG_PTR)mask);
@@ -56,7 +55,7 @@ static BYTE *align_zero(BYTE *p, ULONG mask)
     return aligned;
 }
 
-/* the buffer the call has and how far a routine may read: from the start of the message to its end. */
+/* the bounds a routine may read within: from the message start to its end. */
 typedef struct {
     const BYTE *Start;
     const BYTE *End;
@@ -68,7 +67,7 @@ static void reader_open(READER *r, ULONG *flags, const BYTE *position)
     memset(&info, 0, sizeof(info));
     RPC_STATUS status = NdrGetUserMarshalInfo(flags, 1, &info);
     if (status || !info.Level1.BufferSize) {
-        /* a call outside a stub has no buffer to be held to. */
+        /* a call outside a stub has no buffer to stay within. */
         r->Start = nullptr;
         r->End = nullptr;
         return;
@@ -98,11 +97,11 @@ static const BYTE *align_read(const BYTE *p, ULONG mask)
     return (const BYTE *)(((ULONG_PTR)p + mask) & ~(ULONG_PTR)mask);
 }
 
-/* ------------------------------------------------------------------ pointers to interfaces */
+/* ------------------------------------------------------------------ interface pointers */
 
 /*
- * A stream over the part of the message an interface goes to or comes from. The reference to the object is written by
- * CoMarshalInterface into the buffer itself, so the size that was asked for with CoGetMarshalSizeMax is the room.
+ * a stream over the part of the message an interface goes to or comes from. CoMarshalInterface writes the object
+ * reference straight into the buffer, so the size from CoGetMarshalSizeMax is all the room there is.
  */
 typedef struct {
     IStream Stream;
@@ -245,8 +244,8 @@ static BUFFERSTREAM *bufferstream_new(BYTE *data, ULONG size)
     return s;
 }
 
-/* The wire form of a pointer to an interface: the count of bytes twice (the first of a conformant array, the second of
-   its variance), then the bytes of the object reference. The 64 bit form has a count of 8 bytes before the second. */
+/* an interface pointer on the wire: the byte count twice, as conformant array size then variance, then the object
+   reference bytes. the 64-bit form puts an 8 byte count before the second one. */
 static ULONG interface_size(ULONG *flags, ULONG context, ULONG start, IUnknown *punk, REFIID iid, BOOL w64)
 {
     if (!punk)
@@ -288,8 +287,8 @@ static BYTE *interface_marshal(ULONG *flags, ULONG context, BYTE *buffer, IUnkno
     return data + used;
 }
 
-/* The object reference is checked before it is handed on: the signature, a known kind of reference and the interface asked
-   for. A peer that sends anything else is not following the form. */
+/* the object reference is checked before being handed on: signature, a known kind and the requested interface. a
+   peer sending anything else breaks the format. */
 static BYTE *interface_unmarshal(ULONG *flags, BYTE *buffer, IUnknown **pp, REFIID iid, BOOL w64)
 {
     READER r;
@@ -372,9 +371,9 @@ WINOLEAPI void WINAPI WdtpInterfacePointer_UserFree64(IUnknown *punk)
         punk->lpVtbl->Release(punk);
 }
 
-/* ------------------------------------------------------------------ handles of windows and objects */
+/* ------------------------------------------------------------------ window and object handles */
 
-/* A handle of the kinds that belong to the machine, sent as its value and the tag that says it is one. */
+/* machine wide handles are sent as their value, with a tag saying so. */
 static ULONG handle_size(const ULONG *flags, ULONG start, const void *handle)
 {
     if (!handle)
@@ -453,8 +452,8 @@ HANDLE_ROUTINES(HMONITOR, HMONITOR)
 /* ------------------------------------------------------------------ global memory */
 
 /*
- * Memory in a call is sent whole when the peer is another process: a tag, the value of the handle, and for a handle that
- * is not null the size twice with the value again and the bytes. A peer in the process takes the handle as it is.
+ * memory goes whole to another process: a tag, the handle value, and for a non null handle the size twice, the value
+ * again and the bytes. an in process peer takes the handle as it is.
  */
 static ULONG global_size(const ULONG *flags, ULONG start, const HGLOBAL *global, BOOL w64)
 {
@@ -633,8 +632,8 @@ WINOLEAPI void WINAPI HGLOBAL_UserFree64(ULONG *flags, HGLOBAL *global)
 }
 
 /*
- * The oleaut32 of windows tells ole32 where it is loaded, so that ole32 can reach what only that dll holds. Nothing here
- * needs it: the module is kept for a program that asks.
+ * windows' oleaut32 tells ole32 where it is loaded so ole32 can reach what only that dll holds. nothing here needs
+ * it, the module is kept for programs that ask.
  */
 static HMODULE g_oleaut_module;
 
@@ -648,14 +647,13 @@ HMODULE OleOleautModule(void)
     return g_oleaut_module;
 }
 
-/* ------------------------------------------------------------------ names of storage elements */
+/* ------------------------------------------------------------------ storage element names */
 
 /*
- * A block of names, which a storage is asked to leave out of a copy, is an array of pointers to strings that ends with a
- * null one. Its wire type is a pointer to a structure that the sizes lead, and the stub puts the reference of the pointer, so
- * the routines put the structure: the number of characters the counts say, then the number of strings and of characters, then
- * the strings one after the other with their terminators. No names at all is a structure of nothing, which is a null block when
- * it comes back (guess).
+ * an SNB lists elements a storage copy should leave out: an array of string pointers ending with a null one. its wire
+ * type is a pointer to a structure led by its sizes, and the stub writes the pointer's reference, so these routines
+ * write the structure: the character count the conformance needs, the string and character counts, then each string
+ * with its terminator. no names at all is an empty structure, assumed to come back as a null block.
  */
 static ULONG snb_chars(const SNB *snb, ULONG *strings)
 {
@@ -716,7 +714,7 @@ WINOLEAPI BYTE *WINAPI SNB_UserUnmarshal(ULONG *flags, BYTE *buffer, SNB *snb)
         return (BYTE *)p;
     reader_need(&r, p, (SIZE_T)chars * sizeof(WCHAR));
     const WCHAR *text = (const WCHAR *)p;
-    /* every string must end where the counts say, or the pointers would point past the characters. */
+    /* each string must end where the counts say, or the pointers would run past the characters. */
     ULONG ends = 0;
     for (ULONG i = 0; i < chars; i++)
         if (!text[i])
@@ -752,9 +750,9 @@ WINOLEAPI void WINAPI SNB_UserFree(ULONG *flags, SNB *snb)
 /* ------------------------------------------------------------------ bitmaps */
 
 /*
- * A bitmap of the device is sent as its bits: a tag, the value of the handle, then for a handle that is not null the
- * size of the bits, the structure that describes them and the bits. The device independent bitmaps are sent as these
- * too, which is what the format has, so a section's pixels arrive but not its sharing.
+ * a device bitmap is sent as its bits: a tag, the handle value, then for a non null handle the size of the bits, the
+ * structure describing them and the bits. dibs go the same way since that is all the format has, so a section's
+ * pixels arrive but not its sharing.
  */
 static ULONG bitmap_bytes(HBITMAP bitmap, BITMAP *bm)
 {
@@ -855,7 +853,7 @@ static BYTE *bitmap_unmarshal(ULONG *flags, BYTE *buffer, HBITMAP *bitmap, BOOL 
             if (width < 0 || height < 0 || width_bytes < 0 || rows > 0xFFFFFFFF ||
                 rows * (ULONGLONG)width_bytes != size)
                 RpcRaiseException(RPC_BAD_STUB_DATA);
-            /* the rows of a bitmap of the device are padded to words. */
+            /* device bitmap rows are padded to words. */
             ULONGLONG row_bits = (ULONGLONG)width * planes * bits_pixel;
             if (row_bits > 0xFFFFFFFF || (ULONG)(2 * ((row_bits + 15) >> 4)) != (ULONG)width_bytes)
                 RpcRaiseException(RPC_BAD_STUB_DATA);

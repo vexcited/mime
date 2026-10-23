@@ -1,11 +1,11 @@
 /*
- * jpeg codec written from ITU-T T.81, which is ISO 10918-1: baseline, extended sequential and progressive huffman coded
- * images of 8 bits in one, three or four components, with the JFIF, Exif, ICC and Adobe conventions around them.
+ * jpeg codec per ITU-T T.81, ISO 10918-1: baseline, extended sequential and progressive huffman coded 8 bit images
+ * with one, three or four components, and the JFIF, Exif, ICC and Adobe conventions around them.
  * freestanding: needs only memcpy, memmove, memset, memcmp and the allocator interface.
  *
- * the decoder gives gray, b g r or cmyk pixels, optionally at 1/2, 1/4 or 1/8 of the size. the encoder takes gray,
- * b g r, b g r with a fourth byte, or cmyk pixels. every function is reentrant, nothing is kept between calls.
- * cmyk pixels hold the amount of ink, 0 is no ink, the files store the inverted values as Adobe programs do.
+ * the decoder outputs gray, b g r or cmyk pixels, optionally at 1/2, 1/4 or 1/8 size. the encoder takes gray,
+ * b g r, b g r with a fourth byte, or cmyk. every function is reentrant and keeps nothing between calls.
+ * cmyk pixels hold the amount of ink, 0 is none, and files store the inverted values like Adobe programs do.
  */
 #ifndef MIME_LIB_JPEG_JPEG_H
 #define MIME_LIB_JPEG_JPEG_H
@@ -110,7 +110,7 @@ typedef struct MimeJpegSegment {
     size_t offset;        /* of the 0xff byte in the file. */
 } MimeJpegSegment;
 
-/* the segments from the soi to the first scan header, that one included. */
+/* iterates the segments from the soi through the first scan header. */
 int mime_jpeg_segments_init(MimeJpegSegments *it, const uint8_t *data, size_t size);
 /* 1 with a segment, 0 at the end, MIME_JPEG_ERR_FORMAT when the structure is broken. */
 int mime_jpeg_next_segment(MimeJpegSegments *it, MimeJpegSegment *seg);

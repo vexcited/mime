@@ -1,6 +1,6 @@
 /*
- * the multimedia device api: a render endpoint, the host's default output, and a capture endpoint, its
- * default input, whose audio clients play and record through the host (client.c).
+ * the multimedia device api: a render endpoint for the host's default output and a capture endpoint for its
+ * default input. their audio clients, in client.c, play and record through the host.
  */
 #include "mmdevapi_private.h"
 
@@ -17,7 +17,7 @@ int _fltused = 0x9875;
 
 static void *(WINAPI *g_task_alloc)(SIZE_T size);
 
-/* CoTaskMemAlloc from ole32, which owns what the callers free. */
+/* CoTaskMemAlloc from ole32, which owns what callers free. */
 void *MmTaskAlloc(SIZE_T size)
 {
     if (!g_task_alloc) {
@@ -40,7 +40,7 @@ void MmMixFormat(WAVEFORMATEXTENSIBLE *f)
     f->Format.nAvgBytesPerSec = 48000 * 8;
     f->Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
     f->Samples.wValidBitsPerSample = 32;
-    f->dwChannelMask = 3; /* front left and right */
+    f->dwChannelMask = 3; /* front left and right. */
     f->SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
 }
 
@@ -147,7 +147,7 @@ static STORE g_render_store = {&store_vtbl, FALSE}, g_capture_store = {&store_vt
 
 /* ------------------------------------------------------------------ device */
 
-/* an endpoint is a device and its endpoint interface, one object for each direction. */
+/* one object per direction, acting as both device and endpoint. */
 typedef struct DEVICE {
     const IMMDeviceVtbl *device;
     const IMMEndpointVtbl *endpoint;
@@ -493,10 +493,9 @@ static DWORD WINAPI activate_completion(void *parameter)
 }
 
 /*
- * the device path names an endpoint by id, or the default endpoint of a
- * direction by its device interface class. the activation itself runs on
- * the calling thread; the handler hears of it on another, as windows calls
- * it from a worker.
+ * the path names an endpoint by id, or a direction's default endpoint by its
+ * device interface class. activation runs on the calling thread and the
+ * handler is told on another one, as windows calls it from a worker.
  */
 DECLSPEC_EXPORT HRESULT WINAPI ActivateAudioInterfaceAsync(LPCWSTR path, REFIID riid, PROPVARIANT *params,
                                                            IActivateAudioInterfaceCompletionHandler *handler,

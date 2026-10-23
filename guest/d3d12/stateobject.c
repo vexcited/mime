@@ -1,19 +1,14 @@
 /*
- * state objects: ray tracing pipelines and the collections they take
- * shaders from. a state object gathers the libraries, shaders and hit
- * groups of its own subobjects and of the collections it names, with the
- * root signatures and configurations associated with each. an executable
- * one compiles every shader a group uses against its root signatures, the
- * local one's arguments read from the shader record, and makes a vulkan
- * ray tracing pipeline of a group for each ray generation, miss and
- * callable shader and each hit group. shader identifiers are the groups'
- * handles, vulkan's being 32 bytes as direct3d's are.
+ * state objects: ray tracing pipelines and the collections they take shaders from. a state object gathers the
+ * libraries, shaders and hit groups of its subobjects and of the collections it names, with their associated root
+ * signatures and configurations. an executable one compiles every shader a group uses against its root signatures,
+ * with local arguments read from the shader record, and makes a Vulkan ray tracing pipeline with a group for each
+ * ray generation, miss and callable shader and each hit group. shader identifiers are the group handles, 32 bytes
+ * in both APIs.
  *
- * a pipeline that allows additions is a vulkan pipeline library linked
- * into the executable pipeline, and AddToStateObject links the parent's
- * libraries with one of the addition's, so the identifiers the parent gave
- * stay valid, as VK_EXT_pipeline_library_group_handles keeps a library's
- * handles in every pipeline linking it.
+ * a pipeline that allows additions is a Vulkan pipeline library linked into the executable pipeline.
+ * AddToStateObject links the parent's libraries with one of the addition's, so the parent's identifiers stay valid:
+ * VK_EXT_pipeline_library_group_handles keeps a library's handles in every pipeline linking it.
  */
 #include "d3d12_private.h"
 
@@ -31,7 +26,7 @@ typedef struct SoShader {
     char function[128];
     SoBlob *library;
     UINT kind;
-    /* the local root signature associated with it, NULL for none yet. */
+    /* the associated local root signature, NULL for none yet. */
     D12RootSignature *local;
 } SoShader;
 
@@ -42,14 +37,14 @@ typedef struct SoHitGroup {
     D12RootSignature *local;
 } SoHitGroup;
 
-/* a vulkan group: what direct3d identifies, a general shader or a hit group. */
+/* a Vulkan group, which is what Direct3D identifies: a general shader or a hit group. */
 typedef struct SoGroup {
     const WCHAR *name;
     BYTE handle[D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES];
-    /* the group's index in the linked pipeline, and its shaders' stack sizes. */
+    /* the index in the linked pipeline, and the shaders' stack sizes. */
     UINT index;
     UINT64 stack[4];
-    /* the shaders it has: general, closest hit, any hit, intersection. */
+    /* its shaders: general, closest hit, any hit, intersection. */
     UINT used;
     UINT kind;
 } SoGroup;
@@ -114,7 +109,7 @@ static WCHAR *name_from_ascii(const char *s)
     return out;
 }
 
-/* a function's name, which libraries' names are, in ascii; FALSE when it is not. */
+/* function names, which library names also are, in ascii; FALSE when not ascii. */
 static BOOL ascii_of(const WCHAR *s, char *out, SIZE_T size)
 {
     SIZE_T i = 0;
@@ -228,7 +223,7 @@ static HRESULT add_group(D12StateObject *so, const D3D12_HIT_GROUP_DESC *d, D12R
     return g->name ? S_OK : E_OUTOFMEMORY;
 }
 
-/* the shaders of a dxil library: every one, or those the exports name, renamed as they say. */
+/* every shader of a dxil library, or those the exports name, renamed as they say. */
 static HRESULT add_library(D12StateObject *so, const D3D12_DXIL_LIBRARY_DESC *d)
 {
     if (!d->DXILLibrary.pShaderBytecode || !d->DXILLibrary.BytecodeLength)
@@ -268,7 +263,7 @@ static HRESULT add_library(D12StateObject *so, const D3D12_DXIL_LIBRARY_DESC *d)
             hr = E_INVALIDARG;
             break;
         }
-        /* functions that are no ray tracing shader are only called by others. */
+        /* functions that are not ray tracing shaders are only called by others. */
         if (exports[found].kind >= DXIL_KIND_RAYGEN && exports[found].kind <= DXIL_KIND_CALLABLE)
             hr = add_shader(so, e->Name, exports[found].name, blob, exports[found].kind, nullptr);
     }
@@ -316,7 +311,7 @@ static HRESULT add_collection(D12StateObject *so, const D3D12_EXISTING_COLLECTIO
     return hr;
 }
 
-/* the subobject an association names, as an index in the description's array. */
+/* the index in the description's array of the subobject an association names. */
 static int subobject_index(const D3D12_STATE_OBJECT_DESC *desc, const D3D12_STATE_SUBOBJECT *s)
 {
     for (UINT i = 0; i < desc->NumSubobjects; i++)
@@ -325,10 +320,7 @@ static int subobject_index(const D3D12_STATE_OBJECT_DESC *desc, const D3D12_STAT
     return -1;
 }
 
-/*
- * the local root signature for an export: one associated with its name,
- * else one of an association to no export, else one no association names.
- */
+/* one associated with the export's name, else one associated with no export, else one no association names. */
 static D12RootSignature *local_root_for(const D3D12_STATE_OBJECT_DESC *desc, const BYTE *associated,
                                         const WCHAR *name)
 {
@@ -434,7 +426,7 @@ static VkShaderStageFlagBits stage_of(UINT kind)
     }
 }
 
-/* a shader against the global root signature and its local one, as a module. */
+/* compiles against the global root signature and the local one, into a module. */
 static HRESULT compile_shader(D12Device *device, D12StateObject *so, const SoShader *s, D12RootSignature *local,
                               VkShaderModule *module)
 {
@@ -478,11 +470,11 @@ typedef struct Builder {
     VkPipelineShaderStageCreateInfo *stages;
     VkRayTracingShaderGroupCreateInfoKHR *groups;
     UINT stage_count, group_count;
-    /* by shader, its stage, and the root signature it was compiled with. */
+    /* per shader: its stage and the root signature it was compiled with. */
     UINT *stage_of_shader;
 } Builder;
 
-/* the stage of a shader, compiled at its first use with the local root signature of what uses it. */
+/* compiles a shader at first use, with the local root signature of what uses it, and returns its stage. */
 static UINT use_shader(D12Device *device, D12StateObject *so, Builder *b, const WCHAR *name, UINT kind,
                        D12RootSignature *local, HRESULT *hr)
 {
@@ -525,7 +517,7 @@ static VkPipelineCreateFlags pipeline_flags(D12StateObject *so)
     return flags;
 }
 
-/* the groups of this state object's own shaders and hit groups, compiled into a pipeline or a library. */
+/* the groups of this object's own shaders and hit groups, built into a pipeline or a library. */
 static HRESULT build_own(D12Device *device, D12StateObject *so, BOOL library, VkPipeline *out, UINT group_base)
 {
     D12Vk *vk = &device->vk;
@@ -610,7 +602,7 @@ static HRESULT build_own(D12Device *device, D12StateObject *so, BOOL library, Vk
     return hr;
 }
 
-/* the stack sizes of each group's shaders, and direct3d's default pipeline stack size of them. */
+/* each group's shader stack sizes, and Direct3D's default pipeline stack size from them. */
 static void stack_sizes(D12Device *device, D12StateObject *so)
 {
     D12Vk *vk = &device->vk;
@@ -711,7 +703,7 @@ static void state_destroy(D12StateObject *so)
     D12Vk *vk = &device->vk;
     if (so->pipeline)
         vk->vkDestroyPipeline(vk->device, so->pipeline, nullptr);
-    /* a library of its own is the last; the parent's go with the parent. */
+    /* its own library is the last; the parent's belong to the parent. */
     if (so->library_count)
         vk->vkDestroyPipeline(vk->device, so->libraries[so->library_count - 1], nullptr);
     HeapFree(GetProcessHeap(), 0, so->libraries);
@@ -821,7 +813,7 @@ static ULONG STDMETHODCALLTYPE props_release(ID3D12StateObjectProperties1 *iface
     return state_release(&props_impl(iface)->iface);
 }
 
-/* a group this object or its parents identify. */
+/* looks through the parents too. */
 static SoGroup *identified(D12StateObject *so, const WCHAR *name)
 {
     for (D12StateObject *o = so; o; o = o->parent)
@@ -873,7 +865,7 @@ static void STDMETHODCALLTYPE props_set_pipeline_stack_size(ID3D12StateObjectPro
     props_impl(iface)->stack_size = size;
 }
 
-/* programs are work graphs', which mime does not run. */
+/* programs belong to work graphs, which mime does not run. */
 static D3D12_PROGRAM_IDENTIFIER *STDMETHODCALLTYPE props_get_program_identifier(ID3D12StateObjectProperties1 *iface,
                                                                                D3D12_PROGRAM_IDENTIFIER *ret,
                                                                                LPCWSTR name)

@@ -1,6 +1,6 @@
 /*
  * conversion streams: one open driver instance converting buffers the
- * program prepares, its formats and filter kept with the stream.
+ * program prepares, with its formats and filter.
  */
 #include "msacm32_private.h"
 
@@ -15,7 +15,7 @@ static MMRESULT stream_message(ACMSTREAM_ *s, UINT message, LPARAM param)
     return (MMRESULT)AcmDriverMessage(s->driver, message, (LPARAM)&s->instance, param);
 }
 
-/* what a driver says of opening the conversion, without opening it. */
+/* asks a driver whether it would open the conversion, without opening it. */
 static MMRESULT query(ACMDRIVER_ *driver, LPWAVEFORMATEX source, LPWAVEFORMATEX destination, LPWAVEFILTER filter,
                       DWORD flags)
 {
@@ -314,7 +314,7 @@ MSACMAPI MMRESULT WINAPI acmStreamUnprepareHeader(HACMSTREAM has, LPACMSTREAMHEA
     ACMDRVSTREAMHEADER *d = driver_header(h);
     if (d->dwPrepared != (DWORD_PTR)has)
         return MMSYSERR_INVALHANDLE;
-    /* the buffers must be the prepared ones; changed lengths are put back but reported. */
+    /* the buffers must be the prepared ones. changed lengths are restored but reported. */
     if (h->pbSrc != d->pbPreparedSrc || h->pbDst != d->pbPreparedDst)
         return MMSYSERR_INVALPARAM;
     BOOL changed = FALSE;

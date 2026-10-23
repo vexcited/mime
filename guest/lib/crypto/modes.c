@@ -64,8 +64,6 @@ void mime_cfb_decrypt(const MimeCipher *c, const void *key, uint8_t *iv, size_t 
     cfb(c, key, iv, segment, in, out, size, true);
 }
 
-/* ------------------------------------------------------------------ cmac */
-
 static void double_block(uint8_t *out, const uint8_t *in)
 {
     uint8_t carry = in[0] >> 7;
@@ -121,8 +119,6 @@ void mime_cmac_final(MimeCmac *m, uint8_t *tag)
     memset(m->x, 0, 16);
     m->used = 0;
 }
-
-/* ------------------------------------------------------------------ aes key wrap of rfc 3394 */
 
 int mime_aes_wrap(const MimeAes *kek, const uint8_t *in, size_t size, uint8_t *out)
 {

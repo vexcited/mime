@@ -1,7 +1,6 @@
 /*
- * what mime's capture source offers the capture engine over the interfaces of windows: to be asked to deliver the
- * frames in the format the engine will give its sinks, so that the host converts them. a source of another kind does
- * not have it, and the engine converts the few formats it can itself.
+ * mime's capture source extension: the capture engine asks it for frames already in the format its sinks want, so
+ * the host converts them. other sources lack it, and the engine then converts the few formats it can itself.
  */
 #ifndef MIME_WIN32_MIMECAMERA_H
 #define MIME_WIN32_MIMECAMERA_H
@@ -11,8 +10,8 @@
 typedef struct IMimeCaptureSource IMimeCaptureSource;
 
 /*
- * SetOutputSubtype: the subtype of the samples a stream sends from the next start, which it converts to from the
- * camera's, or GUID_NULL for the camera's own. CanConvertTo: whether a subtype of the camera's can become another.
+ * SetOutputSubtype: the subtype a stream sends from its next start, converted from the camera's, or GUID_NULL for
+ * the camera's own. CanConvertTo: whether a camera subtype can be converted to another.
  */
 #define IMimeCaptureSource_METHODS(T)                                                                                  \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \

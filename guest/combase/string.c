@@ -1,9 +1,7 @@
 /*
- * windows runtime strings. the layout is the one windows uses, which
- * C++/WinRT also builds itself: a header with flags, length and the
- * character pointer, then for allocated strings a reference count and the
- * characters. references live in a caller's HSTRING_HEADER and are never
- * freed; a NULL HSTRING is the empty string.
+ * windows runtime strings, in windows' layout which C++/WinRT also builds itself: a header with flags, length and
+ * character pointer, then for allocated strings a reference count and the characters. references live in a caller's
+ * HSTRING_HEADER and are never freed; a NULL HSTRING is the empty string.
  */
 #include "combase_private.h"
 
@@ -153,7 +151,7 @@ static LPCWSTR text_of(HSTRING string, UINT32 *length)
     return WindowsGetStringRawBuffer(string, length);
 }
 
-/* a new string from characters, which are empty for the null string. */
+/* no characters make the null string. */
 static HRESULT make(LPCWSTR text, UINT32 length, HSTRING *out)
 {
     *out = nullptr;
@@ -279,7 +277,7 @@ ROAPI HRESULT WINAPI WindowsTrimStringEnd(HSTRING string, HSTRING trim, HSTRING 
     return make(text, end, result);
 }
 
-/* every match from the left, none overlapping. */
+/* replaces every match from the left, without overlaps. */
 ROAPI HRESULT WINAPI WindowsReplaceString(HSTRING string, HSTRING from, HSTRING to, HSTRING *result)
 {
     if (!result)
@@ -324,8 +322,8 @@ ROAPI HRESULT WINAPI WindowsReplaceString(HSTRING string, HSTRING from, HSTRING 
 }
 
 /*
- * a string whose characters are written by the caller. The handle is the string itself with a magic in its flags,
- * which promoting clears. An empty buffer promotes to the null string.
+ * the handle is the string itself with a magic in its flags, which promotion clears. an empty buffer promotes to the
+ * null string.
  */
 ROAPI HRESULT WINAPI WindowsPreallocateStringBuffer(UINT32 length, WCHAR **buffer, HSTRING_BUFFER *handle)
 {

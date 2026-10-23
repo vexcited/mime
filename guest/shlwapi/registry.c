@@ -1,10 +1,5 @@
-/*
- * registry helpers shlwapi keeps for itself: the wrappers of old shell code, values read from
- * the user's or the machine's side, ini strings and policies.
- */
+/* shlwapi's own registry helpers: old shell wrappers, user or machine values, ini strings and policies. */
 #include "shlwapi_private.h"
-
-/* ------------------------------------------------------------------ wrappers */
 
 LONG WINAPI RegCreateKeyExWrapW(HKEY key, LPCWSTR subkey, DWORD reserved, LPWSTR class_name, DWORD options,
                                 REGSAM access, SECURITY_ATTRIBUTES *security, HKEY *out, DWORD *disposition);
@@ -96,7 +91,7 @@ LONG WINAPI RegSetValueExWrapW(HKEY key, LPCWSTR value, DWORD reserved, DWORD ty
     return RegSetValueExW(key, value, reserved, type, data, size);
 }
 
-/* version.dll's functions, loaded when first used. */
+/* version.dll is loaded on first use. */
 DWORD WINAPI GetFileVersionInfoSizeWrapW(LPCWSTR file, DWORD *handle);
 DWORD WINAPI GetFileVersionInfoSizeWrapW(LPCWSTR file, DWORD *handle)
 {
@@ -121,12 +116,10 @@ BOOL WINAPI VerQueryValueWrapW(const void *block, LPCWSTR path, void **out, UINT
     return query && query(block, path, out, size);
 }
 
-/* ------------------------------------------------------------------ values */
-
 typedef LONG(WINAPI *GET_VALUE_W)(HKEY, LPCWSTR, LPCWSTR, DWORD *, void *, DWORD *);
 typedef LONG(WINAPI *GET_VALUE_A)(HKEY, LPCSTR, LPCSTR, DWORD *, void *, DWORD *);
 
-/* SHGetValue, except in a safe mode boot where nothing is read. */
+/* like SHGetValue, but reads nothing in a safe mode boot. */
 DWORD WINAPI SHGetValueGoodBootW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD *type, void *data, DWORD *size);
 DWORD WINAPI SHGetValueGoodBootW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD *type, void *data, DWORD *size)
 {
@@ -145,7 +138,7 @@ DWORD WINAPI SHGetValueGoodBootA(HKEY key, LPCSTR subkey, LPCSTR value, DWORD *t
     return get ? (DWORD)get(key, subkey, value, type, data, size) : ERROR_PROC_NOT_FOUND;
 }
 
-/* the subkey created when missing, then the value set. */
+/* creates the subkey when missing. */
 LONG WINAPI SHRegSetValue(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD flags, DWORD type, const void *data,
                           DWORD size);
 LONG WINAPI SHRegSetValue(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD flags, DWORD type, const void *data,
@@ -206,8 +199,6 @@ BOOL WINAPI SHRegGetBoolValueFromHKCUHKLM(LPCWSTR subkey, LPCWSTR value, BOOL fa
     }
 }
 
-/* ------------------------------------------------------------------ ini files and policies */
-
 DWORD WINAPI SHGetIniStringW(LPCWSTR section, LPCWSTR key, LPWSTR out, DWORD size, LPCWSTR file);
 DWORD WINAPI SHGetIniStringW(LPCWSTR section, LPCWSTR key, LPWSTR out, DWORD size, LPCWSTR file)
 {
@@ -220,8 +211,8 @@ BOOL WINAPI SHSetIniStringW(LPCWSTR section, LPCWSTR key, LPCWSTR value, LPCWSTR
     return WritePrivateProfileStringW(section, key, value, file);
 }
 
-/* a DWORD of the policies under Software\Microsoft\Windows\CurrentVersion\Policies, the
-   machine's winning over the user's; 0 when neither sets it. */
+/* a DWORD under Software\Microsoft\Windows\CurrentVersion\Policies, the machine's winning over the
+   user's. 0 when neither sets it. */
 DWORD WINAPI SHGetRestriction(LPCWSTR unused, LPCWSTR subkey, LPCWSTR value);
 DWORD WINAPI SHGetRestriction(LPCWSTR unused, LPCWSTR subkey, LPCWSTR value)
 {

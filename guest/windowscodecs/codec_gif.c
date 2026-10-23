@@ -1,19 +1,19 @@
 /*
- * the gif codec: frames in the size of their rectangles with their palettes, and the descriptors, controls and
- * extensions of the file as metadata. The encoder collects frames and writes the file when it is committed.
+ * GIF frames retain their rectangles and palettes; descriptors, controls and extensions become metadata. the encoder
+ * collects frames until commit.
  */
 #include "wic_codec.h"
 #include "codec_util.h"
 #include "meta_codecs.h"
 #include <gif/gif.h>
 
-/* ------------------------------------------------------------------ the decoder */
+/* the decoder. */
 
 typedef struct GifState {
     MimeGif *gif;
     const MimeGifInfo *info;
     UINT frames;
-    WICColor **palettes; /* made when a frame is asked for. */
+    WICColor **palettes; /* allocated on first frame request. */
 } GifState;
 
 static HRESULT gif_error(int code)
@@ -68,7 +68,7 @@ static void gif_close(void *state)
 
 static UINT gif_frame_count(void *state) { return ((GifState *)state)->frames; }
 
-/* the palette of a frame, the transparent color with no alpha, and long enough to hold the transparent index. */
+/* extend the palette through the transparent index and clear that entry's alpha. */
 static const WICColor *frame_palette(GifState *s, UINT index, const MimeGifFrame *f, UINT *count)
 {
     if (!f->palette || !f->palette_size) {
@@ -89,7 +89,7 @@ static const WICColor *frame_palette(GifState *s, UINT index, const MimeGifFrame
     UINT n = f->palette_size;
     if (f->has_transparency) {
         if (f->transparent_index >= n) {
-            /* the palette grows to hold it, with black. */
+            /* fill palette extensions with black. */
             for (UINT i = n; i <= f->transparent_index; i++)
                 s->palettes[index][i] = 0xff000000u;
             n = (UINT)f->transparent_index + 1;
@@ -147,7 +147,7 @@ static HRESULT gif_container_palette(void *state, WICColor *colors, UINT *count)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ metadata */
+/* metadata. */
 
 static HRESULT put_u8(IWICMetadataReader *r, const WCHAR *name, BYTE v)
 {
@@ -179,7 +179,7 @@ static HRESULT add_extension(GifState *s, const MimeGifExtension *ext, IWICMetad
             memcpy(id, ext->header, ext->header_size < 11 ? ext->header_size : 11);
             hr = WicMetaPutBytes(r, L"Application", id, 11);
             if (SUCCEEDED(hr)) {
-                /* the data is the run of sub blocks, each with its length byte, without the terminator. */
+                /* length-prefixed subblocks without their final terminator. */
                 const BYTE *p = ext->data;
                 SIZE_T total = 0;
                 if (ext->chained && p) {
@@ -340,7 +340,7 @@ const WicDecoderOps wic_dec_gif = {
     .metadata = gif_metadata,
 };
 
-/* ------------------------------------------------------------------ the encoder */
+/* the encoder. */
 
 typedef struct GifFrameData {
     UINT width, height;
@@ -410,7 +410,7 @@ static HRESULT gif_write_frame(void *state, UINT index, WicEncFrame *frame)
             f->transparent_index = (BYTE)i;
         }
     }
-    /* the controls the program set win over what the palette says. */
+    /* application controls override palette transparency. */
     IWICMetadataReader *gce = WicBlocksFind(frame->metadata, &GUID_MetadataFormatGCE);
     if (gce) {
         UINT32 v;
@@ -529,7 +529,7 @@ static HRESULT gif_finish(void *state, IWICPalette *palette, IWICBitmapSource *t
         ef.top = (uint16_t)f->top;
         ef.width = (uint16_t)f->width;
         ef.height = (uint16_t)f->height;
-        /* a frame with the global palette does not repeat it. */
+        /* omit the local palette when it matches the global one. */
         BOOL same = global_size && f->palette_size == global_size && !memcmp(f->palette, global, (SIZE_T)global_size * 3);
         if (!same) {
             ef.palette = f->palette;

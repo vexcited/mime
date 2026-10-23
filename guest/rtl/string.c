@@ -1,4 +1,4 @@
-/* counted string helpers (rtl). */
+/* counted string helpers. */
 #include "rtl.h"
 
 void NTAPI RtlInitUnicodeString(PUNICODE_STRING dst, PCWSTR src)
@@ -143,8 +143,8 @@ NTSTATUS NTAPI RtlUpcaseUnicodeString(PUNICODE_STRING dst, PCUNICODE_STRING src,
 }
 
 /*
- * the ansi code page is windows-1252. characters outside latin-1 map to
- * '?' when narrowing; widening maps 0x80..0x9F through the cp1252 table.
+ * the ansi code page is windows-1252. narrowing maps characters outside latin-1 to '?', widening maps 0x80..0x9F
+ * through the cp1252 table.
  */
 static constexpr WCHAR g_cp1252_high[32] = {
     0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160,
@@ -405,7 +405,7 @@ NTSTATUS NTAPI RtlUnicodeStringToInteger(PCUNICODE_STRING s, ULONG base, PULONG 
 
 NTSTATUS NTAPI RtlHashUnicodeString(PCUNICODE_STRING s, BOOLEAN case_insensitive, ULONG algorithm, PULONG hash)
 {
-    /* the x65599 hash, as used by HASH_STRING_ALGORITHM_X65599 and the loader. */
+    /* x65599, as HASH_STRING_ALGORITHM_X65599 and the loader use. */
     ULONG h = 0;
     for (USHORT i = 0; i < s->Length / sizeof(WCHAR); i++) {
         WCHAR c = case_insensitive ? towupper(s->Buffer[i]) : s->Buffer[i];

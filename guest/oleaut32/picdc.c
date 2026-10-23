@@ -1,7 +1,6 @@
 /*
- * the context every picture is drawn through, and the sizes of pictures. One memory context compatible with the
- * screen serves the whole process, and the lock around it makes drawing one picture at a time, since a bitmap can be
- * selected into one context only.
+ * the dc all pictures are drawn through, and picture sizes. One screen compatible memory dc serves the process, and
+ * its lock draws one picture at a time, since a bitmap can be selected into only one dc.
  */
 #include "picture.h"
 
@@ -21,7 +20,7 @@ void PicUnlock(void)
     ReleaseSRWLockExclusive(&g_draw_lock);
 }
 
-/* the context, made on first use with a bitmap of one pixel selected, which stands for the default one. */
+/* created on first use with a 1x1 bitmap selected, standing in for the default one. */
 HDC PicDc(void)
 {
     AcquireSRWLockExclusive(&g_make_lock);
@@ -58,7 +57,7 @@ int PicDpiY(void)
     return PicDc() ? g_dpi[1] : 0;
 }
 
-/* pixels as himetric units at the resolution of the display, rounded to the nearest. */
+/* at the display's dpi, rounded to nearest. */
 HRESULT PicPixelsToHimetric(const SIZE *pixels, SIZE *himetric)
 {
     int dpi_x = PicDpiX(), dpi_y = PicDpiY();
@@ -84,7 +83,6 @@ static HRESULT measure_bitmap(PIC_IMAGE *image)
     return PicPixelsToHimetric(&image->Pixels, &image->Himetric);
 }
 
-/* the sizes of a picture, from what it holds. */
 HRESULT PicMeasure(PIC_IMAGE *image)
 {
     switch (image->Kind) {

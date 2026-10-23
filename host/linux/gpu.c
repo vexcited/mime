@@ -1,27 +1,10 @@
 /*
- * gpu channels on vulkan.
- *
- * each guest process that renders with opengl gets a channel (mime/gpu.h):
- * a thread here executes the commands it writes in its ring, in order, and
- * records them for vulkan. the commands are at metal's level, which vulkan
- * matches closely: the guest keeps the graphics api state, decides render
- * passes and only sends what changes. memory the commands name is guest
- * memory the gpu reads and writes in place, imported into buffers with
- * VK_EXT_external_memory_host.
- *
- * every image stays in VK_IMAGE_LAYOUT_GENERAL, so passes, copies and
- * sampling only need memory barriers between them, but for a surface's
- * back buffer while the presenter shows it. state metal keeps in its
- * pipelines is dynamic here: depth, stencil, culling and topology go with
- * the draws, and a guest pipeline is one vulkan pipeline. the program's
- * uniforms live in a ring the draws index with a dynamic offset.
- *
- * rows keep gl's order in every image, bottom first: vulkan's framebuffer
- * rows run from gl's bottom without a flip, and VK_EXT_depth_clip_control
- * takes gl's depth range. programs are compiled to spir-v on worker threads
- * (host/gpu/shader.c) while the ring goes on; a pipeline waits for its
- * program. surfaces keep a back buffer the guest renders to, shown on the
- * window by the vulkan presenter (vkwsi.c).
+ * replays per-process OpenGL command rings through Vulkan. the guest owns API state and render passes;
+ * VK_EXT_external_memory_host imports guest memory directly. images stay in VK_IMAGE_LAYOUT_GENERAL except back
+ * buffers held by the presenter. depth, stencil, culling and topology are dynamic, and uniform-ring data uses
+ * dynamic offsets. rows retain OpenGL's bottom-first order, with VK_EXT_depth_clip_control preserving its depth
+ * range. worker threads compile SPIR-V through host/gpu/shader.c; pipelines wait for programs and vkwsi.c presents
+ * back buffers.
  */
 #include "../gpu/gpu.h"
 #include "../gpu/shader.h"
@@ -35,7 +18,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/* the metal values the guest sends. */
+/* the Metal values the guest sends. */
 enum {
     PIXEL_BGRA8 = 80,
     PIXEL_D32 = 252,
@@ -136,7 +119,7 @@ static void init_device(void)
     VkPhysicalDevice devices[8];
     if (g_vk.fn.vkEnumeratePhysicalDevices(g_vk.instance, &count, devices) < 0 || !count)
         return;
-    /* the first discrete gpu, else the first one with vulkan 1.3. */
+    /* the first discrete GPU, else the first one with Vulkan 1.3. */
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     for (int pass = 0; pass < 2 && !physical; pass++) {
         for (uint32_t i = 0; i < count; i++) {
@@ -192,7 +175,7 @@ static void init_device(void)
     if (!g_clip_control)
         mime_warn("gpu: no VK_EXT_depth_clip_control: depth keeps vulkan's range");
 
-    /* what the gpu has of what gl may use. */
+    /* queries capabilities used by OpenGL. */
     VkPhysicalDeviceRobustness2FeaturesEXT robust = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dyn3 = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT, robustness ? &robust : nullptr};
@@ -290,7 +273,7 @@ static void init_device(void)
 static VkFormat pixel_format(uint32_t f)
 {
     switch (f) {
-    case 1: return VK_FORMAT_R8_UNORM; /* alpha 8, swizzled */
+    case 1: return VK_FORMAT_R8_UNORM; /* alpha 8, swizzled. */
     case 10: return VK_FORMAT_R8_UNORM;
     case 11: return VK_FORMAT_R8_SRGB;
     case 12: return VK_FORMAT_R8_SNORM;
@@ -383,7 +366,7 @@ static bool is_compressed(VkFormat f)
     return f >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && f <= VK_FORMAT_BC7_SRGB_BLOCK;
 }
 
-/* bytes of a texel, or of a 4 by 4 block of a compressed format, as buffer copies count them. */
+/* copy unit size: one texel or one compressed 4 by 4 block. */
 static uint32_t texel_bytes(VkFormat f, VkImageAspectFlags aspect)
 {
     if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT)
@@ -441,7 +424,7 @@ static VkFormat vertex_format(uint32_t f)
     VkFormatProperties props;
     g_vk.fn.vkGetPhysicalDeviceFormatProperties(g_vk.physical_device, v, &props);
     if (v && !(props.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT)) {
-        /* three components the gpu cannot fetch read as four, the fourth from the next element. */
+        /* three components the GPU cannot fetch read as four, the fourth from the next element. */
         static const VkFormat wider[][2] = {
             {VK_FORMAT_R8G8B8_UINT, VK_FORMAT_R8G8B8A8_UINT}, {VK_FORMAT_R8G8B8_SINT, VK_FORMAT_R8G8B8A8_SINT},
             {VK_FORMAT_R8G8B8_UNORM, VK_FORMAT_R8G8B8A8_UNORM}, {VK_FORMAT_R8G8B8_SNORM, VK_FORMAT_R8G8B8A8_SNORM},
@@ -471,7 +454,7 @@ static VkBlendFactor blend_factor(uint8_t f)
     return f < sizeof(table) / sizeof(table[0]) ? table[f] : VK_BLEND_FACTOR_ONE;
 }
 
-/* metal's write mask has red in its high bit, vulkan's in its low one. */
+/* Metal's write mask has red in its high bit, Vulkan's in its low one. */
 static VkColorComponentFlags write_mask(uint8_t m)
 {
     return ((m & 8) ? VK_COLOR_COMPONENT_R_BIT : 0) | ((m & 4) ? VK_COLOR_COMPONENT_G_BIT : 0) |
@@ -490,7 +473,7 @@ static VkSamplerAddressMode address_mode(uint8_t m)
     }
 }
 
-/* metal's swizzle names zero, one, then red to alpha from 0; vulkan's from 1 after identity. */
+/* Metal's swizzle names zero, one, then red to alpha from 0; Vulkan's from 1 after identity. */
 static VkComponentSwizzle component(uint8_t s)
 {
     return s <= 5 ? (VkComponentSwizzle)(s + 1) : VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -513,7 +496,7 @@ typedef struct Block {
 } Block;
 
 typedef struct Alloc {
-    Block *block; /* null for memory of its own */
+    Block *block; /* null for memory of its own. */
     VkDeviceMemory memory;
     VkDeviceSize offset, size;
 } Alloc;
@@ -559,7 +542,6 @@ static void block_give(Block *b, VkDeviceSize offset, VkDeviceSize size)
     while (i < b->free_count && b->free[i].offset < offset)
         i++;
     range_insert(b, i, (Range){offset, size});
-    /* merges with the neighbors. */
     if (i + 1 < b->free_count && b->free[i].offset + b->free[i].size == b->free[i + 1].offset) {
         b->free[i].size += b->free[i + 1].size;
         memmove(&b->free[i + 1], &b->free[i + 2], (b->free_count - i - 2) * sizeof(Range));
@@ -631,7 +613,7 @@ static void release_alloc(Alloc *a)
 /* ---------------------------------------------------------------- objects */
 
 typedef struct View {
-    uint32_t key; /* level, slice and aspect */
+    uint32_t key; /* level, slice and aspect. */
     VkImageView view;
 } View;
 
@@ -665,14 +647,14 @@ typedef struct Pipeline {
     bool valid;
     MimeGpuPipelineDesc desc;
     Program *program;
-    VkPipeline variants[4]; /* fill mode times depth clamp, when they are not dynamic */
+    VkPipeline variants[4]; /* fill mode times depth clamp, when they are not dynamic. */
 } Pipeline;
 
 typedef struct Surface {
     Texture color, depth;
     MvkImageChain *chain;
     VkSemaphore rendered;
-    bool presented;  /* in the presenter's hands: the next use waits for it */
+    bool presented;  /* in the presenter's hands: the next use waits for it. */
     uint32_t width, height, samples;
     uint16_t depth_format, stencil_format;
     uint32_t window_id;
@@ -686,7 +668,7 @@ typedef struct Binding {
     bool surface;
 } Binding;
 
-/* what is destroyed once the gpu passed the batch that used it last. */
+/* deferred destruction after the last batch using each object completes. */
 typedef struct Garbage {
     uint64_t value;
     VkImage image;
@@ -697,9 +679,9 @@ typedef struct Garbage {
 
 typedef struct Batch {
     VkCommandBuffer cmd;
-    uint64_t value;      /* of the channel's timeline, 0 while recording or free */
-    uint64_t fence;      /* the guest's fence it signals, 0 for none */
-    uint32_t ring_start; /* where the uniform ring was when it began */
+    uint64_t value;      /* of the channel's timeline, 0 while recording or free. */
+    uint64_t fence;      /* the guest's fence it signals, 0 for none. */
+    uint32_t ring_start; /* where the uniform ring was when it began. */
     VkDescriptorPool pools[16];
     uint32_t pool_count;
 } Batch;
@@ -721,19 +703,19 @@ typedef struct Channel {
 
     VkCommandPool pool;
     VkSemaphore timeline;
-    uint64_t submitted;            /* the last value of the timeline submitted */
-    volatile uint64_t completed;   /* the last one the gpu passed */
+    uint64_t submitted;            /* the last value of the timeline submitted. */
+    volatile uint64_t completed;   /* the last one the GPU passed. */
     pthread_mutex_t retire_lock;
     pthread_cond_t retire_cond;
     bool retire_stop;
     Batch batches[MAX_BATCHES];
-    Batch *batch;                  /* recording, or null */
+    Batch *batch;                  /* recording, or null. */
     VkSemaphore waits[8];
     uint32_t wait_count;
-    VkSemaphore signal;            /* a binary semaphore the batch signals, for the presenter */
+    VkSemaphore signal;            /* a binary semaphore the batch signals, for the presenter. */
     struct {
         uint64_t value, fence;
-    } fences[256];                 /* guest fences by batch value, for the retirer */
+    } fences[256];                 /* guest fences by batch value, for the retirer. */
     uint32_t fence_head, fence_tail;
     Garbage *garbage;
     uint32_t garbage_count, garbage_cap;
@@ -781,7 +763,7 @@ typedef struct Channel {
         uint32_t vb_mask;
         uint8_t uniforms[4096];
         uint32_t uniform_bytes;
-        uint32_t uniform_offset; /* in the ring, for the dynamic offset */
+        uint32_t uniform_offset; /* in the ring, for the dynamic offset. */
         bool uniforms_placed;
         MimeGpuMem uniform_buffers[MIME_GPU_STAGES][MIME_GPU_MAX_UNIFORM_BLOCKS];
         uint32_t uniform_buffer_mask[MIME_GPU_STAGES];
@@ -903,7 +885,7 @@ static void destroy_garbage(Garbage *g)
     release_alloc(&g->mem);
 }
 
-/* frees what batches the gpu passed held. */
+/* releases resources held by completed batches. */
 static void collect(Channel *c)
 {
     uint64_t done = __atomic_load_n(&c->completed, __ATOMIC_ACQUIRE);
@@ -943,7 +925,7 @@ static void wait_value(Channel *c, uint64_t value)
         ;
 }
 
-/* the batch being recorded, begun on a free command buffer. */
+/* starts recording on a free command buffer. */
 static Batch *batch(Channel *c)
 {
     if (c->batch)
@@ -953,7 +935,6 @@ static Batch *batch(Channel *c)
         if (!c->batches[i].value)
             pick = &c->batches[i];
     if (!pick) {
-        /* the oldest one in flight. */
         for (int i = 0; i < MAX_BATCHES; i++)
             if (!pick || c->batches[i].value < pick->value)
                 pick = &c->batches[i];
@@ -1035,14 +1016,14 @@ static void signal_fence(Channel *c, uint64_t value)
         mime_vm_raise_irq(c->vm, MIME_IRQ_GPU);
 }
 
-/* submits what was recorded; fence, when not 0, is signaled to the guest once the gpu finished it. */
+/* submits recorded commands and signals a nonzero guest fence after completion. */
 static void commit(Channel *c, uint64_t fence)
 {
     end_rendering(c);
     if (!c->batch && !fence && !c->wait_count && !c->signal)
         return;
     Batch *b = batch(c);
-    /* the host reads what the gpu wrote of guest memory. */
+    /* the host reads what the GPU wrote of guest memory. */
     VkMemoryBarrier2 mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, nullptr, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                            VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT};
     VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 1, &mb};
@@ -1087,7 +1068,7 @@ static void commit(Channel *c, uint64_t fence)
     pthread_mutex_unlock(&c->retire_lock);
 }
 
-/* follows the timeline: guest fences are signaled as the gpu passes their batches. */
+/* signals guest fences as their batch timeline values complete. */
 static void *retire_main(void *arg)
 {
     Channel *c = arg;
@@ -1133,11 +1114,9 @@ static void *retire_main(void *arg)
 /* ---------------------------------------------------------------- uniform ring */
 
 /*
- * room in the uniform ring. what the batches the gpu has not passed and the
- * one being recorded wrote, from the oldest one's start to the head, stays;
- * when the ring is full the oldest batches are waited for, and a batch that
- * filled it alone is submitted. null when the batch changed: what the caller
- * prepared for it goes with it.
+ * preserves uniform data from the oldest unfinished batch through the current head. a full ring waits for old
+ * batches, or submits the current batch if it filled the ring alone. returns null if the batch changed, invalidating
+ * the caller's prepared state.
  */
 static uint8_t *ring_alloc(Channel *c, uint32_t bytes, uint32_t *offset)
 {
@@ -1212,7 +1191,7 @@ static VkImageViewType view_type(uint32_t type)
     }
 }
 
-/* the view sampling reads: the depth of a depth and stencil format, with the swizzle of metal's format and the guest's. */
+/* sampling uses the depth aspect of depth-stencil images, combining format and guest swizzles. */
 static VkImageView sampled_view(Texture *t)
 {
     VkComponentMapping base = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B,
@@ -1242,7 +1221,7 @@ static VkImageView sampled_view(Texture *t)
     return view;
 }
 
-/* a view of one level and slice, for passes and blits. */
+/* single-level, single-slice view for passes and blits. */
 static VkImageView attachment_view(Texture *t, uint32_t level, uint32_t slice)
 {
     uint32_t key = level << 16 | slice;
@@ -1358,7 +1337,7 @@ static bool texture_make(Texture *t, uint32_t type, uint32_t mtl_format, uint32_
     return true;
 }
 
-/* a new image goes to the general layout, where every image stays. */
+/* new images start in GENERAL; presentation may temporarily change back-buffer layout. */
 static void texture_init_layout(Channel *c, Texture *t)
 {
     image_layout(c, t->image, t->aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
@@ -1518,7 +1497,6 @@ static void append_program_error(MimeShaderResult *result, const char *message)
     info->size = result->info_size = (uint32_t)size;
 }
 
-/* the descriptor set layout and the modules of a compiled program. */
 static bool program_objects(Program *p, MimeShaderResult *r)
 {
     for (int s = 0; s < MIME_GPU_STAGES; s++) {
@@ -1642,7 +1620,7 @@ static void program_wait(Program *p)
     pthread_mutex_unlock(&p->lock);
 }
 
-/* after the gpu is done with it: a pipeline of the program may be in flight. */
+/* after the GPU is done with it: a pipeline of the program may be in flight. */
 static void program_free(Program *p)
 {
     program_wait(p);
@@ -1668,7 +1646,7 @@ static void program_create(Channel *c, const MimeGpuProgramCreate *pc)
     }
     Program **slotp = SLOT(c, programs, pc->id);
     if (*slotp) {
-        /* pipelines made from it are gone with the guest's: the gpu finishes what it recorded first. */
+        /* waits for pending GPU work before destroying pipelines derived from the guest program. */
         commit(c, 0);
         wait_value(c, c->submitted);
         program_free(*slotp);
@@ -1884,7 +1862,7 @@ static void pipeline_create(Channel *c, const MimeGpuPipelineCreate *pc)
     pl->desc = pc->desc;
     pl->program = p;
     pl->valid = true;
-    /* the variant draws use most, made now rather than at the first draw. */
+    /* prebuilds the most common pipeline variant. */
     pl->variants[0] = build_pipeline(pl, 0, false);
 }
 
@@ -1916,7 +1894,7 @@ static void sampler_create(Channel *c, const MimeGpuSamplerCreate *s)
                                             : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     float lod_max = s->lod_max;
     if (!s->mip_filter)
-        lod_max = 0.25f; /* not mipmapped: the base level, as metal samples it */
+        lod_max = 0.25f; /* not mipmapped: the base level, as Metal samples it. */
     VkSamplerCreateInfo info = {
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .magFilter = filter(s->mag_filter),
@@ -2027,7 +2005,7 @@ static void surface_destroy(Channel *c, uint32_t id_)
     memset(s, 0, sizeof(*s));
 }
 
-/* the back buffer goes to the presenter, which copies it to the window once the gpu drew it. */
+/* hands the back buffer to the presenter, which waits for rendering before copying it to the window. */
 static void present(Channel *c, uint32_t id_)
 {
     Surface *s = id_ < c->surfaces_cap ? &c->surfaces[id_] : nullptr;
@@ -2071,7 +2049,7 @@ static VkAttachmentLoadOp load_op(uint8_t load)
                                 : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 }
 
-/* opens rendering to the guest pass, its load actions those the guest gave. */
+/* begins rendering with the guest's load actions. */
 static bool begin_rendering(Channel *c)
 {
     if (c->rendering)
@@ -2123,7 +2101,7 @@ static bool begin_rendering(Channel *c)
                 any_stencil = true;
         }
     }
-    /* vulkan renders depth and stencil of one image: a pass with both takes them from the same view. */
+    /* depth and stencil must use the same image view when both are attached. */
     if (any_depth && any_stencil && depth.imageView != stencil.imageView)
         any_stencil = false;
     if (!any_depth && any_stencil && !(c->pass_stencil))
@@ -2150,7 +2128,7 @@ static void end_rendering(Channel *c)
     if (!c->rendering) {
         if (!c->pass_live)
             return;
-        /* a pass that only clears still clears. */
+        /* a pass with no draws must still execute its clears. */
         bool clears = false;
         for (int i = 0; i < ATTACHMENTS; i++)
             clears |= pass_att(c, i)->id && pass_att(c, i)->load == LOAD_CLEAR;
@@ -2159,7 +2137,7 @@ static void end_rendering(Channel *c)
     }
     g_vk.fn.vkCmdEndRendering(cbuf(c));
     c->rendering = false;
-    /* the pass goes on with what it left. */
+    /* resumed rendering loads the previous contents. */
     for (int i = 0; i < ATTACHMENTS; i++)
         pass_att(c, i)->load = LOAD_LOAD;
 }
@@ -2210,7 +2188,7 @@ static VkDescriptorSet allocate_set(Channel *c, VkDescriptorSetLayout layout)
                 return set;
         }
         if (b->pool_count == 16) {
-            /* the batch is full of descriptor sets: it goes, and a new one starts. */
+            /* submits the batch and starts another when descriptor capacity is exhausted. */
             commit(c, 0);
             b = batch(c);
         }
@@ -2247,7 +2225,7 @@ static Texture *dummy_for(uint32_t gl_type)
     }
 }
 
-/* a set with the program's textures and named blocks; the loose uniforms are its dynamic part. */
+/* binds textures and named blocks; loose uniforms use a dynamic offset. */
 static bool write_set(Channel *c, Program *p)
 {
     VkDescriptorSet set = allocate_set(c, p->set_layout);
@@ -2278,7 +2256,7 @@ static bool write_set(Channel *c, Program *p)
             uint64_t off = 0, range = m->bytes ? m->bytes : 16;
             VkBuffer buf = mem ? heap(c, mem, range, &off) : VK_NULL_HANDLE;
             if (!buf) {
-                /* nothing bound reads zeros of the ring's start, as metal would read nothing defined. */
+                /* nothing bound reads zeros of the ring's start, as Metal would read nothing defined. */
                 buf = c->uniforms;
                 off = 0;
             }
@@ -2306,9 +2284,7 @@ static bool write_set(Channel *c, Program *p)
 }
 
 /*
- * places the uniforms and the descriptor set the draw needs in the batch,
- * which their allocation may submit and replace: then they are placed again
- * in the new one.
+ * allocating uniforms or descriptors may submit and replace the batch. retry both in the new batch if that happens.
  */
 static bool place_resources(Channel *c, Program *p)
 {
@@ -2350,7 +2326,6 @@ static bool place_resources(Channel *c, Program *p)
     return false;
 }
 
-/* applies the state the guest changed since the last draw. */
 static bool flush_state(Channel *c)
 {
     Pipeline *pl = c->st.pipeline;
@@ -2361,7 +2336,7 @@ static bool flush_state(Channel *c)
     if (!pipeline)
         return false;
     if (!c->rendering) {
-        /* resources first: rendering opens in the batch they settle in. */
+        /* allocates resources before opening rendering in their final batch. */
         c->st.set = VK_NULL_HANDLE;
         if (!place_resources(c, pl->program) || !begin_rendering(c))
             return false;
@@ -2661,7 +2636,7 @@ static void blit(Channel *c, const MimeGpuBlit *b)
         VkImageCopy region = {ss, {b->src_x0, b->src_y0, 0}, ds, {b->dst_x0, b->dst_y0, 0}, {(uint32_t)sw, (uint32_t)sh, 1}};
         g_vk.fn.vkCmdCopyImage(cb, src->image, VK_IMAGE_LAYOUT_GENERAL, dst->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
     } else if (src->samples > 1 && dst->samples == 1 && !depth) {
-        /* a resolve: the whole source into the destination, which has its size. */
+        /* resolves the entire source into an equally sized destination. */
         int32_t w = (int32_t)(src->width < dst->width ? src->width : dst->width);
         int32_t h = (int32_t)(src->height < dst->height ? src->height : dst->height);
         if (src->format == dst->format) {
@@ -2669,7 +2644,10 @@ static void blit(Channel *c, const MimeGpuBlit *b)
             g_vk.fn.vkCmdResolveImage(cb, src->image, VK_IMAGE_LAYOUT_GENERAL, dst->image, VK_IMAGE_LAYOUT_GENERAL, 1,
                                       &region);
         } else {
-            /* vulkan resolves to the same format: through an image of the source's, converted by a blit. */
+            /*
+             * Vulkan requires matching resolve formats; resolve to a temporary source-format image, then convert
+             * with a blit.
+             */
             Texture tmp;
             if (!texture_make(&tmp, TEXTURE_2D, src->mtl_format, (uint32_t)w, (uint32_t)h, 1, 1, 1, false))
                 return;
@@ -2703,7 +2681,7 @@ static bool draw_ready(Channel *c)
 {
     if (!c->pass_live || !c->st.pipeline)
         return false;
-    /* sampled surfaces the presenter has come back first, outside rendering. */
+    /* reacquires sampled surfaces from the presenter before rendering begins. */
     for (int s = 0; s < MIME_GPU_STAGES; s++)
         for (uint32_t m = c->st.tex_mask[s], i; m; m &= m - 1) {
             i = (uint32_t)__builtin_ctz(m);
@@ -2721,7 +2699,7 @@ static void set_topology(Channel *c, uint32_t primitive)
     VkCommandBuffer cb = cbuf(c);
     VkPrimitiveTopology t = (VkPrimitiveTopology)(primitive <= 4 ? primitive : 3);
     g_vk.fn.vkCmdSetPrimitiveTopology(cb, t);
-    /* metal restarts strips at the largest index, always. */
+    /* Metal restarts strips at the largest index, always. */
     g_vk.fn.vkCmdSetPrimitiveRestartEnable(cb, t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
                                                    t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
 }
@@ -2918,7 +2896,7 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
         }
         memcpy(c->st.uniforms, u + 1, n);
         if (n != c->st.uniform_bytes)
-            c->st.dirty |= DIRTY_SET; /* the dynamic buffer's range follows the size */
+            c->st.dirty |= DIRTY_SET; /* the dynamic buffer's range follows the size. */
         c->st.uniform_bytes = n;
         c->st.uniforms_placed = false;
         c->st.dirty |= DIRTY_UNIFORMS;
@@ -2970,7 +2948,7 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
 /* spins a little before sleeping: a guest in the middle of a frame publishes again within microseconds. */
 static bool wait_for_work(Channel *c, uint64_t get)
 {
-    /* what was recorded goes to the gpu before the thread waits, unless the guest goes on at once. */
+    /* submits pending work before sleeping unless the guest immediately supplies more. */
     if (c->batch) {
         double end = now_s() + 0.0005;
         while (__atomic_load_n(&c->hdr->put, __ATOMIC_ACQUIRE) == get && !c->stop && now_s() < end)

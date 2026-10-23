@@ -1,10 +1,10 @@
 /*
- * file version information: the RT_VERSION resource of a module copied into
- * a caller buffer, and VerQueryValue walking its VS_VERSIONINFO tree.
+ * file version information: a module's RT_VERSION resource copied into a
+ * caller buffer, and VerQueryValue walking its VS_VERSIONINFO tree.
  *
- * the buffer layout is the one of windows: the resource rounded to a dword,
- * the "FE2X" signature, then as many bytes again where VerQueryValueA writes
- * the ansi copies of the strings it returns.
+ * the buffer layout matches windows: the resource rounded to a dword, the
+ * "FE2X" signature, then as many bytes again where VerQueryValueA writes the
+ * ansi copies of the strings it returns.
  */
 #define MIME_BUILD_VERSION
 #include <mime/nt.h>
@@ -19,7 +19,7 @@ static WORD rd16(const BYTE *p)
     return (WORD)(p[0] | p[1] << 8);
 }
 
-/* the version resource of a module loaded as data, NULL with the windows error set. */
+/* the module is loaded as data. NULL with the windows error set. */
 static const BYTE *find_version(HMODULE module, DWORD *size)
 {
     HRSRC res = FindResourceW(module, MAKEINTRESOURCEW(VS_VERSION_INFO), MAKEINTRESOURCEW(16));
@@ -47,7 +47,7 @@ VERAPI DWORD WINAPI GetFileVersionInfoSizeExW(DWORD flags, LPCWSTR file, LPDWORD
         *handle = 0;
     HMODULE module = load_data(file);
     if (!module) {
-        /* 16 bit ne files are where windows looks next; mime has none, so no resource. */
+        /* windows would try 16-bit ne files next; mime has none. */
         if (GetLastError() != ERROR_FILE_NOT_FOUND)
             SetLastError(ERROR_RESOURCE_DATA_NOT_FOUND);
         return 0;
@@ -115,7 +115,7 @@ VERAPI BOOL WINAPI GetFileVersionInfoW(LPCWSTR file, DWORD handle, DWORD size, L
     return GetFileVersionInfoExW(FILE_VER_GET_LOCALISED, file, handle, size, data);
 }
 
-/* one node of the tree: wLength, wValueLength, wType, the key, then the value and the children. */
+/* wLength, wValueLength, wType, the key, then the value and the children. */
 typedef struct VER_NODE {
     const BYTE *Base;
     WORD Length, ValueLength, Type;
@@ -154,7 +154,7 @@ static BOOL parse_node(const BYTE *p, const BYTE *limit, VER_NODE *n)
 
 static BOOL query_value(const BYTE *block, LPCWSTR path, VER_NODE *found)
 {
-    /* 16 bit blocks, marked "VS" here, come from ne files mime cannot load. */
+    /* 16-bit blocks, marked "VS" here, come from ne files mime cannot load. */
     if (rd16(block + 4) != 0)
         return FALSE;
     if ((WORD)(rd16(block) - 8) > 0x7FF8) {
@@ -242,7 +242,7 @@ VERAPI BOOL WINAPI VerQueryValueA(LPCVOID block, LPCSTR sub_block, LPVOID *buffe
         SetLastError(0);
         return TRUE;
     }
-    /* strings go to the ansi area GetFileVersionInfo reserved after the signature, at the same offset. */
+    /* strings go to the same offset in the ansi area GetFileVersionInfo reserved after the signature. */
     DWORD aligned = (rd16(base) + 3u) & ~3u;
     if (*(const DWORD UNALIGNED *)(base + aligned) != SIGNATURE_FE2X) {
         SetLastError(ERROR_INVALID_DATA);
@@ -269,7 +269,6 @@ VERAPI BOOL WINAPI VerQueryValueA(LPCVOID block, LPCSTR sub_block, LPVOID *buffe
     return TRUE;
 }
 
-/* ansi entry points. */
 
 static LPWSTR to_wide(LPCSTR s)
 {
@@ -322,7 +321,7 @@ VERAPI BOOL WINAPI GetFileVersionInfoA(LPCSTR file, DWORD handle, DWORD size, LP
     return GetFileVersionInfoExA(FILE_VER_GET_LOCALISED, file, handle, size, data);
 }
 
-/* VerLanguageName: the localized display name of a language id, "Language Neutral" for 0. */
+/* "Language Neutral" for 0. */
 VERAPI DWORD WINAPI VerLanguageNameW(DWORD lang, LPWSTR buffer, DWORD size)
 {
     WCHAR name[128];
@@ -384,10 +383,9 @@ static DWORD copy_dir(LPCWSTR src, LPWSTR dst, PUINT len)
 }
 
 /*
- * VerFindFile: the directory holding the current copy of the file, searched
- * in the application then the windows and system directories, and where a
- * new copy belongs: the system directory for shared files, else the
- * application directory.
+ * the current copy is searched in the application, then the windows and system
+ * directories. a new copy belongs in the system directory for shared files,
+ * else in the application directory.
  */
 VERAPI DWORD WINAPI VerFindFileW(DWORD flags, LPCWSTR file, LPCWSTR win_dir, LPCWSTR app_dir, LPWSTR cur_dir,
                                  PUINT cur_dir_len, LPWSTR dest_dir, PUINT dest_dir_len)
@@ -454,10 +452,7 @@ static void join(WCHAR *out, LPCWSTR dir, LPCWSTR file)
     lstrcpynW(out + n, file, (int)(MAX_PATH - n));
 }
 
-/*
- * VerInstallFile: copies the source over the destination, without the version
- * comparisons and the compressed sources windows also handles.
- */
+/* copies the source over the destination, skipping the version checks and compressed sources windows handles. */
 VERAPI DWORD WINAPI VerInstallFileW(DWORD flags, LPCWSTR src_file, LPCWSTR dest_file, LPCWSTR src_dir,
                                     LPCWSTR dest_dir, LPCWSTR cur_dir, LPWSTR tmp_file, PUINT tmp_file_len)
 {

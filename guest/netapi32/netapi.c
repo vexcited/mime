@@ -1,9 +1,9 @@
 /*
- * lan manager network functions of a standalone machine.
+ * lan manager functions for a standalone machine.
  *
  * mime has no network stack, so there is no server service sharing folders
- * and no remote machine to reach. the machine is a member of the default
- * workgroup, the state windows setup leaves a computer in.
+ * and no remote machine to reach. the machine is in the default workgroup,
+ * as Windows setup leaves it.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -37,10 +37,8 @@ typedef struct _WKSTA_INFO_102 {
     DWORD wki102_logged_on_users;
 } WKSTA_INFO_102;
 
-/* the workgroup windows setup joins, recorded nowhere else in mime. */
+/* the workgroup Windows setup joins; mime records it nowhere else. */
 static constexpr WCHAR g_workgroup[] = L"WORKGROUP";
-
-/* ---------------------------------------------------------------- buffers */
 
 NETAPI NET_API_STATUS WINAPI NetApiBufferAllocate(DWORD size, LPVOID *buffer)
 {
@@ -80,8 +78,6 @@ NETAPI NET_API_STATUS WINAPI NetApiBufferSize(LPVOID buffer, LPDWORD size)
     *size = (DWORD)LocalSize(buffer);
     return NERR_Success;
 }
-
-/* ---------------------------------------------------------------- machine */
 
 static BOOL local_server(LMCSTR server)
 {
@@ -149,8 +145,6 @@ NETAPI NET_API_STATUS WINAPI NetWkstaGetInfo(LMSTR server, DWORD level, LPBYTE *
     *buffer = (LPBYTE)info;
     return NERR_Success;
 }
-
-/* ---------------------------------------------------------------- shares */
 
 /* the server service is not running, and other machines cannot be reached. */
 NETAPI NET_API_STATUS WINAPI NetShareEnum(LMSTR server, DWORD level, LPBYTE *buffer, DWORD max_length,

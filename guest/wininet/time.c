@@ -1,7 +1,4 @@
-/*
- * http dates: InternetTimeToSystemTime reads the rfc 1123, rfc 850 and asctime forms of rfc 7231, and
- * InternetTimeFromSystemTime writes rfc 1123.
- */
+/* HTTP dates: parse RFC 1123, RFC 850 and asctime forms from RFC 7231; serialize RFC 1123. */
 #include "wininet_private.h"
 
 static const char Days[7][4] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
@@ -33,7 +30,7 @@ static int DaysIn(int year, int month)
     return month == 2 && leap ? 29 : days[month - 1];
 }
 
-/* the date in any of the three forms, names matched on their first three letters in any case. */
+/* parse any supported form, matching names case-insensitively by their first three letters. */
 BOOL InetParseTime(const char *text, SYSTEMTIME *time)
 {
     int numbers[4], count = 0, month = 0, hour = -1, minute = 0, second = 0;

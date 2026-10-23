@@ -19,15 +19,15 @@
 #define LZMS_X86_ID_WINDOW 65535
 #define LZMS_X86_MAX_OFFSET 1023
 
-/* how many symbols a code decodes before it is rebuilt from its frequencies. */
+/* symbols decoded before rebuilding each code from its frequencies. */
 #define LZMS_LITERAL_REBUILD 1024
 #define LZMS_OFFSET_REBUILD 1024
 #define LZMS_LENGTH_REBUILD 512
 #define LZMS_POWER_REBUILD 512
 
 typedef struct LzmsProb {
-    uint32_t zeros; /* zero bits among the last 64 */
-    uint64_t history; /* newest bit in the low end */
+    uint32_t zeros; /* zero bits among the last 64. */
+    uint64_t history; /* newest bit in the low end. */
 } LzmsProb;
 
 typedef struct LzmsCode {
@@ -35,7 +35,7 @@ typedef struct LzmsCode {
     uint32_t rebuild_freq;
     uint32_t until_rebuild;
     uint32_t freqs[LZMS_MAX_SYMS];
-    uint16_t fast[1 << LZMS_FAST_BITS]; /* symbol << 4 | length, 0 for slow path */
+    uint16_t fast[1 << LZMS_FAST_BITS]; /* symbol << 4 | length, 0 for slow path. */
     uint16_t count[LZMS_MAX_CODE_LEN + 1];
     uint16_t offset[LZMS_MAX_CODE_LEN + 1];
     uint32_t first[LZMS_MAX_CODE_LEN + 1];
@@ -53,8 +53,8 @@ typedef struct RangeDecoder {
 /* reads 16 bit words from the end of the chunk towards its start. */
 typedef struct BackReader {
     const uint8_t *in;
-    size_t pos; /* one past the next word to load */
-    uint64_t buf; /* left aligned */
+    size_t pos; /* one past the next word to load. */
+    uint64_t buf; /* left aligned. */
     uint32_t bits;
 } BackReader;
 
@@ -84,8 +84,8 @@ struct MimeLzms {
 };
 
 /*
- * both slot tables are runs of slots sharing a count of extra bits. a
- * slot covers base to base + 2^extra - 1 and the next slot starts after.
+ * slot tables group equal extra-bit counts. each slot spans base through base + 2^extra - 1, followed by the
+ * next slot.
  */
 static constexpr uint8_t g_offset_runs[][2] = {
     {0, 8},   {2, 9},   {3, 7},   {4, 10},  {5, 15},  {6, 15},  {7, 20},
@@ -260,10 +260,8 @@ static int compare_keys(const void *a, const void *b)
 }
 
 /*
- * computes code lengths the way the format demands: symbols sorted by
- * frequency then value, a huffman tree that takes leaves before internal
- * nodes on ties, and the resulting lengths handed out longest first in
- * that same sorted order.
+ * the format sorts symbols by frequency then value. Huffman ties prefer leaves over internal nodes; lengths
+ * are assigned longest first in that sorted order.
  */
 static bool compute_lengths(MimeLzms *z, const LzmsCode *c)
 {
@@ -432,9 +430,8 @@ static inline bool decode_length(MimeLzms *z, BackReader *br, uint32_t *out)
 }
 
 /*
- * picks repeat entry idx and moves it to the front of the queue. a match
- * of the same kind just before has already been pushed in front, while
- * the format only inserts it after one more item, so it is skipped.
+ * moves repeat entry idx to the front. skip a preceding match of the same kind: it was already pushed here,
+ * but the format delays insertion by one item.
  */
 static inline uint64_t take_recent(uint64_t *queue, uint32_t idx, uint32_t skip)
 {
@@ -465,10 +462,8 @@ static inline uint32_t decode_rep_index(RangeDecoder *rd, uint32_t *states, Lzms
 }
 
 /*
- * one candidate x86 instruction at data[i]; returns where scanning resumes.
- * the compressor turned the relative operand of some call, lea, mov and
- * locked add instructions into an absolute one when it believed the data
- * was code, judged by how recently the same target was referenced.
+ * reverses x86 filtering at data[i] and returns the next scan position. the compressor makes some call, lea,
+ * mov and locked add operands absolute when recent references to the same target suggest code.
  */
 static size_t undo_x86_at(MimeLzms *z, uint8_t *data, size_t i, int32_t *last_x86)
 {
@@ -565,7 +560,7 @@ bool mime_lzms_decompress(MimeLzms *z, const void *in_ptr, size_t in_size, void 
     uint32_t main_state = 0, match_state = 0, lz_state = 0, delta_state = 0;
     uint32_t lz_rep_states[2] = {}, delta_rep_states[2] = {};
     uint64_t lz_recent[4] = {1, 2, 3, 4};
-    uint64_t delta_recent[4] = {1, 2, 3, 4}; /* power << 32 | raw offset */
+    uint64_t delta_recent[4] = {1, 2, 3, 4}; /* power << 32 | raw offset. */
     enum { ITEM_LITERAL, ITEM_LZ, ITEM_DELTA } prev = ITEM_LITERAL;
 
     size_t pos = 0;

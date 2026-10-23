@@ -1,6 +1,4 @@
-/*
- * FormatMessage: message lookup in message tables and insert formatting.
- */
+/* FormatMessage: message table lookup and insert formatting. */
 #include "kernelbase_private.h"
 
 #define MAX_INSERTS 99
@@ -12,7 +10,7 @@ typedef struct BUILTIN_MESSAGE {
     PCWSTR Text;
 } BUILTIN_MESSAGE;
 
-/* used when the localized kernelbase.dll.mui with the real message table is missing. */
+/* fallback when kernelbase.dll.mui and its message table are missing. */
 static const BUILTIN_MESSAGE g_builtin[] = {
     {0, L"The operation completed successfully.\r\n"},
     {1, L"Incorrect function.\r\n"},
@@ -131,10 +129,10 @@ static void out_char(OUT_BUFFER *o, WCHAR c)
 
 typedef struct INSERT_SPEC {
     WCHAR Format[32]; /* the printf conversion, without '%'. */
-    UCHAR Stars;      /* '*' width or precision arguments consumed before the value */
+    UCHAR Stars;      /* '*' width or precision arguments consumed before the value. */
 } INSERT_SPEC;
 
-/* parses "%N!fmt!" at p, just after the '%'; returns the characters consumed or 0. */
+/* p points just after the '%' of "%N!fmt!"; returns the characters consumed, or 0. */
 static SIZE_T parse_insert(PCWSTR p, ULONG *index, INSERT_SPEC *spec)
 {
     PCWSTR start = p;
@@ -161,7 +159,7 @@ static SIZE_T parse_insert(PCWSTR p, ULONG *index, INSERT_SPEC *spec)
     return (SIZE_T)(p - start);
 }
 
-/* formats one insert; ansi callers pass narrow strings for %s. */
+/* ansi callers pass narrow strings for %s. */
 static void format_insert(OUT_BUFFER *o, const INSERT_SPEC *spec, const ULONG_PTR *args, ULONG first, BOOL ansi)
 {
     WCHAR fmt[40];
@@ -198,10 +196,7 @@ static void format_insert(OUT_BUFFER *o, const INSERT_SPEC *spec, const ULONG_PT
     out_append(o, buffer, (SIZE_T)n);
 }
 
-/*
- * expands a message. inserts are resolved by number; when they come from a
- * va_list every argument up to the highest one used is fetched first.
- */
+/* inserts are resolved by number. From a va_list, every argument up to the highest one used is fetched first. */
 static BOOL format_message(PCWSTR text, DWORD flags, va_list *args, BOOL ansi, OUT_BUFFER *o)
 {
     BOOL ignore = (flags & FORMAT_MESSAGE_IGNORE_INSERTS) != 0;

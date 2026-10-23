@@ -1,12 +1,11 @@
 /*
- * what a glyph run looks like: the rendering parameters, the coverage
- * textures of IDWriteGlyphRunAnalysis and the outlines handed to a geometry
- * sink. Glyphs are drawn without hinting, at the position they are given
- * to the fraction of a pixel.
+ * glyph run rendering: rendering parameters, IDWriteGlyphRunAnalysis coverage
+ * textures and outlines for a geometry sink. glyphs are unhinted and placed at
+ * their exact subpixel position.
  */
 #include "dw_private.h"
 
-/* the slant of a simulated oblique, the tangent of twelve degrees. */
+/* the slant of a simulated oblique, tan 12 degrees. */
 #define OBLIQUE_SHEAR 0.2126f
 
 static float absf(float v) { return v < 0 ? -v : v; }
@@ -96,7 +95,7 @@ HRESULT DwRenderingParamsCreate(FLOAT gamma, FLOAT contrast, FLOAT grayscale_con
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the allocator the rasterizer takes */
+/* ------------------------------------------------------------------ rasterizer allocator */
 
 static void *ttf_alloc(void *ctx, size_t size) { return DwAlloc(size); }
 static void ttf_free(void *ctx, void *p) { DwFree(p); }
@@ -110,7 +109,7 @@ typedef struct DwAnalysis {
     DwFace *face;
     UINT32 count;
     UINT16 *glyphs;
-    float *x, *y; /* the device position of each glyph's origin */
+    float *x, *y; /* device position of each glyph's origin. */
     /* font units, y up, to device pixels, y down. */
     float xx, xy, yx, yy;
     DWRITE_RENDERING_MODE mode;
@@ -214,7 +213,7 @@ static HRESULT WINAPI analysis_bounds(IDWriteGlyphRunAnalysis *This, DWRITE_TEXT
         return E_INVALIDARG;
     }
     if (type == DWRITE_TEXTURE_CLEARTYPE_3x1) {
-        /* the box in subpixels, taken to whole pixels with one more at each side for the filter. */
+        /* the subpixel box, rounded out to whole pixels plus one on each side for the filter. */
         RECT sub;
         run_bounds(a, 3.0f, &sub);
         if (sub.left == sub.right) {
@@ -231,7 +230,7 @@ static HRESULT WINAPI analysis_bounds(IDWriteGlyphRunAnalysis *This, DWRITE_TEXT
     return S_OK;
 }
 
-/* adds a glyph's coverage to a row of the texture. */
+/* overlapping coverage adds like alpha, so it never exceeds 255. */
 static inline UINT8 combine(UINT8 under, UINT8 over)
 {
     return (UINT8)(under + over - (under * over + 127) / 255);
@@ -289,7 +288,7 @@ static HRESULT WINAPI analysis_texture(IDWriteGlyphRunAnalysis *This, DWRITE_TEX
                 }
                 continue;
             }
-            /* subpixel samples through the five tap filter that keeps colour fringes mild. */
+            /* a five tap filter over the subpixel samples keeps colour fringes mild. */
             static const int taps[5] = {8, 77, 86, 77, 8};
             int samples = width * 3;
             for (int s = 0; s < samples; s++) {
@@ -457,7 +456,7 @@ static D2D1_BEZIER_SEGMENT cubic_of(D2D1_POINT_2F p0, D2D1_POINT_2F c, D2D1_POIN
     return b;
 }
 
-/* turns the points of a contour into a figure: on curve points are corners, off curve ones quadratic controls. */
+/* on curve points are corners, off curve ones quadratic controls. */
 static void outline_end(void *ctx)
 {
     OutlineState *s = ctx;
@@ -489,7 +488,7 @@ static void outline_end(void *ctx)
     sink->lpVtbl->BeginFigure(sink, start, D2D1_FIGURE_BEGIN_FILLED);
     BOOL pending = FALSE;
     D2D1_POINT_2F control = {};
-    /* walk once round the contour, ending back on the start. */
+    /* walk once around the contour, ending back on the start. */
     UINT32 total = first < n && c->on[first] ? n : n + 1;
     for (UINT32 k = 0; k < total; k++) {
         UINT32 i = (begin + k) % n;

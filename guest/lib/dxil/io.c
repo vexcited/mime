@@ -1,12 +1,12 @@
 /*
- * signatures and what each stage reads and writes: dx.op's loadInput,
+ * signatures and each stage's reads and writes: dx.op's loadInput,
  * storeOutput and their kin, system values, and the execution modes.
  *
- * a signature element is a variable of its own at its packed place,
- * Location its row and Component its column, of 32-bit floats, signed or
- * unsigned integers as its component type says; system values are spir-v
- * built-ins. stages with inputs per vertex or control point, and the hull
- * shader's outputs, have an array of each around it.
+ * each signature element is its own variable at its packed place, Location
+ * its row and Component its column, of 32-bit floats or signed or unsigned
+ * integers per its component type. system values are spir-v built-ins.
+ * stages with inputs per vertex or control point, and the hull shader's
+ * outputs, wrap each in an array.
  */
 #include "internal.h"
 
@@ -71,7 +71,7 @@ static SigElement *element(Compiler *c, Signature *sig, uint32_t id)
     return nullptr;
 }
 
-/* the 32-bit type an element has in the interface. */
+/* the 32-bit interface type of an element's component type. */
 static uint32_t interface_scalar(Compiler *c, uint8_t comp)
 {
     switch (comp) {
@@ -88,7 +88,6 @@ static uint32_t interface_scalar(Compiler *c, uint8_t comp)
     }
 }
 
-/* the vertices of the primitive a geometry shader takes. */
 static uint32_t gs_vertices(uint32_t primitive)
 {
     switch (primitive) {
@@ -101,7 +100,7 @@ static uint32_t gs_vertices(uint32_t primitive)
     }
 }
 
-/* how many vertices or control points an arrayed interface holds; 0 when it is not arrayed. */
+/* vertex or control point count of an arrayed interface, 0 when not arrayed. */
 static uint32_t arrayed(Compiler *c, int sig)
 {
     if (sig == SIG_IN) {
@@ -159,16 +158,15 @@ static uint32_t distance_count(const Signature *sig, uint8_t kind)
 }
 
 /*
- * the built-in of a system value element, its type, and how its
- * components are indexed: 0 a scalar, 1 a vector by column, 2 an array of
- * scalars by row, 3 the clip or cull distances.
+ * also returns how components are indexed: 0 a scalar, 1 a vector by
+ * column, 2 an array of scalars by row, 3 the clip or cull distances.
  */
 static int element_builtin(Compiler *c, int sig, const SigElement *e, uint32_t *which, uint32_t *type, int *shape)
 {
     int pixel = c->kind == KIND_PIXEL, in = sig == SIG_IN;
-    /* the outputs that reach the rasterizer, and those that take a built-in there. */
+    /* outputs that reach the rasterizer, and those that take a built-in there. */
     int raster = sig == SIG_OUT && (c->kind == KIND_VERTEX || c->kind == KIND_DOMAIN || c->kind == KIND_GEOMETRY);
-    /* a mesh shader's primitive outputs take the built-ins of primitives. */
+    /* mesh shader primitive outputs take the primitive built-ins. */
     int primitive = sig == SIG_PATCH && c->kind == KIND_MESH;
     *shape = 0;
     *type = t_i32(c);
@@ -303,7 +301,7 @@ static int same_semantic(const char *a, const char *b)
     return *a == *b;
 }
 
-/* the element of a linked signature with the same semantic, or NULL. */
+/* NULL when no element has the same semantic. */
 static const DxbcSignatureElement *linked(const DxbcSignature *sig, const SigElement *e)
 {
     for (uint32_t i = 0; sig && i < sig->count; i++)
@@ -312,12 +310,12 @@ static const DxbcSignatureElement *linked(const DxbcSignature *sig, const SigEle
     return nullptr;
 }
 
-/* the location variable of an element; 0 for a mesh shader's output no pixel shader reads. */
+/* 0 for a mesh shader output no pixel shader reads. */
 static void location_variable(Compiler *c, int sig, const SigElement *e, uint32_t n, uint32_t *var, uint32_t *scalar)
 {
     uint32_t storage = storage_of(c, sig);
     *scalar = interface_scalar(c, e->comp);
-    /* pixel shader targets are at their render target, the semantic index; the rest at their row. */
+    /* pixel shader targets sit at their render target, the semantic index. the rest sit at their row. */
     uint32_t location = c->kind == KIND_PIXEL && sig == SIG_OUT ? e->semantic_index : (uint32_t)e->row;
     uint32_t component = e->col;
     if (c->kind == KIND_MESH && c->options->linked_inputs) {
@@ -356,7 +354,7 @@ static void location_variable(Compiler *c, int sig, const SigElement *e, uint32_
     }
 }
 
-/* the variable of an element, made at its first access. */
+/* made at first access. */
 static int make_variable(Compiler *c, int sig, SigElement *e)
 {
     if (e->var)
@@ -408,7 +406,7 @@ static int make_variable(Compiler *c, int sig, SigElement *e)
     return 0;
 }
 
-/* the value of an index operand as a u32 id. */
+/* an index operand as a u32 id. */
 static uint32_t index_of(Compiler *c, uint32_t id)
 {
     const DxValue *v = dx_value(&c->m, c->f, id);
@@ -417,7 +415,7 @@ static uint32_t index_of(Compiler *c, uint32_t id)
     return dxil_value(c, id);
 }
 
-/* a pointer to one component of an element; vertex is an id, or 0 where the interface is not arrayed. */
+/* vertex is an id, or 0 where the interface is not arrayed. */
 static uint32_t component_pointer(Compiler *c, int sig, SigElement *e, uint32_t var, uint32_t scalar, int builtin,
                                   uint32_t vertex, uint32_t row_id, uint32_t col)
 {
@@ -454,7 +452,7 @@ static uint32_t builtin_load(Compiler *c, uint32_t which, uint32_t type)
     return spv_load(&c->b, type, dxil_builtin(c, which, SpvStorageClassInput, type));
 }
 
-/* a vertex shader's index, without the draw's base as direct3d counts. */
+/* direct3d counts vertex shader indices without the draw's base. */
 static uint32_t draw_index(Compiler *c, uint32_t index, uint32_t base)
 {
     spv_capability(&c->b, SpvCapabilityDrawParameters);
@@ -534,7 +532,7 @@ static uint32_t invocation_id(Compiler *c)
     return spv_op1(&c->b, SpvOpBitcast, c->t_u32, builtin_load(c, SpvBuiltInInvocationId, t_i32(c)));
 }
 
-/* a component of a vector built-in, as the call's type. */
+/* a component of a vector built-in, in the call's type. */
 static int builtin_component(Compiler *c, const DxInst *ins, uint32_t which, uint32_t size)
 {
     uint32_t type = spv_type_vector(&c->b, c->t_u32, size);
@@ -558,7 +556,7 @@ static int builtin_scalar(Compiler *c, const DxInst *ins, uint32_t which, uint32
     return 0;
 }
 
-/* evalCentroid, evalSampleIndex and evalSnapped: an input interpolated elsewhere. */
+/* evalCentroid, evalSampleIndex and evalSnapped interpolate an input away from the pixel center. */
 static int evaluate(Compiler *c, const DxInst *ins, uint32_t op)
 {
     SigElement *e = element(c, &c->inputs, (uint32_t)dxil_constant(c, ins->ops[2], 0));
@@ -640,7 +638,7 @@ static int emit_indices(Compiler *c, const DxInst *ins)
     return 0;
 }
 
-/* the task shader's payload, made at the first use; type is the dxil type of what it holds. */
+/* made at first use, type being the dxil type it holds. */
 static uint32_t payload(Compiler *c, uint32_t type)
 {
     if (!c->payload) {
@@ -692,7 +690,6 @@ int dxil_prepare_task(Compiler *c, const DxFunction *f)
     return c->error ? -1 : 0;
 }
 
-/* whether a function calls a dx.op. */
 int dxil_uses_op(Compiler *c, const DxFunction *f, uint32_t op)
 {
     for (uint32_t i = 0; i < f->inst_count; i++) {
@@ -716,7 +713,7 @@ static uint32_t vertex_index(Compiler *c, uint32_t id)
     return dxil_convert(c, dxil_value(c, id), dxil_type(c, v->type), c->t_u32);
 }
 
-/* the inputs GetAttributeAtVertex reads, made arrays of the triangle's vertices. */
+/* turns the inputs GetAttributeAtVertex reads into arrays of the triangle's vertices. */
 int dxil_prepare_vertex_inputs(Compiler *c, const DxFunction *f)
 {
     for (uint32_t i = 0; i < f->inst_count; i++) {

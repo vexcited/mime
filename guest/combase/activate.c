@@ -1,7 +1,7 @@
 /*
- * the activation of an application's toast through its COM server: the class that serves the activations is found from
- * the identity of the application, and its INotificationActivationCallback called with the arguments of the toast or of
- * the button, and the text a person typed. the server is started by ole32 when it is not running.
+ * toast activation through an application's COM server: the activator class is found from the application's identity,
+ * and its INotificationActivationCallback gets the toast or button arguments and any typed text. ole32 starts the
+ * server when it is not running.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/shobjidl.h>
@@ -36,9 +36,8 @@ static BOOL ole_api(OLE_API *api)
 }
 
 /*
- * the class that serves the activations of an application: the CustomActivator value of its registered identity, else
- * the activator a shortcut of the start menu with the same identity names. a guess about the order, windows keeps the
- * registered identities of desktop programs in the shortcut.
+ * the CustomActivator value of the registered identity, else the activator named by a start menu shortcut with the
+ * same identity. the order is a guess: windows keeps desktop programs' registered identities in the shortcut.
  */
 static BOOL activator_from_registry(const OLE_API *api, const WCHAR *aumid, CLSID *clsid)
 {

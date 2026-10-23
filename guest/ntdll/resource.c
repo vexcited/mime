@@ -1,15 +1,14 @@
 /*
  * resource lookup in mapped images.
  *
- * ids and names follow the usual convention: values below 0x10000 are
- * integer ids, anything else points to a string, and "#123" strings are
- * converted to ids.
+ * values below 0x10000 are integer ids, anything else points to a string,
+ * and "#123" strings are converted to ids.
  */
 #include "ntdll_private.h"
 
 #define IS_INTRESOURCE(x) (((ULONG_PTR)(x) >> 16) == 0)
 
-/* image handles with the low bit set are data file mappings, as LoadLibraryEx creates them. */
+/* LoadLibraryEx sets the low bits of the handle for data file mappings. */
 static PVOID image_base(PVOID handle, BOOLEAN *mapped_as_image)
 {
     *mapped_as_image = !((ULONG_PTR)handle & 3);
@@ -23,8 +22,8 @@ static IMAGE_RESOURCE_DIRECTORY *root_directory(PVOID handle, PULONG size, PUCHA
     PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     if (!nt)
         return nullptr;
-    /* resource only images such as mui files are often pe32, whose data directories sit 16 bytes earlier, and a 32-bit
-       process looks at 64-bit images too, so the layout is the one the magic tells and not that of this build. */
+    /* follow the magic, not this build: resource only images like mui files are often pe32, with data directories
+       16 bytes earlier, and a 32-bit process reads 64-bit images too. */
     PUCHAR optional = (PUCHAR)&nt->OptionalHeader;
     BOOLEAN pe32 = *(PUSHORT)optional == 0x10B;
     ULONG count = *(PULONG)(optional + (pe32 ? 92 : 108));
@@ -37,7 +36,7 @@ static IMAGE_RESOURCE_DIRECTORY *root_directory(PVOID handle, PULONG size, PUCHA
     *size = dir->Size;
     if (*image)
         return (IMAGE_RESOURCE_DIRECTORY *)(base + dir->VirtualAddress);
-    /* data file mappings keep the raw file layout: translate the rva through the section table. */
+    /* data file mappings keep the raw file layout, so translate the rva through the section table. */
     IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION(nt);
     for (ULONG i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
         if (dir->VirtualAddress >= sec->VirtualAddress &&
@@ -74,7 +73,6 @@ static ULONG_PTR normalize_id(ULONG_PTR id)
     return id;
 }
 
-/* finds an entry by id or name in one directory level. */
 static IMAGE_RESOURCE_DIRECTORY_ENTRY *find_entry(IMAGE_RESOURCE_DIRECTORY *root, IMAGE_RESOURCE_DIRECTORY *dir,
                                                   ULONG_PTR id)
 {

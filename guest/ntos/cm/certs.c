@@ -1,12 +1,11 @@
 /*
- * the trusted roots of the host. its distribution's certificate bundle,
- * read through the z: drive at each boot, becomes the machine's AuthRoot
- * store, where windows keeps the roots its automatic root update brings:
- * SOFTWARE\Microsoft\SystemCertificates\AuthRoot\Certificates\<sha-1>, a
- * Blob value in each holding the hash and certificate as serialized store
- * elements. the keys are made before the journal starts, so they are never
- * saved and every boot sees the bundle as it is now; roots that the iso's
- * hive or the journal already holds are left alone.
+ * the host's trusted roots. its distribution's certificate bundle, read through
+ * the z: drive at each boot, becomes the machine's AuthRoot store, where windows
+ * keeps the roots automatic root update brings:
+ * SOFTWARE\Microsoft\SystemCertificates\AuthRoot\Certificates\<sha-1>, whose Blob
+ * value holds the hash and certificate as serialized store elements. the keys are
+ * made before the journal starts, so they are never saved and every boot sees the
+ * bundle as it is now. roots the iso's hive or the journal already hold are left alone.
  */
 #include "cm.h"
 #include <crypto/crypto.h>
@@ -17,7 +16,7 @@
 #define CERT_CERT_PROP_ID 32
 #define X509_ASN_ENCODING 1
 
-/* where the distributions keep the bundle, first match wins. */
+/* first match wins. */
 static const PCWSTR bundles[] = {
     L"\\??\\Z:\\etc\\ssl\\certs\\ca-certificates.crt",                 /* debian, ubuntu, arch, gentoo. */
     L"\\??\\Z:\\etc\\pki\\tls\\certs\\ca-bundle.crt",                  /* fedora, rhel. */
@@ -71,7 +70,7 @@ static int base64_value(UCHAR c)
     return -1;
 }
 
-/* decodes the base64 between two pem lines, skipping white space; returns the bytes written. */
+/* skips white space, returns the bytes written. */
 static ULONG base64_decode(const UCHAR *p, const UCHAR *end, PUCHAR out)
 {
     ULONG n = 0, bits = 0, acc = 0;
@@ -89,7 +88,7 @@ static ULONG base64_decode(const UCHAR *p, const UCHAR *end, PUCHAR out)
     return n;
 }
 
-/* the size of the der sequence at the start of data, 0 if it is not one that fits. */
+/* the size of the der sequence at the start of data, 0 if it is not one or does not fit. */
 static ULONG der_size(const UCHAR *data, ULONG size)
 {
     if (size < 2 || data[0] != 0x30)
@@ -113,7 +112,7 @@ static void put_element(PUCHAR out, ULONG id, ULONG length)
     memcpy(out, fields, sizeof(fields));
 }
 
-/* writes one root unless its key already holds a certificate. lock held. */
+/* skipped when its key already holds a certificate. lock held. */
 static void add_root(const UCHAR *der, ULONG size)
 {
     UCHAR hash[20];
@@ -169,7 +168,7 @@ void CmpImportHostRoots(void)
         const UCHAR *body = p + sizeof(begin) - 1, *stop = find(body, end, end_line);
         if (!stop)
             break;
-        /* the decoded certificate takes at most three quarters of its text, which must fit the buffer. */
+        /* base64 decodes to at most three quarters of its text, which must fit the buffer. */
         if ((ULONG64)(stop - body) * 3 / 4 <= 64 * 1024) {
             ULONG n = base64_decode(body, stop, der);
             ULONG cert = der_size(der, n);

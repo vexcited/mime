@@ -109,7 +109,7 @@ static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
             }
             if (text && values[column])
                 values[column] += base - 1;
-            /* the columns a transform adds to _Columns are numbered by their order, and carry no number of their own. */
+            /* columns a transform adds to _Columns are numbered by their order, not by a value of their own. */
             BOOL numbered = insert && column == 1 && !wcscmp(table->Name, L"_Columns");
             if ((!values[column] && !(type & 0x1000) && !numbered) ||
                 (text && values[column] && !strings[values[column]])) {
@@ -203,8 +203,8 @@ static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
     return error;
 }
 
-/* the rows of _Columns the transform adds must be those of tables the database does not have yet: a column added to a table
- * that has rows would change how they are stored. */
+/* added _Columns rows must be for tables the database lacks: a new column in a table with rows would change how they
+ * are stored. */
 static UINT check_schema(MIME_MSI_DATABASE *database, MIME_MSI_TABLE *original, const MIME_MSI_TABLE *edited, PWSTR *strings)
 {
     if (edited->Rows < original->Rows)
@@ -217,7 +217,7 @@ static UINT check_schema(MIME_MSI_DATABASE *database, MIME_MSI_TABLE *original, 
                     !wcscmp(strings[MimeMsiCell(original, old, 0)], strings[table]);
         if (known)
             continue;
-        /* a table that is not in the original rows may still have a stream of its own, which the schema must not change. */
+        /* a table missing from the original rows may still have its own stream, whose schema must not change. */
         BYTE *data = nullptr;
         SIZE_T size;
         UINT error = strings[table] ? MimeMsiTableStream(database, strings[table], &data, &size) : ERROR_INVALID_DATA;
@@ -245,7 +245,7 @@ static void commit_edits(MSI_TABLE_EDIT *edits, BOOL keep)
     }
 }
 
-/* the tables of the transform, the ones about the schema (_Tables and _Columns) in the first pass and the others in the second. */
+/* applies the transform's tables: _Tables and _Columns in the first pass, the rest in the second. */
 static UINT transform_pass(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, PWSTR *strings, ULONG base, UINT flags,
                            const ULONG *children, ULONG count, BOOL schema, MSI_TABLE_EDIT **out)
 {
@@ -330,7 +330,7 @@ UINT MimeMsiApplyTransformStorage(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE
     if (!error)
         error = transform_pass(database, transform, strings, base, flags, children, count, TRUE, &edits);
     if (!error && edits) {
-        /* a table the transform makes is read with the schema it adds, so the schema and the strings go in first. */
+        /* tables the transform creates are read with the schema it adds, so the schema and strings go in first. */
         commit_edits(edits, TRUE);
         edits = nullptr;
         MimeMsiFree(database->Strings);

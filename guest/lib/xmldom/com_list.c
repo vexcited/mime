@@ -56,7 +56,7 @@ static BOOL tag_matches(XNode *n, const WCHAR *name, UINT length, BOOL any)
     return any || (xd_atom_len(n->qname) == length && !memcmp(n->qname, name, (SIZE_T)length * sizeof(WCHAR)));
 }
 
-/* brings the cached part of a list up to date with its document. */
+/* resyncs the cached part of a list after its document changed. */
 BOOL xd_list_refresh(XList *l)
 {
     XDoc *doc = l->base->doc;
@@ -121,7 +121,7 @@ XNode *xd_list_item(XList *l, UINT index)
         return nullptr;
     if (l->kind != XL_CHILDREN)
         return l->v[index];
-    /* children are found from the last place looked, which suits walking a list in order. */
+    /* lookups resume from the last position, so walking a list in order is cheap. */
     XNode *n;
     UINT at;
     if (l->cache_node && index >= l->cache_index) {
@@ -737,7 +737,7 @@ static HRESULT STDMETHODCALLTYPE er_invoke(XErrObj *o, DISPID id, REFIID riid, L
     return xd_disp_invoke(o, &xd_dispset_error, id, riid, lcid, flags, params, result, excep, argerr);
 }
 
-/* an error that did not happen answers false for all its parts. */
+/* with no error recorded, every getter returns S_FALSE. */
 static HRESULT STDMETHODCALLTYPE er_get_errorCode(XErrObj *o, LONG *code)
 {
     if (!code)

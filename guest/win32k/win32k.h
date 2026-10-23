@@ -1,6 +1,4 @@
-/*
- * win32k internal interface: the window manager and gdi of mime.
- */
+/* win32k window manager and GDI interfaces. */
 #ifndef MIME_WIN32K_H
 #define MIME_WIN32K_H
 
@@ -14,11 +12,11 @@
 
 #define W32_TAG(a, b, c, d) ((ULONG)(a) | (ULONG)(b) << 8 | (ULONG)(c) << 16 | (ULONG)(d) << 24)
 
-void *W32Alloc(SIZE_T size);  /* zeroed nonpaged pool */
+void *W32Alloc(SIZE_T size);  /* zeroed nonpaged pool. */
 void W32Free(void *p);
 PWSTR W32StrDup(PCWSTR s, SIZE_T chars);
 #define W32Trace(...) DbgPrint(__VA_ARGS__)
-void W32SetLastError(ULONG error); /* the calling thread's TEB LastErrorValue */
+void W32SetLastError(ULONG error); /* the calling thread's TEB LastErrorValue. */
 
 static inline LONG W32Min(LONG a, LONG b)
 {
@@ -36,12 +34,11 @@ static inline LONG W32MulDiv(LONG a, LONG b, LONG c)
     return (LONG)(v >= 0 ? (v + c / 2) / c : (v - c / 2) / c);
 }
 
-/* ------------------------------------------------------------------ lock */
+/* lock. */
 
 /*
- * one recursive lock serializes the window manager and gdi, like the user
- * critical section of windows. it is released around callbacks into user
- * mode and while a thread sleeps in its message loop.
+ * one recursive lock serializes the window manager and GDI, like the Windows user critical section. release it around
+ * user callbacks and while sleeping in a message loop.
  */
 void UserEnter(void);
 void UserLeave(void);
@@ -49,7 +46,7 @@ ULONG UserLeaveAll(void);
 void UserReenter(ULONG depth);
 BOOLEAN UserIsOwner(void);
 
-/* ------------------------------------------------------------------ geometry */
+/* geometry. */
 
 static inline BOOLEAN RectEmpty(const RECT *r)
 {
@@ -84,7 +81,7 @@ static inline BOOLEAN RectContains(const RECT *r, LONG x, LONG y)
 
 void RectUnion(RECT *out, const RECT *a, const RECT *b);
 
-/* ------------------------------------------------------------------ regions */
+/* regions. */
 
 /* y-x banded rectangles: sorted by top, then left, bands share top and bottom. */
 typedef struct REGION {
@@ -110,7 +107,7 @@ BOOLEAN RgnEqual(const REGION *a, const REGION *b);
 BOOLEAN RgnFromRects(REGION *r, const RECT *rects, ULONG count);
 BOOLEAN RgnRoundRect(REGION *r, LONG left, LONG top, LONG right, LONG bottom, LONG ew, LONG eh);
 
-/* ------------------------------------------------------------------ gdi objects */
+/* GDI objects. */
 
 enum {
     GDI_TYPE_DC = 0x01,
@@ -124,20 +121,20 @@ enum {
 };
 
 #define GDI_FLAG_STOCK 0x01
-#define GDI_FLAG_DELETE_PENDING 0x02 /* deleted while selected into a dc */
-#define GDI_FLAG_SYSTEM 0x04          /* owned by win32k, never freed by applications */
+#define GDI_FLAG_DELETE_PENDING 0x02 /* deleted while selected into a dc. */
+#define GDI_FLAG_SYSTEM 0x04          /* owned by win32k, never freed by applications. */
 
 typedef struct GDI_OBJECT {
     HANDLE Handle;
     UCHAR Type;
     UCHAR Flags;
-    USHORT SelectCount; /* dcs that currently select the object */
+    USHORT SelectCount; /* DCs that currently select the object. */
     HANDLE OwnerPid;
 } GDI_OBJECT;
 
 HANDLE GdiCreateHandle(GDI_OBJECT *object, UCHAR type);
 void GdiFreeHandle(GDI_OBJECT *object);
-GDI_OBJECT *GdiLookup(HANDLE handle, UCHAR type); /* type 0 accepts any */
+GDI_OBJECT *GdiLookup(HANDLE handle, UCHAR type); /* type 0 accepts any. */
 UCHAR GdiHandleType(HANDLE handle);
 void GdiDeleteObject(GDI_OBJECT *object);
 void GdiReleaseProcessObjects(HANDLE pid);
@@ -145,30 +142,30 @@ GDI_OBJECT *GdiStockObject(int index);
 HANDLE GdiStockHandle(int index);
 void GdiInitializeStockObjects(void);
 
-/* surfaces back bitmaps, dib sections and window contents. */
-#define SURF_OWNS_BITS 0x01   /* bits allocated from pool */
-#define SURF_USER_BITS 0x02   /* dib section bits in the owner process */
-#define SURF_DEVICE 0x04      /* window surface: writes are opaque, alpha 255 */
-#define SURF_CONTIGUOUS 0x08  /* physically contiguous, presentable to the host */
+/* surfaces back bitmaps, DIB sections and window contents. */
+#define SURF_OWNS_BITS 0x01   /* bits allocated from pool. */
+#define SURF_USER_BITS 0x02   /* DIB section bits in the owner process. */
+#define SURF_DEVICE 0x04      /* window surface: writes are opaque, alpha 255. */
+#define SURF_CONTIGUOUS 0x08  /* physically contiguous, presentable to the host. */
 #define SURF_TOPDOWN 0x10
-#define SURF_RETIRED 0x20     /* replaced window surface, freed when the last dc releases it */
-#define SURF_FOREIGN 0x40     /* user bits the caller owns, from D3DKMTCreateDCFromMemory */
+#define SURF_RETIRED 0x20     /* replaced window surface, freed when the last DC releases it. */
+#define SURF_FOREIGN 0x40     /* user bits the caller owns, from D3DKMTCreateDCFromMemory. */
 
 typedef struct SURFACE {
     GDI_OBJECT Header;
     LONG Width;
     LONG Height;
-    LONG Stride;  /* bytes between rows as displayed, negative for bottom-up dibs */
-    UCHAR Bpp;    /* 1, 4, 8, 16, 24 or 32 */
+    LONG Stride;  /* bytes between rows as displayed, negative for bottom-up dibs. */
+    UCHAR Bpp;    /* 1, 4, 8, 16, 24 or 32. */
     UCHAR Flags;
     USHORT ColorCount;
-    PUCHAR Bits;  /* first row as displayed, row y is at Bits + y * Stride */
+    PUCHAR Bits;  /* first row as displayed, row y is at Bits + y * Stride. */
     RGBQUAD Colors[256];
-    DWORD Masks[3]; /* 16 and 32 bpp bitfields */
-    PVOID UserBits;  /* user mode address of a dib section */
+    DWORD Masks[3]; /* 16 and 32 bpp bitfields. */
+    PVOID UserBits;  /* user mode address of a DIB section. */
     SIZE_T UserSize;
-    BITMAPINFOHEADER Info; /* as created, for GetObject */
-    RECT Dirty;      /* device surfaces: area changed since the last present */
+    BITMAPINFOHEADER Info; /* as created, for GetObject. */
+    RECT Dirty;      /* device surfaces: area changed since the last present. */
     struct WND *Window;
 } SURFACE;
 
@@ -184,10 +181,10 @@ typedef struct BRUSH {
     COLORREF Color;
     ULONG_PTR Hatch;
     SURFACE *Pattern;
-    int SysColor; /* system color brushes follow color changes, -1 otherwise */
+    int SysColor; /* system color brushes follow color changes, -1 otherwise. */
 } BRUSH;
 
-/* pens of ExtCreatePen keep the full style with type, end cap and join. */
+/* ExtCreatePen preserves the pen type, end cap and join. */
 typedef struct PEN {
     GDI_OBJECT Header;
     UINT Style;
@@ -215,7 +212,7 @@ typedef struct GDI_REGION {
     REGION Region;
 } GDI_REGION;
 
-/* ------------------------------------------------------------------ device contexts */
+/* device contexts. */
 
 typedef struct DC_STATE {
     COLORREF TextColor;
@@ -235,17 +232,17 @@ typedef struct DC_STATE {
     BRUSH *Brush;
     PEN *Pen;
     FONT *Font;
-    REGION ClipRgn; /* application clip in device coordinates relative to the dc origin */
+    REGION ClipRgn; /* application clip in device coordinates relative to the DC origin. */
     BOOLEAN HasClip;
-    BOOLEAN HasXform; /* World is not the identity */
+    BOOLEAN HasXform; /* World is not the identity. */
     int PolyFillMode;
     int ArcDirection;
-    XFORM World;      /* world to page, GM_ADVANCED */
+    XFORM World;      /* world to page, GM_ADVANCED. */
     SIZE WindowExt;
     SIZE ViewportExt;
-    BOOLEAN HasPage;  /* the extents scale or flip */
+    BOOLEAN HasPage;  /* the extents scale or flip. */
     BOOLEAN HasMeta;
-    REGION MetaRgn;   /* SetMetaRgn, device coordinates like the clip region */
+    REGION MetaRgn;   /* SetMetaRgn, device coordinates like the clip region. */
     float MiterLimit;
 } DC_STATE;
 
@@ -255,13 +252,13 @@ typedef struct GDI_PATH {
     ULONG Capacity;
     POINT *Points;
     BYTE *Types;
-    BOOLEAN NewFigure; /* the next point starts a figure */
+    BOOLEAN NewFigure; /* the next point starts a figure. */
 } GDI_PATH;
 
 enum {
     PATH_NONE = 0,
-    PATH_OPEN = 1,   /* between BeginPath and EndPath, drawing calls add to the path */
-    PATH_CLOSED = 2, /* ready for FillPath, StrokePath and friends */
+    PATH_OPEN = 1,   /* between BeginPath and EndPath, drawing calls add to the path. */
+    PATH_CLOSED = 2, /* ready for FillPath or StrokePath. */
 };
 
 typedef struct DC_SAVED {
@@ -271,20 +268,20 @@ typedef struct DC_SAVED {
 } DC_SAVED;
 
 #define DC_MEMORY 0x01
-#define DC_WINDOW 0x02  /* obtained from a window */
-#define DC_CACHE 0x04   /* returned to the cache by ReleaseDC */
-#define DC_PAINT 0x08   /* BeginPaint dc */
+#define DC_WINDOW 0x02  /* obtained from a window. */
+#define DC_CACHE 0x04   /* returned to the cache by ReleaseDC. */
+#define DC_PAINT 0x08   /* BeginPaint dc. */
 #define DC_INFO 0x10
-#define DC_METAFILE 0x20 /* the win32k half of an enhanced metafile dc, without a surface */
+#define DC_METAFILE 0x20 /* the win32k half of an enhanced metafile DC, without a surface. */
 
 typedef struct DC {
     GDI_OBJECT Header;
     ULONG Flags;
     SURFACE *Surface;
-    SURFACE *DefaultBitmap; /* the 1x1 bitmap of memory dcs */
+    SURFACE *DefaultBitmap; /* the 1x1 bitmap of memory dcs. */
     struct WND *Window;
-    POINT Origin;  /* surface coordinates of device point 0,0 */
-    REGION VisRgn; /* surface coordinates */
+    POINT Origin;  /* surface coordinates of device point 0,0. */
+    REGION VisRgn; /* surface coordinates. */
     DC_STATE State;
     DC_SAVED *Saved;
     int SaveLevel;
@@ -294,10 +291,10 @@ typedef struct DC {
     RECT Bounds;
     ULONG PathState;
     GDI_PATH Path;
-    int PixelFormat; /* memory dcs; window dcs use the window's */
-    BOOLEAN OfMonitor; /* a dc of the device \\.\DISPLAYn, which is only that monitor */
+    int PixelFormat; /* memory DCs; window DCs use the window's. */
+    BOOLEAN OfMonitor; /* a DC of the device \\.\DISPLAYn, which is only that monitor. */
     ULONG Monitor;
-    SIZE VirtualPixels; /* SetVirtualResolution, zero when unset */
+    SIZE VirtualPixels; /* SetVirtualResolution, zero when unset. */
     SIZE VirtualMm;
 } DC;
 
@@ -312,12 +309,12 @@ BOOLEAN DcGetClip(DC *dc, REGION *out);
 void DcLogicalToDevice(DC *dc, LONG *x, LONG *y);
 void DcLogicalToSurface(DC *dc, LONG *x, LONG *y);
 LONG DcScaleToDevice(DC *dc, LONG v);
-void DcTransformPoint(DC *dc, LONG *x, LONG *y); /* world transform only */
-/* world to device without the dc origin, and whether it scales, flips or rotates. */
+void DcTransformPoint(DC *dc, LONG *x, LONG *y); /* world transform only. */
+/* world to device without the DC origin, and whether it scales, flips or rotates. */
 void DcGetXform(DC *dc, XFORM *out);
 BOOLEAN DcIsScaled(DC *dc);
 void DcDeviceToLogical(DC *dc, LONG *x, LONG *y);
-LONG DcPenWidth(DC *dc); /* the selected pen's width in device pixels, at least 1 */
+LONG DcPenWidth(DC *dc); /* the selected pen's width in device pixels, at least 1. */
 BOOLEAN DcIsPathOpen(DC *dc);
 /* path recording, logical coordinates; used by the drawing services while a path is open. */
 BOOLEAN PathMoveTo(DC *dc, LONG x, LONG y);
@@ -334,12 +331,11 @@ BOOLEAN RgnTransform(REGION *out, const RECT *rects, ULONG count, const XFORM *m
 void DrawLine(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RECT *dirty);
 struct FONT_INSTANCE *DcGetFont(DC *dc);
 
-/* ------------------------------------------------------------------ drawing primitives */
+/* drawing primitives. */
 
 /*
- * 32 bit colors in surfaces are 0xAARRGGBB little endian, i.e. B, G, R, A
- * bytes. like gdi, drawing writes alpha 0 into bitmaps; device surfaces
- * force alpha 255 when pixels are stored.
+ * 32-bit surface colors are little-endian 0xAARRGGBB, stored as B, G, R, A. GDI writes alpha 0 in bitmaps;
+ * device surfaces force alpha 255.
  */
 static inline ULONG ColorToPixel(COLORREF c)
 {
@@ -367,24 +363,24 @@ BOOLEAN StretchSurface(SURFACE *dst, const REGION *clip, const RECT *dst_rect, S
 BOOLEAN AlphaBlendSurface(SURFACE *dst, const REGION *clip, const RECT *dst_rect, SURFACE *src, const RECT *src_rect,
                           BLENDFUNCTION blend);
 
-/* ------------------------------------------------------------------ fonts */
+/* fonts. */
 
 typedef struct GLYPH {
     USHORT Index;
-    SHORT Advance;   /* pixels */
-    SHORT Left;      /* bitmap offset from the pen position */
-    SHORT Top;       /* bitmap offset from the baseline, negative is above */
+    SHORT Advance;   /* pixels. */
+    SHORT Left;      /* bitmap offset from the pen position. */
+    SHORT Top;       /* bitmap offset from the baseline, negative is above. */
     USHORT Width;
     USHORT Height;
-    UCHAR Ready;     /* rendered */
+    UCHAR Ready;     /* rendered. */
     UCHAR *Coverage;
 } GLYPH;
 
 typedef struct FONT_INSTANCE {
     LIST_ENTRY Links;
     struct FONT_FACE *Face;
-    LONG EmPixels;   /* requested character height */
-    LONG Width;      /* lfWidth, 0 for the natural width */
+    LONG EmPixels;   /* requested character height. */
+    LONG Width;      /* lfWidth, 0 for the natural width. */
     LONG Weight;
     BOOLEAN Italic;
     BOOLEAN Underline;
@@ -398,15 +394,15 @@ typedef struct FONT_INSTANCE {
     LONG UnderlineSize;
     LONG StrikeoutPos;
     ULONG RefCount;
-    ULONG *CharPages[256]; /* glyph index + 1 for code points by high byte, bmp only, 0 when unknown */
-    GLYPH *Pages[256];     /* rendered glyphs by glyph index high byte */
+    ULONG *CharPages[256]; /* glyph index + 1 for code points by high byte, BMP only, 0 when unknown. */
+    GLYPH *Pages[256];     /* rendered glyphs by glyph index high byte. */
 } FONT_INSTANCE;
 
 void FontInitialize(void);
 FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi);
 const GLYPH *FontGetGlyph(FONT_INSTANCE *fi, ULONG codepoint);
 const GLYPH *FontGetGlyphIndex(FONT_INSTANCE *fi, USHORT index);
-USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint); /* 0 for missing glyphs */
+USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint); /* 0 for missing glyphs. */
 void FontGlyphAbcFloat(FONT_INSTANCE *fi, USHORT index, ABCFLOAT *abc);
 UCHAR *FontRenderTransformed(FONT_INSTANCE *fi, USHORT index, const XFORM *m, LONG *left, LONG *top, LONG *width,
                              LONG *height);
@@ -414,11 +410,11 @@ void FontReleaseProcess(HANDLE pid);
 void FontGetFaceName(FONT_INSTANCE *fi, PWSTR name, ULONG chars);
 LONG FontTextWidth(FONT_INSTANCE *fi, PCWSTR text, ULONG count, LONG extra);
 void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR text, ULONG count, const INT *dx);
-extern LOGFONTW W32SystemFont;  /* default gui font for the system dpi */
+extern LOGFONTW W32SystemFont;  /* default GUI font for the system dpi. */
 LOGFONTW W32MessageFontForDpi(UINT dpi);
 LOGFONTW W32CaptionFontForDpi(UINT dpi);
 
-/* ------------------------------------------------------------------ user objects */
+/* user objects. */
 
 enum {
     USER_TYPE_FREE = 0,
@@ -443,7 +439,7 @@ USER_OBJECT *UserLookup(HANDLE handle, UCHAR type);
 void UserReference(USER_OBJECT *object);
 void UserDereference(USER_OBJECT *object);
 
-/* ------------------------------------------------------------------ threads, processes, queues */
+/* threads, processes, queues. */
 
 typedef struct W32PROCESS {
     PEPROCESS Process;
@@ -453,18 +449,18 @@ typedef struct W32PROCESS {
     ULONG DpiAwareness;
     MIME_CLIENT_INFO Client;
     BOOLEAN ClientValid;
-    BOOLEAN Wow;        /* a 32-bit program, its structures are converted at its boundary */
-    struct W32GPU *Gpu; /* gpu.c */
-    struct W32VK *Vk;   /* vulkan.c */
-    struct W32AUDIO *Audio; /* audio.c */
-    struct W32RAW *Raw;     /* rawinput.c */
+    BOOLEAN Wow;        /* a 32-bit program, its structures are converted at its boundary. */
+    struct W32GPU *Gpu; /* gpu.c. */
+    struct W32VK *Vk;   /* vulkan.c. */
+    struct W32AUDIO *Audio; /* audio.c. */
+    struct W32RAW *Raw;     /* rawinput.c. */
     ULONG ImageChars;
     WCHAR ImagePath[512];
-    WCHAR DesktopInfo[128];      /* the winsta\desktop it was started on, winsta.c */
-    struct W32WINSTA *WinSta;    /* referenced */
+    WCHAR DesktopInfo[128];      /* the winsta\desktop it was started on, winsta.c. */
+    struct W32WINSTA *WinSta;    /* referenced. */
     HANDLE WinStaHandle;
-    ULONG_PTR DndHandler;        /* the process's code for drops, dnd.c */
-    BOOLEAN InputIdle;           /* a thread has waited for input once: WaitForInputIdle answers at once from then on */
+    ULONG_PTR DndHandler;        /* the process's code for drops, dnd.c. */
+    BOOLEAN InputIdle;           /* WaitForInputIdle succeeds immediately after the first input wait. */
 } W32PROCESS;
 
 typedef struct QUEUED_MESSAGE {
@@ -480,7 +476,7 @@ typedef struct QUEUED_MESSAGE {
 
 enum {
     QM_POSTED = 0,
-    QM_INPUT = 1, /* raw host event processed by the receiving thread */
+    QM_INPUT = 1, /* raw host event processed by the receiving thread. */
     QM_WINDOW_SHOW = 2,
     QM_WINDOW_PLACEMENT = 3,
 };
@@ -491,23 +487,23 @@ typedef struct SENT_MESSAGE {
     HWND Hwnd;
     UINT Msg;
     WPARAM Wparam;
-    LPARAM Lparam;        /* kernel pointer for MIME_LPARAM_IN and MIME_LPARAM_INOUT */
+    LPARAM Lparam;        /* kernel pointer for MIME_LPARAM_IN and MIME_LPARAM_INOUT. */
     ULONG LparamKind;
     ULONG LparamSize;
     LRESULT Result;
     BOOLEAN Completed;
-    BOOLEAN Notify;       /* SendNotifyMessage: nobody waits, the receiver frees it */
+    BOOLEAN Notify;       /* SendNotifyMessage: nobody waits, the receiver frees it. */
     BOOLEAN SenderGone;
     BOOLEAN Ansi;
-    BOOLEAN Owned;        /* Lparam is pool memory that belongs to the message once its sender stops waiting */
-    BOOLEAN Aborted;      /* the window or its thread went before the procedure ran or finished */
-    BOOLEAN Callback;     /* SendMessageCallback: the sender gets the result later */
-    BOOLEAN ResultCall;   /* not a message: the result of a callback, to call in the sender's thread */
-    struct SENT_MESSAGE *Outer; /* the message the receiving thread was processing when this one came in */
+    BOOLEAN Owned;        /* Lparam is pool memory that belongs to the message once its sender stops waiting. */
+    BOOLEAN Aborted;      /* the window or its thread went before the procedure ran or finished. */
+    BOOLEAN Callback;     /* SendMessageCallback: the sender gets the result later. */
+    BOOLEAN ResultCall;   /* not a message: the result of a callback, to call in the sender's thread. */
+    struct SENT_MESSAGE *Outer; /* the message the receiving thread was processing when this one came in. */
     HANDLE SenderTid;
     SENDASYNCPROC AsyncProc;
     ULONG_PTR AsyncData;
-    HHOOK Hook;           /* a hook call instead of a message, Msg holds the hook code */
+    HHOOK Hook;           /* a hook call instead of a message, Msg holds the hook code. */
     KEVENT Done;
 } SENT_MESSAGE;
 
@@ -516,13 +512,13 @@ typedef struct W32THREAD {
     HANDLE Tid;
     W32PROCESS *Process;
     LIST_ENTRY Links;
-    KEVENT Event;           /* signalled when the queue gets work */
+    KEVENT Event;           /* signalled when the queue gets work. */
     LIST_ENTRY Posted;
     LIST_ENTRY Input;
-    LIST_ENTRY Sent;        /* messages sent to this thread by others */
-    SENT_MESSAGE *Receiving; /* sent message being processed */
-    BOOLEAN Replied;         /* the message being processed was answered before its procedure returned */
-    ULONG ReceivingKind;     /* 1 for a sent message being processed, 2 when its sender does not wait, else 0 */
+    LIST_ENTRY Sent;        /* messages sent to this thread by others. */
+    SENT_MESSAGE *Receiving; /* sent message being processed. */
+    BOOLEAN Replied;         /* the message being processed was answered before its procedure returned. */
+    ULONG ReceivingKind;     /* 1 for a sent message being processed, 2 when its sender does not wait, else 0. */
     ULONG WakeBits;
     ULONG ChangeBits;
     BOOLEAN QuitPosted;
@@ -533,23 +529,23 @@ typedef struct W32THREAD {
     HWND Focus;
     HWND Active;
     HWND Capture;
-    ULONG CaptureNc;  /* nc hit code of a capture held by the frame */
-    UCHAR KeyState[256]; /* bit 7 down, bit 0 toggled, as seen by this thread */
-    HWND MouseWindow;    /* window under the mouse for leave tracking */
+    ULONG CaptureNc;  /* nc hit code of a capture held by the frame. */
+    UCHAR KeyState[256]; /* bit 7 down, bit 0 toggled, as seen by this thread. */
+    HWND MouseWindow;    /* window under the mouse for leave tracking. */
     TRACKMOUSEEVENT Track;
     ULONG CallbackDepth;
-    ULONG LastRead;          /* tick of the last time the thread looked at its queue */
-    BOOLEAN InWait;          /* sleeping in a message wait or in a send, serving its queue */
-    struct HOOK *CurrentHook; /* the hook procedure running, for CallNextHookEx */
+    ULONG LastRead;          /* tick of the last time the thread looked at its queue. */
+    BOOLEAN InWait;          /* sleeping in a message wait or in a send, serving its queue. */
+    struct HOOK *CurrentHook; /* the hook procedure running, for CallNextHookEx. */
     BOOLEAN Destroying;
     HCURSOR Cursor;
     LONG CursorShowCount;
-    struct W32DESKTOP *Desktop;  /* referenced, winsta.c */
+    struct W32DESKTOP *Desktop;  /* referenced, winsta.c. */
     HANDLE DesktopHandle;
-    HWND TsfSink;          /* the window the text services framework takes the host's input method through, ime.c */
+    HWND TsfSink;          /* text services window for host input methods, ime.c. */
 } W32THREAD;
 
-/* the user interface limits of the job of the caller, JOB_OBJECT_UILIMIT_*. */
+/* caller job restrictions, JOB_OBJECT_UILIMIT_*. */
 #define W32_UILIMIT_HANDLES 0x01
 #define W32_UILIMIT_READCLIPBOARD 0x02
 #define W32_UILIMIT_WRITECLIPBOARD 0x04
@@ -564,22 +560,21 @@ static inline BOOLEAN W32UiLimited(ULONG limit)
     return (MimeProcessUiLimits(PsGetCurrentProcess()) & limit) != 0;
 }
 
-W32THREAD *W32GetThread(void);  /* current thread, created on demand */
+W32THREAD *W32GetThread(void);  /* current thread, created on demand. */
 W32PROCESS *W32GetProcess(void);
-/* winsta.c: dropping the window station and desktop of a process or thread that goes. */
+/* release process or thread window station and desktop references, winsta.c. */
 void WinStaFreeProcess(W32PROCESS *p);
 void WinStaFreeThread(W32THREAD *t);
 BOOL WndThreadHasWindows(W32THREAD *t);
-/* shutdown.c */
+/* shutdown.c. */
 ULONG NTAPI W32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *context);
 ULONG W32ProcessThreads(W32PROCESS *p, HANDLE *tids, ULONG max);
 BOOLEAN MsgThreadHung(W32THREAD *t);
-/* what MsgSendSystem answers. */
 enum {
     MSGSYS_OK = 1,
-    MSGSYS_GONE,    /* the window or its thread ended */
+    MSGSYS_GONE,    /* the window or its thread ended. */
     MSGSYS_TIMEOUT,
-    MSGSYS_EVENT0,  /* the first event of the caller was set, the second MSGSYS_EVENT0 + 1 */
+    MSGSYS_EVENT0,  /* the first event of the caller was set, the second MSGSYS_EVENT0 + 1. */
 };
 ULONG MsgSendSystem(HANDLE tid, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG64 timeout_ms,
                     PKEVENT *events, ULONG event_count, LRESULT *result);
@@ -592,12 +587,12 @@ void NTAPI W32TimeChange(void);
 BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOWPLACEMENT *placement);
 void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state);
 DWORD W32TickCount(void);
-/* the tick count of the last input event, of the host or injected. */
+/* tick count of the last host or injected input event. */
 extern DWORD InputLastTime;
 ULONG GdiCountProcessObjects(HANDLE pid);
 ULONG WndCountProcessObjects(W32PROCESS *p);
 
-/* ------------------------------------------------------------------ classes and windows */
+/* classes and windows. */
 
 typedef struct WND_CLASS {
     LIST_ENTRY Links;
@@ -616,7 +611,7 @@ typedef struct WND_CLASS {
     HBRUSH Background;
     PWSTR MenuName;
     ULONG Fnid;
-    W32PROCESS *Process; /* NULL for global and system classes */
+    W32PROCESS *Process; /* NULL for global and system classes. */
     LONG Windows;
     PUCHAR Extra;
 } WND_CLASS;
@@ -624,23 +619,23 @@ typedef struct WND_CLASS {
 #define WNDF_DESTROYING 0x0001
 #define WNDF_NEEDS_ERASE 0x0002
 #define WNDF_INTERNAL_PAINT 0x0004
-#define WNDF_FRAME_DIRTY 0x0008    /* the frame must be redrawn by win32k */
+#define WNDF_FRAME_DIRTY 0x0008    /* the frame must be redrawn by win32k. */
 #define WNDF_SENT_CREATE 0x0010
-#define WNDF_ACTIVE_FRAME 0x0020   /* caption drawn active */
+#define WNDF_ACTIVE_FRAME 0x0020   /* caption drawn active. */
 #define WNDF_DIALOG 0x0040
-#define WNDF_HOST_WINDOW 0x0080    /* has a host window */
+#define WNDF_HOST_WINDOW 0x0080    /* has a host window. */
 #define WNDF_RESTORETOMAX 0x0100
-#define WNDF_PAINT_PENDING 0x0200  /* WM_PAINT will be generated */
+#define WNDF_PAINT_PENDING 0x0200  /* WM_PAINT will be generated. */
 #define WNDF_MOUSE_TRACKED 0x0400
-#define WNDF_ERASE_PENDING 0x0800  /* BeginPaint must send WM_ERASEBKGND */
+#define WNDF_ERASE_PENDING 0x0800  /* BeginPaint must send WM_ERASEBKGND. */
 #define WNDF_NCPAINT_SENT 0x1000
-#define WNDF_HOST_MOVING 0x2000    /* the host is moving the window, do not echo the position back */
-#define WNDF_PRESENTED 0x4000      /* the host has received contents, the window may be shown */
+#define WNDF_HOST_MOVING 0x2000    /* the host is moving the window, do not echo the position back. */
+#define WNDF_PRESENTED 0x4000      /* the host has received contents, the window may be shown. */
 #define WNDF_ACTIVATE_PENDING 0x8000
-#define WNDF_NOCLOSE 0x10000       /* SC_CLOSE removed from the system menu */
+#define WNDF_NOCLOSE 0x10000       /* SC_CLOSE removed from the system menu. */
 #define WNDF_FULLSCREEN 0x20000
-#define WNDF_DROPTARGET 0x80000    /* takes drops through a handler of its process, dnd.c */
-#define WNDF_APP_FULLSCREEN 0x40000 /* the program made it cover the screen before the host made it fullscreen */
+#define WNDF_DROPTARGET 0x80000    /* takes drops through a handler of its process, dnd.c. */
+#define WNDF_APP_FULLSCREEN 0x40000 /* the program made it cover the screen before the host made it fullscreen. */
 
 /* caption buttons for hot and pressed tracking. */
 enum {
@@ -660,17 +655,17 @@ typedef struct WND {
     USER_OBJECT Header;
     struct WND *Parent;
     struct WND *Owner;
-    struct WND *FirstChild; /* top of the z order */
+    struct WND *FirstChild; /* top of the z order. */
     struct WND *LastChild;
-    struct WND *Next;       /* below this window */
-    struct WND *Prev;       /* above this window */
+    struct WND *Next;       /* below this window. */
+    struct WND *Prev;       /* above this window. */
     W32THREAD *Thread;
     WND_CLASS *Class;
     DWORD Style;
     DWORD ExStyle;
     ULONG Flags;
-    RECT WindowRect;  /* screen coordinates */
-    RECT ClientRect;  /* screen coordinates */
+    RECT WindowRect;  /* screen coordinates. */
+    RECT ClientRect;  /* screen coordinates. */
     RECT NormalRect;
     POINT MinPosition;
     POINT MaxPosition;
@@ -682,51 +677,51 @@ typedef struct WND {
     WNDPROC Proc;
     BOOLEAN Ansi;
     HINSTANCE Instance;
-    UINT_PTR Id;      /* control id or menu */
+    UINT_PTR Id;      /* control id or menu. */
     LONG_PTR UserData;
     PUCHAR Extra;
     ULONG ExtraSize;
     PWSTR Text;
     ULONG TextLength;
-    REGION Update;    /* client relative update region, screen coordinates */
+    REGION Update;    /* client relative update region, screen coordinates. */
     HICON Icon;
     HICON IconSmall;
     UINT Dpi;
-    POINT MinTrack, MaxTrack; /* from the last WM_GETMINMAXINFO, 0 until there was one */
+    POINT MinTrack, MaxTrack; /* from the last WM_GETMINMAXINFO, 0 until there was one. */
     HICON HostIcon;
     ULONG HostStateRequest;
-    SURFACE *Surface; /* top level windows */
+    SURFACE *Surface; /* top level windows. */
     UCHAR CaptionHot;
     UCHAR CaptionPressed;
-    UCHAR CaptionTracking; /* button pressed while the mouse went down on it */
+    UCHAR CaptionTracking; /* button pressed at mouse-down. */
     DWORD ContextHelpId;
     HMENU SystemMenu;
-    REGION *Shape;     /* SetWindowRgn, window relative, NULL for none */
-    ULONG LayerFlags;  /* LWA_* for SetLayeredWindowAttributes, MIME_LAYER_UPDATE for UpdateLayeredWindow */
+    REGION *Shape;     /* SetWindowRgn, window relative, NULL for none. */
+    ULONG LayerFlags;  /* LWA_* for SetLayeredWindowAttributes, MIME_LAYER_UPDATE for UpdateLayeredWindow. */
     COLORREF LayerKey;
     BYTE LayerAlpha;
-    SURFACE *Present;  /* composed copy shown to the host when the surface needs alpha or a shape */
+    SURFACE *Present;  /* composed copy shown to the host when the surface needs alpha or a shape. */
     ULONG TouchFlags;
-    ULONG DisplayAffinity; /* WDA_*, how captures show the window */
+    ULONG DisplayAffinity; /* WDA_*, how captures show the window. */
     int PixelFormat;
     WND_PROP *Props;
     ULONG PropCount;
     ULONG PropCapacity;
-    PWSTR ShutdownReason; /* ShutdownBlockReasonCreate */
+    PWSTR ShutdownReason; /* ShutdownBlockReasonCreate. */
 } WND;
 
-#define MIME_LAYER_UPDATE 0x80000000u /* contents come from UpdateLayeredWindow, premultiplied */
+#define MIME_LAYER_UPDATE 0x80000000u /* contents come from UpdateLayeredWindow, premultiplied. */
 
 WND *WndLookup(HWND hwnd);
 WND *WndDesktop(void);
-LRESULT ClientShutdown(WND *w, ULONG flags); /* shutdown.c */
+LRESULT ClientShutdown(WND *w, ULONG flags); /* shutdown.c. */
 static inline HWND WndHandle(WND *w)
 {
     return w ? (HWND)w->Header.Handle : nullptr;
 }
-BOOLEAN WndIsTopLevel(WND *w); /* direct child of the desktop */
+BOOLEAN WndIsTopLevel(WND *w); /* direct child of the desktop. */
 WND *WndTopLevel(WND *w);
-BOOLEAN WndIsVisible(WND *w);  /* the window and all its ancestors are visible */
+BOOLEAN WndIsVisible(WND *w);  /* the window and all its ancestors are visible. */
 BOOLEAN WndIsChildOf(WND *child, WND *parent);
 void WndDestroy(WND *w);
 void WndDestroyThreadWindows(W32THREAD *t);
@@ -742,7 +737,7 @@ void WndInvalidate(WND *w, const RECT *client_rect, BOOLEAN erase, BOOLEAN child
 void WndInvalidateRegion(WND *w, const REGION *screen_rgn, ULONG flags);
 void WndValidate(WND *w, const RECT *client_rect);
 void WndUpdateHostConfig(WND *w, BOOLEAN activate);
-void WndEnsureSurface(WND *w); /* top level windows: creates or resizes the surface and the host window */
+void WndEnsureSurface(WND *w); /* top level windows: creates or resizes the surface and the host window. */
 void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out);
 WND *WndFindNeedsPaint(W32THREAD *t, HWND filter);
 void WndActivate(WND *w, BOOLEAN click);
@@ -752,13 +747,13 @@ void WndCenterOnOwner(WND *w);
 UINT WndGetDpi(WND *w);
 void WndSetText(WND *w, PCWSTR text, ULONG chars);
 
-/* ------------------------------------------------------------------ frame */
+/* frame. */
 
 typedef struct FRAME_METRICS {
-    LONG Border;      /* left, right and bottom non client width, visible border included */
-    LONG Top;         /* top non client height, caption included */
-    LONG Caption;     /* caption height */
-    LONG VisibleInset;/* invisible resize border on left, right and bottom */
+    LONG Border;      /* left, right and bottom non client width, visible border included. */
+    LONG Top;         /* top non client height, caption included. */
+    LONG Caption;     /* caption height. */
+    LONG VisibleInset;/* invisible resize border on left, right and bottom. */
     LONG ButtonWidth;
     LONG CornerRadius;
 } FRAME_METRICS;
@@ -769,36 +764,36 @@ void FrameAdjustRect(RECT *r, DWORD style, DWORD ex_style, UINT dpi);
 void FrameClientFromWindow(RECT *r, DWORD style, DWORD ex_style, UINT dpi);
 LRESULT FrameHitTest(WND *w, POINT pt);
 void FramePaint(WND *w);
-void FrameGetButtonRect(WND *w, int button, RECT *r); /* window relative */
-void FrameGetVisibleRect(WND *w, RECT *r);              /* window relative */
-ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max); /* window relative caption areas */
+void FrameGetButtonRect(WND *w, int button, RECT *r); /* window relative. */
+void FrameGetVisibleRect(WND *w, RECT *r);              /* window relative. */
+ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max); /* window relative caption areas. */
 LRESULT FrameMouse(WND *w, UINT msg, LONG hit, POINT pt);
 
-/* ------------------------------------------------------------------ messages and callbacks */
+/* messages and callbacks. */
 
-/* thunk.c: how the parameters of a message are copied between processes. */
+/* message parameter copying between processes, thunk.c. */
 typedef enum MSG_CLASS {
-    MC_VALUE,         /* both parameters are plain values */
-    MC_KERNEL,        /* only the window manager sends it */
-    MC_CREATE,        /* WM_CREATE and WM_NCCREATE */
-    MC_STRING_IN,     /* lparam is a string, or NULL */
-    MC_ITEM_LB,       /* the string of a list box command, or an item's data */
-    MC_ITEM_CB,       /* the same for a combo box */
-    MC_STRING_OUT,    /* wparam characters of room at lparam */
-    MC_LINE_OUT,      /* EM_GETLINE, the room is in the first word of the buffer */
-    MC_ITEM_OUT,      /* LB_GETTEXT, the room is as long as the text */
+    MC_VALUE,         /* both parameters are plain values. */
+    MC_KERNEL,        /* only the window manager sends it. */
+    MC_CREATE,        /* WM_CREATE and WM_NCCREATE. */
+    MC_STRING_IN,     /* lparam is a string, or NULL. */
+    MC_ITEM_LB,       /* the string of a list box command, or an item's data. */
+    MC_ITEM_CB,       /* the same for a combo box. */
+    MC_STRING_OUT,    /* wparam characters of room at lparam. */
+    MC_LINE_OUT,      /* EM_GETLINE, the room is in the first word of the buffer. */
+    MC_ITEM_OUT,      /* LB_GETTEXT, the room is as long as the text. */
     MC_FORMAT_OUT,    /* WM_ASKCBFORMATNAME */
     MC_STRUCT_IN,
     MC_STRUCT_INOUT,
     MC_STRUCT_OUT,
-    MC_TITLEBAR,      /* a structure that must say how large it is */
+    MC_TITLEBAR,      /* a structure that must say how large it is. */
     MC_HELP,
-    MC_OPTMSG,        /* an optional MSG */
+    MC_OPTMSG,        /* an optional MSG. */
     MC_COPYDATA,
     MC_NCCALCSIZE,
     MC_MDICREATE,
-    MC_PTR2,          /* wparam and lparam both optionally point at a DWORD to fill */
-    MC_WPTR,          /* wparam points at a DWORD to fill */
+    MC_PTR2,          /* wparam and lparam both optionally point at a DWORD to fill. */
+    MC_WPTR,          /* wparam points at a DWORD to fill. */
     MC_UINTS_IN,
     MC_UINTS_OUT,
     MC_DEVCHANGE,
@@ -809,25 +804,25 @@ typedef enum MSG_CLASS {
 
 typedef struct MSG_RULE {
     UCHAR Class;
-    UCHAR Layout;  /* the structure holds a pointer or a handle, so a 32-bit program has another layout of it */
-    USHORT Size;   /* bytes of a structure of fixed size */
+    UCHAR Layout;  /* pointer or handle fields require a different 32-bit layout. */
+    USHORT Size;   /* bytes of a structure of fixed size. */
 } MSG_RULE;
 
 typedef struct MSG_CAPTURE {
-    PVOID Buffer;      /* the copy, pool memory, or NULL when the parameters pass as they are */
+    PVOID Buffer;      /* the copy, pool memory, or NULL when the parameters pass as they are. */
     ULONG Size;
-    ULONG Kind;        /* how the callback gets it, MIME_LPARAM_* */
+    ULONG Kind;        /* how the callback gets it, MIME_LPARAM_*. */
     UINT Msg;
     UCHAR Class;
     BOOLEAN ItemData;
-    WPARAM Wparam;     /* what the procedure is given */
+    WPARAM Wparam;     /* what the procedure is given. */
     LPARAM Lparam;
-    WPARAM UserWparam; /* what the sender passed */
+    WPARAM UserWparam; /* what the sender passed. */
     LPARAM UserLparam;
     LPARAM UserPos;
-    ULONG Chars;       /* characters the copy has room for */
-    ULONG Capacity;    /* characters the sender's buffer has room for */
-    LRESULT Refused;   /* the result of a send that was refused */
+    ULONG Chars;       /* characters the copy has room for. */
+    ULONG Capacity;    /* characters the sender's buffer has room for. */
+    LRESULT Refused;   /* the result of a send that was refused. */
 } MSG_CAPTURE;
 
 MSG_RULE MsgRuleFor(UINT msg);
@@ -839,8 +834,8 @@ LRESULT MsgSend(WND *w, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT MsgSendKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG lparam_kind, ULONG lparam_size);
 LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM wparam, LPARAM lparam,
                           ULONG lparam_kind, ULONG lparam_size);
-LRESULT DefWindowProcKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam); /* kernel lparam pointers */
-LRESULT DefWindowProcUser(WND *w, UINT msg, WPARAM wparam, LPARAM lparam);   /* user lparam pointers */
+LRESULT DefWindowProcKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam); /* kernel lparam pointers. */
+LRESULT DefWindowProcUser(WND *w, UINT msg, WPARAM wparam, LPARAM lparam);   /* user lparam pointers. */
 BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait);
 void MsgProcessSent(W32THREAD *t);
 ULONG MsgInSendFlags(W32THREAD *t);
@@ -850,12 +845,12 @@ void TimerProcessExpired(W32THREAD *t, LONG64 *next_due);
 void TimerRemoveWindow(WND *w);
 void TimerRemoveThread(W32THREAD *t);
 BOOLEAN TimerGetMessage(W32THREAD *t, HWND hwnd, UINT min, UINT max, BOOLEAN remove, MSG *out);
-/* sets or kills a timer of the thread's, the lock held; a system one posts WM_SYSTIMER. */
+/* set or kill a thread timer with the lock held; system timers post WM_SYSTIMER. */
 UINT_PTR TimerSet(W32THREAD *t, HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, BOOLEAN system);
 BOOLEAN TimerKill(W32THREAD *t, HWND hwnd, UINT_PTR id, BOOLEAN system);
 LONG64 TimerNextDue(W32THREAD *t);
 
-/* ------------------------------------------------------------------ hooks */
+/* hooks. */
 
 typedef struct HOOK {
     USER_OBJECT Header;
@@ -863,34 +858,34 @@ typedef struct HOOK {
     int Id;
     HOOKPROC Proc;
     BOOLEAN Ansi;
-    W32THREAD *Owner;      /* the installing thread, where low level hooks run */
-    W32THREAD *Target;     /* the hooked thread, NULL for every thread */
+    W32THREAD *Owner;      /* the installing thread, where low level hooks run. */
+    W32THREAD *Target;     /* the hooked thread, NULL for every thread. */
     W32PROCESS *Process;
 } HOOK;
 
 BOOLEAN HookActive(int id, W32THREAD *t);
 /* calls the first hook of the chain the thread sees; data is the lparam structure, size 0 for a value. */
 LRESULT HookCall(int id, W32THREAD *t, int code, WPARAM wparam, LPARAM lparam, ULONG size, BOOLEAN *called);
-LRESULT HookInvoke(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG size); /* in the current thread */
+LRESULT HookInvoke(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG size); /* in the current thread. */
 HOOK *HookLookup(HHOOK handle);
 void HookRemoveThread(W32THREAD *t);
 
-/* ------------------------------------------------------------------ input */
+/* input. */
 
 void InputInitialize(void);
 /* turns a raw host event into a message; consumed means the event produces nothing and is dropped. */
 BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max, BOOLEAN remove,
                        BOOLEAN *consumed);
 extern POINT InputCursorPos;
-extern BOOLEAN InputPointerOutside; /* the host said the last pointer event was outside its window */
-/* the raw input thread, which owns the desktop window as csrss's threads do in windows. */
+extern BOOLEAN InputPointerOutside; /* the host said the last pointer event was outside its window. */
+/* raw input thread owns the desktop window, like the Windows csrss threads. */
 extern HANDLE InputThreadId, InputProcessId;
 extern UCHAR InputAsyncKeys[256];
 extern WND *InputForeground;
 void InputSetForeground(WND *w);
 void InputSetCapture(W32THREAD *t, WND *w, ULONG nc_hit);
-extern BOOLEAN InputCursorHidden; /* the host shows no cursor */
-/* rawinput.c */
+extern BOOLEAN InputCursorHidden; /* the host shows no cursor. */
+/* rawinput.c. */
 POINT InputClampCursor(POINT pt);
 void InputUpdatePointer(void);
 void InputCursorMoved(void);
@@ -898,13 +893,13 @@ void InputCursorShown(void);
 void InputForegroundChanged(void);
 BOOLEAN RawInputEvent(const MimeInputEvent *ev, BOOLEAN injected);
 void RawPadEvent(const MimeInputEvent *ev);
-/* shell.c: toast notifications and the launcher, the shell's way to the host's desktop. */
+/* host toasts and launcher integration, shell.c. */
 void ShellInitialize(void);
 void ShellHostEvent(const MimeInputEvent *ev);
 void ShellFreeProcess(W32PROCESS *p);
 void RawFreeProcess(W32PROCESS *p);
 
-/* ------------------------------------------------------------------ painting and presentation */
+/* painting and presentation. */
 
 void PaintFlushThread(W32THREAD *t);
 void PaintPresent(WND *top);
@@ -919,9 +914,9 @@ void HostWindowDestroy(WND *w);
 void HostConfigure(WND *w, BOOLEAN activate);
 void HostPresent(WND *w, const RECT *dirty);
 void LayerWindowDestroyed(WND *w);
-SURFACE *LayerPrepare(WND *w, const RECT *dirty); /* surface to present, composed when needed */
+SURFACE *LayerPrepare(WND *w, const RECT *dirty); /* surface to present, composed when needed. */
 void LayerStyleChanged(WND *w);
-BOOLEAN LayerHitTest(WND *w, POINT pt); /* FALSE when the window shape excludes the screen point */
+BOOLEAN LayerHitTest(WND *w, POINT pt); /* FALSE when the window shape excludes the screen point. */
 void MenuFreeProcess(W32PROCESS *p);
 void PropFreeWindow(WND *w);
 HANDLE PropGetData(WND *w, ATOM atom);
@@ -931,23 +926,23 @@ void MenuRefreshWindowState(WND *w);
 void ClipboardWindowDestroyed(WND *w);
 void ClipboardDisown(WND *w);
 void ClipboardThreadDestroyed(W32THREAD *t);
-void ClipboardHostChanged(ULONG mask, ULONG generation); /* the MIME_CLIP_* kinds the host clipboard holds */
+void ClipboardHostChanged(ULONG mask, ULONG generation); /* the MIME_CLIP_* kinds the host clipboard holds. */
 void ClipboardHostRequest(ULONG kind, ULONG id);
 UINT ClipboardFormatOfKind(ULONG kind);
 ULONG ClipboardKindOfFormat(UINT format);
 
-/* ime.c */
+/* ime.c. */
 void ImeHostEvent(const MimeInputEvent *ev);
 void ImeWindowDestroyed(WND *w);
 void ImeFocusChanged(void);
 LRESULT ImeDefaultCompositionChars(WND *w);
 
-/* dnd.c */
+/* dnd.c. */
 void DndHostEvent(const MimeInputEvent *ev);
 void DndThreadDestroyed(W32THREAD *t);
 void DndWindowDestroyed(WND *w);
-/* input.c: lets go of the left button the host swallowed the release of. */
-void InputReleaseLeftButton(void);         /* another host program pastes a kind of the session's */
+/* release a left button whose up event was consumed by the host, input.c. */
+void InputReleaseLeftButton(void);         /* another host program pastes a clipboard format owned by the session. */
 void GpuFreeProcess(W32PROCESS *p);
 void VkFreeProcess(W32PROCESS *p);
 void AudioFreeProcess(W32PROCESS *p);
@@ -955,7 +950,7 @@ void GfxShareFreeProcess(W32PROCESS *p);
 void HostSetCursor(ULONG cursor);
 void HostBeep(UINT type);
 
-/* ------------------------------------------------------------------ system */
+/* system. */
 
 typedef struct W32_DISPLAY {
     LONG Width;
@@ -963,7 +958,7 @@ typedef struct W32_DISPLAY {
     RECT Work;
     UINT Dpi;
     UINT RefreshHz;
-    DWORD Bits; /* of the display mode a program set, 32 otherwise */
+    DWORD Bits; /* of the display mode a program set, 32 otherwise. */
 } W32_DISPLAY;
 
 extern W32_DISPLAY W32Display;
@@ -991,14 +986,14 @@ void HostPart(WND *w, RECT *part);
 /* tray.c: the notification area. */
 void TrayHostEvent(const MimeInputEvent *ev);
 void TrayWindowDestroyed(WND *w);
-/* menu.c: the items of a menu and its submenus listed for the host, with each one's id. */
+/* list menu items and submenus with their ids for the host, menu.c. */
 ULONG MenuFlattenForHost(HMENU handle, MimeTrayItem *items, ULONG *ids, ULONG max);
 void WndCheckMonitorDpi(WND *w);
 UINT WndHostDpi(WND *w);
 int MetricsGet(int index, UINT dpi);
 COLORREF MetricsSysColor(int index);
 
-/* screen.c: the surface screen and desktop dcs draw on, composed from the windows before reads. */
+/* screen and desktop DC surface, composed from windows before reads, screen.c. */
 SURFACE *ScreenSurface(void);
 POINT ScreenOrigin(void);
 BOOLEAN ScreenMonitorRect(ULONG index, RECT *out);
@@ -1013,7 +1008,7 @@ HBRUSH MetricsSysColorBrush(int index);
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 void MetricsInitialize(void);
 void MetricsDisplayChanged(void);
-/* display.c */
+/* display.c. */
 void DisplayApplyMode(void);
 void DisplayProcessExited(HANDLE pid);
 void CursorInitialize(void);
@@ -1023,7 +1018,7 @@ SURFACE *CursorIconImage(HICON icon);
 BOOLEAN CursorValid(HICON icon);
 SURFACE *CursorImage(HICON cursor);
 void CursorHotspot(HICON cursor, LONG *x, LONG *y);
-/* capture.c */
+/* capture.c. */
 void CaptureFreeProcess(W32PROCESS *p);
 void CaptureCursorKind(ULONG kind);
 void CaptureCursorShown(HCURSOR cursor);

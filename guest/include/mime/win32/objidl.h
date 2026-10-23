@@ -119,7 +119,7 @@ typedef struct IEnumSTATSTG IEnumSTATSTG;
 typedef struct IEnumString IEnumString;
 typedef struct IEnumUnknown IEnumUnknown;
 
-/* the enumerators of strings, of objects and of the elements of a storage. */
+/* enumerators of strings, objects and storage elements. */
 #define MIME_ENUM_INTERFACE(name, type)                                                                                \
     typedef struct name##Vtbl {                                                                                        \
         HRESULT(STDMETHODCALLTYPE *QueryInterface)(name * This, REFIID riid, void **object);                           \

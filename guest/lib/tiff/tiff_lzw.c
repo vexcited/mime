@@ -16,11 +16,10 @@ static void lzw_init(TiffLzwDec *st)
 }
 
 /*
- * the msb first decoder of the tiff specification. every table entry points at an earlier occurrence of its
- * string in the output, so a code is a plain copy. a new entry is the previous string plus the first byte
- * of the current one, which is the previous string extended by one byte in the output.
- * early is 1 when the code width grows one code before the table is full, as in the specification, and 0 for
- * the encoders that grow it late.
+ * the msb first decoder of the tiff specification. every table entry points at an earlier copy of its string in
+ * the output, so a code is a plain copy, and a new entry is the previous string extended by one byte in place.
+ * early is 1 when the code width grows one code before the table is full, as specified, and 0 for encoders that
+ * grow it late.
  */
 static size_t lzw_decode_msb(TiffLzwDec *st, const uint8_t *src, size_t n, uint8_t *dst, size_t cap, bool *error,
                              unsigned early)
@@ -120,7 +119,7 @@ static size_t lzw_decode_msb(TiffLzwDec *st, const uint8_t *src, size_t n, uint8
     return (size_t)(out - dst);
 }
 
-/* the lsb first variant of the first versions of the specification: widths grow late. */
+/* the lsb first variant of early versions of the specification, where widths grow late. */
 static size_t lzw_decode_lsb(TiffLzwDec *st, const uint8_t *src, size_t n, uint8_t *dst, size_t cap, bool *error)
 {
     const uint8_t *p = src, *end = src + n;

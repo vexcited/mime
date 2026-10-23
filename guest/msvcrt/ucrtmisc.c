@@ -1,7 +1,6 @@
 /*
- * universal crt additions over the rest of msvcrt: the utf-8 conversions of c11, the restartable conversions with the
- * checks, wide character transformations, locale objects of the c locale, the locale forms of collation and case
- * conversion, the time base functions, aligned reallocation and the heap walk.
+ * ucrt additions to msvcrt: c11 utf-8 conversions, checked restartable conversions, wctrans, c locale objects, locale
+ * forms of collation and case conversion, the time base functions, aligned reallocation and the heap walk.
  */
 #include "msvcrt_private.h"
 
@@ -38,7 +37,7 @@ void __cdecl _aligned_free(void *p);
 void *__cdecl _aligned_offset_realloc(void *p, size_t size, size_t alignment, size_t offset);
 size_t __cdecl _msize(void *p);
 
-/* the state of the utf-8 conversions: bytes of a character that is not complete, or the second unit of a pair. */
+/* utf-8 conversion state: the bytes of an incomplete character, or the second unit of a pair. */
 typedef struct {
     unsigned long Wchar;
     unsigned short Byte, State;
@@ -50,8 +49,8 @@ typedef struct {
 #define STATE_PAIR 2
 
 /*
- * one character of utf-8 at s: the code point and the bytes used, with the partial bytes kept in the state. The result
- * is the bytes used from s, (size_t)-2 when s ends in the middle of a character and (size_t)-1 for a malformed one.
+ * decodes one utf-8 character at s, keeping partial bytes in the state. returns the bytes used from s, (size_t)-2 when
+ * s ends mid character and (size_t)-1 for a malformed one.
  */
 static size_t decode_utf8(unsigned *point, const char *s, size_t n, MBSTATE *state)
 {
@@ -139,8 +138,8 @@ static MBSTATE g_c16rtomb_state;
 static MBSTATE g_c32rtomb_state;
 
 /*
- * mbrtoc16: the next utf-16 unit of a utf-8 string. A character beyond the basic plane takes two calls, the second
- * of which gives its low surrogate and uses no bytes, which is told by (size_t)-3.
+ * a character beyond the basic plane takes two calls: the second gives the low surrogate, uses no bytes and returns
+ * (size_t)-3.
  */
 size_t __cdecl mbrtoc16(char16_t *out, const char *s, size_t n, MBSTATE *state)
 {
@@ -192,7 +191,7 @@ size_t __cdecl mbrtoc32(char32_t *out, const char *s, size_t n, MBSTATE *state)
     return point ? used : 0;
 }
 
-/* c16rtomb: the high surrogate is kept until the low one comes and the pair is written as one character. */
+/* keeps a high surrogate until the low one comes, then writes the pair as one character. */
 size_t __cdecl c16rtomb(char *out, char16_t c, MBSTATE *state)
 {
     if (!state)
@@ -238,9 +237,9 @@ size_t __cdecl c32rtomb(char *out, char32_t c, MBSTATE *state)
 /* ------------------------------------------------------------------ restartable conversions */
 
 /*
- * the _s forms of mbsrtowcs and wcsrtombs: the string at *src, up to count characters, into a buffer of size units.
- * Without a destination the size needed is given. A string that did not end is left at the next character and the
- * result is terminated; one that did sets *src to null. _TRUNCATE fits what can be and gives STRUNCATE.
+ * the _s forms of mbsrtowcs and wcsrtombs: up to count characters of *src into a buffer of size units. without a
+ * destination, gives the size needed. a string not converted to its end leaves *src at the next character and the
+ * result terminated; a complete one sets *src to null. _TRUNCATE fits what it can and gives STRUNCATE.
  */
 errno_t __cdecl mbsrtowcs_s(size_t *converted, wchar_t *dst, size_t size, const char **src, size_t count, MBSTATE *state)
 {
@@ -379,7 +378,7 @@ errno_t __cdecl wmemmove_s(wchar_t *dst, size_t size, const wchar_t *src, size_t
     return 0;
 }
 
-/* the two transformations of wctrans: toupper is 1 and tolower 2. */
+/* wctrans: toupper is 1, tolower 2. */
 unsigned short __cdecl wctrans(const char *name)
 {
     if (!strcmp(name, "tolower"))
@@ -396,7 +395,7 @@ wint_t __cdecl towctrans(wint_t c, unsigned short transform)
 
 /* ------------------------------------------------------------------ locales */
 
-/* the locale object holds two pointers to the information of the locale and its multibyte code page. */
+/* holds pointers to the locale information and to its multibyte code page. */
 typedef struct {
     void *locinfo;
     void *mbcinfo;
@@ -411,7 +410,7 @@ static LOCALE_OBJECT *make_locale(int category, int wide, const void *name)
         MSVCRT_INVALID(EINVAL);
         return nullptr;
     }
-    /* only the c locale exists, and the user's, which is the same here. */
+    /* only the c locale exists; the user's locale is the same here. */
     int known = !name || (wide ? (!*(const wchar_t *)name || !wcscmp(name, L"C")) : (!*(const char *)name || !strcmp(name, "C")));
     if (!known)
         return nullptr;
@@ -485,7 +484,7 @@ typedef struct {
     long tv_nsec;
 } TIMESPEC32;
 
-/* the time base 1, utc, from the system clock; any other base gives 0. */
+/* only base 1, utc, from the system clock; any other base gives 0. */
 int __cdecl _timespec64_get(TIMESPEC64 *ts, int base)
 {
     if (!ts) {
@@ -520,8 +519,8 @@ int __cdecl _timespec32_get(TIMESPEC32 *ts, int base)
 /* ------------------------------------------------------------------ memory */
 
 /*
- * the bytes of an aligned block that the program asked for or a little more: what the block holds less the room for the
- * alignment and the pointer that finds it, so that a reallocation that clears the new bytes starts where the old ones end.
+ * the block size less the room for alignment and the back pointer: what was asked for or a little more. this lets a
+ * clearing reallocation start where the old bytes end.
  */
 size_t __cdecl _aligned_msize(void *p, size_t alignment, size_t offset)
 {
@@ -555,7 +554,7 @@ void *__cdecl _aligned_recalloc(void *p, size_t count, size_t size, size_t align
     return _aligned_offset_recalloc(p, count, size, alignment, 0);
 }
 
-/* the blocks of the heap one at a time; the entry says where it left off. */
+/* walks the heap one block at a time; the entry records where it left off. */
 typedef struct {
     int *_pentry;
     size_t _size;

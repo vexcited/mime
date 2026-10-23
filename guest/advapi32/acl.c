@@ -1,8 +1,8 @@
 /*
- * access control lists, aces and security descriptors: the win32 face of the rtl routines of ntdll.
+ * acls, aces and security descriptors: win32 wrappers over the ntdll rtl routines.
  *
- * each function converts the status of its routine to the last error the way kernelbase does. the functions that
- * take ace flags answer ERROR_INVALID_FLAGS when the flags are what the routine rejects.
+ * each status becomes a last error the way kernelbase converts it. functions taking ace flags fail with
+ * ERROR_INVALID_FLAGS when the routine rejects the flags.
  */
 #include "advapi32_private.h"
 
@@ -11,7 +11,7 @@ static BOOL result(NTSTATUS status)
     return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
 }
 
-/* the routines that check ace flags report an invalid parameter as invalid flags. */
+/* routines that check ace flags report bad flags as an invalid parameter. */
 static BOOL result_flags(NTSTATUS status)
 {
     if (NT_SUCCESS(status))
@@ -131,7 +131,7 @@ ADVAPI BOOL WINAPI AddScopedPolicyIDAce(PACL acl, DWORD revision, DWORD flags, D
     return result(RtlAddScopedPolicyIDAce(acl, revision, flags, mask, policy));
 }
 
-/* the attribute is added to the end of the list, and the length is what the list uses, or needs when it is too small. */
+/* appends the ace. the returned length is what the list uses, or needs when too small. */
 ADVAPI BOOL WINAPI AddResourceAttributeAce(PACL acl, DWORD revision, DWORD flags, DWORD mask, PSID sid, PVOID attribute,
                                            PDWORD length)
 {
@@ -139,9 +139,8 @@ ADVAPI BOOL WINAPI AddResourceAttributeAce(PACL acl, DWORD revision, DWORD flags
 }
 
 /*
- * a conditional ace: the condition text is compiled to the binary form, the ace is built after the sid with the
- * condition padded to four bytes, and added at the end. the length that comes back is the bytes the list uses, or
- * the bytes it would need when the ace does not fit.
+ * compiles the condition text and appends an ace holding it after the sid, padded to four bytes. the returned
+ * length is what the list uses, or would need when the ace does not fit.
  */
 ADVAPI BOOL WINAPI AddConditionalAce(PACL acl, DWORD revision, DWORD flags, UCHAR type, DWORD mask, PSID sid,
                                      PWCHAR condition, DWORD *used)
@@ -176,7 +175,7 @@ ADVAPI BOOL WINAPI AddConditionalAce(PACL acl, DWORD revision, DWORD flags, UCHA
             memcpy(ace + 8, sid, sid_size);
             memcpy(ace + 8 + sid_size, binary, binary_size);
             NTSTATUS status = RtlAddAce(acl, revision, 0xFFFFFFFF, ace, size);
-            /* the bytes in use now, from the aces actually in the list. */
+            /* bytes in use, counted from the aces in the list. */
             DWORD in_use = sizeof(ACL);
             const BYTE *at = (const BYTE *)(acl + 1);
             for (DWORD i = 0; i < acl->AceCount; i++) {

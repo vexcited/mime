@@ -1,9 +1,6 @@
 /*
- * the virtual machine on linux: kvm with an x64 guest. the local apics
- * live in the kernel (split irqchip), so the guest's timer, its
- * interprocessor interrupts and hlt never leave it; the host raises its
- * interrupt through an irqfd routed as an msi. hypercalls are port writes,
- * their registers read and written through the shared kvm_run.
+ * x64 KVM backend with split irqchip. local APICs, timers, IPIs and HLT never leave the kernel. host interrupts use
+ * an irqfd routed as MSI; port-write hypercalls exchange registers through kvm_run.
  */
 #include "../vmm/vmm.h"
 
@@ -29,7 +26,7 @@
 #include <x86intrin.h>
 
 #define KICK_SIGNAL SIGUSR2
-#define IRQ_GSI 24 /* past the routes kvm keeps for a userspace ioapic, which mime has none of */
+#define IRQ_GSI 24 /* past the routes KVM keeps for a userspace ioapic, which mime has none of. */
 #define MSR_IA32_TSC 0x10
 
 #define CR0_PE (1ull << 0)
@@ -75,9 +72,8 @@ void mime_host_wake_word(uint32_t *word)
 }
 
 /*
- * the guest sees as much memory as the host has, like windows on the same
- * machine, since programs size their caches from it. it costs nothing until
- * touched, and free guest memory goes back to the host (MIME_HC_MEM_DISCARD).
+ * exposes the host's RAM size so programs size caches accordingly. pages cost memory only when touched, and
+ * MIME_HC_MEM_DISCARD returns free guest pages to the host.
  */
 uint64_t mime_vm_default_ram(void)
 {
@@ -96,7 +92,7 @@ static uint32_t host_cpu_count(void)
     return (uint32_t)MIME_MIN((uint64_t)n, MIME_VMM_MAX_VCPUS);
 }
 
-/* whether the kernel backs this ram in huge pages: always, or on request when it was asked. */
+/* checks whether transparent huge pages are always enabled or enabled on request. */
 static bool transparent_huge_pages(MimeVm *vm)
 {
     char mode[128] = {};
@@ -109,7 +105,7 @@ static bool transparent_huge_pages(MimeVm *vm)
     return strstr(mode, "[always]") || (vm->huge_pages && strstr(mode, "[madvise]"));
 }
 
-/* the swap space of the host, which pages out guest memory in place of a windows paging file. */
+/* host swap substitutes for a guest paging file. */
 static uint64_t host_swap_size(void)
 {
     FILE *f = fopen("/proc/meminfo", "r");
@@ -168,13 +164,8 @@ static void cpuid_vendor(struct kvm_cpuid_entry2 *e, const char *vendor)
 }
 
 /*
- * the hypervisor a windows 11 pc with hyper-v, virtual machine platform or
- * memory integrity runs on: microsoft's, with windows in its root
- * partition. kvm emulates its interface, so the cost of the exits a
- * hypervisor brings, and its handling of vmcall, are those of such a pc.
- * the leaves are kvm's, under microsoft's vendor and version, with the
- * root partition's privileges (create partitions, cpu management) and the
- * hardware features only a root partition reads. kvm's own leaves go.
+ * exposes KVM's Hyper-V interface with Microsoft's vendor and version, root-partition privileges for partition
+ * creation and CPU management, and root-only hardware features. suppresses KVM-specific CPUID leaves.
  */
 static uint32_t add_hyperv_leaves(MimeVm *vm, struct kvm_cpuid_entry2 *out, uint32_t room)
 {
@@ -195,7 +186,7 @@ static uint32_t add_hyperv_leaves(MimeVm *vm, struct kvm_cpuid_entry2 *out, uint
             e->eax = 0x4000000B;
             cpuid_vendor(e, "Microsoft Hv");
             break;
-        case 0x40000002: /* build, version 10.0, update */
+        case 0x40000002: /* build, version 10.0, update. */
             e->eax = 26300;
             e->ebx = 0x000A0000;
             e->ecx = 0;
@@ -209,7 +200,7 @@ static uint32_t add_hyperv_leaves(MimeVm *vm, struct kvm_cpuid_entry2 *out, uint
     }
     free(hv);
     if (n && n < room) {
-        /* apic overlay assist, msr bitmaps, architectural counters, second level translation. */
+        /* apic overlay assist, MSR bitmaps, architectural counters, second level translation. */
         struct kvm_cpuid_entry2 features = {.function = 0x40000006, .eax = 0x0000000F};
         out[n++] = features;
     }
@@ -217,10 +208,8 @@ static uint32_t add_hyperv_leaves(MimeVm *vm, struct kvm_cpuid_entry2 *out, uint
 }
 
 /*
- * the processor the guest sees: the host's, as kvm supports it, with the
- * x2apic and the tsc deadline timer the kernel uses, and microsoft's
- * hypervisor in place of kvm's when kvm can play it. without it, no
- * hypervisor at all.
+ * exposes the host CPU features KVM supports, including x2APIC and TSC deadline timers. advertises Hyper-V when
+ * supported, otherwise no hypervisor.
  */
 static bool load_cpuid(MimeVm *vm)
 {
@@ -244,7 +233,7 @@ static bool load_cpuid(MimeVm *vm)
         if (e->function >= 0x40000000 && e->function < 0x40010000)
             continue;
         if (e->function == 1)
-            e->ecx |= (1u << 21) | (1u << 24); /* x2apic, tsc deadline */
+            e->ecx |= (1u << 21) | (1u << 24); /* x2apic, TSC deadline. */
         g_cpuid->entries[out++] = *e;
     }
     uint32_t hv = add_hyperv_leaves(vm, g_cpuid->entries + out, (uint32_t)n - out);
@@ -351,8 +340,8 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     }
 
     /*
-     * ram is reserved without commit and in huge pages where the kernel can,
-     * 2 MiB aligned so the guest's large blocks match host huge pages.
+     * reserves uncommitted RAM aligned to 2 MiB, using huge pages where available so guest blocks align with host
+     * pages.
      */
     uint64_t align = 2ull << 20;
     uint8_t *raw = mmap(nullptr, ram_size + align, PROT_READ | PROT_WRITE,
@@ -392,10 +381,8 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
 }
 
 /*
- * gives free guest ram back to the host. the guest no longer uses these
- * pages, and no host thread holds them (gpu and audio close before the
- * guest frees). kvm drops its own mapping through the mmu notifier, and the
- * guest reads zeros until it writes them again.
+ * returns unused guest pages to the host. no host thread may retain them; GPU and audio close before freeing. KVM
+ * drops mappings through the MMU notifier, and subsequent reads return zeros until written.
  */
 void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len)
 {
@@ -423,8 +410,8 @@ void mime_vm_raise_irq(MimeVm *vm, uint32_t bits)
 void mime_vm_shutdown(MimeVm *vm)
 {
     /*
-     * the guest never closed these, as it powered off with its processes running. the driver's threads
-     * would still wait on the gpu when the process exits, and crash in the driver's own destructors.
+     * closes channels left open at power-off before driver teardown; otherwise driver threads may remain blocked on
+     * GPU work and crash during process destruction.
      */
     mime_audio_close_all();
     mime_camera_close_all();
@@ -536,7 +523,7 @@ static bool setup_vcpu(MimeVcpu *vcpu)
         return false;
     }
 
-    /* the guest's tsc runs with the host's, so both read the same clock. */
+    /* the guest's TSC runs with the host's, so both read the same clock. */
     struct kvm_msrs *msrs = calloc(1, sizeof(*msrs) + sizeof(struct kvm_msr_entry));
     msrs->nmsrs = 1;
     msrs->entries[0].index = MSR_IA32_TSC;
@@ -596,7 +583,7 @@ static void *vcpu_main(void *arg)
         return nullptr;
     }
     vcpu->run->kvm_valid_regs = KVM_SYNC_X86_REGS;
-    /* kvm holds processors other than the first for an init and startup ipi pair; the guest starts them by hypercall. */
+    /* KVM holds processors other than the first for an init and startup ipi pair; the guest starts them by hypercall. */
     struct kvm_mp_state runnable = {KVM_MP_STATE_RUNNABLE};
     if (ioctl(vcpu->fd, KVM_SET_MP_STATE, &runnable) != 0)
         mime_warn("vcpu %u stays halted: %s", vcpu->index, strerror(errno));
@@ -610,7 +597,7 @@ static void *vcpu_main(void *arg)
         vm->boot->boot_counter = __rdtsc();
     }
 
-    /* the boot processor waits for every vcpu to exist, a secondary for the guest to start it. */
+    /* the boot CPU waits for all vCPUs to exist; secondary CPUs wait for the guest to start them. */
     pthread_mutex_lock(&vm->lock);
     vm->vcpus_created++;
     pthread_cond_broadcast(&vm->vcpu_cond);
@@ -642,7 +629,7 @@ static void *vcpu_main(void *arg)
                 continue;
             }
             if (errno == EFAULT && vcpu->run->exit_reason == KVM_EXIT_MEMORY_FAULT) {
-                /* the kernel could not get the page behind a guest address: the file of a window was made shorter. */
+                /* a file-window backing file was truncated, leaving no page at the guest address. */
                 uint64_t gpa = vcpu->run->memory_fault.gpa;
                 if (gpa >= MIME_WINDOW_BASE && gpa - MIME_WINDOW_BASE < MIME_WINDOW_SIZE && vm->window_host &&
                     mime_window_bus_fault(vm->window_host + (gpa - MIME_WINDOW_BASE))) {
@@ -734,10 +721,9 @@ static void *profile_thread(void *arg);
 static sem_t g_profile_sem;
 
 /*
- * a processor that never runs, to ask kvm to map guest memory into its tables before the guest touches it: a
- * page of a file window that the guest reads for the first time costs an exit and a lookup in the host's page
- * cache, 3 to 4 microseconds, and Helium's start reads 30 thousand of them. The ioctl is the processor's, and
- * the processors that run hold theirs while they do.
+ * uses a vCPU that never runs for KVM prefault ioctls because running CPUs hold their ioctl context. prefaulting
+ * avoids first-read exits and page-cache lookups, 3 to 4 microseconds per page; Helium startup reads 30 thousand
+ * such pages.
  */
 static int g_prefault_fd = -1;
 
@@ -748,7 +734,7 @@ void mime_kvm_prefault_open(MimeVm *vm)
     g_prefault_fd = ioctl(vm->vm_fd, KVM_CREATE_VCPU, (unsigned long)vm->vcpu_count);
 }
 
-/* maps [gpa, gpa + size) into the tables of the guest. false when kvm cannot. */
+/* maps [gpa, gpa + size) into the tables of the guest. false when KVM cannot. */
 bool mime_kvm_prefault(MimeVm *vm, uint64_t gpa, uint64_t size)
 {
     if (g_prefault_fd < 0)
@@ -943,7 +929,7 @@ static int compare_samples(const void *a, const void *b)
     return x < y ? 1 : x > y ? -1 : 0;
 }
 
-/* the processors' tables folded into one list of distinct addresses, sorted by count. */
+/* merges per-CPU address counts and sorts by frequency. */
 #define PROFILE_MERGED (PROFILE_SLOTS * 4)
 
 static size_t profile_merge(ProfileSample *all, uint64_t *total)
@@ -988,7 +974,7 @@ static void profile_report(MimeVm *vm)
         return;
     size_t count = profile_merge(all, &total);
     mime_error("profile: %llu samples", (unsigned long long)total);
-    /* where the time went by module, kernel addresses together under the kernel. */
+    /* groups samples by module, combining kernel addresses. */
     struct {
         char name[40];
         uint64_t count;

@@ -1,5 +1,5 @@
 /*
- * mathematical constants and tables of mathlib.c, computed with 400 bit
+ * mathematical constants and tables of mathlib.c, computed with 400-bit
  * arithmetic and stored as pairs of doubles whose sum carries about 106
  * bits.
  */

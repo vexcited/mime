@@ -1,6 +1,5 @@
 /*
- * the hashes certificates use, md5, sha-1 and the sha-2 family, from the
- * shared crypto library, and the certificate hashing exports.
+ * the certificate hashes, MD5, SHA-1 and SHA-2, from the shared crypto library, and the hashing exports.
  */
 #include "crypt32_private.h"
 #include <crypto/crypto.h>
@@ -51,8 +50,6 @@ ALG_ID CrHashFromOid(LPCSTR oid)
             return map[i].alg;
     return 0;
 }
-
-/* ------------------------------------------------------------------ exports */
 
 BOOL WINAPI CryptHashCertificate(HCRYPTPROV_LEGACY hCryptProv, ALG_ID Algid, DWORD dwFlags, const BYTE *pbEncoded,
                                  DWORD cbEncoded, BYTE *pbComputedHash, DWORD *pcbComputedHash)

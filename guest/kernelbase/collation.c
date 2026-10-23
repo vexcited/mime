@@ -1,10 +1,10 @@
 /*
- * the sort order of strings: the collation elements of the Unicode collation algorithm, with the root order of CLDR and
- * the tailoring of a language, compared level by level. The elements come from the tables tools/nls/gencollate.py makes.
+ * string sort order: Unicode collation algorithm elements with the CLDR root order and per language tailoring,
+ * compared level by level.
  *
- * A string is put in its canonical decomposition and each character gives its elements, found by the longest match at
- * the position. The elements are compared by their primary weights, then their secondary ones, then their tertiary
- * ones. The hyphen and the apostrophe of a word sort have no weight at those levels and are compared last.
+ * a string is canonically decomposed and each position yields the elements of the longest matching entry. elements
+ * compare by primary, then secondary, then tertiary weight. the hyphen and apostrophe of a word sort have no weight at
+ * those levels and are compared last.
  */
 #include "kernelbase_private.h"
 #include "nls_coll.h"
@@ -13,8 +13,8 @@ typedef NLS_COLLCE CE;
 
 #define F_VARIABLE 1
 #define F_SYMBOL 2
-#define F_SPECIAL 4 /* a hyphen or an apostrophe of a word sort. */
-#define F_DIGITS 8  /* the mark that holds the length of a number. */
+#define F_SPECIAL 4 /* a word sort hyphen or apostrophe. */
+#define F_DIGITS 8  /* holds the length of a number. */
 
 #define P_COMMON ((ULONG)0x2000 * NLS_COLL_PRIMARY_SCALE)
 
@@ -94,7 +94,7 @@ static void cp_free(CP_LIST *l)
         KbFree(l->Items);
 }
 
-/* the narrow form of a wide character, as the width ignored by the comparison folds it. */
+/* the narrow form of a wide character, for comparisons that ignore width. */
 static ULONG narrow_form(ULONG c)
 {
     if (c >= 0xFF01 && c <= 0xFF5E)
@@ -117,7 +117,7 @@ static ULONG narrow_form(ULONG c)
     case 0xFFE6:
         return 0x20A9;
     }
-    /* the half width katakana and the half width marks of hangul have the forms of the full width ones. */
+    /* half width katakana and hangul marks map to their full width forms. */
     WCHAR out[20];
     if (c >= 0xFF61 && c <= 0xFFDC) {
         int n = KbUniDecompose(c, TRUE, out);
@@ -136,7 +136,7 @@ static ULONG kana_fold(ULONG c)
     return c;
 }
 
-/* decomposes a string to code points, mapped as the flags ask, and puts the marks in canonical order. */
+/* decomposes to code points, mapped as the flags ask, with marks in canonical order. */
 static BOOL decompose_string(PCWSTR s, int len, DWORD flags, BOOL turkic, CP_LIST *out)
 {
     cp_init(out);
@@ -176,7 +176,7 @@ static BOOL decompose_string(PCWSTR s, int len, DWORD flags, BOOL turkic, CP_LIS
                 return FALSE;
         }
     }
-    /* canonical ordering of the marks: a stable sort of each run of characters with a class. */
+    /* canonical ordering: a stable sort of each run of characters with a combining class. */
     for (int i = start; i < out->Count;) {
         if (!KbUniCcc(out->Items[i])) {
             i++;
@@ -200,7 +200,7 @@ static BOOL decompose_string(PCWSTR s, int len, DWORD flags, BOOL turkic, CP_LIS
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the elements */
+/* ------------------------------------------------------------------ collation elements */
 
 static CE make_ce(ULONG p, UINT s, UINT t, UINT f)
 {
@@ -208,13 +208,13 @@ static CE make_ce(ULONG p, UINT s, UINT t, UINT f)
     return ce;
 }
 
-/* the weights of a character the tables do not have: the Han characters and the unassigned ones. */
+/* implicit weights for characters missing from the tables: Han and unassigned ones. */
 static BOOL implicit_ces(ULONG cp, CE_LIST *out)
 {
     ULONG base = 0xFBC0;
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_coll_ideographs); i++) {
         if (cp >= g_coll_ideographs[i][0] && cp <= g_coll_ideographs[i][1]) {
-            /* the characters of the two blocks of the common ideographs weigh before the rest. */
+            /* the two common ideograph blocks weigh before the rest. */
             base = (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xFA0E && cp <= 0xFA29) ? 0xFB40 : 0xFB80;
             break;
         }
@@ -230,7 +230,7 @@ static BOOL implicit_ces(ULONG cp, CE_LIST *out)
     ULONG first = base + (base < 0xFB40 ? 0 : (cp >> 15));
     ULONG second = (cp & 0x7FFF) | 0x8000;
     if (base == 0xFB00) {
-        /* the Tangut ideographs, then the components, each in the order of the code points. */
+        /* Tangut ideographs, then components, each in code point order. */
         ULONG index;
         if (cp <= 0x187FF)
             index = cp - 0x17000;
@@ -259,7 +259,7 @@ static BOOL cps_equal(const ULONG *a, const UINT32 *b, int n)
     return TRUE;
 }
 
-/* the longest entry of a sorted table of strings that begins the characters. */
+/* the longest entry of a sorted string table that is a prefix of the characters. */
 static const NLS_COLLENTRY *longest_entry(const NLS_COLLENTRY *table, ULONG count, const ULONG *cps, int available)
 {
     LONG lo = 0, hi = (LONG)count - 1, found = -1;
@@ -320,14 +320,13 @@ static BOOL is_digit_char(ULONG c, int *value)
     return FALSE;
 }
 
-/* the entry of a table that is exactly these characters, or none. */
 static const NLS_COLLENTRY *exact_entry(const NLS_COLLENTRY *table, ULONG count, const ULONG *cps, int n)
 {
     const NLS_COLLENTRY *e = longest_entry(table, count, cps, n);
     return e && e->CpCount == n ? e : nullptr;
 }
 
-/* an entry of the tailoring of the collator, or the root contractions, for these characters. */
+/* an entry of the collator's tailoring, or of the root contractions, for these characters. */
 
 static const NLS_COLLENTRY *find_exact(const NLS_COLLATOR *tail, const ULONG *cps, int n)
 {
@@ -339,7 +338,7 @@ static const NLS_COLLENTRY *find_exact(const NLS_COLLATOR *tail, const ULONG *cp
     return e;
 }
 
-/* pushes the elements of the string at the position, and returns the characters it used or 0 on failure. */
+/* pushes the elements at the position, returns the characters used or 0 on failure. */
 static int append_string_ces(UINT collator, CP_LIST *cps, int i, CE_LIST *out)
 {
     ULONG c = cps->Items[i];
@@ -354,8 +353,8 @@ static int append_string_ces(UINT collator, CP_LIST *cps, int i, CE_LIST *out)
     int length = e ? e->CpCount : 1;
     if (e || (v & 0x80000000u) || tail->Count) {
         /*
-         * a mark that follows with others between, none of them of a class as high, goes with the characters before it
-         * when they make a contraction; the marks left stay where they are.
+         * a later mark separated only by marks of lower class joins the preceding characters when they form a
+         * contraction. the other marks stay where they are.
          */
         for (int j = i + length; j < cps->Count; j++) {
             UINT cc = KbUniCcc(cps->Items[j]);
@@ -393,7 +392,7 @@ static int append_string_ces(UINT collator, CP_LIST *cps, int i, CE_LIST *out)
     return implicit_ces(c, out) ? 1 : 0;
 }
 
-/* the elements of a decomposed string; a hyphen and an apostrophe of a word sort are marked, and numbers are made. */
+/* elements of a decomposed string: word sort hyphens and apostrophes are marked, digit runs become numbers. */
 static BOOL build_ces(UINT collator, DWORD flags, CP_LIST *cps, CE_LIST *out)
 {
     ce_init(out);
@@ -407,7 +406,7 @@ static BOOL build_ces(UINT collator, DWORD flags, CP_LIST *cps, CE_LIST *out)
             int first = i;
             while (first + 1 < j && is_digit_char(cps->Items[first], &value) && value == 0)
                 first++;
-            /* the length first, so that a longer number is the greater one. */
+            /* length first, so a longer number is greater. */
             int length = j - first;
             CE_LIST zero;
             ce_init(&zero);
@@ -440,9 +439,9 @@ static BOOL build_ces(UINT collator, DWORD flags, CP_LIST *cps, CE_LIST *out)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the comparison */
+/* ------------------------------------------------------------------ comparison */
 
-/* the elements of a string as the flags leave them: symbols that are ignored and elements of nothing are not there. */
+/* a string's elements after the flags: ignored symbols and empty elements are dropped. */
 static BOOL prepare(UINT collator, DWORD flags, PCWSTR s, int len, BOOL turkic, CE_LIST *out)
 {
     CP_LIST cps;
@@ -462,7 +461,7 @@ static BOOL prepare(UINT collator, DWORD flags, PCWSTR s, int len, BOOL turkic, 
             continue;
         if ((flags & NORM_IGNORESYMBOLS) && (ce.F & F_SYMBOL))
             continue;
-        /* a mark of an ignored accent weighs nothing. */
+        /* an ignored accent's mark weighs nothing. */
         if ((flags & (NORM_IGNORENONSPACE | LINGUISTIC_IGNOREDIACRITIC)) && !ce.P)
             continue;
         ok = ce_push(out, ce);
@@ -508,7 +507,7 @@ static int compare_streams(const CE_LIST *a, const CE_LIST *b, int level, BOOL b
     }
 }
 
-/* the specials last: a string that has one at the place where the other has none, or has more of them. */
+/* specials compare last: first by position, then the string with more of them is greater. */
 static int compare_specials(const CE_LIST *a, const CE_LIST *b)
 {
     int i = 0, j = 0;
@@ -570,7 +569,7 @@ static void key_byte(KEY_OUT *o, BYTE b)
     o->Length++;
 }
 
-/* a weight in the bytes 2 to 255, most significant first, so that the keys compare as the weights do. */
+/* a weight as bytes 2 to 255, most significant first, so keys compare like the weights. */
 static void key_weight(KEY_OUT *o, ULONG w, int digits)
 {
     BYTE bytes[5];
@@ -582,7 +581,7 @@ static void key_weight(KEY_OUT *o, ULONG w, int digits)
         key_byte(o, bytes[i]);
 }
 
-/* the levels one after the other, each closed by 1 and the key by 0, as bytes that memcmp puts in the sort order. */
+/* levels one after another, each ended by 1 and the key by 0, so memcmp gives the sort order. */
 int KbSortKey(UINT collator, BOOL turkic, DWORD flags, PCWSTR src, int len, PBYTE key, int size)
 {
     CE_LIST l;
@@ -627,7 +626,7 @@ int KbSortKey(UINT collator, BOOL turkic, DWORD flags, PCWSTR src, int len, PBYT
     return o.Length;
 }
 
-/* the number of a collator by its name, 0 for the root order of a name there is none for. */
+/* a collator number by name, 0 for the root order when there is none. */
 UINT KbCollatorByName(const char *name)
 {
     for (UINT i = 1; i < NLS_COLL_COLLATORS; i++)

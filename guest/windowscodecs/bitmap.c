@@ -1,6 +1,4 @@
-/*
- * IWICBitmap: pixels in memory, and the locks that give programs the memory to read or write.
- */
+/* IWICBitmap storage and read/write locks. */
 #include "wic_private.h"
 #include "convert.h"
 #include <mime/win32/wingdi.h>
@@ -39,7 +37,7 @@ typedef struct WicBitmapLock {
 
 static WicBitmap *bitmap_from(IWICBitmap *This) { return WIC_FROM_SLOT(WicBitmap, bitmap, This); }
 
-/* ------------------------------------------------------------------ rectangles */
+/* rectangles. */
 
 HRESULT WicCheckRect(const WICRect *rect, UINT width, UINT height, WICRect *out)
 {
@@ -77,7 +75,7 @@ HRESULT WicCheckBuffer(const WICRect *rect, const GUID *format, UINT stride, UIN
     return S_OK;
 }
 
-/* copies a rectangle of bits, a start that is not on a byte is shifted into place. */
+/* copy bit rectangles, shifting non-byte-aligned starts. */
 void WicCopyBits(BYTE *dest, UINT dest_stride, const BYTE *src, UINT src_stride, UINT x, UINT y, UINT width,
                  UINT height, UINT bpp)
 {
@@ -111,7 +109,7 @@ void WicCopyBits(BYTE *dest, UINT dest_stride, const BYTE *src, UINT src_stride,
     }
 }
 
-/* ------------------------------------------------------------------ locks */
+/* locks. */
 
 static WicBitmapLock *lock_from(IWICBitmapLock *This) { return WIC_FROM_SLOT(WicBitmapLock, lock, This); }
 
@@ -171,7 +169,7 @@ static const IWICBitmapLockVtbl g_lock_vtbl = {WIC_IUNKNOWN_FUNCS, lock_get_size
 static const WicIfaceEntry g_lock_ifaces[] = {WIC_ENTRY(WicBitmapLock, IID_IWICBitmapLock, lock)};
 static const WicClass g_lock_class = {lock_destroy, g_lock_ifaces, 1};
 
-/* ------------------------------------------------------------------ the bitmap */
+/* the bitmap. */
 
 static void bitmap_destroy(WicBase *base)
 {
@@ -353,7 +351,7 @@ static const WicClass g_bitmap_class = {bitmap_destroy, g_bitmap_ifaces, 2};
 
 static UINT aligned_stride(UINT row_bytes) { return (row_bytes + 3) & ~3u; }
 
-/* a bitmap of the size, over the memory when given, copied into a new allocation unless it is a mapped view. */
+/* create a bitmap, copying supplied memory unless it is a mapped view. */
 HRESULT WicBitmapCreate(UINT width, UINT height, const GUID *format, BYTE *memory, UINT stride, UINT size,
                         BOOL copy, IWICBitmap **out)
 {
@@ -445,7 +443,7 @@ HRESULT WicBitmapFromSource(IWICBitmapSource *source, const WICRect *rect, IWICB
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ bitmaps of the system */
+/* bitmaps of the system. */
 
 HRESULT WicBitmapFromSection(UINT width, UINT height, const GUID *format, HANDLE section, UINT stride, UINT offset,
                              DWORD access, IWICBitmap **out)
@@ -540,7 +538,7 @@ HRESULT WicBitmapFromHBITMAP(HBITMAP hbitmap, HPALETTE hpalette, WICBitmapAlphaC
     if (hpalette)
         old_palette = SelectPalette(dc, hpalette, FALSE);
     BOOL ok = TRUE;
-    /* the rows come in with the stride of the bitmap, so ask for them one at a time. */
+    /* request rows separately because the source uses the bitmap stride. */
     BYTE *packed = WicAlloc((SIZE_T)width * height * 4);
     if (!packed) {
         ok = FALSE;
@@ -559,7 +557,7 @@ HRESULT WicBitmapFromHBITMAP(HBITMAP hbitmap, HPALETTE hpalette, WICBitmapAlphaC
                     BYTE a = (option == WICBitmapIgnoreAlpha || !has_alpha) ? 255 : s[x * 4 + 3];
                     BYTE b = s[x * 4], g = s[x * 4 + 1], r = s[x * 4 + 2];
                     if (option == WICBitmapUseAlpha && info.bmBitsPixel == 32 && has_alpha && a != 255 && a) {
-                        /* a 32 bit bitmap holds premultiplied color, which straight alpha wants undone. */
+                        /* 32-bit bitmaps are premultiplied; undo this for straight alpha. */
                         r = WicStraightChannel(r, a);
                         g = WicStraightChannel(g, a);
                         b = WicStraightChannel(b, a);
@@ -647,14 +645,14 @@ HRESULT WicBitmapFromHICON(HICON icon, IWICBitmap **out)
                                 if (!alpha && !a)
                                     b = g = r = 0;
                             } else {
-                                /* a monochrome icon has the and mask above the xor mask. */
+                                /* monochrome icons store the AND mask above the XOR mask. */
                                 BYTE and_bit = colors[i * 4] ? 1 : 0;
                                 BYTE xor_bit = colors[(i + (SIZE_T)width * height) * 4] ? 1 : 0;
                                 a = (and_bit && !xor_bit) ? 0 : 255;
                                 b = g = r = xor_bit ? 255 : 0;
                             }
                             if (alpha && a != 255) {
-                                /* the color of an icon with alpha is already premultiplied by the system. */
+                                /* the system already premultiplies icons with alpha. */
                             }
                             d[x * 4] = b;
                             d[x * 4 + 1] = g;

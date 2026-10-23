@@ -1,7 +1,7 @@
 /*
  * irql, spin locks and fast mutexes.
  *
- * irql up to DISPATCH_LEVEL is a per processor software value; it only
+ * irql up to DISPATCH_LEVEL is a per processor software value that only
  * defers dispatching and dpcs. higher levels also mask interrupts.
  */
 #include "../ntos.h"
@@ -16,7 +16,7 @@ KIRQL NTAPI KfRaiseIrql(KIRQL irql)
     PKPCR pcr = KeGetPcr();
     KIRQL old = pcr->Irql;
     if (irql < old)
-        KeBugCheckEx(0x00000009, old, irql, 0, 0); /* IRQL_NOT_GREATER_OR_EQUAL */
+        KeBugCheckEx(0x00000009, old, irql, 0, 0); /* IRQL_NOT_GREATER_OR_EQUAL. */
     if (irql > DISPATCH_LEVEL && old <= DISPATCH_LEVEL)
         pcr->SavedInterruptState = KiDisableInterrupts();
     pcr->Irql = irql;
@@ -33,7 +33,7 @@ void NTAPI KeLowerIrql(KIRQL irql)
     PKPCR pcr = KeGetPcr();
     KIRQL old = pcr->Irql;
     if (irql > old)
-        KeBugCheckEx(0x0000000A, old, irql, 0, 0); /* IRQL_NOT_LESS_OR_EQUAL */
+        KeBugCheckEx(0x0000000A, old, irql, 0, 0); /* IRQL_NOT_LESS_OR_EQUAL. */
     pcr->Irql = irql;
     if (old > DISPATCH_LEVEL && irql <= DISPATCH_LEVEL)
         KiRestoreInterrupts(pcr->SavedInterruptState);
@@ -42,7 +42,7 @@ void NTAPI KeLowerIrql(KIRQL irql)
         KiDispatchPendingWork();
 }
 
-/* spin locks: the kernel lock already excludes other processors, the irql change keeps this one. */
+/* spin locks: the kernel lock already excludes other processors, raising irql covers this one. */
 KIRQL NTAPI KeAcquireSpinLockRaiseToDpc(PKSPIN_LOCK lock)
 {
     KIRQL old = KfRaiseIrql(DISPATCH_LEVEL);
@@ -90,7 +90,7 @@ void NTAPI KeLeaveGuardedRegion(void)
         KiDeliverApcs(KernelMode, nullptr);
 }
 
-/* fast mutexes: a counted lock backed by a synchronization event. */
+/* fast mutexes are a count backed by a synchronization event. */
 void NTAPI ExInitializeFastMutex(PFAST_MUTEX mutex)
 {
     mutex->Count = 1;
@@ -103,7 +103,7 @@ void FASTCALL ExAcquireFastMutexUnsafe(PFAST_MUTEX mutex)
 {
     PKTHREAD self = KiCurrentThread();
     if (mutex->Owner == self)
-        KeBugCheckEx(0x000000E5, (ULONG_PTR)mutex, 0, 0, 0); /* recursive acquisition */
+        KeBugCheckEx(0x000000E5, (ULONG_PTR)mutex, 0, 0, 0); /* recursive acquisition. */
     if (__atomic_sub_fetch(&mutex->Count, 1, __ATOMIC_ACQUIRE) != 0) {
         mutex->Contention++;
         KeWaitForSingleObject(&mutex->Event, WrFastMutex, KernelMode, FALSE, nullptr);

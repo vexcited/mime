@@ -1,6 +1,4 @@
-/*
- * uxtheme internal interface.
- */
+/* uxtheme internal interface. */
 #ifndef MIME_UXTHEME_PRIVATE_H
 #define MIME_UXTHEME_PRIVATE_H
 
@@ -13,7 +11,7 @@
 
 #include "../lib/msstyles/msstyles.h"
 
-/* E_PROP_ID_UNSUPPORTED, what every getter returns for a missing property. */
+/* E_PROP_ID_UNSUPPORTED, returned by every getter for a missing property. */
 #define UX_E_NOTFOUND ((HRESULT)0x80070490L)
 
 #ifndef PRF_CLIENT
@@ -24,7 +22,7 @@
 #define PRF_CHILDREN 0x00000010L
 #endif
 
-/* exported by user32 and gdi32 but not declared in the shared headers yet. */
+/* exported by user32 and gdi32 but missing from the shared headers. */
 WINGDIAPI HRGN WINAPI ExtCreateRegion(const XFORM *xform, DWORD count, const RGNDATA *data);
 WINUSERAPI BOOL WINAPI SetPropW(HWND hwnd, LPCWSTR name, HANDLE data);
 WINUSERAPI HANDLE WINAPI GetPropW(HWND hwnd, LPCWSTR name);
@@ -42,7 +40,7 @@ static inline void UxFree(void *p)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, p);
 }
 
-/* an open theme handle: one class of the loaded visual style at one dpi. */
+/* one class of the loaded visual style at one dpi. */
 typedef struct UX_THEME {
     int Class;
     UINT Dpi;
@@ -52,18 +50,18 @@ typedef struct UX_THEME {
 extern MimeMsstyles UxStyles;
 extern const MimeAllocator UxAllocator;
 
-/* loads aero.msstyles once, false when no visual style is available. */
+/* false when no visual style is available. */
 BOOL UxThemeLoaded(void);
 
-/* resolves a handle into its theme, NULL with *hr = E_HANDLE when stale. release with UxRelease. */
+/* NULL with *hr = E_HANDLE when stale. release with UxRelease. */
 UX_THEME *UxAcquire(HTHEME handle, HRESULT *hr);
 void UxRelease(UX_THEME *theme);
 
-/* a decoded theme image: a top down 32 bpp premultiplied dib section. */
+/* a top down 32 bpp premultiplied dib section. */
 typedef struct UX_BITMAP {
     struct UX_BITMAP *Next;
     const void *Data;
-    COLORREF Key; /* transparent color made clear, CLR_INVALID for none. */
+    COLORREF Key; /* made transparent, CLR_INVALID for none. */
     HBITMAP Bitmap;
     DWORD *Bits;
     int Width, Height;
@@ -71,11 +69,10 @@ typedef struct UX_BITMAP {
 
 UX_BITMAP *UxGetBitmap(const MimeMsstylesImage *image);
 
-/* the background image of a part, false for border fill and parts without one. */
+/* false for border fill and parts without an image. */
 BOOL UxPartImage(UX_THEME *theme, int part, int state, const RECT *dest, MimeMsstylesImage *image);
 int UxBackgroundType(UX_THEME *theme, int part, int state);
 
-/* scaled sizes for the theme dpi. */
 static inline int UxScale(UX_THEME *theme, int value)
 {
     return theme->Dpi == 96 ? value : MulDiv(value, (int)theme->Dpi, 96);

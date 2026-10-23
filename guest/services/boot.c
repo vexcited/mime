@@ -1,5 +1,5 @@
 /*
- * services.exe: the start of the machine's services, the timers that delay things, and the end of them all.
+ * services.exe: starting the machine's services at boot, timers, and shutdown.
  */
 #include "services.h"
 
@@ -66,7 +66,7 @@ void TimerInit(void)
         CloseHandle(t);
 }
 
-/* ------------------------------------------------------------------ the start */
+/* ------------------------------------------------------------------ boot start */
 
 static HANDLE g_autostart_event;
 
@@ -76,7 +76,7 @@ static BOOL autostart_candidate(SERVICE *s)
            !(s->Type & SERVICE_USER_SERVICE) && s->Start == SERVICE_AUTO_START;
 }
 
-/* the order windows starts them in: by group, in the order ServiceGroupOrder lists them, and by name within. */
+/* windows' start order: by group in ServiceGroupOrder order, then by tag, then by name. */
 static int by_group(const void *a, const void *b)
 {
     SERVICE *x = *(SERVICE *const *)a, *y = *(SERVICE *const *)b;
@@ -110,7 +110,7 @@ static void start_list(SERVICE **list, DWORD n, DWORD reason)
             return;
         if (s->Status.dwCurrentState != SERVICE_STOPPED)
             continue;
-        /* a service whose program is not in the installation is not tried: windows logs an event for each. */
+        /* a service whose program is missing from the installation is skipped; windows logs an event for each. */
         if (!RunImageExists(s)) {
             s->StartError = ERROR_FILE_NOT_FOUND;
             continue;
@@ -130,7 +130,7 @@ static DWORD WINAPI delayed_start(LPVOID context)
 {
     DELAYED *d = context;
     EnterCriticalSection(&g_lock);
-    /* the names, not the records, were kept; a record that went is not started. */
+    /* records deleted since the list was made are not started. */
     SERVICE **live = SvcAlloc((d->Count + 1) * sizeof(*live));
     DWORD n = 0;
     for (DWORD i = 0; i < d->Count; i++) {
@@ -175,7 +175,7 @@ static DWORD WINAPI autostart_thread(LPVOID unused)
         SERVICE ***target = s->DelayedStart ? &delayed : &normal;
         DWORD *count = s->DelayedStart ? &delayed_count : &normal_count;
         if (*count == capacity) {
-            /* both lists grow together: they are of one capacity. */
+            /* both lists share one capacity, so they grow together. */
             capacity *= 2;
             SERVICE **a = SvcAlloc(capacity * sizeof(*a)), **b = SvcAlloc(capacity * sizeof(*b));
             if (!a || !b) {
@@ -224,14 +224,14 @@ static DWORD WINAPI autostart_thread(LPVOID unused)
 
 void BootStart(void)
 {
-    /* programs wait for the services to be done with their start on this event. */
+    /* programs wait on this event for the services to finish starting. */
     g_autostart_event = SvcCreateWorldEvent(SCM_AUTOSTART_EVENT);
     HANDLE t = CreateThread(nullptr, 0, autostart_thread, nullptr, 0, nullptr);
     if (t)
         CloseHandle(t);
 }
 
-/* ------------------------------------------------------------------ the end */
+/* ------------------------------------------------------------------ shutdown */
 
 #define POLL_MS 10
 #define PRESHUTDOWN_TIME_MS 10000
@@ -239,7 +239,6 @@ void BootStart(void)
 #define SHUTDOWN_LIMIT_MS 30000
 #define IN_FLIGHT_GRACE_MS 1000
 
-/* a set of services the end of the machine works on. */
 typedef struct SERVICE_SET {
     SERVICE **Items;
     DWORD Count;
@@ -270,7 +269,7 @@ static void set_add(SERVICE_SET *set, SERVICE *s)
     set->Items[set->Count++] = s;
 }
 
-/* a program with a process that has not stopped yet and is not on its way to. */
+/* a program whose process is neither stopped nor stopping. */
 static BOOL still_up(const SERVICE *s)
 {
     DWORD state = s->Status.dwCurrentState;
@@ -283,7 +282,7 @@ static BOOL takes(const SERVICE *s, DWORD accepted_bit)
     return (s->Status.dwControlsAccepted & accepted_bit) != 0;
 }
 
-/* a record that is deleted while the lock is let go of must not go; the handle count keeps it. */
+/* the handle count keeps a record alive if it is deleted while the lock is released. */
 static void pin(SERVICE *s)
 {
     s->OpenHandles++;
@@ -295,7 +294,7 @@ static void unpin(SERVICE *s)
         s->OpenHandles--;
 }
 
-/* waits, with the lock let go of in between, for the service to stop or for the time to pass. */
+/* waits for the service to stop or the time to run out, releasing the lock in between. */
 static BOOL stopped_within(SERVICE *s, DWORD ms)
 {
     ULONGLONG limit = GetTickCount64() + ms;
@@ -306,7 +305,7 @@ static BOOL stopped_within(SERVICE *s, DWORD ms)
     return s->Status.dwCurrentState == SERVICE_STOPPED;
 }
 
-/* the time the key of a service allows its preparation for the end, in milliseconds. */
+/* the service key's PreshutdownTimeout, in milliseconds. */
 static DWORD preshutdown_allowance(const SERVICE *s)
 {
     DWORD allowance = PRESHUTDOWN_TIME_MS;
@@ -320,7 +319,7 @@ static DWORD preshutdown_allowance(const SERVICE *s)
     return allowance;
 }
 
-/* the services the configuration names to be prepared first, in its order. */
+/* the services PreshutdownOrder names, in its order. */
 static void collect_named_preshutdown(SERVICE_SET *named)
 {
     HKEY key;
@@ -347,7 +346,7 @@ static void preshutdown(void)
             stopped_within(s, preshutdown_allowance(s));
     }
 
-    /* the others are all asked first, and then waited for one after the other. */
+    /* the others are all notified first, then waited for one by one. */
     SERVICE_SET others = {};
     for (SERVICE *s = g_services; s; s = s->Next)
         if (still_up(s) && takes(s, SERVICE_ACCEPT_PRESHUTDOWN) && !set_has(&named, s))
@@ -364,7 +363,7 @@ static void preshutdown(void)
     SvcFree(asked.Items);
 }
 
-/* how long the machine waits for the services it told to shut down: the slowest of them, within the limit. */
+/* the wait for the services told to shut down: the slowest one's hint, capped at the limit. */
 static DWORD shutdown_budget(const SERVICE_SET *set)
 {
     DWORD budget = 0;
@@ -377,7 +376,7 @@ static DWORD shutdown_budget(const SERVICE_SET *set)
     return budget < SHUTDOWN_LIMIT_MS ? budget : SHUTDOWN_LIMIT_MS;
 }
 
-/* one shutdown control on its own thread, so that a slow handler holds up nobody else. */
+/* one thread per shutdown control, so a slow handler holds up nobody else. */
 static DWORD WINAPI send_shutdown(LPVOID context)
 {
     SERVICE *s = context;
@@ -418,7 +417,7 @@ static void shutdown_services(void)
     while (chosen.Count && !all_stopped(&chosen) && GetTickCount64() < limit)
         SvcSleepChanged(POLL_MS);
 
-    /* a control still being sent gets a moment to come back, the lock free for it to finish. */
+    /* controls still in flight get a short grace period, with the lock free so they can finish. */
     LeaveCriticalSection(&g_lock);
     for (DWORD i = 0; senders && i < chosen.Count; i++) {
         if (senders[i]) {
@@ -436,7 +435,7 @@ static BOOL WINAPI console_handler(DWORD event)
     if (event != 6 /* CTRL_SHUTDOWN_EVENT */)
         return TRUE;
     EnterCriticalSection(&g_lock);
-    /* no more services are started or created from here on. */
+    /* no services are started or created from here on. */
     g_shutdown = TRUE;
     WakeAllConditionVariable(&g_changed);
     preshutdown();
@@ -448,6 +447,6 @@ static BOOL WINAPI console_handler(DWORD event)
 void ShutdownInit(void)
 {
     SetConsoleCtrlHandler(console_handler, TRUE);
-    /* below the programs' level, which is 0x280, and above the service processes'. */
+    /* below the programs' level of 0x280 and above the service processes'. */
     SetProcessShutdownParameters(0x1FF, 0);
 }

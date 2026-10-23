@@ -1,17 +1,13 @@
 /*
- * user address spaces: vads, commit state, page faults and the virtual
- * memory system services.
+ * user address spaces: vads, commit state, page faults and the virtual memory system services.
  *
- * reservations are tracked by vads; commit state lives in the page
- * tables. a committed page that was never touched is an invalid pte
- * carrying MM_SWPTE_COMMITTED and its protection, like MMPTE_SOFTWARE.
- * the vads sit in arrays sorted by address, and every range operation
- * walks the translation tables a table at a time, skipping the holes, so
- * a terabyte reservation costs what its few committed pages cost.
+ * vads track reservations and the page tables hold commit state. a committed but untouched page is an
+ * invalid pte carrying MM_SWPTE_COMMITTED and its protection, like MMPTE_SOFTWARE. vads sit in arrays
+ * sorted by address, and range operations walk the tables one table at a time, skipping holes, so a
+ * terabyte reservation costs only what its committed pages cost.
  *
- * a placeholder is a vad that reserves address space and nothing else. it
- * is replaced by an allocation or a view of exactly its range, and an
- * allocation or view made that way can become a placeholder again.
+ * a placeholder is a vad that only reserves address space. an allocation or view of exactly its range
+ * replaces it, and can turn back into one.
  */
 #include "../ntos.h"
 
@@ -19,11 +15,10 @@
 #define MM_HIGHEST_USER_ADDRESS 0x7FFFFFFEFFFFull
 #define MM_ALLOCATION_GRANULARITY 0x10000ull
 #define MM_TOP_DOWN_START 0x7FF000000000ull
-#define MM_TABLE_SPAN (1ull << 21) /* what one translation table of ptes covers */
+#define MM_TABLE_SPAN (1ull << 21) /* the range one table of ptes covers. */
 
 #define MM_VAD_TAG KI_TAG('M', 'm', 'V', 'd')
 
-/* every allocation type bit mapped views and allocations understand. */
 #define MI_ALLOCATION_TYPES                                                                                       \
     (MEM_COMMIT | MEM_RESERVE | MEM_REPLACE_PLACEHOLDER | MEM_RESERVE_PLACEHOLDER | MEM_RESET | MEM_TOP_DOWN |       \
      MEM_WRITE_WATCH | MEM_PHYSICAL | MEM_ROTATE | MEM_RESET_UNDO | MEM_LARGE_PAGES)
@@ -49,9 +44,8 @@ static inline BOOLEAN pte_committed(ULONG64 pte)
 #define STATUS_DYNAMIC_CODE_BLOCKED ((NTSTATUS)0xC0000604L)
 
 /*
- * windows' rules for a protection: one base protection, and at most one
- * of guard, no cache and write combine, none with no access, write
- * combine only with the plain data protections.
+ * Windows' rules: one base protection, at most one of guard, no cache and write combine, none of them
+ * with PAGE_NOACCESS, and write combine only with the plain data protections.
  */
 BOOLEAN MiProtectionIsValid(ULONG protect)
 {
@@ -74,9 +68,8 @@ BOOLEAN MiProtectionIsValid(ULONG protect)
 /* ----------------------------------------------------------------- commit charge */
 
 /*
- * private committed memory is charged against the whole machine's limit,
- * its memory plus the host's swap, so that commit fails when a program
- * asks for more than could ever be backed.
+ * private commit is charged against the machine's limit, its memory plus the host's swap, so commit
+ * fails when a program asks for more than could ever be backed.
  */
 static volatile LONG64 g_commit_pages, g_commit_peak;
 
@@ -104,7 +97,7 @@ static BOOLEAN charge_commit(PMMADDRESS_SPACE as, SIZE_T pages)
 {
     if (!pages)
         return TRUE;
-    /* a process in a job may be held to a limit of the memory it or the job commits. */
+    /* a job can limit what the process or the whole job commits. */
     PEPROCESS process = CONTAINING_RECORD(as, EPROCESS, AddressSpace);
     BOOLEAN in_job = process->Job != nullptr;
     if (in_job && !PspJobChargeCommit(process, as->CommitCharge, pages))
@@ -137,7 +130,7 @@ static void return_commit(PMMADDRESS_SPACE as, SIZE_T pages)
         PspJobReturnCommit(process, pages);
 }
 
-/* ----------------------------------------------------------------- the vad arrays */
+/* ----------------------------------------------------------------- vad arrays */
 
 static BOOLEAN vad_reserve_slots(PMMADDRESS_SPACE as, ULONG extra)
 {
@@ -164,7 +157,7 @@ static BOOLEAN vad_reserve_slots(PMMADDRESS_SPACE as, ULONG extra)
     return TRUE;
 }
 
-/* the first vad that ends above va, which is the vad holding it when it starts at or below it. */
+/* the first vad ending above va. it holds va if it starts at or below it. */
 static ULONG vad_lower_bound(PMMADDRESS_SPACE as, ULONG_PTR va)
 {
     ULONG low = 0, high = as->VadCount;
@@ -234,7 +227,7 @@ void MiRemoveVad(PMMADDRESS_SPACE as, PMMVAD vad)
     as->VadCount--;
 }
 
-/* changes the range of a vad that stays in place, as a split or a trim does. */
+/* for a split or trim, where the vad keeps its slot. */
 static void vad_set_range(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, ULONG_PTR end)
 {
     ULONG i = vad_index(as, vad);
@@ -264,10 +257,7 @@ static void vad_destroy(PMMVAD vad)
     ExFreePool(vad);
 }
 
-/*
- * the lowest or highest free range of a size inside [lowest, highest],
- * aligned. the search is a scan of the dense array of ranges.
- */
+/* the lowest or highest aligned free range inside [lowest, highest], found by scanning the vad array. */
 NTSTATUS MiFindFreeRangeEx(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, ULONG_PTR lowest,
                            ULONG_PTR highest, BOOLEAN top_down, ULONG_PTR *out)
 {
@@ -284,7 +274,7 @@ NTSTATUS MiFindFreeRangeEx(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment
     if (top_down) {
         if (limit > MM_TOP_DOWN_START && highest == maximum - 1)
             limit = MM_TOP_DOWN_START;
-        /* the first vad ending at or above the limit; one that starts below it holds the limit. */
+        /* the first vad ending at or above the limit holds the limit if it starts below it. */
         ULONG i = vad_lower_bound(as, limit - 1);
         for (;;) {
             if (i < as->VadCount && as->Spans[i].Start < limit)
@@ -346,10 +336,8 @@ typedef struct {
 } PTE_CURSOR;
 
 /*
- * the next translation table that exists inside the cursor's range: its
- * first pte in the range, the address that pte maps and how many ptes of
- * the table fall in the range. missing tables, and with them whole tables
- * of tables, are stepped over.
+ * the next existing table in the cursor's range: returns its first pte in range, and sets the address
+ * that pte maps and how many of the table's ptes are in range. missing tables and subtrees are skipped.
  */
 static ULONG64 *cursor_next(PTE_CURSOR *c, ULONG_PTR *va_out, SIZE_T *count)
 {
@@ -385,7 +373,6 @@ static ULONG64 *cursor_next(PTE_CURSOR *c, ULONG_PTR *va_out, SIZE_T *count)
     return nullptr;
 }
 
-/* makes every translation table of a range exist. */
 static BOOLEAN ensure_tables(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 {
     for (ULONG_PTR va = start; va < end; va = (va + MM_TABLE_SPAN) & ~(MM_TABLE_SPAN - 1))
@@ -394,7 +381,7 @@ static BOOLEAN ensure_tables(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end
     return TRUE;
 }
 
-/* how many pages of a range are committed, private or not. */
+/* counts private and section pages alike. */
 static SIZE_T count_committed(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 {
     PTE_CURSOR c = {as->Root, start, end};
@@ -406,11 +393,7 @@ static SIZE_T count_committed(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR en
     return committed;
 }
 
-/*
- * frees the pages of a range and clears its ptes, a table at a time so
- * that the translations are invalidated once for the pages of a table.
- * returns how many pages were committed.
- */
+/* works a table at a time so translations are flushed once per table. returns how many pages were committed. */
 static SIZE_T release_pages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 {
     ULONG64 old[512];
@@ -460,11 +443,7 @@ SIZE_T MiReleasePages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
     return release_pages(as, start, end);
 }
 
-/*
- * the pte of a page with a new protection, keeping what the page holds. a
- * page of a write watched allocation stays read only while it is clean and
- * keeps being writable once it has been written.
- */
+/* keeps the page's contents. a write watched page stays read-only while clean and writable once written. */
 static ULONG64 reprotect_pte(ULONG64 v, ULONG protect, BOOLEAN watch)
 {
     if (v & MM_PTE_VALID) {
@@ -482,7 +461,7 @@ static ULONG64 reprotect_pte(ULONG64 v, ULONG protect, BOOLEAN watch)
     return sw_pte(protect) | (v & MM_SWPTE_SECTION);
 }
 
-/* commits and gives a protection to a range whose tables exist. */
+/* commits the range with a protection. its tables must exist. */
 static void apply_protection(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, ULONG_PTR end, ULONG protect)
 {
     ULONG64 values[512];
@@ -497,7 +476,6 @@ static void apply_protection(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, U
     }
 }
 
-/* commits a range of a private vad. */
 static NTSTATUS commit_range(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, ULONG_PTR end, ULONG protect)
 {
     SIZE_T fresh = 0;
@@ -514,7 +492,7 @@ static NTSTATUS commit_range(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, U
     return STATUS_SUCCESS;
 }
 
-/* the pages of a range whose contents no longer matter go back to demand zero. */
+/* the contents no longer matter, so the pages go back to demand zero. */
 static void reset_range(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 {
     ULONG64 values[512], old[512];
@@ -566,7 +544,6 @@ NTSTATUS MmCreateAddressSpace(PMMADDRESS_SPACE as)
 
 /* ----------------------------------------------------------------- placeholders */
 
-/* the placeholder that spans exactly a range, or null. */
 static PMMVAD find_placeholder(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 {
     PMMVAD vad = MiFindVad(as, start);
@@ -575,7 +552,7 @@ static PMMVAD find_placeholder(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR e
     return nullptr;
 }
 
-/* puts a vad where another of the same range was, without changing the arrays' layout. */
+/* swaps in a vad of the same range, keeping its slot in the arrays. */
 void MiSwapVad(PMMADDRESS_SPACE as, PMMVAD old, PMMVAD fresh)
 {
     ULONG i = vad_index(as, old);
@@ -584,7 +561,7 @@ void MiSwapVad(PMMADDRESS_SPACE as, PMMVAD old, PMMVAD fresh)
         as->Hint = nullptr;
 }
 
-/* merges adjacent placeholders that span exactly a range into one. */
+/* the placeholders must span the range exactly. */
 static NTSTATUS coalesce_placeholders(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 {
     ULONG first = vad_lower_bound(as, start);
@@ -618,10 +595,7 @@ static NTSTATUS coalesce_placeholders(PMMADDRESS_SPACE as, ULONG_PTR start, ULON
     return STATUS_SUCCESS;
 }
 
-/*
- * frees a range of one private vad: the whole vad, or a part that splits it.
- * with preserve the freed range stays reserved as a placeholder.
- */
+/* frees all of a private vad or a part that splits it. with preserve the range stays reserved as a placeholder. */
 static NTSTATUS release_vad_range(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, ULONG_PTR end, BOOLEAN preserve)
 {
     BOOLEAN whole = start == vad->StartVa && end == vad->EndVa;
@@ -639,7 +613,7 @@ static NTSTATUS release_vad_range(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR sta
         vad_destroy(vad);
         return STATUS_SUCCESS;
     }
-    /* a part: what remains of the vad on each side keeps its flags. */
+    /* a part: the pieces left on each side keep the vad's flags. */
     if (!vad_reserve_slots(as, 2))
         return STATUS_INSUFFICIENT_RESOURCES;
     PMMVAD middle = nullptr, right = nullptr;
@@ -673,10 +647,7 @@ static NTSTATUS release_vad_range(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR sta
 
 /* ----------------------------------------------------------------- extended parameters */
 
-/*
- * reads the extended parameters of a call: each type at most once, and
- * only those the call takes, as a bit mask of the types.
- */
+/* each type may appear at most once, and only the types in the allowed bit mask. */
 NTSTATUS MiCaptureExtendedParameters(const MEM_EXTENDED_PARAMETER *parameters, ULONG count, ULONG allowed,
                                      BOOLEAN user, MI_EXTENDED *out)
 {
@@ -758,7 +729,7 @@ NTSTATUS MiCaptureExtendedParameters(const MEM_EXTENDED_PARAMETER *parameters, U
     return STATUS_SUCCESS;
 }
 
-/* the highest address a number of zero bits allows, windows' reading of the value. */
+/* the highest address zero_bits allows, read the way Windows reads it. */
 NTSTATUS MiZeroBitsHighest(ULONG_PTR zero_bits, ULONG_PTR *highest)
 {
     if (zero_bits) {
@@ -783,7 +754,6 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
     ULONG_PTR base = (ULONG_PTR)*base_io;
     SIZE_T size = *size_io;
 
-    /* the allocation type and what goes with it. */
     if ((type & ~(ULONG)MI_ALLOCATION_TYPES) || !(type & (MEM_COMMIT | MEM_RESERVE | MEM_RESET | MEM_RESET_UNDO)))
         return STATUS_INVALID_PARAMETER;
     BOOLEAN reserve = (type & MEM_RESERVE) != 0, replace = (type & MEM_REPLACE_PLACEHOLDER) != 0;
@@ -821,7 +791,6 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
         reserve = TRUE;
     }
 
-    /* the range. */
     ULONG_PTR granularity = reserve && !replace ? MM_ALLOCATION_GRANULARITY : PAGE_SIZE;
     ULONG_PTR alignment = ext->Alignment;
     if (alignment) {
@@ -953,7 +922,6 @@ NTSTATUS MiAllocateVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG t
 
 /* ----------------------------------------------------------------- freeing */
 
-/* frees or decommits what a call asked for, once the vad it falls in is known. */
 static NTSTATUS free_in_vad(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, ULONG_PTR end, ULONG type,
                             BOOLEAN preserve)
 {
@@ -987,7 +955,7 @@ NTSTATUS MiFreeVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type)
     } else if (!vad) {
         status = STATUS_MEMORY_NOT_ALLOCATED;
     } else if (!*size && start != vad->StartVa) {
-        /* with no size the rest of the allocation goes, so it has to be freed from its base. */
+        /* a zero size frees the rest of the allocation, so it must start at the base. */
         status = STATUS_FREE_VM_NOT_AT_BASE;
     } else if (*size && end > vad->EndVa) {
         status = STATUS_UNABLE_TO_FREE_VM;
@@ -1020,7 +988,7 @@ NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG pr
         return STATUS_CONFLICTING_ADDRESSES;
     }
     if (vad->Flags & MM_VAD_PLACEHOLDER) {
-        /* a placeholder holds no pages, so only the protection it has can be asked for. */
+        /* a placeholder holds no pages, so only its current protection can be asked for. */
         MiUnlockAddressSpace(as);
         if (protect != PAGE_NOACCESS)
             return STATUS_CONFLICTING_ADDRESSES;
@@ -1030,7 +998,7 @@ NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG pr
         *size = end - start;
         return STATUS_SUCCESS;
     }
-    /* every page has to be committed before the first one is changed. */
+    /* every page must be committed before any is changed. */
     if (count_committed(as, start, end) != (end - start) >> PAGE_SHIFT) {
         MiUnlockAddressSpace(as);
         return STATUS_NOT_COMMITTED;
@@ -1070,7 +1038,7 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
     BOOLEAN committed = pte_committed(pte);
     ULONG prot = committed ? MiPteToProtect(pte) : 0;
     ULONG_PTR end = va + PAGE_SIZE, limit = vad->EndVa;
-    /* the region goes on while pages keep the state and protection of the first. */
+    /* the region extends while pages match the first one's state and protection. */
     PTE_CURSOR c = {as->Root, end, limit};
     SIZE_T count;
     ULONG_PTR run_va;
@@ -1104,7 +1072,7 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
     return STATUS_SUCCESS;
 }
 
-/* maps the first touched page of a section view: the prototype page, a relocated one, or a private copy. */
+/* maps the prototype page, a relocated one, or a private copy. */
 static BOOLEAN section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULONG64 *pte, ULONG protect)
 {
     ULONG64 pa;
@@ -1128,7 +1096,7 @@ static BOOLEAN map_zero_page(PMMADDRESS_SPACE as, ULONG64 *pte, ULONG64 v, BOOLE
     ULONG64 attrs = MiProtectToPte(protect, TRUE) & ~MM_PTE_SW_COW;
     if (protect & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))
         attrs = MI_PTE_SET_RW(attrs);
-    /* a page of a write watched allocation that nothing wrote yet is read only until it is. */
+    /* an unwritten page of a write watched allocation stays read-only until written. */
     if (clean && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
         attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_WATCH;
     *pte = pa | attrs | MM_PTE_VALID | MM_PTE_PAGE;
@@ -1138,10 +1106,9 @@ static BOOLEAN map_zero_page(PMMADDRESS_SPACE as, ULONG64 *pte, ULONG64 v, BOOLE
 }
 
 /*
- * a demand zero fault maps the other committed pages of its window too:
- * the 16 KiB host page holding them is backed as a whole anyway, so this
- * saves faults without using more host memory. touching that goes on
- * where the last window ended gets a 64 KiB window, ahead of the program.
+ * a demand zero fault also maps the other committed pages of its 16 KiB window: the host backs that
+ * whole host page anyway, so this saves faults at no extra host memory. a fault continuing where a
+ * recent window ended gets a 64 KiB window instead.
  */
 #define FAULT_WINDOW (16 * 1024)
 #define FAULT_WINDOW_SEQUENTIAL (64 * 1024)
@@ -1151,7 +1118,7 @@ static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULON
     BOOLEAN watch = (vad->Flags & MM_VAD_WRITE_WATCH) != 0;
     if (!map_zero_page(as, pte, v, watch && !write))
         return FALSE;
-    /* a touch that goes on where one of the recent windows ended continues a sequence. */
+    /* a touch right where a recent window ended continues a sequential stream. */
     ULONG stream = (ULONG)-1;
     for (ULONG i = 0; i < 8; i++)
         if (as->LastFaultEnd[i] && page >= as->LastFaultEnd[i] && page < as->LastFaultEnd[i] + FAULT_WINDOW)
@@ -1162,7 +1129,7 @@ static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULON
         start = vad->StartVa;
     if (end > vad->EndVa)
         end = vad->EndVa;
-    /* one translation table holds the whole window, so its ptes sit side by side. */
+    /* the window lies within one table, so its ptes are contiguous. */
     ULONG64 *first = pte - ((page - start) >> PAGE_SHIFT);
     for (ULONG_PTR va = start; va < end; va += PAGE_SIZE) {
         ULONG64 *p = first + ((va - start) >> PAGE_SHIFT), w = *p;
@@ -1182,11 +1149,10 @@ static BOOLEAN demand_zero(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, ULON
 }
 
 /*
- * the first touch of a page of a view, without the kernel lock, for the pages that are shared: the
- * prototype page of the section is built if need be (it is published with a compare and swap, so two
- * processors building it do no harm), and the pages around it that have a prototype already are mapped
- * with it, a window of 16 pages as the processors of other processes did before. a page of an image
- * that the program may write is private from the start and gets its copy here, alone.
+ * first touch of a shared view page, without the kernel lock. the prototype page is built if needed and
+ * published with a compare and swap, so two processors building it do no harm. neighbours in the same
+ * 16-page window whose prototype already exists are mapped along with it. a writable image page is
+ * private from the start and gets its copy here, alone.
  */
 #define SECTION_FAULT_WINDOW (16 * PAGE_SIZE)
 
@@ -1214,7 +1180,7 @@ static BOOLEAN fast_section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR pag
     }
     __atomic_add_fetch(&as->PageFaults, 1, __ATOMIC_RELAXED);
 
-    /* the neighbours that need no work: a page ready for them already. */
+    /* map only the neighbours whose page is ready already. */
     ULONG_PTR start = page & ~(ULONG_PTR)(SECTION_FAULT_WINDOW - 1), end = start + SECTION_FAULT_WINDOW;
     if (start < vad->StartVa)
         start = vad->StartVa;
@@ -1238,13 +1204,12 @@ static BOOLEAN fast_section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR pag
 }
 
 /*
- * the demand zero fault of a committed private page, without the kernel lock. it runs with interrupts
- * off from the first instructions of the trap, as a reader of the gate of the address space: the
- * holder of the lock sets the writer bit and waits for the readers to leave before it changes a vad or
- * a table, and a reader that finds the bit set gives up, so the fault is taken the long way. a page
- * that is not there yet changes to one that is with a compare and swap, which is all that threads
- * faulting at the same time on the same table need from each other, and nothing waits but for the
- * allocator's lock. FALSE leaves the fault to MmAccessFault, whatever the reason.
+ * demand zero fault of a committed private page, without the kernel lock. it runs with interrupts off
+ * from the start of the trap, as a reader of the address space gate: the lock holder sets the writer
+ * bit and waits for readers to leave before changing a vad or a table, and a reader that sees the bit
+ * gives up and takes the slow path. ptes go from absent to present with a compare and swap, which is all
+ * concurrent faults on a table need, and only the allocator's lock is waited on. FALSE leaves the fault
+ * to MmAccessFault, whatever the reason.
  */
 static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BOOLEAN execute)
 {
@@ -1256,7 +1221,7 @@ static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BO
         return FALSE;
     ULONG64 v = __atomic_load_n(pte, __ATOMIC_RELAXED);
     if (v & MM_PTE_VALID) {
-        /* another processor fixed the page while this one was on its way. */
+        /* another processor fixed the page first. */
         return MI_PTE_IS_USER(v) && (!write || !MI_PTE_IS_RO(v)) && (!execute || MI_PTE_USER_EXEC(v));
     }
     ULONG protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
@@ -1307,7 +1272,7 @@ static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BO
         ULONG64 attrs = MiProtectToPte(p, TRUE) & ~MM_PTE_SW_COW;
         if (p & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))
             attrs = MI_PTE_SET_RW(attrs);
-        /* a page of a write watched allocation that nothing wrote yet is read only until it is. */
+        /* an unwritten page of a write watched allocation stays read-only until written. */
         if (watch && (i || !write) && (p & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
             attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_WATCH;
         ULONG64 expected = old[i];
@@ -1334,14 +1299,14 @@ static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BO
     return TRUE;
 }
 
-/* counted for the thread dump, a row for each processor so that counting shares nothing. */
+/* for the thread dump. one row per processor so counting shares nothing. */
 MM_FAULT_STATS MmFaultStats[MAXIMUM_PROCESSORS];
 
 BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
 {
     if (va > MM_HIGHEST_USER_ADDRESS || (KiOptions & KI_OPT_NO_FAST_FAULT))
         return FALSE;
-    /* a thread that was preempted inside the gate would keep a writer waiting on the processor it holds. */
+    /* a thread preempted inside the gate would keep a writer waiting. */
     ULONG64 state = KiDisableInterrupts();
     PMMADDRESS_SPACE as = &((PEPROCESS)KiCurrentThread()->ApcStateProcess)->AddressSpace;
     if (!as->Root) {
@@ -1366,12 +1331,11 @@ BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
 }
 
 /*
- * copies into the memory of another process without attaching to it, which loads its page tables twice for each
- * completed request and with no tagged translations drops this processor's each time: the pages that are present and writable are
- * written through their physical addresses. Returns how much it copied, which is all unless a page is absent, shared
- * copy on write, guarded or read only; the caller copies the rest the slow way. The kernel lock is held, which keeps
- * the process from changing its map and the page from going away, and the faults other processors resolve without it
- * only make pages present.
+ * copies into another process without attaching to it, which would switch page tables twice per request
+ * and, with no tagged translations, flush this processor's each time. present writable pages are written
+ * through their physical addresses. returns how much it copied: everything unless a page is absent, copy
+ * on write, guarded or read-only, and the caller copies the rest the slow way. the kernel lock keeps the
+ * map and pages stable, and lock-free faults on other processors only make pages present.
  */
 SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T length)
 {
@@ -1382,7 +1346,7 @@ SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T
     SIZE_T done = 0;
     while (done < length) {
         ULONG64 pte = MiReadPte(as->Root, (va + done) & ~(ULONG_PTR)(PAGE_SIZE - 1));
-        /* a page of a file window is not memory of the kernel's to write through its map, whatever its protection. */
+        /* file window pages have no pfn and are never written through the physmap, whatever their protection. */
         if (!(pte & MM_PTE_VALID) || !MI_PTE_IS_USER(pte) || MI_PTE_IS_RO(pte) || (pte & (MM_PTE_SW_COW | MM_PTE_SW_WATCH)) ||
             !MiGetPfn(pte & MM_PTE_ADDR_MASK))
             break;
@@ -1396,9 +1360,8 @@ SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T
 }
 
 /*
- * the touch of a guard page is not an access violation: windows says STATUS_GUARD_PAGE_VIOLATION, and
- * STATUS_STACK_OVERFLOW for the guard page of the thread's own stack, the last one it has. the guard is gone from the
- * page, so the access runs again if the exception is handled.
+ * touching a guard page raises STATUS_GUARD_PAGE_VIOLATION, or STATUS_STACK_OVERFLOW for the thread's own
+ * last stack guard. the guard is removed, so the access runs again if the exception is handled.
  */
 static void guard_fault(ULONG_PTR page)
 {
@@ -1407,7 +1370,7 @@ static void guard_fault(ULONG_PTR page)
     thread->Tcb.FaultStatus = own ? STATUS_STACK_OVERFLOW : STATUS_GUARD_PAGE_VIOLATION;
 }
 
-/* resolves demand zero, section and copy on write faults. returns FALSE for real access violations. */
+/* returns FALSE for real access violations. */
 BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
 {
     if (va > MM_HIGHEST_USER_ADDRESS)
@@ -1417,7 +1380,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
     if (!as->Root)
         return FALSE;
     ULONG_PTR page = va & ~(ULONG_PTR)(PAGE_SIZE - 1);
-    /* a page that is not there yet needs no more than the gate, and taking the lock would shut it on the others. */
+    /* a page that is not present yet only needs the gate, and taking the lock would close it for everyone else. */
     if (MmFastFault(va, write, execute))
         return TRUE;
     MmFaultStats[KeGetCurrentPrcb()->Number].Slow++;
@@ -1452,17 +1415,17 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
                 handled = TRUE;
             }
         } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_WATCH)) {
-            /* the first write to a watched page since it was reset: it is written from now on. */
+            /* first write since the last reset: the page is now writable. */
             MiUpgradePte(as->Root, page, MI_PTE_SET_RW(v & ~MM_PTE_SW_WATCH), as->Asid);
             handled = TRUE;
         } else if ((v & MM_PTE_VALID) && mode == UserMode && !MI_PTE_IS_USER(v) && MI_PTE_IS_GUARD(v)) {
-            /* a guard page: the first touch faults and takes the guard away, like windows. */
+            /* like Windows, the first touch of a guard page faults and removes the guard. */
             MiWritePte(as->Root, page, MI_PTE_CLEAR_GUARD(v), as->Asid);
             guard_fault(page);
             handled = FALSE;
         } else if ((v & MM_PTE_VALID) && (mode == KernelMode || MI_PTE_IS_USER(v)) &&
                    (!write || !MI_PTE_IS_RO(v)) && (!execute || MI_PTE_USER_EXEC(v))) {
-            /* another thread, possibly on another processor, fixed the page up first. */
+            /* another thread fixed the page first. */
             handled = TRUE;
         }
     }
@@ -1512,9 +1475,8 @@ static inline BOOLEAN page_is_written(ULONG64 pte)
 }
 
 /*
- * the pages of [*resume, end) that were written, up to a number of them,
- * made clean again when asked; resume says where to go on, 0 at the end.
- * only the pages reported are reset.
+ * collects written pages of [*resume, end), up to a maximum, resetting them when asked. *resume is where
+ * to continue, 0 at the end. only reported pages are reset.
  */
 static SIZE_T gather_written(PMMADDRESS_SPACE as, ULONG_PTR *resume, ULONG_PTR end, BOOLEAN reset, ULONG_PTR *out,
                              SIZE_T maximum)
@@ -1550,7 +1512,7 @@ static SIZE_T gather_written(PMMADDRESS_SPACE as, ULONG_PTR *resume, ULONG_PTR e
     return n;
 }
 
-/* the vad of a write watched range, or null when the range is not all in one. */
+/* null unless the whole range lies in one write watched vad. */
 static PMMVAD watched_vad(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 {
     PMMVAD vad = MiFindVad(as, start);
@@ -1637,12 +1599,12 @@ NTSTATUS NTAPI NtAllocateVirtualMemory(HANDLE process_handle, PVOID *base, ULONG
     NTSTATUS status = reference_process(process_handle, PROCESS_VM_OPERATION, &process);
     if (!NT_SUCCESS(status))
         return status;
-    /* the low bits of the type carry a preferred node plus one, and the machine has one node. */
+    /* the low bits of the type hold a preferred node plus one, and the machine has one node. */
     if ((type & 0x7F) > 1) {
         ObDereferenceObject(process);
         return STATUS_INVALID_PARAMETER;
     }
-    /* new executable memory is dynamic code. */
+    /* new executable memory counts as dynamic code. */
     if ((type & (MEM_COMMIT | MEM_RESERVE)) && (protect & EXECUTABLE_PROTECTION) && PsDynamicCodeBlocked(process))
         status = STATUS_DYNAMIC_CODE_BLOCKED;
     else
@@ -1696,7 +1658,7 @@ NTSTATUS NTAPI ZwAllocateVirtualMemory(HANDLE process, PVOID *base, ULONG_PTR ze
     return status;
 }
 
-/* what NtFreeVirtualMemory checks before it looks at the process, in windows' order. */
+/* the checks NtFreeVirtualMemory makes before looking at the process, in Windows' order. */
 static NTSTATUS validate_free(ULONG_PTR base, SIZE_T size, ULONG *type)
 {
     ULONG t = *type;
@@ -1785,7 +1747,7 @@ NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_
     NTSTATUS status = reference_process(process_handle, PROCESS_VM_OPERATION, &process);
     if (!NT_SUCCESS(status))
         return status;
-    /* code may be made data and code that already was code may stay, nothing else becomes code. */
+    /* code may become data or stay code, but nothing else may become code. */
     if ((protect & EXECUTABLE_PROTECTION) && PsDynamicCodeBlocked(process) &&
         ((protect & (PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) || !region_is_image(process, b))) {
         ObDereferenceObject(process);
@@ -1803,7 +1765,7 @@ NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_
             KiAttachProcess(saved);
     }
     ObDereferenceObject(process);
-    /* windows hands the base, size and old protection back whether the change worked or not. */
+    /* Windows returns the base, size and old protection whether the change worked or not. */
     KiCopyToUser(base, &b, sizeof(b));
     KiCopyToUser(size, &s, sizeof(s));
     if (old)
@@ -1812,10 +1774,8 @@ NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_
 }
 
 /*
- * the attributes of each page of a caller's list. a page backed by memory
- * is valid, with its protection and the normal priority 5; one that is
- * committed but not touched yet is not in the working set. pages of views
- * are shared when they belong to no private allocation.
+ * a page backed by memory is valid, with its protection and the normal priority 5. a committed page not
+ * touched yet is not in the working set. view pages are shared unless they belong to a private allocation.
  */
 static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T length)
 {
@@ -1850,7 +1810,7 @@ static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T lengt
     return STATUS_SUCCESS;
 }
 
-/* the protection field of a working set entry: the memory manager's own numbering of the protections. */
+/* working set entries use the memory manager's own protection numbering. */
 static ULONG working_set_protection(ULONG protect)
 {
     ULONG mask;
@@ -1871,7 +1831,7 @@ static ULONG working_set_protection(ULONG protect)
     return mask;
 }
 
-/* the resident pages from an address on, up to a number of them; resume says where to go on, 0 once it is the end. */
+/* resident pages from *resume on, up to maximum. *resume is where to continue, 0 at the end. */
 static SIZE_T gather_working_set(PMMADDRESS_SPACE as, ULONG_PTR *resume, ULONG_PTR *out, SIZE_T maximum)
 {
     SIZE_T n = 0;
@@ -1903,11 +1863,9 @@ static SIZE_T gather_working_set(PMMADDRESS_SPACE as, ULONG_PTR *resume, ULONG_P
 }
 
 /*
- * every page of the working set: a count, then for each page its address
- * with the protection, the share count and a shared bit in the low bits.
- * a buffer that is too small gets the count, so the caller can ask again.
- * the pages are gathered a few at a time and copied out with the lock
- * released, as the copy can fault.
+ * a count, then each page's address with the protection, share count and a shared bit in the low bits.
+ * a buffer too small gets the count so the caller can ask again. pages are gathered a few at a time and
+ * copied out with the lock released, since the copy can fault.
  */
 static NTSTATUS query_working_set(PEPROCESS process, PVOID info, SIZE_T length)
 {
@@ -1942,10 +1900,7 @@ static NTSTATUS query_working_set(PEPROCESS process, PVOID info, SIZE_T length)
     return STATUS_SUCCESS;
 }
 
-/*
- * the counters of ProcessVmCounters in the three sizes windows has: the
- * plain ones, with the private bytes, and with the private working set.
- */
+/* ProcessVmCounters in its three Windows sizes: plain, with private bytes, and with the private working set. */
 ULONG MmQueryVmCounters(PEPROCESS process, PVOID out, ULONG length)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
@@ -1996,7 +1951,7 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
                 KiCopyToUser(returned, &n, sizeof(n));
         }
     } else if (klass == MemoryImageInformation) {
-        /* the image view holding the address; zeros for any other memory, as windows answers. */
+        /* the image view holding the address. like Windows, any other memory gets zeros. */
         MEMORY_IMAGE_INFORMATION mi = {};
         PMMADDRESS_SPACE as = &process->AddressSpace;
         if (length < sizeof(mi)) {
@@ -2060,10 +2015,8 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
 }
 
 /*
- * information about ranges of virtual memory. no page is ever paged out or
- * missing from the working set in mime, so prefetching, priorities and
- * removing from the working set check their arguments and change nothing;
- * call targets are not tracked either, as no image is checked against them.
+ * mime never pages out or trims the working set, so prefetching, priorities and working set removal only
+ * check their arguments. call targets are not tracked either, since no image is checked against them.
  */
 NTSTATUS NTAPI NtSetInformationVirtualMemory(HANDLE process_handle, ULONG klass, ULONG_PTR count, PVOID entries,
                                              PVOID info, ULONG length)
@@ -2108,7 +2061,7 @@ NTSTATUS NTAPI NtSetInformationVirtualMemory(HANDLE process_handle, ULONG klass,
         ObDereferenceObject(process);
         return STATUS_INVALID_PARAMETER_1;
     }
-    /* the ranges have to be sane, and are copied as they sit in the caller's memory. */
+    /* every range must be sane. */
     for (ULONG_PTR i = 0; i < count && NT_SUCCESS(status); i++) {
         MEMORY_RANGE_ENTRY r;
         if (user)
@@ -2195,8 +2148,8 @@ NTSTATUS NTAPI NtWriteVirtualMemory(HANDLE process_handle, PVOID base, PVOID buf
 #define MM_COPY_CHUNK 0x10000
 
 /*
- * copies between address spaces through a kernel bounce buffer. memory that is not there ends the copy short
- * with STATUS_PARTIAL_COPY, memory that is there and cannot be written is an access violation.
+ * copies between address spaces through a kernel bounce buffer. memory that is not there ends the copy
+ * short with STATUS_PARTIAL_COPY, and committed memory that cannot be written is an access violation.
  */
 NTSTATUS NTAPI MmCopyVirtualMemory(PEPROCESS from_process, PVOID from, PEPROCESS to_process, PVOID to, SIZE_T size,
                                    KPROCESSOR_MODE mode, PSIZE_T copied)
@@ -2216,7 +2169,7 @@ NTSTATUS NTAPI MmCopyVirtualMemory(PEPROCESS from_process, PVOID from, PEPROCESS
     while (done < size) {
         SIZE_T n = size - done < MM_COPY_CHUNK ? size - done : MM_COPY_CHUNK;
         if (by_page) {
-            /* what failed is told apart by the page: the bytes before it are copied. */
+            /* go page by page to find the failing page and keep the bytes before it. */
             SIZE_T source_room = PAGE_SIZE - (((ULONG_PTR)from + done) & (PAGE_SIZE - 1));
             SIZE_T target_room = PAGE_SIZE - (((ULONG_PTR)to + done) & (PAGE_SIZE - 1));
             if (n > source_room)
@@ -2247,13 +2200,13 @@ NTSTATUS NTAPI MmCopyVirtualMemory(PEPROCESS from_process, PVOID from, PEPROCESS
         *copied = done;
     if (status != STATUS_ACCESS_VIOLATION)
         return status;
-    /* the page the write stopped at: there, but not writable. */
+    /* the write stopped at a page that is committed but not writable. */
     MEMORY_BASIC_INFORMATION mbi;
     if (target_failed && NT_SUCCESS(MiQueryVirtual(to_process, (PUCHAR)to + done, &mbi)) && mbi.State == MEM_COMMIT &&
         !(mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) &&
         !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
         return STATUS_ACCESS_VIOLATION;
-    return (NTSTATUS)0x8000000D /* STATUS_PARTIAL_COPY */;
+    return (NTSTATUS)0x8000000D /* STATUS_PARTIAL_COPY. */;
 }
 
 NTSTATUS NTAPI NtFlushInstructionCache(HANDLE process, PVOID base, SIZE_T size)
@@ -2263,9 +2216,8 @@ NTSTATUS NTAPI NtFlushInstructionCache(HANDLE process, PVOID base, SIZE_T size)
 }
 
 /*
- * every processor running this process in user mode takes an interrupt,
- * and its entry into the kernel publishes its stores; the caller waits
- * for each to leave user mode.
+ * interrupts every processor running this process in user mode, whose kernel entry publishes its stores,
+ * then waits for each to leave user mode.
  */
 NTSTATUS NTAPI NtFlushProcessWriteBuffers(void)
 {

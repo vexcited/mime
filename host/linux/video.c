@@ -1,7 +1,7 @@
 /*
- * the host's video decoder, see video.h: capabilities, sessions and the decode of one picture at a time, in
- * the order of the connection's calls. the picture buffers are the guest's images; everything else, the
- * bitstream memory, the session and its parameters, belongs to the connection and goes with its device.
+ * Vulkan video capabilities, sessions and decoding, in connection call order. picture buffers are guest
+ * images; bitstream memory, sessions and parameters belong to the connection and are destroyed with its
+ * device. see video.h.
  */
 #include "video.h"
 
@@ -10,14 +10,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* the connection whose call a thread runs, which the image creation hook sees. */
+/* current connection for the image creation hook. */
 static __thread MvkConnection *t_connection;
 
 void mvk_video_enter(MvkConnection *c) { t_connection = c; }
 
 static PFN_vkCreateImage g_create_image;
 
-/* ------------------------------------------------------------------ profiles */
+/* ------------------------------------------------------------------ profiles. */
 
 typedef struct Profile {
     VkVideoProfileInfoKHR info;
@@ -30,7 +30,7 @@ typedef struct Profile {
     } u;
 } Profile;
 
-/* the decoding profiles offered: what a dxva decoder profile guid stands for. */
+/* maps DXVA decoder profile GUIDs to Vulkan profiles. */
 static const struct {
     uint32_t codec, profile, bit_depth;
 } g_profiles[] = {
@@ -96,7 +96,7 @@ static VkFormat picture_format(uint32_t bit_depth)
     return bit_depth == 10 ? VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 : VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
 }
 
-/* what the gpu says of a profile, false when it cannot decode it into the usual picture format. */
+/* returns false unless the GPU can decode this profile into the usual picture format. */
 static bool query_caps(MvkConnection *c, uint32_t codec, uint32_t profile, uint32_t bit_depth, VkVideoCapabilitiesKHR *caps,
                        VkVideoDecodeCapabilityFlagsKHR *flags, StdVideoH265LevelIdc *h265_level)
 {
@@ -138,7 +138,7 @@ static bool query_caps(MvkConnection *c, uint32_t codec, uint32_t profile, uint3
     return false;
 }
 
-/* ------------------------------------------------------------------ the connection's video state */
+/* ------------------------------------------------------------------ the connection's video state. */
 
 static bool has_device_extension(MvkConnection *c, VkPhysicalDevice physical, const char *name)
 {
@@ -154,7 +154,7 @@ static bool has_device_extension(MvkConnection *c, VkPhysicalDevice physical, co
     return found;
 }
 
-/* the extensions decoding needs of any gpu, and those of each codec, which a gpu may have of some only. */
+/* required video extensions and optional per-codec extensions. */
 static const char *const g_core_extensions[] = {
     VK_KHR_VIDEO_QUEUE_EXTENSION_NAME,
     VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME,
@@ -173,7 +173,7 @@ static const struct {
 /* the queue family that decodes the codecs offered, ~0 when none. */
 static uint32_t decode_family(MvkConnection *c, VkPhysicalDevice physical, VkVideoCodecOperationFlagsKHR ops);
 
-/* the codecs the gpu has the extensions for, as a mask of 1 << codec. */
+/* the codecs the GPU has the extensions for, as a mask of 1 << codec. */
 static uint32_t gpu_codecs(MvkConnection *c, VkPhysicalDevice physical)
 {
     uint32_t codecs = 0;
@@ -197,7 +197,7 @@ uint32_t mvk_video_queue_family(MvkConnection *c, VkPhysicalDevice physical)
     return decode_family(c, physical, codec_operations(gpu_codecs(c, physical)));
 }
 
-/* whether the gpu decodes video, which the guest sees as one extension. */
+/* whether the GPU decodes video, which the guest sees as one extension. */
 bool mvk_video_offered(MvkConnection *c, VkPhysicalDevice physical)
 {
     if (!c->fn.vkEnumerateDeviceExtensionProperties)
@@ -356,7 +356,7 @@ static void destroy_session(MvkConnection *c, VideoSession *s)
     free(s);
 }
 
-/* the device is going: what the sessions hold goes with them, after the queue is done. */
+/* wait for the decode queue before releasing sessions and their resources. */
 void mvk_video_close(MvkConnection *c)
 {
     MvkVideo *v = c->video;
@@ -380,11 +380,11 @@ void mvk_video_close(MvkConnection *c)
     c->video = nullptr;
 }
 
-/* ------------------------------------------------------------------ images made for decoding */
+/* ------------------------------------------------------------------ images made for decoding. */
 
 /*
- * an image with the decode usages gets the profiles it may be decoded with, and is shared by the queue
- * families of the device, which spares the guest the transfers of ownership its graphics queue would need.
+ * decode images get compatible profiles and concurrent sharing across device queue families, avoiding
+ * ownership transfers on the guest graphics queue.
  */
 VkResult mvk_video_create_image(VkDevice device, const VkImageCreateInfo *info, const VkAllocationCallbacks *allocator,
                                 VkImage *image)
@@ -395,7 +395,7 @@ VkResult mvk_video_create_image(VkDevice device, const VkImageCreateInfo *info, 
         return g_create_image(device, info, allocator, image);
     MvkVideo *v = c->video;
     VkImageCreateInfo copy = *info;
-    /* an image goes to any profile, or to the one of its bit depth when the gpu has no such images. */
+    /* use profile-independent images if supported; otherwise select profiles matching the image's bit depth. */
     Profile profile;
     VkVideoProfileListInfoKHR list = {VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR, info->pNext, 0, &profile.info};
     if (v->independent) {
@@ -431,7 +431,7 @@ VkResult mvk_video_create_image(VkDevice device, const VkImageCreateInfo *info, 
     return g_create_image(device, &copy, allocator, image);
 }
 
-/* ------------------------------------------------------------------ calls */
+/* ------------------------------------------------------------------ calls. */
 
 static void reply_result(MvkCall *call, VkResult result)
 {
@@ -479,7 +479,7 @@ static uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties *mp, uin
     return ~0u;
 }
 
-/* the queue, command pool and timeline the decoding shares, made when the first session needs them. */
+/* creates the shared decode queue, command pool and timeline on first use. */
 static bool start_queue(MvkConnection *c)
 {
     MvkVideo *v = c->video;
@@ -638,7 +638,7 @@ void mvk_video_destroy(MvkCall *call)
     }
 }
 
-/* ------------------------------------------------------------------ pictures */
+/* ------------------------------------------------------------------ pictures. */
 
 static void release_picture(VideoSession *s, VideoPicture *p)
 {
@@ -656,7 +656,7 @@ VideoPicture *video_ref(MvkConnection *c, VideoSession *s, uint32_t index)
     VideoPicture *p = &s->pictures[index];
     if (!p->valid || !p->active || p->slot < 0)
         return nullptr;
-    /* ids are reused: a view the guest destroyed and made again is another picture. */
+    /* ids can be reused, so a recreated view represents a new picture. */
     if (mvk_lookup(c, p->view_id) != (uint64_t)p->view) {
         release_picture(s, p);
         return nullptr;
@@ -683,7 +683,7 @@ VideoPicture *video_current(MvkConnection *c, VideoSession *s, uint32_t index, c
 {
     if (index >= VIDEO_MAX_INDEX)
         return nullptr;
-    /* a view decoded into again no longer holds what it did, under whatever index it did. */
+    /* decoding into a view invalidates its previous picture, regardless of its old index. */
     for (uint32_t i = 0; i < VIDEO_MAX_INDEX; i++)
         if (i != index && s->pictures[i].valid && s->pictures[i].view_id == in->picture_view)
             release_picture(s, &s->pictures[i]);
@@ -739,7 +739,7 @@ bool video_mirror(MvkConnection *c, VideoSession *s, VideoPicture *p)
     if (p->mirror_view && p->mirror_extent.width >= p->extent.width && p->mirror_extent.height >= p->extent.height)
         return true;
     if (p->mirror_view) {
-        /* the decodes in flight may read it. */
+        /* in-flight decodes may still read this. */
         wait_decodes(c);
         free_mirror(c, p);
     }
@@ -762,7 +762,7 @@ bool video_mirror(MvkConnection *c, VideoSession *s, VideoPicture *p)
         info.flags |= VK_IMAGE_CREATE_VIDEO_PROFILE_INDEPENDENT_BIT_KHR;
     else
         info.pNext = &list;
-    /* the decode queue's own: the picture is never seen by another. */
+    /* the picture is never accessed by another queue. */
     if (g_create_image(c->device, &info, nullptr, &p->mirror_image) != VK_SUCCESS)
         return false;
     VkMemoryRequirements req;
@@ -811,9 +811,9 @@ bool video_set_parameters(MvkConnection *c, VideoSession *s, const void *key, ui
     return true;
 }
 
-/* ------------------------------------------------------------------ decoding */
+/* ------------------------------------------------------------------ decoding. */
 
-/* a job to build a picture in: its buffer holds at least the size, once the work that used it is done. */
+/* waits for a reusable job and ensures its buffer holds at least size bytes. */
 static VideoJob *take_job(MvkConnection *c, const VideoSession *s, VkDeviceSize need)
 {
     MvkVideo *v = c->video;
@@ -873,8 +873,8 @@ static VideoJob *take_job(MvkConnection *c, const VideoSession *s, VkDeviceSize 
 }
 
 /*
- * the images a decode reads or writes, moved to the layouts decoding wants and back when the gpu keeps them
- * apart. a mirror, which film grain pictures are reconstructed in, only ever holds the layout of a reference.
+ * transitions input and output images to decode layouts and back when required. film grain mirrors always
+ * keep the reference layout.
  */
 static void layout_barriers(MvkConnection *c, VkCommandBuffer cmd, VideoFrame *f, bool before)
 {
@@ -899,7 +899,7 @@ static void layout_barriers(MvkConnection *c, VkCommandBuffer cmd, VideoFrame *f
             b->subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             p->mirror_ready = true;
         }
-        /* a reference in a mirror leaves the image of the guest alone. */
+        /* mirrored references leave the guest image untouched. */
         if (v->unified || !p->image || (p->mirrored && !is_current))
             continue;
         VkImageLayout busy = p->mirrored ? VK_IMAGE_LAYOUT_VIDEO_DECODE_DST_KHR : VK_IMAGE_LAYOUT_VIDEO_DECODE_DPB_KHR;
@@ -981,7 +981,7 @@ void mvk_video_decode(MvkCall *call)
                                       VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     c->fn.vkBeginCommandBuffer(cmd, &begin);
     layout_barriers(c, cmd, f, true);
-    /* the scope names the references and the picture to set up, the latter in no slot yet. */
+    /* the coding scope includes references and the output picture, which has no slot yet. */
     VkVideoReferenceSlotInfoKHR slots[VIDEO_MAX_DPB + 1];
     memcpy(slots, f->refs, f->ref_count * sizeof(slots[0]));
     slots[f->ref_count] = f->setup;
@@ -1028,7 +1028,7 @@ void mvk_video_decode(MvkCall *call)
     mvk_check(call, result, "video decode submit");
     job->done = value;
     v->decoded++;
-    /* a reference from now on, if the codec says the picture is one. */
+    /* retain the picture when the codec marks it as a reference. */
     f->current->active = f->is_reference;
     free(f);
 }

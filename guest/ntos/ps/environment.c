@@ -1,7 +1,6 @@
 /*
- * the environment block of new processes, built from the registry the way
- * userenv builds it at logon: system variables of the session manager,
- * the user's profile variables, then the user's own Environment key.
+ * the environment block of new processes, built from the registry the way userenv does at logon: the
+ * session manager's system variables, the user's profile variables, then the user's Environment key.
  */
 #include "../ntos.h"
 
@@ -16,7 +15,7 @@ typedef struct ENV_VAR {
 typedef struct ENV {
     ENV_VAR Vars[MAX_VARS];
     ULONG Count;
-    BOOLEAN Expand; /* this pass takes REG_EXPAND_SZ values, the previous one REG_SZ */
+    BOOLEAN Expand; /* this pass reads REG_EXPAND_SZ values, the previous one REG_SZ. */
     BOOLEAN AppendPath;
 } ENV;
 
@@ -77,7 +76,7 @@ static void set_z(ENV *env, PCWSTR name, PCWSTR value)
     set(env, name, (ULONG)wcslen(name), value, (ULONG)wcslen(value));
 }
 
-/* expands %VAR% against the variables so far; unknown references stay as they are. */
+/* expands %VAR% against the variables set so far. unknown references are kept as is. */
 static ULONG expand(ENV *env, const WCHAR *in, ULONG chars, PWCHAR out, ULONG capacity)
 {
     ULONG n = 0;
@@ -163,7 +162,7 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
     set_z(env, L"PUBLIC", L"C:\\Users\\Public");
     set_z(env, L"SystemDrive", L"C:");
     set_z(env, L"SystemRoot", L"C:\\Windows");
-    /* only arm64 windows has a folder for arm64 programs apart from x64 ones. */
+    /* only arm64 Windows has separate folders for arm64 programs. */
     if (MIME_NATIVE_ARCHITECTURE == PROCESSOR_ARCHITECTURE_ARM64) {
         set_z(env, L"CommonProgramFiles(Arm)", L"C:\\Program Files (Arm)\\Common Files");
         set_z(env, L"ProgramFiles(Arm)", L"C:\\Program Files (Arm)");
@@ -175,15 +174,15 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
     memset(path, 0, sizeof(path));
     _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\REGISTRY\\USER\\%ls\\Volatile Environment\\1", sid);
     load_key(env, path, FALSE);
-    set_z(env, L"USERNAME", user); /* the system value names SYSTEM, the logon replaces it */
+    set_z(env, L"USERNAME", user); /* the system value says SYSTEM, and logon replaces it. */
     memset(path, 0, sizeof(path));
     _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\REGISTRY\\USER\\%ls\\Environment", sid);
     load_key(env, path, TRUE);
-    /* x64 programs run by the translator see the processor they were built for. */
+    /* x64 programs, translated on arm64, see the processor they were built for. */
     if (machine == IMAGE_FILE_MACHINE_AMD64)
         set_z(env, L"PROCESSOR_ARCHITECTURE", L"AMD64");
 
-    /* 32-bit programs get the 32-bit program folders, as wow64 gives them. */
+    /* like wow64, 32-bit programs get the 32-bit program folders. */
     if (machine == IMAGE_FILE_MACHINE_I386) {
         set_z(env, L"PROCESSOR_ARCHITECTURE", L"x86");
         set_z(env, L"PROCESSOR_ARCHITEW6432", MIME_NATIVE_ARCHITECTURE_NAME);
@@ -191,7 +190,7 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
         set_z(env, L"CommonProgramFiles", L"C:\\Program Files (x86)\\Common Files");
     }
 
-    /* sorted, case insensitive, like RtlSetEnvironmentVariable keeps it. */
+    /* sorted case insensitively, the order RtlSetEnvironmentVariable keeps. */
     for (ULONG i = 1; i < env->Count; i++)
         for (ULONG j = i; j > 0 && compare(&env->Vars[j - 1], &env->Vars[j]) > 0; j--) {
             ENV_VAR t = env->Vars[j];

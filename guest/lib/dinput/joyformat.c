@@ -1,4 +1,4 @@
-/* c_dfDIJoystick as windows' dinput8 keeps its own copy, which GetdfDIJoystick hands out. */
+/* dinput8's own copy of c_dfDIJoystick, which GetdfDIJoystick returns. */
 #include "dinput_private.h"
 
 #define AXIS(guid, ofs) {&guid, ofs, DIDFT_OPTIONAL | DIDFT_AXIS | DIDFT_ANYINSTANCE, DIDOI_ASPECTPOSITION}

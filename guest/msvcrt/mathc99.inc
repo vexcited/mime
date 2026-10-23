@@ -1,11 +1,11 @@
 /*
- * the c99 functions that the universal crt adds to the classic set: selection, rounding, the remainder, scaling and
- * stepping functions, the exponential and logarithm of small arguments, the error function and the gamma function.
- * included at the end of mathlib.c for the double-double helpers it keeps.
+ * the c99 functions the universal crt adds to the classic set: selection, rounding, remainder, scaling, stepping,
+ * exponential and log of small arguments, erf and gamma. included at the end of mathlib.c for its double-double
+ * helpers.
  *
- * long double is double on windows, so the l forms call the double ones. Unlike the classic functions these do not
- * touch errno but raise the floating point exception flags, as the universal crt does. Where a result is a
- * double-double it is rounded once at the end.
+ * long double is double on windows, so the l forms call the double ones. unlike the classic functions these leave
+ * errno alone and raise the floating point exception flags, as the universal crt does. double-double results are
+ * rounded once at the end.
  */
 
 typedef union {
@@ -31,7 +31,6 @@ static inline int is_fnan(float f)
     return (fbits(f) & 0x7fffffffu) > 0x7f800000u;
 }
 
-/* nan or infinity. */
 static inline int not_finite(double x)
 {
     return ((bits(x) >> 52) & 0x7ff) == 0x7ff;
@@ -124,7 +123,7 @@ DECLSPEC_EXPORT double __cdecl nanl(const char *tag) { return nan(tag); }
 
 /* ------------------------------------------------------------------ stepping and scaling */
 
-/* the next double from x toward y, with the flags of a result that overflows or turns subnormal. */
+/* the next double from x toward y, raising the flags when the result overflows or turns subnormal. */
 static double step_toward(double x, double y)
 {
     if (is_nan(x))
@@ -190,7 +189,7 @@ DECLSPEC_EXPORT float __cdecl nexttowardf(float x, double y)
 
 DECLSPEC_EXPORT float __cdecl nextafterf(float x, float y) { return nexttowardf(x, y); }
 
-/* x times 2^n with the flag of a result that overflows or underflows to zero. */
+/* x times 2^n, raising the flag when the result overflows or underflows to zero. */
 static double scale_flagged(double x, int n)
 {
     if (!n || x == 0 || not_finite(x))
@@ -214,7 +213,6 @@ DECLSPEC_EXPORT double __cdecl scalblnl(double x, long n) { return scale_flagged
 DECLSPEC_EXPORT float __cdecl scalbnf(float x, int n) { return (float)scale_flagged(x, n); }
 DECLSPEC_EXPORT float __cdecl scalblnf(float x, long n) { return (float)scale_flagged(x, (int)n); }
 
-/* the exponent of x as a number, the one of _logb. */
 DECLSPEC_EXPORT double __cdecl logb(double x) { return _logb(x); }
 DECLSPEC_EXPORT float __cdecl logbf(float x) { return _logbf(x); }
 DECLSPEC_EXPORT double __cdecl logbl(double x) { return _logb(x); }
@@ -243,7 +241,7 @@ DECLSPEC_EXPORT double __cdecl round(double x)
 DECLSPEC_EXPORT float __cdecl roundf(float x) { return (float)round(x); }
 DECLSPEC_EXPORT double __cdecl roundl(double x) { return round(x); }
 
-/* the integer nearest by the current rounding mode, by adding and taking away a number that has no fraction. */
+/* nearest integer in the current rounding mode, by adding and subtracting a number with no fraction. */
 static double rint_(double x)
 {
     uint64_t u = bits(x);
@@ -276,8 +274,8 @@ DECLSPEC_EXPORT float __cdecl nearbyintf(float x) { return (float)nearbyint_(x);
 DECLSPEC_EXPORT double __cdecl nearbyintl(double x) { return nearbyint_(x); }
 
 /*
- * to an integer type: a value that does not fit, a nan and an infinity raise the invalid flag and give 0, as the
- * universal crt does. The long of windows has 32 bits.
+ * conversion to an integer type: a value that does not fit, a nan or an infinity raises the invalid flag and gives 0,
+ * as the universal crt does. long is 32 bits on windows.
  */
 static long to_long(double v)
 {
@@ -313,8 +311,8 @@ DECLSPEC_EXPORT double __cdecl truncl(double x) { return trunc_(x); }
 /* ------------------------------------------------------------------ remainder */
 
 /*
- * x - n y for the integer n nearest to x / y, halfway cases to the even one, exact. The low bits of n, with the sign
- * of x / y, go to *quo. Works on the mantissas by long division, so no rounding happens on the way.
+ * x - n y, exact, for the integer n nearest to x / y with ties to even. the low bits of n, with the sign of x / y, go
+ * to *quo. long division on the mantissas, so nothing rounds on the way.
  */
 static double ieee_remainder(double x, double y, int *quo)
 {
@@ -514,7 +512,7 @@ static DD erf_series(double x)
 
 /*
  * erfc for x of 2.5 and more, by the continued fraction e^-x^2 / (sqrt(pi) (x + 1/2 / (x + 1 / (x + 3/2 / ...)))).
- * Returns the mantissa part, the power of two goes to *n.
+ * returns the mantissa part, the power of two goes to *n.
  */
 static DD erfc_fraction(double x, int *n)
 {
@@ -618,8 +616,8 @@ static DD lgamma_stirling(DD z)
 }
 
 /*
- * log gamma of x above 0, with the product it was shifted by taken out: x + n is the first of x + k to pass the
- * limit and *product is x (x + 1) ... (x + n - 1), the sums kept exact in a double-double.
+ * log gamma of x above 0 with the shift product taken out: x + n is the first x + k past the limit and *product is
+ * x (x + 1) ... (x + n - 1), its sums kept exact in a double-double.
  */
 static DD lgamma_positive(DD x, DD *product)
 {
@@ -631,7 +629,6 @@ static DD lgamma_positive(DD x, DD *product)
     return lgamma_stirling(dd_add(x, dd(n, 0)));
 }
 
-/* log of a double-double above zero. */
 static DD log_dd(DD v)
 {
     DD l = log_kernel(v.hi);
@@ -639,7 +636,6 @@ static DD log_dd(DD v)
     return fast_two_sum(l.hi, l.lo);
 }
 
-/* log gamma of x above 0 as a double-double. */
 static DD lgamma_of_positive(DD x)
 {
     DD product;
@@ -690,7 +686,7 @@ static DD lgamma_dd(double x, int *negative)
 /*
  * the series of log gamma around 1 and 2, in e = x - 1 and e = x - 2 with |e| below 1/100:
  * log gamma(1 + e) = -g e + sum zeta(k) (-e)^k / k and log gamma(2 + e) = (1 - g) e + sum (zeta(k) - 1) (-e)^k / k,
- * g being euler's constant. The coefficients are the sums for k from 2 to 14.
+ * g being euler's constant. the coefficients are the sums for k from 2 to 14.
  */
 static const double g_lgamma1[] = {
     0.8224670334241132,    -0.40068563438653143, 0.27058080842778454, -0.20738555102867398, 0.1695571769974082,

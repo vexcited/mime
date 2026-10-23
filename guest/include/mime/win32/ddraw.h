@@ -1,7 +1,4 @@
-/*
- * directdraw: the object of every version, surfaces, palettes, clippers,
- * gamma and color controls. methods are in windows' vtable order.
- */
+/* directdraw objects, surfaces, palettes, clippers, gamma and color controls, in windows' vtable order. */
 #ifndef MIME_WIN32_DDRAW_H
 #define MIME_WIN32_DDRAW_H
 
@@ -266,7 +263,7 @@ typedef struct _DDSURFACEDESC2 {
     };
     union {
         DWORD dwMipMapCount;
-        DWORD dwZBufferBitDepth; /* where a first version desc keeps it */
+        DWORD dwZBufferBitDepth; /* where a version 1 desc keeps it. */
         DWORD dwRefreshRate;
         DWORD dwSrcVBHandle;
     };
@@ -290,7 +287,7 @@ typedef struct _DDSURFACEDESC2 {
 
 #define DD_ROP_SPACE (256 / 32)
 
-/* the caps of directx 7; the older sizes stop at fields of their own versions. */
+/* directx 7 caps. older sizes end after their own version's fields. */
 typedef struct _DDCAPS_DX7 {
     DWORD dwSize;
     DWORD dwCaps;
@@ -493,7 +490,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 
 /* ------------------------------------------------------------------ flags */
 
-/* DirectDrawEnumerateEx */
+/* DirectDrawEnumerateEx. */
 #define DDENUM_ATTACHEDSECONDARYDEVICES 0x00000001
 #define DDENUM_DETACHEDSECONDARYDEVICES 0x00000002
 #define DDENUM_NONDISPLAYDEVICES 0x00000004
@@ -501,7 +498,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define DDCREATE_HARDWAREONLY 0x00000001
 #define DDCREATE_EMULATIONONLY 0x00000002
 
-/* SetCooperativeLevel */
+/* SetCooperativeLevel. */
 #define DDSCL_FULLSCREEN 0x00000001
 #define DDSCL_ALLOWREBOOT 0x00000002
 #define DDSCL_NOWINDOWCHANGES 0x00000004
@@ -515,7 +512,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define DDSCL_FPUSETUP 0x00000800
 #define DDSCL_FPUPRESERVE 0x00001000
 
-/* surface descriptions */
+/* surface descriptions. */
 #define DDSD_CAPS 0x00000001
 #define DDSD_HEIGHT 0x00000002
 #define DDSD_WIDTH 0x00000004
@@ -538,7 +535,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define DDSD_DEPTH 0x00800000
 #define DDSD_ALL 0x00FFF9EE
 
-/* surface caps */
+/* surface caps. */
 #define DDSCAPS_RESERVED1 0x00000001
 #define DDSCAPS_ALPHA 0x00000002
 #define DDSCAPS_BACKBUFFER 0x00000004
@@ -604,7 +601,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define DDSCAPS2_EXTENDEDFORMATPRIMARY 0x40000000
 #define DDSCAPS2_ADDITIONALPRIMARY 0x80000000
 
-/* pixel formats */
+/* pixel formats. */
 #define DDPF_ALPHAPIXELS 0x00000001
 #define DDPF_ALPHA 0x00000002
 #define DDPF_FOURCC 0x00000004
@@ -625,7 +622,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define DDPF_BUMPLUMINANCE 0x00040000
 #define DDPF_BUMPDUDV 0x00080000
 
-/* bit depths, as direct3d's descriptions list them. */
+/* bit depths, as direct3d device descriptions list them. */
 #define DDBD_1 0x00004000
 #define DDBD_2 0x00002000
 #define DDBD_4 0x00001000
@@ -643,7 +640,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define FOURCC_DXT4 MAKEFOURCC('D', 'X', 'T', '4')
 #define FOURCC_DXT5 MAKEFOURCC('D', 'X', 'T', '5')
 
-/* the object's caps */
+/* directdraw object caps. */
 #define DDCAPS_3D 0x00000001
 #define DDCAPS_ALIGNBOUNDARYDEST 0x00000002
 #define DDCAPS_ALIGNSIZEDEST 0x00000004
@@ -766,7 +763,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define DDSVCAPS_RESERVED4 0x00000008
 #define DDSVCAPS_STEREOSEQUENTIAL 0x00000010
 
-/* palettes */
+/* palettes. */
 #define DDPCAPS_4BIT 0x00000001
 #define DDPCAPS_8BITENTRIES 0x00000002
 #define DDPCAPS_8BIT 0x00000004
@@ -779,7 +776,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define DDPCAPS_2BIT 0x00000200
 #define DDPCAPS_ALPHA 0x00000400
 
-/* blts */
+/* blts. */
 #define DDBLT_ALPHADEST 0x00000001
 #define DDBLT_ALPHADESTCONSTOVERRIDE 0x00000002
 #define DDBLT_ALPHADESTNEG 0x00000004
@@ -828,7 +825,7 @@ typedef HRESULT(WINAPI *LPDDENUMSURFACESCALLBACK7)(LPDIRECTDRAWSURFACE7 surface,
 #define DDBLTFX_ZBUFFERRANGE 0x00000080
 #define DDBLTFX_ZBUFFERBASEDEST 0x00000100
 
-/* flips, locks, status, keys */
+/* flips, locks, status, keys. */
 #define DDFLIP_WAIT 0x00000001
 #define DDFLIP_EVEN 0x00000002
 #define DDFLIP_ODD 0x00000004

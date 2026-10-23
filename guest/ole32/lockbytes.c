@@ -1,4 +1,4 @@
-/* byte arrays over a global memory block, the backing store of compound files in memory. */
+/* ILockBytes over a global memory block, the backing store of in memory compound files. */
 #include "ole32_private.h"
 
 typedef struct {

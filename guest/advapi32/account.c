@@ -1,10 +1,8 @@
 /*
- * account names: the user name of the process and the mapping between
- * names and sids that the local security authority answers on windows.
+ * account names: the process user name and the name to sid mapping that windows gets from the lsa.
  *
- * there is no lsa: well known sids come from a table, and the accounts of
- * this machine from its identity, the sid of the logged on user and the
- * profiles the kernel registers at boot.
+ * there is no lsa: well known sids come from a table, local accounts from the machine identity, the logged on
+ * user's sid and the profiles the kernel registers at boot.
  */
 #include "advapi32_private.h"
 
@@ -21,7 +19,7 @@ typedef struct ACCOUNT {
 #define BUILTIN L"BUILTIN"
 #define LABEL L"Mandatory Label"
 
-/* the names an english installation reports. */
+/* names as an english installation reports them. */
 static const ACCOUNT g_well_known[] = {
     {L"NULL SID", L"", 0, 1, {0}, SidTypeWellKnownGroup},
     {L"Everyone", L"", 1, 1, {0}, SidTypeWellKnownGroup},
@@ -86,7 +84,7 @@ static const ACCOUNT g_well_known[] = {
     {L"Protected Process Mandatory Level", LABEL, 16, 1, {0x5000}, SidTypeLabel},
 };
 
-/* the built in accounts of every machine, by relative id in its domain. */
+/* built in accounts of every machine, by relative id in the machine's domain. */
 static const struct {
     DWORD Rid;
     PCWSTR Name;
@@ -109,7 +107,7 @@ static BOOL is_machine_domain(const SID *sid)
            sid->SubAuthority[0] == 21;
 }
 
-/* the sid of this machine's domain, S-1-5-21-a-b-c, taken from the user's sid or a registered profile. */
+/* this machine's domain sid, S-1-5-21-a-b-c, from the user's sid or a registered profile. */
 BOOL AdvMachineSid(void *storage)
 {
     SID *out = storage;
@@ -156,7 +154,7 @@ static BOOL read_string(HKEY root, PCWSTR path, PCWSTR value, PWSTR out, DWORD c
     return out[0] != 0;
 }
 
-/* the name of a local user with a profile: what winlogon wrote, else the name of the profile directory. */
+/* a local user's name: what winlogon wrote, else the profile directory name. */
 static BOOL profile_user_name(const SID *sid, PWSTR out, DWORD chars)
 {
     PWSTR text;
@@ -275,7 +273,7 @@ ADVAPI BOOL WINAPI LookupAccountSidW(LPCWSTR system, PSID sid, LPWSTR name, LPDW
     return TRUE;
 }
 
-/* sizes count ansi bytes, through the same rules as the wide function. */
+/* sizes count ansi bytes, with the same rules as the wide function. */
 ADVAPI BOOL WINAPI LookupAccountSidA(LPCSTR system, PSID sid, LPSTR name, LPDWORD name_size, LPSTR domain,
                                      LPDWORD domain_size, PSID_NAME_USE use)
 {
@@ -308,7 +306,7 @@ ADVAPI BOOL WINAPI LookupAccountSidA(LPCSTR system, PSID sid, LPSTR name, LPDWOR
     return TRUE;
 }
 
-/* finds an account by name, optionally qualified with its domain. */
+/* the name may be qualified with its domain. */
 static BOOL lookup_name(PCWSTR account, SID *sid, PWSTR domain, DWORD domain_size, SID_NAME_USE *use)
 {
     PCWSTR slash = wcschr(account, L'\\');
@@ -347,7 +345,7 @@ static BOOL lookup_name(PCWSTR account, SID *sid, PWSTR domain, DWORD domain_siz
             return TRUE;
         }
     }
-    /* the users with a profile on this machine. */
+    /* local users with a profile. */
     HKEY key;
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, PROFILE_LIST, 0, KEY_READ, &key))
         return FALSE;
@@ -440,7 +438,7 @@ ADVAPI BOOL WINAPI LookupAccountNameA(LPCSTR system, LPCSTR account, PSID sid, L
     return TRUE;
 }
 
-/* the account name of the token's user without its domain; sizes count the terminator. */
+/* the user name without its domain; sizes count the terminator. */
 ADVAPI BOOL WINAPI GetUserNameW(LPWSTR buffer, LPDWORD size)
 {
     if (!size) {

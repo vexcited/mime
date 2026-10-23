@@ -1,7 +1,7 @@
 /*
- * the dxbc container: a header with a checksum, the chunks' offsets, and
- * tagged chunks. the checksum is md5 over everything after it, finished
- * with the bit count first in the last block instead of md5's padding.
+ * the dxbc container: a header with a checksum, the chunk offsets, then
+ * tagged chunks. the checksum is md5 over everything after it, except the
+ * last block puts the bit count first instead of md5's padding.
  */
 #include "dxbc.h"
 
@@ -47,8 +47,6 @@ const void *dxbc_find_chunk(const void *bytecode, size_t length, uint32_t tag, u
     }
     return nullptr;
 }
-
-/* ------------------------------------------------------------------ the checksum */
 
 static uint32_t rol(uint32_t v, int n) { return v << n | v >> (32 - n); }
 
@@ -104,7 +102,7 @@ void dxbc_checksum(const void *bytecode, size_t length, uint32_t out[4])
     uint8_t block[64];
     __builtin_memset(block, 0, sizeof(block));
     if (left >= 56) {
-        /* the rest and its padding fill a block; the counts go in one more. */
+        /* the rest and its padding fill a block, so the counts go in one more. */
         __builtin_memcpy(block, data + full, left);
         block[left] = 0x80;
         md5_block(s, block);
@@ -120,8 +118,6 @@ void dxbc_checksum(const void *bytecode, size_t length, uint32_t out[4])
     __builtin_memcpy(out, s, sizeof(s));
 }
 
-/* ------------------------------------------------------------------ signatures */
-
 int dxbc_parse_signature(const void *bytecode, size_t length, uint32_t tag, DxbcSignature *out,
                          const MimeAllocator *alloc)
 {
@@ -132,7 +128,7 @@ int dxbc_parse_signature(const void *bytecode, size_t length, uint32_t tag, Dxbc
     if (!chunk || size < 8)
         return -1;
     uint32_t count = read32(chunk), first = read32(chunk + 4);
-    /* the 5 variant leads with the stream, the 1 variants also end with the minimum precision. */
+    /* the 5 variant starts with the stream, the 1 variants also end with the minimum precision. */
     int has_stream = tag == DXBC_FOURCC('O', 'S', 'G', '5') || tag == DXBC_FOURCC('I', 'S', 'G', '1') ||
                      tag == DXBC_FOURCC('O', 'S', 'G', '1') || tag == DXBC_FOURCC('P', 'S', 'G', '1');
     int has_precision = has_stream && tag != DXBC_FOURCC('O', 'S', 'G', '5');
@@ -151,7 +147,7 @@ int dxbc_parse_signature(const void *bytecode, size_t length, uint32_t tag, Dxbc
             p += 4;
         uint32_t name = read32(p);
         e[i].name = name < size ? (const char *)chunk + name : "";
-        /* a name runs to its nul, which must lie inside the chunk. */
+        /* the name's nul must lie inside the chunk. */
         uint32_t end = name;
         while (end < size && chunk[end])
             end++;

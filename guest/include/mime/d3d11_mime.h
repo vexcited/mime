@@ -1,15 +1,13 @@
 /*
- * what d3d9.dll asks of mime's d3d11.dll beyond windows' interfaces:
- * views whose components are swizzled, as direct3d 9's luminance and
- * depth formats read, scaled copies, and the topologies of direct3d 9's
- * draws.
+ * private d3d11.dll extensions for d3d9.dll: swizzled views for direct3d 9's luminance and depth formats, scaled
+ * copies, and direct3d 9 draw topologies.
  */
 #ifndef MIME_D3D11_MIME_H
 #define MIME_D3D11_MIME_H
 
 #include <mime/win32/d3d11.h>
 
-/* the components of a view, each a VkComponentSwizzle: 1 zero, 2 one, 3 to 6 red to alpha. */
+/* each component is a VkComponentSwizzle: 1 zero, 2 one, 3 to 6 red to alpha. */
 #define MIME_SWIZZLE(r, g, b, a) ((r) | ((g) << 4) | ((b) << 8) | ((a) << 12))
 #define MIME_SWIZZLE_ZERO 1
 #define MIME_SWIZZLE_ONE 2
@@ -18,7 +16,7 @@
 #define MIME_SWIZZLE_B 5
 #define MIME_SWIZZLE_A 6
 
-/* topologies as direct3d 9 draws them: strips never restart, and fans. */
+/* direct3d 9 topologies: strips that never restart, and fans. */
 #define MIME_TOPOLOGY_D3D9 0x10000
 #define MIME_TOPOLOGY_TRIANGLEFAN (MIME_TOPOLOGY_D3D9 | 0xFF)
 

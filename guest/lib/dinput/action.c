@@ -1,12 +1,12 @@
 /*
- * action mapping, dinput8 alone: the checks of an action format, the
- * maps keyboards and mice build without a mapper (their DIKEYBOARD_ and
- * DIMOUSE_ semantics), the data format SetActionMap installs, and
- * EnumDevicesBySemantics ordering the devices a format suits.
+ * action mapping, dinput8 only: action format checks, the keyboard and
+ * mouse maps built from DIKEYBOARD_ and DIMOUSE_ semantics without a
+ * mapper, the data format SetActionMap installs, and the device order of
+ * EnumDevicesBySemantics.
  */
 #include "dinput_private.h"
 
-/* windows' IsValidMapObject; A and W formats differ in size alone. */
+/* A and W formats differ only in size. */
 HRESULT DiCheckActionFormat(const DIACTIONFORMATW *f, BOOL wide)
 {
     if (!f)
@@ -66,7 +66,7 @@ HRESULT DiActionFormatToW(const DIACTIONFORMATA *a, DIACTIONFORMATW *w, DIACTION
     return DI_OK;
 }
 
-/* what building a map changed, back into the caller's A format. */
+/* copies what building the map changed back into the caller's A format. */
 void DiActionFormatBack(DIACTIONFORMATA *a, const DIACTIONFORMATW *w)
 {
     for (DWORD i = 0; i < a->dwNumActions; i++) {
@@ -102,7 +102,7 @@ static DWORD format_crc(const DIACTIONFORMATW *f)
     return crc;
 }
 
-/* the object a keyboard or mouse semantic of the device's own genre stands for, -1 for none. */
+/* the object a keyboard or mouse semantic of the device's genre maps to, or -1. */
 static int default_object(DIDEV *dev, DWORD semantic)
 {
     DWORD genre = semantic >> 24, low = semantic & 0xFF;
@@ -140,10 +140,7 @@ static BOOL taken(const DIACTIONFORMATW *f, DIDEV *dev, DWORD id, DWORD except)
     return FALSE;
 }
 
-/*
- * the device's built in map, there being no mapper: actions already on
- * the device, then those naming it, then unassigned ones of its genre.
- */
+/* no mapper: actions already on the device, then those naming it, then unassigned ones of its genre. */
 HRESULT DiBuildActionMap(DIDEV *dev, DIACTIONFORMATW *f, LPCWSTR user, DWORD flags)
 {
     if (!dev->cls)
@@ -206,17 +203,14 @@ HRESULT DiBuildActionMap(DIDEV *dev, DIACTIONFORMATW *f, LPCWSTR user, DWORD fla
     }
     if (error)
         return E_INVALIDARG;
-    /* no saved configuration: windows' mapper calls a device never configured new. */
+    /* no saved configuration, so windows reports a never configured device as new. */
     f->ftTimeStamp.dwLowDateTime = DIAFTS_NEWDEVICELOW;
     f->ftTimeStamp.dwHighDateTime = DIAFTS_NEWDEVICEHIGH;
     f->dwCRC = format_crc(f);
     return assigned ? DI_OK : DI_NOEFFECT;
 }
 
-/*
- * the map as the device's data format: each action of this device at
- * four times its index, its uAppData as the object's DIPROP_APPDATA.
- */
+/* each action on this device goes at offset 4 * its index, its uAppData becoming the object's DIPROP_APPDATA. */
 HRESULT DiSetActionMap(DIDEV *dev, DIACTIONFORMATW *f, LPCWSTR user, DWORD flags)
 {
     if (!dev->cls)

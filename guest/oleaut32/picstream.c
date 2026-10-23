@@ -1,10 +1,10 @@
 /*
- * pictures read from a stream: the optional marker of OLE ahead of them, finding out how long the picture is, and
- * choosing the loader by the first two bytes.
+ * pictures read from a stream: the optional OLE marker in front, working out the length, and choosing the loader by
+ * the first two bytes.
  */
 #include "picture.h"
 
-/* a buffer is read in steps of this size while the length is not known better. */
+/* read step while the length is unknown. */
 #define READ_STEP 65536
 
 #define MAGIC_ICON 0x0000
@@ -20,7 +20,7 @@ static ULONG get_u32(const BYTE *p)
     return p[0] | p[1] << 8 | p[2] << 16 | (ULONG)p[3] << 24;
 }
 
-/* up to `count` bytes, until the stream has no more. */
+/* reads up to `count` bytes, stopping at the end of the stream. */
 static HRESULT read_some(IStream *stream, void *buffer, ULONG count, ULONG *got)
 {
     BYTE *at = buffer;
@@ -79,8 +79,8 @@ static HRESULT build_image(UINT word, BOOL marked, const BYTE *data, ULONG got, 
 }
 
 /*
- * Reads a picture. `length` is what the caller knows of its size, 0 when it does not. A picture kept in its
- * original format hands the bytes back so the picture can write them out as they came.
+ * `length` is the size the caller knows, 0 when unknown. With keep, the original bytes are handed back so the
+ * picture can write them out unchanged.
  */
 HRESULT PicReadStream(IStream *stream, ULONG length, BOOL keep, DWORD cx, DWORD cy, DWORD flags, PIC_IMAGE *image,
                       BYTE **original, ULONG *original_size)

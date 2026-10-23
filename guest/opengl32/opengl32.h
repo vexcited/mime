@@ -1,15 +1,12 @@
 /*
- * opengl32: opengl on the host gpu.
+ * opengl32: OpenGL on the host gpu.
  *
- * the dll keeps the whole gl state in the process and sends metal level
- * commands to the host through the process's gpu channel (mime/gpu.h).
- * it has no imports, so the same native image also serves x64 programs:
- * their opengl32.dll forwards every call here through mimex86's native
- * calls (mime/mx64.h, tools/gengl.c).
+ * the dll keeps the whole GL state in the process and sends Metal level commands to the host through the process's
+ * gpu channel, see mime/gpu.h. it has no imports, so the same native image also serves x64 programs: their
+ * opengl32.dll forwards every call here through mimex86's native calls, see mime/mx64.h.
  *
- * gl names objects per share group; the host only knows channel wide ids,
- * which the device hands out. rows of every image are kept bottom first,
- * as gl orders them.
+ * GL names objects per share group; the host only knows channel wide ids, which the device hands out. rows of every
+ * image are kept bottom first, as GL orders them.
  */
 #ifndef MIME_OPENGL32_H
 #define MIME_OPENGL32_H
@@ -38,7 +35,7 @@ extern const ULONG GlProcCount;
 
 /* ---------------------------------------------------------------- runtime */
 
-void *gl_alloc(SIZE_T size); /* zeroed */
+void *gl_alloc(SIZE_T size); /* zeroed. */
 void *gl_realloc(void *p, SIZE_T size);
 void gl_free(void *p);
 char *gl_strdup(const char *s);
@@ -67,13 +64,13 @@ enum { ID_TEXTURE, ID_PROGRAM, ID_PIPELINE, ID_DEPTH_STENCIL, ID_SAMPLER, ID_SUR
 
 typedef struct GlDevice {
     GL_LOCK lock;
-    void *owner; /* the context whose state the host holds */
+    void *owner; /* the context whose state the host holds. */
     BOOL open, failed;
     MimeGpuHeader *hdr;
     uint8_t *base;
     uint8_t *ring;
     uint64_t put, published;
-    uint64_t fence; /* the last fence emitted */
+    uint64_t fence; /* the last fence emitted. */
     uint8_t *block_base[MIME_GPU_MAX_BLOCKS];
     uint64_t block_size[MIME_GPU_MAX_BLOCKS];
     uint32_t block_count;
@@ -88,10 +85,10 @@ void gl_device_lock(void);
 void gl_device_unlock(void);
 uint32_t gl_new_id(int kind);
 void gl_free_id(int kind, uint32_t id);
-void *gl_emit(uint32_t op, uint32_t size); /* the record, header written; the device lock must be held */
+void *gl_emit(uint32_t op, uint32_t size); /* the record, header written; the device lock must be held. */
 void gl_publish(void);
 uint64_t gl_fence(void);
-uint64_t gl_batch_fence(void); /* the fence that will cover the commands written now */
+uint64_t gl_batch_fence(void); /* the fence that will cover the commands written now. */
 BOOL gl_fence_done(uint64_t fence);
 void gl_want(uint64_t fence);
 void gl_wait(uint64_t fence);
@@ -108,12 +105,12 @@ typedef struct GlBuffer {
     GLenum usage;
     GlMem mem;
     uint64_t size;
-    uint64_t last_use; /* the batch fence of the last command reading it */
+    uint64_t last_use; /* the batch fence of the last command reading it. */
     BOOL mapped;
     GLbitfield map_access;
     uint64_t map_offset, map_length;
     BOOL dirty_index_range;
-    uint32_t max_index[3]; /* cached by index type, u8 u16 u32 */
+    uint32_t max_index[3]; /* cached per index type: u8, u16, u32. */
 } GlBuffer;
 
 typedef struct GlSamplerState {
@@ -128,20 +125,20 @@ typedef struct GlSamplerState {
 typedef struct GlTexture {
     GLuint name;
     GLenum target;
-    uint32_t id;          /* host texture, 0 before an image */
+    uint32_t id;          /* host texture, 0 before an image. */
     uint32_t mtl_type, mtl_format;
     GLenum internal_format;
     uint32_t width, height, depth;
-    uint32_t levels;      /* allocated on the host */
+    uint32_t levels;      /* allocated on the host. */
     uint32_t samples;
     uint32_t swizzle;
     GLenum component_swizzle[4];
-    BOOL bgra;            /* stored as bgra */
+    BOOL bgra;            /* stored as bgra. */
     BOOL compressed;
     BOOL generate_mipmap; /* GL_GENERATE_MIPMAP: level 0 uploads rebuild the chain. */
     uint16_t defined_levels;
     GlSamplerState sampler;
-    uint32_t sampler_id;  /* 0 when the state changed */
+    uint32_t sampler_id;  /* 0 when the state changed. */
     GLint base_level, max_level;
 } GlTexture;
 
@@ -179,13 +176,13 @@ typedef struct GlShader {
 } GlShader;
 
 typedef struct GlUniform {
-    char *name;      /* "name" or "name[0]" */
-    SIZE_T base_len; /* length without "[0]" */
+    char *name;      /* "name" or "name[0]". */
+    SIZE_T base_len; /* length without "[0]". */
     GLenum type;
     GLint size;
     uint32_t offset, array_stride, matrix_stride;
     int32_t texture[MIME_GPU_STAGES];
-    GLint *units;    /* samplers: the texture unit of each element */
+    GLint *units;    /* samplers: the texture unit of each element. */
 } GlUniform;
 
 typedef struct GlUniformBlock {
@@ -210,12 +207,12 @@ typedef struct GlAttrib {
 
 typedef struct GlProgram {
     GLuint name;
-    uint32_t id;           /* host program, 0 before a link */
+    uint32_t id;           /* host program, 0 before a link. */
     GlShader *shaders[8];
     uint32_t shader_count;
-    char *bindings;        /* glBindAttribLocation, "name\0location\0" */
+    char *bindings;        /* glBindAttribLocation, "name\0location\0" pairs. */
     uint32_t bindings_len;
-    GlMem info;            /* MimeGpuProgramInfo written by the host */
+    GlMem info;            /* MimeGpuProgramInfo written by the host. */
     BOOL linking, linked, link_status, deleted;
     char *log;
     GlUniform *uniforms;
@@ -224,11 +221,11 @@ typedef struct GlProgram {
     uint32_t block_count;
     GlAttrib *attribs;
     uint32_t attrib_count;
-    uint32_t attrib_mask;  /* locations the vertex stage reads */
+    uint32_t attrib_mask;  /* locations the vertex stage reads. */
     uint8_t *ublock;
     uint32_t ublock_size;
     BOOL ublock_dirty;
-    uint32_t serial;       /* changes with each link */
+    uint32_t serial;       /* changes with each link. */
 } GlProgram;
 
 typedef struct GlVertexAttrib {
@@ -264,7 +261,7 @@ typedef struct GlShared {
     GlNames buffers, textures, renderbuffers, programs, shaders;
 } GlShared;
 
-#define GL_RESERVED ((void *)1) /* a generated name without its object yet */
+#define GL_RESERVED ((void *)1) /* a generated name without its object yet. */
 
 void *gl_name_get(GlNames *n, GLuint name);
 void gl_name_set(GlNames *n, GLuint name, void *object);
@@ -280,7 +277,7 @@ typedef struct GlSurface {
     uint32_t depth_format, stencil_format;
     BOOL configured;
     BOOL sync;
-    uint64_t frames[3]; /* fences of the last presents */
+    uint64_t frames[3]; /* fences of the last presents. */
     uint32_t frame_index;
 } GlSurface;
 
@@ -290,7 +287,7 @@ void gl_surface_refresh(GlSurface *s, HDC dc);
 /* ---------------------------------------------------------------- contexts */
 
 enum {
-    DIRTY_PIPELINE = 1u << 0,   /* program, vertex formats, blend, targets */
+    DIRTY_PIPELINE = 1u << 0,   /* program, vertex formats, blend, targets. */
     DIRTY_DEPTH = 1u << 1,
     DIRTY_RASTER = 1u << 2,
     DIRTY_VIEWPORT = 1u << 3,
@@ -428,8 +425,8 @@ typedef struct GlContext {
     GLuint elapsed_query;
     GLuint renderbuffer;
     GLuint active_texture;
-    GLuint units[32][8]; /* see texture.c: unit slots by target */
-    GLenum draw_buffer, read_buffer; /* default framebuffer */
+    GLuint units[32][8]; /* see texture.c: unit slots by target. */
+    GLenum draw_buffer, read_buffer; /* default framebuffer. */
 
     /* fixed state. */
     GLfloat clear_color[4];
@@ -482,7 +479,7 @@ typedef struct GlContext {
     /* the render pass in progress. */
     BOOL pass_open;
     GlTarget target;
-    const void *target_owner;  /* framebuffer or surface */
+    const void *target_owner;  /* framebuffer or surface. */
     uint32_t target_serial;
     struct {
         GLbitfield mask;

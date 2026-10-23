@@ -1,8 +1,7 @@
 /*
- * what the parts of directinput share. one engine serves dinput8.dll and
- * dinput.dll, as windows' two dlls are revisions of the same code: an
- * object or device knows which it belongs to and the version it was
- * initialized with.
+ * shared by the parts of directinput. one engine serves dinput8.dll and
+ * dinput.dll: each object or device knows which dll it belongs to and the
+ * version it was initialized with.
  */
 #ifndef DINPUT_PRIVATE_H
 #define DINPUT_PRIVATE_H
@@ -16,7 +15,7 @@
 #define DI8_VERSION 0x0800
 #define DI_MAX_PATH MAX_PATH
 
-/* the dll a module is: dinput8.dll or dinput.dll, set by its DllMain. */
+/* TRUE in dinput8.dll, FALSE in dinput.dll; set by DllMain. */
 extern BOOL DiIs8;
 extern HINSTANCE DiModule;
 extern LONG DiLocks;
@@ -26,15 +25,13 @@ HRESULT DiCheckVersion(HINSTANCE instance, DWORD version, BOOL di8);
 HRESULT DiGetClassObject(REFCLSID clsid, REFIID riid, void **out);
 extern const DIDATAFORMAT DiJoystickFormat;
 
-/* ------------------------------------------------------------------ the directinput object */
-
 typedef struct DIOBJ {
     const void *vtbl_w;
     const void *vtbl_a;
     LONG ref;
     BOOL di8;
-    DWORD version; /* 0 until initialized */
-    void *joycfg;  /* dinput.dll's IDirectInputJoyConfig, made at its first query */
+    DWORD version; /* 0 until initialized. */
+    void *joycfg;  /* dinput.dll's IDirectInputJoyConfig, made on first query. */
 } DIOBJ;
 
 HRESULT DiCreateObject(REFIID riid, void **out, BOOL di8);
@@ -43,40 +40,37 @@ void *DiJoyConfigFor(DIOBJ *obj);
 void DiJoyConfigFree(DIOBJ *obj);
 HRESULT DiCreateHelper(HINSTANCE instance, DWORD version, REFIID riid, void **out, IUnknown *outer, BOOL di8);
 
-/* ------------------------------------------------------------------ devices */
-
 typedef struct DIDEV DIDEV;
 
-/* an object of a device: a key, an axis, a button, as its native state lays it out. */
+/* a key, axis or button, at its place in the native state. */
 typedef struct DIOBJECT {
     const GUID *guid;
-    DWORD ofs;   /* in the native state */
-    DWORD type;  /* DIDFT_* with the instance */
+    DWORD ofs;   /* offset in the native state. */
+    DWORD type;  /* DIDFT_* plus the instance. */
     DWORD flags; /* DIDOI_* */
-    /* what a hid object adds to its description. */
+    /* hid objects only. */
     WORD page, usage, collection, designator;
     DWORD dimension;
     WORD exponent, report;
 } DIOBJECT;
 
-/* what differs between keyboards, mice and game controllers. */
+/* per class behavior of keyboards, mice and game controllers. */
 typedef struct DICLASS {
     BOOL keyboard;
     HRESULT (*init)(DIDEV *dev);
     HRESULT (*cooperate)(DIDEV *dev, HWND window, DWORD flags);
     void (*acquire)(DIDEV *dev);
     void (*unacquire)(DIDEV *dev);
-    /* the native state as it is now. */
     void (*state)(DIDEV *dev, BYTE *native);
-    /* the name of an object, false for none. */
+    /* false when the object has no name. */
     BOOL (*name)(DIDEV *dev, const DIOBJECT *object, WCHAR *name);
-    /* a property of the class, E_NOTIMPL to leave it to the device. */
+    /* E_NOTIMPL leaves the property to the device. */
     HRESULT (*get_property)(DIDEV *dev, DWORD id, const DIOBJECT *object, DIPROPHEADER *header);
     HRESULT (*set_property)(DIDEV *dev, DWORD id, const DIOBJECT *object, const DIPROPHEADER *header);
-    /* where data comes from once acquired; the keyboard and mouse's when null. */
+    /* starts the data source on acquisition; null uses the keyboard and mouse one. */
     HRESULT (*start)(DIDEV *dev);
     void (*stop)(DIDEV *dev);
-    /* the object of a DIPH_BYUSAGE id, -1 for none; null when the class has no usages. */
+    /* the object for a DIPH_BYUSAGE id or -1; null when the class has no usages. */
     int (*find_usage)(DIDEV *dev, DWORD usage);
     void (*release)(DIDEV *dev);
     const WCHAR *control_panel;
@@ -98,7 +92,7 @@ typedef struct DIEVENT {
 #define DI_MAX_OBJECTS 256
 #define DI_MAX_STATE 1024
 
-/* the emulation flags windows keeps per instance. */
+/* per instance emulation flags. */
 #define DIEM_EXCLUSIVE 0x01
 #define DIEM_NOWINKEY 0x20
 
@@ -107,8 +101,8 @@ struct DIDEV {
     const void *vtbl_a;
     LONG ref;
     BOOL di8;
-    DWORD version;      /* 0 before Initialize */
-    const DICLASS *cls; /* null before Initialize */
+    DWORD version;      /* 0 before Initialize. */
+    const DICLASS *cls; /* null before Initialize. */
     RTL_CRITICAL_SECTION lock;
     GUID instance;
     GUID product;
@@ -122,9 +116,9 @@ struct DIDEV {
     /* the application's data format. */
     BOOL formatted;
     DWORD app_size;
-    DWORD app_ofs[DI_MAX_OBJECTS]; /* of each object, ~0 when not in the format */
+    DWORD app_ofs[DI_MAX_OBJECTS]; /* per object, ~0 when not in the format. */
     UINT_PTR appdata[DI_MAX_OBJECTS];
-    DWORD missing_povs[16];        /* offsets of optional povs the device lacks */
+    DWORD missing_povs[16];        /* offsets of optional povs the device lacks. */
     DWORD missing_count;
     BOOL relative;                 /* DIPROPAXISMODE_REL */
     /* cooperation and acquisition. */
@@ -132,13 +126,13 @@ struct DIDEV {
     DWORD coop;
     DWORD em;                      /* DIEM_* */
     BOOL acquired;
-    HRESULT status;                /* what reads report while not acquired */
+    HRESULT status;                /* what reads report while not acquired. */
     BOOL lost_iconic;
-    LONG baseline[3];              /* of relative axes at the last read */
+    LONG baseline[3];              /* relative axis values at the last read. */
     POINT saved_cursor;
     BOOL hid_cursor;
-    /* the buffer. */
-    DWORD buffer_prop;             /* as set */
+    /* buffered input. */
+    DWORD buffer_prop;             /* as set. */
     DWORD max_buffer;
     DIEVENT *ring;
     DWORD slots, head, tail;
@@ -146,8 +140,8 @@ struct DIDEV {
     HANDLE event;
     DWORD ffgain;
     WCHAR user[DI_MAX_PATH];
-    LIST_ENTRY links;              /* in the list of acquired devices */
-    /* a hid device's: its class data, top level usage, and the c_dfDIJoystick offsets old versions report. */
+    LIST_ENTRY links;              /* in the list of acquired devices. */
+    /* hid only: class data, top level usage, and the c_dfDIJoystick offsets old versions report. */
     void *hid;
     WORD usage_page, usage;
     BOOL legacy;
@@ -186,7 +180,7 @@ LONG DiNextUuidCounter(void);
 void DiBufferEvent(DIDEV *dev, DWORD native_ofs, DWORD data, DWORD time, DWORD sequence);
 void DiSignal(DIDEV *dev);
 
-/* hid.c: the system's hid collections, listed as windows' dinput lists them. */
+/* hid.c: the system's hid collections, listed the way windows lists them. */
 void DiHidRebuild(BOOL force);
 DWORD DiHidCount(void);
 BOOL DiHidEntry(DWORD index, GUID *instance, BYTE *type7, BYTE *type8);
@@ -205,7 +199,7 @@ BOOL DiKeyboardKeyName(DWORD scancode, DWORD dik, WCHAR *name, BOOL di8);
 HRESULT DiEnumEffectsInFile(LPCWSTR file, LPDIENUMEFFECTSINFILECALLBACK callback, void *context, DWORD flags);
 HRESULT DiWriteEffectToFile(LPCWSTR file, DWORD count, LPDIFILEEFFECT effects, DWORD flags);
 
-/* action.c, dinput8 alone. */
+/* action.c, dinput8 only. */
 HRESULT DiBuildActionMap(DIDEV *dev, DIACTIONFORMATW *format, LPCWSTR user, DWORD flags);
 HRESULT DiSetActionMap(DIDEV *dev, DIACTIONFORMATW *format, LPCWSTR user, DWORD flags);
 HRESULT DiCheckActionFormat(const DIACTIONFORMATW *format, BOOL wide);
@@ -214,7 +208,6 @@ void DiActionFormatBack(DIACTIONFORMATA *a, const DIACTIONFORMATW *w);
 HRESULT DiEnumDevicesBySemantics(DIOBJ *obj, LPCWSTR user, DIACTIONFORMATW *format, void *callback, void *context,
                                  DWORD flags, BOOL wide);
 
-/* strings */
 static inline void DiCopyW(WCHAR *dst, const WCHAR *src, SIZE_T size)
 {
     SIZE_T i = 0;

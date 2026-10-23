@@ -1,9 +1,8 @@
 /*
- * draws: direct3d 9's state turned into d3d11's when a draw needs it. the
- * state objects are cached by their descriptions; constants go to
- * dynamic buffers, each shader's own definitions laid over the device's,
- * as they override them; the translations of the bound shaders are found
- * by the keys of the state they depend on.
+ * draws translate direct3d 9 state to d3d11 when needed. state objects
+ * are cached by description, constants go to dynamic buffers with each
+ * shader's defs over the device's, and shader translations are looked up
+ * by the state they depend on.
  */
 #include "d3d9_private.h"
 
@@ -16,10 +15,7 @@ static float fbits(DWORD v)
 
 /* ------------------------------------------------------------------ state objects */
 
-/*
- * a small cache of d3d11 state objects by the direct3d 9 states they are
- * made of, a few words, the oldest replaced when full.
- */
+/* a small cache of d3d11 state objects keyed by a few direct3d 9 state words. the oldest goes when full. */
 static BOOL same_key(const DWORD *a, const DWORD *b, UINT words)
 {
     for (UINT i = 0; i < words; i++)
@@ -124,7 +120,7 @@ UINT D9RenderStateGroups(D3DRENDERSTATETYPE state)
     }
 }
 
-/* d3d9's blend factors as d3d11's; the alpha's colors are their alphas, as d3d11 takes only those there. */
+/* d3d11 takes only alpha factors for alpha, so color factors become their alpha form. */
 static D3D11_BLEND blend_factor(DWORD b, BOOL alpha)
 {
     static const D3D11_BLEND COLOR[] = {D3D11_BLEND_ZERO,           D3D11_BLEND_ZERO,           D3D11_BLEND_ONE,
@@ -250,7 +246,7 @@ static ID3D11DepthStencilState *depth_state(D9Device *d)
     return cached(&d->depth_cache, k, DK_WORDS, make_depth, d);
 }
 
-/* depth bias in units of the depth buffer's resolution, as d3d11 takes it. */
+/* d3d11 takes depth bias in units of the depth buffer's resolution. */
 static INT depth_bias(D9Device *d)
 {
     float bias = fbits(d->render_states[D3DRS_DEPTHBIAS]);
@@ -318,7 +314,7 @@ static void *make_sampler(D9Device *d, const DWORD *k)
     desc.BorderColor[1] = ((border >> 8) & 0xFF) / 255.0f;
     desc.BorderColor[2] = (border & 0xFF) / 255.0f;
     desc.BorderColor[3] = (border >> 24) / 255.0f;
-    /* the largest level is the most detailed one sampled; without mips only it. */
+    /* the max mip level is the most detailed one sampled. without mips, only that one. */
     desc.MinLOD = (float)k[SK_LEVEL];
     desc.MaxLOD = mip == D3DTEXF_NONE ? desc.MinLOD : D3D11_FLOAT32_MAX;
     ID3D11SamplerState *s;
@@ -344,7 +340,7 @@ static ID3D11Buffer *make_cb(D9Device *d, UINT size)
     return SUCCEEDED(d->d3d11->lpVtbl->CreateBuffer(d->d3d11, &desc, nullptr, &b)) ? b : nullptr;
 }
 
-/* the registers of the float constants' buffer a shader reads: 16 to 256, or all with relative addressing. */
+/* 16 to 256 float registers, or all of them with relative addressing. */
 static UINT bucket_of(const D9ShaderInfo *info)
 {
     UINT count = info->relative ? 256 : info->float_count;
@@ -361,10 +357,8 @@ UINT D9FloatBucketSize(const D9ShaderInfo *info)
 }
 
 /*
- * the float, integer and boolean constants of a stage, with the shader's
- * own definitions over them, in a buffer no larger than what it reads:
- * each upload renames the buffer, so small ones keep d3d11's ring of
- * dynamic ranges from filling.
+ * the buffer is no larger than what the shader reads: each upload renames
+ * it, so small ones keep d3d11's ring of dynamic ranges from filling.
  */
 static void upload_constants(D9Device *d, BOOL pixel, const D9ShaderInfo *info, BOOL ff)
 {
@@ -412,7 +406,7 @@ static void upload_constants(D9Device *d, BOOL pixel, const D9ShaderInfo *info, 
     }
 }
 
-/* what d3d9.dll's code reads besides the program's constants: the half pixel, clip planes, points, fog, alpha. */
+/* internal constants: the half pixel, clip planes, points, fog and alpha test. */
 static void upload_internal(D9Device *d, BOOL pixel, BOOL ff)
 {
     ID3D11DeviceContext1 *ctx = d->context;
@@ -441,7 +435,7 @@ static void upload_internal(D9Device *d, BOOL pixel, BOOL ff)
         v[2][1] = end;
         v[2][2] = fbits(rs[D3DRS_FOGDENSITY]);
         v[2][3] = end != start ? 1.0f / (end - start) : 0.0f;
-        /* the stages' bump matrices and luminance, for pixel shaders of model 1. */
+        /* bump matrices and luminance of each stage, for model 1 pixel shaders. */
         for (UINT i = 0; i < D9_MAX_STAGES; i++) {
             const DWORD *ts = d->stage_states[i];
             v[4 + i][0] = fbits(ts[D3DTSS_BUMPENVMAT00]);
@@ -521,7 +515,7 @@ static void bind_viewport(D9Device *d)
     d->viewport_dirty = FALSE;
 }
 
-/* the samplers of a stage and the views of their textures: pixel samplers 0 to 15, vertex 0 to 3 at slots 17 on. */
+/* pixel samplers go to slots 0 to 15, vertex samplers 0 to 3 to slots 17 and up. */
 static void bind_textures(D9Device *d, D9Variant *ps, D9Variant *vs)
 {
     ID3D11DeviceContext1 *ctx = d->context;
@@ -554,7 +548,6 @@ static void bind_textures(D9Device *d, D9Variant *ps, D9Variant *vs)
     (void)vs;
 }
 
-/* the keys of the bound shaders under the device's state. */
 static void vs_key(D9Device *d, D9Shader *shader, D3DPRIMITIVETYPE type, D9ShaderKey *key)
 {
     memset(key, 0, sizeof(*key));
@@ -595,13 +588,13 @@ static void ps_key(D9Device *d, D9Shader *shader, D3DPRIMITIVETYPE type, const D
     key->point_sprite = type == D3DPT_POINTLIST && rs[D3DRS_POINTSPRITEENABLE];
 }
 
-/* every state a draw reads, set on the context; FALSE when the draw cannot be made. */
+/* FALSE when the draw cannot be made. */
 static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
 {
     ID3D11DeviceContext1 *ctx = d->context;
     if (!d->decl)
         return FALSE;
-    /* without shaders, fixed function's programs of the state. */
+    /* without shaders, use the fixed function programs. */
     D9Shader *vs_shader = d->vs, *ps_shader = d->ps;
     if (!vs_shader) {
         D9FFVSKey k;
@@ -641,7 +634,7 @@ static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
         d->bound_ps = ps;
         d->ps_consts_dirty = TRUE;
     }
-    /* instanced streams, as SetStreamSourceFreq marks them, step once each count of instances. */
+    /* streams SetStreamSourceFreq marks as instanced step once every count instances. */
     UINT instanced = 0, rates[16] = {};
     for (UINT i = 1; i < D9_MAX_STREAMS; i++)
         if (d->stream_freq[i] & D3DSTREAMSOURCE_INSTANCEDATA) {
@@ -775,7 +768,7 @@ HRESULT D9DrawIndexed(D9Device *d, D3DPRIMITIVETYPE type, INT base, UINT start, 
     return D3D_OK;
 }
 
-/* bytes for a draw from memory, in a ring the gpu reads, discarded when it wraps. */
+/* draws from memory write to a ring the gpu reads, discarded when it wraps. */
 static BOOL ring_write(D9Device *d, D9Ring *ring, UINT bind, const void *data, UINT size, UINT *offset)
 {
     ID3D11DeviceContext1 *ctx = d->context;
@@ -805,7 +798,7 @@ static BOOL ring_write(D9Device *d, D9Ring *ring, UINT bind, const void *data, U
     return TRUE;
 }
 
-/* draws from memory leave stream 0, and the indices of indexed ones, unbound, as direct3d 9 does. */
+/* like direct3d 9, draws from memory leave stream 0 unbound, and the indices for indexed ones. */
 static void unbind_up(D9Device *d, BOOL indexed)
 {
     D9DeviceSetStream(d, 0, nullptr, 0, 0);
@@ -846,7 +839,7 @@ HRESULT D9DrawIndexedUP(D9Device *d, D3DPRIMITIVETYPE type, UINT min_index, UINT
         return D3D_OK;
     UINT index_size = format == D3DFMT_INDEX32 ? 4 : 2;
     UINT voffset, ioffset;
-    /* the vertices from the lowest index on, the indices made relative to it. */
+    /* only vertices from the lowest index on, indices made relative to it. */
     if (!ring_write(d, &d->up_vertices, D3D11_BIND_VERTEX_BUFFER, (const BYTE *)data + (SIZE_T)min_index * stride,
                     vertex_count * stride, &voffset) ||
         !ring_write(d, &d->up_indices, D3D11_BIND_INDEX_BUFFER, indices, count * index_size, &ioffset))
@@ -865,7 +858,6 @@ HRESULT D9DrawIndexedUP(D9Device *d, D3DPRIMITIVETYPE type, UINT min_index, UINT
     return D3D_OK;
 }
 
-/* the d3d11 objects draws use, made with the device. */
 HRESULT D9InitDraws(D9Device *d)
 {
     for (UINT p = 0; p < 2; p++) {
@@ -895,7 +887,7 @@ HRESULT D9InitDraws(D9Device *d)
     return D3D_OK;
 }
 
-/* what the context has bound is forgotten: the next draw sets it all. */
+/* forgets the context bindings so the next draw sets everything. */
 void D9ResetBindings(D9Device *d)
 {
     d->bound_vs = d->bound_ps = nullptr;

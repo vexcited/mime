@@ -1,7 +1,7 @@
 /*
- * the management of users, groups and shares. The machine is a workstation whose only account is the one that is
- * logged on, and it has neither an account database that can be changed nor a server service, so what reads answers
- * for that account and what writes is refused, and a domain controller is a domain that does not exist.
+ * users, groups and shares. the machine is a workstation whose only account is the logged on user, with no writable
+ * account database and no server service: reads answer for that account, writes are refused, and a domain controller
+ * lookup finds no such domain.
  */
 #include <mime/nt.h>
 #include <mime/win32/winbase.h>
@@ -32,7 +32,6 @@ static BOOL local_server(LMCSTR server)
            (GetComputerNameW(computer, &n) && !_wcsicmp(server, computer));
 }
 
-/* whether the name is the one of the logged on user, the only account of the machine. */
 static BOOL logged_on_user(LMCSTR user)
 {
     typedef BOOL (WINAPI *GET_USER_NAME)(LPWSTR, LPDWORD);
@@ -52,7 +51,7 @@ typedef struct NAME_ENTRY {
     DWORD Attributes;
 } NAME_ENTRY;
 
-/* a buffer of fixed parts followed by their strings, as the functions of this family hand it out. */
+/* the buffer holds the fixed parts, then their strings. */
 static NET_API_STATUS name_list(const NAME_ENTRY *entries, DWORD count, DWORD level, BOOL with_comment_or_attribute,
                                 LPBYTE *buffer, DWORD *returned, DWORD *total)
 {
@@ -89,7 +88,6 @@ static NET_API_STATUS name_list(const NAME_ENTRY *entries, DWORD count, DWORD le
     return NERR_Success;
 }
 
-/* the groups of the logged on user: an administrator of the machine and a user. */
 NETAPI NET_API_STATUS WINAPI NetUserGetLocalGroups(LMCSTR server, LMCSTR user, DWORD level, DWORD flags,
                                                     LPBYTE *buffer, DWORD preferred, LPDWORD entries, LPDWORD total)
 {
@@ -108,7 +106,7 @@ NETAPI NET_API_STATUS WINAPI NetUserGetLocalGroups(LMCSTR server, LMCSTR user, D
     return name_list(groups, RTL_NUMBER_OF(groups), level, TRUE, buffer, entries, total);
 }
 
-/* the account has no global groups; the one every local account has is None. */
+/* the account has no global groups but None, which every local account has. */
 NETAPI NET_API_STATUS WINAPI NetUserGetGroups(LMCSTR server, LMCSTR user, DWORD level, LPBYTE *buffer, DWORD preferred,
                                               LPDWORD entries, LPDWORD total)
 {
@@ -122,12 +120,12 @@ NETAPI NET_API_STATUS WINAPI NetUserGetGroups(LMCSTR server, LMCSTR user, DWORD 
         return ERROR_BAD_NETPATH;
     if (!logged_on_user(user))
         return NERR_UserNotFound;
-    /* the group is mandatory, enabled by default and enabled: SE_GROUP_MANDATORY | ENABLED_BY_DEFAULT | ENABLED. */
+    /* 7 is SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED. */
     static const NAME_ENTRY groups[] = {{L"None", nullptr, 7}};
     return name_list(groups, RTL_NUMBER_OF(groups), level, FALSE, buffer, entries, total);
 }
 
-/* nothing of the account database can be written. */
+/* the account database is read only. */
 static NET_API_STATUS refuse(LMCSTR server)
 {
     return local_server(server) ? ERROR_NOT_SUPPORTED : ERROR_BAD_NETPATH;

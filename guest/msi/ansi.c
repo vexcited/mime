@@ -1,9 +1,8 @@
 #include "msi_private.h"
 
 /*
- * the ANSI forms of the installer functions, which convert their text with the code page of the system and call the
- * wide ones, and the functions of a session that custom actions call: the run mode, the state of a component, the
- * language, the streams of records.
+ * the ANSI installer functions, which convert their text with the system code page and call the wide ones, and the
+ * session functions custom actions call: run mode, component state, language, record streams.
  */
 
 static PWSTR to_wide(PCSTR text)
@@ -17,7 +16,7 @@ static PWSTR to_wide(PCSTR text)
     return wide;
 }
 
-/* text for a caller of the ANSI forms: the size is in bytes without the end, and a short buffer gets a short copy. */
+/* the size is in bytes without the terminator, and a short buffer gets a truncated copy. */
 static UINT copy_ansi(PCWSTR text, LPSTR out, LPDWORD size)
 {
     if (!size)
@@ -42,7 +41,6 @@ static UINT copy_ansi(PCWSTR text, LPSTR out, LPDWORD size)
     return (DWORD)length >= capacity ? ERROR_MORE_DATA : ERROR_SUCCESS;
 }
 
-/* a function of two texts: both are converted, and the call is made with the converted ones. */
 #define WITH_WIDE(a, name_a) PWSTR name_a = to_wide(a)
 
 UINT WINAPI MsiGetPropertyA(MSIHANDLE handle, LPCSTR name, LPSTR out, LPDWORD size)
@@ -107,7 +105,7 @@ UINT WINAPI MsiRecordGetStringA(MSIHANDLE record, UINT field, LPSTR out, LPDWORD
 
 UINT WINAPI MsiOpenDatabaseA(LPCSTR path, LPCSTR persist, MSIHANDLE *out)
 {
-    /* the persist argument is a mode number, or a name for the ones that make a file, which are not made. */
+    /* persist passes through as is: a mode number, or a file name for output modes, which are not supported. */
     PWSTR wide = to_wide(path);
     UINT error = path && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiOpenDatabaseW(wide, (LPCWSTR)persist, out);
     MimeMsiFree(wide);
@@ -428,7 +426,7 @@ UINT WINAPI MsiRecordSetStreamA(MSIHANDLE handle, UINT field, LPCSTR path)
     return error;
 }
 
-/* ------------------------------------------------------------------ the session */
+/* ------------------------------------------------------------------ session */
 
 #define MSIRUNMODE_ADMIN 0
 #define MSIRUNMODE_ADVERTISE 1
@@ -533,7 +531,7 @@ UINT WINAPI MsiGetComponentStateA(MSIHANDLE handle, LPCSTR name, INSTALLSTATE *i
     return error;
 }
 
-/* a modification of the rows of a view: the tables here are read from the package and are not written. */
+/* tables are read from the package and never written. */
 UINT WINAPI MsiViewModify(MSIHANDLE view, int mode, MSIHANDLE record)
 {
     MIME_REMOTE(PROXY_ViewModify, UINT, MIME_ARG(view), MIME_ARG(mode), MIME_ARG(record));

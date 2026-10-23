@@ -1,6 +1,6 @@
 /*
- * the input processor profiles: which text services and keyboard layouts the user has. mime has no text service
- * to install, the host's input method is built in, so what the profiles report is the keyboard layout.
+ * input processor profiles. mime has no text service to install, the host's input method is built in, so the
+ * profiles only report the keyboard layout.
  */
 #include "msctf_private.h"
 #include <mime/win32/winnls.h>

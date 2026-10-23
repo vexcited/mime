@@ -1,9 +1,8 @@
 /*
- * game controllers: the host's controllers, each an xbox 360 controller
- * as windows' xusb22 driver presents one. a usb device with an xusb
- * interface that xinput talks to, its hid child, and the child's hid
- * game controller collection that directinput, raw input and hid clients
- * read. see docs/input-devices.md and docs/hid.md.
+ * game controllers: each host controller appears as an xbox 360 controller
+ * the way windows' xusb22 driver presents one: a usb device with an xusb
+ * interface for xinput, its hid child, and the child's hid game controller
+ * collection that directinput, raw input and hid clients read.
  */
 #define MIME_KERNEL_PNP
 #include "../ntos.h"
@@ -99,7 +98,7 @@ static const WCHAR g_hid_hardware_id[] = L"USB\\VID_045E&PID_028E&IG_00\0";
 
 /* xusb22's hat switch from the four d-pad bits, oddities included. */
 static const UCHAR g_hat[16] = {0, 1, 5, 0, 7, 8, 6, 1, 3, 2, 4, 3, 6, 1, 5, 0};
-/* the xinput button of each hid button. */
+/* the xinput button for each hid button. */
 static const USHORT g_hid_buttons[10] = {0x1000, 0x2000, 0x4000, 0x8000, 0x0100, 0x0200, 0x0020, 0x0010, 0x0040, 0x0080};
 
 typedef struct PAD {
@@ -112,7 +111,7 @@ typedef struct PAD {
     ULONG Packet;
     UCHAR Led;
     LONG Vport;
-    /* the share rules of the hid collection. */
+    /* hid collection sharing state. */
     ULONG Opens, Readers, Writers, NoShareRead, NoShareWrite, Exclusive;
     LIST_ENTRY Files;
     WCHAR UsbInstance[64];
@@ -135,11 +134,11 @@ typedef struct PAD_FILE {
     ULONG Limit;
     ULONG Head, Count;
     LONG PowerRefs;
-    LIST_ENTRY Reads;  /* hid reads waiting for a report */
-    LIST_ENTRY Waits;  /* notifications nothing ever completes */
-    LIST_ENTRY Guide;  /* xusb waits for the guide button */
-    LIST_ENTRY Input;  /* xusb waits for the next state */
-    PUCHAR Ring;       /* MAX_INPUT_BUFFERS reports */
+    LIST_ENTRY Reads;  /* hid reads waiting for a report. */
+    LIST_ENTRY Waits;  /* notifications nothing ever completes. */
+    LIST_ENTRY Guide;  /* xusb waits for the guide button. */
+    LIST_ENTRY Input;  /* xusb waits for the next state. */
+    PUCHAR Ring;       /* MAX_INPUT_BUFFERS reports. */
 } PAD_FILE;
 
 static PAD g_pads[MAX_PADS];
@@ -186,7 +185,7 @@ static PAD *find(ULONG host)
     return nullptr;
 }
 
-/* the pad a file was opened on, unless it went away since. */
+/* the pad the file was opened on, or NULL if it is gone. */
 static PAD *live(PAD_FILE *f)
 {
     PAD *p = &g_pads[f->Slot];
@@ -198,7 +197,7 @@ static UCHAR trigger(SHORT v)
     return v < 0 ? 0 : v > 255 ? 255 : (UCHAR)v;
 }
 
-/* xusb22's mapping of a state to the hid report, with the id byte hidclass puts first. */
+/* maps a state to xusb22's hid report, with the id byte hidclass puts first. */
 static void build_report(const PAD *p, PUCHAR r)
 {
     memset(r, 0, REPORT_SIZE);
@@ -272,7 +271,7 @@ static void complete_state(LIST_ENTRY *list, const PAD *p)
     }
 }
 
-/* a report goes to the oldest waiting read, or into the handle's queue, whose oldest report a full queue drops. */
+/* gives a report to the oldest waiting read, or queues it, dropping the oldest report when the queue is full. */
 static void deliver(PAD_FILE *f, const UCHAR *report)
 {
     if (!IsListEmpty(&f->Reads)) {
@@ -291,7 +290,7 @@ static void deliver(PAD_FILE *f, const UCHAR *report)
 
 /* ------------------------------------------------------------ arrival and removal */
 
-/* windows' instance ids for a controller, its hid child and the child's collection, the prefixes guessed. */
+/* windows-style instance ids for the controller, its hid child and the child's collection. the prefixes are a guess. */
 static void name_pad(PAD *p)
 {
     ULONG tag = 0x2A3F1B0C ^ (g_connections * 0x9E3779B1);
@@ -436,7 +435,7 @@ void NTAPI MimePadEvent(const MimeInputEvent *ev)
     unlock();
 }
 
-/* what raw input tells of a controller's hid collection. */
+/* the hid collection info raw input reports for a controller. */
 BOOLEAN NTAPI MimePadHidInfo(ULONG host, MIME_PAD_HID *info)
 {
     if (!g_driver)
@@ -472,8 +471,8 @@ BOOLEAN IopIsPad(PFILE_OBJECT file)
 typedef struct ANSWER {
     NTSTATUS Status;
     ULONG_PTR Information;
-    LIST_ENTRY *Queue; /* to pend on */
-    ULONG Length;      /* of Out to copy back */
+    LIST_ENTRY *Queue; /* to pend on. */
+    ULONG Length;      /* of Out to copy back. */
     UCHAR Out[XUSB_INFO_EX_SIZE];
 } ANSWER;
 
@@ -622,7 +621,7 @@ static NTSTATUS hid_control(PAD_FILE *f, PAD *p, ULONG code, const UCHAR *in, UL
     }
 }
 
-/* the requests that carry a version and the index of a pad of the device, of which there is one. */
+/* for requests that carry a version and a pad index; each device has one pad. */
 static BOOLEAN versioned(const UCHAR *in, ULONG in_len, ULONG need, USHORT version)
 {
     return in_len >= need && get16(in) == version;
@@ -966,7 +965,7 @@ static NTSTATUS NTAPI pad_create(PDEVICE_OBJECT device, PIRP irp)
     return complete_irp(irp, status, 0);
 }
 
-/* the last handle went: what is pending ends, and the handle stops counting for sharing. */
+/* the last handle closed: pending requests end and it stops counting for sharing. */
 static NTSTATUS NTAPI pad_cleanup(PDEVICE_OBJECT device, PIRP irp)
 {
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;

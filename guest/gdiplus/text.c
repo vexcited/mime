@@ -1,6 +1,5 @@
 /*
- * the calls that draw and measure text: strings in a rectangle, ranges of their characters, strings of glyphs,
- * and text as a path.
+ * drawing and measuring text: strings in a rectangle, character ranges, glyph strings, and text as a path.
  */
 #include "text_private.h"
 
@@ -11,7 +10,7 @@
     if (g->got_dc)                      \
         return ObjectBusy
 
-/* the length of a string argument: a negative length means up to the terminator. */
+/* a negative length means up to the terminator. */
 static INT string_length(const WCHAR *s, INT length) { return length < 0 ? (INT)lstrlenW(s) : length; }
 
 static MimeVecPoint map_point(const MimeVecMatrix *m, float x, float y)
@@ -37,14 +36,14 @@ static BOOL hint_is_one_bit(TextRenderingHint hint)
     return hint == TextRenderingHintSingleBitPerPixelGridFit || hint == TextRenderingHintSingleBitPerPixel;
 }
 
-/* clear type needs the destination under it, which a replacing composition does not keep. */
+/* ClearType blends with the destination, which source copy composition does not keep. */
 static BOOL text_mode_refused(const GGraphics *g)
 {
     return g->compositing_mode == CompositingModeSourceCopy &&
            gp_text_resolved_hint(g) == TextRenderingHintClearTypeGridFit;
 }
 
-/* ------------------------------------------------------------------ what a call is given */
+/* ------------------------------------------------------------------ call arguments */
 
 typedef struct TextCall {
     GGraphics *g;
@@ -80,7 +79,7 @@ static void call_input(TextCall *t, const WCHAR *text, INT length, const RectF *
     in->w2d = *gp_graphics_w2d(t->g);
 }
 
-/* which of the styles are made up because the family has no face for them. */
+/* bold and italic are simulated when the family has no face for them. */
 static void call_style(GTextStyle *s, INT style, INT slot)
 {
     s->simulate_bold = (style & FontStyleBold) && !(slot & 1);
@@ -89,7 +88,7 @@ static void call_style(GTextStyle *s, INT style, INT slot)
     s->strikeout = (style & FontStyleStrikeout) != 0;
 }
 
-/* a format argument: NULL is none, anything else has to be a string format. */
+/* NULL means no format, anything else must be a string format. */
 static GpStatus format_arg(const GpStringFormat *format, const GStrFmt **out)
 {
     *out = nullptr;
@@ -101,10 +100,10 @@ static GpStatus format_arg(const GpStringFormat *format, const GStrFmt **out)
 
 /* ------------------------------------------------------------------ filling outlines */
 
-/* glyph curves are cut into lines finer than the shapes of the drawing calls, which show every corner of a small glyph. */
+/* glyphs are flattened finer than shapes, since a small glyph shows every corner. */
 #define TEXT_FLATNESS 0.1f
 
-/* outlines in device space, drawn the way text is: the rasterization of the hint, the contrast of the graphics. */
+/* fills device space outlines like text: rasterized per the hint, with the graphics' contrast. */
 static GpStatus fill_outlines(GGraphics *g, const MimeVecPath *path, const GBrush *brush, const RectF *clip_rect)
 {
     TextRenderingHint hint = gp_text_resolved_hint(g);
@@ -118,7 +117,7 @@ static GpStatus fill_outlines(GGraphics *g, const MimeVecPath *path, const GBrus
     mime_vec_mask_init(&clip, &gp_allocator);
     BOOL have_clip = FALSE;
     if (status == Ok && clip_rect) {
-        /* the rectangle text is cut to goes through the transform the glyphs went through. */
+        /* the clip rectangle goes through the same transform as the glyphs. */
         const MimeVecMatrix *m = gp_graphics_w2d(g);
         MimeVecPoint corners[4] = {
             map_point(m, clip_rect->X, clip_rect->Y),
@@ -245,7 +244,7 @@ WINGDIPAPI GpStatus WINAPI GdipMeasureString(GpGraphics *graphics, const WCHAR *
 
 /* ------------------------------------------------------------------ ranges of characters */
 
-/* the rectangles of the glyphs of a line that belong to a range of characters, touching ones joined. */
+/* glyph rectangles of a line within a character range, touching ones merged. */
 static void line_range_rects(const GTextLayout *L, const GTextLine *line, INT range_begin, INT range_end,
                              RectF *out, INT *count, INT capacity)
 {
@@ -367,7 +366,7 @@ static void driver_run_free(DriverRun *r)
     gp_free(r->origins);
 }
 
-/* glyph indices and the places they go, in the world of the graphics. */
+/* glyph indices and their positions in world space. */
 static GpStatus driver_run_make(DriverRun *r, GGraphics *g, const GFont *font, const UINT16 *text, INT length,
                                 const PointF *positions, INT flags)
 {
@@ -406,7 +405,7 @@ static GpStatus driver_run_make(DriverRun *r, GGraphics *g, const GFont *font, c
     return Ok;
 }
 
-/* the graphics and the optional matrix both glyph string calls start with. */
+/* argument checks shared by both glyph string calls. */
 static GpStatus driver_graphics(GpGraphics *graphics, const GpMatrix *matrix, GGraphics **g, const GMatrix **m)
 {
     *g = gp_graphics_cast(graphics);
@@ -459,7 +458,7 @@ WINGDIPAPI GpStatus WINAPI GdipDrawDriverString(GpGraphics *graphics, const UINT
     GTextStyle style;
     call_style(&style, f->style, run.slot);
 
-    /* the matrix of the call moves the glyphs in the world, then the world goes to the device */
+    /* the call's matrix applies in world space, before world to device. */
     MimeVecMatrix total;
     BOOL recording = g->meta != nullptr;
     if (recording)

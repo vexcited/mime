@@ -1,7 +1,4 @@
-/*
- * the exports windows uses between its own components: connection policies, the proxy service and its
- * settings, hvsi containers and protocol handles. each logs its name once and fails cleanly.
- */
+/* unsupported connection policy, proxy service, HVSI and protocol-handle exports. each logs once and fails. */
 #include "winhttp_private.h"
 #include <mime/stub.h>
 

@@ -1,12 +1,10 @@
 /*
- * the small floating point helpers the c++ library of the universal crt leans on: the class of a number, its
- * scaling by powers of two, the split into a fraction and an exponent, the integral part and the evaluation of a
- * polynomial, for double and float. Long double is double here, so the _ld forms are the _d ones.
+ * floating point helpers the universal crt's c++ library uses, for double and float. long double is double here, so
+ * the _ld forms are the _d ones.
  *
- * The classes are 2 for a nan, 1 for an infinity, 0 for a zero, -1 for a normal number and -2 for a subnormal one,
- * and the functions that change a number return -1 for a finite nonzero result, 0 for a zero and 1 or 2 for an
- * infinity or a nan. The functions with a series, _dexp _dlog and _dsin, do the same job with the functions of the
- * library, which can differ from windows in the last digit.
+ * classes: 2 nan, 1 infinity, 0 zero, -1 normal, -2 subnormal. functions that change a number return -1 for a finite
+ * nonzero result, 0 for zero, and 1 or 2 for infinity or nan. _dexp, _dlog and _dsin call the library functions, which
+ * can differ from windows in the last digit.
  */
 #include "msvcrt_private.h"
 
@@ -54,7 +52,7 @@ static float ffrom(uint32_t u)
     return x;
 }
 
-/* the flags of the library's own numbering: 1 invalid, 4 division by zero, 8 overflow and 16 underflow. */
+/* the library's own flag bits: 1 invalid, 4 division by zero, 8 overflow, 16 underflow. */
 static void raise_flags(unsigned mask)
 {
     unsigned flags = 0;
@@ -111,7 +109,7 @@ DECLSPEC_EXPORT int __cdecl _fdpcomp(float x, float y)
     return y > x ? 1 : x > y ? 4 : 2;
 }
 
-/* horner's rule over the table, which has n + 1 coefficients, the highest power first. */
+/* horner's rule; the table has n + 1 coefficients, highest power first. */
 DECLSPEC_EXPORT double __cdecl _dpoly(double x, const double *table, int n)
 {
     double result = *table;
@@ -128,7 +126,7 @@ DECLSPEC_EXPORT float __cdecl _fdpoly(float x, const float *table, int n)
     return result;
 }
 
-/* a subnormal number made normal: the exponent it has then, with the number stored in place. */
+/* normalizes a subnormal in place and returns its new exponent. */
 DECLSPEC_EXPORT short __cdecl _dnorm(unsigned short *s)
 {
     uint64_t u;
@@ -161,7 +159,7 @@ DECLSPEC_EXPORT short __cdecl _fdnorm(unsigned short *s)
     return exponent;
 }
 
-/* x times 2 to the power of exp, in place, rounded to even where the result is subnormal. */
+/* x times 2^exp in place, rounding to even when the result is subnormal. */
 DECLSPEC_EXPORT short __cdecl _dscale(double *x, int exp)
 {
     uint64_t u = dbits(*x);
@@ -234,7 +232,7 @@ DECLSPEC_EXPORT short __cdecl _fdscale(float *x, int exp)
     return result != sign ? -1 : 0;
 }
 
-/* the fraction in [0.5, 1) of x and the power of two it takes to get x back. */
+/* splits x into a fraction in [0.5, 1) and a power of two. */
 DECLSPEC_EXPORT short __cdecl _dunscale(short *exp, double *x)
 {
     uint64_t u = dbits(*x);
@@ -277,7 +275,7 @@ DECLSPEC_EXPORT short __cdecl _fdunscale(short *exp, float *x)
     return -1;
 }
 
-/* drops the bits of x below the power of two exp: the integral part when exp is zero. */
+/* clears the bits of x below 2^exp, so exp zero gives the integral part. */
 DECLSPEC_EXPORT short __cdecl _d_int(double *x, short exp)
 {
     uint64_t u = dbits(*x);
@@ -318,12 +316,7 @@ DECLSPEC_EXPORT short __cdecl _fd_int(float *x, short exp)
     return (u & mask) ? -1 : 0;
 }
 
-/* ------------------------------------------------------------------ with the functions of the library */
-
-/*
- * x becomes exp(x) * y * 2^eoff. The cases with a zero, an infinity or a nan follow the arithmetic of them: an
- * infinity that meets a zero is invalid, and so on.
- */
+/* x becomes exp(x) * y * 2^eoff. zero, infinity and nan follow ieee rules, so infinity times zero is invalid. */
 static short exp_scaled(double *px, double y, int eoff)
 {
     double x = *px;
@@ -406,7 +399,7 @@ DECLSPEC_EXPORT short __cdecl _fdexp(float *x, float y, int eoff)
     return code;
 }
 
-/* the natural logarithm, the one to base 10 when the flag is positive and the one to base 2 when it is negative. */
+/* natural log, base 10 when base is positive, base 2 when negative. */
 DECLSPEC_EXPORT double __cdecl _dlog(double x, int base)
 {
     short c = class_d(dbits(x));
@@ -434,7 +427,7 @@ DECLSPEC_EXPORT float __cdecl _fdlog(float x, int base)
     return (float)_dlog(x, base);
 }
 
-/* the sine of x plus a number of quarter turns. */
+/* sin of x shifted by a number of quarter turns. */
 DECLSPEC_EXPORT double __cdecl _dsin(double x, unsigned quarter)
 {
     short c = class_d(dbits(x));

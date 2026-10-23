@@ -1,7 +1,6 @@
 /*
- * the objects of this process that other processes call: identity managers with a stub for each interface that was
- * handed out, the apartments they belong to, the interfaces of reference counting and the dispatch of the calls that
- * arrive over rpc.
+ * objects of this process that other processes call: identity managers with a stub per handed out interface, their
+ * apartments, the reference counting interfaces, and dispatch of calls arriving over rpc.
  */
 #include "orpc.h"
 
@@ -17,7 +16,7 @@ static LONG g_apartment_serial = 1;
 
 #define WM_ORPC (WM_USER + 0x4F52)
 
-/* a call that waits for the thread of an apartment to run it. */
+/* a call waiting for an apartment's thread to run it. */
 typedef struct APT_ITEM {
     struct APT_ITEM *Next;
     ORPC_RUN Function;
@@ -26,7 +25,7 @@ typedef struct APT_ITEM {
     APARTMENT *Apartment;
 } APT_ITEM;
 
-/* the calls waiting for the threads of the apartments, and the event of each that wakes a thread in a call. */
+/* calls waiting for apartment threads, and per apartment the event that wakes its thread inside a call. */
 typedef struct APT_QUEUE {
     struct APT_QUEUE *Next;
     APARTMENT *Apartment;
@@ -54,7 +53,7 @@ static ULONG64 make_oxid(ULONG serial)
 
 static LRESULT CALLBACK apartment_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
 
-/* runs the calls that wait for the apartment of the calling thread. */
+/* runs the calls waiting for the calling thread's apartment. */
 static void apartment_pump(APARTMENT *a)
 {
     APT_QUEUE *q = queue_of(a);
@@ -171,7 +170,7 @@ void OrpcApartmentLeave(OLE_THREAD *t)
     if (a->Window)
         DestroyWindow(a->Window);
     a->Window = nullptr;
-    /* the calls that wait for the thread are answered, as they would be if it had gone. */
+    /* calls still waiting for the thread are answered as if it were gone. */
     APT_QUEUE *q = queue_of(a);
     if (q) {
         AcquireSRWLockExclusive(&g_queue_lock);
@@ -184,7 +183,7 @@ void OrpcApartmentLeave(OLE_THREAD *t)
             item = next;
         }
     }
-    /* the structure stays, calls in flight may still look at it. */
+    /* the structure stays, since calls in flight may still look at it. */
 }
 
 HRESULT OrpcRunInApartment(APARTMENT *a, ORPC_RUN function, void *context)
@@ -219,7 +218,7 @@ HRESULT OrpcRunInApartment(APARTMENT *a, ORPC_RUN function, void *context)
     DWORD got = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
     if (got == WAIT_OBJECT_0)
         return S_OK;
-    /* the thread is gone with the call still queued. */
+    /* the thread went away with the call still queued. */
     AcquireSRWLockExclusive(&g_queue_lock);
     for (link = &q->Head; *link; link = &(*link)->Next)
         if (*link == &item) {
@@ -231,8 +230,8 @@ HRESULT OrpcRunInApartment(APARTMENT *a, ORPC_RUN function, void *context)
 }
 
 /*
- * the wait of a thread of a single threaded apartment for the reply of a call: the calls that come to its apartment
- * in the meantime are run, as windows' modal loop does.
+ * while a single threaded apartment's thread waits for a reply, calls to its apartment still run, like windows' modal
+ * loop does.
  */
 DWORD WINAPI OrpcWait(DWORD count, const HANDLE *handles, DWORD timeout, void *context)
 {
@@ -259,7 +258,7 @@ DWORD WINAPI OrpcWait(DWORD count, const HANDLE *handles, DWORD timeout, void *c
     }
 }
 
-/* ------------------------------------------------------------------ the identity managers of exported objects */
+/* ------------------------------------------------------------------ identity managers of exported objects */
 
 typedef struct EXPORT_IPID {
     struct EXPORT_IPID *Next;
@@ -306,7 +305,7 @@ static void new_ipid(GUID *ipid, ULONG64 oxid)
     memcpy(ipid->Data4, &oxid, 8);
 }
 
-/* the wide string of an endpoint: its address and the dual string array of the object references. */
+/* this process's endpoint, used as the rpc address and in the dual string array of object references. */
 static WCHAR g_endpoint[48];
 static SRWLOCK g_server_lock = SRWLOCK_INIT;
 static BOOL g_server_started;
@@ -371,7 +370,7 @@ static EXPORT_IPID *export_find_ipid(EXPORT *e, REFIID iid)
     return nullptr;
 }
 
-/* the stub class factory of an interface: ole32's own, then the proxy stub class registered for it. */
+/* ole32's own factory first, then the interface's registered proxy stub class. */
 static IPSFactoryBuffer *factory_for(REFIID iid)
 {
     IPSFactoryBuffer *factory = nullptr;
@@ -385,7 +384,7 @@ static IPSFactoryBuffer *factory_for(REFIID iid)
     return factory;
 }
 
-/* exposed to the proxy side as well. */
+/* also used by the proxy side. */
 IPSFactoryBuffer *OrpcFactoryFor(REFIID iid)
 {
     return factory_for(iid);
@@ -407,7 +406,7 @@ static void export_destroy(EXPORT *e)
     OleFree(e);
 }
 
-/* unlinks and destroys an export whose references are gone. */
+/* unlinks and frees an export once its references are gone. */
 static void export_unlink(EXPORT *e)
 {
     for (EXPORT **link = &g_exports; *link; link = &(*link)->Next)
@@ -481,7 +480,7 @@ HRESULT OrpcDisconnectObject(IUnknown *object)
     return S_OK;
 }
 
-/* the export of an object, made when it is not yet. The reference of the identity is taken over. */
+/* makes the export when missing. takes over the identity reference. */
 static HRESULT export_get(IUnknown *identity, APARTMENT *apartment, EXPORT **result)
 {
     AcquireSRWLockExclusive(&g_export_lock);
@@ -504,7 +503,7 @@ static HRESULT export_get(IUnknown *identity, APARTMENT *apartment, EXPORT **res
     return S_OK;
 }
 
-/* the entry of an interface of an export, with its stub; made when the interface is handed out the first time. */
+/* the entry and stub are made the first time the interface is handed out. */
 static HRESULT ipid_get(EXPORT *e, REFIID iid, EXPORT_IPID **result)
 {
     AcquireSRWLockShared(&g_export_lock);
@@ -550,7 +549,7 @@ static HRESULT ipid_get(EXPORT *e, REFIID iid, EXPORT_IPID **result)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the object references on the wire */
+/* ------------------------------------------------------------------ object references on the wire */
 
 static HRESULT write_all(IStream *stream, const void *data, ULONG size)
 {
@@ -566,7 +565,7 @@ static HRESULT read_all(IStream *stream, void *data, ULONG size)
     return FAILED(hr) ? hr : done == size ? S_OK : STG_E_READFAULT;
 }
 
-/* the dual string array of this process: its ncalrpc endpoint, and no security bindings. */
+/* this process's dual string array: its ncalrpc endpoint and no security bindings. */
 static HRESULT write_dual_string(IStream *stream, const WCHAR *endpoint)
 {
     SIZE_T length = wcslen(endpoint);
@@ -584,7 +583,7 @@ static HRESULT write_dual_string(IStream *stream, const WCHAR *endpoint)
     return hr;
 }
 
-/* reads the dual string array, keeping the ncalrpc endpoint it names. */
+/* keeps the ncalrpc endpoint the array names. */
 static HRESULT read_dual_string(IStream *stream, WCHAR *endpoint, ULONG chars)
 {
     USHORT head[2];
@@ -623,7 +622,7 @@ static HRESULT read_dual_string(IStream *stream, WCHAR *endpoint, ULONG chars)
 
 HRESULT OrpcMarshalSizeMax(ULONG *size, REFIID iid, IUnknown *object, DWORD context, DWORD flags)
 {
-    /* the endpoint is of a fixed length, and asking for a size does not start serving. */
+    /* the endpoint has a fixed length, so asking for a size does not start the server. */
     *size = sizeof(OBJREF_HEAD) + sizeof(STDOBJREF) + 4 + 8 * sizeof(WCHAR) + 24 * sizeof(WCHAR);
     return S_OK;
 }
@@ -669,7 +668,7 @@ HRESULT OrpcMarshal(IStream *stream, REFIID iid, IUnknown *object, DWORD context
     EXPORT_IPID *ip;
     hr = ipid_get(e, iid, &ip);
     if (FAILED(hr)) {
-        /* an export made for nothing goes away again. */
+        /* drop the export made for nothing. */
         export_drop_refs(e->Oid, &GUID_NULL, 0);
         return hr;
     }
@@ -704,7 +703,7 @@ HRESULT OrpcMarshal(IStream *stream, REFIID iid, IUnknown *object, DWORD context
     return hr;
 }
 
-/* the object of an object reference of this process, in the interface asked for. */
+/* resolves an object reference of this process to the object, in the requested interface. */
 static HRESULT local_object(const STDOBJREF *std, REFIID iid, void **object)
 {
     IUnknown *identity = nullptr;
@@ -736,7 +735,7 @@ HRESULT OrpcUnmarshalAfterHead(IStream *stream, const OBJREF_HEAD *head, REFIID 
         return hr;
     if ((ULONG)(std.Oxid >> 32) == GetCurrentProcessId()) {
         hr = local_object(&std, IsEqualGUID(wanted, &GUID_NULL) ? &head->Iid : wanted, object);
-        /* the references of the reference are given back, or the table's are taken as the object is. */
+        /* a normal reference gives its references back, a table reference keeps them. */
         if (!(std.Flags & (SORF_TABLE_STRONG | SORF_TABLE_WEAK)) && std.PublicRefs)
             export_drop_refs(std.Oid, &std.Ipid, std.PublicRefs);
         return hr;
@@ -766,7 +765,7 @@ HRESULT OrpcReleaseMarshalData(IStream *stream)
         }
         return S_OK;
     }
-    /* the references of another process are returned to it. */
+    /* references from another process are returned to it. */
     OXID_ENTRY *server = OrpcOxidEntry(std.Oxid, endpoint);
     if (server && std.PublicRefs) {
         BYTE in[4 + 24];
@@ -783,9 +782,9 @@ HRESULT OrpcReleaseMarshalData(IStream *stream)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the interfaces of reference counting */
+/* ------------------------------------------------------------------ reference counting interfaces */
 
-/* the ipid of any interface an object of the apartment has, for the queries. */
+/* for queries: any interface entry of the object the ipid belongs to. */
 static EXPORT_IPID *any_ipid_of(const GUID *ipid, EXPORT **owner)
 {
     for (EXPORT *e = g_exports; e; e = e->Next)
@@ -828,11 +827,11 @@ static void reply_u32(REPLY *r, ULONG v)
 }
 
 /*
- * the calls of IRemUnknown. The stream of each is little endian numbers in the order of the arguments:
+ * IRemUnknown calls. each stream is little endian numbers in argument order:
  *   RemQueryInterface: ipid, refs, interface count, interface ids  ->  per interface: result, std object reference
  *   RemAddRef: entry count, entries of ipid, public refs, private refs  ->  per entry: result
  *   RemRelease: the same entries  ->  nothing
- * which is the layout of windows' calls without the alignment and the pointers.
+ * this is windows' layout without the alignment and the pointers.
  */
 static HRESULT remunk_body(ULONG64 oxid, ULONG method, const BYTE *in, ULONG in_size, BYTE **out, ULONG *out_size)
 {
@@ -960,7 +959,7 @@ static void remunk_run(void *context)
     c->Hr = remunk_body(c->Oxid, c->Method, c->In, c->InSize, c->Out, c->OutSize);
 }
 
-/* the interface of a thread that serves calls: the multithreaded apartment is entered when it was not. */
+/* a thread serving calls joins the multithreaded apartment if it has not yet. */
 static void enter_mta(void)
 {
     OLE_THREAD *t = OleThreadState(TRUE);
@@ -969,8 +968,8 @@ static void enter_mta(void)
 }
 
 /*
- * the reference counting calls run in the apartment of the object they are about: a query asks the object, and a release
- * may be its last.
+ * reference counting calls run in the object's apartment, since a query asks the object and a release may be its
+ * last.
  */
 HRESULT OrpcRemUnknownCall(ULONG64 oxid, ULONG method, const BYTE *in, ULONG in_size, BYTE **out, ULONG *out_size)
 {

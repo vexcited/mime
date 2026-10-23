@@ -346,7 +346,6 @@ int mime_tiff_encoder_add_frame(MimeTiffEncoder *e, const MimeTiffFrameSpec *s, 
         counts[i] = (uint32_t)(e->len - start);
     }
 
-    /* the ifd. */
     Tags t = {.list = list, .n = 0};
     uint32_t width = p.width, height = p.height, rps = p.rps;
     uint16_t bps[MAX_SPP], sfmt[MAX_SPP], extra[MAX_SPP];

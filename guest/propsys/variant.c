@@ -1,4 +1,4 @@
-/* VARIANTs: the automation half of the helpers, and moving values between the two kinds. */
+/* VARIANT helpers, and conversions between VARIANT and PROPVARIANT. */
 #include "propsys_private.h"
 
 HRESULT PsStrRetToString(STRRET *strret, PCUITEMID_CHILD pidl, LPWSTR *out);
@@ -30,7 +30,7 @@ static HRESULT date_filetime(DATE date, FILETIME *time)
     return S_OK;
 }
 
-/* a vector element as the automation type it becomes. */
+/* the automation type a vector element becomes. */
 static VARTYPE automation_base(VARTYPE base)
 {
     switch (base) {

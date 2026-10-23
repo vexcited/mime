@@ -1,6 +1,5 @@
 /*
- * url monikers: urlmon.dll. downloads with their bind status callbacks, url monikers, IUri, url parsing and
- * mime type sniffing.
+ * urlmon.dll: downloads and bind status callbacks, url monikers, IUri, url parsing and mime type sniffing.
  */
 #ifndef MIME_WIN32_URLMON_H
 #define MIME_WIN32_URLMON_H
@@ -367,7 +366,7 @@ typedef enum {
     PARSE_UNESCAPE,
 } PARSEACTION;
 
-/* the flags of FindMimeFromData. */
+/* FindMimeFromData flags. */
 #define FMFD_DEFAULT 0x00000000
 #define FMFD_URLASFILENAME 0x00000001
 #define FMFD_ENABLEMIMESNIFFING 0x00000002
@@ -376,7 +375,7 @@ typedef enum {
 #define FMFD_RESPECTTEXTPLAIN 0x00000010
 #define FMFD_RETURNUPDATEDIMGMIMES 0x00000020
 
-/* the session options of UrlMkGetSessionOption and UrlMkSetSessionOption. */
+/* UrlMkGetSessionOption and UrlMkSetSessionOption options. */
 #define URLMON_OPTION_USERAGENT 0x10000001
 #define URLMON_OPTION_USERAGENT_REFRESH 0x10000002
 #define URLMON_OPTION_URL_ENCODING 0x10000004
@@ -387,7 +386,7 @@ typedef enum {
 #define URL_ENCODING_DISABLE_UTF8 0x20000000
 #define UAS_EXACTLEGACY 0x00001000
 
-/* the flags of CreateURLMonikerEx. */
+/* CreateURLMonikerEx flags. */
 #define URL_MK_LEGACY 0
 #define URL_MK_UNIFORM 1
 #define URL_MK_NO_CANONICALIZE 2

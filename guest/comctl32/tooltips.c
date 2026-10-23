@@ -1,7 +1,6 @@
 /*
- * tooltips, tooltips_class32: a popup that shows the text of the tool
- * under the mouse after a delay. tools are a window or a rectangle of one;
- * the mouse reaches the control through TTM_RELAYEVENT or the subclass
+ * tooltips, tooltips_class32: a popup showing the text of the tool under the mouse after a delay. a tool is a
+ * window or a rectangle of one. the mouse reaches the control through TTM_RELAYEVENT or the subclass
  * TTF_SUBCLASS installs. tracking tooltips show where they are told.
  */
 #include "comctl32_private.h"
@@ -65,7 +64,7 @@ static int find_tool(TOOLTIPS *t, HWND hwnd, UINT_PTR id)
     return -1;
 }
 
-/* the tool a caller's info names: by window and id. */
+/* finds a tool by window and id. */
 static int tool_of(TOOLTIPS *t, const TTTOOLINFOW *ti)
 {
     return ti ? find_tool(t, ti->hwnd, ti->uId) : -1;
@@ -110,7 +109,7 @@ static void free_tool(TOOL *tool)
 
 static LRESULT CALLBACK tool_subclass(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data);
 
-/* the text of a tool, asking its window for a callback. */
+/* asks the tool's window when the text is a callback. */
 static void tool_text(TOOLTIPS *t, int index, LPWSTR out, int max)
 {
     TOOL *tool = &t->Tools[index];
@@ -219,7 +218,6 @@ static void show(TOOLTIPS *t, int index, POINT at)
     }
 }
 
-/* the tool under a screen point. */
 static int tool_at(TOOLTIPS *t, POINT screen)
 {
     HWND under = WindowFromPoint(screen);
@@ -372,7 +370,7 @@ static void delete_tool(TOOLTIPS *t, int k)
         t->Tracking--;
 }
 
-/* copies a tool out: nothing below the first size, everything up to the caller's size. */
+/* nothing below the first structure size, everything up to the caller's size. */
 static LRESULT copy_tool(TOOLTIPS *t, int k, TTTOOLINFOW *ti, BOOL ansi)
 {
     if (!ti || ti->cbSize > TOOLINFO_V3_SIZE)

@@ -1,12 +1,12 @@
 /*
- * lz32's expansion of files that compress.exe made: the SZDD format. A file has fourteen bytes of header, the eight of
- * the signature, the mode letter A, the character that the last letter of the extension was cut to, and the size when
- * expanded. The data are groups of eight items under a control byte whose bits, lowest first, tell a byte to copy
- * as it is, when set, or a reference of two bytes into the last 4096 bytes written, with twelve bits of position and
- * four of length less three. The window starts out filled with spaces and written from 16 bytes before its end.
+ * lz32 expansion of files made by compress.exe, the SZDD format. The 14 byte header holds the 8 byte signature, the
+ * mode letter A, the character the extension's last letter was cut to, and the expanded size. Data come in groups of
+ * eight items under a control byte: each bit, lowest first, means a literal byte when set, else a 2 byte reference
+ * into the last 4096 bytes with 12 bits of position and 4 of length minus three. The window starts filled with spaces
+ * and is written from 16 bytes before its end.
  *
- * A handle from LZInit or LZOpenFile is a number below 16 for a file that is not compressed, which stands for the
- * handle of the file, and 1024 and up for one that is, which expands as it is read.
+ * LZInit and LZOpenFile return a number below 16 standing for the file handle when the file is not compressed, and
+ * 1024 and up when it is, which then expands as it is read.
  */
 #include "kernelbase_private.h"
 
@@ -33,12 +33,12 @@ typedef struct {
     DWORD Size;
 } LZ_HEADER_INFO;
 
-/* the state of the expansion; it starts again from the front of the file to go back. */
+/* seeking backwards restarts the expansion from the front of the file. */
 typedef struct {
     HFILE File;
     LZ_HEADER_INFO Header;
-    DWORD Position; /* what the next read gets */
-    DWORD Produced; /* what the decoder has written out so far */
+    DWORD Position; /* offset of the next read. */
+    DWORD Produced; /* bytes decoded so far. */
     BYTE Window[LZ_WINDOW];
     UINT Write;
     UINT Control;
@@ -58,7 +58,7 @@ static HANDLE win32_handle(HFILE file)
     return (HANDLE)(LONG_PTR)file;
 }
 
-/* the small numbers of files that are not compressed stand for the handles in the table. */
+/* the small numbers of uncompressed files index the handle table. */
 static HFILE dos_to_win32(INT handle)
 {
     if ((UINT)handle < LZ_SLOTS && g_dos[handle])
@@ -78,7 +78,7 @@ static INT win32_to_dos(HFILE file)
     return slot < LZ_SLOTS ? slot : LZERROR_GLOBALLOC;
 }
 
-/* the header of the file from its front: 1 when read, LZERROR_READ for a file too short and -1 when it cannot be. */
+/* 1 when read, LZERROR_READ for a file too short, -1 when it cannot be read. */
 static INT read_header(HFILE file, LZ_HEADER_INFO *info, BOOL *compressed, DWORD *file_size)
 {
     DWORD size = SetFilePointer(win32_handle(file), 0, nullptr, FILE_END);
@@ -121,7 +121,7 @@ static INT input_byte(LZ_FILE *z)
     return z->Input[z->InputAt++];
 }
 
-/* the next expanded byte: its value, -100 at the end of the data or the error. */
+/* the byte, -100 at the end of the data, or an error. */
 static INT decode_byte(LZ_FILE *z)
 {
     if (z->PendingAt < z->PendingLength) {
@@ -163,7 +163,7 @@ static INT decode_byte(LZ_FILE *z)
     }
 }
 
-/* up to count bytes of the expansion at the current place, fewer where the data end; negative for an error. */
+/* fewer than count bytes at the end of the data, negative on error. */
 static INT decode_run(LZ_FILE *z, BYTE *out, UINT count)
 {
     UINT n = 0;
@@ -223,7 +223,7 @@ DECLSPEC_EXPORT INT WINAPI LZInit(INT source)
             start_decoder(z);
         return handle;
     }
-    /* a file that does not compress, or is too short to, is read as it is. */
+    /* a file that is not compressed, or too short to be, is read as it is. */
     if (status != 1 && size >= LZ_HEADER)
         return -1;
     if (_llseek(source, 0, 0) != 0)
@@ -231,7 +231,7 @@ DECLSPEC_EXPORT INT WINAPI LZInit(INT source)
     return win32_to_dos(source);
 }
 
-/* the file's own place for the name of the compressed one: a last letter of the extension that is an underscore. */
+/* the compressed name ends its extension with an underscore. */
 static void compressed_name(char *name, SIZE_T capacity)
 {
     SIZE_T length = strlen(name), at = length;
@@ -292,7 +292,7 @@ DECLSPEC_EXPORT INT WINAPI LZOpenFileW(LPWSTR name, LPOFSTRUCT record, WORD styl
     return LZOpenFileA(path, record, style);
 }
 
-/* the wide form of the compressed name cuts at the first dot of the last part, which the narrow one does not. */
+/* unlike the narrow form, this cuts at the first dot of the last component. */
 static void compressed_name_wide(WCHAR *name, SIZE_T capacity)
 {
     WCHAR *part = name;
@@ -357,7 +357,7 @@ DECLSPEC_EXPORT INT WINAPI LZRead(INT handle, CHAR *buffer, INT count)
         return LZERROR_GLOBLOCK;
     if (z->Header.Mode != 'A')
         return LZERROR_UNKNOWNALG;
-    /* a place behind the decoder's is reached by starting over. */
+    /* seeking back means decoding again from the start. */
     if (z->Position < z->Produced)
         start_decoder(z);
     if (z->Position > z->Produced) {
@@ -440,7 +440,6 @@ DECLSPEC_EXPORT void WINAPI LZCloseFile(INT handle)
     close_handle(handle, TRUE);
 }
 
-/* the date and time of the source for the copy, as its file has them. */
 static void copy_time(HFILE source, HFILE dest)
 {
     FILETIME created, accessed, written;
@@ -525,7 +524,7 @@ DECLSPEC_EXPORT LONG WINAPI CopyLZFile(INT source, INT dest)
     return LZCopy(source, dest);
 }
 
-/* the letter the last extension character is made to, in the case of the first letter of the name. */
+/* restores the missing last letter, in the case of the name's first letter. */
 static void expanded_name(char *name, BYTE missing)
 {
     char *part = name;
@@ -551,7 +550,7 @@ static void expanded_name(char *name, BYTE missing)
     SIZE_T length = strlen(extension);
     if (length && extension[length - 1] == '_')
         extension[length - 1] = (char)letter;
-    /* a missing letter of zero leaves an extension that is empty, and no dot. */
+    /* a zero missing letter leaves an empty extension, so the dot goes too. */
     if (!*extension && extension[-1] == '.')
         extension[-1] = 0;
 }

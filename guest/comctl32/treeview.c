@@ -1,7 +1,4 @@
-/*
- * the tree view, SysTreeView32: a hierarchy of items with text and
- * images, expanded and collapsed, one of them selected.
- */
+/* the tree view, SysTreeView32. */
 #include "comctl32_private.h"
 
 #define TREE_MAGIC 0x45455254
@@ -13,7 +10,7 @@ typedef struct _TREEITEM {
     int Image, Selected, Children, Integral;
     UINT State;
     LPARAM Param;
-    /* the row the item shows on, -1 when hidden in a collapsed parent. */
+    /* -1 when hidden under a collapsed parent. */
     int Row;
 } NODE;
 
@@ -103,7 +100,6 @@ static int depth(NODE *n)
     return d;
 }
 
-/* numbers the visible rows. */
 static void number_rows(TREEVIEW *tv)
 {
     int row = 0;
@@ -198,7 +194,7 @@ static int item_image(TREEVIEW *tv, NODE *n, BOOL selected)
     return image;
 }
 
-/* the parts of a visible row: the indent with the button, the state and normal images, the label. */
+/* a visible row's parts: the indent with the button, the state and normal images, the label. */
 typedef struct ROW_RECTS {
     RECT Row, Button, State, Image, Label;
 } ROW_RECTS;
@@ -626,7 +622,7 @@ static void paint(TREEVIEW *tv, HDC dc, const RECT *update)
         if ((tv->Style & TVS_HASLINES) && (!at_root || (tv->Style & TVS_LINESATROOT))) {
             draw_dotted(dc, cx, mid, r.Button.right - 2, mid, line);
             draw_dotted(dc, cx, n->Prev || !at_root ? r.Row.top : mid, cx, n->Next ? r.Row.bottom : mid, line);
-            /* the ancestors' lines continue past this row while they have later siblings. */
+            /* ancestor lines continue past this row while the ancestor has later siblings. */
             int x = cx - tv->Indent;
             for (NODE *p = n->Parent; p && p->Magic == TREE_MAGIC; p = p->Parent, x -= tv->Indent) {
                 BOOL p_root = !p->Parent || p->Parent->Magic != TREE_MAGIC;
@@ -801,7 +797,7 @@ static void sort_children(TREEVIEW *tv, NODE *parent, PFNTVCOMPARE compare, LPAR
         int k = 0;
         for (NODE *c = parent->Child; c; c = c->Next)
             list[k++] = c;
-        /* an insertion sort keeps equal items in their order. */
+        /* an insertion sort keeps equal items in order. */
         for (int i = 1; i < count; i++) {
             NODE *v = list[i];
             int j = i - 1;

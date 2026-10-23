@@ -1,13 +1,10 @@
-/*
- * shell helpers outside the namespace: directories, icons, recent documents
- * and the administrator check.
- */
+/* shell helpers outside the namespace: directories, icons, recent documents and the admin check. */
 #include "shell32_private.h"
 #include <mime/stub.h>
 
 typedef BOOL(WINAPI *CHECK_MEMBERSHIP)(HANDLE, PVOID, PBOOL);
 
-/* whether the process token holds the enabled administrators group. */
+/* the token must hold the administrators group, enabled. */
 SHSTDAPI BOOL WINAPI IsUserAnAdmin(void)
 {
     static const BYTE admins[16] = {1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 0x20, 2, 0, 0};
@@ -22,7 +19,6 @@ SHSTDAPI BOOL WINAPI IsUserAnAdmin(void)
     return member;
 }
 
-/* creates every missing directory of an absolute path. */
 SHSTDAPI int WINAPI SHCreateDirectoryExW(HWND hwnd, LPCWSTR path, const SECURITY_ATTRIBUTES *attributes)
 {
     if (!path || !path[0])
@@ -38,7 +34,7 @@ SHSTDAPI int WINAPI SHCreateDirectoryExW(HWND hwnd, LPCWSTR path, const SECURITY
     SIZE_T length = wcslen(full);
     if (length > 3 && full[length - 1] == L'\\')
         full[--length] = 0;
-    /* the first component after the root is created first, so start past it. */
+    /* skip the drive, or the UNC server and share, which cannot be created. */
     LPWSTR p = full[0] == L'\\' && full[1] == L'\\' ? wcschr(full + 2, L'\\') : full + 2;
     if (p && full[0] == L'\\' && full[1] == L'\\')
         p = wcschr(p + 1, L'\\');
@@ -102,7 +98,7 @@ SHSTDAPI HRESULT WINAPI SHCreateItemInKnownFolder(REFKNOWNFOLDERID folder, DWORD
     return SHCreateItemFromParsingName(path, nullptr, riid, object);
 }
 
-/* the desktop folder object needs an IShellFolder namespace, which is not implemented. */
+/* there is no IShellFolder namespace yet. */
 SHSTDAPI HRESULT WINAPI SHGetDesktopFolder(void **folder)
 {
     MIME_STUB("shell32");
@@ -113,8 +109,8 @@ SHSTDAPI HRESULT WINAPI SHGetDesktopFolder(void **folder)
 }
 
 /*
- * an icon of an executable, a library or an icon file at the size of the system's large icon. A negative index names
- * a resource id, -1 asks for the number of icons. returns 1 for a file without icon resources, as windows does.
+ * loads at the system's large icon size. a negative index names a resource id and -1 asks for the icon count. like
+ * windows, a file without icon resources gives 1.
  */
 SHSTDAPI HICON WINAPI ExtractIconW(HINSTANCE instance, LPCWSTR file, UINT index)
 {
@@ -134,10 +130,8 @@ SHSTDAPI HICON WINAPI ExtractIconW(HINSTANCE instance, LPCWSTR file, UINT index)
 }
 
 /*
- * icons of a file at the sizes of a large and a small icon. With no array it counts the icons, as an index of -1
- * does for ExtractIconW; a negative index names a resource id and takes one icon; else `count` icons from the
- * index on. The result counts the icons that were made, large and small each, which is a guess from how programs use it
- * (two for one icon of both sizes). An icon file has the one icon.
+ * with no arrays it returns the icon count. a negative index names a resource id and loads one icon. the result
+ * counts large and small icons separately, so one icon of both sizes gives 2: a guess from how programs use it.
  */
 SHSTDAPI UINT WINAPI ExtractIconExW(LPCWSTR file, int index, HICON *large, HICON *small, UINT count)
 {
@@ -197,7 +191,7 @@ SHSTDAPI HICON WINAPI ExtractIconA(HINSTANCE instance, LPCSTR file, UINT index)
     return icon;
 }
 
-/* there is no dialog to choose a program in: the call fails as if the user had cancelled it. */
+/* there is no program chooser, so this fails as if the user cancelled. */
 SHSTDAPI HRESULT WINAPI SHOpenWithDialog(HWND parent, const OPENASINFO *info)
 {
     if (!info || (!info->pcszFile && !info->pcszClass))

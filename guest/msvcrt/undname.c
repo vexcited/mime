@@ -1,15 +1,10 @@
 /*
- * __unDName: the undecorated form of a name the microsoft compilers
- * decorate, as UnDecorateSymbolName prints it. covers qualified names
- * and their back references, templates, operators, constructors and
- * destructors, the special names of vtables and type information,
- * functions with their access, calling convention and signature,
- * variables, and types, including pointers to functions and members.
- * a name it cannot read is returned as it was given.
+ * __unDName: undecorates Microsoft compiler names the way UnDecorateSymbolName prints them. a name it cannot read
+ * comes back unchanged.
  */
 #include "msvcrt_private.h"
 
-/* the flags of UnDecorateSymbolName, the ones honoured here. */
+/* the UnDecorateSymbolName flags honoured here. */
 #define UNDNAME_NO_MS_KEYWORDS 0x0002
 #define UNDNAME_NO_FUNCTION_RETURNS 0x0004
 #define UNDNAME_NO_ACCESS_SPECIFIERS 0x0080
@@ -150,7 +145,7 @@ static char *identifier(UND *u)
     return r;
 }
 
-/* a template's arguments, types up to @, in angle brackets. */
+/* template arguments: types up to @, printed in angle brackets. */
 static char *template_arguments(UND *u)
 {
     BUF r = {};
@@ -248,7 +243,7 @@ static char *fragment(UND *u, BOOL first, char **special)
         if (underscore)
             code = *u->in++;
         if (underscore && code == 'R') {
-            /* the records of run time type information. */
+            /* rtti records. */
             char kind = *u->in++;
             switch (kind) {
             case '0': {
@@ -287,7 +282,7 @@ static char *fragment(UND *u, BOOL first, char **special)
     return remember_name(u, identifier(u));
 }
 
-/* a qualified name: its fragments innermost first, joined outermost first with ::. */
+/* fragments come innermost first and are joined outermost first with ::. */
 static char *qualified_name(UND *u, char **special)
 {
     char *parts[32];
@@ -430,7 +425,7 @@ static const char *cv_name(char c)
     return "";
 }
 
-/* what a pointer or reference points at, its own qualifier after the star given. */
+/* the target of a pointer or reference; star carries the pointer's own qualifier. */
 static char *pointer_type(UND *u, const char *star)
 {
     BUF suffix = {};
@@ -681,7 +676,7 @@ static char *function_type(UND *u, const char *inner, BOOL member)
 static char *symbol(UND *u)
 {
     if (*u->in == '.') {
-        /* a type's name, as type information keeps it: ?A and its qualifier before classes. */
+        /* a type name as type information keeps it: ?A and its qualifier before classes. */
         u->in++;
         if (*u->in == '?' && u->in[1])
             u->in += 2;
@@ -840,7 +835,7 @@ char *MsvcrtUndecorateType(const char *decorated)
 typedef void *(__cdecl *und_alloc_t)(size_t);
 typedef void(__cdecl *und_free_t)(void *);
 
-/* into buffer when given, else into memory of the caller's allocator; a name not understood comes back as given. */
+/* writes into buffer when given, else into memory from the caller's allocator. */
 char *__cdecl __unDNameEx(char *buffer, const char *decorated, int length, und_alloc_t alloc, und_free_t release,
                           void *get_parameter, unsigned short flags)
 {

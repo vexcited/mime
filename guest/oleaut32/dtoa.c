@@ -1,6 +1,6 @@
 /*
- * exact conversions between doubles and decimal digits, with a small big number type. Nothing here depends on the
- * locale: the callers put the decimal point and the exponent where their format wants them.
+ * exact conversions between doubles and decimal digits, with a small bignum. Nothing here depends on the locale:
+ * callers place the decimal point and the exponent.
  */
 #include "dtoa.h"
 
@@ -123,7 +123,6 @@ static void big_pow10(BIG *b, int e)
         big_mul_add(b, small[e], 0);
 }
 
-/* r = a * b. */
 static void big_mul(BIG *r, const BIG *a, const BIG *b)
 {
     ULONG out[BIG_LIMBS] = {0};
@@ -142,7 +141,7 @@ static void big_mul(BIG *r, const BIG *a, const BIG *b)
     big_trim(r);
 }
 
-/* the 64 bits from the top of b, whose length is bits (at least 1): b is top times 2^*shift plus a rest. */
+/* the top 64 bits of b: b = top * 2^*shift + rest, *rest set when rest is nonzero. */
 static ULONGLONG big_top64(const BIG *b, int *shift, BOOL *rest)
 {
     int bits = big_bits(b);
@@ -191,7 +190,7 @@ int AutDoubleDigits(double x, int ndigits, char *digits, int *point)
     if (!m)
         return 0;
 
-    /* the leading digits of the exact value, one more than asked, and whether anything nonzero follows. */
+    /* one more leading digit than asked, and whether anything nonzero follows. */
     char all[360];
     int total = 0, pt = 0;
     BOOL more = FALSE;
@@ -238,7 +237,7 @@ int AutDoubleDigits(double x, int ndigits, char *digits, int *point)
                     more = TRUE;
             }
         }
-        /* the fraction is frac / 2^k: ten times it, the part above k bits is the next digit. */
+        /* the fraction is frac / 2^k: times ten, the bits above k are the next digit. */
         big_set(&n, frac);
         int zeros = 0;
         while (n.Count) {
@@ -272,7 +271,7 @@ int AutDoubleDigits(double x, int ndigits, char *digits, int *point)
     int keep = total < ndigits ? total : ndigits;
     if (total > ndigits) {
         char c = all[ndigits];
-        /* a tie goes away from zero, as the runtime of C that windows' text comes from rounds it. */
+        /* ties round away from zero, like the C runtime windows formats its text with. */
         BOOL up = c >= '5';
         if (up) {
             int i = ndigits - 1;
@@ -323,7 +322,7 @@ static double make_double(ULONGLONG mant, int exp2, BOOL sticky)
     int len = 0;
     for (ULONGLONG t = mant; t; t >>= 1)
         len++;
-    /* the exponent of the lowest of the 53 bits to keep, not below the smallest denormal's. */
+    /* exponent of the lowest kept bit, clamped to the smallest denormal. */
     int low = exp2 + len - 53;
     if (low < -1074)
         low = -1074;
@@ -380,7 +379,7 @@ double AutDigitsToDouble(const BYTE *digits, int count, int point)
     }
     if (!used || (!small && !sticky && !num.Count))
         return 0.0;
-    /* the value is the digits times ten to the scale; its magnitude is ten to the (point - first). */
+    /* value = digits * 10^scale, magnitude is 10^(point - first). */
     int scale = point - first - used;
     int magnitude = point - first;
     if (magnitude > 310)
@@ -408,7 +407,7 @@ double AutDigitsToDouble(const BYTE *digits, int count, int point)
     BIG den, shifted, q_den;
     big_pow10(&den, -scale);
     int dbits = big_bits(&den), nbits = big_bits(&num);
-    /* a quotient of 62 or 63 bits: shift the numerator up, or the denominator when the numerator is the larger. */
+    /* scale so the quotient has 62 or 63 bits. */
     int k = dbits - nbits + 62;
     shifted = num;
     if (k >= 0) {

@@ -1,7 +1,4 @@
-/*
- * thread switching, kernel to user transitions and nested user mode
- * callbacks (KeUserModeCallback).
- */
+/* thread switching, kernel to user transitions and nested user mode callbacks, KeUserModeCallback. */
 #include "ktrap.h"
 
     .text
@@ -53,9 +50,8 @@
 
 /*
  * void KiSwapContextInternal(ULONG64 *old_sp, ULONG64 new_sp, PVOID old_xsave, PVOID new_xsave)
- * the extended state of a user thread is saved after its callee saved
- * registers and restored before the next thread's, so both hold the
- * values the thread had when it switched away.
+ * a user thread's extended state is saved after its callee saved registers
+ * and restored before the next thread's, so both match the switch point.
  */
     .globl  KiSwapContextInternal
     .p2align 4
@@ -99,10 +95,10 @@ KiEnterUserMode:
 
 /*
  * NTSTATUS KiCallUserMode(ULONG64 *callback_sp_slot, PKTRAP_FRAME frame)
- * saves the callee saved state, records the stack pointer that
- * NtCallbackReturn resumes from, copies the prepared user frame below it
- * and returns to user mode through it. the user mode entries of the
- * callback build their frames below this one, see KiExceptionExit.
+ * saves the callee saved state, records the sp NtCallbackReturn resumes
+ * from, copies the prepared user frame below it and returns to user mode
+ * through it. entries during the callback build their frames below this
+ * one, see KiExceptionExit.
  */
     .globl  KiCallUserMode
     .p2align 4

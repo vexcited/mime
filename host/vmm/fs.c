@@ -1,7 +1,4 @@
-/*
- * host file system device. guest volumes map onto host directories; the
- * guest file system driver (mimefs) forwards irps here.
- */
+/* host filesystem device. guest volumes map to host directories; mimefs forwards IRPs here. */
 #include "vmm.h"
 
 #include <dirent.h>
@@ -21,7 +18,7 @@
 #define ST_CTIME(st) ((st)->st_ctimespec)
 #else
 #include <sys/vfs.h>
-/* linux keeps the birth time out of stat; the change time is the closest a plain stat has. */
+/* Linux keeps the birth time out of stat; the change time is the closest a plain stat has. */
 #define ST_BIRTH(st) ((st)->st_ctim.tv_sec < (st)->st_mtim.tv_sec ? (st)->st_ctim : (st)->st_mtim)
 #define ST_ATIME(st) ((st)->st_atim)
 #define ST_MTIME(st) ((st)->st_mtim)
@@ -59,9 +56,9 @@ static uint64_t errno_status(int err)
 }
 
 /*
- * MIME_FS_FAULT=<end>,<skip>,<count>[;...] makes the writes to host files whose path ends in the text come back short, after
- * the first <skip> of them, <count> times: half of the bytes written and no error, which is what a host filesystem that
- * runs out of room does in the middle of a write. a way to test what the guest does with a write that did not all land.
+ * MIME_FS_FAULT=<end>,<skip>,<count>[;...] injects short writes into paths ending in <end>. after <skip>
+ * writes, <count> writes return half the requested bytes without error, simulating a filesystem running out
+ * of space mid-write.
  */
 #define FAULT_MAX 4
 static struct {
@@ -133,10 +130,9 @@ static uint64_t flush_parent(const char *path)
 }
 
 /*
- * opens without recording the access. reading a file or listing a directory would update its access time, a
- * change of the host's disk that waits when a flush is committing the journal: Helium's start was stopped for
- * 4 to 16 ms, with dozens of file calls of all its processes at once, by a flush of one database. Only the
- * owner of a file may do it, and others get the plain open.
+ * avoid access-time updates, which can wait for journal commits during reads and directory scans. one
+ * database flush stalled Helium startup file calls for 4 to 16 ms. only the file owner can use this flag;
+ * other callers fall back to plain open.
  */
 static int open_quiet(const char *path, int flags, mode_t mode)
 {
@@ -193,10 +189,8 @@ static void fill_info(const struct stat *st, const char *name, MimeFsInfo *info)
 }
 
 /*
- * windows names ignore case and host ones do not: when the path is missing
- * as written, each component after the volume root that is missing takes
- * the spelling of an entry of its directory that differs only in case. the
- * first missing one without such an entry, a file to create, stays as written.
+ * resolve missing path components case-insensitively below the volume root. the first component with no
+ * matching directory entry stays as written for creation.
  */
 static void match_case(char *path, size_t root_length)
 {
@@ -302,9 +296,8 @@ static bool is_private_registry(MimeVm *vm, const char *path)
 }
 
 /*
- * the windows are changed under their own lock on linux: taking a window away or placing one is a change of the
- * memory map that waits for every processor to leave the guest, a millisecond during which the other file calls
- * must not wait. macos fills windows when the guest touches them, with the file lock.
+ * Linux file windows use a separate lock: mapping changes can wait a millisecond for all vCPUs, and must not
+ * block other file calls. macOS fills windows on demand under the file lock.
  */
 #ifdef __linux__
 #define WINDOW_LOCK(vm) (&(vm)->window_lock)
@@ -313,10 +306,9 @@ static bool is_private_registry(MimeVm *vm, const char *path)
 #endif
 
 /*
- * vm->fs_lock guards the table of handles, the windows and the stored descriptors, and is held for a lookup or
- * an update. Calls that can take the host long, such as opens, reads and flushes, run without it, as each one is a
- * guest thread waiting, and a flush that lasts 13 ms must not hold up every other file call of the machine.
- * A handle is used by one guest request at a time and closed after the last one ends.
+ * vm->fs_lock protects handle lookup and updates, windows and stored descriptors. release it for slow host
+ * operations: a 13 ms flush must not block unrelated guest requests. each handle has one active guest request
+ * and closes after its final request.
  */
 static MimeFsHandle *get_handle(MimeVm *vm, uint64_t h)
 {
@@ -372,7 +364,7 @@ static void free_handle(MimeVm *vm, uint64_t h)
     free(fh);
 }
 
-/* the times and the read only attribute of an open file, as a program sets them. */
+/* sets an open file's timestamps and read-only attribute. */
 static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
 {
     const MimeFsBasic *basic = mime_vm_phys(vm, pa, sizeof(*basic));
@@ -416,7 +408,7 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
     struct stat st;
     bool exists = stat(path, &st) == 0;
     if (req->flags & MIME_FS_OPEN_STAT_ONLY) {
-        /* the attributes of a name, for a query that has no use for a handle. */
+        /* queries attributes without opening a handle. */
         if (!exists) {
             char parent[MIME_PATH_MAX];
             mime_strlcpy(parent, path, sizeof(parent));
@@ -476,10 +468,10 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
             char *slash = strrchr(parent, '/');
             if (slash && slash != parent)
                 *slash = 0;
-            req->action_out = mime_dir_exists(parent) ? 0 : 1; /* 1 means a parent directory is missing */
+            req->action_out = mime_dir_exists(parent) ? 0 : 1; /* 1 means a parent directory is missing. */
             return MIME_HC_STATUS_NOT_FOUND;
         }
-        /* the event of the making is the guest's own, noted before it can come. */
+        /* record the guest-owned change before its notification can arrive. */
         mime_fswatch_self(path, MIME_FSWATCH_CREATE);
         if (want_dir) {
             if (mkdir(path, 0755) != 0) {
@@ -580,9 +572,8 @@ static void load_dir(MimeFsHandle *fh)
 
 
 /*
- * security descriptors of files. They are the guest's, kept with the file in an extended attribute so they
- * follow it and survive a restart. A file system that refuses attributes, and the host's own files that the
- * machine has no business marking, keep theirs in memory for the session, by device and inode.
+ * store guest security descriptors in file extended attributes so they survive renames and restarts.
+ * filesystems without attributes and host-owned files use a session-only table keyed by device and inode.
  */
 #ifdef __APPLE__
 #define SD_ATTRIBUTE "mime.security"
@@ -644,7 +635,7 @@ static void sd_memory_set(const struct stat *st, const void *data, uint32_t leng
     m->length = length;
 }
 
-/* the descriptor stored for one path: its length, 0 for none, and the bytes when they fit. */
+/* returns the stored descriptor length, 0 if absent, and bytes if they fit. */
 static ssize_t sd_read_path(const char *path, bool memory_only, void *buf, size_t capacity)
 {
     if (!memory_only) {
@@ -657,7 +648,7 @@ static ssize_t sd_read_path(const char *path, bool memory_only, void *buf, size_
                 return n;
         }
     }
-    /* the table only holds what a file system that keeps no attributes could not keep, usually nothing. */
+    /* only descriptors that could not be persisted need table entries. */
     if (!g_sd_memory_count)
         return 0;
     struct stat st;
@@ -672,10 +663,9 @@ static ssize_t sd_read_path(const char *path, bool memory_only, void *buf, size_
 }
 
 /*
- * the directories known to have no descriptor of their own, by a hash of their path. Nearly every open asks the
- * directories above its file, and nearly none has one, so a hit saves a call to the file system for each. A new
- * generation, from every change the guest makes to a descriptor or to a name, forgets them all; a descriptor set
- * on the files by a program of the host in the meantime is not seen until then.
+ * cache paths without descriptors, since most opens check parent directories that have none. guest descriptor
+ * changes and renames invalidate the cache. host-side descriptor changes remain unseen until that
+ * invalidation.
  */
 #define SD_NEGATIVE_SLOTS 4096
 static struct {
@@ -706,8 +696,8 @@ static void sd_note_empty(const char *path, size_t length)
 }
 
 /*
- * the nearest descriptor from a file up: the file's own, else its parent's and so on to the volume root. The
- * answer is the distance in levels in the upper half and the length in the lower, 0 length for none.
+ * finds the closest descriptor from the file up to the volume root. the result packs ancestor distance in the
+ * high half and descriptor length in the low half; length 0 means absent.
  */
 static uint64_t sd_nearest(MimeVm *vm, uint32_t volume, const char *host_path, void *buf, uint64_t capacity, uint64_t up,
                            uint64_t *result)
@@ -728,7 +718,7 @@ static uint64_t sd_nearest(MimeVm *vm, uint32_t volume, const char *host_path, v
     uint8_t scratch[16];
     for (;;) {
         size_t length = strlen(path);
-        /* what has none is remembered until a descriptor is set or a name is moved, for the file as for a directory above it. */
+        /* cache absent file and directory descriptors until a descriptor or name changes. */
         bool above = system;
         ssize_t n = above && sd_known_empty(path, length) ? 0 : sd_read_path(path, !system, buf ? buf : scratch, buf ? capacity : 0);
         if (n > 0) {
@@ -749,7 +739,7 @@ static uint64_t sd_nearest(MimeVm *vm, uint32_t volume, const char *host_path, v
     return MIME_HC_STATUS_OK;
 }
 
-/* the nearest stored descriptor of an open that asked for it, so that the guest which checks the open needs no second exit. */
+/* returns the nearest descriptor with open results to avoid a second guest exit. */
 static void open_fill_sd(MimeVm *vm, MimeFsOpen *req, const char *path)
 {
     req->sd_length = 0;
@@ -799,10 +789,9 @@ static uint64_t fs_set_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t le
 }
 
 /*
- * moves the file or directory of a handle to a name in the directory of another. the names of windows
- * ignore case, so an entry of the directory that differs from the new name by case only is the name taken
- * when the file replaces it, and the name asked for when it is the file itself, a rename that changes case.
- * the paths of the handles open on the moved file, or below a moved directory, follow it.
+ * renames a file or directory relative to another handle. case-insensitive replacements use the existing
+ * spelling; renaming the same entry uses the requested spelling to support case changes. update open handle
+ * paths for the entry and its descendants.
  */
 static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
 {
@@ -879,7 +868,7 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
         if (!fh || !fh->host_path)
             continue;
         if (exists && !same && !strcmp(fh->host_path, target)) {
-            /* the file that was replaced has no name any more, so closing it must not delete the new one. */
+            /* the replaced file lost its name; delete-on-close must not remove its replacement. */
             fh->delete_on_close = false;
         } else if (!strncmp(fh->host_path, old, from_length) &&
                    (fh->host_path[from_length] == '/' || !fh->host_path[from_length])) {
@@ -897,7 +886,7 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 {
     uint64_t status = MIME_HC_STATUS_OK;
-    uint64_t a[8]; /* arguments, regs[1] doubles as the result */
+    uint64_t a[8]; /* arguments, regs[1] doubles as the result. */
     memcpy(a, regs, sizeof(a));
     regs[1] = 0;
     switch (nr) {
@@ -1014,7 +1003,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     }
     case MIME_HC_FS_READDIR: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
-        /* a guest that asks for several entries at once pays one exit for them, a directory of hundreds one for each otherwise. */
+        /* batch directory entries to avoid one guest exit per entry. */
         uint64_t want = a[4] ? MIME_MIN(a[4], 64u) : 1;
         MimeFsDirEntry *de = mime_vm_phys(vm, a[3], want * sizeof(MimeFsDirEntry));
         if (!fh || !de || !fh->is_dir) {
@@ -1123,7 +1112,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         pthread_mutex_unlock(WINDOW_LOCK(vm));
         break;
     case MIME_HC_FS_SYNC: {
-        /* the machine is going down: whatever the programs wrote reaches the disk of the drive, not just the host's cache. */
+        /* flush guest writes to the drive at shutdown, beyond the host page cache. */
         int fd = open(vm->paths->drive_c, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
         if (fd < 0) {
             status = errno_status(errno);

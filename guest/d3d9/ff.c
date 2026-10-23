@@ -1,24 +1,23 @@
 /*
- * fixed function: direct3d 9's transform, lighting and texture stages as
- * shaders of its own bytecode, a vs_3_0 and a ps_2_x program for each key
- * of the state they depend on, which the translator makes dxbc of as it
- * does programs' shaders, fog and the alpha test included. their
- * constants are computed from the transforms, lights, material and
- * texture stage states when those change.
+ * fixed function: transform, lighting and texture stages built as a vs_3_0
+ * and a ps_2_x program per state key, translated to dxbc like program
+ * shaders, fog and alpha test included. constants are recomputed when the
+ * transforms, lights, material or stage states change.
  *
- * the vertex program's constants: c0 to c3 world view projection, c4 to
- * c7 world view, c8 to c10 the inverse of world view's 3x3 for normals,
- * c11 to c15 the material (diffuse, ambient, specular, emissive, power),
- * c16 the global ambient, c17 fog (start, end, density, 1 / (end -
- * start)), c18 points (size, 0, 0, viewport height), c19 point scale (a,
- * b, c), c20 to c23 projection, c24 on 7 for each of 8 lights (diffuse,
- * specular, ambient, position, direction, attenuations 0 to 2 and range,
- * falloff and the cosines of theta and phi halves), c80 on 4 for each
- * stage's texture matrix, c112 on 4 for each blend matrix, c148 the
- * screen to clip transform of pretransformed vertices, c149 (0, 1, 0.5,
- * 2), c150 (4, 255, log2 e, 0). the pixel program's: c0 the texture factor, c1 to c8
- * the stages' constants, c9 to c16 their bump matrices, c17 to c24 their
- * luminance scale and offset, c25 (0, 1, 0.5, 4), c26 (2).
+ * vertex constants: c0 to c3 world view projection, c4 to c7 world view,
+ * c8 to c10 the inverse of world view's 3x3 for normals, c11 to c15 the
+ * material: diffuse, ambient, specular, emissive, power. c16 the global
+ * ambient, c17 fog: start, end, density, 1 / (end - start). c18 points:
+ * size, 0, 0, viewport height. c19 point scale a, b, c. c20 to c23
+ * projection. from c24, 7 per light for 8 lights: diffuse, specular,
+ * ambient, position, direction, attenuations 0 to 2 and range, falloff and
+ * the cosines of half theta and half phi. from c80, 4 per stage texture
+ * matrix. from c112, 4 per blend matrix. c148 the screen to clip transform
+ * of pretransformed vertices, c149 = 0, 1, 0.5, 2, c150 = 4, 255, log2 e, 0.
+ *
+ * pixel constants: c0 the texture factor, c1 to c8 the stage constants, c9
+ * to c16 their bump matrices, c17 to c24 their luminance scale and offset,
+ * c25 = 0, 1, 0.5, 4, c26 = 2.
  */
 #include "d3d9_private.h"
 
@@ -88,9 +87,9 @@ static void def(Asm *a, UINT reg, float x, float y, float z, float w_)
 
 /* ------------------------------------------------------------------ the vertex program */
 
-/* the inputs' registers. */
+/* input registers. */
 enum { V_POS, V_NORMAL, V_DIFFUSE, V_SPECULAR, V_PSIZE, V_WEIGHT, V_INDICES, V_TEX };
-/* the outputs'. */
+/* output registers. */
 enum { O_POS, O_DIFFUSE, O_SPECULAR, O_FOG, O_PSIZE, O_TEX };
 /* temps: the position in view space, the normal, the colors summed, scratch. */
 enum { R_POS, R_NORMAL, R_DIFFUSE, R_SPECULAR, R_AMBIENT, R_EYE, R_L, R_T0, R_T1, R_T2, R_T3, R_T4, R_COLOR, R_MAT };
@@ -111,7 +110,7 @@ enum { R_POS, R_NORMAL, R_DIFFUSE, R_SPECULAR, R_AMBIENT, R_EYE, R_L, R_T0, R_T1
 #define C_K 149
 #define C_K2 150
 
-/* the material's color of a kind, from the vertex's colors as the material sources say. */
+/* a material color, taken from a vertex color when the material source says so. */
 static DWORD material(const D9FFVSKey *k, UINT kind)
 {
     UINT source = (k->material_sources >> (kind * 2)) & 3;
@@ -145,7 +144,7 @@ static void light(Asm *a, const D9FFVSKey *k, UINT i)
         OP(a, D9_OP_SGE, w(R_T2, 1), cs(base + 5, REP(3)), rs(R_T0, REP(1)));
         OP(a, D9_OP_MUL, w(R_T1, 8), rs(R_T1, REP(3)), rs(R_T2, REP(0)));
         if (type == D3DLIGHT_SPOT) {
-            /* rho, the cosine of the light's direction and the light to the vertex, between phi's and theta's. */
+            /* rho: the cosine between the light's direction and the light to vertex vector, placed between phi and theta. */
             OP(a, D9_OP_DP3, w(R_T2, 2), neg(r(R_L)), c(base + 4));
             OP(a, D9_OP_ADD, w(R_T2, 4), rs(R_T2, REP(1)), neg(cs(base + 6, REP(2))));
             OP(a, D9_OP_ADD, w(R_T2, 8), cs(base + 6, REP(1)), neg(cs(base + 6, REP(2))));
@@ -175,7 +174,7 @@ static void light(Asm *a, const D9FFVSKey *k, UINT i)
     }
 }
 
-/* the texture coordinates of a stage: a vertex's set or generated, through the stage's matrix. */
+/* a stage's coordinates come from a vertex set or are generated, then go through the stage's matrix. */
 static void texcoord(Asm *a, const D9FFVSKey *k, UINT stage)
 {
     UINT index = (k->tex_index >> (stage * 4)) & 7;
@@ -198,7 +197,7 @@ static void texcoord(Asm *a, const D9FFVSKey *k, UINT stage)
         OP(a, D9_OP_ADD, w(R_T0, 8), rs(R_T0, REP(3)), rs(R_T0, REP(3)));
         OP(a, D9_OP_MAD, w(R_T0, 7), r(R_NORMAL), rs(R_T0, REP(3)), r(R_EYE));
         if (gen == 4) {
-            /* the sphere map's: R over 2 sqrt(x^2 + y^2 + (z + 1)^2), plus a half. */
+            /* sphere map: R over 2 sqrt(x^2 + y^2 + (z + 1)^2), plus a half. */
             OP(a, D9_OP_ADD, w(R_T1, 7), r(R_T0), cs(C_K, 0x10));
             OP(a, D9_OP_DP3, w(R_T1, 8), r(R_T1), r(R_T1));
             OP(a, D9_OP_RSQ, w(R_T1, 8), rs(R_T1, REP(3)));
@@ -210,7 +209,7 @@ static void texcoord(Asm *a, const D9FFVSKey *k, UINT stage)
     default:
         if (k->inputs & (1u << (V_TEX + index))) {
             OP(a, D9_OP_MOV, w(R_T0, 0xF), src(T_INPUT, V_TEX + index, XYZW));
-            /* missing components: the one after the last is 1, as direct3d 9 pads coordinates for matrices. */
+            /* the component after the last one given is 1, as direct3d 9 pads coordinates for matrices. */
             if (size < 3)
                 OP(a, D9_OP_MOV, w(R_T0, 0xF & ~((2u << size) - 1)), cs(C_K, REP(0)));
             if (size < 3)
@@ -285,7 +284,7 @@ static HRESULT vertex_program(const D9FFVSKey *k, Asm *a)
             if (k->inputs & (1u << V_NORMAL))
                 OP(a, D9_OP_M3x3, w(R_NORMAL, 7), src(T_INPUT, V_NORMAL, XYZW), c(C_NORMAL));
         } else {
-            /* vertex blending: the weights given, the last 1 less their sum, each matrix's. */
+            /* vertex blending: the given weights, the last one 1 minus their sum, each with its matrix. */
             OP(a, D9_OP_MOV, w(R_POS, 0xF), cs(C_K, 0x40));
             OP(a, D9_OP_MOV, w(R_NORMAL, 0xF), cs(C_K, 0x40));
             OP(a, D9_OP_MOV, w(R_T2, 1), cs(C_K, REP(1)));
@@ -331,7 +330,7 @@ static HRESULT vertex_program(const D9FFVSKey *k, Asm *a)
             OP(a, D9_OP_MOV, w(R_EYE, 7), neg(cs(C_K, 0x40 | 0x10)));
     }
 
-    /* colors: lit, or the vertex's own, white and black without them. */
+    /* colors: lit, or the vertex's own, else white and black. */
     if (k->lighting && !k->pretransformed) {
         OP(a, D9_OP_MOV, w(R_DIFFUSE, 0xF), cs(C_K, REP(0)));
         OP(a, D9_OP_MOV, w(R_SPECULAR, 0xF), cs(C_K, REP(0)));
@@ -422,7 +421,6 @@ enum { P_CURRENT = 0, P_TEMP = 1, P_TEX = 2, P_ARG = 3, P_T = 8 };
 #define PC_K 25
 #define PC_K2 26
 
-/* a stage's argument: its register and the modifiers asked. */
 static DWORD argument(Asm *a, UINT stage, DWORD arg, BOOL alpha, UINT scratch)
 {
     DWORD reg;
@@ -461,7 +459,6 @@ static DWORD argument(Asm *a, UINT stage, DWORD arg, BOOL alpha, UINT scratch)
     return reg;
 }
 
-/* a stage's color or alpha operation on its arguments, into dest's components. */
 static void operation(Asm *a, const D9FFPSStage *s, UINT stage, BOOL alpha, DWORD dest)
 {
     UINT op = alpha ? s->alpha_op : s->color_op;
@@ -653,7 +650,7 @@ static UINT decl_inputs(const D9VertexDecl *d, UINT *sizes, BOOL *pretransformed
     return inputs;
 }
 
-/* the stages the pixel program runs: those before the first disabled. */
+/* stages run up to the first disabled one. */
 static UINT active_stages(const D9Device *d)
 {
     UINT n = 0;
@@ -728,7 +725,7 @@ void D9FFPSKeyOf(const D9Device *d, D9FFPSKey *k)
     }
 }
 
-/* the program of a key, made once for the device's life. */
+/* made once per key and kept for the device's life. */
 D9Shader *D9FFShader(D9Device *d, BOOL pixel, const void *key, UINT size)
 {
     D9FFProgram **list = pixel ? &d->ff_ps : &d->ff_vs;
@@ -748,7 +745,7 @@ D9Shader *D9FFShader(D9Device *d, BOOL pixel, const void *key, UINT size)
     D9Shader *s = nullptr;
     if (SUCCEEDED(hr) && SUCCEEDED(D9CreateShader(d, a->words, pixel, &s))) {
         s->ff = TRUE;
-        /* the device's own: bound, its reference let go, as programs' references would keep the device. */
+        /* the device holds it by a bind, since a reference would keep the device alive. */
         D9Bind(&s->base);
         D9ResourceRelease(&s->base);
     }
@@ -777,7 +774,7 @@ void D9FreeFFShaders(D9Device *d)
 
 /* ------------------------------------------------------------------ constants */
 
-/* square roots and cosines without a math library: newton's method and a polynomial. */
+/* no math library: square roots by Newton's method, cosines by a polynomial. */
 static float root(float x)
 {
     if (x <= 0.0f)
@@ -820,7 +817,7 @@ static void multiply(const D3DMATRIX *a, const D3DMATRIX *b, D3DMATRIX *out)
     *out = m;
 }
 
-/* a matrix's columns as rows, as m4x4 reads them. */
+/* columns as rows, the way m4x4 reads them. */
 static void columns(const D3DMATRIX *m, float (*out)[4], UINT rows)
 {
     for (UINT i = 0; i < rows; i++)
@@ -979,7 +976,7 @@ void D9UpdateFFConstants(D9Device *d)
     }
 }
 
-/* fixed function's user clip planes are in world space: in clip space through the inverse of view projection. */
+/* fixed function clip planes are in world space, moved to clip space by the inverse of view projection. */
 void D9FFClipPlanes(const D9Device *d, float out[6][4])
 {
     D3DMATRIX vp, inv;

@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* resolves an xdg base directory: env var if absolute, else $HOME/<fallback>. */
+/* resolves an XDG base directory: env var if absolute, else $HOME/<fallback>. */
 static void xdg_dir(char *out, size_t size, const char *env, const char *fallback)
 {
     const char *value = getenv(env);
@@ -25,9 +25,8 @@ static void xdg_dir(char *out, size_t size, const char *env, const char *fallbac
 }
 
 /*
- * one machine may run per user, whatever the xdg variables say, so the
- * lock lives in the per user temporary dir the system assigns, which no
- * environment variable can move.
+ * one machine runs per user regardless of XDG overrides. keep the lock in the system-assigned per-user
+ * temporary directory, outside environment-controlled paths.
  */
 static void lock_path(char *out, size_t size)
 {
@@ -54,9 +53,8 @@ bool mime_paths_init(MimePaths *paths)
     xdg_dir(paths->cache, sizeof(paths->cache), "XDG_CACHE_HOME", ".cache");
 
     /*
-     * the spec asks for a fallback with runtime dir semantics when
-     * XDG_RUNTIME_DIR is unset. macos has no such dir, but its per user
-     * TMPDIR is private to the user and wiped on reboot, so it fits.
+     * XDG requires runtime directory semantics when XDG_RUNTIME_DIR is unset. macOS TMPDIR is private to the
+     * user and cleared on reboot, so it qualifies.
      */
     const char *runtime = getenv("XDG_RUNTIME_DIR");
     if (runtime && runtime[0] == '/') {
@@ -148,7 +146,7 @@ bool mime_paths_to_host(const MimePaths *paths, const char *guest, char *out, si
     if ((drive != 'C' && drive != 'Z') || guest[1] != ':')
         return false;
     const char *root = drive == 'C' ? paths->drive_c : "";
-    /* the components after the drive, with dots resolved so the path stays below the root. */
+    /* resolves dot components after the drive while keeping the path below its root. */
     char copy[MIME_PATH_MAX * 2];
     mime_strlcpy(copy, guest + 2, sizeof(copy));
     char *components[256];

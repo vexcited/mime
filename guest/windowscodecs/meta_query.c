@@ -1,6 +1,6 @@
 /*
- * the metadata query language: paths of blocks and items such as /app1/ifd/exif/{ushort=36867}, over the blocks of a
- * container or the items of one handler, with readers that follow them and writers that make what is missing.
+ * metadata paths such as /app1/ifd/exif/{ushort=36867} address container blocks or handler items. readers traverse
+ * paths; writers create missing blocks.
  */
 #include "wic_codec.h"
 #include "wic_meta.h"
@@ -13,7 +13,7 @@ typedef struct Segment {
     int index;           /* [n] before a name, -1 for none. */
     const WCHAR *name;   /* a name, not terminated. */
     SIZE_T name_length;
-    const WCHAR *prefix; /* of a name with a namespace prefix: prefix:name. */
+    const WCHAR *prefix; /* namespace-qualified name, prefix:name. */
     SIZE_T prefix_length;
     PROPVARIANT id;      /* the id of a braced item. */
 } Segment;
@@ -46,7 +46,7 @@ static void query_destroy(WicBase *base)
     DeleteCriticalSection(&q->lock);
 }
 
-/* ------------------------------------------------------------------ parsing */
+/* parsing. */
 
 static BOOL ieq(const WCHAR *a, SIZE_T n, const WCHAR *b)
 {
@@ -119,7 +119,7 @@ static BOOL parse_guid(const WCHAR *s, SIZE_T n, GUID *guid)
     return CLSIDFromString(text, guid) == S_OK;
 }
 
-/* the value in the braces: unescaped text copied into a new buffer. */
+/* copy and unescape the braced value. */
 static WCHAR *unescape(const WCHAR *s, SIZE_T n, SIZE_T *length)
 {
     WCHAR *out = CoTaskMemAlloc((n + 1) * sizeof(WCHAR));
@@ -138,7 +138,7 @@ static WCHAR *unescape(const WCHAR *s, SIZE_T n, SIZE_T *length)
 
 static HRESULT parse_item(const WCHAR *s, SIZE_T n, PROPVARIANT *id)
 {
-    /* type=value */
+    /* type=value. */
     SIZE_T eq = 0;
     while (eq < n && s[eq] != '=')
         eq++;
@@ -232,7 +232,7 @@ static HRESULT parse_item(const WCHAR *s, SIZE_T n, PROPVARIANT *id)
     return WINCODEC_ERR_INVALIDQUERYREQUEST;
 }
 
-/* splits a path into segments. the path must start with a slash for an absolute one. */
+/* split path segments; absolute paths must start with a slash. */
 typedef struct Path {
     Segment seg[24];
     UINT count;
@@ -316,9 +316,9 @@ static HRESULT path_parse(const WCHAR *text, Path *p)
     return p->count ? S_OK : WINCODEC_ERR_INVALIDQUERYREQUEST;
 }
 
-/* ------------------------------------------------------------------ walking */
+/* walking. */
 
-/* the position of a walk: the block list or one handler. */
+/* cursor over a block list or a single handler. */
 typedef struct Cursor {
     IWICMetadataBlockReader *blocks; /* when at the root. */
     IWICMetadataBlockWriter *bwriter;
@@ -335,7 +335,6 @@ static const GUID *segment_format(const Segment *seg)
     return WicFormatFromShortName(name);
 }
 
-/* the sub handler of an item. */
 static IWICMetadataReader *item_block(const WicMetaItem *item)
 {
     if (item->value.vt != VT_UNKNOWN || !item->value.punkVal)
@@ -361,13 +360,12 @@ static BOOL item_matches(const WicMetaItem *item, const Segment *seg, const GUID
 
 typedef struct Found {
     IWICMetadataReader *block;  /* the sub block, referenced, or NULL. */
-    UINT item;                  /* the item of the handler. */
+    UINT item;                  /* item within the handler. */
     BOOL is_item;               /* an item that is not a block. */
     BOOL at_root;               /* found among the blocks of the container. */
     UINT block_index;
 } Found;
 
-/* looks for a segment under the cursor. */
 static BOOL look(const Cursor *cur, const Segment *seg, Found *found)
 {
     memset(found, 0, sizeof(*found));
@@ -439,7 +437,7 @@ static BOOL look(const Cursor *cur, const Segment *seg, Found *found)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ query objects */
+/* query objects. */
 
 static HRESULT query_create(IWICMetadataBlockReader *blocks, IWICMetadataBlockWriter *bwriter,
                             IWICMetadataReader *handler, const WCHAR *location, const GUID *container, BOOL writable,
@@ -482,7 +480,6 @@ static WCHAR *join_location(const WCHAR *parent, const Segment *seg)
     return out;
 }
 
-/* the value the query returns for what it found. */
 static HRESULT found_value(WicQuery *q, const Cursor *cur, const Found *f, const Segment *seg, BOOL last,
                            PROPVARIANT *value)
 {
@@ -600,8 +597,6 @@ static HRESULT STDMETHODCALLTYPE q_get_by_name(void *This, LPCWSTR name, PROPVAR
     return hr;
 }
 
-/* the names of what is under the cursor. */
-/* appends at most n characters of text. */
 static void append_n(WCHAR *dest, const WCHAR *text, SIZE_T n)
 {
     SIZE_T k = wcslen(dest);
@@ -742,9 +737,9 @@ static HRESULT STDMETHODCALLTYPE q_get_enumerator(void *This, IEnumString **out)
     return hr;
 }
 
-/* ------------------------------------------------------------------ writing */
+/* writing. */
 
-/* the tag of an ifd that points at a sub block of the format, or zero. */
+/* IFD tag pointing to a subblock of this format, or zero. */
 static UINT16 ifd_pointer_tag(const GUID *parent, const GUID *child)
 {
     BOOL ifd_parent = IsEqualGUID(parent, &GUID_MetadataFormatIfd) || IsEqualGUID(parent, &GUID_MetadataFormatSubIfd) ||
@@ -762,7 +757,6 @@ static UINT16 ifd_pointer_tag(const GUID *parent, const GUID *child)
     return 0;
 }
 
-/* makes the block a segment names, under the cursor. */
 static HRESULT make_block(const Cursor *cur, const Segment *seg, IWICMetadataReader **out)
 {
     const GUID *format = seg->kind == SEG_NAME && !seg->prefix ? segment_format(seg) : nullptr;
@@ -794,7 +788,7 @@ static HRESULT make_block(const Cursor *cur, const Segment *seg, IWICMetadataRea
             }
             value.vt = VT_UNKNOWN;
             value.punkVal = (IUnknown *)w;
-            /* an item with no id cannot be found by one, so it is added next to any with the same value. */
+            /* items without ids cannot be looked up; append even if the value already exists. */
             hr = WicMetaAdd((IWICMetadataReader *)parent, nullptr, &id, &value);
             parent->lpVtbl->Release(parent);
         }
@@ -872,7 +866,7 @@ static HRESULT STDMETHODCALLTYPE q_set_by_name(void *This, LPCWSTR name, const P
                                 if (!schema.pwszVal)
                                     hr = E_OUTOFMEMORY;
                                 else {
-                                    /* the string came from the heap of this library, so move it to the task heap. */
+                                    /* move the string from the library heap to the task allocator. */
                                     SIZE_T len = wcslen(uri) + 1;
                                     WCHAR *task = CoTaskMemAlloc(len * sizeof(WCHAR));
                                     if (task) {

@@ -1,4 +1,4 @@
-/* the formats of dxgi resources and views. */
+/* dxgi resource and view formats. */
 #ifndef MIME_WIN32_DXGIFORMAT_H
 #define MIME_WIN32_DXGIFORMAT_H
 

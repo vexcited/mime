@@ -1,7 +1,7 @@
 /*
- * services.exe: the database. the keys below HKLM\SYSTEM\CurrentControlSet\Services are the services; their
- * names are read at the start and a record is filled from its key the first time it is needed, so that the
- * hundreds of keys of an installation cost nothing until something asks for them.
+ * services.exe: the database. each key below HKLM\SYSTEM\CurrentControlSet\Services is a service. names are read at
+ * startup and a record is filled from its key on first use, so the hundreds of keys of an installation cost nothing
+ * until something asks for them.
  */
 #include "services.h"
 
@@ -9,7 +9,7 @@ static const WCHAR g_root[] = L"SYSTEM\\CurrentControlSet\\Services";
 SERVICE *g_services;
 BOOL g_database_ready;
 
-/* ------------------------------------------------------------------ the registry */
+/* ------------------------------------------------------------------ registry */
 
 HKEY DbOpenKey(const WCHAR *name, REGSAM access, BOOL create)
 {
@@ -26,7 +26,7 @@ HKEY DbOpenKey(const WCHAR *name, REGSAM access, BOOL create)
     return status == ERROR_SUCCESS ? key : nullptr;
 }
 
-/* a string value, expanded when it is REG_EXPAND_SZ; the caller frees it. */
+/* expands REG_EXPAND_SZ; the caller frees the result. */
 WCHAR *DbReadString(HKEY key, const WCHAR *value, DWORD *chars)
 {
     DWORD type = 0, size = 0;
@@ -86,7 +86,7 @@ DWORD DbWriteDword(HKEY key, const WCHAR *value, DWORD data)
     return (DWORD)RegSetValueExW(key, value, 0, REG_DWORD, (const BYTE *)&data, sizeof(data));
 }
 
-/* ------------------------------------------------------------------ the list */
+/* ------------------------------------------------------------------ service list */
 
 static void free_record(SERVICE *s)
 {
@@ -99,7 +99,7 @@ static void free_record(SERVICE *s)
     SvcFree(s);
 }
 
-/* inserts in the order of the names, which the enumerations answer in. */
+/* keeps the list sorted by name, the order enumerations answer in. */
 static void insert(SERVICE *s)
 {
     SERVICE **link = &g_services;
@@ -136,7 +136,7 @@ SERVICE *DbFindByDisplay(const WCHAR *display)
     return nullptr;
 }
 
-/* reads the names of the keys; the records are filled when they are needed. */
+/* reads the key names only; records are filled when needed. */
 void DbLoadNames(void)
 {
     HKEY root;
@@ -162,7 +162,7 @@ void DbLoadNames(void)
 
 BOOL DbDriverRunning(SERVICE *s)
 {
-    /* a driver is running when its object is in the directory of the object manager. */
+    /* a driver is running when its object exists in the object manager's \Driver directory. */
     UNICODE_STRING dir = RTL_CONSTANT_STRING(L"\\Driver");
     UNICODE_STRING fs = RTL_CONSTANT_STRING(L"\\FileSystem");
     for (int k = 0; k < 2; k++) {
@@ -193,7 +193,7 @@ BOOL DbDriverRunning(SERVICE *s)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ loading a record */
+/* ------------------------------------------------------------------ loading records */
 
 BOOL DbLoadRecord(SERVICE *s)
 {
@@ -220,7 +220,7 @@ BOOL DbLoadRecord(SERVICE *s)
     if (DbReadDword(key, L"FailureActionsOnNonCrashFailures", &flag) && flag)
         s->FailureOnNonCrash = TRUE;
     WCHAR *display = DbReadString(key, L"DisplayName", nullptr);
-    /* an indirect string names a resource the service control manager would load; the key name stands for it. */
+    /* an indirect string names a resource the manager would load; the key name stands in for it. */
     if (display && (!*display || display[0] == L'@')) {
         SvcFree(display);
         display = nullptr;
@@ -242,7 +242,7 @@ BOOL DbLoadRecord(SERVICE *s)
 
 /* ------------------------------------------------------------------ dependencies */
 
-/* whether s depends, however indirectly, on other; a group stands for its members. */
+/* whether s depends on other, even indirectly; a group stands for its members. */
 BOOL DbDependsOn(SERVICE *s, SERVICE *other, DWORD depth)
 {
     if (depth > 64)
@@ -265,7 +265,7 @@ BOOL DbDependsOn(SERVICE *s, SERVICE *other, DWORD depth)
     return FALSE;
 }
 
-/* the services that depend on s directly, or the ones of them that are not stopped. */
+/* the direct dependents of s, or only the ones not stopped. */
 void DbDependents(SERVICE *s, SERVICE ***list, DWORD *count, BOOL active_only)
 {
     DWORD capacity = 16, n = 0;
@@ -298,7 +298,7 @@ void DbDependents(SERVICE *s, SERVICE ***list, DWORD *count, BOOL active_only)
     *count = out ? n : 0;
 }
 
-/* the position of a group in ServiceGroupOrder, or past the end for groups it does not list. */
+/* a group's position in ServiceGroupOrder, or past the end for unlisted groups. */
 DWORD DbGroupIndex(const WCHAR *group)
 {
     static WCHAR *order;
@@ -324,9 +324,9 @@ DWORD DbGroupIndex(const WCHAR *group)
 /* ------------------------------------------------------------------ failure actions */
 
 /*
- * the value is a header of five numbers, the reset period, the offsets of the reboot message and the command, the
- * count of actions and the offset of the list, then what they point to. read from the value, which other tools
- * write: the offsets are taken as they are, none is assumed.
+ * the value is a header of five numbers: the reset period, the offsets of the reboot message and the command, the action
+ * count and the offset of the actions, followed by the data. other tools write it, so the offsets are taken as stored
+ * and no layout is assumed.
  */
 DWORD DbReadFailureActions(SERVICE *s, SERVICE_FAILURE_ACTIONSW *actions, SC_ACTION *buffer, WCHAR **reboot,
                            WCHAR **command)
@@ -370,9 +370,9 @@ DWORD DbReadFailureActions(SERVICE *s, SERVICE_FAILURE_ACTIONSW *actions, SC_ACT
     return error;
 }
 
-/* ------------------------------------------------------------------ the parameters of a service */
+/* ------------------------------------------------------------------ service parameters */
 
-/* a type that names a program, which may be interactive. drivers are told apart by the caller. */
+/* a program type, possibly interactive. the caller tells drivers apart. */
 static BOOL is_program_type(DWORD type)
 {
     switch (type & ~(DWORD)SERVICE_INTERACTIVE_PROCESS) {
@@ -380,16 +380,16 @@ static BOOL is_program_type(DWORD type)
     case SERVICE_WIN32_SHARE_PROCESS:
     case SERVICE_USER_OWN_PROCESS:
     case SERVICE_USER_SHARE_PROCESS:
-    case 0xD0: /* a user own process instance */
-    case 0xE0: /* a user share process instance */
-    case 0x210: /* an own process of a package */
+    case 0xD0: /* user own process instance. */
+    case 0xE0: /* user share process instance. */
+    case 0x210: /* package own process. */
         return TRUE;
     default:
         return FALSE;
     }
 }
 
-/* the rules of ScCheckServiceConfigParms: a value of SERVICE_NO_CHANGE is left alone, a creation lacks none. */
+/* windows' parameter rules: SERVICE_NO_CHANGE leaves a value alone, and a creation must give them all. */
 DWORD DbCheckParameters(BOOL creating, const WCHAR *name, DWORD type, DWORD start, DWORD error_control,
                         const WCHAR *path, const WCHAR *group, const WCHAR *dependencies, DWORD dependencies_chars,
                         const WCHAR *account)
@@ -404,7 +404,7 @@ DWORD DbCheckParameters(BOOL creating, const WCHAR *name, DWORD type, DWORD star
     if (start != SERVICE_NO_CHANGE) {
         if (start > SERVICE_DISABLED)
             return ERROR_INVALID_PARAMETER;
-        /* boot and system start are the drivers'. */
+        /* boot and system start are for drivers. */
         if (start < SERVICE_AUTO_START && type != SERVICE_NO_CHANGE && type != SERVICE_KERNEL_DRIVER &&
             type != SERVICE_FILE_SYSTEM_DRIVER)
             return ERROR_INVALID_PARAMETER;
@@ -428,7 +428,7 @@ DWORD DbCheckParameters(BOOL creating, const WCHAR *name, DWORD type, DWORD star
     return ERROR_SUCCESS;
 }
 
-/* splits the dependencies of CreateService into services and groups, which a plus sign tells apart. */
+/* splits CreateService dependencies into services and groups; a plus sign marks a group. */
 static void split_dependencies(const WCHAR *dependencies, DWORD chars, WCHAR **services, WCHAR **groups)
 {
     *services = *groups = nullptr;
@@ -472,7 +472,7 @@ static DWORD write_dependencies(HKEY key, const WCHAR *services, const WCHAR *gr
     return error;
 }
 
-/* the account a service runs in as written in its key: LocalSystem when it names none. */
+/* LocalSystem or a built in service account; an empty account means LocalSystem. */
 static BOOL system_account(const WCHAR *account)
 {
     return !account || !*account || !_wcsicmp(account, L"LocalSystem") || !_wcsicmp(account, L"NT AUTHORITY\\SYSTEM") ||
@@ -487,7 +487,7 @@ static DWORD validate_account(const WCHAR *account)
     BYTE sid[SECURITY_MAX_SID_SIZE_];
     DWORD sid_size = sizeof(sid), domain_size = 256, use;
     WCHAR domain[256];
-    /* the names of this machine only: ".\name", "machine\name" or "name". */
+    /* local names only: ".\name", "machine\name" or "name". */
     const WCHAR *name = account;
     const WCHAR *slash = wcschr(account, L'\\');
     if (slash) {
@@ -504,7 +504,7 @@ static DWORD validate_account(const WCHAR *account)
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ creating and changing */
+/* ------------------------------------------------------------------ create and change */
 
 DWORD DbCreate(const WCHAR *name, const WCHAR *display, DWORD type, DWORD start, DWORD error_control, const WCHAR *path,
                const WCHAR *group, DWORD *tag, const WCHAR *dependencies, DWORD dependencies_chars,
@@ -529,7 +529,7 @@ DWORD DbCreate(const WCHAR *name, const WCHAR *display, DWORD type, DWORD start,
     }
     SERVICE *existing = DbFind(name);
     if (existing && !DbLoadRecord(existing)) {
-        /* a key with no service in it, left by a create or a delete that did not end: OpenService does not find it, so it is not one. */
+        /* an empty key left by an interrupted create or delete: OpenService does not find it, so it is no service. */
         DbRemove(existing);
         existing = nullptr;
     }
@@ -549,7 +549,7 @@ DWORD DbCreate(const WCHAR *name, const WCHAR *display, DWORD type, DWORD start,
     split_dependencies(dependencies, dependencies_chars, &dep_services, &dep_groups);
     DWORD new_tag = 0;
     if (tag) {
-        /* a tag is unique in its group: the next one after the highest. */
+        /* tags are unique within a group: take the next one after the highest. */
         for (SERVICE *m = g_services; m; m = m->Next)
             if (DbLoadRecord(m) && m->Group && !_wcsicmp(m->Group, group) && m->Tag >= new_tag)
                 new_tag = m->Tag + 1;
@@ -607,7 +607,7 @@ DWORD DbCreate(const WCHAR *name, const WCHAR *display, DWORD type, DWORD start,
     s->Status.dwWin32ExitCode = ERROR_SERVICE_NEVER_STARTED;
     s->Stamp = ++g_stamp;
     insert(s);
-    /* a circle through the dependencies already there is refused. */
+    /* refuse a cycle through the existing dependencies. */
     if (DbDependsOn(s, s, 0)) {
         DbRemove(s);
         return ERROR_CIRCULAR_DEPENDENCY;
@@ -665,7 +665,7 @@ DWORD DbChange(SERVICE *s, DWORD type, DWORD start, DWORD error_control, const W
         error = DbWriteDword(key, L"Type", type);
     if (!error && start != SERVICE_NO_CHANGE) {
         error = DbWriteDword(key, L"Start", start);
-        /* an automatic start that is not delayed any more. */
+        /* only an automatic start can stay delayed. */
         if (!error && start != SERVICE_AUTO_START)
             RegDeleteValueW(key, L"DelayedAutostart");
     }
@@ -728,8 +728,8 @@ DWORD DbChange(SERVICE *s, DWORD type, DWORD start, DWORD error_control, const W
         s->DepServices = dep_services;
         s->DepGroups = dep_groups;
         if (DbDependsOn(s, s, 0)) {
-            /* the new list closes a circle: the old one is not restored in the key, as a failure after the write
-               would not be; the dependencies are cleared instead. */
+            /* the new list closes a cycle. like other failures after the write, the old list is not restored in the
+               key; the dependencies are cleared instead. */
             HKEY k = DbOpenKey(s->Name, KEY_ALL_ACCESS, FALSE);
             if (k) {
                 RegDeleteValueW(k, L"DependOnService");
@@ -750,7 +750,6 @@ DWORD DbChange(SERVICE *s, DWORD type, DWORD start, DWORD error_control, const W
     return ERROR_SUCCESS;
 }
 
-/* takes a service out of the database and the registry. */
 void DbRemove(SERVICE *s)
 {
     for (SERVICE **link = &g_services; *link; link = &(*link)->Next) {

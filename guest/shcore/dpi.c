@@ -1,13 +1,12 @@
 /*
- * the scaling api. user32 keeps the process awareness on windows and shcore
- * asks it; mime's win32k keeps the value. a monitor has the dpi of its display,
- * a program aware of that sees it and the others see the system's.
+ * the dpi scaling api. on windows user32 keeps the process awareness and shcore asks it, here win32k keeps it.
+ * a monitor has its display's dpi, which aware programs see. the others see the system dpi.
  */
 #include "shcore_private.h"
 
 #define ERROR_BAD_ARGUMENTS 160L
 
-/* set once per process, as windows allows it; an awareness from the manifest does not count yet. */
+/* set once per process, as windows allows. a manifest awareness does not count yet. */
 static LONG g_awareness_set;
 
 HRESULT WINAPI SetProcessDpiAwareness(PROCESS_DPI_AWARENESS value)
@@ -29,14 +28,14 @@ HRESULT WINAPI GetProcessDpiAwareness(HANDLE process, PROCESS_DPI_AWARENESS *val
         return E_INVALIDARG;
     }
     ULONG_PTR awareness = NtUserCallOneParam(0, MIME_ONEPARAM_GETPROCESSDPIAWARENESS);
-    /* the per monitor v2 awareness is the per monitor one to this api. */
+    /* this api reports per monitor v2 as per monitor. */
     *value = awareness <= PROCESS_PER_MONITOR_DPI_AWARE ? (PROCESS_DPI_AWARENESS)awareness
              : awareness == 3                           ? PROCESS_PER_MONITOR_DPI_AWARE
                                                         : PROCESS_SYSTEM_DPI_AWARE;
     return S_OK;
 }
 
-/* the dpi of the display of a monitor, 0 for a handle that is none. */
+/* 0 for an invalid handle. */
 static UINT monitor_dpi(HMONITOR monitor)
 {
     MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
@@ -47,7 +46,7 @@ static UINT monitor_dpi(HMONITOR monitor)
     return list[index].Dpi ? list[index].Dpi : 96;
 }
 
-/* an unaware process sees 96 everywhere, a system aware one the system's, one aware of monitors the monitor's. */
+/* unaware processes see 96, system aware ones the system dpi, per monitor aware ones the monitor's. */
 static UINT process_dpi(UINT display)
 {
     PROCESS_DPI_AWARENESS awareness;
@@ -71,7 +70,7 @@ HRESULT WINAPI GetDpiForMonitor(HMONITOR monitor, MONITOR_DPI_TYPE type, UINT *x
     return S_OK;
 }
 
-/* the scale factors windows names, the dpi's nearest. */
+/* the nearest scale factor windows defines. */
 static DEVICE_SCALE_FACTOR scale_for_dpi(UINT dpi)
 {
     static const DEVICE_SCALE_FACTOR factors[] = {
@@ -108,7 +107,7 @@ UINT WINAPI GetDpiForShellUIComponent(SHELL_UI_COMPONENT component)
     return GetDpiForSystem();
 }
 
-/* the scale never changes in mime, so a registration only hands out its cookie. */
+/* the scale never changes in mime, so registering only hands out a cookie. */
 static LONG g_next_cookie;
 
 HRESULT WINAPI RegisterScaleChangeNotifications(DISPLAY_DEVICE_TYPE type, HWND window, UINT message, DWORD *cookie)

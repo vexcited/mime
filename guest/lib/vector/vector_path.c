@@ -1,6 +1,4 @@
-/*
- * GDI+ style paths and the shape builders.
- */
+/* GDI+ style paths and the shape builders. */
 #include "vector_internal.h"
 
 #define PI_F 3.14159265358979f

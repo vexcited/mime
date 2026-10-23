@@ -1,8 +1,6 @@
 /*
- * opengl32 of x64 programs: every gl and wgl function is a stub calling
- * the native opengl32.dll in the same process through mimex86 (mime/mx64.h).
- * this part loads the native image and answers wglGetProcAddress with the
- * stubs, which x64 code can call.
+ * opengl32 for x64 programs: every GL and wgl function is a stub calling the native opengl32.dll in the same process
+ * through mimex86, see mime/mx64.h. this part loads the native image and answers wglGetProcAddress with the stubs.
  */
 #include <mime/nt.h>
 #include <mime/mx64.h>

@@ -1,13 +1,9 @@
 /*
- * the thread pool. a pool is a set of worker threads that take callbacks from
- * a queue: those of work, timers, waits and i/o completions. cleanup groups
- * close the objects of a pool together. the older work item, registered wait,
- * timer queue and bound completion functions run over the default pool.
+ * the thread pool: worker threads running work, timer, wait and i/o callbacks from a queue. the legacy work item,
+ * registered wait, timer queue and bound completion functions use the default pool.
  *
- * all state is guarded by one lock, which is never held while a callback runs.
- * timers go through one thread that sleeps until the nearest due time, waits
- * through threads that each watch up to 63 objects, and i/o through a thread
- * per pool that takes the completions of its port.
+ * one lock guards everything and is never held while a callback runs. one thread sleeps until the nearest timer,
+ * wait threads watch up to 63 objects each, and each pool has a thread draining its completion port.
  */
 #include "kernelbase_private.h"
 
@@ -24,7 +20,7 @@ typedef void(WINAPI *TP_CANCEL_CALLBACK)(void *, void *);
 typedef void(WINAPI *TP_FINALIZATION)(TP_INSTANCE *, void *);
 typedef void(WINAPI *TP_BOUND_CALLBACK)(DWORD, DWORD, LPOVERLAPPED);
 
-/* the environment of the sdk, in the layout of versions 1 and 3. */
+/* TP_CALLBACK_ENVIRON, versions 1 and 3 share this layout. */
 typedef struct KB_TP_ENV {
     DWORD Version;
     TP_POOL *Pool;
@@ -52,7 +48,7 @@ enum {
     TPK_ITEM,
 };
 
-/* flags of an object beyond the wt_ ones of the older functions. */
+/* object flags on top of the legacy WT_ ones. */
 #define TPF_LEGACY 0x80000000u
 #define TPF_UNREGISTERED 0x40000000u
 #define WT_EXECUTEINTIMERTHREAD_ 0x00000020u
@@ -64,7 +60,7 @@ enum {
 typedef struct TS_ENTRY TS_ENTRY;
 struct TS_ENTRY {
     LIST_ENTRY Link;
-    ULONGLONG Due; /* in 100 ns, on the clock of now_hns */
+    ULONGLONG Due; /* 100 ns units on the now_hns clock */
     void (*Fire)(TS_ENTRY *);
     BOOL Linked;
 };
@@ -82,7 +78,7 @@ struct TP_POOL {
     BOOL Closed;
     KB_TP_STACK Stack;
     TS_ENTRY Monitor;
-    HANDLE Port; /* the completions of its i/o objects */
+    HANDLE Port; /* shared by the pool's i/o objects */
 };
 
 typedef struct TIMER_QUEUE {
@@ -107,7 +103,7 @@ struct TP_OBJECT {
     LONG Running; /* callbacks running */
     BOOL Closed;
     ULONG Flags;
-    HANDLE Completion; /* signaled once the callbacks of a deleted legacy object are done */
+    HANDLE Completion; /* signaled when a deleted legacy object's callbacks are done */
     /* timers. */
     TS_ENTRY Timer;
     ULONG Period;
@@ -157,7 +153,7 @@ static CONDITION_VARIABLE g_timer_changed = CONDITION_VARIABLE_INIT;
 static LIST_ENTRY g_timers;
 static LIST_ENTRY g_wait_threads;
 static BOOL g_ready, g_timer_thread;
-static DWORD g_current = TLS_OUT_OF_INDEXES; /* the instance of the callback a thread runs */
+static DWORD g_current = TLS_OUT_OF_INDEXES; /* tls slot for the instance of the running callback */
 static TP_POOL g_default;
 static ULONGLONG g_frequency;
 
@@ -207,7 +203,7 @@ static DWORD milliseconds_until(ULONGLONG due, ULONGLONG now)
     return ms >= INFINITE ? INFINITE - 1 : (DWORD)ms;
 }
 
-/* the 100 ns from now of a time that is relative when negative and a file time otherwise. */
+/* a negative time is relative, a positive one an absolute file time. returns 100 ns units from now. */
 static ULONGLONG delay_of(LONGLONG ticks)
 {
     if (ticks < 0)
@@ -222,7 +218,7 @@ static ULONGLONG delay_of(LONGLONG ticks)
 
 static void timer_unlink(TS_ENTRY *entry);
 
-/* lock held. frees a pool with no owner, object or thread left. */
+/* lock held. frees the pool once no reference or thread is left. */
 static void check_pool(TP_POOL *pool)
 {
     if (pool->Refs || pool->Threads)
@@ -312,7 +308,7 @@ static void monitor_fire(TS_ENTRY *entry)
     TP_POOL *pool = CONTAINING_RECORD(entry, TP_POOL, Monitor);
     if (pool->Queued <= pool->Idle)
         return;
-    /* every thread is busy and callbacks wait: a pool gets more threads when its callbacks block. */
+    /* every thread is busy with work waiting, so the callbacks probably block: add threads. */
     ULONG cpus = USER_SHARED_DATA->ActiveProcessorCount ? USER_SHARED_DATA->ActiveProcessorCount : 1;
     for (ULONG n = 0; n < cpus && pool->Queued > pool->Idle + (LONG)n && pool->Threads < pool->Max; n++)
         if (!start_worker(pool))
@@ -323,7 +319,7 @@ static void monitor_fire(TS_ENTRY *entry)
     }
 }
 
-/* lock held. a job was queued: wakes a worker, starts one, or has the monitor start some later. */
+/* lock held. wakes or starts a worker, or lets the monitor start some later. */
 static void ensure_worker(TP_POOL *pool)
 {
     if (pool->Queued <= pool->Idle) {
@@ -344,7 +340,7 @@ static void ensure_worker(TP_POOL *pool)
     }
 }
 
-/* lock held. queues a callback of an object. */
+/* lock held. */
 static void enqueue(TP_OBJECT *object, ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2)
 {
     TP_JOB *job = KbAlloc(sizeof(*job));
@@ -362,7 +358,7 @@ static void enqueue(TP_OBJECT *object, ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2)
     ensure_worker(pool);
 }
 
-/* lock held, and the caller's reference to the object is given to the call. */
+/* lock held, takes over the caller's reference to the object. */
 static void run_callback(TP_OBJECT *object, ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2)
 {
     TP_INSTANCE instance = {.Object = object, .Pool = object->Pool};
@@ -404,7 +400,7 @@ static void run_callback(TP_OBJECT *object, ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
     if (object->Finalization)
         object->Finalization(&instance, object->Context);
 
-    /* what the callback asked to happen once it returns. */
+    /* the *WhenCallbackReturns actions. */
     if (instance.Section)
         LeaveCriticalSection(instance.Section);
     if (instance.Mutex)
@@ -424,7 +420,7 @@ static void run_callback(TP_OBJECT *object, ULONG_PTR a0, ULONG_PTR a1, ULONG_PT
 
 static void attach_wait(TP_OBJECT *object);
 
-/* lock held. what is left to do for an object when one of its callbacks is over. */
+/* lock held. bookkeeping after a callback ends, drops the job's reference. */
 static void settle(TP_OBJECT *object)
 {
     if (object->Kind == TPK_WAIT && (object->Flags & TPF_LEGACY) && !(object->Flags & (TPF_UNREGISTERED | WT_EXECUTEONLYONCE)) &&
@@ -472,7 +468,7 @@ done:
     return 0;
 }
 
-/* lock held. runs the callback in the thread that found it due, or queues it. */
+/* lock held. runs the callback on the thread that found it due, or queues it. */
 static void dispatch(TP_OBJECT *object, ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2)
 {
     if (object->Flags & (WT_EXECUTEINWAITTHREAD | WT_EXECUTEINTIMERTHREAD_)) {
@@ -569,7 +565,7 @@ DECLSPEC_EXPORT TP_GROUP *WINAPI CreateThreadpoolCleanupGroup(void)
     return group;
 }
 
-/* lock held. whether the callbacks of an object are over, not counting the one this thread runs for it. */
+/* lock held. ignores the callback this thread is running for the object. */
 static BOOL idle(TP_OBJECT *object)
 {
     TP_INSTANCE *own = g_current == TLS_OUT_OF_INDEXES ? nullptr : TlsGetValue(g_current);
@@ -585,7 +581,7 @@ static void wait_idle(TP_OBJECT *object)
 
 static void disarm(TP_OBJECT *object);
 
-/* lock held. drops the callbacks of an object that have not begun, and what would make more. */
+/* lock held. drops the callbacks not yet started and disarms the object. */
 static LONG cancel_pending(TP_OBJECT *object)
 {
     LONG dropped = 0;
@@ -614,7 +610,7 @@ static void close_object(TP_OBJECT *object)
         return;
     object->Closed = TRUE;
     disarm(object);
-    /* a callback that is queued for good belongs to its group until it is done. */
+    /* a queued one-shot callback stays in its group until it is done. */
     BOOL single = object->Kind == TPK_SIMPLE || object->Kind == TPK_ITEM;
     if (object->Group && !(single && (object->Pending || object->Running))) {
         RemoveEntryList(&object->GroupLink);
@@ -626,7 +622,7 @@ static void close_object(TP_OBJECT *object)
 DECLSPEC_EXPORT void WINAPI CloseThreadpoolCleanupGroupMembers(TP_GROUP *group, BOOL cancel, void *context)
 {
     enter();
-    /* every callback that has not begun is dropped before any is waited for, or a freed thread would take them. */
+    /* drop every queued callback before waiting on any, or a freed worker would pick them up. */
     if (cancel) {
         for (PLIST_ENTRY e = group->Members.Flink; e != &group->Members; e = e->Flink)
             cancel_pending(CONTAINING_RECORD(e, TP_OBJECT, GroupLink));
@@ -644,7 +640,7 @@ DECLSPEC_EXPORT void WINAPI CloseThreadpoolCleanupGroupMembers(TP_GROUP *group, 
                 enter();
             }
             if (object->Group == group) {
-                /* the object stays out of the list for good, closed here unless a thread of its own did. */
+                /* leave the group for good, closing the object unless its owner already did. */
                 if (object->Closed) {
                     RemoveEntryList(&object->GroupLink);
                     object->Group = nullptr;
@@ -660,7 +656,7 @@ DECLSPEC_EXPORT void WINAPI CloseThreadpoolCleanupGroupMembers(TP_GROUP *group, 
 
 DECLSPEC_EXPORT void WINAPI CloseThreadpoolCleanupGroup(TP_GROUP *group)
 {
-    /* objects that are left do not belong to anything any more. */
+    /* remaining objects simply leave the group. */
     enter();
     while (!IsListEmpty(&group->Members)) {
         TP_OBJECT *object = CONTAINING_RECORD(RemoveHeadList(&group->Members), TP_OBJECT, GroupLink);
@@ -670,7 +666,7 @@ DECLSPEC_EXPORT void WINAPI CloseThreadpoolCleanupGroup(TP_GROUP *group)
     KbFree(group);
 }
 
-/* ------------------------------------------------------------------ the instance of a callback */
+/* ------------------------------------------------------------------ callback instances */
 
 DECLSPEC_EXPORT void WINAPI SetEventWhenCallbackReturns(TP_INSTANCE *instance, HANDLE event)
 {
@@ -698,7 +694,7 @@ DECLSPEC_EXPORT void WINAPI FreeLibraryWhenCallbackReturns(TP_INSTANCE *instance
     instance->Library = module;
 }
 
-/* the callback is over for whoever waits for it, and the actions it asked for happen now. */
+/* releases waiters and runs the requested actions now instead of on return. */
 DECLSPEC_EXPORT void WINAPI DisassociateCurrentThreadFromCallback(TP_INSTANCE *instance)
 {
     if (instance->Disassociated)
@@ -721,7 +717,7 @@ DECLSPEC_EXPORT void WINAPI DisassociateCurrentThreadFromCallback(TP_INSTANCE *i
     leave();
 }
 
-/* whether the pool has room for a thread to take over from this one while it runs long. */
+/* TRUE when the pool can add a thread to cover for this long running one. */
 DECLSPEC_EXPORT BOOL WINAPI CallbackMayRunLong(TP_INSTANCE *instance)
 {
     TP_POOL *pool = instance->Pool;
@@ -806,7 +802,7 @@ static void timer_fire(TS_ENTRY *entry)
 {
     TP_OBJECT *timer = CONTAINING_RECORD(entry, TP_OBJECT, Timer);
     if (timer->Period) {
-        /* a period counts from the due time, and a stall does not make the missed ones run at once. */
+        /* periods count from the due time, and missed ticks after a stall are not replayed. */
         ULONGLONG now = now_hns();
         entry->Due += (ULONGLONG)timer->Period * 10000;
         if (entry->Due <= now)
@@ -911,7 +907,7 @@ DECLSPEC_EXPORT void WINAPI CloseThreadpoolTimer(TP_OBJECT *timer)
 
 static DWORD WINAPI wait_service(void *parameter);
 
-/* lock held. gives a wait to a thread that watches it, one that has no other wait on the handle. */
+/* lock held. picks a wait thread with no other wait on the same handle. */
 static void attach_wait(TP_OBJECT *wait)
 {
     WAIT_THREAD *home = nullptr;
@@ -948,7 +944,7 @@ static void attach_wait(TP_OBJECT *wait)
     SetEvent(home->Control);
 }
 
-/* lock held. takes a wait away from its thread, whose reference it returns. */
+/* lock held. removes the wait from its thread and drops the thread's reference. */
 static void detach_wait(TP_OBJECT *wait)
 {
     WAIT_THREAD *home = wait->Home;
@@ -1025,7 +1021,7 @@ static DWORD WINAPI wait_service(void *parameter)
                     fire_wait(wait, WAIT_TIMEOUT);
             }
         } else {
-            /* a handle that was closed under its wait is dropped. */
+            /* drop waits whose handle was closed under them. */
             for (LONG i = 0; i < count; i++) {
                 TP_OBJECT *wait = snapshot[i];
                 DWORD flags;
@@ -1135,7 +1131,7 @@ static HANDLE pool_port(TP_POOL *pool)
     return pool->Port;
 }
 
-/* the object of an i/o handle, whose callbacks the completions of the handle make. */
+/* completions on file become callbacks of the returned object. */
 static TP_OBJECT *new_io(HANDLE file, void *callback, void *context, const KB_TP_ENV *env, ULONG flags)
 {
     TP_OBJECT *io = new_object(TPK_IO, callback, context, env);
@@ -1144,7 +1140,7 @@ static TP_OBJECT *new_io(HANDLE file, void *callback, void *context, const KB_TP
     io->Flags = flags;
     enter();
     HANDLE port = pool_port(io->Pool);
-    io->Refs++; /* the port names the object until the handle is closed, so the object stays */
+    io->Refs++; /* the port key points at the object until the handle is closed */
     leave();
     if (!port || !CreateIoCompletionPort(file, port, (ULONG_PTR)io, 0)) {
         DWORD error = port ? GetLastError() : ERROR_NOT_ENOUGH_MEMORY;
@@ -1266,8 +1262,8 @@ WINBASEAPI HANDLE WINAPI RegisterWaitForSingleObjectEx(HANDLE object, WAITORTIME
 }
 
 /*
- * completion: NULL returns at once, INVALID_HANDLE_VALUE waits for the callbacks that run, and an event is
- * signaled when they are done. the registration is gone either way.
+ * completion NULL returns at once, INVALID_HANDLE_VALUE waits for running callbacks, and an event is signaled when
+ * they are done. the registration is gone either way.
  */
 WINBASEAPI BOOL WINAPI UnregisterWaitEx(HANDLE handle, HANDLE completion)
 {
@@ -1375,7 +1371,7 @@ DECLSPEC_EXPORT BOOL WINAPI ChangeTimerQueueTimer(HANDLE queue, HANDLE handle, U
     return !gone;
 }
 
-/* lock held. takes a timer out of its queue and stops it. */
+/* lock held. removes a timer from its queue and stops it. */
 static BOOL delete_timer(TP_OBJECT *timer, HANDLE completion)
 {
     timer->Flags |= TPF_UNREGISTERED;

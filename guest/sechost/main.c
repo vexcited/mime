@@ -1,5 +1,5 @@
 /*
- * sechost.dll forwards to advapi32.dll, which holds what windows keeps here (see sechost.def and docs/sechost.md).
+ * sechost.dll forwards to advapi32.dll, which implements what windows keeps here. see sechost.def.
  */
 #include <mime/win32/winbase.h>
 

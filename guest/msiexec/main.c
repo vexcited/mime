@@ -1,7 +1,6 @@
 /*
- * msiexec.exe, the command line of the Windows Installer. It reads the switches, calls the installer functions of msi.dll
- * and ends with their result as its exit code. The 32-bit copy in SysWOW64 is also the host of the 32-bit custom actions
- * of a package, see msi.dll for how the installer starts it.
+ * msiexec.exe, the Windows Installer command line: parses the switches, calls msi.dll and exits with the result. the
+ * 32-bit copy in SysWOW64 also hosts a package's 32-bit custom actions, see remote.c in msi.dll.
  */
 #include <mime/win32/msi.h>
 #include <mime/win32/winuser.h>
@@ -17,16 +16,16 @@ enum { ACTION_NONE, ACTION_INSTALL, ACTION_REMOVE, ACTION_REPAIR, ACTION_ADMIN, 
 
 typedef struct COMMAND {
     int Action;
-    PWSTR Target;         /* the package or the product code */
-    PWSTR Properties;     /* the PROPERTY=value words, as they were typed */
+    PWSTR Target;         /* the package or product code. */
+    PWSTR Properties;     /* PROPERTY=value words as typed. */
     SIZE_T PropertiesLength;
-    PWSTR RepairOptions;  /* the letters after /f */
+    PWSTR RepairOptions;  /* the letters after /f. */
     PWSTR LogPath;
     DWORD LogMode;
     DWORD LogAttributes;
     INSTALLUILEVEL Level;
     BOOL LevelSet;
-    PWSTR Reboot;         /* the value of REBOOT, when a switch asked for one */
+    PWSTR Reboot;         /* the REBOOT value a switch asked for. */
     PWSTR PatchPath;
     PWSTR Pipe;
     BOOL Bad;
@@ -37,7 +36,7 @@ static void *allocate(SIZE_T bytes)
     return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bytes);
 }
 
-/* the next word of a command line, with its quotes taken off, and where the word started in the line. */
+/* the next word of the line without its quotes, and where it started. */
 static PCWSTR next_word(PCWSTR line, PWSTR word, SIZE_T capacity, PCWSTR *start)
 {
     while (*line == L' ' || *line == L'\t')
@@ -148,7 +147,7 @@ static PWSTR copy_text(PCWSTR text)
     return copy;
 }
 
-/* false when the line cannot be understood. */
+/* FALSE when the line cannot be parsed. */
 static BOOL parse(COMMAND *command, PCWSTR line)
 {
     WCHAR word[2048], argument[2048];
@@ -160,7 +159,7 @@ static BOOL parse(COMMAND *command, PCWSTR line)
             break;
         line = end;
         if (word[0] != L'/' && word[0] != L'-') {
-            /* a word with a name and a value is a property, any other word is the package. */
+            /* NAME=value words are properties, any other word is the package. */
             if (wcschr(word, L'=')) {
                 if (!add_property(command, start, (SIZE_T)(end - start)))
                     return FALSE;
@@ -177,7 +176,7 @@ static BOOL parse(COMMAND *command, PCWSTR line)
         if (match(option, L"?") || match(option, L"h") || match(option, L"help")) {
             command->Action = ACTION_HELP;
         } else if (match(option, L"n")) {
-            /* the product that /i is for when the package is a path: the package has the code. */
+            /* /n names the product for /i, ignored since a package path carries its own code. */
             line = next_word(line, argument, RTL_NUMBER_OF(argument), &start);
         } else if (match(option, L"i") || match(option, L"package")) {
             command->Action = ACTION_INSTALL;
@@ -230,7 +229,7 @@ static BOOL parse(COMMAND *command, PCWSTR line)
                    match(option, L"w") || match(option, L"d")) {
             command->Action = ACTION_REGISTER;
         } else {
-            /* the line is wrong, but the rest of it is read for the level of user interface it asks for. */
+            /* a bad switch, but the rest is still read for the UI level it asks for. */
             command->Bad = TRUE;
         }
         if (takes_target) {
@@ -248,7 +247,7 @@ static BOOL looks_like_product(PCWSTR text)
     return text[0] == L'{' && wcslen(text) == 38 && text[37] == L'}';
 }
 
-/* the product code of a package, read without looking at the machine. */
+/* reads a package's product code without consulting the machine. */
 static BOOL product_of_package(PCWSTR path, WCHAR code[39])
 {
     MSIHANDLE package;
@@ -329,7 +328,7 @@ static UINT run(COMMAND *command)
     switch (command->Action) {
     case ACTION_INSTALL:
         if (looks_like_product(command->Target)) {
-            /* a product that is installed: configure it with the properties given, its features as they were. */
+            /* an installed product: configure it with the given properties, keeping its features. */
             error = MsiConfigureProductExW(command->Target, 0, INSTALLSTATE_DEFAULT, properties);
         } else
             error = MsiInstallProductW(command->Target, properties);
@@ -407,6 +406,6 @@ void entry(void)
     if (command.Action == ACTION_REGISTER)
         ExitProcess(ERROR_SUCCESS);
     status = run(&command);
-    /* a package that wants a restart is a success that says so. */
+    /* a package that wants a restart returns a success status saying so. */
     ExitProcess(status);
 }

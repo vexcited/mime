@@ -1,5 +1,5 @@
 /*
- * the entry point of dwrite.dll, and the memory and text helpers its parts share.
+ * dwrite.dll entry point and the memory and text helpers shared by its parts.
  */
 #include "dw_private.h"
 
@@ -44,7 +44,7 @@ static WCHAR fold(WCHAR c)
         return (WCHAR)(c + 32);
     if (c < 0x80)
         return c;
-    /* latin-1 and the greek and cyrillic capitals, which names of fonts use. */
+    /* latin-1 plus the greek and cyrillic capitals, which font names use. */
     if ((c >= 0xC0 && c <= 0xDE && c != 0xD7) || (c >= 0x391 && c <= 0x3A9) || (c >= 0x410 && c <= 0x42F))
         return (WCHAR)(c + 32);
     if (c >= 0x400 && c <= 0x40F)

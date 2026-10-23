@@ -1,10 +1,8 @@
 /*
- * calls from x64 code into native code of the same process, for system
- * dlls whose x64 build only forwards to a native implementation, as
- * opengl32 does. an x64 stub moves rcx to r10 like a system call stub and
- * runs syscall with eax = MX_NATIVE_SYSCALL | table << 16 | index.
- * mimex86 calls the native function with the x64 argument registers and
- * stack, without leaving the thread or the process.
+ * calls from x64 code into native code of the same process, for system dlls whose x64 build only forwards to a
+ * native implementation, like opengl32. an x64 stub moves rcx to r10 like a system call stub and runs syscall with
+ * eax = MX_NATIVE_SYSCALL | table << 16 | index. mimex86 then calls the native function with the x64 argument
+ * registers and stack, on the same thread.
  */
 #ifndef MIME_MX64_H
 #define MIME_MX64_H

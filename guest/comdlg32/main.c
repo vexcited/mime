@@ -59,7 +59,7 @@ static const IClassFactoryVtbl g_factory_vtbl = {
 static FACTORY g_open_factory = {{&g_factory_vtbl}, FALSE};
 static FACTORY g_save_factory = {{&g_factory_vtbl}, TRUE};
 
-/* the open and save dialogs, and the legacy classes that Windows keeps for the dialogs of before Vista. */
+/* the open and save dialogs, plus the legacy classes Windows keeps for pre-Vista dialogs. */
 CDAPI HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void **object)
 {
     if (!object)

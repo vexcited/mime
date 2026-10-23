@@ -1,10 +1,10 @@
 /*
- * what d3d10.dll and d3d10_1.dll share to make devices: the driver types
- * and flags as direct3d 11 has them, and d3d11.dll's device creation.
+ * device creation shared by d3d10.dll and d3d10_1.dll: driver types and flags are mapped to direct3d 11's, then
+ * d3d11.dll creates the device.
  */
 #include "d3d10_private.h"
 
-/* the type an adapter of another driver than the hardware one keeps in its private data. */
+/* the adapter private data where a non hardware driver keeps its driver type. */
 static const GUID GUID_DeviceType = {0xD722FB4D, 0x7A68, 0x437A, {0xB2, 0x0C, 0x58, 0x04, 0xEE, 0x24, 0x94, 0xA6}};
 
 D3D_DRIVER_TYPE D3d10DriverType(D3D10_DRIVER_TYPE type)
@@ -34,7 +34,7 @@ BOOL D3d10AdapterMismatch(IDXGIAdapter *adapter, D3D10_DRIVER_TYPE type)
            kind != D3d10DriverType(type);
 }
 
-/* the direct3d 10 flags as direct3d 11 has them: debuggable moved, null maps and strict validation gone. */
+/* debuggable moved, null maps and strict validation are gone in direct3d 11. */
 UINT D3d10DeviceFlags(UINT flags)
 {
     UINT out = flags & (D3D10_CREATE_DEVICE_SINGLETHREADED | D3D10_CREATE_DEVICE_DEBUG |
@@ -69,7 +69,7 @@ HRESULT D3d10CreateDevice11(IDXGIAdapter *adapter, D3D_DRIVER_TYPE type, HMODULE
     return create(adapter, type, software, flags, &level, 1, D3D11_SDK_VERSION, desc, swapchain, device, nullptr, nullptr);
 }
 
-/* unless single threaded, the device is protected from several threads at once. */
+/* unless single threaded, the device is made thread safe. */
 HRESULT D3d10Protect(IUnknown *device, UINT flags)
 {
     ID3D10Multithread *multithread;

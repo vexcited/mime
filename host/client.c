@@ -1,6 +1,4 @@
-/*
- * cli side of the machine lifecycle: up, run, down and status.
- */
+/* machine lifecycle commands: up, run, down and status. */
 #include "instance.h"
 #include "ipc.h"
 #include "mime_cli.h"
@@ -172,9 +170,9 @@ int mime_cmd_status(const MimePaths *paths, int argc, char **argv)
 }
 
 /*
- * `mime down` shuts the machine down as windows does: the programs are told and given their time, the ones
- * left end, the files are written. --force ends them all at once, --timeout seconds changes the limit of the
- * whole shutdown. the machine process is ended after the guest's limit and a margin, whatever the guest does.
+ * normal shutdown notifies programs, waits and flushes files. --force terminates programs immediately; --timeout
+ * sets the overall limit in seconds. the host process is terminated after that limit plus a margin regardless of
+ * guest progress.
  */
 int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
 {
@@ -234,10 +232,8 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
 /* ------------------------------------------------------------------ run */
 
 /*
- * `mime run` is the console of the program, as a windows terminal is: its
- * output and input, ctrl+c and ctrl+break as ctrl events, and its going
- * away as the console closing. a gui program has no console, so like
- * cmd.exe the command returns as soon as it started, unless --wait.
+ * relays console I/O and Ctrl+C or Ctrl+Break events; disconnecting closes the console. GUI programs return
+ * immediately unless --wait is set.
  */
 
 #define ENABLE_PROCESSED_INPUT 0x1
@@ -258,10 +254,7 @@ static void on_run_signal(int sig)
     errno = saved;
 }
 
-/*
- * what the guest turned on in the terminal, kept from the output as it passes: the escape sequences that set
- * the modes a program leaves on when it ends or is killed.
- */
+/* tracks terminal modes enabled by guest escape sequences so they can be restored even if the program is killed. */
 typedef struct TerminalModes {
     bool alt_screen, cursor_hidden, wrap_off, keypad_application, cursor_application;
     bool mouse_9, mouse_1000, mouse_1002, mouse_1003, mouse_1005, mouse_1006, mouse_1007, mouse_1015;
@@ -272,7 +265,7 @@ typedef struct TerminalModes {
 } TerminalModes;
 
 static TerminalModes g_modes;
-static int g_modes_fd = -1; /* the terminal the guest's escape sequences went to */
+static int g_modes_fd = -1; /* the terminal the guest's escape sequences went to. */
 
 static void note_mode(TerminalModes *m, int mode, bool on)
 {
@@ -355,7 +348,7 @@ static void track_output(int fd, const uint8_t *data, size_t size)
     }
 }
 
-/* puts the terminal back the way the program found it, as far as it changed it. */
+/* restores terminal modes changed by the guest. */
 static void restore_terminal_modes(void)
 {
     TerminalModes *m = &g_modes;
@@ -415,8 +408,8 @@ static void apply_console_mode(uint32_t mode)
 }
 
 /*
- * the console is in charge of the terminal: the guest edits the line, echoes it and turns ctrl+c into
- * a ctrl event, so the terminal sends every key as it is typed. ctrl+backslash stays a signal, as ctrl+break.
+ * the guest handles editing, echo and Ctrl+C, so pass keys through immediately. Ctrl+backslash remains a signal for
+ * Ctrl+Break.
  */
 static void enter_raw_terminal(void)
 {
@@ -448,8 +441,8 @@ static uint32_t terminal_size(void)
 }
 
 /*
- * the exit code of a windows program has 32 bits, the status of a shell 8. the shell gets the low byte, or 1 for a
- * code whose low byte is zero, so that a failure never looks like a success. a code the status cannot show is printed.
+ * the shell receives the low byte of the 32-bit exit code, or 1 if a nonzero code has a zero low byte, so failure
+ * never becomes success. print codes the 8-bit shell status cannot represent.
  */
 static int shell_status(uint32_t code)
 {
@@ -476,8 +469,8 @@ static void write_all(int fd, const void *data, size_t size)
 }
 
 /*
- * asks the terminal where its cursor is, so that the console of the program starts there and does not paint
- * over what the shell left above it. returns column + 1 | row + 1 << 16, or 0 when the terminal does not say.
+ * queries the cursor so guest output preserves shell text above it. returns column + 1 | row + 1 << 16, or 0 if
+ * unanswered.
  */
 static uint32_t terminal_cursor(void)
 {
@@ -609,12 +602,12 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
                 uint32_t value;
                 if (sig == SIGINT || sig == SIGQUIT) {
                     if (!console) {
-                        /* a gui program is no part of the console: the wait ends, it keeps running. */
+                        /* GUI programs continue after the console wait ends. */
                         done = true;
                         exit_code = 128 + sig;
                         break;
                     }
-                    value = sig == SIGINT ? 0 : 1; /* CTRL_C_EVENT, CTRL_BREAK_EVENT */
+                    value = sig == SIGINT ? 0 : 1; /* CTRL_C_EVENT, CTRL_BREAK_EVENT. */
                     mime_ipc_send(fd, MIME_IPC_SIGNAL, &value, sizeof(value));
                 } else if (sig == SIGWINCH) {
                     value = terminal_size();

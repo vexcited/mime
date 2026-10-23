@@ -1,6 +1,6 @@
 /*
- * xmp: a packet read into a block of properties with a schema and a name, whose values are text or blocks of their own for
- * bags, sequences, alternatives and structures, and written back as a packet.
+ * XMP packets map to schema/name properties. text values stay text; bags, sequences, alternatives and structures
+ * become nested blocks.
  */
 #include "wic_codec.h"
 #include "wic_meta.h"
@@ -21,7 +21,7 @@ typedef struct Xml {
     const char *end;
 } Xml;
 
-/* ------------------------------------------------------------------ strings */
+/* strings. */
 
 static WCHAR *dup_utf8(const char *s, SIZE_T n)
 {
@@ -49,7 +49,7 @@ static WCHAR *dup_utf8(const char *s, SIZE_T n)
     return w;
 }
 
-/* decodes entities in place of a copy. */
+/* decode entities while copying text. */
 static WCHAR *decode_text(const char *s, SIZE_T n)
 {
     char *tmp = WicAlloc(n + 1);
@@ -141,7 +141,7 @@ static const char *find_colon(const char *s, SIZE_T n)
     return nullptr;
 }
 
-/* ------------------------------------------------------------------ parsing */
+/* parsing. */
 
 typedef struct Attr {
     const char *name;
@@ -162,7 +162,7 @@ typedef struct Tag {
 
 static BOOL is_space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 
-/* reads the tag at the cursor, which is at a '<'. */
+/* the cursor must point at an opening <. */
 static BOOL read_tag(Xml *x, Tag *t)
 {
     memset(t, 0, sizeof(*t));
@@ -341,7 +341,7 @@ static HRESULT xmp_index_item(IWICMetadataReader *block, UINT index, PROPVARIANT
 
 static HRESULT parse_property(Xml *x, const Tag *open, NsMap *ns, IWICMetadataReader *parent, UINT depth);
 
-/* reads what is inside an element up to its closing tag: plain text, or a collection, or a structure. */
+/* read text, a collection or a structure through the closing tag. */
 static HRESULT parse_value(Xml *x, const Tag *open, NsMap *ns, IWICMetadataReader *parent, const WCHAR *schema,
                            const WCHAR *name, UINT depth)
 {
@@ -367,7 +367,7 @@ static HRESULT parse_value(Xml *x, const Tag *open, NsMap *ns, IWICMetadataReade
     GUID format = GUID_MetadataFormatXMPStruct;
     IWICMetadataReader *block = nullptr;
     Tag t;
-    /* the first element decides: a bag, seq or alt, or a nested description. */
+    /* the first child selects bag, seq, alt or nested description parsing. */
     while (x->p < x->end && SUCCEEDED(hr)) {
         if (*x->p != '<') {
             x->p++;
@@ -432,7 +432,7 @@ static HRESULT parse_value(Xml *x, const Tag *open, NsMap *ns, IWICMetadataReade
                         Tag close;
                         read_tag(x, &close);
                     } else {
-                        /* a structure: the properties of the description inside, or of the item itself. */
+                        /* read properties from a nested description or the item itself. */
                         IWICMetadataReader *st;
                         hr = WicMetaReaderCreate(&GUID_MetadataFormatXMPStruct, &st);
                         if (SUCCEEDED(hr) && depth < MAX_DEPTH) {
@@ -470,7 +470,6 @@ static HRESULT parse_value(Xml *x, const Tag *open, NsMap *ns, IWICMetadataReade
                 CoTaskMemFree(lang_copy);
             }
             if (SUCCEEDED(hr)) {
-                /* up to the closing tag of the element. */
                 while (x->p < x->end && *x->p != '<')
                     x->p++;
                 Tag close;
@@ -513,7 +512,7 @@ static HRESULT parse_property(Xml *x, const Tag *open, NsMap *ns, IWICMetadataRe
         return E_OUTOFMEMORY;
     HRESULT hr;
     if (!uri) {
-        /* an element in a namespace nobody declared is skipped with its content. */
+        /* skip elements in undeclared namespaces, including their contents. */
         UINT level = open->empty ? 0 : 1;
         Tag t;
         while (level && x->p < x->end) {
@@ -539,7 +538,7 @@ static HRESULT parse_property(Xml *x, const Tag *open, NsMap *ns, IWICMetadataRe
 HRESULT WicXmpFromPacket(const BYTE *data, SIZE_T size, IWICMetadataReader **out)
 {
     Xml x = {(const char *)data, (const char *)data + size};
-    /* a byte order mark is skipped, utf-16 packets are not read. */
+    /* skip the byte order mark; UTF-16 packets are unsupported. */
     if (size >= 3 && data[0] == 0xef && data[1] == 0xbb && data[2] == 0xbf)
         x.p += 3;
     NsMap ns;
@@ -587,7 +586,6 @@ HRESULT WicXmpFromPacket(const BYTE *data, SIZE_T size, IWICMetadataReader **out
         }
         if (t.empty)
             continue;
-        /* the child elements until the end of the description. */
         while (SUCCEEDED(hr) && x.p < x.end) {
             while (x.p < x.end && *x.p != '<')
                 x.p++;
@@ -618,7 +616,7 @@ HRESULT WicXmpFromPacket(const BYTE *data, SIZE_T size, IWICMetadataReader **out
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ writing */
+/* writing. */
 
 typedef struct Out {
     char *data;
@@ -810,7 +808,6 @@ static void write_value(Out *o, NsOut *ns, const PROPVARIANT *v, UINT depth)
         put_escaped(o, text);
         return;
     }
-    /* numbers are written as they print. */
     char digits[24];
     unsigned long long u = 0;
     BOOL neg = FALSE;
@@ -863,7 +860,7 @@ HRESULT WicXmpToPacket(IWICMetadataReader *xmp, BOOL jpeg_header, BYTE **out, SI
     NsOut ns;
     memset(&ns, 0, sizeof(ns));
     UINT n = WicMetaCount(xmp);
-    /* the properties of the top level go into one description, grouped by nothing, each in its schema. */
+    /* write all top level properties in one description, retaining each schema. */
     for (UINT i = 0; i < n; i++) {
         const WicMetaItem *item = WicMetaItemAt(xmp, i);
         if (item->schema.vt != VT_LPWSTR || item->id.vt != VT_LPWSTR)

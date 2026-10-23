@@ -1,6 +1,6 @@
 /*
- * memory and semaphores crossing to the devices of other processes, see mime/mvk_share.h: the host keeps the
- * descriptors, these commands name them by the id of the shared object.
+ * memory and semaphores shared with other processes' devices, see mime/mvk_share.h. the host keeps the
+ * descriptors and these commands name them by shared object id.
  */
 #include "mvk_guest.h"
 

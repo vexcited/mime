@@ -1,13 +1,12 @@
 /*
- * the transport between the service control manager and what talks to it. windows speaks the svcctl rpc
- * interface to services.exe, over alpc on a machine and over the named pipe \pipe\svcctl from another;
- * mime has no rpc marshaling, so the manager and advapi32 exchange their own messages on that same pipe.
- * every message is a header and a body of little endian fields, none of which depends on the size of a
- * pointer, so a 32-bit client and a 64-bit manager understand each other. see docs/services.md.
+ * the transport between the service control manager and its clients. windows speaks the svcctl rpc interface to
+ * services.exe, locally over alpc and remotely over the \pipe\svcctl named pipe. mime has no rpc marshaling, so
+ * the manager and advapi32 exchange their own messages on that pipe. fields are little endian and never pointer
+ * sized, so a 32-bit client and a 64-bit manager understand each other.
  *
- * a request is: { magic, size, operation, flags } and its arguments. a reply is { magic, size, error, flags }
- * and its results. strings are a count of characters and the characters, utf-16, without a terminator;
- * 0xFFFFFFFF stands for a null string.
+ * a request is { magic, size, operation, flags } and its arguments, a reply { magic, size, error, flags } and its
+ * results. a string is a character count and the utf-16 characters, without a terminator; a count of 0xFFFFFFFF
+ * is a null string.
  */
 #ifndef MIME_SCM_H
 #define MIME_SCM_H
@@ -17,13 +16,12 @@
 #define SCM_PIPE_NAME L"\\\\.\\pipe\\svcctl"
 #define SCM_START_EVENT L"Global\\SvcctrlStartEvent_A3752DX"
 #define SCM_AUTOSTART_EVENT L"Global\\SC_AutoStartComplete"
-/* who may wait on them: everyone and the app containers, and the system and the administrators do all. */
+/* everyone and app containers may wait on the events; system and administrators get full access. */
 #define SCM_EVENT_SDDL L"D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x100000;;;WD)(A;;0x100000;;;AC)"
 #define SCM_MAGIC 0x314D4353 /* "SCM1" */
 #define SCM_MAX_MESSAGE (4u << 20)
 #define SCM_NULL_STRING 0xFFFFFFFFu
 
-/* the operations of the manager, what the client functions turn into. */
 enum {
     SCM_OP_OPEN_MANAGER = 1,
     SCM_OP_OPEN_SERVICE,
@@ -48,29 +46,26 @@ enum {
     SCM_OP_GET_DISPLAY_NAME,
     SCM_OP_GET_KEY_NAME,
     SCM_OP_BOOT_CONFIG_STATUS,
-    SCM_OP_NOTIFY_ATTACH, /* the connection stays open for completions of notifications */
+    SCM_OP_NOTIFY_ATTACH, /* the connection stays open to deliver notification completions. */
     /* from a service process. */
     SCM_OP_OPEN_CHANNEL = 64,
     SCM_OP_SET_STATUS,
     SCM_OP_SET_BITS,
-    /* what mime adds: the launch of an elevated process, which windows asks of the appinfo service. */
+    /* mime's own: launching an elevated process, which windows asks of the appinfo service. */
     SCM_OP_LAUNCH_ELEVATED = 96,
 };
 
-/* the controls the manager sends down a service process' channel, besides SERVICE_CONTROL_*. */
-#define SCM_CTRL_START_SHARE 80 /* start a service of a process that hosts several: name, arguments */
-#define SCM_CTRL_START_OWN 81   /* start the service of a process that hosts one, whatever it is called */
-#define SCM_CTRL_QUIT 32        /* with no name: every service is done, the dispatcher returns */
+/* controls the manager sends down a service process's channel, besides SERVICE_CONTROL_*. */
+#define SCM_CTRL_START_SHARE 80 /* starts one service of a shared process: name, arguments. */
+#define SCM_CTRL_START_OWN 81   /* starts the only service of its process, whatever its name. */
+#define SCM_CTRL_QUIT 32        /* with no name: every service is done and the dispatcher returns. */
 
-/* the header of every message. */
 typedef struct SCM_HEADER {
     UINT32 Magic;
-    UINT32 Size; /* of the whole message */
-    UINT32 Code; /* the operation of a request, the win32 error of a reply */
+    UINT32 Size; /* of the whole message. */
+    UINT32 Code; /* the operation of a request, the win32 error of a reply. */
     UINT32 Flags;
 } SCM_HEADER;
-
-/* ------------------------------------------------------------------ writing and reading fields */
 
 typedef struct SCM_WRITER {
     UCHAR *Data;
@@ -153,7 +148,7 @@ static inline void ScmPutBytes(SCM_WRITER *w, const void *bytes, UINT32 length)
     }
 }
 
-/* characters of a string, null for a null pointer. */
+/* a NULL pointer is written as a null string. */
 static inline void ScmPutString(SCM_WRITER *w, const WCHAR *s)
 {
     if (!s) {
@@ -170,7 +165,7 @@ static inline void ScmPutString(SCM_WRITER *w, const WCHAR *s)
     }
 }
 
-/* a string of a given length, which may hold nulls, as a multi sz does. */
+/* the string may hold nulls, like a multi-sz. */
 static inline void ScmPutChars(SCM_WRITER *w, const WCHAR *s, UINT32 chars)
 {
     if (!s) {
@@ -186,7 +181,7 @@ static inline void ScmPutChars(SCM_WRITER *w, const WCHAR *s, UINT32 chars)
     }
 }
 
-/* seals the message: its size goes in the header. */
+/* writes the final size into the header. */
 static inline UCHAR *ScmWriterFinish(SCM_WRITER *w, UINT32 *size)
 {
     if (w->Failed || !w->Data)
@@ -228,7 +223,7 @@ static inline UINT64 ScmGetU64(SCM_READER *r)
     return v;
 }
 
-/* a blob in place; null with a length of 0 when it is empty. */
+/* points into the message; NULL with a length of 0 when empty. */
 static inline const void *ScmGetBytes(SCM_READER *r, UINT32 *length)
 {
     UINT32 n = ScmGetU32(r);
@@ -246,7 +241,7 @@ static inline const void *ScmGetBytes(SCM_READER *r, UINT32 *length)
     return at;
 }
 
-/* a string in place, not terminated: its characters and their count. a null string has a null pointer. */
+/* points into the message, not terminated. a null string returns NULL. */
 static inline const WCHAR *ScmGetChars(SCM_READER *r, UINT32 *chars)
 {
     UINT32 n = ScmGetU32(r);
@@ -267,7 +262,7 @@ static inline const WCHAR *ScmGetChars(SCM_READER *r, UINT32 *chars)
     return at;
 }
 
-/* the header of a message read whole, checked. */
+/* checks the header of a message received whole. */
 static inline BOOLEAN ScmCheckMessage(const void *message, UINT32 received)
 {
     const SCM_HEADER *h = message;

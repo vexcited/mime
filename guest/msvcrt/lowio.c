@@ -12,7 +12,7 @@ int MsvcrtUmask;
 int MsvcrtAppType(void);
 #define _CONSOLE_APP 1
 
-/* ------------------------------------------------------------------ the table */
+/* ------------------------------------------------------------------ descriptor table */
 
 static int grow_table(void)
 {
@@ -118,7 +118,7 @@ static HANDLE fd_handle(int fd)
     return (HANDLE)MsvcrtFd(fd)->osfhnd;
 }
 
-/* inherited descriptors from a parent c runtime, then the standard handles. */
+/* takes descriptors inherited from a parent c runtime, then the standard handles. */
 void MsvcrtIoInit(void)
 {
     grow_table();
@@ -468,7 +468,7 @@ errno_t __cdecl _sopen_s(int *pfd, const char *name, int oflag, int shflag, int 
     return *pfd < 0 ? *_errno() : 0;
 }
 
-/* the open that _sopen and _sopen_s share: the secure one checks the mode and reports through the result. */
+/* shared by _sopen and _sopen_s: the secure one checks the mode and reports through the result. */
 DECLSPEC_EXPORT errno_t __cdecl _sopen_dispatch(const char *name, int oflag, int shflag, int pmode, int *pfd,
                                                 int secure)
 {
@@ -933,7 +933,7 @@ int MsvcrtWriteNolock(int fd, const void *buffer, unsigned count)
             if (!write_all(fd, tmp, n, &written))
                 return done ? (int)done : -1;
             if (written < n) {
-                /* counts the source bytes that made it, a newline only with its carriage return. */
+                /* counts the source bytes written, a newline only along with its carriage return. */
                 DWORD out = 0;
                 for (const char *s = start; s < p; s++) {
                     DWORD need = *s == LF ? 2 : 1;
@@ -950,7 +950,7 @@ int MsvcrtWriteNolock(int fd, const void *buffer, unsigned count)
         }
         return (int)done;
     }
-    /* unicode text: the buffer holds utf-16 characters. */
+    /* Unicode text: the buffer holds utf-16 characters. */
     const wchar_t *p = buffer, *end = (const wchar_t *)((const char *)buffer + (count & ~1u));
     unsigned done = 0;
     while (p < end) {

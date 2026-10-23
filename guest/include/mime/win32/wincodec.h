@@ -1,8 +1,6 @@
 /*
- * the windows imaging component: decoders, encoders, pixel format
- * converters, scalers and metadata, behind the interfaces of windowscodecs.dll.
- * their method order and the guids are windows', as programs call objects
- * through the vtables and ask for them by guid.
+ * windows imaging component of windowscodecs.dll: decoders, encoders, pixel format converters, scalers and
+ * metadata. method order and guids match windows, since programs call through the vtables and ask by guid.
  */
 #ifndef MIME_WIN32_WINCODEC_H
 #define MIME_WIN32_WINCODEC_H
@@ -402,7 +400,7 @@ typedef struct ID2D1Image ID2D1Image;
 typedef struct ID2D1Bitmap1 ID2D1Bitmap1;
 typedef struct ID2D1DeviceContext ID2D1DeviceContext;
 
-/* the property bags of codec options. */
+/* property bags for codec options. */
 typedef struct IErrorLog IErrorLog;
 typedef struct IEnumUnknown IEnumUnknown;
 

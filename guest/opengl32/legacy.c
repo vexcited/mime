@@ -1,7 +1,7 @@
 /*
- * legacy commands that are accepted so programs link and start, and that draw nothing: display lists, evaluators, the
- * raster position and pixel drawing, color indexes, texture coordinate generation, clip planes, stipples, the logic
- * operation, pixel transfer and the accumulation buffer. what the specification makes an error is still one.
+ * legacy commands accepted so programs link and start, which draw nothing: display lists, evaluators, the raster
+ * position and pixel drawing, color indexes, texture coordinate generation, clip planes, stipples, the logic operation,
+ * pixel transfer and the accumulation buffer. what the specification makes an error is still one.
  */
 #include "opengl32.h"
 
@@ -255,7 +255,7 @@ GLAPI void APIENTRY glGetPixelMapusv(GLenum map, GLushort *values)
 GLAPI void APIENTRY glAccum(GLenum op, GLfloat value)
 {
     GL_CONTEXT_OR_RETURN();
-    /* there is no accumulation buffer: the operation is an error then. */
+    /* there is no accumulation buffer, so the operation is an error. */
     gl_error(ctx, GL_INVALID_OPERATION);
 }
 

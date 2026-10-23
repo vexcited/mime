@@ -11,7 +11,7 @@ static WH_OBJECT **Slots;
 static WORD *Generations;
 static DWORD SlotCount;
 
-/* the process wide http version of WINHTTP_OPTION_HTTP_VERSION with a NULL handle. */
+/* process-wide HTTP version for WINHTTP_OPTION_HTTP_VERSION with a NULL handle. */
 static DWORD DefaultMajor = 1, DefaultMinor = 1;
 static DWORD WorkerThreads;
 
@@ -29,7 +29,7 @@ static BOOL CALLBACK Startup(PINIT_ONCE once, PVOID parameter, PVOID *context)
     return TRUE;
 }
 
-/* winsock for the process, started outside the loader lock by the first call that needs it. */
+/* initialize Winsock on first use, outside the loader lock. */
 void WhStartup(void)
 {
     InitOnceExecuteOnce(&StartupOnce, Startup, nullptr, nullptr);
@@ -103,7 +103,7 @@ PWSTR WhAnsiToWide(const char *text, DWORD length)
     return wide;
 }
 
-/* the ansi form windows sends on the wire, refusing best fit replacements like winhttp does. */
+/* convert to the wire ANSI code page, rejecting best-fit substitutions as WinHTTP does. */
 char *WhWideToAnsi(LPCWSTR text, DWORD length, BOOL *lossy)
 {
     BOOL used = FALSE;
@@ -124,7 +124,7 @@ BOOL WhFail(DWORD error)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ handles */
+/* handles. */
 
 static DWORD SlotOf(HINTERNET handle)
 {
@@ -272,7 +272,7 @@ void WhRelease(WH_OBJECT *object)
         WhSessionCleanup(object);
     if (object->Type == WH_WEBSOCKET)
         WhWebSocketReleased(object);
-    /* the last notification of a handle, after every operation on it ended. */
+    /* send the closing notification after all handle operations finish. */
     if (handle && object->Closed)
         WhNotify(object, WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING, &handle, sizeof(handle));
     if (object->Worker)
@@ -309,7 +309,7 @@ void WhRelease(WH_OBJECT *object)
     WhRelease(parent);
 }
 
-/* ------------------------------------------------------------------ sessions */
+/* sessions. */
 
 static void InitSession(WH_OBJECT *session, DWORD flags)
 {
@@ -372,9 +372,9 @@ HINTERNET WINAPI WinHttpOpen(LPCWSTR agent, DWORD access, LPCWSTR proxy, LPCWSTR
     return handle;
 }
 
-/* ------------------------------------------------------------------ connections */
+/* connections. */
 
-/* rfc 3492 punycode of one label, for the host names of WinHttpConnect. */
+/* RFC 3492 Punycode for a WinHttpConnect host label. */
 static BOOL Punycode(const DWORD *code, DWORD count, char *out, DWORD *length, DWORD capacity)
 {
     DWORD n = 128, delta = 0, bias = 72, h = 0, b = 0, o = *length;
@@ -435,7 +435,7 @@ static BOOL Punycode(const DWORD *code, DWORD count, char *out, DWORD *length, D
     return TRUE;
 }
 
-/* the ascii form of a host name: ascii passes through, other labels become xn-- punycode. */
+/* leave ASCII labels unchanged; encode others as xn-- Punycode. */
 static BOOL HostToAscii(LPCWSTR host, char *out, DWORD capacity)
 {
     DWORD o = 0;
@@ -490,7 +490,7 @@ static BOOL HostToAscii(LPCWSTR host, char *out, DWORD capacity)
     return TRUE;
 }
 
-/* characters winhttp refuses in a host name that is not a literal address. */
+/* invalid hostname characters, excluding literal addresses. */
 static BOOL BadHostChar(char c)
 {
     if (c < 0x21 || c > 0x7E)
@@ -551,7 +551,7 @@ HINTERNET WINAPI WinHttpConnect(HINTERNET session_handle, LPCWSTR server, INTERN
     return handle;
 }
 
-/* ------------------------------------------------------------------ requests */
+/* requests. */
 
 static BOOL TokenChar(WCHAR c)
 {
@@ -562,7 +562,7 @@ static BOOL TokenChar(WCHAR c)
     return c && c < 128 && strchr("!#$%&'*+-.^_`|~", (char)c) != nullptr;
 }
 
-/* the verb without the blanks around it, or FALSE for characters http does not allow in a method. */
+/* trim surrounding whitespace and reject invalid HTTP method characters. */
 static BOOL ParseVerb(LPCWSTR verb, LPCWSTR *start, DWORD *length)
 {
     while (*verb == ' ' || *verb == '\t')
@@ -825,9 +825,9 @@ BOOL WINAPI WinHttpCheckPlatform(void)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ options */
+/* options. */
 
-/* the options winhttp takes without a handle, the others failing as an incorrect handle type. */
+/* only these options accept a null handle; others fail with incorrect handle type. */
 static BOOL GlobalOption(DWORD option)
 {
     if (option >= 38 && option <= 98 && (0x1800840000200005ull >> (option - 38) & 1))
@@ -1159,7 +1159,6 @@ static DWORD CopyString(LPCWSTR text, LPVOID buffer, LPDWORD length)
     return ERROR_SUCCESS;
 }
 
-/* the url of a request as WinHttpCreateUrl writes it. */
 static PWSTR RequestUrl(WH_OBJECT *request)
 {
     SIZE_T size = wcslen(request->Host) + wcslen(request->Path) + 32;
@@ -1381,7 +1380,7 @@ BOOL WINAPI WinHttpQueryOption(HINTERNET handle, DWORD option, LPVOID buffer, LP
     return !error;
 }
 
-/* ------------------------------------------------------------------ com and service entry points */
+/* com and service entry points. */
 
 HRESULT WINAPI DllCanUnloadNow(void)
 {

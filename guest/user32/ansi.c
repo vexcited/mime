@@ -1,8 +1,8 @@
 /*
- * ansi and unicode. win32k carries unicode only. a message sent through an ansi function is turned into unicode
- * before it goes to the system, and what comes back is turned into ansi; a message that reaches a window procedure
- * expecting ansi is turned the other way. the messages that hold text or characters are the ones turned, those of
- * the standard controls, of the window itself, of creation and of device changes.
+ * ANSI and Unicode. win32k only carries Unicode: a message sent through an ANSI function is converted before it goes
+ * to the system and the result converted back, and a message reaching an ANSI window procedure is converted the other
+ * way. only messages holding text or characters are converted: the standard controls', the window's own, creation and
+ * device change messages.
  */
 #include "user32_private.h"
 #include <mime/msgtable.h>
@@ -11,7 +11,7 @@
 #define WM_IME_CHAR 0x0286
 #endif
 
-/* the ansi code page of windows 7 and later systems can be a double byte one. */
+/* since windows 7 the ANSI code page can be a double byte one. */
 static BOOL dbcs_system(void)
 {
     static int known = -1;
@@ -24,7 +24,7 @@ static BOOL dbcs_system(void)
 
 /* ------------------------------------------------------------------ characters */
 
-/* the unicode characters as many ansi bytes of the buffer make, as many as fit in room; whole characters only. */
+/* converts at most room characters, whole characters only. */
 static int ansi_to_wide_fit(const char *a, int bytes, WCHAR *out, int room)
 {
     if (room <= 0 || bytes <= 0)
@@ -44,7 +44,7 @@ static int ansi_to_wide_fit(const char *a, int bytes, WCHAR *out, int room)
     return chars;
 }
 
-/* the ansi bytes of as many characters as fit in room bytes, whole characters only. */
+/* converts into at most room bytes, whole characters only. */
 static int wide_to_ansi_fit(const WCHAR *w, int chars, char *out, int room)
 {
     if (room <= 0 || chars <= 0)
@@ -65,7 +65,6 @@ static int wide_to_ansi_fit(const WCHAR *w, int chars, char *out, int room)
     return bytes;
 }
 
-/* the bytes the characters take in ansi. */
 static int wide_ansi_size(const WCHAR *w, int chars)
 {
     if (chars <= 0)
@@ -97,7 +96,7 @@ static WCHAR char_to_wide(UINT ch)
     return wc;
 }
 
-/* the ansi character in the low word, a double byte one with its lead byte first. */
+/* the ANSI character in the low word, lead byte first for a double byte one. */
 static UINT wide_to_char(WCHAR wc)
 {
     if (wc < 0x80)
@@ -113,17 +112,17 @@ static UINT wide_to_char(WCHAR wc)
 
 enum {
     CV_NONE,
-    CV_STRING,     /* lparam is a string */
-    CV_ITEM,       /* lparam is a string, or the data of an item that has none */
-    CV_TEXT_OUT,   /* wparam characters of room at lparam */
-    CV_LINE_OUT,   /* room in the first word of lparam's buffer */
-    CV_ITEM_OUT,   /* an item's text, the room being the item's length */
-    CV_LENGTH,     /* a length of text, in characters of the other set */
-    CV_CHAR,       /* wparam is a character */
-    CV_CHAR_LOW,   /* the low word of wparam is a character */
-    CV_MDI,        /* an MDICREATESTRUCT */
-    CV_CREATE,     /* a CREATESTRUCT */
-    CV_DEVICE,     /* a DEV_BROADCAST structure with a name */
+    CV_STRING,     /* lparam is a string. */
+    CV_ITEM,       /* lparam is a string, or the data of an item that has none. */
+    CV_TEXT_OUT,   /* wparam characters of room at lparam. */
+    CV_LINE_OUT,   /* the room is in the first word of lparam's buffer. */
+    CV_ITEM_OUT,   /* an item's text, the room being the item's length. */
+    CV_LENGTH,     /* a text length, in characters of the other set. */
+    CV_CHAR,       /* wparam is a character. */
+    CV_CHAR_LOW,   /* the low word of wparam is a character. */
+    CV_MDI,        /* an MDICREATESTRUCT. */
+    CV_CREATE,     /* a CREATESTRUCT. */
+    CV_DEVICE,     /* a DEV_BROADCAST structure with a name. */
     CV_PASSWORD_SET,
     CV_PASSWORD_GET,
 };
@@ -190,7 +189,7 @@ static int kind_of(UINT msg)
     return CV_NONE;
 }
 
-/* whether a command of a list or combo box carries a string: the control has strings, or the items have none to keep. */
+/* items are strings unless the box is owner drawn without the has strings style. */
 static BOOL item_has_text(HWND hwnd, UINT msg)
 {
     DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
@@ -198,9 +197,9 @@ static BOOL item_has_text(HWND hwnd, UINT msg)
     return (style & (combo ? 0x200u : 0x40u)) || !(style & 0x30);
 }
 
-/* ------------------------------------------------------------------ ansi to unicode, for the sender */
+/* ------------------------------------------------------------------ ANSI to Unicode, for the sender */
 
-/* a name inside a device broadcast structure, put after the fixed part of the unicode one. */
+/* the converted name goes after the fixed part of the Unicode structure. */
 static void *device_to_wide(const void *in, void **block)
 {
     const DWORD *h = in;
@@ -341,7 +340,7 @@ BOOL UserConvBegin(CONV *c, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     return TRUE;
 }
 
-/* the result of a call made on the unicode form, as the caller who used the ansi form gets it. */
+/* converts the result of the Unicode call back for the ANSI caller. */
 LRESULT UserConvEnd(CONV *c, LRESULT result)
 {
     switch (c->kind) {
@@ -395,7 +394,7 @@ LRESULT UserConvEnd(CONV *c, LRESULT result)
     }
     case CV_LENGTH:
         if (result > 0 && dbcs_system()) {
-            /* the length the text has in ansi needs the text. */
+            /* the ANSI length needs the text itself. */
             WCHAR *text = UserAlloc(((SIZE_T)result + 2) * sizeof(WCHAR));
             if (text) {
                 LRESULT n = c->msg == WM_GETTEXTLENGTH
@@ -437,11 +436,11 @@ LRESULT UserConvEnd(CONV *c, LRESULT result)
     return result;
 }
 
-/* ------------------------------------------------------------------ the entry points that send */
+/* ------------------------------------------------------------------ sending entry points */
 
 /*
- * a copy of global memory for a window of another process: the memory is locked here, in the sender's process, and the
- * window manager is given the address. whether or not the receiver took it, the sender's handle is used up by the send.
+ * global memory for a window of another process is locked here, in the sender's process, and the window manager gets
+ * the address. the send uses up the sender's handle whether or not the receiver took it.
  */
 static LRESULT send_global_copy(HWND hwnd, WPARAM size, HGLOBAL memory, ULONG_PTR info, DWORD type)
 {
@@ -467,7 +466,7 @@ LRESULT UserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG
         return c.refused ? c.refusal : 0;
     LRESULT r = NtUserMessageCall(hwnd, msg, c.wparam, c.lparam, info, type, FALSE);
     if (type == MIME_MSGCALL_SENDTIMEOUT) {
-        /* the answer of the procedure is in the structure, the call only says it came. */
+        /* the procedure's answer is in the structure, the return only says one came. */
         MIME_SEND_TIMEOUT *st = (MIME_SEND_TIMEOUT *)info;
         if (r)
             st->Result = (ULONG_PTR)UserConvEnd(&c, (LRESULT)st->Result);
@@ -486,7 +485,7 @@ LRESULT UserSendMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL 
     return UserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_SEND, ansi);
 }
 
-/* ------------------------------------------------------------------ unicode to ansi, for the receiver */
+/* ------------------------------------------------------------------ Unicode to ANSI, for the receiver */
 
 static LRESULT call_ansi_proc(WNDPROC proc, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
@@ -566,7 +565,7 @@ static LRESULT call_ansi_proc(WNDPROC proc, HWND hwnd, UINT msg, WPARAM wparam, 
         if (wparam <= 0x7F)
             return proc(hwnd, msg, wparam, lparam);
         UINT ch = wide_to_char((WCHAR)wparam);
-        /* a double byte character is two messages, the lead byte and then the trail byte. */
+        /* a double byte character arrives as two messages, lead byte first. */
         if (ch > 0xFF) {
             proc(hwnd, msg, ch >> 8, lparam);
             return proc(hwnd, msg, ch & 0xFF, lparam);
@@ -648,7 +647,7 @@ LRESULT UserCallProc(WNDPROC proc, BOOL proc_ansi, HWND hwnd, UINT msg, WPARAM w
     return proc(hwnd, msg, wparam, lparam);
 }
 
-/* the character in the wparam of a posted or retrieved message, between its ansi and unicode forms. */
+/* converts the character in a posted or retrieved message's wparam. */
 WPARAM UserCharWparam(UINT msg, WPARAM wparam, BOOL to_wide)
 {
     switch (msg) {

@@ -1,7 +1,4 @@
-/*
- * system metrics, system colors and SystemParametersInfo, with the
- * windows 11 values scaled to the requested dpi.
- */
+/* system metrics, colors and SystemParametersInfo, using Windows 11 values scaled to the requested DPI. */
 #include "win32k.h"
 
 BRUSH *GdiCreateSystemBrush(COLORREF color, int sys_color);
@@ -10,7 +7,7 @@ W32_DISPLAY W32Display;
 
 #define NUM_SYSCOLORS 31
 
-/* windows 11 light theme. */
+/* Windows 11 light theme. */
 static const COLORREF g_default_colors[NUM_SYSCOLORS] = {
     RGB(0xC8, 0xC8, 0xC8), /* COLOR_SCROLLBAR */
     RGB(0x00, 0x00, 0x00), /* COLOR_BACKGROUND */
@@ -37,7 +34,7 @@ static const COLORREF g_default_colors[NUM_SYSCOLORS] = {
     RGB(0xE3, 0xE3, 0xE3), /* COLOR_3DLIGHT */
     RGB(0x00, 0x00, 0x00), /* COLOR_INFOTEXT */
     RGB(0xFF, 0xFF, 0xE1), /* COLOR_INFOBK */
-    RGB(0xB5, 0xB5, 0xB5), /* unused slot 25 */
+    RGB(0xB5, 0xB5, 0xB5), /* unused slot 25. */
     RGB(0x00, 0x66, 0xCC), /* COLOR_HOTLIGHT */
     RGB(0xB9, 0xD1, 0xEA), /* COLOR_GRADIENTACTIVECAPTION */
     RGB(0xD7, 0xE4, 0xF2), /* COLOR_GRADIENTINACTIVECAPTION */
@@ -48,7 +45,7 @@ static const COLORREF g_default_colors[NUM_SYSCOLORS] = {
 static COLORREF g_colors[NUM_SYSCOLORS];
 static BRUSH *g_brushes[NUM_SYSCOLORS];
 
-/* the display the host reports in the boot information; the dpi is read once, like the windows system dpi. */
+/* read system DPI once from host boot information, as on Windows. */
 static void read_display(void)
 {
     const volatile MimeBootInfo *boot = HalMimeGetBootInfo();
@@ -67,7 +64,7 @@ static void read_display(void)
 void MetricsInitialize(void)
 {
     const MimeBootInfo *boot = HalMimeGetBootInfo();
-    /* the host connects to the desktop while the guest boots, which takes about as long. */
+    /* wait for the host desktop connection while the guest boots. */
     LARGE_INTEGER began;
     KeQuerySystemTime(&began);
     while (!__atomic_load_n(&boot->display_ready, __ATOMIC_ACQUIRE)) {
@@ -93,7 +90,6 @@ void MetricsInitialize(void)
     W32SystemFont = W32MessageFontForDpi(W32Display.Dpi);
 }
 
-/* the host display changed size or work area, or a program set a display mode. */
 void MetricsDisplayChanged(void)
 {
     LONG width = W32Display.Width, height = W32Display.Height;
@@ -129,7 +125,7 @@ int MetricsGet(int index, UINT dpi)
 {
     if (!dpi)
         dpi = W32SystemDpi();
-    /* the sizing border is 3 fixed pixels plus the scaled border width, like windows. */
+    /* the sizing border is 3 fixed pixels plus the scaled border width, like Windows. */
     int frame = 3 + scale(1, dpi), padded = scale(4, dpi);
     switch (index) {
     case SM_CXSCREEN:
@@ -391,7 +387,7 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
             DWORD dwFlags;
             LPWSTR lpszDefaultScheme;
         } hc;
-        /* the size is checked before anything is written: callers pass smaller buffers and expect a failure. */
+        /* validate the size before writing; smaller buffers must fail. */
         if (!NT_SUCCESS(MimeCopyFromUser(&hc.cbSize, data, sizeof(UINT))) || hc.cbSize != sizeof(hc))
             return FALSE;
         hc.dwFlags = 0x00000002; /* HCF_AVAILABLE */
@@ -424,7 +420,7 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
     }
 }
 
-/* whether a SPI_ action changes a setting: the old ones are numbered get then set, the newer ones the other way, and the work area is the odd one out. */
+/* older SPI_ pairs are get then set; newer pairs reverse that order. the work area is an exception. */
 static BOOL sets_parameter(UINT action)
 {
     if (action == 0x2F)

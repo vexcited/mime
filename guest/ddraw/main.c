@@ -1,11 +1,11 @@
 /*
- * ddraw.dll's exports: creating directdraw objects and clippers,
- * enumerating the display, the class objects CoCreateInstance reaches, and
- * the internal entry points other system dlls once called.
+ * ddraw.dll exports: directdraw objects and clippers, display enumeration,
+ * class objects for CoCreateInstance, and internal entry points other system
+ * dlls once called.
  *
- * there is one display, the host's, without a guid of its own: windows
- * enumerates it as the primary display driver and names monitors with
- * guids only on machines with several.
+ * there is one display, the host's, with no guid of its own: Windows
+ * enumerates it as the primary display driver and gives monitors guids only
+ * on machines with several.
  */
 #include "ddraw_private.h"
 
@@ -27,7 +27,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
 
 /* ------------------------------------------------------------------ creation */
 
-/* the guids windows takes for the display: none, DDCREATE_HARDWAREONLY and DDCREATE_EMULATIONONLY. */
+/* the guids accepted for the display: none, DDCREATE_HARDWAREONLY and DDCREATE_EMULATIONONLY. */
 static BOOL our_guid(const GUID *guid)
 {
     return guid == nullptr || guid == (const GUID *)DDCREATE_HARDWAREONLY ||
@@ -74,7 +74,7 @@ DDRAWAPI HRESULT WINAPI DirectDrawCreateClipper(DWORD flags, LPDIRECTDRAWCLIPPER
 
 /* ------------------------------------------------------------------ enumeration */
 
-/* only the ansi forms enumerate; the wide ones are not implemented in windows either. */
+/* only the ansi forms enumerate, the wide ones are not implemented on Windows either. */
 DDRAWAPI HRESULT WINAPI DirectDrawEnumerateExA(LPDDENUMCALLBACKEXA callback, LPVOID context, DWORD flags)
 {
     if (!callback || (flags & ~(DDENUM_ATTACHEDSECONDARYDEVICES | DDENUM_DETACHEDSECONDARYDEVICES |
@@ -238,7 +238,7 @@ void WINAPI ReleaseDDThreadLock(void)
     RtlLeaveCriticalSection(&DdLock);
 }
 
-/* the setup and driver hooks of other system components, which mime's do not use. */
+/* setup and driver hooks for other system components, which mime's do not use. */
 HRESULT WINAPI CompleteCreateSysmemSurface(void *surface)
 {
     return DDERR_UNSUPPORTED;
@@ -307,7 +307,7 @@ HRESULT WINAPI RegisterSpecialCase(DWORD a, DWORD b, DWORD c, DWORD d)
     return DD_OK;
 }
 
-/* the compatibility shims windows' application database applies; mime has none to set. */
+/* shims from the Windows application compatibility database, which mime has none of. */
 HRESULT WINAPI SetAppCompatData(DWORD index, DWORD data)
 {
     return index > 12 ? DDERR_INVALIDPARAMS : DD_OK;

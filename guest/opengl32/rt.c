@@ -1,17 +1,13 @@
-/*
- * the little runtime of an import free dll: memory from the kernel, a
- * lock, and debug output.
- */
+/* the small runtime of an import free dll: memory from the kernel, a lock, and debug output. */
 #include "opengl32.h"
 
 #include <stdarg.h>
 
 /*
- * small blocks come from size classes carved out of 64K chunks, big ones
- * straight from NtAllocateVirtualMemory. each block has a 16 byte header
- * holding its class, or its size for big blocks.
+ * small blocks come from size classes carved out of 64K chunks, big ones straight from NtAllocateVirtualMemory. each
+ * block has a 16 byte header holding its class, or its size for big blocks.
  */
-#define CLASS_COUNT 9 /* 32 to 8192 bytes */
+#define CLASS_COUNT 9 /* 32 to 8192 bytes. */
 #define CHUNK (64 * 1024)
 
 typedef struct FreeBlock {
@@ -174,8 +170,6 @@ uint64_t gl_hash(const void *data, SIZE_T size, uint64_t seed)
     }
     return h;
 }
-
-/* ---------------------------------------------------------------- names */
 
 void *gl_name_get(GlNames *n, GLuint name)
 {

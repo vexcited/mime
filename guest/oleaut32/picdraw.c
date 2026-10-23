@@ -1,10 +1,10 @@
 /*
- * drawing pictures. Bitmaps and icons are blitted from the shared context, which is set up so that the himetric
- * rectangle of the picture maps onto its pixels with the y axis up. Metafiles are played into the destination.
+ * drawing pictures. Bitmaps and icons are blitted from the shared dc, mapped so the picture's himetric rectangle,
+ * y up, lands on its pixels. Metafiles are played into the destination.
  */
 #include "picture.h"
 
-/* the device contexts a picture may be drawn into: DC, metafile DC, memory DC and enhanced metafile DC. */
+/* dc kinds a picture may be drawn into. */
 #define DC_KINDS_ALLOWED ((1u << OBJ_DC) | (1u << OBJ_METADC) | (1u << OBJ_METAFILE) | (1u << OBJ_MEMDC) | (1u << OBJ_ENHMETADC))
 #define OBJECT_KIND_LAST 13
 
@@ -28,7 +28,7 @@ static BOOL high_contrast(void)
     return SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(params), &params, 0) && (params.dwFlags & HC_ON);
 }
 
-/* a one bit source turns into the colors of the window, or their swap on a display for people who need contrast. */
+/* monochrome sources take the window colors, swapped in high contrast mode. */
 static void colors_set(HDC dc, DEST_STATE *state)
 {
     COLORREF background = GetSysColor(COLOR_WINDOW), text = GetSysColor(COLOR_WINDOWTEXT);
@@ -53,7 +53,7 @@ typedef struct MAPPING {
     SIZE WindowExtent, ViewportExtent;
 } MAPPING;
 
-/* himetric units with y up on the rectangle of the picture, onto its pixels. */
+/* maps the picture's himetric rectangle, y up, onto its pixels. */
 static void map_set(HDC dc, const PIC_IMAGE *image, MAPPING *saved)
 {
     saved->Mode = SetMapMode(dc, MM_ANISOTROPIC);
@@ -81,7 +81,7 @@ typedef struct BLIT {
     SIZE Pixels;
 } BLIT;
 
-/* the same blit through the pixels of the bitmap, for destinations that cannot take a bitmap out of a context. */
+/* the same blit via the bitmap's pixels, for destinations that cannot blit from a dc. */
 static BOOL blit_by_pixels(const BLIT *b, HDC source, HBITMAP bitmap, DWORD rop)
 {
     int dpi_x = PicDpiX(), dpi_y = PicDpiY();
@@ -102,7 +102,7 @@ static BOOL blit_by_pixels(const BLIT *b, HDC source, HBITMAP bitmap, DWORD rop)
         LONG y0 = b->Cys < 0 ? b->Ys + b->Cys : b->Ys;
         LONG wide = b->Cxs < 0 ? -b->Cxs : b->Cxs, high = b->Cys < 0 ? -b->Cys : b->Cys;
         LONG x = b->X, y = b->Y, cx = b->Cx, cy = b->Cy;
-        /* the picture is upright when the source runs downward, and mirrored in the other directions. */
+        /* a downward source is upright, other directions mirror it. */
         if (b->Cys > 0) {
             y += cy;
             cy = -cy;
@@ -128,9 +128,9 @@ static BOOL blit(const BLIT *b, HDC source, HBITMAP bitmap, DWORD rop)
     return blit_by_pixels(b, source, bitmap, rop);
 }
 
-/* ------------------------------------------------------------------ the bitmap in a context of the program */
+/* ------------------------------------------------------------------ SelectPicture */
 
-/* the picture lets go of the context it was put in by SelectPicture. */
+/* takes the bitmap back out of the dc SelectPicture put it in. */
 HRESULT PicTakeOut(PIC_IMAGE *image)
 {
     if (!image->Home)
@@ -174,7 +174,7 @@ HRESULT PicSelect(PIC_IMAGE *image, HDC in, HDC *out, HBITMAP *displaced)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the kinds */
+/* ------------------------------------------------------------------ per picture type */
 
 typedef struct VIEW {
     HDC Dest;

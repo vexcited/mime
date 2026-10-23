@@ -1,6 +1,4 @@
-/*
- * helpers shared by the interpreter files of the x86 core.
- */
+/* helpers shared by the interpreter files of the x86 core. */
 #ifndef MIME_X86_INTERNAL_H
 #define MIME_X86_INTERNAL_H
 
@@ -40,7 +38,7 @@ static inline uint64_t x86_sext(uint64_t v, int size)
     }
 }
 
-/* memory, accessed in place. */
+/* guest memory is accessed in place. */
 static inline uint8_t rd8(uint64_t a) { return *(volatile uint8_t *)(uintptr_t)a; }
 static inline uint16_t rd16(uint64_t a) { uint16_t v; __builtin_memcpy(&v, (void *)(uintptr_t)a, 2); return v; }
 static inline uint32_t rd32(uint64_t a) { uint32_t v; __builtin_memcpy(&v, (void *)(uintptr_t)a, 4); return v; }
@@ -70,7 +68,7 @@ static inline void wrn(uint64_t a, int size, uint64_t v)
     }
 }
 
-/* the effective address of the memory operand; cpu->rip is the next instruction. */
+/* c->rip must already point at the next instruction. */
 static inline uint64_t x86_ea(X86Cpu *c, const X86Insn *i)
 {
     uint64_t a = (uint64_t)(int64_t)i->disp;
@@ -92,12 +90,10 @@ static inline uint64_t x86_ea(X86Cpu *c, const X86Insn *i)
 [[noreturn]] void x86_fault(X86Cpu *c, uint32_t code, uint64_t p0, uint64_t p1);
 [[noreturn]] void x86_undefined(X86Cpu *c);
 
-/* lazy flags. */
 uint32_t x86_arith_flags(X86Cpu *c);
 int x86_cond(X86Cpu *c, int cc);
 void x86_set_szp(X86Cpu *c, uint64_t res, int size, uint32_t others);
 
-/* instruction groups living in other files. */
 void x86_exec_sse(X86Cpu *c, const X86Insn *i);
 void x86_exec_x87(X86Cpu *c, const X86Insn *i);
 void x86_exec_mmx(X86Cpu *c, const X86Insn *i);

@@ -1,6 +1,4 @@
-/*
- * float math without libm and 2x3 matrices.
- */
+/* float math without libm, and 2x3 matrices. */
 #include "vector.h"
 
 #if defined(__SSE2__)

@@ -1,12 +1,10 @@
-/*
- * helpers shared by the vector library sources.
- */
+/* helpers shared by the vector library sources. */
 #ifndef MIME_LIB_VECTOR_INTERNAL_H
 #define MIME_LIB_VECTOR_INTERNAL_H
 
 #include "vector.h"
 
-/* grows an array so that at least need elements fit, doubling. */
+/* grows an array by doubling until at least need elements fit. */
 static inline int vec_grow(const MimeAllocator *a, void **buf, uint32_t *cap, uint32_t need, size_t esz, uint32_t limit)
 {
     if (need <= *cap)

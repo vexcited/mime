@@ -1,5 +1,5 @@
 /*
- * the scanf family over msvcrt's input engine (scan.h).
+ * the scanf family over msvcrt's input engine in scan.h.
  */
 #include "msvcrt_private.h"
 

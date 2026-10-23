@@ -1,7 +1,4 @@
-/*
- * d3dcompiler_47.dll: compiling, reflecting, disassembling and editing
- * direct3d shaders and the dxbc containers that hold them.
- */
+/* d3dcompiler_47.dll: compiles, reflects, disassembles and edits shaders and dxbc containers. */
 #ifndef MIME_WIN32_D3DCOMPILER_H
 #define MIME_WIN32_D3DCOMPILER_H
 
@@ -17,7 +14,7 @@
 #define D3DCOMPILER_DLL_W L"d3dcompiler_47.dll"
 #define D3DCOMPILER_DLL_A "d3dcompiler_47.dll"
 
-/* the d3d9 style error of invalid calls, which the container functions return. */
+/* the container functions return this d3d9 style error. */
 #define D3DERR_INVALIDCALL ((HRESULT)0x8876086C)
 
 typedef enum D3D_BLOB_PART {
@@ -71,7 +68,7 @@ typedef enum D3D_INCLUDE_TYPE {
     D3D_INCLUDE_SYSTEM = 1
 } D3D_INCLUDE_TYPE;
 
-/* the files #include opens, as the program provides them. */
+/* lets the program supply the files #include opens. */
 typedef struct ID3DInclude ID3DInclude;
 typedef struct ID3DIncludeVtbl {
     HRESULT(STDMETHODCALLTYPE *Open)(ID3DInclude *This, D3D_INCLUDE_TYPE type, LPCSTR name, LPCVOID parent,

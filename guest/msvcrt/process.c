@@ -860,8 +860,8 @@ char *__cdecl _cgets(char *buf)
 }
 
 /*
- * a line from the keyboard with the editing of backspace, echoed: at most size - 1 characters are kept and the count
- * is stored. A line that does not fit is a range error, with the buffer made empty.
+ * reads a line from the keyboard with backspace editing and echo, keeping at most size - 1 characters and storing the
+ * count. a line that does not fit is a range error and leaves the buffer empty.
  */
 errno_t __cdecl _cgets_s(char *buf, size_t size, size_t *count)
 {

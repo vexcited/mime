@@ -9,9 +9,9 @@
     .text
 
 /*
- * the kernel leaves the CONTEXT of the interrupted code at the stack pointer, and the EXCEPTION_RECORD above
- * it. the unwind data says so, as on windows: an unwind through the dispatcher restores every register from
- * that context and goes on at the faulting pc.
+ * the kernel leaves the interrupted code's CONTEXT at the stack pointer, with the EXCEPTION_RECORD above it.
+ * the unwind data says so, as on Windows: an unwind through the dispatcher restores every register from that
+ * context and resumes at the faulting pc.
  */
     .globl  KiUserExceptionDispatcher
     .p2align 4
@@ -126,9 +126,9 @@ RtlCaptureContext:
     ret
 
 /*
- * RtlpResumeContext, with the context in x0, continues at it, the parts its flags name. x16 and x17
- * are the scratch of the jump, and x18 stays the thread's. a context without a control part, which has
- * nowhere to continue at, comes back after loading what it holds.
+ * RtlpResumeContext continues at the context in x0, loading the parts its flags name. x16 and x17 are
+ * scratch for the jump, and x18 stays the thread's. a context without a control part has nowhere to
+ * continue, so it returns after loading what it holds.
  */
     .globl  RtlpResumeContext
     .p2align 4
@@ -175,7 +175,7 @@ RtlpResumeContext:
 2:  ldr     w17, [x16]
     tbz     w17, #0, 3f             /* CONTEXT_CONTROL */
     ldp     x29, x30, [x16, #0x0F0]
-    ldr     w17, [x16, #0x004]      /* Cpsr, of which only the condition flags are the program's */
+    ldr     w17, [x16, #0x004]      /* Cpsr: only the condition flags belong to the program */
     and     x17, x17, #0xF0000000
     msr     nzcv, x17
     /* nothing is read from the context once the stack pointer moves, since it may lie below it. */
@@ -186,12 +186,11 @@ RtlpResumeContext:
 3:  ret
 
 /*
- * RtlpCallConsolidate takes the context in x0, the callback in x1 and the exception record in x2.
+ * RtlpCallConsolidate: x0 = context, x1 = callback, x2 = exception record.
  *
- * it runs the callback of STATUS_UNWIND_CONSOLIDATE, the catch block of a c++ exception, with the nonvolatile
- * registers of the target frame, and returns where it says to continue. a copy of the target's context at the
- * stack pointer makes an unwind from inside the callback continue straight at the target frame, as on
- * windows.
+ * runs the STATUS_UNWIND_CONSOLIDATE callback, the catch block of a c++ exception, with the target frame's
+ * nonvolatile registers, and returns where it says to continue. a copy of the target's context at the stack
+ * pointer makes an unwind from inside the callback continue straight at the target frame, as on Windows.
  */
     .globl  RtlpCallConsolidate
     .p2align 4
@@ -211,7 +210,7 @@ RtlpCallConsolidate:
     stp     d10, d11, [x12, #0x70]
     stp     d12, d13, [x12, #0x80]
     stp     d14, d15, [x12, #0x90]
-    /* the leading 0x310 bytes of the context, which are all an unwind restores from. */
+    /* only the first 0x310 bytes of the context matter to an unwind. */
     mov     x9, x0
     mov     x10, sp
     mov     w11, #24

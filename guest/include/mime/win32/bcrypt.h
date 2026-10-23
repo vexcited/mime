@@ -1,7 +1,4 @@
-/*
- * cng primitives, bcrypt.dll: algorithm providers, hashes, symmetric and
- * asymmetric keys, secret agreement and key derivation.
- */
+/* cng primitives of bcrypt.dll. */
 #ifndef MIME_WIN32_BCRYPT_H
 #define MIME_WIN32_BCRYPT_H
 

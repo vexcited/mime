@@ -1,13 +1,13 @@
 /*
- * the Button control: push buttons, check boxes, radio buttons and group
- * boxes, drawn with the visual style when it is available.
+ * the Button control: push buttons, check boxes, radio buttons and group boxes, drawn with the visual style when it
+ * is available.
  */
 #include "user32_private.h"
 
 typedef struct BUTTON {
     UINT State;      /* BST_* */
     BOOL Hot;
-    BOOL Tracking;   /* left button held */
+    BOOL Tracking;   /* the left button is held. */
     HFONT Font;
     HANDLE Image;
     UINT ImageType;
@@ -47,7 +47,7 @@ static void notify(HWND hwnd, WORD code)
         SendMessageW(parent, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(hwnd), code), (LPARAM)hwnd);
 }
 
-/* background brush and text colors from the parent, like WM_CTLCOLORBTN or WM_CTLCOLORSTATIC. */
+/* asks the parent for the brush and text colors with WM_CTLCOLORBTN or WM_CTLCOLORSTATIC. */
 static HBRUSH parent_brush(HWND hwnd, HDC dc, UINT msg)
 {
     HWND parent = GetParent(hwnd);
@@ -118,7 +118,7 @@ static void draw_label(HWND hwnd, BUTTON *b, HDC dc, RECT *r, UINT flags, COLORR
     SetTextColor(dc, color);
     SetBkMode(dc, TRANSPARENT);
     if ((flags & DT_SINGLELINE) == 0 && (flags & DT_VCENTER)) {
-        /* multiline text centered vertically by hand, DrawText only does it for single lines. */
+        /* DrawText only centers single lines vertically, so multiline text is centered by hand. */
         RECT calc = *r;
         int h = DrawTextW(dc, text, -1, &calc, (flags & ~DT_VCENTER) | DT_CALCRECT);
         RECT t = *r;
@@ -194,7 +194,7 @@ static void paint_check(HWND hwnd, BUTTON *b, HDC dc, RECT *client, BOOL focused
             FillRect(dc, &in, GetSysColorBrush(COLOR_WINDOWTEXT));
         }
     }
-    /* the label starts a theme defined gap after the box: 3 pixels at 96 dpi. */
+    /* the label starts a theme defined gap after the box, 3 pixels at 96 dpi. */
     RECT text = *client;
     int gap = UserMulDiv(3, (int)dpi, 96);
     if (right)

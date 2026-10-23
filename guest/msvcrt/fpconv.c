@@ -1,7 +1,7 @@
 /*
  * floating point conversions: exact decimal digits of a double for
  * printf and _ecvt, msvcrt's digit string formatting, and correctly
- * rounded strtod. both directions use a small fixed size big integer.
+ * rounded strtod. both directions use a small fixed-size big integer.
  */
 #include "msvcrt_private.h"
 
@@ -134,7 +134,7 @@ static int bn_bit(const BIGNUM *b, int i)
 
 /* ------------------------------------------------------------------ double to decimal */
 
-/* all decimal digits of a big integer, most significant first; returns the count. */
+/* a big integer's decimal digits, most significant first; returns the count. */
 static int bn_to_digits(BIGNUM *b, char *out, int max)
 {
     char tmp[1200];
@@ -257,7 +257,6 @@ static void fptostr(char *buf, int count, MSVCRT_DECIMAL *d)
         memmove(buf, buf + 1, strlen(buf + 1) + 1);
 }
 
-/* inserts c at p, moving the rest of the string. */
 static void insert_char(char *p, char c)
 {
     memmove(p + 1, p, strlen(p) + 1);
@@ -578,7 +577,7 @@ errno_t __cdecl _gcvt_s(char *buf, size_t size, double value, int ndigits)
         return ERANGE;
     }
     strcpy(buf, tmp);
-    /* drops the zeros ending the fraction but keeps the point. */
+    /* drops trailing zeros of the fraction but keeps the point. */
     char *p = buf;
     while (*p && *p != '.')
         p++;
@@ -605,13 +604,13 @@ char *__cdecl _gcvt(double value, int ndigits, char *buf)
 /* ------------------------------------------------------------------ decimal to double */
 
 /*
- * builds the double nearest to mant * 2^e2 (mant with its top bit set),
- * rounding half to even with sticky the bits below mant. reports
- * overflow (1) and underflow to zero (2) in *range.
+ * the double nearest to mant * 2^e2, mant having its top bit set, rounding
+ * half to even with sticky standing for the bits below mant. *range is 1 on
+ * overflow and 2 on underflow to zero.
  */
 static double make_double(uint64_t mant, int e2, int sticky, int *range)
 {
-    /* value = mant * 2^e2, mant in [2^63, 2^64). exponent of the leading bit: */
+    /* value = mant * 2^e2 with mant in [2^63, 2^64); lead is the exponent of the leading bit. */
     int lead = e2 + 63;
     if (lead > 1023) {
         *range = 1;
@@ -666,7 +665,7 @@ static constexpr double g_pow10[] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1
 #define MAX_SIG_DIGITS 800
 
 /*
- * the decimal digits * 10^exp10 as a 64 bit mantissa with its top bit set, a power of two and a sticky flag for what is
+ * decimal digits * 10^exp10 as a 64-bit mantissa with its top bit set, a power of two and a sticky flag for the bits
  * below the mantissa; digits may end with a sticky 1.
  */
 static void decimal_mantissa(const char *digits, int nd, int exp10, uint64_t *mantissa, int *exponent, int *sticky_out)
@@ -824,7 +823,7 @@ static float decimal_to_float(const char *digits, int nd, int exp10, int *range)
     return make_float(mant, e2, sticky, range);
 }
 
-/* the case folded letter of an ascii character, to compare words without the locale. */
+/* ascii case folding, to compare words without the locale. */
 #define FOLD(c) ((c) >= 'A' && (c) <= 'Z' ? (c) + 32 : (c))
 
 static int hex_digit_value(unsigned c)
@@ -839,10 +838,10 @@ static int hex_digit_value(unsigned c)
 }
 
 /*
- * reads a floating point number as the universal crt does: optional sign, then decimal digits with an optional point
- * and an exponent introduced by e, E, d or D, or 0x and hexadecimal digits with an optional point and a binary
- * exponent introduced by p, or INF, INFINITY, NAN, NAN(IND) and NAN(SNAN) in any case. *range is 1 on overflow and 2
- * when a nonzero number rounds to zero. With single the number is rounded to a float and given as a double.
+ * reads a number like the universal crt: an optional sign, then decimal digits with an optional point and an
+ * exponent after e, E, d or D, or 0x and hex digits with an optional point and a binary exponent after p, or INF,
+ * INFINITY, NAN, NAN(IND) and NAN(SNAN) in any case. *range is 1 on overflow and 2 when a nonzero number rounds to
+ * zero. with single the number is rounded to a float and returned as a double.
  */
 #define PARSE_FLOAT(NAME, T)                                                                                      \
     static double NAME(const T *s, const T **end, int *range, int single)                                        \
@@ -854,7 +853,7 @@ static int hex_digit_value(unsigned c)
         *end = s;                                                                                                 \
         if (*p == '-' || *p == '+')                                                                               \
             neg = *p++ == '-';                                                                                    \
-        /* infinity and not a number. */                                                                          \
+        /* infinity and nan. */                                                                                   \
         if (FOLD(p[0]) == 'i' && FOLD(p[1]) == 'n' && FOLD(p[2]) == 'f') {                                        \
             const T *q = p + 3;                                                                                   \
             if (FOLD(q[0]) == 'i' && FOLD(q[1]) == 'n' && FOLD(q[2]) == 'i' && FOLD(q[3]) == 't' &&               \
@@ -1093,7 +1092,7 @@ double __cdecl _wcstod_l(const wchar_t *s, wchar_t **end, void *locale)
 }
 
 /*
- * the float forms round once to a float, which strtod and a cast would not; long double is double here, so strtold
+ * the float forms round once to a float, which strtod plus a cast would not. long double is double here, so strtold
  * and wcstold are the double conversions.
  */
 float __cdecl strtof(const char *s, char **end)
@@ -1212,7 +1211,7 @@ typedef struct {
     double x;
 } _LDOUBLE;
 
-/* _OVERFLOW 3 and _UNDERFLOW 4 like msvcrt's _atodbl. */
+/* _OVERFLOW 3 and _UNDERFLOW 4, like msvcrt's _atodbl. */
 int __cdecl _atodbl(_CRT_DOUBLE *out, char *s)
 {
     const char *p = s;

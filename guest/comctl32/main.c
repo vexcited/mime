@@ -1,10 +1,8 @@
 /*
- * comctl32 entry point and the registration of the control classes.
+ * comctl32 entry point and control class registration.
  *
- * windows registers a class when an activation context names it, through
- * RegisterClassNameW, or in InitCommonControlsEx. mime has no class
- * redirection, so every class this dll implements is registered when it
- * loads.
+ * windows registers a class when an activation context names it, through RegisterClassNameW, or in
+ * InitCommonControlsEx. mime has no class redirection, so every class is registered when the dll loads.
  */
 #include "comctl32_private.h"
 
@@ -18,7 +16,7 @@ typedef struct CLASS_ENTRY {
     DWORD Icc;
 } CLASS_ENTRY;
 
-/* the order and icc bits of windows' table. */
+/* same order and icc bits as windows' table. */
 static const CLASS_ENTRY g_classes[] = {
     {TOOLBARCLASSNAMEW, ToolbarProc, CS_GLOBALCLASS | CS_DBLCLKS, COLOR_BTNFACE + 1, ICC_BAR_CLASSES},
     {TOOLTIPS_CLASSW, TooltipsProc, CS_DROPSHADOW | CS_GLOBALCLASS | CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW, 0,
@@ -56,7 +54,7 @@ void RegisterControlClasses(DWORD icc)
             register_class(&g_classes[i]);
 }
 
-/* ordinal 100: registers one class by name, as user32 does for a class an activation context redirects. */
+/* ordinal 100: registers one class by name, as user32 does when an activation context redirects it. */
 WINCOMMCTRLAPI BOOL WINAPI RegisterClassNameW(LPCWSTR name)
 {
     if (!name)

@@ -1,7 +1,6 @@
 /*
- * the object identifier table: CryptFindOIDInfo and the algorithm id
- * conversions. the rdn attribute rows, their names and the string types
- * they allow were read from crypt32.dll of windows 11.
+ * the object identifier table: CryptFindOIDInfo and the algorithm id conversions. the RDN attribute rows, their
+ * names and allowed string types match windows 11.
  */
 #include "crypt32_private.h"
 

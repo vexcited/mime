@@ -1,11 +1,10 @@
 /*
- * the inverse transform of a block, in floating point. a block is dequantized on loading, transformed down the
- * columns and then along the rows, the two passes being the same one dimensional transform of the even and odd
- * parts of the eight inputs. the output n is the sum over the coefficients u of c_u X_u cos of the angle
- * 2n plus 1 times u pi over 16, and the output 7 minus n differs only in the sign of the share of the odd
- * coefficients.
+ * the inverse block transform, in floating point. a block is dequantized on load, transformed down the columns,
+ * then along the rows, both passes being the same 1D transform of the even and odd parts of eight inputs. output n
+ * is the sum over coefficients u of c_u X_u cos((2n + 1) u pi / 16), and output 7 - n only flips the sign of the
+ * odd coefficients' share.
  *
- * the transforms to a smaller size give the averages of the groups of samples of the full one, see below.
+ * transforms to a smaller size average groups of samples of the full one, see below.
  */
 #include "internal.h"
 
@@ -81,7 +80,7 @@ static inline void idct8_vec(const __m128 *x, __m128 *y)
     y[4] = _mm_sub_ps(e3, o3);
 }
 
-/* the same with the last four inputs zero, which gives the same results with fewer operations. */
+/* the same with the last four inputs zero, which needs fewer operations. */
 static inline void idct8_vec_low(const __m128 *x, __m128 *y)
 {
     const __m128 c1 = _mm_set1_ps(C1), c2 = _mm_set1_ps(C2), c3 = _mm_set1_ps(C3), c4 = _mm_set1_ps(C4);
@@ -116,14 +115,14 @@ static void idct_full(const int16_t *coef, const float *dq, int last, uint8_t *o
 {
     __m128 in[2][8], t[2][8], u[2][8], r[2][8];
     /*
-     * the first ten coefficients in zigzag order lie in the four first rows and columns, and then the second half
-     * of the columns and the second half of the rows are zero.
+     * the first ten zigzag coefficients lie in the first four rows and columns, so then the second half of the
+     * columns and of the rows is zero.
      */
     bool low = last < 10;
     __m128 zero = _mm_setzero_ps();
     for (int k = 0; k < (low ? 4 : 8); k++)
         load_row(coef + 8 * k, dq + 8 * k, &in[0][k], &in[1][k]);
-    /* down the columns: half 0 holds the columns 0 to 3 of every row, half 1 the others. */
+    /* down the columns: half 0 holds columns 0 to 3 of every row, half 1 the rest. */
     if (low) {
         idct8_vec_low(in[0], t[0]);
         for (int k = 0; k < 8; k++)
@@ -132,7 +131,7 @@ static void idct_full(const int16_t *coef, const float *dq, int last, uint8_t *o
         idct8_vec(in[0], t[0]);
         idct8_vec(in[1], t[1]);
     }
-    /* along the rows, which are now the lanes: turn four by four blocks around. */
+    /* along the rows, now the lanes: transpose four by four blocks. */
     for (int h = 0; h < (low ? 1 : 2); h++) {
         for (int g = 0; g < 2; g++) {
             __m128 a = t[h][4 * g], b = t[h][4 * g + 1], c = t[h][4 * g + 2], d = t[h][4 * g + 3];
@@ -193,10 +192,9 @@ static void idct_full(const int16_t *coef, const float *dq, int last, uint8_t *o
 #endif
 
 /*
- * the smaller decodes are the averages of the groups of 8 / n samples of the full decode, which is to say the full
- * transform followed by a box filter, written as one matrix: row i holds, for each frequency u, the mean over group i
- * of the one dimensional basis function, which is c_u over 2 times the cosine of the angle 2x plus 1 times u pi
- * over 16.
+ * smaller decodes average groups of 8 / n samples of the full decode, that is the full transform followed by a box
+ * filter, folded into one matrix: row i holds, for each frequency u, the mean over group i of the 1D basis function
+ * c_u / 2 cos((2x + 1) u pi / 16).
  */
 static const float r4[4][8] = {
     {0.35355339f, 0.45306372f, 0.32664074f, 0.15909482f, 0.0f, -0.10630376f, -0.13529903f, -0.09011998f},

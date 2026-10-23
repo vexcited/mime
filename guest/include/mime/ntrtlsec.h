@@ -1,7 +1,7 @@
 /*
- * the security types of winnt.h and ntifs.h that the runtime library needs, with the rtl routines on sids,
- * access control lists and security descriptors that ntoskrnl.exe and ntdll.dll both export.
- * the dlls above ntdll keep their own copies of the types.
+ * the winnt.h and ntifs.h security types the runtime library needs, and the rtl routines on sids, acls and
+ * security descriptors that ntoskrnl.exe and ntdll.dll both export. the dlls above ntdll keep their own copies
+ * of the types.
  */
 #ifndef MIME_NTRTLSEC_H
 #define MIME_NTRTLSEC_H
@@ -124,7 +124,7 @@ typedef struct _GENERIC_MAPPING {
 
 /* ---------------------------------------------------------------- security descriptors */
 
-/* absolute: the parts are pointers. */
+/* absolute form: the parts are pointers. */
 typedef struct _SECURITY_DESCRIPTOR {
     UCHAR Revision;
     UCHAR Sbz1;
@@ -135,7 +135,7 @@ typedef struct _SECURITY_DESCRIPTOR {
     PACL Dacl;
 } SECURITY_DESCRIPTOR, *PISECURITY_DESCRIPTOR;
 
-/* self relative: the parts are offsets from the start. */
+/* self relative form: the parts are offsets from the start. */
 typedef struct _SECURITY_DESCRIPTOR_RELATIVE {
     UCHAR Revision;
     UCHAR Sbz1;
@@ -188,7 +188,7 @@ typedef struct _SECURITY_DESCRIPTOR_RELATIVE {
 #endif
 #endif
 
-/* sids */
+/* sids. */
 NTSYSAPI BOOLEAN NTAPI RtlValidSid(PSID sid);
 NTSYSAPI ULONG NTAPI RtlLengthSid(PSID sid);
 NTSYSAPI ULONG NTAPI RtlLengthRequiredSid(ULONG count);
@@ -215,7 +215,7 @@ NTSYSAPI NTSTATUS NTAPI RtlSidEqualLevel(PSID a, PSID b, PBOOLEAN equal);
 NTSYSAPI BOOLEAN NTAPI RtlIsValidProcessTrustLabelSid(PSID sid);
 NTSYSAPI NTSTATUS NTAPI RtlSidDominatesForTrust(PSID a, PSID b, PBOOLEAN dominates);
 
-/* access control lists */
+/* access control lists. */
 NTSYSAPI NTSTATUS NTAPI RtlCreateAcl(PACL acl, ULONG length, ULONG revision);
 NTSYSAPI BOOLEAN NTAPI RtlValidAcl(PACL acl);
 NTSYSAPI NTSTATUS NTAPI RtlGetAce(PACL acl, ULONG index, PVOID *ace);
@@ -256,7 +256,7 @@ NTSYSAPI VOID NTAPI RtlMapGenericMask(PACCESS_MASK mask, const GENERIC_MAPPING *
 NTSYSAPI BOOLEAN NTAPI RtlAreAllAccessesGranted(ACCESS_MASK granted, ACCESS_MASK desired);
 NTSYSAPI BOOLEAN NTAPI RtlAreAnyAccessesGranted(ACCESS_MASK granted, ACCESS_MASK desired);
 
-/* security descriptors */
+/* security descriptors. */
 NTSYSAPI NTSTATUS NTAPI RtlCreateSecurityDescriptor(PSECURITY_DESCRIPTOR sd, ULONG revision);
 NTSYSAPI BOOLEAN NTAPI RtlValidSecurityDescriptor(PSECURITY_DESCRIPTOR sd);
 NTSYSAPI BOOLEAN NTAPI RtlValidRelativeSecurityDescriptor(PSECURITY_DESCRIPTOR sd, ULONG length,
@@ -306,8 +306,8 @@ NTSYSAPI NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD2(PSECURITY_DESCRIPTOR relati
 #define ACCESS_FILTER_SECURITY_INFORMATION 0x00000100
 
 /*
- * the owner, primary group and default dacl of the token a new object is made for, asked for only when the
- * descriptor of the creator and the parent leave them open. The values stay valid for the call.
+ * fetches the owner, primary group or default dacl of the token the object is made for, only when the creator
+ * and parent descriptors leave them open. the values stay valid for the call.
  */
 #define MIME_SEC_OWNER 0
 #define MIME_SEC_GROUP 1
@@ -317,7 +317,7 @@ typedef struct MIME_SEC_DEFAULTS {
     void *Context;
 } MIME_SEC_DEFAULTS;
 
-/* the aces of the sacl of the kinds the information selects, or just their size when there is no destination. */
+/* copies the sacl aces of the kinds information selects, or only sizes them when out is NULL. */
 ULONG MimeSecFilterSacl(const ACL *sacl, PACL out, ULONG information);
 NTSTATUS MimeSecNewObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator, PSECURITY_DESCRIPTOR *object,
                           const GUID **types, ULONG type_count, BOOLEAN container, ULONG flags,

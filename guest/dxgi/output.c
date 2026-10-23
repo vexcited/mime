@@ -1,7 +1,7 @@
 /*
- * outputs: a monitor and the modes of its adapter. the monitor's own size
- * and rate are the native mode; the usual smaller resolutions are offered
- * at the same rate, as a panel's scaler takes them, so games can list them.
+ * outputs: a monitor and its adapter's modes. the monitor's own size and rate
+ * are the native mode. the usual smaller resolutions are offered at the same
+ * rate, as a panel's scaler takes them, so games can list them.
  */
 #include "dxgi_private.h"
 #include <mime/display_modes.h>
@@ -9,7 +9,7 @@
 
 static const GUID IID_D3D12Device = {0x189819F1, 0x1DB6, 0x4B57, {0xBE, 0x54, 0x18, 0x21, 0x33, 0x9B, 0x85, 0xF7}};
 
-/* who owns an output, as dxgi.dll counts it: gamma works for exclusive owners alone. */
+/* gamma only works for an exclusive owner. */
 enum { OWNER_NONE, OWNER_SHARED, OWNER_EXCLUSIVE };
 
 typedef struct DxgiOutput {
@@ -19,7 +19,7 @@ typedef struct DxgiOutput {
     DxgiAdapter *adapter;
     HMONITOR monitor;
     UINT owner;
-    /* the program's curve, its scale and offset kept apart as they are never applied. */
+    /* the program's curve. scale and offset are kept apart since they are never applied. */
     DXGI_GAMMA_CONTROL *gamma;
     DXGI_RGB scale, offset;
     BOOL gamma_shown;
@@ -33,7 +33,7 @@ static const GUID *const OUTPUT_IIDS[] = {
     &IID_IDXGIOutput3, &IID_IDXGIOutput4, &IID_IDXGIOutput5, &IID_IDXGIOutput6,
 };
 
-/* the formats a display can scan out, those swap chains take. */
+/* formats a display can scan out, which are the ones swap chains take. */
 static BOOL displayable(DXGI_FORMAT format)
 {
     switch (format) {
@@ -49,7 +49,7 @@ static BOOL displayable(DXGI_FORMAT format)
     }
 }
 
-/* the panel's own mode, which a program changing the display mode does not change. */
+/* the panel's own mode, unaffected when a program changes the display mode. */
 static void native_mode(DxgiOutput *output, UINT *width, UINT *height, UINT *rate)
 {
     MONITORINFOEXW info = {sizeof(info)};
@@ -66,7 +66,7 @@ static void native_mode(DxgiOutput *output, UINT *width, UINT *height, UINT *rat
     }
 }
 
-/* the modes in ascending order, the native one included, or their count with no array. */
+/* modes in ascending order including the native one, or just their count when modes is nullptr. */
 static UINT list_modes(DxgiOutput *output, DXGI_FORMAT format, DXGI_MODE_DESC1 *modes, UINT capacity)
 {
     UINT width, height, rate, n = 0;
@@ -120,7 +120,7 @@ static HRESULT STDMETHODCALLTYPE output_query(IDXGIOutput6 *iface, REFIID riid, 
     return E_NOINTERFACE;
 }
 
-/* the 1025 points of a curve sampled for the display's 256 entries. */
+/* samples the 1025 point curve into the display's 256 entries. */
 static void show_gamma(DxgiOutput *output)
 {
     USHORT ramp[3][256];
@@ -141,7 +141,7 @@ static void show_gamma(DxgiOutput *output)
     output->gamma_shown = TRUE;
 }
 
-/* an owner gone: the display shows gdi's ramp again, as windows' kernel switches back. */
+/* without an exclusive owner the display shows gdi's ramp again, like windows. */
 static void hide_gamma(DxgiOutput *output)
 {
     if (output->gamma_shown)
@@ -260,7 +260,7 @@ static HRESULT STDMETHODCALLTYPE output_get_display_mode_list(IDXGIOutput6 *ifac
     return hr;
 }
 
-/* the listed mode nearest in size, then in rate, of the format asked or the first displayable one. */
+/* the listed mode nearest in size, then rate, in the requested format or the first displayable one. */
 static HRESULT STDMETHODCALLTYPE output_find_closest_matching_mode1(IDXGIOutput6 *iface, const DXGI_MODE_DESC1 *mode,
                                                                     DXGI_MODE_DESC1 *closest, IUnknown *device)
 {
@@ -311,7 +311,6 @@ static HRESULT STDMETHODCALLTYPE output_find_closest_matching_mode(IDXGIOutput6 
     return hr;
 }
 
-/* sleeps to the next refresh of the panel, on the performance counter's clock. */
 static HRESULT STDMETHODCALLTYPE output_wait_for_vblank(IDXGIOutput6 *iface)
 {
     UINT width, height, rate;
@@ -327,7 +326,7 @@ static HRESULT STDMETHODCALLTYPE output_wait_for_vblank(IDXGIOutput6 *iface)
     return S_OK;
 }
 
-/* direct3d 12 devices cannot take an output, their swap chains alone own it. */
+/* direct3d 12 devices cannot take an output, only their swap chains own it. */
 static HRESULT STDMETHODCALLTYPE output_take_ownership(IDXGIOutput6 *iface, IUnknown *device, BOOL exclusive)
 {
     if (!device)
@@ -360,7 +359,7 @@ static HRESULT STDMETHODCALLTYPE output_get_gamma_control_capabilities(IDXGIOutp
     return S_OK;
 }
 
-/* the curve shows as it is while the output is owned exclusively; scale and offset are not supported. */
+/* the curve applies as is while the output is owned exclusively. scale and offset are not supported. */
 static HRESULT STDMETHODCALLTYPE output_set_gamma_control(IDXGIOutput6 *iface, const DXGI_GAMMA_CONTROL *control)
 {
     DxgiOutput *output = impl(iface);
@@ -377,7 +376,7 @@ static HRESULT STDMETHODCALLTYPE output_set_gamma_control(IDXGIOutput6 *iface, c
     return S_OK;
 }
 
-/* what the program set, which an output never set has not. */
+/* fails until the program has set a curve. */
 static HRESULT STDMETHODCALLTYPE output_get_gamma_control(IDXGIOutput6 *iface, DXGI_GAMMA_CONTROL *control)
 {
     DxgiOutput *output = impl(iface);
@@ -399,7 +398,7 @@ static HRESULT STDMETHODCALLTYPE output_get_display_surface_data(IDXGIOutput6 *i
     return DXGI_ERROR_UNSUPPORTED;
 }
 
-/* the count of refreshes since boot, at the time of the last one. */
+/* the count of refreshes since boot, as of the last one. */
 static HRESULT STDMETHODCALLTYPE output_get_frame_statistics(IDXGIOutput6 *iface, DXGI_FRAME_STATISTICS *stats)
 {
     if (!stats)

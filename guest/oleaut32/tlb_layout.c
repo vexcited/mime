@@ -1,8 +1,6 @@
 /*
- * the sizes and offsets of types for a processor: where the members of a structure are, how big a structure or a union
- * is, and where the functions of an interface are in its table of virtual functions. A library written for another word
- * size than this processor's gets its structures laid out again; a library being created gets everything laid out
- * before it is written.
+ * type layout for a processor: member offsets, struct and union sizes, and vtable positions. A library built for
+ * another word size gets its structures laid out again; a library being created is laid out before it is written.
  */
 #include "typelib.h"
 
@@ -20,7 +18,7 @@ static ULONG align_up(ULONG value, ULONG align)
 
 static HRESULT size_align(TL_TYPE *scope, const TYPEDESC *td, SYSKIND kind, int depth, ULONG *size, ULONG *align);
 
-/* the size and alignment of a structure, a union, or what an alias or an enumeration stands for. */
+/* for a struct or union, or what an alias or enum stands for. */
 static HRESULT type_size_align(TL_TYPE *t, SYSKIND kind, int depth, ULONG *size, ULONG *align)
 {
     if (depth > MAX_DEPTH)
@@ -121,13 +119,13 @@ static HRESULT size_align(TL_TYPE *scope, const TYPEDESC *td, SYSKIND kind, int 
         return hr;
     }
     default:
-        /* pointers, strings, interfaces and arrays of the system. */
+        /* pointer sized: pointers, strings, interfaces and safe arrays. */
         *size = *align = p;
         return S_OK;
     }
 }
 
-/* what a type derived from this one inherits: the size of the table of virtual functions, the functions, the bases. */
+/* what a derived type inherits: vtable size, function count and base depth. */
 static void chain_of(ITypeInfo *info, ULONG *vsize, ULONG *funcs, ULONG *depth)
 {
     *vsize = *funcs = *depth = 0;
@@ -162,7 +160,7 @@ static void chain_of(ITypeInfo *info, ULONG *vsize, ULONG *funcs, ULONG *depth)
     AutRelease(cur);
 }
 
-/* the vtable position and the size of the table of an interface type, in the pointer size of the library. */
+/* vtable offsets and size of an interface, in the library's pointer size. */
 static HRESULT layout_interface(TL_TYPE *t)
 {
     TL_LIB *lib = t->Lib;

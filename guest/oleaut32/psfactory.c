@@ -1,14 +1,13 @@
 /*
- * the proxies and stubs of the interfaces of automation: the factory a class of them is reached through, and what turns
- * the arguments of a call into those that cross processes. IDispatch::Invoke takes arguments that point into the caller's
- * memory, which are sent as the variants they hold and brought back as they were changed, and the enumerators of the
- * interfaces of connection points and of variants may be asked for one item with no place to say how many came.
+ * proxies and stubs for the automation interfaces. IDispatch::Invoke arguments that point into caller memory are
+ * sent as the variants they hold and copied back, and the connection point and variant enumerators accept a request
+ * for one item with no fetched count.
  */
 #include "oleaut32_private.h"
 #include <mime/win32/rpcproxy.h>
 #include <mime/win32/rpcndr.h>
 
-/* the routines the generated proxy file names: those that stand in on the wire for the methods they are the local form of. */
+/* the [call_as] routines the generated proxy file refers to. */
 HRESULT STDMETHODCALLTYPE IDispatch_Invoke_Proxy(IDispatch *This, DISPID id, REFIID riid, LCID lcid, WORD flags,
                                                  DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err);
 HRESULT STDMETHODCALLTYPE IDispatch_Invoke_Stub(IDispatch *This, long id, REFIID riid, unsigned long lcid,
@@ -23,23 +22,18 @@ HRESULT STDMETHODCALLTYPE IEnumConnections_Next_Proxy(IEnumConnections *This, UL
 
 #include "oleaut32/oa_ps.h"
 
-/* ------------------------------------------------------------------ Invoke */
-
 /*
- * The arguments of a call that are references go over the wire twice in a way: the variants that refer to a value are taken
- * out of the arguments, which hold an empty variant in their place, and are sent as an array of their own with the places
- * they had. The variants of that array are sent as they are, and a variant that refers to a value is sent with the value, which
- * comes back in the variant the caller has when the call is done. The server puts them back where they were. The flags are
- * the flags of the call with three more for the results the caller did not ask for.
+ * by reference arguments are taken out of rgvarg, leaving VT_EMPTY behind, and sent as a separate array with their
+ * indices. Each is sent with its value, which comes back into the caller's variant, and the server puts them back in
+ * place. The flags carry three extra bits for results the caller did not ask for.
  */
 #define NO_RESULT 0x20000
 #define NO_EXCEPTION 0x40000
 #define NO_ARG_ERROR 0x80000
 #define BAD_CALLEE ((HRESULT)0x80020010)
-/* the arguments that are kept on the stack, as many as a call to a method of automation mostly has. */
+/* enough for most automation calls without allocating. */
 #define STACK_ARGS 16
 
-/* A by reference argument is lifted out of the arguments into the array of values, leaving an empty variant behind. */
 HRESULT STDMETHODCALLTYPE IDispatch_Invoke_Proxy(IDispatch *This, DISPID id, REFIID riid, LCID lcid, WORD flags,
                                                  DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
 {
@@ -124,7 +118,7 @@ HRESULT STDMETHODCALLTYPE IDispatch_Invoke_Proxy(IDispatch *This, DISPID id, REF
     return hr;
 }
 
-/* The values of the by reference arguments belong to the marshaller, so their slots are emptied before the arguments go. */
+/* the by reference values belong to the marshaller, so their slots are emptied before returning. */
 HRESULT STDMETHODCALLTYPE IDispatch_Invoke_Stub(IDispatch *This, long id, REFIID riid, unsigned long lcid,
                                                 unsigned long flags, DISPPARAMS *params, VARIANT *result,
                                                 EXCEPINFO *excep, unsigned int *arg_err, unsigned int refs,
@@ -183,9 +177,7 @@ HRESULT STDMETHODCALLTYPE IDispatch_Invoke_Stub(IDispatch *This, long id, REFIID
     return hr;
 }
 
-/* ------------------------------------------------------------------ the enumerators */
-
-/* One item may be asked for with no place for the count, and the count is then of no interest. */
+/* fetched may be NULL when exactly one item is asked for. */
 #define ENUM_NEXT(iface, type)                                                                                         \
     HRESULT STDMETHODCALLTYPE iface##_Next_Proxy(iface *This, ULONG count, type *items, ULONG *fetched)                \
     {                                                                                                                  \
@@ -202,9 +194,7 @@ ENUM_NEXT(IEnumVARIANT, VARIANT)
 ENUM_NEXT(IEnumConnectionPoints, IConnectionPoint *)
 ENUM_NEXT(IEnumConnections, CONNECTDATA)
 
-/* ------------------------------------------------------------------ the classes */
-
-/* The classes of the proxies of automation: every one of them answers with the factory of all the interfaces above. */
+/* the automation proxy CLSIDs, all served by the proxy file factory except PSOAInterface. */
 static BOOL is_proxy_class(REFCLSID clsid)
 {
     static const BYTE tail[8] = {0xC0, 0, 0, 0, 0, 0, 0, 0x46};

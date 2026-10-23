@@ -1,8 +1,7 @@
 /*
- * the viewports, lights and materials of direct3d 1 to 3, as d3dim.dll of
- * build 26300 has them. a viewport holds the lights a device of the first
- * interfaces lights with and the clip volume its projection ends in; a
- * material reaches a device through the handle it gets there.
+ * direct3d 1 to 3 viewports, lights and materials. a viewport holds the
+ * lights a first interface device uses and the clip volume its projection
+ * ends in; a material reaches a device through the handle it gets there.
  */
 #include "d3d_private.h"
 
@@ -125,7 +124,7 @@ static HRESULT STDMETHODCALLTYPE vp_initialize(IDirect3DViewport3 *This, LPDIREC
     return DDERR_ALREADYINITIALIZED;
 }
 
-/* a device of the second or third interfaces checks the data against its render target. */
+/* devices of the second and third interfaces check the data against their render target. */
 static HRESULT set_data(D3DVIEWPORTOBJ *vp, const D3DVIEWPORT2 *data)
 {
     D3DDEV *dev = vp->dev;
@@ -211,7 +210,7 @@ static HRESULT STDMETHODCALLTYPE vp_get_viewport(IDirect3DViewport3 *This, LPD3D
     return DdLeave(D3D_OK);
 }
 
-/* vertices through the device's transforms and this viewport's clip volume, with their clip codes. */
+/* through the device's transforms and this viewport's clip volume, with clip codes. */
 static HRESULT STDMETHODCALLTYPE vp_transform_vertices(IDirect3DViewport3 *This, DWORD count, LPD3DTRANSFORMDATA data,
                                                        DWORD flags, LPDWORD offscreen)
 {
@@ -328,7 +327,7 @@ static HRESULT STDMETHODCALLTYPE vp_get_background(IDirect3DViewport3 *This, LPD
     return DdLeave(D3D_OK);
 }
 
-/* kept without a reference, as windows does, while the one held before is released. */
+/* kept without a reference like windows, while the previous one is released. */
 static HRESULT STDMETHODCALLTYPE vp_set_background_depth(IDirect3DViewport3 *This, LPDIRECTDRAWSURFACE surface)
 {
     HRESULT hr;
@@ -390,7 +389,7 @@ static HRESULT STDMETHODCALLTYPE vp_get_background_depth2(IDirect3DViewport3 *Th
     return DdLeave(hr);
 }
 
-/* the rectangles within the target for a first device, within the viewport otherwise. */
+/* clips the rectangles to the target for a first device, to the viewport otherwise. */
 HRESULT D3dViewportClear(D3DVIEWPORTOBJ *vp, DWORD count, const D3DRECT *rects, DWORD flags, DWORD color, float z,
                          DWORD stencil, BOOL second)
 {
@@ -650,7 +649,7 @@ static HRESULT STDMETHODCALLTYPE light_initialize(IDirect3DLight *This, LPDIRECT
     return DDERR_ALREADYINITIALIZED;
 }
 
-/* a D3DLIGHT is taken as it is; a D3DLIGHT2 is checked as d3dim700 checks its lights. */
+/* a D3DLIGHT is taken as is; a D3DLIGHT2 is checked like d3dim700 checks its lights. */
 static HRESULT STDMETHODCALLTYPE light_set(IDirect3DLight *This, LPD3DLIGHT data)
 {
     D3DLIGHTOBJ *l = D3dLightFrom(This);
@@ -688,7 +687,7 @@ static HRESULT STDMETHODCALLTYPE light_get(IDirect3DLight *This, LPD3DLIGHT data
         return DDERR_INVALIDOBJECT;
     if (!data || (data->dwSize != sizeof(D3DLIGHT) && data->dwSize != sizeof(D3DLIGHT2)))
         return DDERR_INVALIDPARAMS;
-    /* as much of what was set as the caller has room for. */
+    /* copy as much of what was set as the caller has room for. */
     DWORD size = l->data.dwSize < data->dwSize ? l->data.dwSize : data->dwSize;
     memcpy(data, &l->data, size);
     return D3D_OK;
@@ -717,7 +716,7 @@ HRESULT D3dCreateMaterialObj(D3DOBJ *d3d, D3DMATERIALOBJ **out)
     return D3D_OK;
 }
 
-/* the material of a handle on a device; null for one it never gave. */
+/* null for a handle it never gave out. */
 D3DMATHANDLE *D3dMaterialHandle(D3DDEV *dev, DWORD handle)
 {
     if (!handle || !dev->legacy)
@@ -815,7 +814,7 @@ static HRESULT mat_get(D3DMATERIALOBJ *m, D3DMATERIAL *data)
     return D3D_OK;
 }
 
-/* one handle a device, its copy of the material, the same on every call. */
+/* one handle per device for its copy of the material, the same on every call. */
 static HRESULT mat_get_handle(D3DMATERIALOBJ *m, D3DDEV *dev, D3DMATERIALHANDLE *handle)
 {
     if (!dev)

@@ -1,6 +1,4 @@
-/*
- * winhttp internals: the handle objects, connections and helpers shared by the source files.
- */
+/* shared WinHTTP handle objects and connection helpers. */
 #pragma once
 #ifndef MIME_BUILD_WINHTTP
 #define MIME_BUILD_WINHTTP
@@ -27,7 +25,7 @@ enum {
     WH_WEBSOCKET = WINHTTP_HANDLE_TYPE_WEBSOCKET,
 };
 
-/* the timeouts of WinHttpSetTimeouts and the timeout options, -1 is infinite. */
+/* WinHttpSetTimeouts and option timeouts; -1 means infinite. */
 typedef struct {
     int Resolve;
     int Connect;
@@ -47,7 +45,7 @@ typedef struct {
     DWORD Capacity;
 } WH_HEADERS;
 
-/* a tcp connection to a server or proxy, with its tls state. */
+/* TCP connection to a server or proxy, including TLS state. */
 typedef struct WH_CONN {
     struct WH_CONN *Next;
     SOCKET Socket;
@@ -157,7 +155,7 @@ typedef struct WH_OBJECT {
     DWORD MemoryOffset;
     DWORD Redirects;
     BOOL UpgradeRequested;
-    /* asynchronous operations: one at a time on the worker thread of the request. */
+    /* serialize asynchronous operations on the request worker. */
     HANDLE Worker;
     HANDLE Wake;
     DWORD Op;
@@ -184,7 +182,7 @@ typedef struct WH_OBJECT {
     BOOL WsSendFragment;
 } WH_OBJECT;
 
-/* main.c */
+/* main.c. */
 void WhStartup(void);
 void *WhAlloc(SIZE_T size);
 void *WhAllocZero(SIZE_T size);
@@ -198,22 +196,22 @@ PWSTR WhAnsiToWide(const char *text, DWORD length);
 char *WhWideToAnsi(LPCWSTR text, DWORD length, BOOL *lossy);
 BOOL WhFail(DWORD error);
 WH_OBJECT *WhCreate(DWORD type, WH_OBJECT *parent);
-/* the referenced object of a handle, or NULL with ERROR_INVALID_HANDLE set. */
+/* return a referenced handle object, or NULL with ERROR_INVALID_HANDLE. */
 WH_OBJECT *WhReference(HINTERNET handle);
 void WhAddRef(WH_OBJECT *object);
 void WhRelease(WH_OBJECT *object);
 WH_OBJECT *WhSession(WH_OBJECT *object);
-/* sends a notification when the callback asked for it. */
+/* send only notifications enabled by the callback mask. */
 void WhNotify(WH_OBJECT *object, DWORD status, LPVOID info, DWORD length);
 BOOL WhIsAsync(WH_OBJECT *object);
 
-/* url.c */
+/* url.c. */
 BOOL WhCrack(LPCWSTR url, DWORD length, DWORD flags, URL_COMPONENTS *components);
 
-/* time.c */
+/* time.c. */
 BOOL WhParseHttpDate(const char *text, SYSTEMTIME *time);
 
-/* headers.c */
+/* headers.c. */
 void WhHeadersClear(WH_HEADERS *headers);
 BOOL WhHeadersAppend(WH_HEADERS *headers, const char *name, DWORD name_length, const char *value,
                      DWORD value_length);
@@ -222,7 +220,7 @@ void WhHeadersRemove(WH_HEADERS *headers, const char *name);
 DWORD WhAddHeaders(WH_OBJECT *request, const char *text, DWORD length, DWORD modifiers);
 const char *WhKnownHeaderName(DWORD level);
 
-/* request.c */
+/* request.c. */
 DWORD WhSendRequest(WH_OBJECT *request);
 DWORD WhWrite(WH_OBJECT *request, const void *buffer, DWORD size, DWORD *written);
 DWORD WhReceiveResponse(WH_OBJECT *request);
@@ -235,17 +233,17 @@ DWORD WhConnSend(WH_CONN *conn, const void *data, DWORD size, int timeout);
 BOOL WhConnAppend(WH_CONN *conn, const void *data, DWORD size);
 DWORD WhConnRecv(WH_CONN *conn, void *data, DWORD size, DWORD *got, int timeout);
 
-/* tls.c */
+/* tls.c. */
 DWORD WhTlsHandshake(WH_CONN *conn, LPCWSTR host, DWORD security_flags, int timeout, DWORD *failure);
 DWORD WhTlsSend(WH_CONN *conn, const void *data, DWORD size, int timeout);
 DWORD WhTlsFill(WH_CONN *conn, int timeout);
 void WhTlsClose(WH_CONN *conn);
 
-/* proxy.c */
+/* proxy.c. */
 BOOL WhReadDefaultProxy(WINHTTP_PROXY_INFO *info);
-/* the proxy server for a url and scheme, or FALSE to connect directly. */
+/* select the URL and scheme proxy; FALSE means direct connection. */
 BOOL WhPickProxy(WH_OBJECT *request, LPCWSTR host, BOOL secure, PWSTR proxy_host, DWORD capacity,
                  INTERNET_PORT *proxy_port);
 
-/* websocket.c */
+/* websocket.c. */
 void WhWebSocketReleased(WH_OBJECT *socket);

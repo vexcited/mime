@@ -1,6 +1,4 @@
-/*
- * the device installation functions programs enumerate devices with.
- */
+/* setupapi.dll: the device installation functions programs enumerate devices with. */
 #ifndef MIME_WIN32_SETUPAPI_H
 #define MIME_WIN32_SETUPAPI_H
 
@@ -56,7 +54,7 @@ typedef UINT DI_FUNCTION;
 #define ERROR_CLASS_MISMATCH 0xE0000201
 #define DIODI_NO_ADD 0x00000001
 
-/* error codes of setupapi's own. */
+/* setupapi error codes. */
 #define ERROR_EXPECTED_SECTION_NAME 0x800F0000
 #define ERROR_BAD_SECTION_NAME_LINE 0x800F0001
 #define ERROR_SECTION_NAME_TOO_LONG 0x800F0002

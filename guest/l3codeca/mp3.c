@@ -1,8 +1,6 @@
 /*
- * the layer iii decoding of iso/iec 11172-3 and of the low rates of iso/iec
- * 13818-3, with mpeg 2.5, behind the input ring l3codeca keeps: frames are
- * found bit by bit, locked by a second header, decoded in floating point
- * and cut to 16 or 8 bit pcm by truncation.
+ * layer iii decoding per ISO/IEC 11172-3 and the low rates of ISO/IEC 13818-3, plus MPEG 2.5. frames are found bit by
+ * bit in the input ring, locked by a second header, decoded in floating point and truncated to 16 or 8 bit pcm.
  */
 #include "mp3.h"
 
@@ -42,7 +40,7 @@ static const DWORD RATES[9] = {44100, 48000, 32000, 22050, 24000, 16000, 11025, 
 static const BYTE PRETAB[22] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0};
 static const float POW2Q[4] = {1.0f, 1.189207115f, 1.414213562f, 1.681792831f};
 
-/* the number of scalefactors of each partition of 13818-3, by table, then long, short and mixed blocks. */
+/* scalefactor counts per partition from 13818-3, by table, then long, short and mixed blocks. */
 static const BYTE LSF_COUNTS[6][3][4] = {
     {{6, 5, 5, 5}, {9, 9, 9, 9}, {6, 9, 9, 9}},
     {{6, 5, 7, 3}, {9, 9, 12, 6}, {6, 9, 12, 6}},
@@ -74,7 +72,7 @@ static void tree_add(WORD *count, WORD root, DWORD code, int length, WORD value)
     }
 }
 
-/* the huffman trees, the 4/3 powers and the float window, built once per process. */
+/* the Huffman trees, 4/3 powers and float window, built once per process. */
 void Mp3Setup(void)
 {
     WORD count = 0;
@@ -179,7 +177,7 @@ static BOOL parse_header(DWORD h, Frame *f)
     return TRUE;
 }
 
-/* the bits of the stream at a bit position, the ring padded past its end. */
+/* the ring is padded past its end so this can read over it. */
 static DWORD peek32(const Mp3Decoder *d, DWORD position)
 {
     const BYTE *p = d->ring + (position >> 3);
@@ -189,7 +187,7 @@ static DWORD peek32(const Mp3Decoder *d, DWORD position)
 
 /* ------------------------------------------------------------------ side information */
 
-/* a window switched granule of the reserved block type 0 makes the frame unusable. */
+/* a window switched granule with the reserved block type 0 makes the frame unusable. */
 static BOOL read_side(Bits *b, const Frame *f, Side *s)
 {
     int nch = f->channels;
@@ -302,7 +300,7 @@ static void read_scales_lsf(Bits *b, const Frame *f, Granule *g, int ch, Scales 
         }
     }
     const BYTE *counts = LSF_COUNTS[table][g->block_type != 2 ? 0 : g->mixed ? 2 : 1];
-    /* the scalefactors run over long bands, then short bands window by window. */
+    /* long bands first, then short bands window by window. */
     int long_bands = g->block_type != 2 ? 21 : g->mixed ? 6 : 0, slot = 0;
     for (int part = 0; part < 4; part++)
         for (int i = 0; i < counts[part]; i++, slot++) {
@@ -324,7 +322,7 @@ static void read_scales_lsf(Bits *b, const Frame *f, Granule *g, int ch, Scales 
 
 /* ------------------------------------------------------------------ spectrum */
 
-/* the huffman values of a granule, up to its part2_3_length; the end of what may be nonzero is returned. */
+/* reads Huffman values up to part2_3_length, returns where the possibly nonzero values end. */
 static int read_values(Bits *b, DWORD end, const Granule *g, const Mp3Bands *bands, int *is)
 {
     int big = g->big_values * 2, r1, r2;
@@ -447,7 +445,7 @@ static void intensity_lines(const Frame *f, float *l, float *r, int from, int to
     }
 }
 
-/* joint stereo of a granule: intensity above the right channel's last nonzero band, mid and side below. */
+/* intensity stereo above the right channel's last nonzero band, mid/side below it. */
 static void stereo(const Frame *f, const Granule *g, const Scales *sc, const Mp3Bands *bands, float *l, float *r,
                    int right_nonzero)
 {
@@ -474,7 +472,7 @@ static void stereo(const Frame *f, const Granule *g, const Scales *sc, const Mp3
         }
         return;
     }
-    /* short blocks find the bound of each window; the long part of mixed blocks is never intensity coded. */
+    /* short blocks find the bound per window, and the long part of mixed blocks is never intensity coded. */
     int start = 0;
     if (g->mixed)
         while (3 * bands->s[start] < 36)
@@ -504,7 +502,7 @@ static void stereo(const Frame *f, const Granule *g, const Scales *sc, const Mp3
 
 /* ------------------------------------------------------------------ filterbank */
 
-/* alias reduction, the imdct and overlap of each subband, giving 18 samples of each of the subbands kept. */
+/* alias reduction, imdct and overlap per subband, giving 18 samples for each kept subband. */
 static void hybrid(Mp3Channel *c, const Granule *g, const Mp3Bands *bands, float *xr, int limit, float out[18][32])
 {
     BOOL is_short = g->block_type == 2;
@@ -580,7 +578,7 @@ static void hybrid(Mp3Channel *c, const Granule *g, const Mp3Bands *bands, float
     }
 }
 
-/* the polyphase synthesis of one slot of 32 subbands into 32 samples. */
+/* polyphase synthesis of one slot: 32 subbands into 32 samples. */
 static void synthesize(float *v, DWORD offset, const float *s, int limit, float *pcm)
 {
     float c[33];
@@ -663,7 +661,6 @@ DWORD Mp3Feed(Mp3Decoder *d, const BYTE *data, DWORD size)
     return n;
 }
 
-/* the frame's granules decoded to the subband samples of each output channel. */
 static void decode_frame(Mp3Decoder *d, const Frame *f, const BYTE *frame, BYTE *out)
 {
     Bits b = {frame, 32 + (f->crc ? 16 : 0)};
@@ -749,9 +746,8 @@ static void decode_frame(Mp3Decoder *d, const Frame *f, const BYTE *frame, BYTE 
 }
 
 /*
- * the next frame of the ring into out. before a lock the stream is
- * searched bit by bit for a header whose successor agrees with it, so a
- * stream of one frame never decodes.
+ * before locking, the stream is searched bit by bit for a header whose successor agrees with it, so a one frame stream
+ * never decodes.
  */
 int Mp3Decode(Mp3Decoder *d, BYTE *out, DWORD room, DWORD *written)
 {

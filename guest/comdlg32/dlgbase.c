@@ -1,6 +1,4 @@
-/*
- * what the color, font and print dialogs share, see dlgbase.h.
- */
+/* what the color, font and print dialogs share, see dlgbase.h. */
 #include "dlgbase.h"
 
 static BYTE *put_word(BYTE *p, WORD v)

@@ -1,7 +1,4 @@
-/*
- * directsound: devices, sound buffers, their 3d interfaces, notifications,
- * capture and full duplex. methods are in windows' vtable order.
- */
+/* directsound: devices, buffers, 3d, notifications, capture and full duplex, in windows' vtable order. */
 #ifndef MIME_WIN32_DSOUND_H
 #define MIME_WIN32_DSOUND_H
 
@@ -525,7 +522,7 @@ MIME_DEFINE_GUID(GUID_All_Objects, 0xAA114DE5, 0xC262, 0x4169, 0xA1, 0xC8, 0x23,
 MIME_DEFINE_GUID(DSPROPSETID_DirectSoundDevice, 0x84624F82, 0x25EC, 0x11D1, 0xA4, 0xD8, 0x00, 0xC0, 0x4F, 0xC2, 0x8A,
                  0xCA);
 
-/* the private property set of DSPROPSETID_DirectSoundDevice: the devices and their mappings. */
+/* DSPROPSETID_DirectSoundDevice, a private property set listing devices and their mappings. */
 typedef enum {
     DSPROPERTY_DIRECTSOUNDDEVICE_WAVEDEVICEMAPPING_A = 1,
     DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_1 = 2,

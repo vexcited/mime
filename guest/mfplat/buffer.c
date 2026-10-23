@@ -51,7 +51,6 @@ static HRESULT STDMETHODCALLTYPE buffer_query_interface(IMFMediaBuffer *iface, R
     return E_NOINTERFACE;
 }
 
-/* ------------------------------------------------------------------ memory buffers */
 
 static MemoryBuffer *memory_buffer(IMFMediaBuffer *iface)
 {
@@ -75,7 +74,7 @@ static ULONG STDMETHODCALLTYPE memory_release(IMFMediaBuffer *iface)
     return refs;
 }
 
-/* locks do not nest or pin anything, the memory stays where it is. */
+/* locks do not nest or pin anything, the memory never moves. */
 static HRESULT STDMETHODCALLTYPE memory_lock(IMFMediaBuffer *iface, BYTE **data, DWORD *max_length,
                                              DWORD *current_length)
 {
@@ -133,8 +132,8 @@ static const IMFMediaBufferVtbl MEMORY_BUFFER_VTBL = {
 };
 
 /*
- * the data aligned to the larger of the requested alignment and the
- * minimum one, whose setting also rounds the length up to it.
+ * aligned to the larger of the requested and the minimum alignment, and the
+ * minimum alignment setting also rounds the length up to it.
  */
 HRESULT MfCreateMemoryBuffer(DWORD max_length, DWORD alignment, IMFMediaBuffer **out)
 {
@@ -171,13 +170,12 @@ HRESULT WINAPI MFCreateMemoryBuffer(DWORD max_length, IMFMediaBuffer **buffer)
     return MfCreateMemoryBuffer(max_length, 1, buffer);
 }
 
-/* the alignment is a mask as MF_16_BYTE_ALIGNMENT, any value rounds up to a power of two. */
+/* the alignment is a mask like MF_16_BYTE_ALIGNMENT, other values round up to a power of two. */
 HRESULT WINAPI MFCreateAlignedMemoryBuffer(DWORD max_length, DWORD alignment, IMFMediaBuffer **buffer)
 {
     return MfCreateMemoryBuffer(max_length, round_power_of_two(alignment), buffer);
 }
 
-/* ------------------------------------------------------------------ wrappers */
 
 static WrapperBuffer *wrapper_buffer(IMFMediaBuffer *iface)
 {
@@ -257,7 +255,7 @@ static const IMFMediaBufferVtbl WRAPPER_BUFFER_VTBL = {
     wrapper_get_current_length, wrapper_set_current_length, wrapper_get_max_length,
 };
 
-/* a range inside the current data of the buffer, full from the start. */
+/* a range inside the inner buffer's current data, full from the start. */
 HRESULT WINAPI MFCreateMediaBufferWrapper(IMFMediaBuffer *inner, DWORD offset, DWORD length, IMFMediaBuffer **out)
 {
     if (!out)

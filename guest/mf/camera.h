@@ -1,4 +1,4 @@
-/* what the parts of the capture sources of mf.dll share: the camera behind a symbolic link, and the objects over it. */
+/* shared by mf.dll's capture sources: the camera behind a symbolic link and the objects over it. */
 #ifndef MF_CAMERA_H
 #define MF_CAMERA_H
 
@@ -32,22 +32,19 @@ typedef struct CamDevice {
 void *CamAlloc(SIZE_T size);
 void CamFree(void *p);
 
-/* the cameras of a device interface class as a multi-sz of symbolic links, to free with CamFree. */
+/* the camera symbolic links of a device interface class as a multi-sz, free with CamFree. */
 HRESULT CamEnumeratePaths(const GUID *category, WCHAR **paths);
-/* the friendly name of the device behind a symbolic link. */
 HRESULT CamFriendlyName(PCWSTR path, WCHAR *name, DWORD chars);
 
 HRESULT CamOpenDevice(PCWSTR path, CamDevice **device);
 void CamDeviceAddRef(CamDevice *device);
 void CamDeviceRelease(CamDevice *device);
-/* a request to the camera's device; the error is a win32 one made an hresult. */
+/* win32 errors come back as hresults. */
 HRESULT CamIoctl(CamDevice *device, DWORD code, void *in, DWORD in_size, void *out, DWORD out_size, DWORD *returned);
 
-/* the media foundation subtype of a camera format, and the format of a subtype. */
 void CamSubtype(DWORD fourcc, GUID *subtype);
 BOOL CamFourcc(const GUID *subtype, DWORD *fourcc);
 
-/* the objects. */
 HRESULT CamCreateSource(IMFAttributes *attributes, IMFMediaSource **source);
 HRESULT CamCreateActivate(IMFAttributes *attributes, IMFActivate **activate);
 

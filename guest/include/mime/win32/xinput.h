@@ -1,7 +1,4 @@
-/*
- * xinput: the state, vibration and capabilities of up to four xbox 360
- * style controllers.
- */
+/* xinput: up to four xbox 360 style controllers. */
 #ifndef MIME_WIN32_XINPUT_H
 #define MIME_WIN32_XINPUT_H
 

@@ -1,8 +1,6 @@
 /*
- * the shortcut object: IShellLinkW and IShellLinkA over a target item list,
- * its description, arguments, working directory and icon, the extra data
- * blocks, a property store, and the persistence of all of it to a file or a
- * stream in the shortcut file format of linkfile.c.
+ * IShellLinkW and IShellLinkA with target, string fields, extra data and a property store. linkfile.c handles file
+ * and stream persistence.
  */
 #include "windows_storage_private.h"
 
@@ -12,7 +10,7 @@
 
 #define LINK_FROM(This, member) ((LINK *)((BYTE *)(This) - offsetof(LINK, member)))
 
-/* the interface ids of the shell's property keys the link answers itself. */
+/* property-key interface ids handled directly by the link. */
 static const IShellLinkWVtbl g_link_w_vtbl;
 static const IShellLinkAVtbl g_link_a_vtbl;
 static const IPersistFileVtbl g_file_vtbl;
@@ -21,7 +19,7 @@ static const IShellLinkDataListVtbl g_data_list_vtbl;
 static const IPropertyStoreVtbl g_store_vtbl;
 static const IObjectWithSiteVtbl g_site_vtbl;
 
-/* ------------------------------------------------------------------ the object */
+/* the object. */
 
 static HRESULT link_query(LINK *link, REFIID riid, void **object)
 {
@@ -120,9 +118,9 @@ static void set_dirty(LINK *link)
     link->Dirty = TRUE;
 }
 
-/* ------------------------------------------------------------------ text and fields */
+/* text and fields. */
 
-/* a string field into a caller's buffer: UI strings are loaded, a short buffer gets the start of it. */
+/* load UI strings and truncate to the caller's buffer. */
 static HRESULT get_field(LPCWSTR field, LPWSTR out, int chars)
 {
     if (chars < 1) {
@@ -149,7 +147,7 @@ static HRESULT set_field(LINK *link, LPWSTR *field, LPCWSTR text)
     return S_OK;
 }
 
-/* copies a path to a buffer of a size given as a count, cut to fit like the shell's. */
+/* copy a path, truncating to the character capacity. */
 static HRESULT copy_text(LPCWSTR text, LPWSTR out, int chars)
 {
     if (chars < 1) {
@@ -166,7 +164,7 @@ static HRESULT copy_text(LPCWSTR text, LPWSTR out, int chars)
     return text[i] ? HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER) : S_OK;
 }
 
-/* the ANSI side of a getter: the wide result converted into the caller's buffer. */
+/* convert the wide result into the ANSI caller buffer. */
 static void narrow(LPCWSTR wide, LPSTR out, int chars)
 {
     if (!out || chars < 1)
@@ -187,16 +185,16 @@ static LPWSTR widen(LPCSTR text)
     return wide;
 }
 
-/* ------------------------------------------------------------------ the target */
+/* the target. */
 
-/* the target in the file system, or FALSE when it has none. */
+/* return FALSE when the link has no filesystem target. */
 static BOOL target_path(const LINK *link, LPWSTR path)
 {
     path[0] = 0;
     return link->Pidl && SHGetPathFromIDListEx(link->Pidl, path, MAX_PATH, 0);
 }
 
-/* the find data of a path that exists, kept in the header of the shortcut. */
+/* retain existing target find data in the shortcut header. */
 static void read_find_data(LINK *link, LPCWSTR path)
 {
     WIN32_FILE_ATTRIBUTE_DATA data;
@@ -215,7 +213,7 @@ static void read_find_data(LINK *link, LPCWSTR path)
     }
 }
 
-/* makes a list the target. a path gives the list, its find data and its link info, a list gives its path. */
+/* set the target list. paths also supply find data and link info; lists supply a path. */
 static HRESULT set_target(LINK *link, PCIDLIST_ABSOLUTE pidl, LPCWSTR path)
 {
     PIDLIST_ABSOLUTE list;
@@ -241,7 +239,7 @@ static HRESULT set_target(LINK *link, PCIDLIST_ABSOLUTE pidl, LPCWSTR path)
         ILFree(list);
         return S_OK;
     }
-    /* the places the old target was relative to are gone with it. */
+    /* discard locations relative to the previous target. */
     LkRemoveBlock(link, EXP_SPECIAL_FOLDER_SIG);
     LkRemoveBlock(link, EXP_KNOWN_FOLDER_SIG);
     LkRemoveBlock(link, LNK_SIG_TRACKER);
@@ -262,7 +260,7 @@ static HRESULT set_target(LINK *link, PCIDLIST_ABSOLUTE pidl, LPCWSTR path)
     return S_OK;
 }
 
-/* the expanded path an environment path is, from the block that holds it. */
+/* expand the environment path stored in the block. */
 static BOOL environment_path(const LINK *link, LPWSTR path)
 {
     LINK_BLOCK *block = LkFindBlock(link, EXP_SZ_LINK_SIG);
@@ -278,7 +276,7 @@ static BOOL environment_path(const LINK *link, LPWSTR path)
     return raw[0] && ExpandEnvironmentStringsW(raw, path, MAX_PATH) != 0;
 }
 
-/* the block that keeps a string with variables in it, the ANSI form too. */
+/* store the variable path in both wide and ANSI forms. */
 static HRESULT set_exp_block(LINK *link, DWORD signature, LPCWSTR text)
 {
     EXP_SZ_LINK exp;
@@ -291,7 +289,7 @@ static HRESULT set_exp_block(LINK *link, DWORD signature, LPCWSTR text)
     return LkSetBlock(link, &exp);
 }
 
-/* ------------------------------------------------------------------ IShellLinkW */
+/* IShellLinkW. */
 
 static HRESULT STDMETHODCALLTYPE w_get_path(IShellLinkW *This, LPWSTR file, int chars, WIN32_FIND_DATAW *data,
                                             DWORD flags)
@@ -301,7 +299,7 @@ static HRESULT STDMETHODCALLTYPE w_get_path(IShellLinkW *This, LPWSTR file, int 
     HRESULT hr = S_OK;
     path[0] = 0;
     if (link->Flags & SLDF_HAS_DARWINID) {
-        /* an installer shortcut has no target of its own, its icon location stands for it. */
+        /* installer shortcuts use the icon location in place of a target. */
         if (!ExpandEnvironmentStringsW(link->IconLocation ? link->IconLocation : L"", path, MAX_PATH))
             hr = E_FAIL;
     } else {
@@ -349,7 +347,7 @@ static HRESULT STDMETHODCALLTYPE w_get_id_list(IShellLinkW *This, PIDLIST_ABSOLU
     return *pidl ? S_OK : HRESULT_FROM_WIN32(ERROR_OUTOFMEMORY);
 }
 
-/* a shortcut with a nothing for target starts over. */
+/* an empty target resets the shortcut. */
 static HRESULT STDMETHODCALLTYPE w_set_id_list(IShellLinkW *This, PCIDLIST_ABSOLUTE pidl)
 {
     LINK *link = LINK_FROM(This, LinkW);
@@ -441,7 +439,7 @@ static HRESULT STDMETHODCALLTYPE w_get_icon_location(IShellLinkW *This, LPWSTR p
     return get_field(link->IconLocation, path, chars);
 }
 
-/* the icon path is kept as given, and as a path with variables in a block when it can be written with some. */
+/* retain the supplied icon path and, where possible, an environment-variable form in a block. */
 static HRESULT STDMETHODCALLTYPE w_set_icon_location(IShellLinkW *This, LPCWSTR path, int index)
 {
     LINK *link = LINK_FROM(This, LinkW);
@@ -470,7 +468,7 @@ static HRESULT STDMETHODCALLTYPE w_set_relative_path(IShellLinkW *This, LPCWSTR 
     return S_OK;
 }
 
-/* whether the target is there. the shell would search for it, which needs a user and a tracker. */
+/* only check target existence; shell search would require user interaction and tracking. */
 static HRESULT STDMETHODCALLTYPE w_resolve(IShellLinkW *This, HWND hwnd, DWORD flags)
 {
     LINK *link = LINK_FROM(This, LinkW);
@@ -492,11 +490,11 @@ static HRESULT STDMETHODCALLTYPE w_resolve(IShellLinkW *This, HWND hwnd, DWORD f
         }
         return S_OK;
     }
-    /* the link info names the target too, for a volume that is still there. */
+    /* link info may locate the target on an existing volume. */
     if (link->Info && LkInfoPath(link->Info, link->InfoSize, path, MAX_PATH) && PathFileExistsW(path) &&
         SUCCEEDED(set_target(link, nullptr, path)))
         return S_OK;
-    /* the relative path of a link that was moved with its target. */
+    /* try the relative path when the link moved with its target. */
     if (link->RelativePath && (link->RelativeSource || link->CurFile)) {
         WCHAR base[MAX_PATH], combined[MAX_PATH];
         LkCopy(base, link->RelativeSource ? link->RelativeSource : link->CurFile, MAX_PATH);
@@ -507,11 +505,11 @@ static HRESULT STDMETHODCALLTYPE w_resolve(IShellLinkW *This, HWND hwnd, DWORD f
                 return S_OK;
         }
     }
-    /* a missing target with nobody to ask counts as the user giving up, which resolve reports as false. */
+    /* a missing target without user interaction returns false, like canceled resolution. */
     return S_FALSE;
 }
 
-/* a path is an environment path when expanding it changes it. */
+/* a path contains environment variables if expansion changes it. */
 static HRESULT STDMETHODCALLTYPE w_set_path(IShellLinkW *This, LPCWSTR file)
 {
     LINK *link = LINK_FROM(This, LinkW);
@@ -541,7 +539,7 @@ static const IShellLinkWVtbl g_link_w_vtbl = {
     w_set_path,
 };
 
-/* ------------------------------------------------------------------ IShellLinkA */
+/* IShellLinkA. */
 
 static IShellLinkW *wide_of(IShellLinkA *This)
 {
@@ -585,7 +583,7 @@ static HRESULT STDMETHODCALLTYPE a_set_id_list(IShellLinkA *This, PCIDLIST_ABSOL
     return w->lpVtbl->SetIDList(w, pidl);
 }
 
-/* a getter of the ANSI interface: the wide one's text, in a buffer sized like the caller's. */
+/* convert the wide getter result using the caller's buffer size. */
 #define ANSI_GETTER(name, method)                                                                                  \
     static HRESULT STDMETHODCALLTYPE a_##name(IShellLinkA *This, LPSTR out, int chars)                             \
     {                                                                                                              \
@@ -706,9 +704,9 @@ static const IShellLinkAVtbl g_link_a_vtbl = {
     a_set_path,
 };
 
-/* ------------------------------------------------------------------ the property store */
+/* the property store. */
 
-/* the store of the shortcut's properties, made when they are first asked for from the block that holds them. */
+/* lazily load the property store from its data block. */
 static HRESULT ensure_props(LINK *link)
 {
     if (link->Props)
@@ -732,7 +730,7 @@ static HRESULT ensure_props(LINK *link)
     return S_OK;
 }
 
-/* the block of the properties is rewritten from the store before the shortcut is. */
+/* write the property store into its block before saving the shortcut. */
 static HRESULT update_props_block(LINK *link)
 {
     if (!link->Serialized)
@@ -804,7 +802,7 @@ static HRESULT STDMETHODCALLTYPE store_set_value(IPropertyStore *This, REFPROPER
     return hr;
 }
 
-/* a shortcut opened for writing is written back when it has a file. */
+/* save writable shortcuts back to their file. */
 static HRESULT STDMETHODCALLTYPE store_commit(IPropertyStore *This)
 {
     LINK *link = LINK_FROM(This, Store);
@@ -820,7 +818,7 @@ static const IPropertyStoreVtbl g_store_vtbl = {
     store_get_at,          store_get_value, store_set_value, store_commit,
 };
 
-/* ------------------------------------------------------------------ the data list */
+/* the data list. */
 
 static HRESULT STDMETHODCALLTYPE list_add_data_block(IShellLinkDataList *This, void *block)
 {
@@ -871,7 +869,7 @@ static const IShellLinkDataListVtbl g_data_list_vtbl = {
     list_remove_data_block,  list_get_flags, list_set_flags,
 };
 
-/* ------------------------------------------------------------------ the site */
+/* the site. */
 
 static HRESULT STDMETHODCALLTYPE site_set_site(IObjectWithSite *This, IUnknown *site)
 {
@@ -899,9 +897,9 @@ static const IObjectWithSiteVtbl g_site_vtbl = {
     site_query_interface, site_add_ref, site_release, site_set_site, site_get_site,
 };
 
-/* ------------------------------------------------------------------ persistence */
+/* persistence. */
 
-/* the shortcut as the bytes of a file, with the relative path and the properties brought up to date. */
+/* serialize after updating the relative path and property block. */
 static BYTE *serialize(LINK *link, LPCWSTR file, SIZE_T *size, HRESULT *hr)
 {
     LPCWSTR from = link->RelativeSource ? link->RelativeSource : file;
@@ -997,14 +995,14 @@ static HRESULT file_load(LINK *link, LPCWSTR file, DWORD mode)
     }
     link->Mode = mode;
     LkSetString(&link->CurFile, file);
-    /* an icon with variables in it shows as the path they make. */
+    /* expand environment variables in icon paths. */
     LINK_BLOCK *icon = (link->Flags & SLDF_HAS_EXP_ICON_SZ) ? LkFindBlock(link, EXP_SZ_ICON_SIG) : nullptr;
     if (icon && icon->Size >= sizeof(EXP_SZ_LINK)) {
         WCHAR expanded[MAX_PATH];
         if (ExpandEnvironmentStringsW(((const EXP_SZ_LINK *)icon->Data)->swzTarget, expanded, MAX_PATH))
             LkSetString(&link->IconLocation, expanded);
     }
-    /* a shortcut that gives its target as a variable path or relative to itself has no list yet. */
+    /* environment and relative target paths may not have an item list yet. */
     if (!link->Pidl) {
         WCHAR path[MAX_PATH];
         if ((link->Flags & SLDF_PREFER_ENVIRONMENT_PATH) && environment_path(link, path)) {
@@ -1091,7 +1089,7 @@ static HRESULT STDMETHODCALLTYPE stream_is_dirty(IPersistStream *This)
     return LINK_FROM(This, Stream)->Dirty ? S_OK : S_FALSE;
 }
 
-/* reads a stream to its end and takes it as the bytes of a shortcut. */
+/* read the rest of the stream as a shortcut file. */
 static HRESULT STDMETHODCALLTYPE stream_load(IPersistStream *This, IStream *stream)
 {
     LINK *link = LINK_FROM(This, Stream);

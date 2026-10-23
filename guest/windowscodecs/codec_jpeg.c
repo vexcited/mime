@@ -1,12 +1,9 @@
-/*
- * the jpeg codec, over the jpeg library: gray, bgr and cmyk pictures, a decode at a fraction of the size, the
- * thumbnail of the exif block and the color profile.
- */
+/* JPEG codec with grayscale, BGR and CMYK, scaled decoding, EXIF thumbnails and color profiles. */
 #include "wic_codec.h"
 #include "codec_util.h"
 #include "meta_codecs.h"
 
-/* ------------------------------------------------------------------ the decoder */
+/* the decoder. */
 
 typedef struct JpegState {
     const BYTE *data;
@@ -16,7 +13,7 @@ typedef struct JpegState {
     BOOL profile_tried;
     BYTE *icc;
     size_t icc_size;
-    UINT exif_space; /* 0 none, else the value for the exif color space context. */
+    UINT exif_space; /* 0 none, else the value for the EXIF color space context. */
 } JpegState;
 
 static HRESULT jpeg_error(int code)
@@ -90,7 +87,7 @@ static HRESULT jpeg_frame_decode(void *state, UINT index, BYTE *dest, UINT strid
     int rc = mime_jpeg_decode(s->data, s->size, &WicAllocator, MIME_JPEG_TOLERANT, dest, stride,
                               (size_t)stride * s->info.height, nullptr);
     (void)bpp;
-    /* damaged entropy data leaves a neutral picture where the data ends, which windows shows as it is. */
+    /* damaged entropy data leaves neutral pixels after the error, which Windows displays unchanged. */
     if (rc == MIME_JPEG_OK || rc == MIME_JPEG_TRUNCATED)
         return S_OK;
     return jpeg_error(rc);
@@ -112,7 +109,6 @@ static HRESULT jpeg_decode_scaled(void *state, UINT index, UINT scale, UINT *wid
     return rc == MIME_JPEG_OK || rc == MIME_JPEG_TRUNCATED ? S_OK : jpeg_error(rc);
 }
 
-/* the exif block of the file, if it has one. */
 static BOOL jpeg_exif(JpegState *s, MimeTiff *tiff)
 {
     const uint8_t *payload;
@@ -215,7 +211,7 @@ const WicDecoderOps wic_dec_jpeg = {
     .metadata = jpeg_metadata,
 };
 
-/* ------------------------------------------------------------------ the encoder */
+/* the encoder. */
 
 static const WicOptionDesc g_jpeg_options[] = {
     {L"ImageQuality", VT_R4, 0.9, 0.0, 1.0},
@@ -239,7 +235,7 @@ static HRESULT jpeg_begin(IStream *stream, void **state)
 
 static BOOL jpeg_closest(GUID *format)
 {
-    /* gray goes to gray, cmyk stays, everything else is color. */
+    /* retain grayscale and CMYK; convert other formats to color. */
     const WicFormat *f = WicFindFormat(format);
     if (!f)
         return FALSE;

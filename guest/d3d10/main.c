@@ -1,7 +1,6 @@
 /*
- * the devices of d3d10.dll: direct3d 11 devices of d3d11.dll at feature
- * level 10_0, made with a flag that gives them ID3D10Device, and the
- * version and layers of d3d10core.dll.
+ * d3d10.dll: its devices are d3d11.dll devices at feature level 10_0, made
+ * with a flag that gives them ID3D10Device.
  */
 #include "d3d10_private.h"
 
@@ -14,10 +13,7 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
     return TRUE;
 }
 
-/*
- * a hardware device unless another driver is asked, the adapter given then
- * having to be of that type. bgra support is dropped, as d3d10.dll does.
- */
+/* a non hardware driver type must match the adapter given. like windows, bgra support is dropped. */
 D3D10API HRESULT WINAPI D3D10CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D10_DRIVER_TYPE type, HMODULE software,
                                                       UINT flags, UINT sdk, DXGI_SWAP_CHAIN_DESC *desc,
                                                       IDXGISwapChain **swapchain, ID3D10Device **device)
@@ -56,7 +52,7 @@ D3D10API HRESULT WINAPI D3D10CreateDevice(IDXGIAdapter *adapter, D3D10_DRIVER_TY
     return D3D10CreateDeviceAndSwapChain(adapter, type, software, flags, sdk, nullptr, nullptr, device);
 }
 
-/* d3d10core.dll's, which windows' d3d10.dll imports. */
+/* like windows, the version and layers come from d3d10core.dll. */
 static FARPROC core_entry(const char *name)
 {
     HMODULE core = LoadLibraryW(L"d3d10core.dll");

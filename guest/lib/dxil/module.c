@@ -1,5 +1,5 @@
 /*
- * reads the llvm 3.7 module of a dxil part: the type table, globals and
+ * reads a dxil part's llvm 3.7 module: the type table, globals and
  * functions, constants, metadata and function bodies, numbering values as
  * the bitcode writer did.
  */
@@ -289,7 +289,7 @@ static void read_types(Parser *p, const BcBlock *b)
 
 /* ------------------------------------------------------------------ values */
 
-/* the values being numbered: the module's, or the function's past them. */
+/* the module's values, or the function's numbered past them. */
 static DxValue *new_value(Parser *p, uint32_t *id)
 {
     DxModule *m = p->m;
@@ -491,7 +491,7 @@ static void read_metadata(Parser *p, const BcBlock *b, uint32_t *capacity, uint3
                 md->ops[k] = r->ops[k] ? (uint32_t)r->ops[k] - 1 : DX_NONE;
             break;
         default:
-            /* debug information and others: a node nothing reads. */
+            /* debug information and the rest become nodes nothing reads. */
             md->kind = DM_NULL;
             break;
         }
@@ -596,7 +596,7 @@ static DxInst *new_inst(Parser *p, uint8_t op, uint32_t count)
     return ins->ops || !count ? ins : nullptr;
 }
 
-/* the type an element pointer's indices reach from a base of type base. */
+/* the type an element pointer's indices reach from base. */
 static uint32_t indexed_type(Parser *p, uint32_t type, const uint32_t *indices, uint32_t count)
 {
     for (uint32_t i = 0; i < count && !p->failed; i++) {
@@ -963,7 +963,7 @@ static void read_instruction(Parser *p, const BcRecord *r, uint32_t *block)
         v->kind = DV_INSTRUCTION;
         v->type = type;
         v->inst = f->inst_count - 1;
-        /* the instruction may have moved with the array. */
+        /* growing the array may have moved the instruction. */
         f->insts[f->inst_count - 1].value = id;
     } else if (r->code != FUNC_STORE && !is_terminator(ins->op) && r->code != FUNC_CALL) {
         if (type == DX_NONE) {

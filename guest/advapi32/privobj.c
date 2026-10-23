@@ -1,8 +1,8 @@
 /*
- * private object security, the access mask helpers and the audit alarms.
+ * private object security, access mask helpers and audit alarms.
  *
- * the first are wrappers over the rtl routines in ntdll, which keep the descriptors of a subsystem's own
- * objects. there is no audit log, so the alarms fail the way a caller without the audit privilege does.
+ * private object security wraps the ntdll rtl routines that keep descriptors for a subsystem's own objects. there is
+ * no audit log, so the alarms fail like they do for a caller without the audit privilege.
  */
 #include "advapi32_private.h"
 
@@ -92,7 +92,7 @@ ADVAPI BOOL WINAPI AreAnyAccessesGranted(DWORD granted, DWORD desired)
     return RtlAreAnyAccessesGranted(granted, desired);
 }
 
-/* the access a handle needs to read the parts of a descriptor the information names. */
+/* the handle access needed to read the descriptor parts the information names. */
 ADVAPI void WINAPI QuerySecurityAccessMask(SECURITY_INFORMATION information, LPDWORD desired)
 {
     DWORD mask = 0;
@@ -105,7 +105,7 @@ ADVAPI void WINAPI QuerySecurityAccessMask(SECURITY_INFORMATION information, LPD
     *desired = mask;
 }
 
-/* and the access to change them. */
+/* the handle access needed to change those parts. */
 ADVAPI void WINAPI SetSecurityAccessMask(SECURITY_INFORMATION information, LPDWORD desired)
 {
     DWORD mask = 0;
@@ -142,8 +142,8 @@ ADVAPI BOOL WINAPI SetKernelObjectSecurity(HANDLE handle, SECURITY_INFORMATION i
 #endif
 
 /*
- * whether a token may stand for a client in a check: it has to be an impersonation token, and one that
- * says who the client is. returns the error to report, or zero.
+ * a token may stand for a client in a check only if it is an impersonation token that identifies the client.
+ * returns the error to report, or zero.
  */
 DWORD AdvImpersonationError(HANDLE token)
 {
@@ -162,8 +162,8 @@ DWORD AdvImpersonationError(HANDLE token)
 }
 
 /*
- * the privileges of the set the token holds enabled are marked as used, and the result says whether it holds
- * all of them or, unless the set asks for all, any.
+ * marks the required privileges the token holds enabled as used. the result says whether it holds all of them or,
+ * unless the set requires all, any.
  */
 ADVAPI BOOL WINAPI PrivilegeCheck(HANDLE token, PPRIVILEGE_SET required, LPBOOL result)
 {
@@ -173,7 +173,7 @@ ADVAPI BOOL WINAPI PrivilegeCheck(HANDLE token, PPRIVILEGE_SET required, LPBOOL 
     }
     DWORD error = AdvImpersonationError(token);
     if (error) {
-        /* the check has no word for a token that is not an impersonation one. */
+        /* this check has no error for a non impersonation token, so it reports a bad level. */
         AdvSetError(error == ERROR_NO_IMPERSONATION_TOKEN ? ERROR_BAD_IMPERSONATION_LEVEL : error);
         return FALSE;
     }
@@ -203,8 +203,8 @@ ADVAPI BOOL WINAPI PrivilegeCheck(HANDLE token, PPRIVILEGE_SET required, LPBOOL 
 /* ---------------------------------------------------------------- audit alarms */
 
 /*
- * all of them end in a system service that asks for the audit privilege first. nothing in a session holds it
- * enabled, so they fail with ERROR_PRIVILEGE_NOT_HELD, after clearing what they report back.
+ * every alarm ends in a system service that checks the audit privilege first. nothing in a session holds it enabled,
+ * so they fail with ERROR_PRIVILEGE_NOT_HELD after clearing their outputs.
  */
 static BOOL not_held(void)
 {

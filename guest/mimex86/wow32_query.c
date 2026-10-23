@@ -1,17 +1,15 @@
 /*
- * the information classes of 32-bit system calls: the records whose
- * pointers, handles and sizes are narrower in a 32-bit program, converted
- * both ways, and the classes whose records match passed through. what the
- * kernel answers sets what is converted; a class it does not answer and
- * whose 32-bit layout differs is refused here, as windows' wow64 refuses
- * the classes it does not know.
+ * information classes of 32-bit system calls. records with narrower pointers,
+ * handles and sizes are converted both ways, matching ones pass through. a
+ * class the kernel does not answer and whose 32-bit layout differs is refused,
+ * as windows' wow64 refuses classes it does not know.
  */
 #define MIME_NTDLL
 #define NTSYSCALLAPI
 #include <mime/ntrtl.h>
 #include "wow32_convert.h"
 
-/* the classes nt.h does not name. */
+/* classes nt.h does not name. */
 enum {
     ProcessExceptionPort = 8,
     ProcessDeviceMap = 23,
@@ -29,7 +27,7 @@ enum {
     JobObjectExtendedLimitInformation = 9,
 };
 
-/* query classes whose 32-bit records are the native ones. */
+/* query classes whose 32-bit records match the native ones. */
 static const UCHAR process_same[] = {2,  4,  10, 12, 18, 19, 20, 22, 24, 28, 29, 31, 32, 33, 34, 36, 39, 45,
                                      46, 47, 50, 52, 54, 58, 59, 61, 64, 66, 67, 70, 71, 77, 82, 85, 88, 97, 109, 110, 111};
 static const UCHAR thread_same[] = {1, 12, 14, 16, 17, 18, 20, 22, 24, 25, 27, 28, 32, 33, 34, 35, 39, 42, 44, 54, 55, 59};
@@ -65,7 +63,7 @@ static ULONG_PTR current_process_id(void)
     return (ULONG_PTR)NtCurrentTeb()->ClientId.UniqueProcess;
 }
 
-/* the native 32-bit peb the kernel keeps for a wow64 process, 0 for any other. */
+/* the native 32-bit peb the kernel keeps for a wow64 process, or 0. */
 static ULONG_PTR wow64_peb(HANDLE process)
 {
     ULONG_PTR peb = 0;
@@ -74,7 +72,7 @@ static ULONG_PTR wow64_peb(HANDLE process)
     return peb;
 }
 
-/* the 32-bit peb of a process: this one's own, else the kernel's for a wow64 process. */
+/* this process's own 32-bit peb, else the kernel's for a wow64 process. */
 static ULONG peb32_of(HANDLE process, ULONG_PTR id)
 {
     if (process == NtCurrentProcess() || id == current_process_id())
@@ -101,7 +99,7 @@ ULONG Mx32TebOf(HANDLE process, PVOID teb)
     return wow64_peb(process) ? (ULONG)((ULONG_PTR)teb + MIME_TEB_SIZE) : 0;
 }
 
-/* a counted string the kernel put after its header, moved after the 8-byte 32-bit header. */
+/* moves a counted string from after the native header to after the 8-byte 32-bit header. */
 static void narrow_string(const UNICODE_STRING *in, PVOID out)
 {
     MIME_STRING32 *o = out;
@@ -112,9 +110,8 @@ static void narrow_string(const UNICODE_STRING *in, PVOID out)
 }
 
 /*
- * a query whose answer is a counted string and its text: asked with a
- * buffer 8 bytes longer for the wider header, the needed length given
- * back 8 bytes shorter.
+ * a query answered with a counted string: the buffer is asked 8 bytes longer
+ * for the wider header, and the needed length comes back 8 bytes shorter.
  */
 typedef NTSTATUS (*STRING_QUERY)(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned);
 
@@ -263,7 +260,6 @@ NTSTATUS Mx32SetInformationProcess(const ULONG *a)
     const ULONG *in = pointer32(a[2]);
     switch (klass) {
     case ProcessQuotaLimits: {
-        /* QUOTA_LIMITS and QUOTA_LIMITS_EX: five sizes, a time, then four sizes, flags and a rate. */
         if (length != 32 && length != 56)
             return STATUS_INFO_LENGTH_MISMATCH;
         if (!in)
@@ -389,7 +385,7 @@ NTSTATUS Mx32SetInformationThread(const ULONG *a)
     case ThreadQuerySetWin32StartAddress:
     case ThreadSetTlsArrayAddress:
     case 47: {
-        /* a mask or an address zero extended, as windows widens them. */
+        /* a mask or an address, zero extended as windows widens them. */
         if (length < sizeof(ULONG) || (klass == ThreadAffinityMask && in && length != sizeof(ULONG)))
             return STATUS_INFO_LENGTH_MISMATCH;
         ULONG_PTR value = in ? in[0] : 0;
@@ -449,8 +445,8 @@ static_assert(sizeof(THREAD_INFORMATION32) == 0x40, "x86 thread record");
 static_assert(sizeof(PROCESS_INFORMATION32) == 0xB8, "x86 process record");
 
 /*
- * the handles of the system in the x86 layout: a count and records of 16 bytes, or two words and records of 28.
- * as many fit the caller's buffer as it holds, the native answer has the room for the same number.
+ * system handles in the x86 layout: a count and 16-byte records, or two words and 28-byte records. as many are
+ * returned as fit the caller's buffer, and the native query gets room for the same number.
  */
 static NTSTATUS query_handles32(BOOLEAN extended, const ULONG *a)
 {
@@ -496,7 +492,7 @@ static NTSTATUS query_handles32(BOOLEAN extended, const ULONG *a)
     return status;
 }
 
-/* converts the native process list into the x86 layout, threads and names included. */
+/* converts the native process list to the x86 layout, threads and names included. */
 static NTSTATUS query_processes32(ULONG out, ULONG length, ULONG returned)
 {
     SIZE_T size = 0x10000;
@@ -574,8 +570,8 @@ static NTSTATUS query_processes32(ULONG out, ULONG length, ULONG returned)
 }
 
 /*
- * the modules of the kernel in the 32-bit layout: a count, then records of 284 bytes whose pointers are 32 bits, the
- * base addresses cut to the low half. Which layout Windows hands a 32-bit program is a guess.
+ * kernel modules in the 32-bit layout: a count, then 284-byte records with 32-bit pointers and base addresses cut
+ * to the low half. the layout windows gives 32-bit programs here is a guess.
  */
 static NTSTATUS query_modules32(ULONG address, ULONG length, ULONG returned_address)
 {
@@ -620,7 +616,7 @@ NTSTATUS Mx32QuerySystemInformation(const ULONG *a)
     switch (klass) {
     case SystemBasicInformation:
     case SystemEmulationBasicInformation: {
-        /* the limits of a 32-bit program's address space below 2 gib. */
+        /* a 32-bit program's address space ends below 2 GiB. */
         store32(a[3], 44);
         if (length < 44)
             return STATUS_INFO_LENGTH_MISMATCH;
@@ -636,7 +632,7 @@ NTSTATUS Mx32QuerySystemInformation(const ULONG *a)
         return status;
     }
     case SystemPerformanceInformation: {
-        /* the same record, longer on newer systems: a 32-bit program may ask for its first 0x138 bytes. */
+        /* newer systems made this record longer, a 32-bit program may ask for its first 0x138 bytes. */
         UCHAR native[0x200];
         ULONG needed = 0;
         status = NtQuerySystemInformation(klass, native, sizeof(native), &needed);
@@ -657,7 +653,7 @@ NTSTATUS Mx32QuerySystemInformation(const ULONG *a)
     case SystemExtendedHandleInformation:
         return query_handles32(klass == SystemExtendedHandleInformation, a);
     case SystemRangeStartInformation:
-        /* user addresses of a 32-bit program end at 2 gib. */
+        /* a 32-bit program's user addresses end at 2 GiB. */
         store32(a[3], sizeof(ULONG));
         if (length != sizeof(ULONG))
             return STATUS_INFO_LENGTH_MISMATCH;
@@ -688,7 +684,7 @@ NTSTATUS Mx32QueryObject(const ULONG *a)
     ULONG klass = a[1], length = a[3];
     switch (klass) {
     case ObjectBasicInformation: {
-        /* 56 bytes on both, without a pointer. */
+        /* 56 bytes in both widths, no pointer. */
         UCHAR native[56];
         ULONG needed = 0;
         NTSTATUS status = NtQueryObject(handle, klass, native, sizeof(native), &needed);
@@ -702,7 +698,7 @@ NTSTATUS Mx32QueryObject(const ULONG *a)
     case ObjectNameInformation:
         return query_string32(query_object_string, a);
     case ObjectTypeInformation: {
-        /* the name's header is 8 bytes shorter, the 88 bytes of counts and masks after it are the same. */
+        /* the name header is 8 bytes shorter, the 88 bytes of counts and masks after it match. */
         if (length > 0xFFFF0000u)
             return STATUS_INVALID_PARAMETER;
         PUCHAR native = Mx32Scratch((SIZE_T)length + 8);
@@ -869,7 +865,7 @@ NTSTATUS Mx32QueryInformationJobObject(const ULONG *a)
         return status;
     }
     case JobObjectBasicProcessIdList: {
-        /* the counts, then ids of 4 bytes. */
+        /* the counts, then 4-byte ids. */
         if (length < 8)
             return STATUS_INFO_LENGTH_MISMATCH;
         ULONG room = (length - 8) / sizeof(ULONG);
@@ -944,7 +940,7 @@ static ULONG sid_bytes(const void *sid)
     return 8 + 4 * ((const UCHAR *)sid)[1];
 }
 
-/* a token record of the kernel, in memory that stays until the caller frees it. */
+/* a kernel token record, kept until the caller frees it. */
 typedef struct NATIVE_TOKEN_INFO {
     PUCHAR Data;
     ULONG Length;
@@ -957,7 +953,7 @@ static NTSTATUS query_native(HANDLE token, ULONG klass, NATIVE_TOKEN_INFO *n)
     ULONG needed = 0;
     n->Scratch = nullptr;
     n->Data = n->Local;
-    /* a linked token is asked for with the length of its handle, exactly. */
+    /* a linked token must be asked for with exactly the size of its handle. */
     NTSTATUS status = NtQueryInformationToken(token, klass, n->Local, klass == 19 ? 8 : sizeof(n->Local), &needed);
     if (status == STATUS_BUFFER_TOO_SMALL && needed > sizeof(n->Local)) {
         n->Scratch = n->Data = Mx32Scratch(needed);
@@ -969,12 +965,12 @@ static NTSTATUS query_native(HANDLE token, ULONG klass, NATIVE_TOKEN_INFO *n)
     return status;
 }
 
-/* the 32-bit form of a record, written where the caller said when it fits; its size is always reported. */
+/* the 32-bit form of a record, written to the caller's buffer when it fits. its size is always reported. */
 typedef struct OUT32 {
-    ULONG Address;  /* of the caller's buffer */
+    ULONG Address;  /* the caller's buffer. */
     ULONG Capacity;
     ULONG Size;
-    PUCHAR Data;    /* NULL while measuring */
+    PUCHAR Data;    /* NULL while measuring. */
 } OUT32;
 
 static ULONG out32_alloc(OUT32 *o, ULONG bytes)
@@ -995,7 +991,7 @@ static void out32_ulong(OUT32 *o, ULONG at, ULONG value)
     out32_write(o, at, &value, sizeof(value));
 }
 
-/* a sid with its entry at the given offset: pointer, attributes. */
+/* writes a sid entry, pointer then attributes, at the given offset. */
 static void out32_sid_entry(OUT32 *o, ULONG entry, const void *sid, ULONG attributes)
 {
     ULONG bytes = sid_bytes(sid);
@@ -1032,7 +1028,7 @@ static void out32_sid_pointer(OUT32 *o, PVOID sid)
     }
 }
 
-/* the answers of the kernel whose records hold pointers or handles, narrowed. */
+/* narrows the kernel records that hold pointers or handles. */
 static NTSTATUS narrow_token_record(ULONG klass, const NATIVE_TOKEN_INFO *n, OUT32 *o)
 {
     const UCHAR *d = n->Data;
@@ -1102,7 +1098,7 @@ static NTSTATUS narrow_token_record(ULONG klass, const NATIVE_TOKEN_INFO *n, OUT
         out32_ulong(o, at, (ULONG)(ULONG_PTR)*(const HANDLE *)d);
         return STATUS_SUCCESS;
     }
-    case 33: /* the claims */
+    case 33: /* the claims. */
     case 34:
     case 39: {
         ULONG at = out32_alloc(o, 12);
@@ -1123,7 +1119,7 @@ static NTSTATUS narrow_token_record(ULONG klass, const NATIVE_TOKEN_INFO *n, OUT
     }
 }
 
-/* the classes whose records are the same in both. */
+/* classes whose records match in both widths. */
 static BOOLEAN token_same(ULONG klass)
 {
     static const UCHAR same[] = {3, 7, 8, 9, 10, 12, 15, 16, 17, 18, 20, 21, 23, 24, 26, 27, 29, 32, 40, 47, 48};
@@ -1138,7 +1134,7 @@ NTSTATUS Mx32QueryInformationToken(const ULONG *a)
         return STATUS_ACCESS_VIOLATION;
     if (token_same(klass))
         return NtQueryInformationToken(token, klass, pointer32(a[2]), a[3], pointer32(a[4]));
-    /* the answer is asked in native form and narrowed. */
+    /* queried in native form, then narrowed. */
     NATIVE_TOKEN_INFO *n = Mx32Scratch(sizeof(*n));
     if (!n)
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -1163,7 +1159,7 @@ NTSTATUS Mx32QueryInformationToken(const ULONG *a)
     return status;
 }
 
-/* TOKEN_GROUPS of a 32-bit program as the kernel reads them; freed with Mx32FreeScratch. */
+/* a 32-bit program's TOKEN_GROUPS widened for the kernel, freed with Mx32FreeScratch. */
 static NTSTATUS widen_groups(ULONG address, PVOID *native)
 {
     *native = nullptr;
@@ -1287,7 +1283,7 @@ NTSTATUS Mx32AdjustGroupsToken(const ULONG *a)
 
 /* ------------------------------------------------------------ memory */
 
-/* the 32-bit layouts of what NtQueryVirtualMemory returns; memory above the 32-bit space is not the caller's. */
+/* 32-bit layouts of NtQueryVirtualMemory results. memory above the 32-bit space is not the caller's. */
 NTSTATUS Mx32QueryVirtualMemory(const ULONG *a)
 {
     PVOID base = pointer32(a[1]);
@@ -1319,7 +1315,7 @@ NTSTATUS Mx32QueryVirtualMemory(const ULONG *a)
         return STATUS_SUCCESS;
     }
     case MemoryWorkingSetInformation: {
-        /* a count and entries of a page and its flags, 4 bytes wide here; pages above the 32-bit space are not the program's. */
+        /* a count, then 4-byte page and flags entries. pages above the 32-bit space are not the program's. */
         if (length < 4)
             return STATUS_INFO_LENGTH_MISMATCH;
         ULONG capacity = (length - 4) / 4;
@@ -1342,7 +1338,7 @@ NTSTATUS Mx32QueryVirtualMemory(const ULONG *a)
         return status;
     }
     case MemoryWorkingSetExInformation: {
-        /* entries of an address and its attributes, 8 bytes here and 16 bytes natively. */
+        /* address and attribute entries, 8 bytes here and 16 bytes natively. */
         ULONG count = length / 8;
         if (!count)
             return STATUS_INFO_LENGTH_MISMATCH;

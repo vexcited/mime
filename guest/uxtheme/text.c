@@ -1,8 +1,4 @@
-/*
- * theme text: DrawThemeText and DrawThemeTextEx use the font and the text
- * color of the part when the visual style defines them, and the current ones
- * of the dc otherwise.
- */
+/* DrawThemeText and DrawThemeTextEx use the part's font and text color when the style defines them, else the dc's. */
 #include "uxtheme_private.h"
 
 typedef struct TEXT_STATE {
@@ -50,9 +46,9 @@ static void end_text(HDC dc, TEXT_STATE *ts)
 }
 
 /*
- * composited text for glass and layered surfaces: gdi text leaves the alpha
- * of a 32 bpp target at 0, so the text is drawn white on black into a
- * scratch dib whose coverage becomes the alpha of the text color.
+ * text for glass and layered surfaces: gdi text leaves the alpha of a 32 bpp
+ * target at 0, so the text is drawn white on black into a scratch dib whose
+ * coverage becomes the alpha of the text color.
  */
 static void draw_composited(HDC dc, LPCWSTR text, int count, DWORD flags, const RECT *rect)
 {

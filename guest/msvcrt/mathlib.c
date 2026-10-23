@@ -555,7 +555,6 @@ double __cdecl exp(double x)
     return r;
 }
 
-/* e^x - 1 as a double-double. */
 static DD expm1_dd(double x)
 {
     if (fabs_(x) < 0x1p-5) {

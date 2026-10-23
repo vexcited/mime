@@ -1,8 +1,7 @@
 /*
- * the endpoint mapper: a table in memory shared by the processes of the machine in which servers publish the endpoints their
- * interfaces can be reached on, and clients that name a server without an endpoint look the endpoint up. Windows keeps the
- * table in a service; here it is a section any process opens, and an entry whose process has ended is dropped by whoever
- * finds it.
+ * the endpoint mapper: a machine-wide table where servers publish the endpoints of their interfaces, and where clients
+ * look up the endpoint when a binding has none. windows keeps it in a service, here it is a shared section any process
+ * opens, and whoever finds an entry of a dead process drops it.
  */
 #include "rpcrt4_private.h"
 
@@ -32,14 +31,13 @@ static EP_TABLE *g_table;
 static HANDLE g_mutex;
 static SRWLOCK g_init_lock = SRWLOCK_INIT;
 
-/* creates or opens the shared table and its lock. */
 static RPC_STATUS table_open(void)
 {
     if (g_table)
         return RPC_S_OK;
     AcquireSRWLockExclusive(&g_init_lock);
     if (!g_table) {
-        /* everyone may use both, each with all the rights of its kind. */
+        /* everyone gets full access to both. */
         PSECURITY_DESCRIPTOR sd = RpcpEveryoneDescriptor(0x1F0001), section_sd = RpcpEveryoneDescriptor(0xF001F);
         SECURITY_ATTRIBUTES sa = {sizeof(sa), sd, FALSE}, section_sa = {sizeof(section_sa), section_sd, FALSE};
         HANDLE mutex = CreateMutexW(&sa, FALSE, L"Global\\MimeRpcEndpointMapperLock");
@@ -89,7 +87,6 @@ static ULONGLONG process_creation_time(DWORD pid)
     return t;
 }
 
-/* does the process that made an entry still run. */
 static BOOL entry_alive(const EP_ENTRY *e)
 {
     return e->Pid == GetCurrentProcessId() || process_creation_time(e->Pid) == e->CreationTime;
@@ -110,12 +107,11 @@ static BOOL same_if(const EP_ENTRY *e, const RPC_SYNTAX_IDENTIFIER *id, ULONG ve
         return e->Major < id->SyntaxVersion.MajorVersion ||
                (e->Major == id->SyntaxVersion.MajorVersion && e->Minor <= id->SyntaxVersion.MinorVersion);
     default:
-        /* compatible: same major, and a server at least as new as the client. */
+        /* same major version, and a server at least as new as the client. */
         return e->Major == id->SyntaxVersion.MajorVersion && e->Minor >= id->SyntaxVersion.MinorVersion;
     }
 }
 
-/* the endpoint a server published for an interface; false if there is none. */
 RPC_STATUS RpcpEpResolve(BINDING *b, const RPC_SYNTAX_IDENTIFIER *interface_id)
 {
     RPC_STATUS status = table_open();
@@ -149,7 +145,6 @@ RPC_STATUS RpcpEpResolve(BINDING *b, const RPC_SYNTAX_IDENTIFIER *interface_id)
     return status;
 }
 
-/* removes the entries of a process. */
 void RpcpEpPurge(DWORD pid)
 {
     if (!g_table)

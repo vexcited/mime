@@ -1,7 +1,6 @@
 /*
- * IDirect3DDevice8: its creation over a direct3d 9 device, its lifetime,
- * presentation and reset, the creation of resources with direct3d 8's
- * checks, copies between surfaces, render targets, scenes and clears.
+ * IDirect3DDevice8 over a Direct3D 9 device: lifetime, presentation and reset, resource creation with Direct3D 8's
+ * checks, surface copies, render targets, scenes and clears.
  */
 #include "d3d8_private.h"
 
@@ -43,7 +42,7 @@ HRESULT D8ConvertPresent(D8Device *d, D8Direct3D *d3d, UINT adapter, D3DDEVTYPE 
     DWORD effect = in->SwapEffect;
     if (effect < D3DSWAPEFFECT_DISCARD || effect > D3DSWAPEFFECT_COPY_VSYNC)
         return D3DERR_INVALIDCALL;
-    /* windows fixes the program's count before failing for it. */
+    /* windows fixes up the program's count before failing for it. */
     if (!in->BackBufferCount)
         in->BackBufferCount = 1;
     if ((effect == D3DSWAPEFFECT_COPY || effect == D3DSWAPEFFECT_COPY_VSYNC) && in->BackBufferCount > 1) {
@@ -86,7 +85,7 @@ HRESULT D8ConvertPresent(D8Device *d, D8Direct3D *d3d, UINT adapter, D3DDEVTYPE 
     out->AutoDepthStencilFormat = in->AutoDepthStencilFormat;
     out->Flags = in->Flags;
     out->FullScreen_RefreshRateInHz = in->FullScreen_RefreshRateInHz;
-    /* windowed chains blit at once, but for COPY_VSYNC, which waits for the vertical blank. */
+    /* windowed chains blit at once, except with COPY_VSYNC, which waits for the vertical blank. */
     if (in->Windowed)
         out->PresentationInterval =
             effect == D3DSWAPEFFECT_COPY_VSYNC ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
@@ -102,7 +101,7 @@ static BOOL valid_interval(UINT interval)
            interval == D3DPRESENT_INTERVAL_FOUR || interval == D3DPRESENT_INTERVAL_IMMEDIATE;
 }
 
-/* the implicit swap chain's back buffers and the automatic depth buffer, bound as a new device has them. */
+/* the implicit swap chain's back buffers and the automatic depth buffer, bound as on a new device. */
 static HRESULT take_buffers(D8Device *d, const D3DPRESENT_PARAMETERS *pp)
 {
     IDirect3DSwapChain9 *sc9;
@@ -334,7 +333,7 @@ static HRESULT STDMETHODCALLTYPE device_reset(IDirect3DDevice8 *iface, D3DPRESEN
     d->d9->lpVtbl->SetPixelShader(d->d9, nullptr);
     d->d9->lpVtbl->SetDepthStencilSurface(d->d9, nullptr);
     drop_buffers(d);
-    /* what the program still holds of video memory keeps direct3d 9 from resetting, and the device lost. */
+    /* video memory the program still holds keeps Direct3D 9 from resetting, and the device stays lost. */
     hr = d->d9->lpVtbl->Reset(d->d9, &pp);
     if (FAILED(hr)) {
         D8Leave(d);
@@ -390,7 +389,7 @@ static HRESULT STDMETHODCALLTYPE device_get_raster_status(IDirect3DDevice8 *ifac
     return D3D_OK;
 }
 
-/* the ramp a program reads back is the one it set, the first one counting from 0 to 255. */
+/* a program reads back the ramp it set; the initial one counts from 0 to 255. */
 static void STDMETHODCALLTYPE device_set_gamma_ramp(IDirect3DDevice8 *iface, DWORD flags, const D3DGAMMARAMP *ramp)
 {
     D8Device *d = impl(iface);
@@ -420,7 +419,7 @@ static UINT log2_levels(UINT size)
     return levels;
 }
 
-/* what every texture is checked for, as windows' runtime does before its own kind's rules. */
+/* checks every texture gets before its kind's own rules, like windows' runtime. */
 static HRESULT check_texture(D8Device *d, D3DRESOURCETYPE type, DWORD usage, D3DFORMAT format, D3DPOOL pool)
 {
     if ((UINT)pool > D3DPOOL_SCRATCH)
@@ -548,7 +547,6 @@ static HRESULT STDMETHODCALLTYPE device_create_cube_texture(IDirect3DDevice8 *if
     return wrap_texture(d, D8_CUBE_TEXTURE, hr, (IUnknown *)t9, usage, pool, format, (void **)out);
 }
 
-/* the size of a vertex of an fvf code. */
 static UINT fvf_size(DWORD fvf)
 {
     static const BYTE position[8] = {12, 12, 16, 16, 20, 24, 28, 32};
@@ -628,7 +626,7 @@ static HRESULT STDMETHODCALLTYPE device_create_index_buffer(IDirect3DDevice8 *if
 
 static BOOL swapchain_windowed(D8Device *d) { return !fullscreen(d); }
 
-/* render targets and depth buffers of their own, made in video memory. */
+/* standalone render targets and depth buffers, in video memory. */
 static HRESULT create_surface(D8Device *d, UINT width, UINT height, D3DFORMAT format, DWORD usage,
                               D3DMULTISAMPLE_TYPE samples, BOOL lockable, IDirect3DSurface8 **out)
 {
@@ -685,7 +683,7 @@ static HRESULT STDMETHODCALLTYPE device_create_depth_stencil_surface(IDirect3DDe
     return create_surface(impl(iface), width, height, format, D3DUSAGE_DEPTHSTENCIL, samples, FALSE, out);
 }
 
-/* surfaces in memory take any format the runtime knows the size of, without asking the device. */
+/* memory surfaces take any format the runtime knows the size of, without asking the device. */
 static HRESULT STDMETHODCALLTYPE device_create_image_surface(IDirect3DDevice8 *iface, UINT width, UINT height,
                                                              D3DFORMAT format, IDirect3DSurface8 **out)
 {
@@ -712,7 +710,7 @@ static HRESULT STDMETHODCALLTYPE device_create_image_surface(IDirect3DDevice8 *i
 
 static IDirect3DSurface9 *surface9(D8Object *s) { return (IDirect3DSurface9 *)s->d9; }
 
-/* rows of a rectangle between two locked surfaces, in blocks for the compressed formats. */
+/* copies a rectangle's rows between two locked surfaces, in blocks for compressed formats. */
 static HRESULT cpu_copy(IDirect3DSurface9 *src, const RECT *r, IDirect3DSurface9 *dst, POINT pt, D3DFORMAT format)
 {
     RECT to = {pt.x, pt.y, pt.x + (r->right - r->left), pt.y + (r->bottom - r->top)};
@@ -749,7 +747,7 @@ static HRESULT copy_rect(D8Device *d, D8Object *src, const RECT *r, D8Object *ds
             RECT to = {pt.x, pt.y, pt.x + width, pt.y + height};
             return d9->lpVtbl->StretchRect(d9, surface9(src), r, surface9(dst), &to, D3DTEXF_NONE);
         }
-        /* managed and scratch surfaces go through memory direct3d 9 updates from. */
+        /* managed and scratch surfaces go through memory Direct3D 9 updates from. */
         IDirect3DSurface9 *tmp;
         HRESULT hr = d9->lpVtbl->CreateOffscreenPlainSurface(d9, width, height, src->format, D3DPOOL_SYSTEMMEM, &tmp,
                                                              nullptr);
@@ -771,7 +769,7 @@ static HRESULT copy_rect(D8Device *d, D8Object *src, const RECT *r, D8Object *ds
         if (SUCCEEDED(hr))
             hr = cpu_copy(tmp, r, surface9(dst), pt, src->format);
         tmp->lpVtbl->Release(tmp);
-        /* what is no render target may still lock. */
+        /* surfaces that are not render targets may still lock. */
         if (FAILED(hr))
             hr = cpu_copy(surface9(src), r, surface9(dst), pt, src->format);
         return hr;
@@ -833,7 +831,7 @@ static HRESULT STDMETHODCALLTYPE device_update_texture(IDirect3DDevice8 *iface, 
     return d->d9->lpVtbl->UpdateTexture(d->d9, (IDirect3DBaseTexture9 *)src->d9, (IDirect3DBaseTexture9 *)dst->d9);
 }
 
-/* the whole screen of the adapter, in a surface in memory at least that large. */
+/* the adapter's whole screen, into a memory surface at least that large. */
 static HRESULT STDMETHODCALLTYPE device_get_front_buffer(IDirect3DDevice8 *iface, IDirect3DSurface8 *dest)
 {
     D8Device *d = impl(iface);
@@ -961,7 +959,7 @@ static HRESULT STDMETHODCALLTYPE device_clear(IDirect3DDevice8 *iface, DWORD cou
     return D3D_OK;
 }
 
-/* the queries of directx 7 drivers fail; drivers answer none of the others. */
+/* DirectX 7 driver queries fail, and drivers answer none of the others. */
 static HRESULT STDMETHODCALLTYPE device_get_info(IDirect3DDevice8 *iface, DWORD id, void *info, DWORD size)
 {
     if (!info || !size)
@@ -1064,7 +1062,7 @@ HRESULT D8CreateDevice(D8Direct3D *d3d, UINT adapter, D3DDEVTYPE type, HWND focu
     D8Device *d = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*d));
     if (!d)
         return E_OUTOFMEMORY;
-    /* drivers able to run direct3d 9 shaders never make pure devices, though the flag is reported. */
+    /* drivers that run Direct3D 9 shaders never make pure devices, though the flag is reported. */
     DWORD flags9 = flags & ~(D3DCREATE_PUREDEVICE | 0xC0000000);
     hr = d3d->d9->lpVtbl->CreateDevice(d3d->d9, adapter, D8DeviceType9(type), focus, flags9, &pp, &d->d9);
     if (FAILED(hr)) {

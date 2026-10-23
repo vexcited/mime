@@ -1,8 +1,4 @@
-/*
- * the extended error of the common dialogs, kept for each thread, and the file title functions. the file
- * dialogs are in openfile.c and itemdialog.c, color in colordlg.c, font in fontdlg.c, print in printdlg.c and
- * page setup in pagesetup.c.
- */
+/* the per-thread extended error of the common dialogs, and the file title functions. */
 #include "comdlg32_private.h"
 
 static DWORD g_error_tls = TLS_OUT_OF_INDEXES;
@@ -23,7 +19,7 @@ CDAPI DWORD WINAPI CommDlgExtendedError(void)
     return g_error_tls != TLS_OUT_OF_INDEXES ? (DWORD)(ULONG_PTR)TlsGetValue(g_error_tls) : 0;
 }
 
-/* the name part of a path; returns the size needed when the buffer is too small, -1 for a bad name. */
+/* the name part of a path. returns the size needed when the buffer is too small, -1 for a bad name. */
 CDAPI short WINAPI GetFileTitleW(LPCWSTR file, LPWSTR title, WORD chars)
 {
     if (!file || !file[0])

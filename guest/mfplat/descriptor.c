@@ -87,7 +87,7 @@ static ULONG STDMETHODCALLTYPE handler_release(IMFMediaTypeHandler *iface)
     return MfObjectRelease((IMFAttributes *)handler_owner(iface));
 }
 
-/* one of the types or the current one, as IsEqual sees them. */
+/* matches one of the types or the current one, as IsEqual sees them. */
 static HRESULT STDMETHODCALLTYPE handler_is_media_type_supported(IMFMediaTypeHandler *iface, IMFMediaType *type,
                                                                  IMFMediaType **closest)
 {
@@ -134,7 +134,7 @@ static HRESULT STDMETHODCALLTYPE handler_get_media_type_by_index(IMFMediaTypeHan
     return S_OK;
 }
 
-/* any type becomes the current one, the source behind the descriptor decides what it accepts. */
+/* any type can become current, the source behind the descriptor decides what it accepts. */
 static HRESULT STDMETHODCALLTYPE handler_set_current_media_type(IMFMediaTypeHandler *iface, IMFMediaType *type)
 {
     StreamDescriptor *stream = handler_owner(iface);
@@ -287,7 +287,7 @@ static HRESULT STDMETHODCALLTYPE pd_deselect_stream(IMFPresentationDescriptor *i
     return S_OK;
 }
 
-/* the same stream descriptors, the attributes and selections copied. */
+/* the same stream descriptors, with the attributes and selections copied. */
 static HRESULT STDMETHODCALLTYPE pd_clone(IMFPresentationDescriptor *iface, IMFPresentationDescriptor **copy)
 {
     PresentationDescriptor *pd = presentation(iface);

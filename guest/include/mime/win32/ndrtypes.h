@@ -1,7 +1,4 @@
-/*
- * the format characters of the ndr engine: the bytes that midl writes into the type and procedure format strings, and the
- * flag layouts of the procedure headers.
- */
+/* ndr format characters: the bytes midl writes into type and procedure format strings, and procedure header flags. */
 #ifndef MIME_WIN32_NDRTYPES_H
 #define MIME_WIN32_NDRTYPES_H
 
@@ -116,20 +113,20 @@
 #define FC_INT3264 0xB8
 #define FC_UINT3264 0xB9
 
-/* the kinds of conformance and variance descriptors, the high nibble of the first byte. */
+/* conformance and variance descriptor kinds, in the high nibble of the first byte. */
 #define FC_NORMAL_CONFORMANCE 0x00
 #define FC_POINTER_CONFORMANCE 0x10
 #define FC_TOP_LEVEL_CONFORMANCE 0x20
 #define FC_CONSTANT_CONFORMANCE 0x40
 #define FC_TOP_LEVEL_MULTID_CONFORMANCE 0x80
 
-/* correlation flags of a descriptor from the new correlation format. */
+/* descriptor correlation flags in the new correlation format. */
 #define FC_EARLY_CORRELATION 0x01
 #define FC_SPLIT_CORRELATION 0x02
 #define FC_IID_CORRELATION 0x04
 #define FC_NOCHECK_CORRELATION 0x08
 
-/* pointer attributes, the second byte of a pointer. */
+/* pointer attributes, in a pointer's second byte. */
 #define FC_ALLOCATE_ALL_NODES 0x01
 #define FC_DONT_FREE 0x02
 #define FC_ALLOCED_ON_STACK 0x04
@@ -183,10 +180,10 @@
 #define NDR_VERSION_5_0 0x00050000
 #define NDR_VERSION_5_2 0x00050002
 #define NDR_VERSION_5_4 0x00050004
-/* the newest stub version this engine accepts, as the reference does (build 26300). */
+/* the newest stub version accepted, like windows. */
 #define NDR_STUB_VERSION_MAX 0x000A000C
 
-/* the parameter attributes of an oif procedure, a 16 bit field. */
+/* oif procedure parameter attributes, a 16-bit field. */
 #define PA_MUST_SIZE 0x0001
 #define PA_MUST_FREE 0x0002
 #define PA_IS_PIPE 0x0004
@@ -200,7 +197,7 @@
 #define PA_SAVE_FOR_ASYNC_FINISH 0x0400
 #define PA_SERVER_ALLOC_SHIFT 13
 
-/* the optimization flags of an oi2 procedure. */
+/* oi2 procedure optimization flags. */
 #define OIF_SERVER_MUST_SIZE 0x01
 #define OIF_CLIENT_MUST_SIZE 0x02
 #define OIF_HAS_RETURN 0x04

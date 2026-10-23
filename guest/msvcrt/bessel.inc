@@ -1,12 +1,11 @@
 /*
- * the bessel functions of the first and second kind, _j0 _j1 _jn _y0 _y1 _yn. Included at the end of mathlib.c for
- * the double-double helpers it keeps.
+ * Bessel functions of the first and second kind: _j0 _j1 _jn _y0 _y1 _yn. included at the end of mathlib.c for its
+ * double-double helpers.
  *
- * Up to an argument of 25 the power series are summed in double-double, where the large terms that cancel are
- * harmless. Past that the asymptotic series of hankel give both kinds from one amplitude and one phase. The
- * orders above one come from the three term recurrence: forward where it is stable, which is always for the second
- * kind and for the first kind while the order is below the argument, and the backward recurrence from a high order
- * normalised by the sum of the even orders where the order is above the argument of the first kind.
+ * up to x = 25 the power series are summed in double-double, where the large cancelling terms do no harm. beyond
+ * that, Hankel's asymptotic series give both kinds from one amplitude and one phase. orders above one use the three
+ * term recurrence: forward where stable, which is always for the second kind and for the first kind while the order
+ * is below x. otherwise the first kind recurs backward from a high order, normalized by the sum of the even orders.
  */
 
 #define BESSEL_SERIES_LIMIT 25.0
@@ -18,8 +17,8 @@ static const DD BESSEL_PI_4 = {0.7853981633974483, 3.061616997868383e-17};
 static const DD BESSEL_PI_34 = {2.356194490192345, 9.184850993605148e-17};
 
 /*
- * the sum of the first kind and the sum with the harmonic weights the second kind needs, for the order 0 or 1 or
- * above. The weights are h(k) for the order 0 and h(k) + h(k + 1) for the order 1, with h the harmonic numbers.
+ * the first kind sum, and the sum with the harmonic weights the second kind needs, for order 0, 1 or above. the
+ * weights are h(k) for order 0 and h(k) + h(k + 1) for order 1, h being the harmonic numbers.
  */
 static void bessel_series(double x, int order, DD *j, DD *weighted)
 {
@@ -49,7 +48,7 @@ static void bessel_series(double x, int order, DD *j, DD *weighted)
     *weighted = wsum;
 }
 
-/* the amplitude series of hankel at x for the order 0 or 1, as the cosine and sine coefficients. */
+/* Hankel's amplitude series at x for order 0 or 1, as cosine and sine coefficients. */
 static void bessel_hankel(double x, int order, double *p, double *q)
 {
     double mu = 4.0 * order * order;
@@ -73,7 +72,7 @@ static void bessel_hankel(double x, int order, double *p, double *q)
     *q = sum_q;
 }
 
-/* the first kind and the second kind from the asymptotic series, for x above the limit of the series. */
+/* both kinds from the asymptotic series, for x above the series limit. */
 static void bessel_large(double x, int order, double *j, double *y)
 {
     double p, q;
@@ -178,7 +177,7 @@ double __cdecl _y1(double x)
     return y;
 }
 
-/* the first kind of order n above one for a positive argument. */
+/* the first kind for n > 1 and x > 0. */
 static double bessel_jn_positive(int n, double x)
 {
     if (x <= BESSEL_SERIES_LIMIT) {
@@ -195,7 +194,7 @@ static double bessel_jn_positive(int n, double x)
         }
         return current;
     }
-    /* backward from an even order well above n, in a scale that does not overflow. */
+    /* backward from an even order well above n, scaled to avoid overflow. */
     int start = 2 * ((n + (int)(2.0 * sqrt_(40.0 * n)) + 20) / 2);
     double upper = 0, lower = 1e-300, wanted = 0, total = 0;
     for (int k = start; k > 0; k--) {

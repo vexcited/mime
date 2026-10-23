@@ -1,6 +1,4 @@
-/*
- * the ole user interface dialogs of oledlg.dll.
- */
+/* ole user interface dialogs of oledlg.dll. */
 #ifndef MIME_WIN32_OLEDLG_H
 #define MIME_WIN32_OLEDLG_H
 

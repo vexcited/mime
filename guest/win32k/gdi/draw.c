@@ -365,8 +365,8 @@ void DrawCoverage(SURFACE *s, const REGION *clip, LONG x, LONG y, const UCHAR *c
 }
 
 /*
- * whether a point is inside the ellipse with the semi axes a and b around the origin, all in the same unit. the
- * squares are scaled down for the products to fit in 64 bits when the axes are large.
+ * tests whether a point is inside the ellipse with semi axes a and b around the origin, all in the same unit. for
+ * large axes the squares are scaled down so the products fit in 64 bits.
  */
 typedef struct ELLIPSE_TEST {
     ULONG64 A2, B2, Limit;
@@ -387,7 +387,7 @@ static void ellipse_test_init(ELLIPSE_TEST *e, LONG a, LONG b)
     e->Limit = e->A2 * e->B2;
 }
 
-/* the function that grows with the distance from the center, compared with Limit. */
+/* grows with the distance from the center, compared against Limit. */
 static ULONG64 ellipse_value(const ELLIPSE_TEST *e, LONG px, LONG py)
 {
     ULONG64 x = (ULONG64)(px < 0 ? -px : px) >> e->Shift, y = (ULONG64)(py < 0 ? -py : py) >> e->Shift;
@@ -395,10 +395,9 @@ static ULONG64 ellipse_value(const ELLIPSE_TEST *e, LONG px, LONG py)
 }
 
 /*
- * anti-aliased rectangle with rounded corners, which are quarters of an ellipse with the semi axes rx and ry, so
- * that an ellipse is the rectangle of its box with the corners as large as it allows. an optional border of
- * border_width pixels inside the rectangle and a fill. coverage comes from 4x4 supersampling, which is only done
- * for the pixels the edge crosses.
+ * anti-aliased rectangle whose corners are quarter ellipses with semi axes rx and ry, so an ellipse is its box with
+ * the largest corners. an optional border of border_width pixels sits inside the rectangle, plus a fill. coverage
+ * uses 4x4 supersampling, only on pixels the edge crosses.
  */
 void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG rx, LONG ry, BOOLEAN filled, ULONG fill,
                      ULONG border, LONG border_width)
@@ -467,7 +466,7 @@ void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG rx, 
                 if (!outer)
                     continue;
                 ULONG d = SurfaceGetPixel(s, x, y);
-                /* inner area takes the fill, the ring between takes the border. */
+                /* the inner area takes the fill, the ring between takes the border. */
                 ULONG fa = filled ? inner * 255 / 16 : 0, ba = (outer - inner) * 255 / 16;
                 ULONG out_px = d;
                 if (ba) {
@@ -674,7 +673,7 @@ BOOL NTAPI NtGdiAlphaBlend(HDC hdst, int x, int y, int width, int height, HDC hs
     return ok;
 }
 
-/* bresenham line in surface coordinates, last point excluded like gdi. */
+/* bresenham in surface coordinates, last point excluded like gdi. */
 void DrawLine(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RECT *dirty)
 {
     PEN *pen = dc->State.Pen;
@@ -793,7 +792,6 @@ BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
     return ok;
 }
 
-/* a rectangle with corners of an ellipse of the given size, or the ellipse of the box. */
 static BOOL draw_round_rect(HDC hdc, int left, int top, int right, int bottom, int width, int height, BOOLEAN ellipse)
 {
     DRAW_CONTEXT ctx;
@@ -861,7 +859,7 @@ BOOL NTAPI NtGdiEllipse(HDC hdc, int left, int top, int right, int bottom)
     return draw_round_rect(hdc, left, top, right, bottom, 0, 0, TRUE);
 }
 
-/* flattens one cubic bezier from p0 into 16 line segments in surface coordinates. */
+/* flattens one cubic bezier from p0 into 16 segments, in surface coordinates. */
 static void draw_bezier(DC *dc, const REGION *clip, POINT p0, const POINT *c, RECT *dirty)
 {
     LONG px = p0.x, py = p0.y;

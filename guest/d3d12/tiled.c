@@ -1,15 +1,13 @@
 /*
- * tile mappings of reserved resources: a queue's UpdateTileMappings and
- * CopyTileMappings become one vkQueueBindSparse, which vulkan does not
- * order with the queue's submissions, so it waits for the queue's last
- * serial on its timeline and signals its own, and the queue's next
- * submission waits for it.
+ * UpdateTileMappings and CopyTileMappings become one vkQueueBindSparse, which Vulkan does not order with the
+ * queue's submissions. it waits for the queue's last timeline serial and signals its own, which the queue's next
+ * submission waits for.
  */
 #include "d3d12_private.h"
 
 #define TILE_SIZE 65536u
 
-/* the binds a mapping of tiles makes: of buffers and mip tails as ranges, of standard mips as boxes. */
+/* buffers and mip tails bind as ranges, standard mips as boxes. */
 typedef struct Binds {
     VkSparseMemoryBind *ranges;
     VkSparseImageMemoryBind *boxes;
@@ -25,7 +23,7 @@ static void add_bind(const D12Resource *r, Binds *b, UINT tile, const D12Tile *t
     VkDeviceSize offset = to->heap ? (VkDeviceSize)to->tile * TILE_SIZE : 0;
     if (place.packed) {
         VkSparseMemoryBind *last = b->range_count ? &b->ranges[b->range_count - 1] : nullptr;
-        /* tiles next to each other, mapping memory next to each other or none, are one range. */
+        /* adjacent tiles mapping adjacent memory, or none, merge into one range. */
         if (last && last->resourceOffset + last->size == place.opaque && last->memory == memory &&
             (!memory || last->memoryOffset + last->size == offset)) {
             last->size += TILE_SIZE;
@@ -39,7 +37,7 @@ static void add_bind(const D12Resource *r, Binds *b, UINT tile, const D12Tile *t
                                      memory, offset, 0};
 }
 
-/* maps tiles of a resource to what they now map, recorded for later copies of mappings. */
+/* also records the new mappings, for later CopyTileMappings. */
 static void bind_tiles(D12Queue *queue, D12Resource *r, const UINT *tiles, const D12Tile *to, UINT count)
 {
     D12Device *device = queue->child.device;
@@ -94,10 +92,9 @@ static void bind_tiles(D12Queue *queue, D12Resource *r, const UINT *tiles, const
 }
 
 /*
- * the regions' tiles in order take the ranges' heap tiles in order: a
- * range maps tiles from its start on, or all to its start, or to nothing,
- * or skips them. no starts and no sizes for one region is the whole
- * resource; no range counts for one range is every tile of the regions.
+ * the regions' tiles take the ranges' heap tiles in order. a range maps tiles from its start on, all to its start,
+ * to nothing, or skips them. one region with no starts and sizes is the whole resource, and one range with no
+ * counts covers every tile of the regions.
  */
 void D12UpdateTileMappings(D12Queue *queue, D12Resource *r, UINT region_count,
                            const D3D12_TILED_RESOURCE_COORDINATE *starts, const D3D12_TILE_REGION_SIZE *sizes,
@@ -145,7 +142,7 @@ done:
     HeapFree(GetProcessHeap(), 0, mapped);
 }
 
-/* a region of tiles takes the mappings of another's, read before any changes. */
+/* copies another region's mappings, read before any change. */
 void D12CopyTileMappings(D12Queue *queue, D12Resource *dst, const D3D12_TILED_RESOURCE_COORDINATE *dst_start,
                          D12Resource *src, const D3D12_TILED_RESOURCE_COORDINATE *src_start,
                          const D3D12_TILE_REGION_SIZE *size)

@@ -1,7 +1,6 @@
 /*
- * the visual style of the common controls: parts of the Button class of
- * aero.msstyles drawn the way uxtheme draws them, with 9 grid stretching of
- * sizing margins and true size images.
+ * common control visual style: Button parts of aero.msstyles drawn the way
+ * uxtheme draws them, with nine grid sizing margins and true size images.
  */
 #include "user32_private.h"
 #include <msstyles/msstyles.h>
@@ -80,7 +79,7 @@ BOOL UserThemeActive(void)
     return g_theme.Ready;
 }
 
-/* decoded theme images, premultiplied, kept for the life of the process. */
+/* decoded images are premultiplied and kept for the life of the process. */
 static THEME_BITMAP *theme_bitmap(const MimeMsstylesImage *img)
 {
     RtlEnterCriticalSection(&g_theme.Lock);

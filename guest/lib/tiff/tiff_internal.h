@@ -59,8 +59,6 @@ static inline void tiff_wr32(uint8_t *p, uint32_t v, bool be)
     memcpy(p, &v, 4);
 }
 
-/* ---------------------------------------------------------------- lzw. */
-
 typedef struct TiffLzwEntry {
     const uint8_t *p;
     uint32_t len;
@@ -76,8 +74,8 @@ typedef struct TiffLzwEnc {
 } TiffLzwEnc;
 
 /*
- * decodes one lzw stream into dst, at most cap bytes. returns the number of bytes produced and sets *error when
- * the stream was invalid before it completed, a stream that is merely cut short is not an error.
+ * decodes one lzw stream into at most cap bytes and returns the count. *error is set when the stream turns invalid
+ * before it completes, a stream that is merely cut short is not an error.
  */
 size_t tiff_lzw_decode(TiffLzwDec *st, const uint8_t *src, size_t n, uint8_t *dst, size_t cap, bool *error);
 
@@ -87,45 +85,39 @@ static inline size_t tiff_lzw_bound(size_t n)
     return n + n / 2 + n / 64 + 64;
 }
 
-/* encodes n bytes, dst has room for the bound of n bytes. returns the encoded size. */
+/* dst has room for tiff_lzw_bound(n). returns the encoded size. */
 size_t tiff_lzw_encode(TiffLzwEnc *st, const uint8_t *src, size_t n, uint8_t *dst);
 
-/* ---------------------------------------------------------------- packbits and predictors. */
-
-/* decodes into dst, at most cap bytes, returns the bytes produced. */
+/* returns the bytes produced, at most cap. */
 size_t tiff_packbits_decode(const uint8_t *src, size_t n, uint8_t *dst, size_t cap);
 
 /* encodes one row, dst has room for n + n / 128 + 2, returns the encoded size. */
 size_t tiff_packbits_encode_row(const uint8_t *src, size_t n, uint8_t *dst);
 
-/* horizontal differencing, samples are native little endian units of 1, 2, 4 or 8 bytes. */
+/* horizontal differencing on native little endian units of 1, 2, 4 or 8 bytes. */
 void tiff_predictor_undo(uint8_t *row, size_t samples, unsigned spp, unsigned bytes);
 void tiff_predictor_apply(uint8_t *row, size_t samples, unsigned spp, unsigned bytes);
 
-/* floating point predictor on one row of count samples of bytes each, tmp has room for the row. */
+/* floating point predictor on one row, tmp has room for the row. */
 void tiff_float_undo(uint8_t *row, size_t count, unsigned spp, unsigned bytes, uint8_t *tmp);
 void tiff_float_apply(uint8_t *row, size_t count, unsigned spp, unsigned bytes, uint8_t *tmp);
 
-/* swaps the bytes of count units of 2, 4 or 8 bytes. */
+/* units of 2, 4 or 8 bytes. */
 void tiff_swap_units(uint8_t *p, size_t count, unsigned bytes);
 
-/* reverses the bits of every byte. */
 void tiff_reverse_bits(uint8_t *p, size_t n);
-
-/* ---------------------------------------------------------------- ccitt. */
 
 typedef struct TiffCcitt TiffCcitt;
 
-/* bytes of state for images of a width, which the caller allocates. */
+/* the caller allocates the state. */
 size_t tiff_ccitt_state_size(uint32_t width);
 
-/* prepares the state for a decoder or an encoder, false for a width that is not supported. */
+/* false for an unsupported width. */
 bool tiff_ccitt_init(TiffCcitt *st, uint32_t width, bool decode);
 
 /*
- * decodes rows rows of pixels into dst, with row_bytes per row, 1 meaning black. compression is 2, 3 or 4.
- * the buffer holds zeros where the data ends early. returns the number of rows decoded, with *error set when
- * the data was invalid or ended before the last row.
+ * decodes rows of pixels into dst, row_bytes apart, 1 meaning black. compression is 2, 3 or 4. rows past the end
+ * of the data stay zero. returns the rows decoded, with *error set when the data was invalid or ended early.
  */
 uint32_t tiff_ccitt_decode(TiffCcitt *st, unsigned compression, unsigned t4_options, const uint8_t *src, size_t n,
                            uint8_t *dst, size_t row_bytes, uint32_t rows, bool *error);
@@ -139,15 +131,13 @@ typedef struct TiffByteSink {
 } TiffByteSink;
 
 /*
- * appends the encoding of rows rows of bilevel pixels, row_bytes apart, to the sink. 1 means black unless invert
- * is set. the sink fails on an allocation error.
+ * appends the encoding of bilevel rows, row_bytes apart, to the sink. 1 means black unless invert is set. the
+ * sink fails on an allocation error.
  */
 void tiff_ccitt_encode(TiffCcitt *st, unsigned compression, bool two_dim, bool fill, bool invert, const uint8_t *src,
                        size_t row_bytes, uint32_t rows, TiffByteSink *out);
 
-/* ---------------------------------------------------------------- writer internals. */
-
-/* growing byte buffer used by the writer and the encoder. offsets are relative to base. */
+/* growing byte buffer of the writer and the encoder. offsets are relative to base. */
 typedef struct TiffBuf {
     const MimeAllocator *alloc;
     uint8_t *p;
@@ -159,21 +149,19 @@ typedef struct TiffBuf {
 } TiffBuf;
 
 bool tiff_buf_reserve(TiffBuf *b, size_t extra);
-/* appends n zero bytes and returns their position, or SIZE_MAX on failure. */
+/* returns the position of the zeros, or SIZE_MAX on failure. */
 size_t tiff_buf_zeros(TiffBuf *b, size_t n);
-/* aligns the length to a power of two. */
+/* align is a power of two. */
 bool tiff_buf_align(TiffBuf *b, size_t align);
 
 /*
- * writes an ifd, its values, its sub ifds, thumbnail and chain at the end of b. returns the offset relative to
- * b->base in *off. depth guards the recursion.
+ * writes an ifd, its values, sub ifds, thumbnail and chain at the end of b and returns its offset from b->base
+ * in *off. depth guards the recursion.
  */
 int tiff_write_ifd(TiffBuf *b, const MimeTiffWIfd *ifd, uint32_t depth, uint32_t *off);
 
-/* copies count values of a type from src into dst changing the byte order when swap is set. */
+/* swap changes the byte order. */
 void tiff_copy_values(uint8_t *dst, const uint8_t *src, uint64_t count, unsigned type, bool swap);
-
-/* ---------------------------------------------------------------- helpers. */
 
 /* num / den as 16.16 fixed point, saturating. */
 int32_t tiff_ratio_fixed(uint32_t num, uint32_t den);

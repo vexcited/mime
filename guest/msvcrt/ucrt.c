@@ -196,7 +196,7 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vswprintf(ULONGLONG options, wchar_t 
     return (options & 2) || !buffer || (size_t)count < size ? count : -1;
 }
 
-/* the narrow __stdio_common_vswprintf: the same options, legacy truncation and a count of what was asked. */
+/* narrow __stdio_common_vswprintf: same options, legacy truncation and a count of what was asked. */
 DECLSPEC_EXPORT int __cdecl __stdio_common_vsprintf(ULONGLONG options, char *buffer, size_t size, const char *format,
                                                     void *locale, va_list args)
 {
@@ -247,7 +247,7 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vswscanf(ULONGLONG options, const wch
     return MsvcrtScanExW(nullptr, buffer, size, format, args, (int)(options & 1));
 }
 
-/* the scan of a stream: the secure form takes the sizes of the strings it fills. */
+/* the secure form takes the sizes of the strings it fills. */
 DECLSPEC_EXPORT int __cdecl __stdio_common_vfscanf(ULONGLONG options, FILE *stream, const char *format, void *locale,
                                                    va_list args)
 {
@@ -274,7 +274,7 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vfwscanf(ULONGLONG options, FILE *str
     return r;
 }
 
-/* the printf family with numbered arguments, and the checked forms of the stream and string ones. */
+/* printf with numbered arguments, and the checked stream and string forms. */
 DECLSPEC_EXPORT int __cdecl __stdio_common_vfprintf_p(ULONGLONG options, FILE *stream, const char *format, void *locale,
                                                       va_list args)
 {
@@ -311,7 +311,7 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vfwprintf_s(ULONGLONG options, FILE *
     return vfwprintf(stream, format, args);
 }
 
-/* ------------------------------------------------------------------ streams without their lock */
+/* ------------------------------------------------------------------ unlocked streams */
 
 DECLSPEC_EXPORT int __cdecl _fclose_nolock(FILE *f)
 {
@@ -342,7 +342,7 @@ DECLSPEC_EXPORT wint_t __cdecl _putwc_nolock(wchar_t c, FILE *f)
     return _fputwc_nolock(c, f);
 }
 
-/* the file's lock is recursive here, so the locked form serves. */
+/* the file lock is recursive here, so the locked form serves. */
 DECLSPEC_EXPORT wint_t __cdecl _ungetwc_nolock(wint_t c, FILE *f)
 {
     return ungetwc(c, f);
@@ -365,7 +365,7 @@ DECLSPEC_EXPORT size_t __cdecl _fread_nolock_s(void *buf, size_t bufsize, size_t
     return _fread_nolock(buf, size, count, f);
 }
 
-/* a line from the standard input, at most size - 1 characters; a longer one is a range error and is dropped. */
+/* reads at most size - 1 characters; a longer line is a range error and is dropped. */
 DECLSPEC_EXPORT char *__cdecl gets_s(char *buf, size_t size)
 {
     if (!buf || !size) {
@@ -436,7 +436,7 @@ DECLSPEC_EXPORT wchar_t *__cdecl _getws_s(wchar_t *buf, size_t size)
     return buf;
 }
 
-/* ------------------------------------------------------------------ the console */
+/* ------------------------------------------------------------------ console */
 
 DECLSPEC_EXPORT int __cdecl __conio_common_vcprintf(ULONGLONG options, const char *format, void *locale, va_list args)
 {
@@ -461,7 +461,7 @@ DECLSPEC_EXPORT int __cdecl __conio_common_vcwprintf_s(ULONGLONG options, const 
     return _vcwprintf(format, args);
 }
 
-/* with numbered arguments: the text is formed first, then written. */
+/* formats the text first, then writes it. */
 DECLSPEC_EXPORT int __cdecl __conio_common_vcprintf_p(ULONGLONG options, const char *format, void *locale,
                                                       va_list args)
 {
@@ -483,8 +483,8 @@ DECLSPEC_EXPORT int __cdecl __conio_common_vcwprintf_p(ULONGLONG options, const 
 }
 
 /*
- * scanning the keyboard: a line is read with echo, as _cgets does, and scanned. What the format does not use of the
- * line is gone, where Windows would leave it for the next call. This is a guess at an edge nobody relies on.
+ * reads a line with echo like _cgets, then scans it. unlike Windows, what the format leaves unread is lost instead of
+ * kept for the next call.
  */
 DECLSPEC_EXPORT int __cdecl __conio_common_vcscanf(ULONGLONG options, const char *format, void *locale, va_list args)
 {
@@ -556,7 +556,7 @@ int __cdecl _controlfp_s(unsigned *current, unsigned new_control, unsigned mask)
 unsigned int __cdecl _controlfp(unsigned int new_control, unsigned int mask);
 int __cdecl _wputenv_s(const wchar_t *name, const wchar_t *value);
 
-/* ends the process at once, as _exit does: no handler of atexit runs and no stream is flushed. */
+/* like _exit: no atexit handler runs and no stream is flushed. */
 DECLSPEC_EXPORT DECLSPEC_NORETURN void __cdecl _Exit(int code)
 {
     _exit(code);
@@ -578,7 +578,7 @@ DECLSPEC_EXPORT int __cdecl _crt_at_quick_exit(_PVFV function)
     return result;
 }
 
-/* the handlers of at_quick_exit in reverse order, then the process ends without the ones of atexit. */
+/* runs the at_quick_exit handlers in reverse order, then ends without the atexit ones. */
 DECLSPEC_EXPORT DECLSPEC_NORETURN void __cdecl quick_exit(int code)
 {
     for (;;) {
@@ -623,7 +623,7 @@ DECLSPEC_EXPORT int __cdecl _configure_wide_argv(int mode)
     return __wgetmainargs(&argc, &argv, &env, mode == 2, &info);
 }
 
-/* what is after the name of the program, which is the command line that winmain gets. */
+/* the command line after the program name, as winmain gets it. */
 DECLSPEC_EXPORT char *__cdecl _get_narrow_winmain_command_line(void)
 {
     char *line = GetCommandLineA();
@@ -660,7 +660,7 @@ DECLSPEC_EXPORT wchar_t *__cdecl _get_wide_winmain_command_line(void)
     return line;
 }
 
-/* the environment of the process as a block of strings that the caller frees. */
+/* the caller frees the block. */
 DECLSPEC_EXPORT wchar_t *__cdecl __dcrt_get_wide_environment_from_os(void)
 {
     wchar_t *block = GetEnvironmentStringsW();

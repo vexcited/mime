@@ -1,8 +1,4 @@
-/*
- * component object model basics: guids, IUnknown, the task allocator and
- * the com functions of ole32.dll. interfaces are declared the C way, a
- * struct whose first member points to a table of functions.
- */
+/* COM basics: guids, IUnknown, the task allocator and the COM functions of ole32.dll. */
 #ifndef MIME_WIN32_OBJBASE_H
 #define MIME_WIN32_OBJBASE_H
 
@@ -16,7 +12,7 @@
 #define STDAPICALLTYPE WINAPI
 #define DECLSPEC_SELECTANY __declspec(selectany)
 
-/* defines a guid once per module; the linker merges the copies. */
+/* defines a guid once per module, the linker merges the copies. */
 #define MIME_DEFINE_GUID(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8)                                         \
     const GUID DECLSPEC_SELECTANY name = {l, w1, w2, {b1, b2, b3, b4, b5, b6, b7, b8}}
 
@@ -132,16 +128,13 @@ typedef enum _APTTYPEQUALIFIER {
 /* ------------------------------------------------------------------ IUnknown */
 
 typedef struct IUnknown IUnknown, *LPUNKNOWN;
-/*
- * each interface's methods after its parent's, as a macro of the
- * interface type, so a vtable lists them in windows' order.
- */
+/* each interface's methods macro starts with its parent's, so vtables list them in windows' order. */
 #define MIME_IUNKNOWN_METHODS(T)                                                                                       \
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(T * This, REFIID riid, void **object);                                  \
     ULONG(STDMETHODCALLTYPE *AddRef)(T * This);                                                                        \
     ULONG(STDMETHODCALLTYPE *Release)(T * This);
 
-/* the vtable and object of an interface whose methods macro is I_METHODS. */
+/* declares the vtable and object of an interface whose methods macro is I_METHODS. */
 #define MIME_COM_INTERFACE(I)                                                                                          \
     typedef struct I##Vtbl {                                                                                           \
         I##_METHODS(I)                                                                                                 \
@@ -271,11 +264,11 @@ WINOLEAPI HRESULT WINAPI CoRegisterPSClsid(REFIID iid, REFCLSID clsid);
 WINOLEAPI HRESULT WINAPI CoGetPSClsid(REFIID iid, CLSID *clsid);
 WINOLEAPI HRESULT WINAPI CoRegisterMessageFilter(IMessageFilter *filter, IMessageFilter **previous);
 WINOLEAPI HRESULT WINAPI CoDisconnectObject(IUnknown *object, DWORD reserved);
-/* a stub tells the channel the result of the call it made for the application. */
+/* a stub reports to the channel the result of the call it made for the application. */
 WINOLEAPI HRESULT WINAPI DcomChannelSetHResult(void *reserved1, ULONG *reserved2, HRESULT application);
 
 
-/* the wire forms of the pointers to interfaces and of the handles, with the 64 bit forms of the second transfer syntax. */
+/* wire forms of interface pointers and handles, with 64-bit forms for the second transfer syntax. */
 WINOLEAPI ULONG WINAPI WdtpInterfacePointer_UserSize(ULONG *flags, ULONG context, ULONG offset, IUnknown *punk,
                                                      REFIID iid);
 WINOLEAPI BYTE *WINAPI WdtpInterfacePointer_UserMarshal(ULONG *flags, ULONG context, BYTE *buffer, IUnknown *punk,
@@ -290,7 +283,7 @@ WINOLEAPI BYTE *WINAPI WdtpInterfacePointer_UserUnmarshal64(ULONG *flags, BYTE *
 WINOLEAPI void WINAPI WdtpInterfacePointer_UserFree64(IUnknown *punk);
 
 
-/* the wire forms of the handles and of global memory that a stub names, each with its form for the second syntax. */
+/* wire forms of the handles and global memory a stub names, each with a second syntax form. */
 #define MIME_WIRE_ROUTINES(prefix, type)                                                                               \
     WINOLEAPI ULONG WINAPI prefix##_UserSize(ULONG *flags, ULONG offset, type *value);                                 \
     WINOLEAPI BYTE *WINAPI prefix##_UserMarshal(ULONG *flags, BYTE *buffer, type *value);                              \

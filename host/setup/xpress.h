@@ -1,7 +1,6 @@
 /*
- * xpress huffman decompressor for wim resources.
- * every wim chunk is one block: a table of 512 four bit code lengths
- * followed by a bitstream of 16 bit words with match length bytes inline.
+ * XPRESS Huffman decompressor for WIM resources. each chunk is one block: 512 four-bit code lengths, then
+ * 16-bit bitstream words with inline match length bytes.
  */
 #ifndef MIME_XPRESS_H
 #define MIME_XPRESS_H

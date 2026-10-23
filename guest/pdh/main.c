@@ -1,7 +1,6 @@
 /*
- * pdh: real time queries over the processor counters, from the per
- * processor times of NtQuerySystemInformation. logs, other machines and the
- * performance registry are not there.
+ * pdh: real time queries over the processor counters, built from the per processor times of NtQuerySystemInformation.
+ * logs, other machines and the performance registry are not supported.
  */
 #define PDH_FUNCTION LONG WINAPI
 #include <mime/win32/pdh.h>
@@ -72,7 +71,7 @@ PDH_STATUS WINAPI PdhOpenQueryW(LPCWSTR source, DWORD_PTR user, PDH_HQUERY *hand
         SIZE_T length = wcslen(source);
         if (!length || length > 1024)
             return PDH_INVALID_ARGUMENT;
-        /* a log file mime has no reader for. */
+        /* there is no reader for log files. */
         return PDH_FILE_NOT_FOUND;
     }
     QUERY *query = LocalAlloc(LMEM_ZEROINIT, sizeof(*query));
@@ -273,7 +272,7 @@ PDH_STATUS WINAPI PdhAddCounterW(PDH_HQUERY handle, LPCWSTR path, DWORD_PTR user
     return ERROR_SUCCESS;
 }
 
-/* the english names are the names, mime's counters are not localized. */
+/* the counters are not localized, so the English names are the names. */
 PDH_STATUS WINAPI PdhAddEnglishCounterW(PDH_HQUERY handle, LPCWSTR path, DWORD_PTR user, PDH_HCOUNTER *out)
 {
     return PdhAddCounterW(handle, path, user, out);

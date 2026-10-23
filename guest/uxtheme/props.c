@@ -1,7 +1,4 @@
-/*
- * theme property getters: GetThemeColor, GetThemeInt and the others, the
- * system metrics of the visual style and property origins.
- */
+/* theme property getters, visual style system metrics and property origins. */
 #include "uxtheme_private.h"
 
 #define BEGIN_THEME(handle)                                                                                       \
@@ -66,7 +63,7 @@ THEMEAPI GetThemeBool(HTHEME handle, int part, int state, int prop, BOOL *value)
     return hr;
 }
 
-/* integer or size properties scaled from 96 dpi to the theme dpi. */
+/* scaled from 96 dpi to the theme dpi. */
 THEMEAPI GetThemeMetric(HTHEME handle, HDC dc, int part, int state, int prop, int *value)
 {
     BEGIN_THEME(handle);
@@ -176,9 +173,8 @@ THEMEAPI GetThemeFont(HTHEME handle, HDC dc, int part, int state, int prop, LOGF
 }
 
 /*
- * the files of a packed theme are IMAGE resources: windows returns the value
- * as stored, which for those records is the resource, so the name given here
- * is the resource id in the form "#id".
+ * the files of a packed theme are IMAGE resources and windows returns the
+ * stored value, so the name given here is the resource id as "#id".
  */
 THEMEAPI GetThemeFilename(HTHEME handle, int part, int state, int prop, LPWSTR buffer, int size)
 {
@@ -271,10 +267,7 @@ THEMEAPI GetThemePropertyOrigin(HTHEME handle, int part, int state, int prop, en
     return hr;
 }
 
-/*
- * IsThemePartDefined: true when the class itself has records for the part,
- * or for the exact state when one is given. inherited parts do not count.
- */
+/* only the class's own records count, for the exact state when one is given. inherited parts do not. */
 THEMEAPI_(BOOL) IsThemePartDefined(HTHEME handle, int part, int state)
 {
     HRESULT hr;
@@ -294,7 +287,7 @@ THEMEAPI_(BOOL) IsThemePartDefined(HTHEME handle, int part, int state)
     return found;
 }
 
-/* TMT_TRANSITIONDURATIONS: the state count n, then the n by n matrix of durations, from state rows. */
+/* TMT_TRANSITIONDURATIONS holds the state count n, then an n by n matrix of durations by state row. */
 THEMEAPI GetThemeTransitionDuration(HTHEME handle, int part, int state_from, int state_to, int prop,
                                     DWORD *duration)
 {
@@ -320,7 +313,7 @@ THEMEAPI GetThemeTransitionDuration(HTHEME handle, int part, int state_from, int
     return hr;
 }
 
-/* system metrics of the visual style, falling back to user32 without a theme. */
+/* without a theme these fall back to user32. */
 
 THEMEAPI_(COLORREF) GetThemeSysColor(HTHEME handle, int color)
 {

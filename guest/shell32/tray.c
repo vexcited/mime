@@ -1,15 +1,14 @@
 /*
  * the notification area and app bars.
  *
- * mime has no taskbar. notification icons are checked here and kept by win32k, which shows them in the host
- * desktop's notification area when it has one, with their balloons as the desktop's notifications, and sends the clicks
- * back to the window. app bar queries describe the edge the host reserves outside the work area, which is where the
- * taskbar would be.
+ * mime has no taskbar. win32k keeps the notification icons and shows them in the host desktop's notification area when
+ * there is one, balloons as desktop notifications, and sends clicks back to the window. app bar queries describe the
+ * edge the host reserves outside the work area, where the taskbar would be.
  */
 #include "shell32_private.h"
 #include <mime/ntuser.h>
 
-/* the icons of the process, which stay until deleted or until their window is gone. */
+/* icons stay until deleted or until their window is gone. */
 #define MAX_ICONS 256
 
 typedef struct _TRAY_ICON {
@@ -28,9 +27,9 @@ typedef struct _TRAY_ICON {
 static SRWLOCK g_icon_lock = SRWLOCK_INIT;
 static TRAY_ICON g_icons[MAX_ICONS];
 
-/* the oldest size of the structure, whose tip is 64 characters. */
+/* the original structure size, with a 64 character tip. */
 #define V1_SIZE (offsetof(NOTIFYICONDATAW, szTip) + 64 * sizeof(WCHAR))
-/* the size that has the balloon's text and title, and the one with its icon. */
+/* V2 adds the balloon text and title, V4 the balloon icon. */
 #define V2_SIZE offsetof(NOTIFYICONDATAW, guidItem)
 #define V4_SIZE sizeof(NOTIFYICONDATAW)
 
@@ -40,7 +39,7 @@ static TRAY_ICON *find_icon(HWND window, UINT id, const GUID *guid)
         TRAY_ICON *icon = &g_icons[i];
         if (!icon->Used)
             continue;
-        /* the window of an icon that went away takes it along. */
+        /* an icon dies with its window. */
         if (!IsWindow(icon->Window)) {
             memset(icon, 0, sizeof(*icon));
             continue;
@@ -72,7 +71,7 @@ static void apply_icon(TRAY_ICON *icon, const NOTIFYICONDATAW *data, SIZE_T size
 
 #define H32(h) ((ULONG)(ULONG_PTR)(h))
 
-/* win32k keeps the icon and tells the desktop, with the fields the program's structure had. */
+/* only the fields the program's structure size covers are passed on. */
 static void mirror(UINT op, const TRAY_ICON *icon, const NOTIFYICONDATAW *data, SIZE_T size)
 {
     MIME_TRAY_REQUEST r;
@@ -105,11 +104,7 @@ static void mirror(UINT op, const TRAY_ICON *icon, const NOTIFYICONDATAW *data, 
     NtUserMimeTray(op, (PUCHAR)&r, sizeof(r));
 }
 
-/*
- * the notification area: a program that adds an icon finds it, can modify and delete it, and the host's desktop
- * shows it when it has a notification area. Windows answers FALSE when the taskbar is not running, which this
- * never is.
- */
+/* windows answers FALSE when the taskbar is not running, which never happens here. */
 SHSTDAPI BOOL WINAPI Shell_NotifyIconW(DWORD message, PNOTIFYICONDATAW data)
 {
     SetLastError(ERROR_SUCCESS);
@@ -195,7 +190,7 @@ SHSTDAPI BOOL WINAPI Shell_NotifyIconW(DWORD message, PNOTIFYICONDATAW data)
     return ok;
 }
 
-/* where an icon would sit, which is the end of the taskbar strip when the display reserves one. */
+/* the end of the taskbar strip when the display reserves one. */
 static BOOL tray_corner(RECT *rect);
 
 SHSTDAPI HRESULT WINAPI Shell_NotifyIconGetRect(const NOTIFYICONIDENTIFIER *identifier, RECT *rect)
@@ -212,7 +207,7 @@ SHSTDAPI HRESULT WINAPI Shell_NotifyIconGetRect(const NOTIFYICONIDENTIFIER *iden
     return tray_corner(rect) ? S_OK : E_FAIL;
 }
 
-/* the strip of the primary monitor outside its work area, as a taskbar edge. */
+/* the strip of the primary monitor outside its work area stands in for the taskbar. */
 static BOOL taskbar_position(UINT *edge, RECT *rect)
 {
     POINT origin = {0, 0};
@@ -296,7 +291,7 @@ SHSTDAPI UINT_PTR WINAPI SHAppBarMessage(DWORD message, PAPPBARDATA data)
     case ABM_ACTIVATE:
     case ABM_WINDOWPOSCHANGED:
     case ABM_SETSTATE:
-        /* app bars are accepted without reserving space; positions stay as asked. */
+        /* app bars are accepted without reserving space, positions stay as asked. */
         return TRUE;
     case ABM_SETAUTOHIDEBAR:
     case ABM_SETAUTOHIDEBAREX:

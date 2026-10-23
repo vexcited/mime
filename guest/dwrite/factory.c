@@ -1,15 +1,15 @@
 /*
- * IDWriteFactory: the object programs start from. Versions one and two are
- * answered by the same object, text layout is not offered.
+ * IDWriteFactory: versions one and two are the same object. text layout is
+ * not offered.
  */
 #include "dw_private.h"
 
 static DwFactory *g_shared;
 
-/* the interface asked for, to the debug output: a program that wants a newer factory says so by failing. */
+/* logs unsupported interfaces: a program that wants a newer factory only says so by failing. */
 static void log_missing(const char *what, REFIID riid, void *caller)
 {
-    /* once for each interface: a program that probes for newer ones does so at every font. */
+    /* once per interface, since programs probe for newer ones at every font. */
     static GUID seen[16];
     static LONG seen_count;
     LONG count = seen_count;
@@ -24,7 +24,7 @@ static void log_missing(const char *what, REFIID riid, void *caller)
     char text[96] = "dwrite: no interface {";
     int n = (int)strlen(text);
     const unsigned char *b = (const unsigned char *)riid;
-    /* the guid as it is written: three fields of the machine's order, then eight bytes. */
+    /* the first three fields are in machine order, then eight plain bytes. */
     static const char order[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
     for (int i = 0; i < 16; i++) {
         if (i == 4 || i == 6 || i == 8 || i == 10)
@@ -35,7 +35,7 @@ static void log_missing(const char *what, REFIID riid, void *caller)
     text[n++] = '}';
     for (const char *w = what; *w && n < (int)sizeof(text) - 3; w++)
         text[n++] = *w;
-    /* who asked, as the offset in its module. */
+    /* the caller, as an offset in its module. */
     HMODULE module = nullptr;
     if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, caller,
                            &module) && module && n < (int)sizeof(text) - 20) {
@@ -321,7 +321,7 @@ static HRESULT WINAPI factory_interop(IDWriteFactory2 *This, IDWriteGdiInterop *
     return hr;
 }
 
-/* ------------------------------------------------------------------ text layout, which is not offered */
+/* ------------------------------------------------------------------ text layout, not offered */
 
 static HRESULT WINAPI factory_text_format(IDWriteFactory2 *This, const WCHAR *family, IDWriteFontCollection *collection,
                                           DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STYLE style,
@@ -484,7 +484,7 @@ static HRESULT WINAPI factory3_analysis(IDWriteFactory3 *This, const DWRITE_GLYP
                                         DWRITE_GRID_FIT_MODE grid_fit, DWRITE_TEXT_ANTIALIAS_MODE antialias, FLOAT x,
                                         FLOAT y, IDWriteGlyphRunAnalysis **analysis)
 {
-    /* the old rendering modes, which the new one extends: outline and the downsampled one are natural to the rasterizer. */
+    /* map to the old modes: outline and the downsampled one are natural to the rasterizer anyway. */
     DWRITE_RENDERING_MODE old = mode == DWRITE_RENDERING_MODE1_OUTLINE ? DWRITE_RENDERING_MODE_OUTLINE
                                 : mode == DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC_DOWNSAMPLED
                                     ? DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC
@@ -539,7 +539,7 @@ static HRESULT WINAPI factory3_download_queue(IDWriteFactory3 *This, IDWriteFont
     return factory3_missing("GetFontDownloadQueue");
 }
 
-/* the table of the second factory with the nine methods of the third after it: both are one object. */
+/* the IDWriteFactory2 table followed by the nine IDWriteFactory3 methods, since both are one object. */
 static const struct {
     IDWriteFactory2Vtbl base;
     void *third[9];
@@ -606,7 +606,7 @@ DwFactory *DwFactoryShared(void)
     DwFactory *f = DwFactoryNew(TRUE);
     if (!f)
         return nullptr;
-    /* the first to get here keeps it, and the process holds a reference for good. */
+    /* the first thread here wins, and the process keeps its reference for good. */
     DwFactory *previous = __sync_val_compare_and_swap(&g_shared, nullptr, f);
     if (previous) {
         DwFree(f);

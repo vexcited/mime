@@ -1,6 +1,4 @@
-/*
- * activation context functions of kernel32.dll and kernelbase.dll.
- */
+/* activation context functions of kernel32.dll and kernelbase.dll. */
 #ifndef MIME_WIN32_WINACTCTX_H
 #define MIME_WIN32_WINACTCTX_H
 

@@ -1,4 +1,4 @@
-/* the exports mime does not implement, failing as windows does without the feature. */
+/* exports that are not implemented, failing as windows does without the feature. */
 #include <mime/stubexport.h>
 
 MIME_STUB_RETURN("pdh", LONG, PdhAddRelogCounter, 7, (LONG)0xC0000BD3)

@@ -1,9 +1,4 @@
-/*
- * vertex input and drawing on a direct3d 8 device: shaders by handle,
- * their declarations made direct3d 9 vertex declarations, vertex shader
- * code given the dcl instructions direct3d 9 needs, stream sources and
- * indices with their base vertex, and the draws.
- */
+/* direct3d 8 shaders, vertex declarations, streams and draws, on top of direct3d 9. */
 #include "d3d8_private.h"
 
 static D8Device *impl(IDirect3DDevice8 *iface) { return D8DeviceFrom(iface); }
@@ -62,7 +57,7 @@ void D8TableFree(D8Table *t)
 
 static const BYTE TYPE_SIZE[8] = {4, 8, 12, 16, 4, 4, 4, 8};
 
-/* the usage of a register of direct3d 8 declarations, as windows hands them to direct3d 9 drivers. */
+/* the direct3d 9 usage windows gives each direct3d 8 declaration register. */
 static void register_usage(UINT reg, BYTE *usage, BYTE *index)
 {
     static const BYTE usages[17] = {D3DDECLUSAGE_POSITION, D3DDECLUSAGE_BLENDWEIGHT, D3DDECLUSAGE_BLENDINDICES,
@@ -75,7 +70,7 @@ static void register_usage(UINT reg, BYTE *usage, BYTE *index)
     *index = reg == 6 || reg == 15 || reg == 16 ? 1 : reg >= 7 && reg <= 14 ? reg - 7 : 0;
 }
 
-/* the types a fixed function register takes, by bit, and its place in a stream's order. */
+/* the types each fixed function register accepts, by bit, and its order within a stream. */
 static BOOL fixed_type(UINT reg, UINT type)
 {
     switch (reg) {
@@ -123,7 +118,6 @@ static void free_parsed(D8Parsed *p)
     HeapFree(GetProcessHeap(), 0, p->constants);
 }
 
-/* the declaration's elements, its constants and its size, with direct3d 8's checks. */
 static HRESULT parse_declaration(D8Device *d, const DWORD *decl, BOOL fixed, UINT constant_limit, D8Parsed *out)
 {
     memset(out, 0, sizeof(*out));
@@ -199,7 +193,7 @@ static HRESULT parse_declaration(D8Device *d, const DWORD *decl, BOOL fixed, UIN
             break;
         }
         case D3DVSD_TOKEN_TESSELLATOR:
-            /* no driver tessellates; the generated inputs are left out. */
+            /* no driver tessellates, so generated inputs are dropped. */
             if (!tess)
                 return D3DERR_INVALIDCALL;
             break;
@@ -244,7 +238,7 @@ static HRESULT parse_declaration(D8Device *d, const DWORD *decl, BOOL fixed, UIN
 
 /* ------------------------------------------------------------------ code */
 
-/* words of a direct3d 8 program up to its end token, and how many of them are not comments. */
+/* counts words up to the end token, and how many of them are not comments. */
 static BOOL measure(const DWORD *code, UINT *words, UINT *plain)
 {
     UINT at = 1, kept = 1;
@@ -272,7 +266,7 @@ static BOOL measure(const DWORD *code, UINT *words, UINT *plain)
     }
 }
 
-/* the vertex shader with a dcl of each register the declaration feeds, as direct3d 9 wants them declared. */
+/* direct3d 9 wants a dcl for each register the declaration feeds. */
 static DWORD *declared_code(const DWORD *code, UINT words, const D8Parsed *p)
 {
     UINT count = 0;
@@ -411,7 +405,7 @@ HRESULT D8SetVertexConstants(D8Device *d, UINT start, const void *data, UINT cou
     return D3D_OK;
 }
 
-/* an even value is an fvf code, an odd one a handle, whose declaration's constants load each time. */
+/* an even value is an fvf code, an odd one a handle. a handle's declaration constants load on every set. */
 HRESULT D8SetVertexShader(D8Device *d, DWORD handle)
 {
     IDirect3DDevice9 *d9 = d->d9;
@@ -502,7 +496,7 @@ static HRESULT STDMETHODCALLTYPE device_get_vertex_shader_constant(IDirect3DDevi
     return D3D_OK;
 }
 
-/* a copy of bytes kept, or its size when no buffer is given. */
+/* without a buffer, only the size is returned. */
 static HRESULT give_bytes(const void *bytes, UINT size, void *data, DWORD *data_size)
 {
     if (!data) {
@@ -542,7 +536,6 @@ static HRESULT STDMETHODCALLTYPE device_get_vertex_shader_function(IDirect3DDevi
 
 /* ------------------------------------------------------------------ pixel shaders */
 
-/* the def instructions at the start of a pixel shader, before anything else may come. */
 static BOOL find_defs(D8PixelShader *s, const DWORD *code, UINT words)
 {
     for (UINT at = 1; at < words;) {
@@ -610,7 +603,7 @@ HRESULT D8SetPixelConstants(D8Device *d, UINT start, const void *data, UINT coun
     return D3D_OK;
 }
 
-/* setting a shader writes its defs over the constants, where programs read them back. */
+/* setting a shader writes its defs over the constants, so programs read them back. */
 HRESULT D8SetPixelShader(D8Device *d, DWORD handle)
 {
     IDirect3DDevice9 *d9 = d->d9;

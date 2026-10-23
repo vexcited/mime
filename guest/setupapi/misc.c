@@ -1,11 +1,10 @@
 /*
- * what a setup program asks of setupapi besides the inf files: a file copied or unpacked from its compressed form, an inf
- * file copied into the folder windows keeps them in, and the record of the components of the system that update packages
- * leave, which keeps the files of the component from being put back.
+ * setupapi outside inf parsing: copying or decompressing a file, copying an oem inf into the inf folder, and the
+ * OsComponents records update packages leave, which keep a component's files from being restored.
  */
 #include "setup_private.h"
 
-/* the old file calls of kernel32 that read and write what compress.exe made. */
+/* kernel32's lz calls, for files made by compress.exe. */
 WINBASEAPI int WINAPI LZOpenFileW(LPWSTR name, LPVOID info, WORD style);
 WINBASEAPI LONG WINAPI LZCopy(int source, int destination);
 WINBASEAPI void WINAPI LZClose(int file);
@@ -23,7 +22,7 @@ SETUPAPI DWORD WINAPI SetupDecompressOrCopyFileW(PCWSTR source, PCWSTR target, P
     DWORD done = 0;
     ReadFile(in, head, sizeof(head), &done, nullptr);
     CloseHandle(in);
-    /* a file made by compress.exe starts with SZDD, and has the last letter of its extension an underscore or gone. */
+    /* compress.exe output starts with SZDD, and its extension's last letter is an underscore or missing. */
     if (done == 8 && !memcmp(head, "SZDD\x88\xF0\x27\x33", 8)) {
         if (compression)
             *compression = 2; /* FILE_COMPRESSION_WINLZA */
@@ -53,7 +52,7 @@ SETUPAPI DWORD WINAPI SetupDecompressOrCopyFileA(PCSTR source, PCSTR target, PUI
     return error;
 }
 
-/* an inf the program brings is put among the inf files of windows under a name of the form oemN.inf, and the name returned. */
+/* copies the inf into the windows inf folder as oemN.inf and returns that name. */
 SETUPAPI BOOL WINAPI SetupCopyOEMInfW(PCWSTR source, PCWSTR location, DWORD media_type, DWORD style, PWSTR dest, DWORD size,
                                       PDWORD required, PWSTR *component)
 {
@@ -75,7 +74,7 @@ SETUPAPI BOOL WINAPI SetupCopyOEMInfW(PCWSTR source, PCWSTR location, DWORD medi
     }
     wcscat(directory, L"\\INF");
     CreateDirectoryW(directory, nullptr);
-    /* the same inf is not copied twice: an oem file that has its bytes is the one answered. */
+    /* the same inf is not copied twice: an oem file with the same bytes is returned instead. */
     BOOL found = FALSE;
     for (int i = 0; i < 1000 && !found; i++) {
         _snwprintf(target, RTL_NUMBER_OF(target), L"%ls\\oem%d.inf", directory, i);
@@ -136,7 +135,7 @@ SETUPAPI BOOL WINAPI SetupCopyOEMInfA(PCSTR source, PCSTR location, DWORD media_
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the components of the system */
+/* ------------------------------------------------------------------ OS components */
 
 #define OS_COMPONENTS L"SYSTEM\\Setup\\OsComponents"
 
@@ -146,7 +145,7 @@ static void guid_text(const GUID *g, WCHAR *out)
               g->Data4[0], g->Data4[1], g->Data4[2], g->Data4[3], g->Data4[4], g->Data4[5], g->Data4[6], g->Data4[7]);
 }
 
-/* the record is kept without its trailing zeros, which the names it holds make most of it, and read back with them. */
+/* stored without the trailing zeros that make up most of the record, and read back with them. */
 static LSTATUS set_record(HKEY key, PCWSTR name, const void *record, DWORD size)
 {
     const BYTE *bytes = record;
@@ -238,7 +237,7 @@ SETUPAPI BOOL WINAPI SetupDiSetDeviceRegistryPropertyA(HDEVINFO set, PSP_DEVINFO
 {
     if (!buffer || property == SPDRP_CONFIGFLAGS)
         return SetupDiSetDeviceRegistryPropertyW(set, device, property, buffer, size);
-    /* the text is ansi, a string or for some properties strings one after another, and the registry keeps it wide. */
+    /* ansi text, a string or for some properties a multi string, which the registry keeps wide. */
     int chars = MultiByteToWideChar(CP_ACP, 0, (PCSTR)buffer, (int)size, nullptr, 0);
     PWSTR wide = chars ? SetupAlloc(((SIZE_T)chars + 1) * sizeof(WCHAR)) : nullptr;
     if (!wide) {

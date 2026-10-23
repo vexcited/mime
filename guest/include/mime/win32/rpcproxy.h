@@ -1,7 +1,4 @@
-/*
- * the com proxies and stubs of rpcrt4: the interfaces a channel, a proxy and a stub speak, and the structures midl generates
- * for the interfaces of a proxy dll.
- */
+/* com proxies and stubs of rpcrt4: channel, proxy and stub interfaces, and the structures midl emits for a proxy dll. */
 #ifndef MIME_WIN32_RPCPROXY_H
 #define MIME_WIN32_RPCPROXY_H
 
@@ -98,8 +95,6 @@ MIME_DEFINE_GUID(IID_IRpcStubBuffer, 0xD5F56AFC, 0x593B, 0x101A, 0xB5, 0x69, 0x0
 MIME_DEFINE_GUID(IID_IPSFactoryBuffer, 0xD5F569D0, 0x593B, 0x101A, 0xB5, 0x69, 0x08, 0x00, 0x2B, 0x2D, 0xBF, 0x7A);
 MIME_DEFINE_GUID(IID_IRpcChannelBuffer2, 0x594F31D0, 0x7F19, 0x11D0, 0xB1, 0x94, 0x00, 0xA0, 0xC9, 0x0D, 0xC8, 0xBF);
 
-/* ------------------------------------------------------------------ the structures midl generates */
-
 struct tagCInterfaceStubVtbl;
 struct tagCInterfaceProxyVtbl;
 typedef struct tagCInterfaceStubVtbl *PCInterfaceStubVtblList;
@@ -123,7 +118,7 @@ typedef struct tagProxyFileInfo {
 } ProxyFileInfo;
 typedef ProxyFileInfo ExtendedProxyFileInfo;
 
-/* the header of a proxy vtable has the stubless proxy info first when the proxy file is of table version 2. */
+/* in table version 2 proxy files, the stubless proxy info comes first. */
 typedef struct tagCInterfaceProxyHeader {
 #ifdef USE_STUBLESS_PROXY
     const void *pStublessProxyInfo;
@@ -183,7 +178,7 @@ RPCRTAPI void __RPC_STUB NdrStubForwardingFunction(IRpcStubBuffer *This, IRpcCha
                                                    DWORD *phase);
 RPCRTAPI HRESULT WINAPI CStdStubBuffer_QueryInterface(IRpcStubBuffer *This, REFIID riid, void **object);
 RPCRTAPI ULONG WINAPI CStdStubBuffer_AddRef(IRpcStubBuffer *This);
-/* the Release of a stub vtable is defined in each proxy dll, which knows its factory, by these. */
+/* each proxy dll defines its stub vtables' Release with these, since only it knows its factory. */
 ULONG WINAPI CStdStubBuffer_Release(IRpcStubBuffer *This);
 ULONG WINAPI CStdStubBuffer2_Release(IRpcStubBuffer *This);
 #define CSTDSTUBBUFFERRELEASE(factory)                                                                                \
@@ -205,7 +200,7 @@ RPCRTAPI IRpcStubBuffer *WINAPI CStdStubBuffer_IsIIDSupported(IRpcStubBuffer *Th
 RPCRTAPI ULONG WINAPI CStdStubBuffer_CountRefs(IRpcStubBuffer *This);
 RPCRTAPI HRESULT WINAPI CStdStubBuffer_DebugServerQueryInterface(IRpcStubBuffer *This, void **object);
 RPCRTAPI void WINAPI CStdStubBuffer_DebugServerRelease(IRpcStubBuffer *This, void *object);
-/* proxies and stubs made from a type library's description of an interface: ITypeInfo is declared by oleauto.h. */
+/* proxies and stubs built from type library info. ITypeInfo comes from oleauto.h. */
 struct ITypeInfo;
 RPCRTAPI HRESULT WINAPI CreateProxyFromTypeInfo(struct ITypeInfo *info, IUnknown *outer, REFIID riid,
                                                 IRpcProxyBuffer **proxy, void **object);
@@ -223,7 +218,7 @@ RPCRTAPI HRESULT RPC_ENTRY NdrDllUnregisterProxy(HMODULE module, const ProxyFile
     CStdStubBuffer_QueryInterface, CStdStubBuffer_AddRef, CStdStubBuffer_Release, CStdStubBuffer_Connect,             \
         CStdStubBuffer_Disconnect, CStdStubBuffer_Invoke, CStdStubBuffer_IsIIDSupported, CStdStubBuffer_CountRefs,    \
         CStdStubBuffer_DebugServerQueryInterface, CStdStubBuffer_DebugServerRelease
-/* a stub of an interface with a base that has a stub of its own: the empty places are the runtime's to fill. */
+/* stub for an interface whose base has its own stub: the runtime fills the zero slots. */
 #define CStdStubBuffer_DELEGATING_METHODS 0, 0, CStdStubBuffer2_Release, 0, 0, 0, 0, 0, 0, 0
 
 RPCRTAPI HRESULT WINAPI IUnknown_QueryInterface_Proxy(IUnknown *This, REFIID riid, void **object);

@@ -1,7 +1,4 @@
-/*
- * address text: inet_addr and inet_ntoa, inet_pton and inet_ntop, and the
- * WSAStringToAddress and WSAAddressToString conversions.
- */
+/* socket address parsing and formatting. */
 #include "ws2_32_private.h"
 
 static int hex_value(char c)
@@ -125,7 +122,7 @@ static BOOL parse_ipv6(const char **p, IN6_ADDR *addr)
         int d = hex_value(*s);
         if (d < 0)
             break;
-        /* an embedded ipv4 address ends the text. */
+        /* an embedded IPv4 address ends the text. */
         const char *q = s;
         while (*q >= '0' && *q <= '9')
             q++;
@@ -245,7 +242,7 @@ int WsFormatIpv6(const IN6_ADDR *addr, char *buffer)
     char *p = buffer;
     const UCHAR *b = addr->u.Byte;
     BOOL zero5 = !w[0] && !w[1] && !w[2] && !w[3] && !w[4];
-    /* the forms ending with an ipv4 address: mapped, translated, compatible and isatap. */
+    /* the forms ending with an IPv4 address: mapped, translated, compatible and isatap. */
     if (zero5 && w[5] == 0xFFFF)
         return _snprintf(buffer, INET6_ADDRSTRLEN, "::ffff:%u.%u.%u.%u", b[12], b[13], b[14], b[15]);
     if (!w[0] && !w[1] && !w[2] && !w[3] && w[4] == 0xFFFF && !w[5])

@@ -1,12 +1,12 @@
 /*
  * arm64 structured exception handling: unwind data lookup, frame based dispatch, unwinding and the c
- * language handler, over the unwinder of unwind_arm64.c.
+ * language handler, on top of the unwinder in unwind_arm64.c.
  *
- * the unwind data is Microsoft's published arm64 format, and the dispatch protocol follows what compilers
- * expect from ntdll as on x64: DISPATCHER_CONTEXT, the EXCEPTION_UNWINDING, EXCEPTION_EXIT_UNWIND and
- * EXCEPTION_TARGET_UNWIND flags, and collided unwinds. what differs from x64 is that a frame's pc is the
- * return address of its call: a context an unwind produced has CONTEXT_UNWOUND_TO_CALL set, and the code
- * that looks a pc up, the scope tables of the c handler too, uses the instruction before it.
+ * the unwind data is Microsoft's published arm64 format, and dispatch follows the protocol compilers expect
+ * from ntdll on x64: DISPATCHER_CONTEXT, the EXCEPTION_UNWINDING, EXCEPTION_EXIT_UNWIND and
+ * EXCEPTION_TARGET_UNWIND flags, and collided unwinds. unlike x64, a frame's pc is the return address of its
+ * call: an unwound context has CONTEXT_UNWOUND_TO_CALL set, and pc lookups, including the c handler's scope
+ * tables, use the instruction before it.
  */
 #include "../ntdll_private.h"
 #include "unwind_arm64.h"
@@ -238,7 +238,7 @@ NTDLL_EXPORT void NTAPI RtlDeleteGrowableFunctionTable(PVOID handle)
 
 /* ------------------------------------------------------------ virtual unwind */
 
-/* the pc to look a function up by: the call before the return address of an unwound frame. */
+/* an unwound frame is looked up by the call before its return address. */
 static ULONG64 lookup_pc(const CONTEXT *c)
 {
     return (c->ContextFlags & CONTEXT_UNWOUND_TO_CALL) ? c->Pc - 4 : c->Pc;
@@ -252,7 +252,7 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
     ULONG64 sp = c->Sp;
     if (!a64_virtual_unwind(base, pc, (const A64_FUNCTION *)function, (A64_CONTEXT *)c, (A64_POINTERS *)pointers,
                             &result, 0, ~0ull)) {
-        /* data this code does not know: go on as from a leaf, rather than loop on the same frame. */
+        /* unknown unwind data: continue as from a leaf rather than loop on the same frame. */
         a64_unwind_leaf((A64_CONTEXT *)c);
         *establisher_frame = sp;
         *handler_data = nullptr;
@@ -274,8 +274,8 @@ static BOOLEAN frame_in_stack(ULONG64 frame)
 }
 
 /*
- * one frame up: virtual unwind, or a leaf function returning straight away. false when the unwind data of the
- * function is not valid or leads out of the stack, and the context is then not to be used.
+ * moves one frame up, by virtual unwind or as a leaf. returns false when the function's unwind data is invalid
+ * or leads out of the stack, and the context must not be used then.
  */
 static BOOLEAN unwind_frame(ULONG type, PCONTEXT c, PDISPATCHER_CONTEXT dc, PEXCEPTION_ROUTINE *handler)
 {
@@ -375,7 +375,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
     return FALSE;
 }
 
-/* raises with the state of the caller, resuming after the call. */
+/* raises with the caller's state, resuming after the call. */
 NTDLL_EXPORT void NTAPI RtlRaiseException(PEXCEPTION_RECORD record)
 {
     CONTEXT context;
@@ -448,7 +448,7 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
     if (!target_frame)
         record->ExceptionFlags |= EXCEPTION_EXIT_UNWIND;
 
-    /* the frame of the caller of this function. */
+    /* start from this function's caller. */
     CONTEXT c;
     DISPATCHER_CONTEXT dc;
     PEXCEPTION_ROUTINE handler;

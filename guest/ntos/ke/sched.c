@@ -3,20 +3,20 @@
  */
 #include "../ntos.h"
 
-#define KI_DEFAULT_QUANTUM_HNS 300000 /* 30 ms, desktop style quanta */
+#define KI_DEFAULT_QUANTUM_HNS 300000 /* 30 ms, desktop style quanta. */
 
 LIST_ENTRY KiReadyListHead[MAXIMUM_PRIORITY];
 ULONG KiReadySummary;
 PKPRCB KiProcessorBlock[MAXIMUM_PROCESSORS];
 ULONG KeNumberProcessors = 1;
 volatile ULONG KiKernelLock[8] __attribute__((aligned(64))) = {0, ~0u, 0, 0};
-/* a hold of the lock longer than this many ticks is counted by what held it, see KiNoteLongHold. */
+/* lock holds longer than this many ticks are counted by what held them, see KiNoteLongHold. */
 ULONG64 KiLongHoldTicks = ~0ull;
 ULONG64 KiKernelLockPhys;
 ULONG KiOptions;
-/* the kernel option nolockflush: the lock no longer settles the user translations other processors changed. */
+/* kernel option nolockflush: the lock no longer settles user translations other processors changed. */
 UCHAR KiNoLockFlush;
-/* acquisitions, those that had to wait, ticks waited, the longest wait: a row of eight for each processor, see entry.S */
+/* a row of eight per processor: acquisitions, those that waited, ticks waited, the longest wait. see entry.S. */
 ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 
 ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 a6,
@@ -33,7 +33,7 @@ ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULO
     KiReleaseKernelLock();
     ULONG64 status = HalHypercall(nr, a1, a2, a3, a4, a5, a6, value);
     KiAcquireKernelLock();
-    /* the time away is not time the lock was held, which the statistics of the services want to know. */
+    /* time away does not count as holding the lock in the service statistics. */
     KiCurrentThread()->BlockedTicks += HalReadCounter() - start;
     KiRestoreInterrupts(state);
     return status;
@@ -50,13 +50,12 @@ void KiInitializeScheduler(void)
     KiProcessorBlock[0] = prcb;
 }
 
-/* the processors of the machine as an affinity mask. */
 ULONG64 KiAllProcessors(void)
 {
     return KeNumberProcessors >= 64 ? ~0ull : (1ull << (KeNumberProcessors ? KeNumberProcessors : 1)) - 1;
 }
 
-/* the processors a process is limited to, all of them when it was never limited. */
+/* all processors when the process was never limited. */
 ULONG64 KiProcessAffinity(PKPROCESS process)
 {
     return process->Affinity ? process->Affinity : KiAllProcessors();
@@ -88,7 +87,7 @@ void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVO
     thread->State = Initialized;
     thread->PreviousMode = KernelMode;
 
-    /* the user trap frame (if any) sits at the top, the switch frame below it. */
+    /* the user trap frame, if any, sits at the top and the switch frame below it. */
     KiInitializeSwitchFrame(thread, routine, context);
 
     ULONG64 s = KiAcquireDispatcherLock();

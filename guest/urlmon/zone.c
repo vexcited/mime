@@ -1,6 +1,6 @@
 /*
- * the internet security manager: urls mapped to security zones through
- * internet explorer's zone map, and the zones' url action policies.
+ * the internet security manager: maps urls to security zones through internet explorer's zone map, and reads the
+ * zones' url action policies.
  */
 #include <mime/win32/objbase.h>
 #include <mime/win32/winbase.h>
@@ -121,7 +121,7 @@ static BOOL is_alpha(WCHAR c)
     return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
 }
 
-/* the scheme and host of a url; a dos or unc path counts as a file url. */
+/* a dos or unc path counts as a file url. */
 static BOOL split_url(LPCWSTR url, URL_PARTS *parts)
 {
     memset(parts, 0, sizeof(*parts));
@@ -179,7 +179,7 @@ static BOOL read_dword(HKEY root, LPCWSTR key, LPCWSTR value, DWORD *out)
     return !RegGetValueW(root, key, value, RRF_RT_REG_DWORD, nullptr, out, &size);
 }
 
-/* a zone map entry of a key: the scheme's own value, then the wildcard. */
+/* the scheme's own value first, then the "*" wildcard, user before machine. */
 static BOOL mapped_zone(LPCWSTR key, LPCWSTR scheme, DWORD *zone)
 {
     static const HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
@@ -190,8 +190,8 @@ static BOOL mapped_zone(LPCWSTR key, LPCWSTR scheme, DWORD *zone)
 }
 
 /*
- * the zone map keys a host by its last two labels, with the labels before
- * them as a subkey: www.example.com is Domains\example.com\www.
+ * the zone map keys a host by its last two labels, with the labels before them as a subkey:
+ * www.example.com is Domains\example.com\www.
  */
 static BOOL domain_zone(const URL_PARTS *parts, DWORD *zone)
 {
@@ -225,7 +225,7 @@ static HRESULT url_zone(LPCWSTR url, DWORD *zone)
     }
     if (parts.Host[0] && domain_zone(&parts, zone))
         return S_OK;
-    /* a plain host name without dots is on the intranet, as windows' IntranetName default. */
+    /* like windows' IntranetName default, a plain host name without dots is on the intranet. */
     *zone = parts.Host[0] && !wcschr(parts.Host, L'.') ? URLZONE_INTRANET : URLZONE_INTERNET;
     return S_OK;
 }
@@ -241,7 +241,7 @@ static HRESULT STDMETHODCALLTYPE sm_MapUrlToZone(IInternetSecurityManager *iface
     return url_zone(url, zone);
 }
 
-/* the ansi "scheme:host" of the url followed by its zone. */
+/* the ANSI "scheme:host" followed by the zone. */
 static HRESULT STDMETHODCALLTYPE sm_GetSecurityId(IInternetSecurityManager *iface, LPCWSTR url, BYTE *id,
                                                   DWORD *size, DWORD_PTR reserved)
 {
@@ -266,7 +266,7 @@ static HRESULT STDMETHODCALLTYPE sm_GetSecurityId(IInternetSecurityManager *ifac
     return S_OK;
 }
 
-/* a zone's own policy for an action from the registry, else the default of its template. */
+/* the zone's own policy from the registry, else its template's default. */
 static DWORD action_policy(DWORD zone, DWORD action)
 {
     WCHAR key[160], value[16];
@@ -337,7 +337,7 @@ DECLSPEC_EXPORT HRESULT WINAPI CoInternetCreateSecurityManager(IUnknown *provide
     return S_OK;
 }
 
-/* the zone of a url for IUri::GetZone, URLZONE_INVALID when it maps to none. */
+/* for IUri::GetZone, URLZONE_INVALID when the url maps to none. */
 DWORD UrlZoneOf(LPCWSTR url)
 {
     DWORD zone = URLZONE_INVALID;

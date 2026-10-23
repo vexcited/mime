@@ -1,10 +1,6 @@
 /*
- * remote desktop services: the sessions of this machine.
- *
- * mime runs one interactive session, the console, plus session 0 where
- * services would run. a console session has no remote client, so the client
- * classes describe the local machine the way windows does for the console.
- * every buffer comes from LocalAlloc, which WTSFreeMemory releases.
+ * one interactive console session and session 0 for services. console client information describes the local
+ * machine. returned buffers use LocalAlloc and are released by WTSFreeMemory.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -214,7 +210,7 @@ static void session_user(SESSION *s)
         FreeLibrary(advapi);
 }
 
-/* fills the description of a session; returns a win32 error. */
+/* returns a Win32 error when the session description cannot be filled. */
 static DWORD describe(HANDLE server, DWORD id, SESSION *s)
 {
     if (!MimeWtsServerValid(server))
@@ -299,7 +295,7 @@ WTSAPI BOOL WINAPI WTSQuerySessionInformationW(HANDLE server, DWORD id, WTS_INFO
     case WTSClientDirectory:
         return give_text(L"", buffer, returned);
     case WTSOEMId:
-        return give("", 1, buffer, returned); /* an ansi string even here, like windows */
+        return give("", 1, buffer, returned); /* an ANSI string even here, like windows. */
     case WTSSessionId:
         return give(&s.Id, sizeof(DWORD), buffer, returned);
     case WTSUserName:
@@ -315,9 +311,9 @@ WTSAPI BOOL WINAPI WTSQuerySessionInformationW(HANDLE server, DWORD id, WTS_INFO
         return give(&(DWORD){0}, sizeof(DWORD), buffer, returned);
     case WTSClientProductId:
     case WTSClientProtocolType:
-        return give(&(USHORT){0}, sizeof(USHORT), buffer, returned); /* 0, the console */
+        return give(&(USHORT){0}, sizeof(USHORT), buffer, returned); /* 0, the console. */
     case WTSClientAddress: {
-        BYTE address[24] = {}; /* AF_UNSPEC: no remote client */
+        BYTE address[24] = {}; /* AF_UNSPEC: no remote client. */
         return give(address, sizeof(address), buffer, returned);
     }
     case WTSClientDisplay: {
@@ -362,7 +358,7 @@ WTSAPI BOOL WINAPI WTSQuerySessionInformationW(HANDLE server, DWORD id, WTS_INFO
         x->Level = 1;
         l->SessionId = s.Id;
         l->SessionState = s.State;
-        l->SessionFlags = s.Id ? 1 : -1; /* WTS_SESSIONSTATE_UNLOCK, or unknown for session 0 */
+        l->SessionFlags = s.Id ? 1 : -1; /* WTS_SESSIONSTATE_UNLOCK, or unknown for session 0. */
         copy_text(l->WinStationName, RTL_NUMBER_OF(l->WinStationName), s.Station);
         copy_text(l->UserName, RTL_NUMBER_OF(l->UserName), s.User);
         copy_text(l->DomainName, RTL_NUMBER_OF(l->DomainName), s.Domain);
@@ -393,7 +389,7 @@ WTSAPI BOOL WINAPI WTSQuerySessionInformationW(HANDLE server, DWORD id, WTS_INFO
     }
 }
 
-/* the string classes converted to ansi; the structure classes have no ansi form here yet. */
+/* the string classes converted to ANSI; the structure classes have no ANSI form here yet. */
 WTSAPI BOOL WINAPI WTSQuerySessionInformationA(HANDLE server, DWORD id, WTS_INFO_CLASS klass, LPSTR *buffer,
                                                DWORD *returned)
 {
@@ -474,9 +470,8 @@ WTSAPI BOOL WINAPI WTSQueryUserToken(ULONG id, PHANDLE token)
 /* ---------------------------------------------------------------- notifications */
 
 /*
- * the window must belong to this process, as on windows. mime has a single
- * console session that never connects, disconnects or locks, so no
- * WM_WTSSESSION_CHANGE message is ever due.
+ * the window must belong to this process. the console session never connects, disconnects or locks, so no
+ * WM_WTSSESSION_CHANGE is generated.
  */
 static BOOL check_window(HWND window, DWORD flags)
 {

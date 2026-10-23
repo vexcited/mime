@@ -1,12 +1,11 @@
 /*
- * gif87a and gif89a container parser, lzw codec, frame composer, encoder and
- * color quantizer. pixels are 32 bpp b, g, r, a bytes, indices are 8 bit.
- * freestanding: needs only memcpy, memmove, memset, memcmp and the allocator
- * interface.
+ * gif87a and gif89a parser, lzw codec, frame composer, encoder and color
+ * quantizer. pixels are 32 bpp b, g, r, a bytes, indices are 8 bit.
+ * freestanding: needs only memcpy, memmove, memset, memcmp and the allocator.
  *
- * threading: an opened MimeGif is read only, so frames of one handle may be
- * decoded from several threads at once. the input buffer must stay valid and
- * unchanged for the life of the handle, frame and extension data point into it.
+ * an opened MimeGif is read only, so several threads may decode its frames at
+ * once. the input buffer must stay valid and unchanged for the life of the
+ * handle, frame and extension data point into it.
  */
 #ifndef MIME_LIB_GIF_GIF_H
 #define MIME_LIB_GIF_GIF_H
@@ -45,12 +44,12 @@ enum {
 
 #define MIME_GIF_MAX_FRAMES 65536u
 #define MIME_GIF_MAX_EXTENSIONS 65536u
-#define MIME_GIF_MAX_PIXELS (1u << 28) /* cap of a decoded frame and of the logical screen. */
+#define MIME_GIF_MAX_PIXELS (1u << 28) /* pixel cap of a decoded frame and of the logical screen. */
 
 typedef struct MimeGif MimeGif;
 
 typedef struct MimeGifInfo {
-    uint16_t width; /* logical screen, when the file declares 0 the extent of the frames. */
+    uint16_t width; /* logical screen, or the frames' extent when the file declares 0. */
     uint16_t height;
     uint16_t declared_width; /* as stored in the file. */
     uint16_t declared_height;
@@ -78,7 +77,7 @@ typedef struct MimeGifFrame {
     bool interlaced;
     bool has_local_palette;
     bool local_palette_sorted;
-    uint16_t palette_size;  /* of the palette in effect, the local one else the global one, 0 if none. */
+    uint16_t palette_size;  /* of the palette in effect, local else global, 0 if none. */
     const uint8_t *palette; /* r, g, b triplets inside the input, NULL when palette_size is 0. */
     bool has_gce;           /* a graphic control extension preceded this frame. */
     uint8_t disposal;       /* 0 unspecified, 1 keep, 2 restore to background, 3 restore to previous. */
@@ -190,7 +189,7 @@ int mime_gif_decode_frame_bgra(const MimeGif *gif, unsigned index, uint8_t *out,
 
 /*
  * composed path. renders the logical screen as a browser does. frame n is drawn
- * over the canvas left by the frame before it after the disposal of that one. pixels with
+ * over the canvas the previous frame left after its disposal. pixels with
  * the transparent index leave the canvas alone, parts outside of the logical
  * screen are clipped. the canvas starts fully transparent. browsers ignore the
  * background color of the logical screen and so does this by default. disposal

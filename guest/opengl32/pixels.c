@@ -1,7 +1,6 @@
 /*
- * pixel transfer: rows between the application's format and type and the
- * metal format a texture is stored in. common layouts are copied or
- * swizzled directly; anything else goes through floats.
+ * pixel transfer: rows between the application's format and type and the Metal format a texture is stored in. common
+ * layouts are copied or swizzled directly, anything else goes through floats.
  */
 #include "opengl32.h"
 
@@ -427,7 +426,7 @@ static uint16_t to16(float v)
     return (uint16_t)(v * 65535.0f + 0.5f);
 }
 
-/* one texel of the metal format from rgba floats. the source format decides how luminance and alpha land. */
+/* one texel of the Metal format from rgba floats. the source format decides where luminance and alpha land. */
 static void encode_texel(uint32_t f, GLenum src_format, const float c[4], uint8_t *d)
 {
     float r = c[0];

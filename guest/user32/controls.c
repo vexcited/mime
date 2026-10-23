@@ -1,7 +1,4 @@
-/*
- * the ScrollBar control, drawn and tracked as the scroll bars of windows
- * are.
- */
+/* the ScrollBar control, drawn and tracked like window scroll bars. */
 #include "user32_private.h"
 
 LRESULT CALLBACK ScrollBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)

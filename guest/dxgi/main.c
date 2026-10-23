@@ -1,7 +1,6 @@
 /*
- * the exports of dxgi.dll and the gpus behind its adapters. the vulkan
- * instance is made once, the first time a factory is, and lives as long
- * as the process.
+ * dxgi.dll exports and the gpus behind its adapters. the vulkan instance is
+ * made with the first factory and lives as long as the process.
  */
 #include "dxgi_private.h"
 
@@ -13,10 +12,9 @@ static INIT_ONCE g_vulkan_once = INIT_ONCE_STATIC_INIT;
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
 
 /*
- * the version of the user mode driver as windows numbers it, which
- * programs read through CheckInterfaceSupport. nvidia's drivers end in the
- * last digit of their major version and their minor, 580.95 being
- * 32.0.15.8095.
+ * the user mode driver version as windows numbers it, read by programs
+ * through CheckInterfaceSupport. nvidia's end in the last digit of the major
+ * version and the minor, so 580.95 is 32.0.15.8095.
  */
 static LARGE_INTEGER umd_version(const VkPhysicalDeviceProperties *p)
 {
@@ -51,7 +49,7 @@ static void describe(DxgiGpu *gpu, UINT index)
         else
             desc->SharedSystemMemory += heap->size;
     }
-    /* an integrated gpu's memory is the system's, as windows reports it. */
+    /* like windows, an integrated gpu's memory counts as shared system memory. */
     if (gpu->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
         desc->SharedSystemMemory += desc->DedicatedVideoMemory;
         desc->DedicatedVideoMemory = 128 << 20;
@@ -65,7 +63,7 @@ static void describe(DxgiGpu *gpu, UINT index)
     gpu->umd_version = umd_version(&gpu->properties);
 }
 
-/* discrete gpus first, as windows puts the one driving the display and games pick the first. */
+/* discrete gpus first, like windows lists the one driving the display, since games pick the first. */
 static int rank(const DxgiGpu *gpu)
 {
     switch (gpu->properties.deviceType) {
@@ -82,9 +80,8 @@ static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
 {
     DxgiVulkan *vk = &g_vulkan;
     /*
-     * mime's own vulkan-1.dll, from the system directory: programs that bring a loader of their own (Chromium's
-     * embedded browsers do, with an empty list of drivers) have it in their directory, which a name alone would find
-     * first, and then no adapter would be found.
+     * load mime's vulkan-1.dll from the system directory by full path. programs that ship their own loader, like
+     * Chromium's embedded browsers with an empty driver list, would have it found first by name, leaving no adapters.
      */
     WCHAR path[MAX_PATH + 16];
     UINT length = GetSystemDirectoryW(path, MAX_PATH);
@@ -136,7 +133,7 @@ static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
             gpu.properties.apiVersion < VK_API_VERSION_1_3)
             continue;
         memory(gpu.physical, &gpu.memory);
-        /* a stable sort by rank keeps vulkan's order within a kind. */
+        /* an insertion sort by rank, stable so vulkan's order holds within a kind. */
         UINT at = vk->count;
         while (at && rank(&vk->gpus[at - 1]) > rank(&gpu)) {
             vk->gpus[at] = vk->gpus[at - 1];
@@ -176,7 +173,7 @@ DXGIAPI HRESULT WINAPI CreateDXGIFactory(REFIID riid, void **factory)
     return CreateDXGIFactory2(0, riid, factory);
 }
 
-/* the debug layer's interfaces, absent as when the graphics tools are not installed. */
+/* absent, as when the graphics tools are not installed. */
 DXGIAPI HRESULT WINAPI DXGIGetDebugInterface1(UINT flags, REFIID riid, void **debug)
 {
     if (debug)

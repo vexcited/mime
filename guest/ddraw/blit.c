@@ -1,8 +1,7 @@
 /*
- * the pixel loops of blts: copies, stretches and mirrors by nearest
- * pixel, source and destination color keys, fills. they work on whole
- * pixels of 1 to 4 bytes; what is valid to ask of them is blt.c's to
- * decide.
+ * blt pixel loops: nearest-pixel copies, stretches and mirrors, source and
+ * destination color keys, and fills, on 1 to 4 byte pixels. blt.c decides
+ * what is valid to ask of them.
  */
 #include "ddraw_private.h"
 #include "blit.h"
@@ -68,7 +67,7 @@ void DdFill(BYTE *dst, LONG pitch, DWORD size, LONG width, LONG height, DWORD va
     }
 }
 
-/* the same size, no keys: rows in the order an overlap needs. */
+/* same size, no keys. rows go in the order an overlap needs. */
 static void copy(const DDBLIT *b)
 {
     SIZE_T row = (SIZE_T)b->width * b->size;
@@ -83,9 +82,9 @@ static void copy(const DDBLIT *b)
 }
 
 /*
- * the general loop: each destination pixel takes the source pixel its
- * center falls on, mirrored as asked, kept or dropped by the keys. a
- * source overlapping the destination is read from a copy first.
+ * each destination pixel takes the source pixel its center falls on,
+ * mirrored as asked and filtered by the keys. a source overlapping the
+ * destination is read from a copy first.
  */
 static void general(const DDBLIT *b)
 {
@@ -136,7 +135,7 @@ static void general(const DDBLIT *b)
     HeapFree(GetProcessHeap(), 0, copy_bytes);
 }
 
-/* the commonest blt of sprites: one key, no stretch, 1, 2 or 4 byte pixels. */
+/* the most common sprite blt: one key, no stretch, 1, 2 or 4 byte pixels. */
 #define KEYED_COPY(type)                                                                                              \
     for (LONG y = 0; y < b->height; y++) {                                                                            \
         const type *s = (const type *)(b->src + (SSIZE_T)y * b->src_pitch);                                           \

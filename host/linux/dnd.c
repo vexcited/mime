@@ -1,20 +1,8 @@
 /*
- * drag and drop between host programs and the guest, on wayland: a drag over a host window reaches the guest as
- * events and a drag that leaves the guest's windows becomes a drag of the host.
- *
- * sdl only knows drops of files and text, delivered when the button goes up, and cannot start a drag. this file
- * has its own data device on the seat, on the default queue sdl's event loop dispatches, so its handlers run on
- * the main thread. sdl's own acceptance of drops is turned off, or both would answer the compositor. the
- * compositor sends a drag to every data device of the client.
- *
- * a drag over the guest: the types it offers say which kinds the guest can have (MIME_CLIP_*); the data is read
- * from the offer when the guest asks for a kind, whenever that is, and converted as the clipboard's. the guest
- * answers enter and over with the effect its target chooses, which becomes the accepted type and action, and the
- * drop with the effect it ended with.
- *
- * a drag of the guest: the guest starts it with the kinds it can render and the effects it allows; it needs the
- * serial of the button press that began it, which this file saw on a pointer of its own. when another program
- * reads a type, the guest is asked for the kind and the answer is converted.
+ * Wayland drag and drop between host and guest. uses a separate data device on SDL's default queue, with handlers on
+ * the main thread; SDL drop acceptance is disabled to avoid competing replies. host offers map to MIME_CLIP_* kinds
+ * and clipboard conversions, and guest effects select accepted types and actions. outgoing drags advertise guest
+ * formats and effects and use the button-press serial captured by a private pointer.
  */
 #include "convert.h"
 #include "ui_internal.h"
@@ -47,8 +35,8 @@ typedef struct Offer {
     char **mimes;
     size_t mime_count;
     uint32_t source_actions;
-    uint32_t id;     /* the session, 0 while it is no drag over the guest */
-    uint32_t serial; /* of the enter */
+    uint32_t id;     /* the session, 0 while it is no drag over the guest. */
+    uint32_t serial; /* of the enter. */
     uint32_t kinds;
     bool dropped;
     struct Reader *readers[GROUPS];
@@ -69,9 +57,9 @@ static struct wl_shm *g_shm;
 static uint32_t g_next_session;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-static Offer *g_target;           /* the offer of the drag over the guest, if any */
-static uint32_t g_press_serial;   /* of the last press of a pointer button */
-static void *g_press_surface;     /* and the surface the pointer was over */
+static Offer *g_target;           /* the offer of the drag over the guest, if any. */
+static uint32_t g_press_serial;   /* of the last press of a pointer button. */
+static void *g_press_surface;     /* and the surface the pointer was over. */
 static void *g_pointer_surface;
 
 static int kind_index(uint32_t kind)
@@ -83,10 +71,8 @@ static int kind_index(uint32_t kind)
 }
 
 /*
- * the data of a drag is read as soon as the drag enters, not when the guest asks. sdl's own data device is a
- * second client of the same drag, and when it drops it destroys the offer it declined, which the compositor
- * takes for the end of the drop: the source is then told it finished and may drop its data before a request
- * made after the drop is served. what is asked for first is served. the kinds that share a type share a read.
+ * prefetches offered data on drag entry. SDL's second data device may destroy its rejected offer on drop, causing
+ * the compositor to release source data before later requests arrive. formats sharing a MIME type share one read.
  */
 typedef struct Reader {
     int fd;
@@ -255,7 +241,7 @@ static int group_of(uint32_t kind)
     return -1;
 }
 
-/* asks the source for every type the guest can make a kind of; main thread. */
+/* requests every type convertible to a guest format on the main thread. */
 static void prefetch(Offer *o)
 {
     static const uint32_t first_of_group[GROUPS] = {MIME_CLIP_TEXT, MIME_CLIP_PNG, MIME_CLIP_HTML, MIME_CLIP_HDROP};
@@ -404,7 +390,7 @@ static void device_drop(void *data, struct wl_data_device *device)
 
 static void device_selection(void *data, struct wl_data_device *device, struct wl_data_offer *id)
 {
-    /* the clipboard is sdl's; this device only sees its offers, which would pile up on the compositor. */
+    /* discards clipboard offers handled by SDL to avoid retaining compositor objects. */
     if (id)
         offer_destroy(wl_data_offer_get_user_data(id));
 }
@@ -412,7 +398,7 @@ static void device_selection(void *data, struct wl_data_device *device, struct w
 static const struct wl_data_device_listener device_listener = {device_data_offer, device_enter, device_leave,
                                                                device_motion, device_drop, device_selection};
 
-/* what the guest's target answered to the drag: the effect, as the type accepted and the actions. */
+/* converts the guest target's chosen effect into the accepted type and actions. */
 static void effect_main(void *arg)
 {
     uint64_t packed = (uint64_t)(uintptr_t)arg;
@@ -429,7 +415,7 @@ static void effect_main(void *arg)
             wl_data_offer_set_actions(o->offer, 0, 0);
         return;
     }
-    /* any type tells the compositor it is wanted: the one of the first kind there is. */
+    /* accepting any offered type signals interest; use the first supported format's type. */
     const char *type = nullptr;
     for (int i = 0; i < KINDS && !type; i++)
         if (o->kinds & (1u << i))
@@ -537,12 +523,12 @@ typedef struct Drag {
     struct wl_data_source *source;
     uint32_t id;
     uint32_t kinds;
-    uint32_t action;    /* the last the compositor chose */
+    uint32_t action;    /* the last the compositor chose. */
     bool performed;
     bool ended;
-    int pending;        /* host programs reading from the guest right now */
-    int refs;           /* the drag itself, and each of those reads */
-    struct wl_surface *icon;       /* the image shown with the drag, if the guest gave one */
+    int pending;        /* host programs reading from the guest right now. */
+    int refs;           /* the drag itself, and each of those reads. */
+    struct wl_surface *icon;       /* the image shown with the drag, if the guest gave one. */
     struct wl_buffer *icon_buffer;
 } Drag;
 
@@ -562,7 +548,7 @@ static void drag_unref(Drag *d)
     free(d);
 }
 
-/* the guest's answer to a host program reading a type, converted and written to its pipe; a thread of its own. */
+/* a worker converts the guest reply to the requested host type and writes it to the reader's pipe. */
 static void *send_thread(void *arg)
 {
     Send *s = arg;
@@ -626,7 +612,7 @@ static void source_handle_send(void *data, struct wl_data_source *source, const 
     close(fd);
 }
 
-/* the surface and the buffer of the drag's image go; the main thread, as the compositor's objects are used there. */
+/* destroys the drag image's Wayland surface and buffer on the main thread. */
 static void drop_icon(Drag *d)
 {
     if (d->icon)
@@ -644,9 +630,8 @@ static void drop_icon_main(void *arg)
 }
 
 /*
- * the image of the drag as a surface of its own: pixels in shared memory as a buffer, premultiplied, the surface
- * shown with the buffer's scale of the display. the compositor places it with the pointer, the hot spot of the
- * image under it; that is the offset of the first attach.
+ * the drag image uses premultiplied shared-memory pixels at the display's buffer scale. the initial attach offset
+ * places its hotspot at the pointer.
  */
 static void make_icon(Drag *d, const MimeDragIcon *icon, size_t bytes)
 {
@@ -702,12 +687,12 @@ static void drag_end(Drag *d, bool dropped)
     mime_ui_emit(&ev);
 }
 
-/* the end of a finished drop waits for the programs still reading from the guest, so the guest's data lives. */
+/* waits for active readers before ending the drop so guest data stays alive. */
 static void *end_thread(void *arg)
 {
     Drag *d = arg;
     mime_set_thread_name("mime-dnd-end");
-    /* sdl's data device of a target ends a drop before the reads that came with it. */
+    /* SDL's data device of a target ends a drop before the reads that came with it. */
     struct timespec grace = {0, 150 * 1000 * 1000};
     nanosleep(&grace, nullptr);
     for (int i = 0; i < 500; i++) {
@@ -737,8 +722,8 @@ static void source_handle_dnd_drop_performed(void *data, struct wl_data_source *
 static void source_handle_dnd_finished(void *data, struct wl_data_source *source)
 {
     /*
-     * the drop is done as far as the compositor knows, but a target may still read what it was offered: sdl's data
-     * device of a target that is one of our own windows ends the drop early. the source stays until the next drag.
+     * keeps the source until the next drag because targets may read after compositor completion; SDL ends drops into
+     * our own Windows early.
      */
     Drag *d = data;
     pthread_t thread;
@@ -875,7 +860,7 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
     }
 }
 
-/* the seat and the serial of the last press of a pointer button, for the compositor to move or size a window by. */
+/* seat and last button-press serial used for compositor window moves and resizes. */
 bool mime_ui_pointer_press(void **seat, uint32_t *serial)
 {
     if (!g_seat || !g_press_serial)
@@ -972,7 +957,7 @@ void mime_dnd_init(void)
                                        nullptr);
     if (!g_display)
         return;
-    /* sdl's own handling declines what it does not take, which would race with the answers given here. */
+    /* SDL's own handling declines what it does not take, which would race with the answers given here. */
     SDL_SetEventEnabled(SDL_EVENT_DROP_BEGIN, false);
     SDL_SetEventEnabled(SDL_EVENT_DROP_POSITION, false);
     SDL_SetEventEnabled(SDL_EVENT_DROP_FILE, false);

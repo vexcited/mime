@@ -1,13 +1,10 @@
 /*
- * the class of the proxies and stubs of oleautomation, PSOAInterface: the one that every interface of a type library which
- * is dual or for automation is registered with. It finds the type library the interface is registered in and has the
- * proxy or the stub made from it by rpcrt4, as windows does.
+ * PSOAInterface, the proxy/stub class every dual or oleautomation interface is registered with. Like windows, it finds
+ * the interface's registered type library and has rpcrt4 build the proxy or stub from it.
  */
 #include "oleaut32_private.h"
 #include <mime/win32/rpcproxy.h>
 #include <mime/win32/shlwapi.h>
-
-/* ------------------------------------------------------------------ finding the type information of an interface */
 
 static BOOL parse_hex(const WCHAR **s, unsigned *value)
 {
@@ -30,7 +27,7 @@ static BOOL parse_hex(const WCHAR **s, unsigned *value)
     return n > 0;
 }
 
-/* the type information of an interface, from the library that Interface\{iid}\TypeLib names. */
+/* via the library that Interface\{iid}\TypeLib names. */
 static HRESULT typeinfo_of(REFIID iid, ITypeInfo **out)
 {
     WCHAR g[40], path[100];
@@ -66,8 +63,6 @@ static HRESULT typeinfo_of(REFIID iid, ITypeInfo **out)
     *out = ti;
     return S_OK;
 }
-
-/* ------------------------------------------------------------------ the factory */
 
 static HRESULT STDMETHODCALLTYPE univ_query(IPSFactoryBuffer *This, REFIID riid, void **object)
 {

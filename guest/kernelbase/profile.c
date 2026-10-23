@@ -433,7 +433,7 @@ static BOOL edit_profile(PCWSTR section, PCWSTR key, PCWSTR value, PCWSTR path)
     return result;
 }
 
-/* runs a writer on the file with the profile mutex held, the lock every writer of every process takes. */
+/* the profile mutex is the lock every writer in every process takes. */
 static BOOL write_locked(PCWSTR filename, BOOL (*writer)(const void *, PCWSTR), const void *arguments)
 {
     PWSTR path = profile_path(filename);
@@ -492,9 +492,8 @@ BOOL WINAPI WritePrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR val
 /* ------------------------------------------------------------------ sections */
 
 /*
- * the keys of a section as a list of "key=value" strings ended by an empty one: the key without its trailing
- * blanks, an equals sign and the value without its leading blanks, comments and blank lines left out. A line
- * with no equals sign gives its text alone, as dxupdate needs.
+ * the keys as "key=value" strings ended by an empty one: the key without trailing blanks, the value without leading
+ * blanks, comments and blank lines skipped. A line with no equals sign is returned as is, which dxupdate needs.
  */
 DWORD WINAPI GetPrivateProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size, LPCWSTR filename)
 {
@@ -511,7 +510,7 @@ DWORD WINAPI GetPrivateProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size, 
     PROFILE profile = {};
     BOOL loaded = path && load_profile(path, &profile, FALSE);
     DWORD error = loaded ? ERROR_SUCCESS : GetLastError();
-    /* the list is built as far as it fits in all but the last two characters, which end it. */
+    /* fill all but the last two characters, which end the list. */
     DWORD room = size > 1 ? size - 2 : 0, used = 0;
     BOOL truncated = FALSE, active = FALSE, found = FALSE;
     for (SIZE_T at = 0; loaded && at < profile.Length && !truncated;) {
@@ -524,11 +523,9 @@ DWORD WINAPI GetPrivateProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size, 
             found |= active;
         } else if (line.Key && active) {
             SIZE_T key = line.NameEnd - line.Name, value = line.ValueEnd - line.Value;
-            /* a line with no equals sign is given as it is, the way dxupdate reads its install lists. */
             BOOL equals = line.Equals;
             SIZE_T entry = key + (equals ? 1 + value : 0) + 1;
             SIZE_T copy = entry <= room - used ? entry : room - used;
-            /* the entry piece by piece: the key, the equals sign, the value and the null. */
             for (SIZE_T i = 0; i < copy; i++) {
                 WCHAR c = i < key ? profile.Text[line.Name + i] : !equals ? 0 : i == key ? L'=' : i < key + 1 + value ? profile.Text[line.Value + i - key - 1] : 0;
                 out[used + i] = c;
@@ -540,7 +537,7 @@ DWORD WINAPI GetPrivateProfileSectionW(LPCWSTR section, LPWSTR out, DWORD size, 
     KbFree(profile.Text);
     KbFree(path);
     if (truncated) {
-        /* the last error is left as it was, and the caller is told the buffer was too small by this result. */
+        /* the last error is left alone, only the result says the buffer was too small. */
         if (size < 2)
             return 0;
         out[size - 2] = out[size - 1] = 0;
@@ -591,7 +588,7 @@ static BOOL edit_section(const void *arguments, PCWSTR path)
             body = line.Next;
         }
     }
-    /* deleting what is not there changes nothing, not even the existence of the file. */
+    /* deleting what is not there changes nothing, not even whether the file exists. */
     if (!edit->Lines && !found) {
         KbFree(profile.Text);
         KbSetError(ERROR_SUCCESS);
@@ -644,7 +641,7 @@ static BOOL edit_section(const void *arguments, PCWSTR path)
     return result;
 }
 
-/* replaces the keys of a section by the list, which is ended by an empty string, or removes the section. */
+/* replaces the section's keys with the list, ended by an empty string, or removes the section. */
 BOOL WINAPI WritePrivateProfileSectionW(LPCWSTR section, LPCWSTR lines, LPCWSTR filename)
 {
     if (!section || !*section || contains(section, L"\r\n]")) {
@@ -678,7 +675,7 @@ BOOL WINAPI WriteProfileSectionW(LPCWSTR section, LPCWSTR lines)
 
 /* ------------------------------------------------------------------ structures */
 
-/* a structure is kept as hexadecimal digits, two per byte, followed by the sum of its bytes in one more. */
+/* a structure is stored as two hex digits per byte, followed by the sum of its bytes as one more byte. */
 BOOL WINAPI GetPrivateProfileStructW(LPCWSTR section, LPCWSTR key, LPVOID structure, UINT size, LPCWSTR filename)
 {
     UINT digits = 2 * size;

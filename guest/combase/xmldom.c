@@ -1,15 +1,13 @@
 /*
- * Windows.Data.Xml.Dom: the document object model toast notifications are written in. a document is a tree of
- * nodes made of a small parser (elements, attributes, text, sections, comments, instructions, the predefined and
- * numeric entities), the interfaces of each kind of node, and a serializer. what is left out: namespaces beyond the
- * names as written, document types, entity declarations and the buffers of the storage streams.
+ * Windows.Data.Xml.Dom, the object model toasts are written in: a small parser for elements, attributes, text,
+ * sections, comments, instructions and the predefined and numeric entities, the node interfaces, and a serializer.
+ * left out: namespaces beyond names as written, document types, entity declarations and storage stream buffers.
  *
- * the nodes of one document live in a context. a program's references to nodes are counted per node; the first
- * reference of a node holds the context, the last one of the last node frees every node of the document.
+ * a document's nodes live in a context. references are counted per node; a node's first reference holds the context,
+ * and the last reference of the last node frees every node.
  */
 #include "xmldom.h"
 
-/* the errors the parser gives. */
 #define XML_E_INVALID_TOP ((HRESULT)0xC00CE556)
 #define XML_E_UNEXPECTED_END ((HRESULT)0xC00CE558)
 #define XML_E_SYNTAX ((HRESULT)0xC00CE508)
@@ -100,7 +98,7 @@ static void sb_char(SB *sb, WCHAR c)
     sb_put_n(sb, &c, 1);
 }
 
-/* the text of a builder, handed over; an empty one is a real empty string. */
+/* hands over the builder's text; an empty one is a real empty string, not NULL. */
 static WCHAR *sb_take(SB *sb, SIZE_T *length)
 {
     if (sb->Failed) {
@@ -203,7 +201,7 @@ static const WRT_CLASS *class_of(NodeType type)
 
 static const void *const *vtables_of(NodeType type);
 
-/* a node of a context, held by nobody yet. */
+/* a new node in the context, not referenced yet. */
 static XNODE *node_new(XCTX *ctx, NodeType type, const WCHAR *name, SIZE_T name_length, const WCHAR *value,
                        SIZE_T value_length)
 {
@@ -263,7 +261,7 @@ static void unlink_child(XNODE *n)
     n->Parent = nullptr;
 }
 
-/* n goes before reference under parent, at the end for a null reference. */
+/* inserts n before reference under parent, or at the end for a null reference. */
 static void link_child(XNODE *parent, XNODE *n, XNODE *reference)
 {
     n->Parent = parent;
@@ -290,9 +288,8 @@ static void link_attribute(XNODE *element, XNODE *attribute)
 }
 
 /*
- * the children of an attribute are one text node holding its value, as the document model of Windows has them, and
- * programs read an attribute through it. the node is made at the first look and follows the value afterwards. an empty
- * value has no child, a guess.
+ * like Windows' model, an attribute's only child is a text node holding its value, which programs read it through. the
+ * node is made on first access and tracks the value. an empty value has no child, which is a guess.
  */
 static void attribute_text(XNODE *a)
 {
@@ -324,7 +321,7 @@ static void attribute_text(XNODE *a)
     t->Value = copy;
 }
 
-/* the interface of a node a query asks for, without a reference. */
+/* without adding a reference. */
 static WRT_IFACE *find_iface(XNODE *n, REFIID riid)
 {
     if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IInspectable) || IsEqualIID(riid, &IID_IAgileObject))
@@ -335,7 +332,7 @@ static WRT_IFACE *find_iface(XNODE *n, REFIID riid)
     return nullptr;
 }
 
-/* an interface pointer of the node, with a reference for the program. */
+/* adds a reference for the program. */
 static HRESULT node_interface(XNODE *n, REFIID riid, void **out)
 {
     if (!n) {
@@ -546,7 +543,7 @@ static void put_code_point(SB *sb, ULONG code)
     }
 }
 
-/* the reference at p, which starts with &, appended to sb. */
+/* resolves the reference at p, which starts with &, into sb. */
 static HRESULT parse_reference(PARSER *p, SB *sb)
 {
     const WCHAR *at = p->At + 1;
@@ -624,7 +621,7 @@ static HRESULT parse_attribute_value(PARSER *p, WCHAR **value)
             }
             continue;
         }
-        /* white space in a value is a space. */
+        /* white space in a value becomes a space. */
         sb_char(&sb, is_space(c) ? L' ' : c);
         p->At++;
     }
@@ -649,7 +646,7 @@ static HRESULT parse_text(PARSER *p, XNODE *parent)
             CbFree(sb.Text);
             return XML_E_SYNTAX;
         }
-        /* a line break in the text is one line feed. */
+        /* a line break in text becomes one line feed. */
         if (*p->At == L'\r') {
             sb_char(&sb, L'\n');
             p->At++;
@@ -726,7 +723,7 @@ static HRESULT parse_instruction(PARSER *p, XNODE *parent)
     return S_OK;
 }
 
-/* a document type is read past, the program has no use of it. */
+/* document types are skipped. */
 static HRESULT skip_doctype(PARSER *p)
 {
     int brackets = 0;
@@ -745,7 +742,7 @@ static HRESULT skip_doctype(PARSER *p)
 
 static HRESULT parse_element(PARSER *p, XNODE *parent)
 {
-    /* iterative: the open elements are the chain of parents. */
+    /* iterative: the open elements are the parent chain. */
     XNODE *current = parent;
     int depth_at_entry = p->Depth;
     for (;;) {
@@ -894,7 +891,7 @@ HRESULT CbXmlLoadText(XNODE *document, const WCHAR *text, SIZE_T length)
     if (SUCCEEDED(hr) && !root)
         hr = p.At >= p.End && scratch->First ? XML_E_INVALID_TOP : XML_E_UNEXPECTED_END;
     if (FAILED(hr)) {
-        /* the scratch document stays in the context, empty of use, until the context goes. */
+        /* the scratch document stays unused in the context until the context goes. */
         return hr;
     }
     clear_children(document);
@@ -932,7 +929,7 @@ static BOOL is_ancestor(XNODE *maybe, XNODE *n)
     return FALSE;
 }
 
-/* a copy in a context, detached. */
+/* a detached copy in ctx. */
 static XNODE *clone_into(XCTX *ctx, XNODE *src, BOOL deep)
 {
     XNODE *n = node_new(ctx, src->Type, src->Name, src->Name ? wcslen(src->Name) : 0, src->Value,
@@ -955,7 +952,6 @@ static XNODE *clone_into(XCTX *ctx, XNODE *src, BOOL deep)
     return n;
 }
 
-/* what a parent of this kind may hold. */
 static BOOL may_hold(XNODE *parent, XNODE *child)
 {
     switch (child->Type) {
@@ -975,7 +971,7 @@ static BOOL may_hold(XNODE *parent, XNODE *child)
     }
 }
 
-/* the node ready to be linked into parent's context: the node itself, a copy of another document's, or null. */
+/* the node itself, a copy of another document's node, or null when it cannot be linked. */
 static XNODE *adopt(XNODE *parent, XNODE *child)
 {
     if (child->Ctx == parent->Ctx)
@@ -1146,11 +1142,10 @@ static HRESULT STDMETHODCALLTYPE node_get_parent(IXmlNode *This, IXmlNode **valu
     return out_node(p, value);
 }
 
-/* lists. */
 typedef struct XLIST {
     WRT_OBJECT Base;
-    XNODE *Owner; /* a list of its children, which follows the tree */
-    XNODE **Items; /* or a fixed set */
+    XNODE *Owner; /* a live list of its children. */
+    XNODE **Items; /* or a fixed set. */
     UINT32 Count;
 } XLIST;
 
@@ -1522,7 +1517,7 @@ static BOOL step_matches(XNODE *n, const WCHAR *test, SIZE_T length)
     return n->Type == NodeType_ElementNode && wcslen(n->Name) == length && !wcsncmp(n->Name, test, length);
 }
 
-/* a predicate on the nodes a step found. */
+/* filters the nodes a step found. */
 static void apply_predicate(NODESET *set, const WCHAR *pred, SIZE_T length)
 {
     WCHAR *text = dup_n(pred, length);
@@ -1747,7 +1742,7 @@ static const IXmlNodeSelectorVtbl sel_vtbl = {NODE_ENTRIES(IXmlNodeSelector), se
 
 
 
-/* the lists and maps do not belong to a document: their own count of references, holding the nodes they show. */
+/* lists and maps belong to no document: they count their own references and hold the nodes they show. */
 #define L_THUNKS(T)                                                                                                 \
     static HRESULT STDMETHODCALLTYPE T##_QueryInterface(T *This, REFIID riid, void **object)                           \
     {                                                                                                                  \
@@ -2172,7 +2167,7 @@ static HRESULT STDMETHODCALLTYPE data_substring(IXmlCharacterData *This, UINT32 
     return WindowsCreateString(n->Value ? n->Value + offset : L"", count, data);
 }
 
-/* the data with a part replaced: count characters at offset become the text. */
+/* replaces count characters at offset with text. */
 static HRESULT splice(XNODE *n, UINT32 offset, UINT32 count, const WCHAR *text)
 {
     SIZE_T length = n->Value ? wcslen(n->Value) : 0, add = wcslen(text);

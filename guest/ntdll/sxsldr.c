@@ -1,16 +1,13 @@
 /*
- * the loader's side of activation contexts: the process default and
- * system default contexts built at process start, the manifests of dlls
- * and the redirection of dll names through the active context.
+ * the loader's side of activation contexts: the process and system default
+ * contexts built at process start, dll manifests and dll name redirection.
  */
 #include "sxs.h"
 
 static PLDR_MANIFEST_PROBER_ROUTINE g_prober;
 
-/*
- * the system default context. windows builds it from the system default
- * manifest in winsxs; mime's holds a root assembly and no redirection.
- */
+/* windows builds the system default context from a manifest in winsxs, Mime's has a root assembly and no
+   redirection. */
 static const char g_system_default_manifest[] =
     "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
     "<assembly xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0'>"
@@ -18,7 +15,7 @@ static const char g_system_default_manifest[] =
     "processorArchitecture='*' publicKeyToken='6595b64144ccf1df'/>"
     "</assembly>";
 
-/* windows' kernel32 registers its prober here; mime's loader probes by itself until one is set. */
+/* kernel32 registers its prober here, until then the loader probes by itself. */
 NTDLL_EXPORT void NTAPI LdrSetDllManifestProber(PLDR_MANIFEST_PROBER_ROUTINE prober,
                                                 PLDR_ACTCTX_LANGUAGE_ROURINE language,
                                                 PLDR_RELEASE_ACTCTX_ROUTINE release)
@@ -26,7 +23,6 @@ NTDLL_EXPORT void NTAPI LdrSetDllManifestProber(PLDR_MANIFEST_PROBER_ROUTINE pro
     g_prober = prober;
 }
 
-/* frees the data of a context the loader made when the context goes away. */
 static void NTAPI data_notification(ULONG type, PACTIVATION_CONTEXT context, const void *data,
                                     PVOID notification_context, PVOID notification_data, PBOOLEAN disable)
 {
@@ -36,7 +32,7 @@ static void NTAPI data_notification(ULONG type, PACTIVATION_CONTEXT context, con
         *disable = TRUE;
 }
 
-/* the statuses the loader takes for a dll without a manifest, as LdrpFindDllActivationContext does. */
+/* statuses that just mean the dll has no manifest. */
 static BOOLEAN probe_status_ignored(NTSTATUS status)
 {
     return status == STATUS_NO_SUCH_FILE || status == STATUS_RESOURCE_DATA_NOT_FOUND ||
@@ -84,10 +80,9 @@ static BOOLEAN has_separator(PCWSTR name, SIZE_T chars)
 }
 
 /*
- * the path a name redirects to in the active context, as
- * sxsisol_SearchActCtxForDllName builds it: the assembly's storage root
- * when the entry omits it, the path segments, then the name asked for
- * unless the segments already end with it.
+ * the result is the assembly's storage root when the entry omits it, the
+ * path segments, then the requested name unless the segments already end
+ * with it.
  */
 static NTSTATUS redirect(PCUNICODE_STRING key, PWSTR out, SIZE_T out_chars, PULONG out_length)
 {
@@ -121,7 +116,7 @@ static NTSTATUS redirect(PCUNICODE_STRING key, PWSTR out, SIZE_T out_chars, PULO
             memcpy(out, manifest, chars * sizeof(WCHAR));
             n = chars;
         } else {
-            /* shared assemblies live in winsxs, which mime does not have. */
+            /* shared assemblies live in winsxs, which Mime does not have. */
             static const WCHAR winsxs[] = L"C:\\Windows\\WinSxS\\";
             SIZE_T chars = RTL_NUMBER_OF(winsxs) - 1, dir = info->AssemblyDirectoryNameLength / sizeof(WCHAR);
             if (chars + dir + 1 >= out_chars)
@@ -174,7 +169,7 @@ static NTSTATUS redirect(PCUNICODE_STRING key, PWSTR out, SIZE_T out_chars, PULO
     return STATUS_SUCCESS;
 }
 
-/* the name with ".dll" when it has no extension, the key the loader looks up. */
+/* the name with ".dll" added when it has no extension, the key the loader looks up. */
 static BOOLEAN dll_key(PCWSTR name, PWSTR buffer, SIZE_T chars, PUNICODE_STRING key)
 {
     SIZE_T n = wcslen(name);
@@ -275,7 +270,6 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlDosApplyFileIsolationRedirection_Ustr(ULONG flags
 
 /* ------------------------------------------------------------------ process start */
 
-/* the code pages activeCodePage asks for, as LdrpFusionManifestCodePages reads it. */
 static void apply_code_pages(void)
 {
     WCHAR value[15];
@@ -284,8 +278,8 @@ static void apply_code_pages(void)
             RTL_NUMBER_OF(value), nullptr)))
         return;
     /*
-     * "Legacy" keeps the system's code pages and a locale name takes that
-     * locale's; mime keeps the system's for both, its ntdll has no locale table.
+     * "Legacy" keeps the system code pages and a locale name takes that
+     * locale's. Mime keeps the system's for both, its ntdll has no locale table.
      */
     if (!wcscmp(value, L"UTF-8")) {
         PPEB peb = NtCurrentPeb();

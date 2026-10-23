@@ -1,19 +1,18 @@
 /*
- * the animation control, SysAnimate32: plays a silent AVI clip of run length coded frames, such as the file copy
- * animations of setup programs, from a resource of type AVI or from a file. The control keeps the clip's frames
- * where they are in memory and draws them through StretchDIBits, a delta frame over the frames before it, as the
- * control of windows does.
+ * SysAnimate32: plays silent AVI clips of run length coded frames, like setup programs' file copy animations, from
+ * an AVI resource or a file. like windows, frames stay where they are in memory and are drawn with StretchDIBits,
+ * each delta frame over the ones before it.
  */
 #include "comctl32_private.h"
 
 #define TIMER_PLAY 0x2A
-/* how much longer a timer waits while nothing of the control is visible. */
+/* extra timer delay while the control is fully hidden. */
 #define HIDDEN_DELAY 4000
 #define CCM_DPISCALE_ (CCM_FIRST + 0xC)
 #define OBJID_QUERYCLASSNAMEIDX_ (-12)
-/* the class name index that accessibility asks for, 0x1000E on windows. */
+/* the class name index accessibility asks for, 0x1000E on windows. */
 #define ANIMATE_CLASS_INDEX 65550
-/* the header of the stream format, with its color table: up to 256 entries. */
+/* the stream format header plus a color table of up to 256 entries. */
 #define FORMAT_BYTES (sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD))
 #define AVIIF_KEYFRAME_ 0x10
 #define AVISF_VIDEO_PALCHANGES_ 0x10000
@@ -25,7 +24,7 @@ typedef struct CLIP_FRAME {
 } CLIP_FRAME;
 
 typedef struct CLIP {
-    /* where the clip lives: a resource that stays loaded, or memory of ours. */
+    /* NULL for a resource that stays loaded, else our own copy. */
     BYTE *Owned;
     int Width, Height;
     DWORD Delay;
@@ -33,7 +32,7 @@ typedef struct CLIP {
     CLIP_FRAME *Frames;
     BYTE Format[FORMAT_BYTES];
     DWORD RawSize;
-    /* what has been drawn into the picture, so a later frame can go on from it. */
+    /* what has been drawn so far, so a later frame can build on it. */
     HBITMAP Picture;
     HDC PictureDc;
     HGDIOBJ PictureOld;
@@ -87,7 +86,6 @@ static void clip_free(CLIP *c)
     CcFree(c);
 }
 
-/* the chunks of a clip, as little endian words. */
 static DWORD word_at(const BYTE *p)
 {
     return (DWORD)p[0] | (DWORD)p[1] << 8 | (DWORD)p[2] << 16 | (DWORD)p[3] << 24;
@@ -96,9 +94,8 @@ static DWORD word_at(const BYTE *p)
 #define FOURCC_(a, b, c, d) ((DWORD)(a) | (DWORD)(b) << 8 | (DWORD)(c) << 16 | (DWORD)(d) << 24)
 
 /*
- * reads the headers of an AVI of one video stream of run length coded or raw 8 bit frames and the index of its
- * frames. The list of the headers and the lists of the streams are read through, any other list is skipped. A clip
- * whose stream changes its palette, has frames in a list that is not the movie, or has no index is refused.
+ * reads the headers and frame index of an AVI with one video stream of run length coded or raw 8 bit frames. clips
+ * that change palette, keep frames outside the movie list, or have no index are refused.
  */
 static BOOL clip_parse(CLIP *c, const BYTE *data, SIZE_T size)
 {
@@ -121,7 +118,7 @@ static BOOL clip_parse(CLIP *c, const BYTE *data, SIZE_T size)
             DWORD kind = word_at(data + body);
             if (kind == FOURCC_('m', 'o', 'v', 'i'))
                 movie = data + body + 4;
-            /* the header lists are read through, the others skipped. */
+            /* enter the header lists, skip the others. */
             if (kind == FOURCC_('h', 'd', 'r', 'l') || kind == FOURCC_('s', 't', 'r', 'l'))
                 next = body + 4;
         } else if (id == FOURCC_('a', 'v', 'i', 'h')) {
@@ -132,7 +129,7 @@ static BOOL clip_parse(CLIP *c, const BYTE *data, SIZE_T size)
             c->Width = (int)word_at(data + body + 32);
             c->Height = (int)word_at(data + body + 36);
             c->Delay = word_at(data + body) / 1000;
-            /* no frames to prime, at most a video and an audio stream. */
+            /* no initial frames, and at most a video and an audio stream. */
             if (word_at(data + body + 20) != 0 || word_at(data + body + 24) > 2)
                 return FALSE;
         } else if (id == FOURCC_('s', 't', 'r', 'h')) {
@@ -168,7 +165,7 @@ static BOOL clip_parse(CLIP *c, const BYTE *data, SIZE_T size)
     }
     if (!header || !format || !movie || !index || total == 0 || c->Width <= 0 || c->Height <= 0)
         return FALSE;
-    /* the frames of the video stream, in the order of the index. */
+    /* video frames, in index order. */
     SIZE_T entries = index_size / 16;
     c->Frames = CcAlloc(sizeof(CLIP_FRAME) * (SIZE_T)(entries ? entries : 1));
     if (!c->Frames)
@@ -180,7 +177,7 @@ static BOOL clip_parse(CLIP *c, const BYTE *data, SIZE_T size)
         int b = e[1] >= 'a' ? e[1] - 'a' + 10 : e[1] >= 'A' ? e[1] - 'A' + 10 : e[1] - '0';
         if (a * 16 + b != video)
             continue;
-        /* the offset is counted from the type of the movie list, which is four bytes before it. */
+        /* offsets count from the movie list's type, four bytes before its data. */
         SIZE_T offset = (SIZE_T)word_at(e + 8) + 4, length = word_at(e + 12);
         const BYTE *frame = movie + offset;
         if (frame < data || frame + length > data + size)
@@ -227,7 +224,7 @@ static CLIP *clip_from_resource(HINSTANCE module, LPCWSTR name)
         return nullptr;
     HGLOBAL loaded = LoadResource(module, found);
     const BYTE *data = loaded ? LockResource(loaded) : nullptr;
-    /* the resource stays where it is, the clip points into it. */
+    /* the clip points into the resource, which stays loaded. */
     return data ? clip_open(data, SizeofResource(module, found), FALSE) : nullptr;
 }
 
@@ -253,7 +250,7 @@ static CLIP *clip_from_file(LPCWSTR path)
     return c;
 }
 
-/* the picture of a frame: the frames from the last key one drawn over each other, or on from the last one drawn. */
+/* draws from the last key frame, or continues from the last frame drawn. */
 static BOOL clip_compose(CLIP *c, HDC like, int frame)
 {
     if (frame < 0 || frame >= c->Count)
@@ -276,10 +273,10 @@ static BOOL clip_compose(CLIP *c, HDC like, int frame)
     int first = c->Composed >= 0 && c->Composed < frame && c->Composed >= key ? c->Composed + 1 : key;
     BITMAPINFO *bi = (BITMAPINFO *)c->Format;
     for (int i = first; i <= frame; i++) {
-        /* a frame of no bytes repeats the one before. */
+        /* an empty frame repeats the previous one. */
         if (!c->Frames[i].Size)
             continue;
-        /* a frame is raw when it has the size of one, else it is run length coded. */
+        /* a frame of exactly raw size is raw, anything else is run length coded. */
         bi->bmiHeader.biCompression = c->Frames[i].Size != c->RawSize ? BI_RLE8 : BI_RGB;
         bi->bmiHeader.biSizeImage = c->Frames[i].Size;
         StretchDIBits(c->PictureDc, 0, 0, c->Width, c->Height, 0, 0, c->Width, c->Height, c->Frames[i].Data, bi,
@@ -332,7 +329,7 @@ static void draw(ANIMATE *a, HDC target)
     CcEndBuffer(&buffer);
 }
 
-/* a window that is first painted with no clip opens the one its text names, as ACS_AUTOPLAY clips are made. */
+/* on first paint without a clip, the window opens the clip its text names, as ACS_AUTOPLAY clips are made. */
 static BOOL open_clip(ANIMATE *a, HINSTANCE module, LPCWSTR name, BOOL from_text);
 
 static void first_paint(ANIMATE *a)
@@ -374,7 +371,7 @@ static BOOL open_clip(ANIMATE *a, HINSTANCE module, LPCWSTR name, BOOL from_text
     }
     SetRect(&a->Box, 0, 0, w, h);
     if ((a->Style & ACS_TRANSPARENT) && a->Parent) {
-        /* the color of the corner of the first frame is the one that is not drawn. */
+        /* the first frame's corner color is the transparent one. */
         HDC screen = GetDC(a->Hwnd);
         if (screen && clip_compose(c, screen, 0))
             c->Transparent = GetPixel(c->PictureDc, 0, 0);
@@ -401,7 +398,7 @@ static BOOL open_clip(ANIMATE *a, HINSTANCE module, LPCWSTR name, BOOL from_text
     return TRUE;
 }
 
-/* from and to are frame numbers, to of -1 the last one; repeat is how many times, -1 for ever. */
+/* to of -1 is the last frame; repeat of -1 loops forever. */
 static BOOL play(ANIMATE *a, int repeat, int from, int to)
 {
     if (!a->Clip)
@@ -434,7 +431,7 @@ static BOOL play(ANIMATE *a, int repeat, int from, int to)
     return TRUE;
 }
 
-/* shows the frame it is at and moves to the next: 0 when the playing is over, negative while hidden. */
+/* draws the current frame and advances: 0 when done, negative while hidden. */
 static int tick(ANIMATE *a)
 {
     if (!a->Clip)
@@ -442,7 +439,7 @@ static int tick(ANIMATE *a)
     HDC dc = GetDC(a->Hwnd);
     RECT visible = {};
     if (GetClipBox(dc, &visible) == NULLREGION) {
-        /* nothing shows: stay where the play began, and check again later. */
+        /* hidden: stay at the start frame and check again later. */
         a->Frame = a->From;
         ReleaseDC(a->Hwnd, dc);
         return a->Repeat != 0 ? -1 : 0;
@@ -490,7 +487,7 @@ LRESULT CALLBACK AnimateProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     switch (msg) {
     case WM_DESTROY:
-        /* closes the clip, which stops it. */
+        /* closing the clip stops it. */
         open_clip(a, nullptr, nullptr, FALSE);
         SetWindowLongPtrW(hwnd, 0, 0);
         CcFree(a);

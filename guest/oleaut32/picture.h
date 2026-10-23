@@ -1,21 +1,18 @@
-/*
- * what the picture objects of oleaut32 share: the image a picture holds, the loaders of the file formats, the context
- * drawing goes through, and drawing and saving.
- */
+/* shared by the picture objects: the image, the format loaders, the drawing dc, drawing and saving. */
 #ifndef MIME_OLEAUT32_PICTURE_H
 #define MIME_OLEAUT32_PICTURE_H
 
 #include "olestd.h"
 #include "picdecode.h"
 
-/* the kind of a picture nothing was loaded into. It acts as PICTYPE_NONE. */
+/* never loaded, behaves as PICTYPE_NONE. */
 #define PIC_UNSET PICTYPE_UNINITIALIZED
 
-/* the key that opens a placeable metafile, as a 32 bit value and as its first word. */
+/* placeable metafile key, as a 32-bit value and as its first word. */
 #define PLACEABLE_KEY 0x9AC6CDD7
 #define PLACEABLE_HEADER 22
 
-/* the marker of a picture in a stream of OLE: "lt", two more bytes and the length of what follows. */
+/* OLE stream marker: "lt", two more bytes, then the length of what follows. */
 #define STREAM_MARK 0x746C
 #define STREAM_HEADER_SIZE 8
 
@@ -25,25 +22,25 @@
 
 typedef struct PIC_IMAGE {
     SHORT Kind;
-    /* a bitmap, perhaps with a palette and a mask for the pixels that show what is behind. */
+    /* palette and transparency mask are optional. */
     HBITMAP Bitmap;
     HPALETTE Palette;
     HBITMAP Mask;
-    /* where the bitmap sits when a program has it in a context, and what it replaced there. */
+    /* the dc a program selected the bitmap into, and what it replaced there. */
     HDC Home;
     HBITMAP Replaced;
-    /* a windows metafile and its size in twips */
+    /* WmfCx and WmfCy are in twips. */
     HMETAFILE Wmf;
     int WmfCx, WmfCy;
-    /* an icon, drawn from its mask and its colors */
+    /* the icon is drawn from IconAnd and IconXor. */
     HICON Icon;
     HBITMAP IconAnd, IconXor;
     HENHMETAFILE Emf;
-    /* the size in pixels where there is one, and in himetric units for everything */
+    /* pixels when the kind has them, himetric always. */
     SIZE Pixels, Himetric;
 } PIC_IMAGE;
 
-/* picdc.c: the one context pictures are drawn through, and sizes. */
+/* picdc.c. */
 void PicLock(void);
 void PicUnlock(void);
 HDC PicDc(void);
@@ -53,11 +50,11 @@ int PicDpiY(void);
 HRESULT PicPixelsToHimetric(const SIZE *pixels, SIZE *himetric);
 HRESULT PicMeasure(PIC_IMAGE *image);
 
-/* picstream.c: a picture from a stream, in any of the formats. */
+/* picstream.c. */
 HRESULT PicReadStream(IStream *stream, ULONG length, BOOL keep, DWORD cx, DWORD cy, DWORD flags, PIC_IMAGE *image,
                       BYTE **original, ULONG *original_size);
 
-/* the loaders of the formats, each given the whole file. */
+/* format loaders, each given the whole file. */
 HRESULT PicFromBitmapFile(const BYTE *data, ULONG got, ULONG length, PIC_IMAGE *image);
 HRESULT PicFromDecoded(const AUT_IMAGE *decoded, PIC_IMAGE *image);
 HRESULT PicFromIconFile(const BYTE *data, ULONG size, DWORD cx, DWORD cy, DWORD flags, PIC_IMAGE *image);
@@ -65,16 +62,16 @@ HRESULT PicFromMetafile(const BYTE *data, ULONG size, PIC_IMAGE *image);
 HRESULT PicFromPlaceable(const BYTE *data, ULONG size, PIC_IMAGE *image);
 HRESULT PicIconPlanes(HICON icon, HBITMAP *mask, HBITMAP *colors);
 
-/* picdraw.c */
+/* picdraw.c. */
 HRESULT PicTakeOut(PIC_IMAGE *image);
 HRESULT PicRender(PIC_IMAGE *image, HDC dc, LONG x, LONG y, LONG cx, LONG cy, LONG xs, LONG ys, LONG cxs, LONG cys,
                   const RECT *bounds);
 HRESULT PicSelect(PIC_IMAGE *image, HDC in, HDC *out, HBITMAP *displaced);
 
-/* picsave.c: the picture as the bytes of a file, whatever it was loaded from. */
+/* picsave.c. */
 HRESULT PicSerialize(PIC_IMAGE *image, BYTE **bytes, ULONG *size);
 
-/* the handles of an image go away: the objects only when the picture owns them. */
+/* GDI objects are deleted only when the picture owns them. */
 void PicImageFree(PIC_IMAGE *image, BOOL own_handles, BOOL own_palette);
 
 #endif

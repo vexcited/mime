@@ -1,4 +1,4 @@
-/* xinput1_4.dll: windows' own xinput, on the engine the xinput dlls share. */
+/* xinput1_4.dll uses the shared XInput engine. */
 #include "../lib/xinput/xinput_private.h"
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)

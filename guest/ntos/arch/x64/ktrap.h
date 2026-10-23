@@ -1,13 +1,11 @@
-/*
- * x64 definitions shared between c and assembly.
- */
+/* x64 definitions shared between c and assembly. */
 #ifndef MIME_KTRAP_H
 #define MIME_KTRAP_H
 
 /*
- * KTRAP_FRAME layout, see arch.h. it keeps every xmm register, so the user
- * context is whole whatever kernel code did with the registers since, and
- * the hardware frame ends it, so its top is the stack top of an entry.
+ * KTRAP_FRAME layout, see arch.h. it keeps every xmm register so the user
+ * context stays whole whatever the kernel did since, and ends with the
+ * hardware frame, so its top is the stack top of an entry.
  */
 #define KTRAP_XMM0 0x000
 #define KTRAP_RAX 0x100
@@ -62,14 +60,13 @@
 #define KPCR_NUMBER (KPCR_PRCB + 0x00)
 #define KPCR_CURRENT_THREAD (KPCR_PRCB + 0x08)
 
-/* FlushPending bits: the user translations, then the global ones too. */
+/* FlushPending bits: user translations, or global ones too. */
 #define KPCR_FLUSH_USER 1
 #define KPCR_FLUSH_GLOBAL 2
 
-/* TSS fields. */
 #define KTSS_RSP0 0x04
 
-/* selectors, the same as windows. */
+/* selectors, the same as on windows. */
 #define KGDT64_R0_CODE 0x10
 #define KGDT64_R0_DATA 0x18
 #define KGDT64_R3_CMCODE 0x20
@@ -79,11 +76,10 @@
 #define KGDT64_R3_CMTEB 0x50
 #define RPL_USER 3
 
-/* interrupt vectors. */
 #define KI_VECTOR_HOST 0x81    /* the host's interrupt, see MimeSharedPage */
 #define KI_VECTOR_CLOCK 0xD1   /* the local apic timer */
 #define KI_VECTOR_IPI 0xE1     /* reschedule and leave user mode */
-#define KI_VECTOR_FLUSH 0xE2   /* flush the translations, handled without the kernel lock */
+#define KI_VECTOR_FLUSH 0xE2   /* flush user translations, without the kernel lock */
 #define KI_VECTOR_SPURIOUS 0xFF
 
 /* the hypercall port: rax = number, rdi, rsi, rdx, r10, r8, r9 = arguments. */

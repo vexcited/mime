@@ -1,6 +1,6 @@
 /*
- * the tiff codec: every image of the file is a frame, in the pixel format that suits its samples, with the directory of
- * the image as metadata. The encoder writes a frame or several, with the compression the program asks for.
+ * TIFF codec: one frame per image, with its directory as metadata. the encoder supports multiple frames and
+ * application-selected compression.
  */
 #include "wic_codec.h"
 #include "codec_util.h"
@@ -16,11 +16,11 @@ typedef struct TiffState {
 
 typedef struct TiffKind {
     const GUID *format;
-    UINT bits;    /* of the wic pixel. */
+    UINT bits;    /* of the WIC pixel. */
     BOOL invert;  /* white is zero. */
     BOOL gray_alpha;
     BOOL rgb_swap;
-    BOOL rgba;    /* rgb with alpha, 3 + 1. */
+    BOOL rgba;    /* RGB with alpha, 3 + 1. */
     BOOL expand_gray_alpha; /* gray + alpha to color. */
 } TiffKind;
 
@@ -306,7 +306,7 @@ const WicDecoderOps wic_dec_tiff = {
     .metadata = tiff_metadata,
 };
 
-/* ------------------------------------------------------------------ the encoder */
+/* the encoder. */
 
 static const WicOptionDesc g_tiff_options[] = {
     {L"TiffCompressionMethod", VT_UI1, WICTiffCompressionDontCare, 0, 7},

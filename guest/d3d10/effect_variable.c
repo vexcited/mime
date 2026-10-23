@@ -1,9 +1,8 @@
 /*
- * the variables and types of effects: one structure for every variable,
- * global, member, element or annotation, with the vtable of the interface
- * its type answers to. numbers live in their constant buffer's bytes,
- * converted between floats, integers and booleans as d3d10.dll does it:
- * true is -1, and -1.0f as a float.
+ * effect variables and types. every variable, global, member, element or
+ * annotation, is one structure with the vtable its type calls for. numbers
+ * live in their constant buffer and convert between floats, integers and
+ * booleans like windows does: true is -1, or -1.0f as a float.
  */
 #include "effect_private.h"
 
@@ -32,7 +31,7 @@ static const ID3D10EffectTypeVtbl invalid_type_vtbl = {
 
 ID3D10EffectType FxInvalidType = {&invalid_type_vtbl};
 
-/* the invalid variable of each interface, which As* hands out for what does not fit. */
+/* one invalid variable per interface, which As* returns when the type does not fit. */
 enum {
     I_SCALAR,
     I_VECTOR,
@@ -86,7 +85,7 @@ INVALID_AS(I_SAMPLER)
         VTBL_FN(invalid_as_I_SHADER), VTBL_FN(invalid_as_I_BLEND), VTBL_FN(invalid_as_I_DEPTHSTENCIL),                 \
         VTBL_FN(invalid_as_I_RASTERIZER), VTBL_FN(invalid_as_I_SAMPLER), VTBL_FN(fail3), VTBL_FN(fail3)
 
-/* the methods past the variable's: those of one value, then those of arrays. */
+/* methods past the variable's: single value ones, then array ones. */
 #define F1 VTBL_FN(fail1)
 #define F2 VTBL_FN(fail2)
 #define F3 VTBL_FN(fail3)
@@ -109,7 +108,7 @@ static FxType *type_impl(ID3D10EffectType *iface) { return CONTAINING_RECORD(ifa
 
 static BOOL STDMETHODCALLTYPE type_is_valid(ID3D10EffectType *iface) { return TRUE; }
 
-/* the size of the type without the padding after its last element. */
+/* the size without the padding after the last element. */
 static UINT unpacked_size(const FxType *t)
 {
     if (t->buffer_type)
@@ -231,7 +230,7 @@ void FxInitType(FxType *t)
     t->single = t;
 }
 
-/* the type of one element, made when first asked: no elements, a share of the packed size. */
+/* made on first use: no elements, and its share of the packed size. */
 static FxType *single_type(FxEffect *effect, FxType *t)
 {
     if (!t->elements)
@@ -260,7 +259,6 @@ static UINT base_of(const FxVariable *v)
     return base == FX_FLOAT ? V_FLOAT : base == FX_BOOL ? V_BOOL : V_INT;
 }
 
-/* a value given as one kind stored as the variable's. */
 static void put(BYTE *dst, UINT storage, UINT from, const void *src)
 {
     INT i;
@@ -283,7 +281,7 @@ static void put(BYTE *dst, UINT storage, UINT from, const void *src)
     memcpy(dst, &i, 4);
 }
 
-/* a stored value read as another kind: booleans are -1 when true, whatever is stored. */
+/* booleans read as -1 when true, whatever is stored. */
 static void get(void *dst, UINT storage, UINT to, const BYTE *src)
 {
     INT i;
@@ -313,7 +311,7 @@ static HRESULT dirty(FxVariable *v)
     return S_OK;
 }
 
-/* scalars: one register an element, the offset of arrays not read, as d3d10.dll does. */
+/* one register per element. like windows, the array offset is ignored. */
 static HRESULT set_scalars(void *iface, UINT from, const void *data, UINT count)
 {
     FxVariable *v = impl(iface);
@@ -355,7 +353,7 @@ SCALAR_ARRAY(float, V_FLOAT, float)
 SCALAR_ARRAY(int, V_INT, int)
 SCALAR_ARRAY(bool, V_BOOL, BOOL)
 
-/* vectors: the columns of each element, an element a register. */
+/* one register per element. */
 static HRESULT set_vectors(void *iface, UINT from, const void *data, UINT offset, UINT count)
 {
     FxVariable *v = impl(iface);
@@ -401,8 +399,8 @@ VECTOR(int, V_INT, int)
 VECTOR(bool, V_BOOL, BOOL)
 
 /*
- * matrices: given as 4x4 floats, row after row. a register holds a row, a
- * column in column major matrices; transposed calls give the transpose.
+ * matrices come as 4x4 floats, row by row. a register holds a row, or a column
+ * in column major matrices. the transposed calls take the transpose.
  */
 static HRESULT matrices(void *iface, BOOL set, BOOL transpose, float *data, UINT offset, UINT count)
 {
@@ -486,7 +484,7 @@ static HRESULT STDMETHODCALLTYPE get_string_array(void *iface, LPCSTR *out, UINT
     return S_OK;
 }
 
-/* views: the variable holds a reference on each. */
+/* the variable holds a reference on each view. */
 static HRESULT set_views(void *iface, IUnknown **views, UINT offset, UINT count)
 {
     FxVariable *v = impl(iface);
@@ -621,7 +619,7 @@ static HRESULT STDMETHODCALLTYPE get_output_element(void *iface, UINT index, UIN
     return signature_element(iface, index, element, TRUE, desc);
 }
 
-/* state objects and their descriptions, after the assignments of variables. */
+/* the block's variable assignments are evaluated before its state or description is read. */
 static FxBlock *block_at(void *iface, UINT index)
 {
     FxVariable *v = impl(iface);
@@ -655,7 +653,7 @@ static HRESULT STDMETHODCALLTYPE get_backing_store(void *iface, UINT index, void
     return S_OK;
 }
 
-/* constant buffers: the program's own buffer replaces the effect's, which is no longer written. */
+/* a buffer the program sets replaces the effect's, which is then no longer written. */
 static FxBuffer *buffer_impl(void *iface) { return CONTAINING_RECORD(iface, FxBuffer, var.iface); }
 
 static HRESULT STDMETHODCALLTYPE set_constant_buffer(void *iface, ID3D10Buffer *buffer)
@@ -770,7 +768,7 @@ static ID3D10EffectVariable *STDMETHODCALLTYPE var_annotation_by_name(void *ifac
     return FxAnnotationByName(top->annotation_count, top->annotations, name);
 }
 
-/* an element or member, kept once made; its index counts the elements first. */
+/* made once and kept. the index counts elements first, then members. */
 static FxVariable *child(FxVariable *v, UINT index)
 {
     FxType *t = v->type;
@@ -932,7 +930,7 @@ static void *STDMETHODCALLTYPE var_as_sampler(void *iface)
     return as(iface, is_kind(impl(iface), FX_SAMPLER), I_SAMPLER);
 }
 
-/* raw bytes of numbers, which may run past the variable to the end of its buffer. */
+/* the range may run past the variable, up to the end of its buffer. */
 static HRESULT STDMETHODCALLTYPE var_set_raw(void *iface, void *data, UINT offset, UINT count)
 {
     FxVariable *v = impl(iface);
@@ -1039,7 +1037,7 @@ void FxInitVariable(FxVariable *v)
     v->iface.lpVtbl = (const ID3D10EffectVariableVtbl *)vtbl;
 }
 
-/* a constant buffer's type: cbuffer or tbuffer, its variables the members, their packed sizes summed. */
+/* a cbuffer or tbuffer type, its variables the members, their packed sizes summed. */
 void FxInitBuffer(FxBuffer *b)
 {
     FxType *t = &b->type;
@@ -1058,7 +1056,7 @@ void FxInitBuffer(FxBuffer *b)
     b->var.iface.lpVtbl = (const ID3D10EffectVariableVtbl *)buffer_vtbl;
 }
 
-/* the invalid objects and the null shaders' anonymous variables, set up when the dll loads. */
+/* invalid objects and the anonymous variables of null shaders, set up at dll load. */
 static FxType null_types[3] = {
     {.name = "pixelshader", .kind = FX_OBJECT, .object = FX_PIXELSHADER},
     {.name = "vertexshader", .kind = FX_OBJECT, .object = FX_VERTEXSHADER},

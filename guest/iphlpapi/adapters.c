@@ -1,12 +1,9 @@
-/*
- * the adapter lists: GetAdaptersAddresses, GetAdaptersInfo, the network
- * and per adapter parameters, and the ipv4 interface list.
- */
+/* GetAdaptersAddresses, GetAdaptersInfo, network and adapter parameters, and the ipv4 interface list. */
 #include "private.h"
 
 /* ------------------------------------------------------------------ GetAdaptersAddresses */
 
-/* lays the result out twice: once to measure it, once to write it into the caller's buffer. */
+/* the result is laid out twice: once to measure it, once to write it into the caller's buffer. */
 typedef struct {
     BYTE *base;
     SIZE_T used;
@@ -29,7 +26,7 @@ static PWSTR take_string(LAYOUT *l, const WCHAR *s)
     return p;
 }
 
-/* an entry of one of the address lists, with its sockaddr right behind it. */
+/* an address list entry, with its sockaddr right after it. */
 static void *take_entry(LAYOUT *l, SIZE_T size, ADDRESS_FAMILY family, const BYTE *bytes, ULONG scope,
                         SOCKET_ADDRESS **address)
 {
@@ -65,7 +62,7 @@ static ULONG adapter_flags(const IPH_ADAPTER *a, ULONG flags)
     return f;
 }
 
-/* the connection specific suffix: the resolver's domain, or its first search domain. */
+/* the connection specific suffix: the resolver's domain, or else its first search domain. */
 static void dns_suffix(const IPH_SNAPSHOT *s, WCHAR *out, SIZE_T count)
 {
     const char *from = s->domain[0] ? s->domain : s->search;
@@ -175,7 +172,7 @@ static void layout_adapter(LAYOUT *l, const IPH_SNAPSHOT *s, const IPH_ADAPTER *
             *next = e;
             next = (void **)&e->Next;
         }
-        /* the search domains, split at spaces and commas. */
+        /* search domains are split at spaces and commas. */
         IP_ADAPTER_DNS_SUFFIX *last = nullptr;
         for (const char *p = s->search; *p;) {
             while (*p == ' ' || *p == ',')
@@ -302,7 +299,7 @@ ULONG WINAPI GetAdaptersAddresses(ULONG family, ULONG flags, PVOID reserved, PIP
     } else if (measure.used > 0xFFFFFFFF) {
         error = ERROR_INVALID_DATA;
     } else if (!addresses || *size < measure.used) {
-        /* the size asked for is twice what this list needs, at least 16 KiB less one. */
+        /* ask for twice what the list needs, and at least 16 KiB minus one. */
         SIZE_T twice = measure.used * 2;
         *size = measure.used >= 0x7FFFFFFF ? 0xFFFFFFFE : twice <= 0x3FFF ? 0x3FFF : (ULONG)twice;
         error = ERROR_BUFFER_OVERFLOW;
@@ -482,7 +479,7 @@ DWORD WINAPI GetNetworkParams(PFIXED_INFO info, PULONG size)
         if (!GetComputerNameExA(ComputerNameDnsDomain, info->DomainName, &length))
             info->DomainName[0] = 0;
         server_list(&info->DnsServerList, (BYTE *)(info + 1), list, n);
-        /* netbt's NodeType when its registry has none: hybrid. */
+        /* netbt's default NodeType when the registry has none. */
         info->NodeType = HYBRID_NODETYPE;
     }
     IphRelease(s);
@@ -520,7 +517,7 @@ DWORD WINAPI GetPerAdapterInfo(ULONG index, PIP_PER_ADAPTER_INFO info, PULONG si
     return error;
 }
 
-/* ------------------------------------------------------------------ the ipv4 interface list */
+/* ------------------------------------------------------------------ ipv4 interface list */
 
 static void device_name(WCHAR *out, const IPH_ADAPTER *a)
 {
@@ -592,7 +589,7 @@ DWORD WINAPI GetFriendlyIfIndex(DWORD index)
     return index & 0xFFFFFF;
 }
 
-/* mime has no dhcp client service, so its rpc server is not there to release or renew a lease. */
+/* mime has no dhcp client service, so there is no lease to release or renew. */
 DWORD WINAPI IpReleaseAddress(PIP_ADAPTER_INDEX_MAP adapter)
 {
     if (!adapter || wcsnlen(adapter->Name, MAX_ADAPTER_NAME) <= 14)

@@ -1,7 +1,7 @@
 /*
- * activation contexts at run time: the context objects, the per thread
- * activation stack, the section lookups and the queries, with the
- * argument checks, status codes and exceptions of windows' ntdll.
+ * activation contexts at run time: context objects, the per thread
+ * activation stack, section lookups and queries, with the argument checks,
+ * status codes and exceptions of Windows.
  */
 #include "sxs.h"
 
@@ -19,7 +19,7 @@ static ACTIVATION_CONTEXT g_empty_context = {0x7FFFFFFF, ACTCTX_FLAG_STATIC, nul
                                              nullptr, nullptr, 0, 0};
 static LONG g_next_stack_id;
 
-/* a stack frame the activation functions allocate, with the cookie that names it. */
+/* a stack frame the activation functions allocate, with its cookie. */
 typedef struct HEAP_FRAME {
     RTL_ACTIVATION_CONTEXT_STACK_FRAME Frame;
     ULONG_PTR Cookie;
@@ -335,7 +335,7 @@ static NTSTATUS check_find_parameters(ULONG flags, PACTIVATION_CONTEXT_SECTION_K
     return STATUS_SUCCESS;
 }
 
-/* the common tail of both finds: the section, context and metadata a caller asked for. */
+/* shared by both finds: fills in the section, context and metadata the caller asked for. */
 static NTSTATUS fill_found(ULONG flags, PACTIVATION_CONTEXT_SECTION_KEYED_DATA out, const SEARCH *s,
                            const void *section, ULONG length, ULONG user_offset, ULONG user_size)
 {
@@ -732,7 +732,7 @@ NTDLL_EXPORT void NTAPI RtlDeactivateActivationContext(ULONG flags, ULONG_PTR co
     }
     if (!frame)
         RtlRaiseStatus(STATUS_SXS_INVALID_DEACTIVATION);
-    /* frames above the cookie's: windows raises a continuable exception, then pops them all. */
+    /* frames above the cookie's: Windows raises a continuable exception, then pops them all. */
     if (frame != top)
         raise(STATUS_SXS_EARLY_DEACTIVATION, 0, 3, depth - 1, (ULONG_PTR)frame, (ULONG_PTR)top, 0);
     pop_frames(stack, frame->Previous);
@@ -942,7 +942,7 @@ static ULONG root_index(const ACTCTX_DATA *data)
     return 0;
 }
 
-/* copies a counted string out of the data, terminated, advancing the cursor. */
+/* copies a counted string out of the data with a terminator and advances the cursor. */
 static PCWSTR copy_out(UCHAR **cursor, const void *base, ULONG offset, ULONG length)
 {
     if (!length)
@@ -1205,7 +1205,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlQueryInformationActivationContext(ULONG flags, PA
         *written = 0;
     if (flags & 0x3FFFFFF8)
         return STATUS_INVALID_PARAMETER_1;
-    /* no addref only goes with the classes that hand out nothing to release, as windows checks it. */
+    /* like Windows, NO_ADDREF is only accepted for classes that return nothing to release. */
     if ((flags & RTL_QUERY_INFORMATION_ACTIVATION_CONTEXT_FLAG_NO_ADDREF) &&
         info_class != ActivationContextBasicInformation && info_class != RunlevelInformationInActivationContext &&
         info_class != CompatibilityInformationInActivationContext)
@@ -1326,7 +1326,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlQueryActivationContextApplicationSettings(ULONG f
         return STATUS_SXS_KEY_NOT_FOUND;
     SIZE_T value_chars = setting->SettingValueLength / sizeof(WCHAR);
     PCWSTR value = (PCWSTR)((const UCHAR *)setting + setting->SettingValueOffset);
-    /* windows accepts a buffer without room for the terminator, then writes it past the end: mime drops it. */
+    /* Windows accepts a buffer without room for the terminator and writes it past the end; mime drops it. */
     if (chars < value_chars) {
         status = STATUS_BUFFER_TOO_SMALL;
     } else {

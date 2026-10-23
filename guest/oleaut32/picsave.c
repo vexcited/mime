@@ -1,6 +1,6 @@
 /*
- * pictures as the bytes of a file: a bitmap file of the bitmap as it is now, an icon file, a placeable metafile or an
- * enhanced metafile. A picture that kept the file it was loaded from writes that instead, which olepic.c handles.
+ * serializing pictures: a bmp file of the current bitmap, an icon file, a placeable metafile or an enhanced
+ * metafile. Pictures that kept their original file write that instead, see olepic.c.
  */
 #include "picture.h"
 
@@ -31,7 +31,7 @@ typedef struct DIB_COPY {
     RGBQUAD Colors[COLOR_LIMIT];
 } DIB_COPY;
 
-/* the pixels of a bitmap read at a depth, and the colors of its table. The bitmap must not be in a context. */
+/* pixels at the given depth plus the color table. The bitmap must not be selected into a dc. */
 static BYTE *read_pixels(HBITMAP bitmap, LONG width, LONG height, WORD bits, DIB_COPY *dib)
 {
     SIZE_T size = (SIZE_T)stride_of(width, bits) * height;
@@ -156,7 +156,7 @@ static HRESULT icon_file(PIC_IMAGE *image, BYTE **bytes, ULONG *size)
     return S_OK;
 }
 
-/* the ten words before the checksum of a placeable header are exclusive ored to it. */
+/* xor of the ten words before the checksum. */
 static UINT placeable_checksum(const BYTE *header)
 {
     UINT sum = 0;

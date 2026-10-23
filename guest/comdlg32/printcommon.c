@@ -1,5 +1,5 @@
 /*
- * the printers and settings of the print dialogs, see printcommon.h.
+ * printers and settings shared by the print dialogs.
  */
 #include "printcommon.h"
 #include <stddef.h>
@@ -133,7 +133,7 @@ HGLOBAL PrnNewDevmodeHandle(const DEVMODEW *devmode)
     return handle;
 }
 
-/* the strings follow the four words: the driver, the printer and the port, wide. */
+/* the strings follow the four offset words: driver, printer and port, wide. */
 HGLOBAL PrnNewDevnamesHandle(const PRN_ITEM *printer, BOOL is_default, BOOL to_file)
 {
     static const WCHAR driver[] = L"winspool";
@@ -262,7 +262,7 @@ HGLOBAL PrnDevmodeFromAnsi(HGLOBAL ansi)
     return handle;
 }
 
-/* the strings of a device names handle in the other character set, the offsets counting characters of it. */
+/* converts a DEVNAMES handle to the other character set, its offsets counting characters of that set. */
 static HGLOBAL convert_devnames(HGLOBAL source, BOOL to_ansi)
 {
     if (!source)

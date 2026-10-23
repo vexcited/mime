@@ -1,8 +1,6 @@
 /*
- * bcrypt.dll, the cng primitives: algorithm providers, their properties and
- * enumeration. windows' bcrypt routes every call to the provider dll the
- * registry names, bcryptprimitives.dll for the microsoft primitive provider;
- * mime's bcrypt is that provider itself, built on guest/lib/crypto.
+ * bcrypt.dll, the cng primitives. windows' bcrypt routes each call to the provider dll the registry names; mime's
+ * bcrypt is the microsoft primitive provider itself, built on guest/lib/crypto.
  */
 #include "bcrypt_private.h"
 
@@ -40,7 +38,7 @@ NTSTATUS BcStatus(int crypto_status)
     }
 }
 
-/* the convention of every query: the size always, the value when there is room. */
+/* every query returns the size, and the value when there is room. */
 NTSTATUS BcOutput(const void *value, ULONG size, PUCHAR output, ULONG capacity, ULONG *result)
 {
     *result = size;
@@ -57,10 +55,7 @@ NTSTATUS BcOutput(const void *value, ULONG size, PUCHAR output, ULONG capacity, 
 #define MODES_BLOCK ((1u << MODE_CBC) | (1u << MODE_ECB) | (1u << MODE_CFB))
 #define MODES_AES (MODES_BLOCK | (1u << MODE_CCM) | (1u << MODE_GCM))
 
-/*
- * the primitive provider's algorithms in the order windows' registry lists
- * them, with the object lengths of bcryptprimitives.dll of build 26300.
- */
+/* in the order windows' registry lists them, with windows' object lengths. */
 static const ALG_INFO g_algorithms[] = {
     {L"RC4", ID_RC4, BCRYPT_CIPHER_INTERFACE, nullptr, 592, 0, 1, 1, 64, 1, 1u << MODE_NA, MODE_NA},
     {L"AES", ID_AES, BCRYPT_CIPHER_INTERFACE, nullptr, 592, 0, 16, 16, 32, 8, MODES_AES, MODE_CBC},
@@ -115,7 +110,7 @@ const ALG_INFO *BcInfoById(ULONG id)
     return nullptr;
 }
 
-/* the hashes a parameter or padding names, as windows' providers accept them. */
+/* hash names accepted in parameters and padding info. */
 const MimeHashAlg *BcHashByName(LPCWSTR name)
 {
     const ALG_INFO *info = name ? BcFindAlg(name) : nullptr;
@@ -124,7 +119,7 @@ const MimeHashAlg *BcHashByName(LPCWSTR name)
 
 /* ------------------------------------------------------------------ handles */
 
-/* the pseudo handles of index h >> 4: the name, the open flags and the chaining mode, 0 for the default. */
+/* pseudo handles indexed by h >> 4: name, open flags and chaining mode, 0 for the default. */
 static const struct {
     const WCHAR *name;
     ULONG flags;
@@ -357,7 +352,7 @@ BCRYPTAPI NTSTATUS WINAPI BCryptGetFipsAlgorithmMode(BOOLEAN *pfEnabled)
 
 /* ------------------------------------------------------------------ properties */
 
-/* what bcrypt adds to the provider's object length: its own header and room to align. */
+/* the provider's object length plus bcrypt's own header and alignment slack. */
 ULONG BcObjectLength(const ALG *alg)
 {
     const ALG_INFO *info = alg->info;
@@ -383,7 +378,7 @@ NTSTATUS BcChainingMode(ALG *alg, ULONG *mode, ULONG *message_block, PUCHAR inpu
     return STATUS_SUCCESS;
 }
 
-/* the properties every cipher object answers, algorithm or key. */
+/* properties shared by cipher algorithms and keys. */
 NTSTATUS BcCipherCommon(const ALG *alg, ULONG mode, ULONG message_block, LPCWSTR property, PUCHAR output,
                         ULONG capacity, ULONG *result, BOOL *handled)
 {
@@ -571,12 +566,11 @@ BCRYPTAPI NTSTATUS WINAPI BCryptSetProperty(BCRYPT_HANDLE hObject, LPCWSTR pszPr
     return BcKeySetProperty(key, pszProperty, pbInput, cbInput);
 }
 
-/* ------------------------------------------------------------------ what mime does not provide */
+/* ------------------------------------------------------------------ unsupported */
 
 /*
- * the configuration of cng contexts and provider registration: mime has one
- * built in provider and no configuration store, so these answer as windows
- * does when nothing is registered.
+ * cng contexts and provider registration: with one built in provider and no configuration store, these answer as
+ * windows does when nothing is registered.
  */
 BCRYPTAPI NTSTATUS WINAPI BCryptAddContextFunction(ULONG table, LPCWSTR context, ULONG iface, LPCWSTR function,
                                                    ULONG position)

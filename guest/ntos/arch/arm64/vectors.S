@@ -45,9 +45,9 @@ KiSecondaryStartup:
 /*
  * the kernel lock, a ticket lock: the low half serves, the high half hands
  * out tickets. a waiter spins on loads for a few microseconds, then sleeps
- * in the host on the lock word: a spinning vcpu would otherwise take the
- * host core the owner's vcpu needs. a releaser that sees sleepers wakes
- * them. x0 to x2 and x9 to x12 change.
+ * in the host on the lock word, since a spinning vcpu would take the host
+ * core the owner's vcpu needs. a releaser that sees sleepers wakes them.
+ * clobbers x0 to x2 and x9 to x12.
  */
 #define LOCK_OWNER 4
 #define LOCK_SLEEPERS 8
@@ -177,7 +177,7 @@ KiVectorTable:
     str     xzr, [sp, #KTRAP_FLAGS]
 .if \from_user
     mrs     x18, tpidr_el1
-    /* the stores of user mode are visible before the kernel sees the processor leave it. */
+    /* make user mode stores visible before the kernel sees the processor leave it. */
     dmb     ish
     strb    wzr, [x18, #KPCR_USER_MODE]
     bl      KiAcquireKernelLock
@@ -311,13 +311,13 @@ KiExceptionExit:
     cbnz    x12, 2f
     ldr     x13, [sp, #KTRAP_SP]
     msr     sp_el0, x13
-    /* back to user mode: the next processor waiting may enter the kernel. */
+    /* back to user mode, the next waiting processor may enter the kernel. */
     bl      KiReleaseKernelLock
     mov     w9, #1
     strb    w9, [x18, #KPCR_USER_MODE]
     ldr     x18, [sp, #0x90]
     b       3f
-    /* a thread preempted here may resume on another processor: keep the running one's pcr. */
+    /* a thread preempted here may resume on another processor, so reload the current pcr. */
 2:  mrs     x18, tpidr_el1
 3:  ldp     x0, x1, [sp, #0x00]
     ldp     x2, x3, [sp, #0x10]

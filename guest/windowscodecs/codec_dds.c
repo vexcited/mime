@@ -1,6 +1,6 @@
 /*
- * the dds codec: the images of a texture, one frame for each array element, mip level and depth slice, in 32 bit
- * color. The encoder writes a single uncompressed image.
+ * DDS decoder: one 32-bit frame per array element, mip level and depth slice. the encoder writes one uncompressed
+ * image.
  */
 #include "wic_codec.h"
 #include <bcn/bcn.h>
@@ -101,7 +101,6 @@ const WicDecoderOps wic_dec_dds = {
     .frame_decode = dds_frame_decode,
 };
 
-/* ------------------------------------------------------------------ the encoder */
 
 typedef struct DdsEncoder {
     IStream *stream;

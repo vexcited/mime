@@ -1,20 +1,19 @@
 /*
- * pages of file windows that the host took away. a program of the host can shorten a file that a view of the guest maps,
- * which windows does not allow for a local file, but a network share does from its other side: the pages past the new end
- * cannot be read any more. windows answers the access with an in page error in the thread that made it, with the kind of
- * access, the address and the status of the failed read as parameters, and keeps the rest of the program going.
+ * file window pages the host took away. a host program can shorten a file that a guest view maps, which
+ * Windows forbids for a local file but a network share allows from its other side, so pages past the new
+ * end become unreadable. Windows raises an in page error in the faulting thread, with the access kind,
+ * address and failed read status as parameters, and the rest of the program keeps going.
  *
- * the host tells the guest before it gives the pages up, by MIME_HC_FS_WINDOW_LOST after MIME_IRQ_WINDOW. a thread of the
- * kernel marks every section on the window with the range that is gone, drops the cache entries of the window, and takes
- * the pages out of the page tables of every process that maps them, leaving the entries a view leaves for the first touch.
- * the touch goes to the section, which refuses a page in its range, and the fault becomes the in page error:
- * STATUS_IN_PAGE_ERROR with three parameters for a program, and the status as the result of a system call that was reading
- * or writing such a page for it. the range belongs to the section and not to the addresses: a window that is unmapped and
- * placed again at the same addresses for another file has none of it.
+ * before giving the pages up, the host raises MIME_IRQ_WINDOW and MIME_HC_FS_WINDOW_LOST returns the range. a kernel
+ * thread marks every section on the window with the lost range, drops the window's cache entries, and
+ * resets the ptes of every mapping process to first touch entries. the touch reaches the section, which
+ * refuses pages in its lost range, so a program gets STATUS_IN_PAGE_ERROR with three parameters and a
+ * system call touching such a page returns the status. the range belongs to the section, not to the
+ * addresses, so a window later placed at the same addresses for another file is unaffected.
  */
 #include "../ntos.h"
 
-/* the status of the read that failed: the file is no longer what the view was made of. */
+/* the failed read status: the file is no longer what the view was made of. */
 #define STATUS_FILE_INVALID_VALUE ((NTSTATUS)0xC0000098L)
 #define BATCH 32
 
@@ -22,7 +21,7 @@ static LIST_ENTRY g_sections = {&g_sections, &g_sections};
 static KEVENT g_event;
 static MimeWindowLost g_io;
 
-/* sections on a window of the host, the ones a loss can reach. */
+/* tracks sections on a host window, the ones a loss can reach. */
 void MmWindowSectionAttach(PSECTION s)
 {
     if (!s->SourceRef)
@@ -42,7 +41,7 @@ void MmWindowSectionDetach(PSECTION s)
     KiReleaseDispatcherLock(state);
 }
 
-/* what the lost range is for each section that has pages in it; the pages come in the order of the file, the loss is its end. */
+/* pages come in file order, so what is lost is the end of each section. */
 static void mark_sections(ULONG64 begin, ULONG64 end)
 {
     ULONG64 state = KiAcquireDispatcherLock();
@@ -65,7 +64,7 @@ static void mark_sections(ULONG64 begin, ULONG64 end)
     KiReleaseDispatcherLock(state);
 }
 
-/* the entries a view leaves for the first touch, in place of the pages of the lost range, in one address space. */
+/* in one address space, replaces mapped pages of the lost range with first touch entries. */
 static void take_out(PEPROCESS process, ULONG64 begin, ULONG64 end)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
@@ -77,7 +76,6 @@ static void take_out(PEPROCESS process, ULONG64 begin, ULONG64 end)
         PSECTION s = vad->Section;
         if (!s || !s->SourceRef || s->LostEnd <= s->LostBegin)
             continue;
-        /* the view's pages as indexes of the section, then the addresses of the view that hold a page of the range. */
         ULONG64 view_first = vad->SectionOffset >> PAGE_SHIFT;
         ULONG64 view_last = view_first + ((vad->EndVa - vad->StartVa) >> PAGE_SHIFT);
         ULONG_PTR va = vad->StartVa;
@@ -109,7 +107,6 @@ static void take_out(PEPROCESS process, ULONG64 begin, ULONG64 end)
     KiAttachProcess(saved);
 }
 
-/* every address space that has a view of a section on the window. */
 static void take_out_everywhere(ULONG64 begin, ULONG64 end)
 {
     for (ULONG skipped = 0;;) {
@@ -163,13 +160,13 @@ void MmWindowLostInitialize(void)
     PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, worker, nullptr);
 }
 
-/* at the interrupt of the session. */
+/* called from the session interrupt on MIME_IRQ_WINDOW. */
 void MmWindowLostInterrupt(void)
 {
     KeSetEvent(&g_event, IO_NO_INCREMENT, FALSE);
 }
 
-/* what a fault on a page the section lost leaves for the exception that follows. */
+/* sets the status the exception after a fault on a lost page reports. */
 void MmWindowLostFault(void)
 {
     KiCurrentThread()->FaultStatus = STATUS_FILE_INVALID_VALUE;

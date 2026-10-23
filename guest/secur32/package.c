@@ -1,36 +1,29 @@
-/*
- * the security package table, package queries and the dispatch tables.
- */
+/* security package table, package queries and dispatch tables. */
 #include "secur32_private.h"
 
 /*
- * the packages of a windows 11 installation, in the order lsa loads them:
- * negotiate is built into lsasrv, then come lsasrv's default list,
- * kerberos msv1_0 tspkg pku2u cloudAP wdigest schannel, the alias lsasrv
- * makes of schannel, and credssp.dll which sspicli loads in process. the
- * values are what each package's SpGetInfo fills in build 26300.
+ * the packages of a windows 11 installation in lsa's load order: negotiate, then lsa's default list kerberos msv1_0
+ * tspkg pku2u cloudAP wdigest schannel, lsa's alias of schannel, and credssp, which loads in process. the values match
+ * what windows reports.
  */
 const SEC_PACKAGE SecPackages[] = {
-    /* lsasrv NegGetInfo: the default capabilities; cbMaxToken is the largest
-       of the negotiable packages plus 256, so kerberos' 48000 gives 48256. */
+    /* cbMaxToken is the largest negotiable package's plus 256: kerberos' 48000 gives 48256. */
     {L"Negotiate", L"Microsoft Package Negotiator", 0x00883BB3, 1, 9, 48256, SEC_KIND_NEGOTIATE},
-    /* negoexts SpGetInfo; SpInitialize sets the token size to 12000. */
     {L"NegoExtender", L"NegoExtender Security Package", 0x00913913, 1, 30, 12000, SEC_KIND_EXTENDER},
-    /* kerberos SpGetInfo; the token size is the documented MaxTokenSize default. */
+    /* the token size is the documented MaxTokenSize default. */
     {L"Kerberos", L"Microsoft Kerberos V1.0", 0x028F3BBF, 1, 16, 48000, SEC_KIND_KERBEROS},
-    /* msv1_0 SpGetInfo, without credential guard. */
+    /* without credential guard. */
     {L"NTLM", L"NTLM Security Package", 0x02882B37, 1, 10, 2888, SEC_KIND_NTLM},
     {L"TSSSP", L"TS Service Security Package", 0x00810230, 1, 22, 13000, SEC_KIND_TSSSP},
-    /* pku2u SpInitialize sets the token size to 12000. */
     {L"pku2u", L"PKU2U Security Package", 0x00A11113, 1, 31, 12000, SEC_KIND_PKU2U},
     {L"CloudAP", L"Cloud AP Security Package", 0x00602000, 1, 36, 0, SEC_KIND_CLOUDAP},
     {L"WDigest", L"Digest Authentication for Windows", 0x00800304, 1, 21, 4096, SEC_KIND_DIGEST},
     {L"Schannel", L"Schannel Security Package", 0x004107B3, 1, 14, 24576, SEC_KIND_SCHANNEL},
     {L"Microsoft Unified Security Protocol Provider", L"Schannel Security Package", 0x004107B3, 1, 14, 24576,
      SEC_KIND_SCHANNEL},
-    /* lsasrv LoadPackages copies the schannel package under this name. */
+    /* lsa registers schannel a second time under this name. */
     {L"Default TLS SSP", L"Schannel Security Package", 0x004107B3, 1, 14, 24576, SEC_KIND_SCHANNEL},
-    /* credssp InitMaxToken: the larger of negotiate plus 200 and 1024, plus schannel, 48456 + 24576. */
+    /* the token size is max(negotiate + 200, 1024) plus schannel's: 48456 + 24576. */
     {L"CREDSSP", L"Microsoft CredSSP Security Provider", 0x00810733, 1, SECPKG_ID_NONE, 73032, SEC_KIND_CREDSSP},
 };
 
@@ -115,7 +108,7 @@ static void fill_a(SecPkgInfoA *info, const SEC_PACKAGE *p, PSTR *strings)
     *strings += copy_narrow(*strings, p->Comment);
 }
 
-/* one LocalAlloc block per package, freed with FreeContextBuffer, like SecCopyPackageInfoToUserW. */
+/* one LocalAlloc block per package, freed with FreeContextBuffer. */
 SECURITY_STATUS SecCopyPackageInfoW(const SEC_PACKAGE *package, PSecPkgInfoW *info)
 {
     if (!package)
@@ -196,14 +189,14 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY QuerySecurityPackageInfoA(SEC_CHAR *name, 
     return SecCopyPackageInfoA(SecFindPackageA(name), info);
 }
 
-/* everything secur32 hands out comes from LocalAlloc, and sspicli frees unknown blocks the same way. */
+/* everything secur32 hands out comes from LocalAlloc, and windows frees unknown blocks with LocalFree too. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY FreeContextBuffer(void *buffer)
 {
     LocalFree(buffer);
     return SEC_E_OK;
 }
 
-/* lsa loads new packages; mime has no lsa to load them into. */
+/* only lsa loads new packages, and there is none. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY AddSecurityPackageW(LPWSTR name, PSECURITY_PACKAGE_OPTIONS options)
 {
     return SEC_E_UNSUPPORTED_FUNCTION;
@@ -214,7 +207,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY AddSecurityPackageA(LPSTR name, PSECURITY_
     return SEC_E_UNSUPPORTED_FUNCTION;
 }
 
-/* sspicli answers this for every package. */
+/* windows answers this for every package. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY DeleteSecurityPackageW(LPWSTR name)
 {
     return SEC_E_UNSUPPORTED_FUNCTION;
@@ -225,12 +218,9 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY DeleteSecurityPackageA(LPSTR name)
     return SEC_E_UNSUPPORTED_FUNCTION;
 }
 
-/* ------------------------------------------------------------------ dispatch tables */
-
 /*
- * sspicli hands out version 1 tables: the slots up to DecryptMessage, with
- * the legacy seal and unseal slots holding EncryptMessage and DecryptMessage
- * and no SetContextAttributes or later entries.
+ * like windows, version 1 tables: slots up to DecryptMessage, the legacy seal and unseal slots holding EncryptMessage
+ * and DecryptMessage, and no SetContextAttributes or later entries.
  */
 static SecurityFunctionTableW g_table_w = {
     .dwVersion = SECURITY_SUPPORT_PROVIDER_INTERFACE_VERSION,

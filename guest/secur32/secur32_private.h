@@ -1,6 +1,4 @@
-/*
- * secur32 internal interface shared by its source files.
- */
+/* secur32 internal interface. */
 #ifndef MIME_SECUR32_PRIVATE_H
 #define MIME_SECUR32_PRIVATE_H
 
@@ -18,13 +16,11 @@
 #define STATUS_NONE_MAPPED ((NTSTATUS)0xC0000073L)
 #endif
 
-/* what every attempt to establish a context of a package other than schannel answers, see docs/secur32.md. */
+/* what every attempt to establish a context with a package other than schannel fails with. */
 #define SEC_ESTABLISH_FAILURE SEC_E_NO_AUTHENTICATING_AUTHORITY
 
 /* the expiry windows packages report for credentials that never expire. */
 #define SEC_NEVER_EXPIRES 0x7FFFFFFFFFFFFFFFLL
-
-/* ------------------------------------------------------------------ packages */
 
 enum {
     SEC_KIND_NEGOTIATE,
@@ -51,7 +47,7 @@ typedef struct SEC_PACKAGE {
 
 extern const SEC_PACKAGE SecPackages[];
 extern const ULONG SecPackageCount;
-/* packages hosted by lsa, before the in process ones. */
+/* lsa hosted packages, which come before the in process ones. */
 extern const ULONG SecLsaPackageCount;
 
 const SEC_PACKAGE *SecFindPackageW(PCWSTR name);
@@ -59,14 +55,10 @@ const SEC_PACKAGE *SecFindPackageA(PCSTR name);
 SECURITY_STATUS SecCopyPackageInfoW(const SEC_PACKAGE *package, PSecPkgInfoW *info);
 SECURITY_STATUS SecCopyPackageInfoA(const SEC_PACKAGE *package, PSecPkgInfoA *info);
 
-/* ------------------------------------------------------------------ handles */
-
 /* the package and use of a live credential handle, false for any other handle. */
 bool SecLookupCredential(PCredHandle handle, const SEC_PACKAGE **package, ULONG *use);
 /* whether a context handle names a live context; only schannel establishes them. */
 bool SecContextExists(PCtxtHandle handle);
-
-/* ------------------------------------------------------------------ helpers */
 
 FORCEINLINE PVOID SecHeapAlloc(SIZE_T size)
 {
@@ -84,21 +76,20 @@ FORCEINLINE void SecSetError(DWORD error)
     NtCurrentTeb()->LastErrorValue = error;
 }
 
-/* the tls slot of the per thread call data of the Seci functions. */
+/* tls slot of the per thread call data of the Seci functions. */
 extern DWORD SecTlsCallData;
 
-/* the ansi code page conversions, allocated from the process heap. */
+/* ansi code page conversions, allocated from the process heap. */
 PWSTR SecAnsiToWide(PCSTR text);
 PSTR SecWideToAnsi(PCWSTR text);
 
-/* the security status of an nt status, as sspicli maps them. */
+/* maps an nt status to a security status as windows does. */
 SECURITY_STATUS SecNtStatusToSecStatus(NTSTATUS status);
 
-/* the computer name and the logged on user: user is empty for the system account. */
+/* SecUserName returns an empty name for the system account. */
 DWORD SecComputerName(PWSTR out, DWORD capacity);
 bool SecUserName(PWSTR out, DWORD capacity, bool *system);
 
-/* names.c */
 NTSTATUS SecSamCompatibleName(PWSTR out, DWORD capacity, DWORD *length);
 
 #endif

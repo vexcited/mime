@@ -1,7 +1,6 @@
 /*
- * the program of the fixed function pipeline: one vertex and one fragment shader that read their whole state from an
- * array of vec4, laid out in fixed.h. a draw without a program runs it, so a state change is a few uniform writes and
- * never a new program.
+ * the fixed function program: one vertex and one fragment shader reading their whole state from a vec4 array laid out
+ * in fixed.h, so a state change is a few uniform writes and never a new program.
  */
 #include "fixed.h"
 
@@ -216,9 +215,7 @@ const char *gl_ff_fragment_source(void)
     return g_fragment;
 }
 
-/* ---------------------------------------------------------------- the program */
-
-/* the program, linked on the first draw; NULL when the host refused it. */
+/* linked on the first draw; NULL when the host refused it. */
 static GlProgram *ff_program(GlContext *ctx)
 {
     GlFixed *f = &ctx->ff;
@@ -259,7 +256,7 @@ static GlProgram *ff_program(GlContext *ctx)
     return p;
 }
 
-/* the program of a draw without one and where it reads its vertices; NULL when nothing is to be drawn. */
+/* the program for a draw without one, and where it reads its vertices; NULL when nothing is drawn. */
 GlProgram *gl_ff_begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate)
 {
     GlFixed *f = &ctx->ff;
@@ -280,7 +277,7 @@ GlProgram *gl_ff_begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate)
     return p;
 }
 
-/* writes what the draw reads into the program's uniforms, when it changed. */
+/* updates the program's uniforms when the state changed. */
 void gl_ff_prepare(GlContext *ctx, GlProgram *p)
 {
     GlFixed *f = &ctx->ff;
@@ -288,7 +285,7 @@ void gl_ff_prepare(GlContext *ctx, GlProgram *p)
         gl_ff_pack(ctx, f->uniforms);
         f->dirty = FALSE;
     }
-    /* what depends on the texture bound and the point size is checked at every draw. */
+    /* state that depends on the bound texture and point size is checked every draw. */
     uint32_t env, format;
     gl_ff_texture_state(ctx, &env, &format);
     f->uniforms[FF_U_FLAGS1][0] = (GLfloat)env;

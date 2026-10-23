@@ -1,7 +1,6 @@
 /*
- * activeds.dll, the Active Directory service interfaces. The machine has no directory and no provider for the names
- * of one, so the functions that bind to an object fail as a path that leads nowhere, the functions on memory and
- * strings work, and the conversions of values are not made.
+ * activeds.dll, the Active Directory service interfaces. there is no directory and no provider, so binding to an
+ * object fails with a path not found. the memory and string helpers work, value conversions are not done.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/objbase.h>
@@ -26,7 +25,7 @@ struct IEnumVARIANT {
     const IEnumVARIANTVtbl *lpVtbl;
 };
 
-/* at most count characters of the text, and an end. */
+/* copies into count characters, terminator included. */
 static void copy_text(LPWSTR out, LPCWSTR text, SIZE_T count)
 {
     SIZE_T i = 0;
@@ -47,7 +46,7 @@ ADSAPI HRESULT WINAPI ADsGetObject(LPCWSTR path, REFIID iid, void **object)
     *object = nullptr;
     if (!path || !*path)
         return E_ADS_BAD_PATHNAME;
-    /* a name with no provider before the colon is no name; one with a provider has no provider to go to. */
+    /* with or without a provider prefix, no provider serves the path. */
     return HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND);
 }
 
@@ -88,7 +87,7 @@ ADSAPI HRESULT WINAPI ADsBuildVarArrayInt(LPDWORD numbers, DWORD count, VARIANT 
     return E_NOTIMPL;
 }
 
-/* the last error of the providers: kept for the process, where windows keeps it for the thread. */
+/* the providers' last error, kept per process where windows keeps it per thread. */
 static SRWLOCK g_error_lock = SRWLOCK_INIT;
 static DWORD g_error;
 static WCHAR g_error_text[256], g_error_provider[64];
@@ -167,7 +166,7 @@ ADSAPI BOOL WINAPI ReallocADsStr(LPWSTR *text, LPCWSTR value)
     return TRUE;
 }
 
-/* binary data as text: each byte as a backslash and two hexadecimal digits, the way a directory writes octets. */
+/* each byte becomes a backslash and two hex digits, like a directory writes octet strings. */
 ADSAPI HRESULT WINAPI ADsEncodeBinaryData(PBYTE data, DWORD length, LPWSTR *text)
 {
     if (!text || (length && !data))

@@ -1,9 +1,8 @@
 /*
- * the directdraw object behind IDirectDraw, 2, 4 and 7. each interface
- * counts its own references, as windows' do, and the object goes when
- * they all have; it takes with it what was created through it. the
- * methods are one implementation the versions call with their own
- * structures.
+ * the directdraw object behind IDirectDraw, 2, 4 and 7. like on Windows, each
+ * interface counts its own references, and the object goes when all reach
+ * zero, taking what was created through it. every version calls the same
+ * methods with its own structures.
  */
 #include "ddraw_private.h"
 
@@ -94,7 +93,7 @@ static void destroy(DDRAW *dd)
 #ifndef _WIN64
     D3dObjDestroy(dd);
 #endif
-    /* what was made through the object goes with it; programs still holding them find them dead. */
+    /* objects made through it go too, and programs still holding them find them dead. */
     while (!IsListEmpty(&dd->surfaces))
         DdSurfKill(CONTAINING_RECORD(dd->surfaces.Flink, DDSURF, links));
     while (!IsListEmpty(&dd->palettes))
@@ -122,7 +121,7 @@ ULONG DdAddRef(DDRAW *dd, LONG *iface_ref)
     return ref;
 }
 
-/* an interface already at zero stays there, as in windows. */
+/* an interface already at zero stays there, as on Windows. */
 ULONG DdRelease(DDRAW *dd, LONG *iface_ref)
 {
     DdEnter();
@@ -163,7 +162,7 @@ HRESULT DdQuery(DDRAW *dd, DWORD caller, REFIID riid, void **out)
     return S_OK;
 }
 
-/* the object of an interface, initialized, with the lock held; null with the error to return. */
+/* the initialized object with the lock held, or NULL with the error to return. */
 static DDRAW *enter(void *iface, HRESULT *hr)
 {
     DDRAW *dd = DdFromIface(iface);
@@ -267,7 +266,7 @@ static HRESULT STDMETHODCALLTYPE dd_create_palette(void *This, DWORD flags, LPPA
     return DdLeave(hr);
 }
 
-/* the surface descs of the versions: a version 1 or 2 desc is converted both ways. */
+/* version 1 and 2 descs are converted both ways. */
 static HRESULT STDMETHODCALLTYPE dd_create_surface(void *This, void *desc_in, void **out, IUnknown *outer)
 {
     HRESULT hr;
@@ -331,7 +330,7 @@ static HRESULT STDMETHODCALLTYPE dd_enum_display_modes(void *This, DWORD flags, 
     return DdLeave(DdEnumDisplayModes(dd, version, flags, f, context, callback));
 }
 
-/* windows' GetDisplayMode takes either size, and writes the size of the interface's desc. */
+/* takes either desc size, and writes the size of the interface's desc. */
 static HRESULT STDMETHODCALLTYPE dd_get_display_mode(void *This, void *desc)
 {
     HRESULT hr;
@@ -459,7 +458,7 @@ static HRESULT STDMETHODCALLTYPE dd_wait_for_vertical_blank(void *This, DWORD fl
     DdCurrentMode(&mode);
     if ((dd->flags & DDF_MODEX) && mode.width == 320)
         return DdLeave(DDERR_UNSUPPORTED);
-    /* the wait happens without the lock, as other threads keep drawing meanwhile. */
+    /* wait without the lock, since other threads keep drawing meanwhile. */
     DdLeave(DD_OK);
     return DdWaitForVerticalBlank(flags);
 }
@@ -485,7 +484,7 @@ static HRESULT STDMETHODCALLTYPE dd_duplicate_surface(void *This, void *source, 
     return DdLeave(hr);
 }
 
-/* windows' EnumSurfaces: what exists, matched field by field, or what could be created, by creating it. */
+/* existing surfaces matched field by field, or creatable ones, found by creating them. */
 static HRESULT STDMETHODCALLTYPE dd_enum_surfaces(void *This, DWORD flags, void *desc_in, LPVOID context,
                                                   void *callback)
 {
@@ -537,7 +536,7 @@ static HRESULT STDMETHODCALLTYPE dd_enum_surfaces(void *This, DWORD flags, void 
         return DdLeave(DDERR_INVALIDPARAMS);
     if (flags & DDENUMSURFACES_CANBECREATED)
         return DdLeave(DdEnumCreatable(dd, version, d, context, callback));
-    /* the newest first, a snapshot so callbacks may release what they get. */
+    /* newest first, from a snapshot so callbacks may release what they get. */
     DWORD count = 0;
     for (LIST_ENTRY *e = dd->surfaces.Flink; e != &dd->surfaces; e = e->Flink)
         count++;
@@ -602,7 +601,7 @@ static HRESULT STDMETHODCALLTYPE dd_get_caps(void *This, LPDDCAPS driver, LPDDCA
     return DdLeave(DdGetCaps(dd, driver, emulation));
 }
 
-/* the four character codes surfaces may have: the block compressed ones and the packed yuv ones. */
+/* four character codes surfaces may have: block compressed and packed yuv. */
 static const DWORD FOURCC_CODES[] = {FOURCC_DXT1, FOURCC_DXT2, FOURCC_DXT3, FOURCC_DXT4, FOURCC_DXT5,
                                      MAKEFOURCC('Y', 'U', 'Y', '2'), MAKEFOURCC('U', 'Y', 'V', 'Y')};
 
@@ -652,7 +651,7 @@ static HRESULT STDMETHODCALLTYPE dd_get_gdi_surface(void *This, void **out)
     return DdLeave(DD_OK);
 }
 
-/* mime's video memory: a fixed local pool less what surfaces in it take, and as much again nonlocal. */
+/* mime's video memory: a fixed local pool minus what surfaces use, and as much again nonlocal. */
 #define VIDEO_MEMORY (512u << 20)
 
 static HRESULT available_vid_mem(DDRAW *dd, const DDSCAPS2 *caps, LPDWORD total, LPDWORD free_bytes)
@@ -711,7 +710,7 @@ static HRESULT STDMETHODCALLTYPE dd_get_available_vid_mem(void *This, void *caps
     return DdLeave(available_vid_mem(dd, &caps, total, free_bytes));
 }
 
-/* the surface of a dc of IDirectDrawSurface::GetDC; IDirectDraw4 gets the first surface interface. */
+/* the surface owning a dc from IDirectDrawSurface::GetDC. IDirectDraw4 gets the first surface interface. */
 static HRESULT STDMETHODCALLTYPE dd_get_surface_from_dc(void *This, HDC dc, void **out)
 {
     HRESULT hr;
@@ -736,7 +735,7 @@ static HRESULT STDMETHODCALLTYPE dd_get_surface_from_dc(void *This, HDC dc, void
     return DdLeave(DDERR_NOTFOUND);
 }
 
-/* the oldest first; implicit surfaces come back with their root. */
+/* oldest first, implicit surfaces are restored with their root. */
 static HRESULT STDMETHODCALLTYPE dd_restore_all_surfaces(void *This)
 {
     HRESULT hr;
@@ -773,9 +772,9 @@ static HRESULT STDMETHODCALLTYPE dd_test_cooperative_level(void *This)
 }
 
 /*
- * the adapter as dxgi knows it, and windows' guid of it: the vendor, the
- * device and the subsystem xored into CLSID_DirectDraw. the driver version
- * stays 0 as on windows' display driver model path.
+ * the adapter as dxgi sees it. like Windows, the guid is CLSID_DirectDraw
+ * xored with the vendor, device and subsystem. the driver version stays 0,
+ * as with WDDM.
  */
 static HRESULT device_identifier(DDDEVICEIDENTIFIER2 *id, DWORD flags)
 {

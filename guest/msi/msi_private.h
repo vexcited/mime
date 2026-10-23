@@ -25,7 +25,7 @@ void MimeMsiRelease(MIME_MSI_OBJECT *object);
 
 enum { FIELD_NULL, FIELD_INTEGER, FIELD_STRING, FIELD_STREAM };
 
-/* the bytes of a binary field, shared by the records that were fetched from the same row. */
+/* a binary field's bytes, shared by records fetched from the same row. */
 typedef struct MIME_MSI_BLOB {
     ULONG References;
     SIZE_T Size;
@@ -80,10 +80,10 @@ typedef struct MIME_MSI_DATABASE {
     MIME_MSI_TABLE *Tables;
     struct MIME_MSI_TRANSFORM *Transforms;
     BOOL OwnedData;
-    /* a storage inside a patch serves as a database of its own: its directory entry, and the file that holds it. */
+    /* a storage inside a patch opened as its own database: its directory entry and the file holding it. */
     ULONG Root;
     struct MIME_MSI_DATABASE *Parent;
-    /* the patches applied to this database, whose cabinets the media of the patched rows name. */
+    /* patches applied to this database, whose cabinets the patched Media rows name. */
     struct MIME_MSI_DATABASE **Patches;
     ULONG PatchCount, PatchTransforms;
 } MIME_MSI_DATABASE;
@@ -163,13 +163,12 @@ typedef struct MIME_MSI_PACKAGE {
     struct MIME_MSI_CAHOST *Host;
 } MIME_MSI_PACKAGE;
 
-/* a row of the CustomAction table, with the strings copied. */
 typedef struct MIME_MSI_CA_ROW {
     PWSTR Name, Source, Target;
     UINT Type;
 } MIME_MSI_CA_ROW;
 
-/* an action the script holds back: run when the script runs, or when it is rolled back or committed. */
+/* a deferred action, run with the script or on its rollback or commit. */
 typedef struct MIME_MSI_SCRIPT_ACTION {
     struct MIME_MSI_SCRIPT_ACTION *Next;
     MIME_MSI_CA_ROW Row;
@@ -199,7 +198,7 @@ BOOL MimeMsiProxyActive(void);
 UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments);
 void MimeMsiShutDownHost(void);
 #define MIME_ARG(x) ((UINT_PTR)(x))
-/* in the host of the custom actions a function of the installer is a call to the installer. */
+/* in the custom action host, installer functions forward the call to the installer. */
 #define MIME_REMOTE(id, type, ...) \
     do { \
         if (MimeMsiProxyActive()) { \

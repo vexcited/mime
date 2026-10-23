@@ -1,15 +1,15 @@
 /*
- * the walker of the ndr engine: the wire cursor of each pass, the queue of deferred pointees, simple types, pointers,
- * correlation, and the dispatch by format character. The aggregates are in ndr_type.c.
+ * the ndr walker: the wire cursor of each pass, the queue of deferred pointees, simple types, pointers, correlation and
+ * the dispatch by format character. aggregates are in ndr_type.c.
  */
 #include "ndr.h"
 #include "ndr_proc.h"
 
-/* ------------------------------------------------------------------ the wire cursor */
+/* ------------------------------------------------------------------ wire cursor */
 
 /*
- * aligns the position of the pass to mask + 1 bytes. Sizing counts in BufferLength, the others move Buffer, and marshaling
- * zeroes what it skips so that nothing of the stack leaks.
+ * aligns to mask + 1 bytes. sizing counts in BufferLength, the other passes move Buffer, and marshaling zeroes what it
+ * skips so no stack leaks.
  */
 void NdrpAlign(NDRC *c, ULONG mask)
 {
@@ -35,7 +35,7 @@ void NdrpAlign(NDRC *c, ULONG mask)
     }
 }
 
-/* takes count bytes of the wire; sizing and freeing have none to give. */
+/* sizing and freeing have no wire bytes to give. */
 uchar *NdrpTake(NDRC *c, ULONG count)
 {
     PMIDL_STUB_MESSAGE m = c->M;
@@ -55,7 +55,7 @@ uchar *NdrpTake(NDRC *c, ULONG count)
     return buffer;
 }
 
-/* a 32 bit number: written by marshaling, read by the passes that read, counted by sizing. */
+/* written by marshaling, read by the reading passes, counted by sizing. */
 ULONG NdrpU32(NDRC *c, ULONG value)
 {
     if (c->Pass == NDR_FREE)
@@ -74,7 +74,7 @@ ULONG NdrpU32(NDRC *c, ULONG value)
     }
 }
 
-/* the product of a count and a size, as a number of bytes that fits the wire's 32 bits. */
+/* count times size, which must fit the wire's 32 bits. */
 ULONG NdrpCheckedProduct(ULONG_PTR a, ULONG_PTR b)
 {
     ULONGLONG product = (ULONGLONG)a * b;
@@ -85,7 +85,7 @@ ULONG NdrpCheckedProduct(ULONG_PTR a, ULONG_PTR b)
 
 /* ------------------------------------------------------------------ simple types */
 
-/* one value of a simple type at memory; enums are shortened on the wire and checked going in and out. */
+/* enums are shortened on the wire and range checked both ways. */
 void NdrpSimple(NDRC *c, uchar *memory, uchar fc)
 {
     ULONG wire = NdrSimpleWire[fc];
@@ -146,7 +146,7 @@ void NdrpSimple(NDRC *c, uchar *memory, uchar fc)
     }
 }
 
-/* ------------------------------------------------------------------ the queue of pointees */
+/* ------------------------------------------------------------------ pointee queue */
 
 static void queue_init(NDR_QUEUE *q, NDR_PASS pass)
 {
@@ -159,7 +159,7 @@ typedef struct NDR_SCRATCH {
     struct NDR_SCRATCH *Next;
 } NDR_SCRATCH;
 
-/* memory for the walk that goes away with it, also when an exception leaves. */
+/* freed with the walk, even when an exception leaves it. */
 void *NdrpScratch(NDRC *c, SIZE_T size)
 {
     NDR_SCRATCH *block = HeapAlloc(GetProcessHeap(), 0, sizeof(*block) + size + 16);
@@ -220,17 +220,17 @@ static void queue_push(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING for
 
 static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING pf, ULONG refid);
 
-/* what a user type with a pointer on the wire puts is queued behind the object it is in: the object is the pointer. */
+/* the pointee of a user type with a pointer wire form is queued behind its enclosing object: the object is the pointer. */
 void NdrpQueueUser(NDRC *c, uchar *object, PFORMAT_STRING f)
 {
     queue_push(c, nullptr, object, f, 0);
 }
 
-/* the pointees run first in, first out, and the ones they queue run after them. */
+/* first in, first out, and pointees queued by pointees run after them. */
 static void queue_run(NDRC *c)
 {
     NDR_QUEUE *q = c->Q;
-    /* what a pointee queues goes behind the pointees queued before it: one loop does them all. */
+    /* a pointee's own queued pointees go behind those queued before, so one loop does them all. */
     if (q->Draining)
         return;
     q->Draining = TRUE;
@@ -247,12 +247,11 @@ static void queue_run(NDRC *c)
     q->Draining = FALSE;
 }
 
-/* ------------------------------------------------------------------ allocation during unmarshaling */
+/* ------------------------------------------------------------------ unmarshaling allocation */
 
 /*
- * the memory of an object an unmarshaling fills: the caller's when it has one and does not want a new one, else new. A full
- * pointer's pointee is filed under its id before its content is read, so that a pointer into itself finds it. The pass
- * that only measures counts what would be allocated.
+ * uses the caller's memory when there is some and no new memory is required, else allocates. a full pointer's pointee is
+ * filed under its id before its content is read, so a pointer into itself finds it. the measuring pass only counts.
  */
 uchar *NdrpAllocObject(NDRC *c, uchar **memory, SIZE_T size, ULONG flags)
 {
@@ -268,7 +267,7 @@ uchar *NdrpAllocObject(NDRC *c, uchar **memory, SIZE_T size, ULONG flags)
     if (c->Pass != NDR_UNMARSHAL)
         return *memory;
     if (!*memory || (flags & NDRF_MUSTALLOC)) {
-        /* what a count on the wire can make the stub allocate has a limit, so that a lie is an error and not an outage. */
+        /* cap what a wire count can make the stub allocate, so a lie is an error and not an outage. */
         if (size > NDR_MAX_ALLOC)
             NDR_RAISE(RPC_X_BAD_STUB_DATA);
         SIZE_T n = size ? size : 1;
@@ -292,10 +291,7 @@ static BOOL may_free(PMIDL_STUB_MESSAGE m, uchar type, uchar attrs, uchar *point
     return !NdrpInBuffer(m, pointer);
 }
 
-/*
- * walks the object a pointer points to. For the passes that read memory, pointer is the pointee; unmarshaling puts the pointee
- * in *slot.
- */
+/* for the passes that read memory, pointer is the pointee. unmarshaling puts the pointee in *slot. */
 static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING pf, ULONG refid)
 {
     uchar type = pf[0];
@@ -333,7 +329,7 @@ static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING p
     if (++c->Q->Depth > 4096)
         NDR_RAISE(RPC_X_BAD_STUB_DATA);
     if (NDR_WIRE_READ(c->Pass) && type == FC_FP) {
-        /* the number was met before when an object it names was read already, which the pointer then points to. */
+        /* a ref id seen before names an object already read, which the pointer then points to. */
         void *existing = nullptr;
         if (NdrFullPointerQueryRefId(m->FullPtrXlatTables, refid, c->Pass == NDR_MEMSIZE ? 8 : 2, &existing)) {
             if (c->Pass == NDR_UNMARSHAL)
@@ -345,12 +341,12 @@ static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING p
     if (c->Pass == NDR_UNMARSHAL)
         c->Q->PendingRefId = type == FC_FP ? refid : 0;
 
-    /* a simple pointer carries the description of its pointee inline: a base type or a string. */
+    /* a simple pointer describes its pointee inline: a base type or a string. */
     PFORMAT_STRING pointee = (attrs & FC_SIMPLE_POINTER) ? pf + 2 : pf + 2 + *(const short *)(pf + 2);
     if (NDR_WIRE_READ(c->Pass)) {
         uchar *object = c->Pass == NDR_UNMARSHAL ? *slot : nullptr;
         if (attrs & FC_POINTER_DEREF) {
-            /* the pointee is a pointer itself, in a cell of its own. */
+            /* the pointee is itself a pointer, in its own cell. */
             NdrpAllocObject(c, &object, sizeof(void *), 0);
             c->Q->PendingRefId = 0;
             uchar *dummy = nullptr;
@@ -372,7 +368,6 @@ static void pointee_walk(NDRC *c, uchar **slot, uchar *pointer, PFORMAT_STRING p
     c->Q->Depth--;
 }
 
-/* the referent of a pointer: written, read or counted where the caller says. */
 static ULONG referent_io(NDRC *c, uchar *wire, ULONG value)
 {
     if (wire == NDR_WIRE_CURSOR)
@@ -389,8 +384,8 @@ static ULONG referent_io(NDRC *c, uchar *wire, ULONG value)
 }
 
 /*
- * a pointer of any kind at *slot. Its referent goes on the wire where the pointer stands and its pointee is written at once
- * for a top level pointer and queued for one inside another object.
+ * the referent goes on the wire where the pointer stands. a top level pointer's pointee is written at once, an embedded
+ * one's is queued.
  */
 void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar *wire)
 {
@@ -408,7 +403,7 @@ void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar 
             if (!pointer)
                 NDR_RAISE(RPC_X_NULL_REF_POINTER);
             present = TRUE;
-            /* only one inside another object has a number, which is never zero; a parameter has none. */
+            /* only embedded pointers get a referent number, never zero. parameters have none. */
             if (flags & NDRF_EMBEDDED)
                 referent_io(c, wire, 0x20000 + 4 * (c->Pass == NDR_MARSHAL ? m->UniquePtrCount++ : m->UniquePtrCount));
             break;
@@ -416,7 +411,7 @@ void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar 
         case FC_OP:
         case FC_IP:
             present = pointer != nullptr;
-            /* only the data written takes a number, the sizing before it leaves the count to it. */
+            /* only marshaling advances the counter, sizing just reads it. */
             referent_io(c, wire, present ? 0x20000 + 4 * (c->Pass == NDR_MARSHAL ? m->UniquePtrCount++ : m->UniquePtrCount) : 0);
             break;
         case FC_FP:
@@ -442,7 +437,7 @@ void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar 
             if (c->Q->HasPreset && slot)
                 *slot = c->Q->Preset;
             c->Q->HasPreset = FALSE;
-            /* the client lets go of the interface a pointer held before the reply gives it another. */
+            /* the client releases the interface a pointer held before the reply replaces it. */
             if (type == FC_IP && c->Pass == NDR_UNMARSHAL && m->IsClient && slot && *slot) {
                 const NDR_OLE_HOOKS *hooks = NdrpOleHooks();
                 if (hooks)
@@ -456,7 +451,7 @@ void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar 
         break;
     case NDR_FREE:
         present = pointer != nullptr;
-        /* an object that several full pointers reach is walked and freed once, by the first of them; a cycle ends there. */
+        /* an object several full pointers reach is walked and freed once, by the first, which also ends cycles. */
         if (present && type == FC_FP && m->FullPtrXlatTables && !NdrpInBuffer(m, pointer))
             present = NdrFullPointerFree(m->FullPtrXlatTables, pointer) != 0;
         break;
@@ -468,7 +463,7 @@ void NdrpPointerAt(NDRC *c, uchar **slot, PFORMAT_STRING pf, ULONG flags, uchar 
 
     if ((flags & NDRF_EMBEDDED) && m->IgnoreEmbeddedPointers)
         return;
-    /* a long chain of pointers is queued whatever it is in, so that it does not take the stack. */
+    /* long pointer chains are always queued so they do not eat the stack. */
     if ((flags & NDRF_EMBEDDED) && (c->Q->Regions || c->Q->Draining || c->Q->Depth > 64))
         queue_push(c, slot, pointer, pf, refid);
     else
@@ -518,9 +513,9 @@ static ULONG_PTR read_integer(const uchar *p, uchar fc)
 }
 
 /*
- * the value a correlation descriptor names: a field next to the array, one the array's structure holds, a parameter, a
- * constant, or what a routine of the stub computes. The descriptor is a type and operator byte and a 16 bit offset; a
- * descriptor of the new kind has more after it, which is not needed to find the value.
+ * the value a correlation descriptor names: a field next to the array, a field of the enclosing structure, a parameter, a
+ * constant, or what a stub routine computes. the descriptor is a type and operator byte and a 16 bit offset. the new kind
+ * has more after it, which is not needed to find the value.
  */
 ULONG_PTR NdrpComputeConformance(PMIDL_STUB_MESSAGE m, uchar *memory, PFORMAT_STRING d)
 {
@@ -588,11 +583,11 @@ ULONG_PTR NdrpComputeConformance(PMIDL_STUB_MESSAGE m, uchar *memory, PFORMAT_ST
     return value;
 }
 
-/* the variance descriptor is read the same way, and gives the actual count. */
+/* variance descriptors read the same way and give the actual count. */
 ULONG_PTR NdrpComputeVariance(PMIDL_STUB_MESSAGE m, uchar *memory, PFORMAT_STRING d)
 {
     ULONG_PTR max = m->MaxCount;
-    /* a routine of the stub that computes the length can set the offset too, which first_is asks for. */
+    /* a stub routine computing the length may also set the offset, for first_is. */
     m->Offset = 0;
     ULONG_PTR value = NdrpComputeConformance(m, memory, d);
     m->MaxCount = max;
@@ -600,7 +595,7 @@ ULONG_PTR NdrpComputeVariance(PMIDL_STUB_MESSAGE m, uchar *memory, PFORMAT_STRIN
     return value;
 }
 
-/* ------------------------------------------------------------------ checks of counts */
+/* ------------------------------------------------------------------ count checks */
 
 typedef struct NDR_CHECK {
     struct NDR_CHECK *Next;
@@ -613,7 +608,7 @@ typedef struct NDR_CHECK {
 
 enum { CHECK_COUNT, CHECK_VARIANCE, CHECK_SWITCH };
 
-/* true when everything a descriptor reads is read already: a parameter is when it comes before the one being read. */
+/* true once everything the descriptor reads is available: a parameter is when it comes before the one being read. */
 static BOOL ready(PMIDL_STUB_MESSAGE m, PFORMAT_STRING d)
 {
     if ((d[0] & 0xF0) != FC_TOP_LEVEL_CONFORMANCE)
@@ -694,7 +689,7 @@ void NdrpCheckSwitch(NDRC *c, uchar *memory, PFORMAT_STRING desc, LONG_PTR wire)
     check(c, memory, CHECK_SWITCH, desc, (ULONG_PTR)wire, 0, 0);
 }
 
-/* all the parameters are read: what waited for one is checked. */
+/* all parameters are read, check what waited for one. */
 void NdrpCheckDeferred(PMIDL_STUB_MESSAGE m)
 {
     m->ParamNumber = 0x7FFFFFFF;
@@ -716,7 +711,7 @@ void NdrpCheckRelease(PMIDL_STUB_MESSAGE m)
 
 /* ------------------------------------------------------------------ dispatch */
 
-/* walks the object of format f whose memory is *memory (for a pointer type, the pointer itself). */
+/* for a pointer type, *memory is the pointer itself. */
 void NdrpWalk(NDRC *c, uchar **memory, PFORMAT_STRING f, ULONG flags)
 {
     uchar fc = f[0];
@@ -770,7 +765,6 @@ void NdrpWalk(NDRC *c, uchar **memory, PFORMAT_STRING f, ULONG flags)
         break;
     default:
         if (NdrSimpleWire[fc]) {
-            /* a simple type given by its character. */
             NdrpAllocObject(c, memory, NdrSimpleMem[fc], flags);
             NdrpSimple(c, *memory, fc);
             break;
@@ -780,9 +774,8 @@ void NdrpWalk(NDRC *c, uchar **memory, PFORMAT_STRING f, ULONG flags)
 }
 
 /*
- * the outermost walk of a construct: creates the queue when there is none, runs it when the walk is done, and removes it
- * even when an exception leaves. A walk inside another, which is what a stub does when it hands a part of an object to
- * a function of the engine, uses the queue of the first.
+ * creates the queue when there is none, runs it when the walk is done, and removes it even when an exception leaves. a
+ * nested walk, as when a stub hands part of an object to an engine function, uses the outer walk's queue.
  */
 void NdrpWalkTop(PMIDL_STUB_MESSAGE m, NDR_PASS pass, uchar **memory, PFORMAT_STRING format, ULONG flags)
 {

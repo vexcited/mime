@@ -174,7 +174,7 @@ static LONG round_xf(float v)
     return (LONG)(v >= 0 ? v + 0.5f : v - 0.5f);
 }
 
-/* world to page with the GM_ADVANCED transform; rotations move points but not rectangles or glyphs. */
+/* world to page with the GM_ADVANCED transform. rotations move points but not rectangles or glyphs. */
 void DcTransformPoint(DC *dc, LONG *x, LONG *y)
 {
     if (!dc->State.HasXform)
@@ -194,7 +194,6 @@ static LONG round_double(double v)
     return (LONG)(v >= 0 ? v + 0.5 : v - 0.5);
 }
 
-/* the page transform: window to viewport extents and origins. */
 static void page_scale(DC *dc, double *sx, double *sy)
 {
     const DC_STATE *s = &dc->State;
@@ -329,9 +328,8 @@ HDC NTAPI NtGdiCreateCompatibleDC(HDC hdc)
 }
 
 /*
- * the win32k half of an enhanced metafile dc: the state of a dc of the
- * reference device without a surface, so drawing only moves the current
- * position and builds paths while gdi32 records.
+ * the win32k half of an enhanced metafile dc: a reference device dc without a surface, so drawing only moves the
+ * current position and builds paths while gdi32 records.
  */
 HDC NTAPI NtGdiCreateMetafileDC(HDC hdc)
 {
@@ -353,8 +351,8 @@ HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port,
                        HANDLE pdev, PVOID driver_info, PVOID umpd)
 {
     /*
-     * the display dc reads the screen as composed from the windows; what it draws is not shown. no name or DISPLAY
-     * is the whole virtual screen, \\.\DISPLAYn one monitor of it, and a monitor that is not there gives no dc.
+     * the display dc reads the screen as composed from the windows, and what it draws is not shown. no name or
+     * DISPLAY means the whole virtual screen, \\.\DISPLAYn one monitor, and a missing monitor gives no dc.
      */
     PWSTR name = nullptr;
     if (!NT_SUCCESS(W32CaptureString(device, &name, nullptr)))
@@ -373,7 +371,7 @@ HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port,
     return h;
 }
 
-/* a dc of the screen while a program set an 8 bit display mode. */
+/* a screen dc while a program has set an 8 bit display mode. */
 static BOOLEAN palette_display(const DC *dc)
 {
     return W32Display.Bits == 8 && !(dc && dc->Surface && (dc->Flags & DC_MEMORY));
@@ -385,7 +383,7 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
     DC *dc = DcLookup(hdc);
     int v = 0;
     UINT dpi = dc ? dc->Dpi : W32SystemDpi();
-    /* the size and refresh rate of the display the dc is of: its monitor, else the primary one. */
+    /* size and refresh rate of the dc's monitor, else of the primary one. */
     LONG width = W32Display.Width, height = W32Display.Height;
     ULONG refresh = W32Display.RefreshHz;
     MIME_MONITOR_INFO monitor;
@@ -426,7 +424,7 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
         v = -1;
         break;
     case NUMCOLORS:
-        /* a palette display has the twenty static colors, others more than an int says. */
+        /* a palette display has the twenty static colors, others more than an int holds. */
         v = palette_display(dc) ? 20 : -1;
         break;
     case ASPECTX:
@@ -499,9 +497,8 @@ static void isotropic_adjust(DC_STATE *s)
 }
 
 /*
- * the extents windows gives each mapping mode: the viewport is the device
- * in pixels, y up, and the window its physical size in the mode's units,
- * from the virtual resolution when one is set.
+ * the extents windows gives each mapping mode: the viewport is the device in pixels with y up, the window its
+ * physical size in the mode's units, from the virtual resolution when one is set.
  */
 static BOOL set_map_mode(DC *dc, int mode, DWORD *old)
 {
@@ -547,7 +544,7 @@ static BOOL set_map_mode(DC *dc, int mode, DWORD *old)
             wx = virt ? W32MulDiv(mx, 14400, 254) : W32MulDiv(mx, 144, 2540);
             wy = virt ? W32MulDiv(my, 14400, 254) : W32MulDiv(my, 144, 2540);
             break;
-        default: /* MM_LOMETRIC and MM_ISOTROPIC */
+        default: /* MM_LOMETRIC and MM_ISOTROPIC. */
             wx = virt ? mx * 10 : (mx + 50) / 100;
             wy = virt ? my * 10 : (my + 50) / 100;
             break;
@@ -561,7 +558,7 @@ static BOOL set_map_mode(DC *dc, int mode, DWORD *old)
     return TRUE;
 }
 
-/* private: sets the window or the viewport extent; fixed modes ignore it, like windows. */
+/* private. like windows, fixed mapping modes ignore it. */
 BOOL NTAPI NtGdiMimeSetExtent(HDC hdc, UINT which, int x, int y, LPSIZE old)
 {
     UserEnter();
@@ -591,7 +588,7 @@ BOOL NTAPI NtGdiMimeSetExtent(HDC hdc, UINT which, int x, int y, LPSIZE old)
 
 BOOL NTAPI NtGdiSetVirtualResolution(HDC hdc, int px, int py, int mx, int my)
 {
-    /* all four set it, all four zero clear it. */
+    /* setting all four enables it, all four zero clears it. */
     if (px ? (!py || !mx || !my) : (py || mx || my))
         return FALSE;
     UserEnter();
@@ -835,7 +832,6 @@ BOOL NTAPI NtGdiGetDCPoint(HDC hdc, UINT index, POINT *point)
     return ok && NT_SUCCESS(MimeCopyToUser(point, &p, sizeof(p)));
 }
 
-/* sets a dc point; the index has bit 31 set to distinguish it from offsets. */
 BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int mode)
 {
     if (count < 0 || count > 65536)
@@ -852,7 +848,7 @@ BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int m
     BOOL ok = dc != nullptr;
     if (dc) {
         for (int i = 0; i < count; i++) {
-            if (mode == 1) /* logical to device */
+            if (mode == 1) /* logical to device. */
                 DcLogicalToDevice(dc, &pts[i].x, &pts[i].y);
             else
                 DcDeviceToLogical(dc, &pts[i].x, &pts[i].y);
@@ -1183,7 +1179,7 @@ int NTAPI NtGdiGetRandomRgn(HDC hdc, HRGN region, int which)
             result = dc->State.HasMeta ? 1 : 0;
             if (result)
                 RgnCopy(&r->Region, &dc->State.MetaRgn);
-        } else if (which == 3) { /* APIRGN, the meta and clip regions together */
+        } else if (which == 3) { /* APIRGN: the meta and clip regions together. */
             result = dc->State.HasMeta || dc->State.HasClip ? 1 : 0;
             if (dc->State.HasMeta && dc->State.HasClip)
                 RgnCombine(&r->Region, &dc->State.MetaRgn, &dc->State.ClipRgn, RGN_AND);
@@ -1191,7 +1187,7 @@ int NTAPI NtGdiGetRandomRgn(HDC hdc, HRGN region, int which)
                 RgnCopy(&r->Region, &dc->State.MetaRgn);
             else if (dc->State.HasClip)
                 RgnCopy(&r->Region, &dc->State.ClipRgn);
-        } else if (which == 4) { /* SYSRGN, in screen coordinates */
+        } else if (which == 4) { /* SYSRGN, in screen coordinates. */
             RgnCopy(&r->Region, &dc->VisRgn);
             if (dc->Surface && dc->Surface->Window)
                 RgnOffset(&r->Region, dc->Surface->Window->WindowRect.left, dc->Surface->Window->WindowRect.top);

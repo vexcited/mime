@@ -1,7 +1,4 @@
-/*
- * the progress bar, msctls_progress32: a range, a position drawn as a
- * filled bar, and the marquee of PBS_MARQUEE that slides on a timer.
- */
+/* the progress bar, msctls_progress32, with the PBS_MARQUEE block that slides on a timer. */
 #include "comctl32_private.h"
 
 #define TIMER_MARQUEE 1
@@ -35,7 +32,7 @@ static void open_theme(PROGRESS *p)
     p->Theme = OpenThemeData(p->Hwnd, (p->Style & PBS_MARQUEE) ? L"Indeterminate::Progress" : L"Progress");
 }
 
-/* the border is the theme's, or a static edge without one. */
+/* the theme's border, or a static edge without a theme. */
 static void adjust_ex_style(PROGRESS *p)
 {
     DWORD ex = (DWORD)GetWindowLongW(p->Hwnd, GWL_EXSTYLE);
@@ -57,7 +54,7 @@ static void update_marquee_timer(PROGRESS *p)
         KillTimer(p->Hwnd, TIMER_MARQUEE);
 }
 
-/* the fill eases toward a new position when the theme animates it. */
+/* the theme may ease the fill toward a new position. */
 static BOOL can_animate(PROGRESS *p, int *interval)
 {
     int fps = 0;
@@ -153,7 +150,6 @@ static LRESULT set_range(PROGRESS *p, int low, int high)
     return old;
 }
 
-/* the extent of the fill for the shown position within a length. */
 static int fill_extent(PROGRESS *p, int length)
 {
     if (p->Style & PBS_MARQUEE)
@@ -236,7 +232,7 @@ static void paint_classic(PROGRESS *p, HDC dc, const RECT *client)
     p->MarqueeOffset += 8;
     if (p->MarqueeOffset > length + 38)
         p->MarqueeOffset -= length;
-    /* the block, and the part past the end drawn again at the start. */
+    /* the block, then the part past the end drawn again at the start. */
     for (int pass = 0; pass < 2; pass++) {
         int end = p->MarqueeOffset - pass * length, start = end - block;
         if (end <= 0 || start >= length)
@@ -326,7 +322,7 @@ LRESULT CALLBACK ProgressProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     }
     case WM_TIMER:
         if (wparam == TIMER_MARQUEE) {
-            /* one frame per paint: the paint arms the timer again. */
+            /* one frame per paint, and the paint arms the timer again. */
             KillTimer(hwnd, TIMER_MARQUEE);
             redraw(p);
         } else if (wparam == TIMER_ANIMATE) {

@@ -1,6 +1,5 @@
 /*
- * odbc api: the types and constants of sqltypes.h, sql.h, sqlext.h and
- * sqlucode.h, and the functions odbc32.dll exports.
+ * odbc32.dll: the types and constants of sqltypes.h, sql.h, sqlext.h and sqlucode.h.
  */
 #ifndef MIME_WIN32_SQL_H
 #define MIME_WIN32_SQL_H

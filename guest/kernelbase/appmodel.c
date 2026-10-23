@@ -1,13 +1,12 @@
 /*
- * the application model beyond the names of packages: the information of a package that is open, the notifications of
- * the state of an application and the memory resource notifications. No package is installed and no application is in a
- * state a system manages, so a package is never found and nothing that is open can be asked about.
+ * application model beyond package names: package info, app state notifications and memory resource notifications.
+ * no package is installed and the system manages no app state, so a package is never found.
  */
 #include "kernelbase_private.h"
 
 LONG WINAPI PackageIdFromFullName(PCWSTR full, UINT32 flags, UINT32 *length, BYTE *buffer);
 
-/* a package by its full name: one that is well formed is not there, and the reference of a package is never given. */
+/* a well formed full name is simply not installed, and no reference is ever returned. */
 DECLSPEC_EXPORT LONG WINAPI OpenPackageInfoByFullName(PCWSTR full, UINT32 reserved, PVOID *reference)
 {
     UINT32 length = 0;
@@ -33,7 +32,7 @@ DECLSPEC_EXPORT LONG WINAPI GetPackageInfo(PVOID reference, UINT32 flags, UINT32
     return ERROR_INVALID_PARAMETER;
 }
 
-/* a notification of the memory of the machine is never made (see CreateMemoryResourceNotification), so no handle is one. */
+/* CreateMemoryResourceNotification never creates one, so no handle is valid here. */
 DECLSPEC_EXPORT BOOL WINAPI QueryMemoryResourceNotification(HANDLE handle, PBOOL state)
 {
     if (!state) {
@@ -44,8 +43,8 @@ DECLSPEC_EXPORT BOOL WINAPI QueryMemoryResourceNotification(HANDLE handle, PBOOL
     return FALSE;
 }
 
-/* the registration of a routine for the changes of the state of the application, which are the suspension and the
-   resumption that a system manages. Nothing here changes the state of a process, so the routine is never called. */
+/* registers for system managed suspend and resume. nothing here changes a process's state, so the routine is never
+   called. */
 DECLSPEC_EXPORT ULONG WINAPI RegisterAppStateChangeNotification(PVOID routine, PVOID context, PVOID *registration)
 {
     if (!routine || !registration)

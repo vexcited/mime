@@ -1,6 +1,4 @@
-/*
- * multimedia timers and sounds, the subset of winmm.dll mime provides.
- */
+/* multimedia timers and sounds, the subset of winmm.dll mime provides. */
 #ifndef MIME_WIN32_MMSYSTEM_H
 #define MIME_WIN32_MMSYSTEM_H
 
@@ -803,7 +801,7 @@ typedef UINT(CALLBACK *YIELDPROC)(MCIDEVICEID id, DWORD data);
 
 #define MAKEMCIRESOURCE(value, id) MAKELONG((value), (id))
 
-/* the parameter blocks are packed, as in windows' headers. */
+/* parameter blocks are packed, like in windows' headers. */
 #pragma pack(push, 1)
 typedef struct tagMCI_GENERIC_PARMS {
     DWORD_PTR dwCallback;

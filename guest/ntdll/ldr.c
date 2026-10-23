@@ -32,11 +32,8 @@ PVOID LdrpKernel32ThreadInitThunk;
 static PEB_LDR_DATA g_ldr;
 static BOOLEAN g_process_initialized;
 
-/*
- * a 32-bit program on x64 runs on this ntdll and wow64.dll, as on windows:
- * the 64-bit side loads wow64.dll and nothing of the program, and every
- * thread then runs Wow64LdrpInitialize, which never returns.
- */
+/* like windows, a 32-bit program on x64 has the 64-bit side load only wow64.dll, then every thread runs
+   Wow64LdrpInitialize, which never returns. */
 static void(NTAPI *g_wow64_initialize)(PCONTEXT context);
 void(NTAPI *LdrpWow64PrepareForException)(PEXCEPTION_RECORD record, PCONTEXT context);
 static BOOLEAN g_process_detaching;
@@ -46,7 +43,7 @@ static RTL_CRITICAL_SECTION g_peb_lock = RTL_CRITICAL_SECTION_INIT;
 static constexpr WCHAR g_system32[] = L"C:\\Windows\\SysWOW64\\";
 #define LDRP_MACHINE IMAGE_FILE_MACHINE_I386
 #elif defined(__x86_64__) && !defined(MIME_X64_NATIVE)
-/* the x64 system dlls, for programs run by the translator. */
+/* x64 system dlls for programs run by the translator. */
 static constexpr WCHAR g_system32[] = L"C:\\Windows\\SysX64\\";
 #define LDRP_MACHINE IMAGE_FILE_MACHINE_AMD64
 #elifdef __x86_64__
@@ -58,7 +55,7 @@ static constexpr WCHAR g_system32[] = L"C:\\Windows\\System32\\";
 #endif
 static constexpr WCHAR g_windows[] = L"C:\\Windows\\";
 
-/* modules with static thread local storage, indexed by their tls slot. */
+/* modules with static tls, indexed by tls slot. */
 typedef struct TLS_MODULE {
     PLDR_DATA_TABLE_ENTRY Entry;
     IMAGE_TLS_DIRECTORY *Directory;
@@ -66,7 +63,7 @@ typedef struct TLS_MODULE {
 static TLS_MODULE g_tls_modules[64];
 static ULONG g_tls_count;
 
-/* a thread's tls slots, listed so a dll loaded later reaches every thread. */
+/* per thread tls slots, linked so a dll loaded later can reach every thread. */
 typedef struct TLS_VECTOR {
     LIST_ENTRY Link;
     PVOID Slots[RTL_NUMBER_OF(g_tls_modules)];
@@ -74,7 +71,7 @@ typedef struct TLS_VECTOR {
 static LIST_ENTRY g_tls_vectors = {&g_tls_vectors, &g_tls_vectors};
 
 typedef struct LOAD_CONTEXT {
-    BOOLEAN Static; /* part of the initial process image */
+    BOOLEAN Static; /* part of the initial process image. */
     PCWSTR SearchPath;
 } LOAD_CONTEXT;
 
@@ -267,7 +264,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrFindEntryForAddress(PVOID address, PLDR_DATA_TABL
     return STATUS_NO_MORE_ENTRIES;
 }
 
-/* the image view holding an address, as the memory manager knows it; NULL for a partial or data view. */
+/* NULL for a partial or data view. */
 static PVOID image_base_from_memory(PVOID pc)
 {
     MEMORY_IMAGE_INFORMATION mi;
@@ -279,12 +276,8 @@ static PVOID image_base_from_memory(PVOID pc)
     return mi.ImageBase;
 }
 
-/*
- * the base of the image an address lies in, or NULL, also stored in *base,
- * which may not be NULL. the loaded modules answer, not the code tables
- * added at run time; until the process is initialized the memory manager
- * does, as windows asks it before its loader is ready.
- */
+/* only loaded modules count, not code tables added at run time. before process init the memory manager answers,
+   like windows does before its loader is ready. */
 NTDLL_EXPORT PVOID NTAPI RtlPcToFileHeader(PVOID pc, PVOID *base)
 {
     PLDR_DATA_TABLE_ENTRY entry;
@@ -299,11 +292,8 @@ NTDLL_EXPORT PVOID NTAPI RtlPcToFileHeader(PVOID pc, PVOID *base)
 
 /* ------------------------------------------------------------------ api sets */
 
-/*
- * api set contracts resolve to the dll that hosts them. the exact table is windows' own schema, keyed by
- * the name up to the last hyphen so that every version matches, and keeps the contracts whose host Mime has.
- * the prefix rules below it catch the rest of a family and name the dll that implements it here.
- */
+/* the exact table follows the windows schema, keyed by the name up to the last hyphen so every version matches,
+   and only lists contracts whose host dll Mime has. the prefix rules after it catch the rest of each family. */
 typedef struct API_SET_RULE {
     PCWSTR Prefix;
     PCWSTR Host;
@@ -349,10 +339,7 @@ static const API_SET_RULE g_api_sets[] = {
     {L"ext-ms-win-", L"kernelbase.dll", 0},
 };
 
-/*
- * the schema's rule for a contract name, which ends in a hyphen and a version, perhaps followed by the extension
- * of the dll. The name's length without the extension is length, and version_at is where the version starts.
- */
+/* length excludes any .dll extension, version_at receives where the version number starts. */
 static const API_SET_RULE *find_contract(PCWSTR name, SIZE_T length, SIZE_T *version_at)
 {
     WCHAR key[96];
@@ -380,7 +367,6 @@ static const API_SET_RULE *find_contract(PCWSTR name, SIZE_T length, SIZE_T *ver
     return nullptr;
 }
 
-/* the host of a contract in the schema table, or null; a name is the contract, a hyphen and a version, and .dll. */
 static PCWSTR find_api_set_host(PCWSTR name)
 {
     SIZE_T length = wcslen(name);
@@ -405,10 +391,7 @@ static PCWSTR resolve_api_set(PCWSTR name)
     return name;
 }
 
-/*
- * whether a contract has a host: any version of it will do, and the name may have an extension. A name that is
- * no contract is not present, and says so without an error.
- */
+/* any version matches. a name that is not a contract is reported absent, not as an error. */
 NTDLL_EXPORT NTSTATUS NTAPI ApiSetQueryApiSetPresence(PCUNICODE_STRING name, PBOOLEAN present)
 {
     *present = FALSE;
@@ -434,11 +417,8 @@ NTDLL_EXPORT NTSTATUS NTAPI ApiSetQueryApiSetPresence(PCUNICODE_STRING name, PBO
     return STATUS_SUCCESS;
 }
 
-/*
- * STATUS_SUCCESS when a contract of at least the version asked is implemented, STATUS_NOT_FOUND when it is not.
- * The name has no extension; one that does not end in a number is an invalid parameter, as is a name that does
- * not start like a contract.
- */
+/* the name has no extension. a name without a trailing version or without the api-/ext- prefix is
+   STATUS_INVALID_PARAMETER. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlIsApiSetImplemented(PCSTR name)
 {
     SIZE_T length = strlen(name);
@@ -455,7 +435,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlIsApiSetImplemented(PCSTR name)
     SIZE_T version_at;
     const API_SET_RULE *rule = find_contract(wide, length, &version_at);
     if (!rule) {
-        /* a name that ends in no version is not a name at all, one with a version nobody has is absent. */
+        /* no version means a bad name, an unknown contract with a version is just absent. */
         return length && wide[length - 1] >= '0' && wide[length - 1] <= '9' ? STATUS_NOT_FOUND : STATUS_INVALID_PARAMETER;
     }
     ULONG version = 0;
@@ -500,7 +480,7 @@ static NTSTATUS map_image(HANDLE file, PVOID *base)
     NtClose(section);
     if (status == STATUS_IMAGE_NOT_AT_BASE)
         status = STATUS_SUCCESS;
-    /* portable il is consumed by the managed runtime, without executing its native bootstrap. */
+    /* the managed runtime consumes portable il without running its native bootstrap. */
     if (NT_SUCCESS(status) && LdrpNtHeaders(*base)->FileHeader.Machine != LDRP_MACHINE && !is_portable_il(*base)) {
         NtUnmapViewOfSection(NtCurrentProcess(), *base);
         status = STATUS_INVALID_IMAGE_FORMAT;
@@ -542,7 +522,7 @@ static BOOLEAN try_directory(PCWSTR dir, SIZE_T dir_chars, PCWSTR name, PWSTR ou
 }
 
 #if defined(__i386__) || (defined(__x86_64__) && !defined(MIME_X64_NATIVE))
-/* System32 holds the dlls of another processor, so a search through it means this processor's copies. */
+/* System32 holds another processor's dlls, so searching it means this processor's copies. */
 static BOOLEAN is_native_system32(PCWSTR dir, SIZE_T chars)
 {
     static const WCHAR system32[] = L"C:\\Windows\\System32";
@@ -577,7 +557,7 @@ static BOOLEAN search_list(PCWSTR list, PCWSTR name, PWSTR out, SIZE_T out_chars
     return FALSE;
 }
 
-/* whether the process asked to find a dll of a plain name in System32 before anywhere else, read once. */
+/* read once: whether plain dll names search System32 first. */
 static BOOLEAN prefers_system32(void)
 {
     static LONG answer = -1;
@@ -589,7 +569,7 @@ static BOOLEAN prefers_system32(void)
     return answer == 1;
 }
 
-/* finds a dll the way windows does for desktop applications with safe search. */
+/* windows' desktop search order with safe dll search mode. */
 static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_chars)
 {
     if (wcschr(name, '\\') || wcschr(name, '/') || (name[0] && name[1] == ':')) {
@@ -771,7 +751,7 @@ static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
     IMAGE_IMPORT_DESCRIPTOR *desc = LdrpImageDirectory(module->DllBase, IMAGE_DIRECTORY_ENTRY_IMPORT, &size);
     if (!desc)
         return STATUS_SUCCESS;
-    /* the import address table usually lives in read only data. */
+    /* the iat usually lives in read only data. */
     ULONG iat_size = 0;
     PVOID iat = LdrpImageDirectory(module->DllBase, IMAGE_DIRECTORY_ENTRY_IAT, &iat_size);
     PVOID protect_base = iat ? iat : module->DllBase;
@@ -801,7 +781,7 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
     IMAGE_TLS_DIRECTORY *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
     if (!tls)
         return;
-    /* the place of a library that was unloaded is used again, a program may load and free one many times. */
+    /* reuse the slot of an unloaded library, a program may load and free one many times. */
     ULONG index = g_tls_count;
     for (ULONG i = 0; i < g_tls_count; i++) {
         if (!g_tls_modules[i].Directory) {
@@ -821,7 +801,7 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
         *(PULONG)tls->AddressOfIndex = index;
 }
 
-/* a library that goes takes its blocks of every thread, and its place in the table is free for the next one. */
+/* frees the library's block in every thread and its slot. */
 static void release_tls(PLDR_DATA_TABLE_ENTRY e)
 {
     for (ULONG i = 0; i < g_tls_count; i++) {
@@ -837,7 +817,6 @@ static void release_tls(PLDR_DATA_TABLE_ENTRY e)
     }
 }
 
-/* fills the empty slots of a thread with fresh copies of the static tls blocks. */
 static NTSTATUS fill_tls(TLS_VECTOR *v)
 {
     for (ULONG i = 0; i < g_tls_count; i++) {
@@ -854,7 +833,6 @@ static NTSTATUS fill_tls(TLS_VECTOR *v)
     return STATUS_SUCCESS;
 }
 
-/* gives the current thread its copy of every static tls block. */
 static NTSTATUS allocate_thread_tls(void)
 {
     if (!g_tls_count)
@@ -870,7 +848,7 @@ static NTSTATUS allocate_thread_tls(void)
     return fill_tls(v);
 }
 
-/* a dll with tls loaded after threads started: as on windows, each running thread gets its blocks. */
+/* for a tls dll loaded late: like windows, every running thread gets its block. */
 static NTSTATUS allocate_process_tls(void)
 {
     NTSTATUS status = allocate_thread_tls();
@@ -907,7 +885,7 @@ static void call_tls_callbacks(PLDR_DATA_TABLE_ENTRY e, ULONG reason)
 
 /* ------------------------------------------------------------------ dll entry points */
 
-/* tls callbacks and DllMain run with the module's activation context active, the process default when it has none. */
+/* tls callbacks and DllMain run in the module's activation context, or the process default. */
 static BOOLEAN call_entry(PLDR_DATA_TABLE_ENTRY e, ULONG reason, PVOID reserved)
 {
     LDRP_SXS_FRAME frame;
@@ -924,7 +902,7 @@ static BOOLEAN call_entry(PLDR_DATA_TABLE_ENTRY e, ULONG reason, PVOID reserved)
     return ok;
 }
 
-/* runs DllMain(PROCESS_ATTACH) for every module not yet initialized, dependencies first. */
+/* PROCESS_ATTACH for every uninitialized module, dependencies first. */
 static NTSTATUS run_initializers(PVOID reserved)
 {
     for (PLIST_ENTRY l = g_ldr.InInitializationOrderModuleList.Flink; l != &g_ldr.InInitializationOrderModuleList;
@@ -944,7 +922,7 @@ static NTSTATUS run_initializers(PVOID reserved)
     return STATUS_SUCCESS;
 }
 
-/* initializes one module after the modules it imports, the ones a DllMain that loads a library has to wait for. */
+/* imports are initialized first, a DllMain that loads a library has to wait for them. */
 static NTSTATUS init_module(PLDR_DATA_TABLE_ENTRY e, PVOID reserved)
 {
     if (e->Flags & (LDRP_PROCESS_ATTACH_CALLED | LDRP_ENTRY_PROCESSED))
@@ -982,10 +960,8 @@ static NTSTATUS init_module(PLDR_DATA_TABLE_ENTRY e, PVOID reserved)
     return STATUS_SUCCESS;
 }
 
-/*
- * what a load or a lookup added to the initialization list, and what it was asked for: a DllMain that loads a
- * library or looks up a procedure must not start the modules that wait for the outer load.
- */
+/* only runs what this load or lookup added: a DllMain that loads a library or looks up a procedure must not start
+   modules that wait for the outer load. */
 static NTSTATUS run_new_initializers(PLIST_ENTRY before, PLDR_DATA_TABLE_ENTRY target)
 {
     NTSTATUS status = target ? init_module(target, nullptr) : STATUS_SUCCESS;
@@ -1002,7 +978,7 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
     PCWSTR base_name = name + wcslen(name);
     while (base_name > name && base_name[-1] != '\\' && base_name[-1] != '/')
         base_name--;
-    /* the active activation context may redirect a plain name before any search. */
+    /* the active activation context may redirect a plain name before searching. */
     WCHAR path[MAX_PATH];
     BOOLEAN redirected = NT_SUCCESS(LdrpSxsRedirectDll(name, path, RTL_NUMBER_OF(path)));
     PLDR_DATA_TABLE_ENTRY e = redirected ? find_by_path(path) : find_by_name(base_name);
@@ -1030,7 +1006,7 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
         return STATUS_NO_MEMORY;
     }
     e->Flags |= LDRP_LOAD_IN_PROGRESS | (ctx->Static ? LDRP_STATIC_LINK : 0);
-    /* a dll's own manifest is its context, active while its imports resolve. */
+    /* the dll's own manifest is active while its imports resolve. */
     if (!(e->Flags & LDRP_COR_ILONLY))
         status = LdrpSxsProbeDll(base, path, (PACTIVATION_CONTEXT *)&e->EntryPointActivationContext);
     if (NT_SUCCESS(status)) {
@@ -1155,7 +1131,7 @@ static void initialize_process(PCONTEXT context)
         return;
     }
 #endif
-    /* the process default activation context, built from the program's manifest as csrss does on windows. */
+    /* windows has csrss build the default activation context from the program's manifest. */
     status = LdrpSxsInitializeProcess(peb->ImageBaseAddress, peb->ProcessParameters->ImagePathName.Buffer);
     if (!NT_SUCCESS(status))
         fatal("the program's side by side configuration is incorrect", status);
@@ -1202,7 +1178,7 @@ static void initialize_thread(void)
     RtlLeaveCriticalSection(&LdrpLoaderLock);
 }
 
-/* called from LdrInitializeThunk on every new thread before it starts. */
+/* called from LdrInitializeThunk on every new thread. */
 void NTAPI LdrpInitialize(PCONTEXT context)
 {
     if (!g_process_initialized) {
@@ -1266,7 +1242,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrLoadDll(PCWSTR search_path, PULONG flags, PCUNICO
 {
     WCHAR dll[MAX_PATH];
     unicode_to_cstr(name, dll, RTL_NUMBER_OF(dll));
-    /* the search path argument is a ';' separated list unless it is a small flags value. */
+    /* the search path is a ';' separated list unless it is a small flags value. */
     LOAD_CONTEXT ctx = {FALSE, ((ULONG_PTR)search_path & ~(ULONG_PTR)0xFFFF) ? search_path : nullptr};
     RtlEnterCriticalSection(&LdrpLoaderLock);
     PLDR_DATA_TABLE_ENTRY e;
@@ -1282,13 +1258,8 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrLoadDll(PCWSTR search_path, PULONG flags, PCUNICO
     return status;
 }
 
-/*
- * the last 64 modules to be unloaded, which crash reporters ask for to say what had been loaded when a process fell: the
- * entries windows keeps, in the layout of RtlGetUnloadEventTraceEx. an entry has its module's address and size, a serial
- * number, the time stamp and checksum of its headers, the first 31 characters of its name and, where windows puts the
- * version of the file, zeros. the first event takes the serial that follows the start value of windows, and the slot of
- * its serial modulo the number of slots.
- */
+/* the last 64 unloaded modules, which crash reporters read. the name is cut to 31 characters and Version stays
+   zero. sequence numbers start where windows starts them, the slot is the sequence modulo 64. */
 typedef struct _RTL_UNLOAD_EVENT_TRACE_EX {
     PVOID BaseAddress;
     SIZE_T SizeOfImage;
@@ -1324,7 +1295,7 @@ static void record_unload(PLDR_DATA_TABLE_ENTRY e)
         event->ImageName[bytes / sizeof(WCHAR)] = 0;
 }
 
-/* the sizes and the entries of the trace by address: the pointers stay valid for the life of the process. */
+/* the returned pointers stay valid for the life of the process. */
 NTDLL_EXPORT PVOID NTAPI RtlGetUnloadEventTraceEx(PULONG *element_size, PULONG *element_count, PVOID *trace)
 {
     *element_size = &g_unload_event_size;
@@ -1343,7 +1314,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrUnloadDll(PVOID base)
         if (e->ObsoleteLoadCount != 0xFFFF && !(e->Flags & LDRP_STATIC_LINK) && --e->ReferenceCount == 0) {
             if (e->Flags & LDRP_PROCESS_ATTACH_CALLED)
                 call_entry(e, DLL_PROCESS_DETACH, nullptr);
-            /* dependencies keep their references; they stay loaded. */
+            /* dependencies keep their references and stay loaded. */
             record_unload(e);
             destroy_entry(e);
             NtUnmapViewOfSection(NtCurrentProcess(), base);
@@ -1426,11 +1397,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddress(PVOID base, PCANSI_STRING nam
 
 /* ------------------------------------------------------------------ delay loads */
 
-/*
- * what a failure hook is told: the delay load descriptor, the thunk, the name of the dll and what is imported,
- * the module if it was loaded, and the error. Notifications: 3 for a dll that did not load, 4 for a procedure
- * that was not found.
- */
+/* passed to the failure hook with reason 3 when the dll did not load, 4 when the procedure was not found. */
 typedef struct DELAYLOAD_INFO_ {
     ULONG Size;
     const IMAGE_DELAYLOAD_DESCRIPTOR *Descriptor;
@@ -1454,14 +1421,8 @@ typedef PVOID(NTAPI *DELAYLOAD_SYSTEM_HOOK)(PCSTR dll, PCSTR procedure);
 #define VCPP_LOAD_FAILED 0xC06D007E
 #define VCPP_PROC_FAILED 0xC06D007F
 
-/*
- * the address that an import of a delay load descriptor stands for, loaded on the first use: the dll is
- * loaded by the name in the descriptor and kept in its module slot, the export is found by name or ordinal
- * from the import name table entry at the thunk's index, and the thunk of the import address table is
- * replaced by it. A thunk that no longer points into the image is already resolved and gives what it holds.
- * A dll or an export that is missing goes to the hook of the program, then to the system hook, and is
- * raised as an exception when neither gives an address.
- */
+/* a thunk that no longer points into the image is already resolved. a missing dll or export goes to the program's
+   hook, then the system hook, and raises an exception when neither returns an address. */
 NTDLL_EXPORT PVOID NTAPI LdrResolveDelayLoadedAPI(PVOID base, const IMAGE_DELAYLOAD_DESCRIPTOR *descriptor,
                                                   DELAYLOAD_DLL_HOOK dll_hook, DELAYLOAD_SYSTEM_HOOK system_hook,
                                                   PVOID *thunk, ULONG flags)
@@ -1504,7 +1465,7 @@ NTDLL_EXPORT PVOID NTAPI LdrResolveDelayLoadedAPI(PVOID base, const IMAGE_DELAYL
         RtlInitUnicodeString(&name, wide);
         status = LdrLoadDll(nullptr, nullptr, &name, &module);
         if (NT_SUCCESS(status)) {
-            /* another thread may have been first; its module is the one kept. */
+            /* if another thread won the race, keep its module. */
             PVOID raced = __atomic_exchange_n(slot, module, __ATOMIC_ACQ_REL);
             (void)raced;
         }
@@ -1591,11 +1552,8 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllFullName(PVOID base, PUNICODE_STRING name)
     return name->MaximumLength >= e->FullDllName.Length ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
 }
 
-/*
- * The directories a dll of a name is looked for in, as the strings the loader searches: the first is the part that is
- * searched for dlls named without a path, the second the whole list with the directory of the program, the system
- * directories, the current one and the path. A caller releases both with RtlReleasePath.
- */
+/* dll_path is what plain dll names search, search_path the full list: program directory, system directories,
+   current directory and PATH. the caller frees both with RtlReleasePath. */
 NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllPath(PCWSTR dll_name, ULONG flags, PWSTR *dll_path, PWSTR *search_path)
 {
     PRTL_USER_PROCESS_PARAMETERS pp = NtCurrentPeb()->ProcessParameters;

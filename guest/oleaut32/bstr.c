@@ -1,8 +1,7 @@
 /*
- * BSTR strings. a BSTR points to the characters; the DWORD before them
- * holds the length in bytes without the terminating null. on 64 bit
- * windows the block starts 8 bytes before the characters, the length
- * taking the upper half, so the string stays 8 byte aligned.
+ * BSTR strings. a BSTR points at the characters, and the DWORD before them holds the byte length without the
+ * terminator. on 64-bit windows the block starts 8 bytes before the characters with the length in its upper half, so
+ * the string stays 8 byte aligned.
  */
 #include "oleaut32_private.h"
 #include <mime/win32/winnls.h>
@@ -20,7 +19,7 @@ static BSTR allocate(UINT bytes)
         return nullptr;
     *(DWORD *)(block + 4) = bytes;
     BYTE *text = block + BSTR_HEADER;
-    /* the terminator is the character after the last whole one, so an odd byte count is followed by a zero byte and a zero character. */
+    /* the terminator follows the last whole character, so an odd byte count gets a zero byte then a zero character. */
     text[bytes] = 0;
     text[(bytes + 1) & ~1u] = 0;
     text[((bytes + 1) & ~1u) + 1] = 0;
@@ -54,9 +53,8 @@ WINOLEAUTAPI BSTR WINAPI SysAllocString(const OLECHAR *string)
 }
 
 /*
- * strings that something took a reference to with SysAddRefString: the references beyond the first, kept by address. A
- * free of one of them only takes a reference away, and the string goes with the last. Most programs never take one, so
- * the table is only looked in when it is not empty.
+ * references taken with SysAddRefString beyond the first, by address. freeing such a string only drops a reference,
+ * and the string goes with the last one. most programs never take one, so the table is only searched when not empty.
  */
 static SRWLOCK g_ref_lock = SRWLOCK_INIT;
 static struct {
@@ -99,7 +97,7 @@ WINOLEAUTAPI void WINAPI SysFreeString(BSTR bstr)
         AutFree((BYTE *)bstr - BSTR_HEADER);
 }
 
-/* a string with a reference taken lives until it has been freed as many times as it has references. */
+/* the string lives until it is freed once per reference. */
 WINOLEAUTAPI HRESULT WINAPI SysAddRefString(BSTR bstr)
 {
     if (!bstr)
@@ -138,7 +136,7 @@ WINOLEAUTAPI void WINAPI SysReleaseString(BSTR bstr)
     SysFreeString(bstr);
 }
 
-/* strings were not cached by this system to begin with, so there is nothing to turn off. */
+/* strings were never cached here, so there is nothing to turn off. */
 WINOLEAUTAPI void WINAPI SetOaNoCache(void)
 {
 }
@@ -154,8 +152,8 @@ WINOLEAUTAPI UINT WINAPI SysStringLen(BSTR bstr)
 }
 
 /*
- * the new string may point into the old one, so it is copied before the old one is freed. Without a source, or with the old
- * string as the source, the characters of the old one stay, as far as the new one reaches.
+ * the new string may point into the old one, so it is copied before the old one is freed. with no source, or the old
+ * string as source, the old characters stay as far as the new length reaches.
  */
 WINOLEAUTAPI INT WINAPI SysReAllocStringLen(BSTR *bstr, const OLECHAR *string, UINT length)
 {
@@ -206,7 +204,7 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrCat(BSTR left, BSTR right, BSTR *result)
     return S_OK;
 }
 
-/* locale 0 orders by the 16 bit units, as numbers, and then by a last odd byte. */
+/* locale 0 compares the 16-bit units as numbers, then a trailing odd byte. */
 static int compare_units(const BYTE *a, const BYTE *b, UINT common)
 {
     for (UINT i = 0; i + 1 < common; i += 2) {

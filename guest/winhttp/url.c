@@ -9,7 +9,7 @@ typedef struct {
     INTERNET_SCHEME Scheme;
 } WH_SCHEME;
 
-/* the empty scheme cracks too, as scheme 0. */
+/* an empty scheme parses as scheme 0. */
 static const WH_SCHEME Schemes[] = {
     {L"", 0, 0},
     {L"http", 4, INTERNET_SCHEME_HTTP},
@@ -31,7 +31,7 @@ static BOOL Digit(WCHAR c)
     return c >= '0' && c <= '9';
 }
 
-/* bytes the url escaping of winhttp turns into %XX. */
+/* bytes escaped as %XX. */
 static BOOL EscapedByte(BYTE c, BOOL gopher)
 {
     if (c <= 0x20 || c >= 0x7F)
@@ -41,7 +41,7 @@ static BOOL EscapedByte(BYTE c, BOOL gopher)
     return gopher && (c == '+' || c == '?');
 }
 
-/* the utf-8 escaped form of text, a heap string. */
+/* allocate UTF-8-escaped text. */
 static char *EscapeUtf8(LPCWSTR text, DWORD length, BOOL gopher)
 {
     int bytes = WideCharToMultiByte(CP_UTF8, 0, text, (int)length, nullptr, 0, nullptr, nullptr);
@@ -80,7 +80,7 @@ static int HexValue(char c)
     return -1;
 }
 
-/* copies one component as winhttp does: a pointer into the url, or a copy, decoded and escaped on request. */
+/* return a component pointer or copy, decoding and escaping as requested. */
 static DWORD CopyComponent(LPCWSTR source, DWORD length, LPWSTR *buffer, DWORD *size, BOOL decode, BOOL escape,
                            BOOL *short_buffer)
 {
@@ -282,7 +282,7 @@ BOOL WhCrack(LPCWSTR url, DWORD length, DWORD flags, URL_COMPONENTS *uc)
         explicit_port = TRUE;
     }
 
-    /* the path keeps the query unless the caller asked for the extra info. */
+    /* retain the query in the path unless extra info was requested. */
     LPCWSTR path = p;
     DWORD path_length = (DWORD)(text_end - p);
     LPCWSTR extra = nullptr;
@@ -339,7 +339,7 @@ BOOL WINAPI WinHttpCrackUrl(LPCWSTR url, DWORD length, DWORD flags, LPURL_COMPON
     return WhCrack(url, length, flags, components);
 }
 
-/* escapes a host, user or password with ICU_ESCAPE_AUTHORITY into a buffer of capacity characters. */
+/* escape authority fields into a character-counted buffer. */
 static DWORD EscapeAuthority(LPCWSTR text, DWORD length, PWSTR out, DWORD capacity, DWORD *written)
 {
     static const char hex[] = "0123456789ABCDEF";
@@ -390,7 +390,7 @@ static DWORD CreateUrl(LPURL_COMPONENTS uc, DWORD flags, LPWSTR url, LPDWORD url
         scheme_length = 4;
         number = INTERNET_SCHEME_HTTP;
     }
-    /* the escaping class: http and https 4, ftp 1, gopher 2, compared on the given length. */
+    /* escape classes: HTTP and HTTPS 4, FTP 1, Gopher 2; compare the supplied length. */
     DWORD class = 0;
     if (scheme_length) {
         if (!_wcsnicmp(scheme, L"http", scheme_length) || !_wcsnicmp(scheme, L"https", scheme_length))

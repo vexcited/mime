@@ -1,14 +1,11 @@
-/*
- * what the acm codecs share: the messages every installable driver
- * answers alike, and the copy of their details.
- */
+/* helpers shared by the acm codecs: the driver messages they all answer alike, and their details. */
 #ifndef MIME_LIB_ACMDRV_H
 #define MIME_LIB_ACMDRV_H
 
 #include <mime/win32/winbase.h>
 #include <mime/win32/msacmdrv.h>
 
-/* what DefDriverProc answers, without importing winmm for it. */
+/* what DefDriverProc returns, without importing winmm. */
 static inline LRESULT AcmdDefault(UINT message)
 {
     switch (message) {
@@ -28,10 +25,7 @@ static inline LRESULT AcmdDefault(UINT message)
     }
 }
 
-/*
- * the driver's details cut to the caller's size, its strings only when the
- * size reaches past the icon, the long ones only past the long name.
- */
+/* cut to the caller's size: the names only past the icon, copyright and features only past the long name. */
 static inline LRESULT AcmdDetails(ACMDRIVERDETAILSW *out, WORD pid, DWORD version, DWORD support, DWORD tags,
                                   const WCHAR *short_name, const WCHAR *long_name, const WCHAR *copyright,
                                   const WCHAR *features)
@@ -58,7 +52,7 @@ static inline LRESULT AcmdDetails(ACMDRIVERDETAILSW *out, WORD pid, DWORD versio
     return MMSYSERR_NOERROR;
 }
 
-/* the open of a driver id without a description, or of a driver by the acm. */
+/* opening by driver id has no description, the acm passes an audio codec one. */
 static inline BOOL AcmdOpenAllowed(ACMDRVOPENDESCW *desc)
 {
     return !desc || desc->fccType == ACMDRIVERDETAILS_FCCTYPE_AUDIOCODEC;

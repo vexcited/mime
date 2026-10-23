@@ -1,8 +1,6 @@
 /*
- * l3codeca.acm, the mpeg layer 3 decoder windows ships from fraunhofer:
- * mpeg 1, 2 and 2.5 layer iii to 8 or 16 bit pcm, with stereo mixed to
- * mono and the rate halved or quartered on request. it has no encoder;
- * pcm sources are refused.
+ * l3codeca.acm, the Fraunhofer MPEG layer 3 decoder windows ships: MPEG 1, 2 and 2.5 layer iii to 8 or 16 bit pcm,
+ * optionally mixing stereo to mono and halving or quartering the rate. there is no encoder, pcm sources are refused.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/mmreg.h>
@@ -10,7 +8,7 @@
 #include "mp3.h"
 
 typedef struct STREAM {
-    DWORD frame_bytes;  /* the pcm of a frame, which every decoded frame must fill */
+    DWORD frame_bytes;  /* pcm bytes per frame, every decoded frame must fill it exactly */
     Mp3Decoder decoder;
 } STREAM;
 
@@ -26,7 +24,7 @@ static BOOL valid_pcm(const WAVEFORMATEX *f)
            f->nAvgBytesPerSec == f->nSamplesPerSec * f->nBlockAlign;
 }
 
-/* the rate, rates of bytes, blocks and codec delay are never looked at. */
+/* the sample rate, byte rate, block size and codec delay are not checked. */
 static BOOL valid_mp3(const WAVEFORMATEX *f)
 {
     const MPEGLAYER3WAVEFORMAT *m = (const MPEGLAYER3WAVEFORMAT *)f;
@@ -78,7 +76,6 @@ static LRESULT format_tag_details(ACMFORMATTAGDETAILSW *d, DWORD flags)
     return MMSYSERR_NOERROR;
 }
 
-/* decimal digits of a number into text, returning the end. */
 static WCHAR *digits(WCHAR *p, DWORD v, int width)
 {
     WCHAR tmp[10];
@@ -125,7 +122,7 @@ static LRESULT format_details(ACMFORMATDETAILSW *d, DWORD flags)
         d->szFormat[0] = 0;
         return MMSYSERR_NOERROR;
     }
-    /* "128 kBit/s, 44,100 Hz, Stereo", the numbers in 32 bits as windows has them. */
+    /* "128 kBit/s, 44,100 Hz, Stereo", computed in 32 bits like windows. */
     WCHAR text[64], *p = text;
     p = digits(p, f->nAvgBytesPerSec * 8 / 1000, 0);
     lstrcpyW(p, L" kBit/s, ");
@@ -146,7 +143,7 @@ static LRESULT suggest(ACMDRVFORMATSUGGEST *s)
     const WAVEFORMATEX *src = s->pwfxSrc;
     WAVEFORMATEX *dst = s->pwfxDst;
     if (src->wFormatTag == WAVE_FORMAT_PCM) {
-        /* there is no encoder, but the destination is written before saying so. */
+        /* no encoder, but the destination is still written before failing. */
         if (!valid_pcm(src) || ((flags & ACM_FORMATSUGGESTF_WFORMATTAG) && dst->wFormatTag != WAVE_FORMAT_MPEGLAYER3))
             return ACMERR_NOTPOSSIBLE;
         dst->wFormatTag = WAVE_FORMAT_MPEGLAYER3;
@@ -209,7 +206,7 @@ static LRESULT stream_open(ACMDRVSTREAMINSTANCE *in)
     return MMSYSERR_NOERROR;
 }
 
-/* sizes in unsigned 32 bits with truncating division and no overflow checks, as windows has them. */
+/* unsigned 32-bit math with truncating division and no overflow checks, like windows. */
 static LRESULT stream_size(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMSIZE *s)
 {
     const WAVEFORMATEX *src = in->pwfxSrc, *dst = in->pwfxDst;
@@ -237,7 +234,7 @@ static LRESULT stream_size(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMSIZE *s)
     }
 }
 
-/* the frame length of the bitrate index 1 at a rate, those of windows' silent frames. */
+/* like windows, silent frames use bitrate index 1 at the stream's rate. returns the frame length. */
 static DWORD silent_frame(DWORD rate, BYTE *frame, WORD channels)
 {
     static const DWORD versions[9] = {0, 0, 0, 2, 2, 2, 3, 3, 3};
@@ -259,9 +256,8 @@ static DWORD silent_frame(DWORD rate, BYTE *frame, WORD channels)
 }
 
 /*
- * moves source into the ring. sources of whole blocks go block by block,
- * and a block starting "ACM\0crc\0" stands for silence, for which the
- * block's frame count of silent frames is fed instead.
+ * sources made of whole blocks are fed block by block. a block starting with "ACM\0crc\0" stands for silence and is
+ * replaced by its frame count of silent frames.
  */
 static DWORD fill(STREAM *s, const MPEGLAYER3WAVEFORMAT *src, ACMDRVSTREAMHEADER *h)
 {
@@ -289,9 +285,8 @@ static DWORD fill(STREAM *s, const MPEGLAYER3WAVEFORMAT *src, ACMDRVSTREAMHEADER
 }
 
 /*
- * the source goes into the decoder's ring as far as it holds, then whole
- * frames come out while the destination has room. the end flag flushes
- * nothing, and the start flag alone resets the decoder.
+ * fills the decoder's ring as far as it goes, then decodes whole frames while the destination has room. the end flag
+ * flushes nothing, only the start flag resets the decoder.
  */
 static LRESULT convert(STREAM *s, const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMHEADER *h)
 {
@@ -363,7 +358,7 @@ DECLSPEC_EXPORT LRESULT WINAPI DriverProc(DWORD_PTR id, HDRVR driver, UINT messa
         return r;
     }
     case ACMDM_DRIVER_ABOUT:
-        /* windows shows a dialog of the codec's version; the query by -1 says there is one. */
+        /* windows shows a version dialog, and a query with -1 reports that one exists. */
         if (param1 != -1)
             MessageBoxW((HWND)param1,
                         L"MPEG Layer-3 Audio Codec\n1.9 (Build 401) (decode only)\n\nCopyright © 1996-1999 "

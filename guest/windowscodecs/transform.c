@@ -1,13 +1,11 @@
-/*
- * IWICBitmapScaler, IWICBitmapClipper and IWICBitmapFlipRotator: sources made from another source.
- */
+/* bitmap scaling, clipping and rotation sources. */
 #include "wic_private.h"
 
 #ifdef __SSE2__
 #include <emmintrin.h>
 #endif
 
-/* ------------------------------------------------------------------ a source over a source */
+/* a source over a source. */
 
 typedef struct WicTransform {
     WicBase base;
@@ -97,7 +95,7 @@ static HRESULT STDMETHODCALLTYPE transform_copy_palette(IWICBitmapSource *This, 
     VTBL_FN(transform_get_size), VTBL_FN(transform_get_format), VTBL_FN(transform_get_resolution),                      \
         VTBL_FN(transform_copy_palette)
 
-/* ------------------------------------------------------------------ the scaler */
+/* the scaler. */
 
 typedef struct Taps {
     INT start;
@@ -129,7 +127,7 @@ static INT floor_i(float v)
 
 static INT clamp_i(INT v, INT lo, INT hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-/* the taps of each destination position of a range, weights folded onto the edge pixels and normalized. */
+/* precompute taps per destination position, folding edge weights and normalizing. */
 static HRESULT axis_build(WICBitmapInterpolationMode mode, UINT src_n, UINT dst_n, UINT first, UINT count, Axis *axis)
 {
     float scale = (float)src_n / (float)dst_n;
@@ -171,7 +169,7 @@ static HRESULT axis_build(WICBitmapInterpolationMode mode, UINT src_n, UINT dst_
             float pos = center - 0.5f;
             INT base = floor_i(pos);
             float frac = pos - (float)base;
-            /* the weights are in steps of 1/256 as the fixed point scaler has them. */
+            /* quantize weights to 1/256 steps, matching the fixed-point scaler. */
             INT w1 = (INT)(frac * 256.0f);
             start = base;
             taps = 2;
@@ -312,7 +310,7 @@ static BOOL scale_format(const GUID *format, ScaleFormat *out)
     return FALSE;
 }
 
-/* a row of the source as floats, the columns first to first + count of it. */
+/* read count source columns starting at first as floats. */
 static void row_to_float(const ScaleFormat *f, const BYTE *src, UINT count, float *out)
 {
     UINT n = count * f->channels;
@@ -357,7 +355,7 @@ static void float_to_row(const ScaleFormat *f, const float *in, UINT count, BYTE
     }
 }
 
-/* one source row, scaled across: floats for the columns of the rectangle. */
+/* horizontally scale one source row to the rectangle columns. */
 static void scale_row_x(const ScaleFormat *f, const Axis *ax, UINT count, UINT src_first, const float *src,
                         float *out)
 {
@@ -414,7 +412,7 @@ static HRESULT STDMETHODCALLTYPE scaler_copy_pixels(IWICBitmapScaler *This, cons
     IWICBitmapSource *src = t->source;
     UINT bits = WicFormatBits(&t->format);
     if (t->mode == WICBitmapInterpolationModeNearestNeighbor || (t->src_width == t->width && t->src_height == t->height)) {
-        /* a pixel of the source for each, found from the middle of the pixel. */
+        /* select source pixels using destination pixel centers. */
         UINT src_row;
         if (!WicRowBytes(&t->format, t->src_width, &src_row))
             return INTSAFE_E_ARITHMETIC_OVERFLOW;
@@ -468,7 +466,6 @@ static HRESULT STDMETHODCALLTYPE scaler_copy_pixels(IWICBitmapScaler *This, cons
         axis_free(&ay);
         return hr;
     }
-    /* the source columns that matter. */
     INT col_lo = ax.taps[0].start, col_hi = ax.taps[0].start + (INT)ax.taps[0].count;
     for (INT i = 1; i < r.Width; i++) {
         if (ax.taps[i].start < col_lo)
@@ -479,7 +476,7 @@ static HRESULT STDMETHODCALLTYPE scaler_copy_pixels(IWICBitmapScaler *This, cons
     UINT cols = (UINT)(col_hi - col_lo);
     UINT src_bytes = cols * f.channels * f.bytes;
     UINT out_floats = (UINT)r.Width * f.channels;
-    /* the rows of the source that the vertical taps use are scaled across once and kept while they are in use. */
+    /* horizontally scale each row once and retain it while vertical taps need it. */
     UINT max_rows = 0;
     for (INT j = 0; j < r.Height; j++) {
         if (ay.taps[j].count > max_rows)
@@ -565,7 +562,7 @@ static HRESULT STDMETHODCALLTYPE scaler_initialize(IWICBitmapScaler *This, IWICB
         use->lpVtbl->AddRef(use);
         if (mode != WICBitmapInterpolationModeNearestNeighbor && !scale_format(&format, &f) &&
             (sw != width || sh != height)) {
-            /* indexed, packed and small formats are interpolated as 32 bit color. */
+            /* convert indexed, packed and small formats to 32-bit color for interpolation. */
             IWICBitmapSource *converted;
             hr = WicEnsureFormat(source, &GUID_WICPixelFormat32bppBGRA, &converted);
             use->lpVtbl->Release(use);
@@ -614,7 +611,7 @@ HRESULT WicScalerCreate(IWICBitmapScaler **out)
     return *out ? S_OK : E_OUTOFMEMORY;
 }
 
-/* ------------------------------------------------------------------ the clipper */
+/* the clipper. */
 
 static HRESULT STDMETHODCALLTYPE clipper_copy_pixels(IWICBitmapClipper *This, const WICRect *rect, UINT stride,
                                                      UINT size, BYTE *buffer)
@@ -685,7 +682,7 @@ HRESULT WicClipperCreate(IWICBitmapClipper **out)
     return *out ? S_OK : E_OUTOFMEMORY;
 }
 
-/* ------------------------------------------------------------------ the rotator */
+/* the rotator. */
 
 static void copy_pixel(BYTE *d, const BYTE *s, UINT bytes)
 {
@@ -717,9 +714,8 @@ static HRESULT STDMETHODCALLTYPE rotator_copy_pixels(IWICBitmapFlipRotator *This
     UINT turns = t->options & 3;
     BOOL flip_h = (t->options & WICBitmapTransformFlipHorizontal) != 0;
     BOOL flip_v = (t->options & WICBitmapTransformFlipVertical) != 0;
-    INT W = (INT)t->width, H = (INT)t->height; /* the size after the turn. */
+    INT W = (INT)t->width, H = (INT)t->height;
     INT sw = (INT)t->src_width, sh = (INT)t->src_height;
-    /* the source pixel of an output pixel. */
     #define MAP(ox, oy, sx_out, sy_out)                                                                               \
         do {                                                                                                          \
             INT ax_ = flip_h ? W - 1 - (ox) : (ox), ay_ = flip_v ? H - 1 - (oy) : (oy);                               \

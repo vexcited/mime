@@ -1,10 +1,10 @@
 /*
- * the names of application packages: a full name is Name_Version_Architecture_ResourceId_PublisherId, a family name
- * Name_PublisherId. These calls only read the text, they need no package to be installed.
+ * application package names: a full name is Name_Version_Architecture_ResourceId_PublisherId, a family name
+ * Name_PublisherId. Only the text is parsed, no package needs to be installed.
  */
 #include "kernelbase_private.h"
 
-/* the structure of a package id, with its strings behind it in the same buffer. */
+/* a package id, with its strings after it in the same buffer. */
 typedef struct {
     UINT32 Reserved;
     UINT32 ProcessorArchitecture;
@@ -29,12 +29,12 @@ typedef struct {
 #define NAME_MIN_LENGTH 3
 #define RESOURCE_MAX_LENGTH 30
 #define PUBLISHER_ID_LENGTH 13
-/* the longest full name the parts allow, and what the family name of it needs. */
+/* room for the family name of the longest full name the parts allow. */
 #define FAMILY_MAX 128
 
 static constexpr WCHAR g_publisher_alphabet[] = L"1234567890abcdefghjkmnpqrstvwxyzABCDEFGHJKMNPQRSTVWXYZ";
 
-/* the names the file system reserves, which no part of a package name may be. */
+/* no part of a package name may be a name the file system reserves. */
 static BOOL reserved_part(const WCHAR *text, SIZE_T length)
 {
     static const PCWSTR names[] = {L".", L"..", L"con", L"prn", L"aux", L"nul", L"com1", L"com2", L"com3", L"com4",
@@ -44,7 +44,7 @@ static BOOL reserved_part(const WCHAR *text, SIZE_T length)
         SIZE_T n = wcslen(names[i]);
         if (length == n && !_wcsnicmp(text, names[i], n))
             return TRUE;
-        /* and the same name followed by a dot, which names the device as well. */
+        /* a device name followed by a dot names the device too. */
         if (length > n && text[n] == L'.' && !_wcsnicmp(text, names[i], n) && i >= 2)
             return TRUE;
     }
@@ -57,7 +57,7 @@ static BOOL name_character(WCHAR ch)
            ch == L'.';
 }
 
-/* the rules both the name and the resource identifier follow once their characters are known good. */
+/* checks shared by the name and the resource id once their characters are known valid. */
 static BOOL valid_part(const WCHAR *text, SIZE_T length)
 {
     if (reserved_part(text, length) || text[length - 1] == L'.')
@@ -68,7 +68,7 @@ static BOOL valid_part(const WCHAR *text, SIZE_T length)
     return TRUE;
 }
 
-/* one number of the version: up to five digits, at most 65535, ended by the dot or by the next underscore. */
+/* a version number: up to five digits, at most 65535, ended by a dot or the next underscore. */
 static BOOL version_part(const WCHAR **cursor, WCHAR end, USHORT *value)
 {
     const WCHAR *p = *cursor;
@@ -88,8 +88,8 @@ static BOOL version_part(const WCHAR **cursor, WCHAR end, USHORT *value)
 }
 
 /*
- * splits a full name into the parts of a package id. The strings are copied behind the structure of the buffer, whose
- * size is *length on the way in and what it needs on the way out. Returns a win32 error.
+ * the strings are copied after the structure in the buffer, whose size is *length on input and the size needed on
+ * output. Returns a win32 error.
  */
 static LONG parse_full_name(PCWSTR full, UINT32 *length, BYTE *buffer, PACKAGE_ID_ *out)
 {
@@ -134,7 +134,7 @@ static LONG parse_full_name(PCWSTR full, UINT32 *length, BYTE *buffer, PACKAGE_I
     if (!known)
         return ERROR_INVALID_PARAMETER;
 
-    /* the resource identifier is empty when it is a tilde, and then the package has no architecture. */
+    /* a tilde means an empty resource id, and then the package has no architecture. */
     p++;
     const WCHAR *resource = p;
     BOOL neutral_resource = *p == L'~';
@@ -193,7 +193,7 @@ static LONG parse_full_name(PCWSTR full, UINT32 *length, BYTE *buffer, PACKAGE_I
     return ERROR_SUCCESS;
 }
 
-/* the id of a package from its full name; the full form needs the package to be installed, and none is. */
+/* the full form needs the package to be installed, and none is. */
 DECLSPEC_EXPORT LONG WINAPI PackageIdFromFullName(PCWSTR full, UINT32 flags, UINT32 *length, BYTE *buffer)
 {
     if (flags & PACKAGE_INFORMATION_FULL)

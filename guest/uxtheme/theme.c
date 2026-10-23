@@ -1,11 +1,10 @@
 /*
- * the visual style of the session and theme handles: aero.msstyles loaded
- * once per process, OpenThemeData class matching and the window properties
- * SetWindowTheme stores.
+ * the session's visual style and theme handles: aero.msstyles loaded once per
+ * process, OpenThemeData class matching and the SetWindowTheme properties.
  */
 #include "uxtheme_private.h"
 
-/* the window properties of uxtheme, global atoms of windows. */
+/* uxtheme window properties, global atoms on windows. */
 #define UX_PROP_SUBIDLIST ((LPCWSTR)(ULONG_PTR)0xA910)
 #define UX_PROP_SUBAPPNAME ((LPCWSTR)(ULONG_PTR)0xA911)
 #define UX_PROP_THEME ((LPCWSTR)(ULONG_PTR)0xA912)
@@ -32,7 +31,7 @@ static struct {
     const void *File, *Mui;
 } g_style;
 
-/* theme handles are a slot index in the low word and a generation in the high word, like windows. */
+/* like windows, a handle is a slot index in the low word and a generation in the high word. */
 typedef struct UX_SLOT {
     UX_THEME *Theme;
     WORD Generation;
@@ -176,7 +175,7 @@ void UxRelease(UX_THEME *theme)
     RtlLeaveCriticalSection(&g_handles.Lock);
 }
 
-/* the string an atom window property holds, NULL when unset. "$" stands for an empty string. */
+/* NULL when unset. "$" stands for an empty string. */
 static LPWSTR atom_prop(HWND hwnd, LPCWSTR prop, LPWSTR buf, int size)
 {
     if (!hwnd)
@@ -289,7 +288,7 @@ THEMEAPI_(HTHEME) GetWindowTheme(HWND hwnd)
     return GetPropW(hwnd, UX_PROP_THEME);
 }
 
-/* stores s as an atom property, "$" for an empty string; returns true when it changed. */
+/* "$" for an empty string; returns true when the value changed. */
 static BOOL apply_string_prop(HWND hwnd, LPCWSTR s, LPCWSTR prop)
 {
     if (s && !*s)
@@ -324,7 +323,7 @@ THEMEAPI SetWindowTheme(HWND hwnd, LPCWSTR sub_app, LPCWSTR sub_id_list)
         return E_HANDLE;
     apply_string_prop(hwnd, sub_app, UX_PROP_SUBAPPNAME);
     apply_string_prop(hwnd, sub_id_list, UX_PROP_SUBIDLIST);
-    /* windows sends the theme change to the window alone: wparam -1, lparam WTC_... 0x80000001. */
+    /* windows sends the change to this window alone: wparam -1, lparam WTC_... 0x80000001. */
     SendMessageW(hwnd, WM_THEMECHANGED, (WPARAM)-1, (LPARAM)0x80000001);
     return S_OK;
 }

@@ -1,10 +1,9 @@
 /*
- * trustees and explicit access: the structures that name who gets what, and the functions that build lists and
- * descriptors from them.
+ * trustees and explicit access entries, and the functions that build acls and descriptors from them.
  *
- * SetEntriesInAcl merges entries into a list the way the access control provider of windows does: it drops what a
- * set or revoke entry replaces, folds a grant into the ace of the same trustee and inheritance when the list is
- * in canonical order, and writes the new denies before the old explicit aces and the new grants after them.
+ * SetEntriesInAcl merges like the windows access control provider: it drops aces a set or revoke entry replaces,
+ * folds a grant into the ace with the same trustee and inheritance when the list is canonical, and writes new
+ * denies before the old explicit aces and new grants after them.
  */
 #include "advapi32_private.h"
 
@@ -209,7 +208,7 @@ ADVAPI TRUSTEE_TYPE WINAPI GetTrusteeTypeA(PTRUSTEE_W trustee)
 
 /* ---------------------------------------------------------------- resolving trustees */
 
-/* the sid of an account name of this machine, or of the user running the program for CURRENT_USER. */
+/* the sid of a local account name, or of the current user for CURRENT_USER. */
 static DWORD sid_of_name(PCWSTR name, BYTE *storage)
 {
     if (!name)
@@ -226,8 +225,8 @@ static DWORD sid_of_name(PCWSTR name, BYTE *storage)
 }
 
 /*
- * the sid a trustee stands for, copied to storage of SECURITY_MAX_SID_SIZE bytes. the object forms name their
- * guids too, counted in guids for the sizes of the ace.
+ * copies the trustee's sid to storage of SECURITY_MAX_SID_SIZE bytes. object forms also count their guids for the
+ * ace size.
  */
 static DWORD trustee_sid(const TRUSTEE_W *trustee, BYTE *storage, DWORD *guids)
 {
@@ -269,15 +268,15 @@ static DWORD trustee_sid(const TRUSTEE_W *trustee, BYTE *storage, DWORD *guids)
 /* ---------------------------------------------------------------- setting entries in a list */
 
 typedef struct ENTRY_INFO {
-    DWORD Mask;        /* the rights, the bits an existing ace of the trustee takes or loses */
-    DWORD Size;        /* the bytes of the ace the entry adds, 0 for none */
-    BYTE *Sid;         /* the trustee, or the client of a compound ace */
-    BYTE *Server;      /* the server of a compound ace */
+    DWORD Mask;        /* the rights an existing ace of the trustee gains or loses. */
+    DWORD Size;        /* bytes of the ace the entry adds, 0 for none. */
+    BYTE *Sid;         /* the trustee, or the client of a compound ace. */
+    BYTE *Server;      /* the server of a compound ace. */
     const GUID *Object;
     const GUID *Inherited;
 } ENTRY_INFO;
 
-/* an ace of an old list that merges with an entry, or loses what it grants. */
+/* an old ace either merges with the entry or loses rights to it. */
 static void compare_ace(const BYTE *ace, DWORD *mask, const EXPLICIT_ACCESS_W *entry, ENTRY_INFO *info, BOOL canonical)
 {
     BYTE audit_flag = FAILED_ACCESS_ACE_FLAG;
@@ -343,7 +342,7 @@ static void compare_ace(const BYTE *ace, DWORD *mask, const EXPLICIT_ACCESS_W *e
         if (!RtlEqualSid((PSID)wanted, (PSID)(ace + 8)))
             return;
     }
-    /* the trustee matches: what the entry does to the ace depends on its mode and the kind of ace. */
+    /* the trustee matches: the effect depends on the entry mode and the ace kind. */
     BYTE inheritance = ace[1] & 0x1F;
     switch (entry->grfAccessMode) {
     case GRANT_ACCESS:
@@ -388,7 +387,7 @@ static void compare_ace(const BYTE *ace, DWORD *mask, const EXPLICIT_ACCESS_W *e
     info->Size = 0;
 }
 
-/* the ace an entry adds, written at the cursor. */
+/* writes the entry's ace at the cursor. */
 static DWORD add_entry(BYTE **cursor, const EXPLICIT_ACCESS_W *entry, const ENTRY_INFO *info)
 {
     BYTE *ace = *cursor;
@@ -499,7 +498,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
     }
     if (!entries)
         return ERROR_INVALID_PARAMETER;
-    /* the old list: where its explicit leading aces end, and whether it is in canonical order. */
+    /* where the old list's leading explicit aces end, and whether it is canonical. */
     DWORD old_count = old ? old->AceCount : 0, lead = 0;
     BOOL canonical = TRUE;
     UCHAR revision = ACL_REVISION;
@@ -510,7 +509,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
             BYTE type = ace[0];
             if (!(ace[1] & INHERITED_ACE)) {
                 if (type == 0 || type == 4 || type == 5) {
-                    /* the first explicit allow: a deny after it makes the list non canonical. */
+                    /* first explicit allow: a deny after it makes the list non canonical. */
                     const BYTE *scan = ace;
                     for (DWORD j = i; j < old_count; j++, scan += *(const WORD *)(scan + 2))
                         if (!(scan[1] & INHERITED_ACE) && (scan[0] == 1 || scan[0] == 6))
@@ -533,7 +532,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
         for (DWORD i = 0; i < old_count; i++, ace += *(const WORD *)(ace + 2))
             masks[i] = *(const DWORD *)(ace + 4);
     }
-    /* what each entry adds: its mask, the sid it names and the size of its ace. */
+    /* each entry's mask, sid and ace size. */
     for (ULONG j = 0; j < count && !error; j++) {
         const EXPLICIT_ACCESS_W *entry = &entries[j];
         ENTRY_INFO *item = &info[j];
@@ -582,7 +581,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
                 revision = ACL_REVISION_DS;
                 size += 4 + 16 * guids;
                 if (form == TRUSTEE_IS_OBJECTS_AND_NAME && guids) {
-                    /* the names of object types are directory classes, which a machine without one lacks. */
+                    /* object type names are directory classes, and there is no directory. */
                     error = ERROR_INVALID_PARAMETER;
                     break;
                 }
@@ -590,7 +589,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
         }
         item->Size = entry->grfAccessMode == REVOKE_ACCESS ? 0 : size;
     }
-    /* the entries act on the explicit aces of the old list. */
+    /* entries act on the old list's explicit aces. */
     if (!error) {
         for (ULONG j = 0; j < count; j++) {
             const BYTE *ace = old ? (const BYTE *)(old + 1) : nullptr;
@@ -624,7 +623,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
         RtlCreateAcl(acl, total, revision);
         acl->AceCount = (WORD)kept;
         BYTE *cursor = (BYTE *)(acl + 1);
-        /* the new denies and audits come first, then the old explicit aces around the new grants. */
+        /* new denies and audits first, then the old explicit aces around the new grants. */
         for (ULONG j = 0; j < count && !error; j++)
             if (is_deny_like(entries[j].grfAccessMode))
                 error = add_entry(&cursor, &entries[j], &info[j]);
@@ -652,7 +651,7 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
             for (ULONG j = 0; j < count && !error; j++)
                 if (entries[j].grfAccessMode == GRANT_ACCESS || entries[j].grfAccessMode == SET_ACCESS)
                     error = add_entry(&cursor, &entries[j], &info[j]);
-        /* the inherited aces come last, as they were. */
+        /* inherited aces stay last, unchanged. */
         ace = old ? (const BYTE *)(old + 1) : nullptr;
         for (DWORD k = 0; k < old_count && !error; k++, ace += *(const WORD *)(ace + 2)) {
             if ((ace[1] & INHERITED_ACE) && masks[k]) {
@@ -671,9 +670,9 @@ ADVAPI DWORD WINAPI SetEntriesInAclW(ULONG count, PEXPLICIT_ACCESS_W entries, PA
     return error;
 }
 
-/* ---------------------------------------------------------------- the ansi forms */
+/* ---------------------------------------------------------------- ansi forms */
 
-/* the strings made wide for the call of a wide function, freed together. */
+/* wide copies of ansi strings for one call, freed together. */
 typedef struct WIDE_POOL {
     PVOID *Items;
     ULONG Count;
@@ -720,7 +719,7 @@ static PWSTR pool_wide(WIDE_POOL *pool, LPCSTR text)
     return copy;
 }
 
-/* an ansi trustee as a wide one, sharing what holds no text. */
+/* converts an ansi trustee, sharing the fields that hold no text. */
 static DWORD trustee_wide(WIDE_POOL *pool, const TRUSTEE_A *src, TRUSTEE_W *dst)
 {
     *dst = *(const TRUSTEE_W *)src;
@@ -791,7 +790,7 @@ static DWORD align8(DWORD n)
     return (n + 7) & ~7u;
 }
 
-/* the entries of the explicit aces of a list, in one block that holds their sids too. */
+/* entries for the explicit aces, in one block that also holds their sids. */
 ADVAPI DWORD WINAPI GetExplicitEntriesFromAclW(PACL acl, PULONG count, PEXPLICIT_ACCESS_W *entries)
 {
     if (!count || !entries)
@@ -847,7 +846,7 @@ ADVAPI DWORD WINAPI GetExplicitEntriesFromAclW(PACL acl, PULONG count, PEXPLICIT
         for (int pass = 0; pass < (audit ? 2 : 1); pass++) {
             ACCESS_MODE mode;
             if (audit) {
-                /* success first, then failure, for an ace that audits both. */
+                /* an ace auditing both gives success first, then failure. */
                 BOOL success = (flags & SUCCESSFUL_ACCESS_ACE_FLAG) != 0, failure = (flags & FAILED_ACCESS_ACE_FLAG) != 0;
                 if (pass == 0 && success)
                     mode = SET_AUDIT_SUCCESS;
@@ -915,7 +914,7 @@ ADVAPI DWORD WINAPI GetExplicitEntriesFromAclA(PACL acl, PULONG count, PEXPLICIT
 
 /* ---------------------------------------------------------------- descriptors from entries */
 
-/* the old descriptor's parts, which must be self relative. */
+/* parts of the old descriptor, which must be self relative. */
 typedef struct OLD_PARTS {
     PSID Owner;
     PSID Group;

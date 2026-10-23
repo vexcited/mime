@@ -1,7 +1,4 @@
-/*
- * the bmp codec, and the device independent bitmaps that icons share: decoding of the bits of a bitmap in any of the
- * depths and compressions, and a bmp encoder.
- */
+/* BMP codec and DIB decoding shared with icons. */
 #include "wic_codec.h"
 #include "codec_util.h"
 
@@ -10,7 +7,7 @@
 #define BI_RLE4_ 2
 #define BI_BITFIELDS_ 3
 
-/* ------------------------------------------------------------------ the header of a bitmap */
+/* the header of a bitmap. */
 
 HRESULT WicDibParse(const BYTE *p, SIZE_T size, BOOL icon, WicDib *dib)
 {
@@ -85,7 +82,7 @@ HRESULT WicDibParse(const BYTE *p, SIZE_T size, BOOL icon, WicDib *dib)
         masks[1] = WicLe32(p + 44);
         masks[2] = WicLe32(p + 48);
         offset = 52;
-        /* the masks of a header of 40 bytes may carry alpha as a fourth, when the palette area has room. */
+        /* 40-byte headers may have a fourth alpha mask if the palette area has room. */
     }
     dib->width = (UINT)width;
     dib->height = abs_height;
@@ -114,7 +111,6 @@ HRESULT WicDibParse(const BYTE *p, SIZE_T size, BOOL icon, WicDib *dib)
         if (header == 40 && compression == BI_BITFIELDS_)
             dib->bits_offset = 52;
     }
-    /* the pixel format the bits are given in. */
     const GUID *format;
     if (bpp == 1)
         format = &GUID_WICPixelFormat1bppIndexed;
@@ -143,7 +139,7 @@ HRESULT WicDibParse(const BYTE *p, SIZE_T size, BOOL icon, WicDib *dib)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the bits */
+/* the bits. */
 
 static UINT mask_shift(UINT mask)
 {
@@ -263,7 +259,7 @@ HRESULT WicDibDecode(const WicDib *dib, const BYTE *bits, SIZE_T bits_size, BYTE
             memcpy(dst, src, out_row);
             continue;
         }
-        /* masks: a 16 or 32 bit pixel to four bytes. */
+        /* expand masked 16-bit or 32-bit pixels to four bytes. */
         UINT rm = dib->masks[0], gm = dib->masks[1], bm = dib->masks[2], am = dib->masks[3];
         if (dib->compression == BI_RGB_) {
             rm = 0xff0000;
@@ -293,7 +289,7 @@ HRESULT WicDibDecode(const WicDib *dib, const BYTE *bits, SIZE_T bits_size, BYTE
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the decoder */
+/* the decoder. */
 
 typedef struct BmpState {
     const BYTE *data;
@@ -371,7 +367,7 @@ const WicDecoderOps wic_dec_bmp = {
     .frame_decode = bmp_frame_decode,
 };
 
-/* ------------------------------------------------------------------ the encoder */
+/* the encoder. */
 
 static const WicOptionDesc g_bmp_options[] = {
     {L"EnableV5Header32bppBGRA", VT_BOOL, 0, 0, 1},

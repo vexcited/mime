@@ -101,7 +101,7 @@ HRESULT WINAPI InitPropVariantFromResource(HINSTANCE instance, UINT id, PROPVARI
     return init_string(text, value);
 }
 
-/* StrRetToStrW: a wide string is taken over, the others are copied. */
+/* like StrRetToStrW: a wide string is taken over, the others are copied. */
 HRESULT PsStrRetToString(STRRET *strret, PCUITEMID_CHILD pidl, LPWSTR *out)
 {
     *out = nullptr;
@@ -224,7 +224,7 @@ HRESULT WINAPI InitPropVariantVectorFromPropVariant(const PROPVARIANT *source, P
 
 /* ------------------------------------------------------------------ scalars */
 
-/* a scalar of type vt: the value itself when it has the type, else what PropVariantChangeType makes. */
+/* the value itself when it already has type vt, else what PropVariantChangeType makes. */
 static HRESULT to_scalar(const PROPVARIANT *value, VARTYPE vt, void *out, UINT size)
 {
     memset(out, 0, size);
@@ -487,7 +487,7 @@ HRESULT WINAPI PropVariantGetBooleanElem(const PROPVARIANT *value, ULONG index, 
     return hr;
 }
 
-/* the value as a vector of base: a scalar only when the caller takes one. */
+/* a scalar is accepted only when the caller takes one. */
 static HRESULT as_vector(const PROPVARIANT *value, VARTYPE base, PROPVARIANT *vector)
 {
     memset(vector, 0, sizeof(*vector));

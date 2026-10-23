@@ -1,8 +1,7 @@
 /*
- * the local security authority's lookups: names to sids and sids to names, the domains they belong to and the
- * policy that tells which domain is this machine's. there is no lsass; the answers are the ones LookupAccountSid and
- * LookupAccountName give, put in the structures lsa returns them in. windows has these in sechost.dll, which
- * forwards to the calls lsass answers (see docs/sechost.md).
+ * lsa lookups: names to sids and back, their domains, and the policy naming this machine's domain. there is no
+ * lsass: the answers are those of LookupAccountSid and LookupAccountName, in the lsa structures. windows has these
+ * in sechost.dll, which forwards them to lsass.
  */
 #include "advapi32_private.h"
 
@@ -44,14 +43,14 @@ typedef struct _LSA_TRANSLATED_NAME {
     LONG DomainIndex;
 } LSA_TRANSLATED_NAME;
 
-/* the policy information classes this machine answers for. */
+/* the policy information classes answered here. */
 #define POLICY_PRIMARY_DOMAIN_INFORMATION 3
 #define POLICY_ACCOUNT_DOMAIN_INFORMATION 5
 #define POLICY_LSA_SERVER_ROLE_INFORMATION 6
 #define POLICY_DNS_DOMAIN_INFORMATION 12
 #define POLICY_DNS_DOMAIN_INFORMATION_INT 13
 
-/* the specific rights of a policy handle. */
+/* policy handle specific rights. */
 #define POLICY_VIEW_LOCAL_INFORMATION 0x1
 #define POLICY_VIEW_AUDIT_INFORMATION 0x2
 #define POLICY_GET_PRIVATE_INFORMATION 0x4
@@ -72,7 +71,7 @@ ADVAPI BOOL WINAPI LookupAccountSidA(LPCSTR system, PSID sid, LPSTR name, LPDWOR
 
 /* ------------------------------------------------------------------ handles and memory */
 
-/* what lsa hands out is freed with LsaFreeMemory; it all comes from the heap of the process. */
+/* lsa results are freed with LsaFreeMemory and come from the process heap. */
 static PVOID lsa_alloc(SIZE_T size)
 {
     return AdvAllocZero(size);
@@ -110,7 +109,7 @@ ADVAPI NTSTATUS WINAPI LsaOpenPolicy(PLSA_UNICODE_STRING system, PLSA_OBJECT_ATT
         if (!AdvIsLocalSystem(name))
             return STATUS_RPC_SERVER_UNAVAILABLE_;
     }
-    /* looking at the machine's own information and resolving names is for everybody, the rest needs an administrator. */
+    /* viewing local information and looking up names is open to all, the rest needs an administrator. */
     static const ACCESS_MASK policy_rights = 0x000007FF, everyone = POLICY_VIEW_LOCAL_INFORMATION | POLICY_LOOKUP_NAMES;
     static const ACCESS_MASK generic_write = 0x10000000 | 0x40000000; /* GENERIC_ALL, GENERIC_WRITE */
     if (((access & policy_rights & ~everyone) || (access & generic_write)) && !is_administrator())
@@ -155,7 +154,7 @@ ADVAPI NTSTATUS WINAPI LsaLookupFreeMemory(PVOID buffer)
     return LsaFreeMemory(buffer);
 }
 
-/* ------------------------------------------------------------------ the domains of a lookup */
+/* ------------------------------------------------------------------ lookup domains */
 
 #define MAX_DOMAINS 64
 
@@ -168,7 +167,7 @@ typedef struct DOMAINS {
     } Entry[MAX_DOMAINS];
 } DOMAINS;
 
-/* the domain a sid belongs to is the sid without its last sub authority, and a domain's own sid is itself. */
+/* an account's domain is its sid minus the last sub authority; a domain's own sid is itself. */
 static BOOL domain_sid(const SID *sid, SID_NAME_USE use, BYTE *out)
 {
     DWORD length = AdvSidLength(sid);
@@ -182,7 +181,7 @@ static BOOL domain_sid(const SID *sid, SID_NAME_USE use, BYTE *out)
     return TRUE;
 }
 
-/* the index of a domain in the list, added when it is new; -1 when the account has none (everyone, local). */
+/* the domain's index in the list, added when new; -1 for accounts without one, like everyone or local. */
 static LONG domain_index(DOMAINS *list, const WCHAR *name, const SID *sid, SID_NAME_USE use)
 {
     if (!name[0])
@@ -207,7 +206,7 @@ static SIZE_T align4(SIZE_T n)
     return (n + 3) & ~(SIZE_T)3;
 }
 
-/* the list as lsa returns it: the entries, then each domain's name and sid, in one block. */
+/* the list as lsa returns it: entries, then each domain's name and sid, in one block. */
 static LSA_REFERENCED_DOMAIN_LIST *build_domains(const DOMAINS *list)
 {
     SIZE_T size = sizeof(LSA_REFERENCED_DOMAIN_LIST) + list->Count * sizeof(LSA_TRUST_INFORMATION);
@@ -426,7 +425,7 @@ typedef struct POLICY_DNS_DOMAIN_INFO {
     PSID Sid;
 } POLICY_DNS_DOMAIN_INFO;
 
-/* a string put after a structure in the block that holds both. */
+/* places a string after a structure, in the block holding both. */
 static void put_string(LSA_UNICODE_STRING *s, BYTE **at, const WCHAR *text)
 {
     SIZE_T bytes = wcslen(text) * sizeof(WCHAR);
@@ -449,7 +448,7 @@ ADVAPI NTSTATUS WINAPI LsaQueryInformationPolicy(LSA_HANDLE handle, ULONG klass,
     BYTE machine[SECURITY_MAX_SID_SIZE];
     switch (klass) {
     case POLICY_ACCOUNT_DOMAIN_INFORMATION: {
-        /* the machine itself is the domain of its accounts. */
+        /* the machine is the domain of its own accounts. */
         if (!(p->Access & (POLICY_VIEW_LOCAL_INFORMATION | 0x10000000 | 0x80000000)))
             return STATUS_ACCESS_DENIED;
         if (!GetComputerNameW(computer, &chars) || !AdvMachineSid(machine))
@@ -466,7 +465,7 @@ ADVAPI NTSTATUS WINAPI LsaQueryInformationPolicy(LSA_HANDLE handle, ULONG klass,
         return STATUS_SUCCESS;
     }
     case POLICY_PRIMARY_DOMAIN_INFORMATION: {
-        /* a machine that is not in a domain is in the workgroup, which has no sid. */
+        /* a machine outside a domain is in a workgroup, which has no sid. */
         if (!(p->Access & (POLICY_VIEW_LOCAL_INFORMATION | 0x10000000 | 0x80000000)))
             return STATUS_ACCESS_DENIED;
         POLICY_ACCOUNT_DOMAIN_INFO *info = lsa_alloc(sizeof(*info) + 32);
@@ -498,7 +497,7 @@ ADVAPI NTSTATUS WINAPI LsaQueryInformationPolicy(LSA_HANDLE handle, ULONG klass,
         return STATUS_SUCCESS;
     }
     default:
-        /* the audit, quota, trust and the other classes need the policy database. */
+        /* the audit, quota, trust and other classes need the policy database. */
         return klass >= 1 && klass <= 14 ? STATUS_ACCESS_DENIED : STATUS_INVALID_PARAMETER;
     }
 }
@@ -510,13 +509,13 @@ ADVAPI NTSTATUS WINAPI LsaSetInformationPolicy(LSA_HANDLE handle, ULONG klass, P
     return policy_of(handle) ? STATUS_ACCESS_DENIED : STATUS_INVALID_HANDLE;
 }
 
-/* the domain the lookups of this machine are answered for, as the lookup handle gives it. */
+/* the domain this machine's lookups answer for, as the lookup handle gives it. */
 ADVAPI NTSTATUS WINAPI LsaLookupGetDomainInfo(LSA_HANDLE handle, ULONG klass, PVOID *info)
 {
     return LsaQueryInformationPolicy(handle, klass, info);
 }
 
-/* ------------------------------------------------------------------ the local forms of the account lookups */
+/* ------------------------------------------------------------------ local account lookups */
 
 ADVAPI BOOL WINAPI LookupAccountNameLocalW(LPCWSTR account, PSID sid, LPDWORD sid_size, LPWSTR domain,
                                            LPDWORD domain_size, PSID_NAME_USE use)
@@ -552,7 +551,7 @@ ADVAPI NTSTATUS WINAPI LsaEnumerateAccountRights(LSA_HANDLE handle, PSID account
         return STATUS_INVALID_PARAMETER;
     *rights = nullptr;
     *count = 0;
-    /* an account that holds no right is one the policy does not know. */
+    /* an account with no rights is unknown to the policy. */
     return STATUS_OBJECT_NAME_NOT_FOUND;
 }
 

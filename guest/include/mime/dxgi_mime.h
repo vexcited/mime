@@ -1,8 +1,7 @@
 /*
- * what dxgi.dll and the direct3d dlls tell each other beyond windows'
- * interfaces: the vulkan device behind an adapter, the swap chains a
- * direct3d device makes for the factory, the output a fullscreen swap
- * chain owns, and the frames composition swap chains hand to dcomp.dll.
+ * private interfaces between dxgi.dll and the direct3d dlls: the vulkan device behind an adapter, swap chains a
+ * direct3d device creates for the factory, the output a fullscreen swap chain owns, and the frames composition swap
+ * chains hand to dcomp.dll.
  */
 #ifndef MIME_DXGI_MIME_H
 #define MIME_DXGI_MIME_H
@@ -10,7 +9,7 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/dxgi.h>
 
-/* the vulkan objects of an adapter, as vulkan handles and vkGetInstanceProcAddr. */
+/* an adapter's vulkan objects: raw handles and vkGetInstanceProcAddr. */
 typedef struct MIME_DXGI_VULKAN {
     void *Instance;
     void *PhysicalDevice;
@@ -22,8 +21,8 @@ typedef struct MIME_DXGI_VULKAN {
 #define MIME_VK_PROFILE_BYTES 1024
 
 /*
- * the vulkan device of an adapter, which the direct3d 11 and 12 devices of a process share: the host serves a process
- * one. The first to ask makes it with the queues of its family, and it goes with the last that released it.
+ * an adapter's vulkan device, shared by the process's direct3d 11 and 12 devices since the host serves one per
+ * process. the first caller creates it with its queue family, the last release destroys it.
  */
 typedef struct MIME_DXGI_SHARED_VK {
     void *Device;
@@ -33,7 +32,7 @@ typedef struct MIME_DXGI_SHARED_VK {
     void *Queues[MIME_VK_MAX_QUEUES];
     /* a queue is used by one thread at a time, whichever device submits on it. */
     SRWLOCK QueueLocks[MIME_VK_MAX_QUEUES];
-    /* what the device was made for, opaque to dxgi.dll. */
+    /* what the device was created for, opaque to dxgi.dll. */
     UINT ProfileSize;
     BYTE Profile[MIME_VK_PROFILE_BYTES];
 } MIME_DXGI_SHARED_VK;
@@ -83,16 +82,16 @@ MIME_COM_INTERFACE(IMimeDXGIOutput)
 MIME_DEFINE_GUID(IID_IMimeDXGIOutput, 0x6B0E3A52, 0x9D4C, 0x4F1B, 0xA8, 0x27, 0x3E, 0x51, 0xC9, 0x0D, 0x7A, 0x64);
 
 /*
- * implemented by the swap chains made for composition: the frame last presented, which dcomp.dll draws into the
- * windows it composes, and a call when a new one comes. The texture is the device's own, so only a visual tree
- * built on the same device can read it.
+ * implemented by composition swap chains: the last presented frame, which dcomp.dll draws into the windows it
+ * composes, plus a notification for new frames. the texture belongs to the device, so only a visual tree built on
+ * the same device can read it.
  */
 typedef struct MIME_COMPOSITION_FRAME {
     /* an ID3D11Texture2D, a reference the caller releases; NULL until the first Present. */
     IUnknown *Texture;
     UINT64 Serial;
     UINT Width, Height;
-    /* the part of the texture that shows, in pixels. */
+    /* the visible part of the texture, in pixels. */
     RECT Source;
     /* the format to read the texture with: never srgb, since composition blends the encoded values. */
     DXGI_FORMAT ViewFormat;

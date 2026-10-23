@@ -1,6 +1,4 @@
-/*
- * thread local storage, the TlsAlloc family, and fiber local storage.
- */
+/* thread local storage and fiber local storage. */
 #include "kernelbase_private.h"
 
 #define TLS_TOTAL (TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS)
@@ -269,7 +267,7 @@ BOOL WINAPI FlsSetValue(DWORD index, PVOID value)
     return TRUE;
 }
 
-/* runs the callbacks of every live slot of the exiting thread, then frees its data. */
+/* runs the exiting thread's fls callbacks, then frees its data. */
 void KbFlsThreadCleanup(void)
 {
     PTEB teb = NtCurrentTeb();

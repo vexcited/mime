@@ -1,14 +1,11 @@
 /*
- * the screen buffers of a console and the host terminal that shows them,
- * see conscreen.h. cells, attributes, the bytes sent to the terminal and
- * the calls on buffers are here, escape sequences and text are in convt.c.
+ * console screen buffers and the host terminal that shows them: cells, attributes, terminal output and the buffer
+ * calls. escape sequences and text are in convt.c.
  *
- * the terminal is kept in step in two ways. what programs write is applied
- * to the cells and sent on as it is applied, so the terminal scrolls and
- * wraps as the console does and nothing that scrolls off is lost. what
- * calls like WriteConsoleOutput change is marked, and CsRender compares
- * the marked cells with a copy of what the terminal shows, the shadow, and
- * sends the difference.
+ * the terminal is kept in step two ways. program writes are applied to the cells and forwarded as they are applied,
+ * so the terminal scrolls and wraps like the console and nothing that scrolls off is lost. changes from calls like
+ * WriteConsoleOutput are marked, and CsRender diffs the marked cells against the shadow, a copy of what the terminal
+ * shows, and sends the difference.
  */
 #include "conscreen_p.h"
 
@@ -26,7 +23,7 @@ CsCell CsBlank(const CsBuffer *buffer)
     return CsBlankOf(buffer->Attr);
 }
 
-/* what erasing in an escape sequence leaves: the colors of the text, none of its flags. */
+/* erasing in an escape sequence keeps the text colors but none of its flags. */
 CsCell CsEraseBlank(const CsBuffer *buffer)
 {
     return CsBlankOf(CsEraseAttr(buffer->Term, buffer->Attr));
@@ -47,7 +44,7 @@ bool CsGridInit(CsGrid *grid, int width, int height, CsCell fill)
     if (!grid->Rows)
         return false;
     memset(grid->Rows, 0, sizeof(CsRow) * (size_t)height);
-    /* the cells are one block, each row points into it, so freeing is one call and rows move by pointer. */
+    /* one block of cells with rows pointing into it, so freeing is one call and rows move by pointer. */
     CsCell *block = CsAllocate(sizeof(CsCell) * (size_t)width * (size_t)height);
     if (!block) {
         CsFree(grid->Rows);
@@ -66,7 +63,7 @@ bool CsGridInit(CsGrid *grid, int width, int height, CsCell fill)
     return true;
 }
 
-/* the block of cells starts at the lowest row pointer of the grid as it was allocated, kept in Cells of row 0 after sorting. */
+/* scrolling reorders the rows, so the block starts at the lowest row pointer. */
 static CsCell *grid_block(const CsGrid *grid)
 {
     CsCell *low = nullptr;
@@ -91,7 +88,7 @@ void CsRowFill(CsRow *row, int from, int to, CsCell cell)
         row->Cells[x] = cell;
 }
 
-/* moves rows top..bottom by count rows, the rows that come in are filled. */
+/* moves rows top..bottom by count rows and fills the rows that come in. */
 void CsGridScroll(CsGrid *grid, int top, int bottom, int count, bool up, CsCell fill)
 {
     int height = bottom - top + 1;
@@ -137,17 +134,16 @@ void CsGridScroll(CsGrid *grid, int top, int bottom, int count, bool up, CsCell 
 
 /* ------------------------------------------------------------------ attributes and colors */
 
-/* the colors a console starts with, as 0x00BBGGRR: the campbell scheme of windows 10. */
+/* the initial console colors as 0x00BBGGRR: the windows 10 campbell scheme. */
 static const uint32_t g_default_table[16] = {
     0x000C0C0C, 0x00DA3700, 0x000EA113, 0x00DD963A, 0x001F0FC5, 0x00981788, 0x00009CC1, 0x00CCCCCC,
     0x00767676, 0x00FF783B, 0x000CC616, 0x00D6D661, 0x005648E7, 0x009E00B4, 0x00A5F1F9, 0x00F2F2F2,
 };
 
 /*
- * The attribute word of a cell has 16 colors only, so a color made with the 256 color or true color sequences is
- * reduced to the nearest of them. Nearness is the squared distance in sRGB against the 16 colors below, written in the
- * order of the attribute word, and the lowest index wins a tie. The palette of the console is not consulted, so changing
- * it does not change what reads of the cells report.
+ * a cell's attribute word has only 16 colors, so 256 color and true color sequences are reduced to the nearest one by
+ * squared sRGB distance against the colors below, in attribute word order, lowest index winning ties. the console
+ * palette is not consulted, so changing it does not change what cell reads report.
  */
 static const uint32_t g_reference_colors[16] = {
     0x000000, 0x000080, 0x008000, 0x008080, 0x800000, 0x800080, 0x808000, 0xC0C0C0,
@@ -171,14 +167,14 @@ unsigned CsReduceRgb(unsigned r, unsigned g, unsigned b)
     return best;
 }
 
-/* Only the top 3 bits of red and green and the top 2 of blue count, each spread back over the whole range. */
+/* only the top 3 bits of red and green and the top 2 of blue count, each spread back over the whole range. */
 unsigned CsReduceTrueColor(uint32_t rgb)
 {
     unsigned r = (rgb & 0xFF) >> 5, g = ((rgb >> 8) & 0xFF) >> 5, b = ((rgb >> 16) & 0xFF) >> 6;
     return CsReduceRgb(r * 255 / 7, g * 255 / 7, b * 255 / 3);
 }
 
-/* The cube of the 256 colors has the levels below on each axis, then comes a ramp of 24 grays. */
+/* the 256 color cube uses the levels below on each axis, followed by a ramp of 24 grays. */
 unsigned CsReduceIndex(unsigned n)
 {
     static const unsigned levels[6] = {0, 95, 135, 175, 215, 255};
@@ -196,7 +192,7 @@ unsigned CsReduceIndex(unsigned n)
 #define LEGACY_DEFAULT_FG 7
 #define LEGACY_DEFAULT_BG 0
 
-/* a terminal's index of the 16 colors and the console's differ in the red and blue bits. */
+/* terminal and console indexes of the 16 colors swap the red and blue bits. */
 uint32_t CsLegacyToAnsi(uint32_t index)
 {
     return (index & 8) | ((index & 1) << 2) | (index & 2) | ((index & 4) >> 2);
@@ -228,7 +224,7 @@ static unsigned ext_hash(const CsExt *e)
     return h ^ (h >> 15);
 }
 
-/* puts every attribute in a table of 4 slots for each, so that a lookup ends at the first empty slot. */
+/* linear probing with at least 4 slots per attribute, a lookup ends at the first empty slot. */
 static bool ext_rehash(CsTerminal *term)
 {
     unsigned size = 256;
@@ -294,7 +290,6 @@ uint16_t CsExtIntern(CsTerminal *term, const CsExt *ext)
     return index;
 }
 
-/* the index of the 16 colors of the attribute word that a color is shown as. */
 static unsigned legacy_color(uint8_t kind, uint32_t v, unsigned fallback)
 {
     switch (kind) {
@@ -308,7 +303,7 @@ static unsigned legacy_color(uint8_t kind, uint32_t v, unsigned fallback)
     }
 }
 
-/* the attribute word of an attribute, as reads of the cells report it. */
+/* the attribute word that cell reads report. */
 static uint16_t legacy_word(const CsExt *e)
 {
     unsigned fg = legacy_color(e->FgKind, e->Fg, LEGACY_DEFAULT_FG), bg = legacy_color(e->BgKind, e->Bg, LEGACY_DEFAULT_BG);
@@ -326,10 +321,8 @@ CsAttr CsAttrOf(CsTerminal *term, const CsExt *ext)
 }
 
 /*
- * attributes a program set with a call: the colors of the word are
- * indexes of the 256 colors, except that the colors a console starts with,
- * gray text on black, are the terminal's own, so that a program that puts
- * them back leaves the theme of the terminal alone.
+ * attributes set through a call map to the 256 colors, except the initial gray on black, which stays the terminal's
+ * own default so a program that restores it leaves the terminal theme alone.
  */
 CsAttr CsAttrFromLegacy(CsTerminal *term, uint16_t attributes)
 {
@@ -347,7 +340,7 @@ CsAttr CsAttrFromLegacy(CsTerminal *term, uint16_t attributes)
     return CsAttrOf(term, &e);
 }
 
-/* the attribute that erasing and scrolling in the escape sequences fill with: the colors, none of the flags. */
+/* erasing and scrolling in escape sequences fill with the colors but none of the flags. */
 CsAttr CsEraseAttr(CsTerminal *term, CsAttr attr)
 {
     CsExt e = *CsExtGet(term, attr.Ext);
@@ -475,7 +468,7 @@ bool CsGeometryFits(const CsBuffer *b)
            b->Window.Bottom - b->Window.Top + 1 == t->Rows;
 }
 
-/* what programs write may be sent on as it is applied. */
+/* program writes can be forwarded as they are applied. */
 bool CsForwarding(const CsBuffer *b)
 {
     const CsTerminal *t = b->Term;
@@ -534,7 +527,7 @@ static bool table_is_default(const CsBuffer *b)
     return memcmp(b->ColorTable, g_default_table, sizeof(g_default_table)) == 0;
 }
 
-/* a color as select graphic rendition parameters: fg is 30, bg is 40, and the bright forms 60 further. */
+/* a color as sgr parameters: fg is 30, bg is 40, and the bright forms 60 more. */
 static void out_color(CsTerminal *t, const CsBuffer *b, unsigned base, uint8_t kind, uint32_t v)
 {
     if (kind == CS_COLOR_DEFAULT)
@@ -553,7 +546,7 @@ static void out_color(CsTerminal *t, const CsBuffer *b, unsigned base, uint8_t k
     }
 }
 
-/* the colors and styles of an attribute, one select graphic rendition from the plain state. */
+/* sets an attribute's colors and styles with one sgr from the plain state. */
 void CsHostSetAttr(CsTerminal *t, const CsBuffer *b, CsAttr a)
 {
     if (t->HostAttrKnown && t->HostAttr.Attr == a.Attr && t->HostAttr.Ext == a.Ext)
@@ -607,7 +600,7 @@ void CsHostWrap(CsTerminal *t, bool wrap)
 void CsHostPrintCell(CsTerminal *t, const CsBuffer *b, const CsCell *lead, const CsCell *trail)
 {
     CsAttr attr = {lead->Attr, lead->Ext};
-    /* the leading and trailing byte bits only say how a wide character is split. */
+    /* the lead and trail bits only say how a wide character is split. */
     attr.Attr &= (uint16_t)~CS_DBCS_MASK;
     CsHostSetAttr(t, b, attr);
     uint32_t c = lead->Char;
@@ -623,7 +616,7 @@ void CsHostPrintCell(CsTerminal *t, const CsBuffer *b, const CsCell *lead, const
         c = ' ';
     CsOutUtf8(t, c);
     if (t->HostWrapPending) {
-        /* printing wrapped: the terminal now has the cursor in the next row. */
+        /* printing wrapped, so the terminal cursor is now in the next row. */
         t->HostWrapPending = false;
         t->HostX = 0;
         t->HostY++;
@@ -635,7 +628,7 @@ void CsHostPrintCell(CsTerminal *t, const CsBuffer *b, const CsCell *lead, const
     }
 }
 
-/* leaves the terminal's cursor where the cursor of the buffer is. */
+/* moves the terminal cursor to the buffer cursor. */
 void CsHostCursor(CsTerminal *t, const CsBuffer *b)
 {
     int row = b->CursorY - b->Window.Top;
@@ -655,7 +648,7 @@ void CsHostCursor(CsTerminal *t, const CsBuffer *b)
         CsHostGoto(t, col, row);
         return;
     }
-    /* pending wrap is a state of the terminal that only printing in the last column makes. */
+    /* only printing in the last column puts the terminal in pending wrap. */
     const CsCell *cell = &b->Grid.Rows[b->CursorY].Cells[col];
     int lead = col;
     if ((cell->Flags & CS_CELL_TRAIL) && lead > 0)
@@ -756,16 +749,14 @@ static bool cell_blank_with(const CsCell *c, const CsCell *like)
 }
 
 /*
- * paints cells of the viewport row y from x0 to x1 that differ from the
- * shadow, or all of them when forced. cells that are equal are bridged when
- * a few of them lie between changed ones, as moving the cursor over them
- * costs as much as printing them.
+ * paints the cells of viewport row y from x0 to x1 that differ from the shadow, or all of them when forced. short runs
+ * of equal cells between changed ones are painted too, since moving the cursor over them costs as much.
  */
 static void paint_row(CsTerminal *t, CsBuffer *b, int y, int x0, int x1, bool force)
 {
     CsRow *model = &b->Grid.Rows[b->Window.Top + y];
     CsRow *shadow = &t->Shadow.Rows[y];
-    /* a row the console never painted is all different from what it holds. */
+    /* a row the console never painted is treated as all different. */
     force = !shadow->Known;
     int base = b->Window.Left;
     int width = b->Window.Right - b->Window.Left + 1;
@@ -783,7 +774,7 @@ static void paint_row(CsTerminal *t, CsBuffer *b, int y, int x0, int x1, bool fo
         int start = x;
         if ((m->Flags & CS_CELL_TRAIL) && start > 0)
             start--;
-        /* when the rest of the row is one blank cell, one erase does it. */
+        /* when the rest of the row is all the same blank, one erase does it. */
         const CsCell *first = &model->Cells[base + start];
         if (width == t->Cols && first->Char == ' ' && !first->Flags) {
             bool blank = true;
@@ -836,7 +827,7 @@ static void paint_row(CsTerminal *t, CsBuffer *b, int y, int x0, int x1, bool fo
         shadow->Known = true;
 }
 
-/* the terminal shows nothing known: the shadow becomes a blank screen, or the screen of the main buffer again. */
+/* forgets what the terminal shows: the shadow becomes a blank screen, or the main buffer's screen again. */
 static void shadow_reset_known(CsTerminal *t, bool known)
 {
     if (t->ShadowValid) {
@@ -855,7 +846,7 @@ static void shadow_reset(CsTerminal *t)
     shadow_reset_known(t, false);
 }
 
-/* the terminal has a blank screen, which an alternate screen starts as. */
+/* the terminal shows a blank screen, as an alternate screen starts. */
 void CsShadowBlank(CsTerminal *t)
 {
     shadow_reset_known(t, true);
@@ -910,7 +901,7 @@ void CsRender(CsTerminal *t)
         }
         b->Dirty = false;
     }
-    /* the terminal's own wrapping is what the buffer asked for. */
+    /* the terminal's autowrap follows the buffer's wrap mode. */
     CsHostWrap(t, (b->Mode & CS_WRAP_AT_EOL_OUTPUT) != 0);
     CsHostCursor(t, b);
     sync_modes(t);
@@ -951,7 +942,7 @@ void CsSetTitle(CsTerminal *t, const uint16_t *title, size_t count)
             c = 0x10000 + ((c - 0xD800) << 10) + (title[i + 1] - 0xDC00u);
             i++;
         }
-        /* the controls would end the string early. */
+        /* control characters would end the string early. */
         if (c < 0x20 || c == 0x7F)
             c = ' ';
         CsOutUtf8(t, c);
@@ -1107,7 +1098,7 @@ void CsBufferDestroy(CsBuffer *b)
     CsFree(b);
 }
 
-/* makes a buffer the one that is shown, and brings the host terminal to it. */
+/* shows a buffer and brings the host terminal to it. */
 void CsShow(CsTerminal *t, CsBuffer *buffer)
 {
     CsBuffer *old = CsDisplayed(t);
@@ -1130,14 +1121,14 @@ static bool grid_resize(CsBuffer *b, int width, int height)
         return false;
     int copy_w = CS_MIN(width, b->Grid.Width);
     int skip = 0;
-    /* the rows that do not fit are the ones above the cursor. */
+    /* the rows that do not fit are dropped from above the cursor. */
     if (height < b->Grid.Height && b->CursorY >= height)
         skip = b->CursorY - height + 1;
     int copy_h = CS_MIN(height, b->Grid.Height - skip);
     for (int y = 0; y < copy_h; y++) {
         CsRow *from = &b->Grid.Rows[y + skip];
         memcpy(fresh.Rows[y].Cells, from->Cells, sizeof(CsCell) * (size_t)copy_w);
-        /* a wide character cut in two is not one. */
+        /* a wide character cut in half becomes a blank. */
         if (copy_w < b->Grid.Width && copy_w > 0 && (fresh.Rows[y].Cells[copy_w - 1].Flags & (CS_CELL_LEAD | CS_CELL_PAIR)))
             fresh.Rows[y].Cells[copy_w - 1] = blank;
         fresh.Rows[y].Wrapped = from->Wrapped;
@@ -1206,7 +1197,7 @@ void CsTerminalResize(CsTerminal *t, int cols, int rows)
     t->HostAttrKnown = false;
     CsBuffer *shown = CsDisplayed(t);
     if (shown) {
-        /* the terminal reflows and clips on its own; what the console had written is painted again. */
+        /* the terminal reflows and clips on its own, so repaint what the console had written. */
         for (int y = shown->Window.Top; y <= shown->Window.Bottom; y++)
             if (shown->Grid.Rows[y].Touched)
                 CsMark(shown, y, 0, shown->Grid.Width - 1, true);

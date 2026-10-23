@@ -1,18 +1,14 @@
 /*
- * changes the host makes to the files of a directory a program of the guest watches. The guest reports what it does
- * itself, as it does it; what the host's own programs do is told by the kernel of the host, through inotify, to the
- * directories someone watches and no others. A watch is made when a request for changes is made on a directory handle
- * and goes with the handle. A tree is watched directory by directory, the ones below it made later as they appear.
+ * reports host file changes to guest directory watches through inotify. watches live with directory handles.
+ * recursive watches cover each directory and add new subdirectories as they appear.
  *
- * The guest's own changes make events here too, and are not told twice: before the host does what a hypercall asks
- * make, remove or move an entry, write a file or set its size, it notes the entry in mime_fswatch_self, and an event for
- * that entry that follows in the next moments is the guest's own. A creation, a removal or a move is one event and
- * its note is used up by it; writes make events in bursts that the kernel merges, so a note of a write lasts a few
- * milliseconds from the last one. A change of the host in the very milliseconds after a write of the guest to the
- * same file is therefore not told. That this is rare is a guess, not a measurement.
+ * the guest reports its own changes separately. mime_fswatch_self records them before host create, remove,
+ * move, write or truncate operations so their inotify echoes are suppressed. create, remove and move consume
+ * one note; merged write bursts retain a note for a few milliseconds. a host write to the same file during
+ * that interval is also suppressed. assuming this is rare is a guess, not a measurement.
  *
- * Events are queued here as records, coalesced when one repeats the last, and the guest is interrupted when the queue
- * goes from empty to not empty. It fetches the queue with MIME_HC_FS_CHANGES until that answers nothing.
+ * coalesce adjacent duplicate records and interrupt the guest when the queue becomes nonempty.
+ * MIME_HC_FS_CHANGES drains it.
  */
 #include "vmm.h"
 
@@ -34,7 +30,7 @@
 #ifdef __linux__
 
 #define WATCHES 128
-#define DIRECTORIES 8192 /* directories watched in all, trees included */
+#define DIRECTORIES 8192 /* directories watched in all, trees included. */
 #define QUEUE_BYTES (1u << 20)
 #define SELF_SLOTS 256
 #define MODIFY_NOTE_NS 8000000ll
@@ -52,38 +48,38 @@ typedef struct Watch {
     uint32_t id;
     uint32_t filter;
     bool tree;
-    char *base; /* host path of the directory */
+    char *base; /* host path of the directory. */
 } Watch;
 
 typedef struct Directory {
-    int wd; /* 0 when the slot is free */
+    int wd; /* 0 when the slot is free. */
     int watch;
-    char *relative; /* below the watch's directory, with slashes, "" for the directory itself */
+    char *relative; /* below the watch's directory, with slashes, "" for the directory itself. */
 } Directory;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static Watch g_watches[WATCHES];
 static Directory g_directories[DIRECTORIES];
-static uint32_t g_directory_high; /* one past the last slot ever used */
-static int g_inotify = -2; /* -2 not made, -1 refused */
+static uint32_t g_directory_high; /* one past the last slot ever used. */
+static int g_inotify = -2; /* -2 not made, -1 refused. */
 static int g_wake = -1;
 static MimeVm *g_vm;
 static pthread_t g_thread;
 static bool g_thread_started;
-static volatile int g_watching; /* directories watched: the fast path of the notes when none are */
+static volatile int g_watching; /* directories watched: the fast path of the notes when none are. */
 
 /* the queue of records the guest fetches: size, watch, action, name_chars, then the name in utf-16. */
 static uint8_t *g_queue;
 static uint32_t g_queue_used;
 static bool g_overflow[WATCHES];
-static bool g_armed = true; /* the guest fetched to the end: the next record raises the interrupt */
+static bool g_armed = true; /* the guest fetched to the end: the next record raises the interrupt. */
 
 /* entries the guest is changing itself. */
 typedef struct Self {
     char *path;
-    uint32_t hash; /* of the path, compared before the path is */
-    uint32_t created, removed, moved_from, moved_to; /* events to come that are the guest's own */
-    int64_t modified_until;                          /* ns of the monotonic clock */
+    uint32_t hash; /* of the path, compared before the path is. */
+    uint32_t created, removed, moved_from, moved_to; /* events to come that are the guest's own. */
+    int64_t modified_until;                          /* ns of the monotonic clock. */
     int64_t expires;
 } Self;
 
@@ -96,7 +92,7 @@ static int64_t now_ns(void)
     return (int64_t)ts.tv_sec * 1000000000ll + ts.tv_nsec;
 }
 
-/* ------------------------------------------------------------------ the guest's own changes */
+/* ------------------------------------------------------------------ the guest's own changes. */
 
 static uint32_t path_hash(const char *path)
 {
@@ -135,7 +131,7 @@ static Self *self_find(const char *path, bool make)
     return s->path ? s : nullptr;
 }
 
-/* whether a watch looks at the directory of a path: the events of an entry nobody watches are not waited for, and need no note. with the lock held. */
+/* with the lock held: only note guest changes in directories that have watches. */
 static bool watched_path(const char *path)
 {
     for (int i = 0; i < WATCHES; i++) {
@@ -178,7 +174,7 @@ void mime_fswatch_self(const char *path, int kind)
     pthread_mutex_unlock(&g_lock);
 }
 
-/* whether an event is the echo of a change the guest made, which is then used up. with the lock held. */
+/* with the lock held: consumes matching guest-change notes to suppress echoes. */
 static bool self_echo(const char *path, uint32_t mask)
 {
     Self *s = self_find(path, false);
@@ -205,7 +201,7 @@ static bool self_echo(const char *path, uint32_t mask)
     return false;
 }
 
-/* ------------------------------------------------------------------ the queue */
+/* ------------------------------------------------------------------ the queue. */
 
 static void queue_raise(void)
 {
@@ -225,7 +221,7 @@ static void queue_push(uint32_t watch_id, uint32_t action, const char *relative)
             wide[i] = '\\';
     uint32_t size = (uint32_t)((sizeof(MimeFsChange) + chars * 2 + 3) & ~3u);
     if (g_queue_used + size > QUEUE_BYTES) {
-        /* more than the guest has fetched fits: it only learns that something happened to this watch. */
+        /* on overflow, report that the watch changed without listing every event. */
         for (int i = 0; i < WATCHES; i++)
             if (g_watches[i].used && g_watches[i].id == watch_id)
                 g_overflow[i] = true;
@@ -253,13 +249,13 @@ static void queue_push(uint32_t watch_id, uint32_t action, const char *relative)
     queue_raise();
 }
 
-/* ------------------------------------------------------------------ directories and their watches */
+/* ------------------------------------------------------------------ directories and their watches. */
 
 static uint32_t mask_of(uint32_t filter, bool attributes)
 {
     /*
-     * the guest's cache of attributes wants a file told when the program that wrote it closes it, not at each of its
-     * writes: a log written a line at a time would be a flood of events to say that the file is not what it was.
+     * notify the guest attribute cache when a writer closes the file, avoiding an event for every line of a
+     * log.
      */
     if (attributes)
         return IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_ATTRIB | IN_CLOSE_WRITE | IN_DELETE_SELF |
@@ -274,7 +270,7 @@ static uint32_t mask_of(uint32_t filter, bool attributes)
     return mask | IN_DELETE_SELF | IN_MOVE_SELF | IN_ONLYDIR | IN_DONT_FOLLOW;
 }
 
-/* the watches of one directory of the host: more than one when programs of the guest watch it separately. */
+/* a host directory can have multiple guest watches. */
 static bool wd_shared(int wd, const Directory *except)
 {
     for (uint32_t i = 0; i < g_directory_high; i++)
@@ -283,7 +279,7 @@ static bool wd_shared(int wd, const Directory *except)
     return false;
 }
 
-/* watches a directory for a watch, whose events add to those other watches of it ask for. with the lock held. */
+/* with the lock held: adds requested events to the existing directory watch. */
 static bool add_directory(int watch, const char *path, const char *relative)
 {
     int wd = inotify_add_watch(g_inotify, path,
@@ -318,7 +314,7 @@ static void remove_directory(Directory *d)
     __atomic_sub_fetch(&g_watching, 1, __ATOMIC_SEQ_CST);
 }
 
-/* the directories below one, watched, with the names already in them told as made when `announce`. */
+/* watches subdirectories and reports existing entries as creations when `announce` is set. */
 static void add_tree(int watch, const char *path, const char *relative, bool announce)
 {
     DIR *dir = opendir(path);
@@ -352,9 +348,9 @@ static void drop_watch(int watch)
     g_overflow[watch] = false;
 }
 
-/* ------------------------------------------------------------------ events */
+/* ------------------------------------------------------------------ events. */
 
-/* the first slot of a descriptor, which looks up the guest's own notes for all that share it. */
+/* the first descriptor slot supplies guest-change notes shared by all watches. */
 static uint32_t first_for_wd(int wd)
 {
     for (uint32_t i = 0; i < g_directory_high; i++)
@@ -391,9 +387,9 @@ static void handle_events(const char *buffer, ssize_t size)
                 continue;
             Watch *w = &g_watches[d->watch];
             if (e->mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED)) {
-                /* the directory is gone or moved; the watch of the guest stays, with nothing to tell. */
+                /* the directory is gone or moved; keep the guest watch dormant. */
                 if (w->id > MIME_FS_WATCH_ID_ATTRIBUTES) {
-                    /* the guest keeps attributes of the names in it, which it is told no longer hold. */
+                    /* invalidate guest attributes cached for this directory. */
                     g_overflow[d->watch] = true;
                     queue_raise();
                 }
@@ -411,11 +407,11 @@ static void handle_events(const char *buffer, ssize_t size)
             snprintf(full, sizeof(full), "%s/%s", w->base, rel);
             bool directory = (e->mask & IN_ISDIR) != 0;
             uint32_t name_filter = directory ? CHANGE_DIR_NAME : CHANGE_FILE_NAME;
-            /* a note of the guest's own change is used up by the first of the watches to see its event. */
+            /* only the first watch seeing the event consumes its guest-change note. */
             bool own = di == first_for_wd(e->wd) ? self_echo(full, e->mask & ~(uint32_t)IN_ISDIR) : own_seen;
             if (di == first_for_wd(e->wd))
                 own_seen = own;
-            /* a directory made in a tree is watched too, and what it already holds is told. */
+            /* watch new subdirectories and announce their existing contents. */
             if (w->tree && directory && (e->mask & (IN_CREATE | IN_MOVED_TO))) {
                 add_directory(d->watch, full, rel);
                 add_tree(d->watch, full, rel, !own);
@@ -432,7 +428,7 @@ static void handle_events(const char *buffer, ssize_t size)
                 if (w->filter & name_filter)
                     queue_push(w->id, MIME_FS_CHANGE_REMOVED, rel);
             } else if (e->mask & IN_MOVED_FROM) {
-                /* the matching arrival, if it comes in this batch, makes the pair; else it left the watch. */
+                /* pair moves within this batch; otherwise the entry left the watched tree. */
                 int slot = -1;
                 for (int i = 0; i < 16 && slot < 0; i++)
                     if (!moves[i].used)
@@ -492,7 +488,7 @@ static void *reader_main(void *arg)
         if (fds[0].revents & POLLIN) {
             ssize_t n = read(g_inotify, buffer, sizeof(buffer));
             if (n > 0) {
-                /* a moved entry is two events that the kernel queues together; one that ended the batch gets its mate. */
+                /* the kernel queues move pairs together; fetch the second event if the first ended the batch. */
                 const struct inotify_event *last = nullptr;
                 for (const char *p = buffer; p < buffer + n; p += sizeof(*last) + last->len)
                     last = (const struct inotify_event *)p;
@@ -591,7 +587,7 @@ void mime_fswatch_remove(uint32_t id)
     pthread_mutex_unlock(&g_lock);
 }
 
-/* the records for the guest, up to capacity, with a record that says what overflowed first. */
+/* copies up to capacity records, reporting overflow first. */
 uint64_t mime_fswatch_fetch(MimeVm *vm, uint64_t pa, uint64_t capacity, uint64_t *bytes)
 {
     *bytes = 0;
@@ -625,7 +621,7 @@ uint64_t mime_fswatch_fetch(MimeVm *vm, uint64_t pa, uint64_t capacity, uint64_t
         g_queue_used -= taken;
     }
     if (!used && !g_queue_used)
-        g_armed = true; /* the guest has everything: what comes next interrupts it */
+        g_armed = true; /* the guest has everything: what comes next interrupts it. */
     pthread_mutex_unlock(&g_lock);
     *bytes = used;
     return MIME_HC_STATUS_OK;

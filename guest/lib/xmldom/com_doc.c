@@ -1,4 +1,4 @@
-/* IXMLDOMDocument, IXMLDOMDocument2 and IXMLDOMDocument3: creating nodes, loading, saving and the settings. */
+/* IXMLDOMDocument, IXMLDOMDocument2 and IXMLDOMDocument3. */
 #include <xmldom/xmldom.h>
 
 #define D(n) ((XDoc *)(n))
@@ -16,7 +16,7 @@ static void fire(IDispatch *handler)
     VariantClear(&result);
 }
 
-/* a load goes through the states loading, loaded, interactive and completed, announcing each to the handler. */
+/* a load steps through loading, loaded, interactive and completed, firing the handler at each. */
 static void run_states(XDoc *doc)
 {
     for (LONG state = 1; state <= 4; state++) {
@@ -64,7 +64,7 @@ static HRESULT read_all(IUnknown *object, BYTE **data, UINT *size)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the document's own interface */
+/* ------------------------------------------------------------------ IXMLDOMDocument */
 
 static HRESULT STDMETHODCALLTYPE d_get_doctype(XNode *n, void **out)
 {
@@ -225,7 +225,7 @@ static HRESULT STDMETHODCALLTYPE d_getElementsByTagName(XNode *n, BSTR name, voi
     return l ? S_OK : E_OUTOFMEMORY;
 }
 
-/* the type of a created node, a number or a name. */
+/* createNode takes the type as a number or a name. */
 static int node_type_of(const VARIANT *v)
 {
     LONG n;
@@ -501,7 +501,7 @@ static HRESULT STDMETHODCALLTYPE d_put_preserveWhiteSpace(XNode *n, VARIANT_BOOL
     return set_flag(n, XDF_PRESERVE, on);
 }
 
-/* a handler is an object that is called, or nothing. */
+/* a handler is a callable object or nothing. */
 static HRESULT set_handler(IDispatch **slot, VARIANT handler)
 {
     const VARIANT *v = xv_deref(&handler);
@@ -594,7 +594,6 @@ static HRESULT STDMETHODCALLTYPE d_importNode(XNode *n, XNode *node, VARIANT_BOO
     return xd_ret_node(c, out);
 }
 
-/* the properties of a document, as getProperty and setProperty know them. */
 enum { P_LANGUAGE, P_NAMESPACES, P_DEPTH, P_SIZE, P_FLAG };
 
 static const struct {
@@ -620,7 +619,7 @@ static const struct {
     {L"NormalizeAttributeValues", P_FLAG, XDF_NORMALIZE_ATTR},
 };
 
-/* xmlns:p='uri' declarations separated by white space. */
+/* the value is xmlns:p='uri' declarations separated by white space. */
 static HRESULT set_selection_namespaces(XDoc *doc, const WCHAR *text, UINT length)
 {
     XNs *list = nullptr;
@@ -804,7 +803,7 @@ static HRESULT STDMETHODCALLTYPE d_getProperty(XNode *n, BSTR name, VARIANT *v)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the table and copies */
+/* ------------------------------------------------------------------ vtable and copies */
 
 XDocumentVtbl xd_vtbl_document;
 

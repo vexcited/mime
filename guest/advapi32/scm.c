@@ -1,10 +1,10 @@
 /*
- * the service control manager api: the functions a program calls to open, create, query, start and control
- * services. on windows they are calls of the rpc interface svcctl to services.exe; here they are the messages of
- * include/mime/scm.h on a connection to the pipe \pipe\svcctl, which services.exe serves. see docs/services.md.
+ * the service control manager api: open, create, query, start and control services. on windows these are svcctl rpc
+ * calls to services.exe; here they are the include/mime/scm.h messages over the \pipe\svcctl pipe that services.exe
+ * serves.
  *
- * an SC_HANDLE is a block of this process that names the handle services.exe keeps for the process; the blocks
- * are listed, so that a handle that is not one is told apart without being touched.
+ * an SC_HANDLE is a block in this process naming the handle services.exe keeps for it. the blocks are listed, so a
+ * bogus handle is detected without being touched.
  */
 #define MIME_BUILD_ADVAPI32 1
 #include "advapi32_private.h"
@@ -26,7 +26,7 @@ ADVAPI BOOL WINAPI GetSecurityDescriptorControl(PSECURITY_DESCRIPTOR sd, PSECURI
 #define SCK_MANAGER 1
 #define SCK_SERVICE 2
 #define SCK_LOCK 3
-#define SCK_STATUS 4 /* what RegisterServiceCtrlHandler gives a service */
+#define SCK_STATUS 4 /* the handle RegisterServiceCtrlHandler gives a service. */
 
 #ifndef ERROR_INVALID_ADDRESS
 #define ERROR_INVALID_ADDRESS 487L
@@ -40,7 +40,7 @@ typedef struct SC_OBJECT {
     DWORD Magic;
     DWORD Kind;
     UINT64 Id;
-    struct SC_OBJECT *Manager; /* of a lock */
+    struct SC_OBJECT *Manager; /* the manager a lock belongs to. */
 } SC_OBJECT;
 
 static SRWLOCK g_objects_lock = SRWLOCK_INIT;
@@ -61,7 +61,7 @@ static SC_OBJECT *object_new(DWORD kind, UINT64 id)
     return o;
 }
 
-/* whether the handle is one of this process', of the kind. */
+/* the object of that kind behind the handle if this process made it, else NULL. */
 static SC_OBJECT *object_find(SC_HANDLE h, DWORD kind)
 {
     SC_OBJECT *found = nullptr;
@@ -104,7 +104,7 @@ static void object_free(SC_OBJECT *object)
     AdvFree(object);
 }
 
-/* ------------------------------------------------------------------ the connection */
+/* ------------------------------------------------------------------ connection */
 
 #define POOL_SIZE 4
 static SRWLOCK g_pool_lock = SRWLOCK_INIT;
@@ -129,7 +129,7 @@ static HANDLE connect_pipe(DWORD *error)
     return nullptr;
 }
 
-/* a connection to the manager that is not in use. */
+/* an idle connection to the manager. */
 static HANDLE take_connection(DWORD *error)
 {
     HANDLE h = nullptr;
@@ -191,8 +191,8 @@ static DWORD pipe_read(HANDLE h, void *data, DWORD size)
 typedef struct SC_REPLY {
     BYTE *Data;
     SCM_READER R;
-    DWORD Error; /* the manager's answer */
-    BOOL Body;   /* the answer carries more than its header */
+    DWORD Error; /* the manager's answer. */
+    BOOL Body;   /* the answer carries more than its header. */
 } SC_REPLY;
 
 static void reply_free(SC_REPLY *r)
@@ -245,7 +245,7 @@ static DWORD transact(SCM_WRITER *w, SC_REPLY *reply)
             break;
         }
         CloseHandle(pipe);
-        /* a connection that went away is tried again with a new one, other failures are final. */
+        /* a dropped connection is retried on a new one, other failures are final. */
         if (error != ERROR_BROKEN_PIPE && error != ERROR_PIPE_NOT_CONNECTED && error != ERROR_NO_DATA)
             break;
     }
@@ -255,7 +255,7 @@ static DWORD transact(SCM_WRITER *w, SC_REPLY *reply)
     return error;
 }
 
-/* the answer of a request as a win32 error. */
+/* the request's answer as a win32 error. */
 static DWORD call(SCM_WRITER *w, SC_REPLY *reply)
 {
     DWORD error = transact(w, reply);
@@ -271,8 +271,8 @@ static DWORD call_simple(SCM_WRITER *w)
 }
 
 /*
- * the first call into the manager of a process waits for the event services.exe signals when its pipe is ready.
- * a process that comes before the manager makes the event itself: everyone may wait for it, the system owns it.
+ * a process's first manager call waits for the event services.exe signals when its pipe is ready. a process that
+ * starts before the manager creates the event itself: anyone may wait on it, the system owns it.
  */
 #define SCM_READY_TIMEOUT_MS 180000
 
@@ -378,7 +378,7 @@ ADVAPI BOOL WINAPI CloseServiceHandle(SC_HANDLE handle)
     if (!o)
         return fail(ERROR_INVALID_HANDLE);
     if (o->Kind == SCK_LOCK) {
-        /* a lock is let go with UnlockServiceDatabase, closing it gives it up too. */
+        /* UnlockServiceDatabase releases a lock, and so does closing it. */
         SCM_WRITER w;
         ScmWriterInit(&w, SCM_OP_UNLOCK_DATABASE);
         call_simple(&w);
@@ -466,7 +466,7 @@ ADVAPI SC_HANDLE WINAPI CreateServiceW(SC_HANDLE manager, LPCWSTR name, LPCWSTR 
     ScmPutU32(&w, tag != nullptr);
     DWORD chars = 0;
     if (dependencies) {
-        /* a list of names closed by an empty one; the characters it takes are counted here. */
+        /* names ending with an empty one; count the characters. */
         while (dependencies[chars])
             chars += (DWORD)wcslen(dependencies + chars) + 1;
         chars++;
@@ -502,7 +502,7 @@ ADVAPI SC_HANDLE WINAPI CreateServiceA(SC_HANDLE manager, LPCSTR name, LPCSTR di
           a = AdvAnsiToWide(account), pw = AdvAnsiToWide(password), deps = nullptr;
     BOOL ok = (!name || n) && (!display || d) && (!path || p) && (!group || g) && (!account || a) && (!password || pw);
     if (ok && dependencies) {
-        /* the list is converted name by name, its terminator kept. */
+        /* convert the list name by name, keeping its terminator. */
         DWORD total = 0;
         while (dependencies[total])
             total += (DWORD)strlen(dependencies + total) + 1;
@@ -726,7 +726,7 @@ ADVAPI BOOL WINAPI ChangeServiceConfig2A(SC_HANDLE service, DWORD level, LPVOID 
     }
 }
 
-/* a string of the answer, copied to *at inside the caller's buffer, which has been checked to hold it. */
+/* copies an answer string to *at inside the caller's buffer, already checked to fit. */
 static WCHAR *place(BYTE **at, const WCHAR *chars, UINT32 count)
 {
     WCHAR *p = (WCHAR *)*at;
@@ -761,7 +761,7 @@ ADVAPI BOOL WINAPI QueryServiceConfigW(SC_HANDLE service, LPQUERY_SERVICE_CONFIG
     const WCHAR *deps = ScmGetChars(r, &deps_n);
     const WCHAR *account = ScmGetChars(r, &account_n);
     const WCHAR *display = ScmGetChars(r, &display_n);
-    /* the strings follow the structure, each closed; the list of dependencies ends with an empty name. */
+    /* terminated strings follow the structure; the dependency list ends with an empty name. */
     DWORD total = sizeof(QUERY_SERVICE_CONFIGW) + (path_n + 1) * 2 + (group_n + 1) * 2 + (deps ? deps_n * 2 + 2 : 2) +
                   (account ? (account_n + 1) * 2 : 0) + (display_n + 1) * 2;
     BOOL ok = TRUE;
@@ -802,7 +802,7 @@ ADVAPI BOOL WINAPI QueryServiceConfigA(SC_HANDLE service, LPQUERY_SERVICE_CONFIG
 {
     if (!needed)
         return fail(ERROR_INVALID_ADDRESS);
-    /* the wide answer is converted string by string into the buffer behind the structure. */
+    /* convert the wide answer string by string into the buffer after the structure. */
     DWORD wide_size = 0;
     QUERY_SERVICE_CONFIGW *wide = nullptr;
     if (!QueryServiceConfigW(service, nullptr, 0, &wide_size)) {
@@ -1122,8 +1122,8 @@ typedef struct ENUM_ITEM {
 } ENUM_ITEM;
 
 /*
- * lists services the way both families of calls do: the structures first and the strings behind them, as many as
- * the buffer takes, ERROR_MORE_DATA and the bytes the rest needs when it takes less.
+ * lists services for both call families: structures first with their strings behind, as many as fit, then
+ * ERROR_MORE_DATA and the bytes the rest needs.
  */
 static BOOL enum_fill(ENUM_ITEM *items, DWORD count, BOOL process, BYTE *buffer, DWORD size, LPDWORD needed,
                       LPDWORD returned, LPDWORD resume, DWORD start_index)
@@ -1393,7 +1393,7 @@ ADVAPI BOOL WINAPI EnumDependentServicesW(SC_HANDLE service, DWORD state, LPENUM
     if (r->Failed) {
         ok = fail(ERROR_INVALID_DATA);
     } else {
-        /* all of them or none: the order is the order to stop them in, which a part of it would not keep. */
+        /* all or none: the order is the stop order, which a partial list would break. */
         DWORD total = 0;
         for (DWORD i = 0; i < count; i++)
             total += sizeof(ENUM_SERVICE_STATUSW) + (items[i].NameChars + 1) * 2 + (items[i].DisplayChars + 1) * 2;
@@ -1413,14 +1413,14 @@ ADVAPI BOOL WINAPI EnumDependentServicesW(SC_HANDLE service, DWORD state, LPENUM
 ADVAPI BOOL WINAPI EnumDependentServicesA(SC_HANDLE service, DWORD state, LPENUM_SERVICE_STATUSA services, DWORD size,
                                           LPDWORD needed, LPDWORD returned)
 {
-    /* the wide list converts in place through a buffer of its own. */
+    /* the wide list is converted in place through its own buffer. */
     DWORD wide_size = 0, count = 0;
     if (!needed || !returned)
         return fail(ERROR_INVALID_ADDRESS);
     if (EnumDependentServicesW(service, state, nullptr, 0, &wide_size, &count) || GetLastError() != ERROR_MORE_DATA) {
         if (GetLastError() == ERROR_INVALID_HANDLE || GetLastError() == ERROR_ACCESS_DENIED || GetLastError() == ERROR_INVALID_ADDRESS)
             return FALSE;
-        /* none depend on it. */
+        /* no dependents. */
         *needed = 0;
         *returned = 0;
         return TRUE;
@@ -1613,7 +1613,7 @@ ADVAPI BOOL WINAPI SetServiceObjectSecurity(SC_HANDLE handle, DWORD information,
         return fail(ERROR_INVALID_ADDRESS);
     if (!IsValidSecurityDescriptor(sd))
         return FALSE;
-    /* the manager takes the descriptor self relative. */
+    /* the manager takes a self relative descriptor. */
     DWORD length = GetSecurityDescriptorLength(sd);
     PSECURITY_DESCRIPTOR relative = AdvAlloc(length + 64);
     if (!relative)
@@ -1639,7 +1639,7 @@ ADVAPI BOOL WINAPI SetServiceObjectSecurity(SC_HANDLE handle, DWORD information,
     return error ? fail(error) : TRUE;
 }
 
-/* ------------------------------------------------------------------ the lock of the database */
+/* ------------------------------------------------------------------ database lock */
 
 ADVAPI SC_LOCK WINAPI LockServiceDatabase(SC_HANDLE manager)
 {
@@ -1751,7 +1751,7 @@ static BOOL names(SC_HANDLE manager, DWORD op, LPCWSTR in, LPWSTR out, LPDWORD s
         if (reply.R.Failed || !name) {
             error = ERROR_INVALID_DATA;
         } else if (!out || *size < n + 1) {
-            /* the size counts the characters, and without the terminator when the buffer is too small. */
+            /* the size counts characters, without the terminator when the buffer is too small. */
             *size = n;
             error = ERROR_INSUFFICIENT_BUFFER;
         } else {
@@ -1846,7 +1846,7 @@ static void WINAPI notify_apc(ULONG_PTR parameter)
         n->pfnNotifyCallback(n);
 }
 
-/* reads the completions the manager writes, and has each delivered in the thread that asked. */
+/* reads the completions the manager writes and delivers each in the thread that asked. */
 static DWORD WINAPI notify_thread(LPVOID unused)
 {
     (void)unused;
@@ -1950,7 +1950,7 @@ static DWORD start_notifications(void)
 #define NOTIFY_OBJECT_BITS 0x180
 #define NOTIFY_KNOWN_BITS 0x3FF
 
-/* the checks of a registration; every failure is an invalid parameter, answered before anything is registered. */
+/* registration checks; every failure is an invalid parameter, reported before anything is registered. */
 static DWORD notify_check(SC_HANDLE handle, DWORD mask, const SERVICE_NOTIFYW *notify)
 {
     SC_OBJECT *object = handle ? object_any(handle) : nullptr;
@@ -1970,7 +1970,7 @@ static DWORD notify_check(SC_HANDLE handle, DWORD mask, const SERVICE_NOTIFYW *n
     return ERROR_SUCCESS;
 }
 
-/* asks the manager to complete the block when the services change. the callback runs in this thread, as an APC. */
+/* asks the manager to complete the block when services change. the callback runs in this thread as an APC. */
 static DWORD notify_change(SC_HANDLE handle, DWORD mask, PSERVICE_NOTIFYW notify)
 {
     DWORD error = notify_check(handle, mask, notify);
@@ -2010,7 +2010,7 @@ static DWORD notify_change(SC_HANDLE handle, DWORD mask, PSERVICE_NOTIFYW notify
     if (!error)
         return ERROR_SUCCESS;
 
-    /* the completion of a refused registration never comes: take it out of the list unless it already came. */
+    /* a refused registration never completes: remove it from the list unless it already did. */
     AcquireSRWLockExclusive(&g_notify_lock);
     BOOL listed = FALSE;
     for (NOTIFY_REG **link = &g_notifies; *link; link = &(*link)->Next) {
@@ -2035,14 +2035,14 @@ ADVAPI DWORD WINAPI NotifyServiceStatusChangeW(SC_HANDLE service, DWORD mask, PS
 
 ADVAPI DWORD WINAPI NotifyServiceStatusChangeA(SC_HANDLE service, DWORD mask, PSERVICE_NOTIFYA notify)
 {
-    /* the names of a version 2 notice are wide in this layout, as in windows' own. */
+    /* version 2 notification names are wide in this layout, as on windows. */
     return notify_change(service, mask, (PSERVICE_NOTIFYW)notify);
 }
 
 ADVAPI DWORD WINAPI WaitServiceState(SC_HANDLE service, DWORD notify_mask, DWORD timeout, HANDLE cancel_event)
 {
     (void)cancel_event;
-    /* polls the state, which is what a wait for a notification amounts to. */
+    /* waiting for a notification amounts to polling the state. */
     ULONGLONG deadline = GetTickCount64() + timeout;
     for (;;) {
         SERVICE_STATUS_PROCESS p;
@@ -2057,17 +2057,17 @@ ADVAPI DWORD WINAPI WaitServiceState(SC_HANDLE service, DWORD notify_mask, DWORD
     }
 }
 
-/* ------------------------------------------------------------------ the service side */
+/* ------------------------------------------------------------------ service side */
 
 typedef struct DISPATCH_ENTRY {
-    WCHAR *Name;  /* the table's name */
-    WCHAR *Alias; /* the name the manager knows the service by, when it differs */
+    WCHAR *Name;  /* the table's name. */
+    WCHAR *Alias; /* the name the manager knows the service by, when different. */
     LPSERVICE_MAIN_FUNCTIONW MainW;
     LPSERVICE_MAIN_FUNCTIONA MainA;
     LPHANDLER_FUNCTION Handler;
     LPHANDLER_FUNCTION_EX HandlerEx;
     PVOID Context;
-    SC_OBJECT *Status; /* the handle the service reports with, set when it is started */
+    SC_OBJECT *Status; /* the handle the service reports with, set once started. */
     BOOL Started;
 } DISPATCH_ENTRY;
 
@@ -2090,7 +2090,7 @@ static void free_entries(void)
     ReleaseSRWLockExclusive(&g_entries_lock);
 }
 
-/* the entry of a service: by the name of the table or the name the manager gave it. */
+/* finds a service entry by its table name or the name the manager gave it. */
 static DISPATCH_ENTRY *find_entry(const WCHAR *name)
 {
     for (DWORD i = 0; i < g_entry_count; i++)
@@ -2123,7 +2123,7 @@ static DWORD WINAPI service_main_thread(LPVOID context)
     return 0;
 }
 
-/* the channel: the process says it is a service and the pipe becomes the line the manager's controls come on. */
+/* the process registers as a service and the pipe becomes the line the manager's controls arrive on. */
 static HANDLE open_channel(DWORD *error)
 {
     HANDLE pipe = connect_pipe(error);
@@ -2156,14 +2156,14 @@ static DWORD answer(HANDLE pipe, DWORD code)
     return pipe_write(pipe, &h, sizeof(h));
 }
 
-/* ------------------------------------------------------------------ the controls of the manager */
+/* ------------------------------------------------------------------ manager controls */
 
-/* a control as the manager wrote it on the channel. the pieces are copies that the block owns. */
+/* a control as the manager wrote it on the channel; the block owns copies of the pieces. */
 typedef struct CONTROL_MESSAGE {
     DWORD Control;
     WCHAR *Name;
     DWORD EventType;
-    BYTE *EventData; /* null when there is none */
+    BYTE *EventData; /* NULL when there is none. */
     UINT64 StatusId;
     DWORD ArgumentCount;
     WCHAR **Arguments;
@@ -2228,13 +2228,13 @@ static BOOL control_parse(const void *message, UINT32 size, CONTROL_MESSAGE *c)
     return TRUE;
 }
 
-/* a handler of the plain kind is told of the controls up to the network ones and of those a service defines. */
+/* a plain handler gets the controls up to the network ones, and those a service defines. */
 static BOOL plain_handler_knows(DWORD control)
 {
     return (control >= 1 && control <= 10) || (control >= 128 && control <= 255);
 }
 
-/* the control goes to the handler the named service registered. the lock is not held while the handler runs. */
+/* delivers the control to the handler the named service registered, without holding the lock while it runs. */
 static DWORD deliver_control(const CONTROL_MESSAGE *c)
 {
     LPHANDLER_FUNCTION plain = nullptr;
@@ -2261,7 +2261,7 @@ static DWORD deliver_control(const CONTROL_MESSAGE *c)
         return ERROR_CALL_NOT_IMPLEMENTED;
     }
 
-    /* a service that was told to stop takes no more controls until it registers a handler again. */
+    /* a service told to stop takes no more controls until it registers a handler again. */
     if (c->Control == SERVICE_CONTROL_STOP || c->Control == SERVICE_CONTROL_SHUTDOWN ||
         c->Control == SERVICE_CONTROL_PRESHUTDOWN) {
         AcquireSRWLockExclusive(&g_entries_lock);
@@ -2275,7 +2275,7 @@ static DWORD deliver_control(const CONTROL_MESSAGE *c)
     return result;
 }
 
-/* the arguments of the main function: the name, then those of StartService, in the form the table was made for. */
+/* the main function's arguments: the name, then those of StartService, in the form the table was built for. */
 static START_PARAMS *start_params_make(DISPATCH_ENTRY *entry, const CONTROL_MESSAGE *c)
 {
     START_PARAMS *p = AdvAllocZero(sizeof(*p));
@@ -2312,8 +2312,8 @@ static START_PARAMS *start_params_make(DISPATCH_ENTRY *entry, const CONTROL_MESS
 }
 
 /*
- * the manager starts a service. a process of one service takes the first entry whatever the name, and then answers
- * to the name it was given. the main function runs on a thread of its own, the answer says only that it has begun.
+ * the manager starts a service. a one service process takes the first entry whatever the name, then answers to the
+ * given name. the main function runs on its own thread; the answer only says it has begun.
  */
 static DWORD control_start(const CONTROL_MESSAGE *c)
 {
@@ -2370,7 +2370,7 @@ static DWORD control_start(const CONTROL_MESSAGE *c)
     return error;
 }
 
-/* reads the controls of the manager and answers each, until the manager says the process is done or goes away. */
+/* answers the manager's controls until it says the process is done or goes away. */
 static void run_controls(HANDLE pipe)
 {
     for (;;) {
@@ -2433,7 +2433,7 @@ static BOOL start_dispatcher(const WCHAR *const *names, void *const *mains, DWOR
         else
             g_entries[i].MainW = (LPSERVICE_MAIN_FUNCTIONW)mains[i];
     }
-    /* a service is a client of the manager first. */
+    /* a service is a manager client first. */
     SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
     if (!manager) {
         DWORD error = GetLastError();
@@ -2447,7 +2447,7 @@ static BOOL start_dispatcher(const WCHAR *const *names, void *const *mains, DWOR
         free_entries();
         return fail(error);
     }
-    /* the services are taken down before the system goes: below the programs' level, after services.exe's. */
+    /* services shut down before the system goes: below the programs' level, after services.exe's. */
     SetProcessShutdownParameters(0x100, 0);
     run_controls(pipe);
     CloseHandle(pipe);
@@ -2467,7 +2467,7 @@ ADVAPI BOOL WINAPI StartServiceCtrlDispatcherW(const SERVICE_TABLE_ENTRYW *table
         InterlockedExchange(&g_dispatcher_started, 1);
         return fail(ERROR_INVALID_PARAMETER);
     }
-    /* a group of services in svchost.exe has more than sixty. */
+    /* a svchost.exe group can have more than sixty services. */
     const WCHAR **names = AdvAlloc(count * sizeof(*names));
     void **mains = AdvAlloc(count * sizeof(*mains));
     if (!names || !mains) {
@@ -2590,7 +2590,7 @@ ADVAPI BOOL WINAPI SetServiceStatus(SERVICE_STATUS_HANDLE handle, LPSERVICE_STAT
     if (error)
         return fail(error);
     if (status->dwCurrentState == SERVICE_STOPPED) {
-        /* it has stopped: it takes no controls, and the handle is no more. */
+        /* it has stopped: no more controls, and the handle is gone. */
         AcquireSRWLockExclusive(&g_entries_lock);
         for (DWORD i = 0; i < g_entry_count; i++) {
             if (g_entries[i].Status == o) {
@@ -2624,10 +2624,10 @@ ADVAPI BOOL WINAPI SetServiceBits(SERVICE_STATUS_HANDLE handle, DWORD bits, BOOL
 /* ------------------------------------------------------------------ elevation */
 
 /*
- * a process with the rights of an administrator: services.exe, which stands for the appinfo service of windows, makes
- * it with the linked token of the caller and the caller as its parent, and gives back handles in this process. the
- * startup information is what ShellExecute has to give: the window, the desktop and the title. an error of 0 is a
- * process, ERROR_CANCELLED a request the policy of the machine (or a token with no administrator behind it) refused.
+ * starts a process with administrator rights. services.exe, standing in for the windows appinfo service, creates it
+ * with the caller's linked token and the caller as parent, and returns handles in this process. the startup info is
+ * what ShellExecute provides: window, desktop and title. error 0 means a process was created, ERROR_CANCELLED that
+ * the machine policy refused, or that the token has no administrator behind it.
  */
 ADVAPI DWORD WINAPI MimeLaunchElevated(LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD creation_flags,
                                        const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation)

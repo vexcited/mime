@@ -1,4 +1,4 @@
-/* documents from bytes and from files: encodings, byte order marks, and file locations. */
+/* documents from bytes and from files: encodings, byte order marks and file locations. */
 #include <xmldom/xmldom.h>
 
 /* ------------------------------------------------------------------ decoding */
@@ -9,7 +9,7 @@ static const UINT16 cp1252_high[32] = {
     0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
 };
 
-/* utf-8 to utf-16: returns the characters or -1 and the byte offset of the first bad sequence. */
+/* on a bad sequence, *bad gets its byte offset. */
 static WCHAR *decode_utf8(const BYTE *p, UINT size, UINT *length, UINT *bad)
 {
     WCHAR *out = xd_alloc_raw(((SIZE_T)size + 1) * sizeof(WCHAR));
@@ -114,7 +114,6 @@ static WCHAR *decode_page(UINT page, const BYTE *p, UINT size, UINT *length)
     return out;
 }
 
-/* the encoding named by the declaration at the start of text, as an offset and a length, or false. */
 static BOOL declared_encoding(const WCHAR *w, UINT n, UINT *off, UINT *len)
 {
     if (n < 6 || memcmp(w, L"<?xml", 10) || !xd_is_space(w[5]))
@@ -211,7 +210,7 @@ BOOL xd_parse_bytes(XDoc *doc, const BYTE *data, UINT size)
             return r;
         }
     } else {
-        /* the declaration is ascii whatever the encoding, so it can be read from the bytes. */
+        /* the declaration is ascii in any encoding, so it can be read from the raw bytes. */
         WCHAR head[256];
         UINT hn = n < 255 ? n : 255;
         for (UINT i = 0; i < hn; i++)
@@ -237,7 +236,7 @@ BOOL xd_parse_bytes(XDoc *doc, const BYTE *data, UINT size)
             text = decode_page(page, p, n, &length);
         if (!text) {
             if (n && bad < n) {
-                /* the character number of the bad sequence. */
+                /* turn the byte offset into a character index. */
                 UINT at = 0;
                 for (UINT i = 0; i < bad; i++)
                     if ((p[i] & 0xC0) != 0x80)
@@ -286,7 +285,7 @@ static BOOL has_prefix(const WCHAR *s, const char *prefix)
     return TRUE;
 }
 
-/* the path of a file: location, or null when the location is some other kind of url. */
+/* null with *other set when the location is some other kind of url. */
 WCHAR *xd_location_to_path(const WCHAR *location, BOOL *other)
 {
     *other = FALSE;
@@ -351,7 +350,6 @@ WCHAR *xd_location_to_path(const WCHAR *location, BOOL *other)
     return xd_wcsdup(location, (UINT)-1);
 }
 
-/* the url of a path, as the dom reports it. */
 static WCHAR *path_to_url(const WCHAR *path)
 {
     XBuf out = {};
@@ -410,7 +408,7 @@ BOOL xd_load_file(XDoc *doc, const WCHAR *location)
     doc->url = nullptr;
     if (other) {
         doc->url = xd_wcsdup(location, (UINT)-1);
-        /* urls of other kinds, such as http, are not fetched. */
+        /* other urls, such as http, are not fetched. */
         xd_err_set_reason(doc, 0x800C0005u, xd_message(0x800C0005u), doc->url);
         return FALSE;
     }
@@ -456,7 +454,7 @@ BOOL xd_load_file(XDoc *doc, const WCHAR *location)
         }
         CloseHandle(file);
     }
-    /* parse errors carry the url of the document. */
+    /* parse errors carry the document's url. */
     if (!ok && doc->err.code && !doc->err.url && doc->url)
         doc->err.url = xd_wcsdup(doc->url, (UINT)-1);
     xd_free(path);

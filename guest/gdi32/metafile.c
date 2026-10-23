@@ -1,12 +1,10 @@
 /*
- * gdi32 windows metafiles: the 16-bit metafile dc, which exists only in
- * gdi32 like on windows, the metafile objects, their playback, and the
- * conversions to and from enhanced metafiles.
+ * windows metafiles: the 16-bit metafile dc, which lives only in gdi32 like
+ * on windows, playback, and conversion to and from enhanced metafiles.
  *
- * a windows metafile is an 18 byte header and records of 16-bit words:
- * the size in words, the function, then the parameters in reverse order of
- * the call. objects go into the first free slot of a table the header
- * sizes, created on first selection.
+ * a metafile is an 18 byte header then records of 16-bit words: size in
+ * words, function, then the parameters in reverse call order. objects take
+ * the first free slot of a table sized by the header, on first selection.
  */
 #include "emf_private.h"
 #include <mime/win32/winnls.h>
@@ -110,7 +108,7 @@ typedef struct WMF_DC {
     DWORD MaxRecord;
     BOOL Failed;
     HGDIOBJ *Objects;
-    WORD Slots;    /* the table the header announces */
+    WORD Slots;    /* object table size written in the header. */
     WORD Capacity16;
     HGDIOBJ Pen, Brush, Font, Palette;
     HANDLE File;
@@ -291,7 +289,7 @@ static BOOL put_object(WMF_DC *w, HGDIOBJ object, WORD *slot)
     return TRUE;
 }
 
-/* the 16-bit logical font: five shorts, eight bytes and an ansi face name. */
+/* the 16-bit LOGFONT: five shorts, eight bytes and an ansi face name. */
 static BOOL create_font(WMF_DC *w, HGDIOBJ font)
 {
     LOGFONTW lf;
@@ -388,7 +386,7 @@ BOOL WmfSelectObject(HDC dc, HGDIOBJ object, HGDIOBJ *previous)
     return TRUE;
 }
 
-/* a deleted object leaves every windows metafile dc that holds it. */
+/* a deleted object is dropped from every metafile dc holding it. */
 void WmfDeleteObject(HGDIOBJ object)
 {
     if (!MfDcCount)
@@ -476,7 +474,7 @@ WINGDIAPI HMETAFILE WINAPI CloseMetaFile(HDC dc)
         h->mtNoParameters = 0;
         BOOL ok = TRUE;
         if (w->File != INVALID_HANDLE_VALUE) {
-            /* like windows, the file's header says memory metafile. */
+            /* like windows, a disk metafile's header still says memory metafile. */
             h->mtType = 1;
             ok = write_all(w->File, w->Data, w->Size);
             h->mtType = 2;
@@ -803,7 +801,7 @@ WINGDIAPI BOOL WINAPI PlayMetaFileRecord(HDC dc, LPHANDLETABLE table, LPMETARECO
         if (!play_dib(dc, r, params, &info, &bits))
             return PatBlt(dc, x, y, w, h, rop);
         LONG bh = info->bmiHeader.biHeight < 0 ? -info->bmiHeader.biHeight : info->bmiHeader.biHeight;
-        /* the source rectangle counts from the top, StretchDIBits from the bottom of a bottom up dib. */
+        /* the source rect counts from the top, StretchDIBits from the bottom of a bottom-up dib. */
         int ys = info->bmiHeader.biHeight > 0 ? (int)bh - sy - sh : sy;
         return StretchDIBits(dc, x, y, w, h, sx, ys, sw, sh, bits, info, DIB_RGB_COLORS, rop) != 0;
     }
@@ -886,7 +884,7 @@ WINGDIAPI BOOL WINAPI PlayMetaFileRecord(HDC dc, LPHANDLETABLE table, LPMETARECO
     }
     case META_CREATEREGION:
     case META_CREATEPATTERNBRUSH:
-        /* an object takes its slot even when it cannot be made, so later indices stay right. */
+        /* a failed object still takes its slot so later indices stay right. */
         if (table)
             table_put(table, handles, CreateRectRgn(0, 0, 0, 0));
         return TRUE;
@@ -916,7 +914,7 @@ WINGDIAPI BOOL WINAPI PlayMetaFileRecord(HDC dc, LPHANDLETABLE table, LPMETARECO
     return TRUE;
 }
 
-/* plays every record, through a callback when there is one, the objects deleted after. */
+/* the objects are deleted after playback. */
 static BOOL play(HDC dc, HMETAFILE handle, MFENUMPROC proc, LPARAM param)
 {
     WMF *w = wmf_lookup(handle);
@@ -949,7 +947,7 @@ static BOOL play(HDC dc, HMETAFILE handle, MFENUMPROC proc, LPARAM param)
         }
         offset += r->rdSize * 2;
     }
-    /* the objects of the metafile go, the dc gets its own back. */
+    /* delete the metafile's objects and give the dc its own back. */
     if (pen)
         SelectObject(dc, pen);
     if (brush)
@@ -980,9 +978,9 @@ WINGDIAPI BOOL WINAPI EnumMetaFile(HDC dc, HMETAFILE handle, MFENUMPROC proc, LP
 /* ------------------------------------------------------------------ conversions */
 
 /*
- * an enhanced metafile kept inside a windows metafile: escapes of type
- * MFCOMMENT that start with 'WMFC', each with a piece of the metafile. the
- * checksum makes the 16-bit words of the whole file add up to zero.
+ * an enhanced metafile embedded in a windows metafile: MFCOMMENT escapes
+ * starting with 'WMFC', each holding a piece. the checksum makes the 16-bit
+ * words of the whole file sum to zero.
  */
 #define WMFC_IDENTIFIER 0x43464D57u
 #define WMFC_CHUNK 0x2000u
@@ -996,7 +994,6 @@ static WORD word_sum(const BYTE *data, DWORD size)
     return sum;
 }
 
-/* the original enhanced metafile of a windows metafile that carries one. */
 static HENHMETAFILE embedded_emf(const BYTE *data, DWORD size)
 {
     if (size < 18 + 44 || word_sum(data, size & ~1u))
@@ -1038,7 +1035,7 @@ static HENHMETAFILE embedded_emf(const BYTE *data, DWORD size)
     return h;
 }
 
-/* the dword checksum windows puts in the windows metafile comment: the dwords of the whole metafile add to zero. */
+/* the comment's checksum makes the dwords of the whole metafile sum to zero. */
 static DWORD dword_sum(const BYTE *data, DWORD size)
 {
     DWORD sum = 0;
@@ -1073,7 +1070,7 @@ WINGDIAPI HENHMETAFILE WINAPI SetWinMetaFileBits(UINT size, const BYTE *data, HD
     RECT frame, *pframe = nullptr;
     int px = 0, py = 0;
     if (mode >= MM_ISOTROPIC && picture && picture->xExt > 0 && picture->yExt > 0) {
-        /* the picture's size in hundredths of millimeters becomes the frame and the extents in pixels. */
+        /* xExt and yExt are in hundredths of a millimeter. */
         px = MulDiv(picture->xExt, GetDeviceCaps(ref, DESKTOPHORZRES), 100 * GetDeviceCaps(ref, HORZSIZE));
         py = MulDiv(picture->yExt, GetDeviceCaps(ref, DESKTOPVERTRES), 100 * GetDeviceCaps(ref, VERTSIZE));
         frame = (RECT){0, 0, picture->xExt, picture->yExt};
@@ -1084,9 +1081,9 @@ WINGDIAPI HENHMETAFILE WINAPI SetWinMetaFileBits(UINT size, const BYTE *data, HD
     if (dc) {
         BOOL ok = TRUE;
         if (mode == MM_ANISOTROPIC) {
-            /* the original rides along, so GetWinMetaFileBits gives it back. */
+            /* embed the original so GetWinMetaFileBits can return it. */
             DWORD head[6] = {GDICOMMENT_IDENTIFIER, GDICOMMENT_WINDOWS_METAFILE, 0x300, 0, 0, size};
-            /* windows keeps this public comment for itself: it goes in without GdiComment's filter. */
+            /* windows reserves this public comment, so it bypasses GdiComment's filter. */
             EMF_DC *rec = EmfDc(dc);
             EMRGDICOMMENT *r = rec ? EmfRecordAlloc(rec, EMR_GDICOMMENT, offsetof(EMRGDICOMMENT, Data) + sizeof(head) + size)
                                    : nullptr;
@@ -1103,7 +1100,7 @@ WINGDIAPI HENHMETAFILE WINAPI SetWinMetaFileBits(UINT size, const BYTE *data, HD
         result = CloseEnhMetaFile(dc);
         EMF *emf = result ? EmfLookup(result) : nullptr;
         if (emf && mode == MM_ANISOTROPIC) {
-            /* the comment follows the header; its checksum zeroes the dword sum. */
+            /* the comment follows the header, its checksum zeroes the dword sum. */
             DWORD at = ((ENHMETAHEADER *)emf->Data)->nSize;
             DWORD *checksum = (DWORD *)(emf->Data + at + 24);
             *checksum = 0;
@@ -1116,7 +1113,7 @@ WINGDIAPI HENHMETAFILE WINAPI SetWinMetaFileBits(UINT size, const BYTE *data, HD
     return result;
 }
 
-/* the original windows metafile of a metafile SetWinMetaFileBits made, when the mode is anisotropic. */
+/* returns the windows metafile embedded by SetWinMetaFileBits, only for MM_ANISOTROPIC. */
 static UINT original_wmf(const EMF *emf, UINT size, LPBYTE data, INT mode)
 {
     const ENHMETAHEADER *h = (const ENHMETAHEADER *)emf->Data;
@@ -1167,10 +1164,9 @@ static BOOL push_record(BYTE **buffer, DWORD *used, DWORD *cap, WORD function, c
 }
 
 /*
- * windows converts with mf3216's records. mime writes the picture as one
- * stretched dib of the rendered metafile, in the coordinates of the mode,
- * with the metafile itself in comments ahead of it so SetWinMetaFileBits
- * gives it back whole.
+ * windows converts record by record. mime writes one stretched dib of the
+ * rendered picture in the mode's coordinates, preceded by the metafile in
+ * comments so SetWinMetaFileBits gets it back whole.
  */
 static UINT convert(const EMF *emf, HENHMETAFILE handle, UINT size, LPBYTE data, INT mode, HDC ref)
 {
@@ -1212,7 +1208,7 @@ static UINT convert(const EMF *emf, HENHMETAFILE handle, UINT size, LPBYTE data,
             max = words;
         sent += chunk;
     }
-    /* the picture in the units of the mode: hundredths of millimeters for the scaling modes. */
+    /* picture size in mode units: hundredths of millimeters for the scaling modes. */
     LONG fw = h->rclFrame.right - h->rclFrame.left, fh = h->rclFrame.bottom - h->rclFrame.top;
     LONG pw = MulDiv(fw, h->szlDevice.cx, 100 * h->szlMillimeters.cx);
     LONG ph = MulDiv(fh, h->szlDevice.cy, 100 * h->szlMillimeters.cy);
@@ -1262,7 +1258,7 @@ static UINT convert(const EMF *emf, HENHMETAFILE handle, UINT size, LPBYTE data,
         ok = ok && push_record(&out, &used, &cap, META_SETWINDOWORG, org, 2, &max) &&
              push_record(&out, &used, &cap, META_SETWINDOWEXT, ext, 2, &max);
     }
-    /* the rendered picture, a 24 bpp dib on white. */
+    /* render to a 24 bpp dib on white. */
     DWORD stride = ((DWORD)pw * 3 + 3) & ~3u, bits_size = stride * (DWORD)ph;
     BITMAPINFO bi;
     memset(&bi, 0, sizeof(bi));

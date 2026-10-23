@@ -1,14 +1,7 @@
 /*
- * the identity of the guest's windows and the entries of its programs in the desktop's launcher. a window belongs to
- * the program whose application user model id it was given, its own or its process's, and the compositor groups the
- * windows of a program by the application id of their toplevels: the id is "mime." and the user model id with the
- * characters a file name cannot have turned into dashes, which is also the name of the entry the shortcuts of the
- * program get (see desktop.c) so that the compositor finds the entry for the windows. a window with no id has the
- * application id "mime" like the rest of the machine's.
- *
- * what the taskbar buttons of Windows show is shown on the launcher entry, over the session bus: the progress of a
- * button, the count of its badge and its call for attention are the properties of com.canonical.Unity.LauncherEntry
- * which Plasma and several docks follow, and a window that asks for attention is flashed to the compositor.
+ * groups guest Windows by AppUserModelID using "mime." plus a filename-safe ID, matching desktop.c entries. Windows
+ * without IDs use "Mime". com.canonical.Unity.LauncherEntry signals publish taskbar progress, badge counts and
+ * attention requests to compatible desktops; attention also flashes the window.
  */
 #include "ui_internal.h"
 
@@ -24,10 +17,10 @@
 typedef struct Tracked {
     bool used;
     uint32_t id, pid;
-    char aumid[160];  /* its own */
-    char app_id[200]; /* what the compositor was told */
+    char aumid[160];  /* its own. */
+    char app_id[200]; /* what the compositor was told. */
     bool progress_visible, indeterminate;
-    uint32_t progress; /* tenths of a percent */
+    uint32_t progress; /* tenths of a percent. */
     uint32_t count;
     bool urgent;
     uint64_t progress_serial, count_serial;
@@ -103,7 +96,7 @@ static Process *find_process(uint32_t pid, bool create)
     return nullptr;
 }
 
-/* the application id a window has, and the compositor told when it changed. the lock is held. */
+/* updates the compositor when the window's application ID changes; lock held. */
 static void refresh_app_id(Tracked *w, char *changed, size_t size)
 {
     Process *p = w->pid ? find_process(w->pid, false) : nullptr;
@@ -116,7 +109,7 @@ static void refresh_app_id(Tracked *w, char *changed, size_t size)
     }
 }
 
-/* a window is told to the compositor with the id of its program, once it has one. */
+/* publishes the program ID when the window acquires one. */
 void mime_launcher_window_seen(uint32_t id, uint32_t pid)
 {
     char changed[200] = "";
@@ -133,7 +126,7 @@ void mime_launcher_window_seen(uint32_t id, uint32_t pid)
         mime_ui_window_app_id(id, changed);
 }
 
-/* what the application of an id shows: the progress of the button that set it last, the count of the last badge. */
+/* uses the most recently set progress and badge count for each application ID. */
 static void publish_app(const char *app_id)
 {
     bool visible = false, urgent = false;
@@ -192,7 +185,7 @@ static void publish_app(const char *app_id)
         mime_shell_launcher_update(&u);
 }
 
-/* a window, or all the windows of a process, was given the application user model id. */
+/* sets an AppUserModelID on one window or all Windows of a process. */
 static void window_identity(const MimeShellWindow *c)
 {
     char aumid[160];
@@ -227,7 +220,7 @@ static void window_identity(const MimeShellWindow *c)
             changes[n].id = w->id;
             mime_strlcpy(changes[n].app_id, changed, sizeof(changes[n].app_id));
             n++;
-            /* what the old id showed passes to the new one. */
+            /* transfers launcher state from the old ID to the new one. */
             if (old[0])
                 publish_app(old);
             publish_app(changed);

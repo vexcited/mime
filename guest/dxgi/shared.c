@@ -1,7 +1,6 @@
 /*
- * the vulkan device the direct3d devices of a process share. The host serves a process one vulkan device, so the
- * direct3d 11 and 12 devices made on an adapter use the same, its queues and the locks around them. The first to
- * ask describes it, the last to release it takes it away.
+ * the host serves a process one vulkan device, so the direct3d 11 and 12 devices made on an adapter share it, with
+ * its queues and their locks. the first to ask describes it, the last to release it destroys it.
  */
 #include "dxgi_private.h"
 
@@ -18,7 +17,7 @@ struct DxgiShared {
     DxgiSemaphore *semaphores;
 };
 
-/* a semaphore the process's fences share, held by as many of them as opened it. */
+/* a semaphore shared by the process's fences, referenced once per fence that opened it. */
 struct DxgiSemaphore {
     DxgiSemaphore *next;
     UINT64 id;

@@ -1,6 +1,4 @@
-/*
- * kernelbase entry point.
- */
+/* kernelbase entry point. */
 #include "kernelbase_private.h"
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)

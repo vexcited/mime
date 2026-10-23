@@ -1,12 +1,12 @@
 /*
- * the pieces of the ndr engine every other piece uses: the simple type tables, allocation for the stubs, full pointer
- * tables, the rpc ss allocator and the entry points that start a stub message.
+ * the shared pieces of the ndr engine: simple type tables, stub allocation, full pointer tables, the rpc ss allocator and
+ * the stub message entry points.
  */
 #include "ndr.h"
 
 /* ------------------------------------------------------------------ simple types */
 
-/* indexed by format character; the entries of the characters that are not simple types are zero. */
+/* indexed by format character, zero for characters that are not simple types. */
 #define SIMPLE_ROWS(first, second)                                                                                    \
     [FC_BYTE] = first, [FC_CHAR] = first, [FC_SMALL] = first, [FC_USMALL] = first, [FC_WCHAR] = second,                \
     [FC_SHORT] = second, [FC_USHORT] = second
@@ -59,7 +59,7 @@ const uchar NdrSimpleMem[0x100] = {
     [FC_UINT3264] = sizeof(INT_PTR),
 };
 
-/* the three tables are exported under the names midl generated code expects, a byte for each format character. */
+/* exported under the names midl generated code expects, one byte per format character. */
 RPCRTAPI const unsigned char SimpleTypeAlignment[0xC0] = {
     SIMPLE_ROWS(0, 1),
     [FC_LONG] = 3, [FC_ULONG] = 3, [FC_FLOAT] = 3, [FC_HYPER] = 7, [FC_DOUBLE] = 7, [FC_ENUM16] = 1, [FC_ENUM32] = 3,
@@ -94,10 +94,7 @@ RPCRTAPI ULONG RPC_ENTRY NdrGetSimpleTypeMemorySize(unsigned char c)
 
 /* ------------------------------------------------------------------ allocation */
 
-/*
- * a block that holds a whole tree of pointees: the engine measured the tree and allocated it once, so that the tree
- * is freed by freeing its root.
- */
+/* a measured tree of pointees allocated in one block, so freeing the root frees the tree. */
 typedef struct {
     uchar *Base;
     uchar *Next;
@@ -127,7 +124,7 @@ void NdrpFree(PMIDL_STUB_MESSAGE m, void *memory)
         m->pfnFree(memory);
 }
 
-/* a pointer into the receive buffer is not the engine's to free. */
+/* pointers into the receive buffer are not the engine's to free. */
 BOOL NdrpInBuffer(PMIDL_STUB_MESSAGE m, const void *memory)
 {
     return m->BufferStart && (const uchar *)memory >= m->BufferStart && (const uchar *)memory <= m->BufferEnd;
@@ -144,8 +141,8 @@ RPCRTAPI void *RPC_ENTRY NdrAllocate(PMIDL_STUB_MESSAGE m, size_t length)
 /* ------------------------------------------------------------------ full pointers */
 
 /*
- * the tables keep two hashes: a pointer to its reference id and to the state of what was done with it, and a
- * reference id to the pointer the wire named by it. the public fields hold the hashes.
+ * two hashes: pointer to ref id and to what was done with it, and ref id to the pointer the wire named by it. the public
+ * fields hold the hashes.
  */
 #define FP_PTR_STATE_FREED 0x20
 
@@ -202,7 +199,7 @@ RPCRTAPI void RPC_ENTRY NdrFullPointerXlatFree(PFULL_PTR_XLAT_TABLES tables)
 
 RPCRTAPI PFULL_PTR_XLAT_TABLES RPC_ENTRY NdrFullPointerXlatInit(ULONG pointers, XLAT_SIDE side)
 {
-    /* the number of pointers sizes the tables, rounded up to a power of two; none means 128. */
+    /* the pointer count sizes the tables, rounded up to a power of two, 128 when zero. */
     ULONG buckets = 128;
     if (pointers) {
         buckets = 1;
@@ -254,7 +251,7 @@ static FP_REFID *fp_find_refid(PFULL_PTR_XLAT_TABLES t, ULONG refid, BOOL create
 
 static ULONG fp_next_id(PFULL_PTR_XLAT_TABLES t)
 {
-    /* ids are 31 bits; running out means the wire is not what it says. */
+    /* ids are 31 bits, running out means the wire is lying. */
     ULONG id = t->NextRefId & 0x7FFFFFFF;
     t->NextRefId++;
     if (!id)
@@ -262,7 +259,7 @@ static ULONG fp_next_id(PFULL_PTR_XLAT_TABLES t)
     return id;
 }
 
-/* 1 when the pointer is null or what the query asks about was done already, with its id. */
+/* 1 when the pointer is null or the queried action was already done, with its id. */
 RPCRTAPI int RPC_ENTRY NdrFullPointerQueryPointer(PFULL_PTR_XLAT_TABLES tables, void *pointer, unsigned char query,
                                                   ULONG *ref_id)
 {
@@ -297,14 +294,14 @@ RPCRTAPI int RPC_ENTRY NdrFullPointerQueryPointer(PFULL_PTR_XLAT_TABLES tables, 
         return 0;
     *ref_id = e->RefId;
     if (tables->XlatSide == XLAT_CLIENT) {
-        /* a server that answers with this id gets the pointer back. */
+        /* a server answering with this id gets the pointer back. */
         FP_REFID *r = fp_find_refid(tables, e->RefId, TRUE);
         r->Pointer = pointer;
     }
     return 0;
 }
 
-/* 1 when the id is null or what the query asks about was done already; the pointer it was given comes back. */
+/* 1 when the id is null or the queried action was already done, with the pointer it was given. */
 RPCRTAPI int RPC_ENTRY NdrFullPointerQueryRefId(PFULL_PTR_XLAT_TABLES tables, ULONG ref_id, unsigned char query,
                                                 void **pointer)
 {
@@ -346,7 +343,7 @@ RPCRTAPI void RPC_ENTRY NdrFullPointerInsertRefId(PFULL_PTR_XLAT_TABLES tables, 
     }
 }
 
-/* 1 when the memory is to be freed now, 0 when another pointer to it was freed already. */
+/* 1 when the memory is to be freed now, 0 when another pointer to it was already freed. */
 RPCRTAPI int RPC_ENTRY NdrFullPointerFree(PFULL_PTR_XLAT_TABLES tables, void *pointer)
 {
     if (!pointer)
@@ -370,9 +367,9 @@ RPCRTAPI int RPC_ENTRY NdrFullPointerFree(PFULL_PTR_XLAT_TABLES tables, void *po
     return 0;
 }
 
-/* ------------------------------------------------------------------ the rpc ss allocator */
+/* ------------------------------------------------------------------ rpc ss allocator */
 
-/* memory handed out between an enable and a disable, freed together. */
+/* memory handed out between an enable and a disable is freed together. */
 typedef struct SS_NODE {
     struct SS_NODE *Next;
     struct SS_NODE *Prev;
@@ -607,7 +604,7 @@ RPCRTAPI void RPC_ENTRY NdrRpcSmSetClientToOsf(PMIDL_STUB_MESSAGE m)
     m->pfnFree = NdrRpcSmClientFree;
 }
 
-/* ------------------------------------------------------------------ memory for the ole extension */
+/* ------------------------------------------------------------------ ole extension memory */
 
 RPCRTAPI void *RPC_ENTRY I_RpcAllocate(unsigned int size)
 {

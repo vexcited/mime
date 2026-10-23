@@ -1,7 +1,6 @@
 /*
- * key derivation keys and BCryptKeyDerivation: pbkdf2, sp 800-108 in counter
- * mode, the capi derivation, hkdf, the tls prfs and the sp 800-56a
- * concatenation, each over a secret held by a key object.
+ * key derivation keys and BCryptKeyDerivation: pbkdf2, sp 800-108 counter mode, the CAPI derivation, hkdf, the tls
+ * prfs and the sp 800-56a concatenation.
  */
 #include "bcrypt_private.h"
 

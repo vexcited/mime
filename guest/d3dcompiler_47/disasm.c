@@ -1,8 +1,6 @@
 /*
- * D3DDisassemble: shader model 4 and 5 bytecode as fxc prints it. the
- * header comments come from the reflection, as the real disassembler
- * builds them: the creator, required features, buffer definitions,
- * resource bindings, signatures and tessellation, then the instructions.
+ * D3DDisassemble: shader model 4 and 5 bytecode printed the way fxc prints it,
+ * with the header comments built from the reflection.
  */
 #include "d3dcompiler_private.h"
 #include "../lib/dxbc/internal.h"
@@ -12,7 +10,7 @@ static UINT read32(const BYTE *p) { return p[0] | p[1] << 8 | p[2] << 16 | (UINT
 typedef struct Disasm {
     DcText text;
     UINT flags;
-    /* shader model 5.1 and later number registers with ranges and spaces. */
+    /* shader model 5.1 and later give registers a range and a space. */
     BOOL sm51;
     BOOL hex;
     UINT indent;
@@ -93,7 +91,7 @@ static void indent(Disasm *d, UINT depth)
         put(d, "    ");
 }
 
-/* a variable or member as hlsl declares it, members of structures with their offsets. */
+/* prints a variable as hlsl declares it, struct members with their offsets. */
 static HRESULT print_type(Disasm *d, const char *name, ID3D11ShaderReflectionType *type, UINT depth, UINT index,
                           BOOL *after_struct, UINT offset)
 {
@@ -106,7 +104,7 @@ static HRESULT print_type(Disasm *d, const char *name, ID3D11ShaderReflectionTyp
     if (!name)
         return E_FAIL;
     const char *ts = type_string(desc.Type);
-    /* a structure after the first variable and the first member of any structure start on a new line. */
+    /* a struct after the first variable, and the first member of any struct, start a new line. */
     if (*after_struct || (index && desc.Class == D3D_SVC_STRUCT)) {
         put(d, "\n");
         indent(d, depth);
@@ -371,7 +369,7 @@ static void mask_chars(Disasm *d, UINT mask)
     out(d, "   %c%c%c%c", mask & 1 ? 'x' : ' ', mask & 2 ? 'y' : ' ', mask & 4 ? 'z' : ' ', mask & 8 ? 'w' : ' ');
 }
 
-/* inputs show the components read, outputs those always written, which the chunk stores inverted. */
+/* inputs show the components read, outputs the ones always written, which the chunk stores inverted. */
 static void print_signature(Disasm *d, ID3D11ShaderReflection *r, const char *title, UINT which, UINT count,
                             BOOL input)
 {
@@ -643,7 +641,7 @@ static const char *register_name(Disasm *d, UINT type)
     return nullptr;
 }
 
-/* how literals print: as integers, as floats, or as whichever the bits look like. */
+/* literals print as integers, floats, or whichever the bits look like. */
 enum { LIT_INT, LIT_FLOAT, LIT_AMBIGUOUS };
 
 static void ambiguous_literal(Disasm *d, UINT v)
@@ -686,7 +684,7 @@ static void min_precision(Disasm *d, UINT value)
     out(d, " {%s}", name);
 }
 
-/* the bits of the operand token that mark the indices of 1, 2 or 3 dimensions, as fxc brackets them. */
+/* operand types whose indices fxc prints in brackets. */
 static BOOL bracketed(UINT type) { return type <= 30 && ((0x663801CEu >> type) & 1); }
 
 static void print_operand(Disasm *d, const DxbcOperand *op, int literal)
@@ -789,7 +787,7 @@ static void print_operand(Disasm *d, const DxbcOperand *op, int literal)
         put(d, "|");
 }
 
-/* the literals each instruction reads, as its operands are typed. */
+/* how each instruction's literal operands are typed. */
 static int literal_kind(UINT opcode, UINT operand)
 {
     switch (opcode) {
@@ -1008,7 +1006,7 @@ static void print_declaration(Disasm *d, const DxbcInstruction *ins)
             out(d, ", %u", ins->extra[i]);
         break;
     case OP_DCL_CONSTANT_BUFFER:
-        /* the buffer is named in capitals and without components, its size after its range in 5.1. */
+        /* the buffer prints in capitals without components, and in 5.1 its size follows its range. */
         if (d->sm51 && operand && operand->index_count >= 3) {
             out(d, " CB%d[%d:", operand->index[0].immediate, operand->index[1].immediate);
             if (operand->index[2].immediate == 0xFFFFFFFF)
@@ -1275,9 +1273,9 @@ static void print_instruction(Disasm *d, const DxbcInstruction *ins)
         d->indent++;
 }
 
-/* ------------------------------------------------------------------ the entry points */
+/* ------------------------------------------------------------------ entry points */
 
-/* what numbering counts: not declarations, but the phase markers and shader messages. */
+/* numbering skips declarations but counts phase markers and shader messages. */
 static BOOL executable(const DxbcInstruction *ins)
 {
     if (ins->opcode == OP_CUSTOMDATA)
@@ -1298,7 +1296,7 @@ static HRESULT disassemble(LPCVOID data, SIZE_T size, UINT flags, LPCSTR comment
     DcContainer c;
     HRESULT hr = DcOpenContainer(data, size, &c);
     if (hr == D3DERR_INVALIDCALL)
-        /* legacy direct3d 9 bytecode and effects are not disassembled. */
+        /* Direct3D 9 bytecode and effects are not disassembled. */
         return E_NOTIMPL;
     if (FAILED(hr))
         return hr;

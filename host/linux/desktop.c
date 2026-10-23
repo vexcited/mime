@@ -1,18 +1,9 @@
 /*
- * the guest's shortcuts as entries of the host's applications menu. a program that makes a shortcut in the start menu or
- * on the desktop of the guest, such as the "Install app" of a browser, gets an entry in the host's menu that starts it
- * through `mime run`, with the picture of the shortcut as its icon, the group of windows the program's application
- * user model id gives as its window class, and the tasks of its jump list as its actions. an entry goes with the
- * shortcut.
- *
- * it writes into the user's own directory of applications, so it is off unless asked for: the line `shortcuts = true`
- * in the section [desktop] of config.ini in Mime's config directory, or MIME_DESKTOP_SHORTCUTS=1 in the environment of
- * the machine. MIME_DESKTOP_DATA names the directory that stands for the data directory of the desktop, where the
- * applications and the icons go; tests give one of their own and the user's files are never touched.
- *
- * the shortcuts are read from the host's side of the guest's drive: the start menu folders and the desktops are
- * watched with inotify, so whatever way a program made a shortcut is seen, and the entries are made again when the machine
- * starts. only the entries this made are ever changed or removed, they say so in X-Mime-Managed.
+ * exports guest Start Menu and desktop shortcuts to host application entries. entries run programs through Mime run,
+ * use shortcut icons, group Windows by AppUserModelID and expose jump-list tasks as actions. enable with shortcuts =
+ * true in config.ini's [desktop] section or MIME_DESKTOP_SHORTCUTS=1. MIME_DESKTOP_DATA overrides the desktop data
+ * directory. inotify watches guest shortcut folders; startup rebuilds entries, and only entries marked
+ * X-Mime-Managed are changed or removed.
  */
 #include "ui_internal.h"
 
@@ -82,8 +73,8 @@ typedef struct Pending {
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static const MimePaths *g_paths;
 static char g_user[32];
-static char g_data[MIME_PATH_MAX];  /* the data directory of the desktop */
-static char g_exe[MIME_PATH_MAX];   /* the mime that starts the programs */
+static char g_data[MIME_PATH_MAX];  /* the data directory of the desktop. */
+static char g_exe[MIME_PATH_MAX];   /* the mime that starts the programs. */
 static int g_inotify = -1;
 static Watch g_watches[MAX_WATCHES];
 static int g_watch_count;
@@ -100,7 +91,6 @@ static bool parse_bool(const char *text)
     return !strcasecmp(text, "true") || !strcasecmp(text, "yes") || !strcasecmp(text, "on") || !strcmp(text, "1");
 }
 
-/* the value of `key` in `[section]` of an ini file, or false. */
 static bool config_value(const char *path, const char *section, const char *key, char *out, size_t size)
 {
     size_t length;
@@ -174,7 +164,7 @@ static bool env_value(const char *name, char *out, size_t size)
 {
     static const struct {
         const char *name;
-        const char *value; /* the user's name is %U */
+        const char *value; /* the user's name is %U. */
     } table[] = {{"USERPROFILE", "C:\\Users\\%U"},
                  {"HOMEPATH", "\\Users\\%U"},
                  {"HOMEDRIVE", "C:"},
@@ -210,7 +200,7 @@ static bool env_value(const char *name, char *out, size_t size)
     return false;
 }
 
-/* the path with the variables of the guest's environment in it filled in. */
+/* expands guest environment variables in a path. */
 static void expand(const char *in, char *out, size_t size)
 {
     size_t n = 0;
@@ -235,7 +225,7 @@ static void expand(const char *in, char *out, size_t size)
     out[n] = 0;
 }
 
-/* the file or folder of a guest path, found whatever the case of its names on the host's disk. */
+/* resolves guest paths case-insensitively on the host filesystem. */
 static bool resolve_guest_path(const char *guest, char *host, size_t size)
 {
     char drive = (char)toupper((unsigned char)guest[0]);
@@ -279,7 +269,7 @@ static bool resolve_guest_path(const char *guest, char *host, size_t size)
 
 /* ------------------------------------------------------------------ text of an entry */
 
-/* a name for a file: letters, digits, dots, dashes and underscores. */
+/* restricts filenames to letters, digits, dots, dashes and underscores. */
 static void slug(char *out, size_t size, const char *in)
 {
     size_t n = 0;
@@ -296,7 +286,7 @@ static uint32_t fnv(const char *text)
     return h;
 }
 
-/* a value of a desktop entry: the backslash and the line breaks are escaped. */
+/* escapes backslashes and line breaks in desktop entry values. */
 static void escape_value(FILE *f, const char *text)
 {
     for (; *text; text++) {
@@ -311,7 +301,7 @@ static void escape_value(FILE *f, const char *text)
     }
 }
 
-/* an argument of Exec: in double quotes when it needs them, with the characters the specification names escaped. */
+/* quotes and escapes Exec arguments according to the desktop entry specification. */
 static void append_argument(char *out, size_t size, const char *arg)
 {
     size_t n = strlen(out);
@@ -384,7 +374,6 @@ static int split_command_line(const char *line, char argv[][512], int max)
     return argc;
 }
 
-/* `mime run program arguments` for a program of the guest. */
 static void make_exec(char *out, size_t size, const char *program_host, const char *arguments)
 {
     out[0] = 0;
@@ -509,7 +498,7 @@ static void remove_source(const char *lnk)
     }
 }
 
-/* the standard sizes of icon themes, for a picture that is not one. */
+/* chooses standard icon-theme sizes for a nonstandard source image. */
 static uint32_t theme_size(uint32_t side)
 {
     static const uint32_t sizes[] = {16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256, 512};
@@ -520,7 +509,7 @@ static uint32_t theme_size(uint32_t side)
     return best;
 }
 
-/* writes the icon of a shortcut into the theme and gives its file, or nothing. */
+/* writes the shortcut's themed icon and returns its path, or nothing. */
 static bool make_icon(const MimeLink *link, const char *program_host, const char *id, char *out, size_t size)
 {
     char location[MIME_PATH_MAX], host[MIME_PATH_MAX];
@@ -607,7 +596,7 @@ static void process_link(const char *lnk_host)
         snprintf(key, sizeof(key), "%s|%s", program_host, link.arguments);
         snprintf(id, sizeof(id), "mime-%s-%08x", s, fnv(key));
     }
-    /* a shortcut that changed identity leaves the entry it had. */
+    /* removes the previous entry when a shortcut changes identity. */
     for (Entry *e = g_entries; e;) {
         Entry *next = e->next;
         if (strcmp(e->id, id))
@@ -648,7 +637,7 @@ static void process_link(const char *lnk_host)
         if (!resolve_guest_path(directory, e->path, sizeof(e->path)))
             e->path[0] = 0;
     }
-    /* windows of the program have the class of the identity it gave, the id of the entry. */
+    /* uses the program's identity as both window class and desktop entry ID. */
     if (link.aumid[0])
         mime_strlcpy(e->window_class, id, sizeof(e->window_class));
     else
@@ -772,7 +761,7 @@ static void handle_event(const struct inotify_event *ev)
         remove_source(path);
 }
 
-/* the shortcuts that settled: a shortcut is read some time after the write, for a program may still be writing it. */
+/* waits after writes so partially written shortcuts are not parsed. */
 static void run_pending(void)
 {
     uint64_t now = mime_now_ns() / 1000000;
@@ -789,7 +778,7 @@ static void run_pending(void)
     }
 }
 
-/* the entries this made that no shortcut has any more are removed. */
+/* removes managed entries whose shortcuts no longer exist. */
 static void reconcile(void)
 {
     char dir[MIME_PATH_MAX];
@@ -815,7 +804,6 @@ static void reconcile(void)
         if (!find_entry(id)) {
             char icon[MIME_PATH_MAX * 2];
             unlink(path);
-            /* its icons, in each size of the theme. */
             static const uint32_t sizes[] = {16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256, 512};
             for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
                 snprintf(icon, sizeof(icon), "%s/icons/hicolor/%ux%u/apps/%s.png", g_data, sizes[i], sizes[i], id);
@@ -881,7 +869,7 @@ static void *watch_main(void *arg)
 
 /* ------------------------------------------------------------------ the jump lists */
 
-/* the tasks of a program's jump list are the actions of its entry, when it has one. */
+/* maps jump-list tasks to actions on the program's desktop entry. */
 void mime_desktop_jump_list(const MimeShellJumpList *list)
 {
     if (!g_running)

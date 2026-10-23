@@ -1,8 +1,6 @@
 /*
- * dwmapi: mime composes every window, like windows since 8, so composition
- * is always on. window attributes are kept as window properties and the
- * frame bounds are the window rectangle without its invisible resize
- * border.
+ * mime composes every window like windows since 8, so composition is always
+ * on. window attributes are stored as window properties.
  */
 #define MIME_BUILD_DWMAPI
 #include <mime/nt.h>
@@ -16,7 +14,7 @@ WINUSERAPI BOOL WINAPI SetPropW(HWND hwnd, LPCWSTR name, HANDLE data);
 WINUSERAPI HANDLE WINAPI GetPropW(HWND hwnd, LPCWSTR name);
 WINUSERAPI HANDLE WINAPI RemovePropW(HWND hwnd, LPCWSTR name);
 
-/* the attributes a window stores, each a DWORD, and the value they read back without one. */
+/* each attribute is a DWORD, read back as Default when unset. */
 static const struct {
     DWORD Attribute;
     LPCWSTR Prop;
@@ -52,7 +50,7 @@ static int find_attribute(DWORD attribute)
     return -1;
 }
 
-/* a property holds the value plus one, so a stored 0 differs from no property. */
+/* properties hold the value plus one, so a stored 0 differs from no property. */
 static DWORD read_attribute(HWND hwnd, int index)
 {
     ULONG_PTR v = (ULONG_PTR)GetPropW(hwnd, g_attributes[index].Prop);
@@ -65,10 +63,9 @@ static BOOL is_top_level(HWND hwnd)
 }
 
 /*
- * the window rectangle without its invisible resize border, as win32k
- * frames it: the sizing and padded borders around a caption, all but
- * their last pixel, on every side but the top, and the whole border when
- * maximized.
+ * the window rectangle minus its invisible resize border, as win32k frames
+ * it: the sizing and padded borders less one pixel, on every side but the
+ * top. a maximized window loses the whole border.
  */
 static BOOL visible_frame(HWND hwnd, RECT *r)
 {
@@ -104,7 +101,7 @@ DWMAPI DwmIsCompositionEnabled(BOOL *enabled)
     return S_OK;
 }
 
-/* composition cannot be turned off since windows 8; the call is accepted and ignored. */
+/* composition cannot be turned off since windows 8, so this is a no-op. */
 DWMAPI DwmEnableComposition(UINT action)
 {
     return S_OK;
@@ -197,7 +194,7 @@ DWMAPI DwmEnableBlurBehindWindow(HWND hwnd, const DWM_BLURBEHIND *blur)
     return S_OK;
 }
 
-/* the dwm never handles caption hit testing for the window itself. */
+/* the dwm never does caption hit testing for the window. */
 DWMAPI_(BOOL) DwmDefWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
 {
     if (result)
@@ -210,7 +207,7 @@ DWMAPI DwmFlush(void)
     return S_OK;
 }
 
-/* the default accent of windows 11 at the opacity dwm reports for it. guessed, there is no colorization store yet. */
+/* the windows 11 default accent at the opacity dwm reports. a guess, there is no colorization store yet. */
 DWMAPI DwmGetColorizationColor(DWORD *color, BOOL *opaque_blend)
 {
     if (!color || !opaque_blend)
@@ -226,10 +223,9 @@ DWMAPI DwmEnableMMCSS(BOOL enable)
 }
 
 /*
- * the timing of the composition: the refresh rate of the display, the
- * last vblank on the performance counter, and frame counters that windows
- * itself only advances by one each call since composition went to dwm's
- * own statistics. only the desktop is accepted.
+ * the display's refresh rate, the last vblank on the performance counter,
+ * and frame counters that advance by one per call, as windows does since
+ * composition moved to dwm's own statistics. only the desktop is accepted.
  */
 #pragma pack(push, 1)
 typedef struct DWM_TIMING_INFO_RAW {
@@ -293,8 +289,7 @@ DWMAPI DwmGetCompositionTimingInfo(HWND hwnd, void *info)
     return S_OK;
 }
 
-/* the thumbnail and the live preview of a minimized window are shown by the taskbar and the switcher, which are not here, so
-   the bitmaps a window gives are accepted and kept by nobody. */
+/* there is no taskbar or switcher to show thumbnails, so the bitmap is accepted and dropped. */
 DWMAPI DwmSetIconicThumbnail(HWND hwnd, HBITMAP bitmap, DWORD flags)
 {
     if (!IsWindow(hwnd) || !bitmap || (flags & ~1u))

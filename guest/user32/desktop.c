@@ -1,6 +1,6 @@
 /*
- * what programs ask of the desktop around a window: DPI awareness contexts, pointer input as a mouse gives it,
- * the input source of a message, drag detection and a few window helpers.
+ * desktop-level helpers: DPI awareness contexts, mouse input as pointer input, message input source, drag detection
+ * and a few window helpers.
  */
 #include "user32_private.h"
 #include <mime/win32/winuser.h>
@@ -9,9 +9,9 @@
 /* ------------------------------------------------------------------ DPI awareness contexts */
 
 /*
- * the context as windows keeps it: the pseudo handles -1 to -5 are the unaware, system aware, per monitor,
- * per monitor v2 and gdi scaled unaware contexts, and what the get functions return are the numbers behind them.
- * the low nibble is the awareness, and the system aware one carries the system dpi.
+ * pseudo handles -1 to -5 are the unaware, system aware, per monitor, per monitor v2 and gdi scaled unaware
+ * contexts, and the get functions return the values behind them. the low nibble is the awareness, and the system
+ * aware value carries the system dpi.
  */
 static ULONG context_value(DPI_AWARENESS_CONTEXT context)
 {
@@ -51,7 +51,7 @@ WINUSERAPI DPI_AWARENESS WINAPI GetAwarenessFromDpiAwarenessContext(DPI_AWARENES
     return value ? (DPI_AWARENESS)(value & 0xF) : DPI_AWARENESS_INVALID;
 }
 
-/* the awareness of the window's thread: windows keeps it per window, mime per process. */
+/* windows keeps the awareness per window, mime per process. */
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetWindowDpiAwarenessContext(HWND hwnd)
 {
     if (!IsWindow(hwnd)) {
@@ -61,7 +61,7 @@ WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetWindowDpiAwarenessContext(HWND hwnd)
     return UserDpiAwarenessContext();
 }
 
-/* a window of a per monitor aware process scales its frame; for another process that is refused. */
+/* only per monitor aware processes may scale the frame. */
 WINUSERAPI BOOL WINAPI EnableNonClientDpiScaling(HWND hwnd)
 {
     if (!IsWindow(hwnd)) {
@@ -75,7 +75,7 @@ WINUSERAPI BOOL WINAPI EnableNonClientDpiScaling(HWND hwnd)
     return TRUE;
 }
 
-/* with one scale for every monitor, the logical and the physical point are the same. */
+/* one scale for every monitor, so logical and physical points are the same. */
 WINUSERAPI BOOL WINAPI LogicalToPhysicalPointForPerMonitorDPI(HWND hwnd, LPPOINT point)
 {
     if (!point || (hwnd && !IsWindow(hwnd))) {
@@ -107,7 +107,7 @@ WINUSERAPI BOOL WINAPI IsMouseInPointerEnabled(void)
     return g_mouse_in_pointer;
 }
 
-/* the mouse as a pointer: where it is, the buttons that are down and the keys that are. the only pointer there is. */
+/* the mouse is the only pointer: its position, buttons and modifier keys. */
 static BOOL mouse_pointer_info(UINT id, POINTER_INFO *info)
 {
     if (id != MOUSE_POINTER_ID || !info) {
@@ -155,7 +155,7 @@ WINUSERAPI BOOL WINAPI GetPointerInfo(UINT id, POINTER_INFO *info)
     return mouse_pointer_info(id, info);
 }
 
-/* a frame of the mouse is one pointer; the count is in and out. */
+/* a mouse frame holds one pointer. count is in and out. */
 WINUSERAPI BOOL WINAPI GetPointerFrameInfo(UINT id, UINT *count, POINTER_INFO *info)
 {
     if (!count) {
@@ -177,7 +177,7 @@ WINUSERAPI BOOL WINAPI GetPointerFrameInfo(UINT id, UINT *count, POINTER_INFO *i
     return mouse_pointer_info(id, info);
 }
 
-/* the pointer's coordinates are the screen's. */
+/* pointer coordinates are screen coordinates. */
 WINUSERAPI BOOL WINAPI GetPointerInputTransform(UINT id, UINT count, INPUT_TRANSFORM *transform)
 {
     if (id != MOUSE_POINTER_ID || count != 1 || !transform) {
@@ -185,7 +185,7 @@ WINUSERAPI BOOL WINAPI GetPointerInputTransform(UINT id, UINT count, INPUT_TRANS
         return FALSE;
     }
     memset(transform, 0, sizeof(*transform));
-    /* the identity, with 1.0 as its bits so no floating point is linked in. */
+    /* the identity, with 1.0 written as bits so no floating point gets linked in. */
     for (int i = 0; i < 4; i++)
         ((UINT *)transform->m)[i * 5] = 0x3F800000;
     return TRUE;
@@ -200,7 +200,7 @@ WINUSERAPI BOOL WINAPI SkipPointerFrameMessages(UINT id)
     return TRUE;
 }
 
-/* the last message was typed or moved by hand: a mouse for the messages of one, else a keyboard. */
+/* always reports hardware mouse input. */
 WINUSERAPI BOOL WINAPI GetCurrentInputMessageSource(INPUT_MESSAGE_SOURCE *source)
 {
     if (!source) {
@@ -220,8 +220,8 @@ WINUSERAPI DWORD WINAPI GetUnpredictedMessagePos(void)
 /* ------------------------------------------------------------------ drag detection */
 
 /*
- * DragDetect: tracks the mouse from a point while the left button is down. it is a drag when the mouse leaves the
- * drag rectangle around the point, and not when the button comes up, Escape is pressed, or the button was never down.
+ * a drag starts when the mouse leaves the drag rectangle around the point with the left button down. releasing the
+ * button or pressing Escape cancels it, and so does a button that was never down.
  */
 WINUSERAPI BOOL WINAPI DragDetect(HWND hwnd, POINT point)
 {
@@ -267,7 +267,7 @@ WINUSERAPI DWORD WINAPI InSendMessageEx(LPVOID reserved)
     return (DWORD)NtUserCallNoParam(MIME_NOPARAM_INSENDMESSAGE);
 }
 
-/* whether a message from another thread is being answered and was not yet. */
+/* TRUE while handling a message sent by another thread that was not replied to yet. */
 WINUSERAPI BOOL WINAPI InSendMessage(void)
 {
     DWORD flags = InSendMessageEx(nullptr);
@@ -284,7 +284,7 @@ WINUSERAPI BOOL WINAPI ReplyMessage(LRESULT result)
 
 /* ------------------------------------------------------------------ window helpers */
 
-/* the window comes forward as a click on its button would bring it. */
+/* brings the window forward like a click on its taskbar button. */
 WINUSERAPI void WINAPI SwitchToThisWindow(HWND hwnd, BOOL alt_tab)
 {
     if (!IsWindow(hwnd))
@@ -294,7 +294,7 @@ WINUSERAPI void WINAPI SwitchToThisWindow(HWND hwnd, BOOL alt_tab)
     SetForegroundWindow(hwnd);
 }
 
-/* no transition is drawn: the window comes or goes at once. */
+/* no animation: the window shows or hides at once. */
 WINUSERAPI BOOL WINAPI AnimateWindow(HWND hwnd, DWORD time, DWORD flags)
 {
     if (!IsWindow(hwnd)) {
@@ -315,14 +315,14 @@ WINUSERAPI BOOL WINAPI AnimateWindow(HWND hwnd, DWORD time, DWORD flags)
     return TRUE;
 }
 
-/* no program may take the input from the user. */
+/* no program may block the user's input. */
 WINUSERAPI BOOL WINAPI BlockInput(BOOL block)
 {
     SetLastError(ERROR_ACCESS_DENIED);
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ the clipboard's formats */
+/* ------------------------------------------------------------------ clipboard formats */
 
 WINUSERAPI BOOL WINAPI GetUpdatedClipboardFormats(PUINT formats, UINT count, PUINT out)
 {

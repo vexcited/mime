@@ -1,9 +1,4 @@
-/*
- * the fixed function state of a direct3d 8 device: render and texture
- * stage states, textures, transforms, the viewport, material, lights,
- * clip planes, palettes, and state blocks, kept as direct3d 8 reports
- * them and passed on to direct3d 9 in its terms.
- */
+/* direct3d 8 fixed function state and state blocks, kept as direct3d 8 reports them and passed on to direct3d 9. */
 #include "d3d8_private.h"
 
 static D8Device *impl(IDirect3DDevice8 *iface) { return D8DeviceFrom(iface); }
@@ -19,7 +14,7 @@ static const D3DMATRIX IDENTITY = {{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0
 
 /* ------------------------------------------------------------------ render states */
 
-/* the states of directx 7 and before, which direct3d 8 neither reads back nor records. */
+/* directx 7 and older states, which direct3d 8 neither reads back nor records. */
 static BOOL legacy_state(DWORD s)
 {
     switch (s) {
@@ -42,7 +37,7 @@ static BOOL legacy_state(DWORD s)
     }
 }
 
-/* the states direct3d 9 has under the same number and meaning. */
+/* states direct3d 9 kept with the same number and meaning. */
 static BOOL shared_state(DWORD s)
 {
     switch (s) {
@@ -68,7 +63,7 @@ static BOOL shared_state(DWORD s)
     }
 }
 
-/* the bias of direct3d 8 counts steps toward the viewer, here of a 16 bit depth buffer's unit. */
+/* direct3d 8 bias counts steps toward the viewer, in units of a 16-bit depth buffer. */
 static float zbias(DWORD value) { return -(float)value / 65536.0f; }
 
 static void apply_rs(D8Device *d, DWORD state, DWORD value)
@@ -127,7 +122,7 @@ static HRESULT STDMETHODCALLTYPE device_get_render_state(IDirect3DDevice8 *iface
 
 /* ------------------------------------------------------------------ texture stage states */
 
-/* direct3d 9 made sampler states of these. */
+/* direct3d 9 turned these into sampler states. */
 static int sampler_state(DWORD type)
 {
     switch (type) {
@@ -164,7 +159,7 @@ static void apply_tss(D8Device *d, DWORD stage, DWORD type, DWORD value)
     IDirect3DDevice9 *d9 = d->d9;
     int sampler = sampler_state(type);
     if (sampler >= 0) {
-        /* the cubic filters of direct3d 8 became others; the closest left is linear. */
+        /* direct3d 8's cubic filters are gone, linear is the closest left. */
         if ((sampler == D3DSAMP_MAGFILTER || sampler == D3DSAMP_MINFILTER) && value > D3DTEXF_ANISOTROPIC)
             value = D3DTEXF_LINEAR;
         d9->lpVtbl->SetSamplerState(d9, stage, sampler, value);
@@ -299,7 +294,7 @@ static HRESULT STDMETHODCALLTYPE device_get_transform(IDirect3DDevice8 *iface, D
     return D3D_OK;
 }
 
-/* the product applies at once, state block recording or not. */
+/* the product applies right away, even while a state block records. */
 static HRESULT STDMETHODCALLTYPE device_multiply_transform(IDirect3DDevice8 *iface, D3DTRANSFORMSTATETYPE type,
                                                            const D3DMATRIX *matrix)
 {
@@ -319,7 +314,7 @@ static HRESULT STDMETHODCALLTYPE device_multiply_transform(IDirect3DDevice8 *ifa
 
 /* ------------------------------------------------------------------ viewport and material */
 
-/* the viewport must fit the render target; a depth range thinner than a thousandth is widened. */
+/* the viewport must fit the render target. a depth range thinner than a thousandth is widened. */
 static HRESULT apply_viewport(D8Device *d, const D3DVIEWPORT8 *in)
 {
     UINT width = d->target ? d->target->width : 0, height = d->target ? d->target->height : 0;
@@ -396,7 +391,7 @@ static const D3DLIGHT8 DEFAULT_LIGHT = {
 
 static D8Light *find_light(D8Device *d, DWORD index) { return index < d->light_count ? d->lights[index] : nullptr; }
 
-/* the slot of a light, made with the default light the first time; any index the memory allows. */
+/* a new slot starts as the default light. any index memory allows is valid. */
 static HRESULT make_light(D8Device *d, DWORD index, D8Light **out)
 {
     if ((*out = find_light(d, index)))
@@ -634,7 +629,7 @@ static HRESULT STDMETHODCALLTYPE device_get_current_texture_palette(IDirect3DDev
 
 /* ------------------------------------------------------------------ validation */
 
-/* what the driver would refuse: operations it lacks, more stages than it blends. */
+/* fails on what the driver would refuse: missing operations, or more stages than it blends. */
 static HRESULT STDMETHODCALLTYPE device_validate_device(IDirect3DDevice8 *iface, DWORD *passes)
 {
     D8Device *d = impl(iface);
@@ -847,7 +842,6 @@ void D8BlockFree(D8Device *d, D8StateBlock *b)
     HeapFree(GetProcessHeap(), 0, b);
 }
 
-/* the current value of what a command sets. */
 static HRESULT capture(D8Device *d, D8Command *c)
 {
     switch (c->kind) {
@@ -1089,7 +1083,7 @@ static BOOL add_lights(D8Device *d)
     return TRUE;
 }
 
-/* the commands of a block of a kind, in windows' order; capturing fills in their values. */
+/* each block type's commands, in windows' order. capturing fills in the values. */
 static BOOL fill_block(D8Device *d, D3DSTATEBLOCKTYPE type)
 {
     UINT stages = D8_MIN(d->caps.MaxTextureBlendStages, D8_STAGES);

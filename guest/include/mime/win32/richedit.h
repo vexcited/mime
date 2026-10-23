@@ -1,7 +1,6 @@
 /*
- * the rich edit control of riched20.dll, msftedit.dll and riched32.dll:
- * its classes, messages, notifications and structures, packed to four
- * bytes as windows packs them.
+ * rich edit control of riched20.dll, msftedit.dll and riched32.dll.
+ * structures are packed to four bytes, like windows.
  */
 #ifndef MIME_WIN32_RICHEDIT_H
 #define MIME_WIN32_RICHEDIT_H
@@ -156,7 +155,7 @@
 #define ENM_LINK 0x04000000
 #define ENM_LOWFIRTF 0x08000000
 
-/* the styles of their own. */
+/* rich edit specific styles. */
 #define ES_SAVESEL 0x00008000
 #define ES_SUNKEN 0x00004000
 #define ES_DISABLENOSCROLL 0x00002000

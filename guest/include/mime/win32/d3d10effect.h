@@ -1,9 +1,6 @@
 /*
- * the direct3d 10 effects framework of d3d10.dll: effects, their
- * techniques and passes, and their variables, typed by the interface a
- * variable is asked as. the interfaces and their method order are those
- * of d3d10.dll's vtables; only ID3D10Effect and ID3D10EffectPool are
- * reference counted.
+ * the direct3d 10 effects framework of d3d10.dll. methods follow windows' vtable order, and only ID3D10Effect
+ * and ID3D10EffectPool are reference counted.
  */
 #ifndef MIME_WIN32_D3D10EFFECT_H
 #define MIME_WIN32_D3D10EFFECT_H

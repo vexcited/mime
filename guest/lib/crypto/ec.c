@@ -417,7 +417,7 @@ int mime_ec_check_public(const MimeEcKey *key)
     return point_load(&c, &q, key->x, key->y) ? MIME_CRYPTO_OK : MIME_CRYPTO_ERR_PARAM;
 }
 
-/* the leftmost bits of the hash as many as the order has, reduced below the order. */
+/* the hash truncated to the order's bit length, then reduced below the order. */
 static void hash_to_scalar(const Ctx *c, const uint8_t *hash, size_t hash_size, uint32_t *e)
 {
     uint32_t size = c->curve->size, bits = c->curve->bits;

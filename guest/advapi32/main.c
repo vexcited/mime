@@ -1,9 +1,8 @@
 /*
- * advapi32 entry point and the string helpers of the ansi functions.
+ * advapi32 entry point and the ansi string helpers.
  *
- * the registry functions are forwarded to kernelbase by advapi32.def, like
- * windows does; security, cryptography, event logging and the service
- * control manager live in the other files.
+ * advapi32.def forwards the registry functions to kernelbase like windows does; security, cryptography, event
+ * logging and the service control manager live in the other files.
  */
 #include "advapi32_private.h"
 

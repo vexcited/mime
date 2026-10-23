@@ -1,13 +1,12 @@
 /*
- * matrices: the 3 by 2 affine transform of gdi+ with its six elements m11 m12 m21 m22 dx dy. Points are rows, so a
- * point goes through x' = x m11 + y m21 + dx and y' = x m12 + y m22 + dy, and prepending an operation applies it
- * to the points before the ones already in the matrix.
+ * the 3 by 2 affine matrix of gdi+: m11 m12 m21 m22 dx dy. points are rows, so x' = x m11 + y m21 + dx and
+ * y' = x m12 + y m22 + dy, and a prepended operation applies before the ones already in the matrix.
  */
 #include "gp_private.h"
 
 #define MATRIX_ELEMENTS 6
 
-/* a determinant below this is a matrix that cannot be inverted, a guess at the limit windows uses. */
+/* a smaller determinant means not invertible. the exact limit windows uses is a guess. */
 #define DETERMINANT_LIMIT 1.0e-6f
 
 static GMatrix *matrix_cast(const void *matrix)
@@ -17,7 +16,6 @@ static GMatrix *matrix_cast(const void *matrix)
 
 GMatrix *gp_matrix_cast(const void *p) { return matrix_cast(p); }
 
-/* a followed by b: the product that applies a to a point first. */
 void gp_matrix_multiply(const float *a, const float *b, float *out)
 {
     float r[MATRIX_ELEMENTS];
@@ -76,7 +74,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix2(float m11, float m12, float m2
     return matrix_new(m11, m12, m21, m22, dx, dy, matrix);
 }
 
-/* the transform that maps the rectangle to the parallelogram of three points: top left, top right, bottom left. */
+/* maps the rectangle to the parallelogram of three points: top left, top right, bottom left. */
 DECLSPEC_EXPORT GpStatus WINAPI GdipCreateMatrix3(const GpRectF *rect, const GpPointF *points, GpMatrix **matrix)
 {
     GP_REQUIRE_INIT();
@@ -182,7 +180,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipScaleMatrix(GpMatrix *matrix, float sx, floa
     return apply(matrix, op, order);
 }
 
-/* the integer part of a number below 2^62 in size, rounded toward minus infinity. */
+/* floor, for magnitudes below 2^62. */
 static double floor_double(double v)
 {
     double t = (double)(long long)v;
@@ -201,8 +199,8 @@ static float fabs_float(float v)
 }
 
 /*
- * the sine and cosine of an angle in degrees: the angle is brought into the first quadrant, where the series
- * converge in a dozen terms, and the quadrant turns the pair. Right angles come out whole.
+ * degrees in, sine and cosine out. the angle is brought into the first quadrant, where the series converge in a dozen
+ * terms, then the quadrant rotates the pair. right angles come out exact.
  */
 static void sine_cosine(double degrees, double *s, double *c)
 {
@@ -331,7 +329,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipVectorTransformMatrixPointsI(GpMatrix *matri
     return transform_points_int(matrix, points, count, FALSE);
 }
 
-/* ------------------------------------------------------------------ tests */
+/* ------------------------------------------------------------------ queries */
 
 DECLSPEC_EXPORT GpStatus WINAPI GdipIsMatrixInvertible(const GpMatrix *matrix, BOOL *result)
 {
@@ -361,7 +359,7 @@ DECLSPEC_EXPORT GpStatus WINAPI GdipIsMatrixEqual(const GpMatrix *matrix, const 
     return Ok;
 }
 
-/* ------------------------------------------------------------------ helpers of the other modules */
+/* ------------------------------------------------------------------ internal helpers */
 
 BOOL gp_matrix_invertible(const MimeVecMatrix *m)
 {

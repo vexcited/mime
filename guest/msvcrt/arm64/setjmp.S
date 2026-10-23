@@ -1,7 +1,6 @@
 /*
- * _setjmp and the register half of longjmp for arm64, with msvcrt's jump
- * buffer: Frame, Reserved, X19 to X28, Fp, Lr, Sp, Fpcr and Fpsr as 32
- * bit values, then D8 to D15 from offset 128.
+ * _setjmp and the register half of longjmp for arm64, with msvcrt's jump buffer: Frame, Reserved, X19 to X28, Fp,
+ * Lr, Sp, Fpcr and Fpsr as 32-bit values, then D8 to D15 from offset 128.
  *
  * _setjmp     x0 = jump buffer, x1 = frame for unwinding or 0
  * MsvcrtLongjmpRestore  x0 = jump buffer, w1 = value, never returns

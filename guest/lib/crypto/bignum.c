@@ -1,9 +1,8 @@
 /*
- * unsigned big integers on 32 bit limbs: the arithmetic rsa, diffie-hellman
- * and key generation need, with montgomery multiplication for modular
- * exponentiation. exponents marked secret run a fixed window whose table is
- * read whole for every lookup, and the montgomery reduction subtracts
- * without branching on the value.
+ * unsigned big integers on 32-bit limbs for rsa, diffie-hellman and key
+ * generation, with montgomery exponentiation. secret exponents use a fixed
+ * window whose table is read whole on every lookup, and the reduction
+ * subtracts without branching on the value.
  */
 #include "internal.h"
 

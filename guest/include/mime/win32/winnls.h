@@ -1,6 +1,5 @@
 /*
- * national language support: code pages, locales, string comparison and
- * formatting. implemented by kernelbase.dll.
+ * national language support: code pages, locales, string comparison and formatting, implemented by kernelbase.dll.
  */
 #ifndef MIME_WIN32_WINNLS_H
 #define MIME_WIN32_WINNLS_H

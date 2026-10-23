@@ -1,13 +1,9 @@
-/*
- * user32 initialization, the kernel callback table and string conversion.
- */
+/* user32 initialization, the kernel callback table and string conversion. */
 #include "user32_private.h"
 #include <mime/mitigation.h>
 
 HINSTANCE User32Instance;
 MIME_CLIENT_INFO User32Client;
-
-/* ------------------------------------------------------------------ string conversion */
 
 LPWSTR UserAtoWn(LPCSTR s, int count, int *out_count)
 {
@@ -43,9 +39,7 @@ LPSTR UserWtoA(LPCWSTR s)
     return a;
 }
 
-/* ------------------------------------------------------------------ kernel callbacks */
-
-/* a string held in a block put an offset where its pointer was, 0x10000 and up so atoms stay what they are. */
+/* strings in a block store an offset in place of the pointer, at 0x10000 or above so atoms stay atoms. */
 static LPCWSTR block_string(PUCHAR data, LPCWSTR field)
 {
     return (ULONG_PTR)field >= 0x10000 ? (LPCWSTR)(data + ((ULONG_PTR)field - 0x10000)) : field;
@@ -151,8 +145,6 @@ static PVOID g_callbacks[MIME_CB_COUNT] = {
     (PVOID)callback_window_proc, (PVOID)callback_timer_proc, (PVOID)callback_unused, (PVOID)callback_hook_proc,
     (PVOID)callback_send_async,  (PVOID)callback_unused,     (PVOID)callback_unused, (PVOID)callback_unused,
 };
-
-/* ------------------------------------------------------------------ initialization */
 
 static void register_system_class(PCWSTR name, WNDPROC proc, ULONG fnid, UINT style)
 {

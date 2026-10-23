@@ -4,7 +4,7 @@
  */
 #include "urlmon_private.h"
 
-/* copies a result out; a buffer too small gets the length needed with the terminator. */
+/* too small a buffer gets the length needed, terminator included. */
 static HRESULT ReturnString(LPCWSTR text, LPWSTR result, DWORD size, DWORD *length, HRESULT too_small)
 {
     DWORD chars = (DWORD)lstrlenW(text);
@@ -138,7 +138,7 @@ DECLSPEC_EXPORT HRESULT WINAPI CoInternetCombineUrl(LPCWSTR base, LPCWSTR relati
     return hr;
 }
 
-/* S_OK when the urls are the same, S_FALSE otherwise; bit 0 of the flags ignores a final slash. */
+/* S_OK when the urls match, else S_FALSE. bit 0 of the flags ignores a final slash. */
 DECLSPEC_EXPORT HRESULT WINAPI CoInternetCompareUrl(LPCWSTR url1, LPCWSTR url2, DWORD flags)
 {
     return UrlCompareW(url1, url2, flags & 1) ? S_FALSE : S_OK;

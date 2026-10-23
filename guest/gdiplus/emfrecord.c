@@ -1,12 +1,11 @@
 /*
- * recording metafiles: a metafile that is recorded has a graphics that writes what it is asked to draw as emf+
- * records, into comment records of an enhanced metafile that the system's gdi records. the drawing core hands a
- * recording graphics its shapes, images and clips instead of drawing them, and the states are written when the
- * next thing is drawn, as the changes since the last thing that was.
+ * recording metafiles: a recording graphics writes emf+ records into comment records of an enhanced metafile that
+ * the system gdi records. the drawing core hands it shapes, images and clips instead of drawing them, and state
+ * changes since the last draw are written before the next one.
  */
 #include "meta_private.h"
 
-/* ------------------------------------------------------------------ a growing buffer */
+/* ------------------------------------------------------------------ growing buffer */
 
 typedef struct Wr {
     BYTE *p;
@@ -58,7 +57,7 @@ static void w_pad(Wr *w)
     w_bytes(w, zero, (4 - (w->len & 3)) & 3);
 }
 
-/* ------------------------------------------------------------------ the recorder */
+/* ------------------------------------------------------------------ recorder */
 
 #define REC_CHUNK 60000u
 
@@ -69,7 +68,7 @@ typedef struct RecObject {
     UINT stamp;
 } RecObject;
 
-/* the states that the stream has set, and the levels that have saved them. */
+/* the states the stream has set, and the levels that saved them. */
 typedef struct RecState {
     MimeVecMatrix world;
     GpUnit page_unit;
@@ -82,7 +81,7 @@ typedef struct RecState {
     TextRenderingHint text_hint;
     UINT text_contrast;
     POINT origin;
-    /* a mode that the stream has not set yet is not known */
+    /* modes the stream has not set yet are unknown. */
     BOOL known;
 } RecState;
 
@@ -108,16 +107,16 @@ typedef struct GRecorder {
     UINT limit;
     BOOL got_dc;
     BOOL failed;
-    /* the clip of the graphics changes, and the one the metafile dc has */
+    /* clip change stamps: the graphics' current one and the one sent to the metafile dc. */
     UINT clip_stamp, clip_sent;
-    /* what has been drawn, in pixels, for a picture that has no frame */
+    /* what was drawn, in pixels, for a picture without a frame. */
     BOOL has_bounds;
     float bx0, by0, bx1, by1;
 } GRecorder;
 
 static BOOL plus_only(const GRecorder *r) { return r->type != EmfTypeEmfOnly; }
 
-/* the comment record carries the identifier and then the records. */
+/* the comment record carries the identifier, then the records. */
 static void out_reset(GRecorder *r)
 {
     r->out.len = 0;
@@ -136,7 +135,7 @@ static void out_flush(GRecorder *r)
     out_reset(r);
 }
 
-/* one record, whole. data is padded to a multiple of four. */
+/* data is padded to a multiple of four. */
 static void put_record(GRecorder *r, UINT type, UINT flags, const void *data, SIZE_T size)
 {
     if (!plus_only(r))
@@ -166,7 +165,7 @@ static void object_clear(RecObject *o)
     memset(o, 0, sizeof(*o));
 }
 
-/* an object record, in pieces when it is large. */
+/* split into pieces when large. */
 static void put_object(GRecorder *r, UINT id, INT type, const BYTE *data, SIZE_T size)
 {
     UINT flags = id | ((UINT)type << 8);
@@ -190,7 +189,7 @@ static void put_object(GRecorder *r, UINT id, INT type, const BYTE *data, SIZE_T
     }
 }
 
-/* the number of an object with these bytes: one that was written before, or a new one. */
+/* reuses an object written earlier with the same bytes, else makes a new one. */
 static UINT object_number(GRecorder *r, INT type, const Wr *w)
 {
     UINT free_slot = 64, oldest = 0;
@@ -238,7 +237,7 @@ static void w_matrix(Wr *w, const MimeVecMatrix *m)
 
 static BOOL identity(const MimeVecMatrix *m) { return mime_vec_matrix_is_identity(m); }
 
-/* a bitmap as an image object: its pixels as 32 bit straight alpha, row after row. */
+/* pixels as 32 bit straight alpha, row after row. */
 static BOOL image_bitmap(Wr *w, GBitmap *b)
 {
     UINT32 stride = (UINT32)b->width * 4;
@@ -297,8 +296,8 @@ static BOOL image_object(Wr *w, GImage *image)
 }
 
 /*
- * a linear gradient is a horizontal one over a rectangle, moved by a matrix. the modes of this library are put
- * in that form: the gradient runs along x over the rectangle, and the matrix takes it to where it is.
+ * the format's linear gradient is horizontal over a rectangle, moved by a matrix. every mode here is put in that
+ * form: the gradient runs along x over the rectangle and the matrix moves it into place.
  */
 static void linear_form(const GBrush *b, GpRectF *rect, MimeVecMatrix *xf)
 {
@@ -314,7 +313,7 @@ static void linear_form(const GBrush *b, GpRectF *rect, MimeVecMatrix *xf)
     case LinearGradientModeVertical: {
         rect->Width = rh;
         rect->Height = rw;
-        /* x runs down the rectangle and y runs across it */
+        /* x runs down the rectangle and y runs across it. */
         a.m11 = 0;
         a.m12 = 1;
         a.m21 = 1;
@@ -360,7 +359,7 @@ static void linear_form(const GBrush *b, GpRectF *rect, MimeVecMatrix *xf)
         mime_vec_sincosf(b->angle * 3.14159265358979f / 180.0f, &sn, &cs);
         float ac = cs < 0 ? -cs : cs, as = sn < 0 ? -sn : sn;
         if (b->scalable) {
-            /* the direction is in the unit square of the rectangle */
+            /* the direction is in the rectangle's unit square. */
             float len = ac + as;
             float ox = 0.5f - cs * len * 0.5f, oy = 0.5f - sn * len * 0.5f;
             a.m11 = cs * len * rw;
@@ -661,7 +660,7 @@ static void state_of(const GGraphics *g, RecState *s)
 
 static void put_mode(GRecorder *r, UINT type, UINT flags) { put_record(r, type, flags, nullptr, 0); }
 
-/* writes what is different between the graphics and the stream. */
+/* writes what differs between the graphics and the stream. */
 static void sync_state(GRecorder *r)
 {
     GGraphics *g = r->g;
@@ -729,11 +728,11 @@ static void level_push(GRecorder *r, UINT id, INT kind)
     r->level_count++;
 }
 
-/* ------------------------------------------------------------------ the gdi side */
+/* ------------------------------------------------------------------ gdi side */
 
 /*
- * a metafile of the gdi kind, and the gdi records of a dual one, hold what the emf+ records say as drawing of
- * the system: polygons filled with a plain brush, and anything else drawn first on a bitmap which is blended.
+ * a gdi-only metafile, and the gdi part of a dual one, holds the emf+ drawing as system gdi drawing: polygons
+ * filled with a plain brush, and anything else drawn first on a bitmap that is then blended.
  */
 
 static BOOL gdi_wanted(const GRecorder *r) { return r->type != EmfTypeEmfPlusOnly; }
@@ -780,7 +779,6 @@ static void gdi_clip(GRecorder *r)
 
 static COLORREF colorref_of(ARGB c) { return RGB((c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff); }
 
-/* the polygons filled with a plain opaque color. */
 static void gdi_flat_polys(GRecorder *r, const MimeVecPolys *polys, INT fill_rule, ARGB color)
 {
     if (!polys->nsubs)
@@ -818,7 +816,6 @@ static void gdi_flat_polys(GRecorder *r, const MimeVecPolys *polys, INT fill_rul
     gp_free(counts);
 }
 
-/* what a raster job draws on the bitmap. */
 typedef struct RasterJob {
     const MimeVecPolys *polys;
     INT rule;
@@ -831,7 +828,7 @@ typedef struct RasterJob {
     struct GAttrs *attrs;
 } RasterJob;
 
-/* draws a job on a bitmap of the area and blends the bitmap on the metafile dc. */
+/* draws the job on a bitmap of the area, then blends the bitmap onto the metafile dc. */
 static void gdi_raster(GRecorder *r, RECT area, const RasterJob *job)
 {
     GGraphics *g = r->g;
@@ -935,7 +932,7 @@ static RECT area_of_polys(const MimeVecPolys *polys)
     return a;
 }
 
-/* polygons of the device filled with a brush. */
+/* polys are in device space. */
 static void gdi_fill_polys(GRecorder *r, const MimeVecPolys *polys, INT rule, const GBrush *brush)
 {
     if (!polys->nsubs)
@@ -1033,11 +1030,11 @@ static void gdi_image(GRecorder *r, GImage *image, const GpPointF *dst, float sx
     gdi_raster(r, area, &job);
 }
 
-/* ------------------------------------------------------------------ what the graphics is asked to draw */
+/* ------------------------------------------------------------------ recorded drawing */
 
 static GRecorder *rec_of(GGraphics *g) { return g->meta ? g->meta->rec : nullptr; }
 
-/* the bytes of a region as an object: the data the library gives, without its size and checksum. */
+/* the region data without its size and checksum. */
 static BOOL region_bytes(const GRegion *region, Wr *w)
 {
     UINT size = 0;
@@ -1051,7 +1048,7 @@ static BOOL region_bytes(const GRegion *region, Wr *w)
     return TRUE;
 }
 
-/* the number of the brush object, or a color in the record when the brush is a plain one. */
+/* a solid brush goes in the record as a color, others as an object number. */
 static void brush_field(GRecorder *r, const GBrush *b, UINT *flags, UINT32 *field, BOOL *ok)
 {
     if (b->type == BrushTypeSolidColor) {
@@ -1251,7 +1248,7 @@ GpStatus gp_rec_draw_image(GGraphics *g, GImage *image, const GpPointF *dst, flo
 
 /* ------------------------------------------------------------------ levels and clips */
 
-/* the states of the graphics are written, before a call changes them in a way the records do not say. */
+/* called before a call changes the states in a way the records do not express. */
 void gp_rec_sync(GGraphics *g)
 {
     GRecorder *r = rec_of(g);
@@ -1271,7 +1268,7 @@ void gp_rec_save(GGraphics *g, UINT id)
     level_push(r, id, 0);
 }
 
-/* the level is found before the graphics drops it, a restore of a level that is not there does nothing. */
+/* called before the graphics drops the level. restoring a missing level does nothing. */
 void gp_rec_restore(GGraphics *g, UINT id, INT kind)
 {
     GRecorder *r = rec_of(g);
@@ -1312,7 +1309,7 @@ void gp_rec_begin_container(GGraphics *g, UINT id, const GpRectF *dst, const GpR
         put_wr(r, EmfPlusRecordTypeBeginContainerNoParams, 0, &w);
     }
     level_push(r, id, 1);
-    /* a container starts with the world and the page of the plain graphics */
+    /* a container starts with the world and page of a plain graphics. */
     mime_vec_matrix_identity(&r->sent.world);
     r->sent.page_unit = UnitPixel;
     r->sent.page_scale = 1.0f;
@@ -1325,7 +1322,7 @@ GpStatus gp_rec_set_clip(GGraphics *g, const GRegion *region, CombineMode mode)
         return Ok;
     r->clip_stamp++;
     sync_state(r);
-    /* a rectangle is a record of its own */
+    /* a rectangle has a record of its own. */
     const GRegionNode *n = region->root;
     if (n->kind == GREGION_RECT) {
         Wr w = {};
@@ -1396,7 +1393,7 @@ void gp_rec_release_dc(GGraphics *g)
         r->got_dc = FALSE;
 }
 
-/* the enhanced metafile played into the recording as its gdi part, after a request for the device context. */
+/* plays the enhanced metafile into the recording as its gdi part, after a GetDC record. */
 static GpStatus play_into(GGraphics *g, HENHMETAFILE hemf, const MetafileHeader *h)
 {
     GRecorder *r = rec_of(g);
@@ -1416,7 +1413,7 @@ static GpStatus play_into(GGraphics *g, HENHMETAFILE hemf, const MetafileHeader 
     return PlayEnhMetaFile(r->dc, hemf, &rect) ? Ok : GenericError;
 }
 
-/* ------------------------------------------------------------------ the end */
+/* ------------------------------------------------------------------ ending */
 
 static void rec_free(GRecorder *r)
 {
@@ -1445,7 +1442,7 @@ GGraphics *gp_meta_recording_graphics(GMetafile *m)
     return m->graphics;
 }
 
-/* closes the metafile dc, and the metafile is the enhanced metafile that came out. */
+/* closes the metafile dc, the resulting enhanced metafile becomes the metafile. */
 void gp_meta_end_recording(GMetafile *m)
 {
     GRecorder *r = m->rec;
@@ -1454,7 +1451,7 @@ void gp_meta_end_recording(GMetafile *m)
     GGraphics *g = r->g;
     out_flush(r);
     if (r->has_frame) {
-        /* the bounds of the picture are its frame, whatever was drawn */
+        /* the picture bounds are its frame, whatever was drawn. */
         PatBlt(r->dc, r->frame.left, r->frame.top, r->frame.right - r->frame.left, r->frame.bottom - r->frame.top,
                0x00aa0029);
     } else if (r->has_bounds) {
@@ -1493,7 +1490,7 @@ void gp_meta_end_recording(GMetafile *m)
         }
     }
     (void)st;
-    /* a graphics that nobody took goes now, one that a program holds goes on without a metafile */
+    /* a graphics nobody took is freed now, one a program holds lives on without a metafile. */
     if (g) {
         g->meta = nullptr;
         g->width = g->height = 0;
@@ -1505,7 +1502,7 @@ void gp_meta_end_recording(GMetafile *m)
     m->rec = nullptr;
 }
 
-/* a graphics that a program deletes ends the recording of its metafile. */
+/* deleting the recording graphics ends the recording. */
 void gp_meta_graphics_deleted(GGraphics *g)
 {
     GMetafile *m = g->meta;
@@ -1525,9 +1522,9 @@ GpStatus gp_meta_graphics_context(GpImage *image, GpGraphics **graphics)
     return Ok;
 }
 
-/* ------------------------------------------------------------------ making one */
+/* ------------------------------------------------------------------ creation */
 
-/* a frame in the unit as hundredths of a millimeter of the device, rounded to whole ones. */
+/* the frame in hundredths of a millimeter of the device, rounded to whole ones. */
 static BOOL frame_mm100(HDC ref, const GpRectF *f, MetafileFrameUnit unit, RECT *out)
 {
     float kx, ky;
@@ -1612,7 +1609,7 @@ static GpStatus record(HDC ref, EmfType type, const GpRectF *frame, MetafileFram
     m->header.DpiY = res_y / size_y * 25.4f;
     m->header.Type = type == EmfTypeEmfOnly ? MetafileTypeEmf : (MetafileType)type;
     if (framed) {
-        /* the frame in the pixels of the device */
+        /* the frame in device pixels. */
         float kx = res_x / size_x / 100.0f, ky = res_y / size_y / 100.0f;
         r->frame.left = (INT)mime_vec_ceilf((float)mm.left * kx);
         r->frame.top = (INT)mime_vec_ceilf((float)mm.top * ky);
@@ -1731,7 +1728,7 @@ WINGDIPAPI GpStatus WINAPI GdipRecordMetafileStreamI(IStream *stream, HDC ref, E
 
 /* ------------------------------------------------------------------ conversion to emf+ */
 
-/* a windows metafile as an enhanced one in a metafile object of its own, through the placeable header of its box. */
+/* wraps a windows metafile as an enhanced one, through the placeable header of its box. */
 static GMetafile *wmf_as_enhanced(const GMetafile *source)
 {
     WmfPlaceableFileHeader placeable;
@@ -1760,9 +1757,9 @@ static GMetafile *wmf_as_enhanced(const GMetafile *source)
 }
 
 /*
- * records the picture again as the type asked for. the gdi records of the source are kept as they are, in the gdi
- * part of the new metafile behind a record that asks for the device context, and the frame is the pixel bounds of
- * the source on the screen. this is a guess at what the library does with the gdi records.
+ * records the picture again as the requested type. the source's gdi records are kept as they are, in the gdi part
+ * of the new metafile after a GetDC record, and the frame is the source's pixel bounds on the screen. how gdi+
+ * handles the gdi records here is a guess.
  */
 static GpStatus convert(const GpGraphics *graphics, GpMetafile *metafile, BOOL *success, const WCHAR *file,
                         IStream *stream, EmfType type, const WCHAR *description, GpMetafile **out)
@@ -1843,10 +1840,9 @@ WINGDIPAPI GpStatus WINAPI GdipConvertToEmfPlusToStream(const GpGraphics *graphi
 /* ------------------------------------------------------------------ down level */
 
 /*
- * the placeable header for the bits of a windows metafile made from an enhanced one. the box is the frame of the
- * enhanced metafile scaled by half the pixels per hundredth of a millimeter of its device, the unit of the inch is
- * that scale for an inch. both are guesses that follow what the library gives. a metafile whose header cannot be read
- * gets a box of 2000 units square and 96 for an inch.
+ * the placeable header for a windows metafile made from an enhanced one. the box is the enhanced frame scaled by
+ * half the device pixels per hundredth of a millimeter, and the inch unit is that scale for an inch. both are
+ * guesses that match gdi+'s output. an unreadable header gets a 2000 unit square box and 96 per inch.
  */
 static void wmf_placeable_for(HENHMETAFILE emf, BYTE out[PLACEABLE_SIZE])
 {
@@ -1896,7 +1892,7 @@ WINGDIPAPI UINT WINAPI GdipEmfToWmfBits(HENHMETAFILE emf, UINT size, LPBYTE buff
     return bits + lead;
 }
 
-/* ------------------------------------------------------------------ the rasterization limit */
+/* ------------------------------------------------------------------ rasterization limit */
 
 WINGDIPAPI GpStatus WINAPI GdipSetMetafileDownLevelRasterizationLimit(GpMetafile *metafile, UINT limit)
 {

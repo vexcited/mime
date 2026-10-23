@@ -1,4 +1,4 @@
-/* sha-1 as specified by fips 180-4, used to verify wim blobs. */
+/* SHA-1 as specified by FIPS 180-4, used to verify WIM blobs. */
 #include "mime_host.h"
 
 #include <string.h>

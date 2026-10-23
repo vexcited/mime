@@ -1,7 +1,6 @@
 /*
- * the ole layer over com: running objects, menu descriptors, accelerators,
- * the class information of HKCR\CLSID and persistence helpers. creating and
- * loading embedded objects is not implemented.
+ * the ole layer over COM: running objects, menu descriptors, accelerators, HKCR\CLSID class information and
+ * persistence helpers. creating and loading embedded objects is not implemented.
  */
 #include "ole32_private.h"
 #include <mime/stub.h>
@@ -216,7 +215,7 @@ static LONG parse_number(const WCHAR **s)
     return (LONG)(negative ? 0u - n : n);
 }
 
-/* reads a REG_DWORD or decimal string default value. */
+/* reads a decimal string or REG_DWORD default value. */
 static BOOL read_number(HKEY key, LPCWSTR subkey, DWORD *out)
 {
     HKEY sub = key;
@@ -517,7 +516,7 @@ static FARPROC gdi_proc(const char *name)
     return gdi32 ? GetProcAddress(gdi32, name) : nullptr;
 }
 
-/* a copy of a bitmap, through memory dcs of the screen's format. */
+/* copies a bitmap through memory dcs in the screen's format. */
 static HANDLE duplicate_bitmap(HANDLE source)
 {
     typedef int(WINAPI * GET_OBJECT)(HANDLE, int, void *);
@@ -588,7 +587,7 @@ WINOLEAPI HANDLE WINAPI OleDuplicateData(HANDLE source, CLIPFORMAT format, UINT 
 {
     if (!source)
         return nullptr;
-    /* gdi objects and metafiles are copied by their own functions, everything else is global memory. */
+    /* gdi objects and metafiles have their own copy functions, everything else is global memory. */
     if (format == CF_BITMAP)
         return duplicate_bitmap(source);
     if (format == CF_PALETTE)
@@ -608,7 +607,7 @@ WINOLEAPI HANDLE WINAPI OleDuplicateData(HANDLE source, CLIPFORMAT format, UINT 
         memcpy(dest, data, size);
         GlobalUnlock(copy);
         if (format == CF_METAFILEPICT && size >= sizeof(METAFILEPICT)) {
-            /* the picture points to a metafile of its own. */
+            /* the picture holds its own metafile. */
             typedef HANDLE(WINAPI * COPY)(HANDLE, LPCWSTR);
             COPY copy_meta = (COPY)(void *)gdi_proc("CopyMetaFileW");
             METAFILEPICT *pict = GlobalLock(copy);

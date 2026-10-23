@@ -1,7 +1,7 @@
 /*
- * the compaction of the registry journal at boot, see journal_compact.h for what counts. the journal is read once
- * by the replay, which notes each record, and when it is big the records that still matter are written to a new
- * file that takes the journal's place by a rename, so a crash leaves the old journal whole.
+ * registry journal compaction at boot, see journal_compact.h for what counts. the replay notes each record, and
+ * when the journal is big the records that still matter go to a new file that replaces the journal by a rename,
+ * so a crash leaves the old journal whole.
  */
 #include "cm.h"
 
@@ -15,7 +15,7 @@ NTSTATUS CmpJournalReadBytes(void *data, ULONG bytes, ULONG64 offset);
 
 PVOID CmpCompactBegin(void)
 {
-    /* the kernel option nocompaction leaves the journal as it is, to compare what a replay builds. */
+    /* the nocompaction kernel option keeps the journal as is, to compare what a replay builds. */
     if (strstr(HalBootInfo->cmdline, "nocompaction"))
         return nullptr;
     return cm_compact_create();
@@ -43,7 +43,7 @@ static NTSTATUS write_at(PFILE_OBJECT file, const void *data, ULONG size, ULONG6
     return status;
 }
 
-/* writes the records that stay to the new file, renumbered and sealed again. */
+/* renumbered and sealed again. */
 static NTSTATUS write_kept(CmCompact *c, PFILE_OBJECT file, uint32_t largest, ULONG64 *length)
 {
     PUCHAR out = ExAllocatePool2(POOL_FLAG_NON_PAGED, CM_COMPACT_OUT, KI_TAG('C', 'm', 'J', 'o'));
@@ -88,8 +88,8 @@ static NTSTATUS write_kept(CmCompact *c, PFILE_OBJECT file, uint32_t largest, UL
 }
 
 /*
- * the journal being replayed had its records noted: writes the new one, puts it in the place of the old and
- * hands it over through the pointers. the old one stays as it was when anything goes wrong.
+ * after the replay noted the records: writes the new journal, puts it in place of the old one and hands it
+ * over through the pointers. on any failure the old one stays as it was.
  */
 void CmpCompactFinish(PVOID context, PFILE_OBJECT *journal, ULONG64 *offset, ULONG64 *sequence)
 {
@@ -100,7 +100,7 @@ void CmpCompactFinish(PVOID context, PFILE_OBJECT *journal, ULONG64 *offset, ULO
         cm_compact_free(c);
         return;
     }
-    /* a journal that is mostly what counts is not worth writing again, and is looked at again at the next boot. */
+    /* a journal that is mostly live records is not worth rewriting; the next boot looks again. */
     if (!kept || kept_bytes * 4 > *offset * 3) {
         cm_compact_free(c);
         return;
@@ -130,7 +130,7 @@ void CmpCompactFinish(PVOID context, PFILE_OBJECT *journal, ULONG64 *offset, ULO
     if (NT_SUCCESS(status))
         status = IopSynchronousRequest(file, IRP_MJ_FLUSH_BUFFERS, 0, nullptr, 0, nullptr, nullptr);
     if (NT_SUCCESS(status)) {
-        /* it stays when it is closed, as the journal. */
+        /* kept on close, as the journal. */
         FILE_DISPOSITION_INFORMATION keep = {FALSE};
         IO_STACK_LOCATION params = {};
         params.Parameters.SetFile.Length = sizeof(keep);

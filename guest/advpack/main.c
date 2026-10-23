@@ -1,9 +1,6 @@
 /*
- * advpack.dll, the library setup programs call for the things an installer does over and over: whether the user is
- * an administrator, the version of a file, deleting a folder with what is in it, taking files out of a cabinet,
- * running a program of the setup. The functions that run an INF file, make backups for an uninstall or register
- * objects from an INF need an INF engine Mime does not have, and fail as the library does when it cannot read the
- * INF.
+ * advpack.dll, the helpers setup programs use: admin checks, file versions, deleting trees, cabinet extraction and
+ * running setup commands. anything that needs an INF engine fails, as advpack does when it cannot read the INF.
  */
 #include "../lib/cabinet/cabinet.h"
 #include <mime/win32/winbase.h>
@@ -67,8 +64,7 @@ static void release(PVOID memory)
 /* ------------------------------------------------------------------ the user */
 
 /*
- * whether the administrators group is among the groups of the token, enabled or not: a user of an administrator
- * account whose token is filtered still counts, as the groups are compared and their attributes are not.
+ * the administrators group counts whether enabled or not, so a filtered admin token still passes.
  */
 ADVAPI BOOL WINAPI IsNTAdmin(DWORD reserved, DWORD *reserved2)
 {
@@ -114,8 +110,8 @@ ADVAPI BOOL WINAPI IsNTAdmin(DWORD reserved, DWORD *reserved2)
 /* ------------------------------------------------------------------ versions */
 
 /*
- * the fixed version of a file as two numbers, or with bVersion false the language and the code page of its first
- * translation. A file with no version information is not an error: both numbers are zero.
+ * with bVersion false this returns the language and code page of the first translation instead. a file with no
+ * version information is not an error: both numbers are zero.
  */
 ADVAPI HRESULT WINAPI GetVersionFromFileExW(LPCWSTR file, LPDWORD high, LPDWORD low, BOOL version)
 {
@@ -169,8 +165,8 @@ static BOOL full_path(PCWSTR path)
 }
 
 /*
- * a file, or a folder with its contents. The flags keep the folder, keep the folders under it, delete it only
- * when it is empty, or allow network paths, which are otherwise refused. A path that is not complete is refused.
+ * the flags keep the folder, keep its subfolders, delete only when empty, or allow network paths, which are
+ * otherwise refused. relative paths are refused.
  */
 ADVAPI HRESULT WINAPI DelNodeW(LPCWSTR path, DWORD flags)
 {
@@ -226,7 +222,7 @@ ADVAPI HRESULT WINAPI DelNodeA(LPCSTR path, DWORD flags)
     return hr;
 }
 
-/* the command line of the rundll32 entry: the path, then a comma and the flags as a number. */
+/* the parameters are the path, a comma, then the flags as a number. */
 ADVAPI HRESULT WINAPI DelNodeRunDLL32W(HWND window, HINSTANCE instance, LPWSTR parameters, INT show)
 {
     WCHAR path[MAX_PATH];
@@ -296,7 +292,7 @@ static void *extract_begin(void *context, const MIME_CAB_FILE *file)
     EXTRACT *extract = context;
     if (!name_listed(extract, file->Name))
         return nullptr;
-    /* a name with a folder in it keeps only the file. */
+    /* drop any folder part of the name. */
     PCSTR base = file->Name;
     for (PCSTR p = file->Name; *p; p++)
         if (*p == '\\' || *p == '/')
@@ -356,7 +352,7 @@ static void cab_release(void *memory)
     release(memory);
 }
 
-/* the files of a cabinet that the colon separated list names, or all of them when it is empty or a star. */
+/* list is colon separated; empty or a star means every file. */
 ADVAPI HRESULT WINAPI ExtractFilesA(LPCSTR cabinet, LPCSTR directory, DWORD flags, LPCSTR list, LPVOID reserved,
                                     DWORD reserved2)
 {
@@ -422,8 +418,7 @@ static HRESULT join(PWSTR out, PCWSTR directory, PCWSTR name)
 }
 
 /*
- * copies one file into a directory, keeping the newer of two versions unless the flags say otherwise: with
- * AIF_NOOVERWRITE an existing file stays, with AIF_REPLACEONLY a file that is not there is not made.
+ * keeps the newer version by default. AIF_NOOVERWRITE keeps an existing file, AIF_REPLACEONLY never creates one.
  */
 ADVAPI HRESULT WINAPI AdvInstallFileW(HWND window, LPCWSTR source_dir, LPCWSTR source_file, LPCWSTR dest_dir,
                                       LPCWSTR dest_file, DWORD flags, DWORD reserved)
@@ -470,9 +465,8 @@ ADVAPI HRESULT WINAPI AdvInstallFileA(HWND window, LPCSTR source_dir, LPCSTR sou
 #define RSC_FLAG_INF 0x00000001
 
 /*
- * runs the command of a setup: a program, in a directory. The command of an INF file needs the INF engine and
- * fails. With a place for the handle the program is not waited for and its handle comes back, and the result is the
- * asynchronous success; without, the program is waited for.
+ * INF commands need the INF engine and fail. when the caller wants the process handle, the program is not waited
+ * for and the result is the asynchronous success code.
  */
 ADVAPI HRESULT WINAPI RunSetupCommandW(HWND window, LPCWSTR command, LPCWSTR section, LPCWSTR directory,
                                        LPCWSTR title, HANDLE *process_out, DWORD flags, LPVOID reserved)
@@ -512,7 +506,7 @@ ADVAPI HRESULT WINAPI RunSetupCommandA(HWND window, LPCSTR command, LPCSTR secti
 
 /* ------------------------------------------------------------------ restarts */
 
-/* a restart is asked for by the system or by a file that is replaced at the next one, and nothing here does either. */
+/* nothing here ever needs a restart. */
 ADVAPI DWORD WINAPI NeedRebootInit(void)
 {
     return 0;
@@ -533,7 +527,7 @@ ADVAPI HRESULT WINAPI RebootCheckOnInstallA(HWND window, LPCSTR inf, LPCSTR sect
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ what needs an INF engine */
+/* ------------------------------------------------------------------ INF engine */
 
 #define NO_INF(name, args) ADVAPI HRESULT WINAPI name args { return E_FAIL_; }
 
@@ -575,7 +569,7 @@ NO_INF(UserInstStubWrapperW, (HWND w, HINSTANCE i, LPCWSTR parameters, INT show)
 NO_INF(UserUnInstStubWrapperA, (HWND w, HINSTANCE i, LPCSTR parameters, INT show))
 NO_INF(UserUnInstStubWrapperW, (HWND w, HINSTANCE i, LPCWSTR parameters, INT show))
 
-/* the entries of rundll32 return a count, not a result: an INF that cannot be run is zero. */
+/* the rundll32 entries return a count, not an HRESULT: zero when the INF cannot run. */
 ADVAPI INT WINAPI LaunchINFSectionA(HWND window, HINSTANCE instance, LPSTR parameters, INT show)
 {
     return 0;

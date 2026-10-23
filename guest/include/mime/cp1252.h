@@ -1,4 +1,4 @@
-/* the characters of the ansi code page 1252 above the ascii range, which the console driver and kernelbase both convert with. */
+/* code page 1252 above the ascii range, shared by the console driver and kernelbase. */
 #ifndef MIME_CP1252_H
 #define MIME_CP1252_H
 

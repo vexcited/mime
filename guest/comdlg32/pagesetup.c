@@ -1,7 +1,6 @@
 /*
- * PageSetupDlg: the paper, the orientation and the margins of the page, with a sample of the page. the sizes
- * are in thousandths of an inch or hundredths of a millimeter, as the flags of the structure say and, when
- * they do not, as the measurement system of the locale does.
+ * PageSetupDlg. sizes are in thousandths of an inch or hundredths of a millimeter, as the structure's flags say,
+ * or as the locale's measurement system says when they do not.
  */
 #include "printcommon.h"
 
@@ -15,7 +14,6 @@ typedef struct _PAGEDLG {
     int Current;
     DEVMODEW *Devmode;
     BOOL Metric;
-    /* the paper of the printer. */
     int PaperCount;
     WORD Papers[64];
     POINT Sizes[64];
@@ -95,7 +93,7 @@ static BOOL parse_length(const PAGEDLG *d, LPCWSTR text, int *value)
     return TRUE;
 }
 
-/* the paper in the dialog's unit, turned for the orientation. */
+/* the paper size in the dialog's unit, rotated for the orientation. */
 static void paper_size(PAGEDLG *d, int *w, int *h)
 {
     int sw = 2100, sh = 2970;
@@ -194,7 +192,7 @@ static void refresh_preview(PAGEDLG *d)
         InvalidateRect(page, nullptr, TRUE);
 }
 
-/* the page, as small as the box allows, with the margin as dotted lines and a few lines of text. */
+/* the page scaled to its box, margins as dotted lines, and a few lines of text. */
 static void draw_page(PAGEDLG *d, const DRAWITEMSTRUCT *di)
 {
     HDC dc = di->hDC;
@@ -224,7 +222,7 @@ static void draw_page(PAGEDLG *d, const DRAWITEMSTRUCT *di)
         SelectObject(dc, brush);
         SelectObject(dc, old);
         DeleteObject(pen);
-        /* lines of text that stand for the page, a hook may paint over them. */
+        /* placeholder text lines, a hook may paint over them. */
         BOOL handled = FALSE;
         if (d->PaintHook) {
             RECT r = page;
@@ -343,7 +341,7 @@ static BOOL command(PAGEDLG *d, WORD id, WORD code)
         if (d->Devmode) {
             d->Devmode->dmOrientation = id == PSD_LANDSCAPE ? DMORIENT_LANDSCAPE : DMORIENT_PORTRAIT;
             d->Devmode->dmFields |= DM_ORIENTATION;
-            /* the margins turn with the page. */
+            /* the margins rotate with the page. */
             refresh_preview(d);
         }
         return TRUE;
@@ -515,7 +513,7 @@ static BOOL page_setup(PAGESETUPDLGW *psd, BOOL ansi)
     if (!(flags & PSD_ENABLEPAGEPAINTHOOK))
         psd->lpfnPagePaintHook = nullptr;
 
-    /* the unit, from the locale when the flags do not say, and the margins' defaults. */
+    /* the unit comes from the locale when the flags do not say, then the default margins. */
     DWORD saved_flags = flags;
     POINT saved_paper = psd->ptPaperSize;
     RECT saved_min = psd->rtMinMargin, saved_margin = psd->rtMargin;
@@ -660,6 +658,6 @@ CDAPI BOOL WINAPI PageSetupDlgW(LPPAGESETUPDLGW psd)
 
 CDAPI BOOL WINAPI PageSetupDlgA(LPPAGESETUPDLGA psd)
 {
-    /* the structure has the layout of the wide one but for the template name. */
+    /* the ANSI structure has the wide layout except for the template name. */
     return page_setup((PAGESETUPDLGW *)psd, TRUE);
 }

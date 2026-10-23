@@ -1,15 +1,14 @@
 /*
- * hashes, hmac, cmac and gmac objects, BCryptHash, pbkdf2 and the capi key
- * derivation. a hash lives in the object buffer the caller passes, as on
- * windows, from its first 16 byte boundary: a header then the state.
+ * hash, hmac, cmac and gmac objects, BCryptHash, pbkdf2 and the CAPI key derivation. like on windows, a hash lives
+ * in the caller's object buffer from its first 16 byte boundary: a header, then the state.
  */
 #include "bcrypt_private.h"
 
 #define HASH_MIN_OBJECT 70
-/* windows' own header before the provider's state, on x64. */
+/* size of windows' hash header before the provider's state, on x64. */
 #define HASH_HEADER 40
 
-/* the oid lists of bcryptprimitives, the encodings a pkcs #1 DigestInfo may carry. */
+/* the encodings a pkcs #1 DigestInfo may carry. */
 static const UCHAR oid_md4[] = {0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x04, 0x05, 0x00};
 static const UCHAR oid_md5[] = {0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05, 0x05, 0x00};
 static const UCHAR oid_sha1[] = {0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00};
@@ -17,7 +16,7 @@ static const UCHAR oid_sha256[] = {0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x0
 static const UCHAR oid_sha384[] = {0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00};
 static const UCHAR oid_sha512[] = {0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00};
 
-/* each hash has its oid with null parameters, without them, and md5 also a bare entry. */
+/* each hash has its oid with and without null parameters; md5 also has a bare entry. */
 static ULONG oid_list(ULONG id, const UCHAR **oid, ULONG *size)
 {
     switch (id) {
@@ -126,7 +125,7 @@ static NTSTATUS start(HASH *hash, PUCHAR secret, ULONG secret_size)
     return STATUS_SUCCESS;
 }
 
-/* gmac authenticates whole blocks as they come, the rest when finished. */
+/* whole blocks are authenticated as they come, the tail on finish. */
 static void gmac_update(GMAC *g, const UCHAR *data, ULONG size)
 {
     if (!g->started) {
@@ -369,7 +368,7 @@ NTSTATUS BcHashProperty(HASH *hash, LPCWSTR property, PUCHAR output, ULONG capac
     return BcOutput(&value, sizeof(value), output, capacity, result);
 }
 
-/* the nonce of gmac, before or between messages. */
+/* only the gmac nonce is settable, before or between messages. */
 NTSTATUS BcHashSetProperty(HASH *hash, LPCWSTR property, PUCHAR input, ULONG size)
 {
     if (!input)

@@ -1,13 +1,9 @@
 /*
- * the line a program reads from a console in line input mode, the history
- * of the lines of each program and the aliases that rewrite them. see
- * conline.h.
+ * the line a program reads in line input mode, each program's command history and the aliases that rewrite lines.
  *
- * the line is shown by writing to the screen buffer, as a console does the
- * echo: the text from the first changed character on is written again, the
- * cells the line no longer takes are blanked, and the cursor goes to where
- * the line is being edited. the echo is written the way a program writes
- * without escape sequences, so a typed escape shows as ^[.
+ * the echo goes to the screen buffer like a console's: text from the first changed character is written again,
+ * cells the line no longer uses are blanked, and the cursor goes to the edit position. it is written without escape
+ * sequences, so a typed escape shows as ^[.
  */
 #include "conline.h"
 #include "conscreen_p.h"
@@ -92,18 +88,18 @@ typedef struct ExeHistory {
     struct ExeHistory *Next;
     ConChar *Exe;
     size_t ExeLength;
-    ConChar **Commands; /* oldest first */
+    ConChar **Commands; /* oldest first. */
     size_t *Lengths;
     long Count;
     long Capacity;
-    long Limit;         /* the most commands kept */
-    long LastDisplayed; /* the command the arrow keys are at, -1 for none */
-    bool JustReset;     /* the next up key shows the newest command, not the one before */
+    long Limit;         /* the most commands kept. */
+    long LastDisplayed; /* the command the arrow keys are at, -1 for none. */
+    bool JustReset;     /* the next up key shows the newest command, not the one before. */
 } ExeHistory;
 
 typedef struct Alias {
     struct Alias *Next;
-    ConChar *Source; /* lower case */
+    ConChar *Source; /* lower case. */
     size_t SourceLength;
     ConChar *Target;
     size_t TargetLength;
@@ -111,14 +107,14 @@ typedef struct Alias {
 
 typedef struct ExeAliases {
     struct ExeAliases *Next;
-    ConChar *Exe; /* lower case */
+    ConChar *Exe; /* lower case. */
     size_t ExeLength;
     Alias *Aliases;
 } ExeAliases;
 
 struct ConLineState {
-    unsigned BufferSize; /* commands kept for each program */
-    unsigned Buffers;    /* programs whose commands are kept */
+    unsigned BufferSize; /* commands kept per program. */
+    unsigned Buffers;    /* programs whose commands are kept. */
     unsigned Flags;
     ExeHistory *Histories;
     ExeAliases *Exes;
@@ -183,7 +179,7 @@ static void drop_from(ExeHistory *h, long from)
         h->Count = from;
 }
 
-/* the commands kept change to n: the oldest ones stay, the newest ones above n go. */
+/* keeps at most n commands: the oldest stay, the newest beyond n go. */
 static void realloc_history(ExeHistory *h, long n)
 {
     if (n == h->Limit)
@@ -223,7 +219,7 @@ static ExeHistory *find_history(const ConLineState *s, const ConChar *exe, size_
     return nullptr;
 }
 
-/* the history of a program, a new one when there is room, else the one of a program that left the least. */
+/* finds or makes a program's history. when all buffers are taken, an empty one or else the least recently used goes. */
 static ExeHistory *get_history(ConLineState *s, const ConChar *exe, size_t n)
 {
     ExeHistory *h = find_history(s, exe, n);
@@ -268,7 +264,7 @@ static ExeHistory *get_history(ConLineState *s, const ConChar *exe, size_t n)
     return h;
 }
 
-/* moves the history of a program to the front of the list, where the ones in use are. */
+/* the most recently used histories come first. */
 static void to_front(ConLineState *s, ExeHistory *h)
 {
     for (ExeHistory **p = &s->Histories; *p; p = &(*p)->Next) {
@@ -536,8 +532,7 @@ void ConAliasExpunge(ConLineState *s, const ConChar *exe, size_t exe_length)
 }
 
 /*
- * the line is split at single blanks; the first word is the alias, the rest of the line
- * from after the first blank is its arguments.
+ * the line is split at single blanks: the first word is the alias, the rest after the first blank its arguments.
  */
 bool ConAliasExpand(const ConLineState *s, const ConChar *exe, size_t exe_length, const ConChar *line, size_t length,
                     ConChar *out, size_t room, size_t *out_length)
@@ -560,7 +555,6 @@ bool ConAliasExpand(const ConLineState *s, const ConChar *exe, size_t exe_length
     if (!found)
         return false;
     size_t args = end < length ? end + 1 : length;
-    /* the arguments, the words after the first one. */
     size_t arg_start[9], arg_end[9];
     unsigned argc = 0;
     size_t i = args;
@@ -637,17 +631,17 @@ struct ConLine {
     size_t Length;
     size_t Allocated;
     size_t Cursor;
-    int StartX, StartY; /* where the line starts on the screen */
-    size_t Displayed;   /* cells the line took on the screen when it was last drawn */
+    int StartX, StartY; /* where the line starts on the screen. */
+    size_t Displayed;   /* cells the line took when last drawn. */
     bool Done;
     uint32_t KeyState;
     ConChar *Result;
     size_t ResultLength;
     unsigned ScrollsSeen;
-    size_t Lines; /* lines in the result, more than one when an alias made several */
+    size_t Lines; /* more than one when an alias made several lines. */
 };
 
-/* the cells a character takes in the echo of the line, when it starts at the offset. */
+/* the cells a character takes in the echo when it starts at offset. */
 static unsigned cells_of(const ConLine *l, ConChar c, unsigned offset)
 {
     if (c == '\t') {
@@ -670,7 +664,7 @@ static size_t offset_of(const ConLine *l, size_t index)
     return offset;
 }
 
-/* writes the characters from..to as the echo shows them: controls as ^X, a tab as the blanks it stands for. */
+/* echoes from..to: controls as ^X, a tab as the blanks it stands for. */
 static void echo_range(ConLine *l, size_t from, size_t to, unsigned offset)
 {
     uint16_t chunk[256];
@@ -700,7 +694,7 @@ static void echo_range(ConLine *l, size_t from, size_t to, unsigned offset)
         CsPutLegacy(s, chunk, n);
 }
 
-/* the screen cell of an offset in cells from the start of the line. */
+/* the screen cell at an offset in cells from the start of the line. */
 static void cell_of(const ConLine *l, size_t offset, int *x, int *y)
 {
     int width = l->Screen->Grid.Width;
@@ -728,7 +722,6 @@ static void note_scrolls(ConLine *l)
     }
 }
 
-/* draws the line from a character on, blanks what it no longer takes and puts the cursor at the edit position. */
 static void redraw(ConLine *l, size_t from)
 {
     if (!l->Echo)
@@ -744,7 +737,6 @@ static void redraw(ConLine *l, size_t from)
     note_scrolls(l);
     size_t total = offset_of(l, l->Length);
     if (total < l->Displayed) {
-        /* the cells the line left are blanked. */
         size_t extra = l->Displayed - total;
         uint16_t blanks[64];
         for (size_t k = 0; k < sizeof(blanks) / sizeof(blanks[0]); k++)
@@ -841,7 +833,7 @@ static void insert_char(ConLine *l, ConChar c)
         l->Text[l->Cursor] = c;
         l->Length++;
     } else {
-        /* a pair of units is one character. */
+        /* a surrogate pair is one character. */
         if (c >= 0xD800 && c <= 0xDBFF && l->Cursor + 1 < l->Length) {
             l->Text[l->Cursor] = c;
             l->Cursor++;
@@ -871,7 +863,7 @@ static void delete_range(ConLine *l, size_t from, size_t to)
     redraw(l, from);
 }
 
-/* the characters are of the classes blank, delimiter and word, and the word keys cross a run of one class. */
+/* blank, delimiter or word: the word keys skip a run of one class. */
 static int char_class(ConChar c)
 {
     if (c == ' ' || c == '\t')
@@ -936,9 +928,8 @@ static size_t step_right(const ConLine *l, size_t i)
 }
 
 /*
- * the line is done: with a line ending when enter did it, which is also
- * what shows the cursor on the next row. the lines of a program that echoes
- * go to its history and through the aliases.
+ * ends the line, with a line ending when enter did it, which also moves the cursor to the next row. a program that
+ * echoes gets its lines added to its history and run through the aliases.
  */
 static void finish(ConLine *l, bool newline, uint32_t state)
 {
@@ -1101,7 +1092,7 @@ static ExeHistory *current_entry(ConLine *l, const ConChar **text, size_t *lengt
     return h;
 }
 
-/* a key that edits, or false when it is a character for the line. */
+/* false when the key is a character for the line. */
 static bool editing_key(const ConKey *key)
 {
     bool ctrl = (key->State & (KS_LEFT_CTRL | KS_RIGHT_CTRL)) != 0;
@@ -1132,7 +1123,7 @@ static ConLineResult edit_key(ConLine *l, const ConKey *key)
         if (ctrl && key->Vk == VK_RIGHT) {
             move_cursor(l, word_right(l));
         } else if (l->Cursor >= l->Length) {
-            /* at the end of the line the key copies the next character of the command the keys are at. */
+            /* at the end of the line, copy the next character of the command the keys are at. */
             if (current_entry(l, &entry, &entry_length) && l->Cursor < entry_length) {
                 insert_char(l, entry[l->Cursor]);
                 if (entry[l->Cursor - 1] >= 0xD800 && entry[l->Cursor - 1] <= 0xDBFF && l->Cursor < entry_length)
@@ -1225,12 +1216,11 @@ ConLineResult ConLineKey(ConLine *l, const ConKey *key)
         return CONLINE_MORE;
     ConChar c = key->Char;
 
-    /* a key is an editing key, or it is the character it makes. */
     if (!l->Vt && editing_key(key) && (!c || key->Vk == VK_ESCAPE))
         return edit_key(l, key);
     if (!c)
         return CONLINE_MORE;
-    /* a control character that ends the read without ending the line. */
+    /* a control character in the wake mask ends the read but not the line. */
     if (c < 32 && ((l->WakeMask >> c) & 1)) {
         if (l->Cursor < l->Length) {
             l->Length = l->Cursor;

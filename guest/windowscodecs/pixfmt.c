@@ -1,6 +1,4 @@
-/*
- * the pixel formats this library knows, with the bits and channels that IWICPixelFormatInfo reports.
- */
+/* pixel formats and their IWICPixelFormatInfo properties. */
 #include "wic_private.h"
 
 static const WicFormat g_formats[] = {

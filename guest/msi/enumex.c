@@ -1,7 +1,7 @@
 /*
- * the calls of Windows Installer 3.0 and later that name a context: enumerating the products and the patches of the
- * machine or of a user, the version of a file, whether a product was installed with elevation. Mime keeps one catalog
- * of products per user and one for the machine (see catalog.c), which is what these read.
+ * Windows Installer 3.0 and later calls that take a context: enumerating the products and patches of the machine or
+ * a user, file versions, whether a product was installed elevated. mime keeps one product catalog per user and one
+ * for the machine, see catalog.c.
  */
 #include "msi_private.h"
 #include <mime/win32/winver.h>
@@ -9,7 +9,7 @@
 static constexpr WCHAR g_catalog[] = L"Software\\Mime\\Installer\\Products";
 static constexpr WCHAR g_everyone[] = L"S-1-1-0";
 
-/* whether the sid asked for takes in the user of this process: none, everyone, or the user. */
+/* whether the sid covers this process's user: no sid, everyone, or the user itself. */
 static BOOL sid_takes_user(PCWSTR sid, PCWSTR user)
 {
     return !sid || !wcscmp(sid, g_everyone) || !_wcsicmp(sid, user);
@@ -31,10 +31,7 @@ static UINT copy_sid(PCWSTR text, LPWSTR out, LPDWORD size)
     return ERROR_SUCCESS;
 }
 
-/*
- * the products of the machine and then the ones of the user, each key of a catalog one product. The index counts the
- * products that pass the filters.
- */
+/* machine products first, then the user's, one per catalog key. the index skips filtered out products. */
 UINT WINAPI MsiEnumProductsExW(LPCWSTR product, LPCWSTR sid, DWORD contexts, DWORD index, WCHAR installed[39],
                                MSIINSTALLCONTEXT *context, LPWSTR user_sid, LPDWORD sid_size)
 {
@@ -99,7 +96,7 @@ UINT WINAPI MsiEnumProductsW(DWORD index, LPWSTR product)
     return error;
 }
 
-/* the patches of the products that pass the filters, in the order of the products. */
+/* patches of the products that pass the filters, in product order. */
 UINT WINAPI MsiEnumPatchesExW(LPCWSTR product, LPCWSTR sid, DWORD contexts, DWORD filter, DWORD index, WCHAR patch[39],
                               WCHAR target[39], MSIINSTALLCONTEXT *context, LPWSTR user_sid, LPDWORD sid_size)
 {
@@ -154,7 +151,7 @@ UINT WINAPI MsiGetPatchInfoExW(LPCWSTR patch, LPCWSTR product, LPCWSTR sid, MSII
     return MsiGetPatchInfoW(patch, property, value, size);
 }
 
-/* the patches are applied in the order given: nothing in the catalog says more. */
+/* patches apply in the order given, the catalog records nothing more. */
 UINT WINAPI MsiDeterminePatchSequenceW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context, DWORD count,
                                        MSIPATCHSEQUENCEINFOW *patches)
 {
@@ -174,7 +171,7 @@ UINT WINAPI MsiDeterminePatchSequenceW(LPCWSTR product, LPCWSTR sid, MSIINSTALLC
     return ERROR_SUCCESS;
 }
 
-/* patches are not read for their descriptions: no file here is a patch package the installer applies. */
+/* no patch xml is extracted: no file here is a patch package the installer applies. */
 UINT WINAPI MsiExtractPatchXMLDataW(LPCWSTR patch, DWORD reserved, LPWSTR xml, LPDWORD size)
 {
     if (!patch || !*patch || (xml && !size))
@@ -184,7 +181,7 @@ UINT WINAPI MsiExtractPatchXMLDataW(LPCWSTR patch, DWORD reserved, LPWSTR xml, L
     return ERROR_PATCH_PACKAGE_INVALID;
 }
 
-/* the version of a file as four numbers, and its language: the strings are empty when the file has none. */
+/* the strings are empty when the file has no version or language. */
 UINT WINAPI MsiGetFileVersionW(LPCWSTR path, LPWSTR version, LPDWORD version_size, LPWSTR language,
                                LPDWORD language_size)
 {
@@ -226,7 +223,7 @@ UINT WINAPI MsiGetFileVersionW(LPCWSTR path, LPWSTR version, LPDWORD version_siz
     return error;
 }
 
-/* a product installed for the machine was put there by someone with the rights to do it. */
+/* a per-machine product was installed by someone with the rights to do it. */
 UINT WINAPI MsiIsProductElevatedW(LPCWSTR product, BOOL *elevated)
 {
     WCHAR packed[33];

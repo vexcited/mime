@@ -1,6 +1,6 @@
 /*
- * ranges: a stretch of a context's text between two positions that follow the text as it changes. a range works
- * only inside an edit session, with the cookie the session was given.
+ * ranges: a span of a context's text whose ends follow the text as it changes. a range only works inside an edit
+ * session, with that session's cookie.
  */
 #include "msctf_private.h"
 
@@ -52,12 +52,12 @@ static ULONG STDMETHODCALLTYPE rng_release(ITfRangeACP *This)
 
 RNG *RngFromInterface(ITfRange *iface)
 {
-    /* every range is one of ours: the vtable says so. */
+    /* our ranges are recognized by their vtable. */
     extern const ITfRangeACPVtbl g_range_vtbl;
     return iface && (const void *)iface->lpVtbl == (const void *)&g_range_vtbl ? (RNG *)iface : nullptr;
 }
 
-/* the range must be one of the context, and the cookie one it gave. */
+/* the range must still belong to a context, and the cookie must be one that context gave out. */
 static HRESULT check(RNG *rng, TfEditCookie cookie, BOOL write)
 {
     if (!rng->Context)
@@ -65,7 +65,7 @@ static HRESULT check(RNG *rng, TfEditCookie cookie, BOOL write)
     return CtxCheckCookie(rng->Context, cookie, write) ? S_OK : TF_E_NOLOCK;
 }
 
-/* a range of the same context as this one, or why not. */
+/* resolves `iface` to a range of the same context, or returns why it cannot. */
 static HRESULT other(RNG *rng, ITfRange *iface, RNG **out)
 {
     *out = RngFromInterface(iface);
@@ -121,7 +121,7 @@ LONG CtxMovePosition(LONG position, LONG start, LONG old_end, LONG new_end, TfGr
         return position;
     if (position > old_end)
         return position + (new_end - old_end);
-    /* inside the replaced text or at its edges: the gravity says which side the position stays on. */
+    /* inside the replaced text or at its edges, the gravity picks which side the position stays on. */
     if (position == start && position == old_end)
         return gravity == TF_GRAVITY_FORWARD ? new_end : start;
     if (position == start)
@@ -147,7 +147,7 @@ void RngDetachAll(CTX *ctx)
 {
     while (ctx->Ranges) {
         RNG *rng = ctx->Ranges;
-        /* the range stays alive for whoever holds it, now belonging to no context. */
+        /* the range lives on for its holders, detached from any context. */
         ctx->Ranges = rng->Next;
         if (rng->Next)
             rng->Next->Prev = nullptr;
@@ -209,7 +209,7 @@ static HRESULT STDMETHODCALLTYPE rng_set_text(ITfRangeACP *This, TfEditCookie co
         return hr;
     CtxAddRef(ctx);
     CtxTextChanged(ctx, change.acpStart, change.acpOldEnd, change.acpNewEnd, TRUE);
-    /* the range covers the text it was given. */
+    /* the range ends up covering exactly the new text. */
     if (rng->Context) {
         rng->Start = start;
         rng->End = start + cch;
@@ -241,7 +241,7 @@ static HRESULT STDMETHODCALLTYPE rng_insert_embedded(ITfRangeACP *This, TfEditCo
     return TS_E_FORMAT;
 }
 
-/* shifting a start or an end: a range never turns inside out, the other end goes along. */
+/* a range never turns inside out: shifting one end past the other drags the other along. */
 static HRESULT shift(RNG *rng, TfEditCookie cookie, LONG request, LONG *shifted, BOOL start_side)
 {
     HRESULT hr = check(rng, cookie, FALSE);

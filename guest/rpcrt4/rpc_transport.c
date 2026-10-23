@@ -1,15 +1,12 @@
 /*
- * the transport of rpc: whole pdus over named pipes. A pipe in message mode carries one pdu in each message, so a pdu is
- * read with one call. ncalrpc and ncacn_np both use pipes, in names of their own; ncalrpc endpoints have no place in the pipe
- * namespace of programs.
+ * the rpc transport: whole pdus over message mode named pipes, one pdu per message, so one read gets a pdu. ncalrpc
+ * and ncacn_np both use pipes, under their own names, and ncalrpc endpoints stay out of the pipe namespace of programs.
  */
 #include "rpcrt4_private.h"
 
-/* ------------------------------------------------------------------ names */
-
 /*
- * the pipe an endpoint of a protocol sequence is. The endpoint of ncacn_np is "\pipe\name", which is the pipe "name"; local
- * rpc endpoints are plain names and live in pipes with a prefix that the pipe names of programs do not have.
+ * an ncacn_np endpoint "\pipe\name" is the pipe "name". local rpc endpoints are plain names, put in pipes with a prefix
+ * program pipe names do not have.
  */
 RPC_STATUS RpcpPipeName(PCWSTR protseq, PCWSTR endpoint, PWSTR name, SIZE_T count)
 {
@@ -44,7 +41,7 @@ RPC_STATUS RpcpPipeName(PCWSTR protseq, PCWSTR endpoint, PWSTR name, SIZE_T coun
     return RPC_S_PROTSEQ_NOT_SUPPORTED;
 }
 
-/* is the machine in a network address the one the program runs on. */
+/* whether a network address names this machine. */
 static BOOL address_is_local(PCWSTR address)
 {
     if (!address || !*address)
@@ -59,7 +56,6 @@ static BOOL address_is_local(PCWSTR address)
     return GetComputerNameW(name, &size) && !_wcsicmp(name, a);
 }
 
-/* ------------------------------------------------------------------ a stream */
 
 static RPC_STATUS map_io_error(RPC_STREAM *stream, DWORD error)
 {
@@ -125,7 +121,7 @@ RPC_STATUS RpcpStreamConnect(const BINDING *b, RPC_STREAM *stream)
     return RPC_S_OK;
 }
 
-/* a stream over a pipe the server accepted. */
+/* wraps a pipe the server accepted. */
 RPC_STATUS RpcpStreamAdopt(RPC_STREAM *stream, HANDLE pipe)
 {
     memset(stream, 0, sizeof(*stream));
@@ -146,8 +142,8 @@ void RpcpStreamClose(RPC_STREAM *stream)
 }
 
 /*
- * waits for an overlapped operation, for the cancellation of the thread, or for the time out of the stream. A cancelled or
- * timed out operation is cancelled and the stream is of no more use.
+ * waits for an overlapped operation, the thread's cancellation or the stream timeout. a cancelled or timed out operation
+ * is cancelled and the stream is unusable after.
  */
 static RPC_STATUS wait_io(RPC_STREAM *stream, OVERLAPPED *ov, DWORD *bytes, BOOL alertable)
 {
@@ -165,7 +161,7 @@ static RPC_STATUS wait_io(RPC_STREAM *stream, OVERLAPPED *ov, DWORD *bytes, BOOL
     CancelIoEx(stream->Handle, ov);
     GetOverlappedResult(stream->Handle, ov, bytes, TRUE);
     stream->Broken = TRUE;
-    /* a cancel of the thread and the call time out of the binding both cancel the call. */
+    /* a thread cancel and the binding's call timeout both cancel the call. */
     if (wait == WAIT_OBJECT_0 + 1) {
         InterlockedExchange(&thread->Cancelled, 0);
         ResetEvent(thread->CancelEvent);
@@ -208,13 +204,13 @@ RPC_STATUS RpcpStreamReceive(RPC_STREAM *stream, void *buffer, ULONG capacity, U
     return got ? RPC_S_OK : map_io_error(stream, ERROR_BROKEN_PIPE);
 }
 
-/* a security descriptor that lets every user open an object with the access given: the interfaces decide who may call. */
+/* lets every user open the object with the given access: the interfaces decide who may call. */
 PSECURITY_DESCRIPTOR RpcpEveryoneDescriptor(ULONG mask)
 {
     unsigned char *sd = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 256);
     if (!sd)
         return nullptr;
-    /* an absolute descriptor: its header, then an acl with one allowed ace for the world sid. */
+    /* an absolute descriptor: header, then an acl with one allowed ace for the world sid. */
     static const unsigned char world_sid[12] = {1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0};
     struct {
         unsigned char Revision;

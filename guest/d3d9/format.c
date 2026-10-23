@@ -1,8 +1,8 @@
 /*
- * direct3d 9's formats as dxgi's. luminance and the formats without some
- * components read through swizzles, missing color components being 1;
- * depth formats are typeless so shaders may read them, as INTZ, DF24 and
- * DF16 ask, and the 8-bit color formats typeless for their srgb views.
+ * direct3d 9 formats as dxgi ones. luminance and formats lacking
+ * components read through swizzles, missing color components as 1. depth
+ * formats are typeless so shaders can read them, as INTZ, DF24 and DF16
+ * need, and 8-bit color formats are typeless for their srgb views.
  */
 #include "d3d9_private.h"
 
@@ -36,7 +36,7 @@ static const D9Format FORMATS[] = {
     C(X4R4G4B4, B4G4R4A4_UNORM, B4G4R4A4_UNORM, UNKNOWN, SW(R, G, B, ONE), 2, R),
     C(A8, A8_UNORM, A8_UNORM, UNKNOWN, 0, 1, R),
     C(A2B10G10R10, R10G10B10A2_UNORM, R10G10B10A2_UNORM, UNKNOWN, 0, 4, R),
-    /* blue and red trade places: reads see it right, renderings swap the two. */
+    /* red and blue are swapped: reads come out right, rendering swaps them. */
     C(A2R10G10B10, R10G10B10A2_UNORM, R10G10B10A2_UNORM, UNKNOWN, SW(B, G, R, A), 4, R),
     C(G16R16, R16G16_UNORM, R16G16_UNORM, UNKNOWN, SW(R, G, ONE, ONE), 4, R),
     C(A16B16G16R16, R16G16B16A16_UNORM, R16G16B16A16_UNORM, UNKNOWN, 0, 8, R),
@@ -72,7 +72,7 @@ static const D9Format FORMATS[] = {
     DS(D3DFMT_D32F_LOCKABLE, R32_TYPELESS, R32_FLOAT, D32_FLOAT, 0, 4, D | L),
     DS(D3DFMT_D32_LOCKABLE, R32_TYPELESS, R32_FLOAT, D32_FLOAT, 0, 4, D | L),
     DS(D3DFMT_D24FS8, R32G8X24_TYPELESS, R32_FLOAT_X8X24_TYPELESS, D32_FLOAT_S8X24_UINT, 0, 8, D | ST),
-    /* depth formats of the vendors' shadow and depth reading tricks, read as their depth in every component. */
+    /* vendor depth formats for shadows and depth reads, which return the depth in every component. */
     DS(MAKEFOURCC('I', 'N', 'T', 'Z'), R24G8_TYPELESS, R24_UNORM_X8_TYPELESS, D24_UNORM_S8_UINT, SW(R, R, R, R), 4,
        D | ST),
     DS(MAKEFOURCC('D', 'F', '2', '4'), R24G8_TYPELESS, R24_UNORM_X8_TYPELESS, D24_UNORM_S8_UINT, SW(R, R, R, R), 4,
@@ -92,7 +92,7 @@ const D9Format *D9GetFormat(D3DFORMAT format)
     return &UNKNOWN_FORMAT;
 }
 
-/* the bytes of a row of blocks as programs lock them, rows a multiple of 4 bytes. */
+/* the locked pitch of a row of blocks, a multiple of 4 bytes. */
 UINT D9FormatPitch(const D9Format *f, UINT width)
 {
     UINT blocks = (width + f->block - 1) / f->block;
@@ -135,7 +135,7 @@ static WORD half(float f)
 
 static UINT bits_of(UINT value8, UINT bits) { return (value8 * ((1u << bits) - 1) + 127) / 255; }
 
-/* a 565 color block of a single color, transparent when DXT1's alpha is under a half. */
+/* a single color 565 block, transparent when the DXT1 alpha is under a half. */
 static void color_block(BYTE *out, UINT r, UINT g, UINT b, BOOL transparent)
 {
     WORD c = (WORD)(bits_of(r, 5) << 11 | bits_of(g, 6) << 5 | bits_of(b, 5));
@@ -145,9 +145,8 @@ static void color_block(BYTE *out, UINT r, UINT g, UINT b, BOOL transparent)
 }
 
 /*
- * a color as a block of the format, as ColorFill writes it: the
- * components scaled to the format's, luminance from the red, green and
- * blue weighted as BT.601 does, a guess. 0 for formats it cannot fill.
+ * packs a color the way ColorFill writes it. luminance weighs red, green
+ * and blue as BT.601 does, a guess. returns 0 for formats it cannot fill.
  */
 UINT D9PackColor(const D9Format *f, D3DCOLOR color, BYTE out[16])
 {

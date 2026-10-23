@@ -1,4 +1,4 @@
-/* the class factory and the registration of the classes a module serves. */
+/* the class factory and class registration. */
 #include <xmldom/xmldom.h>
 
 static LONG g_locks;
@@ -95,7 +95,6 @@ HRESULT xd_can_unload(void)
     return xd_objects == 0 && g_locks == 0 ? S_OK : S_FALSE;
 }
 
-/* ------------------------------------------------------------------ registration */
 
 static void guid_string(const GUID *g, WCHAR *out)
 {
@@ -152,7 +151,7 @@ static void compose(WCHAR *out, UINT cap, const WCHAR *a, const WCHAR *b, const 
 
 HRESULT xd_register_server(const XClass *classes, UINT count, HMODULE module, BOOL unregister)
 {
-    /* the server is named in System32 whatever the processor, which is where each processor finds its own. */
+    /* always registered under System32, which each architecture resolves to its own copy. */
     WCHAR full[MAX_PATH], file[MAX_PATH];
     if (!GetModuleFileNameW(module, full, MAX_PATH))
         return E_FAIL;

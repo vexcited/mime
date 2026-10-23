@@ -1,4 +1,4 @@
-/* pixel formats: what a surface's bytes are, their pitch, and the dc gdi can make over them. */
+/* pixel formats: a surface's layout, its pitch, and the dc gdi can make over it. */
 #include "ddraw_private.h"
 
 static BOOL is_dxt(DWORD fourcc, DWORD *block)
@@ -18,7 +18,7 @@ static BOOL is_dxt(DWORD fourcc, DWORD *block)
     }
 }
 
-/* the four character codes of yuv formats ddraw blts and locks as 16 bits a pixel. */
+/* yuv four character codes ddraw blts and locks as 16 bits per pixel. */
 static BOOL is_packed_yuv(DWORD fourcc)
 {
     return fourcc == MAKEFOURCC('Y', 'U', 'Y', '2') || fourcc == MAKEFOURCC('U', 'Y', 'V', 'Y') ||
@@ -80,7 +80,7 @@ BOOL DdFormatFromPixelFormat(const DDPIXELFORMAT *pf, DDFORMAT *out)
     return TRUE;
 }
 
-/* the bytes from the start of a row to pixel x. */
+/* byte offset of pixel x in a row. */
 DWORD DdSurfBytes(const DDSURF *s, LONG x)
 {
     if (s->format.block)

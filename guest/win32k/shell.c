@@ -1,9 +1,7 @@
 /*
- * the shell's way to the desktop of the host: toast notifications, the identity of a window and the entry of an
- * application in the launcher. a program's shell libraries (combase for toasts, explorerframe for the taskbar list)
- * hand their commands to NtUserMimeShell, which numbers the toasts, tells the host (MIME_HC_SHELL) and keeps who
- * made each toast so that what the desktop says about it, MIME_INPUT_SHELL, is queued for that program. the program
- * has a thread waiting in the kernel for its events, as a notification client waits for the platform's.
+ * host integration for toasts, window identity and launcher entries. combase and explorerframe submit NtUserMimeShell
+ * commands. the kernel assigns toast ids, forwards MIME_HC_SHELL commands, and queues MIME_INPUT_SHELL replies for
+ * the creating process, whose notification thread waits here.
  */
 #include "win32k.h"
 
@@ -72,7 +70,7 @@ static void owner_set(ULONG id, ULONG pid)
 {
     KIRQL irql;
     KeAcquireSpinLock(&g_lock, &irql);
-    /* the table is a ring: the oldest toast is the one forgotten when it is full. */
+    /* the ring evicts the oldest toast when full. */
     g_owners[g_owner_next % OWNER_MAX].Id = id;
     g_owners[g_owner_next % OWNER_MAX].Pid = pid;
     g_owner_next++;
@@ -103,7 +101,7 @@ static void owner_forget(ULONG id)
     KeReleaseSpinLock(&g_lock, irql);
 }
 
-/* the host's events of a toast go to the program that showed it. */
+/* route toast events to the process that showed it. */
 void ShellHostEvent(const MimeInputEvent *ev)
 {
     if (!g_ready)
@@ -157,7 +155,7 @@ void ShellHostEvent(const MimeInputEvent *ev)
     KeSetEvent(&g_event, IO_NO_INCREMENT, FALSE);
 }
 
-/* a program that is gone takes its toasts' events with it. */
+/* discard toast events when their process exits. */
 void ShellFreeProcess(W32PROCESS *p)
 {
     if (!g_ready)
@@ -195,7 +193,7 @@ static LONG wait_event(ULONG timeout_ms, PUCHAR out)
             return NT_SUCCESS(MimeCopyToUser(out, &e, sizeof(e))) ? 1 : (LONG)STATUS_ACCESS_VIOLATION;
         LARGE_INTEGER t;
         if (timeout_ms == 0xFFFFFFFF) {
-            t.QuadPart = -100000000; /* ten seconds, looking again for a thread that was alerted */
+            t.QuadPart = -100000000; /* ten seconds, looking again for a thread that was alerted. */
         } else {
             ULONGLONG now = KeQueryInterruptTime();
             if (now >= deadline)
@@ -203,7 +201,7 @@ static LONG wait_event(ULONG timeout_ms, PUCHAR out)
             t.QuadPart = -(LONGLONG)(deadline - now);
         }
         NTSTATUS s = KeWaitForSingleObject(&g_event, UserRequest, UserMode, TRUE, &t);
-        /* an apc, an alert or the thread being ended is for the caller, which the wait must give back to be ended. */
+        /* the wait must return APCs, alerts and thread termination to the caller. */
         if (s != STATUS_SUCCESS && s != STATUS_TIMEOUT)
             return (LONG)s;
     }
@@ -214,7 +212,7 @@ static void zero_end(USHORT *text, ULONG chars)
     text[chars - 1] = 0;
 }
 
-/* a command from a program: checked, completed with what only the kernel knows, and passed to the host. */
+/* validate the command, add kernel-owned data and forward it to the host. */
 static LONG run_command(PUCHAR request, ULONG size)
 {
     ULONG op;

@@ -1,10 +1,8 @@
 /*
- * d3d8.dll: direct3d 8 over mime's direct3d 9. every object wraps its
- * direct3d 9 one, and the device keeps the state as direct3d 8 reports
- * it: its render states with the values windows starts from, lights
- * enabled as 128, viewports adjusted, shaders by handle, state blocks by
- * token. objects the device binds count those bindings apart from their
- * references, as windows' runtime does.
+ * d3d8.dll: Direct3D 8 over mime's Direct3D 9. every object wraps its Direct3D 9 one, and the device keeps state as
+ * Direct3D 8 reports it: render states with windows' initial values, enabled lights as 128, adjusted viewports,
+ * shaders by handle, state blocks by token. like windows' runtime, objects count device bindings apart from their
+ * references.
  */
 #ifndef D3D8_PRIVATE_H
 #define D3D8_PRIVATE_H
@@ -63,14 +61,14 @@ struct D8Direct3D {
 D8Direct3D *D8Direct3DFrom(IDirect3D8 *iface);
 HRESULT D8CreateDirect3D(UINT sdk, IDirect3D8 **out);
 HRESULT D8GetCaps(D8Direct3D *d3d, UINT adapter, D3DDEVTYPE type, D3DCAPS8 *caps);
-/* the format of the desktop as direct3d 8 names it. */
+/* the desktop format as Direct3D 8 names it. */
 D3DFORMAT D8DisplayFormat(D8Direct3D *d3d, UINT adapter);
 D3DFORMAT D8NoAlpha(D3DFORMAT format);
-/* the type direct3d 9 makes the device with: it knows no reference rasterizer of its own. */
+/* the device type for Direct3D 9, which has no reference rasterizer of its own. */
 static inline D3DDEVTYPE D8DeviceType9(D3DDEVTYPE type) { return type == D3DDEVTYPE_REF ? D3DDEVTYPE_HAL : type; }
 BOOL D8IsDepthFormat(D3DFORMAT format);
 BOOL D8HasStencil(D3DFORMAT format);
-/* bytes of a texel, or of a 4x4 block for the compressed formats, 0 for those it does not know. */
+/* bytes per texel, or per 4x4 block for compressed formats, 0 for unknown ones. */
 UINT D8FormatBytes(D3DFORMAT format);
 BOOL D8IsDxt(D3DFORMAT format);
 UINT D8LevelSize(D3DFORMAT format, UINT width, UINT height, UINT depth);
@@ -89,9 +87,8 @@ enum {
 };
 
 /*
- * any object a program gets from the device. its references are the
- * program's, its uses the device's bindings; while it has references it
- * holds one on the device. levels of textures count with their texture.
+ * any object a program gets from the device. references are the program's and uses are the device's bindings.
+ * while it has references it holds one on the device. texture levels count with their texture.
  */
 struct D8Object {
     const void *vtbl;
@@ -109,19 +106,19 @@ struct D8Object {
     DWORD priority;
     DWORD lod;
     BOOL lockable;
-    /* levels of 2d textures in memory, which lock without checks and unlock when not locked. */
+    /* levels of 2d textures in memory, which lock without checks and may unlock when not locked. */
     BOOL lenient;
     LONG locks;
     UINT width, height, depth;
     D3DMULTISAMPLE_TYPE samples;
-    /* textures: their levels, six times as many for cubes, face major. */
+    /* textures: levels, six times as many for cubes, face major. */
     UINT levels;
     D8Object **subs;
     UINT level, face;
     /* buffers. */
     UINT size;
     DWORD fvf;
-    /* swap chains: their back buffers, and whether presenting them flips. */
+    /* swap chains: back buffers, and whether presenting flips. */
     D8Object **buffers;
     UINT buffer_count;
     BOOL flip;
@@ -136,12 +133,12 @@ void D8ObjectUnuse(D8Object *o);
 /* moves a binding from what a slot holds to another object. */
 void D8Bind(D8Object **slot, D8Object *o);
 D8Object *D8ObjectFrom(void *iface);
-/* the object of the program's pointer, if it is of this device and of one of the kinds asked. */
+/* the object behind a program's pointer, if it belongs to this device and is one of the given kinds. */
 D8Object *D8Check(D8Device *d, void *iface, UINT kinds);
 #define D8_KIND(k) (1u << (k))
 #define D8_TEXTURES (D8_KIND(D8_TEXTURE) | D8_KIND(D8_CUBE_TEXTURE) | D8_KIND(D8_VOLUME_TEXTURE))
 
-/* wraps a direct3d 9 object, the reference passing to the wrapper. internal ones start used, not referenced. */
+/* wraps a Direct3D 9 object and takes over its reference. internal ones start used, not referenced. */
 HRESULT D8WrapSurface(D8Device *d, IDirect3DSurface9 *s9, DWORD usage, BOOL internal, D8Object **out);
 HRESULT D8WrapTexture(D8Device *d, UINT kind, IUnknown *t9, DWORD usage, D3DPOOL pool, D3DFORMAT format,
                       D8Object **out);
@@ -149,7 +146,7 @@ HRESULT D8WrapBuffer(D8Device *d, UINT kind, IUnknown *b9, UINT size, DWORD usag
                      D3DFORMAT format, D8Object **out);
 HRESULT D8WrapSwapChain(D8Device *d, IDirect3DSwapChain9 *sc9, const D3DPRESENT_PARAMETERS *params, BOOL internal,
                         D8Object **out);
-/* lets go of the back buffers of a swap chain, before a reset makes new ones. */
+/* releases a swap chain's back buffers before a reset makes new ones. */
 void D8SwapChainDrop(D8Object *sc);
 HRESULT D8SwapChainTake(D8Object *sc, const D3DPRESENT_PARAMETERS *params);
 HRESULT D8SurfaceDesc(D8Object *s, D3D8_SURFACE_DESC *desc);
@@ -178,12 +175,12 @@ typedef struct D8PixelShader {
     DWORD *function;
     UINT function_size;
     IDirect3DPixelShader9 *ps9;
-    /* the registers of its def instructions, which setting it loads. */
+    /* the registers its def instructions set, loaded when the shader is set. */
     D8Constants *defs;
     UINT def_count;
 } D8PixelShader;
 
-/* handles of shaders and state blocks: indices, 0 kept back, the last freed given out first. */
+/* shader and state block handles are indices, 0 reserved, the last freed handed out first. */
 typedef struct D8Table {
     void **slots;
     UINT count, capacity;
@@ -196,7 +193,7 @@ void *D8TableGet(const D8Table *t, UINT index);
 void D8TableRemove(D8Table *t, UINT index);
 void D8TableFree(D8Table *t);
 
-/* checks shader code and declarations as windows' runtime does, the text of what fails kept when asked. */
+/* validates like windows' runtime, keeping the failure text when asked. */
 HRESULT D8ValidateVertexShader(const DWORD *code, const DWORD *declaration, const D3DCAPS8 *caps, BOOL text,
                                char **errors);
 HRESULT D8ValidatePixelShader(const DWORD *code, const D3DCAPS8 *caps, BOOL text, char **errors);
@@ -305,17 +302,17 @@ HRESULT D8CreateDevice(D8Direct3D *d3d, UINT adapter, D3DDEVTYPE type, HWND focu
                        D3DPRESENT_PARAMETERS8 *params, IDirect3DDevice8 **out);
 void D8Enter(D8Device *d);
 void D8Leave(D8Device *d);
-/* checks presentation parameters as direct3d 8 does and turns them into direct3d 9's. */
+/* checks presentation parameters like Direct3D 8 and converts them to Direct3D 9's. */
 HRESULT D8ConvertPresent(D8Device *d, D8Direct3D *d3d, UINT adapter, D3DDEVTYPE type, HWND focus,
                          D3DPRESENT_PARAMETERS8 *in, D3DPRESENT_PARAMETERS *out);
 
-/* each part of the device's vtable, filled by the file that has it. */
+/* each part of the device's vtable, filled by the file that implements it. */
 void D8DeviceStateMethods(IDirect3DDevice8Vtbl *vtbl);
 void D8DeviceShaderMethods(IDirect3DDevice8Vtbl *vtbl);
 
-/* the state as a new or reset device has it, already the direct3d 9 device's. */
+/* the state of a new or reset device, already applied to the Direct3D 9 device. */
 void D8DefaultState(D8Device *d);
-/* lets go of every binding, state block, light and palette. */
+/* releases every binding, state block, light and palette. */
 void D8ClearState(D8Device *d);
 void D8DeleteShaders(D8Device *d);
 UINT D8TransformIndex(D3DTRANSFORMSTATETYPE type);
@@ -329,7 +326,7 @@ HRESULT D8SetStreamSource(D8Device *d, UINT stream, D8Object *buffer, UINT strid
 HRESULT D8SetIndices(D8Device *d, D8Object *buffer, UINT base);
 HRESULT D8SetVertexConstants(D8Device *d, UINT start, const void *data, UINT count);
 HRESULT D8SetPixelConstants(D8Device *d, UINT start, const void *data, UINT count);
-/* a mixed device switching how it processes vertices, which unbinds its streams and shader. */
+/* a mixed device switching vertex processing, which unbinds its streams and shader. */
 void D8SwitchProcessing(D8Device *d, BOOL software);
 
 void D8BlockFree(D8Device *d, D8StateBlock *b);

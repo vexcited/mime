@@ -1,10 +1,9 @@
 /*
- * the client of rpc: connections to servers, the bind that opens an interface on one, and the buffers of calls. A stub asks
- * for a buffer of the size of its arguments, fills it, and sends it; the reply replaces it.
+ * the rpc client: server connections, the bind that opens an interface, and call buffers. a stub asks for a buffer the
+ * size of its arguments, fills it and sends it, and the reply replaces it.
  *
- * Connections are kept for the next call: a call takes an idle one that was made for the same server and security, or makes
- * one, and gives it back when the reply is read. The interface a connection carries is opened once, with a bind, and named
- * by a short number afterwards.
+ * connections are pooled: a call takes an idle one made for the same server and security, or makes one, and returns it
+ * once the reply is read. each interface is bound once per connection and named by a short number afterwards.
  */
 #include "rpcrt4_private.h"
 
@@ -38,12 +37,12 @@ typedef struct RPC_CONN {
     unsigned char *Receive;
 } RPC_CONN;
 
-/* the state of a call between its buffer and its reply. */
+/* a call between getting its buffer and reading its reply. */
 typedef struct CCALL {
     RPC_CONN *Conn;
     USHORT ContextId;
     BOOL Ndr64;
-    /* the object the call is made to, which the call has chosen when it asked for its buffer. */
+    /* chosen when the call got its buffer. */
     UUID Object;
 } CCALL;
 
@@ -52,7 +51,7 @@ static RPC_CONN *g_idle;
 
 /* ------------------------------------------------------------------ buffers */
 
-/* a buffer of size bytes with room before it for the header of a pdu, aligned for the engine. */
+/* room is left before the buffer for a pdu header, aligned for the engine. */
 unsigned char *RpcpBufferAlloc(SIZE_T size)
 {
     unsigned char *raw = HeapAlloc(GetProcessHeap(), 0, size + PDU_ROOM + 32);
@@ -71,7 +70,7 @@ void RpcpBufferFree(void *buffer)
     HeapFree(GetProcessHeap(), 0, ((unsigned char **)aligned)[-1]);
 }
 
-/* ------------------------------------------------------------------ the thread */
+/* ------------------------------------------------------------------ threads */
 
 static DWORD g_thread_tls = TLS_OUT_OF_INDEXES;
 static SRWLOCK g_thread_lock = SRWLOCK_INIT;
@@ -101,7 +100,6 @@ RPC_THREAD *RpcpThread(void)
     return t;
 }
 
-/* a thread that ends takes its record with it. */
 void RpcpThreadDetach(void)
 {
     if (g_thread_tls == TLS_OUT_OF_INDEXES)
@@ -123,7 +121,7 @@ void RpcpThreadDetach(void)
     TlsSetValue(g_thread_tls, nullptr);
 }
 
-/* asks the call a thread is making to stop. */
+/* asks the call the thread is making to stop. */
 RPC_STATUS RpcpThreadCancel(DWORD thread_id)
 {
     RPC_STATUS status = RPC_S_INVALID_ARG;
@@ -169,7 +167,6 @@ static void conn_destroy(RPC_CONN *c)
     HeapFree(GetProcessHeap(), 0, c);
 }
 
-/* closes the connections that were idle too long. */
 static void pool_expire(ULONG now)
 {
     RPC_CONN **at = &g_idle;
@@ -223,8 +220,8 @@ static void pool_give(RPC_CONN *c)
 }
 
 /*
- * the last binding handle to a server is freed: the connections kept for it are closed, and a server that holds contexts for
- * the client rundowns them, as the end of the association does on windows.
+ * called when the last binding handle to a server is freed: its pooled connections close, and a server holding contexts
+ * for the client runs them down, like the end of an association on windows.
  */
 void RpcpPoolDrop(const WCHAR *key)
 {
@@ -252,8 +249,8 @@ static void pdu_syntax(PDU_SYNTAX *out, const RPC_SYNTAX_IDENTIFIER *s)
 }
 
 /*
- * opens an interface on a connection: the first interface with a bind, the others by altering the context. The transfer
- * syntaxes offered are the interface's own. Returns the number the interface is called by.
+ * the first interface on a connection is opened with a bind, the others with an alter context. the transfer syntaxes
+ * offered are the interface's own. returns the number the interface is called by.
  */
 static RPC_STATUS conn_bind(RPC_CONN *c, const BINDING *b, const RPC_SYNTAX_IDENTIFIER *abstract,
                             const RPC_SYNTAX_IDENTIFIER *offered, ULONG offered_count, USHORT *context_id,
@@ -295,7 +292,7 @@ static RPC_STATUS conn_bind(RPC_CONN *c, const BINDING *b, const RPC_SYNTAX_IDEN
     }
     USHORT auth_length = 0;
     if (b->HasAuth && b->AuthnLevel > RPC_C_AUTHN_LEVEL_NONE) {
-        /* the level and the service travel in a trailer, with no token. */
+        /* the level and service travel in a trailer, with no token. */
         while ((p - pdu) & 3)
             *p++ = 0;
         PDU_SEC_TRAILER *t = (PDU_SEC_TRAILER *)p;
@@ -333,7 +330,7 @@ static RPC_STATUS conn_bind(RPC_CONN *c, const BINDING *b, const RPC_SYNTAX_IDEN
         c->MaxRecv = min(c->MaxRecv, *(USHORT *)(r + 2));
     }
     r += 8;
-    /* the secondary address, then padding to four bytes from the pdu's start. */
+    /* the secondary address, then padding to four bytes from the pdu start. */
     USHORT sec_len = *(USHORT *)r;
     r += 2 + sec_len;
     while ((r - reply) & 3)
@@ -380,7 +377,6 @@ static RPC_STATUS conn_new(const BINDING *b, const WCHAR *key, RPC_CONN **out)
 
 /* ------------------------------------------------------------------ calls */
 
-/* the binding a message names, for a client call. */
 RPC_STATUS RpcpClientBinding(RPC_MESSAGE *message, BINDING **binding)
 {
     BINDING *b = RpcpBindingLookup(message->Handle);
@@ -394,8 +390,8 @@ RPC_STATUS RpcpServerGetBuffer(RPC_MESSAGE *message, BINDING *b);
 void RpcpServerFreeBuffer(RPC_MESSAGE *message);
 
 /*
- * the connection a call goes over and the number of its interface on it, made if the call is the first for them. The server's
- * endpoint is asked of the endpoint mapper if the binding names none.
+ * the connection and interface number a call uses, set up if this is the first call for them. the endpoint mapper
+ * supplies the endpoint when the binding names none.
  */
 static RPC_STATUS call_connect(BINDING *b, const RPC_CLIENT_INTERFACE *iface, RPC_MESSAGE *message, CCALL *call)
 {
@@ -427,7 +423,7 @@ static RPC_STATUS call_connect(BINDING *b, const RPC_CLIENT_INTERFACE *iface, RP
         status = conn_bind(c, b, &iface->InterfaceId, offered, offered_count, &id, &chosen);
         if (status) {
             conn_destroy(c);
-            /* a connection the server closed while it was idle: try again with a new one. */
+            /* the server closed this idle connection, retry on a new one. */
             if (reused && (status == RPC_S_CALL_FAILED || status == RPC_S_COMM_FAILURE))
                 continue;
             return status;
@@ -495,7 +491,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcFreeBuffer(RPC_MESSAGE *message)
     RpcpBufferFree(message->Buffer);
     message->Buffer = nullptr;
     if (call) {
-        /* a call that never sent: its connection goes back. */
+        /* the call never sent, so its connection goes back to the pool. */
         if (call->Conn)
             pool_give(call->Conn);
         HeapFree(GetProcessHeap(), 0, call);
@@ -504,7 +500,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcFreeBuffer(RPC_MESSAGE *message)
     return RPC_S_OK;
 }
 
-/* sends the stub data of a request in as many fragments as the connection takes. */
+/* in as many fragments as the connection takes. */
 static RPC_STATUS send_request(RPC_CONN *c, RPC_MESSAGE *m, CCALL *call, const UUID *object, ULONG call_id)
 {
     ULONG header = sizeof(PDU_REQUEST_HEADER) + (object ? sizeof(UUID) : 0);
@@ -567,9 +563,7 @@ static RPC_STATUS send_request(RPC_CONN *c, RPC_MESSAGE *m, CCALL *call, const U
     return status;
 }
 
-/*
- * reads the answer: the stub data of a response, whole, or the status of a fault. Several fragments are put together.
- */
+/* reads a response's whole stub data, reassembling fragments, or a fault's status. */
 static RPC_STATUS read_reply(RPC_CONN *c, ULONG call_id, unsigned char **data, ULONG *length)
 {
     unsigned char *whole = nullptr;
@@ -656,14 +650,13 @@ RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcSendReceive(RPC_MESSAGE *message)
         return status;
     message->Buffer = reply;
     message->BufferLength = length;
-    /* the reply is a buffer without a call: the stub frees it with I_RpcFreeBuffer. */
+    /* the reply buffer outlives the call, the stub frees it with I_RpcFreeBuffer. */
     return RPC_S_OK;
 }
 
 /*
- * Mime's own: the function a thread waits for the replies of its calls with. A thread that has windows has to go on
- * serving them while it waits, and the function does that. It is called as WaitForMultipleObjects would be, without the
- * wait for all.
+ * mime specific: sets the function a thread waits for its call replies with, so a thread with windows can keep serving
+ * them. it is called like WaitForMultipleObjects without wait all.
  */
 RPCRTAPI void RPC_ENTRY I_RpcMimeSetWaitFunction(DWORD(WINAPI *function)(DWORD, const HANDLE *, DWORD, void *), void *context,
                                                  void *previous[2])

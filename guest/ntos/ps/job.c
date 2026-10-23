@@ -1,19 +1,16 @@
 /*
- * job objects: a set of processes, their limits and the completion port that hears about them. a process
- * belongs to the job of the process that created it unless it breaks away, and leaves it when it exits.
- * closing the last handle of a job with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE ends every process in it, as
- * programs that run children in a job expect.
+ * job objects: a set of processes, their limits and the completion port told about them. a process joins its
+ * creator's job unless it breaks away, and leaves it when it exits. closing the last handle of a job with
+ * JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE ends every process in it.
  *
- * jobs nest, as on windows 8 and later: a process that is in a job and is assigned to another one makes the
- * second a child of the first (when it has no parent, no process and no child of its own), and goes on being
- * in the first. a process is in its job and every job above it: each job counts the processes of the jobs
- * below, hears of them on its port, ends them with its own end and keeps the limit of active processes over
- * all of them. enforced are the kill on close, the breakaway flags, the limit of active processes, the limits of the
- * memory a process and the job may commit, the error mode that die on unhandled exception forces, the private table
- * of global atoms, and the restrictions of the user interface, which win32k reads with MimeProcessUiLimits; the
- * limits of time, the affinity and the priority are recorded and reported. a process that would be one too many is
- * not created, or not assigned, with STATUS_QUOTA_EXCEEDED, and the port is told as windows does: the limit was
- * hit, and the process that was refused left.
+ * jobs nest as on windows 8 and later: assigning a process already in a job to another job makes the second a
+ * child of the first, if it has no parent, process or child yet, and the process stays in the first. a process is
+ * in its job and every job above it, and each job counts, notifies, ends and limits the processes below it.
+ * enforced: kill on close, the breakaway flags, the active process limit, the process and job commit limits, the
+ * error mode die on unhandled exception forces, the private global atom table and the ui restrictions, which win32k
+ * reads with MimeProcessUiLimits. time limits, affinity and priority are only recorded. a process over the active
+ * limit is not created or assigned, with STATUS_QUOTA_EXCEEDED, and like windows the port is told the limit was hit
+ * and the refused process left.
  */
 #include "../ntos.h"
 
@@ -85,25 +82,25 @@ typedef struct JOB_COMPLETION_PORT {
 } JOB_COMPLETION_PORT;
 
 typedef struct EJOB {
-    KEVENT Event; /* waitable, as on windows; signaled only by end of job time, which never comes */
-    LIST_ENTRY Processes;   /* the processes whose own job this is, not those of the jobs below */
-    LIST_ENTRY Children;    /* the jobs below */
-    LIST_ENTRY Siblings;    /* in the parent's Children */
-    struct EJOB *Parent;    /* referenced */
-    ULONG Active, Total, Terminated; /* of this job and the ones below it */
+    KEVENT Event; /* only end of job time would signal it, and that never comes. */
+    LIST_ENTRY Processes;   /* processes directly in this job, not in the jobs below. */
+    LIST_ENTRY Children;
+    LIST_ENTRY Siblings;    /* link in the parent's Children. */
+    struct EJOB *Parent;    /* referenced. */
+    ULONG Active, Total, Terminated; /* include the jobs below. */
     JOB_EXTENDED_LIMIT Limits;
     ULONG UiRestrictions;
-    PVOID Port; /* referenced io completion object */
+    PVOID Port; /* referenced io completion object. */
     PVOID Key;
-    LONG64 CommitPages;        /* the commit charge of the processes in it and below, for the limit of the job's memory */
+    LONG64 CommitPages;        /* commit of every process in it and below, for the job memory limit. */
     LONG64 PeakCommitPages;
-    SIZE_T PeakProcessCommit;  /* the largest commit charge a process of it had, in bytes */
-    PVOID Atoms;               /* the private table of global atoms, made when the first one is asked for */
+    SIZE_T PeakProcessCommit;  /* in bytes. */
+    PVOID Atoms;               /* private global atom table, made on first use. */
 } EJOB;
 
 POBJECT_TYPE PsJobType;
 
-/* one lock for the shape of the jobs, their lists and their counts: they change rarely. */
+/* one lock for the job tree, its lists and counts, which change rarely. */
 static KSPIN_LOCK g_lock;
 
 NTSTATUS IopQueueCompletion(PVOID port, PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information);
@@ -114,7 +111,7 @@ static void post(EJOB *job, ULONG message, PEPROCESS process)
         IopQueueCompletion(job->Port, job->Key, process ? process->UniqueProcessId : nullptr, STATUS_SUCCESS, message);
 }
 
-/* the interface limits of the job of a process and the jobs above it, as JOB_OBJECT_UILIMIT_*. */
+/* the JOB_OBJECT_UILIMIT_* bits of the process's job and every job above it. */
 ULONG NTAPI MimeProcessUiLimits(PEPROCESS process)
 {
     ULONG limits = 0;
@@ -126,10 +123,7 @@ ULONG NTAPI MimeProcessUiLimits(PEPROCESS process)
     return limits;
 }
 
-/*
- * whether a process may use the user handles of another: not when a job it is in holds its processes to their own
- * handles and the other is not in that job.
- */
+/* a job with JOB_OBJECT_UILIMIT_HANDLES keeps its processes off user handles owned outside the job. */
 BOOLEAN NTAPI MimeProcessMayUseUserHandles(PEPROCESS user, PEPROCESS owner)
 {
     BOOLEAN allowed = TRUE;
@@ -148,7 +142,7 @@ BOOLEAN NTAPI MimeProcessMayUseUserHandles(PEPROCESS user, PEPROCESS owner)
 
 #define JOB_CHAIN_MAX 16
 
-/* the jobs from this one up to the root, at most JOB_CHAIN_MAX; call with the lock. */
+/* this job and its ancestors, at most JOB_CHAIN_MAX. call with the lock held. */
 static ULONG chain_of(EJOB *job, EJOB **chain)
 {
     ULONG n = 0;
@@ -157,7 +151,7 @@ static ULONG chain_of(EJOB *job, EJOB **chain)
     return n;
 }
 
-/* the error mode bits the jobs of a process force: no error box for a crash, with die on unhandled exception. */
+/* die on unhandled exception forces SEM_NOGPFAULTERRORBOX. */
 ULONG PspJobForcedErrorMode(PEPROCESS process)
 {
     ULONG bits = 0;
@@ -170,7 +164,7 @@ ULONG PspJobForcedErrorMode(PEPROCESS process)
     return bits;
 }
 
-/* the job whose private table of global atoms the process uses, or NULL for the table of the session. */
+/* the atom table slot of the nearest job with private global atoms, or NULL for the session's table. */
 PVOID *PspJobAtomTableSlot(PEPROCESS process)
 {
     PVOID *slot = nullptr;
@@ -187,9 +181,8 @@ PVOID *PspJobAtomTableSlot(PEPROCESS process)
 }
 
 /*
- * a process commits memory: pages more on top of the held ones. A limit of the memory of a process or of the job it
- * is in, or of one above it, refuses with the port told of it as windows does. The pages count for every job it
- * is in otherwise.
+ * charges pages of new commit on top of held_pages. a process or job memory limit on any of its jobs refuses it and,
+ * like windows, tells the port. otherwise every job of the process is charged.
  */
 BOOLEAN PspJobChargeCommit(PEPROCESS process, SIZE_T held_pages, SIZE_T pages)
 {
@@ -237,7 +230,7 @@ void PspJobReturnCommit(PEPROCESS process, SIZE_T pages)
     KeReleaseSpinLock(&g_lock, irql);
 }
 
-/* a job by handle, which must grant the rights asked of a caller in user mode. */
+/* user mode callers need the handle to grant access. */
 static NTSTATUS reference_job(HANDLE handle, ACCESS_MASK access, EJOB **job)
 {
     ACCESS_MASK granted = 0;
@@ -245,14 +238,14 @@ static NTSTATUS reference_job(HANDLE handle, ACCESS_MASK access, EJOB **job)
     NTSTATUS status = ObReferenceHandle(handle, PsJobType, mode, (PVOID *)job, &granted);
     if (NT_SUCCESS(status) && mode == UserMode && (granted & access) != access) {
         ObDereferenceObject(*job);
-        /* a caller that lets go of what it holds at its end must not find the job it was refused. */
+        /* callers release *job when done, so a refused job must not be left there. */
         *job = nullptr;
         status = STATUS_ACCESS_DENIED;
     }
     return status;
 }
 
-/* every process of the job and the jobs below it, referenced; call with the lock. */
+/* references every process of the job and the jobs below. call with the lock held. */
 static void collect(EJOB *job, PEPROCESS *out, ULONG *n, ULONG max)
 {
     for (PLIST_ENTRY e = job->Processes.Flink; e != &job->Processes && *n < max; e = e->Flink) {
@@ -281,7 +274,7 @@ static void terminate_all(EJOB *job, NTSTATUS status)
     for (ULONG i = 0; i < n; i++) {
         if (processes[i] != PsCurrentProcess())
             PspTerminateProcess(processes[i], status);
-        /* only the processes the job ended are counted, not those that ended by themselves. */
+        /* only processes the job ended count, not those that exited on their own. */
         __atomic_add_fetch(&job->Terminated, 1, __ATOMIC_RELAXED);
         ObDereferenceObject(processes[i]);
     }
@@ -323,10 +316,9 @@ void PspInitializeJobs(void)
 }
 
 /*
- * puts a process in a job. one that is in a job goes down into a job below its own, or a job that has nothing
- * yet hangs from its own; any other job is refused with STATUS_ACCESS_DENIED, so is the same job twice. the jobs
- * the process newly enters, from the job up to but not including the one it was in, each count it, so a job
- * at its limit of processes refuses it.
+ * a process already in a job may only go into a job below its own, or into an empty job that then becomes a child of
+ * its own. anything else, the same job included, is STATUS_ACCESS_DENIED. every job the process newly enters counts
+ * it, so a job at its process limit refuses it.
  */
 static NTSTATUS join(EJOB *job, PEPROCESS process)
 {
@@ -349,7 +341,7 @@ static NTSTATUS join(EJOB *job, PEPROCESS process)
             if (at < all) {
                 entered = at;
             } else if (!job->Parent && !job->Active && IsListEmpty(&job->Children) && all == 1) {
-                /* the job comes under the one the process is in. */
+                /* the job becomes a child of the process's job. */
                 entered = 1;
                 adopted = TRUE;
             } else {
@@ -392,7 +384,6 @@ static NTSTATUS join(EJOB *job, PEPROCESS process)
         return status;
     if (old)
         ObDereferenceObject(old);
-    /* a job that does not let a process crash with a box makes the process know it. */
     process->DefaultHardErrorMode |= PspJobForcedErrorMode(process);
     for (ULONG i = 0; i < entered; i++)
         post(chain[i], JOB_OBJECT_MSG_NEW_PROCESS, process);
@@ -400,8 +391,8 @@ static NTSTATUS join(EJOB *job, PEPROCESS process)
 }
 
 /*
- * a new process joins its creator's job, unless it may break away and asked to, or must. a job at its
- * limit refuses it, and then it has left again as far as the port is concerned.
+ * a new process joins its creator's job unless it may break away and asks to, or must. if the job is at its limit,
+ * the port sees the process join and leave.
  */
 NTSTATUS PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags)
 {
@@ -412,7 +403,7 @@ NTSTATUS PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags)
     if (limits & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)
         return STATUS_SUCCESS;
     if (flags & PROCESS_CREATE_FLAGS_BREAKAWAY) {
-        /* a job that does not allow it refuses the creation, it does not quietly keep the process. */
+        /* a breakaway the job does not allow fails the creation, the process is not quietly kept. */
         if (limits & JOB_OBJECT_LIMIT_BREAKAWAY_OK)
             return STATUS_SUCCESS;
         return STATUS_ACCESS_DENIED;
@@ -423,7 +414,7 @@ NTSTATUS PspInheritJob(PEPROCESS process, PEPROCESS parent, ULONG flags)
     return status;
 }
 
-/* the job a list of handles puts a new process in, which is the last, and every one must take it. */
+/* the new process goes in the last job of the list, and every listed job must accept it. */
 NTSTATUS PspReferenceJobForCreation(const HANDLE *list, ULONG count, struct EJOB **out)
 {
     EJOB *job = nullptr;
@@ -448,7 +439,7 @@ NTSTATUS PspAssignNewProcessToJob(struct EJOB *job, PEPROCESS process)
     return status;
 }
 
-/* the last thread of a process left: its job and every one above count it out. */
+/* called when the last thread of a process exits: its job and every job above count it out. */
 void PspJobProcessExit(PEPROCESS process)
 {
     EJOB *chain[JOB_CHAIN_MAX];
@@ -556,7 +547,7 @@ NTSTATUS NTAPI NtIsProcessInJob(HANDLE process_handle, HANDLE job_handle)
     if (job_handle)
         status = reference_job(job_handle, JOB_OBJECT_QUERY, &job);
     if (NT_SUCCESS(status)) {
-        /* in the job when it is the process's own or one above it. */
+        /* the process is in the job if it is its own job or one above it. */
         BOOLEAN in = FALSE;
         KIRQL irql;
         KeAcquireSpinLock(&g_lock, &irql);
@@ -607,7 +598,7 @@ NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID i
     case JobObjectAssociateCompletionPortInformation: want = sizeof(in.port); break;
     case JobObjectBasicUIRestrictions: want = sizeof(in.ui); break;
     default:
-        /* cpu rates, notification limits and the like are accepted and not enforced. */
+        /* cpu rates, notification limits and the like are accepted but not enforced. */
         ObDereferenceObject(job);
         return STATUS_SUCCESS;
     }
@@ -643,7 +634,7 @@ NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID i
             if (NT_SUCCESS(status)) {
                 job->Port = port;
                 job->Key = in.port.CompletionKey;
-                /* the processes already in the job are announced, as windows does. */
+                /* like windows, announce the processes already in the job. */
                 PEPROCESS processes[256];
                 ULONG n = snapshot(job, processes, 256);
                 for (ULONG i = 0; i < n; i++) {
@@ -660,7 +651,7 @@ NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID i
                 job->UiRestrictions = in.ui;
             break;
         }
-        /* a limit that forbids the box of a crash reaches the processes that are in the job already. */
+        /* die on unhandled exception also applies to processes already in the job. */
         if (NT_SUCCESS(status) && (klass == JobObjectBasicLimitInformation || klass == JobObjectExtendedLimitInformation) &&
             (job->Limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION)) {
             PEPROCESS members[256];
@@ -683,7 +674,7 @@ NTSTATUS NTAPI NtQueryInformationJobObject(HANDLE job_handle, ULONG klass, PVOID
     if (job_handle) {
         status = reference_job(job_handle, JOB_OBJECT_QUERY, &job);
     } else {
-        /* no handle asks about the job of the calling process. */
+        /* a NULL handle means the calling process's job. */
         job = PsCurrentProcess()->Job;
         status = job ? STATUS_SUCCESS : STATUS_ACCESS_DENIED;
         if (job)

@@ -1,8 +1,4 @@
-/*
- * direct3d 11 video: decoders and the buffers programs fill for them, video processors and their views,
- * as the interfaces of the video device and the video context present them. the interfaces and their method
- * order are windows', as programs call them through the vtables.
- */
+/* direct3d 11 video: decoders, their buffers, video processors and their views, in windows' vtable order. */
 #ifndef MIME_WIN32_D3D11VIDEO_H
 #define MIME_WIN32_D3D11VIDEO_H
 

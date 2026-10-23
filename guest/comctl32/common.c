@@ -1,6 +1,5 @@
 /*
- * helpers the controls share: memory, strings, notifications to the
- * parent and off screen painting.
+ * helpers the controls share: memory, strings, parent notifications and off screen painting.
  */
 #include "comctl32_private.h"
 
@@ -90,7 +89,7 @@ int CcCopyTextA(LPSTR dst, int max, LPCWSTR src)
     if (src && src != LPSTR_TEXTCALLBACKW)
         n = WideCharToMultiByte(CP_ACP, 0, src, -1, dst, max, nullptr, nullptr);
     if (n <= 0) {
-        /* too long: the part that fits. */
+        /* too long: copy what fits. */
         n = src && src != LPSTR_TEXTCALLBACKW
                 ? WideCharToMultiByte(CP_ACP, 0, src, (int)wcslen(src), dst, max - 1, nullptr, nullptr)
                 : 0;
@@ -102,8 +101,6 @@ int CcCopyTextA(LPSTR dst, int max, LPCWSTR src)
     dst[n - 1] = 0;
     return n - 1;
 }
-
-/* ------------------------------------------------------------------ notifications */
 
 void CcNotifyInit(CC_NOTIFY *n, HWND hwnd, HWND parent)
 {
@@ -172,8 +169,6 @@ LRESULT CcNotifyMouse(CC_NOTIFY *n, UINT code, DWORD_PTR item, DWORD_PTR data, P
     nm.pt = pt;
     return CcNotify(n, code, &nm.hdr);
 }
-
-/* ------------------------------------------------------------------ drawing */
 
 HDC CcBeginBuffer(CC_DRAW_BUFFER *b, HDC target, const RECT *rect)
 {

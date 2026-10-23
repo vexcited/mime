@@ -1,4 +1,4 @@
-/* the system properties propsys knows by name, generated from their keys. */
+/* the system properties propsys knows by name. */
 static const struct {
     LPCWSTR name;
     PROPERTYKEY key;

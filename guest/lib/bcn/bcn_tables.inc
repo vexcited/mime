@@ -1,4 +1,4 @@
-/* tables of the BPTC texture compression specification, generated, see the BC6H and BC7 sections. */
+/* tables from the BC6H and BC7 sections of the BPTC texture compression specification. */
 /* partition shapes, 2 bits per pixel, pixel 0 in the low bits. */
 static const uint32_t bptc_part2[64] = {
     0x50505050u, 0x40404040u, 0x54545454u, 0x54505040u, 0x50404000u, 0x55545450u,

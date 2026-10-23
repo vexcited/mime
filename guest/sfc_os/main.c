@@ -1,8 +1,7 @@
 /*
- * sfc_os.dll, Windows Resource Protection. Windows 11 keeps no list of protected files for the callers of this dll:
- * the watcher thread and its server are gone, most entry points answer that nothing is done, and a file is protected
- * when the servicing stack knows it. Mime has no servicing stack, so a file is protected when it is one of the files
- * of the operating system in the Windows folder, see docs/sfc.md.
+ * sfc_os.dll, Windows Resource Protection. on Windows 11 the watcher thread and its server are gone, most entry
+ * points do nothing, and protection comes from the servicing stack. mime has none, so a file is protected when it is
+ * an operating system file in the Windows folder.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -44,7 +43,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 
 static constexpr WCHAR g_product[] = L"Microsoft® Windows® Operating System";
 
-/* whether the version resource of the file names the operating system as its product. */
+/* whether the version resource names the operating system as the product. */
 static BOOL is_operating_system_file(PCWSTR path)
 {
     DWORD handle, bytes = GetFileVersionInfoSizeW(path, &handle);
@@ -67,7 +66,7 @@ static BOOL is_operating_system_file(PCWSTR path)
     return result;
 }
 
-/* a file of the Windows folder that carries the product of the operating system. */
+/* an operating system file inside the Windows folder. */
 SFC BOOL WINAPI SfcIsFileProtected(HANDLE rpc, LPCWSTR name)
 {
     if (!name || !*name) {
@@ -90,7 +89,7 @@ SFC BOOL WINAPI SfcIsFileProtected(HANDLE rpc, LPCWSTR name)
     return protected_file;
 }
 
-/* the list of protected files is not kept: it ends before its first file. */
+/* no list is kept, so it is always empty. */
 SFC BOOL WINAPI SfcGetNextProtectedFile(HANDLE rpc, PROTECTED_FILE_DATA *data)
 {
     SetLastError(ERROR_NO_MORE_FILES);
@@ -105,7 +104,7 @@ SFC BOOL WINAPI SfpVerifyFile(LPCSTR file, LPSTR error, DWORD error_size)
 
 /* ------------------------------------------------------------------ registry keys */
 
-/* the service sid of TrustedInstaller, the owner of the keys and files of the system. */
+/* TrustedInstaller's service sid, owner of the system's keys and files. */
 static const BYTE g_trusted_installer[] = {
     1, 6, 0, 0, 0, 0, 0, 5,
     0x50, 0x00, 0x00, 0x00,
@@ -124,16 +123,15 @@ typedef struct {
 } ACE_HEADER_;
 
 /*
- * a key is protected when TrustedInstaller has full control of it and nobody else can change it: the first deny entry
- * for TrustedInstaller or an allow entry of another sid with a right that writes, deletes or changes the descriptor
- * ends the walk with no protection.
+ * protected when TrustedInstaller has full control and nobody else can change the key. a deny entry for
+ * TrustedInstaller, or another sid allowed to write, delete or change the descriptor, means unprotected.
  */
 static BOOL protects_key(PSECURITY_DESCRIPTOR descriptor)
 {
     BOOL present, defaulted;
     PVOID acl;
     ACL_SIZE_INFORMATION information;
-    /* the information class is the size of the list, 2. */
+    /* class 2 is AclSizeInformation. */
     if (!GetSecurityDescriptorDacl(descriptor, &present, &acl, &defaulted) || !acl ||
         !GetAclInformation(acl, &information, sizeof(information), 2))
         return FALSE;
@@ -166,7 +164,7 @@ SFC BOOL WINAPI SfcIsKeyProtected(HKEY key, LPCWSTR subkey, REGSAM sam)
         }
         wcscpy(path, subkey);
         SIZE_T length = wcslen(path);
-        /* the nearest key that exists above the one named stands in for it. */
+        /* the nearest existing ancestor stands in for a missing key. */
         for (;;) {
             error = RegOpenKeyExW(key, path, 0, (sam & 0x300) | KEY_READ, &opened);
             if (!error)
@@ -208,9 +206,9 @@ SFC BOOL WINAPI SfcIsKeyProtected(HKEY key, LPCWSTR subkey, REGSAM sam)
     return protected_key;
 }
 
-/* ------------------------------------------------------------------ what windows 11 leaves of the rest */
+/* ------------------------------------------------------------------ what windows 11 leaves */
 
-/* nothing runs that could be asked, and nothing needs to be started: these answer success or "not implemented". */
+/* nothing runs to be asked or started: these return success or not implemented. */
 SFC DWORD WINAPI SfcInitProt(DWORD a, DWORD b, DWORD c, DWORD d, DWORD e, DWORD f, DWORD g)
 {
     return ERROR_CALL_NOT_IMPLEMENTED;
@@ -256,7 +254,7 @@ SFC DWORD WINAPI SfcInstallProtectedFiles(DWORD a, DWORD b, DWORD c, DWORD d, DW
     return 0;
 }
 
-/* the system restore client is loaded for the call, and without it the status says so. */
+/* srclient.dll is loaded per call. without it the status says not implemented. */
 typedef struct {
     DWORD Event;
     DWORD Type;
@@ -302,7 +300,7 @@ SFC BOOL WINAPI SRSetRestorePointW(RESTOREPOINTINFOW_ *spec, STATEMGRSTATUS_ *st
     return set_restore_point("SRSetRestorePointW", spec, status);
 }
 
-/* ------------------------------------------------------------------ the file map enumeration of the servicing stack */
+/* ------------------------------------------------------------------ servicing stack file maps */
 
 SFC BOOL WINAPI BeginFileMapEnumeration(DWORD flags, PVOID reserved, PVOID *handle)
 {

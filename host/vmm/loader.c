@@ -76,7 +76,7 @@ static void map_physmap(TableAlloc *ta, uint64_t root, uint64_t ram_base, uint64
     for (uint64_t pa = ram_base; pa < ram_base + ram_size; pa += 1ull << 21) {
         uint64_t va = MIME_KVA_PHYSMAP + pa;
         uint64_t *l2 = walk(ta, root, va, 2);
-        l2[(va >> 21) & 0x1FF] = pa | attrs | PTE_VALID; /* 2 MiB block */
+        l2[(va >> 21) & 0x1FF] = pa | attrs | PTE_VALID; /* 2 MiB block. */
     }
 }
 
@@ -91,7 +91,7 @@ static void map_windows(TableAlloc *ta, uint64_t root)
     }
 }
 
-/* device-nGnRnE, mair index 1, for the gic registers. */
+/* device-nGnRnE, mair index 1, for the GIC registers. */
 static void map_device(TableAlloc *ta, uint64_t root, uint64_t pa, uint64_t size)
 {
     uint64_t attrs = PTE_ATTR(1) | PTE_AF | PTE_UXN | PTE_PXN;
@@ -129,7 +129,7 @@ static bool apply_relocations(uint8_t *image, uint32_t image_size, uint32_t relo
             if (type == 0)
                 continue;
             if (type != 10 || rva + 8 > image_size)
-                return false; /* only IMAGE_REL_BASED_DIR64 is valid on arm64 */
+                return false; /* only IMAGE_REL_BASED_DIR64 is valid on arm64. */
             uint64_t v = rd64(image + rva) + (uint64_t)delta;
             memcpy(image + rva, &v, 8);
         }

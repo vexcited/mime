@@ -18,15 +18,15 @@ static KI_SERVICE_TABLE g_tables[2] = {{g_nt_services, MIME_NT_SERVICES_COUNT}, 
 static UCHAR g_reported[2][4096 / 8];
 /* calls of each service, for the thread dump; racy counts are good enough for that. */
 static ULONG64 g_calls[2][4096];
-/* the ticks the kernel lock was held by each service, not counting the time its thread waited, and the longest call */
+/* ticks each service held the kernel lock, minus the time its thread waited, and its longest call. */
 static ULONG64 g_ticks[2][4096], g_longest[2][4096];
 
-/* holds of the kernel lock that lasted long, by the service or vector that held it, see KiNoteLongHold. */
+/* long kernel lock holds, by the service or vector that held it, see KiNoteLongHold. */
 #define KI_HOLD_REASONS (0x2001 + 256)
 static ULONG64 g_long_ticks[KI_HOLD_REASONS], g_long_max[KI_HOLD_REASONS], g_long_calls[KI_HOLD_REASONS];
 static ULONG64 g_long_total;
 void AfdDumpStats(void);
-/* calls of each hypercall, the time they took, and how much of it with the kernel lock held; the x64 hal counts them. */
+/* per hypercall: calls, time taken, and how much of it with the kernel lock held. the x64 hal counts them. */
 ULONG64 HalHypercallCalls[64], HalHypercallTicks[64], HalHypercallLongest[64], HalHypercallLockedTicks[64];
 
 /* called as the lock is released after being held for longer than KiLongHoldTicks, with the lock still held. */
@@ -299,7 +299,7 @@ void KiSystemService(PKTRAP_FRAME frame)
     if (table < 2)
         g_calls[table][index]++;
     KI_SERVICE_TABLE *t = table < 2 ? &g_tables[table] : nullptr;
-    /* a process with the win32k system calls disabled never becomes a gui process: its first call fails, guessed from the audit only mode of the policy. */
+    /* a process with win32k system calls disabled never becomes a gui process and its first call fails, a guess based on the policy's audit only mode. */
     BOOLEAN locked = table == 1 && !thread->Win32Thread &&
                      (PsCurrentProcess()->MitigationPolicy[MIME_POLICY_SYSTEM_CALL_DISABLE] & MIME_SYSTEM_CALL_DISABLE_WIN32K);
     if (table == 1 && !locked && !thread->Win32Thread && g_win32.ThreadCallout) {
@@ -459,7 +459,7 @@ void KiSystemService(PKTRAP_FRAME frame)
         record.ExceptionAddress = (PVOID)KI_TRAP_PC(frame);
         ethread->PendingException = 0;
         if (PspIsWow64Process(PsCurrentProcess())) {
-            /* the program is emulated, so the emulator raises it for the code that made the call, told by the code in the teb. */
+            /* the program is emulated, so the emulator raises it for the calling code, as the code in the teb tells it. */
             ULONG code = (ULONG)record.ExceptionCode;
             KiCopyToUser(&ethread->Tcb.Teb->ExceptionCode, &code, sizeof(code));
         } else if (!KiDispatchUserException(&record, frame)) {
@@ -486,7 +486,7 @@ NTSTATUS KiFaultResult(void)
     return status == STATUS_GUARD_PAGE_VIOLATION || status == STATUS_STACK_OVERFLOW ? status : STATUS_IN_PAGE_ERROR;
 }
 
-/* copies from caller memory; kernel mode callers (Zw* services) pass kernel buffers. */
+/* copies from caller memory; kernel mode callers, the Zw* services, pass kernel buffers. */
 NTSTATUS KiCopyFromUser(void *dst, const void *user_src, SIZE_T length)
 {
     if (!length)

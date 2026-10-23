@@ -1,7 +1,7 @@
 /*
- * the exports of dcomp.dll beyond the devices: surface handles, the clock of
- * the compositor and its statistics, which here are the display's blanks on
- * the performance counter. Frames are numbered by the blank they start at.
+ * dcomp.dll exports besides devices: surface handles, the compositor clock and
+ * its statistics, which follow the display's blanks on the performance counter.
+ * frames are numbered by the blank they start at.
  */
 #include "dcomp_private.h"
 
@@ -23,7 +23,7 @@ static HRESULT create_device(UINT version, IUnknown *rendering_device, REFIID ii
         *out = nullptr;
         return hr;
     }
-    /* the interface asked for answers by the device's own table, the version making what it offers. */
+    /* the device's own query decides by version what it offers. */
     hr = DcDeviceQuery(device, iid, out);
     DcDeviceRelease(device);
     if (FAILED(hr))
@@ -68,9 +68,9 @@ DCOMPAPI HRESULT WINAPI DCompositionCreateDevice3(IUnknown *rendering_device, RE
 /* ------------------------------------------------------------------ surface handles */
 
 /*
- * a handle names a composition surface by a section whose first bytes say
- * so. the section can be duplicated into another process; what it names is
- * found through those bytes.
+ * a handle is a section whose first bytes mark it as a composition surface.
+ * it can be duplicated into another process, which finds the surface through
+ * those bytes.
  */
 #define SURFACE_HANDLE_MAGIC 0x53434D44u
 
@@ -125,7 +125,7 @@ DCOMPAPI HRESULT WINAPI DCompositionAttachMouseDragToHwnd(IDCompositionVisual *v
 
 DCOMPAPI HRESULT WINAPI DwmEnableMMCSS(BOOL enable) { return S_OK; }
 
-/* the dwm flushes its queue; the compositor here has none. */
+/* this compositor has no queue to flush. */
 DCOMPAPI HRESULT WINAPI DwmFlush(void) { return S_OK; }
 
 DCOMPAPI HRESULT WINAPI DwmpEnableDDASupport(void) { return S_OK; }
@@ -146,7 +146,7 @@ DCOMPAPI HRESULT WINAPI DllGetActivationFactory(void *class_id, void **factory)
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 
-/* the presentation manager is not offered. */
+/* the presentation manager is not supported. */
 DCOMPAPI HRESULT WINAPI CreatePresentationFactory(IUnknown *device, REFIID iid, void **factory)
 {
     if (factory)
@@ -174,7 +174,7 @@ UINT64 DcFrequency(void)
     return frequency;
 }
 
-/* frames older than this are gone from the statistics, as the dwm keeps a few seconds. */
+/* older frames drop out of the statistics, as the dwm keeps only a few seconds. */
 #define FRAME_HISTORY 512
 
 static void frame_range(const MIME_VBLANK *vblank, UINT64 *first, UINT64 *last)
@@ -193,7 +193,7 @@ DCOMPAPI HRESULT WINAPI DCompositionGetFrameId(COMPOSITION_FRAME_ID_TYPE type, C
     MIME_VBLANK vblank;
     MimeVblankInfo(&vblank);
     UINT64 current = MimeVblankIndex(&vblank, DcNow());
-    /* the frame being made is next, the one at the last blank confirmed, the one before it completed. */
+    /* the frame being made is next, the one at the last blank is confirmed, the one before it completed. */
     switch (type) {
     case COMPOSITION_FRAME_ID_CREATED:
         *frame_id = current + 1;
@@ -266,9 +266,8 @@ DCOMPAPI HRESULT WINAPI DCompositionGetTargetStatistics(COMPOSITION_FRAME_ID fra
 DCOMPAPI HRESULT WINAPI DCompositionBoostCompositorClock(BOOL enable) { return S_OK; }
 
 /*
- * waits for the compositor's clock to tick, which it does at each blank, or
- * for one of the handles: the index of the handle that was signaled, or the
- * count of handles when the clock ticked.
+ * waits for the compositor clock, which ticks at each blank, or for a handle.
+ * returns the index of the signaled handle, or count when the clock ticked.
  */
 DCOMPAPI DWORD WINAPI DCompositionWaitForCompositorClock(UINT count, const HANDLE *handles, DWORD timeout)
 {
@@ -297,7 +296,7 @@ DCOMPAPI DWORD WINAPI DCompositionWaitForCompositorClock(UINT count, const HANDL
 
 /* ------------------------------------------------------------------ status codes */
 
-/* the hresults the dwm's statuses become, as dcomp.dll maps them. */
+/* maps dwm statuses to HRESULTs the way dcomp.dll does. */
 HRESULT DcResultFromStatus(LONG status)
 {
     switch (status) {

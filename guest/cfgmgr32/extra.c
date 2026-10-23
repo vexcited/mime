@@ -1,11 +1,10 @@
 /*
- * cfgmgr32 beyond the reading of the tree: keys and properties of devices, classes and interfaces that can be
- * written, device nodes as far as they can be acted on, and notifications of interfaces coming and going.
+ * the writable side of cfgmgr32: device, class and interface keys and properties, device node actions, and
+ * interface arrival and removal notifications.
  *
- * A property that is not one of the registry values of a device is kept under its key, in a Properties key: one
- * key per property set, one per property id of four hexadecimal digits, and below that the values Type, a number,
- * and the data in the default value, as bytes. Windows keeps the properties in a layout of its own that programs
- * only reach through these functions, so this one is Mime's.
+ * a property that is not a registry value of the device is kept under its key as Properties\<set>\<id as four hex
+ * digits>, with a numeric Type value and the data as bytes in the default value. windows' own layout is private to
+ * these functions, so this one is mime's.
  */
 #define MIME_BUILD_CFGMGR32
 #include <mime/nt.h>
@@ -103,7 +102,7 @@ static CONFIGRET store_get(HKEY base, const DEVPROPKEY *key, DEVPROPTYPE *type, 
     return error == ERROR_MORE_DATA || (!buffer && length) ? CR_BUFFER_SMALL : CR_SUCCESS;
 }
 
-/* the property written, or removed when the type is empty and there is no data. */
+/* removed when the type is empty and there is no data. */
 static CONFIGRET store_set(HKEY base, const DEVPROPKEY *key, DEVPROPTYPE type, const BYTE *buffer, ULONG size)
 {
     if (type == DEVPROP_TYPE_EMPTY && !buffer && !size) {
@@ -169,7 +168,7 @@ static CONFIGRET store_keys(HKEY base, DEVPROPKEY *keys, ULONG capacity, PULONG 
     return CR_SUCCESS;
 }
 
-/* a list of keys into the caller's array, whose size comes back when it is short. */
+/* reports the needed count when the caller's array is short. */
 static CONFIGRET key_list_result(const DEVPROPKEY *found, ULONG found_count, DEVPROPKEY *out, PULONG count)
 {
     ULONG capacity = out ? *count : 0;
@@ -207,7 +206,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Depth(PULONG depth, DEVINST devinst, ULONG flags)
     return CR_SUCCESS;
 }
 
-/* the devices are the drivers' of Mime, which stay loaded: they are enabled and cannot be disabled. */
+/* devices belong to mime's drivers, which stay loaded: always enabled, never disableable. */
 CMAPI CONFIGRET WINAPI CM_Enable_DevNode(DEVINST devinst, ULONG flags)
 {
     if (flags)
@@ -228,7 +227,7 @@ CMAPI CONFIGRET WINAPI CM_Disable_DevNode(DEVINST devinst, ULONG flags)
     return present(id) ? CR_NOT_DISABLEABLE : CR_NO_SUCH_DEVNODE;
 }
 
-/* a device that is there is set up. */
+/* a present device is already set up. */
 CMAPI CONFIGRET WINAPI CM_Setup_DevNode(DEVINST devinst, ULONG flags)
 {
     if (flags & ~1u)
@@ -240,8 +239,7 @@ CMAPI CONFIGRET WINAPI CM_Setup_DevNode(DEVINST devinst, ULONG flags)
 }
 
 /*
- * a device that is gone and has left its key behind is removed from the registry; one that is there belongs to
- * a driver of Mime, which keeps it.
+ * only a device that is gone but left its key behind is removed; a present one belongs to a mime driver.
  */
 CMAPI CONFIGRET WINAPI CM_Uninstall_DevNode(DEVINST devinst, ULONG flags)
 {
@@ -260,7 +258,7 @@ CMAPI CONFIGRET WINAPI CM_Uninstall_DevNode(DEVINST devinst, ULONG flags)
 
 #define PNP_VetoNonDisableable 10
 
-/* a device that is there cannot be removed: the veto names it. */
+/* a present device is always vetoed, and the veto names it. */
 CMAPI CONFIGRET WINAPI CM_Query_And_Remove_SubTreeW(DEVINST devinst, PULONG veto_type, PWSTR veto_name, ULONG length,
                                                     ULONG flags)
 {
@@ -285,7 +283,7 @@ CMAPI CONFIGRET WINAPI CM_Query_And_Remove_SubTreeW(DEVINST devinst, PULONG veto
     return CR_REMOVE_VETOED;
 }
 
-/* the key CM_Open_DevNode_Key opens for the hardware: its Device Parameters. */
+/* only the hardware key CM_Open_DevNode_Key opens, Device Parameters. */
 CMAPI CONFIGRET WINAPI CM_Delete_DevNode_Key(DEVINST devinst, ULONG profile, ULONG flags)
 {
     if (flags & ~(ULONG)(CM_REGISTRY_SOFTWARE | CM_REGISTRY_USER | CM_REGISTRY_CONFIG))
@@ -337,7 +335,6 @@ static PCWSTR property_value_name(ULONG property)
     }
 }
 
-/* the registry type a property is written with. */
 static DWORD property_registry_type(ULONG property)
 {
     switch (property) {
@@ -414,7 +411,7 @@ CMAPI CONFIGRET WINAPI CM_Get_DevNode_Property_Keys(DEVINST devinst, DEVPROPKEY 
     return key_list_result(found, n, keys, count);
 }
 
-/* a registry mapped key is written through its value, any other into the property store. */
+/* registry mapped keys are written through their value, others into the property store. */
 CMAPI CONFIGRET WINAPI CM_Set_DevNode_PropertyW(DEVINST devinst, const DEVPROPKEY *key, DEVPROPTYPE type,
                                                 PBYTE buffer, ULONG size, ULONG flags)
 {
@@ -457,7 +454,7 @@ static LSTATUS class_open(const GUID *klass, REGSAM access, BOOL create, HKEY *o
                   : RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, access, out);
 }
 
-/* the class of a name: the key of Control\Class whose Class value is the name. */
+/* finds the Control\Class key whose Class value is the name. */
 static BOOL class_by_name(PCWSTR name, GUID *klass)
 {
     HKEY root;
@@ -524,7 +521,7 @@ CMAPI CONFIGRET WINAPI CM_Delete_Class_Key(const GUID *klass, ULONG flags)
     WCHAR path[128] = CLASS_PATH L"\\";
     format_guid(klass, path + lstrlenW(path));
     if (flags == CM_DELETE_CLASS_ONLY) {
-        /* the class alone goes; one with keys under it stays, which is a failure of the registry. */
+        /* only a class with no subkeys is deleted, otherwise it is a registry error. */
         HKEY key;
         if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &key))
             return CR_NO_SUCH_REGISTRY_KEY;
@@ -676,7 +673,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Class_Property_Keys(const GUID *klass, DEVPROPKEY 
 
 /* ------------------------------------------------------------------ interfaces */
 
-/* the key of an interface under DeviceClasses, the \\?\ of its path as ##?#; its parent holds its properties. */
+/* the key under DeviceClasses names the path with \\?\ as ##?#; its parent holds the properties. */
 static BOOL interface_path(PCWSTR link, WCHAR *path, ULONG chars)
 {
     PCWSTR brace = nullptr;
@@ -751,7 +748,7 @@ CMAPI CONFIGRET WINAPI CM_Delete_Device_Interface_KeyW(PCWSTR path, ULONG flags)
     return from_registry(error);
 }
 
-/* the properties every interface has: whether it is enabled, and its class. */
+/* every interface has these: enabled, and its class. */
 MIME_DEVPROPKEY(g_interface_enabled, 0x14C83A99, 0x0B3F, 0x44B7, 0xBE, 0x4C, 0xA1, 0x78, 0xD3, 0x99, 0x05, 0x64, 2);
 MIME_DEVPROPKEY(g_interface_class, 0x026E516E, 0xB814, 0x414B, 0x83, 0xCD, 0x85, 0x6D, 0x6F, 0xEF, 0x48, 0x22, 4);
 
@@ -808,7 +805,7 @@ CMAPI CONFIGRET WINAPI CM_Set_Device_Interface_PropertyW(PCWSTR path, const DEVP
     return cr;
 }
 
-/* an interface of another class on the same device: there are none. */
+/* there are never aliases in other classes. */
 CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_AliasW(PCWSTR path, GUID *alias_class, PWSTR alias, PULONG length,
                                                       ULONG flags)
 {
@@ -821,7 +818,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_AliasW(PCWSTR path, GUID *alias_c
     return CR_NO_SUCH_DEVICE_INTERFACE;
 }
 
-/* the keys an interface has of its own are answered here, any other property is the device's. */
+/* answers the interface's own keys; any other property is the device's. */
 CONFIGRET InterfaceOwnProperty(PCWSTR path, const DEVPROPKEY *key, DEVPROPTYPE *type, PBYTE buffer, PULONG size,
                                BOOL *handled)
 {
@@ -850,7 +847,7 @@ CONFIGRET InterfaceOwnProperty(PCWSTR path, const DEVPROPKEY *key, DEVPROPTYPE *
     return cr;
 }
 
-/* ------------------------------------------------------------------ the versions with a machine */
+/* ------------------------------------------------------------------ _Ex versions */
 
 CMAPI CONFIGRET WINAPI CM_Get_DevNode_Registry_Property_ExW(DEVINST devinst, ULONG property, PULONG type,
                                                             PVOID buffer, PULONG length, ULONG flags, void *machine)
@@ -886,10 +883,9 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_List_Size_ExW(PULONG length, GUID
 /* ------------------------------------------------------------------ notifications */
 
 /*
- * a registration for the interfaces of a class, or of all, is delivered from a thread of the process that waits for
- * the tree to change, compares the interfaces and devices with those it saw and calls the callbacks of the
- * registrations that want the change. A callback is never called with the lock held, and a registration that is
- * removed while one runs waits for it, unless it is removed from the callback itself.
+ * a process thread waits for the tree to change, diffs interfaces and devices against what it saw, and calls the
+ * matching callbacks. callbacks never run with the lock held, and removing a registration waits for a running
+ * callback unless it is removed from inside that callback.
  */
 typedef struct NOTIFICATION {
     struct NOTIFICATION *Next;
@@ -964,7 +960,7 @@ static BOOL device_in(const SEEN_DEVICE *list, ULONG count, PCWSTR id)
     return FALSE;
 }
 
-/* removes a registration from the list and frees it, when nothing runs it; the lock is held. */
+/* frees a removed registration once no callback runs; the lock is held. */
 static BOOL notification_release(NOTIFICATION *n)
 {
     if (!n->Removed || n->Running)
@@ -978,7 +974,7 @@ static BOOL notification_release(NOTIFICATION *n)
     return TRUE;
 }
 
-/* calls the callbacks that want an event, each once, with the lock off while they run. */
+/* each matching callback runs once, without the lock. */
 static void deliver(CM_NOTIFY_ACTION action, CM_NOTIFY_FILTER_TYPE type, const GUID *klass, PCWSTR text)
 {
     ULONG chars = (ULONG)lstrlenW(text) + 1;
@@ -1086,9 +1082,7 @@ static DWORD WINAPI watch_tree(void *param)
 }
 
 /*
- * registers a callback for device interfaces or device instances arriving and leaving. The notifications come
- * from a thread of the process, as the tree changes. A filter on a device handle is accepted and is never called:
- * the devices here cannot be queried for removal.
+ * device handle filters are accepted but never called: devices here cannot be queried for removal.
  */
 CMAPI CONFIGRET WINAPI CM_Register_Notification(PCM_NOTIFY_FILTER filter, PVOID context, PCM_NOTIFY_CALLBACK callback,
                                                 PHCMNOTIFICATION notify)
@@ -1149,7 +1143,7 @@ CMAPI CONFIGRET WINAPI CM_Unregister_Notification(HCMNOTIFICATION notify)
         return CR_INVALID_DATA;
     }
     n->Removed = TRUE;
-    /* a call that is running is waited for, outside the lock, unless this is that call: it frees on its return. */
+    /* wait for a running callback outside the lock, unless we are that callback: it frees on return. */
     DWORD self = GetCurrentThreadId();
     while (n->Running && n->CallerThread != self) {
         RtlLeaveCriticalSection(&g_notify_lock);

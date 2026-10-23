@@ -1,9 +1,8 @@
 /*
- * the opentype side of uniscribe: script, language and feature tags read
- * from the font's GSUB and GPOS tables, and the single glyph lookups a
- * program asks for by feature: single and alternate substitutions, single
- * positioning. shaping itself stays nominal, so features apply only when
- * a range asks for them.
+ * the opentype side of uniscribe: script, language and feature tags from the
+ * font's GSUB and GPOS tables, and single glyph lookups by feature: single and
+ * alternate substitution, single positioning. shaping stays nominal, so
+ * features apply only when a range asks for them.
  */
 #include "usp10_private.h"
 
@@ -25,7 +24,7 @@ static DWORD u32(const USP_TABLE *t, DWORD offset)
     return (DWORD)u16(t, offset) << 16 | u16(t, offset + 2);
 }
 
-/* a tag as the font stores it, bytes in order. */
+/* bytes in the font's order. */
 static OPENTYPE_TAG tag_at(const USP_TABLE *t, DWORD offset)
 {
     return offset + 4 <= t->Size ? TAG(t->Data[offset], t->Data[offset + 1], t->Data[offset + 2], t->Data[offset + 3])
@@ -45,7 +44,7 @@ static void read_table(HDC dc, DWORD tag, USP_TABLE *t)
     t->Size = size;
 }
 
-/* the cache with its layout tables, read from dc the first time. */
+/* layout tables are read from dc the first time. */
 static HRESULT get_tables(HDC dc, SCRIPT_CACHE *cache, USP_CACHE **out)
 {
     HRESULT hr = UspGetCache(dc, cache, out);
@@ -64,7 +63,7 @@ static HRESULT get_tables(HDC dc, SCRIPT_CACHE *cache, USP_CACHE **out)
     return S_OK;
 }
 
-/* the script table for script, or the default one when the font has no such script. */
+/* falls back to the default script when the font lacks this one. */
 static DWORD find_script(const USP_TABLE *t, OPENTYPE_TAG script)
 {
     DWORD list = u16(t, 4);
@@ -83,7 +82,7 @@ static DWORD find_script(const USP_TABLE *t, OPENTYPE_TAG script)
     return fallback;
 }
 
-/* the language system of a script table, its default one for language 0 or a missing one. */
+/* language 0 or a missing language gives the default language system. */
 static DWORD find_language(const USP_TABLE *t, DWORD script, OPENTYPE_TAG language)
 {
     if (!script)
@@ -98,7 +97,6 @@ static DWORD find_language(const USP_TABLE *t, DWORD script, OPENTYPE_TAG langua
     return def ? script + def : 0;
 }
 
-/* the feature table of a language system with that tag. */
 static DWORD find_feature(const USP_TABLE *t, DWORD langsys, OPENTYPE_TAG feature)
 {
     DWORD list = u16(t, 6);
@@ -116,7 +114,7 @@ static DWORD find_feature(const USP_TABLE *t, DWORD langsys, OPENTYPE_TAG featur
     return 0;
 }
 
-/* the coverage index of glyph, -1 when the table does not cover it. */
+/* -1 when the table does not cover the glyph. */
 static int coverage_index(const USP_TABLE *t, DWORD coverage, WORD glyph)
 {
     UINT format = u16(t, coverage), count = u16(t, coverage + 2);
@@ -138,7 +136,7 @@ static int coverage_index(const USP_TABLE *t, DWORD coverage, WORD glyph)
 
 typedef BOOL (*SUBTABLE_VISIT)(const USP_TABLE *t, UINT type, DWORD subtable, void *context);
 
-/* every subtable of every lookup of a feature, through extension lookups, until visit says stop. */
+/* walks every subtable of every lookup, through extension lookups, until visit says stop. */
 static BOOL visit_feature(const USP_TABLE *t, DWORD feature, UINT extension, SUBTABLE_VISIT visit, void *context)
 {
     DWORD lookups = u16(t, 8);
@@ -169,9 +167,9 @@ static BOOL visit_feature(const USP_TABLE *t, DWORD feature, UINT extension, SUB
 
 typedef struct SUBSTITUTION {
     WORD Glyph;
-    LONG Choice; /* the alternate taken, from 1. */
+    LONG Choice; /* 1-based. */
     int Max;
-    WORD *Out;   /* the alternates, when listing them. */
+    WORD *Out;   /* set when listing alternates. */
     int Count;
 } SUBSTITUTION;
 
@@ -249,7 +247,6 @@ static BOOL position(const USP_TABLE *t, UINT type, DWORD subtable, void *contex
     return TRUE;
 }
 
-/* the feature of the script and language in table t. */
 static DWORD feature_of(const USP_TABLE *t, OPENTYPE_TAG script, OPENTYPE_TAG language, OPENTYPE_TAG feature)
 {
     if (!t->Data)
@@ -273,7 +270,7 @@ typedef struct TAG_LIST {
     int Count;
 } TAG_LIST;
 
-/* adds the tags of count records, stride bytes apart, once each. */
+/* adds each tag once. */
 static void add_tags(const USP_TABLE *t, DWORD records, UINT count, UINT stride, TAG_LIST *list)
 {
     for (UINT i = 0; i < count; i++) {
@@ -286,7 +283,7 @@ static void add_tags(const USP_TABLE *t, DWORD records, UINT count, UINT stride,
     }
 }
 
-/* as many as fit, and how many there are: E_OUTOFMEMORY when some did not fit. */
+/* copies as many as fit; E_OUTOFMEMORY when some did not. */
 static HRESULT finish_tags(const TAG_LIST *list, int max, OPENTYPE_TAG *tags, int *count)
 {
     for (int i = 0; i < list->Count && i < max; i++)
@@ -295,7 +292,7 @@ static HRESULT finish_tags(const TAG_LIST *list, int max, OPENTYPE_TAG *tags, in
     return list->Count > max ? E_OUTOFMEMORY : S_OK;
 }
 
-/* without layout tables, the run's own script. */
+/* without layout tables, only the run's own script. */
 USPAPI ScriptGetFontScriptTags(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, int max_tags,
                                OPENTYPE_TAG *tags, int *count)
 {
@@ -376,7 +373,7 @@ USPAPI ScriptGetFontFeatureTags(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *an
     return hr;
 }
 
-/* the glyph first, then its alternates under the feature. */
+/* the glyph itself comes first, then its alternates. */
 USPAPI ScriptGetFontAlternateGlyphs(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysis, OPENTYPE_TAG script,
                                     OPENTYPE_TAG language, OPENTYPE_TAG feature, WORD glyph, int max_alternates,
                                     WORD *alternates, int *count)
@@ -449,7 +446,6 @@ USPAPI ScriptItemizeOpenType(const WCHAR *chars, int count, int max_items, const
     return S_OK;
 }
 
-/* the range of each character, from the counts of the ranges. */
 static int range_of(const int *range_chars, int ranges, int c)
 {
     for (int r = 0, end = 0; r < ranges; r++) {
@@ -482,7 +478,7 @@ USPAPI ScriptShapeOpenType(HDC dc, SCRIPT_CACHE *cache, SCRIPT_ANALYSIS *analysi
     if (FAILED(hr) || !ranges || analysis->fNoGlyphIndex)
         return hr;
 
-    /* the features asked for each range, applied to the glyphs of its characters. */
+    /* each range's features apply to the glyphs of its characters. */
     for (int c = 0; c < count; c++) {
         int r = range_of(range_chars, ranges, c);
         const TEXTRANGE_PROPERTIES *props = r >= 0 ? range_properties[r] : nullptr;

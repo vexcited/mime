@@ -1,16 +1,15 @@
 /*
- * sids, access control lists and security descriptors: the rtl routines ntoskrnl.exe and ntdll.dll both
- * export. they validate in the order windows does, return its status codes and lay descriptors out the way
- * it does, so programs that read the bytes see the same ones.
+ * sids, acls and security descriptors, exported by both ntoskrnl.exe and ntdll.dll. validation order, status codes and
+ * descriptor layout match windows, so programs that read the bytes see the same ones.
  */
 #define NTSYSAPI
 #include "rtl.h"
 #include <mime/ntrtlsec.h>
 #include <stdarg.h>
 
-/* the types that carry a sid right after the mask, as a bit set of ace types. */
+/* bit set of the ace types that carry a sid right after the mask. */
 #define SID_ACE_TYPES 0x001A660Fu
-/* the object ace types, which have a flags field and guids before the sid. */
+/* object ace types, which have a flags field and guids before the sid. */
 #define OBJECT_ACE_TYPES 0x000199E0u
 
 #define ACE_LONG_ALIGNED(size) (((size) & 3) == 0)
@@ -45,7 +44,7 @@ BOOLEAN NTAPI RtlEqualSid(PSID a, PSID b)
            memcmp(a, b, 8 + 4 * (ULONG)x->SubAuthorityCount) == 0;
 }
 
-/* the same authority and all sub authorities but the last, or the last six of a package sid. */
+/* same authority and all sub authorities but the last, or but the last six for a package sid. */
 BOOLEAN NTAPI RtlEqualPrefixSid(PSID a, PSID b)
 {
     const SID *x = a, *y = b;
@@ -55,7 +54,7 @@ BOOLEAN NTAPI RtlEqualPrefixSid(PSID a, PSID b)
     ULONG count = x->SubAuthorityCount;
     if (count == 0)
         return TRUE;
-    /* the app container authority of 11 sub authorities leaves out the last five. */
+    /* an app container sid of 11 sub authorities ignores the last five. */
     const UCHAR *au = x->IdentifierAuthority.Value;
     ULONG skip = count == 11 && !au[0] && !au[1] && !au[2] && !au[3] && !au[4] && au[5] == 11 ? 5 : 1;
     return memcmp(x->SubAuthority, y->SubAuthority, 4 * (count - skip)) == 0;
@@ -81,7 +80,7 @@ NTSTATUS NTAPI RtlInitializeSid(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, U
     return STATUS_SUCCESS;
 }
 
-/* the count is a byte, but a variadic call may not name a parameter that is promoted. */
+/* the count is a byte, but va_start may not name a promoted parameter. */
 NTSTATUS RtlInitializeSidEx(PSID sid, PSID_IDENTIFIER_AUTHORITY authority, ULONG count_argument, ...)
 {
     UCHAR count = (UCHAR)count_argument;
@@ -178,7 +177,7 @@ static BOOLEAN authority_is(const SID *sid, const UCHAR *authority)
     return memcmp(&sid->IdentifierAuthority, authority, 6) == 0;
 }
 
-/* the levels of mandatory label sids compare by their one sub authority, the integrity level. */
+/* mandatory label sids compare by their single sub authority, the integrity level. */
 NTSTATUS NTAPI RtlSidDominates(PSID a, PSID b, PBOOLEAN dominates)
 {
     const SID *x = a, *y = b;
@@ -229,7 +228,7 @@ static ULONG sid_end_offset(const UCHAR *sid, ULONG at)
     return at + 8 + 4 * (ULONG)sid[1];
 }
 
-/* whether the sid at the offset of an ace is valid and fits in its size. */
+/* whether the sid at an ace offset is valid and fits inside the ace. */
 static BOOLEAN ace_sid_fits(const UCHAR *ace, ULONG size, ULONG at)
 {
     if (size < at + 8 || ace[at] != SID_REVISION || ace[at + 1] > SID_MAX_SUB_AUTHORITIES)
@@ -312,7 +311,7 @@ NTSTATUS NTAPI RtlGetAce(PACL acl, ULONG index, PVOID *result)
     return ace >= end ? STATUS_INVALID_PARAMETER : STATUS_SUCCESS;
 }
 
-/* the first byte after the aces, or NULL when the list runs past its size. */
+/* the first byte after the aces, or NULL when the aces overrun the acl. */
 static UCHAR *first_free(const ACL *acl, BOOLEAN *consistent)
 {
     UCHAR *ace = (UCHAR *)(acl + 1);
@@ -346,7 +345,7 @@ NTSTATUS NTAPI RtlAddAce(PACL acl, ULONG revision, ULONG index, PVOID list, ULON
         return STATUS_INVALID_PARAMETER;
     UCHAR *end = (UCHAR *)acl + acl->AclSize;
     UCHAR new_revision = (UCHAR)revision > acl->AclRevision ? (UCHAR)revision : acl->AclRevision;
-    /* each ace of the list needs a revision of the acl that knows its type. */
+    /* each ace needs an acl revision that knows its type. */
     const UCHAR *ace = list, *list_end = ace + length;
     USHORT added = 0;
     while (ace < list_end) {
@@ -533,8 +532,8 @@ VOID NTAPI RtlMapGenericMask(PACCESS_MASK mask, const GENERIC_MAPPING *mapping)
 }
 
 /*
- * the aces below share their checks: the sid, the revisions of the list and of the call, the flags, then the
- * list itself and its room, always in that order.
+ * the add ace routines below check in this order: the sid, the acl and call revisions, the flags, then the acl itself
+ * and its free space.
  */
 static NTSTATUS revision_of(const ACL *acl, ULONG revision, UCHAR *result)
 {
@@ -761,8 +760,8 @@ NTSTATUS NTAPI RtlAddScopedPolicyIDAce(PACL acl, ULONG revision, ULONG flags, AC
 }
 
 /*
- * the attribute of a resource attribute ace, checked, and its size once it is written after the sid in the relative
- * form: offsets of the name and of each value up front, the name, then the values one after the other.
+ * a resource attribute ace holds one attribute after the sid. relative form: offsets of the name and of each value,
+ * then the name, then the values.
  */
 typedef struct {
     PWSTR Name;
@@ -835,7 +834,7 @@ static BOOLEAN attribute_valid(const ATTRIBUTE_V1 *a)
     }
 }
 
-/* the bytes of the relative form, or the status that says why it does not exist. dst is NULL to only measure. */
+/* writes the relative form, or the status saying why it cannot. dst NULL only measures. */
 static NTSTATUS attribute_relative(const ATTRIBUTE_V1 *a, UCHAR *dst, ULONG *size)
 {
     ULONG64 total = 16 + 4 * (ULONG64)a->Count;
@@ -899,8 +898,8 @@ static NTSTATUS attribute_relative(const ATTRIBUTE_V1 *a, UCHAR *dst, ULONG *siz
 }
 
 /*
- * adds a resource attribute ace, which holds one attribute after the sid of everyone. the length that comes back is
- * the bytes the list uses with the new ace, and when the list is too small the bytes it needs.
+ * the ace holds one attribute after the everyone sid. the returned length is the bytes the acl uses with the new ace,
+ * or the bytes it needs when it is too small.
  */
 NTSTATUS NTAPI RtlAddResourceAttributeAce(PACL acl, ULONG revision, ULONG flags, ACCESS_MASK mask, PSID sid,
                                           PVOID information, PULONG length)
@@ -965,7 +964,7 @@ NTSTATUS NTAPI RtlAddResourceAttributeAce(PACL acl, ULONG revision, ULONG flags,
     return STATUS_SUCCESS;
 }
 
-/* a process trust label sid has the trust authority and two sub authorities, the trust type and the level. */
+/* a process trust label sid: the trust authority, then the trust type and the level. */
 static BOOLEAN valid_trust_label_sid(const SID *sid)
 {
     if (sid->SubAuthorityCount != 2 || sid->Revision != SID_REVISION || !authority_is(sid, g_trust_authority))
@@ -1066,7 +1065,7 @@ NTSTATUS NTAPI RtlAddAccessFilterAce(PACL acl, ULONG revision, ULONG flags, PSID
 
 /* ---------------------------------------------------------------- security descriptors */
 
-/* the parts of a descriptor of either form, without looking at the present flags. */
+/* descriptor parts of either form, ignoring the present flags. */
 static PSID sd_owner(const SECURITY_DESCRIPTOR *sd)
 {
     if (sd->Control & SE_SELF_RELATIVE) {
@@ -1133,7 +1132,7 @@ BOOLEAN NTAPI RtlValidSecurityDescriptor(PSECURITY_DESCRIPTOR sd)
     return TRUE;
 }
 
-/* a self relative descriptor of a known length: every part must lie inside it, aligned, whole and valid. */
+/* in a self relative descriptor of known length every part must lie inside, aligned, whole and valid. */
 static BOOLEAN relative_sid_fits(const UCHAR *base, ULONG length, ULONG offset)
 {
     if (offset >= length || offset < sizeof(SECURITY_DESCRIPTOR_RELATIVE) || (offset & 3))
@@ -1319,7 +1318,7 @@ NTSTATUS NTAPI RtlSetControlSecurityDescriptor(PSECURITY_DESCRIPTOR sd, SECURITY
                                                SECURITY_DESCRIPTOR_CONTROL bits)
 {
     SECURITY_DESCRIPTOR *s = sd;
-    /* the presence, defaulting and form bits and the rm bit follow from the other calls. */
+    /* the present, defaulted, self relative and rm bits are set by the other calls. */
     if ((~mask & bits) || (mask & 0xC03F))
         return STATUS_INVALID_PARAMETER;
     s->Control = (SECURITY_DESCRIPTOR_CONTROL)(bits | (s->Control & ~mask));
@@ -1350,8 +1349,8 @@ VOID NTAPI RtlSetSecurityDescriptorRMControl(PSECURITY_DESCRIPTOR sd, PUCHAR con
 }
 
 /*
- * the self relative layout windows writes: the 20 byte header, then the sacl, the dacl, the owner and the group,
- * each padded to four bytes, absent parts having offset 0.
+ * windows' self relative layout: the 20-byte header, then sacl, dacl, owner and group, each padded to four bytes.
+ * absent parts have offset 0.
  */
 NTSTATUS NTAPI RtlMakeSelfRelativeSD(PSECURITY_DESCRIPTOR absolute, PSECURITY_DESCRIPTOR relative, PULONG length)
 {
@@ -1424,7 +1423,7 @@ NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD(PSECURITY_DESCRIPTOR relative, PSECUR
         need_dacl <= *dacl_size && need_sacl <= *sacl_size && need_group <= *group_size &&
         (!owner || owner_out) && (!group || group_out) && (!dacl || dacl_out) && (!sacl || sacl_out)) {
         SECURITY_DESCRIPTOR *out = absolute;
-        /* the padding of the absolute form keeps the bytes of the relative header, like windows leaves it. */
+        /* like windows, the absolute header's padding keeps the relative header's bytes. */
         memmove(out, relative, sizeof(SECURITY_DESCRIPTOR_RELATIVE) < sizeof(*out) ? sizeof(SECURITY_DESCRIPTOR_RELATIVE)
                                                                                     : sizeof(*out));
         out->Control &= ~SE_SELF_RELATIVE;
@@ -1456,7 +1455,7 @@ NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD(PSECURITY_DESCRIPTOR relative, PSECUR
     return STATUS_BUFFER_TOO_SMALL;
 }
 
-/* converts in place: the parts move after the larger header and the offsets turn into pointers. */
+/* in place: the parts move past the larger header and the offsets become pointers. */
 NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD2(PSECURITY_DESCRIPTOR relative, PULONG size)
 {
     if (!relative)
@@ -1472,7 +1471,7 @@ NTSTATUS NTAPI RtlSelfRelativeToAbsoluteSD2(PSECURITY_DESCRIPTOR relative, PULON
     PSID owner = sd_owner(relative), group = sd_group(relative);
     PACL dacl = r->Control & SE_DACL_PRESENT ? sd_dacl(relative) : nullptr;
     PACL sacl = r->Control & SE_SACL_PRESENT ? sd_sacl(relative) : nullptr;
-    /* the highest end of the parts decides how much follows the header. */
+    /* the furthest part end decides how much follows the header. */
     UCHAR *last = nullptr;
     if (owner)
         last = (UCHAR *)owner + padded_sid(owner);

@@ -1,6 +1,6 @@
 /*
- * bitmaps for pictures: the files of the bmp format, checked against the rules of the format, and the images the gif
- * and jpeg decoders hand over. Both end as device independent sections, so a program can reach the pixels.
+ * bitmaps for pictures: validated bmp files and the images the gif and jpeg decoders produce. Both become DIB
+ * sections so a program can reach the pixels.
  */
 #include "picture.h"
 
@@ -31,7 +31,6 @@ static ULONG row_bytes(ULONG width, ULONG bits)
     return (ULONG)(((ULONGLONG)width * bits + 31) / 32 * 4);
 }
 
-/* a section of the given shape, with the colors of its table when it has one. */
 static HBITMAP make_section(LONG width, LONG height, WORD bits, const RGBQUAD *colors, ULONG color_count, BYTE **pixels)
 {
     BYTE storage[sizeof(BITMAPINFOHEADER) + COLOR_LIMIT * sizeof(RGBQUAD)] = {};
@@ -70,7 +69,7 @@ static void rle_put(RLE_TARGET *t, LONG x, LONG y, UINT index)
         at[x / 2] = (BYTE)(x & 1 ? (at[x / 2] & 0xF0) | (index & 15) : (at[x / 2] & 0x0F) | (index << 4));
 }
 
-/* the pixels in file order: the first row of the data is row 0. */
+/* pixels in file order: the first row of the data is row 0. */
 static void rle_decode(RLE_TARGET *t, const BYTE *data, ULONG size)
 {
     LONG x = 0, y = 0;
@@ -107,7 +106,7 @@ static void rle_decode(RLE_TARGET *t, const BYTE *data, ULONG size)
     }
 }
 
-/* ------------------------------------------------------------------ channels */
+/* ------------------------------------------------------------------ color masks */
 
 typedef struct CHANNEL {
     ULONG Mask;
@@ -126,7 +125,7 @@ static CHANNEL channel_of(ULONG mask)
     return c;
 }
 
-/* the value of a channel scaled up to a byte. */
+/* scales the channel up to 8 bits. */
 static BYTE channel_value(const CHANNEL *c, ULONG pixel)
 {
     if (!c->Bits)
@@ -136,7 +135,7 @@ static BYTE channel_value(const CHANNEL *c, ULONG pixel)
     return (BYTE)((v * 255 + top / 2) / top);
 }
 
-/* ------------------------------------------------------------------ the file */
+/* ------------------------------------------------------------------ bmp files */
 
 typedef struct BMP_SHAPE {
     LONG Width, Height;
@@ -149,7 +148,6 @@ typedef struct BMP_SHAPE {
     ULONG ImageSize;
 } BMP_SHAPE;
 
-/* the colors of the table that follows the header, as quads. */
 static void read_table(const BYTE *data, const BMP_SHAPE *shape, ULONG header, RGBQUAD *colors)
 {
     const BYTE *at = data + BMP_FILE_HEADER + header;
@@ -162,7 +160,7 @@ static void read_table(const BYTE *data, const BMP_SHAPE *shape, ULONG header, R
     }
 }
 
-/* the pixels of a file with 16 or 32 bits and masks, or 16 bits without, as a section of 24 or 32 bits. */
+/* converts masked 16 or 32 bit pixels, or unmasked 16 bit ones, to a 24 or 32 bit section. */
 static HBITMAP convert_wide(const BYTE *rows, const BMP_SHAPE *shape, const BYTE *masks, LONG height_signed)
 {
     ULONG source_stride = row_bytes(shape->Width, shape->Bits);
@@ -202,7 +200,7 @@ static HBITMAP convert_wide(const BYTE *rows, const BMP_SHAPE *shape, const BYTE
     return section;
 }
 
-/* checks the header and works out the shape. CTL_E_INVALIDPICTURE for what the format does not allow. */
+/* validates the header and computes the shape. CTL_E_INVALIDPICTURE for anything the format forbids. */
 static HRESULT read_shape(const BYTE *data, ULONG length, BMP_SHAPE *shape, ULONG *header_size, ULONG *table_bytes)
 {
     ULONG hsize = length - BMP_FILE_HEADER;
@@ -349,7 +347,7 @@ HRESULT PicFromBitmapFile(const BYTE *data, ULONG got, ULONG length, PIC_IMAGE *
 
 /* ------------------------------------------------------------------ decoded images */
 
-/* a mask of one bit a pixel, set where the pixel shows what is behind. Rows are top down and padded to words. */
+/* 1 bpp, set where the pixel is transparent. Rows are top down and padded to words. */
 static HBITMAP make_mask(const AUT_IMAGE *decoded)
 {
     ULONG stride = (ULONG)((decoded->width + 15) / 16 * 2);

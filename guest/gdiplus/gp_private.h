@@ -1,13 +1,11 @@
 /*
- * gdiplus internals: the objects behind the flat api, the render targets and the drawing core the modules share.
+ * gdiplus internals shared by the modules.
  *
- * every object starts with a tag, and the api functions check it before they touch anything, which is how a
- * stray pointer or a deleted object ends as InvalidParameter instead of a crash. the objects the sdk keeps in
- * classes (GpPath, GpBrush and so on) are the G... structures here, the exports take them as void pointers.
+ * every object starts with a tag that the api functions check first, so a stray pointer or a deleted object gives
+ * InvalidParameter instead of a crash. the sdk classes such as GpPath and GpBrush are the G... structures here.
  *
- * coordinates: world space is what the program draws in, page space is world space under the world transform,
- * and device space is page space scaled by the page unit, in pixels. the transforms are MimeVecMatrix, a point
- * is a row, x' = x * m11 + y * m21 + dx.
+ * world space is what the program draws in, page space is world space under the world transform, and device space
+ * is page space scaled by the page unit, in pixels. points are rows: x' = x * m11 + y * m21 + dx.
  */
 #ifndef MIME_GDIPLUS_PRIVATE_H
 #define MIME_GDIPLUS_PRIVATE_H
@@ -48,7 +46,7 @@ typedef struct GObject {
 #define GP_MAX_DIMENSION 32767
 #define GP_MAX_BYTES 0x40000000u
 
-/* the library is usable between GdiplusStartup and the matching GdiplusShutdown, the functions that make objects say so. */
+/* true between GdiplusStartup and the matching GdiplusShutdown. functions that create objects check it. */
 BOOL gp_started(void);
 #define GP_REQUIRE_INIT()                  \
     do {                                   \
@@ -56,23 +54,23 @@ BOOL gp_started(void);
             return GdiplusNotInitialized;  \
     } while (0)
 
-/* memory, from the process heap. gp_alloc_zero clears. */
+/* process heap memory. gp_alloc_zero clears it. */
 void *gp_alloc(SIZE_T size);
 void *gp_alloc_zero(SIZE_T size);
 void *gp_realloc(void *p, SIZE_T size);
 void gp_free(void *p);
-/* the allocator the vector library asks for. */
+/* the allocator handed to the vector library. */
 extern const MimeAllocator gp_allocator;
-/* a copy of count elements, NULL for a count of 0. */
+/* NULL when bytes is 0. */
 void *gp_dup(const void *p, SIZE_T bytes);
 
 #define GP_CAST(type, tag_, p) ((p) && ((GObject *)(p))->tag == (tag_) ? (type *)(p) : nullptr)
 
-/* math: the natural logarithm, the exponential and the power, for positive bases. */
+/* natural log, exp and pow, for positive bases. */
 double gp_log(double x);
 double gp_exp(double x);
 double gp_pow(double x, double y);
-/* the 128 steps of the rising half of the sigma bell blend shape, scaled to 0..65536 over 256 steps. */
+/* the rising half of the sigma bell blend shape: the first 128 of 256 steps, scaled to 0..65536. */
 const float *gp_sigma_table(void);
 
 /* ------------------------------------------------------------------ matrices */
@@ -86,14 +84,13 @@ typedef struct GMatrix {
 } GMatrix;
 
 GMatrix *gp_matrix_cast(const void *p);
-/* a matrix is invertible when its determinant is not tiny, as gdi+ has it. */
+/* like gdi+, a tiny determinant counts as not invertible. */
 BOOL gp_matrix_invertible(const MimeVecMatrix *m);
 /* a followed by b: the product that applies a to a point first. */
 void gp_matrix_multiply(const float *a, const float *b, float *out);
 void gp_matrix_point(const float *m, float x, float y, float *ox, float *oy);
 /* the sdk order flag: MatrixOrderPrepend applies the new operation first. */
 void gp_matrix_apply(MimeVecMatrix *m, const MimeVecMatrix *op, MatrixOrder order);
-/* the inverse, false when the matrix cannot be inverted. */
 BOOL gp_matrix_inverse(MimeVecMatrix *out, const MimeVecMatrix *m);
 
 /* ------------------------------------------------------------------ paths */
@@ -102,27 +99,26 @@ typedef struct GPath {
     DWORD tag;
     FillMode fill_mode;
     MimeVecPath path;
-    /* the end of the last figure that was closed or the start of the open one, for the sdk's "last point". */
 } GPath;
 
 GPath *gp_path_cast(const void *p);
 GPath *gp_path_new(FillMode mode);
-/* the point types of a path make figures: a start, then lines and groups of three curve points. */
+/* valid figures are a start, then lines and groups of three curve points. */
 BOOL gp_path_types_valid(const BYTE *types, INT count);
 GpStatus gp_path_status(int vec_status);
 void gp_path_free(GPath *p);
 GPath *gp_path_clone(const GPath *p);
-/* flattens the path through a matrix into polygons, flatness is in the output space. */
+/* flatness is in output space. */
 GpStatus gp_path_flatten(const MimeVecPath *path, const MimeVecMatrix *m, float flatness, MimeVecPolys *out);
 /* the points that stand for a rectangle or ellipse, for the shape draw calls. */
 GpStatus gp_path_add_shape_rect(MimeVecPath *p, float x, float y, float w, float h);
 
 /* ------------------------------------------------------------------ colors */
 
-/* straight argb to the premultiplied form the pipeline works in, with the rounding of gdiplus.dll. */
+/* straight argb to premultiplied, rounding like gdi+. */
 UINT32 gp_premultiply(UINT32 argb);
 UINT32 gp_unpremultiply(UINT32 pargb);
-/* scales the four bytes of a premultiplied pixel by v / 255 (rounded) or by count / total in the AA way. */
+/* scales the four bytes of a premultiplied pixel by v / 255, rounded, or by count / total for antialiasing. */
 UINT32 gp_scale_pargb(UINT32 pargb, UINT32 v255);
 
 /* ------------------------------------------------------------------ images and bitmaps */
@@ -146,19 +142,19 @@ typedef struct GBitmap {
     INT width;
     INT height;
     PixelFormat format;
-    INT stride;       /* bytes, negative for bottom up memory */
-    BYTE *bits;       /* the top row */
-    BYTE *owned;      /* the allocation to free, NULL when the pixels belong to the caller */
+    INT stride;       /* in bytes, negative for bottom up rows. */
+    BYTE *bits;       /* the top row. */
+    BYTE *owned;      /* the allocation to free, NULL when the caller owns the pixels. */
     ColorPalette *palette;
     float dpi_x, dpi_y;
     GUID raw_format;
-    UINT flags;       /* ImageFlags */
+    UINT flags;       /* ImageFlags. */
     GProperty *props;
     UINT prop_count;
-    /* several frames: the decoder the current frame was read from, and the dimension that selects among them. */
+    /* multiple frames: the decoder of the current frame, and the dimension that selects among them. */
     struct GFrameSource *source;
     UINT frame_index;
-    /* LockBits */
+    /* LockBits state. */
     BOOL locked;
     GpRect lock_rect;
     UINT lock_flags;
@@ -169,7 +165,7 @@ typedef struct GBitmap {
     ColorPalette *lock_palette;
     /* an encoder started by SaveImage with MultiFrame, for SaveAdd. */
     void *save_state;
-    /* a graphics that draws on the bitmap holds it, a bitmap cannot be disposed while one does. */
+    /* a graphics drawing on the bitmap holds it, and a held bitmap cannot be disposed. */
     INT graphics_refs;
     BOOL disposed;
 } GBitmap;
@@ -179,25 +175,25 @@ GImage *gp_image_cast(const void *image);
 BOOL gp_format_known(PixelFormat format);
 INT gp_default_stride(INT width, PixelFormat format);
 GpStatus gp_bitmap_create(INT width, INT height, PixelFormat format, GBitmap **bitmap);
-/* wraps caller memory or makes room; stride is the row distance and may be negative. */
+/* wraps caller memory or allocates. stride may be negative. */
 GpStatus gp_bitmap_create_with_bits(INT width, INT height, INT stride, PixelFormat format, BYTE *scan0, GBitmap **bitmap);
 GpStatus gp_bitmap_copy(const GBitmap *source, GBitmap **copy);
 void gp_bitmap_free(GBitmap *bitmap);
-/* the rows of pixels of any format as straight 8 bit argb, and the other way around. count pixels from x. */
+/* count pixels from x on a row of any format, as straight 8-bit argb and back. */
 void gp_bitmap_read_argb(const GBitmap *b, INT x, INT y, INT count, UINT32 *out);
 void gp_bitmap_write_argb(GBitmap *b, INT x, INT y, INT count, const UINT32 *argb);
-/* converts a row between any two formats, through straight argb. */
+/* converts a row between any two formats through straight argb. */
 void gp_convert_row(BYTE *dst, PixelFormat dst_format, const ColorPalette *dst_palette, const BYTE *src,
                     PixelFormat src_format, const ColorPalette *src_palette, INT x_count);
 
-/* palettes: the defaults of the indexed formats, copies, the halftone palettes and the colors of a picture. */
+/* palettes: indexed format defaults, copies, halftone palettes and the colors of a picture. */
 ColorPalette *gp_palette_default(PixelFormat format);
 ColorPalette *gp_palette_copy(const ColorPalette *src);
 void gp_palette_halftone256(ARGB *entries);
 UINT gp_palette_halftone(PaletteType type, ARGB *entries, BOOL transparent);
 UINT gp_palette_optimal(GBitmap *b, UINT count, BOOL transparent, ARGB *entries);
 
-/* the codecs. the bytes of an image are decoded into a bitmap, or a metafile for the vector formats. */
+/* codecs decode image bytes into a bitmap, or a metafile for vector formats. */
 struct GFrameSource;
 void gp_frame_source_free(struct GFrameSource *s);
 GpStatus gp_frame_source_clone(const struct GFrameSource *src, GBitmap *dst);
@@ -206,7 +202,7 @@ GpStatus gp_decode_bytes(BYTE *data, SIZE_T size, GImage **image);
 GpStatus gp_read_file(const WCHAR *file, BYTE **data, SIZE_T *size);
 GpStatus gp_read_stream(IStream *stream, BYTE **data, SIZE_T *size);
 UINT gp_frame_count(const GBitmap *b);
-/* the imaging component, one reference for the caller. */
+/* the WIC factory, with a reference for the caller. */
 struct IWICImagingFactory;
 GpStatus gp_wic_factory(struct IWICImagingFactory **factory);
 const GUID *gp_wic_format_of(PixelFormat f);
@@ -214,7 +210,7 @@ const GUID *gp_encoder_format(const CLSID *clsid);
 void gp_save_state_free(void *state);
 const GUID *gp_frame_dimension(const GBitmap *b);
 GpStatus gp_select_frame(GBitmap *b, UINT index);
-/* metafiles are the business of metafile.c. */
+/* metafile.c. */
 GpStatus gp_metafile_from_bytes(BYTE *data, SIZE_T size, GImage **image);
 GpStatus gp_metafile_to_bitmap(GImage *image, GBitmap **bitmap);
 GpStatus gp_metafile_clone(GpImage *image, GpImage **clone);
@@ -224,11 +220,11 @@ GpStatus gp_metafile_bounds(GpImage *image, GpRectF *bounds, GpUnit *unit);
 GpStatus gp_metafile_raw_format(GpImage *image, GUID *format);
 /* either resolution may be NULL. */
 GpStatus gp_metafile_resolution(GpImage *image, float *dpi_x, float *dpi_y);
-/* the width and height a metafile reports in pixels, either may be NULL, and its image flags. */
+/* the pixel size a metafile reports, either may be NULL, and its image flags. */
 GpStatus gp_metafile_pixel_size(GpImage *image, UINT *width, UINT *height);
 GpStatus gp_metafile_flags(GpImage *image, UINT *flags);
 GpStatus gp_metafile_thumbnail(GpImage *image, UINT width, UINT height, GpImage **thumbnail);
-/* the size a metafile has on a page of the graphics, in the units of its world. */
+/* a metafile's size on the graphics page, in world units. */
 struct GGraphics;
 GpStatus gp_metafile_page_size(struct GGraphics *g, GpImage *image, float width, float height, GpUnit unit,
                                float *out_w, float *out_h);
@@ -259,12 +255,12 @@ typedef struct GBrush {
     /* hatch */
     HatchStyle hatch_style;
     ARGB hatch_fore, hatch_back;
-    /* texture: a private copy of the image area, drawn through the attributes and the wrap mode */
+    /* texture: a private copy of the image area, drawn through the attributes and the wrap mode. */
     GBitmap *image;
     struct GAttrs *attrs;
     /*
-     * linear gradient. mode is a LinearGradientMode, or GP_LINE_POINTS or GP_LINE_ANGLE, and the rectangle is
-     * the one the brush was made with, for the points the rectangle that holds them.
+     * linear gradient. lg_mode is a LinearGradientMode, GP_LINE_POINTS or GP_LINE_ANGLE. rect is the one the brush
+     * was made with, or for points the rectangle that holds them.
      */
     INT lg_mode;
     GpPointF p1, p2;
@@ -295,8 +291,8 @@ GBrush *gp_brush_solid(ARGB color);
 
 typedef struct GCap {
     DWORD tag;
-    BOOL arrow;        /* adjustable arrow cap */
-    GPath *fill;       /* a custom cap: the fill and the stroke paths, as the sdk has them */
+    BOOL arrow;        /* adjustable arrow cap. */
+    GPath *fill;       /* custom cap fill and stroke paths, as in the sdk. */
     GPath *stroke;
     LineCap base_cap;
     LineJoin join;
@@ -332,18 +328,18 @@ GPen *gp_pen_cast(const void *p);
 GCap *gp_cap_cast(const void *p);
 GCap *gp_cap_clone(const GCap *c);
 void gp_cap_free(GCap *c);
-/* the factor from a length in the unit to pixels at the resolution. */
+/* pixels per unit at the resolution. */
 float gp_unit_to_pixels(GpUnit unit, float dpi);
 /*
- * the outline of a path drawn with a pen. the path is in world space and the polygons come out in the space the
- * matrix leads to. a pen whose width is not in world units takes its width in pixels at the resolution.
+ * the path is in world space and the polygons come out in the matrix's target space. a pen whose width is not in
+ * world units takes its width in pixels at the resolution.
  */
 GpStatus gp_pen_widen(const GPen *pen, const MimeVecPath *path, const MimeVecMatrix *matrix, float flatness,
                       MimeVecPolys *out);
 GpStatus gp_pen_widen_ex(const GPen *pen, const MimeVecPath *path, const MimeVecMatrix *world_to_out, float flatness,
                          float dpi, MimeVecPolys *out);
 
-/* custom line caps: the ends of the flattened line are shortened and the shapes of the caps made. */
+/* custom line caps shorten the ends of the flattened line and add the cap shapes. */
 BOOL gp_pen_has_custom_caps(const GPen *pen);
 GpStatus gp_pen_custom_caps(const GPen *pen, MimeVecPolys *flat, float width, float min_width,
                             const MimeVecMatrix *to_out, float flatness, MimeVecPolys *fills, MimeVecPolys *strokes);
@@ -378,16 +374,16 @@ GRegion *gp_region_cast(const void *p);
 GRegion *gp_region_new_infinite(void);
 GRegion *gp_region_clone(const GRegion *r);
 void gp_region_free(GRegion *r);
-/* the pixels of the region under a matrix, as a mask, clipped to the rectangle. */
+/* the region's pixels under a matrix, as a mask clipped to clip. */
 GpStatus gp_region_to_mask(const GRegion *r, const MimeVecMatrix *m, const MimeVecRect *clip, MimeVecMask *mask);
-/* a mask of polygons filled without antialiasing, inside the clip. */
+/* polygons filled without antialiasing, inside the clip. */
 GpStatus gp_mask_from_polys(MimeVecMask *m, const MimeVecPolys *polys, INT rule, const MimeVecRect *clip);
 
 /* ------------------------------------------------------------------ graphics */
 
 typedef struct GState {
     struct GState *next;
-    INT kind;             /* 0 save, 1 begin container */
+    INT kind;             /* 0 for a save, 1 for a container. */
     UINT id;
     MimeVecMatrix world;
     GpUnit page_unit;
@@ -399,10 +395,10 @@ typedef struct GState {
     PixelOffsetMode pixel_offset;
     TextRenderingHint text_hint;
     UINT text_contrast;
-    MimeVecMask clip;       /* the clip in device space */
+    MimeVecMask clip;       /* in device space. */
     BOOL clip_set;
     POINT origin;
-    /* a container also has the rectangles it was made with, for the sdk's scaling of its units. */
+    /* containers also keep the rectangles they were made with, for the sdk's unit scaling. */
     MimeVecMatrix container;
 } GState;
 
@@ -411,11 +407,11 @@ typedef struct GGraphics {
     HDC hdc;
     HWND hwnd;
     BOOL owns_dc;
-    BOOL got_dc;          /* GdipGetDC is outstanding */
+    BOOL got_dc;          /* GdipGetDC is outstanding. */
     HANDLE token;
-    GBitmap *target;      /* the bitmap of GdipGetImageGraphicsContext */
-    struct GMetafile *meta; /* a recording metafile */
-    INT width, height;    /* the target size in pixels */
+    GBitmap *target;      /* the bitmap of GdipGetImageGraphicsContext. */
+    struct GMetafile *meta; /* a recording metafile. */
+    INT width, height;    /* the target size in pixels. */
     float dpi_x, dpi_y;
     InterpolationMode interpolation;
     SmoothingMode smoothing;
@@ -427,16 +423,16 @@ typedef struct GGraphics {
     GpUnit page_unit;
     float page_scale;
     MimeVecMatrix world;
-    MimeVecMatrix container; /* the transform a container puts below the world, identity otherwise */
-    MimeVecMatrix w2d;    /* world to device, with the page scale and the pixel offset */
+    MimeVecMatrix container; /* the transform a container puts below the world, else identity. */
+    MimeVecMatrix w2d;    /* world to device, with the page scale and the pixel offset. */
     BOOL w2d_valid;
-    MimeVecMask clip;     /* the clip in device space, valid when clip_set */
+    MimeVecMask clip;     /* in device space, valid when clip_set. */
     BOOL clip_set;
-    POINT origin;         /* the render origin of hatch and texture fills */
+    POINT origin;         /* the render origin of hatch and texture fills. */
     GState *states;
     UINT next_state_id;
     INT busy;
-    /* the device context GdipGetDC makes for a graphics on a bitmap */
+    /* the device context GdipGetDC makes for a graphics on a bitmap. */
     HDC bitmap_dc;
     HBITMAP bitmap_dib;
     HGDIOBJ bitmap_old;
@@ -445,80 +441,78 @@ typedef struct GGraphics {
 } GGraphics;
 
 GGraphics *gp_graphics_cast(const void *p);
-/* world to device, rebuilt when the transforms changed. */
+/* rebuilt when the transforms change. */
 const MimeVecMatrix *gp_graphics_w2d(GGraphics *g);
-/* the same without the half pixel of the pixel offset modes, for the containers. */
+/* without the half pixel of the pixel offset modes, for containers. */
 MimeVecMatrix gp_graphics_w2d_base(const GGraphics *g);
 GpStatus gp_graphics_make_bitmap_dc(GGraphics *g, HDC *dc);
 void gp_graphics_release_bitmap_dc(GGraphics *g, HDC dc, BOOL write_back);
-/* the multiplier from page units to pixels along the x and y axes. */
+/* page units to pixels, per axis. */
 void gp_graphics_page_scale(const GGraphics *g, float *sx, float *sy);
-/* how many world units one unit of the given kind is: the size of a font in points in the world of the graphics. */
+/* world units per one unit of the given kind, e.g. to size a font given in points. */
 float gp_graphics_unit_to_world(const GGraphics *g, GpUnit unit);
 
-/* ------------------------------------------------------------------ the drawing core */
+/* ------------------------------------------------------------------ drawing core */
 
 /*
- * the source of a fill: a brush made ready for a rectangle of device pixels. fetch gives the premultiplied
- * argb of count pixels from x, y.
+ * a brush made ready for a rectangle of device pixels. fetch gives the premultiplied argb of count pixels from x, y.
  */
 typedef struct GSource {
     void (*fetch)(struct GSource *s, INT x, INT y, INT count, UINT32 *out);
     void (*destroy)(struct GSource *s);
-    BOOL constant;      /* the same color everywhere */
-    UINT32 color;       /* the premultiplied color when constant */
-    BOOL opaque;        /* no pixel has an alpha below 255, so there is nothing to blend */
+    BOOL constant;      /* the same color everywhere. */
+    UINT32 color;       /* the premultiplied color when constant. */
+    BOOL opaque;        /* no pixel has an alpha below 255, so there is nothing to blend. */
 } GSource;
 
-/* a source for a brush in a graphics, valid for pixels inside bounds. NULL with a status on failure. */
+/* valid for pixels inside bounds. */
 GpStatus gp_source_create(GGraphics *g, const GBrush *brush, const RECT *bounds, GSource **out);
-/* the same for a graphics-less use: the matrix is the world to device transform. */
 void gp_source_free(GSource *s);
 
-/* the antialiasing a smoothing mode stands for: 0 none, 1 eight by four, 2 eight by eight. */
+/* 0 is no antialiasing, 1 is 8 by 4 samples, 2 is 8 by 8. */
 INT gp_smoothing_samples(SmoothingMode mode);
 
 /*
- * fills polygons in device space with a source. fill_rule is MIME_VEC_FILL_ALTERNATE or MIME_VEC_FILL_WINDING.
- * aa is 0, 1 or 2 as above. the clip of the graphics and of the device context apply.
+ * fills device space polygons. fill_rule is MIME_VEC_FILL_ALTERNATE or MIME_VEC_FILL_WINDING, aa is 0, 1 or 2 as
+ * above. the clips of the graphics and of the device context apply.
  */
 GpStatus gp_fill_polys(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, const GBrush *brush);
 /*
- * the fill of text: glyph outlines wound the non zero way. map, when given, turns the coverage 0 to 255 of a pixel
- * into the alpha it gets, and clip is a second device mask the fill is cut to.
+ * text fill: glyph outlines wound non-zero. map, when given, turns a pixel's coverage 0 to 255 into its alpha, and
+ * clip is a second device mask the fill is cut to.
  */
 GpStatus gp_fill_polys_text(GGraphics *g, const MimeVecPolys *polys, INT aa, const GBrush *brush, const UINT8 *map,
                             const MimeVecMask *clip);
-/* the same with a ready source and the area it was made for. */
+/* with a ready source and the area it was made for. */
 GpStatus gp_fill_polys_src(GGraphics *g, const MimeVecPolys *polys, INT fill_rule, INT aa, GSource *src,
                            const RECT *area);
-/* fills the pixels of a mask without antialiasing. */
+/* without antialiasing. */
 GpStatus gp_fill_mask(GGraphics *g, const MimeVecMask *mask, const GBrush *brush);
-/* narrows an area to the clip, a clip that is no rectangle comes back as a mask. FALSE when nothing shows. */
+/* a clip that is not a rectangle comes back as a mask. FALSE when nothing shows. */
 BOOL gp_clip_narrow(GGraphics *g, RECT *area, const MimeVecMask **mask);
-/* a path in world space: transformed and flattened, then filled. */
+/* a world space path, transformed, flattened and filled. */
 GpStatus gp_fill_path(GGraphics *g, const MimeVecPath *path, FillMode mode, const GBrush *brush);
-/* a path in world space under an extra matrix applied first, as the glyph runs of text have. */
+/* extra is applied first, as for text glyph runs. */
 GpStatus gp_fill_path_xform(GGraphics *g, const MimeVecPath *path, const MimeVecMatrix *extra, FillMode mode,
                             const GBrush *brush);
-/* strokes a path in world space with a pen: the widened outline is filled with the pen's brush. */
+/* fills the widened outline with the pen's brush. */
 GpStatus gp_stroke_path(GGraphics *g, const MimeVecPath *path, const GPen *pen);
-/* a rectangle in world space with the exact pixel rules of a transform that only scales and moves. */
+/* follows the exact pixel rules of a transform that only scales and moves. */
 GpStatus gp_fill_rect_world(GGraphics *g, const GBrush *brush, float x, float y, float w, float h);
 
-/* the scan converter. coverage is 0..cmax per pixel, where cmax is 1 (aliased), 32 or 64. */
+/* the scan converter. coverage is 0..cmax per pixel, cmax being 1 when aliased, else 32 or 64. */
 typedef void (*GSpanFn)(void *user, INT y, INT x0, INT count, const UINT8 *coverage, UINT cmax);
 GpStatus gp_raster(const MimeVecPolys *polys, INT fill_rule, INT aa, const RECT *clip, GSpanFn fn, void *user);
 
-/* the destination a graphics draws on, as pixels of one format covering a rectangle of device space. */
+/* what a graphics draws on: pixels of one format covering a device rectangle. */
 typedef struct GSurface {
-    BYTE *bits;       /* the pixel at (x, y) of the rectangle */
+    BYTE *bits;       /* the pixel at x, y. */
     INT stride;
-    INT x, y;         /* device coordinates of the first pixel */
+    INT x, y;         /* device coordinates of the first pixel. */
     INT width, height;
     PixelFormat format;
     const ColorPalette *palette;
-    /* for the surfaces made from a device context */
+    /* surfaces made from a device context. */
     HDC hdc;
     HBITMAP dib;
     HDC mem;
@@ -527,35 +521,34 @@ typedef struct GSurface {
     BOOL direct;
 } GSurface;
 
-/* the device rectangle of the whole target of a graphics. */
 void gp_graphics_bounds(const GGraphics *g, RECT *bounds);
 GpStatus gp_surface_acquire(GGraphics *g, const RECT *area, GSurface *s);
 void gp_surface_release(GGraphics *g, GSurface *s, BOOL modified);
-/* rows of the surface as premultiplied pixels, and the composition of premultiplied pixels onto it. */
+/* surface rows as premultiplied pixels, and composition of premultiplied pixels onto it. */
 void gp_surface_read(const GSurface *s, INT x, INT y, INT count, UINT32 *out);
 void gp_surface_write(const GSurface *s, INT x, INT y, INT count, const UINT32 *pargb);
 void gp_compose_over(const GSurface *s, INT x, INT y, INT count, const UINT32 *pargb);
 void gp_compose_copy(const GSurface *s, INT x, INT y, INT count, const UINT32 *pargb, const UINT8 *cov, UINT cmax);
 
-/* any pixel format to straight argb and back, the pixels of count from x on a row. */
+/* n pixels from x on a row, any format to straight argb and back. */
 void gp_row_to_argb(const BYTE *row, PixelFormat f, const ColorPalette *pal, INT x, INT n, UINT32 *out);
 void gp_row_from_argb(BYTE *row, PixelFormat f, const ColorPalette *pal, INT x, INT n, const UINT32 *in);
 
 
-/* ------------------------------------------------------------------ images drawn */
+/* ------------------------------------------------------------------ image drawing */
 
 GpStatus gp_draw_image(GGraphics *g, GImage *image, const GpPointF *dst_points, INT dst_count, float sx, float sy,
                        float sw, float sh, GpUnit src_unit, struct GAttrs *attrs);
 
-/* draws a metafile into a graphics, the source rectangle onto three corners of the page. */
+/* maps the source rectangle onto three corners on the page. */
 GpStatus gp_metafile_draw(GGraphics *g, GImage *image, const GpPointF *dst, float sx, float sy, float sw, float sh,
                           GpUnit src_unit, struct GAttrs *attrs);
 
 /* ------------------------------------------------------------------ image attributes and text */
 
 /*
- * the color adjustment of an image attributes object, applied to a row of straight argb pixels. the type
- * selects the settings: ColorAdjustTypeDefault, Bitmap, Brush, Pen or Text.
+ * image attributes color adjustment, applied to a row of straight argb. the type selects the settings:
+ * ColorAdjustTypeDefault, Bitmap, Brush, Pen or Text.
  */
 struct GAttrs *gp_attrs_cast(const void *p);
 struct GAttrs *gp_attrs_clone(const struct GAttrs *a);
@@ -564,12 +557,11 @@ void gp_attrs_apply(const struct GAttrs *attrs, ColorAdjustType type, UINT32 *ar
 BOOL gp_attrs_active(const struct GAttrs *attrs, ColorAdjustType type);
 WrapMode gp_attrs_wrap(const struct GAttrs *attrs, ARGB *clamp_color);
 
-/* ------------------------------------------------------------------ recording graphics (emfrecord.c) */
+/* ------------------------------------------------------------------ recording graphics, emfrecord.c */
 
 /*
- * a graphics with a metafile in its meta field records: the drawing core and the graphics calls hand it what they
- * were asked to do and it writes emf+ records. these calls are made before the real work, which a recording
- * graphics does not do for what it draws.
+ * a graphics with a meta field records: the drawing core and the graphics calls hand it what they were asked to do
+ * and it writes emf+ records. these calls come before the real work, which a recording graphics skips.
  */
 GGraphics *gp_graphics_new_recording(struct GMetafile *meta, float dpi_x, float dpi_y, INT width, INT height);
 GpStatus gp_rec_fill_path(GGraphics *g, const MimeVecPath *path, FillMode mode, const GBrush *brush);
@@ -590,7 +582,7 @@ void gp_rec_offset_clip(GGraphics *g, float dx, float dy);
 void gp_rec_comment(GGraphics *g, UINT size, const BYTE *data);
 GpStatus gp_rec_get_dc(GGraphics *g, HDC *dc);
 void gp_rec_release_dc(GGraphics *g);
-/* a recording graphics that is deleted ends the recording. */
+/* deleting a recording graphics ends the recording. */
 void gp_meta_graphics_deleted(GGraphics *g);
 /* the graphics of a recording metafile, for GdipGetImageGraphicsContext. */
 GpStatus gp_meta_graphics_context(GpImage *image, GpGraphics **graphics);

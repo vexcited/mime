@@ -46,7 +46,7 @@ static BOOL table_name(PCWSTR name, WCHAR out[32])
     return encode_name(name, TRUE, out);
 }
 
-/* a binary column keeps its bytes in a stream named after the table and the key of the row, in the packed alphabet. */
+/* binary cells live in a stream named after the table and row key, in the packed alphabet. */
 UINT MimeMsiReadBinary(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size)
 {
     WCHAR encoded[32];
@@ -94,7 +94,7 @@ UINT MimeMsiReadStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZ
     return ERROR_FILE_NOT_FOUND;
 }
 
-/* the directory entries directly below the root of the database, in the order of the tree. */
+/* the root's direct children, in tree order. */
 UINT MimeMsiChildren(MIME_MSI_DATABASE *database, ULONG **list, ULONG *count)
 {
     MIME_CFB *file = &database->File;
@@ -108,7 +108,7 @@ UINT MimeMsiChildren(MIME_MSI_DATABASE *database, ULONG **list, ULONG *count)
     ULONG stack[64], depth = 0;
     if (!found)
         return ERROR_NOT_ENOUGH_MEMORY;
-    /* a walk in order of the tree: left, the entry, right. */
+    /* in order walk: left, entry, right. */
     ULONG at = entry.Child;
     SIZE_T steps = 0;
     while (at != UINT32_MAX || depth) {
@@ -161,7 +161,7 @@ UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database)
         error = ERROR_CALL_NOT_IMPLEMENTED;
         goto done;
     }
-    /* an entry is a length and a count of uses; a long string has length zero and a count, then its length in four bytes. */
+    /* an entry is a length and a reference count. a long string has length zero and a count, then a 4-byte length. */
     ULONG count = 1;
     for (SIZE_T at = 4; at < pool_size; count++) {
         if (at + 4 > pool_size) {

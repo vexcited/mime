@@ -1,12 +1,7 @@
 /*
- * the switch between 64-bit and 32-bit code of a wow64 thread. the 32-bit
- * state lives in the cpu area of the 64-bit teb's tls slot 1, and slot 0
- * keeps the 64-bit stack pointer while 32-bit code runs.
- *
- * 32-bit code comes back through a far jump to the 64-bit code segment:
- * ntdll's system call stubs call Wow64CpuTransition through
- * Wow64Transition, and calls into 32-bit code return to Wow64CpuReturn32.
- * a far jump only reaches the low 4 GiB, so this dll lives there.
+ * WOW64 mode switching. native TEB TLS slot 1 holds the 32-bit CPU area; slot 0 saves the native stack while 32-bit
+ * code runs. syscall stubs call Wow64CpuTransition through Wow64Transition; callbacks return to Wow64CpuReturn32.
+ * both gates use far jumps limited to the low 4 GiB, where this DLL must reside.
  */
 #define TEB_STACKPTR64 0x1480
 #define TEB_CPU 0x1488
@@ -29,15 +24,13 @@
 #define CODE64 0x33
 #define TEB32 0x53
 
-#define FRAME 0xB8 /* xmm6 to xmm15, the far pointer, alignment */
+#define FRAME 0xB8 /* xmm6 to xmm15, the far pointer, alignment. */
 
     .text
 
 /*
- * ULONG Wow64CpuRun(void): runs the thread's 32-bit code until it makes a
- * system call, 0, or returns from a call into it, 1. the reset flag of the
- * cpu area restores every register, the segments and the extended state;
- * without it a system call's return only restores what it preserves.
+ * Wow64CpuRun returns 0 for a system call or 1 for a completed call into 32-bit code. the reset flag restores all
+ * registers, segments and extended state; otherwise only syscall-preserved state is restored.
  */
     .globl  Wow64CpuRun
     .p2align 4
@@ -105,7 +98,7 @@ Wow64CpuRun:
     movl    CPU_EAX(%r11), %eax
     iretq
 
-/* the registers 32-bit code had, into the cpu area at r11. */
+/* saves 32-bit registers in the CPU area at r11. */
 .macro SAVE32
     movl    %edi, CPU_EDI(%r11)
     movl    %esi, CPU_ESI(%r11)
@@ -165,8 +158,7 @@ return_landing:
     ret
 
 /*
- * the 32-bit code of the gates: a far jump to the landing in the 64-bit
- * code segment, its address found without relocations, eax kept.
+ * 32-bit gates far-jump to the native code segment, computing their targets without relocations and preserving eax.
  */
     .code32
     .globl  Wow64CpuTransition

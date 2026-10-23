@@ -1,11 +1,11 @@
 /*
- * activation context generation: what windows' sxs.dll does inside csrss
+ * activation context generation: what sxs.dll does inside csrss on Windows
  * for CreateActCtx and CreateProcess, done here in the process itself.
  *
  * the root manifest comes from a file or an RT_MANIFEST resource. its
  * dependencies resolve to private assemblies probed in the application
  * directory as sxs.dll does, or to the few system assemblies mime maps
- * onto its own dlls. the result is ACTIVATION_CONTEXT_DATA in windows'
+ * onto its own dlls. the result is ACTIVATION_CONTEXT_DATA in the Windows
  * layout, built in pages of its own.
  */
 #include "sxs.h"
@@ -150,7 +150,7 @@ static NTSTATUS find_manifest_resource(PVOID module, ULONG_PTR name, const void 
         return status;
     if (!dir->NumberOfNamedEntries && !dir->NumberOfIdEntries)
         return STATUS_RESOURCE_LANG_NOT_FOUND;
-    /* the first language, as windows' loader takes it when it asks for none. */
+    /* the first language, as the loader takes it when it asks for none. */
     IMAGE_RESOURCE_DIRECTORY_ENTRY *entry = (IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
     info.Language = entry->Name & 0xFFFF;
     IMAGE_RESOURCE_DATA_ENTRY *data_entry;
@@ -175,7 +175,6 @@ static BOOLEAN file_missing(NTSTATUS status)
         status == STATUS_NO_SUCH_FILE || status == STATUS_OBJECT_PATH_SYNTAX_BAD;
 }
 
-/* parses a manifest file. */
 static NTSTATUS load_manifest_file(PCWSTR path, SXS_MANIFEST *manifest)
 {
     MAPPED_FILE f;
@@ -205,7 +204,7 @@ static NTSTATUS load_manifest_image(PCWSTR path, ULONG_PTR name, SXS_MANIFEST *m
     return status;
 }
 
-/* whether windows prefers <image>.manifest files to embedded manifests on this machine. */
+/* whether Windows prefers <image>.manifest files to embedded manifests on this machine. */
 static BOOLEAN prefer_external_manifest(void)
 {
     static LONG cached = -1;
@@ -251,7 +250,7 @@ typedef struct GEN_ASSEMBLY {
     PWSTR Directory; /* the storage root of a private assembly, with a trailing backslash */
     PWSTR Language;
     BOOLEAN Private;
-    BOOLEAN System; /* one of the windows assemblies mime maps onto its own dlls */
+    BOOLEAN System; /* one of the Windows assemblies mime maps onto its own dlls */
     PCWSTR SystemFile;
 } GEN_ASSEMBLY;
 
@@ -292,7 +291,7 @@ static void free_gen(GEN *g)
     gen_free(g->Assemblies);
 }
 
-/* the windows assemblies mime provides itself, each one dll of the system directory. */
+/* the Windows assemblies mime provides itself, each a single dll in the system directory. */
 static const struct {
     PCWSTR Name;
     PCWSTR File;
@@ -336,7 +335,7 @@ static ULONG reference_cultures(const SXS_IDENTITY *ref, PCWSTR cultures[3])
     PCWSTR lang = ref->Language;
     if (lang && *lang && _wcsicmp(lang, L"neutral") && _wcsicmp(lang, L"none")) {
         if (!wcscmp(lang, L"*")) {
-            /* guessed: the user's ui language and its parent, as mime only knows en-US. */
+            /* stands for the user's ui language and its parent; mime only knows en-US. */
             cultures[n++] = L"en-US\\";
             cultures[n++] = L"en\\";
         } else {
@@ -458,7 +457,7 @@ static NTSTATUS resolve_dependencies(GEN *g)
                 status = probe_private(g, ref, &found);
                 if (status == STATUS_SXS_ASSEMBLY_NOT_FOUND && (dep->Optional || ref->Token)) {
                     /*
-                     * windows fails without the assembly in winsxs. mime has no winsxs, so a shared
+                     * Windows fails without the assembly in winsxs. mime has no winsxs, so a shared
                      * assembly it does not provide is left out and the dlls resolve by the search path.
                      */
                     DbgPrint("sxs: assembly %ls not available, ignored\n", ref->Name);
@@ -749,7 +748,7 @@ static void build_assembly_information(GEN *g, SECTION *s)
         SXS_MANIFEST *m = &a->Manifest;
         SECTION_ITEM *item = section_add(s, m->HasIdentity && m->Identity.Name ? m->Identity.Name : L"", nullptr, i + 1);
         if (!item) {
-            /* two assemblies with one name: windows rejects that as a version conflict. */
+            /* two assemblies with one name: Windows rejects that as a version conflict. */
             s->Conflict = TRUE;
             return;
         }

@@ -1,8 +1,8 @@
 /*
- * dxgi formats as vulkan formats. typeless formats are their unsigned
- * integer or unorm member, made mutable so typed views reinterpret them;
- * typeless depth formats also name the depth format their textures take
- * when bound as depth stencils. x8 formats read their alpha as one.
+ * dxgi formats as vulkan formats. typeless formats map to their uint or unorm
+ * member, made mutable so typed views reinterpret them. typeless depth formats
+ * also name the depth format their textures use when bound as depth stencils.
+ * x8 formats read their alpha as one.
  */
 #include "d3d11_private.h"
 
@@ -132,7 +132,7 @@ const D3dFormat *D3dGetFormat(DXGI_FORMAT format)
     return &g_formats[format];
 }
 
-/* the device falls back to 32 bit depth where the gpu has no 24 bit depth buffers, as amd's. */
+/* falls back to 32-bit depth on gpus without 24-bit depth buffers, like AMD's. */
 void D3dFormatsUseD32(void)
 {
     static const DXGI_FORMAT d24[] = {DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_D24_UNORM_S8_UINT,
@@ -158,7 +158,7 @@ VkImageUsageFlags D3dImageUsage(UINT bind, UINT misc, D3D11_USAGE usage)
     return flags;
 }
 
-/* what CheckFormatSupport reports, from what vulkan supports with optimal tiling and in buffers. */
+/* derived from vulkan's optimal tiling and buffer support. */
 UINT D3dFormatSupport(D3dDevice *device, DXGI_FORMAT format, UINT *support2)
 {
     const D3dFormat *f = D3dGetFormat(format);
@@ -167,7 +167,7 @@ UINT D3dFormatSupport(D3dDevice *device, DXGI_FORMAT format, UINT *support2)
     if (f->vk == VK_FORMAT_UNDEFINED)
         return 0;
     if (f->flags & D3D_FORMAT_PLANAR) {
-        /* planes are read through views of their own formats, copied and decoded into whole. */
+        /* planes are read through views of their own formats, and copied and decoded into whole. */
         UINT depth = format == DXGI_FORMAT_NV12 ? D3D_VIDEO_8BIT : format == DXGI_FORMAT_P010 ? D3D_VIDEO_10BIT : 0;
         UINT planar = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_SHADER_LOAD |
                       D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_CPU_LOCKABLE |
@@ -262,7 +262,7 @@ UINT D3dFormatSupport(D3dDevice *device, DXGI_FORMAT format, UINT *support2)
 
 typedef enum ChannelKind { CH_UNORM, CH_SNORM, CH_UINT, CH_SINT, CH_FLOAT, CH_UFLOAT } ChannelKind;
 
-/* the channels of a color format from its lowest bit, in r, g, b, a order: their widths and kind. */
+/* channel widths and kind of a color format, from the lowest bit, in r, g, b, a order. */
 static BOOL channels(VkFormat f, BYTE bits[4], UINT *count, ChannelKind *kind)
 {
     static const struct {
@@ -337,7 +337,7 @@ static FLOAT bits_float(UINT u)
     return f;
 }
 
-/* a float as a small float of the exponent and mantissa widths, rounded to nearest even; signed adds a sign bit. */
+/* converts to a small float of the given widths, rounding to nearest even. signed adds a sign bit. */
 static UINT to_small_float(FLOAT f, UINT exponent_bits, UINT mantissa_bits, BOOL is_signed)
 {
     UINT u = float_bits(f), sign = u >> 31, bias = (1u << (exponent_bits - 1)) - 1;
@@ -386,7 +386,7 @@ static FLOAT from_small_float(UINT v, UINT exponent_bits, UINT mantissa_bits, BO
     else if (!m)
         out = 0;
     else {
-        /* denormal: normalized for a float. */
+        /* a denormal becomes normal in a float. */
         int ne = 1 - (int)bias;
         while (!(m & (1u << mantissa_bits))) {
             m <<= 1;
@@ -400,11 +400,11 @@ static FLOAT from_small_float(UINT v, UINT exponent_bits, UINT mantissa_bits, BO
 static UINT round_half(FLOAT f) { return (UINT)(f + 0.5f); }
 
 /*
- * one element of a color format holding a clear: the low bits of each
- * value for clears of uints, as ClearUnorderedAccessViewUint writes them
- * whatever the format, or the floats converted to the format for clears
- * of floats. FALSE for formats without channels to clear, and for clears
- * of floats on integer formats, which direct3d drops.
+ * one element of a color format holding a clear. uint clears take each
+ * value's low bits whatever the format, as ClearUnorderedAccessViewUint
+ * writes them. float clears convert to the format. FALSE for formats without
+ * channels to clear, and for float clears on integer formats, which direct3d
+ * drops.
  */
 BOOL D3dPackClear(VkFormat format, const UINT *uints, const FLOAT *floats, BYTE out[16], UINT *size)
 {
@@ -439,7 +439,7 @@ BOOL D3dPackClear(VkFormat format, const UINT *uints, const FLOAT *floats, BYTE 
     return TRUE;
 }
 
-/* the clear value of an image of the format that writes an element's bits exactly. */
+/* the clear value that writes the element's bits exactly into an image of the format. */
 BOOL D3dClearValueOfBits(VkFormat format, const BYTE *element, VkClearColorValue *value)
 {
     BYTE bits[4];

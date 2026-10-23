@@ -34,7 +34,7 @@
     add     sp, sp, #\size
 .endm
 
-/* void KiSwapContextInternal(ULONG64 *old_sp, ULONG64 new_sp) */
+/* void KiSwapContextInternal(ULONG64 *old_sp, ULONG64 new_sp). */
     .globl  KiSwapContextInternal
     .p2align 2
 KiSwapContextInternal:
@@ -71,8 +71,8 @@ KiEnterUserMode:
 /*
  * NTSTATUS KiCallUserMode(ULONG64 *callback_sp_slot, PKTRAP_FRAME frame)
  * saves the callee saved state, records the stack pointer that
- * NtCallbackReturn resumes from, copies the prepared user frame below it
- * and returns to user mode through it.
+ * NtCallbackReturn resumes from, copies the user frame below it and
+ * returns to user mode through it.
  */
     .globl  KiCallUserMode
     .p2align 2
@@ -91,7 +91,7 @@ KiCallUserMode:
     b.ne    1b
     b       KiExceptionExit
 
-/* void KiCallbackReturnInternal(ULONG64 callback_sp, NTSTATUS status) */
+/* void KiCallbackReturnInternal(ULONG64 callback_sp, NTSTATUS status). */
     .globl  KiCallbackReturnInternal
     .p2align 2
 KiCallbackReturnInternal:
@@ -100,7 +100,7 @@ KiCallbackReturnInternal:
     POP_CALLEE KCALLOUT_FRAME_SIZE
     ret
 
-/* int KiSetJump(KJUMP_BUFFER *buf) / void KiLongJump(KJUMP_BUFFER *buf, int value) */
+/* int KiSetJump(KJUMP_BUFFER *buf) and void KiLongJump(KJUMP_BUFFER *buf, int value). */
     .globl  KiSetJump
     .p2align 2
 KiSetJump:
@@ -138,8 +138,7 @@ KiLongJump:
     csinc   w0, w1, wzr, ne
     ret
 
-/* calls a system service with up to 16 arguments taken from an array. */
-/* NTSTATUS KiCallService(PVOID routine, ULONG64 *args, ULONG stack_args) */
+/* NTSTATUS KiCallService(PVOID routine, ULONG64 *args, ULONG stack_args): up to 16 arguments from an array. */
     .globl  KiCallService
     .p2align 2
 KiCallService:

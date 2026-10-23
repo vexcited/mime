@@ -1,14 +1,12 @@
 /*
  * the windows notification facility: named pieces of state with a change stamp that programs publish and
- * subscribe to. A name is 64 bits that say how long it lives and for whom, and carry a sequence number; they are
- * stored xored with a constant. Every well known name exists from the start, a name made with NtCreateWnfStateName
- * lives until it is deleted, and a temporary one until its creator exits. Permanent and persistent names are
- * kept for the time the system runs, not on disk. See docs/ntoskrnl.md.
+ * subscribe to. a name is 64 bits giving its lifetime, scope and a sequence number, stored xored with a constant.
+ * well known names exist from the start, a name made with NtCreateWnfStateName lives until deleted, and a
+ * temporary one until its creator exits. permanent and persistent names last while the system runs, not on disk.
  *
- * A process that subscribes to a name has the event it handed to NtSetWnfProcessNotificationEvent set whenever the
- * data of that name changes, and finds out which names changed by comparing change stamps, so a notification that
- * comes in while it is busy is not lost. NtGetCompleteWnfStateSubscription, which Windows uses to learn the changes
- * from the kernel, is not offered.
+ * a subscribed process has the event it gave NtSetWnfProcessNotificationEvent set whenever a name's data changes,
+ * and compares change stamps to find which names changed, so a notification arriving while it is busy is not
+ * lost. NtGetCompleteWnfStateSubscription, which windows uses to learn the changes from the kernel, is not offered.
  */
 #include "../ntos.h"
 
@@ -19,7 +17,7 @@
 
 typedef struct WNF_INSTANCE {
     struct WNF_INSTANCE *Next;
-    ULONG64 Scope; /* which instance: the process of a process scoped one, otherwise 0 */
+    ULONG64 Scope; /* the process for a process scoped name, otherwise 0 */
     WNF_CHANGE_STAMP Stamp;
     ULONG Size;
     PUCHAR Data;
@@ -28,7 +26,7 @@ typedef struct WNF_INSTANCE {
 
 typedef struct WNF_ENTRY {
     struct WNF_ENTRY *Next;
-    ULONG64 Name; /* as the caller holds it, the xored value */
+    ULONG64 Name; /* xored, as the caller holds it */
     WNF_STATE_NAME_LIFETIME Lifetime;
     WNF_DATA_SCOPE Scope;
     ULONG MaximumSize;
@@ -73,7 +71,7 @@ static ULONG64 value_of(const WNF_STATE_NAME *name)
     return (ULONG64)name->Data[1] << 32 | name->Data[0];
 }
 
-/* the stored form of a name and the plain one are each other's xor with the key. */
+/* xoring with the key converts between the stored and plain forms. */
 static ULONG64 decoded(ULONG64 value)
 {
     return value ^ WNF_NAME_KEY;
@@ -127,7 +125,7 @@ static NTSTATUS capture_name(PCWNF_STATE_NAME user, ULONG64 *value)
     return name_valid(*value) ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
 }
 
-/* the entry of a name, a well known one made on first use; null for a name that was never made. */
+/* well known names are made on first use; null for a name never made. */
 static WNF_ENTRY *entry_of(ULONG64 value, BOOLEAN make)
 {
     for (WNF_ENTRY *e = g_entries; e; e = e->Next)
@@ -149,8 +147,8 @@ static WNF_ENTRY *entry_of(ULONG64 value, BOOLEAN make)
 }
 
 /*
- * the instance that holds the data of a scope: one for the machine, the system and a session, since there is one
- * session and one user, and one for each process for a process scoped name. An explicit scope names the process.
+ * with one session and one user, the machine, system and session scopes share one instance; a process scoped
+ * name has one per process. an explicit scope names the process.
  */
 static ULONG64 scope_key(const WNF_ENTRY *e, const VOID *explicit_scope, NTSTATUS *status)
 {
@@ -204,7 +202,6 @@ static WNF_PROCESS *process_of(HANDLE pid, BOOLEAN make)
     return p;
 }
 
-/* the processes subscribed to a name hear that it changed. */
 static void notify(ULONG64 value)
 {
     for (WNF_PROCESS *p = g_processes; p; p = p->Next) {
@@ -218,7 +215,7 @@ static void notify(ULONG64 value)
     }
 }
 
-/* a process that goes takes its subscriptions with it, and the temporary names it made. */
+/* an exiting process takes its subscriptions and temporary names with it. */
 static void NTAPI process_notify(HANDLE parent, HANDLE pid, BOOLEAN create)
 {
     if (create)
@@ -243,7 +240,7 @@ static void NTAPI process_notify(HANDLE parent, HANDLE pid, BOOLEAN create)
             g_entry_count--;
             continue;
         }
-        /* a process scoped instance of the process goes too. */
+        /* its instances of process scoped names go too. */
         if (entry->Scope == WnfDataScopeProcess) {
             WNF_INSTANCE **i = &entry->Instances;
             while (*i) {
@@ -479,7 +476,7 @@ NTSTATUS NTAPI NtDeleteWnfStateData(PCWNF_STATE_NAME state_name, const VOID *exp
     return status;
 }
 
-/* a name without data has the stamp 0 and no bytes. The size needed comes back with STATUS_BUFFER_TOO_SMALL. */
+/* a name without data has stamp 0 and no bytes. STATUS_BUFFER_TOO_SMALL returns the size needed. */
 NTSTATUS NTAPI NtQueryWnfStateData(PCWNF_STATE_NAME state_name, PCWNF_TYPE_ID type_id, const VOID *explicit_scope,
                                    PWNF_CHANGE_STAMP change_stamp, PVOID buffer, PULONG buffer_size)
 {
@@ -597,7 +594,7 @@ NTSTATUS NTAPI NtSubscribeWnfStateChange(PCWNF_STATE_NAME state_name, WNF_CHANGE
         p->Count++;
     }
     id = p->Subscriptions[i].Id;
-    /* data newer than the stamp the caller has is a change it has not heard of. */
+    /* data newer than the caller's stamp is a change it has not heard of. */
     WNF_INSTANCE *latest = instance_of(e, scope_key(e, nullptr, &status));
     if (latest && latest->Stamp > change_stamp && p->Event)
         KeSetEvent(p->Event, IO_NO_INCREMENT, FALSE);
@@ -627,7 +624,7 @@ NTSTATUS NTAPI NtUnsubscribeWnfStateChange(PCWNF_STATE_NAME state_name)
     return status;
 }
 
-/* Windows has a process ask the kernel for the changes it was told of; here it compares the stamps itself. */
+/* windows has a process ask the kernel for its changes; here the process compares stamps itself. */
 NTSTATUS NTAPI NtGetCompleteWnfStateSubscription(PWNF_STATE_NAME old_state_name, PULONG64 old_subscription_id,
                                                  ULONG old_event_mask, ULONG old_status, PVOID new_delivery_descriptor,
                                                  ULONG descriptor_size)

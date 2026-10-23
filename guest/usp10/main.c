@@ -1,6 +1,4 @@
-/*
- * usp10 entry point.
- */
+/* usp10 entry point. */
 #include <mime/win32/winbase.h>
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)

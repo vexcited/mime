@@ -1,11 +1,10 @@
 /*
- * plain strings through uniscribe in one call: ScriptStringAnalyse
- * itemizes, shapes and places a whole string, lays its items out in
- * visual order and keeps the result for drawing, measuring and caret
- * positions.
+ * ScriptStringAnalyse and friends: itemize, shape and place a whole string
+ * in one call, lay its items out in visual order and keep the result for
+ * drawing, measuring and caret positions.
  *
- * the glyph arrays hold the items in visual order, characters stay in
- * logical order with clusters relative to their item's first glyph.
+ * glyph arrays hold the items in visual order; characters stay in logical
+ * order, with clusters relative to their item's first glyph.
  */
 #include "usp10_private.h"
 
@@ -27,13 +26,13 @@ typedef struct USP_STRING {
     int Items;
     SCRIPT_ITEM *Item; /* Items + 1, the last one marks the end. */
     int *Visual;       /* item at each visual position. */
-    int *First;        /* by item, its first glyph. */
+    int *First;        /* first glyph of each item. */
     int *Count;
     int Glyphs;
     WORD *Glyph;
     SCRIPT_VISATTR *Attr;
     int *Advance;
-    int *Justify; /* the advances drawn with. */
+    int *Justify; /* the advances used for drawing. */
     GOFFSET *Offset;
     WORD *Cluster;
     SCRIPT_LOGATTR *LogAttr;
@@ -70,7 +69,7 @@ static USP_STRING *get_string(SCRIPT_STRING_ANALYSIS ssa)
     return s && s->Magic == STRING_MAGIC ? s : nullptr;
 }
 
-/* the text as shaped: stars for passwords, prefix ampersands made invisible. */
+/* stars for passwords, prefix ampersands made invisible. */
 static WCHAR *prepare_text(const void *string, int length, int charset, DWORD flags, int *chars, int *hotkey)
 {
     WCHAR *text;
@@ -108,13 +107,13 @@ static WCHAR *prepare_text(const void *string, int length, int charset, DWORD fl
     return text;
 }
 
-/* negative stops align right on windows; here every stop aligns left. */
+/* windows aligns negative stops right; here every stop aligns left. */
 static int tab_value(int v)
 {
     return v < 0 ? -v : v;
 }
 
-/* the next tab stop after x, from the tab definition or every eight average characters. */
+/* without tab definitions, stops fall every eight average characters. */
 static int next_tab(const SCRIPT_TABDEF *tabs, int average, int x)
 {
     int interval = 8 * average, origin = 0;
@@ -139,7 +138,6 @@ static int next_tab(const SCRIPT_TABDEF *tabs, int average, int x)
     return (p / interval + 1) * interval - origin;
 }
 
-/* items, glyphs and widths of the first chars characters. */
 static HRESULT analyse(USP_STRING *s, int chars, const SCRIPT_CONTROL *control, const SCRIPT_STATE *state,
                        const int *dx, const SCRIPT_TABDEF *tabs)
 {
@@ -182,7 +180,7 @@ static HRESULT analyse(USP_STRING *s, int chars, const SCRIPT_CONTROL *control, 
     ScriptLayout(items, levels, s->Visual, nullptr);
     UspFree(levels);
 
-    /* shaped and placed item by item, in visual order. */
+    /* item by item, in visual order. */
     int g = 0;
     for (int v = 0; v < items; v++) {
         int i = s->Visual[v];
@@ -190,7 +188,7 @@ static HRESULT analyse(USP_STRING *s, int chars, const SCRIPT_CONTROL *control, 
         int start = it->iCharPos, n = it[1].iCharPos - start, count = 0;
         hr = ScriptShape(s->Dc, &s->Cache, s->Text + start, n, capacity - g, &it->a, s->Glyph + g, s->Cluster + start,
                          s->Attr + g, &count);
-        /* no font to fall back on: the nominal glyphs. */
+        /* no font to fall back on: use the nominal glyphs. */
         if (hr == USP_E_SCRIPT_NOT_IN_FONT) {
             it->a.eScript = SCRIPT_UNDEFINED;
             hr = ScriptShape(s->Dc, &s->Cache, s->Text + start, n, capacity - g, &it->a, s->Glyph + g,
@@ -226,7 +224,7 @@ static HRESULT analyse(USP_STRING *s, int chars, const SCRIPT_CONTROL *control, 
     GetTextMetricsW(s->Dc, &tm);
     s->Ascent = tm.tmAscent;
     if (s->Flags & SSA_TAB) {
-        /* a tab glyph reaches the next stop from where the glyphs before it end. */
+        /* a tab glyph stretches from where the glyphs before it end to the next stop. */
         BYTE *tab = UspAlloc((SIZE_T)g + 1);
         if (!tab)
             return E_OUTOFMEMORY;
@@ -267,7 +265,7 @@ static HRESULT analyse(USP_STRING *s, int chars, const SCRIPT_CONTROL *control, 
     return S_OK;
 }
 
-/* how many characters fit in width, ending on a cluster. */
+/* ends on a cluster boundary. */
 static int fitting_chars(USP_STRING *s, int width)
 {
     int *dx = UspAlloc((SIZE_T)s->Chars * sizeof(int));
@@ -322,7 +320,7 @@ USPAPI ScriptStringAnalyse(HDC dc, const void *string, int length, int max_glyph
 
     SCRIPT_CONTROL sc = control ? *control : (SCRIPT_CONTROL){0};
     SCRIPT_STATE st = state ? *state : (SCRIPT_STATE){0};
-    /* the base direction is the reading order, mirrored for a right to left layout. */
+    /* the reading order, mirrored for a right to left layout. */
     st.uBidiLevel = (st.uBidiLevel & ~1) | (((flags & SSA_RTL) != 0) ^ ((flags & SSA_LAYOUTRTL) != 0));
     if (flags & SSA_DZWG)
         st.fDisplayZWG = 1;
@@ -333,7 +331,7 @@ USPAPI ScriptStringAnalyse(HDC dc, const void *string, int length, int max_glyph
     if (SUCCEEDED(hr) && (flags & SSA_CLIP) && (flags & SSA_GLYPHS) && s->Size.cx > width) {
         int kept = fitting_chars(s, width);
         if (kept < chars) {
-            /* the kept part analysed again on its own. */
+            /* the kept part is analysed again on its own. */
             USP_STRING *t = UspAlloc(sizeof(*t));
             if (!t) {
                 hr = E_OUTOFMEMORY;
@@ -382,7 +380,7 @@ USPAPI_(const SCRIPT_LOGATTR *) ScriptString_pLogAttr(SCRIPT_STRING_ANALYSIS ssa
     return s ? s->LogAttr : nullptr;
 }
 
-/* the item holding character cp, the first or last one for positions outside the string. */
+/* positions outside the string give the first or last item. */
 static int item_of(const USP_STRING *s, int cp)
 {
     int i = 0;
@@ -391,7 +389,6 @@ static int item_of(const USP_STRING *s, int cp)
     return i;
 }
 
-/* the x where an item starts, from the left of the string. */
 static int item_x(const USP_STRING *s, int item)
 {
     int x = 0;
@@ -488,7 +485,6 @@ USPAPI ScriptStringValidate(SCRIPT_STRING_ANALYSIS ssa)
     return get_string(ssa) ? S_OK : E_INVALIDARG;
 }
 
-/* draws every item from left, each clipped to clip when given. */
 static void draw_items(USP_STRING *s, int left, int y, UINT options, const RECT *clip)
 {
     int x = left;
@@ -526,7 +522,7 @@ USPAPI ScriptStringOut(SCRIPT_STRING_ANALYSIS ssa, int x, int y, UINT options, c
             y = cp.y;
         }
     }
-    /* items are drawn from the left one after the other, whatever the alignment. */
+    /* items are drawn left to right whatever the alignment. */
     int left = x;
     if ((align & TA_CENTER) == TA_CENTER)
         left -= s->Size.cx / 2;
@@ -548,7 +544,7 @@ USPAPI ScriptStringOut(SCRIPT_STRING_ANALYSIS ssa, int x, int y, UINT options, c
     if (s->Glyphs && !only_hotkey)
         draw_items(s, left, y, item_options, rect);
 
-    /* the hotkey's underline, a pixel under the baseline in the text color. */
+    /* the hotkey underline sits a pixel under the baseline, in the text color. */
     if (s->Hotkey >= 0 && (s->Flags & SSA_HOTKEY)) {
         int a, b;
         if (SUCCEEDED(ScriptStringCPtoX(s, s->Hotkey, FALSE, &a)) &&
@@ -566,7 +562,7 @@ USPAPI ScriptStringOut(SCRIPT_STRING_ANALYSIS ssa, int x, int y, UINT options, c
         }
     }
 
-    /* the selection drawn again over a highlight, item by item. */
+    /* redraw the selection over a highlight, item by item. */
     if (min_sel < max_sel && s->Glyphs) {
         RECT box = {left, top, left + ((s->Flags & SSA_FIT) ? s->Width : s->Size.cx), top + s->Size.cy};
         if (options & ETO_CLIPPED)

@@ -1,9 +1,4 @@
-/*
- * IDirect3DDevice9Ex: a d3d11 device and its immediate context, the
- * implicit swap chain and the state direct3d 9 keeps. methods take the
- * device's lock; a device made without D3DCREATE_MULTITHREADED does not
- * need it, but direct3d 9 programs call from several threads anyway.
- */
+/* IDirect3DDevice9Ex over a d3d11 device and its immediate context. */
 #include "d3d9_private.h"
 
 D9Device *D9DeviceFrom(IDirect3DDevice9 *iface)
@@ -13,7 +8,7 @@ D9Device *D9DeviceFrom(IDirect3DDevice9 *iface)
 
 static D9Device *impl(IDirect3DDevice9Ex *iface) { return CONTAINING_RECORD(iface, D9Device, iface); }
 
-/* as windows' runtime, only a device made D3DCREATE_MULTITHREADED takes a lock. */
+/* like windows, only a D3DCREATE_MULTITHREADED device takes a lock. */
 void D9Lock(D9Device *device)
 {
     if (device->multithreaded)
@@ -43,7 +38,7 @@ static DWORD dbits(float f)
 
 static const D3DMATRIX IDENTITY = {{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}};
 
-/* the state a device starts with and Reset returns to, as direct3d 9 documents it. */
+/* the documented initial state, which Reset restores. */
 static void default_state(D9Device *d)
 {
     DWORD *rs = d->render_states;
@@ -117,7 +112,7 @@ static void default_state(D9Device *d)
     d->scissor = (RECT){0, 0, rt ? (LONG)rt->width : 0, rt ? (LONG)rt->height : 0};
 }
 
-/* what holds a surface's binds: its texture for levels, itself otherwise. */
+/* levels are bound through their texture. */
 static D9Resource *bind_target(D9Surface *s)
 {
     if (!s)
@@ -125,7 +120,6 @@ static D9Resource *bind_target(D9Surface *s)
     return s->container ? &s->container->base : &s->base;
 }
 
-/* binds a surface as the device holds them, the old one let go. */
 static void set_surface(D9Surface **slot, D9Surface *s)
 {
     if (*slot == s)
@@ -190,7 +184,7 @@ static void set_decl(D9VertexDecl **slot, D9VertexDecl *v)
     D9Unbind(old);
 }
 
-/* what Reset and the device's end let go: every binding but the targets. */
+/* for Reset and destruction: drops every binding but the targets. */
 static void unbind_resources(D9Device *d)
 {
     set_shader(&d->vs, nullptr);
@@ -382,7 +376,7 @@ static ULONG STDMETHODCALLTYPE device_release(IDirect3DDevice9Ex *iface)
 
 static HRESULT STDMETHODCALLTYPE device_test_cooperative_level(IDirect3DDevice9Ex *iface) { return D3D_OK; }
 
-/* the gpu's memory, in bytes, as a 32-bit count rounded to whole mebibytes. */
+/* in bytes, rounded to whole mebibytes and kept within 32 bits. */
 static UINT STDMETHODCALLTYPE device_get_available_texture_mem(IDirect3DDevice9Ex *iface)
 {
     IDXGIAdapter1 *adapter;
@@ -434,7 +428,7 @@ static HRESULT STDMETHODCALLTYPE device_get_creation_parameters(IDirect3DDevice9
     return D3D_OK;
 }
 
-/* the cursor is windows' own: its image is the surface's, made a cursor of gdi. */
+/* the surface becomes a regular gdi cursor. */
 static HRESULT STDMETHODCALLTYPE device_set_cursor_properties(IDirect3DDevice9Ex *iface, UINT x, UINT y,
                                                               IDirect3DSurface9 *bitmap)
 {
@@ -608,10 +602,9 @@ static HRESULT STDMETHODCALLTYPE device_set_dialog_box_mode(IDirect3DDevice9Ex *
 }
 
 /*
- * the ramp of an implicit swap chain, those of CreateAdditionalSwapChain
- * have none, shown while it is fullscreen; a
- * windowed one only keeps it. there is no calibrator, as on a system
- * without one, so D3DSGR_CALIBRATE changes nothing.
+ * only implicit swap chains have a ramp. it shows while fullscreen and is
+ * only kept while windowed. there is no calibrator, so D3DSGR_CALIBRATE
+ * changes nothing.
  */
 static void STDMETHODCALLTYPE device_set_gamma_ramp(IDirect3DDevice9Ex *iface, UINT swapchain, DWORD flags,
                                                     const D3DGAMMARAMP *ramp)
@@ -627,7 +620,7 @@ static void STDMETHODCALLTYPE device_set_gamma_ramp(IDirect3DDevice9Ex *iface, U
     D9Unlock(d);
 }
 
-/* what was set, zero before. */
+/* zero until a ramp is set. */
 static void STDMETHODCALLTYPE device_get_gamma_ramp(IDirect3DDevice9Ex *iface, UINT swapchain, D3DGAMMARAMP *ramp)
 {
     D9Device *d = impl(iface);
@@ -749,7 +742,6 @@ static HRESULT STDMETHODCALLTYPE device_create_depth_stencil_surface(IDirect3DDe
                           quality, FALSE, out, shared);
 }
 
-/* a system memory surface's rectangle to a surface in the gpu's memory. */
 static HRESULT STDMETHODCALLTYPE device_update_surface(IDirect3DDevice9Ex *iface, IDirect3DSurface9 *source,
                                                        const RECT *rect, IDirect3DSurface9 *dest, const POINT *point)
 {
@@ -887,7 +879,7 @@ static HRESULT STDMETHODCALLTYPE device_color_fill(IDirect3DDevice9Ex *iface, ID
         d->context->lpVtbl->ClearView(d->context, (ID3D11View *)rtv, c, &box, 1);
         D9SurfaceWritten(s);
     } else if (s->texture) {
-        /* the color in the surface's own layout, uploaded as a lock would. */
+        /* the color packed in the surface's layout, uploaded like a lock would. */
         BYTE block[16];
         const D9Format *f = s->base.format;
         RECT b = D9SurfaceBlockRect(s, &r);
@@ -1000,14 +992,14 @@ static HRESULT STDMETHODCALLTYPE device_end_scene(IDirect3DDevice9Ex *iface)
     if (!d->in_scene)
         return D3DERR_INVALIDCALL;
     d->in_scene = FALSE;
-    /* the scene's work goes to the gpu, as drivers start it at EndScene. */
+    /* flush at EndScene, where drivers start the work. */
     D9Lock(d);
     d->context->lpVtbl->Flush(d->context);
     D9Unlock(d);
     return D3D_OK;
 }
 
-/* the rectangles a clear covers: the viewport, the scissor rectangle if enabled, each rectangle given. */
+/* a clear is limited by the viewport, the scissor rectangle if enabled, and each given rectangle. */
 static UINT clear_rects(D9Device *d, DWORD count, const D3DRECT *rects, D3D11_RECT *out, UINT max)
 {
     D3D11_RECT bound = {(LONG)d->viewport.X, (LONG)d->viewport.Y, (LONG)(d->viewport.X + d->viewport.Width),
@@ -1180,7 +1172,7 @@ static HRESULT STDMETHODCALLTYPE device_get_material(IDirect3DDevice9Ex *iface, 
     return D3D_OK;
 }
 
-/* lights are kept in a list as long as the highest index set, as programs set them sparsely. */
+/* the list grows to the highest index set, since programs set lights sparsely. */
 static D9Light *light_slot(D9Device *d, DWORD index, BOOL grow)
 {
     for (UINT i = 0; i < d->light_count; i++)
@@ -1675,7 +1667,7 @@ static HRESULT STDMETHODCALLTYPE device_get_vertex_declaration(IDirect3DDevice9E
     return D3D_OK;
 }
 
-/* SetFVF sets the declaration of the format, made once for the device's life. */
+/* each fvf's declaration is made once and kept for the device's life. */
 static HRESULT STDMETHODCALLTYPE device_set_fvf(IDirect3DDevice9Ex *iface, DWORD fvf)
 {
     D9Device *d = impl(iface);
@@ -1769,7 +1761,7 @@ static HRESULT STDMETHODCALLTYPE device_get_vertex_shader(IDirect3DDevice9Ex *if
     return D3D_OK;
 }
 
-/* shader constants: kept in the device and uploaded with the draws that read them. */
+/* kept in the device and uploaded with the draws that read them. */
 static HRESULT set_constants(D9Device *d, void *bank, UINT size, UINT max, UINT start, const void *data, UINT count,
                              BOOL *dirty)
 {
@@ -1998,7 +1990,7 @@ static HRESULT STDMETHODCALLTYPE device_get_ps_constant_b(IDirect3DDevice9Ex *if
     return get_constants(impl(iface)->ps_b, 4, 16, start, data, count);
 }
 
-/* patches: no gpu tessellates direct3d 9's, as no driver of windows 10 does. */
+/* no windows 10 driver tessellates direct3d 9 patches, so neither does this. */
 static HRESULT STDMETHODCALLTYPE device_draw_rect_patch(IDirect3DDevice9Ex *iface, UINT handle,
                                                         const float *segments, const D3DRECTPATCH_INFO *info)
 {

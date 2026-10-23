@@ -1,9 +1,6 @@
 /*
- * the simple authentication and security layer wrappers of sspi.
- *
- * a sasl profile names the package behind a mechanism. the only profile of
- * a windows 11 installation is GSSAPI, the Kerberos package, from
- * SecurityProviders\SaslProfiles of the SYSTEM hive.
+ * sspi's sasl wrappers. a sasl profile names the package behind a mechanism; a windows 11 installation has only GSSAPI,
+ * the Kerberos package, under SecurityProviders\SaslProfiles in the SYSTEM hive.
  */
 #include "secur32_private.h"
 
@@ -17,7 +14,7 @@ static const struct {
     PCWSTR Package;
 } g_profiles[] = {{L"GSSAPI", L"Kerberos"}};
 
-/* the defaults of the next sasl contexts, set when SaslSetContextOption gets no context. */
+/* defaults for the next sasl contexts, set when SaslSetContextOption gets no context. */
 static ULONG g_send_size, g_recv_size, g_authz_processing;
 
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SaslEnumerateProfilesW(LPWSTR *list, ULONG *count)
@@ -88,11 +85,9 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SaslGetProfilePackageA(LPSTR profile, PSec
 }
 
 /*
- * SaslIdentifyPackageHelper matches the mechanism oid at the start of a
- * gss token, and takes a token starting with a negotiation response, 0xA0,
- * for the first prefix. the prefixes are those of the sasl packages: the
- * kerberos oid and its legacy microsoft form. the info is static and must
- * not be freed. guessed: sspicli builds the prefix list at run time.
+ * a gss token is matched by the mechanism oid at its start, and a token starting with a negotiation response, 0xA0,
+ * matches the first prefix. the prefixes are the kerberos oid and its legacy microsoft form. the returned info is
+ * static and must not be freed.
  */
 static const UCHAR g_kerberos_oid[] = {0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x12, 0x01, 0x02, 0x02};
 static const UCHAR g_kerberos_legacy_oid[] = {0x06, 0x09, 0x2A, 0x86, 0x48, 0x82, 0xF7, 0x12, 0x01, 0x02, 0x02};
@@ -192,7 +187,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SaslGetContextOption(PCtxtHandle context, 
     return SEC_E_INVALID_HANDLE;
 }
 
-/* without a sasl context, which mime never creates, the sizes and authz processing set the defaults. */
+/* there are never sasl contexts, so the sizes and authz processing only set the defaults. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SaslSetContextOption(PCtxtHandle context, ULONG option, PVOID value, ULONG size)
 {
     ULONG *target;

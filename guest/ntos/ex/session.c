@@ -1,9 +1,9 @@
 /*
  * mime session manager: the control channel with the host.
  *
- * the host sends run and shutdown requests; the kernel answers with
- * process lifecycle and debug output events. this plays the part smss and
- * csrss have on windows until those exist as real user mode processes.
+ * the host sends run and shutdown requests; the kernel answers with process
+ * lifecycle and debug output events. this stands in for smss and csrss until
+ * those exist as real user mode processes.
  */
 #include "../ntos.h"
 
@@ -19,7 +19,7 @@ static UCHAR g_send_buffer[MIME_CTRL_MAX_MESSAGE] __attribute__((aligned(16)));
 static BOOLEAN g_ready;
 static FAST_MUTEX g_console_lock;
 
-/* the buffers live in the kernel image, which is physically contiguous. */
+/* the kernel image is physically contiguous, so the buffers live there. */
 static void send_message(const void *message, ULONG size)
 {
     if (size > sizeof(g_send_buffer))
@@ -62,7 +62,7 @@ void MimeSendDebugOutput(PEPROCESS process, const char *text, SIZE_T length)
     }
 }
 
-/* console output and notices for the terminal of a run, split to fit the channel. */
+/* split to fit the channel. */
 void MimeSendConsole(ULONG type, ULONG64 request, ULONG value, const void *data, ULONG length)
 {
     static UCHAR buffer[MIME_CTRL_MAX_MESSAGE];
@@ -108,14 +108,14 @@ static void irq_dpc(PKDPC dpc, PVOID context, PVOID a1, PVOID a2)
         FsNotifyHostInterrupt();
     if (bits & MIME_IRQ_WINDOW)
         MmWindowLostInterrupt();
-    /* the dump reads user stacks, which the session thread does at passive level. */
+    /* the dump reads user stacks, so the session thread does it at passive level. */
     if (bits & MIME_IRQ_DUMP) {
         __atomic_store_n(&g_dump_pending, 1, __ATOMIC_RELEASE);
         KeSetEvent(&g_ctrl_event, 1, FALSE);
     }
 }
 
-/* interrupt level: defer the work to a dpc. */
+/* interrupt level: the work is deferred to a dpc. */
 void MimeSessionInterrupt(ULONG bits)
 {
     __atomic_fetch_or(&g_irq_bits, (LONG)bits, __ATOMIC_ACQ_REL);
@@ -124,9 +124,9 @@ void MimeSessionInterrupt(ULONG bits)
 }
 
 /*
- * whether a program the host starts gets the whole token of the user. one that asks for it by its manifest is given it,
- * as the broker of the services does for the shell, unless the machine was told to decline; the host's user is the one
- * who typed the command, so nobody is asked.
+ * whether a program the host starts gets the user's full token. one whose manifest asks for it gets it, as the
+ * service broker does for the shell, unless the machine is set to decline. the host's user typed the command,
+ * so nobody is prompted.
  */
 static NTSTATUS choose_token(PCUNICODE_STRING image, ULONG level, BOOLEAN *elevated)
 {
@@ -140,7 +140,7 @@ static NTSTATUS choose_token(PCUNICODE_STRING image, ULONG level, BOOLEAN *eleva
         declined = 0;
     if (declined) {
         KiLogPrintf("elevation declined for %wZ by the policy", image);
-        /* a program that can do without the rights goes on without them. */
+        /* a program that can run without the rights goes on without them. */
         return level == 3 ? STATUS_CANCELLED : STATUS_SUCCESS;
     }
     KiLogPrintf("elevation approved for %wZ", image);
@@ -163,7 +163,7 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
     UNICODE_STRING cwd = {(USHORT)(run->cwd_chars * sizeof(WCHAR)), (USHORT)(run->cwd_chars * sizeof(WCHAR)),
                           (PWSTR)(text + run->image_chars + run->cmdline_chars)};
     KiLogPrintf("run request %llu: %wZ", run->request_id, &image);
-    /* the terminal of the run is a console, which a console program is attached to from the start. */
+    /* the run's terminal is a console, attached to a console program from the start. */
     MIME_CONSOLE *console = ConsoleCreate(run->request_id, run->flags, run->console_size, run->console_cursor);
     if (!console) {
         send_process_event(MIME_EVT_RUN_FAILED, run->request_id, (ULONG)STATUS_INSUFFICIENT_RESOURCES, 0);
@@ -187,8 +187,8 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
 }
 
 /*
- * the host asks for a shutdown as a logon session does: the programs are told and given their time, the rest
- * ends, the files are written. a second request that forces it takes the time away from the first.
+ * the host asks for a shutdown like a logon session does: programs are told and given time, the rest ends,
+ * the files are written. a second, forced request cuts the first one's wait short.
  */
 static void handle_shutdown(const MimeCtrlShutdown *request, ULONG size)
 {
@@ -198,7 +198,7 @@ static void handle_shutdown(const MimeCtrlShutdown *request, ULONG size)
         if (request->timeout_ms)
             timeout = request->timeout_ms;
     }
-    /* a forced one does not wait for the programs, and cuts the one that does. */
+    /* a forced shutdown does not wait for the programs, and cuts short one that does. */
     if (flags & MIME_SHUTDOWN_FORCE)
         PsShutdownSystem(ShutdownPowerOff);
     NTSTATUS status = MimeShutdownStart(EWX_SHUTDOWN | EWX_POWEROFF | EWX_FORCEIFHUNG, MX_SHUTDOWN_REASON_HOST, 0,
@@ -208,9 +208,9 @@ static void handle_shutdown(const MimeCtrlShutdown *request, ULONG size)
 }
 
 /*
- * the policy of user account control, which user mode reads from the shared page: whether programs that ask for
- * elevation are elevated at all, whether files and keys are virtualized and whether installers are told by their name.
- * a policy that is not set is on, as it is on a machine that was not changed.
+ * the user account control policy user mode reads from the shared page: whether elevation requests are honored,
+ * whether files and keys are virtualized, and whether installers are detected by name. an unset policy is on,
+ * as on an unchanged machine.
  */
 static void load_elevation_policy(void)
 {
@@ -245,7 +245,7 @@ void MiSessionInitialize(void)
     send_message(&ready, sizeof(ready));
     KiLogPrintf("session ready");
     load_elevation_policy();
-    /* the machine answers the host first; the services start alongside the first requests. */
+    /* the host gets its answer first; the services start alongside the first requests. */
     PsStartServiceController();
 
     for (;;) {

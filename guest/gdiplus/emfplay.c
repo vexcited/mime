@@ -1,11 +1,9 @@
 /*
- * playing metafiles: drawing them onto a graphics, and the enumerate calls that show every record to a
- * program first. the gdi records of a metafile are played by the gdi of the system on a device context for the
- * graphics, the emf+ records by emfplus.c on the graphics itself.
+ * playing metafiles onto a graphics, and the enumerate calls that show each record to a program first. the
+ * system gdi plays the gdi records on a dc for the graphics, emfplus.c plays the emf+ records on the graphics.
  *
- * the metafile is placed by one matrix: its own pixels to the device. a graphics that draws a metafile gets the
- * matrix as the transform its container puts below the world transform, so the records see the pixels of the
- * metafile as their page.
+ * one matrix places the metafile, from its own pixels to the device. the graphics gets it as the container
+ * transform below the world transform, so the records see the metafile's pixels as their page.
  */
 #include "meta_private.h"
 
@@ -25,9 +23,9 @@ static WORD rd16(const BYTE *p)
 
 static INT round_to_int(float v) { return (INT)mime_vec_floorf(v + 0.5f); }
 
-/* ------------------------------------------------------------------ sizes on a page */
+/* ------------------------------------------------------------------ page sizes */
 
-/* the size of something that measures width by height in a unit when it is drawn without scaling. */
+/* the page size of width by height in unit, drawn without scaling. */
 GpStatus gp_metafile_page_size(struct GGraphics *gfx, GpImage *image, float width, float height, GpUnit unit,
                                float *out_w, float *out_h)
 {
@@ -38,7 +36,7 @@ GpStatus gp_metafile_page_size(struct GGraphics *gfx, GpImage *image, float widt
     float sx, sy;
     gp_graphics_page_scale(g, &sx, &sy);
     if (unit == UnitPixel) {
-        /* the picture's own size is its whole pixels */
+        /* the picture's own size counts in whole pixels. */
         float bx, by, bw, bh;
         gp_meta_real_bounds(m, &bx, &by, &bw, &bh);
         if (width == bw && height == bh) {
@@ -57,7 +55,7 @@ GpStatus gp_metafile_page_size(struct GGraphics *gfx, GpImage *image, float widt
 
 /* ------------------------------------------------------------------ the device context */
 
-/* the clip of the graphics as a region of the context, in device pixels. */
+/* in device pixels. */
 static void dc_apply_clip(HDC dc, GGraphics *g)
 {
     HRGN region = gp_meta_clip_region(g);
@@ -73,7 +71,7 @@ static XFORM to_xform(const MimeVecMatrix *m)
     return x;
 }
 
-/* the context the gdi records play on: the one of the graphics, or a dib of its bitmap. */
+/* the graphics' own dc, or a dib of its bitmap. */
 static BOOL dc_open(GPlayer *p)
 {
     GGraphics *g = p->g;
@@ -94,8 +92,8 @@ static BOOL dc_open(GPlayer *p)
 }
 
 /*
- * a bitmap and its device context are two copies of the pixels. emf+ records draw in the bitmap and gdi records in
- * the context, so the context is brought up to date before the gdi records and its changes go back after them.
+ * a bitmap and its dc are two copies of the pixels. emf+ records draw in the bitmap and gdi records in the dc,
+ * so the dc is synced before the gdi records and its changes are copied back after them.
  */
 void gp_play_gdi_begin(GPlayer *p)
 {
@@ -128,7 +126,7 @@ void gp_play_gdi_end(GPlayer *p)
                 x++;
                 continue;
             }
-            /* what gdi drew has no alpha of its own, it is opaque */
+            /* gdi output has no alpha of its own, so it is opaque. */
             INT start = x;
             while (x < b->width && (row[x] & 0x00ffffffu) != (orig[x] & 0x00ffffffu)) {
                 row[x] |= 0xff000000u;
@@ -154,7 +152,7 @@ static void dc_close(GPlayer *p)
 
 /* ------------------------------------------------------------------ records */
 
-/* one record of an enhanced metafile played, or shown to the program. */
+/* plays the record, or shows it to the program. */
 static BOOL gdi_record(GPlayer *p, HDC dc, const ENHMETARECORD *r)
 {
     if (p->cb) {
@@ -170,7 +168,6 @@ static BOOL gdi_record(GPlayer *p, HDC dc, const ENHMETARECORD *r)
     return TRUE;
 }
 
-/* the emf+ records of one comment. */
 static BOOL plus_comment(GPlayer *p, const ENHMETARECORD *r)
 {
     gp_play_gdi_end(p);
@@ -216,7 +213,7 @@ static int CALLBACK enum_proc(HDC dc, HANDLETABLE *table, const ENHMETARECORD *r
     return gdi_record(p, dc, r);
 }
 
-/* a windows metafile record, which a program sees as the function with the high flag. */
+/* a program sees a windows metafile record as its function with the high flag set. */
 static int CALLBACK wmf_proc(HDC dc, HANDLETABLE *table, METARECORD *r, int count, LPARAM param)
 {
     GPlayer *p = (GPlayer *)param;
@@ -237,11 +234,10 @@ static int CALLBACK wmf_proc(HDC dc, HANDLETABLE *table, METARECORD *r, int coun
     return 1;
 }
 
-/* ------------------------------------------------------------------ a gdi playback */
+/* ------------------------------------------------------------------ gdi playback */
 
 /*
- * the frame goes to a rectangle of whole pixels of the metafile, and the little the rectangle is off from the
- * frame is made up in the transform of the context.
+ * the frame maps to a rectangle of whole metafile pixels, and the dc transform makes up the small difference.
  */
 static void frame_setup(GPlayer *p, RECT *rect)
 {
@@ -282,7 +278,7 @@ static GpStatus gdi_run(GPlayer *p)
     dc_apply_clip(dc, g);
     BOOL ok;
     if (m->header.Type < MetafileTypeEmf) {
-        /* the window is the box of the picture, one unit a pixel of the metafile */
+        /* the window is the picture's box, one unit per metafile pixel. */
         XFORM x = to_xform(&p->to_device);
         SetWorldTransform(dc, &x);
         SetMapMode(dc, MM_ANISOTROPIC);
@@ -303,7 +299,7 @@ static GpStatus gdi_run(GPlayer *p)
     return ok ? Ok : GenericError;
 }
 
-/* ------------------------------------------------------------------ an emf+ playback */
+/* ------------------------------------------------------------------ emf+ playback */
 
 static BOOL has_get_dc(GMetafile *m)
 {
@@ -371,7 +367,7 @@ static GpStatus plus_run(GPlayer *p)
     return st;
 }
 
-/* ------------------------------------------------------------------ the placement */
+/* ------------------------------------------------------------------ placement */
 
 static BOOL rotated(const MimeVecMatrix *m)
 {
@@ -381,7 +377,7 @@ static BOOL rotated(const MimeVecMatrix *m)
     return c > 1.0e-4f * scale || d > 1.0e-4f * scale;
 }
 
-/* the matrix that takes a rectangle of metafile pixels onto the parallelogram of three world points. */
+/* maps a rectangle of metafile pixels onto the parallelogram of three world points. */
 static void rect_to_points(const GpPointF *pt, const GpRectF *src, MimeVecMatrix *out)
 {
     float ux = (pt[1].X - pt[0].X) / src->Width, uy = (pt[1].Y - pt[0].Y) / src->Width;
@@ -398,8 +394,8 @@ static GpStatus play_placed(GGraphics *g, GMetafile *m, const GpPointF *pt, cons
                             EnumerateMetafileProc cb, void *data, struct GAttrs *attrs);
 
 /*
- * a metafile that is turned, sheared or recolored is drawn on a bitmap of its own size first and the bitmap
- * is drawn as an image.
+ * a turned, sheared or recolored metafile is drawn on a bitmap of its own size first, then the bitmap is drawn
+ * as an image.
  */
 static GpStatus play_raster(GGraphics *g, GMetafile *m, const GpPointF *pt, const GpRectF *src,
                             EnumerateMetafileProc cb, void *data, struct GAttrs *attrs)
@@ -432,7 +428,7 @@ static GpStatus play_raster(GGraphics *g, GMetafile *m, const GpPointF *pt, cons
     t->interpolation = g->interpolation;
     t->smoothing = g->smoothing;
     GpPointF tp[3] = {{0, 0}, {(float)tw, 0}, {0, (float)th}};
-    /* the callback sees the records once, whatever the way they are drawn */
+    /* the callback sees the records once, however they are drawn. */
     st = play_placed(t, m, tp, src, cb, data, nullptr);
     GdipDeleteGraphics(tg);
     if (st == Ok)
@@ -452,7 +448,7 @@ static GpStatus play_placed(GGraphics *g, GMetafile *m, const GpPointF *pt, cons
     p->cb = cb;
     p->cb_data = data;
     p->attrs = attrs;
-    /* the part of the graphics the metafile can reach is the parallelogram of the three points */
+    /* the metafile can only reach the parallelogram of the three points. */
     GpPointF corners[4] = {pt[0], pt[1], {pt[1].X + pt[2].X - pt[0].X, pt[1].Y + pt[2].Y - pt[0].Y}, pt[2]};
     GraphicsState saved;
     GpStatus st = GdipSaveGraphics(g, &saved);
@@ -527,7 +523,7 @@ GpStatus gp_meta_play(GGraphics *g, GMetafile *m, const GpRectF *dest, const GpR
     return play_placed(g, m, pt, &s, callback, data, attrs);
 }
 
-/* the metafile drawn by the drawing calls of images: three corners of the page for a rectangle of the source. */
+/* for the image drawing calls: three page corners for a source rectangle. */
 GpStatus gp_metafile_draw(GGraphics *g, GImage *image, const GpPointF *dst, float sx, float sy, float sw, float sh,
                           GpUnit src_unit, struct GAttrs *attrs)
 {
@@ -610,9 +606,9 @@ WINGDIPAPI GpStatus WINAPI GdipPlayMetafileRecord(const GpMetafile *metafile, Em
     return Ok;
 }
 
-/* ------------------------------------------------------------------ the enumerate calls */
+/* ------------------------------------------------------------------ enumerate calls */
 
-/* the common check of every call: a graphics, a metafile, a callback and attributes that are what they say. */
+/* the check every call shares: graphics, metafile, callback and attributes must be valid. */
 static GpStatus enumerate_args(GpGraphics *graphics, const GpMetafile *metafile, EnumerateMetafileProc callback,
                                const GpImageAttributes *attrs, GGraphics **g, GMetafile **m, struct GAttrs **a)
 {
@@ -675,7 +671,7 @@ static void rect_points(const GpRectF *r, GpPointF *pt)
     pt[2].Y = r->Y + r->Height;
 }
 
-/* the destination of a point: the source rectangle at its natural size. */
+/* a point destination draws the source rectangle at its natural size. */
 static void point_dest(GGraphics *g, GMetafile *m, const GpPointF *at, const GpRectF *src, GpUnit unit, GpPointF *pt)
 {
     float w, h;
@@ -781,7 +777,7 @@ WINGDIPAPI GpStatus WINAPI GdipEnumerateMetafileDestPointsI(GpGraphics *graphics
     return GdipEnumerateMetafileDestPoints(graphics, metafile, pt, 3, callback, data, attrs);
 }
 
-/* the source rectangle variants name a unit, which the calls check first. */
+/* the variants with a source rectangle take a unit, which the calls check first. */
 static GpStatus src_unit_ok(Unit unit)
 {
     return unit >= UnitPixel && unit <= UnitMillimeter ? Ok : InvalidParameter;
@@ -883,9 +879,9 @@ WINGDIPAPI GpStatus WINAPI GdipEnumerateMetafileSrcRectDestPointsI(GpGraphics *g
 /* ------------------------------------------------------------------ records from a terminal services client */
 
 /*
- * the client of a terminal session gets emf+ records for a device context. kinds: 1 starts a session on the
- * context, 2 ends it, 3 and 4 tell the format and the palette of the remote surface, 5 plays the records.
- * the objects the records define stay between the calls of a session.
+ * a terminal session client gets emf+ records for a dc. kinds: 1 starts a session on the dc, 2 ends it, 3 and 4
+ * give the format and palette of the remote surface, 5 plays the records. objects defined by the records persist
+ * across the calls of a session.
  */
 static GpGraphics *ts_graphics;
 static HDC ts_dc;

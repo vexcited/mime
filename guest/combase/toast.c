@@ -1,13 +1,11 @@
 /*
- * Windows.UI.Notifications: toast notifications. a program builds the content as an XmlDocument, makes a
- * ToastNotification of it, and shows it through the notifier of its application user model id. the content is read
- * when it is shown, the pieces a notification of the host's desktop has (title, body, picture, buttons, a reply box,
- * how urgent it is) are handed to the host through win32k (NtUserMimeShell), and what the person does with it comes
- * back as events of the toast: Activated with the arguments of the toast or of the button, Dismissed with why, and
- * Failed. a thread of the process waits for them. see docs/combase.md.
+ * Windows.UI.Notifications toasts. a program builds an XmlDocument, wraps it in a ToastNotification and shows it
+ * through its app user model id's notifier. the content is read at show time: title, body, picture, buttons, a reply
+ * box and urgency go to the host through win32k's NtUserMimeShell. what the user does comes back as Activated,
+ * Dismissed or Failed events, which a process thread waits for.
  *
- * the activation factory of the manager answers only when the host can show notifications at all, so that a program
- * that checks first, as a browser does, keeps its own notification center where there is no desktop to use.
+ * the manager's factory only answers when the host can show notifications, so a program that checks first, like a
+ * browser, keeps its own notification center when there is no desktop.
  */
 #include "xmldom.h"
 #include <mime/abi.h>
@@ -155,7 +153,7 @@ static void handlers_clear(HANDLERS *set)
 
 typedef struct TOAST_ACTION {
     WCHAR *Arguments;
-    WCHAR *InputId; /* the input whose text the button sends, or null */
+    WCHAR *InputId; /* the input whose text the button sends, or null. */
 } TOAST_ACTION;
 
 typedef struct TOAST {
@@ -169,14 +167,14 @@ typedef struct TOAST {
     INT32 Mirroring, Priority;
     IInspectable *Data;
     HANDLERS Dismissed, Activated, Failed;
-    /* while it is shown. */
+    /* set while shown. */
     ULONG HostId;
-    BOOL Showing; /* the host has not yet said which number it gave */
+    BOOL Showing; /* the host has not returned its id yet. */
     WCHAR *Aumid;
     WCHAR *Launch;
     TOAST_ACTION Actions[ACTIONS_MAX];
     ULONG ActionCount;
-    struct TOAST *Next; /* in the table of shown toasts */
+    struct TOAST *Next; /* link in the shown table. */
 } TOAST;
 
 typedef struct ARGS {
@@ -187,7 +185,7 @@ typedef struct ARGS {
     HRESULT Error;
 } ARGS;
 
-/* a property set of strings boxed, what the person typed. */
+/* the typed text, as a property set of boxed strings. */
 typedef struct SETENTRY {
     WCHAR *Key;
     WCHAR *Value;
@@ -207,7 +205,7 @@ typedef struct NOTIFIER {
 
 typedef struct HISTORY {
     WRT_OBJECT Base;
-    WCHAR *Aumid; /* null for the process's own */
+    WCHAR *Aumid; /* null for the process's own. */
 } HISTORY;
 
 typedef struct VECTOR {
@@ -285,7 +283,7 @@ static WCHAR *current_aumid(void)
     return copy;
 }
 
-/* the name a program is known by: the product name of its file, else the file's name. */
+/* the registered DisplayName, else the exe's ProductName, else the exe's file name. */
 static void application_name(WCHAR *out, SIZE_T capacity, const WCHAR *aumid)
 {
     out[0] = 0;
@@ -308,7 +306,7 @@ static void application_name(WCHAR *out, SIZE_T capacity, const WCHAR *aumid)
     DWORD n = GetModuleFileNameW(nullptr, path, MAX_PATH);
     if (!n || n >= MAX_PATH)
         return;
-    /* the resource's product name, found in the version data by its UTF-16 key. */
+    /* find ProductName in the version resource by its UTF-16 key. */
     HMODULE module = LoadLibraryExW(path, nullptr, LOAD_LIBRARY_AS_DATAFILE);
     if (module) {
         HRSRC found = FindResourceW(module, MAKEINTRESOURCEW(1), MAKEINTRESOURCEW(16));
@@ -388,7 +386,7 @@ static const WCHAR *attribute_of(XNODE *e, const WCHAR *name)
     return a ? (a->Value ? a->Value : L"") : nullptr;
 }
 
-/* a path or a file address of a picture as a path of the guest, null for one that is not a file. */
+/* a file path or file:// address as a guest path, NULL for anything that is not a file. */
 static WCHAR *picture_path(const WCHAR *source)
 {
     if (!source || !source[0])
@@ -408,7 +406,7 @@ static WCHAR *picture_path(const WCHAR *source)
     char *bytes = CbAlloc(n * 3 + 1);
     if (!bytes)
         return nullptr;
-    /* an address is percent encoded UTF-8 and a path is already text, which is made UTF-8 first to share the rest. */
+    /* addresses are percent encoded UTF-8; paths are made UTF-8 too so both share the rest. */
     SIZE_T k = 0;
     for (SIZE_T i = 0; i < n; i++) {
         if (address && p[i] == L'%' && i + 2 < n) {
@@ -531,7 +529,7 @@ static HRESULT read_content(IXmlDocument *document, CONTENT *c)
             const WCHAR *args = attribute_of(n, L"arguments");
             const WCHAR *label = attribute_of(n, L"content");
             const WCHAR *input = attribute_of(n, L"hint-inputId");
-            /* a protocol button opens the address and a system one is the desktop's own: neither calls the program. */
+            /* protocol buttons open the address and system ones belong to the desktop: neither calls the program. */
             if (type && (!wcscmp(type, L"protocol") || !wcscmp(type, L"system")))
                 continue;
             ULONG i = c->ActionCount++;
@@ -563,7 +561,7 @@ static void table_add(TOAST *t)
     LeaveCriticalSection(&g_table_lock);
 }
 
-/* leaves the table, with the reference the table held given to the caller to release. */
+/* the table's reference passes to the caller, who releases it. */
 static BOOL table_remove(TOAST *t)
 {
     BOOL found = FALSE;
@@ -813,7 +811,7 @@ static void pset_destroy(WRT_OBJECT *object)
     CbFree(s);
 }
 
-/* the interfaces of a property set are reached through IPropertySet, which has no methods of its own. */
+/* the property set's interfaces are reached through IPropertySet, which adds no methods. */
 static const WRT_CLASS pset_class = {g_set_class, 2, {&IID_IPropertySet, &IID_IInspectableMap}, 0, pset_destroy};
 
 static PSET *pset_new(void)
@@ -1157,7 +1155,7 @@ static void raise_failed(TOAST *t, HRESULT error)
 
 /* ------------------------------------------------------------------ activation through the application's COM server */
 
-/* activate.c: the activator of an application, and its callback called. */
+/* in activate.c. */
 BOOL CbActivateApplication(const WCHAR *aumid, const WCHAR *arguments, const WCHAR *key, const WCHAR *value);
 
 typedef struct ACTIVATION {
@@ -1173,7 +1171,7 @@ static void activation_free(ACTIVATION *a)
     CbFree(a);
 }
 
-/* a thread of its own, for the program that serves the activation may take a while to start. */
+/* on its own thread, since the server may take a while to start. */
 static DWORD WINAPI activation_thread(void *param)
 {
     ACTIVATION *a = param;
@@ -1182,7 +1180,7 @@ static DWORD WINAPI activation_thread(void *param)
     return 0;
 }
 
-/* the toast was acted on and its program has nothing registered to hear it: its COM server is called. */
+/* the toast was acted on and its program registered no handler: call its COM server. */
 static void activate_through_server(TOAST *t, LONG action, const WCHAR *typed)
 {
     ACTIVATION *a = CbAlloc(sizeof(*a));
@@ -1220,7 +1218,7 @@ static void dispatch(const MIME_SHELL_EVENT *e)
         return;
     switch (e->Kind) {
     case MIME_SHELL_EVENT_TOAST_ACTIVATED:
-        /* the desktop closes a notification that was answered, so the toast is done with. */
+        /* the desktop closes an answered notification, so the toast is done. */
         if (table_remove(t))
             toast_unref(t);
         if (has_handlers(&t->Activated, &t->Lock))
@@ -1243,7 +1241,7 @@ static void dispatch(const MIME_SHELL_EVENT *e)
     }
     case MIME_SHELL_EVENT_TOAST_DISMISSED:
         if (e->Arg == 2) {
-            /* a popup that timed out stays in the history, as in the action center, with no popup left to hide. */
+            /* a timed out popup stays in the history, as in the action center, with no popup left to hide. */
             EnterCriticalSection(&g_table_lock);
             t->HostId = 0;
             LeaveCriticalSection(&g_table_lock);
@@ -1285,7 +1283,6 @@ static void ensure_event_thread(void)
 
 /* ------------------------------------------------------------------ showing and hiding */
 
-/* what the notification server is told of a toast. */
 static void fill_message(MimeShellToast *m, NOTIFIER *n, TOAST *t, const CONTENT *c)
 {
     m->op = MIME_SHELL_TOAST_SHOW;
@@ -1323,7 +1320,7 @@ static HRESULT show_toast(NOTIFIER *n, TOAST *t)
         content_free(&c);
         return hr;
     }
-    /* a toast with no popup only goes to the history, which the desktop's notification server has no room for. */
+    /* a toast without a popup only goes to the history, which the desktop's notification server has no room for. */
     BOOL quiet = t->SuppressPopup;
     MimeShellToast *m = nullptr;
     if (!quiet) {
@@ -1335,7 +1332,7 @@ static HRESULT show_toast(NOTIFIER *n, TOAST *t)
         memset(m, 0, sizeof(*m));
         fill_message(m, n, t, &c);
     }
-    /* an earlier toast of the same tag and group is replaced by the host; the table forgets it too. */
+    /* the host replaces an earlier toast with the same tag and group; the table forgets it too. */
     TOAST *replaced = nullptr;
     if (t->Tag && t->Tag[0]) {
         init();
@@ -1371,7 +1368,7 @@ static HRESULT show_toast(NOTIFIER *n, TOAST *t)
         return S_OK;
     }
     ensure_event_thread();
-    /* the table has the toast before the host can answer for it, the number being filled in when the call returns. */
+    /* add to the table before the host can answer; the id is filled in when the call returns. */
     if (table_remove(t))
         toast_unref(t);
     t->HostId = 0;
@@ -1410,7 +1407,7 @@ static HRESULT hide_toast(TOAST *t)
     return r < 0 ? status_hr(r) : S_OK;
 }
 
-/* the toasts that have no popup on the host, in the history only, that a removal names. */
+/* drops the history-only toasts a removal names; the host has no popup for them. */
 static void forget_quiet(const WCHAR *aumid, const WCHAR *tag, const WCHAR *group)
 {
     TOAST *gone = nullptr;
@@ -1516,7 +1513,7 @@ static void vector_destroy(WRT_OBJECT *object)
 
 static const WRT_CLASS vector_class = {g_vector_class, 1, {&IID_IVectorViewToast}, 0, vector_destroy};
 
-/* the toasts this process shows of an application, in the order they were shown. */
+/* this process's toasts for an application, oldest first. */
 static HRESULT new_history_vector(const WCHAR *aumid, IVectorViewPtr **out)
 {
     VECTOR *v = CbAlloc(sizeof(*v));
@@ -1646,7 +1643,7 @@ static void notifier_destroy(WRT_OBJECT *object)
 static const WRT_CLASS notifier_class = {g_notifier_class, 2, {&IID_IToastNotifier, &IID_IToastNotifier2}, 0,
                                          notifier_destroy};
 
-/* a notifier of an application, the process's own when no id is given. */
+/* the process's own notifier when no id is given. */
 static HRESULT notifier_new(const WCHAR *aumid, IToastNotifier **out)
 {
     *out = nullptr;
@@ -1680,7 +1677,7 @@ static HISTORY *history_of(void *iface)
     return (HISTORY *)((WRT_IFACE *)iface)->Owner;
 }
 
-/* the application whose toasts a history call is about: the one named, else the history's own, else the process's. */
+/* the named application, else the history's own, else the process's. */
 static WCHAR *history_aumid(HISTORY *h, HSTRING named)
 {
     if (named)
@@ -1936,7 +1933,7 @@ static BOOL CALLBACK make_manager(PINIT_ONCE o, PVOID parameter, PVOID *context)
 
 HRESULT CbToastManagerFactory(REFIID riid, void **factory)
 {
-    /* without a desktop that shows notifications the class is not there for a program to use. */
+    /* without a desktop that shows notifications, the class does not exist for programs. */
     if (!host_can_show()) {
         *factory = nullptr;
         return REGDB_E_CLASSNOTREG;

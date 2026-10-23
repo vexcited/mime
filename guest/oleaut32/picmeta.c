@@ -1,7 +1,4 @@
-/*
- * metafiles for pictures: windows metafiles, with or without the placeable header that tells their size, and
- * enhanced metafiles.
- */
+/* metafiles for pictures: windows metafiles, with or without a placeable header giving their size, and enhanced metafiles. */
 #include "picture.h"
 
 #define WMF_HEADER_BYTES 18
@@ -44,7 +41,7 @@ static void put_record(BYTE *p, UINT function, int first, int second)
     put_u16(p + 8, (UINT)second & 0xFFFF);
 }
 
-/* the records are there already when the data goes straight from the header to a window origin and extent. */
+/* true when the first two records after the header already set the window origin and extent. */
 static BOOL has_window_records(const BYTE *data, ULONG size)
 {
     if (size < WMF_HEADER_BYTES + 2 * WMF_RECORD_BYTES)
@@ -54,7 +51,7 @@ static BOOL has_window_records(const BYTE *data, ULONG size)
            get_u32(second) == WMF_WORDS_PER_RECORD && get_u16(second + 4) == WMF_SET_WINDOW_EXT;
 }
 
-/* the metafile of the bytes, given the area its coordinates cover when a placeable header said what that is. */
+/* area, from a placeable header, is the extent the coordinates cover, or NULL. */
 static HRESULT make_metafile(const BYTE *data, ULONG size, const RECT *area, HMETAFILE *result)
 {
     *result = nullptr;

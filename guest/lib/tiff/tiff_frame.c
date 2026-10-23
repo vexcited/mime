@@ -158,7 +158,6 @@ int mime_tiff_frame_open(const MimeTiffIfd *ifd, MimeTiffFrame *f)
     else
         f->alpha = MIME_TIFF_ALPHA_UNSPECIFIED;
 
-    /* ycbcr. */
     f->ycbcr_h = f->ycbcr_v = 2;
     if (mime_tiff_ifd_find(ifd, MIME_TIFF_TAG_YCBCR_SUBSAMPLING, &e) == MIME_TIFF_OK) {
         uint64_t sh, sv;
@@ -203,7 +202,6 @@ int mime_tiff_frame_open(const MimeTiffIfd *ifd, MimeTiffFrame *f)
             memcpy(f->reference_black_white, c, sizeof c);
     }
 
-    /* palette. */
     if (f->photometric == MIME_TIFF_PHOTOMETRIC_PALETTE && f->bits_per_sample >= 1 && f->bits_per_sample <= 16 &&
         mime_tiff_ifd_find(ifd, MIME_TIFF_TAG_COLOR_MAP, &f->color_map) == MIME_TIFF_OK && f->color_map.data &&
         f->color_map.type == MIME_TIFF_TYPE_SHORT) {
@@ -212,13 +210,12 @@ int mime_tiff_frame_open(const MimeTiffIfd *ifd, MimeTiffFrame *f)
             f->palette_entries = (uint32_t)n;
     }
 
-    /* jpeg tables. */
     if (mime_tiff_ifd_find(ifd, MIME_TIFF_TAG_JPEG_TABLES, &e) == MIME_TIFF_OK && e.data) {
         f->jpeg_tables = e.data;
         f->jpeg_tables_size = e.size;
     }
 
-    /* layout of the strips or tiles. */
+    /* strip or tile layout. */
     uint64_t per_plane;
     uint16_t offsets_tag, counts_tag;
     if (mime_tiff_ifd_uint(ifd, MIME_TIFF_TAG_TILE_WIDTH, &w)) {
@@ -256,7 +253,7 @@ int mime_tiff_frame_open(const MimeTiffIfd *ifd, MimeTiffFrame *f)
         f->byte_counts.count >= total)
         f->has_byte_counts = true;
 
-    /* the layout of decoded pixels. */
+    /* decoded pixel layout. */
     f->out_bits_per_sample = f->bits_per_sample;
     f->out_samples_per_pixel = f->samples_per_pixel;
     f->out_photometric = f->photometric;

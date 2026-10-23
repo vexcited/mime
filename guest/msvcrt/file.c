@@ -6,7 +6,7 @@
 
 wchar_t *MsvcrtPathToW(const char *path);
 
-/* converts a result path back to the file api code page into buf, allocating when buf is NULL. */
+/* converts a path to the file api code page into buf, allocating when buf is NULL. */
 static char *path_to_a(const wchar_t *w, char *buf, size_t size, int alloc_min)
 {
     UINT cp = AreFileApisANSI() ? CP_ACP : CP_OEMCP;
@@ -237,7 +237,7 @@ int __cdecl _rmdir(const char *path)
     return r;
 }
 
-/* sets the "=X:" variable of the drive of the new current directory, like msvcrt. */
+/* sets the "=X:" variable for the new current directory's drive, like msvcrt. */
 static void set_drive_variable(void)
 {
     wchar_t cwd[MAX_PATH];
@@ -735,7 +735,7 @@ static int has_exec_ext(const wchar_t *name)
            !_wcsicmp(dot, L".com");
 }
 
-/* msvcrt's __wdtoxmode: the unix mode of file attributes, owner bits copied to group and others. */
+/* msvcrt's __wdtoxmode: unix mode bits from file attributes, owner bits copied to group and others. */
 unsigned short MsvcrtAttribToMode(DWORD attributes, const wchar_t *name)
 {
     unsigned short mode;
@@ -964,7 +964,7 @@ int __cdecl _fstati64(int fd, struct _stat64 *st)
     return fstat_fd(fd, st);
 }
 
-/* the 64 bit msvcrt's _stat uses 64 bit times and a 32 bit size. */
+/* the 64-bit msvcrt's _stat uses 64-bit times and a 32-bit size. */
 int __cdecl _stat(const char *path, struct _stat64i32 *st)
 {
     struct _stat64 s;
@@ -1001,7 +1001,7 @@ int __cdecl _fstat32(int fd, struct _stat32 *st)
     return to_32(fstat_fd(fd, &s), &s, st);
 }
 
-/* the layouts that pair 32 bit times with a 64 bit size. */
+/* the layouts that pair 32-bit times with a 64-bit size. */
 struct _stat32i64 {
     _dev_t st_dev;
     _ino_t st_ino;
@@ -1091,7 +1091,7 @@ struct _wfinddata64_t {
     wchar_t name[260];
 };
 
-/* the 64 bit msvcrt's _finddata_t: 64 bit times and a 32 bit size. */
+/* the 64-bit msvcrt's _finddata_t: 64-bit times and a 32-bit size. */
 struct _finddata64i32_t {
     unsigned attrib;
     __time64_t time_create;
@@ -1149,7 +1149,7 @@ static void find_fail(void)
     }
 }
 
-/* the narrow name of a find result in the file api code page; 0 when it does not convert. */
+/* a find result's narrow name in the file api code page; 0 when it does not convert. */
 static int find_name_a(const WIN32_FIND_DATAW *fd, char *name)
 {
     UINT cp = AreFileApisANSI() ? CP_ACP : CP_OEMCP;
@@ -1350,7 +1350,7 @@ int __cdecl _wfindnext(intptr_t h, struct _wfinddata64i32_t *out)
     return 0;
 }
 
-/* the layouts with 32 bit times, with a 32 bit size and with a 64 bit one. */
+/* the layouts with 32-bit times, with a 32-bit or a 64-bit size. */
 struct _finddata32_t {
     unsigned attrib;
     __time32_t time_create;

@@ -4,7 +4,7 @@
  */
 #include "odbc32_private.h"
 
-/* sqlstate for odbc 3 applications, for odbc 2 applications, and message. */
+/* the odbc 3 sqlstate, the odbc 2 sqlstate and the message. */
 static const struct {
     PCWSTR state3;
     PCWSTR state2;
@@ -139,7 +139,7 @@ static void OdbcRead(const OdbcHandle *h, USHORT index, OdbcRecord *record)
     OdbcMessage(error, record->message, ODBC_MESSAGE_MAX);
 }
 
-/* copies a record to the caller in utf-16 or ansi, as SQLGetDiagRec and SQLError do. */
+/* copies a record out in utf-16 or ansi, as SQLGetDiagRec and SQLError do. */
 static SQLRETURN OdbcOutputRecord(const OdbcRecord *record, SQLPOINTER state, SQLINTEGER *native, SQLPOINTER message,
                                   SQLSMALLINT message_max, SQLSMALLINT *message_length, BOOL ansi)
 {
@@ -250,7 +250,7 @@ DECLSPEC_EXPORT SQLRETURN SQL_API SQLErrorA(SQLHENV env, SQLHDBC dbc, SQLHSTMT s
 
 /* ------------------------------------------------------------------ fields */
 
-/* copies a string field; lengths are in bytes for the unicode function. */
+/* lengths are in bytes for the unicode function. */
 static SQLRETURN OdbcOutputField(PCWSTR text, SQLPOINTER value, SQLSMALLINT buffer_length, SQLSMALLINT *length,
                                  BOOL ansi)
 {

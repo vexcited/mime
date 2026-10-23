@@ -1,6 +1,6 @@
 /*
- * kernel mode image loader for drivers, and the system dlls (ntdll.dll,
- * and mimex86.dll for x86 and x64 programs) mapped into every process.
+ * kernel mode image loader for drivers, and the system dlls mapped into
+ * every process: ntdll.dll, and mimex86.dll for x86 and x64 programs.
  */
 #include "../ntos.h"
 
@@ -144,7 +144,6 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
         memcpy(base + sec[i].VirtualAddress, file + sec[i].PointerToRawData, raw);
     }
 
-    /* relocate. */
     LONG64 delta = (LONG64)((ULONG_PTR)base - info.ImageBase);
     IMAGE_DATA_DIRECTORY rel = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
     for (ULONG off = 0; NT_SUCCESS(status) && delta && off + 8 <= rel.Size;) {
@@ -159,7 +158,7 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
         off += block->SizeOfBlock;
     }
 
-    /* resolve imports against the kernel. */
+    /* imports resolve against the kernel. */
     IMAGE_DATA_DIRECTORY imp = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     PVOID kernel = (PVOID)HalBootInfo->kernel_virt;
     for (PIMAGE_IMPORT_DESCRIPTOR d = imp.VirtualAddress ? (PIMAGE_IMPORT_DESCRIPTOR)(base + imp.VirtualAddress) : nullptr;
@@ -323,7 +322,7 @@ NTSTATUS PspInitializeSystemDll(void)
     return STATUS_SUCCESS;
 }
 
-/* the system dll a program of this machine runs on, NULL when there is none. */
+/* the system dll this machine's programs run on, or NULL. */
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine)
 {
     if (machine == MIME_NATIVE_MACHINE)

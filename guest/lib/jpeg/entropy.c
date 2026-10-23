@@ -1,13 +1,13 @@
 /*
- * the entropy coding of the encoder: the bit writer, the huffman tables, and the sequential and progressive scans.
+ * the encoder's entropy coding: the bit writer, huffman tables, and sequential and progressive scans.
  *
- * the tables made for an image are built from the counts of a first pass over the same blocks, with the usual
- * huffman merging and, when a code comes out longer than the 16 bits the format allows, the counts halved and the
- * merge done again. a code of only ones is not allowed, so one symbol past the real ones takes it and is dropped.
+ * tables made for an image come from the counts of a first pass over the same blocks, merged the usual huffman way
+ * and kept within the 16 bit code limit. an all ones code is not allowed, so a dummy symbol past the real ones takes
+ * it and is dropped.
  */
 #include "enc.h"
 
-/* ------------------------------------------------------------------ the file */
+/* ------------------------------------------------------------------ output */
 
 static bool ensure(Enc *e, size_t n)
 {
@@ -58,7 +58,7 @@ void enc_put_u16(Enc *e, unsigned v)
     }
 }
 
-/* the complete bytes of the accumulator, with a zero after every 0xff. */
+/* writes out the accumulator's complete bytes, stuffing a zero after every 0xff. */
 static void drain(Enc *e)
 {
     if (!ensure(e, 16)) {
@@ -84,7 +84,7 @@ static inline void put_bits(Enc *e, uint32_t v, int n)
         drain(e);
 }
 
-/* ends the entropy coded segment on a byte, the missing bits being ones. */
+/* ends the entropy coded segment on a byte boundary, padding with one bits. */
 static void flush_bits(Enc *e)
 {
     if (e->counting)
@@ -115,7 +115,7 @@ void huff_slot_clear(HuffSlot *s)
     __builtin_memset(s->freq, 0, sizeof s->freq);
 }
 
-/* the codes of a table in canonical order: the shortest first, a longer one being the previous plus one, shifted. */
+/* canonical codes: shortest first, each the previous plus one, shifted when the length grows. */
 static void assign_codes(HuffSlot *s)
 {
     int code = 0, k = 0;
@@ -136,7 +136,7 @@ void huff_slot_standard(HuffSlot *s, const JpegHuffSpec *spec)
     assign_codes(s);
 }
 
-/* by weight, then by the real count, and for the rest the larger symbol first, so the reserved symbol merges first. */
+/* sorts by weight, then real count, then larger symbol first, so the reserved symbol merges first. */
 static void sort_by_weight(int *idx, int m, const uint32_t *f, const uint32_t *real)
 {
     for (int i = 1; i < m; i++) {
@@ -154,9 +154,9 @@ static void sort_by_weight(int *idx, int m, const uint32_t *f, const uint32_t *r
 }
 
 /*
- * code lengths of at most 16 bits for the symbols with a count. when the plain merge goes deeper, the counts below
- * a floor are raised to it, the floor doubling until the codes fit: rare symbols then share the depth they get,
- * while the order of the lengths still follows the order of the counts.
+ * code lengths of at most 16 bits for the symbols that have a count. when the plain merge goes deeper, counts below
+ * a floor are raised to it, doubling the floor until the codes fit. rare symbols then share a depth, and the
+ * lengths still follow the order of the counts.
  */
 static void code_lengths(const uint32_t *counts, uint8_t *len)
 {
@@ -259,7 +259,7 @@ void enc_write_dht(Enc *e, int cls, int id, const HuffSlot *s)
     enc_put_bytes(e, s->spec.vals, (size_t)s->spec.count);
 }
 
-/* ------------------------------------------------------------------ the pieces of a scan */
+/* ------------------------------------------------------------------ scan pieces */
 
 static unsigned comp_id(const Enc *e, int i)
 {
@@ -282,7 +282,7 @@ static void write_sos(Enc *e, const int *ci, int ns, int ss, int se, int ah, int
     enc_put_u8(e, (unsigned)(ah << 4 | al));
 }
 
-/* after every restart interval of MCUs: the marker, with the predictions starting again. */
+/* after each restart interval: the marker, and the predictions start over. */
 static void restart_marker(Enc *e)
 {
     if (e->counting)
@@ -311,7 +311,7 @@ static void code_dc(Enc *e, HuffSlot *dc, int *pred, int value)
         put_bits(e, (uint32_t)(diff < 0 ? diff - 1 : diff), n);
 }
 
-/* the bits of the coefficients that are not zero, bit k for the coefficient k in zigzag order. */
+/* bit k is set when zigzag coefficient k is nonzero. */
 static inline uint64_t nonzero_mask(const int16_t *zz)
 {
 #ifdef MIME_JPEG_SSE2
@@ -331,7 +331,7 @@ static inline uint64_t nonzero_mask(const int16_t *zz)
 #endif
 }
 
-/* the symbols of a block that is only being counted for the tables. */
+/* counts a block's symbols for the tables, without writing it. */
 static void count_block_sequential(HuffSlot *dc, HuffSlot *ac, int *pred, const int16_t *blk)
 {
     int diff = blk[0] - *pred;
@@ -354,8 +354,8 @@ static void count_block_sequential(HuffSlot *dc, HuffSlot *ac, int *pred, const 
 }
 
 /*
- * a block to the file. the bits wait in a register of this function and the bytes go straight to the buffer, which
- * has room for the worst case of a block: 64 codes of up to 27 bits, every byte stuffed.
+ * writes a block. bits stay in a local register and bytes go straight to the buffer, which has room for a block's
+ * worst case: 64 codes of up to 27 bits, every byte stuffed.
  */
 static void write_block_sequential(Enc *e, HuffSlot *dc, HuffSlot *ac, int *pred, const int16_t *blk)
 {
@@ -418,7 +418,7 @@ static int slots_needed(const Enc *e)
     return n;
 }
 
-/* one scan of the blocks of the components ci, which is all of them in the order of the MCUs or only one. */
+/* one scan over the blocks of components ci: all of them in MCU order, or a single one. */
 static void sequential_pass(Enc *e, const int *ci, int ns)
 {
     uint32_t count = 0;
@@ -527,7 +527,7 @@ int enc_entropy_sequential(Enc *e)
 
 typedef struct Progress {
     uint32_t eobrun;
-    uint8_t pending[4096]; /* the correction bits that follow the run of empty blocks. */
+    uint8_t pending[4096]; /* correction bits that follow the run of empty blocks. */
     unsigned npending;
 } Progress;
 
@@ -699,7 +699,7 @@ static int run_scan(Enc *e, const ScanSpec *sc)
         }
     }
     if (sc->ss > 0) {
-        /* a scan of AC coefficients names the table of its one component as its AC table 0. */
+        /* an AC scan names its one component's table as AC table 0. */
         int ci[1] = {sc->ci[0]};
         enc_put_u8(e, 0xFF);
         enc_put_u8(e, M_SOS);
@@ -721,8 +721,8 @@ static int run_scan(Enc *e, const ScanSpec *sc)
 }
 
 /*
- * the order of the scans: the DC of every component first with one bit dropped, then the low and the high AC
- * coefficients of each component with one bit dropped, then the bit of each that was dropped.
+ * scan order: the DC of every component with one bit dropped, then the low and high AC coefficients of each
+ * component with one bit dropped, then each dropped bit.
  */
 int enc_entropy_progressive(Enc *e)
 {

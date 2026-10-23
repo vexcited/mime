@@ -1,11 +1,11 @@
 /*
- * reading images: files and streams are decoded by the imaging component, one frame at a time, into the pixel
- * formats gdi+ has. an image of several frames, a gif or a tiff, keeps its decoder to select among them.
+ * reading images: WIC decodes files and streams one frame at a time into gdi+ pixel formats. a multi-frame
+ * image, a gif or a tiff, keeps its decoder to switch frames.
  */
 #include "gp_private.h"
 #include <mime/win32/wincodec.h>
 
-/* ------------------------------------------------------------------ the imaging component */
+/* ------------------------------------------------------------------ WIC */
 
 typedef struct WicSession {
     IWICImagingFactory *factory;
@@ -14,7 +14,7 @@ typedef struct WicSession {
 static GpStatus wic_open(WicSession *s)
 {
     s->factory = nullptr;
-    /* a thread that has not joined com does it here, one that did in another mode is left as it is */
+    /* joins com if the thread has not, a thread already in another mode is left alone. */
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     HRESULT hr = CoCreateInstance(&CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory,
                                   (void **)&s->factory);
@@ -38,7 +38,7 @@ GpStatus gp_wic_factory(IWICImagingFactory **factory)
     return st;
 }
 
-/* ------------------------------------------------------------------ the source of the frames */
+/* ------------------------------------------------------------------ frame sources */
 
 typedef struct GFrameSource {
     BYTE *data;
@@ -46,19 +46,19 @@ typedef struct GFrameSource {
     IWICBitmapDecoder *decoder;
     GUID container;
     UINT count;
-    const GUID *dimension; /* the dimension the frames are along */
-    /* gif */
+    const GUID *dimension; /* the frame dimension. */
+    /* gif. */
     BOOL gif;
     UINT screen_w, screen_h;
     UINT background;
-    INT transparent;       /* the index of the clear color of the canvas, -1 for none */
-    BYTE *canvas;          /* the picture so far, one index per pixel */
-    BYTE *saved;           /* for the frames that restore the previous picture */
-    INT composed;          /* the frame the canvas is at, -1 for none */
-    WICColor palette[256]; /* the palette of the canvas */
+    INT transparent;       /* canvas transparent index, -1 for none. */
+    BYTE *canvas;          /* the picture so far, one index per pixel. */
+    BYTE *saved;           /* for frames that restore the previous picture. */
+    INT composed;          /* the frame the canvas holds, -1 for none. */
+    WICColor palette[256];
     UINT palette_count;
-    UINT prev_l, prev_t, prev_w, prev_h, prev_disposal; /* the frame drawn last */
-    UINT *delays;          /* in 1/100 s, one per frame */
+    UINT prev_l, prev_t, prev_w, prev_h, prev_disposal; /* the frame drawn last. */
+    UINT *delays;          /* in 1/100 s, one per frame. */
     UINT loops;
     BOOL has_loops;
 } GFrameSource;
@@ -91,7 +91,7 @@ typedef struct FormatMap {
     PixelFormat gp;
 } FormatMap;
 
-/* the pixel formats gdi+ keeps as they are, by the format of the imaging component that holds them. */
+/* the WIC formats gdi+ keeps as they are. */
 static const FormatMap g_formats[] = {
     {&GUID_WICPixelFormat1bppIndexed, PixelFormat1bppIndexed},
     {&GUID_WICPixelFormat4bppIndexed, PixelFormat4bppIndexed},
@@ -157,7 +157,7 @@ static PixelFormat gp_format_of(const GUID *wic, const GUID **target)
             return g_formats[i].gp;
         }
     }
-    /* two bit pictures grow to four, everything else becomes argb */
+    /* 2 bpp grows to 4 bpp, everything else becomes argb. */
     if (guid_equal(wic, &GUID_WICPixelFormat2bppIndexed)) {
         *target = &GUID_WICPixelFormat4bppIndexed;
         return PixelFormat4bppIndexed;
@@ -185,7 +185,7 @@ static const GUID *raw_format_of(const GUID *container)
     return &ImageFormatBMP;
 }
 
-/* ------------------------------------------------------------------ a palette */
+/* ------------------------------------------------------------------ palettes */
 
 static ColorPalette *palette_from_wic(IWICImagingFactory *factory, IWICBitmapSource *source, UINT bits)
 {
@@ -228,7 +228,7 @@ static ColorPalette *gray_palette(UINT bits)
     return p;
 }
 
-/* ------------------------------------------------------------------ the properties of a frame */
+/* ------------------------------------------------------------------ frame properties */
 
 static char lower_of(char c) { return c >= 'A' && c <= 'Z' ? (char)(c + 32) : c; }
 
@@ -264,7 +264,7 @@ static GProperty *prop_add(GBitmap *b, ULONG id, WORD type, ULONG length, const 
     return p;
 }
 
-/* the types of the exif property values. */
+/* exif value types. */
 enum { T_BYTE = 1, T_ASCII = 2, T_SHORT = 3, T_LONG = 4, T_RATIONAL = 5, T_UNDEFINED = 7, T_SLONG = 9, T_SRATIONAL = 10 };
 
 static void prop_from_variant(GBitmap *b, ULONG id, const PROPVARIANT *v)
@@ -338,7 +338,7 @@ static void prop_from_variant(GBitmap *b, ULONG id, const PROPVARIANT *v)
     }
 }
 
-/* the items of an ifd handler, with the ifds below it flattened in. */
+/* nested ifds are flattened in. */
 static void props_from_ifd(GBitmap *b, IWICMetadataReader *ifd, INT depth)
 {
     if (depth > 4)
@@ -381,7 +381,7 @@ static void props_from_blocks(GBitmap *b, IWICBitmapFrameDecode *frame, const GU
         GUID f;
         if (SUCCEEDED(r->lpVtbl->GetMetadataFormat(r, &f))) {
             if (guid_equal(&f, &GUID_MetadataFormatApp1)) {
-                /* the exif block holds the ifd */
+                /* the exif block holds the ifd. */
                 UINT items = 0;
                 r->lpVtbl->GetCount(r, &items);
                 for (UINT k = 0; k < items; k++) {
@@ -405,7 +405,7 @@ static void props_from_blocks(GBitmap *b, IWICBitmapFrameDecode *frame, const GU
                 memset(&id, 0, sizeof(id));
                 memset(&v, 0, sizeof(v));
                 if (SUCCEEDED(r->lpVtbl->GetValueByIndex(r, 0, nullptr, &id, &v)) && v.vt == VT_UI4) {
-                    /* the gamma as a rational, in hundred thousandths */
+                    /* gamma as a rational, in hundred thousandths. */
                     UINT32 q[2] = {v.ulVal, 100000};
                     prop_add(b, 0x0301, T_RATIONAL, 8, q);
                 }
@@ -501,7 +501,7 @@ static GpStatus gif_setup(WicSession *w, GFrameSource *s)
         }
         pal->lpVtbl->Release(pal);
     }
-    /* a file with no global color table has the colors of its first frame */
+    /* a file with no global color table uses the colors of its first frame. */
     if (!s->palette_count && s->count) {
         IWICBitmapFrameDecode *first = nullptr;
         if (SUCCEEDED(s->decoder->lpVtbl->GetFrame(s->decoder, 0, &first))) {
@@ -566,7 +566,6 @@ static void gif_clear(GFrameSource *s, UINT l, UINT t, UINT w, UINT h)
     }
 }
 
-/* draws one frame onto the canvas. */
 static GpStatus gif_draw_frame(WicSession *w, GFrameSource *s, UINT index, UINT *l, UINT *t, UINT *fw, UINT *fh,
                                UINT *disposal)
 {
@@ -588,7 +587,7 @@ static GpStatus gif_draw_frame(WicSession *w, GFrameSource *s, UINT index, UINT 
         frame->lpVtbl->Release(frame);
         return OutOfMemory;
     }
-    /* the colors of the frame, when its own palette is not the one of the canvas the indexes are looked up */
+    /* when the frame has its own palette, each index is looked up in the canvas palette. */
     WICColor local[256];
     UINT local_count = 0;
     BOOL same = TRUE;
@@ -626,7 +625,6 @@ static GpStatus gif_draw_frame(WicSession *w, GFrameSource *s, UINT index, UINT 
             if (tr >= 0 && v == tr)
                 continue;
             if (!same && v < local_count) {
-                /* the nearest color of the canvas palette */
                 UINT best = v, best_d = ~0u;
                 for (UINT k = 0; k < s->palette_count; k++) {
                     INT dr = (INT)((local[v] >> 16) & 255) - (INT)((s->palette[k] >> 16) & 255);
@@ -648,7 +646,7 @@ static GpStatus gif_draw_frame(WicSession *w, GFrameSource *s, UINT index, UINT 
     return st;
 }
 
-/* the canvas as it is after the frame, from the start when the frame is not the next one. */
+/* recomposes from the start when the frame is not the next one. */
 static GpStatus gif_compose(WicSession *w, GFrameSource *s, UINT index)
 {
     UINT l = 0, t = 0, fw = 0, fh = 0, disposal = 0;
@@ -665,7 +663,7 @@ static GpStatus gif_compose(WicSession *w, GFrameSource *s, UINT index)
             else if (s->prev_disposal == 3)
                 memcpy(s->canvas, s->saved, (SIZE_T)s->screen_w * s->screen_h);
         }
-        /* the frame may need the canvas back after it */
+        /* the frame may need the canvas restored after it. */
         memcpy(s->saved, s->canvas, (SIZE_T)s->screen_w * s->screen_h);
         GpStatus st = gif_draw_frame(w, s, i, &l, &t, &fw, &fh, &disposal);
         if (st != Ok) {
@@ -799,7 +797,7 @@ static GpStatus decode_frame(WicSession *w, GFrameSource *s, UINT index, GBitmap
                        guid_equal(&wic_format, &GUID_WICPixelFormat8bppGray)) {
                 p = gray_palette(guid_equal(&wic_format, &GUID_WICPixelFormat8bppGray) ? 8 : 4);
                 if (p && guid_equal(&wic_format, &GUID_WICPixelFormat2bppGray)) {
-                    /* four levels in a four bit picture: the levels of two bits are spread on the sixteen entries */
+                    /* 2 bpp gray in a 4 bpp picture: the four levels spread over the sixteen entries. */
                 }
             } else {
                 p = palette_from_wic(w->factory, (IWICBitmapSource *)frame, bits);
@@ -864,7 +862,7 @@ static BOOL metafile_signature(const BYTE *d, SIZE_T n)
     return FALSE;
 }
 
-/* a decoder for the bytes: the source takes the bytes over. */
+/* the source takes ownership of the bytes. */
 static GpStatus open_source(WicSession *w, BYTE *data, SIZE_T size, GFrameSource **out)
 {
     GFrameSource *s = gp_alloc_zero(sizeof(*s));
@@ -914,7 +912,7 @@ static GpStatus open_source(WicSession *w, BYTE *data, SIZE_T size, GFrameSource
     return Ok;
 }
 
-/* opens the bytes again for a clone: the first frame is not decoded, the frame of the bitmap is selected. */
+/* for a clone: the first frame is not decoded, the bitmap's frame is selected instead. */
 GpStatus gp_source_reopen(const BYTE *data, SIZE_T size, GBitmap *dst, GBitmap **unused)
 {
     WicSession w;
@@ -1066,7 +1064,7 @@ static GpStatus load_stream(IStream *stream, GImage **image)
 
 static GpStatus bitmap_only(GImage *image, GpBitmap **bitmap)
 {
-    /* a bitmap constructor makes a bitmap of anything that is a picture */
+    /* a bitmap constructor makes a bitmap of any picture. */
     if (image->tag == GP_TAG_BITMAP) {
         *bitmap = image;
         return Ok;
@@ -1170,7 +1168,7 @@ GpStatus gp_select_frame(GBitmap *b, UINT index)
     GBitmap *n;
     st = decode_frame(&w, s, index, &n);
     if (st == Ok) {
-        /* the new picture takes the place of the old one in the same object */
+        /* the new picture replaces the old one in the same object. */
         load_props(&w, s, index, n);
         gp_free(b->owned);
         gp_free(b->palette);

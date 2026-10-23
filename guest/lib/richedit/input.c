@@ -435,7 +435,7 @@ void ReKeyDown(RE *e, UINT vk)
     }
 }
 
-/* ------------------------------------------------------------------ the mouse */
+/* ------------------------------------------------------------------ mouse */
 
 enum { SELECT_CHARS, SELECT_WORDS, SELECT_LINES };
 
@@ -562,7 +562,7 @@ void ReMouseTimer(RE *e)
     drag_to(e, x, y);
 }
 
-/* the wheel: ctrl zooms, shift does nothing, otherwise lines by whole notches. */
+/* ctrl zooms, shift does nothing, otherwise scroll lines by whole notches. */
 LRESULT ReWheel(RE *e, WPARAM wparam)
 {
     UINT keys = LOWORD(wparam);
@@ -611,7 +611,7 @@ LRESULT ReWheel(RE *e, WPARAM wparam)
     return 1;
 }
 
-/* ------------------------------------------------------------------ the clipboard */
+/* ------------------------------------------------------------------ clipboard */
 
 static UINT rtf_format(void)
 {

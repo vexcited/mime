@@ -1,6 +1,4 @@
-/*
- * processes and threads.
- */
+/* processes and threads. */
 #include "kernelbase_private.h"
 #include <mime/mitigation.h>
 
@@ -284,7 +282,7 @@ int WINAPI GetThreadPriority(HANDLE thread)
     THREAD_BASIC_INFORMATION info;
     if (!query_thread(thread, &info))
         return THREAD_PRIORITY_ERROR_RETURN;
-    /* the kernel reports the step over the process, and 16 either way for the limits. */
+    /* the kernel reports the offset from the process priority, and 16 for both limits. */
     if (info.BasePriority == 16)
         return THREAD_PRIORITY_TIME_CRITICAL;
     if (info.BasePriority == -16)
@@ -344,7 +342,7 @@ DWORD WINAPI GetPriorityClass(HANDLE process)
     }
 }
 
-/* the class a priority class flag names, 0 for none. */
+/* 0 when no priority class flag is set. */
 static UCHAR class_of_flag(DWORD flag)
 {
     if (flag & IDLE_PRIORITY_CLASS)
@@ -362,14 +360,14 @@ static UCHAR class_of_flag(DWORD flag)
     return 0;
 }
 
-/* sets the class of a process, and the real time one only with the privilege of raising priorities. */
+/* the real time class needs the privilege to raise priorities. */
 static NTSTATUS set_class(HANDLE process, UCHAR klass)
 {
     ULONG value = PROCESS_PRIORITY_CLASS_EX_CLASS | ((ULONG)klass << 16);
     NTSTATUS status = NtSetInformationProcess(process, (PROCESSINFOCLASS)MX_PROCESS_PRIORITY_CLASS_EX, &value, sizeof(value));
     if (status != STATUS_PRIVILEGE_NOT_HELD || klass != PROCESS_PRIORITY_CLASS_REALTIME)
         return status;
-    /* the privilege is there to be enabled for the call, as the user of a limited token has none. */
+    /* enable the privilege for the call, a limited token simply lacks it. */
     struct {
         ULONG Count;
         ULONG Low;
@@ -472,7 +470,7 @@ DWORD_PTR WINAPI SetThreadAffinityMask(HANDLE thread, DWORD_PTR mask)
 
 DWORD WINAPI SetThreadIdealProcessor(HANDLE thread, DWORD processor)
 {
-    /* the status of the call is the processor that was the ideal before. */
+    /* the call's status is the previous ideal processor. */
     NTSTATUS status = NtSetInformationThread(thread, ThreadIdealProcessor, &processor, sizeof(processor));
     if (NT_SUCCESS(status))
         return (DWORD)status;
@@ -539,7 +537,7 @@ BOOL WINAPI SetThreadGroupAffinity(HANDLE thread, const GROUP_AFFINITY *affinity
     return TRUE;
 }
 
-/* the kernel keeps the processor number in TPIDRRO_EL0, as windows on arm64 does. */
+/* the kernel keeps the processor number in TPIDRRO_EL0, as Windows on arm64 does. */
 DWORD WINAPI GetCurrentProcessorNumber(void)
 {
 #ifdef __aarch64__
@@ -649,7 +647,7 @@ void WINAPI GetStartupInfoA(LPSTARTUPINFOA info)
 
 /* ------------------------------------------------------------------ process creation */
 
-/* an ansi environment block as a unicode one, both ending with an empty string. */
+/* both blocks end with an empty string. */
 static PWSTR wide_environment(const char *ansi, SIZE_T *bytes)
 {
     SIZE_T n = 0;
@@ -679,9 +677,8 @@ static SIZE_T environment_bytes(PCWSTR env)
 #define PROCESS_CREATE_FLAGS_INHERIT_HANDLES 0x00000004
 
 /*
- * the list has windows' layout: how many attributes it holds, how many it has, which numbers they are,
- * the slot of the extended flags, then attributes of 24 bytes. a value stays with the caller, only the
- * extended flags are kept in the list.
+ * Windows' layout: the attribute count, the capacity, a mask of the attributes present, the extended flags slot, then
+ * 24 byte attributes. Values stay with the caller, only the extended flags are kept in the list.
  */
 typedef struct KB_ATTRIBUTE {
     DWORD_PTR Attribute;
@@ -702,7 +699,7 @@ struct _PROC_THREAD_ATTRIBUTE_LIST {
 #define KB_ATTRIBUTE_ADDITIVE 0x40000
 #define KB_ATTRIBUTE_INPUT 0x20000
 
-/* ------------------------------------------------------------------ the attributes of a new process */
+/* ------------------------------------------------------------------ new process attributes */
 
 #define KB_PS_PARENT_PROCESS 0x00060000u
 #define KB_PS_TOKEN 0x00060002u
@@ -742,7 +739,7 @@ typedef struct KB_PROCESS_ATTRIBUTES {
     const KB_SECURITY_CAPABILITIES *Capabilities;
 } KB_PROCESS_ATTRIBUTES;
 
-/* the creation flags of a program as the three words the kernel takes, or an error. */
+/* the mitigation creation flags as the three words the kernel takes, or an error. */
 static BOOL pack_mitigation(const KB_ATTRIBUTE *a, ULONG64 packed[3])
 {
     static const MIME_MITIGATION_FIELD fields[] = {MIME_MITIGATION_FIELDS};
@@ -775,7 +772,7 @@ static BOOL add_ps(KB_PROCESS_ATTRIBUTES *out, ULONG number, SIZE_T size, ULONG_
     return TRUE;
 }
 
-/* the PS_ATTRIBUTE_PROTECTION values of the levels of PROCESS_CREATION_PROTECTION. */
+/* maps PROCESS_CREATION_PROTECTION levels to PS_ATTRIBUTE_PROTECTION values. */
 static BOOL protection_value(DWORD level, UCHAR *value)
 {
     static const UCHAR values[] = {0x61, 0x52, 0x51, 0x31, 0x41, 0x62, 0x21, 0x12, 0x81};
@@ -789,10 +786,7 @@ static BOOL protection_value(DWORD level, UCHAR *value)
     return TRUE;
 }
 
-/*
- * what the attribute list of an extended startup information asks of the new process, as the attributes
- * the kernel takes. a handle list needs a creation that inherits handles.
- */
+/* turns an extended startup attribute list into kernel attributes. A handle list needs handle inheritance. */
 static DWORD convert_attributes(LPPROC_THREAD_ATTRIBUTE_LIST list, BOOL inherit, KB_PROCESS_ATTRIBUTES *out)
 {
     for (DWORD i = 0; i < list->Used; i++) {
@@ -861,7 +855,7 @@ static DWORD convert_attributes(LPPROC_THREAD_ATTRIBUTE_LIST list, BOOL inherit,
     return 0;
 }
 
-/* a token for an app container, made from the process token or the one of CreateProcessAsUser. */
+/* an app container token, made from the process token or the CreateProcessAsUser one. */
 static NTSTATUS create_container_token(HANDLE base, const KB_SECURITY_CAPABILITIES *c, PHANDLE out)
 {
     HANDLE own = nullptr, source = base;
@@ -879,12 +873,9 @@ static NTSTATUS create_container_token(HANDLE base, const KB_SECURITY_CAPABILITI
 }
 
 /*
- * the program, then its parameters as kernelbase hands them to the kernel:
- * environment, standard handles, window and console choices, title,
- * desktop and the c library's runtime data. there is no console window to
- * make, so a new console is the creator's; DETACHED_PROCESS gives none.
- * priority classes and the attribute list of an extended startup
- * information are accepted and not applied.
+ * builds the process parameters the kernel takes: environment, standard handles, window and console choices, title,
+ * desktop and the c runtime data. There is no console window to make, so a new console is the creator's and
+ * DETACHED_PROCESS gives none.
  */
 BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR command_line,
                                    LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit,
@@ -984,7 +975,7 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
     pp.CountCharsX = startup->dwXCountChars;
     pp.CountCharsY = startup->dwYCountChars;
     pp.FillAttribute = startup->dwFillAttribute;
-    /* handles named without inheriting them, or a parent to take them from, are not the child's: it gets none. */
+    /* the child gets the standard handles only when it inherits handles or a parent process is named. */
     BOOL named_parent = FALSE;
     if ((flags & EXTENDED_STARTUPINFO_PRESENT) && startup->cb >= sizeof(STARTUPINFOEXW) &&
         ((LPSTARTUPINFOEXW)startup)->lpAttributeList) {
@@ -1011,7 +1002,7 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
         pp.ConsoleHandle = CONSOLE_NEW;
     else if (flags & CREATE_NO_WINDOW)
         pp.ConsoleHandle = CONSOLE_NO_WINDOW;
-    /* a pseudo console is the console of the new process: the handle of its device is named for the kernel. */
+    /* a pseudo console becomes the new process's console, the kernel gets its device handle. */
     if ((flags & EXTENDED_STARTUPINFO_PRESENT) && startup->cb >= sizeof(STARTUPINFOEXW) &&
         ((LPSTARTUPINFOEXW)startup)->lpAttributeList) {
         LPPROC_THREAD_ATTRIBUTE_LIST list = ((LPSTARTUPINFOEXW)startup)->lpAttributeList;
@@ -1027,7 +1018,7 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
             }
         }
     }
-    /* a new process group starts with ctrl+c ignored, as on windows. */
+    /* a new process group starts with ctrl+c ignored, as on Windows. */
     if (flags & CREATE_NEW_PROCESS_GROUP)
         pp.ConsoleFlags = 1;
     else
@@ -1035,7 +1026,7 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
 
     ULONG process_flags = ((flags & CREATE_BREAKAWAY_FROM_JOB) ? PROCESS_CREATE_FLAGS_BREAKAWAY : 0) |
                           (inherit ? PROCESS_CREATE_FLAGS_INHERIT_HANDLES : 0);
-    /* the token of CreateProcessAsUser is an attribute of the process to make, so are those of the extended startup information. */
+    /* the CreateProcessAsUser token and the extended startup attributes become attributes of the new process. */
     KB_PROCESS_ATTRIBUTES attributes = {};
     HANDLE container = nullptr;
     if ((flags & EXTENDED_STARTUPINFO_PRESENT) && startup->cb >= sizeof(STARTUPINFOEXW) &&
@@ -1061,7 +1052,7 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
         return FALSE;
     }
     attributes.TotalLength = sizeof(SIZE_T) + attributes.Count * sizeof(PS_ATTRIBUTE);
-    /* the descriptors of the security attributes are the new objects' own. */
+    /* the security attributes' descriptors go to the new objects. */
     OBJECT_ATTRIBUTES process_oa, thread_oa;
     InitializeObjectAttributes(&process_oa, nullptr, 0, nullptr, process_sa ? process_sa->lpSecurityDescriptor : nullptr);
     InitializeObjectAttributes(&thread_oa, nullptr, 0, nullptr, thread_sa ? thread_sa->lpSecurityDescriptor : nullptr);
@@ -1078,7 +1069,7 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
         SetHandleInformation(info->hProcess, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
     if (thread_sa && thread_sa->bInheritHandle)
         SetHandleInformation(info->hThread, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-    /* the class a creation flag names is set before the program has run for long. */
+    /* set the priority class early, before the program has run for long. */
     UCHAR klass = class_of_flag(flags);
     if (klass) {
         set_class(info->hProcess, klass);
@@ -1281,9 +1272,8 @@ void KbNoteApc(void)
 }
 
 /*
- * the kernel ignores user apcs queued while the target thread runs until
- * something tests for them, so an alertable wait would sleep through them.
- * NtTestAlert delivers them on its way back; the counter tells whether any ran.
+ * the kernel ignores user apcs queued while the target thread runs until something tests for them, so an alertable wait
+ * would sleep through them. NtTestAlert delivers them, and the counter tells whether any ran.
  */
 BOOL KbRunPendingApcs(void)
 {
@@ -1352,8 +1342,8 @@ BOOL WINAPI IsWow64Process2(HANDLE process, USHORT *process_machine, USHORT *nat
 }
 
 /*
- * The machine that code the thread loads and runs as a guest is made for, unless it names one: the machine of the process
- * to begin with. It answers with the machine it had. Guess: the setting is the process's here, not the thread's.
+ * sets the machine the thread's guest code targets, the process machine by default, and returns the previous one.
+ * Guess: the setting is per process here, not per thread.
  */
 USHORT WINAPI Wow64SetThreadDefaultGuestMachine(USHORT machine)
 {
@@ -1405,7 +1395,7 @@ BOOL WINAPI GetProcessWorkingSetSize(HANDLE process, PSIZE_T minimum, PSIZE_T ma
     return TRUE;
 }
 
-/* the working set limits bind nothing, the flags of a process that has no hard limits. */
+/* the limits are not enforced, the flags say there are no hard limits. */
 DECLSPEC_EXPORT BOOL WINAPI GetProcessWorkingSetSizeEx(HANDLE process, PSIZE_T minimum, PSIZE_T maximum, PDWORD flags)
 {
     if (!minimum || !maximum || !flags) {
@@ -1465,9 +1455,9 @@ DWORD WINAPI WTSGetActiveConsoleSessionId(void)
 }
 
 /*
- * the level orders the process in a shutdown, the highest first, and the one flag, SHUTDOWN_NORETRY, spares it
- * the dialog of a program that does not answer. the kernel keeps both, as csrss does on windows, and answers
- * any other flag with the status csrss does, which the status table turns into error 641.
+ * the level orders processes at shutdown, highest first, and SHUTDOWN_NORETRY skips the dialog for a program that does
+ * not answer. The kernel keeps both, as csrss does on Windows, and rejects other flags with the csrss status, which
+ * maps to error 641.
  */
 BOOL WINAPI SetProcessShutdownParameters(DWORD level, DWORD flags)
 {
@@ -1701,7 +1691,7 @@ BOOL WINAPI InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST list,
     return ok;
 }
 
-/* the size an attribute's value must have, 0 for one that has no fixed size; or an error. */
+/* 0 when the value size is right, else an error code. */
 static DWORD attribute_size_error(DWORD_PTR attribute, PVOID value, SIZE_T size)
 {
     switch (attribute) {
@@ -1785,7 +1775,7 @@ BOOL WINAPI UpdateProcThreadAttribute(LPPROC_THREAD_ATTRIBUTE_LIST list, DWORD f
     }
     KB_ATTRIBUTE *slot = &list->Attributes[list->Used];
     if (attribute == PROC_THREAD_ATTRIBUTE_EXTENDED_FLAGS) {
-        /* the one attribute that adds up: its bits are kept in the list, in a slot of its own. */
+        /* the only attribute that accumulates: its bits live in a slot of their own in the list. */
         if (size != 4) {
             KbSetError(ERROR_BAD_LENGTH);
             return FALSE;
@@ -1899,8 +1889,8 @@ BOOL WINAPI SetProcessMitigationPolicy(PROCESS_MITIGATION_POLICY policy, PVOID b
 }
 
 /*
- * the mask of the options a program can ask for: the same two words as the creation flags, a field set
- * to 3 where windows takes it. the words are made here, not by the kernel.
+ * the options a program can ask for, in the same two words as the creation flags, with 3 in each field Windows takes.
+ * The words are built here, not by the kernel.
  */
 static void mitigation_options_mask(ULONG64 *mask, SIZE_T length)
 {
@@ -2158,7 +2148,7 @@ BOOL WINAPI IsThreadAFiber(void)
     return (NtCurrentTeb()->SameTebFlags & HAS_FIBER_DATA) != 0;
 }
 
-/* the counters of the kernel when it keeps them, else zeros: no i/o is counted per process yet. */
+/* the kernel's counters when it has them, else zeros: no i/o is counted per process yet. */
 BOOL WINAPI GetProcessIoCounters(HANDLE process, PIO_COUNTERS counters)
 {
     if (!counters) {

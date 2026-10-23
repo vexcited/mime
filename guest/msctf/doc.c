@@ -1,6 +1,6 @@
 /*
- * document managers: a stack of contexts, the top one the document a text service edits. a program makes one for
- * each place the user types, and the thread manager says which of them has the focus.
+ * document managers: a stack of contexts, the top one is what a text service edits. a program makes one for each
+ * place the user types, and the thread manager tracks which one has the focus.
  */
 #include "msctf_private.h"
 
@@ -138,7 +138,7 @@ static HRESULT STDMETHODCALLTYPE doc_pop(ITfDocumentMgr *This, DWORD flags)
         return E_INVALIDARG;
     if (!doc->Depth)
         return E_FAIL;
-    /* the base context stays unless all are asked for. */
+    /* the base context stays unless TF_POPF_ALL is given. */
     if (!(flags & TF_POPF_ALL) && doc->Depth == 1)
         return E_FAIL;
     do {
@@ -159,7 +159,7 @@ static HRESULT get_context(DOC *doc, ULONG index, ITfContext **context)
     if (!context)
         return E_INVALIDARG;
     if (index >= doc->Depth) {
-        /* nothing in the stack is not nothing: the empty context says so itself. */
+        /* an empty stack still hands out the empty context. */
         *context = CtxEmpty();
         return S_OK;
     }
@@ -192,8 +192,6 @@ static HRESULT STDMETHODCALLTYPE doc_enum_contexts(ITfDocumentMgr *This, IEnumTf
 
 const ITfDocumentMgrVtbl g_doc_vtbl = {doc_query, doc_add_ref, doc_release, doc_create_context, doc_push, doc_pop,
                                        doc_get_top, doc_get_base, doc_enum_contexts};
-
-/* ------------------------------------------------------------------ compartments */
 
 static DOC *from_compartments(ITfCompartmentMgr *This)
 {

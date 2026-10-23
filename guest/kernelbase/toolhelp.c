@@ -1,7 +1,4 @@
-/*
- * tool help snapshots, registered waits, volume names, geographical
- * information and the thread context and device control wrappers.
- */
+/* tool help snapshots, volume names, geographical information, thread contexts and DeviceIoControl. */
 #include "kernelbase_private.h"
 
 /* ------------------------------------------------------------------ tool help snapshots */
@@ -76,8 +73,8 @@ typedef struct tagTHREADENTRY32 {
 } THREADENTRY32, *LPTHREADENTRY32;
 
 /*
- * the snapshot lives in a section, like windows keeps it, so the handle can be duplicated. A header with the counts and
- * the positions of the three lists, then the entries of the modules, the processes and the threads one after the other.
+ * like on windows, the snapshot lives in a section so its handle can be duplicated. a header with the list counts and
+ * offsets is followed by the module, process and thread entries.
  */
 typedef struct SNAPSHOT {
     ULONG ModuleCount;
@@ -97,7 +94,7 @@ typedef struct SNAPSHOT {
 #define TH32CS_ALL (TH32CS_SNAPHEAPLIST | TH32CS_SNAPPROCESS | TH32CS_SNAPTHREAD | TH32CS_SNAPMODULE)
 #define MAX_SNAPSHOT_MODULES 4096
 
-/* the modules a snapshot collects before it knows how many there are. */
+/* grows while modules are collected, before the final count is known. */
 typedef struct MODULE_LIST {
     MODULEENTRY32W *Entries;
     ULONG Count, Capacity;
@@ -138,7 +135,6 @@ static void copy_name(WCHAR *out, SIZE_T chars_max, PCWSTR in, SIZE_T bytes)
     out[n] = 0;
 }
 
-/* the modules of this process, from the loader's list. */
 static void own_modules(MODULE_LIST *list, DWORD pid)
 {
     PPEB_LDR_DATA ldr = KbPeb()->Ldr;
@@ -165,7 +161,6 @@ static BOOL read_memory(HANDLE process, ULONG64 address, PVOID out, SIZE_T size)
     return NT_SUCCESS(NtReadVirtualMemory(process, (PVOID)(ULONG_PTR)address, out, size, &done)) && done == size;
 }
 
-/* a string of the other process's loader entry, read as far as the entry says it goes. */
 static void read_name(HANDLE process, ULONG64 buffer, ULONG bytes, WCHAR *out, SIZE_T chars_max)
 {
     SIZE_T n = bytes / sizeof(WCHAR);
@@ -179,14 +174,14 @@ static void read_name(HANDLE process, ULONG64 buffer, ULONG bytes, WCHAR *out, S
     out[n] = 0;
 }
 
-/* the walk of a loader list of another process: its entries by their layout, which is the one of a process of the same width or the 32-bit one of a wow64 process. */
+/* where to find things in another process's loader list: native width, or the 32-bit layout of a wow64 process. */
 typedef struct LDR_LAYOUT {
     ULONG PointerSize;
     ULONG LdrOffset;       /* in the peb. */
-    ULONG ListOffset;      /* of the load order list in the loader data. */
-    ULONG BaseOffset;      /* in an entry, from its start. */
+    ULONG ListOffset;      /* of the load order list in PEB_LDR_DATA. */
+    ULONG BaseOffset;
     ULONG SizeOffset;
-    ULONG FullNameOffset;  /* the unicode strings: length and maximum length, then the buffer after the padding. */
+    ULONG FullNameOffset;  /* UNICODE_STRING: length, maximum length, padding, then the buffer. */
     ULONG BaseNameOffset;
     ULONG StringBufferOffset;
 } LDR_LAYOUT;
@@ -232,9 +227,9 @@ static BOOL other_modules(HANDLE process, ULONG64 peb, const LDR_LAYOUT *layout,
 }
 
 /*
- * the modules of another process, read from its memory. The caller's width decides what is seen, as on windows: a
- * 64-bit caller lists the 64-bit modules of any process with the module flag, and the 32-bit ones of a wow64 process
- * with the 32-bit module flag; a 32-bit caller lists only the modules of a 32-bit process.
+ * like windows, the caller's width decides what is visible. a 64-bit caller lists 64-bit modules with
+ * TH32CS_SNAPMODULE and a wow64 process's 32-bit ones with TH32CS_SNAPMODULE32. a 32-bit caller only sees 32-bit
+ * processes.
  */
 static BOOL modules_of(DWORD pid, DWORD flags, MODULE_LIST *list)
 {
@@ -252,12 +247,11 @@ static BOOL modules_of(DWORD pid, DWORD flags, MODULE_LIST *list)
         ok = FALSE;
     }
 #ifdef _WIN64
-    /* the 64-bit layout of a loader entry. */
     static const LDR_LAYOUT native = {8, offsetof(PEB, Ldr), offsetof(PEB_LDR_DATA, InLoadOrderModuleList),
                                       offsetof(LDR_DATA_TABLE_ENTRY, DllBase), offsetof(LDR_DATA_TABLE_ENTRY, SizeOfImage),
                                       offsetof(LDR_DATA_TABLE_ENTRY, FullDllName), offsetof(LDR_DATA_TABLE_ENTRY, BaseDllName),
                                       8};
-    /* the 32-bit one: the links, the base at 0x18, the size at 0x20, the names at 0x24 and 0x2C with the buffer 4 bytes in. */
+    /* wow64 layout: base at 0x18, size at 0x20, names at 0x24 and 0x2C with the buffer 4 bytes in. */
     static const LDR_LAYOUT wow = {4, 0x0C, 0x0C, 0x18, 0x20, 0x24, 0x2C, 4};
     if (ok && (flags & TH32CS_SNAPMODULE))
         ok = other_modules(process, (ULONG64)(ULONG_PTR)basic.PebBaseAddress, &native, list, pid);
@@ -268,7 +262,7 @@ static BOOL modules_of(DWORD pid, DWORD flags, MODULE_LIST *list)
                                       offsetof(LDR_DATA_TABLE_ENTRY, DllBase), offsetof(LDR_DATA_TABLE_ENTRY, SizeOfImage),
                                       offsetof(LDR_DATA_TABLE_ENTRY, FullDllName), offsetof(LDR_DATA_TABLE_ENTRY, BaseDllName),
                                       4};
-    /* a 32-bit caller reads only the memory of a 32-bit process: the peb of a 64-bit one is out of its reach. */
+    /* a 64-bit process's peb is out of a 32-bit caller's reach. */
     BOOL wow_target = FALSE;
     if (ok && (!IsWow64Process(process, &wow_target) || !wow_target)) {
         KbSetError(ERROR_PARTIAL_COPY);
@@ -283,7 +277,6 @@ static BOOL modules_of(DWORD pid, DWORD flags, MODULE_LIST *list)
     return ok;
 }
 
-/* what the process list of the system says. */
 static PSYSTEM_PROCESS_INFORMATION process_list(PVOID *memory)
 {
     SIZE_T size = 0x20000;
@@ -600,10 +593,7 @@ WINBASEAPI BOOL WINAPI Thread32Next(HANDLE snapshot, LPTHREADENTRY32 entry)
 
 /* ------------------------------------------------------------------ volumes */
 
-/*
- * the volume guid names of C: and Z:. windows derives them from the
- * partition; these fixed values are guessed, built from the drive letter.
- */
+/* windows derives volume guids from the partition, these are made up from the drive letter. */
 static const WCHAR *const g_volume_names[2] = {
     L"\\\\?\\Volume{4d696d65-0000-0043-0000-000000000043}\\",
     L"\\\\?\\Volume{4d696d65-0000-005a-0000-00000000005a}\\",
@@ -646,7 +636,7 @@ WINBASEAPI BOOL WINAPI GetVolumePathNamesForVolumeNameW(LPCWSTR volume, LPWSTR n
         KbSetError(volume && !_wcsnicmp(volume, L"\\\\?\\Volume{", 11) ? ERROR_FILE_NOT_FOUND : ERROR_INVALID_NAME);
         return FALSE;
     }
-    /* a multi string: "X:\" then an empty string. */
+    /* a multi string: "X:\" and an empty string. */
     DWORD need = 5;
     if (returned)
         *returned = need;
@@ -750,7 +740,7 @@ typedef struct GEO_DATA {
     PCWSTR CurrencySymbol;
 } GEO_DATA;
 
-/* the nations of the locales mime knows; the values are those windows documents for each nation. */
+/* nations of the supported locales, with the values windows documents for each. */
 static const GEO_DATA g_geos[] = {
     {244, L"US", L"USA", L"United States", L"United States of America", L"39.45", L"-98.908", L"en-us", 0x0409, 840,
      39070, L"1", L"USD", L"$"},
@@ -782,7 +772,7 @@ DWORD WINAPI NlsGetCacheUpdateCount(void)
 #define GEOCLASS_REGION_MASK 14
 #define GEOCLASS_NATION_MASK 16
 
-/* the nations of the data, or the regions that hold them, with the parent a caller names. */
+/* there is no region data, so GEOCLASS_REGION_MASK enumerates nothing. */
 WINBASEAPI BOOL WINAPI EnumSystemGeoID(DWORD geo_class, GEOID parent, GEO_ENUMPROC proc)
 {
     if (!proc) {
@@ -804,7 +794,7 @@ WINBASEAPI BOOL WINAPI EnumSystemGeoID(DWORD geo_class, GEOID parent, GEO_ENUMPR
     return TRUE;
 }
 
-/* the nation of the user is kept in the international settings, by name and by number. */
+/* stored under the international settings, by name and by number. */
 WINBASEAPI BOOL WINAPI SetUserGeoID(GEOID id)
 {
     const GEO_DATA *g = find_geo(id);
@@ -910,7 +900,7 @@ WINBASEAPI BOOL WINAPI SetThreadContext(HANDLE thread, const CONTEXT *context)
     return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
-/* the control codes of file systems go to NtFsControlFile, the rest to the device. */
+/* file system control codes go to NtFsControlFile, the rest to the device. */
 #define KB_DEVICE_TYPE(code) ((code) >> 16)
 #define KB_FILE_DEVICE_FILE_SYSTEM 0x00000009
 #define KB_FILE_DEVICE_NAMED_PIPE 0x00000011

@@ -1,7 +1,4 @@
-/*
- * system virtual address space: kernel stacks, driver images and other
- * mappings that need their own page tables instead of the physmap.
- */
+/* system virtual address space: kernel stacks, driver images and other mappings outside the physmap. */
 #include "../ntos.h"
 
 typedef struct SYSVA_RANGE {
@@ -45,7 +42,7 @@ void MmFreeSystemVa(PVOID va, SIZE_T pages)
 {
     SYSVA_RANGE *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('M', 'm', 'S', 'v'));
     if (!r)
-        return; /* leaks the range, harmless */
+        return; /* leaks the range, which is harmless. */
     r->Start = (ULONG_PTR)va;
     r->Pages = pages;
     KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_lock);
@@ -64,7 +61,7 @@ PVOID MmMapPagesInSystem(const ULONG64 *pages, SIZE_T count, ULONG64 attrs)
     return va;
 }
 
-/* allocates a kernel stack with an unmapped guard page below it. */
+/* with an unmapped guard page below it. */
 PVOID MmAllocateKernelStack(SIZE_T size, PVOID *limit)
 {
     SIZE_T pages = BYTES_TO_PAGES(size);

@@ -1,10 +1,7 @@
 /*
- * window stations and desktops as objects of the namespace: window
- * stations live in \Sessions\1\Windows\WindowStations, each with its
- * desktops. a process has a window station and each thread a desktop,
- * taken from the winsta\desktop its creator named, WinSta0\Default when
- * none. mime draws every desktop onto the one host display, so a desktop
- * only matters for the names, handles and rules programs observe.
+ * window stations live under \Sessions\1\Windows\WindowStations and contain desktops. each process has a station and
+ * each thread a desktop, inherited from the requested winsta\desktop or WinSta0\Default. all desktops share the host
+ * display; only namespace, handle and access rules differ.
  */
 #include "win32k.h"
 
@@ -53,7 +50,7 @@ typedef struct W32WINSTA {
 
 typedef struct W32DESKTOP {
     LIST_ENTRY Links;
-    W32WINSTA *WinSta; /* referenced */
+    W32WINSTA *WinSta; /* referenced. */
     ULONG Flags;
     ULONG HeapKb;
     WCHAR Name[64];
@@ -119,7 +116,7 @@ static void copy_name(WCHAR *out, const WCHAR *name, ULONG chars)
     out[chars] = 0;
 }
 
-/* a window station of the namespace, created or opened; *created tells which. */
+/* create or open a window station; *created distinguishes the two. */
 static NTSTATUS winsta_by_name(PCWSTR name, ULONG chars, BOOLEAN create, BOOLEAN create_only, W32WINSTA **out,
                                BOOLEAN *created)
 {
@@ -182,7 +179,7 @@ static W32DESKTOP *find_desktop(W32WINSTA *w, PCWSTR name, ULONG chars)
     return nullptr;
 }
 
-/* a desktop of a window station, created when missing; returned referenced. */
+/* create a missing desktop and return a reference. */
 static NTSTATUS desktop_in(W32WINSTA *w, PCWSTR name, ULONG chars, BOOLEAN create, W32DESKTOP **out,
                            BOOLEAN *created)
 {
@@ -216,7 +213,7 @@ static NTSTATUS desktop_in(W32WINSTA *w, PCWSTR name, ULONG chars, BOOLEAN creat
     return STATUS_SUCCESS;
 }
 
-/* WinSta0 with its Default and Winlogon desktops, as winlogon makes them, kept for good. */
+/* retain WinSta0 and its Default and Winlogon desktops for the session. */
 static void interactive(void)
 {
     if (g_winsta0)
@@ -226,7 +223,7 @@ static void interactive(void)
         return;
     w->Flags = WSF_VISIBLE;
     W32DESKTOP *d, *logon;
-    /* everyone at the console works on the station and its default desktop; the logon desktop is the system's. */
+    /* console users share the station and default desktop; the logon desktop belongs to the system. */
     ObSetInteractiveSecurity(w, TRUE);
     if (NT_SUCCESS(desktop_in(w, L"Default", 7, TRUE, &d, nullptr))) {
         ObSetInteractiveSecurity(d, TRUE);
@@ -239,7 +236,6 @@ static void interactive(void)
     g_winsta0 = w;
 }
 
-/* the window station and desktop a process starts with, from its winsta\desktop. */
 static void start_objects(W32PROCESS *p, W32WINSTA **winsta, W32DESKTOP **desktop)
 {
     interactive();
@@ -292,7 +288,7 @@ static W32DESKTOP *thread_desktop(W32THREAD *t)
     return t->Desktop;
 }
 
-/* whether the calling thread works on the desktop that has the input: the default one of WinSta0. */
+/* input is assigned to WinSta0\Default. */
 BOOLEAN WinStaOnInputDesktop(void)
 {
     W32THREAD *t = W32GetThread();
@@ -314,7 +310,7 @@ void WinStaFreeThread(W32THREAD *t)
     t->Desktop = nullptr;
 }
 
-/* the object's own name: the leaf of a relative or full path. */
+/* use the leaf name of either a relative or full path. */
 static NTSTATUS capture_name(POBJECT_ATTRIBUTES user, OBJECT_ATTRIBUTES *oa, UNICODE_STRING *name, PCWSTR *leaf,
                              ULONG *chars)
 {
@@ -341,7 +337,7 @@ static void free_name(UNICODE_STRING *name)
         ExFreePool(name->Buffer);
 }
 
-/* generic rights as the rights of a window station or a desktop, in windows' mappings. */
+/* Windows generic-rights mappings for stations and desktops. */
 static ACCESS_MASK map_access(PVOID object, ACCESS_MASK access)
 {
     BOOLEAN station = ObGetObjectType(object) == g_winsta_type;
@@ -370,7 +366,7 @@ static HANDLE insert(PVOID object, ACCESS_MASK access, ULONG attributes)
     return h;
 }
 
-/* a handle to a window station or desktop that was there: the descriptor says what the caller may have of it. */
+/* check the existing object's descriptor before granting a handle. */
 static HANDLE insert_open(PVOID object, ACCESS_MASK access, ULONG attributes)
 {
     ACCESS_MASK granted;
@@ -382,7 +378,7 @@ static HANDLE insert_open(PVOID object, ACCESS_MASK access, ULONG attributes)
     return insert(object, granted, attributes);
 }
 
-/* the descriptor of one the caller made, from the security attributes it gave. */
+/* build a new object descriptor from the caller's security attributes. */
 static BOOL assign_new(PVOID object, OBJECT_ATTRIBUTES *oa)
 {
     NTSTATUS status = ObAssignSecurity(object, oa, nullptr, UserMode);
@@ -405,7 +401,7 @@ HWINSTA NTAPI NtUserCreateWindowStation(POBJECT_ATTRIBUTES attributes, ACCESS_MA
         W32SetLastError(status_error(status));
         return nullptr;
     }
-    /* an unnamed window station is the one of the caller's logon session. */
+    /* an unnamed station belongs to the caller's logon session. */
     static const WCHAR service[] = L"Service-0x0-3e8d2$";
     if (!chars) {
         leaf = service;
@@ -420,7 +416,7 @@ HWINSTA NTAPI NtUserCreateWindowStation(POBJECT_ATTRIBUTES attributes, ACCESS_MA
         W32SetLastError(status == STATUS_OBJECT_NAME_COLLISION ? ERROR_ALREADY_EXISTS : status_error(status));
         return nullptr;
     }
-    /* the security attributes the caller gave are the descriptor of a window station it made. */
+    /* apply caller-supplied security attributes to a new station. */
     if (created && oa.SecurityDescriptor) {
         status = ObReplaceSecurity(w, &oa, UserMode);
         if (!NT_SUCCESS(status)) {
@@ -466,7 +462,7 @@ HWINSTA NTAPI NtUserOpenWindowStation(POBJECT_ATTRIBUTES attributes, ACCESS_MASK
     return (HWINSTA)h;
 }
 
-/* the window station a desktop call names: its root handle, else the caller's own. */
+/* use the supplied root station handle, or the caller's station. */
 static W32WINSTA *root_winsta(HANDLE root)
 {
     W32WINSTA *w = nullptr;
@@ -512,7 +508,7 @@ HDESK NTAPI NtUserCreateDesktopEx(POBJECT_ATTRIBUTES attributes, PUNICODE_STRING
         d->Flags = flags;
         if (heap_kb)
             d->HeapKb = heap_kb;
-        /* what the caller gave as the security of the desktop is its descriptor; a refusal leaves no desktop. */
+        /* apply the supplied desktop descriptor; remove the desktop on access denial. */
         if (!assign_new(d, &oa)) {
             ObDereferenceObject(d);
             return nullptr;
@@ -613,7 +609,7 @@ HDESK NTAPI NtUserGetThreadDesktop(DWORD tid, HDESK console)
     return (HDESK)h;
 }
 
-/* a thread with windows or hooks keeps its desktop, as on windows. */
+/* threads with windows or hooks cannot change desktop, as on Windows. */
 BOOL NTAPI NtUserSetThreadDesktop(HDESK handle)
 {
     types();
@@ -750,7 +746,7 @@ BOOL NTAPI NtUserGetObjectInformation(HANDLE handle, DWORD index, PVOID info, DW
         break;
     }
     case UOI_USER_SID:
-        /* no user is logged on to a window station of its own here. */
+        /* no user is logged on to a private window station here. */
         ok = copy_out(info, length, nullptr, 0, needed);
         break;
     case UOI_HEAPSIZE: {
@@ -805,10 +801,7 @@ BOOL NTAPI NtUserSetObjectInformation(HANDLE handle, DWORD index, PVOID info, DW
     return ok;
 }
 
-/*
- * the names of the window stations, or of a window station's desktops, as
- * a byte count, a name count and the names one after the other.
- */
+/* serialize a byte count, name count and consecutive station or desktop names. */
 NTSTATUS NTAPI NtUserBuildNameList(HWINSTA handle, ULONG length, PVOID buffer, PULONG needed)
 {
     types();
@@ -869,8 +862,8 @@ NTSTATUS NTAPI NtUserBuildNameList(HWINSTA handle, ULONG length, PVOID buffer, P
 #define GR_USEROBJECTS_PEAK 4
 
 /*
- * the gdi and user objects of a process, GR_GLOBAL counting the caller's. peaks are the largest
- * counts seen by these queries, a guess at what windows tracks.
+ * count process GDI and USER objects; GR_GLOBAL uses the caller. peaks are the highest queried counts, a guess at
+ * Windows tracking.
  */
 DWORD NTAPI NtUserGetGuiResources(HANDLE process, DWORD flags)
 {

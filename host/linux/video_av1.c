@@ -1,13 +1,9 @@
 /*
- * dxva av1 pictures as vulkan video decodes them. dxva carries the frame header with every reference resolved,
- * the tile control entries and the tile data alone, no obu headers. the sequence header vulkan wants is not in the
- * buffers, so the one made from the picture parameters is kept in the session's parameters object for as long as
- * its values do not change. what dxva leaves out is guessed as the comments say, every guess being a value that
- * does not change the decoding of the frame.
+ * converts DXVA AV1 pictures to Vulkan video. DXVA supplies the resolved frame header, tile controls and tile
+ * data without OBU headers. derive the missing sequence header from picture parameters and reuse it while
+ * unchanged. missing fields use the documented guesses below, which do not affect frame decoding.
  *
- * film grain is applied by the decoder into the surface of the guest, the picture the guest keeps referring to
- * has none: such a picture is decoded as the mirror video_mirror makes, and the surface of the guest gets the
- * decode output.
+ * film grain goes into the guest surface. references use the grain-free reconstruction in video_mirror.
  */
 #include "video.h"
 
@@ -39,7 +35,7 @@ static int relative_dist(uint32_t order_hint_bits, int a, int b)
     return (diff & (m - 1)) - (diff & m);
 }
 
-/* whether the sizes in superblocks are what uniform spacing makes of the count, as the tile info codes it. */
+/* checks whether tile sizes match the uniform spacing encoded by tile info. */
 static bool uniform_spacing(const uint16_t *sizes, uint32_t count, uint32_t total)
 {
     for (uint32_t log2 = 0; log2 <= 6; log2++) {
@@ -55,7 +51,7 @@ static bool uniform_spacing(const uint16_t *sizes, uint32_t count, uint32_t tota
     return false;
 }
 
-/* the picture a reference is read from: the mirror when the guest's image holds it with film grain. */
+/* references use the mirror when the guest image contains film grain. */
 static void reference_resource(const VideoPicture *p, VkVideoPictureResourceInfoKHR *r)
 {
     video_picture_resource(p, r);
@@ -142,7 +138,7 @@ bool video_av1_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeIn
     seq->flags.enable_intra_edge_filter = p.coding.intra_edge_filter;
     seq->flags.enable_interintra_compound = p.coding.interintra_compound;
     seq->flags.enable_masked_compound = p.coding.masked_compound;
-    /* dxva has the picture's allow_warped_motion, which is all decoding reads. */
+    /* DXVA has the picture's allow_warped_motion, which is all decoding reads. */
     seq->flags.enable_warped_motion = 1;
     seq->flags.enable_dual_filter = p.coding.dual_filter;
     seq->flags.enable_order_hint = p.order_hint_bits != 0;
@@ -186,7 +182,7 @@ bool video_av1_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeIn
     }
     f->params = s->params;
 
-    /* the references by name: the slot of the map each names, the picture in it, and what that picture was. */
+    /* resolves each named reference to its map slot, picture and saved metadata. */
     VkVideoDecodeAV1PictureInfoKHR *pic = &f->u.av1.picture;
     *pic = (VkVideoDecodeAV1PictureInfoKHR){VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_PICTURE_INFO_KHR};
     StdVideoDecodeAV1PictureInfo *std = &f->u.av1.std_picture;
@@ -225,7 +221,7 @@ bool video_av1_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeIn
         f->ref_pictures[k] = r;
     }
 
-    /* the reference info of the picture, which the later frames read back: its sign biases and order hints. */
+    /* save sign biases and order hints for later frames. */
     StdVideoDecodeAV1ReferenceInfo *self = &f->u.av1.std_refs[VIDEO_MAX_DPB];
     self->flags.disable_frame_end_update_cdf = p.coding.disable_frame_end_update_cdf;
     self->flags.segmentation_enabled = p.segmentation.enabled;
@@ -323,7 +319,7 @@ bool video_av1_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeIn
         cdef->cdef_uv_sec_strength[i] = p.cdef.uv_strengths[i].secondary;
     }
 
-    /* vulkan has the log2 of the unit size less five, the least dxva gives is 64 samples. */
+    /* Vulkan has the log2 of the unit size less five, the least DXVA gives is 64 samples. */
     StdVideoAV1LoopRestoration *lr = &f->u.av1.loop_restoration;
     for (uint32_t i = 0; i < 3; i++) {
         lr->FrameRestorationType[i] = (StdVideoAV1FrameRestorationType)p.loop_filter.frame_restoration_type[i];
@@ -345,14 +341,14 @@ bool video_av1_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeIn
         memcpy(gm->gm_params[1 + i], e->wmmat, sizeof(gm->gm_params[0]));
     }
 
-    /* the parameters dxva has as coded: the multipliers and offsets are the syntax elements, not differences. */
+    /* the parameters DXVA has as coded: the multipliers and offsets are the syntax elements, not differences. */
     StdVideoAV1FilmGrain *fg = &f->u.av1.film_grain;
     if (grain) {
         const DxvaFilmGrainAV1 *g = &p.film_grain;
         fg->flags.chroma_scaling_from_luma = g->chroma_scaling_from_luma;
         fg->flags.overlap_flag = g->overlap_flag;
         fg->flags.clip_to_restricted_range = g->clip_to_restricted_range;
-        /* vulkan ignores update_grain, the parameters are the ones the frame uses. */
+        /* Vulkan ignores update_grain, the parameters are the ones the frame uses. */
         fg->flags.update_grain = 1;
         fg->grain_scaling_minus_8 = g->scaling_shift_minus8;
         fg->ar_coeff_lag = g->ar_coeff_lag;
@@ -385,7 +381,6 @@ bool video_av1_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeIn
         fg->cr_offset = (uint16_t)g->cr_offset;
     }
 
-    /* the picture itself. */
     bool super = p.coding.superres;
     std->flags.error_resilient_mode = p.format.frame_type == STD_VIDEO_AV1_FRAME_TYPE_SWITCH ||
                                       (p.format.frame_type == STD_VIDEO_AV1_FRAME_TYPE_KEY && p.format.show_frame);
@@ -417,7 +412,7 @@ bool video_av1_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeIn
     std->frame_type = (StdVideoAV1FrameType)p.format.frame_type;
     std->OrderHint = self->OrderHint;
     std->primary_ref_frame = p.primary_ref_frame;
-    /* only whether it is zero matters to vulkan, and every picture is kept in case a frame later refers to it. */
+    /* only whether it is zero matters to Vulkan, and every picture is kept in case a frame later refers to it. */
     std->refresh_frame_flags = 0xFF;
     std->interpolation_filter = (StdVideoAV1InterpolationFilter)p.interp_filter;
     std->TxMode = (StdVideoAV1TxMode)p.coding.tx_mode;

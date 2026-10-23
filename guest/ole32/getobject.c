@@ -1,13 +1,13 @@
 /*
- * CoGetObject, for the names that stand for a class: "new:" makes an instance, "clsid:" gets the factory, and the
- * elevation prefix of the COM elevation moniker is taken off. Other names would need the monikers of windows (files,
- * items, composites, the parser of display names), which Mime does not have: they fail as a syntax error.
+ * CoGetObject for names that stand for a class: "new:" makes an instance, "clsid:" gets the class factory, and the
+ * COM elevation moniker prefix is stripped. other names need file, item and composite monikers and a display name
+ * parser, which are missing here, so they fail as a syntax error.
  */
 #include "ole32_private.h"
 
 #define MK_E_SYNTAX_ ((HRESULT)0x800401E4L)
 
-/* whether the text starts with the prefix, whatever the case; the rest is left in *rest. */
+/* case insensitive prefix match, the remainder goes in *rest. */
 static BOOL strip(PCWSTR text, PCWSTR prefix, PCWSTR *rest)
 {
     SIZE_T length = wcslen(prefix);
@@ -17,7 +17,7 @@ static BOOL strip(PCWSTR text, PCWSTR prefix, PCWSTR *rest)
     return TRUE;
 }
 
-/* a class given as a guid or as a program id, and the name's end for a guid that is followed by a colon. */
+/* a braced guid or a ProgID, with an optional trailing colon. */
 static HRESULT parse_class(PCWSTR text, CLSID *clsid)
 {
     WCHAR copy[256];
@@ -31,7 +31,7 @@ static HRESULT parse_class(PCWSTR text, CLSID *clsid)
     return FAILED(hr) ? MK_E_SYNTAX_ : S_OK;
 }
 
-/* the contexts the caller allows, in the second form of the options. */
+/* dwClassContext of BIND_OPTS2, when given. */
 static DWORD context_of(const BIND_OPTS *options)
 {
     if (options && options->cbStruct >= sizeof(BIND_OPTS2)) {
@@ -51,7 +51,7 @@ WINOLEAPI HRESULT WINAPI CoGetObject(LPCWSTR name, BIND_OPTS *options, REFIID ri
         return E_INVALIDARG;
     if (options && options->cbStruct < sizeof(BIND_OPTS))
         return E_INVALIDARG;
-    /* the elevation moniker asks for an administrator; the session is one already. */
+    /* the elevation moniker asks for an administrator, which the session already is. */
     PCWSTR rest = name;
     if (strip(name, L"Elevation:Administrator!", &rest) || strip(name, L"Elevation:Highest!", &rest))
         name = rest;

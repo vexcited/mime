@@ -1,9 +1,7 @@
 /*
- * the host's network configuration for the guest's ip helper: the links
- * with their type, speed and state, their addresses with lifetimes, the
- * routes through a gateway and the resolver's servers and domains. linux
- * reads netlink, sysfs and resolv.conf; macos the routing sysctl, the
- * interface ioctls and resolv.conf.
+ * host network configuration for guest IP Helper: links, addresses and lifetimes, gateway routes, DNS servers
+ * and domains. Linux uses netlink, sysfs and resolv.conf; macOS uses routing sysctl, interface ioctls and
+ * resolv.conf.
  */
 #include "vmm.h"
 
@@ -86,7 +84,7 @@ static void add_route(Config *c, uint32_t index, int family, const void *destina
     set_addr(&r->gateway, family, gateway, family == AF_INET6 && link_local6(gateway) ? index : 0);
 }
 
-/* ------------------------------------------------------------ the resolver */
+/* ------------------------------------------------------------ the resolver. */
 
 static void read_resolver(Config *c)
 {
@@ -137,7 +135,7 @@ static void read_resolver(Config *c)
 }
 
 #ifdef __APPLE__
-/* ------------------------------------------------------------ macos */
+/* ------------------------------------------------------------ macOS. */
 
 static void read_links(Config *c)
 {
@@ -314,7 +312,7 @@ static void read_routes(Config *c)
 }
 
 #else
-/* ------------------------------------------------------------ linux */
+/* ------------------------------------------------------------ Linux. */
 
 static bool sys_read(const char *name, const char *file, char *out, size_t size)
 {
@@ -335,7 +333,7 @@ static bool sys_exists(const char *name, const char *file)
     return access(path, F_OK) == 0;
 }
 
-/* a netlink dump: calls each for every message of the answer. */
+/* calls each for every message in a netlink dump. */
 static void netlink_dump(Config *c, int type, int family, void (*each)(Config *, const struct nlmsghdr *))
 {
     int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
@@ -395,7 +393,7 @@ static void each_address(Config *c, const struct nlmsghdr *h)
         else if (a->rta_type == IFA_FLAGS)
             memcpy(&flags, RTA_DATA(a), 4);
     }
-    /* for ipv4 the local address is ours and the other one the peer of a point to point link. */
+    /* IPv4 local address identifies this host; the other address identifies a point-to-point peer. */
     const void *bytes = local ? local : address;
     if (!bytes)
         return;
@@ -545,7 +543,7 @@ static void read_routes(Config *c)
 }
 #endif
 
-/* ------------------------------------------------------------ the hypercall */
+/* ------------------------------------------------------------ the hypercall. */
 
 static pthread_mutex_t g_config_lock = PTHREAD_MUTEX_INITIALIZER;
 static Config g_config;
@@ -564,7 +562,7 @@ uint64_t mime_net_config(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *value
     read_addresses(c);
     read_routes(c);
     read_resolver(c);
-    /* addresses and routes of links that are gone in between are dropped. */
+    /* drop addresses and routes whose links disappeared during the query. */
     uint32_t kept = 0;
     for (uint32_t i = 0; i < c->head.addresses; i++)
         if (find_link(c, c->addresses[i].index))

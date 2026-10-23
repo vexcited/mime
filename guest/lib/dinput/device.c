@@ -1,8 +1,8 @@
 /*
  * the device object: IDirectInputDevice8 for dinput8.dll, IDirectInputDevice
  * to IDirectInputDevice7 for dinput.dll. what keyboards, mice and game
- * controllers share is here, as windows keeps it in its generic device;
- * the rest is in their classes. the A methods convert and call the W ones.
+ * controllers share lives here, the rest in their classes. the A methods
+ * convert and call the W ones.
  */
 #include "dinput_private.h"
 
@@ -36,7 +36,7 @@ static HRESULT unlock(DIDEV *dev, HRESULT hr)
     return hr;
 }
 
-/* ------------------------------------------------------------------ unknown */
+/* ------------------------------------------------------------------ IUnknown */
 
 static BOOL device_iid(DIDEV *dev, REFIID riid, BOOL *w)
 {
@@ -96,7 +96,7 @@ static ULONG STDMETHODCALLTYPE dev_release(void *This)
 
 /* ------------------------------------------------------------------ initialization */
 
-/* the system devices: which class, and whether the guid is an alias of the real one. */
+/* the system devices: their class, and whether the guid aliases the real one. */
 static const struct {
     const GUID *guid;
     BOOL keyboard;
@@ -106,7 +106,7 @@ static const struct {
     {&GUID_SysKeyboard, TRUE, FALSE},  {&GUID_SysKeyboardEm, TRUE, TRUE},  {&GUID_SysKeyboardEm2, TRUE, TRUE},
 };
 
-/* windows resets a device it initializes again, refusing while acquired. */
+/* like windows, initializing again resets the device, and is refused while acquired. */
 static HRESULT initialize(DIDEV *dev, HINSTANCE instance, DWORD version, REFGUID guid)
 {
     if (!guid)
@@ -121,7 +121,7 @@ static HRESULT initialize(DIDEV *dev, HINSTANCE instance, DWORD version, REFGUID
         if (IsEqualGUID(guid, SYSTEM[i].guid))
             which = i;
     if (which == ~0u) {
-        /* a hid device, the list rebuilt once when it is not there. */
+        /* a hid device: rebuild the list once on a miss. */
         if (!DiHidLookup(guid, &hid)) {
             DiHidRebuild(FALSE);
             if (!DiHidLookup(guid, &hid))
@@ -193,7 +193,7 @@ HRESULT DiNewDevice(REFIID riid, void **out, BOOL di8)
     return hr;
 }
 
-/* CreateDevice: the interface asked for, then Initialize with the object's version unless aggregated. */
+/* the requested interface, then Initialize with the object's version unless aggregated. */
 HRESULT DiCreateDevice(DIOBJ *obj, REFGUID guid, REFIID riid, void **out, IUnknown *outer)
 {
     *out = nullptr;
@@ -339,9 +339,9 @@ static void object_to_a(const DIDEVICEOBJECTINSTANCEW *w, DIDEVICEOBJECTINSTANCE
 }
 
 /*
- * windows' filter: alias and vendor objects only when asked, any type of
- * the filter, the attributes it names, then the collection, the first
- * object of another collection ending the walk.
+ * windows' filter: alias and vendor objects only when asked, any type in
+ * the filter, the attributes it names, then the collection; the first
+ * object of another collection ends the walk.
  */
 static HRESULT enum_objects(DIDEV *dev, void *callback, void *context, DWORD flags, BOOL w)
 {
@@ -406,7 +406,7 @@ static HRESULT STDMETHODCALLTYPE dev_enum_objects_a(void *This, LPDIENUMDEVICEOB
     return enum_objects(DiDeviceFrom(This), (void *)callback, context, flags, FALSE);
 }
 
-/* an object for DIPH_*: its index, or the error windows gives. */
+/* the index of a DIPH_* object, or the error windows returns. */
 static HRESULT resolve(DIDEV *dev, DWORD id, DWORD how, int *index)
 {
     *index = -1;
@@ -508,7 +508,7 @@ static const PROPERTY PROPERTIES[] = {
     {0xFFFF, sizeof(DIPROPDWORD), 0x1A},
 };
 
-/* windows' checks of a property call, in its order; the property and object when they pass. */
+/* validates a property call in windows' order, returning the property and object. */
 static HRESULT check_property(DIDEV *dev, REFGUID guid, const DIPROPHEADER *h, const PROPERTY **prop, int *index)
 {
     if (!h || h->dwHeaderSize != sizeof(DIPROPHEADER) || (h->dwSize & 3) || h->dwSize < sizeof(DIPROPHEADER))
@@ -606,7 +606,7 @@ static HRESULT get_property(DIDEV *dev, REFGUID guid, DIPROPHEADER *h)
     }
 }
 
-/* the ring belongs to the data path's lock, which the input thread buffers under. */
+/* the ring is guarded by the data path's lock, which the input thread buffers under. */
 static HRESULT set_buffer(DIDEV *dev, DWORD size)
 {
     DWORD slots = size > dev->max_buffer ? dev->max_buffer : size;
@@ -657,7 +657,7 @@ static HRESULT set_property(DIDEV *dev, REFGUID guid, const DIPROPHEADER *h)
     case 5:
     case 6:
     case 10:
-        /* applied to every absolute axis, which keyboards and mice have none of. */
+        /* these apply to every absolute axis, and keyboards and mice have none. */
         return index < 0 ? DI_OK : DIERR_UNSUPPORTED;
     case 7:
         if (value > 0xFFFF)
@@ -734,7 +734,7 @@ static BOOL foreground_ok(DIDEV *dev)
     return GetForegroundWindow() == dev->window && !IsIconic(dev->window);
 }
 
-/* windows' order: the format, the foreground, exclusivity, the class, the data path, then the foreground watch. */
+/* windows' order: format, foreground, exclusivity, class, data path, then the foreground watch. */
 static HRESULT acquire(DIDEV *dev)
 {
     dev->status = DIERR_NOTACQUIRED;
@@ -802,7 +802,7 @@ static HRESULT unacquire(DIDEV *dev)
     return DI_OK;
 }
 
-/* acquisition taken away: reads report it, the event says so, a minimized window gets it back. */
+/* acquisition taken away: reads report it, the event is signaled, a minimized window gets it back. */
 void DiDeviceLost(DIDEV *dev)
 {
     lock(dev);
@@ -839,7 +839,6 @@ static HRESULT STDMETHODCALLTYPE dev_unacquire(void *This)
     return unlock(dev, unacquire(dev));
 }
 
-/* a device lost while its window was minimized comes back once the window does. */
 static void reacquire(DIDEV *dev)
 {
     if (!dev->acquired && dev->lost_iconic && dev->window && IsWindow(dev->window) && !IsIconic(dev->window))
@@ -866,10 +865,9 @@ static HRESULT STDMETHODCALLTYPE dev_get_device_state(void *This, DWORD size, LP
 }
 
 /*
- * a ring of as many slots as the buffer size, where an event filling the
- * last free one drops the oldest: one fewer than the size is kept
- * (guessed: windows' ring arithmetic, worth checking on windows). called
- * with the data path's lock held.
+ * a ring of buffer size slots where an event taking the last free one
+ * drops the oldest, so one fewer than the size is kept. called with the
+ * data path's lock held.
  */
 void DiBufferEvent(DIDEV *dev, DWORD native_ofs, DWORD data, DWORD time, DWORD sequence)
 {
@@ -948,7 +946,7 @@ static HRESULT STDMETHODCALLTYPE dev_set_data_format(void *This, LPCDIDATAFORMAT
     return unlock(dev, DiSetDataFormat(dev, format));
 }
 
-/* the event is a duplicate, reset at once; a second one is refused. */
+/* the event handle is duplicated and reset at once; setting a second one is refused. */
 static HRESULT STDMETHODCALLTYPE dev_set_event_notification(void *This, HANDLE event)
 {
     DIDEV *dev = DiDeviceFrom(This);

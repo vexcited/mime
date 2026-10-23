@@ -1,10 +1,9 @@
 /*
- * the emf+ records played onto a graphics: the objects a metafile defines, and each drawing, state and clip
- * record turned into the calls of the api on the graphics of the player.
+ * emf+ records played onto a graphics: the objects a metafile defines, and each drawing, state and clip record
+ * turned into api calls on the player's graphics.
  *
- * the layouts are those of the emf+ file format. what the records do when they are not what the format says is
- * from reading the library: a record with less data than it needs is skipped, an object that cannot be made leaves
- * its slot empty, and a record that names an object that is not there draws nothing.
+ * layouts follow the emf+ format. a record with too little data is skipped, an object that cannot be made leaves
+ * its slot empty, and a record naming a missing object draws nothing.
  */
 #include "meta_private.h"
 
@@ -76,7 +75,7 @@ static UINT32 le32(const BYTE *p)
 #define PLUS_SOLID 0x8000
 #define PLUS_MAX_ITEMS (1u << 22)
 
-/* one coordinate of a relative point: a byte of 7 bits, or two bytes of 15, both signed. */
+/* one coordinate of a relative point: one byte of 7 bits or two bytes of 15, both signed. */
 static BOOL rd_relative_value(Rd *r, INT *out)
 {
     if (r->left < 1)
@@ -102,7 +101,7 @@ static BOOL rd_relative_value(Rd *r, INT *out)
     return TRUE;
 }
 
-/* the points of a record: whole, in 16 bits, or as steps from the one before. */
+/* points are stored whole, in 16 bits, or as steps from the previous one. */
 static GpPointF *read_points(Rd *r, UINT count, UINT flags)
 {
     if (!count || count > PLUS_MAX_ITEMS)
@@ -246,7 +245,7 @@ void gp_plus_player_unwind(GPlayer *p)
     p->save_count = 0;
 }
 
-/* the object a record names, when it has the type the record needs. */
+/* NULL unless the object has the type the record needs. */
 static void *object_of(GPlayer *p, UINT id, INT type)
 {
     if (id >= 64)
@@ -255,7 +254,7 @@ static void *object_of(GPlayer *p, UINT id, INT type)
     return o->type == type ? o->obj : nullptr;
 }
 
-/* a path: points, then the types of its points, either may be packed. */
+/* points, then point types, either may be packed. */
 static GpStatus make_path(const BYTE *d, SIZE_T n, GpPath **out)
 {
     Rd r = {d, n, FALSE};
@@ -273,7 +272,7 @@ static GpStatus make_path(const BYTE *d, SIZE_T n, GpPath **out)
     }
     BOOL ok = TRUE;
     if (flags & 0x1000) {
-        /* runs of lines or beziers, or single types */
+        /* runs of lines or beziers, or single types. */
         const BYTE *tstart = r.p;
         UINT filled = 0;
         while (filled < count && r.left) {
@@ -316,7 +315,7 @@ static GpStatus make_path(const BYTE *d, SIZE_T n, GpPath **out)
 
 static GpStatus make_region(const BYTE *d, SIZE_T n, GpRegion **out)
 {
-    /* the library takes the region with a size and a checksum in front */
+    /* GdipCreateRegionRgnData wants a size and a checksum in front. */
     static UINT32 table[256];
     static BOOL ready;
     if (!ready) {
@@ -346,7 +345,7 @@ static GpStatus make_region(const BYTE *d, SIZE_T n, GpRegion **out)
 
 static GpStatus make_image(const BYTE *d, SIZE_T n, GpImage **out);
 
-/* a brush of any of the five kinds. the matrix is the optional one of the kinds that have it. */
+/* brushes of all five kinds, some with an optional matrix. */
 static void read_matrix(Rd *r, GMatrix *m)
 {
     m->tag = GP_TAG_MATRIX;
@@ -653,7 +652,7 @@ static GpStatus make_pen(const BYTE *d, SIZE_T n, GpPen **out)
             GdipSetPenCustomEndCap(pen, cap_end);
         *out = pen;
     }
-    /* the pen keeps copies */
+    /* the pen keeps its own copies. */
     if (cap_start)
         GdipDeleteCustomLineCap(cap_start);
     if (cap_end)
@@ -661,7 +660,7 @@ static GpStatus make_pen(const BYTE *d, SIZE_T n, GpPen **out)
     return st;
 }
 
-/* a custom line cap: an arrow, or the paths of a cap that a program made. */
+/* an arrow, or the paths of a cap a program made. */
 static GpStatus make_cap(const BYTE *d, SIZE_T n, GpCustomLineCap **out)
 {
     Rd r = {d, n, FALSE};
@@ -746,7 +745,7 @@ static GpStatus make_image(const BYTE *d, SIZE_T n, GpImage **out)
     if (r.bad)
         return InvalidParameter;
     if (kind == 1) {
-        /* an encoded picture */
+        /* an encoded picture. */
         BYTE *copy = gp_dup(r.p, r.left);
         if (!copy)
             return OutOfMemory;
@@ -894,7 +893,7 @@ static void object_store(GPlayer *p, UINT id, INT type, void *obj)
     p->objects[id].obj = obj;
 }
 
-/* an object record is complete: the object is made and takes its slot. */
+/* a complete object record: the object is made and stored in its slot. */
 static void object_define(GPlayer *p, UINT flags, const BYTE *d, SIZE_T n)
 {
     UINT id = flags & 0xff, type = (flags >> 8) & 0x7f;
@@ -933,11 +932,11 @@ static void object_define(GPlayer *p, UINT flags, const BYTE *d, SIZE_T n)
     }
     if (st != Ok)
         obj = nullptr;
-    /* a slot of a failed object is emptied, so the draw records that name it do nothing */
+    /* a failed object empties its slot, so draw records naming it do nothing. */
     object_store(p, id, (INT)type, obj);
 }
 
-/* an object record: whole, or one piece of several. */
+/* whole, or one piece of several. */
 static void object_record(GPlayer *p, UINT flags, const BYTE *d, SIZE_T n)
 {
     if (!(flags & 0x8000) && !p->piece) {
@@ -978,7 +977,7 @@ static void object_record(GPlayer *p, UINT flags, const BYTE *d, SIZE_T n)
 
 /* ------------------------------------------------------------------ brushes in records */
 
-/* the brush of a draw record: the color the record holds, or an object. the made one is to be freed. */
+/* a color held in the record, or an object. *temporary is set when the brush must be freed. */
 static GpBrush *record_brush(GPlayer *p, UINT32 field, UINT flags, BOOL *temporary)
 {
     *temporary = FALSE;
@@ -1016,7 +1015,7 @@ static void save_push(GPlayer *p, UINT index, UINT id, INT kind)
     p->save_count++;
 }
 
-/* the level a record names, and the levels above it which go with it. returns the graphics id or 0. */
+/* the levels above the named one go with it. returns the graphics id or 0. */
 static UINT save_pop(GPlayer *p, UINT index, INT kind)
 {
     for (UINT i = p->save_count; i > 0; i--) {
@@ -1339,7 +1338,7 @@ GpStatus gp_plus_record(GPlayer *p, UINT type, UINT flags, UINT size, const BYTE
         return r.bad ? Ok : GdipSetRenderingOrigin(gfx, x, y);
     }
     case EmfPlusRecordTypeSetAntiAliasMode: {
-        /* an older stream has one bit that says whether to smooth, the newer ones name the mode. */
+        /* older streams have one smoothing bit, newer ones name the mode. */
         INT mode = p->mf->header.Version < EMFPLUS_VERSION ? (INT)(flags & 1) + 3 : (INT)((flags >> 1) & 0xf);
         return GdipSetSmoothingMode(gfx, (SmoothingMode)mode);
     }
@@ -1432,7 +1431,7 @@ GpStatus gp_plus_record(GPlayer *p, UINT type, UINT flags, UINT size, const BYTE
         if (r.bad)
             return Ok;
         GpUnit unit = (GpUnit)(flags & 0xff);
-        /* the unit of a display counts the pixels of the recording device */
+        /* UnitDisplay counts pixels of the recording device. */
         if (GdipSetPageUnit(gfx, unit) == Ok)
             GdipSetPageScale(gfx, scale);
         return Ok;

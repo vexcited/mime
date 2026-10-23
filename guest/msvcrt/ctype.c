@@ -1,6 +1,4 @@
-/*
- * character classification and case mapping of the c locale.
- */
+/* character classification and case mapping for the C locale. */
 #include "msvcrt_private.h"
 
 /* msvcrt's _ctype: the entry before character 0 classifies EOF. */
@@ -24,7 +22,7 @@ const unsigned short MsvcrtCtype[257] = {
     0x000,
 };
 
-/* msvcrt's _wctype for the first 256 characters, latin-1 included. */
+/* msvcrt's _wctype for the first 256 characters, Latin-1 included. */
 const unsigned short MsvcrtWctypeTable[256] = {
     0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x068, 0x028, 0x028, 0x028, 0x028, 0x020, 0x020,
     0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020, 0x020,
@@ -182,8 +180,6 @@ int __cdecl _tolower_l(int c, void *locale)
     return MsvcrtToLower(c);
 }
 
-/* ------------------------------------------------------------------ wide characters */
-
 unsigned short MsvcrtWctype(wint_t c)
 {
     if (c == WEOF)
@@ -254,7 +250,7 @@ int __cdecl __iswcsym(wint_t c)
     return iswalnum(c) || c == '_';
 }
 
-/* the c locale maps only the ascii letters, like msvcrt. */
+/* the C locale maps only the ASCII letters, like msvcrt. */
 wchar_t __cdecl towupper(wchar_t c)
 {
     return c >= 'a' && c <= 'z' ? c - 32 : c;

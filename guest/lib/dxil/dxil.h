@@ -1,7 +1,7 @@
 /*
- * dxil: the shader model 6 bytecode of direct3d 12, an llvm 3.7 module in
- * a dxbc container, compiled to spir-v with the same binding model, the
- * same options and the same results as dxbc_compile.
+ * dxil: direct3d 12's shader model 6 bytecode, an llvm 3.7 module in a dxbc
+ * container. it compiles to spir-v with the same binding model, options and
+ * results as dxbc_compile.
  */
 #ifndef MIME_LIB_DXIL_H
 #define MIME_LIB_DXIL_H
@@ -12,14 +12,13 @@
 int dxil_is(const void *bytecode, size_t length);
 
 /*
- * compiles the shader, or the function of a library options->export_name
- * names; 0 on success, the reason in info->error otherwise. free with
- * dxbc_free.
+ * compiles the shader, or the library function options->export_name names.
+ * 0 on success, the reason in info->error otherwise. free with dxbc_free.
  */
 int dxil_compile(const void *bytecode, size_t length, const DxbcCompileOptions *options, DxbcShaderInfo *info,
                  const MimeAllocator *alloc);
 
-/* a function a library exports: its name, its shader kind as dxil numbers them, its payload and attributes' sizes. */
+/* a library export: name, shader kind as dxil numbers them, payload and attribute sizes. */
 typedef struct DxilExport {
     char name[128];
     uint32_t kind;
@@ -35,10 +34,10 @@ enum {
     DXIL_KIND_CALLABLE,
 };
 
-/* the functions of a library, up to max of them written; their count, -1 when the container holds no library. */
+/* writes up to max exports and returns their count, -1 when the container holds no library. */
 int dxil_library_exports(const void *bytecode, size_t length, DxilExport *out, uint32_t max,
                          const MimeAllocator *alloc);
-/* whether a function's name, mangled or not, is the name it is exported by. */
+/* matches mangled or plain function names. */
 int dxil_export_matches(const char *function, const char *export_name);
 
 #endif

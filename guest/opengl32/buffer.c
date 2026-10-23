@@ -1,8 +1,6 @@
 /*
- * buffer objects. their storage is heap memory the gpu reads in place, so
- * an update of a buffer the gpu may still be reading moves it to new
- * memory instead of waiting; the old memory is reused once the gpu passed
- * the last fence that read it.
+ * buffer objects live in heap memory the gpu reads in place, so updating a buffer the gpu may still read moves it to
+ * new memory instead of waiting. the old memory is reused once the gpu passed the last fence that read it.
  */
 #include "opengl32.h"
 
@@ -153,7 +151,7 @@ GLAPI void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint name, 
                                                    name ? (uint64_t)size : 0, FALSE};
 }
 
-/* gives the buffer new storage of size, keeping keep bytes of its contents. */
+/* new storage of size, keeping the first keep bytes. */
 static BOOL rename(GlBuffer *b, uint64_t size, uint64_t keep)
 {
     GlMem mem;

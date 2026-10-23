@@ -1,4 +1,4 @@
-/* nodes and documents: allocation, the tree, reference counts and what a subtree is worth. */
+/* nodes and documents: allocation, tree links and reference counting. */
 #include <xmldom/xmldom.h>
 
 static CRITICAL_SECTION g_lock;
@@ -148,7 +148,7 @@ XDoc *xd_doc_new(UINT flags)
     return doc;
 }
 
-/* frees what hangs below a node, one leaf at a time so a deep tree cannot overflow the stack. */
+/* frees one leaf at a time so a deep tree cannot overflow the stack. */
 static void free_below(XNode *root)
 {
     XNode *n = root;
@@ -666,7 +666,7 @@ HRESULT xd_check_insert(XNode *parent, XNode *child, XNode *before)
     return S_OK;
 }
 
-/* a node of another document is moved over as a copy, the original leaves its tree. */
+/* a node from another document is copied over and the original leaves its tree. */
 static XNode *adopt(XNode *parent, XNode *child)
 {
     if (child->doc == parent->doc)

@@ -1,8 +1,7 @@
 /*
- * msftedit.dll, rich edit 4.1 and later: the class RICHEDIT50W over the
- * shared engine, with friendly hyperlinks from rtf fields. windows'
- * msftedit registers RICHEDIT50W alone. the math, custom text out and
- * windowless entries report E_NOTIMPL.
+ * msftedit.dll, rich edit 4.1 and later: the RICHEDIT50W class over the shared engine, with friendly hyperlinks from
+ * rtf fields. like Windows, it registers only RICHEDIT50W. the math, custom text out and windowless entries return
+ * E_NOTIMPL.
  */
 #include <richedit/richedit_private.h>
 #include <mime/win32/commctrl.h>

@@ -1,10 +1,7 @@
 /*
- * the dynamic data exchange management library, client side: instances,
- * string handles as global atoms, data handles, and conversations held
- * by a hidden window speaking the WM_DDE_* protocol to a server window.
- * a conversation starts with WM_DDE_INITIATE sent to every top level
- * window and holds the first server that acknowledges it. there is no
- * server side yet: DdeNameService fails, so no program can serve.
+ * DDEML, client side only: instances, string handles as global atoms, data handles, and conversations run by a
+ * hidden window speaking WM_DDE_* to a server window. WM_DDE_INITIATE goes to every top level window and the first
+ * server to acknowledge it is kept. DdeNameService fails, so no program can serve yet.
  */
 #include "user32_private.h"
 
@@ -66,7 +63,7 @@ typedef struct DDE_CONV {
     DDE_INSTANCE *Instance;
     HWND Client, Server;
     ATOM Service, Topic;
-    /* the answer the client window last received. */
+    /* the last answer the client window received. */
     UINT Message;
     LPARAM Lparam;
     BOOL Answered;
@@ -150,8 +147,7 @@ WINUSERAPI BOOL WINAPI DdeUninitialize(DWORD id)
     return i != nullptr;
 }
 
-/* the transactions of a conversation here are done when a call returns, so none is left to abandon: the call is valid for
-   an instance that is there and does nothing. */
+/* transactions complete before the call returns, so there is never one to abandon. */
 WINUSERAPI BOOL WINAPI DdeAbandonTransaction(DWORD id, HCONV conversation, DWORD transaction)
 {
     AcquireSRWLockShared(&g_lock);
@@ -303,10 +299,7 @@ WINUSERAPI BOOL WINAPI DdeFreeDataHandle(HDDEDATA handle)
 
 /* ------------------------------------------------------------------ packed lparams */
 
-/*
- * the messages that carry a handle and an atom pack both into a block
- * of global memory, as 64-bit windows does; the others keep two words.
- */
+/* like 64-bit windows, messages carrying a handle and an atom pack them into global memory, the others keep two words. */
 static BOOL packs(UINT message)
 {
     return message == WM_DDE_ACK || message == WM_DDE_DATA || message == WM_DDE_POKE || message == WM_DDE_ADVISE;
@@ -494,7 +487,6 @@ static BOOL wait_answer(DDE_CONV *c, DWORD timeout)
     return TRUE;
 }
 
-/* executes, requests and pokes, waiting for the server's answer. */
 WINUSERAPI HDDEDATA WINAPI DdeClientTransaction(LPBYTE data, DWORD size, HCONV handle, HSZ item, UINT format,
                                                 UINT type, DWORD timeout, LPDWORD result)
 {

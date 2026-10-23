@@ -37,7 +37,7 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     }
     IO_STATUS_BLOCK local = {};
     HANDLE h = nullptr;
-    /* the security quality of service asked of the file, which a named pipe's server impersonates by. */
+    /* the security quality of service a named pipe server impersonates the client with. */
     PETHREAD thread = PsCurrentThread();
     thread->CreateQos = 0;
     if (oa.SecurityQualityOfService) {
@@ -100,10 +100,9 @@ NTSTATUS NTAPI ZwOpenFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES
 }
 
 /*
- * a file opened for synchronous i/o is used by one request at a time, as on windows: the position that the
- * requests share and the state of an enumeration would not survive two at once. the requests wait for the
- * file in turn. a request waits and the kernel lock goes to the others while it talks to the host, so
- * without this a second request on the same handle could start in the middle of the first.
+ * like windows, a synchronous i/o file serves one request at a time: the shared position and enumeration state would
+ * not survive two at once. a request releases the kernel lock while it talks to the host, so without this a second
+ * request on the same handle could start in the middle of the first.
  */
 static void lock_file(PFILE_OBJECT file)
 {
@@ -166,13 +165,13 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         }
     }
     BOOLEAN use_position = offset.QuadPart == -1 || (offset.LowPart == FILE_USE_FILE_POINTER_POSITION && offset.HighPart == -1);
-    /* a write goes to the end of the file when the handle only appends, or when it names the offset of the end. */
+    /* writes go to the end of the file when the handle only appends, or when the offset names the end. */
     BOOLEAN to_end = write && ((file->Flags & FO_APPEND_ONLY) ||
                                (byte_offset && offset.LowPart == FILE_WRITE_TO_END_OF_FILE && offset.HighPart == -1));
     lock_file(file);
     if (to_end) {
         ULONG64 size = 0;
-        /* a device that has no size is written where it is. */
+        /* a device with no size is written at its current position. */
         offset.QuadPart = NT_SUCCESS(IoQueryFileSize(file, &size)) ? (LONGLONG)size : file->CurrentByteOffset.QuadPart;
     } else if (use_position) {
         offset = file->CurrentByteOffset;
@@ -308,7 +307,7 @@ static NTSTATUS query_file(PFILE_OBJECT file, PVOID info, ULONG length, FILE_INF
     return status;
 }
 
-/* the access the handle grants, its generic rights mapped to a file's: the i/o manager's to answer, not a driver's. */
+/* the handle's granted access with generic rights mapped to file rights. the i/o manager answers this, not drivers. */
 static NTSTATUS query_access(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length)
 {
     PFILE_OBJECT file;
@@ -374,9 +373,8 @@ NTSTATUS NTAPI ZwQueryInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOI
 }
 
 /*
- * a rename names the new place of a file, and the file system is given the directory it is in, opened here:
- * the new name up to its last backslash is that directory, and the rest is the name in it. the names are
- * those of a handle of the same file system, a full path, as nothing but ntdll's callers set them.
+ * the file system gets the target directory, opened here: the new name up to its last backslash, the rest being the
+ * name in it. names are full paths on the same file system, since only ntdll's callers set them.
  */
 static NTSTATUS rename_file(PFILE_OBJECT file, PUCHAR buf, ULONG length, FILE_INFORMATION_CLASS klass)
 {
@@ -393,7 +391,7 @@ static NTSTATUS rename_file(PFILE_OBJECT file, PUCHAR buf, ULONG length, FILE_IN
     ULONG chars = name_length / sizeof(WCHAR), slash = chars;
     while (slash && name[slash - 1] != '\\')
         slash--;
-    /* a name with no directory part, or one that ends in a backslash, names nothing. */
+    /* a name with no directory part, or ending in a backslash, is invalid. */
     if (slash < 2 || slash == chars)
         return STATUS_OBJECT_NAME_INVALID;
     UNICODE_STRING parent = {(USHORT)((slash - 1) * sizeof(WCHAR)), (USHORT)((slash - 1) * sizeof(WCHAR)), name};
@@ -431,7 +429,7 @@ static NTSTATUS rename_file(PFILE_OBJECT file, PUCHAR buf, ULONG length, FILE_IN
     return status;
 }
 
-/* the kernel's own rename of an open file to a full path, replacing a file of that name when asked. */
+/* renames an open file to a full path for the kernel, replacing an existing file when asked. */
 NTSTATUS IoRenameFileObject(PFILE_OBJECT file, PCWSTR new_name, BOOLEAN replace)
 {
     ULONG name_length = (ULONG)wcslen(new_name) * sizeof(WCHAR), size = 20 + name_length;
@@ -468,7 +466,7 @@ NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID 
         if (klass == FilePositionInformation && length >= sizeof(FILE_POSITION_INFORMATION)) {
             file->CurrentByteOffset = ((PFILE_POSITION_INFORMATION)buf)->CurrentByteOffset;
         } else if (klass == FileIoCompletionNotificationInformation) {
-            /* the modes only add up, as on windows. */
+            /* like windows, modes can only be added. */
             ULONG flags = length >= sizeof(ULONG) ? *(PULONG)buf : 0;
             if (length < sizeof(ULONG))
                 status = STATUS_INFO_LENGTH_MISMATCH;
@@ -511,11 +509,11 @@ static NTSTATUS query_by_name(POBJECT_ATTRIBUTES attributes, PVOID info, ULONG l
     PKTHREAD t = KiCurrentThread();
     KPROCESSOR_MODE old = t->PreviousMode;
     oa.Attributes |= OBJ_KERNEL_HANDLE;
-    /* the open below runs as the kernel's, which would read a descriptor of the caller's as its own memory: nothing is created. */
+    /* the open runs as kernel mode and would read a caller's descriptor as kernel memory, and nothing is created anyway. */
     oa.SecurityDescriptor = nullptr;
     oa.SecurityQualityOfService = nullptr;
     t->PreviousMode = KernelMode;
-    /* a name only asked about is not opened on the host: the open gives the attributes. */
+    /* a name only queried is not opened on the host, the open returns the attributes. */
     status = IopCreateFileEx(&h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &io, 0,
                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
                              FILE_SYNCHRONOUS_IO_NONALERT, KernelMode, TRUE);
@@ -767,7 +765,7 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
     NTSTATUS status = reference_file(handle, &file);
     if (!NT_SUCCESS(status))
         return status;
-    /* the request is named by its i/o status block, the start of its OVERLAPPED. */
+    /* the request is identified by its i/o status block, the start of its OVERLAPPED. */
     if (IopIsNamedPipe(file))
         status = NpfsCancel(file, PsCurrentProcess(), request != nullptr, request);
     else if (IopIsAfd(file))

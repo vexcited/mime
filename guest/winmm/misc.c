@@ -1,17 +1,13 @@
-/*
- * what winmm keeps besides devices: installable drivers, auxiliary
- * devices, the rest of wave input, versions.
- */
+/* installable drivers, auxiliary devices, wave input and version functions. */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
 
-/* ------------------------------------------------------------------ installable drivers */
 
 typedef struct DRIVER {
     struct DRIVER *next;
     HMODULE module;
     DRIVERPROC proc;
-    DWORD_PTR id; /* what DRV_OPEN returned */
+    DWORD_PTR id; /* what DRV_OPEN returned. */
 } DRIVER;
 
 static RTL_CRITICAL_SECTION g_lock = {nullptr, -1, 0, nullptr, nullptr, 0};
@@ -36,9 +32,8 @@ static BOOL module_open(HMODULE module)
 }
 
 /*
- * the driver's file is the value the name has in the section, Drivers32 by
- * default, of the registry's drivers, or the name itself. the first
- * instance of a module loads and enables it.
+ * resolves the driver name through the registry section, Drivers32 by default, or uses it as a filename. the first
+ * instance loads and enables the module.
  */
 WINMMAPI HDRVR WINAPI OpenDriver(LPCWSTR name, LPCWSTR section, LPARAM param)
 {
@@ -153,7 +148,6 @@ WINMMAPI HMODULE WINAPI GetDriverModuleHandle(HDRVR h)
     return DrvGetModuleHandle(h);
 }
 
-/* ------------------------------------------------------------------ auxiliary devices */
 
 WINMMAPI MMRESULT WINAPI auxGetDevCapsW(UINT_PTR id, void *caps, UINT size)
 {
@@ -180,7 +174,6 @@ WINMMAPI MMRESULT WINAPI auxOutMessage(UINT id, UINT message, DWORD_PTR param1, 
     return MMSYSERR_BADDEVICEID;
 }
 
-/* ------------------------------------------------------------------ wave input */
 
 WINMMAPI MMRESULT WINAPI waveInGetErrorTextW(MMRESULT error, LPWSTR text, UINT size)
 {
@@ -237,7 +230,6 @@ WINMMAPI MMRESULT WINAPI waveInMessage(HWAVEIN wave, UINT message, DWORD_PTR par
     return wave ? MMSYSERR_INVALHANDLE : MMSYSERR_BADDEVICEID;
 }
 
-/* ------------------------------------------------------------------ versions and tasks */
 
 WINMMAPI UINT WINAPI mmsystemGetVersion(void)
 {

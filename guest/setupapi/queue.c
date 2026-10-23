@@ -1,7 +1,7 @@
 /*
- * file queues: copies, deletions and renames that a program or an inf collects and then writes together. A handler gets
- * a note before and after each operation and may skip it or stop the whole commit; the default handler goes on with all,
- * and stops where something is missing that it cannot ask for.
+ * file queues: copies, deletes and renames collected by a program or an inf, then committed together. a handler is
+ * notified before and after each operation and may skip it or abort the commit. the default handler does everything
+ * and stops where something is missing that it cannot prompt for.
  */
 #include "setup_private.h"
 #include "../lib/cabinet/cabinet.h"
@@ -164,7 +164,7 @@ SETUPAPI BOOL WINAPI SetupQueueRenameA(HSPFILEQ queue, PCSTR source_path, PCSTR 
     return ok;
 }
 
-/* ------------------------------------------------------------------ writing the files */
+/* ------------------------------------------------------------------ committing */
 
 static void make_path(PWSTR out, SIZE_T chars, PCWSTR directory, PCWSTR name)
 {
@@ -216,7 +216,7 @@ static void make_directories(PWSTR path)
     }
 }
 
-/* whether the target is already what the style wants it to be: a copy that is not made is not an error. */
+/* whether the target already matches what the style wants: a skipped copy is not an error. */
 static BOOL leave_target(const QUEUE_ITEM *item, PCWSTR source, PCWSTR target)
 {
     BOOL exists = GetFileAttributesW(target) != INVALID_FILE_ATTRIBUTES;
@@ -235,7 +235,7 @@ static BOOL leave_target(const QUEUE_ITEM *item, PCWSTR source, PCWSTR target)
         return GetFileAttributesExW(source, GetFileExInfoStandard, &a) && GetFileAttributesExW(target, GetFileExInfoStandard, &b) &&
                CompareFileTime(&a.ftLastWriteTime, &b.ftLastWriteTime) <= 0;
     }
-    /* by default a target that is newer than the source is kept. */
+    /* by default a target newer than the source is kept. */
     return have_from && have_to && to > from;
 }
 
@@ -249,7 +249,7 @@ static DWORD copy_one(const QUEUE_ITEM *item, PCWSTR source, PCWSTR target)
         return ERROR_SUCCESS;
     }
     DWORD error = GetLastError();
-    /* a file that runs can be renamed away, and the copy then takes its name. */
+    /* a running file can be renamed away so the copy takes its name. */
     if ((error == ERROR_SHARING_VIOLATION || error == ERROR_ACCESS_DENIED) && GetFileAttributesW(target) != INVALID_FILE_ATTRIBUTES) {
         WCHAR old[MAX_PATH + 16];
         SetupCopyText(old, target, MAX_PATH);
@@ -266,8 +266,7 @@ static DWORD copy_one(const QUEUE_ITEM *item, PCWSTR source, PCWSTR target)
 }
 
 /*
- * the notes a handler gets carry paths in the kind of strings it was written for: a handler of the ansi kind gets the
- * paths as ansi, and a wide one wide.
+ * an ansi handler gets ansi paths in its notifications, a wide one wide paths.
  */
 typedef struct HANDLER {
     PVOID Routine;
@@ -369,7 +368,7 @@ BOOL SetupCommit(FILE_QUEUE *queue, PSP_FILE_CALLBACK_W handler_w, PVOID context
                         result = copy_one(item, source, target);
                     }
                     if (result) {
-                        /* a note of the failure, which a handler may answer by skipping or by stopping. */
+                        /* the handler may answer a failure by skipping or aborting. */
                         WCHAR path[MAX_PATH];
                         wcscpy(path, source);
                         UINT answer2 = call_paths(&h, SPFILENOTIFY_COPYERROR, target, source, result, 0, (UINT_PTR)path);
@@ -443,7 +442,7 @@ SETUPAPI VOID WINAPI SetupTermDefaultQueueCallback(PVOID context)
     SetupFree(context);
 }
 
-/* what the default handler answers: every operation is done, and what needs a person is refused. */
+/* every operation is done, and whatever needs a person is refused. */
 static UINT default_answer(UINT notification)
 {
     switch (notification) {
@@ -633,7 +632,7 @@ static BOOL iterate_cabinet(PCWSTR cabinet, PVOID handler, PVOID context, BOOL a
         return FALSE;
     }
     EXTRACT e = {handler, context, ansi, cabinet, 0, FALSE, nullptr, L""};
-    /* the note of the cabinet: where it is and what set it belongs to. */
+    /* the cabinet notification: its path and the set it belongs to. */
     WCHAR path[MAX_PATH];
     wcscpy(path, cabinet);
     PWSTR slash = wcsrchr(path, '\\');

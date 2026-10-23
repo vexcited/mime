@@ -13,7 +13,7 @@ static void ini_path(const MimePaths *paths, char *out, size_t size)
     snprintf(out, size, "%s/machine.ini", paths->data);
 }
 
-/* like windows setup: DESKTOP- and 7 random letters or digits. */
+/* like Windows setup: DESKTOP- and 7 random letters or digits. */
 static void make_computer_name(char *out, size_t size)
 {
     static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -33,14 +33,14 @@ static void make_machine_serial(char *out, size_t size)
     out[size - 1] = 0;
 }
 
-/* random uuid version 4, the form windows setup gives every machine. */
+/* random UUID version 4, the form Windows setup gives every machine. */
 static void make_machine_uuid(char *out, size_t size)
 {
     uint32_t r[4];
     for (int i = 0; i < 4; i++)
         r[i] = arc4random();
-    r[1] = (r[1] & 0xFFFF0FFF) | 0x00004000; /* version 4 */
-    r[2] = (r[2] & 0x3FFFFFFF) | 0x80000000; /* the rfc 4122 variant */
+    r[1] = (r[1] & 0xFFFF0FFF) | 0x00004000; /* version 4. */
+    r[2] = (r[2] & 0x3FFFFFFF) | 0x80000000; /* the RFC 4122 variant. */
     snprintf(out, size, "%08X-%04X-%04X-%04X-%04X%08X", r[0], r[1] >> 16, r[1] & 0xFFFF, r[2] >> 16,
              r[2] & 0xFFFF, r[3]);
 }
@@ -62,9 +62,8 @@ static void read_line(const char *path, char *out, size_t size)
 }
 
 /*
- * the brand string of cpuid, which programs in the guest read themselves
- * anyway. windows skips its leading spaces and keeps the trailing ones,
- * which linux trims.
+ * reads the CPUID brand string directly. Windows preserves trailing spaces, which Linux trims, but skips leading
+ * spaces.
  */
 static void cpu_brand(char *out, size_t size)
 {
@@ -82,11 +81,7 @@ static void cpu_brand(char *out, size_t size)
     mime_strlcpy(out, p, size);
 }
 
-/*
- * on a pc the guest is the machine it runs on: the processor and the
- * firmware tables are the host's, as a windows installed on it would
- * report them, so nothing tells a virtual machine apart.
- */
+/* on PCs, exposes the host processor and firmware tables to the guest. */
 const MimeHardwareProfile *mime_hardware_profile(void)
 {
     static char cpu[64], manufacturer[64], product[64], family[64], bios_vendor[64], bios_version[64], bios_date[16];
@@ -115,10 +110,8 @@ const MimeHardwareProfile *mime_hardware_profile(void)
 }
 #else
 /*
- * the reference machine: a microsoft surface laptop 7, the windows 11 arm64
- * flagship, with the snapdragon x elite that machine carries. a program in
- * the guest sees these as the processor and firmware of the computer it
- * runs on, in the registry, the smbios tables and the environment.
+ * ARM64 identity models a Windows 11 Microsoft Surface Laptop 7 with Snapdragon X Elite. the registry, SMBIOS tables
+ * and environment expose these processor and firmware values.
  */
 const MimeHardwareProfile *mime_hardware_profile(void)
 {
@@ -139,7 +132,7 @@ const MimeHardwareProfile *mime_hardware_profile(void)
 
 #endif
 
-/* the host login name, restricted to what windows allows in an account name. */
+/* restricts the host login name to characters allowed in Windows account names. */
 static void make_user_name(char *out, size_t size)
 {
     const struct passwd *pw = getpwuid(getuid());
@@ -229,7 +222,7 @@ bool mime_identity_load(const MimePaths *paths, MimeIdentity *out)
         make_machine_uuid(out->machine_uuid, sizeof(out->machine_uuid));
         changed = true;
     }
-    /* like the language setup asks for, taken from the settings of the host the first time. */
+    /* chooses the installation language from host settings on first use. */
     MimeLocale locale;
     if (!out->locale[0] || !mime_locale_find(out->locale, &locale)) {
         mime_locale_from_host(&locale);

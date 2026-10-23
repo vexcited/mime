@@ -1,10 +1,8 @@
 /*
- * dcomp.dll: the objects a program builds with DirectComposition and the
- * compositor that draws them into windows. Everything lives in the calling
- * process: a device keeps the visual tree, targets are bound to windows,
- * and Commit makes the changes since the last one the tree the compositor
- * draws, which it does on the calling thread with the direct3d device the
- * device was made on.
+ * dcomp.dll: DirectComposition objects and the compositor that draws them
+ * into windows, all in the calling process. Commit turns the pending changes
+ * into the tree the compositor draws, on the calling thread with the device's
+ * Direct3D device.
  */
 #ifndef DCOMP_PRIVATE_H
 #define DCOMP_PRIVATE_H
@@ -56,15 +54,12 @@ typedef enum DcKind {
 
 typedef struct DcClass {
     DcKind kind;
-    /* the committed state takes the pending one. */
+    /* copies the pending state into the committed one. */
     void (*commit)(DcObject *object);
     void (*destroy)(DcObject *object);
 } DcClass;
 
-/*
- * what every object has. refs counts the interface references of programs
- * and the ones the tree holds; the device is kept by each object.
- */
+/* refs counts program interface references and the ones the tree holds. every object keeps its device alive. */
 struct DcObject {
     const DcClass *cls;
     LONG refs;
@@ -76,15 +71,14 @@ struct DcObject {
 void DcObjectInit(DcObject *object, DcDevice *device, const DcClass *cls);
 ULONG DcObjectAddRef(DcObject *object);
 ULONG DcObjectRelease(DcObject *object);
-/* marks the pending state as not yet committed; the device's lock is held. */
+/* called with the device lock held. */
 void DcObjectDirty(DcObject *object);
 void DcObjectUndirty(DcObject *object);
-/* the object behind an interface pointer of this dll, with a reference, or NULL. */
+/* the referenced object behind an interface pointer of this dll, or NULL. */
 DcObject *DcObjectFrom(IUnknown *unknown);
 
 MIME_DEFINE_GUID(IID_MimeDcObject, 0x2F1B6A90, 0x3C74, 0x4D58, 0x81, 0xE6, 0xA9, 0x47, 0x0B, 0x5C, 0xDE, 0x12);
 
-/* queries an object for one of the interfaces it lists. */
 typedef struct DcInterface {
     const GUID *iid;
     void *pointer;
@@ -113,7 +107,7 @@ struct DcAnimation {
     IDCompositionAnimation iface;
     DcObject base;
     DcAnimData pending, committed;
-    /* when the committed data began: the commit that brought it, or the absolute time. */
+    /* the commit that brought the committed data, or an absolute time. */
     UINT64 begin;
 };
 
@@ -122,7 +116,7 @@ HRESULT DcCreateAnimation(DcDevice *device, IDCompositionAnimation **out);
 DcAnimation *DcAnimationFrom(IDCompositionAnimation *animation);
 float DcAnimationValue(const DcAnimation *animation, UINT64 now);
 
-/* a number a property holds, or an animation that gives it. */
+/* a property value: a number, or an animation that gives it. */
 typedef struct DcFloat {
     float value;
     DcAnimation *animation;
@@ -224,10 +218,10 @@ HRESULT DcCreateEffectGroup(DcDevice *device, IDCompositionEffectGroup **out);
 HRESULT DcCreateRectangleClip(DcDevice *device, IDCompositionRectangleClip **out);
 HRESULT DcCreateFilter(DcDevice *device, DcFilterKind kind, void **out);
 
-/* the matrix a committed transform makes at a time, in the row vector convention direct3d has. */
+/* the committed transform's matrix at a time, in Direct3D's row vector convention. */
 BOOL DcTransformMatrix(const DcObject *transform, UINT64 now, float m[16]);
 BOOL DcEffectOpacity(const DcObject *effect, UINT64 now, float *opacity, float transform3d[16], BOOL *has_transform);
-/* the color transform a committed filter effect applies, as five rows of four: a 4x4 matrix and an offset. */
+/* five rows of four: a 4x4 color matrix, then an offset. */
 BOOL DcFilterColor(const DcObject *effect, UINT64 now, float color[20]);
 BOOL DcClipValues(const DcObject *clip, UINT64 now, float rect[4], float radii[8]);
 
@@ -235,7 +229,7 @@ BOOL DcClipValues(const DcObject *clip, UINT64 now, float rect[4], float radii[8
 
 typedef struct DcVisualState {
     DcFloat offset_x, offset_y, offset_z, opacity;
-    /* the transform: none, an object, a matrix of 3 by 2 or one of 4 by 4. */
+    /* none, an object, a 3x2 matrix or a 4x4 matrix. */
     int transform_kind;
     DcObject *transform;
     float matrix[16];
@@ -255,14 +249,14 @@ struct DcVisual {
     IDCompositionVisual3 iface;
     DcObject base;
     DcVisualState pending, committed;
-    /* the visual this one is a child of in the pending tree. */
+    /* parent in the pending tree. */
     DcVisual *parent;
 };
 
 extern const IDCompositionVisual3Vtbl g_visual_vtbl;
 HRESULT DcCreateVisual(DcDevice *device, IDCompositionVisual3 **out);
 
-/* the compositor's state for a window: a swap chain of the device that draws it, and its back buffer. */
+/* per-window compositor state: a swap chain on the drawing device and its back buffer. */
 typedef struct DcOutput {
     ID3D11Device *device;
     IDXGISwapChain1 *swapchain;
@@ -291,20 +285,19 @@ HRESULT DcCreateTarget(DcDevice *device, HWND hwnd, BOOL topmost, IDCompositionT
 typedef enum DcContentKind { DCC_SWAPCHAIN, DCC_SURFACE, DCC_TEXTURE, DCC_DYNAMIC } DcContentKind;
 
 /*
- * what a visual shows, shared by the visuals of a device that show the same
- * thing: the swap chain's frames, a surface's texture, or a texture of the
- * program's. The shader view of the texture is kept as long as the texture is.
+ * shared by every visual of a device that shows the same swap chain, surface
+ * or program texture. the shader view lives as long as the texture.
  */
 struct DcContent {
     LONG refs;
     DcDevice *device;
     DcContent *next;
     DcContentKind kind;
-    /* what the device knows it by: the swap chain's source or the object. */
+    /* lookup key: the swap chain's source or the object. */
     void *identity;
     DcObject *object;
     IMimeDXGICompositionSource *source;
-    /* the view of the texture last used, and the texture it was made for. */
+    /* the last view used and the texture it was made for. */
     IUnknown *texture;
     ID3D11ShaderResourceView *view;
     DXGI_FORMAT view_format;
@@ -314,7 +307,6 @@ DcContent *DcContentRef(DcContent *content);
 void DcContentUnref(DcContent *content);
 HRESULT DcContentForObject(DcDevice *device, IUnknown *object, DcContent **out);
 
-/* a frame of the content for the compositor: the view, its size, the part shown and how it blends. */
 typedef struct DcFrame {
     ID3D11ShaderResourceView *view;
     UINT width, height;
@@ -343,7 +335,7 @@ struct DcSurface {
     UINT texture_width, texture_height;
 };
 
-/* a surface factory draws surfaces with the direct3d device it was given. */
+/* factory surfaces use the Direct3D device the factory was given. */
 typedef struct DcFactory {
     IDCompositionSurfaceFactory iface;
     DcObject base;
@@ -360,7 +352,7 @@ HRESULT DcResolveRenderingDevice(IUnknown *rendering_device, ID3D11Device **d3d)
 
 /* ------------------------------------------------------------------ the device */
 
-/* an interface of the device is a pointer to a table and the device it belongs to. */
+/* a device interface is a table pointer followed by its device. */
 typedef struct DcDeviceFace {
     const void *lpVtbl;
     DcDevice *device;
@@ -371,7 +363,7 @@ struct DcDevice {
     LONG refs;
     UINT version;
     CRITICAL_SECTION lock;
-    /* the direct3d device surfaces and the compositor draw with; none when the program gave none. */
+    /* used by surfaces and the compositor, NULL when the program gave none. */
     ID3D11Device *d3d;
     DcObject *dirty;
     BOOL content_changed;
@@ -389,7 +381,7 @@ ULONG DcDeviceAddRef(DcDevice *device);
 ULONG DcDeviceRelease(DcDevice *device);
 HRESULT DcDeviceCommit(DcDevice *device);
 HRESULT DcDeviceQuery(DcDevice *device, REFIID riid, void **out);
-/* whether the device is still alive, adding a reference if so: for callbacks that outlive their registration. */
+/* adds a reference if the device is still alive, for callbacks that outlive their registration. */
 DcDevice *DcDeviceTryRef(DcDevice *device);
 
 extern const IDCompositionDeviceVtbl g_device1_vtbl;
@@ -400,13 +392,12 @@ extern const IMimeDCompositionDeviceVtbl g_mime_vtbl;
 
 /* ------------------------------------------------------------------ the compositor */
 
-/* draws the committed tree of a target into its window. */
 HRESULT DcCompose(DcTarget *target);
 void DcComposeAll(DcDevice *device, BOOL only_flagged);
 void DcOutputRelease(DcOutput *output);
 void DcGpuRelease(DcDevice *device);
 HRESULT DcReadTarget(DcTarget *target, const RECT *rect, void *pixels, UINT pitch);
-/* a frame of a content source arrived: compose the targets that show it. */
+/* a source produced a frame: recompose the targets that show it. */
 void DcSourceFrame(DcDevice *device, IUnknown *source);
 
 /* ------------------------------------------------------------------ matrices, clocks and the registry */

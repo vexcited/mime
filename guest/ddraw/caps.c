@@ -1,15 +1,13 @@
 /*
- * IDirectDraw::GetCaps: the caps of a display driver of the windows
- * display driver model, as windows' ddraw makes them from the d3d9 user
- * mode driver, and those of windows' emulation. blt.c checks blts
- * against the same values.
+ * IDirectDraw::GetCaps: the caps of a WDDM display driver and of the
+ * emulation layer. blt.c checks blts against the same values.
  */
 #include "ddraw_private.h"
 
 #define ROPS_SRCCOPY {[6] = 1u << 12}
 #define ROPS_HEL {[0] = 1, [6] = 1u << 12, [7] = 1u << 31}
 
-/* what a modern driver reports, overlays hidden as windows hides them. */
+/* what a modern driver reports, with overlays hidden as on Windows. */
 static void driver_caps(DDCAPS *c, DWORD fourccs)
 {
     memset(c, 0, sizeof(*c));
@@ -34,7 +32,7 @@ static void driver_caps(DDCAPS *c, DWORD fourccs)
     c->ddsCaps.dwCaps2 = DDSCAPS2_CUBEMAP;
 }
 
-/* windows' emulation on a display gdi draws on. */
+/* the emulation layer on a display gdi draws on. */
 static void hel_caps(DDCAPS *c)
 {
     memset(c, 0, sizeof(*c));
@@ -68,7 +66,7 @@ static BOOL caps_size(DWORD size)
     return size == DDCAPS_SIZE_DX1 || size == DDCAPS_SIZE_DX3 || size == DDCAPS_SIZE_DX5 || size == DDCAPS_SIZE_DX7;
 }
 
-/* a caller's caps get as much as their size holds. */
+/* copies as much as the caller's structure size holds. */
 static void copy_out(DDCAPS *out, const DDCAPS *full)
 {
     DWORD size = out->dwSize;

@@ -1,8 +1,6 @@
 /*
- * binding handles and string bindings. A string binding is "[object@]protseq:address[endpoint,options]", the
- * characters : , @ [ \ ] escaped by a backslash inside its parts. A binding handle made from one only keeps its parts and
- * an object uuid: Mime has no rpc transport, so nothing is ever bound to a server, but the handles can be copied, turned
- * back into strings and have their object and security settings queried, as callers expect.
+ * binding handles and string bindings. a string binding is "[object@]protseq:address[endpoint,options]", with
+ * : , @ [ \ ] escaped by a backslash inside its parts.
  */
 #include "rpcrt4_private.h"
 
@@ -55,7 +53,7 @@ static PWSTR put_escaped(PWSTR out, PCWSTR s)
     return out;
 }
 
-/* the text up to the first of the stop characters that is not escaped, with the escapes taken out. */
+/* the text up to the first unescaped stop character, with escapes removed. */
 static PCWSTR scan_part(PCWSTR s, WCHAR stop1, WCHAR stop2, PWSTR *part, BOOL *ok)
 {
     PCWSTR p = s;
@@ -102,9 +100,9 @@ static void free_parts(PARTS *parts)
 }
 
 /*
- * the string cut into its parts: an object uuid before the first unescaped @, the protocol sequence up to the first
- * unescaped colon, the network address up to a bracket, and in the brackets the endpoint and the options after a comma,
- * or "endpoint=...", or options alone when the text has an equals sign that is not an endpoint's.
+ * an object uuid before the first unescaped @, the protocol sequence up to the first unescaped colon, the network address
+ * up to a bracket, then in brackets the endpoint and the options after a comma, or "endpoint=...", or options alone when
+ * the text has an equals sign that is not an endpoint's.
  */
 static RPC_STATUS parse_binding(PCWSTR text, PARTS *parts)
 {
@@ -159,7 +157,6 @@ static RPC_STATUS parse_binding(PCWSTR text, PARTS *parts)
         return RPC_S_OK;
     }
     p = bracket + 1;
-    /* the closing bracket, then what is inside it. */
     PCWSTR close = p;
     while (*close && *close != L']') {
         if (*close == L'\\' && close[1])
@@ -190,7 +187,7 @@ static RPC_STATUS parse_binding(PCWSTR text, PARTS *parts)
     }
     RPC_STATUS status = RPC_S_OK;
     if (equals) {
-        /* only "endpoint=" may name a part; any other text of this form is options. */
+        /* only "endpoint=" names a part, any other key=value text is options. */
         if (!_wcsnicmp(content, L"endpoint", 8) && (PCWSTR)content + 8 == equals) {
             BOOL e1, e2;
             PCWSTR end = scan_part(equals + 1, L',', L',', &parts->Endpoint, &e1);
@@ -296,7 +293,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcStringBindingParseW(RPC_WSTR binding, RPC_WSTR 
     PWSTR uuid = nullptr;
     if (object) {
         status = UuidToStringW(&parts.Object, &uuid);
-        /* an object that is not given is the empty string, not the nil uuid. */
+        /* a missing object becomes the empty string, not the nil uuid. */
         if (!status && RpcpIsNil(&parts.Object)) {
             RpcpFreeString(uuid);
             uuid = RpcpCopyString(L"");
@@ -330,7 +327,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcStringBindingParseW(RPC_WSTR binding, RPC_WSTR 
     return RPC_S_OK;
 }
 
-/* ------------------------------------------------------------------ the narrow forms */
+/* ------------------------------------------------------------------ narrow forms */
 
 PWSTR RpcpWiden(const unsigned char *s)
 {
@@ -413,7 +410,7 @@ BINDING *RpcpBindingNew(BINDING_KIND kind)
     return b;
 }
 
-/* the handle if it is one the runtime made; a program's pointer is never dereferenced before it is known. */
+/* never dereferences a program's pointer before finding it in the table. */
 BINDING *RpcpBindingLookup(RPC_BINDING_HANDLE handle)
 {
     if (!handle)
@@ -438,7 +435,7 @@ static void release_strings(BINDING *b)
     RpcpFreeString(b->Principal);
 }
 
-/* removes the handle from the table and frees it; false if it was not there. */
+/* false if the handle was not in the table. */
 static BOOL binding_unlink(BINDING *target)
 {
     ULONG slot = bucket_of(target);
@@ -462,7 +459,6 @@ void RpcpBindingRelease(BINDING *b)
     HeapFree(GetProcessHeap(), 0, b);
 }
 
-/* a client handle with the same parts, object and settings. */
 BINDING *RpcpBindingCopy(const BINDING *from)
 {
     BINDING *b = RpcpBindingNew(BINDING_CLIENT);
@@ -489,7 +485,7 @@ BINDING *RpcpBindingCopy(const BINDING *from)
     return b;
 }
 
-/* the protocol sequences that make a handle: the local one and the connection oriented ones. */
+/* only the local and the connection oriented protocol sequences make a handle. */
 static BOOL protseq_known(PCWSTR protseq)
 {
     return !_wcsicmp(protseq, L"ncalrpc") || !_wcsnicmp(protseq, L"ncacn_", 6);
@@ -546,7 +542,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingFromStringBindingA(RPC_CSTR string, RPC_
     return status;
 }
 
-/* lets go of a client binding, and when no other binding goes to its server, of the connections kept for it. */
+/* also closes the pooled connections once no other binding goes to the same server. */
 void RpcpBindingFree(BINDING *b)
 {
     WCHAR key[400];
@@ -624,7 +620,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingToStringBindingA(RPC_BINDING_HANDLE hand
     return *string ? RPC_S_OK : ERROR_OUTOFMEMORY;
 }
 
-/* a handle without an object has the nil uuid; a null handle asks for the call being served. */
+/* a handle without an object has the nil uuid, a null handle means the call being served. */
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingInqObject(RPC_BINDING_HANDLE handle, UUID *object)
 {
     BINDING *b = handle ? RpcpBindingLookup(handle) : RpcpCurrentCallBinding();
@@ -648,7 +644,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingSetObject(RPC_BINDING_HANDLE handle, UUI
     return RPC_S_OK;
 }
 
-/* a handle used again for another server finds its endpoint again when asked. */
+/* the endpoint is looked up again on the next call. */
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingReset(RPC_BINDING_HANDLE handle)
 {
     BINDING *b = RpcpBindingLookup(handle);
@@ -680,8 +676,8 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingVectorFree(RPC_BINDING_VECTOR **vector)
 }
 
 /*
- * the options are kept on the handle by number. The documented ones are below 14; larger numbers and zero are an
- * invalid argument. The call timeout and the no linger option take effect.
+ * options are stored by number. the documented ones are below 14, zero and larger numbers are invalid. only the call
+ * timeout and the no linger option take effect.
  */
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingSetOption(RPC_BINDING_HANDLE handle, ULONG option, ULONG_PTR value)
 {
@@ -707,7 +703,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingInqOption(RPC_BINDING_HANDLE handle, ULO
     return RPC_S_OK;
 }
 
-/* the time a client waits for a server to answer when it connects; the default is 5, 10 is for ever. */
+/* how long a client waits for a server to answer a connect. the default is 5, 10 means forever. */
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcMgmtSetComTimeout(RPC_BINDING_HANDLE handle, unsigned int timeout)
 {
     BINDING *b = RpcpBindingLookup(handle);
@@ -784,7 +780,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingSetAuthInfoA(RPC_BINDING_HANDLE handle, 
     return status;
 }
 
-/* the extended form carries a structure that starts with its version and size. */
+/* the extended form takes a structure that starts with its version and size. */
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingSetAuthInfoExW(RPC_BINDING_HANDLE handle, RPC_WSTR principal, ULONG level,
                                                        ULONG service, void *identity, ULONG authz,
                                                        RPC_SECURITY_QOS *qos)

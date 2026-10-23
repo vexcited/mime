@@ -1,4 +1,4 @@
-/* the exports mime does not implement, failing as windows does without the feature. */
+/* unimplemented exports, failing as windows does without the feature. */
 #include <mime/stubexport.h>
 
 MIME_STUB_RETURN("wevtapi", DWORD, EvtIntSysprepCleanup, 0, ERROR_CALL_NOT_IMPLEMENTED)

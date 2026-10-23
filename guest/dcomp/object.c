@@ -1,7 +1,6 @@
 /*
- * the parts every object shares: references, the dirty list that Commit
- * walks, the numbers properties hold with the animations that may give them,
- * and the animations themselves.
+ * what every object shares: references, the dirty list Commit walks, property
+ * values that animations may drive, and the animations themselves.
  */
 #include "dcomp_private.h"
 
@@ -12,7 +11,7 @@ static const double HALF_PI = 1.5707963267948966;
 
 double DcSin(double x)
 {
-    /* reduced to a quarter turn either side of zero, where a series of fifteen terms is exact to a billionth. */
+    /* reduce to a quarter turn around zero, where fifteen series terms are exact to a billionth. */
     x -= (double)(long long)(x / TWO_PI + (x >= 0 ? 0.5 : -0.5)) * TWO_PI;
     if (x > HALF_PI)
         x = 2 * HALF_PI - x;
@@ -35,7 +34,7 @@ void DcMatrixIdentity(float m[16])
     m[0] = m[5] = m[10] = m[15] = 1.0f;
 }
 
-/* out = a * b, as row vectors multiply: a applies first. */
+/* out = a * b with row vectors, so a applies first. */
 void DcMatrixMultiply(float out[16], const float a[16], const float b[16])
 {
     float r[16];
@@ -210,9 +209,9 @@ DcAnimation *DcAnimationFrom(IDCompositionAnimation *animation)
 }
 
 /*
- * the value at a time: the primitive in force at the time the animation
- * has run, after repeats folded it back. A cubic and a sine run from their
- * own offset, an end holds its value.
+ * uses the primitive in force at the animation's elapsed time, after folding
+ * repeats back. cubics and sines run from their own offset, an end holds its
+ * value.
  */
 float DcAnimationValue(const DcAnimation *a, UINT64 now)
 {
@@ -266,14 +265,14 @@ static ULONG STDMETHODCALLTYPE anim_release(IDCompositionAnimation *iface)
 
 static BOOL finite(double v) { return v - v == 0.0; }
 
-/* seconds as ticks of the performance counter, kept to a 1024th as the dwm does. */
+/* seconds to performance counter ticks, kept to a 1024th of a second as the dwm does. */
 static UINT64 ticks(double seconds)
 {
     long long units = (long long)(seconds * 1024.0 + (seconds < 0 ? -0.5 : 0.5));
     return (UINT64)((double)units * (1.0 / 1024.0) * (double)DcFrequency());
 }
 
-/* adds a primitive: offsets never go back, and an end closes the animation. */
+/* offsets never go back, and an end closes the animation. */
 static HRESULT add_primitive(DcAnimation *a, const DcAnimPrimitive *p)
 {
     DcAnimData *d = &a->pending;
@@ -358,7 +357,7 @@ static HRESULT STDMETHODCALLTYPE anim_add_cubic(IDCompositionAnimation *iface, d
     return add(a, DC_PRIM_CUBIC, offset, 0, constant, linear, quadratic, cubic);
 }
 
-/* the frequency is in cycles per second, the phase in degrees. */
+/* frequency is in hertz, phase in degrees. */
 static HRESULT STDMETHODCALLTYPE anim_add_sinusoidal(IDCompositionAnimation *iface, double offset, float bias,
                                                      float amplitude, float frequency, float phase)
 {

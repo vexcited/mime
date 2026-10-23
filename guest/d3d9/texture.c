@@ -1,10 +1,9 @@
 /*
- * IDirect3DTexture9, IDirect3DCubeTexture9 and IDirect3DVolumeTexture9:
- * a d3d11 texture with a surface or volume object for each level and
- * face, which hold the texture's references. textures in system memory
- * are only bytes; managed ones keep their bytes in memory too, as the
- * truth locks change and unlocks upload. textures that generate their
- * mips show programs one level and make the others when drawn with.
+ * IDirect3DTexture9, IDirect3DCubeTexture9 and IDirect3DVolumeTexture9: a
+ * d3d11 texture with a surface or volume object per level and face, which
+ * use the texture's references. system memory textures are only bytes.
+ * managed ones also keep a copy in memory, which locks change and unlocks
+ * upload. textures that make their own mips show programs one level.
  */
 #include "d3d9_private.h"
 
@@ -58,7 +57,7 @@ static void destroy_resource(D9Resource *r) { destroy(CONTAINING_RECORD(r, D9Tex
 
 /* ------------------------------------------------------------------ views */
 
-/* the view shaders read, from the level of detail set: srgb, swizzled as the format reads. */
+/* starts at the set level of detail, swizzled as the format needs. */
 ID3D11ShaderResourceView *D9TextureSrv(D9Texture *t, BOOL srgb)
 {
     const D9Format *f = t->base.format;
@@ -101,7 +100,7 @@ static void drop_views(D9Texture *t)
     t->srv = t->srv_srgb = nullptr;
 }
 
-/* the mips of a texture that makes them, before it is drawn with. */
+/* generates pending mips before the texture is drawn with. */
 void D9TexturePrepare(D9Texture *t)
 {
     if (!t->autogen_dirty || !(t->base.usage & D3DUSAGE_AUTOGENMIPMAP))
@@ -172,7 +171,7 @@ static void STDMETHODCALLTYPE texture_pre_load(IDirect3DBaseTexture9 *iface) {}
 
 static D3DRESOURCETYPE STDMETHODCALLTYPE texture_get_type(IDirect3DBaseTexture9 *iface) { return impl(iface)->base.type; }
 
-/* the most detailed level shaders read, of managed textures only. */
+/* only managed textures take a level of detail. */
 static DWORD STDMETHODCALLTYPE texture_set_lod(IDirect3DBaseTexture9 *iface, DWORD lod)
 {
     D9Texture *t = impl(iface);
@@ -429,7 +428,7 @@ static HRESULT lock_box(D9Volume *v, D3DLOCKED_BOX *locked, const D3DBOX *box, D
     return D3D_OK;
 }
 
-/* a level's box of memory to the gpu, after the work before it. */
+/* uploads in gpu order, after the work queued before it. */
 static void upload_box(D9Texture *t, UINT level, const RECT *r, UINT front, UINT back)
 {
     const D9Format *f = t->base.format;
@@ -636,7 +635,7 @@ HRESULT D9CreateTexture(D9Device *device, D3DRESOURCETYPE type, UINT width, UINT
     t->height = height;
     t->depth = type == D3DRTYPE_VOLUMETEXTURE ? depth : 1;
     t->faces = type == D3DRTYPE_CUBETEXTURE ? 6 : 1;
-    /* textures that make their mips show programs only the first. */
+    /* textures that make their own mips show programs only the first level. */
     t->d3d_levels = usage & D3DUSAGE_AUTOGENMIPMAP ? chain : levels;
     t->levels = usage & D3DUSAGE_AUTOGENMIPMAP ? 1 : levels;
     t->autogen_filter = D3DTEXF_LINEAR;
@@ -680,7 +679,7 @@ HRESULT D9CreateTexture(D9Device *device, D3DRESOURCETYPE type, UINT width, UINT
         if (!t->surfaces)
             hr = E_OUTOFMEMORY;
     }
-    /* managed textures keep their texels in memory, zeros at first as the gpu's. */
+    /* managed textures keep a copy in memory, zeroed at first like the gpu's. */
     for (UINT i = 0; SUCCEEDED(hr) && i < subs && pool != D3DPOOL_DEFAULT; i++) {
         UINT l = i % t->levels;
         hr = D9AllocMemory(&t->memory[i], f, mip(width, l), mip(height, l), mip(t->depth, l));
@@ -694,13 +693,13 @@ HRESULT D9CreateTexture(D9Device *device, D3DRESOURCETYPE type, UINT width, UINT
     return D3D_OK;
 }
 
-/* UpdateTexture: a system memory texture's levels to the matching ones of a texture in the gpu's memory. */
+/* UpdateTexture: system memory levels to the matching levels of a gpu texture. */
 HRESULT D9UpdateTexture(D9Device *device, D9Texture *s, D9Texture *t)
 {
     if (!s || !t || s->base.pool != D3DPOOL_SYSTEMMEM || t->base.pool != D3DPOOL_DEFAULT ||
         s->base.type != t->base.type || s->base.d3d_format != t->base.d3d_format || !t->resource)
         return D3DERR_INVALIDCALL;
-    /* the source may have more levels: those of the destination's top size on. */
+    /* the source may have more levels: skip to the one matching the destination's top size. */
     UINT skip = 0;
     while (skip < s->levels && mip(s->width, skip) > t->width)
         skip++;
@@ -714,7 +713,7 @@ HRESULT D9UpdateTexture(D9Device *device, D9Texture *s, D9Texture *t)
             RECT r = {0, 0, (LONG)w, (LONG)h};
             D9Memory *saved = &t->memory[face * t->levels + l];
             D9Memory keep = *saved;
-            /* the destination's level read from the source's memory. */
+            /* upload the destination level straight from the source's memory. */
             *saved = *m;
             if (t->base.format->block > 1) {
                 r.right = D9_ALIGN(w, t->base.format->block);
@@ -731,7 +730,7 @@ HRESULT D9UpdateTexture(D9Device *device, D9Texture *s, D9Texture *t)
     return D3D_OK;
 }
 
-/* a 2d level's memory, by its index in memory, to its subresource. */
+/* index is the level's place in memory, sub its subresource. */
 void D9UploadLevel(D9Texture *t, UINT sub, UINT index, const RECT *r)
 {
     const D9Format *f = t->base.format;

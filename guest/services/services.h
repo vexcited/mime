@@ -1,10 +1,9 @@
 /*
- * services.exe, the service control manager. see docs/services.md for what it does and where it follows windows'
- * services.exe of build 26300 and where it is a guess.
+ * services.exe, the service control manager.
  *
- * the database is the registry below HKLM\SYSTEM\CurrentControlSet\Services, read at the start and kept in
- * records afterwards. one lock protects the records, the handles and the images; every wait releases it and
- * waits on the condition variable that any change of state wakes.
+ * the database is the registry under HKLM\SYSTEM\CurrentControlSet\Services, read at start and kept in records.
+ * one lock protects records, handles and images. every wait releases it on the condition variable that any state
+ * change wakes.
  */
 #ifndef MIME_SERVICES_H
 #define MIME_SERVICES_H
@@ -13,7 +12,7 @@
 #include <mime/win32/winsvc.h>
 #include <mime/win32/winnls.h>
 
-/* ------------------------------------------------------------------ what services.exe needs of advapi32 */
+/* ------------------------------------------------------------------ advapi32 declarations */
 
 typedef struct _LUID_AND_ATTRIBUTES {
     LUID Luid;
@@ -142,46 +141,45 @@ typedef struct NOTIFY NOTIFY;
 struct SERVICE {
     SERVICE *Next;
     WCHAR Name[SVC_NAME_MAX + 1];
-    WCHAR *DisplayName; /* the name when not set */
-    WCHAR *Group;       /* NULL when it has none */
-    WCHAR *DepServices; /* DependOnService, a multi sz */
-    WCHAR *DepGroups;   /* DependOnGroup */
+    WCHAR *DisplayName; /* falls back to Name. */
+    WCHAR *Group;       /* or NULL. */
+    WCHAR *DepServices; /* DependOnService, a multi sz. */
+    WCHAR *DepGroups;   /* DependOnGroup. */
     DWORD Type, Start, ErrorControl, Tag;
-    BOOL MarkedForDelete;   /* DeleteService was called: the record goes once nothing holds it and it has stopped */
-    BOOL DelayedStart;      /* DelayedAutostart of an automatic service, started after the others */
-    BOOL FailureOnNonCrash; /* the failure actions also apply when the service stops with an error */
-    BOOL StopRequested;     /* a stopping control was given to the service */
-    BOOL ShutdownStopping;  /* the shutdown is stopping it */
+    BOOL MarkedForDelete;   /* freed once nothing holds it and it has stopped. */
+    BOOL DelayedStart;      /* DelayedAutostart: started after the other automatic services. */
+    BOOL FailureOnNonCrash; /* failure actions also run when it stops with an error. */
+    BOOL StopRequested;     /* a stopping control was sent. */
+    BOOL ShutdownStopping;  /* stopped by the shutdown. */
     BOOL Loaded;
-    /* the running state, as the service reports it. */
+    /* as the service reports it. */
     SERVICE_STATUS Status;
-    DWORD ServiceFlags; /* SERVICE_RUNS_IN_SYSTEM_PROCESS and the like */
+    DWORD ServiceFlags; /* SERVICE_RUNS_IN_SYSTEM_PROCESS and the like. */
     IMAGE *Image;
-    UINT64 StatusId; /* the handle the service process reports the status with */
+    UINT64 StatusId; /* the handle the service process reports status with. */
     ULONGLONG StateTick;
-    DWORD StartError; /* the answer of the last start */
+    DWORD StartError; /* the result of the last start. */
     DWORD OpenHandles;
-    DWORD StartPending; /* a thread is starting it */
-    /* failures, for the recovery actions. */
+    DWORD StartPending; /* a thread is starting it. */
+    /* for the recovery actions. */
     DWORD FailureCount;
     ULONGLONG LastFailureTick;
-    /* the access control list. */
     PSECURITY_DESCRIPTOR Sd;
     NOTIFY *Notify;
-    ULONGLONG Stamp; /* when the state last changed, for notifications */
+    ULONGLONG Stamp; /* when the state last changed, for notifications. */
 };
 
 struct IMAGE {
     IMAGE *Next;
-    WCHAR *Key;       /* the command line, which share process services match by */
-    WCHAR *Account;   /* the account the process runs as, in a form that compares: the services of one process share it */
+    WCHAR *Key;       /* the command line, which share process services match on. */
+    WCHAR *Account;   /* in comparable form, shared by every service of the process. */
     HANDLE Process;
     DWORD Pid;
-    HANDLE Pipe;      /* the channel the dispatcher opened, NULL until it does */
-    HANDLE PipeEvent; /* overlapped i/o of the channel */
+    HANDLE Pipe;      /* the dispatcher's channel, NULL until it connects. */
+    HANDLE PipeEvent; /* for the channel's overlapped i/o. */
     CRITICAL_SECTION ControlLock;
-    HANDLE Wait;      /* the thread pool wait on the process */
-    DWORD Services;   /* running or starting in it */
+    HANDLE Wait;      /* the thread pool wait on the process. */
+    DWORD Services;   /* running or starting in it. */
     BOOL Exited, Broken, Terminating;
     BOOL FirstSent;
     DWORD Type;
@@ -194,7 +192,7 @@ struct SCHANDLE {
     SCHANDLE *Next;
     UINT64 Id;
     DWORD Kind;    /* SCH_* */
-    DWORD Access;  /* granted, mapped */
+    DWORD Access;  /* granted, mapped. */
     SERVICE *Service;
     DWORD Flags;
 };
@@ -207,29 +205,29 @@ struct CLIENT {
     HANDLE Process;
     HANDLE Wait;
     SCHANDLE *Handles;
-    BOOL Locking; /* holds the lock of the database */
-    BOOL Dead;    /* its process ended while a request was running */
+    BOOL Locking; /* holds the database lock. */
+    BOOL Dead;    /* its process ended during a request. */
     DWORD Refs;
     NOTIFY *Notifies;
-    HANDLE NotifyPipe; /* where notifications go */
+    HANDLE NotifyPipe; /* where notifications are written. */
     HANDLE NotifyEvent;
 };
 
 struct NOTIFY {
-    NOTIFY *Next;     /* of the service */
+    NOTIFY *Next;     /* in the service's list. */
     NOTIFY *NextOfClient;
     CLIENT *Client;
-    UINT64 Block;     /* chosen by the client */
-    SERVICE *Service; /* NULL for the manager */
+    UINT64 Block;     /* chosen by the client. */
+    SERVICE *Service; /* NULL for the manager. */
     DWORD Mask;
     DWORD Version;
-    ULONGLONG Base;   /* the creation stamp or the state to compare with */
+    ULONGLONG Base;   /* the creation stamp or the state to compare with. */
     DWORD LastState;
-    BOOL Queued;      /* completed, waiting to be written */
+    BOOL Queued;      /* completed, waiting to be written. */
     DWORD Status;
     DWORD Triggered;
     SERVICE_STATUS_PROCESS Process;
-    WCHAR *Names;     /* multi sz for created and deleted */
+    WCHAR *Names;     /* multi sz, for created and deleted. */
     DWORD NamesChars;
     NOTIFY *NextQueued;
 };
@@ -334,16 +332,16 @@ DWORD AccessSetSd(PSECURITY_DESCRIPTOR *sd, DWORD information, PSECURITY_DESCRIP
 HANDLE AccessServiceToken(SERVICE *s, DWORD *error);
 void AccessEnablePrivilege(const WCHAR *name);
 
-/* elevate.c: the broker for processes that ask for the rights of an administrator. */
+/* elevate.c: the broker for processes that need administrator rights. */
 typedef struct ELEVATE_REQUEST {
     WCHAR *Application, *CommandLine, *Directory, *Desktop, *Title;
     DWORD CreationFlags, StartupFlags, Show;
-    void *Environment; /* the caller's own, used when the user's cannot be made */
+    void *Environment; /* the caller's, used when the user's cannot be built. */
 } ELEVATE_REQUEST;
 
 typedef struct ELEVATE_RESULT {
     DWORD ProcessId, ThreadId, Elevation;
-    UINT64 Process, Thread; /* handles in the process of the client */
+    UINT64 Process, Thread; /* handles in the client's process. */
 } ELEVATE_RESULT;
 
 DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *request, ELEVATE_RESULT *result);
@@ -359,10 +357,10 @@ void MainWake(void);
 void MainCollect(void);
 void entry(void);
 
-/* the failure actions as the service keeps them in the registry. */
+/* the FailureActions registry value. */
 typedef struct FAILURE_BLOB {
     DWORD ResetPeriod;
-    DWORD RebootMessage; /* offsets from the start of the value */
+    DWORD RebootMessage; /* offsets from the start of the value. */
     DWORD Command;
     DWORD ActionCount;
     DWORD Actions;

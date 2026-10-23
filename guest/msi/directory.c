@@ -99,7 +99,7 @@ UINT MimeMsiDirectoryPath(MIME_MSI_PACKAGE *package, PCWSTR name, BOOL source, P
     return error ? error : directory_path(package, table, name, source, 0, out);
 }
 
-/* once costing is done every directory of the package is a property with its path, the way a format reaches one. */
+/* after costing, each directory becomes a property holding its path, which is how formatted text resolves it. */
 UINT MimeMsiPublishDirectories(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_TABLE *table;

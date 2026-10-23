@@ -1,7 +1,6 @@
 /*
- * what kind of program a file is, and the request to put the system to sleep. The kinds are those of GetBinaryType:
- * 32 bit, DOS, 16 bit windows, PIF, POSIX, 64 bit. Windows asks the system to map the file as an image and reads its
- * kind from the section; here the headers of the file are read, which gives the same kinds for the same files.
+ * GetBinaryType and SetSystemPowerState. Windows maps the file as an image and reads its kind from the section, here
+ * the file headers are read directly, which gives the same kinds for the same files.
  */
 #include <mime/win32/winbase.h>
 #include <mime/ntapi.h>
@@ -26,7 +25,7 @@ static BOOL read_at(HANDLE file, DWORD offset, void *buffer, DWORD size)
            got == size;
 }
 
-/* a file that is no executable image may still be a DOS program or a PIF by its name, as windows decides. */
+/* like windows, a file that is not an image may still be a DOS program or a PIF by its extension. */
 static int kind_from_name(LPCWSTR name)
 {
     SIZE_T n = lstrlenW(name);
@@ -41,9 +40,8 @@ static int kind_from_name(LPCWSTR name)
 }
 
 /*
- * the kind in *type. A file that cannot be opened keeps the error of the open; a dll, a machine that is not a
- * processor of Windows and a file that is no program are ERROR_BAD_EXE_FORMAT; a name that is none is
- * ERROR_INVALID_NAME.
+ * a file that cannot be opened keeps the open's error. a dll, a machine Windows does not run on and a file that is
+ * not a program give ERROR_BAD_EXE_FORMAT, a NULL name gives ERROR_INVALID_NAME.
  */
 DECLSPEC_EXPORT BOOL WINAPI GetBinaryTypeW(LPCWSTR name, LPDWORD type)
 {
@@ -84,10 +82,10 @@ DECLSPEC_EXPORT BOOL WINAPI GetBinaryTypeW(LPCWSTR name, LPDWORD type)
                     ok = FALSE;
                 }
             } else if (header[0] == 'N' && header[1] == 'E') {
-                /* a new executable for windows is a 16 bit one, any other is taken for DOS. */
+                /* an NE for windows is 16-bit windows, any other is taken for DOS. */
                 result = header[0x36] == 2 ? SCS_WOW_BINARY_ : SCS_DOS_BINARY_;
             }
-            /* an LE or LX header, or none: a DOS program. */
+            /* LE, LX or no new header: a DOS program. */
         }
     }
     CloseHandle(file);
@@ -115,9 +113,9 @@ DECLSPEC_EXPORT BOOL WINAPI GetBinaryType(LPCSTR name, LPDWORD type)
 }
 
 /*
- * sleeping asks the system for the power action of sleep, hibernating for that of hibernate, both with the
- * lightest state that asks for, and allowing the programs a say unless forced. Without the privilege that the
- * request needs it is ERROR_PRIVILEGE_NOT_HELD, and a machine that cannot enter the state ERROR_NOT_SUPPORTED.
+ * asks for the sleep or hibernate power action with the lightest matching state, letting programs object unless
+ * forced. fails with ERROR_PRIVILEGE_NOT_HELD without the privilege, ERROR_NOT_SUPPORTED when the machine cannot
+ * enter the state.
  */
 DECLSPEC_EXPORT BOOL WINAPI SetSystemPowerState(BOOL suspend, BOOL force)
 {

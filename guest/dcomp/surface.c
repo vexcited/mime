@@ -1,8 +1,7 @@
 /*
- * what a visual can show: surfaces a program draws into, textures it hands
- * over, and the frames of swap chains made for composition. A surface is a
- * texture of the rendering device; drawing hands the texture out and the
- * compositor reads it where it lies.
+ * what a visual can show: program surfaces and textures, and frames of swap
+ * chains made for composition. a surface is a texture of the rendering device:
+ * drawing hands the texture out and the compositor reads it in place.
  */
 #include "dcomp_private.h"
 
@@ -69,9 +68,8 @@ static BOOL rect_valid(const DcSurface *s, const RECT *r)
 }
 
 /*
- * drawing hands out the texture and the place in it to draw, the corner of
- * the rectangle: the program draws there and ends the draw, which a
- * suspended one also may.
+ * hands out the texture and the offset of the rectangle's corner in it. the
+ * program draws there and ends the draw, which it may also do while suspended.
  */
 static HRESULT STDMETHODCALLTYPE surf_begin_draw(void *This, const RECT *rect, REFIID riid, void **object, POINT *offset)
 {
@@ -149,7 +147,7 @@ static HRESULT STDMETHODCALLTYPE surf_resume_draw(void *This)
     return hr;
 }
 
-/* moves a part of the surface, through a copy since the two places may overlap. */
+/* goes through a copy since the two places may overlap. */
 static HRESULT STDMETHODCALLTYPE surf_scroll(void *This, const RECT *scroll, const RECT *clip, int dx, int dy)
 {
     DcSurface *s = surf_impl(This);
@@ -193,7 +191,7 @@ static HRESULT STDMETHODCALLTYPE surf_scroll(void *This, const RECT *scroll, con
     return hr;
 }
 
-/* a virtual surface grows or shrinks, keeping what both sizes hold. */
+/* resizing a virtual surface keeps what both sizes cover. */
 static HRESULT STDMETHODCALLTYPE surf_resize(void *This, UINT width, UINT height)
 {
     DcSurface *s = surf_impl(This);
@@ -230,7 +228,7 @@ static HRESULT STDMETHODCALLTYPE surf_resize(void *This, UINT width, UINT height
     return hr;
 }
 
-/* the texture stays whole; trimming says only that the program will not read the rectangles back. */
+/* the texture stays whole: trimming only says the program will not read the rectangles back. */
 static HRESULT STDMETHODCALLTYPE surf_trim(void *This, const RECT *rectangles, UINT count)
 {
     DcSurface *s = surf_impl(This);
@@ -254,9 +252,9 @@ static const IDCompositionVirtualSurfaceVtbl virtual_vtbl = {
 };
 
 /*
- * the formats and alpha modes surfaces take are dcomp.dll's: unspecified
- * alpha is opaque, an alpha-only surface needs alpha, and a size is both
- * dimensions or, on the third device, none.
+ * formats and alpha modes follow dcomp.dll: unspecified alpha is opaque, an
+ * alpha-only surface needs alpha, and a size gives both dimensions or, on the
+ * third device, neither.
  */
 HRESULT DcCreateSurface(DcDevice *device, ID3D11Device *d3d, BOOL is_virtual, UINT width, UINT height,
                         DXGI_FORMAT format, DXGI_ALPHA_MODE alpha, void **out)
@@ -371,7 +369,7 @@ HRESULT DcCreateSurfaceFactory(DcDevice *device, ID3D11Device *d3d, IDCompositio
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ textures of the program */
+/* ------------------------------------------------------------------ program textures */
 
 typedef struct DcTexture {
     IDCompositionTexture iface;
@@ -441,7 +439,7 @@ static HRESULT STDMETHODCALLTYPE tex_set_alpha_mode(IDCompositionTexture *iface,
     return S_OK;
 }
 
-/* fences are not offered. */
+/* fences are not supported. */
 static HRESULT STDMETHODCALLTYPE tex_get_available_fence(IDCompositionTexture *iface, UINT64 *value, REFIID riid,
                                                          void **fence)
 {
@@ -567,7 +565,7 @@ HRESULT DcCreateDynamicTexture(DcDevice *device, IDCompositionDynamicTexture **o
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ surfaces named by handles */
+/* ------------------------------------------------------------------ handle surfaces */
 
 typedef struct DcHandleSurface {
     IUnknown iface;
@@ -605,7 +603,7 @@ static ULONG STDMETHODCALLTYPE hs_release(IUnknown *iface)
 
 static const IUnknownVtbl hs_vtbl = {hs_query, hs_add_ref, hs_release};
 
-/* the section of DCompositionCreateSurfaceHandle: other handles are objects of another type. */
+/* takes a DCompositionCreateSurfaceHandle section, other handles are the wrong object type. */
 HRESULT DcCreateSurfaceFromHandle(DcDevice *device, HANDLE handle, IUnknown **out)
 {
     if (!handle || handle == INVALID_HANDLE_VALUE)
@@ -665,10 +663,9 @@ void DcContentUnref(DcContent *content)
 }
 
 /*
- * the content a program's object stands for: a surface, texture or dynamic
- * texture of this device, or a swap chain made for composition. Other swap
- * chains and surfaces of handles are taken and show nothing, which S_FALSE
- * says; anything else is not content.
+ * content is a surface, texture or dynamic texture of this device, or a swap
+ * chain made for composition. other swap chains and handle surfaces are taken
+ * but show nothing, which S_FALSE says. anything else is not content.
  */
 HRESULT DcContentForObject(DcDevice *device, IUnknown *object, DcContent **out)
 {
@@ -732,7 +729,7 @@ HRESULT DcContentForObject(DcDevice *device, IUnknown *object, DcContent **out)
     return S_OK;
 }
 
-/* the format a texture is read with: typeless ones are read as their plain kind. */
+/* typeless formats are read as their plain kind. */
 static DXGI_FORMAT plain_format(DXGI_FORMAT format)
 {
     switch (format) {
@@ -750,9 +747,9 @@ static DXGI_FORMAT plain_format(DXGI_FORMAT format)
 }
 
 /*
- * the frame a content shows now, for the direct3d device that draws: its
- * shader view, which stays good until the next call for the content, and
- * how it is placed. A texture of another device cannot be read.
+ * the content's current frame for the drawing device. the shader view stays
+ * valid until the next call for the content. a texture of another device
+ * cannot be read.
  */
 BOOL DcContentFrame(DcContent *c, ID3D11Device *d3d, DcFrame *f)
 {

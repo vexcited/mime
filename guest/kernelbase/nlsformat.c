@@ -1,6 +1,4 @@
-/*
- * formatting of dates, times, numbers, currencies and durations for a locale, and the lists of the formats of a locale.
- */
+/* locale formatting of dates, times, numbers, currencies and durations, and the format lists of a locale. */
 #include "kernelbase_private.h"
 #include "nls_locslots.h"
 
@@ -52,7 +50,7 @@ static SIZE_T run_length(PCWSTR p)
     return n;
 }
 
-/* copies a quoted literal; returns the characters consumed. Two quotes inside it are one, a lone one ends it. */
+/* returns the characters consumed. Two quotes inside are one quote, a lone one ends the literal. */
 static SIZE_T put_quoted(TEXT_OUT *o, PCWSTR p)
 {
     SIZE_T i = 1;
@@ -76,7 +74,7 @@ static SIZE_T put_quoted(TEXT_OUT *o, PCWSTR p)
 
 /* ------------------------------------------------------------------ dates */
 
-/* a number in the letters of the Hebrew numerals: the hundreds, the tens and the ones, with the marks around the last. */
+/* Hebrew numerals: hundreds, tens and ones, with the marks around the last letter. */
 static void put_hebrew_number(TEXT_OUT *o, int value)
 {
     static const WCHAR hundreds[] = {0x05E7, 0x05E8, 0x05E9, 0x05EA};
@@ -210,7 +208,6 @@ static int format_date(UINT l, const DATE_CONTEXT *c, PCWSTR format, LPWSTR buff
     return finish_text(&o);
 }
 
-/* a system time as a date of the calendar. */
 static BOOL date_context(UINT l, CALID calendar, const SYSTEMTIME *date, DATE_CONTEXT *c)
 {
     SYSTEMTIME st;
@@ -380,7 +377,7 @@ static int time_format(UINT l, DWORD flags, const SYSTEMTIME *time, LPCWSTR form
     return format_time(l, flags, &st, format ? format : LS(NLS_S_STIMEFORMAT), buffer, size);
 }
 
-/* ------------------------------------------------------------------ the entry points of dates and times */
+/* ------------------------------------------------------------------ date and time entry points */
 
 static UINT locale_of_lcid(LCID locale)
 {
@@ -564,9 +561,9 @@ static BOOL parse_number(PCWSTR value, UINT digits, NUMBER_PARTS *n)
 }
 
 /*
- * The grouping is read as decimal digits, the first of them the size of the group at the right. A last digit that is not
- * zero repeats, a last zero ends the groups and the digits left stay together. A zero before the last digit is a group of
- * no digits, which puts the separator twice.
+ * grouping is a string of digits, the first the size of the rightmost group. A last nonzero digit repeats, a last zero
+ * ends the groups and leaves the remaining digits together. A zero before the last digit is an empty group, which
+ * doubles the separator.
  */
 static void put_grouped(TEXT_OUT *o, PCWSTR integer, UINT grouping, PCWSTR separator)
 {
@@ -844,9 +841,9 @@ int WINAPI GetCurrencyFormatA(LCID locale, DWORD flags, LPCSTR value, const CURR
 /* ------------------------------------------------------------------ durations */
 
 /*
- * A run of d, h, m or s is that unit of the duration with at least as many digits as the run is long, and a run of f is
- * its fraction with that many digits, nine at most. The highest unit in the picture takes the units above it too, and a
- * run of f that is the highest takes the whole seconds as well and counts the duration in that fraction of a second.
+ * a run of d, h, m or s prints that unit with at least as many digits as the run, a run of f the fraction with that many
+ * digits, nine at most. The highest unit in the picture absorbs the units above it, and a run of f that is the highest
+ * counts the whole duration in that fraction of a second.
  */
 static BOOL duration_unit(WCHAR c)
 {
@@ -883,7 +880,7 @@ static int duration_format(UINT l, ULONGLONG ticks, PCWSTR format, LPWSTR buffer
             present[*p == 'd' ? 0 : (*p == 'h' || *p == 'H') ? 1 : *p == 'm' ? 2 : *p == 's' ? 3 : 4] = TRUE;
         p += n;
     }
-    /* the ticks that are left for each unit, taking away the ones counted by the units above it that are in the picture. */
+    /* the ticks left for each unit once the units above it in the picture are taken out. */
     ULONGLONG amount[5] = {};
     ULONGLONG rest = ticks;
     int highest = -1;
@@ -913,7 +910,7 @@ static int duration_format(UINT l, ULONGLONG ticks, PCWSTR format, LPWSTR buffer
         } else {
             SIZE_T digits = n > 9 ? 9 : n;
             if (highest == 4) {
-                /* the duration in the unit of that many digits of a second, the ones above counted in. */
+                /* the whole duration in that fraction of a second. */
                 ULONGLONG value = ticks;
                 for (SIZE_T i = 7; i < digits; i++)
                     value *= 10;
@@ -995,7 +992,7 @@ static void add_format(FORMAT_LIST *list, PCWSTR format)
     list->Format[list->Count++] = format;
 }
 
-/* a copy of a picture with the fields written another way: the year in four digits or two, numbers with a zero before. */
+/* a copy of the picture with one field rewritten: four or two digit years, or zero padded numbers. */
 static PCWSTR add_variant(FORMAT_LIST *list, PCWSTR picture, WCHAR field, int from, int to)
 {
     WCHAR *out = list->Storage[list->Count < MAX_FORMATS ? list->Count : MAX_FORMATS - 1];
@@ -1053,7 +1050,6 @@ static PWSTR narrow_text(UINT cp, PCWSTR text, char *buffer, int size)
     return (PWSTR)buffer;
 }
 
-/* the calendar a list of formats is for. */
 static CALID list_calendar(UINT l, DWORD flags)
 {
     CALID calendar = (CALID)KbLocaleNumber(l, NLS_N_ICALENDARTYPE);
@@ -1235,7 +1231,7 @@ BOOL WINAPI EnumTimeFormatsEx(TIMEFMT_ENUMPROCEX proc, LPCWSTR name, DWORD flags
     return enumerate_times(l, flags, proc, param, nullptr, 0, nullptr);
 }
 
-/* ------------------------------------------------------------------ the values of calendars */
+/* ------------------------------------------------------------------ calendar values */
 
 static BOOL enumerate_calendar_info(UINT l, CALID calendar, CALTYPE type, CALINFO_ENUMPROCEXEX proc_exex, LPARAM param,
                                     CALINFO_ENUMPROCW proc, CALINFO_ENUMPROCEXW proc_exw, UINT cp, CALINFO_ENUMPROCA proc_a,

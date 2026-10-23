@@ -4,7 +4,7 @@
 #include "ntdll_private.h"
 #include <mime/ntrtlsec.h>
 
-/* S-1-5-21-..., the authority in decimal below 2^32, else in hex like windows. */
+/* the authority is decimal below 2^32, else hex like windows. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PVOID sid, BOOLEAN allocate)
 {
     const SID *s = sid;
@@ -33,7 +33,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PV
     return STATUS_SUCCESS;
 }
 
-/* the buffer a text sid needs, in bytes without the terminator, for the longest number of each part. */
+/* bytes without the terminator, assuming the longest text for each part. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlLengthSidAsUnicodeString(PVOID sid, PULONG length)
 {
     const SID *s = sid;
@@ -43,7 +43,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlLengthSidAsUnicodeString(PVOID sid, PULONG length
     return STATUS_SUCCESS;
 }
 
-/* \REGISTRY\USER\<sid of the process token>, what HKEY_CURRENT_USER opens. */
+/* \REGISTRY\USER\<process token sid>, what HKEY_CURRENT_USER opens. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlFormatCurrentUserKeyPath(PUNICODE_STRING path)
 {
     HANDLE token;

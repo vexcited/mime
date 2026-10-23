@@ -4,10 +4,9 @@
 #include <mime/win32/winver.h>
 
 /*
- * the standard actions of a package beyond its files and its registration: what is searched for on the machine, what
- * the package may not run on, and the folders, registry values, environment variables and shortcuts of its components.
- * They run as the sequence reaches them, and write through the journal of the transaction, so that a failure puts the
- * machine back as it was.
+ * standard actions beyond files and registration: machine searches, launch conditions, and the folders, registry
+ * values, environment variables and shortcuts of components. they run as the sequence reaches them and write through
+ * the transaction journal, so a failure restores the machine.
  */
 
 enum { ACTION_NONE, ACTION_LOCAL, ACTION_ABSENT };
@@ -62,7 +61,7 @@ static UINT find_component(MIME_MSI_PACKAGE *package, PCWSTR name, MIME_MSI_TABL
     return ERROR_INSTALL_PACKAGE_INVALID;
 }
 
-/* the registry view the registry of a component is in: the 64-bit one for a 64-bit component. */
+/* the 64-bit registry view for a 64-bit component. */
 static UINT component_view(MIME_MSI_PACKAGE *package, PCWSTR name, DWORD *view)
 {
     MIME_MSI_TABLE *table;
@@ -102,7 +101,7 @@ static BOOL component_registered(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *tabl
     return FALSE;
 }
 
-/* which components the product has when costing ends: the registration changes while the actions run. */
+/* snapshots the product's components when costing ends, since registration changes while actions run. */
 UINT MimeMsiSnapshotComponents(MIME_MSI_PACKAGE *package)
 {
     MimeMsiFree(package->ComponentInstalled);
@@ -121,7 +120,7 @@ UINT MimeMsiSnapshotComponents(MIME_MSI_PACKAGE *package)
     return ERROR_SUCCESS;
 }
 
-/* what the installation does with a component: it is put there, taken away when the product had it, or left alone. */
+/* whether a component is installed, removed because the product had it, or left alone. */
 static UINT component_action(MIME_MSI_PACKAGE *package, PCWSTR name, ULONG *action)
 {
     MIME_MSI_TABLE *table;
@@ -237,9 +236,9 @@ static int hex_digit(WCHAR ch)
 }
 
 /*
- * the value of a Registry row, once formatted. The text says what kind it is: #% an expandable string, #x bytes in hex,
- * ## a string that starts with a number sign, # and digits a number, and one with [~] in it, which the formatter has
- * made a character zero, a list of strings.
+ * a formatted Registry row value. its prefix gives the type: #% an expandable string, #x hex bytes, ## a string that
+ * starts with a number sign, # and digits a number. a value containing [~], which the formatter turned into a zero
+ * character, is a list of strings.
  */
 static UINT registry_value(PCWSTR text, DWORD length, DWORD *type, BYTE **data, DWORD *bytes)
 {
@@ -294,7 +293,7 @@ static UINT registry_value(PCWSTR text, DWORD length, DWORD *type, BYTE **data, 
             list |= text[i] == 0;
         *type = list ? REG_MULTI_SZ : REG_SZ;
     }
-    /* strings keep their end, and a list has two. */
+    /* strings keep their terminator, lists have two. */
     DWORD characters = length + 1 + (*type == REG_MULTI_SZ ? 1 : 0);
     WCHAR *copy = MimeMsiAllocate(characters * sizeof(WCHAR));
     if (!copy)
@@ -331,10 +330,10 @@ static UINT write_registry_rows(MIME_MSI_PACKAGE *package)
         if (!error)
             error = format_length(package, raw_value, &value, &value_length);
         if (!error && name_length == 1 && (name[0] == L'-')) {
-            /* the key goes when the product is installed. */
+            /* a name of - deletes the key on install. */
             error = MimeMsiDeleteRegistryTree(package, root, key, 0);
         } else if (!error && name_length == 1 && (name[0] == L'+' || name[0] == L'*')) {
-            /* the key is made, empty, and + keeps it where * has it removed with the component. */
+            /* + and * create an empty key. on removal + keeps it and * deletes it with the component. */
             HKEY made;
             DWORD disposition;
             error = RegCreateKeyExW(root, key, 0, nullptr, 0, KEY_READ | package->RegistryView, nullptr, &made, &disposition);
@@ -390,7 +389,7 @@ static UINT remove_registry_rows(MIME_MSI_PACKAGE *package)
             error = ERROR_SUCCESS;
         else if (!error) {
             error = MimeMsiDeleteRegistryValue(package, root, key, name);
-            /* a key left empty by the removal goes too. */
+            /* delete the key too if the removal left it empty. */
             HKEY opened;
             if (!error && !RegOpenKeyExW(root, key, 0, KEY_READ | package->RegistryView, &opened)) {
                 DWORD subkeys = 1, values = 1;
@@ -438,7 +437,7 @@ static UINT read_environment(HKEY root, PCWSTR path, PCWSTR name, PWSTR *value, 
     return error;
 }
 
-/* the part of a value that is not the old value: the text around [~], and where the old value goes. */
+/* splits a value template around [~], which marks where the old value goes. */
 static UINT environment_parts(MIME_MSI_PACKAGE *package, PCWSTR template, PWSTR *before, PWSTR *after, BOOL *has_old)
 {
     PCWSTR marker = template ? wcsstr(template, L"[~]") : nullptr;
@@ -510,9 +509,9 @@ static UINT environment_rows(MIME_MSI_PACKAGE *package, BOOL install)
                 error = MimeMsiDeleteRegistryValue(package, root, path, name);
             } else if (set || create) {
                 if (create && !set && old_value) {
-                    /* it exists: nothing to do. */
+                    /* already there, leave it. */
                 } else {
-                    /* with no old value the separator next to the place of it has nothing to separate, a guess. */
+                    /* with no old value, drop the separator next to its place. this is a guess. */
                     if (has_old && (!old_value || !*old_value)) {
                         SIZE_T before_length = wcslen(before);
                         if (*after == L';')
@@ -529,9 +528,8 @@ static UINT environment_rows(MIME_MSI_PACKAGE *package, BOOL install)
                         if (has_old && old_value)
                             wcscat(value, old_value);
                         wcscat(value, after);
-                        /* the old value is not added twice. */
                         DWORD type = old_type == REG_EXPAND_SZ || wcschr(value, L'%') ? REG_EXPAND_SZ : REG_SZ;
-                        /* what the package already put around the old value is not put there twice. */
+                        /* skip the write when the package's text around the old value is already there. */
                         BOOL present = old_value && !wcscmp(old_value, value);
                         if (has_old && old_value && (*before || *after))
                             present = (!*before || wcsstr(old_value, before)) && (!*after || wcsstr(old_value, after));
@@ -544,7 +542,7 @@ static UINT environment_rows(MIME_MSI_PACKAGE *package, BOOL install)
             }
         } else if (!error && !install && remove_on_uninstall) {
             if (old_value && has_old) {
-                /* what the package put around the old value is taken out of the value again. */
+                /* take what the package added around the old value back out. */
                 SIZE_T length = wcslen(old_value);
                 PWSTR value = MimeMsiDuplicate(old_value);
                 if (!value)
@@ -661,7 +659,7 @@ static void free_paths(PATH_LIST *list)
     MimeMsiFree(list->Paths);
 }
 
-/* the folders of the components that go, the deepest first, so that a folder is empty when its turn comes. */
+/* removes the folders of removed components, deepest first, so each is empty when its turn comes. */
 static UINT remove_folders(MIME_MSI_PACKAGE *package)
 {
     PATH_LIST folders = {};
@@ -698,7 +696,7 @@ static UINT remove_folders(MIME_MSI_PACKAGE *package)
         if (!error)
             error = add_path(&folders, path);
     }
-    /* the directories the files of a component went to. */
+    /* the directories the component's files went to. */
     if (!error)
         error = optional_table(package, L"Component", &table);
     for (ULONG row = 0; table && row < table->Rows && !error; row++) {
@@ -713,7 +711,7 @@ static UINT remove_folders(MIME_MSI_PACKAGE *package)
             error = add_path(&folders, path);
     }
     if (!error && folders.Count > 1) {
-        /* an insertion sort keeps the order of folders of one depth. */
+        /* insertion sort is stable, keeping the order of folders at one depth. */
         for (ULONG i = 1; i < folders.Count; i++) {
             PWSTR item = folders.Paths[i];
             ULONG j = i;
@@ -742,7 +740,7 @@ static UINT remove_folders(MIME_MSI_PACKAGE *package)
     return error;
 }
 
-/* the files that a removed component put there, and the ones RemoveFile rows name. */
+/* removes the files of removed components and the ones RemoveFile rows name. */
 static UINT remove_files(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_TABLE *table;
@@ -866,7 +864,7 @@ static UINT create_shortcuts(MIME_MSI_PACKAGE *package)
                 error = ERROR_FUNCTION_FAILED;
         }
         if (!error) {
-            /* the file of a feature stands for an advertised shortcut, which is not made. */
+            /* a feature's file stands for an advertised shortcut, which is not created. */
             if (!*target) {
                 error = ERROR_INSTALL_PACKAGE_INVALID;
             } else {
@@ -971,7 +969,7 @@ static BOOL read_text_value(HKEY key, PCWSTR name, DWORD type_wanted, PWSTR *tex
     if (type == REG_SZ || type == REG_EXPAND_SZ || type == REG_MULTI_SZ) {
         *text = (PWSTR)data;
         if (type_wanted == 2 && type == REG_EXPAND_SZ) {
-            /* a raw value tells what it was. */
+            /* a raw read marks an expandable string with #%. */
             SIZE_T length = wcslen(*text);
             PWSTR marked = MimeMsiAllocate((length + 3) * sizeof(WCHAR));
             if (marked) {
@@ -1000,7 +998,7 @@ static BOOL read_text_value(HKEY key, PCWSTR name, DWORD type_wanted, PWSTR *tex
     return *text != nullptr;
 }
 
-/* a file looked for by a Signature row: the name, the version and the size the row wants. */
+/* checks a file against a Signature row's name, version and size. */
 static BOOL signature_matches(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *signatures, ULONG row, PCWSTR path)
 {
     WIN32_FILE_ATTRIBUTE_DATA info;
@@ -1032,7 +1030,7 @@ static BOOL signature_matches(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *signatu
     return TRUE;
 }
 
-/* the first file or directory a signature finds under a directory, down to a depth. */
+/* the first match for a signature under a directory, searched down to a depth. */
 static PWSTR locate(MIME_MSI_PACKAGE *package, PCWSTR directory, PCWSTR signature, int depth, ULONG level)
 {
     MIME_MSI_TABLE *signatures;
@@ -1047,7 +1045,7 @@ static PWSTR locate(MIME_MSI_PACKAGE *package, PCWSTR directory, PCWSTR signatur
         }
     }
     if (row == UINT32_MAX) {
-        /* no signature: the directory is what is looked for. */
+        /* without a signature, the directory itself is the target. */
         DWORD attributes = GetFileAttributesW(directory);
         return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) ? MimeMsiDuplicate(directory) : nullptr;
     }
@@ -1116,7 +1114,7 @@ static PWSTR search_registry(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, U
             if ((type & 15) == 2)
                 result = text;
             else {
-                /* a path, perhaps of a file; the signature may name the file inside a directory. */
+                /* the value is a path: a file, or a directory to look in for the signature's file. */
                 PWSTR expanded = text;
                 DWORD attributes = GetFileAttributesW(text);
                 if (attributes != INVALID_FILE_ATTRIBUTES) {
@@ -1153,7 +1151,7 @@ static PWSTR search_directory(MIME_MSI_PACKAGE *package, PCWSTR signature, PCWST
         if (MimeMsiFormat(package, raw_path, &formatted))
             return nullptr;
         if (parent && *parent) {
-            /* the path is under the place another search found. */
+            /* the path is relative to what the parent search found. */
             PWSTR location = search_directory(package, parent, found_parents, count);
             if (!location) {
                 MimeMsiFree(formatted);
@@ -1190,7 +1188,7 @@ static PWSTR search_component(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, 
         if (!RegEnumValueW(key, 0, name, &length, nullptr, nullptr, nullptr, &bytes) &&
             read_text_value(key, name, 2, &result)) {
             if (type == 0) {
-                /* the directory of the key path. */
+                /* type 0 wants the key path's directory. */
                 PWSTR separator = wcsrchr(result, L'\\');
                 DWORD attributes = GetFileAttributesW(result);
                 if (separator && !(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY)))
@@ -1223,7 +1221,6 @@ static UINT app_search(MIME_MSI_PACKAGE *package)
         for (ULONG i = 0; registry && !result && i < registry->Rows; i++) {
             PCWSTR key = cell_text(package, registry, i, L"Signature_");
             if (key && !wcscmp(key, signature)) {
-                /* the signature of a registry search lives in the column of the same name. */
                 result = search_registry(package, registry, i);
             }
         }
@@ -1341,8 +1338,8 @@ static UINT launch_conditions(MIME_MSI_PACKAGE *package, PWSTR *message)
 
 /* ------------------------------------------------------------------ actions of tables */
 
-/* the standard actions that work on rows of their own tables. A package that has no rows in the tables has nothing for
- * the action to do, and the action succeeds. Rows are not carried out by any of them yet. */
+/* standard actions that work on rows of their own tables. with no rows there is nothing to do and the action
+ * succeeds. none of them carries out rows yet. */
 static const struct {
     PCWSTR Action;
     PCWSTR Tables[3];

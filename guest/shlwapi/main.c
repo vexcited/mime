@@ -1,6 +1,4 @@
-/*
- * shlwapi entry point, its version, class objects and the helpers its files share.
- */
+/* shlwapi entry point, version, class objects and shared helpers. */
 #include "shlwapi_private.h"
 
 HRESULT ShlAssocCreateInstance(REFIID riid, void **out);
@@ -58,7 +56,7 @@ LPWSTR ShlWide(LPCSTR s)
     return w;
 }
 
-/* windows 10's shlwapi reports 10.0.10586 whatever the build. */
+/* shlwapi reports 10.0.10586 whatever the build, like windows 10's. */
 HRESULT WINAPI DllGetVersion(DLLVERSIONINFO *info)
 {
     if (!info || (info->cbSize != sizeof(DLLVERSIONINFO) && info->cbSize != sizeof(DLLVERSIONINFO2)))
@@ -74,8 +72,6 @@ HRESULT WINAPI DllGetVersion(DLLVERSIONINFO *info)
     }
     return S_OK;
 }
-
-/* ------------------------------------------------------------------ the class factory */
 
 static HRESULT STDMETHODCALLTYPE factory_query(IClassFactory *This, REFIID riid, void **out)
 {
@@ -128,15 +124,13 @@ HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void **out)
     return factory_query(&assoc_factory, riid, out);
 }
 
-/* ------------------------------------------------------------------ what windows this is */
-
-/* PLATFORM_INTEGRATED, the shell and the browser as one. */
+/* PLATFORM_INTEGRATED: the shell and the browser as one. */
 UINT WINAPI WhichPlatform(void)
 {
     return 2;
 }
 
-/* the shell's ui version, 6 since windows xp. a guess. */
+/* 6 since windows xp, a guess. */
 UINT WINAPI GetUIVersion(void);
 UINT WINAPI GetUIVersion(void)
 {
@@ -174,7 +168,7 @@ HRESULT WINAPI SHWindowsPolicyGetValue(REFGUID policy, DWORD *value, DWORD size)
     return E_FAIL;
 }
 
-/* no dock, no battery worth telling. */
+/* no dock, no battery worth reporting. */
 DWORD WINAPI SHGetMachineInfo(UINT what);
 DWORD WINAPI SHGetMachineInfo(UINT what)
 {
@@ -187,9 +181,7 @@ FARPROC WINAPI DelayLoadFailureHook(LPCSTR dll, LPCSTR function)
     return nullptr;
 }
 
-/* ------------------------------------------------------------------ libraries */
-
-/* the language resources live next to the dll itself here, so this is LoadLibraryEx. */
+/* language resources live next to the dll here, so this is plain LoadLibraryEx. */
 HINSTANCE WINAPI MLLoadLibraryW(LPCWSTR name, HMODULE parent, DWORD flags)
 {
     return LoadLibraryExW(name, nullptr, 0);
@@ -200,7 +192,7 @@ HINSTANCE WINAPI MLLoadLibraryA(LPCSTR name, HMODULE parent, DWORD flags)
     return LoadLibraryExA(name, nullptr, 0);
 }
 
-/* the in process server of a class loaded and kept. */
+/* loads the class's in process server and never frees it. */
 HMODULE WINAPI SHPinDllOfCLSID(const CLSID *clsid);
 HMODULE WINAPI SHPinDllOfCLSID(const CLSID *clsid)
 {
@@ -216,9 +208,7 @@ HMODULE WINAPI SHPinDllOfCLSID(const CLSID *clsid)
     return LoadLibraryW(path);
 }
 
-/* ------------------------------------------------------------------ counters */
-
-/* counters shared by the process, one per index. */
+/* process wide, indexes wrap around. */
 static LONG volatile counters[64];
 
 LONG WINAPI SHGlobalCounterGetValue(int counter);
@@ -240,7 +230,7 @@ LONG WINAPI SHGlobalCounterDecrement(int counter)
 }
 
 #ifdef _WIN64
-/* x64 only: the pointer exchange and the unaligned string functions of the shell. */
+/* x64 only exports. */
 PVOID WINAPI SHInterlockedCompareExchange(PVOID volatile *destination, PVOID exchange, PVOID comparand);
 PVOID WINAPI SHInterlockedCompareExchange(PVOID volatile *destination, PVOID exchange, PVOID comparand)
 {

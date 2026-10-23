@@ -1,17 +1,15 @@
 /*
- * task dialogs: TaskDialogIndirect builds a modal dialog from its
- * configuration, a primary panel with the main icon, instruction, content,
- * expanded information, progress bar, radio buttons and command links over
- * a secondary panel with the expando, the verification check box and the
- * push buttons, and a footer. windows draws it with DirectUI; mime uses
- * child windows laid out the same way.
+ * task dialogs. TaskDialogIndirect builds a modal dialog from its configuration: a primary panel with the main
+ * icon, instruction, content, expanded information, progress bar, radio buttons and command links, over a
+ * secondary panel with the expando, verification check box and push buttons, then a footer. windows draws it
+ * with DirectUI, mime uses child windows laid out the same way.
  */
 #include "comctl32_private.h"
 
 #define BCM_SETSHIELD 0x160C
 #define TD_TIMER 1
 #define TD_TIMER_INTERVAL 200
-/* the ids of the child windows; the button ids the caller sees are kept apart. */
+/* child window ids, kept apart from the button ids the caller sees. */
 #define ID_BUTTON_FIRST 0x8000
 #define ID_RADIO_FIRST 0x9000
 #define ID_VERIFY 0xA000
@@ -53,7 +51,7 @@ typedef struct TD_STATE {
     int StringCount;
 } TD_STATE;
 
-/* a string or a resource id of the instance; the caller frees the copy. */
+/* a string or a resource id of the instance. the caller frees the copy. */
 static LPWSTR resolve_string(TD_STATE *td, PCWSTR text)
 {
     if (!text)
@@ -73,7 +71,7 @@ static LPWSTR resolve_string(TD_STATE *td, PCWSTR text)
     return copy;
 }
 
-/* the text with hyperlink markup reduced to the link text. */
+/* reduces hyperlink markup to the link text. */
 static LPWSTR strip_links(LPWSTR text, BOOL links)
 {
     if (!text || !links)
@@ -106,7 +104,7 @@ static void close_with(TD_STATE *td, HRESULT hr)
     EndDialog(td->Hwnd, 0);
 }
 
-/* handles a callback answer: a failure closes the dialog with it. */
+/* a failed callback answer closes the dialog with it. */
 static BOOL check(TD_STATE *td, HRESULT hr)
 {
     if (FAILED(hr)) {
@@ -221,7 +219,6 @@ static void make_fonts(TD_STATE *td)
         td->ContentFont = message_font(100, 0);
 }
 
-/* the height text needs at a width. */
 static int text_height(HWND hwnd, HFONT font, int width)
 {
     int n = GetWindowTextLengthW(hwnd);
@@ -271,7 +268,7 @@ static int dlu_x(TD_STATE *td, int dlu)
     return MulDiv(dlu, base, 4);
 }
 
-/* the push buttons are equally wide, at least 50 dlu; the row grows from the right. */
+/* push buttons are equally wide, at least 50 dlu, and the row grows from the right. */
 static int button_metrics(TD_STATE *td, int *width, int *height)
 {
     int w = dlu_x(td, 50), count = 0;
@@ -288,7 +285,7 @@ static int button_metrics(TD_STATE *td, int *width, int *height)
     return count;
 }
 
-/* places every child for a client width, returns the client height. */
+/* places every child for a client width and returns the client height. */
 static int layout(TD_STATE *td, int width, BOOL move)
 {
     int pad = 10, gap = 10;
@@ -349,7 +346,7 @@ static int layout(TD_STATE *td, int width, BOOL move)
     int push = button_metrics(td, &bw, &bh);
     int row_top = y + 9;
     int buttons_w = push ? push * bw + (push - 1) * 10 : 0;
-    /* the left column: the expando, then the check box with its box and text. */
+    /* the left column: the expando, then the check box. */
     int left_w = 0, verify_w = 0;
     if (td->Expando)
         left_w = text_width(td->Hwnd, td->ContentFont, L"Hide details") + 40;
@@ -364,7 +361,7 @@ static int layout(TD_STATE *td, int width, BOOL move)
         if (verify_w > left_w)
             left_w = verify_w;
     }
-    /* side by side when both fit, else the buttons above the left column. */
+    /* side by side when both fit, otherwise the buttons go above the left column. */
     BOOL stacked = left_w && push && left_w + 20 + buttons_w > width - 2 * pad;
     int left_y = stacked ? row_top + bh + 9 : row_top;
     if (td->Expando) {
@@ -812,7 +809,7 @@ static void paint(TD_STATE *td, HDC dc)
                    td->FooterIconRect.bottom - td->FooterIconRect.top, 0, nullptr, DI_NORMAL);
 }
 
-/* ------------------------------------------------------------------ the dialog procedure */
+/* ------------------------------------------------------------------ dialog procedure */
 
 static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
@@ -1021,7 +1018,7 @@ static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ the entry points */
+/* ------------------------------------------------------------------ entry points */
 
 WINCOMMCTRLAPI HRESULT WINAPI TaskDialogIndirect(const TASKDIALOGCONFIG *config, int *button, int *radio_button,
                                                  BOOL *verification)

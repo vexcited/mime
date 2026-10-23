@@ -1,19 +1,19 @@
 /*
- * screen capture. a duplication follows one monitor of the screen as Mime composes it (screen.c) and hands out
- * its frames: the rows that changed since the frame before go to the program's buffer, and the rectangles they
- * make wait to be asked for. the pointer comes apart from the frame, as in dxgi's output duplication.
+ * screen capture. a duplication follows one monitor of the screen as mime composes it in screen.c and hands out
+ * frames: rows that changed since the last frame go to the program's buffer, and their rectangles wait to be
+ * asked for. the pointer comes separately from the frame, as in dxgi output duplication.
  *
- * nothing tells the screen that it changed but the guest's own presents, window configurations and the counts of
- * the images windows presented through the host (ScreenSerial, ScreenHostSerial), so a frame is composed only
- * when one of them moved, and the program polls at the display's rate.
+ * the only signals that the screen changed are the guest's own presents, window configurations and the counts of
+ * images windows presented through the host, ScreenSerial and ScreenHostSerial. so a frame is composed only when
+ * one of them moved, and the program polls at the display's rate.
  *
- * a duplication keeps a copy of the frame it gave last. the copy is what a new frame is compared with, in bands
- * of rows, so the rectangles are exact to the pixel within a band and bands that touch are joined.
+ * a duplication keeps a copy of the last frame it gave. new frames are compared with it in bands of rows, so the
+ * rectangles are exact to the pixel within a band, and touching bands are joined.
  */
 #include "win32k.h"
 
 #define CAPTURE_MAX 32
-/* guess: windows' kernel refuses a fifth duplication of an output with DXGI_ERROR_NOT_CURRENTLY_AVAILABLE. */
+/* assumed: windows refuses a fifth duplication of an output with DXGI_ERROR_NOT_CURRENTLY_AVAILABLE. */
 #define CAPTURE_PER_OUTPUT 4
 #define CAPTURE_MAX_RECTS 128
 #define CAPTURE_BAND 16
@@ -25,11 +25,11 @@ typedef struct CAPTURE {
     W32PROCESS *Process;
     ULONG Handle;
     ULONG Monitor;
-    RECT Rect; /* the monitor when the duplication was made, a change of it loses the duplication */
-    HWND Window; /* a window's duplication, and then the pixels are the window's own */
+    RECT Rect; /* the monitor at creation; if it changes, the duplication is lost. */
+    HWND Window; /* set for a window's duplication, whose pixels are the window's own. */
     BOOLEAN ClientOnly;
     SURFACE *Prev;
-    SURFACE *Now; /* a window's pixels as composed, to compare with the copy */
+    SURFACE *Now; /* the window's composed pixels, compared with the copy. */
     BOOLEAN Delivered;
     ULONG GuestSerial;
     ULONG64 HostSerial;
@@ -74,9 +74,9 @@ static ULONG64 counter(void)
     return (ULONG64)KeQueryPerformanceCounter(nullptr).QuadPart;
 }
 
-/* ------------------------------------------------------------------ the pointer's image */
+/* ------------------------------------------------------------------ pointer image */
 
-/* a built in pointer: rows of 0 for clear, 1 for outline and 2 for fill. */
+/* rows of 0 for clear, 1 for outline and 2 for fill. */
 typedef struct BUILTIN {
     LONG Width, Height, HotspotX, HotspotY;
     const char *Rows;
@@ -147,7 +147,7 @@ static ULONG g_shape_serial = 1;
 static ULONG g_host_kind = MIME_CURSOR_ARROW;
 static HCURSOR g_shown;
 
-/* the host shows these with its own theme, so what a capture shows of them is a guess. */
+/* the host draws these with its own theme, so captures only approximate them. */
 void CaptureCursorKind(ULONG kind)
 {
     if (kind == g_host_kind && !g_shown)
@@ -157,7 +157,7 @@ void CaptureCursorKind(ULONG kind)
     g_shape_serial++;
 }
 
-/* the image of the cursor a program set, none when the host's own is shown. */
+/* none when the host's own cursor is shown. */
 void CaptureCursorShown(HCURSOR cursor)
 {
     if (cursor == g_shown)
@@ -166,10 +166,7 @@ void CaptureCursorShown(HCURSOR cursor)
     g_shape_serial++;
 }
 
-/*
- * the pointer's image in straight alpha bgra: the image of the cursor a program set, else a built in one for
- * the host's cursor. false when the pointer is hidden.
- */
+/* straight alpha bgra of the program's cursor, else a built in one for the host's. false when hidden. */
 static BOOLEAN pointer_image(PUCHAR out, ULONG capacity, MIME_CAPTURE_SHAPE *shape)
 {
     SURFACE *image = g_shown ? CursorImage(g_shown) : nullptr;
@@ -202,7 +199,7 @@ static BOOLEAN pointer_image(PUCHAR out, ULONG capacity, MIME_CAPTURE_SHAPE *sha
         for (LONG x = 0; x < width; x++) {
             ULONG px;
             if (image) {
-                /* the image is premultiplied, windows' pointer shapes are not. */
+                /* our image is premultiplied, windows pointer shapes are not. */
                 px = SurfaceGetPixel(image, x, y);
                 ULONG a = px >> 24;
                 if (a && a != 255) {
@@ -222,7 +219,7 @@ static BOOLEAN pointer_image(PUCHAR out, ULONG capacity, MIME_CAPTURE_SHAPE *sha
 
 /* ------------------------------------------------------------------ frames */
 
-/* the first and last pixel that differ in two rows, false when they are the same. */
+/* false when the rows are the same. */
 static BOOLEAN row_diff(const ULONG *a, const ULONG *b, LONG width, LONG *first, LONG *last)
 {
     LONG x = 0;
@@ -242,7 +239,7 @@ static BOOLEAN row_diff(const ULONG *a, const ULONG *b, LONG width, LONG *first,
 
 static void add_rect(CAPTURE *c, const RECT *r)
 {
-    /* bands that touch and overlap in x are one rectangle. */
+    /* bands that touch and overlap in x merge into one rectangle. */
     if (c->DirtyCount) {
         RECT *last = &c->Dirty[c->DirtyCount - 1];
         if (last->bottom == r->top && r->left < last->right && r->right > last->left) {
@@ -253,7 +250,7 @@ static void add_rect(CAPTURE *c, const RECT *r)
         }
     }
     if (c->DirtyCount == CAPTURE_MAX_RECTS) {
-        /* too many: the last rectangle takes in the rest, as the kernel coalesces its own. */
+        /* too many: the last rectangle absorbs the rest, like windows coalesces its own. */
         RECT *last = &c->Dirty[c->DirtyCount - 1];
         RectUnion(last, last, r);
         return;
@@ -261,9 +258,7 @@ static void add_rect(CAPTURE *c, const RECT *r)
     c->Dirty[c->DirtyCount++] = *r;
 }
 
-/*
- * the rectangles of the rows given that differ from the copy, the copy brought up to date.
- */
+/* collects rectangles of rows that differ from the copy, and updates the copy. */
 static void diff_frame(CAPTURE *c, const UCHAR *bits, LONG stride)
 {
     LONG width = c->Prev->Width, height = c->Prev->Height;
@@ -294,7 +289,7 @@ static void diff_frame(CAPTURE *c, const UCHAR *bits, LONG stride)
     }
 }
 
-/* the rows of the rectangles of the copy to the program's buffer. */
+/* copies the dirty rows from the copy to the program's buffer. */
 static NTSTATUS write_frame(CAPTURE *c, PUCHAR user, ULONG size)
 {
     LONG width = c->Prev->Width;
@@ -318,14 +313,14 @@ static BOOLEAN monitor_is(CAPTURE *c)
     return MonitorGet(c->Monitor, &m) && !memcmp(&m.Rect, &c->Rect, sizeof(RECT));
 }
 
-/* the window of a window's duplication as it is now, none when it is gone. */
+/* none when the window is gone. */
 static WND *capture_window(CAPTURE *c)
 {
     WND *w = WndLookup(c->Window);
     return w && !w->Header.Destroyed ? w : nullptr;
 }
 
-/* the desktops are one window tree: the threads of the default desktop see the screen and the others are refused. */
+/* the desktops share one window tree: only threads of the default desktop see the screen. */
 static BOOLEAN on_input_desktop(void)
 {
     return WinStaOnInputDesktop();
@@ -428,9 +423,9 @@ static LONG op_open(MIME_CAPTURE_OPEN *o)
 }
 
 /*
- * a window's frame: its own pixels composed again when anything on the screen may have changed, and given when they
- * differ from the last ones. the window going away is its capture ending, and a window that changes size starts the
- * frames again whole at the new size, once the buffer is big enough.
+ * the window's pixels are composed again when anything may have changed, and given when they differ from the
+ * last ones. the window going away ends the capture, and a resized window restarts with whole frames at the new
+ * size once the buffer is big enough.
  */
 static LONG op_frame_window(CAPTURE *c, MIME_CAPTURE_FRAME *f, PUCHAR user, ULONG size)
 {
@@ -507,7 +502,6 @@ static LONG op_frame(CAPTURE *c, MIME_CAPTURE_FRAME *f, PUCHAR user, ULONG size)
     if ((ULONG64)size < (ULONG64)width * height * 4)
         return STATUS_BUFFER_TOO_SMALL;
 
-    /* the pointer. */
     MIME_CAPTURE_SHAPE shape;
     BOOLEAN shown = pointer_image(nullptr, 0, &shape);
     POINT pos = {InputCursorPos.x - c->Rect.left - (shown ? shape.HotspotX : 0),
@@ -519,7 +513,6 @@ static LONG op_frame(CAPTURE *c, MIME_CAPTURE_FRAME *f, PUCHAR user, ULONG size)
                             (visible && (pos.x != c->PointerPos.x || pos.y != c->PointerPos.y));
     BOOLEAN shape_changed = !c->PointerKnown || c->ShapeSerial != g_shape_serial;
 
-    /* the screen. */
     BOOLEAN screen_changed = !c->Delivered || c->GuestSerial != ScreenSerial;
     ULONG64 host = c->HostSerial;
     if (!screen_changed) {
@@ -576,7 +569,7 @@ static LONG op_frame(CAPTURE *c, MIME_CAPTURE_FRAME *f, PUCHAR user, ULONG size)
     return STATUS_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ the entry point */
+/* ------------------------------------------------------------------ entry point */
 
 LONG NTAPI NtUserMimeCapture(ULONG op, ULONG id, PUCHAR info, PUCHAR data, ULONG size)
 {
@@ -631,7 +624,7 @@ LONG NTAPI NtUserMimeCapture(ULONG op, ULONG id, PUCHAR info, PUCHAR data, ULONG
             status = STATUS_BUFFER_TOO_SMALL;
             break;
         }
-        /* the rectangles are in the monitor's pixels, as the frame is. */
+        /* in monitor pixels, like the frame. */
         status = need && !NT_SUCCESS(MimeCopyToUser(data, c->Dirty, need)) ? STATUS_ACCESS_VIOLATION : STATUS_SUCCESS;
         break;
     }

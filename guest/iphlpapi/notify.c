@@ -1,11 +1,8 @@
 /*
- * change notifications. one thread of the process polls the host every
- * two seconds while anyone listens, compares the snapshot with the
- * previous one, and calls the callbacks of the changed addresses,
- * interfaces and routes, completes the NotifyAddrChange and
- * NotifyRouteChange requests and tells the connectivity hint listeners.
- * windows calls back on thread pool threads; here it is that thread,
- * which also delivers the initial notifications.
+ * change notifications. while anyone listens, one thread polls the host every two seconds, diffs the snapshot
+ * against the previous one, calls the address, interface and route callbacks, completes NotifyAddrChange and
+ * NotifyRouteChange requests and updates the connectivity hint listeners. windows calls back on thread pool
+ * threads, here it is this thread, which also delivers the initial notifications.
  */
 #include "private.h"
 
@@ -19,17 +16,17 @@ typedef struct REGISTRATION {
     ADDRESS_FAMILY family;
     void *callback;
     void *context;
-    BOOL initial; /* the initial notification is due */
-    LONG active;  /* callbacks running */
+    BOOL initial; /* the initial notification is due. */
+    LONG active;  /* callbacks running. */
     BOOL cancelled;
-    NL_NETWORK_CONNECTIVITY_HINT hint; /* the last one told */
+    NL_NETWORK_CONNECTIVITY_HINT hint; /* the last hint delivered. */
 } REGISTRATION;
 
 typedef struct WAITER {
     struct WAITER *next;
-    BOOL route; /* else an ipv4 address change */
+    BOOL route; /* else an ipv4 address change. */
     LPOVERLAPPED overlapped;
-    HANDLE event; /* of a synchronous caller */
+    HANDLE event; /* for a synchronous caller. */
 } WAITER;
 
 typedef void(NETIOAPI_API_ *ROW_CALLBACK)(PVOID context, PVOID row, MIB_NOTIFICATION_TYPE type);
@@ -51,7 +48,7 @@ typedef struct {
     ULONG count;
 } BATCH;
 
-/* the registrations of a kind and family, held active while they are called outside the lock. */
+/* registrations of a kind and family, held active so they can be called outside the lock. */
 static BATCH hold(KIND kind, ADDRESS_FAMILY family, BOOL initial_only)
 {
     BATCH b = {};
@@ -61,7 +58,7 @@ static BATCH hold(KIND kind, ADDRESS_FAMILY family, BOOL initial_only)
         n++;
     b.list = n ? IphAlloc(n * sizeof(*b.list)) : nullptr;
     for (REGISTRATION *r = registrations; b.list && r; r = r->next) {
-        /* changes wait until the initial notification was given. */
+        /* changes wait until the initial notification is delivered. */
         if (initial_only ? !r->initial
                          : (r->initial || r->kind != kind || (family && r->family && r->family != family)))
             continue;
@@ -79,7 +76,7 @@ static void unhold(BATCH *b)
     AcquireSRWLockExclusive(&lock);
     for (ULONG i = 0; i < b->count; i++) {
         REGISTRATION *r = b->list[i];
-        /* cancelled from its own callback: freed once it returned. */
+        /* cancelled from its own callback: freed once it returns. */
         if (!--r->active && r->cancelled)
             IphFree(r);
     }
@@ -206,7 +203,7 @@ static const IPH_ROUTE *find_route(const IPH_SNAPSHOT *s, const IPH_ROUTE *key)
 
 static void route_event(const IPH_SNAPSHOT *s, const IPH_ROUTE *r, MIB_NOTIFICATION_TYPE type, BOOL *v4)
 {
-    /* like windows, the row has the route's key alone. */
+    /* like windows, the row holds only the route's key. */
     MIB_IPFORWARD_ROW2 full, row = {};
     IphRouteRow(s, r, &full);
     row.InterfaceLuid = full.InterfaceLuid;
@@ -309,7 +306,7 @@ static DWORD WINAPI monitor(LPVOID parameter)
     return 0;
 }
 
-/* starts the thread, and wakes it for the work just queued. called with the lock held. */
+/* starts the thread and wakes it for newly queued work. called with the lock held. */
 static BOOL start(void)
 {
     if (!wake && !(wake = CreateEventW(nullptr, FALSE, FALSE, nullptr)))
@@ -358,7 +355,7 @@ static DWORD request_change(BOOL route, PHANDLE handle, LPOVERLAPPED overlapped)
     ReleaseSRWLockExclusive(&lock);
     if (overlapped)
         return ERROR_IO_PENDING;
-    /* without an overlapped structure the call waits for the change. */
+    /* without an OVERLAPPED the call blocks until the change. */
     WaitForSingleObject(w->event, INFINITE);
     CloseHandle(w->event);
     IphFree(w);
@@ -471,7 +468,7 @@ DWORD NETIOAPI_API_ CancelMibChangeNotify2(HANDLE handle)
         return ERROR_INVALID_HANDLE;
     }
     found->cancelled = TRUE;
-    /* waits for a running callback, unless it is that callback which cancels: it is freed once it returns. */
+    /* wait for a running callback, unless that callback is the one cancelling: then it is freed once it returns. */
     if (found->active && GetCurrentThreadId() == thread_id) {
         ReleaseSRWLockExclusive(&lock);
         return NO_ERROR;

@@ -1,9 +1,8 @@
 /*
- * IShellItemImageFactory::GetImage: the thumbnail or the icon of a shell item as a 32 bit bitmap.
+ * IShellItemImageFactory::GetImage: a shell item's thumbnail or icon as a 32-bit bitmap.
  *
- * a picture is a file one of the codecs of the imaging component knows. Its thumbnail is the first frame turned by
- * its Exif orientation, scaled to fit the size asked for; a jpeg or tiff file offers the thumbnail it carries when
- * that is big enough. Everything else is shown by its icon.
+ * pictures are files a WIC codec decodes. the thumbnail is the first frame turned upright per its Exif orientation and
+ * scaled to fit, or the thumbnail a jpeg or tiff carries when it is big enough. everything else shows its icon.
  */
 #include "shell32_private.h"
 #include <mime/win32/wincodec.h>
@@ -16,9 +15,9 @@
 #define LAYOUT_RTL 1
 #endif
 
-/* the biggest bitmap a request may ask for, by its long side. */
+/* the largest long side a request may ask for. */
 #define LARGEST_REQUEST 8192
-/* the sizes of the thumbnail cache of Windows, which a request is taken up to when it does not shrink to fit. */
+/* the Windows thumbnail cache sizes, which requests that do not shrink to fit round up to. */
 static const int g_cache_sizes[] = {16, 32, 48, 96, 256, 768, 1280, 1920, 2560};
 
 typedef HRESULT(WINAPI *CO_CREATE)(REFCLSID, IUnknown *, DWORD, REFIID, void **);
@@ -37,7 +36,7 @@ static void *ole_proc(const char *name)
     return ole ? (void *)GetProcAddress(ole, name) : nullptr;
 }
 
-/* the imaging factory, with a multithreaded apartment made for the call when the thread has none. */
+/* enters a multithreaded apartment for the call when the thread has none. */
 static HRESULT wic_open(WIC *wic)
 {
     memset(wic, 0, sizeof(*wic));
@@ -76,7 +75,7 @@ static void release_source(IWICBitmapSource *source)
         source->lpVtbl->Release(source);
 }
 
-/* a source that fits the box by its long side, which keeps the proportions; the size it already has is kept. */
+/* scales the long side to box, keeping proportions. */
 static HRESULT scale_fit(IWICImagingFactory *factory, IWICBitmapSource *source, int box, IWICBitmapSource **out)
 {
     UINT w, h;
@@ -112,7 +111,6 @@ static HRESULT scale_fit(IWICImagingFactory *factory, IWICBitmapSource *source, 
     return hr;
 }
 
-/* a source of exactly this size. */
 static HRESULT scale_exact(IWICImagingFactory *factory, IWICBitmapSource *source, UINT w, UINT h,
                            IWICBitmapSource **out)
 {
@@ -152,7 +150,7 @@ static HRESULT clip(IWICImagingFactory *factory, IWICBitmapSource *source, const
     return hr;
 }
 
-/* premultiplied 32 bit pixels, which every later step works in. */
+/* every later step works in premultiplied 32-bit pixels. */
 static HRESULT to_pbgra(IWICImagingFactory *factory, IWICBitmapSource *source, IWICBitmapSource **out)
 {
     WICPixelFormatGUID format;
@@ -177,7 +175,7 @@ static HRESULT to_pbgra(IWICImagingFactory *factory, IWICBitmapSource *source, I
     return hr;
 }
 
-/* the transform of an Exif orientation, which turns the stored pixels upright. */
+/* the transform that turns pixels stored in an Exif orientation upright. */
 static BOOL orientation_transform(int orientation, WICBitmapTransformOptions *transform)
 {
     switch (orientation) {
@@ -207,7 +205,7 @@ static BOOL orientation_transform(int orientation, WICBitmapTransformOptions *tr
     }
 }
 
-/* the Exif orientation of a frame, 1 when it has none. */
+/* 1 when the frame has no Exif orientation. */
 static int frame_orientation(IWICBitmapFrameDecode *frame)
 {
     IWICMetadataQueryReader *reader;
@@ -250,7 +248,7 @@ static HRESULT orient(IWICImagingFactory *factory, IWICBitmapSource *source, int
     return hr;
 }
 
-/* the size a request is extracted at: the next size of the cache of Windows, or the request when it is bigger. */
+/* rounds up to the next Windows cache size, or keeps a request bigger than all of them. */
 static int cache_size(int request)
 {
     for (SIZE_T i = 0; i < RTL_NUMBER_OF(g_cache_sizes); i++)
@@ -259,7 +257,7 @@ static int cache_size(int request)
     return request;
 }
 
-/* whether the thumbnail of a file may be one it carries, as Windows takes them from these extensions. */
+/* the extensions Windows takes embedded thumbnails from. */
 static BOOL carries_thumbnail(LPCWSTR path)
 {
     static const WCHAR *const extensions[] = {L"jpg", L"jpeg", L"tif", L"tiff", L"wdp", L"crw", L"cr2", L"nef",
@@ -274,7 +272,7 @@ static BOOL carries_thumbnail(LPCWSTR path)
 }
 
 
-/* the 32 bit top down dib that holds the pixels of a source. */
+/* a 32-bit top-down DIB of the source's pixels. */
 static HRESULT bitmap_from_source(IWICBitmapSource *source, HBITMAP *out)
 {
     UINT w, h;
@@ -303,7 +301,6 @@ static HRESULT bitmap_from_source(IWICBitmapSource *source, HBITMAP *out)
     return S_OK;
 }
 
-/* the long side of a source. */
 static UINT long_side(IWICBitmapSource *source)
 {
     UINT w = 0, h = 0;
@@ -312,9 +309,9 @@ static UINT long_side(IWICBitmapSource *source)
 }
 
 /*
- * the part of the picture a crop flag keeps, and the size the result is scaled to. A square takes the middle of a wide
- * picture and the part starting a third down a tall one. The wide shape is 19 by 13 and is cut the same way when the
- * ratio is off by more than a hundredth. The offsets are unsigned, so a half is a shift.
+ * what a crop flag keeps, and the size the result is scaled to. a square crop takes the middle of a wide picture and
+ * starts a third down a tall one. the wide shape is 19 by 13, cut the same way when the ratio is off by more than a
+ * hundredth. the offsets are unsigned, so a half is a shift.
  */
 static void crop_area(UINT w, UINT h, int request, int flags, WICRect *area, UINT *out_w, UINT *out_h)
 {
@@ -353,7 +350,7 @@ static void crop_area(UINT w, UINT h, int request, int flags, WICRect *area, UIN
     }
 }
 
-/* shapes the picture for the flags: a square or wide crop, the size asked for or the one the cache would give. */
+/* crops square or wide per the flags, then scales to the request or to the size the cache would give. */
 static HRESULT shape(IWICImagingFactory *factory, IWICBitmapSource *picture, int request, int flags, BOOL natural,
                      IWICBitmapSource **out)
 {
@@ -379,7 +376,7 @@ static HRESULT shape(IWICImagingFactory *factory, IWICBitmapSource *picture, int
         release_source(part);
         return hr;
     }
-    /* the picture as it is is kept when the cache's size is asked for and it already has that long side. */
+    /* a carried thumbnail is used at its own size when that size suits the request. */
     int target = request;
     if (flags & SIIGBF_BIGGERSIZEOK) {
         if (natural)
@@ -399,10 +396,7 @@ static HRESULT shape(IWICImagingFactory *factory, IWICBitmapSource *picture, int
     return hr;
 }
 
-/*
- * a carried thumbnail suits the picture when the side that is not its long one is within a pixel of what the picture's
- * proportions give for it. A size of 0 never suits.
- */
+/* the short side must be within a pixel of what the picture's proportions give. a zero size never matches. */
 static BOOL thumbnail_matches(UINT tw, UINT th, UINT fw, UINT fh)
 {
     if (!tw || !th || !fw || !fh)
@@ -415,7 +409,7 @@ static BOOL thumbnail_matches(UINT tw, UINT th, UINT fw, UINT fh)
     return gap > -1.0 && gap < 1.0;
 }
 
-/* the thumbnail a jpeg or tiff file carries, upright, when it is as big as the request and fits the picture. */
+/* only used when it is at least as big as the request and has the picture's proportions. */
 static HRESULT carried_thumbnail(IWICImagingFactory *factory, IWICBitmapDecoder *decoder, IWICBitmapFrameDecode *frame,
                                  int orientation, UINT fw, UINT fh, int request, IWICBitmapSource **out)
 {
@@ -446,7 +440,6 @@ static BOOL file_error(HRESULT hr)
            hr == HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED) || hr == HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION);
 }
 
-/* the thumbnail of a picture file. */
 static HRESULT picture_bitmap(LPCWSTR path, int request, int flags, HBITMAP *out)
 {
     WIC wic;
@@ -475,7 +468,7 @@ static HRESULT picture_bitmap(LPCWSTR path, int request, int flags, HBITMAP *out
             hr = WTS_E_FAILEDEXTRACTION;
             goto done;
         }
-        /* the thumbnail the file carries, for the sizes the cache of Windows holds. */
+        /* embedded thumbnails only serve the small sizes of the Windows cache. */
         if (request <= 256 && carries_thumbnail(path))
             carried_thumbnail(wic.Factory, decoder, frame, orientation, fw, fh, request, &picture);
         if (!picture) {
@@ -522,7 +515,7 @@ static HRESULT bitmap_from_pixels(const DWORD *pixels, int cx, int cy, HBITMAP *
     return S_OK;
 }
 
-/* the icon alone, square at the width asked for. */
+/* the bare icon, square at the requested width. */
 static HRESULT icon_bitmap(const SH_ICON_SOURCE *source, int cx, HBITMAP *out)
 {
     HICON icon = ShLoadIconSource(source, cx, cx);
@@ -537,7 +530,7 @@ static HRESULT icon_bitmap(const SH_ICON_SOURCE *source, int cx, HBITMAP *out)
     if (w == cx && h == cx) {
         hr = bitmap_from_pixels(pixels, cx, cx, out);
     } else {
-        /* an icon that came out another size is stretched by nearest pixels. */
+        /* stretch an icon of another size by nearest neighbor. */
         DWORD *square = ShAlloc((SIZE_T)cx * (SIZE_T)cx * sizeof(DWORD));
         hr = E_OUTOFMEMORY;
         if (square) {
@@ -552,13 +545,13 @@ static HRESULT icon_bitmap(const SH_ICON_SOURCE *source, int cx, HBITMAP *out)
     return hr;
 }
 
-/* the accent the tile of an icon is filled with, which Windows takes from the app's tile or the user's color. */
+/* the tile accent. Windows takes it from the app's tile or the user's color. */
 #define TILE_RED 0
 #define TILE_GREEN 120
 #define TILE_BLUE 215
 
 
-/* a channel of the frame of a tile, lifted towards white. */
+/* the tile frame: each channel lifted towards white. */
 static DWORD frame_color(DWORD color)
 {
     DWORD out = 0xff000000u;
@@ -567,7 +560,7 @@ static DWORD frame_color(DWORD color)
     return out;
 }
 
-/* a pixel of the icon, premultiplied, over an opaque one. */
+/* blends a premultiplied icon pixel over an opaque one. */
 static DWORD over_opaque(DWORD icon, DWORD under)
 {
     DWORD inverse = 255 - (icon >> 24);
@@ -577,7 +570,7 @@ static DWORD over_opaque(DWORD icon, DWORD under)
     return out;
 }
 
-/* the icon on a tile of a color with a lighter frame, centered with a margin of half the free space. */
+/* the icon centered on a colored tile with a lighter frame. */
 static HRESULT tile_bitmap(const SH_ICON_SOURCE *source, int cx, int cy, BOOL wide, HBITMAP *out)
 {
     if (wide)
@@ -631,16 +624,14 @@ static HRESULT tile_bitmap(const SH_ICON_SOURCE *source, int cx, int cy, BOOL wi
     return hr;
 }
 
-/* ------------------------------------------------------------------ the request */
+/* ------------------------------------------------------------------ request */
 
 /*
- * the bitmap of an item. path is the file the item is, or NULL for the desktop, which is virtual kind 1, "This PC",
- * which is 2, and the other folders of the shell, which are 3.
+ * path is the item's file, or NULL for a virtual item: kind 1 is the desktop, 2 "This PC", 3 any other shell folder.
  *
- * a request for icons or for what is in memory never makes a thumbnail, and one that wants only a thumbnail then
- * fails with E_PENDING. Otherwise the thumbnail is tried first and the icon stands in for it, unless only the
- * thumbnail was wanted, which gives the failure of the extraction. A request for what is in memory that was
- * answered with an icon says S_FALSE.
+ * icon only and memory only requests never make a thumbnail, so asking for only a thumbnail then fails with E_PENDING.
+ * otherwise the thumbnail is tried first and the icon stands in, unless only the thumbnail was wanted, which returns
+ * the extraction failure. a memory only request answered with an icon returns S_FALSE.
  */
 HRESULT ShItemImage(LPCWSTR path, int virtual_kind, SIZE size, int flags, HBITMAP *bitmap)
 {

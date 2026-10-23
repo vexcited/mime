@@ -1,8 +1,8 @@
 /*
  * backgrounds: theme images decoded once into premultiplied dib sections and
- * drawn the way uxtheme draws them, nine grid stretching or tiling with the
- * sizing margins, true size images aligned in the rectangle, glyphs over the
- * content area, border fill parts drawn with gdi.
+ * drawn like uxtheme does: nine grid stretching or tiling with the sizing
+ * margins, true size images aligned in the rectangle, glyphs over the content
+ * area, border fill parts drawn with gdi.
  */
 #include "uxtheme_private.h"
 #include "../lib/png/png.h"
@@ -34,7 +34,7 @@ static HBITMAP create_dib(int width, int height, DWORD **bits)
     return bm;
 }
 
-/* 24 and 32 bpp bmp files, the only depths themes use. 32 bpp ones carry straight alpha. */
+/* themes only use 24 and 32 bpp bmp files. 32 bpp ones carry straight alpha. */
 static BOOL decode_bmp(const uint8_t *d, size_t n, DWORD *out, int width, int height)
 {
     if (n < 54)
@@ -170,7 +170,7 @@ static void blend(HDC dst, int x, int y, int w, int h, const DRAW_SRC *src, int 
     GdiAlphaBlend(dst, x, y, w, h, src->Dc, sx, sy, sw, sh, bf);
 }
 
-/* one cell of the nine grid, stretched or repeated at the source size. */
+/* stretched, or tiled at the source size. */
 static void cell(HDC dst, int x, int y, int w, int h, const DRAW_SRC *src, int sx, int sy, int sw, int sh, BOOL tile,
                  int scale)
 {
@@ -202,7 +202,7 @@ static void draw_frame(HDC dc, const MimeMsstylesImage *img, const MimeMsstylesR
 
     if (img->sizing_type == ST_TRUESIZE) {
         int dw = img->draw_width ? img->draw_width : sw, dh = img->draw_height ? img->draw_height : sh;
-        /* an image larger than the destination is shrunk to fit, keeping its ratio. guessed from screenshots. */
+        /* an image larger than the destination shrinks to fit, keeping its ratio. a best guess. */
         if (dw > w || dh > h) {
             if ((LONG64)dw * h > (LONG64)dh * w) {
                 dh = (int)((LONG64)dh * w / dw);
@@ -278,7 +278,7 @@ static BOOL draw_image(HDC dc, const MimeMsstylesImage *img, const RECT *rect, u
     return TRUE;
 }
 
-/* aerolite color images: border color around a fill pixel, stretched with the sizing margins. */
+/* aerolite color images: a border color around a fill pixel, stretched with the sizing margins. */
 static BOOL draw_color_image(HDC dc, UX_THEME *theme, int part, int state, const RECT *rect, unsigned omit)
 {
     MimeMsstylesColorImage ci;
@@ -374,7 +374,7 @@ static void fill_solid(HDC dc, int l, int t, int r, int b, COLORREF color)
     DeleteObject(brush);
 }
 
-/* vertical and horizontal gradients through GRADIENTCOLOR1..5 weighted by GRADIENTRATIO1..5. */
+/* GRADIENTCOLOR1..5 weighted by GRADIENTRATIO1..5. */
 static void fill_gradient(HDC dc, UX_THEME *theme, int part, int state, const RECT *rc, BOOL vertical,
                           COLORREF fallback)
 {
@@ -399,7 +399,7 @@ static void fill_gradient(HDC dc, UX_THEME *theme, int part, int state, const RE
             ratios[i] = 1;
         total = n;
     }
-    /* each color owns a band of its ratio, blending toward the next one. */
+    /* each color gets a band sized by its ratio, blending toward the next. */
     int pos = 0;
     for (int i = 0; i < n && pos < len; i++) {
         int band = i == n - 1 ? len - pos : len * ratios[i] / total;
@@ -724,7 +724,7 @@ THEMEAPI_(BOOL) IsThemeBackgroundPartiallyTransparent(HTHEME handle, int part, i
     return result;
 }
 
-/* the region of the opaque pixels, drawn into a scratch dib and read back. */
+/* the part is drawn into a scratch dib and its opaque pixels read back. */
 static HRGN alpha_region(UX_THEME *theme, int part, int state, const RECT *rect)
 {
     int w = rect->right - rect->left, h = rect->bottom - rect->top;
@@ -865,7 +865,6 @@ THEMEAPI HitTestThemeBackground(HTHEME handle, HDC dc, int part, int state, DWOR
     return S_OK;
 }
 
-/* asks the parent to paint its background into dc, under the child rectangle. */
 THEMEAPI DrawThemeParentBackgroundEx(HWND hwnd, HDC dc, DWORD flags, const RECT *rect)
 {
     HWND parent = GetParent(hwnd);

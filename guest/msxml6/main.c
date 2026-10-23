@@ -1,6 +1,6 @@
 /*
- * msxml6.dll: the dom documents of msxml 6.0, whose defaults are the secure ones: a document type is refused and
- * selections are xpath. the engine is in guest/lib/xmldom, see docs/msxml.md.
+ * msxml6.dll: msxml 6.0 dom documents, with secure defaults: a document type is refused and selections use xpath.
+ * the engine is in guest/lib/xmldom.
  */
 #include <xmldom/xmldom.h>
 

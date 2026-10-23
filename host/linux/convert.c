@@ -1,6 +1,4 @@
-/*
- * conversions between host and windows clipboard formats, see convert.h.
- */
+/* host and Windows clipboard format conversion. */
 #include "convert.h"
 
 #include <SDL3/SDL.h>
@@ -97,18 +95,18 @@ char *mime_conv_text_from_guest(const uint16_t *text, size_t chars, size_t *out_
 typedef struct Argb {
     uint32_t *pixels;
     int width, height;
-    bool alpha; /* the bitmap says what its alpha is */
+    bool alpha; /* the bitmap says what its alpha is. */
 } Argb;
 
-/* where the pixels of a dib are and how they are laid out. */
+/* DIB pixel offsets and layout. */
 typedef struct DibLayout {
     uint32_t header;
-    int width, height; /* height as the header has it */
+    int width, height; /* height as the header has it. */
     uint32_t bits, compression;
     uint32_t mask[4];
     uint32_t colors;
-    size_t palette;     /* offset of the color table */
-    size_t pixels;      /* offset of the first row */
+    size_t palette;     /* offset of the color table. */
+    size_t pixels;      /* offset of the first row. */
     size_t stride;
     bool has_alpha;
 } DibLayout;
@@ -265,7 +263,6 @@ static bool dib_to_argb(const uint8_t *dib, size_t size, Argb *out)
     return true;
 }
 
-/* the bytes an sdl stream in dynamic memory holds. */
 static uint8_t *take_stream(SDL_IOStream *io, size_t *out_size)
 {
     Sint64 size = SDL_TellIO(io);
@@ -322,7 +319,7 @@ uint8_t *mime_conv_dib_to_bmp(const void *dib, size_t size, size_t *out_size)
     return bmp;
 }
 
-/* the pixels of a png or bmp file as 0xAARRGGBB, top row first. */
+/* the pixels of a PNG or BMP file as 0xAARRGGBB, top row first. */
 static bool decode_image(const void *file, size_t size, Argb *out)
 {
     SDL_IOStream *io = SDL_IOFromConstMem(file, size);
@@ -358,7 +355,7 @@ uint8_t *mime_conv_image_to_png(const void *file, size_t size, size_t *out_size)
 {
     static const uint8_t signature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
     if (size >= 8 && !memcmp(file, signature, 8)) {
-        /* a png goes on as it is. */
+        /* a PNG goes on as it is. */
         uint8_t *copy = malloc(size);
         if (copy) {
             memcpy(copy, file, size);
@@ -399,10 +396,10 @@ uint8_t *mime_conv_image_to_dib(const void *file, size_t size, bool v5, size_t *
     wr32(dib + 48, 0x000000FF);
     if (v5) {
         wr32(dib + 52, 0xFF000000);
-        wr32(dib + 56, 0x73524742); /* LCS_sRGB */
+        wr32(dib + 56, 0x73524742); /* LCS_sRGB. */
         wr32(dib + 108, 4);         /* LCS_GM_IMAGES */
     }
-    /* the plain format keeps its three masks right after the 40 byte header. what it shows through goes on white. */
+    /* the plain format stores three masks after its 40-byte header and composites transparency over white. */
     uint8_t *rows = dib + header;
     for (int y = 0; y < a.height; y++) {
         uint32_t *src = a.pixels + (size_t)(a.height - 1 - y) * (size_t)a.width;
@@ -463,7 +460,7 @@ uint8_t *mime_conv_html_to_guest(const void *html, size_t size, size_t *out_size
     const char *text = (const char *)in;
     size_t len = size;
     if (size >= 2 && ((in[0] == 0xFF && in[1] == 0xFE) || (in[0] == 0xFE && in[1] == 0xFF))) {
-        /* utf-16 with a byte order mark, as some host browsers copy. */
+        /* UTF-16 with a byte order mark, as some host browsers copy. */
         bool big = in[0] == 0xFE;
         size_t chars = (size - 2) / 2;
         uint16_t *wide = malloc((chars + 1) * sizeof(uint16_t));
@@ -630,7 +627,7 @@ bool mime_conv_uri_to_path(const char *uri, size_t len, char *out, size_t size)
     return o > 0;
 }
 
-/* the lines of a uri list, without comments or empty lines. */
+/* the lines of a URI list, without comments or empty lines. */
 typedef struct Lines {
     const char *text;
     size_t len, at;
@@ -865,7 +862,7 @@ uint32_t mime_conv_kinds(char *const *mimes, size_t count)
         mask |= MIME_CLIP_DIB | MIME_CLIP_DIBV5 | MIME_CLIP_PNG;
     if (has_type(mimes, count, MIME_HTML))
         mask |= MIME_CLIP_HTML;
-    /* a list of uris holds files, urls or both: only reading it tells. */
+    /* a list of URIs holds files, URLs or both: only reading it tells. */
     if (has_type(mimes, count, MIME_URIS))
         mask |= MIME_CLIP_HDROP | MIME_CLIP_URL;
     return mask;
@@ -904,8 +901,8 @@ const char *mime_conv_read_type(uint32_t kind, char *const *mimes, size_t count)
 }
 
 /*
- * the drop effect a file manager's mark says. gnome's file managers write "copy", "cut" or "link" and then the uris,
- * a line each; kde's write "1" for a cut and "0" for a copy next to the uri list.
+ * GNOME prefixes URI lists with "copy", "cut" or "link"; KDE supplies "1" for cut and "0" for copy alongside the
+ * list.
  */
 static uint8_t *effect_to_guest(const void *raw, size_t size, size_t *out_size)
 {
@@ -1022,7 +1019,6 @@ uint8_t *mime_conv_from_guest(const char *mime, uint32_t kind, const void *raw, 
             return out;
         }
         if (bmp) {
-            /* a bmp file from a png: through the pixels. */
             size_t dib_size;
             uint8_t *dib = mime_conv_image_to_dib(raw, size, true, &dib_size);
             if (dib) {
@@ -1039,7 +1035,7 @@ uint8_t *mime_conv_from_guest(const char *mime, uint32_t kind, const void *raw, 
     case MIME_CLIP_HDROP: {
         char *uris = mime_conv_hdrop_to_uris(mime_daemon_paths(), raw, size, out_size);
         if (uris && !strcmp(mime, MIME_GNOME_FILES)) {
-            /* "copy" or "cut", then one uri on each line without a line end after the last. */
+            /* "copy" or "cut", then one URI on each line without a line end after the last. */
             uint8_t *gnome = malloc(*out_size + 8);
             if (gnome) {
                 size_t n = (effect & 2) ? 4 : 5;

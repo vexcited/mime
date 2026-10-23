@@ -21,7 +21,7 @@ extern BOOLEAN KiTraceUserExceptions;
 #define STATUS_FLOAT_MULTIPLE_FAULTS ((NTSTATUS)0xC00002B4L)
 #define STATUS_FLOAT_MULTIPLE_TRAPS ((NTSTATUS)0xC00002B5L)
 
-/* the code of an sse exception from the flags mxcsr reports unmasked. */
+/* the sse exception code for the unmasked flags mxcsr reports. */
 static NTSTATUS simd_status(ULONG mxcsr)
 {
     ULONG raised = mxcsr & ~(mxcsr >> 7) & 0x3F;
@@ -60,7 +60,7 @@ static NTSTATUS x87_status(void)
     return STATUS_FLOAT_MULTIPLE_FAULTS;
 }
 
-/* the exception a user mode fault raises, in the record windows builds for it. */
+/* the exception record windows builds for a user mode fault. */
 static void build_record(PKTRAP_FRAME frame, PEXCEPTION_RECORD record)
 {
     memset(record, 0, sizeof(*record));
@@ -133,7 +133,7 @@ static void build_record(PKTRAP_FRAME frame, PEXCEPTION_RECORD record)
         record->ExceptionCode = STATUS_ASSERTION_FAILURE_CODE;
         break;
     case 0x2D:
-        /* debug service: nothing listens, so it is a breakpoint without effect past the int3 that follows. */
+        /* debug service: no debugger listens, so resume past the int3 that follows. */
         frame->Rip++;
         record->ExceptionAddress = (PVOID)frame->Rip;
         record->ExceptionCode = STATUS_BREAKPOINT;
@@ -265,7 +265,7 @@ static void interrupt(PKTRAP_FRAME frame)
     }
 }
 
-/* the first try at a page fault of user mode on a page that is not there, before the kernel lock, see entry.S. */
+/* first try at a user not present page fault, before the kernel lock, see entry.S. */
 BOOLEAN KiFastPageFault(PKTRAP_FRAME frame)
 {
     extern char KiTimelineImage[16];
@@ -278,7 +278,7 @@ BOOLEAN KiFastPageFault(PKTRAP_FRAME frame)
 
 void KiTrapDispatch(PKTRAP_FRAME frame)
 {
-    /* what holds the lock, for the statistics: the vector, past the system services. */
+    /* the lock holder for statistics: the vector, past the system service numbers. */
     KiKernelLock[3] = 0x2001 + (frame->Vector & 0xFF);
     /* int 2e, the system call of ntdll's stubs when SharedUserData says syscall is unavailable. */
     if (frame->Vector == 0x2E && KI_TRAP_FROM_USER(frame)) {

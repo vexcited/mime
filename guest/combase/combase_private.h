@@ -1,6 +1,3 @@
-/*
- * combase internal interface shared by its source files.
- */
 #ifndef MIME_COMBASE_PRIVATE_H
 #define MIME_COMBASE_PRIVATE_H
 
@@ -19,7 +16,7 @@ FORCEINLINE void CbFree(void *p)
         HeapFree(GetProcessHeap(), 0, p);
 }
 
-/* a static string, which needs no release, for the runtime class names. */
+/* a static string that needs no release, for runtime class names. */
 HSTRING CbStaticString(HSTRING_HEADER *header, LPCWSTR text);
 
 /* uisettings.c */
@@ -31,7 +28,7 @@ HRESULT CbUISettingsFactory(REFIID riid, void **factory);
 extern const WCHAR CbApiInformationClass[];
 HRESULT CbApiInformationFactory(REFIID riid, void **factory);
 
-/* apartment.c: the factories a program registers for itself. */
+/* apartment.c: factories a program registers for itself. */
 HRESULT CbRegisteredFactory(HSTRING class_id, REFIID riid, void **factory);
 
 /* regionpolicy.c */

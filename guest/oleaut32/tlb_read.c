@@ -1,8 +1,8 @@
 /*
- * type libraries in the msft format: a library read from memory. The file is a header, the offsets of the type
- * records, a directory of segments (the type records, imports, references, guids, names, strings, type descriptions,
- * array descriptions and custom data) and then the members of each type. Everything the file says is checked against
- * its size before it is used; a type's functions and variables are decoded when they are first asked for.
+ * reading msft format type libraries from memory. The file is a header, type record offsets, a segment directory, the
+ * segments for type records, imports, references, guids, names, strings, type and array descriptions and custom
+ * data, then each type's members. Every offset is bounds checked before use, and a type's functions and variables
+ * are decoded on first access.
  */
 #include "typelib.h"
 #include <mime/win32/winnls.h>
@@ -12,7 +12,7 @@
 #define TYPE_RECORD_SIZE 100
 #define MAX_DEPTH 32
 
-/* ------------------------------------------------------------------ the heap of a library */
+/* ------------------------------------------------------------------ library heap */
 
 typedef struct TL_CHUNK {
     struct TL_CHUNK *Next;
@@ -33,7 +33,7 @@ void *TlAlloc(TL_LIB *lib, SIZE_T size)
         chunk->Size = total;
         chunk->Next = lib->Chunks;
         lib->Chunks = chunk;
-        /* a big block does not hide the room that is left in the one before it. */
+        /* keep the previous chunk current so a big block does not waste its free room. */
         if (size > 16384 && chunk->Next) {
             chunk->Used = size;
             lib->Chunks = chunk->Next;
@@ -73,7 +73,7 @@ WCHAR *TlStrDup(TL_LIB *lib, const WCHAR *text)
     return text ? TlStrDupLen(lib, text, wcslen(text)) : nullptr;
 }
 
-/* a string of the library's heap that can be a bstr's value: the length goes before it. */
+/* stores the length prefix in front so the text can serve as a BSTR. */
 static BSTR tl_bstr(TL_LIB *lib, const WCHAR *text, ULONG length)
 {
     BYTE *block = TlAlloc(lib, 8 + (SIZE_T)length * sizeof(WCHAR) + 4);
@@ -85,14 +85,14 @@ static BSTR tl_bstr(TL_LIB *lib, const WCHAR *text, ULONG length)
     return b;
 }
 
-/* ------------------------------------------------------------------ the pointer size of the library and of this machine */
+/* ------------------------------------------------------------------ library and host pointer sizes */
 
 BOOL TlNativeSyskind(SYSKIND kind)
 {
     return kind == (sizeof(void *) == 8 ? SYS_WIN64 : SYS_WIN32);
 }
 
-/* a position in the vtable is in words of the pointer size of the library's processor. */
+/* vtable offsets are in the library's pointer size. */
 SHORT TlNativeVtOffset(const TL_LIB *lib, SHORT offset)
 {
     if (lib->FileSyskind == SYS_WIN32 && sizeof(void *) == 8)
@@ -107,7 +107,7 @@ USHORT TlNativeVtSize(const TL_LIB *lib, USHORT size)
     return (USHORT)TlNativeVtOffset(lib, (SHORT)size);
 }
 
-/* ------------------------------------------------------------------ the image */
+/* ------------------------------------------------------------------ image access */
 
 static const BYTE *segment_at(const TL_LIB *lib, int seg, ULONG offset, ULONG length)
 {
@@ -138,7 +138,7 @@ static const BYTE *image_at(const TL_LIB *lib, ULONGLONG offset, ULONGLONG lengt
     return lib->Image + offset;
 }
 
-/* the text of a record of bytes in the library's code page, on the heap of the library. */
+/* decodes bytes in the library's code page onto the library heap. */
 static WCHAR *text_of_bytes(TL_LIB *lib, const char *bytes, ULONG length)
 {
     if (!length)
@@ -188,7 +188,7 @@ BOOL TlGuidAt(TL_LIB *lib, ULONG offset, GUID *guid)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ references to types */
+/* ------------------------------------------------------------------ type references */
 
 HREFTYPE TlHrefOfIndex(ULONG index)
 {
@@ -207,7 +207,7 @@ BOOL TlIndexOfHref(HREFTYPE ref, ULONG *index)
     return TRUE;
 }
 
-/* the reference as the file wrote it: where the type's record is, or the position of an import. */
+/* a file reference is a type record offset or an import position. */
 static HREFTYPE href_from_file(TL_LIB *lib, ULONG file_ref)
 {
     if (file_ref == 0xFFFFFFFF)
@@ -289,7 +289,7 @@ void TlCopyTypeDesc(TL_LIB *lib, TYPEDESC *to, const TYPEDESC *from)
 
 /* ------------------------------------------------------------------ constants */
 
-/* a value of the custom data segment, or one that is in the reference itself. */
+/* stored in the custom data segment, or inline in the reference itself. */
 static HRESULT const_value(TL_LIB *lib, ULONG ref, VARIANT *out)
 {
     memset(out, 0, sizeof(*out));
@@ -379,7 +379,7 @@ HRESULT TlVariantCopy(TL_LIB *lib, VARIANT *to, const VARIANT *from)
     return S_OK;
 }
 
-/* a chain of custom data items starting at a position of the custom data guid segment. */
+/* the chain of custom data items starting at an offset in the custom data guid segment. */
 static TL_CUST *read_custom(TL_LIB *lib, ULONG offset)
 {
     TL_CUST *head = nullptr, **tail = &head;
@@ -562,7 +562,7 @@ HRESULT TlReadImage(const BYTE *image, SIZE_T size, SYSKIND target, void (*relea
     return S_OK;
 }
 
-/* the members of a type, decoded when they are first needed. */
+/* decoded on first use. */
 HRESULT TlLoadMembers(TL_TYPE *type)
 {
     TL_LIB *lib = type->Lib;
@@ -582,7 +582,7 @@ HRESULT TlLoadMembers(TL_TYPE *type)
         ULONG d1 = rd32(b + 84);
         USHORT cf = type->FuncCount, cv = type->VarCount;
         type->Cust = read_custom(lib, type->CustOff);
-        /* the references the type holds, whatever it is. */
+        /* implemented types, whatever the kind. */
         if (type->ImplCount) {
             type->Impls = TlAlloc(lib, (SIZE_T)type->ImplCount * sizeof(TL_IMPL));
             if (!type->Impls) {

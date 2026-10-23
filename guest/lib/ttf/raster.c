@@ -1,13 +1,11 @@
-/*
- * outline flattening and exact area coverage rasterization.
- */
+/* outline flattening and exact area coverage rasterization. */
 #include "ttf.h"
 #include "ttf_internal.h"
 
-/* largest flattening error tolerated, in pixels. */
+/* largest flattening error, in pixels. */
 #define FLATNESS 0.04f
 #define MAX_SUBDIVISIONS 256
-/* coordinate clamp keeping float to int conversions defined. */
+/* keeps float to int conversions defined. */
 #define COORD_LIMIT 4194304.0f
 #define MAX_BITMAP_SIDE 16384
 
@@ -174,9 +172,9 @@ static void box_line(Path *p, float x0, float y0, float x1, float y1)
 }
 
 /*
- * adds a line piece contained in one row, with signed height d. each cell
- * receives the part of d covering the pixel to the right of the line, and
- * the next cell the rest, so a prefix sum along the row yields coverage.
+ * adds a line piece within one row, with signed height d. each cell gets the part
+ * of d covering the pixel right of the line and the next cell the rest, so a
+ * prefix sum along the row yields coverage.
  */
 static void acc_span(float *row, int width, float xa, float xb, float d)
 {

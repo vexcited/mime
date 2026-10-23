@@ -1,7 +1,6 @@
 /*
- * the display's vertical blanks on the performance counter: they come at the
- * panel's refresh rate and are counted from the counter's zero, which is all
- * dxgi, dwmapi and dcomp need to agree on when a frame shows.
+ * vertical blanks on the performance counter: they come at the panel's refresh rate, counted from the counter's
+ * zero, which is all dxgi, dwmapi and dcomp need to agree on when a frame shows.
  */
 #ifndef MIME_VBLANK_H
 #define MIME_VBLANK_H
@@ -17,7 +16,7 @@ typedef struct MIME_VBLANK {
     UINT rate;
 } MIME_VBLANK;
 
-/* the panel's rate in hertz, read again at most every few seconds. */
+/* in hertz, cached for a few seconds. */
 FORCEINLINE UINT MimeRefreshRate(void)
 {
     static volatile LONG cached;
@@ -45,7 +44,7 @@ FORCEINLINE void MimeVblankInfo(MIME_VBLANK *info)
     info->period = info->frequency / info->rate;
 }
 
-/* the index of the blank at or before the counter value, and the counter value the next one comes at. */
+/* the blank at or before counter. MimeVblankTime gives the counter value of a blank. */
 FORCEINLINE UINT64 MimeVblankIndex(const MIME_VBLANK *info, UINT64 counter) { return counter / info->period; }
 
 FORCEINLINE UINT64 MimeVblankTime(const MIME_VBLANK *info, UINT64 index) { return index * info->period; }

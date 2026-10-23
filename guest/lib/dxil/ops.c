@@ -1,13 +1,12 @@
 /*
- * the arithmetic of dx.op, conversions, derivatives and wave operations.
- * dxil passes scalars, or vectors with long vectors; each operation works
- * on whatever its operands are.
+ * dx.op arithmetic, conversions, derivatives and wave operations. operands
+ * are scalars, or vectors with long vectors, and each op takes either.
  */
 #include "internal.h"
 
 static uint32_t t_i32(Compiler *c) { return spv_type_int(&c->b, 32, 1); }
 
-/* the operand of a dx.op, after the opcode. */
+/* operand i of a dx.op, counted after the opcode. */
 static uint32_t arg(Compiler *c, const DxInst *ins, uint32_t i) { return dxil_value(c, ins->ops[2 + i]); }
 
 static uint32_t arg_type(Compiler *c, const DxInst *ins, uint32_t i)
@@ -16,7 +15,7 @@ static uint32_t arg_type(Compiler *c, const DxInst *ins, uint32_t i)
     return v ? v->type : ins->type;
 }
 
-/* a constant of the scalar type, splatted over the value type's vector. */
+/* a scalar constant, splatted to the value type's vector. */
 static uint32_t splat(Compiler *c, uint32_t dx_type, uint64_t bits)
 {
     const DxType *t = &c->m.types[dx_type];
@@ -35,7 +34,7 @@ static uint32_t splat(Compiler *c, uint32_t dx_type, uint64_t bits)
     return spv_const_composite(&c->b, dxil_type(c, dx_type), parts, t->count < 16 ? t->count : 16);
 }
 
-/* the bits of 1.0 and 0.0 and the like in a float type's width. */
+/* the bits of 1.0, 0.0 and the like at the float type's width. */
 static uint64_t float_bits(Compiler *c, uint32_t dx_type, double v)
 {
     uint32_t scalar = dxil_type(c, dxil_component_type(c, dx_type));
@@ -51,7 +50,7 @@ static uint64_t float_bits(Compiler *c, uint32_t dx_type, double v)
         uint32_t u;
     } x = {(float)v};
     if (scalar == c->t_f16) {
-        /* the few constants used here are exact halves. */
+        /* the few constants used here are exact in half precision. */
         uint32_t f = x.u, sign = (f >> 16) & 0x8000, exp = (f >> 23) & 0xFF;
         return exp ? sign | (exp - 112) << 10 | ((f >> 13) & 0x3FF) : sign;
     }
@@ -80,7 +79,7 @@ static uint32_t is_special(Compiler *c, const DxInst *ins, uint32_t op)
     case 9: return inf;
     case 10: return spv_op1(&c->b, SpvOpLogicalNot, type, spv_op2(&c->b, SpvOpLogicalOr, type, nan, inf));
     default: {
-        /* normal: not zero, a denormal, an infinity or a nan. */
+        /* isNormal: not zero, denormal, infinity or nan. */
         uint32_t abs = spv_glsl(&c->b, dxil_type(c, at), GLSLstd450FAbs, &a, 1);
         uint32_t ge = spv_op2(&c->b, SpvOpFOrdGreaterThanEqual, type, abs,
                               splat(c, at, dxil_type(c, dxil_component_type(c, at)) == c->t_f64 ? 0x0010000000000000ull
@@ -91,7 +90,6 @@ static uint32_t is_special(Compiler *c, const DxInst *ins, uint32_t op)
     }
 }
 
-/* the low and high words of a 64-bit operand. */
 static void split64(Compiler *c, uint32_t v, uint32_t *lo, uint32_t *hi)
 {
     uint32_t pair = spv_op1(&c->b, SpvOpBitcast, c->t_uvec[2], v);
@@ -99,7 +97,7 @@ static void split64(Compiler *c, uint32_t v, uint32_t *lo, uint32_t *hi)
     *hi = dxil_extract(c, c->t_u32, pair, 1);
 }
 
-/* the bit a find of glsl gives for a 64-bit value, from those of its words: all ones when none. */
+/* a glsl find bit on a 64-bit value, built from its two words. all ones when none. */
 static uint32_t find64(Compiler *c, uint32_t v, uint32_t instruction)
 {
     uint32_t lo, hi;
@@ -111,7 +109,7 @@ static uint32_t find64(Compiler *c, uint32_t v, uint32_t instruction)
     if (instruction == GLSLstd450FindILsb)
         return spv_op3(&c->b, SpvOpSelect, c->t_u32, spv_op2(&c->b, SpvOpIEqual, c->t_bool, l, none),
                        spv_op3(&c->b, SpvOpSelect, c->t_u32, spv_op2(&c->b, SpvOpIEqual, c->t_bool, h, none), none, h32), l);
-    /* the top word decides; a signed value's top word of all ones or zeros leaves it to the bottom one. */
+    /* the top word decides, unless a signed value's top word is all ones or all zeros. */
     uint32_t top_word = spv_op2(&c->b, SpvOpINotEqual, c->t_bool, h, none);
     if (instruction == GLSLstd450FindSMsb) {
         uint32_t sign = spv_op2(&c->b, SpvOpShiftRightArithmetic, c->t_u32, hi, dxil_uconst(c, 31));
@@ -121,7 +119,7 @@ static uint32_t find64(Compiler *c, uint32_t v, uint32_t instruction)
     return spv_op3(&c->b, SpvOpSelect, c->t_u32, top_word, h32, l);
 }
 
-/* firstbitHi and firstbitSHi count from the top bit, all ones when none is found. */
+/* firstbitHi and firstbitSHi count from the top bit, all ones when there is none. */
 static uint32_t first_bit_high(Compiler *c, const DxInst *ins, int is_signed)
 {
     uint32_t a = arg(c, ins, 0);
@@ -139,7 +137,7 @@ static uint32_t first_bit_high(Compiler *c, const DxInst *ins, int is_signed)
     return dxil_convert(c, spv_op3(&c->b, SpvOpSelect, c->t_u32, none, r, flipped), c->t_u32, type);
 }
 
-/* the width and offset of a bit field, masked as direct3d does and the width cut at the top bit. */
+/* bit field width and offset, masked like direct3d does, the width cut at the top bit. */
 static void bit_field(Compiler *c, uint32_t *width, uint32_t *offset)
 {
     uint32_t mask = dxil_uconst(c, 31);
@@ -149,7 +147,7 @@ static void bit_field(Compiler *c, uint32_t *width, uint32_t *offset)
     *width = spv_glsl(&c->b, c->t_u32, GLSLstd450UMin, args, 2);
 }
 
-/* masked sums of absolute differences: the bytes where the reference byte is not zero. */
+/* msad: sums absolute byte differences, skipping bytes where the reference byte is zero. */
 static uint32_t msad(Compiler *c, const DxInst *ins)
 {
     uint32_t ref = arg(c, ins, 0), src = arg(c, ins, 1), sum = arg(c, ins, 2);
@@ -185,7 +183,7 @@ static uint32_t dot(Compiler *c, const DxInst *ins, uint32_t n)
     return sum;
 }
 
-/* dot4AddI8Packed and dot4AddU8Packed: the dot product of four bytes each, added to the accumulator. */
+/* dot4AddI8Packed and dot4AddU8Packed: a dot product of four byte pairs, added to the accumulator. */
 static uint32_t dot4_packed(Compiler *c, const DxInst *ins, int is_signed)
 {
     uint32_t acc = arg(c, ins, 0), a = arg(c, ins, 1), b = arg(c, ins, 2);
@@ -210,7 +208,7 @@ static void add_with_carry(Compiler *c, const DxInst *ins, int subtract)
     dxil_set_parts(c, ins->value, parts, 2);
 }
 
-/* the 16-bit float of legacyF32ToF16, in the low half of a word, and back. */
+/* legacyF32ToF16 and back: the half lives in the low 16 bits of a word. */
 static uint32_t f32_to_f16(Compiler *c, uint32_t v)
 {
     uint32_t parts[2] = {v, dxil_fconst(c, 0.0f)};
@@ -224,7 +222,7 @@ static uint32_t f16_to_f32(Compiler *c, uint32_t v)
     return dxil_extract(c, c->t_f32, pair, 0);
 }
 
-/* pack4x8: the low bytes of four values, truncated, clamped to 0 to 255, or clamped to -128 to 127 by mode. */
+/* pack4x8: the low bytes of four values, by mode truncated, clamped to 0..255 or clamped to -128..127. */
 static uint32_t pack4x8(Compiler *c, const DxInst *ins)
 {
     uint32_t mode = (uint32_t)dxil_constant(c, ins->ops[2], 0), r = dxil_uconst(c, 0), i32 = t_i32(c);
@@ -320,7 +318,7 @@ static uint32_t quad_swap(Compiler *c, uint32_t type, uint32_t value, uint32_t d
     return spv_op(&c->b, SpvOpGroupNonUniformQuadSwap, type, w, 3);
 }
 
-/* a value compared with another by its bits, as WaveMatch compares lanes' values. */
+/* compares by bits, like WaveMatch compares lane values. */
 static uint32_t same_bits(Compiler *c, uint32_t type, uint32_t a, uint32_t b)
 {
     if (type == c->t_bool)
@@ -339,10 +337,7 @@ static uint32_t same_bits(Compiler *c, uint32_t type, uint32_t a, uint32_t b)
     return spv_op2(&c->b, SpvOpIEqual, c->t_bool, a, b);
 }
 
-/*
- * waveMatch: a loop taking the first active lane's value each time, the
- * lanes equal to it leaving it together with their ballot.
- */
+/* WaveMatch: each loop pass takes the first active lane's value, and the lanes equal to it exit with their ballot. */
 static void wave_match(Compiler *c, const DxInst *ins)
 {
     subgroup(c, SpvCapabilityGroupNonUniformBallot);
@@ -367,7 +362,7 @@ static void wave_match(Compiler *c, const DxInst *ins)
     dxil_set_parts(c, ins->value, parts, 4);
 }
 
-/* the lanes of a multi prefix operation's mask below this one. */
+/* the lanes of the multi prefix mask that are below this lane. */
 static uint32_t lanes_before(Compiler *c, const DxInst *ins)
 {
     uint32_t words[4];
@@ -389,10 +384,9 @@ static uint32_t multi_prefix_count(Compiler *c, const DxInst *ins)
 }
 
 /*
- * waveMultiPrefixOp: the operation over the lanes of the mask below this
- * one, a loop over every lane of the wave, each shuffled to all, those of
- * the mask below this one taken. its operations, read from dxc's output:
- * 0 sum, 1 and, 2 or, 3 xor, 4 product.
+ * WaveMultiPrefixOp: loops over every lane of the wave, shuffles its value
+ * to all, and folds in those of the mask below this lane. ops are 0 sum,
+ * 1 and, 2 or, 3 xor, 4 product.
  */
 static uint32_t multi_prefix(Compiler *c, const DxInst *ins)
 {
@@ -613,7 +607,7 @@ int dxil_math_op(Compiler *c, const DxInst *ins, uint32_t op)
     case 133: r = spv_op1(&c->b, SpvOpConvertFToS, type, arg(c, ins, 0)); break;
     case 134: r = spv_op1(&c->b, SpvOpConvertFToU, type, arg(c, ins, 0)); break;
     case 162: {
-        /* dot2AddHalf: two halves each, in float, added to a float. */
+        /* dot2AddHalf: a dot product of two half pairs, done in float and added to a float. */
         uint32_t a[2], b[2];
         for (uint32_t i = 0; i < 2; i++) {
             a[i] = dxil_convert(c, arg(c, ins, 1 + i), dxil_type(c, arg_type(c, ins, 1 + i)), c->t_f32);

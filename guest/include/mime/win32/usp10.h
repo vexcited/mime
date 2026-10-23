@@ -1,6 +1,4 @@
-/*
- * uniscribe, usp10.dll: itemizing, shaping and placing unicode text.
- */
+/* uniscribe, usp10.dll: itemizing, shaping and placing Unicode text. */
 #ifndef MIME_WIN32_USP10_H
 #define MIME_WIN32_USP10_H
 

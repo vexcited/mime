@@ -10,7 +10,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
-/* mime's guest reaches the network through the host, which it reports as a lan connection. */
+/* the host network is reported as a LAN connection. */
 DECLSPEC_EXPORT BOOL WINAPI InternetGetConnectedState(LPDWORD flags, DWORD reserved)
 {
     if (flags)
@@ -19,9 +19,8 @@ DECLSPEC_EXPORT BOOL WINAPI InternetGetConnectedState(LPDWORD flags, DWORD reser
 }
 
 /*
- * dialing: the machine is always online, so nothing is dialed. Flags above the four of dialing are invalid and so
- * is a nonzero reserved value. A machine with the remote access library answers TRUE, as Windows does, with the
- * last error cleared.
+ * dialing is a no-op because the machine is always online. reject flags beyond the four dialing flags and nonzero
+ * reserved values. like Windows with its remote access library, return TRUE and clear last error.
  */
 DECLSPEC_EXPORT BOOL WINAPI InternetAutodial(DWORD flags, HWND window)
 {
@@ -44,10 +43,9 @@ DECLSPEC_EXPORT BOOL WINAPI InternetAutodialHangup(DWORD reserved)
 }
 
 /*
- * combines a base and a relative url with the shlwapi engine: the encoding is on unless ICU_NO_ENCODE is given,
- * which inverts the flag the engine knows, and the engine is told to keep wininet's rules. A buffer that is too
- * small gives ERROR_INSUFFICIENT_BUFFER with the size needed, any other failure ERROR_INVALID_PARAMETER and a
- * failed allocation ERROR_NOT_ENOUGH_MEMORY.
+ * combine URLs through shlwapi with WinINet rules. ICU_NO_ENCODE reverses the engine's encoding flag. report a short
+ * buffer with ERROR_INSUFFICIENT_BUFFER and required size, allocation failure with ERROR_NOT_ENOUGH_MEMORY, and other
+ * failures with ERROR_INVALID_PARAMETER.
  */
 #define COMBINE_FLAGS(flags) (((flags) ^ ICU_NO_ENCODE) | 0x80000000u)
 
@@ -78,7 +76,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetCombineUrlA(LPCSTR base, LPCSTR relative, LP
     return combine_result(UrlCombineA(base, relative, buffer, length, COMBINE_FLAGS(flags)));
 }
 
-/* no ftp or gopher server ever answered, so there is no response text: an empty string and error 0. */
+/* without FTP or Gopher responses, return empty response text and error 0. */
 DECLSPEC_EXPORT BOOL WINAPI InternetGetLastResponseInfoW(LPDWORD error, LPWSTR buffer, LPDWORD length)
 {
     if (!error || !length)

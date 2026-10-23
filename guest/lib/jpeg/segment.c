@@ -1,6 +1,4 @@
-/*
- * the marker segments before the image: walking them, and the exif block, xmp packet and icc profile they carry.
- */
+/* walks the marker segments before the image, and extracts the exif block, xmp packet and icc profile. */
 #include "internal.h"
 
 bool mime_jpeg_is_jpeg(const uint8_t *data, size_t size)
@@ -27,7 +25,7 @@ int mime_jpeg_next_segment(MimeJpegSegments *it, MimeJpegSegment *seg)
     if (it->done)
         return 0;
     for (;;) {
-        /* bytes that are not a marker are skipped, and so are the fill bytes of a marker. */
+        /* skip bytes that are not a marker, and a marker's fill bytes. */
         while (p < n && d[p] != 0xFF)
             p++;
         while (p < n && d[p] == 0xFF)

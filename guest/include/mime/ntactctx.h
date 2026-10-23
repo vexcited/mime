@@ -1,8 +1,4 @@
-/*
- * activation contexts as ntdll.dll exports them: the per thread
- * activation stack, section lookups and queries. docs/sxs.md describes
- * the data layout behind them.
- */
+/* activation contexts as ntdll.dll exports them: the per thread activation stack, section lookups and queries. */
 #ifndef MIME_NTACTCTX_H
 #define MIME_NTACTCTX_H
 
@@ -47,11 +43,10 @@
 #define STATUS_INVALID_PARAMETER_6 ((NTSTATUS)0xC00000F4)
 #endif
 
-/* the pseudo handles: NULL is the process default. */
+/* pseudo handles. NULL is the process default. */
 #define ACTCTX_EMPTY ((HANDLE)(LONG_PTR)-3)
 #define ACTCTX_SYSTEM_DEFAULT ((HANDLE)(LONG_PTR)-4)
 
-/* section ids. */
 #define ACTIVATION_CONTEXT_SECTION_ASSEMBLY_INFORMATION 1
 #define ACTIVATION_CONTEXT_SECTION_DLL_REDIRECTION 2
 #define ACTIVATION_CONTEXT_SECTION_WINDOW_CLASS_REDIRECTION 3
@@ -80,7 +75,7 @@
 #define RTL_QUERY_INFORMATION_ACTIVATION_CONTEXT_FLAG_ACTIVATION_CONTEXT_IS_ADDRESS 0x00000004
 #define RTL_QUERY_INFORMATION_ACTIVATION_CONTEXT_FLAG_NO_ADDREF 0x80000000
 
-/* what a context's notification routine is told. */
+/* notification types. */
 #define ACTIVATION_CONTEXT_NOTIFICATION_DESTROY 1
 #define ACTIVATION_CONTEXT_NOTIFICATION_ZOMBIFY 2
 #define ACTIVATION_CONTEXT_NOTIFICATION_USED 3
@@ -97,7 +92,7 @@ typedef struct _RTL_ACTIVATION_CONTEXT_STACK_FRAME {
     ULONG Flags;
 } RTL_ACTIVATION_CONTEXT_STACK_FRAME, *PRTL_ACTIVATION_CONTEXT_STACK_FRAME;
 
-/* the frame a caller keeps on its own stack for the unsafe fast activation. */
+/* the caller keeps this frame on its own stack for the unsafe fast activation. */
 typedef struct _RTL_CALLER_ALLOCATED_ACTIVATION_CONTEXT_STACK_FRAME_EXTENDED {
     SIZE_T Size;
     ULONG Format;
@@ -294,28 +289,23 @@ NTSYSAPI void NTAPI RtlDeactivateActivationContextUnsafeFast(
 #endif
 
 /*
- * mime's own entry: builds activation context data from a manifest the way
- * windows' sxs.dll does inside csrss, for CreateActCtx. the source is a
- * manifest file, or an image when module or resource are set. the data comes
- * from NtAllocateVirtualMemory; MimeSxsFreeActivationContextData frees it.
+ * mime's own: builds activation context data from a manifest for CreateActCtx, the job of sxs.dll inside csrss
+ * on windows. the source is a manifest file, or an image when module or resource are set. the data comes from
+ * NtAllocateVirtualMemory; free it with MimeSxsFreeActivationContextData.
  */
 typedef struct _MIME_SXS_GENERATE {
-    ULONG Flags;               /* ACTCTX_FLAG_* as CreateActCtxW checked them */
-    PCWSTR Source;             /* full path of the manifest or the image */
-    PCWSTR AssemblyDirectory;  /* the application directory private assemblies are probed in */
-    PCWSTR ResourceName;       /* RT_MANIFEST name or id, NULL for a file */
-    PVOID Module;              /* a loaded image to read the resource from, or NULL */
+    ULONG Flags;               /* ACTCTX_FLAG_*, already checked by CreateActCtxW. */
+    PCWSTR Source;             /* full path of the manifest or the image. */
+    PCWSTR AssemblyDirectory;  /* where private assemblies are probed. */
+    PCWSTR ResourceName;       /* RT_MANIFEST name or id, NULL for a file. */
+    PVOID Module;              /* a loaded image to read the resource from, or NULL. */
     USHORT ProcessorArchitecture;
     LANGID LangId;
 } MIME_SXS_GENERATE, *PMIME_SXS_GENERATE;
 
 NTSYSAPI NTSTATUS NTAPI MimeSxsGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data);
 NTSYSAPI void NTAPI MimeSxsFreeActivationContextData(PVOID data);
-/*
- * hands a context to a thread created suspended in this process, activated
- * when it starts, as CreateRemoteThreadEx does on windows by writing into
- * the new thread's teb.
- */
+/* gives a context to a suspended thread of this process, activated when it starts, like CreateRemoteThreadEx. */
 NTSYSAPI NTSTATUS NTAPI MimeSxsInheritActivationContext(HANDLE thread_id, PACTIVATION_CONTEXT context);
 
 #endif

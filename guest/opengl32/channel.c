@@ -1,13 +1,10 @@
 /*
- * the process's gpu channel: commands into the ring, fences, and the heap
- * of guest memory the host gpu reads in place.
+ * the process's gpu channel: the command ring, fences, and the heap of guest memory the host gpu reads in place.
  *
- * the ring is published to the host at flushes, waits and every 256K, not
- * per command, and the host is only kicked when it went idle. transient
- * data, like client arrays, uniforms of large programs and texture rows,
- * goes into a stream region reused once the gpu passed the fence that
- * covered it; buffer objects get blocks from a first fit heap whose freed
- * ranges wait for their last fence.
+ * the ring is published to the host at flushes, waits and every 256K, not per command, and the host is only kicked
+ * when it went idle. transient data such as client arrays, uniforms of large programs and texture rows goes into a
+ * stream region reused once the gpu passed the fence that covered it. buffer objects get blocks from a first fit heap
+ * whose freed ranges wait for their last fence.
  */
 #include "opengl32.h"
 
@@ -203,7 +200,7 @@ void gl_wait(uint64_t fence)
     gl_device_lock();
     gl_publish();
     gl_device_unlock();
-    /* short waits are spun: a sleep costs a host interrupt to end. */
+    /* short waits spin: ending a sleep costs a host interrupt. */
     for (int i = 0; i < 4000; i++) {
         if (gl_fence_done(fence))
             return;
@@ -274,7 +271,7 @@ BOOL gl_stream_alloc(uint64_t size, uint32_t align, GlMem *mem)
 typedef struct Range {
     uint32_t block;
     uint64_t offset, size;
-    uint64_t fence; /* free once the gpu passed it */
+    uint64_t fence; /* free once the gpu passed it. */
 } Range;
 
 static Range *g_ranges;
@@ -382,7 +379,7 @@ BOOL gl_heap_alloc(uint64_t size, GlMem *mem)
     reclaim();
     BOOL ok = take(size, mem);
     if (!ok && g_retired_count) {
-        /* what the gpu still reads frees up when it is done. */
+        /* ranges the gpu still reads are freed once it is done. */
         gl_wait(GlDev.fence);
         gl_fence();
         gl_wait(GlDev.fence);
@@ -421,7 +418,7 @@ typedef struct CacheEntry {
 
 static struct {
     CacheEntry *entries;
-    uint32_t count, cap; /* cap is a power of two */
+    uint32_t count, cap; /* cap is a power of two. */
 } g_cache[ID_KINDS];
 
 uint64_t gl_cache_lookup(int kind, const void *key, SIZE_T size, BOOL *created)

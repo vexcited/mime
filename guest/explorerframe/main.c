@@ -1,5 +1,5 @@
 /*
- * explorerframe.dll: the taskbar button list of a window, CLSID_TaskbarList.
+ * explorerframe.dll: CLSID_TaskbarList, a window's taskbar button state.
  */
 #include "explorerframe_private.h"
 
@@ -8,7 +8,6 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
-/* the version of the dll, which the shell's own library reports for itself. */
 typedef struct _DLLVERSIONINFO {
     DWORD cbSize;
     DWORD dwMajorVersion;

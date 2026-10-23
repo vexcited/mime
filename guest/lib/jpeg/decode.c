@@ -1,10 +1,9 @@
 /*
- * the decoder: the markers, the entropy decoding of the sequential and progressive scans of annexes F and G, the
- * restart intervals and the driver that turns the blocks into planes and the planes into pixels.
+ * the decoder: markers, entropy decoding of the sequential and progressive scans of annexes F and G, restart
+ * intervals, and the driver that turns blocks into planes and planes into pixels.
  *
- * a sequential image whose one scan holds every component is transformed block by block as it is decoded. any
- * other image, which means a progressive one or one with a scan for each component, keeps the coefficients of the
- * whole picture until its last scan.
+ * a sequential image with every component in one scan is transformed block by block while decoding. any other
+ * image, progressive or with a scan per component, keeps the whole picture's coefficients until its last scan.
  */
 #include "dec.h"
 
@@ -66,7 +65,7 @@ static int huff_build(JpegHuff *h, const uint8_t *bits, const uint8_t *vals, int
     return 0;
 }
 
-/* ------------------------------------------------------------------ the bits of the entropy coded data */
+/* ------------------------------------------------------------------ entropy coded bits */
 
 typedef struct Bits {
     const uint8_t *p, *end;
@@ -167,7 +166,7 @@ static inline int extend(int v, int s)
 
 /* ------------------------------------------------------------------ blocks */
 
-/* a sequential block: the coefficients are put in the zeroed block, the result is the last one that is not zero. */
+/* a sequential block, decoded into the zeroed block. returns the index of the last nonzero coefficient. */
 static int block_sequential(Bits *bp, const JpegHuff *dc, const JpegHuff *ac, int *pred, int16_t *blk)
 {
     Bits b = *bp;
@@ -235,7 +234,7 @@ static int block_dc_refine(Bits *bp, int al, int16_t *blk)
     return 0;
 }
 
-/* a correction bit for a coefficient that already is not zero. */
+/* a correction bit for a coefficient that is already nonzero. */
 static inline void refine_coef(Bits *b, int16_t *c, int bit)
 {
     if (bits_take(b, 1)) {
@@ -245,16 +244,16 @@ static inline void refine_coef(Bits *b, int16_t *c, int bit)
     }
 }
 
-/* a run of blocks without coefficients left in the band: 2 to the power r, and r more bits to add to it. */
+/* the length of an end of band run: 2 to the power r plus r more bits. */
 static inline uint32_t band_run_length(Bits *b, int r)
 {
     return (1u << r) + (r ? (uint32_t)bits_take(b, r) : 0);
 }
 
 /*
- * the first scan of a band of coefficients (T.81 G.1.2.2). Every symbol is a run of zeros and the size of the next
- * coefficient, which is stored shifted up by the successive approximation position. A symbol of size 0 either skips
- * 16 coefficients or ends the band of this block and of the blocks the run it announces covers.
+ * the first scan of a coefficient band, T.81 G.1.2.2. each symbol is a zero run and the size of the next
+ * coefficient, stored shifted up by the successive approximation position. a size 0 symbol either skips 16
+ * coefficients or ends the band for this block and for the blocks of the run it announces.
  */
 static int block_ac_first(Bits *bp, const JpegHuff *ac, int ss, int se, int al, uint32_t *eobrun, int16_t *blk)
 {
@@ -291,7 +290,7 @@ static int block_ac_first(Bits *bp, const JpegHuff *ac, int ss, int se, int al, 
     return rc;
 }
 
-/* one correction bit for the coefficient at k when it is not zero, read when it is passed. */
+/* reads a correction bit for the coefficient at k if it is nonzero. */
 static inline void correct_if_set(Bits *b, int16_t *c, int bit)
 {
     if (!*c)
@@ -302,9 +301,9 @@ static inline void correct_if_set(Bits *b, int16_t *c, int bit)
 }
 
 /*
- * a later scan of a band (T.81 G.1.2.3). Coefficients that are not zero yet get one more bit each time they are
- * passed. Between them a symbol places at most one new coefficient of magnitude one, after the number of zero
- * coefficients it announces, and a band end gives the remaining blocks of its run only the correction bits.
+ * a refinement scan of a band, T.81 G.1.2.3. nonzero coefficients get one more bit each time they are passed.
+ * between them a symbol places at most one new coefficient of magnitude one, after the zeros it announces, and an
+ * end of band gives the remaining blocks of its run only correction bits.
  */
 static int block_ac_refine(Bits *bp, const JpegHuff *ac, int ss, int se, int al, uint32_t *eobrun, int16_t *blk)
 {
@@ -328,7 +327,7 @@ static int block_ac_refine(Bits *bp, const JpegHuff *ac, int ss, int se, int al,
                 *eobrun = band_run_length(&b, zeros);
                 break;
             }
-            /* past the coefficients that already have a value, and zeros of them to the place of the new one. */
+            /* walk past the nonzero coefficients, counting zeros up to the new one's place. */
             for (; k <= se; k++) {
                 int16_t *c = &blk[jpeg_zigzag[k]];
                 if (*c) {
@@ -353,7 +352,7 @@ corrupt:
     return -1;
 }
 
-/* ------------------------------------------------------------------ the markers before and between the scans */
+/* ------------------------------------------------------------------ markers */
 
 static int be16(const uint8_t *p)
 {
@@ -483,7 +482,7 @@ static void parse_app(Jpeg *j, int marker, const uint8_t *p, size_t len)
     }
 }
 
-/* the segment at the position, handled when it is one of the headers. */
+/* handles the segment at the position when it is a header. */
 static int header_segment(Jpeg *j, int marker)
 {
     if (j->pos + 2 > j->size)
@@ -530,7 +529,7 @@ int jpeg_color_space(const Jpeg *j)
     if (j->ncomp == 1)
         return MIME_JPEG_CS_GRAY;
     if (j->ncomp == 3) {
-        /* a JFIF segment means YCbCr, whatever else the file says, which is how the files in use are read. */
+        /* a JFIF segment means YCbCr whatever else the file says, which is how real files are read. */
         if (j->jfif)
             return MIME_JPEG_CS_YCBCR;
         if (j->adobe)
@@ -542,7 +541,7 @@ int jpeg_color_space(const Jpeg *j)
     return j->adobe && j->adobe_transform == 2 ? MIME_JPEG_CS_YCCK : MIME_JPEG_CS_CMYK;
 }
 
-/* ------------------------------------------------------------------ the geometry */
+/* ------------------------------------------------------------------ geometry */
 
 static int set_geometry(Jpeg *j)
 {
@@ -571,8 +570,8 @@ static int set_geometry(Jpeg *j)
         c->cbw = jpeg_ceil_div(cw, 8);
         c->cbh = jpeg_ceil_div(chh, 8);
         /*
-         * a component with fewer samples than the picture is decoded at a larger size when the picture is
-         * scaled down, so that it needs no upsampling when its samples are a multiple of the output's.
+         * when the picture is scaled down, a component with fewer samples is decoded at a larger size, so it
+         * needs no upsampling when its samples are a multiple of the output's.
          */
         int cn = (int)n;
         while (cn < 8 && ((uint32_t)hmax * n) % ((uint32_t)c->h * (uint32_t)cn * 2) == 0 &&
@@ -718,7 +717,7 @@ static JpegHuff *table_for(Jpeg *j, bool ac, int id)
 {
     JpegHuff *h = ac ? &j->ac[id] : &j->dc[id];
     if (!h->defined && id < 2) {
-        /* a stream without tables of its own, as motion jpeg often is, uses the ones of annex K. */
+        /* streams without their own tables, as motion jpeg often is, use those of annex K. */
         const JpegHuffSpec *s = ac ? &jpeg_std_ac[id] : &jpeg_std_dc[id];
         huff_build(h, s->bits, s->vals, s->count);
     }
@@ -760,7 +759,7 @@ static int alloc_coefficients(Jpeg *j)
     return 0;
 }
 
-/* a block of the plane without any content: the mean gray. */
+/* fills a plane block that has no data with mean gray. */
 static void plane_neutral(JpegComp *c, uint32_t bx, uint32_t by)
 {
     if (bx >= c->cbw || by >= c->cbh)
@@ -790,9 +789,9 @@ static void neutral_mcu(Jpeg *j, const Scan *sc, uint32_t mcu)
 }
 
 /*
- * at the end of a restart interval: finds the marker, which has to be the next restart marker. returns 1 to go on,
- * with *lost the intervals that were lost between the previous marker and this one, and 0 when the scan ends here,
- * leaving the position at the marker that ended it.
+ * at the end of a restart interval, finds the marker, which must be the next restart marker. returns 1 to go on,
+ * with *lost the intervals lost between the previous marker and this one, or 0 when the scan ends here, leaving
+ * the position at the marker that ended it.
  */
 static int restart_sync(Jpeg *j, Bits *b, unsigned *next, unsigned *lost)
 {
@@ -946,7 +945,7 @@ static int decode_scan(Jpeg *j, const Scan *sc)
                 if (!j->tolerant)
                     return MIME_JPEG_ERR_DATA;
                 status = MIME_JPEG_TRUNCATED;
-                /* the rest of the interval is lost, with restarts the next interval can still be read. */
+                /* the rest of the interval is lost, but with restarts the next one can still be read. */
                 for (; mcu < interval_end; mcu++)
                     neutral_mcu(j, sc, mcu);
                 if (!restart) {
@@ -961,9 +960,9 @@ static int decode_scan(Jpeg *j, const Scan *sc)
     return status;
 }
 
-/* ------------------------------------------------------------------ the driver */
+/* ------------------------------------------------------------------ driver */
 
-/* the transform of every block of a picture put together from several scans. */
+/* transforms every block of a picture assembled from several scans. */
 static void transform_buffered(Jpeg *j)
 {
     for (int i = 0; i < j->ncomp; i++) {

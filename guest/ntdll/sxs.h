@@ -1,7 +1,7 @@
 /*
  * side by side internals shared by ntdll's sources: the binary layout of
  * activation context data, the manifest model the parser fills and the
- * hooks the loader calls. docs/sxs.md describes the layout.
+ * hooks the loader calls.
  */
 #ifndef MIME_NTDLL_SXS_H
 #define MIME_NTDLL_SXS_H
@@ -29,7 +29,7 @@
 #define ACTCTX_GUID_SECTION_INORDER 0x00000001
 
 #define ACTCTX_ASSEMBLY_PRIVATE 0x00000010
-#define ACTCTX_ASSEMBLY_ROOT 0x00000001 /* guessed name of the root assembly's own flag */
+#define ACTCTX_ASSEMBLY_ROOT 0x00000001 /* guessed name of the root assembly's own flag. */
 
 #define ACTCTX_PATH_TYPE_NONE 1
 #define ACTCTX_PATH_TYPE_WIN32_FILE 2
@@ -248,12 +248,12 @@ typedef struct ACTCTX_COM_PROGID_REDIRECTION {
 typedef struct ACTCTX_COM_TYPELIB_REDIRECTION {
     ULONG Size;
     ULONG Flags;
-    ULONG NameLength; /* the module name in the section's user data, with its terminator */
+    ULONG NameLength; /* module name in the section's user data, terminator included. */
     ULONG NameOffset;
     USHORT MajorVersion;
     USHORT MinorVersion;
     ULONG HelpDirLength;
-    ULONG HelpDirOffset; /* from the start of this entry */
+    ULONG HelpDirOffset; /* from the start of this entry. */
     ULONG LibraryFlags;
 } ACTCTX_COM_TYPELIB_REDIRECTION;
 static_assert(sizeof(ACTCTX_COM_TYPELIB_REDIRECTION) == 32);
@@ -283,13 +283,13 @@ typedef struct ACTCTX_APPLICATION_SETTING {
     ULONG SettingValueOffset;
 } ACTCTX_APPLICATION_SETTING;
 
-/* ------------------------------------------------------------------ the activation context object */
+/* ------------------------------------------------------------------ activation context object */
 
 #define ACTCTX_FLAG_ZOMBIE 0x00000001
 #define ACTCTX_FLAG_STATIC 0x00000002
 #define ACTCTX_FLAG_USED_NOTIFIED 0x00000008
 
-/* the handle points at RefCount; the fields keep windows' offsets on x64. */
+/* the handle points at RefCount, the fields keep windows' x64 offsets. */
 struct _ACTIVATION_CONTEXT {
     LONG RefCount;
     ULONG Flags;
@@ -302,7 +302,7 @@ struct _ACTIVATION_CONTEXT {
     ULONG DisabledNotifications;
 };
 
-/* ------------------------------------------------------------------ the manifest model */
+/* ------------------------------------------------------------------ manifest model */
 
 typedef struct SXS_IDENTITY {
     PWSTR Name;
@@ -323,7 +323,7 @@ typedef struct SXS_COM_CLASS {
     GUID Clsid;
     GUID TypeLibrary;
     PWSTR ProgId;
-    PWSTR *ProgIds; /* extra progid elements */
+    PWSTR *ProgIds; /* extra progid elements. */
     ULONG ProgIdCount;
     ULONG ThreadingModel;
     ULONG MiscStatus[5];
@@ -354,7 +354,7 @@ typedef struct SXS_FILE {
     ULONG ComClassCount;
     SXS_TYPELIB *TypeLibs;
     ULONG TypeLibCount;
-    SXS_INTERFACE *Interfaces; /* comInterfaceProxyStub */
+    SXS_INTERFACE *Interfaces; /* comInterfaceProxyStub. */
     ULONG InterfaceCount;
 } SXS_FILE;
 
@@ -385,43 +385,43 @@ typedef struct SXS_MANIFEST {
     ULONG DependencyCount;
     SXS_FILE *Files;
     ULONG FileCount;
-    SXS_INTERFACE *ExternalProxies; /* comInterfaceExternalProxyStub */
+    SXS_INTERFACE *ExternalProxies; /* comInterfaceExternalProxyStub. */
     ULONG ExternalProxyCount;
     SXS_SETTING *Settings;
     ULONG SettingCount;
     SXS_COMPATIBILITY *Compatibility;
     ULONG CompatibilityCount;
-    PVOID Pool; /* every string and array of the manifest lives in this chain of blocks */
+    PVOID Pool; /* owns every string and array of the manifest. */
 } SXS_MANIFEST;
 
-/* parses a manifest held in memory, in utf-8 or utf-16 with or without a byte order mark. */
+/* utf-8 or utf-16, with or without a bom. */
 NTSTATUS SxspParseManifest(const void *bytes, SIZE_T size, SXS_MANIFEST *manifest);
 void SxspFreeManifest(SXS_MANIFEST *manifest);
-/* parses "a.b.c.d"; FALSE when malformed. */
+/* "a.b.c.d", FALSE when malformed. */
 BOOLEAN SxspParseVersion(PCWSTR text, USHORT version[4]);
 
 /* ------------------------------------------------------------------ hooks for the loader and kernelbase */
 
-/* activation context data for a manifest held in memory, as if read from path. */
+/* builds activation context data from an in-memory manifest as if read from path. */
 NTSTATUS SxspGenerateFromText(const void *text, SIZE_T size, PCWSTR path, PVOID *data);
 
-/* x65599 hash of the upcased characters, as the sections key their strings. */
+/* x65599 hash of the upcased characters, the key of section strings. */
 ULONG SxspHashString(PCWCH s, SIZE_T chars);
-/* the system directory of this processor's dlls, with a trailing backslash. */
+/* this processor's system dll directory, with a trailing backslash. */
 PCWSTR SxspSystemDirectory(void);
 
 /* the active frame's context, or the process default for NULL. */
 PACTIVATION_CONTEXT LdrpSxsActiveContext(void);
-/* points the thread at its activation stack inside the teb when it has none. */
+/* sets up the thread's activation stack inside the teb when it has none. */
 void LdrpSxsInitializeThread(void);
 /* builds the process default context from the program's manifest, then applies its settings. */
 NTSTATUS LdrpSxsInitializeProcess(PVOID image, PCWSTR image_path);
-/* reads a dll's resource 2 manifest into a context, NULL when it has none. */
+/* reads a dll's resource 2 manifest, NULL context when it has none. */
 NTSTATUS LdrpSxsProbeDll(PVOID base, PCWSTR full_path, PACTIVATION_CONTEXT *context);
-/* the path a dll name redirects to in the active context; STATUS_SXS_KEY_NOT_FOUND when it does not. */
+/* STATUS_SXS_KEY_NOT_FOUND when the active context does not redirect the name. */
 NTSTATUS LdrpSxsRedirectDll(PCWSTR name, PWSTR out, SIZE_T out_chars);
 
-/* activates a module's context around loader work, NULL meaning the process default. */
+/* activates a module's context around loader work, NULL means the process default. */
 typedef RTL_CALLER_ALLOCATED_ACTIVATION_CONTEXT_STACK_FRAME_EXTENDED LDRP_SXS_FRAME;
 void LdrpSxsActivate(LDRP_SXS_FRAME *frame, PACTIVATION_CONTEXT context);
 void LdrpSxsDeactivate(LDRP_SXS_FRAME *frame);

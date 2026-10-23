@@ -1,14 +1,10 @@
 /*
- * the console driver, \Device\ConDrv: the kernel side of a console, the
- * part that conhost is on windows. a console has an input buffer and screen
- * buffers; the standard handles of a console program are files of the
- * driver, \CurrentIn for the input and \CurrentOut for the active screen
- * buffer, and so are the handles CreateConsoleScreenBuffer makes with
- * \ScreenBuffer. kernelbase drives them with these private device controls,
- * and reads and writes them with ReadFile and WriteFile.
+ * the console driver, \Device\ConDrv: the kernel side of a console, conhost's role on Windows. a console has an
+ * input buffer and screen buffers. a console program's standard handles are files of the driver: \CurrentIn for
+ * input and \CurrentOut for the active screen buffer, as are the handles CreateConsoleScreenBuffer opens with
+ * \ScreenBuffer. kernelbase drives them with these private device controls plus ReadFile and WriteFile.
  *
- * a console is shown on the terminal of a host run, or on a pseudo console
- * \Pty whose owner carries its bytes, or on nothing.
+ * a console shows on the terminal of a host run, on a pseudo console \Pty whose owner carries its bytes, or nowhere.
  */
 #ifndef MIME_CONDRV_H
 #define MIME_CONDRV_H
@@ -18,8 +14,8 @@
 #define MIME_CONDRV_DEVICE L"\\Device\\ConDrv"
 #define MIME_CONDRV_STREAM_DEVICE L"\\Device\\ConDrvStream" /* \Input, \Output, \Error: redirected streams as pipe ends */
 
-/* the names under the device that make handles: */
-#define MIME_CONDRV_CURRENT_IN L"CurrentIn"       /* the input of the console of the process */
+/* names under the device that open handles. */
+#define MIME_CONDRV_CURRENT_IN L"CurrentIn"       /* the input of the process's console */
 #define MIME_CONDRV_CURRENT_OUT L"CurrentOut"     /* its active screen buffer */
 #define MIME_CONDRV_SCREEN_BUFFER L"ScreenBuffer" /* a new screen buffer of that console */
 #define MIME_CONDRV_PTY L"Pty"                    /* a new pseudo console */
@@ -36,9 +32,9 @@
 #define IOCTL_CONDRV_ALLOC MIME_CONDRV_IOCTL(0x810)     /* in MIME_CONDRV_ALLOC: a console for a process without one */
 #define IOCTL_CONDRV_TITLE MIME_CONDRV_IOCTL(0x811)     /* in MIME_CONDRV_TITLE, out the title: get or set */
 #define IOCTL_CONDRV_CODE_PAGES MIME_CONDRV_IOCTL(0x812) /* in MIME_CONDRV_CODE_PAGES with Set, out the pages */
-#define IOCTL_CONDRV_INPUT_EXE MIME_CONDRV_IOCTL(0x813) /* in the name of the exe whose history and aliases the reads use, or none to read it */
+#define IOCTL_CONDRV_INPUT_EXE MIME_CONDRV_IOCTL(0x813) /* in the exe name whose history and aliases reads use, or nothing to get it */
 
-/* on a handle of the input */
+/* on an input handle. */
 #define IOCTL_CONDRV_IN_MODE MIME_CONDRV_IOCTL(0x830)       /* in MIME_CONDRV_MODE, out the mode */
 #define IOCTL_CONDRV_IN_READ MIME_CONDRV_IOCTL(0x831)       /* in MIME_CONDRV_READ, out the text read */
 #define IOCTL_CONDRV_IN_PEEK MIME_CONDRV_IOCTL(0x803)       /* out bytes without taking them or waiting */
@@ -49,24 +45,24 @@
 #define IOCTL_CONDRV_IN_HISTORY MIME_CONDRV_IOCTL(0x832)    /* in MIME_CONDRV_HISTORY, command history and its sizes */
 #define IOCTL_CONDRV_IN_ALIAS MIME_CONDRV_IOCTL(0x833)      /* in MIME_CONDRV_ALIAS: aliases */
 
-/* on a handle of a screen buffer */
+/* on a screen buffer handle. */
 #define IOCTL_CONDRV_OUT_WRITE MIME_CONDRV_IOCTL(0x840)       /* in MIME_CONDRV_WRITE then the text */
 #define IOCTL_CONDRV_OUT_MODE MIME_CONDRV_IOCTL(0x841)        /* in MIME_CONDRV_MODE, out the mode */
 #define IOCTL_CONDRV_OUT_INFO MIME_CONDRV_IOCTL(0x842)        /* in MIME_CONDRV_INFO_REQUEST, out MIME_CONDRV_INFO */
 #define IOCTL_CONDRV_OUT_SIZE MIME_CONDRV_IOCTL(0x843)        /* in MIME_CONDRV_COORD */
 #define IOCTL_CONDRV_OUT_CURSOR MIME_CONDRV_IOCTL(0x844)      /* in MIME_CONDRV_CURSOR */
 #define IOCTL_CONDRV_OUT_WINDOW MIME_CONDRV_IOCTL(0x845)      /* in MIME_CONDRV_WINDOW */
-#define IOCTL_CONDRV_OUT_ATTRIBUTE MIME_CONDRV_IOCTL(0x846)   /* in USHORT: the attributes of the text */
+#define IOCTL_CONDRV_OUT_ATTRIBUTE MIME_CONDRV_IOCTL(0x846)   /* in USHORT: the text attributes */
 #define IOCTL_CONDRV_OUT_READ_RECT MIME_CONDRV_IOCTL(0x847)   /* in MIME_CONDRV_RECT_IO, out the cells */
 #define IOCTL_CONDRV_OUT_WRITE_RECT MIME_CONDRV_IOCTL(0x848)  /* in MIME_CONDRV_RECT_IO then the cells */
 #define IOCTL_CONDRV_OUT_READ_RUN MIME_CONDRV_IOCTL(0x849)    /* in MIME_CONDRV_RUN, out the characters or attributes */
 #define IOCTL_CONDRV_OUT_WRITE_RUN MIME_CONDRV_IOCTL(0x84A)   /* in MIME_CONDRV_RUN then the data */
 #define IOCTL_CONDRV_OUT_FILL MIME_CONDRV_IOCTL(0x84B)        /* in MIME_CONDRV_FILL */
 #define IOCTL_CONDRV_OUT_SCROLL MIME_CONDRV_IOCTL(0x84C)      /* in MIME_CONDRV_SCROLL */
-#define IOCTL_CONDRV_OUT_ACTIVATE MIME_CONDRV_IOCTL(0x84D)    /* makes the buffer the one that is shown */
+#define IOCTL_CONDRV_OUT_ACTIVATE MIME_CONDRV_IOCTL(0x84D)    /* makes this the shown buffer */
 #define IOCTL_CONDRV_OUT_FONT MIME_CONDRV_IOCTL(0x84E)        /* out MIME_CONDRV_FONT */
 
-/* on the handle of a pseudo console */
+/* on a pseudo console handle. */
 #define IOCTL_CONDRV_PTY_CREATE MIME_CONDRV_IOCTL(0x860)  /* in MIME_CONDRV_PTY_CREATE: size and flags */
 #define IOCTL_CONDRV_PTY_OUTPUT MIME_CONDRV_IOCTL(0x861)  /* out the terminal bytes the console made; waits for some */
 #define IOCTL_CONDRV_PTY_INPUT MIME_CONDRV_IOCTL(0x862)   /* in the terminal bytes the owner got from its terminal */
@@ -184,7 +180,7 @@ typedef struct MIME_CONDRV_WINDOW {
     MIME_CONDRV_RECT Rect;
 } MIME_CONDRV_WINDOW;
 
-/* a rectangle of cells, its width times its height of them follow in a write and come back in a read */
+/* a rectangle of cells: width times height cells follow in a write and come back in a read. */
 typedef struct MIME_CONDRV_RECT_IO {
     MIME_CONDRV_RECT Rect;
 } MIME_CONDRV_RECT_IO;

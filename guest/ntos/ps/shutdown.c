@@ -1,9 +1,8 @@
 /*
- * the shutdown of the session and of the machine. on windows winlogon starts it, csrss walks the processes
- * from the highest shutdown level down and asks winsrv to tell the windows of each one, then the console
- * routine of the ones left, before services and the kernel finish the job. here the kernel does it all on one
- * system thread, with a worker thread for each process of a level; the window manager has its part in a callout.
- * docs/shutdown.md has the order, the flags and the timeouts.
+ * session and machine shutdown. on windows winlogon starts it, csrss walks the processes from the highest shutdown
+ * level down and has winsrv tell the windows of each, then the console handlers of what is left, before services
+ * and the kernel finish. here the kernel does it all on one system thread, with a worker thread per process of a
+ * level. the window manager's part is a callout.
  */
 #include "../ntos.h"
 #include "../cm/cm.h"
@@ -13,11 +12,11 @@
 #define CTRL_SHUTDOWN_EVENT 6
 #define MAX_BATCH 16
 #define MAX_WAIT 5
-/* DBG_TERMINATE_PROCESS, the exit code csrss gives a process whose windows were told. */
+/* the exit code csrss gives a process whose windows were told. */
 #define STATUS_DBG_TERMINATE_PROCESS ((NTSTATUS)0x40010004L)
 #define SHUTDOWN_PRIVILEGE 19
 
-/* what a process knows of the shutdown: 0 not yet, 1 taken in a batch. */
+/* per process shutdown state: 0 not yet, 1 taken in a batch. */
 #define PS_SHUTDOWN_TAKEN 1
 
 typedef struct SHUTDOWN_SETTINGS {
@@ -25,7 +24,7 @@ typedef struct SHUTDOWN_SETTINGS {
     ULONG WaitToKillTimeout;
     ULONG QuickTimeout;
     ULONG TerminateTimeout;
-    ULONG ServiceTimeout; /* WaitToKillServiceTimeout, what the services have to stop */
+    ULONG ServiceTimeout; /* WaitToKillServiceTimeout. */
     BOOLEAN AutoEndTasks;
     BOOLEAN AllowBlocking;
 } SHUTDOWN_SETTINGS;
@@ -33,8 +32,8 @@ typedef struct SHUTDOWN_SETTINGS {
 static struct {
     FAST_MUTEX Lock;
     BOOLEAN Ready;
-    BOOLEAN Active;  /* a request waits to start or runs. */
-    BOOLEAN Pending; /* it still waits for its delay. */
+    BOOLEAN Active;  /* a request is pending or running. */
+    BOOLEAN Pending; /* still waiting for its delay. */
     BOOLEAN Refused; /* a window answered no to the query. */
     ULONG Generation;
     BOOLEAN Stopping; /* the machine is going down. */
@@ -42,10 +41,10 @@ static struct {
     ULONG Reason;
     ULONG Control;
     ULONG DelayMs;
-    ULONG LimitMs; /* the most the whole thing may take, 0 for no limit. */
+    ULONG LimitMs; /* limit for the whole shutdown, 0 for none. */
     NTSTATUS Result;
     KEVENT Cancel;   /* the request was aborted. */
-    KEVENT Expire;   /* the time ran out: everything left ends now. */
+    KEVENT Expire;   /* time ran out: everything left ends now. */
     KEVENT Finished; /* the thread is done. */
     SHUTDOWN_SETTINGS Settings;
     ULONG64 Deadline; /* milliseconds of interrupt time, 0 for none. */
@@ -78,7 +77,7 @@ void PsShutdownInitialize(void)
 
 /* ------------------------------------------------------------------ settings */
 
-/* a number kept as a string or a dword, which is how the keys of these timeouts are written. */
+/* the timeout keys hold either a string or a dword. */
 static ULONG read_number(PCWSTR key, PCWSTR name, ULONG fallback)
 {
     UCHAR data[64];
@@ -98,13 +97,12 @@ static ULONG read_number(PCWSTR key, PCWSTR name, ULONG fallback)
     return fallback;
 }
 
-/* where the timeouts are kept. */
 #define KEY_DESKTOP_FORMAT L"\\REGISTRY\\USER\\S-1-5-21-%u-%u-%u-1001\\Control Panel\\Desktop"
 #define KEY_CONTROL L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control"
 #define KEY_POLICY L"\\REGISTRY\\MACHINE\\Software\\Policies\\Microsoft\\Windows\\System"
 #define SERVICE_TIMEOUT_CAP 30000
 
-/* the timeouts of a shutdown, read when it starts, each with the value it has when the registry says nothing. */
+/* read when a shutdown starts, with a default for each missing value. */
 static void load_settings(SHUTDOWN_SETTINGS *s)
 {
     WCHAR desktop[128];
@@ -139,7 +137,7 @@ static NTSTATUS wait_objects(PVOID *objects, ULONG count, ULONG64 timeout_ms)
                                     timeout_ms == ~0ull ? nullptr : &t, blocks);
 }
 
-/* the time a wait of a given length may have: the shutdown's own limit cuts it short. */
+/* clips a wait to the shutdown's own limit. */
 static ULONG64 allowed(ULONG64 wanted)
 {
     if (!g.Deadline)
@@ -166,14 +164,14 @@ static void kill_process(PEPROCESS process, NTSTATUS status)
                     process->ImageFileName, g.Settings.TerminateTimeout);
 }
 
-/* what the manager of services has beyond its service timeout: the services are asked to prepare first. */
+/* extra time for the service control manager on top of its service timeout: services are asked to prepare first. */
 #define SERVICE_PREPARE_ALLOWANCE_MS 10000
 #define HANDLER_EXIT_GRACE_MS 1000
 
 /*
- * a process with no window to ask, or whose windows did not end it, is told by its console routine, which runs on a new
- * thread. the thread ending with the event as its code is the routine saying it took the event, and the process is
- * then ended here. a process with no routine, or that does not end in time, is ended at once.
+ * a process with no window, or whose windows did not end it, gets its console handler run on a new thread. that
+ * thread exiting with the event as its code means the handler took the event, and the process is then ended here.
+ * a process with no handler, or that does not end in time, is ended at once.
  */
 static void ctrl_shutdown(PEPROCESS process)
 {
@@ -204,7 +202,7 @@ static void ctrl_shutdown(PEPROCESS process)
             PspTerminateProcess(process, STATUS_CONTROL_C_EXIT);
             return;
         }
-        /* the routine ended without taking the event: the program may still be leaving by itself. */
+        /* the handler ended without taking the event: the program may still be leaving by itself. */
         PVOID leaving[1] = {&process->Pcb};
         wait_objects(leaving, 1, HANDLER_EXIT_GRACE_MS);
     }
@@ -251,13 +249,13 @@ static void NTAPI process_worker(PVOID context)
 
 /* ------------------------------------------------------------------ levels */
 
-/* the processes of session 0, the services, are not asked at a logoff: only a shutdown of the machine reaches them. */
+/* session 0 processes, the services, take part only in a machine shutdown, not a logoff. */
 static BOOLEAN takes_part(PEPROCESS p)
 {
     return p->SessionId != 0 || (g.Flags & MX_EWX_MACHINE);
 }
 
-/* the processes of the highest level not yet taken, marked as taken. */
+/* takes the processes of the highest level not yet taken, and marks them. */
 static ULONG take_batch(PEPROCESS *out)
 {
     ULONG count = 0, level = 0;
@@ -305,7 +303,7 @@ static NTSTATUS run_batch(PEPROCESS *processes, ULONG count)
     }
     PVOID objects[2] = {&batch.Done, &g.Expire};
     if (wait_objects(objects, KeReadStateEvent(&g.Expire) ? 1 : 2, ~0ull) != STATUS_WAIT_0) {
-        /* the time is up: the workers end what they wait for and finish soon. */
+        /* time is up: the workers end what they wait for and finish soon. */
         PVOID done[1] = {&batch.Done};
         if (wait_objects(done, 1, 10000) != STATUS_WAIT_0) {
             for (ULONG i = 0; i < count; i++)
@@ -317,7 +315,7 @@ static NTSTATUS run_batch(PEPROCESS *processes, ULONG count)
     return batch.Cancelled ? STATUS_CANCELLED : STATUS_SUCCESS;
 }
 
-/* arms the limit of the whole shutdown, which ends the waits of everything. */
+/* arms the limit of the whole shutdown, which ends every wait. */
 static void NTAPI limit_thread(PVOID context)
 {
     ULONG64 limit = (ULONG64)(ULONG_PTR)context;
@@ -331,7 +329,7 @@ static void NTAPI limit_thread(PVOID context)
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
-/* every process that is still there is to be asked again. */
+/* processes still alive are to be asked again. */
 static void reset_taken(void)
 {
     ULONG64 s = KiAcquireDispatcherLock();
@@ -358,7 +356,7 @@ static NTSTATUS user_phase(void)
 
 /* ------------------------------------------------------------------ the machine */
 
-/* ends what is left and waits a while for it, so that the handles are closed and the files written. */
+/* ends what is left and waits a while, so that handles get closed and files written. */
 static void end_everything(void)
 {
     ULONG64 start = now_ms();
@@ -394,7 +392,7 @@ static void end_everything(void)
     g.Stopping = TRUE;
     ExReleaseFastMutex(&g.Lock);
     if (second) {
-        /* another thread does it already. */
+        /* another thread is already doing it. */
         KEVENT never;
         KeInitializeEvent(&never, NotificationEvent, FALSE);
         for (;;)
@@ -402,7 +400,7 @@ static void end_everything(void)
     }
     KiLogPrintf("shutting down, action %u", action);
     end_everything();
-    /* what handles still keep for the host's files, then the registry journal, so that the sync of the drive covers both. */
+    /* flush host files still held by handles, then the registry journal, so the drive sync covers both. */
     FsWbFlushAll();
     CmpJournalShutdown();
     HalHypercall(MIME_HC_FS_SYNC, 0, 0, 0, 0, 0, 0, nullptr);
@@ -442,7 +440,7 @@ static void NTAPI shutdown_thread(PVOID context)
     }
     NTSTATUS status = user_phase();
     if (status == STATUS_CANCELLED && g.Refused && (g.Control & MX_SHUTDOWN_RETRY_FORCED) && !g.Stopping) {
-        /* nobody is there to choose to shut down anyway, so a no ends in that choice. */
+        /* nobody is there to choose to force it anyway, so a refusal acts as that choice. */
         KiLogPrintf("shutdown: a window refused, going on forced");
         reset_taken();
         KeClearEvent(&g.Cancel);
@@ -460,7 +458,7 @@ static void NTAPI shutdown_thread(PVOID context)
 
 /* ------------------------------------------------------------------ requests */
 
-/* a shutdown can be stopped while it counts down; once it has begun the programs are already being told. */
+/* a shutdown can be aborted during its countdown, not once programs are being told. */
 NTSTATUS MimeShutdownAbort(void)
 {
     ExAcquireFastMutex(&g.Lock);
@@ -479,10 +477,9 @@ NTSTATUS MimeShutdownAbort(void)
 }
 
 /*
- * starts a shutdown. a second request while one runs does nothing when it asks for no more than the first
- * did, as windows answers 259 then, ends the first and starts again when it adds shutting down, rebooting or
- * forcing, and is busy when it is a logoff in a shutdown. strict requests, the ones of InitiateSystemShutdownEx,
- * fail instead of joining.
+ * a second request while one runs does nothing if it asks for no more than the first, as windows answers 259 then.
+ * it ends the first and starts over if it adds shutdown, reboot or force, and is busy if it is a logoff during a
+ * shutdown. strict requests, from InitiateSystemShutdownEx, fail instead of joining.
  */
 NTSTATUS MimeShutdownStart(ULONG flags, ULONG reason, ULONG delay_seconds, ULONG control, ULONG limit_ms,
                            BOOLEAN strict, BOOLEAN wait)
@@ -510,7 +507,7 @@ NTSTATUS MimeShutdownStart(ULONG flags, ULONG reason, ULONG delay_seconds, ULONG
             ExReleaseFastMutex(&g.Lock);
             return answer;
         }
-        /* it asks for more than what runs: that one ends and this one takes its place. */
+        /* it asks for more than the running one: that one ends and this one replaces it. */
         KeSetEvent(&g.Cancel, 0, FALSE);
         ExReleaseFastMutex(&g.Lock);
         PVOID done[1] = {&g.Finished};
@@ -539,7 +536,7 @@ NTSTATUS MimeShutdownStart(ULONG flags, ULONG reason, ULONG delay_seconds, ULONG
     if (!NT_SUCCESS(status) || !wait)
         return status;
     PVOID done[1] = {&g.Finished};
-    /* a wait of user mode, so that the caller, which a shutdown ends too, can end. */
+    /* a user mode wait, so the caller can be ended by the shutdown too. */
     NTSTATUS waited = KeWaitForMultipleObjects(1, done, WaitAny, UserRequest, UserMode, FALSE, nullptr, nullptr);
     return waited == STATUS_WAIT_0 ? g.Result : waited;
 }
@@ -566,9 +563,8 @@ NTSTATUS NTAPI NtShutdownSystem(SHUTDOWN_ACTION action)
 }
 
 /*
- * a power action of the system: sleep, hibernate or shutdown. It needs the shutdown privilege; Mime has no sleep or
- * hibernate state to enter, so a request that is allowed is refused as not supported, a guess for the answer of a
- * machine without those states.
+ * sleep, hibernate or shutdown. it needs the shutdown privilege. there is no sleep or hibernate state here, so an
+ * allowed request is refused as not supported, a guess at what a machine without those states answers.
  */
 NTSTATUS NTAPI NtInitiatePowerAction(ULONG action, ULONG lightest_state, ULONG flags, BOOLEAN asynchronous)
 {

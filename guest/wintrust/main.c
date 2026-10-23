@@ -6,11 +6,10 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
 }
 
 /*
- * the state of a verification is its provider data, as on windows, where
- * the handle is the CRYPT_PROVIDER_DATA itself: one signer with the
- * certificates of its chain, from the signing certificate to the root.
+ * the verification handle is CRYPT_PROVIDER_DATA, containing one signer and its certificate chain from signer to
+ * root.
  */
-#define STATE_MAGIC 0x54535457 /* "WTST" */
+#define STATE_MAGIC 0x54535457 /* "WTST". */
 
 typedef struct WT_STATE {
     CRYPT_PROVIDER_DATA Data;

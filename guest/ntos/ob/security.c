@@ -1,14 +1,13 @@
 /*
- * the security descriptors of objects. An object has one once it is inserted: the creator's, with what its
- * directory hands down, completed from the token of the thread that made it. The types whose objects keep
- * theirs elsewhere (files with their file system, keys with the registry) say so with a pair of procedures.
- * The descriptor is a shared blob behind the reserved word of the object header; a type without generic
- * rights has none, and an object nobody gave one to answers with the system's.
+ * object security descriptors. an object gets one when inserted: the creator's, plus what its directory
+ * hands down, completed from the creating thread's token. types that store theirs elsewhere, files with
+ * their file system and keys with the registry, provide a pair of procedures. the descriptor is a shared
+ * blob in the object header's reserved word. a type without generic rights has none, and an object
+ * nobody gave one answers with the system's default.
  *
- * A program in user mode that opens an object that already exists is checked against its descriptor with the
- * token it acts with (ObCheckOpenAccess), and one that makes a named object against the descriptor of the
- * directory it goes into. What a handle then holds is checked at each use, and the privileges and the owner and
- * label rules of setting a descriptor are in se/sd.c.
+ * a user mode open of an existing object is checked against its descriptor with the thread's token, see
+ * ObCheckOpenAccess, and creating a named object is checked against the target directory's. handles are
+ * checked at each use. the privilege, owner and label rules for setting a descriptor are in se/sd.c.
  */
 #include "../ntos.h"
 #include "../se/se.h"
@@ -17,7 +16,7 @@
 #define OB_SD_PENDING OB_FLAG_SD_PENDING
 #define STATUS_INVALID_SECURITY_DESCR ((NTSTATUS)0xC0000079L)
 
-/* the rights of an object whose type says nothing about them: the standard ones and all the specific ones. */
+/* for a type with no mapping of its own: the standard rights and all the specific ones. */
 static const ULONG g_plain_mapping[4] = {0x20000, 0x20000, 0x20000, 0x1FFFFF};
 
 static FAST_MUTEX g_lock;
@@ -37,7 +36,6 @@ static BOOLEAN securable(const OBJECT_TYPE *type)
     return type->Init.GenericMapping[3] != 0 || type->Init.GetSecurity != nullptr;
 }
 
-/* an object's descriptor goes with it. */
 void ObpFreeSecurity(PVOID header)
 {
     OBJECT_HEADER *h = header;
@@ -84,7 +82,7 @@ NTSTATUS ObStoreSecurity(PVOID object, SD_BLOB *sd)
 
 /* ---------------------------------------------------------------- new objects */
 
-/* whether a descriptor hands anything down to what is made in its container. */
+/* whether any ace is inheritable by objects created in the container. */
 static BOOLEAN hands_down(const SD_BLOB *sd)
 {
     const SECURITY_DESCRIPTOR_RELATIVE *r = (const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data;
@@ -110,7 +108,7 @@ NTSTATUS ObComputeSecurity(POBJECT_TYPE type_object, const OBJECT_ATTRIBUTES *at
 {
     const OBJECT_TYPE *type = type_object;
     *result = nullptr;
-    /* a file system or the registry makes the descriptors of its own, and a type with no rights has none. */
+    /* file systems and the registry make their own descriptors, and a type with no rights has none. */
     if (type->Init.GetSecurity || !type->Init.GenericMapping[3])
         return STATUS_SUCCESS;
 
@@ -134,7 +132,7 @@ NTSTATUS ObComputeSecurity(POBJECT_TYPE type_object, const OBJECT_ATTRIBUTES *at
         SeSdDereference(parent_sd);
     if (creator)
         SeSdDereference(creator);
-    /* before the first token exists, at boot, objects are made without. */
+    /* at boot, before the first token exists, objects get no descriptor. */
     if (status == STATUS_NO_TOKEN)
         return STATUS_SUCCESS;
     if (!NT_SUCCESS(status))
@@ -143,7 +141,7 @@ NTSTATUS ObComputeSecurity(POBJECT_TYPE type_object, const OBJECT_ATTRIBUTES *at
     return STATUS_SUCCESS;
 }
 
-/* gives a descriptor to an object made for it by ObComputeSecurity, which is the object's from now on. */
+/* takes ownership of a descriptor made by ObComputeSecurity. */
 void ObAttachSecurity(PVOID object, SD_BLOB *sd)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
@@ -152,7 +150,7 @@ void ObAttachSecurity(PVOID object, SD_BLOB *sd)
         h->Reserved = (ULONG_PTR)sd;
 }
 
-/* the directories programs make named objects in. */
+/* the directories programs create named objects in. */
 static BOOLEAN creatable_directory(PVOID object)
 {
     WCHAR buffer[128];
@@ -164,7 +162,7 @@ static BOOLEAN creatable_directory(PVOID object)
     for (ULONG i = 0; i < RTL_NUMBER_OF(creatable); i++)
         if (!_wcsicmp(buffer, creatable[i]))
             return TRUE;
-    /* the same inside a session, \Sessions\n\BaseNamedObjects and \Sessions\n\Windows\WindowStations. */
+    /* the same inside a session: \Sessions\n\BaseNamedObjects and \Sessions\n\Windows\WindowStations. */
     if (!_wcsnicmp(buffer, sessions, RTL_NUMBER_OF(sessions) - 1)) {
         const WCHAR *rest = buffer + RTL_NUMBER_OF(sessions) - 1;
         while (*rest >= '0' && *rest <= '9')
@@ -174,7 +172,7 @@ static BOOLEAN creatable_directory(PVOID object)
     return FALSE;
 }
 
-/* the descriptor of an object the kernel put in the namespace: see SeSdBootDefault. */
+/* for objects the kernel put in the namespace, see SeSdBootDefault. */
 NTSTATUS ObAssignBootSecurity(PVOID object)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
@@ -192,7 +190,7 @@ NTSTATUS ObAssignBootSecurity(PVOID object)
     return status;
 }
 
-/* a window station or a desktop everyone at the console works at: everything but changing its descriptor. */
+/* for a window station or desktop everyone at the console uses: full access except changing its descriptor. */
 NTSTATUS ObSetInteractiveSecurity(PVOID object, BOOLEAN everyone)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
@@ -222,7 +220,7 @@ NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVO
     return STATUS_SUCCESS;
 }
 
-/* the descriptor of an object that has one already, replaced by what its maker offered. */
+/* replaces an existing descriptor with what the creator offered. */
 NTSTATUS ObReplaceSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, KPROCESSOR_MODE mode)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
@@ -251,9 +249,8 @@ static void trace_open_denial(PVOID object, ACCESS_MASK desired, NTSTATUS status
 }
 
 /*
- * the open of an object that exists by a caller in user mode: the rights it is given, or the refusal. A caller in
- * kernel mode, a type whose objects keep no descriptor and an object without one are not checked, *granted is then
- * the access asked for. The file system and the registry check their own, with the open itself.
+ * kernel mode callers, types that keep no descriptor and objects without one are not checked, and then
+ * *granted is the access asked for. the file system and the registry check their own during the open.
  */
 NTSTATUS ObCheckOpenAccessEx(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mode, ULONG flags, ACCESS_MASK *granted)
 {
@@ -280,7 +277,7 @@ NTSTATUS ObCheckOpenAccess(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mo
     return ObCheckOpenAccessEx(object, desired, mode, 0, granted);
 }
 
-/* whether a caller in user mode may make a named object in a directory: it needs the right to create objects in it. */
+/* creating a named object needs create access on the directory. */
 #define DIRECTORY_CREATE_OBJECT_ 0x4
 
 NTSTATUS ObCheckCreateAccess(PVOID directory, KPROCESSOR_MODE mode)
@@ -299,14 +296,14 @@ NTSTATUS ObCheckCreateAccess(PVOID directory, KPROCESSOR_MODE mode)
     return status;
 }
 
-/* ---------------------------------------------------------------- the services */
+/* ---------------------------------------------------------------- services */
 
 static BOOLEAN pseudo(HANDLE handle)
 {
     return handle == NtCurrentProcess() || handle == NtCurrentThread();
 }
 
-/* the rights a user mode caller must have on the handle, the privilege for the system access right. */
+/* user mode callers need the rights on the handle, and the security privilege for ACCESS_SYSTEM_SECURITY. */
 static NTSTATUS check_rights(HANDLE handle, ACCESS_MASK granted, ACCESS_MASK needed)
 {
     if (KeGetPreviousMode() != UserMode)
@@ -334,7 +331,7 @@ NTSTATUS NTAPI NtSetSecurityObject(HANDLE handle, ULONG info, PVOID descriptor)
         status = SeSdCapture(descriptor, mode, &modification);
     if (NT_SUCCESS(status)) {
         const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
-        /* one change at a time, as the descriptor is read, changed and stored again. */
+        /* serializes the read, modify and store of the descriptor. */
         static FAST_MUTEX set_lock;
         static BOOLEAN set_ready;
         if (!set_ready) {
@@ -381,7 +378,7 @@ NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, ULONG info, PVOID descriptor
     if (NT_SUCCESS(status))
         status = ObReferenceSecurity(object, &sd);
     if (NT_SUCCESS(status) && !sd && securable(OBJECT_TO_HEADER(object)->Type)) {
-        /* made before a token existed, or never given one. */
+        /* created before a token existed, or never given one. */
         const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
         status = SeSdSystemDefault(mapping_of(type), type == ObDirectoryType, &sd);
     }

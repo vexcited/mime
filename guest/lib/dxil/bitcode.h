@@ -1,5 +1,5 @@
 /*
- * the llvm bitstream: blocks of records, read whole into a tree. dxil is
+ * the llvm bitstream, read whole into a tree of blocks and records. dxil is
  * llvm 3.7 bitcode in this container format.
  */
 #ifndef MIME_LIB_DXIL_BITCODE_H
@@ -14,14 +14,14 @@ typedef struct BcRecord {
     uint32_t code;
     uint32_t count;
     uint64_t *ops;
-    /* the bytes of a blob operand, if the abbreviation had one. */
+    /* blob operand bytes, if the abbreviation had one. */
     const uint8_t *blob;
     uint32_t blob_size;
 } BcRecord;
 
 typedef struct BcBlock BcBlock;
 
-/* an entry of a block: a record, or a nested block. */
+/* a record or a nested block. */
 typedef struct BcEntry {
     BcRecord *record;
     BcBlock *block;
@@ -51,7 +51,7 @@ void bc_arena_free(BcArena *a);
 BcMark bc_arena_mark(const BcArena *a);
 void bc_arena_release(BcArena *a, BcMark mark);
 
-/* the stream's top level blocks, as a block of id ~0; NULL when malformed. */
+/* the top level blocks, as a block of id ~0. NULL when malformed. */
 BcBlock *bc_parse(const uint8_t *data, size_t size, BcArena *arena);
 
 #endif

@@ -1,6 +1,5 @@
 /*
- * windows sockets 2: ws2_32.dll. the types, constants and error codes of
- * winsock2.h, ws2def.h and ws2ipdef.h, with the 64 bit layouts.
+ * ws2_32.dll: the types, constants and error codes of winsock2.h, ws2def.h and ws2ipdef.h, with the 64-bit layouts.
  */
 #ifndef MIME_WIN32_WINSOCK2_H
 #define MIME_WIN32_WINSOCK2_H
@@ -283,7 +282,7 @@ typedef struct hostent {
 } HOSTENT, *PHOSTENT, *LPHOSTENT;
 #define h_addr h_addr_list[0]
 
-/* the 64 bit layout puts s_proto before s_port, the 32 bit one has the port first. */
+/* the 64-bit layout puts s_proto before s_port, the 32-bit one has the port first. */
 typedef struct servent {
     char *s_name;
     char **s_aliases;

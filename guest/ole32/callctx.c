@@ -1,7 +1,7 @@
 /*
- * the state of the calls of a thread: the context of the call being served, the cancellation of calls, the logical thread
- * and the use of the multithreaded apartment by code that has no thread in it. The context of a call is what
- * CoSwitchCallContext put there, and the security of a call from another process is that call's.
+ * per thread call state: the context of the call being served, call cancellation, the logical thread id and use of
+ * the multithreaded apartment by code with no thread in it. the call context is what CoSwitchCallContext put there,
+ * and a call from another process carries that call's security.
  */
 #include "orpc.h"
 
@@ -11,7 +11,7 @@
 
 /* ------------------------------------------------------------------ the multithreaded apartment */
 
-/* the users of the apartment are records in a list, so that a cookie that was not handed out can be told. */
+/* apartment users are kept in a list so a cookie that was never handed out can be detected. */
 typedef struct MTA_USER {
     struct MTA_USER *Next;
 } MTA_USER;
@@ -55,7 +55,7 @@ WINOLEAPI HRESULT WINAPI CoDecrementMTAUsage(void *cookie)
 
 /* ------------------------------------------------------------------ the call being served */
 
-/* the security of a call is only there for a call from another process: the thread takes on the caller's identity. */
+/* only a call from another process has security: the thread takes on the caller's identity. */
 WINOLEAPI HRESULT WINAPI CoImpersonateClient(void)
 {
     OLE_THREAD *t = OleThreadState(FALSE);
@@ -84,7 +84,7 @@ WINOLEAPI HRESULT WINAPI CoGetCallerTID(DWORD *thread)
     return t->CallerThread ? S_OK : S_FALSE;
 }
 
-/* the object that stands for the call, handed back so that the caller can put it back when the call is done. */
+/* returns the old context so the caller can put it back when the call is done. */
 WINOLEAPI HRESULT WINAPI CoSwitchCallContext(IUnknown *new_context, IUnknown **old_context)
 {
     if (!old_context)
@@ -100,9 +100,9 @@ WINOLEAPI HRESULT WINAPI CoSwitchCallContext(IUnknown *new_context, IUnknown **o
 /* ------------------------------------------------------------------ cancelling calls */
 
 /*
- * a call is cancellable while its thread has allowed it with CoEnableCallCancellation. The object of the call that can
- * be cancelled is the one the thread gave to CoSetCancelObject, which must have ICancelMethodCalls; the cancel is
- * handed to it. A thread with no such object has no call to cancel.
+ * a call is cancellable while its thread allows it with CoEnableCallCancellation. the cancel goes to the object the
+ * thread gave CoSetCancelObject, which must have ICancelMethodCalls. a thread with no such object has no call to
+ * cancel.
  */
 static const IID iid_cancel = {0x00000029, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
 static const IID iid_proxy_manager = {0x00000008, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
@@ -240,7 +240,7 @@ WINOLEAPI HRESULT WINAPI CoTestCancel(void)
     return hr;
 }
 
-/* an object that is a proxy for an object of another process is connected if its proxy manager says so. */
+/* a proxy is connected if its proxy manager says so. */
 WINOLEAPI BOOL WINAPI CoIsHandlerConnected(IUnknown *object)
 {
     if (!object || IsBadReadPtr(object, sizeof(void *)))
@@ -295,8 +295,7 @@ WINOLEAPI HRESULT WINAPI CoGetCurrentLogicalThreadId(GUID *guid)
 }
 
 /*
- * A stub tells the channel the result of the application's call when it has made it, with nothing to tell about the
- * channel itself: the result is kept for the call being served, where nothing reads it yet.
+ * a stub reports the application's result here. it is kept for the call being served, where nothing reads it yet.
  */
 WINOLEAPI HRESULT WINAPI DcomChannelSetHResult(void *reserved1, ULONG *reserved2, HRESULT application)
 {
@@ -309,9 +308,9 @@ WINOLEAPI HRESULT WINAPI DcomChannelSetHResult(void *reserved1, ULONG *reserved2
 }
 
 /*
- * The questions the marshaling of variants asks of the other side of a call. The peer of a call here speaks the version of
- * the protocol windows has today, so it does not need the padding after a variant that older ones read, and it takes the
- * records of the user defined types. Outside a call nothing is asked of anyone: no padding, records allowed.
+ * what variant marshaling asks of the other side of a call. the peer here speaks the current protocol, so it needs
+ * no trailing padding after a variant, which older ones read, and accepts user defined type records. outside a call
+ * nothing is asked: no padding, records allowed.
  */
 WINOLEAPI BOOL WINAPI CoDoesOtherSideVariantMarshalingNeedTrailingPadding(ULONG *flags)
 {
@@ -324,8 +323,8 @@ WINOLEAPI BOOL WINAPI CoDoesOtherSideSupportUDTMarshaling(ULONG *flags)
 }
 
 /*
- * The context of the call being served when the call is one to the object given, else nothing and no error. Guess: the
- * object is not compared, a call is the one that is served.
+ * the call context when the call being served is to the given object, else nothing and no error. guess: the object
+ * is not compared, any served call counts.
  */
 WINOLEAPI HRESULT WINAPI CoGetCallContextOfObject(IUnknown *server, REFIID iid, void **context)
 {

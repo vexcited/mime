@@ -1,13 +1,13 @@
 /*
- * what the color, font and print dialogs share: dialog templates made in memory, the templates a program
- * supplies, registered messages and strings between the ANSI and the wide versions.
+ * what the color, font and print dialogs share: in-memory dialog templates, program supplied templates,
+ * registered messages and ANSI to wide string helpers.
  */
 #ifndef MIME_COMDLG32_DLGBASE_H
 #define MIME_COMDLG32_DLGBASE_H
 
 #include "comdlg32_private.h"
 
-/* the classes of a dialog template. */
+/* dialog template class atoms. */
 #define CTL_BUTTON 0x0080
 #define CTL_EDIT 0x0081
 #define CTL_STATIC 0x0082
@@ -23,13 +23,10 @@ typedef struct _CTL {
     short X, Y, W, H;
 } CTL;
 
-/* a template of a captioned dialog in Segoe UI 9 with the given controls; free it with HeapFree. */
+/* a captioned dialog template in Segoe UI 9 with the given controls. free it with HeapFree. */
 LPDLGTEMPLATEW DlgBuild(LPCWSTR title, DWORD style, int width, int height, const CTL *controls, UINT count);
 
-/*
- * the template of a dialog: the one a program names with the flags (an error from the CDERR_ codes when it
- * cannot be had), or the one built by the caller. built is set when the result has to be freed.
- */
+/* the template a program names with the flags. failures are reported as CDERR_ codes. */
 typedef struct _DLGSOURCE {
     DWORD Flags;
     DWORD TemplateFlag, HandleFlag;
@@ -38,20 +35,19 @@ typedef struct _DLGSOURCE {
     BOOL Ansi;
 } DLGSOURCE;
 
-/* returns the locked template or nullptr with the extended error in error. */
+/* returns the locked template, or nullptr with the extended error in error. */
 const void *DlgFindTemplate(const DLGSOURCE *source, DWORD *error);
 
-/* a message registered on first use. */
+/* registered on first use and cached. */
 UINT DlgMessage(UINT *cache, LPCWSTR name);
 
-/* the hook procedure a dialog calls before the dialog's own procedure: nullptr when the flag is off. */
+/* FALSE with CDERR_NOHOOK when the hook flag is set without a hook. */
 BOOL DlgHookValid(DWORD flags, DWORD hook_flag, const void *hook, DWORD *error);
 
 /* ANSI to wide for a fixed buffer, and back. */
 void DlgToWide(LPCSTR ansi, LPWSTR wide, int chars);
 void DlgToAnsi(LPCWSTR wide, LPSTR ansi, int chars);
 
-/* a bit of GDI the dialogs share. */
 void DlgFillRect(HDC dc, const RECT *rect, COLORREF color);
 
 #endif

@@ -1,4 +1,3 @@
-/* what the mci core shares between its devices and its string interface. */
 #ifndef WINMM_MCI_PRIVATE_H
 #define WINMM_MCI_PRIVATE_H
 
@@ -10,8 +9,8 @@
 
 typedef struct MCI_TABLE {
     BOOL used;
-    HMODULE module;      /* whose strings resource returns name */
-    UINT type;           /* the device type a type table serves, 0 else */
+    HMODULE module;      /* module containing resource return strings. */
+    UINT type;           /* the device type a type table serves, 0 else. */
     BYTE *data;
     DWORD size;
     const BYTE **commands;
@@ -20,8 +19,8 @@ typedef struct MCI_TABLE {
 
 typedef struct MCI_DEVICE {
     MCIDEVICEID id;
-    WCHAR *name;         /* the alias, none for element id opens */
-    WCHAR install[80];   /* the key of [MCI32] the driver came from */
+    WCHAR *name;         /* the alias, none for element id opens. */
+    WCHAR install[80];   /* the key of [MCI32] the driver came from. */
     DWORD open_flags, element_id;
     DWORD_PTR data;
     YIELDPROC yield;
@@ -33,12 +32,12 @@ typedef struct MCI_DEVICE {
     BOOL closing, closing_by_notify;
 } MCI_DEVICE;
 
-/* the arguments of an open string, parsed again with the device's own open command once its driver loaded. */
+/* open arguments are parsed again with the device's command table after its driver loads. */
 typedef struct MCI_REPARSE {
-    const WCHAR *args;      /* the words after the device name */
-    const WCHAR *device;    /* the device word */
+    const WCHAR *args;      /* the words after the device name. */
+    const WCHAR *device;    /* the device word. */
     BOOL is_new;
-    MCIERROR deferred;      /* an unknown word the core table left */
+    MCIERROR deferred;      /* an unknown word the core table left. */
     DWORD flags;
     BYTE block[MCI_BLOCK_SIZE];
     WCHAR *strings[MCI_MAX_STRINGS];

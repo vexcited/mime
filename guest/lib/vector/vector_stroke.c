@@ -306,7 +306,7 @@ static void emit_join(St *s, MimeVecPoint p, MimeVecPoint d1, MimeVecPoint d2, f
 
 /* caps. */
 
-/* the cap an end really gets: anchors have the dash cap as their base cap, like gdiplus.dll. */
+/* anchors use the dash cap as their base cap, like GDI+. */
 static int resolve_cap(const St *s, int type)
 {
     if (type == MIME_VEC_CAP_SQUARE || type == MIME_VEC_CAP_ROUND || type == MIME_VEC_CAP_TRIANGLE)
@@ -379,7 +379,7 @@ static void emit_cap(St *s, MimeVecPoint p, MimeVecPoint nrm, MimeVecPoint e, in
 #undef CAPPT
 }
 
-/* anchor shapes in the units of the reference caps of gdiplus.dll: x across the line, y along it. */
+/* anchor shapes in GDI+ reference cap units: x across the line, y along it. */
 static const float anchor_square[4][2] = {
     {-0.70710678f, -0.70710678f}, {0.70710678f, -0.70710678f}, {0.70710678f, 0.70710678f}, {-0.70710678f, 0.70710678f}};
 static const float anchor_diamond[4][2] = {{0, 1}, {-1, 0}, {0, -1}, {1, 0}};
@@ -536,9 +536,9 @@ static void emit_piece(St *s, const MimeVecPoint *pts, uint32_t n, int cap0, int
 }
 
 /*
- * dashes a cleaned polyline. a closed one starts at its last vertex with the closing segment, as
- * gdiplus.dll does. the dash ends take the dash cap, except the ones within half a width of the
- * real ends of an open subpath, which take the start and end caps.
+ * dashes a cleaned polyline. like GDI+, a closed one starts at its last vertex with the closing segment.
+ * the dash ends take the dash cap, except those within half a width of the real ends of an open subpath,
+ * which take the start and end caps.
  */
 static void dash_polyline(St *s, const MimeVecPoint *p, uint32_t n, bool closed)
 {

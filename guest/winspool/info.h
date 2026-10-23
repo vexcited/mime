@@ -1,6 +1,4 @@
-/*
- * the builders of printer, driver, port, monitor, print processor, data type and form descriptions.
- */
+/* builders for spooler information structures. */
 #ifndef MIME_WINSPOOL_INFO_H
 #define MIME_WINSPOOL_INFO_H
 

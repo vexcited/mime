@@ -102,7 +102,6 @@ static int cmp_w(const void *a, const void *b)
 
 void __cdecl qsort(void *base, size_t count, size_t size, int(__cdecl *cmp)(const void *, const void *));
 
-/* appends p to a growing argument vector. */
 static int push_arg(void ***vec, int *n, int *cap, void *p)
 {
     if (*n + 2 > *cap) {

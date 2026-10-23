@@ -1,10 +1,8 @@
 /*
- * dsound.dll's exports: creating devices and capture objects, enumerating
- * them, the device ids of the default devices, and the class objects
- * CoCreateInstance reaches.
- *
- * there is one render device, the host's default output, named as
- * mmdevapi names it; there is no capture device.
+ * dsound.dll exports: device and capture creation, enumeration, default
+ * device ids, and the class objects CoCreateInstance reaches. there is one
+ * render device, the host's default output, named like mmdevapi names it,
+ * and no capture device.
  */
 #include "dsound_private.h"
 #include "amplitude.h"
@@ -73,7 +71,7 @@ static DWORD channel_bits(DWORD mask)
     return n;
 }
 
-/* windows' IsValidWfx: pcm of 8 to 32 bits, 32 bit floats, other tags taken as they are. */
+/* like windows: pcm of 8 to 32 bits, 32-bit floats, and other tags taken as they are. */
 BOOL DsValidFormat(const WAVEFORMATEX *f)
 {
     WORD tag = DsFormatTag(f);
@@ -92,9 +90,9 @@ BOOL DsValidFormat(const WAVEFORMATEX *f)
 }
 
 /*
- * windows' DBToAmpFactor: hundredths of a decibel rounded to tenths, the
- * amplitude truncated to 16 bits, 0xFFFF at full volume; the engine
- * scales it by 1/65535.
+ * like windows: hundredths of a decibel rounded to tenths, the amplitude
+ * truncated to 16 bits, 0xFFFF at full volume. the engine scales it by
+ * 1/65535.
  */
 float DsAmplitude(LONG hundredths)
 {
@@ -110,7 +108,7 @@ float DsAmplitude(LONG hundredths)
 
 /* ------------------------------------------------------------------ devices */
 
-/* the device a guid names: the default ids, the device itself, or none for null. */
+/* null and the default ids name the one device too. */
 BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture)
 {
     if (capture)
@@ -183,7 +181,7 @@ static BOOL call_enum(LPDSENUMCALLBACKW w, LPDSENUMCALLBACKA a, LPGUID guid, con
     return a(guid, description_a, module_a, context);
 }
 
-/* the primary driver without a guid, then each device, as windows lists them. */
+/* the primary driver without a guid first, then each device, like windows. */
 static HRESULT enumerate(LPDSENUMCALLBACKW w, LPDSENUMCALLBACKA a, void *context, BOOL capture)
 {
     if (!w && !a)
@@ -288,7 +286,7 @@ static ULONG STDMETHODCALLTYPE factory_release(IClassFactory *This)
     return ref;
 }
 
-/* objects made this way wait for Initialize, as windows' do. */
+/* objects made this way wait for Initialize, like windows. */
 static HRESULT STDMETHODCALLTYPE factory_create(IClassFactory *This, IUnknown *outer, REFIID riid, void **out)
 {
     FACTORY *f = (FACTORY *)This;

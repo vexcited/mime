@@ -1,17 +1,12 @@
 /*
- * tiff reader, decoder, encoder and ifd writer, see the tiff 6.0 specification, its supplements and the exif
- * specification. freestanding: needs only memcpy, memmove, memset, memcmp and strlen, and the allocator interface.
- * deflate compressed data goes through ../png/inflate.h and ../png/deflate.h.
+ * tiff reader, decoder, encoder and ifd writer, per tiff 6.0 and exif. freestanding: needs only memcpy, memmove,
+ * memset, memcmp, strlen and the allocator. deflate goes through ../png/inflate.h and ../png/deflate.h.
  *
- * all multi byte values in structs and in sample buffers are little endian, which is the byte order of every
- * target of the guest. only the raw value bytes of an entry stay in the byte order of the file, see MimeTiffEntry.
+ * multi byte values in structs and sample buffers are little endian, like every guest target. only the raw value
+ * bytes of an entry keep the file's byte order.
  *
- * the library has four parts. the file and ifd reader is mime_tiff_open, mime_tiff_ifd_* and mime_tiff_entry_*.
- * the ifd writer for exif style blobs is mime_tiff_write and mime_tiff_import. the frame decoder is
- * mime_tiff_frame_*. the encoder is mime_tiff_encoder_* and mime_tiff_encode.
- *
- * nothing in the library keeps state between calls, so any number of threads may use it at once as long as they
- * do not share an encoder or a frame being modified.
+ * no state is kept between calls, so threads may share the library as long as they do not share an encoder or a
+ * frame being modified.
  */
 #ifndef MIME_LIB_TIFF_TIFF_H
 #define MIME_LIB_TIFF_TIFF_H
@@ -32,7 +27,7 @@ enum {
     MIME_TIFF_ERR_RANGE = -6,       /* no such ifd, entry, chunk or row. */
 };
 
-/* the largest image the decoder and the encoder handle, in bytes of decoded samples. */
+/* the largest image handled, in bytes of decoded samples. */
 #define MIME_TIFF_MAX_IMAGE_BYTES 0x7fffffffu
 
 /* ---------------------------------------------------------------- tags, types and values. */
@@ -151,27 +146,24 @@ enum {
 typedef struct MimeTiff {
     const uint8_t *data;
     size_t size;
-    uint64_t first_ifd; /* offset of the first ifd. */
+    uint64_t first_ifd;
     bool big_endian;
     bool bigtiff;
 } MimeTiff;
 
-/*
- * a decoded ifd header. the entries stay in the file, read them with mime_tiff_ifd_entry. a copy is self
- * contained but points at the file data, which must outlive it.
- */
+/* a decoded ifd header. the entries stay in the file data, which must outlive every copy. */
 typedef struct MimeTiffIfd {
     MimeTiff tiff;
     uint64_t offset;
-    uint64_t next;  /* offset of the next ifd in the chain, 0 for none. */
+    uint64_t next;  /* 0 for none. */
     uint32_t count; /* entries that fit in the data. */
     bool sorted;    /* tags ascending, lookups by tag are binary searches. */
 } MimeTiffIfd;
 
 /*
- * one directory entry. data points at the value bytes, in the byte order of the file, and size is count * the
- * size of type. data is NULL when the type is unknown, the value lies outside of the file or is larger than
- * 4 GiB, the other fields are still valid then.
+ * one directory entry. data points at the value bytes in the file's byte order, size is count times the type
+ * size. data is NULL when the type is unknown or the value is outside the file or over 4 GiB, the other fields
+ * stay valid.
  */
 typedef struct MimeTiffEntry {
     uint16_t tag;
@@ -187,75 +179,55 @@ typedef struct MimeTiffEntry {
 /* byte size of one value of a type, 0 when unknown. rationals are 8, a pair of 32 bit values. */
 size_t mime_tiff_type_size(unsigned type);
 
-/*
- * validates a tiff header at the start of data. offsets in the file are relative to data. both byte orders,
- * classic tiff and bigtiff. the first ifd is not checked here.
- */
+/* validates a classic or bigtiff header in either byte order, offsets being relative to data. skips the first ifd. */
 int mime_tiff_open(MimeTiff *tiff, const void *data, size_t size);
 
-/*
- * same for a tiff structure inside another container: the payload of a jpeg APP1 marker with or without the
- * leading "Exif\0\0", or of a png eXIf chunk.
- */
+/* same for the payload of a jpeg APP1 marker, with or without the leading "Exif\0\0", or of a png eXIf chunk. */
 int mime_tiff_open_exif(MimeTiff *tiff, const void *data, size_t size);
 
-/* reads the ifd at an offset. a truncated entry table is shortened to the entries that are present. */
+/* a truncated entry table is shortened to the entries present. */
 int mime_tiff_ifd_at(const MimeTiff *tiff, uint64_t offset, MimeTiffIfd *ifd);
 
-/*
- * the number of ifds of the chain starting at the first ifd, which is the frame count of a multipage file.
- * the chain ends at a zero or invalid offset or where it would revisit an ifd.
- */
+/* the chain length, the frame count of a multipage file. it ends at a zero or invalid offset or a revisited ifd. */
 uint32_t mime_tiff_ifd_count(const MimeTiff *tiff);
 
-/* the ifd of the chain at an index, MIME_TIFF_ERR_RANGE past the end. */
 int mime_tiff_ifd_index(const MimeTiff *tiff, uint32_t index, MimeTiffIfd *ifd);
 
-/* the following ifd of the chain, MIME_TIFF_ERR_RANGE when there is none. no cycle check, see ifd_count. */
+/* no cycle check, unlike mime_tiff_ifd_count. */
 int mime_tiff_ifd_next(const MimeTiffIfd *ifd, MimeTiffIfd *next);
 
-/* entry number index of the ifd, MIME_TIFF_ERR_RANGE past the end. */
 int mime_tiff_ifd_entry(const MimeTiffIfd *ifd, uint32_t index, MimeTiffEntry *entry);
 
-/* the entry with a tag, MIME_TIFF_ERR_RANGE when the ifd has none. */
 int mime_tiff_ifd_find(const MimeTiffIfd *ifd, uint16_t tag, MimeTiffEntry *entry);
 
 /* first value of an integer tag, false when absent or not an integer. */
 bool mime_tiff_ifd_uint(const MimeTiffIfd *ifd, uint16_t tag, uint64_t *value);
 
 /*
- * opens the sub ifd that value number index of a tag points at. for the exif, gps and interoperability ifds,
- * which are MIME_TIFF_TAG_EXIF_IFD, MIME_TIFF_TAG_GPS_IFD and MIME_TIFF_TAG_INTEROP_IFD, index is 0. for
- * MIME_TIFF_TAG_SUB_IFDS it counts the sub ifds. MIME_TIFF_ERR_RANGE when absent. offsets pointing back into
- * the chain are not detected, so a caller that recurses keeps a depth limit.
+ * opens the sub ifd that value index of a tag points at. index is 0 for the exif, gps and interoperability ifds
+ * and picks one of the MIME_TIFF_TAG_SUB_IFDS. offsets pointing back into the chain are not detected, so a
+ * recursive caller needs a depth limit.
  */
 int mime_tiff_ifd_sub(const MimeTiffIfd *ifd, uint16_t tag, uint64_t index, MimeTiffIfd *sub);
 
-/*
- * the jpeg thumbnail of an exif blob: the data that JPEGInterchangeFormat and JPEGInterchangeFormatLength of
- * the second ifd describe. the data is inside the blob. MIME_TIFF_ERR_RANGE when there is none.
- */
+/* the jpeg thumbnail of an exif blob, from JPEGInterchangeFormat and its length in the second ifd. */
 int mime_tiff_thumbnail(const MimeTiff *tiff, const uint8_t **data, size_t *size);
 
-/* value number i of an unsigned or non negative integer entry: byte, short, long, ifd, long8, ifd8, undefined. */
+/* types byte, short, long, ifd, long8, ifd8 and undefined. */
 bool mime_tiff_entry_uint(const MimeTiffEntry *entry, uint64_t i, uint64_t *value);
 
-/* value number i of any integer entry, also the signed types. false when it does not fit. */
+/* signed types too. false when the value does not fit. */
 bool mime_tiff_entry_int(const MimeTiffEntry *entry, uint64_t i, int64_t *value);
 
-/* value number i of a rational or signed rational entry as numerator and denominator. */
 bool mime_tiff_entry_rational(const MimeTiffEntry *entry, uint64_t i, int64_t *num, int64_t *den);
 
-/* the bit pattern of value number i of a float entry, 32 bits, or of a double entry, 64 bits. */
+/* the raw bits of a float or double value. */
 bool mime_tiff_entry_bits(const MimeTiffEntry *entry, uint64_t i, uint64_t *bits);
 
-/*
- * the text of an ascii entry, up to the first nul or the end of the value. the pointer points into the file,
- * the text is not terminated. false for other types.
- */
+/* the text up to the first nul. it points into the file and is not terminated. */
 bool mime_tiff_entry_string(const MimeTiffEntry *entry, const char **text, size_t *length);
 
-/* copies an ascii entry as a nul terminated string, truncated to cap. returns the length of the full text. */
+/* truncates to cap and returns the full length. */
 size_t mime_tiff_entry_copy_string(const MimeTiffEntry *entry, char *dst, size_t cap);
 
 /* ---------------------------------------------------------------- writing ifds and exif blobs. */
@@ -269,15 +241,11 @@ typedef struct MimeTiffWEntry {
     uint16_t type; /* not a bigtiff type. */
     uint32_t count;
     /*
-     * count values of type, little endian unless MIME_TIFF_W_BIG_ENDIAN is set in flags. rationals are
-     * numerator and denominator pairs. ascii counts include the terminating nul.
+     * count values of type, little endian unless flags has MIME_TIFF_W_BIG_ENDIAN. rationals are numerator,
+     * denominator pairs. ascii counts include the nul.
      */
     const void *data;
-    /*
-     * when set the entry is a pointer to another ifd, which the writer places in the file. tag is then
-     * typically MIME_TIFF_TAG_EXIF_IFD, MIME_TIFF_TAG_GPS_IFD or MIME_TIFF_TAG_INTEROP_IFD, and type, count
-     * and data are ignored.
-     */
+    /* when set the entry points at this ifd, placed in the file by the writer. type, count and data are ignored. */
     const MimeTiffWIfd *sub;
     uint32_t flags;
 } MimeTiffWEntry;
@@ -285,7 +253,7 @@ typedef struct MimeTiffWEntry {
 struct MimeTiffWIfd {
     const MimeTiffWEntry *entries; /* any order, the writer sorts them. a tag may appear once. */
     uint32_t entry_count;
-    const MimeTiffWIfd *next; /* next ifd of the chain, typically the thumbnail ifd after ifd 0. */
+    const MimeTiffWIfd *next; /* typically the thumbnail ifd after ifd 0. */
     const void *thumbnail;    /* jpeg data, placed in the file with JPEGInterchangeFormat and Length added. */
     size_t thumbnail_size;
 };
@@ -305,9 +273,8 @@ int mime_tiff_write(const MimeTiffWIfd *root, unsigned flags, const MimeAllocato
 
 /*
  * builds a writer description of a parsed ifd, to copy metadata between files. the exif, gps and interoperability
- * ifds are imported as sub ifds, the sub ifds tag is dropped, and JPEGInterchangeFormat becomes the thumbnail.
- * entries keep pointing at the source data, which must outlive the result. release the result by passing *out
- * to mime_free.
+ * ifds become sub ifds, the sub ifds tag is dropped and JPEGInterchangeFormat becomes the thumbnail. entries point
+ * at the source data, which must outlive the result. free *out with mime_free.
  */
 int mime_tiff_import(const MimeTiffIfd *src, unsigned flags, const MimeAllocator *alloc, const MimeTiffWIfd **out);
 
@@ -318,7 +285,7 @@ int mime_tiff_import(const MimeTiffIfd *src, unsigned flags, const MimeAllocator
 #define MIME_TIFF_DECODE_CCITT_PHOTOMETRIC 0x4u /* CCITT: black is 0 when photometric is BlackIsZero, see below. */
 
 /*
- * description of one image of a file. the out_ fields say how mime_tiff_frame_decode lays out the pixels.
+ * one image of a file. the out_ fields give the pixel layout mime_tiff_frame_decode produces.
  *
  * the pixels are chunky, out_samples_per_pixel samples of out_bits_per_sample bits each, rows padded to whole
  * bytes. samples of 1, 2, 4 and 8 bits are returned as in the file, packed from the most significant bit
@@ -330,9 +297,8 @@ int mime_tiff_import(const MimeTiffIfd *src, unsigned flags, const MimeAllocator
  * MIME_TIFF_DECODE_RAW_YCBCR is given. subsampled planes are never exposed. planar files are merged into
  * chunky pixels. the horizontal and floating point predictors are undone. the orientation is not applied.
  *
- * CCITT data has 1 for the pixels of black runs, whatever the photometric says, which is what libtiff does.
- * With MIME_TIFF_DECODE_CCITT_PHOTOMETRIC the bits are inverted for BlackIsZero, so that black runs are the
- * pixels that the photometric calls black.
+ * CCITT data has 1 for the pixels of black runs whatever the photometric says, like libtiff. with
+ * MIME_TIFF_DECODE_CCITT_PHOTOMETRIC the bits are inverted for BlackIsZero, so black runs match the photometric.
  */
 typedef struct MimeTiffFrame {
     MimeTiffIfd ifd;
@@ -367,12 +333,12 @@ typedef struct MimeTiffFrame {
     uint32_t palette_entries; /* 1 << bits for palette images with a color map, else 0. */
     uint32_t chunk_count;     /* strips or tiles in the file, all planes. */
     uint32_t chunks_per_plane;
-    /* the layout of the decoded pixels. */
+    /* decoded pixel layout. */
     uint16_t out_bits_per_sample;
     uint16_t out_samples_per_pixel;
     uint16_t out_photometric;
     uint32_t out_row_bytes; /* the smallest stride. */
-    /* jpeg data. jpeg_tables is the JPEGTables value, NULL when absent. */
+    /* the JPEGTables value, NULL when absent. */
     const uint8_t *jpeg_tables;
     size_t jpeg_tables_size;
     int32_t ycbcr_coefficients[3]; /* 16.16 fixed point, the luma weights of red, green and blue. */
@@ -395,54 +361,47 @@ typedef struct MimeTiffChunk {
     uint32_t plane; /* sample plane for planar files, else 0. */
 } MimeTiffChunk;
 
-/* reads the description of the image in an ifd. fails with MIME_TIFF_ERR_FORMAT for a missing or impossible size. */
+/* fails with MIME_TIFF_ERR_FORMAT when the size is missing or impossible. */
 int mime_tiff_frame_open(const MimeTiffIfd *ifd, MimeTiffFrame *frame);
 
-/* the same for the frame at an index of the chain. */
 int mime_tiff_frame_open_index(const MimeTiff *tiff, uint32_t index, MimeTiffFrame *frame);
 
-/* any other tag of the frame. */
 int mime_tiff_frame_tag(const MimeTiffFrame *frame, uint16_t tag, MimeTiffEntry *entry);
 
-/* copies up to cap entries of the color map as 16 bit red, green, blue triples, returns the number copied. */
+/* copies up to cap color map entries as 16 bit red, green, blue triples, returns the count. */
 uint32_t mime_tiff_frame_palette(const MimeTiffFrame *frame, uint16_t *rgb, uint32_t cap);
 
 /*
- * the raw data of a strip or tile and its place in the image. for compressions this library does not decode,
- * which are JPEG and JPEG 2000, the caller decodes the chunk itself, together with frame->jpeg_tables.
- * missing byte counts make a chunk run up to the next chunk or the end of the file.
+ * the raw data of a strip or tile and where it goes. JPEG and JPEG 2000 are not decoded here, the caller decodes
+ * the chunk with frame->jpeg_tables. a missing byte count makes a chunk run to the next one or the end of the file.
  */
 int mime_tiff_frame_chunk(const MimeTiffFrame *frame, uint32_t index, MimeTiffChunk *chunk);
 
 /*
- * decodes the whole image into out, height rows of stride bytes, stride at least out_row_bytes. alloc is for
- * temporary memory. corrupt data fails with MIME_TIFF_ERR_DATA after decoding what it can, rows that could not
- * be decoded are zero. unsupported combinations fail before touching out.
+ * decodes the whole image into height rows of stride bytes, stride at least out_row_bytes. alloc is for temporary
+ * memory. corrupt data fails with MIME_TIFF_ERR_DATA after decoding what it can, leaving bad rows zero.
+ * unsupported combinations fail before touching out.
  */
 int mime_tiff_frame_decode(const MimeTiffFrame *frame, const MimeAllocator *alloc, unsigned flags, void *out,
                            size_t stride);
 
-/*
- * decodes count rows starting at row y, the first of them into out. a strip that straddles the band is
- * decoded entirely, so band edges at strip boundaries are cheapest.
- */
+/* decodes count rows from row y. a strip straddling the band is decoded whole, so strip aligned bands are cheapest. */
 int mime_tiff_frame_decode_rows(const MimeTiffFrame *frame, const MimeAllocator *alloc, unsigned flags, uint32_t y,
                                 uint32_t count, void *out, size_t stride);
 
 /* ---------------------------------------------------------------- encoding. */
 
 /*
- * what to write for one frame. zero fields mean the default noted. the sample buffer is chunky, the samples
- * of a pixel following each other, 16 bit and wider samples little endian, rows padded to whole bytes, bilevel
- * and other sub byte depths packed from the most significant bit. the file is always written chunky.
- * the photometric is the caller's choice and only checked for palette images, which need a color map.
+ * what to write for one frame, zero fields take the noted default. the sample buffer is chunky, wide samples
+ * little endian, rows padded to whole bytes, sub byte depths packed from the most significant bit. the file is
+ * always written chunky. the photometric is only checked for palette images, which need a color map.
  */
 typedef struct MimeTiffFrameSpec {
     uint32_t width;
     uint32_t height;
     uint16_t bits_per_sample;    /* 1, 2, 4, 8 or 16, also 32 and 64 together with a sample format. */
     uint16_t samples_per_pixel;  /* 1 to 16, with extra samples included. */
-    uint16_t photometric;        /* as chosen by the caller. */
+    uint16_t photometric;
     uint16_t sample_format;      /* 0 for unsigned integer, 2 signed, 3 floating point, from 16 bits up. */
     uint16_t extra_samples;      /* the last extra_samples samples are not color. */
     uint16_t alpha;              /* MIME_TIFF_ALPHA_ of the first extra sample, default unspecified. */
@@ -452,7 +411,7 @@ typedef struct MimeTiffFrameSpec {
     uint16_t resolution_unit;    /* 0 to omit the tag. */
     uint16_t deflate_level;      /* 0 for 6, up to 9. */
     uint16_t group3_two_dim;     /* nonzero for 2d t.4, a one dimensional row every fourth row. */
-    uint16_t group3_fill;        /* nonzero to end the end of line codes on byte boundaries. */
+    uint16_t group3_fill;        /* nonzero to byte align the end of line codes. */
     uint16_t ccitt_photometric;  /* nonzero: BlackIsZero data has its black runs as 0 bits, see the decode flag. */
     uint32_t rows_per_strip;     /* 0 for about 8 KiB of samples per strip, at least one row. */
     uint32_t x_resolution_num;   /* both 0 to omit the tags. */
@@ -489,23 +448,20 @@ typedef struct MimeTiffEncoder {
 #define MIME_TIFF_ENCODE_BIG_ENDIAN 0x1u /* default little endian. */
 
 /*
- * starts a file. the layout is the 8 byte header, then for every frame its strips and after those its ifd,
- * the values that do not fit into entries and the exif and gps ifds. so pixel data comes first and the ifds
- * last. the first ifd offset in the header and the next ifd offsets are patched in as the following ifd is
- * written. the file is a classic tiff, so it cannot exceed 4 GiB, bigger results fail with MIME_TIFF_ERR_NOMEM.
- * the default of about 8 KiB of samples per strip, at least one row, is the same as in libtiff and a guess at
- * what the Windows encoder does. an error from mime_tiff_encoder_add_frame other than a parameter error leaves
- * the encoder unusable, it still has to be finished or aborted to release its memory.
+ * starts a file. each frame writes its strips, then its ifd with its out of line values and exif and gps ifds,
+ * so pixel data comes before the ifds. the header and next ifd offsets are patched as each following ifd is
+ * written. a classic tiff cannot exceed 4 GiB, bigger results fail with MIME_TIFF_ERR_NOMEM. the default of
+ * about 8 KiB of samples per strip matches libtiff. an error from mime_tiff_encoder_add_frame other than a
+ * parameter error leaves the encoder unusable, it must still be finished or aborted to free its memory.
  */
 int mime_tiff_encoder_init(MimeTiffEncoder *enc, const MimeAllocator *alloc, unsigned flags);
 
 int mime_tiff_encoder_add_frame(MimeTiffEncoder *enc, const MimeTiffFrameSpec *spec, const void *pixels,
                                 size_t stride);
 
-/* ends the file. *out is released with mime_free. the encoder cannot be used any more. */
+/* *out is freed with mime_free. the encoder cannot be used any more. */
 int mime_tiff_encoder_finish(MimeTiffEncoder *enc, void **out, size_t *out_len);
 
-/* drops everything. */
 void mime_tiff_encoder_abort(MimeTiffEncoder *enc);
 
 /* one frame files. */

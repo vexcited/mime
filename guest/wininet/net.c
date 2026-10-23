@@ -1,11 +1,8 @@
-/*
- * opening urls, and ftp and gopher, which mime has no client for: each of those validates its handle and fails
- * cleanly.
- */
+/* URL opening and unsupported FTP/Gopher entry points, which validate handles before failing. */
 #include "wininet_private.h"
 #include <mime/stub.h>
 
-/* checks a handle, then fails with the error a valid handle of the wrong type or state gets. */
+/* validate the handle, then report the wrong-type or wrong-state error. */
 static BOOL FailHandle(HINTERNET handle, DWORD type, DWORD error)
 {
     INET_OBJECT *object = InetReference(handle);
@@ -18,8 +15,8 @@ static BOOL FailHandle(HINTERNET handle, DWORD type, DWORD error)
 }
 
 /*
- * http and https urls become a hidden connection and a GET request, sent with the given headers. the request
- * handle comes back, or with INTERNET_FLAG_ASYNC goes to INTERNET_STATUS_REQUEST_COMPLETE.
+ * HTTP and HTTPS URLs create a hidden connection and GET request with supplied headers. return the request handle, or
+ * deliver it through INTERNET_STATUS_REQUEST_COMPLETE for INTERNET_FLAG_ASYNC.
  */
 DECLSPEC_EXPORT HINTERNET WINAPI InternetOpenUrlW(HINTERNET session, LPCWSTR url, LPCWSTR headers,
                                                  DWORD headers_length, DWORD flags, DWORD_PTR context)
@@ -49,7 +46,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetOpenUrlW(HINTERNET session, LPCWSTR url
     PWSTR host = InetDuplicateN(parts.lpszHostName, parts.dwHostNameLength);
     PWSTR user = parts.dwUserNameLength ? InetDuplicateN(parts.lpszUserName, parts.dwUserNameLength) : nullptr;
     PWSTR password = parts.dwPasswordLength ? InetDuplicateN(parts.lpszPassword, parts.dwPasswordLength) : nullptr;
-    /* the object is the path and query; the fragment stays with the client. */
+    /* send path and query; retain fragments on the client. */
     DWORD extra = parts.dwExtraInfoLength;
     for (DWORD i = 0; i < extra; i++)
         if (parts.lpszExtraInfo[i] == '#')
@@ -77,7 +74,7 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetOpenUrlW(HINTERNET session, LPCWSTR url
         if (connection) {
             connection->Context = context;
             request = InetOpenRequest(connection, nullptr, object, nullptr, nullptr, nullptr, flags, context);
-            /* the connection lives on through its request only. */
+            /* only the request retains the hidden connection. */
             InetDetach(connection);
             InetRelease(connection);
         }
@@ -113,14 +110,14 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetOpenUrlW(HINTERNET session, LPCWSTR url
     return request;
 }
 
-/* find handles come from FtpFindFirstFile and GopherFindFirstFile, which never succeed. */
+/* FtpFindFirstFile and GopherFindFirstFile never succeed, so no find handles exist. */
 DECLSPEC_EXPORT BOOL WINAPI InternetFindNextFileW(HINTERNET find, LPVOID data)
 {
     MIME_STUB("wininet");
     return FailHandle(find, INTERNET_HANDLE_TYPE_FTP_FIND, ERROR_NO_MORE_FILES);
 }
 
-/* ftp connections fail in InternetConnect, so every handle given here is invalid or of another type. */
+/* FTP connections cannot be created; supplied handles are invalid or have another type. */
 #define FAIL_FTP(handle) FailHandle(handle, INTERNET_HANDLE_TYPE_CONNECT_FTP, ERROR_INTERNET_CANNOT_CONNECT)
 
 DECLSPEC_EXPORT HINTERNET WINAPI FtpFindFirstFileW(HINTERNET connect, LPCWSTR search, LPWIN32_FIND_DATAW data,
@@ -198,7 +195,7 @@ DECLSPEC_EXPORT BOOL WINAPI FtpCommandW(HINTERNET connect, BOOL expect_response,
     return FAIL_FTP(connect);
 }
 
-/* windows dropped gopher in internet explorer 7, so every gopher call reports the protocol as missing. */
+/* Gopher calls report a missing protocol, as Windows has since Internet Explorer 7. */
 DECLSPEC_EXPORT BOOL WINAPI GopherCreateLocatorW(LPCWSTR host, INTERNET_PORT port, LPCWSTR display, LPCWSTR selector,
                                                 DWORD type, LPWSTR locator, LPDWORD length)
 {
@@ -230,7 +227,7 @@ DECLSPEC_EXPORT BOOL WINAPI GopherGetAttributeW(HINTERNET connect, LPCWSTR locat
     return InetFail(ERROR_INTERNET_PROTOCOL_NOT_FOUND);
 }
 
-/* mime keeps no url cache, so no url has an entry. */
+/* no URL cache entries exist. */
 DECLSPEC_EXPORT BOOL WINAPI GetUrlCacheEntryInfoExW(LPCWSTR url, LPVOID info, LPDWORD size, LPWSTR redirect,
                                                    LPDWORD redirect_size, LPVOID reserved, DWORD flags)
 {

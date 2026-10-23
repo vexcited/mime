@@ -1,7 +1,4 @@
-/*
- * the activation objects of capture devices: the attributes that name a device, and the media source that
- * ActivateObject makes from them.
- */
+/* capture device activation objects: the attributes naming a device, and the media source ActivateObject makes. */
 #include "camera.h"
 
 typedef struct Activate {
@@ -46,7 +43,7 @@ static ULONG STDMETHODCALLTYPE a_release(IMFActivate *iface)
     return (ULONG)refs;
 }
 
-/* the attribute methods, handed on to the store the activation object keeps. */
+/* the IMFAttributes methods forward to the kept store. */
 static HRESULT STDMETHODCALLTYPE a_get_item(IMFActivate *i, REFGUID k, PROPVARIANT *v)
 {
     return A(i)->lpVtbl->GetItem(A(i), k, v);
@@ -168,7 +165,7 @@ static HRESULT STDMETHODCALLTYPE a_copy_all_items(IMFActivate *i, IMFAttributes 
     return A(i)->lpVtbl->CopyAllItems(A(i), dest);
 }
 
-/* the source is made once, then handed out again: a second activation of the same object gets the same camera. */
+/* the source is made once: activating the same object again gives the same camera. */
 static HRESULT STDMETHODCALLTYPE a_activate_object(IMFActivate *iface, REFIID riid, void **out)
 {
     Activate *a = CONTAINING_RECORD(iface, Activate, iface);
@@ -221,7 +218,7 @@ static const IMFActivateVtbl ACTIVATE_VTBL = {
     a_activate_object, a_shutdown_object, a_detach_object,
 };
 
-/* an activation object over a store of attributes it keeps, the caller's reference to it passed on. */
+/* takes over the caller's reference to the attribute store. */
 HRESULT CamCreateActivate(IMFAttributes *attributes, IMFActivate **out)
 {
     Activate *a = CamAlloc(sizeof(*a));

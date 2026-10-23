@@ -98,8 +98,6 @@ void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame)
         PspTerminateProcess(PsCurrentProcess(), STATUS_ACCESS_VIOLATION);
 }
 
-/* ------------------------------------------------------------ contexts */
-
 NTSTATUS NTAPI NtContinue(PCONTEXT context, BOOLEAN test_alert)
 {
     PKTHREAD thread = KiCurrentThread();
@@ -114,7 +112,7 @@ NTSTATUS NTAPI NtContinue(PCONTEXT context, BOOLEAN test_alert)
     KiEnterUserMode(frame);
 }
 
-/* the user context of a thread: the caller itself, or one stopped in the kernel. */
+/* the caller's own user context, or that of a thread stopped in the kernel. */
 NTSTATUS NTAPI NtGetContextThread(HANDLE handle, PCONTEXT context)
 {
     PETHREAD thread;
@@ -186,7 +184,7 @@ NTSTATUS NTAPI NtTestAlert(void)
         thread->Alerted[UserMode] = FALSE;
         return STATUS_ALERTED;
     }
-    /* the caller learns that apcs ran, as the status survives their delivery. */
+    /* the status survives apc delivery, so the caller learns that apcs ran. */
     return apcs ? STATUS_USER_APC : STATUS_SUCCESS;
 }
 
@@ -225,8 +223,6 @@ NTSTATUS NTAPI NtRaiseException(PEXCEPTION_RECORD record, PCONTEXT context, BOOL
     return STATUS_SUCCESS;
 }
 
-/* ----------------------------------------------------- user callbacks */
-
 #define STATUS_NO_CALLBACK_ACTIVE ((NTSTATUS)0xC0000258L)
 
 NTSTATUS NTAPI KeUserModeCallback(ULONG api, PVOID input, ULONG input_length, PVOID *output, PULONG output_length)
@@ -246,10 +242,10 @@ NTSTATUS NTAPI KeUserModeCallback(ULONG api, PVOID input, ULONG input_length, PV
     PKTRAP_FRAME saved_trap = thread->TrapFrame;
     KPROCESSOR_MODE saved_mode = thread->PreviousMode;
     thread->CallbackDepth++;
-    /* the time in user mode is not time the service held the lock, which the statistics of the services want to know. */
+    /* time in user mode does not count as the service holding the lock in the service statistics. */
     ULONG64 left = HalReadCounter(), blocked = thread->BlockedTicks;
     NTSTATUS status = KiCallUserMode(&thread->CallbackSp, &frame);
-    /* waits meanwhile were counted already. */
+    /* waits during the callback were already counted. */
     thread->BlockedTicks += HalReadCounter() - left - (thread->BlockedTicks - blocked);
     thread->CallbackDepth--;
     thread->TrapFrame = saved_trap;

@@ -1,11 +1,11 @@
 /*
- * the identifiers of the controls in the color, font, print and page setup dialogs. programs write hooks and
- * templates against these, so they are those of dlgs.h.
+ * control ids of the color, font, print and page setup dialogs. program hooks and templates rely on them, so they
+ * match dlgs.h.
  */
 #ifndef MIME_COMDLG32_DLGIDS_H
 #define MIME_COMDLG32_DLGIDS_H
 
-/* the generic ones: push buttons, check boxes, radio buttons, groups, statics, lists, combos, edits. */
+/* generic ids: push buttons, check boxes, radio buttons, groups, statics, lists, combos, edits. */
 #define psh1 0x0400
 #define psh2 0x0401
 #define psh3 0x0402
@@ -92,7 +92,7 @@
 #define FONT_APPLY psh3
 
 
-/* print dialogs. */
+/* print. */
 #define PRN_GROUP_PRINTER 1075
 #define PRN_NAME_LABEL 1093
 #define PRN_NAME 1139

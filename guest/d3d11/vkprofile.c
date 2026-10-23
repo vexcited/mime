@@ -25,7 +25,6 @@ static BOOL has_extension(const VkExtensionProperties *list, UINT count, const c
     return FALSE;
 }
 
-/* the instance functions the choice of features needs. */
 typedef struct Fns {
     PFN_vkGetPhysicalDeviceProperties2 properties2;
     PFN_vkGetPhysicalDeviceFeatures2 features2;
@@ -34,7 +33,7 @@ typedef struct Fns {
     PFN_vkEnumerateDeviceExtensionProperties extensions;
 } Fns;
 
-/* every structure the device is made with, so the chain outlives the choosing. */
+/* holds every create info structure so the pNext chain outlives build(). */
 typedef struct Request {
     VkDeviceCreateInfo info;
     VkDeviceQueueCreateInfo queue;
@@ -70,7 +69,6 @@ typedef struct Request {
     VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT group_handles;
 } Request;
 
-/* the properties the profile reads, as one chain. */
 typedef struct Props {
     VkPhysicalDeviceProperties2 base;
     VkPhysicalDeviceTransformFeedbackPropertiesEXT xfb;
@@ -86,10 +84,10 @@ typedef struct Props {
 } Props;
 
 /*
- * The union of what Direct3D 11 and 12 ask. Each keeps its own trimming of features it has no use for, and a feature
- * stays off only when both trim it. Shader objects, which Direct3D 11 draws with, set every dynamic state their
- * enabled features have, so a feature Direct3D 12 wants and Direct3D 11 does not know costs it one more call per
- * command buffer: see the context's dynamic state for depth bounds and the shading rate.
+ * the union of what direct3d 11 and 12 need. each trims features it has no use for, and a feature stays off only
+ * when both trim it. direct3d 11 draws with shader objects, which must set the dynamic state of every enabled
+ * feature, so a feature only direct3d 12 wants costs direct3d 11 one more call per command buffer: see the
+ * context's dynamic state for depth bounds and the shading rate.
  */
 static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p, Request *r)
 {
@@ -105,7 +103,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     fn->extensions(physical, nullptr, &count, available);
 
     UINT n = 0;
-    /* what the apis cannot work without. */
+    /* required extensions. */
     static const char *const both[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME};
     static const char *const only11[] = {VK_EXT_SHADER_OBJECT_EXTENSION_NAME};
     static const char *const only12[] = {VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
@@ -163,10 +161,9 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     if (p->has_maintenance5)
         WANT(VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME, p->has_dgc = TRUE)
     /*
-     * Acceleration structures and ray queries need all of these. They cost the host's driver 30 ms of the 80 a
-     * device takes, which a program that does not use direct3d 12 should not pay: they are on when direct3d 12 is
-     * loaded when the device is made, so a browser's direct3d 11 device, made before its WebGPU loads direct3d 12,
-     * is without ray tracing, which WebGPU has no use for.
+     * acceleration structures and ray queries need all of these. they cost the host driver about 30 ms of the 80 a
+     * device takes, so they are only enabled when d3d12.dll is already loaded at device creation. a browser's
+     * direct3d 11 device, made before WebGPU loads direct3d 12, goes without ray tracing, which WebGPU does not use.
      */
     BOOL rt_extensions = GetModuleHandleW(L"d3d12.dll") &&
                          has_extension(available, count, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) &&
@@ -179,7 +176,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
         r->names[n++] = VK_KHR_RAY_QUERY_EXTENSION_NAME;
         r->names[n++] = VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME;
         p->has_rt = TRUE;
-        /* pipelines, and their libraries keeping their groups' handles for AddToStateObject. */
+        /* ray tracing pipelines, with library group handles for AddToStateObject. */
         if (has_extension(available, count, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) &&
             has_extension(available, count, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME) &&
             has_extension(available, count, VK_EXT_PIPELINE_LIBRARY_GROUP_HANDLES_EXTENSION_NAME)) {
@@ -192,7 +189,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
 #undef WANT
     HeapFree(GetProcessHeap(), 0, available);
 
-    /* the chain: every structure of an extension that is enabled, the gpu then filling them in. */
+    /* chain the feature structures of every enabled extension for the gpu to fill in. */
     void *head = nullptr;
 #define SET(s, type) ((s) = (typeof(s)){type})
 #define LINK(s) ((s).pNext = head, head = &(s))
@@ -300,7 +297,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     VkPhysicalDeviceVulkan12Features *f12 = &r->f12;
     VkPhysicalDeviceVulkan13Features *f13 = &r->f13;
 
-    /* what each api cannot work without. */
+    /* the minimum each api needs. */
     BOOL core = r->robust.nullDescriptor && f13->dynamicRendering && f13->synchronization2 && f12->timelineSemaphore &&
                 f12->hostQueryReset && f12->runtimeDescriptorArray && f12->descriptorBindingPartiallyBound;
     p->d3d11 = ok11 && core && r->object.shaderObject && f12->descriptorBindingSampledImageUpdateAfterBind &&
@@ -354,21 +351,21 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     r->eds2.extendedDynamicState2LogicOp = FALSE;
     if (!r->unused.dynamicRenderingUnusedAttachments)
         p->has_unused_attachments = FALSE;
-    /* features left enabled that shader objects need every draw to set the state of are not used. */
+    /* unused features that would make shader objects set their state every draw stay off. */
     f->alphaToOne = FALSE;
     f->wideLines = FALSE;
     p->has_native16 = f12->shaderFloat16 && f->shaderInt16;
-    /* mesh shaders of every limit direct3d's first tier has; views and rates they lack features for. */
+    /* mesh shaders need direct3d's tier 1 limits. multiview stays off, per-primitive rates wait for the vrs tier. */
     BOOL mesh_rates = r->mesh.primitiveFragmentShadingRateMeshShader;
     r->mesh.multiviewMeshShader = r->mesh.primitiveFragmentShadingRateMeshShader = FALSE;
     if (!r->mesh.meshShader || !r->mesh.taskShader)
         p->has_mesh = FALSE;
-    /* shaders go to pipelines without shader modules. */
+    /* lets shader code go to pipelines without shader modules. */
     if (!r->maintenance5.maintenance5)
         p->has_maintenance5 = FALSE;
     if (!r->dgc.deviceGeneratedCommands || !p->has_maintenance5)
         p->has_dgc = FALSE;
-    /* 64-bit atomics of typed views need them of images, of buffers and 64-bit integers; sparse ones are not used. */
+    /* 64-bit atomics on typed views need image, buffer and int64 support. sparse image atomics are unused. */
     r->atomic64.sparseImageInt64Atomics = FALSE;
     VkFormatProperties wide;
     fn->format_properties(physical, VK_FORMAT_R64_UINT, &wide);
@@ -378,21 +375,21 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     p->has_shared_atomic64 = f12->shaderSharedInt64Atomics && f->shaderInt64;
     if (!r->barycentric.fragmentShaderBarycentric)
         p->has_barycentrics = FALSE;
-    /* direct3d's compute shaders take derivatives over quads of consecutive threads, vulkan's linear groups. */
+    /* direct3d compute derivatives use quads of consecutive threads, which is vulkan's linear grouping. */
     r->derivatives.computeDerivativeGroupQuads = FALSE;
     if (!r->derivatives.computeDerivativeGroupLinear)
         p->has_compute_derivatives = FALSE;
-    /* copies between depth or stencil and color images. */
+    /* for copies between depth or stencil and color images. */
     if (!r->maintenance8.maintenance8)
         p->has_maintenance8 = FALSE;
-    /* builds on the gpu only, without capture and replay. */
+    /* builds run on the gpu only, without capture and replay. */
     r->as.accelerationStructureCaptureReplay = r->as.accelerationStructureHostCommands = FALSE;
     r->as.accelerationStructureIndirectBuild = FALSE;
     if (!r->as.accelerationStructure || !r->ray_query.rayQuery || !r->rt_maintenance.rayTracingMaintenance1)
         p->has_rt = FALSE;
     r->rt_pipeline.rayTracingPipelineShaderGroupHandleCaptureReplay = FALSE;
     r->rt_pipeline.rayTracingPipelineShaderGroupHandleCaptureReplayMixed = FALSE;
-    /* direct3d's indirect rays arguments are vulkan's second indirect trace rays command. */
+    /* direct3d's indirect DispatchRays arguments map to vkCmdTraceRaysIndirect2KHR. */
     if (!p->has_rt || !r->rt_pipeline.rayTracingPipeline || !r->rt_pipeline.rayTraversalPrimitiveCulling ||
         !r->group_handles.pipelineLibraryGroupHandles || !r->rt_maintenance.rayTracingPipelineTraceRaysIndirect2)
         p->has_rt_pipeline = FALSE;
@@ -428,7 +425,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     /* direct3d aligns scratch memory to 256 bytes. */
     if (props.as.minAccelerationStructureScratchOffsetAlignment > D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT)
         p->has_rt = p->has_rt_pipeline = FALSE;
-    /* shader identifiers are group handles and shader tables vulkan's: their sizes and alignments must agree. */
+    /* shader identifiers are group handles and shader tables are used as is, so sizes and alignments must agree. */
     if (p->has_rt_pipeline &&
         (props.rt.shaderGroupHandleSize != D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES ||
          props.rt.shaderGroupHandleAlignment > D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT ||
@@ -436,7 +433,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
          props.rt.maxShaderGroupStride < 4096 ||
          props.rt.maxRayRecursionDepth < D3D12_RAYTRACING_MAX_DECLARABLE_TRACE_RECURSION_DEPTH))
         p->has_rt_pipeline = FALSE;
-    /* direct3d's index buffer views, read as dxgi formats, and every stage of the lists' draws and dispatches. */
+    /* generated commands must read dxgi format index buffer views and reach the compute and vertex stages. */
     if (p->has_dgc) {
         p->dgc_stages = props.dgc.supportedIndirectCommandsShaderStages;
         if (!(props.dgc.supportedIndirectCommandsInputModes & VK_INDIRECT_COMMANDS_INPUT_MODE_DXGI_INDEX_BUFFER_EXT) ||
@@ -447,13 +444,13 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
                         props.mesh.maxMeshWorkGroupInvocations < 128 || props.mesh.maxTaskWorkGroupInvocations < 128 ||
                         props.mesh.maxTaskPayloadSize < 16384))
         p->has_mesh = FALSE;
-    /* shader objects want both stages bound when either feature is on, so neither is left on. */
+    /* shader objects want both stages bound when either feature is on, so both go off together. */
     if (!p->has_mesh)
         r->mesh.meshShader = r->mesh.taskShader = FALSE;
 
     /*
-     * variable rate shading: a rate per draw at tier 1; at tier 2 also per primitive and from an image of square
-     * tiles of a size direct3d knows, combined in every way.
+     * variable rate shading: tier 1 is a rate per draw. tier 2 adds per primitive rates and a rate image with square
+     * tiles of a size direct3d knows, with every combiner.
      */
     VkFormatProperties rate_format;
     fn->format_properties(physical, VK_FORMAT_R8_UINT, &rate_format);
@@ -473,7 +470,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
                             props.vrs.maxFragmentSizeAspectRatio >= 2;
         p->vrs_viewports = props.vrs.primitiveFragmentShadingRateWithMultipleViewports;
     }
-    /* the feature stays on only where the rate is set: shader objects want one before every draw. */
+    /* only keep the feature when the rate is set, since shader objects then want one before every draw. */
     p->has_vrs = vrs_on;
     if (p->vrs_tier < D3D12_VARIABLE_SHADING_RATE_TIER_2) {
         r->vrs.primitiveFragmentShadingRate = r->vrs.attachmentFragmentShadingRate = FALSE;
@@ -483,7 +480,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     }
 
     /*
-     * conservative rasterization: tier 1 overestimates by half a pixel at most, tier 2 by 1/256 and keeps degenerate
+     * conservative rasterization: tier 1 overestimates by at most half a pixel, tier 2 by 1/256 and keeps degenerate
      * triangles, tier 3 also tells the pixel shader whether its pixel is fully covered.
      */
     if (p->has_conservative && props.conservative.primitiveOverestimationSize <= 0.5f) {
@@ -496,7 +493,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
         }
     }
 
-    /* the sizes of waves: the one the gpu runs, and the range shaders may ask for with subgroup size control. */
+    /* wave sizes: what the gpu runs, and the range subgroup size control allows. */
     p->wave_size = p->wave_min = p->wave_max = props.sub.subgroupSize;
     if (f13->subgroupSizeControl && props.p13.minSubgroupSize && props.p13.maxSubgroupSize >= props.p13.minSubgroupSize) {
         p->wave_min = props.p13.minSubgroupSize;
@@ -527,8 +524,8 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
         return DXGI_ERROR_UNSUPPORTED;
     }
     /*
-     * Each queue costs the host's driver some 20 ms to make and 6 to destroy, so a process gets one, and a few more
-     * once direct3d 12 is loaded: Direct3D 11 submits on the first, and direct3d 12's queues take the others in turn,
+     * each queue costs the host driver about 20 ms to create and 6 to destroy, so a process gets one, and a few more
+     * once direct3d 12 is loaded. direct3d 11 submits on the first, and direct3d 12 queues take the others in turn,
      * sharing the first when it is the only one.
      */
     p->queue_count = GetModuleHandleW(L"d3d12.dll") ? MIME_VK_D3D12_QUEUES : 1;
@@ -536,8 +533,8 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
         p->queue_count = qprops[p->queue_family].queueCount;
 
     /*
-     * tiled resources: tier 1 binds buffers and 2D images of standard shapes, aliased; tier 2 also reads zero where
-     * nothing is mapped and tells shaders what is; tier 3 also tiles 3D images.
+     * tiled resources: tier 1 binds buffers and standard shaped 2D images, aliased. tier 2 also reads zero where
+     * nothing is mapped and tells shaders what is. tier 3 also tiles 3D images.
      */
     const VkPhysicalDeviceSparseProperties *sp = &base.properties.sparseProperties;
     if (p->d3d12 && (qprops[p->queue_family].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) && supported.sparseBinding &&

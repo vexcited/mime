@@ -1,7 +1,7 @@
 /*
- * the objects of a type of a library: ITypeInfo, ITypeInfo2 and ITypeComp, and ICreateTypeInfo2 on a library that is
- * being made. A type that is dual has two of them, the one that is seen as a dispatch interface (its functions without
- * the locale and the result parameters, as automation calls them) and the one of the virtual table.
+ * ITypeInfo2 and ITypeComp for library types, plus ICreateTypeInfo2 on a library being built. A dual type has two
+ * objects: the dispatch view, whose functions lack the lcid and retval parameters as automation calls them, and the
+ * vtable view.
  */
 #include "typelib.h"
 
@@ -43,7 +43,7 @@ static TYPEKIND view_kind(const TYPEINFO *i)
     return t->Kind;
 }
 
-/* whether the functions come with the ones of the bases and as automation sees them. */
+/* the dispatch view of a dual type lists base functions too, in automation form. */
 static BOOL dispatch_view(const TYPEINFO *i)
 {
     return type_is_dual(i->Type) && !i->VtableView;
@@ -76,7 +76,7 @@ static BSTR bstr_of(const WCHAR *text)
     return text ? SysAllocString(text) : nullptr;
 }
 
-/* ------------------------------------------------------------------ creating the objects */
+/* ------------------------------------------------------------------ creation */
 
 HRESULT TlTypeInfoCreate(TL_TYPE *type, BOOL vtable_view, TYPEINFO **result)
 {
@@ -179,7 +179,6 @@ static ULONG WINAPI comp_release(ITypeComp *self)
 
 /* ------------------------------------------------------------------ descriptions */
 
-/* the number of bytes the nodes below a type description need. */
 static SIZE_T td_extra(const TYPEDESC *td)
 {
     switch (td->vt) {
@@ -192,7 +191,6 @@ static SIZE_T td_extra(const TYPEDESC *td)
     }
 }
 
-/* the bytes a node of an array description takes, with its bounds. */
 static SIZE_T array_node_size(const ARRAYDESC *array)
 {
     SIZE_T dims = array->cDims ? array->cDims : 1;
@@ -200,9 +198,9 @@ static SIZE_T array_node_size(const ARRAYDESC *array)
 }
 
 /*
- * A type description copied into the memory that follows a description, which has the room td_extra counted. The nodes
- * below it are taken from the cursor. A reference to a type that has no level in its top byte gets the level of the
- * type the description is listed for, which tells a base type what to do with the handle it is given back.
+ * copies a type description, taking child nodes from the cursor in the room td_extra counted. A type reference with no
+ * level in its top byte gets the level of the type being described, which tells a base type how to resolve the handle
+ * when it comes back.
  */
 static void td_copy(BYTE **cursor, TYPEDESC *to, const TYPEDESC *from, USHORT level)
 {
@@ -313,7 +311,7 @@ HRESULT TlBuildFuncDesc(TL_TYPE *type, TL_FUNC *f, BOOL dispatch, USHORT tag, FU
             if (p->Default.vt == VT_BSTR && p->Default.bstrVal) {
                 ex->varDefaultValue.bstrVal = SysAllocStringLen(p->Default.bstrVal, SysStringLen(p->Default.bstrVal));
                 if (!ex->varDefaultValue.bstrVal) {
-                    /* the strings so far belong to the blob, nothing else points at it yet. */
+                    /* nothing else points into the blob yet, so free the strings copied so far. */
                     for (SHORT j = 0; j < k - 1; j++)
                         if ((fd->lprgelemdescParam[j].paramdesc.wParamFlags & PARAMFLAG_FHASDEFAULT) &&
                             fd->lprgelemdescParam[j].paramdesc.pparamdescex->varDefaultValue.vt == VT_BSTR)
@@ -371,9 +369,9 @@ HRESULT TlBuildVarDesc(TL_TYPE *type, TL_VAR *v, VARDESC **out)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the base of a type */
+/* ------------------------------------------------------------------ base types */
 
-/* the type this one is derived from, referenced, or an error when it has none. */
+/* the base type, referenced, or an error when there is none. */
 static HRESULT base_info(TYPEINFO *info, ITypeInfo **base)
 {
     TL_TYPE *t = info->Type;
@@ -404,7 +402,7 @@ static TYPEINFO *ours(ITypeInfo *i)
 {
     TYPEINFO *mine = nullptr;
     if (i && SUCCEEDED(i->lpVtbl->QueryInterface(i, &IID_MimeTypeInfo, (void **)&mine))) {
-        /* the reference this took is given back: the caller holds the pointer it was given. */
+        /* drop the QueryInterface reference, the caller already holds one. */
         ((ITypeInfo *)mine)->lpVtbl->Release((ITypeInfo *)mine);
         return mine;
     }
@@ -412,10 +410,9 @@ static TYPEINFO *ours(ITypeInfo *i)
 }
 
 /*
- * The description of a function of a type. With the bases listed the functions of the bases come first, as the dispatch
- * side of an interface counts them, the bases being asked for theirs in the same way and in the same form, the one of
- * a call by automation. Their handles are marked with the level of the type they are in, so that whoever gets one back
- * knows which type it is relative to.
+ * with list_bases, base functions come first, as the dispatch side counts them, and bases are asked the same way in
+ * automation form. Their handles carry the level of the type they belong to, so whoever gets one back knows which
+ * type it is relative to.
  */
 static HRESULT listed_func_desc(TYPEINFO *info, UINT index, BOOL list_bases, BOOL automation_form, FUNCDESC **out)
 {
@@ -446,7 +443,7 @@ static HRESULT listed_func_desc(TYPEINFO *info, UINT index, BOOL list_bases, BOO
 
 /* ------------------------------------------------------------------ ITypeInfo */
 
-/* the flags a dispatch interface reports: it is not a class, a control or a licensed thing, whatever the library says. */
+/* a dispatch interface never reports class, control or licensed flags, whatever the library says. */
 #define DISPATCH_REPORTED_FLAGS 0x5AD0
 
 static HRESULT WINAPI ti_get_type_attr(ITypeInfo2 *self, TYPEATTR **out)
@@ -527,7 +524,7 @@ static HRESULT WINAPI ti_get_var_desc(ITypeInfo2 *self, UINT index, VARDESC **ou
     return TlBuildVarDesc(info->Type, &info->Type->Vars[index], out);
 }
 
-/* the member a member id names in this type: a function, or a variable. */
+/* a function or a variable found by member id. */
 typedef struct {
     TL_FUNC *Func;
     TL_VAR *Var;
@@ -606,7 +603,7 @@ static HRESULT WINAPI ti_get_names(ITypeInfo2 *self, MEMBERID id, BSTR *names, U
 }
 
 
-/* the handle the other half of a dual interface goes by. */
+/* refers to the other half of a dual interface. */
 #define HREF_OTHER_HALF 0xFFFFFFFEu
 #define HREF_INVALID 0xFFFFFFFFu
 #define HREF_VTABLE_HALF 2u
@@ -636,7 +633,7 @@ static HRESULT WINAPI ti_get_ref_type_of_impl_type(ITypeInfo2 *self, UINT index,
     return S_OK;
 }
 
-/* a type of another library, found through the table of imports; the vtable half when the handle asks and there is one. */
+/* a type from another library via the import table, its vtable half when the handle asks and one exists. */
 static HRESULT imported_type(TL_TYPE *from, HREFTYPE handle, ITypeInfo **out)
 {
     TL_LIB *lib = from->Lib;
@@ -649,7 +646,7 @@ static HRESULT imported_type(TL_TYPE *from, HREFTYPE handle, ITypeInfo **out)
         *out = FAILED(hr) ? nullptr : type;
         return hr;
     }
-    /* the imported type tells itself where its other half is, and is its own when it has none. */
+    /* ask the imported type for its other half; without one it is its own. */
     HREFTYPE other;
     hr = type->lpVtbl->GetRefTypeOfImplType(type, 0xFFFFFFFFu, &other);
     if (hr == TYPE_E_ELEMENTNOTFOUND) {
@@ -667,7 +664,7 @@ static HRESULT imported_type(TL_TYPE *from, HREFTYPE handle, ITypeInfo **out)
     return hr;
 }
 
-/* the type a handle that is not for this one is handed to: the base of an interface, the first interface of a class. */
+/* where foreign handles are forwarded: an interface's base, or a coclass's first interface. */
 static HRESULT handle_base(TYPEINFO *info, ITypeInfo **base)
 {
     TL_TYPE *t = info->Type;
@@ -695,7 +692,7 @@ static HRESULT WINAPI ti_get_ref_type_info(ITypeInfo2 *self, HREFTYPE handle, IT
     HRESULT hr = TlLoadMembers(t);
     if (FAILED(hr))
         return hr;
-    /* a handle that carries the level of another type was made by a base of this one. */
+    /* a handle carrying another level was made by a base type. */
     ULONG level = HREF_DEPTH(handle);
     if (level) {
         TYPEKIND kind = view_kind(info);
@@ -737,7 +734,7 @@ static HRESULT WINAPI ti_get_impl_type_flags(ITypeInfo2 *self, UINT index, INT *
     return S_OK;
 }
 
-/* the function of a name in a type or the types it is derived from: the member and the type it is in. */
+/* searches the type, then its bases, and returns the owning type too. */
 static BOOL lookup_name(TYPEINFO *info, LPCOLESTR name, BOOL functions, MEMBER *m, TYPEINFO **owner, int depth)
 {
     TL_TYPE *t = info->Type;
@@ -785,7 +782,7 @@ static HRESULT WINAPI ti_get_ids_of_names(ITypeInfo2 *self, LPOLESTR *names, UIN
         return S_OK;
     if (!m.Func)
         return DISP_E_UNKNOWNNAME;
-    /* the arguments by name: their position among the ones automation passes. */
+    /* argument names map to their position among the parameters automation passes. */
     HRESULT hr = S_OK;
     BOOL dispatch = dispatch_view(owner) || dispatch_view(info);
     for (UINT i = 1; i < count; i++) {
@@ -1034,7 +1031,7 @@ static HRESULT WINAPI ti_get_type_kind(ITypeInfo2 *self, TYPEKIND *kind)
     return S_OK;
 }
 
-/* the flags of the type as the library has them, which the attributes of a dispatch interface hide some of. */
+/* the library's own flags, some of which a dispatch interface's TYPEATTR hides. */
 static HRESULT WINAPI ti_get_type_flags(ITypeInfo2 *self, ULONG *flags)
 {
     if (!flags)
@@ -1280,7 +1277,7 @@ static BOOL invoke_matches(INVOKEKIND kind, WORD flags)
     return (flags & kind) != 0;
 }
 
-/* a function of a name that a call of the given kind can reach, then a variable; the type that holds it. */
+/* a function reachable by this kind of call is preferred over a variable; also returns the owning type. */
 HRESULT TlBindName(TYPEINFO *info, LPCOLESTR name, WORD flags, ITypeInfo **found, DESCKIND *kind, BINDPTR *bind,
                    int depth)
 {
@@ -1361,7 +1358,7 @@ static const WCHAR *help_file_of(TL_LIB *lib)
     return lib->HelpFile;
 }
 
-/* the other half of a dual interface, referenced, or null for a type that is not dual. */
+/* the other half of a dual interface, referenced, or NULL when not dual. */
 ITypeInfo *TlInfoVtableHalf(ITypeInfo *info)
 {
     TYPEINFO *mine = nullptr;

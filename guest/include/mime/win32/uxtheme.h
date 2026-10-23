@@ -1,6 +1,4 @@
-/*
- * visual styles api of uxtheme.dll.
- */
+/* visual styles api of uxtheme.dll. */
 #ifndef MIME_WIN32_UXTHEME_H
 #define MIME_WIN32_UXTHEME_H
 

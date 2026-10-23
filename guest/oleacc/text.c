@@ -1,6 +1,6 @@
 /*
- * oleacc.dll: the texts of roles and states, and the strings its proxies speak, as windows' oleacc resource
- * file words them in English.
+ * oleacc.dll: role and state texts and the proxies' strings, worded in English as windows' oleacc resource file has
+ * them.
  */
 #define OLEACCAPI DECLSPEC_EXPORT
 #include <mime/win32/oleacc.h>
@@ -194,7 +194,7 @@ const WCHAR *OaRoleName(DWORD role)
     return role < RTL_NUMBER_OF(roles) ? roles[role] : nullptr;
 }
 
-/* the text of the highest state bit of a mask, and of none, "normal". */
+/* the text of the highest set state bit, "normal" for none. */
 const WCHAR *OaStateName(DWORD state)
 {
     DWORD index = 0;
@@ -211,7 +211,7 @@ const WCHAR *OaString(DWORD id)
     return L"";
 }
 
-/* a string for LoadString's rules: cut to the buffer, which always ends with a terminator, and its length. */
+/* LoadString rules: cut to the buffer, always terminated, returns the length. */
 static UINT copy_text(const WCHAR *text, WCHAR *buffer, UINT length)
 {
     if (!text)
@@ -241,7 +241,7 @@ OLEACCAPI UINT WINAPI GetStateTextW(DWORD state, LPWSTR text, UINT length)
     return copy_text(OaStateName(state), text, length);
 }
 
-/* the ansi forms ask for the wide text and convert it; a length of the buffer too small cuts the text. */
+/* the ansi forms convert the wide text, a buffer too small cuts it. */
 static UINT ansi_text(UINT (WINAPI *wide)(DWORD, LPWSTR, UINT), DWORD value, LPSTR text, UINT length)
 {
     WCHAR buffer[128];

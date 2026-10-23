@@ -1,6 +1,4 @@
-/*
- * gif decoding: the first image of a file, drawn on a canvas of the logical screen. Colors stay indexed.
- */
+/* gif decoding: the first image of a file, drawn on a logical screen sized canvas. Colors stay indexed. */
 #include "picdecode.h"
 
 typedef struct {
@@ -32,7 +30,7 @@ static int gif_palette(GIF_READER *r, unsigned char palette[256][4], int count)
     return 1;
 }
 
-/* the sub-blocks of one extension or one image, ended by a zero length. */
+/* skips sub-blocks up to the zero length terminator. */
 static int gif_skip_blocks(GIF_READER *r)
 {
     for (;;) {
@@ -47,7 +45,7 @@ static int gif_skip_blocks(GIF_READER *r)
     }
 }
 
-/* the sub-blocks of image data, taken one byte at a time. */
+/* reads image data sub-blocks one byte at a time. */
 typedef struct {
     GIF_READER *r;
     int left;
@@ -76,7 +74,7 @@ static int gif_data_byte(GIF_BLOCKS *b)
     return value;
 }
 
-/* lzw decoding into the indexed rows of the frame; a truncated stream leaves the rest of the frame as it was. */
+/* lzw decodes into the frame's indexed rows; a truncated stream leaves the rest of the frame untouched. */
 static void gif_lzw(GIF_READER *r, int minimum, unsigned char *frame, int width, int height, int interlaced)
 {
     static const int pass_start[4] = {0, 4, 2, 1};
@@ -121,7 +119,7 @@ static void gif_lzw(GIF_READER *r, int minimum, unsigned char *frame, int width,
         } else {
             if (code > next)
                 return;
-            /* the code being defined is the previous string followed by its own first byte. */
+            /* the code being defined is the previous string plus its own first byte. */
             int current = code == next ? previous : code;
             int first = current;
             while (first >= clear)
@@ -168,7 +166,7 @@ int AutDecodeGif(const unsigned char *data, size_t size, AUT_IMAGE *image)
 {
     GIF_READER reader = {data, size, 0};
     GIF_READER *r = &reader;
-    /* the signature is accepted in lower case too, as the first word of the file may be either. */
+    /* the signature is also accepted in lower case. */
     if (size < 13 || (data[0] | 0x20) != 'g' || (data[1] | 0x20) != 'i' || (data[2] | 0x20) != 'f' || data[3] != '8' ||
         (data[4] != '7' && data[4] != '9') || (data[5] | 0x20) != 'a')
         return 0;
@@ -248,7 +246,7 @@ int AutDecodeGif(const unsigned char *data, size_t size, AUT_IMAGE *image)
     }
     AUT_FREE(frame);
     if (count == 0) {
-        /* a file without any palette is shown in black and white. */
+        /* no palette at all means black and white. */
         count = 2;
         local[1][0] = local[1][1] = local[1][2] = 255;
         palette = local;

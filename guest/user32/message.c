@@ -1,7 +1,4 @@
-/*
- * messages: sending, posting, retrieval, dispatch and the default window
- * procedure, which win32k implements.
- */
+/* sending, posting, retrieval, dispatch and the default window procedure, which win32k implements. */
 #include "user32_private.h"
 #include <mime/msgtable.h>
 
@@ -15,14 +12,13 @@ WINUSERAPI LRESULT WINAPI SendMessageA(HWND hwnd, UINT msg, WPARAM wparam, LPARA
     return UserSendMessage(hwnd, msg, wparam, lparam, TRUE);
 }
 
-/* the flags of SendMessageTimeout that are not refused: the defined ones, and a few more that are passed on. */
+/* flags SendMessageTimeout accepts: the defined ones plus a few that are passed on. */
 #define SMTO_ACCEPTED_FLAGS 0x7F
 #define MSG_BEYOND_ALL_MESSAGES 0x20000
 
 /*
- * SendMessageTimeout. a message number beyond 17 bits, or a flag outside the accepted ones, fails with nothing said and
- * the result left as it was. otherwise the result is cleared and the window manager answers whether the message came
- * back in time.
+ * a message number above 17 bits or an unaccepted flag fails silently and leaves the result untouched. otherwise the
+ * result is cleared and the window manager reports whether the message came back in time.
  */
 static LRESULT send_timeout(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT flags, UINT timeout,
                             ULONG_PTR *result, BOOL ansi)
@@ -77,12 +73,12 @@ WINUSERAPI BOOL WINAPI SendMessageCallbackA(HWND hwnd, UINT msg, WPARAM wparam, 
 #define MSG_CB_DIR 0x0145
 #define MSG_LB_DIR 0x018D
 #define MSG_DROPFILES 0x0233
-/* DDL_POSTMSGS: the list fills itself from the messages the control receives, so that a posted directory listing works. */
+/* DDL_POSTMSGS: the list fills itself from the messages it receives, so posted directory listings work. */
 #define DIR_POST_MESSAGES 0x2000
 
 /*
- * the handle of the files dropped is the sender's global memory, which a window of another process cannot read. the
- * window's process is asked to make a copy of the bytes, and the post carries the handle of the copy.
+ * the dropped files handle is the sender's global memory, which another process cannot read. the window's process
+ * copies the bytes and the post carries the copy's handle.
  */
 static BOOL drop_handle_for_other_process(HWND hwnd, WPARAM *wparam)
 {
@@ -129,7 +125,7 @@ WINUSERAPI BOOL WINAPI PostThreadMessageA(DWORD thread, UINT msg, WPARAM wparam,
     return NtUserPostThreadMessage(thread, msg, UserCharWparam(msg, wparam, TRUE), lparam);
 }
 
-/* what BroadcastSystemMessage may be asked for. */
+/* flags and recipients BroadcastSystemMessage accepts. */
 #define BSF_DEFINED_FLAGS 0x7FF
 #define BSM_COMPONENTS 0x0F
 #define BSM_DEFINED_RECIPIENTS 0x1F
@@ -145,10 +141,10 @@ static long refuse_broadcast(DWORD error)
 }
 
 /*
- * BroadcastSystemMessage and its Ex form. the parameters are judged here, in this order: the message number, the flags,
- * the structure the flags ask for, the size of that structure and the message being one a program defines for itself. a
- * query never posts, and a message that carries data of the sender cannot be posted or sent without waiting. the
- * answer is 0 for a refusal or a denied query, -1 when no recipient the system serves was named, and else positive.
+ * parameters are checked in this order: message number, flags, the structure the flags ask for, its size, and
+ * whether the message is program defined. a query never posts, and a message carrying sender data cannot be posted
+ * or sent without waiting. returns 0 for a refusal or a denied query, -1 when no recipient the system serves was
+ * named, else a positive value.
  */
 static long broadcast_system(DWORD flags, LPDWORD recipients, UINT msg, WPARAM wparam, LPARAM lparam, PBSMINFO info,
                              BOOL ansi)
@@ -258,7 +254,7 @@ WINUSERAPI BOOL WINAPI TranslateMessage(const MSG *msg)
 
 static LRESULT dispatch(const MSG *msg)
 {
-    /* a drag from or to the host's programs, run by the code of the process that takes it. */
+    /* host drag and drop, run in the process that takes the drop. */
     if (msg->message == WM_MIME_HOSTDND) {
         UserHostDnd(msg);
         return 0;
@@ -320,7 +316,7 @@ WINUSERAPI DWORD WINAPI MsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *h
 {
     if (!(flags & MWMO_WAITALL))
         return NtUserMsgWaitForMultipleObjectsEx(count, handles, timeout, mask, flags);
-    /* all the handles and the queue: the handles in short slices so new messages are noticed. */
+    /* wait on the handles in short slices so new queue messages are noticed. */
     DWORD start = GetTickCount();
     for (;;) {
         if (HIWORD(GetQueueStatus(mask)))
@@ -370,7 +366,7 @@ WINUSERAPI UINT WINAPI RegisterWindowMessageA(LPCSTR name)
 WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     LRESULT result;
-    /* a copy of memory of another process, which the message brought, as a global handle of this one. */
+    /* memory the message brought from another process, returned as a global handle of this one. */
     if (msg == WM_COPYGLOBALDATA) {
         if (!wparam || !lparam)
             return 0;
@@ -396,8 +392,7 @@ WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPA
 }
 
 /*
- * multiple document interface: there is no MDIClient class, so a frame
- * only keeps its client window sized and focused, and children get the
+ * there is no MDIClient class, so an MDI frame only keeps its client window sized and focused, and children get the
  * plain window procedure.
  */
 WINUSERAPI LRESULT WINAPI DefFrameProcW(HWND hwnd, HWND client, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -442,7 +437,7 @@ WINUSERAPI LRESULT WINAPI CallWindowProcW(WNDPROC proc, HWND hwnd, UINT msg, WPA
     return proc ? proc(hwnd, msg, wparam, lparam) : 0;
 }
 
-/* the procedures user32 has for its classes take unicode, even when an ansi program holds them. */
+/* user32's class procedures take unicode, even when an ansi program holds them. */
 static BOOL is_system_proc(WNDPROC proc)
 {
     if (proc == DefWindowProcW || proc == DefDlgProcW)

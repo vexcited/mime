@@ -116,7 +116,7 @@ static DWORD move_one(LPCWSTR from, LPCWSTR to, BOOL replace, BOOL recurse)
 typedef struct _FILE_OP {
     SHFILEOPSTRUCTW *Op;
     LPCWSTR NextTarget;
-    /* the target is a directory receiving every source by name. */
+    /* the target is a directory that receives every source by name. */
     BOOL IntoDirectory;
 } FILE_OP;
 
@@ -220,7 +220,7 @@ SHSTDAPI int WINAPI SHFileOperationW(LPSHFILEOPSTRUCTW operation)
     return (int)error;
 }
 
-/* a double null terminated list of ANSI names as wide ones, null for no list. */
+/* a double null terminated ANSI list as a wide one, NULL for no list. */
 static LPWSTR widen_list(LPCSTR list)
 {
     if (!list)
@@ -237,7 +237,6 @@ static LPWSTR widen_list(LPCSTR list)
     return wide;
 }
 
-/* the ANSI form widens the lists and the title and calls the wide one. */
 SHSTDAPI int WINAPI SHFileOperationA(LPSHFILEOPSTRUCTA operation)
 {
     if (!operation)

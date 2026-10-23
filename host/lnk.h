@@ -1,6 +1,4 @@
-/*
- * the host's reading of a Windows shortcut file, see lnk.c.
- */
+/* Windows shortcut reader; see lnk.c. */
 #ifndef MIME_LNK_H
 #define MIME_LNK_H
 
@@ -9,9 +7,9 @@
 #include <stdio.h>
 
 typedef struct MimeLink {
-    char target[1100];     /* the path the shortcut was made for, as the guest sees it */
-    char target_raw[1100]; /* the same with its variables still in it, when the shortcut keeps them */
-    char relative[1100];   /* the path relative to the shortcut, when there is no other */
+    char target[1100];     /* target path in the guest. */
+    char target_raw[1100]; /* target path before environment expansion, if stored. */
+    char relative[1100];   /* shortcut-relative target when no other path exists. */
     char arguments[2100];
     char directory[1100];
     char description[260];
@@ -20,7 +18,7 @@ typedef struct MimeLink {
     int icon_index;
     int show_command;
     char aumid[160];       /* System.AppUserModel.ID */
-    char toast_clsid[40];  /* System.AppUserModel.ToastActivatorCLSID, in braces */
+    char toast_clsid[40];  /* System.AppUserModel.ToastActivatorCLSID, in braces. */
 } MimeLink;
 
 /* false when the bytes are not a shortcut or have no target. all the strings are utf-8. */

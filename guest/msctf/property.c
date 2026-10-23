@@ -1,7 +1,7 @@
 /*
- * properties: values attached to stretches of a context's text, such as the display attribute of each part of a
- * composition. a property is kept as non overlapping segments that follow the text as it changes. the edit record
- * of an edit session tells the sinks of the context what the session changed.
+ * properties: values attached to spans of a context's text, such as a composition's display attributes. a property
+ * is a list of non overlapping segments that follow the text. the edit record tells the context's sinks what an edit
+ * session changed.
  */
 #include "msctf_private.h"
 
@@ -65,7 +65,7 @@ static void drop_segment(PROP_ENTRY *entry, ULONG at)
     entry->Count--;
 }
 
-/* takes [start, end) out of the segments, splitting the ones it cuts. */
+/* removes [start, end) from the segments, splitting the ones it cuts. */
 static void cut(PROP_ENTRY *entry, LONG start, LONG end)
 {
     for (ULONG i = 0; i < entry->Count;) {
@@ -75,7 +75,7 @@ static void cut(PROP_ENTRY *entry, LONG start, LONG end)
             continue;
         }
         if (seg->Start < start && seg->End > end) {
-            /* the cut is inside the segment: its tail becomes a segment of its own. */
+            /* a cut inside a segment splits off its tail. */
             VARIANT value;
             LONG tail_end = seg->End;
             VariantInit(&value);
@@ -298,7 +298,7 @@ static HRESULT STDMETHODCALLTYPE pr_get_value(ITfProperty *This, TfEditCookie co
                                               : seg->End > rng->Start && seg->Start < rng->End;
         if (!touches)
             continue;
-        /* one value over the whole range is the property's value there, anything else is mixed. */
+        /* a single value over the whole range is the result, anything else is mixed. */
         if (touched || seg->Start > covered_to)
             mixed = TRUE;
         else
@@ -310,7 +310,7 @@ static HRESULT STDMETHODCALLTYPE pr_get_value(ITfProperty *This, TfEditCookie co
         return S_FALSE;
     if (rng->Start != rng->End && covered_to < rng->End)
         mixed = TRUE;
-    /* a part of the range with no value, or another one, leaves the range with none. */
+    /* a gap or a different value leaves the range with no value. */
     if (mixed || !found)
         return S_FALSE;
     return VariantCopy(value, &found->Value);
@@ -364,7 +364,7 @@ static HRESULT STDMETHODCALLTYPE pr_set_value(ITfProperty *This, TfEditCookie co
     RNG *rng = RngFromInterface(range);
     if (!value || !rng || rng->Context != property->Context)
         return E_INVALIDARG;
-    /* a property holds numbers, strings and objects, or nothing, and over text. */
+    /* values are empty, numbers, strings or objects, set over a non empty range. */
     if ((V_VT(value) != VT_EMPTY && V_VT(value) != VT_I4 && V_VT(value) != VT_BSTR && V_VT(value) != VT_UNKNOWN) ||
         rng->Start == rng->End)
         return E_INVALIDARG;
@@ -410,9 +410,9 @@ HRESULT PropsGetProperty(CTX *ctx, REFGUID guid, ITfProperty **out)
 /* ------------------------------------------------------------------ tracked properties */
 
 /*
- * what ITfContext::TrackProperties gives: one read only property standing for several. its ranges are the runs over
- * which every one of them holds one value, and its value over a range is an enumerator of the values the properties
- * have there. it is how a program reads the display attribute and the composing mark of a composition at once.
+ * ITfContext::TrackProperties: one read only property standing for several. its ranges are the runs where each tracked
+ * property holds one value, and its value over a range enumerates their values. programs use it to read a
+ * composition's display attribute and composing mark at once.
  */
 typedef struct TRACKED {
     ITfReadOnlyProperty Iface;
@@ -460,7 +460,7 @@ static HRESULT STDMETHODCALLTYPE tr_get_type(ITfReadOnlyProperty *This, GUID *gu
     return S_OK;
 }
 
-/* the places where any tracked property starts or stops having a value, within [from, to). */
+/* the positions in [from, to) where any tracked property starts or stops having a value. */
 static ULONG breakpoints(TRACKED *tracked, LONG from, LONG to, LONG *out, ULONG max)
 {
     ULONG n = 0;
@@ -539,7 +539,7 @@ static HRESULT STDMETHODCALLTYPE tr_enum_ranges(ITfReadOnlyProperty *This, TfEdi
     return hr;
 }
 
-/* the values of the properties over a range, as an enumerator. */
+/* enumerates the tracked properties' values over a range. */
 typedef struct VALUES {
     IEnumTfPropertyValue Iface;
     LONG Refs;
@@ -748,7 +748,7 @@ static void span_add(SPAN_LIST *list, LONG start, LONG end)
 {
     if (end < start)
         return;
-    /* joins the span with the ones it touches. */
+    /* merges the span with the ones it touches. */
     for (ULONG i = 0; i < list->Count; i++) {
         if (start <= list->Spans[i][1] && end >= list->Spans[i][0]) {
             if (start < list->Spans[i][0])

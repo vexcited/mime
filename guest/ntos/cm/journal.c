@@ -8,9 +8,9 @@ static NTSTATUS CmpJournalStatus;
 static BOOLEAN CmpJournalReady;
 
 /*
- * a record is written to the host file as soon as it is appended, which is enough to survive the end of the
- * program. making it durable on the host disk is a flush costing milliseconds, so a worker does it, once for
- * all the records appended since the last flush, while appends go on.
+ * a record reaches the host file as soon as it is appended, which survives the program ending. making it
+ * durable on the host disk is a flush costing milliseconds, so a worker does one for all the records appended
+ * since the last flush, while appends go on.
  */
 static ULONG64 CmpJournalDurable;
 static KMUTEX CmpJournalSyncLock;
@@ -18,7 +18,7 @@ static KEVENT CmpJournalWake;
 static volatile LONG CmpJournalPending;
 static BOOLEAN CmpJournalWorker;
 
-/* operations met during replay that this build does not know, each named once in the log. */
+/* unknown operations met during replay, each logged once. */
 static ULONG CmpJournalSkipped[8];
 static ULONG CmpJournalSkippedCount;
 
@@ -39,14 +39,14 @@ static NTSTATUS flush(void)
 
 static NTSTATUS truncate_tail(void)
 {
-    /* a file shorter than the records counted would be made longer with zeros: a hole with records after it. */
+    /* extending a short file would leave a hole of zeros with records after it. */
     ULONG64 length;
     NTSTATUS status = IoQueryFileSize(CmpJournalFile, &length);
     if (!NT_SUCCESS(status))
         return status;
     if (length < CmpJournalOffset)
         return STATUS_REGISTRY_CORRUPT;
-    /* the flush that follows makes the whole file durable up to the new end. */
+    /* the flush below makes the whole file durable up to the new end. */
     FILE_END_OF_FILE_INFORMATION end;
     end.EndOfFile.QuadPart = (LONGLONG)CmpJournalOffset;
     IO_STACK_LOCATION params = {};
@@ -61,8 +61,8 @@ static NTSTATUS truncate_tail(void)
 }
 
 /*
- * the log is read in pieces of a record, tens of thousands of them, each of which is a call to the host:
- * replaying reads it a block at a time instead and takes the records out of that.
+ * the log holds tens of thousands of records and each read is a host call, so replay reads a block at a time
+ * and takes the records out of that.
  */
 #define CM_REPLAY_BLOCK (64 * 1024)
 static PUCHAR CmpReplayBlock;
@@ -96,7 +96,7 @@ NTSTATUS CmpJournalReadBytes(void *data, ULONG bytes, ULONG64 offset)
     return got == bytes ? STATUS_SUCCESS : STATUS_REGISTRY_CORRUPT;
 }
 
-/* the longest unwritten tail taken for a torn flush, the stretch of records one flush covers is far shorter. */
+/* the longest zero tail taken for a torn flush; one flush covers far less. */
 #define TORN_TAIL_MAX (1u << 20)
 
 static BOOLEAN tail_is_zero(ULONG64 offset, ULONG64 length)
@@ -120,9 +120,9 @@ static BOOLEAN tail_is_zero(ULONG64 offset, ULONG64 length)
 }
 
 /*
- * a crash between a write and its flush can leave the end of the file unwritten or half written, in any
- * order the host filesystem pleases. what is left of the last record, or zeros to the end, is such a tail
- * and goes. damage with valid data after it is real corruption.
+ * a crash between a write and its flush can leave the end of the file unwritten or half written, in any order
+ * the host filesystem likes. a partial last record, or zeros to the end, is such a tail and is dropped. damage
+ * followed by valid data is real corruption.
  */
 static NTSTATUS drop_torn_tail(const char *why)
 {
@@ -130,7 +130,7 @@ static NTSTATUS drop_torn_tail(const char *why)
     return truncate_tail();
 }
 
-/* a journal this long is read for what in it no longer counts, see compact.c. */
+/* a journal this long is considered for compaction, see compact.c. */
 #define CM_COMPACT_MIN_BYTES (2u << 20)
 
 static NTSTATUS replay(PVOID *compact)
@@ -157,7 +157,7 @@ static NTSTATUS replay(PVOID *compact)
         ULONG size = cm_journal_size(&record);
         if (size > length - CmpJournalOffset)
             return truncate_tail();
-        /* most records are small, and replay reuses one buffer for them. */
+        /* most records are small and replay reuses one buffer for them. */
         PUCHAR bytes = size <= sizeof(small) ? small : ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('C', 'm', 'J', 'r'));
         if (!bytes)
             return STATUS_INSUFFICIENT_RESOURCES;
@@ -228,7 +228,7 @@ void CmpJournalEnable(void)
     CmpJournalReady = TRUE;
 }
 
-/* makes everything appended so far durable; one flush covers every record written before it began. */
+/* one flush covers every record written before it began. */
 static NTSTATUS make_durable(void)
 {
     KeWaitForSingleObject(&CmpJournalSyncLock, Executive, KernelMode, FALSE, nullptr);
@@ -239,7 +239,7 @@ static NTSTATUS make_durable(void)
         if (NT_SUCCESS(status)) {
             CmpJournalDurable = target;
         } else {
-            /* records the callers were told were saved may not be, so nothing more is added after them. */
+            /* records callers were told were saved may not be, so nothing more is appended after them. */
             CmpJournalStatus = status;
             KiLogPrintf("registry: journal flush failed at offset %llu: %08x", target, status);
         }

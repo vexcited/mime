@@ -1,7 +1,6 @@
 /*
- * native helpers of the translator: a setjmp pair private to the
- * translator, and one system service stub per service number so a call
- * can reach any number chosen at run time.
+ * native helpers of the translator: a private setjmp pair, and one system
+ * service stub per service number so a call can pick the number at run time.
  */
 #include "mime_svc_nt.h"
 #include "mime_svc_win32k.h"

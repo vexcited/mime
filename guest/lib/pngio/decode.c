@@ -26,7 +26,7 @@
 /* the most a metadata item may inflate to. */
 #define MAX_METADATA (64u << 20)
 
-/* cap on stored text items and extra chunks each, further ones are dropped. */
+/* cap on stored text items, and separately on extra chunks. further ones are dropped. */
 #define MAX_ITEMS 16384u
 
 /* deflate cannot expand more than 1032 to 1, plus the headers. */
@@ -228,7 +228,7 @@ static int add_chunk(MimePngioDecoder *dec, const uint8_t *type, const uint8_t *
     return MIME_PNGIO_OK;
 }
 
-/* text chunks: a malformed one is dropped. */
+/* a malformed text chunk is dropped. */
 static int parse_text(MimePngioDecoder *dec, uint32_t type, const uint8_t *b, uint32_t len)
 {
     MimePngioText t;
@@ -285,8 +285,8 @@ static bool valid_time(const MimePngioTime *t)
 }
 
 /*
- * ancillary chunks that describe the image, honoured before the image data only.
- * returns 1 when the chunk was consumed, 0 when it goes to the extra chunk list.
+ * ancillary chunks describing the image, honoured only before the image data.
+ * returns 1 when consumed, 0 when the chunk goes to the extra chunk list.
  */
 static int parse_known(MimePngioDecoder *dec, uint32_t type, const uint8_t *b, uint32_t len)
 {
@@ -464,7 +464,6 @@ static int parse_chunks(MimePngioDecoder *dec, uint64_t max_pixels)
                 dec->idat_total += size - pos - 8;
                 break;
             }
-            /* a file cut after complete image data is accepted. */
             if (dec->idat_count)
                 break;
             return MIME_PNGIO_ERR_FORMAT;
@@ -659,7 +658,7 @@ int mime_pngio_format(const MimePngioDecoder *dec)
     return dec->format;
 }
 
-/* joins the IDAT payloads, or points into the file when there is one. */
+/* joins the IDAT payloads, or points into the file when there is only one. */
 static int gather_idat(const MimePngioDecoder *dec, const uint8_t **z, uint8_t **owned)
 {
     const uint8_t *d = dec->data;
@@ -702,7 +701,7 @@ static int ensure_raw(MimePngioDecoder *dec)
 
     if (dec->raw)
         return MIME_PNGIO_OK;
-    /* a deflate stream of this size cannot hold that many bytes, so refuse before allocating. */
+    /* a deflate stream this size cannot hold that many bytes, so refuse before allocating. */
     if (dec->raw_size > (uint64_t)dec->idat_total * MAX_INFLATE_RATIO + 4096)
         return MIME_PNGIO_ERR_DATA;
     /* the image, the zero row, then the decoder state, which is too big for a guest stack. */
@@ -814,7 +813,7 @@ static void scatter(const uint8_t *tmp, uint8_t *row, unsigned bits, uint32_t x0
     }
 }
 
-/* the whole interlaced image, out being zero filled for packed formats by this function. */
+/* the whole interlaced image. zero fills out itself for packed formats. */
 static int decode_adam7(MimePngioDecoder *dec, uint8_t *out, size_t stride)
 {
     const MimePngioInfo *info = &dec->info;
@@ -930,7 +929,7 @@ int mime_pngio_chunk(const MimePngioDecoder *dec, unsigned index, MimePngioChunk
     return MIME_PNGIO_OK;
 }
 
-/* copies or inflates into a buffer of size + 1 bytes with a null terminator. */
+/* copies or inflates into a buffer of size + 1 bytes, null terminated. */
 static int metadata_bytes(const MimePngioDecoder *dec, const uint8_t *src, size_t src_size, bool compressed,
                           void **data, size_t *size)
 {

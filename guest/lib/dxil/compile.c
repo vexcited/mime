@@ -1,15 +1,15 @@
 /*
- * the compiler from dxil to spir-v.
+ * compiles dxil to spir-v.
  *
- * each defined function of the entry point becomes a spir-v function of
- * the blocks cfg.c structures, in their order. dxil's ssa values map to
- * spir-v ids one to one, phis to OpPhi, whose operands are filled in once
- * every block is written. a value whose definition the added blocks keep
- * from dominating its uses goes through a function variable instead.
- * dx.op calls are lowered by io.c, resource.c and ops.c.
+ * each defined function of the entry point becomes a spir-v function made
+ * of the blocks cfg.c structures, in their order. dxil ssa values map one
+ * to one to spir-v ids and phis to OpPhi, whose operands are filled in once
+ * every block is written. a value whose definition no longer dominates its
+ * uses because of the added blocks goes through a function variable.
+ * io.c, resource.c and ops.c lower the dx.op calls.
  *
- * the shaders reach resources through direct3d 12's root signature, as
- * those of dxbc do: see dxbc.h.
+ * resources go through direct3d 12's root signature, as with dxbc: see
+ * dxbc.h.
  */
 #include "internal.h"
 
@@ -125,10 +125,7 @@ static uint32_t type_u16(Compiler *c)
     return c->t_u16;
 }
 
-/*
- * the spir-v type of a dxil type. without native low precision, half and
- * i16 are the minimum precision types of direct3d and run in 32 bits.
- */
+/* without native low precision, half and i16 are direct3d's minimum precision types and run in 32 bits. */
 uint32_t dxil_type(Compiler *c, uint32_t t)
 {
     if (t >= c->m.type_count) {
@@ -184,7 +181,6 @@ uint32_t dxil_type(Compiler *c, uint32_t t)
     return r;
 }
 
-/* the scalar type of a scalar or vector type. */
 uint32_t dxil_component_type(Compiler *c, uint32_t type)
 {
     const DxType *t = &c->m.types[type];
@@ -246,7 +242,7 @@ static uint32_t half_to_float(uint32_t h)
     return sign | exp << 23 | (man & 0x3FF) << 13;
 }
 
-/* a scalar constant of a dxil type from the bits llvm stores. */
+/* from the bits llvm stores. */
 static uint32_t scalar_constant(Compiler *c, uint32_t type, uint64_t bits)
 {
     const DxType *t = &c->m.types[type];
@@ -347,9 +343,9 @@ uint64_t dxil_constant(Compiler *c, uint32_t id, uint64_t fallback)
 }
 
 /*
- * whether derivatives are there: in pixel shaders, and in compute shaders
- * of whole quads when the device takes them, the quad four consecutive
- * threads as in direct3d's compute shaders.
+ * derivatives exist in pixel shaders, and in compute shaders made of whole
+ * quads when the device supports it, a quad being four consecutive threads
+ * as in direct3d.
  */
 int dxil_derivatives(Compiler *c)
 {
@@ -411,7 +407,7 @@ uint32_t dxil_vector(Compiler *c, uint32_t scalar_type, const uint32_t *parts, u
     return spv_op(&c->b, SpvOpCompositeConstruct, spv_type_vector(&c->b, scalar_type, count), parts, count);
 }
 
-/* the width in bits and whether a spir-v scalar type is a float, by the types the compiler made. */
+/* bit width and floatness of a spir-v scalar type the compiler made. */
 static uint32_t type_width(Compiler *c, uint32_t type, int *is_float)
 {
     *is_float = type == c->t_f32 || type == c->t_f16 || type == c->t_f64;
@@ -442,7 +438,7 @@ uint32_t dxil_convert(Compiler *c, uint32_t value, uint32_t from, uint32_t to)
         return spv_op1(&c->b, SpvOpFConvert, to, value);
     if (!ff && !tf)
         return spv_op1(&c->b, to == spv_type_int(&c->b, tw, 1) ? SpvOpSConvert : SpvOpUConvert, to, value);
-    /* a float of another width: through the integer of its own width. */
+    /* a float of another width goes through the integer of its own width. */
     uint32_t mid = ff ? spv_type_int(&c->b, fw, 0) : spv_type_float(&c->b, fw);
     if (ff)
         return spv_op1(&c->b, SpvOpUConvert, to, spv_op1(&c->b, SpvOpBitcast, mid, value));
@@ -453,7 +449,7 @@ uint32_t dxil_convert(Compiler *c, uint32_t value, uint32_t from, uint32_t to)
 
 typedef struct Pointer {
     uint32_t id;
-    /* the pointee: dxil's type and its spir-v type. */
+    /* the pointee's dxil and spir-v types. */
     uint32_t dx;
     uint32_t type;
     uint32_t storage;
@@ -470,7 +466,7 @@ static uint32_t storage_of_space(Compiler *c, uint32_t space)
 
 static int pointer_of(Compiler *c, uint32_t id, Pointer *out);
 
-/* the type a dxil type is kept as in groupshared memory. */
+/* how a dxil type is stored in groupshared memory. */
 static uint32_t shared_type(Compiler *c, uint32_t t)
 {
     if (c->shared_map[t])
@@ -510,7 +506,7 @@ static uint32_t memory_type(Compiler *c, uint32_t t, uint32_t storage)
     return storage == SpvStorageClassWorkgroup ? shared_type(c, t) : dxil_type(c, t);
 }
 
-/* a value of dxil type t read from or written to memory of another type, bit for bit. */
+/* reinterprets a value of dxil type t bit for bit between memory types. */
 static uint32_t reinterpret(Compiler *c, uint32_t value, uint32_t t, uint32_t from, uint32_t to)
 {
     if (from == to)
@@ -531,7 +527,7 @@ static uint32_t reinterpret(Compiler *c, uint32_t value, uint32_t t, uint32_t fr
     return spv_op(&c->b, SpvOpCompositeConstruct, to, parts, n);
 }
 
-/* whether a pointer may be read as another pointee: scalars of the same width, read with a bitcast. */
+/* scalars of the same width may be read through another pointee with a bitcast. */
 static int same_size(Compiler *c, uint32_t a, uint32_t b)
 {
     int fa, fb;
@@ -541,7 +537,7 @@ static int same_size(Compiler *c, uint32_t a, uint32_t b)
                       type_width(c, dxil_type(c, a), &fa) == type_width(c, dxil_type(c, b), &fb));
 }
 
-/* an access chain of a pointer by dxil index values, the first of which steps over the pointer itself. */
+/* the first dxil index steps over the pointer itself. */
 static int access(Compiler *c, const Pointer *base, const uint32_t *indices, uint32_t count, Pointer *out)
 {
     if (!count) {
@@ -578,7 +574,7 @@ static int access(Compiler *c, const Pointer *base, const uint32_t *indices, uin
     return 0;
 }
 
-/* the variable of a global, made at its first use. */
+/* made at first use. */
 static int global_pointer(Compiler *c, uint32_t id, const DxValue *v, Pointer *out)
 {
     Value *s = dxil_slot(c, id);
@@ -697,7 +693,6 @@ static uint32_t binop_opcode(Compiler *c, const DxInst *ins, int is_float, int i
     }
 }
 
-/* the signed integer type of the same shape as an unsigned one. */
 static uint32_t signed_type(Compiler *c, uint32_t dx)
 {
     const DxType *t = &c->m.types[dx];
@@ -714,13 +709,13 @@ static void binop(Compiler *c, const DxInst *ins)
     uint32_t op = binop_opcode(c, ins, is_float_type(c, ins->type), is_bool_type(c, ins->type));
     uint32_t r;
     if (op == SpvOpSDiv || op == SpvOpShiftRightArithmetic) {
-        /* on signed types: drivers may take the result type's signedness for the operation's. */
+        /* on signed types, as drivers may take the result type's signedness for the operation's. */
         uint32_t st = signed_type(c, ins->type);
         r = spv_op2(&c->b, op, st, spv_op1(&c->b, SpvOpBitcast, st, a),
                     op == SpvOpShiftRightArithmetic ? b : spv_op1(&c->b, SpvOpBitcast, st, b));
         r = spv_op1(&c->b, SpvOpBitcast, type, r);
     } else if (op == SpvOpSRem) {
-        /* a less the truncated quotient times b: nvidia's OpSRem of a negative a is positive. */
+        /* a minus the truncated quotient times b, since nvidia's OpSRem of a negative a is positive. */
         uint32_t st = signed_type(c, ins->type);
         uint32_t sa = spv_op1(&c->b, SpvOpBitcast, st, a), sb = spv_op1(&c->b, SpvOpBitcast, st, b);
         uint32_t q = spv_op2(&c->b, SpvOpSDiv, st, sa, sb);
@@ -733,7 +728,7 @@ static void binop(Compiler *c, const DxInst *ins)
     dxil_set_plain(c, ins->value, r);
 }
 
-/* a bool as a number: 1 or all ones for integers, 1.0 or -1.0 for floats. */
+/* 1 or all ones for integers, 1.0 or -1.0 for floats. */
 static uint32_t from_bool(Compiler *c, uint32_t value, uint32_t to, int negative)
 {
     int f;
@@ -745,7 +740,7 @@ static uint32_t from_bool(Compiler *c, uint32_t value, uint32_t to, int negative
     return spv_op3(&c->b, SpvOpSelect, to, value, yes, spv_const_null(&c->b, to));
 }
 
-/* vector types keep their shape: the scalar conversion's vector of the result's length. */
+/* vector casts keep their shape. */
 static void cast(Compiler *c, const DxInst *ins)
 {
     const DxValue *src = dx_value(&c->m, c->f, ins->ops[0]);
@@ -756,7 +751,7 @@ static void cast(Compiler *c, const DxInst *ins)
         Pointer p;
         if (pointer_of(c, ins->ops[0], &p))
             return;
-        /* others, as the i8 pointers lifetime markers take, fail where they are used. */
+        /* others, such as the i8 pointers lifetime markers take, fail where they are used. */
         if (same_size(c, to_dx->element, p.dx))
             set_pointer(c, ins->value, &p);
         return;
@@ -845,7 +840,7 @@ static void compare(Compiler *c, const DxInst *ins)
     default: dxil_fail(c, "an unknown comparison"); return;
     }
     if (boolean && op != SpvOpLogicalEqual && op != SpvOpLogicalNotEqual) {
-        /* orderings of i1, which llvm takes as unsigned: through integers. */
+        /* llvm orders i1 as unsigned, so compare through integers. */
         uint32_t u = c->t_u32;
         const DxType *at = &c->m.types[a_dx->type];
         if (at->kind == DT_VECTOR)
@@ -1020,7 +1015,6 @@ static void select_value(Compiler *c, const DxInst *ins)
     dxil_set_plain(c, ins->value, r);
 }
 
-/* the name of a function a call reaches. */
 static const char *callee_name(Compiler *c, const DxInst *ins)
 {
     const DxValue *v = dx_value(&c->m, c->f, ins->ops[0]);
@@ -1105,7 +1099,7 @@ void dxil_end_if(Compiler *c, uint32_t merge)
 
 static int orphan_block(const Cfg *cfg, uint32_t b) { return cfg->blocks[b].idom == DX_NONE; }
 
-/* the cfg block that defines a value for a use in block u. */
+/* the cfg block defining a value used in block u. */
 static uint32_t definition_block(Compiler *c, const uint32_t *phi_block, uint32_t inst, uint32_t u)
 {
     const CfgBlock *ub = &c->cfg->blocks[u];
@@ -1117,7 +1111,7 @@ static uint32_t definition_block(Compiler *c, const uint32_t *phi_block, uint32_
     return s + 1;
 }
 
-/* marks a value demoted when its definition does not dominate a use in block u. */
+/* demotes a value whose definition does not dominate its use in block u. */
 static void check_use(Compiler *c, const uint32_t *phi_block, uint32_t id, uint32_t u, int depth)
 {
     if (id >= CFG_SYNTH || depth > 8)
@@ -1127,7 +1121,7 @@ static void check_use(Compiler *c, const uint32_t *phi_block, uint32_t id, uint3
         return;
     const DxInst *ins = &c->f->insts[v->inst];
     if (ins->op == DI_CALL && is_handle_type(c, ins->type)) {
-        /* handles are lowered where used: their operands are what is used there. */
+        /* handles are lowered where used, so their operands count as used there. */
         for (uint32_t i = 1; i < ins->count; i++)
             check_use(c, phi_block, ins->ops[i], u, depth + 1);
         return;
@@ -1140,7 +1134,6 @@ static void check_use(Compiler *c, const uint32_t *phi_block, uint32_t id, uint3
         s->demoted = 1;
 }
 
-/* the operands of an instruction that are values. */
 static void check_instruction(Compiler *c, const uint32_t *phi_block, const DxInst *ins, uint32_t u)
 {
     switch (ins->op) {
@@ -1213,7 +1206,7 @@ static int find_demotions(Compiler *c)
     return c->error ? -1 : 0;
 }
 
-/* the variables of the function, at the start of its first block: allocas and demoted values. */
+/* allocas and demoted values, at the start of the first block. */
 static void make_variables(Compiler *c)
 {
     const DxFunction *f = c->f;
@@ -1246,7 +1239,6 @@ static void make_variables(Compiler *c)
     }
 }
 
-/* where a block's phis keep their operands. */
 typedef struct PhiTable {
     uint32_t *first;
     size_t *word;
@@ -1264,7 +1256,7 @@ static uint32_t phi_operand(Compiler *c, uint32_t value, uint32_t type)
     return dxil_value(c, value);
 }
 
-/* the operands a block's successors' phis take from it, read before its terminator. */
+/* the operands the successors' phis take from block b, read before its terminator. */
 static void resolve_phis(Compiler *c, PhiTable *t, uint32_t b)
 {
     const Cfg *cfg = c->cfg;
@@ -1469,7 +1461,7 @@ static int compile_function(Compiler *c, const DxFunction *f, uint32_t id)
             return -1;
     spv_function_end(&c->b);
 
-    /* the phis' operands, now that every block is written. */
+    /* phi operands, now that every block is written. */
     SpvSection *code = &c->b.sections[SECTION_FUNCTIONS];
     for (uint32_t i = 0; i < cfg->order_count && !c->b.failed; i++) {
         uint32_t b = cfg->order[i];
@@ -1494,10 +1486,7 @@ static int compile_function(Compiler *c, const DxFunction *f, uint32_t id)
 
 /* ------------------------------------------------------------------ the entry point */
 
-/*
- * the name a library exports a function by: dxc mangles names as msvc
- * does, "\01?name@@" and the signature, and direct3d exports the name.
- */
+/* dxc mangles library names as msvc does, "\01?name@@" plus the signature, and direct3d exports the bare name. */
 static size_t demangled(const char *name, const char **start)
 {
     if (name[0] == 1)
@@ -1533,7 +1522,7 @@ static const DxFunction *function_of(Compiler *c, const DxMetadata *md)
     return nullptr;
 }
 
-/* the properties of the entry point: flags and each stage's description. */
+/* entry point properties: flags and each stage's description. */
 static int read_properties(Compiler *c, const DxMetadata *list)
 {
     if (!list)
@@ -1633,7 +1622,7 @@ static int build(Compiler *c)
     const DxMetadata *entry = &c->m.metadata[entries->nodes[0]];
     const DxMetadata *resources = nullptr;
     if (c->kind == KIND_LIBRARY) {
-        /* a library's export, its resources those of the whole library. */
+        /* a library export uses the whole library's resources. */
         entry = nullptr;
         for (uint32_t i = 0; i < entries->count && !entry; i++) {
             const DxMetadata *md = entries->nodes[i] < c->m.metadata_count ? &c->m.metadata[entries->nodes[i]] : nullptr;
@@ -1800,7 +1789,7 @@ int dxil_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
     __builtin_memset(info, 0, sizeof(*info));
     uint32_t size;
     const uint8_t *part = dxbc_find_chunk(bytecode, length, DXBC_FOURCC('D', 'X', 'I', 'L'), &size);
-    /* the program header: version and kind, its size, then the bitcode's header. */
+    /* program header: version and kind, size, then the bitcode header. */
     if (!part || size < 24) {
         set_error(info, "no dxil part");
         return -1;

@@ -1,17 +1,13 @@
 /*
- * the names of host directories, kept to find the spelling of a name that differs from the one asked for only
- * in its case. Windows names ignore case and the host's do not, so every name the guest uses that is not there
- * as written means a look at its directory, and so does every name it makes: a browser that makes a file in a
- * directory of thousands for each response of its cache read the whole directory each time, 170 microseconds
- * for 400 names and growing with them.
+ * caches directory names for case-insensitive Windows path lookup. missing spellings and file creation
+ * otherwise require full directory scans: 170 microseconds for 400 names, increasing with directory size.
  *
- * On Linux an inotify watch on the directory keeps the names exact: the host's kernel queues the event of a
- * change before the call that made it returns, so reading what is queued before each look finds every change
- * made before it, the machine's own, other programs' and the guest's, and a directory that changes all the time
- * is as good as one that does not. Where there is no watch, on another host, on a file system that refuses one or with no
- * room for another, the names are used while the directory has the inode and the times it had when they were
- * read, were read when it had not changed for 100 milliseconds, and are read again if it changed while they
- * were being read: the times of the host's file system advance in steps of milliseconds.
+ * on Linux, drain inotify events before each lookup. the kernel queues a change before its modifying call
+ * returns, so this includes changes by the guest and other host programs.
+ *
+ * without a watch, reuse names only while inode and timestamps match, after the directory has been unchanged
+ * for 100 milliseconds. reread if it changes during listing, since host filesystem timestamps advance in
+ * millisecond steps.
  */
 #include "vmm.h"
 
@@ -36,8 +32,8 @@
 #endif
 
 #define DIR_NAMES_SLOTS 64
-#define DIR_NAMES_MAX_DIRECTORY 200000u /* names in one directory */
-#define DIR_NAMES_MAX_TOTAL 600000u     /* names in all */
+#define DIR_NAMES_MAX_DIRECTORY 200000u /* names in one directory. */
+#define DIR_NAMES_MAX_TOTAL 600000u     /* names in all. */
 #define DIR_NAMES_SETTLE_NS 100000000ll
 
 typedef struct DirName {
@@ -50,22 +46,22 @@ typedef struct DirNames {
     char *path;
     dev_t dev;
     ino_t ino;
-    struct timespec mtime, ctime; /* when there is no watch */
-    int watch;                    /* 0 when there is none, as inotify numbers its watches from 1 */
+    struct timespec mtime, ctime; /* when there is no watch. */
+    int watch;                    /* 0 when there is none, as inotify numbers its watches from 1. */
     DirName **table;
     uint32_t buckets, count;
-    uint64_t stamp; /* of the last use, the oldest slot is replaced */
+    uint64_t stamp; /* of the last use, the oldest slot is replaced. */
 } DirNames;
 
 static DirNames g_slots[DIR_NAMES_SLOTS];
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_clock;
-static uint32_t g_total; /* names in all the slots */
+static uint32_t g_total; /* names in all the slots. */
 #ifdef __linux__
-static int g_inotify = -2; /* -2 not made yet, -1 refused */
+static int g_inotify = -2; /* -2 not made yet, -1 refused. */
 #endif
 
-/* a utf-16 unit in upper case, as windows compares names: ascii, latin-1 and cyrillic. */
+/* uppercases UTF-16 units for Windows name comparisons: ASCII, Latin-1 and Cyrillic. */
 static uint16_t upcase(uint16_t c)
 {
     if ((c >= 'a' && c <= 'z') || (c >= 0xE0 && c <= 0xFE && c != 0xF7) || (c >= 0x430 && c <= 0x44F))
@@ -79,7 +75,7 @@ static uint16_t upcase(uint16_t c)
 
 bool mime_names_same(const char *a, const char *b)
 {
-    /* names of ascii are compared as they are: converting both to utf-16 for every entry of a directory scanned costs more. */
+    /* compare ASCII directly to avoid repeated UTF-16 conversion during scans. */
     const unsigned char *x = (const unsigned char *)a, *y = (const unsigned char *)b;
     for (;; x++, y++) {
         if (*x >= 0x80 || *y >= 0x80)
@@ -101,7 +97,7 @@ bool mime_names_same(const char *a, const char *b)
     return true;
 }
 
-/* a hash of the name that names equal but for case share. */
+/* case-insensitive name hash. */
 static uint32_t fold_hash(const char *name)
 {
     uint32_t h = 2166136261u;
@@ -122,7 +118,7 @@ static bool same_time(struct timespec a, struct timespec b)
     return a.tv_sec == b.tv_sec && a.tv_nsec == b.tv_nsec;
 }
 
-/* whether the directory was left alone for long enough to trust a listing taken of it. */
+/* requires a sufficiently old modification time before trusting an unwatched listing. */
 static bool directory_settled(const struct stat *st)
 {
     struct timespec now;
@@ -190,7 +186,7 @@ static void slot_remove(DirNames *d, const char *name)
 
 #endif
 
-/* the entry whose name is the component's but for case. */
+/* finds the directory entry matching the component without case. */
 static bool slot_find(const DirNames *d, const char *component, char *spelling)
 {
     if (!d->buckets)
@@ -205,7 +201,7 @@ static bool slot_find(const DirNames *d, const char *component, char *spelling)
     return false;
 }
 
-/* gives a slot back, and its watch when no other slot has the same one. */
+/* releases a slot and its watch unless another slot shares it. */
 static void slot_free(DirNames *d)
 {
 #ifdef __linux__
@@ -256,7 +252,7 @@ static void drain(void)
                 if (!d->path || d->watch != e->wd)
                     continue;
                 if (e->mask & (IN_IGNORED | IN_DELETE_SELF | IN_MOVE_SELF | IN_UNMOUNT)) {
-                    /* the directory is gone or moved: its names are no longer a path's, and the kernel ended the watch. */
+                    /* discard names and the ended watch when the directory is removed or moved. */
                     if (e->mask & IN_IGNORED)
                         d->watch = 0;
                     slot_free(d);
@@ -286,7 +282,7 @@ static DIR *open_directory(const char *path)
     return dir;
 }
 
-/* an empty slot to build a directory's names in: the directory's own, else a free one, else the least recently used. */
+/* reuse the directory slot, then a free slot, then the least recently used slot. */
 static DirNames *slot_for(const char *dir)
 {
     DirNames *pick = nullptr;
@@ -346,9 +342,11 @@ bool mime_dir_spelling(const char *dir, const char *component, char *spelling, b
         return found;
     }
 
-    /* not kept, or no longer the directory's: read it. the watch goes on before the listing is read, so that a change
-       made meanwhile is queued and applied over the listing, which a name present in both and a name in neither
-       leave as it is. the lock is held so that no one else applies those events to a slot that is not there yet. */
+    /*
+     * install the watch before reading an uncached directory, then apply queued changes over the listing.
+     * duplicate additions and removals are harmless. hold the lock so no other thread drains events before
+     * this slot exists.
+     */
     DirNames *d = slot_for(dir);
     d->path = strdup(dir);
     d->dev = st.st_dev;

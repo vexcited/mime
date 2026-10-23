@@ -1,14 +1,13 @@
 /*
- * com proxies and stubs: the objects that stand for an interface in the client's process, and for an object in the server's.
+ * com proxies and stubs: the objects that stand for an interface in the client process and for an object in the server.
  *
- * A proxy dll built from midl lists its interfaces in ProxyFileInfo tables. This file is the half of rpcrt4 that turns those
- * tables into proxies, stubs and the factory that makes them, and the half of the interpreter that talks to the channel a
- * proxy is connected to. The channel itself belongs to ole32, which marshals interface pointers for the engine as well.
+ * a midl proxy dll lists its interfaces in ProxyFileInfo tables. this file turns those tables into proxies, stubs and
+ * their factory, and talks to the channel a proxy is connected to. the channel belongs to ole32, which also marshals
+ * interface pointers for the engine.
  *
- * Own layouts, not the reference's: the interface pointer of a proxy is a pointer to the first field of a PROXY, so the
- * buffer is found from it by a cast. A table version 2 proxy vtable is generated with a placeholder in each method that
- * has no code of its own, and a copy of the table with thunks in the places of the placeholders is made when the first
- * proxy of the interface is.
+ * the layouts are mime's own: a proxy's interface pointer points to the first field of a PROXY, so a cast finds the
+ * proxy. a proxy vtable has a placeholder for each method without its own code, and the first proxy of an interface
+ * makes a copy of the table with thunks in their places.
  */
 #include "ndr_proc.h"
 #include <mime/win32/rpcproxy.h>
@@ -17,7 +16,6 @@
 #define MSHLFLAGS_NORMAL 0
 #define CO_E_OBJNOTCONNECTED ((HRESULT)0x800401FDL)
 
-/* the most methods a thunk exists for. */
 #define NDR_MAX_STUBLESS_METHODS 1024
 #define NDR_MAX_DELEGATED_METHODS 128
 #define NDR_THUNK_SIZE 16
@@ -25,16 +23,16 @@
 
 static HRESULT NdrStubErrorHandler(DWORD code);
 
-/* the first instruction of the thunk of a method, in thunks.S. */
+/* the per-method thunks, in thunks.S. */
 extern const unsigned char NdrpStublessThunks[];
 extern const unsigned char NdrpDelegateThunks[];
 
-/* ------------------------------------------------------------------ the layouts */
+/* ------------------------------------------------------------------ layouts */
 
 typedef struct PROXY {
-    /* the interface pointer of the proxy points here, to the vtable it uses. */
+    /* the proxy's interface pointer points here. */
     const void *Vtbl;
-    /* the interface pointer of the proxy of the base interface the thunks of delegated methods go to. */
+    /* the base interface's proxy, which delegated method thunks call. */
     void *DelegateInterface;
     const IRpcProxyBufferVtbl *lpVtbl;
     LONG Refs;
@@ -55,7 +53,7 @@ typedef struct STUB {
     IRpcStubBuffer *Delegate;
 } STUB;
 
-/* the head of a proxy vtable in the two table versions. */
+/* the proxy vtable head of table version 2. */
 typedef struct {
     const MIDL_STUBLESS_PROXY_INFO *Info;
     const IID *Iid;
@@ -73,7 +71,6 @@ static const void *const *proxy_vtbl_methods(const ProxyFileInfo *file, const CI
     return (const void *const *)((const uchar *)v + (file->TableVersion >= 2 ? sizeof(PROXY_HEAD2) : sizeof(void *)));
 }
 
-/* the entry of an interface in a list of proxy files. */
 typedef struct {
     const ProxyFileInfo *File;
     ULONG Index;
@@ -140,7 +137,7 @@ static const OLE32_FUNCTIONS *ole32(void)
     return &table;
 }
 
-/* the factory of the proxies and stubs of an interface that another dll provides, or null. */
+/* the proxy/stub factory another dll registers for iid, or null. */
 static IPSFactoryBuffer *factory_of(REFIID iid)
 {
     const OLE32_FUNCTIONS *o = ole32();
@@ -153,12 +150,11 @@ static IPSFactoryBuffer *factory_of(REFIID iid)
     return factory;
 }
 
-/* ------------------------------------------------------------------ the vtables of proxies */
+/* ------------------------------------------------------------------ proxy vtables */
 
 /*
- * The vtable a proxy of an interface uses: the one of the proxy file with thunks where it has placeholders. A placeholder of
- * -1 is a method that midl left to the interpreter, 0 after the three methods of IUnknown is one of a base interface that
- * has a proxy of its own.
+ * the proxy file's vtable with its placeholders replaced by thunks. -1 is a method midl left to the interpreter, 0 past
+ * the IUnknown methods is a base interface method that has its own proxy.
  */
 typedef struct VTBL_COPY {
     struct VTBL_COPY *Next;
@@ -209,7 +205,7 @@ static const void *vtbl_for(const PS_ENTRY *e)
     return copy;
 }
 
-/* ------------------------------------------------------------------ the proxy buffer */
+/* ------------------------------------------------------------------ proxy buffer */
 
 static HRESULT STDMETHODCALLTYPE proxy_query(IRpcProxyBuffer *This, REFIID riid, void **object)
 {
@@ -342,8 +338,8 @@ static HRESULT proxy_create(IPSFactoryBuffer *factory, const ProxyFileInfo **lis
         }
         p->DelegatedIid = e.Delegated;
         /*
-         * the delegate was referenced through the outer unknown, which the interface of this proxy is going to be. A factory
-         * may leave the interface to be asked for once the proxy is connected, which is when this one gets it.
+         * the delegate was referenced through the outer unknown, which this proxy's interface is going to be. a factory
+         * may leave the interface to be queried once the proxy is connected, which is now.
          */
         if (p->DelegateInterface)
             ((IUnknown *)p->DelegateInterface)->lpVtbl->Release((IUnknown *)p->DelegateInterface);
@@ -355,14 +351,14 @@ static HRESULT proxy_create(IPSFactoryBuffer *factory, const ProxyFileInfo **lis
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ calls through a proxy */
+/* ------------------------------------------------------------------ proxy calls */
 
 static IRpcChannelBuffer *channel_of(PMIDL_STUB_MESSAGE m)
 {
     return m->pRpcChannelBuffer;
 }
 
-/* the interface of the proxy a call is made on, kept in the message for the buffer calls. */
+/* the proxy's interface, kept in the message for the buffer calls. */
 #define MESSAGE_IID(m) (*(const IID **)&(m)->Reserved51_4)
 
 void NdrpProxyBegin(void *interface_pointer, PRPC_MESSAGE msg, PMIDL_STUB_MESSAGE m, PMIDL_STUB_DESC desc, ULONG proc_num)
@@ -406,7 +402,7 @@ void NdrpChannelSendReceive(PMIDL_STUB_MESSAGE m)
     ULONG status = 0;
     m->fBufferValid = 0;
     HRESULT hr = channel->lpVtbl->SendReceive(channel, msg, &status);
-    /* a channel that fails has seen the end of the buffer it was given. */
+    /* a failing channel has already consumed the buffer. */
     if (FAILED(hr) || status)
         msg->pvBuffer = nullptr;
     if (FAILED(hr))
@@ -456,7 +452,7 @@ RPCRTAPI void RPC_ENTRY NdrProxyFreeBuffer(void *This, MIDL_STUB_MESSAGE *m)
     NdrpChannelFreeBuffer(m);
 }
 
-/* ------------------------------------------------------------------ the stub buffer */
+/* ------------------------------------------------------------------ stub buffer */
 
 static const CInterfaceStubHeader *stub_header(const CStdStubBuffer *s)
 {
@@ -550,7 +546,7 @@ RPCRTAPI HRESULT WINAPI CStdStubBuffer_Invoke(IRpcStubBuffer *This, RPCOLEMESSAG
     DWORD phase = 0;
     HRESULT hr = S_OK;
     __try {
-        /* a table midl leaves out serves every method with the interpreter, which the server information describes. */
+        /* without a dispatch table, the interpreter serves every method from the server info. */
         if (header->pDispatchTable)
             header->pDispatchTable[message->iMethod](This, channel, (PRPC_MESSAGE)message, &phase);
         else
@@ -558,7 +554,7 @@ RPCRTAPI HRESULT WINAPI CStdStubBuffer_Invoke(IRpcStubBuffer *This, RPCOLEMESSAG
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         ULONG code = __exception_code();
-        /* a fault in the object itself is not the stub's: it is reported as the object's. */
+        /* a fault inside the object itself is reported as the object's, not the stub's. */
         hr = phase == 1 ? RPC_E_SERVERFAULT : NdrStubErrorHandler(code);
     }
     return hr;
@@ -632,7 +628,7 @@ RPCRTAPI void RPC_ENTRY NdrStubGetBuffer(IRpcStubBuffer *This, IRpcChannelBuffer
     m->fBufferValid = 1;
 }
 
-/* ------------------------------------------------------------------ the factory */
+/* ------------------------------------------------------------------ factory */
 
 static HRESULT STDMETHODCALLTYPE factory_query(IPSFactoryBuffer *This, REFIID riid, void **object)
 {
@@ -662,7 +658,7 @@ static HRESULT STDMETHODCALLTYPE factory_create_proxy(IPSFactoryBuffer *This, IU
     return proxy_create(This, ((CStdPSFactoryBuffer *)This)->pProxyFileList, outer, riid, proxy, object);
 }
 
-/* stub vtables with empty places are completed with the standard methods in a copy, made once for each. */
+/* stub vtables with empty entries get the standard methods in a copy, made once per vtable. */
 typedef struct STUB_COPY {
     struct STUB_COPY *Next;
     const CInterfaceStubVtbl *Original;
@@ -772,7 +768,7 @@ RPCRTAPI HRESULT RPC_ENTRY NdrDllGetClassObject(REFCLSID clsid, REFIID iid, void
     if (!object)
         return E_POINTER;
     *object = nullptr;
-    /* the class of the file, or an interface of its list, which proxy files register themselves under. */
+    /* proxy files register under the file's class or under any interface in their list. */
     PS_ENTRY e;
     if ((!proxy_clsid || !IsEqualGUID(clsid, proxy_clsid)) && !find_entry(proxy_file_list, clsid, &e))
         return CLASS_E_CLASSNOTAVAILABLE;
@@ -955,10 +951,9 @@ RPCRTAPI HRESULT RPC_ENTRY NdrDllUnregisterProxy(HMODULE module, const ProxyFile
 /* ------------------------------------------------------------------ stubless proxies */
 
 /*
- * A call of a method that midl left to the interpreter: the thunk of its index has put the arguments in a frame, and the
- * proxy info in the head of the vtable says which procedure it is. On x64 a float or double that arrived in one of the first
- * four registers is in fp, and replaces what the integer register held. On x86 the thunk takes the arguments off the stack
- * after the call, and needs to be told how many bytes they are.
+ * a call of a method midl left to the interpreter: the thunk has put the arguments in a frame, and the proxy info in the
+ * vtable head names the procedure. a float or double that arrived in one of the first NDR_FP_SLOTS registers is in fp,
+ * and replaces what the integer register held. on x86 the thunk pops the arguments after the call and needs their size.
  */
 #if defined(__aarch64__)
 #define NDR_FP_SLOTS 8
@@ -974,7 +969,7 @@ LONG_PTR NdrpStublessClient(ULONG method, uchar *args, const ULONG_PTR *fp, ULON
     PFORMAT_STRING format = info->ProcFormatString + info->FormatStringOffset[method];
     NDR_PROC p;
     NdrpParseProc(format, &p);
-    /* the frame of the procedure holds a slot for the return value, which is not on the stack of the caller. */
+    /* the return value slot is in the procedure's frame, not on the caller's stack. */
     if (pop)
         *pop = p.StackSize - ((p.Oi2Flags & OIF_HAS_RETURN) ? sizeof(void *) : 0);
     if (fp && p.FloatMask) {
@@ -1118,7 +1113,7 @@ static MEMSTREAM *memstream_new(uchar *data, ULONG size)
     return s;
 }
 
-/* the interface of a pointer: a constant given with the pointer, or what a parameter holds. */
+/* a constant given with the pointer, or what a parameter holds. */
 static void interface_iid(NDRC *c, PFORMAT_STRING f, IID *iid)
 {
     PMIDL_STUB_MESSAGE m = c->M;

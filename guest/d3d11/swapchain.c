@@ -1,18 +1,13 @@
 /*
- * swap chains. the back buffer is a texture of the device's like any
- * other; Present blits it to an image of a vulkan swap chain on the
- * window, scaled to its client area, then presents that. a sync interval
- * of 0 presents immediately, others in fifo; changing between them makes
- * the vulkan swap chain anew. with a flip model the program still sees
- * one back buffer, as direct3d 11 shows it.
+ * swap chains. the back buffer is an ordinary device texture. Present blits it, scaled to the client area, to an
+ * image of a vulkan swap chain on the window and presents that. sync interval 0 presents immediately, others use
+ * fifo, and switching between them recreates the vulkan swap chain. with a flip model the program still sees one
+ * back buffer, as in direct3d 11.
  *
- * swap chains made for composition have no window. Present copies the back
- * buffer to a texture of its own, the frame dcomp.dll draws into the windows
- * it composes, and tells it a new one came. The sync interval paces the
- * caller to the display's blanks as the compositor would: a frame shows at
- * the first blank after it was presented that the one before has had its
- * intervals, and Present waits when more frames than the latency allows are
- * still to show.
+ * composition swap chains have no window. Present copies the back buffer to a texture of its own, which dcomp.dll
+ * draws into the windows it composes, and notifies it. the sync interval paces the caller to display blanks like
+ * the compositor would: a frame shows at the first blank after it was presented once the previous frame has had
+ * its intervals, and Present waits when more frames than the latency allows are still to show.
  */
 #include "d3d11_private.h"
 #include <mime/vblank.h>
@@ -34,14 +29,14 @@ typedef struct D3dSwapChain {
     DXGI_SWAP_CHAIN_DESC1 desc;
     DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen;
     BOOL fullscreen_state;
-    /* the output a fullscreen swap chain owns, which its gamma controls. */
+    /* the output a fullscreen swap chain owns and controls the gamma of. */
     IDXGIOutput *owned;
-    /* the window as it was before fullscreen made it cover the output. */
+    /* window placement saved before going fullscreen. */
     BOOL windowed_saved;
     RECT windowed_rect;
     LONG windowed_style, windowed_ex_style;
     D3dResource *back;
-    /* the single sampled copy a multisampled back buffer resolves to before the blit. */
+    /* a multisampled back buffer resolves here before the blit. */
     D3dResource *resolved;
     MimePrivateData data;
 
@@ -65,7 +60,7 @@ typedef struct D3dSwapChain {
     DXGI_RGBA background;
     UINT source_width, source_height;
 
-    /* composition: the texture of the frame last presented and who wants to know about the next. */
+    /* composition: the last presented frame and the listeners for the next one. */
     BOOL composition;
     HANDLE surface_handle;
     CRITICAL_SECTION frame_lock;
@@ -76,7 +71,7 @@ typedef struct D3dSwapChain {
         MIME_COMPOSITION_LISTENER function;
         void *context;
     } listeners[MAX_LISTENERS];
-    /* when frames show, in blanks: the id of each of the last presents and the blank it shows at. */
+    /* id of each recent present and the blank it shows at. */
     struct {
         UINT id;
         UINT64 blank;
@@ -109,7 +104,7 @@ static void destroy_swapchain(D3dSwapChain *sc)
     sc->image_count = 0;
 }
 
-/* the surface format that keeps the back buffer's bytes as they are, srgb or not. */
+/* picks a surface format that keeps the back buffer's bytes unchanged, srgb or not. */
 static VkFormat choose_format(D3dSwapChain *sc)
 {
     D3dVk *vk = &sc->device->vk;
@@ -254,7 +249,7 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
     VkResult r = vk->vkAcquireNextImageKHR(vk->device, sc->swapchain, UINT64_MAX, sc->acquire[slot], VK_NULL_HANDLE,
                                            &index);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
-        /* the window changed size: a swap chain at the new size. */
+        /* the window was resized. */
         if (!create_swapchain(sc, mode)) {
             D3dContextFlush(c);
             return S_OK;
@@ -340,7 +335,7 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
     vk->vkQueuePresentKHR(device->queue, &info);
     ReleaseSRWLockExclusive(device->queue_lock);
 
-    /* no more frames ahead of the gpu than the latency allows. */
+    /* keep the gpu at most the latency's worth of frames behind. */
     UINT latency = sc->desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT ? sc->max_latency
                                                                                         : device->max_frame_latency;
     sc->frame_serials[sc->present_count % 16] = serial;
@@ -355,7 +350,7 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
 
 /* ------------------------------------------------------------------ composition */
 
-/* composition reads the bytes of a frame as they are: an srgb format is stored typeless and read as its plain kind. */
+/* composition reads frame bytes as they are: srgb formats are stored typeless and viewed as plain unorm. */
 static DXGI_FORMAT view_format(DXGI_FORMAT format)
 {
     switch (format) {
@@ -404,7 +399,7 @@ static HRESULT create_front(D3dSwapChain *sc)
     return S_OK;
 }
 
-/* the next present's blank: after the one before has had its intervals, never before the coming one. */
+/* the blank for the next present: once the previous frame had its intervals, and never before the coming blank. */
 static UINT64 schedule(D3dSwapChain *sc, const MIME_VBLANK *vblank, UINT interval, UINT64 now)
 {
     UINT64 slot = MimeVblankIndex(vblank, now) + 1;
@@ -416,7 +411,7 @@ static UINT64 schedule(D3dSwapChain *sc, const MIME_VBLANK *vblank, UINT interva
     return slot;
 }
 
-/* Present for a composition swap chain: publish the back buffer as the frame, keeping to the display's pace. */
+/* publishes the back buffer as the frame, paced to the display. */
 static HRESULT present_composition(D3dSwapChain *sc, UINT interval, UINT flags, const DXGI_PRESENT_PARAMETERS *params)
 {
     D3dDevice *device = sc->device;
@@ -430,7 +425,7 @@ static HRESULT present_composition(D3dSwapChain *sc, UINT interval, UINT flags, 
     if ((flags & DXGI_PRESENT_ALLOW_TEARING) && (interval || !(sc->desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)))
         return DXGI_ERROR_INVALID_CALL;
     if (params) {
-        /* dirty rectangles lie inside the buffer and are not empty; a scroll needs them, and a rectangle to scroll. */
+        /* dirty rects must be non-empty and inside the buffer. a scroll needs dirty rects and a scroll rect. */
         RECT buffer = {0, 0, (LONG)sc->desc.Width, (LONG)sc->desc.Height};
         if (params->DirtyRectsCount && !params->pDirtyRects)
             return DXGI_ERROR_INVALID_CALL;
@@ -457,7 +452,7 @@ static HRESULT present_composition(D3dSwapChain *sc, UINT interval, UINT flags, 
     if (flags & DXGI_PRESENT_TEST)
         return S_OK;
 
-    /* no more frames ahead of the display than the latency allows. */
+    /* keep the display at most the latency's worth of frames behind. */
     MIME_VBLANK vblank;
     MimeVblankInfo(&vblank);
     LARGE_INTEGER counter;
@@ -478,7 +473,7 @@ static HRESULT present_composition(D3dSwapChain *sc, UINT interval, UINT flags, 
             break;
         if (flags & DXGI_PRESENT_DO_NOT_WAIT)
             return DXGI_ERROR_WAS_STILL_DRAWING;
-        /* the oldest has to show to make room: the wait is for the blank after the oldest of those ahead. */
+        /* wait for the oldest pending frame to show to make room. */
         UINT64 until = MimeVblankTime(&vblank, oldest);
         if (until > now)
             Sleep((DWORD)((until - now) * 1000 / vblank.frequency) + 1);
@@ -508,7 +503,7 @@ static HRESULT present_composition(D3dSwapChain *sc, UINT interval, UINT flags, 
     return S_OK;
 }
 
-/* the listeners hear of a new frame once the device's lock is let go, so they may draw with the device. */
+/* called after the device lock is released, so listeners may draw with the device. */
 static void notify_listeners(D3dSwapChain *sc)
 {
     struct {
@@ -625,7 +620,7 @@ static HRESULT present_locked(D3dSwapChain *sc, UINT interval, UINT flags, const
     EnterCriticalSection(&sc->device->immediate->lock);
     HRESULT hr = sc->composition ? present_composition(sc, interval, flags, params) : present(sc, interval, flags);
     LeaveCriticalSection(&sc->device->immediate->lock);
-    /* a composition frame is on the display's side once the device is free again. */
+    /* notify only once the device is free again. */
     if (SUCCEEDED(hr) && sc->composition && !(flags & DXGI_PRESENT_TEST))
         notify_listeners(sc);
     return hr;
@@ -650,9 +645,8 @@ static HRESULT STDMETHODCALLTYPE sc_get_buffer(IDXGISwapChain4 *iface, UINT inde
 }
 
 /*
- * fullscreen as dxgi.dll makes it, the display mode left as it is: the
- * window loses its frame and edges and covers the output, on top of the
- * others; leaving gives it back its styles, place and size.
+ * fullscreen like dxgi does it, without a mode change: the window loses its frame and edges and covers the output,
+ * topmost. leaving restores its styles, position and size.
  */
 static BOOL fullscreen_style(LONG style, LONG ex_style)
 {
@@ -679,7 +673,7 @@ static void enter_fullscreen(D3dSwapChain *sc, IDXGIOutput *output)
     SetWindowPos(sc->window, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
 }
 
-/* an owned output knows when its swap chain lets it go, and shows gdi's gamma again. */
+/* an output released by its swap chain shows gdi's gamma again. */
 static void own(IDXGIOutput *output, BOOL owned)
 {
     IMimeDXGIOutput *mime;
@@ -726,7 +720,6 @@ static HRESULT STDMETHODCALLTYPE sc_set_fullscreen_state(IDXGISwapChain4 *iface,
             return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
         disown(sc);
         enter_fullscreen(sc, output);
-        /* the output is the swap chain's until it leaves fullscreen. */
         own(output, TRUE);
         sc->owned = output;
     } else if (sc->fullscreen_state) {
@@ -797,7 +790,6 @@ static HRESULT STDMETHODCALLTYPE sc_resize_buffers(IDXGISwapChain4 *iface, UINT 
     /* no window to take the size from. */
     if (sc->composition && (!width || !height))
         return DXGI_ERROR_INVALID_CALL;
-    /* the program must have let go of the back buffer. */
     if (sc->back && sc->back->child.refs > 1)
         return DXGI_ERROR_INVALID_CALL;
     D3dContextFlush(sc->device->immediate);
@@ -822,7 +814,6 @@ static HRESULT STDMETHODCALLTYPE sc_resize_buffers(IDXGISwapChain4 *iface, UINT 
         sc->resolved = nullptr;
     }
     sc->source_width = sc->source_height = 0;
-    /* the surface format follows the back buffer's. */
     if (sc->swapchain && choose_format(sc) != sc->format)
         create_swapchain(sc, sc->mode);
     return S_OK;
@@ -843,8 +834,8 @@ static HRESULT STDMETHODCALLTYPE sc_resize_target(IDXGISwapChain4 *iface, const 
 }
 
 /*
- * the statistics of the frames shown so far: the last present on the display, the blank it showed at and the
- * latest blank. Until a frame showed they are disjoint, as dxgi.dll's are.
+ * the last present that reached the display, the blank it showed at and the latest blank. until a frame has shown
+ * the statistics are disjoint, like dxgi's.
  */
 static HRESULT frame_statistics(D3dSwapChain *sc, UINT *present_count, UINT *present_refresh, UINT *sync_refresh,
                                 LARGE_INTEGER *sync_time)
@@ -1011,7 +1002,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_maximum_frame_latency(IDXGISwapChain4 *i
     return S_OK;
 }
 
-/* a handle of its own for each caller, who closes it. */
+/* each caller gets its own handle to close. */
 static HANDLE STDMETHODCALLTYPE sc_get_frame_latency_waitable_object(IDXGISwapChain4 *iface)
 {
     D3dSwapChain *sc = impl(iface);
@@ -1022,7 +1013,7 @@ static HANDLE STDMETHODCALLTYPE sc_get_frame_latency_waitable_object(IDXGISwapCh
     return handle;
 }
 
-/* composition scales and moves a swap chain's frame by a matrix without skew or rotation. */
+/* only scale and translation, no skew or rotation. */
 static HRESULT STDMETHODCALLTYPE sc_set_matrix_transform(IDXGISwapChain4 *iface, const DXGI_MATRIX_3X2_F *matrix)
 {
     D3dSwapChain *sc = impl(iface);
@@ -1132,7 +1123,7 @@ static const IDXGISwapChain4Vtbl sc_vtbl = {
     sc_set_hdr_meta_data,
 };
 
-/* ------------------------------------------------------------------ the frames composition reads */
+/* ------------------------------------------------------------------ composition source */
 
 static HRESULT STDMETHODCALLTYPE src_query(IMimeDXGICompositionSource *iface, REFIID riid, void **out)
 {
@@ -1149,7 +1140,7 @@ static ULONG STDMETHODCALLTYPE src_release(IMimeDXGICompositionSource *iface)
     return sc_release(&source_impl(iface)->iface);
 }
 
-/* S_FALSE until the first Present: there is nothing to show yet. */
+/* S_FALSE until the first Present. */
 static HRESULT STDMETHODCALLTYPE src_get_frame(IMimeDXGICompositionSource *iface, MIME_COMPOSITION_FRAME *frame)
 {
     D3dSwapChain *sc = source_impl(iface);
@@ -1245,7 +1236,7 @@ static HRESULT STDMETHODCALLTYPE media_set_present_duration(IDXGISwapChainMedia 
     return S_OK;
 }
 
-/* the display shows frames at one rate, in units of 100 nanoseconds: the durations it supports are its period. */
+/* the display has one rate, so the only supported duration is its period, in 100 ns units. */
 static HRESULT STDMETHODCALLTYPE media_check_present_duration_support(IDXGISwapChainMedia *iface, UINT desired,
                                                                       UINT *smaller, UINT *larger)
 {
@@ -1325,7 +1316,7 @@ HRESULT D3dCreateSwapChain(D3dDevice *device, IDXGIFactory *factory, HWND window
     return S_OK;
 }
 
-/* swap chains made for composition. The checks are dxgi.dll's for a flip model chain without a window. */
+/* the checks are dxgi's for a windowless flip model chain. */
 HRESULT D3dCreateCompositionSwapChain(D3dDevice *device, IDXGIFactory *factory, HANDLE surface,
                                       const DXGI_SWAP_CHAIN_DESC1 *desc, IDXGISwapChain1 **out)
 {
@@ -1359,7 +1350,7 @@ HRESULT D3dCreateCompositionSwapChain(D3dDevice *device, IDXGIFactory *factory, 
                  DXGI_SWAP_CHAIN_FLAG_RESTRICT_SHARED_RESOURCE_DRIVER |
                  DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT | DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING |
                  DXGI_SWAP_CHAIN_FLAG_RESTRICTED_TO_ALL_HOLOGRAPHIC_DISPLAYS | 0x2000;
-    /* a chain made for a surface handle is a video chain, which says so in flags the other chains do not take. */
+    /* a surface handle makes a video chain, which also accepts the video flags. */
     if (surface)
         flags |= DXGI_SWAP_CHAIN_FLAG_DISPLAY_ONLY | DXGI_SWAP_CHAIN_FLAG_FULLSCREEN_VIDEO |
                  DXGI_SWAP_CHAIN_FLAG_YUV_VIDEO | DXGI_SWAP_CHAIN_FLAG_HW_PROTECTED;
@@ -1390,7 +1381,6 @@ HRESULT D3dCreateCompositionSwapChain(D3dDevice *device, IDXGIFactory *factory, 
     }
     if (desc->Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
         sc->latency = CreateSemaphoreW(nullptr, sc->max_latency, 16, nullptr);
-    /* the swap chain keeps the surface the program named with a handle of its own. */
     if (surface && !DuplicateHandle(GetCurrentProcess(), surface, GetCurrentProcess(), &sc->surface_handle, 0, FALSE,
                                     DUPLICATE_SAME_ACCESS)) {
         D3dResourceRelease(sc->back);

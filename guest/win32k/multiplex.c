@@ -190,7 +190,7 @@ BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)
     return TRUE;
 }
 
-/* the queues stay separate: attaching only validates the threads, which is enough for focus tricks. */
+/* attaching validates threads but leaves their queues separate. */
 BOOL NTAPI NtUserAttachThreadInput(DWORD attach, DWORD to, BOOL do_attach)
 {
     UserEnter();

@@ -1,7 +1,6 @@
 /*
- * the windows runtime interfaces of screen capture: Windows.Graphics.Capture, the Direct3D11 wrappers it takes and
- * hands out, and the interop interfaces programs ask for by identifier. every method list is a macro, so the
- * implementations and the programs that call them share the layouts.
+ * windows runtime screen capture: Windows.Graphics.Capture, the Direct3D11 wrappers it uses and the interop
+ * interfaces. method lists are macros so implementations and callers share the layouts.
  */
 #ifndef MIME_WIN32_WGC_H
 #define MIME_WIN32_WGC_H
@@ -19,7 +18,7 @@ typedef struct SizeInt32 {
 } SizeInt32;
 
 typedef struct TimeSpan {
-    INT64 Duration; /* 100 nanosecond units */
+    INT64 Duration; /* 100 nanosecond units. */
 } TimeSpan;
 
 typedef struct EventRegistrationToken {
@@ -40,8 +39,6 @@ typedef struct Direct3DSurfaceDescription {
     Direct3DMultisampleDescription MultisampleDescription;
 } Direct3DSurfaceDescription;
 
-/* ------------------------------------------------------------------ foundation and Direct3D11 */
-
 typedef struct IClosable IClosable;
 #define IClosable_METHODS(T)                                                                                           \
     MIME_INSPECTABLE_METHODS(T)                                                                                        \
@@ -60,14 +57,12 @@ typedef struct IDirect3DSurface IDirect3DSurface;
     HRESULT(STDMETHODCALLTYPE *get_Description)(T * This, Direct3DSurfaceDescription * description);
 MIME_COM_INTERFACE(IDirect3DSurface)
 
-/* not a runtime interface: the way into the Direct3D object behind a wrapper. */
+/* not a runtime interface: reaches the Direct3D object behind a wrapper. */
 typedef struct IDirect3DDxgiInterfaceAccess IDirect3DDxgiInterfaceAccess;
 #define IDirect3DDxgiInterfaceAccess_METHODS(T)                                                                        \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *GetInterface)(T * This, REFIID riid, void **object);
 MIME_COM_INTERFACE(IDirect3DDxgiInterfaceAccess)
-
-/* ------------------------------------------------------------------ Windows.Graphics.Capture */
 
 typedef struct ITypedEventHandler ITypedEventHandler;
 #define ITypedEventHandler_METHODS(T)                                                                                  \
@@ -183,7 +178,7 @@ MIME_DEFINE_GUID(IID_IDirect3D11CaptureFramePoolStatics, 0x7784056A, 0x67AA, 0x4
                  0xCA, 0x21);
 MIME_DEFINE_GUID(IID_IDirect3D11CaptureFramePoolStatics2, 0x589B103F, 0x6BBC, 0x5DF5, 0xA9, 0x91, 0x02, 0xE2, 0x8B,
                  0x3B, 0x66, 0xD5);
-/* the delegates of the frame pool's FrameArrived and the item's Closed. */
+/* delegates for the frame pool's FrameArrived and the item's Closed. */
 MIME_DEFINE_GUID(IID_FramePoolHandler, 0x51A947F7, 0x79CF, 0x5A3E, 0xA3, 0xA5, 0x12, 0x89, 0xCF, 0xA6, 0xDF, 0xE8);
 MIME_DEFINE_GUID(IID_ItemClosedHandler, 0xE9C610C0, 0xA68C, 0x5BD9, 0x80, 0x21, 0x85, 0x89, 0x34, 0x6E, 0xEE, 0xE2);
 

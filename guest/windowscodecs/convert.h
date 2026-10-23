@@ -1,6 +1,4 @@
-/*
- * the pixel conversion core and the palette indexer behind IWICFormatConverter.
- */
+/* pixel conversion and palette indexing for IWICFormatConverter. */
 #ifndef WIC_CONVERT_H
 #define WIC_CONVERT_H
 
@@ -10,12 +8,12 @@ typedef struct WicIndexer WicIndexer;
 WicIndexer *WicIndexerNew(const WICColor *palette, UINT count, WICBitmapDitherType dither, double threshold_percent,
                           UINT width);
 void WicIndexerFree(WicIndexer *indexer);
-/* converts a row of straight BGRA to indices of bits each, the row y of the image. */
+/* convert image row y from straight BGRA to packed indices of bits each. */
 void WicIndexerRow(WicIndexer *indexer, const BYTE *bgra, BYTE *dst, UINT x0, UINT count, UINT bits, UINT col, UINT y);
 
 /*
- * a color channel of a pixel that was multiplied by its alpha, made straight again. Alpha 255 leaves it, otherwise it is
- * scaled by 255 over alpha in 16.16 and held to 255. An alpha of 0 has nothing to scale.
+ * undo premultiplication using 16.16 scaling by 255 / alpha, capped at 255. alpha 255 leaves the channel unchanged;
+ * alpha 0 cannot be scaled.
  */
 static inline BYTE WicStraightChannel(BYTE channel, BYTE alpha)
 {

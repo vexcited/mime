@@ -1,6 +1,6 @@
 /*
- * the structures printers, drivers, ports, monitors and print processors are described with, built into the
- * buffer of the caller, see pack.c. the same builders answer GetPrinter and EnumPrinters, in ANSI or wide.
+ * builds printer, driver, port, monitor and print processor descriptions in caller buffers using pack.c. GetPrinter
+ * and EnumPrinters share these builders for ANSI and Unicode results.
  */
 #include "winspool_private.h"
 #include "info.h"
@@ -12,7 +12,6 @@ PCWSTR InfoProvider(void)
     return g_provider;
 }
 
-/* the directory of the drivers of the native environment. */
 static void driver_directory(WCHAR *path)
 {
     UINT n = GetSystemDirectoryW(path, MAX_PATH);
@@ -167,7 +166,6 @@ static void build_printer(SpoolPack *p, int index, DWORD level, void **result)
     }
 }
 
-/* the size of one printer's description at a level. */
 static SIZE_T printer_size(int index, DWORD level, BOOL ansi)
 {
     SpoolPack p;
@@ -191,7 +189,7 @@ BOOL InfoGetPrinter(int index, DWORD level, LPBYTE buffer, DWORD size, LPDWORD n
     return TRUE;
 }
 
-/* the structure of the list is an array, and then the strings. pointers are written as built. */
+/* the structure array comes first, then strings; pointers are written as each entry is built. */
 BOOL InfoEnumPrinters(const int *indexes, int count, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                       LPDWORD returned, BOOL ansi)
 {
@@ -216,7 +214,7 @@ BOOL InfoEnumPrinters(const int *indexes, int count, DWORD level, LPBYTE buffer,
     return TRUE;
 }
 
-/* the print provider the local printers are listed under: one container. */
+/* local printers appear under one print provider container. */
 static void build_container(SpoolPack *p, void **result)
 {
     PRINTER_INFO_1W *i = SpoolPackStruct(p, sizeof(*i));

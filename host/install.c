@@ -1,7 +1,6 @@
 /*
- * prepares the C: drive before a boot. the system files themselves are
- * never written to it: the machine maps them from the mime binary, see
- * rom.h. this creates the user's profile, as windows does at first logon.
+ * creates the C: drive profile before boot. system files remain embedded in Mime and mapped through rom.h; they are
+ * never written to the drive.
  */
 #include "identity.h"
 #include "mime_cli.h"
@@ -62,9 +61,8 @@ static bool create_profile(const MimePaths *paths)
 }
 
 /*
- * the folder of the name files, which every installation has: programs read the hosts file for the names it gives
- * and some watch its folder for changes, as a browser does to keep its resolver's configuration current, and one that
- * cannot find the folder has no resolver of its own. the file made is empty of names, as the one of a new Windows is.
+ * creates the hosts-file directory so programs can read or watch it. a missing directory can prevent browsers from
+ * initializing their resolvers. the new file contains no name entries, like a fresh Windows installation.
  */
 static void create_name_files(const MimePaths *paths)
 {
@@ -87,9 +85,8 @@ static void create_name_files(const MimePaths *paths)
 }
 
 /*
- * the folders of the shared profile and the start menu of every user, which an installation has: a program that makes
- * a shortcut asks for the folders of the machine as well as the user's, and one that cannot find them gives the
- * shortcut up.
+ * creates shared profile and Start Menu folders. shortcut creation may fail if either shared or per-user folders are
+ * missing.
  */
 static void create_shared_folders(const MimePaths *paths)
 {
@@ -115,7 +112,7 @@ bool mime_prepare_drive(const MimePaths *paths)
     snprintf(dir, sizeof(dir), "%s/Windows/SysWOW64", paths->drive_c);
     if (!mime_mkdir_p(dir, 0755))
         return false;
-    /* copies written by older versions are shadowed by the rom, remove them. */
+    /* copies written by older versions are shadowed by the ROM, remove them. */
     const MimeRomHeader *h = mime_rom_header();
     for (uint32_t i = 0; i < h->count; i++) {
         char path[MIME_PATH_MAX];

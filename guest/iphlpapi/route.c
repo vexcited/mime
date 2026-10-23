@@ -1,8 +1,7 @@
 /*
- * the routing table and route selection. the routes are those the stack
- * makes for the adapters' addresses, the loopback's, and the host's routes
- * through a gateway; a destination takes the longest matching prefix, then
- * the lowest route and interface metric.
+ * routing table and route selection. routes are the ones the stack makes for the adapters' addresses and the
+ * loopback, plus the host's gateway routes. a destination takes the longest matching prefix, then the lowest route
+ * and interface metric.
  */
 #include "private.h"
 
@@ -35,7 +34,7 @@ static int common_prefix(const BYTE *a, const BYTE *b, int length)
     return bits;
 }
 
-/* windows' source selection, in short: the destination itself, then the same scope, not deprecated, temporary
+/* a short version of windows' source selection: the destination itself, then same scope, not deprecated, temporary
    for ipv6, and the longest common prefix. */
 static const IPH_ADDRESS *pick_source(const IPH_SNAPSHOT *s, const IPH_ADAPTER *a, ADDRESS_FAMILY family,
                                       const BYTE *destination)
@@ -79,7 +78,7 @@ DWORD IphBestRoute(const IPH_SNAPSHOT *s, const NET_LUID *luid, ULONG index, con
         if (!(only = IphAdapterByIndex(s, index)))
             return ERROR_FILE_NOT_FOUND;
     }
-    /* a link scope destination with a zone goes out of that zone's interface. */
+    /* a link scope destination with a zone goes out that zone's interface. */
     ULONG zone = family == AF_INET6 && IphAddressScope(family, bytes) <= 2 ? destination->Ipv6.sin6_scope_id : 0;
     const IPH_ROUTE *best = nullptr;
     ULONG best_metric = 0;
@@ -142,7 +141,7 @@ void IphRouteRow(const IPH_SNAPSHOT *s, const IPH_ROUTE *r, MIB_IPFORWARD_ROW2 *
     row->Origin = r->origin;
 }
 
-/* ------------------------------------------------------------------ the tables */
+/* ------------------------------------------------------------------ tables */
 
 DWORD NETIOAPI_API_ GetIpForwardTable2(ADDRESS_FAMILY family, PMIB_IPFORWARD_TABLE2 *table)
 {
@@ -163,7 +162,7 @@ DWORD NETIOAPI_API_ GetIpForwardTable2(ADDRESS_FAMILY family, PMIB_IPFORWARD_TAB
     return t ? NO_ERROR : ERROR_NOT_ENOUGH_MEMORY;
 }
 
-/* the first preferred ipv4 address of an adapter, which the legacy table shows as an on link route's next hop. */
+/* an adapter's first preferred ipv4 address, which the legacy table shows as an on link route's next hop. */
 static const IPH_ADDRESS *local_address(const IPH_SNAPSHOT *s, const IPH_ADAPTER *a)
 {
     for (ULONG i = 0; a && i < a->address_count; i++) {
@@ -317,7 +316,7 @@ DWORD WINAPI GetBestInterfaceEx(struct sockaddr *destination, PDWORD index)
         return ERROR_INVALID_PARAMETER;
     SOCKADDR_INET target = {};
     memcpy(&target, destination, destination->sa_family == AF_INET ? sizeof(SOCKADDR_IN) : sizeof(SOCKADDR_IN6));
-    /* a scope id of the interface level names the interface itself. */
+    /* an interface level scope id names the interface itself. */
     if (target.si_family == AF_INET6 && (target.Ipv6.sin6_scope_id & 0xF0000000) == 0x10000000) {
         *index = target.Ipv6.sin6_scope_id & 0x0FFFFFFF;
         return NO_ERROR;

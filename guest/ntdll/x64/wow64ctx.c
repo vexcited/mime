@@ -1,7 +1,6 @@
 /*
- * the 32-bit context of a wow64 thread, seen from 64-bit code: the
- * processor's registers while it runs 32-bit code, else the cpu area its
- * teb points at.
+ * a wow64 thread's 32-bit context seen from 64-bit code: the live registers
+ * while it runs 32-bit code, else the cpu area its teb points at.
  */
 #include "../ntdll_private.h"
 
@@ -56,7 +55,7 @@ static NTSTATUS wow64_context(HANDLE thread, I386_CONTEXT *context, BOOLEAN sett
     native.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
     status = NtGetContextThread(thread, &native);
     if (NT_SUCCESS(status) && native.SegCs == CODE32) {
-        /* the thread stopped in 32-bit code: its registers are the processor's. */
+        /* stopped in 32-bit code, so the processor registers are its own. */
         ULONG *regs[] = {&context->Eax, &context->Ebx, &context->Ecx, &context->Edx, &context->Esi,
                          &context->Edi, &context->Ebp, &context->Esp, &context->Eip};
         ULONG64 *natives[] = {&native.Rax, &native.Rbx, &native.Rcx, &native.Rdx, &native.Rsi,

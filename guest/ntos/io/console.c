@@ -1,18 +1,14 @@
 /*
- * the consoles of the console driver, \Device\ConDrv, see condev.c for the
- * device programs open. a console has an input buffer of records, a
- * terminal with its screen buffers, see conscreen.c, and a backend that carries
- * the terminal's bytes: the terminal of a host run, a pseudo console, or
- * nothing. a console program is attached to the console it is created in; a
- * gui program is not, but may attach with AttachConsole or AllocConsole.
+ * the consoles behind \Device\ConDrv. a console has an input buffer of records, a terminal with its screen buffers,
+ * and a backend carrying the terminal's bytes: a host run's terminal, a pseudo console, or nothing. a console
+ * program is attached to the console it is created in. a gui program is not, but may attach with AttachConsole or
+ * AllocConsole.
  *
- * input the host sends waits here until a process reads it, writes go to
- * the screen buffers and from there to the terminal, and a ctrl event
- * starts the ctrl routine kernelbase registered on a new thread of each
- * attached process, as csrss does on windows.
+ * host input waits here until a process reads it, writes go to the screen buffers and on to the terminal, and a ctrl
+ * event runs the ctrl routine kernelbase registered on a new thread of each attached process, as csrss does on
+ * windows.
  *
- * when the terminal goes away the processes get CTRL_CLOSE_EVENT and five
- * seconds to exit before they are terminated.
+ * when the terminal goes away the processes get CTRL_CLOSE_EVENT and five seconds to exit before they are terminated.
  */
 #include "console_p.h"
 
@@ -69,7 +65,7 @@ void ConRelease(MIME_CONSOLE *c)
         destroy(c);
 }
 
-/* the console of a process with a reference, or NULL. */
+/* the process's console, referenced, or NULL. */
 MIME_CONSOLE *ConProcessConsole(PEPROCESS p)
 {
     ExAcquireFastMutex(&g_con_lock);
@@ -80,7 +76,7 @@ MIME_CONSOLE *ConProcessConsole(PEPROCESS p)
     return c;
 }
 
-/* the console of a host run with a reference, or NULL. called with the lock held. */
+/* the host run's console, referenced, or NULL. called with the lock held. */
 static MIME_CONSOLE *find_run(ULONG64 request)
 {
     for (PLIST_ENTRY e = g_consoles.Flink; e != &g_consoles; e = e->Flink) {
@@ -93,7 +89,7 @@ static MIME_CONSOLE *find_run(ULONG64 request)
     return nullptr;
 }
 
-/* the size of a new console: columns | rows << 16, or the usual window of a console. */
+/* size is columns | rows << 16, else the usual console window size. */
 MIME_CONSOLE *ConCreateConsole(CON_BACKEND backend, ULONG64 request, ULONG tty_flags, ULONG size)
 {
     MIME_CONSOLE *c = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*c), KI_TAG('C', 'o', 'n', 'S'));
@@ -187,7 +183,7 @@ void ConsoleDetach(PEPROCESS p)
     ExAcquireFastMutex(&g_con_lock);
     MIME_CONSOLE *c = p->Console;
     p->Console = nullptr;
-    /* a pseudo console that is hung up waits for the last process to leave. */
+    /* a hung up pseudo console waits for the last process to leave. */
     if (c && c->Backend == CON_BACKEND_PTY)
         KeSetEvent(&c->PtyReady, 0, FALSE);
     ExReleaseFastMutex(&g_con_lock);
@@ -217,7 +213,7 @@ void ConsoleSetHint(PEPROCESS p, MIME_CONSOLE *c)
     ExReleaseFastMutex(&g_con_lock);
 }
 
-/* the title a console starts with: the first program's, which its window shows until a program sets another. */
+/* a console shows its first program's title until a program sets another. */
 void ConsoleInitialTitle(MIME_CONSOLE *c, PCUNICODE_STRING title)
 {
     ExAcquireFastMutex(&g_con_lock);
@@ -250,7 +246,7 @@ BOOLEAN ConInputWaiting(MIME_CONSOLE *c)
     return !IsListEmpty(&c->Input) || (c->Flags & MIME_CONDRV_CLOSED);
 }
 
-/* the input handles are signaled while input waits, which makes them waitable. */
+/* input handles are signaled while input waits, so they can be waited on. */
 void ConUpdateInputEvents(MIME_CONSOLE *c)
 {
     BOOLEAN waiting = ConInputWaiting(c);
@@ -312,7 +308,7 @@ static void set_output_paused(MIME_CONSOLE *c, BOOLEAN paused)
         KeSetEvent(&c->OutputResumed, 0, FALSE);
 }
 
-/* the pause key and ctrl+s, which line input turns into a stop of the output. */
+/* the pause key and ctrl+s, which pause the output in line input. */
 static BOOLEAN is_pause_request(const MIME_CONDRV_RECORD *r)
 {
     if (r->Key.VirtualKey == CON_VK_PAUSE)
@@ -322,9 +318,9 @@ static BOOLEAN is_pause_request(const MIME_CONDRV_RECORD *r)
 }
 
 /*
- * output pausing by the keyboard. the records are taken one by one, each seeing the state the ones before left. a
- * pressed key that is not a system key resumes paused output and is swallowed, and while line input is on the keys that
- * ask for a pause pause it and are swallowed. what stays moves to the front of the array and is counted.
+ * keyboard output pausing. records are handled in order, each seeing the state the earlier ones left. a pressed
+ * non-system key resumes paused output and is swallowed, and in line input the pause keys pause it and are swallowed.
+ * the rest move to the front of the array and are counted.
  */
 static ULONG take_pause_keys(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count)
 {
@@ -348,10 +344,9 @@ static ULONG take_pause_keys(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count
 
 
 /*
- * writes records the way the console takes written and typed events: in
- * vt input the keys become their sequences, and an event written alone
- * merges into the last one when it repeats it. the head ones go ahead of
- * what waits. returns the events taken, called with the lock held.
+ * queues records like the console takes written and typed events: in vt input keys become their sequences, and an
+ * event written alone merges into the last one when it repeats it. head puts them before what waits. returns the
+ * events taken. called with the lock held.
  */
 NTSTATUS ConWriteRecords(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count, BOOLEAN head, ULONG *written)
 {
@@ -406,7 +401,7 @@ NTSTATUS ConWriteRecords(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count, BO
     return STATUS_SUCCESS;
 }
 
-/* characters typed by nobody, as a terminal would answer: the reports of the escape sequences. */
+/* queues the terminal's answers to escape sequences as input, as if typed. */
 static void inject_text(MIME_CONSOLE *c, const UCHAR *text, ULONG length)
 {
     CON_CHUNK *k = ConNewChunk(TRUE, length * 2);
@@ -453,7 +448,7 @@ void ConSendOutput(MIME_CONSOLE *c, const void *data, ULONG length, ULONG stream
     }
 }
 
-/* the bytes the terminal needs, and what it answers with that the program reads as input. called with the lock held. */
+/* sends the terminal its bytes and queues its replies as input. called with the lock held. */
 void ConFlush(MIME_CONSOLE *c)
 {
     CsTerminal *t = &c->Term;
@@ -490,7 +485,7 @@ void ConSetTitle(MIME_CONSOLE *c, const WCHAR *title, ULONG count)
     ConFlush(c);
 }
 
-/* the mouse reports the input mode asks the terminal for: while the program has the mouse and quick edit does not. */
+/* mouse reports are requested while the program has the mouse and quick edit is off. */
 static void apply_mouse(MIME_CONSOLE *c)
 {
     uint32_t api = 0;
@@ -502,8 +497,8 @@ static void apply_mouse(MIME_CONSOLE *c)
 }
 
 /*
- * the mode is kept even when it is refused. the four bits of the extended flags are not part of the stored mode: they
- * set the three booleans when any of them is given, and only then are they reported back.
+ * the mode is kept even when refused. the four extended flag bits are not stored in the mode: when any is given they
+ * set the three booleans, and only then are they reported back.
  */
 NTSTATUS ConSetInputMode(MIME_CONSOLE *c, ULONG mode)
 {
@@ -556,7 +551,7 @@ void ConAbortReads(MIME_CONSOLE *c, BOOLEAN flush)
 
 /* ------------------------------------------------------------ typed input */
 
-/* removes the ctrl+c presses of processed input from decoded records; returns the records left. */
+/* removes processed input's ctrl+c presses from decoded records. returns the records left. */
 static ULONG take_ctrl_c(MIME_CONDRV_RECORD *r, ULONG count, BOOLEAN *found)
 {
     ULONG kept = 0;
@@ -572,7 +567,7 @@ static ULONG take_ctrl_c(MIME_CONDRV_RECORD *r, ULONG count, BOOLEAN *found)
     return kept;
 }
 
-/* typed input decoded into keys, or the bytes of a redirected input, with the lock held. */
+/* decodes typed input into keys, or queues redirected input bytes. called with the lock held. */
 static BOOLEAN host_input(MIME_CONSOLE *c, const UCHAR *data, ULONG length, BOOLEAN *ctrl_c)
 {
     if (!(c->Flags & MIME_CONDRV_TTY_INPUT) || (!length && !c->CarryLength)) {
@@ -678,7 +673,7 @@ static BOOLEAN host_input(MIME_CONSOLE *c, const UCHAR *data, ULONG length, BOOL
     return TRUE;
 }
 
-/* typed or piped input, an end of file when empty. */
+/* typed or piped input, empty means end of file. */
 void ConHostInputLocked(MIME_CONSOLE *c, const UCHAR *data, ULONG length, BOOLEAN *ctrl_c)
 {
     BOOLEAN queued = host_input(c, data, length, ctrl_c);
@@ -737,9 +732,9 @@ void ConResize(MIME_CONSOLE *c, ULONG size)
 }
 
 /*
- * a pseudo console starts as conhost's does: the terminal is asked for the keys that carry win32 input and
- * the focus, and the screen is cleared, unless the program that made it asked to keep what the terminal
- * shows, and then the terminal is asked where its cursor is.
+ * a pseudo console starts like conhost's: the terminal is asked for win32 input and focus reports and the screen is
+ * cleared, unless the creator asked to keep what the terminal shows, in which case the terminal is asked for its
+ * cursor position.
  */
 void ConPtyStart(MIME_CONSOLE *c, ULONG size, ULONG flags)
 {
@@ -778,8 +773,8 @@ void ConsoleHostSize(ULONG64 request, ULONG size)
 /* ------------------------------------------------------------ ctrl events */
 
 /*
- * starts the ctrl routine of every process attached to the console, or of
- * one process group; a process that never registered one ends at once.
+ * runs the ctrl routine of every process attached to the console, or of one process group. a process that never
+ * registered one ends at once.
  */
 ULONG ConDispatchEvent(MIME_CONSOLE *c, ULONG event, ULONG group)
 {
@@ -810,7 +805,7 @@ ULONG ConDispatchEvent(MIME_CONSOLE *c, ULONG event, ULONG group)
     return n;
 }
 
-/* the processes a closed console still holds after their grace time end. */
+/* terminates the processes a closed console still holds after their grace time. */
 static void NTAPI close_watchdog(PVOID context)
 {
     MIME_CONSOLE *c = context;
@@ -837,7 +832,7 @@ static void NTAPI close_watchdog(PVOID context)
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
-/* the terminal of the console is gone: waiting readers are released, the programs are told and given time. */
+/* the terminal is gone: release waiting readers, tell the programs and give them time. */
 void ConClose(MIME_CONSOLE *c)
 {
     ExAcquireFastMutex(&g_con_lock);
@@ -874,7 +869,7 @@ void ConsoleHostEvent(ULONG64 request, ULONG event)
 
 /* ------------------------------------------------------------ reads */
 
-/* after a read: the readiness and the input events follow what is left, and the host learns what was read. */
+/* after a read, updates readiness and input events to match what is left and tells the host what was read. */
 void ConAfterRead(MIME_CONSOLE *c, ULONG acked, BOOLEAN clear)
 {
     BOOLEAN closed = (c->Flags & MIME_CONDRV_CLOSED) != 0;
@@ -932,7 +927,7 @@ ULONG ConTakeInput(MIME_CONSOLE *c, PUCHAR out, ULONG length, BOOLEAN peek, BOOL
     return done;
 }
 
-/* turns the bytes waiting into records for a reader of records, as a console reads its keyboard. */
+/* turns waiting bytes into records for a record reader, as a console reads its keyboard. */
 static void bytes_to_records(MIME_CONSOLE *c)
 {
     for (PLIST_ENTRY e = c->Input.Flink; e != &c->Input; e = e->Flink) {
@@ -1040,11 +1035,9 @@ NTSTATUS ConAttachProcess(PEPROCESS self, ULONG pid)
 }
 
 /*
- * windows makes a new console window for a process without a console. the
- * host has no window to give: a process that descends from a host run takes
- * the terminal of that run, as the program of the run does, and any other
- * gets a console that nothing shows, which programs can still use and
- * others attach to.
+ * windows makes a new console window for a process without a console, but the host has no window to give. a process
+ * descending from a host run takes that run's terminal, and any other gets a console nothing shows, which programs
+ * can still use and attach to.
  */
 NTSTATUS ConAllocFor(PEPROCESS self, ULONG flags)
 {

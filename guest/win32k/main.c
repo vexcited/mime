@@ -293,7 +293,7 @@ W32THREAD *W32LookupThread(HANDLE tid)
     return nullptr;
 }
 
-/* the threads of a process that are alive, in the order they were made. */
+/* the live threads of a process, in creation order. */
 ULONG W32ProcessThreads(W32PROCESS *p, HANDLE *tids, ULONG max)
 {
     ULONG n = 0;
@@ -363,7 +363,7 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     }
     if (InputForeground && InputForeground->Thread == t)
         InputForeground = nullptr;
-    /* a thread that hid the pointer leaves it hidden for the next program otherwise. */
+    /* otherwise a thread that hid the pointer leaves it hidden for the next program. */
     if (InputCursorHidden && (t->CursorShowCount < 0 || !t->Cursor))
         HostSetCursor(MIME_CURSOR_ARROW);
     WinStaFreeThread(t);
@@ -471,7 +471,7 @@ static BOOLEAN thread_idle(W32THREAD *t)
     return t->InWait && IsListEmpty(&t->Input) && IsListEmpty(&t->Posted) && !t->QuitPosted;
 }
 
-/* the subsystem a process asked for in its image, 0 when it cannot be read. */
+/* the subsystem from the process image, 0 when it cannot be read. */
 static ULONG image_subsystem(HANDLE pid)
 {
     PEPROCESS process;
@@ -490,9 +490,9 @@ static ULONG image_subsystem(HANDLE pid)
 }
 
 /*
- * WaitForInputIdle: until a thread of the process waits for input with nothing to read, which happens once. A
- * process that is not a program of the graphical subsystem, or has no message queue, has nothing to wait for. One
- * that is, and has not made its queue yet, is waited for as well; it ends the wait with failure if it ends.
+ * WaitForInputIdle: waits until a thread of the process waits for input with nothing to read, which only happens
+ * once. a process outside the graphical subsystem, or without a message queue, has nothing to wait for, but a
+ * graphical one that has not made its queue yet is still waited for, and fails the wait if it ends.
  */
 ULONG NTAPI NtUserWaitForInputIdle(ULONG_PTR process_id, DWORD timeout, BOOL remote_handle)
 {

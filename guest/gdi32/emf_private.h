@@ -1,6 +1,4 @@
-/*
- * gdi32 enhanced metafile internals shared by the recorder and the player.
- */
+/* enhanced metafile internals shared by the recorder and the player. */
 #pragma once
 #include "gdi32_private.h"
 
@@ -22,21 +20,21 @@ typedef struct EMF_DC {
     BOOL Failed;
     HANDLE File;
     WCHAR Path[MAX_PATH];
-    /* the objects of the handle table, by index; index 0 is the metafile itself. */
+    /* the handle table by index, index 0 being the metafile itself. */
     HGDIOBJ *Objects;
     DWORD ObjectCapacity;
-    WORD Handles; /* one more than the highest index used */
+    WORD Handles; /* one more than the highest index used. */
     int Caps[EMF_CAPS];
-    RECTL Bounds; /* union of the record bounds, inclusive */
+    RECTL Bounds; /* union of the record bounds, inclusive. */
     BOOL HasBounds;
     BOOL ClipKnown;
     BOOL HasClip;
-    RECT Clip; /* device bounds of the clip and meta regions */
-    int ArcDirection; /* as recorded, 0 before the first */
-    int Saves;        /* saved states, for the relative levels of RestoreDC */
+    RECT Clip; /* device bounds of the clip and meta regions. */
+    int ArcDirection; /* as recorded, 0 before the first. */
+    int Saves;        /* saved states, for the relative levels of RestoreDC. */
     BOOL DcBrush;
     BOOL DcPen;
-    DWORD AppBounds; /* SetBoundsRect flags */
+    DWORD AppBounds; /* SetBoundsRect flags. */
     RECT AppRect;
 } EMF_DC;
 

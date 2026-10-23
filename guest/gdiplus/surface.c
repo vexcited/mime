@@ -1,10 +1,9 @@
 /*
- * the surfaces a graphics draws on and the composition of source pixels onto them. a bitmap is drawn in its own
- * memory. a device context is drawn in the memory of the dib section selected into it when it has one, and
- * otherwise through a tile that is copied from the context, drawn on and copied back.
+ * the surfaces a graphics draws on, and compositing onto them. a bitmap is drawn in place. a device context is
+ * drawn in its selected dib section when it has one, otherwise through a tile copied from the context and back.
  *
- * a surface is a window of device space: row y is at bits + (y - surface.y) * stride and the pixel x of that row
- * is number x - surface.x.
+ * a surface is a window of device space: row y is at bits + (y - surface.y) * stride, and pixel x is number
+ * x - surface.x in that row.
  */
 #include "gp_private.h"
 
@@ -15,7 +14,7 @@ void gp_graphics_bounds(const GGraphics *g, RECT *bounds)
     bounds->bottom = g->height;
 }
 
-/* the memory of the dib section selected into a device context, when there is one a surface can use. */
+/* the bits of the dib section selected into hdc, when a surface can use them. */
 static BOOL dc_dib(HDC hdc, BYTE **bits, INT *stride, INT *width, INT *height, PixelFormat *format)
 {
     HGDIOBJ obj = GetCurrentObject(hdc, OBJ_BITMAP);
@@ -42,7 +41,7 @@ static BOOL dc_dib(HDC hdc, BYTE **bits, INT *stride, INT *width, INT *height, P
     }
     BYTE *base = ds.dsBm.bmBits;
     if (ds.dsBmih.biHeight > 0) {
-        /* bottom up: the first row in memory is the bottom row of the picture */
+        /* bottom up: the first row in memory is the bottom one. */
         *bits = base + (SSIZE_T)(h - 1) * row;
         *stride = -row;
     } else {
@@ -82,7 +81,7 @@ GpStatus gp_surface_acquire(GGraphics *g, const RECT *area, GSurface *s)
         s->direct = TRUE;
         return Ok;
     }
-    /* a tile of 32 bit pixels, with the contents of the context to start from */
+    /* a 32-bit tile that starts with the context's contents. */
     s->x = area->left;
     s->y = area->top;
     s->width = area->right - area->left;
@@ -131,14 +130,12 @@ void gp_surface_release(GGraphics *g, GSurface *s, BOOL modified)
     memset(s, 0, sizeof(*s));
 }
 
-/* ------------------------------------------------------------------ rows of premultiplied pixels */
-
 static BYTE *surface_row(const GSurface *s, INT y)
 {
     return s->bits + (SSIZE_T)(y - s->y) * s->stride;
 }
 
-/* the destination pixels as premultiplied argb, count of them from x on row y. */
+/* reads count pixels from x on row y as premultiplied argb. */
 void gp_surface_read(const GSurface *s, INT x, INT y, INT count, UINT32 *out)
 {
     BYTE *row = surface_row(s, y);
@@ -176,7 +173,7 @@ void gp_surface_write(const GSurface *s, INT x, INT y, INT count, const UINT32 *
     }
 }
 
-/* the source over the destination, both premultiplied. */
+/* source over destination, both premultiplied. */
 static UINT32 over(UINT32 s, UINT32 d)
 {
     UINT32 keep = 255 - (s >> 24);
@@ -205,7 +202,7 @@ void gp_compose_over(const GSurface *s, INT x, INT y, INT count, const UINT32 *p
     }
     for (INT done = 0; done < count; done += 256) {
         INT n = count - done > 256 ? 256 : count - done;
-        /* skip the work for the pixels that are clear */
+        /* a fully transparent chunk leaves the destination alone. */
         BOOL any = FALSE;
         for (INT i = 0; i < n; i++) {
             if (pargb[done + i] >> 24) {
@@ -223,7 +220,7 @@ void gp_compose_over(const GSurface *s, INT x, INT y, INT count, const UINT32 *p
     (void)px;
 }
 
-/* source copy: the color replaces the destination, by the coverage when the edge of a shape is partly covered. */
+/* source copy replaces the destination, blended by coverage on partly covered edges. */
 void gp_compose_copy(const GSurface *s, INT x, INT y, INT count, const UINT32 *pargb, const UINT8 *cov, UINT cmax)
 {
     UINT32 dst[256];

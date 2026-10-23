@@ -1,4 +1,4 @@
-/* the kernel thunks of the display driver model gdi32 exports, as far as mime has them. */
+/* the display driver model kernel thunks gdi32 exports, as far as mime has them. */
 #ifndef MIME_WIN32_D3DKMTHK_H
 #define MIME_WIN32_D3DKMTHK_H
 
@@ -8,7 +8,7 @@
 #define D3DKMTAPI WINGDIAPI
 #endif
 
-/* the d3dddi formats, the values of D3DFORMAT. */
+/* same values as D3DFORMAT. */
 typedef enum _D3DDDIFORMAT {
     D3DDDIFMT_UNKNOWN = 0,
     D3DDDIFMT_R8G8B8 = 20,

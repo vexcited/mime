@@ -1,8 +1,7 @@
 /*
- * safe arrays. like windows, every descriptor is allocated with 16 bytes in
- * front of it: the element interface id for FADF_HAVEIID, or the element
- * type in the last 4 bytes for FADF_HAVEVARTYPE. the bounds are stored in
- * reverse order of the dimensions, and the first index varies fastest.
+ * safe arrays. Like windows, every descriptor has 16 bytes in front of it: the element IID for FADF_HAVEIID, or the
+ * element type in the last 4 bytes for FADF_HAVEVARTYPE. Bounds are stored in reverse dimension order, and the first
+ * index varies fastest.
  */
 #include "oleaut32_private.h"
 
@@ -58,13 +57,13 @@ static IRecordInfo **record_slot(SAFEARRAY *array)
 }
 
 /*
- * descriptors and data that something outside took a reference to, with SafeArrayAddRef. They are freed when the last
- * reference goes, whoever destroyed the array first. A data entry also remembers what is needed to free its elements.
+ * descriptors and data pinned by SafeArrayAddRef. They are freed when the last reference goes, whoever destroyed the
+ * array first. Data entries also remember how to free their elements.
  */
 typedef struct {
     void *Key;
     LONG Refs;
-    /* data only. */
+    /* the rest is for data entries only. */
     USHORT Features;
     ULONG Elements;
     ULONG ElementSize;
@@ -151,7 +150,7 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayAllocDescriptorEx(VARTYPE vt, UINT dims, SA
         return hr;
     SAFEARRAY *array = *out;
     if (vt == VT_RECORD) {
-        /* the size of an element is the one of the record, which is set with its information. */
+        /* the element size comes from the record info, set later. */
         array->fFeatures = FADF_RECORD;
         return S_OK;
     }
@@ -262,7 +261,7 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayDestroyData(SAFEARRAY *array)
         return E_INVALIDARG;
     if (array->cLocks)
         return DISP_E_ARRAYISLOCKED;
-    /* data that others hold a reference to stays with them, and the elements go when they let it go. */
+    /* referenced data stays alive, its elements are freed with the last reference. */
     if (array->pvData && g_data.Count) {
         BOOL kept = FALSE;
         AcquireSRWLockExclusive(&g_ref_lock);
@@ -437,7 +436,6 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayPtrOfIndex(SAFEARRAY *array, LONG *indices,
     return S_OK;
 }
 
-/* copies one element the way the array type owns it. */
 static HRESULT copy_element(SAFEARRAY *array, void *to, const void *from)
 {
     if (array->fFeatures & FADF_BSTR) {
@@ -481,7 +479,7 @@ static void free_element(SAFEARRAY *array, void *element)
     }
 }
 
-/* strings and interfaces are passed by value, every other type through a pointer. */
+/* BSTRs and interfaces are passed by value, every other type through a pointer. */
 WINOLEAUTAPI HRESULT WINAPI SafeArrayPutElement(SAFEARRAY *array, LONG *indices, void *value)
 {
     if (!array || !indices)
@@ -561,7 +559,7 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayCopy(SAFEARRAY *array, SAFEARRAY **out)
     memcpy(prefix(copy), prefix(array), SA_PREFIX);
     copy->fFeatures = array->fFeatures & ~FADF_NOT_OWNED;
     if (array->fFeatures & FADF_RECORD) {
-        /* the copy holds a reference of its own, not the one the bytes of the prefix were. */
+        /* the copy takes its own record reference rather than the one copied with the prefix bytes. */
         *record_slot(copy) = nullptr;
         SafeArraySetRecordInfo(copy, *record_slot(array));
     }
@@ -581,8 +579,8 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayCopy(SAFEARRAY *array, SAFEARRAY **out)
 }
 
 /*
- * changes the bounds of the last dimension, whose bounds are stored first.
- * that dimension varies slowest, so elements are added or dropped at the end.
+ * changes the bounds of the last dimension, which are stored first. That dimension varies slowest, so elements are
+ * added or dropped at the end.
  */
 WINOLEAUTAPI HRESULT WINAPI SafeArrayRedim(SAFEARRAY *array, SAFEARRAYBOUND *bound)
 {
@@ -643,9 +641,9 @@ WINOLEAUTAPI HRESULT WINAPI VectorFromBstr(BSTR bstr, SAFEARRAY **out)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the rest of the creating and the references */
+/* ------------------------------------------------------------------ creation helpers and references */
 
-/* the size of an element and the features that go with its type, or false when no array holds the type. */
+/* false when no safe array can hold the type. */
 static BOOL element_traits(VARTYPE vt, IRecordInfo *record, ULONG *size, USHORT *features)
 {
     *features = 0;
@@ -745,7 +743,7 @@ WINOLEAUTAPI HRESULT WINAPI SafeArrayAddRef(SAFEARRAY *array, PVOID *data)
         hr = E_OUTOFMEMORY;
     } else {
         entry->Refs++;
-        /* only data the array owns is kept, a static one is the caller's to keep alive. */
+        /* only owned data is kept, static data is the caller's to keep alive. */
         if (!(array->fFeatures & FADF_NOT_OWNED) && array->pvData) {
             REFENTRY *d = ref_find(&g_data, array->pvData);
             if (!d) {

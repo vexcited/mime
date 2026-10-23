@@ -1,6 +1,4 @@
-/*
- * executive: KUSER_SHARED_DATA, synchronization objects and waits.
- */
+/* executive: KUSER_SHARED_DATA, synchronization objects and waits. */
 #include "../ntos.h"
 
 POBJECT_TYPE ExEventType;
@@ -17,7 +15,7 @@ void MiInitializeSections(void);
 typedef struct ETIMER {
     KTIMER Timer;
     KDPC Dpc;
-    /* the completion routine of the thread that set the timer, as a user apc. */
+    /* runs the setting thread's completion routine as a user apc. */
     KAPC Apc;
     PETHREAD ApcThread; /* referenced */
     PVOID ApcRoutine;
@@ -97,10 +95,9 @@ static void NTAPI timer_apc_rundown(PKAPC apc)
 }
 
 /*
- * on expiry, the routine is queued to the thread that set the timer with
- * the expiry time in its two arguments; an apc still queued is not queued
- * twice, so a periodic timer of a thread that does not wait alertably
- * delivers once.
+ * on expiry the routine is queued to the setting thread with the expiry time
+ * in its two arguments. an apc still queued is not queued twice, so a periodic
+ * timer of a thread that never waits alertably delivers once.
  */
 static void NTAPI timer_dpc(PKDPC dpc, PVOID context, PVOID arg1, PVOID arg2)
 {
@@ -120,8 +117,8 @@ static void NTAPI timer_dpc(PKDPC dpc, PVOID context, PVOID arg1, PVOID arg2)
 }
 
 /*
- * a mutant that is deleted while a thread owns it is abandoned, as windows does when the last handle of an owned mutant
- * closes: it leaves the list of the owner's mutants, which a thread walks when it ends, and would otherwise hold freed memory.
+ * a mutant deleted while owned is abandoned, as windows does when the last handle of an owned mutant closes.
+ * it leaves the owner's mutant list, which a thread walks when it ends, and would otherwise hold freed memory.
  */
 static void NTAPI mutant_delete(PVOID object)
 {
@@ -401,7 +398,7 @@ NTSTATUS NTAPI NtCancelTimer(HANDLE handle, PBOOLEAN current)
     return STATUS_SUCCESS;
 }
 
-/* waits on handles; the objects are referenced for the duration of the wait. */
+/* the objects stay referenced for the duration of the wait. */
 NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable, PLARGE_INTEGER timeout,
                        KPROCESSOR_MODE mode)
 {

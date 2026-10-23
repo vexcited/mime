@@ -1,8 +1,4 @@
-/*
- * IDirect3D9Ex: direct3d 9's adapters, one for each monitor, as dxgi's
- * outputs list them, their modes, the formats and caps devices have, and
- * device creation.
- */
+/* IDirect3D9Ex: one adapter per monitor as dxgi lists outputs, their modes, formats and caps, and device creation. */
 #include "d3d9_private.h"
 
 typedef struct D9Direct3D {
@@ -34,7 +30,7 @@ IDXGIFactory1 *D9Factory(void)
     return g_factory;
 }
 
-/* the outputs of every adapter in turn; an adapter without outputs is one of its own. */
+/* walks every adapter's outputs in turn. an adapter without outputs counts as one. */
 HRESULT D9GetOutput(UINT index, IDXGIAdapter1 **out_adapter, IDXGIOutput **out_output)
 {
     IDXGIFactory1 *factory = D9Factory();
@@ -78,7 +74,6 @@ UINT D9AdapterCount(void)
     return n;
 }
 
-/* the display format a dxgi mode format is, and back. */
 static DXGI_FORMAT display_format(D3DFORMAT format)
 {
     switch (format) {
@@ -95,7 +90,7 @@ static DXGI_FORMAT display_format(D3DFORMAT format)
     }
 }
 
-/* the modes of a format, without the scalings and scanline orders dxgi lists apart. */
+/* merges the duplicates dxgi lists for each scaling and scanline order. */
 static UINT list_modes(UINT adapter, D3DFORMAT format, D3DSCANLINEORDERING scanline, D3DDISPLAYMODEEX *out,
                        UINT max)
 {
@@ -367,7 +362,7 @@ static HRESULT STDMETHODCALLTYPE d3d_register_software_device(IDirect3D9Ex *ifac
 
 static UINT STDMETHODCALLTYPE d3d_get_adapter_count(IDirect3D9Ex *iface) { return D9AdapterCount(); }
 
-/* a guid of the adapter's ids, the same each time, as windows' is for a gpu and driver. */
+/* derived from the adapter ids, so it stays the same for a gpu and driver, like windows'. */
 static GUID device_identifier(const DXGI_ADAPTER_DESC1 *desc, LARGE_INTEGER version)
 {
     GUID g = {0xD7B71E3E, 0x4340, 0x11CF, {0}};

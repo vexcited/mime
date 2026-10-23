@@ -1,8 +1,6 @@
 /*
- * the dynamic arrays of pointers and structures, DPA and DSA, and the
- * Str_ string slot helpers. the item count is the first field of both
- * arrays and the pointer table the second field of a DPA, as the
- * DPA_GetPtrCount and DPA_GetPtrPtr macros read them.
+ * DPA and DSA dynamic arrays, and the Str_ slot helpers. the item count is the first field of both, and the pointer
+ * table the second field of a DPA, as the DPA_GetPtrCount and DPA_GetPtrPtr macros read them.
  */
 #include "comctl32_private.h"
 
@@ -416,7 +414,7 @@ WINCOMMCTRLAPI BOOL WINAPI Str_SetPtrA(LPSTR *slot, LPCSTR text)
     return TRUE;
 }
 
-/* ordinal 235: copies into the buffer, returns the characters copied. */
+/* ordinal 235. returns the characters copied. */
 WINCOMMCTRLAPI int WINAPI Str_GetPtrW(LPCWSTR text, LPWSTR buffer, int max)
 {
     if (!buffer || max <= 0)

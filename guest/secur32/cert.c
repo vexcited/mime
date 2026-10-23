@@ -1,8 +1,7 @@
 /*
- * the server's certificates for the tls engine: crypt32 decodes them into
- * a memory store, gives the leaf's public key and judges the chain with its
- * ssl policy. secur32 loads crypt32 on the first handshake, so programs
- * that never speak tls do not pay for it.
+ * server certificates for the tls engine: crypt32 decodes them into a memory store, extracts the leaf's public key and
+ * checks the chain with its ssl policy. crypt32 is loaded on the first handshake, so programs that never use tls do not
+ * pay for it.
  */
 #include "schannel.h"
 
@@ -58,7 +57,7 @@ static bool have_crypt32(void)
            crypt32.FreeContext && crypt32.GetChain && crypt32.FreeChain && crypt32.VerifyPolicy;
 }
 
-/* ------------------------------------------------------------------ the crypto library's hooks */
+/* ------------------------------------------------------------------ crypto library hooks */
 
 typedef BOOLEAN(WINAPI *RTL_GEN_RANDOM)(PVOID, ULONG);
 
@@ -116,7 +115,7 @@ SECURITY_STATUS SchLoadCertificates(TLS_CERTS *certs, const BYTE *const *der, co
         PCCERT_CONTEXT added = nullptr;
         if (!crypt32.AddEncoded(certs->Store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, der[i], (DWORD)sizes[i],
                                 CERT_STORE_ADD_ALWAYS, i ? nullptr : &added)) {
-            /* only the leaf must decode; a broken intermediate just breaks the chain. */
+            /* only the leaf must decode; a broken intermediate only breaks the chain. */
             if (!i) {
                 SchFreeCertificates(certs);
                 return SEC_E_CERT_UNKNOWN;
@@ -149,7 +148,7 @@ void SchFreeCertificate(PCCERT_CONTEXT cert)
     crypt32.FreeContext(cert);
 }
 
-/* one der element: its tag, then the content. */
+/* one der element of the given tag. */
 static bool der_element(const BYTE **p, SIZE_T *left, BYTE tag, const BYTE **content, SIZE_T *size)
 {
     if (*left < 2 || (*p)[0] != tag)
@@ -173,7 +172,7 @@ static bool der_element(const BYTE **p, SIZE_T *left, BYTE tag, const BYTE **con
     return true;
 }
 
-/* RSAPublicKey of rfc 8017 a.1.1: a SEQUENCE of the modulus and the exponent. */
+/* RSAPublicKey, rfc 8017 a.1.1: a SEQUENCE of modulus and exponent. */
 static SECURITY_STATUS rsa_key(const CRYPT_BIT_BLOB *bits, TLS_PEER_KEY *key)
 {
     const BYTE *p = bits->pbData, *seq, *n, *e;
@@ -203,7 +202,7 @@ static SECURITY_STATUS rsa_key(const CRYPT_BIT_BLOB *bits, TLS_PEER_KEY *key)
     return SEC_E_OK;
 }
 
-/* an uncompressed point on one of the named curves of the parameters. */
+/* an uncompressed point on the named curve of the parameters. */
 static SECURITY_STATUS ec_key(const CRYPT_ALGORITHM_IDENTIFIER *algorithm, const CRYPT_BIT_BLOB *bits,
                               TLS_PEER_KEY *key)
 {

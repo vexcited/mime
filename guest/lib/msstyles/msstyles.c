@@ -1,6 +1,4 @@
-/*
- * msstyles parser. the format notes are in docs/msstyles.md.
- */
+/* msstyles theme file parser. */
 #include "msstyles.h"
 
 struct MimeMsstylesRec {
@@ -125,7 +123,7 @@ static bool res_name_eq(const Pe *pe, uint32_t off, const char *name)
     return name[len] == 0;
 }
 
-/* returns the raw OffsetToData of the matching entry. name NULL matches the id, id ~0 takes the first entry. */
+/* returns the matching entry's raw OffsetToData. a NULL name matches the id, id ~0 takes the first entry. */
 static bool res_entry(const Pe *pe, uint32_t dir, const char *name, uint32_t id, uint32_t *out)
 {
     uint32_t at = pe->rsrc + dir;
@@ -233,7 +231,7 @@ static unsigned name_char(const MimeMsstyles *ms, int cls, uint32_t i)
     return rd16(ms->file + ms->class_name[cls] + 2 * i);
 }
 
-/* compares chars from up to before to of a class name with a utf-16 string of len chars. */
+/* compares class name chars from up to but excluding to with a utf-16 string of len chars. */
 static bool name_range_eq(const MimeMsstyles *ms, int cls, uint32_t from, uint32_t to, const uint16_t *s, size_t len)
 {
     if (to - from != len)
@@ -501,7 +499,7 @@ static bool parse_records(MimeMsstyles *ms)
 
 /*
  * BCMAP indexes the loader's class list, built in the order classes first
- * appear in the variant, globals and sysmetrics forced first.
+ * appear in the variant, with globals and sysmetrics forced first.
  */
 static bool parse_bcmap(MimeMsstyles *ms, const Pe *pe)
 {
@@ -657,7 +655,7 @@ int mime_msstyles_find_class(const MimeMsstyles *ms, const char *app, const char
     return -1;
 }
 
-/* MatchThemeApp: app specific entry first, then with fallback the plain class. */
+/* tries the app specific entry first, then with fallback the plain class. */
 static int match_app(const MimeMsstyles *ms, const uint16_t *app, size_t app_n, const uint16_t *cls, size_t cls_n,
                      bool fallback)
 {
@@ -916,7 +914,7 @@ static bool is_space(unsigned c)
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
-/* parses up to cap integers separated by commas or spaces, like ParseIntegerTokenList. */
+/* parses up to cap integers separated by commas or spaces. */
 static uint32_t parse_ints(const uint16_t *s, int32_t *out, uint32_t cap)
 {
     uint32_t n = 0;
@@ -1618,7 +1616,7 @@ bool mime_msstyles_get_image(const MimeMsstyles *ms, int cls, int part, int stat
         (int32_t)dpi >= 2 * out->min_dpi)
         out->margin_scale = (int32_t)dpi / out->min_dpi;
 
-    /* TRUESIZE images, SelectCorrectImageFile then DrawImageInfo. */
+    /* TRUESIZE images: the draw size follows the scaling type, the dpi and the destination. */
     out->draw_width = out->frame_width;
     out->draw_height = out->frame_height;
     if (out->sizing_type == MIME_ST_TRUESIZE && out->truesize_scaling_type != MIME_TSST_NONE) {

@@ -1,23 +1,14 @@
 /*
- * host files placed in the guest by MIME_HC_FS_MAP, read only or, for a handle opened for writing and a guest that
- * asks, shared and writable: the guest's writes go to the page cache, where reads and writes of the file see them at
- * once. the window
- * range is reserved in the host process once, and the guest is given it
- * in a few large read only memory slots. a file is mapped over a part of
- * the reservation, from the host's page cache, and taken away by mapping
- * nothing over it: the guest reads what the host caches, a file is
- * cached once, only the pages the guest touches are read from disk, and
- * neither placing a window nor removing one changes the guest's memory
- * map. that change, a memory slot made or deleted, waits for every
- * processor to leave the guest and took a millisecond or two each time.
+ * maps host files into the guest through MIME_HC_FS_MAP. mappings are read-only unless both the handle and
+ * request allow shared writes, which remain coherent with the host page cache. reserve the window range once
+ * and add large memory slots. map files over the reservation, then replace removed mappings with empty
+ * memory. only touched pages are read; files are cached once. this avoids per-window memory slot changes,
+ * which wait for all vCPUs and cost 1 to 2 ms.
  *
- * a program of the host can shorten a file that has a window. the pages past the new end are gone from the
- * page cache, and what touches one gets a bus error: the kernel stalls a processor of the guest on it without
- * leaving KVM_RUN, and a thread of ours would be killed. the file is watched with inotify, and once it is shorter
- * the guest is told which pages are gone and takes its mappings of them away, so that a program touching one gets
- * the in page error of windows. only then are the pages replaced by zeros, which a processor stalled on one then
- * reads, or at once after a moment when the guest does not answer. a bus error that reaches a thread of ours is
- * answered the same way, by replacing the page in the signal handler.
+ * when a host file shrinks, touching removed pages causes SIGBUS or stalls a guest processor inside KVM_RUN.
+ * inotify reports lost pages to the guest, which removes its mappings so programs get a Windows in-page
+ * error. replace pages with zeros after acknowledgment or timeout to release stalled processors. a host
+ * thread receiving SIGBUS replaces the page in its signal handler.
  */
 #include "../vmm/vmm.h"
 
@@ -38,10 +29,10 @@ bool mime_kvm_set_slot(MimeVm *vm, uint32_t slot, uint64_t ipa, uint64_t size, v
 /* the range gets its memory slots in steps of this size, as windows are placed that far. */
 #define WINDOW_CHUNK (2ull << 30)
 
-/* ------------------------------------------------------------------ files the host shortens */
+/* ------------------------------------------------------------------ files the host shortens. */
 
 #define LOST_QUEUE 64
-#define LOST_WAIT_MS 100 /* how long the guest has to take its mappings away before the pages are replaced */
+#define LOST_WAIT_MS 100 /* how long the guest has to take its mappings away before the pages are replaced. */
 #define BUS_RING 256
 #define WINDOW_PAGE ((uint64_t)MIME_PAGE_SIZE)
 
@@ -56,15 +47,15 @@ static struct {
     MimeVm *vm;
     int inotify, wake;
     bool started;
-    uint8_t *base; /* the window range in this process, for the signal handler */
+    uint8_t *base; /* the window range in this process, for the signal handler. */
     uint32_t bus_tail;
-    uint64_t bus_page[BUS_RING]; /* offsets of replaced pages in the range, plus one */
+    uint64_t bus_page[BUS_RING]; /* offsets of replaced pages in the range, plus one. */
     uint32_t bus_head;
 } g_lost = {.lock = PTHREAD_MUTEX_INITIALIZER, .acked = PTHREAD_COND_INITIALIZER, .inotify = -1, .wake = -1};
 
 #define WINDOW_LOCK_OF(vm) (&(vm)->window_lock)
 
-/* replaces the pages of a window that are gone by zeros that can be written, if it is still the window they were told for. */
+/* replaces lost pages with writable zeros if the window still matches the notification. */
 static void give_up(MimeVm *vm, uint64_t id, uint64_t ipa, uint64_t size)
 {
     pthread_mutex_lock(WINDOW_LOCK_OF(vm));
@@ -79,12 +70,12 @@ static void give_up(MimeVm *vm, uint64_t id, uint64_t ipa, uint64_t size)
     pthread_mutex_unlock(WINDOW_LOCK_OF(vm));
 }
 
-/* tells the guest, and waits for it to answer or for the time to run out, then gives the pages up. */
+/* reports lost pages, waits for acknowledgment or timeout, then replaces them. */
 static void publish_lost(MimeVm *vm, uint64_t id, uint64_t ipa, uint64_t size)
 {
     pthread_mutex_lock(&g_lost.lock);
     if (g_lost.tail - g_lost.head == LOST_QUEUE)
-        g_lost.head++; /* the oldest has waited long enough, it is replaced below by its own turn */
+        g_lost.head++; /* the oldest notification timed out; its turn below will replace the pages. */
     uint64_t serial = ++g_lost.next_serial;
     uint32_t at = g_lost.tail++ % LOST_QUEUE;
     g_lost.queue[at].serial = serial;
@@ -107,7 +98,7 @@ static void publish_lost(MimeVm *vm, uint64_t id, uint64_t ipa, uint64_t size)
     give_up(vm, id, ipa, size);
 }
 
-/* a window is taken away: what was waiting to be told about it is not told, as its addresses go to another file. */
+/* discard pending notifications for a removed window before its addresses are reused. */
 static void cancel_lost(uint64_t id)
 {
     pthread_mutex_lock(&g_lost.lock);
@@ -141,7 +132,7 @@ uint64_t mime_window_lost(MimeVm *vm, uint64_t pa)
     return MIME_HC_STATUS_OK;
 }
 
-/* the windows of the files an event names, or of every file when it names none, checked against their sizes. */
+/* checks sizes of files named by the event, or all files if none are named. */
 static void check_windows(MimeVm *vm, const int *watches, int count)
 {
     for (;;) {
@@ -197,7 +188,7 @@ static void *lost_main(void *arg)
                     if (ipa >= vm->windows[i].ipa && ipa < vm->windows[i].ipa + vm->windows[i].size)
                         id = vm->windows[i].id;
                 pthread_mutex_unlock(WINDOW_LOCK_OF(vm));
-                /* a page of a window that is gone already is nobody's to tell. */
+                /* the window is already gone; no notification is needed. */
                 if (id)
                     publish_lost(vm, id, ipa, WINDOW_PAGE);
             }
@@ -250,8 +241,8 @@ static void start_watching(MimeVm *vm)
 }
 
 /*
- * a bus error on a window, in the signal handler of the thread that touched it: the page is replaced by one of zeros
- * and the thread goes on. the guest is told by the thread that watches, once it has been woken.
+ * SIGBUS handler: replace the page with zeros so the thread can resume, then wake the watcher to notify the
+ * guest.
  */
 bool mime_window_bus_fault(void *address)
 {
@@ -284,12 +275,12 @@ static bool reserve(MimeVm *vm)
     return true;
 }
 
-/* gives the range up to `end` bytes from its start a memory slot each time a chunk is passed. */
+/* adds memory slots for each chunk up to `end` bytes. */
 static bool register_to(MimeVm *vm, uint64_t end)
 {
     while (vm->window_registered < end) {
         uint64_t at = vm->window_registered;
-        /* the slots can be written: what the host maps over a window decides, and the guest's tables keep it from the rest. */
+        /* slots allow writes; host mappings and guest page tables enforce access restrictions. */
         if (!mime_kvm_set_slot(vm, mime_kvm_alloc_slot(vm), MIME_WINDOW_BASE + at, WINDOW_CHUNK, vm->window_host + at, false))
             return false;
         vm->window_registered += WINDOW_CHUNK;
@@ -384,8 +375,8 @@ void mime_window_unmap_all(MimeVm *vm)
 }
 
 /*
- * a window's pages are mapped into the guest's tables by kvm as the guest first reads them, an exit each. The
- * windows asked to be warm are mapped by a thread meanwhile, in the order they come.
+ * KVM normally maps file pages into guest tables on first read, one exit per page. a worker prefetches
+ * requested windows in arrival order.
  */
 #define WARM_QUEUE 64
 static struct {
@@ -414,7 +405,7 @@ static void *warm_main(void *arg)
     return nullptr;
 }
 
-/* asks for the window at this address to be warm; one that does not fit the queue is left to be read as it comes. */
+/* queues window prefetch; a full queue leaves the window to fault normally. */
 void mime_window_warm(MimeVm *vm, uint64_t ipa)
 {
     uint64_t size = 0;
@@ -437,7 +428,7 @@ void mime_window_warm(MimeVm *vm, uint64_t ipa)
     pthread_mutex_unlock(&g_warm_lock);
 }
 
-/* kvm maps every window as it is created, so a fault there is never a lazy fill. */
+/* KVM maps windows at creation, so window faults need no lazy fill. */
 bool mime_fs_lazy_fault(MimeVm *vm, uint64_t ipa)
 {
     return false;

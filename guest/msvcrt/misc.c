@@ -6,7 +6,6 @@
 
 /* ------------------------------------------------------------------ error messages */
 
-/* msvcrt's _sys_errlist, read from the binary. */
 const char *_sys_errlist[44] = {
     "No error",
     "Operation not permitted",
@@ -315,7 +314,7 @@ int *__cdecl __fpecode_ptr(void)
     return &MsvcrtThreadData()->fpecode;
 }
 
-/* the signal actions of the c runtime's exception filter for its startup code. */
+/* the exception filter of the c runtime startup code, applying the signal actions. */
 int __cdecl _XcptFilter(unsigned long code, PEXCEPTION_POINTERS pointers)
 {
     int sig;
@@ -487,7 +486,7 @@ void __cdecl _wassert(const wchar_t *message, const wchar_t *file, unsigned line
     wcscat_s(text, 540, L"\n\nFor information on how your program can cause an assertion\n"
                         L"failure, see the Visual C++ documentation on asserts\n\n"
                         L"(Press Retry to debug the application - JIT must be enabled)");
-    int r = message_box(text, L"Microsoft Visual C++ Runtime Library", 0x12012 /* abort retry ignore, task modal */);
+    int r = message_box(text, L"Microsoft Visual C++ Runtime Library", 0x12012 /* abort retry ignore, task modal. */);
     if (r == 3) {
         raise(SIGABRT);
         _exit(3);
@@ -572,7 +571,7 @@ static void swap_bytes(char *a, char *b, size_t size)
     }
 }
 
-/* calls either comparison form. */
+/* a comparison with or without a context, so one sort serves both forms. */
 typedef struct {
     COMPARE cmp;
     COMPARE_S cmp_s;
@@ -761,7 +760,7 @@ void *__cdecl _lsearch(const void *key, void *base, unsigned int *count, unsigne
     return p;
 }
 
-/* ------------------------------------------------------------------ small leftovers of the c runtime */
+/* ------------------------------------------------------------------ leftovers */
 
 double _HUGE = __builtin_inf();
 int _fileinfo;

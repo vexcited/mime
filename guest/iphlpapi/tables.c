@@ -1,6 +1,4 @@
-/*
- * the interface, address, neighbor and connection tables.
- */
+/* the interface, address, neighbor and connection tables. */
 #include "private.h"
 
 void NETIOAPI_API_ FreeMibTable(PVOID memory)
@@ -8,7 +6,7 @@ void NETIOAPI_API_ FreeMibTable(PVOID memory)
     IphFree(memory);
 }
 
-/* a table of NumEntries and its rows at offset 8, as FreeMibTable frees it. */
+/* NumEntries then the rows at offset 8, the layout FreeMibTable expects. */
 static void *new_table(ULONG rows, ULONG row)
 {
     return IphAlloc(IphTableSize(rows, row, FALSE));
@@ -243,7 +241,7 @@ DWORD NETIOAPI_API_ GetIpInterfaceTable(ADDRESS_FAMILY family, PMIB_IPINTERFACE_
     return t ? NO_ERROR : ERROR_NOT_ENOUGH_MEMORY;
 }
 
-/* the adapter a row names by its luid, or else its index. */
+/* the adapter a row names by luid, else by index. */
 static DWORD row_adapter(const IPH_SNAPSHOT *s, const NET_LUID *luid, ULONG index, const IPH_ADAPTER **a)
 {
     if (luid->Value) {
@@ -506,7 +504,7 @@ DWORD WINAPI GetIpAddrTable(PMIB_IPADDRTABLE table, PULONG size, BOOL order)
 
 /* ------------------------------------------------------------------ neighbors */
 
-/* the neighbor caches are the host's, out of reach: the tables are empty. */
+/* the neighbor caches are the host's and out of reach, so the tables are empty. */
 DWORD NETIOAPI_API_ GetIpNetTable2(ADDRESS_FAMILY family, PMIB_IPNET_TABLE2 *table)
 {
     if (!table)
@@ -576,7 +574,7 @@ enum { ROW_BASIC, ROW_TCP2, ROW_PID, ROW_MODULE };
 
 typedef struct {
     ULONG size;
-    ULONG offset; /* of the first row */
+    ULONG offset; /* offset of the first row. */
 } ROW_SHAPE;
 
 static ROW_SHAPE tcp_shape(ADDRESS_FAMILY family, int kind)
@@ -606,7 +604,7 @@ static ROW_SHAPE udp_shape(ADDRESS_FAMILY family, int kind)
                               : (ROW_SHAPE){sizeof(MIB_UDPROW), 4};
 }
 
-/* the address bytes, port and scope of a socket address, as the tables store them. */
+/* splits a socket address into the bytes, port and scope the tables store. */
 static void endpoint(const MIME_AFD_ADDRESS *a, BYTE *bytes, DWORD *port, DWORD *scope)
 {
     *port = (DWORD)a->Data[0] | (DWORD)a->Data[1] << 8;
@@ -657,7 +655,7 @@ static void udp_row(BYTE *row, ADDRESS_FAMILY family, int kind, const MIME_AFD_S
         r->dwOwningPid = k->ProcessId;
 }
 
-/* listeners 1, connections 2, both 3. */
+/* which: listeners 1, connections 2, both 3. */
 static BOOL tcp_wanted(const MIME_AFD_SOCKET_INFO *k, ADDRESS_FAMILY family, int which)
 {
     if (k->Type != 1 || k->Family != family)
@@ -678,7 +676,7 @@ static int compare_rows(const BYTE *a, const BYTE *b, SIZE_T key)
     return memcmp(a, b, key);
 }
 
-/* fills a connection table as windows sizes them; tcp when which is nonzero. */
+/* fills a connection table sized as windows does, tcp when which is nonzero. */
 static DWORD socket_table(void *table, PULONG size, BOOL order, ADDRESS_FAMILY family, int kind, int which)
 {
     if (!size)
@@ -710,7 +708,7 @@ static DWORD socket_table(void *table, PULONG size, BOOL order, ADDRESS_FAMILY f
         *(DWORD *)table = count;
         *size = IphTableSize(count, shape.size, FALSE);
         if (order) {
-            /* by local then remote endpoint, the state of a v4 tcp row coming first is skipped. */
+            /* sort by local then remote endpoint, skipping the state that leads a v4 tcp row. */
             SIZE_T skip = which && family == AF_INET ? 4 : 0;
             SIZE_T key = family == AF_INET6 ? (which ? 48 : 24) : (which ? 16 : 8);
             BYTE *tmp = IphAlloc(shape.size);

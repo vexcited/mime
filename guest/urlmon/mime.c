@@ -1,6 +1,6 @@
 /*
- * FindMimeFromData: the type a server proposed, the signature of the first 256 bytes, and the type of the
- * url's extension in the registry, after the documented detection of internet explorer.
+ * FindMimeFromData: the server's proposed type, the signature of the first 256 bytes, then the registry type of the
+ * url's extension, following internet explorer's documented detection.
  */
 #include "urlmon_private.h"
 
@@ -237,7 +237,7 @@ static const KNOWN_TYPE *KnownType(LPCWSTR type)
     return nullptr;
 }
 
-/* the Content Type of the extension of a url in the classes root. */
+/* the Content Type the classes root gives the url's extension. */
 static BOOL TypeOfExtension(LPCWSTR url, PWSTR type, DWORD capacity)
 {
     LPCWSTR end = url;

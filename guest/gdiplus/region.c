@@ -1,11 +1,11 @@
 /*
- * regions: the Region of the flat api. a region is a tree of rectangles and paths joined by set operations,
- * kept in world units. it turns into pixels, a mask, only when a graphics or a matrix says what a unit is, and
- * the pixels are the ones whose sample point the shapes cover, the way a non antialiased fill has them.
+ * the flat api Region: a tree of rectangles and paths joined by set operations, kept in world units. it becomes a
+ * pixel mask only when a graphics or a matrix defines the unit, covering the pixels whose sample point the shapes
+ * cover, like a non antialiased fill.
  *
- * the data of a region is a list of nodes in prefix order: an operation, then its left and right nodes, with the
- * rectangle, path, empty and infinite leaves. around it go the magic and the number of nodes below the root, and
- * for the api a size and a crc.
+ * region data is the node list in prefix order: an operation, then its left and right nodes, with rectangle, path,
+ * empty and infinite leaves. it is wrapped in the magic and the node count below the root, plus a size and a crc
+ * for the api.
  */
 #include "gp_private.h"
 
@@ -22,7 +22,7 @@ GRegion *gp_region_cast(const void *p)
     return GP_CAST(GRegion, GP_TAG_REGION, p);
 }
 
-/* ------------------------------------------------------------------ the tree */
+/* ------------------------------------------------------------------ tree */
 
 static GRegionNode *node_new(GRegionKind kind)
 {
@@ -183,7 +183,6 @@ static void build_span(void *user, INT y, INT x0, INT count, const UINT8 *cov, U
         b->row[x0 + i - b->left] = cmax <= 1 ? 255 : (UINT8)((cov[i] * 255u + cmax / 2) / cmax);
 }
 
-/* the mask of polygons filled without antialiasing, inside the clip. */
 static int mask_from_polys(MimeVecMask *m, const MimeVecPolys *polys, INT rule, const MimeVecRect *clip)
 {
     mime_vec_mask_clear(m);
@@ -274,7 +273,7 @@ GpStatus gp_mask_from_polys(MimeVecMask *m, const MimeVecPolys *polys, INT rule,
     return status_of(mask_from_polys(m, polys, rule, clip));
 }
 
-/* the pixels the region may cover, for the regions that have bounds. */
+/* the pixels the region may cover, when it has bounds. */
 static BOOL node_bounds(const GRegionNode *n, const MimeVecMatrix *m, MimeVecBounds *b, BOOL *infinite)
 {
     switch (n->kind) {
@@ -317,7 +316,7 @@ static BOOL node_bounds(const GRegionNode *n, const MimeVecMatrix *m, MimeVecBou
         BOOL inf = linf || rinf;
         switch ((CombineMode)n->op) {
         case CombineModeIntersect:
-            /* bounded when either side is */
+            /* bounded when either side is. */
             if (!l && !linf)
                 return FALSE;
             if (!r && !rinf)
@@ -379,7 +378,7 @@ static BOOL node_bounds(const GRegionNode *n, const MimeVecMatrix *m, MimeVecBou
     }
 }
 
-/* a device mask of the region over its own pixels, or over the limit when it has no bounds. */
+/* the device mask over the region's own pixels, or over the limit when it has no bounds. */
 static GpStatus region_mask_own(const GRegion *r, const MimeVecMatrix *m, MimeVecMask *mask, BOOL *infinite)
 {
     MimeVecBounds b;
@@ -447,7 +446,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateRegionPath(GpPath *path, GpRegion **region)
     return r ? Ok : OutOfMemory;
 }
 
-/* the rectangles of a gdi region, as a union of rectangle nodes. */
+/* the gdi region's rectangles become a union of rectangle nodes. */
 WINGDIPAPI GpStatus WINAPI GdipCreateRegionHrgn(HRGN hrgn, GpRegion **region)
 {
     GP_REQUIRE_INIT();
@@ -539,7 +538,6 @@ WINGDIPAPI GpStatus WINAPI GdipSetEmpty(GpRegion *region)
 
 /* ------------------------------------------------------------------ combining */
 
-/* joins the tree of the region with a new node. */
 static GpStatus region_combine_node(GRegion *r, GRegionNode *other, CombineMode mode)
 {
     if (!other)
@@ -594,7 +592,7 @@ WINGDIPAPI GpStatus WINAPI GdipCombineRegionRegion(GpRegion *region, GpRegion *o
     return region_combine_node(r, node_clone(o->root), mode);
 }
 
-/* ------------------------------------------------------------------ moving */
+/* ------------------------------------------------------------------ transforms */
 
 static GpStatus node_transform(GRegionNode *n, const MimeVecMatrix *m)
 {
@@ -609,7 +607,7 @@ static GpStatus node_transform(GRegionNode *n, const MimeVecMatrix *m)
             n->rect.Height = y0 < y1 ? y1 - y0 : y0 - y1;
             return Ok;
         } else {
-            /* a rectangle that is turned or sheared is a polygon from then on */
+            /* a rotated or sheared rectangle becomes a polygon. */
             GPath *p = gp_path_new(FillModeWinding);
             if (!p)
                 return OutOfMemory;
@@ -705,7 +703,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetRegionBounds(GpRegion *region, GpGraphics *gra
             if (mime_vec_mask_is_empty(&mask)) {
                 memset(rect, 0, sizeof(*rect));
             } else {
-                /* back from the device to the world of the graphics */
+                /* back from device to the graphics world. */
                 MimeVecMatrix inv;
                 float x0 = (float)b.left, y0 = (float)b.top, x1 = (float)b.right, y1 = (float)b.bottom;
                 if (gp_graphics_cast(graphics) && mime_vec_matrix_invert(&inv, m)) {
@@ -959,7 +957,7 @@ WINGDIPAPI GpStatus WINAPI GdipIsVisibleRegionRectI(GpRegion *region, INT x, INT
     return GdipIsVisibleRegionRect(region, (float)x, (float)y, (float)w, (float)h, graphics, result);
 }
 
-/* the rectangles of the mask, rows of equal runs merged downwards. */
+/* the mask's rectangles, with rows of equal runs merged downwards. */
 static GpStatus region_rects(const GRegion *r, const MimeVecMatrix *m, GpRectF **out, INT *count)
 {
     *out = nullptr;
@@ -1156,7 +1154,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetRegionDataSize(GpRegion *region, UINT *size)
     GRegion *r = gp_region_cast(region);
     if (!r || !size)
         return InvalidParameter;
-    /* the size and crc, the magic and the count, and the nodes */
+    /* the size and crc, the magic and the count, then the nodes. */
     *size = (UINT)(8 + 8 + node_size(r->root));
     return Ok;
 }

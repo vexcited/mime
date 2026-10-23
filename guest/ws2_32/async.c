@@ -1,8 +1,6 @@
 /*
- * the asynchronous database calls of winsock 1.1: WSAAsyncGetHostByName and its kin look a name up on a thread of
- * their own, one for all the requests of the process, and post the answer to a window. The task handle is what the
- * message carries in its wParam. Its lParam holds the size of the answer in the buffer in the low word and an error
- * in the high word; an answer that does not fit the buffer is WSAENOBUFS with the size that would have.
+ * Winsock 1.1 asynchronous database lookups share one worker thread per process. completion posts the task handle in
+ * wParam, result size in lParam's low word and error in its high word. WSAENOBUFS reports the required size.
  */
 #include "ws2_32_private.h"
 
@@ -16,10 +14,10 @@ typedef struct ASYNC_TASK {
     UINT message;
     char *buffer;
     int length;
-    int number; /* the type, protocol number or port */
-    int count;  /* bytes in key */
+    int number; /* the type, protocol number or port. */
+    int count;  /* bytes in key. */
     char *proto;
-    BYTE key[1]; /* the name or the address, then the protocol name */
+    BYTE key[1]; /* the name or the address, then the protocol name. */
 } ASYNC_TASK;
 
 typedef BOOL(WINAPI *POST_ROUTINE)(HWND, UINT, WPARAM, LPARAM);
@@ -35,7 +33,7 @@ static POST_ROUTINE g_post;
 
 static void lock(void)
 {
-    /* the lock is made on first use; two threads that start together make it once. */
+    /* initializes the lock once, including concurrent first calls. */
     if (!g_lock_ready) {
         static LONG volatile making;
         if (InterlockedCompareExchange(&making, 1, 0) == 0) {
@@ -67,8 +65,8 @@ static SIZE_T align8(SIZE_T n)
 }
 
 /*
- * the entry flattened into the buffer: the structure, the arrays of pointers, then the strings and the addresses, all
- * pointing into the buffer. The size the whole needs is returned, the buffer is only written when it is big enough.
+ * packs the structure, pointer arrays, strings and addresses into one buffer with internal pointers. returns the
+ * required size and writes only if the buffer fits.
  */
 static SIZE_T flatten_host(const struct hostent *h, char *buffer, int length)
 {
@@ -287,7 +285,7 @@ static HANDLE queue_task(ASYNC_TASK *task)
     return handle;
 }
 
-/* a task for the call: the key copied after the record, the protocol name after it. */
+/* copies the request key and protocol name after the task record. */
 static ASYNC_TASK *make_task(int kind, HWND hwnd, UINT message, const void *key, int key_size, const char *proto,
                              char *buffer, int length, int number)
 {
@@ -363,7 +361,7 @@ HANDLE WSAAPI WSAAsyncGetServByPort(HWND hwnd, u_int message, int port, const ch
     return submit(ASYNC_SERV_PORT, hwnd, message, nullptr, 0, proto, buffer, length, port);
 }
 
-/* a request still waiting is dropped, the one being answered gets no message, any other handle is WSAEINVAL. */
+/* drops queued requests or suppresses active requests' completion messages. other handles fail with WSAEINVAL. */
 int WSAAPI WSACancelAsyncRequest(HANDLE task)
 {
     int error = WsCheckStarted();
@@ -395,7 +393,7 @@ int WSAAPI WSACancelAsyncRequest(HANDLE task)
     return 0;
 }
 
-/* a program can have its answers posted some other way than PostMessage; the routine takes the same arguments. */
+/* allows a replacement for PostMessage with the same signature. */
 int WSAAPI WSApSetPostRoutine(PVOID routine)
 {
     lock();
@@ -404,7 +402,7 @@ int WSAAPI WSApSetPostRoutine(PVOID routine)
     return 0;
 }
 
-/* the entry that 16 bit winsock had to be unloaded by. */
+/* legacy 16-bit Winsock unload entry point. */
 int WINAPI WEP(void)
 {
     return 1;

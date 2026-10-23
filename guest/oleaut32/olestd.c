@@ -1,6 +1,6 @@
 #include "olestd.h"
 
-/* the quotient rounded to the nearest integer, halves away from zero. */
+/* rounds halves away from zero. */
 LONGLONG OleStdRoundDiv(LONGLONG numerator, LONGLONG denominator)
 {
     if (denominator < 0) {
@@ -12,9 +12,8 @@ LONGLONG OleStdRoundDiv(LONGLONG numerator, LONGLONG denominator)
 }
 
 /*
- * GetIDsOfNames of the standard objects. The first name is a member, any other one would be a parameter of it, and
- * these members have none. Names are not case sensitive. A name that is not known gets DISPID_UNKNOWN and fails the
- * call, the others are still looked up.
+ * the first name is a member, others would be its parameters and these members have none. Names are case
+ * insensitive. An unknown name gets DISPID_UNKNOWN and fails the call, but the rest are still looked up.
  */
 HRESULT OleStdIdsOfNames(const OLESTD_MEMBER *members, int count, REFIID riid, LPOLESTR *names, UINT name_count,
                          DISPID *ids)
@@ -42,7 +41,7 @@ HRESULT OleStdIdsOfNames(const OLESTD_MEMBER *members, int count, REFIID riid, L
     return result;
 }
 
-/* a control error becomes an exception of the call, which is how automation clients learn of it. */
+/* automation clients learn of control errors through the exception info. */
 HRESULT OleStdException(HRESULT hr, EXCEPINFO *info)
 {
     if ((hr & OLESTD_CONTROL_MASK) != OLESTD_CONTROL_ERROR)
@@ -54,7 +53,7 @@ HRESULT OleStdException(HRESULT hr, EXCEPINFO *info)
     return DISP_E_EXCEPTION;
 }
 
-/* the type information of one of the interfaces of stdole2.tlb, whose library is the only one that has any. */
+/* type info of one of the interfaces in stdole2.tlb. */
 HRESULT OleStdTypeInfo(UINT index, REFGUID id, ITypeInfo **info)
 {
     if (!info)

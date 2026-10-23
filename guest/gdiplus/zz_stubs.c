@@ -1,6 +1,3 @@
-/*
- * exports that are not written yet. Each reports that it is not implemented.
- */
 #include "gp_private.h"
 
 WINGDIPAPI GpStatus WINAPI GdipCreateStreamOnFile(const WCHAR*, UINT, IStream**) { return NotImplemented; }

@@ -69,7 +69,7 @@ WINGDIAPI BOOL WINAPI WidenPath(HDC dc)
     return NtGdiWidenPath(dc);
 }
 
-/* the limit travels as the bits of a float, as windows passes it. */
+/* the limit is passed as the bits of a float, like windows does. */
 WINGDIAPI BOOL WINAPI SetMiterLimit(HDC dc, FLOAT limit, PFLOAT old)
 {
     MF_RECORD(dc, MfSetMiterLimit(dc, limit), FALSE, FALSE);
@@ -138,7 +138,7 @@ WINGDIAPI BOOL WINAPI PolylineTo(HDC dc, const POINT *points, DWORD count)
 
 static BOOL poly_draw_kernel(HDC dc, const POINT *points, const BYTE *types, int count);
 
-/* validates every type first, like windows, then replays the figures through the current position. */
+/* like windows, every type is validated before any figure is drawn. */
 WINGDIAPI BOOL WINAPI PolyDraw(HDC dc, const POINT *points, const BYTE *types, int count)
 {
     if (count < 0 || (count && (!points || !types))) {
@@ -159,7 +159,7 @@ WINGDIAPI BOOL WINAPI PolyDraw(HDC dc, const POINT *points, const BYTE *types, i
     if (MfActive(dc)) {
         if (!MfPolyDraw(dc, points, types, (DWORD)count) || MfIsWmfDc(dc))
             return FALSE;
-        /* win32k keeps the current position and the path: the figures go there unrecorded. */
+        /* win32k keeps the current position and the path, so the figures go there unrecorded. */
         return poly_draw_kernel(dc, points, types, count);
     }
     return poly_draw_kernel(dc, points, types, count);
@@ -199,10 +199,10 @@ static BOOL poly_draw_kernel(HDC dc, const POINT *points, const BYTE *types, int
 /* ------------------------------------------------------------------ arcs */
 
 /*
- * elliptic arcs as cubic bezier curves of at most a quarter turn each. the
- * box gives the ellipse, the radials through the two points the angles,
- * the arc direction of the dc the way around. angles count up the way the
- * screen's counterclockwise goes, with y down.
+ * elliptic arcs as cubic beziers of at most a quarter turn each. the box
+ * gives the ellipse, the radials through the two points give the angles and
+ * the dc's arc direction picks the way around. angles grow counterclockwise
+ * on screen, with y down.
  */
 typedef struct ARC {
     double Cx, Cy, Rx, Ry;
@@ -240,7 +240,7 @@ static void arc_setup(HDC dc, ARC *a, int left, int top, int right, int bottom, 
     a->Sweep = sweep;
 }
 
-/* the curve points after the start: three a segment. returns their count. */
+/* the points after the start, three per segment. */
 static UINT arc_curves(const ARC *a, POINT *out)
 {
     double sweep = a->Sweep < 0 ? -a->Sweep : a->Sweep;
@@ -268,7 +268,7 @@ static UINT arc_curves(const ARC *a, POINT *out)
     return n;
 }
 
-/* the arc as a polygon outline, for chords and pies. */
+/* for chords and pies. */
 static UINT arc_flat(const ARC *a, POINT *out, UINT max)
 {
     UINT steps = max - 1;
@@ -277,7 +277,7 @@ static UINT arc_flat(const ARC *a, POINT *out, UINT max)
     return steps + 1;
 }
 
-/* what win32k gets: the figures, which keep the current position and any open path. */
+/* sends figures to win32k, which keeps the current position and any open path. */
 static BOOL arc_kernel(HDC dc, int kind, int left, int top, int right, int bottom, int x1, int y1, int x2, int y2)
 {
     ARC a;
@@ -285,8 +285,8 @@ static BOOL arc_kernel(HDC dc, int kind, int left, int top, int right, int botto
     POINT pts[1 + 48 + 2];
     ellipse_point(&a, a.Start, &pts[0]);
     switch (kind) {
-    case 0: /* arc */
-    case 1: { /* arc to */
+    case 0: /* arc. */
+    case 1: { /* arc to. */
         UINT n = arc_curves(&a, pts + 1);
         if (kind == 1) {
             if (!NtGdiLineTo(dc, pts[0].x, pts[0].y))
@@ -295,7 +295,7 @@ static BOOL arc_kernel(HDC dc, int kind, int left, int top, int right, int botto
         }
         return poly_draw(dc, pts, n + 1, MIME_POLY_BEZIER);
     }
-    default: { /* chord and pie: one closed polygon, filled and outlined */
+    default: { /* chord and pie: one closed polygon, filled and outlined. */
         UINT n = arc_flat(&a, pts, 49);
         if (kind == 3)
             pts[n++] = (POINT){(LONG)a.Cx, (LONG)a.Cy};
@@ -328,7 +328,7 @@ WINGDIAPI BOOL WINAPI Pie(HDC dc, int left, int top, int right, int bottom, int 
     return arc_kernel(dc, 3, left, top, right, bottom, x1, y1, x2, y2);
 }
 
-/* a line to the start of a circular arc, then the arc; positive sweeps turn counterclockwise. */
+/* a line to the start of a circular arc, then the arc. positive sweeps turn counterclockwise. */
 WINGDIAPI BOOL WINAPI AngleArc(HDC dc, int x, int y, DWORD radius, FLOAT start, FLOAT sweep)
 {
     if ((LONG)radius < 0) {
@@ -392,7 +392,7 @@ WINGDIAPI LONG WINAPI SetBitmapBits(HBITMAP bitmap, DWORD size, const void *bits
 
 /* ------------------------------------------------------------------ escapes */
 
-/* the display driver implements no escapes; QUERYESCSUPPORT answers for the escapes gdi32 handles itself. */
+/* the display driver has no escapes. QUERYESCSUPPORT answers for the ones gdi32 handles itself. */
 WINGDIAPI int WINAPI ExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out)
 {
     if (PrnDcCount) {
@@ -438,7 +438,6 @@ WINGDIAPI int WINAPI DescribePixelFormat(HDC dc, int format, UINT size, LPPIXELF
     return FORMAT_COUNT;
 }
 
-/* the best match for the requested flags, color depth, alpha, depth and stencil bits. */
 WINGDIAPI int WINAPI ChoosePixelFormat(HDC dc, const PIXELFORMATDESCRIPTOR *want)
 {
     if (!want || want->nSize != sizeof(PIXELFORMATDESCRIPTOR)) {
@@ -474,7 +473,7 @@ WINGDIAPI int WINAPI GetPixelFormat(HDC dc)
     return (int)v;
 }
 
-/* like windows, the opengl32 the process loaded presents. */
+/* like windows, whichever opengl32 the process loaded does the present. */
 WINGDIAPI BOOL WINAPI SwapBuffers(HDC dc)
 {
     int format = GetPixelFormat(dc);

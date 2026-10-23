@@ -1,13 +1,12 @@
 /*
- * the direct3d object of a directdraw object, made at the first query
- * for it and living as long as the directdraw object does, whose count
- * it shares, as d3dim700.dll of build 26300 has it. its devices are the
- * software rasterizer windows offers, "RGB Emulation", and the hardware
- * ones of a driver, all drawn on the gpu here.
+ * the direct3d object of a directdraw object, created on the first query
+ * and sharing its refcount and lifetime. its devices are windows' software
+ * "RGB Emulation" rasterizer and a driver's hardware ones, all drawn on the
+ * gpu here.
  */
 #include "d3d_private.h"
 
-/* the floats of direct3d need no runtime of the compiler's. */
+/* direct3d's floats need no compiler runtime. */
 int _fltused = 0x9875;
 
 static const IDirect3D7Vtbl d3d7_vtbl;
@@ -18,9 +17,9 @@ D3DOBJ *D3dObjFromIface7(IDirect3D7 *iface)
 }
 
 /*
- * directx 7 objects answer the seventh interface, the others the first
- * three, which d3dim's object serves. it shares the count of the
- * directdraw interface first asked for it.
+ * directx 7 objects answer IDirect3D7, the others the first three
+ * interfaces. it shares the refcount of the directdraw interface first
+ * queried for it.
  */
 HRESULT D3dObjQuery(DDRAW *dd, DWORD version, REFIID riid, void **out)
 {
@@ -66,7 +65,7 @@ static void orphan(LIST_ENTRY *list)
     }
 }
 
-/* with its directdraw object: what is left of it is unreachable, as devices hold the object. */
+/* dies with its directdraw object; anything left is unreachable, since devices hold the object. */
 void D3dObjDestroy(DDRAW *dd)
 {
     D3DOBJ *d3d = dd->d3d;
@@ -108,7 +107,7 @@ void D3dObjRelease(D3DOBJ *d3d)
     outer->lpVtbl->Release(outer);
 }
 
-/* ------------------------------------------------------------------ devices and their descriptions */
+/* ------------------------------------------------------------------ devices */
 
 static DWORD registry_dword(const WCHAR *key, const WCHAR *name)
 {
@@ -123,7 +122,7 @@ BOOL D3dIsHalGuid(const GUID *guid)
     return IsEqualGUID(guid, &IID_IDirect3DHALDevice) || IsEqualGUID(guid, &IID_IDirect3DTnLHalDevice);
 }
 
-/* the guids CreateDevice and EnumZBufferFormats take, even those of devices windows 11 lacks. */
+/* includes the guids of devices windows 11 lacks. */
 BOOL D3dIsDeviceGuid(const GUID *guid)
 {
     return IsEqualGUID(guid, &IID_IDirect3DRampDevice) || IsEqualGUID(guid, &IID_IDirect3DRGBDevice) ||
@@ -136,7 +135,7 @@ void D3dPrimCaps(D3DPRIMCAPS *c, BOOL hal)
 {
     c->dwSize = sizeof(*c);
     c->dwMiscCaps = hal ? 0x72 : 0x70;
-    /* the rgb rasterizer's, and a modern driver's: dither, z test, fog of both kinds, bias and anisotropy. */
+    /* the rgb rasterizer's, and a modern driver's: dither, z test, both fog kinds, bias and anisotropy. */
     c->dwRasterCaps = hal ? 0x003361B1 : 0x002121F7;
     c->dwZCmpCaps = 0xFF;
     c->dwSrcBlendCaps = 0x1FFF;
@@ -151,9 +150,9 @@ void D3dPrimCaps(D3DPRIMCAPS *c, BOOL hal)
 }
 
 /*
- * the rgb device as d3dim700 describes it, and a hardware device as a
- * current driver does through ddraw's emulation of the old driver model
- * guessed, the values being the driver's.
+ * the rgb device as windows describes it, and a hardware device as a
+ * current driver reports it through ddraw's emulation of the old driver
+ * model. the driver values are guessed.
  */
 BOOL D3dDeviceDesc7(const GUID *guid, D3DDEVICEDESC7 *d)
 {
@@ -178,7 +177,7 @@ BOOL D3dDeviceDesc7(const GUID *guid, D3DDEVICEDESC7 *d)
         d->dvGuardBandLeft = d->dvGuardBandTop = -32768.0f;
         d->dvGuardBandRight = d->dvGuardBandBottom = 32767.0f;
         d->dwFVFCaps = 8;
-        /* all of direct3d 7's operations but the premodulation nothing implements. */
+        /* every direct3d 7 operation except premodulate, which nothing implements. */
         d->dwTextureOpCaps = 0x00FEFFFF;
         d->dvMaxVertexW = 1e10f;
         d->dwMaxActiveLights = tnl ? 8 : 0xFFFFFFFF;
@@ -222,7 +221,7 @@ static HRESULT STDMETHODCALLTYPE d3d7_enum_devices(IDirect3D7 *This, LPD3DENUMDE
             continue;
         D3DDEVICEDESC7 desc;
         D3dDeviceDesc7(DEVICES[i].guid, &desc);
-        /* the plain hardware device is described with the software pipeline's transform and lighting. */
+        /* the plain hardware device reports the software pipeline's transform and lighting. */
         if (IsEqualGUID(DEVICES[i].guid, &IID_IDirect3DHALDevice))
             desc.dwDevCaps &= ~D3DDEVCAPS_HWTRANSFORMANDLIGHT;
         char name[32], description[96];
@@ -267,7 +266,7 @@ static HRESULT STDMETHODCALLTYPE d3d7_create_vertex_buffer(IDirect3D7 *This, LPD
 #define RGB_FORMAT(bits, r, g, b, a)                                                                                   \
     {sizeof(DDPIXELFORMAT), DDPF_RGB | ((a) ? DDPF_ALPHAPIXELS : 0), 0, {bits}, {r}, {g}, {b}, {a}}
 
-/* what a current driver offers as textures through ddraw's list, guessed as they are the driver's. */
+/* the texture formats a current driver offers through ddraw, guessed. */
 const DDPIXELFORMAT D3dTextureFormats[] = {
     RGB_FORMAT(32, 0xFF0000, 0xFF00, 0xFF, 0),
     RGB_FORMAT(32, 0xFF0000, 0xFF00, 0xFF, 0xFF000000),
@@ -321,7 +320,7 @@ static HRESULT STDMETHODCALLTYPE d3d7_enum_zbuffer_formats(IDirect3D7 *This, REF
     return D3D_OK;
 }
 
-/* the textures of every device are managed by the backend, which keeps them as long as their surfaces. */
+/* the backend manages every device's textures and keeps them as long as their surfaces. */
 static HRESULT STDMETHODCALLTYPE d3d7_evict_managed_textures(IDirect3D7 *This)
 {
     return D3dObjFromIface7(This) ? D3D_OK : DDERR_INVALIDOBJECT;

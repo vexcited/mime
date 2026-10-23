@@ -1,8 +1,7 @@
 /*
- * imagehlp.dll, the helpers for executable images: the certificates stored after the sections of a signed file, the
- * checksum in the header, and the lookups of directories and sections in a mapped image. The certificates are the
- * records of the security directory, whose address is a file offset and not a relative address. Each record is a
- * length, a revision, a type and the bytes, and starts on an eight byte boundary.
+ * imagehlp.dll: certificates stored after the sections of a signed file, the header checksum, and directory and
+ * section lookups in mapped images. the security directory address is a file offset, not an rva. each certificate
+ * record is a length, revision, type and data, aligned to 8 bytes.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -19,7 +18,7 @@
 #define CHECKSUM_MAPVIEW_FAILURE 3
 #define CHECKSUM_UNICODE_FAILURE 4
 
-#define SECURITY_ENTRY_OFFSET 32 /* the fifth directory, after four of eight bytes. */
+#define SECURITY_ENTRY_OFFSET 32 /* the fifth data directory, after four 8 byte entries. */
 
 typedef struct _WIN_CERTIFICATE {
     DWORD dwLength;
@@ -33,11 +32,11 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the security directory of a file */
+/* ------------------------------------------------------------------ security directory */
 
 typedef struct {
     HANDLE File;
-    DWORD DirectoryPosition; /* where the directory entry sits in the file. */
+    DWORD DirectoryPosition; /* file offset of the directory entry. */
     DWORD Offset;            /* the certificates, from the entry. */
     DWORD Size;
     DWORD FileSize;
@@ -68,7 +67,7 @@ static BOOL open_directory(HANDLE file, SECDIR *dir)
         return FALSE;
     if (!read_at(file, (DWORD)dos.e_lfanew, &signature, 4) || signature != IMAGE_NT_SIGNATURE)
         return FALSE;
-    /* the optional header follows the four bytes of signature and the twenty of the file header. */
+    /* the optional header follows the 4 byte signature and the 20 byte file header. */
     DWORD optional = (DWORD)dos.e_lfanew + 4 + 20;
     if (!read_at(file, optional, &magic, 2))
         return FALSE;
@@ -94,7 +93,7 @@ static BOOL write_entry(SECDIR *dir)
     return write_at(dir->File, dir->DirectoryPosition, entry, sizeof entry);
 }
 
-/* the header of a record and where it starts, for the record of the index. */
+/* the file offset and header of record number index. */
 static BOOL find_record(SECDIR *dir, DWORD index, DWORD *where, WIN_CERTIFICATE *header)
 {
     DWORD at = 0;
@@ -194,7 +193,7 @@ IMAGEHLP BOOL WINAPI ImageRemoveCertificate(HANDLE file, DWORD index)
             return FALSE;
     }
     dir.Size -= length;
-    /* a directory that is last in the file gives the room back. */
+    /* a directory at the end of the file gives its room back. */
     if (dir.Offset + dir.Size + length == dir.FileSize) {
         LARGE_INTEGER end = {.QuadPart = (LONGLONG)dir.Offset + dir.Size};
         if (!SetFilePointerEx(file, end, nullptr, FILE_BEGIN) || !SetEndOfFile(file))
@@ -213,7 +212,7 @@ IMAGEHLP BOOL WINAPI ImageAddCertificate(HANDLE file, LPWIN_CERTIFICATE certific
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    /* the new record goes after the directory when it is last in the file, else after the file. */
+    /* the new record goes after the directory when it ends the file, else at the end of the file. */
     DWORD count = 0, at = 0;
     WIN_CERTIFICATE header;
     while (at + 8 <= dir.Size && read_at(file, dir.Offset + at, &header, 8) && header.dwLength >= 8 &&

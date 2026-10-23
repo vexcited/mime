@@ -1,6 +1,4 @@
-/*
- * job objects, over the kernel's (ntos/ps/job.c).
- */
+/* job objects, over the kernel's in ntos/ps/job.c. */
 #include "kernelbase_private.h"
 
 #define JOB_OBJECT_ALL_ACCESS (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x3F)

@@ -1,7 +1,4 @@
-/*
- * INotificationActivationCallback, the interface the COM server of an application is called through when a person
- * acts on one of its toast notifications.
- */
+/* windows calls an app's COM server through INotificationActivationCallback when the user acts on its toasts. */
 #ifndef MIME_WIN32_NOTIFICATIONACTIVATIONCALLBACK_H
 #define MIME_WIN32_NOTIFICATIONACTIVATIONCALLBACK_H
 

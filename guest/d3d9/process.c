@@ -1,13 +1,12 @@
 /*
- * ProcessVertices: the vertices through the vertex shader bound, or fixed
- * function's, and written to a buffer as screen positions and the values
- * the declaration of the destination asks for. windows runs its own
- * vertex pipeline on the cpu; here the gpu runs the draws' and streams
- * the outputs out, read back once done.
+ * ProcessVertices: windows runs the vertex pipeline on the cpu. here the
+ * gpu runs it like a draw and streams the outputs out, read back once
+ * done and written as screen positions plus what the destination
+ * declaration asks for.
  */
 #include "d3d9_private.h"
 
-/* the shader streaming out a variant's outputs: the position, then each register of outputs written. */
+/* streams out the position, then each output register written. */
 static ID3D11GeometryShader *stream_out(D9Device *d, D9Variant *v, UINT *stride)
 {
     *stride = 16 * (1 + __builtin_popcount(v->outputs & ((1u << D9_SLOT_POSITION) - 1)));
@@ -68,7 +67,7 @@ static DWORD color_of(const float *c)
     return v;
 }
 
-/* the clip codes of D3DCLIPSTATUS9 of a position in clip space. */
+/* D3DCLIPSTATUS9 clip codes of a clip space position. */
 static DWORD clip_codes(const float *p)
 {
     return (p[0] < -p[3] ? D3DCS_LEFT : 0) | (p[0] > p[3] ? D3DCS_RIGHT : 0) | (p[1] > p[3] ? D3DCS_TOP : 0) |
@@ -80,7 +79,7 @@ HRESULT D9ProcessVertices(D9Device *d, UINT source, UINT dest, UINT count, D9Buf
 {
     if (buffer->base.type != D3DRTYPE_VERTEXBUFFER || buffer->base.device != d)
         return D3DERR_INVALIDCALL;
-    /* the destination's layout: the declaration given, else the buffer's flexible format. */
+    /* the given declaration, else the buffer's fvf. */
     D3DVERTEXELEMENT9 elements[MAXD3DDECLLENGTH + 1];
     UINT element_count;
     if (decl) {
@@ -96,7 +95,7 @@ HRESULT D9ProcessVertices(D9Device *d, UINT source, UINT dest, UINT count, D9Buf
         if (elements[i].Stream)
             continue;
         UINT size = type_size(elements[i].Type);
-        /* as d3d9.dll: only floats and colors in the declaration of the output. */
+        /* like windows, the output declaration may only hold floats and colors. */
         if (!size && decl)
             return D3DERR_INVALIDCALL;
         stride = D9_MAX(stride, elements[i].Offset + D9_MAX(size, 4u));
@@ -133,15 +132,15 @@ HRESULT D9ProcessVertices(D9Device *d, UINT source, UINT dest, UINT count, D9Buf
         return D3DERR_INVALIDCALL;
     }
 
-    /* the registers in the order they were streamed out. */
+    /* each register's column in the streamed output. */
     int column[D9_SLOT_POSITION];
     UINT next = 1;
     for (UINT slot = 0; slot < D9_SLOT_POSITION; slot++)
         column[slot] = vs->outputs & (1u << slot) ? (int)next++ : -1;
     /*
-     * with D3DPV_DONOTCOPYDATA only what the vertex operation makes is
-     * written: the position, and the colors when fixed function lights,
-     * which is a guess at what d3d9.dll's flags pick.
+     * with D3DPV_DONOTCOPYDATA only the position is written, plus the
+     * colors when fixed function lights. which elements windows writes is a
+     * guess.
      */
     BOOL only_position = flags & D3DPV_DONOTCOPYDATA;
     BOOL lit = !d->vs && d->render_states[D3DRS_LIGHTING];
@@ -153,7 +152,7 @@ HRESULT D9ProcessVertices(D9Device *d, UINT source, UINT dest, UINT count, D9Buf
     for (UINT n = 0; n < count; n++) {
         const float(*reg)[4] = (const float(*)[4])((const BYTE *)mapped.pData + (SIZE_T)n * so_stride);
         BYTE *vertex = out + (SIZE_T)n * stride;
-        /* the position without the half pixel the translation moved it by. */
+        /* undo the half pixel offset the translation added. */
         float p[4] = {reg[0][0] - reg[0][3] * half_x, reg[0][1] + reg[0][3] * half_y, reg[0][2], reg[0][3]};
         DWORD codes = clip_codes(p);
         clip_union |= codes;
@@ -183,7 +182,7 @@ HRESULT D9ProcessVertices(D9Device *d, UINT source, UINT dest, UINT count, D9Buf
                     if (slot < 0 || slot >= D9_SLOT_POSITION || column[slot] < 0)
                         continue;
                     memcpy(value, reg[column[slot]], sizeof(value));
-                    /* fixed function's fog factor rides in the specular color's alpha, a guess. */
+                    /* fixed function's fog factor is guessed to ride in the specular alpha. */
                     if (e->Usage == D3DDECLUSAGE_COLOR && e->UsageIndex == 1 && !d->vs && column[10] >= 0)
                         value[3] = reg[column[10]][0];
                 }

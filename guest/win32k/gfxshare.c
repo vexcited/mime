@@ -1,13 +1,13 @@
 /*
  * the kernel objects behind the nt handles of shared direct3d resources and fences, see mime/gfxshare.h.
  *
- * An object holds the bytes its creator described the resource with, so the process that opens it can make its own
- * object, and the id the host keeps the memory or semaphore for other processes by. When the last reference to it
- * goes the host is told to drop that.
+ * an object holds the bytes its creator described the resource with, so a process that opens it can build its own
+ * object, plus the id under which the host keeps the memory or semaphore for other processes. the host drops it
+ * when the last reference goes.
  *
- * A keyed mutex is a lock with a key. It starts free with key 0; acquiring it waits until it is free and has the
- * key asked for, releasing it makes it free with the key given. A process that ends holding it abandons it: the
- * next acquire says so and does not take it.
+ * a keyed mutex starts free with key 0. acquiring waits until it is free with the requested key, releasing frees it
+ * with the given key. a process that ends while holding it abandons it: the next acquire reports that and does not
+ * take it.
  */
 #include "win32k.h"
 
@@ -34,7 +34,7 @@ static LIST_ENTRY g_all = {&g_all, &g_all};
 static KSPIN_LOCK g_lock;
 static LONG64 g_next_id = 1;
 static ULONG g_next_legacy = 1;
-/* the objects with a legacy shared handle, by it. */
+/* objects with a legacy shared handle, indexed by it. */
 #define MAX_LEGACY 4096
 static GFXSHARE *g_legacy[MAX_LEGACY];
 
@@ -68,7 +68,7 @@ static POBJECT_TYPE type_of(ULONG kind)
     return kind == MIME_GFXSHARE_RESOURCE ? g_resource_type : kind == MIME_GFXSHARE_SYNC ? g_sync_type : nullptr;
 }
 
-/* the object of a handle, of the kind asked for or of either. */
+/* kind 0 accepts either kind. */
 static NTSTATUS reference(HANDLE handle, ULONG kind, GFXSHARE **out)
 {
     types();
@@ -85,7 +85,7 @@ static NTSTATUS reference(HANDLE handle, ULONG kind, GFXSHARE **out)
     return STATUS_SUCCESS;
 }
 
-/* a name given by the caller as the whole path in the object namespace, copied with its attributes. */
+/* the caller gives the whole object namespace path. */
 static NTSTATUS capture_name(ULONG64 user, ULONG attributes, OBJECT_ATTRIBUTES *oa, UNICODE_STRING *name,
                              PWSTR *buffer)
 {
@@ -150,7 +150,7 @@ static NTSTATUS create(MimeGfxShare *a)
             KeAcquireSpinLock(&g_lock, &irql);
             InsertTailList(&g_all, &s->Links);
             if (a->Flags & MIME_GFXSHARE_LEGACY) {
-                /* the first free place from the next number on, the numbers turning round. */
+                /* the first free slot from the next number on, wrapping around. */
                 for (ULONG i = 0; i < MAX_LEGACY && !legacy; i++) {
                     ULONG n = g_next_legacy++;
                     if (!g_legacy[(n - 1) % MAX_LEGACY]) {
@@ -255,8 +255,8 @@ static NTSTATUS retire(MimeGfxShare *a)
 }
 
 /*
- * the free mutex with the key is taken, unless its last holder went without releasing it: that acquire only says so,
- * and leaves the mutex free for the next, as the runtime treats it as no acquire at all.
+ * after an abandon, the next acquire only reports it and leaves the mutex free, since the runtime treats it as no
+ * acquire at all.
  */
 static NTSTATUS take(GFXSHARE *s)
 {
@@ -307,7 +307,7 @@ static NTSTATUS acquire(MimeGfxShare *a)
         }
         NTSTATUS w = KeWaitForSingleObject(&s->Changed, Executive, UserMode, FALSE, timeout);
         if (w == STATUS_TIMEOUT) {
-            /* once more, the lock may have been released in the last moment. */
+            /* check once more, the lock may have been released at the last moment. */
             if (a->Timeout == 0xFFFFFFFF)
                 continue;
             KeAcquireSpinLock(&g_lock, &irql);
@@ -346,7 +346,7 @@ static NTSTATUS release(MimeGfxShare *a)
     return status;
 }
 
-/* the holder is gone without releasing: the mutex is free, with its key, and says it was abandoned. */
+/* the holder went away without releasing: the mutex becomes free, keeps its key and reports the abandon. */
 static NTSTATUS abandon(MimeGfxShare *a)
 {
     GFXSHARE *s;
@@ -400,7 +400,7 @@ NTSTATUS NTAPI NtGdiMimeGfxShare(ULONG op, PVOID user)
     default:
         return STATUS_INVALID_PARAMETER;
     }
-    /* the answers go back whatever the status: a timeout and an abandoned mutex are answers. */
+    /* copied back whatever the status: a timeout and an abandoned mutex are answers too. */
     if (!NT_SUCCESS(MimeCopyToUser(user, &a, sizeof(a))) && NT_SUCCESS(status))
         return STATUS_ACCESS_VIOLATION;
     return status;

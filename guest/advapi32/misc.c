@@ -1,6 +1,6 @@
 /*
- * event logging and hardware profiles. mime has no event log service: event sources accept every report and
- * write it to the debug output. the service control manager is in scm.c.
+ * event logging and hardware profiles. there is no event log service: sources accept every report and write it to
+ * the debug output. the service control manager is in scm.c.
  */
 #include "advapi32_private.h"
 #include <mime/stub.h>
@@ -76,8 +76,8 @@ typedef struct EVENT_LOG {
 } EVENT_LOG;
 
 /*
- * Mime keeps no event log: a log can be opened and closed, and always holds no record. A name no log has opens the
- * Application log, which is what windows does for a source it does not know, so the name is kept as it is.
+ * there is no event log: a log opens and closes and never holds a record. an unknown name opens the Application log,
+ * as windows does for an unknown source, and the name is kept as given.
  */
 ADVAPI HANDLE WINAPI OpenEventLogW(LPCWSTR server, LPCWSTR source)
 {
@@ -133,7 +133,7 @@ ADVAPI BOOL WINAPI CloseEventLog(HANDLE h)
     return TRUE;
 }
 
-/* a read has to say how to read and in which direction, each once; there is never a record, so it ends at once. */
+/* the flags must give exactly one read mode and one direction; with no records the read ends at once. */
 ADVAPI BOOL WINAPI ReadEventLogW(HANDLE h, DWORD flags, DWORD offset, LPVOID buffer, DWORD bytes, DWORD *read, DWORD *needed)
 {
     if (read)
@@ -170,7 +170,7 @@ ADVAPI BOOL WINAPI GetNumberOfEventLogRecords(HANDLE h, PDWORD count)
     return TRUE;
 }
 
-/* an empty log has no oldest record: the number the first one will have. */
+/* an empty log's oldest record is the number the first one will get. */
 ADVAPI BOOL WINAPI GetOldestEventLogRecord(HANDLE h, PDWORD record)
 {
     if (!event_log(h))
@@ -187,7 +187,7 @@ ADVAPI BOOL WINAPI ClearEventLogW(HANDLE h, LPCWSTR backup)
 {
     if (!event_log(h))
         return FALSE;
-    /* nothing to save, and nothing that a backup file could hold. */
+    /* nothing to save, and nothing for a backup file to hold. */
     if (backup) {
         AdvSetError(ERROR_NOT_SUPPORTED);
         return FALSE;
@@ -208,7 +208,7 @@ ADVAPI BOOL WINAPI ClearEventLogA(HANDLE h, LPCSTR backup)
     return ok;
 }
 
-/* the event is never signalled, as no record is ever added. */
+/* the event never fires since no record is ever added. */
 ADVAPI BOOL WINAPI NotifyChangeEventLog(HANDLE h, HANDLE event)
 {
     if (!event_log(h))
@@ -236,7 +236,7 @@ static PCWSTR event_type(WORD type)
     }
 }
 
-/* one debug output line: source, type, event id and the insertion strings. */
+/* writes one debug line: source, type, event id and the insertion strings. */
 ADVAPI BOOL WINAPI ReportEventW(HANDLE h, WORD type, WORD category, DWORD id, PSID user, WORD count, DWORD data_size,
                                 LPCWSTR *strings, LPVOID data)
 {
@@ -282,7 +282,7 @@ ADVAPI BOOL WINAPI ReportEventA(HANDLE h, WORD type, WORD category, DWORD id, PS
     return ok;
 }
 
-/* the cache of HKEY_CURRENT_USER is never kept apart from the user, so there is nothing to drop. */
+/* the HKEY_CURRENT_USER cache is never kept apart from the user, so there is nothing to drop. */
 ADVAPI LSTATUS WINAPI RegDisablePredefinedCache(void)
 {
     return ERROR_SUCCESS;
@@ -306,7 +306,7 @@ typedef struct HW_PROFILE_INFOA {
 #define DOCKINFO_DOCKED 0x2
 #define DOCKINFO_USER_SUPPLIED 0x4
 
-/* reads the current profile of IDConfigDB, falling back to the dock state windows reports without one. */
+/* reads the current profile from IDConfigDB, else the dock state windows reports without one. */
 ADVAPI BOOL WINAPI GetCurrentHwProfileW(HW_PROFILE_INFOW *info)
 {
     if (!info) {
@@ -484,9 +484,8 @@ static BOOL is_control(WCHAR c)
 }
 
 /*
- * runs the tests the caller asks for, all when it gives no result
- * pointer, and reports each that held. the text counts as utf-16 when a
- * utf-16 test holds and no test against it does.
+ * runs the tests the caller asks for, all of them when result is NULL, and reports each that held. the text is
+ * utf-16 when a utf-16 test holds and no test against it does.
  */
 ADVAPI BOOL WINAPI IsTextUnicode(const void *buffer, int size, LPINT result)
 {
@@ -533,7 +532,7 @@ ADVAPI BOOL WINAPI IsTextUnicode(const void *buffer, int size, LPINT result)
         found |= IS_TEXT_UNICODE_REVERSE_CONTROLS;
     if (illegal)
         found |= IS_TEXT_UNICODE_ILLEGAL_CHARS;
-    /* statistics: most characters of utf-16 western text have a zero high byte. */
+    /* statistics: utf-16 western text mostly has zero high bytes. */
     if (low_high * 2 > n)
         found |= IS_TEXT_UNICODE_STATISTICS;
     else if (high_low * 2 > n)
@@ -562,11 +561,10 @@ ADVAPI ULONG WINAPI LsaNtStatusToWinError(NTSTATUS status)
 /* ---------------------------------------------------------------- remote registry */
 
 /*
- * a key of the registry of this machine, as a handle of its own for the keys that have one. Flags are only looked
- * at for a named machine: bits above 7 and the two bits 1 and 4 together are ERROR_INVALID_PARAMETER. A machine
- * other than this one cannot be reached, as the remote registry service has no peer: ERROR_BAD_NETPATH, which is
- * what Windows gives when no transport finds the machine. Guess: "." and "localhost" name this machine as well as
- * the computer name does.
+ * a key of this machine's registry, as its own handle for keys that have one. flags are only checked for a named
+ * machine: bits above 7, or bits 1 and 4 together, give ERROR_INVALID_PARAMETER. no other machine is reachable since
+ * the remote registry service has no peer: ERROR_BAD_NETPATH, what windows gives when no transport finds the machine.
+ * "." and "localhost" are assumed to name this machine, like the computer name.
  */
 ADVAPI LSTATUS WINAPI RegConnectRegistryExW(LPCWSTR machine, HKEY key, ULONG flags, HKEY *result)
 {
@@ -616,9 +614,9 @@ ADVAPI LSTATUS WINAPI RegConnectRegistryA(LPCSTR machine, HKEY key, HKEY *result
 }
 
 /*
- * the registry reflection of 32-bit and 64-bit views, which windows' 64-bit systems had in their first versions and
- * dropped: the calls remain, and 32-bit programs that were written for it call them. No key is reflected, so disabling
- * and enabling succeed and none is ever found disabled; native 64-bit callers get what windows answers them.
+ * registry reflection between the 32-bit and 64-bit views, which early 64-bit windows had and later dropped. the calls
+ * remain for 32-bit programs written for it. no key is reflected, so disabling and enabling succeed and none is ever
+ * found disabled; native 64-bit callers get what windows answers them.
  */
 ADVAPI LSTATUS WINAPI RegDisableReflectionKey(HKEY key)
 {

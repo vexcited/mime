@@ -1,7 +1,6 @@
 /*
- * gdi32 fonts: enumeration, outline metrics, glyph indices and outlines,
- * character placement and fonts added at run time. the font engine lives
- * in win32k.
+ * fonts: enumeration, outline metrics, glyph indices and outlines, character
+ * placement and fonts added at run time. the font engine lives in win32k.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -147,7 +146,7 @@ WINGDIAPI DWORD WINAPI GetFontData(HDC dc, DWORD table, DWORD offset, PVOID buff
     return NtGdiGetFontData(dc, table, offset, buffer, size);
 }
 
-/* the string fields stay offsets from the start of the structure, as on windows. */
+/* like windows, the string fields stay offsets from the start of the structure. */
 WINGDIAPI UINT WINAPI GetOutlineTextMetricsW(HDC dc, UINT size, LPOUTLINETEXTMETRICW otm)
 {
     if (!otm)
@@ -327,8 +326,8 @@ WINGDIAPI BOOL WINAPI GetCharWidth32A(HDC dc, UINT first, UINT last, LPINT width
 /* ------------------------------------------------------------------ character placement */
 
 /*
- * left to right placement without shaping: glyphs are the font's glyph
- * indices, the order is the identity and widths come from the advances.
+ * left to right without shaping: glyphs are the font's glyph indices, the
+ * order is the identity and widths are the advances.
  */
 WINGDIAPI DWORD WINAPI GetCharacterPlacementW(HDC dc, LPCWSTR text, int count, int max_extent,
                                               LPGCP_RESULTSW results, DWORD flags)
@@ -371,7 +370,7 @@ WINGDIAPI DWORD WINAPI GetCharacterPlacementW(HDC dc, LPCWSTR text, int count, i
     return (DWORD)MAKELONG(size.cx, size.cy);
 }
 
-/* the ansi form: the text through the ansi code page, the placement of the wide one, the string back. */
+/* converts the text through the ansi code page, places it with the wide form, and converts the string back. */
 WINGDIAPI DWORD WINAPI GetCharacterPlacementA(HDC dc, LPCSTR text, int count, int max_extent,
                                               LPGCP_RESULTSA results, DWORD flags)
 {
@@ -409,7 +408,7 @@ WINGDIAPI DWORD WINAPI GetCharacterPlacementA(HDC dc, LPCSTR text, int count, in
     return r;
 }
 
-/* the charsets, their ansi code pages and their bits of a font signature's code page ranges. */
+/* each charset, its ansi code page, and its bit in a font signature's code page ranges. */
 static const struct {
     UINT charset, codepage, bit;
 } CHARSETS[] = {
@@ -421,7 +420,7 @@ static const struct {
     {SYMBOL_CHARSET, CP_SYMBOL, 31},
 };
 
-/* a charset, a code page, a font signature or a locale: the charset, code page and signature bit that go with it. */
+/* maps a charset, code page, font signature or locale to its charset, code page and signature bit. */
 WINGDIAPI BOOL WINAPI TranslateCharsetInfo(DWORD *source, LPCHARSETINFO info, DWORD flags)
 {
     if (!info)

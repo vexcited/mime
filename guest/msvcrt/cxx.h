@@ -1,12 +1,11 @@
 /*
- * what the c++ files of msvcrt share: the classes of the c runtime's
- * c++ abi, the records compilers emit for run time type information and
- * exceptions, and the per thread state of exception handling.
+ * shared by msvcrt's C++ files: the C runtime's C++ ABI classes, the RTTI and exception records compilers emit, and
+ * the per thread exception handling state.
  */
 #ifndef MIME_MSVCRT_CXX_H
 #define MIME_MSVCRT_CXX_H
 
-/* the headers are c ones, without linkage of their own. */
+/* the headers are C ones without linkage of their own. */
 extern "C" {
 #include <mime/win32/winbase.h>
 void *__cdecl malloc(size_t size);
@@ -32,7 +31,7 @@ __declspec(noreturn) void __cdecl terminate(void);
 #define MSVCRT_C_PREFIX ""
 #endif
 
-/* the names of members the compiler would not emit under their own, by architecture. */
+/* per architecture symbol names for members the compiler would not emit under their own name. */
 #define MSVCRT_NAME(name) __asm__(MSVCRT_NAME_##name)
 #ifdef __i386__
 #define MSVCRT_NAME_BAD_CAST_DEFAULT "??_Fbad_cast@@QAEXXZ"
@@ -51,8 +50,6 @@ __declspec(noreturn) void __cdecl terminate(void);
 #define MSVCRT_NAME_NON_RTTI_VECTOR_DELETING "??_E__non_rtti_object@@UEAAPEAXI@Z"
 #define MSVCRT_NAME_TYPE_INFO_DELETING "??_Gtype_info@@UEAAPEAXI@Z"
 #endif
-
-/* ------------------------------------------------------------------ classes */
 
 struct __type_info_node;
 
@@ -125,8 +122,6 @@ public:
     virtual ~__non_rtti_object();
 };
 
-/* ------------------------------------------------------------------ run time type information */
-
 /* where a base class sits: at mdisp, or through the virtual base table at pdisp, entry vdisp. */
 struct RTTI_PMD {
     int mdisp;
@@ -134,7 +129,7 @@ struct RTTI_PMD {
     int vdisp;
 };
 
-/* pointers of these records are rvas on 64-bit windows and addresses on x86, an int either way. */
+/* pointers in these records are rvas on 64-bit Windows and addresses on x86, an int either way. */
 struct RTTI_LOCATOR {
     ULONG signature;
     ULONG offset;
@@ -167,9 +162,7 @@ struct RTTI_BASE {
 #define RTTI_BASE_AMBIGUOUS 0x02
 #define RTTI_BASE_PRIVATE 0x04
 
-/* ------------------------------------------------------------------ exceptions */
-
-/* the thread's state: its handlers, the catch blocks running, newest first, and throws not yet caught. */
+/* the thread's state: its handlers, the running catch blocks, newest first, and throws not yet caught. */
 struct MSVCRT_CATCH;
 struct MSVCRT_EH_THREAD {
     void *terminate;
@@ -182,7 +175,7 @@ struct MSVCRT_EH_THREAD {
     /* the record and context of the exception the newest catch block handles, for __current_exception. */
     void *current_record;
     void *current_context;
-    /* 64-bit windows: the state of each function whose catch block runs, its frame first. */
+    /* 64-bit Windows: the state of each function whose catch block runs, its frame first. */
     ULONG_PTR kept[16][2];
     int kept_count;
 };

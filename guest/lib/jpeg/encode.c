@@ -1,11 +1,10 @@
 /*
- * the encoder: the layout of the components, the color transform and chroma subsampling, the quantization and the
- * markers around the entropy coded data of entropy.c.
+ * the encoder: component layout, color transform and chroma subsampling, quantization, and the markers around the
+ * entropy coded data of entropy.c.
  *
- * a picture is cut into rows of MCUs. a row at a time is converted to planar samples, the planes with fewer
- * samples are averaged down by whole factors, and every block goes through the transform and the quantization.
- * a baseline file with the tables of the standard is written as the rows are made, the others keep every block of
- * the picture for the passes over it that their tables or scans need.
+ * the picture is cut into MCU rows. each row is converted to planar samples, subsampled planes are averaged down by
+ * whole factors, and every block is transformed and quantized. a baseline file with the standard tables is written
+ * row by row, other files keep every block of the picture for the passes their tables or scans need.
  */
 #include "enc.h"
 
@@ -32,9 +31,9 @@ static void *enc_alloc_array(Enc *e, uint64_t count, uint64_t item)
 /* ------------------------------------------------------------------ color */
 
 /*
- * the transform of JFIF with 15 bit fractions. the luma is 0.299 red, 0.587 green and 0.114 blue, and the chroma are
- * the differences of blue and of red from it, scaled to the range and centered on 128. the weights of each add up to
- * the unit, which keeps gray at the same level and the chroma of gray at 128.
+ * the JFIF transform with 15 bit fractions. luma is 0.299 red, 0.587 green and 0.114 blue, the chroma are the blue
+ * and red differences from it, scaled and centered on 128. each set of weights sums to one, so gray keeps its level
+ * and its chroma stays at 128.
  */
 #define Y_R 9798
 #define Y_G 19235
@@ -67,7 +66,7 @@ static inline __m128i load8(const uint8_t *p)
     return _mm_unpacklo_epi8(_mm_loadl_epi64((const __m128i *)p), _mm_setzero_si128());
 }
 
-/* four pixels of b, g, r or of b, g, r and another byte, as the channels in 32 bit lanes. */
+/* four pixels of b, g, r, or b, g, r and another byte, as channels in 32 bit lanes. */
 static inline void split4(const uint8_t *src, int bpp, __m128i *b, __m128i *g, __m128i *r)
 {
     __m128i v = _mm_loadu_si128((const __m128i *)src);
@@ -83,7 +82,7 @@ static inline void split4(const uint8_t *src, int bpp, __m128i *b, __m128i *g, _
     *r = _mm_and_si128(_mm_srli_epi32(v, 16), ff);
 }
 
-/* eight pixels to the three planes. the weights of two channels are applied in one multiplication of pairs. */
+/* eight pixels to the three planes. one pair multiply applies the weights of two channels. */
 static inline void ycc8(const uint8_t *src, int bpp, uint8_t *y, uint8_t *cb, uint8_t *cr)
 {
     __m128i b0, g0, r0, b1, g1, r1;
@@ -93,7 +92,7 @@ static inline void ycc8(const uint8_t *src, int bpp, uint8_t *y, uint8_t *cb, ui
     __m128i rg_lo = _mm_unpacklo_epi16(r, g), rg_hi = _mm_unpackhi_epi16(r, g);
     __m128i bz_lo = _mm_unpacklo_epi16(b, _mm_set1_epi16(1)), bz_hi = _mm_unpackhi_epi16(b, _mm_set1_epi16(1));
     const __m128i bias = _mm_set1_epi32(C_BIAS);
-    /* pairs of red and green against two weights, and blue and one against the weight of blue and the rounding. */
+    /* red and green pairs against two weights, blue and one against blue's weight and the rounding. */
 #define WEIGHTS(wr, wg) _mm_set1_epi32((int)(((uint32_t)(uint16_t)(wg) << 16) | (uint16_t)(wr)))
     const __m128i krg_y = WEIGHTS(Y_R, Y_G), kb_y = WEIGHTS(Y_B, Y_ROUND);
     const __m128i krg_cb = WEIGHTS(CB_R, CB_G), kb_cb = WEIGHTS(CB_B, 0);
@@ -116,7 +115,6 @@ static inline void ycc8(const uint8_t *src, int bpp, uint8_t *y, uint8_t *cb, ui
 }
 #endif
 
-/* one row of pixels to the planes of the components. */
 static void convert_row(const Enc *e, const uint8_t *src, uint8_t *const *dst, uint32_t w)
 {
     int bpp = e->format == MIME_JPEG_PIXEL_BGR24 ? 3 : 4;
@@ -132,7 +130,7 @@ static void convert_row(const Enc *e, const uint8_t *src, uint8_t *const *dst, u
         break;
     case MODE_YCC:
 #ifdef MIME_JPEG_SSE2
-        /* three byte pixels are read four bytes at a time, so a few pixels are left to the code below. */
+        /* three byte pixels are read four bytes at a time, so the last few pixels go to the code below. */
         for (; x + 10 <= w; x += 8, src += 8 * bpp)
             ycc8(src, bpp, &dst[0][x], &dst[1][x], &dst[2][x]);
 #endif
@@ -147,7 +145,7 @@ static void convert_row(const Enc *e, const uint8_t *src, uint8_t *const *dst, u
         }
         break;
     case MODE_CMYK:
-        /* the files hold the inverted values, 255 is no ink. */
+        /* files store inverted values, 255 is no ink. */
         for (; x < w; x++, src += 4) {
             dst[0][x] = (uint8_t)(255 - src[0]);
             dst[1][x] = (uint8_t)(255 - src[1]);
@@ -164,7 +162,7 @@ static void convert_row(const Enc *e, const uint8_t *src, uint8_t *const *dst, u
     }
 }
 
-/* the average of the samples of each factor by factor group, the rows being made to the padded width. */
+/* averages each factor by factor group of samples, making rows of the padded width. */
 static void downsample(const uint8_t *src, size_t src_stride, uint8_t *dst, size_t dst_stride, uint32_t out_w,
                        uint32_t out_h, int fx, int fy)
 {
@@ -175,7 +173,7 @@ static void downsample(const uint8_t *src, size_t src_stride, uint8_t *dst, size
     for (uint32_t y = 0; y < out_h; y++) {
         uint32_t x = 0;
 #ifdef MIME_JPEG_SSE2
-        /* the usual halvings, eight samples at a time; the widths are multiples of eight. */
+        /* the usual halvings, eight samples at a time. the widths are multiples of eight. */
         if (fx <= 2 && fy <= 2) {
             const uint8_t *r0 = src + (size_t)(y * (uint32_t)fy) * src_stride;
             const uint8_t *r1 = fy == 2 ? r0 + src_stride : r0;
@@ -240,7 +238,7 @@ void enc_quantize_row(Enc *e, uint32_t mrow)
                 int16_t natural[64], *zz = c->blocks + ((size_t)row * c->bw + bx) * 64;
                 jpeg_fdct_quant(e->sub[i] + (size_t)by * 8 * e->sub_stride[i] + bx * 8, e->sub_stride[i],
                                 e->invq[c->tq], natural);
-                /* the blocks are kept in the order they are coded in. */
+                /* blocks are kept in coding order. */
                 for (int k = 0; k < 64; k++)
                     zz[k] = natural[jpeg_zigzag[k]];
             }
@@ -321,7 +319,7 @@ static void write_headers(Enc *e, const MimeJpegEncodeParams *p)
     }
 }
 
-/* ------------------------------------------------------------------ the driver */
+/* ------------------------------------------------------------------ driver */
 
 static int setup(Enc *e, const MimeJpegEncodeParams *p)
 {
@@ -373,7 +371,6 @@ static int setup(Enc *e, const MimeJpegEncodeParams *p)
     e->baseline = (p->flags & MIME_JPEG_ENC_BASELINE) != 0;
     e->restart = p->restart_interval;
 
-    /* the quantization tables. */
     int quality = p->quality ? p->quality : 75;
     for (int t = 0; t < e->nq; t++) {
         const uint16_t *user = t == 0 ? p->qtable_luma : p->qtable_chroma;
@@ -398,7 +395,6 @@ static int setup(Enc *e, const MimeJpegEncodeParams *p)
         jpeg_fdct_prepare(e->qt[t], e->invq[t]);
     }
 
-    /* the buffers. */
     e->full_stride = (size_t)e->mcux * 8 * (size_t)e->hmax;
     for (int i = 0; i < e->ncomp; i++) {
         EncComp *c = &e->comp[i];

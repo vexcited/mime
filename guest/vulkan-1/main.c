@@ -1,7 +1,7 @@
 /*
- * the connection of the process to the host's vulkan driver: calls are
- * encoded into per thread scratch memory, then copied into the ring in
- * order. queries wait for their reply; everything else returns at once.
+ * the process's connection to the host vulkan driver: calls are encoded into
+ * per thread scratch memory, then copied into the ring in order. queries wait
+ * for their reply; everything else returns at once.
  */
 #include "mvk_guest.h"
 
@@ -59,7 +59,7 @@ BOOL mvk_connect(void)
 
 /* ------------------------------------------------------------------ ids */
 
-/* ids are reused once their object is destroyed: the host runs both in ring order. */
+/* ids are reused once their object is destroyed, safe since the host runs both in ring order. */
 static SRWLOCK g_id_lock = SRWLOCK_INIT;
 static uint64_t g_next_id = 1;
 static uint64_t *g_free_ids;
@@ -142,7 +142,7 @@ void mvk_block_free(void *base)
         NtGdiMimeVkFree(base);
 }
 
-/* frees a block once the host ran the call that stopped its use. */
+/* frees the block once the host ran the call that stopped using it. */
 void mvk_block_free_after(void *base, uint64_t serial)
 {
     Deferred *d = HeapAlloc(GetProcessHeap(), 0, sizeof(*d));
@@ -213,7 +213,7 @@ MvkEncoder *mvk_call_begin(uint32_t op)
     return &s->enc;
 }
 
-/* copies the call into the ring, waiting for room, and wakes the host when it sleeps. */
+/* waits for room in the ring, and wakes the host when it sleeps. */
 static uint64_t submit(MvkEncoder *e, uint32_t reply, uint32_t reply_size)
 {
     mvk_align(e, 8);
@@ -238,7 +238,7 @@ static uint64_t submit(MvkEncoder *e, uint32_t reply, uint32_t reply_size)
         YieldProcessor();
     }
     if (MVK_RING_SIZE - at < size) {
-        /* the end of the ring is padding, a nop when one fits. */
+        /* pad the end of the ring with a nop when one fits. */
         if (MVK_RING_SIZE - at >= sizeof(MvkCallHeader)) {
             MvkCallHeader nop = {MVK_OP_NOP, MVK_RING_SIZE - at, serial, MVK_NO_REPLY, 0};
             memcpy(g_ring + at, &nop, sizeof(nop));
@@ -284,7 +284,7 @@ void mvk_wait_serial(uint64_t serial)
         NtGdiMimeVkWait(serial, 0xFFFFFFFF);
 }
 
-/* the count of watched semaphores the host saw reach their values. */
+/* how many watched semaphores the host saw reach their values. */
 uint64_t mvk_events(void)
 {
     return g_header ? __atomic_load_n(&g_header->events, __ATOMIC_ACQUIRE) : 0;
@@ -303,7 +303,7 @@ void mvk_wait_events(uint64_t seen, ULONG timeout_ms)
 
 static MvkDecoder g_reply_decoder;
 
-/* the reply space is one: a thread holds it from its query until it read the reply. */
+/* there is one reply slot: a thread holds it from its query until it read the reply. */
 MvkDecoder *mvk_call_wait(MvkEncoder *e)
 {
     if (!e || e->overflow)
@@ -342,7 +342,7 @@ void mvk_put_chain(MvkEncoder *e, const void *next)
     mvk_put_chain_struct(e, s);
 }
 
-/* an output struct: its sType and the sTypes of its chain the protocol knows, ending with 0. */
+/* the sType of an output struct and the known sTypes of its chain, ending with 0. */
 void mvk_put_out_shape(MvkEncoder *e, const VkBaseOutStructure *s)
 {
     mvk_put_u32(e, (uint32_t)s->sType);
@@ -352,7 +352,7 @@ void mvk_put_out_shape(MvkEncoder *e, const VkBaseOutStructure *s)
     mvk_put_u32(e, 0);
 }
 
-/* fills the caller's chain from a reply chain, which has its known structs in its order. */
+/* the reply chain holds the known structs in the caller's order. */
 void mvk_out_chain(MvkDecoder *d, void *next)
 {
     uint32_t type = mvk_get_u32(d);
@@ -374,7 +374,7 @@ void mvk_skip_pointer(MvkDecoder *d)
     mvk_get_u32(d);
 }
 
-/* the decoders of input structs only run on the host. */
+/* input struct decoders only run on the host. */
 void *mvk_get_chain(MvkDecoder *d)
 {
     return nullptr;

@@ -1,6 +1,6 @@
 /*
- * icons for pictures: choosing the image of an icon or cursor file that suits the display and the size asked for,
- * making the icon from it, and the two bitmaps the icon is drawn with.
+ * icons for pictures: picks the image of an icon or cursor file that best fits the display and requested size, makes
+ * the icon, and gets the two bitmaps it is drawn with.
  */
 #include "picture.h"
 
@@ -27,7 +27,7 @@ static ULONG get_u32(const BYTE *p)
     return p[0] | p[1] << 8 | p[2] << 16 | (ULONG)p[3] << 24;
 }
 
-/* how many colors the image of a file may have: what was asked for, else what the display can show. */
+/* the requested color count, else what the display can show. */
 static ULONG color_limit(DWORD flags)
 {
     if (flags & (LP_MONOCHROME | LP_VGACOLOR | LP_COLOR)) {
@@ -42,7 +42,7 @@ static ULONG color_limit(DWORD flags)
     return bits >= COLOR_BITS_HUGE ? 0x7FFFFFFF : 1u << bits;
 }
 
-/* the entry of the directory that comes closest to what is wanted. */
+/* the directory entry closest to what is wanted. */
 static UINT choose_entry(const BYTE *entries, UINT count, ULONG limit, int want_cx, int want_cy)
 {
     UINT best = 0;
@@ -70,7 +70,7 @@ static UINT choose_entry(const BYTE *entries, UINT count, ULONG limit, int want_
     return best;
 }
 
-/* the mask and the colors an icon is drawn with. Both are copies the picture deletes. */
+/* both bitmaps are copies the picture deletes. */
 HRESULT PicIconPlanes(HICON icon, HBITMAP *mask, HBITMAP *colors)
 {
     ICONINFO info = {};
@@ -144,12 +144,12 @@ HRESULT PicFromIconFile(const BYTE *data, ULONG size, DWORD cx, DWORD cy, DWORD 
     ULONG length = get_u32(entry + 8), offset = get_u32(entry + 12);
     if ((ULONGLONG)offset + length > size || length < 4)
         return CTL_E_INVALIDPICTURE;
-    /* an image is a bitmap with its info header, or a png. Other headers do not make an icon. */
+    /* only a BITMAPINFOHEADER image or a png makes an icon. */
     ULONG head = get_u32(data + offset);
     if (head != IMAGE_INFO_HEADER && head != IMAGE_PNG_SIGNATURE)
         return CTL_E_INVALIDPICTURE;
 
-    /* the resource form of a cursor begins with its hot spot, which the file keeps in the directory. */
+    /* a cursor resource starts with its hot spot, which the file keeps in the directory. */
     BYTE *resource = AutAlloc((SIZE_T)length + 4);
     if (!resource)
         return E_OUTOFMEMORY;

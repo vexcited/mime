@@ -1,15 +1,13 @@
 /*
- * the state objects: blend, rasterizer, depth stencil and sampler states,
- * one object per distinct description as direct3d hands them out, and
- * input layouts, whose elements reach the vertex shader's input registers
- * by semantic. the states are only descriptions: draws set them as
- * vulkan dynamic state.
+ * state objects: blend, rasterizer, depth stencil and sampler states, one object per distinct description like
+ * direct3d, and input layouts, matched to the vertex shader's inputs by semantic. states are only descriptions,
+ * draws set them as vulkan dynamic state.
  */
 #include "d3d11_private.h"
 
 #define VTBL_FN(f) ((void *)(f))
 
-/* the objects share their layout: the interface, then the child. */
+/* common header of every state object. */
 typedef struct D3dObject {
     void *iface;
     D3dChild child;
@@ -42,10 +40,7 @@ static HRESULT STDMETHODCALLTYPE object_set_private_data_interface(void *iface, 
 
 static ULONG STDMETHODCALLTYPE object_add_ref(void *iface) { return InterlockedIncrement(&object(iface)->child.refs); }
 
-/*
- * answers its interfaces, listed newest last, IUnknown and ID3D11DeviceChild
- * included, or the direct3d 10 interface the iid asked for.
- */
+/* iids lists the object's own interfaces. d3d10 is returned for any other iid when not NULL. */
 static HRESULT query(void *iface, const GUID *const *iids, UINT count, void *d3d10, REFIID riid, void **out)
 {
     if (!out)
@@ -62,7 +57,7 @@ static HRESULT query(void *iface, const GUID *const *iids, UINT count, void *d3d
     return S_OK;
 }
 
-/* releases a cached state under the device's state lock, unlinking it at the last reference. */
+/* unlinks the state at the last reference, under the device's state lock. */
 static ULONG release_cached(void *iface, D3dObject **list, void (*destroy)(D3dObject *))
 {
     D3dObject *o = object(iface);
@@ -85,7 +80,7 @@ static ULONG release_cached(void *iface, D3dObject **list, void (*destroy)(D3dOb
     return refs;
 }
 
-/* the cached state whose description matches, referenced, or NULL. */
+/* returns a referenced match, or NULL. */
 static D3dObject *find_cached(D3dDevice *device, D3dObject *list, SIZE_T desc_offset, const void *desc, SIZE_T size)
 {
     for (D3dObject *o = list; o; o = o->next)
@@ -315,7 +310,7 @@ HRESULT D3dCreateDepthStencilState(D3dDevice *device, const D3D11_DEPTH_STENCIL_
         return E_INVALIDARG;
     d.DepthEnable = !!d.DepthEnable;
     d.StencilEnable = !!d.StencilEnable;
-    /* what disabled tests would use does not tell states apart. */
+    /* settings of disabled tests do not make states distinct. */
     if (!d.DepthEnable) {
         d.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
         d.DepthFunc = D3D11_COMPARISON_LESS;
@@ -549,7 +544,7 @@ HRESULT D3dCreateInputLayout(D3dDevice *device, const D3D11_INPUT_ELEMENT_DESC *
         layout->instanced[e->InputSlot] = e->InputSlotClass == D3D11_INPUT_PER_INSTANCE_DATA;
         layout->step_rate[e->InputSlot] = e->InputSlotClass == D3D11_INPUT_PER_INSTANCE_DATA ? e->InstanceDataStepRate
                                                                                               : 1;
-        /* the element feeds the shader's input of the same semantic; ones it does not read are left out. */
+        /* elements feed the shader input of the same semantic, the rest are dropped. */
         const DxbcSignatureElement *input = nullptr;
         for (UINT k = 0; k < inputs.count && !input; k++)
             if (!_stricmp(inputs.elements[k].name, e->SemanticName) &&
@@ -564,7 +559,7 @@ HRESULT D3dCreateInputLayout(D3dDevice *device, const D3D11_INPUT_ELEMENT_DESC *
         a->format = f->vk;
         a->offset = offset;
     }
-    /* the shader's inputs no element feeds, system values aside, make the layout invalid. */
+    /* an unfed shader input other than a system value makes the layout invalid. */
     for (UINT k = 0; k < inputs.count && SUCCEEDED(hr); k++) {
         if (inputs.elements[k].system_value)
             continue;
@@ -589,7 +584,7 @@ HRESULT D3dCreateInputLayout(D3dDevice *device, const D3D11_INPUT_ELEMENT_DESC *
 
 /* ------------------------------------------------------------------ class linkage and context states */
 
-/* class linkage, for dynamic shader linking: kept, though no instance is ever found. */
+/* class linkage for dynamic shader linking: creatable, but no instance is ever found. */
 typedef struct D3dClassLinkage {
     ID3D11ClassLinkage iface;
     D3dChild child;
@@ -636,7 +631,7 @@ HRESULT D3dCreateClassLinkage(D3dDevice *device, ID3D11ClassLinkage **out)
     return S_OK;
 }
 
-/* the device context states of CreateDeviceContextState: one state, the device's own. */
+/* CreateDeviceContextState: there is only one state, the device's own. */
 typedef struct D3dContextState {
     ID3DDeviceContextState iface;
     D3dChild child;

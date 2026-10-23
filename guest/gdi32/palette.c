@@ -1,8 +1,7 @@
 /*
  * gdi32 palettes. the display is true color and win32k has no palette
  * objects, so logical palettes live here: a small handle table whose handles
- * carry the palette type byte, and a record of the palette selected in each
- * dc. realizing a palette maps nothing on a true color device.
+ * carry the palette type byte, and the palette selected in each dc.
  */
 #include "gdi32_private.h"
 #include <mime/stub.h>
@@ -39,7 +38,7 @@ static HPALETTE make_handle(UINT index)
     return (HPALETTE)(ULONG_PTR)(PAL_HANDLE_BASE | index);
 }
 
-/* the palette of a handle; the caller holds the lock. */
+/* the caller holds the lock. */
 static PALETTE *lookup(HPALETTE h)
 {
     ULONG_PTR v = (ULONG_PTR)h;
@@ -272,7 +271,7 @@ WINGDIAPI UINT WINAPI GetNearestPaletteIndex(HPALETTE palette, COLORREF color)
     return index;
 }
 
-/* a true color device has no system palette, as on windows. */
+/* a true color device has no system palette, like on windows. */
 WINGDIAPI UINT WINAPI GetSystemPaletteEntries(HDC dc, UINT start, UINT count, LPPALETTEENTRY entries)
 {
     if (!dc_valid(dc))
@@ -280,7 +279,7 @@ WINGDIAPI UINT WINAPI GetSystemPaletteEntries(HDC dc, UINT start, UINT count, LP
     return 0;
 }
 
-/* every color is exact on a true color device; palette indices read the selected palette. */
+/* every color is exact on a true color device, palette indices read the selected palette. */
 WINGDIAPI COLORREF WINAPI GetNearestColor(HDC dc, COLORREF color)
 {
     if (!dc_valid(dc)) {
@@ -301,12 +300,9 @@ WINGDIAPI COLORREF WINAPI GetNearestColor(HDC dc, COLORREF color)
     return color & 0x00FFFFFF;
 }
 
-/* ------------------------------------------------------------------ animating, resizing, system use */
+/* ------------------------------------------------------------------ animation, resizing, system use */
 
-/*
- * replaces the entries of a logical palette that carry PC_RESERVED, from the entries given. The stock palette
- * cannot be animated.
- */
+/* only PC_RESERVED entries change. the stock palette cannot be animated. */
 WINGDIAPI BOOL WINAPI AnimatePalette(HPALETTE palette, UINT start, UINT count, const PALETTEENTRY *entries)
 {
     start &= 0xFFFF;
@@ -328,7 +324,7 @@ WINGDIAPI BOOL WINAPI AnimatePalette(HPALETTE palette, UINT start, UINT count, c
     return found;
 }
 
-/* a palette of 1 to 65535 entries; the entries that are added are black and not flagged. */
+/* 1 to 65535 entries, new ones are black with no flags. */
 WINGDIAPI BOOL WINAPI ResizePalette(HPALETTE palette, UINT count)
 {
     if (palette == PalDefault() || !count || count > 0xFFFF)
@@ -353,7 +349,7 @@ WINGDIAPI BOOL WINAPI ResizePalette(HPALETTE palette, UINT count)
     return ok;
 }
 
-/* the share of the system palette programs may take: the static colors are kept, as on windows' default. */
+/* the static colors are reserved by default, as on windows. */
 static volatile LONG g_system_palette_use = SYSPAL_STATIC;
 
 WINGDIAPI UINT WINAPI GetSystemPaletteUse(HDC dc)
@@ -365,7 +361,7 @@ WINGDIAPI UINT WINAPI GetSystemPaletteUse(HDC dc)
     return (UINT)g_system_palette_use;
 }
 
-/* returns the use before; a device without a palette keeps the static colors whatever is asked (guessed). */
+/* a device without a palette keeps the static colors whatever is asked. this is a guess. */
 WINGDIAPI UINT WINAPI SetSystemPaletteUse(HDC dc, UINT use)
 {
     if (!dc_valid(dc) || use < SYSPAL_STATIC || use > SYSPAL_NOSTATIC256) {
@@ -376,9 +372,8 @@ WINGDIAPI UINT WINAPI SetSystemPaletteUse(HDC dc, UINT use)
 }
 
 /*
- * the halftone palette: the 20 static colors at both ends, a 6 by 6 by 6 cube of colors between them and a ramp
- * of grays. The arrangement is a guess; the cube and the static colors are what a halftone palette is known to
- * hold.
+ * the 20 static colors at both ends, a 6x6x6 color cube between them and a gray ramp. the order is a guess,
+ * the cube and the static colors are what a halftone palette is known to hold.
  */
 WINGDIAPI HPALETTE WINAPI CreateHalftonePalette(HDC dc)
 {

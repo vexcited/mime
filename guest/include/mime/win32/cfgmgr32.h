@@ -1,8 +1,4 @@
-/*
- * the configuration manager programs reach the device tree with: device
- * nodes, their registry properties and DEVPKEY properties, and the paths
- * of device interfaces.
- */
+/* the configuration manager: device nodes, their registry and DEVPKEY properties, and device interface paths. */
 #ifndef MIME_WIN32_CFGMGR32_H
 #define MIME_WIN32_CFGMGR32_H
 
@@ -163,8 +159,6 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_PropertyW(PCWSTR path, const DEVP
 CMAPI CONFIGRET WINAPI CM_Open_DevNode_Key(DEVINST devinst, REGSAM access, ULONG profile, DWORD disposition,
                                            HKEY *key, ULONG flags);
 CMAPI DWORD WINAPI CM_MapCrToWin32Err(CONFIGRET cr, DWORD fallback);
-
-/* ------------------------------------------------------------------ added by the api sweep */
 
 #define DEVPROP_TYPE_BYTE 0x00000003
 #define DEVPROP_TYPE_UINT16 0x00000005

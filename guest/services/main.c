@@ -1,7 +1,6 @@
 /*
- * services.exe: the pipe the clients talk to and the operations they ask for. every operation is one request and
- * one answer on a connection, run by a thread of that connection; the handles a client gets belong to its
- * process, not to the connection, so that it can keep a few connections and use any of them.
+ * services.exe: the client pipe and its operations. each operation is one request and one answer, run by the
+ * connection's thread. handles belong to the client process, not the connection, so any connection can use them.
  */
 #include "services.h"
 
@@ -103,7 +102,7 @@ static SCHANDLE *handle_new(CLIENT *cl, DWORD kind, DWORD access, SERVICE *s)
     return h;
 }
 
-/* a service that was deleted goes when nothing holds it and it has stopped. */
+/* a deleted service is freed once nothing holds it and it has stopped. */
 static void remove_if_done(SERVICE *s)
 {
     if (!s->MarkedForDelete || s->OpenHandles || s->StartPending || s->Status.dwCurrentState != SERVICE_STOPPED)
@@ -117,7 +116,6 @@ static void remove_if_done(SERVICE *s)
     WakeAllConditionVariable(&g_changed);
 }
 
-/* the services that were deleted go once nothing holds them and they have stopped. */
 void MainCollect(void)
 {
     for (SERVICE *s = g_services, *next; s; s = next) {
@@ -190,7 +188,7 @@ static DWORD conn_write(CONN *c, const void *data, DWORD size)
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ helpers of the operations */
+/* ------------------------------------------------------------------ operation helpers */
 
 static BOOL valid_service_name(const WCHAR *name)
 {
@@ -200,7 +198,7 @@ static BOOL valid_service_name(const WCHAR *name)
     return n <= SVC_NAME_MAX && !wcschr(name, L'\\') && !wcschr(name, L'/');
 }
 
-/* a string that arrived with its length; null stays null. the string is copied, the caller frees it. */
+/* a length-prefixed string, NULL stays NULL. the caller frees the copy. */
 static WCHAR *get_string(SCM_READER *r, BOOL *present)
 {
     UINT32 chars;
@@ -212,7 +210,7 @@ static WCHAR *get_string(SCM_READER *r, BOOL *present)
     return SvcDupN(s, chars);
 }
 
-/* the answer carries a status process in nine numbers. */
+/* a SERVICE_STATUS_PROCESS as nine DWORDs. */
 static void put_status(SCM_WRITER *w, SERVICE *s)
 {
     SERVICE_STATUS_PROCESS p;
@@ -235,7 +233,7 @@ static BOOL list_active(SERVICE *s, DWORD state_mask)
     return (active && (state_mask & SERVICE_ACTIVE)) || (!active && (state_mask & SERVICE_INACTIVE));
 }
 
-/* ------------------------------------------------------------------ the operations */
+/* ------------------------------------------------------------------ operations */
 
 static DWORD op_open_manager(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
 {
@@ -250,7 +248,7 @@ static DWORD op_open_manager(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
         SvcFree(database);
         return ERROR_SHUTDOWN_IN_PROGRESS;
     }
-    /* any database but the active one is refused, the failed one with the answer of a database that is not there. */
+    /* only ServicesActive opens. ServicesFailed fails as a missing database. */
     if (database && _wcsicmp(database, L"ServicesActive") && _wcsicmp(database, L"ServicesFailed")) {
         SvcFree(database);
         return ERROR_INVALID_NAME;
@@ -302,7 +300,7 @@ static DWORD op_open_service(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     error = AccessReadSd(s);
     if (error)
         goto done;
-    s->OpenHandles++; /* held while the lock is let go for the check */
+    s->OpenHandles++; /* keeps it alive while the lock is dropped for the check. */
     PSECURITY_DESCRIPTOR sd = s->Sd;
     DWORD granted = 0;
     LeaveCriticalSection(&g_lock);
@@ -376,7 +374,7 @@ static DWORD op_create(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     if (error)
         goto done;
     s->Sd = nullptr;
-    /* the creator is given what it asked for; the descriptor is the default one. */
+    /* the creator gets the access it asked for, the descriptor is the default. */
     AccessReadSd(s);
     SCHANDLE *h = handle_new(cl, SCH_SERVICE, access, s);
     if (!h) {
@@ -466,7 +464,7 @@ done:
     return error;
 }
 
-/* the value of FailureActions that holds the actions, the strings after the header and the list at the end. */
+/* the FailureActions value: the header, then the strings, then the action list. */
 static DWORD write_failure_actions(SERVICE *s, DWORD reset, const WCHAR *reboot, const WCHAR *command, DWORD count,
                                    const SC_ACTION *actions)
 {
@@ -529,7 +527,7 @@ static DWORD op_change_config2(CLIENT *cl, SCM_READER *r)
     case SERVICE_CONFIG_DESCRIPTION: {
         BOOL present;
         WCHAR *text = get_string(r, &present);
-        /* a null pointer leaves the description, an empty text removes it. */
+        /* a NULL pointer keeps the description, an empty string removes it. */
         if (present) {
             if (*text)
                 error = DbWriteString(key, L"Description", text, REG_SZ);
@@ -560,7 +558,7 @@ static DWORD op_change_config2(CLIENT *cl, SCM_READER *r)
             if (!error && r->Failed)
                 error = ERROR_INVALID_PARAMETER;
             if (!error) {
-                /* with no list the existing actions stay, and an empty one with a count of zero removes them. */
+                /* no list keeps the existing actions, an empty one with a zero count removes them. */
                 if (count == 0 && !has_reboot && !has_command && !reset)
                     RegDeleteValueW(key, L"FailureActions");
                 else
@@ -656,7 +654,7 @@ static DWORD op_query_config(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     if (!need(h, SERVICE_QUERY_CONFIG))
         return ERROR_ACCESS_DENIED;
     SERVICE *s = h->Service;
-    /* read from the key each time, as windows does: what is written there is what is answered. */
+    /* read from the key every time, like windows. */
     HKEY key = DbOpenKey(s->Name, KEY_READ, FALSE);
     if (!key)
         return ERROR_FILE_NOT_FOUND;
@@ -678,7 +676,7 @@ static DWORD op_query_config(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     ScmPutString(w, path ? path : L"");
     ScmPutString(w, group ? group : L"");
     ScmPutU32(w, tag);
-    /* services first, then the groups with a plus sign in front of each. */
+    /* services first, then groups, each prefixed with a plus sign. */
     DWORD service_chars = services ? SvcMultiSzChars(services) - 1 : 0;
     DWORD group_count_chars = 0;
     for (const WCHAR *g = groups; g && *g; g += wcslen(g) + 1)
@@ -730,7 +728,7 @@ static DWORD op_query_config2(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     switch (level) {
     case SERVICE_CONFIG_DESCRIPTION: {
         WCHAR *text = DbReadString(key, L"Description", nullptr);
-        /* an indirect string would be loaded from its file; one that cannot be is given as it is. */
+        /* an indirect string would be loaded from its file, one that cannot be is returned as is. */
         ScmPutString(w, text);
         SvcFree(text);
         break;
@@ -832,12 +830,12 @@ static DWORD op_enum(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
         SvcFree(group);
         return ERROR_ACCESS_DENIED;
     }
-    /* a type or a state that names nothing the database has is refused (guessed from the documented errors). */
+    /* unknown type or state bits are refused. the error is a guess from the documented ones. */
     if (!type_mask || (type_mask & ~(DWORD)SERVICE_TYPE_ALL) || !state_mask || (state_mask & ~(DWORD)SERVICE_STATE_ALL)) {
         SvcFree(group);
         return ERROR_INVALID_PARAMETER;
     }
-    /* the services that fit, from the one the caller stopped at; the caller packs as many as its buffer takes. */
+    /* the matching services from the resume index on. the caller packs as many as its buffer holds. */
     DWORD index = 0, count = 0;
     UINT32 count_offset = w->Size;
     ScmPutU32(w, 0);
@@ -996,17 +994,14 @@ static DWORD op_control(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     DWORD error = RunControl(s, control, 0, nullptr, 0, &result);
     if (s->OpenHandles)
         s->OpenHandles--;
-    /* a user defined control answers with what the handler returned, the others with the error of the call. */
+    /* a user-defined control returns the handler's result, the others the call's error. */
     if (!error && control >= 128 && result)
         error = result;
     put_status(w, s);
     return error;
 }
 
-/*
- * a process that asks for the rights of an administrator (SCM_OP_LAUNCH_ELEVATED): the program, its command line and the
- * parts of the startup information that matter, then the ids and the handles of the process in the client's.
- */
+/* SCM_OP_LAUNCH_ELEVATED: answers with the ids and with handles in the client's process. */
 static DWORD op_launch_elevated(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
 {
     (void)cl;
@@ -1023,7 +1018,7 @@ static DWORD op_launch_elevated(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *
     DWORD error = ERROR_INVALID_PARAMETER;
     if (!r->Failed && command_line && *command_line) {
         ELEVATE_RESULT out = {};
-        /* the launch takes its time, and needs nothing of the database. */
+        /* the launch is slow and needs nothing from the database. */
         LeaveCriticalSection(&g_lock);
         error = g_shutdown ? ERROR_SHUTDOWN_IN_PROGRESS : ElevateLaunch(c->Pipe, c->Pid, &q, &out);
         EnterCriticalSection(&g_lock);
@@ -1441,7 +1436,7 @@ static HANDLE make_instance(BOOL first)
 {
     SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, FALSE};
     PSECURITY_DESCRIPTOR sd = nullptr;
-    /* everyone may connect, the system and the administrators do all. */
+    /* everyone may connect, system and administrators get full access. */
     if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;;GRGW;;;WD)(A;;GA;;;SY)(A;;GA;;;BA)", SDDL_REVISION_1, &sd,
                                                              nullptr))
         sa.lpSecurityDescriptor = sd;
@@ -1499,7 +1494,7 @@ static void read_timeouts(void)
 {
     HKEY key;
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control", 0, KEY_READ, &key) == ERROR_SUCCESS) {
-        /* the pipe timeout of the control messages, 30 seconds unless the key says otherwise. */
+        /* the control pipe timeout, 30 seconds unless the key overrides it. */
         DWORD value;
         if (DbReadDword(key, L"ServicesPipeTimeout", &value))
             g_control_timeout = value;
@@ -1523,7 +1518,7 @@ void MainWake(void)
 
 void entry(void)
 {
-    /* a second copy has nothing to do. */
+    /* a second instance has nothing to do. */
     HANDLE done = OpenEventW(SYNCHRONIZE, FALSE, SCM_AUTOSTART_EVENT);
     if (done) {
         CloseHandle(done);
@@ -1544,7 +1539,7 @@ void entry(void)
         CloseHandle(thread);
     ShutdownInit();
 
-    /* the clients wait for this event: it is created here, or it was by the first of them. */
+    /* clients wait on this event. it is created here or already was by the first client. */
     HANDLE ready = SvcCreateWorldEvent(SCM_START_EVENT);
     if (ready)
         SetEvent(ready);

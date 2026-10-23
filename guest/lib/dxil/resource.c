@@ -1,10 +1,10 @@
 /*
- * resources: the handles dxil makes of the root signature's ranges or of
- * the descriptor heaps, and the operations that read and write through
- * them. the binding model is dxbc's for direct3d 12, see dxbc.h: views and
- * samplers of the heaps by their index in the mutable sets, constants and
- * root descriptors in push constants, and raw, structured and constant
- * buffer views of a table through the device address of their record.
+ * dxil resource handles, made from root signature ranges or descriptor
+ * heaps, and the ops that read and write through them. the binding model is
+ * dxbc's for direct3d 12, see dxbc.h: heap views and samplers by index in the
+ * mutable sets, constants and root descriptors in push constants, and raw,
+ * structured and constant buffer views of a table through their record's
+ * device address.
  */
 #include "internal.h"
 
@@ -53,7 +53,7 @@ int dxil_read_resources(Compiler *c, const DxMetadata *list)
                 continue;
             ResourceInfo *r = &c->ranges[cls][dx_md_int(&c->m, md, 0, i)];
             r->cls = (uint8_t)cls;
-            /* shader model 6.6 libraries cast their globals of handles to the resource's type. */
+            /* shader model 6.6 libraries cast their handle globals to the resource type. */
             const DxMetadata *g = dx_md_op(&c->m, md, 1);
             uint32_t gid = g && g->kind == DM_VALUE ? g->value : DX_NONE;
             const DxValue *gv = gid != DX_NONE ? dx_value(&c->m, nullptr, gid) : nullptr;
@@ -133,7 +133,7 @@ static Handle *handle_of(Compiler *c, uint32_t id)
     return &c->handles[s->handle];
 }
 
-/* the integers of a constant structure, the operands of createHandleFromBinding and annotateHandle. */
+/* the integer fields of a constant struct, like the operands of createHandleFromBinding and annotateHandle. */
 static void constant_fields(Compiler *c, uint32_t id, uint64_t *out, uint32_t count)
 {
     const DxValue *v = dx_value(&c->m, c->f, id);
@@ -168,7 +168,7 @@ static int create_from_binding(Compiler *c, const DxInst *ins)
     return 0;
 }
 
-/* the register of an element of an array of resources: the first's plus the flat index of a gep's operands. */
+/* the register of a resource array element: the first register plus the gep's flat index. */
 static uint32_t element_register(Compiler *c, uint32_t reg, const uint32_t *ops, uint32_t count)
 {
     const DxValue *base = dx_value(&c->m, c->f, ops[0]);
@@ -184,7 +184,7 @@ static uint32_t element_register(Compiler *c, uint32_t reg, const uint32_t *ops,
     return reg;
 }
 
-/* the handle a pointer to a resource's global, or to an element of its array, stands for; 0 when it is none. */
+/* the handle behind a pointer to a resource global or one of its array elements. 0 when none. */
 static int resource_pointer(Compiler *c, uint32_t id, Handle *out)
 {
     const DxValue *v = dx_value(&c->m, c->f, id);
@@ -246,12 +246,11 @@ static int create_from_heap(Compiler *c, const DxInst *ins)
 }
 
 /*
- * the properties annotateHandle gives, as dxc writes them: the kind in the
- * low byte of the first word, then bit 12 for views of unordered access,
- * 13 rasterizer ordered, 14 globally coherent and 15 a counter, or a
- * comparison for samplers. the second word holds a typed view's component
- * type and count in its two low bytes, or a structure's stride, or a
- * constant buffer's size.
+ * annotateHandle properties as dxc encodes them: the kind in the low byte of
+ * the first word, then bit 12 for UAVs, 13 rasterizer ordered, 14 globally
+ * coherent and 15 has a counter, or comparison for samplers. the second word
+ * holds a typed view's component type and count in its two low bytes, a
+ * structure's stride, or a constant buffer's size.
  */
 static int annotate(Compiler *c, const DxInst *ins)
 {
@@ -303,7 +302,7 @@ static int annotate(Compiler *c, const DxInst *ins)
     return 0;
 }
 
-/* ------------------------------------------------------------------ the root signature */
+/* ------------------------------------------------------------------ root signature */
 
 static const DxbcRootBinding *root_binding(Compiler *c, uint32_t cls, uint32_t space, uint32_t reg)
 {
@@ -319,7 +318,7 @@ static const DxbcRootBinding *root_binding(Compiler *c, uint32_t cls, uint32_t s
     return nullptr;
 }
 
-/* a dword of the push constants, the offset a uint value in bytes. */
+/* a push constant dword at a byte offset given as a uint value. */
 static uint32_t push_word(Compiler *c, uint32_t byte_offset)
 {
     if (!c->push) {
@@ -339,11 +338,11 @@ static uint32_t push_word(Compiler *c, uint32_t byte_offset)
     return spv_load(&c->b, c->t_u32, ptr);
 }
 
-/* a dword of the shader record, which holds the arguments of local root signatures. */
+/* a shader record dword, where local root signature arguments live. */
 static uint32_t record_word(Compiler *c, uint32_t byte_offset)
 {
     if (!c->record) {
-        /* direct3d's records are 4096 bytes at most. */
+        /* direct3d records are at most 4096 bytes. */
         uint32_t array = spv_type_array_unique(&c->b, c->t_u32, 1024);
         dxil_decorate(c, array, SpvDecorationArrayStride, 4);
         uint32_t block = spv_type_struct_unique(&c->b, &array, 1);
@@ -360,7 +359,7 @@ static uint32_t record_word(Compiler *c, uint32_t byte_offset)
     return spv_load(&c->b, c->t_u32, ptr);
 }
 
-/* a dword of a root argument: in the push constants, or the shader record for local root signatures. */
+/* a root argument dword, from push constants or, for local root signatures, the shader record. */
 static uint32_t root_word(Compiler *c, const DxbcRootBinding *b, uint32_t byte_offset)
 {
     return b->record ? record_word(c, byte_offset) : push_word(c, byte_offset);
@@ -385,7 +384,6 @@ static uint32_t table_start(Compiler *c, const DxbcRootBinding *b)
     return index;
 }
 
-/* the register a handle names, as a u32. */
 static uint32_t handle_register(Compiler *c, const Handle *h)
 {
     if (h->spv_register)
@@ -396,7 +394,7 @@ static uint32_t handle_register(Compiler *c, const Handle *h)
     return dxil_value(c, h->index);
 }
 
-/* the root binding a handle of a range is in, or NULL for heap handles. */
+/* the root binding of a range handle, or NULL for heap handles. */
 static const DxbcRootBinding *binding_of(Compiler *c, const Handle *h)
 {
     if (h->heap)
@@ -413,7 +411,7 @@ static uint32_t nonuniform(Compiler *c, const Handle *h, uint32_t id)
     return id;
 }
 
-/* the index of a handle's descriptor in its heap: the heap index itself, or the table's start and place. */
+/* a handle's descriptor index in its heap: the heap index itself, or the table start plus its place. */
 static uint32_t heap_index(Compiler *c, const Handle *h, const DxbcRootBinding *b)
 {
     if (h->heap)
@@ -435,7 +433,6 @@ static void nonuniform_capability(Compiler *c, uint32_t storage_image, int texel
     spv_capability(&c->b, CAPS[texel_buffer][storage_image]);
 }
 
-/* the shape of an image of a resource kind. */
 static void image_shape(uint32_t kind, uint32_t *dim, uint32_t *arrayed, uint32_t *ms)
 {
     *arrayed = *ms = 0;
@@ -456,7 +453,7 @@ static void image_shape(uint32_t kind, uint32_t *dim, uint32_t *arrayed, uint32_
     }
 }
 
-/* the type images of a component type sample to: floats, signed or unsigned integers. */
+/* what images of a component type sample to: float, signed or unsigned. */
 static uint32_t sampled_type(Compiler *c, uint8_t comp)
 {
     switch (comp) {
@@ -471,7 +468,7 @@ static uint32_t sampled_type(Compiler *c, uint8_t comp)
     }
 }
 
-/* the image type of a handle; format R32 for atomics, unknown otherwise. */
+/* format R32 for atomics, unknown otherwise. */
 static uint32_t image_type(Compiler *c, const Handle *h, int depth, int atomic)
 {
     uint32_t dim, arrayed, ms;
@@ -499,7 +496,7 @@ static uint32_t image_type(Compiler *c, const Handle *h, int depth, int atomic)
     return spv_type_image(&c->b, type, dim, depth ? 1 : 0, arrayed, ms, storage ? 2 : 1, format);
 }
 
-/* the resource set's variable for an image type, all of them on its one mutable binding. */
+/* the resource set variable for an image type. all of them share the one mutable binding. */
 static uint32_t image_heap(Compiler *c, uint32_t type)
 {
     for (uint32_t i = 0; i < c->image_count; i++)
@@ -516,7 +513,7 @@ static uint32_t image_heap(Compiler *c, uint32_t type)
     return var;
 }
 
-/* the image type of a typed view's 64-bit texels, for 64-bit atomics. */
+/* the image type for a typed view's 64-bit texels, used by 64-bit atomics. */
 static uint32_t wide_image_type(Compiler *c, const Handle *h, uint32_t scalar, int is_signed)
 {
     uint32_t dim, arrayed, ms;
@@ -531,7 +528,7 @@ static uint32_t wide_image_type(Compiler *c, const Handle *h, uint32_t scalar, i
     return spv_type_image(&c->b, scalar, dim, 0, arrayed, ms, 2, is_signed ? SpvImageFormatR64i : SpvImageFormatR64ui);
 }
 
-/* a pointer to a handle's view of 64-bit texels, in the set of them. */
+/* a pointer to a handle's 64-bit texel view, in the set of those. */
 static uint32_t wide_image_pointer(Compiler *c, const Handle *h, uint32_t type)
 {
     uint32_t var = 0;
@@ -552,7 +549,6 @@ static uint32_t wide_image_pointer(Compiler *c, const Handle *h, uint32_t type)
                                    w, 2));
 }
 
-/* a pointer to the image descriptor of a handle. */
 static uint32_t image_pointer(Compiler *c, const Handle *h, uint32_t type)
 {
     if (h->r.kind == RK_CBUFFER || h->r.kind == RK_SAMPLER) {
@@ -576,7 +572,7 @@ static uint32_t load_image(Compiler *c, const Handle *h, uint32_t type)
     return ptr ? nonuniform(c, h, spv_load(&c->b, type, ptr)) : 0;
 }
 
-/* a sampler of the heap, or of the root signature's static samplers. */
+/* a heap sampler, or one of the root signature's static samplers. */
 static uint32_t load_sampler(Compiler *c, const Handle *h)
 {
     uint32_t type = spv_type_sampler(&c->b);
@@ -609,7 +605,7 @@ static uint32_t load_sampler(Compiler *c, const Handle *h)
     return nonuniform(c, h, spv_load(&c->b, type, ptr));
 }
 
-/* a device address, a uvec2, as a pointer of the type into physical storage. */
+/* a uvec2 device address as a physical storage pointer of the type. */
 static uint32_t address_pointer(Compiler *c, uint32_t address, uint32_t pointer_type)
 {
     spv_capability(&c->b, SpvCapabilityPhysicalStorageBufferAddresses);
@@ -624,7 +620,7 @@ static uint32_t root_address(Compiler *c, const DxbcRootBinding *b)
     return dxil_vector(c, c->t_u32, parts, 2);
 }
 
-/* half of the record of a heap descriptor: address, size and stride, then the counter's address. */
+/* one half of a heap descriptor's record: address, size and stride, then the counter's address. */
 static uint32_t heap_record(Compiler *c, uint32_t index, uint32_t half)
 {
     uint32_t v4 = c->t_uvec[4];
@@ -653,7 +649,7 @@ static uint32_t uvec2_of(Compiler *c, uint32_t v, uint32_t first)
     return spv_op(&c->b, SpvOpVectorShuffle, c->t_uvec[2], w, 4);
 }
 
-/* the pointer type of an array of words or vec4s at a device address. */
+/* the pointer type of a word or vec4 array at a device address. */
 static uint32_t root_array_pointer(Compiler *c, uint32_t element, uint32_t stride)
 {
     uint32_t *cached = stride == 16 ? &c->root_vec4_pointer : stride == 8 ? &c->root_qword_pointer : &c->root_word_pointer;
@@ -668,12 +664,12 @@ static uint32_t root_array_pointer(Compiler *c, uint32_t element, uint32_t strid
     return *cached = spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, block);
 }
 
-/* a raw, structured or constant buffer read through its device address, with its size when it has a record. */
+/* a raw, structured or constant buffer accessed by device address, with its size when it has a record. */
 typedef struct Memory {
     uint32_t address;
     uint32_t size;
     uint32_t counter;
-    /* root constants: the push constants' offset, in bytes, or the shader record's. */
+    /* root constants: the byte offset into the push constants or the shader record. */
     int constants;
     uint32_t push_offset;
     uint8_t record;
@@ -723,14 +719,13 @@ static uint32_t word_pointer(Compiler *c, uint32_t address, uint32_t word)
     return spv_op(&c->b, SpvOpAccessChain, spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, c->t_u32), w, 3);
 }
 
-/* whether a word is inside a view with a record. */
 static uint32_t word_in_bounds(Compiler *c, const Memory *m, uint32_t word)
 {
     uint32_t words = spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, m->size, dxil_uconst(c, 2));
     return spv_op2(&c->b, SpvOpULessThan, c->t_bool, word, words);
 }
 
-/* reads a word; out of bounds reads of views with a record give zero. */
+/* out of bounds reads of views with a record give zero. */
 static uint32_t read_word(Compiler *c, const Memory *m, uint32_t word)
 {
     if (m->constants) {
@@ -748,7 +743,7 @@ static uint32_t read_word(Compiler *c, const Memory *m, uint32_t word)
     return in ? spv_op3(&c->b, SpvOpSelect, c->t_u32, in, v, dxil_uconst(c, 0)) : v;
 }
 
-/* writes a word; out of bounds writes of views with a record do nothing. */
+/* out of bounds writes of views with a record do nothing. */
 static void write_word(Compiler *c, const Memory *m, uint32_t word, uint32_t value)
 {
     uint32_t merge = 0;
@@ -762,14 +757,13 @@ static void write_word(Compiler *c, const Memory *m, uint32_t word, uint32_t val
 
 /* ------------------------------------------------------------------ results */
 
-/* the components of the structure a call returns that some extractvalue reads. */
+/* the members of the returned struct that some extractvalue reads. */
 static uint32_t used_parts(Compiler *c, const DxInst *ins)
 {
     uint32_t i = ins->value - c->m.value_count;
     return c->part_masks && i < c->f->value_count ? c->part_masks[i] : ~0u;
 }
 
-/* the type of member i of the structure a call returns. */
 static uint32_t member_type(Compiler *c, const DxInst *ins, uint32_t i, uint32_t *dx)
 {
     const DxType *t = &c->m.types[ins->type];
@@ -779,7 +773,6 @@ static uint32_t member_type(Compiler *c, const DxInst *ins, uint32_t i, uint32_t
     return dxil_type(c, m);
 }
 
-/* the 64-bit value of two 32-bit words. */
 static uint32_t wide_of(Compiler *c, uint32_t lo, uint32_t hi, uint32_t type)
 {
     uint32_t pair[2] = {lo, hi};
@@ -787,9 +780,9 @@ static uint32_t wide_of(Compiler *c, uint32_t lo, uint32_t hi, uint32_t type)
 }
 
 /*
- * a ResRet of a vec4 of a type: its components as the structure's types,
- * and a status of zero. 64-bit texels are two words of the view, as
- * direct3d's R32G32 formats hold them.
+ * a ResRet from a vec4: its components cast to the struct's types, and a
+ * zero status. 64-bit texels take two words of the view, like direct3d's
+ * R32G32 formats.
  */
 static void set_resret(Compiler *c, const DxInst *ins, uint32_t vec4, uint32_t scalar, uint32_t status)
 {
@@ -809,9 +802,9 @@ static void set_resret(Compiler *c, const DxInst *ins, uint32_t vec4, uint32_t s
 }
 
 /*
- * an image operation, through its sparse twin when the shader asks
- * whether what it read was mapped: its status is then 0 where every texel
- * was and 1 where one was not, as statuses of reads of other memory are 0.
+ * an image op, through its sparse variant when the shader checks residency.
+ * the status is 0 when every texel was mapped and 1 otherwise. reads of
+ * other memory always give 0.
  */
 static uint32_t image_op(Compiler *c, uint32_t opcode, uint32_t type, const uint32_t *w, uint32_t count,
                          uint32_t *status)
@@ -843,7 +836,7 @@ static uint32_t image_op(Compiler *c, uint32_t opcode, uint32_t type, const uint
 
 static uint32_t gather_operands(Compiler *c, const DxInst *ins, uint32_t first, uint32_t n, uint32_t scalar);
 
-/* the vec4 of a type a store writes of four values from first; 64-bit values as two words each. */
+/* the vec4 a store writes, from four values starting at first. 64-bit values take two words each. */
 static uint32_t store_values(Compiler *c, const DxInst *ins, uint32_t first, uint32_t scalar)
 {
     const DxValue *v = dx_value(&c->m, c->f, ins->ops[first]);
@@ -908,7 +901,7 @@ static uint32_t gather_operands(Compiler *c, const DxInst *ins, uint32_t first, 
     return dxil_vector(c, scalar, parts, n);
 }
 
-/* constant offsets of a sample, or 0 when they are all zero or not constant. */
+/* a sample's constant offsets, or 0 when all are zero or not constant. */
 static uint32_t const_offset(Compiler *c, const DxInst *ins, uint32_t first, uint32_t kind, uint32_t *dynamic)
 {
     uint32_t n = spatial_count(kind);
@@ -964,8 +957,8 @@ static uint32_t sampled_image(Compiler *c, const Handle *h, const Handle *s, int
 }
 
 /*
- * the sample family: plain, bias, level, grad, the comparisons and their
- * level, grad and bias forms. operands after the offsets differ per op.
+ * the sample family: plain, bias, level, grad, and the comparisons with
+ * their level, grad and bias forms. operands after the offsets vary per op.
  */
 static int sample(Compiler *c, const DxInst *ins, uint32_t op)
 {
@@ -1002,7 +995,7 @@ static int sample(Compiler *c, const DxInst *ins, uint32_t op)
     case 65: lod = dxil_fconst(c, 0.0f); break;
     default: break;
     }
-    /* implicit derivatives where there are none: the first level. */
+    /* without implicit derivatives, sample the first level. */
     int implicit = !lod && !ddx && dxil_derivatives(c);
     if (!implicit && !lod && !ddx) {
         lod = dxil_fconst(c, 0.0f);
@@ -1108,7 +1101,7 @@ static int gather(Compiler *c, const DxInst *ins, uint32_t op)
     return 0;
 }
 
-/* textureLoad: texels by integer coordinates, the mip or the sample. */
+/* textureLoad: a texel by integer coordinates, with a mip or sample index. */
 static int texture_load(Compiler *c, const DxInst *ins)
 {
     Handle *h = handle_of(c, ins->ops[2]);
@@ -1142,7 +1135,7 @@ static int texture_load(Compiler *c, const DxInst *ins)
             operands |= SpvImageOperandsConstOffsetMask;
             w[count++] = offset;
         } else if (dynamic) {
-            /* a fetch's offset only moves its texel: added to the coordinates, past the array index. */
+            /* a fetch offset only moves the texel: it is added to the coordinates, not the array index. */
             uint32_t n = spatial_count(h->r.kind), parts[3];
             for (uint32_t i = 0; i < coords; i++) {
                 uint32_t k = coords == 1 ? w[1] : dxil_extract(c, c->t_u32, w[1], i);
@@ -1161,7 +1154,7 @@ static int texture_load(Compiler *c, const DxInst *ins)
     return 0;
 }
 
-/* textureStore and textureStoreSample: a texel of four values. */
+/* textureStore and textureStoreSample: writes a texel of four values. */
 static int texture_store(Compiler *c, const DxInst *ins, int with_sample)
 {
     Handle *h = handle_of(c, ins->ops[2]);
@@ -1184,7 +1177,7 @@ static int texture_store(Compiler *c, const DxInst *ins, int with_sample)
 
 static int typed_buffer(const Handle *h) { return h->r.kind == RK_TYPED_BUFFER; }
 
-/* the byte address bufferLoad, rawBufferLoad and the like reach. */
+/* the byte address that bufferLoad, rawBufferLoad and the like access. */
 static uint32_t byte_address(Compiler *c, const Handle *h, uint32_t index_op, uint32_t offset_op)
 {
     uint32_t a = dxil_value(c, index_op);
@@ -1196,7 +1189,6 @@ static uint32_t byte_address(Compiler *c, const Handle *h, uint32_t index_op, ui
     return a;
 }
 
-/* the size in bytes of a dxil scalar type. */
 static uint32_t type_bytes(Compiler *c, uint32_t dx)
 {
     const DxType *t = &c->m.types[dx];
@@ -1207,7 +1199,6 @@ static uint32_t type_bytes(Compiler *c, uint32_t dx)
     return 4;
 }
 
-/* a value of a type read from memory at a byte address. */
 static uint32_t read_value(Compiler *c, const Memory *m, uint32_t address, uint32_t dx)
 {
     uint32_t type = dxil_type(c, dx), bytes = type_bytes(c, dx);
@@ -1240,7 +1231,7 @@ static void write_value(Compiler *c, const Memory *m, uint32_t address, uint32_t
         return;
     }
     if (bytes == 2) {
-        /* half a word: the other half kept, which races as direct3d's 16-bit stores of raw buffers may. */
+        /* keeps the other half of the word, which can race, as direct3d's 16-bit raw buffer stores may. */
         uint32_t bits = type == c->t_u16 ? value : spv_op1(&c->b, SpvOpBitcast, c->t_u16, value);
         uint32_t v = spv_op1(&c->b, SpvOpUConvert, c->t_u32, bits);
         uint32_t shift = spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32,
@@ -1260,7 +1251,7 @@ static void write_value(Compiler *c, const Memory *m, uint32_t address, uint32_t
     write_word(c, m, word, value);
 }
 
-/* bufferLoad and rawBufferLoad: a typed buffer's texel, or the components a raw or structured view's call uses. */
+/* bufferLoad and rawBufferLoad: a typed buffer's texel, or the raw or structured components the call uses. */
 static int buffer_load(Compiler *c, const DxInst *ins, uint32_t op)
 {
     Handle *h = handle_of(c, ins->ops[2]);
@@ -1326,7 +1317,7 @@ static int buffer_store(Compiler *c, const DxInst *ins)
     return 0;
 }
 
-/* rawBufferVectorLoad and rawBufferVectorStore: a vector's components one after another. */
+/* rawBufferVectorLoad and rawBufferVectorStore: a vector's components packed one after another. */
 static int buffer_vector(Compiler *c, const DxInst *ins, int store)
 {
     Handle *h = handle_of(c, ins->ops[2]);
@@ -1359,7 +1350,7 @@ static int buffer_vector(Compiler *c, const DxInst *ins, int store)
     return 0;
 }
 
-/* cbufferLoadLegacy: a row of 16 bytes, as the structure's members split it. */
+/* cbufferLoadLegacy: a 16 byte row, split like the struct's members. */
 static int cbuffer_load(Compiler *c, const DxInst *ins, uint32_t op)
 {
     Handle *h = handle_of(c, ins->ops[2]);
@@ -1384,7 +1375,7 @@ static int cbuffer_load(Compiler *c, const DxInst *ins, uint32_t op)
     for (uint32_t i = 0; i < count; i++)
         if (mask & (1u << i))
             needed |= bytes == 8 ? 3u << (2 * i) : 1u << (i * bytes / 4);
-    /* the row's words: from the push constants, or one load of 16 bytes, rows past a view's size reading zero. */
+    /* the row comes from the push constants or one 16 byte load. rows past a view's size read zero. */
     if (m.constants) {
         uint32_t base = spv_op2(&c->b, SpvOpIAdd, c->t_u32, dxil_uconst(c, m.push_offset),
                                 spv_op2(&c->b, SpvOpShiftLeftLogical, c->t_u32, row, dxil_uconst(c, 4)));
@@ -1432,7 +1423,7 @@ static int cbuffer_load(Compiler *c, const DxInst *ins, uint32_t op)
     return 0;
 }
 
-/* getDimensions: sizes, then levels or samples, as the kind answers them. */
+/* getDimensions: the sizes, then levels or samples depending on the kind. */
 static int dimensions(Compiler *c, const DxInst *ins)
 {
     Handle *h = handle_of(c, ins->ops[2]);
@@ -1477,7 +1468,7 @@ static int dimensions(Compiler *c, const DxInst *ins)
     }
     for (uint32_t i = 0; i < dims; i++)
         parts[i] = dims == 1 ? size : dxil_extract(c, c->t_u32, size, i);
-    /* a cube array's layers count six faces each. */
+    /* cube array layers count six faces each. */
     if (h->r.kind == RK_TEXTURECUBEARRAY)
         parts[2] = spv_op2(&c->b, SpvOpUDiv, c->t_u32, parts[2], dxil_uconst(c, 6));
     dxil_set_parts(c, ins->value, parts, 4);
@@ -1512,7 +1503,7 @@ static uint32_t atomic_opcode(uint32_t op)
     return op < 9 ? OPS[op] : SpvOpAtomicIAdd;
 }
 
-/* a pointer to the value an atomic works on, and whether it is in bounds, 0 when it always is. */
+/* a pointer to an atomic's target, and its bounds check, 0 when it is always in bounds. */
 static uint32_t atomic_pointer(Compiler *c, const Handle *h, const DxInst *ins, uint32_t first, uint32_t *type,
                                uint32_t *in)
 {
@@ -1523,7 +1514,7 @@ static uint32_t atomic_pointer(Compiler *c, const Handle *h, const DxInst *ins, 
             return 0;
         uint32_t address = byte_address(c, h, ins->ops[first], ins->ops[first + 1]);
         if (*type == c->t_u64) {
-            /* a qword, its index checked against the size as the words' are. */
+            /* a qword, its index checked against the size like word indices are. */
             spv_capability(&c->b, SpvCapabilityInt64Atomics);
             uint32_t qword = spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, address, dxil_uconst(c, 3));
             if (m.size) {
@@ -1545,7 +1536,7 @@ static uint32_t atomic_pointer(Compiler *c, const Handle *h, const DxInst *ins, 
     }
     uint32_t image, ptr, scalar;
     if (*type == c->t_u64) {
-        /* 64-bit texels: the heap's views of them, beside its own. */
+        /* 64-bit texels go through the heap's 64-bit views, kept beside the regular ones. */
         int is_signed = h->r.comp == COMP_I64;
         scalar = spv_type_int(&c->b, 64, (uint32_t)is_signed);
         image = wide_image_type(c, h, scalar, is_signed);
@@ -1601,7 +1592,7 @@ static int atomic(Compiler *c, const DxInst *ins, int exchange)
     return 0;
 }
 
-/* bufferUpdateCounter: the view's hidden counter, the old value when counting up, the new one down. */
+/* bufferUpdateCounter: the view's hidden counter. returns the old value when counting up, the new one when down. */
 static int update_counter(Compiler *c, const DxInst *ins)
 {
     Handle *h = handle_of(c, ins->ops[2]);
@@ -1647,9 +1638,8 @@ static int barrier(Compiler *c, uint32_t mode)
 }
 
 /*
- * shader model 6.8's barriers, read from dxc's output: memory types 1 views,
- * 2 shared memory, 4 and 8 the records of nodes; semantics 1 a group sync, 2
- * group scope, 4 device scope.
+ * shader model 6.8 barriers. memory types: 1 views, 2 shared memory, 4 and 8
+ * node records. semantics: 1 group sync, 2 group scope, 4 device scope.
  */
 static int barrier_by(Compiler *c, uint32_t memory, uint32_t flags)
 {
@@ -1672,11 +1662,11 @@ static int barrier_by(Compiler *c, uint32_t memory, uint32_t flags)
 }
 
 /*
- * WriteSamplerFeedback and its kin: the mip a sample at the coordinates
- * takes, floored and within the texture's mips, goes to the word of the
- * feedback map's region the coordinates fall in, wrapped: its least for
- * min mip maps, its bit for mip region used maps. the levels of detail
- * are vulkan's query's, the bias and gradient forms computing theirs.
+ * WriteSamplerFeedback and friends: the mip a sample at the coordinates would
+ * use, floored and clamped to the texture's mips, goes into the feedback map
+ * word of the region the coordinates fall in, wrapped. min mip maps keep the
+ * smallest, mip region used maps set its bit. the lod is vulkan's query, the
+ * bias and gradient forms compute their own.
  */
 static int write_feedback(Compiler *c, const DxInst *ins, uint32_t op)
 {
@@ -1692,7 +1682,7 @@ static int write_feedback(Compiler *c, const DxInst *ins, uint32_t op)
     if (op == 176) {
         lod = dxil_value(c, ins->ops[9]);
     } else if (op == 177) {
-        /* the larger of the gradients' lengths in texels of the first mip, its logarithm. */
+        /* log2 of the longer gradient, in texels of the first mip. */
         uint32_t n = coord_count(tex->r.kind) > 3 ? 3 : coord_count(tex->r.kind);
         uint32_t size = spv_op2(&c->b, SpvOpImageQuerySizeLod, n > 1 ? c->t_uvec[n] : c->t_u32, image, dxil_uconst(c, 0));
         uint32_t wh[2] = {n > 1 ? dxil_extract(c, c->t_u32, size, 0) : size,
@@ -1751,8 +1741,8 @@ static int write_feedback(Compiler *c, const DxInst *ins, uint32_t op)
 /* ------------------------------------------------------------------ sample positions */
 
 /*
- * direct3d's standard sample positions, in sixteenths of a pixel from its
- * center, for 1, 2, 4, 8 and 16 samples: those of count n start at n - 1.
+ * direct3d's standard sample positions in sixteenths of a pixel from its
+ * center, for 1, 2, 4, 8 and 16 samples. those for count n start at n - 1.
  */
 static constexpr int8_t SAMPLE_POSITIONS[31][2] = {
     {0, 0},   {4, 4},   {-4, -4}, {-2, -6}, {6, -2}, {-6, 2}, {2, 6},  {1, -3},  {-1, 3},  {5, 1},   {-3, -5},

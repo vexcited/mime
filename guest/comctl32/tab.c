@@ -1,7 +1,4 @@
-/*
- * the tab control, SysTabControl32: a row of tabs over a display area,
- * one of them selected.
- */
+/* the tab control, SysTabControl32. */
 #include "comctl32_private.h"
 
 typedef struct TAB_ITEM {
@@ -73,7 +70,7 @@ static int min_width(TAB *t)
     return 2 * (3 * tm.tmAveCharWidth + t->PadX);
 }
 
-/* lays the tabs out in one row along the top, or the bottom with TCS_BOTTOM. */
+/* one row along the top, or the bottom with TCS_BOTTOM. */
 static void layout(TAB *t)
 {
     RECT client;

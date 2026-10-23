@@ -1,12 +1,11 @@
 /*
- * drag and drop with the host's programs. a drag from a host program over one of the guest's host windows comes
- * as input events; the window under it, or the nearest of its ancestors that takes drops, gets
- * WM_MIME_HOSTDND posted to its thread, and user32 and ole32 there run the IDropTarget or the legacy
- * WM_DROPFILES. nothing is read from the host until the target asks for a format. the other way, a thread that
- * runs DoDragDrop starts a host drag when its drag leaves its window, and the host's requests for the data and
- * the end of the drag come to that thread as the same message.
+ * drag and drop with host programs. a host drag over a guest window comes as input events: the window under it, or
+ * its nearest ancestor that takes drops, gets WM_MIME_HOSTDND posted to its thread, where user32 and ole32 run the
+ * IDropTarget or the legacy WM_DROPFILES. nothing is read from the host until the target asks for a format. the
+ * other way round, DoDragDrop starts a host drag when the drag leaves its window, and the host's data requests and
+ * the end of the drag reach that thread as the same message.
  *
- * one host drag at a time, like one pointer: the session is the host's number for it.
+ * one host drag at a time, like one pointer. the session is the host's id for it.
  */
 #include "win32k.h"
 
@@ -19,7 +18,7 @@
 #define NO_RESULT MIME_DND_GOING
 
 typedef struct DND {
-    /* a host drag over the guest's windows */
+    /* a host drag over the guest's windows. */
     BOOLEAN Active;
     BOOLEAN Dropped;
     ULONG Id;
@@ -27,15 +26,15 @@ typedef struct DND {
     ULONG Allowed;
     ULONG Keys;
     POINT Pt;
-    HWND Target;      /* the window that has the enter, if any */
-    BOOLEAN Files;    /* and it only takes WM_DROPFILES */
+    HWND Target;      /* the window that got the enter, if any. */
+    BOOLEAN Files;    /* the target only takes WM_DROPFILES. */
     BOOLEAN Entered;
-    /* the guest's drag, taken over by the host */
+    /* the guest's drag, taken over by the host. */
     ULONG SourceId;
     W32THREAD *SourceThread;
     ULONG_PTR SourceHandler;
     ULONG SourceResult;
-    PVOID Icon;       /* the image the next host drag shows, in memory the host can read */
+    PVOID Icon;       /* the image the next host drag shows, in memory the host can read. */
     ULONG IconBytes;
     struct {
         BOOLEAN Used;
@@ -57,7 +56,7 @@ static ULONG keys_of(ULONG modifiers)
     return keys;
 }
 
-/* the window that takes the drop: the deepest at the point or the nearest ancestor that registered. */
+/* the deepest window at the point, or its nearest ancestor that registered. */
 static WND *find_target(WND *top, POINT pt, BOOLEAN *files)
 {
     WND *desktop = WndDesktop();
@@ -99,7 +98,7 @@ static void leave_target(void)
     g_dnd.Entered = FALSE;
 }
 
-/* a drag over a window: tells the window under it, and the one it left. */
+/* tells the window under the drag, and the one it left. */
 static void host_over(const MimeInputEvent *ev, BOOLEAN enter)
 {
     if (enter) {
@@ -187,7 +186,7 @@ void DndHostEvent(const MimeInputEvent *ev)
         if (g_dnd.SourceThread && g_dnd.SourceId == ev->pad) {
             g_dnd.SourceResult = ev->x ? (ev->flags & 0xFF) | 0x100 : 0;
             QueuePost(g_dnd.SourceThread, nullptr, WM_MIME_HOSTDND, g_dnd.SourceHandler, (LPARAM)MIME_DND_PHASE_END);
-            /* the host kept the release of the button from the guest. */
+            /* the host kept the button release from the guest. */
             InputReleaseLeftButton();
         }
         break;
@@ -277,7 +276,7 @@ ULONG_PTR NTAPI NtUserMimeDnd(ULONG op, ULONG_PTR a, ULONG_PTR b, PULONG out)
         }
         break;
     case MIME_DND_ICON: {
-        /* a drag image of up to 512 pixels each way, as MimeDragIcon has it. */
+        /* MimeDragIcon allows up to 512 pixels each way. */
         MimeDragIcon header;
         if (g_dnd.Icon) {
             MmFreeContiguousPages(g_dnd.Icon, g_dnd.IconBytes);
@@ -355,7 +354,7 @@ ULONG_PTR NTAPI NtUserMimeDnd(ULONG op, ULONG_PTR a, ULONG_PTR b, PULONG out)
     return result;
 }
 
-/* what a drag over the guest holds in a format, from the host, a chunk at a time. */
+/* reads the host's data for a drag over the guest, a chunk at a time. */
 ULONG NTAPI NtUserMimeDndData(ULONG session, ULONG format, PUCHAR buffer, ULONG capacity, ULONG offset, PULONG total)
 {
     ULONG kind;
@@ -383,7 +382,7 @@ ULONG NTAPI NtUserMimeDndData(ULONG session, ULONG format, PUCHAR buffer, ULONG 
     return ok;
 }
 
-/* gives the host program that reads the guest's drag a chunk of what it asked for. */
+/* answers a host program reading the guest's drag, a chunk at a time. */
 ULONG NTAPI NtUserMimeDndProvide(ULONG request, PUCHAR data, ULONG length, ULONG offset, ULONG total)
 {
     ULONG64 whole = total == 0xFFFFFFFFu ? MIME_CLIP_NONE : total;

@@ -1,7 +1,4 @@
-/*
- * hid.dll: the HidD_ functions that talk to a hid collection and the HidP_
- * functions that read and write reports through its preparsed data.
- */
+/* hid.dll: HidD_ functions talk to a hid collection, HidP_ functions parse reports with its preparsed data. */
 #ifndef MIME_WIN32_HIDPI_H
 #define MIME_WIN32_HIDPI_H
 

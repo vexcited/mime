@@ -1,7 +1,4 @@
-/*
- * msimg32: the gdi extension dll. its three blending entry points are the
- * gdi32 Gdi* implementations, as on windows.
- */
+/* msimg32: its three blending entry points are the gdi32 Gdi* implementations, as on Windows. */
 #define MIME_BUILD_MSIMG32
 #include <mime/nt.h>
 #include <mime/win32/winbase.h>
@@ -30,7 +27,7 @@ MSIMG32API BOOL WINAPI GradientFill(HDC dc, PTRIVERTEX vertices, ULONG vertex_co
     return GdiGradientFill(dc, vertices, vertex_count, mesh, mesh_count, mode);
 }
 
-/* a windows 2000 era hook that does nothing on current windows. */
+/* a Windows 2000 era hook that does nothing on current Windows. */
 DECLSPEC_EXPORT void WINAPI vSetDdrawflag(void)
 {
 }

@@ -1,7 +1,4 @@
-/*
- * windows.storage entry point and class factory. the shortcut class of the
- * shell is registered to this dll, as it is on windows.
- */
+/* windows.storage entry point and class factory. Windows registers the shell shortcut class here. */
 #include "windows_storage_private.h"
 #include <mime/win32/shobjidl_ui.h>
 
@@ -31,7 +28,6 @@ static ULONG STDMETHODCALLTYPE factory_release(IClassFactory *This)
     return 1;
 }
 
-/* the classes of this dll, each made by a function of its own. */
 typedef struct _CLASS_FACTORY {
     IClassFactory Interface;
     const GUID *Clsid;

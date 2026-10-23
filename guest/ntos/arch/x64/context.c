@@ -1,7 +1,6 @@
 /*
- * the x64 half of threads and contexts: descriptor tables, the system
- * call registers, the extended state, switch frames, user mode entry
- * frames and the CONTEXT conversions.
+ * x64 threads and contexts: descriptor tables, syscall msrs, extended state,
+ * switch and user entry frames, CONTEXT conversion.
  */
 #include "../../ntos.h"
 
@@ -23,7 +22,7 @@ static DECLSPEC_ALIGN(16) UCHAR g_fault_stacks[MAXIMUM_PROCESSORS][8192];
 #define CR4_OSXSAVE (1ull << 18)
 #define CR4_SMEP (1ull << 20)
 
-/* the fixed part of the user mode extended state, see the CONTEXT and XSAVE_FORMAT layouts. */
+/* the legacy area of the user extended state, as in XSAVE_FORMAT. */
 #define XSAVE_HEADER 512
 #define XSAVE_LEGACY_MXCSR 24
 
@@ -33,7 +32,7 @@ void KiSwitchAddressSpace(PKPROCESS process)
         KiWriteCr3(process->DirectoryTableBase);
 }
 
-/* fs of a wow64 thread in 32-bit code is its 32-bit teb, through the segment and its loaded base. */
+/* in 32-bit code, fs of a wow64 thread points at its 32-bit teb. */
 static void set_teb32(ULONG_PTR teb32)
 {
     ULONG64 *entry = &KeGetPcr()->GdtBase[KGDT64_R3_CMTEB / 8];
@@ -43,7 +42,7 @@ static void set_teb32(ULONG_PTR teb32)
 
 void KiSwapContext(PKTHREAD old, PKTHREAD next)
 {
-    /* the teb of the thread is gs in user mode, swapped in at each return there. */
+    /* in user mode gs is the teb, swapped in at each return there. */
     if (next->Teb)
         KiWriteMsr(MSR_KERNEL_GS_BASE, (ULONG64)next->Teb);
     if (next->Teb32)
@@ -52,14 +51,12 @@ void KiSwapContext(PKTHREAD old, PKTHREAD next)
 }
 
 /*
- * an idle processor lets go of the kernel lock and, for a short while, spins on the flags that tell it
- * there is work. whoever makes a thread ready for it sees that (KiRequestDispatch) and does not
- * interrupt it, which costs the sender and the receiver an exit to the host each, and a halted
- * processor a wake up besides. only then does it halt, and a processor that halted is interrupted.
+ * an idle processor releases the kernel lock and spins briefly on its work flags. a waker that sees it
+ * spinning, see KiRequestDispatch, skips the interrupt, which would cost both sides an exit to the host.
+ * only then does it halt, and a halted processor is interrupted.
  *
- * hlt only ends on an interrupt taken with interrupts enabled. the entry of an interrupt that finds
- * IdleSleeping takes the lock back before handling it, so interrupts still run with the lock held, and
- * when the processor comes back from one it holds the lock.
+ * hlt ends only on an interrupt taken with interrupts enabled. an interrupt entry that finds IdleSleeping
+ * takes the lock back first, so interrupts still run with the lock held and the processor holds it after.
  */
 #define KI_IDLE_SPIN_TICKS 40000
 
@@ -73,12 +70,12 @@ void KiIdleWait(void)
     KiReleaseKernelLock();
     __asm__ volatile("sti" ::: "memory");
     ULONG64 end = HalReadCounter() + ((KiOptions & KI_OPT_NO_IDLE_SPIN) ? 0 : KI_IDLE_SPIN_TICKS);
-    /* no pause instruction: the host takes a processor that executes them in a loop for one that waits for a lock. */
+    /* no pause: the host would take a vcpu looping on it for one waiting on a lock. */
     while (pcr->IdleSleeping && !prcb->DispatchPending && !prcb->DpcPending && HalReadCounter() < end)
         ;
     __asm__ volatile("cli" ::: "memory");
     if (pcr->IdleSleeping && !prcb->DispatchPending && !prcb->DpcPending) {
-        /* published before looking again, so that a request that came meanwhile is seen or sends the interrupt. */
+        /* published before looking again, so a request that came meanwhile is seen or sends the interrupt. */
         __atomic_store_n(&prcb->IdleState, KI_IDLE_HALTED, __ATOMIC_SEQ_CST);
         if (!prcb->DispatchPending && !prcb->DpcPending)
             __asm__ volatile("sti; hlt; cli" ::: "memory");
@@ -120,7 +117,7 @@ static ULONG64 segment(ULONG64 access, ULONG64 flags)
     return 0xFFFFull | access << 40 | 0xFull << 48 | flags << 52;
 }
 
-/* the extended state components the kernel saves for user threads: x87, sse, avx and avx-512. */
+/* the extended state saved for user threads: x87, sse, avx and avx-512. */
 static void initialize_xsave(void)
 {
     ULONG regs[4];
@@ -135,7 +132,6 @@ static void initialize_xsave(void)
     KiXsaveSize = (regs[1] + 63) & ~63u;
 }
 
-/* descriptor tables, system call registers and control bits of the running processor. */
 void KiInitializeProcessorArch(void)
 {
     PKPCR pcr = KeGetPcr();
@@ -156,7 +152,7 @@ void KiInitializeProcessorArch(void)
     else
         __asm__ volatile("xsetbv" ::"c"(0), "a"((ULONG)KiXsaveMask), "d"((ULONG)(KiXsaveMask >> 32)));
 
-    /* the windows layout: kernel code and data, 32-bit and 64-bit user code, user data, the tss. */
+    /* the windows gdt layout: kernel code and data, 32-bit and 64-bit user code, user data, the tss. */
     ULONG64 *gdt = pcr->Gdt;
     memset(pcr->Gdt, 0, sizeof(pcr->Gdt));
     gdt[KGDT64_R0_CODE / 8] = segment(0x9B, 0x2);
@@ -181,7 +177,7 @@ void KiInitializeProcessorArch(void)
         USHORT limit;
         ULONG64 base;
     } gdtr = {sizeof(pcr->Gdt) - 1, (ULONG64)gdt}, idtr = {sizeof(g_idt) - 1, (ULONG64)g_idt};
-    /* loading gs zeroes its base, which the kernel needs: it is written back right after. */
+    /* loading gs zeroes its base, so it is written back right after. */
     __asm__ volatile("lgdt %0\n\t"
                      "lidt %1\n\t"
                      "pushq %[cs]\n\t"
@@ -212,14 +208,13 @@ void KiInitializeProcessorArch(void)
     KiWriteMsr(MSR_LSTAR, (ULONG64)KiSystemCall64);
     KiWriteMsr(MSR_CSTAR, (ULONG64)KiSystemCall32);
     KiWriteMsr(MSR_FMASK, 0x47700);
-    /* the default attributes, with write combining at index 4. */
+    /* the default PAT, with write combining at index 4. */
     KiWriteMsr(MSR_PAT, 0x0007040100070406ull);
 }
 
 /*
- * the switch frame of a new thread returns into KiThreadStartup. a user
- * thread keeps its extended state at the top of its kernel stack, above
- * its trap frame.
+ * a new thread's switch frame returns into KiThreadStartup. a user thread
+ * keeps its extended state at the top of its kernel stack, above its trap frame.
  */
 void KiInitializeSwitchFrame(PKTHREAD thread, PKSTART_ROUTINE routine, PVOID context)
 {
@@ -237,12 +232,12 @@ void KiInitializeSwitchFrame(PKTHREAD thread, PKSTART_ROUTINE routine, PVOID con
     memset(frame, 0, KSWITCH_FRAME_SIZE + 8);
     frame[0] = (ULONG64)routine;                       /* rbx */
     frame[3] = (ULONG64)context;                       /* rsi */
-    frame[KSWITCH_RETURN / 8] = (ULONG64)KiThreadStartup; /* return address */
+    frame[KSWITCH_RETURN / 8] = (ULONG64)KiThreadStartup;
     thread->KernelSp = (ULONG64)frame;
     thread->TrapFrame = (PKTRAP_FRAME)trap;
 }
 
-/* the user stack pointer; 32-bit code leaves the upper half of rsp undefined. */
+/* 32-bit code leaves the upper half of rsp undefined. */
 static ULONG64 user_stack(const KTRAP_FRAME *frame)
 {
     return frame->Cs == (KGDT64_R3_CMCODE | RPL_USER) ? (ULONG)frame->Rsp : frame->Rsp;
@@ -254,7 +249,7 @@ static void user_segments(PKTRAP_FRAME frame)
     frame->Ss = KGDT64_R3_DATA | RPL_USER;
 }
 
-/* sp is where the caller left its stack: the code starts as if called, with a return address slot pushed. */
+/* the code starts as if called on the caller's sp, with a return address slot pushed. */
 void KiInitializeUserFrame(PKTRAP_FRAME frame, ULONG64 pc, ULONG64 sp, ULONG64 arg0, ULONG64 arg1, ULONG64 teb)
 {
     memset(frame, 0, sizeof(*frame));
@@ -343,7 +338,7 @@ void KiContextToTrapFrame(const CONTEXT *ctx, PKTRAP_FRAME frame, ULONG flags, K
         frame->Rip = ctx->Rip;
         frame->Rsp = ctx->Rsp;
         if (mode == UserMode) {
-            /* user mode may only change the arithmetic and trace flags, and stays in user mode, 64 or 32-bit. */
+            /* user mode may change only the arithmetic and trace flags, and stays in user mode, 64 or 32-bit. */
             frame->Rflags = (ctx->EFlags & EFLAGS_USER_MASK) | EFLAGS_IF | 0x2;
             user_segments(frame);
             if (ctx->SegCs == (KGDT64_R3_CMCODE | RPL_USER))
@@ -362,9 +357,8 @@ void KiContextToTrapFrame(const CONTEXT *ctx, PKTRAP_FRAME frame, ULONG flags, K
 }
 
 /*
- * the user apc dispatcher finds the interrupted CONTEXT at its stack
- * pointer, the routine and its arguments in the home slots, as on windows,
- * then a machine frame its unwind codes describe.
+ * like on windows, the user apc dispatcher finds the interrupted CONTEXT at its
+ * sp, the routine and arguments in the home slots, then a machine frame for unwinding.
  */
 BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE routine, PVOID context, PVOID arg1,
                        PVOID arg2)
@@ -388,9 +382,8 @@ BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE ro
 }
 
 /*
- * the layout KiUserExceptionDispatcher's unwind codes describe: from its
- * stack pointer, 0x28 bytes, the context, the record, then a machine frame
- * with the faulting rip and rsp, so unwinding goes on there.
+ * the layout KiUserExceptionDispatcher's unwind codes expect: from its sp, 0x28 bytes,
+ * the context, the record, then a machine frame with the faulting rip and rsp.
  */
 BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RECORD record)
 {
@@ -445,7 +438,7 @@ void KiDumpTrapFrame(const char *what, const KTRAP_FRAME *frame)
     KiLogPrintf("  rsi %016llx rdi %016llx rbp %016llx r8  %016llx", frame->Rsi, frame->Rdi, frame->Rbp, frame->R8);
     KiLogPrintf("  r9  %016llx r10 %016llx r11 %016llx r12 %016llx", frame->R9, frame->R10, frame->R11, frame->R12);
     KiLogPrintf("  r13 %016llx r14 %016llx r15 %016llx", frame->R13, frame->R14, frame->R15);
-    /* the top of the stack, where a call through a bad pointer left its return address. */
+    /* a call through a bad pointer left its return address at the stack top. */
     ULONG64 sp = frame->Rsp;
     if (sp && !(sp & 7) && MmIsAddressValid((PVOID)sp) && MmIsAddressValid((PVOID)(sp + 24))) {
         ULONG64 *top = (ULONG64 *)sp;

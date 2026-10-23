@@ -1,4 +1,4 @@
-/* what the parts of mfplat share: the object base and the attribute store every attribute object keeps. */
+/* shared by the parts of mfplat: the object base and the attribute store. */
 #ifndef MFPLAT_PRIVATE_H
 #define MFPLAT_PRIVATE_H
 
@@ -11,11 +11,9 @@ void *MfAlloc(SIZE_T size);
 void *MfAllocZero(SIZE_T size);
 void MfFree(void *p);
 
-/* ------------------------------------------------------------------ objects */
-
 typedef struct MfObject MfObject;
 
-/* the interfaces an object answers besides IUnknown, and what its last release frees beyond the object. */
+/* iids lists the interfaces besides IUnknown. destroy frees what the object owns beyond itself. */
 typedef struct MfClass {
     const GUID *const *iids;
     void (*destroy)(MfObject *object);
@@ -27,9 +25,9 @@ typedef struct MfItem {
 } MfItem;
 
 /*
- * the items sorted by the first field of their key, newer ones before older
- * ones sharing it, as windows keeps them. the lock is recursive, so a
- * thread holding LockStore still reads and writes.
+ * like windows, items are sorted by the first field of their key, newer
+ * before older on ties. the lock is recursive, so a thread holding
+ * LockStore can still read and write.
  */
 typedef struct MfStore {
     CRITICAL_SECTION lock;
@@ -55,7 +53,7 @@ static inline MfObject *mf_object(void *iface)
     return (MfObject *)iface;
 }
 
-/* the attribute methods of every attribute object, for the head of its vtable. */
+/* every attribute object starts its vtable with these. */
 HRESULT STDMETHODCALLTYPE MfAttrGetItem(IMFAttributes *iface, REFGUID key, PROPVARIANT *value);
 HRESULT STDMETHODCALLTYPE MfAttrGetItemType(IMFAttributes *iface, REFGUID key, MF_ATTRIBUTE_TYPE *type);
 HRESULT STDMETHODCALLTYPE MfAttrCompareItem(IMFAttributes *iface, REFGUID key, const PROPVARIANT *value,
@@ -108,15 +106,13 @@ const PROPVARIANT *MfStoreFind(MfStore *store, REFGUID key);
 HRESULT MfStoreCompare(MfStore *ours, IMFAttributes *theirs, MF_ATTRIBUTES_MATCH_TYPE type, const GUID *skip,
                        UINT32 skip_count, BOOL *result);
 
-/* ------------------------------------------------------------------ the parts */
-
 extern int _fltused;
 BOOL MfStarted(void);
 HRESULT MfCreateMemoryBuffer(DWORD max_length, DWORD alignment_mask, IMFMediaBuffer **out);
 void MfWorkQueuesShutdown(void);
 HRESULT MfQueueResult(DWORD queue, IMFAsyncResult *result);
 HRESULT MfAsyncResultCreate(IUnknown *object, IMFAsyncCallback *callback, IUnknown *state, IMFAsyncResult **out);
-/* the callback of a result mfplat made, null for any other result. */
+/* NULL for results mfplat did not create. */
 IMFAsyncCallback *MfAsyncResultCallback(IMFAsyncResult *result);
 HRESULT MfMediaEventCreate(MediaEventType type, REFGUID extended, HRESULT status, const PROPVARIANT *value,
                            IMFMediaEvent **out);

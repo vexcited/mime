@@ -1,9 +1,8 @@
 /*
- * D3DReflect: ID3D11ShaderReflection and its constant buffers, variables
- * and types, read from the RDEF, STAT, SFI0, Aon9 and signature chunks
- * and the declarations of the shader code, the way CShaderReflection of
- * D3DCompiler_47.dll reads them. what is out of range or not found is one
- * of the null objects, whose methods fail with E_FAIL.
+ * D3DReflect: ID3D11ShaderReflection with its constant buffers, variables
+ * and types, read from the RDEF, STAT, SFI0, Aon9 and signature chunks and
+ * the shader's declarations. lookups out of range or not found return null
+ * objects whose methods fail with E_FAIL.
  */
 #include "d3dcompiler_private.h"
 
@@ -26,7 +25,7 @@ struct DcType {
     DcType *base;
     DcType *interfaces;
     UINT interface_count;
-    /* where the type is in the RDEF chunk: types there are equal when they are the same. */
+    /* offset of the type in the RDEF chunk: equal offsets mean the same type. */
     UINT identity;
 };
 
@@ -67,7 +66,7 @@ struct DcReflection {
     DcBlock *blocks;
 };
 
-/* every allocation of a reflection, freed with it. */
+/* allocations live as long as the reflection. */
 static void *zalloc(DcReflection *r, SIZE_T size)
 {
     DcBlock *block = DcAlloc(sizeof(DcBlock) + 8 + size);
@@ -80,9 +79,9 @@ static void *zalloc(DcReflection *r, SIZE_T size)
     return p;
 }
 
-/* ------------------------------------------------------------------ the null objects */
+/* ------------------------------------------------------------------ null objects */
 
-/* each takes the arguments of the method it stands for, as 32-bit callees pop them. */
+/* each takes its method's arguments, since 32-bit callees pop them. */
 static HRESULT STDMETHODCALLTYPE null_fail(void *iface, void *arg) { return E_FAIL; }
 static UINT STDMETHODCALLTYPE null_zero(void *iface) { return 0; }
 static UINT STDMETHODCALLTYPE null_slot(void *iface, UINT index) { return 0xFFFFFFFF; }
@@ -292,7 +291,7 @@ static ID3D11ShaderReflectionVariable *STDMETHODCALLTYPE buffer_variable_by_name
 static const ID3D11ShaderReflectionConstantBufferVtbl buffer_vtbl = {
     VTBL_FN(buffer_get_desc), VTBL_FN(buffer_variable), VTBL_FN(buffer_variable_by_name)};
 
-/* ------------------------------------------------------------------ the reflection */
+/* ------------------------------------------------------------------ reflection */
 
 static DcReflection *impl(ID3D11ShaderReflection *iface) { return CONTAINING_RECORD(iface, DcReflection, iface); }
 
@@ -361,7 +360,7 @@ static ID3D11ShaderReflectionConstantBuffer *STDMETHODCALLTYPE reflection_buffer
     return &g_null_buffer;
 }
 
-/* direct3d 11 callers get the binding without the space and id of direct3d 12. */
+/* Direct3D 11 callers get the binding without the Direct3D 12 space and id. */
 static void copy_bind(DcReflection *r, const DcBindDesc *bind, D3D11_SHADER_INPUT_BIND_DESC *desc)
 {
     memcpy(desc, bind, r->d3d12 ? sizeof(DcBindDesc) : sizeof(D3D11_SHADER_INPUT_BIND_DESC));
@@ -457,9 +456,9 @@ static UINT STDMETHODCALLTYPE reflection_interface_slots(ID3D11ShaderReflection 
 }
 
 /*
- * the feature level of each shader model the compiler knows, in its order:
- * a version found several times takes the last entry, as GetShaderModelByVersion
- * searches from the end. 0xFFFFFFFF stands for direct3d 9 only.
+ * the feature level of each shader model the compiler knows, in its order.
+ * a version listed twice takes the last entry, since lookups search from
+ * the end. 0xFFFFFFFF means Direct3D 9 only.
  */
 static const struct {
     UINT version;
@@ -540,7 +539,7 @@ ID3D11ShaderReflection *DcReflectionInterface(DcReflection *r) { return &r->ifac
 
 /* ------------------------------------------------------------------ reading the chunks */
 
-/* a string of the bytecode, which must end before the end of the container. */
+/* strings must end inside the container. */
 static HRESULT copy_string(DcReflection *r, const BYTE *base, UINT offset, const BYTE *end, LPCSTR *out)
 {
     const BYTE *s = base + offset;
@@ -558,7 +557,7 @@ static HRESULT copy_string(DcReflection *r, const BYTE *base, UINT offset, const
     return S_OK;
 }
 
-/* the header of an RDEF chunk with the strides of its entries, which shader model 4 leaves out. */
+/* shader model 4 leaves the entry strides out of the RDEF header. */
 typedef struct RdefHeader {
     UINT buffer_count, buffer_offset, bind_count, bind_offset, target, flags, creator;
     UINT buffer_stride, bind_stride, variable_stride, type_stride, member_stride, interface_slots;
@@ -571,7 +570,7 @@ typedef struct RdefContext {
     RdefHeader h;
 } RdefContext;
 
-/* a range of the bytecode after the chunk's start and up to the end of the container. */
+/* whether a range lies between the chunk's start and the end of the container. */
 static BOOL in_range(const RdefContext *c, const BYTE *p, UINT64 size)
 {
     return p > c->chunk && p < c->end && size && (UINT64)(c->end - p) >= size;
@@ -782,7 +781,7 @@ static const struct {
     {"SV_STENCILREF", D3D_NAME_STENCIL_REF},
 };
 
-/* a signature of 24, 28 or 32 byte entries, the last two leading with the stream. */
+/* signature entries are 24, 28 or 32 bytes, and the larger two start with the stream. */
 static HRESULT read_signature(DcReflection *r, const BYTE *chunk, const BYTE *end, UINT stride, UINT which,
                               UINT *count_out)
 {
@@ -831,7 +830,7 @@ static HRESULT read_signature(DcReflection *r, const BYTE *chunk, const BYTE *en
     return S_OK;
 }
 
-/* the version d3dcompiler's shader model table knows the shader by. */
+/* the version the shader model table lists the shader under. */
 static UINT internal_version(UINT token)
 {
     static const UINT PREFIX[] = {0xFFFF, 0xFFFE, 0x4753, 0x4853, 0x4453, 0x4353};
@@ -845,7 +844,7 @@ static UINT internal_version(UINT token)
     return prefix << 16 | ((token >> 4) & 0xF) << 8 | (token & 0xF);
 }
 
-/* the version token and the declarations before the first instruction. */
+/* reads the version token and the declarations before the first instruction. */
 static HRESULT read_code(DcReflection *r, const BYTE *chunk, UINT size)
 {
     if (size < 4)
@@ -885,7 +884,7 @@ static HRESULT read_code(DcReflection *r, const BYTE *chunk, UINT size)
     return S_OK;
 }
 
-/* the legacy shader of feature level 9 gives the shader model its feature level. */
+/* the feature level 9 legacy shader sets the shader model's feature level. */
 static HRESULT read_legacy(DcReflection *r, const BYTE *chunk, UINT size)
 {
     if (size < 36 || read32(chunk + 8) < 4)
@@ -914,7 +913,7 @@ static HRESULT read_legacy(DcReflection *r, const BYTE *chunk, UINT size)
     return S_OK;
 }
 
-/* the instruction counts of the STAT chunk, which comes in 28, 29 and 37 words. */
+/* the STAT chunk comes in 28, 29 and 37 words. */
 static void read_stat(DcReflection *r, const BYTE *chunk, UINT size)
 {
     UINT s[37] = {};
@@ -1036,7 +1035,7 @@ HRESULT DcReflectionCreate(const DcContainer *c, BOOL d3d12, DcReflection **out)
     r->iface.lpVtbl = &reflection_vtbl;
     r->refs = 1;
     r->d3d12 = d3d12;
-    /* whatever the chunks hold that cannot be read is an invalid argument. */
+    /* chunks that cannot be read make it an invalid argument. */
     if (FAILED(read_all(r, c))) {
         reflection_free(r);
         return E_INVALIDARG;

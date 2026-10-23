@@ -266,7 +266,7 @@ UINT WINAPI MsiSourceListAddSourceW(LPCWSTR product, LPCWSTR user, DWORD reserve
     return error;
 }
 
-/* the source goes to the place the index names, one based, or to the end for zero. A source already in the list moves. */
+/* inserts at the one based index, or appends for zero. a source already in the list is moved. */
 UINT WINAPI MsiSourceListAddSourceExW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context,
                                       DWORD options, LPCWSTR source, DWORD index)
 {
@@ -308,7 +308,7 @@ UINT WINAPI MsiSourceListAddSourceExW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCO
         DWORD place = index && index - 1 < count ? index - 1 : count;
         if (found < count && !index)
             place = found;
-        /* the order after the change, written back from the first place that differs. */
+        /* the new order, written back from the first position that differs. */
         PWSTR *order = MimeMsiAllocate(sizeof(*order) * 65538);
         if (!order)
             error = ERROR_NOT_ENOUGH_MEMORY;

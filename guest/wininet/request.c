@@ -1,7 +1,4 @@
-/*
- * the http engine: sending requests, reading responses and bodies, redirects, authentication, cookies,
- * decoding, and the worker thread of asynchronous requests.
- */
+/* HTTP request workers: sending, response parsing, redirects, authentication, cookies and decoding. */
 #include "wininet_private.h"
 #include "png/inflate.h"
 
@@ -28,7 +25,7 @@ static DWORD Cancelled(INET_OBJECT *request, DWORD error)
     return request->Closed ? ERROR_INTERNET_OPERATION_CANCELLED : error;
 }
 
-/* ------------------------------------------------------------------ connections of a request */
+/* connections of a request. */
 
 static void SetConn(INET_OBJECT *request, INET_CONN *conn)
 {
@@ -54,7 +51,7 @@ static void DropConnection(INET_OBJECT *request)
     InetConnClose(nullptr, TakeConn(request));
 }
 
-/* the connection goes back to the pool when its response ended cleanly, else it is closed. */
+/* pool connections after a clean response end; close others. */
 static void FinishConnection(INET_OBJECT *request)
 {
     INET_CONN *conn = TakeConn(request);
@@ -99,7 +96,7 @@ void InetRequestCleanup(INET_OBJECT *request)
         CloseHandle(request->Wake);
 }
 
-/* the http/1.1 tunnel of an https request through a proxy. */
+/* HTTP/1.1 tunnel for an HTTPS request through a proxy. */
 static DWORD Tunnel(INET_OBJECT *request, INET_CONN *conn)
 {
     char *host = InetNarrow(request->Host, -1);
@@ -130,7 +127,7 @@ static DWORD Tunnel(INET_OBJECT *request, INET_CONN *conn)
     return ok ? ERROR_SUCCESS : ERROR_INTERNET_CANNOT_CONNECT;
 }
 
-/* a connection for the request: a pooled one when allowed, else a new one, with tls when secure. */
+/* reuse pooled connections when allowed; otherwise connect and negotiate TLS if secure. */
 static DWORD Connect(INET_OBJECT *request, BOOL allow_reuse)
 {
     WCHAR proxy[INTERNET_MAX_HOST_NAME_LENGTH] = L"";
@@ -176,7 +173,7 @@ static DWORD Connect(INET_OBJECT *request, BOOL allow_reuse)
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ building the request */
+/* building the request. */
 
 typedef struct {
     char *Data;
@@ -209,7 +206,7 @@ static void PutString(INET_OUT *out, const char *text)
     Put(out, text, (DWORD)strlen(text));
 }
 
-/* the request target: utf-8 with spaces, controls and bytes above ascii escaped. */
+/* UTF-8 request targets escape spaces, controls and non-ASCII bytes. */
 static void PutTarget(INET_OUT *out, LPCWSTR object)
 {
     int bytes = WideCharToMultiByte(CP_UTF8, 0, object, -1, nullptr, 0, nullptr, nullptr);
@@ -246,7 +243,7 @@ static void Base64(const BYTE *data, DWORD length, char *out)
     out[o] = 0;
 }
 
-/* sets a request header the engine owns, replacing what was there. */
+/* replace an engine-owned request header. */
 static BOOL SetHeader(INET_OBJECT *request, const char *name, const char *value)
 {
     AcquireSRWLockExclusive(&request->Lock);
@@ -256,7 +253,7 @@ static BOOL SetHeader(INET_OBJECT *request, const char *name, const char *value)
     return ok;
 }
 
-/* adds a request header the application did not give. */
+/* add only headers omitted by the application. */
 static BOOL AddHeaderIfNew(INET_OBJECT *request, const char *name, const char *value)
 {
     AcquireSRWLockExclusive(&request->Lock);
@@ -293,7 +290,6 @@ static BOOL SetBasic(INET_OBJECT *request, const char *name, LPCWSTR user, LPCWS
     return ok;
 }
 
-/* the path part of the request object, for cookies. */
 static LPCWSTR ObjectPath(INET_OBJECT *request)
 {
     LPCWSTR object = request->Object;
@@ -304,7 +300,6 @@ static LPCWSTR ObjectPath(INET_OBJECT *request)
     return object;
 }
 
-/* the headers wininet adds to the application's before each request goes out. */
 static DWORD AddDefaultHeaders(INET_OBJECT *request, BOOL via_proxy)
 {
     INET_OBJECT *session = InetSession(request);
@@ -360,7 +355,6 @@ static DWORD AddDefaultHeaders(INET_OBJECT *request, BOOL via_proxy)
     return ok ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
 }
 
-/* the request line and headers as they go on the wire. */
 static DWORD BuildRequest(INET_OBJECT *request, BOOL via_proxy, INET_OUT *out)
 {
     char *verb = InetNarrow(request->Verb, -1), *version = InetNarrow(request->Version, -1);
@@ -400,7 +394,7 @@ static DWORD BuildRequest(INET_OBJECT *request, BOOL via_proxy, INET_OUT *out)
     return out->Failed ? ERROR_NOT_ENOUGH_MEMORY : ERROR_SUCCESS;
 }
 
-/* connects, sends the head and the body kept for the request; a pooled connection that failed is retried. */
+/* connect and send headers and retained body; retry failed pooled connections. */
 static DWORD Transmit(INET_OBJECT *request)
 {
     for (DWORD attempt = 0; attempt < 2; attempt++) {
@@ -438,7 +432,7 @@ static DWORD Transmit(INET_OBJECT *request)
     return ERROR_INTERNET_CONNECTION_ABORTED;
 }
 
-/* ------------------------------------------------------------------ responses */
+/* responses. */
 
 static BOOL ValueHas(const char *value, const char *token)
 {
@@ -478,7 +472,6 @@ static void ResetResponse(INET_OBJECT *request)
     ReleaseSRWLockExclusive(&request->Lock);
 }
 
-/* the status line and headers of one response. */
 static DWORD ReadHead(INET_OBJECT *request)
 {
     INET_CONN *conn = request->Conn;
@@ -603,7 +596,7 @@ static void SetupBody(INET_OBJECT *request)
     }
 }
 
-/* the next chunk size, consuming the trailers after the last chunk. */
+/* read the next chunk size; consume trailers after the last chunk. */
 static DWORD NextChunk(INET_OBJECT *request)
 {
     INET_CONN *conn = request->Conn;
@@ -644,7 +637,7 @@ static DWORD NextChunk(INET_OBJECT *request)
     return ERROR_SUCCESS;
 }
 
-/* how much of the body is buffered now; with wait, fills once when none is. */
+/* return buffered body size; wait fills once if empty. */
 static DWORD Available(INET_OBJECT *request, BOOL wait, DWORD *available)
 {
     *available = 0;
@@ -692,7 +685,6 @@ static DWORD Available(INET_OBJECT *request, BOOL wait, DWORD *available)
     return ERROR_SUCCESS;
 }
 
-/* copies body bytes out of the connection buffer. */
 static DWORD Consume(INET_OBJECT *request, BYTE *buffer, DWORD size)
 {
     if (request->BodyMode == INET_BODY_MEMORY) {
@@ -732,7 +724,7 @@ static DWORD AfterConsume(INET_OBJECT *request)
     return ERROR_SUCCESS;
 }
 
-/* reads into the buffer: until it is full or the body ends, or with partial only what has arrived. */
+/* read until full or EOF; partial reads take only currently available data. */
 static DWORD ReadBody(INET_OBJECT *request, void *buffer, DWORD size, DWORD *read, BOOL partial)
 {
     *read = 0;
@@ -778,7 +770,7 @@ BOOL InetDataReady(INET_OBJECT *request)
     return !Available(request, FALSE, &available) && (available || request->BodyDone);
 }
 
-/* ------------------------------------------------------------------ decoding */
+/* decoding. */
 
 static void *InflateAlloc(void *context, size_t size)
 {
@@ -792,7 +784,7 @@ static void InflateFree(void *context, void *memory)
 
 static const MimeAllocator Allocator = {InflateAlloc, InflateFree, nullptr};
 
-/* the deflate data of a gzip member, after its header. */
+/* skip the gzip header to reach deflate data. */
 static BOOL GzipPayload(const BYTE *data, DWORD size, DWORD *offset)
 {
     if (size < 18 || data[0] != 0x1F || data[1] != 0x8B || data[2] != 8)
@@ -818,7 +810,7 @@ static BOOL GzipPayload(const BYTE *data, DWORD size, DWORD *offset)
     return TRUE;
 }
 
-/* reads the whole encoded body and keeps it decoded in memory. */
+/* decode the entire body into memory. */
 static DWORD Decode(INET_OBJECT *request, BOOL gzip)
 {
     BYTE *raw = nullptr;
@@ -870,9 +862,9 @@ static DWORD Decode(INET_OBJECT *request, BOOL gzip)
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ redirects */
+/* redirects. */
 
-/* removes the dot segments of a path, rfc 3986 5.2.4, in place. */
+/* remove dot segments in place under RFC 3986 section 5.2.4. */
 static void RemoveDots(PWSTR path)
 {
     PWSTR copy = InetDuplicate(path);
@@ -909,7 +901,7 @@ static void RemoveDots(PWSTR path)
     InetFree(copy);
 }
 
-/* the absolute url of a Location value, a relative one resolved against the request after rfc 3986. */
+/* resolve relative Location values against the request under RFC 3986. */
 static PWSTR ResolveLocation(INET_OBJECT *request, const char *location)
 {
     PWSTR value = InetWiden(location, -1);
@@ -993,7 +985,6 @@ static BOOL WarnOnZoneCrossing(void)
     return value != 0;
 }
 
-/* points the request at a new url. */
 static DWORD ApplyRedirect(INET_OBJECT *request, LPCWSTR url)
 {
     URL_COMPONENTSW uc = {sizeof(uc)};
@@ -1048,7 +1039,7 @@ static DWORD ApplyRedirect(INET_OBJECT *request, LPCWSTR url)
         request->AuthTried = FALSE;
     }
     ReleaseSRWLockExclusive(&request->Lock);
-    /* the credentials of the connection belong to its server. */
+    /* do not carry server credentials to another origin. */
     if (!same_host) {
         InetFree(request->User);
         InetFree(request->Password);
@@ -1057,7 +1048,7 @@ static DWORD ApplyRedirect(INET_OBJECT *request, LPCWSTR url)
     return ERROR_SUCCESS;
 }
 
-/* drains what is left of a body so the connection can carry the next request. */
+/* drain the remaining body before connection reuse. */
 static void Drain(INET_OBJECT *request)
 {
     BYTE scratch[4096];
@@ -1073,7 +1064,7 @@ static void Drain(INET_OBJECT *request)
     FinishConnection(request);
 }
 
-/* follows a redirect as wininet does, *followed telling whether a new request went out. */
+/* follow WinINet redirect rules; *followed reports whether a new request was sent. */
 static DWORD Redirect(INET_OBJECT *request, BOOL *followed)
 {
     *followed = FALSE;
@@ -1125,7 +1116,7 @@ static DWORD Redirect(INET_OBJECT *request, BOOL *followed)
     return ERROR_SUCCESS;
 }
 
-/* a basic challenge the request has credentials for: the request goes out again with them. */
+/* retry a Basic challenge using available request credentials. */
 static DWORD Authenticate(INET_OBJECT *request, BOOL *retried)
 {
     *retried = FALSE;
@@ -1169,14 +1160,13 @@ static void StoreCookies(INET_OBJECT *request)
     }
 }
 
-/* reads the response to what went out, following redirects and challenges. */
 static DWORD ReceiveResponse(INET_OBJECT *request)
 {
     DWORD error;
     while (TRUE) {
         ResetResponse(request);
         error = ReadHead(request);
-        /* a pooled connection the server had closed: the request goes out again once. */
+        /* retry once if the server closed the pooled connection. */
         if ((error == ERROR_INTERNET_CONNECTION_RESET || error == ERROR_INTERNET_CONNECTION_ABORTED) &&
             request->ConnReused && !request->Closed && !request->SendEx) {
             request->ConnReused = FALSE;
@@ -1214,7 +1204,7 @@ static DWORD ReceiveResponse(INET_OBJECT *request)
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ the operations */
+/* the operations. */
 
 DWORD InetPrepareSend(INET_OBJECT *request, LPCWSTR headers, DWORD headers_length, const void *optional,
                       DWORD optional_length, DWORD total_length, BOOL ex)
@@ -1248,7 +1238,6 @@ DWORD InetPrepareSend(INET_OBJECT *request, LPCWSTR headers, DWORD headers_lengt
     request->Redirects = 0;
     request->AuthTried = request->ProxyAuthTried = FALSE;
     request->Written = 0;
-    /* a request sent again starts over. */
     DropConnection(request);
     ResetResponse(request);
     request->State = INET_OPENED;
@@ -1300,7 +1289,7 @@ DWORD InetRunOp(INET_OBJECT *request, INET_OP *op)
         error = Send(request);
         if (op->Kind == INET_OP_OPEN_URL)
             op->Result = error ? 0 : (DWORD_PTR)request->Handle;
-        /* a response that came, as a redirect needing confirmation, stays readable. */
+        /* retain readable responses while redirect confirmation is pending. */
         if (error && request->State != INET_RECEIVED)
             request->State = INET_OPENED;
         return error;
@@ -1406,7 +1395,7 @@ BOOL InetStart(INET_OBJECT *request, INET_OP *op)
     return InetFail(ERROR_IO_PENDING);
 }
 
-/* ------------------------------------------------------------------ the api */
+/* the api. */
 
 static INET_OBJECT *ReferenceRequest(HINTERNET handle)
 {
@@ -1496,7 +1485,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetWriteFile(HINTERNET file, LPCVOID buffer, DW
     return ok;
 }
 
-/* a read completes at once with what has arrived when the request is asynchronous and data is there. */
+/* asynchronous reads complete immediately with buffered data. */
 static BOOL Read(HINTERNET file, INET_OP *op)
 {
     INET_OBJECT *request = ReferenceRequest(file);
@@ -1586,7 +1575,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetQueryDataAvailable(HINTERNET file, LPDWORD a
     return ok;
 }
 
-/* without a cache, only a body held in memory, as a decoded one, can be moved in. */
+/* seeking requires an in-memory body, such as a decoded response; there is no cache. */
 DECLSPEC_EXPORT DWORD WINAPI InternetSetFilePointer(HINTERNET file, LONG distance, PVOID distance_high, DWORD method,
                                                    DWORD_PTR context)
 {

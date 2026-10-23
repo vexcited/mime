@@ -1,9 +1,8 @@
 #include "msi_private.h"
 
 /*
- * RemoveExistingProducts: the products FindRelatedProducts found, taken away before the new one goes in. An upgrade
- * is an installation inside of an installation, so the removal runs without the lock, through the same entry point
- * that msiexec uses.
+ * RemoveExistingProducts removes the products FindRelatedProducts found before the new one installs. an upgrade is an
+ * installation inside an installation, so the removal runs without the lock, through msiexec's entry point.
  */
 
 typedef struct RELATED {

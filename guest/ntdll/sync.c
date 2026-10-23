@@ -9,9 +9,9 @@
 /*
  * LockCount is -1 when free and counts the owner plus waiters otherwise.
  * contended threads spin a while, then sleep on an auto-reset event created
- * on first need. a section without a spin count spins as long as windows'
- * heap and c library locks do: most holds are shorter than a trip to the
- * kernel and back.
+ * on first need. without a spin count, a section spins as long as windows'
+ * heap and c library locks do: most holds are shorter than a kernel round
+ * trip.
  */
 #define DEFAULT_SPIN 4000
 static HANDLE get_event(PRTL_CRITICAL_SECTION cs)
@@ -32,11 +32,10 @@ static HANDLE get_event(PRTL_CRITICAL_SECTION cs)
 }
 
 /*
- * what windows keeps in a critical section, as it is on windows 11: the debug information is -1, there is none, unless the
- * process asks for it with a flag or a global flag; a spin count is 24 bits and the flags of the section are the bits above
- * them; a processor alone spins not at all, and more of them spin 2000 times when the section does not say. Crash
- * reporters read the sections of the loader and of the PEB through the debug information when it is a pointer, and skip
- * the -1: a null there, which these sections had, was an unreadable range at address 0 in every minidump.
+ * like windows 11: DebugInfo is -1 unless the process asks for it with a flag or a global flag. the spin count
+ * is 24 bits with the section flags above. a single processor never spins, otherwise the default is 2000.
+ * crash reporters follow DebugInfo of the loader and PEB sections when it is a pointer and skip -1. a null there
+ * showed up as an unreadable range at address 0 in every minidump.
  */
 #define CS_DEFAULT_SPIN 0x20007D0
 #define CS_NOT_A_POINTER ((PRTL_CRITICAL_SECTION_DEBUG)(LONG_PTR)-1)
@@ -44,7 +43,7 @@ static HANDLE get_event(PRTL_CRITICAL_SECTION cs)
 static LIST_ENTRY g_cs_list = {&g_cs_list, &g_cs_list};
 static RTL_SRWLOCK g_cs_list_lock;
 
-/* the debug information of a section that was asked to have it, linked in the list of the process; none when there is no memory. */
+/* linked in the process list. without memory the section simply gets none. */
 static void add_debug_info(PRTL_CRITICAL_SECTION cs)
 {
     PRTL_CRITICAL_SECTION_DEBUG debug = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, HEAP_ZERO_MEMORY, sizeof(*debug));
@@ -78,7 +77,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlInitializeCriticalSectionEx(PRTL_CRITICAL_SECTION
         return STATUS_INVALID_PARAMETER_3;
     if (spin & 0xFF000000)
         return STATUS_INVALID_PARAMETER_2;
-    /* a section that is initialized by being all zeros is left as it is. */
+    /* a statically initialized, all zero section is left as is. */
     if (flags & RTL_CRITICAL_SECTION_FLAG_STATIC_INIT)
         return STATUS_SUCCESS;
     ULONG_PTR count = (flags & RTL_CRITICAL_SECTION_FLAG_DYNAMIC_SPIN) || !spin ? CS_DEFAULT_SPIN : spin;
@@ -100,7 +99,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlInitializeCriticalSection(PRTL_CRITICAL_SECTION c
     return STATUS_SUCCESS;
 }
 
-/* the 24 bits of the count change and the flags above them stay; a processor alone keeps the flags only. */
+/* only the low 24 bits change, the flags above stay. a single processor keeps only the flags. */
 NTDLL_EXPORT ULONG NTAPI RtlSetCriticalSectionSpinCount(PRTL_CRITICAL_SECTION cs, ULONG spin)
 {
     ULONG old = (ULONG)cs->SpinCount;
@@ -120,7 +119,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlDeleteCriticalSection(PRTL_CRITICAL_SECTION cs)
         if (debug->ProcessLocksList.Flink)
             RemoveEntryList(&debug->ProcessLocksList);
         RtlReleaseSRWLockExclusive(&g_cs_list_lock);
-        /* a section that was never initialized has no heap block behind it. */
+        /* a never initialized section has no heap block behind it. */
         if (!(cs->SpinCount & RTL_CRITICAL_SECTION_FLAG_STATIC_INIT))
             RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, debug);
     }
@@ -196,10 +195,10 @@ NTDLL_EXPORT ULONG NTAPI RtlIsCriticalSectionLockedByThread(PRTL_CRITICAL_SECTIO
 /* ------------------------------------------------------------------ wait on address */
 
 /*
- * waiting threads park in a table keyed by address, as on windows: a waker
- * unlinks them and alerts each by thread id, so only a wake that finds a
- * waiter enters the kernel. an alert sent before its thread sleeps is kept
- * by the kernel, and the extra wake it may cause later is allowed.
+ * like windows, waiters park in a table keyed by address: a waker unlinks
+ * them and alerts each by thread id, so only a wake that finds a waiter
+ * enters the kernel. the kernel keeps an alert sent before its thread
+ * sleeps, the extra wake it may cause later is allowed.
  */
 typedef struct ADDRESS_WAITER {
     struct ADDRESS_WAITER *Next;
@@ -220,7 +219,7 @@ static ULONG bucket_of(const volatile void *address)
     return (ULONG)(((ULONG_PTR)address * 0x9E3779B97F4A7C15ull) >> 57) % WAIT_BUCKETS;
 }
 
-/* held for a few instructions; a preempted owner gets the processor back by yielding. */
+/* held for a few instructions, a preempted owner gets the processor back by yielding. */
 static void bucket_lock(volatile LONG *lock)
 {
     ULONG spins = 0;
@@ -261,7 +260,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlWaitOnAddress(const void *address, const void *co
     ADDRESS_WAITER w = {nullptr, address, NtCurrentThreadId(), 1};
     ULONG b = bucket_of(address);
     bucket_lock(&g_wait_buckets[b].Lock);
-    /* queued before the value is compared: a waker stores the value, then looks for waiters. */
+    /* queue before comparing: a waker stores the value, then looks for waiters. */
     w.Next = g_wait_buckets[b].Head;
     g_wait_buckets[b].Head = &w;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
@@ -334,14 +333,14 @@ NTDLL_EXPORT void NTAPI RtlWakeAddressAll(const void *address)
 /*
  * the word holds an exclusive bit, a waiters bit and a reader count.
  * contention spins briefly, then sets the waiters bit and sleeps on the
- * word; releasing a lock with waiters wakes them all to compete again.
+ * word. releasing a lock with waiters wakes them all to compete again.
  */
 #define SRW_EXCLUSIVE ((ULONG_PTR)1)
 #define SRW_WAITING ((ULONG_PTR)2)
 #define SRW_READER ((ULONG_PTR)4)
 #define SRW_SPINS 64
 
-/* sleeps until the word changes, if the bits in busy still hold the lock against the caller. */
+/* sleeps until the word changes, as long as the busy bits still block the caller. */
 static void srw_sleep(PRTL_SRWLOCK lock, ULONG_PTR busy)
 {
     ULONG_PTR v = __atomic_load_n((ULONG_PTR *)&lock->Ptr, __ATOMIC_RELAXED);
@@ -423,7 +422,7 @@ NTDLL_EXPORT void NTAPI RtlReleaseSRWLockShared(PRTL_SRWLOCK lock)
 
 /* ------------------------------------------------------------------ condition variables */
 
-/* a generation counter: waiters sleep until it moves past the value they saw. */
+/* waiters sleep until the generation counter moves past the value they saw. */
 NTDLL_EXPORT void NTAPI RtlInitializeConditionVariable(PRTL_CONDITION_VARIABLE cv)
 {
     cv->Ptr = nullptr;

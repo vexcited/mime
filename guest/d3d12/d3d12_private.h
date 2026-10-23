@@ -1,9 +1,7 @@
 /*
- * d3d12.dll: direct3d 12 over vulkan 1.3, written for the way mime's
- * vulkan-1.dll works as d3d11.dll is. heaps are vulkan memory with a buffer
- * over it, descriptor heaps are descriptor buffers, root signatures are
- * push constants and pipeline states are shader objects with all other
- * state dynamic. see docs/d3d12.md.
+ * d3d12.dll: Direct3D 12 over Vulkan 1.3. heaps are Vulkan memory with a buffer over it, descriptor heaps are
+ * descriptor buffers, root signatures are push constants and pipeline states are shader objects with all other
+ * state dynamic.
  */
 #ifndef D3D12_PRIVATE_H
 #define D3D12_PRIVATE_H
@@ -221,7 +219,7 @@ typedef struct D12Vk {
     D12_VK_INSTANCE_FUNCS(X)
     D12_VK_DEVICE_FUNCS(X)
 #undef X
-    /* memory and semaphores crossing to the devices of other processes, mime's vulkan-1.dll. */
+    /* mime's vulkan-1.dll extensions to share memory and semaphores with other processes. */
     PFN_vkMimeShareExportMemory vkMimeShareExportMemory;
     PFN_vkMimeShareImportMemory vkMimeShareImportMemory;
     PFN_vkMimeShareExportSemaphore vkMimeShareExportSemaphore;
@@ -234,7 +232,6 @@ typedef struct D12Device D12Device;
 typedef struct D12Resource D12Resource;
 typedef struct D12Heap D12Heap;
 
-/* what every object of the device shares: its references, name and private data. */
 typedef struct D12Child {
     LONG refs;
     D12Device *device;
@@ -248,16 +245,15 @@ HRESULT D12ChildGetDevice(D12Child *child, REFIID riid, void **out);
 /* ------------------------------------------------------------------ memory */
 
 typedef enum D12MemoryKind {
-    D12_MEMORY_DEVICE,   /* the gpu's own memory, not mapped */
-    D12_MEMORY_UPLOAD,   /* guest ram the gpu reads, written by the cpu */
-    D12_MEMORY_READBACK, /* guest ram the gpu writes and the cpu reads, cached */
+    D12_MEMORY_DEVICE,   /* gpu memory, not mapped. */
+    D12_MEMORY_UPLOAD,   /* guest ram the cpu writes and the gpu reads. */
+    D12_MEMORY_READBACK, /* cached guest ram the gpu writes and the cpu reads. */
     D12_MEMORY_KINDS
 } D12MemoryKind;
 
 /*
- * a heap: one vulkan allocation and, where buffers may be placed in it, one
- * buffer over all of it, whose device address is the gpu virtual address
- * of its start. committed resources are ranges of the device's own heaps.
+ * one Vulkan allocation, plus a buffer over all of it when buffers may be placed in it. the buffer's device
+ * address is the heap's gpu virtual address. committed resources are ranges of the device's internal heaps.
  */
 struct D12Heap {
     ID3D12Heap1 iface;
@@ -269,12 +265,12 @@ struct D12Heap {
     VkBuffer buffer;
     D3D12_GPU_VIRTUAL_ADDRESS va;
     BYTE *mapped;
-    /* the device's heaps that committed resources come from: their free ranges. */
+    /* internal heaps that committed resources come from, with their free ranges. */
     BOOL internal;
     struct D12Heap *next;
     struct D12Range *free;
     UINT free_count, free_capacity;
-    UINT64 handed_out; /* past this offset no range was ever given out */
+    UINT64 handed_out; /* no range past this offset was ever given out. */
 };
 
 HRESULT D12CreateHeap(D12Device *device, const D3D12_HEAP_DESC *desc, D12Heap **out);
@@ -284,7 +280,7 @@ D12Heap *D12HeapFrom(ID3D12Heap *iface);
 typedef struct D12Allocation {
     D12Heap *heap;
     UINT64 offset, size;
-    BOOL fresh; /* no one had the range before: its memory is as the driver gave it, which for mapped memory is zero */
+    BOOL fresh; /* never used before, so mapped memory is still zero from the driver. */
 } D12Allocation;
 
 HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 size, UINT64 align, BOOL image,
@@ -293,7 +289,7 @@ void D12Free(D12Device *device, D12Allocation *alloc);
 D12MemoryKind D12HeapKind(D12Device *device, const D3D12_HEAP_PROPERTIES *props);
 void D12MemoryDestroy(D12Device *device);
 
-/* the buffer behind a gpu virtual address: the heap's buffer and the offset in it. */
+/* the heap buffer behind a gpu virtual address, and the offset in it. */
 BOOL D12AddressLookup(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va, VkBuffer *buffer, VkDeviceSize *offset,
                       UINT64 *available);
 void D12AddressAdd(D12Device *device, D12Heap *heap);
@@ -301,7 +297,7 @@ void D12AddressRemove(D12Device *device, D12Heap *heap);
 
 /* ------------------------------------------------------------------ resources */
 
-/* an image view and its descriptor, made once per view description and kept with the resource. */
+/* made once per view description and kept with the resource. */
 typedef struct D12ImageView {
     struct D12ImageView *next;
     VkImageViewCreateInfo info;
@@ -318,7 +314,7 @@ struct D12Resource {
     D3D12_HEAP_PROPERTIES heap_props;
     D3D12_HEAP_FLAGS heap_flags;
     D3D12_RESOURCE_STATES initial_state;
-    /* where it lives: a heap it was placed in, or the range of a committed one. */
+    /* placed in a heap, or a range of an internal heap when committed. */
     D12Heap *heap;
     UINT64 heap_offset;
     D12Allocation alloc;
@@ -338,10 +334,7 @@ struct D12Resource {
     BOOL swapchain;
     SRWLOCK views_lock;
     D12ImageView *views;
-    /*
-     * reserved resources: 64 KiB tiles, a buffer's own range of addresses,
-     * an image's tile shape and mip tail, and the heap tile each tile maps.
-     */
+    /* reserved resources use 64 KiB tiles. buffers get their own address range, images a tile shape and mip tail. */
     BOOL reserved;
     struct D12Heap *sparse;
     VkExtent3D tile_shape;
@@ -351,10 +344,7 @@ struct D12Resource {
     UINT tile_count;
     struct D12Tile *tiles;
     SRWLOCK tiles_lock;
-    /*
-     * sharing: a texture made to be shared owns its memory, which other devices import; what it was described
-     * with, its kernel object once it has a handle, and the description of the object being opened while it is.
-     */
+    /* a shareable texture owns its memory, which other devices import. import_* is only set while opening. */
     VkDeviceMemory own_memory;
     MimeShareBlob *share_blob;
     MimeShare share;
@@ -363,13 +353,13 @@ struct D12Resource {
     MimeShare import_share;
 };
 
-/* where a tile of a reserved resource maps: a heap and its tile, no heap when it maps nothing. */
+/* where a reserved tile maps, heap is NULL when unmapped. */
 typedef struct D12Tile {
     struct D12Heap *heap;
     UINT tile;
 } D12Tile;
 
-/* a tile of a reserved resource: in a mip's grid of tiles, or one of a layer's packed tiles, or of a buffer. */
+/* a reserved tile: in a mip's tile grid, among a layer's packed tiles, or in a buffer. */
 typedef struct D12TilePlace {
     BOOL packed;
     UINT mip, layer;
@@ -384,18 +374,18 @@ void D12ResourceTiling(D12Resource *resource, UINT *tile_count, D3D12_PACKED_MIP
                        D3D12_TILE_SHAPE *shape, UINT *subresource_count, UINT first, D3D12_SUBRESOURCE_TILING *tilings);
 UINT D12TileIndex(const D12Resource *resource, const D3D12_TILED_RESOURCE_COORDINATE *at);
 BOOL D12TileAt(const D12Resource *resource, UINT tile, D12TilePlace *place);
-/* the tiles of a region: count of them in order, from a coordinate in a box or in the resource's order. */
+/* lists a region's tiles in order, as a box from start or as a run in resource order, and returns the count. */
 UINT D12RegionTiles(const D12Resource *resource, const D3D12_TILED_RESOURCE_COORDINATE *start,
                     const D3D12_TILE_REGION_SIZE *size, UINT *tiles, UINT max);
 void D12FreeTiles(D12Resource *resource);
 
 D12Resource *D12ResourceFrom(ID3D12Resource *iface);
-/* share.c: committed textures made to be shared and the handles that open them. */
+/* share.c: shareable committed textures and their handles. */
 HRESULT D12ResourceShare(D12Resource *resource, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out);
 HRESULT D12OpenSharedResource(D12Device *device, HANDLE handle, REFIID riid, void **out);
 void D12ShareDescribe(D12Resource *resource, const VkImageCreateInfo *info, UINT type_index, UINT64 memory_size);
 void D12ShareDestroy(D12Resource *resource);
-/* a texture over the memory of a shared object; the description is the one the object was made with. */
+/* a texture over a shared object's memory, with the description the object was made with. */
 HRESULT D12CreateResourceImported(D12Device *device, const D3D12_HEAP_PROPERTIES *props, D3D12_HEAP_FLAGS flags,
                                   const D3D12_RESOURCE_DESC1 *desc, const MimeShareBlob *blob, const MimeShare *share,
                                   D12Resource **out);
@@ -419,9 +409,8 @@ VkExtent2D D12FeedbackExtent(const D3D12_RESOURCE_DESC1 *desc);
 /* ------------------------------------------------------------------ descriptors */
 
 /*
- * a descriptor handle names a heap and a place in it: the heap's id above
- * D12_HANDLE_SHIFT, the place times the increment below. ids index the
- * device's table of heaps, so a handle finds its heap at once.
+ * a descriptor handle holds the heap id above D12_HANDLE_SHIFT and the slot times the increment below. ids index
+ * the device's heap table, so a handle finds its heap at once.
  */
 #ifdef _WIN64
 #define D12_HANDLE_SHIFT 40
@@ -433,7 +422,7 @@ VkExtent2D D12FeedbackExtent(const D3D12_RESOURCE_DESC1 *desc);
 #define D12_INCREMENT (1u << D12_INCREMENT_SHIFT)
 #define D12_MAX_HEAPS (1u << (sizeof(SIZE_T) * 8 - D12_HANDLE_SHIFT))
 
-/* what a cbv, srv or uav of a heap is to the shaders: a vulkan descriptor or a record. */
+/* what a cbv, srv or uav is to shaders: a Vulkan descriptor or a record. */
 typedef enum D12DescriptorKind {
     D12_DESC_NONE,
     D12_DESC_SAMPLED_IMAGE,
@@ -443,7 +432,7 @@ typedef enum D12DescriptorKind {
     D12_DESC_RECORD,
 } D12DescriptorKind;
 
-/* what cpu only heaps keep of a view beyond its bytes: ClearUnorderedAccessView reads it. */
+/* what cpu only heaps keep beside a view's bytes, for ClearUnorderedAccessView. */
 typedef struct D12DescriptorInfo {
     D12Resource *resource;
     D12ImageView *view;
@@ -453,7 +442,6 @@ typedef struct D12DescriptorInfo {
     BYTE kind;
 } D12DescriptorInfo;
 
-/* a render target or depth stencil view: what rendering to it needs. */
 typedef struct D12TargetView {
     D12Resource *resource;
     D12ImageView *view;
@@ -473,7 +461,7 @@ typedef struct D12DescriptorHeap {
     VkDeviceMemory memory;
     VkBuffer buffer;
     VkDeviceAddress address;
-    /* the vulkan descriptors at descriptors, the records at records, in guest memory either way. */
+    /* Vulkan descriptors and records, both in guest memory. */
     BYTE *base;
     BYTE *descriptors;
     DxbcRecord *records;
@@ -511,7 +499,7 @@ void D12DescriptorsDestroy(D12Device *device);
 
 typedef enum D12Stage { D12_VS, D12_HS, D12_DS, D12_GS, D12_PS, D12_CS, D12_AS, D12_MS, D12_STAGES } D12Stage;
 
-/* the bytes of push constants root arguments take at most: 64 dwords, which every gpu direct3d 12 runs on has. */
+/* push constant bytes root arguments may take: 64 dwords, which every Direct3D 12 gpu has. */
 #define D12_PUSH_SIZE 256
 
 /* where a root parameter's values are in the push constants. */
@@ -527,17 +515,17 @@ typedef struct D12RootSignature {
     D3D12_ROOT_SIGNATURE_FLAGS flags;
     UINT param_count;
     D12RootParam *params;
-    /* the bindings the compiler sees, and the bytes of push constants they take. */
+    /* the bindings the compiler sees, and the push constant bytes they take. */
     DxbcRootBinding *bindings;
     UINT *binding_stages;
     UINT binding_count;
     UINT push_size;
-    /* local root signatures: the bytes of their arguments in a shader record. */
+    /* local root signatures: the size of their arguments in a shader record. */
     UINT record_size;
     UINT static_count;
     VkDescriptorSetLayout static_layout;
     VkPipelineLayout layout;
-    /* the serialized root signature it was made from, to match shaders' own. */
+    /* the serialized form, to compare with the root signatures shaders carry. */
     void *blob;
     SIZE_T blob_size;
 } D12RootSignature;
@@ -545,7 +533,7 @@ typedef struct D12RootSignature {
 HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size, D12RootSignature **out);
 D12RootSignature *D12RootSignatureFrom(ID3D12RootSignature *iface);
 DxbcRootBinding *D12RootBindings(D12RootSignature *root, D12Stage stage, UINT *count);
-/* parses an RTS0 part into a versioned description, allocated in one block the caller frees. */
+/* parses an RTS0 part into a versioned description, in one block the caller frees. */
 HRESULT D12ParseRootSignature(const void *data, SIZE_T size, D3D12_VERSIONED_ROOT_SIGNATURE_DESC **out);
 HRESULT D12SerializeRootSignature(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *desc, ID3DBlob **blob,
                                   ID3DBlob **error);
@@ -557,12 +545,12 @@ typedef struct D12PipelineState {
     ID3D12PipelineState iface;
     D12Child child;
     BOOL compute;
-    /* graphics of mesh shaders, without vertex input. */
+    /* graphics with mesh shaders, so no vertex input. */
     BOOL mesh;
     D12RootSignature *root;
     VkPipeline pipeline;
     UINT stage_mask;
-    /* graphics: the fixed function state, set dynamically when the state is. */
+    /* graphics: fixed function state, set dynamically when the state is set. */
     D3D12_BLEND_DESC blend;
     UINT sample_mask;
     D3D12_RASTERIZER_DESC2 rasterizer;
@@ -615,7 +603,7 @@ typedef struct D12CommandSignature {
     UINT arg_count;
     D3D12_INDIRECT_ARGUMENT_DESC *args;
     D12RootSignature *root;
-    /* generated commands: their layout and the stages it is for, when the signature needs them. */
+    /* generated commands: their layout and the stages it reaches, when the signature needs them. */
     VkIndirectCommandsLayoutEXT layout;
     VkShaderStageFlags stages;
 } D12CommandSignature;
@@ -636,9 +624,9 @@ typedef struct D12Fence {
     D12Child child;
     D3D12_FENCE_FLAGS flags;
     VkSemaphore semaphore;
-    /* the highest value seen completed, and the cpu waits not yet satisfied. */
+    /* the highest value seen completed, and the pending cpu waits. */
     volatile UINT64 completed;
-    /* the highest value a submission or the cpu signals, so waits for it only wait for the gpu. */
+    /* the highest value any submission or the cpu will signal, so waits up to it only wait for the gpu. */
     volatile UINT64 queued;
     SRWLOCK lock;
     D12FenceWait *waits;
@@ -646,14 +634,13 @@ typedef struct D12Fence {
     struct D12Fence *next_waiting;
     /* the kernel object of a shared fence, once it has a handle or was opened from one. */
     MimeShare share;
-    /* the process's table entry that holds the semaphore when it is shared with other fences, see d3d11's share.c. */
+    /* the process table entry holding the semaphore when other fences share it, see d3d11's share.c. */
     void *entry;
 } D12Fence;
 
 HRESULT D12CreateFence(D12Device *device, UINT64 value, D3D12_FENCE_FLAGS flags, D12Fence **out);
-/* a handle to a shared fence, which becomes shared with the first. */
+/* the first handle makes the fence shared. */
 HRESULT D12FenceShare(D12Fence *fence, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out);
-/* the fence a handle names, as a fence of this device. */
 HRESULT D12FenceOpen(D12Device *device, HANDLE handle, D12Fence **out);
 D12Fence *D12FenceFrom(ID3D12Fence *iface);
 UINT64 D12FenceValue(D12Fence *fence);
@@ -670,7 +657,7 @@ typedef struct D12Queue {
     /* the queue's own timeline: what was submitted and what the gpu finished. */
     VkSemaphore timeline;
     UINT64 next_serial;
-    /* the serial of tile mappings the next submission must wait for, as vulkan does not order them. */
+    /* the tile mapping serial the next submission must wait for, since Vulkan does not order them. */
     UINT64 bind_serial;
 } D12Queue;
 
@@ -701,9 +688,9 @@ typedef struct D12CommandAllocator {
     UINT used, count, capacity;
     /* the list recording with it, which a reset may not overlap. */
     struct D12CommandList *recording;
-    /* memory of generated commands, reused at each reset. */
+    /* generated command memory, reused at each reset. */
     struct D12Scratch *scratch;
-    /* queries the lists' commands take, as acceleration structures' sizes, reused at each reset. */
+    /* queries the lists' commands use, such as acceleration structure sizes, reused at each reset. */
     struct D12QueryBlock *queries;
 } D12CommandAllocator;
 
@@ -714,7 +701,7 @@ typedef struct D12QueryBlock {
     UINT used;
 } D12QueryBlock;
 
-/* count queries of a type for a list's allocator, to reset before use. */
+/* takes count queries of a type from the allocator; the caller resets them before use. */
 BOOL D12QueryAlloc(D12CommandAllocator *allocator, VkQueryType type, UINT count, VkQueryPool *pool, UINT *first);
 
 /* a block of device memory that commands of an allocator take from in order. */
@@ -727,7 +714,7 @@ typedef struct D12Scratch {
     UINT type;
 } D12Scratch;
 
-/* device memory for generated commands of a list's allocator, NULL when there is none. */
+/* device memory for generated commands from the allocator. */
 BOOL D12ScratchAlloc(D12CommandAllocator *allocator, UINT64 size, UINT64 alignment, UINT type_bits,
                      VkDeviceAddress *address);
 
@@ -739,7 +726,7 @@ typedef struct D12RootState {
     D12RootSignature *root;
     UINT push[64];
     BOOL push_dirty;
-    /* the words changed since the last push, which alone go again while the push constants stay ours. */
+    /* words changed since the last push. only these go again while the push constants stay ours. */
     UINT push_lo, push_hi;
     BOOL sets_dirty;
 } D12RootState;
@@ -754,7 +741,7 @@ typedef struct D12CommandList {
     D12CommandAllocator *allocator;
     VkCommandBuffer cmd;
     BOOL open;
-    /* bundles: the calls recorded, replayed on the list that executes them, and the initial pipeline state. */
+    /* bundles: the recorded calls the executing list replays, and the initial pipeline state. */
     BOOL recording;
     BYTE *calls;
     SIZE_T call_size, call_capacity;
@@ -762,14 +749,14 @@ typedef struct D12CommandList {
     HRESULT error;
 
     D12PipelineState *pipeline;
-    /* what the command buffer has bound: the graphics pipeline state's shaders, the compute shader. */
+    /* what the command buffer has bound: the graphics state's shaders and the compute shader. */
     D12PipelineState *bound_graphics;
     VkPipeline bound_cs;
-    /* the attachments the rendering begun has, as the graphics state then bound laid them out. */
+    /* the attachments of the current rendering, laid out by the graphics state bound when it began. */
     UINT render_rt_count;
     VkFormat render_depth_format, render_stencil_format;
     D12RootState graphics, compute;
-    /* the bind point whose root arguments the push constants hold, -1 for none. */
+    /* the bind point whose root arguments are in the push constants, -1 for none. */
     int pushed_compute;
     D12DescriptorHeap *heaps[2];
     BOOL heaps_dirty;
@@ -798,16 +785,16 @@ typedef struct D12CommandList {
     D12TargetView dsv;
     BOOL has_dsv;
     BOOL rendering;
-    /* the images attachments or clears wrote since the last barrier ordering them. */
+    /* images written by attachments or clears since the last barrier ordering them. */
     VkImage written[16];
     UINT written_count;
     BOOL targets_dirty;
-    /* variable rate shading: the rate, its two combiners, the image of rates. */
+    /* variable rate shading: the rate, its two combiners and the rate image. */
     UINT shading_rate, rate_combiners[2];
     D12Resource *rate_image;
     BOOL rate_dirty;
     UINT render_samples;
-    /* the render pass begun, for its resolves at its end. */
+    /* the current render pass, for its resolves at the end. */
     D3D12_RENDER_PASS_RENDER_TARGET_DESC pass_targets[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT];
     UINT pass_count;
 
@@ -829,7 +816,7 @@ typedef struct D12Garbage {
     VkObjectType type;
 } D12Garbage;
 
-/* a typed buffer descriptor made, by address, range and format. */
+/* a typed buffer descriptor, keyed by address, range and format. */
 typedef struct D12TexelEntry {
     VkDeviceAddress address;
     VkDeviceSize range;
@@ -867,32 +854,32 @@ struct D12Device {
     BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_divisor, has_zero_divisor;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation, has_statistics, has_so_queries;
     BOOL has_conservative, has_line_rasterization, has_patch_points, has_unused_attachments;
-    /* shader model 6: 16-bit arithmetic, the wave operations of every stage, mesh and amplification shaders. */
+    /* shader model 6: 16-bit arithmetic, wave operations in every stage, mesh and amplification shaders. */
     BOOL has_native16, has_waves, has_mesh;
     /* 64-bit atomics of typed views and of shared memory. */
     BOOL has_atomic64, has_shared_atomic64;
     BOOL has_barycentrics, has_maintenance5, has_maintenance8, has_compute_derivatives, has_msaa_storage;
-    /* variable rate shading: direct3d's tier, the tile size of rate images, 4 pixel wide rates, rates with viewports. */
+    /* variable rate shading: the Direct3D tier, rate image tile size, 4 pixel wide rates, per viewport rates. */
     UINT vrs_tier, vrs_tile;
     UINT conservative_tier;
     UINT tiled_tier;
-    /* waves: the size the gpu runs, the range shaders may ask for, the stages that may ask. */
+    /* waves: the size the gpu runs, the range shaders may ask for and the stages that may ask. */
     UINT wave_size, wave_min, wave_max;
     VkShaderStageFlags wave_stages;
     BOOL vrs_more_rates, vrs_viewports;
-    /* commands the gpu generates, for ExecuteIndirect of signatures changing state, and the stages they reach. */
+    /* gpu generated commands, for ExecuteIndirect with state changing signatures, and the stages they reach. */
     BOOL has_dgc;
     VkShaderStageFlags dgc_stages;
     /* acceleration structures and ray queries, and ray tracing pipelines. */
     BOOL has_rt, has_rt_pipeline;
-    /* the compute pipeline limiting indirect rays to a count. */
+    /* the compute pipeline that clamps indirect rays to a count. */
     VkPipelineLayout rays_count_layout;
     VkPipeline rays_count_pipeline;
     /* acceleration structures by gpu virtual address. */
     SRWLOCK as_lock;
     D12AccelerationStructure *as_list;
     UINT as_count, as_capacity;
-    /* the buffers made for acceleration structures, sorted by address, which bound the objects over them. */
+    /* buffers made for acceleration structures, sorted by address; they bound the objects over them. */
     D3D12_GPU_VIRTUAL_ADDRESS_RANGE *as_regions;
     UINT as_region_count, as_region_capacity;
     VkPipelineCache pipeline_cache;
@@ -913,7 +900,7 @@ struct D12Device {
     D12Allocation null_buffer;
     D3D12_GPU_VIRTUAL_ADDRESS null_address;
 
-    /* descriptors: the heaps by id, the set layouts all shaders share and descriptor bytes made. */
+    /* descriptors: heaps by id, the set layouts all shaders share and cached descriptor bytes. */
     SRWLOCK heap_lock;
     void **heaps;
     UINT heap_next_id;
@@ -922,7 +909,7 @@ struct D12Device {
     VkDescriptorSetLayout resource_layout, sampler_layout, record_layout, empty_layout;
     UINT mutable_stride;
     UINT record_offset;
-    /* 64-bit atomics of typed views: the set of their 64-bit views and the bytes of one, 0 without. */
+    /* 64-bit atomics of typed views: the set layout of their 64-bit views and one view's size, 0 without. */
     VkDescriptorSetLayout atomic_layout;
     UINT atomic_stride;
     UINT sampler_size;
@@ -936,7 +923,7 @@ struct D12Device {
     D12SamplerEntry *samplers;
     UINT sampler_count, sampler_capacity;
 
-    /* fences waited on with events, by the waiter thread; a timeline it also waits on wakes it. */
+    /* fences waited on with events. the waiter thread serves them and waiter_wake wakes it. */
     SRWLOCK fence_lock;
     D12Fence *waiting_fences;
     HANDLE waiter;
@@ -952,7 +939,7 @@ struct D12Device {
     CRITICAL_SECTION init_lock;
     VkCommandPool init_pool;
     VkCommandBuffer init_cmd;
-    /* a full barrier heading every ExecuteCommandLists, as resources decay between them. */
+    /* a full barrier before every ExecuteCommandLists, since resources decay between them. */
     VkCommandBuffer boundary_cmd;
     BOOL init_recording;
     VkSemaphore init_timeline;
@@ -971,7 +958,7 @@ UINT64 D12StateObjectStackSize(D12StateObject *so);
 /* raytracing.c: acceleration structures, by the gpu virtual address direct3d gives them. */
 VkAccelerationStructureKHR D12AccelerationStructureAt(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va);
 void D12AccelerationRegionAdd(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va, UINT64 size);
-/* the memory of a resource or heap goes: so do the acceleration structures in it. */
+/* drops the acceleration structures in a resource or heap's memory when it goes. */
 void D12AccelerationStructuresForget(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va, UINT64 size);
 void D12AccelerationStructuresDestroy(D12Device *device);
 void D12PrebuildInfo(D12Device *device, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS *inputs,
@@ -979,10 +966,10 @@ void D12PrebuildInfo(D12Device *device, const D3D12_BUILD_RAYTRACING_ACCELERATIO
 UINT D12CheckDriverMatchingIdentifier(D12Device *device, UINT type, const void *identifier);
 HRESULT D12RaysInit(D12Device *device);
 void D12RaysDestroy(D12Device *device);
-/* copies indirect rays arguments to dst, packed, the width of those past the count zero. */
+/* copies indirect ray arguments packed into dst, zeroing the width of those past the count. */
 void D12LimitRays(D12Device *device, VkCommandBuffer cmd, VkDeviceAddress src, UINT stride, UINT max_count,
                   VkDeviceAddress count, VkDeviceAddress dst);
-/* commands, recorded outside rendering. */
+/* recorded outside rendering. */
 void D12BuildAccelerationStructure(D12Device *device, VkCommandBuffer cmd,
                                    const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC *desc);
 void D12EmitPostbuildInfo(D12CommandAllocator *allocator, VkCommandBuffer cmd,

@@ -1,8 +1,8 @@
 /*
- * calls a function with arguments held in slots: the first four go to the integer registers and, the same bits, to the
- * floating point ones, since the caller does not know which are which, and the rest on the stack. The function is given at
- * least the four slots of home space. rcx is the function, rdx the slots, r8 their number, the fifth argument where to keep xmm0,
- * which holds the result of a function that returns a float, or null; the result is in rax.
+ * calls a function with arguments held in slots. the first four go to both the integer and the xmm registers, since
+ * the caller does not know which are floats, the rest go on the stack, always with four slots of home space.
+ * rcx is the function, rdx the slots, r8 their count, the fifth argument where to store xmm0 for a float result, or
+ * null. the integer result is in rax.
  */
     .text
     .globl  AutCallEx

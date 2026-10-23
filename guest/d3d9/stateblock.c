@@ -1,12 +1,9 @@
 /*
- * IDirect3DStateBlock9: a set of states and their values, made of the
- * device's (CreateStateBlock) or of what setters record between
- * BeginStateBlock and EndStateBlock, which then do not change the device.
- * Apply sets them through the device's own methods; Capture takes the
- * device's values of the states the block has.
- *
- * the states of the predefined blocks are those of windows' d3d9.dll,
- * read from its tables of them.
+ * IDirect3DStateBlock9: states and their values, taken from the device by
+ * CreateStateBlock or recorded by setters between BeginStateBlock and
+ * EndStateBlock, which then leave the device alone. Apply goes through the
+ * device's own methods, Capture reads back the device's values. the
+ * predefined blocks hold the same states as windows'.
  */
 #include "d3d9_private.h"
 
@@ -209,7 +206,6 @@ void D9RecordIndices(D9StateBlock *b, D9Buffer *buffer)
     b->mask.indices = TRUE;
 }
 
-/* constants: the registers set, as setters take them. */
 void D9RecordConstants(D9StateBlock *b, BOOL pixel, UINT kind, UINT start, const void *data, UINT count)
 {
     void *bank;
@@ -331,7 +327,7 @@ static void capture(D9StateBlock *b)
         v->npatch = d->npatch_segments;
 }
 
-/* sampler slots back to the numbers setters take: vertex samplers from D3DVERTEXTEXTURESAMPLER0. */
+/* slots back to sampler numbers: vertex samplers count from D3DVERTEXTEXTURESAMPLER0. */
 static DWORD sampler_number(UINT slot) { return slot < 16 ? slot : D3DDMAPSAMPLER + slot - 16; }
 
 static void apply(D9StateBlock *b)

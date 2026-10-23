@@ -1,9 +1,4 @@
-/*
- * the catalog administrator: hashes of files as catalogs record them and
- * the lookup of the catalogs holding a hash. mime installs no catalog, so
- * a lookup finds none, as on a machine whose file is signed by no
- * catalog.
- */
+/* catalog file hashes and lookup. Mime installs no catalogs, so lookups find none. */
 #include "trust_private.h"
 
 #define CATADMIN_MAGIC 184
@@ -14,7 +9,7 @@ typedef struct CAT_ADMIN {
     GUID Subsystem;
 } CAT_ADMIN;
 
-/* the subsystem windows tries first without one, the driver signing catalogs. */
+/* defaults to the driver signing catalog subsystem. */
 static const GUID g_driver_action = {0xf750e6c3, 0x38ee, 0x11d1, {0x85, 0xe5, 0x00, 0xc0, 0x4f, 0xc2, 0x95, 0xee}};
 
 WINTRUSTAPI BOOL WINAPI CryptCATAdminAcquireContext2(HCATADMIN *admin, const GUID *subsystem, PCWSTR algorithm,
@@ -67,9 +62,8 @@ static DWORD dword(const BYTE *p)
 }
 
 /*
- * the portable executable hash of authenticode: the image without its
- * checksum, its certificate directory entry and its certificates; any
- * other file is hashed whole.
+ * Authenticode hashes PE images without the checksum, certificate directory entry or certificates. other files are
+ * hashed whole.
  */
 static BOOL file_hash(const BYTE *bytes, DWORD size, BYTE *hash)
 {

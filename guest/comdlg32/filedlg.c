@@ -1,10 +1,8 @@
 /*
- * the file dialog window. the folder tree is on the left, the files of the
- * folder on the right, the address and navigation buttons above them and the
- * file name, file type and buttons below.
+ * the file dialog window: folder tree on the left, the folder's files on the right, address and navigation
+ * buttons above, file name, file type and buttons below.
  *
- * the dialog is a modal dialog of user32 with its controls made in code, so it
- * is sized by dialog units and laid out again when it is resized.
+ * it is a user32 modal dialog whose controls are made in code, sized in dialog units and laid out again on resize.
  */
 #include "filedlg.h"
 #include <mime/win32/commctrl.h>
@@ -31,7 +29,7 @@
 
 #define MAX_HISTORY 32
 
-/* icons of the lists and the tree, in the image list. */
+/* image list icons for the lists and the tree. */
 enum {
     ICON_FOLDER,
     ICON_FILE,
@@ -46,7 +44,6 @@ enum {
     ICON_COUNT,
 };
 
-/* a node of the folder tree. */
 typedef struct _FD_NODE {
     WCHAR Path[MAX_PATH];
     /* 0 a heading, 1 the computer, 2 a folder or drive. */
@@ -54,10 +51,9 @@ typedef struct _FD_NODE {
     BOOL Filled;
 } FD_NODE;
 
-/* an entry of the list. */
 typedef struct _FD_ENTRY {
     WCHAR Name[MAX_PATH];
-    /* the text of the first column when it is not the name, for drives. */
+    /* the first column's text when it is not the name, for drives. */
     WCHAR Label[MAX_PATH];
     BOOL Folder;
     BOOL Drive;
@@ -73,7 +69,7 @@ typedef struct _FD_CONTROL {
     DWORD Id;
     HWND Window;
     LPWSTR Text;
-    /* what an edit box holds, where Text is its label. */
+    /* an edit box's content. Text is its label. */
     LPWSTR Content;
     int State;
     BOOL Checked;
@@ -87,7 +83,7 @@ typedef struct _FD_CONTROL {
         HWND Window;
     } *Items;
     HWND Label;
-    /* a group heading starts a box around the controls that follow it, until the next one. */
+    /* a group heading boxes the controls that follow it, up to the next one. */
     BOOL Ended;
 } FD_CONTROL;
 
@@ -108,11 +104,10 @@ struct _FILEDLG {
     void *FilterContext;
     BOOL ReadOnlyShown, ReadOnlyChecked;
 
-    /* the window and its controls. */
     HWND Hwnd, Owner, Back, Up, NewFolder, Address, Tree, List, NameLabelWindow, NameEdit, TypeLabel, TypeCombo,
         OkButton, CancelButton, ReadOnlyBox;
     HIMAGELIST Images;
-    /* the icons the shell gave, as the index in its list and the place in Images each was added at. */
+    /* shell icons seen so far: their index in the shell's list and the slot in Images each was added at. */
     int ShellKeys[96], ShellSlots[96], ShellCount;
     HICON BackIcon, UpIcon, NewFolderIcon;
     HFONT Font;
@@ -122,7 +117,6 @@ struct _FILEDLG {
     HRESULT Result;
     DWORD ThreadId;
 
-    /* where it is. */
     WCHAR Folder[MAX_PATH];
     BOOL AtComputer;
     LPWSTR History[MAX_HISTORY];
@@ -136,7 +130,6 @@ struct _FILEDLG {
     BOOL Syncing, SyncingName, Navigating;
     int Busy;
 
-    /* the answer. */
     LPWSTR *Results;
     UINT ResultCount;
 
@@ -146,7 +139,7 @@ struct _FILEDLG {
     int CustomHeight;
 };
 
-/* the folder the last dialog ended in, for the next that has no better idea. */
+/* the folder the last dialog ended in, for the next one that has no better idea. */
 static WCHAR g_last_folder[MAX_PATH];
 
 /* ------------------------------------------------------------------ strings */
@@ -181,7 +174,7 @@ static HRESULT set_text(LPWSTR *field, LPCWSTR text)
     return S_OK;
 }
 
-/* a copy for the caller to free with CoTaskMemFree, which is the process heap in mime. */
+/* the caller frees it with CoTaskMemFree, which is the process heap in mime. */
 static HRESULT task_copy(LPCWSTR text, LPWSTR *out)
 {
     return FdDuplicate(text, out);
@@ -434,7 +427,7 @@ HRESULT FdSetFolder(FILEDLG *dialog, LPCWSTR path)
         if (!copy)
             return E_OUTOFMEMORY;
         wcscpy(copy, path);
-        /* the window handles it on its own thread, which owns the controls. */
+        /* the window's own thread owns the controls, so it handles this. */
         if (GetCurrentThreadId() == dialog->ThreadId) {
             SendMessageW(dialog->Hwnd, WM_FD_NAVIGATE, 0, (LPARAM)copy);
             fd_free(copy);
@@ -542,7 +535,7 @@ static BOOL fd_path_exists(LPCWSTR path, BOOL *folder)
     return TRUE;
 }
 
-/* the path of a known folder that is there. */
+/* the path of a known folder that exists. */
 static BOOL known_path(const GUID *id, WCHAR *path)
 {
     PWSTR text;
@@ -571,7 +564,6 @@ static BOOL spec_extension(LPCWSTR spec, WCHAR *extension, UINT chars)
     return n != 0;
 }
 
-/* the spec the list is filtered by. */
 static LPCWSTR current_spec(const FILEDLG *dialog)
 {
     if (dialog->Wildcard[0])
@@ -628,7 +620,7 @@ static void format_date(const FILETIME *time, WCHAR *out, int chars)
         out[n - 1] = 0;
 }
 
-/* the names of the file types seen in this folder, so that each is looked up once. */
+/* names of the file types seen in this folder, so each is looked up once. */
 typedef struct _TYPE_NAME {
     WCHAR Extension[16];
     WCHAR Name[64];
@@ -687,7 +679,7 @@ static int compare_entries(const FILEDLG *dialog, const FD_ENTRY *a, const FD_EN
     return dialog->SortDescending ? -result : result;
 }
 
-/* a merge sort of indices, so the entries themselves stay where they are. */
+/* a merge sort of indices, so the entries stay in place. */
 static void sort_indices(const FILEDLG *dialog, UINT *index, UINT *scratch, UINT count)
 {
     if (count < 2)
@@ -709,7 +701,6 @@ static void sort_indices(const FILEDLG *dialog, UINT *index, UINT *scratch, UINT
     memcpy(index, scratch, count * sizeof(UINT));
 }
 
-/* the path of an entry of the list. */
 static BOOL entry_path(const FILEDLG *dialog, const FD_ENTRY *entry, WCHAR *path)
 {
     if (entry->Drive) {
@@ -829,7 +820,7 @@ static void read_entries(FILEDLG *dialog)
     FindClose(handle);
 }
 
-/* ------------------------------------------------------------------ the list */
+/* ------------------------------------------------------------------ file list */
 
 static void list_set_columns(FILEDLG *dialog)
 {
@@ -908,7 +899,6 @@ static void list_fill(FILEDLG *dialog)
     InvalidateRect(dialog->List, nullptr, TRUE);
 }
 
-/* the entry behind a row. */
 static const FD_ENTRY *row_entry(FILEDLG *dialog, int row)
 {
     LVITEMW item;
@@ -968,7 +958,7 @@ UINT FdGetSelection(FILEDLG *dialog, LPWSTR **paths)
     return made;
 }
 
-/* where a dialog starts: the folder it was told to, the last one a dialog ended in, the default, the documents. */
+/* where a dialog starts: the folder it was told, the last one a dialog ended in, the default, then documents. */
 static BOOL starting_folder(FILEDLG *dialog, LPWSTR path)
 {
     path[0] = 0;
@@ -997,11 +987,11 @@ BOOL FdGetFolder(FILEDLG *dialog, LPWSTR path)
 /* ------------------------------------------------------------------ icons */
 
 /*
- * the icons of the tree and the list are drawn here, 16 by 16 pixels from a palette, since the imageres of
- * a machine without Windows' own artwork has none for folders and files.
+ * tree and list icons are drawn here as 16 by 16 palette pictures, since imageres on a machine without Windows'
+ * own artwork has none for folders and files.
  */
 static const char g_art[ICON_COUNT][16][17] = {
-    /* folder */
+    /* folder. */
     {
         "................",
         "................",
@@ -1020,7 +1010,7 @@ static const char g_art[ICON_COUNT][16][17] = {
         "................",
         "................",
     },
-    /* file */
+    /* file. */
     {
         "................",
         "...kkkkkkk......",
@@ -1039,7 +1029,7 @@ static const char g_art[ICON_COUNT][16][17] = {
         "...kkkkkkkkkk...",
         "................",
     },
-    /* drive */
+    /* drive. */
     {
         "................",
         "................",
@@ -1058,7 +1048,7 @@ static const char g_art[ICON_COUNT][16][17] = {
         "................",
         "................",
     },
-    /* computer */
+    /* computer. */
     {
         "................",
         "..kkkkkkkkkkkk..",
@@ -1077,7 +1067,7 @@ static const char g_art[ICON_COUNT][16][17] = {
         ".....kkkkkk.....",
         "................",
     },
-    /* desktop */
+    /* desktop. */
     {
         "................",
         "................",
@@ -1096,7 +1086,7 @@ static const char g_art[ICON_COUNT][16][17] = {
         "................",
         "................",
     },
-    /* documents */
+    /* documents. */
     {
         "................",
         "................",
@@ -1115,7 +1105,7 @@ static const char g_art[ICON_COUNT][16][17] = {
         "......kkkkkkk...",
         "................",
     },
-    /* downloads */
+    /* downloads. */
     {
         "................",
         "................",
@@ -1134,7 +1124,7 @@ static const char g_art[ICON_COUNT][16][17] = {
         "................",
         "................",
     },
-    /* pictures */
+    /* pictures. */
     {
         "................",
         "................",
@@ -1153,7 +1143,7 @@ static const char g_art[ICON_COUNT][16][17] = {
         "................",
         "................",
     },
-    /* music */
+    /* music. */
     {
         "................",
         "................",
@@ -1172,7 +1162,7 @@ static const char g_art[ICON_COUNT][16][17] = {
         "................",
         "................",
     },
-    /* videos */
+    /* videos. */
     {
         "................",
         "................",
@@ -1231,7 +1221,7 @@ static DWORD art_color(char c)
     return 0;
 }
 
-/* an icon of a picture, each pixel repeated to fill the size asked for. */
+/* each pixel of the picture is repeated to fill the size asked for. */
 static HICON icon_from_art(const char rows[16][17], int size)
 {
     int scale = size / 16 ? size / 16 : 1;
@@ -1270,9 +1260,8 @@ static HICON icon_from_art(const char rows[16][17], int size)
 }
 
 /*
- * the place in the dialog's images of the icon the shell has for a path, which is added the first time. A path by
- * attributes needs no file; a drive's type is asked of the drive. The art drawn here stands in when the shell
- * has none.
+ * the slot in the dialog's images of the shell's icon for a path, added the first time. a path by attributes needs
+ * no file, and a drive's type is asked of the drive. the art drawn here stands in when the shell has none.
  */
 static int shell_icon(FILEDLG *dialog, LPCWSTR path, DWORD attributes, BOOL by_attributes, int fallback)
 {
@@ -1318,7 +1307,7 @@ static void load_images(FILEDLG *dialog)
     }
 }
 
-/* ------------------------------------------------------------------ the tree */
+/* ------------------------------------------------------------------ folder tree */
 
 static HTREEITEM tree_add(FILEDLG *dialog, HTREEITEM parent, LPCWSTR text, int icon, int kind, LPCWSTR path,
                           BOOL children)
@@ -1372,7 +1361,7 @@ static int icon_for_known(const GUID *id)
     return ICON_FOLDER;
 }
 
-/* the subfolders of a path, sorted, as names. */
+/* the sorted subfolder names of a path. */
 typedef struct _NAMES {
     WCHAR (*Names)[MAX_PATH];
     UINT Count, Capacity;
@@ -1380,7 +1369,7 @@ typedef struct _NAMES {
 
 static void names_sort(WCHAR (*names)[MAX_PATH], UINT count)
 {
-    /* a binary insertion by shifting is enough for the folders of one level. */
+    /* binary insertion by shifting is enough for one level of folders. */
     for (UINT i = 1; i < count; i++) {
         WCHAR key[MAX_PATH];
         wcscpy(key, names[i]);
@@ -1516,7 +1505,6 @@ static void tree_build(FILEDLG *dialog)
     (void)computer;
 }
 
-/* the child of an item with a given name. */
 static HTREEITEM tree_child_named(FILEDLG *dialog, HTREEITEM parent, LPCWSTR name)
 {
     for (HTREEITEM child = (HTREEITEM)SendMessageW(dialog->Tree, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)parent); child;
@@ -1531,7 +1519,7 @@ static HTREEITEM tree_child_named(FILEDLG *dialog, HTREEITEM parent, LPCWSTR nam
     return nullptr;
 }
 
-/* selects what the folder shown is in the tree, expanding the way to it. */
+/* selects the shown folder in the tree, expanding the way to it. */
 static void tree_select_path(FILEDLG *dialog, LPCWSTR path)
 {
     dialog->Syncing = TRUE;
@@ -1544,7 +1532,7 @@ static void tree_select_path(FILEDLG *dialog, LPCWSTR path)
                 target = root;
         }
     } else {
-        /* a folder of the quick access list. */
+        /* a quick access folder. */
         HTREEITEM root = (HTREEITEM)SendMessageW(dialog->Tree, TVM_GETNEXTITEM, TVGN_ROOT, 0);
         for (HTREEITEM child = root ? (HTREEITEM)SendMessageW(dialog->Tree, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)root)
                                     : nullptr;
@@ -1598,7 +1586,7 @@ static void tree_select_path(FILEDLG *dialog, LPCWSTR path)
     dialog->Syncing = FALSE;
 }
 
-/* ------------------------------------------------------------------ messages to the user */
+/* ------------------------------------------------------------------ user messages */
 
 static int fd_message(FILEDLG *dialog, LPCWSTR text, UINT flags)
 {
@@ -1652,7 +1640,7 @@ static BOOL navigate(FILEDLG *dialog, LPCWSTR where, BOOL record, BOOL sync_tree
         DWORD n = GetFullPathNameW(where, MAX_PATH, full, nullptr);
         if (!n || n >= MAX_PATH || !PathIsDirectoryW(full))
             return FALSE;
-        /* the folder of a root keeps its separator, any other loses it. */
+        /* a root keeps its separator, any other folder loses it. */
         if (!PathIsRootW(full))
             PathRemoveBackslashW(full);
         if (dialog->Events.FolderChanging && !dialog->Events.FolderChanging(dialog, dialog->Context, full))
@@ -1725,7 +1713,7 @@ static void refresh(FILEDLG *dialog)
 
 /* ------------------------------------------------------------------ what was typed */
 
-/* the file name box without the blanks around it. */
+/* the file name box, trimmed. */
 static void name_text(FILEDLG *dialog, WCHAR *text, int chars)
 {
     text[0] = 0;
@@ -1740,7 +1728,6 @@ static void name_text(FILEDLG *dialog, WCHAR *text, int chars)
         text[--length] = 0;
 }
 
-/* sets the name box from the selected files. */
 static void name_from_selection(FILEDLG *dialog)
 {
     if (dialog->Navigating || dialog->SyncingName)
@@ -1779,7 +1766,7 @@ static void name_from_selection(FILEDLG *dialog)
     dialog->SyncingName = FALSE;
 }
 
-/* a path from what was typed: absolute as it is, otherwise below the folder shown. */
+/* absolute as typed, otherwise relative to the folder shown. */
 static BOOL resolve_name(FILEDLG *dialog, LPCWSTR text, WCHAR *full)
 {
     WCHAR joined[MAX_PATH * 2];
@@ -1813,7 +1800,7 @@ static BOOL valid_name(LPCWSTR text)
     return TRUE;
 }
 
-/* whether a list of patterns such as "*.txt;*.log" has one for the extension, which comes with its dot. */
+/* whether a pattern list such as "*.txt;*.log" has one for the extension, which includes its dot. */
 static BOOL patterns_have_extension(LPCWSTR patterns, LPCWSTR extension)
 {
     if (!patterns || !extension[0] || !extension[1])
@@ -1829,7 +1816,7 @@ static BOOL patterns_have_extension(LPCWSTR patterns, LPCWSTR extension)
     return FALSE;
 }
 
-/* the extension put on a name typed with none: the default one, which a file type that does not list it replaces. */
+/* the extension for a name typed without one: the default, replaced by the file type's when the type does not list it. */
 static BOOL extension_to_add(FILEDLG *dialog, WCHAR *extension, UINT chars)
 {
     if (!dialog->DefaultExt || !dialog->DefaultExt[0])
@@ -1855,7 +1842,7 @@ static BOOL extension_to_add(FILEDLG *dialog, WCHAR *extension, UINT chars)
     return TRUE;
 }
 
-/* the extension of a name is one the dialog knows, so that it is not the user's slip to leave the default off. */
+/* a known extension means leaving the default off was not the user's slip. */
 static BOOL known_extension(const FILEDLG *dialog, LPCWSTR extension, LPCWSTR default_extension)
 {
     if (!extension[0])
@@ -1866,7 +1853,7 @@ static BOOL known_extension(const FILEDLG *dialog, LPCWSTR extension, LPCWSTR de
         return dialog->TypeCount && patterns_have_extension(current_spec(dialog), extension);
     if (!wcscmp(current_spec(dialog), L"*.*"))
         return TRUE;
-    /* an extension that has a key in the registry is a known type of file. */
+    /* an extension with a registry key is a known file type. */
     HKEY key;
     if (RegOpenKeyExW(HKEY_CLASSES_ROOT, extension, 0, KEY_READ, &key) == ERROR_SUCCESS) {
         RegCloseKey(key);
@@ -1879,9 +1866,8 @@ static BOOL known_extension(const FILEDLG *dialog, LPCWSTR extension, LPCWSTR de
 }
 
 /*
- * a name typed for saving gets the default extension when its own is none the dialog knows. a name that exists as
- * typed or is in quotes is left alone, unless the file types are strict, which also puts the extension on a name
- * of another type.
+ * a name typed for saving gets the default extension unless its own is known. a name that exists as typed or is
+ * quoted is left alone, unless the file types are strict, which also puts the extension on a name of another type.
  */
 static void add_extension(FILEDLG *dialog, WCHAR *path, BOOL exists, BOOL quoted)
 {
@@ -1940,7 +1926,7 @@ static UINT split_names(LPWSTR text, LPWSTR *names, UINT max)
     return n;
 }
 
-/* turns the file name box and the selection into results, or says why not. TRUE when the dialog may end. */
+/* turns the name box and the selection into results, or says why not. TRUE when the dialog may end. */
 static BOOL accept(FILEDLG *dialog)
 {
     WCHAR text[MAX_PATH * 4];
@@ -2106,7 +2092,7 @@ static BOOL accept(FILEDLG *dialog)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the owner's controls */
+/* ------------------------------------------------------------------ owner controls */
 
 static FD_CONTROL *find_control(FILEDLG *dialog, DWORD id)
 {
@@ -2147,7 +2133,7 @@ static HWND make_child(FILEDLG *dialog, LPCWSTR class_name, LPCWSTR text, DWORD 
     return window;
 }
 
-/* makes the windows of one control of the owner, if the dialog is up. */
+/* creates the windows of one owner control, if the dialog is up. */
 static void create_control_windows(FILEDLG *dialog, FD_CONTROL *control)
 {
     if (!dialog->Hwnd || control->Window || control->Label)
@@ -2462,7 +2448,7 @@ HRESULT FdGetControlSelection(FILEDLG *dialog, DWORD id, DWORD *item_id)
     return S_OK;
 }
 
-/* the controls of the owner, in a column above the file name, as high as they need. */
+/* owner controls in a column above the file name, as tall as they need. */
 static int place_controls(FILEDLG *dialog, int x, int y, int width, BOOL move)
 {
     int row = MulDiv(14, dialog->UnitY, 8), gap = MulDiv(2, dialog->UnitY, 8);
@@ -2514,7 +2500,7 @@ static int place_controls(FILEDLG *dialog, int x, int y, int width, BOOL move)
     return y - start;
 }
 
-/* ------------------------------------------------------------------ glyphs for the buttons */
+/* ------------------------------------------------------------------ button glyphs */
 
 /* a 16 by 16 black picture drawn with '#', transparent elsewhere. */
 static HICON make_glyph(const char *const rows[16])
@@ -2657,7 +2643,7 @@ static void layout(FILEDLG *dialog)
 }
 
 
-/* ------------------------------------------------------------------ a new folder */
+/* ------------------------------------------------------------------ new folder */
 
 typedef struct _PROMPT {
     WCHAR Text[MAX_PATH];
@@ -2710,7 +2696,7 @@ static INT_PTR CALLBACK prompt_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
     return FALSE;
 }
 
-/* asks for a name and makes the folder, which is then the one selected. */
+/* asks for a name and creates the folder, which then becomes selected. */
 static void new_folder(FILEDLG *dialog)
 {
     if (dialog->AtComputer)
@@ -2724,7 +2710,7 @@ static void new_folder(FILEDLG *dialog)
     DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_SETFONT | DS_CENTER | WS_VISIBLE;
     copy[0] = LOWORD(style);
     copy[1] = HIWORD(style);
-    /* the first name that is free. */
+    /* the first free name. */
     WCHAR path[MAX_PATH];
     for (int i = 1; i < 1000; i++) {
         if (i == 1)
@@ -2773,7 +2759,7 @@ static void new_folder(FILEDLG *dialog)
         }
     }
     dialog->Busy--;
-    /* a node of the tree for it, if its parent shows its folders. */
+    /* a tree node for it, if its parent shows its folders. */
     HTREEITEM selected = (HTREEITEM)SendMessageW(dialog->Tree, TVM_GETNEXTITEM, TVGN_CARET, 0);
     FD_NODE *node = selected ? tree_node(dialog, selected) : nullptr;
     if (node && node->Filled && node->Kind == 2 && !_wcsicmp(node->Path, dialog->Folder)) {
@@ -2790,7 +2776,7 @@ static void new_folder(FILEDLG *dialog)
     }
 }
 
-/* ------------------------------------------------------------------ the dialog procedure */
+/* ------------------------------------------------------------------ dialog procedure */
 
 static FILEDLG *dialog_of(HWND hwnd)
 {
@@ -2853,7 +2839,7 @@ static void create_controls(FILEDLG *dialog)
     (void)hwnd;
 }
 
-/* the part of a name that is not the extension, for selecting it in the box. */
+/* the length of a name without its extension, to select that part in the box. */
 static int base_length(LPCWSTR name)
 {
     LPCWSTR dot = wcsrchr(name, L'.');
@@ -3091,7 +3077,7 @@ static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
         load_images(dialog);
         make_glyphs(dialog);
         create_controls(dialog);
-        /* laid out before it has text, since a box holding text when it grows keeps the text scrolled. */
+        /* laid out before it has text, since a box that grows while holding text keeps it scrolled. */
         dialog->Showing = TRUE;
         layout(dialog);
         fill_types(dialog);
@@ -3193,7 +3179,7 @@ static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
     }
     case CDM_SETCONTROLTEXT:
     case CDM_HIDECONTROL: {
-        /* the controls under the numbers dlgs.h gives them. */
+        /* the controls under their dlgs.h ids. */
         HWND control = nullptr;
         switch (wparam) {
         case IDOK:
@@ -3270,13 +3256,13 @@ static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ showing it */
+/* ------------------------------------------------------------------ showing */
 
 HRESULT FdShow(FILEDLG *dialog, HWND owner)
 {
     static const INITCOMMONCONTROLSEX classes = {sizeof(INITCOMMONCONTROLSEX),
                                                   ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_BAR_CLASSES};
-    /* a dialog template: a captioned, sized frame in dialog units, with Segoe UI 9. */
+    /* a captioned frame sized in dialog units, in Segoe UI 9. */
     static const WORD tmpl[] = {
         0, 0, 0, 0, 0, 0, 0, 440, 250, 0, 0, 0, 9, 'S', 'e', 'g', 'o', 'e', ' ', 'U', 'I', 0,
     };

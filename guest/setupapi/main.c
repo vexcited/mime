@@ -1,8 +1,6 @@
 /*
- * setupapi: device information sets over cfgmgr32. a set holds devices
- * and the interfaces of a class, present as the kernel's device tree
- * lists them; their properties are those of their Enum keys. the CM_
- * functions are forwards to cfgmgr32, as on windows.
+ * setupapi: device information sets over cfgmgr32. a set holds devices and a class's interfaces as the kernel's
+ * device tree lists them, with properties from their Enum keys. the CM_ functions forward to cfgmgr32, as on windows.
  */
 #define MIME_BUILD_SETUPAPI
 #include <mime/nt.h>
@@ -13,7 +11,7 @@
 #define SET_MAGIC 0x53455444 /* 'DTES' */
 #define MAX_PATH_CHARS 512
 
-/* SP_DEVICE_INTERFACE_DETAIL_DATA's size: windows packs it to a byte on x86. */
+/* windows packs SP_DEVICE_INTERFACE_DETAIL_DATA to a byte on x86. */
 #ifdef _WIN64
 #define DETAIL_SIZE_W 8
 #define DETAIL_SIZE_A 8
@@ -31,7 +29,7 @@ typedef struct DEVICE {
 typedef struct IFACE {
     WCHAR Path[MAX_PATH_CHARS];
     GUID Class;
-    DWORD Device; /* its index in the set */
+    DWORD Device; /* index in the set. */
 } IFACE;
 
 typedef struct DEVICE_SET {
@@ -111,7 +109,7 @@ static GUID class_of(DEVINST inst)
     return guid;
 }
 
-/* a device of the set, added when new; its index or ~0. */
+/* adds the device when new. returns its index or ~0. */
 static DWORD add_device(DEVICE_SET *s, PCWSTR id)
 {
     for (DWORD i = 0; i < s->DeviceCount; i++)
@@ -137,7 +135,7 @@ static BOOL prefix_matches(PCWSTR id, PCWSTR enumerator)
     return CompareStringOrdinal(id, n, enumerator, n, TRUE) == CSTR_EQUAL && id[n] == L'\\';
 }
 
-/* the kernel's list: interface paths of a class or of every class, or present devices. */
+/* asks the kernel for interface paths of one class or of every class, or for the present devices. */
 static MIME_PNP_REQUEST *ask(MIME_PNP_CLASS klass, ULONG flags, const GUID *guid)
 {
     for (ULONG chars = 4096;;) {
@@ -178,7 +176,7 @@ static BOOL add_interfaces(DEVICE_SET *s, const GUID *guid, BOOL all, PCWSTR enu
         IFACE *i = &s->Ifaces[s->IfaceCount++];
         lstrcpynW(i->Path, p, MAX_PATH_CHARS);
         i->Device = device;
-        /* the class of each interface, from the kernel. */
+        /* each interface's class, from the kernel. */
         BYTE query[sizeof(MIME_PNP_REQUEST) + MAX_DEVICE_ID_LEN * sizeof(WCHAR)] = {};
         MIME_PNP_REQUEST *q = (MIME_PNP_REQUEST *)query;
         lstrcpynW(q->Instance, p, RTL_NUMBER_OF(q->Instance));
@@ -308,7 +306,6 @@ WINSETUPAPI BOOL WINAPI SetupDiEnumDeviceInfo(HDEVINFO set, DWORD index, PSP_DEV
     return fill_devinfo(s, index, data);
 }
 
-/* a device of the set from what a caller holds. */
 static DEVICE *device_of(DEVICE_SET *s, PSP_DEVINFO_DATA data)
 {
     if (!data || data->cbSize != sizeof(SP_DEVINFO_DATA)) {
@@ -396,7 +393,7 @@ static IFACE *iface_of(DEVICE_SET *s, PSP_DEVICE_INTERFACE_DATA data)
     return &s->Ifaces[data->Reserved - 1];
 }
 
-/* the path after a 4 byte header; without a buffer or with a small one, the size needed. */
+/* the path follows a 4 byte header. with no buffer or a small one, only the size needed. */
 static BOOL interface_detail(HDEVINFO set, PSP_DEVICE_INTERFACE_DATA iface, void *detail, DWORD size,
                              PDWORD required, PSP_DEVINFO_DATA device, BOOL wide)
 {
@@ -609,7 +606,7 @@ static HKEY device_key(DEVICE *d, DWORD type, REGSAM access, BOOL create)
 {
     WCHAR path[MAX_DEVICE_ID_LEN + 96];
     if (type == DIREG_DRV) {
-        /* the driver key named by the device's Driver value. */
+        /* the driver key, named by the device's Driver value. */
         WCHAR driver[128];
         ULONG size = sizeof(driver);
         if (CM_Get_DevNode_Registry_PropertyW(d->Inst, CM_DRP_DRIVER, nullptr, driver, &size, 0)) {
@@ -661,7 +658,7 @@ WINSETUPAPI HKEY WINAPI SetupDiCreateDevRegKeyW(HDEVINFO set, PSP_DEVINFO_DATA d
     return device_key(d, type, KEY_ALL_ACCESS, TRUE);
 }
 
-/* windows keeps an interface's settings under DeviceClasses, the path's \\?\ as ##?#. */
+/* windows keeps an interface's settings under DeviceClasses, with the path's \\?\ written ##?#. */
 static HKEY interface_key(IFACE *f, REGSAM access, BOOL create)
 {
     WCHAR path[MAX_PATH_CHARS + 160] = L"SYSTEM\\CurrentControlSet\\Control\\DeviceClasses\\";
@@ -699,7 +696,7 @@ WINSETUPAPI HKEY WINAPI SetupDiOpenDeviceInterfaceRegKey(HDEVINFO set, PSP_DEVIC
     return f ? interface_key(f, access, FALSE) : INVALID_HANDLE_VALUE;
 }
 
-/* no class installers run: nothing to install, as for a device already set up. */
+/* no class installers run: succeed as for a device already set up. */
 WINSETUPAPI BOOL WINAPI SetupDiCallClassInstaller(DI_FUNCTION function, HDEVINFO set, PSP_DEVINFO_DATA device)
 {
     DEVICE_SET *s = set_of(set);
@@ -711,8 +708,7 @@ WINSETUPAPI BOOL WINAPI SetupDiCallClassInstaller(DI_FUNCTION function, HDEVINFO
 }
 
 /*
- * adds the interface of a symbolic link to a set, with its device, or
- * finds it there already. the path compares without regard to case.
+ * finds or adds a symbolic link's interface and its device. paths compare case-insensitively.
  */
 WINSETUPAPI BOOL WINAPI SetupDiOpenDeviceInterfaceW(HDEVINFO set, PCWSTR path, DWORD flags,
                                                     PSP_DEVICE_INTERFACE_DATA data)
@@ -798,7 +794,7 @@ static BOOL hex_digits(const WCHAR *s, int count, DWORD *value)
     return TRUE;
 }
 
-/* a name of the form {00000000-0000-0000-0000-000000000000}, which is how the class keys are named. */
+/* class keys are named {00000000-0000-0000-0000-000000000000}. */
 static BOOL guid_from_key_name(const WCHAR *s, GUID *guid)
 {
     if (wcslen(s) != 38 || s[0] != L'{' || s[9] != L'-' || s[14] != L'-' || s[19] != L'-' || s[24] != L'-' || s[37] != L'}')
@@ -819,10 +815,9 @@ static BOOL guid_from_key_name(const WCHAR *s, GUID *guid)
 }
 
 /*
- * the setup classes of this machine that have a name, from the class keys of the registry: those whose Class value
- * is the name, without regard to case. The number found is always given; when the list has no room for them all that
- * is ERROR_INSUFFICIENT_BUFFER with the list filled as far as it goes. A name that no class has is no error and finds
- * none, which is a guess. Another machine's classes cannot be reached.
+ * the classes whose Class value matches the name, case-insensitively. the count is always returned, and a short list
+ * is filled as far as it goes with ERROR_INSUFFICIENT_BUFFER. an unknown name finds none without error, a guess.
+ * remote machines are not reachable.
  */
 WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameExW(PCWSTR name, GUID *list, DWORD size, PDWORD required, PCWSTR machine,
                                                     PVOID reserved)

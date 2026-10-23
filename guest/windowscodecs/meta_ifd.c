@@ -1,6 +1,6 @@
 /*
- * ifd metadata: the entries of tiff and exif directories as items with a numeric id and a typed value, and back to
- * the bytes of a directory. a pointer to another directory becomes an item whose value is a block of its own.
+ * TIFF and EXIF IFD entries map to numeric metadata ids and typed values. directory pointers become nested handler
+ * blocks.
  */
 #include "wic_codec.h"
 #include "wic_meta.h"
@@ -9,7 +9,7 @@
 
 #define MAX_DEPTH 4
 
-/* ------------------------------------------------------------------ from tiff */
+/* from tiff. */
 
 static void *pv_alloc(SIZE_T n) { return CoTaskMemAlloc(n ? n : 1); }
 
@@ -27,7 +27,7 @@ static UINT64 rd(const MimeTiffEntry *e, UINT64 i, UINT size)
     return v;
 }
 
-/* the value of an entry in the form wic gives it. */
+/* convert an IFD entry to its WIC representation. */
 static HRESULT entry_value(const MimeTiffEntry *e, PROPVARIANT *pv)
 {
     WicPvInit(pv);
@@ -239,7 +239,7 @@ HRESULT WicIfdFromTiff(const GUID *format, const void *data, size_t size, IWICMe
     return ifd_from(format, &ifd, 0, out);
 }
 
-/* the ifd at the position in the chain of a parsed blob, as a block of the format. */
+/* read the indexed IFD from a parsed directory chain. */
 HRESULT WicIfdFromTiffIndex(const GUID *format, const MimeTiff *tiff, UINT index, IWICMetadataReader **out)
 {
     MimeTiffIfd ifd;
@@ -253,7 +253,7 @@ HRESULT WicIfdFromParsed(const GUID *format, const MimeTiffIfd *ifd, IWICMetadat
     return ifd_from(format, ifd, 0, out);
 }
 
-/* ------------------------------------------------------------------ to tiff */
+/* to tiff. */
 
 typedef struct WriteIfd {
     MimeTiffWEntry *entries;
@@ -383,7 +383,7 @@ static BOOL add_entry(WriteIfd *w, const MimeTiffWEntry *e)
 static HRESULT build_ifd(WriteState *ws, IWICMetadataReader *reader, WriteIfd *w, UINT depth)
 {
     UINT count = WicMetaCount(reader);
-    /* the sub ifds are built first, as arrays that stay put. */
+    /* build child IFD arrays first so their addresses stay stable. */
     UINT sub_slots = 0;
     for (UINT i = 0; i < count; i++) {
         const WicMetaItem *item = WicMetaItemAt(reader, i);
@@ -408,7 +408,7 @@ static HRESULT build_ifd(WriteState *ws, IWICMetadataReader *reader, WriteIfd *w
             if (!v->punkVal || depth >= MAX_DEPTH ||
                 FAILED(v->punkVal->lpVtbl->QueryInterface(v->punkVal, &IID_IWICMetadataReader, (void **)&sub)))
                 continue;
-            /* only the pointers of a directory have a place in one. */
+            /* retain only directory-pointer entries here. */
             if (tag != MIME_TIFF_TAG_EXIF_IFD && tag != MIME_TIFF_TAG_GPS_IFD && tag != MIME_TIFF_TAG_INTEROP_IFD) {
                 sub->lpVtbl->Release(sub);
                 continue;
@@ -505,7 +505,7 @@ HRESULT WicIfdToTiff(IWICMetadataReader *ifd, BOOL big_endian, BOOL prefix, BYTE
     return hr;
 }
 
-/* ------------------------------------------------------------------ entries for the tiff encoder */
+/* entries for the TIFF encoder. */
 
 struct WicIfdSet {
     WriteState ws;
@@ -528,7 +528,7 @@ HRESULT WicIfdSetCreate(IWICMetadataReader *ifd, WicIfdSet **out)
         WicIfdSetFree(set);
         return hr;
     }
-    /* the pointers to directories are given to the encoder apart from the other entries. */
+    /* pass directory pointers separately from ordinary entries to the encoder. */
     set->entries = set->root.entries;
     UINT n = 0;
     for (UINT i = 0; i < set->root.count; i++) {
@@ -542,7 +542,7 @@ HRESULT WicIfdSetCreate(IWICMetadataReader *ifd, WicIfdSet **out)
     }
     set->count = n;
     for (UINT i = 0; i < set->count; i++) {
-        /* the generated entries are the encoder's own, so a few tags are not taken from a program. */
+        /* exclude application tags that the encoder generates itself. */
         (void)i;
     }
     *out = set;

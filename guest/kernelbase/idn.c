@@ -1,12 +1,12 @@
 /*
- * internationalized domain names: IdnToAscii turns a name with non-ASCII labels into the ASCII form with the xn-- prefix
- * and punycode of RFC 3492, IdnToUnicode turns it back and IdnToNameprepUnicode only maps and normalizes the name. The
- * mapping of nameprep is NFKC and lower case here, which is Windows' for the characters of the usual scripts; the
- * prohibited characters, the bidirectional rules and the unassigned code points are not looked at.
+ * internationalized domain names: IdnToAscii turns non-ASCII labels into xn-- prefixed RFC 3492 punycode, IdnToUnicode
+ * turns them back, and IdnToNameprepUnicode only maps and normalizes. the nameprep mapping here is NFKC plus lower
+ * case, which matches Windows for the usual scripts; prohibited characters, bidi rules and unassigned code points are
+ * not checked.
  *
- * Flags: IDN_ALLOW_UNASSIGNED 1 and IDN_USE_STD3_ASCII_RULES 2 for the three, IDN_EMAIL_ADDRESS 4 for the first two and
- * IDN_RAW_PUNYCODE 8 for IdnToUnicode. The errors are the ones the native functions give: ERROR_INVALID_FLAGS,
- * ERROR_INVALID_PARAMETER, ERROR_INVALID_NAME for a name that cannot be, and ERROR_INSUFFICIENT_BUFFER.
+ * flags: IDN_ALLOW_UNASSIGNED 1 and IDN_USE_STD3_ASCII_RULES 2 for all three, IDN_EMAIL_ADDRESS 4 for the first two,
+ * IDN_RAW_PUNYCODE 8 for IdnToUnicode. errors match Windows: ERROR_INVALID_FLAGS, ERROR_INVALID_PARAMETER,
+ * ERROR_INVALID_NAME for an impossible name, and ERROR_INSUFFICIENT_BUFFER.
  */
 #include "kernelbase_private.h"
 
@@ -46,7 +46,7 @@ static int digit_value(WCHAR c)
     return -1;
 }
 
-/* the code points of the label as utf-16 are encoded; returns the length written or -1 when it does not fit. */
+/* encodes a utf-16 label; returns the length written or -1 when it does not fit. */
 static int punycode_encode(const WCHAR *label, int length, WCHAR *out, int room)
 {
     unsigned cp[IDN_WORK];
@@ -109,7 +109,7 @@ static int punycode_encode(const WCHAR *label, int length, WCHAR *out, int room)
     return at;
 }
 
-/* the label after the xn-- prefix as utf-16; -1 for a malformed one or one that does not fit. */
+/* decodes the label after the xn-- prefix to utf-16; -1 when malformed or too long. */
 static int punycode_decode(const WCHAR *in, int length, WCHAR *out, int room)
 {
     unsigned cp[IDN_WORK];
@@ -184,7 +184,7 @@ static WCHAR lower(WCHAR c)
     return out;
 }
 
-/* the rules for the ascii in a label when std3 is asked: letters, digits and hyphens, none at an end. */
+/* std3 rules for a label's ascii: letters, digits and hyphens, no hyphen at either end. */
 static BOOL std3_label(const WCHAR *label, int length, BOOL email_local)
 {
     for (int i = 0; i < length; i++) {
@@ -204,7 +204,7 @@ static BOOL all_ascii(const WCHAR *s, int length)
     return TRUE;
 }
 
-/* the mapping of nameprep: compatibility composed form, lower case, and every dot written the same. */
+/* nameprep mapping: NFKC, lower case, and every dot variant written as a full stop. */
 static int nameprep(const WCHAR *src, int length, WCHAR *dst, int room)
 {
     if (!length)
@@ -220,7 +220,7 @@ static int nameprep(const WCHAR *src, int length, WCHAR *dst, int room)
     return n;
 }
 
-/* the last at sign of an address and what follows is the domain; before it the text is kept as it is. */
+/* the domain follows the last at sign, the text before it is kept as is. */
 static int email_split(const WCHAR *s, int length)
 {
     for (int i = length - 1; i >= 0; i--)
@@ -240,7 +240,7 @@ static BOOL put_text(WCHAR *out, int *at, int room, const WCHAR *text, int lengt
     return TRUE;
 }
 
-/* the name label by label: the dots are kept and an empty label is only allowed before the final dot. */
+/* converts label by label: dots are kept, and an empty label is only allowed before the final dot. */
 static int convert_name(const WCHAR *name, int length, WCHAR *out, int room, DWORD flags, LABEL_FUNCTION convert)
 {
     int at = 0, start = 0;
@@ -302,7 +302,7 @@ static BOOL label_to_unicode(const WCHAR *label, int length, WCHAR *out, int *at
         WCHAR decoded[IDN_WORK];
         int n = punycode_decode(label + 4, length - 4, decoded, IDN_WORK);
         if (n > 0) {
-            /* a label that does not encode back to what was given was not made by an encoder. */
+            /* a label that does not encode back to the input was not made by an encoder. */
             WCHAR again[IDN_WORK];
             int p = punycode_encode(decoded, n, again, IDN_WORK);
             if (p == length - 4 && !_wcsnicmp(again, label + 4, (size_t)p) && !all_ascii(decoded, n)) {
@@ -323,9 +323,9 @@ static BOOL label_to_unicode(const WCHAR *label, int length, WCHAR *out, int *at
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the functions */
+/* ------------------------------------------------------------------ exported functions */
 
-/* the arguments checked as the native workers check them; the length is that of the name without a terminator. */
+/* argument checks as the native workers do them; the length excludes the terminator. */
 static BOOL idn_arguments(DWORD flags, DWORD allowed, LPCWSTR src, int *length, BOOL *terminated, LPWSTR dst, int dst_len)
 {
     if (flags & ~allowed) {
@@ -350,7 +350,7 @@ static BOOL idn_arguments(DWORD flags, DWORD allowed, LPCWSTR src, int *length, 
     return TRUE;
 }
 
-/* the result put in the caller's buffer, or its size when there is none. */
+/* copies the result into the caller's buffer, or returns its size when there is none. */
 static int idn_finish(const WCHAR *result, int length, BOOL terminated, LPWSTR dst, int dst_len)
 {
     int total = length + (terminated ? 1 : 0);
@@ -380,7 +380,7 @@ static int idn_run(DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst_le
     WCHAR *result = work + IDN_WORK;
     int length;
     int prefix = 0;
-    /* an address keeps the part before its last at sign as it is, and only the domain is converted. */
+    /* an address keeps the part before its last at sign unchanged, only the domain is converted. */
     if (flags & IDN_EMAIL_ADDRESS) {
         prefix = email_split(src, src_len);
         if (prefix > IDN_WORK / 2) {

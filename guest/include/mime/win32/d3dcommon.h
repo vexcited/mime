@@ -1,4 +1,4 @@
-/* what the direct3d versions share: feature levels, topologies, blobs. */
+/* shared by the direct3d versions: feature levels, topologies, blobs. */
 #ifndef MIME_WIN32_D3DCOMMON_H
 #define MIME_WIN32_D3DCOMMON_H
 
@@ -64,7 +64,7 @@ typedef struct D3D_SHADER_MACRO {
     LPCSTR Definition;
 } D3D_SHADER_MACRO;
 
-/* a block of bytes: compiled shaders and their errors. */
+/* holds compiled shaders and error messages. */
 typedef struct ID3D10Blob ID3D10Blob;
 typedef ID3D10Blob ID3DBlob;
 typedef struct ID3D10BlobVtbl {

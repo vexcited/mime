@@ -63,10 +63,9 @@ void KiFormatUserStack(PEPROCESS process, ULONG64 sp, char *out, ULONG size)
 }
 
 /*
- * an access that cannot be resolved is an access violation unless the memory manager says more, and windows turns its
- * status into the exception the same way for every fault: a guard page or the end of a stack keeps its own code with the
- * parameters of an access violation, and any other failure, the status of a read that failed, is STATUS_IN_PAGE_ERROR with
- * the status as the third parameter. the record is changed in place.
+ * an unresolved access is an access violation unless the memory manager says more. like windows, a guard page or the
+ * end of a stack keeps its own code with access violation parameters, and any other failure becomes
+ * STATUS_IN_PAGE_ERROR with the status as the third parameter. the record is changed in place.
  */
 void KiApplyFaultStatus(PEXCEPTION_RECORD record)
 {

@@ -1,6 +1,6 @@
 /*
- * oleacc.dll: active accessibility. the objects of windows are in proxy.c, their words in text.c; here are the
- * entry points that find objects, send them through messages and walk them.
+ * oleacc.dll: active accessibility entry points that find objects, pass them through messages and walk them. window
+ * objects are in proxy.c, their words in text.c.
  */
 #define OLEACCAPI DECLSPEC_EXPORT
 #include <mime/win32/oleacc.h>
@@ -19,9 +19,9 @@ static void *slot(IUnknown *object, int index)
 /* ------------------------------------------------------------------ marshaling objects through messages */
 
 /*
- * an object travels as windows' oleacc sends it: marshaled into a stream, the stream put in a page file backed
- * mapping behind a header, and an atom naming the mapping returned as the result of the message. the atom's
- * string tells the process and the handle of the mapping. a client takes the object out once.
+ * objects travel as windows' oleacc sends them: marshaled into a stream, put in a page file backed mapping behind a
+ * header, and returned from the message as an atom naming the mapping. the atom's string holds the process and the
+ * mapping handle. a client takes the object out once.
  */
 #define MARSHAL_MAGIC 0xAA1D5AF5u /* -1440944115 */
 #define MARSHAL_LIMIT 0x100000
@@ -48,7 +48,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
     return TRUE;
 }
 
-/* results nobody took are dropped in the order they were made, at most forty at a time. */
+/* results nobody took are dropped oldest first, keeping at most forty. */
 static void remember_outstanding(ATOM atom, HANDLE mapping)
 {
     EnterCriticalSection(&g_outstanding_lock);
@@ -69,7 +69,7 @@ OLEACCAPI LRESULT WINAPI LresultFromObject(REFIID riid, WPARAM wparam, IUnknown 
     HRESULT hr = CreateStreamOnHGlobal(nullptr, TRUE, &stream);
     if (FAILED(hr))
         return hr;
-    /* a client of another process needs the object served over rpc; any other, which includes a caller that names none, is us. */
+    /* a client in another process needs the object served over rpc. anything else, including a caller naming no process, is us. */
     DWORD me_now = GetCurrentProcessId(), asked = (DWORD)wparam;
     BOOL elsewhere = asked && asked != 0xFFFFFFFFu && asked != me_now;
     hr = CoMarshalInterface(stream, riid, object, elsewhere ? 0 : 3, nullptr, 0);
@@ -117,7 +117,7 @@ OLEACCAPI LRESULT WINAPI LresultFromObject(REFIID riid, WPARAM wparam, IUnknown 
     if (result == E_FAIL) {
         CoReleaseMarshalData(stream);
     } else {
-        /* the marshaled reference now lives in the mapping, which the client unmarshals. */
+        /* the marshaled reference now lives in the mapping for the client to unmarshal. */
     }
     stream->lpVtbl->Release(stream);
     return result;
@@ -165,7 +165,7 @@ OLEACCAPI HRESULT WINAPI ObjectFromLresult(LRESULT lresult, REFIID riid, WPARAM 
     HANDLE mapping;
     if (process == GetCurrentProcessId()) {
         mapping = (HANDLE)(LONG_PTR)(LONG)handle;
-        /* the entry of the table is spent as the client takes the result. */
+        /* taking the result spends its table entry. */
         EnterCriticalSection(&g_outstanding_lock);
         for (int i = 0; i < OUTSTANDING_MAX; i++)
             if (g_outstanding[i].atom == atom) {
@@ -216,7 +216,7 @@ OLEACCAPI HRESULT WINAPI ObjectFromLresult(LRESULT lresult, REFIID riid, WPARAM 
     return hr;
 }
 
-/* ------------------------------------------------------------------ objects of windows */
+/* ------------------------------------------------------------------ window objects */
 
 static HRESULT std_object(HWND hwnd, LONG object_id, REFIID riid, void **object)
 {
@@ -231,7 +231,7 @@ OLEACCAPI HRESULT WINAPI CreateStdAccessibleObject(HWND hwnd, LONG object_id, RE
 OLEACCAPI HRESULT WINAPI CreateStdAccessibleProxyW(HWND hwnd, LPCWSTR class_name, LONG object_id, REFIID riid,
                                                    void **object)
 {
-    /* the proxy follows the class of the window, not the name given. */
+    /* the proxy follows the window class, not the given name. */
     if (!object)
         return E_INVALIDARG;
     return std_object(hwnd, object_id, riid, object);
@@ -244,9 +244,8 @@ OLEACCAPI HRESULT WINAPI CreateStdAccessibleProxyA(HWND hwnd, LPCSTR class_name,
 }
 
 /*
- * the object a window gives for an id: its own, from WM_GETOBJECT, whose result may be an error that is the
- * answer, nothing, when the window has none, or an object marshaled for this call. a window without one gets
- * the standard proxy.
+ * a window's own object for an id comes from WM_GETOBJECT, whose result is either an error that stands as the answer,
+ * nothing when the window has none, or an object marshaled for this call. windows without one get the standard proxy.
  */
 OLEACCAPI HRESULT WINAPI AccessibleObjectFromWindow(HWND hwnd, DWORD object_id, REFIID riid, void **object)
 {
@@ -256,7 +255,7 @@ OLEACCAPI HRESULT WINAPI AccessibleObjectFromWindow(HWND hwnd, DWORD object_id, 
     WPARAM from = 0;
     ULONG_PTR result = 0;
     if (IsWindow(hwnd)) {
-        /* a window of the calling thread is answered in the thread: the object goes back as it is. */
+        /* a window of the calling thread answers in the thread, so the object comes back as it is. */
         from = GetWindowThreadProcessId(hwnd, nullptr) == GetCurrentThreadId() ? (WPARAM)0xFFFFFFFFu
                                                                                 : (WPARAM)GetCurrentProcessId();
         SendMessageTimeoutW(hwnd, WM_GETOBJECT, from, (LPARAM)object_id, SMTO_ABORTIFHUNG, 10000, &result);
@@ -311,7 +310,6 @@ OLEACCAPI HRESULT WINAPI AccessibleObjectFromEvent(HWND hwnd, DWORD object_id, D
     return VariantCopy(child, &id);
 }
 
-/* the object under a point, and the child of it that is there. */
 OLEACCAPI HRESULT WINAPI AccessibleObjectFromPoint(POINT point, IAccessible **accessible, VARIANT *child)
 {
     if (!accessible || !child)
@@ -367,7 +365,7 @@ OLEACCAPI HANDLE WINAPI GetProcessHandleFromHwnd(HWND hwnd)
 
 /* ------------------------------------------------------------------ walking objects */
 
-/* the slots of IAccessible after IDispatch's seven. */
+/* IAccessible slots after IDispatch's seven. */
 typedef HRESULT(STDMETHODCALLTYPE *GET_PARENT)(IUnknown *, IDispatch **);
 typedef HRESULT(STDMETHODCALLTYPE *GET_CHILD_COUNT)(IUnknown *, LONG *);
 typedef HRESULT(STDMETHODCALLTYPE *GET_CHILD)(IUnknown *, VARIANT, IDispatch **);
@@ -375,7 +373,7 @@ typedef HRESULT(STDMETHODCALLTYPE *GET_CHILD)(IUnknown *, VARIANT, IDispatch **)
 static const IID IID_IEnumVARIANT_ = {0x00020404, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
 static const IID IID_IOleWindow_ = {0x00000114, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
 
-/* a child named by number becomes its object when the container has one for it. */
+/* a numbered child becomes its object when the container has one for it. */
 static void resolve_child(IUnknown *container, VARIANT *v)
 {
     if (v->vt != VT_I4)
@@ -436,7 +434,7 @@ OLEACCAPI HRESULT WINAPI AccessibleChildren(IAccessible *container_in, LONG star
     return hr;
 }
 
-/* the window an object belongs to: its own if it is an IOleWindow, else its nearest ancestor's. */
+/* an IOleWindow's own window, else its nearest ancestor's. */
 OLEACCAPI HRESULT WINAPI WindowFromAccessibleObject(IAccessible *object_in, HWND *hwnd)
 {
     IUnknown *object = (IUnknown *)object_in;

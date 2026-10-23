@@ -1,7 +1,7 @@
 /*
  * accounts and the machine's role. the only account is the logged on
- * user, a local administrator filtered by uac; the machine is a stand
- * alone workstation of a workgroup, joined to no azure directory.
+ * user, a local administrator filtered by uac. the machine is a standalone
+ * workgroup workstation, joined to no azure directory.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -37,7 +37,7 @@ static BOOL local_server(LMCSTR server)
            (GetComputerNameW(computer, &n) && !_wcsicmp(server, computer));
 }
 
-/* the user of the process token: its sid and account name. */
+/* reads the sid and account name from the process token. */
 static BOOL current_user(BYTE *sid, DWORD sid_size, WCHAR *name, DWORD name_size)
 {
     HANDLE token;
@@ -178,8 +178,6 @@ NETAPI NET_API_STATUS WINAPI NetUserGetInfo(LPCWSTR server, LPCWSTR user, DWORD 
     return NERR_Success;
 }
 
-/* ---------------------------------------------------------------- the machine's role */
-
 typedef enum {
     DsRole_RoleStandaloneWorkstation,
 } DSROLE_MACHINE_ROLE;
@@ -236,8 +234,6 @@ NETAPI void WINAPI DsRoleFreeMemory(PVOID buffer)
     if (buffer)
         LocalFree(buffer);
 }
-
-/* ---------------------------------------------------------------- azure directory */
 
 /* a machine joined to no directory gets success and no information. */
 NETAPI HRESULT WINAPI NetGetAadJoinInformation(LPCWSTR tenant, PVOID *info)

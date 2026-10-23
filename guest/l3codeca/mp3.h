@@ -1,4 +1,4 @@
-/* an mpeg audio layer iii decoder of mpeg 1, 2 and 2.5, fed through a ring of input as l3codeca's. */
+/* an MPEG 1, 2 and 2.5 audio layer iii decoder, fed through an input ring. */
 #ifndef L3CODECA_MP3_H
 #define L3CODECA_MP3_H
 
@@ -33,17 +33,17 @@ enum {
 
 typedef struct Mp3Channel {
     float overlap[576];
-    float last[2][576];  /* the spectra of the last frame, which concealment repeats */
+    float last[2][576];  /* last frame's spectra, repeated for concealment */
     float v[1024];
 } Mp3Channel;
 
 typedef struct Mp3Decoder {
     BYTE ring[MP3_RING + 8];
-    DWORD start, end;    /* the bytes held, from start to end */
-    DWORD bit;           /* the bit of ring[start] the stream is at */
-    DWORD lock;          /* the masked header of the stream, zero before sync */
-    DWORD checks;        /* the frames whose successor is still checked */
-    BYTE reservoir[6144];  /* 511 bytes kept and a frame, room for corrupt lengths read past them */
+    DWORD start, end;    /* bytes held */
+    DWORD bit;           /* bit offset within ring[start] */
+    DWORD lock;          /* masked stream header, zero before sync */
+    DWORD checks;        /* frames whose successor is still checked */
+    BYTE reservoir[6144];  /* 511 bytes of reservoir plus a frame, with slack for corrupt lengths */
     DWORD reserved;
     DWORD v_offset;
     DWORD noise;

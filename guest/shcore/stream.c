@@ -1,6 +1,5 @@
 /*
- * the streams of shcore: memory, files and registry values, and the IStream
- * helpers over any stream.
+ * shcore streams over memory, files and registry values, and the IStream helpers.
  */
 #include "shcore_private.h"
 
@@ -19,7 +18,7 @@ typedef struct {
     CRITICAL_SECTION lock;
     BYTE *data;
     SIZE_T size, capacity, position;
-    /* a registry stream writes its bytes back as it goes away. */
+    /* a registry stream writes its bytes back when released. */
     HKEY key;
     LPWSTR value;
 } MEMSTREAM;
@@ -520,7 +519,7 @@ HRESULT WINAPI SHCreateStreamOnFileEx(LPCWSTR path, DWORD mode, DWORD attributes
     return S_OK;
 }
 
-/* only the access, share and create bits of the mode are taken. */
+/* only the access, share and create bits of the mode are used. */
 HRESULT WINAPI SHCreateStreamOnFileW(LPCWSTR path, DWORD mode, IStream **stream)
 {
     if (!stream)
@@ -580,7 +579,7 @@ HRESULT WINAPI IStream_Copy(IStream *from, IStream *to, DWORD size)
     return SUCCEEDED(hr) && read.QuadPart != size ? E_FAIL : hr;
 }
 
-/* a WORD of length, then the characters without their terminator. */
+/* a WORD length, then the characters without a terminator. */
 HRESULT WINAPI IStream_ReadStr(IStream *stream, LPWSTR *string)
 {
     *string = nullptr;

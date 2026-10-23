@@ -1,8 +1,4 @@
-/*
- * the host half of the vulkan wire, for the generated decoders and the
- * hand written calls: a connection per guest process, its handle table and
- * the calls being run.
- */
+/* host Vulkan wire context: per-process connections, handle tables and call dispatch. */
 #ifndef MIME_MVK_HOST_H
 #define MIME_MVK_HOST_H
 
@@ -31,43 +27,40 @@ struct MvkConnection {
     bool kicked;
     volatile bool closing;
 
-    /*
-     * host handles by guest id, in chunks that never move, so threads
-     * recording command buffers read them while the connection binds more.
-     */
+    /* handle-table chunks never move, allowing recording threads to read while new handles are bound. */
     uint64_t **handle_chunks;
     struct {
         uint64_t handle, id;
-    } *reverse;        /* host handle to guest id, open addressing */
+    } *reverse;        /* host handle to guest id, open addressing. */
     size_t reverse_size, reverse_used;
 
     void *library;
     PFN_vkGetInstanceProcAddr gipa;
     VkInstance instance;
-    struct HostInstance *host_instance; /* the instance above when the guest's request for it is shared, see vulkan.c */
+    struct HostInstance *host_instance; /* the instance above when the guest's request for it is shared, see vulkan.c. */
     VkDevice device;
     VkPhysicalDevice physical_device;
     MvkDispatch fn;
-    bool host_import; /* the device imports guest memory */
-    bool timelines;   /* the device has timeline semaphores, whether the guest asked for them or not */
-    pthread_mutex_t queue_lock; /* the queues, which the presenting thread submits to as well */
+    bool host_import; /* the device imports guest memory. */
+    bool timelines;   /* the device has timeline semaphores, whether the guest asked for them or not. */
+    pthread_mutex_t queue_lock; /* the queues, which the presenting thread submits to as well. */
     uint32_t queue_count;
     struct {
         VkQueue queue;
         uint32_t family;
     } queues[64];
-    struct MvkWsi *wsi; /* vkwsi.c */
-    struct MvkVideo *video; /* video.c */
+    struct MvkWsi *wsi; /* vkwsi.c. */
+    struct MvkVideo *video; /* video.c. */
     VkDeviceSize import_alignment;
 
-    /* pipelines being created aside, in the order of their calls, see vulkan.c. */
+    /* pipelines created asynchronously, ordered by their calls; see vulkan.c. */
     struct MvkJob *jobs, *last_job;
     pthread_mutex_t job_lock;
     pthread_cond_t job_done;
     volatile uint32_t jobs_finished;
     uint32_t jobs_seen;
 
-    /* command buffers recorded aside since the last submission, newest first, see vulkan.c. */
+    /* command buffers recorded asynchronously since the last submission, newest first; see vulkan.c. */
     struct MvkRecord *records;
     uint32_t records_pending;
     pthread_mutex_t record_lock;
@@ -91,10 +84,10 @@ struct MvkConnection {
     uint64_t wake_value;
     uint64_t rounds;
 
-    uint8_t *call;   /* a private copy of the call being run */
+    uint8_t *call;   /* a private copy of the call being run. */
     uint8_t *arena;
 
-    /* the device objects the program made and has not destroyed, by handle, open addressing. */
+    /* live device objects indexed by handle using open addressing. */
     pthread_mutex_t live_lock;
     struct {
         uint64_t handle;
@@ -105,7 +98,7 @@ struct MvkConnection {
 
 uint64_t mvk_lookup(MvkConnection *c, uint64_t id);
 void mvk_bind(MvkConnection *c, uint64_t id, uint64_t handle);
-/* objects made and destroyed for the program, the ones left destroyed with the device. */
+/* tracks guest objects and destroys any remaining ones with the device. */
 void mvk_track(MvkConnection *c, uint64_t handle, int kind);
 void mvk_forget(MvkConnection *c, uint64_t handle);
 
@@ -113,7 +106,7 @@ typedef struct MvkCall {
     MvkDecoder in;
     MvkConnection *conn;
     const MvkDispatch *fn;
-    VkCommandBuffer command_buffer; /* while a recorded stream is replayed */
+    VkCommandBuffer command_buffer; /* while a recorded stream is replayed. */
     MvkCallHeader header;
     MvkEncoder out;
     int replying;
@@ -144,7 +137,7 @@ void mvk_reply_chain_struct(MvkEncoder *e, const VkBaseOutStructure *s);
 void mvk_put_chain(MvkEncoder *e, const void *next);
 uint64_t mvk_dispatch_id(const void *object);
 
-/* a connection of the host's own, for opengl: its instance, then the device its caller made. */
+/* host-owned OpenGL connection: its instance followed by a caller-created device. */
 bool mvk_internal_instance(MvkConnection *c, uint32_t api);
 void mvk_internal_device(MvkConnection *c, VkPhysicalDevice physical, VkDevice device, uint32_t family);
 
@@ -162,10 +155,8 @@ void mvk_wsi_close(MvkConnection *c);
 void mvk_wsi_drain(MvkConnection *c);
 
 /*
- * an image the host renders to, presented on a guest window as a one image
- * swapchain would be, its rows bottom first as gl keeps them. it is in
- * VK_IMAGE_LAYOUT_PRESENT_SRC_KHR when presented,
- * and rendered to again once the semaphore acquire returns was waited for.
+ * presents a bottom-first host-rendered image on a guest window, like a single-image swapchain. presentation
+ * requires VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; rendering resumes after waiting on the semaphore returned by acquire.
  */
 typedef struct Swapchain MvkImageChain;
 MvkImageChain *mvk_wsi_chain_create(MvkConnection *c, VkImage image, VkFormat format, VkExtent2D extent);
@@ -175,7 +166,7 @@ VkSemaphore mvk_wsi_chain_acquire(MvkConnection *c, MvkImageChain *s);
 void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s);
 
 
-/* vkshare.c: memory and semaphores crossing between the processes' devices, see there. */
+/* vkshare.c: memory and semaphores shared across process devices. */
 void mvk_share_export_memory(MvkCall *call);
 void mvk_share_import_memory(MvkCall *call);
 void mvk_share_export_semaphore(MvkCall *call);

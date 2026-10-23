@@ -1,7 +1,6 @@
 /*
- * processor identification from cpuid, the source of the processor
- * features, SYSTEM_INFO and the CentralProcessor registry key. the guest
- * sees the host's own processor, as windows on the same machine would.
+ * processor identification from cpuid, for the processor features, SYSTEM_INFO
+ * and the CentralProcessor key. the guest sees the host's own processor.
  */
 #include "../../ntos.h"
 #include "../../cm/cm.h"
@@ -27,7 +26,7 @@ void KiReadProcessorIds(void)
         KiCpuid(0x80000001, 0, g_ext1);
 }
 
-/* the hypervisor's leaves from 0x40000000 when cpuid reports microsoft's, FALSE without it. */
+/* the hypervisor leaves from 0x40000000 when cpuid reports microsoft's, FALSE otherwise. */
 BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count)
 {
     ULONG regs[4];
@@ -42,9 +41,8 @@ BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count)
 }
 
 /*
- * on microsoft's hypervisor windows says which system it is through the
- * guest os id register, which enables its hypercalls: microsoft, windows
- * nt, version 10.0 and the build.
+ * on microsoft's hypervisor windows identifies itself through the guest os id
+ * register, which enables hypercalls: microsoft, windows nt, 10.0 and the build.
  */
 void KiIdentifyToHypervisor(void)
 {
@@ -151,7 +149,7 @@ PCSTR KiProcessorSmbiosManufacturer(void)
     return strcmp(g_vendor, "GenuineIntel") ? "Advanced Micro Devices, Inc." : "Intel(R) Corporation";
 }
 
-/* the signature and feature flags of cpuid leaf 1, as the processor id field holds them. */
+/* the signature and feature flags of cpuid leaf 1, as the smbios processor id holds them. */
 ULONG64 KiProcessorSmbiosId(void)
 {
     return (ULONG64)g_leaf1[3] << 32 | g_leaf1[0];

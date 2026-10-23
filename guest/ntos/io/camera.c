@@ -1,9 +1,8 @@
 /*
- * cameras: the host's cameras as devices of the guest, the way windows' usbvideo driver shows a usb camera. each is a
- * usb device with a video interface in the plug and play tree, whose interfaces in the camera categories are opened
- * with a reference string, "\global", and answer requests for the camera's name, modes and controls. a stream is
- * one block of memory shared with the host (mime/camera.h), mapped in the process that opened it; the host's frame
- * notifications set the event the process gave when it opened the stream. see docs/camera.md.
+ * host cameras as guest devices, shown like windows' usbvideo driver shows a usb camera: a usb device with a video
+ * interface whose camera category interfaces are opened with the reference string "\global". a stream is one block
+ * of memory shared with the host, mapped in the opening process. host frame notifications set the event that process
+ * gave when it opened the stream.
  */
 #define MIME_KERNEL_PNP
 #include "../ntos.h"
@@ -26,8 +25,8 @@ typedef struct CAMERA {
     MimeCameraInfo Info;
     MimeCameraFormat *Formats;
     ULONG FormatCount;
-    WCHAR Instance[96];  /* the video interface */
-    WCHAR Parent[96];    /* the usb device */
+    WCHAR Instance[96];  /* the video interface. */
+    WCHAR Parent[96];    /* the usb device. */
     LIST_ENTRY Files;
 } CAMERA;
 
@@ -38,13 +37,12 @@ typedef struct CAMERA_DEVICE {
 typedef struct CAMERA_FILE {
     LIST_ENTRY Links;
     ULONG Slot;
-    ULONG HostId;      /* the camera it was opened on, 0 once the camera went */
+    ULONG HostId;      /* 0 once the camera is gone. */
     ULONG Generation;
-    /* the stream, if the file has opened one. */
     BOOLEAN HasStream;
     BOOLEAN Running;
-    ULONG64 Stream;    /* the host's handle */
-    PVOID Block;       /* the memory, in the kernel's view */
+    ULONG64 Stream;    /* host handle. */
+    PVOID Block;       /* kernel mapping of the shared block. */
     ULONG64 Pa;
     SIZE_T Size;
     PVOID Section;
@@ -57,7 +55,7 @@ static CAMERA g_cameras[MIME_CAMERA_MAX];
 static PDEVICE_OBJECT g_devices[MIME_CAMERA_MAX];
 static PDRIVER_OBJECT g_driver;
 static KMUTEX g_lock;
-/* a page the host's answers to lists and controls land in, and the formats of up to the most a camera may have. */
+/* host answers to list and control requests land in g_page, format lists in g_formats. */
 static PVOID g_page;
 static ULONG64 g_page_pa;
 static PVOID g_formats;
@@ -109,7 +107,7 @@ static ULONG hash_text(const char *text)
 
 static void widen(const char *utf8, WCHAR *out, ULONG chars)
 {
-    /* the names are what a person reads, so only what the system's fonts show: ascii as it is, the rest as ?. */
+    /* names are for display: ascii stays, the rest becomes ?. */
     ULONG n = 0;
     for (; *utf8 && n + 1 < chars; utf8++) {
         UCHAR c = (UCHAR)*utf8;
@@ -121,7 +119,7 @@ static void widen(const char *utf8, WCHAR *out, ULONG chars)
     out[n] = 0;
 }
 
-/* windows' ids for a usb camera: the usb device, and the video interface of its composite function. */
+/* the ids windows gives a usb camera: the usb device and the video interface of its composite function. */
 static void name_camera(CAMERA *c)
 {
     ULONG tag = hash_text(c->Info.location) ^ ((ULONG)c->Info.vendor << 16 | c->Info.product);
@@ -133,12 +131,11 @@ static void name_camera(CAMERA *c)
 
 static void add_camera(CAMERA *c, const MimeCameraInfo *info)
 {
-    /* the files of a camera that was here before stay in the list: they hold a place in it until their handles close. */
+    /* files from an earlier arrival stay listed until their handles close. */
     c->Info = *info;
     c->Used = TRUE;
     name_camera(c);
 
-    /* the camera's formats, as many as the host lists. */
     c->FormatCount = 0;
     c->Formats = nullptr;
     ULONG64 count = 0;
@@ -197,7 +194,7 @@ static void add_camera(CAMERA *c, const MimeCameraInfo *info)
     MimePnpAddDevice(c->Instance, c->Parent, &video);
     WCHAR device[40];
     _snwprintf(device, RTL_NUMBER_OF(device), L"\\Device\\MimeCamera%u", (ULONG)(c - g_cameras));
-    /* the categories usbvideo registers its interface in, each opened as "global". */
+    /* the categories usbvideo registers its interface in, each with the reference string "global". */
     static const GUID *const categories[] = {&KSCATEGORY_CAPTURE, &KSCATEGORY_RENDER, &KSCATEGORY_VIDEO,
                                              &KSCATEGORY_RENDER_EXT, &KSCATEGORY_VIDEO_CAMERA};
     for (ULONG i = 0; i < RTL_NUMBER_OF(categories); i++)
@@ -214,7 +211,7 @@ static void remove_camera(CAMERA *c)
 {
     MimePnpRemoveDevice(c->Instance);
     MimePnpRemoveDevice(c->Parent);
-    /* the programs using it are woken to find the stream lost, which the host told it too. */
+    /* wake the programs using it so they see the stream is lost. */
     for (PLIST_ENTRY e = c->Files.Flink; e != &c->Files; e = e->Flink) {
         CAMERA_FILE *f = CONTAINING_RECORD(e, CAMERA_FILE, Links);
         f->HostId = 0;
@@ -225,7 +222,7 @@ static void remove_camera(CAMERA *c)
     c->Used = FALSE;
 }
 
-/* looks at the host's cameras again: the ones that came get their devices, the ones that went lose them. */
+/* adds devices for host cameras that came and removes the ones that went. */
 static void refresh(void)
 {
     ULONG64 count = 0;
@@ -262,7 +259,7 @@ static void refresh(void)
     }
 }
 
-/* a frame is waiting in a stream: the event of the file that opened it is set. */
+/* sets the event of the file that opened the stream. */
 static void frame(ULONG stream)
 {
     for (ULONG i = 0; i < MIME_CAMERA_MAX; i++) {
@@ -272,7 +269,7 @@ static void frame(ULONG stream)
         for (PLIST_ENTRY e = c->Files.Flink; e != &c->Files; e = e->Flink) {
             CAMERA_FILE *f = CONTAINING_RECORD(e, CAMERA_FILE, Links);
             if (f->HasStream && f->Stream == stream) {
-                /* cleared before the process looks, so that a frame after its look wakes it again. */
+                /* cleared before the process looks, so a later frame wakes it again. */
                 __atomic_store_n(&((MimeCameraHeader *)f->Block)->wake, 0, __ATOMIC_RELEASE);
                 signal_file(f);
                 return;
@@ -298,7 +295,7 @@ void NTAPI MimeCameraEvent(const MimeInputEvent *ev)
 static void unmap_stream(CAMERA_FILE *f)
 {
     if (f->User && f->Owner) {
-        /* the process may be gone already, with its address space. */
+        /* the process and its address space may already be gone. */
         if (f->Owner->AddressSpace.Root)
             MiUnmapViewOfSectionEx(f->Owner, f->User, 0);
     }
@@ -420,7 +417,7 @@ static NTSTATUS NTAPI camera_create(PDEVICE_OBJECT device, PIRP irp)
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
     PFILE_OBJECT file = stack->FileObject;
     CAMERA_DEVICE *d = device->DeviceExtension;
-    /* the interface is opened with its reference string, and with nothing else. */
+    /* only the reference string may be opened. */
     if (!is_global(&file->FileName))
         return complete_irp(irp, STATUS_OBJECT_NAME_NOT_FOUND, 0);
     CAMERA_FILE *f = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*f), KI_TAG('C', 'a', 'm', 'O'));
@@ -445,7 +442,7 @@ static NTSTATUS NTAPI camera_create(PDEVICE_OBJECT device, PIRP irp)
     return complete_irp(irp, status, 0);
 }
 
-/* the last handle went: the stream ends, and the host lets go of its memory. */
+/* last handle closed: end the stream so the host releases its memory. */
 static NTSTATUS NTAPI camera_cleanup(PDEVICE_OBJECT device, PIRP irp)
 {
     CAMERA_FILE *f = IoGetCurrentIrpStackLocation(irp)->FileObject->FsContext;
@@ -546,7 +543,7 @@ static NTSTATUS NTAPI camera_control(PDEVICE_OBJECT device, PIRP irp)
         status = from_host(HalMimeHypercall(MIME_HC_CAMERA_CONTROL, g_page_pa, 0, 0, 0, 0, 0, nullptr));
         if (NT_SUCCESS(status)) {
             memcpy(buf, g_page, sizeof(req));
-            /* the camera's own answer: a control it does not have is a request nothing can serve. */
+            /* the camera's own status, a control it lacks becomes STATUS_NOT_FOUND. */
             status = from_host((ULONG64)((MimeCameraControl *)g_page)->status);
             information = sizeof(MimeCameraControl);
             if (status == STATUS_NO_SUCH_DEVICE)
@@ -603,7 +600,7 @@ void IopInitializeCameras(void)
     g_driver = driver;
 }
 
-/* the cameras the host has already, once the registry their devices are written to is there. */
+/* adds the cameras the host already has, once the registry exists. */
 void IopStartCameras(void)
 {
     if (!g_driver)

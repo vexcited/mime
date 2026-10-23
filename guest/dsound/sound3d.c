@@ -1,8 +1,8 @@
 /*
- * IDirectSound3DBuffer and IDirectSound3DListener, and what windows'
- * software 3d object makes of them: a volume from the distance and the
- * cone, a power for each speaker from the direction, a frequency from the
- * doppler shift. its constants and roundings are windows'.
+ * IDirectSound3DBuffer and IDirectSound3DListener, and the software 3d model
+ * behind them: volume from distance and cone, per speaker power from the
+ * direction, frequency from the doppler shift. constants and rounding match
+ * windows.
  */
 #include "dsound_private.h"
 
@@ -30,7 +30,7 @@ static double square_root(double x)
     return __builtin_elementwise_sqrt(x);
 }
 
-/* the natural logarithm of a positive number: its exponent, and atanh of the mantissa's distance from 1. */
+/* the exponent times ln 2, plus an atanh series on the mantissa. */
 static double natural_log(double x)
 {
     union {
@@ -72,7 +72,7 @@ static double power_of_two(double y)
     return sum * scale.d;
 }
 
-/* the sine and cosine of angles within a few turns. */
+/* good for angles within a few turns. */
 static double sine(double x)
 {
     while (x > PI)
@@ -103,7 +103,7 @@ static double tangent(double x)
 
 static double arctangent(double t)
 {
-    /* two halvings bring it under the tangent of pi/16, where the series is short. */
+    /* two halvings bring t under the tangent of pi/16, where the series is short. */
     BOOL invert = t > 1 || t < -1;
     if (invert)
         t = 1 / t;
@@ -167,7 +167,7 @@ static BOOL normalize(D3DVECTOR *v)
     return TRUE;
 }
 
-/* windows' CheckVector: a vector longer than the floats reach is scaled back inside them. */
+/* a vector too long for the float range is scaled back inside it. */
 static D3DVECTOR check_vector(D3DVECTOR v)
 {
     double m = square_root((double)v.x * v.x + (double)v.y * v.y + (double)v.z * v.z);
@@ -194,7 +194,7 @@ static D3DVECTOR head_relative(D3DVECTOR v, const DS3DLISTENER *l)
     return (D3DVECTOR){dot(v, right), dot(v, up), dot(v, front)};
 }
 
-/* ------------------------------------------------------------------ the model */
+/* ------------------------------------------------------------------ model */
 
 void Ds3dDefaults(DSBUFFER *b)
 {
@@ -226,7 +226,7 @@ void DsListenerDefaults(LISTENER3D *l)
     l->dirty = 0;
 }
 
-/* CMultiPan3dObject::DistributeSignal: power between the two speakers around the direction, by a tangent law. */
+/* splits the power between the two speakers around the direction, by a tangent law. */
 static void distribute(double power, double azimuth, const double *speakers, int count, double *out)
 {
     double below = -4.0, above = 4.0;
@@ -261,7 +261,7 @@ static void distribute(double power, double azimuth, const double *speakers, int
     }
 }
 
-/* CMultiPan3dObject::CalculatePanValues, for the stereo speakers at -90 and 90 degrees. */
+/* pan levels for stereo speakers at -90 and 90 degrees. */
 static void pan_values(D3DVECTOR at, LONG pans[2])
 {
     static const double speakers[2] = {-1.5707963705062866, 1.5707963705062866};
@@ -286,7 +286,7 @@ static void pan_values(D3DVECTOR at, LONG pans[2])
         pans[i] = power[i] == 0.0 ? -10000 : (LONG)(natural_log(power[i]) * 434.2944881588036);
 }
 
-/* CSw3dObject::UpdateConeAttenuation. */
+/* 1 inside the cone, the outside volume beyond it, interpolated in between. */
 static float cone_attenuation(const DS3DBUFFER *p, const DS3DLISTENER *l)
 {
     if (p->dwInsideConeAngle >= 360 || p->dwMode == DS3DMODE_DISABLE)
@@ -306,7 +306,6 @@ static float cone_attenuation(const DS3DBUFFER *p, const DS3DLISTENER *l)
     return (float)power_of_two(volume * 0.0016666667f);
 }
 
-/* C3dObject::UpdateDoppler. */
 static DWORD doppler(const DS3DBUFFER *p, const DS3DLISTENER *l, DWORD frequency)
 {
     if (l->flDopplerFactor <= 0.0f || p->dwMode == DS3DMODE_DISABLE)
@@ -333,10 +332,9 @@ static DWORD doppler(const DS3DBUFFER *p, const DS3DLISTENER *l, DWORD frequency
 }
 
 /*
- * CMultiPan3dObject::Commit3dChanges and the engine's channel
- * attenuations: the buffer's volume and the 3d volume on every speaker,
- * each speaker's power on top. a mono source feeds each speaker once,
- * every channel of a stereo one feeds every speaker.
+ * each speaker gets the buffer's volume plus the 3d volume, scaled by its
+ * power. a mono source feeds each speaker once, every channel of a stereo
+ * one feeds every speaker.
  */
 void Ds3dApply(DSBUFFER *b)
 {
@@ -755,7 +753,7 @@ static HRESULT listener_changed(LISTENER3D *l, DWORD apply)
     return leave(DS_OK);
 }
 
-/* the front and the top: both of some length and not along each other, kept as given. */
+/* front and top must be nonzero and not parallel, and are kept unnormalized. */
 static BOOL valid_orientation(D3DVECTOR *front, D3DVECTOR *top)
 {
     if (is_nan(front->x) || is_nan(front->y) || is_nan(front->z) || is_nan(top->x) || is_nan(top->y) ||
@@ -920,7 +918,7 @@ static void commit_listener(LISTENER3D *l)
     l->dirty = 0;
 }
 
-/* every deferred change of the listener and of the device's buffers at once. */
+/* applies the deferred changes of the listener and of all the device's buffers at once. */
 static HRESULT STDMETHODCALLTYPE l3d_commit(IDirectSound3DListener *This)
 {
     LISTENER3D *l = enter_listener(This);

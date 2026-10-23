@@ -1,6 +1,6 @@
 /*
- * enumerators. the enumerators of interface pointers all have the same four methods after IUnknown, so one object
- * serves them, answering for the interface it was made for.
+ * enumerators. all interface pointer enumerators share the same four methods after IUnknown, so one object serves
+ * them all.
  */
 #include "msctf_private.h"
 
@@ -119,8 +119,6 @@ HRESULT EnumCreate(REFIID iid, IUnknown **items, ULONG count, void **out)
 {
     return enum_new(iid, items, count, 0, out);
 }
-
-/* ------------------------------------------------------------------ guids */
 
 typedef struct GUID_ENUM {
     const IEnumGUIDVtbl *Vtbl;

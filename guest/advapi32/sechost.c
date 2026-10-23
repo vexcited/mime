@@ -1,9 +1,8 @@
 /*
- * what sechost.dll of windows exports and mime's advapi32 had not: the services and security functions that windows
- * keeps in sechost and has advapi32 call, the credential store, the audit policy, event tracing sessions and the
- * private entry points of the service control manager. sechost.dll of mime forwards to these (docs/sechost.md). the
- * service and account functions are real; the rest either answer what an empty machine would or fail with the error of
- * a function that is not there, and log their name once.
+ * functions windows exports from sechost.dll that advapi32 lacked: the service and security functions windows keeps
+ * in sechost and calls from advapi32, the credential store, audit policy, event tracing sessions and the private
+ * service control manager entry points. mime's sechost.dll forwards to these. the service and account functions are
+ * real; the rest answer like an empty machine would, or fail like a missing function and log their name once.
  */
 #define MIME_BUILD_ADVAPI32 1
 #include "advapi32_private.h"
@@ -14,13 +13,13 @@
 
 /* ------------------------------------------------------------------ services */
 
-/* the unsuffixed name of windows' sechost is the wide function. */
+/* windows' sechost exports the wide function under the unsuffixed name. */
 ADVAPI DWORD WINAPI NotifyServiceStatusChange(SC_HANDLE service, DWORD mask, PSERVICE_NOTIFYW notify)
 {
     return NotifyServiceStatusChangeW(service, mask, notify);
 }
 
-/* what SetServiceBits calls: the bits of the service the manager keeps, the string is the name of the service. */
+/* backs SetServiceBits: the manager keeps the service's bits, and name is the service name. */
 ADVAPI DWORD WINAPI I_ScSetServiceBitsW(SERVICE_STATUS_HANDLE handle, DWORD bits, BOOL set, BOOL update, LPWSTR name)
 {
     (void)name;
@@ -33,7 +32,7 @@ ADVAPI DWORD WINAPI I_ScSetServiceBitsA(SERVICE_STATUS_HANDLE handle, DWORD bits
     return SetServiceBits(handle, bits, set, update) ? ERROR_SUCCESS : GetLastError();
 }
 
-/* svchost.exe hands the library the function that answers the manager's low resource notices. the manager sends none. */
+/* svchost.exe passes the callback for the manager's low resource notices, which the manager never sends. */
 ADVAPI DWORD WINAPI I_RegisterSvchostNotificationCallback(PVOID callback)
 {
     (void)callback;
@@ -69,7 +68,7 @@ MIME_STUB_RETURN("sechost", DWORD, I_ScSendPnPMessage, 6, ERROR_CALL_NOT_IMPLEME
 MIME_STUB_RETURN("sechost", DWORD, I_ScValidatePnPService, 4, ERROR_CALL_NOT_IMPLEMENTED)
 MIME_STUB_RETURN("sechost", DWORD, ScSendSynchronousPowerMessage, 4, ERROR_CALL_NOT_IMPLEMENTED)
 
-/* ------------------------------------------------------------------ rpc helpers of the service processes */
+/* ------------------------------------------------------------------ service process rpc helpers */
 
 MIME_STUB_RETURN("sechost", DWORD, LocalRpcBindingCreateWithSecurity, 5, ERROR_CALL_NOT_IMPLEMENTED)
 MIME_STUB_RETURN("sechost", DWORD, LocalRpcBindingSetAuthInfoEx, 2, ERROR_CALL_NOT_IMPLEMENTED)
@@ -79,7 +78,7 @@ MIME_STUB_RETURN("sechost", DWORD, RpcClientCapabilityCheck, 1, ERROR_CALL_NOT_I
 MIME_STUB_RETURN("sechost", NTSTATUS, CapabilityCheck, 3, LSA_NOT_IMPLEMENTED)
 MIME_STUB_RETURN("sechost", NTSTATUS, CapabilityCheckForSingleSessionSku, 2, LSA_NOT_IMPLEMENTED)
 
-/* ------------------------------------------------------------------ lsa, the parts without a policy database */
+/* ------------------------------------------------------------------ lsa, without a policy database */
 
 MIME_STUB_RETURN("sechost", NTSTATUS, LsaICLookupNames, 10, LSA_NOT_IMPLEMENTED)
 MIME_STUB_RETURN("sechost", NTSTATUS, LsaICLookupNamesWithCreds, 10, LSA_NOT_IMPLEMENTED)
@@ -93,7 +92,7 @@ MIME_STUB_RETURN("sechost", NTSTATUS, BuildSecurityDescriptorForSharingAccessEx,
 MIME_STUB_RETURN("sechost", NTSTATUS, QueryTransientObjectSecurityDescriptor, 3, LSA_NOT_IMPLEMENTED)
 MIME_STUB_RETURN("sechost", BOOLEAN, FreeTransientObjectSecurityDescriptor, 1, FALSE)
 
-/* ------------------------------------------------------------------ the audit policy: it is the administrator's, and nobody here is */
+/* ------------------------------------------------------------------ audit policy: administrators only, and nobody here is one */
 
 #define AUDIT_STUB(name, args) MIME_STUB_ERROR("sechost", BOOLEAN, name, args, ERROR_PRIVILEGE_NOT_HELD, FALSE)
 AUDIT_STUB(AuditComputeEffectivePolicyBySid, 4)
@@ -111,7 +110,7 @@ AUDIT_STUB(AuditSetPerUserPolicy, 3)
 AUDIT_STUB(AuditSetSecurity, 2)
 AUDIT_STUB(AuditSetSystemPolicy, 2)
 
-/* what audit and the credential store give out is freed alike. */
+/* audit and credential store buffers are freed the same way. */
 ADVAPI void WINAPI AuditFree(PVOID buffer)
 {
     AdvFree(buffer);
@@ -122,7 +121,7 @@ ADVAPI void WINAPI CredFree(PVOID buffer)
     AdvFree(buffer);
 }
 
-/* ------------------------------------------------------------------ the credential store: empty, and it keeps nothing */
+/* ------------------------------------------------------------------ credential store: empty, stores nothing */
 
 #define CRED_READ_STUB(type, name, args) MIME_STUB_ERROR("sechost", type, name, args, ERROR_NOT_FOUND, FALSE)
 #define CRED_STUB(type, name, args) MIME_STUB_ERROR("sechost", type, name, args, ERROR_NOT_SUPPORTED, FALSE)
@@ -171,9 +170,9 @@ MIME_STUB_RETURN("sechost", DWORD, CredpDecodeCredential, 1, ERROR_NOT_SUPPORTED
 MIME_STUB_RETURN("sechost", DWORD, CredpEncodeCredential, 1, ERROR_NOT_SUPPORTED)
 MIME_STUB_RETURN("sechost", DWORD, CredpEncodeSecret, 5, ERROR_NOT_SUPPORTED)
 
-/* ------------------------------------------------------------------ event tracing sessions: none can be made, none exist */
+/* ------------------------------------------------------------------ event tracing sessions: none exist or can be created */
 
-/* a session handle is 64 bits, which two arguments of a 32-bit process make. */
+/* a 64-bit session handle takes two arguments in a 32-bit process. */
 #define TRACE_STUB(name, args) MIME_STUB_RETURN("sechost", ULONG, name, args, ERROR_NOT_SUPPORTED)
 TRACE_STUB(StartTraceA, 3)
 TRACE_STUB(StartTraceW, 3)
@@ -211,7 +210,7 @@ MIME_STUB_RETURN("sechost", ULONGLONG, OpenTraceFromFile, 3, ~0ull)
 MIME_STUB_RETURN("sechost", ULONGLONG, OpenTraceFromRealTimeLogger, 3, ~0ull)
 MIME_STUB_RETURN("sechost", ULONGLONG, OpenTraceFromRealTimeLoggerWithAllocationOptions, 7, ~0ull)
 
-/* no provider registers itself with a session, so the list of the guids is empty. */
+/* no provider registers with a session, so the guid list is empty. */
 ADVAPI ULONG WINAPI EnumerateTraceGuids(PVOID *properties, ULONG count, PULONG guids)
 {
     (void)properties;
@@ -222,7 +221,7 @@ ADVAPI ULONG WINAPI EnumerateTraceGuids(PVOID *properties, ULONG count, PULONG g
     return ERROR_SUCCESS;
 }
 
-/* no session runs: the list of them is empty. */
+/* no session runs, so the list is empty. */
 ADVAPI ULONG WINAPI QueryAllTracesW(PVOID *properties, ULONG count, PULONG loggers)
 {
     (void)properties;
@@ -238,7 +237,7 @@ ADVAPI ULONG WINAPI QueryAllTracesA(PVOID *properties, ULONG count, PULONG logge
     return QueryAllTracesW(properties, count, loggers);
 }
 
-/* ------------------------------------------------------------------ conditions of security descriptors, identity providers, isolation */
+/* ------------------------------------------------------------------ descriptor conditions, identity providers, isolation */
 
 MIME_STUB_RETURN("sechost", DWORD, LocalGetConditionForString, 10, ERROR_CALL_NOT_IMPLEMENTED)
 MIME_STUB_RETURN("sechost", DWORD, LocalGetReferencedTokenTypesForCondition, 3, ERROR_CALL_NOT_IMPLEMENTED)

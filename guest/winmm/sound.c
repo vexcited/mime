@@ -1,8 +1,7 @@
 /*
- * PlaySound: a wave image from memory, a resource, a file or a system
- * alias, played through the wave mapper, so compressed formats go through
- * msacm32. asynchronous sounds play on a thread of their own, one at a
- * time: a new sound stops the one playing unless it asks not to.
+ * PlaySound loads wave data from memory, resources, files or system aliases. the wave mapper converts compressed
+ * formats through msacm32. asynchronous sounds run one at a time; a new sound stops the current one unless requested
+ * otherwise.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -10,7 +9,7 @@
 #define SND_INVALID_FLAGS 0xFF80DF20u
 
 typedef struct SOUND {
-    BYTE *image;      /* the whole riff image, ours */
+    BYTE *image;      /* the whole RIFF image, ours. */
     const WAVEFORMATEX *format;
     const BYTE *data;
     DWORD size;
@@ -26,7 +25,7 @@ static HANDLE heap(void)
     return GetProcessHeap();
 }
 
-/* the fmt and data chunks of a riff wave image. */
+/* the fmt and data chunks of a RIFF wave image. */
 static BOOL parse(SOUND *s, DWORD size)
 {
     const BYTE *p = s->image;
@@ -95,7 +94,7 @@ static BOOL load_resource(SOUND *s, HMODULE module, const WCHAR *name)
     return image && take_image(s, image, SizeofResource(module, r));
 }
 
-/* the file the current sound scheme gives an event of the system, such as SystemAsterisk. */
+/* resolves a system event, such as SystemAsterisk, through the current sound scheme. */
 static BOOL load_alias(SOUND *s, const WCHAR *alias)
 {
     WCHAR key[256], value[MAX_PATH], path[MAX_PATH];
@@ -134,7 +133,7 @@ static BOOL load(SOUND *s, const WCHAR *sound, HMODULE module, DWORD flags)
         return alias && load_alias(s, alias);
     }
     if (flags & SND_MEMORY && !(flags & (SND_RESOURCE & ~SND_MEMORY))) {
-        /* the image's size is in its riff header. */
+        /* the image's size is in its RIFF header. */
         const BYTE *p = (const BYTE *)sound;
         return !memcmp(p, "RIFF", 4) && take_image(s, p, *(const DWORD *)(p + 4) + 8);
     }
@@ -154,7 +153,6 @@ static void unload(SOUND *s)
     s->image = nullptr;
 }
 
-/* plays the sound until it ends, or until stop is set, looping when asked. */
 static BOOL play(SOUND *s, HANDLE stop)
 {
     HANDLE done = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -197,7 +195,7 @@ static DWORD WINAPI sound_thread(void *arg)
     return 0;
 }
 
-/* stops the asynchronous sound, waiting for its thread. */
+/* waits for the asynchronous playback thread to stop. */
 static void stop(void)
 {
     RtlEnterCriticalSection(&g_lock);
@@ -262,7 +260,7 @@ static BOOL play_sound(const WCHAR *sound, HMODULE module, DWORD flags)
     return ok;
 }
 
-/* a string argument names something but for memory images and alias numbers. */
+/* memory images and numeric aliases do not take string arguments. */
 static BOOL is_string(const void *sound, DWORD flags)
 {
     if ((flags & SND_ALIAS_ID) == SND_ALIAS_ID || ((flags & SND_MEMORY) && (flags & SND_RESOURCE) != SND_RESOURCE))

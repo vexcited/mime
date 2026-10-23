@@ -1,11 +1,7 @@
 /*
- * private protocol between the user mode gui dlls (user32, gdi32) and
- * win32k.sys: system service prototypes, multiplexer routine numbers and
- * kernel to user callbacks.
- *
- * services keep their real windows names and numbers. their parameters are
- * close to the real ones where those are known; the multiplexers NtUserCall*
- * and NtGdiGetAndSetDCDword use mime routine numbers.
+ * the private protocol between user32, gdi32 and win32k.sys: service prototypes, multiplexer routine numbers and
+ * kernel to user callbacks. services keep their windows names and numbers, with parameters close to the real ones
+ * where known; the NtUserCall* multiplexers and NtGdiGetAndSetDCDword use mime's own routine numbers.
  */
 #ifndef MIME_NTUSER_H
 #define MIME_NTUSER_H
@@ -20,7 +16,7 @@
 #endif
 #endif
 
-/* window manager error codes winerror.h does not define yet. */
+/* window manager errors missing from winerror.h. */
 #ifndef ERROR_CLIPBOARD_NOT_OPEN
 #define ERROR_CLIPBOARD_NOT_OPEN 1418L
 #endif
@@ -39,37 +35,36 @@
 
 /* ------------------------------------------------------------------ kernel callbacks */
 
-/* indices into PEB->KernelCallbackTable, filled by user32. */
+/* indices into PEB->KernelCallbackTable, which user32 fills. */
 enum {
-    MIME_CB_WINDOWPROC = 0,  /* MIME_WINDOWPROC_ARGS -> LRESULT, output may carry updated lparam data */
+    MIME_CB_WINDOWPROC = 0,  /* MIME_WINDOWPROC_ARGS -> LRESULT, the output may carry updated lparam data. */
     MIME_CB_TIMERPROC = 1,   /* MIME_TIMERPROC_ARGS */
-    MIME_CB_LOADSYSTEM = 2,  /* reserved */
-    MIME_CB_HOOKPROC = 3,    /* MIME_HOOKPROC_ARGS -> LRESULT, output carries the updated lparam data */
-    MIME_CB_SENDASYNC = 4,   /* MIME_SENDASYNC_ARGS, the result of a SendMessageCallback */
+    MIME_CB_LOADSYSTEM = 2,  /* reserved. */
+    MIME_CB_HOOKPROC = 3,    /* MIME_HOOKPROC_ARGS -> LRESULT, the output carries the updated lparam data. */
+    MIME_CB_SENDASYNC = 4,   /* MIME_SENDASYNC_ARGS, the result of a SendMessageCallback. */
     MIME_CB_COUNT = 8,
 };
 
-/* how the lparam of a callback was marshaled into the argument buffer. */
+/* how a callback's lparam was marshaled into the argument buffer. */
 enum {
-    MIME_LPARAM_VALUE = 0,       /* passed through unchanged */
-    MIME_LPARAM_IN = 1,          /* points to Data, read only */
-    MIME_LPARAM_INOUT = 2,       /* points to Data, copied back to the kernel on return */
-    MIME_LPARAM_CREATESTRUCT = 3, /* CREATESTRUCTW followed by the name and class strings */
-    MIME_LPARAM_PTR2 = 4,         /* Data holds two DWORDs, wparam and lparam point at them */
-    MIME_LPARAM_WPTR = 5          /* Data holds one DWORD, wparam points at it and lparam passes through */
+    MIME_LPARAM_VALUE = 0,       /* passed through unchanged. */
+    MIME_LPARAM_IN = 1,          /* points to Data, read only. */
+    MIME_LPARAM_INOUT = 2,       /* points to Data, copied back to the kernel on return. */
+    MIME_LPARAM_CREATESTRUCT = 3, /* CREATESTRUCTW followed by the name and class strings. */
+    MIME_LPARAM_PTR2 = 4,         /* Data holds two DWORDs, wparam and lparam point at them. */
+    MIME_LPARAM_WPTR = 5          /* Data holds one DWORD, wparam points at it and lparam passes through. */
 };
 
 /*
- * a block too large for the callback stack is not in Data: the kernel put it in memory of the receiver and Lparam
- * points at it, DataSize being its size. the result carries no data then, the kernel reads the block itself.
+ * a block too large for the callback stack is not in Data: the kernel put it in the receiver's memory, Lparam
+ * points at it and DataSize is its size. the result then carries no data, the kernel reads the block itself.
  */
 #define MIME_LPARAM_EXTERNAL 0x100
 #define MIME_LPARAM_KIND(kind) ((kind) & 0xFF)
 
 /*
- * in MIME_LPARAM_CREATESTRUCT data, lpszName and lpszClass hold byte offsets
- * from the start of Data, 0 for NULL. for WM_NCCALCSIZE with wparam TRUE the
- * data is NCCALCSIZE_PARAMS followed by its WINDOWPOS and lppos must be
+ * in MIME_LPARAM_CREATESTRUCT data, lpszName and lpszClass are byte offsets from the start of Data, 0 for NULL.
+ * for WM_NCCALCSIZE with wparam TRUE, the data is NCCALCSIZE_PARAMS followed by its WINDOWPOS, and lppos must be
  * pointed at it.
  */
 
@@ -80,14 +75,14 @@ typedef struct MIME_WINDOWPROC_ARGS {
     UINT LparamKind;
     WPARAM Wparam;
     LPARAM Lparam;
-    ULONG Ansi;      /* the procedure expects ansi messages */
-    ULONG DataSize;  /* bytes of Data */
-    UCHAR Data[];    /* marshaled lparam, 16 byte aligned */
+    ULONG Ansi;      /* the procedure expects ansi messages. */
+    ULONG DataSize;
+    UCHAR Data[];    /* marshaled lparam, 16 byte aligned. */
 } MIME_WINDOWPROC_ARGS;
 
 typedef struct MIME_CALLBACK_RESULT {
     LRESULT Result;
-    ULONG DataSize; /* updated Data for MIME_LPARAM_INOUT */
+    ULONG DataSize; /* updated Data for MIME_LPARAM_INOUT. */
     ULONG Pad;
     UCHAR Data[];
 } MIME_CALLBACK_RESULT;
@@ -100,7 +95,7 @@ typedef struct MIME_TIMERPROC_ARGS {
     DWORD Time;
 } MIME_TIMERPROC_ARGS;
 
-/* the result of a SendMessageCallback, called in the thread that sent the message. */
+/* runs in the thread that sent the message. */
 typedef struct MIME_SENDASYNC_ARGS {
     SENDASYNCPROC Proc;
     HWND Hwnd;
@@ -109,7 +104,7 @@ typedef struct MIME_SENDASYNC_ARGS {
     LRESULT Result;
 } MIME_SENDASYNC_ARGS;
 
-/* a hook procedure call. with DataSize the lparam points to Data, a copy of the hook structure. */
+/* with a DataSize, lparam points to Data, a copy of the hook structure. */
 typedef struct MIME_HOOKPROC_ARGS {
     HOOKPROC Proc;
     int Id;
@@ -147,10 +142,10 @@ typedef struct MIME_CLIENT_INFO {
     WNDPROC DefWindowProcW;
 } MIME_CLIENT_INFO;
 
-/* the program is 32-bit: win32k hands it callbacks in the 64-bit layouts, converted by its wow64 layer. */
+/* the program is 32-bit: win32k gives it callbacks in the 64-bit layouts, which its wow64 layer converts. */
 #define MIME_CLIENT_WOW 0x1
 
-/* flags for NtUserRegisterClassExWOW. */
+/* NtUserRegisterClassExWOW flags. */
 #define MIME_CLASS_ANSI 0x1
 #define MIME_CLASS_SYSTEM 0x2
 
@@ -180,29 +175,29 @@ enum {
     MIME_ONEPARAM_SETPROCESSDPIAWARENESS,
     MIME_ONEPARAM_GETPROCESSDPIAWARENESS,
     MIME_ONEPARAM_REPLYMESSAGE,
-    MIME_ONEPARAM_SETMESSAGEEXTRAINFO,  /* the new value -> the old one */
+    MIME_ONEPARAM_SETMESSAGEEXTRAINFO,  /* the new value -> the old one. */
 };
 
 enum {
     MIME_TWOPARAM_GETSYSTEMMETRICS = 1, /* index, dpi */
     MIME_TWOPARAM_SETCURSORPOS,
-    MIME_TWOPARAM_MONITORFROMPOINT,     /* unused */
+    MIME_TWOPARAM_MONITORFROMPOINT,     /* unused. */
     MIME_TWOPARAM_GETMONITORINFO,       /* monitor, MONITORINFO pointer */
     MIME_TWOPARAM_WINDOWFROMPOINT,      /* x, y */
-    MIME_TWOPARAM_GETMONITORS,          /* MIME_MONITOR_INFO array, its capacity -> how many monitors there are */
-    MIME_TWOPARAM_HOSTMOVESIZE,         /* window, 0 or a WMSZ_* edge: the host moves or sizes it under the pointer -> TRUE when it does */
+    MIME_TWOPARAM_GETMONITORS,          /* MIME_MONITOR_INFO array, its capacity -> the number of monitors. */
+    MIME_TWOPARAM_HOSTMOVESIZE,         /* window, 0 or a WMSZ_* edge: the host moves or sizes it under the pointer -> TRUE when it does. */
 };
 
-/* a monitor as NtUserCallTwoParam's MIME_TWOPARAM_GETMONITORS hands it out. */
+/* what MIME_TWOPARAM_GETMONITORS returns per monitor. */
 #define MIME_USER_MAX_MONITORS 8
 typedef struct MIME_MONITOR_INFO {
     ULONG Flags; /* MONITORINFOF_PRIMARY */
-    ULONG Dpi;   /* of the display, whatever the process is aware of */
+    ULONG Dpi;   /* the display's, whatever the process is aware of. */
     ULONG RefreshHz;
     RECT Rect;
     RECT Work;
     WCHAR Device[32]; /* \\.\DISPLAYn */
-    WCHAR Name[32];   /* the host's name for the monitor */
+    WCHAR Name[32];   /* the host's name for the monitor. */
 } MIME_MONITOR_INFO;
 
 enum {
@@ -228,21 +223,21 @@ enum {
     MIME_HWNDPARAM_GETCLIENTRECT,       /* RECT pointer */
     MIME_HWNDPARAM_ISCHILD,             /* parent */
     MIME_HWNDPARAM_GETDLGITEM,          /* id */
-    MIME_HWNDPARAM_GETTHREADPROCESSID,  /* DWORD pointer for the pid, returns the tid */
+    MIME_HWNDPARAM_GETTHREADPROCESSID,  /* DWORD pointer for the pid, returns the tid. */
     MIME_HWNDPARAM_MAPPOINTS,           /* MIME_MAP_POINTS pointer */
     MIME_HWNDPARAM_GETWINDOWINFO,       /* WINDOWINFO pointer */
     MIME_HWNDPARAM_SETICON,             /* MIME_SET_ICON pointer */
     MIME_HWNDPARAM_GETICON,             /* ICON_BIG or ICON_SMALL */
-    MIME_HWNDPARAM_SETDIALOGINFO,       /* nonzero marks the window as a dialog */
-    MIME_HWNDPARAM_ADJUSTRECT,          /* MIME_ADJUST_RECT pointer, uses the window dpi */
+    MIME_HWNDPARAM_SETDIALOGINFO,       /* nonzero marks the window as a dialog. */
+    MIME_HWNDPARAM_ADJUSTRECT,          /* MIME_ADJUST_RECT pointer, uses the window dpi. */
     MIME_HWNDPARAM_CHILDFROMPOINT,      /* packed client point */
     MIME_HWNDPARAM_SETCONTEXTHELPID,
-    MIME_HWNDPARAM_ENABLECLOSE,         /* nonzero enables SC_CLOSE, zero greys the close button */
-    MIME_HWNDPARAM_SETTOUCH,            /* MIME_TOUCH_REGISTERED and TWF_* flags, 0 unregisters */
-    MIME_HWNDPARAM_SYSTIMER,            /* MIME_SYS_TIMER pointer, an elapse of 0 kills the timer */
-    MIME_HWNDPARAM_SETAFFINITY,         /* WDA_*: how captures of the screen show the window */
+    MIME_HWNDPARAM_ENABLECLOSE,         /* nonzero enables SC_CLOSE, zero greys the close button. */
+    MIME_HWNDPARAM_SETTOUCH,            /* MIME_TOUCH_REGISTERED and TWF_* flags, 0 unregisters. */
+    MIME_HWNDPARAM_SYSTIMER,            /* MIME_SYS_TIMER pointer, an elapse of 0 kills the timer. */
+    MIME_HWNDPARAM_SETAFFINITY,         /* WDA_*: how screen captures show the window. */
     MIME_HWNDPARAM_GETAFFINITY,
-    MIME_HWNDPARAM_GETCLASSWORD,        /* byte offset into the extra bytes of the class: the word there, or ERROR_INVALID_INDEX */
+    MIME_HWNDPARAM_GETCLASSWORD,        /* byte offset into the class extra bytes -> the word there, or ERROR_INVALID_INDEX. */
 };
 
 typedef struct MIME_SYS_TIMER {
@@ -255,11 +250,11 @@ typedef struct MIME_SYS_TIMER {
 /* NtUserMessageCall types. */
 enum {
     MIME_MSGCALL_SEND = 0,           /* SendMessage */
-    MIME_MSGCALL_DEFWINDOWPROC = 1,  /* default processing in win32k */
+    MIME_MSGCALL_DEFWINDOWPROC = 1,  /* default processing in win32k. */
     MIME_MSGCALL_SENDNOTIFY = 2,     /* SendNotifyMessage */
-    MIME_MSGCALL_SENDTIMEOUT = 3,    /* result_info points to a MIME_SEND_TIMEOUT */
-    MIME_MSGCALL_SENDCALLBACK = 4,   /* SendMessageCallback, result_info points to a MIME_SEND_CALLBACK */
-    MIME_MSGCALL_BROADCAST = 5,      /* BroadcastSystemMessage, result_info points to a MIME_BROADCAST */
+    MIME_MSGCALL_SENDTIMEOUT = 3,    /* result_info points to a MIME_SEND_TIMEOUT. */
+    MIME_MSGCALL_SENDCALLBACK = 4,   /* SendMessageCallback, result_info points to a MIME_SEND_CALLBACK. */
+    MIME_MSGCALL_BROADCAST = 5,      /* BroadcastSystemMessage, result_info points to a MIME_BROADCAST. */
 };
 
 typedef struct MIME_SEND_CALLBACK {
@@ -267,12 +262,12 @@ typedef struct MIME_SEND_CALLBACK {
     ULONG_PTR Data;
 } MIME_SEND_CALLBACK;
 
-/* the arguments of BroadcastSystemMessageEx once checked by user32, and what it learns. */
+/* BroadcastSystemMessageEx arguments after user32 checked them, and what comes back. */
 typedef struct MIME_BROADCAST {
-    ULONG Recipients;  /* BSM_*, in and out */
+    ULONG Recipients;  /* BSM_*, in and out. */
     ULONG Flags;       /* BSF_* */
-    HWND Hwnd;         /* out: the window that denied a query */
-    HDESK Desktop;     /* out: its desktop */
+    HWND Hwnd;         /* out: the window that denied a query. */
+    HDESK Desktop;     /* out: its desktop. */
 } MIME_BROADCAST;
 
 typedef struct MIME_SEND_TIMEOUT {
@@ -316,20 +311,20 @@ enum {
     MIME_DCDW_ARCDIRECTION,
     MIME_DCDW_POLYFILLMODE,
     MIME_DCDW_TEXTCHAREXTRA,
-    MIME_DCDW_PIXELFORMAT,  /* read only, set with NtGdiSetPixelFormat */
-    MIME_DCDW_PATHSTATE,    /* read only: 0 no path, 1 open, 2 closed */
+    MIME_DCDW_PIXELFORMAT,  /* read only, set with NtGdiSetPixelFormat. */
+    MIME_DCDW_PATHSTATE,    /* read only: 0 no path, 1 open, 2 closed. */
     MIME_DCDW_WINDOW,
 };
 
-/* NtGdiDoPalette functions, with the numbers of windows: the color table of a dib section. */
+/* NtGdiDoPalette functions on the color table of a dib section, numbered as on windows. */
 #define MIME_PAL_GETDIBCOLORTABLE 4
 #define MIME_PAL_SETDIBCOLORTABLE 5
 
 /* NtGdiGetCharWidthW and NtGdiGetCharABCWidthsW flags. */
-#define MIME_GCW_INDICES 0x0008      /* chars are glyph indices */
-#define MIME_GCABCW_INDICES 0x0002   /* chars are glyph indices */
-#define MIME_GCABCW_FLOAT 0x0100     /* the buffer receives ABCFLOAT values */
-#define MIME_GTEE_INDICES 0x0001     /* NtGdiGetTextExtentExW: the text is glyph indices */
+#define MIME_GCW_INDICES 0x0008      /* chars are glyph indices. */
+#define MIME_GCABCW_INDICES 0x0002   /* chars are glyph indices. */
+#define MIME_GCABCW_FLOAT 0x0100     /* the buffer receives ABCFLOAT values. */
+#define MIME_GTEE_INDICES 0x0001     /* NtGdiGetTextExtentExW: the text is glyph indices. */
 
 /* NtGdiPolyPolyDraw functions. */
 enum {
@@ -351,9 +346,8 @@ enum {
 #define MIME_EXTENT_VIEWPORT 1
 
 /*
- * NtGdiEnumFonts output: one record per face that matches the request,
- * written back to back. the buffer size is given in bytes and receives the
- * size needed.
+ * NtGdiEnumFonts output: one record per matching face, back to back. the buffer size is in bytes and receives
+ * the size needed.
  */
 typedef struct MIME_FONT_ENUM_RECORD {
     ENUMLOGFONTEXW Font;
@@ -373,10 +367,9 @@ enum {
 };
 
 /*
- * icons: the color bitmap is 32 bpp premultiplied; the mask is optional and
- * twice as tall, and mask then image, when there is no color bitmap.
- * MIME_CURSORF_SYSTEM marks a system cursor whose IDC_ value is in the low word
- * of Flags, shown by the host with its native cursor.
+ * icons: the color bitmap is 32 bpp premultiplied and the mask optional. without a color bitmap the mask is
+ * twice as tall, mask then image. MIME_CURSORF_SYSTEM marks a system cursor with its IDC_ value in the low word
+ * of Flags, which the host shows as its native cursor.
  */
 #define MIME_CURSORF_SYSTEM 0x80000000u
 typedef struct MIME_CURSOR_DATA {
@@ -396,24 +389,23 @@ typedef struct MIME_CURSOR_DATA {
 enum {
     MIME_MENU_ISMENU = 1,
     MIME_MENU_ITEMCOUNT,
-    MIME_MENU_DEFAULTITEM, /* param: low word GMDI_* flags, bit 16 by position */
+    MIME_MENU_DEFAULTITEM, /* param: GMDI_* flags in the low word, bit 16 for by position. */
     MIME_MENU_GETINFO,     /* param: MENUINFO pointer */
-    MIME_MENU_SYSTEMWINDOW, /* the window whose system menu this is, NULL for other menus */
+    MIME_MENU_SYSTEMWINDOW, /* the window whose system menu this is, NULL for other menus. */
 };
 
 /* ------------------------------------------------------------------ clipboard */
 
 /*
- * memory formats travel as bytes: NtUserSetClipboardData copies Size bytes
- * from Data, and NtUserGetClipboardData copies up to Size bytes into Data
- * and returns the full size in Size. gdi formats pass their handle and no
- * data; delayed rendering passes neither.
+ * memory formats travel as bytes: NtUserSetClipboardData copies Size bytes from Data, NtUserGetClipboardData
+ * copies up to Size bytes into Data and returns the full size in Size. gdi formats pass their handle and no data;
+ * delayed rendering passes neither.
  */
 typedef struct MIME_CLIPBOARD_DATA {
     PVOID Data;
     SIZE_T Size;
-    DWORD Sequence; /* get: sequence number the data belongs to */
-    BOOL Gdi;       /* get: the result is a gdi handle */
+    DWORD Sequence; /* get: the sequence number the data belongs to. */
+    BOOL Gdi;       /* get: the result is a gdi handle. */
 } MIME_CLIPBOARD_DATA;
 
 /* ------------------------------------------------------------------ window properties */
@@ -555,16 +547,16 @@ W32KAPI ULONG_PTR NTAPI NtUserMimeCallMenu(HMENU menu, ULONG_PTR param, ULONG ro
 
 /* ------------------------------------------------------------------ shutdown */
 
-/* the message the shutdown sends a thread, whose default processing asks its windows. */
+/* sent to a thread during shutdown; its default processing asks the thread's windows. */
 #define MX_WM_CLIENTSHUTDOWN 0x3B
-/* its flags: how the shutdown goes and what the windows are told in the lparam of WM_QUERYENDSESSION. */
+/* how the shutdown goes, and what the windows get in the lparam of WM_QUERYENDSESSION. */
 #define MX_WMCS_CLOSEAPP 0x00000001    /* ENDSESSION_CLOSEAPP */
-#define MX_WMCS_QUERY 0x00000002       /* ask WM_QUERYENDSESSION, else send WM_ENDSESSION */
+#define MX_WMCS_QUERY 0x00000002       /* send WM_QUERYENDSESSION, else WM_ENDSESSION. */
 #define MX_WMCS_SHUTDOWN 0x00000004
-#define MX_WMCS_USERPROCESS 0x00000008 /* the process is the user's and ends once its windows were told */
+#define MX_WMCS_USERPROCESS 0x00000008 /* a user process, which ends once its windows were told. */
 #define MX_WMCS_FORCEIFHUNG 0x00000040
 #define MX_WMCS_NORETRY 0x00000080
-#define MX_WMCS_ENDING 0x00000100      /* wparam of WM_ENDSESSION */
+#define MX_WMCS_ENDING 0x00000100      /* the wparam of WM_ENDSESSION. */
 #define MX_WMCS_QUICK 0x00000200
 #define MX_WMCS_REBOOT 0x00000400
 #define MX_WMCS_CRITICAL 0x40000000    /* ENDSESSION_CRITICAL */
@@ -578,11 +570,11 @@ W32KAPI LONG NTAPI NtUserMimeExitWindows(ULONG flags, ULONG reason);
 
 /* ------------------------------------------------------------------ gpu */
 
-/* the host window region a window dc renders to, see mime/gpu.h. */
+/* where a window dc renders in its host window, see mime/gpu.h. */
 typedef struct MIME_GPU_SURFACE {
     HWND Window;
-    ULONG HostWindow; /* 0 while the window is hidden */
-    LONG X, Y;        /* client area in the host window's surface */
+    ULONG HostWindow; /* 0 while the window is hidden. */
+    LONG X, Y;        /* the client area in the host window's surface. */
     ULONG Width, Height;
 } MIME_GPU_SURFACE;
 
@@ -592,76 +584,74 @@ W32KAPI NTSTATUS NTAPI NtGdiMimeGpuKick(void);
 W32KAPI NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms);
 W32KAPI BOOL NTAPI NtGdiMimeGpuGetSurface(HDC dc, MIME_GPU_SURFACE *surface);
 
-/* audio output streams of the process, mime/audio.h. */
-#define MIME_AUDIO_OPEN 0  /* plays the format written in the header */
+/* the process's audio output streams, see mime/audio.h. */
+#define MIME_AUDIO_OPEN 0  /* plays the format written in the header. */
 #define MIME_AUDIO_START 1
 #define MIME_AUDIO_STOP 2
-#define MIME_AUDIO_CLOSE 3 /* the slot and its memory go back to the process for a later stream */
+#define MIME_AUDIO_CLOSE 3 /* the slot and its memory stay with the process for a later stream. */
 W32KAPI NTSTATUS NTAPI NtGdiMimeAudioCreate(PVOID *base, PULONG index);
 W32KAPI NTSTATUS NTAPI NtGdiMimeAudioControl(ULONG index, ULONG op);
 
-/* the vulkan connection of the process and its blocks of shared memory, mime/mvk_wire.h. */
+/* the process's vulkan connection and its shared memory blocks, see mime/mvk_wire.h. */
 W32KAPI NTSTATUS NTAPI NtGdiMimeVkOpen(PVOID *base);
 W32KAPI NTSTATUS NTAPI NtGdiMimeVkAlloc(SIZE_T size, PVOID *base, PULONG64 pa);
 W32KAPI NTSTATUS NTAPI NtGdiMimeVkFree(PVOID base);
 W32KAPI NTSTATUS NTAPI NtGdiMimeVkKick(void);
 W32KAPI NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms);
 
-/* shared direct3d resources and fences: the services of mime/gfxshare.h. */
+/* shared direct3d resources and fences, see mime/gfxshare.h. */
 W32KAPI NTSTATUS NTAPI NtGdiMimeGfxShare(ULONG op, PVOID arguments);
 
-/* the display's gamma ramps, three channels of 256 values, red first. */
-#define MIME_GAMMA_GET 0    /* the ramp gdi set for the session, the identity before any */
-#define MIME_GAMMA_SET 1    /* gdi's ramp */
-#define MIME_GAMMA_DEVICE 2 /* the calling process's fullscreen ramp over gdi's, null to drop it */
+/* display gamma ramps: three channels of 256 values, red first. */
+#define MIME_GAMMA_GET 0    /* the session ramp gdi set, the identity until one is set. */
+#define MIME_GAMMA_SET 1    /* gdi's ramp. */
+#define MIME_GAMMA_DEVICE 2 /* the caller's fullscreen ramp over gdi's, NULL drops it. */
 W32KAPI NTSTATUS NTAPI NtGdiMimeGamma(ULONG op, PUSHORT ramp);
 
 /*
- * drag and drop with the host's programs (win32k dnd.c). a target registers a window and the handler of its
- * process; a drag over the window then posts WM_MIME_HOSTDND to its thread, wparam the handler (zero for a window
- * that only takes files, which user32 handles itself) and lparam the phase and the session. MIME_DND_STATE and
- * NtUserMimeDndData give the target what the drag holds, MIME_DND_REPLY its answers. a source starts a host drag
- * and gets the host's requests for data and its end as the same message, to its thread.
+ * drag and drop with host programs, see win32k dnd.c. a target registers a window and its process's handler; a
+ * drag over the window then posts WM_MIME_HOSTDND to its thread, wparam the handler and lparam the phase and
+ * session. the handler is zero for a window that only takes files, which user32 handles itself. MIME_DND_STATE
+ * and NtUserMimeDndData tell the target what the drag holds, MIME_DND_REPLY carries its answers. a source starts
+ * a host drag and gets the host's data requests and the drag's end as the same message, on its thread.
  */
 #define MIME_DND_PHASE_ENTER 1
 #define MIME_DND_PHASE_OVER 2
 #define MIME_DND_PHASE_LEAVE 3
 #define MIME_DND_PHASE_DROP 4
-#define MIME_DND_PHASE_REQUEST 5 /* lparam >> 4 is the slot of the request, see MIME_DND_REQUEST */
+#define MIME_DND_PHASE_REQUEST 5 /* lparam >> 4 is the request slot, see MIME_DND_REQUEST. */
 #define MIME_DND_PHASE_END 6
-#define MIME_DND_GOING 0xFFFFFFFFu /* MIME_DND_RESULT while the host drag goes on; else dropped << 8 | effect */
-#define MIME_DND_STATE_SIZE 16     /* kinds, allowed effects, keys, x, y, number of formats, then the formats */
+#define MIME_DND_GOING 0xFFFFFFFFu /* MIME_DND_RESULT while the host drag goes on, else dropped << 8 | effect. */
+#define MIME_DND_STATE_SIZE 16     /* kinds, allowed effects, keys, x, y, format count, then the formats. */
 enum {
-    MIME_DND_REGISTER = 1, /* hwnd, handler: the window takes drops */
+    MIME_DND_REGISTER = 1, /* hwnd, handler: the window takes drops. */
     MIME_DND_REVOKE,       /* hwnd */
-    MIME_DND_REPLY,        /* session, phase << 8 | effect: the target's answer */
-    MIME_DND_STATE,        /* session, 0, out: ULONG[MIME_DND_STATE_SIZE]; returns 1 while the session is current */
-    MIME_DND_START,        /* kinds, allowed effects, handler: this thread begins a host drag; returns its session */
-    MIME_DND_ICON,         /* bytes, 0, out: the MimeDragIcon the next MIME_DND_START of this thread shows; returns 1 */
+    MIME_DND_REPLY,        /* session, phase << 8 | effect: the target's answer. */
+    MIME_DND_STATE,        /* session, 0, out: ULONG[MIME_DND_STATE_SIZE]. returns 1 while the session is current. */
+    MIME_DND_START,        /* kinds, allowed effects, handler: this thread starts a host drag. returns its session. */
+    MIME_DND_ICON,         /* bytes, 0, out: the MimeDragIcon this thread's next MIME_DND_START shows. returns 1. */
     MIME_DND_STOP,         /* session */
-    MIME_DND_REQUEST,      /* slot, 0, out: ULONG[2] kind and request of a data request for the source */
-    MIME_DND_RESULT,       /* session: how the source's host drag ended */
-    MIME_DND_OUTSIDE,      /* whether the host says the pointer is outside the window of its last event */
+    MIME_DND_REQUEST,      /* slot, 0, out: ULONG[2], the kind and request of a data request for the source. */
+    MIME_DND_RESULT,       /* session: how the source's host drag ended. */
+    MIME_DND_OUTSIDE,      /* whether the host says the pointer left the window of its last event. */
 };
 W32KAPI ULONG_PTR NTAPI NtUserMimeDnd(ULONG op, ULONG_PTR a, ULONG_PTR b, PULONG out);
-/* a chunk of what a drag over the guest holds in a clipboard format, from offset; total gets its size. */
+/* a chunk, from offset, of what a drag over the guest holds in a clipboard format. total gets its size. */
 W32KAPI ULONG NTAPI NtUserMimeDndData(ULONG session, ULONG format, PUCHAR buffer, ULONG capacity, ULONG offset,
                                       PULONG total);
-/* a chunk of the data the host asked the source for; total is 0xFFFFFFFF for none. */
 /*
- * the input method of the host (win32k ime.c). a composition is the session's, for the window with the focus of
- * the foreground thread. MIME_IME_GET gives a part of it as ImmGetCompositionString does, MIME_IME_AREA tells
- * the host where text is entered in a window (buffer: left, top, right, bottom and the caret's x, client
- * coordinates of the window a), MIME_IME_NOTIFY ends the composition (a: CPS_COMPLETE or CPS_CANCEL),
- * MIME_IME_AVAILABLE says whether the host has an input method at all.
+ * the host's input method, see win32k ime.c. the session has one composition, for the focus window of the
+ * foreground thread. MIME_IME_GET returns part of it like ImmGetCompositionString. MIME_IME_AREA tells the host
+ * where text goes in window a: buffer holds left, top, right, bottom and the caret x, in client coordinates.
+ * MIME_IME_NOTIFY ends the composition, a being CPS_COMPLETE or CPS_CANCEL. MIME_IME_AVAILABLE says whether the
+ * host has an input method at all.
  *
- * a program that composes through the text services framework (msctf.dll) takes the host's input method from
- * there. MIME_IME_TSF registers a window of the calling thread, a: the window or NULL, which then gets
- * MIME_TSF_MESSAGE instead of the input method messages: wparam is MIME_IME_PREEDIT, MIME_IME_COMMIT or
- * MIME_IME_CANCELLED of the host's events, lparam the selected part of a preedit text as two words, each the
- * position plus one or 0 for none. the window answers 1 when the text service took the event, else the input
- * method messages follow as usual. MIME_IME_PENDING gives the text of the event being sent, MIME_IME_RESET
- * drops what the host's input method holds of a composition, without any message.
+ * a program that composes through msctf.dll gets the host's input method from there. MIME_IME_TSF registers a
+ * window of the calling thread, or NULL, as a; that window then gets MIME_TSF_MESSAGE instead of the input method
+ * messages, with wparam MIME_IME_PREEDIT, MIME_IME_COMMIT or MIME_IME_CANCELLED, and lparam the selected part of a
+ * preedit text as two words, each a position plus one, or 0 for none. the window answers 1 when the text service
+ * took the event, otherwise the usual input method messages follow. MIME_IME_PENDING returns the text of the event
+ * being sent. MIME_IME_RESET silently drops what the host's input method holds of a composition.
  */
 enum {
     MIME_IME_GET = 1,
@@ -676,11 +666,11 @@ enum {
 W32KAPI ULONG NTAPI NtUserMimeIme(ULONG op, ULONG_PTR a, ULONG_PTR b, PUCHAR buffer, ULONG size);
 
 /*
- * the notification area (win32k tray.c). shell32 keeps the icons of Shell_NotifyIcon in win32k, which tells the
- * host's desktop and sends the clicks back to the window as the icon's callback message. MIME_TRAYOP_MENU is
- * TrackPopupMenu's: when the desktop asked an icon for its context menu, the menu is the desktop's to show and
- * the call returns 1, and MIME_TRAYOP_MENU_RESULT then gives 0 while the choice is awaited, 1 for none, else
- * 0x80000000 and the item's id. the handles are 32 bits, as they are in windows.
+ * the notification area, see win32k tray.c. shell32 keeps the Shell_NotifyIcon icons in win32k, which tells the
+ * host's desktop and sends clicks back to the window as the icon's callback message. MIME_TRAYOP_MENU serves
+ * TrackPopupMenu: when the desktop asked an icon for its context menu, the desktop shows the menu and the call
+ * returns 1. MIME_TRAYOP_MENU_RESULT then returns 0 while the choice is pending, 1 for none, else 0x80000000 with
+ * the item id. handles are 32 bits, as on windows.
  */
 enum {
     MIME_TRAYOP_ADD = 1,
@@ -692,8 +682,8 @@ enum {
 
 typedef struct MIME_TRAY_REQUEST {
     ULONG Window;
-    ULONG Key; /* shell32's number for the icon, what the window and uID or GUID name */
-    ULONG Id;  /* uID, the icon's number in its callback */
+    ULONG Key; /* shell32's number for the icon, which the window and uID or GUID identify. */
+    ULONG Id;  /* uID, the icon's number in its callback. */
     ULONG Flags; /* NIF_* */
     ULONG Callback;
     ULONG Icon;
@@ -702,17 +692,17 @@ typedef struct MIME_TRAY_REQUEST {
     ULONG BalloonIcon;
     ULONG InfoFlags; /* NIIF_* */
     ULONG Timeout;
-    ULONG Menu; /* HMENU, for MIME_TRAYOP_MENU */
+    ULONG Menu; /* HMENU, for MIME_TRAYOP_MENU. */
     WCHAR Tip[128];
     WCHAR InfoTitle[64];
     WCHAR Info[256];
 } MIME_TRAY_REQUEST;
 
 /*
- * NtUserMimeShell: MIME_SHELLOP_COMMAND passes a MimeShellToast or a MimeShellWindow of mime/abi.h as request, the size
- * being its own, and gives the toast's number for a MIME_SHELL_TOAST_SHOW, 1 or 0 for MIME_SHELL_TOAST_PROBE, else
- * 0 or a failing status. MIME_SHELLOP_WAIT waits for an event of the toasts the caller made, for id milliseconds
- * (0xFFFFFFFF for as long as it takes), and gives 1 with the event in request, 0 for none, or the status that woke it.
+ * NtUserMimeShell: MIME_SHELLOP_COMMAND takes a MimeShellToast or MimeShellWindow of mime/abi.h as request, with
+ * its own size. it returns the toast number for MIME_SHELL_TOAST_SHOW, 1 or 0 for MIME_SHELL_TOAST_PROBE, else 0
+ * or a failure status. MIME_SHELLOP_WAIT waits id milliseconds, 0xFFFFFFFF for no limit, for an event of the
+ * caller's toasts, and returns 1 with the event in request, 0 for none, or the status that woke it.
  */
 #define MIME_SHELLOP_COMMAND 1
 #define MIME_SHELLOP_WAIT 2
@@ -725,35 +715,36 @@ typedef struct MIME_SHELL_EVENT {
 } MIME_SHELL_EVENT;
 W32KAPI ULONG NTAPI NtUserMimeTray(ULONG op, PUCHAR request, ULONG size);
 W32KAPI LONG NTAPI NtUserMimeShell(ULONG op, ULONG id, PUCHAR request, ULONG size);
+/* a chunk of the data the host asked the source for. total is 0xFFFFFFFF for none. */
 W32KAPI ULONG NTAPI NtUserMimeDndProvide(ULONG request, PUCHAR data, ULONG length, ULONG offset, ULONG total);
 
 /*
- * screen capture (win32k capture.c), the kernel end of dxgi.dll's output duplication and of the window and
- * monitor capture of Windows.Graphics.Capture. a duplication is made for a monitor and gives its frames: the
- * screen as Mime composes it, bgra rows, with the rectangles that changed since the frame before and the pointer
- * apart. every structure is made of 32 bit numbers so 32 bit programs share the layout. the calls answer the
- * statuses the kernel gives dxgi.dll: STATUS_TIMEOUT for no new frame, STATUS_NOT_FOUND when the monitors changed,
- * STATUS_INSTANCE_NOT_AVAILABLE past the limit of duplications, STATUS_ACCESS_DENIED off the input desktop and
- * STATUS_BUFFER_TOO_SMALL with the size needed in the structure.
+ * screen capture, see win32k capture.c: the kernel side of dxgi.dll's output duplication and of
+ * Windows.Graphics.Capture for windows and monitors. a duplication of a monitor yields frames of the screen as mime
+ * composes it, in bgra rows, with the rectangles changed since the last frame and the pointer kept separate. every
+ * structure is made of 32-bit fields, so 32-bit programs share the layout. the calls return the statuses dxgi.dll
+ * expects from the kernel: STATUS_TIMEOUT for no new frame, STATUS_NOT_FOUND when the monitors changed,
+ * STATUS_INSTANCE_NOT_AVAILABLE past the duplication limit, STATUS_ACCESS_DENIED off the input desktop and
+ * STATUS_BUFFER_TOO_SMALL with the needed size in the structure.
  */
 enum {
     MIME_CAPOP_OPEN = 1, /* info: MIME_CAPTURE_OPEN */
     MIME_CAPOP_CLOSE,    /* id: the duplication */
-    MIME_CAPOP_FRAME,    /* id, info: MIME_CAPTURE_FRAME, data: the monitor's rows, size their bytes */
-    MIME_CAPOP_DIRTY,    /* id, data: RECTs of the last frame, size their bytes, info: ULONG bytes needed */
-    MIME_CAPOP_MOVES,    /* the same for the move rectangles, DXGI_OUTDUPL_MOVE_RECT */
-    MIME_CAPOP_SHAPE,    /* id, info: MIME_CAPTURE_SHAPE, data: the pointer's image, size its bytes */
-    MIME_CAPOP_WINDOW,   /* id: the window, info: MIME_CAPTURE_WINDOW, data: bgra rows, size their bytes */
+    MIME_CAPOP_FRAME,    /* id, info: MIME_CAPTURE_FRAME, data: the monitor's rows, size: their bytes. */
+    MIME_CAPOP_DIRTY,    /* id, data: RECTs of the last frame, size: their bytes, info: ULONG bytes needed. */
+    MIME_CAPOP_MOVES,    /* the same for the move rectangles, DXGI_OUTDUPL_MOVE_RECT. */
+    MIME_CAPOP_SHAPE,    /* id, info: MIME_CAPTURE_SHAPE, data: the pointer's image, size: its bytes. */
+    MIME_CAPOP_WINDOW,   /* id: the window, info: MIME_CAPTURE_WINDOW, data: bgra rows, size: their bytes. */
 };
 
 /*
- * a duplication of a window instead of a monitor: Monitor holds the window, and a frame is the window's own pixels,
- * whole window or client area, the images its process presented through the host included.
+ * duplicates a window instead of a monitor: Monitor holds the window, and a frame is the window's own pixels,
+ * whole window or client area, including what its process presented through the host.
  */
 #define MIME_CAPTURE_WINDOW_TARGET 0x80000000u
 #define MIME_CAPTURE_TARGET_CLIENT 0x40000000u
 typedef struct MIME_CAPTURE_OPEN {
-    ULONG Monitor; /* the monitor's index, or the window */
+    ULONG Monitor; /* the monitor index, or the window. */
     ULONG Flags;
     ULONG Handle;
     ULONG Width, Height;
@@ -770,7 +761,7 @@ typedef struct MIME_CAPTURE_FRAME {
     LONG PointerX, PointerY;
     ULONG DirtyBytes, MoveBytes;
     ULONG ShapeBytes;
-    /* the size of the frame: a window's changes, and a buffer too small is told it. */
+    /* the frame size, since a window's can change. also reported when the buffer is too small. */
     ULONG Width, Height;
 } MIME_CAPTURE_FRAME;
 
@@ -781,13 +772,13 @@ typedef struct MIME_CAPTURE_SHAPE {
     ULONG Size;
 } MIME_CAPTURE_SHAPE;
 
-/* PW_CLIENTONLY, and PW_RENDERFULLCONTENT: the image the window's process presented through the host too. */
+/* PW_CLIENTONLY, and PW_RENDERFULLCONTENT, which includes what the window's process presented through the host. */
 #define MIME_CAPTURE_CLIENT_ONLY 0x1
 #define MIME_CAPTURE_FULL_CONTENT 0x2
 typedef struct MIME_CAPTURE_WINDOW {
     ULONG Flags;
     ULONG Width, Height;
-    LONG ClientX, ClientY; /* where the client area starts in the window's pixels */
+    LONG ClientX, ClientY; /* where the client area starts in the window's pixels. */
 } MIME_CAPTURE_WINDOW;
 W32KAPI LONG NTAPI NtUserMimeCapture(ULONG op, ULONG id, PUCHAR info, PUCHAR data, ULONG size);
 

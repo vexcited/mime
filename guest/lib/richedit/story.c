@@ -51,7 +51,7 @@ void ReDefaultFormat(RE *e, HFONT font, RE_FMT *out)
     int dpi = e->dpi ? e->dpi : 96;
     LONG twips = 1440 * lf.lfHeight / dpi;
     if (twips > 0) {
-        /* a cell height: windows takes the font's internal leading off. */
+        /* for a cell height windows takes off the font's internal leading. */
         HDC dc = GetDC(nullptr);
         HGDIOBJ old = SelectObject(dc, h);
         TEXTMETRICW tm;
@@ -381,7 +381,7 @@ static BOOL is_break(WCHAR c)
     return c == RE_CR || c == RE_VT || c == RE_FF;
 }
 
-/* the format typing takes: the character before the caret's, or the one after it at a paragraph's start. */
+/* the format typing takes: the character before the caret's, or the one after it at a paragraph start. */
 WORD ReInsertFormat(RE *e)
 {
     if (e->ins_valid)
@@ -525,7 +525,7 @@ static BOOL append(WCHAR **text, WORD **cf, WORD **pf, UINT len, const WCHAR *t,
     return TRUE;
 }
 
-/* folds typing and deleting into the record before it, as one undo step. */
+/* folds typing and deleting into the previous record, as one undo step. */
 static BOOL merge(RE *e, UINT cp, UINT count, const WCHAR *s, UINT n, const WORD *cf, const WORD *pf, int kind)
 {
     if (!e->typing_group || !e->undo_count)
@@ -621,7 +621,7 @@ static BOOL replace_raw(RE *e, UINT cp, UINT count, const WCHAR *s, UINT n, cons
     return TRUE;
 }
 
-/* replaces [cp, cp + count) with n characters of formats cf; paragraph marks take the paragraph's format. */
+/* replaces [cp, cp + count) with n characters of formats cf. paragraph marks take the paragraph's format. */
 BOOL ReReplace(RE *e, UINT cp, UINT count, const WCHAR *s, UINT n, const WORD *cf, const WORD *pf, int undo_kind)
 {
     if (cp > e->len - 1)
@@ -830,7 +830,7 @@ static int char_class(WCHAR c)
     return 2;
 }
 
-/* EM_FINDWORDBREAK over the story, or the application's procedure when it set one. */
+/* EM_FINDWORDBREAK, or the application's procedure when it set one. */
 UINT ReWordBreak(RE *e, UINT cp, int code)
 {
     UINT n = e->len;
@@ -934,7 +934,7 @@ static UINT prefix_of(const WCHAR *t, UINT n)
     return 0;
 }
 
-/* the end of a url starting at i, or i when there is none. */
+/* returns i when no url starts there. */
 static UINT url_end(const WCHAR *t, UINT n, UINT i)
 {
     UINT plen = prefix_of(t + i, n - i);

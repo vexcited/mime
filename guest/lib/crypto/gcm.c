@@ -162,8 +162,6 @@ void mime_gcm_tag(MimeGcm *g, const MimeAes *aes, uint8_t *tag, size_t size)
     memcpy(tag, s, size);
 }
 
-/* ------------------------------------------------------------------ ccm */
-
 bool mime_ccm_valid(size_t nonce_size, size_t tag_size)
 {
     return nonce_size >= 7 && nonce_size <= 13 && tag_size >= 4 && tag_size <= 16 && !(tag_size & 1);

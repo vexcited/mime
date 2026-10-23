@@ -1,4 +1,4 @@
-/* gsm 06.10 frames, the state of each direction, and windows' 65 byte blocks of two frames. */
+/* GSM 06.10 frames, per direction state, and the Windows 65-byte blocks of two frames. */
 #ifndef MSGSM32_GSM_H
 #define MSGSM32_GSM_H
 
@@ -11,11 +11,11 @@ typedef struct GSM_FRAME {
 } GSM_FRAME;
 
 typedef struct GSM_ENCODER {
-    SHORT dp[120];   /* the reconstructed residual of the last 120 samples */
+    SHORT dp[120];   /* reconstructed residual of the last 120 samples. */
     SHORT z1;
     LONG l_z2;
     SHORT mp;
-    SHORT larpp[8];  /* the last frame's decoded log area ratios */
+    SHORT larpp[8];  /* the last frame's decoded log area ratios. */
     SHORT u[8];
 } GSM_ENCODER;
 

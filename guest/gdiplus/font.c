@@ -1,14 +1,14 @@
 /*
- * fonts: the font files, the families made of them, the collections that hold the families and the font objects
- * of the flat api. The installed collection is what gdi32 lists, read through its font data calls the first time
- * a face is needed. A private collection reads font files and memory itself.
+ * font files, families, collections and the font objects of the flat api. the installed collection is what gdi32
+ * lists, read through its font data calls the first time a face is needed. a private collection reads font files
+ * and memory itself.
  */
 #include "text_private.h"
 
-/* the tag of a font table as GetFontData takes it, the first letter in the lowest byte. */
+/* a font table tag as GetFontData takes it, first letter in the lowest byte. */
 #define TABLE_TAG(a, b, c, d) ((DWORD)(a) | (DWORD)(b) << 8 | (DWORD)(c) << 16 | (DWORD)(d) << 24)
 
-/* ------------------------------------------------------------------ the lock of the shared state */
+/* ------------------------------------------------------------------ shared state lock */
 
 static volatile LONG g_lock;
 
@@ -24,7 +24,7 @@ static void text_unlock(void) { InterlockedExchange(&g_lock, 0); }
 
 static WCHAR raise_ascii(WCHAR c) { return c >= 'a' && c <= 'z' ? (WCHAR)(c - 32) : c; }
 
-/* names are equal when their first 31 characters are, with only a to z raised. */
+/* names match on their first 31 characters, with only a to z uppercased. */
 static int name_compare(const WCHAR *a, const WCHAR *b)
 {
     for (INT i = 0; i < LF_FACESIZE - 1; i++) {
@@ -66,7 +66,7 @@ static void face_free(GFace *face)
     }
 }
 
-/* the design numbers of a face: the horizontal header's, or the typographic ones when the font asks for them. */
+/* the hhea metrics, or the typographic ones when the font asks for them. */
 static void face_metrics(GFace *face)
 {
     const MimeTtfMetrics *m = &face->metrics;
@@ -90,7 +90,7 @@ static void face_metrics(GFace *face)
     face->strike_size = m->strikeout_size > 0 ? m->strikeout_size : face->em / 20;
 }
 
-/* parses face number index of the bytes; the face keeps a reference on them. */
+/* the face keeps a reference on the bytes. */
 static GFace *face_open(GFontBlob *blob, unsigned index)
 {
     GFace *face = gp_alloc_zero(sizeof(*face));
@@ -145,7 +145,7 @@ static void family_retain(GFamily *family)
         InterlockedIncrement(&family->refs);
 }
 
-/* the index a name is or would be at in the sorted families of a collection. */
+/* where a name is or would be in the collection's sorted families. */
 static INT collection_lower_bound(const GCollection *c, const WCHAR *name, BOOL *found)
 {
     INT lo = 0, hi = c->count;
@@ -172,7 +172,7 @@ static GFamily *collection_find(const GCollection *c, const WCHAR *name)
     return found ? c->families[at] : nullptr;
 }
 
-/* the family of that name, made when the collection does not have it yet. */
+/* made when the collection does not have it yet. */
 static GFamily *collection_add_family(GCollection *c, const WCHAR *name, BOOL installed)
 {
     BOOL found;
@@ -267,7 +267,7 @@ static int CALLBACK list_face(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD t
     return 1;
 }
 
-/* the slots of an installed family come from the faces gdi32 lists under its name. Called with the lock held. */
+/* from the faces gdi32 lists under the family name. called with the lock held. */
 static void family_load_slots(GFamily *family)
 {
     if (family->slots_loaded)
@@ -287,7 +287,7 @@ static void family_load_slots(GFamily *family)
     DeleteDC(dc);
 }
 
-/* which face of a collection file the device context has selected: the one with the same header table. */
+/* in a collection file, the dc's selected face is the one with the same header table. */
 static unsigned collection_face_index(HDC dc, const GFontBlob *blob, const LOGFONTW *lf)
 {
     unsigned count = mime_ttf_face_count(blob->bytes, blob->size);
@@ -312,7 +312,7 @@ static unsigned collection_face_index(HDC dc, const GFontBlob *blob, const LOGFO
     return 0;
 }
 
-/* reads the face gdi32 realizes for a logical font from its font data. */
+/* reads the face gdi32 realizes for the logical font from its font data. */
 static GFace *load_installed_face(const LOGFONTW *lf)
 {
     HDC dc = CreateCompatibleDC(nullptr);
@@ -348,7 +348,7 @@ static GFace *load_installed_face(const LOGFONTW *lf)
     return face;
 }
 
-/* the face of a slot, read the first time it is asked for. Called with the lock held. */
+/* read on first use. called with the lock held. */
 static const GFace *slot_face(GFamily *family, int index)
 {
     GFaceSlot *s = &family->slot[index];
@@ -364,7 +364,7 @@ static const GFace *slot_face(GFamily *family, int index)
 
 const GFace *gp_family_face(GFamily *family, INT style, INT *slot)
 {
-    /* the slots tried for each of the four styles, in order, -1 ends the list. */
+    /* slots tried for each of the four styles, in order. -1 ends the list. */
     static const signed char order[4][4] = {{0, -1, -1, -1}, {1, 0, -1, -1}, {2, 0, -1, -1}, {3, 1, 2, 0}};
     const GFace *face = nullptr;
     text_lock();
@@ -380,7 +380,7 @@ const GFace *gp_family_face(GFamily *family, INT style, INT *slot)
             break;
         }
         if (index == 0) {
-            /* a family with no regular face uses its italic, else its bold, else its bold italic one in its place. */
+            /* a family with no regular face uses its italic, else bold, else bold italic face instead. */
             static const signed char stand_in[3] = {2, 1, 3};
             for (int j = 0; j < 3 && !face; j++) {
                 face = slot_face(family, stand_in[j]);
@@ -484,7 +484,7 @@ GFamily *gp_family_resolve(const void *family)
     return GP_CAST(GFamily, GP_TAG_FAMILY, family);
 }
 
-/* a family argument: InvalidParameter for what is none, FontFamilyNotFound for a generic one nothing stands for. */
+/* InvalidParameter for a non family, FontFamilyNotFound for a generic one nothing stands in for. */
 static GpStatus family_arg(const void *p, GFamily **out)
 {
     if (!p)
@@ -499,7 +499,7 @@ static GpStatus family_arg(const void *p, GFamily **out)
 
 static GCollection *collection_cast(const void *p) { return GP_CAST(GCollection, GP_TAG_COLLECTION, p); }
 
-/* a collection with its list of families ready. */
+/* with its family list ready. */
 static GCollection *collection_use(const void *p)
 {
     GCollection *c = collection_cast(p);
@@ -626,7 +626,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetFontCollectionFamilyList(GpFontCollection *col
     return Ok;
 }
 
-/* the path a font file name stands for: whole paths as they are, other names in the Fonts directory, then on the path. */
+/* whole paths as given, other names in the Fonts directory, then on the path. */
 static BOOL font_file_path(const WCHAR *name, WCHAR *path)
 {
     BOOL absolute = name[0] == '\\' || ((name[0] | 0x20) >= 'a' && (name[0] | 0x20) <= 'z' && name[1] == ':' && name[2] == '\\');
@@ -809,7 +809,7 @@ WINGDIPAPI GpStatus WINAPI GdipIsStyleAvailable(const GpFontFamily *family, INT 
     return Ok;
 }
 
-/* the design number of a family for a style, 0 when the style has no face. */
+/* 0 when the style has no face. */
 static GpStatus family_metric(const GpFontFamily *family, INT style, UINT16 *out, INT which)
 {
     GFamily *f;
@@ -912,7 +912,7 @@ static MimeVecPoint midpoint(MimeVecPoint a, MimeVecPoint b)
     return m;
 }
 
-/* a quadratic curve from a through control to b is the cubic with controls two thirds of the way. */
+/* a quadratic from a through control to b is the cubic with controls two thirds of the way. */
 static int outline_quad(MimeVecPath *path, MimeVecPoint a, MimeVecPoint control, MimeVecPoint b)
 {
     const float k = 2.0f / 3.0f;
@@ -920,7 +920,7 @@ static int outline_quad(MimeVecPath *path, MimeVecPoint a, MimeVecPoint control,
                                    b.x + k * (control.x - b.x), b.y + k * (control.y - b.y), b.x, b.y);
 }
 
-/* turns the contour of on and off curve points into a closed figure. */
+/* closes the contour of on and off curve points into a figure. */
 static void outline_end(void *ctx)
 {
     OutlineBuilder *b = ctx;
@@ -992,7 +992,7 @@ GpStatus gp_face_outline(const GFace *face, UINT16 glyph, MimeVecPath *path, flo
 
 /* ------------------------------------------------------------------ fallback */
 
-/* the families a character the font lacks is looked for in, in the order of Windows' font linking. */
+/* families searched for a character the font lacks, in Windows font linking order. */
 static const WCHAR *const g_fallback_names[] = {
     L"Segoe UI",        L"Microsoft YaHei", L"Microsoft JhengHei", L"Yu Gothic",   L"Malgun Gothic", L"MS Gothic",
     L"Segoe UI Symbol", L"Segoe UI Emoji",  L"Nirmala UI",         L"Leelawadee UI", L"Ebrima",       L"Gadugi",
@@ -1139,7 +1139,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetFontUnit(GpFont *font, Unit *unit)
     return Ok;
 }
 
-/* the line spacing of the font's face in design units, and the em it is measured in. */
+/* in design units, with the em it is measured in. */
 static GpStatus font_line_spacing(const GFont *f, INT *spacing, INT *em)
 {
     GFamily *family = gp_family_resolve(f->family);
@@ -1185,7 +1185,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetFontHeightGivenDPI(const GpFont *font, REAL dp
 
 /* ------------------------------------------------------------------ logical fonts */
 
-/* the font a device context has realized, in world units. */
+/* in world units. */
 static GpStatus font_from_dc(HDC dc, GpFont **out)
 {
     TEXTMETRICW tm;
@@ -1205,13 +1205,13 @@ static GpStatus font_from_dc(HDC dc, GpFont **out)
     return font_make(family, family, size, style, UnitWorld, out);
 }
 
-/* the font of a logical font is realized in a context of its own, which is not changed by it. */
+/* realized in a dc of its own, which the font leaves unchanged. */
 static GpStatus font_from_logfont(HDC hdc, const LOGFONTW *lf, GpFont **out)
 {
     HDC dc = CreateCompatibleDC(hdc);
     if (!dc)
         return OutOfMemory;
-    /* the height of the logical font is in the units of the context it came with */
+    /* the logical font height is in the units of the dc it came with. */
     SIZE window, viewport;
     if (GetWindowExtEx(hdc, &window) && GetViewportExtEx(hdc, &viewport)) {
         SetMapMode(dc, MM_ANISOTROPIC);
@@ -1289,7 +1289,7 @@ static GpStatus logfont_of(GpFont *font, GpGraphics *graphics, LOGFONTW *lf)
     float device = gp_font_world_size(f->size, f->unit, g) * row;
     memset(lf, 0, sizeof(*lf));
     lf->lfHeight = -(LONG)mime_vec_floorf(device + 0.5f);
-    /* the turn of the world transform in tenths of a degree, counted the way gdi counts them. */
+    /* the world transform's rotation in tenths of a degree, counted like gdi counts them. */
     LONG tenths = (LONG)(mime_vec_atan2f(m->m12, m->m11) * (1800.0f / 3.14159265f));
     if (tenths) {
         tenths = 3600 - tenths;

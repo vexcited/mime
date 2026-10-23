@@ -1,6 +1,5 @@
 /*
- * advapi32 internal interface: the security types of winnt.h and the
- * helpers shared by its source files.
+ * advapi32 internals: the winnt.h security types and helpers shared by the source files.
  */
 #ifndef MIME_ADVAPI32_PRIVATE_H
 #define MIME_ADVAPI32_PRIVATE_H
@@ -337,7 +336,7 @@ typedef enum _TRUSTEE_TYPE {
     TRUSTEE_IS_COMPUTER,
 } TRUSTEE_TYPE;
 
-/* the name of a trustee is a wide string, or an ansi one in the A structures that otherwise look alike. */
+/* TRUSTEE_W names are wide strings; the A structures are identical but ansi. */
 typedef struct _TRUSTEE_W {
     struct _TRUSTEE_W *pMultipleTrustee;
     MULTIPLE_TRUSTEE_OPERATION MultipleTrusteeOperation;
@@ -471,7 +470,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE token, BOOLEAN disabl
                                                     ULONG length, PTOKEN_PRIVILEGES previous, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI RtlImpersonateSelf(ULONG level);
 
-/* the rtl routines of ntdll on sids, lists and descriptors, which the functions of this dll wrap. */
+/* ntdll rtl routines on sids, acls and descriptors, wrapped by this dll. */
 NTSYSAPI BOOLEAN NTAPI RtlValidSid(PSID sid);
 NTSYSAPI ULONG NTAPI RtlLengthSid(PSID sid);
 NTSYSAPI ULONG NTAPI RtlLengthRequiredSid(ULONG count);
@@ -575,7 +574,7 @@ NTSYSAPI NTSTATUS NTAPI RtlConvertToAutoInheritSecurityObject(PSECURITY_DESCRIPT
                                                               PSECURITY_DESCRIPTOR *result, const GUID *type,
                                                               BOOLEAN container, PGENERIC_MAPPING mapping);
 
-/* privobj.c: whether a token may stand for a client in a check, the error if not. */
+/* privobj.c: 0 when a token may stand for a client in a check, else the error. */
 DWORD AdvImpersonationError(HANDLE token);
 
 /* ---------------------------------------------------------------- helpers */
@@ -608,7 +607,7 @@ FORCEINLINE void AdvFree(PVOID p)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, p);
 }
 
-/* ansi strings of the A functions, converted with the ansi code page; results come from the process heap. */
+/* A function strings, converted with the ansi code page into the process heap. */
 PWSTR AdvAnsiToWide(LPCSTR s);
 PSTR AdvWideToAnsi(LPCWSTR s);
 
@@ -619,9 +618,9 @@ BOOL AdvSidEqual(const SID *a, const SID *b);
 /* builds a sid in storage, which holds SECURITY_MAX_SID_SIZE bytes. */
 PSID AdvMakeSid(void *storage, BYTE authority, int count, ...);
 /*
- * parses a sid as sddl writes it: S-1-..., or an alias of two letters. the aliases that name a sid inside a domain
- * resolve with the domains of the context, a null context knows this machine's. without an end the text must be
- * the sid alone, else the parse stops after the sid and stores where. returns a win32 error.
+ * parses sddl sid text: S-1-... or a two letter alias. domain relative aliases resolve with the context's domains,
+ * a NULL context uses this machine's. without end the text must be the sid alone, else parsing stops after the sid
+ * and stores where. returns a win32 error.
  */
 typedef struct SDDL_CONTEXT {
     const SID *Domain;
@@ -638,10 +637,10 @@ BOOL AdvCurrentUserSid(void *storage);
 /* resolves the pseudo token handles to a real handle, opening one into *opened when needed. */
 NTSTATUS AdvResolveToken(HANDLE token, ACCESS_MASK access, HANDLE *real, HANDLE *opened);
 
-/* the sid of this machine's account domain, S-1-5-21-a-b-c, into storage of SECURITY_MAX_SID_SIZE bytes. */
+/* this machine's account domain sid, S-1-5-21-a-b-c, into storage of SECURITY_MAX_SID_SIZE bytes. */
 BOOL AdvMachineSid(void *storage);
 
-/* sddl.c: compiles the text of a condition to the binary token stream, LocalAlloc'd, as AddConditionalAce stores it. */
+/* sddl.c: compiles condition text to the binary token stream AddConditionalAce stores, LocalAlloc'd. */
 DWORD AdvConditionFromString(PCWSTR text, PVOID *binary, DWORD *size);
 
 /* account.c: account names of sids, and whether a server name designates this machine. */

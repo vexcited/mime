@@ -1,10 +1,8 @@
 /*
- * gdi object handles, stock objects, brushes, pens, logical fonts and
- * region objects.
+ * gdi object handles, stock objects, brushes, pens, logical fonts and region objects.
  *
- * handles look like the windows ones: the low 16 bits index the handle
- * table, bits 16..23 hold the object type and bits 24..31 a reuse counter,
- * so gdi32 can tell the type of a handle without a system call.
+ * handles look like windows ones: the low 16 bits index the handle table, bits 16..23 hold the object type and
+ * bits 24..31 a reuse counter, so gdi32 can tell a handle's type without a system call.
  */
 #include "../win32k.h"
 
@@ -242,8 +240,8 @@ void GdiInitializeStockObjects(void)
     make_stock(DC_BRUSH, &new_brush(BS_SOLID, RGB(255, 255, 255), 0)->Header);
     make_stock(DC_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0), GDI_TYPE_PEN)->Header);
     UINT dpi = W32SystemDpi();
-    /* bitmap fonts are not supported: the legacy stock fonts map to outline faces. */
-    /* the System face is a bitmap font with a 16 pixel cell at 96 dpi. */
+    /* bitmap fonts are not supported, so the legacy stock fonts map to outline faces. */
+    /* System is a bitmap font with a 16 pixel cell at 96 dpi. */
     LOGFONTW lf = make_logfont(16 * (LONG)dpi / 96, FW_BOLD, L"Segoe UI");
     make_stock(SYSTEM_FONT, &new_font(&lf)->Header);
     make_stock(DEVICE_DEFAULT_FONT, &new_font(&lf)->Header);
@@ -287,7 +285,7 @@ BOOL NTAPI NtGdiDeleteObjectApp(HANDLE handle)
         GdiDeleteObject(o);
         ok = TRUE;
     } else if (o) {
-        ok = TRUE; /* deleting stock objects is a harmless no-op on windows */
+        ok = TRUE; /* deleting a stock object is a harmless no-op on windows. */
     }
     UserLeave();
     return ok;

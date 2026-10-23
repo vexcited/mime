@@ -1,6 +1,4 @@
-/*
- * system information and time services.
- */
+/* system information and time services. */
 #include "../ntos.h"
 
 NTSTATUS NTAPI NtQuerySystemTime(PLARGE_INTEGER time)
@@ -21,9 +19,9 @@ NTSTATUS NTAPI NtQueryPerformanceCounter(PLARGE_INTEGER counter, PLARGE_INTEGER 
 }
 
 /*
- * the clock is tick driven but timers are programmed to the exact deadline, so
- * a resolution request only has to be remembered. the system resolution is the
- * finest one any live process asked for, and the default when none did.
+ * timers are programmed to the exact deadline, so a resolution request only
+ * has to be remembered. the system resolution is the finest any live process
+ * asked for, or the default.
  */
 enum {
     TIMER_RESOLUTION_COARSEST = 156250,
@@ -91,10 +89,9 @@ static NTSTATUS copy_info(PVOID dst, const void *src, ULONG size, ULONG length, 
 /* ------------------------------------------------------------------ smbios */
 
 /*
- * the smbios tables of the reference machine, what the firmware of a real
- * computer presents: the bios, the system, the board, the chassis and the
- * processor, with the strings a program reads to learn the machine it is
- * on. built in one buffer, then handed out by SystemFirmwareTableInformation.
+ * the reference machine's smbios tables, as real firmware presents them: bios,
+ * system, board, chassis and processor, with the strings programs read to learn
+ * the machine. built in one buffer, served by SystemFirmwareTableInformation.
  */
 typedef struct SMB_BUILDER {
     PUCHAR Buffer;
@@ -140,7 +137,7 @@ static void smb_begin(SMB_BUILDER *b, UCHAR type, USHORT handle)
     smb_put(b, header, sizeof(header));
 }
 
-/* a structure field holding the index of a string, 0 when there is none. */
+/* the string index for a structure field, 0 for none. */
 static UCHAR smb_string(SMB_BUILDER *b, const char *text)
 {
     if (!text || !text[0])
@@ -162,8 +159,8 @@ static void smb_end(SMB_BUILDER *b)
 }
 
 /*
- * the uuid, from the logical byte order of the boot information to the
- * wire order of the tables: the first three fields are little endian.
+ * from the boot information's logical byte order to the tables' wire order:
+ * the first three fields are little endian.
  */
 static void smb_uuid(SMB_BUILDER *b, const UCHAR uuid[16])
 {
@@ -178,7 +175,7 @@ static void smb_uuid(SMB_BUILDER *b, const UCHAR uuid[16])
     smb_put(b, wire, sizeof(wire));
 }
 
-/* the whole table, the header of RawSmbiosData included. returns its size. */
+/* includes the RawSmbiosData header, returns the size. */
 static ULONG smb_build(PUCHAR buffer, ULONG capacity)
 {
     SMB_BUILDER b = {buffer, 0, capacity};
@@ -271,9 +268,8 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
 }
 
 /*
- * SystemFirmwareTableInformation: the RSMB provider only, the raw smbios
- * data of the reference machine. the buffer protocol is the one of wdm:
- * a too small buffer reports the required size in TableBufferLength.
+ * SystemFirmwareTableInformation: only the RSMB provider, the raw smbios data.
+ * like wdm, a too small buffer gets the required size in TableBufferLength.
  */
 static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
 {
@@ -371,9 +367,9 @@ static ULONG process_thread_count(PEPROCESS p)
 }
 
 /*
- * fills the records into a kernel buffer under the dispatcher lock, which
- * guards the process and thread lists. returns the size needed, which may
- * exceed capacity, in which case nothing past capacity is written.
+ * fills a kernel buffer under the dispatcher lock, which guards the process and
+ * thread lists. returns the size needed, which may exceed capacity; nothing is
+ * written past capacity.
  */
 static ULONG fill_processes(PUCHAR buffer, ULONG capacity, PUCHAR user_base)
 {
@@ -431,7 +427,7 @@ static ULONG fill_processes(PUCHAR buffer, ULONG capacity, PUCHAR user_base)
 
 static NTSTATUS query_processes(PVOID info, ULONG length, PULONG returned)
 {
-    /* larger buffers than any process list needs are only filled up to this bound. */
+    /* buffers larger than any process list needs are filled only up to this bound. */
     ULONG capacity = length < 0x100000 ? length : 0x100000;
     PUCHAR buffer = capacity ? ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity, KI_TAG('P', 's', 'I', 'n')) : nullptr;
     if (capacity && !buffer)
@@ -457,7 +453,7 @@ static NTSTATUS query_processes(PVOID info, ULONG length, PULONG returned)
 
 /*
  * SystemHandleInformation and SystemExtendedHandleInformation: every open handle of every process. the
- * short form has the identifiers in 16 bits, as the first one did.
+ * short form keeps identifiers in 16 bits, like the original.
  */
 static NTSTATUS query_handles(BOOLEAN extended, PVOID info, ULONG length, PULONG returned)
 {
@@ -477,7 +473,7 @@ static NTSTATUS query_handles(BOOLEAN extended, PVOID info, ULONG length, PULONG
     ULONG total = 0;
     for (ULONG i = 0; i < n; i++)
         total += (ULONG)processes[i]->HandleTable.Count;
-    /* the handles that came while this counted fit as far as the room goes. */
+    /* some slack for handles opened while counting; extra ones are dropped. */
     SIZE_T room = (SIZE_T)total + 64;
     PUCHAR buffer = ExAllocatePool2(POOL_FLAG_PAGED, header + room * entry_size, KI_TAG('S', 'y', 'H', 'd'));
     if (!buffer) {
@@ -575,7 +571,7 @@ static void module_callback(PVOID context, ULONG index, PVOID base, SIZE_T size,
     add_module(context, base, size, name);
 }
 
-/* the kernel and the images it loaded: the modules a program asks for to learn the drivers. */
+/* the kernel and the images it loaded, which programs list to learn the drivers. */
 static NTSTATUS query_modules(PVOID info, ULONG length, PULONG returned)
 {
     MODULE_LIST list = {};
@@ -597,7 +593,7 @@ static NTSTATUS query_modules(PVOID info, ULONG length, PULONG returned)
     if (length < 8) {
         status = STATUS_INFO_LENGTH_MISMATCH;
     } else {
-        /* a buffer that is too small gets the modules that fit and the status that says so. */
+        /* a too small buffer gets the modules that fit and the status saying so. */
         ULONG fit = (length - 8) / (ULONG)sizeof(RTL_PROCESS_MODULE_INFORMATION);
         if (fit > count)
             fit = count;
@@ -623,7 +619,7 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     case SystemModuleInformation:
         return query_modules(info, length, returned);
     case SystemPageFileInformation:
-        /* there is no paging file, the host swaps guest memory, so the list is empty. */
+        /* no paging file: the host swaps guest memory, so the list is empty. */
         return copy_info(info, nullptr, 0, length, returned);
     case SystemBasicInformation:
     case SystemEmulationBasicInformation: {
@@ -641,7 +637,7 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         return copy_info(info, &b, sizeof(b), length, returned);
     }
     case SystemProcessorPerformanceInformation: {
-        /* per processor, kernel time including idle, interrupt and dpc time, as windows reports it. */
+        /* per processor, kernel time includes idle, interrupt and dpc time, as on windows. */
         typedef struct {
             LARGE_INTEGER IdleTime, KernelTime, UserTime, DpcTime, InterruptTime;
             ULONG InterruptCount;
@@ -723,9 +719,9 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         return query_firmware_tables(info, length, returned);
     case SystemHypervisorDetailInformation: {
         /*
-         * the hypervisor's leaves in windows' order: vendor and maximum,
-         * interface, version, features, hardware features, enlightenments,
-         * limits. without microsoft's hypervisor windows has none to report.
+         * the hypervisor leaves in windows' order: vendor and maximum, interface,
+         * version, features, hardware features, enlightenments, limits. without
+         * microsoft's hypervisor windows reports none.
          */
         ULONG leaves[7][4], out[7][4];
         if (!KiQueryHypervisorLeaves(leaves, 7))
@@ -746,7 +742,7 @@ NTSTATUS NTAPI ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     KPROCESSOR_MODE old = t->PreviousMode;
     t->PreviousMode = KernelMode;
     NTSTATUS status;
-    /* kernel callers pass kernel buffers: KiCopyToUser refuses them, so copy directly. */
+    /* kernel callers pass kernel buffers, which KiCopyToUser refuses, so copy directly. */
     if (klass == SystemBasicInformation && length >= sizeof(SYSTEM_BASIC_INFORMATION)) {
         SYSTEM_BASIC_INFORMATION *b = info;
         memset(b, 0, sizeof(*b));
@@ -766,7 +762,7 @@ NTSTATUS NTAPI ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     return status;
 }
 
-/* the locale of the installation, which the host chose and passed on. */
+/* the installation locale the host chose. */
 NTSTATUS NTAPI NtQueryDefaultLocale(BOOLEAN user, LCID *locale)
 {
     LCID l = HalBootInfo->locale_lcid ? HalBootInfo->locale_lcid : 0x0409;

@@ -1,11 +1,10 @@
 /*
- * kernel entry points, interrupt and system call entry, and the exit to
- * user mode.
+ * kernel entry points, interrupt and system call entry, and the exit to user mode.
  *
  * gs holds the KPCR in kernel mode and the TEB in user mode, swapped on
  * every crossing. an entry from user mode clears KPCR.UserMode before it
  * takes the kernel lock, and the exit sets it before releasing the lock,
- * so a processor holding the lock sees exactly which others run user code.
+ * so the lock holder sees exactly which processors run user code.
  */
 #include "ktrap.h"
 
@@ -51,9 +50,9 @@ KiSecondaryStartup:
 /*
  * the kernel lock, a ticket lock: the low half serves, the high half hands
  * out tickets. a waiter spins for a few microseconds, then sleeps in the
- * host on the lock word: a spinning vcpu would otherwise take the host
- * core the owner's vcpu needs. a releaser that sees sleepers wakes them.
- * rax, rcx, rdx and r8 to r11 change, as in any call.
+ * host on the lock word, so it does not take the host core the owner's vcpu
+ * needs. a releaser that sees sleepers wakes them.
+ * clobbers rax, rcx, rdx and r8 to r11, as any call.
  */
 #define LOCK_OWNER 4
 #define LOCK_SLEEPERS 8
@@ -73,7 +72,7 @@ KiAcquireKernelLock:
     movl    %eax, %r9d
     shrl    $16, %r9d               /* our ticket */
     movzwl  %ax, %eax
-    xorl    %r11d, %r11d            /* the time it began to wait, none while the lock was free */
+    xorl    %r11d, %r11d            /* when waiting began, 0 if the lock was free */
     cmpl    %r9d, %eax
     je      4f
     rdtsc
@@ -112,7 +111,7 @@ KiAcquireKernelLock:
     movq    %rax, LOCK_SINCE(%r8)
     movl    %gs:KPCR_NUMBER, %eax
     movl    %eax, LOCK_OWNER(%r8)
-    /* what the lock cost this processor: KiLockStats, a row of eight counters for each. */
+    /* lock statistics: KiLockStats has eight counters per processor. */
     shll    $6, %eax
     leaq    KiLockStats(%rip), %rcx
     addq    %rax, %rcx
@@ -140,8 +139,8 @@ KiAcquireKernelLock:
     movq    %rax, %cr4
     ret
     /*
-     * user translations too: the kernel writes to the memory of the program from here on, and a stale
-     * entry of a page another thread freed and the allocator gave out again would take the write.
+     * user translations too: the kernel writes to user memory from here on, and a stale entry
+     * for a page another thread freed and the allocator reused would take the write.
      */
 8:  testb   $KPCR_FLUSH_USER, %gs:KPCR_FLUSH_PENDING
     jz      6f
@@ -160,7 +159,7 @@ KiReleaseKernelLock:
     cmpl    %gs:KPCR_NUMBER, %eax
     je      1f
     ud2
-1:  /* how long it was held, counted in all and by what held it when it was long. */
+1:  /* hold time, counted overall and, for long holds, by holder. */
     rdtsc
     shlq    $32, %rdx
     orq     %rdx, %rax
@@ -186,11 +185,9 @@ KiReleaseKernelLock:
 2:  ret
 
 /*
- * the interrupt that asks for the user translations to be flushed. it
- * touches nothing the kernel lock guards, so it is handled where it lands:
- * flush, say so by clearing the request, and go back. a flush that waited
- * for the lock would queue every processor of a process behind the one that
- * asked, one lock handoff each.
+ * the user tlb flush interrupt. it touches nothing the kernel lock guards,
+ * so it runs without it: flush, clear the request, return. waiting for the
+ * lock would queue every processor of a process behind the requester.
  */
     .globl  KiFlushIpi
     .p2align 4
@@ -298,8 +295,7 @@ KiFlushIpi:
 
 /*
  * syscall from user mode: rcx = return rip, r11 = rflags, interrupts off.
- * the frame is built where the hardware would push one, at the stack
- * top KPCR.KernelRsp names.
+ * the frame is built where the hardware would push one, at KPCR.KernelRsp.
  */
     .globl  KiSystemCall64
     .p2align 4
@@ -327,7 +323,7 @@ KiSystemCall64:
     movq    %rbx, %rsp
     jmp     KiExceptionExit
 
-/* a 32-bit system call has no service: it ends the process like an illegal instruction would. */
+/* there is no 32-bit system call: it ends the process like an illegal instruction. */
     .globl  KiSystemCall32
     .p2align 4
 KiSystemCall32:
@@ -359,7 +355,7 @@ KiIsrBase:
 
 /*
  * common entry: the processor pushed ss, rsp, rflags, cs, rip, the stub an
- * error code and the vector. builds the rest of the trap frame below.
+ * error code and the vector. the rest of the trap frame goes below.
  */
     .p2align 4
 KiTrapCommon:
@@ -377,9 +373,8 @@ KiTrapCommon:
     testb   $RPL_USER, KTRAP_CS(%rbx)
     jz      2f
     /*
-     * a page that is not there is tried without the kernel lock and without leaving user mode as
-     * far as the other processors can tell: UserMode stays set, so one that changes the address space
-     * interrupts this processor, and the interrupt is taken when the fault returns.
+     * a not present page fault is first tried without the kernel lock and with UserMode still set,
+     * so a processor changing the address space interrupts this one, taken when the fault returns.
      */
     cmpq    $14, KTRAP_VECTOR(%rbx)
     jne     5f
@@ -398,7 +393,7 @@ KiTrapCommon:
 5:  movb    $0, %gs:KPCR_USER_MODE
     call    KiAcquireKernelLock
     jmp     3f
-    /* an idle processor halted without the lock takes it back before handling anything. */
+    /* an idle processor that halted without the lock takes it back first. */
 2:  cmpb    $0, %gs:KPCR_IDLE_SLEEPING
     je      3f
     movb    $0, %gs:KPCR_IDLE_SLEEPING
@@ -408,7 +403,7 @@ KiTrapCommon:
     movq    %rbx, %rsp
     jmp     KiExceptionExit
 
-/* restores the trap frame at rsp and returns from the interrupt, exception or system call. */
+/* returns through the trap frame at rsp. */
     .globl  KiExceptionExit
     .p2align 4
 KiExceptionExit:

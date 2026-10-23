@@ -1,9 +1,9 @@
 /*
- * event tracing in user mode: providers register and write, and nothing enables them, as the machine has no
- * tracing sessions. advapi32 and kernelbase forward their Event and Trace functions here, as they do on Windows.
+ * user mode event tracing: providers register and write, but nothing enables them, as the machine has no
+ * tracing sessions. advapi32 and kernelbase forward their Event and Trace functions here, as on Windows.
  *
- * a registration handle holds the slot of the registration in its low bits and a sequence number in bits 32
- * to 47, which a slot gets anew each time it is used, so a stale handle is told from a live one.
+ * a registration handle holds its slot in the low bits and a sequence number in bits 32 to 47, renewed each
+ * time the slot is reused, so a stale handle can be told from a live one.
  */
 #include "ntdll_private.h"
 
@@ -54,7 +54,7 @@ static ULONG fail(ULONG error)
     return error;
 }
 
-/* the live registration of a handle, with the lock held, or null. */
+/* returns a handle's live registration with the lock held, or null. */
 static ETW_REGISTRATION *lookup(ULONGLONG handle)
 {
     ULONG low = (ULONG)handle;
@@ -146,7 +146,7 @@ NTDLL_EXPORT ULONG NTAPI EtwEventUnregister(ULONGLONG handle)
     return unregister(handle, nullptr);
 }
 
-/* the traits of a provider: its size, a name and the traits that follow, each with its own size. */
+/* provider traits: a total size, a name, then traits that each carry their own size. */
 static BOOLEAN valid_traits(const BYTE *bytes, ULONG size)
 {
     if (size < 3 || size > 0xffff || *(const USHORT *)bytes != size)
@@ -174,7 +174,7 @@ NTDLL_EXPORT ULONG NTAPI EtwEventSetInformation(ULONGLONG handle, ULONG kind, co
     PVOID traits = nullptr;
     switch (kind) {
     case 0:
-    case 4: /* tracking the module of the provider, which takes no data. */
+    case 4: /* module tracking, which takes no data. */
         if (size)
             return ERROR_INVALID_PARAMETER;
         break;
@@ -424,7 +424,7 @@ NTDLL_EXPORT ULONG NTAPI EtwUnregisterTraceGuids(ULONGLONG handle)
     return error;
 }
 
-/* a logger with the process bit set is a private one, which the process would run itself. */
+/* a logger with the process bit set is private, run by the process itself. */
 #define PRIVATE_LOGGER 0x1000000
 
 NTDLL_EXPORT ULONG NTAPI EtwLogTraceEvent(ULONGLONG logger, PVOID header)

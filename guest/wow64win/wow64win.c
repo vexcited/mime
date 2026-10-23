@@ -1,8 +1,6 @@
 /*
- * wow64win.dll: the win32k half of wow64. it converts the win32k system
- * calls of 32-bit code (wow32_win32k.c), and turns the window callbacks the
- * kernel makes into the 64-bit ntdll into calls of the 32-bit ntdll's
- * dispatcher (wow32_callback.c), made through wow64.dll.
+ * converts 32-bit win32k calls through wow32_win32k.c and converts native window callbacks through wow32_callback.c
+ * before dispatching them to 32-bit ntdll via wow64.dll.
  */
 #include <mime/ntrtl.h>
 #include <mime/ntuser.h>
@@ -21,7 +19,7 @@ extern UCHAR Wow64WinServicesWin32k[];
 typedef ULONG64 (*SVC16)(ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64,
                          ULONG64, ULONG64, ULONG64, ULONG64, ULONG64, ULONG64);
 
-/* a system call by number, for the conversions that pick it at run time. */
+/* dispatches a service number selected at runtime. */
 ULONG64 MxCallService(ULONG number, const ULONG64 *a)
 {
     ULONG table = number >> 12, index = number & 0xFFF;
@@ -53,9 +51,8 @@ WIN_EXPORT ULONG NTAPI Wow64WinSystemCall(ULONG number, const ULONG *arguments)
 }
 
 /*
- * a window callback of the kernel: its arguments in the 32-bit layout on
- * the 32-bit stack, below the code waiting in its system call, then the
- * 32-bit dispatcher, then its result back in the 64-bit layout.
+ * converts callback arguments onto the suspended 32-bit stack, calls its dispatcher, and converts the result back to
+ * the native layout.
  */
 static NTSTATUS callback(ULONG api, PVOID arguments, ULONG length)
 {

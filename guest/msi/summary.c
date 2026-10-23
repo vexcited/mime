@@ -119,7 +119,7 @@ done:
     return error;
 }
 
-/* one property of the summary information of a database, read without a handle. */
+/* reads one summary information property without a handle. */
 UINT MimeMsiSummaryProperty(MIME_MSI_DATABASE *database, UINT id, MIME_MSI_SUMMARY_VALUE *value)
 {
     memset(value, 0, sizeof(*value));

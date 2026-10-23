@@ -1,9 +1,4 @@
-/*
- * common controls of comctl32.dll version 6: initialization, subclassing,
- * image lists, the progress bar, header, list view, status bar, tooltips,
- * up down, trackbar, tab, tree view and toolbar controls, task dialogs and,
- * through prsht.h, property sheets.
- */
+/* common controls of comctl32.dll version 6. property sheets come through prsht.h. */
 #ifndef MIME_WIN32_COMMCTRL_H
 #define MIME_WIN32_COMMCTRL_H
 
@@ -338,8 +333,7 @@ WINCOMMCTRLAPI HRESULT WINAPI ImageList_CoCreateInstance(REFCLSID clsid, const I
 WINCOMMCTRLAPI HRESULT WINAPI HIMAGELIST_QueryInterface(HIMAGELIST himl, REFIID riid, void **object);
 
 /*
- * the com side of image lists, as commoncontrols.h declares it. an
- * HIMAGELIST points at the IImageList2 interface of its list, so programs
+ * the com side of image lists, from commoncontrols.h. an HIMAGELIST points at its list's IImageList2, so programs
  * cast one to the other.
  */
 MIME_DEFINE_GUID(IID_IImageList, 0x46EB5926, 0x582E, 0x4017, 0x9F, 0xDF, 0xE8, 0x99, 0x8D, 0xAA, 0x09, 0x50);

@@ -1,6 +1,6 @@
 /*
- * des of fips 46-3, triple des in its ede form and desx. the s-boxes are
- * looked up by secret bits; des survives for compatibility only.
+ * des of fips 46-3, ede triple des and desx. the s-boxes are indexed by
+ * secret bits; des is here for compatibility only.
  */
 #include "internal.h"
 

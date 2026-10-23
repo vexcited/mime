@@ -20,7 +20,7 @@ WINGDIAPI HRGN WINAPI CreatePolygonRgn(const POINT *points, int count, int mode)
     return region;
 }
 
-/* an ellipse is a round rectangle whose corners span the whole box, as on windows. */
+/* like windows, an ellipse is a round rect whose corners span the whole box. */
 WINGDIAPI HRGN WINAPI CreateEllipticRgn(int left, int top, int right, int bottom)
 {
     int width = right > left ? right - left : left - right;

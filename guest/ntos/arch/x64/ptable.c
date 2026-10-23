@@ -1,12 +1,12 @@
 /*
  * x64 page tables: walking, mapping and tlb maintenance.
  *
- * the upper half of every process root is a copy of the kernel root's,
- * whose 256 entries the loader creates, so kernel tables are shared by all
- * address spaces. x64 has no broadcast invalidation: a processor that
- * changes a translation invalidates its own tlb, marks the others with
- * FlushPending, which each settles before using translations again, and
- * interrupts the ones running the same address space in user mode.
+ * the upper half of every process root copies the kernel root, whose 256
+ * entries the loader creates, so all address spaces share the kernel tables.
+ * x64 has no broadcast invalidation: a processor that changes a translation
+ * invalidates its own tlb, sets FlushPending on the others, which settle it
+ * before using translations again, and interrupts those running the same
+ * address space in user mode.
  */
 #include "../../ntos.h"
 
@@ -81,10 +81,9 @@ static void flush_local_all(BOOLEAN global)
 }
 
 /*
- * the other processors owe a flush before their next use of user or
- * kernel translations. those in user mode with this address space stop
- * using it now: the interrupt makes them enter the kernel, where they
- * wait for the lock this processor holds and flush before going back.
+ * the other processors must flush before they next use translations. those
+ * in user mode on this address space are interrupted into the kernel, where
+ * they wait for the lock this processor holds and flush before going back.
  */
 static void shootdown(BOOLEAN global)
 {
@@ -105,7 +104,7 @@ static void shootdown(BOOLEAN global)
     }
     if (targets)
         HalSendFlushIpi(targets);
-    /* a processor has answered when it has left user mode, or flushed and cleared the request. */
+    /* a processor has answered once it left user mode or flushed and cleared the request. */
     while (targets) {
         ULONG i = (ULONG)__builtin_ctzll(targets);
         PKPCR pcr = CONTAINING_RECORD(KiProcessorBlock[i], KPCR, Prcb);
@@ -123,7 +122,7 @@ void MiFlushTlbPage(ULONG_PTR va, USHORT asid, BOOLEAN global)
     shootdown(global);
 }
 
-/* a run of pages: a few invalidations, or all of the process's translations for a long one. */
+/* long runs flush all of the process's translations instead. */
 void MiFlushTlbRange(ULONG_PTR va, SIZE_T pages, USHORT asid)
 {
     if (pages > 32) {
@@ -147,7 +146,7 @@ void MiFlushTlbAll(void)
     shootdown(TRUE);
 }
 
-/* settles what other processors asked of this one, with the kernel lock held. */
+/* kernel lock held. */
 void KiSettleTlbFlush(void)
 {
     PKPCR pcr = KeGetPcr();
@@ -197,7 +196,7 @@ ULONG64 MiUnmapPage(ULONG64 *root, ULONG_PTR va, USHORT asid)
     return old;
 }
 
-/* stores the new entries of a run of ptes, and invalidates once what the old ones translated. */
+/* invalidates once for the whole run. */
 void MiRewritePtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, const ULONG64 *values, USHORT asid)
 {
     SIZE_T first = count, last = 0;
@@ -213,7 +212,7 @@ void MiRewritePtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, const ULONG64 *valu
         MiFlushTlbRange(va + (first << PAGE_SHIFT), last - first + 1, asid);
 }
 
-/* clears a run of ptes, handing back the old entries once the translations are gone. */
+/* old gets the previous entries once the translations are gone. */
 void MiClearPtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, USHORT asid, ULONG64 *old)
 {
     SIZE_T first = count, last = 0;
@@ -231,7 +230,6 @@ void MiClearPtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, USHORT asid, ULONG64 
         MiFlushTlbRange(va + (first << PAGE_SHIFT), last - first + 1, asid);
 }
 
-/* windows page protection to a user or kernel page table entry. */
 ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user)
 {
     ULONG64 pte = MM_PTE_ACCESSED | MM_PTE_DIRTY | (user ? MM_PTE_USER : MM_PTE_GLOBAL);
@@ -247,7 +245,7 @@ ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user)
         pte |= MM_PTE_SW_COW;
     if (protect & PAGE_NOCACHE)
         pte |= MM_PTE_PCD | MM_PTE_PWT;
-    /* the page and its data stay, out of reach of user mode. */
+    /* the page and its data stay, but user mode cannot reach them. */
     if (user && (base == PAGE_NOACCESS || (protect & PAGE_GUARD))) {
         pte &= ~MM_PTE_USER;
         if (protect & PAGE_GUARD)
@@ -277,7 +275,7 @@ ULONG MiPteToProtect(ULONG64 pte)
     return protect;
 }
 
-/* gives a present page more access than it had: another processor that still has the old entry faults, which flushes it. */
+/* adds access without a shootdown: a processor still holding the old entry faults, which flushes it. */
 void MiUpgradePte(ULONG64 *root, ULONG_PTR va, ULONG64 value, USHORT asid)
 {
     ULONG64 *pte = MiWalk(root, va, FALSE, 3);

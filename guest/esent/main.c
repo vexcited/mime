@@ -1,9 +1,8 @@
 /*
- * esent: instances, sessions and attachments of the extensible storage
- * engine, without the engine. a database file that does not exist fails to
- * attach as on windows; one that exists cannot be read, so attaching it
- * reports an invalid database, and everything after an attachment finds no
- * open database or table.
+ * esent instances, sessions and attachments, without the storage engine.
+ * like windows, a missing database file fails to attach. an existing one
+ * cannot be read, so it attaches as an invalid database and everything after
+ * finds no open database or table.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winnls.h>
@@ -124,7 +123,7 @@ JET_ERR WINAPI JetCreateInstanceA(JET_INSTANCE *out, LPCSTR name)
     return JetCreateInstance2A(out, name, nullptr, 0);
 }
 
-/* no instance, or a null one, is the default instance of the single instance mode. */
+/* no instance, or a null one, means the default instance of single instance mode. */
 static JET_ERR init(JET_INSTANCE *handle)
 {
     AcquireSRWLockExclusive(&g_lock);
@@ -222,7 +221,7 @@ JET_ERR WINAPI JetTerm2(JET_INSTANCE handle, JET_GRBIT grbit)
     return term(handle);
 }
 
-/* the parameters are taken and have no engine to configure. */
+/* accepted, though there is no engine to configure. */
 JET_ERR WINAPI JetSetSystemParameterW(JET_INSTANCE *handle, JET_SESID session, ULONG id, ULONG_PTR value,
                                       LPCWSTR text)
 {

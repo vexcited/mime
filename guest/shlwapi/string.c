@@ -1,6 +1,6 @@
 /*
- * the string functions shlwapi keeps for itself: byte sizes, time intervals, dates, STRRET,
- * bounded printf, code page conversions and guids.
+ * shlwapi's own string functions: byte sizes, time intervals, dates, STRRET, bounded printf, code page
+ * conversions and guids.
  */
 #include "shlwapi_private.h"
 
@@ -18,7 +18,7 @@ LPWSTR WINAPI StrCpyW(LPWSTR dest, LPCWSTR src)
     return dest;
 }
 
-/* count counts the terminator, as lstrcpyn's does. */
+/* count includes the terminator, like lstrcpyn's. */
 LPWSTR WINAPI StrNCatW(LPWSTR dest, LPCWSTR src, int count)
 {
     if (!dest || !src || count <= 0)
@@ -37,7 +37,7 @@ LPSTR WINAPI StrNCatA(LPSTR dest, LPCSTR src, int count)
 
 /* ------------------------------------------------------------------ printf */
 
-/* -1 when the text does not fit, which still ends with a terminator. */
+/* -1 when the text does not fit, though the output is still terminated. */
 int WINAPI wvnsprintfW(LPWSTR out, int size, LPCWSTR format, va_list args)
 {
     if (!out || size <= 0)
@@ -92,7 +92,7 @@ int WINAPIV wnsprintfA(LPSTR out, int size, LPCSTR format, ...)
 
 /* ------------------------------------------------------------------ code pages */
 
-/* the characters written with the terminator, a too small buffer truncated but terminated. */
+/* returns characters written including the terminator. a too small buffer is truncated but terminated. */
 int WINAPI SHAnsiToUnicodeCP(UINT code_page, LPCSTR source, LPWSTR out, int size)
 {
     if (!out || size <= 0)
@@ -117,7 +117,7 @@ int WINAPI SHAnsiToUnicodeCP(UINT code_page, LPCSTR source, LPWSTR out, int size
     return n;
 }
 
-/* the bytes written with the terminator; truncation never splits a double byte character. */
+/* returns bytes written including the terminator. truncation never splits a double byte character. */
 int WINAPI SHUnicodeToAnsiCP(UINT code_page, LPCWSTR source, LPSTR out, int size)
 {
     if (!out || size <= 0)
@@ -184,7 +184,7 @@ HRESULT WINAPI SHAnsiToUnicodeCPAlloc(UINT code_page, LPCSTR source, LPWSTR *out
     return S_OK;
 }
 
-/* an ansi copy in task memory. */
+/* the caller frees the copy with CoTaskMemFree. */
 HRESULT WINAPI DupWideToAnsi(LPCWSTR source, LPSTR *out);
 HRESULT WINAPI DupWideToAnsi(LPCWSTR source, LPSTR *out)
 {
@@ -375,7 +375,7 @@ BOOL WINAPI GUIDFromStringA(LPCSTR text, GUID *guid)
     return GUIDFromStringW(wide, guid);
 }
 
-/* the characters written with the terminator, 0 when 39 do not fit. */
+/* returns characters written including the terminator, or 0 when the 39 needed do not fit. */
 int WINAPI SHStringFromGUIDW(REFGUID guid, LPWSTR out, int size);
 int WINAPI SHStringFromGUIDW(REFGUID guid, LPWSTR out, int size)
 {
@@ -404,7 +404,7 @@ int WINAPI SHStringFromGUIDA(REFGUID guid, LPSTR out, int size)
 
 static const PCWSTR size_units[] = {L" KB", L" MB", L" GB", L" TB", L" PB", L" EB"};
 
-/* a number with the user's grouping and decimal separator and the given decimals. */
+/* formats with the user's grouping and decimal separator. */
 static BOOL group_number(LPCWSTR digits, UINT decimals, LPWSTR out, int size)
 {
     WCHAR decimal[8], thousand[8], grouping[16];
@@ -420,8 +420,8 @@ static BOOL group_number(LPCWSTR digits, UINT decimals, LPWSTR out, int size)
     return GetNumberFormatW(LOCALE_USER_DEFAULT, 0, digits, &format, out, size) != 0;
 }
 
-/* bytes below 1024 as they are, else in the largest unit that keeps the whole part below 1000
-   with three significant digits, truncated or rounded. */
+/* bytes below 1024 as is, else the largest unit that keeps the whole part below 1000, with three
+   significant digits, truncated or rounded. */
 static HRESULT format_byte_size(ULONGLONG bytes, BOOL round, LPWSTR out, UINT size)
 {
     WCHAR number[64], text[96];
@@ -486,7 +486,7 @@ static HRESULT format_byte_size(ULONGLONG bytes, BOOL round, LPWSTR out, UINT si
     return S_OK;
 }
 
-/* the flags are exactly one of SFBS_FLAGS_ROUND_TO_NEAREST_DISPLAYED_DIGIT and
+/* flags must be exactly one of SFBS_FLAGS_ROUND_TO_NEAREST_DISPLAYED_DIGIT and
    SFBS_FLAGS_TRUNCATE_UNDISPLAYED_DECIMAL_DIGITS. */
 HRESULT WINAPI StrFormatByteSizeEx(ULONGLONG size, SFBS_FLAGS flags, LPWSTR out, UINT length)
 {
@@ -520,7 +520,7 @@ LPSTR WINAPI StrFormatByteSizeA(DWORD size, LPSTR out, UINT length)
     return StrFormatByteSize64A(size, out, length);
 }
 
-/* kilobytes rounded up, grouped, the result truncated to the buffer rather than failing. */
+/* rounds up to whole kilobytes, and truncates to the buffer rather than failing. */
 LPWSTR WINAPI StrFormatKBSizeW(LONGLONG size, LPWSTR out, UINT length)
 {
     if (!out || !length)
@@ -555,7 +555,7 @@ LPSTR WINAPI StrFormatKBSizeA(LONGLONG size, LPSTR out, UINT length)
 
 /* ------------------------------------------------------------------ time intervals */
 
-/* a value keeping only as many leading digits as the budget has left, the rest zeros. */
+/* keeps as many leading digits as the budget has left, zeroing the rest. */
 static DWORD significant(DWORD value, int *budget)
 {
     int digits = 0;
@@ -572,7 +572,7 @@ static DWORD significant(DWORD value, int *budget)
     return value / scale * scale;
 }
 
-/* " 1 hr 2 min 3 sec" with digits significant digits, each part left out when it is zero. */
+/* " 1 hr 2 min 3 sec" to digits significant digits, leaving out zero parts. */
 int WINAPI StrFromTimeIntervalW(LPWSTR out, UINT length, DWORD milliseconds, int digits)
 {
     DWORD seconds = (DWORD)(((ULONGLONG)milliseconds + 500) / 1000);
@@ -610,7 +610,7 @@ int WINAPI StrFromTimeIntervalA(LPSTR out, UINT length, DWORD milliseconds, int 
 
 /* ------------------------------------------------------------------ dates */
 
-/* the date, the time or both of a utc file time in local time; 0 for a zero time. */
+/* formats a UTC file time in local time. a zero time gives 0. */
 int WINAPI SHFormatDateTimeW(const FILETIME *time, DWORD *flags, LPWSTR out, UINT size)
 {
     if (!out || !size)
@@ -673,7 +673,7 @@ int WINAPI SHFormatDateTimeW(const FILETIME *time, DWORD *flags, LPWSTR out, UIN
     return (int)wcslen(out);
 }
 
-/* the ansi form returns the bytes written with the terminator. */
+/* the ANSI form returns bytes written including the terminator. */
 int WINAPI SHFormatDateTimeA(const FILETIME *time, DWORD *flags, LPSTR out, UINT size)
 {
     WCHAR wide[160];
@@ -692,7 +692,7 @@ static LPCSTR strret_offset(const STRRET *strret, const struct _ITEMIDLIST *pidl
     return (LPCSTR)pidl + strret->uOffset;
 }
 
-/* a STRRET_WSTR string is handed over; the others are copied into task memory. */
+/* a STRRET_WSTR string is handed over, the others are copied into task memory. */
 HRESULT WINAPI StrRetToStrW(STRRET *strret, const struct _ITEMIDLIST *pidl, LPWSTR *out)
 {
     if (!strret || !out)
@@ -760,7 +760,7 @@ HRESULT WINAPI StrRetToStrA(STRRET *strret, const struct _ITEMIDLIST *pidl, LPST
     return S_OK;
 }
 
-/* the string copied into the buffer, a STRRET_WSTR one freed afterwards. */
+/* a STRRET_WSTR string is freed after the copy. */
 HRESULT WINAPI StrRetToBufW(STRRET *strret, const struct _ITEMIDLIST *pidl, LPWSTR out, UINT size)
 {
     if (!strret || !out || !size)

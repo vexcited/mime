@@ -1,6 +1,4 @@
-/*
- * named and anonymous pipes over the \Device\NamedPipe file system.
- */
+/* named and anonymous pipes over the \Device\NamedPipe file system. */
 #include "kernelbase_private.h"
 #include <mime/ntrtlsec.h>
 
@@ -58,7 +56,7 @@ static HANDLE ov_event(LPOVERLAPPED ov)
     return (HANDLE)((ULONG_PTR)ov->hEvent & ~(ULONG_PTR)1);
 }
 
-/* a file system control that waits for completion unless the caller supplied an OVERLAPPED. */
+/* waits for completion unless the caller supplied an OVERLAPPED. */
 static NTSTATUS pipe_control(HANDLE pipe, LPOVERLAPPED ov, ULONG code, PVOID in, ULONG in_len, PVOID out,
                              ULONG out_len, ULONG_PTR *information)
 {
@@ -119,7 +117,7 @@ WINBASEAPI HANDLE WINAPI CreateNamedPipeW(LPCWSTR name, DWORD open_mode, DWORD p
     UNICODE_STRING nt;
     if (!KbDosPathToNt(name, &nt))
         return INVALID_HANDLE_VALUE;
-    /* a pipe made without a descriptor gets the one that lets everyone read and only the owner and the system write. */
+    /* without a descriptor, everyone may read and only the owner and the system may write. */
     PVOID descriptor = sa ? sa->lpSecurityDescriptor : nullptr;
     SECURITY_DESCRIPTOR default_sd;
     PACL default_acl = nullptr;
@@ -294,7 +292,7 @@ WINBASEAPI BOOL WINAPI GetNamedPipeClientProcessId(HANDLE pipe, PULONG id)
     return pipe_attribute(pipe, "ClientProcessId", id);
 }
 
-/* the name of the machine of the client of a pipe, which the pipe file system only has for clients over the network. */
+/* the pipe file system only knows the client's computer name for remote clients. */
 WINBASEAPI BOOL WINAPI GetNamedPipeClientComputerNameW(HANDLE pipe, LPWSTR name, ULONG length)
 {
     IO_STATUS_BLOCK iosb;
@@ -436,7 +434,7 @@ WINBASEAPI BOOL WINAPI CreatePipe(PHANDLE read_pipe, PHANDLE write_pipe, LPSECUR
     return TRUE;
 }
 
-/* writes a message and reads the answer in one request, FSCTL_PIPE_TRANSCEIVE. */
+/* one FSCTL_PIPE_TRANSCEIVE request writes the message and reads the answer. */
 WINBASEAPI BOOL WINAPI TransactNamedPipe(HANDLE pipe, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size,
                                          LPDWORD read, LPOVERLAPPED overlapped)
 {

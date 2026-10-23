@@ -1,7 +1,4 @@
-/*
- * shlwapi internal interface shared by its source files: the com interfaces its helpers call
- * through and the functions of other dlls it loads on demand.
- */
+/* shlwapi internals: the COM interfaces its helpers call through and the dll functions it loads on demand. */
 #ifndef MIME_SHLWAPI_PRIVATE_H
 #define MIME_SHLWAPI_PRIVATE_H
 
@@ -11,7 +8,7 @@
 #include <mime/win32/oleauto.h>
 #include <rtl.h>
 
-/* exported entry points without an implementation, like mime/stubexport.h but exported by the def. */
+/* stubs like mime/stubexport.h, but exported through the def file. */
 #include <mime/stub.h>
 #define SHLWAPI_STUB_ARGS_0 void
 #define SHLWAPI_STUB_ARGS_1 ULONG_PTR a1
@@ -35,7 +32,7 @@
     void WINAPI name(SHLWAPI_STUB_ARGS_##args);                                                                        \
     void WINAPI name(SHLWAPI_STUB_ARGS_##args) { MIME_STUB("shlwapi"); }
 
-/* a function of another dll, loaded the first time it is asked for. */
+/* loads the dll on first use. */
 FARPROC ShlProc(LPCWSTR dll, LPCSTR name);
 
 /* ansi strings widened into heap memory, freed with ShlFree. */
@@ -43,15 +40,13 @@ LPWSTR ShlWide(LPCSTR s);
 void ShlFree(void *p);
 void *ShlAlloc(SIZE_T size);
 
-/* task memory of ole32, which the caller frees with CoTaskMemFree. */
+/* ole32 task memory, which the caller frees with CoTaskMemFree. */
 void *ShlTaskAlloc(SIZE_T size);
 void ShlTaskFree(void *p);
 
-/* the private ordinals other shell dlls use. */
+/* private ordinals other shell dlls use. */
 HRESULT WINAPI SHLoadRegUIStringW(HKEY key, LPCWSTR value, LPWSTR out, DWORD size);
 BOOL WINAPI SHIsChildOrSelf(HWND parent, HWND child);
-
-/* ------------------------------------------------------------------ interfaces */
 
 #ifndef STREAM_SEEK_SET
 #define STREAM_SEEK_SET 0

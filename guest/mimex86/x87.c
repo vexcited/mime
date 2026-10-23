@@ -1,6 +1,6 @@
 /*
- * the x87 floating point unit, computed in double precision like most
- * emulators do: values loaded from 80 bit memory lose their extra bits.
+ * the x87 fpu, computed in double precision like most emulators do:
+ * values loaded from 80-bit memory lose their extra bits.
  */
 #include "internal.h"
 #include "xmath.h"
@@ -13,7 +13,7 @@
 
 void x86_fpu_init(X86Cpu *c)
 {
-    c->fcw = 0x027F; /* windows starts threads with 53 bit precision */
+    c->fcw = 0x027F; /* windows starts threads with 53-bit precision. */
     c->fsw = 0;
     c->ftop = 0;
     c->ftag = 0;
@@ -23,7 +23,7 @@ void x86_fpu_init(X86Cpu *c)
     c->mmx_mode = 0;
 }
 
-/* ------------------------------------------------------------ 80 bit format */
+/* ------------------------------------------------------------ 80-bit format */
 
 void x86_double_to_ext(double v, uint8_t out[10])
 {
@@ -68,7 +68,7 @@ double x86_ext_to_double(const uint8_t in[10])
     if (e == 0x7FFF) {
         uint64_t frac = (mant << 1) >> 12;
         if ((mant << 1) && !frac)
-            frac = 1ull << 51; /* keep a nan a nan */
+            frac = 1ull << 51; /* keeps a nan a nan. */
         u = sign | (0x7FFull << 52) | frac;
     } else if (!mant) {
         u = sign;
@@ -240,7 +240,7 @@ static uint16_t tag_word(X86Cpu *c)
     return tw;
 }
 
-/* fnstenv and fldenv in the 28 byte protected mode format. */
+/* fnstenv and fldenv in the 28-byte protected mode format. */
 static void store_env(X86Cpu *c, uint64_t a)
 {
     wr32(a, c->fcw);
@@ -269,7 +269,7 @@ static void load_env(X86Cpu *c, uint64_t a)
 
 void x86_fxsave(X86Cpu *c, uint8_t *area)
 {
-    __builtin_memset(area, 0, 160); /* bytes 416 to 511 are left alone, like the processor does */
+    __builtin_memset(area, 0, 160); /* bytes 416 to 511 are left alone, like the processor does. */
     uint16_t fsw = full_fsw(c);
     __builtin_memcpy(area + 0, &c->fcw, 2);
     __builtin_memcpy(area + 2, &fsw, 2);
@@ -420,7 +420,7 @@ static void exec_memory(X86Cpu *c, const X86Insn *i, uint64_t a)
             return;
         case 6:
             store_env(c, a);
-            c->fcw |= 0x3F; /* fnstenv masks every exception */
+            c->fcw |= 0x3F; /* fnstenv masks every exception. */
             return;
         case 7:
             wr16(a, c->fcw);

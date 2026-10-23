@@ -1,6 +1,4 @@
-/*
- * the effect objects: making one from the id of its effect, and reading and writing its parameters.
- */
+/* effect objects: creation from an effect id, and parameter access. */
 #include "fx_core.h"
 
 static const FxClass *const classes[] = {
@@ -14,7 +12,7 @@ FxEffect *fx_effect_cast(const void *p)
     return e && e->tag == GP_TAG_EFFECT ? (FxEffect *)e : nullptr;
 }
 
-/* the library does not have to be started to make an effect. */
+/* works without GdiplusStartup. */
 WINGDIPAPI GpStatus WINAPI GdipCreateEffect(const GUID guid, CGpEffect **effect)
 {
     if (!effect)
@@ -77,7 +75,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetEffectParameters(CGpEffect *effect, UINT *size
     if (*size < need)
         return InvalidParameter;
     e->cls->get(FX_STATE(e), params);
-    /* only the color matrix and the lookup tables say how much they wrote. */
+    /* only the color matrix and the lookup tables report how much they wrote. */
     if (e->cls->flags & FX_REPORTS_SIZE)
         *size = need;
     return Ok;

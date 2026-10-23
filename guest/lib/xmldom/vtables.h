@@ -1,7 +1,6 @@
 /*
- * the tables of functions of the dom's interfaces, in the order windows' typelib gives them. a node of any type
- * shows the table of its type, which starts with the methods of IXMLDOMNode, so the tables only differ in what
- * follows them. the selection of a method by number is what the dispatch tables rely on.
+ * the dom interface vtables, in the order of windows' typelib. every node type's table starts with the IXMLDOMNode
+ * methods, so they only differ in what follows. the dispatch tables select methods by slot number.
  */
 #ifndef MIME_XMLDOM_VTABLES_H
 #define MIME_XMLDOM_VTABLES_H
@@ -126,7 +125,7 @@ typedef struct XAttributeVtbl {
     HRESULT(STDMETHODCALLTYPE *put_value)(XNode *This, VARIANT value);
 } XAttributeVtbl;
 
-/* text and cdata sections split, comments only have the character data methods. */
+/* text and cdata sections can split, comments only have the character data methods. */
 typedef struct XTextVtbl {
     XM_NODE(XNode)
     XM_DATA(XNode)
@@ -202,7 +201,6 @@ typedef struct XMapVtbl {
     HRESULT(STDMETHODCALLTYPE *get__newEnum)(XList *This, IUnknown **enumerator);
 } XMapVtbl;
 
-/* parse errors, the implementation object and the enumerator are small objects of their own. */
 typedef struct XErrObj XErrObj;
 struct XErrObj {
     const void *vtbl;
@@ -236,7 +234,7 @@ typedef struct XImplVtbl {
 typedef struct XEnum {
     const void *vtbl;
     LONG refs;
-    IUnknown *source; /* the list or map, referred to. */
+    IUnknown *source; /* the list or map, referenced. */
     UINT pos;
 } XEnum;
 typedef struct XEnumVtbl {
@@ -247,7 +245,7 @@ typedef struct XEnumVtbl {
     HRESULT(STDMETHODCALLTYPE *Clone)(XEnum *This, void **out);
 } XEnumVtbl;
 
-/* the secondary interfaces of a node: ISupportErrorInfo and IObjectSafety on one small object. */
+/* a node's ISupportErrorInfo and IObjectSafety, on one small object. */
 typedef struct XAux {
     const void *vtbl;
     LONG refs;

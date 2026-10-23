@@ -1,6 +1,6 @@
 /*
- * the environment: _environ and _wenviron, kept in sync with the
- * process environment block, and the getenv and _putenv families.
+ * _environ and _wenviron, kept in sync with the process environment
+ * block, and the getenv and _putenv families.
  */
 #include "msvcrt_private.h"
 
@@ -9,7 +9,7 @@ wchar_t **MsvcrtWenviron;
 char **MsvcrtInitenv;
 wchar_t **MsvcrtWinitenv;
 
-/* the exported data names of the same pointers. */
+/* the exported data names for the same pointers. */
 char **_environ;
 wchar_t **_wenviron;
 char **__initenv;
@@ -21,7 +21,7 @@ static void sync_exports(void)
     _wenviron = MsvcrtWenviron;
 }
 
-/* builds a malloc'ed array of copies of the strings of a block, skipping "=C:" style entries. */
+/* copies the strings of a block into a malloc'ed array, skipping "=C:" style entries. */
 static char **block_to_array_a(const char *block)
 {
     size_t count = 0;
@@ -140,7 +140,7 @@ static int find_w(wchar_t **env, const wchar_t *name, size_t len)
     return -(i + 1);
 }
 
-/* replaces, adds or with an empty value removes the entry of option in *penv; takes ownership of option. */
+/* replaces, adds or, with an empty value, removes option's entry in *penv; takes ownership of option. */
 static int update_a(char ***penv, char *option, size_t len, int remove)
 {
     char **env = *penv;
@@ -488,7 +488,7 @@ errno_t __cdecl _wdupenv_s(wchar_t **pbuf, size_t *plen, const wchar_t *name)
     return r;
 }
 
-/* looks for file in the current directory, then in each directory of the variable. */
+/* searches the current directory, then each directory listed in the variable. */
 static errno_t searchenv_w(const wchar_t *file, const wchar_t *var, wchar_t *buf, size_t size)
 {
     if (!file || !var || !buf || !size) {

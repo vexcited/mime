@@ -1,8 +1,7 @@
 /*
- * drops from the host's programs on windows of this process. win32k posts WM_MIME_HOSTDND to the thread of the
- * window that takes the drop; the message goes through DispatchMessage like any other, and here it is run: by
- * the handler of ole32 when the window registered an IDropTarget, and by this file for a window that only has
- * WS_EX_ACCEPTFILES, which gets WM_DROPFILES with a DROPFILES block.
+ * drops from host programs onto windows of this process. win32k posts WM_MIME_HOSTDND to the target window's thread
+ * and DispatchMessage runs it: ole32 handles windows with an IDropTarget, this file handles windows that only have
+ * WS_EX_ACCEPTFILES by sending WM_DROPFILES with a DROPFILES block.
  */
 #include "user32_private.h"
 #include <mime/abi.h>
@@ -17,7 +16,7 @@ typedef void(WINAPI *DND_HANDLER)(HWND hwnd, LPARAM lparam);
 #define CF_HDROP 15
 #endif
 
-/* the whole DROPFILES block of the drag, in global memory the program owns; null when the drag has no files. */
+/* the drag's DROPFILES block in program-owned global memory, or NULL when it has no files. */
 static HGLOBAL fetch_files(ULONG session, HWND hwnd, const POINT *screen)
 {
     ULONG total = 0;
@@ -42,7 +41,7 @@ static HGLOBAL fetch_files(ULONG session, HWND hwnd, const POINT *screen)
         }
         offset += n;
     }
-    /* where it was dropped, in the window's client area, and whether outside it. */
+    /* pt in client coordinates and fNC when the drop is outside the client area. */
     POINT client = *screen;
     ScreenToClient(hwnd, &client);
     RECT area;
@@ -60,7 +59,7 @@ static void reply(ULONG session, ULONG phase, ULONG effect)
     NtUserMimeDnd(MIME_DND_REPLY, session, phase << 8 | effect, nullptr);
 }
 
-/* a window with WS_EX_ACCEPTFILES and no IDropTarget: it takes the files of the drag and nothing else. */
+/* without an IDropTarget, a WS_EX_ACCEPTFILES window only takes the dragged files. */
 static void files_window(HWND hwnd, LPARAM lparam)
 {
     ULONG phase = (ULONG)lparam & 15, session = (ULONG)lparam >> 4;

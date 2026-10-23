@@ -1,7 +1,6 @@
 /*
- * the bitmap host of the effects: working out which pixels an effect is run for, reading them as straight argb,
- * running the effect and writing the result back or into a new bitmap. the histograms and the drawing of an image
- * through an effect are here too.
+ * runs effects on bitmaps: picks the pixels, reads them as straight argb and writes the result back or into a new
+ * bitmap. also the histograms and drawing an image through an effect.
  */
 #include "fx_core.h"
 
@@ -17,14 +16,14 @@ static void rect_clip(RECT *r, const RECT *to)
     r->bottom = fx_min(r->bottom, to->bottom);
 }
 
-/* ------------------------------------------------------------------ the run */
+/* ------------------------------------------------------------------ run */
 
 typedef struct Outcome {
-    GBitmap *bitmap;   /* a new bitmap, for the runs that make one */
+    GBitmap *bitmap;   /* a new bitmap, for runs that make one. */
     RECT area;
 } Outcome;
 
-/* the straight argb pixels of a rectangle of the bitmap, which lies inside it. */
+/* the rectangle must lie inside the bitmap. */
 static UINT32 *read_pixels(const GBitmap *b, const RECT *r)
 {
     SIZE_T width = (SIZE_T)(r->right - r->left), height = (SIZE_T)(r->bottom - r->top);
@@ -43,9 +42,8 @@ static void write_pixels(GBitmap *b, INT x, INT y, INT width, INT height, const 
 }
 
 /*
- * runs the effect for the bitmap. with in_place the result goes into the bitmap, without it a new bitmap is made
- * that covers the area, which may reach beyond the input when the effect grows its bounds. an area with nothing in
- * it is not an error, there is no result then.
+ * with in_place the result goes into the bitmap, otherwise into a new bitmap covering the area, which may reach
+ * beyond the input when the effect grows its bounds. an empty area is not an error, it just has no result.
  */
 static GpStatus run_effect(GBitmap *in, FxEffect *e, const RECT *region, BOOL in_place, Outcome *out)
 {
@@ -66,7 +64,7 @@ static GpStatus run_effect(GBitmap *in, FxEffect *e, const RECT *region, BOOL in
     }
     out->area = area;
 
-    /* an effect that looks at neighbors gets the whole input, the others only the pixels they make. */
+    /* an effect that looks at neighbors gets the whole input, the others only the pixels they produce. */
     RECT wanted = input;
     if (!(cls->flags & FX_NEIGHBORS))
         rect_clip(&wanted, &area);
@@ -85,7 +83,7 @@ static GpStatus run_effect(GBitmap *in, FxEffect *e, const RECT *region, BOOL in
         gp_free(dst);
         return st;
     }
-    /* what an effect did before it refused the rest of its work stays. */
+    /* work the effect did before it failed is kept. */
     if (in_place) {
         write_pixels(in, area.left, area.top, aw, ah, dst);
     } else if (st == Ok) {
@@ -107,7 +105,7 @@ static GpStatus run_effect(GBitmap *in, FxEffect *e, const RECT *region, BOOL in
     return st;
 }
 
-/* the tables of an effect that has them, for the program to keep. */
+/* the effect's tables, if it has any, for the program to keep. */
 static GpStatus give_tables(FxEffect *e, BOOL want, void **aux, INT *aux_size)
 {
     if (!want || !aux || !aux_size || !e->cls->tables)
@@ -191,7 +189,7 @@ WINGDIPAPI GpStatus WINAPI GdipBitmapGetHistogram(GpBitmap *bitmap, HistogramFor
     GBitmap *b = gp_bitmap_cast(bitmap);
     if (!b || entries != 256 || (UINT)format > HistogramFormatA)
         return InvalidParameter;
-    /* the channels the format counts, in the order of the arrays: alpha red green blue, red green blue, or one. */
+    /* the channels the format counts, in array order: alpha red green blue, red green blue, or one. */
     UINT *arrays[4] = {ch0, ch1, ch2, ch3};
     UINT used = format == HistogramFormatARGB || format == HistogramFormatPARGB ? 4 : format == HistogramFormatRGB ? 3 : 1;
     for (UINT i = 0; i < 4; i++)
@@ -247,12 +245,12 @@ WINGDIPAPI GpStatus WINAPI GdipBitmapGetHistogram(GpBitmap *bitmap, HistogramFor
 /* ------------------------------------------------------------------ drawing through an effect */
 
 /*
- * the pixels that hold a rectangle, and one more column and row. the numbers must be in the range the pixels of
- * an image can be, else nothing is held.
+ * the pixels covering a rectangle, plus one more column and row. coordinates outside any image's range give an
+ * empty rectangle.
  */
 static RECT pixels_holding(float x, float y, float w, float h)
 {
-    /* 2 to the 30th, which no pixel of an image gets near. */
+    /* 2^30, far beyond any image. */
     const float limit = 1073741824.0f;
     RECT none = {0, 0, 0, 0};
     if (!(x >= -limit && x <= limit && y >= -limit && y <= limit && w >= 0.0f && w <= limit && h >= 0.0f && h <= limit))
@@ -284,7 +282,7 @@ WINGDIPAPI GpStatus WINAPI GdipDrawImageFX(GpGraphics *graphics, GpImage *image,
     if (g->busy)
         return ObjectBusy;
 
-    /* an effect works on pixels, a metafile is turned into some first. */
+    /* effects work on pixels, so a metafile is rasterized first. */
     GBitmap *bitmap = gp_bitmap_cast(img);
     GBitmap *made = nullptr;
     if (e && !bitmap) {
@@ -310,7 +308,7 @@ WINGDIPAPI GpStatus WINAPI GdipDrawImageFX(GpGraphics *graphics, GpImage *image,
     }
     float fx = gp_unit_to_pixels(unit, dpi_x), fy = gp_unit_to_pixels(unit, dpi_y);
 
-    /* the rectangle in pixels, as given: a negative size runs the other way and mirrors the picture. */
+    /* a negative size mirrors the picture. */
     float rx = 0.0f, ry = 0.0f, rw = (float)width, rh = (float)height;
     if (source) {
         rx = source->X * fx;
@@ -320,7 +318,7 @@ WINGDIPAPI GpStatus WINAPI GdipDrawImageFX(GpGraphics *graphics, GpImage *image,
     }
     float sx = rw < 0.0f ? rx + rw : rx, sy = rh < 0.0f ? ry + rh : ry;
     float sw = rw < 0.0f ? -rw : rw, sh = rh < 0.0f ? -rh : rh;
-    /* the corners the picture goes to, in the units the rectangle is given in, moved by the matrix. */
+    /* the destination corners in the rectangle's units, through the matrix. */
     GpPointF corners[3] = {{rx / fx, ry / fy}, {(rx + rw) / fx, ry / fy}, {rx / fx, (ry + rh) / fy}};
     if (m) {
         for (INT i = 0; i < 3; i++) {
@@ -336,7 +334,7 @@ WINGDIPAPI GpStatus WINAPI GdipDrawImageFX(GpGraphics *graphics, GpImage *image,
         st = gp_draw_image(g, img, corners, 3, sx, sy, sw, sh, UnitPixel, a);
         return st;
     }
-    /* the effect is run on a copy of the pixels that hold the rectangle, and the copy is drawn. */
+    /* the effect runs on a copy of the covering pixels, and the copy is drawn. */
     RECT hold = pixels_holding(sx, sy, sw, sh);
     RECT whole = {0, 0, width, height};
     rect_clip(&hold, &whole);

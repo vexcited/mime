@@ -1,8 +1,7 @@
 /*
- * the complex functions of the universal crt, which take and return the structures of its headers by value. The
- * arithmetic is done in double precision with the identities of each function, with the sign of zero kept where a
- * branch cut makes it matter. The single precision forms widen and narrow, and the long double forms are the double
- * ones, as long double is double here.
+ * the universal crt complex functions, which pass its header structures by value. the math is done in double with
+ * each function's identities, keeping the sign of zero where a branch cut makes it matter. the float forms widen and
+ * narrow, and the long double forms are the double ones since long double is double here.
  */
 #include "msvcrt_private.h"
 
@@ -69,7 +68,7 @@ static Z zlog(Z z)
     return mk(log(_hypot(z.R, z.I)), atan2(z.I, z.R));
 }
 
-/* the root with a real part that is not negative. */
+/* the root with a non negative real part. */
 static Z zsqrt(Z z)
 {
     if (z.R == 0 && z.I == 0)
@@ -103,7 +102,7 @@ static Z zcos(Z z)
     return mk(cos(z.R) * cosh(z.I), -sin(z.R) * sinh(z.I));
 }
 
-/* the sine and cosine of the real part, the tangent of the imaginary part and the square of its hyperbolic secant. */
+/* from the real part's sine and cosine, and the imaginary part's tangent and squared hyperbolic secant. */
 static Z ztan(Z z)
 {
     double sx = sin(z.R), cx = cos(z.R), ty = tanh(z.I);
@@ -129,7 +128,7 @@ static Z ztanh(Z z)
     return mk(t.I, -t.R);
 }
 
-/* atanh for the part of the plane that the sign symmetries of the function leave. */
+/* atanh on the part of the plane left after the function's sign symmetries. */
 static Z zatanh(Z z)
 {
     double a = z.R, b = z.I;

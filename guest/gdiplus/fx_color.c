@@ -1,7 +1,4 @@
-/*
- * the effects that work on one pixel at a time: the color matrix, the lookup tables and the effects that make
- * them, hue saturation lightness and the tint.
- */
+/* per-pixel effects: the color matrix, lookup tables and the effects built on them, and the tint. */
 #include "fx_core.h"
 
 /* ------------------------------------------------------------------ tables */
@@ -42,7 +39,7 @@ void fx_rgb_to_lsh(INT r, INT g, INT b, INT *l, INT *s, INT *h)
     INT spread = hi - lo;
     INT room = *l >= 128 ? 510 - (hi + lo) : hi + lo;
     *s = 255 * spread / room;
-    /* where the color lies on the hue circle, in the unit of the spread, starting at red. */
+    /* position on the hue circle from red, in units of the spread. */
     INT around;
     if (r == hi)
         around = g - b;
@@ -58,7 +55,7 @@ void fx_rgb_to_lsh(INT r, INT g, INT b, INT *l, INT *s, INT *h)
     *h = hue;
 }
 
-/* a point of a sextant: the low value plus the share of the span that is left of 43. */
+/* a point within a sextant: low plus left 43rds of the span. */
 static INT along(INT low, INT span, INT left) { return low + span * left / 43; }
 
 void fx_lsh_to_rgb(INT l, INT s, INT h, INT *r, INT *g, INT *b)
@@ -102,7 +99,7 @@ void fx_lsh_to_rgb(INT l, INT s, INT h, INT *r, INT *g, INT *b)
     *b = (BYTE)*b;
 }
 
-/* ------------------------------------------------------------------ the middle tone */
+/* ------------------------------------------------------------------ midtone */
 
 float fx_midtone_gamma(INT midtone)
 {
@@ -125,13 +122,13 @@ float fx_midtone_gamma(INT midtone)
     return midtone >= 0 ? 1.0f / g : g;
 }
 
-/* ------------------------------------------------------------------ parameters made of integers */
+/* ------------------------------------------------------------------ integer parameters */
 
 typedef struct IntRange {
     INT lo, hi;
 } IntRange;
 
-/* the state of the effects whose parameters are a few integers with a range each, and maybe tables. */
+/* state of the effects whose parameters are a few ranged integers, plus optional tables. */
 typedef struct IntState {
     const IntRange *range;
     UINT count;
@@ -141,7 +138,7 @@ typedef struct IntState {
 
 static UINT int_size(const void *state) { return ((const IntState *)state)->count * sizeof(INT); }
 
-/* the values are checked and kept one after the other, so the ones before a bad one stay. */
+/* values are checked and stored in order, so the ones before a bad one are kept. */
 static GpStatus int_set(void *state, const void *params, UINT size)
 {
     IntState *s = state;
@@ -162,7 +159,7 @@ static void int_get(const void *state, void *out)
     memcpy(out, s->v, s->count * sizeof(INT));
 }
 
-/* ------------------------------------------------------------------ the color matrix */
+/* ------------------------------------------------------------------ color matrix */
 
 static void matrix_init(void *state)
 {
@@ -213,7 +210,7 @@ const FxClass fx_class_matrix = {
     matrix_get, nullptr, matrix_run, nullptr,
 };
 
-/* ------------------------------------------------------------------ the lookup tables of the program */
+/* ------------------------------------------------------------------ program lookup tables */
 
 static void lookup_init(void *state) { fx_identity_tables(state); }
 static UINT lookup_size(const void *state) { return 1024; }
@@ -241,12 +238,12 @@ const FxClass fx_class_lookup = {
     lookup_get, nullptr, lookup_run, lookup_tables,
 };
 
-/* ------------------------------------------------------------------ the effects that run through tables */
+/* ------------------------------------------------------------------ table effects */
 
 static GpStatus table_run(void *state, const FxJob *job)
 {
     IntState *s = state;
-    /* the tables are made again from the parameters by the class before every run. */
+    /* the class rebuilds the tables from the parameters before every run. */
     fx_apply_tables(s->tables, job);
     return Ok;
 }
@@ -270,7 +267,7 @@ static const float contrast_limit = 1.0f - 1.0e-6f;
 static const BYTE *brightness_tables(void *state)
 {
     IntState *s = state;
-    /* with nothing asked the tables stay what they were, they are not made identity again. */
+    /* with both values 0 the tables are left as they were, not reset to identity. */
     if (s->v[0] == 0 && s->v[1] == 0)
         return s->tables;
     float contrast = (float)s->v[1] / 100.0f;
@@ -340,7 +337,7 @@ static const BYTE *levels_tables(void *state)
         top = t;
     }
     BYTE fill = (BYTE)fx_floor_int(base + 0.5f);
-    /* up to the lower point the table is the fill, above the upper point the other end. */
+    /* below the low point the table holds the fill, above the top point the other end. */
     INT flat = low >= 0.0f ? fx_floor_int(low) : -1;
     float width = 1.0f / (top - low);
     for (INT i = 0; i < 256; i++) {
@@ -422,7 +419,7 @@ static void hsl_init(void *state)
     fx_identity_tables(s->tables);
 }
 
-/* the tables are lightness, saturation and hue, in the slots the lookup tables have for blue, green and red. */
+/* the lightness, saturation and hue tables sit in the blue, green and red slots. */
 static const BYTE *hsl_tables(void *state)
 {
     IntState *s = state;
@@ -499,7 +496,7 @@ static GpStatus tint_run(void *state, const FxJob *job)
             INT r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
             INT pull = (amount * fx_max(r, fx_max(g, b))) >> 8;
             INT mr = tr * pull + keep * r, mg = tg * pull + keep * g, mb = tb * pull + keep * b;
-            /* what the mix takes from the brightness of the pixel is given back. */
+            /* give back the brightness the mix took from the pixel. */
             INT back = 19 * b + 54 * r + 183 * g - 54 * (mr >> 8) - 183 * (mg >> 8) - 19 * (mb >> 8);
             out[x] = (p & 0xff000000u) | (UINT32)fx_byte((back + mr) >> 8) << 16 |
                      (UINT32)fx_byte((back + mg) >> 8) << 8 | fx_byte((back + mb) >> 8);

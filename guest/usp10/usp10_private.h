@@ -1,6 +1,4 @@
-/*
- * what the parts of usp10 share: the font cache and memory.
- */
+/* shared by the parts of usp10: the font cache and memory. */
 #ifndef USP10_PRIVATE_H
 #define USP10_PRIVATE_H
 
@@ -10,7 +8,7 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/usp10.h>
 
-/* the scripts of this implementation, indexes of the script properties. */
+/* indexes of the script properties. */
 enum {
     USP_UNDEFINED = SCRIPT_UNDEFINED,
     USP_LATIN = 1,
@@ -30,10 +28,10 @@ typedef struct USP_CACHE {
     DWORD Magic;
     BOOL Real; /* glyph ids from gdi32, else characters. */
     TEXTMETRICW Metrics;
-    WORD *Glyphs[256]; /* character to glyph id plus one, by page of 256. */
+    WORD *Glyphs[256]; /* glyph id plus one, by page of 256 characters. */
     ABC *Widths[256];  /* by glyph id. */
     BYTE *Known[256];
-    /* the opentype layout tables, read on first use. */
+    /* opentype layout tables, read on first use. */
     BOOL TablesRead;
     USP_TABLE Gsub, Gpos;
     UINT UnitsPerEm;

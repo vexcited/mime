@@ -1,7 +1,6 @@
 /*
- * text built up piece by piece, for disassembly and error messages: a
- * growing buffer and a printf of its own, which formats doubles exactly
- * as the c runtime's %f does, rounding the exact binary value.
+ * growable text buffer and printf for disassembly and error messages. %f
+ * rounds the exact binary value, like the c runtime's.
  */
 #include "d3dcompiler_private.h"
 
@@ -123,7 +122,7 @@ static void big_add_small(Big *b, UINT32 v)
     }
 }
 
-/* the decimal digits of the number, most significant first. */
+/* most significant digit first. */
 static int big_digits(Big b, char *out, int size)
 {
     char tmp[400];
@@ -146,7 +145,7 @@ static int big_digits(Big b, char *out, int size)
     return count;
 }
 
-/* the bits of the fraction below bit k, kept apart from the integer part. */
+/* keeps only the bits below bit k, the fraction. */
 static void big_low_bits(Big *b, int k)
 {
     int words = k / 32, rest = k % 32;
@@ -188,7 +187,7 @@ static void big_shr(Big *b, int bits)
         b->n--;
 }
 
-/* %f of the double with the precision, as text without the sign. */
+/* %f with the given precision, without the sign. */
 static int format_fixed(double value, int precision, char *out, int size)
 {
     UINT64 bits;
@@ -220,7 +219,7 @@ static int format_fixed(double value, int precision, char *out, int size)
         big_low_bits(&fraction, k);
         big_shr(&integer, k);
     }
-    /* the digits of the fraction, rounded half to even on the exact value. */
+    /* fraction digits, rounded half to even on the exact value. */
     Big digits;
     big_set(&digits, 0);
     if (k) {

@@ -1,14 +1,13 @@
 /*
- * the encrypting file system calls. Mime's volumes have no encryption: no file is ever encrypted, so decrypting one is
- * a success that changes nothing, asking for the status finds a volume that does not support it, and encrypting or
- * opening a file in its raw form is refused.
+ * encrypting file system calls. mime's volumes have no encryption, so decrypting succeeds without doing anything,
+ * the status reports an unsupported volume, and encrypting or opening a file raw is refused.
  */
 #include "advapi32_private.h"
 
 /* FileEncryptionStatus results. */
 #define FILE_SYSTEM_NOT_SUPPORT 6
 
-/* the file must exist, as the calls of the service find it first. */
+/* the service looks the file up first, so it must exist. */
 static BOOL file_exists(LPCWSTR name)
 {
     if (!name) {

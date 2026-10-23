@@ -1,11 +1,8 @@
 /*
- * the descriptor heap: one array per kind of descriptor in a set that is
- * updated after it is bound, so a view's descriptor is written once, when
- * the view is made, without waiting for anything. index 0 of each array
- * is the null descriptor that unbound slots read as zeros.
+ * the descriptor heap: one update-after-bind array per descriptor kind, so a view's descriptor is written once when
+ * the view is made, without waiting. index 0 of each array is a null descriptor, so unbound slots read zeros.
  *
- * and what the gpu may still be using when the program lets go of it,
- * destroyed once the submissions that used it are done.
+ * also deferred destruction of objects the gpu may still use.
  */
 #include "d3d11_private.h"
 
@@ -21,7 +18,7 @@ UINT D3dHeapAlloc(D3dDevice *device, UINT kind)
     UINT index = 0;
     AcquireSRWLockExclusive(&heap->lock);
     UINT64 completed = device->completed;
-    /* the oldest freed index the gpu is done with, else a new one. */
+    /* reuse a freed index the gpu is done with, else take a new one. */
     for (UINT i = 0; i < heap->freed[kind].count; i++)
         if (heap->freed[kind].serial[i] <= completed) {
             index = heap->freed[kind].index[i];
@@ -149,10 +146,7 @@ void D3dHeapWriteBuffers(D3dDevice *device, UINT index, VkBuffer buffer, VkDevic
     HeapFree(GetProcessHeap(), 0, infos);
 }
 
-/*
- * the heap's set, sized by what the gpu allows, and the null descriptors
- * at index 0. samplers are fewer: direct3d allows 4096 sampler states.
- */
+/* the heap is sized by the gpu's limits. direct3d allows only 4096 sampler states. */
 HRESULT D3dHeapInit(D3dDevice *device)
 {
     D3dVk *vk = &device->vk;
@@ -202,7 +196,7 @@ HRESULT D3dHeapInit(D3dDevice *device)
     if (vk->vkAllocateDescriptorSets(vk->device, &alloc, &heap->set) != VK_SUCCESS)
         return E_FAIL;
 
-    /* the tables: a dynamic uniform buffer per stage. */
+    /* binding tables: a dynamic uniform buffer per stage. */
     VkDescriptorSetLayoutBinding tables[D3D_STAGES];
     for (UINT i = 0; i < D3D_STAGES; i++)
         tables[i] = (VkDescriptorSetLayoutBinding){i, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_ALL};
@@ -226,7 +220,7 @@ HRESULT D3dHeapInit(D3dDevice *device)
     if (vk->vkCreatePipelineLayout(vk->device, &pipeline, nullptr, &device->pipeline_layout) != VK_SUCCESS)
         return E_FAIL;
 
-    /* null descriptors read as zeros; the null sampler is direct3d's default state. */
+    /* the null sampler is direct3d's default sampler state. */
     D3dHeapWriteImage(device, D3D_HEAP_SAMPLED_IMAGE, 0, VK_NULL_HANDLE);
     D3dHeapWriteImage(device, D3D_HEAP_STORAGE_IMAGE, 0, VK_NULL_HANDLE);
     D3dHeapWriteTexel(device, D3D_HEAP_UNIFORM_TEXEL, 0, VK_NULL_HANDLE);
@@ -245,7 +239,7 @@ HRESULT D3dHeapInit(D3dDevice *device)
 
 /* ------------------------------------------------------------------ constant buffer descriptors */
 
-/* the uniform buffer descriptor of a range, made the first time it is bound and kept. */
+/* cached per range, made the first time it is bound. */
 UINT D3dCbvIndex(D3dDevice *device, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size)
 {
     size = D3D_MIN(size, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16);
@@ -361,7 +355,7 @@ static void defer(D3dDevice *device, const D3dGarbage *g)
                                : HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*list));
         if (!list) {
             ReleaseSRWLockExclusive(&device->garbage_lock);
-            /* without memory to remember it, the object leaks rather than being freed in use. */
+            /* leak rather than free something still in use. */
             return;
         }
         device->garbage = list;
@@ -393,7 +387,6 @@ void D3dDeferFree(D3dDevice *device, UINT64 serial, D3dAllocation *alloc)
     defer(device, &g);
 }
 
-/* frees what the gpu is done with, after the completed serial moved. */
 void D3dCollectGarbage(D3dDevice *device)
 {
     AcquireSRWLockExclusive(&device->garbage_lock);

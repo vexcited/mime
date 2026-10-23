@@ -1,11 +1,8 @@
 /*
- * the effects framework: D3D10CreateEffectFromMemory loads the FX10 chunk
- * of an fx_4_0 container as d3d10.dll's CEffectLoader reads it, then makes
- * the effect's constant buffers, states and shaders on the device. passes
- * apply their states and shaders, and each shader its constant buffers,
- * views and samplers, found by name in the reflection of its bytecode.
- * state assignments fxc could not fold run as expressions,
- * effect_expression.c.
+ * the effects framework: D3D10CreateEffectFromMemory loads the FX10 chunk of
+ * an fx_4_0 container and makes its constant buffers, states and shaders on
+ * the device. shader resources are found by name in the bytecode's reflection.
+ * state assignments fxc could not fold run as expressions, see effect_expression.c.
  */
 #include "effect_private.h"
 #include "../lib/dxbc/dxbc.h"
@@ -26,12 +23,12 @@ void *FxAlloc(FxEffect *effect, SIZE_T size)
 
 /* ------------------------------------------------------------------ the state table */
 
-/* the value types of states, direct3d's shader variable types. */
+/* state value types, numbered like D3D10_SHADER_VARIABLE_TYPE. */
 enum { ST_BOOL = 1, ST_INT = 2, ST_FLOAT = 3, ST_UINT = 19, ST_UINT8 = 20, ST_OBJECT = 0 };
 
 typedef struct FxStateInfo {
     UINT block, type, columns, count;
-    /* the object a state takes, an object type of the format, or 0 for numbers. */
+    /* the fx object type the state takes, or 0 for numbers. */
     UINT object;
     SIZE_T offset;
 } FxStateInfo;
@@ -42,7 +39,7 @@ typedef struct FxStateInfo {
 #define SM(f) offsetof(D3D10_SAMPLER_DESC, f)
 #define PS(f) offsetof(FxPass, f)
 
-/* the 56 states of d3d10.dll's table, in its order, which assignments name by index. */
+/* the 56 states, in the order assignments index them. */
 static const FxStateInfo STATES[] = {
     {FX_BLOCK_PASS, ST_OBJECT, 1, 1, FX_RASTERIZER, PS(rasterizer)},
     {FX_BLOCK_PASS, ST_OBJECT, 1, 1, FX_DEPTHSTENCIL, PS(depth_stencil)},
@@ -102,10 +99,10 @@ static const FxStateInfo STATES[] = {
     {FX_BLOCK_SAMPLER, ST_OBJECT, 1, 1, FX_TEXTURE, offsetof(FxBlock, texture)},
 };
 
-/* the bytes a value of the state takes: four a component, one for masks. */
+/* 4 bytes per component, 1 for masks. */
 static UINT state_size(const FxStateInfo *info) { return info->type == ST_UINT8 ? 1 : 4 * info->columns; }
 
-/* where an object variable of the type of the state is acceptable: shaders and textures by family. */
+/* shaders and textures match by family. */
 static BOOL object_fits(UINT state_object, UINT object)
 {
     if (state_object == FX_TEXTURE)
@@ -115,7 +112,7 @@ static BOOL object_fits(UINT state_object, UINT object)
     return object == state_object;
 }
 
-/* the null objects constant assignments of 0 name. */
+/* what a constant assignment of 0 to an object state points at. */
 static FxBlock null_blocks[5] = {{0}, {FX_BLOCK_DEPTHSTENCIL}, {FX_BLOCK_BLEND}, {FX_BLOCK_RASTERIZER}, {0}};
 static FxShader null_shaders[3] = {{FX_PIXELSHADER}, {FX_VERTEXSHADER}, {FX_GEOMETRYSHADER}};
 static void *null_view;
@@ -140,11 +137,11 @@ static void *null_object(UINT object)
     }
 }
 
-/* ------------------------------------------------------------------ objects of variables */
+/* ------------------------------------------------------------------ object variables */
 
 UINT FxElementCount(const FxType *type) { return type->elements ? type->elements : 1; }
 
-/* the storage of an element of an object variable: a block, a shader, a view pointer or a string. */
+/* an element's storage is a block, a shader, a view pointer or a string. */
 static void *object_element(FxVariable *v, UINT index)
 {
     switch (v->type->object) {
@@ -169,7 +166,7 @@ typedef struct FxReader {
     FxEffect *effect;
     const BYTE *base;
     UINT size;
-    /* the unstructured data, which offsets of the structured stream point into. */
+    /* offsets in the structured stream point into this. */
     const BYTE *data;
     UINT data_size;
     UINT pos;
@@ -200,7 +197,6 @@ static const BYTE *next_bytes(FxReader *r, UINT size)
     return p;
 }
 
-/* bytes of the unstructured data. */
 static const BYTE *data_at(FxReader *r, UINT offset, UINT size)
 {
     if (offset > r->data_size || r->data_size - offset < size)
@@ -208,7 +204,7 @@ static const BYTE *data_at(FxReader *r, UINT offset, UINT size)
     return r->data + offset;
 }
 
-/* a string of the unstructured data, NULL for offset 0; FALSE when it runs past the data. */
+/* offset 0 gives NULL. fails when the string runs past the data. */
 static BOOL string_at(FxReader *r, UINT offset, const char **out)
 {
     *out = nullptr;
@@ -224,7 +220,7 @@ static BOOL string_at(FxReader *r, UINT offset, const char **out)
     return FALSE;
 }
 
-/* a block of the unstructured data, its size first. */
+/* the block starts with its size. */
 static const BYTE *block_at(FxReader *r, UINT offset, UINT *size)
 {
     const BYTE *p = data_at(r, offset, 4);
@@ -318,9 +314,8 @@ static HRESULT read_type(FxReader *r, UINT offset, FxType **out)
 }
 
 /*
- * packed values, the components one after the other, spread to the layout
- * of constant buffers: each row, or column of column major matrices, and
- * each element of an array starting a register of 16 bytes.
+ * spreads packed components to the constant buffer layout: each row, each
+ * column of a column major matrix and each array element starts a 16-byte register.
  */
 static BOOL unpack(BYTE *out, const BYTE *in, UINT size, const FxType *t, UINT *used)
 {
@@ -358,7 +353,6 @@ static BOOL unpack(BYTE *out, const BYTE *in, UINT size, const FxType *t, UINT *
     return TRUE;
 }
 
-/* a numeric variable's default value, or an annotation's. */
 static HRESULT read_value(FxReader *r, UINT offset, const FxType *t, BYTE *out)
 {
     const BYTE *in = data_at(r, offset, t->packed);
@@ -433,7 +427,7 @@ FxVariable *FxFindVariable(FxEffect *effect, const char *name)
     return nullptr;
 }
 
-/* a name a child effect gives may not be one of its pool's. */
+/* a child effect may not reuse a name from its pool. */
 static BOOL pooled_name(FxReader *r, const char *name)
 {
     return name && r->effect->pool && (find_buffer(r->effect->pool, name) || FxFindVariable(r->effect->pool, name));
@@ -492,7 +486,6 @@ static HRESULT read_buffers(FxReader *r)
     return S_OK;
 }
 
-/* a shader of a variable or an inline one, its bytecode in the unstructured data. */
 static HRESULT read_shader(FxReader *r, FxShader *s, UINT kind, UINT code_offset, UINT so_offset)
 {
     s->kind = kind;
@@ -524,7 +517,7 @@ static FxBlock *new_block(FxReader *r, UINT kind)
         return nullptr;
     FxBlock *b = &e->blocks[e->block_count++];
     b->kind = kind;
-    /* the defaults of d3d10.dll's blocks, before their assignments. */
+    /* block defaults, set before the assignments. */
     switch (kind) {
     case FX_BLOCK_DEPTHSTENCIL:
         b->desc.depth_stencil = (D3D10_DEPTH_STENCIL_DESC){
@@ -561,7 +554,7 @@ static FxBlock *new_block(FxReader *r, UINT kind)
 
 static void evaluate(FxAssignment *a);
 
-/* a constant of an assignment as the state's type takes it: 1 a float, 2 to 4 integers. */
+/* constant types: 1 is float, 2 to 4 are integers. */
 static BOOL convert_constant(UINT from, const BYTE *value, UINT to, BYTE *out)
 {
     INT i;
@@ -589,8 +582,8 @@ static BOOL convert_constant(UINT from, const BYTE *value, UINT to, BYTE *out)
 }
 
 /*
- * the assignments of a block or pass: constants go to their state at once,
- * variables are kept for each apply but objects, held by where they are.
+ * constants go to their state now. variables are evaluated again on each
+ * apply, except objects, which are referenced in place.
  */
 static HRESULT read_assignments(FxReader *r, UINT count, UINT kind, void *block, UINT *assignment_count,
                                 FxAssignment **out, UINT *rtv_count)
@@ -680,7 +673,7 @@ static HRESULT read_assignments(FxReader *r, UINT count, UINT kind, void *block,
             break;
         }
         case 5: {
-            /* an element of an array, its index computed. */
+            /* an array element with a computed index. */
             const BYTE *xi = data_at(r, offset, 8), *blob;
             const char *array;
             UINT size;
@@ -698,7 +691,7 @@ static HRESULT read_assignments(FxReader *r, UINT count, UINT kind, void *block,
             break;
         }
         case 6: {
-            /* a value computed. */
+            /* a computed value. */
             const BYTE *blob;
             UINT size;
             HRESULT hr;
@@ -819,7 +812,7 @@ static HRESULT read_objects(FxReader *r)
     return S_OK;
 }
 
-/* what a child effect shares with its pool must be there, the same. */
+/* everything a child effect shares must exist in its pool and match. */
 static HRESULT read_shared(FxReader *r)
 {
     for (UINT i = 0; i < r->header[4]; i++) {
@@ -889,7 +882,7 @@ static HRESULT read_techniques(FxReader *r)
 
 /* ------------------------------------------------------------------ shaders and the device */
 
-/* the resources of a shader, found by name among the effect's buffers and variables. */
+/* finds the shader's resources by name among the effect's buffers and variables. */
 static HRESULT bind_shader(FxEffect *e, FxShader *s)
 {
     ID3D10ShaderReflection *reflection;
@@ -939,7 +932,7 @@ static HRESULT bind_shader(FxEffect *e, FxShader *s)
     return hr;
 }
 
-/* a declaration of stream output, "SEMANTIC[index][.mask]" entries split by ";", "$SKIP" a gap. */
+/* stream output declarations: "SEMANTIC[index][.mask]" entries split by ";", "$SKIP" for a gap. */
 static UINT parse_so(const char *text, D3D10_SO_DECLARATION_ENTRY *out, char *names, UINT max)
 {
     UINT count = 0;
@@ -1031,7 +1024,7 @@ static HRESULT create_state(FxEffect *e, FxBlock *b)
     }
 }
 
-/* the constant buffers, at first written in full, the state objects and the shaders. */
+/* constant buffers are uploaded in full the first time. */
 static HRESULT bind_to_device(FxEffect *e)
 {
     ID3D10Device *d = e->device;
@@ -1060,10 +1053,7 @@ static HRESULT bind_to_device(FxEffect *e)
 
 /* ------------------------------------------------------------------ applying */
 
-/*
- * a variable's value or an expression's as a state reads it: an index
- * past the array's elements takes the first, a byte the result's first.
- */
+/* an index past the end of the array reads element 0. a byte state takes the result's first byte. */
 static void evaluate(FxAssignment *a)
 {
     const FxStateInfo *info = &STATES[a->state];
@@ -1091,7 +1081,7 @@ static void evaluate(FxAssignment *a)
     memcpy(a->target, a->source->data + 4 * a->constant_index, state_size(info));
 }
 
-/* a block's assignments of variables, its state made again when they change it. */
+/* recreates the block's state object when a variable assignment changes it. */
 void FxEvaluateBlock(FxEffect *effect, FxBlock *b)
 {
     if (!b->assignment_count)
@@ -1108,7 +1098,7 @@ typedef void(STDMETHODCALLTYPE *SetBuffers)(ID3D10Device *, UINT, UINT, ID3D10Bu
 typedef void(STDMETHODCALLTYPE *SetViews)(ID3D10Device *, UINT, UINT, ID3D10ShaderResourceView *const *);
 typedef void(STDMETHODCALLTYPE *SetSamplers)(ID3D10Device *, UINT, UINT, ID3D10SamplerState *const *);
 
-/* a constant buffer's bytes, written when they changed and the program did not put its own buffer. */
+/* uploads only when changed, and never once the program set its own buffer. */
 static void upload(FxEffect *e, FxBuffer *b)
 {
     if (!b->dirty || b->user || !b->buffer)
@@ -1165,7 +1155,7 @@ static void evaluate_pass(FxPass *p)
         evaluate(&p->assignments[i]);
 }
 
-/* the pass's states, then render targets, then its vertex, pixel and geometry shaders, each as given. */
+/* order: states, render targets, then the vertex, pixel and geometry shaders. */
 static void apply_pass(FxPass *p)
 {
     FxEffect *e = p->effect;
@@ -1223,7 +1213,7 @@ static HRESULT STDMETHODCALLTYPE pass_get_desc(ID3D10EffectPass *iface, D3D10_PA
     return S_OK;
 }
 
-/* the variable of the pass's shader and its index there, an anonymous one for inline and null shaders. */
+/* inline and null shaders report an anonymous variable. */
 static HRESULT shader_desc(FxPass *p, FxShader *s, UINT null_index, D3D10_PASS_SHADER_DESC *desc)
 {
     if (!desc)
@@ -1305,7 +1295,6 @@ static void mask_shader(D3D10_STATE_BLOCK_MASK *mask, FxShader *s, D3D10_DEVICE_
     }
 }
 
-/* the states the pass sets. */
 static HRESULT STDMETHODCALLTYPE pass_mask(ID3D10EffectPass *iface, D3D10_STATE_BLOCK_MASK *mask)
 {
     FxPass *p = pass_impl(iface);
@@ -1334,7 +1323,7 @@ static const ID3D10EffectPassVtbl pass_vtbl = {
     pass_annotation_by_name, pass_apply,    pass_mask,
 };
 
-/* the invalid pass and technique, which other objects' getters hand out for what is not there. */
+/* getters return these for passes and techniques that do not exist. */
 static BOOL STDMETHODCALLTYPE invalid_is_valid(void *iface) { return FALSE; }
 
 static HRESULT STDMETHODCALLTYPE invalid_desc(void *iface, void *desc) { return E_FAIL; }
@@ -1473,7 +1462,7 @@ static void destroy(FxEffect *e)
     HeapFree(GetProcessHeap(), 0, e);
 }
 
-/* an effect answers the iid of ID3D10EffectPool only, as d3d10.dll's does, a pool it too. */
+/* like windows, an effect answers only the ID3D10EffectPool iid, so it is a pool too. */
 static HRESULT STDMETHODCALLTYPE effect_query(ID3D10Effect *iface, REFIID riid, void **out)
 {
     FxEffect *e = effect_impl(iface);
@@ -1529,7 +1518,7 @@ static HRESULT STDMETHODCALLTYPE effect_get_desc(ID3D10Effect *iface, D3D10_EFFE
     return S_OK;
 }
 
-/* indices past the effect's own are its pool's, as are names it does not have. */
+/* indices past the effect's own, and names it lacks, go to the pool. */
 static ID3D10EffectConstantBuffer *STDMETHODCALLTYPE effect_buffer_by_index(ID3D10Effect *iface, UINT index)
 {
     FxEffect *e = effect_impl(iface);
@@ -1562,7 +1551,7 @@ static ID3D10EffectVariable *STDMETHODCALLTYPE effect_variable_by_name(ID3D10Eff
     return v ? &v->iface : &FxInvalidVariable.iface;
 }
 
-/* semantics compare without regard to case. */
+/* semantics compare case insensitively. */
 static ID3D10EffectVariable *STDMETHODCALLTYPE effect_variable_by_semantic(ID3D10Effect *iface, LPCSTR semantic)
 {
     for (FxEffect *e = effect_impl(iface); semantic && !effect_impl(iface)->optimized && e; e = e->pool)
@@ -1587,7 +1576,7 @@ static ID3D10EffectTechnique *STDMETHODCALLTYPE effect_technique_by_name(ID3D10E
     return &invalid_technique;
 }
 
-/* optimizing lets go of the names, which the effect then cannot be searched by. */
+/* optimizing drops the names, so lookups by name stop working. */
 static HRESULT STDMETHODCALLTYPE effect_optimize(ID3D10Effect *iface)
 {
     effect_impl(iface)->optimized = TRUE;
@@ -1638,7 +1627,7 @@ static const ID3D10EffectPoolVtbl pool_vtbl = {pool_query, pool_add_ref, pool_re
 
 /* ------------------------------------------------------------------ loading */
 
-/* the tag, fx_4_0's or fx_4_1's, is not read, as d3d10.dll does not. */
+/* like windows, the fx_4_0 or fx_4_1 tag is not checked. */
 static HRESULT load(FxEffect *e, const void *data, SIZE_T length)
 {
     uint32_t size;
@@ -1713,7 +1702,7 @@ static HRESULT create(void *data, SIZE_T length, ID3D10Device *device, FxEffect 
     return S_OK;
 }
 
-/* a child effect takes a pool, and only it does. */
+/* only child effects take a pool. */
 D3D10API HRESULT WINAPI D3D10CreateEffectFromMemory(void *data, SIZE_T length, UINT flags, ID3D10Device *device,
                                                     ID3D10EffectPool *pool, ID3D10Effect **effect)
 {

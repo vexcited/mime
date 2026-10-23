@@ -1,8 +1,8 @@
 /*
  * security identifiers: allocation, comparison and the S-1-... string form.
  *
- * these wrap the sid routines of ntdll, which validate and answer the way windows' do, and set the last error the
- * way kernelbase does: the functions that cannot fail clear it, the others convert the status.
+ * these wrap the ntdll sid routines, which validate like windows, and set the last error like kernelbase: functions
+ * that cannot fail clear it, the others convert the status.
  */
 #include "advapi32_private.h"
 #include <stdarg.h>
@@ -112,7 +112,7 @@ ADVAPI PUCHAR WINAPI GetSidSubAuthorityCount(PSID sid)
 
 /* ---------------------------------------------------------------- string form */
 
-/* the text of a sid into a buffer of LocalAlloc, wide characters including the terminator. */
+/* a sid's text in a LocalAlloc buffer; chars counts wide characters including the terminator. */
 static PWSTR sid_text(PSID sid, DWORD *chars)
 {
     UNICODE_STRING text;

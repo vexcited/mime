@@ -1,6 +1,6 @@
 /*
- * pixel formats: rows of any format to and from straight 8 bit argb, the common currency of the bitmap code, and
- * the conversions between formats built on it.
+ * pixel formats: rows of any format to and from straight 8-bit argb, the common currency of the bitmap code, and
+ * the format conversions built on it.
  */
 #include "gp_private.h"
 
@@ -38,7 +38,6 @@ static UINT32 expand5(UINT32 v) { return (v << 3) | (v >> 2); }
 static UINT32 expand6(UINT32 v) { return (v << 2) | (v >> 4); }
 static UINT32 pack555(UINT32 r, UINT32 g, UINT32 b) { return ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3); }
 
-/* the 8 bit value of a 16 bit channel. */
 static UINT32 narrow16(UINT32 v) { return (v * 255 + 32767) / 65535; }
 static UINT32 widen8(UINT32 v) { return v * 257; }
 
@@ -49,7 +48,7 @@ static UINT32 palette_lookup(const ColorPalette *pal, UINT index)
     return pal->Entries[index];
 }
 
-/* the entry of the palette nearest to a color, by the squared distance of the channels. */
+/* by squared channel distance. */
 static UINT nearest_entry(const ColorPalette *pal, UINT32 argb)
 {
     if (!pal || !pal->Count)
@@ -245,7 +244,7 @@ void gp_row_from_argb(BYTE *row, PixelFormat f, const ColorPalette *pal, INT x, 
     case PixelFormat16bppGrayScale: {
         USHORT *p = (USHORT *)row + x;
         for (INT i = 0; i < n; i++) {
-            /* the weights gdi+ uses for gray are the usual 0.299, 0.587 and 0.114 */
+            /* gdi+ uses the usual 0.299, 0.587 and 0.114 gray weights. */
             UINT32 g = (((in[i] >> 16) & 255) * 299 + ((in[i] >> 8) & 255) * 587 + (in[i] & 255) * 114) / 1000;
             p[i] = (USHORT)widen8(g);
         }
@@ -328,7 +327,6 @@ void gp_row_from_argb(BYTE *row, PixelFormat f, const ColorPalette *pal, INT x, 
     }
 }
 
-/* a row of pixels of one format into another, through straight argb in pieces. */
 void gp_convert_row(BYTE *dst, PixelFormat dst_format, const ColorPalette *dst_palette, const BYTE *src,
                     PixelFormat src_format, const ColorPalette *src_palette, INT count)
 {

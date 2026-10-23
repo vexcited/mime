@@ -1,16 +1,13 @@
 /*
- * the small writes of the files of the host backed volumes. A program that appends a log record in two or
- * three writes of a few bytes would cost a trip to the host for each, 7 microseconds and the host's own
- * write, so a handle keeps the writes that continue one another in a buffer of its own and the host gets
- * them together: when the buffer is full, when the handle is flushed, closed or reads, when anything asks
- * about the file, which is another handle reading it, its size, a listing that holds it or an open by its name, when
- * a write does not continue the buffer, at shutdown and, for what is left, ten milliseconds after it was
- * written. A handle that asked for write through or unbuffered i/o never gets one.
+ * write-back of small writes on the host backed volumes. appending a log record in a few tiny writes would cost a
+ * host trip each, so a handle buffers contiguous writes and sends them together: when the buffer is full, when the
+ * handle is flushed, closed or reads, when anything else looks at the file, such as another handle reading it, its
+ * size, a directory listing or an open by name, when a write does not continue the buffer, at shutdown, and otherwise
+ * ten milliseconds after the write. handles opened for write through or unbuffered i/o never buffer.
  *
- * What a program sees is what the file system would show it with a cache of its own: every way the guest
- * has to see a file's data or size first has the handles that keep data for it write it. The host's programs
- * see the file ten milliseconds late at most, and what the machine's own death takes with it, a crash of the
- * machine process, is that much.
+ * the guest sees what a file system with its own cache would show: every way to see a file's data or size first
+ * flushes the handles buffering for it. host programs see the file at most ten milliseconds late, and a crash of the
+ * machine process loses at most that much.
  */
 #include "../ntos.h"
 
@@ -18,18 +15,18 @@
 #define WB_MAX_WRITE (16 * 1024)
 #define WB_MAX_BUFFERS 48
 #define WB_TICK_MS 10
-#define WB_IDLE_TICKS 3 /* clean for this many ticks and the buffer is given back */
+#define WB_IDLE_TICKS 3 /* a buffer clean for this many ticks is freed. */
 #define WB_BUCKETS 64
 
 static FAST_MUTEX g_lock;
-static LIST_ENTRY g_kept; /* the buffers handles hold */
+static LIST_ENTRY g_kept; /* buffers held by handles. */
 static ULONG g_buffers;
-/* by file, the buffers with data the host has not got: read without the lock to see whether a file has any. */
+/* per file bucket, buffers with unflushed data: read without the lock to see whether a file has any. */
 static volatile LONG g_pending[WB_BUCKETS];
 static volatile LONG g_dirty;
 /*
- * the files with a section or a window in use, which keep no writes back and cannot be made shorter. a few at a time,
- * so a table searched under the lock; the count is also kept alone, for the writes of files that have none.
+ * files with a section or a window in use, which buffer no writes and cannot be truncated. there are few at a time, so
+ * a table searched under the lock; the total is also kept apart so writes to unmapped files can skip the search.
  */
 #define WB_MAPPED_FILES 256
 static struct {
@@ -38,7 +35,7 @@ static struct {
     LONG Count;
 } g_mapped_files[WB_MAPPED_FILES];
 static volatile LONG g_mapped_total;
-static LONG g_mapped_overflow; /* uses of files the table had no room for: every file counts as mapped meanwhile */
+static LONG g_mapped_overflow; /* uses the table had no room for: meanwhile every file counts as mapped. */
 static KEVENT g_wake;
 static volatile LONG g_worker;
 static BOOLEAN g_ready;
@@ -60,7 +57,7 @@ static void mark_clean(FS_WB *wb)
     __atomic_sub_fetch(&g_dirty, 1, __ATOMIC_SEQ_CST);
 }
 
-/* writes the buffer to the host, with the lock held. the data is gone from the buffer whatever happens. */
+/* lock held. the buffer is emptied whatever happens. */
 static NTSTATUS flush_locked(FS_WB *wb)
 {
     if (!wb->Length)
@@ -77,7 +74,7 @@ static NTSTATUS flush_locked(FS_WB *wb)
     wb->Length = 0;
     mark_clean(wb);
     if (!NT_SUCCESS(status)) {
-        /* what was kept is gone, so a write that follows would leave a hole in the file: none follows. */
+        /* the buffered data is lost, so a later write would leave a hole in the file: fail them all. */
         if (NT_SUCCESS(wb->Failed))
             wb->Failed = status;
         KiLogPrintf("fs: %u bytes at %llu of file %llu were not written: %08x", (unsigned)sent, wb->Start, wb->FileId, status);
@@ -94,7 +91,7 @@ static void release_buffer(FS_WB *wb)
     g_buffers--;
 }
 
-/* a bounded name check: the same file, or below the directory. names are volume relative and start with a backslash. */
+/* the same file, or one below the directory. names are volume relative and start with a backslash. */
 static BOOLEAN name_matches(PCUNICODE_STRING name, PCUNICODE_STRING path, BOOLEAN directory)
 {
     if (!name || !name->Length)
@@ -113,7 +110,7 @@ static BOOLEAN name_matches(PCUNICODE_STRING name, PCUNICODE_STRING path, BOOLEA
     return RtlEqualUnicodeString(&head, &dir, TRUE);
 }
 
-/* one tick of the flusher: everything dirty goes to the host, and buffers clean for a while go back. TRUE when none are kept. */
+/* flushes everything dirty and frees buffers idle for a while. TRUE when none are left. */
 static BOOLEAN tick(void)
 {
     ExAcquireFastMutex(&g_lock);
@@ -183,13 +180,11 @@ void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta)
     ExReleaseFastMutex(&g_lock);
 }
 
-/* whether any file has a section or a window in use. */
 BOOLEAN FsWbAnyMapped(void)
 {
     return __atomic_load_n(&g_mapped_total, __ATOMIC_SEQ_CST) != 0;
 }
 
-/* whether a section or a window of the file is in use. */
 BOOLEAN FsWbIsMapped(ULONG volume, ULONG64 file_id)
 {
     if (!__atomic_load_n(&g_mapped_total, __ATOMIC_SEQ_CST))
@@ -202,7 +197,7 @@ BOOLEAN FsWbIsMapped(ULONG volume, ULONG64 file_id)
     return mapped;
 }
 
-/* with the lock held. a file the table lost track of counts as mapped, which is the safe way to be wrong for a write. */
+/* lock held. a file the table lost track of counts as mapped, the safe side for a write. */
 static BOOLEAN mapped_locked(ULONG volume, ULONG64 file_id)
 {
     if (g_mapped_overflow > 0)
@@ -218,24 +213,24 @@ BOOLEAN FsWbWrite(FS_WB *wb, ULONG64 offset, const void *data, ULONG length, NTS
     *status = STATUS_SUCCESS;
     if (!g_ready || !length || length > WB_MAX_WRITE || !wb->Host)
         return FALSE;
-    /* a view of the file, or a window, reads the host's pages and must see the write when it returns. what this handle
-       kept before the first one was made was written when it was made. */
+    /* a view or a window reads the host's pages and must see the write when it returns. what this handle
+       buffered before the first one was made was flushed then. */
     if (__atomic_load_n(&g_mapped_total, __ATOMIC_SEQ_CST) > 0 && FsWbIsMapped(wb->Volume, wb->FileId))
         return FALSE;
     BOOLEAN start_worker = FALSE;
     ExAcquireFastMutex(&g_lock);
-    /* a window made while this write came in is counted before it takes what is kept, which is this check's order. */
+    /* a window made during this write is counted before it flushes the buffers, which is why this check comes here. */
     if (__atomic_load_n(&g_mapped_total, __ATOMIC_SEQ_CST) > 0 && mapped_locked(wb->Volume, wb->FileId)) {
         ExReleaseFastMutex(&g_lock);
         return FALSE;
     }
     if (!NT_SUCCESS(wb->Failed)) {
-        /* a flush of what this handle wrote failed after its write returned: every write after it says so, none lands. */
+        /* a flush failed after its write had returned: every later write reports it and none lands. */
         *status = wb->Failed;
         ExReleaseFastMutex(&g_lock);
         return TRUE;
     }
-    /* what other handles of the file keep is older than this write, and must not land after it. */
+    /* data other handles buffered for the file is older than this write and must not land after it. */
     if (__atomic_load_n(&g_pending[bucket(wb->Volume, wb->FileId)], __ATOMIC_SEQ_CST) > (wb->Length ? 1 : 0)) {
         for (PLIST_ENTRY e = g_kept.Flink; e != &g_kept; e = e->Flink) {
             FS_WB *other = CONTAINING_RECORD(e, FS_WB, Links);
@@ -247,7 +242,7 @@ BOOLEAN FsWbWrite(FS_WB *wb, ULONG64 offset, const void *data, ULONG length, NTS
     if (wb->Length) {
         ULONG64 end = wb->Start + wb->Length;
         if (offset >= wb->Start && offset <= end && offset + length - wb->Start <= WB_SIZE) {
-            /* inside the buffer or continuing it. */
+            /* inside the buffer or right after it. */
             memcpy(wb->Buffer + (offset - wb->Start), data, length);
             if (offset + length > end)
                 wb->Length = (ULONG)(offset + length - wb->Start);

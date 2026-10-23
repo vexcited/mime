@@ -1,9 +1,7 @@
 /*
- * the socket driver, \Device\Afd: a socket is a file of this device bound
- * to a socket of the host. ws2_32 drives it with these private device
- * controls; sends, receives, connects and accepts can stay pending and
- * complete like any other overlapped i/o, through the status block, the
- * event, an apc or the completion port of the file.
+ * the socket driver, \Device\Afd: each socket is a file of this device bound to a host socket. ws2_32 drives it
+ * with these private device controls. sends, receives, connects and accepts can pend and complete like any
+ * overlapped i/o: status block, event, apc or completion port.
  */
 #ifndef MIME_AFD_H
 #define MIME_AFD_H
@@ -35,7 +33,7 @@
 #define IOCTL_AFD_CONFIG MIME_AFD_IOCTL(0x811)        /* out MIME_AFD_CONFIG and its arrays */
 #define IOCTL_AFD_SOCKETS MIME_AFD_IOCTL(0x812)       /* out MIME_AFD_SOCKET_INFO list of every open socket */
 
-/* a windows sockaddr_in or sockaddr_in6, the host's MimeNetAddr. */
+/* a Windows sockaddr_in or sockaddr_in6, the host's MimeNetAddr. */
 typedef struct MIME_AFD_ADDRESS {
     USHORT Family;
     UCHAR Data[26];
@@ -47,7 +45,7 @@ typedef struct MIME_AFD_CREATE {
     ULONG Protocol;
 } MIME_AFD_CREATE;
 
-/* the caller's WSABUF, the same on every 64 bit architecture. */
+/* the caller's WSABUF, the same on every 64-bit architecture. */
 typedef struct MIME_AFD_BUFFER {
     ULONG Length;
     ULONG Pad;
@@ -258,7 +256,7 @@ typedef struct MIME_AFD_SOCKET_INFO {
     MIME_AFD_ADDRESS Remote; /* family 0 unless connected */
 } MIME_AFD_SOCKET_INFO;
 
-/* the statuses of socket errors, with their win32 meaning where windows has one. */
+/* NTSTATUS values for socket errors, with their win32 meaning where Windows has one. */
 #define STATUS_AFD_LOCAL_DISCONNECT ((NTSTATUS)0xC000013BL)
 #define STATUS_AFD_REMOTE_DISCONNECT ((NTSTATUS)0xC000013CL)
 #define STATUS_AFD_INVALID_CONNECTION ((NTSTATUS)0xC0000140L)

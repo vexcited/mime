@@ -1,6 +1,4 @@
-/*
- * the procedure descriptions of the ndr interpreter, shared by the calls of clients and servers.
- */
+/* procedure descriptions of the ndr interpreter, shared by clients and servers. */
 #ifndef MIME_RPCRT4_NDR_PROC_H
 #define MIME_RPCRT4_NDR_PROC_H
 
@@ -40,7 +38,7 @@ typedef struct {
 void NdrpParseProc(PFORMAT_STRING f, NDR_PROC *p);
 void NdrpInitStubMessage(PMIDL_STUB_MESSAGE m, PRPC_MESSAGE msg, PMIDL_STUB_DESC desc, BOOL client, const NDR_PROC *p);
 
-/* the stack frame calls: the manager routine of a server and the stub of an object. */
+/* calls a server manager routine or an object stub with a built stack frame. */
 ULONGLONG NdrpInvokeEx(void *function, const ULONG_PTR *slots, ULONG count, ULONG fp_kind, ULONGLONG *fp_value);
 
 static inline ULONG_PTR NdrpInvoke(void *function, const ULONG_PTR *slots, ULONG count)
@@ -48,10 +46,10 @@ static inline ULONG_PTR NdrpInvoke(void *function, const ULONG_PTR *slots, ULONG
     return (ULONG_PTR)NdrpInvokeEx(function, slots, count, 0, nullptr);
 }
 
-/* the description of the older transfer syntax among those of a stub that carries two, or null. */
+/* the ndr syntax among the transfer syntaxes of a dual syntax stub, or null. */
 const MIDL_SYNTAX_INFO *NdrpOldSyntax(const MIDL_SYNTAX_INFO *list, ULONG_PTR count);
 
-/* the call of a client, shared by the stubs of the rpc runtime and the thunks of stubless proxies. */
+/* shared by the rpc runtime stubs and the stubless proxy thunks. */
 CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, uchar *args, BOOL promoted_floats);
 
 #endif

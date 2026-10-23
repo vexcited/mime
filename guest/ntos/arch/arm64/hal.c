@@ -102,7 +102,6 @@ static void wr32(volatile UCHAR *base, ULONG off, ULONG v)
     *(volatile ULONG *)(base + off) = v;
 }
 
-/* finds the redistributor of the running processor by its affinity. */
 static volatile UCHAR *find_redistributor(void)
 {
     ULONG64 mpidr = KI_READ_SYSREG(mpidr_el1);
@@ -113,7 +112,7 @@ static volatile UCHAR *find_redistributor(void)
         if ((ULONG)(typer >> 32) == affinity)
             return base + off;
         if (typer & (1u << 4))
-            break; /* last redistributor */
+            break; /* last redistributor. */
     }
     return base;
 }
@@ -139,7 +138,6 @@ static void enable_spi(ULONG intid)
     wr32(g_gicd, GICD_ISENABLER + word * 4, bit);
 }
 
-/* the redistributor and cpu interface of the running processor. */
 void HalInitializeProcessor(void)
 {
     volatile UCHAR *gicr = find_redistributor();
@@ -156,7 +154,7 @@ void HalInitializeProcessor(void)
     KI_WRITE_ICC(ICC_IGRPEN1_EL1, 1);
     KiInstructionBarrier();
 
-    /* user mode reads its processor number like on windows, and the virtual counter for QueryPerformanceCounter. */
+    /* like windows, user mode reads its processor number here, and the virtual counter backs QueryPerformanceCounter. */
     KI_WRITE_SYSREG(tpidrro_el0, KeGetCurrentPrcb()->Number);
     KI_WRITE_SYSREG(cntkctl_el1, (1u << 1) | (1u << 0));
     KI_WRITE_SYSREG(cntv_ctl_el0, 2);
@@ -173,7 +171,7 @@ void HalSendIpi(ULONG processor)
     KiInstructionBarrier();
 }
 
-/* the same interrupt to a set of processors, a target list for each cluster. */
+/* one target list per cluster. */
 void HalSendIpiMask(ULONG64 mask)
 {
     KiDataSyncBarrier();

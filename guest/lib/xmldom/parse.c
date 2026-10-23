@@ -1,7 +1,4 @@
-/*
- * the xml parser: a document in utf-16 becomes the nodes of a document. it follows xml 1.0 with namespaces and
- * reports a bad document the way the dom does, with the codes and words of its message table.
- */
+/* the xml parser: xml 1.0 with namespaces, reporting errors with the dom's codes and messages. */
 #include <xmldom/xmldom.h>
 
 typedef struct Frame {
@@ -15,7 +12,7 @@ typedef struct Frame {
 typedef struct RawAttr {
     const WCHAR *name;
     UINT nlen;
-    UINT colon; /* the offset of the colon in the name, zero for none. */
+    UINT colon; /* offset of the colon in the name, 0 for none. */
     UINT voff;
     UINT vlen;
     const WCHAR *at; /* where the attribute starts, for errors. */
@@ -49,7 +46,7 @@ typedef struct Parser {
     const WCHAR *uri_xml;
     const WCHAR *uri_xmlns;
     BOOL strip; /* whitespace-only text is dropped. */
-    UINT64 expanded; /* the characters entities have been expanded to, which is bounded. */
+    UINT64 expanded; /* characters produced by entity expansion, which is capped. */
 } Parser;
 
 #define XML_URI L"http://www.w3.org/XML/1998/namespace"
@@ -84,7 +81,6 @@ static BOOL fail_at(Parser *ps, UINT code, const WCHAR *at, const WCHAR *p1, con
         offset = length;
     LONG line, linepos;
     xd_line_info(ps->s, length, offset, &line, &linepos);
-    /* the text of the line the error is on. */
     UINT start = offset - (UINT)(linepos - 1), end = offset;
     while (end < length && ps->s[end] != '\n' && ps->s[end] != '\r')
         end++;
@@ -125,7 +121,7 @@ static BOOL push_bind(Parser *ps, const WCHAR *prefix, const WCHAR *uri)
     return TRUE;
 }
 
-/* the namespace a prefix atom stands for in the open elements: found says whether it is declared. */
+/* found says whether the prefix is declared at all. */
 static const WCHAR *lookup_bind(Parser *ps, const WCHAR *prefix, BOOL *found)
 {
     for (UINT i = ps->bind_count; i-- > 0;) {
@@ -152,7 +148,6 @@ static const WCHAR *skip_space(const WCHAR *p, const WCHAR *e)
     return p;
 }
 
-/* a code point at p, and how many units it takes. */
 static UINT code_point_at(const WCHAR *p, const WCHAR *e, UINT *units)
 {
     UINT c = *p;
@@ -175,10 +170,7 @@ static void put_code_point(XBuf *b, UINT c)
     }
 }
 
-/*
- * a name at ps->p, possibly with one colon. on success p is past it. the errors follow the dom: a bad first
- * character, a bad later one, more than one colon.
- */
+/* a name with at most one colon. errors match the dom's: bad first character, bad later one, extra colon. */
 static BOOL scan_qname(Parser *ps, const WCHAR **name, UINT *length, UINT *colon)
 {
     const WCHAR *p = ps->p;
@@ -227,10 +219,7 @@ static BOOL entity_value(Parser *ps, const WCHAR *name, UINT length, XEntity **o
 
 static BOOL append_entity(Parser *ps, XBuf *out, const WCHAR *value, UINT length, UINT depth, const WCHAR *at);
 
-/*
- * a reference at ps->p, which is on the ampersand: the character or text it stands for goes to out. attribute
- * says the text is an attribute value, which cannot hold a reference to an external entity.
- */
+/* ps->p is on the '&'. attribute values cannot reference an external entity. */
 static BOOL parse_reference(Parser *ps, XBuf *out, BOOL attribute)
 {
     const WCHAR *at = ps->p;
@@ -306,7 +295,7 @@ static BOOL parse_reference(Parser *ps, XBuf *out, BOOL attribute)
     UINT before = out->length;
     if (!append_entity(ps, out, entity->value, entity->length, 0, at))
         return FALSE;
-    /* the text of an entity in an attribute value has its white space normalized as the rest. */
+    /* entity text in an attribute value has its white space normalized like the rest. */
     if (attribute)
         for (UINT i = before; i < out->length; i++)
             if (out->s[i] == '\t' || out->s[i] == '\n' || out->s[i] == '\r')
@@ -315,7 +304,7 @@ static BOOL parse_reference(Parser *ps, XBuf *out, BOOL attribute)
     return TRUE;
 }
 
-/* the replacement text of an entity, which may itself refer to entities. */
+/* replacement text may itself refer to entities. */
 static BOOL append_entity(Parser *ps, XBuf *out, const WCHAR *value, UINT length, UINT depth, const WCHAR *at)
 {
     if (depth > 16 || (ps->expanded += length) > 10000000)
@@ -451,7 +440,7 @@ static BOOL parse_cdata(Parser *ps)
     XNode *n = new_node(ps, XN_CDATA, nullptr, 0, nullptr);
     if (!n)
         return FALSE;
-    /* line ends are normalized in a section too. */
+    /* line ends are normalized in a CDATA section too. */
     XBuf b = {};
     for (const WCHAR *q = start; q < p; q++) {
         if (*q == '\r') {
@@ -551,7 +540,7 @@ static BOOL parse_xml_decl(Parser *ps)
     if (!decl)
         return FALSE;
     decl->flags |= XF_XMLDECL;
-    UINT allowed = 0; /* the pseudo attributes come as version, encoding, standalone. */
+    UINT allowed = 0; /* the order must be version, encoding, standalone. */
     BOOL seen = FALSE;
     for (;;) {
         p = skip_space(p, e);
@@ -704,7 +693,7 @@ static BOOL add_entity(Parser *ps, const WCHAR *name, UINT nlen, const WCHAR *va
     return TRUE;
 }
 
-/* a quoted string in a declaration, p is on the quote. returns the position after it. */
+/* p is on the quote. returns the position after the closing one. */
 static const WCHAR *skip_quoted(const WCHAR *p, const WCHAR *e)
 {
     WCHAR q = *p++;
@@ -713,7 +702,7 @@ static const WCHAR *skip_quoted(const WCHAR *p, const WCHAR *e)
     return p < e ? p + 1 : e;
 }
 
-/* the end of a markup declaration, whose quoted strings may hold a '>'. */
+/* quoted strings in a declaration may hold a '>'. */
 static const WCHAR *skip_declaration(const WCHAR *p, const WCHAR *e)
 {
     while (p < e && *p != '>') {
@@ -727,7 +716,7 @@ static const WCHAR *skip_declaration(const WCHAR *p, const WCHAR *e)
 
 static BOOL parse_internal_subset(Parser *ps, const WCHAR *start, const WCHAR **end_out)
 {
-    /* start is just after the '['; the subset ends at the matching ']' outside quotes, comments and declarations. */
+    /* start is just past the '['. the subset ends at the matching ']' outside quotes, comments and declarations. */
     const WCHAR *p = start, *e = ps->e;
     while (p < e) {
         if (*p == ']') {
@@ -844,7 +833,7 @@ static BOOL parse_doctype(Parser *ps)
     XNode *n = new_node(ps, XN_DOCTYPE, name, nlen, nullptr);
     if (!n)
         return FALSE;
-    /* what follows the name is kept as written, to be written back. */
+    /* the rest is kept verbatim so it can be written back. */
     UINT rlen = (UINT)(p - rest);
     n->value = xd_wcsdup(rest, rlen);
     n->length = rlen;
@@ -963,7 +952,7 @@ static BOOL parse_start_tag(Parser *ps)
     XDoc *doc = ps->doc;
     UINT ns_base = ps->bind_count;
 
-    /* declarations first, they apply to this element's own name and attributes. */
+    /* declarations first: they apply to this element's own name and attributes. */
     for (UINT i = 0; i < count; i++) {
         RawAttr *a = &ps->attrs[i];
         BOOL is_default = a->nlen == 5 && !memcmp(a->name, L"xmlns", 10);
@@ -992,7 +981,6 @@ static BOOL parse_start_tag(Parser *ps)
             return fail_at(ps, E_OUTOFMEMORY, a->at, nullptr, nullptr);
     }
 
-    /* the element's namespace. */
     const WCHAR *uri = nullptr;
     if (colon) {
         const WCHAR *prefix = prefix_atom(ps, name, colon);
@@ -1142,7 +1130,7 @@ static BOOL parse_end_tag(Parser *ps)
     return TRUE;
 }
 
-/* text up to the next markup or reference, line ends normalized. */
+/* text up to the next markup or reference, with line ends normalized. */
 static BOOL parse_text_run(Parser *ps)
 {
     const WCHAR *p = ps->p, *e = ps->e;
@@ -1189,7 +1177,7 @@ static BOOL parse_text_run(Parser *ps)
 
 static BOOL parse_content(Parser *ps)
 {
-    /* the root element's start tag is at ps->p; this runs until it closes. */
+    /* the root element's start tag is at ps->p, this runs until it closes. */
     do {
         if (ps->p >= ps->e)
             return report_unclosed(ps);

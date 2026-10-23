@@ -1,23 +1,22 @@
 /*
- * direct3d 9's shader bytecode as shader model 5 dxbc. a d3d9 temp r#
- * stays r#, constants come from constant buffers (floats cb0, integers
- * and booleans cb1, what d3d9.dll adds cb2), samplers s# are t# and s#.
- * outputs are written to temps and copied at the end, where the vertex
- * shader moves the position by half a pixel, as direct3d 9's pixel
- * centers are at integers and direct3d 10's at halves, and the pixel shader applies fog and the
- * alpha test of the device's state, as fixed function did after shaders
- * of model 2 and older. interpolated values sit in the registers of
- * their semantics, the same for every shader (D9VaryingSlot), so any
- * vertex shader links with any pixel shader.
+ * direct3d 9 shader bytecode to shader model 5 dxbc. temps r# stay r#.
+ * float constants come from cb0, integers and booleans from cb1, internal
+ * values from cb2. sampler s# becomes t# and s#. outputs are written to
+ * temps and copied at the end, where the vertex shader moves the position
+ * by half a pixel, since direct3d 9 pixel centers are at integers and
+ * direct3d 10 ones at halves, and the pixel shader applies the device's
+ * fog and alpha test, as fixed function did after model 2 and older
+ * shaders. each semantic has the same register in every shader, see
+ * D9VaryingSlot, so any vertex shader links with any pixel shader.
  *
- * the bytecode's format: an instruction token holds the opcode in bits
- * 0 to 15, a control field in 16 to 23 (comparisons, texld's kind), the
- * length in 24 to 27 from model 2 on, predication in bit 28 and co-issue
- * in 30. a parameter token holds the register number in bits 0 to 10 and
- * its type in 28 to 30 and 11 to 12; a destination's write mask in 16 to
- * 19, its modifiers in 20 to 23 and its shift in 24 to 27; a source's
- * swizzle in 16 to 23 and its modifier in 24 to 27, bit 13 relative
- * addressing, followed by the address register's token from model 2 on.
+ * bytecode format: an instruction token holds the opcode in bits 0 to 15,
+ * a control field for comparisons and texld's kind in 16 to 23, the length
+ * in 24 to 27 from model 2 on, predication in bit 28 and co-issue in 30. a
+ * parameter token holds the register number in bits 0 to 10 and its type
+ * in 28 to 30 and 11 to 12. a destination has its write mask in 16 to 19,
+ * modifiers in 20 to 23 and shift in 24 to 27. a source has its swizzle in
+ * 16 to 23, modifier in 24 to 27 and relative addressing in bit 13,
+ * followed by the address register token from model 2 on.
  */
 #include "d3d9_private.h"
 #include "../lib/dxbc/tokens.h"
@@ -26,7 +25,7 @@
 #define SWZ(x, y, z, w) ((x) | (y) << 2 | (z) << 4 | (w) << 6)
 #define REPL(c) SWZ(c, c, c, c)
 
-/* the register types of parameter tokens. */
+/* parameter token register types. */
 enum {
     RT_TEMP = 0,
     RT_INPUT = 1,
@@ -86,9 +85,9 @@ static WORD g_slots[D9_SLOT_POSITION];
 static UINT g_slot_count;
 
 /*
- * texture coordinates 0 to 7 are registers 0 to 7, the colors 8 and 9,
- * fog 10; other semantics take the next free register the first time a
- * shader of the process uses them, as few programs use many.
+ * texture coordinates 0 to 7 use registers 0 to 7, colors 8 and 9, fog
+ * 10. other semantics take the next free register the first time any
+ * shader in the process uses them, as few programs use many.
  */
 int D9VaryingSlot(UINT usage, UINT index)
 {
@@ -114,7 +113,7 @@ int D9VaryingSlot(UINT usage, UINT index)
 
 /* ------------------------------------------------------------------ parsing */
 
-/* the source parameters of each opcode of model 1, whose instructions have no length. */
+/* model 1 instructions have no length, so source counts come from here. */
 static int sm1_sources(UINT op, BOOL pixel, UINT major, UINT minor, BOOL *dst)
 {
     *dst = TRUE;
@@ -218,7 +217,6 @@ static int sm1_sources(UINT op, BOOL pixel, UINT major, UINT minor, BOOL *dst)
     }
 }
 
-/* the parameters of the instruction at code: destination, predicate, sources, and the words it takes. */
 BOOL D9Decode(const D9ShaderInfo *info, const DWORD *code, UINT left, D9Inst *inst)
 {
     memset(inst, 0, sizeof(*inst));
@@ -291,7 +289,7 @@ BOOL D9Decode(const D9ShaderInfo *info, const DWORD *code, UINT left, D9Inst *in
     }
     inst->src_count = sources;
     inst->words = at;
-    /* the length the bytecode gives wins: it covers what a decoder of these versions does not know. */
+    /* the length in the bytecode wins: it covers what this decoder does not know. */
     if (length && length + 1 != at)
         inst->words = length + 1;
     return inst->words <= left;
@@ -306,21 +304,21 @@ typedef struct Tx {
     D9Signature inputs, outputs;
     UINT next_temp;
     UINT temp_max;
-    /* internal temps: the address register, predicates, the outputs' copies, scratch. */
+    /* internal temps: the address register, predicate, output copies, scratch. */
     UINT r_addr, r_pred;
-    /* the rows texm3x2 and texm3x3 instructions compute, and the next one's place. */
+    /* rows the texm3x2 and texm3x3 instructions compute, and where the next one goes. */
     UINT r_matrix, matrix_row;
     UINT r_out[16];
-    /* vertex shaders: the inputs of integer attributes, turned to floats. */
+    /* vertex shaders: integer attribute inputs converted to floats. */
     UINT r_in[16];
     UINT loop_temps[8];
     BOOL loop_kinds[8];
     UINT loop_steps[8];
     UINT loop_depth;
-    /* the samplers read, and their dimensions: 2 2d, 3 cube, 4 volume, with 0x80 those that compare. */
+    /* samplers read and their dimensions: 2 2d, 3 cube, 4 volume, plus 0x80 for those that compare. */
     UINT samplers_used;
     BYTE sampler_dims[20];
-    /* the registers declared: outputs of vertex shaders, inputs of pixel shaders, and theirs. */
+    /* declared registers: vertex shader outputs, pixel shader inputs, and the centroid ones. */
     UINT outputs_written, inputs_read, centroid;
     BOOL writes_size, reads_position, reads_point_coord;
     BOOL in_main;
@@ -350,12 +348,11 @@ static DWORD fbits(float f)
     return v;
 }
 
-/* the swizzle of a d3d9 source, d3d9's order being dxbc's. */
+/* d3d9 swizzles use the same encoding as dxbc. */
 static UINT src_swizzle(DWORD token) { return (token >> 16) & 0xFF; }
 
 static UINT dst_mask(DWORD token) { return (token >> 16) & 0xF; }
 
-/* a swizzle restricted to a write mask's components, as instructions of fewer components read. */
 static UINT first_component(UINT mask)
 {
     for (UINT i = 0; i < 4; i++)
@@ -367,7 +364,7 @@ static UINT first_component(UINT mask)
 static D9Opnd texcoord_input(Tx *t, UINT n, UINT swizzle);
 static UINT treg(UINT n);
 
-/* the index register of a relative source: a0's or aL's component, as an integer temp. */
+/* a relative source's index: a component of a0 or aL, as an integer temp. */
 static int relative_reg(Tx *t, const D9Param *p, UINT *component)
 {
     if (!p->has_rel)
@@ -385,7 +382,6 @@ static int relative_reg(Tx *t, const D9Param *p, UINT *component)
     return (int)t->r_addr;
 }
 
-/* the dxbc register of a pixel shader input of model 2 or 3. */
 static int ps_input_reg(Tx *t, UINT type, UINT num)
 {
     const D9ShaderInfo *info = t->info;
@@ -396,7 +392,7 @@ static int ps_input_reg(Tx *t, UINT type, UINT num)
     return num < 8 ? D9VaryingSlot(D3DDECLUSAGE_TEXCOORD, num) : -1;
 }
 
-/* a source register as an operand, without its modifier. */
+/* without the source modifier, see source_at. */
 static D9Opnd source_reg(Tx *t, const D9Param *p, UINT swizzle, UINT offset)
 {
     DWORD token = p->token;
@@ -440,7 +436,7 @@ static D9Opnd source_reg(Tx *t, const D9Param *p, UINT swizzle, UINT offset)
         UINT base = type == RT_CONST2 ? 2048 : type == RT_CONST3 ? 4096 : type == RT_CONST4 ? 6144 : 0;
         int rel = relative_reg(t, p, &component);
         if (t->info->pixel && t->info->major < 2) {
-            /* model 1's constants are within [-1, 1]. */
+            /* model 1 constants are clamped to [-1, 1]. */
             UINT r = temp(t);
             D9Op2(&t->code, OP_MAX, D9Temp(r, 0xF), D9Cb(0, base + num, swizzle, rel, component), D9ImmF(-1.0f));
             D9Op2(&t->code, OP_MIN, D9Temp(r, 0xF), D9TempSrc(r, SWZ_XYZW), D9ImmF(1.0f));
@@ -466,7 +462,7 @@ static D9Opnd source_reg(Tx *t, const D9Param *p, UINT swizzle, UINT offset)
     }
 }
 
-/* a source with its modifier applied: negations and absolutes in the operand, others computed into a temp. */
+/* negation and absolute go in the operand, other modifiers are computed into a temp. */
 static D9Opnd source_at(Tx *t, const D9Param *p, UINT offset)
 {
     UINT swizzle = src_swizzle(p->token);
@@ -524,7 +520,7 @@ static D9Opnd source_at(Tx *t, const D9Param *p, UINT offset)
 
 static D9Opnd source(Tx *t, const D9Param *p) { return source_at(t, p, 0); }
 
-/* the temp a destination register is written to: d3d9's temps are dxbc's, outputs their copies. */
+/* d3d9 temps map to the same dxbc temps, outputs to their copies. */
 static BOOL dest_temp(Tx *t, const D9Param *p, UINT *reg)
 {
     DWORD token = p->token;
@@ -537,7 +533,7 @@ static BOOL dest_temp(Tx *t, const D9Param *p, UINT *reg)
         return TRUE;
     case RT_ADDR:
         if (info->pixel) {
-            /* ps 1.4 and earlier write texture registers: temps of their own. */
+            /* ps 1.4 and earlier write texture registers, which get temps of their own. */
             *reg = 32 + num;
             return TRUE;
         }
@@ -583,10 +579,7 @@ static BOOL dest_temp(Tx *t, const D9Param *p, UINT *reg)
     return FALSE;
 }
 
-/*
- * writes what the instruction computed into scratch to its destination:
- * shifted, saturated, and only where the predicate holds.
- */
+/* writes the scratch result to the destination: shifted, saturated, and only where the predicate holds. */
 static void write_dest(Tx *t, const D9Inst *inst, UINT scratch, UINT mask)
 {
     UINT reg;
@@ -613,7 +606,7 @@ static void write_dest(Tx *t, const D9Inst *inst, UINT scratch, UINT mask)
     D9Op1(&t->code, OP_MOV | (DWORD)saturate << 13, D9Temp(reg, mask), value);
 }
 
-/* the opcodes of instructions dxbc has alike: their operands are d3d9's. */
+/* instructions dxbc has too, taking the same operands. */
 static DWORD simple_opcode(UINT op)
 {
     switch (op) {
@@ -644,7 +637,7 @@ static DWORD simple_opcode(UINT op)
     }
 }
 
-/* ifc, breakc and setp's comparisons: 1 greater, 2 equal, 3 greater or equal, 4 less, 5 not equal, 6 less or equal. */
+/* comparisons of ifc, breakc and setp: 1 greater, 2 equal, 3 greater or equal, 4 less, 5 not equal, 6 less or equal. */
 static void compare(Tx *t, D9Opnd dst, UINT kind, D9Opnd a, D9Opnd b)
 {
     switch (kind) {
@@ -680,7 +673,7 @@ static void matrix(Tx *t, const D9Inst *inst, UINT scratch, UINT rows, UINT colu
         D9Op2(&t->code, columns == 4 ? OP_DP4 : OP_DP3, D9Temp(scratch, 1u << i), a, source_at(t, &inst->src[1], i));
 }
 
-/* texture sampling: texld and its kinds, texldl and texldd, with the sampler's type and shadow comparisons. */
+/* texld and its variants, texldl and texldd, handling the sampler type and shadow comparisons. */
 static void sample(Tx *t, const D9Inst *inst, UINT scratch, const D9Param *coord_param, UINT sampler,
                    UINT result_swizzle)
 {
@@ -732,7 +725,7 @@ static void sample(Tx *t, const D9Inst *inst, UINT scratch, const D9Param *coord
 
 /* ------------------------------------------------------------------ pixel shaders of model 1 */
 
-/* a stage's texture coordinates, as interpolated, or the point's. */
+/* interpolated texture coordinates, or the point sprite's. */
 static D9Opnd texcoord_input(Tx *t, UINT n, UINT swizzle)
 {
     if (t->key->point_sprite)
@@ -742,7 +735,6 @@ static D9Opnd texcoord_input(Tx *t, UINT n, UINT swizzle)
     return D9Src(OPERAND_INPUT, n, swizzle);
 }
 
-/* a sample of a stage's texture at coordinates, projected when asked, into scratch. */
 static void sample_stage(Tx *t, UINT unit, D9Opnd coords, BOOL project, UINT scratch)
 {
     const D9ShaderKey *key = t->key;
@@ -767,17 +759,17 @@ static void sample_stage(Tx *t, UINT unit, D9Opnd coords, BOOL project, UINT scr
     t->sampler_dims[unit] = shadow ? 2 | 0x80 : type;
 }
 
-/* the texture register t# of models 1.0 to 1.3, a temp of its own. */
+/* t# of models 1.0 to 1.3 is a temp of its own. */
 static UINT treg(UINT n) { return 32 + n; }
 
-/* the bump matrix and luminance of a stage, in cb2 from 4 and 12. */
+/* bump matrices start at cb2[4], luminance at cb2[12]. */
 static D9Opnd bump(UINT stage, UINT swizzle) { return D9Cb(2, 4 + stage, swizzle, -1, 0); }
 
 /*
- * the instructions of models 1.0 to 1.4 that read textures. t# of 1.0 to
- * 1.3 holds the stage's sample or coordinates once an instruction wrote
- * it; 1.4's texld samples the stage of its destination at coordinates of
- * t# or r#, divided by z or w with _dz and _dw.
+ * texture instructions of models 1.0 to 1.4. in 1.0 to 1.3, t# holds the
+ * stage's sample or coordinates once an instruction wrote it. 1.4's texld
+ * samples its destination's stage at coordinates from t# or r#, divided
+ * by z or w with _dz and _dw.
  */
 static BOOL ps1_texture(Tx *t, const D9Inst *inst)
 {
@@ -790,7 +782,7 @@ static BOOL ps1_texture(Tx *t, const D9Inst *inst)
     switch (op) {
     case D9_OP_TEX:
         if (v14) {
-            /* texld r#, t# or r#: the coordinates, divided by z or w with _dz and _dw. */
+            /* texld r#, t# or r#. */
             const D9Param *p = &inst->src[0];
             UINT modifier = (p->token >> 24) & 0xF;
             D9Opnd coords = D9RegType(p->token) == RT_TEXTURE ? texcoord_input(t, D9RegNum(p->token), SWZ_XYZW)
@@ -824,7 +816,7 @@ static BOOL ps1_texture(Tx *t, const D9Inst *inst)
         }
         return TRUE;
     case D9_OP_TEXKILL: {
-        /* of the coordinates' x, y and z in 1.0 to 1.3, of the register in 1.4. */
+        /* x, y and z of the coordinates in 1.0 to 1.3, of the register in 1.4. */
         D9Opnd v = v14 && D9RegType(inst->dst.token) == RT_TEMP ? D9TempSrc(m, SWZ_XYZW) : texcoord_input(t, m, SWZ_XYZW);
         D9Op2(c, OP_LT, D9Temp(scratch, 7), v, D9ImmF(0.0f));
         D9Op2(c, OP_OR, D9Temp(scratch, 1), D9TempSrc(scratch, REPL(0)), D9TempSrc(scratch, REPL(1)));
@@ -1093,7 +1085,7 @@ static void translate(Tx *t, const D9Inst *inst)
         break;
     }
     case D9_OP_CND: {
-        /* ps 1.1 to 1.3 test r0.a alone, as their only form; 1.4 each component. */
+        /* ps 1.1 to 1.3 can only test r0.a, 1.4 tests each component. */
         scratch = temp(t);
         D9Op2(&t->code, OP_LT, D9Temp(scratch, mask), D9ImmF(0.5f), source(t, &inst->src[0]));
         D9Op3(&t->code, OP_MOVC, D9Temp(scratch, mask), D9TempSrc(scratch, SWZ_XYZW), source(t, &inst->src[1]),
@@ -1346,7 +1338,7 @@ static void translate(Tx *t, const D9Inst *inst)
 
 /* ------------------------------------------------------------------ the end of the program */
 
-/* the vertex shader's position, from its output of either model. */
+/* finds the position output in either model. */
 static int position_temp(Tx *t)
 {
     const D9ShaderInfo *info = t->info;
@@ -1468,7 +1460,7 @@ static void ps_epilogue(Tx *t)
             D9Opnd always = D9Imm(~0u);
             D9Emit(c, OP_DISCARD | 1u << 18, &always, 1);
         } else {
-            /* alpha as the 8 bits the reference has. */
+            /* alpha at 8 bits, the precision of the alpha reference. */
             D9Op2(c, OP_MUL, D9Temp(a, 1), D9TempSrc(color, REPL(3)), D9ImmF(255.0f));
             D9Op1(c, OP_ROUND_NE, D9Temp(a, 1), D9TempSrc(a, REPL(0)));
             static const BYTE KIND[] = {0, 4, 2, 6, 1, 5, 3, 0};
@@ -1641,7 +1633,7 @@ static void declare(Tx *t, D9Code *d)
 
 /* ------------------------------------------------------------------ the program */
 
-/* what the outputs and inputs of either stage are, before the code reads and writes them. */
+/* decides the input and output registers before the code is translated. */
 static void plan_registers(Tx *t)
 {
     const D9ShaderInfo *info = t->info;
@@ -1770,7 +1762,7 @@ HRESULT D9TranslateShader(const D9ShaderInfo *info, const D9ShaderKey *key, void
 
 /* ------------------------------------------------------------------ parsing */
 
-/* the outputs a vertex shader before model 3 writes, by register type and number. */
+/* the D9_OUT_* bit of an output register before model 3. */
 static UINT vs_output_bit(UINT type, UINT num)
 {
     if (type == RT_RASTOUT && num <= 2)
@@ -1795,7 +1787,7 @@ HRESULT D9ParseShader(const DWORD *function, BOOL pixel, D9ShaderInfo *info)
     info->minor = version & 0xFF;
     if (info->major < 1 || info->major > 3)
         return D3DERR_INVALIDCALL;
-    /* the program's length: to the end token, which code programs give carries no size. */
+    /* programs pass code without a size, so measure up to the end token. */
     UINT words = 1;
     const UINT max = 1u << 20;
     D9Inst inst;

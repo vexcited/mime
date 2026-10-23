@@ -1,7 +1,7 @@
 /*
- * dxva vp9 pictures as vulkan video decodes them. dxva carries the parsed uncompressed header; what it does
- * not carry, which reference slots the picture refreshes, is read from the header at the start of the frame,
- * which the bitstream holds whole: uncompressed header, compressed header, then the tiles.
+ * converts DXVA VP9 pictures to Vulkan video. DXVA supplies the parsed uncompressed header except
+ * refresh_frame_flags, which is read from the frame bitstream. the bitstream includes both headers and all
+ * tiles.
  */
 #include "video.h"
 
@@ -44,10 +44,10 @@ static uint8_t refresh_flags(const uint8_t *data, uint32_t size, const DxvaPicPa
     if (!error_resilient)
         bits_get(&b, 2); /* reset_frame_context */
     if (intra_only) {
-        bits_get(&b, 24); /* the sync code */
+        bits_get(&b, 24); /* the sync code. */
         if (profile > 0) {
             if (profile >= 2)
-                bits_get(&b, 1); /* ten or twelve bits */
+                bits_get(&b, 1); /* ten or twelve bits. */
             uint32_t color_space = bits_get(&b, 3);
             if (color_space != 7) {
                 bits_get(&b, 1); /* color_range */
@@ -92,7 +92,7 @@ bool video_vp9_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeIn
     /* any picture may be a reference to a later one, the reference map says which are. */
     f->is_reference = true;
 
-    /* the three references of the frame, once each, with the slots they hold. */
+    /* the three frame references, deduplicated and mapped to DPB slots. */
     VkVideoDecodeVP9PictureInfoKHR *pic = &f->u.vp9.picture;
     *pic = (VkVideoDecodeVP9PictureInfoKHR){VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_PICTURE_INFO_KHR};
     VideoPicture *used[3] = {0};

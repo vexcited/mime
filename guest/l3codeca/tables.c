@@ -1,12 +1,11 @@
 /*
- * the constants of mpeg audio layer iii: the huffman codes of iso/iec
- * 11172-3 annex b table 3-b.7, the window of the synthesis filterbank of
- * table 3-b.3 in units of 1/65536, and the scalefactor bands of tables
- * 3-b.8 and of iso/iec 13818-3 table b.2, with those of mpeg 2.5.
+ * MPEG audio layer iii constants: the Huffman codes of ISO/IEC 11172-3 annex b table 3-b.7, the synthesis window of
+ * table 3-b.3 in units of 1/65536, and the scalefactor bands of table 3-b.8 and ISO/IEC 13818-3 table b.2, plus
+ * MPEG 2.5.
  */
 #include "mp3.h"
 
-/* each code: its length in the top byte, its bits below. big value tables are in x major order. */
+/* each code has its length in the top byte and its bits below. big value tables are x major. */
 static const uint32_t CODES_1[4] = {
     0x01000001, 0x03000001, 0x02000001, 0x03000000,
 };
@@ -321,7 +320,7 @@ const int32_t MP3_WINDOW[512] = {
     2, 2, 1, 1, 1, 1, 1, 1,
 };
 
-/* the starts of the bands, the last one the end: 22 long bands of 576 lines, 13 short of 192. */
+/* band starts, the last entry being the end: 22 long bands over 576 lines, 13 short over 192. */
 const Mp3Bands MP3_BANDS[9] = {
     /* 44100 Hz */
     {{0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134, 162, 196, 238, 288, 342, 418, 576},
@@ -351,7 +350,7 @@ const Mp3Bands MP3_BANDS[9] = {
     {{0, 12, 24, 36, 48, 60, 72, 88, 108, 132, 160, 192, 232, 280, 336, 400, 476, 566, 568, 570, 572, 574, 576},
      {0, 8, 16, 24, 36, 52, 72, 96, 124, 160, 162, 164, 166, 192}},
 };
-/* the cosines of the 36 point imdct, for each input then each output. */
+/* 36 point imdct cosines, per input then per output. */
 const float MP3_IMDCT36[648] = {
     6.755902076e-01f, 6.087614290e-01f, 5.372996083e-01f, 4.617486132e-01f, 3.826834324e-01f, 3.007057995e-01f,
     2.164396139e-01f, 1.305261922e-01f, 4.361938737e-02f, -4.361938737e-02f, -1.305261922e-01f, -2.164396139e-01f,
@@ -463,7 +462,7 @@ const float MP3_IMDCT36[648] = {
     3.007057995e-01f, -3.826834324e-01f, 4.617486132e-01f, -5.372996083e-01f, 6.087614290e-01f, -6.755902076e-01f,
 };
 
-/* the cosines of the 12 point imdct of short blocks. */
+/* 12 point imdct cosines for short blocks. */
 const float MP3_IMDCT12[72] = {
     6.087614290e-01f, 3.826834324e-01f, 1.305261922e-01f, -1.305261922e-01f, -3.826834324e-01f, -6.087614290e-01f,
     -7.933533403e-01f, -9.238795325e-01f, -9.914448614e-01f, -9.914448614e-01f, -9.238795325e-01f, -7.933533403e-01f,
@@ -479,7 +478,7 @@ const float MP3_IMDCT12[72] = {
     -6.087614290e-01f, 3.826834324e-01f, -1.305261922e-01f, -1.305261922e-01f, 3.826834324e-01f, -6.087614290e-01f,
 };
 
-/* the windows of block types 0 to 3, that of short blocks in the first 12 of type 2. */
+/* windows of block types 0 to 3, the short block window being the first 12 of type 2. */
 const float MP3_WINDOWS[144] = {
     4.361938737e-02f, 1.305261922e-01f, 2.164396139e-01f, 3.007057995e-01f, 3.826834324e-01f, 4.617486132e-01f,
     5.372996083e-01f, 6.087614290e-01f, 6.755902076e-01f, 7.372773368e-01f, 7.933533403e-01f, 8.433914458e-01f,
@@ -507,7 +506,7 @@ const float MP3_WINDOWS[144] = {
     4.617486132e-01f, 3.826834324e-01f, 3.007057995e-01f, 2.164396139e-01f, 1.305261922e-01f, 4.361938737e-02f,
 };
 
-/* the synthesis matrix: the cosine of a times 2k + 1 times pi over 64, for each a then each subband k. */
+/* synthesis matrix: cos(a * (2k + 1) * pi / 64), per a then per subband k. */
 const float MP3_SYNTH[1024] = {
     1.000000000e+00f, 1.000000000e+00f, 1.000000000e+00f, 1.000000000e+00f, 1.000000000e+00f, 1.000000000e+00f,
     1.000000000e+00f, 1.000000000e+00f, 1.000000000e+00f, 1.000000000e+00f, 1.000000000e+00f, 1.000000000e+00f,
@@ -682,13 +681,13 @@ const float MP3_SYNTH[1024] = {
     3.368898534e-01f, -2.429801799e-01f, 1.467304745e-01f, -4.906767433e-02f,
 };
 
-/* the butterflies of the alias reduction: cs then ca. */
+/* alias reduction butterflies: cs then ca. */
 const float MP3_ALIAS[16] = {
     8.574929257e-01f, 8.817419973e-01f, 9.496286491e-01f, 9.833145925e-01f, 9.955178161e-01f, 9.991605582e-01f, 9.998991952e-01f, 9.999931551e-01f,
     -5.144957554e-01f, -4.717319686e-01f, -3.133774542e-01f, -1.819131996e-01f, -9.457419253e-02f, -4.096558289e-02f, -1.419856857e-02f, -3.699974674e-03f,
 };
 
-/* the left and right factors of the intensity positions of mpeg 1. */
+/* left and right factors of the MPEG 1 intensity positions. */
 const float MP3_INTENSITY[14] = {
     0.000000000e+00f, 1.000000000e+00f,
     2.113248654e-01f, 7.886751346e-01f,

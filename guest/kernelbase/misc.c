@@ -1,6 +1,4 @@
-/*
- * atoms and application packages.
- */
+/* atoms and application packages. */
 #include "kernelbase_private.h"
 
 
@@ -44,7 +42,7 @@ static ATOM_TABLE *table(BOOL global)
     return global ? &g_global_atoms : &g_local_atoms;
 }
 
-/* recognizes integer atoms given as MAKEINTATOM values or "#123" strings; returns FALSE for string names. */
+/* MAKEINTATOM values and "#123" strings are integer atoms, anything else is a string name. */
 static BOOL integer_atom(LPCWSTR name, ATOM *atom, BOOL *valid)
 {
     *valid = TRUE;
@@ -305,7 +303,7 @@ UINT WINAPI GetAtomNameA(ATOM atom, LPSTR buffer, int size)
 
 /* ------------------------------------------------------------------ global atoms */
 
-/* probes the kernel atom services once; without them a process wide table stands in. */
+/* probes the kernel atom services once, falling back to a process wide table. */
 static BOOL kernel_atoms(void)
 {
     LONG state = __atomic_load_n(&g_kernel_atoms, __ATOMIC_ACQUIRE);
@@ -476,7 +474,7 @@ LONG WINAPI GetApplicationUserModelId(HANDLE process, UINT32 *length, PWSTR id)
     return APPMODEL_ERROR_NO_APPLICATION;
 }
 
-/* the argument checks of the package lookup; no package is installed, so nothing matches. */
+/* only checks arguments: no package is installed, so nothing matches. */
 DECLSPEC_EXPORT LONG WINAPI GetPackagesByPackageFamily(PCWSTR family, UINT32 *count, PWSTR *full_names,
                                                        UINT32 *buffer_length, WCHAR *buffer)
 {
@@ -500,7 +498,7 @@ DECLSPEC_EXPORT LONG WINAPI FindPackagesByPackageFamily(PCWSTR family, UINT32 fi
     return GetPackagesByPackageFamily(family, count, full_names, buffer_length, buffer);
 }
 
-/* no package is installed: the lookup of any name finds nothing, a guess of the error. */
+/* no package is installed, so nothing is found. The error code is a guess. */
 DECLSPEC_EXPORT LONG WINAPI GetPackagePathByFullName(PCWSTR full_name, UINT32 *length, PWSTR path)
 {
     if (!full_name || !length || (*length && !path))
@@ -516,9 +514,8 @@ DECLSPEC_EXPORT LONG WINAPI GetPackagePath(const void *id, const UINT32 reserved
 }
 
 /*
- * the policies of an application: the process of a package has them from its manifest, the others have the ones of a
- * classic desktop program. The values are a guess of what windows answers a program that is no package, from the
- * names of the enumerations the sdk documents.
+ * a packaged process gets its policies from its manifest, any other one those of a classic desktop program. The values
+ * are a guess based on the enumeration names in the sdk.
  */
 static LONG app_policy(HANDLE token, UINT32 *policy, UINT32 value)
 {
@@ -570,7 +567,7 @@ DECLSPEC_EXPORT LONG WINAPI AppPolicyGetWindowingModel(HANDLE token, UINT32 *pol
     return app_policy(token, policy, 2); /* AppPolicyWindowingModel_ClassicDesktop */
 }
 
-/* the other lookups of the package contracts: no process or token belongs to a package. */
+/* no process or token belongs to a package. */
 DECLSPEC_EXPORT LONG WINAPI GetCurrentPackageInfo(UINT32 flags, UINT32 *length, BYTE *buffer, UINT32 *count)
 {
     if (!length || (*length && !buffer))

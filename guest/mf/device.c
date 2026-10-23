@@ -1,7 +1,7 @@
 /*
- * the camera behind a symbolic link: the interfaces of a device interface class, the file a link opens, and the
- * requests that file answers (mime/camera.h). the symbolic links are the paths windows' media foundation hands to
- * programs, "\\?\usb#vid_xxxx&pid_xxxx&mi_xx#...#{e5323777-f976-4f5b-9b55-b94699c46e44}\global".
+ * the camera behind a symbolic link: enumerating a device interface class, opening a link, and the requests the
+ * file answers, see mime/camera.h. the links look like the ones windows media foundation gives programs:
+ * "\\?\usb#vid_xxxx&pid_xxxx&mi_xx#...#{e5323777-f976-4f5b-9b55-b94699c46e44}\global".
  */
 #include "camera.h"
 
@@ -35,7 +35,7 @@ HRESULT CamEnumeratePaths(const GUID *category, WCHAR **paths)
             *paths = list;
             return S_OK;
         }
-        /* a camera plugged in between the two calls makes the list longer than it was. */
+        /* a camera plugged in between the two calls grows the list. */
         CamFree(list);
         if (cr != CR_BUFFER_SMALL)
             return E_FAIL;
@@ -102,7 +102,7 @@ HRESULT CamOpenDevice(PCWSTR path, CamDevice **out)
     }
     HRESULT hr = CamIoctl(d, MIME_CAMERA_IOCTL(MIME_CAMERA_IOCTL_INFO), nullptr, 0, &d->info, sizeof(d->info), nullptr);
     if (SUCCEEDED(hr)) {
-        /* the formats are asked for until they fit: the first call says how many there are. */
+        /* retry until the formats fit, the first call says how many there are. */
         DWORD room = 64;
         for (int attempt = 0; attempt < 3 && SUCCEEDED(hr); attempt++) {
             DWORD bytes = (DWORD)offsetof(MimeCameraFormatList, format) + room * (DWORD)sizeof(MimeCameraFormat);

@@ -159,7 +159,7 @@ UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list)
     return error;
 }
 
-/* the patches applied stay with the product as files, in the order they were applied, so that it opens again with them. */
+/* caches the applied patches in order, so the product reopens with them. */
 UINT MimeMsiCachePatches(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_path, PCWSTR cache)
 {
     MIME_MSI_DATABASE *database = package->Database;

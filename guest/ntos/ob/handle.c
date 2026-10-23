@@ -1,11 +1,9 @@
-/*
- * handle tables and handle based object services.
- */
+/* handle tables and handle based object services. */
 #include "../ntos.h"
 #include "../se/se.h"
 
 #define KERNEL_HANDLE_BIT 0xFFFFFFFF80000000ull
-#define OBJ_PROTECT_CLOSE 0x00000001 /* the handle attribute SetHandleInformation's HANDLE_FLAG_PROTECT_FROM_CLOSE sets */
+#define OBJ_PROTECT_CLOSE 0x00000001 /* set by SetHandleInformation's HANDLE_FLAG_PROTECT_FROM_CLOSE. */
 #define STATUS_HANDLE_NOT_CLOSABLE ((NTSTATUS)0xC0000235L)
 #define ObjectHandleFlagInformation 4
 #define HANDLE_TO_INDEX(h) ((((ULONG_PTR)(h)) & 0x7FFFFFFF) / 4 - 1)
@@ -102,8 +100,8 @@ static BOOLEAN handle_listed(const HANDLE *list, ULONG count, ULONG_PTR index)
 }
 
 /*
- * the inheritable handles of a parent, at the same values in its new child's empty table, as windows does.
- * with a list, those it names, sorted: each must be a handle of the parent that may be inherited.
+ * like Windows, the parent's inheritable handles land at the same values in the child's empty table. with a
+ * list, only the listed handles, sorted, and each must be an inheritable handle of the parent.
  */
 static NTSTATUS inherit_handles(PEPROCESS parent, PEPROCESS child, const HANDLE *list, ULONG list_count)
 {
@@ -171,13 +169,13 @@ NTSTATUS ObInheritHandleList(PEPROCESS parent, PEPROCESS child, const HANDLE *li
 /* consumes the caller's pointer reference to object. */
 NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle)
 {
-    /* the system access right is the security privilege's to give, as the open of a file or key asks it. */
+    /* ACCESS_SYSTEM_SECURITY needs the security privilege, as when opening a file or key. */
     if ((access & ACCESS_SYSTEM_SECURITY) && KeGetPreviousMode() == UserMode &&
         !SepSinglePrivilegeCheck(SE_SECURITY_PRIVILEGE, UserMode)) {
         ObDereferenceObject(object);
         return STATUS_PRIVILEGE_NOT_HELD;
     }
-    /* generic rights become the type's own, and the maximum is everything the type has, as nothing is withheld. */
+    /* generic rights become the type's own, and MAXIMUM_ALLOWED gets everything the type has. */
     const ULONG *mapping = OBJECT_TO_HEADER(object)->Type->Init.GenericMapping;
     if (mapping[3] && (access & (GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL | MAXIMUM_ALLOWED))) {
         ACCESS_MASK mapped = access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL | MAXIMUM_ALLOWED);
@@ -208,7 +206,7 @@ NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHAN
     return status;
 }
 
-/* inserts a possibly named object, handling OBJ_OPENIF and name collisions. */
+/* handles OBJ_OPENIF and name collisions. */
 NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS_MASK access, KPROCESSOR_MODE mode,
                              PHANDLE handle)
 {
@@ -272,7 +270,7 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         leaf.Length = leaf.MaximumLength = (USHORT)((len - slash) * 2);
     }
 
-    /* a name that is free is made only where the caller may make objects, one that is taken is found as it is. */
+    /* a free name is created only where the caller may create objects, but a taken one is still found. */
     NTSTATUS may_create = ObCheckCreateAccess(parent, mode);
     status = ObAssignSecurity(object, attributes, parent, mode);
     if (NT_SUCCESS(status)) {
@@ -290,7 +288,7 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
         ObDereferenceObject(object);
         if (!NT_SUCCESS(st))
             return st == STATUS_OBJECT_TYPE_MISMATCH ? st : STATUS_OBJECT_NAME_COLLISION;
-        /* the one that exists is opened like any other, with the check of what is asked of it. */
+        /* the existing object is opened like any other, checked against the access asked for. */
         ACCESS_MASK granted;
         st = ObCheckOpenAccess(existing, access, mode, &granted);
         if (!NT_SUCCESS(st)) {
@@ -313,8 +311,8 @@ NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attributes, ACCESS
 }
 
 /*
- * a process with strict handle checks gets an exception, as the system call returns, for a handle that is not
- * one. The null handle is left out, guessed.
+ * with strict handle checks, an invalid handle raises an exception as the system call returns. the null
+ * handle is assumed exempt.
  */
 static NTSTATUS invalid_handle(HANDLE handle, KPROCESSOR_MODE mode)
 {
@@ -405,7 +403,7 @@ NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode)
     PEPROCESS owner;
     PHANDLE_TABLE table = table_for(handle, mode, &owner);
     ULONG_PTR index = HANDLE_TO_INDEX(handle);
-    /* a protected handle stays open, though the process's end closes it. */
+    /* a protected handle stays open, though process exit still closes it. */
     KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
     BOOLEAN protected = index < table->Capacity && table->Entries[index].Object &&
                         (table->Entries[index].Attributes & OBJ_PROTECT_CLOSE);
@@ -421,7 +419,7 @@ typedef struct OBJECT_HANDLE_FLAGS {
     BOOLEAN ProtectFromClose;
 } OBJECT_HANDLE_FLAGS;
 
-/* the flags of a handle of the caller, read and optionally replaced under the table's lock. */
+/* read and optionally replaced under the table's lock. */
 static NTSTATUS handle_flags(HANDLE handle, OBJECT_HANDLE_FLAGS *flags, BOOLEAN set, ACCESS_MASK *granted)
 {
     PEPROCESS owner;
@@ -445,7 +443,7 @@ static NTSTATUS handle_flags(HANDLE handle, OBJECT_HANDLE_FLAGS *flags, BOOLEAN 
     return STATUS_SUCCESS;
 }
 
-/* only the handle flags are kept; the other classes change nothing here. */
+/* only handle flags are stored. other classes are accepted and ignored. */
 NTSTATUS NTAPI NtSetInformationObject(HANDLE handle, ULONG klass, PVOID info, ULONG length)
 {
     if (klass != ObjectHandleFlagInformation)
@@ -541,18 +539,17 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
     if (!NT_SUCCESS(status))
         return status;
     if (!(options & DUPLICATE_SAME_ACCESS)) {
-        /* the rights asked for are the type's own, the generic ones mapped. */
         ACCESS_MASK wanted = access;
         if (wanted & MAXIMUM_ALLOWED) {
             wanted = (wanted & ~MAXIMUM_ALLOWED) | granted;
         } else {
             wanted = ObMapGenericAccess(OBJECT_TO_HEADER(object)->Type, wanted);
         }
-        /* bits the type has no right for drop out, as the sandbox's synchronization rights on a mutex do. */
+        /* drop bits the type has no right for, like the sandbox's synchronization rights on a mutex. */
         ULONG valid = OBJECT_TO_HEADER(object)->Type->Init.ValidAccessMask;
         if (valid)
             wanted &= valid | 0x01000000 /* ACCESS_SYSTEM_SECURITY */;
-        /* a handle never becomes more powerful than its source, so a read only section cannot become writable. */
+        /* a handle never gains rights over its source, so a read-only section cannot become writable. */
         if (KeGetPreviousMode() == UserMode && (wanted & ~granted)) {
             ObDereferenceObject(object);
             return STATUS_ACCESS_DENIED;
@@ -711,7 +708,7 @@ NTSTATUS NTAPI NtCreateSymbolicLinkObject(PHANDLE handle, ACCESS_MASK access, PO
     POBJECT_SYMBOLIC_LINK link;
     status = ObCreateObject(ObSymbolicLinkType, &oa, KeGetPreviousMode(), sizeof(OBJECT_SYMBOLIC_LINK), (PVOID *)&link);
     if (NT_SUCCESS(status)) {
-        /* the link owns its target, ObCreateObject left the body uninitialized. */
+        /* the link owns its target. ObCreateObject left the body uninitialized. */
         link->Target.Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, captured.Length + sizeof(WCHAR), KI_TAG('O', 'b', 'S', 'l'));
         if (!link->Target.Buffer) {
             link->Target.Length = link->Target.MaximumLength = 0;

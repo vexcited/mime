@@ -1,9 +1,8 @@
 /*
- * IDirect3DDevice7, as d3dim700.dll of build 26300 implements it: the
- * state of the device is kept here, checked and defaulted as windows
- * does, and handed to the backend in direct3d 9's terms when this device
- * is the one drawing. drawing reaches the render target's copy in the
- * backend, read back when the cpu wants its pixels.
+ * IDirect3DDevice7: keeps, validates and defaults the device state like
+ * windows, and hands it to the backend in direct3d 9 terms while this
+ * device is the one drawing. drawing reaches the render target's backend
+ * copy, read back when the cpu wants its pixels.
  */
 #include "d3d_private.h"
 
@@ -23,7 +22,7 @@ static DWORD float_bits(float f)
     return d;
 }
 
-/* ------------------------------------------------------------------ state in direct3d 9's terms */
+/* ------------------------------------------------------------------ state in direct3d 9 terms */
 
 static BOOL active(D3DDEV *dev)
 {
@@ -43,7 +42,7 @@ static void push_rs(D3DDEV *dev, DWORD type, DWORD value)
         DbSetRenderState(dev->db, type, value ? 1 : 0);
         break;
     case D3DRENDERSTATE_ZBIAS:
-        /* 0 to 16 toward the viewer, a driver's step a unit guessed. */
+        /* 0 to 16 toward the viewer; the size of one step is guessed. */
         DbSetRenderState(dev->db, DB_RS_DEPTHBIAS, float_bits(-(float)value * (1.0f / 65536.0f)));
         break;
     case D3DRENDERSTATE_EDGEANTIALIAS:
@@ -97,7 +96,7 @@ static void push_rs(D3DDEV *dev, DWORD type, DWORD value)
     default:
         if (type >= D3DRENDERSTATE_WRAP0 && type <= D3DRENDERSTATE_WRAP7)
             DbSetRenderState(dev->db, type, value);
-        /* the others are the rasterizer's own business, or nothing a gpu does. */
+        /* the rest only concern the rasterizer or have no gpu equivalent. */
         break;
     }
 }
@@ -156,7 +155,6 @@ static void push_tss(D3DDEV *dev, DWORD stage, DWORD type, DWORD value)
     }
 }
 
-/* direct3d 7's transform types as direct3d 9's. */
 static DWORD transform9(DWORD type)
 {
     switch (type) {
@@ -177,7 +175,7 @@ static BOOL valid_transform(DWORD type)
            (type >= D3DTRANSFORMSTATE_TEXTURE0 && type <= D3DTRANSFORMSTATE_TEXTURE7);
 }
 
-/* the projection of the first interfaces ends with their viewport's clip volume. */
+/* the first interfaces' projection ends with their viewport's clip volume. */
 static void push_transform(D3DDEV *dev, DWORD type)
 {
     D3DMATRIX m = dev->transforms[type];
@@ -192,7 +190,7 @@ void D3dPushProjection(D3DDEV *dev)
         push_transform(dev, D3DTRANSFORMSTATE_PROJECTION);
 }
 
-/* everything of the device to the backend, which another device's work changed. */
+/* resends all device state, which another device's work changed. */
 void D3dDevActivate(D3DDEV *dev)
 {
     if (g_active == dev)
@@ -319,7 +317,7 @@ static void set_clip_plane(D3DDEV *dev, DWORD index, const float *plane)
         DbSetClipPlane(dev->db, index, plane);
 }
 
-/* the surface references a device holds, through the interface of its version; an aggregate holds none. */
+/* references go through the interface of the device's version; an aggregate holds none. */
 static void hold(D3DDEV *dev, DDSURF *s)
 {
     if (s && dev->surface_version)
@@ -355,9 +353,9 @@ void D3dSetTextureWeak(D3DDEV *dev, DWORD stage, DDSURF *s)
         dev->weak_textures |= 1u << stage;
 }
 
-/* ------------------------------------------------------------------ the targets and textures of a draw */
+/* ------------------------------------------------------------------ draw setup */
 
-/* the targets bound, and depth fills waiting for the depth buffer done now that it is. */
+/* also runs depth fills that waited for the depth buffer to be bound. */
 BOOL D3dBindTargets(D3DDEV *dev)
 {
     D3dDevActivate(dev);
@@ -379,7 +377,6 @@ BOOL D3dBindTargets(D3DDEV *dev)
     return TRUE;
 }
 
-/* whether an operation reads its texture argument, as the stage's arguments ask. */
 static BOOL reads_texture(DWORD op, DWORD arg1, DWORD arg2)
 {
     BOOL one = (arg1 & D3DTA_SELECTMASK) == D3DTA_TEXTURE, two = (arg2 & D3DTA_SELECTMASK) == D3DTA_TEXTURE;
@@ -396,9 +393,8 @@ static BOOL reads_texture(DWORD op, DWORD arg1, DWORD arg2)
 }
 
 /*
- * the textures of the stages, and the color key of the first: its keyed
- * texels have alpha 0 and are not drawn, as the hardware drivers of
- * direct3d 7 did through the alpha test.
+ * the first stage's color key gives keyed texels alpha 0 so the alpha
+ * test drops them, as direct3d 7 hardware drivers did.
  */
 static void bind_textures(D3DDEV *dev)
 {
@@ -410,7 +406,7 @@ static void bind_textures(D3DDEV *dev)
         DbSetTexture(dev->db, stage, image);
         if (!stage && image && s->d3d && s->d3d->keyed)
             keyed = TRUE;
-        /* windows' emulation ends the stages at the first reading a texture it lacks. */
+        /* windows' emulation ends the stages at the first one reading a missing texture. */
         const DWORD *t = dev->tss[stage];
         if (!image && end == D3D_STAGES &&
             (reads_texture(t[D3DTSS_COLOROP], t[D3DTSS_COLORARG1], t[D3DTSS_COLORARG2]) ||
@@ -441,12 +437,12 @@ HRESULT D3dClearRects(D3DDEV *dev, DWORD n, const D3DRECT *list, DWORD flags, DW
         return D3D_OK;
     BOOL whole = (flags & D3DCLEAR_TARGET) && n == 1 && !list[0].x1 && !list[0].y1 &&
                  list[0].x2 == (LONG)dev->target->desc.dwWidth && list[0].y2 == (LONG)dev->target->desc.dwHeight;
-    /* a target cleared whole needs nothing of its memory. */
+    /* a target cleared whole needs nothing from its memory. */
     if (whole)
         D3dSurfReplaced(dev->target);
     if (!D3dBindTargets(dev))
         return DDERR_SURFACELOST;
-    /* the backend clears within its viewport, which the rectangles may pass. */
+    /* the backend clears within its viewport, which the rectangles may exceed. */
     DbSetViewport(dev->db, 0, 0, dev->target->desc.dwWidth, dev->target->desc.dwHeight, 0.0f, 1.0f);
     HRESULT hr = DbClear(dev->db, n, list, flags, color, z, stencil);
     DbSetViewport(dev->db, dev->viewport.dwX, dev->viewport.dwY, dev->viewport.dwWidth, dev->viewport.dwHeight,
@@ -476,7 +472,7 @@ DWORD D3dFvfSize(DWORD fvf)
     return size;
 }
 
-/* a remainder of a triangle list is not drawn, where windows rounds it up and reads past the end. */
+/* a partial triangle at the end of a list is not drawn; windows rounds up and reads past the end. */
 DWORD D3dPrimitiveCount(D3DPRIMITIVETYPE type, DWORD n)
 {
     switch (type) {
@@ -517,7 +513,6 @@ HRESULT D3dDraw(D3DDEV *dev, D3DPRIMITIVETYPE type, DWORD fvf, const void *verti
     return SUCCEEDED(hr) ? D3D_OK : hr;
 }
 
-/* strided vertices packed as the format lays them out. */
 const BYTE *D3dPackStrided(D3DDEV *dev, DWORD fvf, const D3DDRAWPRIMITIVESTRIDEDDATA *data, DWORD count)
 {
     DWORD stride = D3dFvfSize(fvf);
@@ -600,7 +595,7 @@ BOOL D3dPalettized(const DDSURF *s)
     return (s->format.pf.dwFlags & (DDPF_PALETTEINDEXED4 | DDPF_PALETTEINDEXED8)) != 0;
 }
 
-/* the checks CreateDevice and SetRenderTarget share: the surface must take 3d drawing and a palette if indexed. */
+/* shared by CreateDevice and SetRenderTarget: the surface must allow 3d drawing, and have a palette if indexed. */
 HRESULT D3dCheckPalette(DDSURF *target)
 {
     if (!target->palette && target->format.bpp < 16)
@@ -722,7 +717,7 @@ HRESULT D3dCreateDevice7(D3DOBJ *d3d, const GUID *guid, DDSURF *target, IDirect3
     if (!guid || !D3dIsDeviceGuid(guid))
         return DDERR_INVALIDPARAMS;
     D3DDEVICEDESC7 desc;
-    /* the ramp device and those of the reference rasterizer have no provider in windows 11. */
+    /* the ramp and reference rasterizer devices have no provider in windows 11. */
     if (!D3dDeviceDesc7(guid, &desc))
         return E_NOINTERFACE;
     BOOL hal = D3dIsHalGuid(guid);
@@ -817,7 +812,7 @@ static void record_texture(D3DITEM *item, DDSURF *s)
         DdSurfAddRef(s, DdSurfRefOf(s, DDV7));
 }
 
-/* a handle for a block: windows reserves 0 and reuses freed handles. */
+/* windows reserves handle 0 and reuses freed handles. */
 static DWORD new_handle(D3DDEV *dev, D3DBLOCK *block)
 {
     for (DWORD i = 1; i < dev->block_count; i++)
@@ -889,7 +884,7 @@ static HRESULT apply_block(D3DDEV *dev, D3DBLOCK *b)
     return D3D_OK;
 }
 
-/* every recorded value replaced by the device's current one. */
+/* replaces every recorded value with the device's current one. */
 static HRESULT capture_block(D3DDEV *dev, D3DBLOCK *b)
 {
     for (DWORD i = 0; i < b->count; i++) {
@@ -944,7 +939,6 @@ static const DWORD PIXEL_RS[] = {4, 2, 7, 8, 9, 10, 14, 15, 16, 19, 20, 23, 24, 
 static const DWORD VERTEX_RS[] = {9, 29, 22, 28, 34, 35, 36, 37, 38, 48, 139, 141, 140, 136, 137, 138, 143, 142,
                                   148, 147, 145, 146, 151, 152};
 
-/* the predefined sets, filled with the current values. */
 static BOOL predefined(D3DDEV *dev, D3DBLOCK *b, D3DSTATEBLOCKTYPE type)
 {
     const DWORD *rs = type == D3DSBT_ALL ? ALL_RS : type == D3DSBT_PIXELSTATE ? PIXEL_RS : VERTEX_RS;
@@ -1051,7 +1045,7 @@ void D3dDevDestroy(D3DDEV *dev)
     unhold(dev, dev->depth);
     unhold(dev, dev->target);
     HeapFree(GetProcessHeap(), 0, dev);
-    /* a first device, which its surface owns, holds nothing of the direct3d object. */
+    /* a first device belongs to its surface and holds nothing on the direct3d object. */
     if (held)
         D3dObjRelease(d3d);
 }
@@ -1219,7 +1213,7 @@ static HRESULT STDMETHODCALLTYPE dev7_clear(IDirect3DDevice7 *This, DWORD count,
     if (!(flags & (D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL)))
         return DdLeave(DDERR_INVALIDPARAMS);
     flags &= D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL;
-    /* the rectangles within the viewport, which a null list clears whole. */
+    /* clip the rectangles to the viewport; a null list clears all of it. */
     const D3DVIEWPORT7 *vp = &dev->viewport;
     RECT view = {(LONG)vp->dwX, (LONG)vp->dwY, (LONG)(vp->dwX + vp->dwWidth), (LONG)(vp->dwY + vp->dwHeight)};
     D3DRECT *list = HeapAlloc(GetProcessHeap(), 0, (rects ? count : 1) * sizeof(*list) + 1);
@@ -1286,7 +1280,7 @@ D3DMATRIX D3dMultiply(const D3DMATRIX *a, const D3DMATRIX *b)
     return r;
 }
 
-/* the matrix given times the current one, at once even while a block records. */
+/* applies at once, even while a block records. */
 static HRESULT STDMETHODCALLTYPE dev7_multiply_transform(IDirect3DDevice7 *This, D3DTRANSFORMSTATETYPE type,
                                                          LPD3DMATRIX matrix)
 {
@@ -1366,7 +1360,7 @@ static HRESULT STDMETHODCALLTYPE dev7_get_material(IDirect3DDevice7 *This, LPD3D
     return DdLeave(D3D_OK);
 }
 
-/* windows' checks of a light, the same while recording. */
+/* windows' light checks, also applied while recording. */
 static BOOL valid_light(const D3DLIGHT7 *l)
 {
     if (l->dltType < D3DLIGHT_POINT || l->dltType > D3DLIGHT_DIRECTIONAL)
@@ -1428,7 +1422,7 @@ static HRESULT STDMETHODCALLTYPE dev7_light_enable(IDirect3DDevice7 *This, DWORD
     return DdLeave(D3dLightEnable(dev, index, enable));
 }
 
-/* an enabled light reads back as 128, as windows' does. */
+/* an enabled light reads back as 128, like windows. */
 static HRESULT STDMETHODCALLTYPE dev7_get_light_enable(IDirect3DDevice7 *This, DWORD index, BOOL *enable)
 {
     HRESULT hr;
@@ -1471,7 +1465,7 @@ static BOOL legacy_state(DWORD type)
     }
 }
 
-/* states of the first interfaces are stored, then refused; types past 255 are ignored. */
+/* first interface states are stored, then refused; types past 255 are ignored. */
 static HRESULT STDMETHODCALLTYPE dev7_set_render_state(IDirect3DDevice7 *This, D3DRENDERSTATETYPE type, DWORD value)
 {
     HRESULT hr;
@@ -1518,7 +1512,7 @@ static HRESULT STDMETHODCALLTYPE dev7_begin_state_block(IDirect3DDevice7 *This)
         HeapFree(GetProcessHeap(), 0, b);
         return DdLeave(DDERR_OUTOFMEMORY);
     }
-    /* the handle is taken, its block complete only at the end. */
+    /* the handle is taken now; its block is only complete at the end. */
     dev->blocks[handle] = nullptr;
     dev->recording = b;
     dev->recording_handle = handle;
@@ -1700,7 +1694,7 @@ static HRESULT STDMETHODCALLTYPE dev7_set_texture_stage_state(IDirect3DDevice7 *
     return DdLeave(D3D_OK);
 }
 
-/* what the rgb rasterizer can blend, in one pass; a hardware device's driver does everything here. */
+/* what the rgb rasterizer blends in one pass; a hardware device's driver does everything here. */
 static HRESULT STDMETHODCALLTYPE dev7_validate_device(IDirect3DDevice7 *This, LPDWORD passes)
 {
     HRESULT hr;
@@ -1739,7 +1733,7 @@ static HRESULT STDMETHODCALLTYPE dev7_validate_device(IDirect3DDevice7 *This, LP
     return DdLeave(D3D_OK);
 }
 
-/* a texture's levels copied into another's, through ddraw's blts. */
+/* copies the levels through ddraw's blts. */
 static HRESULT STDMETHODCALLTYPE dev7_load(IDirect3DDevice7 *This, LPDIRECTDRAWSURFACE7 dst_iface, LPPOINT point,
                                            LPDIRECTDRAWSURFACE7 src_iface, LPRECT rect, DWORD flags)
 {
@@ -1937,7 +1931,7 @@ static D3DVECTOR transform_point(const D3DMATRIX *m, float x, float y, float z, 
     return r;
 }
 
-/* the cube around each sphere through world, view and projection, its corners' clip codes joined. */
+/* each sphere's bounding cube goes through world, view and projection, and its corners' clip codes are joined. */
 static HRESULT STDMETHODCALLTYPE dev7_compute_sphere_visibility(IDirect3DDevice7 *This, LPD3DVECTOR centers,
                                                                 LPD3DVALUE radii, DWORD count, DWORD flags,
                                                                 LPDWORD results)

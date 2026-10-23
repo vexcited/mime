@@ -1,6 +1,4 @@
-/*
- * buffered streams: msvcrt's FILE layer over the low io descriptors.
- */
+/* buffered streams: msvcrt's FILE layer over the low io descriptors. */
 #include "msvcrt_private.h"
 
 FILE MsvcrtIob[_IOB_ENTRIES];
@@ -24,7 +22,7 @@ void MsvcrtStdioInit(void)
         f->_flag = i == 0 ? _IOREAD : _IOWRT;
         if (MsvcrtStreams)
             MsvcrtStreams[i] = f;
-        /* the stream of a missing standard handle gets the descriptor -2, like msvcrt. */
+        /* a missing standard handle gets descriptor -2, like msvcrt. */
         intptr_t h = MsvcrtFd(i)->osfhnd;
         if (h == -1 || h == -2 || !h)
             f->_file = -2;
@@ -79,7 +77,7 @@ void __cdecl _unlock_file(FILE *f)
     MsvcrtUnlockFile(f);
 }
 
-/* a free stream, locked, or NULL. */
+/* returns a free stream, locked, or NULL. */
 FILE *MsvcrtGetStream(void)
 {
     FILE *result = nullptr;
@@ -287,7 +285,7 @@ int MsvcrtFflushNolock(FILE *f)
     return 0;
 }
 
-/* flushes every stream; with flush_only it counts the streams flushed, else the open ones. */
+/* with flush_only, counts the streams flushed, else the open ones. */
 int MsvcrtFlushAll(int flush_only)
 {
     int count = 0, err = 0;
@@ -337,7 +335,7 @@ int __cdecl _flushall(void)
 
 /* ------------------------------------------------------------------ open and close */
 
-/* parses a fopen mode into open flags and stream flags; returns 0 when invalid. */
+/* returns 0 for an invalid mode. */
 static int parse_mode(const wchar_t *mode, int *oflag, int *sflag, int *share)
 {
     int commit = _commode;
@@ -1170,7 +1168,7 @@ size_t __cdecl _fread_nolock(void *buf, size_t size, size_t count, FILE *f)
             f->_ptr += n;
             p += n;
         } else if (left >= bufsize) {
-            /* reads whole buffers straight into the caller's memory. */
+            /* whole buffers go straight into the caller's memory. */
             unsigned n = bufsize ? (unsigned)(left - left % bufsize) : (unsigned)left;
             if (n > INT_MAX)
                 n = INT_MAX - INT_MAX % (bufsize ? bufsize : 1);
@@ -1541,7 +1539,7 @@ static unsigned g_tmpnam_count;
 
 char *__cdecl _ultoa(unsigned long value, char *buf, int radix);
 
-/* the next \t<pid>.<n> name in the root of the current drive, numbers in base 32 like msvcrt. */
+/* names are \t<pid>.<n> in the current drive's root, numbers in base 32 like msvcrt. */
 static void next_name(char *buf, const char *prefix, unsigned *counter)
 {
     char num[16];
@@ -1568,7 +1566,7 @@ static FILE *tmpfile_open(int share)
         MultiByteToWideChar(CP_ACP, 0, g_tmpfile_name, -1, w, MAX_PATH);
         fd = MsvcrtOpenW(w, _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY | _O_TEMPORARY, share, _S_IREAD | _S_IWRITE, 0);
         if (fd < 0 && *_errno() == EACCES) {
-            /* the drive root is not writable: the temporary directory instead. */
+            /* the drive root is not writable, use the temporary directory. */
             char dir[MAX_PATH];
             DWORD n = GetTempPathA(MAX_PATH - 20, dir);
             if (n && n < MAX_PATH - 20) {

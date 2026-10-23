@@ -28,7 +28,7 @@ static void br_init(BitReader *br, const uint8_t *src)
     br->pos = 0;
 }
 
-/* reads n bits, 0 to 32, from the position, least significant bit first. */
+/* n is 0 to 32, least significant bit first. */
 static inline uint32_t br_get(BitReader *br, unsigned n)
 {
     unsigned pos = br->pos;
@@ -59,7 +59,7 @@ static inline unsigned subset_of(unsigned nsub, unsigned partition, unsigned pix
     return ((nsub == 2 ? bptc_part2[partition] : bptc_part3[partition]) >> (2 * pixel)) & 3;
 }
 
-/* anchor pixels of the subsets, the first one of each subset is always pixel 0. */
+/* anchor pixels of the subsets, the first subset's is always pixel 0. */
 static void anchors(unsigned nsub, unsigned partition, unsigned anchor[3])
 {
     anchor[0] = 0;

@@ -1,10 +1,10 @@
 /*
- * the classes that programs serve to other processes. A program that registers a class object for a local server
- * marshals it, as a standard object reference to its IClassFactory, into a table the whole machine shares; a program
- * that asks for the class finds the reference there, or starts the program registered under HKCR\CLSID\{clsid}\LocalServer32
- * and waits for the reference to appear, and unmarshals it into a proxy.
+ * classes programs serve to other processes. registering a local server class object marshals its IClassFactory as a
+ * standard object reference into a machine wide table. a program asking for the class finds the reference there, or
+ * starts the program under HKCR\CLSID\{clsid}\LocalServer32 and waits for the reference to appear, then unmarshals it
+ * into a proxy.
  *
- * This is what windows' service control manager and rpcss do for classes; here the table is a named section and a mutex.
+ * on windows the service control manager and rpcss do this, here the table is a named section and a mutex.
  */
 #include "orpc.h"
 
@@ -36,7 +36,7 @@ static CLASS_TABLE *g_table;
 static HANDLE g_mutex;
 static SRWLOCK g_open_lock = SRWLOCK_INIT;
 
-/* the registrations of this process, whose marshaled references hold the factories. */
+/* this process's registrations, whose marshaled references keep the factories alive. */
 typedef struct LOCAL_CLASS {
     struct LOCAL_CLASS *Next;
     DWORD Cookie;
@@ -60,7 +60,7 @@ static ULONG64 creation_time(DWORD pid)
     return value;
 }
 
-/* a registration of a process that is gone is not one. */
+/* registrations of processes that are gone do not count. */
 static BOOL alive(const CLASS_ENTRY_SHARED *e)
 {
     return e->Pid == GetCurrentProcessId() || (e->Created && creation_time(e->Pid) == e->Created);
@@ -201,7 +201,7 @@ void OrpcClassRevoke(DWORD cookie)
     ReleaseSRWLockExclusive(&g_local_lock);
     if (!local)
         return;
-    /* the reference the table held lets go of the factory. */
+    /* dropping the table's reference releases the factory. */
     IStream *stream;
     if (SUCCEEDED(CreateStreamOnHGlobal(nullptr, TRUE, &stream))) {
         ULONG written;
@@ -216,7 +216,7 @@ void OrpcClassRevoke(DWORD cookie)
 
 /* ------------------------------------------------------------------ asking for a class */
 
-/* the command line of the local server of a class, with -Embedding after it. */
+/* the class's local server command line, with -Embedding appended. */
 static BOOL local_server_command(REFCLSID clsid, WCHAR *out, DWORD chars)
 {
     HKEY key;
@@ -240,7 +240,7 @@ static BOOL local_server_command(REFCLSID clsid, WCHAR *out, DWORD chars)
     return TRUE;
 }
 
-/* the reference of a served class, copied out of the table; false if the class is not served. */
+/* copies a served class's reference out of the table, false if the class is not served. */
 static BOOL find_class(REFCLSID clsid, BYTE *objref, ULONG *size)
 {
     BOOL found = FALSE;
@@ -286,7 +286,7 @@ HRESULT OrpcClassGet(REFCLSID clsid, REFIID iid, void **object)
         while (!got && GetTickCount64() < end) {
             Sleep(20);
             got = find_class(clsid, objref, &size);
-            /* a server that ended before it served the class is not coming. */
+            /* a server that exited before serving the class never will. */
             if (!got && WaitForSingleObject(process, 0) == WAIT_OBJECT_0) {
                 got = find_class(clsid, objref, &size);
                 break;

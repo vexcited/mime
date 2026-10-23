@@ -3,11 +3,9 @@
 
 #include "../vmm/vmm.h"
 
-/*
- * the host's cameras for the guest, see mime/camera.h and docs/camera.md. the hypercalls return MIME_HC_STATUS_*.
- */
+/* camera hypercalls returning MIME_HC_STATUS_*. shared layouts are in mime/camera.h. */
 
-/* tells the machine that cameras came or went, or that a stream has frames waiting. any thread. */
+/* notifies the guest of camera changes or available frames; callable from any thread. */
 typedef void (*MimeCameraNotify)(uint32_t kind, uint32_t stream);
 
 /* starts looking at the host's cameras. notify is called from a thread of the camera service. */

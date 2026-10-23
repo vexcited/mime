@@ -1,11 +1,8 @@
 /*
- * console: the standard handles of a console program are files of the
- * console driver, \Device\ConDrv, see mime/condrv.h: \CurrentIn for the input
- * and \CurrentOut for the screen buffer that is shown. kernelbase asks them
- * its questions with device controls and reads and writes them as files. a
- * program `mime run` started shares that terminal, and ctrl+c, ctrl+break
- * and closing it are ctrl events that the driver delivers by starting
- * ctrl_routine on a new thread. a gui program has no console until
+ * console: a console program's standard handles are files of \Device\ConDrv, see mime/condrv.h: \CurrentIn for input
+ * and \CurrentOut for the active screen buffer. kernelbase talks to them with device controls and reads and writes
+ * them as files. a program started by `mime run` shares that terminal, and ctrl+c, ctrl+break and closing it are ctrl
+ * events the driver delivers by starting ctrl_routine on a new thread. a gui program has no console until
  * AttachConsole or AllocConsole.
  */
 #include "kernelbase_private.h"
@@ -19,12 +16,12 @@
 #define CONSOLE_WINDOW ((HWND)(ULONG_PTR)0x00FF0010)
 
 static RTL_CRITICAL_SECTION g_console_lock = RTL_CRITICAL_SECTION_INIT;
-static HANDLE g_condrv; /* \Device\ConDrv, for what is about the process and its console */
+static HANDLE g_condrv; /* \Device\ConDrv, for requests about the process and its console. */
 static PHANDLER_ROUTINE g_ctrl_handlers[32];
 static ULONG g_ctrl_handler_count;
-static WCHAR g_exe_name[256]; /* the name the history and aliases of the process go by */
+static WCHAR g_exe_name[256]; /* the name the process's history and aliases are keyed by. */
 
-/* ------------------------------------------------------------------ the driver */
+/* ------------------------------------------------------------------ driver */
 
 static NTSTATUS control(HANDLE handle, ULONG code, const void *in, ULONG in_len, void *out, ULONG out_len, ULONG_PTR *done)
 {
@@ -39,7 +36,7 @@ static NTSTATUS control(HANDLE handle, ULONG code, const void *in, ULONG in_len,
     return status;
 }
 
-/* what the driver, or another driver that was asked by mistake, answered, as the error of the call. */
+/* sets the last error from the driver's status, or from another driver's when the handle was not a console. */
 static BOOL fail(NTSTATUS status)
 {
     switch (status) {
@@ -54,7 +51,7 @@ static BOOL fail(NTSTATUS status)
     }
 }
 
-/* a request about the console of the process; fails when there is none. */
+/* a request about the process's console; fails when there is none. */
 static NTSTATUS process_control(ULONG code, const void *in, ULONG in_len, void *out, ULONG out_len, ULONG_PTR *done)
 {
     return control(g_condrv, code, in, in_len, out, out_len, done);
@@ -83,7 +80,6 @@ static UINT code_page(BOOL input)
 
 /* ------------------------------------------------------------------ text output */
 
-/* debug output through NtDisplayString, chunked for its limits. */
 void KbDisplayText(LPCWSTR text, SIZE_T chars)
 {
     /* NtDisplayString converts to at most 512 utf-8 bytes per call. */
@@ -98,14 +94,14 @@ void KbDisplayText(LPCWSTR text, SIZE_T chars)
     }
 }
 
-/* text for a screen buffer: utf-16, or bytes of the output code page. */
+/* text for a screen buffer: utf-16, or bytes in the output code page. */
 static BOOL write_text(HANDLE console, BOOL bytes, const void *data, DWORD length)
 {
     DWORD unit = bytes ? 1 : sizeof(WCHAR);
     const UCHAR *p = data;
     do {
         DWORD n = length > MAX_WRITE_CHARS ? MAX_WRITE_CHARS : length;
-        /* a pair of utf-16 units is not cut. */
+        /* do not split a surrogate pair. */
         if (!bytes && n < length && n && ((const WCHAR *)p)[n - 1] >= 0xD800 && ((const WCHAR *)p)[n - 1] <= 0xDBFF)
             n--;
         ULONG size = sizeof(MIME_CONDRV_WRITE) + n * unit;
@@ -177,7 +173,7 @@ static PCWSTR exe_name(ULONG *length)
     return g_exe_name;
 }
 
-/* the text a read gives back, as wide characters or as bytes of the input code page. */
+/* a read's text, as wide characters or as bytes of the input code page. */
 static BOOL read_text(HANDLE console, BOOL wide, PVOID buffer, DWORD count, LPDWORD read, PCONSOLE_READCONSOLE_CONTROL control_in)
 {
     ULONG exe_length;
@@ -208,7 +204,7 @@ static BOOL read_text(HANDLE console, BOOL wide, PVOID buffer, DWORD count, LPDW
     rq->ExeNameLength = exe_length;
     PWCHAR text = (PWCHAR)(rq + 1);
     if (initial) {
-        /* the characters of the buffer that start the line are wide, or bytes of the input code page. */
+        /* the initial characters that start the line are wide, or bytes of the input code page. */
         if (wide) {
             memcpy(text, buffer, initial * sizeof(WCHAR));
         } else {
@@ -234,7 +230,7 @@ static BOOL read_text(HANDLE console, BOOL wide, PVOID buffer, DWORD count, LPDW
     return ok;
 }
 
-/* reads characters, waiting for at least one; none at end of file. */
+/* waits for at least one character; none at end of file. */
 BOOL WINAPI ReadConsoleW(HANDLE console, LPVOID buffer, DWORD count, LPDWORD read, PCONSOLE_READCONSOLE_CONTROL control_in)
 {
     if (read)
@@ -263,9 +259,8 @@ BOOL WINAPI ReadConsoleA(HANDLE console, LPVOID buffer, DWORD count, LPDWORD rea
 #define MAX_RECORDS 256
 
 /*
- * the console keeps the input records, as conhost's input buffer does:
- * the keys typed, decoded from what the terminal sends, and the events
- * programs write. flags are CONSOLE_READ_NOREMOVE and CONSOLE_READ_NOWAIT.
+ * the console holds the input records like conhost's input buffer: typed keys decoded from the terminal's bytes, and
+ * events programs write. flags are CONSOLE_READ_NOREMOVE and CONSOLE_READ_NOWAIT.
  */
 static BOOL read_input_records(HANDLE console, PINPUT_RECORD buffer, DWORD count, LPDWORD read, USHORT flags)
 {
@@ -352,10 +347,7 @@ BOOL WINAPI GetNumberOfConsoleInputEvents(HANDLE console, LPDWORD count)
     return TRUE;
 }
 
-/*
- * the console's write: appended, or ahead of the events waiting. the
- * events it took land in *written even when it fails, as on windows.
- */
+/* appends, or inserts ahead of the waiting events. like windows, *written counts events taken even on failure. */
 static BOOL write_input(HANDLE console, const INPUT_RECORD *records, DWORD count, LPDWORD written, BOOL append)
 {
     *written = 0;
@@ -386,11 +378,9 @@ static BOOL known_event(WORD type)
 }
 
 /*
- * ansi events carry a byte of the input code page. as the console does,
- * each key event becomes one per utf-16 unit of its character, a lead byte
- * takes the next event's byte as its trail, a lead byte left at the end
- * waits in the console for the next write, and a byte that converts to
- * nothing drops its event.
+ * ansi events carry a byte of the input code page. like the console, each key event becomes one per utf-16 unit of
+ * its character, a lead byte takes the next event's byte as its trail, a lead byte at the end waits in the console
+ * for the next write, and a byte that converts to nothing drops its event.
  */
 static BOOL write_input_ansi(HANDLE console, const INPUT_RECORD *records, DWORD count, LPDWORD written, BOOL append)
 {
@@ -460,7 +450,7 @@ BOOL WINAPI WriteConsoleInputA(HANDLE console, const INPUT_RECORD *buffer, DWORD
     return write_input_ansi(console, buffer, count, written, TRUE);
 }
 
-/* what ntvdm wrote: the events go ahead of the ones waiting. */
+/* ntvdm's write: the events go ahead of the waiting ones. */
 BOOL WINAPI WriteConsoleInputVDMW(HANDLE console, const INPUT_RECORD *buffer, DWORD count, LPDWORD written)
 {
     return write_input(console, buffer, count, written, FALSE);
@@ -477,7 +467,7 @@ BOOL WINAPI FlushConsoleInputBuffer(HANDLE console)
     return NT_SUCCESS(status) || fail(status);
 }
 
-/* ------------------------------------------------------------------ the modes */
+/* ------------------------------------------------------------------ modes */
 
 BOOL WINAPI GetConsoleMode(HANDLE console, LPDWORD mode)
 {
@@ -568,9 +558,8 @@ static HANDLE open_driver_file(PCWSTR name, ACCESS_MASK access, ULONG share, ULO
 }
 
 /*
- * a stream the terminal has is a file of the console; a stream `mime run`
- * was given a pipe or a file for is a handle to its end of the console's
- * stream device, which programs see as a pipe, as on windows.
+ * a stream the terminal owns is a console file. a stream `mime run` redirected to a pipe or file is a handle to the
+ * console's stream device, which programs see as a pipe, as on windows.
  */
 static HANDLE standard_handle(ULONG tty_flags, ULONG tty, PCWSTR console_name, PCWSTR stream, ACCESS_MASK access)
 {
@@ -609,12 +598,10 @@ static void set_console_handles(BOOL only_missing)
 }
 
 /*
- * the console driver starts this on a new thread for each ctrl event, as
- * csrss starts kernel32's CtrlRoutine. handlers run newest first; when none
- * handles the event, and always after a close, the process exits. a handler
- * that took a logoff or a shutdown ends the thread with the event as its
- * exit code, and the system ends the process once the handler is back, as
- * csrss does: that is how it knows the handler took it.
+ * the console driver starts this on a new thread for each ctrl event, as csrss starts kernel32's CtrlRoutine.
+ * handlers run newest first. when none handles the event, and always after a close, the process exits. a handler
+ * that took a logoff or shutdown ends the thread with the event as exit code, and the system ends the process once
+ * the handler returns: that is how csrss knows the handler took it.
  */
 static DWORD WINAPI ctrl_routine(LPVOID parameter)
 {
@@ -636,7 +623,7 @@ static DWORD WINAPI ctrl_routine(LPVOID parameter)
     return 0;
 }
 
-/* a handle of the console driver, whatever the handle of a pipe or a file is. */
+/* whether a handle belongs to the console driver rather than a pipe or file. */
 static BOOL is_console_device(HANDLE h)
 {
     if (!h || h == INVALID_HANDLE_VALUE || KbIsPseudoHandle(h))
@@ -647,7 +634,7 @@ static BOOL is_console_device(HANDLE h)
            info.DeviceType == 0x50 /* FILE_DEVICE_CONSOLE */;
 }
 
-/* a program that is no console program has no use for the console handles it was given. */
+/* a non console program has no use for the console handles it was given. */
 static void close_console_handle(PHANDLE slot)
 {
     if (is_console_device(*slot)) {
@@ -722,10 +709,7 @@ BOOL WINAPI SetStdHandle(DWORD which, HANDLE handle)
     return SetStdHandleEx(which, handle, nullptr);
 }
 
-/*
- * CONIN$, CONOUT$ and CON are names of the console of the process: opens the file of the
- * driver, or returns nullptr when the name is none of them.
- */
+/* CONIN$, CONOUT$ and CON name the process's console: opens the driver file, or returns nullptr for other names. */
 HANDLE KbOpenConsoleDevice(LPCWSTR name, DWORD access, DWORD share, const SECURITY_ATTRIBUTES *sa, DWORD disposition)
 {
     PCWSTR base = name;
@@ -755,9 +739,8 @@ HANDLE KbOpenConsoleDevice(LPCWSTR name, DWORD access, DWORD share, const SECURI
 /* ------------------------------------------------------------------ console management */
 
 /*
- * windows makes a new console window; mime has no console host window, so a process that
- * descends from a run takes the terminal of that run while it is open, and any other gets a
- * console that nothing shows.
+ * windows creates a console window. mime has no console host window, so a process descended from a run takes that
+ * run's terminal while it is open, and any other gets a console nothing shows.
  */
 BOOL WINAPI AllocConsole(void)
 {
@@ -1054,8 +1037,8 @@ BOOL WINAPI SetConsoleScreenBufferInfoEx(HANDLE console, PCONSOLE_SCREEN_BUFFER_
     i->Attributes = info->wAttributes;
     i->PopupAttributes = info->wPopupAttributes;
     /*
-     * the size of the window the server is given is right minus left, where the call on windows reads the
-     * rectangle it returns as inclusive: setting what was got makes the window a column and a row smaller.
+     * the server takes the window size as right minus left, while windows reads the returned rectangle as inclusive:
+     * setting what was read makes the window a column and a row smaller.
      */
     i->Window.Left = info->srWindow.Left;
     i->Window.Top = info->srWindow.Top;
@@ -1169,7 +1152,7 @@ BOOL WINAPI SetConsoleActiveScreenBuffer(HANDLE console)
     return NT_SUCCESS(status) || fail(status);
 }
 
-/* ------------------------------------------------------------------ rectangles of cells */
+/* ------------------------------------------------------------------ cell rectangles */
 
 static BOOL rect_transfer(HANDLE console, BOOL write, PCHAR_INFO buffer, COORD size, COORD origin, PSMALL_RECT region,
                           BOOL ansi)
@@ -1179,9 +1162,8 @@ static BOOL rect_transfer(HANDLE console, BOOL write, PCHAR_INFO buffer, COORD s
         return FALSE;
     }
     /*
-     * the size of the rectangle is cut to what the caller's array has room for from the origin on. a read of
-     * nothing, or of nothing that is in the buffer, fails with the error of a server that does not know the
-     * call; a write of nothing is a bad parameter.
+     * the rectangle is clipped to what the caller's array holds from the origin. reading nothing, or nothing inside the
+     * buffer, fails with the error of a server that does not know the call; writing nothing is a bad parameter.
      */
     int w = (SHORT)(region->Right - region->Left + 1), h = (SHORT)(region->Bottom - region->Top + 1);
     if (w > size.X - origin.X)
@@ -1310,7 +1292,7 @@ BOOL WINAPI WriteConsoleOutputA(HANDLE console, const CHAR_INFO *buffer, COORD s
     return rect_transfer(console, TRUE, (PCHAR_INFO)buffer, size, origin, region, TRUE);
 }
 
-/* runs of characters or attributes from a cell on. */
+/* reads a run of characters or attributes starting at a cell. */
 static BOOL read_run(HANDLE console, ULONG kind, COORD start, void *out, DWORD length, LPDWORD read)
 {
     if (read)
@@ -1335,7 +1317,7 @@ static BOOL read_run(HANDLE console, ULONG kind, COORD start, void *out, DWORD l
         memcpy((PUCHAR)out + (size_t)total * 2, block + sizeof(ULONG), got * 2);
         KbFree(block);
         total += got;
-        /* the cells go on in the rows below. */
+        /* the run continues into the rows below. */
         ULONG skip = got;
         LONG64 pos = (LONG64)start.Y * 0 + skip;
         (void)pos;
@@ -1562,7 +1544,7 @@ BOOL WINAPI ScrollConsoleScreenBufferA(HANDLE console, const SMALL_RECT *source,
     return scroll(console, source, clip, destination, w, fill->Attributes);
 }
 
-/* ------------------------------------------------------------------ fonts and the like */
+/* ------------------------------------------------------------------ fonts */
 
 static BOOL font_info(HANDLE console, MIME_CONDRV_FONT *font)
 {
@@ -1607,7 +1589,7 @@ DECLSPEC_EXPORT BOOL WINAPI SetCurrentConsoleFontEx(HANDLE console, BOOL maximum
         return FALSE;
     }
     MIME_CONDRV_FONT f;
-    /* the font of a terminal is the terminal's: the call is accepted by a handle that may be written. */
+    /* the terminal owns its font: the call just succeeds on a writable handle. */
     return font_info(console, &f);
 }
 
@@ -1715,7 +1697,7 @@ DECLSPEC_EXPORT BOOL WINAPI SetConsoleHistoryInfo(PCONSOLE_HISTORY_INFO info)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    /* the flags travel in the length of the name, which this request has no use for. */
+    /* the flags travel in the name length field, which this request does not use. */
     ULONG in_size = sizeof(MIME_CONDRV_HISTORY);
     MIME_CONDRV_HISTORY rq = {MIME_CONDRV_HISTORY_SET_INFO, info->HistoryBufferSize, info->NumberOfHistoryBuffers, info->dwFlags};
     NTSTATUS status = process_control(IOCTL_CONDRV_IN_HISTORY, &rq, in_size, nullptr, 0, nullptr);
@@ -1726,7 +1708,7 @@ DECLSPEC_EXPORT BOOL WINAPI SetConsoleHistoryInfo(PCONSOLE_HISTORY_INFO info)
     return TRUE;
 }
 
-/* the exe name argument, wide, of a wide or ansi call. */
+/* the exe name argument of a wide or ansi call, as wide. */
 static PWSTR exe_arg(LPCSTR ansi, LPCWSTR wide, BOOL is_ansi)
 {
     if (!is_ansi)
@@ -1885,7 +1867,7 @@ DECLSPEC_EXPORT BOOL WINAPI AddConsoleAliasA(LPSTR source, LPSTR target, LPSTR e
     return ok;
 }
 
-/* the text of a wide result in the bytes a wide or ansi call counts. */
+/* copies a wide result out, counting bytes as the wide or ansi call does. */
 static DWORD alias_text(ULONG op, PCWSTR source, PCWSTR exe, void *out, DWORD bytes, BOOL is_ansi)
 {
     ULONG room = bytes / (is_ansi ? 1 : sizeof(WCHAR));

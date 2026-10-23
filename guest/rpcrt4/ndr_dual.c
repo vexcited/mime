@@ -1,14 +1,12 @@
 /*
- * the entry points of stubs that midl wrote for two transfer syntaxes. A dual syntax stub carries the format strings of ndr
- * and of ndr64 and calls NdrClientCall3 whichever the binding agreed on; this runtime only negotiates the older syntax, so
- * these find the description of it in the tables and run it as NdrClientCall2 does.
+ * entry points of midl stubs carrying both ndr and ndr64 format strings, which call NdrClientCall3 whichever syntax was
+ * negotiated. this runtime only negotiates ndr, so these find its description and run it like NdrClientCall2.
  */
 #include "ndr_proc.h"
 #include <stdarg.h>
 
 static const GUID g_ndr20_id = {0x8A885D04, 0x1CEB, 0x11C9, {0x9F, 0xE8, 0x08, 0x00, 0x2B, 0x10, 0x48, 0x60}};
 
-/* the description of the older transfer syntax among those of an interface, or null. */
 const MIDL_SYNTAX_INFO *NdrpOldSyntax(const MIDL_SYNTAX_INFO *list, ULONG_PTR count)
 {
     for (ULONG_PTR i = 0; list && i < count; i++)
@@ -40,14 +38,11 @@ RPCRTAPI CLIENT_CALL_RETURN RPC_VAR_ENTRY NdrClientCall3(MIDL_STUBLESS_PROXY_INF
     }
     CLIENT_CALL_RETURN r = NdrpClientCall(&desc, procs + offsets[proc], args, promoted);
     va_end(ap);
-    /* the return value comes back as the result of the call; where the stub says it keeps it is not written. */
+    /* the return value is the call's result, the stub's return_value location is not written. */
     return r;
 }
 #else
-/*
- * on x86 the arguments of the procedure follow the three of the call on the stack, as the next of its variable arguments,
- * and nothing is widened.
- */
+/* on x86 the procedure's arguments follow the call's three on the stack, unwidened. */
 RPCRTAPI CLIENT_CALL_RETURN RPC_VAR_ENTRY NdrClientCall4(MIDL_STUBLESS_PROXY_INFO *info, ULONG proc, void *return_value, ...)
 {
     va_list ap;
@@ -73,7 +68,7 @@ RPCRTAPI CLIENT_CALL_RETURN RPC_VAR_ENTRY NdrClientCall4(MIDL_STUBLESS_PROXY_INF
 #endif
 
 #ifdef _WIN64
-/* a server that carries both syntaxes dispatches to these, and a com stub that does to the next. */
+/* servers carrying both syntaxes dispatch to these, com stubs to the next. */
 RPCRTAPI void RPC_ENTRY NdrServerCallAll(PRPC_MESSAGE msg)
 {
     NdrServerCall2(msg);

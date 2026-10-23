@@ -1,6 +1,5 @@
 /*
- * print spooler api of winspool.drv: printer handles, enumeration, jobs,
- * forms, drivers and device modes.
+ * print spooler api of winspool.drv: printer handles, enumeration, jobs, forms, drivers and device modes.
  */
 #ifndef MIME_WIN32_WINSPOOL_H
 #define MIME_WIN32_WINSPOOL_H

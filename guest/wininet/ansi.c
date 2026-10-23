@@ -1,9 +1,7 @@
-/*
- * the ansi forms, converting through the ansi code page around the wide functions.
- */
+/* ANSI wrappers using the process code page. */
 #include "wininet_private.h"
 
-/* a heap copy of length characters of text, or of all of it when length is -1. */
+/* copy length characters to the heap; -1 copies the terminated string. */
 static PWSTR Widen(LPCSTR text, int length)
 {
     if (!text)
@@ -17,7 +15,7 @@ static PWSTR Widen(LPCSTR text, int length)
     return wide;
 }
 
-/* the header length of the ansi forms, where -1 means a terminated string. */
+/* ANSI header length; -1 means a terminated string. */
 static int HeaderLength(LPCSTR headers, DWORD length)
 {
     return length == (DWORD)-1 || !length ? -1 : (int)length;
@@ -99,7 +97,7 @@ static BOOL IsStringOption(DWORD option)
            option == INTERNET_OPTION_SECURITY_CERTIFICATE;
 }
 
-/* string options come back narrowed, their length in characters as the wide form reports it. */
+/* convert string options back to ANSI, retaining the wide result's character count. */
 DECLSPEC_EXPORT BOOL WINAPI InternetQueryOptionA(HINTERNET handle, DWORD option, LPVOID buffer, LPDWORD length)
 {
     if (!IsStringOption(option) || !length)
@@ -195,7 +193,7 @@ DECLSPEC_EXPORT BOOL WINAPI HttpEndRequestA(HINTERNET request, LPINTERNET_BUFFER
     return HttpEndRequestW(request, (LPINTERNET_BUFFERSW)buffers_out, flags, context);
 }
 
-/* ftp connections fail in InternetConnect, so this finds nothing but says why. */
+/* InternetConnect cannot create FTP connections, so only handle errors are possible. */
 DECLSPEC_EXPORT HINTERNET WINAPI FtpFindFirstFileA(HINTERNET connect, LPCSTR search, LPWIN32_FIND_DATAA data, DWORD flags,
                                                   DWORD_PTR context)
 {

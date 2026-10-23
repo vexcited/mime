@@ -1,13 +1,7 @@
 /*
- * sockets. a socket is a file of the kernel's \Device\Afd, which binds it
- * to a socket of the host, so the handle works with completion ports,
- * waits and handle duplication like on windows. ws2_32 keeps a record per
- * socket for what only the caller sees: timeouts, linger and the options
- * the host has no notion of, and the window of a WSAAsyncSelect.
- *
- * blocking calls start a request with the thread's event and wait for it;
- * overlapped calls hand the caller's OVERLAPPED to the kernel, which
- * completes it through its event, its completion routine or the port.
+ * sockets are \Device\Afd files backed by host sockets, supporting completion ports, waits and duplication. ws2_32
+ * records client-side timeouts, linger, unsupported host options and WSAAsyncSelect windows. blocking calls use a
+ * thread event; overlapped calls pass OVERLAPPED to the kernel for event, routine or port completion.
  */
 #include "ws2_32_private.h"
 
@@ -64,7 +58,7 @@ static HANDLE afd_open(void)
     return h;
 }
 
-/* an afd file that is no socket, for select, WSAPoll and names. */
+/* non-socket AFD file for select, WSAPoll and name queries. */
 static HANDLE helper_handle(void)
 {
     EnterCriticalSection(&lock);
@@ -85,7 +79,7 @@ static HANDLE thread_event(void)
     return t->event;
 }
 
-/* a request of a blocking caller: waits for it, cancelling it after timeout milliseconds. */
+/* waits for a blocking request, cancelling after timeout milliseconds. */
 static NTSTATUS afd_call(HANDLE h, ULONG code, void *in, ULONG in_len, void *out, ULONG out_len, DWORD timeout,
                          ULONG_PTR *information)
 {
@@ -184,7 +178,7 @@ static BOOL afd_state(SOCKET s, MIME_AFD_STATE *st)
     return NT_SUCCESS(status);
 }
 
-/* references the record of s; a socket from another process or a duplicated handle gets one now. */
+/* references the socket record, creating it for imported or duplicated handles. */
 static WS_SOCKET *acquire(SOCKET s, int *error)
 {
     *error = WsCheckStarted();
@@ -277,7 +271,6 @@ static int sockaddr_size(int family)
     return family == AF_INET ? (int)sizeof(SOCKADDR_IN) : (int)sizeof(SOCKADDR_IN6);
 }
 
-/* a caller's sockaddr as the driver takes it. */
 static int to_address(const WS_SOCKET *sock, const struct sockaddr *addr, int len, MIME_AFD_ADDRESS *a)
 {
     if (!addr || len < (int)sizeof(SOCKADDR_IN))
@@ -338,7 +331,6 @@ static int resolve_kind(int *af, int *type, int *protocol)
     return WSAESOCKTNOSUPPORT;
 }
 
-/* a new afd file with its host socket. */
 static int open_socket(int af, int type, int protocol, HANDLE *out)
 {
     HANDLE h = afd_open();
@@ -394,7 +386,7 @@ SOCKET WSAAPI socket(int af, int type, int protocol)
 
 static void protocol_info_a(const WSAPROTOCOL_INFOW *w, WSAPROTOCOL_INFOA *a);
 
-/* a socket WSADuplicateSocket made for this process: its handle, already here. */
+/* WSADuplicateSocket has already installed this handle in the target process. */
 static SOCKET adopt_socket(const WSAPROTOCOL_INFOW *info)
 {
     int error = WsCheckStarted();
@@ -427,11 +419,7 @@ SOCKET WSAAPI WSASocketW(int af, int type, int protocol, LPWSAPROTOCOL_INFOW inf
     return create_socket(af, type, protocol, flags);
 }
 
-/*
- * the socket's handle duplicated into the target process, carried in the
- * protocol information the way windows' provider carries it; WSASocket
- * there takes it back.
- */
+/* passes the duplicated target-process handle through protocol information for WSASocket to consume. */
 int WSAAPI WSADuplicateSocketW(SOCKET s, DWORD process_id, LPWSAPROTOCOL_INFOW info)
 {
     int error;
@@ -568,7 +556,7 @@ int WSAAPI connect(SOCKET s, const struct sockaddr *name, int namelen)
     return error ? fail(sock, error) : succeed(sock);
 }
 
-/* connect data and quality of service need a transport that carries them, which tcp does not. */
+/* connect data and quality of service need a transport that carries them, which TCP does not. */
 int WSAAPI WSAConnect(SOCKET s, const struct sockaddr *name, int namelen, LPWSABUF caller_data, LPWSABUF callee_data,
                       void *sqos, void *gqos)
 {
@@ -910,11 +898,9 @@ static BOOL WSAAPI disconnect_ex(SOCKET s, LPOVERLAPPED overlapped, DWORD flags,
 }
 
 /*
- * TransmitFile: the head buffer, the bytes of the file from its place, the tail buffer, in order, on a stream socket.
- * The work is done before the call returns. With an OVERLAPPED the file place is the one in it and the request is then
- * completed with the total, as an operation that finished at once but is reported the way a pending one is, with
- * WSA_IO_PENDING. TF_DISCONNECT ends the sending side after the data; TF_REUSE_SOCKET cannot be done, the socket is
- * not given back, and the other flags are only hints.
+ * TransmitFile sends the head buffer, file data and tail buffer synchronously. OVERLAPPED supplies the file offset;
+ * completion reports the total and returns WSA_IO_PENDING even though work is done. TF_DISCONNECT shuts down
+ * sending; TF_REUSE_SOCKET is unsupported and other flags are hints.
  */
 typedef struct {
     PVOID Head;
@@ -1037,9 +1023,8 @@ static const GUID guid_wsa_send_msg = {0xA441E712, 0x754F, 0x43CA, {0x84, 0xA7, 
 static const GUID guid_disconnect_ex = {0x7FDA2E11, 0x8630, 0x436F, {0xA0, 0x31, 0xF5, 0x36, 0xA6, 0xEE, 0xC1, 0x57}};
 
 /*
- * WSARecvMsg and WSASendMsg of datagram sockets: the receive or send with an address, the control data besides. there
- * is none to give or take here: no control message comes back, as from a socket that asked for none, and the ones a
- * send carries (the type of service) are ignored.
+ * datagram WSARecvMsg and WSASendMsg carry addresses but no control data here. receive returns no control messages;
+ * send ignores them, including type of service.
  */
 static int WSAAPI wsa_recv_msg(SOCKET s, LPWSAMSG msg, LPDWORD received, LPWSAOVERLAPPED overlapped,
                                LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
@@ -1083,7 +1068,7 @@ static int WSAAPI wsa_send_msg(SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD sent
                     overlapped, routine);
 }
 
-/* the entry the extension pointer of WSAIoctl gives, as ws2_32 exports it too. */
+/* also exported directly by ws2_32, besides WSAIoctl's extension pointer. */
 int WSAAPI WSASendMsg(SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD sent, LPWSAOVERLAPPED overlapped,
                       LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
 {
@@ -1276,7 +1261,7 @@ static DWORD WINAPI async_main(LPVOID parameter)
     static const int order[] = {FD_CONNECT_BIT, FD_ACCEPT_BIT, FD_READ_BIT, FD_OOB_BIT, FD_WRITE_BIT, FD_CLOSE_BIT};
     for (;;) {
         WaitForSingleObject(async_event, INFINITE);
-        /* the windows to tell, gathered under the lock and told outside it. */
+        /* collects notification Windows under the lock, then sends outside it. */
         for (;;) {
             SOCKET s = INVALID_SOCKET;
             HWND hwnd = nullptr;
@@ -1365,7 +1350,7 @@ int WSAAPI WSAEnumNetworkEvents(SOCKET s, WSAEVENT event, LPWSANETWORKEVENTS eve
 
 /* ------------------------------------------------------------------ interfaces and names */
 
-/* the addresses of the host, one entry per address; returns the count or a negative winsock error. */
+/* returns one entry per host address, or a negative Winsock error. */
 int WsInterfaces(MIME_AFD_INTERFACE *list, int max)
 {
     HANDLE h = helper_handle();
@@ -1406,13 +1391,13 @@ static void prefix_mask(int family, int bits, BYTE *mask)
         mask[i] = bits >= 8 ? 0xFF : (BYTE)(0xFF << (8 - bits));
 }
 
-/* an address of an interface that is up with its link up, as the ip helper lists them. */
+/* requires an active interface and link, matching IP helper enumeration. */
 static BOOL interface_ready(const MIME_AFD_INTERFACE *e)
 {
     return (e->Flags & (MIME_AFD_IF_UP | MIME_AFD_IF_RUNNING)) == (MIME_AFD_IF_UP | MIME_AFD_IF_RUNNING);
 }
 
-/* SIO_GET_INTERFACE_LIST: the ipv4 interfaces of the host. */
+/* SIO_GET_INTERFACE_LIST: the IPv4 interfaces of the host. */
 static int interface_list(LPVOID out, DWORD out_size, LPDWORD returned)
 {
     MIME_AFD_INTERFACE list[64];
@@ -1627,7 +1612,7 @@ int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, 
         break;
     case SIO_ADDRESS_LIST_CHANGE:
     case SIO_ROUTING_INTERFACE_CHANGE:
-        /* winsock does not watch the host's addresses yet, iphlpapi does: an overlapped watch never completes. */
+        /* Winsock does not watch the host's addresses yet, iphlpapi does: an overlapped watch never completes. */
         if (overlapped) {
             overlapped->Internal = (ULONG_PTR)STATUS_PENDING;
             release(sock);
@@ -1792,7 +1777,7 @@ static int *extra_option(WS_SOCKET *sock, int level, int name, BOOL create)
     return &sock->extra[sock->extra_count++].value;
 }
 
-/* the value of options that are accepted and remembered without reaching the host. */
+/* options cached without forwarding to the host. */
 static BOOL inert_option(int level, int name, int *initial)
 {
     switch (level) {
@@ -1870,7 +1855,7 @@ static BOOL membership_option(int level, int name)
     return level == IPPROTO_IPV6 && (name == IPV6_ADD_MEMBERSHIP || name == IPV6_DROP_MEMBERSHIP);
 }
 
-/* the host option behind a windows one, 0 when the host has none. */
+/* maps a Windows option to a host option, or 0 if unsupported. */
 static ULONG host_option_id(const WS_SOCKET *sock, int level, int name, int *error)
 {
     *error = 0;

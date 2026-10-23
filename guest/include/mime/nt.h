@@ -1,7 +1,6 @@
 /*
- * core nt definitions shared by the mime kernel and user mode.
- * layouts follow 64 bit windows (identical on x64 and arm64) wherever
- * user mode code or drivers can observe them; offsets are asserted.
+ * core nt definitions shared by the kernel and user mode. layouts that user mode or drivers can see follow
+ * 64-bit windows, the same on x64 and arm64, and their offsets are asserted.
  */
 #ifndef MIME_NT_H
 #define MIME_NT_H
@@ -91,7 +90,6 @@ typedef union _LARGE_INTEGER {
     LONGLONG QuadPart;
 } LARGE_INTEGER, *PLARGE_INTEGER;
 
-/* a locally unique identifier: logon sessions, privileges, adapters. */
 typedef struct _LUID {
     ULONG LowPart;
     LONG HighPart;
@@ -266,7 +264,6 @@ typedef struct _GUID {
 #define STATUS_INTEGER_OVERFLOW ((NTSTATUS)0xC0000095L)
 #define STATUS_INVALID_FILE_FOR_SECTION ((NTSTATUS)0xC0000020L)
 
-/* doubly linked lists. */
 typedef struct _LIST_ENTRY {
     struct _LIST_ENTRY *Flink;
     struct _LIST_ENTRY *Blink;
@@ -402,7 +399,6 @@ FORCEINLINE struct _TEB *NtCurrentTeb(void)
 #ifdef __i386__
     __asm__("movl %%fs:0x18, %0" : "=r"(teb));
 #elifdef __x86_64__
-    /* x64 code finds its teb through gs. */
     __asm__("movq %%gs:0x30, %0" : "=r"(teb));
 #else
     /* arm64 user mode keeps the teb in x18. */
@@ -684,7 +680,7 @@ typedef struct _FILE_FS_DEVICE_INFORMATION {
 #define MEM_FREE 0x00010000
 #define MEM_PRIVATE 0x00020000
 #define MEM_MAPPED 0x00040000
-#define MEM_REPLACE_PLACEHOLDER 0x00004000 /* with MEM_RESERVE, or MEM_MAPPED views */
+#define MEM_REPLACE_PLACEHOLDER 0x00004000 /* with MEM_RESERVE, or for MEM_MAPPED views. */
 #define MEM_RESERVE_PLACEHOLDER 0x00040000
 #define MEM_RESET 0x00080000
 #define MEM_TOP_DOWN 0x00100000
@@ -695,8 +691,8 @@ typedef struct _FILE_FS_DEVICE_INFORMATION {
 #define MEM_LARGE_PAGES 0x20000000
 #define MEM_IMAGE 0x01000000
 #define WRITE_WATCH_FLAG_RESET 0x01
-#define MEM_COALESCE_PLACEHOLDERS 0x00000001 /* freeing, with MEM_RELEASE */
-#define MEM_PRESERVE_PLACEHOLDER 0x00000002  /* freeing, with MEM_RELEASE */
+#define MEM_COALESCE_PLACEHOLDERS 0x00000001 /* with MEM_RELEASE. */
+#define MEM_PRESERVE_PLACEHOLDER 0x00000002  /* with MEM_RELEASE. */
 #define UNMAP_WITH_TRANSIENT_BOOST 0x00000001
 #define UNMAP_PRESERVE_PLACEHOLDER 0x00000002
 #define UNMAP_NONE 0x00000000
@@ -799,13 +795,13 @@ typedef struct _MEMORY_BASIC_INFORMATION {
     DWORD Type;
 } MEMORY_BASIC_INFORMATION, *PMEMORY_BASIC_INFORMATION;
 
-#define MEMORY_IMAGE_PARTIAL_MAP 0x1      /* the view does not cover the whole image */
-#define MEMORY_IMAGE_NOT_EXECUTABLE 0x2   /* mapped as data, SEC_IMAGE_NO_EXECUTE */
+#define MEMORY_IMAGE_PARTIAL_MAP 0x1      /* the view does not cover the whole image. */
+#define MEMORY_IMAGE_NOT_EXECUTABLE 0x2   /* mapped as data, SEC_IMAGE_NO_EXECUTE. */
 
 typedef struct _MEMORY_IMAGE_INFORMATION {
     PVOID ImageBase;
     SIZE_T SizeOfImage;
-    ULONG ImageFlags; /* MEMORY_IMAGE_..., the signing level in bits 2 to 5 */
+    ULONG ImageFlags; /* MEMORY_IMAGE_*, with the signing level in bits 2 to 5. */
     ULONG Reserved;
 } MEMORY_IMAGE_INFORMATION, *PMEMORY_IMAGE_INFORMATION;
 
@@ -1160,8 +1156,8 @@ typedef struct _IMAGE_RESOURCE_DIRECTORY {
 } IMAGE_RESOURCE_DIRECTORY, *PIMAGE_RESOURCE_DIRECTORY;
 
 typedef struct _IMAGE_RESOURCE_DIRECTORY_ENTRY {
-    ULONG Name; /* high bit: name is an offset to IMAGE_RESOURCE_DIR_STRING_U */
-    ULONG OffsetToData; /* high bit: points to a subdirectory */
+    ULONG Name; /* high bit set: an offset to an IMAGE_RESOURCE_DIR_STRING_U. */
+    ULONG OffsetToData; /* high bit set: points to a subdirectory. */
 } IMAGE_RESOURCE_DIRECTORY_ENTRY, *PIMAGE_RESOURCE_DIRECTORY_ENTRY;
 
 typedef struct _IMAGE_RESOURCE_DIR_STRING_U {
@@ -1193,7 +1189,7 @@ typedef struct _IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY {
 #define CONTEXT_ARM64_FLOATING_POINT (CONTEXT_ARM64 | 0x4L)
 #define CONTEXT_ARM64_DEBUG_REGISTERS (CONTEXT_ARM64 | 0x8L)
 #define CONTEXT_ARM64_FULL (CONTEXT_ARM64_CONTROL | CONTEXT_ARM64_INTEGER | CONTEXT_ARM64_FLOATING_POINT)
-/* set by an unwind in a context whose pc is the return address of a call, the instruction before it the call. */
+/* set when unwinding leaves pc on a return address, so the instruction before it is the call. */
 #define CONTEXT_ARM64_UNWOUND_TO_CALL 0x20000000L
 
 typedef union _ARM64_NT_NEON128 {
@@ -1236,7 +1232,7 @@ MIME_FIELD_AT(ARM64_NT_CONTEXT, V, 0x110);
 MIME_FIELD_AT(ARM64_NT_CONTEXT, Fpcr, 0x310);
 MIME_STATIC_ASSERT(sizeof(ARM64_NT_CONTEXT) == 0x390, "ARM64_NT_CONTEXT size");
 
-/* x64 thread context, the context of x64 programs run by the translator. */
+/* x64 thread context, also used for x64 programs run by the translator. */
 #define CONTEXT_AMD64 0x00100000L
 #define CONTEXT_AMD64_CONTROL (CONTEXT_AMD64 | 0x1L)
 #define CONTEXT_AMD64_INTEGER (CONTEXT_AMD64 | 0x2L)
@@ -1306,7 +1302,7 @@ MIME_FIELD_AT(AMD64_CONTEXT, Xmm0, 0x1A0);
 MIME_FIELD_AT(AMD64_CONTEXT, VectorRegister, 0x300);
 MIME_STATIC_ASSERT(sizeof(AMD64_CONTEXT) == 0x4D0, "AMD64_CONTEXT size");
 
-/* the context of the code being compiled. */
+/* x86 thread context. */
 typedef struct _I386_CONTEXT {
     ULONG ContextFlags;
     ULONG Dr0, Dr1, Dr2, Dr3, Dr6, Dr7;
@@ -1324,10 +1320,9 @@ MIME_FIELD_AT(I386_CONTEXT, Eip, 0xB8);
 MIME_STATIC_ASSERT(sizeof(I386_CONTEXT) == 716, "I386_CONTEXT size");
 
 /*
- * wow64, 32-bit programs on x64: the 64-bit teb's tls slot 1 points at
- * the cpu area, the 32-bit context while the thread runs 64-bit code, at
- * the top of its 64-bit stack. a set reset flag makes the next entry into
- * 32-bit code restore everything, not only what a system call keeps.
+ * wow64: tls slot 1 of the 64-bit teb points at the cpu area at the top of the 64-bit stack, which holds the
+ * 32-bit context while the thread runs 64-bit code. the reset flag makes the next entry into 32-bit code restore
+ * every register, not only what a system call keeps.
  */
 #define WOW64_TLS_CPURESERVED 1
 #define WOW64_TLS_WOW64INFO 10
@@ -1920,7 +1915,7 @@ MIME_FIELD_AT(TEB, Rcu, 0x1870);
 #endif
 
 #define MIME_TEB_SIZE 0x2000
-#define MIME_TEB32_SIZE 0x1000 /* after the 64-bit teb of a wow64 thread */
+#define MIME_TEB32_SIZE 0x1000 /* follows the 64-bit teb of a wow64 thread. */
 
 typedef struct _KSYSTEM_TIME {
     ULONG LowPart;
@@ -2010,7 +2005,7 @@ typedef struct _KUSER_SHARED_DATA {
     USHORT UserModeGlobalLogger[16];
     ULONG ImageFileExecutionOptions;
     ULONG LangGenerationCount;
-    volatile ULONGLONG MimeReadyThreads; /* Reserved4 on windows: nonzero while threads wait for a processor */
+    volatile ULONGLONG MimeReadyThreads; /* Reserved4 on windows. nonzero while threads wait for a processor. */
     volatile ULONGLONG InterruptTimeBias;
     volatile ULONGLONG QpcBias;
     ULONG ActiveProcessorCount;
@@ -2028,10 +2023,7 @@ typedef struct _KUSER_SHARED_DATA {
 } KUSER_SHARED_DATA, *PKUSER_SHARED_DATA;
 #define USER_SHARED_DATA ((volatile KUSER_SHARED_DATA *const)0x7FFE0000)
 
-/*
- * the performance counter, which user mode reads itself: the processor's
- * counter with the bias and shift the kernel publishes (ke/timer.c).
- */
+/* user mode reads the performance counter itself: the processor's counter with the kernel's bias and shift. */
 #ifndef NTSYSCALLAPI
 #ifdef MIME_KERNEL
 #define NTSYSCALLAPI
@@ -2047,7 +2039,7 @@ FORCEINLINE ULONG64 MimeReadQpc(void)
 #ifdef __aarch64__
     __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v));
 #else
-    /* x86 code translated on an arm64 machine has a tsc of its own: the translator answers the call. */
+    /* translated x86 code on arm64 has its own tsc, which the translator answers through this call. */
     if (USER_SHARED_DATA->NativeProcessorArchitecture != 9 /* PROCESSOR_ARCHITECTURE_AMD64 */) {
         LARGE_INTEGER counter;
         NtQueryPerformanceCounter(&counter, nullptr);
@@ -2060,7 +2052,6 @@ FORCEINLINE ULONG64 MimeReadQpc(void)
     return (v + USER_SHARED_DATA->QpcBias) >> USER_SHARED_DATA->QpcShift;
 }
 
-/* the high half of a 64 by 64 bit product. */
 FORCEINLINE ULONG64 MimeMulHigh(ULONG64 a, ULONG64 b)
 {
     ULONG64 al = (ULONG)a, ah = a >> 32, bl = (ULONG)b, bh = b >> 32;
@@ -2070,9 +2061,8 @@ FORCEINLINE ULONG64 MimeMulHigh(ULONG64 a, ULONG64 b)
 }
 
 /*
- * system or interrupt time to the counter's precision: the time of the last
- * clock tick and the counts since, as windows' ntdll computes it, read
- * again while the kernel's TimeUpdateLock says the tick is changing.
+ * system or interrupt time at counter precision: the last clock tick plus the counts since, retried while
+ * TimeUpdateLock says the tick is changing.
  */
 FORCEINLINE ULONG64 MimePreciseTime(BOOLEAN system)
 {
@@ -2112,7 +2102,7 @@ MIME_FIELD_AT(KUSER_SHARED_DATA, QpcData, 0x3C6);
 #define MIME_NT_MAJOR_VERSION 10
 #define MIME_NT_MINOR_VERSION 0
 
-/* system information classes we implement. */
+/* the system information classes mime implements. */
 typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemBasicInformation = 0,
     SystemProcessorInformation = 1,
@@ -2135,7 +2125,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemHypervisorDetailInformation = 185,
 } SYSTEM_INFORMATION_CLASS;
 
-/* the request and answer of SystemFirmwareTableInformation, as in wdm.h. */
+/* SystemFirmwareTableInformation, as in wdm.h. */
 #define SystemFirmwareTable_Enumerate 0
 #define SystemFirmwareTable_Get 1
 
@@ -2147,9 +2137,7 @@ typedef struct _SYSTEM_FIRMWARE_TABLE_INFORMATION {
     UCHAR TableBuffer[1];
 } SYSTEM_FIRMWARE_TABLE_INFORMATION, *PSYSTEM_FIRMWARE_TABLE_INFORMATION;
 
-/*
- * the raw smbios data GetSystemFirmwareTable returns for the RSMB provider.
- */
+/* what GetSystemFirmwareTable returns for the RSMB provider. */
 typedef struct _RAW_SMBIOS_DATA {
     UCHAR Used20CallingMethod;
     UCHAR SMBIOSMajorVersion;
@@ -2173,7 +2161,7 @@ typedef struct _SYSTEM_BASIC_INFORMATION {
     CCHAR NumberOfProcessors;
 } SYSTEM_BASIC_INFORMATION, *PSYSTEM_BASIC_INFORMATION;
 
-/* SystemProcessInformation: one record per process, followed by its threads and its image name. */
+/* SystemProcessInformation: one record per process, followed by its threads and image name. */
 typedef struct _SYSTEM_THREAD_INFORMATION {
     LARGE_INTEGER KernelTime;
     LARGE_INTEGER UserTime;
@@ -2262,7 +2250,7 @@ typedef enum _PROCESSINFOCLASS {
     ProcessProtectionInformation = 61,
 } PROCESSINFOCLASS;
 
-/* ProcessPriorityClass, and the class that sets a class and the foreground flag by what a flag word names. */
+/* like ProcessPriorityClass, with a flag word saying whether to set the class, the foreground flag or both. */
 #define MX_PROCESS_PRIORITY_CLASS_EX 108
 #define PROCESS_PRIORITY_CLASS_EX_FOREGROUND 1
 #define PROCESS_PRIORITY_CLASS_EX_CLASS 2
@@ -2281,18 +2269,18 @@ typedef struct _PROCESS_PRIORITY_CLASS {
 } PROCESS_PRIORITY_CLASS, *PPROCESS_PRIORITY_CLASS;
 
 /*
- * what SetProcessShutdownParameters and GetProcessShutdownParameters keep: windows asks csrss, which has no
- * class for it, so this one is mime's. the level orders the process in a shutdown, the highest first.
+ * the values of SetProcessShutdownParameters. windows keeps them in csrss, so this class is mime's own.
+ * processes with a higher level shut down first.
  */
 #define MX_PROCESS_SHUTDOWN_PARAMETERS 109
 #define MX_SHUTDOWN_LEVEL_DEFAULT 0x280
 #define MX_SHUTDOWN_NORETRY 1
-/* the level of services.exe and the one of the processes it starts, below the programs' and in that order. */
+/* services.exe, then the processes it starts, shut down after the programs. */
 #define MX_SHUTDOWN_LEVEL_SERVICES 0x1FF
 #define MX_SHUTDOWN_LEVEL_SERVICE_PROCESS 0x100
-/* what the shutdown gives services.exe beside WaitToKillServiceTimeout, for the preshutdown controls (a guess). */
+/* extra time services.exe gets on top of WaitToKillServiceTimeout for preshutdown controls. a guess. */
 #define MX_SHUTDOWN_PRESHUTDOWN_MS 30000
-/* what csrss answers to flags other than SHUTDOWN_NORETRY, which the status table maps to error 641. */
+/* csrss fails flags other than SHUTDOWN_NORETRY with this, which maps to error 641. */
 #define MX_STATUS_BAD_SHUTDOWN_FLAGS ((NTSTATUS)0xC00002EBL)
 typedef struct _MX_SHUTDOWN_PARAMETERS {
     ULONG Level;
@@ -2305,7 +2293,7 @@ typedef enum _SHUTDOWN_ACTION {
     ShutdownPowerOff = 2,
 } SHUTDOWN_ACTION;
 
-/* ExitWindowsEx flags, which the kernel needs for its own shutdown. */
+/* ExitWindowsEx flags, for the kernel's own shutdown. */
 #ifndef EWX_LOGOFF
 #define EWX_LOGOFF 0x00000000
 #define EWX_SHUTDOWN 0x00000001
@@ -2318,7 +2306,7 @@ typedef enum _SHUTDOWN_ACTION {
 #define EWX_HYBRID_SHUTDOWN 0x00400000
 #define EWX_BOOTOPTIONS 0x01000000
 #endif
-/* the flags that start a shutdown of the machine rather than a logoff, and the ones a request may carry. */
+/* flags that shut the machine down rather than log off, and every flag a request may carry. */
 #define MX_EWX_MACHINE (EWX_SHUTDOWN | EWX_REBOOT | EWX_POWEROFF | EWX_HYBRID_SHUTDOWN)
 #define MX_EWX_VALID (MX_EWX_MACHINE | EWX_FORCE | EWX_FORCEIFHUNG | EWX_QUICKRESOLVE | EWX_RESTARTAPPS | EWX_BOOTOPTIONS)
 
@@ -2336,19 +2324,18 @@ typedef enum _SHUTDOWN_ACTION {
 #endif
 
 /*
- * a shutdown the kernel runs, the part csrss and winlogon play on windows. the information class of
- * NtSetSystemInformation that starts one stands for the call to winlogon that InitiateSystemShutdownEx makes,
- * and 0 for the one that stops it.
+ * the kernel runs shutdowns, the job of csrss and winlogon on windows. this NtSetSystemInformation class stands
+ * for the call InitiateSystemShutdownEx makes to winlogon, and 0 for the one that stops it.
  */
 #define MX_SYSTEM_SHUTDOWN_REQUEST 0x7F000001u
 #define MX_SHUTDOWN_ABORT 1u      /* AbortSystemShutdown */
-#define MX_SHUTDOWN_IMMEDIATE 2u  /* no notification, every process ends at once */
-#define MX_SHUTDOWN_RETRY_FORCED 4u /* a window that refuses does not stop it: the programs are asked again, forced */
-#define MX_SHUTDOWN_REASON_HOST 0x80000000u /* planned, other: what `mime down` gives */
+#define MX_SHUTDOWN_IMMEDIATE 2u  /* no notification, every process ends at once. */
+#define MX_SHUTDOWN_RETRY_FORCED 4u /* a refusing window does not stop it: programs are asked again, forced. */
+#define MX_SHUTDOWN_REASON_HOST 0x80000000u /* planned, other: what `mime down` gives. */
 typedef struct _MX_SHUTDOWN_REQUEST {
     ULONG Flags;      /* EWX_* */
     ULONG Reason;     /* SHTDN_REASON_* */
-    ULONG Delay;      /* seconds before it starts, which AbortSystemShutdown can use */
+    ULONG Delay;      /* seconds before it starts, during which AbortSystemShutdown can stop it. */
     ULONG Control;    /* MX_SHUTDOWN_* */
 } MX_SHUTDOWN_REQUEST;
 
@@ -2361,7 +2348,7 @@ typedef struct _PROCESS_BASIC_INFORMATION {
     ULONG_PTR InheritedFromUniqueProcessId;
 } PROCESS_BASIC_INFORMATION, *PPROCESS_BASIC_INFORMATION;
 
-/* the attribute list of NtCreateUserProcess, of which mime knows the primary token. */
+/* NtCreateUserProcess attributes; mime only knows the primary token. */
 #define PS_ATTRIBUTE_TOKEN 0x00060002u
 typedef struct _PS_ATTRIBUTE {
     ULONG_PTR Attribute;
@@ -2428,7 +2415,7 @@ typedef struct _OBJECT_NAME_INFORMATION {
 /* win32k callbacks dispatched through PEB.KernelCallbackTable. */
 typedef NTSTATUS(NTAPI *PKERNEL_CALLBACK_PROC)(PVOID Arguments, ULONG ArgumentLength);
 
-/* nt string helpers common to kernel and user mode (rtl). */
+/* nt string helpers common to kernel and user mode. */
 #define UNICODE_NULL ((WCHAR)0)
 
 #ifndef MIME_KERNEL

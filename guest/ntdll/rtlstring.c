@@ -1,16 +1,16 @@
 /*
- * strings and numbers of ntdll beyond the core ones in rtl/string.c: sizes and conversions to and from the oem
- * code page, utf-8 strings, counted ansi strings, guid text and the integer conversions of characters.
+ * ntdll string and number helpers beyond rtl/string.c: oem conversions and sizes, utf-8, counted ansi strings,
+ * guid text and integer conversions.
  *
- * The ansi code page here is windows-1252, which rtl/string.c converts with. The oem one is 437 whose upper half
- * is in <mime/cp437.h>; characters it does not have convert to '?'.
+ * the ansi code page is windows-1252, as in rtl/string.c. the oem one is 437, its upper half is in <mime/cp437.h>,
+ * and characters it lacks convert to '?'.
  */
 #include "ntdll_private.h"
 #include <mime/cp437.h>
 
 #define STRING_MAX 0xFFFF
 
-/* ------------------------------------------------------------------ strings of bytes */
+/* ------------------------------------------------------------------ byte strings */
 
 NTDLL_EXPORT NTSTATUS NTAPI RtlInitAnsiStringEx(PANSI_STRING string, PCSTR source)
 {
@@ -36,7 +36,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlInitUTF8StringEx(PANSI_STRING string, PCSTR sourc
     return RtlInitAnsiStringEx(string, source);
 }
 
-/* the string is as long as the destination holds. */
+/* truncates to what the destination holds. */
 NTDLL_EXPORT void NTAPI RtlCopyString(PSTRING destination, const STRING *source)
 {
     destination->Length = 0;
@@ -89,7 +89,7 @@ NTDLL_EXPORT void NTAPI RtlFreeOemString(POEM_STRING string)
 
 /* ------------------------------------------------------------------ sizes */
 
-/* what a string needs once converted, in bytes, counting the terminator. */
+/* converted size in bytes, terminator included. */
 NTDLL_EXPORT ULONG NTAPI RtlxAnsiStringToUnicodeSize(const STRING *string)
 {
     return (ULONG)string->Length * sizeof(WCHAR) + sizeof(WCHAR);
@@ -137,7 +137,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlUnicodeToMultiByteSize(PULONG size, PCWCH source,
     return STATUS_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ the oem code page */
+/* ------------------------------------------------------------------ oem code page */
 
 static WCHAR oem_to_wide(UCHAR c)
 {
@@ -185,7 +185,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlUpcaseUnicodeToOemN(PCHAR dst, ULONG dst_bytes, P
     return STATUS_SUCCESS;
 }
 
-/* the destination of a conversion: made, or checked to be big enough as the caller's. */
+/* allocates the destination, or checks that the caller's is big enough. */
 static NTSTATUS prepare_narrow(PSTRING dst, ULONG bytes, BOOLEAN allocate)
 {
     if (bytes > STRING_MAX)
@@ -247,7 +247,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlUpcaseUnicodeStringToOemString(POEM_STRING dst, P
     return STATUS_SUCCESS;
 }
 
-/* as the string above, but without a terminator in the buffer, which a counted string does not need. */
+/* same as above, but a counted string gets no terminator. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlUpcaseUnicodeStringToCountedOemString(POEM_STRING dst, PCUNICODE_STRING src,
                                                                       BOOLEAN allocate)
 {
@@ -289,22 +289,21 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlUpcaseUnicodeStringToAnsiString(PANSI_STRING dst,
     return STATUS_SUCCESS;
 }
 
-/* the characters a FAT name may not have: control characters and those that make a path or a pattern. */
+/* control characters and path or wildcard characters. */
 static BOOLEAN fat_illegal(UCHAR c)
 {
     return c < 0x20 || strchr("\"*+,/:;<=>?[\\]|", c) != nullptr;
 }
 
 /*
- * whether a name is one of the 8.3 names of a FAT volume: at most eight characters, a dot and three more, no
- * characters the format forbids, no trailing dot or blank, no blank before the dot. Spaces are legal and
- * reported. "." and ".." are legal too.
+ * at most eight characters, a dot and three more, no forbidden characters, no trailing dot or blank and no blank
+ * before the dot. spaces are legal and reported. "." and ".." are legal too.
  */
 NTDLL_EXPORT BOOLEAN NTAPI RtlIsNameLegalDOS8Dot3(PCUNICODE_STRING name, POEM_STRING oem, PBOOLEAN contains_spaces)
 {
     if (name->Length > 0x18)
         return FALSE;
-    /* twelve bytes are all a name can use. */
+    /* an 8.3 name never needs more than twelve bytes. */
     CHAR local[12];
     OEM_STRING counted = {0, sizeof(local), local};
     POEM_STRING converted = oem ? oem : &counted;
@@ -368,9 +367,8 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlDowncaseUnicodeString(PUNICODE_STRING dst, PCUNIC
 }
 
 /*
- * a copy of a string: with flag 1 the copy has a terminator, with 2 as well it exists when the string is empty.
- * Flag 2 asks for flag 1 too. A string has to be well formed and shorter than 0xFFFE bytes when a terminator
- * is added.
+ * flag 1 adds a terminator, flag 2 also allocates for an empty string and requires flag 1. the source must be well
+ * formed and, with a terminator, shorter than 0xFFFE bytes.
  */
 NTDLL_EXPORT NTSTATUS NTAPI RtlDuplicateUnicodeString(ULONG flags, PCUNICODE_STRING source, PUNICODE_STRING copy)
 {
@@ -472,10 +470,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlUnicodeStringToUTF8String(PSTRING dst, PCUNICODE_
 
 /* ------------------------------------------------------------------ characters and integers */
 
-/*
- * the character at the string as a wide one, and the string moved past it. Windows-1252 has one byte per
- * character.
- */
+/* windows-1252 has one byte per character. */
 NTDLL_EXPORT WCHAR NTAPI RtlAnsiCharToUnicodeChar(PUCHAR *source)
 {
     WCHAR c;
@@ -497,9 +492,8 @@ static int digit_value(char c)
 }
 
 /*
- * the number at the start of a string. Leading blanks and control characters are skipped, then a sign. Base 0
- * reads 0x, 0o and 0b prefixes and is decimal otherwise; 2, 8, 10 and 16 are the others. It stops at the first
- * character that is not a digit of the base, and overflow wraps.
+ * skips leading blanks and control characters, then a sign. base 0 reads 0x, 0o and 0b prefixes and is decimal
+ * otherwise, else 2, 8, 10 or 16. stops at the first non digit, overflow wraps.
  */
 NTDLL_EXPORT NTSTATUS NTAPI RtlCharToInteger(PCSTR string, ULONG base, PULONG value)
 {
@@ -540,9 +534,8 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlCharToInteger(PCSTR string, ULONG base, PULONG va
 }
 
 /*
- * the number as digits in a buffer of the given length. A negative length is a width: the number is padded
- * with zeros to it. Digits that do not fit give STATUS_BUFFER_OVERFLOW and the buffer is left alone; a number
- * shorter than the buffer is ended by a null.
+ * a negative length is a width to zero pad to. too many digits give STATUS_BUFFER_OVERFLOW and leave the buffer
+ * alone, a shorter number is null terminated.
  */
 NTDLL_EXPORT NTSTATUS NTAPI RtlIntegerToChar(ULONG value, ULONG base, LONG length, PSTR buffer)
 {
@@ -575,7 +568,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlIntegerToChar(ULONG value, ULONG base, LONG lengt
 
 /* ------------------------------------------------------------------ guids */
 
-/* {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}: exactly this, thirty eight characters, with hexadecimal digits of any case. */
+/* exactly {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}, 38 characters, hex digits of any case. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlGUIDFromString(PCUNICODE_STRING string, GUID *guid)
 {
     static const UCHAR layout[] = {8, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2};
@@ -617,10 +610,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlGUIDFromString(PCUNICODE_STRING string, GUID *gui
     return STATUS_SUCCESS;
 }
 
-/*
- * the text of a guid in braces, in lower case hexadecimal, 76 bytes long. Allocated, the string gets 78 bytes;
- * otherwise it has to have them.
- */
+/* lower case hex in braces, 76 bytes. an allocated string gets 78 bytes, a caller's must have them. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlStringFromGUIDEx(const GUID *guid, PUNICODE_STRING string, BOOLEAN allocate)
 {
     if (allocate) {

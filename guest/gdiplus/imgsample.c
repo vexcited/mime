@@ -1,9 +1,8 @@
 /*
- * the samplers: how a run of device pixels reads the premultiplied rows of a picture. Which one is used is decided
- * per draw from the matrix and the interpolation mode, see sampler_create and docs/gdiplus.md.
+ * the samplers read the premultiplied rows of a picture for a run of device pixels. sampler_create picks one per
+ * draw from the matrix and the interpolation mode.
  *
- * positions in the picture are the coordinates where pixel k has its center at k, and a device pixel x, y samples at
- * the inverse matrix of x, y.
+ * pixel k has its center at position k, and device pixel x, y samples at the inverse matrix of x, y.
  */
 #include "image_private.h"
 
@@ -11,13 +10,13 @@
 #define HAVE_FIXED_BILINEAR 1
 #endif
 
-/* the wrap modes of the attributes: 0 to 3 tile, with a mirror on the x axis, the y axis or both, and 4 is clamp. */
+/* attribute wrap modes: 0 to 3 tile, mirrored on x, y or both, and 4 is clamp. */
 #define WRAP_CLAMP 4
 
 static BOOL mirror_x(INT wrap) { return wrap == 1 || wrap == 3; }
 static BOOL mirror_y(INT wrap) { return wrap == 2 || wrap == 3; }
 
-/* an index brought into 0 to n - 1 by tiling, or by mirroring on every odd lap. */
+/* brings an index into 0 to n - 1 by tiling, mirroring on every odd lap. */
 static INT wrap_axis(INT i, INT n, BOOL mirror)
 {
     INT r = i >= 0 ? i % n : n - ((~i) % n) - 1;
@@ -26,7 +25,7 @@ static INT wrap_axis(INT i, INT n, BOOL mirror)
     return r;
 }
 
-/* the position of a pixel after a wrap mode that tiles, others leave it. */
+/* tiling wrap modes move the position, the others leave it. */
 static void wrap_point(INT wrap, INT *x, INT *y, INT w, INT h)
 {
     if ((UINT)wrap > 3)
@@ -42,7 +41,7 @@ static inline BOOL in_picture(const Sampler *s, INT x, INT y)
     return x >= 0 && y >= 0 && x < s->w && y < s->h;
 }
 
-/* the pixel at a position that may be outside: wrapped when the mode tiles, else the clamp color. */
+/* outside the picture: wrapped when the mode tiles, else the clamp color. */
 static UINT32 pixel_wrapped(const Sampler *s, INT x, INT y)
 {
     if (!in_picture(s, x, y)) {
@@ -61,7 +60,7 @@ static void position_at(const Sampler *s, INT x, INT y, float *u, float *v)
     *v = p[1];
 }
 
-/* floor of a float that may be far out, held to the 32 bit range. */
+/* clamped to the 32-bit range. */
 static INT floor_wide(float f)
 {
     if (!(f > -2147483648.0f))
@@ -72,7 +71,7 @@ static INT floor_wide(float f)
     return (float)i > f ? i - 1 : i;
 }
 
-/* the 16.16 start and step of the positions of a run, from the float positions at its two ends. */
+/* the 16.16 start and step of a run, from the float positions at its two ends. */
 static void fixed_walk(const Sampler *s, INT y, INT x0, INT x1, INT *u, INT *v, INT *du, INT *dv)
 {
     float uf, vf, ue, ve;
@@ -85,7 +84,7 @@ static void fixed_walk(const Sampler *s, INT y, INT x0, INT x1, INT *u, INT *v, 
     *dv = floor_wide(((ve - vf) * 65536.0f) / n + 0.5f);
 }
 
-/* ------------------------------------------------------------------ a copy */
+/* ------------------------------------------------------------------ copy */
 
 static void run_copy(const Sampler *s, INT y, INT x0, INT x1, UINT32 *out)
 {
@@ -134,7 +133,7 @@ static void run_nearest(const Sampler *s, INT y, INT x0, INT x1, UINT32 *out)
 
 /* ------------------------------------------------------------------ bilinear */
 
-/* the 2 by 2 window with its corner at ix, iy: the neighbours that are outside follow the wrap mode. */
+/* the 2 by 2 window with its corner at ix, iy. neighbours outside the picture follow the wrap mode. */
 static void window_of(const Sampler *s, INT ix, INT iy, UINT32 q[4])
 {
     INT x0 = ix, y0 = iy, x1 = ix + 1, y1 = iy + 1;
@@ -152,7 +151,7 @@ static void window_of(const Sampler *s, INT ix, INT iy, UINT32 q[4])
     q[3] = in_picture(s, x1, y1) ? pixel_at(s, x1, y1) : s->clamp;
 }
 
-/* the four pixels blended with weights of 11 bits, each byte on its own. */
+/* 11-bit weights, each byte on its own. */
 static UINT32 blend11(const UINT32 q[4], INT fx, INT fy)
 {
     if (fx == 0 && fy == 0)
@@ -187,7 +186,7 @@ static void run_bilinear(const Sampler *s, INT y, INT x0, INT x1, UINT32 *out)
 }
 
 #ifdef HAVE_FIXED_BILINEAR
-/* the same with 16.16 positions and weights of 8 bits, which is how the 32 bit library rounds. */
+/* 16.16 positions and 8-bit weights, rounding like 32-bit gdi+. */
 static UINT32 blend8(const UINT32 q[4], INT fx, INT fy)
 {
     UINT32 out = 0;
@@ -231,7 +230,7 @@ static void run_bilinear16(const Sampler *s, INT y, INT x0, INT x1, UINT32 *out)
 static INT g_cubic[129];
 static volatile LONG g_cubic_ready;
 
-/* the weights of the cubic convolution with parameter -0.5 at k / 64 pixels from the center, as 16.16. */
+/* cubic convolution weights with parameter -0.5 at k / 64 pixels from the center, as 16.16. */
 static void cubic_prepare(void)
 {
     if (g_cubic_ready)
@@ -249,7 +248,7 @@ static void cubic_prepare(void)
     g_cubic_ready = 1;
 }
 
-/* four pixels in a line blended by the weights for a fraction of 64ths, the colors held to the alpha. */
+/* four pixels in a line blended with the weights for f / 64, colors clamped to the alpha. */
 static UINT32 blend_cubic(const UINT32 p[4], INT f)
 {
     const INT wt[4] = {g_cubic[64 + f], g_cubic[f], g_cubic[64 - f], g_cubic[128 - f]};
@@ -257,7 +256,7 @@ static UINT32 blend_cubic(const UINT32 p[4], INT f)
     for (INT k = 0; k < 4; k++) {
         INT shift = 8 * k;
 #ifdef __i386__
-        /* the 32 bit library has the weights in 1/16384 and adds products that were cut to 16 bits */
+        /* 32-bit gdi+ uses weights in 1/16384 and sums products truncated to 16 bits. */
         INT sum = 0;
         for (INT t = 0; t < 4; t++) {
             INT mag = wt[t] < 0 ? -wt[t] : wt[t];
@@ -312,7 +311,7 @@ static void run_bicubic(const Sampler *s, INT y, INT x0, INT x1, UINT32 *out)
 #ifdef HAVE_FIXED_BILINEAR
 static BOOL small_number(float v) { return v >= -32768.0f && v <= 32767.0f; }
 
-/* the 16.16 form of the inverse matrix, false when its elements are too big for it. */
+/* false when the inverse matrix elements do not fit in 16.16. */
 static BOOL fixed_prepare(Sampler *s)
 {
     const ImgMat *m = &s->inv;

@@ -1,16 +1,12 @@
 /*
- * the window manager's part of a shutdown. csrss gives each process of a level to winsrv, which asks its gui
- * threads with a message nobody sends by hand, WM_CLIENTSHUTDOWN, whose default processing sends the windows of
- * the thread WM_QUERYENDSESSION and then WM_ENDSESSION. the flags of that message, the order of the threads and
- * the waits are those of winsrvext.dll and win32kfull.sys of build 26300; the dialogs windows shows for a program
- * that does not answer are not here, see docs/shutdown.md.
+ * winsrv asks GUI threads to shut down with WM_CLIENTSHUTDOWN. its default handler sends WM_QUERYENDSESSION and
+ * WM_ENDSESSION. csrss groups processes by shutdown level; dialogs for unresponsive programs are not implemented.
  */
 #include "win32k.h"
 
 #define MAX_THREADS 64
 #define MAX_WINDOWS 128
 
-/* how a thread answered. */
 enum {
     NOTIFY_OK = 1,
     NOTIFY_REFUSED,   /* WM_QUERYENDSESSION returned FALSE. */
@@ -20,7 +16,7 @@ enum {
     NOTIFY_CANCELLED, /* the shutdown was aborted. */
 };
 
-/* ------------------------------------------------------------------ which window is asked */
+/* which window is asked. */
 
 #define MESSAGE_ONLY_STYLE 0x80000000u
 #define IME_CLASS_PREFIX_CHARS 3
@@ -37,13 +33,13 @@ static BOOLEAN class_is_ime(const WND *w)
     return TRUE;
 }
 
-/* a window the shutdown may ask the thread through: alive, not message only, and not an input method window. */
+/* eligible windows are alive, receive ordinary messages and are not input method windows. */
 static BOOLEAN askable(WND *w, W32THREAD *t)
 {
     return w->Thread == t && !(w->Flags & WNDF_DESTROYING) && !(w->ExStyle & MESSAGE_ONLY_STYLE) && !class_is_ime(w);
 }
 
-/* the window a thread is asked through: its top one, or the owner of that when the owner qualifies as well. */
+/* use the thread's top window, or its owner if eligible. */
 static WND *shutdown_window(W32THREAD *t)
 {
     WND *desktop = WndDesktop();
@@ -59,7 +55,6 @@ static WND *shutdown_window(W32THREAD *t)
     return chosen;
 }
 
-/* the word of WM_CLIENTSHUTDOWN, from the flags of the request and the shutdown flags kept for the process. */
 #define EWX_MACHINE_BITS 0x2040580Bu
 #define PROCESS_SHUTDOWN_NORETRY 0x1u
 
@@ -84,7 +79,7 @@ static ULONG client_flags(ULONG ewx, ULONG process_flags)
     return word;
 }
 
-/* IME windows and tool windows of the shell are not asked first; this is the filter winsrv's FindWindowFromThread has. */
+/* do not ask IME or shell tool windows first. */
 static BOOLEAN thread_qualifies(W32THREAD *t)
 {
     WND *desktop = WndDesktop();
@@ -94,7 +89,6 @@ static BOOLEAN thread_qualifies(W32THREAD *t)
     return FALSE;
 }
 
-/* whether a window of the thread says it blocks the shutdown, with ShutdownBlockReasonCreate. */
 static BOOLEAN thread_blocks(W32THREAD *t)
 {
     WND *desktop = WndDesktop();
@@ -114,9 +108,8 @@ static ULONG64 ms_left(const MX_SHUTDOWN_CONTEXT *ctx, ULONG64 wanted)
 }
 
 /*
- * asks one thread: WM_CLIENTSHUTDOWN to its window, the thread answering once its windows have. a thread that
- * has not looked at its queue for the hung time is not waited for, except one that has a window with a block
- * reason, which gets the wait to kill time instead.
+ * send WM_CLIENTSHUTDOWN to one thread and wait for its windows to answer. skip hung threads unless a window has a
+ * shutdown block reason, in which case use the wait-to-kill timeout.
  */
 static ULONG notify_thread(HANDLE tid, ULONG flags, const MX_SHUTDOWN_CONTEXT *ctx, BOOLEAN wait)
 {
@@ -185,7 +178,7 @@ ULONG NTAPI W32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *ctx
             break;
         case NOTIFY_REFUSED:
             asked = i + 1;
-            /* a forced shutdown does not take a no for an answer, but the windows are told it was asked for. */
+            /* forced shutdown ignores refusal but still notifies windows. */
             refused = !(ctx->Flags & EWX_FORCE);
             break;
         case NOTIFY_HUNG:
@@ -199,7 +192,7 @@ ULONG NTAPI W32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *ctx
     if (hung)
         return MX_SHUTDOWN_PROCESS_DONE;
     if (refused || cancelled) {
-        /* the session is not ending after all: the windows that were asked hear it. */
+        /* notify queried windows that shutdown was canceled. */
         for (ULONG i = 0; i < asked; i++)
             notify_thread(tids[i], flags & ~(ULONG)MX_WMCS_ENDING, ctx, FALSE);
         return MX_SHUTDOWN_PROCESS_CANCEL;
@@ -211,8 +204,8 @@ ULONG NTAPI W32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *ctx
 }
 
 /*
- * the default processing of WM_CLIENTSHUTDOWN, in the thread that was asked. the windows of the thread, hidden ones
- * included, hear WM_QUERYENDSESSION from the top down until one refuses, or WM_ENDSESSION all of them.
+ * WM_CLIENTSHUTDOWN runs in the target thread. send WM_QUERYENDSESSION from top to bottom, including hidden windows,
+ * until one refuses; send WM_ENDSESSION to all.
  */
 #define CLIENT_QUERIED 1
 #define CLIENT_ENDED 2
@@ -246,7 +239,7 @@ LRESULT ClientShutdown(WND *w, ULONG flags)
             continue;
         }
         MsgSend(target, WM_ENDSESSION, (flags & MX_WMCS_ENDING) ? 1 : 0, reasons);
-        /* a process that ends with its windows takes no more timers; the window may be gone by now. */
+        /* do not schedule timers for a terminating process; the window may already be gone. */
         target = WndLookup(windows[i]);
         if (target && (flags & MX_WMCS_ENDING) && (flags & MX_WMCS_USERPROCESS))
             TimerRemoveWindow(target);
@@ -255,13 +248,12 @@ LRESULT ClientShutdown(WND *w, ULONG flags)
     return result;
 }
 
-/* ------------------------------------------------------------------ block reasons */
+/* block reasons. */
 
 /* a window of another process answers with 5 and no error: the caller sees a result that looks like success. */
 #define BLOCK_FOREIGN_RESULT 5
 #define MAX_BLOCK_REASON_CHARS 0x101
 
-/* the window a block reason call names, or the error and the result to give instead. */
 static WND *reason_window(HWND hwnd, BOOLEAN own_process_only, ULONG *result)
 {
     WND *w = WndLookup(hwnd);
@@ -321,7 +313,7 @@ ULONG NTAPI NtUserShutdownReasonDestroy(HWND hwnd)
     return result;
 }
 
-/* the reason of a window of any process: as much as fits, and always how much room all of it needs. */
+/* read any process's window reason up to the buffer size, always returning the required size. */
 ULONG NTAPI NtUserShutdownBlockReasonQuery(HWND hwnd, LPWSTR buffer, PULONG count)
 {
     UserEnter();
@@ -358,9 +350,9 @@ ULONG NTAPI NtUserShutdownBlockReasonQuery(HWND hwnd, LPWSTR buffer, PULONG coun
     return result;
 }
 
-/* ------------------------------------------------------------------ ExitWindowsEx */
+/* ExitWindowsEx. */
 
-/* JOB_OBJECT_UILIMIT_EXITWINDOWS: a process in a job with it cannot start a shutdown, and is told no without an error. */
+/* JOB_OBJECT_UILIMIT_EXITWINDOWS denies shutdown without setting an error. */
 #define UILIMIT_EXITWINDOWS W32_UILIMIT_EXITWINDOWS
 
 ULONG NTAPI NtUserPrepareForLogoff(void)
@@ -369,9 +361,8 @@ ULONG NTAPI NtUserPrepareForLogoff(void)
 }
 
 /*
- * what ExitWindowsEx asks of the machine, once user32 has made its checks: the answer is the status
- * winsrv gives, STATUS_CANT_WAIT for a thread that has windows, which user32 answers by asking again from
- * another thread while this one serves its messages.
+ * return the winsrv status after user32 validation. STATUS_CANT_WAIT means the caller owns windows; user32 retries on
+ * another thread while this one pumps messages.
  */
 LONG NTAPI NtUserMimeExitWindows(ULONG flags, ULONG reason)
 {

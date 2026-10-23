@@ -1,9 +1,6 @@
 /*
- * well known sids: the table of WELL_KNOWN_SID_TYPE and the questions asked of it.
- *
- * the sids are grouped by the prefix they share, an identifier authority and up to two sub authorities, followed
- * by the relative id that names the sid inside the group. the account domain group takes the domain sid of the
- * caller as its prefix.
+ * well known sids. sids are grouped by a shared prefix of an authority and up to two sub authorities, then a
+ * relative id. the account domain group uses the caller's domain sid as its prefix.
  */
 #include "advapi32_private.h"
 
@@ -22,9 +19,9 @@ typedef struct WK_ENTRY {
 
 typedef struct WK_GROUP {
     BYTE Authority;
-    BYTE Prefix; /* the number of sub authorities before the relative id: 0, 1 or the domain */
-    DWORD First; /* the fixed first sub authority of a prefix of one */
-    BOOL Domain; /* the prefix is the domain sid of the caller */
+    BYTE Prefix; /* sub authorities before the relative id: 0, 1 or the domain. */
+    DWORD First; /* fixed first sub authority when Prefix is 1. */
+    BOOL Domain; /* the prefix is the caller's domain sid. */
     const WK_ENTRY *Entries;
     DWORD Count;
 } WK_GROUP;
@@ -167,7 +164,7 @@ ADVAPI BOOL WINAPI IsWellKnownSid(PSID sid, DWORD type)
     if (count == 0) {
         found = authority_equals(s, 5) ? WinNtAuthoritySid : (DWORD)-1;
     } else if (count == 1) {
-        /* the first group of the authority answers, whatever the other groups of it hold. */
+        /* only the first group of the authority is checked. */
         for (DWORD g = 0; g < RTL_NUMBER_OF(g_groups); g++) {
             if (authority_equals(s, g_groups[g].Authority)) {
                 found = type_of_rid(g_groups[g].Entries, g_groups[g].Count, s->SubAuthority[0]);

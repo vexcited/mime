@@ -1,9 +1,9 @@
 /*
- * msadp32.acm, the microsoft adpcm codec: 8 and 16 bit pcm, mono and
- * stereo, to and from 4 bit adpcm in blocks predicted by the seven
- * standard coefficient pairs. realtime encoding uses the second pair for
- * every block; a stream opened ACM_STREAMOPENF_NONREALTIME tries all seven
- * and keeps the one with the least error, as windows' codec does.
+ * msadp32.acm, the Microsoft adpcm codec: 8 and 16 bit pcm, mono and
+ * stereo, to and from 4-bit adpcm blocks predicted by the seven standard
+ * coefficient pairs. realtime encoding uses the second pair for every
+ * block. a stream opened ACM_STREAMOPENF_NONREALTIME tries all seven and
+ * keeps the one with the least error, as windows' codec does.
  */
 #include <mime/win32/winbase.h>
 #include <acmdrv/acmdrv.h>
@@ -47,7 +47,7 @@ static BOOL valid_adpcm(const WAVEFORMATEX *f)
            ((const ADPCMWAVEFORMAT *)f)->wSamplesPerBlock == samples_per_block(f->nChannels, f->nBlockAlign);
 }
 
-/* the seven standard pairs and nothing else, the only ones windows' codec converts. */
+/* exactly the seven standard pairs, the only ones windows' codec converts. */
 static BOOL standard_coefficients(const WAVEFORMATEX *f)
 {
     const ADPCMWAVEFORMAT *a = (const ADPCMWAVEFORMAT *)f;
@@ -96,7 +96,7 @@ static void put(SINK *o, const void *data, DWORD size)
 }
 
 typedef struct CHANNEL {
-    int predictor, delta, sample1, sample2; /* sample1 the newer */
+    int predictor, delta, sample1, sample2; /* sample1 is the newer one. */
 } CHANNEL;
 
 /* windows divides toward zero, then clamps the code. */
@@ -126,9 +126,9 @@ static int decode_sample(CHANNEL *c, int nibble, const ADPCMCOEFSET *coefs)
 }
 
 /*
- * the pair a block encodes best: the starting delta from how far each
- * pair misses the third to fifth samples, the error the sum of the
- * squares over the block, shifted by 7.
+ * picks the pair that encodes a block best. the starting delta comes from
+ * how far each pair misses the third to fifth samples, the error is the sum
+ * of the squares over the block, shifted by 7.
  */
 static void choose(CHANNEL *c, const int *s, DWORD n)
 {
@@ -201,7 +201,7 @@ static DWORD encode(const BYTE *in, DWORD bytes, BOOL bits16, WORD channels, BYT
             put(&o, &(SHORT){(SHORT)c[ch].sample2}, 2);
         in += (n > 1 ? 2 : 1) * channels * size;
         DWORD left = n > 2 ? (n - 2) * channels : 0;
-        /* nibbles in order of samples, the high one first; a lone last one pairs with zero. */
+        /* nibbles in sample order, the high one first. a lone last one pairs with zero. */
         for (DWORD i = 0; i < left; i += 2) {
             int high = encode_sample(&c[i % channels], read_sample(in, bits16)), low = 0;
             in += size;
@@ -430,7 +430,7 @@ static LRESULT stream_size(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMSIZE *s)
 }
 
 /*
- * decoding takes every byte, or whole blocks with ACM_STREAMCONVERTF_BLOCKALIGN;
+ * decoding takes every byte, or whole blocks with ACM_STREAMCONVERTF_BLOCKALIGN.
  * encoding takes an even number of frames, whole blocks with the flag, and
  * nothing below two frames.
  */

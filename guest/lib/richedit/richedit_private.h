@@ -29,7 +29,7 @@ typedef struct RE_FMT {
     BYTE autolink;
 } RE_FMT;
 
-/* the font of a format at the current zoom, made when first measured. */
+/* the font of a format at the current zoom, created when first measured. */
 typedef struct RE_FONT {
     HFONT font;
     int ascent, descent, ave;
@@ -79,7 +79,6 @@ typedef struct RE {
     BOOL ins_valid;
     BOOL plain;
 
-    /* the selection: anchor and active end. */
     UINT anchor, active;
     BOOL at_line_end;
     int caret_x, caret_h;

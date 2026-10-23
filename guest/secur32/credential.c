@@ -1,9 +1,6 @@
 /*
- * credential handles: acquiring, querying and freeing them.
- *
- * like sspicli, the lower half of a handle points to the package and the
- * upper half identifies the credential. credentials live in a list under a
- * lock, so a stale or forged handle is rejected instead of dereferenced.
+ * credential handles. as on windows, the lower half of a handle points to the package and the upper half identifies the
+ * credential. credentials live in a locked list, so a stale or forged handle is rejected instead of dereferenced.
  */
 #include "schannel.h"
 
@@ -13,7 +10,6 @@ typedef struct SEC_CREDENTIAL {
     ULONG Use;
     /* domain\user of the supplied identity, or NULL for the logged on user. */
     PWSTR Name;
-    /* the protocols and flags of a schannel credential. */
     SCH_CONFIG Schannel;
 } SEC_CREDENTIAL;
 
@@ -27,7 +23,7 @@ static bool is_package(ULONG_PTR p)
     return p >= first && p < end && (p - first) % sizeof(SEC_PACKAGE) == 0;
 }
 
-/* the credential behind a handle; the lock must be held. */
+/* the caller holds g_lock. */
 static SEC_CREDENTIAL *find(PCredHandle handle)
 {
     if (!handle || !is_package(handle->dwLower))
@@ -133,8 +129,7 @@ static SECURITY_STATUS acquire(const SEC_PACKAGE *package, ULONG use, void *auth
     if (!package)
         return SEC_E_SECPKG_NOT_FOUND;
     if (package->Kind == SEC_KIND_SCHANNEL) {
-        /* SpUniAcquireCredentialsHandle wants an inbound or outbound use, SpCommonAcquireCredentialsHandle
-           a SCHANNEL_CRED, SCH_CREDENTIALS or identity structure version. */
+        /* schannel wants an inbound or outbound use, and a SCHANNEL_CRED, SCH_CREDENTIALS or identity version. */
         if (!(use & SECPKG_CRED_BOTH))
             return SEC_E_NO_CREDENTIALS;
         if (auth_data) {
@@ -144,7 +139,7 @@ static SECURITY_STATUS acquire(const SEC_PACKAGE *package, ULONG use, void *auth
                 return SEC_E_UNKNOWN_CREDENTIALS;
         }
     } else {
-        /* msv1_0 SpAcquireCredentialsHandle refuses a credential without a direction and key callbacks. */
+        /* like ntlm, refuse a credential with no direction or with a key callback. */
         if (!(use & SECPKG_CRED_BOTH) || get_key)
             return SEC_E_UNSUPPORTED_FUNCTION;
     }
@@ -205,7 +200,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY FreeCredentialsHandle(PCredHandle credenti
     return SEC_E_OK;
 }
 
-/* the user name of SECPKG_CRED_ATTR_NAMES, in a heap copy. */
+/* the SECPKG_CRED_ATTR_NAMES user name, as a heap copy. */
 static SECURITY_STATUS credential_name(PCredHandle credential, PWSTR *name)
 {
     *name = nullptr;
@@ -287,7 +282,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY QueryCredentialsAttributesA(PCredHandle cr
     return SEC_E_OK;
 }
 
-/* no package of mime accepts credential attributes or extra credentials. */
+/* no package accepts credential attributes or extra credentials. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SetCredentialsAttributesW(PCredHandle credential, ULONG attribute, void *buffer,
                                                                 ULONG size)
 {

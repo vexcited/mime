@@ -1,7 +1,6 @@
 /*
- * ip helper: iphlpapi.dll. the adapter, interface, address, route and
- * connection structures of iptypes.h, ipifcons.h, ifmib.h, ipmib.h,
- * tcpmib.h, udpmib.h, ifdef.h, nldef.h and netioapi.h.
+ * ip helper, iphlpapi.dll, with the structures of iptypes.h, ipifcons.h, ifmib.h,
+ * ipmib.h, tcpmib.h, udpmib.h, ifdef.h, nldef.h and netioapi.h.
  */
 #ifndef MIME_WIN32_IPHLPAPI_H
 #define MIME_WIN32_IPHLPAPI_H

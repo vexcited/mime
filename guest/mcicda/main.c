@@ -1,8 +1,7 @@
 /*
- * mcicda.dll, the cdaudio device. windows' driver refuses to open when
- * the machine has no optical drive, which open cdaudio reports as
- * MCIERR_CANNOT_LOAD_DRIVER. mime's machine has none, and reading the
- * audio of a disc is not there, so the driver always answers that way.
+ * mcicda.dll, the cdaudio device. windows refuses to open it without an optical
+ * drive, and open cdaudio reports MCIERR_CANNOT_LOAD_DRIVER. this machine has
+ * none and disc audio is not supported, so the driver always answers that way.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/mmsystem.h>
@@ -24,7 +23,7 @@ DECLSPEC_EXPORT LRESULT WINAPI DriverProc(DWORD_PTR id, HDRVR driver, UINT messa
     case DRV_CLOSE:
         return 1;
     case DRV_OPEN:
-        /* an open without mci parameters, as for configuration, works; a device does not. */
+        /* an open without mci parameters, as for configuration, works, a device open does not. */
         return param2 ? 0 : 1;
     case DRV_QUERYCONFIGURE:
         return 0;

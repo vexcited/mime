@@ -1,9 +1,9 @@
 /*
  * mimefs: file system driver for host backed volumes.
- * \Device\HarddiskVolume1 is the C: drive (the drive_c directory on the
- * host), \Device\HarddiskVolume2 exposes the host root as Z:. the system files
- * mime ships (kernel, drivers, dlls) are not on the host: they are served
- * read only from the rom the host maps into the guest, without hypercalls.
+ * \Device\HarddiskVolume1 is C:, the host's drive_c directory, and
+ * \Device\HarddiskVolume2 exposes the host root as Z:. the kernel, drivers
+ * and dlls mime ships are not on the host: they are served read only from
+ * the rom the host maps into the guest, without hypercalls.
  */
 #include "../ntos.h"
 
@@ -17,24 +17,24 @@ typedef struct MIMEFS_VOLUME {
 } MIMEFS_VOLUME;
 
 typedef struct MIMEFS_FCB {
-    const MimeRomEntry *Rom; /* set for system files served from the rom */
-    MIMEFS_CACHE *Cache;     /* read only opens of host files */
+    const MimeRomEntry *Rom; /* set for system files served from the rom. */
+    MIMEFS_CACHE *Cache;     /* read only opens of host files. */
     ULONG Volume;
     ULONG64 FileId;
     ULONG64 HostHandle;
-    FS_WB Wb;            /* small writes kept for the host, see io/fswrite.c */
-    BOOLEAN Buffered;    /* this open may keep them: not one that asked for write through or unbuffered i/o */
-    BOOLEAN StatOnly;    /* made to answer one query by name: no host handle, the info of the open is the answer */
-    MimeFsInfo OpenInfo; /* what the host told when the file was opened */
+    FS_WB Wb;            /* small writes buffered for the host, see io/fswrite.c. */
+    BOOLEAN Buffered;    /* not opened for write through or unbuffered i/o, so it may buffer. */
+    BOOLEAN StatOnly;    /* answers one query by name: no host handle, OpenInfo is the answer. */
+    MimeFsInfo OpenInfo; /* what the host reported at open. */
     BOOLEAN Directory;
     BOOLEAN DeleteOnClose;
     BOOLEAN DotsDone;
     UCHAR DotIndex;
-    BOOLEAN HostDone; /* directories list host entries, then rom children */
+    BOOLEAN HostDone; /* directories list host entries, then rom children. */
     ULONG DirIndex;
     ULONG RomIndex;
     BOOLEAN IsRoot;
-    MimeFsDirEntry *Batch; /* entries of the host's listing fetched together, from index BatchFirst */
+    MimeFsDirEntry *Batch; /* host listing entries fetched together, starting at BatchFirst. */
     ULONG BatchFirst;
     ULONG BatchCount;
     UNICODE_STRING Pattern;
@@ -112,7 +112,7 @@ static ULONG rom_child(PCUNICODE_STRING dir, const MimeRomEntry *rom, WCHAR *nam
     return n;
 }
 
-/* host entries with the name of a rom file are stale copies, the rom wins. */
+/* host entries named like a rom file are stale copies, the rom wins. */
 static BOOLEAN shadowed_by_rom(PCUNICODE_STRING dir, const WCHAR *name, ULONG chars)
 {
     WCHAR path[128];
@@ -163,15 +163,14 @@ const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file)
 }
 
 /*
- * the pages holding a file's data, for sections: the rom, or a window of the host's page cache, the host's own pages of
- * the file, so a view and a read or a write of the file see one another's data at once. The window of a file opened
- * for reading is shared with the others that read it, and one for a handle opened for writing, or for a view that
- * writes, is the section's own. A file with a window in use keeps no writes back, see io/fswrite.c, and what it kept is
- * written before the window is made. *ref is released with IoReleaseFileWindow.
+ * the pages backing a file for sections: the rom, or a window on the host's page cache, so a view and reads or writes
+ * of the file see each other at once. a read-only file's window is shared by its readers; one for a handle opened
+ * for writing, or for a writable view, belongs to the section. a file with a window in use buffers no writes, see
+ * io/fswrite.c, and what it buffered is flushed before the window is made. *ref is released with IoReleaseFileWindow.
  */
 typedef struct MIMEFS_WINDOW_REF {
-    MIMEFS_CACHE *Cache; /* a shared window, which the entry keeps */
-    ULONG64 Private;     /* the guest address of a window of the section's own */
+    MIMEFS_CACHE *Cache; /* a shared window, held by the cache entry. */
+    ULONG64 Private;     /* guest address of the section's private window. */
     ULONG Volume;
     ULONG64 FileId;
 } MIMEFS_WINDOW_REF;
@@ -199,7 +198,7 @@ BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_s
     memset(r, 0, sizeof(*r));
     r->Volume = fcb->Volume;
     r->FileId = fcb->FileId;
-    /* counted first, so that a write that comes meanwhile goes to the host, and then what was kept is written. */
+    /* counted first so concurrent writes go to the host, then what was buffered is flushed. */
     FsWbMapped(r->Volume, r->FileId, 1);
     FsWbSync(&fcb->Wb);
     BOOLEAN done = FALSE;
@@ -211,7 +210,7 @@ BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_s
         MimeFsInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*info), KI_TAG('M', 'f', 'I', 'n'));
         if (info && NT_SUCCESS(query(fcb, info)) && (info->size || (writable && minimum_size))) {
             ULONG64 length = info->size;
-            /* a section of more than the file makes the file longer. */
+            /* a section larger than the file extends the file. */
             if (writable && minimum_size > length) {
                 FsCacheInvalidate(fcb->Volume, fcb->FileId);
                 if (HalHypercallUnlocked(MIME_HC_FS_SET_SIZE, fcb->HostHandle, minimum_size, 0, 0, 0, 0, nullptr) == MIME_HC_STATUS_OK) {
@@ -263,7 +262,6 @@ BOOLEAN IopIsMimeFs(PFILE_OBJECT file)
     return file->DeviceObject && file->DeviceObject->DriverObject == g_driver;
 }
 
-/* the volume of the directory a notification request is made on. */
 NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_handle)
 {
     if (!IopIsMimeFs(file) || !file->FsContext)
@@ -287,7 +285,7 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
         *info = fcb->OpenInfo;
         return STATUS_SUCCESS;
     }
-    /* what other handles keep for the file is written first, what this one keeps is counted in. */
+    /* other handles flush their buffers for the file first; this one's is counted in. */
     FsWbSyncOthers(&fcb->Wb);
     NTSTATUS status = host_status(HalHypercallUnlocked(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(info), 0, 0, 0, 0, nullptr), FALSE);
     if (NT_SUCCESS(status) && fcb->Wb.Length && fcb->Wb.Start + fcb->Wb.Length > info->size) {
@@ -307,7 +305,7 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     ULONG disposition = stack->Parameters.Create.Options >> 24;
     PIO_SECURITY_CONTEXT security = stack->Parameters.Create.SecurityContext;
     ACCESS_MASK access = security ? security->DesiredAccess : 0;
-    /* a program in user mode is held to the descriptors of the files it opens, the kernel and the drivers are not. */
+    /* user mode programs are held to file descriptors, the kernel and drivers are not. */
     BOOLEAN check = (stack->Flags & SL_FORCE_ACCESS_CHECK) && security && SeAccessCheckRequired();
 
     MimeFsOpen *req = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MimeFsOpen), KI_TAG('M', 'f', 'O', 'p'));
@@ -347,7 +345,7 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         req->flags |= MIME_FS_OPEN_NON_DIRECTORY;
     if (check)
         req->flags |= MIME_FS_OPEN_WANT_SD;
-    /* a query by name needs the attributes and nothing else: the host answers them without making a handle. */
+    /* a query by name only needs the attributes: the host answers without making a handle. */
     BOOLEAN stat_only = (stack->Flags & SL_OPEN_STAT_ONLY) != 0 && disposition == FILE_OPEN &&
                         !(req->flags & MIME_FS_OPEN_WRITE) && !(file->Flags & FO_DELETE_ON_CLOSE);
     if (stat_only)
@@ -363,8 +361,8 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     }
     req->disposition = host_disposition;
     /*
-     * a name asked about lately is answered as it was, see io/fsattr.c. what is not is asked of the host, and kept if its
-     * directory is watched for changes of the host's programs.
+     * a name asked about lately is answered from io/fsattr.c. otherwise the host is asked, and the answer is kept if
+     * the directory is watched for host changes.
      */
     BOOLEAN keep = FALSE;
     LONG keep_token = 0;
@@ -387,16 +385,15 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         }
         keep = FsAttrBegin(vol->HostVolume, &file->FileName, &keep_token);
     }
-    /* what handles keep for this name is written before the host looks at the file: its size, its time, or a truncation. */
+    /* buffered writes for this name are flushed before the host looks at its size, time, or truncates it. */
     FsWbSyncPath(vol->HostVolume, &file->FileName, FALSE);
     /*
-     * a file with a section in use is not made shorter by an open that truncates it, as it is not by a change of its
-     * size: a view would read what is no longer there, and where the pages are the host's that is a fault the host
-     * cannot take. The file is looked up by name first, without a handle, to know which one it is, and what the cache
-     * of its pages holds is dropped before the host truncates it, not after: a read that comes between would take
-     * pages that are gone from the window of the host's file. An open that empties a file that exists is also
-     * checked before it is made, as it cannot be taken back, so the host opens the name as it is with a handle, which
-     * tells the descriptor too, and the real open comes when the descriptor allows it.
+     * a file with a section in use is not truncated by an open, as it is not by a size change: a view would read
+     * what is gone, and when the pages are the host's that is a fault the host cannot take. the file is first looked
+     * up by name, without a handle, to identify it, and its cached pages are dropped before the host truncates it,
+     * not after, or a read in between would take pages gone from the window. an open that empties an existing file
+     * cannot be undone, so it is checked first: the host opens the name as is with a handle, which also returns the
+     * descriptor, and the real open follows once the descriptor allows it.
      */
     if (disposition == FILE_SUPERSEDE || disposition == FILE_OVERWRITE || disposition == FILE_OVERWRITE_IF) {
         ULONG saved_flags = req->flags, saved_disposition = req->disposition;
@@ -461,13 +458,13 @@ opened:
         NTSTATUS allowed = MimeFsCheckOpen(vol->HostVolume, host, &file->FileName, directory, access, options, disposition,
                                            action == FILE_CREATED, &known, &granted);
         if (allowed == STATUS_MORE_PROCESSING_REQUIRED && !host) {
-            /* a query by name that needs the directory above: opened with a handle, the host can be asked more. */
+            /* a query by name that needs the parent directory: reopen with a handle so the host can be asked more. */
             req->flags &= ~(ULONG)MIME_FS_OPEN_STAT_ONLY;
             goto reopen;
         }
         if (!NT_SUCCESS(allowed)) {
             SeTraceDenial("file", &file->FileName, access, allowed);
-            /* a file made for an open that is refused is not left behind. */
+            /* a file created by a refused open is not left behind. */
             if (host && action == FILE_CREATED)
                 HalHypercallUnlocked(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
             if (host)
@@ -508,7 +505,7 @@ opened:
         if (!NT_SUCCESS(status)) {
             if (SeTraceAccess)
                 KiLogPrintf("the descriptor of '%wZ' cannot be kept: %08x", &file->FileName, status);
-            /* a file the creator may not make that way is not left behind. */
+            /* a file the creator may not create that way is not left behind. */
             HalHypercallUnlocked(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
             HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
@@ -522,7 +519,7 @@ opened:
         file->Flags |= FO_DIRECTORY_FILE;
     file->FsContext = fcb;
     if (checked) {
-        /* the handle has what the descriptor gave, and the file object says the same. */
+        /* the handle gets what the descriptor granted, and the file object agrees. */
         security->GrantedAccess = granted;
         security->Checked = TRUE;
         file->ReadAccess = (granted & (FILE_READ_DATA | FILE_EXECUTE)) != 0;
@@ -544,7 +541,7 @@ static NTSTATUS NTAPI mimefs_cleanup(PDEVICE_OBJECT device, PIRP irp)
     MIMEFS_FCB *fcb = file->FsContext;
     if (fcb && !fcb->Rom && fcb->Directory)
         FsNotifyCleanup(file);
-    /* the last handle is closing: what it kept goes to the host before anything can look at the file again. */
+    /* the last handle is closing: flush its buffer before anything can look at the file again. */
     if (fcb && !fcb->Rom && !fcb->Directory)
         FsWbClose(&fcb->Wb);
     return complete(irp, STATUS_SUCCESS, 0);
@@ -612,7 +609,7 @@ static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
             return complete(irp, kept, NT_SUCCESS(kept) ? length : 0);
         }
     }
-    /* the host reads and writes in order with what handles of the file kept for it. */
+    /* host reads and writes stay ordered with what handles buffered for the file. */
     NTSTATUS synced = FsWbSync(&fcb->Wb);
     if (!NT_SUCCESS(synced) && write)
         return complete(irp, synced, 0);
@@ -797,8 +794,8 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
 }
 
 /*
- * moves the file to the name in the directory the i/o manager opened for it. the leaf is the part of the new
- * name after its last backslash, and the file object takes the name it has in the directory now.
+ * moves the file into the directory the i/o manager opened for it. the leaf is the part of the new name after its
+ * last backslash, and the file object takes its new name in the directory.
  */
 static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MIMEFS_FCB *fcb, PIO_STACK_LOCATION stack,
                                     const UCHAR *in, ULONG length)
@@ -825,7 +822,7 @@ static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MI
     if (!text)
         return STATUS_INSUFFICIENT_RESOURCES;
     memcpy(text, name + start, leaf * sizeof(WCHAR));
-    /* what handles keep for the file, or for what is below a directory, is written before its name changes. */
+    /* buffered writes for the file, or for anything below a directory, are flushed before the name changes. */
     if (fcb->Directory)
         FsWbSyncPath(fcb->Volume, &file->FileName, TRUE);
     else
@@ -834,7 +831,7 @@ static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MI
                                       stack->Parameters.SetFile.ReplaceIfExists ? MIME_FS_RENAME_REPLACE : 0, 0, nullptr);
     NTSTATUS status = host_status(hs, FALSE);
     if (NT_SUCCESS(status)) {
-        /* the name below the volume: the directory's, a backslash and the leaf. */
+        /* the volume relative name: the directory's, a backslash and the leaf. */
         ULONG base = dir->FileName.Length / sizeof(WCHAR);
         while (base && dir->FileName.Buffer[base - 1] == '\\')
             base--;
@@ -878,8 +875,8 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         ULONG64 size = (ULONG64)((PFILE_END_OF_FILE_INFORMATION)in)->EndOfFile.QuadPart;
         if (stack->Parameters.SetFile.FileInformationClass == FileAllocationInformation)
             return complete(irp, STATUS_SUCCESS, 0);
-        /* a file with a section in use is not made shorter, as on windows: a view would read what is no longer there,
-           and where the pages are the host's that is a fault the host cannot take. */
+        /* like windows, a file with a section in use is not truncated: a view would read what is gone, and when
+           the pages are the host's that is a fault the host cannot take. */
         if (FsWbIsMapped(fcb->Volume, fcb->FileId)) {
             MimeFsInfo *current = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*current), KI_TAG('M', 'f', 'I', 'n'));
             BOOLEAN shorter = current && NT_SUCCESS(query(fcb, current)) && size < current->size;
@@ -945,7 +942,7 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         }
         NTSTATUS status = STATUS_SUCCESS;
         if (change->mask && !fcb->StatOnly) {
-            /* what this handle kept is written first, or the host would give the file the time of that write. */
+            /* flush this handle's buffer first, or the host would stamp the file with that write's time. */
             FsWbSync(&fcb->Wb);
             status = host_status(HalHypercallUnlocked(MIME_HC_FS_SET_BASIC, fcb->HostHandle, HalPhysicalOf(change), 0, 0, 0, 0,
                                                        nullptr), FALSE);
@@ -1052,7 +1049,7 @@ static void write_entry(PUCHAR out, FILE_INFORMATION_CLASS klass, const MimeFsIn
     }
 }
 
-/* the entries of a directory come from the host several to a call: a listing costs a call for each one otherwise. */
+/* the host lists a directory several entries per call, instead of one call per entry. */
 #define DIR_BATCH 16
 
 static BOOLEAN host_dir_entry(MIMEFS_FCB *fcb, ULONG index, MimeFsDirEntry *out)
@@ -1093,12 +1090,12 @@ static NTSTATUS NTAPI mimefs_directory(PDEVICE_OBJECT device, PIRP irp)
     BOOLEAN first_query = fcb->Pattern.Buffer == nullptr;
     if ((stack->Flags & SL_RESTART_SCAN) || first_query) {
         fcb->DirIndex = 0;
-        fcb->BatchCount = 0; /* the host lists the directory again for index 0 */
+        fcb->BatchCount = 0; /* the host lists the directory again for index 0. */
         fcb->RomIndex = 0;
         fcb->HostDone = FALSE;
         fcb->DotIndex = 0;
         fcb->DotsDone = fcb->IsRoot;
-        /* the sizes of the listing are the host's: what handles keep for files of this directory is written first. */
+        /* the listing's sizes come from the host: flush buffered writes for files of this directory first. */
         FsWbSyncPath(fcb->Volume, &stack->FileObject->FileName, TRUE);
     }
     PUNICODE_STRING pattern = stack->Parameters.QueryDirectory.FileName;
@@ -1222,7 +1219,7 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
         ULONG need = 12 + sizeof(fs) - sizeof(WCHAR);
         if (length < 12)
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
-        ((PULONG)out)[0] = 0x00000003 | 0x00000004 | 0x00000002; /* case preserved, unicode names */
+        ((PULONG)out)[0] = 0x00000003 | 0x00000004 | 0x00000002; /* case preserved, unicode names. */
         ((PULONG)out)[1] = 255;
         ((PULONG)out)[2] = sizeof(fs) - sizeof(WCHAR);
         ULONG copy = length - 12 < sizeof(fs) - sizeof(WCHAR) ? length - 12 : (ULONG)(sizeof(fs) - sizeof(WCHAR));
@@ -1279,7 +1276,7 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
     }
 }
 
-/* the whole descriptor of a file, a reference in the information; see IopGetFileSecurity. */
+/* the whole descriptor as a reference in the information, see IopGetFileSecurity. */
 static NTSTATUS NTAPI mimefs_query_security(PDEVICE_OBJECT device, PIRP irp)
 {
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
@@ -1317,7 +1314,7 @@ static NTSTATUS NTAPI mimefs_flush(PDEVICE_OBJECT device, PIRP irp)
     NTSTATUS kept = FsWbSync(&fcb->Wb);
     if (!NT_SUCCESS(kept))
         return complete(irp, kept, 0);
-    /* the host writes the file out, which takes milliseconds; nothing else here waits for it. */
+    /* the host writes the file out, which takes milliseconds, so the kernel lock is not held meanwhile. */
     ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_FLUSH, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
     return complete(irp, host_status(hs, FALSE), 0);
 }

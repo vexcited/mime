@@ -1,7 +1,7 @@
 /*
- * private data as windows' directx keeps it: setting a guid again replaces
- * its value, setting it with no data removes it, and an interface is held
- * with a reference and handed out with another.
+ * like directx: setting a guid again replaces its value, setting it with no
+ * data removes it, and an interface is held with a reference and handed out
+ * with another.
  */
 #include "privdata.h"
 
@@ -23,7 +23,7 @@ static void entry_free(MimePrivateEntry *entry)
     HeapFree(GetProcessHeap(), 0, entry);
 }
 
-/* unlinks the entry of the guid, the caller holding the lock. */
+/* the caller holds the lock. */
 static MimePrivateEntry *take(MimePrivateData *data, REFGUID guid)
 {
     for (MimePrivateEntry **link = &data->first; *link; link = &(*link)->next)

@@ -1,8 +1,7 @@
 /*
  * what each call records on a metafile dc: enhanced metafile records with
- * their device bounds, and the windows metafile records of the same calls.
- * the bounds are those of the reference device, clipped to the clip region
- * and kept inclusive like windows' kernel accumulates them.
+ * device bounds, and the windows metafile records of the same calls. bounds
+ * are in reference device units, clipped, and inclusive like windows keeps them.
  */
 #include "emf_private.h"
 #include <mime/win32/winnls.h>
@@ -44,10 +43,7 @@ static WORD hi(DWORD v)
 
 /* ------------------------------------------------------------------ bounds helpers */
 
-/*
- * half the pen width in device units, 0 for a cosmetic pen and -1 for a
- * null pen, which draws nothing.
- */
+/* half the pen width in device units: 0 for a cosmetic pen, -1 for a null pen. */
 static double pen_half(EMF_DC *emf, const XFORM *m)
 {
     HGDIOBJ pen = NtGdiGetDCObject(emf->Dc, OBJ_PEN);
@@ -80,7 +76,7 @@ static void add_logical(EMF_BOUNDS *b, const XFORM *m, double x, double y)
     EmfBoundsPoint(b, dx, dy);
 }
 
-/* the four corners of a logical rectangle; exclusive drops the right and bottom device pixel. */
+/* exclusive drops the right and bottom device pixel. */
 static void add_rect(EMF_BOUNDS *b, const XFORM *m, double l, double t, double r, double bt, BOOL exclusive)
 {
     EMF_BOUNDS box;
@@ -106,7 +102,7 @@ static BOOL compatible(EMF_DC *emf)
     return mode == GM_COMPATIBLE;
 }
 
-/* the bounds of records without a bounds field go to the header only. */
+/* for records without a bounds field: only the header bounds grow. */
 static void commit_header(EMF_DC *emf, const EMF_BOUNDS *b)
 {
     EmfBoundsCommit(emf, nullptr, b);
@@ -190,7 +186,7 @@ BOOL MfSetPoint(HDC dc, UINT emr, UINT meta, int x, int y)
     return TRUE;
 }
 
-/* windows records the origin the offset leads to. */
+/* windows records the resulting origin, not the offset. */
 BOOL MfOffsetOrg(HDC dc, BOOL viewport, int x, int y)
 {
     if (MfIsWmfDc(dc)) {
@@ -212,7 +208,7 @@ BOOL MfScaleExt(HDC dc, BOOL viewport, int xn, int xd, int yn, int yd)
     return emf_four(dc, viewport ? EMR_SCALEVIEWPORTEXTEX : EMR_SCALEWINDOWEXTEX, xn, xd, yn, yd);
 }
 
-/* like windows, only a change of mode is recorded, and the isotropic mode always. */
+/* like windows, only a mode change is recorded, but MM_ISOTROPIC always is. */
 BOOL MfSetMapMode(HDC dc, int mode)
 {
     if (MfIsWmfDc(dc)) {
@@ -240,7 +236,7 @@ BOOL MfRecordEmpty(HDC dc, UINT emr, UINT meta)
     return TRUE;
 }
 
-/* recorded relative to the current level, and only when the level exists. */
+/* recorded relative to the current level, and only if that level exists. */
 BOOL MfRestoreDC(HDC dc, int level)
 {
     if (MfIsWmfDc(dc)) {
@@ -351,11 +347,11 @@ BOOL MfClipRect(HDC dc, UINT emr, UINT meta, int left, int top, int right, int b
     return TRUE;
 }
 
-/* the region data is in device units, as the clip region. */
+/* region data is in device units, like the clip region. */
 BOOL MfSelectClipRgn(HDC dc, HRGN region, int mode)
 {
     if (MfIsWmfDc(dc)) {
-        /* windows metafiles keep only rectangles: a reset, then the box of the region. */
+        /* windows metafiles only keep rectangles: a reset, then the region's bounding box. */
         WORD zero = 0;
         if (!WmfRecord(dc, META_SELECTCLIPREGION, 1, &zero))
             return FALSE;
@@ -439,7 +435,7 @@ BOOL MfLineTo(HDC dc, int x, int y)
     return TRUE;
 }
 
-/* the arc direction windows records before arcs and boxes, flipped when the mapping flips y in the compatible mode. */
+/* windows records the arc direction before arcs and boxes, flipped when the compatible mode mapping flips y. */
 static BOOL validate_arc_direction(EMF_DC *emf)
 {
     DWORD dir = AD_COUNTERCLOCKWISE, mode = MM_TEXT;
@@ -603,7 +599,7 @@ static BOOL fits16(const POINT *points, DWORD count)
     return TRUE;
 }
 
-/* the bounds of points, with the current position for the functions that start there. */
+/* from_current adds the current position, for the functions that start there. */
 static void poly_bounds(EMF_DC *emf, EMF_BOUNDS *b, const POINT *points, DWORD count, BOOL from_current,
                         BOOL filled)
 {
@@ -801,7 +797,7 @@ BOOL MfExtFloodFill(HDC dc, int x, int y, COLORREF color, UINT type)
 
 /* ------------------------------------------------------------------ paths */
 
-/* the device bounds of the closed path, through GetPath before the path goes away. */
+/* read through GetPath, before the path is discarded. */
 static void path_bounds(EMF_DC *emf, EMF_BOUNDS *b, BOOL stroke, BOOL fill)
 {
     EmfBoundsInit(b);
@@ -845,7 +841,7 @@ BOOL MfPath(HDC dc, UINT emr)
 
 /* ------------------------------------------------------------------ text */
 
-/* GDI comment and text scale: hundredths of millimeters per logical unit in the compatible mode, 0 otherwise. */
+/* text scale in hundredths of millimeters per logical unit in the compatible mode, 0 otherwise. */
 static void text_scale(EMF_DC *emf, FLOAT *ex, FLOAT *ey)
 {
     *ex = *ey = 0;
@@ -861,7 +857,7 @@ static void text_scale(EMF_DC *emf, FLOAT *ex, FLOAT *ey)
     }
 }
 
-/* the device box of a text run: the advances along the baseline, the cell around it, upright like win32k draws it. */
+/* the device box of a text run: advances along the baseline plus the cell, kept upright like win32k draws it. */
 static void text_bounds(EMF_DC *emf, EMF_BOUNDS *b, int x, int y, UINT options, const RECT *rect, const INT *dx,
                         UINT count)
 {
@@ -903,7 +899,7 @@ static void text_bounds(EMF_DC *emf, EMF_BOUNDS *b, int x, int y, UINT options, 
         }
         double ox, oy;
         EmfTransformPoint(&m, x, y, &ox, &oy);
-        /* text stays upright: without rotation only the magnitudes of the scales count. */
+        /* text stays upright, so without rotation only the scale magnitudes count. */
         double a = m.eM11, bb = m.eM12, c = m.eM21, d = m.eM22;
         if (!bb && !c) {
             a = a < 0 ? -a : a;
@@ -974,7 +970,7 @@ BOOL MfTextOut(HDC dc, int x, int y, UINT options, const RECT *rect, LPCWSTR tex
     if (dx) {
         memcpy(adv, dx, (SIZE_T)count * step * sizeof(INT));
     } else if (count) {
-        /* the advances from the partial extents, as windows records them. */
+        /* windows records advances derived from the partial extents. */
         ULONG *ext = (ULONG *)adv;
         SIZE size;
         if (!NtGdiGetTextExtentExW(dc, text, count, 0, nullptr, ext, &size,
@@ -1038,9 +1034,8 @@ static BOOL rop_uses_source(DWORD rop)
 }
 
 /*
- * the pixels of a source dc area as a bottom up 32 bpp dib: the area in
- * device units, clipped to the source bitmap, and the transform from the
- * source's logical coordinates to the captured pixels.
+ * a source dc area as a bottom-up 32 bpp dib, clipped to the source bitmap,
+ * with the transform from source logical coordinates to captured pixels.
  */
 typedef struct CAPTURE {
     BITMAPINFOHEADER Info;
@@ -1101,7 +1096,6 @@ static BOOL capture_source(HDC src, int sx, int sy, int sw, int sh, CAPTURE *c, 
     BOOL ok = FALSE;
     if (dib && pixels) {
         HGDIOBJ old = NtGdiSelectBitmap(mem, dib);
-        /* the source in device units for the copy. */
         int saved = NtGdiSaveDC(src);
         DWORD prev;
         NtGdiGetAndSetDCDword(src, MIME_DCDW_GRAPHICSMODE, GM_ADVANCED, &prev);
@@ -1118,7 +1112,7 @@ static BOOL capture_source(HDC src, int sx, int sy, int sw, int sh, CAPTURE *c, 
             ok = c->Bits != nullptr;
         }
         if (ok) {
-            /* bottom up, as windows stores them. */
+            /* bottom-up, as windows stores them. */
             for (LONG row = 0; row < ch; row++)
                 memcpy(c->Bits + (SIZE_T)(ch - 1 - row) * cw * 4, (BYTE *)pixels + (SIZE_T)row * cw * 4,
                        (SIZE_T)cw * 4);
@@ -1160,7 +1154,7 @@ static BOOL wmf_blt(HDC dc, int x, int y, int width, int height, HDC src, int sx
     BOOL empty;
     if (!capture_source(src, sx, sy, sw, sh, &c, &empty))
         return empty;
-    /* the capture starts where the source does: a stretch from all of it. */
+    /* the capture starts at the source origin, so stretch from all of it. */
     WORD p[10] = {lo(rop), hi(rop), (WORD)c.Info.biHeight, (WORD)c.Info.biWidth, 0, 0, (WORD)height, (WORD)width,
                   (WORD)y, (WORD)x};
     BOOL ok = WmfDibRecord(dc, META_DIBSTRETCHBLT, p, 10, (const BITMAPINFO *)&c.Info,
@@ -1170,10 +1164,9 @@ static BOOL wmf_blt(HDC dc, int x, int y, int width, int height, HDC src, int sx
 }
 
 /*
- * bit blt, stretch blt, alpha blend and transparent blt. a raster
- * operation without a source records a bit blt without a bitmap, like
- * windows; for the blends rop is the blend function or the transparent
- * color.
+ * bit blt, stretch blt, alpha blend and transparent blt. like windows, a rop
+ * without a source records a bit blt with no bitmap. for the blends, rop is
+ * the blend function or the transparent color.
  */
 BOOL MfBitBlt(HDC dc, int x, int y, int width, int height, HDC src, int sx, int sy, int sw, int sh, DWORD rop,
               UINT emr)

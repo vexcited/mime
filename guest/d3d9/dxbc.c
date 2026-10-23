@@ -1,8 +1,4 @@
-/*
- * a writer of shader model 4 bytecode, for the shaders d3d9.dll makes of
- * direct3d 9's: operands as their tokens, instructions of an opcode and
- * operands, signatures, and the container d3d11 takes.
- */
+/* a shader model 4 bytecode writer for the shaders d3d9.dll translates, with the container d3d11 takes. */
 #include "d3d9_private.h"
 #include "../lib/dxbc/tokens.h"
 #include "../lib/dxbc/dxbc.h"
@@ -31,8 +27,6 @@ void D9CodeFree(D9Code *c)
     memset(c, 0, sizeof(*c));
 }
 
-/* ------------------------------------------------------------------ operands */
-
 static D9Opnd operand(DWORD token, UINT type, UINT dims)
 {
     D9Opnd o = {{token | type << 12 | dims << 20}, 1};
@@ -58,7 +52,7 @@ D9Opnd D9Temp(UINT reg, UINT mask) { return D9Dst(OPERAND_TEMP, reg, mask); }
 
 D9Opnd D9TempSrc(UINT reg, UINT swizzle) { return D9Src(OPERAND_TEMP, reg, swizzle); }
 
-/* one component of a temp, as conditions and indices take it. */
+/* a single temp component, as conditions and indices take it. */
 D9Opnd D9TempScalar(UINT reg, UINT component)
 {
     D9Opnd o = operand(2 | SELECT_SELECT1 << 2 | (component & 3) << 4, OPERAND_TEMP, 1);
@@ -130,8 +124,6 @@ D9Opnd D9Neg(D9Opnd o) { return D9Mod(o, MOD_NEG); }
 
 D9Opnd D9Abs(D9Opnd o) { return D9Mod(o, MOD_ABS); }
 
-/* ------------------------------------------------------------------ instructions */
-
 void D9Emit(D9Code *c, DWORD opcode, const D9Opnd *ops, UINT count)
 {
     UINT length = 1;
@@ -160,8 +152,6 @@ void D9Op3(D9Code *c, DWORD op, D9Opnd d, D9Opnd a, D9Opnd b, D9Opnd e)
     D9Opnd ops[4] = {d, a, b, e};
     D9Emit(c, op, ops, 4);
 }
-
-/* ------------------------------------------------------------------ the container */
 
 static void put_bytes(D9Code *c, const void *bytes, UINT n)
 {
@@ -211,7 +201,7 @@ static void put_signature(D9Code *c, const D9Signature *sig)
     (void)start;
 }
 
-/* the container of a program: its input and output signatures and code, with the checksum d3d11 checks. */
+/* signatures and code in a container, with the checksum d3d11 checks. */
 HRESULT D9Container(const D9Signature *inputs, const D9Signature *outputs, const D9Code *code, void **out,
                     SIZE_T *size)
 {

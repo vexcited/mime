@@ -1,9 +1,9 @@
 /*
- * private object security on tokens: the descriptors of objects made from a token's defaults and the routines
- * that need the token itself. The descriptor algorithms are in guest/rtl/secobj.c, shared with the kernel.
+ * private object security that needs a token: descriptors built from a token's defaults and related routines.
+ * the descriptor algorithms are in guest/rtl/secobj.c, shared with the kernel.
  *
- * the owner, privilege and mandatory label checks windows makes on the caller, and the removal of inherited
- * aces an explicit one already covers, are not done.
+ * not done: windows' owner, privilege and mandatory label checks on the caller, and dropping inherited aces that
+ * an explicit one already covers.
  */
 #include "ntdll_private.h"
 #include <crypto/crypto.h>
@@ -12,7 +12,7 @@
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, SECURITY_INFORMATION information,
                                                   PSECURITY_DESCRIPTOR sd, ULONG length, PULONG needed);
 
-/* the privilege set of winnt.h, with one privilege. */
+/* a winnt.h PRIVILEGE_SET with one privilege. */
 typedef struct {
     ULONG PrivilegeCount;
     ULONG Control;
@@ -30,10 +30,10 @@ typedef struct {
 #define HEAP() (NtCurrentPeb()->ProcessHeap)
 
 
-/* ---------------------------------------------------------------- the token defaults */
+/* ---------------------------------------------------------------- token defaults */
 
 typedef struct {
-    HANDLE requested; /* the token the caller named, else the thread's or the process's */
+    HANDLE requested; /* the caller's token, else the thread's or the process's. */
     HANDLE handle;
     BOOLEAN opened;
     BOOLEAN tried;
@@ -54,7 +54,7 @@ static NTSTATUS token_handle(DEFAULTS *d, HANDLE token)
     return status;
 }
 
-/* the one pointer a token information class holds, backed by a heap block that lives with the defaults. */
+/* the heap block backing the pointer lives as long as the defaults. */
 static NTSTATUS token_pointer(DEFAULTS *d, ULONG klass, int slot, PVOID *out)
 {
     ULONG length = 512;
@@ -89,7 +89,7 @@ static void defaults_free(DEFAULTS *d)
 }
 
 
-/* the token defaults for the rtl, opened on the first one asked for. */
+/* opens the token on first use. */
 static NTSTATUS fetch_default(void *context, ULONG which, PVOID *value)
 {
     DEFAULTS *d = context;
@@ -138,7 +138,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlNewSecurityObject(PSECURITY_DESCRIPTOR parent, PS
     return new_object(parent, creator, object, nullptr, 0, container, 0, token, mapping);
 }
 
-/* ---------------------------------------------------------------- objects made from tables and tokens */
+/* ---------------------------------------------------------------- objects from tables and tokens */
 
 #define CURRENT_PROCESS_TOKEN ((HANDLE)(LONG_PTR)-4)
 #define CURRENT_THREAD_TOKEN ((HANDLE)(LONG_PTR)-5)
@@ -148,7 +148,6 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlNewSecurityObject(PSECURITY_DESCRIPTOR parent, PS
 #define TokenIsAppContainerClass 29
 #define TokenAppContainerSidClass 31
 
-/* a token information class in a heap block of its own. */
 static NTSTATUS token_block(HANDLE token, ULONG klass, PVOID *block)
 {
     ULONG length = 256;
@@ -172,7 +171,6 @@ static NTSTATUS token_block(HANDLE token, ULONG klass, PVOID *block)
     }
 }
 
-/* whether the token holds a privilege and has it enabled. */
 static BOOLEAN privilege_enabled(HANDLE token, ULONG low)
 {
     typedef struct {
@@ -194,7 +192,7 @@ static BOOLEAN privilege_enabled(HANDLE token, ULONG low)
     return enabled;
 }
 
-/* the list of a new named pipe: the system, administrators and the owner may do all, everyone may read. */
+/* system, administrators and the owner get full access, everyone may read. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlDefaultNpAcl(PACL *acl)
 {
     *acl = nullptr;
@@ -204,7 +202,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlDefaultNpAcl(PACL *acl)
     if (!NT_SUCCESS(status))
         return status;
 
-    /* a process in an app container also gives it, and its parent, full access. */
+    /* in an app container, the container and its parent get full access too. */
     ULONG is_container = 0, returned;
     if (NT_SUCCESS(NtQueryInformationToken(CURRENT_EFFECTIVE_TOKEN, TokenIsAppContainerClass, &is_container,
                                            sizeof(is_container), &returned)) && is_container) {
@@ -258,7 +256,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlDefaultNpAcl(PACL *acl)
     return status;
 }
 
-/* a descriptor from an ace table, completed from the process token. */
+/* missing parts are filled from the process token. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlCreateUserSecurityObject(PRTL_ACE_DATA table, ULONG count, PSID owner, PSID group,
                                                         BOOLEAN container, const GENERIC_MAPPING *mapping,
                                                         PSECURITY_DESCRIPTOR *object)
@@ -272,10 +270,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlCreateUserSecurityObject(PRTL_ACE_DATA table, ULO
     return status;
 }
 
-/*
- * a new descriptor for another instance of an object, which is only worth making when the parent or the
- * creator changed or the token was modified since the last one. else there is nothing new, and none is made.
- */
+/* only builds a descriptor when the parent or creator changed or the token was modified since the last one. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlNewInstanceSecurityObject(BOOLEAN parent_changed, BOOLEAN creator_changed,
                                                          PLUID old_modified, PLUID new_modified,
                                                          PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator,
@@ -294,10 +289,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlNewInstanceSecurityObject(BOOLEAN parent_changed,
     return STATUS_SUCCESS;
 }
 
-/*
- * what a requested access comes to for a new object, and the privilege that stands behind it. the system
- * access right needs the security privilege, which is then recorded as used.
- */
+/* ACCESS_SYSTEM_SECURITY needs the security privilege, which is then recorded as used. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlNewSecurityGrantedAccess(ACCESS_MASK desired, PRIVILEGE_SET_ONE *privileges, PULONG length,
                                                         HANDLE token, const GENERIC_MAPPING *mapping,
                                                         PACCESS_MASK granted)
@@ -333,7 +325,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlNewSecurityGrantedAccess(ACCESS_MASK desired, PRI
     return STATUS_SUCCESS;
 }
 
-/* an object is untrusted when its mandatory label is below medium, or there is none to speak of. */
+/* untrusted means a mandatory label below medium, or no usable label. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlIsUntrustedObject(HANDLE handle, PVOID object, PBOOLEAN untrusted)
 {
     *untrusted = TRUE;
@@ -376,9 +368,9 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlIsUntrustedObject(HANDLE handle, PVOID object, PB
     return status;
 }
 
-/* ---------------------------------------------------------------- sids made from names */
+/* ---------------------------------------------------------------- sids from names */
 
-/* the five sub authorities a name is boiled down to by sha-1 of its upper case form, or the eight of sha-256. */
+/* five sub authorities from sha-1 of the upper case name, or eight from sha-256. */
 static NTSTATUS hash_name(PCUNICODE_STRING name, const MimeHashAlg *algorithm, ULONG *words)
 {
     UNICODE_STRING upper;
@@ -414,7 +406,7 @@ static NTSTATUS service_sid(PCUNICODE_STRING name, ULONG base, PSID sid, PULONG 
     return STATUS_SUCCESS;
 }
 
-/* S-1-5-80 and five hashed numbers: the sid of a service. */
+/* S-1-5-80 and five hashed numbers. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlCreateServiceSid(PCUNICODE_STRING name, PSID sid, PULONG length)
 {
     if (!name || !sid || !length)
@@ -422,7 +414,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlCreateServiceSid(PCUNICODE_STRING name, PSID sid,
     return service_sid(name, 80, sid, length);
 }
 
-/* the same under another base, 80 to 111: S-1-5-83 is a virtual machine, 96 a font driver host... */
+/* same with base 80 to 111: S-1-5-83 is a virtual machine, 96 a font driver host... */
 NTDLL_EXPORT NTSTATUS NTAPI RtlCreateVirtualAccountSid(PCUNICODE_STRING name, ULONG base, PSID sid, PULONG length)
 {
     if (!name || !sid || !length || base - 80 > 31)
@@ -430,15 +422,15 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlCreateVirtualAccountSid(PCUNICODE_STRING name, UL
     return service_sid(name, base, sid, length);
 }
 
-/* the names of the capabilities that got a number of their own, and the sids that number makes. */
+/* capabilities with a dedicated number in their sid. */
 static const WCHAR *const g_legacy_capabilities[12] = {
     L"INTERNETCLIENT", L"INTERNETCLIENTSERVER", L"PRIVATENETWORKCLIENTSERVER", L"PICTURESLIBRARY",
     L"VIDEOSLIBRARY", L"MUSICLIBRARY", L"DOCUMENTSLIBRARY", L"ENTERPRISEAUTHENTICATION", L"SHAREDUSERCERTIFICATES",
     L"REMOVABLESTORAGE", L"APPOINTMENTS", L"CONTACTS"};
 
 /*
- * the group sid S-1-5-32 and eight hashed numbers, and the capability sid S-1-15-3: with a number for the
- * twelve oldest capabilities, else 1024 and the same eight, or 65536 for the names of a win32 app.
+ * group sid: S-1-5-32 and eight hashed numbers. capability sid: S-1-15-3 with the dedicated number for the twelve
+ * oldest capabilities, else 1024 and the same eight, or 65536 for win32 app names.
  */
 NTDLL_EXPORT NTSTATUS NTAPI RtlDeriveCapabilitySidsFromName(PCUNICODE_STRING name, PSID group, PSID capability)
 {

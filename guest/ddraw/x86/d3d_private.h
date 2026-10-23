@@ -1,8 +1,7 @@
 /*
- * direct3d 1 to 7, which 32-bit windows has in d3dim.dll and d3dim700.dll
- * and mime in ddraw itself: what its parts share. devices keep the state
- * of their interface, as windows' do, and hand it to the direct3d 9
- * device of d3dback.c in that api's terms.
+ * direct3d 1 to 7, which windows ships as d3dim.dll and d3dim700.dll and
+ * mime builds into ddraw. devices keep their interface's state like
+ * windows and hand it to the direct3d 9 device in d3dback.c.
  */
 #ifndef DDRAW_D3D_PRIVATE_H
 #define DDRAW_D3D_PRIVATE_H
@@ -23,22 +22,22 @@ struct D3DOBJ {
     IDirect3D2 iface2;
     IDirect3D3 iface3;
     DDRAW *dd;
-    DWORD outer;         /* the directdraw interface whose count it shares */
+    DWORD outer;         /* the directdraw interface whose refcount it shares. */
     LIST_ENTRY devices;
-    LIST_ENTRY buffers;  /* vertex buffers, which hold no reference on it */
+    LIST_ENTRY buffers;  /* vertex buffers, which hold no reference on it. */
     LIST_ENTRY viewports, lights, materials;
-    DWORD next_viewport; /* ids of viewports, from 1. */
+    DWORD next_viewport; /* viewport ids start at 1. */
 };
 
 HRESULT D3dObjQuery(DDRAW *dd, DWORD version, REFIID riid, void **out);
 void D3dObjDestroy(DDRAW *dd);
 void D3dLegacyInitObj(D3DOBJ *d3d);
 D3DOBJ *D3dObjFromIface7(IDirect3D7 *iface);
-/* the directdraw object's count, which the direct3d object shares. */
+/* these use the directdraw object's refcount. */
 void D3dObjAddRef(D3DOBJ *d3d);
 void D3dObjRelease(D3DOBJ *d3d);
 
-/* the descriptions of the devices mime offers, and the formats they draw on and sample. */
+/* the devices mime offers and the formats they render to and sample. */
 BOOL D3dDeviceDesc7(const GUID *guid, D3DDEVICEDESC7 *desc);
 void D3dPrimCaps(D3DPRIMCAPS *caps, BOOL hal);
 BOOL D3dIsDeviceGuid(const GUID *guid);
@@ -56,15 +55,15 @@ typedef struct D3DLIGHTSLOT {
     BOOL set, enabled;
 } D3DLIGHTSLOT;
 
-/* an item of a state block, as windows records it: what was set and its value. */
+/* state block items, recorded like windows: what was set and its value. */
 enum { D3DI_RS, D3DI_TSS, D3DI_TEXTURE, D3DI_VIEWPORT, D3DI_MATERIAL, D3DI_LIGHT, D3DI_LIGHTENABLE, D3DI_TRANSFORM,
        D3DI_CLIPPLANE };
 
 typedef struct D3DITEM {
     DWORD op, a, b;
     union {
-        DWORD value;          /* of a texture stage state */
-        DDSURF *texture;      /* referenced, unlike windows' raw pointer */
+        DWORD value;          /* a texture stage state. */
+        DDSURF *texture;      /* referenced, unlike windows' raw pointer. */
         D3DVIEWPORT7 viewport;
         D3DMATERIAL7 material;
         D3DLIGHT7 light;
@@ -86,12 +85,12 @@ struct D3DDEV {
     IDirect3DDevice iface1;
     IDirect3DDevice2 iface2;
     IDirect3DDevice3 iface3;
-    IUnknown inner;           /* its own unknown, which a surface aggregating a first device holds. */
-    IUnknown *outer;          /* where the interfaces' IUnknown methods go. */
+    IUnknown inner;           /* held by the surface aggregating a first device. */
+    IUnknown *outer;          /* receives the interfaces' IUnknown calls. */
     LONG ref;
-    DWORD version;            /* of the interface that made it: 1, 2, 3 or 7. */
-    DWORD surface_version;    /* of the surface interfaces it holds, 0 for the weak ones of an aggregate. */
-    D3DLEGACY *legacy;        /* what the first interfaces add, null for the seventh. */
+    DWORD version;            /* of the interface that created it: 1, 2, 3 or 7. */
+    DWORD surface_version;    /* of the surface interfaces it holds, 0 for an aggregate's weak ones. */
+    D3DLEGACY *legacy;        /* what the first interfaces add, null for version 7. */
     D3DOBJ *d3d;
     GUID guid;
     BOOL hal;
@@ -104,8 +103,8 @@ struct D3DDEV {
     DWORD rs[256];
     DWORD tss[D3D_STAGES][32];
     DDSURF *textures[D3D_STAGES];
-    DWORD weak_textures;       /* stages whose texture came through a handle, holding no reference. */
-    D3DMATRIX transforms[24];  /* by type, WORLD 1 to TEXTURE7 23 */
+    DWORD weak_textures;       /* stages whose texture came through a handle and hold no reference. */
+    D3DMATRIX transforms[24];  /* by type, WORLD 1 to TEXTURE7 23. */
     D3DVIEWPORT7 viewport;
     D3DMATERIAL7 material;
     D3DLIGHTSLOT *lights;
@@ -113,23 +112,22 @@ struct D3DDEV {
     float clip_planes[D3D_CLIP_PLANES][4];
     D3DCLIPSTATUS clip_status;
 
-    D3DBLOCK **blocks;         /* by handle, null when free */
+    D3DBLOCK **blocks;         /* by handle, null when free. */
     DWORD block_count;
     D3DBLOCK *recording;
     DWORD recording_handle;
 
-    /* what the backend shows of this device is stale after another device drew. */
-    BOOL keyed;               /* the key test the color key added is on */
-    DWORD stage_end;          /* the stage disabled for lack of its texture, D3D_STAGES for none */
-    D3DPAL8 *pal8;            /* the entries it takes of an 8-bit target's palette. */
-    BYTE *scratch;            /* vertices packed for the backend */
+    BOOL keyed;               /* the alpha test added for the color key is on. */
+    DWORD stage_end;          /* the stage disabled for lacking its texture, D3D_STAGES for none. */
+    D3DPAL8 *pal8;            /* the entries it takes in an 8-bit target's palette. */
+    BYTE *scratch;            /* vertices packed for the backend. */
     SIZE_T scratch_size;
     LIST_ENTRY links;
 };
 
 HRESULT D3dCreateDevice7(D3DOBJ *d3d, const GUID *guid, DDSURF *target, IDirect3DDevice7 **out);
 D3DDEV *D3dDevFromIface7(void *iface);
-/* the state of a device, the backend's when it is the one drawing. */
+/* these also reach the backend when this device is the one drawing. */
 void D3dSetRs(D3DDEV *dev, DWORD type, DWORD value);
 void D3dSetTss(D3DDEV *dev, DWORD stage, DWORD type, DWORD value);
 void D3dSetTransform(D3DDEV *dev, DWORD type, const D3DMATRIX *m);
@@ -140,7 +138,7 @@ HRESULT D3dSetLight(D3DDEV *dev, DWORD index, const D3DLIGHT7 *light);
 HRESULT D3dLightEnable(D3DDEV *dev, DWORD index, BOOL enable);
 void D3dSetTexture(D3DDEV *dev, DWORD stage, DDSURF *s);
 void D3dSetTextureWeak(D3DDEV *dev, DWORD stage, DDSURF *s);
-/* the projection again, after the clip volume of a first interface's viewport changed. */
+/* resends the projection after a first interface viewport's clip volume changed. */
 void D3dPushProjection(D3DDEV *dev);
 BOOL D3dBindTargets(D3DDEV *dev);
 DDSURF *D3dAttachedDepth(DDSURF *s);
@@ -149,24 +147,23 @@ BOOL D3dPalettized(const DDSURF *s);
 HRESULT D3dCheckPalette(DDSURF *target);
 void D3dHoldTargets(D3DDEV *dev, DDSURF *target, DDSURF *depth);
 D3DMATRIX D3dMultiply(const D3DMATRIX *a, const D3DMATRIX *b);
-/* the rectangles given, already within the viewport, cleared on the targets. */
+/* the rectangles must already be within the viewport. */
 HRESULT D3dClearRects(D3DDEV *dev, DWORD count, const D3DRECT *rects, DWORD flags, DWORD color, float z,
                       DWORD stencil);
-/* a device's end: its references, textures and the first interfaces' objects released. */
+/* releases its references, textures and first interface objects. */
 void D3dDevDestroy(D3DDEV *dev);
-/* the device whose state the backend holds now, which another device's work takes over. */
+/* loads this device's state into the backend after another device's work. */
 void D3dDevActivate(D3DDEV *dev);
 BOOL D3dDevIsActive(D3DDEV *dev);
 
-/* the size of a vertex of a flexible vertex format, 0 for one that is not valid. */
+/* 0 for an invalid format. */
 DWORD D3dFvfSize(DWORD fvf);
 DWORD D3dPrimitiveCount(D3DPRIMITIVETYPE type, DWORD count);
-/* draws vertices packed as the format says, with optional indices. */
 HRESULT D3dDraw(D3DDEV *dev, D3DPRIMITIVETYPE type, DWORD fvf, const void *vertices, DWORD vertex_count,
                 const WORD *indices, DWORD index_count, DWORD flags);
-/* strided vertices packed in the device's scratch memory as the format lays them out. */
+/* packs into the device's scratch memory in the format's layout. */
 const BYTE *D3dPackStrided(D3DDEV *dev, DWORD fvf, const D3DDRAWPRIMITIVESTRIDEDDATA *data, DWORD count);
-/* pipeline.c: vertices through the device's transforms, lighting and fog into screen space. */
+/* pipeline.c: transforms, lights and fogs vertices into screen space. */
 HRESULT D3dProcess(D3DDEV *dev, const BYTE *src, DWORD src_fvf, BYTE *dst, DWORD dst_fvf, DWORD count, DWORD op,
                    DWORD flags);
 
@@ -178,7 +175,7 @@ typedef struct D3DMATERIALOBJ D3DMATERIALOBJ;
 typedef struct D3DTEXOBJ D3DTEXOBJ;
 typedef struct D3DEXECBUF D3DEXECBUF;
 
-/* a viewport, one object for its three interfaces, and the lights it holds. */
+/* one object serves all three viewport interfaces. */
 struct D3DVIEWPORTOBJ {
     IDirect3DViewport3 iface;
     LONG ref;
@@ -201,7 +198,7 @@ struct D3DLIGHTOBJ {
     IDirect3DLight iface;
     LONG ref;
     D3DOBJ *d3d;
-    D3DLIGHT2 data;           /* as set, a D3DLIGHT taking the first 76 bytes. */
+    D3DLIGHT2 data;           /* as set; a D3DLIGHT fills the first 76 bytes. */
     BOOL set;
     D3DVIEWPORTOBJ *viewport;
     LIST_ENTRY vp_links;
@@ -215,11 +212,11 @@ struct D3DMATERIALOBJ {
     LONG ref;
     D3DOBJ *d3d;
     D3DMATERIAL data;
-    LIST_ENTRY handles;       /* D3DMATHANDLE of the devices it has a handle on. */
+    LIST_ENTRY handles;       /* D3DMATHANDLE, one per device holding a handle. */
     LIST_ENTRY links;
 };
 
-/* what a material handle names: the material's copy on a device. */
+/* a material handle names the material's copy on one device. */
 typedef struct D3DMATHANDLE {
     D3DMATERIALOBJ *material;
     D3DDEV *dev;
@@ -228,7 +225,7 @@ typedef struct D3DMATHANDLE {
     LIST_ENTRY dev_links;
 } D3DMATHANDLE;
 
-/* IDirect3DTexture and 2, aggregated in a surface. */
+/* IDirect3DTexture and IDirect3DTexture2, aggregated in a surface. */
 struct D3DTEXOBJ {
     IDirect3DTexture iface1;
     IDirect3DTexture2 iface2;
@@ -255,7 +252,7 @@ struct D3DLEGACY {
     LIST_ENTRY viewports;     /* D3DVIEWPORTOBJ.dev_links. */
     DWORD viewport_count;
     D3DVIEWPORTOBJ *current;
-    DWORD downloaded;         /* the id of the viewport last downloaded. */
+    DWORD downloaded;         /* id of the viewport last downloaded. */
     D3DMATRIX clip_map;
     DWORD light_states[9];
     DWORD light_locks, transform_locks, rs_locks[8];
@@ -268,7 +265,7 @@ struct D3DLEGACY {
     D3DSTATS stats;
     DWORD status;             /* clip status and extents, shared by execute buffers and GetClipStatus. */
     float extents[4];
-    /* the stage states the third interface reads back, which the legacy mapping leaves alone. */
+    /* stage states as the third interface set them, apart from the legacy mapping. */
     DWORD api_tss[D3D_STAGES][32];
     D3DTEXOBJ *stage_textures[D3D_STAGES];
     /* between Begin and End. */
@@ -288,11 +285,11 @@ struct D3DLEGACY {
     DWORD tl_capacity;
     D3DPICKRECORD *picks;
     DWORD pick_count;
-    BYTE *lit;                /* vertices lit on the cpu, as the backend draws them. */
+    BYTE *lit;                /* vertices lit on the cpu, ready for the backend. */
     SIZE_T lit_size;
 };
 
-/* an execute buffer, its memory the device's to read at Execute. */
+/* an execute buffer; the device reads its memory at Execute. */
 struct D3DEXECBUF {
     IDirect3DExecuteBuffer iface;
     LONG ref;
@@ -305,35 +302,33 @@ struct D3DEXECBUF {
     LIST_ENTRY links;
 };
 
-/* legacy.c: the direct3d object and devices of the first interfaces. */
+/* legacy.c: direct3d object and devices of the first interfaces. */
 void D3dLegacyActivate(D3DDEV *dev);
 void D3dLegacyDestroy(D3DDEV *dev);
-/* the clip volume of the current viewport, after the projection. */
+/* the current viewport's clip volume, applied after the projection. */
 const D3DMATRIX *D3dLegacyClipMap(D3DDEV *dev);
-/* the viewport downloaded: its clip volume and rectangle made the device's. */
+/* makes the viewport's clip volume and rectangle the device's. */
 HRESULT D3dLegacyDownload(D3DDEV *dev, D3DVIEWPORTOBJ *vp);
-/* the current viewport downloaded if another one was last. */
+/* downloads the current viewport if another one was last. */
 HRESULT D3dLegacyDownloadCurrent(D3DDEV *dev);
-/* the device's render state through the rules of the first interfaces, legacy states mapped to stages. */
+/* follows the first interfaces' rules, mapping legacy states to stages. */
 HRESULT D3dLegacySetRenderState(D3DDEV *dev, DWORD type, DWORD value);
 HRESULT D3dLegacySetLightState(D3DDEV *dev, DWORD type, DWORD value);
-/* a stage state of the third interface, kept apart from what the legacy mapping makes of it. */
+/* kept apart from what the legacy mapping derives. */
 void D3dLegacySetTss(D3DDEV *dev, DWORD stage, DWORD type, DWORD value);
-/* the stage textures a device of the third interface binds. */
 void D3dLegacySetTexture(D3DDEV *dev, DWORD stage, D3DTEXOBJ *texture);
-/* the device descriptions of a device guid for an interface version. */
 BOOL D3dLegacyDesc(const GUID *guid, DWORD version, D3DDEVICEDESC *hw, D3DDEVICEDESC *sw);
 
 /* legacydev.c: the interfaces of a device. */
 void D3dLegacyDeviceInit(D3DDEV *dev);
 D3DDEV *D3dDevFromLegacy(void *iface);
-/* vertices of a format drawn, lit on the cpu when they have normals and a material is current. */
+/* lights on the cpu when vertices have normals and a material is current. */
 HRESULT D3dLegacyDraw(D3DDEV *dev, D3DPRIMITIVETYPE type, DWORD fvf, const void *vertices, DWORD vertex_count,
                       const WORD *indices, DWORD index_count, DWORD flags);
-/* the same without the viewport's download or the statistics, for what execute buffers draw. */
+/* the same without viewport download or statistics, for execute buffers. */
 HRESULT D3dLegacyRender(D3DDEV *dev, D3DPRIMITIVETYPE type, DWORD fvf, const void *vertices, DWORD vertex_count,
                         const WORD *indices, DWORD index_count, DWORD flags);
-/* a matrix handle of the first interface, and its change reaching the transforms it is bound to. */
+/* first interface matrix handles; a change reaches the transforms the handle is bound to. */
 D3DMATRIXOBJ *D3dMatrixHandle(D3DDEV *dev, DWORD handle);
 void D3dMatrixChanged(D3DDEV *dev, DWORD handle);
 
@@ -366,17 +361,17 @@ void D3dExecuteBufferDeviceGone(D3DEXECBUF *b);
 /* ramp.c: 8-bit palettized targets and the ramp device's colors. */
 void D3dPal8Target(D3DDEV *dev);
 void D3dPal8Free(D3DDEV *dev);
-/* a vertex color of the mono model as its ramp's color. */
+/* maps a mono model vertex color to its ramp color. */
 DWORD D3dRampConvert(D3DDEV *dev, DWORD color, DWORD specular);
 DWORD D3dRampBackground(D3DDEV *dev, const D3DMATERIAL *m);
-/* vertices with positions and normals lit in gray, their ramp colors written at each output vertex. */
+/* lights in gray and writes the ramp color at each output vertex. */
 void D3dRampLight(D3DDEV *dev, const BYTE *src, DWORD stride, DWORD normal, DWORD count, BYTE *dst,
                   DWORD dst_stride);
 
 /* pipeline.c: the first interfaces' lighting and vertex fog. */
-/* the colors of lit vertices, diffuse and specular, written at each output vertex. */
+/* writes diffuse and specular at each output vertex. */
 void D3dLegacyLight(D3DDEV *dev, const BYTE *src, DWORD fvf, DWORD count, BYTE *dst, DWORD dst_stride);
-/* the vertex fog of a camera space depth as a specular alpha, 255 without fog. */
+/* vertex fog for a camera space depth as specular alpha, 255 without fog. */
 DWORD D3dLegacyFog(D3DDEV *dev, float z);
 /* the first interface's ProcessVertices: to the screen through the current viewport, lit if asked. */
 HRESULT D3dLegacyProcess(D3DDEV *dev, const BYTE *src, DWORD src_fvf, BYTE *dst, DWORD dst_fvf, DWORD count,
@@ -384,41 +379,40 @@ HRESULT D3dLegacyProcess(D3DDEV *dev, const BYTE *src, DWORD src_fvf, BYTE *dst,
 
 /* ------------------------------------------------------------------ surfaces in the backend */
 
-/* a direct3d object aggregated in a surface, its inner unknown held until the surface goes. */
+/* an aggregated direct3d object; its inner unknown is held until the surface goes. */
 typedef struct D3DAGG {
     IUnknown *inner;
     struct D3DAGG *next;
 } D3DAGG;
 
-/* a surface's copy in the backend, which travels with its memory when it flips. */
+/* a surface's backend copy, which follows its memory through flips. */
 typedef struct D3DSURFX {
     DbImage *image;
-    DWORD usage;          /* DB_ flags it was made for */
-    BOOL gpu_newer;       /* drawn to since the memory was read */
-    DWORD generation;     /* of the memory when the two last matched */
-    BOOL converted;       /* uploaded through DB_FORMAT_ARGB */
-    BOOL keyed;           /* with its color key as alpha */
-    DWORD key;            /* the key it was uploaded with */
-    DWORD palette;        /* the palette's uniqueness it was uploaded with */
-    /* a depth fill waiting for the buffer to be bound, the backend clearing only what is. */
-    /* a palettized target's pixels back to indices: through a color cube, or to the nearest entry. */
+    DWORD usage;          /* DB_ flags it was made for. */
+    BOOL gpu_newer;       /* drawn to since the memory was read. */
+    DWORD generation;     /* the memory's generation when the two last matched. */
+    BOOL converted;       /* uploaded through DB_FORMAT_ARGB. */
+    BOOL keyed;           /* color key uploaded as alpha. */
+    DWORD key;            /* the key it was uploaded with. */
+    DWORD palette;        /* the palette uniqueness it was uploaded with. */
+    /* turns a palettized target's pixels back to indices, through a color cube or the nearest entry. */
     BOOL cubed;
     BYTE cube[216];
     WORD *nearest;
     DWORD nearest_palette;
+    /* a depth fill waiting for the buffer to be bound, since the backend only clears what is bound. */
     BOOL fill;
     float fill_z;
     DWORD fill_stencil;
     RECT fill_rect;
 } D3DSURFX;
 
-/* the image of a surface, current for the use asked; null when it cannot have one. */
+/* current for the use asked; null when it cannot have one. */
 DbImage *D3dSurfImage(D3DDEV *dev, DDSURF *s, DWORD usage);
-/* the surface was drawn to on the gpu. */
 void D3dSurfDrawn(DDSURF *s);
 /* a clear covering a whole target makes its memory irrelevant. */
 void D3dSurfReplaced(DDSURF *s);
-/* how a palettized target's colors become indices, a 6x6x6 cube's entries or the nearest without one. */
+/* palettized colors become indices through a 6x6x6 cube, or the nearest entry without one. */
 void D3dSurfQuantize(DDSURF *s, const BYTE *cube);
 
 /* ------------------------------------------------------------------ vertex buffers */
@@ -439,7 +433,7 @@ struct D3DVB {
 HRESULT D3dCreateVertexBuffer7(D3DOBJ *d3d, const D3DVERTEXBUFFERDESC *desc, DWORD flags,
                                IDirect3DVertexBuffer7 **out);
 D3DVB *D3dVbFromIface7(void *iface);
-/* the first interface's buffer, the same object behind another vtable. */
+/* the same object behind another vtable. */
 HRESULT D3dCreateVertexBuffer1(D3DOBJ *d3d, const D3DVERTEXBUFFERDESC *desc, DWORD flags,
                                IDirect3DVertexBuffer **out);
 D3DVB *D3dVbFromIface1(void *iface);

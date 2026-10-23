@@ -1,13 +1,13 @@
 /*
- * the socket driver, \Device\Afd. a socket file is bound to a non blocking
- * socket of the host. an operation that would block becomes a request
- * queued on its socket, and the host is asked to watch the socket; once
- * the watch fires, the worker thread retries the requests, records the
- * WSAEventSelect events and wakes the threads in select or WSAPoll.
+ * the socket driver, \Device\Afd. each socket file is bound to a non blocking
+ * host socket. an operation that would block becomes a request queued on its
+ * socket, and the host watches the socket; when the watch fires, the worker
+ * retries the requests, records WSAEventSelect events and wakes the threads in
+ * select or WSAPoll.
  *
- * requests complete like any overlapped i/o: the status block, the event,
- * an apc or the completion port of the file. data moves through one
- * bounce buffer, so the driver works under one lock.
+ * requests complete like any overlapped i/o: status block, event, apc or the
+ * file's completion port. data moves through one bounce buffer, so the driver
+ * works under one lock.
  */
 #include "../ntos.h"
 
@@ -83,16 +83,16 @@ typedef struct AFD_REQUEST {
     PIO_STATUS_BLOCK Iosb;
     NTSTATUS Status;
     ULONG_PTR Information;
-    BOOLEAN Pending; /* went pending, so even a failure reaches the apc or the port */
+    BOOLEAN Pending; /* went pending, so even a failure reaches the apc or port */
     ULONG Flags; /* MSG_* */
     ULONG Total;
     ULONG Transferred;
-    PVOID From;        /* receive: the caller's sockaddr and length */
+    PVOID From;        /* receive: the caller's sockaddr and its length */
     PVOID FromLength;
     LONG FromCapacity;
     BOOLEAN HasTo;
-    MIME_AFD_ADDRESS To; /* send: the destination of a datagram */
-    PFILE_OBJECT Accept;  /* accept: the socket that takes the connection */
+    MIME_AFD_ADDRESS To; /* send: a datagram's destination */
+    PFILE_OBJECT Accept;  /* accept: the socket taking the connection */
     PVOID AcceptAddresses;
     ULONG Count;
     MIME_AFD_BUFFER Buffers[];
@@ -101,7 +101,7 @@ typedef struct AFD_REQUEST {
 typedef struct AFD_SOCKET {
     LIST_ENTRY Links;
     ULONG Host; /* the host socket, 0 before IOCTL_AFD_CREATE */
-    ULONG ProcessId; /* of the process that opened it */
+    ULONG ProcessId; /* the opening process */
     ULONG Family;
     ULONG Type;
     ULONG Protocol;
@@ -169,7 +169,7 @@ static void unlock(void)
     KeReleaseMutex(&g_lock, FALSE);
 }
 
-/* a host call; 0 or the winsock error. */
+/* returns 0 or the winsock error. */
 static LONG host(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 *value)
 {
     ULONG64 v = 0;
@@ -250,8 +250,8 @@ static void free_request(AFD_REQUEST *r)
     ExFreePool(r);
 }
 
-/* reports the result: status block, event, then the apc or the completion port, which an error that
-   ended the request before it went pending skips, like windows. */
+/* status block, event, then apc or completion port. like windows, an error that ended the request
+   before it went pending skips the last step. */
 static void finish_request(AFD_REQUEST *r)
 {
     if (r->Iosb) {
@@ -302,7 +302,7 @@ static void fail_list(LIST_ENTRY *list, NTSTATUS status)
     }
 }
 
-/* copies between the bounce buffer and the request's buffers, from a byte offset. */
+/* between the bounce buffer and the request's buffers, from a byte offset. */
 static NTSTATUS move_data(AFD_REQUEST *r, ULONG offset, PUCHAR data, ULONG length, BOOLEAN to_user)
 {
     for (ULONG i = 0; i < r->Count && length; i++) {
@@ -373,7 +373,7 @@ static void connect_done(AFD_SOCKET *s, LONG error)
     }
 }
 
-/* takes in what the host saw; its error is gone from the host socket once read. */
+/* reading the host socket's error clears it there. */
 static void observe(AFD_SOCKET *s, ULONG revents, LONG error)
 {
     if (revents & MIME_NET_INVALID)
@@ -453,7 +453,7 @@ static void signal_select(AFD_SOCKET *s, ULONG revents)
     KeSetEvent(s->SelectEvent, IO_NO_INCREMENT, FALSE);
 }
 
-/* what the host polls found, by socket type and the events asked and found, for the statistics. */
+/* host poll statistics by socket type and events asked and found. */
 static struct {
     ULONG Key;
     ULONG64 Count;
@@ -471,7 +471,7 @@ static void count_poll(ULONG type, ULONG events, BOOLEAN arm, ULONG revents)
     }
 }
 
-/* asks the host what the socket is ready for; arm also watches the events asked. */
+/* asks the host what the socket is ready for; arm also watches the requested events. */
 static ULONG poll_socket(AFD_SOCKET *s, ULONG events, BOOLEAN arm)
 {
     g_poll.socket = s->Host;
@@ -491,7 +491,7 @@ static ULONG poll_socket(AFD_SOCKET *s, ULONG events, BOOLEAN arm)
     return revents;
 }
 
-/* the sockets polled most since the last dump, with what they asked and were told, for the lock statistics. */
+/* the most polled sockets since the last dump, with what they asked and got, for the lock statistics. */
 void AfdDumpStats(void)
 {
     LARGE_INTEGER none = {};
@@ -628,7 +628,7 @@ static ULONG try_accept(AFD_SOCKET *s, AFD_REQUEST *r)
         LONG e = host(MIME_HC_NET_ACCEPT, s->Host, pa(&g_addr), 0, 0, 0, &id);
         if (e == WSAEWOULDBLOCK)
             return AFD_BLOCKED;
-        /* a connection reset before it was accepted is skipped, like windows does. */
+        /* like windows, a connection reset before it was accepted is skipped. */
         if (e == WSAECONNABORTED || e == 10054)
             continue;
         if (e)
@@ -692,7 +692,7 @@ static BOOLEAN run_list(AFD_SOCKET *s, LIST_ENTRY *list, AFD_SOCKET **moved)
     return progress;
 }
 
-/* the host events the requests and the event selection wait for. */
+/* the host events that pending requests and the event selection wait for. */
 static ULONG wants(AFD_SOCKET *s)
 {
     ULONG w = 0;
@@ -705,8 +705,8 @@ static ULONG wants(AFD_SOCKET *s)
     if ((sel & (FD_READ | FD_OOB | FD_ACCEPT)) && !ended)
         w |= MIME_NET_READ;
     /*
-     * the end of the stream is told once the data is read, so a socket with data left has nothing to watch for:
-     * a watch on it would fire at once, again and again, until the program reads. reading starts the service.
+     * FD_CLOSE is reported once the data is read, so a socket with unread data has nothing to watch for: the
+     * watch would fire again and again until the program reads. reading restarts the service.
      */
     if ((sel & FD_CLOSE) && !s->CloseReported && s->Type == SOCK_STREAM && s->State == MIME_AFD_STATE_CONNECTED &&
         !ended && !(s->PollRevents & MIME_NET_READ))
@@ -716,7 +716,7 @@ static ULONG wants(AFD_SOCKET *s)
     return w;
 }
 
-/* retries what waits on a socket until nothing moves, then arms the host watches. */
+/* retries the waiting requests until nothing moves, then arms the host watches. */
 static void service(AFD_SOCKET *s)
 {
     for (int round = 0; round < 16 && s->Host && !s->Closed; round++) {
@@ -808,7 +808,7 @@ static NTSTATUS check_address(const MIME_AFD_ADDRESS *a, const AFD_SOCKET *s)
     return STATUS_SUCCESS;
 }
 
-/* starts a request: completes it now when it can, otherwise queues it or fails a non blocking one. */
+/* completes now when it can, otherwise queues it or fails a non blocking one. */
 static NTSTATUS start_request(AFD_SOCKET *s, AFD_REQUEST *r, LIST_ENTRY *list, BOOLEAN may_pend)
 {
     ULONG result = IsListEmpty(list) ? try_request(s, r) : AFD_BLOCKED;
@@ -870,7 +870,7 @@ static NTSTATUS transfer(PFILE_OBJECT file, AFD_SOCKET *s, BOOLEAN send, HANDLE 
     if (!NT_SUCCESS(status))
         return immediate(r, status, 0);
     r->Flags = t.Flags;
-    /* a connected stream ignores the destination, like windows. */
+    /* like windows, a connected stream ignores the destination. */
     if (send && t.Address && s->Type == SOCK_DGRAM) {
         status = KiCopyFromUser(&r->To, (PVOID)(ULONG_PTR)t.Address, sizeof(r->To));
         if (!NT_SUCCESS(status))
@@ -1142,7 +1142,7 @@ static NTSTATUS do_poll(PVOID input, ULONG in_len, PVOID output, ULONG out_len, 
             unlock();
             break;
         }
-        /* watch every socket for what its caller asked, then sleep until the worker ran. */
+        /* watch every socket for what the caller asked, then sleep until the worker ran. */
         for (ULONG i = 0; i < head.Count; i++) {
             ULONG asked = p->Entries[i].Events;
             hp[i].events = 0;
@@ -1257,13 +1257,13 @@ static NTSTATUS do_interfaces(PVOID output, ULONG out_len, ULONG_PTR *informatio
     return status;
 }
 
-/* the host's links, addresses, gateways and resolver, as the ip helper shows them. */
+/* the host's links, addresses, gateways and resolver, for the ip helper. */
 static NTSTATUS do_config(PVOID output, ULONG out_len, ULONG_PTR *information)
 {
     PUCHAR config = ExAllocatePool2(POOL_FLAG_NON_PAGED, AFD_CONFIG_SIZE, KI_TAG('A', 'f', 'd', 'C'));
     if (!config)
         return STATUS_INSUFFICIENT_RESOURCES;
-    /* the host reads its configuration on its own, so the sockets need not wait. */
+    /* the host reads its configuration itself, so the sockets need not wait. */
     ULONG64 size = 0;
     LONG e = host(MIME_HC_NET_CONFIG, pa(config), AFD_CONFIG_SIZE, 0, 0, 0, &size);
     NTSTATUS status = MimeAfdStatus(e);
@@ -1323,7 +1323,7 @@ static NTSTATUS do_sockets(PVOID output, ULONG out_len, ULONG_PTR *information)
     return status;
 }
 
-/* the requests that answer at once, under the lock. */
+/* requests answered at once, under the lock. */
 static NTSTATUS control(AFD_SOCKET *s, ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len,
                         ULONG_PTR *information)
 {
@@ -1546,7 +1546,7 @@ NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID cont
     case IOCTL_AFD_ACCEPT:
         return do_accept(file, s, event, apc, context, iosb, input, in_len);
     }
-    /* the rest answers at once and completes like a synchronous request. */
+    /* the rest answer at once and complete like a synchronous request. */
     NTSTATUS status;
     AFD_REQUEST *r = new_request(file, AFD_RECV, 0, event, apc, context, iosb, &status);
     if (!r)
@@ -1581,7 +1581,7 @@ NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID cont
     return immediate(r, status, information);
 }
 
-/* NtReadFile and NtWriteFile of a socket: a receive or a send without flags. */
+/* a receive or a send without flags. */
 NTSTATUS AfdReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
                       PVOID buffer, ULONG length)
 {
@@ -1628,7 +1628,7 @@ static BOOLEAN cancel_list(LIST_ENTRY *list, PFILE_OBJECT file, PETHREAD thread,
     return found;
 }
 
-/* CancelIo with the thread, CancelIoEx with the status block of one request or neither. */
+/* CancelIo passes the thread, CancelIoEx the status block of one request or neither. */
 NTSTATUS AfdCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb)
 {
     AFD_SOCKET *s = file->FsContext;
@@ -1687,7 +1687,7 @@ static NTSTATUS NTAPI afd_create(PDEVICE_OBJECT device, PIRP irp)
     return complete_irp(irp, STATUS_SUCCESS, 0);
 }
 
-/* the last handle went: pending requests end and the host socket closes. */
+/* the last handle is gone: pending requests end and the host socket closes. */
 static NTSTATUS NTAPI afd_cleanup(PDEVICE_OBJECT device, PIRP irp)
 {
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
@@ -1730,7 +1730,7 @@ static NTSTATUS NTAPI afd_volume(PDEVICE_OBJECT device, PIRP irp)
         return complete_irp(irp, STATUS_INVALID_PARAMETER, 0);
     if (stack->Parameters.QueryVolume.Length < sizeof(FILE_FS_DEVICE_INFORMATION))
         return complete_irp(irp, STATUS_BUFFER_TOO_SMALL, 0);
-    /* GetFileType calls a socket a pipe, like windows does. */
+    /* like windows, GetFileType calls a socket a pipe. */
     FILE_FS_DEVICE_INFORMATION *info = irp->AssociatedIrp.SystemBuffer;
     info->DeviceType = FILE_DEVICE_NAMED_PIPE;
     info->Characteristics = 0;

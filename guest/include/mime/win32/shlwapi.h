@@ -1,6 +1,6 @@
 /*
- * shell light weight utilities, shlwapi.dll: paths, strings, urls, the registry helpers,
- * associations and the small com helpers. kernelbase and shcore host many of them.
+ * shlwapi.dll: paths, strings, urls, registry helpers, associations and small com helpers.
+ * kernelbase and shcore host many of them.
  */
 #ifndef MIME_WIN32_SHLWAPI_H
 #define MIME_WIN32_SHLWAPI_H
@@ -498,7 +498,7 @@ LWSTDAPI BOOL WINAPI IsInternetESCEnabled(void);
     UrlCanonicalizeW(url, out, size, URL_ESCAPE_SPACES_ONLY | URL_DONT_ESCAPE_EXTRA_INFO)
 #define UrlUnescapeInPlace(url, flags) UrlUnescapeW(url, nullptr, nullptr, (flags) | URL_UNESCAPE_INPLACE)
 
-/* ------------------------------------------------------------------ the registry */
+/* ------------------------------------------------------------------ registry */
 
 #define SRRF_RT_REG_NONE 0x00000001
 #define SRRF_RT_REG_SZ 0x00000002

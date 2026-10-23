@@ -27,7 +27,7 @@ HRESULT MimeShareHResult(NTSTATUS status)
     }
 }
 
-/* the whole path of a name in the namespace of the session: names reach the session's directory of named objects. */
+/* names live in the session's BaseNamedObjects directory. */
 static BOOL full_name(LPCWSTR name, WCHAR *out, UINT chars)
 {
     DWORD session = 0;
@@ -111,7 +111,7 @@ HRESULT MimeShareOpen(HANDLE handle, UINT kind, MimeShare *share, void *data, UI
     share->id = a.Id;
     share->kind = a.Kind;
     share->flags = a.Flags;
-    /* the legacy handle belongs to the maker: closing an opened object does not take it away. */
+    /* the legacy handle belongs to the creator: closing an opened object does not take it away. */
     share->legacy = 0;
     if (size)
         *size = a.Size;
@@ -123,7 +123,7 @@ HRESULT MimeShareKind(HANDLE handle, UINT *kind)
     MimeGfxShare a = {};
     a.Handle = (ULONG_PTR)handle;
     NTSTATUS status = call(MIME_GFXSHARE_OPEN, &a);
-    /* the description is not asked for, the kind is answered whether it fits or not. */
+    /* no room is given for the description, but the kind comes back even when it does not fit. */
     if (!NT_SUCCESS(status) && status != STATUS_BUFFER_TOO_SMALL)
         return MimeShareHResult(status);
     *kind = a.Kind;

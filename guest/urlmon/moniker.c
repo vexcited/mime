@@ -1,7 +1,7 @@
 /*
- * url monikers and the bind status callbacks bind contexts carry. a url moniker binds to storage through the
- * download engine, synchronously: an asynchronous binding gets its data through OnDataAvailable before
- * BindToStorage returns MK_S_ASYNCHRONOUS.
+ * url monikers and the bind status callbacks bind contexts carry. binding to storage runs the download engine
+ * synchronously, so an asynchronous binding gets its data through OnDataAvailable before BindToStorage returns
+ * MK_S_ASYNCHRONOUS.
  */
 #include "urlmon_private.h"
 
@@ -61,7 +61,7 @@ static HRESULT STDMETHODCALLTYPE um_IsDirty(IMoniker *iface)
     return S_FALSE;
 }
 
-/* the persisted form: the length in bytes with the terminator, then the url. */
+/* persisted as the byte length including the terminator, then the url. */
 static HRESULT STDMETHODCALLTYPE um_Load(IMoniker *iface, IStream *stream)
 {
     URL_MONIKER *moniker = moniker_of(iface);
@@ -269,7 +269,7 @@ static const IMonikerVtbl UrlMonikerVtbl = {
     um_GetDisplayName, um_ParseDisplayName, um_IsSystemMoniker,
 };
 
-/* a url resolved against the display name of a context moniker, as UrlCombine joins them. */
+/* resolves against the context moniker's display name, joined like UrlCombine. */
 static PWSTR Resolve(IMoniker *context, LPCWSTR url, DWORD flags)
 {
     LPOLESTR base = nullptr;

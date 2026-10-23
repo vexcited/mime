@@ -1,6 +1,6 @@
 /*
- * paths and volumes: full and long names, current, system and temporary
- * directories, searching, drives and volume information.
+ * paths and volumes: full and long names, current, system and temporary directories, searching, drives and volume
+ * information.
  */
 #include "kernelbase_private.h"
 
@@ -31,7 +31,7 @@ typedef struct KB_FILE_FS_FULL_SIZE_INFORMATION {
     ULONG BytesPerSector;
 } KB_FILE_FS_FULL_SIZE_INFORMATION;
 
-/* copies a string result with the usual convention: length on success, size needed otherwise. */
+/* returns the length on success, the size needed otherwise. */
 static UINT copy_result(LPCWSTR value, LPWSTR buffer, UINT size)
 {
     UINT n = (UINT)wcslen(value);
@@ -390,7 +390,7 @@ BOOL WINAPI SetSearchPathMode(DWORD flags)
     return TRUE;
 }
 
-/* the default search order: application directory, current directory, system, windows, then PATH. */
+/* the default search order: application directory, current directory, system, the Windows directory, then PATH. */
 static PWSTR default_search_path(void)
 {
     PRTL_USER_PROCESS_PARAMETERS pp = KbParams();
@@ -562,7 +562,7 @@ DWORD WINAPI GetLogicalDriveStringsA(DWORD size, LPSTR buffer)
     return need;
 }
 
-/* builds the root of the volume a path refers to, such as C:\ or \\server\share\. */
+/* the volume root of a path, such as C:\ or \\server\share\. */
 static BOOL volume_root(LPCWSTR path, PWSTR root, SIZE_T chars)
 {
     WCHAR full[MAX_PATH * 2];
@@ -1007,7 +1007,7 @@ BOOL WINAPI DefineDosDeviceW(DWORD flags, LPCWSTR device, LPCWSTR target)
         KbSetError(ERROR_PATH_NOT_FOUND);
         return FALSE;
     }
-    /* windows stacks definitions, here a new definition replaces the current one. */
+    /* Windows stacks definitions, here a new one replaces the current one. */
     UNICODE_STRING us;
     RtlInitUnicodeString(&us, path);
     OBJECT_ATTRIBUTES oa;
@@ -1040,8 +1040,8 @@ BOOL WINAPI DefineDosDeviceA(DWORD flags, LPCSTR device, LPCSTR target)
 }
 
 /*
- * a 32-bit program asks for the files of System32 to be left alone by setting a word of its teb, which the translator
- * reads, see wow32.c. Nothing else is redirected in a program of the machine.
+ * a 32-bit program turns System32 redirection off by setting a word in its teb, which the translator reads, see
+ * wow32.c. Native programs are never redirected.
  */
 #ifdef __i386__
 #include <mime/wow32.h>

@@ -1,8 +1,6 @@
 /*
- * the objects of the windows runtime classes that are written in C: a count of references shared by the
- * interfaces of an object, the queries between them, and the three methods every runtime interface starts with.
- * an object is a WRT_OBJECT first and its own fields after; each of its interfaces is a WRT_IFACE of the object's,
- * whose vtable the object is made with, and the class lists their identifiers in the same order.
+ * Windows runtime objects written in C. an object starts with a WRT_OBJECT holding one reference count for all its
+ * interfaces; each interface is a WRT_IFACE, and the class lists their iids in the same order as the vtables.
  */
 #ifndef MIME_WINRT_OBJECT_H
 #define MIME_WINRT_OBJECT_H
@@ -23,7 +21,7 @@ typedef struct WRT_CLASS {
     LPCWSTR Name;
     ULONG Count;
     const IID *Iids[WRT_MAX_INTERFACES];
-    /* the interfaces GetIids does not list: programs ask for them by identifier alone. */
+    /* bitmask of interfaces GetIids hides: programs ask for them by iid only. */
     ULONG Hidden;
     void (*Destroy)(WRT_OBJECT *object);
 } WRT_CLASS;
@@ -34,7 +32,6 @@ struct WRT_OBJECT {
     WRT_IFACE Ifaces[WRT_MAX_INTERFACES];
 };
 
-/* an object with one reference, its interfaces made with these vtables. */
 FORCEINLINE void WrtInit(WRT_OBJECT *object, const WRT_CLASS *class, const void *const *vtables)
 {
     object->Refs = 1;
@@ -103,7 +100,7 @@ FORCEINLINE HRESULT WrtGetIids(WRT_IFACE *self, ULONG *count, IID **iids)
     return S_OK;
 }
 
-/* strings are combase's, reached at run time as the dlls that are not core ones reach each other. */
+/* HSTRINGs belong to combase, loaded at run time like other non core dlls do. */
 FORCEINLINE HRESULT WrtGetRuntimeClassName(WRT_IFACE *self, HSTRING *name)
 {
     typedef HRESULT(WINAPI * CREATE)(LPCWSTR, UINT32, HSTRING *);
@@ -126,7 +123,6 @@ FORCEINLINE HRESULT WrtGetTrustLevel(WRT_IFACE *self, TrustLevel *level)
     return S_OK;
 }
 
-/* the methods of IUnknown and of IInspectable of an interface T, for its vtable. */
 #define WRT_UNKNOWN_THUNKS(T)                                                                                          \
     static HRESULT STDMETHODCALLTYPE T##_QueryInterface(T *This, REFIID riid, void **object)                           \
     {                                                                                                                  \

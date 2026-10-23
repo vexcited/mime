@@ -1,11 +1,9 @@
 /*
- * Unicode character data: combining classes, decompositions, composition and simple case mappings, from the tables
- * tools/nls/genunicode.py makes of the Unicode Character Database.
+ * Unicode character data from the Unicode Character Database: combining classes, decompositions, composition and
+ * simple case mappings.
  */
 #include "kernelbase_private.h"
 #include "nls_unidata.h"
-
-/* ------------------------------------------------------------------ Hangul */
 
 #define HANGUL_S_BASE 0xAC00
 #define HANGUL_L_BASE 0x1100
@@ -17,9 +15,6 @@
 #define HANGUL_N_COUNT (HANGUL_V_COUNT * HANGUL_T_COUNT)
 #define HANGUL_S_COUNT (HANGUL_L_COUNT * HANGUL_N_COUNT)
 
-/* ------------------------------------------------------------------ lookups */
-
-/* the position of a key in a sorted array of 32 bit values, or -1. */
 static LONG find32(const UINT32 *keys, ULONG count, ULONG key)
 {
     LONG lo = 0, hi = (LONG)count - 1;
@@ -51,7 +46,7 @@ BOOL KbUniIsNonspacing(ULONG cp)
     return g_uni_mark_blocks[g_uni_mark_index[cp >> 7] * 128 + (cp & 127)] != 0;
 }
 
-/* the units of the full decomposition of a character, or 0 when it has none. */
+/* full decomposition, returns the number of units, 0 when there is none. */
 int KbUniDecompose(ULONG cp, BOOL compat, WCHAR *out)
 {
     if (cp < (compat ? 0xA0u : 0xC0u))
@@ -88,7 +83,7 @@ int KbUniDecompose(ULONG cp, BOOL compat, WCHAR *out)
     return n;
 }
 
-/* the character a pair composes to, or 0. */
+/* 0 when the pair does not compose. */
 ULONG KbUniCompose(ULONG first, ULONG second, BOOL hangul)
 {
     if (hangul && first >= HANGUL_L_BASE && first < HANGUL_L_BASE + HANGUL_L_COUNT && second >= HANGUL_V_BASE &&
@@ -101,7 +96,7 @@ ULONG KbUniCompose(ULONG first, ULONG second, BOOL hangul)
     while (lo <= hi) {
         LONG mid = (lo + hi) / 2;
         if (g_uni_comp_first[mid] == first) {
-            /* the entries of one first character are together, sorted by the second. */
+            /* entries with the same first character are adjacent, sorted by the second. */
             LONG a = mid;
             while (a > 0 && g_uni_comp_first[a - 1] == first)
                 a--;
@@ -117,8 +112,6 @@ ULONG KbUniCompose(ULONG first, ULONG second, BOOL hangul)
     }
     return 0;
 }
-
-/* ------------------------------------------------------------------ case */
 
 static ULONG case_lookup(ULONG cp, const UINT16 *index, const INT32 *blocks, const UINT32 *sup_cp, const UINT32 *sup_to,
                          ULONG sup_count)

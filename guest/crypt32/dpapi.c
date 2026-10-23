@@ -1,23 +1,16 @@
 /*
- * data protection: CryptProtectData and CryptUnprotectData, the master keys
- * they use, and CryptProtectMemory.
+ * data protection: CryptProtectData, CryptUnprotectData, their master keys, and CryptProtectMemory.
  *
- * windows protects data in lsass, which keeps for each user master keys of 64
- * random bytes in %APPDATA%\Microsoft\Protect\<sid>, each file encrypted
- * with a key derived from the user's password, and the machine's in
- * System32\Microsoft\Protect\S-1-5-18\User under the DPAPI_SYSTEM secret of
- * lsa. mime runs no lsass, so crypt32 does that work in the calling process,
- * in the same files and the same blob format.
+ * windows does this in lsass, which keeps per user master keys of 64 random bytes in
+ * %APPDATA%\Microsoft\Protect\<sid>, each file encrypted with a key derived from the user's password, and the
+ * machine's in System32\Microsoft\Protect\S-1-5-18\User under the lsa secret DPAPI_SYSTEM. mime has no lsass, so
+ * crypt32 does the work in the calling process, with the same files and blob format.
  *
- * mime's users have no password. their master keys are protected the way
- * windows protects them for an account with a blank password: the pre-key
- * is HMAC-SHA1 of the user's sid, keyed with SHA-1 of the empty utf-16
- * password. that secret is stable for as long as the user's sid is, keeps
- * the keys readable across restarts and copies of drive_c, and protects
- * nothing from someone who holds the profile, exactly like a passwordless
- * windows account. the machine keys take the place of DPAPI_SYSTEM with
- * SHA-1 of the installation's MachineGuid, so data protected for the local
- * machine is bound to this installation.
+ * mime users have no password, so their master keys are protected as windows protects a blank password account:
+ * the pre-key is HMAC-SHA1 of the user's sid, keyed with SHA-1 of the empty UTF-16 password. it is stable as long
+ * as the sid is, survives restarts and copies of drive_c, and protects nothing from whoever holds the profile.
+ * machine keys use SHA-1 of the installation's MachineGuid in place of DPAPI_SYSTEM, binding local machine data
+ * to this installation.
  */
 #include "crypt32_private.h"
 #include <crypto/crypto.h>
@@ -83,7 +76,7 @@ static void guid_text(const GUID *g, WCHAR *out)
     out[36] = 0;
 }
 
-/* the textual form of the token user's sid, S-R-I-S1-S2... */
+/* the token user's sid as text, S-R-I-S1-S2... */
 static BOOL user_sid(WCHAR *out, DWORD capacity)
 {
     HANDLE token;
@@ -253,7 +246,7 @@ typedef struct {
 
 static_assert(sizeof(MASTER_KEY_FILE) == 128, "master key header");
 
-/* the key and iv that encrypt a master key: pbkdf2 of the pre-key, as the public descriptions of dpapi give it. */
+/* the key and iv that encrypt a master key: PBKDF2 of the pre-key, per the public DPAPI descriptions. */
 static void master_key_cipher(const BYTE prekey[20], const MASTER_KEY_SECTION *section, MimeAes *aes, BYTE iv[16])
 {
     BYTE derived[48];
@@ -382,7 +375,7 @@ static BOOL find_master_key(BOOL machine, const GUID *guid, MASTER_KEY *out)
     return ok;
 }
 
-/* the key the Preferred file names while it has not expired, else a new one it is made to name. */
+/* the key the Preferred file names while it has not expired, else a new key it then names. */
 static BOOL preferred_master_key(BOOL machine, MASTER_KEY *out)
 {
     WCHAR dir[MAX_PATH * 2], path[MAX_PATH * 2];
@@ -457,7 +450,7 @@ static DWORD blob_key_size(DWORD alg)
     return 0;
 }
 
-/* hmac of the master key's sha-1 over a salt, the entropy following: the session key and the signing key. */
+/* HMAC keyed with the master key's SHA-1 over a salt, then the entropy: the session key and the signing key. */
 static void blob_key(const MimeHashAlg *hash, const MASTER_KEY *key, const BYTE *salt, DWORD salt_size,
                      const DATA_BLOB *entropy, BYTE *out)
 {
@@ -507,7 +500,7 @@ static void put32(BYTE **p, DWORD value)
     put(p, &value, 4);
 }
 
-/* the prompt structure applies when it asks for one; without ui the prompt is skipped, or refused when ui is forbidden. */
+/* the prompt applies only when it asks for one; without ui it is skipped, or refused when ui is forbidden. */
 static DWORD prompt_flags(const CRYPTPROTECT_PROMPTSTRUCT *prompt)
 {
     return prompt ? prompt->dwPromptFlags & (CRYPTPROTECT_PROMPT_ON_UNPROTECT | CRYPTPROTECT_PROMPT_ON_PROTECT |
@@ -731,11 +724,9 @@ BOOL WINAPI CryptUpdateProtectedState(PSID pOldSid, LPCWSTR pwszOldPassword, DWO
 /* ------------------------------------------------------------------ memory */
 
 /*
- * windows encrypts these blocks in the kernel with keys it holds for the
- * process, the logon session or the boot. mime derives the three from a
- * secret of the boot, sha-256 of the machine guid and the boot time, mixed
- * with the process id and creation time or the logon id: stable for as long
- * as windows' would be, without state to keep.
+ * windows encrypts these blocks in the kernel with per process, per logon session or per boot keys. mime derives
+ * all three from a boot secret, SHA-256 of the machine guid and boot time, mixed with the process id and creation
+ * time or the logon id: as stable as windows' keys, with no state to keep.
  */
 static BOOL memory_key(DWORD flags, MimeAes *aes, BYTE iv[16])
 {

@@ -1,4 +1,4 @@
-/* the service side of the dhcp client, which mime does not run: the rpc server is unavailable. */
+/* the dhcp client service side, which mime does not run: the rpc server is unavailable. */
 #include <mime/stubexport.h>
 
 MIME_STUB_RETURN("dhcpcsvc", DWORD, DhcpAcquireParameters, 1, 1722)

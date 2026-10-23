@@ -1,16 +1,11 @@
 /*
- * the process random generator behind SystemFunction036 (RtlGenRandom) and
- * CryptGenRandom.
+ * the process random generator behind SystemFunction036, also known as RtlGenRandom, and CryptGenRandom.
  *
- * windows draws these bytes from bcryptprimitives, which the kernel seeds
- * through \Device\CNG. the generator here asks that device first, so it
- * uses the kernel's randomness as soon as mime's kernel provides one. mime's
- * kernel has no entropy source yet, so until then the seed is the best the
- * guest offers: the jitter of the performance counter around system calls,
- * the time, the identity of the process and thread, addresses, the system
- * counters and the machine guid the host drew at installation. the bytes are
- * then produced by chacha20 with fast key erasure, keyed by sha-256 of that
- * pool, and reseeded with fresh timings as the process runs.
+ * windows draws these bytes from bcryptprimitives, seeded by the kernel through \Device\CNG. this generator asks
+ * that device first, so it uses kernel randomness once mime's kernel provides some. until then the seed is the best
+ * the guest has: performance counter jitter around system calls, the time, the process and thread ids, addresses,
+ * system counters and the machine guid the host drew at installation. output comes from chacha20 with fast key
+ * erasure, keyed by sha-256 of that pool and reseeded with fresh timings as the process runs.
  */
 #include "advapi32_private.h"
 #include <crypto/crypto.h>
@@ -52,7 +47,7 @@ static struct {
     BYTE Key[32];
     ULONG64 Requests;
     HANDLE Device;
-    LONG DeviceState; /* 0 untried, 1 present, 2 absent */
+    LONG DeviceState; /* 0 untried, 1 present, 2 absent. */
 } g_rng;
 
 static ULONG64 counter(void)
@@ -86,7 +81,7 @@ static BOOL kernel_random(BYTE *out, ULONG size)
     return FALSE;
 }
 
-/* the timing of system calls: the host schedules the virtual processors, so the low bits wander. */
+/* system call timing: the host schedules the virtual processors, so the low bits wander. */
 static void add_jitter(SHA256 *pool, int rounds)
 {
     for (int i = 0; i < rounds; i++) {
@@ -121,7 +116,7 @@ static void add_system_state(SHA256 *pool)
     sha256_update(pool, &teb->ClientId, sizeof(teb->ClientId));
 }
 
-/* the guid the host drew for this installation: secret to nobody, but different on every machine. */
+/* the guid the host drew for this installation: not secret, but different on every machine. */
 static void add_machine_guid(SHA256 *pool)
 {
     HKEY key;

@@ -1,11 +1,7 @@
-/*
- * mfplat.dll, the media foundation platform: startup, time, the frame rate
- * conversions and transform enumeration. the objects live in the other
- * files, see docs/mfplat.md.
- */
+/* mfplat.dll, the media foundation platform: startup, time, frame rate conversions and transform enumeration. */
 #include "mfplat_private.h"
 
-/* the compiler references it from code using floating point, without a crt to define it. */
+/* floating point code references it and there is no crt to define it. */
 int _fltused = 0x9875;
 
 static LONG g_startups;
@@ -47,9 +43,7 @@ void WINAPI MFHeapFree(void *p)
     MfFree(p);
 }
 
-/* ------------------------------------------------------------------ startup */
-
-/* any version up to 2.x starts, MFSTARTUP_LITE only leaves out sockets. */
+/* any version up to 2.x starts. MFSTARTUP_LITE only leaves out sockets. */
 HRESULT WINAPI MFStartup(ULONG version, DWORD flags)
 {
     if ((version & 0xFFFF0000) > 0x00020000)
@@ -89,9 +83,7 @@ HRESULT WINAPI MFUnlockPlatform(void)
     return MFShutdown();
 }
 
-/* ------------------------------------------------------------------ time */
-
-/* a times b plus d, over c, with a 128 bit product. */
+/* (a * b + d) / c with a 128-bit product. */
 LONGLONG WINAPI MFllMulDiv(LONGLONG a, LONGLONG b, LONGLONG c, LONGLONG d)
 {
     if (!c)
@@ -104,7 +96,7 @@ LONGLONG WINAPI MFllMulDiv(LONGLONG a, LONGLONG b, LONGLONG c, LONGLONG d)
     ULONGLONG middle = (lo_lo >> 32) + (DWORD)hi_lo + (DWORD)lo_hi;
     ULONGLONG low = (middle << 32) | (DWORD)lo_lo;
     ULONGLONG high = hi_hi + (hi_lo >> 32) + (lo_hi >> 32) + (middle >> 32);
-    /* the signed product plus d, kept as a magnitude and a sign. */
+    /* add d, keeping the result as a magnitude and a sign. */
     if (d) {
         BOOL d_negative = d < 0;
         ULONGLONG ud = d < 0 ? 0 - (ULONGLONG)d : (ULONGLONG)d;
@@ -137,7 +129,7 @@ LONGLONG WINAPI MFllMulDiv(LONGLONG a, LONGLONG b, LONGLONG c, LONGLONG d)
     return negative != c_negative ? (LONGLONG)(0 - quotient) : (LONGLONG)quotient;
 }
 
-/* 100 ns units since the dll loaded, from the performance counter. */
+/* 100 ns units since the dll loaded. */
 MFTIME WINAPI MFGetSystemTime(void)
 {
     LARGE_INTEGER now;
@@ -146,7 +138,7 @@ MFTIME WINAPI MFGetSystemTime(void)
     return MFllMulDiv(now.QuadPart - g_time_base.QuadPart, 10000000, g_time_frequency.QuadPart, 0);
 }
 
-/* the rates whose frame times windows rounds its own way. */
+/* windows rounds the frame times of these rates its own way. */
 static const struct {
     UINT64 time;
     UINT32 numerator, denominator;
@@ -203,8 +195,6 @@ HRESULT WINAPI MFAverageTimePerFrameToFrameRate(UINT64 time, UINT32 *numerator, 
     *denominator = (UINT32)time / a;
     return S_OK;
 }
-
-/* ------------------------------------------------------------------ transforms */
 
 /* mime registers no transforms, so every enumeration is empty. */
 HRESULT WINAPI MFTEnumEx(GUID category, UINT32 flags, const MFT_REGISTER_TYPE_INFO *input,

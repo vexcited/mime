@@ -1,7 +1,6 @@
 /*
- * cryptui: the certificate manager and viewer as plain message boxes over
- * crypt32's stores and names, after the argument checks windows' dialogs
- * make. the wizards and the other dialogs are not there.
+ * cryptui: the certificate manager and viewer as plain message boxes over crypt32's stores and names, after the
+ * same argument checks as windows' dialogs. the wizards and other dialogs are missing.
  */
 #define CRYPTUIAPI
 #include <mime/win32/cryptuiapi.h>
@@ -29,7 +28,7 @@ static BOOL load_crypt32(void)
     return g_crypt32.open && g_crypt32.next && g_crypt32.close && g_crypt32.name;
 }
 
-/* appends without overflowing, the text cut where it no longer fits. */
+/* appends without overflowing, truncating what does not fit. */
 static void append(WCHAR *text, SIZE_T size, LPCWSTR more)
 {
     SIZE_T length = wcslen(text);

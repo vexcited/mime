@@ -11,7 +11,7 @@ typedef struct {
     LONG left, top, right, bottom;
 } BAG_RECTL;
 
-/* the value as type vt, whatever type the bag gave back. */
+/* coerces whatever type the bag returns to vt. */
 static HRESULT read_type(IPropertyBag *bag, LPCWSTR name, VARIANT *value, VARTYPE vt)
 {
     memset(value, 0, sizeof(*value));
@@ -181,7 +181,7 @@ HRESULT WINAPI PSPropertyBag_WritePropertyKey(IPropertyBag *bag, LPCWSTR name, R
     return hr;
 }
 
-/* compound values are one property per field, "name.field". */
+/* compound values are stored as one property per field, "name.field". */
 static HRESULT field_name(LPCWSTR name, LPCWSTR field, WCHAR *out)
 {
     SIZE_T a = wcslen(name), b = wcslen(field);

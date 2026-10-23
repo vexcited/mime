@@ -1,9 +1,6 @@
 /*
- * security support provider interface: secur32.dll and schannel.dll.
- *
- * secur32 implements the interface; schannel forwards its sspi exports
- * there, like both forward to sspicli.dll on windows. the declarations
- * cover sspi.h, secext.h and the lsa client calls of ntsecapi.h.
+ * security support provider interface of secur32.dll. schannel.dll forwards its sspi exports there.
+ * covers sspi.h, secext.h and the lsa client calls of ntsecapi.h.
  */
 #ifndef MIME_WIN32_SSPI_H
 #define MIME_WIN32_SSPI_H
@@ -198,7 +195,7 @@ typedef void(SEC_ENTRY *SEC_GET_KEY_FN)(void *arg, void *principal, ULONG key_ve
 #define SCHANNEL_CRED_VERSION 4
 #define SCH_CREDENTIALS_VERSION 5
 
-/* the identity structures passed as authentication data. */
+/* identity structures passed as authentication data. */
 #define SEC_WINNT_AUTH_IDENTITY_ANSI 0x1
 #define SEC_WINNT_AUTH_IDENTITY_UNICODE 0x2
 #define SEC_WINNT_AUTH_IDENTITY_VERSION 0x200
@@ -478,7 +475,7 @@ typedef enum _POLICY_NOTIFICATION_INFORMATION_CLASS {
     PolicyNotifyMax
 } POLICY_NOTIFICATION_INFORMATION_CLASS, *PPOLICY_NOTIFICATION_INFORMATION_CLASS;
 
-/* the logon identifiers below point to a LUID: two 32 bit halves, low part first. */
+/* the logon ids below point to a LUID: two 32-bit halves, low part first. */
 typedef void *PSSPI_LUID;
 
 /* ------------------------------------------------------------------ secur32 exports */

@@ -1,7 +1,4 @@
-/*
- * what every direct3d 9 resource does alike: the device it holds a
- * reference on, private data, priorities, and the memory programs lock.
- */
+/* what every direct3d 9 resource shares: the device reference, private data, priority and lockable memory. */
 #include "d3d9_private.h"
 
 #define D3DSPD_IUNKNOWN 0x00000001
@@ -118,8 +115,6 @@ DWORD D9ResourceSetPriority(D9Resource *r, DWORD priority)
     return old;
 }
 
-/* ------------------------------------------------------------------ memory */
-
 HRESULT D9AllocMemory(D9Memory *memory, const D9Format *f, UINT width, UINT height, UINT depth)
 {
     memory->pitch = D9FormatPitch(f, width);
@@ -136,7 +131,7 @@ void D9FreeMemory(D9Memory *memory)
     memory->bytes = nullptr;
 }
 
-/* a lock's rectangle within a level, whole blocks of compressed formats. */
+/* the rectangle must lie within the level and, for compressed formats, on whole blocks. */
 BOOL D9LockRect(const D9Format *f, UINT width, UINT height, const RECT *rect, RECT *out)
 {
     if (!rect) {

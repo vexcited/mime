@@ -1,12 +1,11 @@
 /*
  * registry change notification, NtNotifyChangeKey and NtNotifyChangeMultipleKeys.
  *
- * a key handle keeps at most one notify block, made by its first request. The block holds the filter and the
- * subtree flag of that request, which later requests on the handle keep, and a flag for a change that happened
- * while no request waited, which the next request answers at once. A request is a post, registered with an arm on
- * the block of its key, and with a second arm for the one subordinate key of NtNotifyChangeMultipleKeys. The first
- * change to reach an arm answers the post: a synchronous caller wakes, the others get their status block, event
- * and apc routine once the registry lock is out. See docs/ntoskrnl.md.
+ * a key handle has at most one notify block, made by its first request. the block keeps that request's filter
+ * and subtree flag for later requests on the handle, and a flag for a change that came while no request waited,
+ * which the next request answers at once. a request is a post with an arm on its key's block, and a second arm
+ * for the subordinate key of NtNotifyChangeMultipleKeys. the first change to reach an arm answers the post: a
+ * synchronous caller wakes, the others get their status block, event and apc once the registry lock is released.
  */
 #include "cm.h"
 
@@ -17,7 +16,7 @@
 typedef struct CM_POST CM_POST;
 
 typedef struct CM_ARM {
-    LIST_ENTRY Links; /* in the arms of the block, when Notify is set */
+    LIST_ENTRY Links; /* in the block's arms, while Notify is set */
     CM_NOTIFY *Notify;
     CM_POST *Post;
 } CM_ARM;
@@ -33,7 +32,7 @@ struct CM_NOTIFY {
 };
 
 struct CM_POST {
-    LIST_ENTRY Links; /* the waiting posts, then the answered ones that wait for the lock to be out */
+    LIST_ENTRY Links; /* waiting posts, then answered ones waiting for the lock to be released */
     CM_ARM Arm[2];
     PEPROCESS Process;
     PETHREAD Thread;
@@ -41,7 +40,7 @@ struct CM_POST {
     PIO_STATUS_BLOCK Iosb; /* the caller's, bit 0 set for the 32-bit layout, none for a thread agnostic post */
     PVOID ApcRoutine;
     PVOID ApcContext;
-    CM_KEY_BODY *Subordinate; /* the second key, held by name for as long as the post lives */
+    CM_KEY_BODY *Subordinate; /* the second key, held by name while the post lives */
     NTSTATUS Status;
     BOOLEAN Sync;
     BOOLEAN Agnostic;
@@ -90,7 +89,7 @@ static void answer(CM_POST *post, NTSTATUS status)
     __atomic_add_fetch(&CmpNotifyReady, 1, __ATOMIC_SEQ_CST);
 }
 
-/* answers the posts waiting on a block: all of them for a change, only the first key's for the end of a key. */
+/* a change answers every post on the block; a key's end answers only posts on their first key. */
 static void answer_all(CM_NOTIFY *n, NTSTATUS status, BOOLEAN change)
 {
     while (!IsListEmpty(&n->Arms)) {
@@ -129,7 +128,7 @@ static void copy_to_process(PEPROCESS process, PVOID address, const void *source
     IopCopyToProcess(process, address, source, length);
 }
 
-/* the status block, then the event, then the apc routine, for a post answered while the lock was held. */
+/* for a post answered while the lock was held: the status block, then the event, then the apc. */
 static void finish(CM_POST *post)
 {
     if (post->Iosb) {
@@ -147,7 +146,7 @@ static void finish(CM_POST *post)
     release_post(post);
 }
 
-/* to be called with the lock out, by whoever released it. */
+/* called by whoever released the lock, with it released. */
 void CmpNotifyFinish(void)
 {
     for (;;) {
@@ -173,7 +172,7 @@ static BOOLEAN is_below(CM_NODE *ancestor, CM_NODE *node)
     return FALSE;
 }
 
-/* a change of a key's names, values, attributes or security, lock held. */
+/* lock held. */
 void CmpNotifyChange(CM_NODE *node, ULONG filter)
 {
     if (!CmpNotifyCount)
@@ -189,7 +188,7 @@ void CmpNotifyChange(CM_NODE *node, ULONG filter)
     }
 }
 
-/* the key is gone: what waits on it ends with the clean up status, and the key's handles keep no block. */
+/* waiters end with STATUS_NOTIFY_CLEANUP and the key's handles drop their block. */
 void CmpNotifyKeyDeleted(CM_NODE *node)
 {
     if (!CmpNotifyCount)
@@ -204,7 +203,6 @@ void CmpNotifyKeyDeleted(CM_NODE *node)
     }
 }
 
-/* the last handle of a key closes. */
 void CmpNotifyClose(CM_KEY_BODY *body)
 {
     if (!body->Notify)
@@ -227,7 +225,7 @@ void CmpNotifyDelete(CM_KEY_BODY *body)
     CmpUnlock();
 }
 
-/* a thread that ends: its posts end with the clean up status, without the apc routine. */
+/* an ending thread's posts end with STATUS_NOTIFY_CLEANUP, without the apc. */
 void CmNotifyRunDown(PETHREAD thread)
 {
     if (IsListEmpty(&CmpPosts))
@@ -246,7 +244,7 @@ void CmNotifyRunDown(PETHREAD thread)
 
 /* ------------------------------------------------------------------ requests */
 
-/* lock held. a request waits on a key: STATUS_PENDING, or success when a change was already there. */
+/* lock held. STATUS_PENDING, or success when a change was already pending. */
 static NTSTATUS arm_key(CM_KEY_BODY *body, CM_POST *post, ULONG index, ULONG filter, BOOLEAN tree)
 {
     if (body->Node->Flags & CM_NODE_DELETED)
@@ -277,7 +275,7 @@ static NTSTATUS arm_key(CM_KEY_BODY *body, CM_POST *post, ULONG index, ULONG fil
     return STATUS_PENDING;
 }
 
-/* touches every page of a caller's buffer as a probe for writing does, leaving it as it was. */
+/* probes the buffer for writing by rewriting one byte per page with its own value. */
 static BOOLEAN writable(PVOID buffer, ULONG length)
 {
     for (ULONG_PTR p = (ULONG_PTR)buffer, end = p + length; p < end; p = (p & ~(ULONG_PTR)0xFFF) + 0x1000) {

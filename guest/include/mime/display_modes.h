@@ -1,7 +1,6 @@
 /*
- * the resolutions a display lists below its own, as a panel's scaler
- * takes them: what games show in their resolution menus. win32k's display
- * modes and dxgi's outputs both list them.
+ * resolutions a display lists below its native one, as a panel scaler accepts them, for game resolution menus.
+ * shared by win32k's display modes and dxgi's outputs.
  */
 #ifndef MIME_DISPLAY_MODES_H
 #define MIME_DISPLAY_MODES_H

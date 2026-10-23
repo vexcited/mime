@@ -1,9 +1,9 @@
 /*
- * calls a frame based handler of the x86 exception list with a
- * registration of its own pushed first, so an exception raised in the
- * handler is seen as nested, and an unwind running into another as
- * collided. the registration keeps the frame being dispatched after the
- * handler's two fields, for the nested handlers to report.
+ * calls an x86 frame based handler with an ntdll registration pushed
+ * first, so an exception raised in the handler is seen as nested and an
+ * unwind running into another as collided. the registration stores the
+ * frame being dispatched after its two fields, for the nested handlers to
+ * report.
  *
  * EXCEPTION_DISPOSITION RtlpExecuteHandlerForException(record, frame, context, dispatcher, handler)
  * EXCEPTION_DISPOSITION RtlpExecuteHandlerForUnwind(record, frame, context, dispatcher, handler)
@@ -34,7 +34,7 @@ execute_handler:
     pushl 8(%ebp)
     movl 24(%ebp), %ecx
     calll *%ecx
-    /* handlers may leave the stack anywhere: the registration is found from the frame. */
+    /* handlers may leave the stack anywhere, so find the registration from the frame. */
     movl -24(%ebp), %ecx
     movl %ecx, %fs:0
     leal -12(%ebp), %esp

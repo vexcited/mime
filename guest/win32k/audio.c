@@ -1,10 +1,10 @@
 /*
- * audio output streams. a stream is one block of physically contiguous
- * memory mapped in the process and handed to the host, which plays the frames
- * the process writes there (mime/audio.h). nothing here runs per buffer: the
- * process and the host's output callback only move the counters of the header.
- * a closed stream keeps its memory mapped for the next stream of the process,
- * as views are only unmapped with the process.
+ * audio output streams. a stream is one physically contiguous block of memory
+ * mapped in the process and handed to the host, which plays the frames the
+ * process writes there, see mime/audio.h. nothing here runs per buffer: the
+ * process and the host's output callback only move the header counters.
+ * a closed stream's memory stays mapped for the process's next stream, since
+ * views are only unmapped with the process.
  */
 #include "win32k.h"
 
@@ -15,7 +15,7 @@ typedef struct AUDIO_SLOT {
     ULONG64 Pa;
     PVOID Section;
     PVOID User;
-    ULONG Stream; /* the host stream, 0 while not open */
+    ULONG Stream; /* the host stream, 0 while not open. */
     BOOLEAN InUse;
 } AUDIO_SLOT;
 

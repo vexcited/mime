@@ -1,6 +1,4 @@
-/*
- * IWICFormatConverter: a source seen in another pixel format, converted when its pixels are asked for.
- */
+/* IWICFormatConverter converts source pixels on demand. */
 #include "wic_private.h"
 #include "convert.h"
 
@@ -84,7 +82,7 @@ static HRESULT STDMETHODCALLTYPE conv_copy_palette(IWICFormatConverter *This, IW
     if (!c->palette) {
         if (WicFormatIsIndexed(&c->dst_format))
             return WINCODEC_ERR_PALETTEUNAVAILABLE;
-        /* the fixed gray and black and white formats have palettes of their own. */
+        /* fixed grayscale and black-and-white formats supply their own palettes. */
         return WINCODEC_ERR_PALETTEUNAVAILABLE;
     }
     return palette->lpVtbl->InitializeFromPalette(palette, c->palette);
@@ -173,7 +171,7 @@ static HRESULT STDMETHODCALLTYPE conv_copy_pixels(IWICFormatConverter *This, con
         return c->source->lpVtbl->CopyPixels(c->source, &r, stride, size, buffer);
     BOOL indexed = WicFormatIsIndexed(&c->dst_format);
     if (indexed && c->dither == WICBitmapDitherTypeErrorDiffusion && (r.X || r.Y || (UINT)r.Width != c->width)) {
-        /* the error carries from the top left, so the whole image is done once and cut. */
+        /* error diffusion depends on earlier pixels, so convert the whole image once and crop requests. */
         EnterCriticalSection(&c->lock);
         if (!c->cache) {
             UINT row;

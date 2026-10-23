@@ -1,12 +1,9 @@
-/*
- * memory: virtual memory, heaps, the local and global allocators and file
- * mappings.
- */
+/* virtual memory, heaps, local and global memory, and file mappings. */
 #include "kernelbase_private.h"
 
 /* ------------------------------------------------------------------ virtual memory */
 
-/* what the lowest address a program may ask for is: the first 64 KiB are never available. */
+/* the first 64 KiB are never available. */
 #define KB_MINIMUM_ADDRESS 0x10000
 
 LPVOID WINAPI VirtualAllocEx(HANDLE process, LPVOID address, SIZE_T size, DWORD type, DWORD protect)
@@ -17,7 +14,7 @@ LPVOID WINAPI VirtualAllocEx(HANDLE process, LPVOID address, SIZE_T size, DWORD 
     }
     PVOID base = address;
     SIZE_T length = size;
-    /* the low bits of the type belong to the node of an allocation made for one. */
+    /* the low bits of type carry the preferred node. */
     NTSTATUS status = NtAllocateVirtualMemory(process, &base, 0, &length, type & 0xFFFFFFC0, protect);
     if (!NT_SUCCESS(status)) {
         KbSetStatus(status);
@@ -32,10 +29,8 @@ LPVOID WINAPI VirtualAlloc(LPVOID address, SIZE_T size, DWORD type, DWORD protec
 }
 
 /*
- * allocates with extended parameters: an address range and alignment, a
- * node, attributes. a placeholder is reserved with MEM_RESERVE_PLACEHOLDER
- * and later replaced, for all of it or a part split off, with MEM_RESERVE
- * and MEM_REPLACE_PLACEHOLDER.
+ * a placeholder is reserved with MEM_RESERVE_PLACEHOLDER and later replaced, whole or a split off part, with
+ * MEM_RESERVE and MEM_REPLACE_PLACEHOLDER.
  */
 DECLSPEC_EXPORT LPVOID WINAPI VirtualAlloc2(HANDLE process, PVOID address, SIZE_T size, ULONG type, ULONG protect,
                                            MEM_EXTENDED_PARAMETER *parameters, ULONG count)
@@ -169,10 +164,8 @@ BOOL WINAPI PrefetchVirtualMemory(HANDLE process, ULONG_PTR count, PWIN32_MEMORY
 }
 
 /*
- * the range must be committed read write memory of one region. the pages
- * go back to demand zero, so they read as zero after and cost nothing
- * while untouched. windows writes the zeroes itself into the pages in the
- * working set first, which would only touch the pages here.
+ * the range must be committed read write memory in one region. The pages go back to demand zero, so they read as zero
+ * and cost nothing until touched. Windows first writes zeroes into the resident pages, which here would only touch them.
  */
 DECLSPEC_EXPORT DWORD WINAPI DiscardVirtualMemory(PVOID base, SIZE_T size)
 {
@@ -195,7 +188,7 @@ DECLSPEC_EXPORT DWORD WINAPI DiscardVirtualMemory(PVOID base, SIZE_T size)
     return NT_SUCCESS(status) ? ERROR_SUCCESS : RtlNtStatusToDosError(status);
 }
 
-/* offered pages keep their contents in mime, so reclaiming always finds them intact. */
+/* offered pages keep their contents here, so reclaiming always finds them intact. */
 DECLSPEC_EXPORT DWORD WINAPI OfferVirtualMemory(PVOID base, SIZE_T size, DWORD priority)
 {
     if (priority - 1 > 3)
@@ -223,11 +216,7 @@ typedef struct KB_CFG_CALL_TARGET_INFO {
     ULONG_PTR Flags;
 } KB_CFG_CALL_TARGET_INFO;
 
-/*
- * marks the valid call targets of control flow guard, offsets in a range.
- * mime keeps no bitmap, so an image's checks always pass, and this only
- * reports the targets as set.
- */
+/* no CFG bitmap is kept, so an image's checks always pass and this only reports the targets as set. */
 DECLSPEC_EXPORT BOOL WINAPI SetProcessValidCallTargets(HANDLE process, PVOID base, SIZE_T size, ULONG count,
                                                       KB_CFG_CALL_TARGET_INFO *targets)
 {
@@ -247,7 +236,7 @@ DECLSPEC_EXPORT BOOL WINAPI SetProcessValidCallTargets(HANDLE process, PVOID bas
     return TRUE;
 }
 
-/* the pages of an allocation made with MEM_WRITE_WATCH that were written since it was made or last reset. */
+/* pages of a MEM_WRITE_WATCH allocation written since it was made or last reset. */
 UINT WINAPI GetWriteWatch(DWORD flags, PVOID base, SIZE_T size, PVOID *addresses, ULONG_PTR *count,
                           LPDWORD granularity)
 {
@@ -274,10 +263,7 @@ SIZE_T WINAPI GetLargePageMinimum(void)
     return USER_SHARED_DATA->LargePageMinimum;
 }
 
-/*
- * the forms for store apps take no executable memory. a program of mime's
- * is not restricted by them, but a call that asks for it fails as there.
- */
+/* the store app variants reject executable memory like Windows does, though nothing else restricts programs here. */
 static BOOL executable_protection(DWORD protect)
 {
     return (protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
@@ -354,7 +340,7 @@ static BOOL writable_protection(ULONG protect)
     return (protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
 }
 
-/* checks that every byte of the range is committed with the requested access. */
+/* every byte must be committed with the requested access. */
 static BOOL range_accessible(const void *p, UINT_PTR size, BOOL write)
 {
     if (!size)
@@ -501,7 +487,7 @@ BOOL WINAPI HeapUnlock(HANDLE heap)
     return RtlUnlockHeap(heap);
 }
 
-/* the walk of ntdll in its own entry, which has a wide size and its own flags. */
+/* ntdll's heap walk entry, with a pointer sized size and its own flags. */
 typedef struct {
     PVOID DataAddress;
     SIZE_T DataSize;
@@ -528,8 +514,8 @@ typedef struct {
 #define KB_WALK_SEGMENT 0x0002
 
 /*
- * the next block of the heap, or the next region: the entry the caller got last says where it was. A region has the
- * flag PROCESS_HEAP_REGION and its address is the start of the region, a block's address is its data.
+ * the caller's last entry says where the walk is. A region has PROCESS_HEAP_REGION set and its start as address, a
+ * block's address is its data.
  */
 BOOL WINAPI HeapWalk(HANDLE heap, LPPROCESS_HEAP_ENTRY entry)
 {
@@ -603,9 +589,8 @@ DWORD WINAPI GetProcessHeaps(DWORD count, PHANDLE heaps)
 /* ------------------------------------------------------------------ local and global memory */
 
 /*
- * moveable blocks: the handle points at the Pointer field of a 16 byte
- * aligned descriptor, so handles end in 8 while heap pointers never do.
- * the data block starts with a header pointing back to its descriptor.
+ * moveable blocks: the handle points at the Pointer field of a 16 byte aligned descriptor, so handles end in 8 while
+ * heap pointers never do. The data block starts with a header pointing back to its descriptor.
  */
 #define MOVEABLE_MAGIC 0x564F4D4Bu /* "KMOV". */
 #define DATA_MAGIC 0x5441444Bu     /* "KDAT". */
@@ -643,8 +628,8 @@ static PVOID data_block(MOVEABLE *m)
 }
 
 /*
- * the descriptor of the moveable block whose data starts at p, or null. a program that locked a handle holds this
- * pointer, and the size and the flags of the block can be asked of it as of the handle.
+ * NULL unless p starts the data of a moveable block. A program that locked a handle holds this pointer and may ask it
+ * for the block's size and flags as it would the handle.
  */
 static MOVEABLE *moveable_of_data(LPCVOID p)
 {
@@ -1167,10 +1152,7 @@ BOOL WINAPI UnmapViewOfFileEx(PVOID base, ULONG flags)
     return TRUE;
 }
 
-/*
- * maps a view of a section into a process, into a placeholder when the
- * type says so. the protection is a page protection, not a file map access.
- */
+/* the protection is a page protection, not a file map access. */
 DECLSPEC_EXPORT PVOID WINAPI MapViewOfFile3(HANDLE section, HANDLE process, PVOID address, ULONG64 offset,
                                             SIZE_T size, ULONG type, ULONG protect,
                                             MEM_EXTENDED_PARAMETER *parameters, ULONG count)
@@ -1195,7 +1177,7 @@ DECLSPEC_EXPORT PVOID WINAPI MapViewOfFile3(HANDLE section, HANDLE process, PVOI
     return nullptr;
 }
 
-/* unmaps a view, which stays reserved as a placeholder with MEM_PRESERVE_PLACEHOLDER. */
+/* with MEM_PRESERVE_PLACEHOLDER the view stays reserved as a placeholder. */
 DECLSPEC_EXPORT BOOL WINAPI UnmapViewOfFile2(HANDLE process, PVOID base, ULONG flags)
 {
     NTSTATUS status = STATUS_INVALID_PARAMETER;
@@ -1206,7 +1188,7 @@ DECLSPEC_EXPORT BOOL WINAPI UnmapViewOfFile2(HANDLE process, PVOID base, ULONG f
     return TRUE;
 }
 
-/* the node of an allocation or a view: the one node there is, or none preferred. */
+/* node 0 is the only one, 0xFFFFFFFF means no preference. */
 static BOOL node_available(DWORD node)
 {
     if (node == 0 || node == 0xFFFFFFFFu)

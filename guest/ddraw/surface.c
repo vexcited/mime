@@ -1,9 +1,8 @@
 /*
- * IDirectDrawSurface, 2, 3, 4 and 7, and the gamma and color controls on
- * them. one object per surface holds an interface of every version, each
- * counting its own references as windows' do, so a pointer stays the
- * same for the surface's life. surfaces made together with a complex
- * one are implicit: they die with their root. see docs/ddraw.md.
+ * IDirectDrawSurface 1, 2, 3, 4 and 7 with the gamma and color controls.
+ * one object per surface holds every interface version, each with its own
+ * refcount like windows, so pointers stay stable. surfaces created along
+ * with a complex one are implicit and die with their root.
  */
 #include "ddraw_private.h"
 #include <mime/ntuser.h>
@@ -16,7 +15,7 @@ static const IDirectDrawSurface7Vtbl surf7_vtbl;
 static const IDirectDrawGammaControlVtbl gamma_vtbl;
 static const IDirectDrawColorControlVtbl color_vtbl;
 
-/* the code windows returns for DDSCAPS_OPTIMIZED surfaces, which have no public name. */
+/* windows returns this for DDSCAPS_OPTIMIZED surfaces; it has no public name. */
 #define DDERR_OPTIMIZED MAKE_DDHRESULT(655)
 #define DDVGAMMA 100
 #define DDVCOLOR 101
@@ -127,9 +126,9 @@ void DdSurfInitIfaces(DDSURF *s)
     InitializeListHead(&s->links);
 }
 
-/* ------------------------------------------------------------------ the descs of the versions */
+/* ------------------------------------------------------------------ surface descs */
 
-/* a version 1 desc is the version 2 one without caps 2 to 4 and the texture stage. */
+/* a version 1 desc lacks caps 2 to 4 and the texture stage. */
 void DdSurfDescFromV1(const DDSURFACEDESC *in, DDSURFACEDESC2 *out)
 {
     memset(out, 0, sizeof(*out));
@@ -147,11 +146,7 @@ void DdSurfDescToV1(const DDSURFACEDESC2 *in, DDSURFACEDESC *out)
 
 static DWORD mip_levels(DDSURF *s);
 
-/*
- * windows' FillEitherDDSurfaceDesc: caps, keys, sizes and the format, a
- * z buffer's depth in its own field for the first versions. lpSurface is
- * left alone.
- */
+/* early versions get a z buffer's depth in its own field. lpSurface is left alone. */
 static void fill_desc(DDSURF *s, BOOL v2, DDSURFACEDESC2 *d)
 {
     d->dwFlags = DDSD_CAPS;
@@ -203,7 +198,7 @@ static void fill_desc(DDSURF *s, BOOL v2, DDSURFACEDESC2 *d)
     }
 }
 
-/* a desc of the size of the version: 120 bytes for the first three interfaces and 136 after. */
+/* 120 bytes for the first three interfaces, 136 after. */
 void DdSurfFillDesc(DDSURF *s, DWORD version, DDSURFACEDESC2 *out)
 {
     memset(out, 0, sizeof(*out));
@@ -222,7 +217,7 @@ void DdSurfFillDesc(DDSURF *s, DWORD version, DDSURFACEDESC2 *out)
     out->dwSize = sizeof(DDSURFACEDESC2);
 }
 
-/* windows' tryMatch: only the fields the desc flags, caps exactly. */
+/* compares only the fields the desc flags; caps must match exactly. */
 BOOL DdSurfMatches(DDSURF *s, const DDSURFACEDESC2 *d)
 {
     if (!d)
@@ -265,7 +260,7 @@ static DDATTACH *find_attachment(DDSURF *s, DDSURF *a)
     return nullptr;
 }
 
-/* prepends, as windows' lists go; an explicit attachment references the interface given. */
+/* prepends like windows; an explicit attachment holds a reference on the given interface. */
 static BOOL attach(DDSURF *s, DDSURF *a, DWORD version, BOOL implicit)
 {
     DDATTACH *at = HeapAlloc(GetProcessHeap(), 0, sizeof(*at));
@@ -280,7 +275,7 @@ static BOOL attach(DDSURF *s, DDSURF *a, DWORD version, BOOL implicit)
     return TRUE;
 }
 
-/* removes the attachment; the reference it held, if any, goes too. */
+/* also drops the reference the attachment held, if any. */
 static void detach(DDSURF *s, DDATTACH *at)
 {
     RemoveEntryList(&at->links);
@@ -292,7 +287,6 @@ static void detach(DDSURF *s, DDATTACH *at)
         DdSurfRelease(a, DdSurfRefOf(a, version));
 }
 
-/* the next surface of a flip chain: the attachment that flips with it. */
 static DDSURF *next_flip(DDSURF *s)
 {
     for (LIST_ENTRY *e = s->attached.Flink; e != &s->attached; e = e->Flink) {
@@ -306,7 +300,7 @@ static DDSURF *next_flip(DDSURF *s)
     return nullptr;
 }
 
-/* the levels of a mipmap from this one down. */
+/* counts from this level down. */
 static DWORD mip_levels(DDSURF *s)
 {
     DWORD n = 1;
@@ -364,10 +358,7 @@ static void free_memory(DDSURF *s)
 
 static void set_palette(DDSURF *s, DDPAL *p);
 
-/*
- * the last reference of a surface went: its implicit surfaces go with
- * it, released as many times as they are referenced, then what it holds.
- */
+/* implicit surfaces die with it, released once per reference they hold. */
 static void destroy(DDSURF *s)
 {
     s->freeing = TRUE;
@@ -384,7 +375,7 @@ static void destroy(DDSURF *s)
         detach(s, at);
         if (implicit && a->implicit && !a->freeing) {
             a->implicit = FALSE;
-            /* the whole chain dies with its root: every reference the child still has goes. */
+            /* the chain dies with its root, whatever references the child still has. */
             for (DWORD v = DDV1; v <= DDV7; v++)
                 while (*DdSurfRefOf(a, v) > 0)
                     DdSurfRelease(a, DdSurfRefOf(a, v));
@@ -401,7 +392,7 @@ static void destroy(DDSURF *s)
         s->clipper = nullptr;
         c->iface.lpVtbl->Release(&c->iface);
     }
-    /* attachments to it from elsewhere go: they referenced it, so only implicit ones can be left. */
+    /* explicit attachments referenced it, so only implicit ones can be left. */
     if (dd) {
         for (LIST_ENTRY *e = dd->surfaces.Flink; e != &dd->surfaces; e = e->Flink) {
             DDSURF *other = CONTAINING_RECORD(e, DDSURF, links);
@@ -442,7 +433,7 @@ ULONG DdSurfAddRef(DDSURF *s, LONG *iface_ref)
     return ref;
 }
 
-/* an implicit surface's last reference belongs to its root: releasing it does nothing. */
+/* an implicit surface's last reference belongs to its root, so releasing it does nothing. */
 ULONG DdSurfRelease(DDSURF *s, LONG *iface_ref)
 {
     DdEnter();
@@ -461,7 +452,7 @@ ULONG DdSurfRelease(DDSURF *s, LONG *iface_ref)
     return ref;
 }
 
-/* the directdraw object went: its surfaces are released until gone, as windows does. */
+/* the directdraw object is gone: release until the surface dies, like windows. */
 void DdSurfKill(DDSURF *s)
 {
     s->implicit = FALSE;
@@ -478,7 +469,7 @@ void DdSurfKill(DDSURF *s)
     }
 }
 
-/* a mode change or a lost focus: surfaces in video memory lose their contents. */
+/* after a mode change or focus loss, video memory surfaces lose their contents. */
 void DdLoseSurfaces(DDRAW *dd)
 {
     for (LIST_ENTRY *e = dd->surfaces.Flink; e != &dd->surfaces; e = e->Flink) {
@@ -500,7 +491,7 @@ static void bump(DDSURF *s)
     s->generation++;
 }
 
-/* pixels changed: a new uniqueness value, and the screen shows the primary's change. */
+/* bumps the uniqueness value; a primary's change also reaches the screen. */
 void DdSurfWritten(DDSURF *s, const RECT *rect)
 {
     bump(s);
@@ -546,7 +537,7 @@ HRESULT DdSurfQuery(DDSURF *s, REFIID riid, void **out)
 
 /* ------------------------------------------------------------------ method helpers */
 
-/* the surface of an interface with the lock held, and the version it was called through. */
+/* returns with the lock held, and the version the call came through. */
 static DDSURF *enter(void *iface, DWORD *version, HRESULT *hr)
 {
     DDSURF *s = DdSurfFromIface(iface);
@@ -594,7 +585,7 @@ static ULONG STDMETHODCALLTYPE surf_release(void *This)
 
 /* ------------------------------------------------------------------ attachment methods */
 
-/* windows' rule of what can be attached to what, and the flip pairs attaching makes. */
+/* windows' rules for what attaches to what, and the flip pairs attaching creates. */
 static HRESULT add_attached(DDSURF *s, DWORD version, DDSURF *a, DWORD a_version)
 {
     DWORD sc = s->desc.ddsCaps.dwCaps, ac = a->desc.ddsCaps.dwCaps;
@@ -639,7 +630,7 @@ static HRESULT add_attached(DDSURF *s, DWORD version, DDSURF *a, DWORD a_version
         return DD_OK;
     }
     if (sc & DDSCAPS_FLIP) {
-        /* into the chain right after this surface. */
+        /* goes into the chain right after this surface. */
         DDSURF *next = next_flip(s);
         DDATTACH *link = next ? find_attachment(s, next) : nullptr;
         if (!link)
@@ -664,7 +655,7 @@ static HRESULT add_attached(DDSURF *s, DWORD version, DDSURF *a, DWORD a_version
             front->desc.dwBackBufferCount++;
         return DD_OK;
     }
-    /* a new pair: the surface and the attached one flip between each other. */
+    /* a new pair: the two surfaces flip with each other. */
     if (!attach(s, a, a_version, FALSE) || !attach(a, s, version, TRUE))
         return DDERR_OUTOFMEMORY;
     if (sc & DDSCAPS_BACKBUFFER) {
@@ -692,7 +683,7 @@ static HRESULT STDMETHODCALLTYPE surf_add_attached_surface(void *This, void *att
     return DdLeave(add_attached(s, version, a, DdSurfVersionOf(attached)));
 }
 
-/* the front of a chain a surface is in, null for none. */
+/* the front of the surface's chain, or null. */
 static DDSURF *chain_front(DDSURF *s)
 {
     DDSURF *f = s;
@@ -742,7 +733,7 @@ static HRESULT delete_one(DDSURF *s, DDATTACH *at)
             front->desc.ddsCaps.dwCaps &= ~(DDSCAPS_FLIP | DDSCAPS_FRONTBUFFER | DDSCAPS_BACKBUFFER);
             if (front->created_front)
                 front->desc.ddsCaps.dwCaps |= DDSCAPS_FRONTBUFFER;
-            /* the pair's back link from the other side goes as well. */
+            /* drop the pair's back link from the other side too. */
             DDSURF *other = next_flip(front);
             if (other) {
                 DDATTACH *back = find_attachment(front, other);
@@ -793,7 +784,7 @@ static HRESULT STDMETHODCALLTYPE surf_delete_attached_surface(void *This, DWORD 
     return DdLeave(hr);
 }
 
-/* the version of the interfaces a version's callbacks and attached surfaces get. */
+/* the interface version that callbacks and attached surfaces get for a version. */
 static DWORD out_version(DWORD version)
 {
     return version < DDV4 ? DDV1 : version;
@@ -859,7 +850,7 @@ static HRESULT STDMETHODCALLTYPE surf_enum_overlay_z_orders(void *This, DWORD fl
     return DdLeave(DD_OK);
 }
 
-/* windows' GetAttachedSurface: the newest attachment with every bit asked; the first versions get version 1. */
+/* the newest attachment with every asked bit; the first versions get a version 1 interface. */
 static HRESULT get_attached(DDSURF *s, DWORD version, DDSCAPS2 caps, void **out)
 {
     if (s->lost)
@@ -905,7 +896,7 @@ static HRESULT STDMETHODCALLTYPE surf_get_attached_surface(void *This, void *cap
 
 /* ------------------------------------------------------------------ flip */
 
-/* what flips: the memory and with it the pixels gdi shows; everything else stays with its surface. */
+/* only the memory flips, and with it the pixels gdi shows; everything else stays with its surface. */
 static void swap_memory(DDSURF *a, DDSURF *b)
 {
     BYTE *memory = a->memory;
@@ -972,7 +963,6 @@ static HRESULT flip(DDSURF *s, DWORD version, DDSURF *override, DWORD flags)
     if ((target->desc.ddsCaps.dwCaps ^ s->desc.ddsCaps.dwCaps) & DDSCAPS_SYSTEMMEMORY)
         return DDERR_INVALIDPARAMS;
     if ((s->desc.ddsCaps.dwCaps & DDSCAPS_MIPMAP) && !override) {
-        /* every level of a flipping mipmap turns together. */
         DDSURF *level = s;
         while (level) {
             DDSURF *levels[64];
@@ -998,12 +988,12 @@ static HRESULT flip(DDSURF *s, DWORD version, DDSURF *override, DWORD flags)
     if (override) {
         swap_memory(s, target);
     } else {
-        /* back 1 shows next: each back buffer takes the next one's memory, the last the front's. */
+        /* back buffer 1 shows next: each takes the next one's memory, the last takes the front's. */
         for (DWORD i = n; i-- > 0;)
             swap_memory(s, chain[i]);
     }
     if (primary && s->dd) {
-        /* the flip waits for the display's refresh, as a driver's does unless told not to. */
+        /* waits for vertical refresh, as drivers do unless told not to. */
         if (!(flags & DDFLIP_NOVSYNC))
             DdWaitForVerticalBlank(DDWAITVB_BLOCKBEGIN);
         DdPresentFlip(s);
@@ -1024,7 +1014,7 @@ static HRESULT STDMETHODCALLTYPE surf_flip(void *This, void *override_iface, DWO
     return DdLeave(flip(s, version, override, flags));
 }
 
-/* the front buffer gets back the memory gdi shows. */
+/* gives the front buffer back the memory gdi shows. */
 HRESULT DdSurfFlipToGdi(DDSURF *primary)
 {
     if (primary->gdi || !(primary->desc.ddsCaps.dwCaps & DDSCAPS_FLIP))
@@ -1153,7 +1143,7 @@ static HRESULT STDMETHODCALLTYPE surf_get_clipper(void *This, LPDIRECTDRAWCLIPPE
     return DdLeave(DD_OK);
 }
 
-/* the key slot a flag picks, in windows' order; zero for an invalid combination. */
+/* the key slot a flag selects, in windows' order; zero for an invalid combination. */
 static DWORD key_slot(DWORD flags, DDSURF *s, BOOL get)
 {
     if (flags & DDCKEY_DESTOVERLAY)
@@ -1302,7 +1292,7 @@ static BOOL valid_rect(const RECT *r, const DDSURF *s)
            r->bottom <= (LONG)s->desc.dwHeight && r->right <= (LONG)s->desc.dwWidth;
 }
 
-/* the address of a rectangle's first pixel: whole pixels, two at a time for packed yuv. */
+/* whole pixels, two at a time for packed yuv. */
 static BYTE *rect_pointer(DDSURF *s, const RECT *r)
 {
     if (!r)
@@ -1378,7 +1368,7 @@ static HRESULT STDMETHODCALLTYPE surf_lock(void *This, LPRECT rect, void *desc, 
     return DdLeave(lock(s, version, rect, desc, flags));
 }
 
-/* by the pointer Lock gave for the first interfaces, by the rectangle after. */
+/* the first interfaces unlock by the pointer Lock gave, later ones by the rectangle. */
 static HRESULT unlock(DDSURF *s, DWORD version, void *arg)
 {
     if (optimized(s))
@@ -1430,7 +1420,7 @@ static HRESULT STDMETHODCALLTYPE surf_unlock(void *This, void *arg)
 
 /* ------------------------------------------------------------------ dcs */
 
-/* a dc of an 8 bit surface takes its palette, else the primary's, else gray. */
+/* an 8-bit surface's dc uses its palette, else the primary's, else gray. */
 static void dc_colors(DDSURF *s, PALETTEENTRY *table)
 {
     DDPAL *p = s->palette ? s->palette : s->dd && s->dd->primary ? s->dd->primary->palette : nullptr;
@@ -1516,7 +1506,7 @@ static HRESULT STDMETHODCALLTYPE surf_restore(void *This)
     return DdLeave(DdSurfRestore(s));
 }
 
-/* windows' Restore: back in the mode it was made in; implicit surfaces come back with their root. */
+/* restores in the mode it was made in; implicit surfaces come back with their root. */
 HRESULT DdSurfRestore(DDSURF *s)
 {
     if (!s->lost)
@@ -1539,7 +1529,7 @@ HRESULT DdSurfRestore(DDSURF *s)
         if (at->implicit)
             at->surface->lost = FALSE;
     }
-    /* a chain's members are attached to each other: every member of the root's complex surface returns. */
+    /* chain members are attached to each other, so every member of the root's complex surface comes back. */
     for (DDSURF *b = next_flip(s); b && b != s; b = next_flip(b))
         b->lost = FALSE;
     return DD_OK;
@@ -1547,7 +1537,7 @@ HRESULT DdSurfRestore(DDSURF *s)
 
 static BOOL keys_supported(DDSURF *s, DWORD slot, BOOL range)
 {
-    /* system memory uses windows' emulation, which keys source blts only, single colors. */
+    /* system memory uses windows' emulation, which only does single-color source keys. */
     BOOL hel = (s->desc.ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) != 0;
     switch (slot) {
     case DDCKEY_DESTBLT:
@@ -1624,7 +1614,7 @@ static HRESULT STDMETHODCALLTYPE surf_set_clipper(void *This, LPDIRECTDRAWCLIPPE
     return DdLeave(DD_OK);
 }
 
-/* attaching takes a reference, detaching gives it back; the screen shows a primary's change. */
+/* attaching takes a reference, detaching gives it back; a primary's change reaches the screen. */
 static void set_palette(DDSURF *s, DDPAL *p)
 {
     DDPAL *old = s->palette;
@@ -1720,7 +1710,7 @@ static HRESULT STDMETHODCALLTYPE surf_page_lock(void *This, DWORD flags)
     return DdLeave(DD_OK);
 }
 
-/* system memory surfaces whose memory a program may give: the size, pitch and format change with it. */
+/* a program may supply a system memory surface's memory, changing its size, pitch and format. */
 static HRESULT set_surface_desc(DDSURF *s, const DDSURFACEDESC2 *d, DWORD flags)
 {
     if (optimized(s))
@@ -1900,7 +1890,7 @@ static HRESULT STDMETHODCALLTYPE surf_change_uniqueness_value(void *This)
     return DdLeave(DD_OK);
 }
 
-/* priority and level of detail belong to managed textures, which d3d keeps. */
+/* priority and level of detail only apply to managed textures, which d3d keeps. */
 static BOOL managed_root(DDSURF *s)
 {
     return (s->desc.ddsCaps.dwCaps2 & (DDSCAPS2_TEXTUREMANAGE | DDSCAPS2_D3DTEXTUREMANAGE)) &&
@@ -1967,7 +1957,7 @@ static HRESULT STDMETHODCALLTYPE surf_get_lod(void *This, LPDWORD lod)
     return DdLeave(DD_OK);
 }
 
-/* ------------------------------------------------------------------ overlays, which there are none of */
+/* ------------------------------------------------------------------ overlays, unsupported */
 
 static HRESULT STDMETHODCALLTYPE surf_add_overlay_dirty_rect(void *This, LPRECT rect)
 {
@@ -2074,7 +2064,7 @@ static HRESULT STDMETHODCALLTYPE gamma_get_ramp(IDirectDrawGammaControl *This, D
         *ramp = *s->gamma;
         return DdLeave(DD_OK);
     }
-    /* none set: gdi's ramp of the display. */
+    /* none set: use gdi's display ramp. */
     HDC dc = GetDC(nullptr);
     BOOL ok = dc && GetDeviceGammaRamp(dc, ramp);
     if (dc)
@@ -2091,7 +2081,7 @@ void DdShowGamma(DDRAW *dd)
     }
 }
 
-/* windows writes back the ramp it found, gdi's, which is what the display shows once the device ramp goes. */
+/* windows restores the gdi ramp it found, which the display shows once the device ramp goes. */
 void DdHideGamma(DDSURF *s)
 {
     if (s->gamma_shown)
@@ -2099,7 +2089,7 @@ void DdHideGamma(DDSURF *s)
     s->gamma_shown = FALSE;
 }
 
-/* the ramp shows while the object holds exclusive mode, else it is only kept. no calibrator is known. */
+/* the ramp only shows while the object holds exclusive mode, otherwise it is just stored. no calibrator is known. */
 static HRESULT STDMETHODCALLTYPE gamma_set_ramp(IDirectDrawGammaControl *This, DWORD flags, LPDDGAMMARAMP ramp)
 {
     HRESULT hr;

@@ -1,6 +1,4 @@
-/*
- * win32 error codes and hresult helpers.
- */
+/* win32 error codes and hresult helpers. */
 #ifndef MIME_WIN32_WINERROR_H
 #define MIME_WIN32_WINERROR_H
 

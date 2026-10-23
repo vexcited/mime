@@ -1,7 +1,4 @@
-/*
- * direct3d 1 to 7: what devices describe of themselves, and the
- * descriptions of execute buffers. the values are windows'.
- */
+/* direct3d 1 to 7 device caps and execute buffer descriptions. */
 #ifndef MIME_WIN32_D3DCAPS_H
 #define MIME_WIN32_D3DCAPS_H
 
@@ -212,7 +209,7 @@ typedef struct _D3DPrimCaps {
 #define D3DVTXPCAPS_POSITIONALLIGHTS 0x00000010
 #define D3DVTXPCAPS_LOCALVIEWER 0x00000020
 
-/* the description of the first five interfaces, in three sizes as they grew. */
+/* used by the first five interfaces, in three sizes as it grew. */
 typedef struct _D3DDeviceDesc {
     DWORD dwSize;
     DWORD dwFlags;
@@ -246,7 +243,7 @@ typedef struct _D3DDeviceDesc {
     WORD wMaxSimultaneousTextures;
 } D3DDEVICEDESC, *LPD3DDEVICEDESC;
 
-/* the sizes of the descriptions of directx 3 and 5. */
+/* directx 3 and 5 description sizes. */
 #define D3DDEVICEDESCSIZE_V1 FIELD_OFFSET(D3DDEVICEDESC, dwMinTextureWidth)
 #define D3DDEVICEDESCSIZE_V2 FIELD_OFFSET(D3DDEVICEDESC, dwMaxTextureRepeat)
 #define D3DDEVICEDESCSIZE (sizeof(D3DDEVICEDESC))

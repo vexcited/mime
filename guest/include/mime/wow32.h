@@ -5,9 +5,9 @@
 #include <mime/nt.h>
 
 /*
- * where a 32-bit thread says it wants the files of System32 left alone, a word of its teb that only transactions of the
- * file system use in Windows. Windows keeps this in a slot of the 64-bit teb, which a translator has no need of, and a
- * slot of the 32-bit teb would be one the program's own local storage can have.
+ * the 32-bit teb word where a thread disables System32 redirection. Windows uses it only for file system
+ * transactions and keeps the flag in the 64-bit teb, which a translator does not have, and a free 32-bit slot
+ * could clash with the program's own tls.
  */
 #define MIME_TEB32_FSREDIR_OFFSET 0xFD4
 
@@ -65,7 +65,7 @@ typedef struct MIME_PEB32 {
     ULONG TlsExpansionBitmapBits[32], SessionId;
 } MIME_PEB32;
 MIME_FIELD_AT(MIME_PEB32, SessionId, 0x1D4);
-/* where the 32-bit PEB of nt.h keeps the code pages, which kernelbase of the x86 runtime reads. */
+/* code page fields of the 32-bit PEB, read by the x86 kernelbase. */
 #define MIME_PEB32_ACTIVE_CODE_PAGE 0x228
 #define MIME_PEB32_OEM_CODE_PAGE 0x22A
 

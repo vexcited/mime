@@ -1,7 +1,7 @@
 /*
- * CreateDispTypeInfo: type information for an automation object made of the method tables of the program. The tables
- * stay with the program and are read in place. What comes back is a coclass with one interface, and that interface is
- * the one with the functions, laid out as virtual with the method at iMeth times the size of a pointer.
+ * CreateDispTypeInfo: type information built from a program's method tables, which stay with the program and are read
+ * in place. the result is a coclass with one interface holding the functions, laid out as virtual with each method at
+ * iMeth times the pointer size.
  */
 #include "oleaut32_private.h"
 
@@ -32,7 +32,7 @@ static HRESULT new_info(const INTERFACEDATA *data, LCID lcid, TYPEKIND kind, ITy
     return S_OK;
 }
 
-/* the first method of the table with this member id and one of the kinds in the mask, or -1. */
+/* the first method with this member id and one of the kinds in the mask, or -1. */
 static int find_method(const DISP_INFO *info, DISPID id, UINT mask)
 {
     for (UINT i = 0; i < info->Data->cMembers; i++) {
@@ -224,7 +224,7 @@ static HRESULT STDMETHODCALLTYPE di_get_ref_type_of_impl_type(ITypeInfo *This, U
     return S_OK;
 }
 
-/* the flags that make two names the same in the language of the object. */
+/* the flags under which two names are equal in the object's language. */
 static DWORD name_flags(LCID lcid)
 {
     DWORD flags = NORM_IGNORECASE | NORM_IGNORENONSPACE;
@@ -326,7 +326,7 @@ static void STDMETHODCALLTYPE di_release_var_desc(ITypeInfo *This, VARDESC *desc
 
 #define SMALL_CALL 8
 
-/* the arguments of one call, as DispCallFunc takes them: a type and a pointer to a variant for each. */
+/* one call's arguments as DispCallFunc takes them: a type and a variant pointer each. */
 typedef struct {
     UINT Count;
     VARTYPE *Types;
@@ -375,7 +375,7 @@ static BOOL args_init(CALL_ARGS *args, UINT count)
     return TRUE;
 }
 
-/* a type of parameter that a variant is converted to before the call. */
+/* parameter types a variant is converted to before the call. */
 static BOOL converts_to(VARTYPE vt)
 {
     return (vt >= VT_I2 && vt <= VT_BOOL) || vt == VT_UNKNOWN || vt == VT_DECIMAL || (vt >= VT_I1 && vt <= VT_UINT);
@@ -429,7 +429,7 @@ static HRESULT args_build(CALL_ARGS *args, const METHODDATA *m, WORD flags, cons
     return S_OK;
 }
 
-/* the property is read first and the object it gives is what the call goes on to. */
+/* reads the property first and continues the call on the object it returns. */
 static HRESULT through_getter(const DISP_INFO *info, void *instance, const METHODDATA *getter, WORD flags,
                               DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
 {

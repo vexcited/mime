@@ -1,14 +1,14 @@
 /*
- * the instance, its physical devices and the lookup of entry points.
- * properties of the host's gpu reach the guest as they are, except mapped
- * memory: the guest maps only memory the host imports from guest ram, so
- * memory types the host cannot import lose their host visibility.
+ * the instance, its physical devices and entry point lookup. host gpu
+ * properties pass through unchanged, except that the guest can only map
+ * memory the host imports from guest ram, so other memory types lose their
+ * host visibility.
  */
 #include "mvk_guest.h"
 
 #define MVK_API_VERSION VK_API_VERSION_1_4
 
-/* the instance extensions of the host the protocol carries, asked once. */
+/* host instance extensions the protocol carries, queried once. */
 static VkExtensionProperties *g_instance_extensions;
 static uint32_t g_instance_extension_count;
 static uint32_t g_host_api = VK_API_VERSION_1_0;
@@ -167,7 +167,7 @@ static VkResult load_physical_devices(VkInstance instance)
         if (p->properties.apiVersion > MVK_API_VERSION)
             p->properties.apiVersion = MVK_API_VERSION;
         mvk_raw_vkGetPhysicalDeviceMemoryProperties(p, &p->memory);
-        /* memory the host cannot import from guest ram cannot be mapped by the guest. */
+        /* the guest cannot map memory the host cannot import from guest ram. */
         for (uint32_t t = 0; t < p->memory.memoryTypeCount; t++)
             if (!(importable[i] & (1u << t)))
                 p->memory.memoryTypes[t].propertyFlags &=
@@ -265,7 +265,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceExtensionProperties(VkPhysicalDe
     return copy_properties(list, n, count, out);
 }
 
-/* the device extensions of the host the protocol carries, asked once per physical device. */
+/* host device extensions the protocol carries, queried once per physical device. */
 VkResult mvk_device_extensions(VkPhysicalDevice physical, VkExtensionProperties **out, uint32_t *count)
 {
     static struct {
@@ -335,7 +335,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instan
         return nullptr;
     if (!strcmp(name, "vkGetInstanceProcAddr"))
         return (PFN_vkVoidFunction)vkGetInstanceProcAddr;
-    /* without an instance, only the global commands. */
+    /* without an instance, only the global commands resolve. */
     if (!instance && strcmp(name, "vkCreateInstance") && strcmp(name, "vkEnumerateInstanceVersion") &&
         strcmp(name, "vkEnumerateInstanceExtensionProperties") && strcmp(name, "vkEnumerateInstanceLayerProperties"))
         return nullptr;

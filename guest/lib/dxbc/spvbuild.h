@@ -1,7 +1,7 @@
 /*
- * a spir-v module builder: words appended to the module's sections in
- * order, types and constants made once, functions written one block at a
- * time.
+ * a spir-v module builder: words go to the module's sections in order,
+ * types and constants are made once, and functions are written a block at
+ * a time.
  */
 #ifndef MIME_LIB_DXBC_SPIRV_H
 #define MIME_LIB_DXBC_SPIRV_H
@@ -30,7 +30,7 @@ enum {
     SECTION_COUNT
 };
 
-/* a made type or constant: the hash of its words and where they are in the globals. */
+/* the hash of a made type or constant's words, and where they are in the globals. */
 typedef struct SpvCached {
     uint32_t hash;
     uint32_t id;
@@ -58,7 +58,6 @@ void spv_init(SpvBuilder *b, const MimeAllocator *alloc);
 void spv_free(SpvBuilder *b);
 uint32_t spv_id(SpvBuilder *b);
 
-/* an instruction of count operand words, appended to a section. */
 void spv_emit(SpvBuilder *b, int section, uint32_t op, const uint32_t *operands, uint32_t count);
 void spv_emit_string(SpvBuilder *b, int section, uint32_t op, const uint32_t *before, uint32_t before_count,
                      const char *text, const uint32_t *after, uint32_t after_count);
@@ -92,7 +91,7 @@ uint32_t spv_const64(SpvBuilder *b, uint32_t type, uint64_t bits);
 uint32_t spv_const_bool(SpvBuilder *b, int value);
 uint32_t spv_const_composite(SpvBuilder *b, uint32_t type, const uint32_t *parts, uint32_t count);
 uint32_t spv_const_null(SpvBuilder *b, uint32_t type);
-/* a composite constant of any size, made each time: immediate constant buffers. */
+/* made each time: immediate constant buffers. */
 uint32_t spv_const_composite_array(SpvBuilder *b, uint32_t type, const uint32_t *parts, uint32_t count);
 /* a global unique to its caller, never shared: struct types that get decorations, variables. */
 uint32_t spv_type_struct_unique(SpvBuilder *b, const uint32_t *members, uint32_t count);
@@ -117,7 +116,7 @@ void spv_return(SpvBuilder *b);
 void spv_function_begin(SpvBuilder *b, uint32_t id, uint32_t ret, uint32_t type);
 void spv_function_end(SpvBuilder *b);
 
-/* the finished module, its words allocated with the builder's allocator. */
+/* allocated with the builder's allocator. */
 uint32_t *spv_finish(SpvBuilder *b, size_t *words);
 
 #endif

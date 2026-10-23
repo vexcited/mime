@@ -1,6 +1,5 @@
 /*
- * bitmaps: the pixels of an image in any of the gdi+ pixel formats, how they are made, copied, locked for a
- * program to read and write, and the palettes of the indexed formats.
+ * bitmaps in any gdi+ pixel format: creation, copies, LockBits, and the palettes of the indexed formats.
  */
 #include "gp_private.h"
 
@@ -28,7 +27,7 @@ static const ARGB vga16[16] = {0xff000000, 0xff800000, 0xff008000, 0xff808000, 0
                                0xff008080, 0xffc0c0c0, 0xff808080, 0xffff0000, 0xff00ff00, 0xffffff00,
                                0xff0000ff, 0xffff00ff, 0xff00ffff, 0xffffffff};
 
-/* the palette of a new indexed bitmap: black and white, the 16 colors of a vga, or the halftone colors. */
+/* black and white, the 16 vga colors, or the halftone colors. */
 ColorPalette *gp_palette_default(PixelFormat format)
 {
     UINT count = format == PixelFormat1bppIndexed ? 2 : (format == PixelFormat4bppIndexed ? 16 : 256);
@@ -135,7 +134,7 @@ void gp_bitmap_free(GBitmap *b)
     gp_free(b);
 }
 
-/* the pixels, the palette, the resolution, the format they came from and the properties are copied. */
+/* copies the pixels, palette, resolution, original format and properties. */
 GpStatus gp_bitmap_copy(const GBitmap *b, GBitmap **copy)
 {
     GBitmap *c;
@@ -290,7 +289,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromGdiDib(const BITMAPINFO *info, VO
     return Ok;
 }
 
-/* the bits of a gdi bitmap, as 32 bit rows the callers convert from. NULL when it cannot be read. */
+/* as 32 bit rows the callers convert from. NULL when it cannot be read. */
 static BYTE *read_hbitmap(HBITMAP hbm, HPALETTE palette, INT *width, INT *height, INT *bits_pixel)
 {
     BITMAP bm;
@@ -454,7 +453,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateBitmapFromHICON(HICON icon, GpBitmap **bitm
                     ok = GetDIBits(dc, info.hbmMask, info.hbmColor ? 0 : (UINT)height, (UINT)height, mask, &bi,
                                    DIB_RGB_COLORS) > 0;
                 if (ok) {
-                    /* a color bitmap with an alpha channel keeps it, else the mask makes the alpha */
+                    /* a color bitmap with an alpha channel keeps it, else the mask makes the alpha. */
                     BOOL has_alpha = FALSE;
                     if (info.hbmColor) {
                         for (SIZE_T i = 0; i < (SIZE_T)width * height; i++)
@@ -773,7 +772,6 @@ WINGDIPAPI GpStatus WINAPI GdipBitmapConvertFormat(GpBitmap *bitmap, PixelFormat
         gp_bitmap_write_argb(c, 0, y, b->width, tmp);
     }
     gp_free(tmp);
-    /* the converted pixels take the place of the old ones */
     gp_free(b->owned);
     gp_free(b->palette);
     b->owned = c->owned;
@@ -788,7 +786,7 @@ WINGDIPAPI GpStatus WINAPI GdipBitmapConvertFormat(GpBitmap *bitmap, PixelFormat
     return Ok;
 }
 
-/* ------------------------------------------------------------------ the palette of an image */
+/* ------------------------------------------------------------------ image palettes */
 
 static UINT palette_flags(const ColorPalette *p)
 {
@@ -920,7 +918,7 @@ WINGDIPAPI GpStatus WINAPI GdipDisposeImage(GpImage *image)
         return gp_metafile_dispose(image);
     GBitmap *b = (GBitmap *)i;
     if (b->graphics_refs) {
-        /* a graphics still draws on it, the pixels go away with the graphics */
+        /* a graphics still draws on it, so the pixels go away with the graphics. */
         b->image.tag = 0;
         b->disposed = TRUE;
         return Ok;

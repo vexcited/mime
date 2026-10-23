@@ -1,6 +1,4 @@
-/*
- * what an acm driver answers: its messages and the structures they carry.
- */
+/* acm driver messages and the structures they carry. */
 #ifndef MIME_WIN32_MSACMDRV_H
 #define MIME_WIN32_MSACMDRV_H
 

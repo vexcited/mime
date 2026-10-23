@@ -1,14 +1,14 @@
 /*
- * the structures of window messages that hold a pointer or a handle, in the layout of 32-bit programs and in the
- * 64-bit one win32k carries, and the conversions between them. the system call side converts what a 32-bit program
- * sends, the callback side what a 32-bit window procedure gets and what it writes into it.
+ * window message structures that hold a pointer or a handle, in the 32-bit layout and the 64-bit one win32k uses,
+ * and the conversions between them. system calls convert what a 32-bit program sends, callbacks what a 32-bit
+ * window procedure receives and writes back.
  */
 #ifndef MIME_WOW32_LAYOUT_H
 #define MIME_WOW32_LAYOUT_H
 
 #include <mime/ntuser.h>
 
-/* a handle, sign extended as windows' wow64 does it, so that -1 stays -1. */
+/* sign extended like windows' wow64, so -1 stays -1. */
 static inline HANDLE lay_handle(ULONG value)
 {
     return (HANDLE)(LONG_PTR)(LONG)value;
@@ -136,7 +136,7 @@ typedef struct WINDOWPOS64_LAYOUT {
     UINT flags;
 } WINDOWPOS64_LAYOUT;
 
-/* the messages whose lparam is a fixed structure of one layout in the 32-bit program and another in win32k. */
+/* messages whose lparam is a fixed structure laid out differently in 32-bit programs and in win32k. */
 static inline ULONG lay_size32(UINT msg)
 {
     switch (msg) {
@@ -205,14 +205,14 @@ static inline ULONG lay_size64(UINT msg)
     return 0;
 }
 
-/* whether the receiver may change the structure, so that what it wrote has to go back. */
+/* whether the receiver may write the structure, so it must be copied back. */
 static inline BOOLEAN lay_writes(UINT msg)
 {
     return msg == WM_MEASUREITEM || msg == WM_WINDOWPOSCHANGING || msg == CB_GETCOMBOBOXINFO || msg == WM_NEXTMENU ||
            msg == 0x0124 || (msg >= 0x022A && msg <= 0x022F);
 }
 
-/* the structure of a 32-bit program as win32k wants it. */
+/* 32-bit layout to win32k's. */
 static inline void lay_to64(UINT msg, const void *in, void *out)
 {
     switch (msg) {
@@ -247,7 +247,7 @@ static inline void lay_to64(UINT msg, const void *in, void *out)
     }
     case WM_HELP: {
         const HELPINFO32 *a = in;
-        /* a size that is not the 32-bit one stays, so the refusal of a wrong size is the same. */
+        /* a size other than the 32-bit one is kept, so a wrong size is still refused. */
         *(HELPINFO64 *)out = (HELPINFO64){a->cbSize == sizeof(HELPINFO32) ? sizeof(HELPINFO64) : a->cbSize,
                                           a->iContextType, a->iCtrlId, lay_handle(a->hItemHandle), a->dwContextId,
                                           a->MousePos};
@@ -285,7 +285,7 @@ static inline void lay_to64(UINT msg, const void *in, void *out)
     }
 }
 
-/* the structure of win32k as a 32-bit program has it. */
+/* win32k's layout to the 32-bit one. */
 static inline void lay_to32(UINT msg, const void *in, void *out)
 {
     switch (msg) {
@@ -358,7 +358,7 @@ static inline void lay_to32(UINT msg, const void *in, void *out)
     }
 }
 
-/* what a 32-bit procedure changed, in the structure of win32k. only the fields that can change carry over. */
+/* copies back what a 32-bit procedure changed. only writable fields carry over. */
 static inline void lay_back64(UINT msg, const void *in32, void *out64)
 {
     UCHAR whole[sizeof(DRAWITEM64) + sizeof(COMBOBOXINFO64) + 32];

@@ -1,4 +1,4 @@
-/* the shared helpers of propsys: type rules, strings, guids and numbers. */
+/* shared helpers: type rules, strings, guids and numbers. */
 #include "propsys_private.h"
 
 BOOL PsValidType(VARTYPE vt)
@@ -191,7 +191,7 @@ HRESULT PsWideToAnsiAlloc(LPCWSTR source, LPSTR *out)
     return S_OK;
 }
 
-/* StringCchCopyW: a too small buffer keeps what fits and reports it. */
+/* like StringCchCopyW: a too small buffer keeps what fits and reports it. */
 HRESULT PsCopyString(LPWSTR buffer, UINT length, LPCWSTR source)
 {
     if (!length || length > 0x7FFFFFFF)
@@ -231,7 +231,7 @@ static BOOL hex_field(LPCWSTR *p, UINT digits, ULONGLONG *value)
     return TRUE;
 }
 
-/* the braced form only, as GUIDFromStringW takes it. */
+/* only the braced form, like GUIDFromStringW. */
 BOOL PsGuidFromString(LPCWSTR s, GUID *guid)
 {
     static const UINT groups[] = {8, 4, 4, 4, 12};
@@ -265,7 +265,7 @@ static BOOL is_digit(WCHAR c)
     return c >= '0' && c <= '9';
 }
 
-/* StrCmpLogicalW: runs of digits compare by value, the rest without case. */
+/* like StrCmpLogicalW: runs of digits compare by value, the rest without case. */
 int PsStrCmpLogical(LPCWSTR a, LPCWSTR b)
 {
     while (*a && *b) {
@@ -301,7 +301,7 @@ int PsStrCmpLogical(LPCWSTR a, LPCWSTR b)
     return *b ? -1 : 0;
 }
 
-/* doubles go through msvcrt, the one formatter of the system that knows them. */
+/* doubles are formatted by msvcrt, the only system formatter that handles them. */
 typedef int(__cdecl *SNWPRINTF)(WCHAR *, SIZE_T, const WCHAR *, ...);
 typedef double(__cdecl *WCSTOD)(const WCHAR *, WCHAR **);
 

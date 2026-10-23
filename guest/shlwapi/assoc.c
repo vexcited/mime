@@ -1,13 +1,13 @@
 /*
- * associations: the QueryAssociations object over the classes root, where the user's classes in
- * HKEY_CURRENT_USER\Software\Classes come before the machine's, and the Assoc functions over it.
+ * the QueryAssociations object and the Assoc functions over the classes root, where the user's classes in
+ * HKEY_CURRENT_USER\Software\Classes come before the machine's.
  */
 #include "shlwapi_private.h"
 
 #define ASSOC_NONE HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION)
 #define TEXT_SIZE 2048
 
-/* one class name opened on both sides of the classes root. */
+/* one class key opened on both the user and the machine side. */
 typedef struct {
     HKEY user, machine;
 } CLASS_KEY;
@@ -16,10 +16,10 @@ typedef struct {
     IQueryAssociations iface;
     LONG refs;
     ASSOCF flags;
-    CLASS_KEY chain[6];         /* the class, the extension, the system associations and the defaults */
+    CLASS_KEY chain[6];         /* the class, the extension, system associations, then defaults. */
     int count;
-    WCHAR extension[MAX_PATH];  /* ".txt" when the association began with one */
-    WCHAR progid[MAX_PATH];     /* the class an extension or a user's choice led to */
+    WCHAR extension[MAX_PATH];  /* ".txt" when the association began with one. */
+    WCHAR progid[MAX_PATH];     /* the class an extension or a user's choice led to. */
     WCHAR application[MAX_PATH];
 } ASSOC;
 
@@ -64,7 +64,7 @@ static void add_class(ASSOC *a, LPCWSTR name)
         a->chain[a->count++] = c;
 }
 
-/* a string value, expanded when it is REG_EXPAND_SZ. */
+/* REG_EXPAND_SZ values come back expanded. */
 static BOOL read_string(HKEY key, LPCWSTR subkey, LPCWSTR value, LPWSTR out, DWORD size)
 {
     if (!key)
@@ -159,8 +159,8 @@ static ULONG STDMETHODCALLTYPE assoc_release(IQueryAssociations *iface)
     return (ULONG)refs;
 }
 
-/* an extension leads to its progid, a user's choice first; an executable to its Applications
-   key; anything else is a progid, a protocol or a clsid of its own. */
+/* an extension leads to its progid, the user's choice first. an executable leads to its Applications key,
+   anything else is its own progid, protocol or clsid. */
 static HRESULT STDMETHODCALLTYPE assoc_init(IQueryAssociations *iface, ASSOCF flags, LPCWSTR name, HKEY progid,
                                             HWND window)
 {
@@ -243,7 +243,7 @@ static HRESULT STDMETHODCALLTYPE assoc_init(IQueryAssociations *iface, ASSOCF fl
     return S_OK;
 }
 
-/* the verb asked for, else the shell key's default, else open, else its first verb. */
+/* the verb asked for, else the shell key's default, else open, else the first verb. */
 static BOOL find_verb(ASSOC *a, LPCWSTR wanted, LPWSTR verb, int *which)
 {
     for (int i = 0; i < a->count; i++) {
@@ -318,8 +318,8 @@ static BOOL chain_string(ASSOC *a, LPCWSTR subkey, LPCWSTR value, LPWSTR out, DW
     return FALSE;
 }
 
-/* the program of a command line: quoted, else the longest leading words naming a file, else the
-   first word; a bare name is searched for. */
+/* the program of a command line: the quoted part, else the longest leading words naming a file, else
+   the first word. a bare name is searched for. */
 static BOOL command_executable(LPCWSTR command, ASSOCF flags, LPWSTR out, DWORD size)
 {
     while (*command == L' ' || *command == L'\t')
@@ -421,7 +421,6 @@ static BOOL file_description(LPCWSTR exe, LPWSTR out, DWORD size)
     return found;
 }
 
-/* the string asked for into text, FALSE when the association has none. */
 static BOOL get_string(ASSOC *a, ASSOCF flags, ASSOCSTR str, LPCWSTR extra, LPWSTR text, DWORD size)
 {
     switch (str) {
@@ -532,8 +531,8 @@ static BOOL get_string(ASSOC *a, ASSOCF flags, ASSOCSTR str, LPCWSTR extra, LPWS
     }
 }
 
-/* with no buffer S_FALSE and the size the string needs, with too small a one E_POINTER, the
-   text truncated unless ASSOCF_NOTRUNCATE says not to. */
+/* no buffer gives S_FALSE and the size needed. too small a buffer gives E_POINTER and truncated text,
+   unless ASSOCF_NOTRUNCATE. */
 static HRESULT STDMETHODCALLTYPE assoc_get_string(IQueryAssociations *iface, ASSOCF flags, ASSOCSTR str,
                                                   LPCWSTR extra, LPWSTR out, DWORD *size)
 {
@@ -692,9 +691,9 @@ HRESULT ShlAssocCreateInstance(REFIID riid, void **out)
     return hr;
 }
 
-/* ------------------------------------------------------------------ the Assoc functions */
+/* ------------------------------------------------------------------ Assoc functions */
 
-/* the class id must be CLSID_QueryAssociations, though the interface's own id passes too. */
+/* the class id must be CLSID_QueryAssociations, though the interface id passes too. */
 HRESULT WINAPI AssocCreate(CLSID clsid, REFIID riid, void **out)
 {
     if (!out)
@@ -748,7 +747,7 @@ HRESULT WINAPI AssocQueryStringByKeyW(ASSOCF flags, ASSOCSTR str, HKEY key, LPCW
     return hr;
 }
 
-/* the ansi forms ask for the wide string, then report twice its characters when given no buffer. */
+/* the ANSI forms query the wide string, and report twice its length when given no buffer. */
 static HRESULT string_ansi(HRESULT hr, LPCWSTR wide, DWORD wide_size, LPSTR out, DWORD *size)
 {
     if (hr == S_FALSE) {
@@ -890,7 +889,7 @@ static const PCWSTR perceived_names[] = {L"unknown",    L"text",     L"image",  
                                          L"video",      L"compressed", L"document", L"system",
                                          L"application", L"gamemedia", L"contacts"};
 
-/* the registry's PerceivedType first, then the types windows knows by heart. */
+/* the registry's PerceivedType first, then the types windows has built in. */
 HRESULT WINAPI AssocGetPerceivedType(LPCWSTR extension, PERCEIVED *type, PERCEIVEDFLAG *flags, LPWSTR *name)
 {
     if (!extension || !type || !flags)
@@ -938,7 +937,7 @@ HRESULT WINAPI AssocGetPerceivedType(LPCWSTR extension, PERCEIVED *type, PERCEIV
     return S_OK;
 }
 
-/* the url action policy of an extension; mime has no zones to ask, so none. */
+/* mime has no zones to ask, so there is no policy. */
 DWORD WINAPI AssocGetUrlAction(LPCWSTR extension);
 DWORD WINAPI AssocGetUrlAction(LPCWSTR extension)
 {
@@ -975,7 +974,7 @@ BOOL WINAPI AssocIsDangerous(LPCWSTR name)
     return FALSE;
 }
 
-/* the extension the mime database gives a content type. */
+/* looks the content type up in the MIME database. */
 BOOL WINAPI MIME_GetExtensionW(LPCWSTR type, LPWSTR extension, UINT size);
 BOOL WINAPI MIME_GetExtensionW(LPCWSTR type, LPWSTR extension, UINT size)
 {
@@ -991,7 +990,7 @@ BOOL WINAPI MIME_GetExtensionW(LPCWSTR type, LPWSTR extension, UINT size)
     return found;
 }
 
-/* the description of a file's version resource, its name when it has none. */
+/* falls back to the file name when there is no version description. */
 BOOL WINAPI SHGetFileDescriptionW(LPCWSTR file, LPCWSTR version, LPCWSTR language, LPWSTR out, UINT *size);
 BOOL WINAPI SHGetFileDescriptionW(LPCWSTR file, LPCWSTR version, LPCWSTR language, LPWSTR out, UINT *size)
 {

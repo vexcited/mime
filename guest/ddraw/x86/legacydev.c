@@ -1,8 +1,7 @@
 /*
- * IDirect3DDevice, IDirect3DDevice2 and IDirect3DDevice3 of d3dim.dll,
- * build 26300: one object behind three interfaces, whose methods behave
- * by the version that made it. a first device lives in the surface that
- * made it, its IUnknown being the surface's.
+ * IDirect3DDevice, IDirect3DDevice2 and IDirect3DDevice3: one object behind
+ * three interfaces, whose methods behave by the version that created it. a
+ * first device lives in the surface that made it and uses its IUnknown.
  */
 #include "d3d_private.h"
 
@@ -53,7 +52,7 @@ static D3DDEV *from_inner(IUnknown *iface)
     return CONTAINING_RECORD(iface, D3DDEV, inner);
 }
 
-/* a first device answers only for the guid that made it; the others for their interfaces. */
+/* a first device answers only for the guid that created it, the others for their interfaces. */
 static HRESULT STDMETHODCALLTYPE inner_query(IUnknown *This, REFIID riid, void **out)
 {
     if (!out)
@@ -102,7 +101,7 @@ static ULONG STDMETHODCALLTYPE inner_release(IUnknown *This)
 
 static const IUnknownVtbl inner_vtbl = {inner_query, inner_add_ref, inner_release};
 
-/* ------------------------------------------------------------------ the methods, shared by the interfaces */
+/* ------------------------------------------------------------------ methods shared by the interfaces */
 
 static HRESULT query(D3DDEV *dev, REFIID riid, void **out)
 {
@@ -124,7 +123,7 @@ static BOOL desc_size_valid(DWORD size)
     return size == sizeof(D3DDEVICEDESC) || size == D3DDEVICEDESCSIZE_V1 || size == D3DDEVICEDESCSIZE_V2;
 }
 
-/* the stored descriptions, their own size included, as far as the caller's sizes go. */
+/* copies the stored descriptions, size field included, up to the caller's sizes. */
 static HRESULT get_caps(D3DDEV *dev, D3DDEVICEDESC *hw, D3DDEVICEDESC *sw)
 {
     if (!hw || !sw || !desc_size_valid(hw->dwSize) || !desc_size_valid(sw->dwSize))
@@ -155,7 +154,7 @@ static D3DTEXHANDLE *handle_of(D3DDEV *dev, D3DTEXOBJ *t)
     return nullptr;
 }
 
-/* the two handles name each other's textures from now on. */
+/* from now on each handle names the other's texture. */
 static HRESULT swap_texture_handles(D3DDEV *dev, D3DTEXOBJ *a, D3DTEXOBJ *b)
 {
     if (!a || !b)
@@ -285,7 +284,7 @@ static HRESULT get_current_viewport(D3DDEV *dev, IDirect3DViewport3 **out)
 #define RGB_FORMAT(bits, r, g, b, a)                                                                                   \
     {sizeof(DDPIXELFORMAT), DDPF_RGB | ((a) ? DDPF_ALPHAPIXELS : 0), 0, {bits}, {r}, {g}, {b}, {a}}
 
-/* the rgb rasterizer's, the last two for the third interface only. */
+/* the rgb rasterizer's; the last two are for the third interface only. */
 static const DDPIXELFORMAT SOFTWARE_FORMATS[] = {
     RGB_FORMAT(32, 0xFF0000, 0xFF00, 0xFF, 0),
     RGB_FORMAT(32, 0xFF0000, 0xFF00, 0xFF, 0xFF000000),
@@ -297,7 +296,7 @@ static const DDPIXELFORMAT SOFTWARE_FORMATS[] = {
     RGB_FORMAT(16, 0xF00, 0xF0, 0xF, 0xF000),
 };
 
-/* what d3dim enumerates of a driver without registry lists: the formats of directx 5. */
+/* what d3dim enumerates for a driver without registry lists: the directx 5 formats. */
 static const DDPIXELFORMAT SAFE_FORMATS[] = {
     RGB_FORMAT(16, 0x7C00, 0x3E0, 0x1F, 0),
     RGB_FORMAT(16, 0x7C00, 0x3E0, 0x1F, 0x8000),
@@ -407,7 +406,7 @@ static HRESULT get_direct3d(D3DDEV *dev, DWORD version, void **out)
     return D3D_OK;
 }
 
-/* a new target keeps a depth buffer if the old one had one; texture handles go to the new target. */
+/* a new target keeps a depth buffer if the old one had one; texture handles move to the new target. */
 static HRESULT set_render_target(D3DDEV *dev, DDSURF *target)
 {
     if (!target)
@@ -528,7 +527,7 @@ static HRESULT get_clip_status(D3DDEV *dev, D3DCLIPSTATUS *status)
 
 /* ------------------------------------------------------------------ drawing */
 
-/* the vertex types of the second interface as formats; others draw nothing. */
+/* the second interface's vertex types as formats; others draw nothing. */
 static DWORD fvf_of_type(DWORD type)
 {
     switch (type) {
@@ -556,10 +555,7 @@ static void count_primitives(D3DDEV *dev, D3DPRIMITIVETYPE type, DWORD n, DWORD 
     s->dwVerticesProcessed += vertices;
 }
 
-/*
- * the rasterizers' MODULATE of a texture without alpha takes the diffuse
- * alpha, for these exact stage states only.
- */
+/* the rasterizers' MODULATE of a texture without alpha takes the diffuse alpha, for these exact stage states only. */
 static BOOL diffuse_alpha(D3DDEV *dev)
 {
     const DWORD *t = dev->tss[0];
@@ -591,7 +587,7 @@ HRESULT D3dLegacyRender(D3DDEV *dev, D3DPRIMITIVETYPE type, DWORD fvf, const voi
     if (!vertices || !vertex_count || !fvf)
         return D3D_OK;
     BOOL transformed = (fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZRHW;
-    /* lit here, the backend only transforming. */
+    /* lit here, so the backend only transforms. */
     if (!transformed && (fvf & D3DFVF_NORMAL) && !(flags & D3DDP_DONOTLIGHT) &&
         l->light_states[D3DLIGHTSTATE_MATERIAL]) {
         DWORD out_fvf = D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_SPECULAR | (fvf & (D3DFVF_TEXCOUNT_MASK | 0xFFFF0000));
@@ -615,7 +611,7 @@ HRESULT D3dLegacyRender(D3DDEV *dev, D3DPRIMITIVETYPE type, DWORD fvf, const voi
         vertices = l->lit;
         fvf = out_fvf;
     } else if (IsEqualGUID(&dev->guid, &IID_IDirect3DRampDevice) && (fvf & D3DFVF_DIFFUSE)) {
-        /* the mono model's colors as their ramps', in a copy. */
+        /* mono model colors become their ramp colors, in a copy. */
         DWORD stride = D3dFvfSize(fvf), at = D3dFvfSize(fvf & (D3DFVF_POSITION_MASK | D3DFVF_NORMAL | D3DFVF_RESERVED1));
         SIZE_T need = (SIZE_T)stride * vertex_count;
         if (need > l->lit_size) {
@@ -677,7 +673,7 @@ static DWORD keep_count(D3DPRIMITIVETYPE type, DWORD n)
     }
 }
 
-/* what a batch drawn in the middle keeps for the primitives that continue it: a fan its first element. */
+/* what a batch drawn midway keeps for the primitives that continue it, such as a fan's first element. */
 static void keep_tail(D3DPRIMITIVETYPE type, BYTE *items, DWORD *n, DWORD size)
 {
     DWORD keep = keep_count(type, *n);
@@ -859,9 +855,9 @@ static HRESULT validate(D3DDEV *dev, DWORD *passes)
 }
 
 /*
- * the six planes of world, view, projection and the clip volume, and
- * each sphere's center against them: outside a plane past its radius,
- * crossing it within.
+ * builds six planes from world, view, projection and the clip volume. a
+ * sphere is outside a plane when its center is past it by more than the
+ * radius, and crosses it when within.
  */
 static HRESULT sphere_visibility(D3DDEV *dev, const D3DVECTOR *centers, const float *radii, DWORD count,
                                  DWORD *results)
@@ -980,7 +976,7 @@ static HRESULT delete_matrix(D3DDEV *dev, D3DMATRIXHANDLE handle)
     return D3D_OK;
 }
 
-/* the viewport made current for one Execute or Pick, downloaded, and the old one back after. */
+/* downloads the viewport as current for one Execute or Pick, then restores the old one. */
 static HRESULT run_buffer(D3DDEV *dev, IDirect3DExecuteBuffer *iface, IDirect3DViewport *vp_iface, DWORD flags,
                           const D3DRECT *rect)
 {
@@ -1030,7 +1026,7 @@ static HRESULT get_pick_records(D3DDEV *dev, DWORD *count, D3DPICKRECORD *record
         return hr;                                                                                                     \
     return DdLeave(EXPR)
 
-/* what all three interfaces have, by the names the vtables give them. */
+/* methods all three interfaces share, under the names the vtables give them. */
 #define COMMON_METHODS(N, IFACE, VIEWPORT, TEXTURE)                                                                    \
     static HRESULT STDMETHODCALLTYPE dev##N##_query(IFACE *This, REFIID riid, void **out)                              \
     {                                                                                                                  \
@@ -1338,7 +1334,7 @@ static HRESULT STDMETHODCALLTYPE dev3_draw_indexed_primitive_strided(IDirect3DDe
     CALL(draw_strided(dev, type, fvf, data, vertex_count, indices, index_count, flags));
 }
 
-/* a buffer's whole vertices, which the indices of the indexed draw count from. */
+/* takes all of the buffer's vertices, which the indexed draw's indices count from. */
 static HRESULT STDMETHODCALLTYPE dev3_draw_primitive_vb(IDirect3DDevice3 *This, D3DPRIMITIVETYPE type,
                                                         LPDIRECT3DVERTEXBUFFER buffer, DWORD start, DWORD count,
                                                         DWORD flags)

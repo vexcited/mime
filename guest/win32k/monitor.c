@@ -1,8 +1,7 @@
 /*
- * the host's monitors. the host lays them out in guest pixels as one virtual screen with the primary at 0, 0, each
- * as many pixels as the display has device pixels, so a monitor's dpi is 96 times its scale. a program sees them
- * as windows' monitors: handles from MonitorHandle, \\.\DISPLAYn devices, and per monitor dpi for the programs
- * that are aware of it. a window is on the monitor most of it covers.
+ * host monitors use device pixels in a virtual screen with the primary at 0, 0. DPI is 96 times the scale. programs
+ * see MonitorHandle handles and display devices; DPI-aware programs get per-monitor DPI. a window belongs to the
+ * monitor it overlaps most.
  */
 #include "win32k.h"
 
@@ -30,7 +29,7 @@ static void device_name(ULONG index, WCHAR name[32])
     name[at] = 0;
 }
 
-/* the primary one is what the boot information says too, and the display mode of a program replaces its size. */
+/* the primary monitor matches boot information; an application display mode overrides its size. */
 static void primary(MIME_MONITOR_INFO *m)
 {
     m->Rect = (RECT){0, 0, W32Display.Width, W32Display.Height};
@@ -80,7 +79,6 @@ void MonitorsRefresh(void)
         g_changed = TRUE;
 }
 
-/* whether the monitors differ from what they were when this was last asked. */
 BOOLEAN MonitorsTakeChanged(void)
 {
     BOOLEAN changed = g_changed;
@@ -95,7 +93,7 @@ ULONG MonitorCount(void)
     return g_count;
 }
 
-/* a monitor as it is now; the primary follows the display mode. */
+/* the primary monitor follows the display mode. */
 BOOLEAN MonitorGet(ULONG index, MIME_MONITOR_INFO *out)
 {
     if (index >= MonitorCount())
@@ -120,7 +118,7 @@ static LONG64 distance(const RECT *r, const RECT *m)
     return (LONG64)dx * dx + (LONG64)dy * dy;
 }
 
-/* the monitor most of a rectangle is on, a point counting as inside the monitor it is in; else the nearest one. */
+/* choose the largest overlap, or the nearest monitor if there is none. a point belongs to its containing monitor. */
 LONG MonitorFromRectIndex(const RECT *rect, BOOLEAN nearest)
 {
     MIME_MONITOR_INFO m;
@@ -167,7 +165,6 @@ UINT MonitorDpiOfRect(const RECT *rect)
     return m.Dpi ? m.Dpi : 96;
 }
 
-/* the virtual screen: where all of the monitors are. */
 RECT MonitorVirtualScreen(void)
 {
     MIME_MONITOR_INFO m;
@@ -181,7 +178,6 @@ RECT MonitorVirtualScreen(void)
     return all;
 }
 
-/* whether a rectangle covers a whole monitor, as a program's own fullscreen window does. */
 BOOLEAN MonitorCoveredBy(const RECT *rect)
 {
     MIME_MONITOR_INFO m;
@@ -192,7 +188,7 @@ BOOLEAN MonitorCoveredBy(const RECT *rect)
     return FALSE;
 }
 
-/* the monitor of a device name, -1 for none. */
+/* returns the monitor index for a device name, or -1. */
 LONG MonitorFromDeviceName(PCWSTR name)
 {
     for (ULONG i = 0; i < MonitorCount(); i++) {

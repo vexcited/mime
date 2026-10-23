@@ -1,12 +1,9 @@
 /*
- * secur32 entry point and the helpers shared by its source files.
+ * secur32 entry point and shared helpers.
  *
- * windows' secur32 forwards the security support provider interface to
- * sspicli.dll, which talks to lsa. mime has neither, so secur32 implements
- * the interface itself: the package table, credential handles, the user
- * name queries and the schannel tls client are real, while the other
- * packages fail to establish a context: there is no kerberos, ntlm or
- * digest implementation.
+ * windows' secur32 forwards the sspi interface to sspicli.dll, which talks to lsa. mime has neither, so secur32
+ * implements the interface itself: the package table, credential handles, user name queries and the schannel tls
+ * client are real. there is no kerberos, ntlm or digest, so the other packages never establish a context.
  */
 #include "secur32_private.h"
 
@@ -41,7 +38,7 @@ PSTR SecWideToAnsi(PCWSTR text)
     return out;
 }
 
-/* the cases of sspicli's SspNtStatusToSecStatus that secur32 can meet. */
+/* only the status mappings secur32 can hit. */
 SECURITY_STATUS SecNtStatusToSecStatus(NTSTATUS status)
 {
     if (status == STATUS_SUCCESS || (status & 0x1FFF0000) == 0x00090000)

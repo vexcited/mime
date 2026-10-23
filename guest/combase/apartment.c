@@ -1,6 +1,6 @@
 /*
- * what a program that implements runtime classes of its own asks of the runtime: serving factories from its code, being
- * told about the end of its apartment, naming the apartment, and changing the error a call reports.
+ * what a program with its own runtime classes asks of the runtime: registered factories, apartment shutdown, apartment
+ * ids and error transforms.
  */
 #include "combase_private.h"
 
@@ -16,7 +16,6 @@ typedef struct REGISTRATION {
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static REGISTRATION *g_registrations;
 
-/* the factory the program registered for a class, as a reference to the interface asked for. */
 HRESULT CbRegisteredFactory(HSTRING class_id, REFIID riid, void **factory)
 {
     UINT32 length;
@@ -97,8 +96,7 @@ ROAPI void WINAPI RoRevokeActivationFactories(RO_REGISTRATION_COOKIE cookie)
 }
 
 /*
- * the identifier of the apartment of the thread: the thread itself for a single threaded one, and one value for the
- * multithreaded apartment of the process. A thread outside any apartment has none.
+ * the thread id for a single threaded apartment, one fixed value for the process's multithreaded apartment.
  */
 ROAPI HRESULT WINAPI RoGetApartmentIdentifier(UINT64 *identifier)
 {
@@ -119,7 +117,7 @@ ROAPI HRESULT WINAPI RoGetApartmentIdentifier(UINT64 *identifier)
     return S_OK;
 }
 
-/* the callbacks are kept for the apartment, and never called: an apartment here ends with its thread or its process. */
+/* callbacks are kept but never called: an apartment here ends with its thread or its process. */
 ROAPI HRESULT WINAPI RoRegisterForApartmentShutdown(IApartmentShutdown *callback, UINT64 *identifier,
                                                     APARTMENT_SHUTDOWN_REGISTRATION_COOKIE *cookie)
 {

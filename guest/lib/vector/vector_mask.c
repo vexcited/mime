@@ -1,6 +1,4 @@
-/*
- * coverage masks as sorted bands of runs.
- */
+/* coverage masks as sorted bands of runs. */
 #include "vector_internal.h"
 
 #define MASK_LIMIT (1u << 24)

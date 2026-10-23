@@ -1,8 +1,4 @@
-/*
- * direct3d 1 to 7, which ddraw serves: the direct3d object of every
- * version, devices, viewports, lights, materials, textures, execute
- * buffers and vertex buffers. methods are in windows' vtable order.
- */
+/* direct3d 1 to 7, served by ddraw. methods follow windows' vtable order. */
 #ifndef MIME_WIN32_D3D_H
 #define MIME_WIN32_D3D_H
 
@@ -199,7 +195,7 @@ typedef struct IDirect3DVertexBuffer7 IDirect3DVertexBuffer7, *LPDIRECT3DVERTEXB
     HRESULT(STDMETHODCALLTYPE *EndScene)(T * This);                                                                    \
     HRESULT(STDMETHODCALLTYPE *GetDirect3D)(T * This, LPDIRECT3D * d3d);
 
-/* what devices 2 and 3 share after their first methods, with their vertex description. */
+/* the methods devices 2 and 3 share after their first ones, differing only in the vertex type. */
 #define IDirect3DDevice2_STATE_METHODS(T, VERTEXTYPE)                                                                  \
     HRESULT(STDMETHODCALLTYPE *Begin)(T * This, D3DPRIMITIVETYPE type, VERTEXTYPE vertex_type, DWORD flags);           \
     HRESULT(STDMETHODCALLTYPE *BeginIndexed)(T * This, D3DPRIMITIVETYPE type, VERTEXTYPE vertex_type,                  \
@@ -344,7 +340,7 @@ typedef struct IDirect3DVertexBuffer7 IDirect3DVertexBuffer7, *LPDIRECT3DVERTEXB
     HRESULT(STDMETHODCALLTYPE *GetClipPlane)(T * This, DWORD index, D3DVALUE * plane);                                 \
     HRESULT(STDMETHODCALLTYPE *GetInfo)(T * This, DWORD id, LPVOID info, DWORD size);
 
-/* ------------------------------------------------------------------ the objects of the first interfaces */
+/* ------------------------------------------------------------------ other objects */
 
 #define IDirect3DExecuteBuffer_METHODS(T)                                                                              \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \

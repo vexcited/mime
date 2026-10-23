@@ -1,4 +1,4 @@
-/* xinput1_1.dll: the first redistributable xinput with XInputEnable, on the shared engine. */
+/* xinput1_1.dll, the first redistributable XInput with XInputEnable, using the shared engine. */
 #include "../lib/xinput/xinput_private.h"
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)

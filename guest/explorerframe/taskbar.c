@@ -1,8 +1,7 @@
 /*
- * the taskbar list of a window: progress, overlay icon, thumbnail toolbar, tooltip and clip, and the tabs a
- * program registers for one window. there is no taskbar, so the settings are kept and nothing shows them. the
- * progress is also a property of the window, "MimeTaskbarProgress" for its state and "MimeTaskbarValue" for its
- * value from 0 to 65534, which a host that shows progress reads.
+ * a window's taskbar state: progress, overlay icon, thumbnail toolbar, tooltip, clip and registered tabs. there is
+ * no taskbar, so the settings are only kept. progress is also stored as window properties, "MimeTaskbarProgress"
+ * for the state and "MimeTaskbarValue" for the value from 0 to 65534, for a host that shows progress.
  */
 #include "explorerframe_private.h"
 #include <mime/shellclient.h>
@@ -12,7 +11,6 @@
 #define PROGRESS_MAX 65534
 #define TAB_PROPERTY ((LPCWSTR)(ULONG_PTR)0xA91B)
 
-/* what the list keeps for each window it was given settings of. */
 typedef struct _WINDOW_STATE {
     HWND Window;
     HICON Overlay;
@@ -32,7 +30,7 @@ typedef struct _TASKBAR_LIST {
     LONG Refs;
 } TASKBAR_LIST;
 
-/* the state of a window, made when there is none, and dropped when its window is gone. */
+/* also drops the state of windows that are gone. */
 static WINDOW_STATE *state_of(HWND window, BOOL create)
 {
     WINDOW_STATE *free_slot = nullptr;
@@ -120,8 +118,8 @@ static HRESULT STDMETHODCALLTYPE tl_mark_fullscreen(ITaskbarList3 *This, HWND wi
 }
 
 /*
- * the progress of a window's button as the launcher of the desktop shows it: the fraction of its bar in tenths of a
- * percent. a button with no progress has none, one that waits for something has an empty bar.
+ * tells the desktop launcher the bar's fill in hundredths of a percent. no progress hides the bar, an indeterminate
+ * one shows it empty.
  */
 static void send_progress(HWND window)
 {
@@ -142,7 +140,7 @@ static HRESULT STDMETHODCALLTYPE tl_progress_value(ITaskbarList3 *This, HWND win
                                                    ULONGLONG total)
 {
     ULONGLONG value;
-    /* none done is 0, all done is the top, between them the share of 65532 plus one, which can overflow. */
+    /* 0 when none is done, the top when all is, else a share of 65532 plus one, which can overflow. */
     if (!completed) {
         value = 0;
     } else if (completed >= total) {
@@ -205,7 +203,7 @@ static HRESULT thumb_buttons(HWND window, UINT count, LPTHUMBBUTTON buttons, BOO
             s->ButtonCount = count;
             memcpy(s->Buttons, buttons, count * sizeof(THUMBBUTTON));
         } else {
-            /* an update changes the buttons that were added, found by their ids. */
+            /* an update changes already added buttons, matched by id. */
             for (UINT i = 0; i < count; i++) {
                 BOOL found = FALSE;
                 for (UINT k = 0; k < s->ButtonCount && !found; k++)
@@ -238,9 +236,8 @@ static HRESULT STDMETHODCALLTYPE tl_button_images(ITaskbarList3 *This, HWND wind
 }
 
 /*
- * an overlay icon is a small picture on the button, which the desktop's launchers have no place for; what they have is
- * the count on a badge. a guess at the meaning: the first number of the description is the count, and an overlay with
- * none counts as one.
+ * desktop launchers cannot show an overlay icon, only a count badge. as a guess, the first number in the description
+ * is the count, and an overlay without one counts as one.
  */
 static void send_badge(HWND window, BOOL present, LPCWSTR description)
 {
@@ -303,7 +300,7 @@ static HRESULT STDMETHODCALLTYPE tl_clip(ITaskbarList3 *This, HWND window, RECT 
     return S_OK;
 }
 
-/* the flags of a tab: the pairs that exclude each other are invalid, and only a registered tab has any. */
+/* mutually exclusive flag pairs are invalid, and only a registered tab takes flags. */
 static HRESULT STDMETHODCALLTYPE tl_tab_properties(ITaskbarList4 *This, HWND tab, STPFLAG flags)
 {
     if ((flags & 0xC) == 0xC || (flags & 3) == 3)
@@ -322,7 +319,7 @@ static const ITaskbarList4Vtbl g_vtbl = {
     tl_tab_properties,
 };
 
-/* ------------------------------------------------------------------ the class */
+/* ------------------------------------------------------------------ class */
 
 static HRESULT STDMETHODCALLTYPE factory_query_interface(IClassFactory *This, REFIID riid, void **object)
 {

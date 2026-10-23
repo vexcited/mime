@@ -1,7 +1,7 @@
 /*
- * the llvm 3.7 module of a dxil part, as the compiler reads it: types,
- * values numbered as the bitcode numbers them, functions of blocks of
- * instructions, and metadata.
+ * a dxil part's llvm 3.7 module as the compiler reads it: types, values
+ * numbered as the bitcode numbers them, functions of instruction blocks,
+ * and metadata.
  */
 #ifndef MIME_LIB_DXIL_IR_H
 #define MIME_LIB_DXIL_IR_H
@@ -51,7 +51,7 @@ typedef enum DxValueKind {
     DV_INSTRUCTION,
 } DxValueKind;
 
-/* llvm's opcodes of constant expressions and instructions. */
+/* llvm opcodes of constant expressions and instructions. */
 enum {
     DX_CAST_TRUNC,
     DX_CAST_ZEXT,
@@ -128,7 +128,7 @@ enum {
     DX_RMW_UMIN,
 };
 
-/* the kinds of constant expressions kept: casts and element pointers. */
+/* the constant expression kinds kept. */
 enum { DX_EXPR_CAST, DX_EXPR_GEP, DX_EXPR_BINOP };
 
 typedef struct DxValue {

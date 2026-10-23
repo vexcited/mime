@@ -1,13 +1,13 @@
 /*
- * msacm32's process state: the lock of the driver list, the checks of
- * handles and pointers, the version and the metrics.
+ * msacm32 process state: the driver list lock, handle and pointer checks,
+ * the version and the metrics.
  */
 #include "msacm32_private.h"
 
 HINSTANCE AcmModule;
 RTL_CRITICAL_SECTION AcmLock;
 
-/* how deep the thread holding the list is in enumerations, which forbid changing the list. */
+/* how deeply the thread holding the list is nested in enumerations, which forbid changing it. */
 static DWORD g_enum_depth;
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
@@ -42,7 +42,7 @@ void AcmLeaveEnum(void)
     RtlLeaveCriticalSection(&AcmLock);
 }
 
-/* a handle of the given kind, or of any kind, still open. */
+/* whether a handle of the given kind, or of any kind, is still open. */
 BOOL AcmValid(const void *handle, DWORD type)
 {
     if (!handle || !AcmBoot())
@@ -126,7 +126,7 @@ MSACMAPI DWORD WINAPI acmGetVersion(void)
     return 0x05000000;
 }
 
-/* the drivers the thread sees whose support has every bit of mask. */
+/* counts the drivers the thread sees that support every bit of mask. */
 static MMRESULT count_drivers(DWORD *out, DWORD mask, DWORD flags)
 {
     DWORD n = 0;
@@ -139,7 +139,7 @@ static MMRESULT count_drivers(DWORD *out, DWORD mask, DWORD flags)
     return MMSYSERR_NOERROR;
 }
 
-/* the wave device a hardware driver stands for, found by the name both give. */
+/* the wave device a hardware driver stands for, matched by name. */
 static MMRESULT wave_identifier(ACMDRIVERID_ *id, DWORD *out, BOOL input)
 {
     *out = (DWORD)-1;

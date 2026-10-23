@@ -1,7 +1,4 @@
-/*
- * direct3d 9: the capabilities devices report. the values are windows',
- * as programs test them.
- */
+/* direct3d 9 device capabilities. */
 #ifndef MIME_WIN32_D3D9CAPS_H
 #define MIME_WIN32_D3D9CAPS_H
 

@@ -1,7 +1,6 @@
 /*
- * mf.dll, the media foundation pipeline: here the capture devices programs ask of it, the cameras of the host
- * (see source.c) and, for microphones, the lists that are empty because their endpoints have no media source on top
- * of them. see docs/mfplat.md and docs/camera.md.
+ * mf.dll, only the capture device functions. cameras come from the host, see source.c. microphone lists are empty
+ * because their endpoints have no media source on top of them.
  */
 #include "camera.h"
 
@@ -13,7 +12,6 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
     return TRUE;
 }
 
-/* the capture class the attributes ask for, video or audio, or the failure. */
 static HRESULT source_type(IMFAttributes *attributes, BOOL *video)
 {
     GUID type;
@@ -29,7 +27,6 @@ static HRESULT source_type(IMFAttributes *attributes, BOOL *video)
     return S_OK;
 }
 
-/* the activation object of one camera: its name, its symbolic link and the kind of source it makes. */
 static HRESULT activate_camera(PCWSTR link, IMFActivate **out)
 {
     WCHAR name[128];
@@ -50,9 +47,9 @@ static HRESULT activate_camera(PCWSTR link, IMFActivate **out)
 }
 
 /*
- * the cameras of the host, as windows lists the interfaces of the camera category: one activation object each. the
- * category attribute names another interface class to list instead, such as the sensor cameras, which are none here.
- * microphones have no media source, so their list is empty.
+ * one activation object per interface of the camera category. the category attribute selects another interface
+ * class instead, such as sensor cameras, which are none here. microphones have no media source, so their list is
+ * empty.
  */
 HRESULT WINAPI MFEnumDeviceSources(IMFAttributes *attributes, IMFActivate ***sources, UINT32 *count)
 {
@@ -97,9 +94,9 @@ HRESULT WINAPI MFEnumDeviceSources(IMFAttributes *attributes, IMFActivate ***sou
 }
 
 /*
- * a camera needs its symbolic link; one that names no camera fails with the error of opening it. a microphone may
- * name its endpoint, or a role for the default one, but not both; the endpoint exists in mmdevapi but has no media
- * source here.
+ * a camera needs its symbolic link, one that names no camera fails with the error of opening it. a microphone may
+ * name its endpoint or a role for the default one, not both. the endpoint exists in mmdevapi but has no media source
+ * here.
  */
 HRESULT WINAPI MFCreateDeviceSource(IMFAttributes *attributes, IMFMediaSource **source)
 {
@@ -117,7 +114,7 @@ HRESULT WINAPI MFCreateDeviceSource(IMFAttributes *attributes, IMFMediaSource **
     return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
 }
 
-/* an activation object over a copy of the attributes, that makes the source when it is asked to. */
+/* the activation object keeps a copy of the attributes and makes the source when asked. */
 HRESULT WINAPI MFCreateDeviceSourceActivate(IMFAttributes *attributes, IMFActivate **activate)
 {
     if (!attributes)

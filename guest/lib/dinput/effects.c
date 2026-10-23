@@ -1,10 +1,9 @@
 /*
- * effect files, as windows' dinput writes and reads them: a RIFF form
- * 'FORC' starting with a guid, then a LIST 'efct' for each effect with
- * its name, a 32-bit DIEFFECT whose pointers are left out, its guid, a
- * 1, and 'data' chunks for the axes, the directions, the envelope and the
- * type specific parameters. the reader takes the next chunk for each of
- * the four whatever the writer left out, as windows' does.
+ * effect files: a RIFF 'FORC' form starting with a guid, then a LIST 'efct'
+ * per effect holding its name, a 32-bit DIEFFECT without its pointers, its
+ * guid, a 1, and 'data' chunks for the axes, the directions, the envelope
+ * and the type specific parameters. like windows, the reader takes the next
+ * chunk for each of those four, whatever the writer left out.
  */
 #include "dinput_private.h"
 
@@ -29,14 +28,12 @@ static HRESULT last_error(void)
     return (HRESULT)(0x80070000u | (GetLastError() & 0xFFFF));
 }
 
-/* ------------------------------------------------------------------ reading */
-
 typedef struct READER {
     const BYTE *data;
     SIZE_T size, pos;
 } READER;
 
-/* the next chunk: its contents' start and end, after a list's type. */
+/* the next chunk's content range, past a list's type. */
 static BOOL descend(READER *r, SIZE_T *start, SIZE_T *end)
 {
     if (r->pos + 8 > r->size)
@@ -165,8 +162,6 @@ HRESULT DiEnumEffectsInFile(LPCWSTR file, LPDIENUMEFFECTSINFILECALLBACK callback
     HeapFree(GetProcessHeap(), 0, bytes);
     return hr;
 }
-
-/* ------------------------------------------------------------------ writing */
 
 typedef struct WRITER {
     BYTE *data;

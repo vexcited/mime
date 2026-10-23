@@ -1,15 +1,10 @@
 /*
- * the device of the console driver, \Device\ConDrv, see console.c for the
- * consoles. a program opens its console as files: \CurrentIn is the input,
- * \CurrentOut the screen buffer that is shown, \ScreenBuffer makes a
- * screen buffer and \Pty a pseudo console. the file objects carry what they
- * belong to, and kernelbase asks them its questions with device controls
- * with the controls of mime/condrv.h, reads and writes them with ReadFile and WriteFile.
+ * the console driver device, \Device\ConDrv. a program opens its console as files: \CurrentIn is the input,
+ * \CurrentOut the shown screen buffer, \ScreenBuffer makes a screen buffer and \Pty a pseudo console. kernelbase
+ * talks to them with the device controls of mime/condrv.h and with ReadFile and WriteFile.
  *
- * a standard stream `mime run` was given a pipe or a file for is no
- * console: \Device\ConDrvStream\Input, Output and Error are its ends,
- * files of a named pipe device as a redirected handle is on windows, read
- * and written in bytes and asked the questions of a pipe.
+ * a standard stream that `mime run` got a pipe or file for is no console: \Device\ConDrvStream\Input, Output and
+ * Error act as named pipe files, like a redirected handle on windows.
  */
 #include "console_p.h"
 
@@ -52,9 +47,8 @@ static const WCHAR *high_table(UINT cp)
 }
 
 /*
- * bytes of a code page to utf-16. a character cut at the end of the input
- * waits in carry for the next call. consumed is the bytes taken, the
- * return is the characters made.
+ * code page bytes to utf-16. a character cut at the end of the input waits in carry for the next call. *consumed
+ * counts the bytes taken, the return the characters made.
  */
 ULONG ConBytesToWide(UINT cp, const UCHAR *in, ULONG length, PWCHAR out, ULONG room, UCHAR carry[4],
                      PULONG carry_length, PULONG consumed)
@@ -80,7 +74,7 @@ ULONG ConBytesToWide(UINT cp, const UCHAR *in, ULONG length, PWCHAR out, ULONG r
             UCHAR lead = joined[0];
             ULONG need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
             if (have < need) {
-                /* the character goes on in the next write. */
+                /* the character continues in the next write. */
                 memcpy(carry, joined, have);
                 *carry_length = have;
                 i += fresh;
@@ -115,7 +109,7 @@ ULONG ConBytesToWide(UINT cp, const UCHAR *in, ULONG length, PWCHAR out, ULONG r
             } else {
                 out[n++] = (WCHAR)c;
             }
-            /* what was taken from the carry first, then from the input. */
+            /* bytes come from the carry first, then from the input. */
             ULONG from_carry = *carry_length < take ? *carry_length : take;
             ULONG from_input = take - from_carry;
             memmove(carry, carry + from_carry, *carry_length - from_carry);
@@ -144,7 +138,7 @@ ULONG ConBytesToWide(UINT cp, const UCHAR *in, ULONG length, PWCHAR out, ULONG r
     return n;
 }
 
-/* utf-16 to the bytes of a code page; stops before a character that does not fit in the room. */
+/* utf-16 to code page bytes, stopping before a character that does not fit. */
 ULONG ConWideToBytes(UINT cp, const WCHAR *in, ULONG count, PUCHAR out, ULONG room, PULONG consumed)
 {
     ULONG n = 0, i = 0;
@@ -210,7 +204,7 @@ ULONG ConWideToBytes(UINT cp, const WCHAR *in, ULONG count, PUCHAR out, ULONG ro
 
 /* ------------------------------------------------------------ reading text */
 
-/* the characters of key presses waiting, each as many times as its repeat count; the other events are dropped. */
+/* takes the characters of waiting key presses, repeated per repeat count, and drops other events. */
 static ULONG take_chars(MIME_CONSOLE *c, PWCHAR out, ULONG room, ULONG *acked, BOOLEAN *eof)
 {
     ULONG done = 0;
@@ -221,7 +215,7 @@ static ULONG take_chars(MIME_CONSOLE *c, PWCHAR out, ULONG room, ULONG *acked, B
         CON_CHUNK *k = CONTAINING_RECORD(e, CON_CHUNK, Links);
         e = e->Flink;
         if (!k->Records) {
-            /* the bytes of a console fed by a stream: utf-8 characters. */
+            /* a console fed by a stream holds utf-8 bytes. */
             if (!k->Length) {
                 if (done)
                     break;
@@ -263,7 +257,7 @@ static ULONG take_chars(MIME_CONSOLE *c, PWCHAR out, ULONG room, ULONG *acked, B
     return done;
 }
 
-/* a key press of the records waiting, for a line being edited; false when there is none. */
+/* the next waiting key press for the line editor, FALSE when there is none. */
 static BOOLEAN next_key(MIME_CONSOLE *c, ConKey *key, BOOLEAN *eof, ULONG *acked)
 {
     *eof = FALSE;
@@ -291,15 +285,14 @@ static BOOLEAN next_key(MIME_CONSOLE *c, ConKey *key, BOOLEAN *eof, ULONG *acked
     }
 }
 
-/* waits for the console to have input, or to close. */
 static NTSTATUS wait_ready(MIME_CONSOLE *c)
 {
     return KeWaitForSingleObject(&c->InputReady, UserRequest, UserMode, FALSE, nullptr);
 }
 
 /*
- * the characters a read has left from the line it took, the first line of them when an alias made several.
- * returns how many it gave. called with the lock held.
+ * hands out what is left of the line a read took, one line at a time when an alias made several. returns the count.
+ * called with the lock held.
  */
 static ULONG take_pending(MIME_CONSOLE *c, PWCHAR out, ULONG room)
 {
@@ -328,10 +321,9 @@ static ULONG take_pending(MIME_CONSOLE *c, PWCHAR out, ULONG room)
 }
 
 /*
- * reads text for ReadConsole and ReadFile: in line input a line, with its
- * line ending, edited with the keys; else the characters waiting, at least
- * one. what does not fit stays for the next read. *got is in characters. a
- * ctrl+c or ctrl+break while the read waits ends it with STATUS_CANCELLED.
+ * text for ReadConsole and ReadFile: in line input an edited line with its line ending, else at least one waiting
+ * character. what does not fit stays for the next read. *got is in characters. ctrl+c or ctrl+break during the wait
+ * ends the read with STATUS_CANCELLED.
  */
 static NTSTATUS read_text(MIME_CONSOLE *c, ULONG room, PWCHAR out, PWCHAR initial, ULONG initial_length, PWCHAR exe,
                           ULONG exe_length, ULONG wake_mask, PULONG got, PULONG key_state)
@@ -374,7 +366,7 @@ static NTSTATUS read_text(MIME_CONSOLE *c, ULONG room, PWCHAR out, PWCHAR initia
                 return status;
             continue;
         }
-        /* line input: the keys are the editor's until it has a line. */
+        /* line input: keys go to the editor until it has a line. */
         if (!line) {
             unsigned flags = 0;
             if (c->InputMode & ENABLE_ECHO_INPUT)
@@ -443,7 +435,7 @@ static NTSTATUS read_text(MIME_CONSOLE *c, ULONG room, PWCHAR out, PWCHAR initia
     }
 }
 
-/* the same as bytes of the input code page, the bytes that do not fit kept for the next read. */
+/* read_text in input code page bytes, keeping the bytes that do not fit for the next read. */
 static NTSTATUS read_bytes(MIME_CONSOLE *c, ULONG room, PUCHAR out, PWCHAR initial, ULONG initial_length, PWCHAR exe,
                            ULONG exe_length, ULONG wake_mask, PULONG got, PULONG key_state)
 {
@@ -478,7 +470,7 @@ static NTSTATUS read_bytes(MIME_CONSOLE *c, ULONG room, PUCHAR out, PWCHAR initi
         ULONG n = ConWideToBytes(cp, wide, chars, out, room, &consumed);
         *got = n;
         if (consumed < chars) {
-            /* the rest of the characters as bytes, for the next read. */
+            /* keep the leftover characters as bytes for the next read. */
             ULONG left = chars - consumed;
             PUCHAR rest = ExAllocatePool2(POOL_FLAG_NON_PAGED, left * 4, KI_TAG('C', 'o', 'n', 'b'));
             if (rest) {
@@ -498,7 +490,7 @@ static NTSTATUS read_bytes(MIME_CONSOLE *c, ULONG room, PUCHAR out, PWCHAR initi
 
 /* ------------------------------------------------------------ the handles */
 
-/* the console of a file of the driver that is a pseudo console, with a reference, or nothing. */
+/* the referenced console of a pseudo console file, or NULL. */
 MIME_CONSOLE *ConPtyFromFile(PFILE_OBJECT file)
 {
     if (file->DeviceObject != g_device)
@@ -510,7 +502,7 @@ MIME_CONSOLE *ConPtyFromFile(PFILE_OBJECT file)
     return h->Console;
 }
 
-/* the pseudo console a handle of the current process is, with a reference. */
+/* the referenced pseudo console behind a handle of the current process. */
 MIME_CONSOLE *ConsoleOfPtyHandle(HANDLE handle)
 {
     PFILE_OBJECT file;
@@ -633,7 +625,6 @@ static NTSTATUS NTAPI con_cleanup(PDEVICE_OBJECT device, PIRP irp)
     return complete(irp, STATUS_SUCCESS, 0);
 }
 
-/* the last handle of a file went: what it held is let go. */
 static NTSTATUS NTAPI con_close(PDEVICE_OBJECT device, PIRP irp)
 {
     if (device != g_device)
@@ -666,7 +657,7 @@ static NTSTATUS NTAPI con_close(PDEVICE_OBJECT device, PIRP irp)
 
 /* ------------------------------------------------------------ device controls */
 
-/* the console a request is about: the handle's, or the process's for a handle of the device itself. */
+/* the handle's console, or the process's console for a handle to the device itself. */
 static MIME_CONSOLE *console_for(CON_HANDLE *h, PEPROCESS self, BOOLEAN *owned)
 {
     *owned = FALSE;
@@ -689,7 +680,7 @@ static NTSTATUS to_status(CsResult r)
     }
 }
 
-/* waits while the pause key holds the output, or the owner of a pseudo console has not taken what it was given. */
+/* waits while pause holds the output, or while a pseudo console's owner has not taken what it was given. */
 static NTSTATUS wait_output(MIME_CONSOLE *c)
 {
     for (;;) {
@@ -705,7 +696,7 @@ static NTSTATUS wait_output(MIME_CONSOLE *c)
     }
 }
 
-/* text for a screen buffer: utf-16, or bytes in the output code page, in pieces the scratch buffer holds. */
+/* writes utf-16 or output code page bytes, in pieces that fit the scratch buffer. */
 static NTSTATUS write_text(MIME_CONSOLE *c, CsBuffer *b, BOOLEAN bytes, const void *data, ULONG length)
 {
     NTSTATUS status = wait_output(c);
@@ -758,7 +749,7 @@ static NTSTATUS history_op(MIME_CONSOLE *c, PUCHAR buf, ULONG in_len, ULONG out_
         return STATUS_INVALID_PARAMETER;
     MIME_CONDRV_HISTORY rq = *(MIME_CONDRV_HISTORY *)buf;
     const WCHAR *exe = (const WCHAR *)(buf + sizeof(rq));
-    /* the settings carry their flags where the other requests have the length of a name. */
+    /* the settings carry flags where other requests have a name length. */
     BOOLEAN has_name = rq.Op != MIME_CONDRV_HISTORY_GET_INFO && rq.Op != MIME_CONDRV_HISTORY_SET_INFO;
     if (has_name && (ULONG64)in_len < sizeof(rq) + (ULONG64)rq.ExeNameLength * sizeof(WCHAR))
         return STATUS_INVALID_PARAMETER;
@@ -847,7 +838,7 @@ static NTSTATUS alias_op(MIME_CONSOLE *c, PUCHAR buf, ULONG in_len, ULONG out_le
             *information = ((ULONG)n < room ? (ULONG)n : room) * sizeof(WCHAR);
             if ((ULONG)n > room)
                 status = STATUS_BUFFER_OVERFLOW;
-            /* the full length is always told in the first word of the information. */
+            /* the first word always holds the full length. */
         }
         break;
     }
@@ -1039,7 +1030,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
         break;
     }
 
-    /* ---- the mode, of the input or of a screen buffer */
+    /* ---- input or screen buffer mode */
     case IOCTL_CONDRV_IN_MODE: {
         if (in_len < sizeof(MIME_CONDRV_MODE) || out_len < sizeof(MIME_CONDRV_MODE)) {
             status = STATUS_INVALID_PARAMETER;
@@ -1067,7 +1058,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
                 } else {
                     BOOLEAN vt_was = (e->Mode & CS_VIRTUAL_TERMINAL_PROCESSING) != 0;
                     e->Mode = m->Mode;
-                    /* an escape sequence cut by turning the sequences off is dropped. */
+                    /* an escape sequence cut off by turning sequences off is dropped. */
                     if (vt_was && !(m->Mode & CS_VIRTUAL_TERMINAL_PROCESSING))
                         CsParserReset(e);
                 }
@@ -1091,7 +1082,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
     case IOCTL_CONDRV_IN_ANSI_CARRY:
     case IOCTL_CONDRV_IN_HISTORY:
     case IOCTL_CONDRV_IN_ALIAS:
-        /* the history and the aliases belong to the console, and are asked of it by any file. */
+        /* history and aliases belong to the console, so any file may ask for them. */
         if (h->Kind != CH_INPUT && code != IOCTL_CONDRV_IN_HISTORY && code != IOCTL_CONDRV_IN_ALIAS) {
             status = STATUS_INVALID_HANDLE;
             break;
@@ -1117,7 +1108,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
             ULONG room = (out_len - sizeof(MIME_CONDRV_READ_RESULT)) / elem;
             if (room > rq.Length)
                 room = rq.Length;
-            /* the buffer is shared by the request and the answer, so what the read needs is kept first. */
+            /* request and answer share the buffer, so copy what the read needs first. */
             PWCHAR copy = nullptr;
             ULONG copy_chars = rq.InitialChars + rq.ExeNameLength;
             if (copy_chars) {
@@ -1198,7 +1189,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
                 status = STATUS_INVALID_PARAMETER;
                 break;
             }
-            /* events as WriteConsoleInput keeps them: known types only, the flags a console stores as booleans. */
+            /* events as WriteConsoleInput keeps them: known types only, flags stored as booleans. */
             BOOLEAN valid = TRUE;
             for (ULONG i = 0; i < count && valid; i++) {
                 MIME_CONDRV_RECORD *r = &records[i];
@@ -1608,7 +1599,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
                     KeClearEvent(&c->PtyReady);
                 if (c->PtyQueued <= 256 * 1024)
                     KeSetEvent(&c->PtySpace, 0, FALSE);
-                /* a closed console goes on talking while a process is left in it. */
+                /* a closed console keeps working while a process remains in it. */
                 BOOLEAN closed = (c->Flags & MIME_CONDRV_CLOSED) != 0 && empty;
                 ExReleaseFastMutex(&g_con_lock);
                 if (done || closed || !out_len) {
@@ -1662,7 +1653,7 @@ static ULONG stream_of(PIRP irp)
     return (ULONG)(ULONG_PTR)IoGetCurrentIrpStackLocation(irp)->FileObject->FsContext2;
 }
 
-/* waits for input without taking it, as a zero byte read of a pipe does. */
+/* waits for input without taking it, like a zero byte pipe read. */
 static NTSTATUS wait_input(MIME_CONSOLE *c)
 {
     for (;;) {
@@ -1679,7 +1670,6 @@ static NTSTATUS wait_input(MIME_CONSOLE *c)
     }
 }
 
-/* bytes of redirected input, waiting for some. */
 static NTSTATUS stream_read(MIME_CONSOLE *c, PUCHAR out, ULONG length, ULONG_PTR *information)
 {
     for (;;) {
@@ -1749,7 +1739,7 @@ static NTSTATUS NTAPI con_read_write(PDEVICE_OBJECT device, PIRP irp)
         status = wait_input(c);
     } else {
         status = stream_read(c, irp->UserBuffer, length, &information);
-        /* the end of the input is the other end of the pipe closing. */
+        /* the other end of the pipe closing is the end of the input. */
         if (NT_SUCCESS(status) && !information)
             status = STATUS_PIPE_BROKEN;
     }
@@ -1782,7 +1772,7 @@ static ULONG input_available(void)
     return n;
 }
 
-/* a byte mode pipe in blocking mode, the client end, always connected. */
+/* answers as the client end of a connected byte mode pipe in blocking mode. */
 static NTSTATUS NTAPI con_query(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -1820,7 +1810,7 @@ static NTSTATUS NTAPI con_query(PDEVICE_OBJECT device, PIRP irp)
     }
 }
 
-/* the modes of a pipe end: byte reads, blocking or not, both accepted as they change nothing here. */
+/* byte reads, blocking or not: all accepted, they change nothing here. */
 static NTSTATUS NTAPI con_set(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -1837,7 +1827,7 @@ static NTSTATUS NTAPI con_fs_control(PDEVICE_OBJECT device, PIRP irp)
     PUCHAR buf = irp->AssociatedIrp.SystemBuffer;
     if (device != g_stream_device || code != FSCTL_PIPE_PEEK)
         return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
-    /* the header: state, bytes available, messages and message length; then as much data as fits. */
+    /* the header: state, bytes available, messages and message length, then as much data as fits. */
     if (out_len < 4 * sizeof(ULONG))
         return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
     ULONG *head = (ULONG *)buf;
@@ -1851,7 +1841,7 @@ static NTSTATUS NTAPI con_fs_control(PDEVICE_OBJECT device, PIRP irp)
         ExAcquireFastMutex(&g_con_lock);
         head[1] = c->InputBytes;
         copied = ConTakeInput(c, buf + 4 * sizeof(ULONG), out_len - 4 * sizeof(ULONG), TRUE, &eof, &acked);
-        /* the end of the input is next when its empty chunk heads the queue, whatever room the peek has. */
+        /* the end of input is next when its empty chunk heads the queue, whatever the peek's room. */
         CON_CHUNK *first = IsListEmpty(&c->Input) ? nullptr : CONTAINING_RECORD(c->Input.Flink, CON_CHUNK, Links);
         BOOLEAN at_end = first && !first->Records && !first->Length;
         BOOLEAN broken = at_end || (!c->InputBytes && (c->Flags & MIME_CONDRV_CLOSED));

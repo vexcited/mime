@@ -1,12 +1,10 @@
 /*
- * Windows.Graphics.Capture: capture items for a window or a monitor, a frame pool of Direct3D 11 textures and the
- * session that fills it. the pixels come from win32k's capture (guest/win32k/capture.c, the same as dxgi.dll's output
- * duplication): a session keeps a duplication of its item's window or monitor, and a thread polls the sessions once a
- * blank of the display, writes what changed into a texture of the session's device and tells the pool's handlers
- * that a frame arrived.
+ * Windows.Graphics.Capture: capture items for a window or monitor, a frame pool of Direct3D 11 textures, and the
+ * session that fills it. pixels come from win32k's capture, the same source as dxgi's output duplication. a thread
+ * polls every session once per display blank, writes the changes into a texture on the session's device and signals
+ * the pool's handlers.
  *
- * a frame is a copy of the session's own texture into a free texture of the pool, so a program holding frames
- * never sees them change; when all the pool's textures are held, the frame is dropped.
+ * frames are copies into free pool textures, so held frames never change; when all are held, the frame is dropped.
  */
 #include "combase_private.h"
 #include <mime/ntuser.h>
@@ -86,7 +84,7 @@ struct SESSION {
     UINT Width, Height;
     ID3D11Texture2D *Shadow;
     UINT ShadowWidth, ShadowHeight;
-    /* a pool made again wants a frame whether anything changed or not, from the last pixels. */
+    /* a recreated pool wants a frame from the last pixels even if nothing changed. */
     BOOL Resend;
     SizeInt32 LastContent;
     UINT LastCropX, LastCropY;
@@ -132,7 +130,7 @@ static HRESULT handlers_remove(HANDLER_SET *set, CRITICAL_SECTION *lock, EventRe
     return S_OK;
 }
 
-/* the handlers called with the sender, outside the lock since they call back. */
+/* called outside the lock since handlers call back in. */
 static void handlers_raise(HANDLER_SET *set, CRITICAL_SECTION *lock, IInspectable *sender)
 {
     ITypedEventHandler *list[POOL_MAX_HANDLERS];
@@ -160,7 +158,7 @@ static void handlers_clear(HANDLER_SET *set)
         }
 }
 
-/* ------------------------------------------------------------------ the thread of sessions */
+/* ------------------------------------------------------------------ session thread */
 
 static CRITICAL_SECTION g_lock;
 static BOOL g_lock_made;
@@ -249,7 +247,7 @@ static DWORD WINAPI capture_thread(void *param)
 
 /* ------------------------------------------------------------------ items */
 
-/* the bounds of a window as it shows: without the invisible border, from dwm as capturers read them. */
+/* the window bounds without the invisible border, from dwm, as capturers read them. */
 static BOOL window_bounds(HWND window, RECT *window_rect, RECT *frame)
 {
     typedef HRESULT(WINAPI * GET)(HWND, DWORD, PVOID, DWORD);
@@ -335,7 +333,7 @@ static void item_destroy(WRT_OBJECT *object)
 
 static const WRT_CLASS item_class = {CbCaptureItemClass, 1, {&IID_IGraphicsCaptureItem}, 0, item_destroy};
 
-/* the item closes once, when its window or monitor is gone. */
+/* closes once, when the window or monitor is gone. */
 static void item_close(ITEM *item)
 {
     EnterCriticalSection(&item->Lock);
@@ -363,7 +361,7 @@ static HRESULT item_make(HWND window, HMONITOR monitor, UINT number, REFIID riid
     return hr;
 }
 
-/* a monitor's number, the one its device name ends with. */
+/* the number the monitor's device name ends with. */
 static UINT monitor_number(HMONITOR monitor)
 {
     MONITORINFOEXW info = {sizeof(info)};
@@ -379,7 +377,7 @@ static UINT monitor_number(HMONITOR monitor)
     return value;
 }
 
-/* guesses: a window that is gone is an invalid window handle, and the windows that cannot be captured are invalid. */
+/* guesses: a window that is gone or cannot be captured is an invalid window handle. */
 static HRESULT STDMETHODCALLTYPE interop_create_for_window(IGraphicsCaptureItemInterop *This, HWND window, REFIID riid,
                                                            void **result)
 {
@@ -522,7 +520,7 @@ static void pool_release_textures(POOL *pool)
     pool->QueueCount = 0;
 }
 
-/* textures of the pool's size and format, one for each buffer. */
+/* one texture per buffer, in the pool's size and format. */
 static HRESULT pool_make_textures(POOL *pool)
 {
     D3D11_TEXTURE2D_DESC desc = {.Width = (UINT)pool->Size.Width,
@@ -563,7 +561,7 @@ static BOOL format_accepted(DirectXPixelFormat format)
     return format == 87 || format == 28 || format == 10;
 }
 
-/* the device of a wrapper, and its immediate context. */
+/* takes the device and its immediate context from the wrapper. */
 static HRESULT pool_bind_device(POOL *pool, IDirect3DDevice *wrapper)
 {
     IDirect3DDxgiInterfaceAccess *access;
@@ -617,7 +615,7 @@ static HRESULT STDMETHODCALLTYPE pool_recreate(IDirect3D11CaptureFramePool *This
     return hr;
 }
 
-/* the oldest frame there is, or none. */
+/* the oldest queued frame, or none. */
 static HRESULT STDMETHODCALLTYPE pool_try_get_next_frame(IDirect3D11CaptureFramePool *This,
                                                          IDirect3D11CaptureFrame **result)
 {
@@ -870,7 +868,7 @@ static UINT64 system_time(void)
            (UINT64)counter.QuadPart % (UINT64)frequency.QuadPart * 10000000ull / (UINT64)frequency.QuadPart;
 }
 
-/* a copy of the session's texture into a free texture of the pool, queued for the program. false when all are held. */
+/* copies the session texture into a free pool texture and queues it; FALSE when all are held. */
 static BOOL session_deliver(SESSION *s, SizeInt32 content, UINT crop_x, UINT crop_y)
 {
     POOL *pool = s->Pool;
@@ -915,7 +913,7 @@ static BOOL session_deliver(SESSION *s, SizeInt32 content, UINT crop_x, UINT cro
     return TRUE;
 }
 
-/* the session's texture, the size of the frames the kernel gives. */
+/* sized like the frames the kernel gives. */
 static HRESULT session_shadow(SESSION *s, UINT width, UINT height)
 {
     if (s->Shadow && s->ShadowWidth == width && s->ShadowHeight == height)
@@ -977,7 +975,7 @@ static void session_poll(SESSION *s)
     if (FAILED(session_shadow(s, frame.Width, frame.Height)))
         return;
 
-    /* the dirty rectangles into the session's texture, and from there a frame. */
+    /* copy the dirty rectangles into the session texture, then deliver a frame. */
     RECT rects[128];
     UINT count = frame.DirtyBytes / sizeof(RECT);
     if (count > RTL_NUMBER_OF(rects))
@@ -998,7 +996,7 @@ static void session_poll(SESSION *s)
     if (pool->Multithread)
         pool->Multithread->lpVtbl->Leave(pool->Multithread);
 
-    /* a window shows without its invisible border: the frame is the part of its pixels the bounds hold. */
+    /* windows show without their invisible border, so the frame is the part of the pixels inside the bounds. */
     SizeInt32 content = {(INT32)frame.Width, (INT32)frame.Height};
     UINT crop_x = 0, crop_y = 0;
     if (s->Item->Window) {

@@ -1,9 +1,8 @@
 /*
- * the host's input method as a text service. win32k sends what the desktop's input method does, a preedit text
- * being composed or a text committed, to a window of the thread, which edits the document that has the focus the
- * way a text service of Windows does: it asks for an edit session, starts a composition, sets its text, marks it
- * with display attributes and ends it. a program that does not use the framework never has such a window, and
- * keeps the input method messages of imm32.
+ * the host's input method as a text service. win32k sends the desktop input method's preedit and committed text to a
+ * window of the thread, which edits the focused document like a Windows text service: it asks for an edit session,
+ * starts a composition, sets its text, marks it with display attributes and ends it. programs that do not use the
+ * framework never get that window and keep imm32's input method messages.
  */
 #include <mime/nt.h>
 #include <mime/abi.h>
@@ -79,7 +78,7 @@ static void forget_composition(SERVICE *svc)
         CtxRelease(ctx);
 }
 
-/* the program ended the composition on its own, such as when its focus moved: the desktop's input method forgets it. */
+/* the program ended the composition itself, such as on a focus change, so the desktop input method drops it. */
 static HRESULT STDMETHODCALLTYPE sink_terminated(ITfCompositionSink *This, TfEditCookie cookie, ITfComposition *comp)
 {
     SERVICE *svc = from_sink(This);
@@ -95,7 +94,7 @@ static const ITfCompositionSinkVtbl sink_vtbl = {sink_query, sink_add_ref, sink_
 
 /* ------------------------------------------------------------------ editing the document */
 
-/* the desktop's input method was told where text is entered: the composition, or else the selection. */
+/* tells the desktop input method where text goes: the composition, else the selection. */
 static void update_area(SERVICE *svc, CTX *ctx)
 {
     LONG start, end, caret;
@@ -110,7 +109,7 @@ static void update_area(SERVICE *svc, CTX *ctx)
     } else {
         return;
     }
-    /* an empty range has no extent in some stores: the character before it stands in. */
+    /* some stores give an empty range no extent, so the character before it stands in. */
     HRESULT hr = CtxStoreTextExt(ctx, start, end, &all);
     if (FAILED(hr) && start == end && start > 0) {
         hr = CtxStoreTextExt(ctx, start - 1, start, &all);
@@ -135,7 +134,7 @@ static TF_DA_ATTR_INFO attribute_kind(const EVENT *ev, LONG index)
     return TF_ATTR_INPUT;
 }
 
-/* marks each run of the composed text with the display attribute of the part of the text it is. */
+/* marks each run of the composed text with its display attribute. */
 static void mark_text(CTX *ctx, const EVENT *ev, LONG start)
 {
     LONG run = 0;
@@ -173,7 +172,7 @@ static HRESULT composition_range(SERVICE *svc, ITfRange **range)
     return svc->Composition->lpVtbl->GetRange(svc->Composition, range);
 }
 
-/* a composing text arrived: it replaces what the composition holds. */
+/* new preedit text replaces the composition's content. */
 static HRESULT do_preedit(SERVICE *svc, CTX *ctx, TfEditCookie cookie, const EVENT *ev)
 {
     HRESULT hr;
@@ -208,7 +207,7 @@ static HRESULT do_preedit(SERVICE *svc, CTX *ctx, TfEditCookie cookie, const EVE
         PropsSet(ctx, &GUID_PROP_COMPOSING, start, start + length, &one);
         PropsSet(ctx, &GUID_PROP_ATTRIBUTE, start, start + length, nullptr);
         mark_text(ctx, ev, start);
-        /* the caret is where the input method says: the start of what it converts, or the end it names. */
+        /* the caret goes at the start of the converted part, else at the end the input method gives. */
         LONG cursor = ev->Begin >= 0 && ev->End > ev->Begin ? ev->Begin : ev->End >= 0 ? ev->End : (LONG)ev->Count;
         if (cursor > (LONG)ev->Count)
             cursor = (LONG)ev->Count;
@@ -219,7 +218,7 @@ static HRESULT do_preedit(SERVICE *svc, CTX *ctx, TfEditCookie cookie, const EVE
     return hr;
 }
 
-/* the composition ends with the text it holds replaced by `text`, which may be empty. */
+/* ends the composition, replacing its text with `text`, which may be empty. */
 static HRESULT do_end(SERVICE *svc, CTX *ctx, TfEditCookie cookie, const WCHAR *text, ULONG count)
 {
     HRESULT hr = S_OK;

@@ -1,11 +1,8 @@
-/*
- * direct3d 9: the types, states and formats the interfaces take. the
- * values are windows', as programs pass them.
- */
+/* direct3d 9 types, states and formats, with windows' values. */
 #ifndef MIME_WIN32_D3D9TYPES_H
 #define MIME_WIN32_D3D9TYPES_H
 
-/* d3d8.h takes these types without the four whose layout or values differ in direct3d 8. */
+/* d3d8.h uses these types, except the four whose layout or values differ in direct3d 8. */
 
 #include <mime/win32/objbase.h>
 #include <mime/win32/wingdi.h>

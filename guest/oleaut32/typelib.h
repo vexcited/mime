@@ -1,8 +1,7 @@
 /*
- * type libraries: the model that both the reader of the msft format and the creator of type libraries fill, and what
- * the objects on top of it share. A library is decoded when it is read (the names and the types come out of the file
- * as they are asked for) and held as TL_TYPE records of functions, variables and implemented types; a created library
- * is built straight into the same records and written as an msft file.
+ * the type library model filled by both the msft reader and the creator, and shared by the objects on top. A read
+ * library is decoded lazily into TL_TYPE records of functions, variables and implemented types; a created library is
+ * built straight into the same records and written as an msft file.
  */
 #ifndef MIME_OLEAUT32_TYPELIB_H
 #define MIME_OLEAUT32_TYPELIB_H
@@ -27,7 +26,6 @@ extern const ITypeInfo2Vtbl g_typeinfo_vtbl;
 extern const ITypeCompVtbl g_typecomp_vtbl;
 extern const ICreateTypeInfo2Vtbl g_createinfo_vtbl;
 
-/* custom data: a guid and a value. */
 typedef struct TL_CUST {
     struct TL_CUST *Next;
     GUID Guid;
@@ -38,7 +36,7 @@ typedef struct {
     WCHAR *Name;
     TYPEDESC Type;
     USHORT Flags;
-    /* the default value, when Flags has PARAMFLAG_FHASDEFAULT. */
+    /* valid when Flags has PARAMFLAG_FHASDEFAULT. */
     VARIANT Default;
     TL_CUST *Cust;
 } TL_PARAM;
@@ -49,7 +47,7 @@ typedef struct {
     INVOKEKIND Invoke;
     CALLCONV Conv;
     USHORT Flags;
-    /* the offset in the table of virtual functions, in the bytes of the library's own pointer size. */
+    /* in bytes of the library's own pointer size. */
     SHORT VtOffset;
     BOOL VtOffsetSet;
     SHORT OptCount;
@@ -62,7 +60,7 @@ typedef struct {
     DWORD HelpContext, HelpStringContext;
     WCHAR *Doc;
     WCHAR *HelpFile;
-    /* a function of a module: the dll and the entry, which is a name or an ordinal. */
+    /* module functions: the dll and the entry, by name or ordinal. */
     WCHAR *DllName;
     WCHAR *EntryName;
     USHORT Ordinal;
@@ -89,7 +87,7 @@ typedef struct {
     TL_CUST *Cust;
 } TL_IMPL;
 
-/* an imported type: a library and a type of it, by guid or by index. */
+/* a type of another library, by guid or by index. */
 typedef struct {
     GUID Lib;
     LCID Lcid;
@@ -125,18 +123,18 @@ struct TL_TYPE {
     TL_IMPL *Impls;
     TL_CUST *Cust;
     MEMBERID Constructor, Destructor;
-    /* the number of functions and of interfaces the bases bring, for a dispatch interface or an interface. */
+    /* functions and interfaces contributed by the bases of an interface or dispinterface. */
     USHORT InheritedFuncs, InheritedImpls;
     BOOL Loaded;
     BOOL Layouted;
-    /* the alignment members of a structure obey, when it was set. */
+    /* member alignment of a struct, when set. */
     BOOL PackSet;
     USHORT Pack;
-    /* the position of its record in the file, for a type that was read. */
+    /* record offset in the file, for a type that was read. */
     ULONG FileOffset;
-    /* the names, strings and guids of the record as the file has them, until they are decoded. */
+    /* raw file offsets, until decoded. */
     ULONG NameOff, DocOff, GuidOff, CustOff;
-    /* the two objects: the one a dispatch or plain view gives, and the vtable view of a dual interface. */
+    /* the dispatch or plain view, and the vtable view of a dual interface. */
     TYPEINFO *Info, *Dual;
 };
 
@@ -145,7 +143,6 @@ typedef struct {
 } TL_SEGMENT;
 
 struct TL_LIB {
-    /* the objects on it. */
     const ITypeLib2Vtbl *lpVtbl;
     const ITypeCompVtbl *lpCompVtbl;
     const ICreateTypeLib2Vtbl *lpCreateVtbl;
@@ -162,14 +159,14 @@ struct TL_LIB {
     TL_CUST *Cust;
     ULONG TypeCount, TypeCapacity;
     TL_TYPE **Types;
-    /* the types imported, and the libraries they were found in. */
+    /* imported types, and the libraries they were found in. */
     ULONG ImportCount;
     TL_IMPORT *Imports;
     ITypeLib **ImportedLibs;
-    /* where the dispatch interface is, as a reference. */
+    /* reference to IDispatch. */
     HREFTYPE DispatchRef;
     BOOL Writable;
-    /* the image of a library that was read. */
+    /* the file image of a library that was read. */
     const BYTE *Image;
     SIZE_T ImageSize;
     void (*ReleaseImage)(void *context, const BYTE *image);
@@ -178,11 +175,11 @@ struct TL_LIB {
     UINT CodePage;
     TL_SEGMENT Seg[15];
     ULONG TypeOffsets, ImpOffset;
-    /* the file a library was loaded from or is to be saved to. */
+    /* loaded from, or to be saved to. */
     WCHAR *Path;
-    /* memory of the library's own: strings and descriptions live until the library does. */
+    /* strings and descriptions live as long as the library. */
     struct TL_CHUNK *Chunks;
-    /* hash of the names of the types, for FindName and GetTypeInfoOfName. */
+    /* type name hash for FindName and GetTypeInfoOfName. */
     BOOL NamesIndexed;
 };
 
@@ -200,7 +197,7 @@ struct TL_LIB {
 #define SEG_CUSTDATA 11
 #define SEG_CDGUID 12
 
-/* the heap of a library. */
+/* library heap. */
 void *TlAlloc(TL_LIB *lib, SIZE_T size);
 void TlHeapFree(TL_LIB *lib);
 WCHAR *TlTypeName(TL_TYPE *t);
@@ -209,7 +206,7 @@ HRESULT TlCustAll(TL_CUST *list, CUSTDATA *data);
 WCHAR *TlStrDup(TL_LIB *lib, const WCHAR *text);
 WCHAR *TlStrDupLen(TL_LIB *lib, const WCHAR *text, SIZE_T length);
 
-/* the vtable offset of a function in the processor's own words, and a size in the library's. */
+/* vtable offsets and sizes converted between the library's and this processor's pointer size. */
 SHORT TlNativeVtOffset(const TL_LIB *lib, SHORT offset);
 USHORT TlNativeVtSize(const TL_LIB *lib, USHORT size);
 BOOL TlNativeSyskind(SYSKIND kind);
@@ -219,12 +216,12 @@ HRESULT TlReadImage(const BYTE *image, SIZE_T size, SYSKIND target, void (*relea
                     void *context, TL_LIB **lib);
 HRESULT TlLoadMembers(TL_TYPE *type);
 HRESULT TlEnsureLayout(TL_TYPE *type);
-/* the string of a library as the file has it. */
+/* strings by file offset. */
 WCHAR *TlNameAt(TL_LIB *lib, ULONG offset);
 WCHAR *TlStringAt(TL_LIB *lib, ULONG offset);
 BOOL TlGuidAt(TL_LIB *lib, ULONG offset, GUID *guid);
 
-/* types by reference. */
+/* type references. */
 #define HREF_DEPTH(h) ((h) >> 24)
 #define HREF_LOCAL_STEP 128
 HREFTYPE TlHrefOfIndex(ULONG index);
@@ -246,7 +243,7 @@ void TlLibDestroy(TL_LIB *lib);
 TL_LIB *TlLibOfInfo(TYPEINFO *info);
 TL_TYPE *TlTypeOfInfo(TYPEINFO *info);
 
-/* descriptions out of the model. */
+/* FUNCDESC and VARDESC from the model. */
 HRESULT TlBuildFuncDesc(TL_TYPE *type, TL_FUNC *func, BOOL dispatch_view, USHORT depth, FUNCDESC **out);
 HRESULT TlBuildVarDesc(TL_TYPE *type, TL_VAR *var, VARDESC **out);
 void TlCopyTypeDesc(TL_LIB *lib, TYPEDESC *to, const TYPEDESC *from);

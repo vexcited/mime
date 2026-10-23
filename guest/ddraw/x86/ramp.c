@@ -1,16 +1,15 @@
 /*
- * 8-bit palettized targets and the ramp device, as d3dim.dll's ramp
- * lighting driver has them, build 26300. direct3d takes the entries of
- * the target's palette the program left free: the rgb devices put a
- * 6x6x6 color cube there and quantize every pixel to it, the ramp device
- * the colors of its material ramps. the backend draws in 32-bit color;
- * the pixels become indices when the cpu reads them.
+ * 8-bit palettized targets and the ramp device, like d3dim's ramp lighting
+ * driver. direct3d takes the palette entries the program left free: the
+ * rgb devices put a 6x6x6 color cube there and quantize every pixel to it,
+ * the ramp device puts its material ramps' colors. the backend draws in
+ * 32-bit color and pixels become indices when the cpu reads them.
  *
- * the ramp device is drawn in rgb: a vertex gets the color of the ramp
- * entry its intensity selects, which the backend interpolates. windows
- * interpolates the ramp index instead, the same colors where a ramp is
- * linear; and the per pixel ramp stage of windows 11's rasterizer is not
- * established, so this is the classic model, guessed.
+ * the ramp device draws in rgb: a vertex gets the color of the ramp entry
+ * its intensity selects, which the backend interpolates. windows
+ * interpolates the ramp index instead, giving the same colors where a ramp
+ * is linear. how windows 11's rasterizer does its per pixel ramp stage is
+ * unknown, so this is the classic model, guessed.
  */
 #include "d3d_private.h"
 
@@ -27,7 +26,7 @@ struct D3DPAL8 {
     PALETTEENTRY colors[256];
     BOOL dirty;
     BYTE cube[216];
-    /* the material whose ramp has its entries, which change the next one asks for its own. */
+    /* the material whose ramp holds the entries; they change when another asks for its own. */
     D3DMATERIAL ramp;
     float ramp_ambient;
     BOOL ramp_set;
@@ -70,7 +69,7 @@ static BYTE allocate(D3DPAL8 *p, BYTE r, BYTE g, BYTE b)
     return (BYTE)best;
 }
 
-/* the colors taken reach the palette, in the entries still left free there. */
+/* writes the taken colors to the palette entries still free there. */
 static void flush(D3DPAL8 *p)
 {
     if (!p->dirty)
@@ -94,7 +93,7 @@ static BOOL mono(D3DDEV *dev)
     return IsEqualGUID(&dev->guid, &IID_IDirect3DRampDevice);
 }
 
-/* the device's target taken: an 8-bit palette gets the cube, or room for ramps. */
+/* an 8-bit target's palette gets the cube, or room for ramps. */
 void D3dPal8Target(D3DDEV *dev)
 {
     DDSURF *s = dev->target;
@@ -151,7 +150,7 @@ static BOOL has_specular(const D3DMATERIAL *m)
     return m->dwRampSize > 2 && (m->dcvSpecular.r != 0.0f || m->dcvSpecular.g != 0.0f || m->dcvSpecular.b != 0.0f);
 }
 
-/* the color of a ramp's entry: its diffuse part from unlit to lit, then toward the specular peak. */
+/* a ramp entry's color: diffuse from unlit to lit, then toward the specular peak. */
 static DWORD ramp_entry(D3DDEV *dev, const D3DMATERIAL *m, DWORD i)
 {
     DWORD n = m->dwRampSize;
@@ -199,7 +198,7 @@ static void take_ramp(D3DDEV *dev, const D3DMATERIAL *m)
     flush(p);
 }
 
-/* the color at a lit and specular intensity of the current material's ramp, gray without one, guessed. */
+/* the current material's ramp color at a lit and specular intensity, gray without one, guessed. */
 static DWORD ramp_color(D3DDEV *dev, float lit, float specular)
 {
     D3DLEGACY *l = dev->legacy;
@@ -223,16 +222,16 @@ DWORD D3dRampConvert(D3DDEV *dev, DWORD color, DWORD specular)
     return (color & 0xFF000000) | ramp_color(dev, (float)(color & 0xFF) / 255.0f, (float)(specular & 0xFF) / 255.0f);
 }
 
-/* the background's fill: its ramp's first entry. */
+/* the background fills with its ramp's first entry. */
 DWORD D3dRampBackground(D3DDEV *dev, const D3DMATERIAL *m)
 {
     return m->dwRampSize ? ramp_entry(dev, m, 0) : 0;
 }
 
 /*
- * the lights of the current viewport as one gray intensity each, on the
- * mono model's formulas, which keep the second light's attenuation
- * without dividing by the distance or cutting at the range.
+ * each light of the current viewport becomes one gray intensity, using the
+ * mono model's formulas: D3DLIGHT2 attenuation is kept, without dividing by
+ * the distance or cutting at the range.
  */
 void D3dRampLight(D3DDEV *dev, const BYTE *src, DWORD stride, DWORD normal, DWORD count, BYTE *dst,
                   DWORD dst_stride)
@@ -245,7 +244,7 @@ void D3dRampLight(D3DDEV *dev, const BYTE *src, DWORD stride, DWORD normal, DWOR
     DWORD alpha = (DWORD)(m->dcvDiffuse.a * 255.0f) << 24;
     for (DWORD i = 0; i < count; i++) {
         const float *v = (const float *)(src + (SIZE_T)i * stride), *n = (const float *)(src + (SIZE_T)i * stride + normal);
-        /* camera space, the normal through the world view matrix's rotation, as rigid transforms keep it. */
+        /* camera space; the normal goes through the world view rotation, which rigid transforms preserve. */
         float p[3], nn[3];
         for (int k = 0; k < 3; k++) {
             p[k] = v[0] * (&wv._11)[k] + v[1] * (&wv._21)[k] + v[2] * (&wv._31)[k] + (&wv._41)[k];

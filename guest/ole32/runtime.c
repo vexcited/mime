@@ -53,7 +53,6 @@ WINOLEAPI void WINAPI RoUninitialize(void)
     CoUninitialize();
 }
 
-/* ------------------------------------------------------------------ security and message filters */
 
 static LONG g_security_initialized;
 

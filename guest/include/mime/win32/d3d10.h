@@ -1,7 +1,6 @@
 /*
- * direct3d 10: devices and the objects they create, state blocks and the
- * shader helpers of d3d10.dll. the interfaces and their method order are
- * those of d3d11.dll's vtables, which carry them.
+ * direct3d 10: devices, the objects they create, state blocks and d3d10.dll's shader helpers. the interfaces and
+ * their method order match d3d11.dll's vtables, which carry them.
  */
 #ifndef MIME_WIN32_D3D10_H
 #define MIME_WIN32_D3D10_H
@@ -190,7 +189,7 @@ typedef struct D3D10_BOX {
     UINT back;
 } D3D10_BOX;
 
-/* the origin and size in whole pixels, unlike direct3d 11's. */
+/* origin and size in whole pixels, unlike direct3d 11. */
 typedef struct D3D10_VIEWPORT {
     INT TopLeftX;
     INT TopLeftY;
@@ -449,7 +448,7 @@ typedef enum D3D10_BLEND_OP {
 
 #define D3D10_COLOR_WRITE_ENABLE_ALL 15
 
-/* one blend for every target, each target enabling it and masking its channels. */
+/* one blend for all targets; each target only enables it and masks its channels. */
 typedef struct D3D10_BLEND_DESC {
     BOOL AlphaToCoverageEnable;
     BOOL BlendEnable[8];
@@ -624,7 +623,7 @@ typedef struct D3D10_COUNTER_INFO {
     UINT8 NumDetectableParallelUnits;
 } D3D10_COUNTER_INFO;
 
-/* what a state block captures, a bit per state and slot, 76 bytes in all. */
+/* a bit per state and slot, 76 bytes in all. */
 typedef struct D3D10_STATE_BLOCK_MASK {
     BYTE VS;
     BYTE VSSamplers[2];

@@ -1,7 +1,6 @@
 /*
- * IFileOperation, the shell's file operation object: items to copy, move, rename, delete or create are queued, and
- * PerformOperations does them in order, telling the progress sinks about each. there is no dialog, and no recycle bin.
- * the work is done by the same tree functions as SHFileOperation.
+ * IFileOperation queues work for PerformOperations and notifies progress sinks in order. it uses the SHFileOperation
+ * tree helpers without a progress dialog or recycle bin.
  */
 #include "windows_storage_private.h"
 
@@ -32,7 +31,7 @@ static LPWSTR Duplicate(LPCWSTR text)
     return copy;
 }
 
-/* ------------------------------------------------------------------ the trees, over SHFileOperation */
+/* the trees, over SHFileOperation. */
 
 /* a double terminated list of one name. */
 static BOOL one_name(WCHAR *out, SIZE_T chars, LPCWSTR path)
@@ -101,9 +100,9 @@ typedef enum _OP_KIND {
 
 typedef struct _FO_OP {
     OP_KIND Kind;
-    IShellItem *Item;   /* the source, or for a new item the folder that gets it */
-    IShellItem *Folder; /* the destination folder of a move or a copy */
-    LPWSTR Name;        /* the new name, NULL to keep the source's */
+    IShellItem *Item;   /* the source, or for a new item the folder that gets it. */
+    IShellItem *Folder; /* the destination folder of a move or a copy. */
+    LPWSTR Name;        /* the new name, NULL to keep the source's. */
     LPWSTR Template;
     DWORD Attributes;
     IFileOperationProgressSink *Sink;
@@ -175,7 +174,7 @@ static ULONG STDMETHODCALLTYPE fo_release(IFileOperation *This)
     return 0;
 }
 
-/* sinks are told in the order they were advised. one of the call's own comes last. */
+/* notify sinks in registration order, then the per-call sink. */
 static HRESULT STDMETHODCALLTYPE fo_advise(IFileOperation *This, IFileOperationProgressSink *sink, DWORD *cookie)
 {
     FILE_OPERATION *f = from_interface(This);
@@ -323,7 +322,7 @@ static HRESULT STDMETHODCALLTYPE fo_new_item(IFileOperation *This, IShellItem *f
     return queue(from_interface(This), OP_NEW, folder, nullptr, name, template_name, attributes, sink);
 }
 
-/* the items of an array or one item, each queued by the single item call. */
+/* queue arrays item by item through the single-item method. */
 static HRESULT queue_each(FILE_OPERATION *f, IUnknown *items, OP_KIND kind, IShellItem *folder, LPCWSTR name)
 {
     if (!items)
@@ -373,7 +372,7 @@ static HRESULT STDMETHODCALLTYPE fo_delete_items(IFileOperation *This, IUnknown 
     return queue_each(from_interface(This), items, OP_DELETE, nullptr, nullptr);
 }
 
-/* ------------------------------------------------------------------ performing */
+/* performing. */
 
 static HRESULT path_of(IShellItem *item, WCHAR *path)
 {
@@ -395,14 +394,13 @@ static HRESULT error_hr(DWORD error)
     return error ? HRESULT_FROM_WIN32(error) : S_OK;
 }
 
-/* the last name of a path. */
 static LPCWSTR base_name(LPCWSTR path)
 {
     LPCWSTR slash = wcsrchr(path, L'\\');
     return slash ? slash + 1 : path;
 }
 
-/* a name that is free in the folder: "name (2).ext", "name (3).ext"... as a copy on the same name is renamed. */
+/* choose an unused copy name such as "name (2).ext" or "name (3).ext". */
 static BOOL unique_path(WCHAR *path)
 {
     WCHAR base[LONG_PATH];
@@ -425,7 +423,7 @@ static BOOL unique_path(WCHAR *path)
     return FALSE;
 }
 
-/* the target of a move or copy: the folder's path and the name, which defaults to the source's. */
+/* combine the destination folder with the supplied name or source name. */
 static HRESULT target_path(const FO_OP *op, WCHAR *source, WCHAR *target)
 {
     WCHAR folder[LONG_PATH];
@@ -443,7 +441,6 @@ static HRESULT target_path(const FO_OP *op, WCHAR *source, WCHAR *target)
     return S_OK;
 }
 
-/* the item of a path that exists now, or NULL. */
 static IShellItem *item_of(LPCWSTR path)
 {
     IShellItem *item = nullptr;
@@ -452,7 +449,6 @@ static IShellItem *item_of(LPCWSTR path)
     return item;
 }
 
-/* the sinks to tell, those advised and the operation's own. */
 typedef struct _TELL {
     IFileOperationProgressSink *List[MAX_SINKS + 1];
     int Count;
@@ -480,7 +476,7 @@ static void gather_release(TELL *t)
     t->Count = 0;
 }
 
-/* the first failure a sink answers to a Pre call, which stops the operation. E_NOTIMPL is not a refusal. */
+/* stop at the first failed Pre callback; E_NOTIMPL is not a refusal. */
 static HRESULT pre_result(HRESULT hr)
 {
     return hr == E_NOTIMPL ? S_OK : hr;
@@ -530,7 +526,7 @@ static HRESULT run_one(FILE_OPERATION *f, FO_OP *op)
         }
     }
     if (FAILED(hr)) {
-        /* a refusal of a sink is the user cancelling. */
+        /* a sink refusal counts as user cancellation. */
         gather_release(&tell);
         f->Aborted = TRUE;
         return hr;
@@ -569,7 +565,7 @@ static HRESULT run_one(FILE_OPERATION *f, FO_OP *op)
             break;
         }
         if (!_wcsicmp(source, target)) {
-            /* onto itself: a copy makes a new name when it may, a move has nothing to do. */
+            /* copying onto itself may choose a new name; moving onto itself is a no-op. */
             if (op->Kind == OP_MOVE)
                 break;
             if (!(f->Flags & FOF_RENAMEONCOLLISION)) {
@@ -647,9 +643,9 @@ static HRESULT run_one(FILE_OPERATION *f, FO_OP *op)
 }
 
 /*
- * the operations run in the order they were queued, between StartOperations and FinishOperations. an operation that
- * failed is told to the sinks and is not an error of PerformOperations, which only fails when it cannot run at all;
- * with FOFX_EARLYFAILURE the first failure ends the rest. FinishOperations gets that first failure.
+ * run in queue order between StartOperations and FinishOperations. report per-operation errors to sinks;
+ * PerformOperations fails only if it cannot run. FOFX_EARLYFAILURE stops at the first failed operation, which is
+ * passed to FinishOperations.
  */
 static HRESULT STDMETHODCALLTYPE fo_perform(IFileOperation *This)
 {
@@ -704,7 +700,6 @@ static const IFileOperationVtbl g_operation_vtbl = {
     fo_new_item,        fo_perform,    fo_get_aborted,
 };
 
-/* the object the class factory makes, a queue with the flags of a call with no flags at all. */
 HRESULT FileOperationCreate(IUnknown *outer, REFIID riid, void **object)
 {
     if (outer)

@@ -1,7 +1,7 @@
 /*
- * what directshow and kernel streaming leave programs for the controls of a camera: the camera control and the video
- * processing amplifier, which media foundation's capture sources answer too, and the kernel streaming control that
- * reaches a device's properties. methods are in windows' vtable order.
+ * directshow and kernel streaming camera controls: camera control and video proc amp, which media foundation
+ * capture sources also answer, and the kernel streaming control for device properties. methods are in windows'
+ * vtable order.
  */
 #ifndef MIME_WIN32_STRMCTL_H
 #define MIME_WIN32_STRMCTL_H
@@ -54,7 +54,7 @@ typedef enum tagCameraControlFlags {
 
 #define IAMVideoProcAmp_METHODS(T) IAMCameraControl_METHODS(T)
 
-/* the property, method and event requests of kernel streaming: a set, an id in it and what to do. */
+/* kernel streaming property, method and event requests: a set, an id in it and what to do. */
 typedef struct KSIDENTIFIER {
     GUID Set;
     ULONG Id;
@@ -78,7 +78,7 @@ MIME_DEFINE_GUID(IID_IAMCameraControl, 0xC6E13370, 0x30AC, 0x11D0, 0xA1, 0x8C, 0
 MIME_DEFINE_GUID(IID_IAMVideoProcAmp, 0xC6E13360, 0x30AC, 0x11D0, 0xA1, 0x8C, 0x00, 0xA0, 0xC9, 0x11, 0x89, 0x56);
 MIME_DEFINE_GUID(IID_IKsControl, 0x28F54685, 0x06FD, 0x11D2, 0xB2, 0x7A, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96);
 
-/* the categories cameras are in, and their interfaces are opened with the reference string "global". */
+/* camera device categories. their interfaces open with the reference string "global". */
 MIME_DEFINE_GUID(KSCATEGORY_CAPTURE, 0x65E8773D, 0x8F56, 0x11D0, 0xA3, 0xB9, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96);
 MIME_DEFINE_GUID(KSCATEGORY_RENDER, 0x65E8773E, 0x8F56, 0x11D0, 0xA3, 0xB9, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96);
 MIME_DEFINE_GUID(KSCATEGORY_VIDEO, 0x6994AD05, 0x93EF, 0x11D0, 0xA3, 0xCC, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96);

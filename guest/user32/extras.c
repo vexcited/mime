@@ -1,18 +1,13 @@
-/*
- * user32 functions that the api sweep found missing: waiting for a process to be idle, the setters of window
- * classes, the ANSI class queries and the small queries of the process and thread.
- */
+/* WaitForInputIdle, class setters, ANSI class queries and small process and thread queries. */
 #include "user32_private.h"
 #include <mime/win32/winuser.h>
-
-/* ------------------------------------------------------------------ waiting for input */
 
 #define STATUS_OBJECT_TYPE_MISMATCH_ ((NTSTATUS)0xC0000024)
 
 /*
- * until the process waits for input with nothing to read: 0 when it does, WAIT_TIMEOUT after the time, and
- * WAIT_FAILED (-1) for a handle that is none of a process (ERROR_INVALID_HANDLE) or a process that ended.
- * A program of the console has no queue and gives 0 at once.
+ * returns 0 once the process waits for input with nothing to read, WAIT_TIMEOUT when the time runs out, and
+ * WAIT_FAILED with ERROR_INVALID_HANDLE for a handle that is not a process or a process that ended. console programs
+ * have no queue and return 0 at once.
  */
 WINUSERAPI DWORD WINAPI WaitForInputIdle(HANDLE process, DWORD milliseconds)
 {
@@ -21,7 +16,7 @@ WINUSERAPI DWORD WINAPI WaitForInputIdle(HANDLE process, DWORD milliseconds)
     if (NT_SUCCESS(status))
         return (DWORD)NtUserWaitForInputIdle((ULONG_PTR)info.UniqueProcessId, milliseconds, FALSE);
     if (status == STATUS_OBJECT_TYPE_MISMATCH_) {
-        /* a handle that is not one of a process but a remote one or a pseudo handle. */
+        /* not a process handle: a remote handle or a pseudo handle. */
         if ((ULONG_PTR)process & 2)
             return (DWORD)NtUserWaitForInputIdle((ULONG_PTR)process & ~(ULONG_PTR)3, milliseconds, TRUE);
         if ((ULONG_PTR)process & 1)
@@ -31,11 +26,9 @@ WINUSERAPI DWORD WINAPI WaitForInputIdle(HANDLE process, DWORD milliseconds)
     return WAIT_FAILED;
 }
 
-/* ------------------------------------------------------------------ classes */
-
 /*
- * an atom or a name: the A forms of the class functions turn a name to wide characters and leave an atom as it
- * is. The value is the old one, 0 with the last error set when the change failed.
+ * the A forms convert a name to wide characters and leave an atom as is. returns the old value, or 0 with the last
+ * error set on failure.
  */
 WINUSERAPI ULONG_PTR WINAPI SetClassLongPtrW(HWND hwnd, int index, LONG_PTR value)
 {
@@ -123,12 +116,7 @@ WINUSERAPI BOOL WINAPI GetClassInfoA(HINSTANCE instance, LPCSTR name, LPWNDCLASS
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the thread and the process */
-
-/*
- * whether the thread has a queue; with convert a thread that has none is given one, and its failing is
- * ERROR_NOT_ENOUGH_MEMORY.
- */
+/* with convert, a thread without a queue gets one, failing with ERROR_NOT_ENOUGH_MEMORY. */
 WINUSERAPI BOOL WINAPI IsGUIThread(BOOL convert)
 {
     if (NtUserGetThreadState(15))
@@ -146,7 +134,7 @@ WINUSERAPI LPARAM WINAPI SetMessageExtraInfo(LPARAM value)
     return (LPARAM)NtUserCallOneParam((ULONG_PTR)value, MIME_ONEPARAM_SETMESSAGEEXTRAINFO);
 }
 
-/* the layout windows get when they are made: LAYOUT_RTL makes the top level windows right to left. */
+/* layout for new windows: LAYOUT_RTL makes top level windows right to left. */
 static volatile LONG g_default_layout;
 
 WINUSERAPI BOOL WINAPI GetProcessDefaultLayout(DWORD *layout)
@@ -174,19 +162,19 @@ DWORD UserDefaultLayout(void)
     return (DWORD)g_default_layout;
 }
 
-/* there are no programs of the store here, so none is an immersive process. */
+/* there are no store apps here, so no process is immersive. */
 WINUSERAPI BOOL WINAPI IsImmersiveProcess(HANDLE process)
 {
     return FALSE;
 }
 
-/* the desktop is always composed, since windows 8 has no way to turn that off. */
+/* always composited, windows 8 and later cannot turn composition off. */
 WINUSERAPI BOOL WINAPI IsThreadDesktopComposited(void)
 {
     return TRUE;
 }
 
-/* no shims apply to the programs here. */
+/* no compatibility shims apply here. */
 WINUSERAPI DWORD WINAPI GetAppCompatFlags(HTASK task)
 {
     return 0;
@@ -197,21 +185,19 @@ WINUSERAPI DWORD WINAPI GetAppCompatFlags2(HTASK task)
     return 0;
 }
 
-/* realizing a palette changes nothing on a true color display. */
+/* nothing to realize on a true color display. */
 WINUSERAPI UINT WINAPI UserRealizePalette(HDC dc)
 {
     return 0;
 }
 
-/* ------------------------------------------------------------------ small functions */
-
-/* the type that older programs passed is not used. */
+/* the type is ignored. */
 WINUSERAPI void WINAPI SetLastErrorEx(DWORD error, DWORD type)
 {
     SetLastError(error);
 }
 
-/* turns the character to the wide one of the code page of the layout's locale, then asks as the wide form does. */
+/* converts through the ansi code page of the layout's locale. */
 WINUSERAPI SHORT WINAPI VkKeyScanExA(CHAR ch, HKL layout)
 {
     UINT page = 0;
@@ -223,18 +209,13 @@ WINUSERAPI SHORT WINAPI VkKeyScanExA(CHAR ch, HKL layout)
     return VkKeyScanExW(wide, layout);
 }
 
-/* ------------------------------------------------------------------ touch injection */
-
 #define TOUCH_FEEDBACK_DEFAULT_ 1
 #define TOUCH_FEEDBACK_NONE_ 3
 #define TOUCH_MAX_CONTACTS 256
 
 static volatile LONG g_touch_contacts;
 
-/*
- * the contacts the process may inject at once, 1 to 256, and how the feedback shows, default, indirect or none; read
- * from the documentation, the exact checks are a guess.
- */
+/* 1 to 256 contacts, with default, indirect or no feedback. the exact checks are a guess. */
 WINUSERAPI BOOL WINAPI InitializeTouchInjection(UINT32 max_contacts, DWORD mode)
 {
     if (max_contacts < 1 || max_contacts > TOUCH_MAX_CONTACTS || mode < TOUCH_FEEDBACK_DEFAULT_ ||
@@ -247,8 +228,8 @@ WINUSERAPI BOOL WINAPI InitializeTouchInjection(UINT32 max_contacts, DWORD mode)
 }
 
 /*
- * there is no pointer input stack to deliver a contact to, so an injection that is well formed is refused with
- * ERROR_NOT_SUPPORTED. One before the initialization, with no contacts, too many or a null array is a bad parameter.
+ * there is no pointer input stack, so well formed injections fail with ERROR_NOT_SUPPORTED. calls before
+ * initialization, with no contacts, too many or a null array get ERROR_INVALID_PARAMETER.
  */
 WINUSERAPI BOOL WINAPI InjectTouchInput(UINT32 count, const VOID *contacts)
 {

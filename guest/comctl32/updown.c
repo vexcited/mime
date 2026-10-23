@@ -1,7 +1,4 @@
-/*
- * the up down control, msctls_updown32: two arrows that step a position
- * through a range, optionally shown in a buddy window as a number.
- */
+/* the up down control, msctls_updown32: two arrows stepping a position, optionally shown in a buddy window. */
 #include "comctl32_private.h"
 
 #define TIMER_REPEAT 1
@@ -46,7 +43,7 @@ static BOOL buddy_is(UPDOWN *u, LPCWSTR cls)
     return u->Buddy && GetClassNameW(u->Buddy, name, 32) && !_wcsicmp(name, cls);
 }
 
-/* the position in the buddy's text, with or without thousands separators. */
+/* writes the position to the buddy, with or without thousands separators. */
 static void update_buddy(UPDOWN *u)
 {
     if (!u->Buddy || !(u->Style & UDS_SETBUDDYINT))
@@ -86,7 +83,7 @@ static void update_buddy(UPDOWN *u)
     SetWindowTextW(u->Buddy, text);
 }
 
-/* the number in the buddy's text, FALSE when it is not one. */
+/* FALSE when the buddy's text is not a number. */
 static BOOL read_buddy(UPDOWN *u, int *value)
 {
     if (!u->Buddy || !(u->Style & UDS_SETBUDDYINT)) {
@@ -149,7 +146,7 @@ static int clamp_pos(UPDOWN *u, int v)
     return v;
 }
 
-/* the size and place next to the buddy, which gives up the room. */
+/* sizes and places the control next to the buddy, which gives up the room. */
 static void align_to_buddy(UPDOWN *u)
 {
     if (!u->Buddy || !(u->Style & (UDS_ALIGNLEFT | UDS_ALIGNRIGHT)))
@@ -206,7 +203,7 @@ static int increment(UPDOWN *u)
     return inc;
 }
 
-/* one step: UDN_DELTAPOS may cancel it, then the position, the buddy and the scroll message. */
+/* UDN_DELTAPOS may cancel the step, then the position, the buddy and the scroll message follow. */
 static void step(UPDOWN *u, BOOL up, int inc)
 {
     sync_from_buddy(u);

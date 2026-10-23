@@ -1,8 +1,6 @@
 /*
- * the caret: one for each thread, a rectangle or bitmap inverted over its
- * window, blinking on the window's system timer. painting hides it while
- * BeginPaint and EndPaint run, as windows' does, so it never gets drawn
- * over and then inverted back into garbage.
+ * one caret per thread, inverted over its window and blinked by a system timer. BeginPaint hides it until
+ * EndPaint so painting does not overwrite the pixels that must be inverted back.
  */
 #include "user32_private.h"
 
@@ -42,7 +40,7 @@ static CARET *owned(void)
     return c && c->hwnd ? c : nullptr;
 }
 
-/* a 50% gray, which a caret of bitmap 1 inverts with. */
+/* a caret made with bitmap 1 inverts with this 50% gray. */
 static HBRUSH gray_brush(void)
 {
     static HBRUSH brush;
@@ -89,7 +87,7 @@ static void kill_timer(CARET *c)
     NtUserCallHwndParam(c->hwnd, (ULONG_PTR)&st, MIME_HWNDPARAM_SYSTIMER);
 }
 
-/* shown again, the caret starts a blink period on. */
+/* a caret shown again starts its blink period visible. */
 static void show_now(CARET *c)
 {
     if (!c->on)
@@ -156,7 +154,7 @@ WINUSERAPI BOOL WINAPI HideCaret(HWND hwnd)
     return TRUE;
 }
 
-/* an input method puts its popups at the caret, until the program says elsewhere. */
+/* input methods put their popups at the caret unless the program says otherwise. */
 static void follow(const CARET *c)
 {
     LONG area[5] = {c->x, c->y, c->x + (c->width > 0 ? c->width : 1), c->y + c->height, c->x};
@@ -201,7 +199,7 @@ WINUSERAPI BOOL WINAPI SetCaretBlinkTime(UINT milliseconds)
     return TRUE;
 }
 
-/* the blink, from the system timer DefWindowProc gets. */
+/* driven by the system timer DefWindowProc receives. */
 BOOL UserCaretTimer(HWND hwnd, WPARAM id)
 {
     if (id != CARET_TIMER)
@@ -212,7 +210,6 @@ BOOL UserCaretTimer(HWND hwnd, WPARAM id)
     return TRUE;
 }
 
-/* painting a window hides its caret until it is done. */
 void UserCaretPaint(HWND hwnd, BOOL begin)
 {
     CARET *c = owned();
@@ -224,7 +221,7 @@ void UserCaretPaint(HWND hwnd, BOOL begin)
     }
 }
 
-/* a window going away takes its thread's caret with it, its children's too. */
+/* destroying a window destroys the thread's caret when it is in that window or one of its children. */
 void UserCaretDestroyed(HWND hwnd)
 {
     CARET *c = owned();
@@ -235,7 +232,7 @@ void UserCaretDestroyed(HWND hwnd)
     }
 }
 
-/* the window and rectangle of the thread's caret, for GetGUIThreadInfo. */
+/* for GetGUIThreadInfo. */
 HWND UserCaretInfo(RECT *rect)
 {
     CARET *c = owned();
@@ -245,7 +242,7 @@ HWND UserCaretInfo(RECT *rect)
     return c->hwnd;
 }
 
-/* what a thread's windows are doing; only the calling thread's caret is known here. */
+/* only the calling thread's caret is known here. */
 WINUSERAPI BOOL WINAPI GetGUIThreadInfo(DWORD thread, PGUITHREADINFO info)
 {
     if (!info || info->cbSize != sizeof(*info)) {

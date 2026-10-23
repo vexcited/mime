@@ -1,10 +1,8 @@
 /*
- * the subclassing helpers. the first SetWindowSubclass on a window replaces
- * its window procedure with master_proc, which calls the subclass
- * procedures from the newest to the oldest; each reaches the next one with
- * DefSubclassProc, and the last DefSubclassProc calls the original window
- * procedure. a frame per call on the thread remembers how far the chain
- * went, so nested and reentrant messages each walk their own chain.
+ * the first SetWindowSubclass on a window replaces its window procedure with master_proc, which calls the
+ * subclass procedures from newest to oldest. each reaches the next with DefSubclassProc, and the last one calls
+ * the original window procedure. a frame per call on the thread remembers how far the chain went, so nested and
+ * reentrant messages each walk their own chain.
  */
 #include "comctl32_private.h"
 
@@ -20,9 +18,9 @@ typedef struct _SUBCLASS_HEADER {
     struct _SUBCLASS_HEADER *NextWindow;
     HWND Window;
     WNDPROC Original;
-    /* the newest subclass first. */
+    /* newest first. */
     SUBCLASS *First;
-    /* the calls into the chain in progress; entries are freed only when none are. */
+    /* calls into the chain in progress. removed entries are freed only when there are none. */
     ULONG Calls;
 } SUBCLASS_HEADER;
 
@@ -90,7 +88,7 @@ static void cleanup(SUBCLASS_HEADER *header)
     }
     if (header->First)
         return;
-    /* another procedure installed on top keeps calling master_proc, which then passes through. */
+    /* another procedure installed on top keeps calling master_proc, which then just passes through. */
     if (IsWindow(header->Window)) {
         if ((WNDPROC)GetWindowLongPtrW(header->Window, GWLP_WNDPROC) != master_proc)
             return;
@@ -122,7 +120,7 @@ static LRESULT CALLBACK master_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
     header->Calls--;
     TlsSetValue(g_frame_tls, frame.Previous);
     if (msg == WM_NCDESTROY) {
-        /* the window is gone, so whatever the subclasses did not remove goes with it. */
+        /* the window is gone, so drop whatever the subclasses did not remove. */
         for (SUBCLASS *entry = header->First; entry; entry = entry->Next)
             entry->Removed = TRUE;
     }
@@ -203,7 +201,7 @@ WINCOMMCTRLAPI LRESULT WINAPI DefSubclassProc(HWND hwnd, UINT msg, WPARAM wparam
     for (; frame; frame = frame->Previous)
         if (frame->Header->Window == hwnd)
             return call_next(frame, hwnd, msg, wparam, lparam);
-    /* called outside a subclass procedure: go straight to the original procedure. */
+    /* called outside a subclass procedure: go straight to the original one. */
     SUBCLASS_HEADER *header = find_header(hwnd);
     if (header)
         return CallWindowProcW(header->Original, hwnd, msg, wparam, lparam);

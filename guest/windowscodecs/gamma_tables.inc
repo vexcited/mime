@@ -1,4 +1,4 @@
-/* the gamma tables of windowscodecs.dll build 26300: sRGB bytes to linear light times 255, as float bits, and linear light in 3354 steps to sRGB bytes. */
+/* sRGB bytes to linear light times 255 as float bits, and 3354 linear-light steps to sRGB bytes. */
 static const UINT32 g_to_linear_bits[256] = {
     0x00000000, 0x3d9e8391, 0x3e1e8391, 0x3e6dc55a, 0x3e9e8391, 0x3ec62475, 0x3eedc55a, 0x3f0ab31f,
     0x3f1e8391, 0x3f325403, 0x3f462475, 0x3f5a763c, 0x3f70009d, 0x3f835de4, 0x3f8f5630, 0x3f9beb76,

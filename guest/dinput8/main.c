@@ -12,7 +12,7 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
     return TRUE;
 }
 
-/* windows refuses the joystick configuration interface here, leaving the pointer alone. */
+/* windows refuses the joystick configuration interface here and leaves the pointer alone. */
 DECLSPEC_EXPORT HRESULT WINAPI DirectInput8Create(HINSTANCE instance, DWORD version, REFIID riid, void **out,
                                                   IUnknown *outer)
 {

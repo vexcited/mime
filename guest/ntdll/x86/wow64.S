@@ -1,7 +1,7 @@
 /*
- * the gate of the system call stubs on x64, as windows' 32-bit ntdll has
- * it: Wow64SystemServiceCall jumps through Wow64Transition, which
- * wow64.dll points at wow64cpu.dll's way back to 64-bit code.
+ * the system call gate on x64, like windows' 32-bit ntdll:
+ * Wow64SystemServiceCall jumps through Wow64Transition, which wow64.dll
+ * points at wow64cpu.dll's switch back to 64-bit code.
  */
     .data
     .globl  _Wow64Transition

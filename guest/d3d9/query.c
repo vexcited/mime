@@ -1,8 +1,7 @@
 /*
- * IDirect3DQuery9 over d3d11's queries: events, occlusion counts,
- * timestamps and their frequency and disjointness. the vertex cache's
- * description is a constant; the other kinds of windows' drivers report
- * no more than this one does, D3DERR_NOTAVAILABLE.
+ * IDirect3DQuery9 over d3d11 queries: events, occlusion, timestamps,
+ * their frequency and disjointness. the vertex cache description is a
+ * constant. other kinds return D3DERR_NOTAVAILABLE, as windows drivers do.
  */
 #include "d3d9_private.h"
 
@@ -83,7 +82,7 @@ static D3DQUERYTYPE STDMETHODCALLTYPE query_get_type(IDirect3DQuery9 *iface) { r
 
 static DWORD STDMETHODCALLTYPE query_get_data_size(IDirect3DQuery9 *iface) { return data_size(impl(iface)->type); }
 
-/* occlusion and disjointness bracket work with a begin; the others are points in it, ended alone. */
+/* occlusion and disjoint queries bracket work with a begin. the others mark a point and are only ended. */
 static BOOL brackets(D3DQUERYTYPE type)
 {
     return type == D3DQUERYTYPE_OCCLUSION || type == D3DQUERYTYPE_TIMESTAMPDISJOINT;
@@ -107,7 +106,7 @@ static HRESULT STDMETHODCALLTYPE query_issue(IDirect3DQuery9 *iface, DWORD flags
         q->issued = FALSE;
     }
     if (flags & D3DISSUE_END) {
-        /* an end without a begin brackets nothing, as on windows, which reports zero samples. */
+        /* like windows, an end without a begin brackets nothing and reports zero samples. */
         if (!q->began && brackets(q->type))
             ctx->lpVtbl->Begin(ctx, (ID3D11Asynchronous *)q->query);
         if (q->type == D3DQUERYTYPE_TIMESTAMPFREQ)
@@ -189,7 +188,7 @@ HRESULT D9CreateQuery(D9Device *d, D3DQUERYTYPE type, IDirect3DQuery9 **out)
 {
     if (!data_size(type))
         return D3DERR_NOTAVAILABLE;
-    /* without an out pointer, whether the kind is supported. */
+    /* without an out pointer, only checks whether the kind is supported. */
     if (!out)
         return D3D_OK;
     *out = nullptr;

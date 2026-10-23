@@ -1,11 +1,9 @@
 /*
- * system stores: the registry stores of Software\Microsoft\SystemCertificates
- * and its siblings, and the logical stores windows builds from them, as
- * crypt32 of windows 11 build 26300 lays them out. see docs/crypt32.md.
+ * system stores: the registry stores under Software\Microsoft\SystemCertificates and its siblings, and the logical
+ * stores windows 11 builds from them.
  *
- * a registry store is a memory store read from <store>\Certificates\<sha-1>
- * keys, each with a Blob value holding the serialized element; changes are
- * written through as they happen. a logical store is a collection of the
+ * a registry store is a memory store read from <store>\Certificates\<sha-1> keys, each with a Blob value holding
+ * the serialized element; changes are written through as they happen. a logical store is a collection of the
  * physical stores windows predefines for its location and name.
  */
 #include "crypt32_private.h"
@@ -621,7 +619,7 @@ static cr_change *start_change(cr_reg *reg)
     return nullptr;
 }
 
-/* an event to be signaled by the next change of the registry, or no longer. */
+/* registers an event for the next registry change, or unregisters it. */
 static BOOL listen(cr_reg *reg, HANDLE event, DWORD flags)
 {
     cr_change *change = start_change(reg);
@@ -820,7 +818,7 @@ static BOOL named(PCWSTR name, PCWSTR want)
     return !_wcsicmp(name, want);
 }
 
-/* the physical stores of a logical store, from crypt32's EnumPhysicalStore. */
+/* the physical stores of a logical store, as CertEnumPhysicalStore lists them. */
 static DWORD physical_mask(DWORD location, PCWSTR name)
 {
     static const DWORD defaults[] = {0, 0x32, 0x112, 0, 0x22, 0x22, 0x22, 0x2, 0x2, 0x2};

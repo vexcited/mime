@@ -1,28 +1,27 @@
 /*
- * drawing images: the GdipDrawImage calls. They all end in one draw of a rectangle of a bitmap through a matrix:
- * the units and the flips of the source rectangle are settled, the rows of the picture that the draw reads are
- * picked (a big picture drawn small is averaged down first), and the parallelogram the picture lands on is filled
- * from a sampler. docs/gdiplus.md has the rules.
+ * the GdipDrawImage calls. they all end in one draw of a bitmap rectangle through a matrix: the source units and
+ * flips are settled, the rows the draw reads are picked, a big picture drawn small is averaged down first, and the
+ * parallelogram the picture lands on is filled from a sampler.
  *
- * the matrix of a call takes the source rectangle to the page. The graphics' world to device matrix follows it.
+ * a call's matrix takes the source rectangle to the page, then the graphics' world to device matrix applies.
  */
 #include "image_private.h"
 
 #define SMALL (1.1920929e-7f)
 #define COORDINATE_LIMIT (1073741800.0f)
-/* a picture side from which a draw smaller than the picture is averaged down first */
+/* a picture with a side this long is averaged down first when drawn smaller. */
 #define BIG_SIDE (420.0f)
 
 static float mag(float v) { return v < 0.0f ? -v : v; }
 
-/* ------------------------------------------------------------------ settings of the graphics */
+/* ------------------------------------------------------------------ graphics settings */
 
 static BOOL half_pixel(const GGraphics *g)
 {
     return g->pixel_offset == PixelOffsetModeHighQuality || g->pixel_offset == PixelOffsetModeHalf;
 }
 
-/* the mode the sampler works with: the graphics keeps the plain ones, but a raw value is not refused. */
+/* the graphics keeps the plain modes, but a raw value is not refused. */
 static InterpolationMode mode_of(const GGraphics *g)
 {
     switch (g->interpolation) {
@@ -39,7 +38,7 @@ static InterpolationMode mode_of(const GGraphics *g)
     }
 }
 
-/* how many rows beyond the source rectangle the sampler may look at, at a scale. */
+/* how many rows past the source rectangle the sampler may read at this scale. */
 static float rows_beyond(InterpolationMode mode, float scale)
 {
     switch (mode) {
@@ -56,12 +55,12 @@ static float rows_beyond(InterpolationMode mode, float scale)
     }
 }
 
-/* ------------------------------------------------------------------ the rows of the picture */
+/* ------------------------------------------------------------------ picture rows */
 
 typedef struct Rows {
     const UINT32 *px;
     INT w, h;
-    SSIZE_T stride;     /* in pixels */
+    SSIZE_T stride;     /* in pixels. */
     UINT32 *owned;
 } Rows;
 
@@ -71,7 +70,7 @@ static void rows_free(Rows *r)
     memset(r, 0, sizeof(*r));
 }
 
-/* the rows top to bottom as premultiplied pixels, adjusted by the attributes. Rows that are already so are not copied. */
+/* top to bottom, premultiplied and adjusted by the attributes. rows already in that form are not copied. */
 static GpStatus rows_read(const GGraphics *g, GBitmap *b, struct GAttrs *attrs, INT top, INT bottom, Rows *out)
 {
     INT w = b->width, count = bottom - top;
@@ -104,13 +103,13 @@ static GpStatus rows_read(const GGraphics *g, GBitmap *b, struct GAttrs *attrs, 
 }
 
 /*
- * the rows turned by a quarter turn or a flip whose linear part is the matrix, so that the matrix becomes a
- * translation. The index of a pixel goes to k' = k * linear + corner, where corner keeps it inside the new rows.
+ * applies a quarter turn or flip so the matrix becomes a translation. pixel k goes to k' = k * linear + corner,
+ * where corner keeps it inside the new rows.
  */
 static GpStatus rows_turn(Rows *r, const ImgMat *lin, INT corner[2])
 {
     INT w = r->w, h = r->h;
-    /* the entries are one, minus one or zero, give or take the last bit of a float */
+    /* the entries are one, minus one or zero, give or take the last bit of a float. */
     INT a = (INT)(lin->m11 < 0.0f ? lin->m11 - 0.5f : lin->m11 + 0.5f);
     INT b = (INT)(lin->m12 < 0.0f ? lin->m12 - 0.5f : lin->m12 + 0.5f);
     INT c = (INT)(lin->m21 < 0.0f ? lin->m21 - 0.5f : lin->m21 + 0.5f);
@@ -169,8 +168,8 @@ static void plain_fetch(GSource *source, INT x, INT y, INT count, UINT32 *out)
 
 typedef struct DriverJob {
     Rows rows;
-    float rect[4];       /* the source rectangle in the rows, before the half pixel */
-    float pts[6];        /* where its top left, top right and bottom left corners are on the page */
+    float rect[4];       /* source rectangle in the rows, before the half pixel. */
+    float pts[6];        /* its top left, top right and bottom left corners on the page. */
     ImgMat to_device;
     INT wrap;
     UINT32 clamp;
@@ -178,7 +177,7 @@ typedef struct DriverJob {
     BOOL half;
 } DriverJob;
 
-/* fills the parallelogram the rectangle lands on. A picture of no rows is the clamp color all over. */
+/* a picture with no rows is the clamp color all over. */
 static GpStatus driver_draw(GGraphics *g, const DriverJob *job)
 {
     float rect[4] = {job->rect[0], job->rect[1], job->rect[2], job->rect[3]};
@@ -252,8 +251,7 @@ static GpStatus driver_draw(GGraphics *g, const DriverJob *job)
 /* ------------------------------------------------------------------ one draw of a bitmap */
 
 /*
- * draws the rectangle of the bitmap through the matrix to the page. The rectangle is in the unit, or in pixels
- * for the units of the page. A negative size starts at the other end.
+ * the rectangle is in unit, or in pixels for the page units. a negative size starts at the other end.
  */
 static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], const ImgMat *mat_in, GpUnit unit,
                             struct GAttrs *attrs, DrawImageAbort stop, void *stop_data)
@@ -261,7 +259,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
     float sx = rect_in[0], sy = rect_in[1], sw = rect_in[2], sh = rect_in[3];
     ImgMat mat = *mat_in;
 
-    /* a physical unit is turned into pixels of the picture */
+    /* a physical unit is converted to picture pixels. */
     if (unit != UnitWorld && unit != UnitDisplay && unit != UnitPixel) {
         float kx = b->dpi_x, ky = b->dpi_y;
         if (unit == UnitPoint) {
@@ -280,7 +278,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
         sh *= ky;
         mat_stretch(&mat, 1.0f / kx, 1.0f / ky, FALSE);
     }
-    /* a rectangle with a negative size is the one the other way round, mirrored */
+    /* a negative size means the same rectangle the other way round, mirrored. */
     if (sw < 0.0f) {
         mat_shift(&mat, -sw, 0.0f, FALSE);
         mat_stretch(&mat, -1.0f, 1.0f, FALSE);
@@ -293,7 +291,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
         sy += sh;
         sh = -sh;
     }
-    /* with the half pixel offsets the page is moved back by half a pixel, so the rectangle follows it */
+    /* half pixel offset moves the page back by half a pixel, so the rectangle follows it. */
     BOOL half = half_pixel(g);
     if (half) {
         sx -= 0.5f;
@@ -313,7 +311,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
         !(box[3] >= 0.0f && box[3] <= COORDINATE_LIMIT))
         return ValueOverflow;
 
-    /* where three corners of the rectangle are on the page, no area is nothing to draw */
+    /* where three corners land on the page. no area means nothing to draw. */
     float pts[6] = {sx, sy, sx + sw, sy, sx, sy + sh};
     mat_apply(&mat, pts, 3);
     if (mag((pts[0] - pts[2]) * (pts[5] - pts[1]) - (pts[1] - pts[3]) * (pts[4] - pts[0])) < SMALL)
@@ -327,7 +325,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
     if (mag(drv.m22 * drv.m11 - drv.m21 * drv.m12) < SMALL)
         return Ok;
 
-    /* the rectangle to read, the way the picture is before the half pixel */
+    /* the rectangle to read, before the half pixel. */
     float lx = sx + (half ? 0.5f : 0.0f), ly = sy + (half ? 0.5f : 0.0f), lw = sw, lh = sh;
     float dev[4];
     mat_box(&drv, lx, ly, lx + lw, ly + lh, dev);
@@ -339,7 +337,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
     BOOL shrink = FALSE;
     float wabs = mag(lw), habs = mag(lh);
 
-    /* a big picture drawn much smaller is averaged down first, to about the size it will have */
+    /* a big picture drawn much smaller is averaged down first, to about its final size. */
     if ((drv.kind & ~3u) == 0 && (drv.m11 - 1.0f < -SMALL || drv.m22 - 1.0f < -SMALL) &&
         mode != InterpolationModeNearestNeighbor && mode != InterpolationModeHighQualityBilinear &&
         mode != InterpolationModeHighQualityBicubic && !turned && (wabs >= BIG_SIDE || habs >= BIG_SIDE)) {
@@ -367,7 +365,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
         }
     }
 
-    /* the rows the sampler may touch: the rectangle's, and the ones it blends with past its edges */
+    /* the rows the sampler may touch: the rectangle's, plus those it blends with past its edges. */
     INT page_h = shrink ? new_h : pic_h;
     float scale_y = habs > 0.0f ? dev_h / habs : 1.0f;
     INT top = floor_int(ly) - ceil_int(rows_beyond(mode, scale_y));
@@ -425,7 +423,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
     job.half = half;
 
     if (turned && job.rows.h > 0) {
-        /* the rows are turned so that the draw becomes a translation, which the sampler copies */
+        /* turn the rows so the draw becomes a translation, which the sampler copies. */
         INT corner[2];
         ImgMat lin = drv;
         status = rows_turn(&job.rows, &lin, corner);
@@ -434,8 +432,8 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
             return status;
         }
         /*
-         * the pixels went to k' = k * linear + corner, while the edges of the rectangle go to the ones of the turned
-         * picture, which is one pixel further for each axis that mirrors.
+         * pixels went to k' = k * linear + corner, but the rectangle edges go to those of the turned picture, one
+         * pixel further on each mirrored axis.
          */
         float edge[2] = {(float)corner[0] + (lin.m11 < 0.0f) + (lin.m21 < 0.0f),
                          (float)corner[1] + (lin.m12 < 0.0f) + (lin.m22 < 0.0f)};
@@ -448,7 +446,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
         float nw = mag(c1x - c0x), nh = mag(c1y - c0y);
         float corners[6] = {nx, ny, nx + nw, ny, nx, ny + nh};
         for (INT i = 0; i < 3; i++) {
-            /* back into the rows before the turn, the transpose of the linear part, then to the page */
+            /* back into the unturned rows through the transpose of the linear part, then to the page. */
             float ux = corners[2 * i] - edge[0], uy = corners[2 * i + 1] - edge[1];
             float p[2] = {ux * lin.m11 + uy * lin.m12, ux * lin.m21 + uy * lin.m22};
             mat_apply(&to_page, p, 1);
@@ -473,7 +471,7 @@ static GpStatus draw_matrix(GGraphics *g, GBitmap *b, const float rect_in[4], co
 
 /* ------------------------------------------------------------------ the calls */
 
-/* a source rectangle turned the right way round: a negative size starts at the far end. */
+/* a negative size starts at the far end. */
 static void rect_upright(float r[4])
 {
     if (r[2] < 0.0f) {
@@ -486,7 +484,7 @@ static void rect_upright(float r[4])
     }
 }
 
-/* draws the rectangle of the image on a parallelogram of three points of the page. */
+/* dst holds three corners of a parallelogram on the page. */
 static GpStatus draw_corners(GGraphics *g, GImage *image, const GpPointF dst[3], const float src[4], GpUnit unit,
                              struct GAttrs *attrs, DrawImageAbort stop, void *stop_data)
 {
@@ -504,7 +502,7 @@ static GpStatus draw_corners(GGraphics *g, GImage *image, const GpPointF dst[3],
     return draw_matrix(g, b, rect, &m, unit, attrs, stop, stop_data);
 }
 
-/* draws the rectangle of the image on a rectangle of the page. A negative size on either side mirrors. */
+/* a negative size on either side mirrors. */
 static GpStatus draw_rectangle(GGraphics *g, GImage *image, const float dest[4], const float src[4], GpUnit unit,
                                struct GAttrs *attrs, DrawImageAbort stop, void *stop_data)
 {
@@ -545,7 +543,7 @@ GpStatus gp_draw_image(GGraphics *g, GImage *image, const GpPointF *dst_points, 
     return draw_corners(g, image, dst_points, src, src_unit, attrs, nullptr, nullptr);
 }
 
-/* the size a rectangle of w by h in a unit has on the page of the graphics. */
+/* device pixels per unit at dpi. */
 static float unit_multiplier(GpUnit unit, float dpi)
 {
     double d = 1.0 * (double)dpi;
@@ -576,7 +574,7 @@ static void page_size(const GGraphics *g, const GBitmap *b, float w, float h, Gp
     *out_h = (unit_multiplier(unit, g->dpi_y) * h) / sy;
 }
 
-/* the whole picture as a source: in pixels for a bitmap, in its own unit for a metafile. */
+/* in pixels for a bitmap, in its own unit for a metafile. */
 static GpStatus whole_source(GImage *image, float src[4], GpUnit *unit)
 {
     GBitmap *b = gp_bitmap_cast(image);
@@ -598,7 +596,6 @@ static GpStatus whole_source(GImage *image, float src[4], GpUnit *unit)
     return Ok;
 }
 
-/* the size on the page of a rectangle of the image measured in a unit. */
 static GpStatus size_on_page(GGraphics *g, GImage *image, float w, float h, GpUnit unit, float *out_w, float *out_h)
 {
     GBitmap *b = gp_bitmap_cast(image);
@@ -609,7 +606,7 @@ static GpStatus size_on_page(GGraphics *g, GImage *image, float w, float h, GpUn
     return gp_metafile_page_size(g, image, w, h, unit, out_w, out_h);
 }
 
-/* the checks the calls share, in the order of the library: the graphics, its busy state, the image. */
+/* checked in the same order as gdi+: the graphics, its busy state, then the image. */
 static GpStatus check_call(const void *graphics, const void *image, GGraphics **g, GImage **img)
 {
     *g = gp_graphics_cast(graphics);
@@ -669,7 +666,7 @@ WINGDIPAPI GpStatus WINAPI GdipDrawImageRectI(GpGraphics *graphics, GpImage *ima
     return GdipDrawImageRect(graphics, image, (float)x, (float)y, (float)width, (float)height);
 }
 
-/* the points calls share the count rule: four points are a perspective the library does not do. */
+/* four points would be a perspective, which gdi+ does not do. */
 static GpStatus check_points(const void *points, INT count)
 {
     if (!points || count <= 0)

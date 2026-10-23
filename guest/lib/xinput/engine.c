@@ -1,9 +1,8 @@
 /*
- * the xinput engine: pads found through the xusb interfaces, given user
- * indices by the led the driver keeps, and asked with the xusb device
- * controls. every call but XInputEnable runs under one lock, and a port
- * without a pad looks for one on each call while communication is on.
- * see docs/xinput.md.
+ * the xinput engine: pads are found through the xusb interfaces, take their
+ * user index from the led the driver keeps, and are queried with the xusb
+ * device controls. every call but XInputEnable runs under one lock, and while
+ * communication is on, a port without a pad looks for one on each call.
  */
 #include "xinput_private.h"
 #include <mime/win32/dsound.h>
@@ -36,7 +35,7 @@ typedef struct PAD {
     BOOL Used;
     BOOL Connected;
     HANDLE Handle;
-    HANDLE Overlapped; /* for the guide button wait, opened when first needed */
+    HANDLE Overlapped; /* for the guide button wait, opened on first use. */
     WCHAR *Path;
     UCHAR Sub;
     USHORT Version;
@@ -149,7 +148,7 @@ static HRESULT send_vibration(PAD *p, const XINPUT_VIBRATION *v)
     return control(p->Handle, IOCTL_XUSB_SET_STATE, in, sizeof(in), nullptr, 0, nullptr);
 }
 
-/* GET_GAMEPAD_STATE in the form the driver speaks; the pad's state, connection and headset follow it. */
+/* GET_GAMEPAD_STATE in the driver's format. the pad's state, connection and headset are updated from it. */
 static HRESULT read_state(PAD *p)
 {
     UCHAR out[29];
@@ -361,7 +360,7 @@ static void enumerate(void)
     walk(enumerate_one, nullptr);
 }
 
-/* one api call on a port: looks for a pad when it has none, and forgets one that fails, once retrying. */
+/* one api call on a port: finds a pad when there is none and drops one that fails, retrying once. */
 typedef HRESULT (*XI_OP)(PAD *p, void *context);
 
 static DWORD request(DWORD index, XI_OP op, void *context)
@@ -502,7 +501,7 @@ static HRESULT op_caps(PAD *p, void *context)
         hr = control(p->Handle, IOCTL_XUSB_GET_CAPABILITIES, in, sizeof(in), out, 24, nullptr);
         if (FAILED(hr))
             return hr;
-        /* xinput1_4 calls an unset type a gamepad; xinput1_3 and older copy it. */
+        /* xinput1_4 calls an unset type a gamepad, xinput1_3 and older copy it. */
         c->Type = out[2] || XiRevision < 0x0104 ? out[2] : XINPUT_DEVTYPE_GAMEPAD;
         c->SubType = out[3];
         c->Flags = XiRevision >= 0x0104 ? 0x000C : XiRevision == 0x0103 ? XINPUT_CAPS_VOICE_SUPPORTED : 0;
@@ -595,7 +594,7 @@ DWORD XiGetBatteryInformation(DWORD index, BYTE type, XINPUT_BATTERY_INFORMATION
     battery->BatteryType = battery->BatteryLevel = 0;
     DEVICE_CALL c = {index, type, battery, FALSE};
     if (type == BATTERY_DEVTYPE_HEADSET) {
-        /* headsets are found by their own port across every device; xinput1_3 then reports no pad anyway. */
+        /* headsets are found by their own port across every device. xinput1_3 then reports no pad anyway. */
         lock();
         walk(battery_any, &c);
         unlock();
@@ -729,7 +728,7 @@ static BOOL ids_any(const WCHAR *path, HANDLE device, const UCHAR *info, void *c
     UCHAR in[3] = {0x02, 0x01, (UCHAR)c->Index}, out[7];
     if (FAILED(control(device, IOCTL_XUSB_GET_AUDIO_INFORMATION, in, sizeof(in), out, sizeof(out), nullptr)))
         return FALSE;
-    /* a headset would be looked up among the audio endpoints of its container; mime's pads have none. */
+    /* a headset would be looked up among its container's audio endpoints, but mime's pads have none. */
     c->Found = TRUE;
     return TRUE;
 }
@@ -931,7 +930,7 @@ typedef struct GUIDE_WAIT {
     HANDLE Event;
 } GUIDE_WAIT;
 
-/* the wait on the overlapped handle; closing that handle is what cancels it. */
+/* closing the overlapped handle is what cancels this wait. */
 static void wait_guide(GUIDE_WAIT *w)
 {
     UCHAR in[3] = {0x02, 0x01, w->Sub}, out[29];

@@ -1,11 +1,9 @@
 /*
- * security descriptors, access control lists and access checks.
+ * security descriptors, acls and access checks.
  *
- * mime's kernel does not keep security descriptors on files or keys yet
- * (NtQuerySecurityObject and NtAccessCheck are not implemented), so when it
- * cannot answer, the descriptors are synthesized the way windows sets them up
- * for the user's own files, and access checks are evaluated here against the
- * groups of the token, with the rules of the kernel's SeAccessCheck.
+ * mime's kernel does not keep descriptors on files or keys yet and lacks NtQuerySecurityObject and NtAccessCheck.
+ * when it cannot answer, descriptors are synthesized the way windows sets up the user's own files, and access
+ * checks run here against the token's groups with the rules of the kernel's SeAccessCheck.
  */
 #include "advapi32_private.h"
 
@@ -75,7 +73,7 @@ static BOOL acl_valid(const ACL *acl)
 typedef struct IDENTITY {
     TOKEN_USER *User;
     TOKEN_GROUPS *Groups;
-    const SID *Sid; /* a trustee that is not the token's user, or NULL */
+    const SID *Sid; /* a trustee that is not the token's user, or NULL. */
 } IDENTITY;
 
 /* whether an ace's sid applies: allow aces need an enabled group, deny aces also match deny only groups. */
@@ -88,7 +86,7 @@ static BOOL identity_matches(const IDENTITY *id, const SID *sid, BOOL deny)
         AdvMakeSid(users, 5, 2, 32, 545);
         if (AdvSidEqual(sid, id->Sid) || AdvSidEqual(sid, (SID *)everyone))
             return TRUE;
-        /* an account of this machine is an authenticated member of its users. */
+        /* a local account is an authenticated member of the machine's users. */
         const SID *t = id->Sid;
         BOOL local_user = t->IdentifierAuthority.Value[5] == 5 && t->SubAuthorityCount == 5 && t->SubAuthority[0] == 21;
         return local_user && (AdvSidEqual(sid, (SID *)authenticated) || AdvSidEqual(sid, (SID *)users));
@@ -123,7 +121,7 @@ static const SID *ace_sid(const SID *sid, const SID *self)
     return self && AdvSidEqual(sid, (const SID *)principal_self) ? self : sid;
 }
 
-/* the last node below the one at index, in the order the list is given. */
+/* the last node under the one at index, in list order. */
 static DWORD subtree_end(const OBJECT_TYPE_LIST *list, DWORD count, DWORD index)
 {
     DWORD end = index + 1;
@@ -133,9 +131,9 @@ static DWORD subtree_end(const OBJECT_TYPE_LIST *list, DWORD count, DWORD index)
 }
 
 /*
- * the user mode version of SeAccessCheck, for kernels without NtAccessCheck. every node of the object type
- * tree has its own granted and denied bits: an ace for a type reaches its subtree, and a deny also reaches the
- * nodes above, since the whole is not usable when a part of it is forbidden. without a tree there is one node.
+ * user mode SeAccessCheck for kernels without NtAccessCheck. each object type tree node has its own granted and
+ * denied bits: a type's ace reaches its subtree, and a deny also reaches the nodes above, since the whole is unusable
+ * when one part is forbidden. without a tree there is one node.
  */
 static void evaluate_tree(const ACL *dacl, const IDENTITY *id, const GENERIC_MAPPING *mapping, const SID *self,
                           const OBJECT_TYPE_LIST *list, DWORD count, ACCESS_MASK *allowed, ACCESS_MASK *denied)
@@ -162,7 +160,7 @@ static void evaluate_tree(const ACL *dacl, const IDENTITY *id, const GENERIC_MAP
                 continue;
             sid = (const SID *)(raw + offset);
             if (flags & 1) {
-                /* an ace for a type needs the node of that type. */
+                /* a type's ace needs that type's node. */
                 const GUID *guid = (const GUID *)(raw + 12);
                 DWORD node = 0;
                 while (node < count && memcmp(list[node].ObjectType, guid, sizeof(GUID)) != 0)
@@ -188,7 +186,7 @@ static void evaluate_tree(const ACL *dacl, const IDENTITY *id, const GENERIC_MAP
         } else {
             for (DWORD n = first; n < last; n++)
                 denied[n] |= mask & ~allowed[n];
-            /* the nodes above, the ones whose subtree holds the denied one. */
+            /* the nodes above: those whose subtree holds the denied one. */
             DWORD level = first < count ? list[first].Level : 0;
             for (DWORD n = ancestors; n > 0 && level > 0; n--) {
                 if (list[n - 1].Level < level) {
@@ -200,7 +198,7 @@ static void evaluate_tree(const ACL *dacl, const IDENTITY *id, const GENERIC_MAP
     }
 }
 
-/* the tree has to start at level zero and go down one level at a time, with a type for each node. */
+/* the tree must start at level zero and descend one level at a time, with a type per node. */
 static BOOL object_types_valid(const OBJECT_TYPE_LIST *list, DWORD count)
 {
     if (list[0].Level != 0)
@@ -216,7 +214,7 @@ static BOOL object_types_valid(const OBJECT_TYPE_LIST *list, DWORD count)
     return TRUE;
 }
 
-/* the check of every node. results[i] is the granted access, or zero when the node was refused. */
+/* checks every node. results[i] is the granted access, or zero when refused. */
 static BOOL access_check(const SD_PARTS *p, HANDLE token, DWORD desired, PGENERIC_MAPPING mapping, const SID *self,
                          const OBJECT_TYPE_LIST *list, DWORD count, DWORD *results, BOOL *statuses)
 {
@@ -252,7 +250,7 @@ static BOOL access_check(const SD_PARTS *p, HANDLE token, DWORD desired, PGENERI
     AdvFree(id.User);
     AdvFree(id.Groups);
     for (DWORD n = 0; n < nodes; n++) {
-        ACCESS_MASK granted = allowed[n] & ~ACCESS_SYSTEM_SECURITY; /* needs SeSecurityPrivilege */
+        ACCESS_MASK granted = allowed[n] & ~ACCESS_SYSTEM_SECURITY; /* needs SeSecurityPrivilege. */
         ACCESS_MASK result = desired & MAXIMUM_ALLOWED ? granted | wanted : wanted;
         BOOL ok = (wanted & ~granted) == 0 && result != 0;
         results[n] = ok ? (desired & MAXIMUM_ALLOWED ? granted : wanted) : 0;
@@ -263,7 +261,7 @@ static BOOL access_check(const SD_PARTS *p, HANDLE token, DWORD desired, PGENERI
     return TRUE;
 }
 
-/* what the access check functions share before they look at the descriptor. */
+/* argument checks the access check functions share before reading the descriptor. */
 static BOOL check_arguments(PSECURITY_DESCRIPTOR sd, DWORD desired, PGENERIC_MAPPING mapping, PPRIVILEGE_SET privileges,
                             LPDWORD privileges_length, const OBJECT_TYPE_LIST *list, DWORD count, SD_PARTS *p)
 {
@@ -326,7 +324,7 @@ ADVAPI BOOL WINAPI AccessCheck(PSECURITY_DESCRIPTOR sd, HANDLE token, DWORD desi
     return TRUE;
 }
 
-/* the root of the tree decides, which a refused part of the tree has already told. */
+/* the tree's root decides, and a refused part has already been reflected in it. */
 ADVAPI BOOL WINAPI AccessCheckByType(PSECURITY_DESCRIPTOR sd, PSID self, HANDLE token, DWORD desired,
                                      OBJECT_TYPE_LIST *list, DWORD count, PGENERIC_MAPPING mapping,
                                      PPRIVILEGE_SET privileges, LPDWORD privileges_length, LPDWORD granted,
@@ -370,7 +368,7 @@ ADVAPI BOOL WINAPI AccessCheckByType(PSECURITY_DESCRIPTOR sd, PSID self, HANDLE 
     return ok;
 }
 
-/* every node has its own access and status, the status being zero or an error code. */
+/* each node gets its own access and status, the status being zero or an error code. */
 ADVAPI BOOL WINAPI AccessCheckByTypeResultList(PSECURITY_DESCRIPTOR sd, PSID self, HANDLE token, DWORD desired,
                                                OBJECT_TYPE_LIST *list, DWORD count, PGENERIC_MAPPING mapping,
                                                PPRIVILEGE_SET privileges, LPDWORD privileges_length,
@@ -403,7 +401,7 @@ ADVAPI BOOL WINAPI AccessCheckByTypeResultList(PSECURITY_DESCRIPTOR sd, PSID sel
 
 /* ---------------------------------------------------------------- trustees */
 
-/* the rights an acl gives a trustee, or the rights it audits for it when audit_failed is given. */
+/* the rights an acl gives a trustee, or what it audits for it when audit_failed is given. */
 static DWORD effective_rights(PACL acl, PTRUSTEE_W trustee, BOOL ansi, PACCESS_MASK rights, PACCESS_MASK audit_failed)
 {
     if (!trustee || !rights)
@@ -455,7 +453,7 @@ static DWORD effective_rights(PACL acl, PTRUSTEE_W trustee, BOOL ansi, PACCESS_M
     if (!id.Groups)
         id.Sid = sid;
     if (audit_failed) {
-        /* every audit ace of the trustee or of a group it is in adds its mask for the outcomes it names. */
+        /* each audit ace of the trustee or one of its groups adds its mask for the outcomes it names. */
         ACCESS_MASK successful = 0, failed = 0;
         BOOL any = FALSE;
         for (DWORD i = 0; i < acl->AceCount; i++) {

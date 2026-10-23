@@ -1,12 +1,7 @@
 /*
- * the input method of the desktop. with a text input protocol sdl reports the input method's composition as
- * editing text and what it commits as text, and tells it where the caret is. a composition becomes
- * MIME_INPUT_IME events for the guest, whose window manager sends the WM_IME_* messages of the input method
- * manager; the text itself waits in a queue until the guest takes it, since an event has no room for it.
- *
- * an input method clears its preedit text and commits in one step, which sdl reports as editing text that is
- * empty and then text; a clear that no text follows is a cancelled composition. the clear is held back until the
- * next event shows which it is. typed text with no composition at all is the characters of MIME_INPUT_CHAR.
+ * SDL editing events become MIME_INPUT_IME composition events; text waits in a queue because events cannot hold it.
+ * empty preedit followed by text means commit; without text it means cancellation, so empty preedit is deferred
+ * until the next event. text without composition becomes MIME_INPUT_CHAR.
  */
 #include "ui_internal.h"
 
@@ -21,9 +16,9 @@ typedef struct Text {
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static Text *g_head, *g_tail;
-static bool g_composing;       /* a composition is up, the guest knows of it */
-static bool g_clear_held;      /* its text went empty and nothing has said why */
-static uint32_t g_window;      /* the window it is for */
+static bool g_composing;       /* a composition is up, the guest knows of it. */
+static bool g_clear_held;      /* its text went empty and nothing has said why. */
+static uint32_t g_window;      /* the window it is for. */
 
 static void queue_text(const uint16_t *chars, size_t count)
 {
@@ -80,7 +75,7 @@ static void emit_ime(uint32_t flags, int32_t x, int32_t y)
     mime_ui_emit(&ev);
 }
 
-/* the utf-16 position of the n-th character of utf-8 text, -1 staying -1. */
+/* maps a UTF-8 character index to a UTF-16 position, preserving -1. */
 static int32_t units_before(const char *text, int chars)
 {
     if (chars < 0)
@@ -121,7 +116,7 @@ void mime_ime_editing(uint32_t window, const char *text, int start, int length)
     emit_ime(MIME_IME_PREEDIT, begin, end);
 }
 
-/* text the input method commits; true when it ends a composition, else the caller types it. */
+/* handles committed text; returns true if it ends a composition, otherwise the caller emits characters. */
 bool mime_ime_commit(uint32_t window, const char *text)
 {
     if (!g_composing)
@@ -189,7 +184,7 @@ static void cancel_main(void *arg)
     drop_texts();
     g_composing = false;
     g_clear_held = false;
-    /* an input method holds nothing for a program that was not composing, so there is nothing to reset. */
+    /* only composing Windows have input-method state to reset. */
     if (composing)
         mime_ui_clear_composition(window);
 }

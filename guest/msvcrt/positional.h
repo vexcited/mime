@@ -1,11 +1,11 @@
 /*
- * printf with positional parameters. The format is read once to learn the type of each numbered argument, the
- * arguments are taken from the va_list in the order of their numbers, and the format is written again without the
- * numbers, in the order the engine takes its arguments, with the table of the arguments in that order. Included once for
- * each character type, with POSITIONAL_NAME and FCHAR defined.
+ * printf with positional parameters. the format is read once to learn each numbered argument's type, the arguments are
+ * taken from the va_list in number order, and the format is rewritten without the numbers, along with a table of the
+ * arguments in the order the engine takes them. included once per character type, with POSITIONAL_NAME and FCHAR
+ * defined.
  *
- * A number is 1 to 99. Every number up to the highest must be used, a gap is an invalid parameter. A conversion without
- * a number takes the next argument after those taken without a number, a guess about a format that mixes the two.
+ * numbers go from 1 to 99 and every number up to the highest must be used, a gap is an invalid parameter. a conversion
+ * without a number takes the next argument after those taken without a number, a guess for formats that mix the two.
  */
 static int POSITIONAL_NAME(const FCHAR *fmt, va_list ap, FCHAR **rewritten, PARG **sequence)
 {
@@ -23,7 +23,7 @@ static int POSITIONAL_NAME(const FCHAR *fmt, va_list ap, FCHAR **rewritten, PARG
     size_t used = 0, at = 0;
     int unnumbered = 0;
 
-    /* the first pass: kinds by number; the second writes the format and the order. */
+    /* first pass: kinds by number; second pass: writes the format and the order. */
     for (int pass = 0; pass < 2; pass++) {
         const FCHAR *f = fmt;
         unnumbered = 0;
@@ -39,7 +39,7 @@ static int POSITIONAL_NAME(const FCHAR *fmt, va_list ap, FCHAR **rewritten, PARG
                 out[at++] = *f++;
                 continue;
             }
-            /* the number of the conversion, when digits and a dollar follow. */
+            /* the conversion's number, when digits and a dollar follow. */
             int number = 0;
             const FCHAR *p = f;
             int value = 0;
@@ -52,7 +52,6 @@ static int POSITIONAL_NAME(const FCHAR *fmt, va_list ap, FCHAR **rewritten, PARG
                     return -1;
             }
             int width_star = 0, prec_star = 0, wide64 = 0, size_short = 0, kind = PK_NONE;
-            /* flags. */
             while (*f == '-' || *f == '+' || *f == ' ' || *f == '#' || *f == '0')
                 out[at++] = *f++;
             /* width. */
@@ -97,7 +96,7 @@ static int POSITIONAL_NAME(const FCHAR *fmt, va_list ap, FCHAR **rewritten, PARG
                         out[at++] = *f++;
                 }
             }
-            /* the size prefix. */
+            /* size prefix. */
             for (;;) {
                 FCHAR c = *f;
                 if (c == 'l' && f[1] == 'l') {

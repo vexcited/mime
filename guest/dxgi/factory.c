@@ -1,6 +1,6 @@
 /*
- * the factory: adapters by index, luid or preference, the window
- * association, and swap chains, which the device passed in makes.
+ * the factory: adapters by index, luid or preference, window association,
+ * and swap chains, which the given device makes.
  */
 #include "dxgi_private.h"
 
@@ -208,7 +208,7 @@ static HRESULT STDMETHODCALLTYPE factory_register_event(IDXGIFactory7 *iface, HA
 
 static void STDMETHODCALLTYPE factory_unregister(IDXGIFactory7 *iface, DWORD cookie) {}
 
-/* a swap chain with no window: the device makes it, for a visual of dcomp.dll to show. */
+/* a windowless swap chain made by the device, for a dcomp.dll visual to show. */
 static HRESULT create_composition(IDXGIFactory7 *iface, IUnknown *device, HANDLE surface,
                                   const DXGI_SWAP_CHAIN_DESC1 *desc, IDXGIOutput *restrict_to,
                                   IDXGISwapChain1 **swapchain)
@@ -252,7 +252,7 @@ static ULONG STDMETHODCALLTYPE media_release(IDXGIFactoryMedia *iface)
     return factory_release(&media_impl(iface)->iface);
 }
 
-/* the swap chain stands for the composition surface a handle names, which a visual shows by that handle. */
+/* the swap chain backs the composition surface the handle names, and a visual shows it by that handle. */
 static HRESULT STDMETHODCALLTYPE media_create_swap_chain_for_composition_surface_handle(
     IDXGIFactoryMedia *iface, IUnknown *device, HANDLE surface, const DXGI_SWAP_CHAIN_DESC1 *desc,
     IDXGIOutput *restrict_to, IDXGISwapChain1 **swapchain)
@@ -327,7 +327,7 @@ static HRESULT STDMETHODCALLTYPE factory_enum_adapter_by_gpu_preference(IDXGIFac
     const DxgiVulkan *vk = DxgiGetVulkan();
     if (index >= vk->count)
         return DXGI_ERROR_NOT_FOUND;
-    /* adapters are already discrete first; the lowest power reverses the kinds. */
+    /* adapters are already discrete first, minimum power reverses the kinds. */
     const DxgiGpu *order[RTL_NUMBER_OF(vk->gpus)];
     UINT n = 0;
     if (preference == DXGI_GPU_PREFERENCE_MINIMUM_POWER)

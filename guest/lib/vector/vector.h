@@ -1,23 +1,20 @@
 /*
- * freestanding 2D vector geometry and scan conversion, the engine below the
- * GDI+ flat API. paths with GDI+ point types, flattening, stroking, an
- * antialiased scan converter, run based coverage masks for clipping, hit
- * testing and scanline blending.
+ * freestanding 2D geometry and scan conversion under the GDI+ flat API: paths
+ * with GDI+ point types, flattening, stroking, an antialiased scan converter,
+ * run based coverage masks for clipping, hit testing and scanline blending.
  *
- * conventions, all of them the GDI+ ones:
+ * GDI+ conventions throughout:
  *   y grows downward and positive angles are clockwise on screen.
  *   matrices use the row vector form, x' = x * m11 + y * m21 + dx.
- *   pixel x, y covers one unit square from x, y and its center is x + .5, y + .5.
+ *   pixel x, y covers the unit square from x, y, its center is x + .5, y + .5.
  *
- * robustness: coordinates are clamped to +-MIME_VEC_COORD_LIMIT and infinities
- * are clamped too. a NaN makes the builders and the flattener fail with
- * MIME_VEC_INVALID, the scan converter and the stroker skip the polygon or
- * subpath that holds one. all memory comes from a MimeAllocator and every size
- * is capped. a function that fails leaves its output valid but incomplete.
+ * coordinates and infinities are clamped to +-MIME_VEC_COORD_LIMIT. a NaN makes
+ * the builders and the flattener fail with MIME_VEC_INVALID, the scan converter
+ * and the stroker skip the polygon or subpath holding it. memory comes from a
+ * MimeAllocator and every size is capped. a failing function leaves its output
+ * valid but incomplete.
  *
- * values marked GUESS below were not verified against the real gdiplus.dll.
- * the anchor cap shapes, the miter limit rule and the dash cap pattern
- * adjustment were read from it.
+ * values marked GUESS may not match GDI+.
  */
 #ifndef MIME_LIB_VECTOR_H
 #define MIME_LIB_VECTOR_H
@@ -58,7 +55,6 @@ float mime_vec_ceilf(float x);
 void mime_vec_sincosf(float a, float *s, float *c);
 /* angle of the vector x, y in -pi to pi, absolute error about 3e-7. */
 float mime_vec_atan2f(float y, float x);
-/* true when v is neither NaN nor infinite. */
 static inline bool mime_vec_finite(float v)
 {
     return v == v && v - v == 0.0f;
@@ -81,12 +77,12 @@ typedef struct MimeVecPoint {
     float x, y;
 } MimeVecPoint;
 
-/* float box, right and bottom are the largest coordinates and not exclusive. */
+/* float box, right and bottom are inclusive. */
 typedef struct MimeVecBounds {
     float left, top, right, bottom;
 } MimeVecBounds;
 
-/* integer rectangle with exclusive right and bottom. it is empty when right <= left or bottom <= top. */
+/* integer rectangle with exclusive right and bottom, empty when right <= left or bottom <= top. */
 typedef struct MimeVecRect {
     int32_t left, top, right, bottom;
 } MimeVecRect;
@@ -120,8 +116,8 @@ static inline MimeVecPoint mime_vec_xform(const MimeVecMatrix *m, float x, float
 /* polygons and polylines, the flattened data. */
 
 typedef struct MimeVecSub {
-    uint32_t first;  /* index of the first point. */
-    uint32_t count;  /* point count. */
+    uint32_t first;
+    uint32_t count;
     uint32_t closed; /* nonzero when the closing segment exists. fills always close implicitly. */
 } MimeVecSub;
 
@@ -142,9 +138,8 @@ void mime_vec_polys_clear(MimeVecPolys *p);
 int mime_vec_polys_begin(MimeVecPolys *p);
 int mime_vec_polys_add(MimeVecPolys *p, float x, float y);
 int mime_vec_polys_end(MimeVecPolys *p, bool closed);
-/* a whole subpath at once. */
 int mime_vec_polys_add_sub(MimeVecPolys *p, const MimeVecPoint *pts, uint32_t count, bool closed);
-/* exact bounds of the points, false when there are none. */
+/* false when there are no points. */
 bool mime_vec_polys_bounds(const MimeVecPolys *p, MimeVecBounds *b);
 void mime_vec_polys_transform(MimeVecPolys *p, const MimeVecMatrix *m);
 
@@ -154,7 +149,7 @@ void mime_vec_polys_transform(MimeVecPolys *p, const MimeVecMatrix *m);
 #define MIME_VEC_PT_LINE 1
 #define MIME_VEC_PT_BEZIER 3
 #define MIME_VEC_PT_TYPE_MASK 0x07
-/* the dash mode flag is kept in the data but the stroker ignores it. this is a limitation. */
+/* kept in the data, but the stroker ignores it. */
 #define MIME_VEC_PT_DASHMODE 0x10
 #define MIME_VEC_PT_MARKER 0x20
 #define MIME_VEC_PT_CLOSE 0x80
@@ -196,7 +191,7 @@ int mime_vec_path_add_bezier(MimeVecPath *p, float x0, float y0, float x1, float
 /* count must be 1 + 3k. */
 int mime_vec_path_add_beziers(MimeVecPath *p, const MimeVecPoint *pts, uint32_t count);
 int mime_vec_path_add_rect(MimeVecPath *p, float x, float y, float w, float h);
-/* starts at angle 0 on the right side and runs clockwise with four Beziers. GUESS for the start point. */
+/* starts at angle 0 on the right and runs clockwise with four Beziers. the start point is a GUESS. */
 int mime_vec_path_add_ellipse(MimeVecPath *p, float x, float y, float w, float h);
 /*
  * elliptical arc inside the rectangle. the angles are in degrees, measured
@@ -302,22 +297,22 @@ void mime_vec_stroke_defaults(MimeVecStroke *s, float width);
  *   cap and nothing with a flat cap. a lone point draws nothing.
  *   a miter join past the miter limit becomes a bevel. the limit is the ratio
  *   of the miter length to the width, 1 over the sine of half the interior
- *   angle, as in gdiplus.dll. a limit under 1 acts as 1. MiterClipped cuts
- *   the miter at miter_limit times half the width from the vertex, as SVG 2. GUESS
- *   dashes follow gdiplus.dll. the pattern period is kept when the dash cap is
+ *   angle, as in GDI+. a limit under 1 acts as 1. MiterClipped cuts the miter
+ *   at miter_limit times half the width from the vertex, as SVG 2. GUESS.
+ *   dashes follow GDI+. the pattern period is kept when the dash cap is
  *   round or triangle: the dashes get shorter by one width, at least 0.001
  *   width, and the gaps longer by one width, so the caps fill the difference.
  *   the dash ends take the dash cap. at the real ends of an open subpath the
- *   start and end caps are used when they are not flat. GUESS
+ *   start and end caps are used when they are not flat. GUESS.
  *   a closed subpath that starts and ends inside a dash merges the two
- *   halves into one dash. GUESS
+ *   halves into one dash. GUESS.
  *   a pattern that would need too many dashes falls back to a solid line.
  *   inset alignment puts the pen on the interior side of a closed subpath,
- *   the side is picked from the orientation of the polygon, so the outer edge
- *   of the pen follows the path and convex corners are sharp. open subpaths
- *   stay centered. GUESS
- *   anchor caps are filled shapes, with the proportions of the reference caps
- *   of gdiplus.dll scaled by the pen width, at least one unit. the square
+ *   picked from the polygon's orientation, so the outer edge of the pen
+ *   follows the path and convex corners are sharp. open subpaths stay
+ *   centered. GUESS.
+ *   anchor caps are filled shapes with the proportions of the GDI+ reference
+ *   caps, scaled by the pen width, at least one unit. the square
  *   anchor has a half side of 0.7071, the round one a radius of 1, the
  *   diamond a half diagonal of 1, and the arrow is a triangle with its apex
  *   on the line end and a base 1.732 behind it and 2 wide. the arrow pulls
@@ -337,8 +332,7 @@ enum {
     MIME_VEC_AA_NONE = 0,
     /*
      * 8 by 4 samples per pixel on a box filter and coverage rounded from
-     * count * 255 / 32. the 32 levels are the GDI+ SmoothingModeAntiAlias
-     * behavior. GUESS
+     * count * 255 / 32. the 32 levels match GDI+ SmoothingModeAntiAlias. GUESS.
      */
     MIME_VEC_AA_8X4 = 1,
     /* 8 by 8 samples and 64 levels, as SmoothingModeAntiAlias8x8. GUESS. */
@@ -347,34 +341,32 @@ enum {
     MIME_VEC_AA_EXACT = 3
 };
 
-/* called for the rows touched with coverage 0..255 for count pixels from x. */
+/* called for each touched row with coverage 0..255 for count pixels from x. */
 typedef void (*MimeVecSpanFn)(void *user, int y, int x, int count, const uint8_t *coverage);
 
 /*
- * fills the polygons inside the clip rectangle. every subpath closes
- * implicitly. memory is proportional to the points and the clip width: the
- * rows are streamed, tall clips are split in bands and clips wider than 16384
- * in vertical strips. the rows come top to bottom within a strip, so for a
- * clip wider than 16384 the order is strip by strip. the callback is never
- * called with pixels outside the clip. polygons with a NaN are skipped.
- * MIME_VEC_NOMEM when memory is short, and some rows may have been emitted.
+ * fills the polygons inside the clip rectangle, every subpath closing
+ * implicitly. rows are streamed, so memory follows the points and the clip
+ * width: tall clips are split in bands and clips wider than 16384 in vertical
+ * strips, with rows top to bottom within each strip. the callback never gets
+ * pixels outside the clip. polygons with a NaN are skipped. on MIME_VEC_NOMEM
+ * some rows may already have been emitted.
  */
 int mime_vec_fill(const MimeAllocator *a, const MimeVecPolys *polys, int rule, int aa, const MimeVecRect *clip,
                   MimeVecSpanFn fn, void *user);
-/* the same for one plain polygon. */
 int mime_vec_fill_polygon(const MimeAllocator *a, const MimeVecPoint *pts, uint32_t count, int rule, int aa,
                           const MimeVecRect *clip, MimeVecSpanFn fn, void *user);
-/* the integer rectangle of the pixels a shape with these bounds may touch, clamped to the limits. */
+/* the pixels a shape with these bounds may touch, clamped to the limits. */
 MimeVecRect mime_vec_bounds_to_rect(const MimeVecBounds *b);
 
 /* coverage masks for clip regions. */
 
 /*
  * a mask is a set of horizontal bands, each with a sorted list of runs of
- * constant coverage 1..255, and everything else is 0. a rectangle costs one
- * band and one run, an antialiased shape one band per row at most. identical
- * neighboring rows are merged. the infinite region is a large rectangle, for
- * instance the clip limit in each direction.
+ * constant coverage 1..255, everything else is 0. a rectangle costs one band
+ * and one run, an antialiased shape at most one band per row. identical
+ * neighboring rows are merged. the infinite region is a large rectangle, such
+ * as the clip limit in each direction.
  */
 typedef struct MimeVecRun {
     int32_t x0, x1;
@@ -413,43 +405,43 @@ void mime_vec_mask_clear(MimeVecMask *m);
 int mime_vec_mask_copy(MimeVecMask *dst, const MimeVecMask *src);
 int mime_vec_mask_set_rect(MimeVecMask *m, const MimeVecRect *r);
 /*
- * row by row building for callers with their own rasterizer. clear the mask, add the rows from top to bottom
- * with coverage 0..255 for count pixels from x, then finish. a row with no coverage may be left out.
+ * row by row building for callers with their own rasterizer: clear the mask, add rows top to bottom with
+ * coverage 0..255 for count pixels from x, then finish. rows with no coverage may be left out.
  */
 int mime_vec_mask_add_row(MimeVecMask *m, int y, int x, int count, const uint8_t *cov);
 void mime_vec_mask_finish(MimeVecMask *m);
-/* rasterizes a shape and keeps only the pixels inside clip. */
+/* keeps only the pixels inside clip. */
 int mime_vec_mask_set_polys(MimeVecMask *m, const MimeVecPolys *polys, int rule, int aa, const MimeVecRect *clip);
 /*
  * dst = a op b on the coverage with rounded products. with a and b as
  * fractions the results are intersect a*b, union a+b-a*b, xor a*ib+b*ia,
  * exclude a*ib and complement b*ia, where ia and ib are one minus a and b.
- * dst may be a or b. when it fails dst is left as it was.
+ * dst may be a or b. on failure dst is left as it was.
  */
 int mime_vec_mask_combine(MimeVecMask *dst, const MimeVecMask *a, const MimeVecMask *b, int op);
 /* dst is one minus src inside r and 0 outside r. dst may be src. */
 int mime_vec_mask_invert(MimeVecMask *dst, const MimeVecMask *src, const MimeVecRect *r);
 void mime_vec_mask_translate(MimeVecMask *m, int dx, int dy);
 bool mime_vec_mask_is_empty(const MimeVecMask *m);
-/* true when the mask is exactly one fully covered rectangle, which is returned in r when r is not NULL. */
+/* true when the mask is exactly one fully covered rectangle, returned in r when r is not NULL. */
 bool mime_vec_mask_is_rect(const MimeVecMask *m, MimeVecRect *r);
 MimeVecRect mime_vec_mask_bounds(const MimeVecMask *m);
 uint32_t mime_vec_mask_coverage_at(const MimeVecMask *m, int x, int y);
 /* INSIDE only when every pixel of r has coverage 255, OUTSIDE only when every pixel has 0. */
 int mime_vec_mask_test_rect(const MimeVecMask *m, const MimeVecRect *r);
-/* multiplies a coverage row by the mask in place. */
+/* in place. */
 void mime_vec_mask_apply_row(const MimeVecMask *m, int y, int x, int count, uint8_t *coverage);
-/* feeds the mask inside r to a span callback, one call per row and run group. */
+/* one callback per row and run group. */
 void mime_vec_mask_emit(const MimeVecMask *m, const MimeVecRect *r, MimeVecSpanFn fn, void *user);
 
 /* hit testing. */
 
-/* winding number of the closed polygons around the point. every subpath closes. */
+/* every subpath closes. */
 int mime_vec_winding_at(const MimeVecPolys *p, float x, float y);
 bool mime_vec_point_in_polys(const MimeVecPolys *p, float x, float y, int rule);
-/* squared distance from the point to the nearest segment, honoring the closed flag. negative when empty. */
+/* to the nearest segment, honoring the closed flag. negative when empty. */
 float mime_vec_distance2(const MimeVecPolys *p, float x, float y);
-/* true when the point is within dist of the polylines, which is a hit on a stroke of width 2 * dist with round caps. */
+/* a hit on a stroke of width 2 * dist with round caps. */
 bool mime_vec_point_near(const MimeVecPolys *p, float x, float y, float dist);
 
 /* scanline blending. */
@@ -459,10 +451,10 @@ bool mime_vec_point_near(const MimeVecPolys *p, float x, float y, float dist);
  * dword, with straight alpha, ARGB, or premultiplied alpha, PARGB. colors are
  * straight unless stated.
  *
- * R[x] below is the exact rounded division of x by 255. the code adds 128 to
- * x, adds that sum shifted right by 8 to itself and shifts the result right
- * by 8. it is exact for 0 <= x <= 65535 and no ties exist because 255 is odd.
- * mime_vec_div255 is R. Q[n, d] is n / d rounded to nearest.
+ * R[x] is the exact rounded division of x by 255: add 128 to x, add that sum
+ * shifted right by 8 to itself and shift the result right by 8. it is exact
+ * for 0 <= x <= 65535 and has no ties because 255 is odd. mime_vec_div255 is
+ * R. Q[n, d] is n / d rounded to nearest.
  *
  * effective source alpha: e = R[cov * alpha] and sa = R[srcA * e].
  * SourceOver, premultiplied or opaque destination, for each channel c of B G
@@ -481,18 +473,16 @@ bool mime_vec_point_near(const MimeVecPolys *p, float x, float y, float dist);
  *     the source pixel with its alpha scaled.
  * a premultiplied source uses srcP = R[srcPC * e] instead of the product by sa
  * and is converted back to straight for a straight destination.
- * this is our best formulation of the GDI+ 8 bit math and it is not verified
- * to be bit exact.
+ * this is our best take on the GDI+ 8 bit math, not verified to be bit exact.
  */
 enum { MIME_VEC_BLEND_OVER = 0, MIME_VEC_BLEND_COPY = 1 };
 enum { MIME_VEC_FMT_ARGB = 0, MIME_VEC_FMT_PARGB = 1 };
 
 /* constant straight 0xAARRGGBB color. cov may be NULL for full coverage. */
 void mime_vec_blend_color(uint32_t *dst, uint32_t color, const uint8_t *cov, uint32_t count, int mode, int dst_fmt);
-/* a source pixel per destination pixel, alpha is a constant 0..255 factor. cov may be NULL. */
+/* one source pixel per destination pixel, alpha is a constant 0..255 factor. cov may be NULL. */
 void mime_vec_blend_row(uint32_t *dst, const uint32_t *src, const uint8_t *cov, uint32_t count, uint32_t alpha,
                         int mode, int dst_fmt, int src_fmt);
-/* exact rounded x / 255 for 0 <= x <= 65535. */
 static inline uint32_t mime_vec_div255(uint32_t x)
 {
     x += 128;

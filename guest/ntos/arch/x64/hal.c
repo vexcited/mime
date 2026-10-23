@@ -1,7 +1,4 @@
-/*
- * x64 side of the hal: port hypercalls, the tsc, the x2apic and its timer
- * in tsc deadline mode.
- */
+/* x64 hal: port hypercalls, the tsc, the x2apic and its tsc deadline timer. */
 #include "../../ntos.h"
 
 /* rax = number, rdi rsi rdx r10 r8 r9 = arguments; rax = status, rdx = value. */
@@ -19,7 +16,7 @@ ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
                      : [port] "i"(MIME_HC_PORT), "D"(a1), "S"(a2), "r"(r10), "r"(r8), "r"(r9)
                      : "memory");
     if (number < 64) {
-        /* the counters are racy when the lock is not held, which is good enough for statistics. */
+        /* racy without the lock, good enough for statistics. */
         ULONG64 took = HalReadCounter() - start;
         HalHypercallCalls[number]++;
         HalHypercallTicks[number] += took;
@@ -33,7 +30,6 @@ ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
     return nr;
 }
 
-/* translates any mapped kernel address to its guest physical address. */
 ULONG64 HalPhysicalOf(const void *va)
 {
     ULONG_PTR v = (ULONG_PTR)va;
@@ -79,9 +75,8 @@ void HalSendIpi(ULONG processor)
 }
 
 /*
- * one interrupt to a set of processors: logical destination mode reaches the
- * sixteen processors of a cluster with a single write, where a write for
- * each would cost the sender an exit to the host for each.
+ * logical destination mode reaches the sixteen processors of a cluster in one
+ * write, instead of one host exit per processor.
  */
 static void send_mask(ULONG64 mask, ULONG vector)
 {
@@ -97,7 +92,7 @@ void HalSendIpiMask(ULONG64 mask)
     send_mask(mask, KI_VECTOR_IPI);
 }
 
-/* the request that processors flush their user translations, see KiFlushIpi. */
+/* see KiFlushIpi. */
 void HalSendFlushIpi(ULONG64 mask)
 {
     send_mask(mask, KI_VECTOR_FLUSH);
@@ -108,7 +103,7 @@ void HalEndOfInterrupt(ULONG vector)
     KiWriteMsr(MSR_X2APIC_EOI, 0);
 }
 
-/* the local apic of the running processor, in x2apic mode with the timer in tsc deadline mode. */
+/* x2apic mode, with the timer in tsc deadline mode. */
 void HalInitializeProcessor(void)
 {
     KiWriteMsr(MSR_APIC_BASE, KiReadMsr(MSR_APIC_BASE) | (1ull << 11) | (1ull << 10));

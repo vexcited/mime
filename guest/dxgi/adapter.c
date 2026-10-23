@@ -1,6 +1,6 @@
 /*
- * adapters, a gpu each, and their outputs. the first adapter drives the
- * monitor, as the gpu a windows pc's display hangs off; the others have
+ * adapters, one per gpu, and their outputs. the first adapter drives the
+ * monitor, like the gpu a windows pc's display hangs off. the others have
  * no outputs.
  */
 #include "dxgi_private.h"
@@ -72,7 +72,7 @@ static HRESULT STDMETHODCALLTYPE adapter_get_parent(IDXGIAdapter4 *iface, REFIID
     return factory->lpVtbl->QueryInterface(factory, riid, parent);
 }
 
-/* the monitor whose device is \\.\DISPLAYn for the index n - 1. */
+/* index n - 1 finds the monitor whose device is \\.\DISPLAYn. */
 typedef struct FIND_MONITOR {
     UINT index;
     HMONITOR monitor;
@@ -89,7 +89,7 @@ static BOOL CALLBACK find_monitor(HMONITOR monitor, HDC dc, LPRECT rect, LPARAM 
     return TRUE;
 }
 
-/* the first adapter drives every monitor, in the order of their devices. */
+/* outputs follow the order of the monitors' devices. */
 static HRESULT STDMETHODCALLTYPE adapter_enum_outputs(IDXGIAdapter4 *iface, UINT index, IDXGIOutput **output)
 {
     if (!output)
@@ -148,9 +148,9 @@ static const GUID IID_ID3D10Device = {0x9B7E4C0F, 0x342C, 0x4106, {0xA1, 0x9F, 0
 static const GUID IID_ID3D10Device1 = {0x9B7E4C8F, 0x342C, 0x4106, {0xA1, 0x9F, 0x4F, 0x27, 0x04, 0xF6, 0x89, 0xF0}};
 
 /*
- * the version of the user mode driver, for direct3d 10, 10.1 and dxgi
- * devices only, as windows' dxgi answers. windows also makes a 10.1 device
- * to answer for 10.1: every gpu here reaches 11.
+ * like windows, the user mode driver version is only answered for direct3d
+ * 10, 10.1 and dxgi devices. windows also creates a 10.1 device to answer
+ * for 10.1, which is not needed here: every gpu reaches 11.
  */
 static HRESULT STDMETHODCALLTYPE adapter_check_interface_support(IDXGIAdapter4 *iface, REFGUID guid,
                                                                  LARGE_INTEGER *version)
@@ -176,7 +176,7 @@ static HRESULT STDMETHODCALLTYPE adapter_register_event(IDXGIAdapter4 *iface, HA
 
 static void STDMETHODCALLTYPE adapter_unregister(IDXGIAdapter4 *iface, DWORD cookie) {}
 
-/* the budgets of vulkan's memory heaps, local being the gpu's own. */
+/* budgets of vulkan's memory heaps, local being the gpu's own. */
 static HRESULT STDMETHODCALLTYPE adapter_query_video_memory_info(IDXGIAdapter4 *iface, UINT node,
                                                                  DXGI_MEMORY_SEGMENT_GROUP group,
                                                                  DXGI_QUERY_VIDEO_MEMORY_INFO *info)

@@ -1,10 +1,9 @@
 /*
  * wgl: pixel formats, contexts and presenting windows.
  *
- * a window's default framebuffer is a surface: a back buffer the host
- * keeps and copies to a layer over the window's client area at each swap.
- * the surface follows the window's size and position, checked when a frame
- * starts and when it is presented.
+ * a window's default framebuffer is a surface: a back buffer the host keeps and copies to a layer over the window's
+ * client area at each swap. the surface follows the window's size and position, checked when a frame starts and when
+ * it is presented.
  */
 #include "opengl32.h"
 

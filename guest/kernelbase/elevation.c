@@ -1,12 +1,11 @@
 /*
- * the check CreateProcess makes before a program starts: whether the manifest of the program asks for more than the
- * token it would run with has. a program that requires an administrator, or the highest rights its user has, does not
- * start from a process whose token is the filtered half of an administrator's, or from a standard user's: the call
- * fails with ERROR_ELEVATION_REQUIRED, and whoever can ask for an elevation (ShellExecute) does. windows makes the
- * check after the process exists and ends it; here it is made first, which a program cannot tell apart.
+ * the manifest check CreateProcess makes before a program starts. a program that requires an administrator or the
+ * highest available rights does not start from a filtered administrator token or a standard user's: the call fails
+ * with ERROR_ELEVATION_REQUIRED, and callers that can elevate, like ShellExecute, do. windows checks after creating
+ * the process and ends it, here the check comes first, which a program cannot tell apart.
  *
- * the manifest is looked for in the resources of the file without mapping it, and only a manifest that has the words
- * of a level above the invoker's is read by the real parser, so a program without any costs a few small reads.
+ * the manifest is read from the file's resources without mapping it, and only one containing the words of a level
+ * above asInvoker goes to the real parser, so a program without one costs a few small reads.
  */
 #include "kernelbase_private.h"
 
@@ -23,7 +22,7 @@
 
 NTSYSAPI NTSTATUS NTAPI RtlQueryElevationFlags(PULONG flags);
 
-/* what a token is to the check: 0 whole, 1 the limited half of a pair, 2 a standard user's. */
+/* 0 for a full token, 1 for the limited half of a linked pair, 2 for a standard user. */
 static int user_type(HANDLE token)
 {
     ULONG type = 1, returned;
@@ -38,7 +37,7 @@ static int user_type(HANDLE token)
     return elevated ? 0 : 2;
 }
 
-/* the file read in windows of a page, one at a time: the headers and the directories of the resources sit together. */
+/* reads the file one page at a time: the headers and resource directories sit close together. */
 typedef struct FILE_WINDOW {
     HANDLE File;
     ULONGLONG Base;
@@ -105,7 +104,7 @@ static BOOL rva_to_offset(const IMAGE_LAYOUT *l, ULONG rva, ULONGLONG *offset)
     return FALSE;
 }
 
-/* the entry of a level of the resource tree: the one with the id, or the first one when the id is zero. */
+/* the entry of a resource tree level: the one with the id, or the first when the id is zero. */
 static BOOL resource_entry(FILE_WINDOW *file, const IMAGE_LAYOUT *l, ULONG directory, ULONG id, ULONG *next, BOOL *branch)
 {
     ULONGLONG at;
@@ -130,7 +129,7 @@ static BOOL resource_entry(FILE_WINDOW *file, const IMAGE_LAYOUT *l, ULONG direc
     return FALSE;
 }
 
-/* the manifest resource of the process, in a block of the heap; null when the file has none. */
+/* the process manifest resource, in a heap block; NULL when the file has none. */
 static BYTE *read_manifest(FILE_WINDOW *file, ULONG *size)
 {
     BYTE dos[64];
@@ -177,7 +176,7 @@ static BYTE *read_manifest(FILE_WINDOW *file, ULONG *size)
     return manifest;
 }
 
-/* whether the text, ascii or utf-16, holds the word. */
+/* whether ascii or utf-16 text contains the word. */
 static BOOL has_word(const BYTE *text, ULONG size, const char *word)
 {
     SIZE_T n = 0;
@@ -200,7 +199,7 @@ static BOOL has_word(const BYTE *text, ULONG size, const char *word)
     return FALSE;
 }
 
-/* the level the real parser finds in the manifest of the file; the activation context does what the loader does. */
+/* the run level the real parser finds, through an activation context as the loader would. */
 static ULONG parsed_level(PCWSTR path)
 {
     ACTCTXW context = {sizeof(context)};
@@ -222,7 +221,7 @@ static ULONG parsed_level(PCWSTR path)
 
 /*
  * 0 when the program may start with the token, ERROR_ELEVATION_REQUIRED when its manifest asks for more. the token is
- * the one given to CreateProcessAsUser, or the process' own.
+ * CreateProcessAsUser's, or the process's own.
  */
 DWORD KbCheckElevation(HANDLE token, PCWSTR path)
 {
@@ -240,7 +239,7 @@ DWORD KbCheckElevation(HANDLE token, PCWSTR path)
             process_type = type;
         }
     }
-    /* a whole token needs no elevation, whatever the manifest says. */
+    /* a full token needs no elevation, whatever the manifest says. */
     if (!type)
         return ERROR_SUCCESS;
     HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
@@ -259,7 +258,7 @@ DWORD KbCheckElevation(HANDLE token, PCWSTR path)
     CloseHandle(file);
     ULONG level = 0;
     if (manifest) {
-        /* the common manifest names the invoker, and the words that matter are not in it. */
+        /* the common manifest says asInvoker, without the words that matter. */
         if (has_word(manifest, size, "requireAdministrator") || has_word(manifest, size, "highestAvailable"))
             level = parsed_level(path);
         KbFree(manifest);

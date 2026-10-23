@@ -1,7 +1,4 @@
-/*
- * vulkan-1.dll: the vulkan api of the guest, run by the host's driver
- * through the wire of mime/mvk_wire.h.
- */
+/* vulkan-1.dll: the guest vulkan api, run by the host driver over the mime/mvk_wire.h wire. */
 #ifndef MVK_GUEST_H
 #define MVK_GUEST_H
 
@@ -60,7 +57,7 @@ struct VkCommandBuffer_T {
     VkDevice device;
     uint64_t pool;
     struct VkCommandBuffer_T *pool_next;
-    /* the stream: chunks of guest memory the host reads when the buffer ends. */
+    /* guest memory chunks the host reads when the buffer ends. */
     MvkStreamChunk *first, *last;
     uint64_t first_pa, last_pa;
     uint64_t bytes;
@@ -68,7 +65,7 @@ struct VkCommandBuffer_T {
     VkCommandBufferInheritanceInfo inheritance;
     int has_inheritance;
     int recording;
-    /* the stream, and the record being encoded: in the stream's last chunk, or in scratch memory. */
+    /* the record being encoded is in the stream's last chunk or in scratch memory. */
     struct Stream *stream;
     MvkEncoder enc;
     int in_place;
@@ -76,7 +73,7 @@ struct VkCommandBuffer_T {
     size_t scratch_size;
 };
 
-/* main.c: the connection and the calls. */
+/* main.c: the connection and calls. */
 BOOL mvk_connect(void);
 uint64_t mvk_new_id(void);
 void mvk_free_id(uint64_t id);
@@ -87,7 +84,7 @@ void mvk_call_done(MvkDecoder *d);
 uint64_t mvk_last_serial(void);
 void mvk_wait_serial(uint64_t serial);
 uint64_t mvk_events(void);
-/* the header slots of mirrored timeline semaphores. */
+/* header slots of mirrored timeline semaphores. */
 volatile uint64_t *mvk_mirrors(void);
 uint64_t mvk_done_serial(void);
 void mvk_wait_events(uint64_t seen, ULONG timeout_ms);
@@ -96,7 +93,7 @@ void mvk_block_free(void *base);
 void mvk_block_free_after(void *base, uint64_t serial);
 void mvk_log(const char *fmt, ...);
 
-/* chains: input chains are encoded, output chains are described then filled. */
+/* input chains are encoded, output chains are described then filled. */
 void mvk_put_chain(MvkEncoder *e, const void *next);
 void mvk_put_out_shape(MvkEncoder *e, const VkBaseOutStructure *s);
 void mvk_out_chain(MvkDecoder *d, void *next);
@@ -104,7 +101,7 @@ void mvk_out_chain_struct(MvkDecoder *d, VkBaseOutStructure *s);
 void mvk_skip_pointer(MvkDecoder *d);
 uint64_t mvk_dispatch_id(const void *object);
 
-/* command buffers: commands go to the buffer's stream. */
+/* commands go to the command buffer's stream. */
 MvkEncoder *mvk_cmd_begin(VkCommandBuffer buffer, uint32_t op);
 void mvk_cmd_end(VkCommandBuffer buffer, MvkEncoder *e);
 
@@ -115,10 +112,10 @@ typedef struct MvkProc {
 extern const MvkProc mvk_procs[];
 /* video.c: private commands. */
 extern const MvkProc mvk_video_procs[];
-/* share.c: memory and semaphores crossing to other processes' devices. */
+/* share.c: memory and semaphores shared with other processes' devices. */
 extern const MvkProc mvk_share_procs[];
 
-/* the generated entry points the hand written ones extend. */
+/* generated entry points the hand written ones extend. */
 VKAPI_ATTR void VKAPI_CALL mvk_raw_vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physical,
                                                                        VkPhysicalDeviceMemoryProperties *properties);
 VKAPI_ATTR void VKAPI_CALL mvk_raw_vkGetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physical,

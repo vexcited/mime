@@ -1,7 +1,7 @@
 /*
- * IDWriteFontFallback: the font for characters the requested family lacks.
- * The family asked for goes first, then the ones Windows leans on for the
- * script of the character, then any font that has it.
+ * IDWriteFontFallback: picks a font for characters the requested family
+ * lacks. the requested family goes first, then the ones windows uses for the
+ * character's script, then any font that has it.
  */
 #include "dw_private.h"
 
@@ -68,7 +68,7 @@ static UINT32 next_code_point(const WCHAR *text, UINT32 length, UINT32 *position
     return c;
 }
 
-/* tries one family: the entry that fits the request, opened, when it has the character. */
+/* opens the family's best entry for the request if it has the character. */
 static BOOL try_family(DwCollection *c, UINT32 family, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch,
                        DWRITE_FONT_STYLE style, UINT32 cp, UINT32 *entry, DwFontData **data)
 {
@@ -112,7 +112,7 @@ static BOOL pick(DwCollection *c, DwCollection *system, const WCHAR *base, DWRIT
             }
         }
     }
-    /* anything that has it. */
+    /* last, any font that has it. */
     for (index = 0; index < system->count; index++) {
         if (try_family(system, index, weight, stretch, style, cp, entry, data)) {
             *found_in = system;

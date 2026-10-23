@@ -1,6 +1,4 @@
-/*
- * desktop window manager api, dwmapi.dll.
- */
+/* desktop window manager api, dwmapi.dll. */
 #ifndef MIME_WIN32_DWMAPI_H
 #define MIME_WIN32_DWMAPI_H
 

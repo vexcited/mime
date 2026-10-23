@@ -1,7 +1,7 @@
 /*
- * regsvr32.exe, which registers a library by calling its DllRegisterServer or DllUnregisterServer, or its DllInstall.
- * The exit code says how far it got: 1 for a line it cannot read, 2 when OLE cannot start, 3 when the library does not
- * load, 4 when it has no such function and 5 when the function fails.
+ * regsvr32.exe: calls a library's DllRegisterServer, DllUnregisterServer or DllInstall.
+ * exit codes: 1 bad command line, 2 OLE fails to start, 3 the library does not load,
+ * 4 the function is missing, 5 the function fails.
  */
 #include <mime/win32/ole2.h>
 #include <mime/win32/winuser.h>
@@ -44,14 +44,14 @@ static PCWSTR next_word(PCWSTR line, PWSTR word, SIZE_T capacity)
 
 static BOOL parse(SETTINGS *settings, PCWSTR line, PWSTR word, SIZE_T capacity, PWSTR install_line)
 {
-    /* the program name is the first word. */
+    /* skip the program name. */
     line = next_word(line, word, capacity);
     for (;;) {
         line = next_word(line, word, capacity);
         if (!word[0])
             break;
         if (word[0] != L'/' && word[0] != L'-') {
-            /* the first name is the library, any other word is not understood. */
+            /* the first name is the library, any other word is an error. */
             if (settings->Library)
                 return FALSE;
             wcscpy(install_line + 1024, word);

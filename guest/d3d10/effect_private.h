@@ -1,7 +1,4 @@
-/*
- * the effects framework: an effect as d3d10.dll loads it from the FX10
- * chunk of an fx_4_0 container, and the objects it hands out.
- */
+/* effects loaded from the FX10 chunk of an fx_4_0 container, and the objects they hand out. */
 #ifndef D3D10_EFFECT_PRIVATE_H
 #define D3D10_EFFECT_PRIVATE_H
 
@@ -15,7 +12,7 @@ typedef struct FxBlock FxBlock;
 typedef struct FxShader FxShader;
 typedef struct FxPass FxPass;
 
-/* the kinds of types, and the object types of the fx_4_0 format. */
+/* type kinds, and the fx_4_0 object types. */
 enum { FX_NUMERIC = 1, FX_OBJECT = 2, FX_STRUCT = 3 };
 enum {
     FX_STRING = 1,
@@ -35,7 +32,7 @@ enum {
     FX_BUFFER = 22,
 };
 
-/* a numeric type's bits: its layout, base type, rows and columns, and the column major flag. */
+/* numeric type bits: layout, base type, rows, columns and the column major flag. */
 #define FX_LAYOUT(n) ((n) & 7)
 #define FX_BASE(n) (((n) >> 3) & 7)
 #define FX_ROWS(n) (((n) >> 8) & 7)
@@ -58,13 +55,13 @@ struct FxType {
     UINT numeric, object;
     UINT member_count;
     FxMember *members;
-    /* the type of one element of an array, the type itself otherwise. */
+    /* an array's element type, or the type itself. */
     FxType *single;
-    /* constant buffers' types answer their own class and type. */
+    /* constant buffer types report their own class and type. */
     D3D10_SHADER_VARIABLE_TYPE buffer_type;
 };
 
-/* the blocks of states, by the kind the state table gives them. */
+/* state block kinds, as the state table names them. */
 enum {
     FX_BLOCK_DEPTHSTENCIL = 1,
     FX_BLOCK_BLEND = 2,
@@ -77,7 +74,7 @@ typedef struct FxExpression FxExpression;
 
 typedef struct FxAssignment {
     UINT state, index, kind;
-    /* where the value goes: a field of a block or pass. */
+    /* a field of a block or pass. */
     void *target;
     FxVariable *source, *index_source;
     UINT constant_index;
@@ -92,14 +89,13 @@ struct FxBlock {
         D3D10_RASTERIZER_DESC rasterizer;
         D3D10_SAMPLER_DESC sampler;
     } desc;
-    /* the sampler state's texture, which nothing reads. */
+    /* the sampler's texture, never read. */
     ID3D10ShaderResourceView **texture;
     IUnknown *state;
     UINT assignment_count;
     FxAssignment *assignments;
 };
 
-/* a resource of a shader and where the effect keeps it. */
 enum { FX_BIND_CB, FX_BIND_TBUFFER, FX_BIND_SRV, FX_BIND_SAMPLER };
 
 typedef struct FxBinding {
@@ -114,11 +110,11 @@ struct FxShader {
     UINT length;
     const char *so_decl;
     IUnknown *object;
-    /* a container of the input signature of vertex and geometry shaders. */
+    /* input signature container for vertex and geometry shaders. */
     ID3D10Blob *signature;
     UINT binding_count;
     FxBinding *bindings;
-    /* the variable that holds it: a global one, or one of its own for inline shaders. */
+    /* a global variable, or a private one for inline shaders. */
     FxVariable *variable;
     UINT variable_index;
 };
@@ -133,10 +129,10 @@ struct FxVariable {
     UINT annotation_count;
     FxVariable *annotations;
     FxBuffer *buffer;
-    /* numerics: their bytes; objects: their first element's storage. */
+    /* bytes for numerics, the first element's storage for objects. */
     BYTE *data;
     FxVariable *top;
-    /* elements, then members, made when first asked. */
+    /* elements, then members, made on first use. */
     FxVariable **children;
 };
 

@@ -1,6 +1,6 @@
 /*
- * paths: the GraphicsPath of the flat api over the vector library's path builder, the point and type arrays of
- * gdi+, their editing, flattening, widening and warping, hit testing and the iterator.
+ * the flat api GraphicsPath over the vector library's path builder: editing, flattening, widening and warping, hit
+ * testing and the iterator.
  */
 #include "gp_private.h"
 
@@ -157,7 +157,7 @@ WINGDIPAPI GpStatus WINAPI GdipResetPath(GpPath *path)
     return Ok;
 }
 
-/* ------------------------------------------------------------------ the arrays */
+/* ------------------------------------------------------------------ arrays */
 
 WINGDIPAPI GpStatus WINAPI GdipGetPointCount(GpPath *path, INT *count)
 {
@@ -265,7 +265,7 @@ WINGDIPAPI GpStatus WINAPI GdipClosePathFigures(GpPath *path)
     GPath *p = gp_path_cast(path);
     if (!p)
         return InvalidParameter;
-    /* every figure that is open gets closed: its last point takes the close flag */
+    /* every open figure gets closed: its last point takes the close flag. */
     for (UINT i = 0; i < p->path.count; i++) {
         BOOL last = i + 1 == p->path.count || (p->path.types[i + 1] & MIME_VEC_PT_TYPE_MASK) == MIME_VEC_PT_START;
         if (last && (p->path.types[i] & MIME_VEC_PT_TYPE_MASK) != MIME_VEC_PT_START)
@@ -311,7 +311,7 @@ WINGDIPAPI GpStatus WINAPI GdipReversePath(GpPath *path)
         gp_free(types);
         return OutOfMemory;
     }
-    /* figures are reversed in place and in order: the whole array is read backwards */
+    /* the whole array is read backwards, so each figure and the figure order are reversed. */
     UINT out = 0;
     UINT end = n;
     while (end > 0) {
@@ -351,7 +351,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetPathLastPoint(GpPath *path, GpPointF *point)
     return Ok;
 }
 
-/* ------------------------------------------------------------------ the shapes */
+/* ------------------------------------------------------------------ shapes */
 
 #define PATH_OR_FAIL(p, path)       \
     GPath *p = gp_path_cast(path);  \
@@ -683,7 +683,7 @@ WINGDIPAPI GpStatus WINAPI GdipWindingModeOutline(GpPath *path, GpMatrix *matrix
     return Ok;
 }
 
-/* the output of the stroker as a path of closed figures. */
+/* the stroker output as a path of closed figures. */
 static GpStatus polys_to_path(const MimeVecPolys *polys, MimeVecPath *out)
 {
     for (UINT s = 0; s < polys->nsubs; s++) {
@@ -792,7 +792,7 @@ WINGDIPAPI GpStatus WINAPI GdipWarpPath(GpPath *path, GpMatrix *matrix, const Gp
     float a[8];
     if (mode == WarpModePerspective && !square_to_quad(quad, a))
         return InvalidParameter;
-    /* flatten first so curves follow the warp */
+    /* flatten first so curves follow the warp. */
     GpStatus st = GdipFlattenPath(path, nullptr, flatness);
     if (st != Ok)
         return st;
@@ -867,7 +867,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetPathWorldBoundsI(GpPath *path, GpRect *bounds,
     GpStatus st = GdipGetPathWorldBounds(path, &b, matrix, pen);
     if (st != Ok)
         return st;
-    /* the integer rectangle that holds the float one */
+    /* the integer rectangle that holds the float one. */
     INT l = (INT)mime_vec_floorf(b.X), t = (INT)mime_vec_floorf(b.Y);
     INT r = (INT)mime_vec_ceilf(b.X + b.Width), bt = (INT)mime_vec_ceilf(b.Y + b.Height);
     bounds->X = l;
@@ -889,7 +889,7 @@ WINGDIPAPI GpStatus WINAPI GdipIsVisiblePathPoint(GpPath *path, REAL x, REAL y, 
         *result = mime_vec_point_in_polys(&polys, x, y,
                                           p->fill_mode == FillModeWinding ? MIME_VEC_FILL_WINDING
                                                                            : MIME_VEC_FILL_ALTERNATE);
-        /* a graphics with a clip hides the points the clip hides */
+        /* points the graphics clip hides are not visible. */
         GGraphics *g = gp_graphics_cast(graphics);
         if (g && *result && g->clip_set) {
             MimeVecPoint pt = mime_vec_xform(gp_graphics_w2d(g), x, y);
@@ -927,12 +927,12 @@ WINGDIPAPI GpStatus WINAPI GdipIsOutlineVisiblePathPointI(GpPath *path, INT x, I
     return GdipIsOutlineVisiblePathPoint(path, (float)x, (float)y, pen, graphics, result);
 }
 
-/* ------------------------------------------------------------------ the iterator */
+/* ------------------------------------------------------------------ iterator */
 
 typedef struct GPathIter {
     DWORD tag;
-    GPath *path; /* a copy */
-    INT sub_pos;     /* next figure start for subpath iteration */
+    GPath *path; /* a copy. */
+    INT sub_pos;     /* the next figure start for subpath iteration. */
     INT marker_pos;
     INT type_pos;
 } GPathIter;
@@ -974,7 +974,7 @@ WINGDIPAPI GpStatus WINAPI GdipDeletePathIter(GpPathIterator *iterator)
 
 static BYTE type_at(const GPathIter *it, INT i) { return it->path->path.types[i]; }
 
-/* the end (exclusive) of the figure that starts at start */
+/* the exclusive end of the figure that begins at start. */
 static INT figure_end(const GPathIter *it, INT start)
 {
     INT n = (INT)it->path->path.count, i = start + 1;
@@ -1040,7 +1040,7 @@ WINGDIPAPI GpStatus WINAPI GdipPathIterNextPathType(GpPathIterator *iterator, IN
         *result = 0;
         return Ok;
     }
-    /* a run of points of one type, the first of the run is the end of the previous one */
+    /* a run of points of one type. its first point is the end of the previous run. */
     INT s = pos;
     BYTE t = type_at(it, s + 1) & MIME_VEC_PT_TYPE_MASK;
     INT e = s + 1;

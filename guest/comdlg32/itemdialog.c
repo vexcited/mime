@@ -1,16 +1,14 @@
 /*
- * the common item dialogs, FileOpenDialog and FileSaveDialog: IFileDialog,
- * IFileOpenDialog or IFileSaveDialog, IFileDialog2, IFileDialogCustomize,
- * IObjectWithSite and IOleWindow over the file dialog window of filedlg.c.
+ * the common item dialogs, FileOpenDialog and FileSaveDialog, over the file dialog window of filedlg.c.
  *
- * every interface of the object is a pointer to a small header holding its
- * table and the object, so one function serves each method of all of them.
+ * each interface pointer is a small header holding its vtable and the object, so one function serves a
+ * method for all of them.
  */
 #include "filedlg.h"
 #include <mime/win32/shlwapi.h>
 
 #define MAX_LISTENERS 8
-/* cookies of Advise count from here, as the slots of the shell's own listeners come first. */
+/* Advise cookies start here, after the slots of the shell's own listeners. */
 #define FIRST_COOKIE 4
 
 typedef struct _ITEMDLG ITEMDLG;
@@ -55,7 +53,7 @@ static const IOleWindowVtbl g_window_vtbl;
 
 /* ------------------------------------------------------------------ items */
 
-/* a shell item for a path, which need not exist yet. */
+/* the path need not exist yet. */
 static HRESULT item_from_path(LPCWSTR path, IShellItem **item)
 {
     *item = nullptr;
@@ -67,7 +65,6 @@ static HRESULT item_from_path(LPCWSTR path, IShellItem **item)
     return hr;
 }
 
-/* the file system path of an item. */
 static HRESULT path_of_item(IShellItem *item, WCHAR *path)
 {
     LPWSTR name;
@@ -357,7 +354,7 @@ static HRESULT STDMETHODCALLTYPE d_get_file_type_index(IFileDialog *This, UINT *
     return S_OK;
 }
 
-/* a sink gets the first free slot, and its cookie is the slot number plus one past the shell's own. */
+/* a sink takes the first free slot; its cookie is that slot plus one, past the shell's own. */
 static HRESULT STDMETHODCALLTYPE d_advise(IFileDialog *This, IFileDialogEvents *events, DWORD *cookie)
 {
     ITEMDLG *d = OWNER(This);
@@ -387,7 +384,7 @@ static HRESULT STDMETHODCALLTYPE d_unadvise(IFileDialog *This, DWORD cookie)
     return S_OK;
 }
 
-/* the option bits no dialog has, a folder dialog that saves or takes many, and the two ways to ask for files that conflict. */
+/* refuses unknown bits, a save dialog that picks folders or many files, and the two conflicting file options. */
 static HRESULT STDMETHODCALLTYPE d_set_options(IFileDialog *This, FILEOPENDIALOGOPTIONS options)
 {
     ITEMDLG *d = OWNER(This);
@@ -485,7 +482,7 @@ static HRESULT STDMETHODCALLTYPE d_set_file_name_label(IFileDialog *This, LPCWST
     return FdSetNameLabel(OWNER(This)->Dialog, text);
 }
 
-/* the result is there once the dialog was accepted, and until it is shown again. */
+/* the result exists once the dialog was accepted, until it is shown again. */
 static HRESULT STDMETHODCALLTYPE d_get_result(IFileDialog *This, IShellItem **item)
 {
     ITEMDLG *d = OWNER(This);
@@ -514,7 +511,7 @@ static HRESULT STDMETHODCALLTYPE d_set_default_extension(IFileDialog *This, LPCW
     return FdSetDefaultExtension(OWNER(This)->Dialog, extension);
 }
 
-/* ends the dialog, from any thread, and makes Show return the result given. */
+/* works from any thread; Show returns the given result. */
 static HRESULT STDMETHODCALLTYPE d_close(IFileDialog *This, HRESULT result)
 {
     FdClose(OWNER(This)->Dialog, result);
@@ -575,7 +572,7 @@ static HRESULT STDMETHODCALLTYPE d_get_selected_items(IFileOpenDialog *This, ISh
 
 /* ------------------------------------------------------------------ IFileSaveDialog */
 
-/* an item to save over: its folder and its name. */
+/* sets both the folder and the file name. */
 static HRESULT STDMETHODCALLTYPE d_set_save_as_item(IFileSaveDialog *This, IShellItem *item)
 {
     ITEMDLG *d = OWNER(This);

@@ -1,9 +1,8 @@
 /*
- * the hid report descriptor parser: a descriptor in, for each top level
- * collection the preparsed data hid.dll and raw input read, laid out as
- * windows' hidparse lays it out, and the table of report ids. two passes:
- * the first checks the structure and sizes the blobs, the second fills
- * them. see docs/hid.md.
+ * hid report descriptor parser: turns a descriptor into the preparsed data
+ * of each top level collection, laid out as windows' hidparse lays it out
+ * for hid.dll and raw input, plus the table of report ids. the first pass
+ * checks the structure and sizes the blobs, the second fills them.
  */
 #include "../ntos.h"
 
@@ -35,7 +34,7 @@ typedef struct ITEM {
 
 typedef struct REPORT {
     UCHAR Id;
-    UCHAR Collection; /* 1 based */
+    UCHAR Collection; /* 1-based. */
     BOOLEAN Claimed;
     ULONG Bits[3];
 } REPORT;
@@ -50,7 +49,7 @@ typedef struct GLOBALS {
     LONG LogicalMin, LogicalMax, PhysicalMin, PhysicalMax, UnitExp;
     ULONG Unit;
     ULONG ReportSize, ReportCount;
-    LONG Report; /* index in the report table, -1 for none */
+    LONG Report; /* index in the report table, -1 for none. */
     ULONG Tokens;
     TOKEN Token[4];
 } GLOBALS;
@@ -79,7 +78,7 @@ typedef struct TLC {
     USHORT Nodes;
     PUCHAR Blob;
     ULONG Length;
-    USHORT Last[3]; /* next free cap slot of each type */
+    USHORT Last[3]; /* next free cap slot per report type. */
     USHORT NodesUsed;
 } TLC;
 
@@ -579,7 +578,7 @@ static NTSTATUS main_item(PARSER *p, const ITEM *item, ULONG type, TLC *t, USHOR
 
     if (!variable) {
         if (constant)
-            return STATUS_SUCCESS; /* the usages carry over to the next main item */
+            return STATUS_SUCCESS; /* the usages carry over to the next main item. */
         if (l->Count && l->Usage[l->Count - 1].Alias)
             return fail(p, 64, STATUS_INVALID_PARAMETER_MIX);
         PUCHAR last = nullptr;

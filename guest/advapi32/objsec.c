@@ -1,12 +1,9 @@
 /*
- * the security of objects by name and by handle: GetNamedSecurityInfo, SetSecurityInfo and the functions around
- * them. Windows does this in ntmarta.dll, which the access provider interface of advapi32 loads; here it is one
- * file. An object of a kind is opened with the access its parts need, its descriptor read or set through the
- * kernel (GetKernelObjectSecurity and its set, RegGetKeySecurity, GetUserObjectSecurity), and for a file or a
- * key a change of the lists is also handed down to what is below it, the way ntmarta does and the kernel does
- * not: the lists of every child that does not protect its own are made again from the new ones of its parent.
- *
- * The behaviour was read from ntmarta.dll of build 26100 and is written from it, not copied.
+ * object security by name and by handle: GetNamedSecurityInfo, SetSecurityInfo and friends. windows does this in
+ * ntmarta.dll, loaded through advapi32's access provider interface; here it is one file. an object is opened with
+ * the access its parts need, and its descriptor read or set through the kernel. for files and keys, a list change is
+ * also propagated down, which windows does here and not in the kernel: every child that does not protect its lists
+ * gets them rebuilt from its parent's new ones.
  */
 #include "advapi32_private.h"
 
@@ -17,10 +14,10 @@
 #define WRITE_DAC_ 0x00040000L
 #define WRITE_OWNER_ 0x00080000L
 
-#define SACL_PARTS 0x1F8 /* the sacl, label, attribute, scope, trust label and access filter */
-#define LIST_PARTS 0x1FC /* and the dacl */
+#define SACL_PARTS 0x1F8 /* sacl, label, attribute, scope, trust label and access filter. */
+#define LIST_PARTS 0x1FC /* the above plus the dacl. */
 
-/* what the lists of a new object are made with: auto inheritance, and no check of the caller's rights. */
+/* new lists use auto inheritance and skip the check of the caller's rights. */
 #define INHERIT_FLAGS 0x101B
 
 #define FILE_OPEN_FOR_BACKUP_INTENT_ 0x00004000
@@ -40,12 +37,12 @@ typedef enum { READ_ACCESS, WRITE_ACCESS, MODIFY_ACCESS } OPEN_TYPE;
 typedef struct OBJ {
     SE_OBJECT_TYPE Type;
     HANDLE Handle;
-    BOOL Owned;  /* closed with the object */
-    BOOL Window; /* a window station, not a kernel handle */
-    PWSTR Name;  /* the dos path of a file, the registry path of a key: for parents and children */
+    BOOL Owned;  /* closed with the object. */
+    BOOL Window; /* a window station, not a kernel handle. */
+    PWSTR Name;  /* dos path of a file or registry path of a key, for parents and children. */
 } OBJ;
 
-/* a descriptor in its own block of the process heap, made by the rtl. */
+/* a descriptor the rtl made, in its own process heap block. */
 typedef PVOID MADE;
 
 static void made_free(MADE sd)
@@ -54,7 +51,7 @@ static void made_free(MADE sd)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, sd);
 }
 
-/* the generic rights of what is propagated to, as ntmarta has them. */
+/* generic mappings of the kinds lists propagate to, as windows has them. */
 static const GENERIC_MAPPING g_file_mapping = {0x120089, 0x120116, 0x1200A0, 0x1F01FF};
 static const GENERIC_MAPPING g_key_mapping = {0x20019, 0x20006, 0x20039, 0xF003F};
 
@@ -63,7 +60,7 @@ static BOOL is_registry(SE_OBJECT_TYPE type)
     return type == SE_REGISTRY_KEY || type == SE_REGISTRY_WOW64_32KEY || type == SE_REGISTRY_WOW64_64KEY;
 }
 
-/* the kinds whose lists are propagated to their children by the client. */
+/* kinds whose lists the client propagates to their children. */
 static BOOL propagates(SE_OBJECT_TYPE type)
 {
     return type == SE_FILE_OBJECT || is_registry(type);
@@ -74,11 +71,11 @@ static const GENERIC_MAPPING *mapping_of(SE_OBJECT_TYPE type)
     return is_registry(type) ? &g_key_mapping : &g_file_mapping;
 }
 
-/* ---------------------------------------------------------------- the access an operation needs */
+/* ---------------------------------------------------------------- access an operation needs */
 
 /*
- * the handle access the parts need: what reading, writing or both takes, and for files and keys also what lets
- * the children be listed and a file's attributes known. The system access right comes with the sacl parts.
+ * the handle access the parts need for reading, writing or both. with extras, files and keys also get what lists
+ * children and reads a file's attributes. the sacl parts add the system access right.
  */
 static DWORD desired_access(SE_OBJECT_TYPE type, OPEN_TYPE open, BOOL extras, DWORD info)
 {
@@ -101,9 +98,9 @@ static DWORD desired_access(SE_OBJECT_TYPE type, OPEN_TYPE open, BOOL extras, DW
         mask |= system;
     if (extras) {
         if (type == SE_FILE_OBJECT)
-            mask |= READ_CONTROL_ | 0x80; /* and FILE_READ_ATTRIBUTES */
+            mask |= READ_CONTROL_ | 0x80; /* plus FILE_READ_ATTRIBUTES. */
         else if (is_registry(type))
-            mask |= 9; /* KEY_QUERY_VALUE and KEY_ENUMERATE_SUB_KEYS */
+            mask |= 9; /* KEY_QUERY_VALUE and KEY_ENUMERATE_SUB_KEYS. */
     }
     return mask;
 }
@@ -150,7 +147,7 @@ static OBJ *obj_new(SE_OBJECT_TYPE type, HANDLE handle, BOOL owned, PCWSTR name)
     return o;
 }
 
-/* a file by its dos name, opened as a reparse point and with backup intent, as ntmarta does. */
+/* opens a file by dos name as a reparse point with backup intent, like windows. */
 static DWORD open_file_name(PCWSTR name, DWORD access, OBJ **out)
 {
     UNICODE_STRING nt;
@@ -176,7 +173,7 @@ static DWORD open_file_name(PCWSTR name, DWORD access, OBJ **out)
     return ERROR_SUCCESS;
 }
 
-/* the root key a registry name starts with, and the rest of the name. */
+/* splits a registry name into its root key and the rest. */
 static DWORD split_key_name(PCWSTR name, HKEY *root, PCWSTR *rest)
 {
     static const struct {
@@ -186,7 +183,7 @@ static DWORD split_key_name(PCWSTR name, HKEY *root, PCWSTR *rest)
         {L"MACHINE", HKEY_LOCAL_MACHINE},     {L"USERS", HKEY_USERS},           {L"USER", HKEY_USERS},
         {L"CLASSES_ROOT", HKEY_CLASSES_ROOT}, {L"CURRENT_USER", HKEY_CURRENT_USER}, {L"CONFIG", HKEY_CURRENT_CONFIG},
     };
-    /* a name of another machine's registry is the registry service's, which this system has none of. */
+    /* a remote registry name needs the remote registry service, which is absent. */
     if (!name || (name[0] == '\\' && name[1] == '\\'))
         return ERROR_INVALID_PARAMETER;
     for (SIZE_T i = 0; i < RTL_NUMBER_OF(roots); i++) {
@@ -227,7 +224,7 @@ static DWORD open_key_name(SE_OBJECT_TYPE type, PCWSTR name, DWORD access, OBJ *
     return ERROR_SUCCESS;
 }
 
-/* a named kernel object is whichever of six kinds has the name; a name of another kind is a bad handle. */
+/* a named kernel object can be any of six kinds; a name of another kind is a bad handle. */
 static DWORD open_kernel_name(PCWSTR name, DWORD access, OBJ **out)
 {
     HANDLE h = OpenMutexW(access, FALSE, name);
@@ -263,7 +260,7 @@ static DWORD open_kernel_name(PCWSTR name, DWORD access, OBJ **out)
     return ERROR_SUCCESS;
 }
 
-/* window stations by name; user32 is loaded when it is wanted. */
+/* window stations by name; user32 is loaded when needed. */
 static DWORD open_window_name(PCWSTR name, DWORD access, OBJ **out)
 {
     HMODULE user32 = LoadLibraryW(L"user32.dll");
@@ -282,7 +279,7 @@ static DWORD open_window_name(PCWSTR name, DWORD access, OBJ **out)
     return ERROR_SUCCESS;
 }
 
-/* services belong to the service control manager, which this system has none of: what the manager says is the answer. */
+/* services belong to the service control manager: whatever it answers is the result. */
 static DWORD open_service_name(PCWSTR name, DWORD access, OBJ **out)
 {
     HMODULE self = GetModuleHandleW(L"advapi32.dll");
@@ -317,7 +314,7 @@ static DWORD obj_open_name(SE_OBJECT_TYPE type, PCWSTR name, DWORD access, OBJ *
         return 2310 /* NERR_NetNameNotFound */;
     case SE_DS_OBJECT:
     case SE_DS_OBJECT_ALL:
-        return 8453 /* ERROR_DS_UNAVAILABLE, there is no directory service */;
+        return 8453 /* ERROR_DS_UNAVAILABLE: there is no directory service. */;
     case SE_WMIGUID_OBJECT:
         return ERROR_FILE_NOT_FOUND;
     default:
@@ -325,7 +322,7 @@ static DWORD obj_open_name(SE_OBJECT_TYPE type, PCWSTR name, DWORD access, OBJ *
     }
 }
 
-/* a handle is used as it is, with the rights it has; only a predefined key is no handle, and is opened. */
+/* a handle is used as is, with its own rights; only a predefined key is not a real handle and gets opened. */
 static DWORD obj_open_handle(SE_OBJECT_TYPE type, HANDLE handle, DWORD access, OBJ **out)
 {
     HANDLE use = handle;
@@ -340,7 +337,7 @@ static DWORD obj_open_handle(SE_OBJECT_TYPE type, HANDLE handle, DWORD access, O
         use = key;
         owned = TRUE;
     }
-    /* a file keeps its name for the parent and the children its lists are handed to. */
+    /* a file keeps its name to find its parent and the children its lists go to. */
     WCHAR path[1024];
     DWORD chars = type == SE_FILE_OBJECT ? GetFinalPathNameByHandleW(handle, path, RTL_NUMBER_OF(path), 0) : 0;
     BOOL named = chars && chars < RTL_NUMBER_OF(path);
@@ -357,7 +354,7 @@ static DWORD obj_open_handle(SE_OBJECT_TYPE type, HANDLE handle, DWORD access, O
 
 /* ---------------------------------------------------------------- reading and writing descriptors */
 
-/* a descriptor of the object, self relative, in a LocalAlloc block. */
+/* the object's descriptor, self relative, in a LocalAlloc block. */
 static DWORD obj_get(OBJ *o, DWORD info, BYTE **sd)
 {
     *sd = nullptr;
@@ -381,7 +378,7 @@ static DWORD obj_get(OBJ *o, DWORD info, BYTE **sd)
         *sd = block;
         return ERROR_SUCCESS;
     }
-    /* a file, a key or a kernel object: through the kernel, with room for most descriptors at the first try. */
+    /* files, keys and kernel objects go through the kernel, with room for most descriptors on the first try. */
     ULONG room = 1024;
     BYTE *block = LocalAlloc(LMEM_FIXED, room);
     if (!block)
@@ -416,7 +413,7 @@ static DWORD obj_set(OBJ *o, DWORD info, PVOID sd)
     return NT_SUCCESS(status) ? ERROR_SUCCESS : RtlNtStatusToDosError(status);
 }
 
-/* whether the object can have things in it: a directory, a key. */
+/* whether the object can contain others: a directory or a key. */
 static BOOL obj_is_container(OBJ *o)
 {
     if (is_registry(o->Type))
@@ -431,13 +428,13 @@ static BOOL obj_is_container(OBJ *o)
     IO_STATUS_BLOCK io;
     if (!NT_SUCCESS(NtQueryInformationFile(o->Handle, &io, &basic, sizeof(basic), FileBasicInformation)))
         return FALSE;
-    /* a link to a directory is a leaf: what it points to is not the business of a walk over this tree. */
+    /* a link to a directory is a leaf: a walk over this tree does not follow it. */
     return (basic.Attributes & FILE_ATTRIBUTE_DIRECTORY_) && !(basic.Attributes & 0x400 /* FILE_ATTRIBUTE_REPARSE_POINT */);
 }
 
 /* ---------------------------------------------------------------- parents and children */
 
-/* the name of the parent of an object, in a new block, or NULL for a root. */
+/* the parent's name in a new block, or NULL for a root. */
 static PWSTR parent_name(PCWSTR name, BOOL registry)
 {
     if (!name)
@@ -450,7 +447,7 @@ static PWSTR parent_name(PCWSTR name, BOOL registry)
         while (cut && name[cut - 1] != '\\')
             cut--;
         if (!cut)
-            return nullptr; /* a root key */
+            return nullptr; /* a root key. */
         cut--;
         while (cut && name[cut - 1] == '\\')
             cut--;
@@ -461,7 +458,7 @@ static PWSTR parent_name(PCWSTR name, BOOL registry)
         }
         return parent;
     }
-    /* a file: past a drive "C:", a device prefix "\\?\" or a share "\\server\share", the root of the volume is left. */
+    /* a file: skip a drive "C:", a device prefix "\\?\" or a share "\\server\share" to find the volume root. */
     SIZE_T root = 0;
     if (length >= 4 && name[0] == '\\' && name[1] == '\\' && (name[2] == '?' || name[2] == '.') && name[3] == '\\')
         root = 4;
@@ -480,10 +477,10 @@ static PWSTR parent_name(PCWSTR name, BOOL registry)
     while (cut > root + 1 && name[cut - 1] != '\\')
         cut--;
     if (cut <= root + 1)
-        return nullptr; /* the root directory itself, or what hangs off a bare drive */
+        return nullptr; /* the root directory itself, or a name directly on a bare drive. */
     SIZE_T keep = cut - 1;
     if (keep <= root)
-        keep = root + 1; /* "C:\" keeps its slash */
+        keep = root + 1; /* "C:\" keeps its slash. */
     PWSTR parent = AdvAlloc((keep + 1) * sizeof(WCHAR));
     if (parent) {
         memcpy(parent, name, keep * sizeof(WCHAR));
@@ -492,7 +489,7 @@ static PWSTR parent_name(PCWSTR name, BOOL registry)
     return parent;
 }
 
-/* the parent of an object, opened to read the parts. NULL without an error when it has none. */
+/* the object's parent, opened to read the parts. NULL without an error when there is none. */
 static DWORD obj_parent(OBJ *o, DWORD info, OBJ **parent)
 {
     *parent = nullptr;
@@ -539,7 +536,7 @@ static void names_free(NAMES *n)
     memset(n, 0, sizeof(*n));
 }
 
-/* the names of what is directly in a container. */
+/* the names directly inside a container. */
 static DWORD obj_children(OBJ *dir, NAMES *names)
 {
     memset(names, 0, sizeof(*names));
@@ -567,7 +564,7 @@ static DWORD obj_children(OBJ *dir, NAMES *names)
             names_free(names);
         return error;
     }
-    /* a directory is listed through a handle of its own. */
+    /* a directory is listed through its own handle. */
     OBJ *listing;
     DWORD error = open_file_name(dir->Name, 0x100001 /* SYNCHRONIZE | FILE_LIST_DIRECTORY */, &listing);
     if (error)
@@ -588,7 +585,7 @@ static DWORD obj_children(OBJ *dir, NAMES *names)
             break;
         }
         for (BYTE *e = buffer;;) {
-            /* the next entry, an index, four times, two sizes, the attributes and the length of the name. */
+            /* entry layout: next offset, index, four times, two sizes, attributes, name length. */
             ULONG next = *(ULONG *)e, attributes = *(ULONG *)(e + 56), bytes = *(ULONG *)(e + 60);
             PCWSTR entry = (PCWSTR)(e + 64);
             BOOL dots = (bytes == 2 && entry[0] == '.') || (bytes == 4 && entry[0] == '.' && entry[1] == '.');
@@ -610,10 +607,10 @@ static DWORD obj_children(OBJ *dir, NAMES *names)
     return error;
 }
 
-/* one child by a name obj_children gave. */
+/* opens one child by a name obj_children returned. */
 static DWORD obj_open_child(OBJ *dir, PCWSTR name, DWORD access, OBJ **child)
 {
-    /* a key reached through a handle has no name to build on: its children are known by the handle alone. */
+    /* a key opened by handle has no name to build on, so its children are opened through the handle alone. */
     PWSTR joined = nullptr;
     if (dir->Name) {
         SIZE_T length = wcslen(dir->Name);
@@ -645,7 +642,7 @@ static DWORD obj_open_child(OBJ *dir, PCWSTR name, DWORD access, OBJ **child)
     return error;
 }
 
-/* ---------------------------------------------------------------- descriptors made again */
+/* ---------------------------------------------------------------- rebuilding descriptors */
 
 static HANDLE open_token(void)
 {
@@ -667,8 +664,8 @@ static void add_control(void *sd, WORD bits)
 }
 
 /*
- * a descriptor from the parts the caller gave, absolute, the way SetNamedSecurityInfo builds it. A part that is not
- * well formed is refused with the error of its kind before anything is touched.
+ * builds an absolute descriptor from the caller's parts, like SetNamedSecurityInfo. a malformed part is refused with
+ * its kind's error before anything is touched.
  */
 static DWORD build_absolute(SECURITY_DESCRIPTOR *sd, DWORD info, PSID owner, PSID group, PACL dacl, PACL sacl)
 {
@@ -688,7 +685,7 @@ static DWORD build_absolute(SECURITY_DESCRIPTOR *sd, DWORD info, PSID owner, PSI
         RtlSetGroupSecurityDescriptor(sd, group, FALSE);
     }
     if (info & DACL_SECURITY_INFORMATION) {
-        /* a list not given is a null one, which nothing can be inherited into: it is protected from the start. */
+        /* a missing list is a null one, which nothing can inherit into, so it starts protected. */
         if (dacl) {
             if (!RtlValidAcl(dacl))
                 return ERROR_INVALID_ACL;
@@ -711,7 +708,7 @@ static DWORD build_absolute(SECURITY_DESCRIPTOR *sd, DWORD info, PSID owner, PSI
     return ERROR_SUCCESS;
 }
 
-/* a new descriptor for an object, from the creator's parts and what the parent hands down. */
+/* a new descriptor from the creator's parts and what the parent passes down. */
 static DWORD derive(const void *parent, const void *creator, BOOL container, HANDLE token, const GENERIC_MAPPING *mapping,
                     MADE *out)
 {
@@ -730,7 +727,7 @@ static BOOL list_equal(const ACL *a, const ACL *b)
            !memcmp(a + 1, b + 1, a->AclSize - sizeof(ACL));
 }
 
-/* whether a new descriptor says what the current one already does, for the parts named. */
+/* whether the new descriptor matches the current one for the named parts. */
 static BOOL unchanged(const void *current, const void *replacement, DWORD info)
 {
     BOOLEAN defaulted, cp, np;
@@ -760,7 +757,7 @@ static BOOL unchanged(const void *current, const void *replacement, DWORD info)
     return TRUE;
 }
 
-/* ---------------------------------------------------------------- handing lists down */
+/* ---------------------------------------------------------------- propagation */
 
 #define PROGRESS_INVOKE_NEVER 1
 #define PROGRESS_INVOKE_EVERY_OBJECT 2
@@ -774,18 +771,18 @@ typedef VOID(CALLBACK *PROGRESS_FN)(PWSTR name, DWORD status, PDWORD setting, PV
 typedef struct TREE {
     HANDLE Token;
     const GENERIC_MAPPING *Mapping;
-    PROGRESS_FN Progress; /* NULL for a plain change */
+    PROGRESS_FN Progress; /* NULL for a plain change. */
     DWORD Setting;
     PVOID Args;
-    BOOL Reset;    /* the children lose their own entries, and their protection */
-    BOOL Unprotect; /* the children lose their protection */
+    BOOL Reset;    /* children lose their own entries and their protection. */
+    BOOL Unprotect; /* children lose their protection. */
     BOOL Cancelled;
-    DWORD Failed;  /* the first error of a child, which the tree functions report */
-    DWORD Owners;  /* owner and group, which a tree operation gives to every object in it */
+    DWORD Failed;  /* the first child error, which the tree functions report. */
+    DWORD Owners;  /* owner and group, which a tree operation sets on every object in it. */
     PSID Owner, Group;
 } TREE;
 
-/* tells the progress routine about one object, and says whether it asked to try the object again. */
+/* calls the progress routine for one object; returns whether it asked to retry the object. */
 static BOOL report(TREE *t, PCWSTR name, DWORD error, BOOL set)
 {
     if (!t || !t->Progress || t->Cancelled || t->Setting == PROGRESS_INVOKE_NEVER)
@@ -802,7 +799,7 @@ static BOOL report(TREE *t, PCWSTR name, DWORD error, BOOL set)
 
 static void update_children(OBJ *dir, DWORD info, const void *new_parent, TREE *tree);
 
-/* a descriptor of only the parts a tree gives to everything in it. */
+/* a descriptor holding only the parts a tree sets on everything in it. */
 static DWORD owners_only(TREE *tree, SECURITY_DESCRIPTOR *sd)
 {
     RtlCreateSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION);
@@ -814,10 +811,9 @@ static DWORD owners_only(TREE *tree, SECURITY_DESCRIPTOR *sd)
 }
 
 /*
- * one child: its lists are made again from the new ones of its parent, keeping its own explicit aces, set when
- * they are different, and handed on into what the child holds. A child that protects its lists is left alone
- * with all that is below it. Owner and group are not the business of the children, unless a tree operation
- * gives them to every object.
+ * rebuilds one child's lists from its parent's new ones, keeping its explicit aces, sets them when they changed and
+ * recurses into the child. a child that protects its lists is skipped with everything below it. owner and group are
+ * left alone unless a tree operation sets them on every object.
  */
 static void update_child(OBJ *dir, PCWSTR name, DWORD info, const void *new_parent, TREE *tree)
 {
@@ -845,7 +841,7 @@ static void update_child(OBJ *dir, PCWSTR name, DWORD info, const void *new_pare
                     BYTE empty[8];
                     PVOID creator = current;
                     if (tree && tree->Reset) {
-                        /* nothing explicit of its own: owner and group stay, the lists are empty. */
+                        /* no explicit entries of its own: owner and group stay, the lists are empty. */
                         PSID owner = nullptr, group = nullptr;
                         BOOLEAN defaulted;
                         RtlCreateSecurityDescriptor(&stripped, SECURITY_DESCRIPTOR_REVISION);
@@ -860,7 +856,7 @@ static void update_child(OBJ *dir, PCWSTR name, DWORD info, const void *new_pare
                             RtlSetSaclSecurityDescriptor(&stripped, TRUE, (PACL)empty, FALSE);
                         creator = &stripped;
                     } else if (ignore) {
-                        /* the protection is dropped from what the child has now. */
+                        /* drop the protection from the child's current descriptor. */
                         ((SECURITY_DESCRIPTOR_RELATIVE *)current)->Control &= ~(SE_DACL_PROTECTED | SE_SACL_PROTECTED);
                     }
                     error = derive(new_parent, creator, container, tree ? tree->Token : nullptr,
@@ -913,8 +909,8 @@ static void update_children(OBJ *dir, DWORD info, const void *new_parent, TREE *
 }
 
 /*
- * sets the parts of an object, and for a file or a key whose lists change makes the lists of what is below it
- * again. sd is absolute, with the parts and the protection the caller chose.
+ * sets the object's parts and, when a file's or key's lists change, rebuilds the lists below it. sd is absolute, with
+ * the parts and protection the caller chose.
  */
 static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_protection, TREE *tree)
 {
@@ -922,7 +918,7 @@ static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_p
     if (!propagates(o->Type) || !(info & LIST_PARTS)) {
         if (tree && tree->Owners && propagates(o->Type) && obj_is_container(o))
             update_children(o, tree->Owners, nullptr, tree);
-        /* no generic mapping is known here: the kernel maps what is generic, and the lists are marked as processed. */
+        /* no generic mapping is known here: the kernel maps generic rights, and the lists are marked processed. */
         add_control(sd, ((info & DACL_SECURITY_INFORMATION) ? SE_DACL_AUTO_INHERIT_REQ | SE_DACL_AUTO_INHERITED : 0) |
                             ((info & SACL_PARTS) ? SE_SACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERITED : 0));
         return obj_set(o, info, sd);
@@ -934,7 +930,7 @@ static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_p
     BYTE *parent_sd = nullptr, *current = nullptr;
     MADE made = nullptr;
     WORD control = control_of(sd);
-    /* what the parent hands down, when any of the lists is to inherit. */
+    /* what the parent passes down, when either list inherits. */
     if (((info & DACL_SECURITY_INFORMATION) && !(control & SE_DACL_PROTECTED)) ||
         ((parts & SACL_PARTS) && !(control & SE_SACL_PROTECTED))) {
         error = obj_parent(o, parts & LIST_PARTS, &parent);
@@ -946,7 +942,7 @@ static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_p
             obj_close(parent);
         }
     }
-    /* the owner, the group and the protection the object has now, for what the caller did not say. */
+    /* current owner, group and protection, for what the caller left out. */
     PSID owner = nullptr, group = nullptr;
     BOOLEAN defaulted;
     RtlGetOwnerSecurityDescriptor(sd, &owner, &defaulted);
@@ -996,7 +992,7 @@ static DWORD set_object(OBJ *o, DWORD info, SECURITY_DESCRIPTOR *sd, BOOL keep_p
 
 /* ---------------------------------------------------------------- reading the parts */
 
-/* the object and the pointers of a descriptor, as GetNamedSecurityInfo gives them back. */
+/* returns the descriptor and the pointers into it, as GetNamedSecurityInfo does. */
 static DWORD give_parts(BYTE *sd, DWORD info, PSID *owner, PSID *group, PACL *dacl, PACL *sacl, PSECURITY_DESCRIPTOR *result)
 {
     SECURITY_DESCRIPTOR_RELATIVE *r = (SECURITY_DESCRIPTOR_RELATIVE *)sd;
@@ -1015,7 +1011,7 @@ static DWORD give_parts(BYTE *sd, DWORD info, PSID *owner, PSID *group, PACL *da
     return ERROR_SUCCESS;
 }
 
-/* the arguments of the two readers, checked and cleared in the order ntmarta does. */
+/* checks and clears the arguments of both readers, in the order windows does. */
 static DWORD prepare_output(DWORD info, PSID *owner, PSID *group, PACL *dacl, PACL *sacl, PSECURITY_DESCRIPTOR *result)
 {
     if (info & OWNER_SECURITY_INFORMATION) {
@@ -1057,7 +1053,7 @@ static BOOL valid_handle_type(SE_OBJECT_TYPE type)
     return (type >= SE_FILE_OBJECT && type <= SE_WINDOW_OBJECT) || type == SE_WMIGUID_OBJECT;
 }
 
-/* opens the object with the access the parts need, with the extras first: the access may be one it will not give. */
+/* opens with the access the parts need, trying the extras first since the object may refuse them. */
 static DWORD open_to_read(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD info, OBJ **o)
 {
     DWORD error;
@@ -1066,7 +1062,7 @@ static DWORD open_to_read(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD
         error = name ? obj_open_name(type, name, access, o) : obj_open_handle(type, handle, access, o);
         if (!error)
             return ERROR_SUCCESS;
-        /* a name that is not there will not be there without the extras either. */
+        /* a missing name stays missing without the extras too. */
         if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || error == ERROR_INVALID_NAME_)
             break;
     }
@@ -1135,7 +1131,7 @@ ADVAPI DWORD WINAPI GetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE type, SECURITY
 
 /* ---------------------------------------------------------------- setting the parts */
 
-/* the parts of a change to a named object or a handle: the user's, checked and put in a descriptor. */
+/* checks the user's parts of a change by name or handle and puts them in a descriptor. */
 static DWORD set_security(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD info, PSID owner, PSID group, PACL dacl,
                           PACL sacl)
 {
@@ -1143,7 +1139,7 @@ static DWORD set_security(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD
     DWORD error = build_absolute(&sd, info, owner, group, dacl, sacl);
     if (error)
         return error;
-    /* the protection of a list nobody said anything about is kept. */
+    /* a list's protection is kept when the caller says nothing about it. */
     BOOL keep = ((info & DACL_SECURITY_INFORMATION) && !(info & (PROTECTED_DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION))) ||
                 ((info & SACL_PARTS) && !(info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)));
     OBJ *o = nullptr;
@@ -1151,7 +1147,7 @@ static DWORD set_security(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD
     if (!propagates(type) || !(info & LIST_PARTS))
         access = desired_access(type, WRITE_ACCESS, FALSE, info);
     error = name ? obj_open_name(type, name, access, &o) : obj_open_handle(type, handle, access, &o);
-    /* the extras are only a convenience: without them the object may still open. */
+    /* the extras are a convenience: the object may still open without them. */
     if (error && propagates(type) && (info & LIST_PARTS) && error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
         access = desired_access(type, MODIFY_ACCESS, FALSE, info);
         error = name ? obj_open_name(type, name, access, &o) : obj_open_handle(type, handle, access, &o);
@@ -1196,9 +1192,9 @@ ADVAPI DWORD WINAPI SetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE type, SECURITY
     return set_security(type, nullptr, handle, info, owner, group, dacl, sacl);
 }
 
-/* ---------------------------------------------------------------- the older, direct functions */
+/* ---------------------------------------------------------------- older direct functions */
 
-/* the handle access of a plain read or write of the parts, as GetFileSecurity and RegGetKeySecurity ask for it. */
+/* handle access for a plain read or write of the parts, as GetFileSecurity and RegGetKeySecurity request it. */
 static DWORD plain_access(DWORD info, BOOL write)
 {
     DWORD mask = 0;
@@ -1300,7 +1296,7 @@ ADVAPI BOOL WINAPI SetFileSecurityA(LPCSTR name, SECURITY_INFORMATION info, PSEC
     return ok;
 }
 
-/* a predefined key stands for a handle the registry keeps; the security of it is read through one opened on it. */
+/* a predefined key stands for a handle the registry keeps, so its security is read through a key opened on it. */
 static LONG key_for_security(HKEY key, DWORD access, HKEY *real, BOOL *opened)
 {
     *opened = FALSE;
@@ -1363,7 +1359,7 @@ static DWORD tree_operation(PWSTR name, SE_OBJECT_TYPE type, DWORD info, PSID ow
 {
     if (!name)
         return ERROR_INVALID_PARAMETER;
-    /* the trees of files and keys are the ones this system has. */
+    /* only file and key trees exist here. */
     if (type != SE_FILE_OBJECT && !is_registry(type))
         return ERROR_INVALID_PARAMETER;
     if (action < TREE_SEC_INFO_SET || action > TREE_SEC_INFO_RESET_KEEP_EXPLICIT)
@@ -1417,7 +1413,7 @@ ADVAPI DWORD WINAPI TreeResetNamedSecurityInfoW(LPWSTR name, SE_OBJECT_TYPE type
                           keep_explicit ? TREE_SEC_INFO_RESET_KEEP_EXPLICIT : TREE_SEC_INFO_RESET, progress, setting, args);
 }
 
-/* the callback of the ansi functions is handed names in ansi too. */
+/* the ansi functions' callback gets ansi names too. */
 typedef VOID(CALLBACK *PROGRESS_FN_A)(PSTR name, DWORD status, PDWORD setting, PVOID args, BOOL set);
 
 typedef struct ANSI_PROGRESS {
@@ -1474,7 +1470,7 @@ typedef struct INHERITED_FROMA {
     PSTR AncestorName;
 } INHERITED_FROMA;
 
-/* the sid of an entry, wherever its type puts it. NULL for the types that have none. */
+/* an entry's sid wherever its type puts it, NULL for types without one. */
 static PSID ace_sid(const ACE_HEADER *ace)
 {
     if (ace->AceType <= SYSTEM_ALARM_ACE_TYPE || (ace->AceType >= ACCESS_ALLOWED_CALLBACK_ACE_TYPE && ace->AceType <= ACCESS_DENIED_CALLBACK_ACE_TYPE) ||
@@ -1556,7 +1552,7 @@ static DWORD get_inheritance_source(PWSTR name, SE_OBJECT_TYPE type, DWORD info,
             BYTE flags = source->AceFlags;
             if (flags & INHERITED_ACE)
                 continue;
-            /* what reaches an object this far down: not past a no propagate, and for a leaf only what is for leaves. */
+            /* what reaches this depth: nothing past a no propagate, and for a leaf only what applies to leaves. */
             if (!(flags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)) || (level > 1 && (flags & NO_PROPAGATE_INHERIT_ACE)))
                 continue;
             if (level == 1 && !container && !(flags & OBJECT_INHERIT_ACE))
@@ -1658,7 +1654,7 @@ ADVAPI DWORD WINAPI FreeInheritedFromArray(INHERITED_FROMW *array, USHORT count,
     return ERROR_SUCCESS;
 }
 
-/* ---------------------------------------------------------------- the lists as entries */
+/* ---------------------------------------------------------------- lists as entries */
 
 #define ACTRL_ACCESS_ALLOWED 0x00000001
 #define ACTRL_ACCESS_DENIED 0x00000002
@@ -1690,7 +1686,7 @@ typedef struct ACTRL {
     ACTRL_PROPERTY *Properties;
 } ACTRL;
 
-/* the entries of a list, in one block of local memory: each names its trustee by the sid. */
+/* a list's entries in one local memory block, each naming its trustee by sid. */
 static DWORD entries_from_acl(const ACL *acl, BOOL audit, ACTRL **out)
 {
     *out = nullptr;
@@ -1742,7 +1738,7 @@ static DWORD entries_from_acl(const ACL *acl, BOOL audit, ACTRL **out)
     return ERROR_SUCCESS;
 }
 
-/* the account of a sid as DOMAIN\name, else the sid in text, in local memory. */
+/* a sid's account as DOMAIN\name, else its text form, in local memory. */
 static PWSTR account_text(PSID sid)
 {
     WCHAR name[256], domain[256];
@@ -1813,7 +1809,7 @@ static DWORD get_security_ex(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DW
     return error;
 }
 
-/* a list from entries, through the merging of explicit access, the grants and denials before the audits. */
+/* builds a list from entries via the explicit access merge, grants and denies before audits. */
 static DWORD acl_from_entries(const ACTRL *list, BOOL audit, PACL *acl)
 {
     *acl = nullptr;

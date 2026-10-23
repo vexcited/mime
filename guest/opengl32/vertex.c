@@ -1,7 +1,6 @@
 /*
- * the vertex command families of immediate mode: positions, colors, normals and texture coordinates in every type
- * gl has them, each with its vector form. integer colors and normals are scaled to the range of their type. the work
- * is in immediate.h.
+ * the immediate mode vertex commands: positions, colors, normals and texture coordinates in every type GL has, each
+ * with its vector form. integer colors and normals are scaled to the range of their type. the work is in immediate.h.
  */
 #include "immediate.h"
 

@@ -1,6 +1,3 @@
-/*
- * winmm entry point.
- */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
 

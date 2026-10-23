@@ -1,7 +1,6 @@
 /*
- * InitiateSystemShutdown and AbortSystemShutdown. on windows these are calls over rpc to the machine's shutdown
- * service, which checks the privilege of the caller and runs ExitWindowsEx after the timeout; here the call goes to
- * the kernel, which plays that service, see docs/shutdown.md.
+ * InitiateSystemShutdown and AbortSystemShutdown. on windows these are rpc calls to the shutdown service, which checks
+ * the caller's privilege and runs ExitWindowsEx after the timeout; here the kernel plays that service.
  */
 #include "advapi32_private.h"
 
@@ -20,9 +19,9 @@
 #define SHUTDOWN_INSTALL_UPDATES 0x00000040
 #define SHUTDOWN_RESTART_BOOTOPTIONS 0x00000400
 #define SHUTDOWN_HYBRID 0x00000200
-/* the reason InitiateSystemShutdown gives, SHTDN_REASON_FLAG_PLANNED with the legacy api as the major reason. */
+/* InitiateSystemShutdown's reason: SHTDN_REASON_FLAG_PLANNED with the legacy api as the major reason. */
 #define LEGACY_REASON 0x80070000u
-/* a timeout of ten years is where the call stops accepting. */
+/* timeouts of ten years or more are refused. */
 #define MAX_TIMEOUT 0x12CC0300u
 
 static BOOL request(MX_SHUTDOWN_REQUEST *r)
@@ -30,7 +29,7 @@ static BOOL request(MX_SHUTDOWN_REQUEST *r)
     NTSTATUS status = NtSetSystemInformation((SYSTEM_INFORMATION_CLASS)MX_SYSTEM_SHUTDOWN_REQUEST, r, sizeof(*r));
     if (NT_SUCCESS(status))
         return TRUE;
-    /* the service says access denied to a caller without the privilege, and no shutdown when there is none to stop. */
+    /* the service denies a caller without the privilege, and reports no shutdown when there is none to stop. */
     switch (status) {
     case STATUS_PRIVILEGE_NOT_HELD:
         AdvSetError(ERROR_ACCESS_DENIED);
@@ -45,11 +44,11 @@ static BOOL request(MX_SHUTDOWN_REQUEST *r)
     return FALSE;
 }
 
-/* what the message and the timeout of a request come to, before the machine is looked at. */
+/* the verdict on a request's message and timeout, before the machine is checked. */
 typedef enum REQUEST_VERDICT {
     REQUEST_FINE,
-    REQUEST_REFUSED_QUIETLY, /* too long to be sent at all: the call fails and the last error stays as it was */
-    REQUEST_INVALID,         /* a message of 512 characters or more, or a timeout of ten years */
+    REQUEST_REFUSED_QUIETLY, /* too long to send at all: the call fails and the last error is left unchanged. */
+    REQUEST_INVALID,         /* a message of 512 characters or more, or a timeout of ten years. */
 } REQUEST_VERDICT;
 
 #define MAX_MESSAGE_BYTES 0xFFFE
@@ -65,7 +64,7 @@ static REQUEST_VERDICT judge_request(LPCWSTR message, DWORD timeout)
     return REQUEST_FINE;
 }
 
-/* the checks of the client, in its order: the message and the timeout, then the machine. */
+/* client side checks in order: message and timeout, then the machine. */
 static BOOL initiate(LPCWSTR machine, LPCWSTR message, DWORD timeout, ULONG flags, DWORD reason)
 {
     REQUEST_VERDICT verdict = judge_request(message, timeout);
@@ -83,7 +82,7 @@ static BOOL initiate(LPCWSTR machine, LPCWSTR message, DWORD timeout, ULONG flag
     return request(&r);
 }
 
-/* the timeout counts down before anything starts; a shutdown of apps that do not answer is forced after it. */
+/* the timeout runs down before anything starts; after it, apps that do not answer are forced. */
 static ULONG ewx_flags(BOOL force, BOOL reboot)
 {
     return (reboot ? EWX_REBOOT : EWX_SHUTDOWN) | (force ? EWX_FORCE : EWX_FORCEIFHUNG);
@@ -137,7 +136,7 @@ ADVAPI BOOL WINAPI AbortSystemShutdownA(LPSTR machine)
     return ok;
 }
 
-/* InitiateShutdown: the flags say what happens and whether the programs are forced, the grace period is the timeout. */
+/* InitiateShutdown: the flags choose what happens and whether programs are forced; the grace period is the timeout. */
 ADVAPI DWORD WINAPI InitiateShutdownW(LPWSTR machine, LPWSTR message, DWORD grace, DWORD flags, DWORD reason)
 {
     if (judge_request(message, grace) != REQUEST_FINE)

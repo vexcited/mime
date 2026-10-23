@@ -1,9 +1,4 @@
-/*
- * winmm: the multimedia timer and sound entry points. timers run on one
- * thread of the process like windows, with its 16 slots and its timer ids.
- * there are no audio devices: sounds fail the way winmm does without an
- * output device.
- */
+/* multimedia timers run on one process-wide thread, with Windows-compatible IDs and 16 slots. */
 #define MIME_BUILD_WINMM
 #include <mime/nt.h>
 #include <mime/ntrtl.h>

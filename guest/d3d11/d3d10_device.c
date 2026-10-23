@@ -1,9 +1,8 @@
 /*
- * ID3D10Device1, as d3d11.dll's device carries it for the devices
- * d3d10.dll and d3d10_1.dll make: each method converts what direct3d 10
- * passes and calls the direct3d 11 device or its immediate context.
- * objects handed out are the direct3d 10 interfaces of direct3d 11
- * objects, asked for by iid as d3d11.dll does.
+ * ID3D10Device1 on the devices d3d10.dll and d3d10_1.dll make: each method
+ * converts its direct3d 10 arguments and calls the direct3d 11 device or its
+ * immediate context. objects handed out are direct3d 11 objects queried for
+ * their direct3d 10 interface.
  */
 #include "d3d10_private.h"
 
@@ -26,7 +25,7 @@ static void *query11(void *iface) { return iface ? &D3D10_IMPL(D3dQuery, iface)-
 
 #define STATE11(type, state) ((state) ? (void *)&D3D10_IMPL(type, state)->iface : NULL)
 
-/* what a creation method of direct3d 11 made, as the direct3d 10 interface asked. */
+/* queries a new direct3d 11 object for the requested direct3d 10 interface. */
 static HRESULT made(HRESULT hr, void *object, REFIID riid, void **out)
 {
     if (out)
@@ -34,7 +33,7 @@ static HRESULT made(HRESULT hr, void *object, REFIID riid, void **out)
     return hr;
 }
 
-/* state objects report direct3d 10's error for too many of them. */
+/* state objects report direct3d 10's error when there are too many. */
 static HRESULT state_error(HRESULT hr)
 {
     if (hr == D3D11_ERROR_TOO_MANY_UNIQUE_STATE_OBJECTS)
@@ -63,7 +62,7 @@ static ULONG STDMETHODCALLTYPE device_release(ID3D10Device1 *iface)
 
 /* ------------------------------------------------------------------ binding */
 
-/* the slots a binding converts: d3d11.dll's buffers for each, the counts past them clamped. */
+/* slots converted per binding, larger counts are clamped. */
 #define CB_SLOTS 15
 #define SRV_SLOTS 128
 #define SAMPLER_SLOTS 16
@@ -270,7 +269,7 @@ static void STDMETHODCALLTYPE rs_set_state(ID3D10Device1 *iface, ID3D10Rasterize
     context(iface)->lpVtbl->RSSetState(context(iface), STATE11(D3dRasterizerState, state));
 }
 
-/* direct3d 10's viewports are whole pixels, made floats; more than there are slots sets nothing. */
+/* direct3d 10 viewports are whole pixels. a count past the slot count sets nothing. */
 static void STDMETHODCALLTYPE rs_set_viewports(ID3D10Device1 *iface, UINT count, const D3D10_VIEWPORT *viewports)
 {
     D3D11_VIEWPORT v[D3D10_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
@@ -337,10 +336,7 @@ static void STDMETHODCALLTYPE resolve_subresource(ID3D10Device1 *iface, ID3D10Re
 
 /* ------------------------------------------------------------------ getters */
 
-/*
- * a slot at a time, as d3d11.dll does it: the direct3d 11 getter's object,
- * then its direct3d 10 interface.
- */
+/* one slot at a time: the direct3d 11 getter's object, then its direct3d 10 interface. */
 typedef void(STDMETHODCALLTYPE *SlotGetter)(ID3D11DeviceContext4 *This, UINT slot, UINT count, void **objects);
 
 static void get_slots(ID3D10Device1 *iface, SlotGetter get, UINT slot, UINT count, void **out, REFIID riid)
@@ -473,7 +469,7 @@ static void STDMETHODCALLTYPE om_get_depth_stencil_state(ID3D10Device1 *iface, I
         ((ID3D10DepthStencilState *)s10)->lpVtbl->Release(s10);
 }
 
-/* d3d11.dll gives -1 for the offsets of the slots there are, 0 past them. */
+/* like windows, offsets are -1 for existing slots and 0 past them. */
 static void STDMETHODCALLTYPE so_get_targets(ID3D10Device1 *iface, UINT count, ID3D10Buffer **buffers, UINT *offsets)
 {
     if (buffers) {
@@ -494,7 +490,7 @@ static void STDMETHODCALLTYPE rs_get_state(ID3D10Device1 *iface, ID3D10Rasterize
     *state = D3d10From11(s, &IID_ID3D10RasterizerState);
 }
 
-/* read as direct3d 11's, then made whole pixels in place. */
+/* read as direct3d 11 viewports, then converted to whole pixels in place. */
 static void STDMETHODCALLTYPE rs_get_viewports(ID3D10Device1 *iface, UINT *count, D3D10_VIEWPORT *viewports)
 {
     context(iface)->lpVtbl->RSGetViewports(context(iface), count, (D3D11_VIEWPORT *)viewports);
@@ -552,9 +548,8 @@ static void STDMETHODCALLTYPE flush(ID3D10Device1 *iface) { context(iface)->lpVt
 /* ------------------------------------------------------------------ creation */
 
 /*
- * keyed mutexes and gdi compatibility move up to direct3d 11's bits; cube
- * maps only for 2d textures. other bits are invalid: d3d11.dll passes on a
- * flag it refuses, here refused at once.
+ * keyed mutexes and gdi compatibility move up to direct3d 11's bits, cube
+ * maps are only for 2d textures. other bits are invalid and refused right away.
  */
 static BOOL misc11(UINT misc, BOOL cube, UINT *out)
 {
@@ -630,7 +625,7 @@ static HRESULT STDMETHODCALLTYPE create_texture3d(ID3D10Device1 *iface, const D3
     return made(hr, texture, &IID_ID3D10Texture3D, (void **)out);
 }
 
-/* direct3d 10's shader resource view descriptions are direct3d 11's, cube arrays and all. */
+/* direct3d 10 shader resource view descriptions match direct3d 11's, cube arrays included. */
 static HRESULT create_srv(ID3D10Device1 *iface, ID3D10Resource *resource, const void *desc, REFIID riid, void **out)
 {
     if (out)
@@ -670,7 +665,7 @@ static HRESULT STDMETHODCALLTYPE create_render_target_view(ID3D10Device1 *iface,
     return made(hr, view, &IID_ID3D10RenderTargetView, (void **)out);
 }
 
-/* the description gains direct3d 11's flags, none. */
+/* the direct3d 11 description adds flags, set to none. */
 static HRESULT STDMETHODCALLTYPE create_depth_stencil_view(ID3D10Device1 *iface, ID3D10Resource *resource,
                                                            const D3D10_DEPTH_STENCIL_VIEW_DESC *desc,
                                                            ID3D10DepthStencilView **out)
@@ -725,7 +720,7 @@ static HRESULT STDMETHODCALLTYPE create_geometry_shader(ID3D10Device1 *iface, co
 
 /*
  * the entries go to stream 0, which is rasterized. the stride is the
- * buffer's when every entry writes to slot 0, or when it is given; with
+ * buffer's when every entry writes to slot 0, or when it is given. with
  * several buffers and none given, direct3d 11 packs them.
  */
 static HRESULT STDMETHODCALLTYPE create_geometry_shader_with_stream_output(ID3D10Device1 *iface, const void *bytecode,
@@ -767,7 +762,7 @@ static HRESULT STDMETHODCALLTYPE create_pixel_shader(ID3D10Device1 *iface, const
     return made(hr, shader, &IID_ID3D10PixelShader, (void **)out);
 }
 
-/* one blend for every target: independent when the targets' enables or masks differ. */
+/* independent blending only when the targets' enables or masks differ. */
 static HRESULT STDMETHODCALLTYPE create_blend_state(ID3D10Device1 *iface, const D3D10_BLEND_DESC *desc,
                                                     ID3D10BlendState **out)
 {
@@ -791,7 +786,7 @@ static HRESULT STDMETHODCALLTYPE create_blend_state(ID3D10Device1 *iface, const 
     return state_error(made(hr, state, &IID_ID3D10BlendState, (void **)out));
 }
 
-/* direct3d 10.1's blend description is direct3d 11's. */
+/* the direct3d 10.1 blend description matches direct3d 11's. */
 static HRESULT STDMETHODCALLTYPE create_blend_state1(ID3D10Device1 *iface, const D3D10_BLEND_DESC1 *desc,
                                                      ID3D10BlendState1 **out)
 {
@@ -857,7 +852,7 @@ static HRESULT STDMETHODCALLTYPE create_predicate(ID3D10Device1 *iface, const D3
     return made(hr, predicate, &IID_ID3D10Predicate, (void **)out);
 }
 
-/* direct3d 10's own counters, up to the last of them, 0x11, are not supported. */
+/* direct3d 10's own counters, up to 0x11, are not supported. */
 static HRESULT STDMETHODCALLTYPE create_counter(ID3D10Device1 *iface, const D3D10_COUNTER_DESC *desc,
                                                 ID3D10Counter **out)
 {
@@ -897,7 +892,7 @@ static HRESULT STDMETHODCALLTYPE check_counter(ID3D10Device1 *iface, const D3D10
                                                  units_length, description, description_length);
 }
 
-/* the flags d3d10.dll created the device with, its own above direct3d 11's included. */
+/* includes d3d10.dll's own flags above direct3d 11's. */
 static UINT STDMETHODCALLTYPE get_creation_flags(ID3D10Device1 *iface)
 {
     return device11(iface)->lpVtbl->GetCreationFlags(device11(iface));
@@ -908,7 +903,7 @@ static HRESULT STDMETHODCALLTYPE open_shared_resource(ID3D10Device1 *iface, HAND
     return device11(iface)->lpVtbl->OpenSharedResource(device11(iface), handle, riid, out);
 }
 
-/* text filters are gone: their size is kept nowhere and reads as 0. */
+/* text filters are gone: the size is not kept and reads as 0. */
 static void STDMETHODCALLTYPE set_text_filter_size(ID3D10Device1 *iface, UINT width, UINT height) {}
 
 static void STDMETHODCALLTYPE get_text_filter_size(ID3D10Device1 *iface, UINT *width, UINT *height)

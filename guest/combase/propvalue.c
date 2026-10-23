@@ -1,7 +1,7 @@
 /*
- * Windows.Foundation.PropertyValue: the boxed values of the runtime. a box holds one scalar, a string, a date or
- * nothing, and answers IPropertyValue; the numbers convert to one another where the value fits, as the system's
- * boxes do. the arrays, points, sizes and rectangles are not made.
+ * Windows.Foundation.PropertyValue: a box holds one scalar, a string, a date or nothing behind IPropertyValue. like
+ * the system's boxes, numbers convert to each other where the value fits. arrays, points, sizes and rectangles are
+ * not made.
  */
 #include "xmldom.h"
 
@@ -54,7 +54,7 @@ static HRESULT STDMETHODCALLTYPE pv_is_numeric(IPropertyValue *This, BOOLEAN *va
     return S_OK;
 }
 
-/* an integer or a real, whichever the box holds, as a number to range check. */
+/* reads the box as an integer or a real, for range checks. */
 static HRESULT as_number(BOX *b, BOOL *is_real, INT64 *s, UINT64 *u, double *r)
 {
     *is_real = FALSE;
@@ -350,7 +350,7 @@ HRESULT CbBoxDateTime(DateTime time, IReferenceDateTime **box)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the statics */
+/* ------------------------------------------------------------------ statics */
 
 WRT_INSPECTABLE_THUNKS(IPropertyValueStatics)
 

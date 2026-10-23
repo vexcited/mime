@@ -1,9 +1,7 @@
 /*
- * winsta.dll, the session library of remote desktop services that wtsapi32 and the shell call on Windows. Mime has
- * one console session and the session of the services, no remote connection and no terminal server, so the calls of
- * the library that ask about sessions answer for those two and the calls that connect, shadow, license or manage
- * remote sessions fail with ERROR_NOT_SUPPORTED. Programs that protect themselves from tampering load the library as
- * one of the system's, and some of them need it to be a file they can read.
+ * remote desktop session queries for the console and service sessions. there is no terminal server, so connection,
+ * shadowing, licensing and remote management return ERROR_NOT_SUPPORTED. some tamper-protected programs require this
+ * DLL to exist as a readable file.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -16,7 +14,7 @@
 #define WINSTATION_NAME_CHARS 32
 #define WINSTATION_ACTIVE 0
 #define WINSTATION_DISCONNECTED 4
-#define SERVER_MAGIC 0x57534554 /* 'WSET' */
+#define SERVER_MAGIC 0x57534554 /* 'WSET'. */
 
 typedef struct SERVER {
     DWORD Magic;
@@ -40,7 +38,7 @@ static BOOL valid_server(HANDLE server)
     return server == nullptr || (server != INVALID_HANDLE_VALUE && ((SERVER *)server)->Magic == SERVER_MAGIC);
 }
 
-/* the session a number names: the console is the one the process runs in, session 0 is the services'. */
+/* the console uses the process's session ID; services use session 0. */
 static BOOL describe(ULONG id, PCWSTR *name, ULONG *state)
 {
     if (id == 0) {

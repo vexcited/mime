@@ -1,13 +1,10 @@
 /*
- * the tls client: tls 1.3 of rfc 8446, and tls 1.2 of rfc 5246 with the
- * ecdhe and aes gcm suites of rfc 5288 and rfc 8422, the extended master
- * secret of rfc 7627 and the renegotiation indication of rfc 5746. the
- * ClientHello names the server with rfc 6066 and offers protocols with
- * rfc 7301.
+ * the tls client: tls 1.3 of rfc 8446, and tls 1.2 of rfc 5246 with the ecdhe and aes gcm suites of rfc 5288 and
+ * rfc 8422, the extended master secret of rfc 7627 and renegotiation indication of rfc 5746. the ClientHello names the
+ * server per rfc 6066 and offers protocols per rfc 7301.
  *
- * the engine reads whole records from the caller's buffers, decrypting
- * them in place, and queues the records it sends in an output buffer that
- * InitializeSecurityContext hands over as its token.
+ * records are read whole from the caller's buffers and decrypted in place. outgoing records queue in an output buffer
+ * that InitializeSecurityContext hands over as its token.
  */
 #include "schannel.h"
 
@@ -313,7 +310,7 @@ static unsigned get16(const BYTE *p)
 
 /* ------------------------------------------------------------------ alerts and failure */
 
-/* what a received alert means to the caller, schannel's TlsParseAlertMessage. */
+/* what a received alert means to the caller, as schannel reports it. */
 static SECURITY_STATUS alert_status(BYTE level, BYTE number)
 {
     if (level == TLS1_ALERT_WARNING) {
@@ -458,8 +455,8 @@ static void seal(TLS *t, BYTE type, BYTE *header, BYTE *data, SIZE_T size, BYTE 
 }
 
 /*
- * opens one protected record of total bytes in place. plain points at the
- * content and type gets the content type, the inner one for tls 1.3.
+ * opens one protected record of total bytes in place. plain points at the content and type gets the content type, the
+ * inner one for tls 1.3.
  */
 static SECURITY_STATUS open_record(TLS *t, BYTE *record, SIZE_T total, BYTE **plain, SIZE_T *size, BYTE *type,
                                    BYTE *alert)
@@ -1912,10 +1909,7 @@ SECURITY_STATUS TlsDecrypt(TLS *t, BYTE *input, SIZE_T size, TLS_RECORD *record,
         status = post_handshake_messages(t);
         if (status)
             return status;
-        /*
-         * like schannel, the record becomes a plain handshake record left
-         * for InitializeSecurityContext in the extra buffer.
-         */
+        /* like schannel, leave it as a plain handshake record in the extra buffer for InitializeSecurityContext. */
         input[0] = REC_HANDSHAKE;
         input[3] = (BYTE)(plain_size >> 8);
         input[4] = (BYTE)plain_size;

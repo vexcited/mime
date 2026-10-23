@@ -1,6 +1,6 @@
 /*
- * the legacy shlwapi path functions kernelbase exports: MAX_PATH buffers over the PathCch core,
- * with the ansi forms converting through the ansi code page.
+ * the legacy shlwapi path functions kernelbase exports: MAX_PATH buffers over the PathCch core, with the ansi forms
+ * converting through the ansi code page.
  */
 #include "shlwapi_kb.h"
 
@@ -27,7 +27,7 @@ BOOL KbShWideToAnsiBuffer(LPCWSTR wide, LPSTR out, int size)
     return TRUE;
 }
 
-/* where the ansi string a has the character wide_at of its wide form w. */
+/* the position in a matching wide_at in its wide form w. */
 static LPSTR ansi_at(LPCSTR a, LPCWSTR w, LPCWSTR wide_at)
 {
     if (!wide_at)
@@ -406,7 +406,7 @@ LWSTDAPI BOOL WINAPI PathIsFileSpecA(LPCSTR path)
     return TRUE;
 }
 
-/* a name 8.3 can not hold: a space, a second dot, more than eight characters before the dot or
+/* a name 8.3 cannot hold: a space, a second dot, more than eight characters before the dot or
    more than four after it, the count checked before each character. */
 LWSTDAPI BOOL WINAPI PathIsLFNFileSpecW(LPCWSTR name)
 {

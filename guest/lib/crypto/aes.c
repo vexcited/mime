@@ -1,7 +1,6 @@
 /*
- * aes of fips 197. with aes-ni the rounds run in the processor and take the
- * same time whatever the data; without it a byte oriented implementation
- * looks bytes up in the s-box, whose timing depends on the cache.
+ * aes of fips 197. aes-ni runs in constant time; the byte oriented fallback
+ * looks up the s-box, whose timing depends on the cache.
  */
 #include "internal.h"
 

@@ -1,11 +1,11 @@
 /*
- * names: of keys, as dinput8 builds them from the keyboard layout and
- * dinput.dll takes them from its string table, and the other strings of
- * the en-US resources of both dlls.
+ * key names, built from the keyboard layout by dinput8 and taken from its
+ * string table by dinput.dll, and the other strings of both dlls' en-US
+ * resources.
  */
 #include "dinput_private.h"
 
-/* string 512 + DIK of both dlls' resources. */
+/* string 512 + DIK in both dlls' resources. */
 static const WCHAR *const KEY_NAMES[256] = {
     [0x01] = L"Escape",
     [0x02] = L"1",
@@ -157,7 +157,7 @@ const WCHAR *DiKeyFixedName(DWORD dik)
     return dik < 256 ? KEY_NAMES[dik] : nullptr;
 }
 
-/* the strings both dlls share, those differing named after the dll. */
+/* strings both dlls share; where they differ, the name says which dll. */
 const WCHAR *DiString(DWORD id)
 {
     static const WCHAR *const MOUSE_OBJECTS[] = {L"X-axis",   L"Y-axis",   L"Wheel",    L"Button 0",
@@ -228,10 +228,10 @@ static BOOL punctuation(WCHAR c)
 }
 
 /*
- * windows' DIGetKeyNameText: fixed names for digits and media keys, the
- * character a key of the main block types, uppercased, else the name
- * GetKeyNameText gives, else the fixed one but for the three keys of
- * other countries. dinput.dll has only its fixed names.
+ * fixed names for digits and media keys, the uppercased character a main
+ * block key types, else the name GetKeyNameText gives, else the fixed one
+ * except for the three keys of other countries. dinput.dll only has its
+ * fixed names.
  */
 BOOL DiKeyboardKeyName(DWORD s, DWORD dik, WCHAR *name, BOOL di8)
 {

@@ -1,13 +1,13 @@
 /*
- * the immediate context. bindings are kept as direct3d sees them, with a
- * reference on what is bound; a draw turns what changed into vulkan
- * commands: the shaders bound as shader objects, the fixed function state
- * as dynamic state, and for each stage a table of the heap indices of
- * what its shader reads, uploaded to the ring when it changes.
+ * the immediate context. bindings are kept as direct3d sees them, holding a
+ * reference on what is bound. a draw turns what changed into vulkan commands:
+ * shaders bound as shader objects, fixed function state as dynamic state, and
+ * per stage a table of the heap indices its shader reads, uploaded to the
+ * ring when it changes.
  *
  * rendering to the bound targets stays open across draws and closes for
  * anything that cannot happen inside it. closing it, a copy or a dispatch
- * leave a full barrier for whatever comes next.
+ * leaves a full barrier for whatever comes next.
  */
 #include "d3d11_private.h"
 
@@ -20,7 +20,7 @@ D3dContext *D3dContextFrom(ID3D11DeviceContext *iface)
     return iface ? CONTAINING_RECORD((void *)iface, D3dContext, iface) : nullptr;
 }
 
-/* the copies, clears and maps of context_copy.c. */
+/* context_copy.c. */
 void D3dCtxCopySubresourceRegion(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, UINT x, UINT y, UINT z,
                                  ID3D11Resource *src, UINT src_sub, const D3D11_BOX *box, UINT flags);
 void D3dCtxUpdateSubresource(D3dContext *c, ID3D11Resource *dst, UINT dst_sub, const D3D11_BOX *box,
@@ -52,7 +52,7 @@ static void ref_resource(D3dResource **slot, D3dResource *r)
     *slot = r;
 }
 
-/* a reference a deferred context's slot lets go of: the command list being recorded keeps it. */
+/* on a deferred context, the command list being recorded keeps the reference instead. */
 static void drop(D3dContext *c, IUnknown *o)
 {
     if (c->type == D3D11_DEVICE_CONTEXT_DEFERRED) {
@@ -111,11 +111,6 @@ static void ref_view(D3dContext *c, D3dView **slot, D3dView *v)
     *slot = v;
 }
 
-/*
- * the gpu may use the resource until the submission being recorded is
- * done; a deferred context notes it in the command list, whose execution
- * tells when.
- */
 static void update_vb_high(D3dContext *c)
 {
     UINT high = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT;
@@ -124,6 +119,7 @@ static void update_vb_high(D3dContext *c)
     c->vb_high = high;
 }
 
+/* the command list's execution tells when the gpu is done with the resource. */
 void D3dContextUseList(D3dContext *c, D3dResource *r)
 {
     if (r->list_mark == c->list_id)
@@ -143,7 +139,7 @@ void D3dContextUseList(D3dContext *c, D3dResource *r)
     c->list_resources[c->list_resource_count++] = r;
 }
 
-/* upload memory for what the commands being recorded read: the ring, or a deferred context's own chunks. */
+/* the immediate context allocates from the ring, a deferred one from its own chunks. */
 BOOL D3dContextRingAlloc(D3dContext *c, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out)
 {
     D3dDevice *device = c->child.device;
@@ -177,7 +173,7 @@ const D3dRingSlice *D3dContextListRange(const D3dContext *c, const D3dResource *
     return nullptr;
 }
 
-/* a deferred discard: new bytes of the list's, which the list's commands read for the buffer from now on. */
+/* a deferred discard gives the buffer new bytes owned by the list, which later commands read. */
 const D3dRingSlice *D3dContextListDiscard(D3dContext *c, D3dResource *r)
 {
     D3dRingSlice slice;
@@ -218,7 +214,7 @@ static volatile LONG64 g_list_ids;
 
 /* ------------------------------------------------------------------ recording */
 
-/* a deferred context records into a command buffer of a pool of its own, which the command list takes. */
+/* records into a command buffer from a pool of its own, which the command list takes over. */
 static BOOL begin_list(D3dContext *c)
 {
     D3dDevice *device = c->child.device;
@@ -233,7 +229,7 @@ static BOOL begin_list(D3dContext *c)
     alloc.commandBufferCount = 1;
     if (vk->vkAllocateCommandBuffers(vk->device, &alloc, &c->list_cmd.buffer) != VK_SUCCESS)
         return FALSE;
-    /* a list may run again while it still runs. */
+    /* a list may be executed again while it still runs. */
     VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
     vk->vkBeginCommandBuffer(c->list_cmd.buffer, &begin);
@@ -291,7 +287,7 @@ static void begin_commands(D3dContext *c)
     cmd->serial = UINT64_MAX;
     c->cmd = cmd;
 fresh:
-    /* a new command buffer starts without state: all of it is set again, the tables uploaded again. */
+    /* a new command buffer has no state: set everything and upload the tables again. */
     c->state_dirty = TRUE;
     c->shaders_dirty = TRUE;
     c->ia_dirty = c->vertex_input_dirty = TRUE;
@@ -333,7 +329,7 @@ VkCommandBuffer D3dContextCommands(D3dContext *c, BOOL transfer)
     return c->cmd->buffer;
 }
 
-/* submits what was recorded, waiting and signalling as asked; returns the serial it signals. */
+/* returns the serial the submission signals. */
 UINT64 D3dContextSubmit(D3dContext *c, const VkSemaphoreSubmitInfo *wait, const VkSemaphoreSubmitInfo *signal)
 {
     D3dDevice *device = c->child.device;
@@ -363,7 +359,7 @@ void D3dContextFlush(D3dContext *c)
 
 /* ------------------------------------------------------------------ hazards */
 
-/* a resource bound for output leaves the shader inputs, as direct3d unbinds it there. */
+/* like direct3d, binding a resource for output unbinds it from shader inputs. */
 static void unbind_inputs(D3dContext *c, D3dResource *r)
 {
     if (!r)
@@ -394,7 +390,7 @@ static void unbind_inputs(D3dContext *c, D3dResource *r)
     }
 }
 
-/* the resources bound for output, gathered again after output bindings change. */
+/* rebuilt after output bindings change. */
 static void gather_outputs(D3dContext *c)
 {
     UINT n = 0;
@@ -416,7 +412,7 @@ static void gather_outputs(D3dContext *c)
     c->outputs_dirty = FALSE;
 }
 
-/* whether the resource is bound for output, so a shader input of it is refused. */
+/* a resource bound for output is refused as a shader input. */
 static BOOL bound_as_output(D3dContext *c, D3dResource *r)
 {
     if (!r)
@@ -479,7 +475,7 @@ static void set_shader(D3dContext *c, D3dStage stage, void *iface)
     D3dShader *shader = D3dShaderFrom(iface, stage);
     if (c->stages[stage].shader == shader)
         return;
-    /* transform feedback ends with the stream output it began for. */
+    /* transform feedback ends with the geometry shader it began for. */
     if (stage == D3D_GS && c->xfb_active)
         end_rendering(c);
     ref_D3dShader(c, &c->stages[stage].shader, shader);
@@ -541,7 +537,7 @@ static void get_shader(D3dContext *c, D3dStage stage, void **shader, ID3D11Class
         *count = 0;
 }
 
-/* the methods of each stage, alike but for the stage. */
+/* per stage methods, identical but for the stage. */
 #define STAGE_METHODS(prefix, stage, type)                                                                             \
     static void STDMETHODCALLTYPE prefix##_set_constant_buffers(ID3D11DeviceContext4 *iface, UINT slot, UINT count,    \
                                                                 ID3D11Buffer *const *buffers)                          \
@@ -971,9 +967,8 @@ static void STDMETHODCALLTYPE cs_get_unordered_access_views(ID3D11DeviceContext4
 }
 
 /*
- * new targets end the transform feedback of the old ones. an offset other
- * than -1 sets where writing starts, the buffer's count of bytes written;
- * -1 goes on after what was written.
+ * new targets end the old ones' transform feedback. an offset other than -1
+ * sets the buffer's count of bytes written, -1 appends after what was written.
  */
 static void STDMETHODCALLTYPE so_set_targets(ID3D11DeviceContext4 *iface, UINT count, ID3D11Buffer *const *buffers,
                                              const UINT *offsets)
@@ -1100,7 +1095,7 @@ static VkPrimitiveTopology topology(D3D11_PRIMITIVE_TOPOLOGY t)
     }
 }
 
-/* the default states of direct3d, for what is bound as null. */
+/* direct3d's default states, used when null is bound. */
 static const D3D11_RASTERIZER_DESC2 DEFAULT_RS = {D3D11_FILL_SOLID, D3D11_CULL_BACK, FALSE, 0, 0, 0, TRUE};
 static const D3D11_DEPTH_STENCIL_DESC DEFAULT_DS = {
     TRUE, D3D11_DEPTH_WRITE_MASK_ALL, D3D11_COMPARISON_LESS, FALSE, 0xFF, 0xFF,
@@ -1116,7 +1111,7 @@ static void emit_viewports(D3dContext *c, VkCommandBuffer cmd, VkExtent2D area)
     VkRect2D scissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
     for (UINT i = 0; i < count; i++) {
         D3D11_VIEWPORT v = i < c->viewport_count ? c->viewports[i] : (D3D11_VIEWPORT){0, 0, 0, 0, 0, 1};
-        /* direct3d's y points down: a viewport of negative height flips vulkan's. */
+        /* direct3d's y points down, so a negative height viewport flips vulkan's. */
         if (v.Width <= 0 || v.Height <= 0)
             v.Width = v.Height = 1;
         viewports[i] = (VkViewport){v.TopLeftX, v.TopLeftY + v.Height, v.Width, -v.Height,
@@ -1134,10 +1129,7 @@ static void emit_viewports(D3dContext *c, VkCommandBuffer cmd, VkExtent2D area)
     vk->vkCmdSetScissorWithCount(cmd, count, scissors);
 }
 
-/*
- * whether a dynamic state differs from what the command buffer has, noting
- * it if so; everything differs in a new command buffer.
- */
+/* stores the value when it differs from the command buffer's. in a new command buffer everything differs. */
 #define DYN_CHANGED(field, value) (c->state_dirty || c->dyn.field != (value) ? (c->dyn.field = (value), TRUE) : FALSE)
 
 static inline __attribute__((always_inline)) BOOL dyn_changed_bytes(D3dContext *c, void *field, const void *value,
@@ -1156,7 +1148,7 @@ static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
     const D3D11_RASTERIZER_DESC2 *rs = c->rasterizer ? &c->rasterizer->desc : &DEFAULT_RS;
     static const VkCullModeFlags CULL[] = {VK_CULL_MODE_NONE, VK_CULL_MODE_NONE, VK_CULL_MODE_FRONT_BIT,
                                            VK_CULL_MODE_BACK_BIT};
-    /* stream output may rasterize another stream than the first, or none. */
+    /* stream output may rasterize a stream other than the first, or none. */
     D3dShader *gs = c->stages[D3D_GS].shader;
     UINT stream = gs && gs->so ? gs->rasterized_stream : 0;
     if (DYN_CHANGED(discard, (UINT)(stream == D3D11_SO_NO_RASTERIZED_STREAM)))
@@ -1172,7 +1164,7 @@ static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
     float bias[3] = {(float)rs->DepthBias, rs->DepthBiasClamp, rs->SlopeScaledDepthBias};
     if (dyn_changed_bytes(c, c->dyn.bias, bias, sizeof(bias)))
         vk->vkCmdSetDepthBias(cmd, bias[0], bias[1], bias[2]);
-    /* direct3d clamps depth to the viewport always; turning clipping off leaves only the clamp. */
+    /* direct3d always clamps depth to the viewport, so disabling clipping leaves only the clamp. */
     if (device->has_depth_clip) {
         if (DYN_CHANGED(clamp, TRUE))
             vk->vkCmdSetDepthClampEnableEXT(cmd, TRUE);
@@ -1185,7 +1177,7 @@ static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
         vk->vkCmdSetLineWidth(cmd, 1.0f);
         if (device->has_tessellation)
             vk->vkCmdSetTessellationDomainOriginEXT(cmd, VK_TESSELLATION_DOMAIN_ORIGIN_UPPER_LEFT);
-        /* features the device has for direct3d 12 that shader objects want the state of set. */
+        /* features enabled for direct3d 12 whose state shader objects need set. */
         if (device->has_conservative)
             vk->vkCmdSetConservativeRasterizationModeEXT(cmd, VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT);
         if (device->has_vrs) {
@@ -1198,7 +1190,7 @@ static void emit_rasterizer(D3dContext *c, VkCommandBuffer cmd)
     VkPrimitiveTopology t = topology(c->topology);
     if (DYN_CHANGED(topology, (UINT)t))
         vk->vkCmdSetPrimitiveTopology(cmd, t);
-    /* strips cut at the all ones index, as direct3d 10 and later always do, but not direct3d 9's. */
+    /* direct3d 10 and later always cut strips at the all ones index, direct3d 9 does not. */
     UINT restart = !(c->topology & MIME_TOPOLOGY_D3D9) &&
                    (t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
                     t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY ||
@@ -1300,7 +1292,7 @@ static void emit_output_merger(D3dContext *c, VkCommandBuffer cmd)
         vk->vkCmdSetSampleMaskEXT(cmd, (VkSampleCountFlagBits)samples, &mask);
 }
 
-/* the vertex bindings: the layout's slots with the strides bound, and the attributes. */
+/* the layout's slots with the bound strides, and the attributes. */
 static void emit_vertex_input(D3dContext *c, VkCommandBuffer cmd)
 {
     D3dDevice *device = c->child.device;
@@ -1358,7 +1350,7 @@ static void emit_buffers(D3dContext *c, VkCommandBuffer cmd)
 
 /* ------------------------------------------------------------------ binding tables */
 
-/* the heap index of an entry of the full table layout, and the resource behind it. */
+/* also returns the resource behind the entry. */
 static UINT table_value(D3dContext *c, D3dStage stage, UINT entry, D3dResource **resource)
 {
     D3dStageState *s = &c->stages[stage];
@@ -1411,7 +1403,6 @@ static UINT table_value(D3dContext *c, D3dStage stage, UINT entry, D3dResource *
     return v->heap_kind == kind ? v->heap_index : 0;
 }
 
-/* the table of a stage, the heap indices of what its shader reads, and the resources behind them. */
 static void build_table(D3dContext *c, D3dStage stage, D3dBindingTable *t)
 {
     D3dStageState *s = &c->stages[stage];
@@ -1426,7 +1417,7 @@ static void build_table(D3dContext *c, D3dStage stage, D3dBindingTable *t)
     }
 }
 
-/* whether a buffer the table read was renamed since. */
+/* stale when a buffer the table read was renamed since. */
 static BOOL table_stale(const D3dStageState *s)
 {
     for (UINT k = 0; k < s->shader->info.table_count; k++) {
@@ -1438,8 +1429,8 @@ static BOOL table_stale(const D3dStageState *s)
 }
 
 /*
- * uploads the tables of the stages whose bindings changed and binds them.
- * the others only mark their resources used once per submission or list.
+ * uploads and binds the tables of stages whose bindings changed. the other
+ * stages only mark their resources used, once per submission or list.
  */
 static BOOL emit_tables(D3dContext *c, VkCommandBuffer cmd, BOOL compute)
 {
@@ -1463,7 +1454,7 @@ static BOOL emit_tables(D3dContext *c, VkCommandBuffer cmd, BOOL compute)
         D3dBindingTable table;
         build_table(c, stage, &table);
         s->table_epoch = epoch;
-        /* the set's descriptors cover a whole table: room for one, the rest given back. */
+        /* the set's descriptors span a whole table: reserve room for one, give back the rest. */
         D3dRingSlice slice;
         if (!D3dContextRingAlloc(c, sizeof(table), device->properties.limits.minUniformBufferOffsetAlignment, &slice))
             return FALSE;
@@ -1471,7 +1462,7 @@ static BOOL emit_tables(D3dContext *c, VkCommandBuffer cmd, BOOL compute)
         D3dRingTrim(device, &slice, sizeof(table), D3D_ALIGN(count * sizeof(UINT), 16));
         s->table_valid = TRUE;
         if (slice.chunk != c->table_chunk) {
-            /* a new chunk: its set, and the other stages' tables uploaded again into it. */
+            /* a new chunk needs its own set, and the other stages' tables uploaded into it again. */
             c->table_chunk = slice.chunk;
             c->table_set = D3dRingTableSet(device, slice.chunk);
             for (UINT k = 0; k < D3D_STAGES; k++)
@@ -1503,7 +1494,7 @@ static BOOL emit_tables(D3dContext *c, VkCommandBuffer cmd, BOOL compute)
 
 /* ------------------------------------------------------------------ rendering */
 
-/* the area every bound target covers, and its layers. */
+/* the area all bound targets cover, and the layer count. */
 static VkExtent2D render_area(D3dContext *c, UINT *layers)
 {
     VkExtent2D area = {~0u, ~0u};
@@ -1520,7 +1511,7 @@ static VkExtent2D render_area(D3dContext *c, UINT *layers)
         l = D3D_MIN(l, c->dsv->range.layerCount);
     }
     if (area.width == ~0u) {
-        /* no target: the viewport's extent, for rendering that only writes views. */
+        /* without targets, rendering that only writes views uses the viewport's extent. */
         area.width = c->viewport_count ? (UINT)D3D_MAX(c->viewports[0].TopLeftX + c->viewports[0].Width, 1) : 1;
         area.height = c->viewport_count ? (UINT)D3D_MAX(c->viewports[0].TopLeftY + c->viewports[0].Height, 1) : 1;
         l = 1;
@@ -1568,7 +1559,7 @@ static void begin_rendering(D3dContext *c, VkCommandBuffer cmd)
     }
     if (!samples)
         samples = c->rasterizer && c->rasterizer->desc.ForcedSampleCount ? c->rasterizer->desc.ForcedSampleCount : 1;
-    /* segments begun for dispatches end outside the render pass instance. */
+    /* query segments begun for dispatches end outside the render pass instance. */
     D3dQueriesClose(c, cmd);
     D3dQueriesCopy(c, cmd);
     device->vk.vkCmdBeginRendering(cmd, &info);
@@ -1586,7 +1577,7 @@ static void begin_rendering(D3dContext *c, VkCommandBuffer cmd)
 
 /* ------------------------------------------------------------------ stream output */
 
-/* whether draws stream out: a geometry shader with a declaration, and buffers to write. */
+/* needs a geometry shader with a declaration and buffers to write. */
 static BOOL streams_out(D3dContext *c)
 {
     D3dShader *gs = c->stages[D3D_GS].shader;
@@ -1598,7 +1589,7 @@ static BOOL streams_out(D3dContext *c)
     return FALSE;
 }
 
-/* the targets, and the buffers holding their counts of bytes written, or the dummy for empty slots. */
+/* the targets and their written byte counters, with the dummy for empty slots. */
 static void stream_output_buffers(D3dContext *c, VkBuffer *buffers, VkDeviceSize *offsets, VkDeviceSize *sizes,
                                   VkBuffer *counters, VkDeviceSize *counter_offsets)
 {
@@ -1613,7 +1604,7 @@ static void stream_output_buffers(D3dContext *c, VkBuffer *buffers, VkDeviceSize
     }
 }
 
-/* transform feedback within a render pass instance, from where each buffer's count says. */
+/* starts inside a render pass instance, at each buffer's written byte count. */
 static void begin_stream_output(D3dContext *c, VkCommandBuffer cmd)
 {
     D3dVk *vk = &c->child.device->vk;
@@ -1636,7 +1627,7 @@ static void end_stream_output(D3dContext *c, VkCommandBuffer cmd)
     c->xfb_active = FALSE;
 }
 
-/* the kind of primitive a geometry shader takes in, as dcl_inputprimitive numbers them. */
+/* the geometry shader input primitive, numbered like dcl_inputprimitive. */
 static UINT input_primitive(D3dContext *c)
 {
     switch (c->topology) {
@@ -1654,7 +1645,7 @@ static UINT input_primitive(D3dContext *c)
     default:
         break;
     }
-    /* patches: what the tessellator makes. */
+    /* with patches, the tessellator output decides. */
     D3dShader *hs = c->stages[D3D_HS].shader;
     if (c->topology >= D3D_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST && hs)
         return hs->info.tess_output_primitive <= 2 ? hs->info.tess_output_primitive : 3;
@@ -1667,7 +1658,7 @@ static BOOL writes_views(D3dContext *c)
     return ps && ps->info.uav_mask;
 }
 
-/* everything a draw needs recorded; false when it cannot draw. */
+/* FALSE when the draw cannot happen. */
 static BOOL prepare_draw(D3dContext *c)
 {
     D3dDevice *device = c->child.device;
@@ -1714,7 +1705,7 @@ static BOOL prepare_draw(D3dContext *c)
             }
             count += 2;
         }
-        /* a device made for mesh shaders wants those stages bound too, to nothing. */
+        /* a device with mesh shaders needs those stages bound too, to nothing. */
         if (device->has_mesh) {
             stages[count] = VK_SHADER_STAGE_TASK_BIT_EXT;
             shaders[count++] = VK_NULL_HANDLE;
@@ -1753,7 +1744,7 @@ static BOOL prepare_draw(D3dContext *c)
     return TRUE;
 }
 
-/* a draw that wrote views leaves a barrier and ends rendering, so what follows sees its writes. */
+/* a draw that wrote views ends rendering with a barrier, so what follows sees its writes. */
 static void finish_draw(D3dContext *c)
 {
     if (writes_views(c))
@@ -1802,7 +1793,7 @@ static void STDMETHODCALLTYPE draw_indexed_instanced(ID3D11DeviceContext4 *iface
     finish_draw(c);
 }
 
-/* draws as many vertices as stream output wrote to the buffer of the first vertex slot, past its offset. */
+/* the vertex count is what stream output wrote to the first vertex buffer, past its offset. */
 static void STDMETHODCALLTYPE draw_auto(ID3D11DeviceContext4 *iface)
 {
     D3D_SYNC(impl(iface));
@@ -2086,7 +2077,7 @@ static HRESULT STDMETHODCALLTYPE list_query(void *iface, REFIID riid, void **out
 
 static ULONG STDMETHODCALLTYPE list_add_ref(void *iface) { return InterlockedIncrement(&list_impl(iface)->child.refs); }
 
-/* what the list owns goes once its last execution is done. */
+/* what the list owns is freed once its last execution is done. */
 static ULONG STDMETHODCALLTYPE list_release(void *iface)
 {
     D3dCommandList *list = list_impl(iface);
@@ -2142,8 +2133,8 @@ static const ID3D11CommandListVtbl list_vtbl = {
 static void clear_state(D3dContext *c);
 
 /*
- * the immediate context runs a list: what it recorded so far is submitted,
- * then the list's command buffer, whose serial the list's resources take.
+ * submits what the immediate context recorded so far, then the list's
+ * command buffer, whose serial the list's resources take.
  */
 static void STDMETHODCALLTYPE execute_command_list(ID3D11DeviceContext4 *iface, ID3D11CommandList *iface_list,
                                                    BOOL restore)
@@ -2228,7 +2219,7 @@ static D3D11_DEVICE_CONTEXT_TYPE STDMETHODCALLTYPE get_type(ID3D11DeviceContext4
 
 static UINT STDMETHODCALLTYPE get_context_flags(ID3D11DeviceContext4 *iface) { return 0; }
 
-/* a deferred context's recording becomes a command list; the context starts a new one. */
+/* the recording becomes a command list and the context starts a new one. */
 static HRESULT STDMETHODCALLTYPE finish_command_list(ID3D11DeviceContext4 *iface, BOOL restore,
                                                      ID3D11CommandList **out)
 {
@@ -2261,7 +2252,7 @@ static HRESULT STDMETHODCALLTYPE finish_command_list(ID3D11DeviceContext4 *iface
     list->resource_count = c->list_resource_count;
     c->list_pool = VK_NULL_HANDLE;
     c->cmd = nullptr;
-    /* what stays bound is the list's too: the list holds it or clearing the state hands it over. */
+    /* the list also owns what stays bound: it holds a reference, or clearing the state hands one over. */
     if (restore) {
         for (UINT s = 0; s < D3D_STAGES; s++) {
             D3dStageState *st = &c->stages[s];
@@ -2435,7 +2426,7 @@ static HRESULT STDMETHODCALLTYPE context_query(ID3D11DeviceContext4 *iface, REFI
     return S_OK;
 }
 
-/* the immediate context lives as long as its device, its references the device's; deferred ones count their own. */
+/* the immediate context shares its device's reference count, deferred ones have their own. */
 static ULONG STDMETHODCALLTYPE context_add_ref(ID3D11DeviceContext4 *iface)
 {
     D3dContext *c = impl(iface);
@@ -2659,7 +2650,7 @@ static ULONG STDMETHODCALLTYPE annotation_release(ID3DUserDefinedAnnotation *ifa
     return context_release(&annotation_impl(iface)->iface);
 }
 
-/* annotations matter to graphics debuggers, which are not attached: the event depth is not kept. */
+/* annotations only matter to graphics debuggers, which never attach here, so no event depth is kept. */
 static INT STDMETHODCALLTYPE annotation_begin_event(ID3DUserDefinedAnnotation *iface, LPCWSTR name) { return -1; }
 
 static INT STDMETHODCALLTYPE annotation_end_event(ID3DUserDefinedAnnotation *iface) { return -1; }
@@ -2710,7 +2701,7 @@ static BOOL STDMETHODCALLTYPE mt_get_protected(ID3D11Multithread *iface)
     return __atomic_load_n(&mt_impl(iface)->protected_, __ATOMIC_RELAXED) != 0;
 }
 
-/* only the immediate context of a device that is not single threaded answers for it. */
+/* only the immediate context of a device that is not single threaded has one. */
 void *D3dMultithreadInterface(D3dContext *c)
 {
     if (c->type != D3D11_DEVICE_CONTEXT_IMMEDIATE || (c->child.device->flags & D3D11_CREATE_DEVICE_SINGLETHREADED))
@@ -2758,7 +2749,7 @@ void D3dContextDestroy(D3dContext *c)
     D3dDevice *device = c->child.device;
     clear_state(c);
     D3dQueriesRelease(c);
-    /* a recording never finished: nothing of it reached the gpu. */
+    /* an unfinished recording never reached the gpu. */
     for (UINT i = 0; i < c->list_chunk_count; i++)
         D3dRingChunkRelease(device, c->list_chunks[i], 0);
     for (UINT i = 0; i < c->list_resource_count; i++)

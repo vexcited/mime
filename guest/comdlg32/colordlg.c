@@ -1,9 +1,8 @@
 /*
- * ChooseColor. the dialog has a grid of 48 basic colors, one of 16 custom colors the program keeps, and
- * once opened a hue and saturation field, a luminance bar and edits for the hue, saturation, luminance and
- * the three primaries. the boxes are placeholders in the template that this file draws and handles with
- * their own window procedure, so a template the program supplies works as long as it has the same
- * control identifiers.
+ * ChooseColor: a grid of 48 basic colors, 16 custom colors the program keeps, and once opened a hue and saturation
+ * field, a luminance bar and edits for hue, saturation, luminance and the three primaries. the boxes are template
+ * placeholders this file draws and handles with its own window procedure, so a program's template works as long
+ * as it uses the same control ids.
  */
 #include "dlgbase.h"
 #include "dlgids.h"
@@ -16,7 +15,7 @@
 #define BOX_COLORS 64
 #define COLUMNS 8
 
-/* the grid of basic colors, row by row. */
+/* row by row. */
 static const COLORREF g_basic[BASIC_COLORS] = {
     0x8080FF, 0x80FFFF, 0x80FF80, 0x80FF00, 0xFFFF80, 0xFF8000, 0xC080FF, 0xFF80FF,
     0x0000FF, 0x00FFFF, 0x00FF80, 0x40FF00, 0xFFFF00, 0xC08000, 0xC08080, 0xFF00FF,
@@ -32,7 +31,7 @@ typedef struct _CCDLG {
     HWND Dialog;
     COLORREF Color;
     COLORREF Boxes[BOX_COLORS];
-    /* the box that is selected, and the one with the focus in each of the grids. */
+    /* the selected box, and the focused box in each grid. */
     int Selected, FocusBasic, FocusCustom;
     int Hue, Sat, Lum;
     BOOL Open;
@@ -166,7 +165,6 @@ static void show_rgb(CCDLG *d)
     set_numbers(d, COLOR_RED, v, 3);
 }
 
-/* the hue, saturation and luminance of the current color. */
 static void take_hls(CCDLG *d)
 {
     rgb_to_hls(d->Color, &d->Hue, &d->Lum, &d->Sat);
@@ -179,7 +177,7 @@ static void redraw_open(const CCDLG *d)
     redraw(d, COLOR_CURRENT);
 }
 
-/* a new color from the program or from a box: the edits and the drawings follow when the dialog is open. */
+/* a new color from the program or a box. the edits and drawings follow when the dialog is open. */
 static void set_color(CCDLG *d, COLORREF color)
 {
     d->Color = map_color(d, color);
@@ -191,7 +189,7 @@ static void set_color(CCDLG *d, COLORREF color)
     }
 }
 
-/* the first of the 64 boxes that holds the color, which becomes the selected one. */
+/* the first of the 64 boxes holding the color becomes the selected one. */
 static BOOL find_box(CCDLG *d, COLORREF color)
 {
     for (int i = 0; i < BOX_COLORS; i++) {
@@ -289,7 +287,7 @@ static void paint_rainbow(CCDLG *d, HWND w, HDC dc)
         SelectObject(mem, old);
         DeleteDC(mem);
     }
-    /* the cross hair, a black cross with a white one around it. */
+    /* the cross hair: a black cross with a white one around it. */
     POINT p = rainbow_point(d, iw, ih);
     p.x += inner.left;
     p.y += inner.top;
@@ -314,7 +312,7 @@ static void paint_rainbow(CCDLG *d, HWND w, HDC dc)
     DeleteObject(black);
 }
 
-/* the bar is the left part of the window, the arrow that marks the luminance sits to the right of it. */
+/* the bar is the left part of the window, with the luminance arrow to its right. */
 #define ARROW_WIDTH 8
 
 static int bar_height(int cy)
@@ -367,7 +365,7 @@ static void paint_current(CCDLG *d, HWND w, HDC dc)
     DlgFillRect(dc, &right, solid);
 }
 
-/* ------------------------------------------------------------------ the grids of boxes */
+/* ------------------------------------------------------------------ box grids */
 
 static void paint_grid(CCDLG *d, HWND w, HDC dc, int first, int rows, int focus)
 {
@@ -408,7 +406,7 @@ static int box_at(HWND w, int rows, int x, int y)
     return row * COLUMNS + col;
 }
 
-/* the box the arrow keys reach from another, or the same when the edge is in the way. */
+/* the box an arrow key moves to, or the same one at an edge. */
 static int move_focus(int index, int base, int rows, WPARAM key)
 {
     int rel = index - base, col = rel % COLUMNS, row = rel / COLUMNS, last = rows * COLUMNS - 1;
@@ -505,7 +503,7 @@ static LRESULT CALLBACK grid_proc(HWND w, UINT message, WPARAM wparam, LPARAM lp
     return DefWindowProcW(w, message, wparam, lparam);
 }
 
-/* ------------------------------------------------------------------ the field and the bar */
+/* ------------------------------------------------------------------ field and bar */
 
 static void hls_changed(CCDLG *d)
 {
@@ -587,7 +585,7 @@ static LRESULT CALLBACK field_proc(HWND w, UINT message, WPARAM wparam, LPARAM l
     return DefWindowProcW(w, message, wparam, lparam);
 }
 
-/* ------------------------------------------------------------------ the dialog */
+/* ------------------------------------------------------------------ dialog */
 
 static void enable_open(CCDLG *d, BOOL enable)
 {
@@ -611,7 +609,7 @@ static void enable_open(CCDLG *d, BOOL enable)
         EnableWindow(solid, enable);
 }
 
-/* the dialog gets the width of its left half until the user asks for the rest. */
+/* only the left half shows until the user asks for the rest. */
 static void close_up(CCDLG *d)
 {
     HWND grid = item(d, COLOR_BOX1), rainbow = item(d, COLOR_RAINBOW);
@@ -650,7 +648,7 @@ static void open_up(CCDLG *d)
     SetFocus(item(d, COLOR_HUE));
 }
 
-/* the answer is the colors the dialog ended with, handed back also when cancelled. */
+/* the custom colors the dialog ended with are handed back even when cancelled. */
 static void keep_custom(CCDLG *d)
 {
     if (d->Cc->lpCustColors)
@@ -679,7 +677,7 @@ static BOOL edit_changed(CCDLG *d, int id, int code)
         BOOL ok;
         UINT value = GetDlgItemInt(d->Dialog, id, &ok, FALSE);
         if (!ok) {
-            /* an empty box is left alone, so a number can be typed afresh. */
+            /* an empty box is left alone so a number can be typed afresh. */
             return TRUE;
         }
         UINT limit = id == COLOR_HUE ? HLSMAX - 1 : (id == COLOR_SAT || id == COLOR_LUM ? HLSMAX : RGBMAX);
@@ -710,7 +708,7 @@ static BOOL edit_changed(CCDLG *d, int id, int code)
             redraw_open(d);
         }
     } else if (code == EN_KILLFOCUS) {
-        /* what is not a number goes back to the value it stands for. */
+        /* anything that is not a number goes back to the current value. */
         BOOL ok;
         GetDlgItemInt(d->Dialog, id, &ok, FALSE);
         if (!ok) {
@@ -748,7 +746,7 @@ static BOOL command(CCDLG *d, WORD id, WORD code, LPARAM lparam)
     case COLOR_ADD:
         d->Boxes[d->FocusCustom] = d->Color;
         redraw(d, COLOR_CUSTOM1);
-        /* the next free place goes down a column and then on to the next one. */
+        /* the next free place goes down a column, then on to the next one. */
         if (d->FocusCustom < BOX_COLORS - 1)
             d->FocusCustom = d->FocusCustom < BOX_COLORS - COLUMNS ? d->FocusCustom + COLUMNS : d->FocusCustom - COLUMNS + 1;
         else
@@ -849,7 +847,7 @@ static INT_PTR CALLBACK color_proc(HWND hwnd, UINT message, WPARAM wparam, LPARA
     if (!d) {
         if (message == WM_INITDIALOG)
             return init_dialog(hwnd, (CCDLG *)lparam);
-        /* messages sent while the window is made reach the hook of this thread. */
+        /* messages sent while the window is being created reach this thread's hook. */
         DLGPROC early = g_hook_tls != TLS_OUT_OF_INDEXES ? (DLGPROC)TlsGetValue(g_hook_tls) : nullptr;
         return early ? early(hwnd, message, wparam, lparam) : 0;
     }
@@ -882,7 +880,7 @@ static INT_PTR CALLBACK color_proc(HWND hwnd, UINT message, WPARAM wparam, LPARA
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ the entry points */
+/* ------------------------------------------------------------------ entry points */
 
 static LPDLGTEMPLATEW build_template(void)
 {
@@ -986,6 +984,6 @@ CDAPI BOOL WINAPI ChooseColorW(LPCHOOSECOLORW cc)
 
 CDAPI BOOL WINAPI ChooseColorA(LPCHOOSECOLORA cc)
 {
-    /* the structure is the same but for the name of the template. */
+    /* the structures differ only in the template name type. */
     return choose_color((CHOOSECOLORW *)cc, TRUE);
 }

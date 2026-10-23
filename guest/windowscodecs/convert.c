@@ -1,8 +1,7 @@
 /*
- * the conversion of pixels between formats. A row goes through one of three canonical forms: 32 bit BGRA with straight
- * alpha for the formats of 8 bits a channel, 64 bit RGBA of 16 bits for the others of integers, and 128 bit RGBA of
- * floats in linear light for the floating point and fixed point formats. Reductions truncate, as windows' do, and
- * expansions repeat the bits.
+ * pixel conversion uses three canonical forms: straight BGRA32 for 8-bit channels, RGBA64 with 16-bit channels
+ * for other integers, and linear RGBA128 floats for float and fixed-point formats. reductions truncate;
+ * expansions repeat bits, as on Windows.
  */
 #include "wic_private.h"
 #include "convert.h"
@@ -22,7 +21,7 @@ typedef struct FormatDesc {
     BYTE ctype;
     BYTE model;
     BYTE nchan;    /* stored channels of an unpacked pixel, or the bits of an indexed one. */
-    signed char r; /* the stored position of each channel, gray in r, or cyan magenta yellow black in r g b a. */
+    signed char r; /* channel positions; gray uses r, CMYK uses r, g, b, a. */
     signed char g;
     signed char b;
     signed char a;
@@ -104,7 +103,7 @@ BOOL WicCanConvert(const GUID *from, const GUID *to)
     const FormatDesc *a = find_desc(from), *b = find_desc(to);
     if (!a || !b)
         return FALSE;
-    /* alpha only comes from images that have it, and nothing goes to the alpha only format but alpha images. */
+    /* alpha-only destinations require a source with alpha. */
     if (b->model == M_ALPHA && !a->alpha)
         return FALSE;
     if (a->model == M_ALPHA && b->model != M_ALPHA && !b->alpha && b->model != M_GRAY && b->model != M_RGB)
@@ -112,7 +111,7 @@ BOOL WicCanConvert(const GUID *from, const GUID *to)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ numbers */
+/* numbers. */
 
 static float half_to_float(UINT16 h)
 {
@@ -203,7 +202,7 @@ static UINT linear_to_srgb16(float v)
         return 0;
     if (v >= 1.0f)
         return 65535;
-    /* the byte table has the steps of 8 bits, so the low byte is found by a search between the neighbors. */
+    /* the table has 8-bit steps; search between adjacent entries for the low byte. */
     BYTE hi = linear_to_srgb8(v);
     float lo_lin = to_linear8(hi), hi_lin = hi < 255 ? to_linear8((BYTE)(hi + 1)) : 1.0f;
     float lo_prev = hi > 0 ? to_linear8((BYTE)(hi - 1)) : 0.0f;
@@ -230,7 +229,7 @@ static inline UINT16 div65535(unsigned long long t)
     return (UINT16)((t + (t >> 16)) >> 16);
 }
 
-/* the light a color gives in linear space, the Rec. 709 weights summed green first. */
+/* linear luminance using Rec. 709 weights, summed green first. */
 #define GRAY_R 0.2126f
 #define GRAY_G 0.7152f
 #define GRAY_B 0.0722f
@@ -253,7 +252,7 @@ static UINT gray16_of(UINT r, UINT g, UINT b)
     return linear_to_srgb16(luminance(to_linear16(r), to_linear16(g), to_linear16(b)));
 }
 
-/* ------------------------------------------------------------------ canonical forms */
+/* canonical forms. */
 
 typedef enum { CANON_8, CANON_16, CANON_F } Canon;
 
@@ -289,7 +288,7 @@ static inline void bit_put(BYTE *row, UINT x, UINT bits, UINT value)
     row[x / per] = (BYTE)((row[x / per] & ~mask) | ((value << shift) & mask));
 }
 
-/* the value of a channel of a pixel with 16 bits of range, or a float. */
+/* read a channel as a 16-bit-range value or float. */
 static void read8(const FormatDesc *d, const BYTE *src, UINT x0, BYTE *out, UINT count, const WICColor *palette,
                   UINT palette_count)
 {
@@ -753,9 +752,9 @@ static void writef(const FormatDesc *d, BYTE *dst, UINT x0, const float *in, UIN
     }
 }
 
-/* ------------------------------------------------------------------ fast paths */
+/* fast paths. */
 
-/* BGRA with straight alpha to the opaque forms, and the swaps of channels, which are most of what programs ask for. */
+/* common BGRA paths: remove alpha or swap channels. */
 static BOOL fast_row(const FormatDesc *s, const FormatDesc *d, const BYTE *src, BYTE *dst, UINT x0, UINT count)
 {
     if (s->ctype != CT_U8 || d->ctype != CT_U8 || s->model != M_RGB || d->model != M_RGB)
@@ -765,7 +764,7 @@ static BOOL fast_row(const FormatDesc *s, const FormatDesc *d, const BYTE *src, 
     UINT sn = s->nchan, dn = d->nchan;
     const BYTE *p = src + (SIZE_T)x0 * sn;
     BYTE *q = dst + (SIZE_T)x0 * dn;
-    /* 32 bit with the same channel order, 24 bit with the same order */
+    /* 32 bit with the same channel order, 24 bit with the same order. */
     if (sn == 4 && dn == 4 && s->r == d->r && s->b == d->b && s->a == d->a) {
         memcpy(q, p, (SIZE_T)count * 4);
         if (d->a < 0) {
@@ -844,7 +843,7 @@ static BOOL fast_row(const FormatDesc *s, const FormatDesc *d, const BYTE *src, 
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ converters */
+/* converters. */
 
 struct WicConverter {
     const FormatDesc *src;
@@ -854,7 +853,7 @@ struct WicConverter {
     UINT palette_count;
 };
 
-/* 4 byte pixel conversions of a row. width pixels from x0 of src, written from x0 of dst. */
+/* convert width 4-byte pixels starting at x0 in both rows. */
 static void convert_core(const WicConverter *c, const BYTE *src, BYTE *dst, UINT x0, UINT width)
 {
     if (c->src == c->dst) {
@@ -923,7 +922,7 @@ static void convert_core(const WicConverter *c, const BYTE *src, BYTE *dst, UINT
     }
 }
 
-/* the nearest entry of a palette to a color, by the distance of the channels weighted by how the eye sees them. */
+/* choose the nearest palette entry by perceptually weighted channel distance. */
 static UINT nearest_entry(const WICColor *palette, UINT count, BYTE r, BYTE g, BYTE b, BYTE a)
 {
     UINT best = 0;
@@ -999,7 +998,7 @@ static int dither_threshold(WICBitmapDitherType type, UINT x, UINT y)
     }
 }
 
-/* the cache of the nearest entry of 5 bit colors, so a row does not search the palette for each pixel. */
+/* cache nearest palette entries for 5-bit colors to avoid per-pixel searches. */
 typedef struct NearestCache {
     BYTE *index; /* 32768 entries, 0xff when not known yet, for palettes of up to 255 entries. */
     BOOL usable;
@@ -1011,7 +1010,7 @@ struct WicIndexer {
     UINT transparent;     /* the entry of a transparent color, or ~0. */
     float threshold;      /* the alpha below which a pixel is transparent. */
     WICBitmapDitherType dither;
-    UINT spread;          /* the step of the palette, which sets the strength of ordered dithering. */
+    UINT spread;          /* palette step controls ordered dithering strength. */
     BYTE *cache;
     int *errors;          /* the rows of error diffusion: 2 rows of (width + 2) times 3. */
     UINT width;
@@ -1033,7 +1032,7 @@ WicIndexer *WicIndexerNew(const WICColor *palette, UINT count, WICBitmapDitherTy
             break;
         }
     }
-    /* percent of 255 cut to a whole number, but a pixel half way rounds up. */
+    /* truncate the percentage of 255, but round halfway pixels up. */
     double level = threshold_percent * 2.55;
     double whole = level < 0.0 ? 0.0 : level > 255.0 ? 255.0 : (double)(int)level;
     if (level >= 0.0 && level < 255.0 && level - whole == 0.5)
@@ -1041,7 +1040,7 @@ WicIndexer *WicIndexerNew(const WICColor *palette, UINT count, WICBitmapDitherTy
     ix->threshold = (float)whole;
     ix->dither = dither;
     ix->width = width;
-    /* the step between the levels of a palette of a cube is a rough 255 over its side; use the count to estimate. */
+    /* estimate the palette cube side from its size; its step is roughly 255 divided by the side. */
     UINT spread = 64;
     if (count <= 2)
         spread = 255;
@@ -1092,7 +1091,6 @@ static UINT indexer_lookup(WicIndexer *ix, BYTE r, BYTE g, BYTE b, BYTE a)
         (void)cg;
         (void)cb;
         UINT idx = nearest_entry(ix->palette, ix->count, r, g, b, a);
-        /* only exact for a pixel at the cell's corner, so cache just when the whole cell agrees by being exact. */
         if (ix->palette[idx] == (0xff000000u | ((UINT)r << 16) | ((UINT)g << 8) | b))
             ix->cache[key] = (BYTE)idx;
         return idx;
@@ -1100,7 +1098,7 @@ static UINT indexer_lookup(WicIndexer *ix, BYTE r, BYTE g, BYTE b, BYTE a)
     return nearest_entry(ix->palette, ix->count, r, g, b, a);
 }
 
-/* converts a row of straight BGRA to indices, bits of them per pixel, the row y of the image. */
+/* convert image row y from straight BGRA to packed indices. */
 void WicIndexerRow(WicIndexer *ix, const BYTE *bgra, BYTE *dst, UINT x0, UINT count, UINT bits, UINT col, UINT y)
 {
     BOOL ordered = ix->dither >= WICBitmapDitherTypeOrdered4x4 && ix->dither <= WICBitmapDitherTypeDualSpiral8x8;
@@ -1153,7 +1151,7 @@ void WicIndexerRow(WicIndexer *ix, const BYTE *bgra, BYTE *dst, UINT x0, UINT co
     }
 }
 
-/* ------------------------------------------------------------------ entry points */
+/* entry points. */
 
 HRESULT WicConvertRows(const GUID *from, const GUID *to, const BYTE *src, UINT src_stride, BYTE *dest,
                        UINT dest_stride, UINT width, UINT height, const WICColor *palette, UINT palette_count,

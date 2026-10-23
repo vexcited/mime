@@ -1,6 +1,3 @@
-/*
- * winspool internal interface: printer handles and string helpers.
- */
 #ifndef MIME_WINSPOOL_PRIVATE_H
 #define MIME_WINSPOOL_PRIVATE_H
 
@@ -12,9 +9,8 @@
 #include <rtl.h>
 
 /*
- * there is no print spooler service: the printers are those built in (printers.c), kept by every process
- * that asks, and a job is processed by the process that started it (job.c). OpenPrinter gives a handle on
- * the local print server for no name, and one on a printer for the name of one.
+ * each process keeps the built-in printers and runs its own jobs; there is no spooler service. OpenPrinter returns a
+ * server handle for no name, or a printer handle for a printer name.
  */
 struct SpoolJob;
 
@@ -40,24 +36,22 @@ FORCEINLINE void SpoolFree(PVOID p)
         HeapFree(GetProcessHeap(), 0, p);
 }
 
-/* sets the last error and returns FALSE. */
 FORCEINLINE BOOL SpoolFail(DWORD error)
 {
     SetLastError(error);
     return FALSE;
 }
 
-/* the handle behind a value, NULL with ERROR_INVALID_HANDLE when it is not one. */
+/* returns NULL and sets ERROR_INVALID_HANDLE for an invalid handle. */
 SpoolHandle *SpoolLookup(HANDLE printer);
-/* the handle of a printer, not of the server: NULL with ERROR_INVALID_HANDLE for the server. */
+/* requires a printer handle; rejects server handles with ERROR_INVALID_HANDLE. */
 SpoolHandle *SpoolLookupPrinter(HANDLE printer);
 
-/* converts an ansi string with the ansi code page; the result comes from the heap. */
+/* converts an ANSI string with the ANSI code page; the result comes from the heap. */
 PWSTR SpoolToWide(LPCSTR s);
-/* writes a utf-16 string as ansi into a buffer of size bytes; returns FALSE if it does not fit. */
+/* writes a UTF-16 string as ANSI into a buffer of size bytes; returns FALSE if it does not fit. */
 BOOL SpoolToAnsi(PCWSTR s, LPSTR buffer, DWORD size);
 
-/* ------------------------------------------------------------------ printers (printers.c) */
 
 typedef struct SpoolPrinter {
     LPCWSTR Name, Driver, Port, Comment, Location, Manufacturer, Model;
@@ -73,7 +67,7 @@ typedef struct SpoolPaper {
 
 int SpoolPrinterCount(void);
 const SpoolPrinter *SpoolPrinterAt(int index);
-/* the index of the printer a name stands for, with an optional \\server\ in front; -1 when there is none. */
+/* resolves a printer name with an optional \\server\ prefix; returns -1 if absent. */
 int SpoolFindPrinter(LPCWSTR name);
 int SpoolDefaultPrinter(void);
 BOOL SpoolSetDefaultPrinter(int index);
@@ -81,41 +75,39 @@ int SpoolPaperCount(void);
 const SpoolPaper *SpoolPaperAt(int index);
 const SpoolPaper *SpoolFindPaper(WORD id);
 const SpoolPaper *SpoolFindPaperByName(LPCWSTR name);
-/* the number of resolutions, and the pair of the one asked for, in dots per inch. */
+/* returns the resolution count and the requested pair in dots per inch. */
 int SpoolResolutionCount(void);
 int SpoolResolutionAt(int index);
 
-/* the device mode of a printer for the user: what was last chosen, else the defaults. a copy to SpoolFree. */
+/* returns a copy of the user's saved device mode or the defaults; free with SpoolFree. */
 DEVMODEW *SpoolUserDevmode(int printer);
 DEVMODEW *SpoolDefaultDevmode(int printer);
-/* sets the members src asks for and the printer can do into dest, which is a whole device mode of the printer. */
+/* merges supported fields requested by src into dest's full device mode. */
 void SpoolMergeDevmode(int printer, DEVMODEW *dest, const DEVMODEW *src);
-/* keeps a device mode as the one the user chose, in the registry too. */
+/* saves the user's device mode in memory and the registry. */
 void SpoolStoreUserDevmode(int printer, const DEVMODEW *devmode);
 DEVMODEA *SpoolDevmodeToAnsi(const DEVMODEW *devmode);
 DEVMODEW *SpoolDevmodeFromAnsi(const DEVMODEA *devmode);
 
-/* a dialog for the settings of a printer, the answer is IDOK or IDCANCEL. */
+/* settings dialog returning IDOK or IDCANCEL. */
 INT_PTR SpoolPreferences(HWND owner, int printer, DEVMODEW *devmode);
 
-/* ------------------------------------------------------------------ jobs (job.c) */
 
 typedef struct SpoolJob SpoolJob;
 DWORD SpoolStartDoc(SpoolHandle *handle, const DOC_INFO_1W *info);
 void SpoolAbortJob(SpoolHandle *handle);
 DWORD SpoolActiveJobs(int printer);
-/* the printed file of a job asked for by the user: a path the caller frees with SpoolFree, nullptr when refused. */
+/* returns a user-selected output path to free with SpoolFree, or nullptr if refused. */
 PWSTR SpoolAskOutput(LPCWSTR document, int printer);
 BOOL SpoolJobsEnum(int printer, DWORD level, DWORD first, DWORD count, LPBYTE buffer, DWORD size, LPDWORD needed,
                    LPDWORD returned, BOOL ansi);
 BOOL SpoolJobGet(int printer, DWORD id, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed, BOOL ansi);
 BOOL SpoolJobSet(int printer, DWORD id, DWORD command);
 
-/* ------------------------------------------------------------------ packing results (pack.c) */
 
 /*
- * a result of structures with strings behind them is built twice, once to size it and once into the
- * buffer: the structures from its start, the strings and blobs from its end, each aligned.
+ * builds twice, first to measure. aligned structures grow from the buffer's start; strings and blobs grow from its
+ * end.
  */
 typedef struct SpoolPack {
     BYTE *base;

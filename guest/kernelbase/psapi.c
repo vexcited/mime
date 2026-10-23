@@ -52,7 +52,7 @@ DECLSPEC_EXPORT BOOL WINAPI K32GetPerformanceInfo(PERFORMANCE_INFORMATION *info,
     return TRUE;
 }
 
-/* the counters in the plain size, with the private bytes, or with the private working set and shared commit too. */
+/* size picks the plain, EX or EX2 counters. */
 DECLSPEC_EXPORT BOOL WINAPI K32GetProcessMemoryInfo(HANDLE process, PROCESS_MEMORY_COUNTERS_EX2 *info, DWORD size)
 {
     SIZE_T minimum = __builtin_offsetof(PROCESS_MEMORY_COUNTERS_EX2, PrivateUsage);
@@ -151,7 +151,7 @@ DECLSPEC_EXPORT BOOL WINAPI QueryWorkingSet(HANDLE process, PVOID info, DWORD si
     return K32QueryWorkingSet(process, info, size);
 }
 
-/* the nt path of the file mapped at an address, cut to the buffer with ERROR_INSUFFICIENT_BUFFER. */
+/* the NT path, truncated to the buffer with ERROR_INSUFFICIENT_BUFFER. */
 DECLSPEC_EXPORT DWORD WINAPI K32GetMappedFileNameW(HANDLE process, LPVOID address, LPWSTR name, DWORD size)
 {
     if (!size) {
@@ -198,7 +198,7 @@ DECLSPEC_EXPORT DWORD WINAPI K32GetMappedFileNameA(HANDLE process, LPVOID addres
 
 /* ------------------------------------------------------------------ device drivers */
 
-/* the record of one module of SystemModuleInformation and the list it comes in. */
+/* SystemModuleInformation records. */
 typedef struct {
     PVOID Section, MappedBase, ImageBase;
     ULONG ImageSize, Flags;
@@ -211,7 +211,7 @@ typedef struct {
     KB_MODULE Modules[1];
 } KB_MODULES;
 
-/* the modules of the kernel, in a buffer that grows until they all fit; the buffer is the caller's to free. */
+/* grows the buffer until every module fits, the caller frees it. */
 static KB_MODULES *query_modules(void)
 {
     ULONG length = 1328;
@@ -236,7 +236,7 @@ static KB_MODULES *query_modules(void)
     }
 }
 
-/* the base address of every module, as many as the buffer takes, and the bytes all of them need. */
+/* fills as many bases as fit, needed gets the bytes for all of them. */
 DECLSPEC_EXPORT BOOL WINAPI K32EnumDeviceDrivers(LPVOID *bases, DWORD size, LPDWORD needed)
 {
     KB_MODULES *list = query_modules();
@@ -250,7 +250,7 @@ DECLSPEC_EXPORT BOOL WINAPI K32EnumDeviceDrivers(LPVOID *bases, DWORD size, LPDW
     return TRUE;
 }
 
-/* the module that was loaded at the address: ERROR_INVALID_HANDLE when there is none. */
+/* ERROR_INVALID_HANDLE when no module was loaded at base. */
 static BOOL find_driver(LPVOID base, KB_MODULE *module)
 {
     KB_MODULES *list = query_modules();
@@ -270,7 +270,7 @@ static BOOL find_driver(LPVOID base, KB_MODULE *module)
     return found;
 }
 
-/* the text copied with its terminator up to the size; a cut one gives the size, a whole one its length. */
+/* copies with the terminator up to size. Returns size when the text was cut, else its length. */
 static DWORD copy_driver_text(const UCHAR *text, LPSTR out, DWORD size)
 {
     DWORD length = (DWORD)strlen((const char *)text) + 1, copy = length < size ? length : size;
@@ -338,7 +338,7 @@ typedef struct {
     UNICODE_STRING PageFileName;
 } KB_PAGEFILE;
 
-/* the callback gets each paging file once, with its name cut to the drive letter and what follows. */
+/* each paging file once, its name cut down to the drive letter and what follows. */
 DECLSPEC_EXPORT BOOL WINAPI K32EnumPageFilesW(ENUM_PAGE_FILE_CALLBACKW callback, LPVOID context)
 {
     ULONG length = 4096, returned = 0;
@@ -404,8 +404,8 @@ DECLSPEC_EXPORT BOOL WINAPI K32EnumPageFilesA(ENUM_PAGE_FILE_CALLBACKA callback,
 /* ------------------------------------------------------------------ working set watch */
 
 /*
- * the kernel does not record the pages a process faults in, so asking it to start or to report is refused with the
- * status the process information service gives for a class it does not know.
+ * the kernel does not record the pages a process faults in, so starting or reading a watch fails with the status of an
+ * unknown information class.
  */
 DECLSPEC_EXPORT BOOL WINAPI K32InitializeProcessForWsWatch(HANDLE process)
 {

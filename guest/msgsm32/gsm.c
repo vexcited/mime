@@ -1,7 +1,6 @@
 /*
- * gsm 06.10 full rate speech coding, the fixed point procedures of the
- * etsi recommendation, which windows' codec follows to the bit: 160
- * samples of 13 bits make a frame of 76 parameters.
+ * GSM 06.10 full rate speech coding, the fixed point procedures of the ETSI recommendation, bit exact with the
+ * Windows codec: a frame of 160 13-bit samples becomes 76 parameters.
  */
 #include "gsm.h"
 
@@ -16,7 +15,7 @@ static const SHORT H[11] = {-134, -374, 0, 2054, 5741, 8192, 5741, 2054, 0, -374
 static const SHORT NRFAC[8] = {29128, 26215, 23832, 21846, 20165, 18725, 17476, 16384};
 static const SHORT FAC[8] = {18431, 20479, 22527, 24575, 26623, 28671, 30719, 32767};
 
-/* ------------------------------------------------------------------ the basic operations */
+/* ------------------------------------------------------------------ basic operations */
 
 static SHORT sat16(LONG v)
 {
@@ -59,7 +58,7 @@ static LONG l_mult(SHORT a, SHORT b)
     return (LONG)a * b * 2;
 }
 
-/* left shifts that put bit 30 of a positive value. */
+/* the left shift count that brings a positive value's top bit to bit 30. */
 static SHORT norm(LONG a)
 {
     SHORT n = 0;
@@ -88,7 +87,7 @@ static SHORT asr(SHORT a, int n)
     return n < 0 ? (SHORT)(a << -n) : (SHORT)(a >> n);
 }
 
-/* the 15 bit quotient of num by denum, num not above denum. */
+/* the 15-bit quotient num / denum, with num <= denum. */
 static SHORT divide(SHORT num, SHORT denum)
 {
     LONG l = num;
@@ -129,7 +128,7 @@ static void autocorrelation(SHORT *s, LONG *acf)
             s[k] = (SHORT)(s[k] << scale);
 }
 
-/* the reflection coefficients by schur's recursion. */
+/* reflection coefficients by Schur's recursion. */
 static void reflection(const LONG *l_acf, SHORT *r)
 {
     if (!l_acf[0]) {
@@ -197,7 +196,7 @@ static void decode_lar(const SHORT *larc, SHORT *larpp)
     }
 }
 
-/* the log area ratios of a segment of the frame, from the last frame's and this one's. */
+/* interpolates a segment's log area ratios between the last frame's and this one's. */
 static void interpolate(const SHORT *previous, const SHORT *current, int segment, SHORT *larp)
 {
     for (int i = 0; i < 8; i++) {
@@ -356,7 +355,7 @@ static void rpe_encoding(const SHORT *e, SHORT *xmaxc_out, SHORT *mc_out, SHORT 
         sum = l_add(sum, sum);
         x[k] = (SHORT)(sum >> 16);
     }
-    /* the grid of most energy. */
+    /* pick the grid with the most energy. */
     LONG em = 0;
     SHORT mc = 0;
     for (int m = 0; m <= 3; m++) {
@@ -467,7 +466,7 @@ void GsmDecode(GSM_DECODER *g, const GSM_FRAME *f, SHORT *out)
         inverse_apcm(exp, mant, f->xmc[j], xmp);
         for (int i = 0; i < 13; i++)
             erp[f->mc[j] + 3 * i] = xmp[i];
-        /* long term synthesis, a lag out of range taking the last one. */
+        /* long term synthesis, an out of range lag reuses the last one. */
         SHORT nr = f->nc[j] < 40 || f->nc[j] > 120 ? g->nrp : f->nc[j];
         g->nrp = nr;
         SHORT brp = QLB[f->bc[j]];
@@ -493,7 +492,7 @@ void GsmDecode(GSM_DECODER *g, const GSM_FRAME *f, SHORT *out)
     }
 }
 
-/* ------------------------------------------------------------------ the 65 byte blocks of two frames */
+/* ------------------------------------------------------------------ 65-byte blocks of two frames */
 
 typedef struct BITS {
     BYTE *p;
@@ -519,7 +518,7 @@ static SHORT get_bits(BITS *b, int count)
 
 static const int lar_bits[8] = {6, 6, 5, 5, 4, 4, 3, 3};
 
-/* the parameters in their order, each from its lowest bit, the second frame from bit 260. */
+/* parameters go in order, lowest bit first, the second frame starting at bit 260. */
 void GsmPack(const GSM_FRAME frames[2], BYTE *out)
 {
     BITS b = {out, 0};

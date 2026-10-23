@@ -106,7 +106,7 @@ static void heap_sort(uint32_t *a, uint32_t n)
 }
 
 typedef struct Pending {
-    uint32_t slot; /* position of the entry value field relative to base. */
+    uint32_t slot; /* offset of the entry's value field from base. */
     const MimeTiffWIfd *sub;
 } Pending;
 

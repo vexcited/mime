@@ -40,7 +40,7 @@ WCHAR *SvcDup(const WCHAR *s)
     return s ? SvcDupN(s, wcslen(s)) : nullptr;
 }
 
-/* the characters of a multi sz with its last terminator, or 1 for an empty one. */
+/* the characters of a multi sz including its final terminator, 1 for an empty one. */
 DWORD SvcMultiSzChars(const WCHAR *m)
 {
     if (!m)
@@ -52,7 +52,7 @@ DWORD SvcMultiSzChars(const WCHAR *m)
     return n + 1;
 }
 
-/* whether a list of strings of the given length ends with the two terminators. */
+/* whether the list ends with two terminators within chars. */
 BOOL SvcValidMultiSz(const WCHAR *m, DWORD chars)
 {
     if (!m || !chars)
@@ -81,13 +81,13 @@ void SvcLog(const char *format, ...)
     OutputDebugStringA(text);
 }
 
-/* waits for any change of state, with the lock held on entry and on return. */
+/* the lock is held on entry and on return. */
 void SvcSleepChanged(DWORD ms)
 {
     SleepConditionVariableCS(&g_changed, &g_lock, ms);
 }
 
-/* a manual reset event the programs of the session wait on, made with the descriptor of SCM_EVENT_SDDL. */
+/* a manual reset event with the SCM_EVENT_SDDL descriptor, for the session's programs to wait on. */
 HANDLE SvcCreateWorldEvent(const WCHAR *name)
 {
     SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, FALSE};

@@ -1,7 +1,7 @@
 /*
- * IDirectSound8: a device's cooperative level, its buffers and their
- * duplicates, its caps and speaker configuration. the primary buffer is
- * one object per device, handed out again by every creation.
+ * IDirectSound8: cooperative level, buffers and their duplicates, caps and
+ * speaker configuration. the primary buffer is one object per device,
+ * returned again by every creation.
  */
 #include "dsound_private.h"
 
@@ -89,7 +89,7 @@ static ULONG STDMETHODCALLTYPE ds_release(IDirectSound8 *This)
 
 void DsDeviceDestroy(DSDEVICE *d)
 {
-    /* the buffers go with the device, as in windows; their interfaces stop working. */
+    /* the buffers die with the device like windows; their interfaces stop working. */
     for (DSBUFFER *b = d->buffers, *next; b; b = next) {
         next = b->next;
         DsBufferKill(b);
@@ -106,7 +106,7 @@ void DsDeviceDestroy(DSDEVICE *d)
     HeapFree(GetProcessHeap(), 0, d);
 }
 
-/* the checks before every method: a live device, initialized. */
+/* run before every method: the device must be live and initialized. */
 static HRESULT check(DSDEVICE *d)
 {
     if (!d)
@@ -202,7 +202,7 @@ static HRESULT STDMETHODCALLTYPE ds_set_cooperative_level(IDirectSound8 *This, H
     d->thread = GetWindowThreadProcessId(root ? root : window, nullptr);
     DWORD old = d->level;
     d->level = level;
-    /* leaving or entering write primary silences the primary buffer and stops it. */
+    /* entering or leaving write primary silences and stops the primary buffer. */
     if (d->primary && (old == DSSCL_WRITEPRIMARY) != (level == DSSCL_WRITEPRIMARY)) {
         DsMixerStop(d->primary);
         if (d->primary->data)
@@ -223,7 +223,7 @@ static HRESULT STDMETHODCALLTYPE ds_compact(IDirectSound8 *This)
     return d->level < DSSCL_PRIORITY ? DSERR_PRIOLEVELNEEDED : DS_OK;
 }
 
-/* the speakers the endpoint has, stereo here, with windows' wide geometry. */
+/* the endpoint's speakers, stereo here, with windows' wide geometry. */
 static HRESULT STDMETHODCALLTYPE ds_get_speaker_config(IDirectSound8 *This, LPDWORD config)
 {
     DSDEVICE *d = DsDeviceFrom(This);
@@ -262,7 +262,7 @@ static HRESULT initialize(DSDEVICE *d, LPCGUID guid)
         return DSERR_ALREADYINITIALIZED;
     if (!DsResolveDevice(guid, &d->guid, FALSE))
         return DSERR_NODRIVER;
-    /* the primary buffer, 22050 hz stereo 8 bit until a program sets its format. */
+    /* the primary buffer is 22050 hz stereo 8-bit until a program sets its format. */
     DSBUFFERDESC desc = {sizeof(desc), DSBCAPS_PRIMARYBUFFER | DSBCAPS_CTRL3D};
     DSBUFFER *primary = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*primary));
     if (!primary)
@@ -330,7 +330,7 @@ HRESULT DsCreateDevice(LPCGUID guid, DWORD version, IDirectSound8 **out)
 
 /* ------------------------------------------------------------------ buffers */
 
-/* windows' IsValidDsBufferFlags: the flags a version allows and the combinations it refuses. */
+/* the flags a version allows and the combinations windows refuses. */
 static BOOL valid_flags(DWORD flags, DWORD allowed)
 {
     if (flags & ~allowed)
@@ -349,7 +349,7 @@ static BOOL valid_flags(DWORD flags, DWORD allowed)
     return !(flags & DSBCAPS_PRIMARYBUFFER) || !(flags & 0xA322);
 }
 
-/* windows' BuildValidDsBufferDesc and IsValidDsBufferDesc. */
+/* normalizes and checks the desc like windows. */
 static HRESULT validate(DSDEVICE *d, LPCDSBUFFERDESC in, DSBUFFERDESC *desc)
 {
     if (in->dwSize != sizeof(DSBUFFERDESC) && in->dwSize != sizeof(DSBUFFERDESC1))
@@ -416,7 +416,7 @@ HRESULT DsCreateBuffer(DSDEVICE *d, LPCDSBUFFERDESC in, DSBUFFER **out)
         return hr;
     if (desc.dwFlags & DSBCAPS_PRIMARYBUFFER) {
         DSBUFFER *p = d->primary;
-        /* the first creation sets the controls, later ones get the same object. */
+        /* the first creation sets the controls; later ones get the same object. */
         if (!d->primary_users) {
             p->flags = (desc.dwFlags & ~(DSBCAPS_LOCHARDWARE | DSBCAPS_LOCSOFTWARE)) | DSBCAPS_LOCSOFTWARE;
         }

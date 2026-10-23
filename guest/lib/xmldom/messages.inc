@@ -1,4 +1,4 @@
-/* the texts of the dom error codes that parse errors carry, as msxml6.dll words them. */
+/* the dom error messages that parse errors carry, worded as msxml6.dll words them. */
     {0xC00CE001u, L"Error opening input file: '%1'.\r\n"},
     {0xC00CE002u, L"Reference to undefined entity '%1'.\r\n"},
     {0xC00CE003u, L"Entity '%1' contains an infinite entity reference loop.\r\n"},

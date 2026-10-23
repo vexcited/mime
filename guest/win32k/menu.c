@@ -1,8 +1,4 @@
-/*
- * menus: menu objects, their items and the system menu of windows. menus
- * are drawn and tracked in user32; win32k keeps the objects so handles are
- * shared by every thread of the session, like windows.
- */
+/* menus are drawn and tracked in user32. win32k owns the objects so handles are shared across session threads. */
 #include "win32k.h"
 
 typedef struct MENU_ITEM {
@@ -24,7 +20,7 @@ typedef struct MENU {
     LIST_ENTRY Links;
     HANDLE OwnerPid;
     BOOLEAN Popup;
-    WND *SystemOf; /* window whose system menu this is */
+    WND *SystemOf; /* window that owns this system menu. */
     ULONG Count;
     ULONG Capacity;
     MENU_ITEM *Items;
@@ -122,7 +118,7 @@ static void sync_close_button(MENU *m)
     }
 }
 
-/* finds an item by position or by command, searching submenus for commands. */
+/* command lookup also searches submenus. */
 static MENU_ITEM *find_item(MENU *m, UINT item, BOOLEAN by_position, MENU **owner, ULONG *index, int depth)
 {
     if (!m || depth > 16)
@@ -249,7 +245,7 @@ static BOOLEAN apply_info(MENU *m, MENU_ITEM *it, const MENUITEMINFOW *mii, PWST
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ cleanup */
+/* cleanup. */
 
 void MenuFreeProcess(W32PROCESS *p)
 {
@@ -283,14 +279,14 @@ void MenuWindowDestroyed(WND *w)
     }
 }
 
-/* ------------------------------------------------------------------ the system menu */
+/* the system menu. */
 
 typedef struct SYSMENU_ENTRY {
     UINT Id;
     PCWSTR Text;
 } SYSMENU_ENTRY;
 
-/* the english strings of the default system menu; the tab separates the accelerator text. */
+/* default system menu strings; tabs separate accelerator text. */
 static const SYSMENU_ENTRY g_sysmenu[] = {
     {SC_RESTORE, L"&Restore"}, {SC_MOVE, L"&Move"},          {SC_SIZE, L"&Size"}, {SC_MINIMIZE, L"Mi&nimize"},
     {SC_MAXIMIZE, L"Ma&ximize"}, {0, nullptr},                  {SC_CLOSE, L"&Close\tAlt+F4"},
@@ -362,7 +358,7 @@ static MENU *system_menu(WND *w, BOOLEAN create)
     return m;
 }
 
-/* ------------------------------------------------------------------ services */
+/* services. */
 
 HMENU NTAPI NtUserCreateMenu(void)
 {
@@ -720,7 +716,7 @@ BOOL NTAPI NtUserSetMenuDefaultItem(HMENU menu, UINT item, UINT by_position)
                 m->Items[i].State &= ~MFS_DEFAULT;
             ok = TRUE;
         } else {
-            /* only items of this menu, not of its submenus. */
+            /* only this menu, excluding submenus. */
             for (ULONG i = 0; i < m->Count; i++) {
                 BOOLEAN match = by_position ? i == item : m->Items[i].Id == item;
                 if (match && !ok) {
@@ -808,7 +804,7 @@ BOOL NTAPI NtUserEndMenu(void)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ menus for the host */
+/* menus for the host. */
 
 static void flatten_menu(MENU *menu, ULONG parent, MimeTrayItem *items, ULONG *ids, ULONG *count, ULONG max, ULONG depth)
 {
@@ -836,7 +832,7 @@ static void flatten_menu(MENU *menu, ULONG parent, MimeTrayItem *items, ULONG *i
     }
 }
 
-/* the items of a menu and of its submenus in the order a host lists them, each with the id the program gave it. */
+/* lists items and submenus in host display order, retaining application command ids. */
 ULONG MenuFlattenForHost(HMENU handle, MimeTrayItem *items, ULONG *ids, ULONG max)
 {
     ULONG count = 0;

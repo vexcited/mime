@@ -1,11 +1,10 @@
 /*
- * state blocks: a mask of the device's states and slots, captured through
- * the device's getters and applied through its setters, each run of slots
- * the mask enables at once, in the order of the kinds of state.
+ * state blocks capture through the device's getters and apply through its
+ * setters, one call per run of slots the mask enables, kind by kind.
  */
 #include "d3d10_private.h"
 
-/* each kind of state: how many slots, and the byte of the mask their bits start at. */
+/* per state kind: slot count and the mask byte its bits start at. */
 static const struct {
     BYTE count;
     BYTE offset;
@@ -60,7 +59,7 @@ D3D10API HRESULT WINAPI D3D10StateBlockMaskIntersect(D3D10_STATE_BLOCK_MASK *a, 
     return S_OK;
 }
 
-/* what is in one mask and not both. */
+/* bits set in exactly one of the masks. */
 D3D10API HRESULT WINAPI D3D10StateBlockMaskDifference(D3D10_STATE_BLOCK_MASK *a, D3D10_STATE_BLOCK_MASK *b,
                                                       D3D10_STATE_BLOCK_MASK *result)
 {
@@ -87,7 +86,7 @@ D3D10API HRESULT WINAPI D3D10StateBlockMaskDisableAll(D3D10_STATE_BLOCK_MASK *ma
     return S_OK;
 }
 
-/* a range of slots of a kind, empty or past its slots refused. */
+/* empty ranges and ranges past the kind's slots are refused. */
 static HRESULT set_capture(D3D10_STATE_BLOCK_MASK *mask, D3D10_DEVICE_STATE_TYPES type, UINT start, UINT count,
                            BOOL enable)
 {
@@ -115,7 +114,7 @@ D3D10API HRESULT WINAPI D3D10StateBlockMaskDisableCapture(D3D10_STATE_BLOCK_MASK
     return set_capture(mask, type, start, count, FALSE);
 }
 
-/* the slot's bit as it is in its byte, not 1: windows returns it so. */
+/* like windows, returns the bit in place within its byte, not 1. */
 D3D10API BOOL WINAPI D3D10StateBlockMaskGetSetting(D3D10_STATE_BLOCK_MASK *mask, D3D10_DEVICE_STATE_TYPES type,
                                                    UINT entry)
 {
@@ -138,7 +137,7 @@ typedef struct StateBlock {
     ID3D10Device *device;
     D3D10_STATE_BLOCK_MASK mask;
     BOOL captured;
-    /* what was captured: the vertex, geometry and pixel shader stages, then the rest. */
+    /* the vertex, geometry and pixel shader stages, then the other state. */
     ID3D10DeviceChild *shader[3];
     StageState stage[3];
     ID3D10Buffer *vb[D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
@@ -168,7 +167,7 @@ typedef struct StateBlock {
 
 static StateBlock *impl(ID3D10StateBlock *iface) { return CONTAINING_RECORD(iface, StateBlock, iface); }
 
-/* the kind of state a stage's kinds start at, and the stage of a kind. */
+/* the first state kind of each stage, and the stage of each kind. */
 static const D3D10_DEVICE_STATE_TYPES STAGE_KINDS[3] = {D3D10_DST_VS, D3D10_DST_GS, D3D10_DST_PS};
 
 static void release_range(void *objects, UINT start, UINT count)
@@ -181,7 +180,6 @@ static void release_range(void *objects, UINT start, UINT count)
         }
 }
 
-/* every object the block holds, all ranges of all kinds. */
 static void release_all(StateBlock *sb)
 {
     release_range(sb->shader, 0, 3);
@@ -340,7 +338,6 @@ static void apply(StateBlock *sb, D3D10_DEVICE_STATE_TYPES type, UINT start, UIN
     }
 }
 
-/* calls the function for each run of slots the mask enables, kind after kind. */
 static void for_each_run(StateBlock *sb, void (*fn)(StateBlock *, D3D10_DEVICE_STATE_TYPES, UINT, UINT))
 {
     const BYTE *mask = (const BYTE *)&sb->mask;
@@ -361,10 +358,7 @@ static void for_each_run(StateBlock *sb, void (*fn)(StateBlock *, D3D10_DEVICE_S
     }
 }
 
-/*
- * d3d10.dll answers the iid of ID3D10EffectPool and nothing else, neither
- * IUnknown nor ID3D10StateBlock, and so does this.
- */
+/* like windows, only the ID3D10EffectPool iid is answered, not even IUnknown or ID3D10StateBlock. */
 static HRESULT STDMETHODCALLTYPE sb_query(ID3D10StateBlock *iface, REFIID riid, void **out)
 {
     if (!out)
@@ -392,7 +386,7 @@ static ULONG STDMETHODCALLTYPE sb_release(ID3D10StateBlock *iface)
     return refs;
 }
 
-/* what an earlier capture holds is let go of first. */
+/* releases what an earlier capture held first. */
 static HRESULT STDMETHODCALLTYPE sb_capture(ID3D10StateBlock *iface)
 {
     StateBlock *sb = impl(iface);
@@ -436,7 +430,7 @@ static const ID3D10StateBlockVtbl sb_vtbl = {
     sb_query, sb_add_ref, sb_release, sb_capture, sb_apply, sb_release_all_device_objects, sb_get_device,
 };
 
-/* a block of the states the mask enables, holding the device. */
+/* the block holds a reference on the device. */
 D3D10API HRESULT WINAPI D3D10CreateStateBlock(ID3D10Device *device, D3D10_STATE_BLOCK_MASK *mask,
                                               ID3D10StateBlock **block)
 {

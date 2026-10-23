@@ -1,7 +1,7 @@
 /*
- * app containers: the sid of one is derived from its name, the sha-256 of the lower cased utf-16 name,
- * whose first 28 bytes become seven sub authorities after S-1-15-2. a profile is the name, a mapping of the
- * sid to it in the user's registry and a folder of the user's local data.
+ * app containers. the sid is S-1-15-2 followed by seven sub authorities taken from the first 28 bytes of the
+ * sha-256 of the lower cased utf-16 name. a profile is a registry mapping from the sid to the name, plus a
+ * folder in the user's local data.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -60,7 +60,6 @@ USERENV HRESULT WINAPI DeriveAppContainerSidFromAppContainerName(PCWSTR name, PS
 #define DISPLAY_NAME_MAX 512
 #define DESCRIPTION_MAX 2048
 
-/* a letter, a digit, a dot, a dash or an underscore. */
 static BOOL valid_name_character(WCHAR c)
 {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_';
@@ -72,7 +71,7 @@ static BOOL valid_text(PCWSTR text, size_t maximum)
     return length && length <= maximum;
 }
 
-/* S-1-15-2-... as text, the name of the mapping. */
+/* the mapping is named by the sid as text. */
 static void sid_to_string(const BYTE *sid, WCHAR *out)
 {
     int n = _snwprintf(out, 128, L"S-%u-%u", sid[0], sid[7]);
@@ -80,7 +79,7 @@ static void sid_to_string(const BYTE *sid, WCHAR *out)
         n += _snwprintf(out + n, 128 - n, L"-%lu", *(const DWORD *)(sid + 8 + 4 * i));
 }
 
-/* the profile folder of a name: Packages under the user's local data. */
+/* Packages under the user's local data. */
 static BOOL package_folder(PCWSTR moniker, WCHAR *path, DWORD chars)
 {
     WCHAR base[MAX_PATH];
@@ -97,7 +96,7 @@ static HRESULT create_directories(PCWSTR path)
     if (length >= MAX_PATH)
         return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
     wcscpy(partial, path);
-    /* from the first level below the drive on. */
+    /* skip the drive. */
     for (WCHAR *p = partial + 3; *p; p++) {
         if (*p != '\\')
             continue;
@@ -111,10 +110,7 @@ static HRESULT create_directories(PCWSTR path)
     return S_OK;
 }
 
-/*
- * makes the profile: the mapping of the sid to the name and its display name, and the folders. a profile that
- * is there is ERROR_ALREADY_EXISTS, and the caller derives the sid of it.
- */
+/* an existing profile gives ERROR_ALREADY_EXISTS, and the caller derives its sid. */
 USERENV HRESULT WINAPI CreateAppContainerProfile(PCWSTR name, PCWSTR display_name, PCWSTR description,
                                                  PVOID capabilities, DWORD capability_count, PSID *sid)
 {
@@ -170,7 +166,7 @@ USERENV HRESULT WINAPI CreateAppContainerProfile(PCWSTR name, PCWSTR display_nam
     return S_OK;
 }
 
-/* the sid of a text, S-1-15-2 and its sub authorities; the profile mappings only hold app containers. */
+/* only parses S-1-15-2 sids, the mappings hold nothing else. */
 static BOOL string_to_sid(PCWSTR text, BYTE *sid)
 {
     if (text[0] != 'S' || text[1] != '-')
@@ -200,7 +196,6 @@ static BOOL string_to_sid(PCWSTR text, BYTE *sid)
     return TRUE;
 }
 
-/* the profile the sid names: deleted with its mapping and its folders. */
 USERENV HRESULT WINAPI DeleteAppContainerProfile(PCWSTR name)
 {
     if (!valid_text(name, APP_CONTAINER_NAME_MAX))
@@ -216,7 +211,7 @@ USERENV HRESULT WINAPI DeleteAppContainerProfile(PCWSTR name)
     LONG error = RegDeleteKeyW(HKEY_CURRENT_USER, key_path);
     if (error && error != ERROR_FILE_NOT_FOUND)
         return HRESULT_FROM_WIN32(error);
-    /* the folders: the sub folders it made, then the folder. what a program put there stays. */
+    /* only the sub folders it made, then the folder itself. files a program put there stay. */
     WCHAR folder[MAX_PATH], sub[MAX_PATH];
     if (package_folder(name, folder, RTL_NUMBER_OF(folder))) {
         _snwprintf(sub, RTL_NUMBER_OF(sub), L"%ls\\AC", folder);
@@ -228,7 +223,7 @@ USERENV HRESULT WINAPI DeleteAppContainerProfile(PCWSTR name)
     return S_OK;
 }
 
-/* the folder of the profile of the sid in text, from the co task allocator. */
+/* the path comes from the co task allocator. */
 USERENV HRESULT WINAPI GetAppContainerFolderPath(PCWSTR sid_text, PWSTR *path)
 {
     if (!path)
@@ -265,7 +260,6 @@ USERENV HRESULT WINAPI GetAppContainerFolderPath(PCWSTR sid_text, PWSTR *path)
     return S_OK;
 }
 
-/* the storage key of the app container the calling thread runs in, under the user's registry. */
 USERENV HRESULT WINAPI GetAppContainerRegistryLocation(REGSAM access, HKEY *key)
 {
     if (!key)
@@ -276,7 +270,7 @@ USERENV HRESULT WINAPI GetAppContainerRegistryLocation(REGSAM access, HKEY *key)
         return E_FAIL;
     ULONG is_container = 0, returned;
     BYTE user[8 + 4 * 15 + 16], container[8 + 4 * 15 + 16];
-    HRESULT result = 0x8000FFFF; /* E_UNEXPECTED, for a caller that is not in an app container */
+    HRESULT result = 0x8000FFFF; /* E_UNEXPECTED when not in an app container. */
     if (NT_SUCCESS(NtQueryInformationToken(token, 29 /* TokenIsAppContainer */, &is_container, sizeof(is_container), &returned)) &&
         is_container &&
         NT_SUCCESS(NtQueryInformationToken(token, 1 /* TokenUser */, user, sizeof(user), &returned)) &&

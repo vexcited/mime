@@ -1,7 +1,4 @@
-/*
- * the standard automation objects of oleaut32.dll: fonts and pictures, with the dispatch interface they speak
- * through and the picture loading functions.
- */
+/* oleaut32.dll standard fonts and pictures, their dispatch interface and the picture loading functions. */
 #ifndef MIME_WIN32_OLECTL_H
 #define MIME_WIN32_OLECTL_H
 
@@ -66,7 +63,7 @@
 
 /* ------------------------------------------------------------------ IDispatch */
 
-/* the dispatch interface and its structures are those of oleauto.h. */
+/* IDispatch and its structures come from oleauto.h. */
 typedef IDispatch *LPDISPATCH;
 typedef IStream *LPSTREAM;
 
@@ -119,7 +116,7 @@ MIME_DEFINE_GUID(IID_IFontDisp, 0xBEF6E003, 0xA874, 0x101A, 0x8B, 0xBA, 0x00, 0x
 MIME_DEFINE_GUID(CLSID_StdFont, 0x0BE35203, 0x8F91, 0x11CE, 0x9D, 0xE3, 0x00, 0xAA, 0x00, 0x4B, 0xB8, 0x51);
 MIME_DEFINE_GUID(CLSID_OldFont, 0x46763EE0, 0xCAB2, 0x11CE, 0x8C, 0x20, 0x00, 0xAA, 0x00, 0x51, 0xE5, 0xD4);
 
-/* the dispatch identifiers of the font properties. */
+/* font property dispatch ids. */
 #define DISPID_FONT_NAME 0
 #define DISPID_FONT_SIZE 2
 #define DISPID_FONT_BOLD 3
@@ -197,7 +194,7 @@ typedef struct IPicture2 IPicture2;
     HRESULT(STDMETHODCALLTYPE *get_Attributes)(T * This, DWORD * attributes);
 MIME_COM_INTERFACE(IPicture)
 
-/* the same with handles as wide as the process. */
+/* same, with pointer-sized handles. */
 #define IPicture2_METHODS(T)                                                                                           \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *get_Handle)(T * This, HHANDLE * handle);                                                \
@@ -223,7 +220,7 @@ MIME_DEFINE_GUID(IID_IPictureDisp, 0x7BF80981, 0xBF32, 0x101A, 0x8B, 0xBB, 0x00,
 MIME_DEFINE_GUID(IID_IPicture2, 0xF5185DD8, 0x2012, 0x4B0B, 0xAA, 0xD9, 0xF0, 0x52, 0xC6, 0xBD, 0x48, 0x2B);
 MIME_DEFINE_GUID(CLSID_StdPicture, 0x0BE35204, 0x8F91, 0x11CE, 0x9D, 0xE3, 0x00, 0xAA, 0x00, 0x4B, 0xB8, 0x51);
 
-/* the dispatch identifiers of the picture properties and of Render. */
+/* dispatch ids of the picture properties and Render. */
 #define DISPID_PICT_HANDLE 0
 #define DISPID_PICT_HPAL 2
 #define DISPID_PICT_TYPE 3

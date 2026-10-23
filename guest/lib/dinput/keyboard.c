@@ -1,7 +1,7 @@
 /*
  * the system keyboard: its keys as objects of a 256 byte state, its
- * cooperative levels, the keys windows releases for an exclusive
- * acquisition and the key name and scan code properties of dinput8.
+ * cooperative levels, the keys windows releases on exclusive acquisition,
+ * and dinput8's key name and scan code properties.
  */
 #include "dinput_private.h"
 
@@ -96,7 +96,7 @@ static void keyboard_state(DIDEV *dev, BYTE *native)
     memcpy(native, DiKeyState, 256);
 }
 
-/* the scan code of a key: its DIK, numlock and pause swapped as GetKeyNameText swaps them. */
+/* a key's scan code from its DIK, numlock and pause swapped as GetKeyNameText swaps them. */
 static DWORD scancode(DWORD dik)
 {
     if (dik == 0x45)

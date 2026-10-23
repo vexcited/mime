@@ -1,6 +1,6 @@
 /*
- * the drawing calls: outlines with a pen, fills with a brush, of the shapes the flat api knows. each builds a
- * path in world space and hands it to the drawing core.
+ * the pen and brush calls for the shapes of the flat api. each builds a world space path and hands it to the
+ * drawing core.
  */
 #include "gp_private.h"
 
@@ -13,7 +13,7 @@
 
 static GpStatus vec_status(int e) { return gp_path_status(e); }
 
-/* ------------------------------------------------------------------ strokes and fills of a path */
+/* ------------------------------------------------------------------ path strokes and fills */
 
 GpStatus gp_stroke_path(GGraphics *g, const MimeVecPath *path, const GPen *pen)
 {
@@ -43,7 +43,6 @@ GpStatus gp_fill_rect_world(GGraphics *g, const GBrush *brush, float x, float y,
     return st;
 }
 
-/* a temporary path for the shapes. */
 typedef struct Tmp {
     MimeVecPath p;
 } Tmp;

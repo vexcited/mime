@@ -1,7 +1,6 @@
 /*
- * the device: the vulkan device of an adapter with what direct3d 11 needs
- * enabled, its queue and timeline, and ID3D11Device5 with the dxgi device
- * and multithread interfaces it also answers to.
+ * the device: a vulkan device with what direct3d 11 needs enabled, its queue
+ * and timeline, and ID3D11Device5 with its dxgi device and multithread interfaces.
  */
 #include "d3d11_private.h"
 
@@ -70,11 +69,7 @@ void D3dWaitSerial(D3dDevice *device, UINT64 serial)
     }
 }
 
-/*
- * submits the init commands, then cmd if any, waiting and signalling
- * beyond the timeline as asked. returns the serial the submission
- * signals.
- */
+/* submits the init commands, then cmd if any. returns the serial the submission signals. */
 UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmitInfo *wait,
                  const VkSemaphoreSubmitInfo *signal)
 {
@@ -93,12 +88,12 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
     signals[0].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     if (signal)
         signals[1] = *signal;
-    /* pictures decoded since the last submission are what this one may read. */
+    /* this submission may read pictures decoded since the last one. */
     VkSemaphoreSubmitInfo waits[2 + D3D_MAX_FENCE_WAITS];
     UINT wait_count = 0;
     if (wait)
         waits[wait_count++] = *wait;
-    /* fences the program waited for since the last submission, which this one comes after. */
+    /* this submission comes after the fences the program waited for since the last one. */
     for (UINT i = 0; i < device->fence_wait_count; i++)
         waits[wait_count++] = (VkSemaphoreSubmitInfo){VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr,
                                                       device->fence_waits[i].semaphore, device->fence_waits[i].value,
@@ -127,7 +122,7 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
     return serial;
 }
 
-/* the next submission waits for the fence to reach the value; a full list is submitted first. */
+/* the next submission waits for the fence to reach the value. a full wait list is submitted first. */
 void D3dQueueWait(D3dDevice *device, VkSemaphore semaphore, UINT64 value)
 {
     for (;;) {
@@ -142,7 +137,7 @@ void D3dQueueWait(D3dDevice *device, VkSemaphore semaphore, UINT64 value)
     }
 }
 
-/* the commands of the device's own work, recorded under the init lock until D3dInitDone. */
+/* records the device's own work under the init lock, held until D3dInitDone. */
 VkCommandBuffer D3dInitCommands(D3dDevice *device)
 {
     D3dVk *vk = &device->vk;
@@ -167,10 +162,9 @@ VkCommandBuffer D3dInitCommands(D3dDevice *device)
     return device->init_cmd.buffer;
 }
 
-/* leaves the init lock taken by D3dInitCommands. */
 void D3dInitDone(D3dDevice *device) { LeaveCriticalSection(&device->init_lock); }
 
-/* ends the init commands for submission, leaving the lock held until D3dInitDone; NULL with nothing recorded. */
+/* the lock stays held until D3dInitDone. NULL when nothing was recorded. */
 VkCommandBuffer D3dTakeInitCommands(D3dDevice *device)
 {
     EnterCriticalSection(&device->init_lock);
@@ -185,7 +179,7 @@ VkCommandBuffer D3dTakeInitCommands(D3dDevice *device)
     return device->init_cmd.buffer;
 }
 
-/* a full memory barrier: what came before is written and visible to what comes after. */
+/* a full memory barrier: earlier writes are visible to everything after. */
 void D3dBarrier(VkCommandBuffer cmd, D3dDevice *device)
 {
     VkMemoryBarrier2 barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
@@ -202,8 +196,8 @@ void D3dBarrier(VkCommandBuffer cmd, D3dDevice *device)
 /* ------------------------------------------------------------------ creation */
 
 /*
- * the host serves one vulkan device to a process, so the direct3d 11 and 12 devices of a process share it with their
- * queues, which they take turns on: the first to ask makes it, see vkprofile.h. It goes with the last of them.
+ * the host serves one vulkan device per process, so a process's direct3d 11 and 12 devices share it and take turns
+ * on its queues. the first to ask creates it, see vkprofile.h, and the last one releases it.
  */
 static HRESULT acquire_vulkan_device(D3dDevice *device, IDXGIAdapter *adapter, const MIME_DXGI_VULKAN *v)
 {
@@ -229,7 +223,7 @@ static HRESULT acquire_vulkan_device(D3dDevice *device, IDXGIAdapter *adapter, c
         (PFN_vkMimeShareExportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareExportSemaphore");
     vk->vkMimeShareImportSemaphore =
         (PFN_vkMimeShareImportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareImportSemaphore");
-    /* direct3d 11 submits on the first queue of the device, whose lock the other devices of the process take. */
+    /* direct3d 11 submits on the first queue, whose lock the process's other devices also take. */
     device->queue = (VkQueue)shared.vk->Queues[0];
     device->queue_lock = &shared.vk->QueueLocks[0];
     device->queue_family = shared.vk->QueueFamily;
@@ -265,7 +259,6 @@ static HRESULT acquire_vulkan_device(D3dDevice *device, IDXGIAdapter *adapter, c
     return S_OK;
 }
 
-/* drops a device's hold, the vulkan device going with the last. */
 static void release_vulkan_device(D3dDevice *device) { MimeVkRelease(&device->shared); }
 
 static HRESULT init_device(D3dDevice *device, IDXGIAdapter *adapter)
@@ -503,7 +496,6 @@ static HRESULT STDMETHODCALLTYPE device_create_shader_resource_view1(ID3D11Devic
     return create_view(iface, D3D_VIEW_SRV, resource, desc, (void **)view);
 }
 
-/* a view description as its second version has it. */
 static void srv_desc1(const D3D11_SHADER_RESOURCE_VIEW_DESC *desc, D3D11_SHADER_RESOURCE_VIEW_DESC1 *desc1)
 {
     memset(desc1, 0, sizeof(*desc1));
@@ -872,7 +864,7 @@ static HRESULT STDMETHODCALLTYPE device_create_deferred_context(ID3D11Device5 *i
     return hr;
 }
 
-/* OpenSharedResource takes the legacy handle GetSharedHandle gives, OpenSharedResource1 the nt handle. */
+/* OpenSharedResource takes the legacy handle from GetSharedHandle, OpenSharedResource1 takes an NT handle. */
 static HRESULT STDMETHODCALLTYPE device_open_shared_resource(ID3D11Device5 *iface, HANDLE handle, REFIID riid,
                                                              void **resource)
 {
@@ -887,7 +879,7 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_resource1(ID3D11Device5 *ifa
     return D3dShareOpen(impl(iface), handle, TRUE, riid, resource);
 }
 
-/* the formats of video depend on what the host's gpu decodes, which is asked once. */
+/* video format support depends on what the host gpu decodes, queried once. */
 static UINT D3dFormatSupportProbed(D3dDevice *device, DXGI_FORMAT format, UINT *support2)
 {
     if (D3dGetFormat(format)->flags & D3D_FORMAT_PLANAR)
@@ -1457,7 +1449,6 @@ static HRESULT STDMETHODCALLTYPE dxgi_reclaim_resources(IDXGIDevice4 *iface, UIN
     return S_OK;
 }
 
-/* signals the event once the gpu ran everything submitted so far. */
 static HRESULT STDMETHODCALLTYPE dxgi_enqueue_set_event(IDXGIDevice4 *iface, HANDLE event)
 {
     D3dDevice *device = dxgi_impl(iface);
@@ -1635,7 +1626,7 @@ static const ID3D11MultithreadVtbl mt_vtbl = {
 
 /* ------------------------------------------------------------------ creation */
 
-/* the first level asked that the device reaches, 11_1 at most. */
+/* the first requested level the device supports, at most 11_1. */
 static D3D_FEATURE_LEVEL choose_level(const D3D_FEATURE_LEVEL *levels, UINT count)
 {
     static const D3D_FEATURE_LEVEL defaults[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1,

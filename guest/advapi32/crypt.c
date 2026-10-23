@@ -1,10 +1,9 @@
 /*
- * the cryptographic service provider functions of CryptoAPI.
+ * CryptoAPI cryptographic service provider functions.
  *
- * windows routes these through cryptsp.dll to provider dlls such as
- * rsaenh.dll. mime answers for the microsoft providers itself: contexts,
- * random numbers and imported key blobs. key containers are not stored, so
- * opening one always finds it, empty.
+ * windows routes these through cryptsp.dll to provider dlls such as rsaenh.dll. mime implements the microsoft
+ * providers itself: contexts, random numbers and imported key blobs. key containers are not stored, so opening one
+ * always finds it empty.
  */
 #include "advapi32_private.h"
 #include <crypto/crypto.h>
@@ -58,8 +57,8 @@ typedef struct PROVIDER {
     LONG References;
     DWORD Type;
     DWORD Flags;
-    ULONG Name;      /* index in g_providers */
-    ULONG Algorithm; /* the next PP_ENUMALGS entry */
+    ULONG Name;      /* index in g_providers. */
+    ULONG Algorithm; /* the next PP_ENUMALGS entry. */
     CHAR Container[MAX_PATH];
 } PROVIDER;
 
@@ -68,7 +67,7 @@ typedef struct KEY {
     PROVIDER *Provider;
     DWORD Algorithm;
     DWORD Size;
-    /* the state of a symmetric key between the calls that encrypt with it: the mode, the chaining value, the stream. */
+    /* symmetric key state kept between encrypt calls: mode, chaining value, stream. */
     DWORD Mode;
     BOOL Started;
     BYTE Iv[16];
@@ -108,7 +107,7 @@ static PROVIDER *provider(HCRYPTPROV handle)
 static ULONG default_provider(DWORD type)
 {
     if (type == PROV_RSA_FULL)
-        return 2; /* the strong provider */
+        return 2; /* the strong provider. */
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_providers); i++)
         if (g_providers[i].Type == type)
             return i;
@@ -304,7 +303,7 @@ typedef ULONG_PTR HCRYPTHASH;
 
 #define HASH_MAGIC 0x48534148 /* "HASH" */
 
-/* the hashes run as the data comes, on the shared crypto library. */
+/* hashes run incrementally on the shared crypto library. */
 typedef struct HASH {
     DWORD Magic;
     PROVIDER *Provider;
@@ -356,7 +355,7 @@ ADVAPI BOOL WINAPI CryptCreateHash(HCRYPTPROV handle, DWORD algorithm, HCRYPTKEY
         AdvSetError(NTE_BAD_FLAGS);
         return FALSE;
     }
-    /* keyed hashes need a cipher implementation, which the provider lacks. */
+    /* keyed hashes need a cipher, which the provider lacks. */
     const MimeHashAlg *alg = hash_algorithm(algorithm);
     if (!alg || key) {
         AdvSetError(key ? NTE_BAD_KEY : NTE_BAD_ALGID);
@@ -507,7 +506,7 @@ typedef struct PROV_ENUMALGS_EX {
     CHAR szLongName[40];
 } PROV_ENUMALGS_EX;
 
-/* the algorithms the provider implements: hashes, since it has no cipher. */
+/* the algorithms the provider implements: hashes only, as it has no cipher. */
 static const struct {
     DWORD Id;
     DWORD Bits;
@@ -656,8 +655,8 @@ static KEY *key_object(HCRYPTKEY handle)
 }
 
 /*
- * a key goes out as the blob it came in, or as its public part: an rsa
- * private blob starts with the public key's header and modulus.
+ * exports the key as the blob it came in, or its public part: an rsa private blob starts with the public header and
+ * modulus.
  */
 ADVAPI BOOL WINAPI CryptExportKey(HCRYPTKEY handle, HCRYPTKEY wrap, DWORD type, DWORD flags, BYTE *data, DWORD *length)
 {
@@ -712,7 +711,7 @@ ADVAPI BOOL WINAPI CryptExportKey(HCRYPTKEY handle, HCRYPTKEY wrap, DWORD type, 
 #define CRYPT_MODE_ECB 2
 #define CRYPT_NO_SALT 0x10
 
-/* the key bytes of a plaintext symmetric key, or null when the key is not one. */
+/* a plaintext symmetric key's bytes, or NULL for other keys. */
 static const BYTE *symmetric_bytes(const KEY *k, DWORD *size)
 {
     const BLOBHEADER *h = (const BLOBHEADER *)k->Blob;
@@ -722,7 +721,7 @@ static const BYTE *symmetric_bytes(const KEY *k, DWORD *size)
     return *size <= k->Size - sizeof(*h) - 4 ? k->Blob + sizeof(*h) + 4 : nullptr;
 }
 
-/* the cipher and the context of a block cipher key on the stack, or the size of the block (0 for a stream cipher). */
+/* a block cipher key's context, held on the stack. block_cipher also gives the cipher and its block size. */
 typedef union {
     MimeAes Aes;
     MimeDes Des;
@@ -763,10 +762,9 @@ static BOOL block_cipher(const KEY *k, const MimeCipher **cipher, BLOCK_KEY *con
 }
 
 /*
- * encrypts or decrypts in place, as the symmetric keys of the providers do: a block cipher in the mode of the key (chained
- * blocks from a zero value by default) with the padding of the last block, a stream cipher byte by byte with its state kept
- * for the next call. A final call that gives less than a block pads it, and a decryption removes the padding, so the length
- * of the data changes by up to a block.
+ * encrypts or decrypts in place like the provider symmetric keys: a block cipher in the key's mode, chained from a zero
+ * IV by default, with last block padding, or a stream cipher whose state carries to the next call. a final call pads a
+ * short block and decryption strips the padding, so the length changes by up to a block.
  */
 static BOOL symmetric(HCRYPTKEY handle, BOOL final, BYTE *data, DWORD *length, DWORD capacity, BOOL encrypt)
 {
@@ -881,7 +879,7 @@ ADVAPI BOOL WINAPI CryptEncrypt(HCRYPTKEY handle, HCRYPTHASH hash, BOOL final, D
     KEY *k = key_object(handle);
     if (!k)
         return FALSE;
-    /* a query for the size of the result: no data, and the size of what would come out. */
+    /* a size query: no data, report the output size. */
     if (!data) {
         DWORD block = 0;
         if (k->Algorithm != CALG_RC4) {
@@ -896,9 +894,9 @@ ADVAPI BOOL WINAPI CryptEncrypt(HCRYPTKEY handle, HCRYPTHASH hash, BOOL final, D
 }
 
 /*
- * the key a hash value makes: the value itself when it is long enough and the stretched one when it is not (see
- * mime_capi_expand), the length being the one the caller asks for in the upper word of the flags or the one of the
- * algorithm, with the parity of the des keys set. The hash is finished by it.
+ * derives a key from a hash value: the value itself when long enough, else the value stretched by mime_capi_expand.
+ * the length comes from the upper word of the flags or from the algorithm, and des keys get their parity set. this
+ * finishes the hash.
  */
 ADVAPI BOOL WINAPI CryptDeriveKey(HCRYPTPROV handle, DWORD algorithm, HCRYPTHASH base, DWORD flags, HCRYPTKEY *result)
 {
@@ -1042,7 +1040,7 @@ bool mime_crypto_random(void *out, size_t size)
 #define NTE_BAD_SIGNATURE ((DWORD)0x80090006L)
 #define CRYPT_NOHASHOID 0x00000001
 
-/* the public part of an RSA key blob: the exponent, then the modulus as little endian bytes. */
+/* the public part of an RSA key blob: exponent, then modulus as little endian bytes. */
 static MimeRsa *rsa_from_blob(const KEY *k)
 {
     const BLOBHEADER *h = (const BLOBHEADER *)k->Blob;
@@ -1071,10 +1069,10 @@ static MimeRsa *rsa_from_blob(const KEY *k)
 }
 
 /*
- * checks a signature made over the value of a hash with an RSA key, as PKCS#1 version 1.5 with the object
- * identifier of the hash unless CRYPT_NOHASHOID is given. The signature is little endian. Reading the value ends
- * the hash. A signature of another length than the modulus, or one that does not verify, is NTE_BAD_SIGNATURE.
- * Guess: CRYPT_TYPE2_FORMAT and CRYPT_X931_FORMAT are not offered and give NTE_BAD_FLAGS.
+ * verifies a PKCS#1 v1.5 RSA signature over the hash value, with the hash's object identifier unless CRYPT_NOHASHOID
+ * is given. the signature is little endian and reading the value finishes the hash. a signature whose length is not
+ * the modulus length, or that does not verify, gives NTE_BAD_SIGNATURE. CRYPT_TYPE2_FORMAT and CRYPT_X931_FORMAT
+ * are not supported and give NTE_BAD_FLAGS, a guess at what windows does.
  */
 ADVAPI BOOL WINAPI CryptVerifySignatureW(HCRYPTHASH handle, const BYTE *signature, DWORD length, HCRYPTKEY public_key,
                                          LPCWSTR description, DWORD flags)

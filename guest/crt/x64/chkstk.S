@@ -8,7 +8,7 @@
     .p2align 4
 __chkstk:
     movq    %rax, %r10
-    leaq    8(%rsp), %r11       /* the caller's stack pointer */
+    leaq    8(%rsp), %r11       /* the caller's stack pointer. */
 1:
     cmpq    $4096, %r10
     jb      2f

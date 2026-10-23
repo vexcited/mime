@@ -1,26 +1,26 @@
 /*
- * the translator from x64 blocks to arm64 code.
+ * translates x64 blocks to arm64 code.
  *
- * a translated block is a function taking the cpu, with the x64 state kept in
- * the cpu structure: x19 holds the cpu and every instruction loads and stores
- * the registers it uses. instructions the translator does not cover call the
+ * a translated block is a function taking the cpu. the x64 state stays in the
+ * cpu structure: x19 holds the cpu and each instruction loads and stores the
+ * registers it uses. instructions the translator does not cover call the
  * interpreter for that one instruction, so any block can be translated. the
  * function returns the index of the first instruction left to interpret, with
- * rip at its address: the count of the block when it ran to its end, or the
- * index of a final instruction that may run nested emulation (a system call),
- * which must not return into code a nested emulation may free.
+ * rip at its address: the block's count when it ran to the end, or the index
+ * of a final instruction that may run nested emulation, such as a system call.
+ * the block must not return into code that nested emulation may free.
  *
  * flags stay lazy as in the interpreter: an arithmetic instruction records its
- * operands when a later instruction may read them. a liveness pass over the
- * block drops the records nothing reads, and a conditional branch right after
- * a compare tests the arm64 flags of the compare itself.
+ * operands when a later instruction may read them. a liveness pass drops the
+ * records nothing reads, and a conditional branch right after a compare tests
+ * the arm64 flags of the compare itself.
  */
 #include "internal.h"
 #include "jit.h"
 
 #include <stddef.h>
 
-/* registers: x19 the cpu, x9 addresses, x10 to x15, x5 and x6 values; x14 is free only between uses of ea. */
+/* x19 holds the cpu, x9 addresses, x10 to x15, x5 and x6 values. x14 is only free between uses of ea. */
 enum { CPU = 19, ADDR = 9, T0 = 10, T1 = 11, T2 = 12, T3 = 13, T4 = 14, T5 = 15, S0 = 5, S1 = 6, XZR = 31 };
 enum { EQ = 0, NE = 1, HS = 2, LO = 3, MI = 4, PL = 5, VS = 6, VC = 7, HI = 8, LS = 9, GE = 10, LT = 11, GT = 12, LE = 13 };
 
@@ -78,7 +78,7 @@ static void str(Emit *e, int size, int rt, int rn, uint32_t off)
 
 static uint32_t sf(int size) { return size == 8 ? 0x80000000u : 0; }
 
-/* the register form of an arithmetic or logic instruction; op is the 32 bit encoding. */
+/* the register form of an arithmetic or logic instruction. op is the 32 bit encoding. */
 static void rrr(Emit *e, uint32_t op, int size, int rd, int rn, int rm)
 {
     put(e, op | sf(size) | (uint32_t)rm << 16 | (uint32_t)rn << 5 | (uint32_t)rd);
@@ -189,10 +189,10 @@ typedef struct Ctx {
     X86Cpu *cpu;
     uint64_t addr, next;
     uint32_t index, count;
-    int flags_live; /* a later instruction may read the flags this one sets */
-    int nzcv_alu;   /* the instruction kind whose arm64 flags are current, -1 none */
-    int keep;       /* set by an emitter that left the arm64 and x86 flags alone */
-    int nzcv_set;   /* set by an emitter that left arm64 flags describing its x86 ones */
+    int flags_live; /* a later instruction may read the flags this one sets. */
+    int nzcv_alu;   /* the instruction kind whose arm64 flags are current, -1 for none. */
+    int keep;       /* set by an emitter that left the arm64 and x86 flags alone. */
+    int nzcv_set;   /* set by an emitter that left arm64 flags describing its x86 ones. */
     const X86Insn *insn;
 } Ctx;
 
@@ -206,7 +206,7 @@ static void set_nzcv(Ctx *x, int kind)
 
 /* ------------------------------------------------------------ operands */
 
-/* the effective address of the memory operand into ADDR. */
+/* computes the memory operand's address into ADDR. */
 static void ea(Ctx *x, const X86Insn *i)
 {
     Emit *e = x->e;
@@ -248,7 +248,7 @@ static void load_reg(Emit *e, int size, int rt, int reg, int rex)
     }
 }
 
-/* writes a register as x86 does: 32 bit results zero extend, which rt already is, narrower ones merge. */
+/* like x86: 32 bit results zero extend, as rt already is, narrower ones merge. */
 static void store_reg(Emit *e, int size, int rt, int reg, int rex)
 {
     if (high_byte(size, reg, rex)) {
@@ -260,7 +260,7 @@ static void store_reg(Emit *e, int size, int rt, int reg, int rex)
     }
 }
 
-/* loads the modrm operand; the memory form leaves its address in ADDR. */
+/* the memory form leaves the address in ADDR. */
 static void load_rm(Ctx *x, const X86Insn *i, int size, int rt)
 {
     if (i->mod == 3) {
@@ -271,7 +271,7 @@ static void load_rm(Ctx *x, const X86Insn *i, int size, int rt)
     }
 }
 
-/* stores to the modrm operand; with reuse, ADDR still holds the address of a previous load_rm. */
+/* with reuse, ADDR still holds the address from a previous load_rm. */
 static void store_rm(Ctx *x, const X86Insn *i, int size, int rt, int reuse)
 {
     if (i->mod == 3) {
@@ -318,7 +318,7 @@ static int alu_op(const X86Insn *i)
     return kind == ALU_ADC || kind == ALU_SBB ? -1 : kind;
 }
 
-/* the operand size of an alu instruction: the even one byte opcodes work on bytes. */
+/* the even one byte opcodes work on bytes. */
 static int alu_size(const X86Insn *i)
 {
     uint8_t op = i->opcode;
@@ -361,7 +361,7 @@ static int ignores_flags(const X86Insn *i)
     if (i->map == 1)
         return op == 0x1F || op == 0xB6 || op == 0xB7 || op == 0xBE || op == 0xBF || (op >= 0x10 && op <= 0x17) ||
                (op >= 0x28 && op <= 0x2D) || (op >= 0x50 && op <= 0x7F) || op == 0xC2 || op == 0xC6 || op >= 0xD0;
-    return 1; /* the 0f 38 and 0f 3a maps */
+    return 1; /* the 0f 38 and 0f 3a maps. */
 }
 
 /* reads flags as a condition: jcc, setcc, cmovcc. */
@@ -370,7 +370,7 @@ static int reads_condition(const X86Insn *i)
     return is_jcc(i) || (i->map == 1 && ((i->opcode >= 0x90 && i->opcode <= 0x9F) || (i->opcode >= 0x40 && i->opcode <= 0x4F)));
 }
 
-/* the instructions after which the block must return before running them, see the top. */
+/* instructions the block must return before running, see the top of the file. */
 static int nests(const X86Insn *i)
 {
     return (i->map == 1 && (i->opcode == 0x05 || i->opcode == 0x34)) || (i->map == 0 && i->opcode == 0xCD);
@@ -450,7 +450,7 @@ static int emit_alu(Ctx *x, const X86Insn *i, int kind)
     uint8_t op = i->opcode;
     int size = alu_size(i);
     uint64_t mask = size_mask(size);
-    int dst; /* 1 the modrm operand, 0 the reg one, -1 the accumulator */
+    int dst; /* 1 for the modrm operand, 0 for the reg one, -1 for the accumulator. */
     if (op >= 0x80) {
         if (op == 0x84 || op == 0x85) {
             load_rm(x, i, size, T0);
@@ -488,7 +488,7 @@ static int emit_alu(Ctx *x, const X86Insn *i, int kind)
     return 1;
 }
 
-/* the arm64 condition for x86 condition cc after an instruction kind; -1 none, -2 never, -3 always. */
+/* the arm64 condition for x86 condition cc after an instruction kind. -1 none, -2 never, -3 always. */
 static int arm_cond(int kind, int cc)
 {
     static const int sub[16] = {VS, VC, LO, HS, EQ, NE, LS, HI, MI, PL, -1, -1, LT, GE, LE, GT};
@@ -669,7 +669,7 @@ enum { V0 = 0, V1 = 1, V2 = 2, V3 = 3 };
 
 static uint32_t OFF_X(int reg) { return (uint32_t)(offsetof(X86Cpu, xmm) + (uint32_t)reg * 16); }
 
-/* vector loads and stores of 4, 8 or 16 bytes; narrower loads clear the rest of the register. */
+/* vector loads and stores of 4, 8 or 16 bytes. narrower loads clear the rest of the register. */
 static void vldr(Emit *e, int bytes, int vt, int rn, uint32_t off)
 {
     uint32_t op = bytes == 16 ? 0x3DC00000u : bytes == 8 ? 0xFD400000u : 0xBD400000u;
@@ -703,7 +703,7 @@ static void ins(Emit *e, int bytes, int vd, int dst, int vn, int src)
 
 static void vmov(Emit *e, int vd, int vn) { v3(e, V_ORR, vd, vn, vn); }
 
-/* the xmm or memory source operand into vt, bytes wide. */
+/* loads the xmm or memory source operand into vt. */
 static void load_xsrc(Ctx *x, const X86Insn *i, int bytes, int vt)
 {
     if (i->mod == 3) {
@@ -714,7 +714,7 @@ static void load_xsrc(Ctx *x, const X86Insn *i, int bytes, int vt)
     }
 }
 
-/* a nan result goes through the interpreter, which applies the x86 nan rules; cond holds when there is none. */
+/* a nan result goes through the interpreter, which applies the x86 nan rules. cond holds when there is none. */
 static uint32_t *nan_guard(Ctx *x, int cond)
 {
     uint32_t *ok = b_cond(x->e, cond);
@@ -755,7 +755,7 @@ static int emit_sse(Ctx *x, const X86Insn *i)
     int lane = pfx == 0xF2 || pfx == 0x66 ? 8 : 4; /* element size */
     uint32_t sz = dbl ? 1u << 22 : 0;
     uint32_t *ok = nullptr, *done = nullptr;
-    x->keep = 1; /* every case but the arithmetic, conversions to integers and compares */
+    x->keep = 1; /* every case but the arithmetic, conversions to integers and compares. */
     switch (op) {
     case 0x10: /* movups, movupd, movss, movsd */
         if (scalar && i->mod == 3) {
@@ -898,7 +898,7 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         patch26(e, done);
         return 1;
     }
-    case 0x5D: /* min: a < b ? a : b, the second operand for nans and equal values */
+    case 0x5D: /* min: a < b ? a : b, the second operand for nans and equal values. */
     case 0x5F: /* max: a > b ? a : b */
         vldr(e, 16, V0, CPU, OFF_X(i->reg));
         load_xsrc(x, i, scalar ? lane : 16, V1);
@@ -972,7 +972,7 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         vstr(e, 16, V0, CPU, OFF_X(i->reg));
         return 1;
     }
-    case 0x2C: { /* cvttss2si, cvttsd2si: nans and out of range values take the interpreter's indefinite value */
+    case 0x2C: { /* cvttss2si, cvttsd2si: nans and out of range values take the interpreter's indefinite value. */
         if (!scalar)
             return 0;
         x->keep = 0;
@@ -981,7 +981,7 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         put(e, (wide ? 0x80000000u : 0) | (dbl ? 0x1E780000u : 0x1E380000u) | (uint32_t)V1 << 5 | T0);
         put(e, (dbl ? 0x1E602000u : 0x1E202000u) | (uint32_t)V1 << 16 | (uint32_t)V1 << 5); /* fcmp v1, v1 */
         uint32_t *nan = b_cond(e, VS);
-        /* saturated: x - min is 0 or -1 (all ones) for the two limits. */
+        /* saturated: x - min is 0 or -1, all ones, for the two limits. */
         mov_imm(e, T1, wide ? 0x8000000000000000ull : 0x80000000ull);
         rrr(e, OP_EOR, wide ? 8 : 4, T1, T0, T1);
         put(e, (wide ? 0xB1000400u : 0x31000400u) | (uint32_t)T1 << 5 | XZR); /* cmn t1, #1 */
@@ -1313,7 +1313,7 @@ static int emit_insn(Ctx *x, const X86Insn *i)
     return 1;
 }
 
-/* control transfers ending the block natively; returns 0 to leave it to the interpreter. */
+/* control transfers ending the block natively. returns 0 to leave it to the interpreter. */
 static int emit_branch(Ctx *x, const X86Insn *i)
 {
     Emit *e = x->e;
@@ -1383,7 +1383,7 @@ static int flags_dead_after(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uin
     if (!x86_ends_block(last))
         return flags_dead_at(cpu, next, lo, hi);
     if (is_jcc(last))
-        return 0; /* the branch itself reads them */
+        return 0; /* the branch itself reads them. */
     if (last->map == 0 && (last->opcode == 0xE9 || last->opcode == 0xEB))
         return flags_dead_at(cpu, next + last->imm, lo, hi);
     if (last->map == 0 && last->opcode == 0xE8)

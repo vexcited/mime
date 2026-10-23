@@ -1,8 +1,6 @@
 /*
- * menus: the menu api over the menu objects of win32k, and popup menu
- * tracking. a popup is a #32768 window owned by the tracking thread, drawn
- * and driven by a modal loop in user mode. submenus are listed but not
- * opened yet.
+ * the menu API over win32k menu objects, and popup tracking. a popup is a #32768 window owned by the tracking thread,
+ * drawn and driven by a user mode modal loop. submenus are listed but not opened yet.
  */
 #include "user32_private.h"
 
@@ -111,7 +109,7 @@ WINUSERAPI BOOL WINAPI GetMenuItemInfoW(HMENU menu, UINT item, BOOL by_position,
     return NtUserMimeGetMenuItemInfo(menu, item, by_position, info);
 }
 
-/* ansi item information converts the string both ways; the structures share their layout. */
+/* ansi item info converts the string both ways, the structures share their layout. */
 static BOOL item_info_a(HMENU menu, UINT item, BOOL by_position, const MENUITEMINFOA *a, BOOL insert)
 {
     if (!a || !valid_info_size(a->cbSize)) {
@@ -248,7 +246,7 @@ WINUSERAPI int WINAPI GetMenuStringA(HMENU menu, UINT id, LPSTR buffer, int max,
 
 /* ------------------------------------------------------------------ legacy item calls */
 
-/* the MF_* form of an item as a MENUITEMINFOW that replaces every field. */
+/* converts MF_* flags to a MENUITEMINFOW that replaces every field. */
 static void flags_to_info(UINT flags, UINT_PTR id, LPCWSTR item, MENUITEMINFOW *mii)
 {
     memset(mii, 0, sizeof(*mii));
@@ -419,10 +417,7 @@ WINUSERAPI LONG WINAPI GetMenuCheckMarkDimensions(void)
     return MAKELONG(GetSystemMetrics(SM_CXMENUCHECK), GetSystemMetrics(SM_CYMENUCHECK));
 }
 
-/*
- * the frame draws no menu bar, so the bar of a window with a menu is the
- * empty band at the top of its client area.
- */
+/* the frame draws no menu bar, so the bar is the empty band at the top of the client area. */
 WINUSERAPI BOOL WINAPI GetMenuBarInfo(HWND hwnd, LONG object, LONG item, PMENUBARINFO info)
 {
     if (!info || info->cbSize != sizeof(MENUBARINFO) || item < 0) {
@@ -838,7 +833,6 @@ static void move_hot(POPUP_STATE *ps, int step)
     }
 }
 
-/* the mnemonic character after & in an item label. */
 static WCHAR mnemonic(const WCHAR *text)
 {
     for (const WCHAR *p = text; *p && *p != L'\t'; p++)
@@ -974,8 +968,8 @@ static void place_popup(POPUP_STATE *ps, int *x, int *y, const RECT *exclude)
 }
 
 /*
- * a menu a program pops up for its notification icon, when the desktop asked the icon for it, is the desktop's to show:
- * win32k hands it over, and the choice comes back as the result. the thread keeps handling its messages meanwhile.
+ * when the desktop asked a notification icon for its menu, the desktop shows the menu the program pops up: win32k
+ * hands it over and returns the choice. the thread keeps handling its messages meanwhile.
  */
 static BOOL host_menu(HMENU menu, HWND hwnd, POPUP_STATE *ps)
 {

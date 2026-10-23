@@ -1,6 +1,6 @@
 /*
- * shell api: launching, command lines, dropped files, file information,
- * file operations, the notification area and app bars of shell32.dll.
+ * shell32.dll api: launching, command lines, dropped files, file information,
+ * file operations, the notification area and app bars.
  */
 #ifndef MIME_WIN32_SHELLAPI_H
 #define MIME_WIN32_SHELLAPI_H
@@ -12,7 +12,7 @@
 #define SHSTDAPI DECLSPEC_IMPORT
 #endif
 
-/* the structures of this header are packed on 32 bit windows. */
+/* these structures are packed on 32-bit windows. */
 #ifdef __i386__
 #pragma pack(push, 1)
 #endif
@@ -333,7 +333,7 @@ typedef struct _SHFILEOPSTRUCTW {
 #define NOTIFYICON_VERSION 3
 #define NOTIFYICON_VERSION_4 4
 
-/* what a notification icon's callback message carries as its event, in version 3 and later. */
+/* events in a notification icon's callback message, version 3 and later. */
 #define NIN_SELECT (WM_USER + 0)
 #define NINF_KEY 0x1
 #define NIN_KEYSELECT (NIN_SELECT | NINF_KEY)

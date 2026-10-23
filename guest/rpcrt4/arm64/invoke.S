@@ -1,7 +1,7 @@
 /*
- * calls a function with arguments held in slots: the first eight go to the integer registers and to the floating point
- * ones, the rest on the stack. x0 is the function, x1 the slots, x2 their number, x4 where to keep d0, which holds the result
- * of a function that returns a float, or null; the result is in x0.
+ * calls a function with its arguments in slots: the first eight go to both the integer and the floating point registers,
+ * the rest on the stack. x0 is the function, x1 the slots, x2 their count, x4 where to store d0 for a float result, or
+ * null. the result is in x0.
  */
     .text
     .globl  NdrpInvokeEx

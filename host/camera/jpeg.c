@@ -1,8 +1,7 @@
 /*
- * baseline jpeg for the camera service. the decoder reads sequential huffman jpegs of 8 bit samples with one or three
- * components and any sampling factors up to 2x2, restart intervals and the standard tables for streams that leave
- * them out, as many webcams do. the encoder makes the frames of the test camera. written from the format's
- * description (itu t.81), not from any implementation.
+ * baseline and extended sequential Huffman JPEG with 8-bit samples, one or three components, sampling up to 2x2 and
+ * restart intervals. missing tables use the standard defaults common to webcams. the encoder serves the synthetic
+ * camera. implemented from ITU T.81, not another implementation.
  */
 #include "jpeg.h"
 
@@ -16,7 +15,7 @@ static const uint8_t zigzag[64] = {
     30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 };
 
-/* the tables of annex k, which a stream without its own uses and the encoder always does. */
+/* Annex K tables, used for missing stream tables and by the encoder. */
 static const uint8_t std_dc_luma_bits[17] = {0, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0};
 static const uint8_t std_dc_chroma_bits[17] = {0, 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0};
 static const uint8_t std_dc_vals[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
@@ -72,7 +71,7 @@ static void init_basis(void)
     __atomic_store_n(&g_basis_ready, true, __ATOMIC_RELEASE);
 }
 
-/* the inverse transform of eight values, the even and odd terms apart since the basis is symmetric. */
+/* inverse transform separates even and odd terms using basis symmetry. */
 static inline void idct8(const float *in, int in_step, float *out, int out_step)
 {
     float even[4], odd[4];
@@ -120,7 +119,7 @@ typedef struct Huff {
     bool defined;
     int32_t maxcode[17];
     int32_t offset[17];
-    uint16_t fast[512]; /* length << 8 | symbol for codes of up to nine bits, 0 for the rest */
+    uint16_t fast[512]; /* length << 8 | symbol for codes of up to nine bits, 0 for the rest. */
 } Huff;
 
 static void huff_build(Huff *h)
@@ -153,9 +152,9 @@ static void huff_set(Huff *h, const uint8_t bits[17], const uint8_t *vals, int c
 typedef struct Bits {
     const uint8_t *p, *end;
     uint64_t buf;
-    int count;  /* bits in buf, right aligned */
-    int marker; /* the marker the data ran into, which is not consumed */
-    int pad;    /* how many of the bits that were fed in are zeros past the end of the data */
+    int count;  /* bits in buf, right aligned. */
+    int marker; /* the marker the data ran into, which is not consumed. */
+    int pad;    /* zero bits supplied after the input ended. */
 } Bits;
 
 static void bits_fill(Bits *b)
@@ -171,7 +170,7 @@ static void bits_fill(Bits *b)
                     b->p += 2;
                     padding = false;
                 } else if (next == 0xFF) {
-                    b->p++; /* a fill byte before a marker */
+                    b->p++; /* a fill byte before a marker. */
                     continue;
                 } else {
                     b->marker = (int)next;
@@ -210,7 +209,7 @@ static inline int huff_decode(Bits *b, const Huff *h)
     return -1;
 }
 
-/* n bits as a signed value: the top half of the range is positive, the rest negative, as the format codes it. */
+/* decodes n-bit signed values: the upper half is positive, the lower half negative. */
 static inline int receive_extend(Bits *b, int n)
 {
     if (!n)
@@ -234,7 +233,7 @@ typedef struct Component {
 
 typedef struct Decoder {
     Huff dc[4], ac[4];
-    uint16_t quant[4][64]; /* zigzag order, as the stream lists them */
+    uint16_t quant[4][64]; /* zigzag order, as the stream lists them. */
     bool quant_defined[4];
     Component comp[3];
     int restart_interval;
@@ -291,7 +290,7 @@ static bool decode_block(Bits *b, Component *c, const Decoder *d, uint8_t *dst, 
         k++;
     }
     idct_block(coef, dst, stride, last == 0);
-    /* the data ended before the block did: what it read past the end was zeros. */
+    /* the block extends beyond input; missing bits were read as zeros. */
     return b->pad <= b->count;
 }
 
@@ -300,7 +299,7 @@ static void restart_reset(Bits *b, Decoder *d, int comps)
     b->count = 0;
     b->buf = 0;
     b->pad = 0;
-    /* the marker, or the bytes up to the next restart marker if the data is damaged. */
+    /* reads the marker or recovers to the next restart marker after damaged data. */
     if (!b->marker) {
         while (b->p + 1 < b->end && !(b->p[0] == 0xFF && b->p[1] >= 0xD0 && b->p[1] <= 0xD7))
             b->p++;
@@ -330,7 +329,7 @@ static bool ensure_plane(MimeJpeg *j, int i, int stride, int rows)
     return true;
 }
 
-/* a scan: the interleaved components of every mcu, or one component's blocks in rows. returns the rows lost. */
+/* decodes interleaved MCUs or one component's blocks in row order. returns the number of lost rows. */
 static bool decode_scan(MimeJpeg *j, Decoder *d, Bits *b, const int *scan, int ns)
 {
     int mcu_w = 8 * j->h_max, mcu_h = 8 * j->v_max;
@@ -456,7 +455,7 @@ bool mime_jpeg_decode(MimeJpeg *j, const uint8_t *data, size_t length)
             break;
         case 0xC2: case 0xC3: case 0xC5: case 0xC6: case 0xC7: case 0xC9: case 0xCA: case 0xCB: case 0xCD:
         case 0xCE: case 0xCF:
-            goto done; /* progressive, lossless, arithmetic */
+            goto done; /* progressive, lossless, arithmetic. */
         case 0xC4:
             while (n >= 17) {
                 int tc = seg[0] >> 4, th = seg[0] & 15, total = 0;
@@ -521,7 +520,6 @@ bool mime_jpeg_decode(MimeJpeg *j, const uint8_t *data, size_t length)
                 j->restart_errors = true;
             d->scanned = true;
             ok = true;
-            /* on to what follows the entropy coded data, a marker. */
             p = b.p;
             while (p + 1 < end && !(p[0] == 0xFF && p[1] != 0 && p[1] != 0xFF && !(p[1] >= 0xD0 && p[1] <= 0xD7)))
                 p++;
@@ -646,7 +644,7 @@ static void put_table(Writer *w, int klass, int id, const uint8_t bits[17], cons
         put_byte(w, vals[i]);
 }
 
-/* the forward transform of a block of samples, quantized, in zigzag order. */
+/* transforms and quantizes a block into zigzag order. */
 static void fdct_block(const uint8_t *src, int stride, int bw, int bh, const float *recip, int16_t *out)
 {
     float in[64], tmp[64], res[64];
@@ -740,7 +738,7 @@ size_t mime_jpeg_encode(const uint8_t *y, int y_stride, const uint8_t *cb, const
 
     Writer w = {.out = out, .capacity = capacity};
     put_word(&w, 0xFFD8);
-    put_word(&w, 0xFFE0); /* jfif */
+    put_word(&w, 0xFFE0); /* JFIF */
     put_word(&w, 16);
     for (const char *s = "JFIF"; *s; s++)
         put_byte(&w, (unsigned)*s);

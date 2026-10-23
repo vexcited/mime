@@ -1,6 +1,6 @@
 /*
- * the ndr engine of rpcrt4.dll: the stub message, the stub descriptors that midl generates and the functions that
- * marshal types by their format strings. The layouts are the ones midl compiled stubs are built against.
+ * the ndr engine of rpcrt4.dll: stub messages, midl stub descriptors and the format string marshalers.
+ * layouts match what midl compiled stubs are built against.
  */
 #ifndef MIME_WIN32_RPCNDR_H
 #define MIME_WIN32_RPCNDR_H
@@ -499,7 +499,7 @@ RPCRTAPI void RPC_ENTRY NdrCorrelationPass(PMIDL_STUB_MESSAGE msg);
 RPCRTAPI void RPC_ENTRY NdrCorrelationFree(PMIDL_STUB_MESSAGE msg);
 RPCRTAPI void RPC_ENTRY NdrOutInit(PMIDL_STUB_MESSAGE msg, PFORMAT_STRING format, unsigned char **memory);
 
-/* ------------------------------------------------------------------ the type marshalers */
+/* ------------------------------------------------------------------ type marshalers */
 
 #define NDR_TYPE_ENTRY(name)                                                                                        \
     RPCRTAPI unsigned char *RPC_ENTRY Ndr##name##Marshall(PMIDL_STUB_MESSAGE msg, unsigned char *memory,           \
@@ -537,7 +537,7 @@ RPCRTAPI void RPC_ENTRY NdrTypeMarshall(PMIDL_STUB_MESSAGE msg, unsigned char *m
 RPCRTAPI void RPC_ENTRY NdrTypeUnmarshall(PMIDL_STUB_MESSAGE msg, unsigned char **memory, PFORMAT_STRING format);
 RPCRTAPI void RPC_ENTRY NdrTypeSize(PMIDL_STUB_MESSAGE msg, unsigned char *memory, PFORMAT_STRING format);
 
-/* ------------------------------------------------------------------ the rpc ss and sm allocators */
+/* ------------------------------------------------------------------ RpcSs and RpcSm allocators */
 
 RPCRTAPI void *RPC_ENTRY RpcSsAllocate(size_t size);
 RPCRTAPI void RPC_ENTRY RpcSsDisableAllocate(void);

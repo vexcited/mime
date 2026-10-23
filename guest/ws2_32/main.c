@@ -1,7 +1,4 @@
-/*
- * ws2_32 entry point, WSAStartup and WSACleanup, the last error, byte
- * order and the per thread buffers.
- */
+/* Winsock startup, errors, byte order and thread-local buffers. */
 #include "ws2_32_private.h"
 
 static CRITICAL_SECTION startup_lock;
@@ -57,7 +54,6 @@ int WsCheckStarted(void)
     return InterlockedCompareExchange(&startup_count, 0, 0) > 0 ? 0 : WSANOTINITIALISED;
 }
 
-/* ------------------------------------------------------------------ startup */
 
 static void copy_bounded(char *dst, SIZE_T size, const char *src)
 {
@@ -89,7 +85,7 @@ int WSAAPI WSAStartup(WORD version, LPWSADATA data)
     }
     data->wVersion = granted;
     data->wHighVersion = MAKEWORD(2, 2);
-    /* winsock 1 programs are told the historical limits, winsock 2 has none. */
+    /* Winsock 1 programs are told the historical limits, Winsock 2 has none. */
     data->iMaxSockets = major == 1 ? 32767 : 0;
     data->iMaxUdpDg = major == 1 ? 65467 : 0;
     data->lpVendorInfo = nullptr;
@@ -126,7 +122,6 @@ void WSAAPI WSASetLastError(int error)
     SetLastError((DWORD)error);
 }
 
-/* ------------------------------------------------------------------ byte order */
 
 u_long WSAAPI htonl(u_long v)
 {
@@ -193,7 +188,6 @@ int WSAAPI WSANtohs(SOCKET s, u_short v, u_short *out)
     return 0;
 }
 
-/* ------------------------------------------------------------------ fd sets and events */
 
 int WSAAPI __WSAFDIsSet(SOCKET fd, fd_set *set)
 {
@@ -231,9 +225,8 @@ DWORD WSAAPI WSAWaitForMultipleEvents(DWORD count, const WSAEVENT *events, BOOL 
     return WaitForMultipleObjectsEx(count, events, all, timeout, alertable);
 }
 
-/* ------------------------------------------------------------------ winsock 1 blocking hooks */
 
-/* winsock 2 has no blocking hooks: blocking calls are never "in progress" for these. */
+/* Winsock 2 has no blocking hooks: blocking calls are never "in progress" for these. */
 BOOL WSAAPI WSAIsBlocking(void)
 {
     return FALSE;

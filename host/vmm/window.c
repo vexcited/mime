@@ -1,7 +1,6 @@
 /*
- * host files placed read only in the guest by MIME_HC_FS_MAP. macos fills
- * each chunk on its first stage 2 fault from the file (lazy.c), keeping
- * at most a budget of filled bytes.
+ * read-only MIME_HC_FS_MAP file windows. macOS fills chunks on their first stage 2 fault through lazy.c,
+ * retaining at most the filled-byte budget.
  */
 #include "vmm.h"
 
@@ -10,7 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define WINDOW_BUDGET (64ull << 20) /* filled window bytes kept before older windows are emptied */
+#define WINDOW_BUDGET (64ull << 20) /* filled window bytes kept before older windows are emptied. */
 
 /* places a file read only at the first free window address, first fit. nothing is read yet. */
 uint64_t mime_window_map(MimeVm *vm, int file, bool writable, uint64_t *ipa_out)
@@ -79,7 +78,7 @@ void mime_window_unmap_all(MimeVm *vm)
         window_unmap(vm, &vm->windows[0]);
 }
 
-/* empties the least recently filled windows until a chunk fits the budget. */
+/* evicts least recently filled windows until one chunk fits. */
 static void window_trim(MimeVm *vm, MimeLazyRegion *keep)
 {
     while (vm->window_bytes + MIME_LAZY_CHUNK > WINDOW_BUDGET) {

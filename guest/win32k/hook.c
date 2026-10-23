@@ -1,8 +1,7 @@
 /*
- * window hooks. thread and process hooks run in the hooked thread, low level
- * hooks in the thread that installed them: the input thread sends it each
- * event like a message and waits for the verdict, as windows does, and skips
- * a hook that does not answer in time.
+ * window hooks. thread and process hooks run in the hooked thread, low level hooks in the thread that installed
+ * them: like windows, the input thread sends it each event as a message, waits for the verdict and skips a hook
+ * that does not answer in time.
  */
 #include "win32k.h"
 
@@ -28,7 +27,7 @@ static BOOLEAN low_level(int id)
     return id == WH_KEYBOARD_LL || id == WH_MOUSE_LL;
 }
 
-/* other hooks only run in their own process, the only address space holding their code. */
+/* other hooks only run in their own process, the only address space that holds their code. */
 static BOOLEAN applies(const HOOK *h, const W32THREAD *t)
 {
     if (h->Header.Destroyed || !h->Owner || h->Owner->Destroying)
@@ -117,7 +116,7 @@ LRESULT HookInvoke(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG size)
     return result;
 }
 
-/* runs a low level hook in its owner thread, served by MsgProcessSent there. */
+/* MsgProcessSent serves it in the owner thread. */
 static LRESULT send_hook(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG size)
 {
     W32THREAD *owner = h->Owner;
@@ -162,7 +161,7 @@ static LRESULT send_hook(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG 
             break;
     }
     if (!sm->Completed) {
-        /* the owner answers late into a call nobody waits for and frees it. */
+        /* the owner will answer late into a call nobody waits for, and free it. */
         sm->Sender = nullptr;
         sm->Notify = TRUE;
         return 0;
@@ -282,7 +281,7 @@ BOOL NTAPI NtUserUnhookWindowsHookEx(HHOOK hook)
     return h != nullptr;
 }
 
-/* low level hook structures cross threads and processes by copy, the other lparams are pointers of this process. */
+/* low level hook structures cross threads and processes by copy, other lparams are pointers in this process. */
 static ULONG hook_data_size(int id)
 {
     switch (id) {

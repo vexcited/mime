@@ -1,6 +1,5 @@
 /*
- * the readers of a PE image's headers and directories: where the headers are, where a directory's data is, in an
- * image mapped as the loader maps it or as a file is mapped as data, and what an export table holds.
+ * PE header, directory and export table readers, for images mapped by the loader or files mapped as data.
  */
 #include "ntdll_private.h"
 
@@ -9,8 +8,8 @@
 #define RTL_IMAGE_NT_HEADER_EX_FLAG_NO_RANGE_CHECK 1
 
 /*
- * the headers of the image at base. With the flag, the size is not looked at and the headers are trusted to be
- * mapped; without, nothing past size is read. The headers must lie in the first 256 MiB of the image.
+ * with the flag, size is ignored and the headers are trusted to be mapped; without it, nothing past size is read.
+ * the headers must lie in the first 256 MiB of the image.
  */
 NTDLL_EXPORT NTSTATUS NTAPI RtlImageNtHeaderEx(ULONG flags, PVOID base, ULONG64 size, PIMAGE_NT_HEADERS *headers)
 {
@@ -49,7 +48,7 @@ static PIMAGE_SECTION_HEADER first_section(const IMAGE_NT_HEADERS *nt)
     return (PIMAGE_SECTION_HEADER)((PUCHAR)&nt->OptionalHeader + nt->FileHeader.SizeOfOptionalHeader);
 }
 
-/* the section of the headers whose raw data holds the address, by the raw size alone as the loader's tables do. */
+/* finds the section whose raw data holds the address, by raw size alone like the loader's tables. */
 NTDLL_EXPORT PIMAGE_SECTION_HEADER NTAPI RtlSectionTableFromVirtualAddress(PIMAGE_NT_HEADERS nt, PVOID base,
                                                                           ULONG address)
 {
@@ -60,7 +59,7 @@ NTDLL_EXPORT PIMAGE_SECTION_HEADER NTAPI RtlSectionTableFromVirtualAddress(PIMAG
     return nullptr;
 }
 
-/* the address of a relative address in an image mapped as a file: through the raw data of its section. */
+/* translates an rva in an image mapped as a file through its section's raw data. */
 NTDLL_EXPORT PVOID NTAPI RtlAddressInSectionTable(PIMAGE_NT_HEADERS nt, PVOID base, ULONG address)
 {
     PIMAGE_SECTION_HEADER section = RtlSectionTableFromVirtualAddress(nt, base, address);
@@ -70,9 +69,8 @@ NTDLL_EXPORT PVOID NTAPI RtlAddressInSectionTable(PIMAGE_NT_HEADERS nt, PVOID ba
 }
 
 /*
- * the data of a directory and its size. The two low bits of the base say how the image is mapped: bit 0 set
- * for a file mapped as data, whatever mapped_as_image says. A directory the image does not have, or has empty,
- * gives null; the size is set for an empty one.
+ * the two low bits of the base say how the image is mapped: bit 0 set means a file mapped as data, whatever
+ * mapped_as_image says. a missing or empty directory gives null; the size is still set for an empty one.
  */
 NTDLL_EXPORT PVOID NTAPI RtlImageDirectoryEntryToData(PVOID image, BOOLEAN mapped_as_image, USHORT directory,
                                                       PULONG size)
@@ -110,7 +108,7 @@ NTDLL_EXPORT PVOID NTAPI RtlImageDirectoryEntryToData(PVOID image, BOOLEAN mappe
     return RtlAddressInSectionTable(nt, base, address);
 }
 
-/* an export of a loaded image by name, by a binary search of its sorted name table; a forwarder gives null. */
+/* binary searches the sorted name table; a forwarder gives null. */
 NTDLL_EXPORT PVOID NTAPI RtlFindExportedRoutineByName(PVOID image, PCSTR name)
 {
     ULONG size = 0;

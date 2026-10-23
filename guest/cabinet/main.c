@@ -1,12 +1,9 @@
 /*
- * cabinet.dll, the reader of cabinet files that setup programs link: FDICreate, FDICopy and the rest hand the
- * cabinet to the caller's own file functions and call back for each file in it. The cabinet is read into memory
- * with the caller's functions, so that a program that keeps cabinets in memory or in an archive of its own works
- * the same as one that opens files, and unpacked by the reader of guest/lib/cabinet (stored, MSZIP and LZX).
+ * cabinet.dll's FDI reader. the cabinet is read into memory through the caller's file callbacks, so cabinets kept
+ * in memory or in a custom archive work like plain files, then unpacked by guest/lib/cabinet: stored, MSZIP and LZX.
  *
- * Not done: cabinets of a set (a file or a folder that goes on in another cabinet is left out, with the callback for
- * the part that began in an earlier one), Quantum, the decryption callback, truncating a cabinet, and the functions
- * that make cabinets (FCI) and the compression api.
+ * not done: cabinet sets, so a file or folder continued in another cabinet is skipped and one begun in an earlier
+ * cabinet is only announced, Quantum, the decryption callback, truncation, FCI and the compression api.
  */
 #define MIME_BUILD_CABINET
 #include "../lib/cabinet/cabinet.h"
@@ -94,7 +91,7 @@ BOOL DIAMONDAPI FDIDestroy(HFDI hfdi)
     return TRUE;
 }
 
-/* the header of a cabinet at the position of the file, and whether it is one this reader knows. */
+/* reads the header at the file's position and checks this reader supports it. */
 static BOOL read_header(FDI *fdi, INT_PTR file, BYTE header[CFHEADER_SIZE])
 {
     if (fdi->Read(file, header, CFHEADER_SIZE) != CFHEADER_SIZE || dword(header) != 0x4643534D)
@@ -108,7 +105,7 @@ BOOL DIAMONDAPI FDIIsCabinet(HFDI hfdi, INT_PTR hf, PFDICABINETINFO pfdici)
     BYTE header[CFHEADER_SIZE] = {};
     if (!fdi || !read_header(fdi, hf, header))
         return FALSE;
-    /* the version is the minor byte and then the major, 1.3 is the only one made. */
+    /* minor byte then major; 1.3 is the only version in use. */
     if (word(header + 24) != 0x0103) {
         fail(fdi, FDIERROR_UNKNOWN_CABINET_VERSION, word(header + 24));
         return FALSE;
@@ -143,11 +140,11 @@ typedef struct CABINET {
     BYTE *Data;
     ULONG Size;
     MIME_CAB *Cab;
-    /* the names the header holds, empty when it has none. */
+    /* empty when the header has none. */
     char Previous[NAME_MAX_], PreviousDisk[NAME_MAX_], Next[NAME_MAX_], NextDisk[NAME_MAX_];
 } CABINET;
 
-/* what the reader itself needs comes from the heap of the process, the caller's allocator keeps its own memory. */
+/* the reader's own memory comes from the process heap, not the caller's allocator. */
 static void *cab_allocate(size_t size)
 {
     return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
@@ -167,7 +164,7 @@ static void copy_name(char *out, const BYTE *data, ULONG size, ULONG at)
     out[i] = 0;
 }
 
-/* the names of the previous and next cabinets, which sit after the reserved bytes of the header. */
+/* the previous and next cabinet names follow the header's reserved bytes. */
 static void read_names(CABINET *cabinet)
 {
     const BYTE *p = cabinet->Data;
@@ -188,7 +185,7 @@ static void read_names(CABINET *cabinet)
     }
 }
 
-/* reads the cabinet the file holds, as far as its header says it goes. */
+/* reads as far as the header says the cabinet goes. */
 static BOOL load(FDI *fdi, INT_PTR file, CABINET *cabinet)
 {
     BYTE header[CFHEADER_SIZE];
@@ -237,7 +234,7 @@ typedef struct COPY {
     void *User;
     FDINOTIFICATION Notification;
     bool Aborted;
-    bool Limited; /* the files from Limit on were cut from the list by the caller */
+    bool Limited; /* the caller cut the files from Limit on. */
     unsigned Limit;
 } COPY;
 
@@ -410,7 +407,6 @@ BOOL DIAMONDAPI FDICopy(HFDI hfdi, char *pszCabinet, char *pszCabPath, int flags
     FDINOTIFICATION *n = &copy.Notification;
     USHORT set = word(cabinet.Data + 32), index = word(cabinet.Data + 34);
 
-    /* the cabinet itself. */
     memset(n, 0, sizeof(*n));
     n->psz1 = cabinet.Next;
     n->psz2 = cabinet.NextDisk;
@@ -423,7 +419,7 @@ BOOL DIAMONDAPI FDICopy(HFDI hfdi, char *pszCabinet, char *pszCabPath, int flags
         goto finish;
     }
 
-    /* the files are listed once, where the caller may cut the count. */
+    /* the caller may cut the file count here. */
     memset(n, 0, sizeof(*n));
     n->cb = (long)dword(cabinet.Data + 16);
     n->pv = pvUser;
@@ -440,7 +436,7 @@ BOOL DIAMONDAPI FDICopy(HFDI hfdi, char *pszCabinet, char *pszCabPath, int flags
         copy.Limit = count;
     }
 
-    /* the files that began in an earlier cabinet are announced, the rest follow with their folder. */
+    /* files begun in an earlier cabinet are only announced, the rest follow with their folder. */
     for (unsigned i = 0; i < count; i++) {
         MIME_CAB_FILE entry;
         if (MimeCabFile(cab, i, &entry) != MIME_CAB_OK)

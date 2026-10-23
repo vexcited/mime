@@ -1,8 +1,7 @@
 /*
- * wevtapi: the event log of a machine whose logs are empty. the classic
- * channels exist and hold no event, queries and subscriptions on them
- * succeed and never return one; other channels are not found, and remote
- * sessions have no server to reach.
+ * wevtapi with empty event logs. the classic channels exist but hold no
+ * events, so queries and subscriptions on them succeed and never return one.
+ * other channels are not found, and remote sessions have no server to reach.
  */
 #define WINEVTAPI
 #include <mime/win32/winevt.h>
@@ -23,7 +22,7 @@ typedef struct {
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static OBJECT g_objects[MAX_OBJECTS];
 
-/* handles are small numbers, as windows' are: the slot plus one. */
+/* handles are small numbers like on windows: the slot plus one. */
 static EVT_HANDLE create(KIND kind, BOOL remote)
 {
     EVT_HANDLE handle = nullptr;
@@ -73,7 +72,7 @@ static BOOL known_channel(LPCWSTR path)
     return FALSE;
 }
 
-/* the session a call names, null for the local one; a remote one has nothing to talk to. */
+/* null is the local session; a remote one has nothing to talk to. */
 static DWORD check_session(EVT_HANDLE session)
 {
     if (!session)
@@ -120,7 +119,6 @@ EVT_HANDLE WINAPI EvtQuery(EVT_HANDLE session, LPCWSTR path, LPCWSTR query, DWOR
     return handle;
 }
 
-/* an empty log has no next event. */
 BOOL WINAPI EvtNext(EVT_HANDLE results, DWORD size, PEVT_HANDLE events, DWORD timeout, DWORD flags, PDWORD returned)
 {
     if (!returned || (size && !events))
@@ -170,7 +168,7 @@ EVT_HANDLE WINAPI EvtCreateRenderContext(DWORD count, LPCWSTR *paths, DWORD flag
     return create(OBJ_CONTEXT, FALSE);
 }
 
-/* xml and bookmarks render without a context, values only with one, and no event exists to render. */
+/* xml and bookmarks render without a context, values only with one. no event ever exists to render. */
 BOOL WINAPI EvtRender(EVT_HANDLE context, EVT_HANDLE fragment, DWORD flags, DWORD size, PVOID buffer, PDWORD used,
                       PDWORD count)
 {
@@ -209,7 +207,7 @@ BOOL WINAPI EvtUpdateBookmark(EVT_HANDLE bookmark, EVT_HANDLE event)
     return fail(ERROR_INVALID_HANDLE);
 }
 
-/* a subscription that waits for events which never come. */
+/* the subscription waits for events that never come. */
 EVT_HANDLE WINAPI EvtSubscribe(EVT_HANDLE session, HANDLE signal, LPCWSTR path, LPCWSTR query, EVT_HANDLE bookmark,
                                PVOID context, EVT_SUBSCRIBE_CALLBACK callback, DWORD flags)
 {
@@ -252,7 +250,6 @@ typedef struct {
     DWORD Type;
 } EVT_VARIANT;
 
-/* the counts of an empty log. */
 BOOL WINAPI EvtGetLogInfo(EVT_HANDLE log, int property, DWORD size, EVT_VARIANT *value, PDWORD used)
 {
     if (!lookup(log, OBJ_LOG))

@@ -1,7 +1,4 @@
-/*
- * time: tick counts, performance counters, system and local time, time
- * zones and the conversions between the various representations.
- */
+/* tick counts, performance counters, system and local time, time zones and conversions. */
 #include "kernelbase_private.h"
 
 #define TICKS_PER_MS 10000ll
@@ -165,7 +162,6 @@ static int days_in_month(int year, int month)
     return month == 2 && is_leap(year) ? 29 : g_month_days[month - 1];
 }
 
-/* days from 1601-01-01 to the given date. */
 static LONGLONG days_since_1601(int year, int month, int day)
 {
     LONGLONG y = year - 1601;
@@ -274,7 +270,7 @@ LONG WINAPI CompareFileTime(const FILETIME *a, const FILETIME *b)
 #define TZ_CONTROL L"SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation"
 #define TZ_ZONES L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones\\"
 
-/* the rules of a time zone key of the registry, a TZI value: the bias, the standard and daylight biases and the dates. */
+/* the TZI registry value of a zone key. */
 typedef struct _TZI {
     LONG Bias, StandardBias, DaylightBias;
     SYSTEMTIME StandardDate, DaylightDate;
@@ -296,7 +292,7 @@ static BOOL query_string(HKEY key, LPCWSTR name, WCHAR *out, DWORD chars)
     return out[0] != 0;
 }
 
-/* a string copied up to a number of characters, always ended. */
+/* always terminates dst. */
 static void copy_chars(WCHAR *dst, LPCWSTR src, SIZE_T chars)
 {
     SIZE_T n = 0;
@@ -314,10 +310,7 @@ static void zone_from_rules(LPTIME_ZONE_INFORMATION info, const TZI *rules)
     info->DaylightDate = rules->DaylightDate;
 }
 
-/*
- * the zone the machine is set to, from the registry as windows keeps it: the bias, the names, the rules and the name of
- * the zone's key. a machine whose registry has no zone has the offset of its clock.
- */
+/* reads the machine zone from the registry like windows keeps it. without one, falls back to the clock's offset. */
 static void current_zone(LPTIME_ZONE_INFORMATION info, WCHAR *key_name, DWORD key_chars, BOOL *dynamic_disabled)
 {
     memset(info, 0, sizeof(*info));
@@ -352,7 +345,7 @@ static void current_zone(LPTIME_ZONE_INFORMATION info, WCHAR *key_name, DWORD ke
         }
         RegCloseKey(key);
     }
-    /* nothing set: the offset of the clock, with no daylight time. */
+    /* no zone set: use the clock's offset, without daylight time. */
     LONG bias = KbTimeZoneBiasMinutes();
     info->Bias = bias;
     if (!bias) {
@@ -378,12 +371,12 @@ static void fill_time_zone(LPTIME_ZONE_INFORMATION info)
 
 static BOOL in_daylight(const TIME_ZONE_INFORMATION *tz, LONGLONG t, BOOL is_utc);
 
-/* what windows returns besides the zone: whether it is daylight time now, when the zone has daylight time. */
+/* the TIME_ZONE_ID_* value returned alongside the zone. */
 static DWORD zone_state(const TIME_ZONE_INFORMATION *tz)
 {
     if (!tz->StandardDate.wMonth || !tz->DaylightDate.wMonth)
         return TIME_ZONE_ID_UNKNOWN;
-    /* the kernel moves the period at the instant of the change, a tick ahead of the clock the page shows. */
+    /* the kernel switches the period at the exact instant, a tick ahead of the shared page's clock. */
     DWORD id = USER_SHARED_DATA->TimeZoneId;
     if (id == TIME_ZONE_ID_STANDARD || id == TIME_ZONE_ID_DAYLIGHT)
         return id;
@@ -425,8 +418,8 @@ DWORD WINAPI GetDynamicTimeZoneInformation(PDYNAMIC_TIME_ZONE_INFORMATION info)
 }
 
 /*
- * the rules of a zone for a year: the zone's key holds the rules in force now and its Dynamic DST subkey the rules of
- * the years that had others, a value each between FirstEntry and LastEntry; years outside take the nearest of them.
+ * the zone key holds the current rules, and its Dynamic DST subkey one value per year from FirstEntry to LastEntry for
+ * years with other rules. years outside that range use the nearest entry.
  */
 static BOOL rules_for_year(LPCWSTR key_name, USHORT year, TZI *rules)
 {
@@ -478,7 +471,7 @@ BOOL WINAPI GetTimeZoneInformationForYear(USHORT year, PDYNAMIC_TIME_ZONE_INFORM
     return TRUE;
 }
 
-/* the date a transition rule designates in a given year, as local file time. */
+/* returns local file time. */
 static LONGLONG transition_time(const SYSTEMTIME *rule, int year)
 {
     SYSTEMTIME st = *rule;
@@ -500,7 +493,7 @@ static LONGLONG transition_time(const SYSTEMTIME *rule, int year)
     return t;
 }
 
-/* determines whether a time, expressed as utc or as local standard time, falls into daylight time. */
+/* t is utc, or local standard time when is_utc is FALSE. */
 static BOOL in_daylight(const TIME_ZONE_INFORMATION *tz, LONGLONG t, BOOL is_utc)
 {
     if (!tz->DaylightDate.wMonth || !tz->StandardDate.wMonth)
@@ -511,7 +504,7 @@ static BOOL in_daylight(const TIME_ZONE_INFORMATION *tz, LONGLONG t, BOOL is_utc
     LONGLONG dst_start = transition_time(&tz->DaylightDate, year);
     LONGLONG dst_end = transition_time(&tz->StandardDate, year);
     if (is_utc) {
-        /* transitions are given in local time: standard time before the start, daylight time before the end. */
+        /* transitions are in local time: standard time before the start, daylight time before the end. */
         dst_start += (LONGLONG)(tz->Bias + tz->StandardBias) * TICKS_PER_MINUTE;
         dst_end += (LONGLONG)(tz->Bias + tz->DaylightBias) * TICKS_PER_MINUTE;
     }
@@ -614,9 +607,9 @@ BOOL WINAPI SetSystemTimeAdjustment(DWORD adjustment, BOOL disabled)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ dynamic zones, years and the other way round */
+/* ------------------------------------------------------------------ dynamic zones */
 
-/* the first and the last year the rules of a zone are kept for, in the Dynamic DST key of the zone. */
+/* reads FirstEntry and LastEntry from the zone's Dynamic DST key. */
 DWORD WINAPI GetDynamicTimeZoneInformationEffectiveYears(const DYNAMIC_TIME_ZONE_INFORMATION *info, LPDWORD first,
                                                          LPDWORD last)
 {

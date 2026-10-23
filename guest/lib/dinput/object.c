@@ -11,7 +11,7 @@ HINSTANCE DiModule;
 LONG DiLocks;
 RTL_CRITICAL_SECTION DiLock;
 
-/* windows' hresValidInstanceVer: dinput8 takes 0x800 alone, dinput the versions of directx 3 to 7. */
+/* dinput8 accepts 0x800 only, dinput the versions of directx 3 to 7. */
 HRESULT DiCheckVersion(HINSTANCE instance, DWORD version, BOOL di8)
 {
     WCHAR path[3];
@@ -353,7 +353,7 @@ static HRESULT STDMETHODCALLTYPE obj_find_device_a(void *This, REFGUID class_gui
     return find_device(obj_from(This), class_guid, wname, out);
 }
 
-/* ------------------------------------------------------------------ action mapping, dinput8 alone */
+/* ------------------------------------------------------------------ action mapping, dinput8 only */
 
 static HRESULT STDMETHODCALLTYPE obj_enum_semantics_w(void *This, LPCWSTR user, LPDIACTIONFORMATW format,
                                                       LPDIENUMDEVICESBYSEMANTICSCBW callback, LPVOID context,
@@ -463,9 +463,9 @@ HRESULT DiCreateObject(REFIID riid, void **out, BOOL di8)
 }
 
 /*
- * windows' DirectInputCreateHelper. with an outer unknown dinput8 makes
- * an object it never hands back and returns success with a null pointer;
- * dinput.dll returns its inner unknown, left uninitialized.
+ * with an outer unknown, dinput8 makes an object it never hands back and
+ * returns success with a null pointer; dinput.dll returns its inner
+ * unknown, uninitialized.
  */
 HRESULT DiCreateHelper(HINSTANCE instance, DWORD version, REFIID riid, void **out, IUnknown *outer, BOOL di8)
 {

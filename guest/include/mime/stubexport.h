@@ -1,6 +1,6 @@
 /*
- * exported entry points without an implementation, declared with the stack size of windows' x86 build so
- * stdcall callers stay balanced. each logs once and returns the failure its caller would see.
+ * unimplemented exports, declared with the argument count of windows' x86 build so stdcall callers stay balanced.
+ * each logs once and returns the failure its caller would see.
  */
 #pragma once
 #include <mime/stub.h>
@@ -23,7 +23,7 @@
 #define MIME_STUB_ARGS_15 MIME_STUB_ARGS_14, ULONG_PTR a15
 #define MIME_STUB_ARGS_16 MIME_STUB_ARGS_15, ULONG_PTR a16
 
-/* a function of <args> pointer sized arguments returning <value> of <type>. */
+/* args is the number of pointer sized arguments. */
 #define MIME_STUB_RETURN(dll, type, name, args, value)                                                                 \
     DECLSPEC_EXPORT type WINAPI name(MIME_STUB_ARGS_##args)                                                            \
     {                                                                                                                  \
@@ -31,7 +31,6 @@
         return value;                                                                                                  \
     }
 
-/* the same, setting the thread's last error first. */
 #define MIME_STUB_ERROR(dll, type, name, args, error, value)                                                           \
     DECLSPEC_EXPORT type WINAPI name(MIME_STUB_ARGS_##args)                                                            \
     {                                                                                                                  \

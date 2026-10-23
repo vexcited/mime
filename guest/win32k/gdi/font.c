@@ -1,10 +1,9 @@
 /*
- * fonts: the face registry built from \SystemRoot\Fonts, logical font
- * matching, realization at a pixel size and the glyph cache.
+ * fonts: the face registry built from \SystemRoot\Fonts, logical font matching, realization at a pixel size and
+ * the glyph cache.
  *
- * font files are large, so registration only reads the table directory
- * and the name, OS/2 and head tables; a file is loaded whole the first
- * time one of its faces is realized.
+ * font files are large, so registration only reads the table directory and the name, OS/2 and head tables. a file
+ * is loaded whole the first time one of its faces is realized.
  */
 #include "font_private.h"
 
@@ -13,7 +12,7 @@
 
 static FONT_FACE *g_faces;
 static ULONG g_face_count;
-/* the faces of the fonts directory are read by a thread of the kernel, and set when it is done. */
+/* set once the kernel thread scanning the fonts directory is done. */
 static KEVENT g_scanned;
 static BOOLEAN g_scanning;
 static LIST_ENTRY g_instances = {&g_instances, &g_instances};
@@ -65,7 +64,7 @@ static ULONG64 file_size(HANDLE h)
     return (ULONG64)info.EndOfFile.QuadPart;
 }
 
-/* font bytes come from an open file during registration or from memory. */
+/* font bytes come from an open file during registration, otherwise from memory. */
 typedef struct FONT_SOURCE {
     HANDLE File;
     const UCHAR *Data;
@@ -122,7 +121,7 @@ static ULONG be32(const UCHAR *p)
     return (ULONG)p[0] << 24 | (ULONG)p[1] << 16 | (ULONG)p[2] << 8 | p[3];
 }
 
-/* copies a name record, preferring windows unicode english. */
+/* copies a name record, preferring the windows unicode english one. */
 static BOOLEAN name_record(const UCHAR *name, ULONG size, USHORT id, PWSTR out, ULONG chars)
 {
     if (size < 6)
@@ -320,14 +319,14 @@ static void register_source(FONT_FILE *file, const FONT_SOURCE *src)
     }
 }
 
-/* waits for the directory's faces, which a start of the machine does not wait for. */
+/* boot does not wait for the fonts directory scan, so this waits for it. */
 static void wait_scanned(void)
 {
     if (g_scanning)
         KeWaitForSingleObject(&g_scanned, Executive, KernelMode, FALSE, nullptr);
 }
 
-/* registers the faces of a font file; returns the number of faces added. */
+/* returns the number of faces added. */
 static ULONG register_file(PCWSTR path, HANDLE owner, BOOLEAN hidden)
 {
     if (!g_faces || wcslen(path) >= MAX_PATH)
@@ -358,7 +357,7 @@ ULONG FontRegisterFile(PCWSTR path, HANDLE owner, BOOLEAN hidden)
     return register_file(path, owner, hidden);
 }
 
-/* registers fonts held in memory, copied into the kernel. */
+/* the data is copied into the kernel. */
 ULONG FontRegisterMemory(PVOID data, SIZE_T size, HANDLE owner, FONT_FILE **out)
 {
     *out = nullptr;
@@ -411,7 +410,7 @@ BOOLEAN FontFaceVisible(FONT_FACE *f)
 /* private fonts die with their process; realized instances keep the data alive. */
 void FontReleaseProcess(HANDLE pid)
 {
-    /* the faces of the directory have no owner, and no process has added its own before they are read. */
+    /* directory faces have no owner, and no process can have added its own before they are read. */
     if (g_scanning && !KeReadStateEvent(&g_scanned))
         return;
     for (ULONG i = 0; i < g_face_count; i++) {
@@ -481,8 +480,8 @@ static void NTAPI scan_thread(PVOID context)
 }
 
 /*
- * reading the faces of the fonts directory takes 20 milliseconds, a fifth of the start of the machine, and
- * nothing needs them before a window is drawn: a thread does it while the start goes on.
+ * scanning the fonts directory takes 20 milliseconds, a fifth of boot, and nothing needs the faces before a window
+ * is drawn, so a thread does it while boot goes on.
  */
 void FontInitialize(void)
 {
@@ -517,7 +516,7 @@ BOOLEAN FontReadTable(FONT_FACE *f, ULONG tag, ULONG offset, PVOID buffer, ULONG
     BOOLEAN ok = FALSE;
     ULONG start = 0, length = 0;
     if (tag == 0) {
-        /* the whole face: a ttc collection is returned from the face's own table directory. */
+        /* the whole face: for a ttc collection, starting at the face's own table directory. */
         start = f->DirOffset;
         length = (ULONG)(src.Size - f->DirOffset);
         ok = src.Size > f->DirOffset;
@@ -619,7 +618,7 @@ FONT_FACE *FontMatchFace(const LOGFONTW *lf)
             if (!!f->Italic != !!lf->lfItalic)
                 score += 1000;
             if (!_wcsicmp(f->Family, name))
-                score -= 1; /* exact family beats typographic family */
+                score -= 1; /* an exact family beats a typographic family. */
             if (score < best_score) {
                 best_score = score;
                 best = f;
@@ -679,7 +678,7 @@ static void compute_metrics(FONT_INSTANCE *fi, const LOGFONTW *lf)
     tm->tmItalic = fi->Italic ? 255 : 0;
     tm->tmUnderlined = fi->Underline ? 255 : 0;
     tm->tmStruckOut = fi->StrikeOut ? 255 : 0;
-    /* note the inverted meaning of TMPF_FIXED_PITCH: set for variable pitch fonts. */
+    /* TMPF_FIXED_PITCH is inverted: it is set for variable pitch fonts. */
     tm->tmPitchAndFamily = (face->Fixed ? 0 : TMPF_FIXED_PITCH) | TMPF_VECTOR | TMPF_TRUETYPE |
                            face->PitchFamily;
     tm->tmCharSet = face->Symbol ? SYMBOL_CHARSET : ANSI_CHARSET;
@@ -836,7 +835,7 @@ LONG FontTextWidth(FONT_INSTANCE *fi, PCWSTR text, ULONG count, LONG extra)
     return w;
 }
 
-/* fonts of the non client metrics; windows 11 uses segoe ui 9 point throughout. */
+/* the non client metrics font: windows 11 uses Segoe UI 9 point throughout. */
 LOGFONTW W32MessageFontForDpi(UINT dpi)
 {
     LOGFONTW lf;

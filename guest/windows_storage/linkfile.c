@@ -1,11 +1,4 @@
-/*
- * the shortcut file format: the header, the target list, the link info
- * that names the volume of the target, the strings and the extra data
- * blocks, as [MS-SHLLINK] lays them out.
- *
- * what windows.storage does not understand it keeps and writes back, so a
- * shortcut made by something else survives a load and a save.
- */
+/* [MS-SHLLINK] parsing and serialization. preserve unknown data across load and save. */
 #include "windows_storage_private.h"
 
 #define ERROR_NOT_FOUND_HR HRESULT_FROM_WIN32(ERROR_NOT_FOUND)
@@ -32,7 +25,7 @@ LPWSTR LkDup(LPCWSTR text)
     return copy;
 }
 
-/* a string cut to a buffer of chars characters, ended. */
+/* copy up to chars characters, including the terminator. */
 void LkCopy(WCHAR *dst, LPCWSTR src, ULONG chars)
 {
     ULONG n = 0;
@@ -77,7 +70,7 @@ static BYTE *write32(BYTE *p, DWORD value)
     return p + sizeof(value);
 }
 
-/* ------------------------------------------------------------------ extra data blocks */
+/* extra data blocks. */
 
 LINK_BLOCK *LkFindBlock(const LINK *link, DWORD signature)
 {
@@ -120,7 +113,7 @@ HRESULT LkSetBlock(LINK *link, const void *block)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ resetting and reading */
+/* resetting and reading. */
 
 void LkReset(LINK *link)
 {
@@ -161,7 +154,7 @@ void LkReset(LINK *link)
     link->Dirty = FALSE;
 }
 
-/* the item list of a shortcut: a size, then items to a zero size inside it. */
+/* the counted item list ends with a zero-sized item. */
 static HRESULT read_id_list(LINK *link, const BYTE *data, SIZE_T size, SIZE_T *offset)
 {
     SIZE_T at = *offset;
@@ -217,7 +210,7 @@ static HRESULT read_link_info(LINK *link, const BYTE *data, SIZE_T size, SIZE_T 
     return S_OK;
 }
 
-/* a counted string, in UTF-16 or the ANSI code page; what does not fit the limit is dropped. */
+/* read counted UTF-16 or ANSI text, truncating at the limit. */
 static HRESULT read_string(const BYTE *data, SIZE_T size, SIZE_T *offset, BOOL unicode, ULONG limit, LPWSTR *out)
 {
     SIZE_T at = *offset;
@@ -297,7 +290,7 @@ HRESULT LkParse(LINK *link, const BYTE *data, SIZE_T size)
     if ((link->Flags & SLDF_HAS_ICONLOCATION) &&
         FAILED(hr = read_string(data, size, &at, unicode, LNK_STRING_MAX, &link->IconLocation)))
         return hr;
-    /* the blocks run to a size under four, or to the end of a file that left the terminator out. */
+    /* stop at a block size below four or EOF if the terminator was omitted. */
     while (size - at >= sizeof(DWORD)) {
         DWORD block = read32(data + at);
         if (block < sizeof(DWORD))
@@ -312,7 +305,7 @@ HRESULT LkParse(LINK *link, const BYTE *data, SIZE_T size)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ writing */
+/* writing. */
 
 static BYTE *put_string(BYTE *p, LPCWSTR text)
 {
@@ -404,9 +397,9 @@ BYTE *LkBuild(LINK *link, SIZE_T *size)
     return out;
 }
 
-/* ------------------------------------------------------------------ link info */
+/* link info. */
 
-/* a string of the link info that is in UTF-16 when the header has the second set of offsets. */
+/* the second offset set indicates a UTF-16 link-info string. */
 static BOOL info_text(const BYTE *info, DWORD size, DWORD offset, DWORD unicode_offset, DWORD header, LPWSTR out,
                       ULONG chars)
 {
@@ -431,7 +424,7 @@ static BOOL info_text(const BYTE *info, DWORD size, DWORD offset, DWORD unicode_
     return TRUE;
 }
 
-/* the target path a link info names, a local path or a share path with its suffix. */
+/* resolve local or share link-info paths with their suffix. */
 BOOL LkInfoPath(const BYTE *info, DWORD size, LPWSTR path, ULONG chars)
 {
     if (!info || size < 0x1C || !chars)
@@ -470,7 +463,7 @@ BOOL LkInfoPath(const BYTE *info, DWORD size, LPWSTR path, ULONG chars)
     return TRUE;
 }
 
-/* the link info of a local path: the volume it is on and the path from its root, or NULL. */
+/* build local link info from the volume and root-relative path, or return NULL. */
 BYTE *LkInfoCreate(LPCWSTR path, DWORD *info_size)
 {
     *info_size = 0;
@@ -491,7 +484,7 @@ BYTE *LkInfoCreate(LPCWSTR path, DWORD *info_size)
     int path_bytes = WideCharToMultiByte(CP_ACP, 0, path, -1, ansi_path, sizeof(ansi_path), "?", &lossy_path);
     if (label_bytes <= 0 || path_bytes <= 0)
         return nullptr;
-    /* a path the code page cannot spell gets the second set of offsets, with the path in UTF-16. */
+    /* paths not representable in the code page use the UTF-16 offsets. */
     DWORD header = lossy_path ? 0x24 : 0x1C;
     DWORD volume = 16 + (DWORD)label_bytes;
     DWORD base_offset = header + volume;

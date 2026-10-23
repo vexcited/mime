@@ -1,7 +1,4 @@
-/*
- * direct3d 9: the interfaces of objects and devices. their method order
- * is windows', as programs call them through the vtables.
- */
+/* direct3d 9 interfaces, in windows' vtable order. */
 #ifndef MIME_WIN32_D3D9_H
 #define MIME_WIN32_D3D9_H
 

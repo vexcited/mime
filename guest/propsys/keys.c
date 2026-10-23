@@ -24,7 +24,7 @@ HRESULT WINAPI PSGetNameFromPropertyKey(REFPROPERTYKEY key, LPWSTR *name)
     return TYPE_E_ELEMENTNOTFOUND;
 }
 
-/* "{fmtid} pid": 41 characters at least, or nothing is written. */
+/* "{fmtid} pid": needs at least 41 characters or nothing is written. */
 HRESULT WINAPI PSStringFromPropertyKey(REFPROPERTYKEY key, LPWSTR string, UINT length)
 {
     if (!string)
@@ -51,7 +51,7 @@ HRESULT WINAPI PSStringFromPropertyKey(REFPROPERTYKEY key, LPWSTR string, UINT l
     return S_OK;
 }
 
-/* StrToIntW: an optional sign and decimal digits, anything after them ignored. */
+/* like StrToIntW: an optional sign and decimal digits, the rest is ignored. */
 static LONG string_to_int(LPCWSTR s)
 {
     BOOL negative = *s == '-';
@@ -63,7 +63,7 @@ static LONG string_to_int(LPCWSTR s)
     return negative ? -value : value;
 }
 
-/* the guid, spaces, an optional comma or dash and more spaces, then the pid. */
+/* the guid, spaces, an optional comma or dash, more spaces, then the pid. */
 HRESULT WINAPI PSPropertyKeyFromString(LPCWSTR string, PROPERTYKEY *key)
 {
     if (!string || !key)

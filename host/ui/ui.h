@@ -1,6 +1,6 @@
 /*
- * host side of the macos display: one borderless NSWindow per guest top
- * level window, fed with pixels rendered by the guest window manager.
+ * host display interface. on macOS, each guest top level window has a borderless NSWindow showing
+ * guest-rendered pixels.
  */
 #ifndef MIME_UI_H
 #define MIME_UI_H
@@ -15,24 +15,24 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx);
 void mime_ui_run(void);
 void mime_ui_get_display(MimeDisplayInfo *info);
 /*
- * the compositor moves (edge 0) or sizes (a WMSZ_* edge) a window with the pointer, whose button of a press is
- * still held: MIME_HC_STATUS_OK when it took over, unsupported where windows are moved by the guest.
+ * asks the compositor to move with edge 0 or resize with a WMSZ_* edge while the pointer button remains held.
+ * returns MIME_HC_STATUS_OK if accepted, unsupported when the guest handles movement.
  */
 uint64_t mime_ui_window_movesize(uint32_t window, uint32_t edge);
 /*
- * the notification area and notifications of the desktop, see MimeTrayCommand: MIME_HC_STATUS_OK once it is
- * queued, unsupported where the desktop has no bus to tell it to. what the desktop says back is MIME_INPUT_TRAY.
+ * queues a MimeTrayCommand for the desktop notification area. returns MIME_HC_STATUS_OK when queued,
+ * unsupported without a desktop bus. replies arrive as MIME_INPUT_TRAY.
  */
 uint64_t mime_ui_tray(const MimeTrayCommand *command);
 /*
- * the shell's commands to the desktop, see MimeShellToast and MimeShellWindow: MIME_HC_STATUS_OK once queued, the
- * value is the answer of a probe or the length of a reply, unsupported where the desktop has no bus to tell it to.
- * what the desktop says back is MIME_INPUT_SHELL. the command may be written to.
+ * queues MimeShellToast or MimeShellWindow commands. returns MIME_HC_STATUS_OK when queued, unsupported
+ * without a desktop bus. value holds a probe result or reply length; replies arrive as MIME_INPUT_SHELL. may
+ * modify the command.
  */
 uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value);
 /* the guest's shortcuts as entries of the desktop's applications menu, if the user asked for it; any thread, once. */
 void mime_ui_desktop_start(const MimePaths *paths);
-/* the monitors, the primary first, at most capacity of them: how many there are. */
+/* returns the monitor count and fills at most capacity entries, primary first. */
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity);
 
 /* any thread. */
@@ -44,7 +44,7 @@ void mime_ui_window_config(const MimeWinConfig *cfg);
 void mime_ui_window_icon(uint32_t id, const void *pixels, uint32_t width, uint32_t height, uint32_t stride);
 void mime_ui_window_present(uint32_t id, const void *pixels, uint32_t width, uint32_t height, uint32_t stride,
                             MimeRect dirty);
-/* the last image presented to a window through vulkan: see MimeWinReadback. */
+/* the last image presented to a window through Vulkan: see MimeWinReadback. */
 bool mime_ui_window_readback(MimeWinReadback *r, void *pixels);
 void mime_ui_set_cursor(uint32_t cursor);
 void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect);
@@ -54,27 +54,25 @@ void mime_ui_gamma(const uint16_t *ramp);
 void mime_ui_beep(uint32_t type);
 
 /*
- * a CAMetalLayer over part of a window, in guest pixels relative to the
- * window's surface, showing gl's bottom first rows upright. window_id 0
- * hides it.
+ * places a CAMetalLayer over a window-relative rectangle in guest pixels, flipping OpenGL bottom-first rows
+ * upright. window_id 0 hides it.
  */
 void *mime_ui_metal_layer_create(void *device);
 void mime_ui_metal_layer_place(void *layer, uint32_t window_id, int32_t x, int32_t y, uint32_t width,
                                uint32_t height, bool sync);
 void mime_ui_metal_layer_destroy(void *layer);
 
-/* clipboard text in utf-16 with windows line endings. */
+/* clipboard text in UTF-16 with windows line endings. */
 void mime_ui_clipboard_set(const uint16_t *text, size_t chars);
 size_t mime_ui_clipboard_read(uint16_t *dst, size_t offset, size_t count);
 
 /*
- * the clipboard beyond text, see MIME_CLIP_* in abi.h. each returns a MIME_HC_STATUS_*; the macos display has none
- * of this and answers unsupported, so the guest keeps to text there.
+ * clipboard formats beyond text, using MIME_CLIP_* and MIME_HC_STATUS_*. macOS returns unsupported, leaving
+ * the guest with text only.
  *
- * offer: the guest owns the clipboard and renders these kinds when asked, none to withdraw. fetch: the bytes of
- * what the host clipboard holds in a kind, from offset, up to capacity; total is its whole size, 0 when there is
- * none, and the generation says which host contents the guest means. provide: a chunk of the answer to a request
- * the host made through MIME_INPUT_CLIP_REQUEST, MIME_CLIP_NONE as total for no data.
+ * offer declares formats the guest can render; none withdraws ownership. fetch reads up to capacity bytes
+ * from offset for the selected generation; total is the full size or 0 if absent. provide answers
+ * MIME_INPUT_CLIP_REQUEST in chunks, with MIME_CLIP_NONE as total when no data exists.
  */
 uint64_t mime_ui_clipboard_offer(uint32_t mask);
 uint64_t mime_ui_clipboard_fetch(uint32_t kind, uint32_t generation, void *dst, uint64_t capacity, uint64_t offset,
@@ -83,21 +81,20 @@ uint64_t mime_ui_clipboard_provide(uint32_t request, const void *src, uint64_t l
                                    uint64_t total);
 
 /*
- * the input method of the desktop, see MIME_INPUT_IME: the oldest queued text (utf-16, at most count units, the
- * return value is its length), where text is entered in a window (window relative guest pixels), and ending a
- * composition or asking whether the host has an input method protocol. each returns a MIME_HC_STATUS_*.
+ * desktop input method interface using MIME_INPUT_IME and MIME_HC_STATUS_*. text fetches the oldest queued
+ * UTF-16 string, up to count units, and returns its length. area sets the window-relative guest rectangle for
+ * popups. control ends composition or probes protocol support.
  */
 uint64_t mime_ui_ime_text(uint16_t *dst, size_t capacity, uint64_t *length);
 uint64_t mime_ui_ime_area(uint32_t window, const MimeRect *area, int32_t cursor);
 uint64_t mime_ui_ime_control(uint32_t op, uint32_t window, uint64_t *value);
 
 /*
- * drag and drop with the host's programs, see MIME_INPUT_DND_*; each returns a MIME_HC_STATUS_*, unsupported on
- * the macos display. effect and finish answer a host drag over a guest window; fetch reads its data in a kind
- * (the answer to MIME_HC_DND_FETCH is like the clipboard's). start begins a host drag of the guest's own, with the
- * kinds the guest can render; the data is asked for with MIME_INPUT_DND_REQUEST and given to
- * mime_ui_clipboard_provide, and the end comes as MIME_INPUT_DND_END. stop ends it early. the icon, a MimeDragIcon
- * of icon_bytes bytes or null, is the drag's image, which the compositor shows beside the pointer; it is copied.
+ * host drag and drop using MIME_INPUT_DND_* and MIME_HC_STATUS_*; unsupported on macOS. effect and finish
+ * answer a host drag; fetch reads its format data with clipboard-style results. start advertises guest
+ * formats, requested through MIME_INPUT_DND_REQUEST and supplied by mime_ui_clipboard_provide. completion
+ * arrives as MIME_INPUT_DND_END; stop ends early. icon is a copied MimeDragIcon of icon_bytes bytes, or null,
+ * shown beside the pointer.
  */
 uint64_t mime_ui_dnd_effect(uint32_t session, uint32_t effect);
 uint64_t mime_ui_dnd_finish(uint32_t session, uint32_t effect);

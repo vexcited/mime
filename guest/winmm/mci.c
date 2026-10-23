@@ -1,10 +1,6 @@
 /*
- * the mci core of winmm: the devices of the process, their drivers found
- * through [MCI32] and the file extensions of [MCI Extensions], the command
- * tables that name each command, and what the core does itself: open,
- * close, sysinfo, break and sound. devices a string command opens on the
- * fly live on a window thread of their own, which closes them at their
- * first notification, as windows' does.
+ * MCI devices and command tables. drivers come from [MCI32], file types from [MCI Extensions]. string commands can
+ * open devices on a dedicated window thread, which closes them on the first notification.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -120,7 +116,7 @@ static WCHAR *duplicate(const WCHAR *s)
 
 /* ------------------------------------------------------------------ command tables */
 
-/* an entry: its keyword, then a dword and a word, packed. */
+/* an entry: its keyword, then a DWORD and a word, packed. */
 const BYTE *MciEntry(const BYTE *p, const WCHAR **word, DWORD *value, WORD *type)
 {
     *word = (const WCHAR *)p;
@@ -201,7 +197,7 @@ static BOOL load_core(void)
     return load_rcdata(WinmmModule, MAKEINTRESOURCEW(CORE_TABLE), 0) == 0;
 }
 
-/* a "#n" name is the number n, as resource names go. */
+/* resource names of the form "#n" specify numeric IDs. */
 static const WCHAR *resource_name(const WCHAR *name)
 {
     if (!IS_INTRESOURCE(name) && name[0] == '#') {
@@ -267,7 +263,7 @@ static const BYTE *find_in(UINT index, const WCHAR *verb, UINT message)
     return nullptr;
 }
 
-/* the device's own table, then its type's, then the core's; the first holding the verb wins entirely. */
+/* the first table containing the verb wins: device, device type, then core. */
 static const BYTE *find_command(MCIDEVICEID id, const WCHAR *verb, UINT message, UINT *table)
 {
     RtlEnterCriticalSection(&MciLock);
@@ -314,7 +310,7 @@ WINMMAPI BOOL WINAPI mciFreeCommandResource(UINT table)
 
 /* ------------------------------------------------------------------ types and drivers */
 
-/* a type name, which may end in digits, against winmm's names of 513 to 523. */
+/* matches type names, optionally followed by digits, to IDs 513 through 523. */
 UINT MciTypeOf(const WCHAR *name)
 {
     if (!name)
@@ -373,10 +369,7 @@ static BOOL type_of_file(const WCHAR *file, WCHAR *type)
     return registry_value(L"MCI Extensions", dot + 1, type, 80) && type[0];
 }
 
-/*
- * the driver of a type from [MCI32]: the key itself, then the key with a
- * digit, then the key whose driver file starts with the type.
- */
+/* looks up [MCI32] by type, then type plus a digit, then a driver filename starting with the type. */
 static MCIERROR find_driver(const WCHAR *type, WCHAR *install, WCHAR *file, WCHAR *params)
 {
     if (lstrlenW(type) > 79)
@@ -550,7 +543,7 @@ WINMMAPI MCIDEVICEID WINAPI mciGetDeviceIDFromElementIDA(DWORD element, LPCSTR t
     return mciGetDeviceIDFromElementIDW(element, name);
 }
 
-/* the module whose strings a resource return of the device names. */
+/* module containing the strings named by the device's resource return. */
 HMODULE MciStringModule(MCIDEVICEID id, BOOL driver)
 {
     RtlEnterCriticalSection(&MciLock);
@@ -601,7 +594,7 @@ static MCIERROR close_device(MCI_DEVICE *d, DWORD flags, DWORD_PTR parms)
     return LOWORD(r);
 }
 
-/* the name a device answers to, unless it is open for this thread already. */
+/* chooses the device's name, unless this thread already has it open. */
 static MCIERROR check_name(const WCHAR *name, BOOL alias, DWORD thread)
 {
     if (name && MciDeviceByName(name, thread) && MciDeviceByName(name, thread) != MCI_ALL_DEVICE_ID)
@@ -627,7 +620,7 @@ static MCIERROR load_device(DWORD flags, MCI_OPEN_PARMSW *p, const WCHAR *type, 
         d->element_id = (flags & MCI_OPEN_ELEMENT_ID) ? (DWORD)(DWORD_PTR)p->lpstrElementName : 0;
         d->owner = GetCurrentThreadId();
         d->requester = requester;
-        d->closing = TRUE; /* hidden until its driver accepted the open */
+        d->closing = TRUE; /* hidden until its driver accepted the open. */
     }
     RtlLeaveCriticalSection(&MciLock);
     if (!d)
@@ -847,7 +840,7 @@ static MCIERROR sysinfo(MCIDEVICEID id, DWORD flags, MCI_SYSINFO_PARMSW *p, DWOR
             return MMSYSERR_NOERROR;
         }
     }
-    /* a quantity is a number for the string interface to print. */
+    /* numeric quantities are printed by the string interface. */
     if (p->dwRetSize * sizeof(WCHAR) < sizeof(DWORD))
         return MCIERR_PARAM_OVERFLOW;
     memcpy(p->lpstrReturn, &count, sizeof(count));
@@ -891,7 +884,7 @@ static MCIERROR core_notify(MCIERROR r, DWORD flags, DWORD_PTR parms, MCIDEVICEI
     return r;
 }
 
-/* one device's command; the raw driver answer, its high word holding the return flags. */
+/* the driver's raw result carries return flags in its high word. */
 static MCIERROR device_command(MCIDEVICEID id, UINT message, DWORD flags, DWORD_PTR parms)
 {
     RtlEnterCriticalSection(&MciLock);
@@ -934,7 +927,7 @@ MCIERROR MciCommand(MCIDEVICEID id, UINT message, DWORD flags, DWORD_PTR parms, 
     }
     if (id != MCI_ALL_DEVICE_ID)
         return device_command(id, message, flags, parms);
-    /* every device of the calling thread in turn; a second failure makes MCIERR_MULTIPLE. */
+    /* tries every device owned by the calling thread; a second failure yields MCIERR_MULTIPLE. */
     MCIERROR result = 0;
     int failures = 0;
     for (UINT i = 1; i < g_capacity; i++) {
@@ -965,7 +958,7 @@ MCIERROR MciCommand(MCIDEVICEID id, UINT message, DWORD flags, DWORD_PTR parms, 
     return failures > 1 ? MCIERR_MULTIPLE : result;
 }
 
-/* a resource return loses its string id, and the driver's flags their word. */
+/* removes a resource result's string ID and the driver's high-word flags. */
 static MCIERROR finish(MCIERROR r, MCIDEVICEID id, DWORD_PTR parms)
 {
     if (!LOWORD(r) && (r & MCI_RESOURCE_RETURNED) && parms) {
@@ -1066,7 +1059,7 @@ HWND MciNotifyWindow(void)
     return g_window;
 }
 
-/* a string command carried out on the window thread for the calling one, which waits for it. */
+/* runs a string command on the window thread while the calling thread waits. */
 MCIERROR MciRelay(const WCHAR *command, WCHAR *ret, UINT size, DWORD requester, BOOL force_notify)
 {
     HWND window = MciNotifyWindow();

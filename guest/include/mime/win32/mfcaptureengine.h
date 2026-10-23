@@ -1,7 +1,4 @@
-/*
- * the capture engine of media foundation: a source of video from a camera, the sinks it feeds and the events it
- * reports. methods are in windows' vtable order.
- */
+/* media foundation capture engine: camera video source, the sinks it feeds and its events, in windows' vtable order. */
 #ifndef MIME_WIN32_MFCAPTUREENGINE_H
 #define MIME_WIN32_MFCAPTUREENGINE_H
 
@@ -43,7 +40,7 @@ typedef enum MF_CAPTURE_ENGINE_STREAM_CATEGORY {
     MF_CAPTURE_ENGINE_STREAM_CATEGORY_METADATA = 6,
 } MF_CAPTURE_ENGINE_STREAM_CATEGORY;
 
-/* the stream index that means the media source itself, for the services of a source. */
+/* stream index meaning the media source itself, for source services. */
 #define MF_CAPTURE_ENGINE_MEDIASOURCE 0xFFFFFFFFu
 #define MF_CAPTURE_ENGINE_FIRST_SOURCE_INDEX 0xFFFFFFFCu
 #define MF_CAPTURE_ENGINE_PREFERRED_SOURCE_STREAM_FOR_VIDEO_RECORD 0xFFFFFFFAu
@@ -161,12 +158,12 @@ MIME_DEFINE_GUID(IID_IMFCaptureEngine, 0xA6BBA433, 0x176B, 0x48B2, 0xB3, 0x75, 0
 MIME_DEFINE_GUID(IID_IMFCaptureEngineClassFactory, 0x8F02D140, 0x56FC, 0x4302, 0xA7, 0x05, 0x3A, 0x97, 0xC7, 0x8B,
                  0xE7, 0x79);
 
-/* the class factory and the engine have one class id. */
+/* the class factory and the engine share one class id. */
 MIME_DEFINE_GUID(CLSID_MFCaptureEngine, 0xEFCE38D3, 0x8914, 0x4674, 0xA7, 0xDF, 0xAE, 0x1B, 0x3D, 0x65, 0x4B, 0x8A);
 MIME_DEFINE_GUID(CLSID_MFCaptureEngineClassFactory, 0xEFCE38D3, 0x8914, 0x4674, 0xA7, 0xDF, 0xAE, 0x1B, 0x3D, 0x65, 0x4B,
                  0x8A);
 
-/* the events, their extended types. */
+/* event extended types. */
 MIME_DEFINE_GUID(MF_CAPTURE_ENGINE_INITIALIZED, 0x219992BC, 0xCF92, 0x4531, 0xA1, 0xAE, 0x96, 0xE1, 0xE8, 0x86, 0xC8,
                  0xF1);
 MIME_DEFINE_GUID(MF_CAPTURE_ENGINE_PREVIEW_STARTED, 0xA416DF21, 0xF9D3, 0x4A74, 0x99, 0x1B, 0xB8, 0x17, 0x29, 0x89, 0x52,
@@ -192,7 +189,7 @@ MIME_DEFINE_GUID(MF_CAPTURE_ENGINE_EFFECT_ADDED, 0xAA8DC7B5, 0xA048, 0x4E13, 0x8
 MIME_DEFINE_GUID(MF_CAPTURE_ENGINE_EFFECT_REMOVED, 0xC6E8DB07, 0xFB09, 0x4A48, 0x89, 0xC6, 0xBF, 0x92, 0xA0, 0x42, 0x22,
                  0xC9);
 
-/* the attributes the engine is initialized with. */
+/* engine initialization attributes. */
 MIME_DEFINE_GUID(MF_CAPTURE_ENGINE_D3D_MANAGER, 0x76E25E7B, 0xD595, 0x4283, 0x96, 0x2C, 0xC5, 0x94, 0xAF, 0xD7, 0x8D,
                  0xDF);
 MIME_DEFINE_GUID(MF_CAPTURE_ENGINE_USE_AUDIO_DEVICE_ONLY, 0x1C8077DA, 0x8466, 0x4DC4, 0x8B, 0x8E, 0x27, 0x6B, 0x3F, 0x85,

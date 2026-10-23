@@ -1,8 +1,6 @@
 /*
- * bthprops: the bluetooth api of a machine without a bluetooth radio.
- * windows' bthprops forwards these to bluetoothapis.dll; mime keeps them
- * here. radio searches find nothing, device searches end at once, and the
- * sdp record parsers are real.
+ * the bluetooth api of a machine without a radio. windows forwards these to bluetoothapis.dll. radio searches find
+ * nothing, device searches end at once, and the sdp record parsers are real.
  */
 #define BLUETOOTHAPI
 #include <mime/win32/bluetoothapis.h>
@@ -108,7 +106,7 @@ BOOL WINAPI BluetoothIsDiscoverable(HANDLE radio)
     return FALSE;
 }
 
-/* the stack speaks bluetooth 2.1. */
+/* the stack claims bluetooth 2.1. */
 BOOL WINAPI BluetoothIsVersionAvailable(UCHAR major, UCHAR minor)
 {
     return major < 2 || (major == 2 && minor <= 1);
@@ -127,7 +125,7 @@ HRESULT WINAPI DllCanUnloadNow(void)
 
 /* ------------------------------------------------------------------ sdp records */
 
-/* a data element: its header, its size and where its value starts. */
+/* decodes a data element header: its size and where its value starts. */
 static BOOL element_header(const BYTE *stream, ULONG length, BYTE *type, BYTE *index, ULONG *size, ULONG *header)
 {
     static const ULONG sizes[] = {1, 2, 4, 8, 16};
@@ -227,7 +225,7 @@ DWORD WINAPI BluetoothSdpGetElementData(LPBYTE stream, ULONG length, PSDP_ELEMEN
     return ERROR_INVALID_PARAMETER;
 }
 
-/* the element after current inside a sequence or alternative, the first one for a null current. */
+/* the element after current in a sequence or alternative, or the first for a null current. */
 static BYTE *next_element(BYTE *stream, ULONG length, BYTE *current, ULONG *left)
 {
     BYTE type, index;

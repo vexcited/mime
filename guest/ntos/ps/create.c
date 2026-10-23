@@ -1,32 +1,30 @@
 /*
- * user process creation, for programs the host starts and for
- * NtCreateUserProcess. the creator's process parameters, captured, become
- * the new process's: its environment, standard handles, window and
- * console choices and the runtime data the c library passes its file
- * descriptors in.
+ * user process creation, for programs the host starts and for NtCreateUserProcess. the creator's captured
+ * process parameters become the new process's: environment, standard handles, window and console choices,
+ * and the runtime data the c library passes its file descriptors in.
  */
 #include "../ntos.h"
 #include <mime/wow32.h>
 
-#define CONSOLE_DETACHED ((HANDLE)(LONG_PTR)-1)  /* DETACHED_PROCESS, as kernelbase marks it */
-#define CONSOLE_NEW ((HANDLE)(LONG_PTR)-2)       /* CREATE_NEW_CONSOLE */
-#define CONSOLE_NO_WINDOW ((HANDLE)(LONG_PTR)-3) /* CREATE_NO_WINDOW */
+#define CONSOLE_DETACHED ((HANDLE)(LONG_PTR)-1)  /* DETACHED_PROCESS, as kernelbase marks it. */
+#define CONSOLE_NEW ((HANDLE)(LONG_PTR)-2)       /* CREATE_NEW_CONSOLE. */
+#define CONSOLE_NO_WINDOW ((HANDLE)(LONG_PTR)-3) /* CREATE_NO_WINDOW. */
 #define PROCESS_CREATE_FLAGS_INHERIT_HANDLES 0x00000004
 #define MAX_ENVIRONMENT (32u << 20)
 
-/* what a new process is given, in kernel memory. */
+/* the new process's parameters, in kernel memory. */
 typedef struct PSP_PARAMS {
     UNICODE_STRING Image, CommandLine, CurrentDirectory, WindowTitle, DesktopInfo;
-    PUCHAR RuntimeData; /* bytes, not text */
+    PUCHAR RuntimeData; /* bytes, not text. */
     USHORT RuntimeDataLength;
-    PWCHAR Environment; /* NULL for the default one */
+    PWCHAR Environment; /* NULL for the default one. */
     SIZE_T EnvironmentBytes;
     HANDLE StandardInput, StandardOutput, StandardError;
     ULONG WindowFlags, ShowWindowFlags, ConsoleFlags;
     ULONG StartingX, StartingY, CountX, CountY, CountCharsX, CountCharsY, FillAttribute;
     BOOLEAN Detached;
-    BOOLEAN NewConsole; /* the process gets a console of its own */
-    HANDLE PtyHandle;   /* the pseudo console the process is attached to, a handle of the creator */
+    BOOLEAN NewConsole; /* the process gets a console of its own. */
+    HANDLE PtyHandle;   /* the creator's handle to the pseudo console the process attaches to. */
 } PSP_PARAMS;
 
 NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out);
@@ -61,11 +59,9 @@ static BOOLEAN arena_string(USER_ARENA *a, PUNICODE_STRING dst, const WCHAR *src
     return TRUE;
 }
 
-/* builds the PEB, process parameters and environment in the new process. */
 /*
- * the 32-bit peb of a wow64 process, below 2 GiB: what the kernel knows of
- * the process, as the 64-bit peb has it. wow64.dll adds the 32-bit process
- * parameters.
+ * the 32-bit peb of a wow64 process, below 2 GiB, mirroring what the 64-bit peb says about the process.
+ * wow64.dll adds the 32-bit process parameters.
  */
 static NTSTATUS setup_wow64_peb(PEPROCESS process)
 {
@@ -143,7 +139,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     peb->ImageSubsystemMajorVersion = img->Image.SubsystemMajor;
     peb->ImageSubsystemMinorVersion = img->Image.SubsystemMinor;
     peb->ActiveProcessAffinityMask = KiProcessAffinity(&process->Pcb);
-    peb->CriticalSectionTimeout.QuadPart = -2592000ll * 10000000; /* 30 days */
+    peb->CriticalSectionTimeout.QuadPart = -2592000ll * 10000000; /* 30 days. */
     peb->HeapSegmentReserve = 0x100000;
     peb->HeapSegmentCommit = 0x2000;
     peb->HeapDeCommitTotalFreeThreshold = 0x10000;
@@ -186,7 +182,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
         pp->RuntimeData.MaximumLength = (USHORT)(p->RuntimeDataLength + sizeof(WCHAR));
     }
     ok = ok && runtime;
-    /* the current directory always ends with a backslash, like windows keeps it. */
+    /* like Windows, the current directory always ends with a backslash. */
     WCHAR dir[MIME_IMAGE_NAME_CHARS + 2];
     SIZE_T dlen = cwd->Length / sizeof(WCHAR);
     if (dlen > MIME_IMAGE_NAME_CHARS)
@@ -206,7 +202,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
             pp->CurrentDirectory.DosPath.Buffer = grow;
         }
     }
-    /* dll search path: application directory first. */
+    /* the dll search path starts with the application directory. */
     SIZE_T img_chars = image->Length / sizeof(WCHAR);
     SIZE_T slash = img_chars;
     while (slash > 0 && image->Buffer[slash - 1] != '\\')
@@ -225,7 +221,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     return STATUS_SUCCESS;
 }
 
-/* converts a dos path such as Z:\a\b.exe into \??\Z:\a\b.exe. */
+/* Z:\a\b.exe becomes \??\Z:\a\b.exe. */
 static NTSTATUS dos_to_nt(PCUNICODE_STRING dos, PUNICODE_STRING nt)
 {
     static const WCHAR prefix[] = L"\\??\\";
@@ -276,7 +272,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         ObDereferenceObject(section);
         return status;
     }
-    /* the creator's token, or the one it was given for the new process. */
+    /* the token given for the new process, or else the creator's. */
     if (token) {
         SepSetProcessToken(process, token);
     } else {
@@ -295,7 +291,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     if (process->Machine == IMAGE_FILE_MACHINE_I386)
         process->AddressSpace.AllocationLimit = 0x7FFF0000;
     process->MimeRequestId = request_id;
-    /* a gui program has no console, a console program shares the one it is given. */
+    /* a gui program gets no console. a console program shares the one it is given. */
     if (!p->Detached && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI) {
         MIME_CONSOLE *pty = p->PtyHandle ? ConsoleOfPtyHandle(p->PtyHandle) : nullptr;
         if (pty) {
@@ -314,7 +310,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
             ConsoleInitialTitle(console, p->WindowTitle.Length ? &p->WindowTitle : image);
         }
     }
-    /* the terminal of the run it descends from stays within reach of AllocConsole. */
+    /* the terminal of the run it descends from stays available to AllocConsole. */
     MIME_CONSOLE *hint = parent && parent->ConsoleHint ? parent->ConsoleHint : console;
     if (hint)
         ConsoleSetHint(process, hint);
@@ -341,12 +337,12 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         SIZE_T ntdll_view = 0;
         status = MiMapViewOfSection(system_dll->Section, process, &ntdll, 0, &ntdll_view, PAGE_EXECUTE_WRITECOPY, 0);
         if (status == STATUS_IMAGE_NOT_AT_BASE) {
-            /* the system dll must sit at its preferred base: the kernel caches its exports. */
+            /* the system dll must sit at its preferred base, since the kernel caches its exports. */
             status = STATUS_CONFLICTING_ADDRESSES;
         }
         process->NtdllBase = ntdll;
     }
-    /* a 32-bit program has the 32-bit ntdll beside the native one, at its base. */
+    /* a 32-bit program also gets the 32-bit ntdll, at its base. */
     PVOID ntdll32 = nullptr;
     if (NT_SUCCESS(status) && PspIsWow64Process(process) && PspWow64NtdllSection) {
         SIZE_T ntdll32_view = 0;
@@ -356,7 +352,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     }
     if (NT_SUCCESS(status))
         status = setup_peb(process, p);
-    /* where it is is told in a spare pointer of the peb, for wow64.dll. */
+    /* wow64.dll finds the 32-bit ntdll through a spare peb pointer. */
     if (NT_SUCCESS(status) && ntdll32)
         process->Peb->SparePointers[0] = ntdll32;
     if (NT_SUCCESS(status) && PspIsWow64Process(process))
@@ -383,7 +379,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         return status;
     }
     PspNotifyProcess(process, TRUE);
-    /* the arguments help to tell the processes of one program apart. */
+    /* the arguments help tell processes of one program apart in the log. */
     UNICODE_STRING shown = p->CommandLine;
     if (shown.Length > 300 * sizeof(WCHAR))
         shown.Length = 300 * sizeof(WCHAR);
@@ -397,8 +393,8 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
 }
 
 /*
- * the service control manager starts with the machine, in session 0 with a token of the system. a machine without
- * the file goes on without services.
+ * the service control manager starts with the machine, in session 0 with a system token. a machine without
+ * services.exe runs without services.
  */
 NTSTATUS PsStartServiceController(void)
 {
@@ -449,7 +445,7 @@ static void free_params(PSP_PARAMS *p)
         ExFreePool(p->Environment);
 }
 
-/* the image of an attribute instead of the parameters', an nt path without its prefix. */
+/* takes the image from an attribute instead of the parameters, dropping the \??\ prefix. */
 static NTSTATUS replace_image(PSP_PARAMS *p, PCUNICODE_STRING image)
 {
     SIZE_T chars = image->Length / sizeof(WCHAR), skip = 0;
@@ -467,7 +463,7 @@ static NTSTATUS replace_image(PSP_PARAMS *p, PCUNICODE_STRING image)
     return STATUS_SUCCESS;
 }
 
-/* the creator's parameters, read once from its memory. */
+/* reads the creator's parameters once from its memory. */
 static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
 {
     RTL_USER_PROCESS_PARAMETERS pp;
@@ -489,7 +485,7 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
                                 : STATUS_NO_MEMORY;
         p->RuntimeDataLength = pp.RuntimeData.Length;
     }
-    /* an environment ends with an empty string; its size, when given, bounds the copy. */
+    /* an environment ends with an empty string. its size, when given, bounds the copy. */
     if (NT_SUCCESS(status) && pp.Environment) {
         SIZE_T bytes = pp.EnvironmentSize;
         if (!bytes || bytes > MAX_ENVIRONMENT) {
@@ -527,13 +523,11 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
 }
 
 /*
- * the attribute list of NtCreateUserProcess. an attribute is a number, a size, a value and an optional
- * place for a length. an input attribute whose number has the additive bit carries its value, the
- * others point at it. what mime does with each:
- *   token, parent process, handle list, job list, mitigation options, child process policy,
- *   win32k filter, the policies of app containers, client id and teb address (out)  taken.
- *   image name  replaces the image of the parameters.
- *   the rest of the attributes windows knows: checked for their size and ignored.
+ * NtCreateUserProcess's attribute list. an attribute is a number, a size, a value and an optional length
+ * pointer. an input attribute whose number has the additive bit carries its value, the others point at it.
+ * mime takes the token, parent process, handle list, job list, mitigation options, child process policy,
+ * win32k filter, app container policies, and the client id and teb address outputs. the image name
+ * replaces the parameters' image. every other attribute Windows knows is size checked and ignored.
  */
 #define PS_ATTRIBUTE_PARENT_PROCESS 0x00060000u
 #define PS_ATTRIBUTE_DEBUG_PORT 0x00060001u
@@ -570,7 +564,7 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
 typedef struct PSP_ATTRIBUTES {
     HANDLE Token;
     HANDLE Parent;
-    PHANDLE HandleList; /* kernel copies, sorted */
+    PHANDLE HandleList; /* kernel copies, sorted. */
     ULONG HandleCount;
     BOOLEAN HasHandleList;
     PHANDLE JobList;
@@ -581,8 +575,8 @@ typedef struct PSP_ATTRIBUTES {
     ULONG ChildPolicy;
     ULONG Win32kFilter[2];
     ULONG AllApplicationPackages, DesktopApp, ComponentFilter;
-    UNICODE_STRING Image;    /* the image name, captured */
-    PVOID ClientId;          /* where the process and thread ids go, and where their length */
+    UNICODE_STRING Image;    /* the image name, captured. */
+    PVOID ClientId;          /* where the process and thread ids go, and their length. */
     PSIZE_T ClientIdLength;
     PVOID TebAddress;
     PSIZE_T TebAddressLength;
@@ -597,7 +591,7 @@ static void free_attributes(PSP_ATTRIBUTES *a)
     KiFreeCapturedString(&a->Image);
 }
 
-/* a list of handles of eight bytes each, copied to the kernel. */
+/* copies a list of 8-byte handles into the kernel. */
 static NTSTATUS capture_handles(const PS_ATTRIBUTE *attribute, PHANDLE *list, ULONG *count)
 {
     SIZE_T size = attribute->Size;
@@ -616,7 +610,7 @@ static NTSTATUS capture_handles(const PS_ATTRIBUTE *attribute, PHANDLE *list, UL
     return STATUS_SUCCESS;
 }
 
-/* ordered by the low word of the handle, the way the inheritance looks for them. */
+/* sorted by the handle's low word, the order inheritance expects. */
 static void sort_handles(PHANDLE list, ULONG count)
 {
     for (ULONG gap = count / 2; gap; gap /= 2) {
@@ -636,7 +630,7 @@ static NTSTATUS capture_one(const PS_ATTRIBUTE *attribute, PSP_ATTRIBUTES *a)
     SIZE_T size = attribute->Size;
     ULONG word = 0;
     NTSTATUS status;
-    /* a pointer to a value of a given size, read now. */
+    /* reads a value of exactly the given size. */
 #define VALUE(length, destination) \
     if (size != (length)) return STATUS_INVALID_PARAMETER; \
     status = KiCopyFromUser((destination), attribute->ValuePtr, (length)); \
@@ -707,7 +701,7 @@ static NTSTATUS capture_one(const PS_ATTRIBUTE *attribute, PSP_ATTRIBUTES *a)
     case PS_ATTRIBUTE_WIN32K_FILTER:
         VALUE(8, a->Win32kFilter);
         return STATUS_SUCCESS;
-    /* known, sized, and not acted on. */
+    /* known and size checked, but ignored. */
     case PS_ATTRIBUTE_PRIORITY_CLASS:
     case PS_ATTRIBUTE_PROTECTION_LEVEL:
         return size == 1 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
@@ -742,8 +736,8 @@ static NTSTATUS capture_one(const PS_ATTRIBUTE *attribute, PSP_ATTRIBUTES *a)
 }
 
 /*
- * the list: its length in bytes is the size of a length plus a whole number of attributes, at most
- * PS_ATTRIBUTE_MAX_COUNT of them, none twice, and an input attribute has no place for a length.
+ * the list's byte length is a length field plus a whole number of attributes, at most PS_ATTRIBUTE_MAX_COUNT,
+ * none repeated, and input attributes have no length pointer.
  */
 static NTSTATUS capture_attributes(const PS_ATTRIBUTE_LIST *user, PSP_ATTRIBUTES *a)
 {
@@ -771,14 +765,14 @@ static NTSTATUS capture_attributes(const PS_ATTRIBUTE_LIST *user, PSP_ATTRIBUTES
     }
     if (NT_SUCCESS(status) && a->HasHandleList) {
         sort_handles(a->HandleList, a->HandleCount);
-        /* a negative handle, a pseudo handle among them, is no handle of the creator. */
+        /* a negative handle, pseudo handles included, is not a handle of the creator. */
         if ((LONG)(ULONG_PTR)a->HandleList[0] < 0)
             status = STATUS_INVALID_PARAMETER;
     }
     return status;
 }
 
-/* the places the process and thread ids and the thread's teb are given back to. */
+/* writes back the process and thread ids and the thread's teb. */
 static void return_attributes(const PSP_ATTRIBUTES *a, PEPROCESS process, PETHREAD thread)
 {
     if (a->ClientId) {
@@ -799,7 +793,6 @@ static void return_attributes(const PSP_ATTRIBUTES *a, PEPROCESS process, PETHRE
     }
 }
 
-/* the policies of the attributes, recorded in the new process. */
 static void apply_attributes(PEPROCESS process, PEPROCESS parent, const PSP_ATTRIBUTES *a)
 {
     ULONG64 requested[3] = {};
@@ -824,7 +817,7 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     if ((process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) ||
         (thread_flags & ~1u) || create_info)
         return STATUS_NOT_SUPPORTED;
-    /* the attributes of the new objects may give them a descriptor, nothing else. */
+    /* the new objects' attributes may only give them a descriptor. */
     OBJECT_ATTRIBUTES process_oa, thread_oa;
     UNICODE_STRING process_name, thread_name;
     NTSTATUS attribute_status = ObCaptureObjectAttributes(process_attributes, &process_oa, &process_name);
@@ -837,7 +830,7 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     KiFreeCapturedString(&thread_name);
     if (!NT_SUCCESS(attribute_status))
         return attribute_status;
-    /* the descriptors they offer are read first, so one that cannot be read starts nothing. */
+    /* capture the offered descriptors first, so a bad one starts nothing. */
     SD_BLOB *process_sd = nullptr, *thread_sd = nullptr;
     if (process_attributes && process_oa.SecurityDescriptor)
         attribute_status = SeSdCapture(process_oa.SecurityDescriptor, KeGetPreviousMode(), &process_sd);
@@ -852,10 +845,10 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     memset(&attrs, 0, sizeof(attrs));
     NTSTATUS status = attributes ? capture_attributes(attributes, &attrs) : STATUS_SUCCESS;
     PEPROCESS creator = PsCurrentProcess(), parent = creator;
-    /* a list of handles to inherit is for a creation that inherits. */
+    /* a handle list only makes sense when inheriting handles. */
     if (NT_SUCCESS(status) && attrs.HasHandleList && !(process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES))
         status = STATUS_INVALID_PARAMETER;
-    /* a process that may not create processes, unless the new one is let to override that. */
+    /* a process barred from creating processes, unless the new one's policy overrides that. */
     if (NT_SUCCESS(status) && (creator->MitigationPolicy[MIME_POLICY_CHILD_PROCESS] & MIME_CHILD_PROCESS_NO_CREATION) &&
         !(attrs.HasChildPolicy && (attrs.ChildPolicy & MIME_CHILD_PROCESS_OVERRIDE)))
         status = STATUS_CHILD_PROCESS_BLOCKED;
@@ -871,7 +864,7 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     struct _TOKEN *token = nullptr;
     if (NT_SUCCESS(status) && attrs.Token)
         status = SepReferenceTokenForNewProcess(attrs.Token, &token);
-    /* the jobs it is put in at birth, which must accept it. */
+    /* the jobs the process starts in, which must accept it. */
     struct EJOB *job = nullptr;
     if (NT_SUCCESS(status) && attrs.JobCount)
         status = PspReferenceJobForCreation(attrs.JobList, attrs.JobCount, &job);
@@ -894,7 +887,7 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
         if (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES)
             status = attrs.HasHandleList ? ObInheritHandleList(parent, process, attrs.HandleList, attrs.HandleCount)
                                          : ObInheritHandles(parent, process);
-        /* the job of the creator first, and a job of the list below it. */
+        /* the parent's job first, then the listed job nested below it. */
         if (NT_SUCCESS(status))
             status = PspInheritJob(process, parent, process_flags);
         if (NT_SUCCESS(status) && job)

@@ -22,7 +22,7 @@ bool mime_locale_find(const char *name, MimeLocale *out)
     return false;
 }
 
-/* the modifiers of the C library that name a script, and the ones of the locales of the other scripts. */
+/* C library script modifiers and locales that use other scripts. */
 static const char *script_of_modifier(const char *modifier)
 {
     static const struct {
@@ -64,7 +64,7 @@ bool mime_locale_tag(const char *text, char *out, unsigned size)
     return true;
 }
 
-/* a name, or the language of it when the name has no locale of its own. */
+/* uses the language default when the full name has no locale. */
 static bool find_loosely(const char *tag, MimeLocale *out)
 {
     char name[64];
@@ -87,7 +87,7 @@ void mime_locale_from_host(MimeLocale *out)
         if (!value || !value[0])
             continue;
         char tag[64];
-        /* the first variable that is set decides, even when it names no locale of the guest. */
+        /* the first set variable wins, even if its locale is unsupported by the guest. */
         if (mime_locale_tag(value, tag, sizeof(tag)) && find_loosely(tag, out))
             return;
         break;

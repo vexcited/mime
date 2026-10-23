@@ -133,7 +133,7 @@ static void emit_para(RTF *r, WCHAR mark)
         r->pf[at] = current_pf(r);
 }
 
-/* turns the pending bytes of 8-bit text into characters in the state's code page. */
+/* decodes the pending 8-bit bytes in the state's code page. */
 static void flush_bytes(RTF *r)
 {
     if (!r->byte_count)
@@ -385,7 +385,7 @@ static void end_field(RTF *r)
         }
         return;
     }
-    /* riched20: the result, then the url in angle brackets; just the url when they are the same. */
+    /* riched20: the result, then the url in angle brackets, or just the url when they are the same. */
     BOOL same = rn == (UINT)wn;
     for (UINT i = 0; same && i < rn; i++)
         same = r->text[rs + i] == wurl[i];
@@ -1019,7 +1019,7 @@ LONG ReReadRtf(RE *e, const char *data, UINT size, UINT cp, UINT count, LONG *er
     parse(r);
     while (r->field_count)
         end_field(r);
-    /* the paragraph format of the last paragraph, and the formats of every character's paragraph. */
+    /* the last paragraph's format, and every character's paragraph format. */
     WORD last_pf = current_pf(r);
     BOOL merge = r->whole && !r->error && r->n && r->text[r->n - 1] == RE_CR;
     if (merge) {

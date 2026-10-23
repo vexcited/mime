@@ -1,7 +1,6 @@
 /*
- * read-only udf reader, enough for windows installation media.
- * windows isos are mastered with udf 1.02 next to an iso 9660 bridge,
- * but install.wim is larger than 4 GiB so only the udf view is usable.
+ * read-only UDF reader for Windows installation media. these use UDF 1.02 with an ISO 9660 bridge, but
+ * install.wim exceeds 4 GiB and requires UDF.
  */
 #ifndef MIME_UDF_H
 #define MIME_UDF_H
@@ -12,7 +11,7 @@ typedef struct MimeUdf MimeUdf;
 
 typedef struct MimeUdfExtent {
     uint64_t file_offset;
-    uint64_t disk_offset; /* byte offset in the image, UINT64_MAX for sparse extents */
+    uint64_t disk_offset; /* byte offset in the image, UINT64_MAX for sparse extents. */
     uint64_t length;
 } MimeUdfExtent;
 
@@ -21,7 +20,7 @@ typedef struct MimeUdfFile {
     bool is_dir;
     uint32_t extent_count;
     MimeUdfExtent *extents;
-    uint8_t *inline_data; /* embedded data for tiny files */
+    uint8_t *inline_data; /* embedded data for tiny files. */
 } MimeUdfFile;
 
 MimeUdf *mime_udf_open(const char *image_path);

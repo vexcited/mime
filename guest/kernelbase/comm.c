@@ -1,8 +1,6 @@
 /*
- * serial ports: each function is one or a few IOCTL_SERIAL requests of
- * the port's driver, waited for on an event. mime has no serial driver,
- * so on any handle the requests fail as they do on a file that is not a
- * port.
+ * serial ports: each function is one or a few IOCTL_SERIAL requests to the port driver, waited on an event. mime has
+ * no serial driver, so the requests fail as they would on a file that is not a port.
  */
 #include "kernelbase_private.h"
 
@@ -79,7 +77,6 @@ typedef struct SERIAL_STATUS {
     BOOLEAN WaitForImmediate;
 } SERIAL_STATUS;
 
-/* one request, waited for on an event of its own. */
 static NTSTATUS serial(HANDLE file, HANDLE event, ULONG code, PVOID in, ULONG in_len, PVOID out, ULONG out_len)
 {
     IO_STATUS_BLOCK iosb = {};
@@ -97,7 +94,7 @@ static BOOL is_error(NTSTATUS status)
     return ((ULONG)status & 0xC0000000) == 0xC0000000;
 }
 
-/* a whole call of one request: the event, the request, the error. */
+/* creates the event, makes the request and sets the last error. */
 static BOOL serial_call(HANDLE file, ULONG code, PVOID in, ULONG in_len, PVOID out, ULONG out_len)
 {
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);

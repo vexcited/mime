@@ -26,7 +26,7 @@ enum {
 struct MimeUdf {
     int fd;
     uint32_t block_size;
-    uint32_t partition_start; /* in blocks */
+    uint32_t partition_start; /* in blocks. */
     uint32_t partition_length;
     MimeUdfFile root;
 };
@@ -112,7 +112,7 @@ static bool parse_allocs(MimeUdf *udf, MimeUdfFile *file, const uint8_t *ad, uin
     return true;
 }
 
-/* loads a (extended) file entry at partition block lbn. */
+/* loads a file entry or extended file entry at partition block lbn. */
 static bool load_file_entry(MimeUdf *udf, uint32_t lbn, MimeUdfFile *file)
 {
     memset(file, 0, sizeof(*file));
@@ -194,7 +194,7 @@ bool mime_udf_read(MimeUdf *udf, const MimeUdfFile *file, uint64_t offset, void 
     return len == 0;
 }
 
-/* decodes a udf dstring/file identifier into lowercase-insensitive utf-8. */
+/* decodes a UDF dstring or file identifier to UTF-8 for case-insensitive lookup. */
 static void decode_name(const uint8_t *id, uint32_t len, char *out, size_t out_size)
 {
     size_t o = 0;

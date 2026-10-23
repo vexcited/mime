@@ -1,6 +1,4 @@
-/*
- * threads: creation, user mode entry, termination and reaping.
- */
+/* threads: creation, user mode entry, termination and reaping. */
 #include "../ntos.h"
 #include "../se/se.h"
 #include <mime/mx64.h>
@@ -8,7 +6,7 @@
 
 #define KERNEL_STACK_SIZE (64 * 1024)
 #define MIME_DEFAULT_STACK_RESERVE (1024 * 1024)
-/* the bytes below the guard page of a stack that the handlers of a stack overflow run on, a quarter of a small stack. */
+/* stack below the guard page kept for stack overflow handlers, a quarter of a small stack. */
 #define MIME_STACK_OVERFLOW_ZONE (32 * 1024)
 
 static LIST_ENTRY g_dead_threads;
@@ -46,7 +44,7 @@ void PsInitializeIdleThread(void)
                     (PVOID)(MIME_KVA_PHYSMAP + HalBootInfo->boot_stack_phys), KeGetCurrentPrcb());
 }
 
-/* the idle thread of a secondary processor; returns the top of its stack, where the processor starts. */
+/* returns the top of the idle thread's stack, where the secondary processor starts. */
 PVOID PsCreateIdleThread(PKPRCB prcb)
 {
     PETHREAD idle = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ETHREAD), KI_TAG('I', 'd', 'l', 'e'));
@@ -165,11 +163,9 @@ static void user_thread_startup(PVOID context)
 #define MIME_NATIVE_STACK_SIZE (1024 * 1024)
 
 /*
- * the 32-bit half of a wow64 thread, as windows lays it out: the 32-bit teb
- * 0x2000 bytes after the 64-bit one, each pointing at the other, the 64-bit
- * teb's exception list holding the 32-bit teb, its stack the 64-bit stack
- * and the 32-bit teb's the program's, and the cpu area at the top of the
- * 64-bit stack.
+ * the 32-bit half of a wow64 thread, laid out like windows: the 32-bit teb sits 0x2000 bytes after the 64-bit one
+ * and each points at the other. the 64-bit teb's exception list holds the 32-bit teb, its stack fields describe the
+ * 64-bit stack, the 32-bit teb's the program's, and the cpu area is at the top of the 64-bit stack.
  */
 static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID stack, PVOID stack_limit, SIZE_T stack_size,
                             ULONG_PTR native_top, ULONG_PTR *native_base)
@@ -251,9 +247,9 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     thread->UserStackAllocation = stack;
     thread->UserStackSize = stack_reserve;
     /*
-     * the stack is committed whole, and a page with the guard on it sits above the last bytes of it: whatever reaches the
-     * guard has overflowed, and the bytes below are what the exception for it is dispatched on, as windows keeps a few
-     * pages for it. the stack limit of the thread is the page above the guard.
+     * the stack is committed whole, with a guard page above its last bytes: hitting the guard means overflow, and
+     * the bytes below are where the exception is dispatched, as windows keeps a few pages for it. the thread's
+     * stack limit is the page above the guard.
      */
     SIZE_T zone = stack_reserve >= 4 * MIME_STACK_OVERFLOW_ZONE ? MIME_STACK_OVERFLOW_ZONE : ROUND_TO_PAGES(stack_reserve / 4);
     PVOID guard = (PUCHAR)stack + zone;
@@ -337,7 +333,7 @@ void NTAPI KeUnstackDetachProcess(PVOID state)
 
 void PspProcessExit(PEPROCESS process);
 
-/* a list link of the program: eight bytes, or four for a wow64 program. */
+/* a list link in the program: 8 bytes, or 4 for wow64. */
 static ULONG64 link_get(const UCHAR *raw, ULONG width)
 {
     return width == 4 ? *(const ULONG *)raw : *(const ULONG64 *)raw;
@@ -350,9 +346,8 @@ static void link_put(ULONG64 user, ULONG64 value, ULONG width)
 }
 
 /*
- * kernelbase keeps the tebs of a process in a list through TlsLinks. a thread
- * that is terminated ends without leaving it, and the next thread to join
- * would write through its teb, freed below.
+ * kernelbase links the tebs of a process through TlsLinks. a terminated thread never unlinks itself, and the next
+ * thread to join would write through its teb, freed below.
  */
 static void unlink_tls_links(PVOID links, ULONG width)
 {
@@ -370,9 +365,8 @@ static void unlink_tls_links(PVOID links, ULONG width)
 }
 
 /*
- * the stacks and the teb of a thread that ends. the program cannot free
- * them, as it runs on one until it is gone, so the kernel does, from the
- * thread's own process while it is still whole.
+ * the program cannot free the stacks and teb it runs on, so the kernel does, from the thread's own process while
+ * it is still whole.
  */
 static void release_user_memory(PEPROCESS process, PETHREAD thread)
 {
@@ -652,7 +646,7 @@ NTSTATUS NTAPI NtSuspendThread(HANDLE handle, PULONG previous)
     return status;
 }
 
-/* every thread of a process suspended or resumed once more, as the debuggers' calls do. */
+/* suspends or resumes every thread of a process once more, as debuggers do. */
 static NTSTATUS suspend_or_resume_process(HANDLE handle, BOOLEAN suspend)
 {
     PEPROCESS process;
@@ -709,7 +703,7 @@ NTSTATUS NTAPI NtResumeProcess(HANDLE handle)
 NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length,
                                         PULONG returned)
 {
-    /* what anyone who can see a thread may know of it, with either the full or the limited right. */
+    /* what anyone who can see a thread may know, with the full or the limited right. */
     ACCESS_MASK rights = THREAD_QUERY_INFORMATION;
     switch (klass) {
     case ThreadBasicInformation:
@@ -887,7 +881,7 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
         else
             thread->Tcb.Affinity = value;
     } else if (klass == ThreadIdealProcessor) {
-        /* the previous one is the status, and a processor that does not exist leaves it alone. */
+        /* the previous ideal processor is returned as the status. a processor that does not exist changes nothing. */
         ULONG ideal = (ULONG)value;
         if (ideal > 64) {
             status = STATUS_INVALID_PARAMETER;
@@ -944,9 +938,8 @@ NTSTATUS NTAPI NtAlertThread(HANDLE handle)
 
 
 /*
- * the thread parking of windows 8 and later, which ntdll builds address
- * waits, srw locks and condition variables on. an alert sent before the
- * wait is kept, so waking never races with going to sleep.
+ * thread parking, as on windows 8 and later, which ntdll builds address waits, srw locks and condition variables
+ * on. an alert sent before the wait is kept, so waking never races with going to sleep.
  */
 NTSTATUS NTAPI NtAlertThreadByThreadId(HANDLE id)
 {
@@ -1052,10 +1045,9 @@ NTSTATUS NTAPI PsSetCreateThreadNotifyRoutine(PCREATE_THREAD_NOTIFY_ROUTINE rout
 }
 
 /*
- * every thread of every process in the log, for a machine that hangs: its
- * state, what it waits for, where its user code called the kernel and the
- * return address on top of the user stack there. passive level: it
- * attaches to each process to read its stack.
+ * logs every thread of every process, for a hung machine: its state, what it waits for, where its user code entered
+ * the kernel and the return address on top of the user stack there. passive level, since it attaches to each
+ * process to read its stack.
  */
 void PsDumpThreads(void)
 {

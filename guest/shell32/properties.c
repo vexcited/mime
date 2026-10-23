@@ -1,22 +1,22 @@
 /*
- * the app user model id of the process, kept where shcore keeps it, and the property store of a window.
+ * the process app user model id, kept where shcore keeps it, and the property store of a window.
  *
- * the store of a window lives in the window's own properties, as windows' does: every value is a window
- * property named after its key, "{format id} property id", holding the atom of the value as text, so another
- * process finds it too. an empty value removes the property and a null one is kept as a marker.
+ * like on windows, a window's store lives in its window properties so other processes see it too: each value is a
+ * property named "{format id} property id" holding the atom of the value's text. an empty value removes the property
+ * and a null one is kept as a marker.
  */
 #include "shell32_private.h"
 #include <mime/shellclient.h>
 #include <mime/win32/propidl.h>
 
-/* ------------------------------------------------------------------ the app id */
+/* ------------------------------------------------------------------ app id */
 
 #define STARTF_TITLEISLINKNAME 0x00000800
 #define STARTF_TITLEISAPPID 0x00001000
 /* marks a title shcore allocated itself. */
 #define STARTF_SHCORE_APPID 0x00004000
 
-/* kept in the process parameters as a title marked STARTF_TITLEISAPPID, where GetStartupInfo shows it. */
+/* stored as the process parameters title marked STARTF_TITLEISAPPID, where GetStartupInfo shows it. */
 SHSTDAPI HRESULT WINAPI SetCurrentProcessExplicitAppUserModelID(LPCWSTR id)
 {
     if (id && wcslen(id) >= 128)
@@ -56,9 +56,9 @@ SHSTDAPI HRESULT WINAPI GetCurrentProcessExplicitAppUserModelID(LPWSTR *out)
     return *out ? S_OK : E_OUTOFMEMORY;
 }
 
-/* ------------------------------------------------------------------ the property store of a window */
+/* ------------------------------------------------------------------ window property store */
 
-/* the value of a property set to null. */
+/* stands for a property set to null. */
 #define NULL_MARKER ((HANDLE)(ULONG_PTR)0xF0000000)
 #define KEY_CHARS 50
 
@@ -88,7 +88,7 @@ static int hex_digit(WCHAR c)
     return -1;
 }
 
-/* a property named "{format id} id", the names this store gives its window properties. */
+/* parses the "{format id} id" names this store gives its window properties. */
 static BOOL key_from_string(const WCHAR *text, PROPERTYKEY *key)
 {
     if (text[0] != L'{' || wcslen(text) < 40 || text[37] != L'}' || text[38] != L' ')
@@ -177,7 +177,7 @@ static BOOL CALLBACK collect_key(HWND window, LPWSTR name, HANDLE data, ULONG_PT
     return TRUE;
 }
 
-/* the keys the window has values for, in the order its properties list them. */
+/* keys come in the order the window lists its properties. */
 static HRESULT list_keys(WINDOW_STORE *store, ENUM_KEYS *keys)
 {
     memset(keys, 0, sizeof(*keys));
@@ -226,7 +226,7 @@ static HRESULT STDMETHODCALLTYPE store_get_value(IPropertyStore *This, REFPROPER
     }
     if (!(ULONG_PTR)data || !GlobalGetAtomNameW((ATOM)(ULONG_PTR)data, text, 260))
         return S_OK;
-    /* the stored text is the value as a string. */
+    /* values come back as strings whatever type they were set with. */
     SIZE_T size = (wcslen(text) + 1) * sizeof(WCHAR);
     WCHAR *copy = ShAlloc(size);
     if (!copy)
@@ -237,7 +237,7 @@ static HRESULT STDMETHODCALLTYPE store_get_value(IPropertyStore *This, REFPROPER
     return S_OK;
 }
 
-/* System.AppUserModel.ID, the id that groups a window's button with the program's others. */
+/* System.AppUserModel.ID groups a window's taskbar button with the program's others. */
 static void notify_window_id(HWND window, REFPROPERTYKEY key, const WCHAR *text)
 {
     static const GUID format = {0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}};

@@ -1,4 +1,3 @@
-/* what the files of the crypto library share. */
 #ifndef MIME_LIB_CRYPTO_INTERNAL_H
 #define MIME_LIB_CRYPTO_INTERNAL_H
 

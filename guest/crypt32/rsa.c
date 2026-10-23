@@ -1,7 +1,6 @@
 /*
- * signature verification for certificates: rsa with the pkcs #1 v1.5
- * padding check, rsa pss and ecdsa on the named curves, over the shared
- * crypto library.
+ * certificate signature verification over the shared crypto library: RSA with the PKCS #1 v1.5 padding check,
+ * RSA-PSS, and ECDSA on the named curves.
  */
 #include "crypt32_private.h"
 #include <crypto/crypto.h>
@@ -114,7 +113,7 @@ static const MimeHashAlg *mime_hash_of(ALG_ID alg)
     return nullptr;
 }
 
-/* a der INTEGER into a big endian field of size bytes. */
+/* a DER INTEGER into a big endian field of size bytes. */
 static bool fixed_integer(der_reader *r, BYTE *out, DWORD size)
 {
     der_item item;
@@ -133,7 +132,7 @@ static bool fixed_integer(der_reader *r, BYTE *out, DWORD size)
     return true;
 }
 
-/* rfc 5480 keys and rfc 5758 signatures: the Ecdsa-Sig-Value of r and s. */
+/* RFC 5480 keys and RFC 5758 signatures: the Ecdsa-Sig-Value of r and s. */
 static DWORD verify_ecdsa(const CERT_PUBLIC_KEY_INFO *key, ALG_ID hash, const BYTE *data, DWORD data_size,
                           const BYTE *sig, DWORD sig_size)
 {
@@ -170,7 +169,6 @@ static DWORD verify_ecdsa(const CERT_PUBLIC_KEY_INFO *key, ALG_ID hash, const BY
     return mime_ecdsa_verify(&ec, digest, CrHashSize(hash), raw, 2 * n) ? NTE_BAD_SIGNATURE : 0;
 }
 
-/* the hash of an AlgorithmIdentifier. */
 static ALG_ID hash_algorithm(const der_item *identifier)
 {
     der_reader r;
@@ -190,7 +188,7 @@ static ALG_ID hash_algorithm(const der_item *identifier)
     return 0;
 }
 
-/* RSASSA-PSS-params of rfc 4055: the hash, mgf1 over the same hash, the salt and trailer 1, sha-1 and 20 by default. */
+/* RFC 4055 RSASSA-PSS-params: hash, MGF1 over the same hash, salt length and trailer 1. defaults are SHA-1 and 20. */
 static DWORD pss_params(der_reader *a, ALG_ID *hash, DWORD *salt)
 {
     *hash = CALG_SHA1;

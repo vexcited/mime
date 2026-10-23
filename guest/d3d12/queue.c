@@ -1,8 +1,7 @@
 /*
- * command queues and fences. a queue submits to one of the device's vulkan
- * queues, a fence is a timeline semaphore. waits on the cpu are vulkan's,
- * which the host's watcher serves without holding the process's other
- * calls, even for values no submission signals yet.
+ * command queues and fences. a queue submits to one of the device's Vulkan queues and a fence is a timeline
+ * semaphore. cpu waits are Vulkan's, which the host's watcher serves without blocking the process's other calls,
+ * even for values no submission signals yet.
  */
 #include "d3d12_private.h"
 
@@ -12,7 +11,7 @@ static D12Fence *fence_impl(ID3D12Fence1 *iface) { return CONTAINING_RECORD(ifac
 
 D12Fence *D12FenceFrom(ID3D12Fence *iface) { return iface ? CONTAINING_RECORD(iface, D12Fence, iface) : nullptr; }
 
-/* the value the gpu or cpu signalled last, asked of the host. */
+/* asks the host for the last value the gpu or cpu signalled. */
 UINT64 D12FenceValue(D12Fence *fence)
 {
     D12Device *device = fence->child.device;
@@ -23,7 +22,6 @@ UINT64 D12FenceValue(D12Fence *fence)
     return fence->completed;
 }
 
-/* blocks until fences reach values, all of them or any. */
 static void fences_block(D12Device *device, UINT count, ID3D12Fence *const *fences, const UINT64 *values, BOOL any)
 {
     VkSemaphore semaphores[64];
@@ -48,9 +46,8 @@ static void fence_block(D12Fence *fence, UINT64 value)
 }
 
 /*
- * the waiter thread: sets the events of satisfied waits, then waits for
- * any waiting fence's next value, or for its wake semaphore, which a new
- * wait signals.
+ * sets the events of satisfied waits, then waits for any waiting fence's next value or for the wake semaphore,
+ * which a new wait signals.
  */
 static DWORD WINAPI waiter_main(void *param)
 {
@@ -256,7 +253,7 @@ static HRESULT STDMETHODCALLTYPE fence_set_event_on_completion(ID3D12Fence1 *ifa
     return add_wait(fence, value, event);
 }
 
-/* vulkan's timelines only go up: a value at or below the current one is not signalled again. */
+/* Vulkan timelines only go up: a value at or below the current one is not signalled again. */
 static HRESULT STDMETHODCALLTYPE fence_signal(ID3D12Fence1 *iface, UINT64 value)
 {
     D12Fence *fence = fence_impl(iface);
@@ -313,7 +310,7 @@ HRESULT D12CreateFence(D12Device *device, UINT64 value, D3D12_FENCE_FLAGS flags,
     D12Fence *fence = alloc_fence(device, value, flags);
     if (!fence)
         return E_OUTOFMEMORY;
-    /* a shared fence's payload is meant to cross to other devices, as a descriptor. */
+    /* a shared fence's payload is exported to other devices as a descriptor. */
     VkExportSemaphoreCreateInfo export = {VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO, nullptr,
                                           VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT};
     VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
@@ -331,7 +328,7 @@ HRESULT D12CreateFence(D12Device *device, UINT64 value, D3D12_FENCE_FLAGS flags,
     return S_OK;
 }
 
-/* SetEventOnMultipleFenceCompletion: each fence waited for in turn, the event set once all or any are done. */
+/* SetEventOnMultipleFenceCompletion: each fence is waited on in turn, and the event set once all or any are done. */
 HRESULT D12SetEventOnFences(D12Device *device, ID3D12Fence *const *fences, const UINT64 *values, UINT count,
                             UINT flags, HANDLE event)
 {
@@ -351,7 +348,7 @@ HRESULT D12SetEventOnFences(D12Device *device, ID3D12Fence *const *fences, const
         fences_block(device, count, fences, values, any);
         return S_OK;
     }
-    /* guessed: with an event, the fences' own waits stand in, the last one setting it for all of them. */
+    /* guessed: the fences' own waits stand in, and the last one sets the event for all of them. */
     if (any || count == 1)
         return add_wait(D12FenceFrom(fences[0]), values[0], event);
     for (UINT i = 0; i < count; i++)
@@ -367,9 +364,8 @@ static D12Queue *queue_impl(ID3D12CommandQueue *iface) { return CONTAINING_RECOR
 D12Queue *D12QueueFrom(ID3D12CommandQueue *iface) { return iface ? queue_impl(iface) : nullptr; }
 
 /*
- * submits command buffers, the device's own commands first, waiting and
- * signalling as asked, then the queue's timeline. returns the serial the
- * submission signals on it.
+ * submits the device's own commands first, then the buffers with the given waits and signals, then the queue's
+ * timeline. returns the timeline serial the submission signals.
  */
 UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT count, const VkSemaphoreSubmitInfo *waits,
                       UINT wait_count, const VkSemaphoreSubmitInfo *signals, UINT signal_count)
@@ -384,7 +380,7 @@ UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT coun
         cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, init};
     for (UINT i = 0; i < count && n < RTL_NUMBER_OF(cmds); i++)
         cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, buffers[i]};
-    /* another queue's submission ran the device's commands: this one waits for them. */
+    /* another queue's submission ran the device's commands, so wait for them. */
     if (!init && init_serial) {
         wait_infos[w] = (VkSemaphoreSubmitInfo){VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
         wait_infos[w].semaphore = device->init_timeline;
@@ -558,7 +554,7 @@ static HRESULT STDMETHODCALLTYPE queue_signal(ID3D12CommandQueue *iface, ID3D12F
     D12Fence *fence = D12FenceFrom(fence_iface);
     if (!fence)
         return E_INVALIDARG;
-    /* vulkan's timelines only go up: a value a signal already promised is not signalled again. */
+    /* Vulkan timelines only go up: a value a signal already promised is not signalled again. */
     if (value <= fence->queued)
         return S_OK;
     fence->queued = value;
@@ -594,7 +590,7 @@ static HRESULT STDMETHODCALLTYPE queue_get_timestamp_frequency(ID3D12CommandQueu
     return S_OK;
 }
 
-/* guessed: vulkan here cannot tie the gpu's clock to the cpu's, so the gpu timestamp is the cpu's in its units. */
+/* guessed: Vulkan cannot tie the gpu clock to the cpu's here, so the gpu timestamp is the cpu's in its units. */
 static HRESULT STDMETHODCALLTYPE queue_get_clock_calibration(ID3D12CommandQueue *iface, UINT64 *gpu, UINT64 *cpu)
 {
     if (!gpu || !cpu)
@@ -668,7 +664,7 @@ static HRESULT STDMETHODCALLTYPE presenter_create_swap_chain(IMimeDXGIPresenter 
     return D12CreateSwapChain(queue, factory, window, desc, fullscreen, swapchain);
 }
 
-/* direct3d 12 swap chains present to windows only. */
+/* Direct3D 12 swap chains present to windows only. */
 static HRESULT STDMETHODCALLTYPE presenter_create_composition_swap_chain(IMimeDXGIPresenter *iface,
                                                                          IDXGIFactory *factory, HANDLE surface,
                                                                          const DXGI_SWAP_CHAIN_DESC1 *desc,
@@ -699,8 +695,8 @@ HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, 
     queue->desc = *desc;
     if (!queue->desc.NodeMask)
         queue->desc.NodeMask = 1;
-    /* the queues of a family in turn, so queues of the program run beside each other as far as there are. */
-    /* the first queue is left to direct3d 11, which shares the device, unless it is the only one. */
+    /* round robin over the family's queues so the program's queues run side by side where possible. */
+    /* the first queue is left to Direct3D 11, which shares the device, unless it is the only one. */
     UINT spare = device->queue_count > 1 ? device->queue_count - 1 : 1;
     UINT index = (UINT)InterlockedIncrement(&device->next_queue) % spare + (device->queue_count > 1 ? 1 : 0);
     queue->queue = device->queues[index];
@@ -723,7 +719,7 @@ HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, 
 /* ------------------------------------------------------------------ shared fences */
 
 /*
- * The first handle makes the kernel object and keeps the semaphore's payload for other devices. The fence's
+ * the first handle makes the kernel object and keeps the semaphore payload for other devices. the fence's
  * description is its flags and the adapter.
  */
 HRESULT D12FenceShare(D12Fence *fence, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out)
@@ -743,12 +739,12 @@ HRESULT D12FenceShare(D12Fence *fence, const SECURITY_ATTRIBUTES *attributes, LP
             MimeShareClose(&fence->share);
             hr = E_FAIL;
         } else if (SUCCEEDED(hr)) {
-            /* the other devices of the process open this fence without importing it. */
+            /* other devices of this process open the fence without importing it. */
             device->shared.adapter->lpVtbl->PublishSemaphore(device->shared.adapter, device->shared.vk, fence->share.id,
                                                              (void *)fence->semaphore, &fence->entry);
         }
     } else if (name) {
-        /* a second name is not another object. */
+        /* a second name does not make another object. */
         hr = DXGI_ERROR_NAME_ALREADY_EXISTS;
     }
     ReleaseSRWLockExclusive(&fence->lock);
@@ -777,10 +773,10 @@ HRESULT D12FenceOpen(D12Device *device, HANDLE handle, D12Fence **out)
     void *semaphore = nullptr;
     if (device->shared.adapter->lpVtbl->OpenSemaphore(device->shared.adapter, device->shared.vk, own.id, &semaphore,
                                                       &fence->entry) == S_OK) {
-        /* a fence of this process made it: the devices share its semaphore. */
+        /* made by a fence of this process: the devices share its semaphore. */
         fence->semaphore = (VkSemaphore)semaphore;
     } else {
-        /* another process's: a semaphore here takes the payload, which nothing has to export again. */
+        /* another process's fence: a local semaphore imports the payload, which never needs exporting again. */
         VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
         type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
         VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
@@ -796,7 +792,7 @@ HRESULT D12FenceOpen(D12Device *device, HANDLE handle, D12Fence **out)
         }
     }
     fence->share = own;
-    /* the payload has a value already, which the fence reports and its waits start from. */
+    /* the payload already has a value, which the fence reports and its waits start from. */
     UINT64 value = 0;
     device->vk.vkGetSemaphoreCounterValue(device->vk.device, fence->semaphore, &value);
     fence->completed = fence->queued = value;

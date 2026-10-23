@@ -1,6 +1,6 @@
 /*
- * locale: msvcrt's c locale, the only one supported, with setlocale,
- * localeconv, collation and the multibyte conversions of that locale.
+ * msvcrt's c locale, the only one supported: setlocale, localeconv,
+ * collation and the multibyte conversions of that locale.
  */
 #include "msvcrt_private.h"
 
@@ -40,7 +40,7 @@ static struct lconv g_lconv = {
     CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX,
 };
 
-/* the exported locale data of the c locale. */
+/* exported c locale data. */
 unsigned int __lc_codepage;
 unsigned int __lc_collate_cp;
 LCID __lc_handle[6];

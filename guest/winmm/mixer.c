@@ -1,7 +1,6 @@
 /*
- * the mixer of the output device: one destination, the speakers, with the
- * endpoint's master volume and mute, which winmm applies to every wave
- * output of the process. there are no source lines.
+ * one mixer destination, the speakers, with master volume and mute applied to every wave output in the process.
+ * there are no source lines.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -32,7 +31,7 @@ static BOOL valid(HMIXER h)
     return m != nullptr;
 }
 
-/* the mixer an object names: its number, or its handle by type. */
+/* resolves a mixer number or a typed object handle. */
 static MMRESULT mixer_of(HMIXEROBJ object, DWORD flags)
 {
     DWORD type = flags & 0xF0000000;
@@ -232,7 +231,7 @@ WINMMAPI MMRESULT WINAPI mixerGetLineInfoA(HMIXEROBJ object, LPMIXERLINEA line, 
     return MMSYSERR_NOERROR;
 }
 
-/* the volume, a fader, and the mute switch, with the names windows' wdmaud gives them. */
+/* volume fader and mute switch, with Windows' wdmaud names. */
 static void fill_control(DWORD id, MIXERCONTROLW *c)
 {
     memset(c, 0, sizeof(*c));

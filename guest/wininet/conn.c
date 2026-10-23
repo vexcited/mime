@@ -1,7 +1,4 @@
-/*
- * connections: winsock for the process, resolving and connecting with the progress notifications, the
- * buffered reads both plain and tls connections share, and the pool of kept alive connections.
- */
+/* Winsock initialization, connection notifications, shared plain/TLS read buffering and keep-alive pooling. */
 #include "wininet_private.h"
 
 #define INET_BUFFER 16384
@@ -20,7 +17,7 @@ static BOOL CALLBACK Startup(PINIT_ONCE once, PVOID parameter, PVOID *context)
     return TRUE;
 }
 
-/* winsock for the process, started outside the loader lock by the first session. */
+/* initialize Winsock at the first session, outside the loader lock. */
 void InetStartup(void)
 {
     InitOnceExecuteOnce(&StartupOnce, Startup, nullptr, nullptr);
@@ -80,7 +77,6 @@ DWORD InetConnRecv(INET_CONN *conn, void *data, DWORD size, DWORD *got, DWORD ti
     return ERROR_SUCCESS;
 }
 
-/* makes room for room more bytes at the end of the plaintext buffer. */
 static BOOL Reserve(INET_CONN *conn, DWORD room)
 {
     if (conn->Start == conn->End)
@@ -119,7 +115,7 @@ DWORD InetConnBuffered(INET_CONN *conn)
     return conn->End - conn->Start;
 }
 
-/* reads more plaintext; at the end of the stream Eof is set and nothing is added. */
+/* append plaintext; EOF sets Eof without adding bytes. */
 DWORD InetConnFill(INET_CONN *conn, DWORD timeout)
 {
     if (conn->Eof)
@@ -179,7 +175,7 @@ void InetConnClose(INET_OBJECT *notify, INET_CONN *conn)
     InetFree(conn);
 }
 
-/* ------------------------------------------------------------------ the pool */
+/* the pool. */
 
 static BOOL SameKey(INET_CONN *conn, LPCWSTR host, INTERNET_PORT port, BOOL secure, LPCWSTR proxy,
                     INTERNET_PORT proxy_port)
@@ -240,7 +236,7 @@ void InetPoolPut(INET_CONN *conn)
     InetConnClose(nullptr, drop);
 }
 
-/* ------------------------------------------------------------------ connecting */
+/* connecting. */
 
 static DWORD ConnectSocket(SOCKET s, const struct sockaddr *address, int length, DWORD timeout)
 {
@@ -272,7 +268,7 @@ static DWORD ConnectSocket(SOCKET s, const struct sockaddr *address, int length,
     return ERROR_SUCCESS;
 }
 
-/* an address as wininet reports it: dotted ipv4, or ipv6 in brackets. */
+/* format addresses as dotted IPv4 or bracketed IPv6. */
 static void AddressText(const struct sockaddr *address, PWSTR text, DWORD capacity)
 {
     text[0] = 0;
@@ -292,7 +288,7 @@ DWORD InetConnOpen(INET_OBJECT *request, LPCWSTR host, INTERNET_PORT port, INET_
     if (!length || length >= ARRAYSIZE(name))
         return ERROR_INTERNET_INVALID_URL;
     memcpy(name, host, (length + 1) * sizeof(WCHAR));
-    /* a bracketed ipv6 literal resolves without its brackets. */
+    /* strip brackets before resolving IPv6 literals. */
     if (name[0] == '[' && length > 2 && name[length - 1] == ']') {
         memmove(name, name + 1, (length - 2) * sizeof(WCHAR));
         name[length - 2] = 0;

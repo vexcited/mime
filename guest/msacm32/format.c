@@ -1,7 +1,7 @@
 /*
- * format tags, formats, filter tags and filters: asked of one driver, or
- * of the first driver able to answer. pcm is known without a driver, so a
- * program sees it even when the pcm converter is off.
+ * format tags, formats, filter tags and filters, asked of one driver or of
+ * the first that can answer. pcm is known without a driver, so programs see
+ * it even with the pcm converter off.
  */
 #include "msacm32_private.h"
 
@@ -81,7 +81,7 @@ MMRESULT AcmMaxFilterSize(HACMOBJ handle, DWORD *size)
 
 /* ------------------------------------------------------------------ format tags */
 
-/* the details a driver gives of one of its tags; pcm gets its name from the acm. */
+/* a driver's details for one of its tags. pcm gets its name from the acm. */
 MMRESULT AcmFormatTagDetails(ACMDRIVERID_ *id, ACMFORMATTAGDETAILSW *d, DWORD flags)
 {
     DWORD query = flags & ACM_FORMATTAGDETAILSF_QUERYMASK;
@@ -98,7 +98,7 @@ MMRESULT AcmFormatTagDetails(ACMDRIVERID_ *id, ACMFORMATTAGDETAILSW *d, DWORD fl
     return MMSYSERR_NOERROR;
 }
 
-/* the driver the thread sees first with the tag, or with its largest format, the tag 0 meaning any. */
+/* the first driver the thread sees with the tag, or with the largest format. tag 0 means any. */
 static ACMDRIVERID_ *driver_for_tag(DWORD tag, BOOL by_size, BOOL filters)
 {
     ACMDRIVERID_ *found = nullptr;
@@ -181,7 +181,7 @@ MSACMAPI MMRESULT WINAPI acmFormatTagDetailsA(HACMDRIVER had, LPACMFORMATTAGDETA
     return r;
 }
 
-/* a tag a driver before this one in the enumeration already gave. */
+/* whether an earlier driver in the enumeration already gave this tag. */
 static BOOL seen_before(ACMDRIVERID_ *id, DWORD tag, BOOL filters)
 {
     for (ACMDRIVERID_ *p = AcmNextId(nullptr, 0); p && p != id; p = AcmNextId(p, 0))
@@ -439,7 +439,7 @@ typedef struct FORMAT_ENUM {
     DWORD flags;
 } FORMAT_ENUM;
 
-/* the device opens the format: any output with ACM_FORMATENUMF_OUTPUT, any input with INPUT. */
+/* whether the device opens the format: any output with ACM_FORMATENUMF_OUTPUT, any input with INPUT. */
 static BOOL device_supports(const WAVEFORMATEX *format, DWORD flags)
 {
     if (flags & ACM_FORMATENUMF_HARDWARE) {
@@ -474,7 +474,7 @@ static BOOL wanted(const WAVEFORMATEX *f, DWORD flags)
     return !(flags & (ACM_FORMATENUMF_INPUT | ACM_FORMATENUMF_OUTPUT)) || device_supports(f, flags);
 }
 
-/* the standard formats of a tag, then the suggestion for conversions when it was not one of them; TRUE stops. */
+/* a tag's standard formats, then the conversion suggestion if it was not among them. TRUE stops. */
 static BOOL enum_tag(FORMAT_ENUM *e, ACMDRIVER_ *driver, const ACMFORMATTAGDETAILSW *tag)
 {
     ACMFORMATDETAILSW *d = e->details;
@@ -551,7 +551,7 @@ static BOOL enum_tag(FORMAT_ENUM *e, ACMDRIVER_ *driver, const ACMFORMATTAGDETAI
     return stop;
 }
 
-/* what the driver suggests for the source in the tag; TRUE stops. */
+/* the driver's suggestion for the source in this tag. TRUE stops. */
 static BOOL suggest_tag(FORMAT_ENUM *e, ACMDRIVER_ *driver, const ACMFORMATTAGDETAILSW *tag)
 {
     ACMFORMATDETAILSW *d = e->details;
@@ -963,7 +963,7 @@ MSACMAPI MMRESULT WINAPI acmFilterDetailsA(HACMDRIVER had, LPACMFILTERDETAILSA d
     return r;
 }
 
-/* the standard filters of a tag of a driver id; TRUE stops. */
+/* a driver id's standard filters for a tag. TRUE stops. */
 static BOOL enum_filters(ACMDRIVERID_ *id, const ACMFILTERTAGDETAILSW *tag, ACMFILTERDETAILSW *d,
                          ACMFILTERENUMCBW callback, DWORD_PTR instance)
 {

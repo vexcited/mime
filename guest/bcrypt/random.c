@@ -1,7 +1,6 @@
 /*
- * BCryptGenRandom and the hooks of the crypto library. the bytes come from
- * advapi32's generator, which reads the kernel's \Device\CNG when it exists,
- * as windows' bcryptprimitives seeds itself from it.
+ * BCryptGenRandom and the crypto library hooks. bytes come from advapi32's generator, which reads the kernel's
+ * \Device\CNG when it exists, the same source windows seeds from.
  */
 #include "bcrypt_private.h"
 

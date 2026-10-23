@@ -1,6 +1,6 @@
 /*
- * filling: the path of a shape becomes polygons in device space, the scan converter turns them into coverage,
- * and the rows of the brush's pixels, scaled by the coverage and the clip, are composed onto the surface.
+ * filling: a shape's path becomes device space polygons, the scan converter turns them into coverage, and the
+ * brush's pixels, scaled by coverage and clip, are composited onto the surface.
  */
 #include "gp_private.h"
 
@@ -17,11 +17,11 @@ INT gp_smoothing_samples(SmoothingMode mode)
     }
 }
 
-/* ------------------------------------------------------------------ the clip */
+/* ------------------------------------------------------------------ clip */
 
 /*
- * narrows the area to what the clip lets through. a clip that is a rectangle only narrows it, any other shape
- * comes back as the mask to apply to the pixels. FALSE in the result: nothing is visible.
+ * a rectangular clip only narrows the area, any other shape also returns a mask for the pixels. FALSE when nothing
+ * is visible.
  */
 BOOL gp_clip_narrow(GGraphics *g, RECT *area, const MimeVecMask **mask)
 {
@@ -76,7 +76,7 @@ BOOL gp_clip_narrow(GGraphics *g, RECT *area, const MimeVecMask **mask)
     return area->right > area->left && area->bottom > area->top;
 }
 
-/* ------------------------------------------------------------------ the fill loop */
+/* ------------------------------------------------------------------ fill loop */
 
 typedef struct FillCtx {
     GGraphics *g;
@@ -88,11 +88,11 @@ typedef struct FillCtx {
     INT cap;
     BOOL modified;
     CompositingMode mode;
-    const UINT8 *map;           /* coverage 0 to 255 to alpha, for text */
-    const MimeVecMask *extra;   /* a second clip, for the rectangle text is cut to */
+    const UINT8 *map;           /* coverage 0 to 255 to alpha, for text. */
+    const MimeVecMask *extra;   /* a second clip, the rectangle text is cut to. */
 } FillCtx;
 
-/* every byte of the pixels scaled by cov / cmax, rounded: the way the scan converter's output meets the brush. */
+/* scales every byte by cov / cmax, rounded, matching how scan converter output meets the brush. */
 static void scale_by_coverage(UINT32 *px, const UINT8 *cov, INT count, UINT cmax)
 {
     if (cmax == 255) {
@@ -160,7 +160,7 @@ static void fill_span(void *user, INT y, INT x0, INT count, const UINT8 *cov, UI
             }
             gp_compose_over(&c->surf, x, y, n, c->buf);
         } else {
-            /* source copy: pixels the clip rejects keep the destination, partly covered ones blend */
+            /* source copy: clipped out pixels keep the destination, partly covered ones blend. */
             UINT8 cc[1024];
             INT m = n > 1024 ? 1024 : n;
             for (INT i = 0; i < m; i++)
@@ -216,7 +216,7 @@ static GpStatus fill_polys_src(GGraphics *g, const MimeVecPolys *polys, INT fill
     return status;
 }
 
-/* the device rectangle a shape touches, with the margin the antialiasing may spill into. */
+/* includes the margin antialiasing may spill into. */
 static BOOL polys_area(const MimeVecPolys *polys, INT aa, RECT *area)
 {
     MimeVecBounds b;
@@ -282,7 +282,7 @@ GpStatus gp_fill_path_xform(GGraphics *g, const MimeVecPath *path, const MimeVec
     if (!path->count)
         return Ok;
     if (g->meta) {
-        /* a recording graphics keeps the shape, the extra matrix is part of it */
+        /* a recording graphics keeps the shape, the extra matrix is part of it. */
         if (!extra)
             return gp_rec_fill_path(g, path, mode, brush);
         MimeVecPath moved;
@@ -318,7 +318,7 @@ GpStatus gp_fill_path(GGraphics *g, const MimeVecPath *path, FillMode mode, cons
     return gp_fill_path_xform(g, path, nullptr, mode, brush);
 }
 
-/* fills the pixels of a mask, with no antialiasing: the rows of the runs get the brush. */
+/* no antialiasing: the brush fills the rows of the runs. */
 GpStatus gp_fill_mask(GGraphics *g, const MimeVecMask *mask, const GBrush *brush)
 {
     if (mime_vec_mask_is_empty(mask))

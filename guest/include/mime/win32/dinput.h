@@ -1,7 +1,6 @@
 /*
- * directinput: the objects of dinput.dll, versions 1 to 7, and of
- * dinput8.dll, their devices and effects. methods are in windows'
- * vtable order; structures have windows' layouts on x86 and x64.
+ * directinput: dinput.dll versions 1 to 7 and dinput8.dll, with devices and effects.
+ * methods follow windows' vtable order, structures have windows' x86 and x64 layouts.
  */
 #ifndef MIME_WIN32_DINPUT_H
 #define MIME_WIN32_DINPUT_H
@@ -284,7 +283,7 @@ MIME_DEFINE_GUID(GUID_CustomForce, 0x13541C2B, 0x8E33, 0x11D0, 0x9A, 0xD0, 0x00,
 #define DIPROPCALIBRATIONMODE_COOKED 0
 #define DIPROPCALIBRATIONMODE_RAW 1
 
-/* properties are small numbers in place of guid pointers. */
+/* properties are small numbers cast to guid pointers. */
 #define MAKEDIPROP(prop) ((REFGUID)(ULONG_PTR)(prop))
 #define DIPROP_BUFFERSIZE MAKEDIPROP(1)
 #define DIPROP_AXISMODE MAKEDIPROP(2)
@@ -1042,7 +1041,7 @@ typedef BOOL(WINAPI *LPDICONFIGUREDEVICESCALLBACK)(IUnknown *target, LPVOID cont
     HRESULT(STDMETHODCALLTYPE *Unload)(T * This);                                                                      \
     HRESULT(STDMETHODCALLTYPE *Escape)(T * This, LPDIEFFESCAPE escape);
 
-/* the methods of the first device interface, of a character width. */
+/* IDirectInputDevice methods for one character width. */
 #define IDirectInputDevice_METHODS_FOR(T, OBJCB, OBJINST, DEVINST)                                                     \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *GetCapabilities)(T * This, LPDIDEVCAPS caps);                                           \
@@ -1170,7 +1169,7 @@ MIME_COM_INTERFACE(IDirectInput7W)
 MIME_COM_INTERFACE(IDirectInput8A)
 MIME_COM_INTERFACE(IDirectInput8W)
 
-/* ------------------------------------------------------------------ the standard data formats, from the import libraries */
+/* ------------------------------------------------------------------ standard data formats, from the import libs */
 
 extern const DIDATAFORMAT c_dfDIMouse;
 extern const DIDATAFORMAT c_dfDIMouse2;

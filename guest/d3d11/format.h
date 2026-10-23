@@ -1,17 +1,13 @@
-/*
- * dxgi formats as vulkan formats, shared by d3d11.dll and d3d12.dll, which
- * both build format.c.
- */
+/* dxgi formats as vulkan formats. d3d11.dll and d3d12.dll both build format.c. */
 #ifndef D3D_FORMAT_H
 #define D3D_FORMAT_H
 
-/* what a dxgi format is to vulkan and to direct3d. */
 typedef struct D3dFormat {
     VkFormat vk;
-    /* the vulkan format of typeless depth formats seen as color, and of their depth views. */
+    /* for typeless depth formats: the vulkan format seen as color, and of their depth views. */
     VkFormat depth;
     VkImageAspectFlags aspect;
-    /* bytes per block and the block's size in texels: 1 for uncompressed formats, 4 for bc. */
+    /* bytes per block, and block size in texels: 1 for uncompressed formats, 4 for bc. */
     BYTE block_bytes;
     BYTE block;
     BYTE flags;

@@ -1,10 +1,9 @@
 /*
- * CryptDecodeObject(Ex): der to the x.509 structures of wincrypt.h.
+ * CryptDecodeObject and CryptDecodeObjectEx: DER to the X.509 structures of wincrypt.h.
  *
- * every decoder runs twice: once with an empty arena to measure the size of
- * the structure and the data it points to, then into the caller's buffer.
- * decoders fill local copies and store them only when the arena has memory,
- * so both passes walk exactly the same allocations.
+ * every decoder runs twice: once with an empty arena to measure the structure and the data it points to, then
+ * into the caller's buffer. decoders fill local copies and store them only when the arena has memory, so both
+ * passes make exactly the same allocations.
  */
 #include "crypt32_private.h"
 
@@ -752,7 +751,7 @@ static DWORD d_utc_time(cr_arena *a, const der_item *item, DWORD flags)
     return d_time(a, item, flags);
 }
 
-/* the attributes of a signer: a set of sequences of an object identifier and a set of values. */
+/* a set of sequences, each an object identifier and a set of values. */
 static DWORD dec_attributes(cr_arena *a, const der_item *item, CRYPT_ATTRIBUTES *out)
 {
     DWORD n = DerCount(item);
@@ -794,7 +793,7 @@ static DWORD dec_attributes(cr_arena *a, const der_item *item, CRYPT_ATTRIBUTES 
     return 0;
 }
 
-/* the information of a signer of a signed message, as the structure of CMSG_SIGNER_INFO. */
+/* decodes into CMSG_SIGNER_INFO. */
 static DWORD d_signer_info(cr_arena *a, const der_item *item, DWORD flags)
 {
     TOP(CMSG_SIGNER_INFO);

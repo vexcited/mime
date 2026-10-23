@@ -1,10 +1,8 @@
 /*
- * IDirect3DSurface9: render targets, depth buffers, plain surfaces, back
- * buffers and the levels of textures. a surface in the gpu's memory is a
- * d3d11 texture, or a subresource of its texture's; system memory and
- * scratch surfaces are only bytes. surfaces programs may lock keep their
- * bytes in memory: unlocking uploads what was locked, and locking a
- * surface the gpu renders to reads it back first.
+ * IDirect3DSurface9. a gpu surface is a d3d11 texture or a subresource of
+ * its texture, system memory and scratch surfaces are only bytes. lockable
+ * surfaces keep a copy in memory: unlock uploads the locked part, and
+ * locking a surface the gpu rendered to reads it back first.
  */
 #include "d3d9_private.h"
 
@@ -36,7 +34,7 @@ static void destroy(D9Surface *s)
 
 static void destroy_resource(D9Resource *r) { destroy(CONTAINING_RECORD(r, D9Surface, base)); }
 
-/* a level of a texture lives as long as its texture, which holds its references. */
+/* a texture level lives as long as its texture, which holds its references. */
 ULONG D9SurfaceAddRef(D9Surface *s)
 {
     if (s->container)
@@ -113,7 +111,7 @@ ID3D11DepthStencilView *D9SurfaceDsv(D9Surface *s)
 
 static BOOL in_gpu(const D9Surface *s) { return s->texture != nullptr; }
 
-/* whether the surface's memory holds its texels without asking the gpu. */
+/* whether the memory copy is current without reading back from the gpu. */
 static BOOL memory_current(const D9Surface *s)
 {
     return !in_gpu(s) || s->base.pool == D3DPOOL_MANAGED || s->memory_valid;
@@ -131,7 +129,7 @@ UINT D9SurfaceSubresource(const D9Surface *s)
     return s->container ? s->face * s->container->d3d_levels + s->level : 0;
 }
 
-/* the surface's texels from the gpu, resolved first when multisampled. */
+/* multisampled surfaces are resolved first. */
 HRESULT D9SurfaceDownload(D9Surface *s)
 {
     D9Device *device = s->base.device;
@@ -174,7 +172,7 @@ HRESULT D9SurfaceDownload(D9Surface *s)
     return hr;
 }
 
-/* a rectangle widened to whole blocks of the surface's format. */
+/* widens a rectangle to whole blocks. */
 RECT D9SurfaceBlockRect(const D9Surface *s, const RECT *rect)
 {
     const D9Format *f = s->base.format;
@@ -188,7 +186,7 @@ RECT D9SurfaceBlockRect(const D9Surface *s, const RECT *rect)
     return r;
 }
 
-/* a rectangle of the surface's memory to the gpu, after the work before it. */
+/* uploads in gpu order, after the work queued before it. */
 void D9SurfaceUpload(D9Surface *s, const RECT *rect)
 {
     if (!in_gpu(s) || !s->memory->bytes)
@@ -197,7 +195,7 @@ void D9SurfaceUpload(D9Surface *s, const RECT *rect)
     D9SurfaceUploadBytes(s, &r, D9MemoryAt(s->memory, s->base.format, r.left, r.top, 0), s->memory->pitch);
 }
 
-/* texels laid out as programs lock them to a rectangle of whole blocks of the surface's texture. */
+/* bytes in the locked layout, to a block aligned rectangle of the texture. */
 void D9SurfaceUploadBytes(D9Surface *s, const RECT *r, const BYTE *bytes, UINT pitch)
 {
     const D9Format *f = s->base.format;
@@ -218,7 +216,7 @@ void D9SurfaceUploadBytes(D9Surface *s, const RECT *r, const BYTE *bytes, UINT p
     HeapFree(GetProcessHeap(), 0, converted);
 }
 
-/* the gpu wrote the surface: what its memory holds is stale. */
+/* the gpu wrote the surface, so its memory copy is stale. */
 void D9SurfaceWritten(D9Surface *s)
 {
     if (s->base.pool != D3DPOOL_MANAGED)
@@ -307,7 +305,6 @@ static HRESULT STDMETHODCALLTYPE surface_get_desc(IDirect3DSurface9 *iface, D3DS
     return D3D_OK;
 }
 
-/* whether programs may lock the surface: what direct3d 9 lets them map. */
 static BOOL lockable(const D9Surface *s)
 {
     if (s->samples > 1)
@@ -376,7 +373,7 @@ static HRESULT STDMETHODCALLTYPE surface_unlock_rect(IDirect3DSurface9 *iface)
     return hr;
 }
 
-/* a gdi device context over the surface's texels, for the 32 and 16-bit formats gdi draws. */
+/* only for the 32 and 16-bit formats gdi draws. */
 static HRESULT STDMETHODCALLTYPE surface_get_dc(IDirect3DSurface9 *iface, HDC *dc)
 {
     D9Surface *s = impl(iface);
@@ -462,7 +459,6 @@ static const IDirect3DSurface9Vtbl surface_vtbl = {
 
 /* ------------------------------------------------------------------ creation */
 
-/* the d3d11 texture of a surface of its own in the gpu's memory. */
 HRESULT D9SurfaceMakeTexture(D9Surface *s)
 {
     const D9Format *f = s->base.format;
@@ -522,7 +518,7 @@ HRESULT D9CreateSurface(D9Device *device, UINT width, UINT height, D3DFORMAT for
     D9ResourceInit(&s->base, device, D3DRTYPE_SURFACE, pool, usage, format, destroy_resource);
     s->samples = samples;
     s->quality = quality;
-    /* plain surfaces and lockable depth formats may always be locked, render targets when asked for. */
+    /* plain surfaces and lockable depth formats can always be locked, render targets only when asked. */
     s->lockable = lockable_flag || !(usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) ||
                   (f->flags & D9_FORMAT_LOCKABLE);
     if (pool == D3DPOOL_DEFAULT || pool == D3DPOOL_MANAGED)

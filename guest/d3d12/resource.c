@@ -1,10 +1,8 @@
 /*
- * memory and resources. a heap is one vulkan allocation with, unless it
- * denies buffers, a buffer over all of it: a buffer placed in it is a range
- * of that buffer, its gpu virtual address the buffer's device address plus
- * the offset. committed resources are ranges of heaps the device makes
- * itself. textures are vulkan images bound to heap memory, living in the
- * general layout from their first commands on.
+ * a heap is one Vulkan allocation with, unless it denies buffers, a buffer over all of it. a placed buffer is a
+ * range of that buffer, its gpu virtual address the buffer's device address plus the offset. committed resources
+ * are ranges of internal heaps. textures are Vulkan images bound to heap memory, in the general layout from their
+ * first commands on.
  */
 #include "d3d12_private.h"
 
@@ -28,7 +26,7 @@ static int pick_type(D12Device *device, D12MemoryKind kind, UINT allowed)
     for (UINT w = 0; w < 3 && wanted[kind][w]; w++)
         for (UINT i = 0; i < device->memory.memoryTypeCount; i++) {
             VkMemoryPropertyFlags flags = device->memory.memoryTypes[i].propertyFlags;
-            /* upload memory the cpu writes and the gpu reads is better not in video memory the cpu cannot see. */
+            /* upload memory is better kept out of video memory the cpu cannot see. */
             if ((allowed & (1u << i)) && (flags & wanted[kind][w]) == wanted[kind][w])
                 return (int)i;
         }
@@ -39,7 +37,7 @@ static int pick_type(D12Device *device, D12MemoryKind kind, UINT allowed)
     return -1;
 }
 
-/* the kind of memory heap properties ask for, custom heaps by their cpu page property. */
+/* custom heaps go by their cpu page property. */
 D12MemoryKind D12HeapKind(D12Device *device, const D3D12_HEAP_PROPERTIES *props)
 {
     switch (props->Type) {
@@ -80,7 +78,7 @@ static VkBufferUsageFlags buffer_usage(D12Device *device)
 
 /* ------------------------------------------------------------------ gpu virtual addresses */
 
-/* heaps with buffers, sorted by address, so an address finds its buffer by bisection. */
+/* heaps with buffers, sorted so an address finds its buffer by bisection. */
 void D12AddressAdd(D12Device *device, D12Heap *heap)
 {
     AcquireSRWLockExclusive(&device->address_lock);
@@ -239,7 +237,6 @@ static const struct ID3D12Heap1Vtbl g_heap_vtbl = {
     heap_get_protected_session,
 };
 
-/* the vulkan side of a heap: its memory of a type, a buffer over it, its address and mapping. */
 static HRESULT heap_init(D12Device *device, D12Heap *heap, D12MemoryKind kind, int type)
 {
     D12Vk *vk = &device->vk;
@@ -323,7 +320,7 @@ HRESULT D12CreateHeap(D12Device *device, const D3D12_HEAP_DESC *desc, D12Heap **
     return heap_create(device, desc, FALSE, -1, out);
 }
 
-/* ------------------------------------------------------------------ the device's own heaps */
+/* ------------------------------------------------------------------ internal heaps */
 
 static BOOL add_free(D12Heap *heap, UINT64 offset, UINT64 size)
 {
@@ -386,7 +383,7 @@ static BOOL take_range(D12Heap *heap, UINT64 size, UINT64 align, UINT64 *out)
     return FALSE;
 }
 
-/* a range of the device's heaps of a kind whose memory type the resource allows. */
+/* a range of an internal heap of a kind, in a memory type the resource allows. */
 HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 size, UINT64 align, BOOL image,
                  D12Allocation *out)
 {
@@ -409,7 +406,7 @@ HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 s
     desc.Properties.Type = kind == D12_MEMORY_UPLOAD     ? D3D12_HEAP_TYPE_UPLOAD
                            : kind == D12_MEMORY_READBACK ? D3D12_HEAP_TYPE_READBACK
                                                          : D3D12_HEAP_TYPE_DEFAULT;
-    /* the type buffers take, unless the resource needs another. */
+    /* the buffer memory type, unless the resource needs another. */
     UINT buffer_type = device->buffer_types[kind];
     int type = buffer_type != ~0u && (type_bits & (1u << buffer_type)) ? (int)buffer_type
                : type_bits == ~0u                                       ? -1
@@ -469,14 +466,13 @@ VkImageUsageFlags D12ImageUsage(D3D12_RESOURCE_FLAGS flags, const D3dFormat *fmt
     return usage;
 }
 
-/* the vulkan image a texture description makes; FALSE for what vulkan cannot make. */
 BOOL D12IsFeedback(DXGI_FORMAT format)
 {
     return format == DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE ||
            format == DXGI_FORMAT_SAMPLER_FEEDBACK_MIP_REGION_USED_OPAQUE;
 }
 
-/* a feedback map's size in regions of its texture's first mip, 4x4 texels when the description says none. */
+/* in regions of the texture's first mip, 4x4 texels when the description gives none. */
 VkExtent2D D12FeedbackExtent(const D3D12_RESOURCE_DESC1 *desc)
 {
     UINT rw = desc->SamplerFeedbackMipRegion.Width ? desc->SamplerFeedbackMipRegion.Width : 4;
@@ -485,9 +481,8 @@ VkExtent2D D12FeedbackExtent(const D3D12_RESOURCE_DESC1 *desc)
 }
 
 /*
- * a feedback map is an image of 32-bit words, one a region: the least mip
- * sampled for min mip maps, 0xFF when none, a bit a mip for mip region used
- * maps. shaders reach it as a storage image.
+ * a feedback map is an image of 32-bit words, one per region: the lowest mip sampled for min mip maps, 0xFF when
+ * none, or a bit per mip for mip region used maps. shaders reach it as a storage image.
  */
 static BOOL feedback_info(const D3D12_RESOURCE_DESC1 *desc, VkImageCreateInfo *info)
 {
@@ -558,7 +553,7 @@ static BOOL image_info(D12Device *device, const D3D12_RESOURCE_DESC1 *desc, VkIm
     if (device->vrs_tier >= D3D12_VARIABLE_SHADING_RATE_TIER_2 && desc->Format == DXGI_FORMAT_R8_UINT &&
         info->imageType == VK_IMAGE_TYPE_2D && info->samples == VK_SAMPLE_COUNT_1_BIT)
         info->usage |= VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
-    /* views of other formats of the same size: typeless formats and the casting direct3d 12 allows. */
+    /* views in other formats of the same size: typeless formats and the casting Direct3D 12 allows. */
     if (!(f->flags & (D3D_FORMAT_DEPTH | D3D_FORMAT_STENCIL)) || !depth) {
         info->flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
         if (f->block > 1)
@@ -569,7 +564,7 @@ static BOOL image_info(D12Device *device, const D3D12_RESOURCE_DESC1 *desc, VkIm
     return TRUE;
 }
 
-/* allocation infos asked for, kept by description: each costs a round trip to the host. */
+/* allocation infos cached by description, since each costs a host round trip. */
 typedef struct InfoEntry {
     D3D12_RESOURCE_DESC1 desc;
     D3D12_RESOURCE_ALLOCATION_INFO info;
@@ -641,7 +636,7 @@ static void add_info(const D3D12_RESOURCE_DESC1 *key, D3D12_RESOURCE_ALLOCATION_
     ReleaseSRWLockExclusive(&g_info_lock);
 }
 
-/* the size and alignment a resource takes in a heap, and for textures the memory types they allow. */
+/* the size and alignment in a heap, and for textures the memory types they allow. */
 static D3D12_RESOURCE_ALLOCATION_INFO allocation_info(D12Device *device, const D3D12_RESOURCE_DESC1 *desc,
                                                       UINT *type_bits)
 {
@@ -713,7 +708,7 @@ VkExtent3D D12MipExtent(const D12Resource *resource, UINT mip)
     return e;
 }
 
-/* the aspect a plane of a texture is: depth then stencil for depth stencil formats. */
+/* depth then stencil for depth stencil formats. */
 VkImageAspectFlags D12PlaneAspect(const D12Resource *resource, UINT plane)
 {
     if (resource->aspect == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))
@@ -723,7 +718,7 @@ VkImageAspectFlags D12PlaneAspect(const D12Resource *resource, UINT plane)
 
 /* ------------------------------------------------------------------ copyable footprints */
 
-/* the typeless format of a depth stencil format, whose two planes copy as R32 or R16 and R8. */
+/* depth stencil formats, whose two planes copy as R32 or R16, and R8. */
 static BOOL planar_format(DXGI_FORMAT format)
 {
     switch (format) {
@@ -813,7 +808,7 @@ void D12Footprints(D12Device *device, const D3D12_RESOURCE_DESC1 *desc, UINT fir
 
 /* ------------------------------------------------------------------ image views */
 
-/* the view a description makes of a texture, made once and kept with it. */
+/* made once per description and kept with the texture. */
 D12ImageView *D12ResourceView(D12Resource *resource, const VkImageViewCreateInfo *info, VkImageUsageFlags usage)
 {
     D12Device *device = resource->child.device;
@@ -937,7 +932,7 @@ static HRESULT STDMETHODCALLTYPE resource_get_device(ID3D12Resource2 *iface, REF
     return D12ChildGetDevice(&impl(iface)->child, riid, device);
 }
 
-/* buffers in heaps the cpu sees map to the guest memory the gpu reads; nothing is copied. */
+/* buffers in cpu visible heaps map the guest memory the gpu reads; nothing is copied. */
 static HRESULT STDMETHODCALLTYPE resource_map(ID3D12Resource2 *iface, UINT subresource, const D3D12_RANGE *read_range,
                                               void **data)
 {
@@ -980,7 +975,7 @@ static D3D12_GPU_VIRTUAL_ADDRESS STDMETHODCALLTYPE resource_get_gpu_virtual_addr
     return impl(iface)->va;
 }
 
-/* textures the cpu reads and writes would need linear images, which are not made. */
+/* cpu access to textures would need linear images, which are not made. */
 static HRESULT STDMETHODCALLTYPE resource_write_to_subresource(ID3D12Resource2 *iface, UINT dst_subresource,
                                                                const D3D12_BOX *dst_box, const void *src,
                                                                UINT src_row_pitch, UINT src_depth_pitch)
@@ -1037,7 +1032,7 @@ static const struct ID3D12Resource2Vtbl g_resource_vtbl = {
     resource_get_desc1,
 };
 
-/* the first commands of a new image: into the general layout, zeroed when it is a target. */
+/* moves a new image into the general layout, zeroed when it is a target. */
 static void init_image(D12Device *device, D12Resource *resource, BOOL clear)
 {
     VkCommandBuffer cmd = D12InitCommands(device);
@@ -1067,7 +1062,6 @@ static void init_image(D12Device *device, D12Resource *resource, BOOL clear)
     D12InitDone(device);
 }
 
-/* the aspects of the format an image is made in. */
 static VkImageAspectFlags format_aspect(VkFormat format)
 {
     switch (format) {
@@ -1102,7 +1096,7 @@ static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap 
     /* a feedback map keeps its texture's mips in its description. */
     if (!feedback)
         resource->desc.MipLevels = (UINT16)info.mipLevels;
-    /* a committed texture made to be shared, or opened from one that was, has memory of its own. */
+    /* a shareable committed texture, or one opened from another, owns its memory. */
     BOOL shared = !heap && ((resource->heap_flags & D3D12_HEAP_FLAG_SHARED) || resource->import_blob);
     VkExternalMemoryImageCreateInfo external = {VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO, nullptr,
                                                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT};
@@ -1193,7 +1187,7 @@ static HRESULT create_buffer(D12Device *device, D12Resource *resource, D12Heap *
         resource->mapped = heap->mapped ? heap->mapped + offset : nullptr;
         return S_OK;
     }
-    /* committed buffers: aligned as windows aligns them, small ones as small resources are. */
+    /* committed buffers are aligned as on windows, small ones like small resources. */
     UINT64 align = size <= D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT ? D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT
                                                                       : D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     D12MemoryKind kind = D12HeapKind(device, &resource->heap_props);
@@ -1207,10 +1201,9 @@ static HRESULT create_buffer(D12Device *device, D12Resource *resource, D12Heap *
     resource->va = h->va + resource->alloc.offset;
     resource->mapped = h->mapped ? h->mapped + resource->alloc.offset : nullptr;
     /*
-     * committed resources start zeroed, as windows makes them, even where memory is reused. mapped memory that no resource
-     * had before is zero already, vulkan-1.dll makes it of new pages, and the pass over it would fault in what the
-     * program has not asked for yet and may write over at once, as an upload of 64 MiB does. A program that says the contents may
-     * be anything, with the flag that makes a heap not zeroed, is not given the pass either.
+     * committed resources start zeroed like on windows, even in reused memory. mapped memory no resource had before
+     * is already zero, since vulkan-1.dll makes it from new pages, and clearing it would fault in pages the program
+     * may overwrite at once, as a 64 MiB upload does. D3D12_HEAP_FLAG_CREATE_NOT_ZEROED also skips the clear.
      */
     if (resource->mapped && (resource->alloc.fresh || (resource->heap_flags & D3D12_HEAP_FLAG_CREATE_NOT_ZEROED)))
         ;
@@ -1279,7 +1272,7 @@ static HRESULT create_resource(D12Device *device, const D3D12_HEAP_PROPERTIES *p
     resource->import_blob = nullptr;
     if (heap)
         heap->iface.lpVtbl->AddRef(&heap->iface);
-    /* direct3d makes the memory of acceleration structures resources of their own, in their own state. */
+    /* Direct3D puts acceleration structures in resources of their own, in their own state. */
     if (resource->buffer && device->has_rt &&
         (state == D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE ||
          (desc->Flags & D3D12_RESOURCE_FLAG_RAYTRACING_ACCELERATION_STRUCTURE)))
@@ -1304,7 +1297,7 @@ HRESULT D12CreateResourceImported(D12Device *device, const D3D12_HEAP_PROPERTIES
                            out);
 }
 
-/* a swap chain's image: owned by the swap chain, already in the general layout once acquired. */
+/* owned by the swap chain and already in the general layout once acquired. */
 HRESULT D12CreateSwapchainResource(D12Device *device, VkImage image, const D3D12_RESOURCE_DESC1 *desc,
                                    D12Resource **out)
 {
@@ -1326,12 +1319,10 @@ HRESULT D12CreateSwapchainResource(D12Device *device, VkImage image, const D3D12
 /* ------------------------------------------------------------------ reserved resources */
 
 /*
- * a reserved resource is a sparse vulkan buffer or image whose 64 KiB
- * tiles map heap memory with vkQueueBindSparse. a texture's tiles are
- * numbered as direct3d numbers them: layer after layer, each layer's
- * standard mips mip after mip, each in rows of tiles, then the layer's
- * packed mips, vulkan's mip tail. a mip tail all layers share is the first
- * layer's.
+ * a reserved resource is a sparse Vulkan buffer or image whose 64 KiB tiles map heap memory through
+ * vkQueueBindSparse. texture tiles are numbered like Direct3D: layer after layer, each layer's standard mips in
+ * order and in rows of tiles, then its packed mips, which are Vulkan's mip tail. a mip tail shared by all layers
+ * belongs to the first layer.
  */
 #define TILE_SIZE 65536u
 
@@ -1506,7 +1497,7 @@ void D12FreeTiles(D12Resource *r)
     r->tiles = nullptr;
 }
 
-/* a sparse buffer, its addresses its own, found as a heap's. */
+/* a sparse buffer with its own addresses, looked up like a heap's. */
 static HRESULT create_reserved_buffer(D12Device *device, D12Resource *r)
 {
     D12Vk *vk = &device->vk;
@@ -1538,7 +1529,7 @@ static HRESULT create_reserved_buffer(D12Device *device, D12Resource *r)
     return S_OK;
 }
 
-/* a sparse image of direct3d's tile shapes, which vulkan's standard block shapes are. */
+/* a sparse image in Direct3D's tile shapes, which are Vulkan's standard block shapes. */
 static HRESULT create_reserved_texture(D12Device *device, D12Resource *r)
 {
     D12Vk *vk = &device->vk;

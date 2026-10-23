@@ -1,13 +1,10 @@
 /*
- * the proxies and stubs of an interface that a type library describes, made at run time: CreateProxyFromTypeInfo and
- * CreateStubFromTypeInfo read the interface and write the format strings of the call interpreter for it as midl would for
- * the same interface, a proxy file of one interface, which the standard factory makes proxies and stubs from. This is what
- * the class of the proxies and stubs of oleautomation, registered with every interface of a type library, does for the
- * interface asked for.
+ * proxies and stubs built at run time from a type library. CreateProxyFromTypeInfo and CreateStubFromTypeInfo write
+ * the interpreter format strings midl would write for the interface, and the standard factory builds on them. this is
+ * what the oleautomation proxy class does for every interface of a type library.
  *
- * What the interfaces may take: numbers, enumerations, strings, BSTR, VARIANT, SAFEARRAY, interface pointers and records of
- * these, by value or by a pointer to one, in what is declared for a parameter of oleautomation. The routines that put the
- * three types of oleaut32 on the wire are found in that dll when the first interface is read.
+ * supported: numbers, enums, strings, BSTR, VARIANT, SAFEARRAY, interface pointers and records of these, by value or
+ * by pointer. the oleaut32 wire routines for BSTR, VARIANT and SAFEARRAY are looked up on first use.
  */
 #include "rpcrt4_private.h"
 #include <mime/win32/oleauto.h>
@@ -26,7 +23,6 @@
 
 #define PSZ ((ULONG)sizeof(void *))
 
-/* the format characters this file writes. */
 enum {
     FCx_BYTE = 0x01, FCx_SMALL = 0x03, FCx_USMALL = 0x04, FCx_SHORT = 0x06, FCx_USHORT = 0x07, FCx_LONG = 0x08,
     FCx_ULONG = 0x09, FCx_FLOAT = 0x0A, FCx_HYPER = 0x0B, FCx_DOUBLE = 0x0C, FCx_ENUM32 = 0x0E, FCx_RP = 0x11,
@@ -51,10 +47,10 @@ enum {
 
 #define MAX_METHODS 1024
 
-/* the places of the routines of the user marshalling types in the table the stub descriptor holds. */
+/* indices into the stub descriptor's user marshal table. */
 enum { USER_BSTR, USER_VARIANT, USER_SAFEARRAY, USER_COUNT };
 
-/* ------------------------------------------------------------------ growing buffers and an arena */
+/* ------------------------------------------------------------------ buffers and arena */
 
 typedef struct {
     BYTE *Data;
@@ -90,7 +86,7 @@ static void buf_put32(BUF *b, ULONG v)
     buf_put16(b, v >> 16);
 }
 
-/* a reference from the position it is written at to an item, in the 16 bits the formats keep it in. */
+/* format strings reference items by a signed 16-bit offset from where the offset is written. */
 static void buf_ref(BUF *b, ULONG target)
 {
     LONG rel = (LONG)target - (LONG)b->Size;
@@ -104,9 +100,7 @@ static ULONG align_up(ULONG v, ULONG a)
     return (v + a - 1) & ~(a - 1);
 }
 
-/*
- * What is made while an interface is read is kept in blocks that go together once it is done.
- */
+/* everything allocated while reading an interface, freed together when done. */
 typedef struct BLOCK {
     struct BLOCK *Next;
 } BLOCK;
@@ -135,7 +129,7 @@ struct TY {
     BYTE Fc;
     ULONG Size;
     ULONG Align;
-    /* what a value takes on the wire when that is the same every time, with its alignment. */
+    /* wire size and alignment, when the size is fixed. */
     ULONG WSize;
     ULONG WAlign;
     int User;
@@ -195,7 +189,7 @@ static TY *ty_new(CTX *c, KIND kind)
     return t;
 }
 
-/* ------------------------------------------------------------------ the types */
+/* ------------------------------------------------------------------ types */
 
 static TY *ty_base(CTX *c, BYTE fc, ULONG size, ULONG align)
 {
@@ -239,7 +233,7 @@ static TY *ty_iface(CTX *c, REFIID iid)
     return t;
 }
 
-/* a record made of numbers, which cy and decimal are. */
+/* a record of plain numbers, used for CY and DECIMAL. */
 static TY *ty_record(CTX *c, ULONG size, ULONG align, ULONG fields, const BYTE *fcs, const ULONG *offsets, const ULONG *sizes)
 {
     TY *t = ty_new(c, T_STRUCT);
@@ -284,7 +278,6 @@ static TY *ty_decimal(CTX *c)
 
 static HRESULT classify(CTX *c, ITypeInfo *ti, const TYPEDESC *td, int depth, TY **out);
 
-/* a record: its members at the places the type library says. */
 static HRESULT classify_record(CTX *c, ITypeInfo *ti, const TYPEATTR *attr, TY **out)
 {
     TY *t = ty_new(c, T_STRUCT);
@@ -446,7 +439,7 @@ static HRESULT classify(CTX *c, ITypeInfo *ti, const TYPEDESC *td, int depth, TY
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the type format string */
+/* ------------------------------------------------------------------ type format string */
 
 static ULONG off_type(CTX *c, TY *t);
 
@@ -499,7 +492,7 @@ static ULONG off_user(CTX *c, TY *t)
     BUF *b = &c->Types;
     t->Off = b->Size;
     buf_put(b, FCx_USER_MARSHAL);
-    /* the wire types of all three are unique pointers, so the stub puts the reference in front, and the routines align. */
+    /* all three wire types are unique pointers: the referent id goes first and the routines align. */
     buf_put(b, amask(4) | 0x80);
     buf_put16(b, (unsigned)t->User);
     buf_put16(b, t->Size);
@@ -517,7 +510,7 @@ static void pad_bytes(BUF *b, ULONG gap)
     }
 }
 
-/* the members of a record that is copied whole, nested records flattened. */
+/* members of a simple struct, nested structs flattened. */
 static ULONG simple_members(BUF *b, const TY *t, ULONG base, ULONG pos)
 {
     for (ULONG i = 0; i < t->FieldCount; i++) {
@@ -551,7 +544,7 @@ static ULONG off_struct(CTX *c, TY *t)
         t->Off = off;
         return off;
     }
-    /* members that are not numbers have formats of their own, which come first. */
+    /* non-numeric members need their own formats, written before the struct. */
     ULONG *refs = ctx_alloc(c, sizeof(ULONG) * (t->FieldCount + 1));
     if (!refs) {
         b->Failed = TRUE;
@@ -589,7 +582,7 @@ static ULONG off_struct(CTX *c, TY *t)
     return off;
 }
 
-/* the four bytes of a pointer to a type: its kind, its attributes and what it points to. */
+/* four bytes: pointer kind, attributes, then the target. */
 static ULONG off_pointer(CTX *c, BYTE kind, TY *target, BOOL on_stack)
 {
     BUF *b = &c->Types;
@@ -631,7 +624,7 @@ static ULONG off_type(CTX *c, TY *t)
     }
 }
 
-/* ------------------------------------------------------------------ the procedure format string */
+/* ------------------------------------------------------------------ procedure format string */
 
 typedef struct {
     TY *Type;
@@ -651,7 +644,7 @@ typedef struct {
 #define DIR_IN 1
 #define DIR_OUT 2
 
-/* the bytes a value takes in the frame of a call, which the compiler of the callee puts the arguments in. */
+/* the stack slot size of an argument in the callee's frame. */
 static ULONG slot_of(const TY *t)
 {
     if (NATIVE_X64)
@@ -741,7 +734,7 @@ static HRESULT describe(CTX *c, PARAM *p)
     case T_USER:
         p->Attrs = attrs | PAx_MUST_FREE;
         p->Offset = off_user(c, t);
-        /* a value that does not fit in the slot of a call on x64 is passed by its address. */
+        /* on x64 a value larger than a slot is passed by address. */
         p->Attrs |= NATIVE_X64 && t->Size > 8 ? PAx_IS_SIMPLE_REF : PAx_IS_BY_VALUE;
         return S_OK;
     default:
@@ -754,7 +747,7 @@ typedef struct {
     ITypeInfo *Owner;
 } FUNC;
 
-/* the procedure of a method, appended to the procedure format string: where it begins. */
+/* appends the method's procedure and returns its start offset. */
 static HRESULT emit_proc(CTX *c, const FUNC *f, ULONG number, ULONG *start)
 {
     const FUNCDESC *fd = f->Desc;
@@ -782,7 +775,6 @@ static HRESULT emit_proc(CTX *c, const FUNC *f, ULONG number, ULONG *start)
         frame += p->Slot;
         count++;
     }
-    /* the return value: an hresult, or a number. */
     BOOL has_return = FALSE;
     PARAM ret;
     memset(&ret, 0, sizeof(ret));
@@ -846,7 +838,7 @@ static HRESULT emit_proc(CTX *c, const FUNC *f, ULONG number, ULONG *start)
                 server_must = TRUE;
         }
     }
-    /* the head: an object procedure with its rpc flags, the number and the size of the frame. */
+    /* object procedure header: rpc flags, method number and frame size. */
     buf_put(b, FCx_AUTO_HANDLE);
     buf_put(b, 0x40 | 0x08 | 0x04);
     buf_put32(b, 0);
@@ -862,7 +854,7 @@ static HRESULT emit_proc(CTX *c, const FUNC *f, ULONG number, ULONG *start)
     buf_put16(b, 0);
     buf_put16(b, 0);
     if (NATIVE_X64) {
-        /* the arguments that travel in the floating point registers: the first four slots hold the object and then arguments. */
+        /* float register mask: slot 0 is this, so only three arguments fit in registers. */
         unsigned mask = 0;
         for (ULONG i = 0; i < count && i < 3; i++) {
             const TY *t = params[i].Type;
@@ -879,9 +871,9 @@ static HRESULT emit_proc(CTX *c, const FUNC *f, ULONG number, ULONG *start)
     return b->Failed ? E_OUTOFMEMORY : S_OK;
 }
 
-/* ------------------------------------------------------------------ reading the interface */
+/* ------------------------------------------------------------------ reading an interface */
 
-/* the methods of an interface and of the interfaces it is derived from, in the order of the table of virtual functions. */
+/* methods of the interface and its bases, in vtable order. */
 typedef struct {
     FUNC Funcs[MAX_METHODS];
     ULONG Count;
@@ -983,7 +975,7 @@ typedef struct UNIV {
     IPSFactoryBuffer *Inner;
 } UNIV;
 
-/* the task allocator of ole32, found with the routines below; the process heap is it where ole32 is not there. */
+/* ole32's task allocator, or the process heap without ole32. */
 static void *(WINAPI *g_co_alloc)(SIZE_T);
 static void(WINAPI *g_co_free)(void *);
 
@@ -1000,7 +992,6 @@ static void __RPC_API task_free(void *p)
         HeapFree(GetProcessHeap(), 0, p);
 }
 
-/* the routines of oleaut32 that put its types on the wire, found when they are first needed. */
 static USER_MARSHAL_ROUTINE_QUADRUPLE g_quadruples[USER_COUNT];
 static LONG g_quadruples_state;
 
@@ -1042,10 +1033,10 @@ static BOOL load_quadruples(void)
     return g_quadruples_state == 2;
 }
 
-/* the methods of the stub are left empty for the runtime to fill in with the standard ones. */
+/* left empty so the runtime fills in the standard stub methods. */
 static const CInterfaceStubVtbl g_stub_template;
 
-/* the head of a proxy vtable of the second version of the tables: the stubless information and the interface first. */
+/* a version 2 proxy vtable starts with the stubless info and the iid. */
 typedef struct {
     const MIDL_STUBLESS_PROXY_INFO *Info;
     const IID *Iid;
@@ -1070,7 +1061,7 @@ static HRESULT build(ITypeInfo *ti, REFIID iid, UNIV **out)
     UNIV *u = nullptr;
     unsigned short *offsets = nullptr;
     if (SUCCEEDED(hr)) {
-        /* the type format string starts with a pad, as midl writes one, so that no type is at offset 0. */
+        /* like midl, pad the start so no type sits at offset 0. */
         buf_put16(&c.Types, 0);
         buf_put16(&c.Procs, 0);
         offsets = AutAllocZero(sizeof(unsigned short) * methods->Count);
@@ -1149,7 +1140,7 @@ static HRESULT build(ITypeInfo *ti, REFIID iid, UNIV **out)
             u->File.TableSize = 1;
             u->File.TableVersion = 2;
             u->FileList[0] = &u->File;
-            /* the clsid is only compared with itself: the file serves the one interface. */
+            /* the clsid only matches itself: the file serves this one interface. */
             static const CLSID clsid = {0x00020424, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
             hr = NdrDllGetClassObject(&clsid, &IID_IPSFactoryBuffer, (void **)&u->Inner, u->FileList, &clsid, &u->Factory);
         }
@@ -1172,12 +1163,12 @@ static HRESULT build(ITypeInfo *ti, REFIID iid, UNIV **out)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the interfaces read so far */
+/* ------------------------------------------------------------------ cache */
 
 static UNIV *g_univ;
 static SRWLOCK g_univ_lock = SRWLOCK_INIT;
 
-/* the half of a dual interface that has the table of virtual functions, referenced: the interface itself for any other. */
+/* the vtable half of a dual interface, or the interface itself, with a reference. */
 static HRESULT vtable_half(ITypeInfo *info, ITypeInfo **half)
 {
     TYPEATTR *attr;
@@ -1201,7 +1192,6 @@ static HRESULT vtable_half(ITypeInfo *info, ITypeInfo **half)
     return hr;
 }
 
-/* the proxy file of the interface, from the cache or made from its type information. */
 static HRESULT univ_get(ITypeInfo *info, REFIID iid, UNIV **out)
 {
     AcquireSRWLockShared(&g_univ_lock);
@@ -1233,7 +1223,7 @@ static HRESULT univ_get(ITypeInfo *info, REFIID iid, UNIV **out)
     AcquireSRWLockExclusive(&g_univ_lock);
     for (UNIV *other = g_univ; other; other = other->Next)
         if (IsEqualGUID(&other->Iid, iid)) {
-            /* another thread was first: the one made here is dropped, which only leaks its tables. */
+            /* another thread won the race: ours is dropped, leaking its tables. */
             ReleaseSRWLockExclusive(&g_univ_lock);
             *out = other;
             return S_OK;

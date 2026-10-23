@@ -1,11 +1,10 @@
 /*
- * dbghelp: symbols, stack walks and minidumps, for crash reporters and
- * diagnostics. there is no pdb reader: a symbol is the nearest export of
- * the module below the address, which is what windows' dbghelp falls back
- * to without symbol files, and no line information exists. stack walks
- * cover the calling process, unwinding with the system's unwind data on
- * x64 and the frame chain on arm64. a minidump holds the system
- * information, the module list and the exception.
+ * dbghelp: symbols, stack walks and minidumps. there is no pdb reader: a
+ * symbol is the nearest export below the address, which is what dbghelp
+ * falls back to without symbol files, and there is no line information.
+ * stack walks cover the calling process, using unwind data on x64 and the
+ * frame chain on arm64. a minidump holds the system info, the module list
+ * and the exception.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -236,7 +235,6 @@ DBGHELP PVOID WINAPI SymFunctionTableAccess64(HANDLE process, DWORD64 address)
     return own_process(process) ? RtlLookupFunctionEntry(address, &base, nullptr) : nullptr;
 }
 
-/* the export of a module closest below an address, from its export directory. */
 static BOOL nearest_export(BYTE *base, DWORD64 address, const char **name, DWORD64 *start)
 {
     IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER *)base;
@@ -296,18 +294,13 @@ DBGHELP BOOL WINAPI SymFromAddr(HANDLE process, DWORD64 address, PDWORD64 displa
     return TRUE;
 }
 
-/* without symbol files there is no line information. */
 DBGHELP BOOL WINAPI SymGetLineFromAddr64(HANDLE process, DWORD64 address, PDWORD displacement, PIMAGEHLP_LINE64 line)
 {
     SetLastError(ERROR_INVALID_ADDRESS);
     return FALSE;
 }
 
-/*
- * a decorated c++ name made readable as far as its qualified name: the
- * name and its scopes, as UNDNAME_NAME_ONLY gives them. the signature is
- * left out whatever the flags ask for.
- */
+/* demangles a c++ name down to its qualified name, like UNDNAME_NAME_ONLY. the signature is always left out. */
 DBGHELP DWORD WINAPI UnDecorateSymbolName(PCSTR decorated, PSTR out, DWORD size, DWORD flags)
 {
     if (!decorated || !out || !size) {
@@ -346,7 +339,7 @@ DBGHELP DWORD WINAPI UnDecorateSymbolName(PCSTR decorated, PSTR out, DWORD size,
 
 /* ------------------------------------------------------------------ stack walks */
 
-/* one frame up the calling process's stack: false at its end. */
+/* moves one frame up, false at the end of the stack. */
 static BOOL unwind(CONTEXT *c)
 {
 #ifdef __x86_64__
@@ -363,7 +356,7 @@ static BOOL unwind(CONTEXT *c)
     }
     return c->Rip != 0;
 #else
-    /* the pc of an unwound frame is the return address, the call the instruction before it. */
+    /* an unwound frame's pc is the return address, so the call is the instruction before it. */
     ULONG64 base;
     ULONG64 stack = c->Sp, pc = c->Pc;
     PVOID function = RtlLookupFunctionEntry((c->ContextFlags & CONTEXT_UNWOUND_TO_CALL) ? pc - 4 : pc, &base, nullptr);
@@ -403,9 +396,8 @@ static void fill_frame(LPSTACKFRAME64 frame, const CONTEXT *c)
 }
 
 /*
- * the context moves one frame up at each call after the first, as windows'
- * StackWalk64 does with x64 and arm64 contexts; Reserved[0] tells the first
- * call from the others.
+ * like StackWalk64 on Windows with x64 and arm64 contexts, every call after
+ * the first moves the context up one frame. Reserved[0] marks the first call.
  */
 DBGHELP BOOL WINAPI StackWalk64(DWORD machine, HANDLE process, HANDLE thread, LPSTACKFRAME64 frame, PVOID context,
                                 PREAD_PROCESS_MEMORY_ROUTINE64 read, PFUNCTION_TABLE_ACCESS_ROUTINE64 table,
@@ -530,7 +522,7 @@ static ULONG32 put(DUMP *d, const void *data, ULONG32 size)
     return at;
 }
 
-/* a MINIDUMP_STRING: the byte length, then the utf-16 text and its terminator. */
+/* MINIDUMP_STRING: byte length, then the UTF-16 text and its terminator. */
 static ULONG32 put_string(DUMP *d, PCWSTR text)
 {
     ULONG32 bytes = (ULONG32)wcslen(text) * sizeof(WCHAR);
@@ -628,7 +620,7 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
         directory[2] = (MINIDUMP_DIRECTORY){ExceptionStream, {sizeof(e), at}};
     }
 
-    /* the directory and the system information's string go back in place. */
+    /* write the directory and the system info string back in place. */
     LONG end = (LONG)d.Rva;
     SetFilePointer(file, (LONG)directory_rva, nullptr, FILE_BEGIN);
     d.Rva = directory_rva;
@@ -722,7 +714,7 @@ typedef struct IMAGEHLP_MODULE64 {
     DWORD Reserved;
 } IMAGEHLP_MODULE64;
 
-/* the codeview record of an image's debug directory, mapped or as a file. */
+/* finds the codeview record in the debug directory of a mapped or file-layout image. */
 static const CV_INFO_PDB70 *codeview(BYTE *base, BOOL mapped, DWORD *size)
 {
     IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
@@ -742,11 +734,7 @@ static const CV_INFO_PDB70 *codeview(BYTE *base, BOOL mapped, DWORD *size)
     return nullptr;
 }
 
-/*
- * the module of the calling process holding an address. without symbol
- * files a module has its exports, reported as SymExport like windows does
- * when no pdb is found.
- */
+/* without symbol files a module reports its exports as SymExport, as Windows does when no pdb is found. */
 DBGHELP BOOL WINAPI SymGetModuleInfoW64(HANDLE process, DWORD64 address, IMAGEHLP_MODULEW64 *info)
 {
     if (!info || info->SizeOfStruct < offsetof(IMAGEHLP_MODULEW64, LoadedPdbName)) {
@@ -860,7 +848,7 @@ typedef struct SYMSRV_INDEX_INFO {
     DWORD age;
 } SYMSRV_INDEX_INFO;
 
-/* the symbol server index of an image file: its stamp and size, and the pdb its codeview record names. */
+/* the index is the image's timestamp and size, plus the pdb its codeview record names. */
 DBGHELP BOOL WINAPI SymSrvGetFileIndexInfoW(PCWSTR file, SYMSRV_INDEX_INFOW *info, DWORD flags)
 {
     if (!file || !info || info->sizeofstruct != sizeof(*info)) {

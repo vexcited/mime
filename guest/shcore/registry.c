@@ -1,4 +1,4 @@
-/* the SH registry helpers: one call over open, query or set and close. */
+/* the SH registry helpers: open, query or set, and close in one call. */
 #include "shcore_private.h"
 
 #define ERROR_KEY_HAS_CHILDREN 1020L
@@ -122,7 +122,7 @@ LONG WINAPI SHDeleteValueA(HKEY root, LPCSTR subkey, LPCSTR value)
     return error;
 }
 
-/* the key and everything below it. */
+/* deletes the subtree too. */
 LONG WINAPI SHDeleteKeyW(HKEY root, LPCWSTR subkey)
 {
     return RegDeleteTreeW(root, subkey);
@@ -200,7 +200,7 @@ LONG WINAPI SHRegGetValueA(HKEY root, LPCSTR subkey, LPCSTR value, DWORD flags, 
     return RegGetValueA(root, subkey, value, flags, type, data, size);
 }
 
-/* the user's value, or the machine's when the user has none. */
+/* the user's value, else the machine's. */
 LONG WINAPI SHRegGetValueFromHKCUHKLM(LPCWSTR subkey, LPCWSTR value, DWORD flags, DWORD *type, void *data,
                                       DWORD *size)
 {
@@ -214,7 +214,7 @@ LONG WINAPI SHRegGetValueFromHKCUHKLM(LPCWSTR subkey, LPCWSTR value, DWORD flags
     return error;
 }
 
-/* a number stored as a string or a dword, the fallback otherwise. */
+/* reads a string or dword number, else returns the fallback. */
 int WINAPI SHRegGetIntW(HKEY key, LPCWSTR value, int fallback)
 {
     WCHAR text[32];
@@ -267,7 +267,7 @@ HKEY WINAPI SHRegDuplicateHKey(HKEY key)
     return copy;
 }
 
-/* the values and subkeys of source under destination, recursively. */
+/* copies values and subkeys recursively. */
 static LONG copy_key(HKEY source, HKEY destination)
 {
     WCHAR name[256];

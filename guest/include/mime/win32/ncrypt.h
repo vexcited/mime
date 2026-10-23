@@ -1,4 +1,4 @@
-/* the cng key storage router, ncrypt.h. */
+/* cng key storage router, ncrypt.h. */
 #ifndef MIME_WIN32_NCRYPT_H
 #define MIME_WIN32_NCRYPT_H
 

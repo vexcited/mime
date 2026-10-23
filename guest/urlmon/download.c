@@ -1,14 +1,14 @@
 /*
- * downloads: URLDownloadToFile, URLDownloadToCacheFile, URLOpenBlockingStream and URLOpenStream bind a url
- * through wininet or the file system on the caller's thread, telling the caller's IBindStatusCallback as
- * windows' urlmon does: OnStartBinding with the IBinding that aborts, OnProgress with the BINDSTATUS codes,
- * OnDataAvailable for pushed streams, then OnStopBinding.
+ * URLDownloadToFile, URLDownloadToCacheFile, URLOpenBlockingStream and URLOpenStream bind a url through wininet or
+ * the file system on the caller's thread. like windows' urlmon, the caller's IBindStatusCallback gets OnStartBinding
+ * with an IBinding that aborts, OnProgress with BINDSTATUS codes, OnDataAvailable for pushed streams, then
+ * OnStopBinding.
  */
 #include "urlmon_private.h"
 
 #define URL_CHUNK 65536
 
-/* ------------------------------------------------------------------ the data stream */
+/* ------------------------------------------------------------------ data stream */
 
 typedef struct {
     IStream Interface;
@@ -214,7 +214,7 @@ IStream *UrlCreateDataStream(void)
     return &stream->Interface;
 }
 
-/* adds data at the end, leaving the read position where it is. */
+/* appends without moving the read position. */
 HRESULT UrlStreamAppend(IStream *iface, const void *data, DWORD size)
 {
     DATA_STREAM *stream = stream_of(iface);
@@ -228,7 +228,7 @@ HRESULT UrlStreamAppend(IStream *iface, const void *data, DWORD size)
     return hr;
 }
 
-/* ------------------------------------------------------------------ the binding */
+/* ------------------------------------------------------------------ binding */
 
 typedef struct {
     IBinding Interface;
@@ -320,11 +320,11 @@ static HRESULT STDMETHODCALLTYPE b_GetBindResult(IBinding *iface, CLSID *protoco
 static const IBindingVtbl BindingVtbl = {b_QueryInterface, b_AddRef,        b_Release,      b_Abort,        b_Suspend,
                                          b_Suspend,        b_SetPriority,   b_GetPriority,  b_GetBindResult};
 
-/* ------------------------------------------------------------------ the callback */
+/* ------------------------------------------------------------------ callback */
 
 /*
- * a status for the caller: E_NOTIMPL counts as success, E_ABORT aborts the binding. the maximum never falls
- * under the progress, as windows' wrapper keeps it.
+ * E_NOTIMPL from the caller counts as success, E_ABORT aborts the binding. like windows, the maximum never falls
+ * below the progress.
  */
 static HRESULT Progress(DOWNLOAD *download, ULONG status, LPCWSTR text)
 {
@@ -368,7 +368,7 @@ static HRESULT Start(DOWNLOAD *download)
     return S_OK;
 }
 
-/* hands what arrived to the sink: the file, the stream, and for pushed streams the caller too. */
+/* writes to the file or stream sink, and for pushed streams tells the caller too. */
 static HRESULT Deliver(DOWNLOAD *download, const BYTE *data, DWORD size, DWORD bscf)
 {
     if (size && download->File) {
@@ -402,7 +402,7 @@ static INIT_ONCE SessionOnce = INIT_ONCE_STATIC_INIT;
 static HINTERNET Session;
 static const char *SessionAgent;
 
-/* wininet's progress as the BINDSTATUS codes, through the context of the request. */
+/* maps wininet progress to BINDSTATUS codes, through the request context. */
 static void CALLBACK OnInternetStatus(HINTERNET handle, DWORD_PTR context, DWORD status, LPVOID info, DWORD length)
 {
     DOWNLOAD *download = (DOWNLOAD *)context;
@@ -443,7 +443,7 @@ static BOOL CALLBACK OpenSession(PINIT_ONCE once, PVOID parameter, PVOID *contex
     return TRUE;
 }
 
-/* the INET_E_* code of a wininet error, as urlmon's table maps them. */
+/* maps a wininet error to INET_E_* following urlmon's table. */
 static HRESULT InetError(DWORD error)
 {
     switch (error) {
@@ -481,7 +481,7 @@ static HRESULT InetError(DWORD error)
     return INET_E_DOWNLOAD_FAILURE;
 }
 
-/* the result of a status code, as urlmon reads them. */
+/* maps a status code to a result the way urlmon does. */
 static HRESULT StatusResult(DWORD code)
 {
     switch (code) {
@@ -562,7 +562,7 @@ static HRESULT HttpBind(DOWNLOAD *download)
 
 /* ------------------------------------------------------------------ files */
 
-/* the local path of a file url or of a path given as a url. */
+/* handles file urls and plain paths passed as urls. */
 static BOOL LocalPath(LPCWSTR url, PWSTR path, DWORD capacity)
 {
     if (!_wcsnicmp(url, L"file:", 5)) {
@@ -620,7 +620,7 @@ static HRESULT FileBind(DOWNLOAD *download, LPCWSTR path)
 
 /* ------------------------------------------------------------------ the cache */
 
-/* a file for a url under the temporary internet files, named after the url's last segment. */
+/* under the temporary internet files, named after the url's last segment. */
 static BOOL CacheFileFor(LPCWSTR url, PWSTR path, DWORD capacity)
 {
     WCHAR directory[MAX_PATH];
@@ -660,7 +660,7 @@ static BOOL CacheFileFor(LPCWSTR url, PWSTR path, DWORD capacity)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ the operations */
+/* ------------------------------------------------------------------ operations */
 
 HRESULT UrlDownload(LPCWSTR url, DWORD kind, DWORD bindf, IBindStatusCallback *callback, LPCWSTR file,
                     IStream **stream, PWSTR cache_file, DWORD cache_length)
@@ -779,7 +779,7 @@ DECLSPEC_EXPORT HRESULT WINAPI URLDownloadToFileA(LPUNKNOWN caller, LPCSTR url, 
     return hr;
 }
 
-/* windows takes a length under 4 characters as MAX_PATH. */
+/* like windows, a length under 4 characters means MAX_PATH. */
 DECLSPEC_EXPORT HRESULT WINAPI URLDownloadToCacheFileW(LPUNKNOWN caller, LPCWSTR url, LPWSTR file, DWORD length,
                                                       DWORD reserved, LPBINDSTATUSCALLBACK callback)
 {

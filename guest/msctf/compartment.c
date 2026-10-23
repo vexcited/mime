@@ -1,7 +1,7 @@
 /*
- * compartments: values that the document managers, the contexts and the thread keep for the programs and text
- * services around them, such as whether the keyboard is open. a compartment is the value and its sinks, which the
- * manager keeps whoever holds an interface to it.
+ * compartments: values the document managers, contexts and the thread keep for programs and text services, such
+ * as whether the keyboard is open. a compartment is a value and its sinks, kept by the manager whoever holds an
+ * interface to it.
  */
 #include "msctf_private.h"
 

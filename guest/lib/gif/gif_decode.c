@@ -143,7 +143,7 @@ int mime_gif_lzw_decode(const uint8_t *data, size_t size, unsigned min_code_size
     return rc;
 }
 
-/* collects the payload of the sub-blocks of a frame into dst, returns the byte count. */
+/* flattens a frame's sub-block payload into dst and returns its size. */
 static size_t flatten(const MimeGif *g, const MimeGifFrame *f, uint8_t *dst)
 {
     const uint8_t *p = f->data, *end = g->data + g->size;

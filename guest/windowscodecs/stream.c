@@ -1,7 +1,4 @@
-/*
- * IWICStream: an IStream over a file, a block of memory, another stream or a part of one. The object serves the
- * decoders and encoders, and is what programs hand them.
- */
+/* IWICStream over files, memory, streams or stream ranges. */
 #include "wic_private.h"
 
 enum { STREAM_NONE, STREAM_MEMORY, STREAM_FILE, STREAM_ISTREAM, STREAM_REGION };
@@ -460,7 +457,7 @@ HRESULT WicMemoryStreamCreate(const BYTE *data, SIZE_T size, BOOL copy, IStream 
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ whole streams */
+/* whole streams. */
 
 HRESULT WicReadStream(IStream *stream, BYTE **data, SIZE_T *size, SIZE_T limit)
 {

@@ -1,6 +1,6 @@
 /*
- * certificate and encoding api of crypt32.dll: blobs, x.509 structures,
- * certificate stores, chains and the asn.1 encoders.
+ * crypt32.dll certificate and encoding api: blobs, x.509 structures, certificate stores, chains and asn.1
+ * encoders.
  */
 #ifndef MIME_WIN32_WINCRYPT_H
 #define MIME_WIN32_WINCRYPT_H

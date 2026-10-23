@@ -2,7 +2,7 @@
 
 static constexpr WCHAR component_catalog[] = L"Software\\Mime\\Installer\\Components";
 
-/* the key path of a component that is a registry value: the root as two digits, a colon, the key and the name. */
+/* a registry key path: the root as two digits, a colon, then the key and the value name. */
 static UINT registry_key_path(MIME_MSI_PACKAGE *package, PCWSTR registry_key, BOOL is64, PWSTR *out)
 {
     MIME_MSI_TABLE *table;
@@ -121,7 +121,7 @@ UINT MimeMsiProcessComponents(MIME_MSI_PACKAGE *package, HKEY root)
         if (error)
             return error;
         if (!selected) {
-            /* a component the product no longer has gives up its place in the catalog. */
+            /* drop components the product no longer has from the catalog. */
             _snwprintf(path, RTL_NUMBER_OF(path), L"%s\\%s", component_catalog, packed);
             error = MimeMsiDeleteRegistryValue(package, root, path, product);
             HKEY emptied;
@@ -151,7 +151,7 @@ UINT MimeMsiProcessComponents(MIME_MSI_PACKAGE *package, HKEY root)
     return ERROR_SUCCESS;
 }
 
-/* whether the place a key path names is there: a file, a directory, or a registry key or value. */
+/* whether the file, directory, registry key or value a key path names exists. */
 static BOOL key_path_present(PCWSTR path)
 {
     if (path[0] >= L'0' && path[0] <= L'9' && path[1] >= L'0' && path[1] <= L'9' && path[2] == L':' && path[3] == L'\\') {
@@ -300,7 +300,7 @@ INSTALLSTATE WINAPI MsiGetComponentPathW(LPCWSTR product, LPCWSTR component, LPW
     return state;
 }
 
-/* the state and path of a component as the first of its client products has it. */
+/* reports the component as its first client product has it. */
 INSTALLSTATE WINAPI MsiLocateComponentW(LPCWSTR component, LPWSTR out, LPDWORD size)
 {
     if ((out && !size))

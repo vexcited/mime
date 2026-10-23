@@ -1,8 +1,6 @@
 /*
- * an audio output stream of the process, played by the host (mime/audio.h):
- * a ring of frames the caller writes, the host consuming them. winmm and
- * dsound write their mixes here, as windows' write theirs to the audio
- * engine.
+ * a process audio output stream played by the host through mime/audio.h: a ring of frames the caller fills and the host
+ * consumes. winmm and dsound write their mixes here, like windows sends them to the audio engine.
  */
 #ifndef MIME_LIB_AUDIO_OUTPUT_H
 #define MIME_LIB_AUDIO_OUTPUT_H
@@ -20,7 +18,7 @@ typedef struct MimeOutput {
     BOOL started;
 } MimeOutput;
 
-/* bits is 16, 24 or 32, 32 with is_float for floats. */
+/* bits is 16, 24 or 32, and 32 with is_float for floats. */
 NTSTATUS MimeOutputOpen(MimeOutput *o, UINT32 rate, UINT32 channels, UINT32 bits, BOOL is_float);
 void MimeOutputClose(MimeOutput *o);
 NTSTATUS MimeOutputStart(MimeOutput *o);
@@ -33,14 +31,14 @@ UINT32 MimeOutputSpace(const MimeOutput *o);
 UINT64 MimeOutputPlayed(const MimeOutput *o);
 UINT64 MimeOutputWritten(const MimeOutput *o);
 
-/* where n frames go next, at most what fits before the end of the ring; then they are committed. */
+/* returns at most what fits before the ring wraps. commit the frames afterwards. */
 BYTE *MimeOutputBegin(MimeOutput *o, UINT32 *n);
 void MimeOutputCommit(MimeOutput *o, UINT32 n);
-/* copies n frames, or silence for a null data, as space allows; returns the frames written. */
+/* NULL data writes silence. returns the frames that fit. */
 UINT32 MimeOutputWrite(MimeOutput *o, const void *data, UINT32 n);
-/* what was written and not played is dropped, while stopped. */
+/* discards unplayed frames while stopped. */
 void MimeOutputDrop(MimeOutput *o);
-/* 0 to 1, applied by the host. */
+/* level is 0 to 1, applied by the host. */
 void MimeOutputVolume(MimeOutput *o, float level);
 
 #endif

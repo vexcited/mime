@@ -1,6 +1,4 @@
-/*
- * urlmon: the entry point, memory helpers, and the session options with the user agent.
- */
+/* urlmon entry point, memory helpers, and session options with the user agent. */
 #include "urlmon_private.h"
 
 static SRWLOCK SessionLock = SRWLOCK_INIT;
@@ -62,7 +60,7 @@ PWSTR UrlWiden(LPCSTR text)
     return wide;
 }
 
-/* the names of the values under a user agent key, as tokens after a semicolon each. */
+/* each value name under the key becomes a "; name" token. */
 static void AppendTokens(char *agent, SIZE_T capacity, HKEY root, const char *key_name)
 {
     HKEY key;
@@ -82,8 +80,8 @@ static void AppendTokens(char *agent, SIZE_T capacity, HKEY root, const char *ke
 }
 
 /*
- * the internet explorer 7 compatible agent windows gives programs that host no browser, with the tokens of
- * internet explorer's Post Platform keys.
+ * the internet explorer 7 compatible agent windows gives programs that host no browser, plus the tokens of internet
+ * explorer's Post Platform keys.
  */
 static char *BuildAgent(void)
 {
@@ -117,7 +115,7 @@ const char *UrlUserAgent(void)
     return agent;
 }
 
-/* a too small buffer is E_OUTOFMEMORY with the size needed, terminator included. */
+/* too small a buffer gives E_OUTOFMEMORY and the size needed, terminator included. */
 DECLSPEC_EXPORT HRESULT WINAPI ObtainUserAgentString(DWORD option, LPSTR agent, DWORD *size)
 {
     if (!agent || !size)
@@ -173,7 +171,7 @@ DECLSPEC_EXPORT HRESULT WINAPI UrlMkSetSessionOption(DWORD option, LPVOID buffer
             return E_OUTOFMEMORY;
         memcpy(copy, buffer, length);
         copy[length] = 0;
-        /* the old agent stays allocated for the requests that still read it. */
+        /* the old agent is never freed, requests may still be reading it. */
         AcquireSRWLockExclusive(&SessionLock);
         Agent = copy;
         ReleaseSRWLockExclusive(&SessionLock);

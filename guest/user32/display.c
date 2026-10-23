@@ -2,7 +2,7 @@
 #include "user32_private.h"
 #include <mime/win32/winspool.h>
 
-/* the display modes live in win32k, which also changes them; see guest/win32k/display.c. */
+/* win32k owns and changes the display modes, see guest/win32k/display.c. */
 WINUSERAPI BOOL WINAPI EnumDisplaySettingsExW(LPCWSTR device, DWORD index, DEVMODEW *mode, DWORD flags)
 {
     if (!mode) {
@@ -20,7 +20,7 @@ WINUSERAPI BOOL WINAPI EnumDisplaySettingsW(LPCWSTR device, DWORD index, DEVMODE
     return EnumDisplaySettingsExW(device, index, mode, 0);
 }
 
-/* the ansi DEVMODE: the same fields, the two names in bytes. */
+/* DEVMODEA has the same fields, with the two names as byte strings. */
 static void mode_to_ansi(const DEVMODEW *w, DEVMODEA *a, WORD size)
 {
     DEVMODEA m;
@@ -49,7 +49,7 @@ static void mode_from_ansi(const DEVMODEA *a, DEVMODEW *w)
                         RTL_NUMBER_OF(w->dmFormName));
     w->dmFormName[RTL_NUMBER_OF(w->dmFormName) - 1] = 0;
     memcpy(&w->dmLogPixels, &m.dmLogPixels, sizeof(DEVMODEA) - offsetof(DEVMODEA, dmLogPixels));
-    /* an ansi mode's size counts byte names; the wide one's counts wide names. */
+    /* dmSize counts byte names for ansi and wide names for wide. */
     w->dmSize = a->dmSize >= sizeof(DEVMODEA) ? sizeof(DEVMODEW) : a->dmSize + sizeof(DEVMODEW) - sizeof(DEVMODEA);
     w->dmDriverExtra = 0;
 }
@@ -126,7 +126,7 @@ WINUSERAPI LONG WINAPI DisplayConfigGetDeviceInfo(void *info)
     return info ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
 }
 
-/* nothing of the display configuration can be changed from here, as it cannot be read. */
+/* the display configuration cannot be read, so nothing in it can be changed. */
 WINUSERAPI LONG WINAPI DisplayConfigSetDeviceInfo(void *info)
 {
     return info ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
@@ -137,10 +137,8 @@ WINUSERAPI LONG WINAPI DisplayConfigSetDeviceInfo(void *info)
 #define WDA_EXCLUDEFROMCAPTURE 0x11
 
 /*
- * the affinity is kept on the window and honored by every capture of the
- * screen: windows 11 shows a window of WDA_MONITOR as black and leaves a
- * window of WDA_EXCLUDEFROMCAPTURE out. only a window of the calling process
- * may be changed.
+ * every screen capture honors the affinity: like windows 11, WDA_MONITOR shows as black and WDA_EXCLUDEFROMCAPTURE
+ * is left out. only windows of the calling process may be changed.
  */
 WINUSERAPI BOOL WINAPI SetWindowDisplayAffinity(HWND window, DWORD affinity)
 {
@@ -186,12 +184,10 @@ WINUSERAPI BOOL WINAPI IsWindowArranged(HWND window)
 #define PW_RENDERFULLCONTENT 0x2
 
 /*
- * win32k's capture gives the window's own pixels, whatever covers it: its redirection surface and, for
- * PW_RENDERFULLCONTENT, the image its process presented through the host, which is how windows draws the windows
- * that a Direct3D or DirectComposition swap chain fills (read from win32kfull's xxxPrintWindow, which asks the
- * desktop window manager for the composed surface in that case). a window is painted first, as UpdateWindow does,
- * so that what comes out is what the window would show. a missing device context is not a failure, nor is a
- * capture of nothing; the desktop is the one window that cannot be printed, and it fails without an error.
+ * win32k captures the window's own pixels, whatever covers it: its redirection surface and, for
+ * PW_RENDERFULLCONTENT, the image its process presented through the host, which covers windows filled by a Direct3D
+ * or DirectComposition swap chain. the window is painted first, as UpdateWindow does. a missing device context or an
+ * empty capture is not a failure. the desktop cannot be printed and fails without an error.
  */
 WINUSERAPI BOOL WINAPI PrintWindow(HWND window, HDC dc, UINT flags)
 {

@@ -1,7 +1,6 @@
 /*
- * the print server: enumerating printers, drivers, ports, monitors and print
- * processors, the default printer, the spool directories and the functions
- * that install or remove spooler components. nothing is installed.
+ * print server enumeration, defaults, spool directories and installation entry points. components cannot be
+ * installed.
  */
 #include "winspool_private.h"
 
@@ -58,7 +57,7 @@ PCWSTR SpoolEnvironmentDirectory(LPCWSTR environment)
     return nullptr;
 }
 
-/* converts an optional ansi environment and checks that it names a known one. */
+/* converts an optional ANSI environment and checks that it names a known one. */
 static BOOL SpoolCheckEnvironmentA(LPCSTR environment)
 {
     if (!environment || !_stricmp(environment, "all"))
@@ -164,7 +163,7 @@ static BOOL SpoolDriverLevel(DWORD level)
     return (level >= 1 && level <= 6) || level == 8;
 }
 
-/* a list of names of one kind in the form of the level asked for; the drivers are listed for levels 1 to 3. */
+/* builds the requested information level; drivers support levels 1 to 3. */
 static BOOL SpoolEnumNames(DWORD kind, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed, LPDWORD returned,
                            BOOL ansi)
 {
@@ -265,7 +264,7 @@ DECLSPEC_EXPORT BOOL WINAPI EnumPrintProcessorsA(LPSTR name, LPSTR environment, 
     return SpoolEnumNames(INFO_PROCESSOR, level, buffer, size, needed, returned, TRUE);
 }
 
-/* the data types of the print processor winprint, and a failure for any other processor. */
+/* only the winprint processor has data types. */
 static BOOL SpoolEnumDatatypes(LPCWSTR processor, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed,
                                LPDWORD returned, BOOL ansi)
 {
@@ -332,7 +331,7 @@ static BOOL SpoolDirectoryW(LPWSTR environment, DWORD level, LPBYTE buffer, DWOR
     return TRUE;
 }
 
-/* the ansi forms need room for the unicode result and report its size, like windows. */
+/* the ANSI forms need room for the Unicode result and report its size, like windows. */
 static BOOL SpoolDirectoryA(LPSTR environment, DWORD level, LPBYTE buffer, DWORD size, LPDWORD needed, PCWSTR kind)
 {
     PWSTR wide = SpoolToWide(environment);
@@ -376,7 +375,7 @@ DECLSPEC_EXPORT BOOL WINAPI GetPrintProcessorDirectoryA(LPSTR name, LPSTR enviro
 
 /* ------------------------------------------------------------------ default printer */
 
-/* the name of the default printer: the chosen one if there is one, else the first of the printers. */
+/* uses the selected default printer, falling back to the first printer. */
 DECLSPEC_EXPORT BOOL WINAPI GetDefaultPrinterW(LPWSTR buffer, LPDWORD size)
 {
     if (!size)
@@ -413,7 +412,7 @@ DECLSPEC_EXPORT BOOL WINAPI GetDefaultPrinterA(LPSTR buffer, LPDWORD size)
     return TRUE;
 }
 
-/* a null or empty name asks for a default to be picked, which the first printer is. */
+/* a null or empty name selects the first printer as default. */
 DECLSPEC_EXPORT BOOL WINAPI SetDefaultPrinterW(LPCWSTR printer)
 {
     int index = printer && *printer ? SpoolFindPrinter(printer) : (SpoolPrinterCount() ? 0 : -1);
@@ -472,7 +471,7 @@ DECLSPEC_EXPORT BOOL WINAPI AddPrinterConnection2W(HWND window, LPCWSTR name, DW
     return SpoolFail(ERROR_INVALID_PRINTER_NAME);
 }
 
-/* the ansi form is not implemented by windows either. */
+/* the ANSI form is not implemented by windows either. */
 DECLSPEC_EXPORT BOOL WINAPI AddPrinterConnection2A(HWND window, LPCSTR name, DWORD level, PVOID info)
 {
     return SpoolFail(ERROR_NOT_SUPPORTED);
@@ -599,7 +598,7 @@ DECLSPEC_EXPORT BOOL WINAPI SetPortA(LPSTR name, LPSTR port, DWORD level, LPBYTE
     return SpoolFail(ERROR_UNKNOWN_PORT);
 }
 
-/* monitors, processors and providers name a dll that would have to be in a spool directory. */
+/* monitors, processors and providers name a DLL that would have to be in a spool directory. */
 DECLSPEC_EXPORT BOOL WINAPI AddMonitorW(LPWSTR name, DWORD level, LPBYTE info)
 {
     return SpoolFail(level == 2 ? ERROR_FILE_NOT_FOUND : ERROR_INVALID_LEVEL);

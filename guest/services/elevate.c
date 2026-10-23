@@ -1,11 +1,9 @@
 /*
- * services.exe: the elevation broker. on windows the appinfo service starts the processes that ask for the rights of
- * an administrator (ShellExecute with the verb runas, a manifest that requires them), after the consent of the user
- * on a desktop of its own. mime has no consent: a request is answered as if the policy of the machine was never to
- * notify, and the host log gets a line for it. see docs/services.md.
+ * services.exe: the elevation broker, what the appinfo service does on windows for runas and requireAdministrator.
+ * mime has no consent prompt: requests are approved as if the policy were never to notify, and the host log says so.
  *
- * the process gets the other half of the token of the caller, its linked token, in the session of the caller, and has
- * the caller as its parent. a caller that is elevated already gets its own token.
+ * the process gets the caller's linked token, in the caller's session, with the caller as parent. an already
+ * elevated caller gets its own token.
  */
 #include "services.h"
 
@@ -30,7 +28,7 @@ typedef struct {
 typedef BOOL(WINAPI *CREATE_ENVIRONMENT)(LPVOID *environment, HANDLE token, BOOL inherit);
 typedef BOOL(WINAPI *DESTROY_ENVIRONMENT)(LPVOID environment);
 
-/* the token a request is made with: the effective token of the client at the call, which the pipe impersonates. */
+/* the client's effective token at the time of the call. */
 static HANDLE client_token(HANDLE pipe, DWORD *error)
 {
     if (!ImpersonateNamedPipeClient(pipe)) {
@@ -52,7 +50,7 @@ static DWORD token_dword(HANDLE token, DWORD klass, DWORD fallback)
     return value;
 }
 
-/* whether the machine's policy lets the request through: the host's user always agrees, unless the machine was told otherwise. */
+/* the host's user always consents unless HKLM\Software\Mime\Elevation has Decline set. */
 static BOOL consent_given(void)
 {
     HKEY key;
@@ -65,7 +63,7 @@ static BOOL consent_given(void)
     return !declined;
 }
 
-/* the token for the new process, primary and with the session of the caller; null and an error when there is none. */
+/* a primary token for the new process, or NULL with an error. */
 static HANDLE elevated_token(HANDLE caller, DWORD *error, DWORD *elevation)
 {
     DWORD type = token_dword(caller, TokenElevationType_, ELEVATION_DEFAULT);
@@ -73,7 +71,7 @@ static HANDLE elevated_token(HANDLE caller, DWORD *error, DWORD *elevation)
     LINKED_TOKEN linked = {};
     DWORD returned;
     if (type == ELEVATION_LIMITED) {
-        /* the other half of the pair, as a primary token for a caller that may hand it out (the system may). */
+        /* the linked token is usable as a primary token only when queried by the system, as here. */
         if (!GetTokenInformation(caller, TokenLinkedToken_, &linked, sizeof(linked), &returned)) {
             *error = GetLastError();
             return nullptr;
@@ -81,10 +79,10 @@ static HANDLE elevated_token(HANDLE caller, DWORD *error, DWORD *elevation)
         source = linked.Token;
         *elevation = ELEVATION_FULL;
     } else if (type == ELEVATION_FULL || token_dword(caller, TokenElevation_, 0)) {
-        /* already elevated: the process gets what the caller has. */
+        /* already elevated: the process gets the caller's token. */
         *elevation = type == ELEVATION_FULL ? ELEVATION_FULL : ELEVATION_DEFAULT;
     } else {
-        /* no administrator behind this token, and nobody to ask for the credentials of one. */
+        /* no administrator behind this token, and no prompt to ask for credentials. */
         *error = ERROR_CANCELLED;
         return nullptr;
     }
@@ -98,7 +96,7 @@ static HANDLE elevated_token(HANDLE caller, DWORD *error, DWORD *elevation)
     return primary;
 }
 
-/* the answer to a request: handles in the process of the client, and the ids. */
+/* the returned handles live in the client's process. */
 DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *q, ELEVATE_RESULT *out)
 {
     DWORD error;
@@ -117,7 +115,6 @@ DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *q, ELEVATE_RE
         CloseHandle(token);
         return ERROR_CANCELLED;
     }
-    /* mime asks nobody: this is what the line below says. */
     SvcLog("elevation: %ls for process %lu is approved without a prompt (no consent interface here)", q->CommandLine, pid);
 
     HANDLE client = OpenProcess(PROCESS_DUP_HANDLE_ | PROCESS_CREATE_PROCESS_ | PROCESS_QUERY_LIMITED_INFORMATION_, FALSE, pid);
@@ -129,7 +126,7 @@ DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *q, ELEVATE_RE
     AccessEnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
     AccessEnablePrivilege(L"SeIncreaseQuotaPrivilege");
 
-    /* the environment is the one of the user of the token, not what the caller changed in its own. */
+    /* the token user's environment, not the caller's modified one. */
     LPVOID environment = nullptr;
     HMODULE userenv = LoadLibraryW(L"userenv.dll");
     CREATE_ENVIRONMENT create_environment = userenv ? (CREATE_ENVIRONMENT)GetProcAddress(userenv, "CreateEnvironmentBlock") : nullptr;

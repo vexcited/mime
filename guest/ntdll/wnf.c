@@ -1,12 +1,11 @@
 /*
- * the windows notification facility in user mode: publishing and querying go to the kernel, which keeps the
- * names and their data, and subscriptions are kept here. A process asks the kernel to set one event whenever
- * a name it subscribed to changes, and a thread of the process that waits for the event compares the change
- * stamps of its subscriptions with the kernel's and calls the callbacks of those that differ. The event is set
- * again by a change that comes while a callback runs, so no change is missed.
+ * user mode side of the windows notification facility. the kernel keeps names and their data, subscriptions
+ * live here. the kernel sets one process event whenever a subscribed name changes, and a delivery thread then
+ * compares each subscription's change stamp with the kernel's and calls the callbacks that differ. a change
+ * during a callback sets the event again, so none is missed.
  *
- * The identity of a package is a security attribute of a token that processes of the desktop do not have, so
- * the queries for it give STATUS_NOT_FOUND, as Windows does for a process that has no package.
+ * package identity is a token security attribute that desktop processes lack, so its queries return
+ * STATUS_NOT_FOUND, like Windows for an unpackaged process.
  */
 #include "ntdll_private.h"
 
@@ -15,7 +14,7 @@
 typedef struct WNF_USER_SUBSCRIPTION {
     struct WNF_USER_SUBSCRIPTION *Next;
     WNF_STATE_NAME Name;
-    WNF_CHANGE_STAMP Stamp; /* the last the callback was given */
+    WNF_CHANGE_STAMP Stamp; /* the last stamp given to the callback. */
     PWNF_USER_CALLBACK Callback;
     PVOID Context;
     WNF_TYPE_ID TypeId;
@@ -50,7 +49,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlTestAndPublishWnfStateData(WNF_STATE_NAME state_n
     return NtUpdateWnfStateData(&state_name, buffer, length, type_id, explicit_scope, matching_stamp, 1);
 }
 
-/* the data, up to the 4096 bytes a name can hold, handed to the callback; its stamp is stored. */
+/* a name holds at most 4096 bytes. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlQueryWnfStateDataWithExplicitScope(PWNF_CHANGE_STAMP change_stamp,
                                                                   WNF_STATE_NAME state_name, const VOID *explicit_scope,
                                                                   PWNF_USER_CALLBACK callback, PVOID context,
@@ -84,7 +83,7 @@ static void free_subscription(WNF_USER_SUBSCRIPTION *s)
     RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, s);
 }
 
-/* the list is unlinked from, with the lock held; the kernel is told when it was the last of its name. */
+/* called with the lock held. the kernel is told when this was the last subscription to its name. */
 static void unlink_subscription(WNF_USER_SUBSCRIPTION *s)
 {
     WNF_USER_SUBSCRIPTION **at = &g_subscriptions;
@@ -100,7 +99,7 @@ static void unlink_subscription(WNF_USER_SUBSCRIPTION *s)
         NtUnsubscribeWnfStateChange(&s->Name);
 }
 
-/* the first subscription of a subscription starts the thread that delivers. */
+/* the first subscription starts the delivery thread. */
 static DWORD NTAPI deliver(PVOID parameter);
 
 static NTSTATUS start_delivery(void)
@@ -176,7 +175,7 @@ static BOOLEAN registered(WNF_USER_SUBSCRIPTION *s)
     return FALSE;
 }
 
-/* removes the subscription; a call in flight finishes first, unless this is the thread of that call. */
+/* a callback in flight finishes first, unless it is the calling thread. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlUnsubscribeWnfStateChangeNotification(PVOID subscription)
 {
     WNF_USER_SUBSCRIPTION *s = subscription;
@@ -224,7 +223,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlUnsubscribeWnfNotificationWaitForCompletion(PVOID
     return STATUS_SUCCESS;
 }
 
-/* the subscription whose stamp is not the kernel's, with the data to hand over; the lock is held. */
+/* called with the lock held, returns a subscription whose stamp differs from the kernel's. */
 static WNF_USER_SUBSCRIPTION *next_change(UCHAR *buffer, ULONG *size, WNF_CHANGE_STAMP *stamp)
 {
     for (WNF_USER_SUBSCRIPTION *s = g_subscriptions; s; s = s->Next) {
@@ -278,7 +277,6 @@ static DWORD NTAPI deliver(PVOID parameter)
 
 /* ------------------------------------------------------------------ packages */
 
-/* the arguments are looked at as Windows looks at them, then there is no package to describe. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlQueryPackageIdentity(PVOID token, PWSTR package_full_name, PSIZE_T package_size,
                                                     PWSTR app_id, PSIZE_T app_id_size, PBOOLEAN packaged)
 {

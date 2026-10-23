@@ -1,7 +1,6 @@
 /*
- * hardware abstraction layer for the mime paravirtual machine, the parts
- * every processor shares. the interrupt controller, the timer and the
- * hypercall instruction live in arch/<processor>/hal.c.
+ * hal for the mime paravirtual machine, the processor independent parts. the
+ * interrupt controller, timer and hypercall instruction are in arch/<processor>/hal.c.
  */
 #include "../ntos.h"
 
@@ -69,7 +68,7 @@ void HalPanic(const char *text)
 
 ULONG64 HalCounterToHns(ULONG64 delta)
 {
-    /* split to avoid 128 bit division, which needs compiler runtime helpers. */
+    /* split to avoid 128-bit division, which needs compiler runtime helpers. */
     return delta / g_freq * 10000000u + delta % g_freq * 10000000u / g_freq;
 }
 
@@ -85,9 +84,9 @@ static WCHAR fold(WCHAR c)
     return c >= 'a' && c <= 'z' ? (WCHAR)(c - 32) : c;
 }
 
-/* the files of the rom by the case folded hash of their names, for the lookup every open of the system drive makes. */
+/* rom files by case folded name hash, for the lookup every system drive open makes. */
 #define ROM_HASH_SLOTS 4096 /* a power of two, more than twice the files */
-static USHORT g_rom_hash[ROM_HASH_SLOTS]; /* the index of an entry plus one */
+static USHORT g_rom_hash[ROM_HASH_SLOTS]; /* entry index plus one */
 static BOOLEAN g_rom_hashed;
 
 static ULONG rom_hash(const WCHAR *text, ULONG chars)

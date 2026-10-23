@@ -1,11 +1,11 @@
 /*
- * direct3d 11 video, the decoders of it: ID3D11VideoDevice and ID3D11VideoContext as a browser's hardware
- * decoder uses them, over the host's video decode queue (guest/vulkan-1/video.c, host/linux/video.c). a
- * decoder session is made on the host; the buffers a program gets from GetDecoderBuffer are guest memory,
- * copied together when it submits them, and the picture is decoded when its frame ends. the pictures are
- * decoded into textures of the device, which the next submission of the device waits for.
+ * direct3d 11 video decoding: ID3D11VideoDevice and ID3D11VideoContext as browser hardware decoders use them, over
+ * the host's video decode queue, see guest/vulkan-1/video.c and host/linux/video.c. the decoder session lives on the
+ * host. GetDecoderBuffer hands out guest memory, joined on submit, and the picture is decoded at EndFrame into a
+ * device texture that the device's next submission waits for.
  *
- * video processors, crypto sessions and authenticated channels do not exist: their methods fail or do nothing.
+ * video processors are in video_processor.inc. crypto sessions and authenticated channels do not exist: their
+ * methods fail or do nothing.
  */
 #include "d3d11_private.h"
 #include "video_dxbc.h"
@@ -14,7 +14,7 @@
 
 /* ------------------------------------------------------------------ profiles */
 
-/* what the wire carries of one picture's bitstream, a call being at most half the ring. */
+/* the most bitstream one picture may carry over the wire, at most half the ring per call. */
 #define MVK_MAX_BITSTREAM (6u << 20)
 
 static const GUID ZERO_GUID;
@@ -24,16 +24,16 @@ typedef struct Profile {
     GUID guid;
     UINT codec, profile, depth;
     DXGI_FORMAT format;
-    /* the slice format dxva configures it with: 2 for h.264's short slices, 1 for the whole frame of vp9. */
+    /* dxva ConfigBitstreamRaw: 2 for h.264 short slices, 1 for whole vp9 frames. */
     UINT bitstream_raw;
-    /* surfaces a decoder wants at least, a guess of the references and the picture being decoded. */
+    /* minimum surfaces: a guess at the references plus the picture being decoded. */
     USHORT min_surfaces;
 } Profile;
 
 static const Profile PROFILES[] = {
     {{0x1B81BE68, 0xA0C7, 0x11D3, {0xB9, 0x84, 0x00, 0xC0, 0x4F, 0x2E, 0x73, 0xC5}}, MVK_VIDEO_CODEC_H264,
      MVK_VIDEO_H264_HIGH, 8, DXGI_FORMAT_NV12, 2, 18},
-    /* h.265 has the short slice format only, which dxva names 1; a picture may refer to 16 others. */
+    /* h.265 only has the short slice format, which dxva calls 1. a picture may reference 16 others. */
     {{0x5B11D51B, 0x2F4C, 0x4452, {0xBC, 0xC3, 0x09, 0xF2, 0xA1, 0x16, 0x0C, 0xC0}}, MVK_VIDEO_CODEC_H265,
      MVK_VIDEO_H265_MAIN, 8, DXGI_FORMAT_NV12, 1, 18},
     {{0x107AF0E0, 0xEF1A, 0x4D19, {0xAB, 0xA8, 0x67, 0xA1, 0x63, 0x07, 0x3D, 0x13}}, MVK_VIDEO_CODEC_H265,
@@ -42,14 +42,14 @@ static const Profile PROFILES[] = {
      DXGI_FORMAT_NV12, 1, 10},
     {{0xA4C749EF, 0x6ECF, 0x48AA, {0x84, 0x48, 0x50, 0xA7, 0xA1, 0x16, 0x5F, 0xF7}}, MVK_VIDEO_CODEC_VP9, 2, 10,
      DXGI_FORMAT_P010, 1, 10},
-    /* av1 profile 0 decodes 8 bits into nv12 and 10 bits into p010: one guid, two entries. */
+    /* av1 profile 0 decodes 8-bit into nv12 and 10-bit into p010: one guid, two entries. */
     {{0xB8BE4CCB, 0xCF53, 0x46BA, {0x8D, 0x59, 0xD6, 0xB8, 0xA6, 0xDA, 0x5D, 0x2A}}, MVK_VIDEO_CODEC_AV1, 0, 8,
      DXGI_FORMAT_NV12, 1, 12},
     {{0xB8BE4CCB, 0xCF53, 0x46BA, {0x8D, 0x59, 0xD6, 0xB8, 0xA6, 0xDA, 0x5D, 0x2A}}, MVK_VIDEO_CODEC_AV1, 0, 10,
      DXGI_FORMAT_P010, 1, 12},
 };
 
-/* the picture buffers a decoder hands out, by D3D11_VIDEO_DECODER_BUFFER_TYPE. */
+/* indexed by D3D11_VIDEO_DECODER_BUFFER_TYPE. */
 enum { BUFFER_PARAMS = 0, BUFFER_QMATRIX = 4, BUFFER_SLICES = 5, BUFFER_BITSTREAM = 6, BUFFER_TYPES = 9 };
 
 static const UINT BUFFER_SIZES[BUFFER_TYPES] = {
@@ -59,7 +59,6 @@ static const UINT BUFFER_SIZES[BUFFER_TYPES] = {
     [BUFFER_BITSTREAM] = 0x400000,
 };
 
-/* the profiles the host decodes, in the order of the table. */
 static const MvkVideoCaps *capability(D3dDevice *device, const Profile *p)
 {
     for (UINT i = 0; i < device->video_count; i++)
@@ -69,7 +68,7 @@ static const MvkVideoCaps *capability(D3dDevice *device, const Profile *p)
     return nullptr;
 }
 
-/* whether the entry is the first the host decodes of its guid, a profile with two formats having two entries. */
+/* a guid with two formats has two entries, so only the first supported one counts. */
 static BOOL first_of_guid(D3dDevice *device, UINT i)
 {
     if (!capability(device, &PROFILES[i]))
@@ -80,7 +79,7 @@ static BOOL first_of_guid(D3dDevice *device, UINT i)
     return TRUE;
 }
 
-/* the profiles by index, each guid once. */
+/* each guid once. */
 static const Profile *profile_at(D3dDevice *device, UINT index)
 {
     for (UINT i = 0; i < RTL_NUMBER_OF(PROFILES); i++)
@@ -89,7 +88,7 @@ static const Profile *profile_at(D3dDevice *device, UINT index)
     return nullptr;
 }
 
-/* the entry of a guid for a format, or for any of its formats. */
+/* ANY_FORMAT matches any of the guid's formats. */
 #define ANY_FORMAT ((DXGI_FORMAT)~0u)
 static const Profile *profile_of(D3dDevice *device, const GUID *guid, DXGI_FORMAT format)
 {
@@ -100,7 +99,7 @@ static const Profile *profile_of(D3dDevice *device, const GUID *guid, DXGI_FORMA
     return nullptr;
 }
 
-/* asks the host, once, which profiles its gpu decodes. */
+/* asks the host once which profiles its gpu decodes. */
 void D3dVideoProbe(D3dDevice *device)
 {
     AcquireSRWLockExclusive(&device->video_lock);
@@ -128,14 +127,14 @@ typedef struct VideoView {
     VkImageView view;
 } VideoView;
 
-/* one entry of the slice control buffer: Windows' structure, 10 bytes as dxva.h packs its structures by one. */
+/* the short slice entry layout: 10 bytes, as dxva.h packs its structures by one. */
 typedef struct SliceEntry {
     UINT location;
     UINT bytes;
     USHORT chopping;
 } __attribute__((packed)) SliceEntry;
 
-/* an entry of the tile control buffer of av1: where the tile's data is, then which tile it is. */
+/* av1 tile control entry. */
 typedef struct TileEntry {
     UINT location;
     UINT bytes;
@@ -150,19 +149,19 @@ typedef struct VideoDecoder {
     D3D11_VIDEO_DECODER_CONFIG config;
     const Profile *profile;
     UINT64 session;
-    /* the memory GetDecoderBuffer gives out, and which of it a program holds. */
+    /* GetDecoderBuffer memory, and whether the program holds it. */
     struct {
         BYTE *data;
         BOOL held;
     } buffers[BUFFER_TYPES];
-    /* the frame between begin and end: the view, and what was submitted, joined together. */
+    /* the frame between begin and end: the target view, and the submitted buffers joined together. */
     BOOL in_frame;
     VideoView *view;
     BYTE *params;
     UINT params_size, params_capacity;
     BYTE *qmatrix;
     UINT qmatrix_size, qmatrix_capacity;
-    /* the slice or tile entries as submitted, with the locations in the joined bitstream: slice_size bytes each. */
+    /* slice or tile entries, slice_size bytes each, with locations rebased into the joined bitstream. */
     BYTE *slices;
     UINT slice_count, slice_capacity, slice_size;
     BYTE *bits;
@@ -199,7 +198,7 @@ static ULONG STDMETHODCALLTYPE decoder_release(ID3D11VideoDecoder *iface)
     if (refs)
         return refs;
     D3dDevice *device = d->child.device;
-    /* what it decodes is done before the session goes: the host waits for its queue. */
+    /* the host waits for its queue, so pending decodes finish before the session goes. */
     if (d->session && device->vk.vkMimeVideoDestroySession)
         device->vk.vkMimeVideoDestroySession(device->vk.device, d->session);
     for (UINT i = 0; i < BUFFER_TYPES; i++)
@@ -412,12 +411,12 @@ static HRESULT STDMETHODCALLTYPE vd_CheckVideoDecoderFormat(ID3D11VideoDevice1 *
     return S_OK;
 }
 
-/* the checks every decoder description goes through before the host is asked: its format, then its size. */
+/* checked before the host is asked: the profile and format, then the size. */
 static HRESULT validate_desc(D3dDevice *device, const D3D11_VIDEO_DECODER_DESC *desc, const Profile **profile)
 {
     BOOL supported = FALSE;
     D3dVideoProbe(device);
-    /* a guid that is none of a decoder the host has is not a profile: its format is wrong only when it is. */
+    /* the format is only checked for a guid the host decodes. */
     if (!profile_of(device, &desc->Guid, ANY_FORMAT))
         return E_INVALIDARG;
     *profile = profile_of(device, &desc->Guid, desc->OutputFormat);
@@ -471,7 +470,7 @@ static HRESULT STDMETHODCALLTYPE vd_GetVideoDecoderConfig(ID3D11VideoDevice1 *if
     config->ConfigBitstreamRaw = p->bitstream_raw;
     config->ConfigHostInverseScan = p->codec == MVK_VIDEO_CODEC_H264;
     config->ConfigMinRenderTargetBuffCount = p->min_surfaces;
-    /* bit 14 clear: a texture array is what the decoder wants, bit 15 clear: a new decoder after a format change. */
+    /* bit 14 clear: the decoder wants a texture array. bit 15 clear: a new decoder after a format change. */
     config->ConfigDecoderSpecific = 0;
     return S_OK;
 }
@@ -490,7 +489,7 @@ static HRESULT STDMETHODCALLTYPE vd_GetVideoDecoderCaps(ID3D11VideoDevice1 *ifac
     const Profile *p = profile_of(device, guid, ANY_FORMAT);
     if (!p || !width || !height)
         return E_INVALIDARG;
-    /* a protected decoder is not offered, a size the gpu does not decode is no decoder at all. */
+    /* no protected decoders, and no decoder for sizes the gpu cannot decode. */
     if (crypto || !size_supported(device, p, width, height))
         *caps = D3D11_VIDEO_DECODER_CAPS_UNSUPPORTED;
     return S_OK;
@@ -515,7 +514,7 @@ static HRESULT STDMETHODCALLTYPE vd_CheckVideoDecoderDownsampling(ID3D11VideoDev
         return hr;
     if (!output->Width || !output->Height)
         return E_INVALIDARG;
-    /* downsampling is a capability the gpu's decoder does not have, which makes the call invalid as for any other. */
+    /* the gpu decoder cannot downsample, which makes any request invalid. */
     return E_INVALIDARG;
 }
 
@@ -598,7 +597,7 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoDecoderOutputView(ID3D11VideoDevi
     v->resource = r;
     D3dResourceAddRef(r);
     v->desc = *desc;
-    /* a view of the whole picture, both planes, the layer being decoded into. */
+    /* both planes of the layer being decoded into. */
     VkImageViewUsageCreateInfo usage = {VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR;
     VkImageViewCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, &usage};
@@ -722,7 +721,6 @@ static HRESULT STDMETHODCALLTYPE vc_SetPrivateDataInterface(ID3D11VideoContext1 
     return c->iface.lpVtbl->SetPrivateDataInterface(&c->iface, guid, data);
 }
 
-/* a decoder of this context's device, or null. */
 static VideoDecoder *decoder_of(D3dContext *c, ID3D11VideoDecoder *iface)
 {
     if (!iface)
@@ -787,7 +785,6 @@ static HRESULT STDMETHODCALLTYPE vc_DecoderBeginFrame(ID3D11VideoContext1 *iface
     return S_OK;
 }
 
-/* room for more bytes in a growing buffer. */
 static BOOL grow(BYTE **data, UINT *capacity, UINT need)
 {
     if (need <= *capacity)
@@ -803,7 +800,7 @@ static BOOL grow(BYTE **data, UINT *capacity, UINT need)
     return TRUE;
 }
 
-/* a copy of a submitted buffer's data, which the program may fill again. */
+/* copied because the program may refill the buffer. */
 static HRESULT keep(BYTE **data, UINT *size, UINT *capacity, const BYTE *from, UINT n)
 {
     if (!grow(data, capacity, n ? n : 1))
@@ -827,7 +824,7 @@ static HRESULT STDMETHODCALLTYPE vc_SubmitDecoderBuffers(ID3D11VideoContext1 *if
             descs[i].DataSize > BUFFER_SIZES[type] - descs[i].DataOffset)
             return E_INVALIDARG;
     }
-    /* the bitstream first: the slice entries that come with it are located in it. */
+    /* join the bitstream first, since slice entries point into it. */
     UINT base = d->bits_size, offset = 0;
     BOOL has_bits = FALSE;
     for (UINT i = 0; i < count; i++) {
@@ -866,7 +863,7 @@ static HRESULT STDMETHODCALLTYPE vc_SubmitDecoderBuffers(ID3D11VideoContext1 *if
             for (UINT at = 0; at + entry <= size; at += entry) {
                 BYTE raw[sizeof(TileEntry)];
                 memcpy(raw, data + at, entry);
-                /* both begin with where the data is and how much of it this buffer holds. */
+                /* both entry kinds begin with the data location and its size in this buffer. */
                 UINT location, bytes;
                 memcpy(&location, raw, 4);
                 memcpy(&bytes, raw + 4, 4);
@@ -874,7 +871,7 @@ static HRESULT STDMETHODCALLTYPE vc_SubmitDecoderBuffers(ID3D11VideoContext1 *if
                     return E_INVALIDARG;
                 location = location - offset + base;
                 memcpy(raw, &location, 4);
-                /* the rest of a slice cut between buffers, which sits right behind its start in what was joined. */
+                /* the rest of a slice split across buffers directly follows its start in the joined bitstream. */
                 if (entry == sizeof(SliceEntry)) {
                     SliceEntry *e = (SliceEntry *)raw;
                     if ((e->chopping & 2) && d->slice_count) {
@@ -903,7 +900,7 @@ static HRESULT STDMETHODCALLTYPE vc_SubmitDecoderBuffers(ID3D11VideoContext1 *if
     return S_OK;
 }
 
-/* the picture, decoded by the host once the graphics work submitted before it is done, which its texture may be in. */
+/* the host decodes once previously submitted graphics work is done, since it may touch the texture. */
 static HRESULT STDMETHODCALLTYPE vc_DecoderEndFrame(ID3D11VideoContext1 *iface, ID3D11VideoDecoder *decoder)
 {
     D3D_SYNC(context_of(iface));
@@ -928,7 +925,7 @@ static HRESULT STDMETHODCALLTYPE vc_DecoderEndFrame(ID3D11VideoContext1 *iface, 
                 hr = E_FAIL;
         }
         if (SUCCEEDED(hr)) {
-            /* what the device itself recorded, as the layouts of new textures, goes first as well. */
+            /* also submits the device's own recorded work, like new texture layouts. */
             D3dContextSubmit(c, nullptr, nullptr);
             MvkVideoDecodeInfo info = {0};
             info.session = d->session;
@@ -965,7 +962,7 @@ static HRESULT STDMETHODCALLTYPE vc_DecoderExtension(ID3D11VideoContext1 *iface,
     VideoDecoder *d = decoder_of(context_of(iface), decoder);
     if (!d || !extension)
         return E_INVALIDARG;
-    /* the functions a driver offers through here, status reports among them, are its own: none is offered. */
+    /* extensions, status reports included, are driver specific: none is offered. */
     return E_INVALIDARG;
 }
 

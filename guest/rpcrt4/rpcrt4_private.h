@@ -1,6 +1,4 @@
-/*
- * rpcrt4 internal interface shared by its source files.
- */
+/* rpcrt4 internals shared by its source files. */
 #ifndef MIME_RPCRT4_PRIVATE_H
 #define MIME_RPCRT4_PRIVATE_H
 
@@ -22,8 +20,8 @@ typedef enum {
 struct SCALL;
 
 /*
- * a binding handle: what a client names a server with, or what a server holds for the call it is serving. The strings are
- * the parts of the string binding it was made from.
+ * what a client names a server with, or what a server holds for the call it is serving. the strings are the parts of
+ * the string binding it was made from.
  */
 typedef struct BINDING {
     struct BINDING *Next;
@@ -53,7 +51,7 @@ PWSTR RpcpWiden(const unsigned char *s);
 RPC_CSTR RpcpNarrow(PWSTR w);
 BOOL RpcpIsNil(const UUID *u);
 
-/* ------------------------------------------------------------------ the protocol */
+/* ------------------------------------------------------------------ protocol */
 
 #define PDU_REQUEST 0
 #define PDU_PING 1
@@ -128,7 +126,7 @@ typedef struct {
 } PDU_SEC_TRAILER;
 #pragma pack(pop)
 
-/* the room before the stub data of a buffer, for the header of a request or response and the stub data's alignment. */
+/* room before a buffer's stub data for a request or response header and the stub data's alignment. */
 #define PDU_ROOM 64
 #define RPC_MAX_FRAGMENT 0xFFF8u
 #define RPC_PDU_VERSION 5
@@ -136,7 +134,7 @@ typedef struct {
 extern const RPC_SYNTAX_IDENTIFIER g_ndr20_syntax;
 extern const RPC_SYNTAX_IDENTIFIER g_ndr64_syntax;
 
-/* ------------------------------------------------------------------ the transport */
+/* ------------------------------------------------------------------ transport */
 
 typedef enum {
     TRANSPORT_PIPE,
@@ -150,11 +148,11 @@ typedef struct RPC_STREAM {
     ULONG Timeout;
 } RPC_STREAM;
 
-/* appends text and numbers to a wide string of count characters. */
+/* count is the destination size in characters. */
 void RpcpAppend(WCHAR *dst, SIZE_T count, const WCHAR *text);
 void RpcpAppendNumber(WCHAR *dst, SIZE_T count, ULONG number);
 
-/* functions of advapi32, which rpcrt4 does not link against. */
+/* advapi32 functions, loaded at run time since rpcrt4 does not link against it. */
 typedef struct {
     BOOL(WINAPI *ImpersonateNamedPipeClient)(HANDLE pipe);
     BOOL(WINAPI *RevertToSelf)(void);
@@ -172,47 +170,46 @@ PSECURITY_DESCRIPTOR RpcpEveryoneDescriptor(ULONG mask);
 void RpcpStreamClose(RPC_STREAM *stream);
 RPC_STATUS RpcpStreamSend(RPC_STREAM *stream, const void *data, ULONG length);
 RPC_STATUS RpcpStreamReceive(RPC_STREAM *stream, void *buffer, ULONG capacity, ULONG *received);
-/* the name of the pipe that an endpoint of a protocol sequence is. */
 RPC_STATUS RpcpPipeName(PCWSTR protseq, PCWSTR endpoint, PWSTR name, SIZE_T count);
 
-/* ------------------------------------------------------------------ the thread */
+/* ------------------------------------------------------------------ threads */
 
 typedef struct RPC_THREAD {
     struct RPC_THREAD *Next;
     DWORD ThreadId;
-    /* the call this thread is serving, or making. */
+    /* the call this thread is serving or making. */
     struct SCALL *Call;
     void *StubMessage;
-    /* an event the calls of the thread wait on besides their reply, for cancellation. */
+    /* signaled to cancel the thread's calls, which wait on it besides their reply. */
     HANDLE CancelEvent;
     LONG Cancelled;
     unsigned char *Scratch;
-    /* how the thread waits for a reply, when its owner has to do more than wait. */
+    /* replaces the plain wait for a reply when the thread's owner must keep doing other work. */
     DWORD(WINAPI *WaitFn)(DWORD count, const HANDLE *handles, DWORD timeout, void *context);
     void *WaitContext;
 } RPC_THREAD;
 
 RPC_THREAD *RpcpThread(void);
-/* the key under which the connections for a binding are pooled, and the pool's release of those of a key. */
+/* connections are pooled by binding key, RpcpPoolDrop closes those of a key. */
 void RpcpBindingKey(const BINDING *b, WCHAR *key, SIZE_T count);
 void RpcpPoolDrop(const WCHAR *key);
 void RpcpThreadDetach(void);
 RPC_STATUS RpcpThreadCancel(DWORD thread_id);
 
-/* buffers with room before them for the header of a pdu. */
+/* buffers with room before them for a pdu header. */
 unsigned char *RpcpBufferAlloc(SIZE_T size);
 void RpcpBufferFree(void *buffer);
 
-/* ------------------------------------------------------------------ the client */
+/* ------------------------------------------------------------------ client */
 
 RPC_STATUS RpcpClientBinding(RPC_MESSAGE *message, BINDING **binding);
 
-/* ------------------------------------------------------------------ the server */
+/* ------------------------------------------------------------------ server */
 
 struct SCALL *RpcpCurrentCall(void);
 BINDING *RpcpCurrentCallBinding(void);
 
-/* ------------------------------------------------------------------ the endpoint mapper */
+/* ------------------------------------------------------------------ endpoint mapper */
 
 RPC_STATUS RpcpEpResolve(BINDING *b, const RPC_SYNTAX_IDENTIFIER *interface_id);
 void RpcpEpPurge(DWORD pid);

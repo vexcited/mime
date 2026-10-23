@@ -1,23 +1,21 @@
 /*
  * special and known folders, and item id lists.
  *
- * like windows, a user folder's path comes from the User Shell Folders key
- * of the user's hive when it is set, else from the folder's default under
- * the profile. common folders read the same key of HKLM.
+ * like windows, a user folder's path comes from the user's User Shell Folders key when set, else from its default
+ * under the profile. common folders read the same key in HKLM.
  *
- * the item id lists are in pidl.c: the desktop is the empty list, a file
- * system object the items of its path below "This PC", and a virtual folder
- * one item naming its class.
+ * item id lists live in pidl.c: the desktop is the empty list, a file system object is the items of its path below
+ * "This PC", and a virtual folder is one item naming its class.
  */
 #include "shell32_private.h"
 
 typedef struct _SH_FOLDER {
     int Csidl;
     const GUID *Id;
-    /* the User Shell Folders value overriding the default, or NULL. */
+    /* the User Shell Folders value that overrides the default, or NULL. */
     LPCWSTR Value;
     BOOL Common;
-    /* the default path, NULL for a virtual folder that has none. */
+    /* NULL for a virtual folder without a path. */
     LPCWSTR Default;
 } SH_FOLDER;
 
@@ -97,7 +95,7 @@ static const SH_FOLDER g_folders[] = {
 };
 
 #define SHELL_FOLDERS_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders"
-/* the token value that names the default user profile. */
+/* the token value meaning the default user profile. */
 #define DEFAULT_USER_TOKEN ((HANDLE)(LONG_PTR)-1)
 
 static const SH_FOLDER *folder_by_csidl(int csidl)
@@ -136,7 +134,7 @@ LPWSTR ShWiden(LPCSTR text)
     return wide;
 }
 
-/* expands the variables of a folder template; the default user profile replaces %USERPROFILE%. */
+/* for the default user, the default profile replaces %USERPROFILE%. */
 static BOOL expand(LPCWSTR template, BOOL default_user, LPWSTR out)
 {
     WCHAR source[MAX_PATH * 2];
@@ -189,7 +187,7 @@ static HRESULT create_tree(LPWSTR path)
     return S_OK;
 }
 
-/* the path of a folder with KF_FLAG semantics, into a MAX_PATH buffer. */
+/* with KF_FLAG semantics, into a MAX_PATH buffer. */
 static HRESULT resolve(const SH_FOLDER *folder, DWORD flags, HANDLE token, LPWSTR out)
 {
     out[0] = 0;
@@ -277,10 +275,9 @@ SHSTDAPI HRESULT WINAPI SHGetFolderPathA(HWND hwnd, int csidl, HANDLE token, DWO
 WINBASEAPI HRESULT WINAPI PathCchAppend(LPWSTR path, SIZE_T size, LPCWSTR more);
 
 /*
- * a folder with a subdirectory under it. The folder must resolve with S_OK. With CSIDL_FLAG_CREATE the whole
- * path is created, which an existing one passes. With CSIDL_FLAG_DONT_VERIFY it is not looked at. Otherwise it
- * must exist as a directory: ERROR_PATH_NOT_FOUND when absent, ERROR_FILE_EXISTS when it is a file. Whatever
- * fails leaves an empty path. An empty or absent subdirectory is the folder alone.
+ * the folder must resolve with S_OK. CSIDL_FLAG_CREATE creates the whole path, CSIDL_FLAG_DONT_VERIFY skips the
+ * check, otherwise it must be an existing directory: ERROR_PATH_NOT_FOUND when absent, ERROR_FILE_EXISTS when it is
+ * a file. any failure leaves an empty path. an empty or absent subdirectory means the folder alone.
  */
 SHSTDAPI HRESULT WINAPI SHGetFolderPathAndSubDirW(HWND hwnd, int csidl, HANDLE token, DWORD flags, LPCWSTR subdir,
                                                   LPWSTR path)
@@ -335,7 +332,7 @@ SHSTDAPI BOOL WINAPI SHGetSpecialFolderPathA(HWND hwnd, LPSTR path, int csidl, B
 
 /* ------------------------------------------------------------------ item id lists */
 
-/* the class ids of the folders that have no path, as windows' lists name them. */
+/* the class ids of the folders without a path, as windows' id lists name them. */
 static const struct {
     const GUID *Id;
     BYTE Sort;

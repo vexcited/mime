@@ -1,28 +1,25 @@
 /*
- * making type libraries: ICreateTypeLib2 and ICreateTypeInfo2 build the records of the model, and SaveAllChanges writes
- * them as an msft file, with the names and the guids hashed and the types, strings and constants in tables of their
- * own, as the reader above and windows' own read them. LHashValOfNameSys and CreateDispTypeInfo are here too.
+ * creating type libraries: ICreateTypeLib2 and ICreateTypeInfo2 fill the model, and SaveAllChanges writes it as an
+ * msft file with hashed names and guids and its own tables of types, strings and constants, readable by tlb_read.c
+ * and by windows. LHashValOfNameSys and CreateDispTypeInfo live here too.
  */
 #include "typelib.h"
 
 #define HRESULT_WRITEFAULT ((HRESULT)0x8003001DL)
 
-/* ------------------------------------------------------------------ the hash of names */
+/* ------------------------------------------------------------------ name hashing */
 
 /*
- * The hash of a name, as a type library stores it. The running value starts at a fixed seed, and each byte of the name
- * turns it into the weight of the byte plus 37 times the old value, in 32 bits. The hash is the remainder of that
- * modulo 65599 in its low 16 bits, with the number of the class of the locale above them and one more bit for the
- * Macintosh. The weight of a byte depends on the class and on whether the library is for the Macintosh.
- *
- * The weights, the classes and the double byte characters below were read off the library of windows with names of one
- * byte and short ones of two, see docs/oleaut32.md for how.
+ * the name hash a type library stores. Starting from a fixed seed, each byte sets the value to the byte's weight plus
+ * 37 times the old value, in 32 bits. The hash is that modulo 65599 in the low 16 bits, with the locale class number
+ * above and one more bit for the Macintosh. Byte weights depend on the class and on whether the library targets the
+ * Macintosh.
  */
 #define HASH_SEED 233495534u
 #define HASH_MODULUS 65599u
 #define HASH_MAC_BIT 0x10000u
 
-/* the weight of each byte for the neutral class: letters weigh as their capital, accents as the letter, and a few more */
+/* neutral class weights: letters weigh as their capital, accented letters as the base letter, and a few more. */
 static const BYTE g_weight_neutral[256] = {
     /* 0x00 */ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
     /* 0x10 */ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
@@ -42,7 +39,7 @@ static const BYTE g_weight_neutral[256] = {
     /* 0xf0 */ 68, 78, 79, 79, 79, 79, 79, 247, 79, 85, 85, 85, 85, 85, 222, 85,
 };
 
-/* the same for the Macintosh, whose upper half of the bytes is another set of characters */
+/* the same for the Macintosh, whose upper half is a different character set. */
 static const BYTE g_weight_neutral_mac[256] = {
     /* 0x00 */ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
     /* 0x10 */ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
@@ -62,12 +59,12 @@ static const BYTE g_weight_neutral_mac[256] = {
     /* 0xf0 */ 63, 79, 85, 85, 85, 73, 127, 247, 127, 249, 250, 251, 63, 253, 254, 127,
 };
 
-/* a byte whose weight is another one in a class. */
+/* a byte with a class specific weight. */
 typedef struct {
     BYTE Byte, Weight;
 } WEIGHT_CHANGE;
 
-/* a double byte character that weighs as one or two single bytes of its own, the second weight being 0 for none. */
+/* a double byte character with one or two weights of its own, the second 0 for none. */
 typedef struct {
     BYTE Lead, Trail, First, Second;
 } DBCS_WEIGHT;
@@ -359,14 +356,14 @@ static const DBCS_WEIGHT g_pairs_big5[] = {
     {0xa3, 0x41, 88, 0}, {0xa3, 0x42, 85, 0}, {0xa3, 0x43, 90, 0},
 };
 
-/* what is a lead byte of a double byte character in a class. */
+/* lead byte ranges of the double byte classes. */
 typedef enum { LEADS_NONE, LEADS_JAPANESE, LEADS_GB, LEADS_WIDE } LEAD_RANGE;
 
-/* a class of locales: the number the hash carries and how its names weigh. */
+/* a locale class: its number in the hash and its weights. */
 typedef struct {
     BYTE Number;
     BYTE Leads;
-    /* the Macintosh weighs as windows does, with the same changes on the neutral table of windows. */
+    /* the Macintosh uses the windows weights, with the same overrides on the neutral table. */
     BOOL MacLikeWindows;
     USHORT ChangeCount, MacChangeCount, PairCount;
     const WEIGHT_CHANGE *Changes, *MacChanges;
@@ -397,7 +394,7 @@ static const NAME_CLASS g_class_irish_english = CHANGED_CLASS(12, irish_english)
 static const NAME_CLASS g_class_arabic = CHANGED_CLASS(13, arabic);
 static const NAME_CLASS g_class_hebrew = CHANGED_CLASS(14, hebrew);
 
-/* the class of a locale: by the language, with a few locales of their own, which only the exact locale id has. */
+/* by primary language, except a few locales matched only by their exact id. */
 static const NAME_CLASS *class_of_locale(LCID lcid)
 {
     switch (lcid) {
@@ -437,7 +434,7 @@ static BOOL is_lead_byte(const NAME_CLASS *cls, BYTE b)
     }
 }
 
-/* how the bytes of a name weigh for a class: the table, and the bytes of the class that weigh differently. */
+/* a class's byte weights: the base table plus its overrides. */
 typedef struct {
     const BYTE *Table;
     const WEIGHT_CHANGE *Changes;
@@ -469,7 +466,7 @@ static ULONG hash_step(ULONG hash, BYTE weight)
     return weight + 37 * hash;
 }
 
-/* a double byte character: its own weights when the class has them, else the weights of its two bytes. */
+/* the character's own weights when the class has them, else those of its two bytes. */
 static ULONG hash_double_byte(const WEIGHTS *weights, ULONG hash, BYTE lead, BYTE trail)
 {
     const NAME_CLASS *cls = weights->Class;
@@ -516,7 +513,7 @@ WINOLEAUTAPI ULONG WINAPI LHashValOfNameSys(SYSKIND syskind, LCID lcid, const OL
 }
 
 
-/* ------------------------------------------------------------------ the library being made */
+/* ------------------------------------------------------------------ ICreateTypeLib2 */
 
 static TL_LIB *lib_of_create(ICreateTypeLib2 *self)
 {
@@ -580,7 +577,7 @@ static HRESULT WINAPI cl_create_type_info(ICreateTypeLib2 *self, LPOLESTR name, 
             hr = TlGetTypeInfo(lib, t->Index, FALSE, &info);
             if (SUCCEEDED(hr)) {
                 *out = (ICreateTypeInfo *)&t->Info->lpCreateVtbl;
-                /* the reference TlGetTypeInfo gave goes to the interface returned: the same object. */
+                /* the reference TlGetTypeInfo took is the one handed out, it is the same object. */
             }
         }
     }
@@ -669,7 +666,7 @@ static HRESULT WINAPI cl_delete_type_info(ICreateTypeLib2 *self, LPOLESTR name)
     EnterCriticalSection(&lib->Lock);
     TL_TYPE *t = type_named(lib, name, nullptr);
     if (t) {
-        /* the slot goes and the types after it move up; references by number follow. */
+        /* later types shift up, and numeric references follow them. */
         for (ULONG i = t->Index; i + 1 < lib->TypeCount; i++) {
             lib->Types[i] = lib->Types[i + 1];
             lib->Types[i]->Index = i;
@@ -734,7 +731,7 @@ static HRESULT WINAPI cl_set_help_string_dll(ICreateTypeLib2 *self, LPOLESTR dll
     return set_text(lib, &lib->HelpStringDll, dll);
 }
 
-/* ------------------------------------------------------------------ the type being made */
+/* ------------------------------------------------------------------ ICreateTypeInfo2 */
 
 static TYPEINFO *info_of_create(ICreateTypeInfo2 *self)
 {
@@ -758,7 +755,6 @@ static ULONG WINAPI ci_release(ICreateTypeInfo2 *self)
 
 #define TYPE_OF(self) (info_of_create(self)->Type)
 
-/* a change of the type: it has to be laid out again. */
 static void touch(TL_TYPE *t)
 {
     t->Layouted = FALSE;
@@ -781,7 +777,7 @@ static HRESULT WINAPI ci_set_type_flags(ICreateTypeInfo2 *self, UINT flags)
         return E_INVALIDARG;
     t->Flags = (USHORT)flags;
     touch(t);
-    /* a dual interface has the other half too. */
+    /* refresh the objects so a dual interface gets its other half. */
     ITypeInfo *info;
     if (SUCCEEDED(TlGetTypeInfo(t->Lib, t->Index, FALSE, &info)))
         info->lpVtbl->Release(info);
@@ -809,7 +805,7 @@ static HRESULT WINAPI ci_set_version(ICreateTypeInfo2 *self, WORD major, WORD mi
     return S_OK;
 }
 
-/* the reference to a type in this library, a number for one of its own and a record of imports for any other. */
+/* own types get an index reference, types of other libraries an import record. */
 static HRESULT WINAPI ci_add_ref_type_info(ICreateTypeInfo2 *self, ITypeInfo *info, HREFTYPE *ref)
 {
     TL_TYPE *t = TYPE_OF(self);
@@ -1118,7 +1114,7 @@ static HRESULT check_names_unique(TL_TYPE *t, UINT skip, const WCHAR *name, INVO
     for (UINT i = 0; i < t->FuncCount; i++) {
         if (i == skip || !t->Funcs[i].Name || _wcsicmp(t->Funcs[i].Name, name))
             continue;
-        /* the accessors of a property share a name, a function does not share it with anything. */
+        /* property accessors may share a name, a function shares it with nothing. */
         if (kind == INVOKE_FUNC || t->Funcs[i].Invoke == INVOKE_FUNC || t->Funcs[i].Invoke == kind)
             return TYPE_E_AMBIGUOUSNAME;
     }
@@ -1530,7 +1526,7 @@ static ULONG add_name(WRITER *w, const WCHAR *text, ULONG href)
     ULONG hash = name_hash(w, text);
     ULONG bucket = hash & 0x7F;
     for (ULONG at = w->NameBucket[bucket]; at != 0xFFFFFFFF; at = get32(&w->Names, at + 4)) {
-        /* the names in a chain are told apart by their text, ignoring case. */
+        /* names in a chain are compared case insensitively. */
         for (ULONG i = 0; i < w->NameCount; i++)
             if (w->NameList[i].Offset == at) {
                 if (!_wcsicmp(w->NameList[i].Text, text)) {
@@ -1583,7 +1579,7 @@ static ULONG add_string(WRITER *w, const WCHAR *text)
     int length = to_ansi(w, text, ansi, sizeof(ansi));
     if (length > 0xFFFF)
         length = 0xFFFF;
-    /* the same string is kept once. */
+    /* strings are stored once. */
     for (ULONG at = 0; at < w->Strings.Length;) {
         USHORT l;
         memcpy(&l, w->Strings.Data + at, 2);
@@ -1644,7 +1640,7 @@ static BOOL simple_vt(VARTYPE vt)
     return vt != VT_PTR && vt != VT_SAFEARRAY && vt != VT_CARRAY && vt != VT_USERDEFINED;
 }
 
-/* a type description as the file holds it: in the reference itself when it is a plain type, else in the table. */
+/* plain types are encoded in the reference itself, others go in the table. */
 static ULONG enc_typedesc(WRITER *w, const TYPEDESC *td)
 {
     if (simple_vt(td->vt))
@@ -1677,7 +1673,7 @@ static ULONG enc_typedesc(WRITER *w, const TYPEDESC *td)
         data = file_href(td->hreftype & 0xFFFFFF);
         break;
     }
-    /* the same description is kept once. */
+    /* descriptions are stored once. */
     for (ULONG at = 0; at + 8 <= w->Typdesc.Length; at += 8) {
         USHORT v, f;
         ULONG d;
@@ -1694,7 +1690,7 @@ static ULONG enc_typedesc(WRITER *w, const TYPEDESC *td)
     return at;
 }
 
-/* a constant: in the reference when it is small, else in the segment of custom data. */
+/* small constants go inline in the reference, others in the custom data segment. */
 static ULONG enc_const(WRITER *w, const VARIANT *v)
 {
     switch (v->vt) {
@@ -1726,7 +1722,7 @@ static ULONG enc_const(WRITER *w, const VARIANT *v)
     case VT_I2:
     case VT_UI2:
     case VT_BOOL: {
-        /* these come through the reference only: a different type is stored widened. */
+        /* always encoded inline above. */
         break;
     }
     case VT_I4:
@@ -1782,7 +1778,7 @@ static ULONG enc_const(WRITER *w, const VARIANT *v)
 static ULONG enc_cust(WRITER *w, TL_CUST *list)
 {
     ULONG head = 0xFFFFFFFF;
-    /* the chain is written from its end so that every item knows the next. */
+    /* written back to front so each item knows its successor. */
     TL_CUST *items[64];
     int n = 0;
     for (TL_CUST *c = list; c && n < 64; c = c->Next)
@@ -1825,9 +1821,8 @@ static ULONG funcdesc_size(WRITER *w, const TL_FUNC *f)
 }
 
 /*
- * The functions of one member id, the get, the put and the put by reference of a property, are chained in the file:
- * each record names the function that comes next in the order of the kinds of call from the highest to the lowest,
- * the lowest one names the highest, and a function that is alone names itself. A reader finds the others by it.
+ * the get, put and putref functions of one member id are chained in the file: each names the next in descending
+ * invoke kind order, the lowest names the highest, and a lone function names itself. Readers find the others this way.
  */
 static ULONG chained_function(const TL_TYPE *t, ULONG k)
 {
@@ -1985,7 +1980,7 @@ HRESULT TlSaveMsft(TL_LIB *lib, LPCOLESTR path)
         ULONG lib_doc = add_string(&w, lib->Doc);
         ULONG lib_help = add_string(&w, lib->HelpFile);
         ULONG lib_help_dll = add_string(&w, lib->HelpStringDll);
-        /* the names of types are known before anything is written that refers to them. */
+        /* type names go into the name table before anything refers to them. */
         for (ULONG i = 0; i < count; i++)
             add_name(&w, lib->Types[i]->Name, i * 100);
         ULONG *memoffs = AutAllocZero((count + 1) * sizeof(ULONG));
@@ -2049,7 +2044,6 @@ HRESULT TlSaveMsft(TL_LIB *lib, LPCOLESTR path)
             buf_u32(&w.Types, 0);
             buf_u32(&w.Types, 0xFFFFFFFF);
         }
-        /* the imports. */
         ULONG *keys = AutAllocZero((lib->ImportCount + 1) * 2 * sizeof(ULONG) + sizeof(ULONG));
         ULONG *values = keys + lib->ImportCount + 1, cached = 0;
         for (ULONG i = 0; i < lib->ImportCount; i++) {
@@ -2062,7 +2056,7 @@ HRESULT TlSaveMsft(TL_LIB *lib, LPCOLESTR path)
         AutFree(keys);
         ULONG custom = enc_cust(&w, lib->Cust);
 
-        /* the file: the header, the table of types, the directory of segments, the segments, the members. */
+        /* file layout: header, type table, segment directory, segments, members. */
         BUF out = {0};
         ULONG varflags = (ULONG)(lib->Syskind & 3) | 0x40 | (lib_help_dll != 0xFFFFFFFF ? 0x100 : 0);
         ULONG pos_header = 0x54 + (lib_help_dll != 0xFFFFFFFF ? 4 : 0) + count * 4 + 240;
@@ -2122,7 +2116,7 @@ HRESULT TlSaveMsft(TL_LIB *lib, LPCOLESTR path)
         for (int i = 0; i < 13; i++) {
             if (order[i].Buf) {
                 if (i == 0) {
-                    /* the members of the types start where the segments end. */
+                    /* type members start where the segments end. */
                     for (ULONG k = 0; k < count; k++)
                         patch32(&w.Types, k * 100 + 4, members_base + memoffs[k]);
                 }

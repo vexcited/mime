@@ -1,20 +1,19 @@
 /*
- * custom line caps. The line of a pen with a custom cap at an end is shortened by the base inset of the cap, the
- * shape of the cap is scaled by the width of the pen and the width scale of the cap, turned to the direction
- * the line leaves the end in and put on the end point. The cap has a fill shape that is filled and a stroke
- * shape that is widened with the stroke caps and join of the cap.
+ * custom line caps. the line is shortened by the cap's base inset at each capped end. the cap shape is scaled by
+ * the pen width and the cap's width scale, turned to the direction the line leaves the end and put on the end
+ * point. the fill shape is filled, the stroke shape is widened with the cap's own stroke caps and join.
  */
 #include "gp_private.h"
 
 typedef struct CapEnd {
     const GCap *cap;
-    MimeVecPoint at;     /* the original end of the line */
-    MimeVecPoint dir;    /* the unit direction pointing away from the line */
+    MimeVecPoint at;     /* the line end before shortening. */
+    MimeVecPoint dir;    /* unit direction pointing away from the line. */
 } CapEnd;
 
 static float length_of(float x, float y) { return mime_vec_sqrtf(x * x + y * y); }
 
-/* the polyline without its last length, in place. false when nothing is left. */
+/* shortens the polyline by length, in place. false when nothing is left. */
 static BOOL shorten_end(MimeVecPoint *pts, UINT *count, float length)
 {
     while (*count >= 2 && length > 0.0f) {
@@ -41,7 +40,7 @@ static void reverse_points(MimeVecPoint *pts, UINT count)
     }
 }
 
-/* the cap space to the space of the line: x along the turned side, y along the direction away from the line. */
+/* cap space to line space: x along the turned side, y away from the line. */
 static MimeVecMatrix cap_matrix(const CapEnd *e, float scale)
 {
     MimeVecMatrix m;
@@ -64,7 +63,7 @@ static float signed_area(const MimeVecPoint *p, UINT n)
     return a;
 }
 
-/* the fill shape of a cap in the space of the output, all with the winding of the stroker's polygons. */
+/* in output space, wound like the stroker's polygons. */
 static GpStatus add_fill(const GCap *cap, const CapEnd *e, float scale, const MimeVecMatrix *to_out, float flatness,
                          float want_sign, MimeVecPolys *out)
 {
@@ -88,7 +87,6 @@ static GpStatus add_fill(const GCap *cap, const CapEnd *e, float scale, const Mi
     return st;
 }
 
-/* the stroke shape of a cap, widened with the stroke settings of the cap. */
 static GpStatus add_stroke(const GCap *cap, const CapEnd *e, float scale, float width, float min_width,
                            const MimeVecMatrix *to_out, float flatness, MimeVecPolys *out)
 {
@@ -120,8 +118,8 @@ BOOL gp_pen_has_custom_caps(const GPen *pen)
 }
 
 /*
- * shortens the open subpaths of flat at the ends that have a custom cap and adds the caps to out, in the space of
- * the output given by to_out. width is the width of the pen in the space of the line.
+ * shortens the capped ends of the open subpaths of flat and adds the caps to out. to_out maps line space to
+ * output space, width is the pen width in line space.
  */
 GpStatus gp_pen_custom_caps(const GPen *pen, MimeVecPolys *flat, float width, float min_width,
                             const MimeVecMatrix *to_out, float flatness, MimeVecPolys *fills, MimeVecPolys *strokes)
@@ -131,7 +129,7 @@ GpStatus gp_pen_custom_caps(const GPen *pen, MimeVecPolys *flat, float width, fl
     MimeVecPolys shortened;
     mime_vec_polys_init(&shortened, &gp_allocator);
     GpStatus st = Ok;
-    /* the caps are collected first and their shapes drawn after the lines, which pick the winding of the fill */
+    /* collect the caps first and draw them after the lines, which decide the fill winding. */
     CapEnd *ends = gp_alloc(sizeof(CapEnd) * (flat->nsubs * 2 + 1));
     UINT nends = 0;
     if (!ends) {
@@ -151,7 +149,7 @@ GpStatus gp_pen_custom_caps(const GPen *pen, MimeVecPolys *flat, float width, fl
             st = OutOfMemory;
             break;
         }
-        /* the directions come from the first and the last segment that has a length */
+        /* the directions come from the first and last segments with a length. */
         BOOL keep = TRUE;
         float s0 = start_cap ? width * start_cap->width_scale : 0.0f, s1 = end_cap ? width * end_cap->width_scale : 0.0f;
         if (start_cap) {

@@ -1,6 +1,4 @@
-/*
- * common dialogs of comdlg32.dll: file, color, font and print dialogs.
- */
+/* common dialogs of comdlg32.dll: file, color, font and print dialogs. */
 #ifndef MIME_WIN32_COMMDLG_H
 #define MIME_WIN32_COMMDLG_H
 
@@ -504,7 +502,7 @@ typedef struct tagPSDA {
     HGLOBAL hPageSetupTemplate;
 } PAGESETUPDLGA, *LPPAGESETUPDLGA;
 
-/* the callback of the extended print dialog. */
+/* the PrintDlgEx callback and the services it gets. */
 typedef struct IPrintDialogCallback IPrintDialogCallback;
 typedef struct IPrintDialogServices IPrintDialogServices;
 
@@ -533,7 +531,7 @@ struct IPrintDialogServices {
     const IPrintDialogServicesVtbl *lpVtbl;
 };
 
-/* ------------------------------------------------------------------ comdlg32 functions */
+/* ------------------------------------------------------------------ functions */
 
 CDAPI DWORD WINAPI CommDlgExtendedError(void);
 CDAPI BOOL WINAPI GetOpenFileNameW(LPOPENFILENAMEW ofn);

@@ -1,6 +1,4 @@
-/*
- * input method manager api, imm32.dll.
- */
+/* input method manager api, imm32.dll. */
 #ifndef MIME_WIN32_IMM_H
 #define MIME_WIN32_IMM_H
 
@@ -63,7 +61,7 @@ typedef struct tagCANDIDATELIST {
 #define IMM_ERROR_NODATA (-1)
 #define IMM_ERROR_GENERAL (-2)
 
-/* attributes of the characters of a composition string. */
+/* composition string character attributes. */
 #define ATTR_INPUT 0x00
 #define ATTR_TARGET_CONVERTED 0x01
 #define ATTR_CONVERTED 0x02

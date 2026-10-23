@@ -1,7 +1,7 @@
 /*
- * the exports of d3dcompiler_47.dll that are not about the container:
- * blobs, files, and the compiler entry points, which fail as a shader with
- * errors does since mime has no hlsl compiler.
+ * d3dcompiler_47.dll exports outside the container code: blobs, files and
+ * the compiler entry points, which fail like a shader with errors since
+ * mime has no hlsl compiler.
  */
 #include "d3dcompiler_private.h"
 
@@ -139,7 +139,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DWriteBlobToFile(ID3DBlob *blob, LPCWSTR name, B
 {
     if (!blob)
         return E_INVALIDARG;
-    /* overwrite picks CREATE_ALWAYS over CREATE_NEW by adding one, as windows does. */
+    /* overwrite turns CREATE_NEW into CREATE_ALWAYS by adding one. */
     HANDLE file = CreateFile2(name, GENERIC_WRITE, FILE_SHARE_READ, (DWORD)overwrite + 1, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return last_error();
@@ -163,7 +163,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DWriteBlobToFile(ID3DBlob *blob, LPCWSTR name, B
 
 /* ------------------------------------------------------------------ compiling */
 
-/* the error, formatted as the compiler formats its messages: the file, line and column, then the code. */
+/* formats the error like compiler messages: file, line and column, then the code. */
 static void compile_error(LPCVOID data, LPCSTR name, const char *what, ID3DBlob **errors)
 {
     if (!errors)
@@ -244,7 +244,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DAssemble(LPCVOID data, SIZE_T size, LPCSTR name
     return E_NOTIMPL;
 }
 
-/* ------------------------------------------------------------------ what mime does not implement */
+/* ------------------------------------------------------------------ unimplemented */
 
 D3DCOMPILERAPI HRESULT WINAPI D3DCompressShaders(UINT count, D3D_SHADER_DATA *shaders, UINT flags, ID3DBlob **out)
 {
@@ -300,8 +300,7 @@ D3DCOMPILERAPI HRESULT WINAPI D3DDisassemble11Trace(LPCVOID data, SIZE_T size, I
     return E_NOTIMPL;
 }
 
-/* windows' does nothing either. */
+/* Windows does nothing here either. */
 D3DCOMPILERAPI void WINAPI DebugSetMute(void) {}
 
-/* returns false, as windows' does. */
 D3DCOMPILERAPI BOOL WINAPI D3DReturnFailure1(void) { return FALSE; }

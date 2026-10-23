@@ -1,6 +1,6 @@
 /*
- * msxml3.dll: the dom documents of msxml 3.0 and the version independent classes that resolve to it. the engine is
- * in guest/lib/xmldom, see docs/msxml.md.
+ * msxml3.dll: msxml 3.0 dom documents and the version independent classes that resolve to it. the engine is in
+ * guest/lib/xmldom.
  */
 #include <xmldom/xmldom.h>
 

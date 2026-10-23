@@ -1,11 +1,8 @@
 /*
- * the names of the user and the computer: GetUserNameEx, the directory
- * name translations, and the computer account.
+ * user and computer names: GetUserNameEx, directory name translation and the computer account.
  *
- * GetUserNameEx asks lsa through sspicli. a standalone machine knows the
- * account only by its sam compatible name, computer\user; the directory
- * formats answer ERROR_NONE_MAPPED there, and the directory functions of
- * secur32 itself fail because a workgroup has no domain controller.
+ * a standalone machine knows the account only by its sam compatible name, computer\user. the directory formats answer
+ * ERROR_NONE_MAPPED there, and secur32's directory functions fail because a workgroup has no domain controller.
  */
 #include "secur32_private.h"
 
@@ -14,7 +11,7 @@ NTSYSAPI NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PVOID 
 #define TOKEN_QUERY 0x0008
 #define TOKEN_USER_CLASS 1
 #define KEY_VALUE_PARTIAL_INFORMATION 2
-/* the flag GetUserNameExW accepts above the format: the size then counts the terminating zero. */
+/* a GetUserNameExW flag above the format: the size then counts the terminating zero. */
 #define NAME_FLAG_COUNT_NUL 0x10000
 
 DWORD SecComputerName(PWSTR out, DWORD capacity)
@@ -54,9 +51,8 @@ static bool read_string(PCUNICODE_STRING key, PCWSTR name, PWSTR out, DWORD capa
 }
 
 /*
- * the account of the thread or process token: S-1-5-18 is the system
- * account, any other user is named by the USERNAME winlogon wrote in the
- * volatile environment of its hive, then by %USERNAME%.
+ * the thread or process token's account. S-1-5-18 is the system account; any other user is named by the USERNAME
+ * winlogon wrote to the hive's volatile environment, then by %USERNAME%.
  */
 bool SecUserName(PWSTR out, DWORD capacity, bool *system)
 {
@@ -103,11 +99,7 @@ bool SecUserName(PWSTR out, DWORD capacity, bool *system)
     return true;
 }
 
-/*
- * computer\user. the system account of a workgroup machine is its computer
- * account, WORKGROUP\computer$; guessed from what services observe, lsasrv
- * was not read.
- */
+/* computer\user. on a workgroup machine the system account is the computer account, WORKGROUP\computer$. */
 NTSTATUS SecSamCompatibleName(PWSTR out, DWORD capacity, DWORD *length)
 {
     WCHAR computer[64], user[260];
@@ -140,7 +132,7 @@ static DWORD user_name(EXTENDED_NAME_FORMAT format, PWSTR out, DWORD capacity, D
     case NameDnsDomain:
     case NameGivenName:
     case NameSurname:
-        /* a local account has no directory names; NameDisplay would be the sam full name, which mime does not keep. */
+        /* a local account has no directory names; NameDisplay would be the sam full name, which is not kept. */
         return ERROR_NONE_MAPPED;
     default:
         return ERROR_INVALID_PARAMETER;
@@ -148,10 +140,8 @@ static DWORD user_name(EXTENDED_NAME_FORMAT format, PWSTR out, DWORD capacity, D
 }
 
 /*
- * the size rules of sspicli's GetUserNameExW: the buffer holds the name and
- * its terminating zero, a short buffer fails with ERROR_MORE_DATA and the
- * size in characters with the zero, and success returns the length without
- * it. the 0x10000 flag counts the zero on success and fails short buffers
+ * the buffer holds the name and its zero. a short buffer fails with ERROR_MORE_DATA and the size in characters with the
+ * zero, and success returns the length without it. the 0x10000 flag counts the zero on success and fails short buffers
  * with ERROR_INSUFFICIENT_BUFFER.
  */
 SECURITYAPI BOOLEAN SEC_ENTRY GetUserNameExW(EXTENDED_NAME_FORMAT format, LPWSTR buffer, PULONG size)
@@ -180,10 +170,7 @@ SECURITYAPI BOOLEAN SEC_ENTRY GetUserNameExW(EXTENDED_NAME_FORMAT format, LPWSTR
     return TRUE;
 }
 
-/*
- * sspicli's GetUserNameExA calls the wide function with the same size and
- * doubles the size it reports on failure.
- */
+/* calls the wide function with the same size and doubles the size it reports on failure, like windows. */
 SECURITYAPI BOOLEAN SEC_ENTRY GetUserNameExA(EXTENDED_NAME_FORMAT format, LPSTR buffer, PULONG size)
 {
     if (!size) {
@@ -218,8 +205,7 @@ SECURITYAPI BOOLEAN SEC_ENTRY GetUserNameExA(EXTENDED_NAME_FORMAT format, LPSTR 
 }
 
 /*
- * secur32's GetComputerObjectNameW reads the dns domain policy of lsa; a
- * workgroup machine has no domain sid there, so every format but
+ * windows reads lsa's dns domain policy here. a workgroup machine has no domain sid there, so every format but
  * NameUnknown fails with STATUS_CANT_ACCESS_DOMAIN_INFO.
  */
 SECURITYAPI BOOLEAN SEC_ENTRY GetComputerObjectNameW(EXTENDED_NAME_FORMAT format, LPWSTR buffer, PULONG size)
@@ -240,10 +226,7 @@ SECURITYAPI BOOLEAN SEC_ENTRY GetComputerObjectNameA(EXTENDED_NAME_FORMAT format
     return ok;
 }
 
-/*
- * SecpTranslateName locates a domain controller with DsGetDcNameW, which
- * fails with ERROR_NO_SUCH_DOMAIN on a workgroup machine.
- */
+/* finding a domain controller with DsGetDcNameW fails with ERROR_NO_SUCH_DOMAIN on a workgroup machine. */
 SECURITYAPI BOOLEAN SEC_ENTRY SecpTranslateName(PCWSTR domain, PCWSTR name, EXTENDED_NAME_FORMAT offered,
                                                 EXTENDED_NAME_FORMAT desired, PWSTR buffer, PULONG size)
 {

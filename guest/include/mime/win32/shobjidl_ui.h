@@ -1,7 +1,6 @@
 /*
- * the shell interfaces of the desktop around a window: the drag image helpers, the taskbar button and its jump
- * list, as shobjidl_core.h and shlobj_core.h declare them. interfaces are declared the C way, a struct whose first
- * member points to a table of functions.
+ * shell interfaces around a window: drag image helpers, the taskbar button and its jump list, from
+ * shobjidl_core.h and shlobj_core.h. interfaces are C structs whose first member points to a vtable.
  */
 #ifndef MIME_WIN32_SHOBJIDL_UI_H
 #define MIME_WIN32_SHOBJIDL_UI_H
@@ -10,8 +9,6 @@
 #include <mime/win32/oleidl.h>
 #include <mime/win32/propsys.h>
 #include <mime/win32/shobjidl.h>
-
-/* ------------------------------------------------------------------ classes and interface ids */
 
 MIME_DEFINE_GUID(CLSID_DragDropHelper, 0x4657278A, 0x411B, 0x11D2, 0x83, 0x9A, 0x00, 0xC0, 0x4F, 0xD9, 0x18, 0xD0);
 MIME_DEFINE_GUID(IID_IDropTargetHelper, 0x4657278B, 0x411B, 0x11D2, 0x83, 0x9A, 0x00, 0xC0, 0x4F, 0xD9, 0x18, 0xD0);
@@ -39,8 +36,6 @@ MIME_DEFINE_GUID(CLSID_ApplicationDocumentLists, 0x86BEC222, 0x30F2, 0x47E0, 0x9
                  0x28);
 MIME_DEFINE_GUID(IID_IApplicationDocumentLists, 0x3C594F9F, 0x9F30, 0x47A1, 0x97, 0x9A, 0xC9, 0xE8, 0x3D, 0x3D, 0x0A,
                  0x06);
-
-/* ------------------------------------------------------------------ drag images */
 
 typedef struct SHDRAGIMAGE {
     SIZE sizeDragImage;
@@ -93,8 +88,6 @@ typedef struct IDropTargetHelperVtbl {
 struct IDropTargetHelper {
     const IDropTargetHelperVtbl *lpVtbl;
 };
-
-/* ------------------------------------------------------------------ the taskbar button */
 
 typedef enum TBPFLAG {
     TBPF_NOPROGRESS = 0,
@@ -175,8 +168,6 @@ struct ITaskbarList4 {
     const ITaskbarList4Vtbl *lpVtbl;
 };
 
-/* ------------------------------------------------------------------ jump lists */
-
 typedef struct IObjectArray IObjectArray;
 typedef struct IObjectArrayVtbl {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(IObjectArray *This, REFIID riid, void **object);
@@ -254,16 +245,12 @@ struct IApplicationDocumentLists {
     const IApplicationDocumentListsVtbl *lpVtbl;
 };
 
-/* ------------------------------------------------------------------ shell32's functions for these */
-
 SHSTDAPI HRESULT WINAPI SHGetPropertyStoreForWindow(HWND window, REFIID riid, void **store);
 SHSTDAPI HRESULT WINAPI SHDoDragDrop(HWND window, IDataObject *data, IDropSource *source, DWORD effects,
                                      DWORD *effect);
 SHSTDAPI HRESULT WINAPI SHCreateStdEnumFmtEtc(UINT count, const FORMATETC formats[], IEnumFORMATETC **enumerator);
 
-/* ------------------------------------------------------------------ the notification area */
-
-/* the window messages of the taskbar a program registers. */
+/* taskbar window messages a program registers. */
 #define TASKBAR_CREATED_MESSAGE L"TaskbarCreated"
 #define TASKBAR_BUTTON_CREATED_MESSAGE L"TaskbarButtonCreated"
 

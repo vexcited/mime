@@ -1,7 +1,4 @@
-/*
- * dxgi: adapters, outputs and swap chains. the interfaces and their method
- * order are windows', as programs call them through the vtables.
- */
+/* dxgi: adapters, outputs and swap chains, in windows' vtable order. */
 #ifndef MIME_WIN32_DXGI_H
 #define MIME_WIN32_DXGI_H
 

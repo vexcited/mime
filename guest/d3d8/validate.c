@@ -1,8 +1,6 @@
 /*
- * the shader validators of direct3d 8: versions, instructions and their
- * operands, register files and instruction slots for vertex and pixel
- * shaders, and the vertex declarations shaders read. what fails is kept
- * as text when asked, as the exported validators hand it out.
+ * the direct3d 8 shader and declaration validators. errors are kept as
+ * text when asked, as the exported validators return it.
  */
 #include "d3d8_private.h"
 
@@ -40,7 +38,7 @@ static void error(Log *log, const char *format, ...)
     log->text[log->length] = 0;
 }
 
-/* the result, with the text in a buffer of the process heap the caller frees. */
+/* the error text goes in a process heap buffer the caller frees. */
 static HRESULT finish(Log *log, char **errors)
 {
     if (errors) {
@@ -71,7 +69,7 @@ static BOOL comment(DWORD token) { return (token & 0xFFFF) == 0xFFFE && !(token 
 
 /* ------------------------------------------------------------------ declarations */
 
-/* the registers a declaration feeds, by bit; inputs is 16 for a shader, 17 for fixed function. */
+/* returns the registers the declaration feeds, by bit. inputs is 16 for a shader, 17 for fixed function. */
 static DWORD validate_declaration(Log *log, const DWORD *decl, const D3DCAPS8 *caps, UINT inputs, UINT constants)
 {
     DWORD declared = 0, streams = 0, normal_sources = 0, normal_targets = 0;
@@ -383,7 +381,7 @@ typedef struct PsOp {
     BYTE min_minor;
 } PsOp;
 
-/* sources of the instructions before ps.1.4, and the version each came in. */
+/* the sources of each instruction before ps.1.4, and the version that added it. */
 static const PsOp PS_OPS[] = {
     {0, 0, 0, 0, 0},     {1, 1, 1, ARITH, 0}, {2, 1, 2, ARITH, 0}, {3, 1, 2, ARITH, 0}, {4, 1, 3, ARITH, 0},
     {5, 1, 2, ARITH, 0}, {8, 1, 2, ARITH, 0}, {9, 1, 2, ARITH, 2}, {18, 1, 3, ARITH, 0}, {64, 1, 0, TEX, 0},
@@ -427,7 +425,7 @@ static BOOL valid_ps_register(UINT type, UINT num, UINT minor, BOOL dst, BOOL de
     }
 }
 
-/* the slots of a shader, or of a phase of a ps.1.4 one, whose arithmetic and texture counts are apart. */
+/* checks the slots of a shader or of a ps.1.4 phase, counting arithmetic and texture apart. */
 static void check_slots(Log *log, UINT minor, UINT tex, UINT arith, UINT total)
 {
     UINT max_tex = minor >= 4 ? 6 : 4, max_total = minor >= 4 ? 14 : minor == 0 ? 8 : 12;

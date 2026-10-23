@@ -1,9 +1,8 @@
 /*
- * the x86 helpers compilers call in msvcrt: _ftol and its kin, which
- * truncate st(0) to a 64-bit integer in edx:eax, the _CI functions of the
- * math library, whose arguments are on the x87 stack, the last one on
- * top, and the _adj_ fdiv workarounds, plain instructions on processors
- * without the flaw.
+ * x86 helpers compilers call in msvcrt. _ftol and its kin truncate st(0)
+ * to a 64-bit integer in edx:eax. the _CI math functions take their
+ * arguments on the x87 stack, the last one on top. the _adj_ fdiv
+ * workarounds are the plain instructions, as for processors without the flaw.
  */
     .text
 
@@ -143,9 +142,8 @@ __adj_fptan:
     retl
 
 /*
- * the sse2 entries of the math library that compilers call with the arguments in xmm0 and xmm1 and the result in
- * xmm0: the function of the c library, with a stack for the arguments, in between. The single precision forms widen
- * their arguments and narrow the result.
+ * sse2 math entries take their arguments in xmm0 and xmm1 and return in xmm0, calling the c function through the
+ * stack. the single precision forms widen their arguments and narrow the result.
  */
 .macro SSE1 name, function
     .globl  ___libm_sse2_\name
@@ -202,7 +200,7 @@ ___libm_sse2_\name:
     retl
 .endm
 
-/* the precise entries have the same conventions, with the export names that start with one underscore less. */
+/* the precise entries use the same conventions; their export names have one leading underscore fewer. */
 .macro PRECISE1 name, function
     .globl  __libm_sse2_\name\()_precise
 __libm_sse2_\name\()_precise:

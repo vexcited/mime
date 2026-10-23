@@ -1,8 +1,4 @@
-/*
- * the property system: property keys, the property store interfaces and the
- * PROPVARIANT and VARIANT helpers of propsys.dll, as propsys.h,
- * propvarutil.h and propkeydef.h declare them.
- */
+/* property system: property keys, property stores and propsys.dll's PROPVARIANT and VARIANT helpers. */
 #ifndef MIME_WIN32_PROPSYS_H
 #define MIME_WIN32_PROPSYS_H
 
@@ -46,7 +42,7 @@ typedef PROPERTYKEY SHCOLUMNID;
 #define MIME_DEFINE_PROPERTYKEY(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8, pid)                              \
     const PROPERTYKEY DECLSPEC_SELECTANY name = {{l, w1, w2, {b1, b2, b3, b4, b5, b6, b7, b8}}, pid}
 
-/* the string result of shell folders, shtypes.h. */
+/* shell folder string results, from shtypes.h. */
 #define STRRET_WSTR 0x0000
 #define STRRET_OFFSET 0x0001
 #define STRRET_CSTR 0x0002
@@ -204,7 +200,6 @@ struct IPropertyBag {
 MIME_DEFINE_GUID(IID_IPropertyBag, 0x55272a00, 0x42cb, 0x11ce, 0x81, 0x35, 0x00, 0xaa, 0x00, 0x4b, 0xb8, 0x51);
 MIME_DEFINE_GUID(IID_IAgileObject, 0x94ea2b94, 0xe9cc, 0x49e0, 0xc0, 0xff, 0xee, 0x64, 0xca, 0x8f, 0x5b, 0x90);
 
-/* the canonical name of a property and its key. */
 MIME_DEFINE_PROPERTYKEY(PKEY_AppUserModel_RelaunchCommand, 0x9f4c2855, 0x9f79, 0x4b39, 0xa8, 0xd0, 0xe1, 0xd4, 0x2d,
                         0xe1, 0xd5, 0xf3, 2);
 MIME_DEFINE_PROPERTYKEY(PKEY_AppUserModel_RelaunchIconResource, 0x9f4c2855, 0x9f79, 0x4b39, 0xa8, 0xd0, 0xe1, 0xd4,

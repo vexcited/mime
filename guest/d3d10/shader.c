@@ -1,8 +1,6 @@
 /*
- * blobs, and what d3d10.dll reads of compiled shaders: their signatures,
- * as a container of their own, and their debug information. compiling and
- * disassembling are d3dcompiler_47.dll's, a disassembled effect is made
- * of its shaders' disassembly.
+ * blobs, shader signatures and debug information. compiling and disassembling
+ * go to d3dcompiler_47.dll, a disassembled effect is its shaders' disassembly.
  */
 #include "d3d10_private.h"
 #include "../lib/dxbc/dxbc.h"
@@ -47,7 +45,7 @@ static const ID3D10BlobVtbl blob_vtbl = {
     blob_query, blob_add_ref, blob_release, blob_get_buffer_pointer, blob_get_buffer_size,
 };
 
-/* the bytes follow the object, which frees them with it. */
+/* the bytes follow the object in the same allocation. */
 D3D10API HRESULT WINAPI D3D10CreateBlob(SIZE_T size, ID3D10Blob **out)
 {
     if (!out)
@@ -69,7 +67,7 @@ D3D10API HRESULT WINAPI D3D10CreateBlob(SIZE_T size, ID3D10Blob **out)
 
 static UINT get32(const BYTE *p) { return p[0] | p[1] << 8 | p[2] << 16 | (UINT)p[3] << 24; }
 
-/* the chunks direct3d 10 knows: effects, shaders, their signatures, statistics and debug information. */
+/* chunks direct3d 10 knows: effects, shaders, signatures, statistics and debug information. */
 static BOOL known_tag(UINT tag)
 {
     static const char TAGS[][5] = {"SDBG", "FX10", "CLI4", "CTAB", "FXLC", "SMID",
@@ -80,10 +78,7 @@ static BOOL known_tag(UINT tag)
     return FALSE;
 }
 
-/*
- * a container as d3d10.dll reads one: exactly as long as said, version 1,
- * its chunks one after the other and known, its checksum right.
- */
+/* valid means exactly the stated length, version 1, known chunks back to back and a correct checksum. */
 BOOL D3d10ContainerValid(const void *bytecode, SIZE_T length)
 {
     const BYTE *b = bytecode;
@@ -116,9 +111,8 @@ BOOL D3d10ContainerValid(const void *bytecode, SIZE_T length)
 static void put32(BYTE *p, UINT v) { memcpy(p, &v, 4); }
 
 /*
- * a container of the shader's input signature, output signature or both,
- * as d3d10.dll builds it: the header, version 1, checksummed. a signature
- * missing fails.
+ * builds a version 1, checksummed container of the input signature, the
+ * output signature or both. a missing signature fails.
  */
 static HRESULT signatures(const void *bytecode, SIZE_T length, BOOL input, BOOL output, ID3D10Blob **out)
 {
@@ -178,7 +172,7 @@ D3D10API HRESULT WINAPI D3D10GetInputAndOutputSignatureBlob(const void *bytecode
     return signatures(bytecode, length, TRUE, TRUE, blob);
 }
 
-/* the debug information chunk of a container whose checksum holds, empty when there is none. */
+/* the checksum must hold. empty when there is no debug chunk. */
 D3D10API HRESULT WINAPI D3D10GetShaderDebugInfo(const void *bytecode, SIZE_T length, ID3D10Blob **out)
 {
     if (out)
@@ -209,7 +203,7 @@ D3D10API HRESULT WINAPI D3D10GetShaderDebugInfo(const void *bytecode, SIZE_T len
 
 /* ------------------------------------------------------------------ profiles */
 
-/* shader model 4.0 whatever the device, as d3d10.dll answers. */
+/* like windows, always shader model 4.0 whatever the device. */
 D3D10API LPCSTR WINAPI D3D10GetVertexShaderProfile(ID3D10Device *device) { return "vs_4_0"; }
 
 D3D10API LPCSTR WINAPI D3D10GetGeometryShaderProfile(ID3D10Device *device) { return "gs_4_0"; }
@@ -218,10 +212,7 @@ D3D10API LPCSTR WINAPI D3D10GetPixelShaderProfile(ID3D10Device *device) { return
 
 /* ------------------------------------------------------------------ d3dcompiler_47.dll */
 
-/*
- * the old hlsl compiler d3d10.dll carries is d3dcompiler_47.dll's here,
- * the same compiler of a later version: what it has, d3d10.dll gives.
- */
+/* d3d10.dll's built in hlsl compiler is d3dcompiler_47.dll here, a later version of the same compiler. */
 static FARPROC compiler_entry(const char *name)
 {
     HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
@@ -231,7 +222,7 @@ static FARPROC compiler_entry(const char *name)
 typedef HRESULT(WINAPI *Compile)(const void *, SIZE_T, LPCSTR, const D3D10_SHADER_MACRO *, ID3D10Include *, LPCSTR,
                                  LPCSTR, UINT, UINT, ID3D10Blob **, ID3D10Blob **);
 
-/* the debug flag needs d3d10's debug layer, which is not there; flags the old compiler lacks are refused. */
+/* the debug flag needs the d3d10 debug layer, which does not exist here. flags the old compiler lacks are refused. */
 D3D10API HRESULT WINAPI D3D10CompileShader(LPCSTR source, SIZE_T length, LPCSTR file, const D3D10_SHADER_MACRO *defines,
                                            ID3D10Include *include, LPCSTR entry, LPCSTR profile, UINT flags,
                                            ID3D10Blob **shader, ID3D10Blob **errors)
@@ -263,7 +254,7 @@ D3D10API HRESULT WINAPI D3D10PreprocessShader(LPCSTR source, SIZE_T length, LPCS
     return preprocess ? preprocess(source, length, file, defines, include, text, errors) : E_NOTIMPL;
 }
 
-/* an effect is compiled for fx_4_0, its flags the compiler's second. */
+/* compiles for fx_4_0, the effect flags going in the compiler's second flags. */
 D3D10API HRESULT WINAPI D3D10CompileEffectFromMemory(void *data, SIZE_T length, LPCSTR file,
                                                      const D3D10_SHADER_MACRO *defines, ID3D10Include *include,
                                                      UINT hlsl_flags, UINT fx_flags, ID3D10Blob **effect,
@@ -330,7 +321,7 @@ static void put_format(Text *t, const char *format, ...)
     append(t, line, n > 0 ? (SIZE_T)n : 0);
 }
 
-/* text with each line after the first indented. */
+/* indents every line after the first. */
 static void put_indented(Text *t, const char *s, UINT indent)
 {
     static const char SPACES[] = "                ";
@@ -356,8 +347,8 @@ static HRESULT put_shader(Text *t, const D3D10_EFFECT_SHADER_DESC *desc, BOOL co
 }
 
 /*
- * the effect's shader variables, then its techniques and passes and the
- * shaders they set, as d3d10.dll lays them out; html when colored.
+ * shader variables first, then techniques, passes and the shaders they set,
+ * laid out like windows does. color gives html.
  */
 D3D10API HRESULT WINAPI D3D10DisassembleEffect(ID3D10Effect *effect, BOOL color, ID3D10Blob **disassembly)
 {

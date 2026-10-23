@@ -1,11 +1,7 @@
 /*
- * print jobs. there is no spooler service: a job lives in the process that started it, and the print
- * processor, which is the part that turns the data into the printed document, runs as the data comes.
- * The "Microsoft Print to PDF" printer turns the pages of the bitmap data type, which gdi32 draws, into
- * the pages of a PDF file, and writes the data of the RAW type to the file as it is.
- *
- * the file comes from the document's output name, from the MIME_PRINT_DIR environment variable (a
- * folder, where the document name makes the name of the file), or from the user, who is asked for it.
+ * jobs run in the process that starts them; there is no spooler service. Microsoft Print to PDF converts GDI bitmap
+ * pages to PDF and copies RAW data unchanged. output comes from the document's path, MIME_PRINT_DIR plus its name,
+ * or a save dialog.
  */
 #include "winspool_private.h"
 #include "pdf.h"
@@ -36,7 +32,7 @@ static LONG g_next_job;
 
 /* ------------------------------------------------------------------ the output file */
 
-/* a file name made of a document name: no characters a file cannot have, no dots or blanks at the end. */
+/* sanitizes a document name for use as a filename, including trailing dots and spaces. */
 static void file_name_of(LPCWSTR document, WCHAR *name, SIZE_T chars)
 {
     SIZE_T n = 0;
@@ -69,7 +65,7 @@ static BOOL free_path(LPCWSTR directory, LPCWSTR base, WCHAR *path)
 
 typedef BOOL(WINAPI *GET_SAVE_FILE_NAME)(void *ofn);
 
-/* the save dialog of comdlg32, reached by name since winspool does not import it. */
+/* loads comdlg32's save dialog by name to avoid a static import. */
 static PWSTR ask_user(LPCWSTR document, LPCWSTR directory)
 {
     HMODULE comdlg = LoadLibraryW(L"comdlg32.dll");
@@ -80,7 +76,7 @@ static PWSTR ask_user(LPCWSTR document, LPCWSTR directory)
     file_name_of(document, base, ARRAYSIZE(base));
     _snwprintf(path, ARRAYSIZE(path), L"%ls.pdf", base);
     static const WCHAR filter[] = L"PDF Document (*.pdf)\0*.pdf\0All Files (*.*)\0*.*\0";
-    /* the structure of OPENFILENAMEW without the header that would pull in comdlg32's. */
+    /* OPENFILENAMEW layout without the comdlg32 header dependency. */
     struct {
         DWORD lStructSize;
         HWND hwndOwner;
@@ -137,7 +133,6 @@ PWSTR SpoolAskOutput(LPCWSTR document, int printer)
             wcscpy(result, path);
         return result;
     }
-    /* the user is asked, starting in the documents folder. */
     n = GetEnvironmentVariableW(L"USERPROFILE", folder, ARRAYSIZE(folder));
     if (n && n + 12 < ARRAYSIZE(folder))
         wcscat(folder, L"\\Documents");
@@ -265,7 +260,7 @@ DWORD SpoolStartDoc(SpoolHandle *h, const DOC_INFO_1W *info)
     return job->Id;
 }
 
-/* the job ends: the document is closed, or removed when it was abandoned. */
+/* closes a completed document or removes an abandoned one. */
 static BOOL finish(SpoolHandle *h, BOOL keep)
 {
     SpoolJob *job = job_of(h);

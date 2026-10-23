@@ -1,12 +1,10 @@
 /*
- * memory: large blocks, sub allocated. a buffer block is a vulkan buffer
- * over the whole block, so a direct3d buffer is a range of it and needs no
- * vulkan object or round trip of its own; image blocks hold images bound
- * at offsets. blocks are kept for the device's life.
+ * memory: large sub-allocated blocks, kept for the device's life. a buffer block is one vulkan buffer over the
+ * whole block, so a direct3d buffer is just a range and needs no vulkan object or round trip of its own. image
+ * blocks hold images bound at offsets.
  *
- * the ring is upload memory for what one command buffer uses: binding
- * tables, the bytes UpdateSubresource copies. a chunk is reused once the
- * submissions that used it are done.
+ * the ring is upload memory for one command buffer: binding tables and UpdateSubresource bytes. a chunk is reused
+ * once the submissions that used it are done.
  */
 #include "d3d11_private.h"
 
@@ -53,7 +51,6 @@ static VkBufferUsageFlags buffer_usage(D3dDevice *device)
     return usage;
 }
 
-/* the memory type for a kind, among the types the resource allows. */
 static int pick_type(D3dDevice *device, D3dMemoryKind kind, UINT allowed)
 {
     static const VkMemoryPropertyFlags wanted[D3D_MEMORY_KINDS][3] = {
@@ -69,7 +66,7 @@ static int pick_type(D3dDevice *device, D3dMemoryKind kind, UINT allowed)
             if ((allowed & (1u << i)) && (flags & wanted[kind][w]) == wanted[kind][w])
                 return (int)i;
         }
-    /* the gpu's memory falls back to any type, for gpus whose memory is all host visible. */
+    /* device memory falls back to any type, for gpus whose memory is all host visible. */
     if (kind == D3D_MEMORY_DEVICE)
         for (UINT i = 0; i < device->memory.memoryTypeCount; i++)
             if (allowed & (1u << i))
@@ -88,7 +85,7 @@ static BOOL add_free(D3dBlock *block, VkDeviceSize offset, VkDeviceSize size)
         block->free = ranges;
         block->free_capacity = capacity;
     }
-    /* sorted by offset, merged with the neighbours. */
+    /* kept sorted by offset and merged with neighbours. */
     UINT at = 0;
     while (at < block->free_count && block->free[at].offset < offset)
         at++;
@@ -113,7 +110,7 @@ static BOOL add_free(D3dBlock *block, VkDeviceSize offset, VkDeviceSize size)
     return TRUE;
 }
 
-/* the first free range that fits, cut out of the block. */
+/* first fit. */
 static BOOL take_range(D3dBlock *block, VkDeviceSize size, VkDeviceSize align, VkDeviceSize *out)
 {
     for (UINT i = 0; i < block->free_count; i++) {
@@ -220,9 +217,8 @@ HRESULT D3dAllocBuffer(D3dDevice *device, D3dMemoryKind kind, VkDeviceSize size,
     if (type == ~0u)
         return E_OUTOFMEMORY;
     /*
-     * texel views, uniform buffers and copies of whole texels all line up at
-     * 256 bytes. sizes round up to the alignment, so that small buffers
-     * leave no gaps that the free ranges would have to keep.
+     * texel views, uniform buffers and whole-texel copies all align to 256 bytes. sizes round up too, so small
+     * buffers leave no gaps in the free list.
      */
     align = D3D_MAX(align, 256);
     return allocate(device, kind, FALSE, type, D3D_ALIGN(size, align), align, out);
@@ -247,8 +243,8 @@ HRESULT D3dAllocImage(D3dDevice *device, VkImage image, D3dAllocation *out)
 }
 
 /*
- * An image that is shared has memory of its own, which other devices import under the id of the object that
- * names it: the first device exports it, the others import what it exported, with the type and size it had.
+ * shared images get dedicated memory that other devices import under the share object's id. the first device
+ * exports it, the others import it with the exporter's memory type and size.
  */
 HRESULT D3dAllocImageShared(D3dDevice *device, VkImage image, UINT64 import_id, const MimeShareBlob *blob,
                             D3dAllocation *out, UINT *type_index)
@@ -290,7 +286,7 @@ HRESULT D3dAllocImageShared(D3dDevice *device, VkImage image, UINT64 import_id, 
 void D3dFree(D3dDevice *device, D3dAllocation *alloc)
 {
     if (!alloc->block) {
-        /* memory of its own, made for an image that is shared. */
+        /* dedicated memory of a shared image. */
         if (alloc->memory) {
             device->vk.vkFreeMemory(device->vk.device, alloc->memory, nullptr);
             memset(alloc, 0, sizeof(*alloc));
@@ -303,7 +299,7 @@ void D3dFree(D3dDevice *device, D3dAllocation *alloc)
     memset(alloc, 0, sizeof(*alloc));
 }
 
-/* the buffer types of each kind, from a probe buffer's requirements. */
+/* picks each kind's buffer memory type from a probe buffer's requirements. */
 HRESULT D3dMemoryInit(D3dDevice *device)
 {
     D3dVk *vk = &device->vk;
@@ -357,7 +353,7 @@ BOOL D3dRingAlloc(D3dDevice *device, VkDeviceSize size, VkDeviceSize align, D3dR
     D3dRingChunk *chunk = device->ring_current;
     if (!chunk || D3D_ALIGN(chunk->head, align) + size > chunk->alloc.size) {
         if (chunk) {
-            /* the chunk is done with once what is recorded now has run. */
+            /* reusable once what is recorded now has run. */
             chunk->serial = device->next_serial;
             chunk->next = device->ring_chunks;
             device->ring_chunks = chunk;
@@ -407,7 +403,7 @@ BOOL D3dRingChunkAlloc(D3dRingChunk *chunk, VkDeviceSize size, VkDeviceSize alig
 #define CB_CHUNK_SIZE (4ull << 20)
 #define CB_WINDOW ((VkDeviceSize)D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16)
 #define CB_STEP 256
-/* chunks with descriptors take an eighth of the uniform buffer heap each, so at most six. */
+/* each chunk takes an eighth of the uniform buffer heap in descriptors, so at most six. */
 #define CB_CHUNKS_MAX 6
 
 struct D3dCbChunk {
@@ -436,7 +432,7 @@ static D3dCbChunk *cb_chunk(D3dDevice *device)
     D3dCbChunk *chunk = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*chunk));
     if (!chunk)
         return nullptr;
-    /* a window past the last slice keeps every descriptor inside the buffer. */
+    /* an extra window past the last slice keeps every descriptor inside the buffer. */
     UINT count = (UINT)(CB_CHUNK_SIZE / CB_STEP);
     if (FAILED(D3dAllocBuffer(device, D3D_MEMORY_UPLOAD, CB_CHUNK_SIZE + CB_WINDOW, CB_STEP, &chunk->alloc))) {
         HeapFree(GetProcessHeap(), 0, chunk);
@@ -487,7 +483,7 @@ BOOL D3dCbAlloc(D3dDevice *device, VkDeviceSize size, D3dCbSlice *out, BOOL *ret
     return TRUE;
 }
 
-/* a buffer leaves its chunk, which the gpu may read until serial. */
+/* the gpu may read the chunk until serial. */
 void D3dCbUnpin(D3dDevice *device, D3dCbChunk *chunk, UINT64 serial)
 {
     if (!chunk)
@@ -498,7 +494,7 @@ void D3dCbUnpin(D3dDevice *device, D3dCbChunk *chunk, UINT64 serial)
     ReleaseSRWLockExclusive(&device->cb_lock);
 }
 
-/* gives back the end of the last slice cut from its chunk. */
+/* gives back the unused end of the chunk's last slice. */
 void D3dRingTrim(D3dDevice *device, const D3dRingSlice *slice, VkDeviceSize reserved, VkDeviceSize used)
 {
     AcquireSRWLockExclusive(&device->ring_lock);
@@ -507,7 +503,7 @@ void D3dRingTrim(D3dDevice *device, const D3dRingSlice *slice, VkDeviceSize rese
     ReleaseSRWLockExclusive(&device->ring_lock);
 }
 
-/* a command list's chunk back in the ring, reused once the list's last execution is done. */
+/* reused once the command list's last execution is done. */
 void D3dRingChunkRelease(D3dDevice *device, D3dRingChunk *chunk, UINT64 serial)
 {
     AcquireSRWLockExclusive(&device->ring_lock);
@@ -517,7 +513,7 @@ void D3dRingChunkRelease(D3dDevice *device, D3dRingChunk *chunk, UINT64 serial)
     ReleaseSRWLockExclusive(&device->ring_lock);
 }
 
-/* the descriptor set of a chunk's binding tables: one uniform buffer per stage, offsets dynamic. */
+/* binding tables: one dynamic uniform buffer per stage. */
 VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk)
 {
     if (chunk->table_set)

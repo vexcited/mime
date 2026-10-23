@@ -1,17 +1,16 @@
 /*
- * the expressions of effects: state assignments fxc could not fold, run
- * by a small machine as d3d10.dll's CFxlVM runs them. a container holds
- * the program in FXLC, its literals in CLI4 and the variables it reads in
- * CTAB. each instruction applies an operation to a count of
- * components: inputs are literals, variables or temporaries, indexed
- * through literals or variables, and the output a temporary or the state.
+ * effect expressions: state assignments fxc could not fold, run by a small
+ * virtual machine. a container holds the program in FXLC, its literals in CLI4
+ * and the variables it reads in CTAB. each instruction applies an operation to
+ * some components: inputs are literals, variables or temporaries, indexed
+ * through literals or variables, and the output is a temporary or the state.
  */
 #include "effect_private.h"
 #include "../lib/dxbc/dxbc.h"
 
 static UINT read32(const BYTE *p) { return p[0] | p[1] << 8 | p[2] << 16 | (UINT)p[3] << 24; }
 
-/* the operations, the high bits of an instruction's token. */
+/* operations, from the high bits of an instruction token. */
 enum {
     OP_MOV = 0x100,
     OP_NEG = 0x101,
@@ -74,7 +73,7 @@ enum {
     OP_DOTSWIZ = 0x70E,
 };
 
-/* the register files of operands. */
+/* operand register files. */
 enum { R_LITERAL = 1, R_VARIABLE = 2, R_OUTPUT = 4, R_TEMP = 7 };
 
 #define TEMPS 128
@@ -84,12 +83,12 @@ struct FxExpression {
     UINT code_size;
     const UINT *literals;
     UINT literal_count;
-    /* each component of the variables' registers, NULL past a variable's bytes. */
+    /* one pointer per register component, NULL past a variable's bytes. */
     UINT *const *table;
     UINT table_size;
 };
 
-/* how many inputs each operation takes, 0 when it is not one, ~0 for any. */
+/* 0 for an unknown operation, ~0 for any count. */
 static UINT inputs_of(UINT op)
 {
     switch (op) {
@@ -163,10 +162,7 @@ static UINT inputs_of(UINT op)
 
 /* ------------------------------------------------------------------ math */
 
-/*
- * the functions of the operations, in doubles: neither the guest's c
- * runtime nor a 32-bit msvcrt.dll is there to call.
- */
+/* math in doubles, done here since there is no c runtime or 32-bit msvcrt.dll to call. */
 #define PI 3.14159265358979323846
 #define PI_2_HI 1.57079632673412561417
 #define PI_2_LO 6.07710050650619224932e-11
@@ -206,7 +202,7 @@ static double cos_poly(double r)
                      r2 * (1.0 / 24 + r2 * (-1.0 / 720 + r2 * (1.0 / 40320 + r2 * (-1.0 / 3628800 + r2 / 479001600)))));
 }
 
-/* x reduced by multiples of pi/2, the multiple's quadrant given back; NaN past the range of integers. */
+/* reduces x by multiples of pi/2 and gives back the quadrant. NaN past the integer range. */
 static double reduce(double x, UINT *quadrant)
 {
     double k = x * (2 / PI);
@@ -233,7 +229,7 @@ static double cos_d(double x)
     return (q + 1) & 2 ? -v : v;
 }
 
-/* the argument halved twice, then the series. */
+/* the argument is halved twice, then the series runs. */
 static double atan_d(double x)
 {
     if (x != x)
@@ -263,7 +259,7 @@ static double atan2_d(double y, double x)
     return y < 0 ? a - PI : a + PI;
 }
 
-/* 2 to the x: the integer part goes to the exponent, the rest through the series of e to the f ln 2. */
+/* the integer part of x goes to the exponent, the fraction f through the series for e to the f ln 2. */
 static double exp2_d(double x)
 {
     if (x != x)
@@ -285,7 +281,7 @@ static double exp2_d(double x)
     return sum;
 }
 
-/* log2 of a positive x: its exponent, and the series of atanh over the mantissa near 1. */
+/* x must be positive: its exponent plus an atanh series over the mantissa near 1. */
 static double log2_d(double x)
 {
     if (!(x > 0))
@@ -303,7 +299,7 @@ static double log2_d(double x)
 
 /* ------------------------------------------------------------------ loading */
 
-/* an operand: its count of indices, then pairs of a register file and an index, the last one its own. */
+/* operand layout: an index count, then register file and index pairs, the last pair being the operand itself. */
 static BOOL check_operand(const UINT *code, UINT size, UINT *pos, BOOL output, UINT literals, UINT table)
 {
     if (*pos >= size)
@@ -327,11 +323,7 @@ static BOOL check_operand(const UINT *code, UINT size, UINT *pos, BOOL output, U
     return TRUE;
 }
 
-/*
- * the expression of an assignment: a container whose variables are found
- * by name, their components laid out as registers of four, one after the
- * other in the variable's bytes.
- */
+/* variables are found by name, their components laid out as consecutive registers of four. */
 HRESULT FxParseExpression(FxEffect *e, const BYTE *blob, UINT size, FxExpression **out)
 {
     uint32_t code_size, literal_size, table_size;
@@ -352,7 +344,7 @@ HRESULT FxParseExpression(FxEffect *e, const BYTE *blob, UINT size, FxExpression
         return E_FAIL;
     x->literals = (const UINT *)(literals + 4);
 
-    /* the constant table: entries of a name, a register set, index and count, then a type and a default. */
+    /* constant table entries: name, register set, index, count, type and default. */
     UINT constants = read32(ctab + 12), info = read32(ctab + 16);
     if (info > table_size || (UINT64)constants * 20 > table_size - info)
         return E_FAIL;
@@ -380,7 +372,7 @@ HRESULT FxParseExpression(FxEffect *e, const BYTE *blob, UINT size, FxExpression
             table[4 * first + k] = k < v->type->size / 4 ? (UINT *)(v->data + 4 * k) : nullptr;
     }
 
-    /* every instruction: its operation, inputs and output in range. */
+    /* each instruction's operation, inputs and output must be in range. */
     const UINT *p = x->code;
     UINT pos = 1, instructions = p[0];
     for (UINT i = 0; i < instructions; i++) {
@@ -404,7 +396,7 @@ HRESULT FxParseExpression(FxEffect *e, const BYTE *blob, UINT size, FxExpression
 
 static UINT zero[4 * TEMPS];
 
-/* where an input's components are: its indices first add up, each scaled by four. */
+/* the indices add up, each scaled by four. */
 static const UINT *input_at(const FxExpression *x, const UINT **pos, const UINT *temps)
 {
     const UINT *p = *pos;
@@ -444,7 +436,6 @@ static UINT u_of(float f)
     return v;
 }
 
-/* one component of a two input operation. */
 static UINT binary(UINT op, UINT a, UINT b)
 {
     float fa = f_of(a), fb = f_of(b);
@@ -569,7 +560,7 @@ static UINT unary(UINT op, UINT a)
     }
 }
 
-/* runs the program, its outputs written to out, which holds four components. */
+/* out holds four components. */
 void FxRunExpression(const FxExpression *x, void *out)
 {
     UINT temps[TEMPS] = {};

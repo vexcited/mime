@@ -1,11 +1,11 @@
 /*
  * file windows of the host backed volumes. a file opened for reading is
- * placed whole and read only in the guest window range by the host
- * (MIME_HC_FS_MAP) when a section maps it or a large read needs it: reads
- * copy from it, and sections use its pages in place. the host fills the
+ * mapped whole and read only into the guest window range by the host,
+ * MIME_HC_FS_MAP, when a section maps it or a large read needs it: reads
+ * copy from it and sections use its pages in place. the host fills the
  * window as it is touched, so the guest keeps no copy of its own. small
- * reads of files without a window go to the host, so scanning a few
- * bytes of many files does not fill windows.
+ * reads of unmapped files go to the host, so that scanning a few bytes of
+ * many files does not fill windows.
  *
  * an entry is checked against the file size and write time on every open,
  * and dropped as soon as the guest opens the file for writing. a dropped
@@ -14,21 +14,21 @@
 #include "../ntos.h"
 
 #define CACHE_BUCKETS 256
-#define CACHE_IDLE_MAX 256 /* unreferenced entries kept for reopening */
-#define CACHE_SMALL_READ 0x10000 /* smaller reads of an unmapped file go to the host directly */
-#define CACHE_SMALL_READS 32     /* ... until a file has been read so often, and then it is mapped */
+#define CACHE_IDLE_MAX 256 /* unreferenced entries kept for reopening. */
+#define CACHE_SMALL_READ 0x10000 /* smaller reads of an unmapped file go to the host directly... */
+#define CACHE_SMALL_READS 32     /* ... until the file has been read this often, then it is mapped. */
 
 struct _MIMEFS_CACHE {
-    struct _MIMEFS_CACHE *Next; /* hash chain */
-    LIST_ENTRY Lru;             /* most recently opened first */
+    struct _MIMEFS_CACHE *Next;
+    LIST_ENTRY Lru;             /* most recently opened first. */
     ULONG Volume;
-    LONG References; /* opens and sections */
+    LONG References; /* opens and sections. */
     ULONG64 FileId;
     ULONG64 Size;
     ULONG64 WriteTime;
-    ULONG64 Window; /* guest physical address, 0 until mapped */
-    ULONG SmallReads; /* reads that went to the host for want of a window */
-    BOOLEAN Warmed;   /* the host was asked to map the window into the guest's tables */
+    ULONG64 Window; /* guest physical address, 0 until mapped. */
+    ULONG SmallReads; /* reads that went to the host for lack of a window. */
+    BOOLEAN Warmed;   /* the host was asked to map the window into the guest's tables. */
 };
 
 #define DETACHED (~0ull)
@@ -75,7 +75,7 @@ static void release(MIMEFS_CACHE *c)
     ExFreePool(c);
 }
 
-/* forgets a hashed entry; its references keep the window until they go. */
+/* unhashes an entry; its references keep the window until they go. */
 static void detach(MIMEFS_CACHE *c)
 {
     unhash(c);
@@ -83,7 +83,7 @@ static void detach(MIMEFS_CACHE *c)
         release(c);
 }
 
-/* drops unreferenced entries, oldest first, while there are more than `keep`. */
+/* drops unreferenced entries, oldest first, down to `keep`. */
 static void trim(ULONG keep)
 {
     PLIST_ENTRY e = g_lru.Blink;
@@ -105,7 +105,7 @@ MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info)
     ExAcquireFastMutex(&g_lock);
     MIMEFS_CACHE *c = find(volume, info->file_id);
     if (c && (c->Size != info->size || c->WriteTime != info->write_time)) {
-        /* changed behind our back, typically by a host program. */
+        /* changed behind our back, usually by a host program. */
         detach(c);
         c = nullptr;
     }
@@ -150,7 +150,7 @@ void FsCacheInvalidate(ULONG volume, ULONG64 file_id)
     ExReleaseFastMutex(&g_lock);
 }
 
-/* maps the window of an entry on first use. called with the lock held. */
+/* lock held. */
 static BOOLEAN map_window(MIMEFS_CACHE *c, ULONG64 host_handle)
 {
     if (c->Window)
@@ -166,19 +166,16 @@ static BOOLEAN map_window(MIMEFS_CACHE *c, ULONG64 host_handle)
         }
         if (hs != MIME_HC_STATUS_NO_MEMORY)
             return FALSE;
-        trim(0); /* the window range is full, give back the idle ones */
+        trim(0); /* the window range is full, give back idle windows. */
     }
     return FALSE;
 }
 
-/*
- * reads through the window. returns FALSE when the data must come from the
- * host instead: the entry was invalidated or the file cannot be mapped.
- */
+/* FALSE means the host must serve the read: the entry was invalidated or the file cannot be mapped. */
 BOOLEAN FsCacheRead(MIMEFS_CACHE *c, ULONG64 host_handle, ULONG64 offset, PUCHAR out, ULONG length, PULONG done)
 {
     *done = 0;
-    /* the file was written since the window was placed, and may be longer or shorter than the window: the host answers. */
+    /* the file was written since the window was made and may no longer match its size: the host answers. */
     if (__atomic_load_n(&c->FileId, __ATOMIC_ACQUIRE) == DETACHED)
         return FALSE;
     if (length < CACHE_SMALL_READ && !__atomic_load_n(&c->Window, __ATOMIC_ACQUIRE) &&
@@ -200,7 +197,7 @@ BOOLEAN FsCacheRead(MIMEFS_CACHE *c, ULONG64 host_handle, ULONG64 offset, PUCHAR
     return TRUE;
 }
 
-/* the window of an entry for a section, with a reference released by FsCacheClose. */
+/* takes a reference that FsCacheClose releases. */
 BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *c, ULONG64 host_handle, PULONG64 pa, PULONG64 size)
 {
     ExAcquireFastMutex(&g_lock);
@@ -209,7 +206,7 @@ BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *c, ULONG64 host_handle, PULONG64 pa, PULO
         c->References++;
         *pa = c->Window;
         *size = c->Size;
-        /* a section reads pages of it as the program runs: the host maps them meanwhile, not at the first read of each. */
+        /* a section touches pages as the program runs: the host maps them in the background, not at each first touch. */
         if (!c->Warmed) {
             c->Warmed = TRUE;
             HalHypercallUnlocked(MIME_HC_FS_WARM, c->Window, 0, 0, 0, 0, 0, nullptr);
@@ -219,7 +216,7 @@ BOOLEAN FsCacheGetWindow(MIMEFS_CACHE *c, ULONG64 host_handle, PULONG64 pa, PULO
     return ok;
 }
 
-/* a window for one section of a file opened for writing: not shared, so that nothing that changes the file takes it away. */
+/* a private window for one section of a file opened for writing, so nothing that changes the file takes it away. */
 BOOLEAN FsCacheMapPrivate(ULONG64 host_handle, BOOLEAN writable, PULONG64 pa)
 {
     for (int attempt = 0; attempt < 2; attempt++) {
@@ -229,7 +226,7 @@ BOOLEAN FsCacheMapPrivate(ULONG64 host_handle, BOOLEAN writable, PULONG64 pa)
         if (hs != MIME_HC_STATUS_NO_MEMORY)
             return FALSE;
         ExAcquireFastMutex(&g_lock);
-        trim(0); /* the window range is full, give back the idle ones */
+        trim(0); /* the window range is full, give back idle windows. */
         ExReleaseFastMutex(&g_lock);
     }
     return FALSE;
@@ -240,7 +237,7 @@ void FsCacheUnmapPrivate(ULONG64 pa)
     HalHypercallUnlocked(MIME_HC_FS_UNMAP, pa, 0, 0, 0, 0, 0, nullptr);
 }
 
-/* the host took pages of windows away: the entries that have them are dropped, and read the file through the host from now on. */
+/* the host reclaimed window pages: the entries using them are dropped and read through the host from now on. */
 void FsCacheWindowLost(ULONG64 begin, ULONG64 end)
 {
     ExAcquireFastMutex(&g_lock);

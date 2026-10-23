@@ -1,8 +1,4 @@
-/*
- * the status bar, msctls_statusbar32: a row of parts along the bottom of
- * its parent, each with text, an icon or owner drawn content, a simple
- * mode with one part, and a size grip.
- */
+/* the status bar, msctls_statusbar32: parts along the parent's bottom, a one part simple mode and a size grip. */
 #include "comctl32_private.h"
 
 #define SIMPLE_PART 255
@@ -53,7 +49,7 @@ static HFONT status_font(STATUS *s)
     return font;
 }
 
-/* the bar's height: the text or a small icon, its borders, at least the minimum asked for. */
+/* text or a small icon plus borders, at least the minimum asked for. */
 static int bar_height(STATUS *s)
 {
     HDC dc = GetDC(s->Hwnd);
@@ -90,7 +86,7 @@ static int grip_width(STATUS *s)
     return w;
 }
 
-/* follows the parent: along its bottom or top as the CCS styles say. */
+/* along the parent's bottom, or top, as the CCS styles say. */
 static void reposition(STATUS *s)
 {
     HWND parent = GetParent(s->Hwnd);

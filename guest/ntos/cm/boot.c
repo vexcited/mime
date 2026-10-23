@@ -1,8 +1,7 @@
 /*
- * specializes the template hives of the iso into this installation, as
- * windows setup does once and the kernel and session manager redo at each
- * boot: version data, identity of the machine and its user, the hardware
- * description and the processor environment variables.
+ * specializes the iso's template hives for this installation, as windows setup
+ * does once and the kernel and session manager redo at each boot: version data,
+ * machine and user identity, hardware description, processor variables.
  */
 #include "cm.h"
 
@@ -45,7 +44,7 @@ static void widen(PWCHAR out, ULONG count, PCSTR text)
     out[i] = 0;
 }
 
-/* the marketing name windows writes for an edition; windows 11 keeps the windows 10 names here. */
+/* windows 11 keeps the windows 10 product names here. */
 static PCWSTR product_name(PCWSTR edition)
 {
     static const struct {
@@ -122,7 +121,7 @@ static void identity(PCWSTR computer, PCWSTR user, PCWSTR sid)
     set(key, L"Sid", REG_BINARY, binary, sizeof(binary));
 }
 
-/* what winlogon writes when the user logs on: the volatile part of the environment. */
+/* what winlogon writes at logon: the volatile part of the environment. */
 static void volatile_environment(PCWSTR computer, PCWSTR user, PCWSTR sid)
 {
     WCHAR path[160] = {}, sub[160] = {}, text[160];
@@ -159,7 +158,7 @@ static void volatile_environment(PCWSTR computer, PCWSTR user, PCWSTR sid)
     set_sz(sub, L"SESSIONNAME", REG_SZ, L"Console");
 }
 
-/* HARDWARE\DESCRIPTION, built by the kernel at every boot. */
+/* HARDWARE\DESCRIPTION, rebuilt by the kernel at every boot. */
 static void hardware(void)
 {
     WCHAR identifier[96] = {}, vendor[48], name[64];
@@ -181,10 +180,7 @@ static void hardware(void)
     }
 }
 
-/*
- * the smbios data of the machine, the way the kernel fills the volatile
- * hardware key from the firmware tables at every boot.
- */
+/* the smbios data, as the kernel fills the volatile hardware key from the firmware tables at boot. */
 static void firmware(void)
 {
     static const PCWSTR bios = L"\\REGISTRY\\MACHINE\\HARDWARE\\DESCRIPTION\\System\\BIOS";
@@ -207,13 +203,13 @@ static void firmware(void)
     set_sz(bios, L"BaseBoardVersion", REG_SZ, L"1");
     set_sz(bios, L"SystemSerialNumber", REG_SZ, serial);
 
-    /* the model, also the source of win32_computersystem. */
+    /* the model, which win32_computersystem also reads. */
     static const PCWSTR sysinfo = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\SystemInformation";
     set_sz(sysinfo, L"SystemManufacturer", REG_SZ, manufacturer);
     set_sz(sysinfo, L"SystemProductName", REG_SZ, product);
 }
 
-/* the guid windows setup draws at installation time and keeps in the registry. */
+/* windows setup draws this guid at install time. */
 static void machine_guid(void)
 {
     static const WCHAR hex[] = L"0123456789abcdef";
@@ -228,7 +224,7 @@ static void machine_guid(void)
     set_sz(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Cryptography", L"MachineGuid", REG_SZ, text);
 }
 
-/* the year of a file time, in the proleptic Gregorian calendar. */
+/* in the proleptic Gregorian calendar. */
 static ULONG year_of(ULONG64 filetime)
 {
     LONG64 days = (LONG64)(filetime / 864000000000ull) - 134774 + 719468; /* days since 0000-03-01 */
@@ -241,8 +237,8 @@ static ULONG year_of(ULONG64 filetime)
 }
 
 /*
- * the zone of the machine, which setup asks for and the control panel changes: the rules of the Windows zone the host
- * is in, copied from the zone's key of the template into the key the system reads, as windows keeps them.
+ * the machine's time zone, which setup asks for: the rules of the Windows zone the host is in, copied from the
+ * template's zone key into the key the system reads.
  */
 static void time_zone_for_year(ULONG year)
 {
@@ -255,8 +251,8 @@ static void time_zone_for_year(ULONG year)
     if (!zone || !NT_SUCCESS(CmpLoadValues(zone)))
         return;
     /*
-     * the rules in force this year. the zone's own TZI holds the oldest rules of a zone that changed them, the years
-     * with rules of their own are values of its Dynamic DST subkey, and the last of them goes for every year after.
+     * the rules in force this year. for a zone that changed its rules, TZI holds the oldest ones, years with their
+     * own rules are values of Dynamic DST, and the last of them applies to every later year.
      */
     CM_VALUE *tzi = CmpFindValue(zone, L"TZI", 3);
     CM_NODE *dynamic = CmpFindChild(zone, L"Dynamic DST", 11);
@@ -289,8 +285,7 @@ static void time_zone_for_year(ULONG year)
         set(info, L"DaylightName", REG_SZ, daylight->Data, daylight->DataLength);
     set_sz(info, L"TimeZoneKeyName", REG_SZ, key);
     set_dword(info, L"DynamicDaylightTimeDisabled", 0);
-    /* what the host's offset is now: the bias of the zone and its standard or daylight bias. the kernel keeps it
-       up to date from here on, see ex/timezone.c. */
+    /* the host's current offset, the zone bias plus its standard or daylight bias. ex/timezone.c keeps it up to date. */
     set_dword(info, L"ActiveTimeBias", (ULONG)HalBootInfo->timezone_bias);
 }
 
@@ -299,7 +294,7 @@ static void time_zone(void)
     time_zone_for_year(year_of(KeBootFiletime));
 }
 
-/* the rules of a year the clock has come to, which may be other than the year before: windows' zones that changed theirs keep each year's. */
+/* a new year may have different rules: zones that changed theirs keep one set per year. */
 void CmRefreshTimeZoneRules(ULONG year)
 {
     ExAcquireFastMutex(&CmpLock);
@@ -308,8 +303,8 @@ void CmRefreshTimeZoneRules(ULONG year)
 }
 
 /*
- * the language of the installation, which the host chose: the system and user locale, the code pages that go with it
- * and the locale of the user's settings. The language of the installed system itself stays English.
+ * the installation language the host chose: system and user locale and their code pages. the language of the
+ * installed system itself stays English.
  */
 static void locale(PCWSTR sid)
 {

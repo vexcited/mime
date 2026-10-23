@@ -32,7 +32,6 @@ DECLSPEC_EXPORT DWORD WINAPI WNetGetConnectionA(LPCSTR local, LPSTR remote, LPDW
     return ERROR_NOT_CONNECTED;
 }
 
-/* the network resource of the use of a connection: the local name and the remote one, among fields that stay. */
 typedef struct {
     DWORD Scope, Type, DisplayType, Usage;
     LPWSTR LocalName, RemoteName, Comment, Provider;
@@ -40,7 +39,7 @@ typedef struct {
 
 #define ERROR_NO_NETWORK 1222L
 
-/* there is no network provider, so a connection is never made, and the connection of a name is never found. */
+/* with no network provider, connections are never made or found. */
 DECLSPEC_EXPORT DWORD WINAPI WNetUseConnectionW(HWND window, NETRESOURCE_W *resource, LPCWSTR password, LPCWSTR user,
                                                 DWORD flags, LPWSTR access_name, LPDWORD access_size, LPDWORD result)
 {

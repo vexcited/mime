@@ -1,8 +1,7 @@
 /*
- * the picture parameters, quantization matrices and slice control of directx video acceleration (dxva), as
- * programs fill them for a hardware decoder and the host reads them: byte layouts of the specifications, shared
- * by the host's decoder and the programs that test it. plain c, little endian, the bit fields of a group kept
- * in one integer of the width the specification gives them, so any compiler lays them out alike.
+ * DXVA picture parameters, quantization matrices and slice controls shared by hardware-decoder callers and
+ * the host. plain C, little-endian layouts from the specifications. each bit-field group uses one integer of
+ * the specified width for consistent compiler layout.
  */
 #ifndef MIME_DXVA_H
 #define MIME_DXVA_H
@@ -14,14 +13,14 @@
 typedef union DxvaPicEntry {
     struct {
         uint8_t index : 7;
-        uint8_t associated : 1; /* h.264: the entry is a long term reference or, in CurrPic, the bottom field */
+        uint8_t associated : 1; /* h.264: the entry is a long term reference or, in CurrPic, the bottom field. */
     };
     uint8_t byte;
 } DxvaPicEntry;
 
 #define DXVA_INVALID_ENTRY 0xFF
 
-/* ------------------------------------------------------------------ h.264 */
+/* ------------------------------------------------------------------ h.264. */
 
 typedef struct DxvaPicParamsH264 {
     uint16_t width_in_mbs_minus1;
@@ -63,7 +62,7 @@ typedef struct DxvaPicParamsH264 {
     uint8_t num_ref_idx_l1_active_minus1;
     uint8_t reserved8a;
     uint16_t frame_num_list[16];
-    uint32_t used_for_reference_flags; /* two bits per entry of ref_frame_list: top field, bottom field */
+    uint32_t used_for_reference_flags; /* two bits per entry of ref_frame_list: top field, bottom field. */
     uint16_t non_existing_frame_flags;
     uint16_t frame_num;
     uint8_t log2_max_frame_num_minus4;
@@ -93,9 +92,8 @@ typedef struct DxvaQmatrixH264 {
 _Static_assert(sizeof(DxvaQmatrixH264) == 224, "DXVA_Qmatrix_H264 is 224 bytes");
 
 /*
- * the short slice format (ConfigBitstreamRaw 2): where a slice, its start code included, is in the bitstream
- * buffer, and how much of it this buffer holds. bad_slice_chopping: bit 0, the slice goes on in the next buffer,
- * bit 1, it began in the previous one.
+ * short slice format for ConfigBitstreamRaw 2: bitstream offset includes the start code. bad_slice_chopping
+ * bit 0 means continuation in the next buffer; bit 1 means the slice began in the previous buffer.
  */
 typedef struct DxvaSliceShort {
     uint32_t bitstream_location;
@@ -105,7 +103,7 @@ typedef struct DxvaSliceShort {
 
 _Static_assert(sizeof(DxvaSliceShort) == 10, "DXVA_Slice_Short is 10 bytes, dxva.h packs its structures by one");
 
-/* ------------------------------------------------------------------ vp9 */
+/* ------------------------------------------------------------------ VP9. */
 
 typedef struct DxvaSegmentationVP9 {
     union {
@@ -129,7 +127,7 @@ typedef struct DxvaPicParamsVP9 {
     uint8_t profile;
     union {
         struct {
-            uint16_t frame_type : 1; /* 0 for a key frame */
+            uint16_t frame_type : 1; /* 0 for a key frame. */
             uint16_t show_frame : 1;
             uint16_t error_resilient_mode : 1;
             uint16_t subsampling_x : 1;
@@ -185,30 +183,28 @@ typedef struct DxvaPicParamsVP9 {
 
 _Static_assert(sizeof(DxvaPicParamsVP9) == 208, "DXVA_PicParams_VP9 is 208 bytes, packed by one as dxva.h is");
 
-/* ------------------------------------------------------------------ av1 */
+/* ------------------------------------------------------------------ AV1. */
 
 /*
- * the layouts follow the specification of dxva for av1, its picture entry, picture parameters and tile control,
- * sections 3 to 5, with the sizes checked against the header of the same names in the mingw sdk. the values
- * are the syntax elements of the av1 specification, resolved by the application: sizes of the frame, global
- * motion, loop filter deltas, segmentation and film grain are the ones the frame uses, not the coded deltas. the sdk
- * packs the header by one, so do these.
+ * DXVA AV1 layouts follow sections 3 to 5 of the specification, with sizes checked against the MinGW SDK
+ * headers and one-byte packing. frame sizes, global motion, loop filter deltas, segmentation and film grain
+ * contain resolved values, not coded deltas.
  */
 
-/* a reference of the frame: where it is in the reference map, its size and the global motion toward it. */
+/* reference map slot, size and global motion toward the reference. */
 typedef struct DxvaPicEntryAV1 {
     uint32_t width;
     uint32_t height;
     int32_t wmmat[6];
     union {
         struct {
-            uint8_t wminvalid : 1; /* an application sets it for the identity motion */
-            uint8_t wmtype : 2;    /* 0 identity, 1 translation, 2 rotation and zoom, 3 affine */
+            uint8_t wminvalid : 1; /* an application sets it for the identity motion. */
+            uint8_t wmtype : 2;    /* 0 identity, 1 translation, 2 rotation and zoom, 3 affine. */
             uint8_t reserved5 : 5;
         };
         uint8_t global_motion_flags;
     };
-    uint8_t index; /* the slot of RefFrameMapTextureIndex, 255 when none */
+    uint8_t index; /* the slot of RefFrameMapTextureIndex, 255 when none. */
     uint16_t reserved16;
 } __attribute__((packed)) DxvaPicEntryAV1;
 
@@ -218,8 +214,8 @@ typedef struct DxvaTilesAV1 {
     uint8_t cols;
     uint8_t rows;
     uint16_t context_update_id;
-    uint16_t widths[64];  /* in superblocks, the first cols are valid */
-    uint16_t heights[64]; /* the first rows are valid */
+    uint16_t widths[64];  /* in superblocks, the first cols are valid. */
+    uint16_t heights[64]; /* the first rows are valid. */
 } __attribute__((packed)) DxvaTilesAV1;
 
 typedef struct DxvaLoopFilterAV1 {
@@ -240,7 +236,7 @@ typedef struct DxvaLoopFilterAV1 {
     int8_t ref_deltas[8];
     int8_t mode_deltas[2];
     uint8_t delta_lf_res;
-    uint8_t frame_restoration_type[3]; /* 0 none, 1 wiener, 2 sgrproj, 3 switchable */
+    uint8_t frame_restoration_type[3]; /* 0 none, 1 wiener, 2 sgrproj, 3 switchable. */
     uint16_t log2_restoration_unit_size[3];
     uint16_t reserved16;
 } __attribute__((packed)) DxvaLoopFilterAV1;
@@ -260,7 +256,7 @@ typedef struct DxvaQuantizationAV1 {
     int8_t v_dc_delta_q;
     int8_t u_ac_delta_q;
     int8_t v_ac_delta_q;
-    uint8_t qm_y; /* 255 for all three when the frame has no quantizer matrix */
+    uint8_t qm_y; /* 255 for all three when the frame has no quantizer matrix. */
     uint8_t qm_u;
     uint8_t qm_v;
     uint16_t reserved16;
@@ -269,7 +265,7 @@ typedef struct DxvaQuantizationAV1 {
 typedef union DxvaCdefStrengthAV1 {
     struct {
         uint8_t primary : 6;
-        uint8_t secondary : 2; /* as coded, 0 to 3 */
+        uint8_t secondary : 2; /* as coded, 0 to 3. */
     };
     uint8_t combined;
 } DxvaCdefStrengthAV1;
@@ -299,7 +295,7 @@ typedef struct DxvaSegmentationAV1 {
         uint8_t control_flags;
     };
     uint8_t reserved24[3];
-    uint8_t feature_mask[8]; /* bit j of entry i is FeatureEnabled[i][j] */
+    uint8_t feature_mask[8]; /* bit j of entry i is FeatureEnabled[i][j]. */
     int16_t feature_data[8][8];
 } __attribute__((packed)) DxvaSegmentationAV1;
 
@@ -320,13 +316,13 @@ typedef struct DxvaFilmGrainAV1 {
         uint16_t control_flags;
     };
     uint16_t grain_seed;
-    uint8_t scaling_points_y[14][2]; /* value, scaling */
+    uint8_t scaling_points_y[14][2]; /* value, scaling. */
     uint8_t num_y_points;
     uint8_t scaling_points_cb[10][2];
     uint8_t num_cb_points;
     uint8_t scaling_points_cr[10][2];
     uint8_t num_cr_points;
-    uint8_t ar_coeffs_y[24]; /* the coded values, the coefficient plus 128 */
+    uint8_t ar_coeffs_y[24]; /* the coded values, the coefficient plus 128. */
     uint8_t ar_coeffs_cb[25];
     uint8_t ar_coeffs_cr[25];
     uint8_t cb_mult;
@@ -339,12 +335,12 @@ typedef struct DxvaFilmGrainAV1 {
 } __attribute__((packed)) DxvaFilmGrainAV1;
 
 typedef struct DxvaPicParamsAV1 {
-    uint32_t width; /* the upscaled width when the frame uses superres */
+    uint32_t width; /* the upscaled width when the frame uses superres. */
     uint32_t height;
-    uint32_t max_width; /* of the sequence */
+    uint32_t max_width; /* of the sequence. */
     uint32_t max_height;
     uint8_t curr_pic_texture_index;
-    uint8_t superres_denom; /* 8 without superres */
+    uint8_t superres_denom; /* 8 without superres. */
     uint8_t bitdepth;
     uint8_t seq_profile;
     DxvaTilesAV1 tiles;
@@ -354,13 +350,13 @@ typedef struct DxvaPicParamsAV1 {
             uint32_t intra_edge_filter : 1;
             uint32_t interintra_compound : 1;
             uint32_t masked_compound : 1;
-            uint32_t warped_motion : 1; /* allow_warped_motion of the frame */
+            uint32_t warped_motion : 1; /* allow_warped_motion of the frame. */
             uint32_t dual_filter : 1;
             uint32_t jnt_comp : 1;
-            uint32_t screen_content_tools : 1; /* allow_screen_content_tools of the frame */
+            uint32_t screen_content_tools : 1; /* allow_screen_content_tools of the frame. */
             uint32_t integer_mv : 1;           /* force_integer_mv */
-            uint32_t cdef : 1;                 /* enable_cdef of the sequence */
-            uint32_t restoration : 1;          /* enable_restoration of the sequence */
+            uint32_t cdef : 1;                 /* enable_cdef of the sequence. */
+            uint32_t restoration : 1;          /* enable_restoration of the sequence. */
             uint32_t film_grain : 1;           /* film_grain_params_present */
             uint32_t intrabc : 1;
             uint32_t high_precision_mv : 1;
@@ -372,7 +368,7 @@ typedef struct DxvaPicParamsAV1 {
             uint32_t skip_mode : 1;      /* skip_mode_present */
             uint32_t reduced_tx_set : 1;
             uint32_t superres : 1;
-            uint32_t tx_mode : 2; /* 0 only 4x4, 1 largest, 2 select */
+            uint32_t tx_mode : 2; /* 0 only 4x4, 1 largest, 2 select. */
             uint32_t use_ref_frame_mvs : 1;
             uint32_t enable_ref_frame_mvs : 1;
             uint32_t reference_frame_update : 1;
@@ -382,7 +378,7 @@ typedef struct DxvaPicParamsAV1 {
     } coding;
     union {
         struct {
-            uint8_t frame_type : 2; /* key, inter, intra only, switch */
+            uint8_t frame_type : 2; /* key, inter, intra only, switch. */
             uint8_t show_frame : 1;
             uint8_t showable_frame : 1;
             uint8_t subsampling_x : 1;
@@ -392,15 +388,15 @@ typedef struct DxvaPicParamsAV1 {
         };
         uint8_t flags;
     } format;
-    uint8_t primary_ref_frame; /* 7 when none */
+    uint8_t primary_ref_frame; /* 7 when none. */
     uint8_t order_hint;
-    uint8_t order_hint_bits; /* 0 without order hints */
+    uint8_t order_hint_bits; /* 0 without order hints. */
     DxvaPicEntryAV1 frame_refs[7];
-    uint8_t ref_frame_map_texture_index[8]; /* 255 for an empty slot */
+    uint8_t ref_frame_map_texture_index[8]; /* 255 for an empty slot. */
     DxvaLoopFilterAV1 loop_filter;
     DxvaQuantizationAV1 quantization;
     DxvaCdefAV1 cdef;
-    uint8_t interp_filter; /* 0 to 3 as coded, 4 switchable */
+    uint8_t interp_filter; /* 0 to 3 as coded, 4 switchable. */
     DxvaSegmentationAV1 segmentation;
     DxvaFilmGrainAV1 film_grain;
     uint32_t reserved32;
@@ -423,29 +419,25 @@ _Static_assert(offsetof(DxvaPicParamsAV1, tiles) == 20 && offsetof(DxvaPicParams
                "layout of DXVA_PicParams_AV1");
 _Static_assert(sizeof(DxvaPicParamsAV1) == 912, "DXVA_PicParams_AV1 is 912 bytes");
 
-/*
- * one tile, or one list of tiles, of the tile control buffer: where its data is in the bitstream buffer, which
- * is the data after tile_size_minus_1, where init_symbol starts.
- */
+/* tile or tile-list entry pointing into the bitstream after tile_size_minus_1, at init_symbol. */
 typedef struct DxvaTileAV1 {
     uint32_t data_offset;
     uint32_t data_size;
     uint16_t row;
     uint16_t column;
     uint16_t reserved16;
-    uint8_t anchor_frame; /* 255 outside a tile list obu */
+    uint8_t anchor_frame; /* 255 outside a tile list obu. */
     uint8_t reserved8;
 } __attribute__((packed)) DxvaTileAV1;
 
 _Static_assert(sizeof(DxvaTileAV1) == 16, "DXVA_Tile_AV1 is 16 bytes");
 
-/* ------------------------------------------------------------------ h.265 */
+/* ------------------------------------------------------------------ h.265. */
 
 /*
- * the picture parameters of the specification of dxva for h.265, main and main 10, 232 bytes packed by one. They are the
- * syntax elements of the sequence and picture parameter sets in use, and the reference picture set already resolved:
- * the lists of the reference pictures of the dpb, and for the picture the indices into that list of those it
- * predicts from. the slice control is the short form, DxvaSliceShort, one entry for each slice segment.
+ * DXVA H.265 Main and Main 10 picture parameters: 232 bytes with one-byte packing. sequence and picture
+ * syntax elements accompany the resolved DPB reference lists and indices of prediction references.
+ * DxvaSliceShort supplies one entry per slice segment.
  */
 typedef struct DxvaPicParamsHEVC {
     uint16_t pic_width_in_min_cbs;
@@ -476,9 +468,9 @@ typedef struct DxvaPicParamsHEVC {
     uint8_t num_ref_idx_l0_default_active_minus1;
     uint8_t num_ref_idx_l1_default_active_minus1;
     int8_t init_qp_minus26;
-    /* NumDeltaPocs of the set the slice header's own set predicts from, 0 when it does not predict. */
+    /* NumDeltaPocs of the predicted reference set, 0 without prediction. */
     uint8_t num_delta_pocs_of_ref_rps_idx;
-    /* the bits the slice header's own short term set takes, 0 when it names one of the sequence's. */
+    /* bits occupied by a slice-local short-term set, 0 for a sequence-defined set. */
     uint16_t num_bits_for_short_term_rps_in_slice;
     uint16_t reserved2;
     union {
@@ -540,11 +532,11 @@ typedef struct DxvaPicParamsHEVC {
     int8_t pps_tc_offset_div2;
     uint8_t log2_parallel_merge_level_minus2;
     int32_t curr_pic_order_cnt_val;
-    /* the reference pictures of the dpb: their surface indices, the long term ones marked. */
+    /* DPB surface indices, with long-term references marked. */
     DxvaPicEntry ref_pic_list[15];
     uint8_t reserved5;
     int32_t pic_order_cnt_val_list[15];
-    /* the pictures the picture predicts from, as indices into ref_pic_list, 0xFF for none. */
+    /* prediction references as ref_pic_list indices, 0xFF for none. */
     uint8_t ref_pic_set_st_curr_before[8];
     uint8_t ref_pic_set_st_curr_after[8];
     uint8_t ref_pic_set_lt_curr[8];

@@ -1,7 +1,6 @@
 /*
- * driver development interface of the mime kernel.
- * structures drivers allocate or touch directly keep the 64 bit windows
- * layout, so binary drivers can eventually load unmodified.
+ * driver interface of the mime kernel. structures drivers allocate or touch directly keep the 64-bit Windows layout,
+ * so binary drivers can eventually load unmodified.
  */
 #ifndef MIME_DDK_H
 #define MIME_DDK_H
@@ -299,9 +298,9 @@ typedef LARGE_INTEGER PHYSICAL_ADDRESS, *PPHYSICAL_ADDRESS;
 #define SL_RETURN_SINGLE_ENTRY 0x02
 #define SL_INDEX_SPECIFIED 0x04
 #define SL_CASE_SENSITIVE 0x80
-/* the create of a program in user mode, which the file system holds to the descriptor of the file. */
+/* a create from user mode, which the file system checks against the file's descriptor. */
 #define SL_FORCE_ACCESS_CHECK 0x01
-/* of mime: a create that only wants the attributes of the name, which the file system may answer without a handle. */
+/* mime private: a create that only wants the name's attributes, which the file system may answer without a handle. */
 #define SL_OPEN_STAT_ONLY 0x10
 
 #define SL_PENDING_RETURNED 0x01
@@ -349,8 +348,8 @@ typedef struct _IO_SECURITY_CONTEXT {
     PVOID AccessState;
     ACCESS_MASK DesiredAccess;
     ULONG FullCreateOptions;
-    PVOID SecurityDescriptor; /* Mime: the descriptor the creator offered, a self relative copy in pool, or NULL */
-    /* Mime: the rights a file system that checked the open gives the handle, in place of the access asked for */
+    PVOID SecurityDescriptor; /* mime: the creator's descriptor as a self relative pool copy, or NULL. */
+    /* mime: rights granted by a file system that checked the open, instead of the access asked for. */
     ACCESS_MASK GrantedAccess;
     BOOLEAN Checked;
 } IO_SECURITY_CONTEXT, *PIO_SECURITY_CONTEXT;
@@ -851,15 +850,15 @@ typedef struct _OBJECT_TYPE_INITIALIZER {
     NTSTATUS (*ParseProcedure)(PVOID object, PVOID type, ULONG attributes, PUNICODE_STRING complete_name,
                                PUNICODE_STRING remaining, PVOID context, PVOID *found);
     PVOID (*WaitObject)(PVOID object); /* dispatcher object to wait on, if not the body itself */
-    /* the generic rights as read, write, execute and all; objects of a type that has the last get a security descriptor */
+    /* generic rights as read, write, execute and all. objects of a type that sets the last get a security descriptor. */
     ULONG GenericMapping[4];
     /*
-     * objects whose descriptor is kept by their file system or the registry: the whole descriptor as a referenced
-     * blob, NULL for none, and a new whole one to store. Mime's SD_BLOB, see ntos.h.
+     * for objects whose descriptor lives in their file system or the registry: get the whole descriptor as a
+     * referenced blob, NULL for none, and store a new one. the blob is mime's SD_BLOB from ntos.h.
      */
     NTSTATUS (*GetSecurity)(PVOID object, PVOID *blob);
     NTSTATUS (*PutSecurity)(PVOID object, PVOID blob);
-    /* the rights a new handle really gets, after those the type implies are added, NULL for none. */
+    /* the rights a new handle actually gets after adding those the type implies, NULL for none. */
     ACCESS_MASK (*ImplyAccess)(ACCESS_MASK granted);
 } OBJECT_TYPE_INITIALIZER;
 
@@ -881,7 +880,7 @@ NTKERNELAPI NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCES
                            ACCESS_MASK *granted);
 NTKERNELAPI NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
                             ACCESS_MASK access, PVOID parse_context, PHANDLE handle);
-/* of mime: the descriptor of a window station or a desktop everyone at the console works at. */
+/* mime: sets the descriptor of a window station or desktop that everyone at the console works at. */
 NTKERNELAPI NTSTATUS ObSetInteractiveSecurity(PVOID object, BOOLEAN everyone);
 NTKERNELAPI NTSTATUS ObCheckOpenAccess(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mode, ACCESS_MASK *granted);
 NTKERNELAPI NTSTATUS ObAssignSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, PVOID parent, KPROCESSOR_MODE mode);
@@ -964,16 +963,16 @@ NTKERNELAPI NTSTATUS NTAPI ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS kla
                                                     PULONG returned);
 
 /*
- * mime paravirtual hardware access for drivers (the mime HAL). win32k uses
- * these to talk to the host display and input devices.
+ * mime paravirtual hardware access for drivers, the mime HAL. win32k uses it to talk to the host display and input
+ * devices.
  */
 NTKERNELAPI ULONG64 NTAPI HalMimeHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
                                            ULONG64 a5, ULONG64 a6, PULONG64 value);
-/* the same without the kernel lock held meanwhile, for calls that take the host long and need nothing of the kernel. */
+/* same, but without holding the kernel lock, for slow host calls that need nothing from the kernel. */
 NTKERNELAPI ULONG64 NTAPI HalMimeHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
                                                    ULONG64 a5, ULONG64 a6, PULONG64 value);
 NTKERNELAPI PKEVENT NTAPI HalMimeGetInputEvent(void);
-/* game controllers, from the host's input events: their hid and xusb devices (io/hid.c). */
+/* game controllers from host input events, as hid and xusb devices, in io/hid.c. */
 struct MimeInputEvent;
 NTKERNELAPI void NTAPI MimePadEvent(const struct MimeInputEvent *ev);
 /* a controller's hid collection for raw input: its interface path, preparsed data and current report. */
@@ -985,10 +984,10 @@ typedef struct MIME_PAD_HID {
     UCHAR Report[15];
 } MIME_PAD_HID;
 NTKERNELAPI BOOLEAN NTAPI MimePadHidInfo(ULONG host, MIME_PAD_HID *info);
-/* the host's cameras: arrivals and removals, and the frames of its streams (io/camera.c). */
+/* host cameras: arrivals, removals and stream frames, in io/camera.c. */
 NTKERNELAPI void NTAPI MimeCameraEvent(const struct MimeInputEvent *ev);
 NTKERNELAPI PKEVENT NTAPI HalMimeGetGpuEvent(void);
-/* copies that treat the pointer as user memory and recover from faults, for drivers. */
+/* copies that treat the pointer as user memory and survive faults, for drivers. */
 NTKERNELAPI NTSTATUS NTAPI MimeCopyFromUser(void *dst, const void *user_src, SIZE_T length);
 NTKERNELAPI NTSTATUS NTAPI MimeCopyToUser(void *user_dst, const void *src, SIZE_T length);
 NTKERNELAPI const void *NTAPI HalMimeGetBootInfo(void);

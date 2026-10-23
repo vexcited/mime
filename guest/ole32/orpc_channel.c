@@ -1,6 +1,6 @@
 /*
- * the channels: the calls of interface proxies sent to an object of another process, and the calls of the rpc runtime
- * dispatched to the stubs of this one.
+ * channels: interface proxy calls sent to objects in other processes, and rpc calls dispatched to this process's
+ * stubs.
  */
 #include "orpc.h"
 
@@ -24,7 +24,7 @@ typedef struct ORPCTHAT {
 } ORPCTHAT;
 #pragma pack(pop)
 
-/* what an rpc status of a failed call means to a caller of an object. */
+/* maps a failed call's rpc status to what the object's caller sees. */
 static HRESULT map_status(RPC_STATUS status)
 {
     if (status < 0)
@@ -34,7 +34,7 @@ static HRESULT map_status(RPC_STATUS status)
     return HRESULT_FROM_WIN32((ULONG)status);
 }
 
-/* ------------------------------------------------------------------ the calls */
+/* ------------------------------------------------------------------ calls */
 
 typedef struct OCALL {
     RPC_MESSAGE Rpc;
@@ -65,7 +65,7 @@ static OCALL *call_begin(OXID_ENTRY *server, const GUID *ipid, REFIID iid, ULONG
     return call;
 }
 
-/* sends the request and waits for the reply, serving the calls to the apartment of the thread meanwhile. */
+/* serves calls to the thread's apartment while waiting for the reply. */
 static HRESULT call_send(OCALL *call, ULONG body_size, BYTE **reply, ULONG *reply_size)
 {
     ORPCTHIS *head = call->Rpc.Buffer;
@@ -84,7 +84,7 @@ static HRESULT call_send(OCALL *call, ULONG body_size, BYTE **reply, ULONG *repl
     if (waits)
         I_RpcMimeSetWaitFunction((DWORD(WINAPI *)(DWORD, const HANDLE *, DWORD, void *))previous[0], previous[1], nullptr);
     if (status) {
-        /* the request buffer is gone with the call. */
+        /* the request buffer went away with the call. */
         call->Rpc.Buffer = nullptr;
         return map_status(status);
     }
@@ -127,7 +127,7 @@ HRESULT OrpcRemCall(OXID_ENTRY *server, ULONG method, const BYTE *in, ULONG in_s
     return hr;
 }
 
-/* ------------------------------------------------------------------ the channel of an interface proxy */
+/* ------------------------------------------------------------------ interface proxy channel */
 
 typedef struct CHANNEL {
     IRpcChannelBuffer2 Interface;
@@ -164,7 +164,7 @@ static ULONG STDMETHODCALLTYPE ch_release(IRpcChannelBuffer2 *This)
     return (ULONG)refs;
 }
 
-/* the state of a call lives in the message the proxy owns, in the slot the runtime of rpc keeps for itself. */
+/* the call state lives in the proxy's message, in the slot the rpc runtime reserves for itself. */
 #define CALL_OF(message) (*(OCALL **)&(message)->reserved2[0])
 
 static HRESULT STDMETHODCALLTYPE ch_get_buffer(IRpcChannelBuffer2 *This, RPCOLEMESSAGE *message, REFIID iid)
@@ -248,7 +248,7 @@ HRESULT OrpcChannelCreate(OXID_ENTRY *server, const GUID *ipid, REFIID iid, IRpc
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the server side of a call */
+/* ------------------------------------------------------------------ server side of a call */
 
 typedef struct SCHANNEL {
     IRpcChannelBuffer2 Interface;
@@ -327,11 +327,11 @@ static void run_call(void *context)
         t->OrpcCall = saved;
 }
 
-/* an rpc call that carries a call to an object: found by its ipid, run in the apartment of the object. */
+/* the target object is found by its ipid and the call runs in its apartment. */
 void WINAPI OrpcDispatch(PRPC_MESSAGE rpc)
 {
     UUID ipid;
-    /* the threads of the rpc runtime are threads of the multithreaded apartment, as com has them. */
+    /* rpc runtime threads belong to the multithreaded apartment, as in COM. */
     OLE_THREAD *thread = OleThreadState(TRUE);
     if (thread && !thread->ComInits)
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);

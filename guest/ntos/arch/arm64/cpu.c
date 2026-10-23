@@ -1,5 +1,5 @@
 /*
- * processor identification from the arm64 id registers, the source of the
+ * processor identification from the arm64 id registers, used for the
  * processor features, SYSTEM_INFO and the CentralProcessor registry key.
  */
 #include "../../ntos.h"
@@ -13,8 +13,8 @@ void KiReadProcessorIds(void)
 {
     KI_PROCESSOR_IDS *p = &KiProcessorIds;
     p->Midr = READ_ID(midr_el1);
-    /* the machine the guest presents itself as; the boot information is the
-     * authority, so the identity is the same whatever the framework does. */
+    /* the boot information decides the machine identity, so it stays the same
+     * whatever the framework does. */
     if (HalBootInfo->cpu_midr)
         p->Midr = HalBootInfo->cpu_midr;
     p->Pfr0 = READ_ID(s3_0_c0_c4_0);
@@ -37,7 +37,7 @@ static ULONG field(ULONG64 reg, int shift)
     return (ULONG)(reg >> shift) & 0xF;
 }
 
-/* sets the PF_* features of KUSER_SHARED_DATA the way windows derives them. */
+/* derives the KUSER_SHARED_DATA PF_* features like windows does. */
 void KiSetProcessorFeatures(BOOLEAN *features)
 {
     const KI_PROCESSOR_IDS *p = &KiProcessorIds;
@@ -53,7 +53,7 @@ void KiSetProcessorFeatures(BOOLEAN *features)
     features[45] = field(p->Isar1, 20) != 0;                           /* PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE */
 }
 
-/* the vendor name windows shows for an implementer code. */
+/* the vendor name windows shows for the implementer code. */
 PCSTR KiProcessorVendor(void)
 {
     switch ((KiProcessorIds.Midr >> 24) & 0xFF) {
@@ -66,7 +66,7 @@ PCSTR KiProcessorVendor(void)
     }
 }
 
-/* the armv8 family, as in the processor identifier. */
+/* the armv8 family, as shown in the processor identifier. */
 USHORT KiProcessorLevel(void)
 {
     return 8;
@@ -88,7 +88,7 @@ void KiFormatProcessorIdentifier(PWCHAR text, ULONG chars)
                (ULONG)(KiProcessorIds.Midr & 0xF));
 }
 
-/* the id registers windows copies into the CentralProcessor keys, named by their encoding. */
+/* windows copies these id registers into the CentralProcessor keys, named by their encoding. */
 void KiSetProcessorRegistryValues(PCWSTR key, KI_SET_REGISTRY_VALUE set)
 {
     static const struct {
@@ -113,7 +113,7 @@ void KiSetProcessorRegistryValues(PCWSTR key, KI_SET_REGISTRY_VALUE set)
 
 UCHAR KiProcessorSmbiosType(void)
 {
-    return 0xC4; /* arm 64 bit */
+    return 0xC4; /* arm 64-bit. */
 }
 
 PCSTR KiProcessorSmbiosManufacturer(void)

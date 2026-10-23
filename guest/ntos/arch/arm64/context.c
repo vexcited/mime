@@ -17,7 +17,7 @@ void KiSwapContext(PKTHREAD old, PKTHREAD next)
     KiSwapContextInternal(&old->KernelSp, next->KernelSp);
 }
 
-/* wfi ends on a pending interrupt even while masked, so the lock is taken back before handling it. */
+/* wfi wakes on a pending interrupt even while masked, so the lock is retaken before handling it. */
 void KiIdleWait(void)
 {
     KiReleaseKernelLock();
@@ -55,7 +55,7 @@ void KiInitializeUserFrame(PKTRAP_FRAME frame, ULONG64 pc, ULONG64 sp, ULONG64 a
     frame->X[1] = arg1;
     frame->X[18] = teb;
     frame->Spsr = PSR_MODE_EL0;
-    frame->Flags = KTRAP_FLAG_FP_SAVED; /* start with zeroed fp state */
+    frame->Flags = KTRAP_FLAG_FP_SAVED; /* start with zeroed fp state. */
 }
 
 void KiInitializeUserContext(PCONTEXT context, ULONG64 pc, ULONG64 sp, ULONG64 arg0, ULONG64 arg1, ULONG64 teb)
@@ -84,7 +84,7 @@ void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *ctx, ULONG flags)
         ctx->Fpcr = frame->Fpcr;
         ctx->Fpsr = frame->Fpsr;
     }
-    /* a software exception raised from a call has the return address for its pc, which only the caller knows. */
+    /* a software exception raised from a call uses the return address as pc, which only the caller knows. */
     if ((flags & CONTEXT_UNWOUND_TO_CALL) && (frame->Flags & KTRAP_FLAG_UNWOUND_TO_CALL))
         ctx->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
 }

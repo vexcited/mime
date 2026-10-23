@@ -1,9 +1,8 @@
 /*
- * win event hooks. a hook of this process hears the events this process
- * raises with NotifyWinEvent, called at once on the raising thread, which
- * is what an in context hook gets on windows; an out of context hook is
- * served the same way here. events of other processes and the system's
- * own events are not delivered, as there is no event relay yet.
+ * win event hooks. a hook only hears events this process raises with
+ * NotifyWinEvent, called at once on the raising thread like an in context
+ * hook on windows; out of context hooks are served the same way. events of
+ * other processes and system events are not delivered, there is no relay yet.
  */
 #include "user32_private.h"
 
@@ -72,7 +71,7 @@ WINUSERAPI BOOL WINAPI UnhookWinEvent(HWINEVENTHOOK hook)
     return TRUE;
 }
 
-/* the matching hooks are copied first, so a callback may unhook or hook again. */
+/* matching hooks are copied first, so a callback may unhook or hook again. */
 WINUSERAPI void WINAPI NotifyWinEvent(DWORD event, HWND hwnd, LONG object, LONG child)
 {
     if (!g_hooks)

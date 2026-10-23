@@ -1,6 +1,3 @@
-/*
- * cfgmgr32 internals shared by its source files: the device nodes of the process and the requests to the kernel.
- */
 #ifndef MIME_CFGMGR32_PRIVATE_H
 #define MIME_CFGMGR32_PRIVATE_H
 

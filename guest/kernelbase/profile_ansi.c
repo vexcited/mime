@@ -1,7 +1,6 @@
 /*
- * the ANSI entry points of the profile functions: arguments go to wide characters through the ANSI code page,
- * the work is the wide functions', and the results come back through the same code page. Windows' own versions
- * share one engine with the wide ones, so the results are the same.
+ * ANSI entry points of the profile functions: arguments and results go through the ANSI code page around the wide
+ * functions. Windows shares one engine between both forms, so the results match.
  */
 #include "kernelbase_private.h"
 
@@ -27,7 +26,7 @@ static void free_arguments(WIDE_ARGUMENTS *w)
     KbFree(w->Filename);
 }
 
-/* converts the optional arguments; an argument that is given and cannot be converted fails with its error. */
+/* a given argument that cannot be converted fails with its error. */
 static BOOL convert_arguments(WIDE_ARGUMENTS *w, LPCSTR section, LPCSTR key, LPCSTR fallback, LPCSTR filename)
 {
     memset(w, 0, sizeof(*w));
@@ -42,7 +41,7 @@ static BOOL convert_arguments(WIDE_ARGUMENTS *w, LPCSTR section, LPCSTR key, LPC
     return TRUE;
 }
 
-/* the length in bytes up to a limit that does not cut a double byte character in two. */
+/* shortens length so no double byte character is cut in two. */
 static DWORD whole_characters(const char *text, DWORD length)
 {
     DWORD at = 0;
@@ -82,7 +81,7 @@ DWORD WINAPI GetPrivateProfileStringA(LPCSTR section, LPCSTR key, LPCSTR fallbac
     if (bytes > 0) {
         length = bytes - (list ? 2 : 1);
     } else {
-        /* too long for the buffer: what fits, cut where a character ends. */
+        /* too long: copy what fits, cut on a character boundary. */
         int needed = WideCharToMultiByte(CP_ACP, 0, wide, chars + (list ? 2 : 1), nullptr, 0, nullptr, nullptr);
         PSTR all = needed > 0 ? KbAlloc(needed) : nullptr;
         if (all) {
@@ -174,7 +173,7 @@ DWORD WINAPI GetPrivateProfileSectionA(LPCSTR section, LPSTR out, DWORD size, LP
     return length;
 }
 
-/* a list of ANSI strings ended by an empty one, as wide characters. */
+/* the list ends with an empty string. */
 static PWSTR list_to_wide(LPCSTR lines)
 {
     SIZE_T length = 0;

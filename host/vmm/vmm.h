@@ -1,7 +1,4 @@
-/*
- * mime virtual machine monitor, built on Hypervisor.framework on macos
- * and kvm on linux.
- */
+/* VM monitor using Hypervisor.framework on macOS and KVM on Linux. */
 #ifndef MIME_VMM_H
 #define MIME_VMM_H
 
@@ -23,7 +20,7 @@
 
 typedef struct MimeVm MimeVm;
 
-/* timezone.c: the host's zone and the Windows zone it is. */
+/* host time zone and corresponding Windows registry name. */
 bool mime_host_time_zone(char *out, size_t size);
 const char *mime_windows_time_zone(const char *iana);
 
@@ -33,7 +30,7 @@ typedef struct MimeVcpu {
 #ifdef __linux__
     int fd;
     struct kvm_run *run;
-    volatile bool running; /* in KVM_RUN, where a signal kicks it out */
+    volatile bool running; /* in KVM_RUN, where a signal kicks it out. */
     uint64_t exits_io;
     uint64_t exits_intr;
     uint64_t exits_halt;
@@ -68,7 +65,7 @@ typedef struct MimeFsHandle {
     bool is_dir;
     bool delete_on_close;
     char *host_path;
-    void *dir_entries; /* cached directory listing */
+    void *dir_entries; /* cached directory listing. */
     uint32_t dir_count;
 } MimeFsHandle;
 
@@ -80,17 +77,17 @@ typedef struct MimeFsHandle {
 #endif
 
 /* guest physical memory filled on first touch, see lazy.c. */
-#define MIME_LAZY_PAGE 0x4000u   /* the host page size */
-#define MIME_LAZY_CHUNK 0x4000u /* filled per fault */
+#define MIME_LAZY_PAGE 0x4000u   /* the host page size. */
+#define MIME_LAZY_CHUNK 0x4000u /* filled per fault. */
 
 typedef struct MimeLazyRegion {
     uint64_t ipa;
     uint64_t size;
-    uint8_t *host;      /* anonymous memory behind the region */
-    int fd;             /* source file, owned, or -1 */
-    const uint8_t *src; /* source memory when there is no file */
+    uint8_t *host;      /* anonymous memory behind the region. */
+    int fd;             /* source file, owned, or -1. */
+    const uint8_t *src; /* source memory when there is no file. */
     uint64_t src_size;
-    uint64_t *filled; /* one bit per chunk */
+    uint64_t *filled; /* one bit per chunk. */
     uint64_t filled_bytes;
     uint64_t last_use;
 } MimeLazyRegion;
@@ -104,10 +101,10 @@ typedef struct MimeLazyRegion {
 typedef struct MimeFileWindow {
     uint64_t ipa;
     uint64_t size;
-    uint64_t id;       /* told apart from the window another file has at the same address later */
-    int fd;            /* a duplicate of the file's descriptor, to see it shortened, -1 when there is none */
-    int watch;         /* its inotify watch */
-    uint64_t lost_from; /* bytes from the start of the window whose pages were given up, size when none were */
+    uint64_t id;       /* distinguishes later windows reusing this address. */
+    int fd;            /* duplicated descriptor for detecting truncation, or -1. */
+    int watch;         /* its inotify watch. */
+    uint64_t lost_from; /* offset of the first replaced page, or size if none. */
 } MimeFileWindow;
 #endif
 
@@ -125,14 +122,14 @@ struct MimeVm {
 #ifdef __linux__
     int kvm_fd;
     int vm_fd;
-    int irq_fd; /* eventfd raising the host interrupt through kvm's irqfd */
+    int irq_fd; /* eventfd raising the host interrupt through KVM's irqfd. */
     uint32_t next_slot;
     uint32_t free_slots[MIME_VMM_MAX_WINDOWS];
     uint32_t free_slot_count;
     uint64_t tsc_hz;
-    bool huge_pages; /* ram is backed by transparent huge pages */
+    bool huge_pages; /* RAM is backed by transparent huge pages. */
 #endif
-    /* the framework fixes the topology once a vcpu runs: every one is created before the first runs. */
+    /* the framework fixes the topology once a vCPU runs: every one is created before the first runs. */
     pthread_cond_t vcpu_cond;
     uint32_t vcpus_created;
 
@@ -148,20 +145,20 @@ struct MimeVm {
     uint32_t input_head, input_tail;
 
     pthread_mutex_t fs_lock;
-    pthread_mutex_t window_lock; /* the windows below on linux, where placing one is a slow change of the memory map */
+    pthread_mutex_t window_lock; /* separate Linux window lock for slow memory map changes. */
     MimeFsHandle *fs_handles[MIME_VMM_MAX_FS_HANDLES];
 #ifdef __linux__
-    MimeFileWindow windows[MIME_VMM_MAX_WINDOWS]; /* host files of MIME_HC_FS_MAP, sorted by ipa */
+    MimeFileWindow windows[MIME_VMM_MAX_WINDOWS]; /* host files of MIME_HC_FS_MAP, sorted by ipa. */
 #else
     MimeLazyRegion rom;
-    MimeLazyRegion windows[MIME_VMM_MAX_WINDOWS]; /* host files of MIME_HC_FS_MAP, sorted by ipa */
+    MimeLazyRegion windows[MIME_VMM_MAX_WINDOWS]; /* host files of MIME_HC_FS_MAP, sorted by ipa. */
 #endif
 #ifdef __linux__
-    uint8_t *window_host;        /* the host addresses behind the window range, files are mapped over them */
-    uint64_t window_registered;  /* bytes of the range from its start that have memory slots */
+    uint8_t *window_host;        /* the host addresses behind the window range, files are mapped over them. */
+    uint64_t window_registered;  /* bytes of the range from its start that have memory slots. */
 #endif
     uint32_t window_count;
-    uint64_t window_bytes; /* filled bytes of every window */
+    uint64_t window_bytes; /* filled bytes of every window. */
     uint64_t window_clock;
 
     char host_root_label[8];
@@ -171,7 +168,7 @@ struct MimeVm {
 uint64_t mime_unix_to_filetime(struct timespec ts);
 void mime_vm_init_boot(MimeVm *vm);
 
-/* vm.c on macos, linux/kvm.c on linux. */
+/* vm.c on macOS, linux/kvm.c on linux. */
 void mime_host_volume_label(char *out, size_t size);
 /* sleeps while the guest word at host address word holds value, at most timeout_ns; wakes every sleeper. */
 void mime_host_wait_word(uint32_t *word, uint32_t value, uint64_t timeout_ns);
@@ -181,7 +178,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size);
 bool mime_vm_start(MimeVm *vm);
 void mime_vm_request_stop(MimeVm *vm, int exit_code);
 void mime_vm_destroy(MimeVm *vm);
-/* the machine has stopped and the process ends: what the host runs for the guest lets go of its memory. */
+/* releases host references to guest memory after the machine stops. */
 void mime_vm_shutdown(MimeVm *vm);
 void *mime_vm_phys(MimeVm *vm, uint64_t pa, uint64_t len);
 void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len);
@@ -197,7 +194,7 @@ bool mime_vm_load_kernel(MimeVm *vm);
 bool mime_vcpu_start(MimeVcpu *vcpu);
 void mime_vcpu_kick(MimeVcpu *vcpu);
 void mime_vcpu_request_dump(MimeVm *vm);
-/* starts or stops sampling where the vcpus run; async signal safe. */
+/* starts or stops sampling where the vCPUs run; async signal safe. */
 void mime_vcpu_toggle_profile(void);
 bool mime_vcpu_start_secondary(MimeVm *vm, uint32_t index, uint64_t pc, uint64_t x0, uint64_t sp);
 
@@ -206,7 +203,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8]);
 
 /* fs.c */
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
-/* fswatch.c: changes of the host's programs to the directories the guest watches, on Linux, see there. */
+/* Linux directory notifications from host programs; see fswatch.c. */
 enum {
     MIME_FSWATCH_CREATE,
     MIME_FSWATCH_REMOVE,
@@ -220,11 +217,13 @@ enum {
 uint64_t mime_fswatch_add(MimeVm *vm, const char *path, uint32_t id, uint32_t filter, bool tree);
 void mime_fswatch_remove(uint32_t id);
 uint64_t mime_fswatch_fetch(MimeVm *vm, uint64_t pa, uint64_t capacity, uint64_t *bytes);
-/* the host is about to change an entry for the guest: the events that follow are the guest's own and told already. */
+/* records an imminent guest change to suppress its host notification echo. */
 void mime_fswatch_self(const char *path, int kind);
 void mime_fswatch_stop(void);
-/* dirnames.c: whether two names are the same but for case, as windows compares them, and the spelling a directory has
-   for a name that differs only in case. *known is false when the directory could not be asked and must be read. */
+/*
+ * case-insensitive name comparison and directory spelling lookup. *known is false if the directory could not
+ * be queried and must be read.
+ */
 bool mime_names_same(const char *a, const char *b);
 bool mime_dir_spelling(const char *dir, const char *component, char *spelling, bool *known);
 void mime_fs_close_all(MimeVm *vm);
@@ -236,7 +235,7 @@ uint64_t mime_window_unmap(MimeVm *vm, uint64_t ipa);
 void mime_window_unmap_all(MimeVm *vm);
 #ifdef __linux__
 void mime_window_warm(MimeVm *vm, uint64_t ipa);
-/* the pages of windows that the host's own changes to files took away, told to the guest before they are given up. */
+/* reports pages lost to host file changes before releasing them. */
 uint64_t mime_window_lost(MimeVm *vm, uint64_t pa);
 /* the fatal signal handler, for a bus error on a window: the page is replaced by zeros and true is returned. */
 bool mime_window_bus_fault(void *address);

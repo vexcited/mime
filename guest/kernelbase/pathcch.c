@@ -1,6 +1,6 @@
 /*
- * the PathCch functions: bounded path manipulation every legacy shlwapi path function is built on.
- * only the backslash separates components unless PATHCCH_CANONICALIZE_SLASHES asks for both.
+ * the PathCch functions, the bounded path core every legacy shlwapi path function is built on. Only the backslash
+ * separates components unless PATHCCH_CANONICALIZE_SLASHES asks for both.
  */
 #include "shlwapi_kb.h"
 
@@ -41,7 +41,7 @@ static BOOL is_volume_path(LPCWSTR path)
     return is_extended(path) && prefix_nocase(path + 4, L"Volume") && is_guid(path + 10);
 }
 
-/* the characters a unc path skips before its server: 2, 8 for "\\?\UNC\", 0 when it is no unc path. */
+/* characters before the server: 2, or 8 for "\\?\UNC\", or 0 when the path is not unc. */
 static SIZE_T unc_prefix(LPCWSTR path)
 {
     if (path[0] != L'\\' || path[1] != L'\\')
@@ -408,8 +408,8 @@ static BOOL out_is_root(PATH_OUT *out)
     return PathCchIsRoot(out->start);
 }
 
-/* "." and ".." resolved segment by segment the way kernelbase does it: ".." climbs to the previous
-   backslash of what was written, never above a root, and a path that empties becomes "\". */
+/* "." and ".." are resolved segment by segment: ".." climbs to the previous backslash written, never above a
+   root, and a path that empties becomes "\". */
 LWSTDAPI HRESULT WINAPI PathCchCanonicalizeEx(LPWSTR result, SIZE_T size, LPCWSTR path, ULONG flags)
 {
     if (!size || size > 0x7FFFFFFF) {

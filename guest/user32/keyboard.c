@@ -1,13 +1,11 @@
 /*
- * the keyboard layout: the US english layout, the only one the host
- * delivers, for key and character translation. windows does this in
- * win32k with the loaded layout tables; the tables here hold the same
- * KBDUS mappings.
+ * key and character translation for the US english layout, the only one the host delivers. the tables hold the same
+ * KBDUS mappings windows loads in win32k.
  */
 #include "user32_private.h"
 
 #define US_LAYOUT ((HKL)(ULONG_PTR)0x04090409)
-#define EXT 0x100 /* extended scan code, sent with the E0 prefix */
+#define EXT 0x100 /* extended scan code, sent with the E0 prefix. */
 
 /* virtual key of each set 1 scan code without the E0 prefix. */
 static constexpr BYTE g_scan_to_vk[0x80] = {
@@ -54,12 +52,12 @@ static const EXT_KEY g_extended[] = {
 /* numeric keypad keys share their scan codes with the navigation keys. */
 static constexpr BYTE g_numpad_scan[10] = {0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49};
 
-/* characters of the printable keys: unshifted and shifted. */
+/* characters of the printable keys, unshifted and shifted. */
 typedef struct CHAR_KEY {
     BYTE Vk;
     WCHAR Normal;
     WCHAR Shifted;
-    WCHAR Control; /* with ctrl, 0 for none */
+    WCHAR Control; /* with ctrl, 0 for none. */
 } CHAR_KEY;
 
 static const CHAR_KEY g_chars[] = {
@@ -139,7 +137,7 @@ static UINT scan_to_vk(UINT scan, BOOL distinguish)
     return distinguish ? vk : generic_vk(vk);
 }
 
-/* the character a key produces with a keyboard state, 0 for none. */
+/* the character a key produces for a keyboard state, or 0. */
 static WCHAR key_char(UINT vk, const BYTE *state)
 {
     BOOL shift = state && (state[VK_SHIFT] & 0x80);
@@ -161,7 +159,7 @@ static WCHAR key_char(UINT vk, const BYTE *state)
         return 0;
     if (ctrl) {
         if (vk == '2' && shift)
-            return 0; /* ctrl shift 2 is nul, reported as no character */
+            return 0; /* ctrl shift 2 is nul, reported as no character. */
         if (vk == '6' && shift)
             return 0x1E;
         if (vk == VK_OEM_MINUS && shift)
@@ -356,7 +354,7 @@ WINUSERAPI int WINAPI GetKeyboardLayoutList(int count, HKL *list)
     return 1;
 }
 
-/* the keyboard win32k reports to raw input: an enhanced 101/102 key one. */
+/* the keyboard win32k reports to raw input: an enhanced 101/102 key keyboard. */
 WINUSERAPI int WINAPI GetKeyboardType(int which)
 {
     switch (which) {
@@ -401,9 +399,8 @@ WINUSERAPI HKL WINAPI LoadKeyboardLayoutW(LPCWSTR name, UINT flags)
 }
 
 /*
- * injected input. a key press that produces a character also produces the
- * character, as the keyboard driver path does for host keys: the kernel
- * delivers characters as their own input, see NtUserTranslateMessage.
+ * like host keys on the keyboard driver path, an injected key press that produces a character also delivers that
+ * character, since the kernel sends characters as their own input. see NtUserTranslateMessage.
  */
 WINUSERAPI UINT WINAPI SendInput(UINT count, LPINPUT inputs, int size)
 {

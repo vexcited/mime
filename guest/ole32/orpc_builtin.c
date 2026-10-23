@@ -1,13 +1,12 @@
 /*
- * the proxies and stubs of the interfaces that ole32 itself knows how to carry between processes: IClassFactory, which
- * every local server is reached through, and INotificationActivationCallback, which a toast is activated through. They
- * are written at build time by tools/ndrgen.py from builtin_ps.py, as midl writes a proxy file of stubless proxies; the
- * interpreter of rpcrt4 does the rest.
+ * proxies and stubs for the interfaces ole32 itself carries between processes, such as IClassFactory, through which
+ * every local server is reached, and INotificationActivationCallback, through which toasts are activated. they come
+ * from a generated proxy file of stubless proxies like midl writes, and rpcrt4's interpreter does the rest.
  */
 #include "orpc.h"
 #include <mime/win32/notificationactivationcallback.h>
 
-/* the routines the generated proxy file names: those that stand in on the wire for the methods they are the local form of. */
+/* named by the generated proxy file: local forms of methods whose wire form differs. */
 HRESULT STDMETHODCALLTYPE ISequentialStream_Read_Proxy(ISequentialStream *This, void *pv, ULONG cb, ULONG *read);
 HRESULT STDMETHODCALLTYPE ISequentialStream_Write_Proxy(ISequentialStream *This, const void *pv, ULONG cb, ULONG *written);
 HRESULT STDMETHODCALLTYPE IStream_Seek_Proxy(IStream *This, LARGE_INTEGER move, DWORD origin, ULARGE_INTEGER *position);
@@ -36,7 +35,7 @@ static BOOL builtin(REFIID iid)
     return orpcbuiltin_IID_Lookup(iid, &index) != 0;
 }
 
-/* ------------------------------------------------------------------ the methods that have a wire form of their own */
+/* ------------------------------------------------------------------ methods with their own wire form */
 
 HRESULT STDMETHODCALLTYPE ISequentialStream_Read_Proxy(ISequentialStream *This, void *pv, ULONG cb, ULONG *read)
 {
@@ -79,7 +78,7 @@ HRESULT STDMETHODCALLTYPE IStream_CopyTo_Proxy(IStream *This, IStream *to, ULARG
     return hr;
 }
 
-/* An enumerator may be asked for one item with no place to say how many came. */
+/* a caller asking for one item may omit the fetched count. */
 #define ENUM_NEXT(iface, type)                                                                                         \
     HRESULT STDMETHODCALLTYPE iface##_Next_Proxy(iface *This, ULONG celt, type *items, ULONG *fetched)                  \
     {                                                                                                                  \
@@ -115,7 +114,7 @@ HRESULT STDMETHODCALLTYPE ILockBytes_WriteAt_Proxy(ILockBytes *This, ULARGE_INTE
     return hr;
 }
 
-/* The two reserved arguments of a storage are for the future: anything in them is refused, and none is sent. */
+/* the reserved storage arguments must be empty and are never sent. */
 HRESULT STDMETHODCALLTYPE IStorage_OpenStream_Proxy(IStorage *This, const OLECHAR *name, void *reserved1, DWORD mode,
                                                     DWORD reserved2, IStream **stream)
 {
@@ -162,9 +161,9 @@ HRESULT OrpcBuiltinFactory(REFIID iid, IPSFactoryBuffer **factory)
 }
 
 /*
- * The interfaces of automation and of the connection points are marshaled by the classes oleaut32 has for them, the way
- * windows registers them: the proxy and stub class of an interface of a type library is registered with it, and these are
- * the ones a system registers by itself. The classes are found in oleaut32 when nothing registers a server for them.
+ * automation and connection point interfaces are marshaled by oleaut32's classes, as windows registers them: a type
+ * library interface's proxy stub class is registered with the library, and these are the ones the system registers
+ * itself. they are found in oleaut32 when no server is registered for them.
  */
 #define OA_CLASS(n) {0x00020420 + (n), 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}}
 
@@ -199,7 +198,7 @@ BOOL OrpcAutomationClass(REFIID iid, CLSID *clsid)
     return FALSE;
 }
 
-/* the dll of a class that windows registers and this system does not need to: the proxies of automation. */
+/* windows registers the automation proxy classes, here oleaut32 serves them unregistered. */
 BOOL OrpcBuiltinServer(REFCLSID clsid, const WCHAR **dll)
 {
     if (clsid->Data1 >= 0x00020420 && clsid->Data1 <= 0x00020426 && !clsid->Data2 && !clsid->Data3 &&
@@ -210,9 +209,9 @@ BOOL OrpcBuiltinServer(REFCLSID clsid, const WCHAR **dll)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ the global options of a process */
+/* ------------------------------------------------------------------ process global options */
 
-/* the options that programs set and ask for through CLSID_GlobalOptions, which this system keeps and reads nowhere. */
+/* CLSID_GlobalOptions settings are kept, but nothing reads them. */
 typedef struct IGlobalOptions IGlobalOptions;
 typedef struct IGlobalOptionsVtbl {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(IGlobalOptions *This, REFIID riid, void **object);
@@ -227,7 +226,7 @@ struct IGlobalOptions {
 
 static const GUID g_clsid_global_options = {0x0000034B, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
 static const GUID g_iid_global_options = {0x0000015B, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
-/* the settings of the runtime start with 0x100, the catalog of classes being the machine's alone, as the reference reads it. */
+/* the runtime settings default to 0x100: the class catalog is the machine's only. */
 static ULONG_PTR g_global_options[6] = {0, 0, 0, 0, 0x100, 0};
 
 static HRESULT STDMETHODCALLTYPE gopt_query(IGlobalOptions *This, REFIID riid, void **object)
@@ -305,7 +304,7 @@ static HRESULT STDMETHODCALLTYPE gfac_lock(IClassFactory *This, BOOL lock)
 static const IClassFactoryVtbl g_gfac_vtbl = {gfac_query, gfac_add_ref, gfac_release, gfac_create, gfac_lock};
 static IClassFactory g_gfac = {&g_gfac_vtbl};
 
-/* the class object of the class that marshals them: the factory of this file. */
+/* this file's factory is the class object of the marshaling class. */
 BOOL OrpcBuiltinClassObject(REFCLSID clsid, REFIID iid, void **object, HRESULT *hr)
 {
     if (IsEqualGUID(clsid, &g_clsid_global_options)) {
@@ -318,7 +317,7 @@ BOOL OrpcBuiltinClassObject(REFCLSID clsid, REFIID iid, void **object, HRESULT *
     return TRUE;
 }
 
-/* the class that marshals an interface of this file, for CoGetPSClsid. */
+/* for CoGetPSClsid. */
 BOOL OrpcBuiltinClass(REFIID iid, CLSID *clsid)
 {
     if (!builtin(iid))

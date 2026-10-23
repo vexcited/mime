@@ -1,7 +1,4 @@
-/*
- * the parts of the virtual machine every host shares: guest memory
- * access, the boot information and the queues the guest pulls from.
- */
+/* shared VM code: guest memory access, boot information and event queues. */
 #include "vmm.h"
 #include "input_queue.h"
 
@@ -29,7 +26,7 @@ uint64_t mime_unix_to_filetime(struct timespec ts)
     return ((uint64_t)ts.tv_sec + 11644473600ull) * 10000000ull + (uint64_t)ts.tv_nsec / 100;
 }
 
-/* guid text of machine.ini, such as 32C7-..., to 16 bytes in text order. */
+/* parses machine.ini GUID text, such as 32C7-..., into 16 bytes in text order. */
 static void parse_uuid(const char *text, uint8_t out[16])
 {
     memset(out, 0, 16);
@@ -75,7 +72,7 @@ static void fill_identity(MimeVm *vm)
     parse_uuid(id.machine_uuid, boot->system_uuid);
     mime_host_volume_label(boot->host_volume_label, sizeof(boot->host_volume_label));
 
-    /* the language of the installation, which MIME_LOCALE sets for one start, as the tests do to keep en-US. */
+    /* MIME_LOCALE overrides the installation language for one run. */
     MimeLocale locale;
     const char *forced = getenv("MIME_LOCALE");
     if (!(forced && forced[0] && mime_locale_find(forced, &locale)) && !mime_locale_find(id.locale, &locale))
@@ -86,7 +83,7 @@ static void fill_identity(MimeVm *vm)
     mime_strlcpy(boot->locale_name, locale.name, sizeof(boot->locale_name));
 }
 
-/* the boot information at the start of ram; the platform adds its timer and interrupt controller. */
+/* the boot information at the start of RAM; the platform adds its timer and interrupt controller. */
 void mime_vm_init_boot(MimeVm *vm)
 {
     vm->shared = (MimeSharedPage *)(vm->ram + MIME_LAYOUT_SHARED);

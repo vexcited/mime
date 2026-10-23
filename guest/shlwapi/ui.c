@@ -1,9 +1,7 @@
-/*
- * window, menu, color and message box helpers.
- */
+/* window, menu, color and message box helpers. */
 #include "shlwapi_private.h"
 
-/* user32 has these without the headers declaring them. */
+/* user32 exports these but the headers do not declare them. */
 WINUSERAPI BOOL WINAPI IsWindowUnicode(HWND window);
 WINUSERAPI BOOL WINAPI GetClassInfoW(HINSTANCE instance, LPCWSTR name, WNDCLASSW *wc);
 WINUSERAPI BOOL WINAPI UnregisterClassA(LPCSTR name, HINSTANCE instance);
@@ -146,7 +144,7 @@ int WINAPI SHGetCurColorRes(void)
     return bits;
 }
 
-/* both icons drawn from the same bits. */
+/* compares the icons' bits. */
 BOOL WINAPI SHAreIconsEqual(HICON a, HICON b);
 BOOL WINAPI SHAreIconsEqual(HICON a, HICON b)
 {
@@ -207,7 +205,6 @@ int WINAPI SHMenuIndexFromID(HMENU menu, UINT id)
     return GetMenuPosFromID(menu, id);
 }
 
-/* the submenu of the item with that command id. */
 HMENU WINAPI SHGetMenuFromID(HMENU menu, UINT id);
 HMENU WINAPI SHGetMenuFromID(HMENU menu, UINT id)
 {
@@ -261,7 +258,7 @@ HRESULT WINAPI SHAutoComplete(HWND edit, DWORD flags)
     return S_OK;
 }
 
-/* the bits of mask set from flags; the old value comes back. */
+/* sets the mask bits from flags and returns the old value. */
 LONG WINAPI SHSetWindowBits(HWND window, int index, UINT mask, UINT flags);
 LONG WINAPI SHSetWindowBits(HWND window, int index, UINT mask, UINT flags)
 {
@@ -272,7 +269,7 @@ LONG WINAPI SHSetWindowBits(HWND window, int index, UINT mask, UINT flags)
     return old;
 }
 
-/* a child of parent, or a popup again without one. */
+/* with no parent the window becomes a popup again. */
 HWND WINAPI SHSetParentHwnd(HWND window, HWND parent);
 HWND WINAPI SHSetParentHwnd(HWND window, HWND parent)
 {
@@ -328,7 +325,7 @@ LRESULT WINAPI SHDefWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM 
     return DefWindowProcA(window, message, wparam, lparam);
 }
 
-/* a class registered unless it is already. */
+/* skips classes that are already registered. */
 ATOM WINAPI SHRegisterClassW(WNDCLASSW *wc);
 ATOM WINAPI SHRegisterClassW(WNDCLASSW *wc)
 {
@@ -365,8 +362,8 @@ void WINAPI SHUnregisterClassesA(HINSTANCE instance, LPCSTR *names, UINT count)
         UnregisterClassA(names[i], instance);
 }
 
-/* a "WorkerW" window keeping extra in its first pointer of window memory, its procedure
-   replaced by proc when one is given. */
+/* a "WorkerW" window that keeps extra in its first pointer of window memory, with proc as its procedure
+   when one is given. */
 HWND WINAPI SHCreateWorkerWindowW(WNDPROC proc, HWND parent, DWORD ex_style, DWORD style, HMENU menu, LONG_PTR extra)
 {
     HINSTANCE instance = GetModuleHandleW(L"shlwapi.dll");
@@ -431,7 +428,7 @@ void WINAPI SHRemoveDefaultDialogFont(HWND dialog) {}
 static const WCHAR dont_show_key[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\DontShowMeThisDialogAgain";
 
-/* a box the user asked not to see again answers with its default. */
+/* a box the user asked not to see again returns its default answer. */
 int WINAPI SHMessageBoxCheckW(HWND parent, LPCWSTR text, LPCWSTR caption, UINT type, int fallback, LPCWSTR name)
 {
     WCHAR value[16];
@@ -452,7 +449,7 @@ int WINAPI SHMessageBoxCheckA(HWND parent, LPCSTR text, LPCSTR caption, UINT typ
     return result;
 }
 
-/* the dialog template version: only the remembered answer is known here. */
+/* the dialog template version only knows the remembered answer. */
 int WINAPI SHMessageBoxCheckExW(HWND parent, HINSTANCE instance, LPCWSTR dialog, DLGPROC proc, LPARAM param,
                                 int fallback, LPCWSTR name);
 int WINAPI SHMessageBoxCheckExW(HWND parent, HINSTANCE instance, LPCWSTR dialog, DLGPROC proc, LPARAM param,
@@ -492,7 +489,7 @@ int WINAPI SHRestrictedMessageBox(HWND parent)
                        L"Restrictions", MB_OK | MB_ICONSTOP);
 }
 
-/* the text and caption may be resource ids; "%1" style inserts come from the arguments. */
+/* text and caption may be resource ids. "%1" style inserts come from the arguments. */
 static int shell_message_box(HINSTANCE instance, HWND parent, LPCWSTR text, LPCWSTR caption, UINT type, va_list *args)
 {
     WCHAR text_buffer[1024], caption_buffer[256];
@@ -540,7 +537,7 @@ int WINAPIV ShellMessageBoxInternal(HINSTANCE instance, HWND parent, LPCWSTR tex
     return result;
 }
 
-/* the ansi form widens text and caption, its inserts keep their own types. */
+/* the ANSI form widens text and caption, its inserts keep their own types. */
 int WINAPIV ShellMessageBoxA(HINSTANCE instance, HWND parent, LPCSTR text, LPCSTR caption, UINT type, ...);
 int WINAPIV ShellMessageBoxA(HINSTANCE instance, HWND parent, LPCSTR text, LPCSTR caption, UINT type, ...)
 {

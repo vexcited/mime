@@ -30,7 +30,7 @@ void mime_dh_free(MimeDh *dh)
     }
 }
 
-/* q prime of qbits, then p = 2kq + 1 prime of bits, then g as h to the power p - 1 over q for the first h giving more than 1. */
+/* a prime q of qbits, a prime p = 2kq + 1 of bits, then g = h^((p - 1) / q) for the first h giving more than 1. */
 static int generate_group(MimeDh *dh, uint32_t bits)
 {
     uint32_t qbits = bits <= 1024 ? 160 : 256;

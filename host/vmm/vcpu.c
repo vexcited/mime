@@ -140,7 +140,7 @@ static volatile bool g_dump_requested;
 
 void mime_vcpu_toggle_profile(void) {}
 
-/* async-signal context: only sets a flag and forces the vcpus out of the guest. */
+/* async-signal context: only sets a flag and forces the vCPUs out of the guest. */
 void mime_vcpu_request_dump(MimeVm *vm)
 {
     g_dump_requested = true;
@@ -174,7 +174,7 @@ static bool handle_exception(MimeVcpu *vcpu)
         return true;
     }
     case EC_WFX:
-        /* the gic handles wfi in the macos kernel, this only happens if that ever changes. */
+        /* the virtual GIC handles WFI inside the macOS kernel; this is a fallback if that changes. */
         vcpu->exits_wfi++;
         set_reg(vcpu, HV_REG_PC, get_reg(vcpu, HV_REG_PC) + 4);
         return true;
@@ -219,7 +219,7 @@ static void *vcpu_main(void *arg)
     hv_vcpu_t handle;
     hv_vcpu_exit_t *exit;
     pthread_setname_np("mime-vcpu");
-    /* the guest's timers wake this thread: the highest quality of service keeps macos from coalescing them late. */
+    /* highest QoS prevents macOS from coalescing guest timer wakeups late. */
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 
     if (hv_vcpu_create(&handle, &exit, nullptr) != HV_SUCCESS) {
@@ -232,7 +232,7 @@ static void *vcpu_main(void *arg)
     vcpu->vtimer_offset = 0;
     hv_vcpu_set_vtimer_offset(handle, 0);
 
-    /* the processor the guest identifies itself with, the reference machine. */
+    /* reference processor identity reported to the guest. */
     if (vm->boot->cpu_midr && hv_vcpu_set_sys_reg(handle, HV_SYS_REG_MIDR_EL1, vm->boot->cpu_midr) != HV_SUCCESS)
         mime_debug("the framework keeps its own midr_el1; the kernel uses the boot information instead");
 
@@ -248,7 +248,7 @@ static void *vcpu_main(void *arg)
     set_sys(vcpu, HV_SYS_REG_MPIDR_EL1, (1ull << 31) | ((uint64_t)(vcpu->index / 16) << 8) | (vcpu->index % 16));
     set_reg(vcpu, HV_REG_CPSR, PSTATE_EL1H_MASKED);
 
-    /* the boot processor waits for every vcpu to exist, a secondary for the guest to start it. */
+    /* the boot processor waits for all vCPUs to exist; secondary processors wait for the guest to start them. */
     pthread_mutex_lock(&vm->lock);
     vm->vcpus_created++;
     pthread_cond_broadcast(&vm->vcpu_cond);

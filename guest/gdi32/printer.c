@@ -1,25 +1,21 @@
 /*
- * printer device contexts. a printer dc is a memory dc whose surface is the page, drawn at the resolution of
- * the printer and sent to the printer when the page ends: gdi32 is the driver of a raster printer, and
- * winspool's print processor turns the pages into the document. the dc answers GetDeviceCaps as the
- * printer would, and its mapping modes use the size of the page.
+ * printer dcs. a printer dc is a memory dc whose surface is the page at printer resolution, sent to the printer
+ * when the page ends: gdi32 acts as a raster printer driver and winspool's print processor builds the document.
  *
- * winspool.drv is loaded when the first printer dc is asked for: gdi32 does not import it.
+ * winspool.drv is loaded on the first printer dc, gdi32 does not import it.
  */
 #include "gdi32_private.h"
 #include <mime/printing.h>
 #include <mime/stub.h>
 #include <stddef.h>
 
-/* the answers of GetDeviceCaps for a printer device context. */
 typedef struct MIME_PRINT_DEVICE {
     WCHAR Name[64];
     int XDpi, YDpi;
-    /* the page in pixels, and the printable part of it that GetDeviceCaps calls HORZRES and VERTRES. */
+    /* the page in pixels, and its printable part that GetDeviceCaps calls HORZRES and VERTRES. */
     int PageWidth, PageHeight;
     int WidthPx, HeightPx;
     int OffsetX, OffsetY;
-    /* the page in tenths of a millimeter. */
     int PageWidthMm10, PageHeightMm10;
     BOOL Color;
 } MIME_PRINT_DEVICE;
@@ -62,7 +58,7 @@ static struct {
     DEVICE_CAPABILITIES Capabilities;
 } g_spool;
 
-/* winspool's printing functions, nullptr in a system without it. */
+/* winspool may be missing from the system. */
 static BOOL spool_load(void)
 {
     if (!g_spool.Tried) {
@@ -153,7 +149,7 @@ static void page_clear(PRN_DC *p)
     memset(p->Bits, 0xFF, (SIZE_T)p->Device.PageWidth * 4 * (SIZE_T)p->Device.PageHeight);
 }
 
-/* the size of the page in the units the mapping modes use. */
+/* the page size in the units the mapping modes use. */
 static void set_resolution(PRN_DC *p)
 {
     int mx = MulDiv(p->Device.PageWidthMm10, 1, 10), my = MulDiv(p->Device.PageHeightMm10, 1, 10);
@@ -162,7 +158,7 @@ static void set_resolution(PRN_DC *p)
 
 static const WCHAR *g_winspool = L"WINSPOOL";
 
-/* the resolution a device mode asks for, in dots per inch. */
+/* in dots per inch. */
 static int resolution_of(const DEVMODEW *dm)
 {
     int x = 300;
@@ -174,8 +170,8 @@ static int resolution_of(const DEVMODEW *dm)
 }
 
 /*
- * the printer's page for the settings: the paper from its identifier or its size, turned for landscape,
- * and the resolution. the settings are first completed by the printer, which keeps what it supports.
+ * the printer first completes the settings, keeping what it supports. the paper comes from its identifier or
+ * its size, turned for landscape.
  */
 static BOOL device_info(LPCWSTR name, HANDLE printer, const DEVMODEW *mode, MIME_PRINT_DEVICE *d)
 {
@@ -221,14 +217,14 @@ static BOOL device_info(LPCWSTR name, HANDLE printer, const DEVMODEW *mode, MIME
     d->PageHeightMm10 = h10;
     d->PageWidth = MulDiv(w10, x, 254);
     d->PageHeight = MulDiv(h10, y, 254);
-    /* the paper is the page: there are no unprintable margins. */
+    /* the paper is the page, there are no unprintable margins. */
     d->WidthPx = d->PageWidth;
     d->HeightPx = d->PageHeight;
     d->Color = !((dm.dmFields & DM_COLOR) && dm.dmColor == DMCOLOR_MONOCHROME);
     return TRUE;
 }
 
-/* a printer dc for the device mode, or nullptr when no such printer exists. */
+/* nullptr when no such printer exists. */
 static HDC prn_create(LPCWSTR device, const DEVMODEW *mode, BOOL info_only)
 {
     if (!spool_load()) {
@@ -291,9 +287,8 @@ BOOL PrnDeleteDC(HDC dc)
 }
 
 /*
- * the dc for CreateDC and CreateIC: the printer the arguments name, or nullptr to leave it to the
- * display. the driver "WINSPOOL" names a printer by its device; a program may also leave the driver out
- * and give the name of a printer, any other name is for the display.
+ * nullptr leaves the call to the display. the driver "WINSPOOL" names a printer by its device. a program may
+ * also omit the driver and pass a printer name, any other name is for the display.
  */
 HDC PrnCreateDC(LPCWSTR driver, LPCWSTR device, const void *mode, BOOL info_only, BOOL *handled)
 {
@@ -315,7 +310,6 @@ HDC PrnCreateDC(LPCWSTR driver, LPCWSTR device, const void *mode, BOOL info_only
     return prn_create(device, (const DEVMODEW *)mode, info_only);
 }
 
-/* the device mode of an ANSI call as the wide one winspool reads. */
 static void devmode_a2w(const DEVMODEA *a, DEVMODEW *w)
 {
     memset(w, 0, sizeof(*w));
@@ -491,7 +485,7 @@ static int page_end(PRN_DC *p)
         return fail(ERROR_SPL_NO_STARTDOC);
     int result = 1;
     if (p->AbortProc && !p->AbortProc(p->Dc, 0)) {
-        /* the program gave up: the document is dropped. */
+        /* the program gave up, so the document is dropped. */
         g_spool.Abort(p->Printer);
         p->InDoc = p->InPage = FALSE;
         surface_free(p);
@@ -527,7 +521,7 @@ static int doc_start(PRN_DC *p, LPCWSTR name, LPCWSTR output)
     } info = {(LPWSTR)(name ? name : L"Untitled"), (LPWSTR)output, (LPWSTR)MIME_DATATYPE_BITMAP};
     DWORD job = g_spool.StartDoc(p->Printer, 1, (LPBYTE)&info);
     if (!job) {
-        /* a save dialog that was cancelled is the user's choice, not an error of the program. */
+        /* a cancelled save dialog is the user's choice, not a program error. */
         if (GetLastError() == ERROR_PRINT_CANCELLED)
             SetLastError(ERROR_CANCELLED);
         return SP_ERROR;
@@ -543,7 +537,7 @@ static int doc_end(PRN_DC *p)
     if (!p->InDoc)
         return fail(ERROR_SPL_NO_STARTDOC);
     int result = 1;
-    /* a page that was left open is the last one. */
+    /* a page left open is the last one. */
     if (p->InPage)
         result = page_end(p);
     if (result == SP_APPABORT || !p->InDoc)
@@ -565,7 +559,7 @@ static int doc_abort(PRN_DC *p)
     return 1;
 }
 
-/* the display dc and an invalid dc fail the document calls without an error code, or with an invalid handle. */
+/* the display dc and invalid dcs fail the document calls with no error code, or with an invalid handle. */
 static int not_printer(HDC dc)
 {
     DWORD v;
@@ -633,7 +627,7 @@ WINGDIAPI int WINAPI SetAbortProc(HDC dc, ABORTPROC proc)
     return 1;
 }
 
-/* only printer dcs can be reset: the page and the document follow the new settings. */
+/* only printer dcs can be reset, the page and document follow the new settings. */
 WINGDIAPI HDC WINAPI ResetDCW(HDC dc, const void *mode)
 {
     PRN_DC *p = lookup(dc);
@@ -688,7 +682,7 @@ static BOOL supported(int escape)
     return FALSE;
 }
 
-/* the escapes of a printer dc, answered here since the driver is this file. -1 when it is not one of them. */
+/* answered here since this file is the driver. -1 when the escape is not a printer one. */
 int PrnEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out, BOOL *handled)
 {
     PRN_DC *p = lookup(dc);

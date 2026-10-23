@@ -1,14 +1,11 @@
-/*
- * allocator interface for freestanding libraries used both by the kernel
- * and by user mode, such as the font rasterizer and the image decoders.
- */
+/* allocator for freestanding libraries shared by kernel and user mode, like the font rasterizer and image decoders. */
 #ifndef MIME_LIB_ALLOC_H
 #define MIME_LIB_ALLOC_H
 
 #include <stddef.h>
 
 typedef struct MimeAllocator {
-    void *(*alloc)(void *ctx, size_t size); /* returns NULL on failure, memory need not be zeroed */
+    void *(*alloc)(void *ctx, size_t size); /* NULL on failure, memory need not be zeroed */
     void (*free)(void *ctx, void *p);
     void *ctx;
 } MimeAllocator;

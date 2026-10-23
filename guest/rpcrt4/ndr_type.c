@@ -1,22 +1,22 @@
 /*
- * the aggregate types of the ndr engine: structures, arrays, strings and unions, each walked by the pass the walker is in.
+ * the aggregate types of the ndr engine: structures, arrays, strings and unions.
  *
- * Wire layouts, which are those of the dce transfer syntax:
- *   conformant things (arrays and strings, and structures that end with one) put the count of their elements first; several
- *   of them nested put all their counts at the head of the outermost one.
- *   varying things put an offset and a length before their elements.
- *   structures and arrays whose elements are of one simple kind are copied whole; others are walked element by element.
- *   pointers write a referent where they stand and their pointees follow the outermost construct, in order.
+ * dce wire layouts:
+ *   conformant arrays, strings and structures ending in one put their element count first. nested ones put all their
+ *   counts at the head of the outermost one.
+ *   varying ones put an offset and a length before their elements.
+ *   structures and arrays of one simple kind are copied whole, others are walked element by element.
+ *   pointers write a referent in place and their pointees follow the outermost construct, in order.
  */
 #include "ndr.h"
 
-/* ------------------------------------------------------------------ the size of a type in memory */
+/* ------------------------------------------------------------------ memory sizes */
 
 static ULONG_PTR conf_memory(NDRC *c, PFORMAT_STRING f, ULONG dim);
 
 /*
- * the memory a type takes, as a walker of struct members or array elements steps over it. A conformant array has no size
- * of its own: the elements are as many as the walk's counts say.
+ * the memory a type takes, as a walker steps over struct members or array elements. a conformant array has no size of
+ * its own, it has as many elements as the walk's counts say.
  */
 ULONG NdrpMemorySize(NDRC *c, uchar *memory, PFORMAT_STRING f)
 {
@@ -48,7 +48,7 @@ ULONG NdrpMemorySize(NDRC *c, uchar *memory, PFORMAT_STRING f)
     case FC_SSTRING:
         return f[1] * (ULONG)*(const USHORT *)(f + 3);
     case FC_ENCAPSULATED_UNION:
-        /* the switch comes first, so the size in the format is the one of the arms. */
+        /* the switch comes first, so the format's size is that of the arms. */
         return *(const USHORT *)(f + 2) + (f[1] >> 4);
     case FC_LGFARRAY:
     case FC_LGVARRAY:
@@ -83,8 +83,8 @@ ULONG NdrpMemorySize(NDRC *c, uchar *memory, PFORMAT_STRING f)
 }
 
 /*
- * the memory the stub gives an [out] object before the call: its size in memory, with the counts of a conformant array or string
- * computed from the parameters that are already unmarshaled.
+ * the memory the stub gives an [out] object before the call. conformant counts come from the parameters already
+ * unmarshaled.
  */
 SIZE_T NdrpOutMemory(PMIDL_STUB_MESSAGE m, PFORMAT_STRING f)
 {
@@ -118,16 +118,11 @@ SIZE_T NdrpOutMemory(PMIDL_STUB_MESSAGE m, PFORMAT_STRING f)
     }
 }
 
-/*
- * the size of one element of a bogus array or the next member of a structure, which may be a simple type given inline, a
- * pointer description or an embedded complex type.
- */
-
-/* ------------------------------------------------------------------ the counts of conformance */
+/* ------------------------------------------------------------------ conformance counts */
 
 /*
- * the number of conformance counts a type puts at the head of an outermost construct: its own, and those of the arrays inside
- * its elements. A fixed array nested in a conformant one counts as a dimension too.
+ * how many conformance counts a type puts at the head of an outermost construct: its own and those of arrays inside its
+ * elements. a fixed array nested in a conformant one counts as a dimension too.
  */
 static ULONG dims_of(PMIDL_STUB_MESSAGE m, PFORMAT_STRING f, BOOL for_variance)
 {
@@ -180,7 +175,7 @@ static ULONG dims_of(PMIDL_STUB_MESSAGE m, PFORMAT_STRING f, BOOL for_variance)
     }
 }
 
-/* the conformant part of a type a structure holds: where it begins in memory and its format. */
+/* the conformant part of a structure: its memory offset and its format. */
 static PFORMAT_STRING conformant_tail(PFORMAT_STRING f, ULONG *offset)
 {
     *offset = 0;
@@ -197,10 +192,7 @@ static PFORMAT_STRING conformant_tail(PFORMAT_STRING f, ULONG *offset)
     }
 }
 
-/*
- * the elements a conformant type has in the current walk, as the counts of its construct say: the memory its elements take.
- * dim is the index of the count that belongs to the type.
- */
+/* the memory a conformant type's elements take, per the walk's counts. dim is the index of its count. */
 static ULONG_PTR conf_memory(NDRC *c, PFORMAT_STRING f, ULONG dim)
 {
     NDR_QUEUE *q = c->Q;
@@ -249,9 +241,9 @@ static ULONG_PTR conf_memory(NDRC *c, PFORMAT_STRING f, ULONG dim)
 }
 
 /*
- * the count of elements of a conformant array or string. If an enclosing construct reserved the counts the array takes its
- * own, writing it there or reading it from there; otherwise it stands at the cursor. descriptor is the correlation
- * descriptor, or null when the count is not computed from anything but the data (a string without a size).
+ * the element count of a conformant array or string. if an enclosing construct reserved the counts, it goes in its reserved
+ * slot, else at the cursor. descriptor is the correlation descriptor, or null when only the data gives the count, as for
+ * an unsized string.
  */
 static ULONG_PTR conf_count(NDRC *c, uchar *memory, PFORMAT_STRING descriptor, ULONG flags, ULONG_PTR known)
 {
@@ -329,7 +321,7 @@ static PFORMAT_STRING layout_pointer(NDRC *c, uchar *memory, uchar *wire, PFORMA
     uchar **slot = memory ? (uchar **)(memory + memory_extra + mem_off) : nullptr;
     uchar *wslot = wire ? wire + wire_extra + wire_off : nullptr;
     if (c->Pass == NDR_UNMARSHAL && slot) {
-        /* the copy of the structure put the referent in the slot: the pointer it had before stays, or none. */
+        /* the structure copy put the referent in the slot, so restore the old pointer, or none. */
         c->Q->Preset = old ? *(uchar *const *)(old + memory_extra + mem_off) : nullptr;
         c->Q->HasPreset = TRUE;
     }
@@ -338,9 +330,8 @@ static PFORMAT_STRING layout_pointer(NDRC *c, uchar *memory, uchar *wire, PFORMA
 }
 
 /*
- * the pointers of a structure or array that a layout lists: for each, where it stands in memory and on the wire and how it is
- * described. The wire slot is inside the object when that was copied whole, so its referent is written there. Returns the
- * byte after the layout.
+ * the pointers a layout lists, with their memory and wire positions and descriptions. when the object was copied whole
+ * the wire slot is inside it, so the referent is written there. returns the byte after the layout.
  */
 static PFORMAT_STRING pointer_layout(NDRC *c, uchar *memory, uchar *wire, PFORMAT_STRING layout)
 {
@@ -350,7 +341,7 @@ static PFORMAT_STRING pointer_layout(NDRC *c, uchar *memory, uchar *wire, PFORMA
     const uchar *old = c->Q->Old;
     c->Q->Old = nullptr;
     uchar *saved_memory = m->Memory;
-    /* the counts of what the pointers point to may be fields of the structure that holds them. */
+    /* pointee counts may be fields of the enclosing structure. */
     m->Memory = memory;
     while (*e != FC_END) {
         if (*e == FC_NO_REPEAT) {
@@ -391,8 +382,8 @@ static PFORMAT_STRING pointer_layout(NDRC *c, uchar *memory, uchar *wire, PFORMA
 /* ------------------------------------------------------------------ whole copies */
 
 /*
- * the wire bytes of an object copied whole, and the memory it goes to: for a pass that writes, the buffer is filled from the
- * object; for the one that reads, the object (allocated when it has no memory yet) is filled from the buffer.
+ * objects copied whole: writing passes fill the buffer from the object, the reading pass fills the object from the buffer,
+ * allocating it first when it has no memory yet.
  */
 static void snapshot_pointers(NDRC *c, uchar **pm, SIZE_T bytes, ULONG flags, PFORMAT_STRING layout)
 {
@@ -413,7 +404,7 @@ static uchar *copy_whole(NDRC *c, uchar **pm, ULONG wire_bytes, SIZE_T memory_by
     switch (c->Pass) {
     case NDR_MARSHAL: {
         mem = *pm;
-        /* the last word of the copy is cleared first, so that padding at the end of the object is not the stack's. */
+        /* clear the last word first so padding at the end does not leak stack. */
         uchar *end = (uchar *)(((ULONG_PTR)wire + wire_bytes + 3) & ~(ULONG_PTR)3);
         if (end - 4 >= wire && (!m->BufferEnd || end <= m->BufferEnd))
             *(ULONG *)(end - 4) = 0;
@@ -467,7 +458,7 @@ static void struct_conformant(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags
         conf_reserve(c, dims_of(m, f, FALSE), &save);
     NdrpAlign(c, f[1]);
 
-    /* the array's own count; unmarshaling already holds it in the reserved slot. */
+    /* the array's own count, already in the reserved slot when unmarshaling. */
     NDR_QUEUE *q = c->Q;
     ULONG my_dim = q->Next;
     if (NDR_WIRE_READ(c->Pass)) {
@@ -489,7 +480,7 @@ static void struct_conformant(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags
         m->Memory = mem;
         uchar *am = mem ? mem + fixed : nullptr;
         q->Next = my_dim;
-        /* the tail is varying: it is a varying array or a string, and counts itself. */
+        /* a varying tail is a varying array or a string, and carries its own count. */
         if (c->Pass == NDR_MEMSIZE)
             am = NDR_DUMMY;
         NdrpWalk(c, &am, array, flags | NDRF_CONF_DONE);
@@ -608,7 +599,7 @@ static void struct_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags
         }
     }
     if (tail) {
-        /* the conformant array at the end is not one of the members: it follows them, at the end of the fixed part. */
+        /* the trailing conformant array is not a member: it follows the fixed part. */
         uchar *object = real ? base + size : NDR_DUMMY;
         q->Next = my_dim;
         NdrpWalk(c, &object, tail, NDRF_CONF_DONE);
@@ -811,8 +802,8 @@ static void array_fixed_varying(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG fla
 }
 
 /*
- * an array whose elements are walked one by one. Its counts come first as for any conformant thing, then the offsets and
- * lengths of the dimensions that vary, then the elements.
+ * an array walked element by element. its counts come first as for any conformant type, then the offsets and lengths
+ * of the varying dimensions, then the elements.
  */
 static void array_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
 {
@@ -834,7 +825,7 @@ static void array_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     if (conformant)
         count = conf_count(c, memory, conf, flags | NDRF_CONF_DONE, 0);
 
-    /* the lengths of the elements that are on the wire, per dimension. */
+    /* per dimension, the elements actually on the wire. */
     ULONG offset = 0, actual = (ULONG)count;
     if (varying) {
         if (!NDR_WIRE_READ(c->Pass)) {
@@ -853,7 +844,6 @@ static void array_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
             NDR_RAISE(RPC_S_INVALID_BOUND);
     }
 
-    /* the element, and what it takes in memory. */
     PFORMAT_STRING type = elem;
     BOOL embedded = elem[0] == FC_EMBEDDED_COMPLEX;
     if (embedded)
@@ -874,7 +864,7 @@ static void array_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
 
     uchar *base;
     if (NDR_WIRE_READ(c->Pass)) {
-        /* every element takes a byte at least, so a count beyond what is left is a lie that would cost a lot of memory. */
+        /* every element takes at least a byte, so a count beyond what is left is a lie that would cost a lot of memory. */
         if (m->BufferEnd && actual > (ULONG)(m->BufferEnd - m->Buffer) + 0u && conformant)
             NDR_RAISE(RPC_X_BAD_STUB_DATA);
         NdrpAllocObject(c, pm, NdrpCheckedProduct(count, elem_size), flags);
@@ -890,7 +880,7 @@ static void array_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     if (actual) {
         NdrpAlign(c, f[1]);
         if (etype >= FC_RP && etype <= FC_FP && !embedded) {
-            /* pointers: all the referents, then their pointees. */
+            /* pointers: all the referents first, then their pointees. */
             uchar *at = base + (ULONG_PTR)offset * sizeof(void *);
             for (ULONG i = 0; i < actual; i++, at += sizeof(void *))
                 NdrpPointerAt(c, c->Pass == NDR_MEMSIZE ? nullptr : (uchar **)at, elem, NDRF_EMBEDDED,
@@ -901,7 +891,6 @@ static void array_bogus_body(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
                 NdrpPointerAt(c, c->Pass == NDR_MEMSIZE ? nullptr : (uchar **)at, type, NDRF_EMBEDDED,
                               NDR_WIRE_CURSOR);
         } else if (!embedded) {
-            /* simple elements. */
             uchar *at = base + (ULONG_PTR)offset * NdrSimpleMem[elem[0]];
             if (elem[0] == FC_RANGE) {
                 for (ULONG i = 0; i < actual; i++, at += NdrSimpleMem[elem[1] & 0xF]) {
@@ -1040,7 +1029,7 @@ void NdrpString(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
         memcpy(wire, memory, bytes);
         break;
     case NDR_UNMARSHAL: {
-        /* the last character must end the string. */
+        /* the last character must be the terminator. */
         BOOL zero = TRUE;
         for (ULONG i = 0; i < unit; i++)
             if (wire[bytes - unit + i])
@@ -1093,8 +1082,8 @@ static LONG_PTR switch_value(const uchar *p, uchar type)
 }
 
 /*
- * a union: the value that picks the arm, then the arm. The arms of the description are a case value and an arm, which is
- * nothing, a simple type or a type to walk; what matches no case is the default arm, or an error if there is none.
+ * the switch value, then the arm. each arm of the description is a case value and a type: nothing, a simple type or a
+ * type to walk. a value matching no case takes the default arm, or is an error when there is none.
  */
 void NdrpUnion(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
 {
@@ -1117,7 +1106,7 @@ void NdrpUnion(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
         PFORMAT_STRING d = f + 2;
         desc = d + NDR_DESC_SIZE(m);
         desc += *(const short *)desc;
-        /* what the switch is, for the passes that know the union's memory. */
+        /* only the passes that have the union's memory know the switch here. */
         if (!NDR_WIRE_READ(c->Pass))
             sw = (LONG_PTR)NdrpComputeConformance(m, *pm, d);
     }
@@ -1127,7 +1116,7 @@ void NdrpUnion(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     ULONG arms = info & 0xFFF;
 
     if (NDR_WIRE_READ(c->Pass)) {
-        /* the size in the format is the one of the arms; an encapsulated union has its switch before them. */
+        /* the format's size covers the arms, an encapsulated union has its switch before them. */
         mem = NdrpAllocObject(c, pm, memory_size + arm_offset, flags);
     } else {
         mem = *pm;
@@ -1135,7 +1124,6 @@ void NdrpUnion(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     if (encapsulated && !NDR_WIRE_READ(c->Pass))
         sw = switch_value(mem, sw_type);
 
-    /* the switch value. */
     uchar *wire_value;
     NdrpAlign(c, NdrSimpleAlign[sw_type]);
     wire_value = NdrpTake(c, NdrSimpleWire[sw_type]);
@@ -1154,7 +1142,6 @@ void NdrpUnion(NDRC *c, uchar **pm, PFORMAT_STRING f, ULONG flags)
     }
     NdrpAlign(c, align_mask);
 
-    /* the arm. */
     const uchar *e = desc + 4;
     ULONG i;
     for (i = 0; i < arms; i++, e += 6)

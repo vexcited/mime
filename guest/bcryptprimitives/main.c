@@ -1,8 +1,6 @@
 /*
- * ProcessPrng, the random source of the process. windows keeps an aes
- * counter generator per processor seeded by the kernel; mime takes the
- * processor's own generator when it has one and otherwise the process
- * generator of advapi32, which asks the kernel first.
+ * ProcessPrng. windows keeps a per processor aes counter generator seeded by the kernel; mime uses the cpu's own
+ * generator when there is one, else advapi32's, which asks the kernel first.
  */
 #include <mime/win32/winbase.h>
 
@@ -20,7 +18,7 @@ static BOOL has_rdrand(void)
     return known;
 }
 
-/* rdrand may come back empty for a moment, a few retries cover it. */
+/* rdrand may briefly come back empty, a few retries cover it. */
 __attribute__((target("rdrnd"))) static BOOL rdrand_fill(BYTE *buffer, SIZE_T size)
 {
     while (size) {
@@ -75,7 +73,7 @@ BOOL WINAPI ProcessPrng(BYTE *buffer, SIZE_T size)
     return process_fill(buffer, size);
 }
 
-/* a random guid of version 4. */
+/* a version 4 guid. */
 BOOL WINAPI ProcessPrngGuid(GUID *guid)
 {
     if (!ProcessPrng((BYTE *)guid, sizeof(*guid)))

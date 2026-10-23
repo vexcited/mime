@@ -1,8 +1,7 @@
 /*
- * ChooseFont. the fonts come from gdi32's enumeration, one entry for each family with the faces it has: the
- * scripts a family supports, the styles it offers (the four every family can show, imitated ones included
- * unless CF_NOSIMULATIONS) and the sizes (the usual ones for scalable fonts, the real ones for raster fonts).
- * the answer is a LOGFONT in the program's structure, or a private one when the program gave none.
+ * ChooseFont. fonts come from gdi32's enumeration, one entry per family with the scripts it supports, the four
+ * styles every family can show, simulated ones included unless CF_NOSIMULATIONS, and its sizes: the usual ones
+ * for scalable fonts, the real ones for raster fonts.
  */
 #include "dlgbase.h"
 #include "dlgids.h"
@@ -39,7 +38,6 @@ static const struct {
 
 static const int g_standard_sizes[] = {8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72};
 
-/* a face as the enumeration gave it. */
 typedef struct _FACE {
     LOGFONTW Lf;
     WCHAR Script[LF_FACESIZE];
@@ -53,7 +51,7 @@ typedef struct _FAMILY {
     DWORD Type;
     BYTE PitchAndFamily;
     BYTE Charset;
-    /* the faces of the family, read when it is first chosen. */
+    /* loaded when the family is first chosen. */
     FACE *Faces;
     int FaceCount, FaceCapacity;
     BOOL Loaded;
@@ -123,7 +121,6 @@ static FAMILY *family_named(const FONTDLG *d, LPCWSTR name)
     return nullptr;
 }
 
-/* the families, one record for each. */
 static int CALLBACK family_proc(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD type, LPARAM param)
 {
     ENUMRUN *run = (ENUMRUN *)param;
@@ -209,7 +206,6 @@ static void enumerate(FONTDLG *d, HDC dc, DWORD screen)
     sort_families(d->Families, d->FamilyCount);
 }
 
-/* the faces of a family are read the first time it is chosen. */
 static void load_faces(FONTDLG *d, FAMILY *fam)
 {
     if (fam->Loaded)
@@ -222,7 +218,7 @@ static void load_faces(FONTDLG *d, FAMILY *fam)
     lstrcpynW(lf.lfFaceName, fam->Name, LF_FACESIZE);
     EnumFontFamiliesExW(d->Dc, &lf, face_proc, (LPARAM)&run, 0);
     if (!fam->FaceCount) {
-        /* the family is there, so it has at least the face that listed it. */
+        /* the family exists, so it has at least the face that listed it. */
         FACE *f = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(FACE));
         if (f) {
             lstrcpynW(f->Lf.lfFaceName, fam->Name, LF_FACESIZE);
@@ -254,7 +250,6 @@ static void combo_text(const FONTDLG *d, int id, WCHAR *text, int chars)
     GetDlgItemTextW(d->Dialog, id, text, chars);
 }
 
-/* the data of the item the text of the combo box names, or nullptr. */
 static LRESULT combo_find(const FONTDLG *d, int id, LPCWSTR text)
 {
     LRESULT index = SendDlgItemMessageW(d->Dialog, id, CB_FINDSTRINGEXACT, (WPARAM)-1, (LPARAM)text);
@@ -421,9 +416,9 @@ static void fill_sizes(FONTDLG *d, FAMILY *fam, BYTE charset)
     }
 }
 
-/* ------------------------------------------------------------------ what is chosen */
+/* ------------------------------------------------------------------ the selection */
 
-/* the point size typed, in tenths of a point, or -1 when it is not a number. */
+/* the typed size in tenths of a point, or -1 when it is not a number. */
 static int size_tenths(const FONTDLG *d)
 {
     WCHAR text[32];
@@ -466,7 +461,7 @@ static int selected_style(const FONTDLG *d, BOOL *valid)
     return s->Kind;
 }
 
-/* the font the controls show, with the points as tenths. */
+/* the font the controls show, its size in tenths of a point. */
 static void collect(FONTDLG *d, LOGFONTW *lf, int *tenths, DWORD *type)
 {
     WCHAR name[LF_FACESIZE];
@@ -534,7 +529,7 @@ static void wide_logfont(const LOGFONTA *a, LOGFONTW *w)
     DlgToWide(a->lfFaceName, w->lfFaceName, LF_FACESIZE);
 }
 
-/* writes what the controls show into the structure of the program, which is what OK and Apply do. */
+/* copies the controls into the program's structure, for OK and Apply. */
 static void store(FONTDLG *d)
 {
     LOGFONTW lf;
@@ -574,7 +569,7 @@ static void update_sample(FONTDLG *d)
     int tenths;
     DWORD type;
     collect(d, &lf, &tenths, &type);
-    /* the sample is drawn at the size of the screen and at most as high as the box it is in. */
+    /* the sample is drawn at screen size, no taller than its box. */
     RECT box;
     int max = 100;
     if (sample) {
@@ -624,7 +619,7 @@ static void refresh_lists(FONTDLG *d, int style_want, LPCWSTR size_text)
     update_sample(d);
 }
 
-/* a family was picked or typed: its scripts, styles and sizes replace the lists. */
+/* a family was picked or typed: refill the script, style and size lists. */
 static void family_changed(FONTDLG *d)
 {
     WCHAR size[32];
@@ -674,7 +669,6 @@ static void apply_logfont(FONTDLG *d, const LOGFONTW *lf, int tenths, LPCWSTR st
     update_sample(d);
 }
 
-/* the size in tenths of a point that a LOGFONT height stands for. */
 static int tenths_of_height(FONTDLG *d, const LOGFONTW *lf)
 {
     int h = lf->lfHeight;
@@ -682,7 +676,7 @@ static int tenths_of_height(FONTDLG *d, const LOGFONTW *lf)
         return MulDiv(-h, 72, d->Dpi) * 10;
     if (h == 0)
         return 100;
-    /* a positive height is the cell, which holds the internal leading. */
+    /* a positive height is the cell height, internal leading included. */
     HDC dc = GetDC(nullptr);
     LOGFONTW copy = *lf;
     HFONT font = CreateFontIndirectW(&copy);
@@ -755,7 +749,7 @@ static INT_PTR init_dialog(HWND hwnd, FONTDLG *d)
     }
     if ((d->Flags & CF_PRINTERFONTS) && d->Cf->hDC) {
         if (d->Flags & CF_SCREENFONTS) {
-            /* the same fonts on both: the faces of the printer that the screen has are the ones to show. */
+            /* with both, show the printer faces the screen also has. */
         } else {
             enumerate(d, d->Cf->hDC, PRINTER_FONTTYPE);
         }
@@ -887,7 +881,7 @@ static BOOL command(FONTDLG *d, WORD id, WORD code)
         if (d->Filling)
             return TRUE;
         if (code == CBN_SELCHANGE) {
-            /* the new item is not in the text of the edit yet. */
+            /* the edit does not show the new selection yet. */
             LRESULT sel = SendDlgItemMessageW(d->Dialog, FONT_FAMILY, CB_GETCURSEL, 0, 0);
             if (sel >= 0) {
                 WCHAR name[LF_FACESIZE];
@@ -988,7 +982,7 @@ static void measure_item(HWND hwnd, MEASUREITEMSTRUCT *mi)
 static INT_PTR CALLBACK font_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     FONTDLG *d = (FONTDLG *)GetPropW(hwnd, L"MimeFontDlg");
-    /* the combo boxes ask for their item heights while the controls are made. */
+    /* the combo boxes ask for item heights while the controls are created. */
     if (message == WM_MEASUREITEM && (!d || !d->Hook)) {
         measure_item(hwnd, (MEASUREITEMSTRUCT *)lparam);
         return TRUE;
@@ -1152,7 +1146,7 @@ static BOOL choose_font(CHOOSEFONTW *cf, CHOOSEFONTA *ansi)
     d->Ansi = ansi;
     d->Flags = flags;
     d->Hook = (DLGPROC)cf->lpfnHook;
-    /* a program that gave no LOGFONT gets a private one for the length of the dialog. */
+    /* a program that gave no LOGFONT gets a private one while the dialog runs. */
     LOGFONTW *given_lf = cf->lpLogFont;
     if (!given_lf) {
         memset(&own, 0, sizeof(own));
@@ -1190,7 +1184,7 @@ CDAPI BOOL WINAPI ChooseFontW(LPCHOOSEFONTW cf)
     return choose_font(cf, nullptr);
 }
 
-/* the ANSI structure is read as a wide one with the pointers it keeps, the dialog converting at the edges. */
+/* the ANSI structure is read as the wide one, keeping its pointers; the dialog converts at the edges. */
 CDAPI BOOL WINAPI ChooseFontA(LPCHOOSEFONTA cf)
 {
     if (!cf)

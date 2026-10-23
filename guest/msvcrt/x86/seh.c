@@ -1,14 +1,12 @@
 /*
- * the structured exception handling of x86 programs compiled against
- * msvcrt: the frame handlers __try blocks register (_except_handler3 and
- * the cookie checked _except_handler4_common), the unwinds of their scope
- * tables, and longjmp, which runs the __finally blocks and destructors of
- * the frames it leaves.
+ * structured exception handling for x86 programs built against msvcrt:
+ * the __try frame handlers _except_handler3 and the cookie checked
+ * _except_handler4_common, their scope table unwinds, and longjmp, which
+ * runs the __finally blocks and destructors of the frames it leaves.
  *
- * a frame's registration sits 0x10 below its ebp: the previous one, the
- * handler, the scope table and the try level, with the stack pointer of
- * the function 8 bytes below and the exception pointers its filters read
- * 4 bytes below.
+ * a frame's registration sits 0x10 below its ebp: previous, handler,
+ * scope table and try level. the function's stack pointer is 8 bytes
+ * below it, and the exception pointers its filters read 4 bytes below.
  */
 #include "msvcrt_private.h"
 
@@ -25,7 +23,7 @@ typedef struct EH3_FRAME {
     int level;
 } EH3_FRAME;
 
-/* the scope table of _except_handler4, xored with the module's cookie. */
+/* _except_handler4's scope table, xored with the module's cookie. */
 typedef struct EH4_SCOPES {
     int gs_cookie_offset;
     int gs_cookie_xor_offset;
@@ -34,7 +32,7 @@ typedef struct EH4_SCOPES {
     SCOPE scopes[1];
 } EH4_SCOPES;
 
-/* the jump buffer of _setjmp3. */
+/* _setjmp3's jump buffer. */
 typedef struct JUMP_BUFFER {
     ULONG Ebp, Ebx, Edi, Esi, Esp, Eip;
     EH3_FRAME *Registration;
@@ -58,7 +56,7 @@ typedef enum {
     ExceptionCollidedUnwind,
 } EXCEPTION_DISPOSITION;
 
-/* whether the processor has the pentium fdiv flaw, which the _adj_ helpers work around: never. */
+/* the pentium fdiv flaw the _adj_ helpers work around is never reported. */
 int MsvcrtAdjustFdiv = 0;
 
 #define TOP_LEVEL3 (-1)
@@ -92,7 +90,7 @@ static EXCEPTION_DISPOSITION __cdecl unwind_handler(EXCEPTION_RECORD *record, vo
     return ExceptionCollidedUnwind;
 }
 
-/* the __finally blocks of a frame from its try level down to stop, each level taken off before its block runs. */
+/* runs a frame's __finally blocks from its try level down to stop, removing each level before its block runs. */
 static void local_unwind(EH3_FRAME *frame, const SCOPE *scopes, int stop, int top)
 {
     UNWIND_FRAME guard = {read_fs0(), (void *)unwind_handler, frame};
@@ -111,7 +109,7 @@ void __cdecl _local_unwind2(EH3_FRAME *frame, int stop) { local_unwind(frame, fr
 void __cdecl _global_unwind2(EH3_FRAME *frame) { RtlUnwind(frame, nullptr, nullptr, nullptr); }
 
 /*
- * whether the __finally block running was reached by an unwind rather
+ * whether the running __finally block was reached by an unwind rather
  * than by leaving its __try. _abnormal_termination passes the block's
  * frame pointer, still in ebp.
  */
@@ -152,7 +150,7 @@ EXCEPTION_DISPOSITION __cdecl _except_handler3(EXCEPTION_RECORD *record, EH3_FRA
     return except_handler3(record, frame, context);
 }
 
-/* the frames of older compilers, as _except_handler3's: a guess, the layout of those is not known here. */
+/* older compilers' frames, handled like _except_handler3's: their layout is a guess. */
 EXCEPTION_DISPOSITION __cdecl _except_handler2(EXCEPTION_RECORD *record, EH3_FRAME *frame, CONTEXT *context,
                                                void *dispatcher)
 {
@@ -164,7 +162,7 @@ static const EH4_SCOPES *eh4_scopes(const ULONG *cookie, const EH3_FRAME *frame)
     return (const EH4_SCOPES *)((ULONG)frame->scopes ^ *cookie);
 }
 
-/* the security cookies a frame keeps, checked by the module's own function, which ends the process when wrong. */
+/* the module's own check function ends the process on a bad cookie. */
 static void check_cookies(const EH4_SCOPES *scopes, ULONG ebp, void *check)
 {
     if (scopes->gs_cookie_offset != TOP_LEVEL4)
@@ -209,8 +207,6 @@ EXCEPTION_DISPOSITION __cdecl _except_handler4_common(const ULONG *cookie, void 
     return ExceptionContinueSearch;
 }
 
-/* ------------------------------------------------------------------ setjmp and longjmp */
-
 static int frame_level(EH3_FRAME *frame)
 {
     if (!frame || frame == (void *)~0u)
@@ -242,7 +238,7 @@ void __stdcall _seh_longjmp_unwind4(JUMP_BUFFER *buf)
     _local_unwind4((const ULONG *)buf->UnwindData[0], buf->Registration, buf->TryLevel);
 }
 
-/* the frames newer than setjmp's are unwound, then the one that called setjmp down to its try level. */
+/* unwinds the frames newer than setjmp's, then setjmp's caller down to its try level. */
 void __cdecl longjmp(JUMP_BUFFER *buf, int value)
 {
     if (!value)

@@ -1,7 +1,6 @@
 /*
- * Windows.Foundation.Metadata.ApiInformation: what programs ask before they use a runtime class, and what the
- * classes of Mime answer. a contract is present up to the version windows 11 of build 26300 has; a type is present
- * when combase activates it; members are present only where the class here has them.
+ * Windows.Foundation.Metadata.ApiInformation. contracts are present up to the versions windows 11 build 26300 has,
+ * types when combase activates them, and members only where the class here has them.
  */
 #include "combase_private.h"
 #include <mime/winrt_object.h>
@@ -36,7 +35,7 @@ static BOOL same(HSTRING string, LPCWSTR text)
     return length == wcslen(text) && !memcmp(raw, text, length * sizeof(WCHAR));
 }
 
-/* the greatest version of the contracts windows 11 of build 26300 has, 0 for a contract it has not. */
+/* the highest version windows 11 build 26300 has, 0 for a contract it lacks. */
 static UINT16 contract_version(HSTRING contract)
 {
     static const struct {

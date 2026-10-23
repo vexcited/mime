@@ -1,7 +1,4 @@
-/*
- * the C callable forms of the interface methods that windowscodecs.dll exports. A method of the proxy of an interface
- * is its method, called on the object.
- */
+/* C-callable wrappers for windowscodecs interface methods. */
 #include "wic_private.h"
 
 DECLSPEC_EXPORT HRESULT WINAPI IWICBitmapClipper_Initialize_Proxy(IWICBitmapClipper *This, IWICBitmapSource *pISource, const WICRect *prc)
@@ -501,7 +498,6 @@ DECLSPEC_EXPORT HRESULT WINAPI IWICStream_InitializeFromMemory_Proxy(IWICStream 
 
 DECLSPEC_EXPORT HRESULT WINAPI IEnumString_Next_WIC_Proxy(IEnumString *This, ULONG count, LPOLESTR *items, ULONG *fetched)
 {
-    /* the vtable of IEnumString: the three of IUnknown, then Next, Skip and Reset. */
     HRESULT (STDMETHODCALLTYPE *next)(IEnumString *, ULONG, LPOLESTR *, ULONG *) = (*(void ***)This)[3];
     return next(This, count, items, fetched);
 }

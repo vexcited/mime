@@ -1,7 +1,7 @@
 /*
- * the spir-v builder. sections grow as words are appended; types and
- * constants are looked up by a hash of their operand words before they
- * are made, so each exists once as spir-v requires of most types.
+ * the spir-v builder. sections grow as words are appended. types and
+ * constants are looked up by a hash of their operands before being made,
+ * so each exists once, as spir-v requires of most types.
  */
 #include "spvbuild.h"
 
@@ -60,7 +60,7 @@ void spv_emit(SpvBuilder *b, int section, uint32_t op, const uint32_t *operands,
         put(b, section, operands[i]);
 }
 
-/* the words of a nul terminated string, padded with zeros. */
+/* nul terminated and zero padded. */
 static uint32_t string_words(const char *text) { return (uint32_t)(__builtin_strlen(text) / 4 + 1); }
 
 static void put_string(SpvBuilder *b, int section, const char *text)
@@ -87,7 +87,7 @@ void spv_emit_string(SpvBuilder *b, int section, uint32_t op, const uint32_t *be
 
 void spv_capability(SpvBuilder *b, uint32_t capability)
 {
-    /* the common capabilities are below 256: remembered in a bitmap; others are rare enough to repeat. */
+    /* common capabilities are below 256 and tracked in a bitmap, the rare others may repeat. */
     if (capability < 256) {
         uint64_t bit = 1ull << (capability & 63);
         if (b->capabilities[capability >> 6] & bit)
@@ -144,10 +144,7 @@ static uint32_t hash_words(uint32_t op, const uint32_t *words, uint32_t count)
     return h ? h : 1;
 }
 
-/*
- * the global made of op and its operands, the result id inserted at
- * result_at among them; made the first time and found afterwards.
- */
+/* finds or makes the global of op and its operands, with the result id inserted at result_at. */
 static uint32_t cached(SpvBuilder *b, uint32_t op, uint32_t result_at, const uint32_t *operands, uint32_t count)
 {
     uint32_t h = hash_words(op, operands, count);
@@ -417,7 +414,7 @@ uint32_t spv_access(SpvBuilder *b, uint32_t pointer_type, uint32_t base, const u
     return spv_op(b, SpvOpAccessChain, pointer_type, w, count + 1);
 }
 
-/* starts a block; a block left open before it falls through with a branch. */
+/* a block still open before this one gets a branch to it. */
 void spv_label(SpvBuilder *b, uint32_t label)
 {
     if (b->block_open)
@@ -475,7 +472,7 @@ uint32_t *spv_finish(SpvBuilder *b, size_t *words)
     size_t at = 0;
     out[at++] = SpvMagicNumber;
     out[at++] = 0x00010600;
-    out[at++] = 0x4D494D45; /* the generator: mime */
+    out[at++] = 0x4D494D45; /* generator: mime. */
     out[at++] = b->next_id;
     out[at++] = 0;
     for (int i = 0; i < SECTION_COUNT; i++) {

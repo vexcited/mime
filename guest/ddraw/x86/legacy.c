@@ -1,11 +1,10 @@
 /*
- * direct3d 1 to 3, d3dim.dll's, read from build 26300: the direct3d
- * object of a directdraw object of the first versions, and its devices.
- * a device here is the seventh's core with what the first interfaces add:
- * viewports, light states and materials by handle, the legacy render
- * states mapped to texture stages as the rasterizers map them, vertex
- * types, Begin and End, and lighting with the old light models, done on
- * the cpu before the backend transforms and clips.
+ * direct3d 1 to 3: the direct3d object of a first version directdraw
+ * object, and its devices. a device here is the version 7 core plus what
+ * the first interfaces add: viewports, light states and materials by
+ * handle, legacy render states mapped to texture stages like the
+ * rasterizers do, vertex types, Begin and End, and old-model lighting done
+ * on the cpu before the backend transforms and clips.
  */
 #include "d3d_private.h"
 
@@ -63,9 +62,8 @@ static void null_desc(D3DDEVICEDESC *d)
 }
 
 /*
- * the hardware and software descriptions of a device for an interface
- * version, d3dim's for its rasterizers and a current driver's through
- * ddraw's emulation for the hardware device, guessed as the driver's own.
+ * the rasterizers as d3dim describes them; the hardware device as a
+ * current driver reports it through ddraw's emulation, guessed.
  */
 BOOL D3dLegacyDesc(const GUID *guid, DWORD version, D3DDEVICEDESC *hw, D3DDEVICEDESC *sw)
 {
@@ -94,7 +92,7 @@ BOOL D3dLegacyDesc(const GUID *guid, DWORD version, D3DDEVICEDESC *hw, D3DDEVICE
         hw->dwFVFCaps = 8;
         hw->dwTextureOpCaps = 0x00FEFFFF;
         hw->wMaxTextureBlendStages = hw->wMaxSimultaneousTextures = 8;
-        /* the software side of a hardware device: transform and lighting alone. */
+        /* the software side of a hardware device: transform and lighting only. */
         sw->dwFlags = 0x1F;
         sw->dwDevCaps = D3DDEVCAPS_FLOATTLVERTEX;
         sw->dtcTransformCaps.dwCaps = D3DTRANSFORMCAPS_CLIP;
@@ -128,7 +126,7 @@ BOOL D3dLegacyDesc(const GUID *guid, DWORD version, D3DDEVICEDESC *hw, D3DDEVICE
     sw->dwDeviceZBufferBitDepth = DDBD_16;
     sw->dwMaxVertexCount = 2021;
     if (version == 3 && !ramp) {
-        /* the description of directx 6's rasterizer. */
+        /* directx 6's rasterizer description. */
         sw->dwFlags = 0x7FF;
         sw->dwDevCaps = 0x551;
         c->dwRasterCaps = 0x121F7;
@@ -173,7 +171,7 @@ static DWORD registry_dword(const WCHAR *name, BOOL *present)
 typedef HRESULT (*ENUM_FN)(const GUID *guid, char *description, char *name, D3DDEVICEDESC *hw, D3DDEVICEDESC *sw,
                            void *context);
 
-/* the devices of an interface version, in d3dim's order. */
+/* in d3dim's order. */
 static void enumerate(DWORD version, ENUM_FN fn, void *context)
 {
     static const struct {
@@ -263,7 +261,7 @@ static BOOL caps_match(const D3DFINDDEVICESEARCH *s, const D3DPRIMCAPS *c)
     return TRUE;
 }
 
-/* a hardware match beats a software one; among each kind the last matching wins. */
+/* a hardware match beats a software one; within each kind the last match wins. */
 static HRESULT find_one(const GUID *guid, char *description, char *name, D3DDEVICEDESC *hw, D3DDEVICEDESC *sw,
                         void *context)
 {
@@ -595,7 +593,7 @@ static HRESULT STDMETHODCALLTYPE d3d3_create_vertex_buffer(IDirect3D3 *This, LPD
     return DdLeave(D3dCreateVertexBuffer1(d3d, desc, flags, buffer));
 }
 
-/* the rasterizers' formats, or the three of a driver; the ramp device has a 16-bit one. */
+/* the rasterizers' formats, or a driver's three; the ramp device has a 16-bit one. */
 static HRESULT STDMETHODCALLTYPE d3d3_enum_zbuffer_formats(IDirect3D3 *This, REFCLSID device,
                                                            LPD3DENUMPIXELFORMATSCALLBACK callback, LPVOID context)
 {
@@ -757,7 +755,7 @@ static void legacy_state(D3DDEV *dev)
         dev->rs[i] = 0;
     for (DWORD i = D3DRENDERSTATE_WRAP0; i <= D3DRENDERSTATE_WRAP7; i++)
         dev->rs[i] = 0;
-    /* what the stage states read back stays apart from the mapping of the legacy states, made now. */
+    /* what the stage states read back stays apart from the legacy state mapping made now. */
     memcpy(l->api_tss, dev->tss, sizeof(l->api_tss));
     for (DWORD stage = 0; stage < D3D_STAGES; stage++)
         dev->tss[stage][D3DTSS_TEXTURETRANSFORMFLAGS] = D3DTTFF_DISABLE;
@@ -769,7 +767,7 @@ static void legacy_state(D3DDEV *dev)
     dev->stage_end = D3D_STAGES;
 }
 
-/* d3dim's checks of the surfaces, the hardware device needing video memory and the software system memory. */
+/* the hardware device needs video memory surfaces, the software ones system memory. */
 static HRESULT check_surfaces(D3DDEV *dev, const GUID *guid, DDSURF *target, DDSURF *depth)
 {
     D3DLEGACY *l = dev->legacy;
@@ -811,7 +809,7 @@ static HRESULT create_device(D3DOBJ *d3d, const GUID *guid, DDSURF *target, DWOR
         return hr;
     DDSURF *depth = D3dAttachedDepth(target);
     D3DDEVICEDESC hw, sw;
-    /* the reference and null devices are d3dref.dll's, which windows 11 lacks. */
+    /* the reference and null devices come from d3dref.dll, which windows 11 lacks. */
     if (!D3dLegacyDesc(guid, version, &hw, &sw))
         return E_NOINTERFACE;
     DbDevice *db = DbDeviceGet();
@@ -856,7 +854,7 @@ static HRESULT create_device(D3DOBJ *d3d, const GUID *guid, DDSURF *target, DWOR
     return D3D_OK;
 }
 
-/* a surface of a directdraw object of the first versions answers for its textures and first devices. */
+/* surfaces of first version directdraw objects answer for their textures and first devices. */
 HRESULT D3dSurfQuery(DDSURF *s, REFIID riid, void **out)
 {
     for (D3DAGG *a = s->aggregates; a; a = a->next)
@@ -929,14 +927,14 @@ void D3dLegacyDestroy(D3DDEV *dev)
     dev->legacy = nullptr;
 }
 
-/* ------------------------------------------------------------------ the backend's view of a first device */
+/* ------------------------------------------------------------------ backend state of a first device */
 
 const D3DMATRIX *D3dLegacyClipMap(D3DDEV *dev)
 {
     return &dev->legacy->clip_map;
 }
 
-/* table fog takes the render states, vertex fog the light states, which direct3d 9 shares. */
+/* table fog uses the render states, vertex fog the light states, which direct3d 9 shares. */
 static void push_fog(D3DDEV *dev)
 {
     D3DLEGACY *l = dev->legacy;
@@ -958,7 +956,7 @@ void D3dLegacyActivate(D3DDEV *dev)
     push_fog(dev);
 }
 
-/* the viewport's clip volume after the projection, and its rectangle on the target. */
+/* applies the viewport's clip volume after the projection, and its rectangle on the target. */
 HRESULT D3dLegacyDownload(D3DDEV *dev, D3DVIEWPORTOBJ *vp)
 {
     if (!vp)
@@ -993,9 +991,9 @@ HRESULT D3dLegacyDownloadCurrent(D3DDEV *dev)
     return D3D_OK;
 }
 
-/* ------------------------------------------------------------------ legacy states, mapped as the rasterizers map them */
+/* ------------------------------------------------------------------ legacy states, mapped like the rasterizers */
 
-/* the texture blend of the first interfaces as the stage states of stage 0. */
+/* the first interfaces' texture blend as stage 0 states. */
 static void apply_blend(D3DDEV *dev)
 {
     DWORD color = D3DTOP_SELECTARG1, alpha = D3DTOP_SELECTARG1, arg2 = 0xFFFFFFFF;
@@ -1119,7 +1117,7 @@ HRESULT D3dLegacySetRenderState(D3DDEV *dev, DWORD type, DWORD value)
     return D3D_OK;
 }
 
-/* the light states of the first interfaces, and the override bits of execute buffers. */
+/* also handles the override bits of execute buffers. */
 HRESULT D3dLegacySetLightState(D3DDEV *dev, DWORD type, DWORD value)
 {
     D3DLEGACY *l = dev->legacy;

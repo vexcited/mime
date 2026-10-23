@@ -1,6 +1,3 @@
-/*
- * shell32 internal interface shared by its source files.
- */
 #ifndef MIME_SHELL32_PRIVATE_H
 #define MIME_SHELL32_PRIVATE_H
 
@@ -16,10 +13,7 @@ typedef BOOL(CALLBACK *PROPENUMPROCEXW)(HWND, LPWSTR, HANDLE, ULONG_PTR);
 WINUSERAPI BOOL WINAPI PrintWindow(HWND window, HDC dc, UINT flags);
 WINUSERAPI int WINAPI EnumPropsExW(HWND window, PROPENUMPROCEXW proc, LPARAM parameter);
 
-/*
- * shell32 allocates what callers free with CoTaskMemFree or ILFree from the
- * process heap, which is the task allocator of mime's ole32.
- */
+/* the process heap is the task allocator of mime's ole32, so callers free this with CoTaskMemFree or ILFree. */
 FORCEINLINE void *ShAlloc(SIZE_T size)
 {
     return HeapAlloc(GetProcessHeap(), 0, size);
@@ -36,9 +30,9 @@ FORCEINLINE void ShFree(void *p)
         HeapFree(GetProcessHeap(), 0, p);
 }
 
-/* a heap copy of a string, for results the caller frees with CoTaskMemFree. */
+/* the caller frees the copy with CoTaskMemFree. */
 LPWSTR ShDuplicate(LPCWSTR text);
-/* converts an ansi string to a heap allocated wide string, NULL stays NULL. */
+/* NULL stays NULL. */
 LPWSTR ShWiden(LPCSTR text);
 
 /* pidl.c */
@@ -74,14 +68,14 @@ enum {
 DWORD *ShIconArt(int kind, int cx, int cy);
 
 /*
- * where an icon comes from: a stock icon by its number, or an index of a file's icons (minus a resource id when
- * negative). Fallback is the stock icon that stands in when the file has none.
+ * a stock icon by number, or an index into a file's icons where a negative index is minus a resource id. Fallback is
+ * the stock icon used when the file has none.
  */
 typedef struct _SH_ICON_SOURCE {
     int Stock;
     int Index;
     int Fallback;
-    /* the file shows its own icon, as an executable does. */
+    /* the file shows its own icon, like an executable. */
     BOOL Self;
     WCHAR Path[MAX_PATH];
 } SH_ICON_SOURCE;

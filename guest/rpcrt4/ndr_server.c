@@ -1,7 +1,6 @@
 /*
- * the server side of the interpreter: a call unmarshaled from a request, made on the manager routine, and its results marshaled
- * into the reply. NdrServerCall2 serves the calls of the rpc runtime and NdrStubCall2 those of com stubs, which also arrive with
- * the channel their buffers come from.
+ * the server side of the interpreter: unmarshal a request, call the manager routine, marshal the results into the reply.
+ * NdrServerCall2 serves rpc runtime calls and NdrStubCall2 com stub calls, which also come with their buffer's channel.
  */
 #include "ndr_proc.h"
 #include <mime/win32/rpcproxy.h>
@@ -11,7 +10,7 @@ static BOOL is_pointer_type(uchar fc)
     return (fc >= FC_RP && fc <= FC_FP) || fc == FC_IP || fc == FC_BIND_CONTEXT;
 }
 
-/* memory for the cells a call needs, from the frame's own space first. */
+/* cells a call needs, taken from the frame's own space first. */
 typedef struct {
     uchar Local[512];
     ULONG Used;
@@ -76,7 +75,6 @@ static void simple_value(PMIDL_STUB_MESSAGE m, NDR_PASS pass, uchar *slot, uchar
     NdrpSimple(&c, slot, fc);
 }
 
-/* ------------------------------------------------------------------ in parameters */
 
 static void unmarshal_in(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, ARENA *arena)
 {
@@ -94,7 +92,7 @@ static void unmarshal_in(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, ARENA *arena)
         }
         if (prm.Attrs & PA_IS_BASETYPE) {
             if (prm.Attrs & PA_IS_SIMPLE_REF) {
-                /* a ref pointer to a simple type: a cell holds the value. */
+                /* a ref pointer to a simple type gets a cell holding the value. */
                 uchar *cell = arena_alloc(arena, 16);
                 *(uchar **)slot = cell;
                 simple_value(m, NDR_UNMARSHAL, cell, prm.BaseType);
@@ -110,15 +108,13 @@ static void unmarshal_in(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, ARENA *arena)
             *(uchar **)slot = arena_alloc(arena, sizeof(void *));
         param_walk(m, NDR_UNMARSHAL, p, &prm, slot);
     }
-    /* the counts that depended on a parameter that came later. */
+    /* counts that depended on a later parameter. */
     NdrpCheckDeferred(m);
 }
 
-/* ------------------------------------------------------------------ out parameters */
-
 /*
- * the memory an [out] reference pointer points to before the call, zeroed: the server routine fills it in. A pointer to a pointer
- * gets a cell for the inner pointer, and so on down the chain.
+ * zeroed memory for an [out] reference pointer, which the server routine fills in. a pointer to a pointer gets a cell for
+ * the inner pointer, and so on down the chain.
  */
 static void out_init(PMIDL_STUB_MESSAGE m, PFORMAT_STRING type, uchar **slot, ARENA *arena)
 {
@@ -215,7 +211,7 @@ static void marshal_out(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
     }
 }
 
-/* the [in] data allocated for the call is freed after it, as the parameters ask. */
+/* frees the [in] data allocated for the call, as the parameter attributes ask. */
 static void free_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
 {
     for (ULONG i = 0; i < p->NumParams; i++) {
@@ -235,7 +231,7 @@ static void free_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
         } else {
             uchar *walk = object;
             NdrpWalkTop(m, NDR_FREE, &walk, type, 0);
-            /* the pointee of a simple reference pointer is the stub's to free when it allocated it, which it did only for an [in] one. */
+            /* the stub only allocated a simple reference pointee for an [in] parameter, so only then does it free it. */
             if ((prm.Attrs & PA_IS_SIMPLE_REF) && (prm.Attrs & PA_IS_IN) && !(prm.Attrs & PA_IS_BY_VALUE) && prm.Attrs < 0x2000 && object &&
                 !NdrpInBuffer(m, object))
                 NdrpFree(m, object);
@@ -244,7 +240,6 @@ static void free_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
     }
 }
 
-/* ------------------------------------------------------------------ the call */
 
 static BOOL arena_owns(const ARENA *a, const void *p)
 {
@@ -270,13 +265,13 @@ LONG RPC_ENTRY NdrStubCall2(IRpcStubBuffer *stub, IRpcChannelBuffer *channel, PR
         info = iface->InterpreterInfo;
         epv = msg->ManagerEpv ? msg->ManagerEpv : (void **)info->DispatchTable;
     }
-    /* the procedure number was checked against the dispatch table of the interface by the runtime, or the stub vtable. */
+    /* the runtime or the stub vtable already checked the procedure number against the dispatch table. */
     PMIDL_STUB_DESC desc = info->pStubDesc;
     PFORMAT_STRING procs = info->ProcString;
     const unsigned short *offsets = info->FmtStringOffset;
     PFORMAT_STRING types = desc->pFormatTypes;
     MIDL_STUB_DESC old_desc;
-    /* a stub of two transfer syntaxes keeps the older one's formats in its table of syntaxes. */
+    /* a dual syntax stub keeps the ndr formats in its syntax table. */
     if (info->pSyntaxInfo) {
         const MIDL_SYNTAX_INFO *old = NdrpOldSyntax(info->pSyntaxInfo, info->nCount ? info->nCount : 2);
         if (!old)
@@ -337,7 +332,7 @@ LONG RPC_ENTRY NdrStubCall2(IRpcStubBuffer *stub, IRpcChannelBuffer *channel, PR
             NdrRpcSsEnableAllocate(&m);
         if (is_object)
             *(void **)frame = object;
-        /* an explicit handle parameter receives the handle of the call. */
+        /* an explicit handle parameter gets the call's handle. */
         if (p.HandleType == 0 && p.HandleDesc[0] == FC_BIND_PRIMITIVE) {
             uchar *h = frame + *(const USHORT *)(p.HandleDesc + 2);
             if (p.HandleDesc[1] & HANDLE_PARAM_IS_VIA_PTR)
@@ -359,7 +354,7 @@ LONG RPC_ENTRY NdrStubCall2(IRpcStubBuffer *stub, IRpcChannelBuffer *channel, PR
             ULONG nargs = p.StackSize / slot_size;
             ULONG ret_offset = 0, ret_kind = 0;
             if ((p.Oi2Flags & OIF_HAS_RETURN) && p.NumParams) {
-                /* the return value has the slot after the arguments, and a float is not in the integer register. */
+                /* the return value's slot follows the arguments, and a float result is not in the integer register. */
                 NDR_PARAM rp = param_of(&p, p.NumParams - 1);
                 ret_offset = rp.Offset;
                 nargs = ret_offset / slot_size;

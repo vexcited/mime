@@ -32,7 +32,7 @@ static void destroy_database(MIME_MSI_OBJECT *object)
     MimeMsiFree(database);
 }
 
-/* a storage of the file, such as a transform inside a patch, as a database whose root is that storage. */
+/* opens a sub storage, such as a transform inside a patch, as a database rooted there. */
 UINT MimeMsiOpenSubStorage(MIME_MSI_DATABASE *parent, PCWSTR name, MIME_MSI_DATABASE **out)
 {
     *out = nullptr;

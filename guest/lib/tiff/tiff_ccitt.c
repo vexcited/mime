@@ -1,8 +1,8 @@
 #include "tiff_internal.h"
 
 /*
- * ccitt t.4 and t.6 run length codes, as bit strings. the decoder expands them into lookup tables when it is
- * set up, the encoder into code and length pairs.
+ * ccitt t.4 and t.6 run length codes as bit strings. setup expands them into lookup tables for the decoder and
+ * code, length pairs for the encoder.
  */
 static const char *const white_term[64] = {
     "00110101", "000111",   "0111",     "1000",     "1011",     "1100",     "1110",     "1111",
@@ -372,7 +372,7 @@ static void commit_row(TiffCcitt *st, uint8_t *row)
 
 enum { EOL_NONE, EOL_FOUND, EOL_END };
 
-/* consumes fill bits and an end of line code if one is next. kind is the tag bit of two dimensional data. */
+/* skips fill bits and an end of line code if one is next. tagged two dimensional data has a tag bit after the eol. */
 static int skip_eol(Br *b, bool tagged, bool *is_1d)
 {
     br_fill(b);
@@ -402,7 +402,7 @@ static int skip_eol(Br *b, bool tagged, bool *is_1d)
     return EOL_FOUND;
 }
 
-/* moves to the next end of line code, which is not consumed. */
+/* moves to the next end of line code without consuming it. */
 static bool resync(Br *b)
 {
     for (;;) {

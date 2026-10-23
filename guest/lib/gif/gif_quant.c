@@ -113,7 +113,7 @@ typedef struct Mapper {
     uint32_t *key_cache;  /* 4096 entries. */
     uint8_t *val_cache;   /* 4096 entries. */
     unsigned dims[3];     /* cube levels. */
-    unsigned gray_levels; /* gray levels. */
+    unsigned gray_levels;
 } Mapper;
 
 static unsigned nearest_scan(const Mapper *m, int r, int g, int b)

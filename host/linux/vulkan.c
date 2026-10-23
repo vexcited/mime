@@ -1,11 +1,7 @@
 /*
- * the vulkan connections of guest processes, run on the host's vulkan
- * driver. each connection has a thread that runs its calls in ring order
- * and keeps the table from guest ids to host handles. memory the guest
- * maps is its own ram, imported into the driver with
- * VK_EXT_external_memory_host, so neither side copies what the other
- * writes. command buffers arrive whole and are recorded here when the
- * guest ends them.
+ * runs guest Vulkan connections on the host driver. each connection executes calls in ring order and maps
+ * guest ids to host handles. VK_EXT_external_memory_host imports mapped guest RAM without copies. command
+ * buffers arrive as complete streams and are recorded when the guest ends them.
  */
 #include "display.h"
 #include "mvk_host.h"
@@ -29,7 +25,7 @@
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static MvkConnection *g_connections[MAX_CONNECTIONS];
 
-/* ------------------------------------------------------------------ handles */
+/* ------------------------------------------------------------------ handles. */
 
 static uint64_t mix(uint64_t v)
 {
@@ -77,7 +73,7 @@ static uint64_t reverse_get(MvkConnection *c, uint64_t handle)
     return 0;
 }
 
-/* ------------------------------------------------------------------ objects left alive */
+/* ------------------------------------------------------------------ objects left alive. */
 
 static void live_put(MvkConnection *c, uint64_t handle, uint32_t kind)
 {
@@ -124,7 +120,6 @@ void mvk_forget(MvkConnection *c, uint64_t handle)
         while (c->live[i].handle && c->live[i].handle != handle)
             i = (i + 1) & mask;
         if (c->live[i].handle) {
-            /* the entries after it move back over the hole. */
             c->live[i].handle = 0;
             c->live_used--;
             for (size_t j = (i + 1) & mask; c->live[j].handle; j = (j + 1) & mask) {
@@ -145,10 +140,7 @@ static int by_kind(const void *a, const void *b)
     return (int)x->kind - (int)y->kind;
 }
 
-/*
- * what the program left alive on the device, destroyed before it as
- * windows' drivers do for a process that goes: the device is idle.
- */
+/* with the device idle, destroys objects the process left alive before destroying the device. */
 static void destroy_leftovers(MvkConnection *c)
 {
     pthread_mutex_lock(&c->live_lock);
@@ -165,7 +157,7 @@ static void destroy_leftovers(MvkConnection *c)
     pthread_mutex_unlock(&c->live_lock);
 }
 
-/* the pool a command buffer came from, which its recordings must not share with another thread's. */
+/* command pool ownership prevents concurrent recording through the same pool. */
 static void pool_of_put(MvkConnection *c, VkCommandBuffer buffer, VkCommandPool pool)
 {
     if (!buffer)
@@ -243,13 +235,12 @@ static void stop_watcher(MvkConnection *c);
 
 static uint64_t await_id_aside(MvkConnection *c, uint64_t id);
 
-/* the thread recording a command buffer aside, not the connection's. */
+/* the recording worker, separate from the connection thread. */
 static __thread bool t_recorder;
 
 /*
- * an id not bound yet may be a pipeline being created aside: its creation
- * is waited for, by the connection's thread, which binds it, or by a
- * thread recording aside, which takes the handle from the creation.
+ * an unbound id may be an asynchronous pipeline creation. the connection thread waits and binds it; recording
+ * workers wait and take its handle directly.
  */
 static uint64_t lookup(MvkConnection *c, uint64_t id)
 {
@@ -314,12 +305,12 @@ void mvk_malformed(MvkCall *c, const char *what)
     }
 }
 
-/* ------------------------------------------------------------------ replies and chains */
+/* ------------------------------------------------------------------ replies and chains. */
 
 /* the reply space starts with a status word the guest checks: 1 when the reply did not fit. */
 MvkEncoder *mvk_reply_begin(MvkCall *c)
 {
-    /* a call nobody waits for replies into nothing. */
+    /* calls with no waiting guest discard replies. */
     static uint8_t sink[16];
     if (c->header.reply == MVK_NO_REPLY) {
         c->out = (MvkEncoder){sink, sink + 8, sink + 8, 0, c->conn, nullptr};
@@ -351,7 +342,7 @@ void *mvk_get_chain(MvkDecoder *d)
     return s;
 }
 
-/* an output struct the guest described by the sTypes of its chain, zeroed and linked. */
+/* allocates and links a zeroed output chain using the requested sTypes. */
 void mvk_get_out_shape_into(MvkDecoder *d, void *dst, size_t size)
 {
     VkBaseOutStructure *base = dst;
@@ -402,7 +393,7 @@ uint64_t mvk_dispatch_id(const void *object)
     return 0;
 }
 
-/* ------------------------------------------------------------------ instance and devices */
+/* ------------------------------------------------------------------ instance and devices. */
 
 static bool load_library(MvkConnection *c)
 {
@@ -475,12 +466,9 @@ static void instance_extensions(MvkCall *call)
     mvk_reply_end(call);
 }
 
-/* ------------------------------------------------------------------ shared instances */
+/* ------------------------------------------------------------------ shared instances. */
 
-/*
- * a request of the guest as it came, with the ids it carries zeroed, so that two requests for the same thing compare
- * equal with memcmp, whichever process sent them.
- */
+/* zero request ids so equivalent requests from different processes compare equal with memcmp. */
 typedef struct Request {
     uint8_t *bytes;
     size_t size;
@@ -528,10 +516,8 @@ static bool request_copy(Request *to, const Request *from)
 }
 
 /*
- * the host's instance of a request, shared by the connections that sent the same one: the processes of a browser make
- * the same instance, and a device made ahead of time can only go to a process that has the instance it was
- * made on. The last connection to let go destroys it, and so does the end of the machine for the one the spare device
- * keeps alive.
+ * connections with identical requests share an instance, allowing them to reuse spare devices created on it.
+ * the last connection destroys the instance unless a spare keeps it alive until machine shutdown.
  */
 #define SPARES_MAX 2
 
@@ -539,14 +525,14 @@ static bool request_copy(Request *to, const Request *from)
 typedef struct Spare {
     MvkConnection *shell;
     Request key;
-    uint64_t made; /* when, in the host's nanoseconds */
+    uint64_t made; /* when, in the host's nanoseconds. */
 } Spare;
 
 typedef struct HostInstance {
     struct HostInstance *next;
     Request key;
     uint32_t refs;
-    MvkConnection base; /* the library, the instance and its commands, never a device */
+    MvkConnection base; /* the library, the instance and its commands, never a device. */
     Spare spares[SPARES_MAX];
 } HostInstance;
 
@@ -557,7 +543,7 @@ void mime_gpu_teardown_enter(void);
 void mime_gpu_teardown_leave(void);
 static void spare_destroy(HostInstance *hi);
 
-/* makes the instance of a request, with the layers the host lacks left out and only the extensions it has. */
+/* creates an instance with only available host layers and extensions. */
 static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkResult *result)
 {
     *result = VK_ERROR_INITIALIZATION_FAILED;
@@ -604,7 +590,7 @@ static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkR
     return hi;
 }
 
-/* the instance of a request with a count held for the caller: one the connections hold already, else a new one. */
+/* acquires a reference to an existing matching instance or creates one. */
 static HostInstance *instance_hold(Request *key, VkInstanceCreateInfo info, MvkDecoder *d, VkResult *result)
 {
     pthread_mutex_lock(&g_instance_lock);
@@ -675,10 +661,7 @@ static void create_instance(MvkCall *call)
     mvk_reply_end(call);
 }
 
-/*
- * the memory types a device can import host memory into, which the guest
- * may map: a device of its own answers, created for the question.
- */
+/* creates a temporary device to query which memory types can import host memory for guest mappings. */
 static uint32_t probe_importable_types(MvkConnection *c, VkPhysicalDevice physical)
 {
     uint32_t count = 0;
@@ -712,23 +695,22 @@ static uint32_t probe_importable_types(MvkConnection *c, VkPhysicalDevice physic
 }
 
 /*
- * the answer is the same for every connection to a device, and a device made only to ask takes 70 ms, so it is
- * kept for the life of the process, by what names the device and its driver.
+ * cache importable memory types by device and driver for the process lifetime; creating a query device takes
+ * 70 ms.
  */
 static struct {
     uint32_t vendor, device, driver;
     char name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
-    char uuids[2 * VK_UUID_SIZE * 2 + 1]; /* the device's and the driver's, in hex */
+    char uuids[2 * VK_UUID_SIZE * 2 + 1]; /* the device's and the driver's, in hex. */
     uint32_t bits;
 } g_importable[8];
 static uint32_t g_importable_count;
 static pthread_mutex_t g_importable_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /*
- * the answer is also kept on disk, so that a machine does not make that device again each time it starts: 70 ms
- * of the driver's work, on a thread that the first program's own calls then wait behind. It is for the very device
- * and driver build that gave it, the name, the version and the uuids of both, and a driver update makes a new line
- * that no old one matches; a line that does not parse is not used, and the file is only ever added to.
+ * persist the result to avoid 70 ms of driver work ahead of the first program at each start. the cache key
+ * includes device and driver names, versions and UUIDs, so updates cannot reuse old results. ignore malformed
+ * lines and only append to the file.
  */
 #define IMPORT_CACHE_NAME "vulkan-import-cache"
 #define IMPORT_CACHE_HEADER "mime vulkan import cache 1"
@@ -880,7 +862,7 @@ static void device_extensions(MvkCall *call)
     for (uint32_t i = 0; i < count; i++)
         if (protocol_has(list[i].extensionName) || mvk_wsi_device_extension(list[i].extensionName))
             n++;
-    /* video decoding is one extension to the guest: what it needs of the device and the host's side of it are the host's. */
+    /* the guest sees one video extension; the host manages device requirements and codec details. */
     bool video = mvk_video_offered(c, physical);
     mvk_put_u32(e, n + (video ? 1 : 0));
     for (uint32_t i = 0; i < count; i++)
@@ -894,15 +876,10 @@ static void device_extensions(MvkCall *call)
     mvk_reply_end(call);
 }
 
+/* imports guest RAM into the device, then binds requested queues from family, index and id triples. */
 /*
- * the device, with the import of host memory added so the guest's mapped
- * memory can be its own ram; then the queues the guest named, as (family,
- * index, id) triples.
- */
-/*
- * buffers may be bound to guest memory the host imported, which vulkan
- * allows only to buffers made for that kind of handle: every buffer is
- * made so. the driver's function, the same for every connection.
+ * all buffers allow imported host memory handles so they can bind guest RAM. the driver function is shared by
+ * connections.
  */
 static PFN_vkCreateBuffer g_create_buffer;
 
@@ -921,8 +898,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL create_importable_buffer(VkDevice device, 
 }
 
 /*
- * makes the device of a request on the connection's instance, and binds the ids of the queues that follow the request
- * in d. The ids of a device made ahead are all zero and bind nothing.
+ * creates the requested device and binds queue ids from d. spare device requests have zero ids, so they bind
+ * nothing.
  */
 static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice physical, uint64_t id,
                               VkDeviceCreateInfo info, uint32_t queues)
@@ -1007,7 +984,7 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
         info.enabledLayerCount = 0;
         info.enabledExtensionCount = n;
         info.ppEnabledExtensionNames = names;
-        /* timeline semaphores hand presents to the presenting thread: on whenever the gpu has them. */
+        /* timeline semaphores hand presents to the presenting thread: on whenever the GPU has them. */
         VkPhysicalDeviceTimelineSemaphoreFeatures timeline = {
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
         VkPhysicalDeviceFeatures2 query = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
@@ -1036,7 +1013,7 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
                 if ((!unified && !strcmp(names[i], VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME)) ||
                     (!independent && !strcmp(names[i], VK_KHR_VIDEO_MAINTENANCE_1_EXTENSION_NAME)))
                     names[i--] = names[--n];
-            /* the chain keeps what the gpu has: its features as it reported them, the rest left out. */
+            /* retains only features supported by the GPU. */
             unified_features.pNext = (void *)info.pNext;
             maintenance_features.pNext = unified ? (void *)&unified_features : (void *)info.pNext;
             vp9_features.pNext = independent ? (void *)&maintenance_features : maintenance_features.pNext;
@@ -1075,22 +1052,20 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
     return result;
 }
 
-/* ------------------------------------------------------------------ the spare device */
+/* ------------------------------------------------------------------ the spare device. */
 
 /*
- * A browser's gpu process waits for the driver to make its device at every start, 78 ms with one queue. The requests
- * the processes made last time are kept on disk, and as soon as the driver is loaded the machine makes the devices of the
- * last two ahead of them, on the instance that the processes share. A process whose request is the same takes the device
- * it finds: the same extensions, features and queues, so that nothing differs but the wait. A new one is made a while
- * after one was taken, for the next process or the next start of the browser. The ones left over are destroyed with
- * the machine.
+ * device creation costs a browser GPU process 78 ms with one queue. save requests on disk and pre-create
+ * devices for the last two requests when the driver loads, using their shared instances. reuse requires
+ * identical extensions, features and queues. replenish a spare after use and destroy unused spares at
+ * shutdown.
  */
 #define LEARNED_MAX 4
 #define LEARNED_NAME "vulkan-device-requests"
 #define LEARNED_HEADER "mime vulkan device requests 1"
 #define UUID_TEXT (2 * VK_UUID_SIZE * 2 + 1)
 #define REFILL_DELAY_NS 1500000000ull
-#define SPARE_IDLE_NS 600000000000ull /* a device nobody took in this long is given back, as a gpu kept open keeps the card awake */
+#define SPARE_IDLE_NS 600000000000ull /* release idle spares after this interval so they do not keep the GPU awake. */
 #define FILL_ARENA (1u << 20)
 
 typedef struct Learned {
@@ -1098,7 +1073,7 @@ typedef struct Learned {
     Request instance, device;
 } Learned;
 
-static Learned g_learned[LEARNED_MAX]; /* the most recent first */
+static Learned g_learned[LEARNED_MAX]; /* the most recent first. */
 static unsigned g_learned_count;
 static bool g_learned_dirty;
 static pthread_mutex_t g_learned_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -1129,7 +1104,7 @@ static bool hex_get(const char *text, Request *r)
     return true;
 }
 
-/* a line that does not parse is left out, and so is a file of another format. */
+/* ignore malformed lines and files with a different format. */
 static void learned_load(void)
 {
     char path[MIME_PATH_MAX];
@@ -1168,7 +1143,7 @@ static void hex_put(FILE *f, const Request *r)
         fprintf(f, "%02x", r->bytes[i]);
 }
 
-/* the file is written aside and moved over the old, so a machine that stops in the middle leaves a whole one. */
+/* write a replacement file and rename it atomically to preserve complete data on interruption. */
 static void learned_save(void)
 {
     pthread_mutex_lock(&g_learned_lock);
@@ -1196,7 +1171,7 @@ static void learned_save(void)
     pthread_mutex_unlock(&g_learned_lock);
 }
 
-/* the request of a device that was made, put first. */
+/* moves the latest successful device request to the front. */
 static void learned_note(const char *uuids, const Request *instance, const Request *device)
 {
     pthread_mutex_lock(&g_learned_lock);
@@ -1264,7 +1239,7 @@ static void spare_destroy(HostInstance *hi)
             shell_destroy(doomed[i]);
 }
 
-/* the instances the spare devices are made on, held for the machine's life, and the device being made. */
+/* shared instances live until shutdown; tracks the device currently being prepared. */
 static HostInstance *g_pool[SPARES_MAX];
 static bool g_building;
 static const Request *g_building_key;
@@ -1288,7 +1263,7 @@ static void pool_release(void)
         mime_info("vulkan: %u devices made ahead were not taken and are destroyed with the machine", left);
 }
 
-/* the spare of the request on the instance, with the lock held. */
+/* finds a spare matching the request and instance, with the lock held. */
 static Spare *spare_find(HostInstance *hi, const Request *key)
 {
     for (unsigned i = 0; i < SPARES_MAX; i++)
@@ -1297,7 +1272,7 @@ static Spare *spare_find(HostInstance *hi, const Request *key)
     return nullptr;
 }
 
-/* the device made ahead for this request, if there is one, waiting for it when it is being made now. */
+/* takes a matching spare, waiting if its creation is in progress. */
 static MvkConnection *spare_take(HostInstance *hi, const Request *key, VkPhysicalDevice physical, uint32_t queues)
 {
     struct timespec limit;
@@ -1322,7 +1297,7 @@ static MvkConnection *spare_take(HostInstance *hi, const Request *key, VkPhysica
     return s;
 }
 
-/* takes the device made ahead and the ids of the queues the request names. */
+/* binds a spare device and the queue ids from the request. */
 static void device_adopt(MvkConnection *c, MvkDecoder *d, uint64_t id, MvkConnection *s, uint32_t queues)
 {
     c->device = s->device;
@@ -1342,7 +1317,7 @@ static void device_adopt(MvkConnection *c, MvkDecoder *d, uint64_t id, MvkConnec
     free(s);
 }
 
-/* the payload of a device request with the ids of the physical device, the device and the queues zeroed. */
+/* normalizes a device request by clearing physical device, device and queue ids. */
 static bool device_request(Request *key, const MvkDecoder *d, uint32_t queues)
 {
     size_t ids[2 + sizeof(((MvkConnection *)0)->queues) / sizeof(((MvkConnection *)0)->queues[0])];
@@ -1371,17 +1346,17 @@ static uint64_t realtime_ns(void)
 static bool g_no_spare;
 static pthread_mutex_t g_maker_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_maker_wake = PTHREAD_COND_INITIALIZER;
-static uint64_t g_maker_at; /* when the next device is due, in realtime nanoseconds, 0 for none */
+static uint64_t g_maker_at; /* when the next device is due, in realtime nanoseconds, 0 for none. */
 static bool g_maker_stop;
-static bool g_maker_quiet; /* the device asked for is made when the connections are quiet, not at once */
-static uint64_t g_vk_busy; /* when a connection last ran a call of the guest, in the host's nanoseconds */
+static bool g_maker_quiet; /* defer spare creation until connections are quiet. */
+static uint64_t g_vk_busy; /* when a connection last ran a call of the guest, in the host's nanoseconds. */
 
 /*
- * a device made while the guest's processes call the driver slows their calls: the driver does one thing at a time for a
- * device, and a webgpu page that started a second after its browser waited 70 ms for its device instead of 6.
+ * creating a spare can serialize driver work with active devices. a WebGPU page opened one second after the
+ * browser waited 70 ms instead of 6 for its device.
  */
 #define QUIET_NS 10000000000ull
-static uint64_t g_quiet_ns = QUIET_NS; /* MIME_VK_SPARE_QUIET_MS changes it, for the test */
+static uint64_t g_quiet_ns = QUIET_NS; /* overridden by MIME_VK_SPARE_QUIET_MS. */
 
 static void maker_request(uint64_t delay, bool quiet)
 {
@@ -1395,7 +1370,7 @@ static void maker_request(uint64_t delay, bool quiet)
     pthread_mutex_unlock(&g_maker_lock);
 }
 
-/* makes the device of the request on the instance of its request, if no spare of it is there. */
+/* creates a spare for this request and instance unless one already exists. */
 static void spare_make_on(const Learned *want, uint8_t *arena)
 {
     MvkConnection owner = {};
@@ -1412,7 +1387,7 @@ static void spare_make_on(const Learned *want, uint8_t *arena)
     request_free(&key);
     if (!hi)
         return;
-    /* the machine holds the instance, so that the processes find it with its devices, and the count taken above is its own. */
+    /* the machine retains this instance reference for later connections and their spare devices. */
     bool pooled = false, placed = false;
     pthread_mutex_lock(&g_instance_lock);
     for (unsigned i = 0; i < SPARES_MAX; i++)
@@ -1499,7 +1474,7 @@ static void spare_make(const Learned *want, uint8_t *arena)
     pthread_mutex_unlock(&g_instance_lock);
 }
 
-/* the spares of requests that are no longer among the last ones are destroyed to make room. */
+/* discard spares outside the recent request list. */
 static void spare_prune(const Learned *want, unsigned n)
 {
     MvkConnection *doomed[SPARES_MAX * SPARES_MAX];
@@ -1523,7 +1498,7 @@ static void spare_prune(const Learned *want, unsigned n)
         shell_destroy(doomed[i]);
 }
 
-/* the devices nobody took for a long time are destroyed, and made again when a process makes a device the way they were made. */
+/* release idle spares; recreate them when a process makes a matching device. */
 static void spare_expire(void)
 {
     MvkConnection *doomed[SPARES_MAX * SPARES_MAX];
@@ -1545,7 +1520,7 @@ static void spare_expire(void)
         shell_destroy(doomed[i]);
 }
 
-/* the first request is made at once, the others once the guest's calls to the driver are quiet. */
+/* prepare the first request immediately; wait for quiet guest connections before the others. */
 static void spare_fill(bool quiet)
 {
     Learned want[SPARES_MAX] = {};
@@ -1571,7 +1546,7 @@ static void spare_fill(bool quiet)
     }
 }
 
-/* a device was made for a process: its request is kept, and the next one is made after a while if none is waiting. */
+/* remember the successful request and schedule a replacement spare if none remains. */
 static void device_learn(MvkConnection *c, VkPhysicalDevice physical, const Request *key)
 {
     HostInstance *hi = c->host_instance;
@@ -1620,10 +1595,7 @@ static void create_device(MvkCall *call)
     mvk_reply_end(call);
 }
 
-/*
- * the device goes with the swapchains the presenter made on it, whose
- * functions were the device's, and a later device may take its place.
- */
+/* destroy presenter swapchains before their device and its function pointers become invalid. */
 static void destroy_device(MvkCall *call)
 {
     MvkConnection *c = call->conn;
@@ -1642,7 +1614,7 @@ static void destroy_device(MvkCall *call)
     c->queue_count = 0;
 }
 
-/* ------------------------------------------------------------------ memory */
+/* ------------------------------------------------------------------ memory. */
 
 #ifndef MADV_POPULATE_WRITE
 #define MADV_POPULATE_WRITE 23
@@ -1656,7 +1628,7 @@ typedef struct Prefault {
     size_t length;
 } Prefault;
 
-/* a few megabytes at a time: the host's page faults of the guest's processors wait while one call holds the map of the memory. */
+/* populate a few MiB per call to avoid blocking guest page faults on the memory map lock. */
 static void *prefault_main(void *arg)
 {
     const Prefault *p = arg;
@@ -1667,9 +1639,9 @@ static void *prefault_main(void *arg)
 }
 
 /*
- * The driver pins the pages of memory it imports, and makes those the guest never touched one by one, 25 ms for 64
- * MiB and up to 100 in the machine, with the guest's other threads' faults waiting behind it. Several threads make
- * them first, 5 ms in all. The pages were going to be pinned anyway, so no more memory is used.
+ * the driver pins imported pages, faulting untouched ones serially: 25 ms for 64 MiB, up to 100 ms in the
+ * machine while other guest faults wait. parallel prefaulting takes 5 ms. these pages would be pinned anyway,
+ * so it uses no extra memory.
  */
 static void prefault(void *host, uint64_t span)
 {
@@ -1693,10 +1665,7 @@ static void prefault(void *host, uint64_t span)
     }
 }
 
-/*
- * memory the guest maps lives in its ram, physically contiguous: the host
- * imports it. other memory is the driver's own.
- */
+/* mapped guest memory is contiguous guest RAM imported by the host; other allocations belong to the driver. */
 static void allocate_memory(MvkCall *call)
 {
     MvkConnection *c = call->conn;
@@ -1746,7 +1715,7 @@ static void free_memory(MvkCall *call)
     bind(c, id, 0);
 }
 
-/* ------------------------------------------------------------------ command buffers */
+/* ------------------------------------------------------------------ command buffers. */
 
 static void allocate_command_buffers(MvkCall *call)
 {
@@ -1790,24 +1759,19 @@ static void free_command_buffers(MvkCall *call)
 static void run_stream(MvkCall *outer, VkCommandBuffer buffer, const uint8_t *stream, size_t size);
 
 /*
- * records a command buffer from its stream: the begin information, then
- * the chunks of commands the guest wrote, which are copied before they are
- * read since the guest may write them meanwhile.
+ * records begin information and command chunks from the guest stream. copy chunks before decoding because the
+ * guest may modify them.
  */
 /*
- * recordings aside: a command buffer's stream, copied here as it is sent,
- * decoded and recorded by a pool of threads, each with its own arena, so
- * the command buffers a program records on many threads are recorded on
- * many here too. two of one command pool are recorded one after the
- * other, as vulkan wants; submissions, and the calls that reset, free or
- * allocate command buffers, wait for every recording sent before them.
- * small streams, secondary command buffers and streams that execute
- * others are recorded here, in order.
+ * copy command streams into a recording worker pool with one arena per worker. recordings from the same
+ * command pool stay serial as Vulkan requires. submissions, resets, frees and allocations wait for all
+ * earlier recordings. small streams, secondary command buffers and streams executing secondary buffers stay
+ * on the connection thread.
  */
 typedef struct MvkRecord {
-    struct MvkRecord *queued; /* the pool's */
-    struct MvkRecord *next;   /* the connection's, newest first */
-    struct MvkRecord *after;  /* the last recording of the same command pool, waited for */
+    struct MvkRecord *queued; /* worker pool list. */
+    struct MvkRecord *next;   /* connection list, newest first. */
+    struct MvkRecord *after;  /* wait for the previous recording from this command pool. */
     MvkConnection *conn;
     VkCommandBuffer buffer;
     VkCommandPool pool;
@@ -1900,7 +1864,7 @@ static void record_push(MvkRecord *r)
     pthread_mutex_unlock(&g_record_lock);
 }
 
-/* every recording sent so far done, and forgotten. */
+/* waits for and releases all queued recordings. */
 static void drain_records(MvkConnection *c)
 {
     if (!c->records)
@@ -1934,7 +1898,7 @@ static bool records_waited_for(uint32_t op)
     }
 }
 
-/* whether a stream executes secondary command buffers, which must be recorded before. */
+/* detects secondary command buffer execution, which requires prior recording. */
 static bool executes_others(const uint8_t *stream, size_t size)
 {
     for (size_t at = 0; at + sizeof(MvkStreamCommand) <= size;) {
@@ -2037,7 +2001,7 @@ static void destroy_command_pool(MvkCall *call)
     bind(call->conn, id, 0);
 }
 
-/* ------------------------------------------------------------------ queues and synchronization */
+/* ------------------------------------------------------------------ queues and synchronization. */
 
 static void queue_submit(MvkCall *call)
 {
@@ -2230,7 +2194,7 @@ static void semaphore_value(MvkCall *call)
     mvk_reply_end(call);
 }
 
-/* a descriptor's bytes, from what the guest's union pointed to. */
+/* descriptor bytes pointed to by the guest union. */
 static void get_descriptor(MvkCall *call)
 {
     MvkDecoder *d = &call->in;
@@ -2297,7 +2261,7 @@ static void event_op(MvkCall *call, int op)
         call->fn->vkResetEvent(device, event);
 }
 
-/* ------------------------------------------------------------------ descriptors and queries */
+/* ------------------------------------------------------------------ descriptors and queries. */
 
 static void allocate_descriptor_sets(MvkCall *call)
 {
@@ -2359,21 +2323,17 @@ static void query_pool_results(MvkCall *call)
     mvk_reply_end(call);
 }
 
-/* ------------------------------------------------------------------ pipelines and shaders created aside */
+/* ------------------------------------------------------------------ pipelines and shaders created aside. */
 
 /*
- * a pipeline compiles for milliseconds, and the guest never waits for its
- * creation: run in ring order it would hold every later call, a frame's
- * submits included. shader objects are the same, 1 to 2 milliseconds each and a few dozen
- * when a browser starts its graphics, so the first frame waited 70 ms for the ones behind it. the connection thread decodes it, so every handle is
- * looked up there, and a pool of threads runs the driver's call; the ids
- * are bound once it is done, and a lookup of one not bound yet waits for
- * its creation alone. destructions of what a creation may still use wait
- * for every creation before them.
+ * pipeline compilation takes milliseconds; shader creation takes 1 to 2 ms each. executing them in ring order
+ * delayed a browser first frame by 70 ms across dozens of shaders. decode on the connection thread so handle
+ * lookups stay ordered, then run driver calls in a worker pool. bind ids on completion; lookups wait only for
+ * the needed creation. destruction waits for all earlier creations that may use the object.
  */
 typedef struct MvkJob {
-    struct MvkJob *next, *prev; /* the connection's, in call order */
-    struct MvkJob *queued; /* the pool's */
+    struct MvkJob *next, *prev; /* connection list in call order. */
+    struct MvkJob *queued; /* worker pool list. */
     MvkConnection *conn;
     uint32_t op;
     VkDevice device;
@@ -2381,16 +2341,16 @@ typedef struct MvkJob {
     uint32_t count;
     void *infos;
     uint64_t *ids;
-    VkPipeline *pipelines; /* the shaders of a shader creation, the same size of handle */
-    bool libraries; /* links pipeline libraries, which a destruction must not take away */
+    VkPipeline *pipelines; /* shader handles from one creation, all the same size. */
+    bool libraries; /* linked pipeline libraries must survive until creation finishes. */
     VkResult result;
     volatile int done;
-    int users;    /* recording threads waiting for it, with job_lock held to change; it is freed after the last */
-    bool retired; /* finished and unlinked, to be freed by the last of its users */
-    uint8_t *memory; /* the call's copy, then the arena it decodes into */
+    int users;    /* recording waiters, updated under job_lock; the last waiter frees it. */
+    bool retired; /* finished and unlinked; the last user frees it. */
+    uint8_t *memory; /* copied call followed by its decoding arena. */
 } MvkJob;
 
-/* what the pool's threads spent in the driver since the last dump: shaders, graphics pipelines, compute pipelines. */
+/* worker driver time since the last dump: shaders, graphics pipelines and compute pipelines. */
 static struct {
     uint64_t creations, ns;
 } g_job_stats[3];
@@ -2400,7 +2360,7 @@ static pthread_cond_t g_pool_work = PTHREAD_COND_INITIALIZER;
 static MvkJob *g_pool_first, *g_pool_last;
 static uint32_t g_pool_threads;
 
-/* the driver's call of a creation, by the pool's thread or by one that needs the result before the pool has begun. */
+/* runs creation on a worker, or on a caller that needs the result before a worker starts. */
 static void run_job(MvkJob *job)
 {
     {
@@ -2430,7 +2390,7 @@ static void run_job(MvkJob *job)
     }
 }
 
-/* takes a creation the pool has not begun out of its queue, so that the thread that needs it runs it now. */
+/* claims an unstarted creation for the waiting caller. */
 static bool take_job(MvkJob *job)
 {
     bool found = false;
@@ -2492,10 +2452,10 @@ static void pool_push(MvkJob *job)
     pthread_mutex_unlock(&g_pool_lock);
 }
 
-/* binds the ids of a finished creation and forgets it. */
+/* binds completed ids and releases the creation. */
 static void finish_job(MvkConnection *c, MvkJob *job)
 {
-    /* bound before it leaves the list, so a recording thread finds one or the other. */
+    /* bind before unlinking so recording workers always find the handle or its pending creation. */
     for (uint32_t i = 0; i < job->count; i++) {
         bind(c, job->ids[i], (uint64_t)job->pipelines[i]);
         mvk_track(c, (uint64_t)job->pipelines[i], job->op == MVK_OP_vkCreateShadersEXT ? MVK_KIND_VkShaderEXT : MVK_KIND_VkPipeline);
@@ -2531,7 +2491,7 @@ static void wait_job(MvkConnection *c, MvkJob *job)
     finish_job(c, job);
 }
 
-/* the creations done so far, bound. */
+/* binds all completed creations. */
 static void reap_jobs(MvkConnection *c)
 {
     for (MvkJob *job = c->jobs, *next; job; job = next) {
@@ -2558,7 +2518,7 @@ static uint64_t await_id(MvkConnection *c, uint64_t id)
     return 0;
 }
 
-/* a recording thread's wait: the creation of the id, or its binding when it is done already. */
+/* recording workers wait for the requested creation or its completed handle binding. */
 static uint64_t await_id_aside(MvkConnection *c, uint64_t id)
 {
     uint64_t handle = 0;
@@ -2568,7 +2528,7 @@ static uint64_t await_id_aside(MvkConnection *c, uint64_t id)
             if (job->ids[i] == id) {
                 job->users++;
                 if (!__atomic_load_n(&job->done, __ATOMIC_ACQUIRE)) {
-                    /* the pool has not begun it: it is run here, with the lock its threads report to let go. */
+                    /* run an unstarted job here, releasing the lock workers need to report completion. */
                     pthread_mutex_unlock(&c->job_lock);
                     if (take_job(job))
                         run_job(job);
@@ -2578,7 +2538,7 @@ static uint64_t await_id_aside(MvkConnection *c, uint64_t id)
                     pthread_cond_wait(&c->job_done, &c->job_lock);
                 handle = (uint64_t)job->pipelines[i];
                 if (--job->users == 0 && job->retired) {
-                    /* the connection finished it while this thread used it, and left the freeing to the last user. */
+                    /* the connection finished this job during use; the last user frees it. */
                     pthread_mutex_unlock(&c->job_lock);
                     free(job->memory);
                     free(job);
@@ -2667,7 +2627,7 @@ static void create_pipelines_aside(MvkCall *call)
     pool_push(job);
 }
 
-/* calls that destroy what a creation aside may still use wait for all of them. */
+/* wait for pending creations before destroying resources they may use. */
 static bool waits_for_jobs(MvkConnection *c, uint32_t op)
 {
     switch (op) {
@@ -2690,16 +2650,13 @@ static bool waits_for_jobs(MvkConnection *c, uint32_t op)
     }
 }
 
-/* ------------------------------------------------------------------ watched semaphores */
+/* ------------------------------------------------------------------ watched semaphores. */
 
 /*
- * a guest thread waiting for timeline values would hold every call of its
- * process if the connection's thread waited for them. the guest asks
- * instead with timeouts of zero, and when that fails names the values it
- * waits for; a watcher thread waits for any of them, and for a wake
- * semaphore the connection signals when it adds one, then counts those
- * reached in the header's events and raises the interrupt, and the guest,
- * which slept until events changed, asks again.
+ * waiting on the connection thread would block all process calls. the guest first polls timeline values, then
+ * registers waits after a timeout. a watcher waits on those values and a wake semaphore for new
+ * registrations. it increments header events and raises the interrupt for completed waits; the guest wakes
+ * and polls again.
  */
 typedef struct MvkWatch {
     VkSemaphore semaphore;
@@ -2803,9 +2760,8 @@ static void add_watch(MvkConnection *c, VkSemaphore semaphore, uint64_t value, i
 }
 
 /*
- * a timeline semaphore the guest reads without asking: its value goes to a
- * header slot now and each time it advances, which the guest only reuses
- * once this connection ran the semaphore's destruction.
+ * mirror timeline values in a header slot so the guest can read them without calls. update on advancement;
+ * the guest reuses a slot only after the connection processes semaphore destruction.
  */
 static void mirror_semaphore(MvkCall *call)
 {
@@ -2825,10 +2781,7 @@ static void mirror_semaphore(MvkCall *call)
     wake_watcher(c);
 }
 
-/*
- * a semaphore took the payload of another device's: its value is not the one the mirror holds and the watch waits
- * for, so both are read again.
- */
+/* importing another device semaphore payload invalidates the cached value; refresh both mirror and watch. */
 void mvk_mirror_refresh(MvkConnection *c, VkSemaphore semaphore)
 {
     if (!c->watching)
@@ -2908,14 +2861,14 @@ static void stop_watcher(MvkConnection *c)
     c->watching = false;
 }
 
-/* ------------------------------------------------------------------ running calls */
+/* ------------------------------------------------------------------ running calls. */
 
 static void run_hand(MvkCall *call)
 {
     switch (call->header.op) {
     case MVK_OP_INSTANCE_EXTENSIONS: instance_extensions(call); break;
     case MVK_OP_CREATE_INSTANCE: create_instance(call); break;
-    case MVK_OP_DESTROY_INSTANCE: break; /* the connection outlives it, and goes with the process */
+    case MVK_OP_DESTROY_INSTANCE: break; /* the connection outlives it, and goes with the process. */
     case MVK_OP_PHYSICAL_DEVICES: physical_devices(call); break;
     case MVK_OP_DEVICE_EXTENSIONS: device_extensions(call); break;
     case MVK_OP_CREATE_DEVICE: create_device(call); break;
@@ -2996,7 +2949,7 @@ static void run_call(MvkCall *call)
     }
     if (c->records && records_waited_for(op))
         drain_records(c);
-    /* MIME_VK_SYNC_SHADERS=1 creates shader objects in the order of the calls, to measure what running them aside is worth. */
+    /* MIME_VK_SYNC_SHADERS=1 serializes shader creation in call order for comparison with worker execution. */
     static int sync_shaders = -1;
     if (sync_shaders < 0)
         sync_shaders = getenv("MIME_VK_SYNC_SHADERS") != nullptr;
@@ -3012,7 +2965,7 @@ static void run_call(MvkCall *call)
     if (call->in.error)
         mime_warn("vulkan: malformed call %#x", op);
     uint64_t took = mime_now_ns() - began;
-    /* what the host spent on each call, for the dump of the machine: a call that waits for its reply costs the guest a trip. */
+    /* per-call host time for the machine dump; replies also cost a guest round trip. */
     uint32_t slot = op >= MVK_OP_HAND ? MVK_OP_GENERATED_COUNT + (op - MVK_OP_HAND) : op;
     if (slot < sizeof(g_op_stats) / sizeof(g_op_stats[0])) {
         __atomic_fetch_add(&g_op_stats[slot].calls, 1, __ATOMIC_RELAXED);
@@ -3020,12 +2973,12 @@ static void run_call(MvkCall *call)
         if (call->header.reply != MVK_NO_REPLY)
             __atomic_fetch_add(&g_op_stats[slot].replies, 1, __ATOMIC_RELAXED);
     }
-    /* what the driver was slow at, for MIME_DEBUG. */
+    /* slow driver calls for MIME_DEBUG. */
     if (took > 2000000)
         mime_debug("vulkan: connection %u call %#x took %llu us", c->index, op, (unsigned long long)(took / 1000));
 }
 
-/* the calls the host ran most and longest since the last dump, then the counts start again. */
+/* dumps call counts and durations, then resets them. */
 void mime_vk_dump_stats(void)
 {
     static const char *const job_names[3] = {"shader objects", "graphics pipelines", "compute pipelines"};
@@ -3081,8 +3034,7 @@ static void run_stream(MvkCall *outer, VkCommandBuffer buffer, const uint8_t *st
             mvk_generated_commands[h.op](&call);
         else
             mime_warn("vulkan: unknown recorded command %#x", h.op);
-        /* what follows a command that did not decode may need it, a dispatch its pipeline: the driver
-           would crash, so the command buffer keeps what came before only. */
+        /* stop recording after a decode failure: later commands may depend on it and crash the driver. */
         if (call.in.error) {
             mime_warn("vulkan: the rest of a command buffer is dropped");
             break;
@@ -3100,7 +3052,7 @@ static void *connection_main(void *arg)
     for (;;) {
         uint64_t put = __atomic_load_n(&h->put, __ATOMIC_ACQUIRE);
         if (put == get) {
-            /* a closing connection runs what the guest sent before going: its last destructions. */
+            /* drain queued calls, including final destructions, before closing. */
             if (c->closing)
                 break;
             /* a short spin catches the next call of a busy guest without a kick. */
@@ -3170,14 +3122,13 @@ static void *connection_main(void *arg)
     return nullptr;
 }
 
-/* ------------------------------------------------------------------ hypercalls */
+/* ------------------------------------------------------------------ hypercalls. */
 
-/* ------------------------------------------------------------------ the host's own device */
+/* ------------------------------------------------------------------ the host's own device. */
 
 /*
- * opengl's channels render through a connection of the host's own: no
- * guest ring, an instance with the presenter's surfaces, and a device its
- * caller makes with what it needs.
+ * OpenGL channels use a host-owned connection without a guest ring. its instance supports presenter surfaces;
+ * the caller creates the required device.
  */
 bool mvk_internal_instance(MvkConnection *c, uint32_t api)
 {
@@ -3308,7 +3259,7 @@ void mime_gpu_teardown_leave(void)
     pthread_mutex_unlock(&g_teardown_lock);
 }
 
-/* returns once the host and the gpu no longer use the connection's memory, as the guest frees it next. */
+/* returns once the host and the GPU no longer use the connection's memory, as the guest frees it next. */
 void mime_vk_close(uint64_t index)
 {
     pthread_mutex_lock(&g_lock);
@@ -3357,7 +3308,7 @@ static void warm_wait(void);
 void mime_vk_close_all(void)
 {
     warm_wait();
-    /* the requests of a machine that stops before the thread wrote them are kept all the same. */
+    /* save requests even if shutdown precedes the background write. */
     learned_save();
     for (uint64_t i = 0; i < MAX_CONNECTIONS; i++)
         mime_vk_close(i);
@@ -3365,9 +3316,9 @@ void mime_vk_close_all(void)
 }
 
 /*
- * the first connection of a guest loads the loader and the driver, 120 ms, and makes a device to learn which
- * memory it can import, 70 ms more. A thread does both while the guest boots, so they are done when its first
- * program asks, and keeps an instance for good, as the loader would unload the driver with the last one that closed.
+ * load the Vulkan loader and driver during boot, taking 120 ms, then query importable memory through a
+ * temporary device, taking 70 ms. retain an instance so closing the last guest connection does not unload the
+ * driver.
  */
 static void *warm_main(void *arg)
 {
@@ -3382,15 +3333,15 @@ static void *warm_main(void *arg)
     if (warm.fn.vkEnumeratePhysicalDevices(warm.instance, &count, devices) >= 0)
         for (uint32_t i = 0; i < count; i++)
             importable_types(&warm, devices[i]);
-    /* the instance stays: the loader unloads the driver when the last one goes, and loads it again. */
+    /* retain the instance to keep the driver loaded. */
     uint64_t done = mime_now_ns();
     __atomic_store_n(&g_warm_done, done, __ATOMIC_RELEASE);
     mime_info("vulkan: the driver is warm after %llu ms", (unsigned long long)((done - began) / 1000000));
-    /* the device of the last run is made ahead as soon as the driver is loaded, and again after one was taken. */
+    /* prepare the last run's device after driver loading and replenish it after use. */
     if (getenv("MIME_VK_SPARE_QUIET_MS"))
         g_quiet_ns = strtoull(getenv("MIME_VK_SPARE_QUIET_MS"), nullptr, 10) * 1000000ull;
     if (getenv("MIME_VK_NO_SPARE")) {
-        /* the processes make their own devices, to tell what a problem depends on. */
+        /* disable device reuse to isolate device-specific problems. */
         g_no_spare = true;
         g_maker_stop = true;
     } else {
@@ -3443,8 +3394,8 @@ void mime_vk_warm_up(void)
 }
 
 /*
- * the machine can be asked to stop while the warm up still makes its device, and a process that exits under a thread
- * inside the driver crashes in the driver's destructors. the thread is waited for before anything else is closed.
+ * shutdown may begin while the warmup thread is inside the driver. join it before closing anything, since
+ * exiting during driver work can crash its destructors.
  */
 static void warm_wait(void)
 {

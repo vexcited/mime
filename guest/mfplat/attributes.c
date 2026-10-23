@@ -1,7 +1,6 @@
 /*
- * the attribute store under every attribute object: typed items keyed by
- * guid, their comparison, and MFCreateAttributes. behaviors follow windows'
- * mfplat, see docs/mfplat.md.
+ * the attribute store behind every attribute object: typed items keyed by
+ * guid, their comparison, and MFCreateAttributes.
  */
 #include "mfplat_private.h"
 
@@ -102,7 +101,7 @@ const PROPVARIANT *MfStoreFind(MfStore *store, REFGUID key)
     return index < 0 ? nullptr : &store->items[index].value;
 }
 
-/* the cleared value of key, a new item before the first one whose key does not sort lower. */
+/* clears the value of key, or inserts a new item before the first one whose key does not sort lower. */
 static PROPVARIANT *item_for_write(MfStore *store, REFGUID key)
 {
     int index = find_index(store, key);
@@ -174,7 +173,7 @@ static BOOL skipped(REFGUID key, const GUID *skip, UINT32 skip_count)
 }
 
 /*
- * the comparison of Compare and of IsEqual's format data, which leaves out
+ * the comparison behind Compare and IsEqual's format data, which leaves out
  * some keys. the other store is locked first and compares our values with
  * its CompareItem.
  */
@@ -274,7 +273,6 @@ static MfStore *store_of(IMFAttributes *iface)
     return &mf_object(iface)->store;
 }
 
-/* the value of key when it has type vt, or the failure. */
 static HRESULT typed(MfStore *store, REFGUID key, VARTYPE vt, const PROPVARIANT **out)
 {
     const PROPVARIANT *value = MfStoreFind(store, key);
@@ -384,7 +382,7 @@ HRESULT STDMETHODCALLTYPE MfAttrGetStringLength(IMFAttributes *iface, REFGUID ke
     return hr;
 }
 
-/* the length is written before the size check, as windows does. */
+/* like windows, the length is written before the size check. */
 HRESULT STDMETHODCALLTYPE MfAttrGetString(IMFAttributes *iface, REFGUID key, LPWSTR value, UINT32 size,
                                                  UINT32 *length)
 {
@@ -498,7 +496,7 @@ HRESULT STDMETHODCALLTYPE MfAttrGetUnknown(IMFAttributes *iface, REFGUID key, RE
     return hr;
 }
 
-/* a value of another type still leaves the key, empty, as windows does. */
+/* like windows, a value of another type still leaves the key, empty. */
 HRESULT STDMETHODCALLTYPE MfAttrSetItem(IMFAttributes *iface, REFGUID key, const PROPVARIANT *value)
 {
     MfStore *store = store_of(iface);

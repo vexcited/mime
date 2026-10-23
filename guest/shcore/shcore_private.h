@@ -1,4 +1,3 @@
-/* shcore.dll's own declarations. */
 #pragma once
 
 #define SHCOREAPI

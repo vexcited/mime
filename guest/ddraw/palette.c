@@ -11,7 +11,7 @@ DDPAL *DdPalFromIface(void *iface)
     return p->magic == PAL_MAGIC ? p : nullptr;
 }
 
-/* the entries of a palette's flags and the bytes each takes: one for indices into another palette. */
+/* entries per palette caps, and bytes per entry: 1 for indices into another palette. */
 static DWORD entry_count(DWORD caps)
 {
     return (caps & DDPCAPS_1BIT) ? 2 : (caps & DDPCAPS_2BIT) ? 4 : (caps & DDPCAPS_4BIT) ? 16 : 256;
@@ -22,7 +22,7 @@ static DWORD entry_size(DWORD caps)
     return (caps & DDPCAPS_8BITENTRIES) ? 1 : 4;
 }
 
-/* windows' HEL keeps entries 0 and 255 of a plain 8 bit palette black and white. */
+/* the emulation layer keeps entries 0 and 255 of a plain 8 bit palette black and white. */
 static void force_ends(DDPAL *p)
 {
     if ((p->caps & (DDPCAPS_8BIT | DDPCAPS_ALLOW256)) != DDPCAPS_8BIT)
@@ -64,7 +64,7 @@ HRESULT DdCreatePalette(DDRAW *dd, DWORD flags, const PALETTEENTRY *entries, DDP
     return DD_OK;
 }
 
-/* the directdraw object went: the palette stays for the references still out, detached from everything. */
+/* the directdraw object is gone: the palette lives on for outstanding references, detached from everything. */
 void DdPalKill(DDPAL *p)
 {
     RemoveEntryList(&p->links);

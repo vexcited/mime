@@ -1,6 +1,4 @@
-/*
- * comdlg32 internal interface shared by its source files.
- */
+/* comdlg32 internals shared by its source files. */
 #ifndef MIME_COMDLG32_PRIVATE_H
 #define MIME_COMDLG32_PRIVATE_H
 

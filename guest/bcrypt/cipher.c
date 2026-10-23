@@ -1,13 +1,11 @@
 /*
- * symmetric keys: generation, import and export, duplication, properties and
- * the block and stream modes of BCryptEncrypt and BCryptDecrypt. a key lives
- * in the caller's object buffer like a hash, and keeps its own chaining value
- * for the calls that pass no iv.
+ * symmetric keys and the modes of BCryptEncrypt and BCryptDecrypt. a key lives in the caller's object buffer like a
+ * hash, and keeps its own chaining value for calls that pass no iv.
  */
 #include "bcrypt_private.h"
 
 #define KEY_MIN_OBJECT 62
-/* windows' own key header before the provider's object, on x64. */
+/* size of windows' key header before the provider's object, on x64. */
 #define KEY_HEADER_SIZE 32
 
 ULONG BcKeyObjectLength(const ALG_INFO *info, ULONG mode)
@@ -45,7 +43,7 @@ static NTSTATUS place_key(ALG *alg, PUCHAR object, ULONG size, KEY **result)
     if (size < KEY_MIN_OBJECT)
         return STATUS_BUFFER_TOO_SMALL;
     ULONG pad = (ULONG)((((ULONG_PTR)object + 15) & ~(ULONG_PTR)15) - (ULONG_PTR)object);
-    /* gcm keys take the length of the other modes too, without precomputed tables. */
+    /* gcm keys use the same length as other modes, without precomputed tables. */
     ULONG provider = alg->info->object_length;
     if (size - pad < KEY_HEADER_SIZE + provider || size - pad < key_size(alg->info))
         return STATUS_BUFFER_TOO_SMALL;
@@ -91,7 +89,7 @@ static NTSTATUS schedule(KEY *key, const UCHAR *secret, ULONG size, BOOL truncat
     return STATUS_SUCCESS;
 }
 
-/* the object buffer the call passed, or one allocated when it passed none. */
+/* allocates one when the caller passed none. */
 static NTSTATUS object_buffer(ALG *alg, PUCHAR *object, ULONG *size, void **heap)
 {
     *heap = nullptr;
@@ -151,7 +149,7 @@ BCRYPTAPI NTSTATUS WINAPI BCryptGenerateSymmetricKey(BCRYPT_ALG_HANDLE hAlgorith
     return STATUS_SUCCESS;
 }
 
-/* the blob of a key data export, and windows' opaque blob, which mime makes the same with its own magic. */
+/* windows' opaque blob is made the same as the key data blob, with mime's own magic. */
 #define OPAQUE_BLOB_MAGIC 0x4D51504F
 
 BCRYPTAPI NTSTATUS WINAPI BCryptImportKey(BCRYPT_ALG_HANDLE hAlgorithm, BCRYPT_KEY_HANDLE hImportKey,
@@ -460,7 +458,7 @@ static BOOL auth_info_valid(const BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO *info)
            (!(info->dwFlags & 3) || info->pbMacContext);
 }
 
-/* gcm and ccm, the data already checked against the buffers. */
+/* gcm and ccm, with the buffers already checked. */
 static NTSTATUS run_auth(KEY *key, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO *info, PUCHAR iv, const UCHAR *in, UCHAR *out,
                          ULONG size, BOOL encrypt)
 {
@@ -483,7 +481,7 @@ static NTSTATUS run_auth(KEY *key, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO *info, 
     MimeGcm g;
     mime_gcm_init(&g, aes, info->pbNonce, info->cbNonce);
     if (info->dwFlags & BCRYPT_AUTH_MODE_IN_PROGRESS_FLAG) {
-        /* the running state: the counter in the iv buffer, the hash in the mac context. */
+        /* running state: the counter lives in the iv buffer, the hash in the mac context. */
         if (!iv)
             return STATUS_INVALID_PARAMETER;
         memcpy(g.counter, iv, 16);
@@ -532,7 +530,7 @@ static NTSTATUS run_rc4(KEY *key, PUCHAR in, ULONG size, PUCHAR iv, PUCHAR out, 
     return STATUS_SUCCESS;
 }
 
-/* after a call the key keeps the chaining value it may continue from, and forgets it once a message is padded. */
+/* the key keeps the chaining value to continue from, and drops it once a message is padded. */
 static void keep_chain(KEY *key, PUCHAR iv, BOOL padded, BOOL auth, BOOL chained)
 {
     ULONG block = key->alg->info->block;
@@ -615,7 +613,7 @@ NTSTATUS BcSymmetricEncrypt(KEY *key, PUCHAR in, ULONG size, void *padding, PUCH
     } else if (!padded) {
         run_mode(key, chain, in, out, size, FALSE);
     } else {
-        /* the last block goes through a buffer, so the output needs room for the plaintext only. */
+        /* the last block goes through a buffer, so the output only needs room for the plaintext. */
         UCHAR last[16];
         run_mode(key, chain, in, out, size - block, FALSE);
         run_mode(key, chain, in + size - block, last, block, FALSE);

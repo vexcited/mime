@@ -1,29 +1,18 @@
 /*
- * the screen as programs read it. windows are not drawn on a shared
- * screen here, the host shows each top level window on its own, so the
- * screen and desktop dcs draw on a surface of the virtual screen's size
- * that is composed when something reads it: the desktop's background
- * color on each monitor, black where no monitor is, then the visible top
- * level windows from the bottom of the z order up, each window's surface
- * at its place, layered and shaped ones blended through their composed
- * copy, and over a window's client area the last image presented to it
- * through vulkan, which the host keeps.
- *
- * the surface starts at the top left of the virtual screen, which is
- * negative when a monitor is left of or above the primary one, while the
- * coordinates of programs have the primary monitor's corner at 0, 0. a dc
- * of the screen has the difference as its origin, and the area ScreenCompose
- * gets is in surface pixels.
+ * the host presents windows separately, so screen and desktop DCs use a virtual-screen surface composed on read. fill
+ * monitor areas with the desktop color and gaps with black, then draw visible windows from bottom to top. blend
+ * layered and shaped surfaces and overlay the last host Vulkan image on each client area. the surface starts at the
+ * virtual screen corner, possibly negative; program coordinates place the primary monitor at 0, 0. screen DC origins
+ * account for that offset, while ScreenCompose takes surface coordinates.
  */
 #include "win32k.h"
 
 static SURFACE *g_screen;
-static POINT g_screen_origin; /* the screen coordinates of the surface's top left pixel */
+static POINT g_screen_origin; /* the screen coordinates of the surface's top left pixel. */
 static MimeWinReadback *g_readback;
 static PUCHAR g_pixels;
 static SIZE_T g_pixels_capacity;
 
-/* the surface screen dcs draw on, the virtual screen's size. */
 SURFACE *ScreenSurface(void)
 {
     RECT all = MonitorVirtualScreen();
@@ -43,7 +32,6 @@ SURFACE *ScreenSurface(void)
     return g_screen;
 }
 
-/* where the surface's top left pixel is on the screen. */
 POINT ScreenOrigin(void)
 {
     ScreenSurface();
@@ -62,7 +50,7 @@ BOOLEAN ScreenMonitorRect(ULONG index, RECT *out)
     return TRUE;
 }
 
-/* the part of the surface that is on a monitor, which is all of it but for the holes between monitors. */
+/* monitor coverage excludes gaps between monitors. */
 void ScreenVisibleRegion(REGION *out)
 {
     RgnClear(out);
@@ -86,20 +74,18 @@ static inline ULONG over(ULONG s, ULONG d)
     return s + rb + g;
 }
 
-/* counts the changes of the guest that show on the screen: presents, window configurations, windows made and gone. */
+/* counts guest-visible screen changes: presents, configuration changes, window creation and destruction. */
 ULONG ScreenSerial;
 
-/* whether a window may present through the host's vulkan: its process has a connection. */
+/* host Vulkan presentation requires a process connection. */
 static BOOLEAN presents_through_host(WND *w)
 {
     return w->Thread && w->Thread->Process && w->Thread->Process->Vk;
 }
 
 /*
- * the window's last vulkan image into g_pixels, its size, the client
- * rectangle it showed in, relative to the window, and the host's count of
- * the images it presented; false when it has none. the pixels are read
- * only when pixels is set.
+ * query the last Vulkan image: size, client rectangle relative to the window, and host present count. return false if
+ * absent; read pixels into g_pixels only when requested.
  */
 static BOOLEAN read_presented(WND *w, BOOLEAN pixels, ULONG *width, ULONG *height, RECT *client, ULONG64 *serial)
 {
@@ -139,7 +125,7 @@ static BOOLEAN read_presented(WND *w, BOOLEAN pixels, ULONG *width, ULONG *heigh
         ULONG want_w = r->width, want_h = r->height;
         if (HalMimeHypercall(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0, nullptr))
             return FALSE;
-        /* a present in between may have changed the size: once more. */
+        /* a present may have resized the image; retry once. */
         if (r->width != want_w || r->height != want_h)
             continue;
         *width = r->width;
@@ -151,10 +137,7 @@ static BOOLEAN read_presented(WND *w, BOOLEAN pixels, ULONG *width, ULONG *heigh
     return FALSE;
 }
 
-/*
- * a mix of the images the visible windows presented through the host, which the guest does not hear about: a
- * capture compares it with the last one to know whether the screen may have changed.
- */
+/* combine visible windows' host present counts so captures detect changes that bypass the guest. */
 ULONG64 ScreenHostSerial(void)
 {
     ULONG64 mix = 0;
@@ -170,11 +153,11 @@ ULONG64 ScreenHostSerial(void)
     return mix;
 }
 
-/* one rectangle of a window's surface over a canvas, which has the screen coordinates origin at its first pixel. */
+/* draw a surface rectangle on a canvas whose first pixel has screen coordinates origin. */
 static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r, WND *w, SURFACE *s)
 {
     LONG ox = w->WindowRect.left, oy = w->WindowRect.top;
-    /* plain windows are opaque whatever alpha gdi left; layered and shaped ones have theirs. */
+    /* plain windows are opaque regardless of GDI alpha; layered and shaped windows retain their alpha. */
     BOOLEAN blend = w->Present || (w->LayerFlags & MIME_LAYER_UPDATE);
     LONG x0 = W32Max(r->left, ox), x1 = W32Min(r->right, ox + s->Width);
     for (LONG y = r->top; y < r->bottom; y++) {
@@ -192,7 +175,7 @@ static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r
     }
 }
 
-/* one rectangle of the image a window presented through the host, stretched as the host stretches it. */
+/* stretch the host image as it appears on screen. */
 static void compose_presented(PUCHAR bits, LONG stride, POINT shift, const RECT *rect, const RECT *c, ULONG width,
                               ULONG height)
 {
@@ -214,8 +197,8 @@ static void compose_presented(PUCHAR bits, LONG stride, POINT shift, const RECT 
 }
 
 /*
- * a window over a canvas, within the rectangles of vis in screen coordinates: its surface at its place, and over
- * its client area the last vulkan image it presented. the image is read from the host once, whatever the rectangles.
+ * compose visible screen rectangles from the window surface and last Vulkan client image. read the host image once
+ * for all rectangles.
  */
 static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *vis, WND *w, BOOLEAN host_pixels)
 {
@@ -237,7 +220,7 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
         for (ULONG i = 0; i < vis->Count; i++)
             compose_surface(bits, stride, shift, &vis->Rects[i], w, s);
 
-    /* the client area shows the last vulkan present. */
+    /* the client area shows the last Vulkan present. */
     ULONG width, height;
     RECT client;
     ULONG64 serial;
@@ -252,7 +235,7 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
         compose_presented(bits, stride, shift, &vis->Rects[i], &c, width, height);
 }
 
-/* whether a window's pixels replace what is under them, and where: the part of its rectangle its surface covers. */
+/* find the surface-backed rectangle that occludes lower windows. */
 static BOOLEAN window_covers(WND *w, RECT *out)
 {
     if (w->DisplayAffinity == 0x11)
@@ -276,10 +259,8 @@ typedef struct PLAN {
 } PLAN;
 
 /*
- * the windows that show in area, top of the z order first, with the part of each that nothing opaque covers; what
- * the windows cover together is covered. a window that is under others altogether is left out, and so is the part
- * of each that is: nothing of it would ever be seen, and a screen of a few windows under a browser fills pixels that
- * are overwritten at every frame.
+ * collect visible window regions from top to bottom, excluding areas hidden by opaque windows. covered is their
+ * combined coverage. skipping occluded pixels avoids drawing them again on every frame.
  */
 static ULONG plan_windows(PLAN *plans, const RECT *area, REGION *covered)
 {
@@ -308,10 +289,7 @@ static ULONG plan_windows(PLAN *plans, const RECT *area, REGION *covered)
     return planned;
 }
 
-/*
- * composes the screen within area, in surface pixels, before a read.
- * pixels come out opaque: alpha 0xFF.
- */
+/* compose area in surface coordinates before a read; output alpha is 0xFF. */
 void ScreenCompose(const RECT *area)
 {
     SURFACE *screen = ScreenSurface();
@@ -328,7 +306,7 @@ void ScreenCompose(const RECT *area)
     RgnInit(&bare);
     ULONG planned = plans ? plan_windows(plans, &screen_area, &covered) : 0;
 
-    /* what is not on a monitor is black, a guess, and the monitors show the desktop's color, where no window does. */
+    /* gaps between monitors are black, a guess; uncovered monitor areas use the desktop color. */
     RgnOffset(&covered, -g_screen_origin.x, -g_screen_origin.y);
     ULONG background = ColorToPixel(MetricsSysColor(COLOR_BACKGROUND)) | 0xFF000000;
     RgnSetRect(&bare, &r);
@@ -348,7 +326,6 @@ void ScreenCompose(const RECT *area)
             }
         }
     }
-    /* the windows from the bottom of the z order up, each where it shows. */
     while (planned--) {
         compose_window(screen->Bits, screen->Stride, g_screen_origin, &plans[planned].Visible, plans[planned].Window, TRUE);
         RgnFree(&plans[planned].Visible);
@@ -359,9 +336,9 @@ void ScreenCompose(const RECT *area)
 }
 
 /*
- * a window's own pixels, whatever covers it: its surface with the image its process presented through the host in
- * the client area. window is the whole window or its client area, in a canvas of bgra rows that starts at the
- * window's corner or at the client area's. the pixels are opaque, as the layered ones blended over black.
+ * capture a window regardless of occlusion: its surface plus the host image in its client area. window selects the
+ * full window or client area in a BGRA canvas starting at that corner. output is opaque; layered pixels blend over
+ * black.
  */
 BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUCHAR bits, LONG stride, LONG width,
                            LONG height)
@@ -374,7 +351,7 @@ BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUC
         return FALSE;
     for (LONG y = 0; y < height; y++)
         memset(bits + (LONG_PTR)y * stride, 0, (SIZE_T)width * 4);
-    /* a child has no surface of its own: it is cut out of its top level window's. */
+    /* children use a region of their top level window surface. */
     POINT shift = {area.left, area.top};
     REGION vis;
     RgnInit(&vis);

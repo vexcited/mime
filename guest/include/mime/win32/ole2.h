@@ -1,7 +1,4 @@
-/*
- * the ole layer of ole32.dll: running objects, embedding, menu descriptors and
- * the class information of HKCR\CLSID.
- */
+/* ole32.dll's ole layer: running objects, embedding, menu descriptors and HKCR\CLSID class info. */
 #ifndef MIME_WIN32_OLE2_H
 #define MIME_WIN32_OLE2_H
 

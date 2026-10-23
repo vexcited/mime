@@ -1,6 +1,4 @@
-/*
- * file version resources, the api of version.dll.
- */
+/* file version resources, the api of version.dll. */
 #ifndef MIME_WIN32_WINVER_H
 #define MIME_WIN32_WINVER_H
 

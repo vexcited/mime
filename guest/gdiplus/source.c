@@ -1,11 +1,10 @@
 /*
- * the sources of the fill loop: what a brush gives for a row of device pixels, premultiplied.
+ * brush sources for the fill loop: each gives a row of premultiplied device pixels.
  *
- * gradients are sampled at the integer device coordinate of a pixel, moved into brush space by the inverse of
- * the brush transform and the world to device transform, and the colors of the two ends are interpolated in
- * premultiplied form as floats and rounded. a hatch is a pattern of 8 by 8 samples aligned to the render
- * origin, and a texture is read at the pixel's brush space position with bilinear filtering, or as it is when
- * the brush moves it by whole pixels.
+ * gradients sample each pixel at its integer device coordinate, mapped into brush space by the inverse of the
+ * brush and world to device transforms, and interpolate premultiplied float colors, then round. a hatch is an
+ * 8 by 8 pattern aligned to the render origin. a texture is read with bilinear filtering, or directly when the
+ * brush moves it by whole pixels.
  */
 #include "gp_private.h"
 
@@ -35,7 +34,7 @@ static UINT32 pack_pargb(float a, float r, float g, float b)
 }
 
 typedef struct FColor {
-    float a, r, g, b; /* premultiplied, 0..255 */
+    float a, r, g, b; /* premultiplied, 0..255. */
 } FColor;
 
 static FColor fcolor_of(ARGB c, BOOL gamma)
@@ -61,7 +60,7 @@ static FColor fcolor_lerp(const FColor *x, const FColor *y, float t)
     return f;
 }
 
-/* the value of a linear gamma channel back to 0..255, by the inverse of the table. */
+/* maps a linear channel back to 0..255 through the inverse of the gamma table. */
 static float gamma_inverse(float v)
 {
     if (v <= 0.0f)
@@ -84,14 +83,13 @@ static UINT32 pack_fcolor(const FColor *c, BOOL gamma)
 {
     if (!gamma || c->a <= 0.0f)
         return pack_pargb(c->a, c->r, c->g, c->b);
-    /* the color channels hold alpha times the linear value, take the alpha out, delinearize, put it back */
+    /* channels hold alpha times the linear value: unpremultiply, delinearize, premultiply again. */
     float k = 255.0f / c->a;
     float r = gamma_inverse(c->r * k) * c->a / 255.0f, g = gamma_inverse(c->g * k) * c->a / 255.0f,
           b = gamma_inverse(c->b * k) * c->a / 255.0f;
     return pack_pargb(c->a, r, g, b);
 }
 
-/* the blend factor of a position, from the factors and positions of a brush. */
 static float blend_factor(const GBlend *bl, float t)
 {
     if (!bl->count)
@@ -148,7 +146,7 @@ static void hatch_fetch(GSource *s, INT x, INT y, INT count, UINT32 *out)
     }
 }
 
-/* the sample between the two colors, three parts of the background and one of the foreground, byte by byte. */
+/* three parts background to one part foreground, per byte. */
 static UINT32 hatch_between(UINT32 fore, UINT32 back)
 {
     UINT32 out = 0;
@@ -157,7 +155,7 @@ static UINT32 hatch_between(UINT32 fore, UINT32 back)
     return out;
 }
 
-/* the foreground of the diagonal styles, moved a little way from the background. */
+/* diagonal styles pull the foreground slightly toward the background. */
 static UINT32 hatch_diagonal_fore(UINT32 fore, UINT32 back)
 {
     UINT32 out = 0;
@@ -194,7 +192,7 @@ static GpStatus hatch_create(GGraphics *g, const GBrush *brush, GSource **out)
 
 /* ------------------------------------------------------------------ wrapping */
 
-/* the coordinate in one tile: v in units of tiles, moved into 0..1 by the wrap mode for this axis. */
+/* folds v, in tiles, into 0..1 by the wrap mode of this axis. */
 static float wrap_axis(float v, BOOL flip, BOOL clamp_mode, BOOL *outside)
 {
     if (clamp_mode) {
@@ -218,7 +216,7 @@ typedef struct LinearSource {
     const GBrush *b;
     MimeVecMatrix inv; /* device to brush space */
     FColor c1, c2;
-    float cx, cy;      /* the center of the rectangle */
+    float cx, cy;      /* rectangle center. */
     float dirx, diry, len;
     float rx, ry, rw, rh;
     BOOL flip_x, flip_y, clamp;
@@ -256,7 +254,7 @@ static float sample_t(const LinearSource *s, float bx, float by, BOOL *outside)
         return ((1.0f - uu) + vv) * 0.5f;
     }
     default: {
-        /* a line or an angle: the position along the direction, from the first corner to the opposite one */
+        /* line or angle: position along the direction, from the first corner to the opposite one. */
         float px, py, len;
         if (s->mode == GP_LINE_ANGLE && s->b->scalable) {
             px = (bx - s->rx) / s->rw - 0.5f;
@@ -317,7 +315,7 @@ static void linear_fetch(GSource *src, INT x, INT y, INT count, UINT32 *out)
         if (outside) {
             out[i] = 0;
         } else {
-            /* the table has one entry for each 1/n of the way, the pixel takes the nearest */
+            /* one entry per 1/n of the way, the pixel takes the nearest. */
             INT idx = (INT)(t * (float)s->table_n + 0.5f);
             if (idx < 0)
                 idx = 0;
@@ -371,7 +369,7 @@ static GpStatus linear_create(GGraphics *g, const GBrush *b, GSource **out)
         s->dirx = dx / l;
         s->diry = dy / l;
         s->len = l;
-        /* the center of a gradient between two points is their middle, not the middle of the padded rectangle */
+        /* a two point gradient is centered between its points, not in the padded rectangle. */
         s->cx = (b->p1.X + b->p2.X) * 0.5f;
         s->cy = (b->p1.Y + b->p2.Y) * 0.5f;
     } else if (b->lg_mode == GP_LINE_ANGLE) {
@@ -400,7 +398,7 @@ static GpStatus linear_create(GGraphics *g, const GBrush *b, GSource **out)
             s->has_preset = TRUE;
         }
     }
-    /* the table of colors: its size follows the length of the diagonals of the brush rectangle on the device */
+    /* the color table is sized by the device length of the brush rectangle's diagonals. */
     MimeVecPoint corners[4] = {{s->rx, s->ry}, {s->rx + s->rw, s->ry}, {s->rx + s->rw, s->ry + s->rh},
                                {s->rx, s->ry + s->rh}};
     for (INT i = 0; i < 4; i++)
@@ -430,11 +428,11 @@ static GpStatus linear_create(GGraphics *g, const GBrush *b, GSource **out)
 /* ------------------------------------------------------------------ path gradients */
 
 typedef struct Tri {
-    float x0, y0;     /* the vertex */
-    float x1, y1;     /* the next vertex */
-    FColor s0, s1;    /* the colors of the two vertices */
+    float x0, y0;
+    float x1, y1;     /* the next vertex. */
+    FColor s0, s1;
     float minx, maxx, miny, maxy;
-    float denom;      /* for the barycentric coordinates */
+    float denom;      /* for the barycentric coordinates. */
 } Tri;
 
 typedef struct PathSource {
@@ -486,7 +484,7 @@ static void path_fetch(GSource *src, INT x, INT y, INT count, UINT32 *out)
             const Tri *t = &s->tris[k];
             if (qx < t->minx || qx > t->maxx || qy < t->miny || qy > t->maxy)
                 continue;
-            /* barycentric coordinates of the point in the triangle of the center and the two vertices */
+            /* barycentric coordinates in the triangle of the center and the two vertices. */
             float ax = t->x0 - s->cx, ay = t->y0 - s->cy, bx = t->x1 - s->cx, by = t->y1 - s->cy;
             float rx = qx - s->cx, ry = qy - s->cy;
             float w1 = (rx * by - ry * bx) / t->denom;
@@ -501,7 +499,7 @@ static void path_fetch(GSource *src, INT x, INT y, INT count, UINT32 *out)
             if (tt > 1.0f)
                 tt = 1.0f;
             FColor sb = tt > 0.0f ? fcolor_lerp(&t->s0, &t->s1, w2 / tt) : t->s0;
-            /* the part of the way that the focus takes */
+            /* the focus scales keep the center color over the first part of the way. */
             if (s->fx > 0.0f || s->fy > 0.0f) {
                 float len = mime_vec_sqrtf(rx * rx + ry * ry);
                 if (len > 0.0f) {
@@ -530,7 +528,7 @@ static void path_fetch(GSource *src, INT x, INT y, INT count, UINT32 *out)
                 }
                 out[i] = pack_fcolor(&f, s->gamma);
             } else {
-                /* the center color is where the position is 0, the surround where it is 1 */
+                /* position 0 is the center color, 1 the surround. */
                 float kk = blend_factor(&s->blend, tt);
                 if (kk < 0.0f)
                     kk = 0.0f;
@@ -584,7 +582,7 @@ static GpStatus path_create(GGraphics *g, const GBrush *b, GSource **out)
             s->has_preset = TRUE;
         }
     }
-    /* the boundary: the flattened path, each flattened point with the color of the vertex it comes from */
+    /* the boundary is the flattened path, each point colored by the vertex it comes from. */
     MimeVecPolys polys;
     mime_vec_polys_init(&polys, &gp_allocator);
     const GPath *path = b->pg_path;
@@ -599,7 +597,7 @@ static GpStatus path_create(GGraphics *g, const GBrush *b, GSource **out)
         path_destroy(&s->base);
         return OutOfMemory;
     }
-    /* the color of the flattened point: that of the nearest path point at or before it */
+    /* a flattened point takes the color of the nearest path point at or before it. */
     UINT raw = path->path.count;
     for (UINT sub = 0; sub < polys.nsubs; sub++) {
         const MimeVecSub *sb = &polys.subs[sub];
@@ -610,7 +608,6 @@ static GpStatus path_create(GGraphics *g, const GBrush *b, GSource **out)
             t->y0 = p0->y;
             t->x1 = p1->x;
             t->y1 = p1->y;
-            /* find the raw points nearest to the two ends */
             INT i0 = 0, i1 = 0;
             float d0 = 3.4e38f, d1 = 3.4e38f;
             for (UINT r = 0; r < raw; r++) {
@@ -661,10 +658,10 @@ static GpStatus path_create(GGraphics *g, const GBrush *b, GSource **out)
 typedef struct TextureSource {
     GSource base;
     MimeVecMatrix inv;
-    UINT32 *pixels; /* premultiplied, w * h */
+    UINT32 *pixels; /* premultiplied, w * h. */
     INT w, h;
     BOOL clamp, flip_x, flip_y;
-    BOOL whole;     /* the brush space position of a pixel is a whole number of pixels from its own */
+    BOOL whole;     /* the brush moves pixels by whole pixels only. */
     INT shift_x, shift_y;
     ARGB clamp_color;
 } TextureSource;
@@ -715,7 +712,7 @@ static void texture_fetch(GSource *src, INT x, INT y, INT count, UINT32 *out)
             out[i] = texel(t, x + i + t->shift_x, y + t->shift_y);
         return;
     }
-    /* texel centers are at half integers, the sample of a pixel is at its own integer coordinate */
+    /* texel centers are at half integers, a pixel samples at its integer coordinate. */
     float u = (float)x * t->inv.m11 + (float)y * t->inv.m21 + t->inv.dx - 0.5f;
     float v = (float)x * t->inv.m12 + (float)y * t->inv.m22 + t->inv.dy - 0.5f;
     for (INT i = 0; i < count; i++, u += t->inv.m11, v += t->inv.m12) {
@@ -755,7 +752,7 @@ static GpStatus texture_create(GGraphics *g, const GBrush *b, GSource **out)
     t->clamp = b->wrap == WrapModeClamp;
     t->flip_x = b->wrap == WrapModeTileFlipX || b->wrap == WrapModeTileFlipXY;
     t->flip_y = b->wrap == WrapModeTileFlipY || b->wrap == WrapModeTileFlipXY;
-    /* a brush that moves the picture by whole pixels needs no filtering */
+    /* a brush that moves the picture by whole pixels needs no filtering. */
     float dx = t->inv.dx, dy = t->inv.dy;
     BOOL scale_free = close_enough(t->inv.m11, 1.0f) && close_enough(t->inv.m22, 1.0f) &&
                       close_enough(t->inv.m12, 0.0f) && close_enough(t->inv.m21, 0.0f);
@@ -771,7 +768,7 @@ static GpStatus texture_create(GGraphics *g, const GBrush *b, GSource **out)
     return Ok;
 }
 
-/* ------------------------------------------------------------------ the entry points */
+/* ------------------------------------------------------------------ entry points */
 
 GpStatus gp_source_create(GGraphics *g, const GBrush *brush, const RECT *bounds, GSource **out)
 {

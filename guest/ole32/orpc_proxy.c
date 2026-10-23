@@ -1,6 +1,6 @@
 /*
- * the objects of other processes as seen from this one: an identity manager for each object, which is the unknown of all
- * the interface proxies of the object and keeps the references the server has given for them.
+ * objects of other processes as seen from this one: one identity manager per object, the IUnknown of all its interface
+ * proxies, holding the references the server gave for them.
  */
 #include "orpc.h"
 
@@ -44,7 +44,7 @@ OXID_ENTRY *OrpcOxidEntry(ULONG64 oxid, const WCHAR *endpoint)
             found = e;
             break;
         }
-    /* a process of the same number but another endpoint is another process. */
+    /* the same process id with another endpoint is another process. */
     if (found && wcscmp(found->Endpoint, endpoint)) {
         RPC_BINDING_HANDLE old = found->Binding;
         found->Binding = nullptr;
@@ -72,14 +72,14 @@ OXID_ENTRY *OrpcOxidEntry(ULONG64 oxid, const WCHAR *endpoint)
     return found && found->Binding ? found : nullptr;
 }
 
-/* ------------------------------------------------------------------ the reference counting calls */
+/* ------------------------------------------------------------------ reference counting calls */
 
 static void put_u32(BYTE *p, ULONG v)
 {
     memcpy(p, &v, 4);
 }
 
-/* gives back the references an interface proxy holds. */
+/* returns the references an interface proxy holds. */
 static void rem_release(OXID_ENTRY *server, const GUID *ipid, ULONG refs)
 {
     if (!refs)
@@ -139,7 +139,7 @@ static HRESULT manager_add_interface(PROXYMGR *m, REFIID iid, const GUID *ipid, 
         if (SUCCEEDED(hr)) {
             hr = factory->lpVtbl->CreateProxy(factory, (IUnknown *)m, iid, &ifp->Proxy, &ifp->Interface);
             /*
-             * the factory of oleaut32 in windows makes a wrapper that has no interface to give until it is connected: it makes
+             * windows' oleaut32 factory makes a wrapper that has no interface to give until it is connected, and makes
              * the proxy it stands for then.
              */
             BOOL connected = FALSE;
@@ -152,7 +152,7 @@ static HRESULT manager_add_interface(PROXYMGR *m, REFIID iid, const GUID *ipid, 
             if (SUCCEEDED(hr) && (!ifp->Proxy || !ifp->Interface))
                 hr = E_NOINTERFACE;
             if (SUCCEEDED(hr)) {
-                /* the interface was referenced through the manager; the manager is kept alive by the caller. */
+                /* the interface was referenced through the manager, which the caller keeps alive. */
                 ((IUnknown *)ifp->Interface)->lpVtbl->Release((IUnknown *)ifp->Interface);
                 if (!connected)
                     hr = ifp->Proxy->lpVtbl->Connect(ifp->Proxy, channel);
@@ -207,7 +207,7 @@ static IFPROXY *manager_find(PROXYMGR *m, REFIID iid)
     return found;
 }
 
-/* ------------------------------------------------------------------ the identity */
+/* ------------------------------------------------------------------ identity */
 
 static HRESULT STDMETHODCALLTYPE manager_query(IUnknown *This, REFIID riid, void **object);
 static ULONG STDMETHODCALLTYPE manager_add_ref(IUnknown *This);
@@ -258,7 +258,7 @@ static ULONG STDMETHODCALLTYPE manager_release(IUnknown *This)
     return 0;
 }
 
-/* a query for an interface the proxy does not have yet goes to the object. */
+/* an interface the proxy lacks is queried from the object. */
 static HRESULT manager_remote_query(PROXYMGR *m, REFIID riid, IFPROXY **result)
 {
     IFPROXY *any = m->Interfaces;
@@ -334,7 +334,7 @@ void OrpcProxyManagerRelease(struct PROXYMGR *manager)
     manager_release((IUnknown *)manager);
 }
 
-/* a proxy marshaled on: the reference to the object it stands for, with references of its own. */
+/* marshals a proxy on: a reference to its object, carrying references of its own. */
 HRESULT OrpcMarshalProxy(struct PROXYMGR *m, IStream *stream, REFIID iid, DWORD flags)
 {
     IFPROXY *ifp = manager_find(m, iid);
@@ -342,7 +342,7 @@ HRESULT OrpcMarshalProxy(struct PROXYMGR *m, IStream *stream, REFIID iid, DWORD 
         HRESULT hr = manager_remote_query(m, iid, &ifp);
         if (FAILED(hr))
             return hr;
-        /* the references of the query are the ones the new reference carries. */
+        /* the new reference carries the references from the query. */
         ifp->PublicRefs -= ORPC_PUBLIC_REFS;
     } else {
         HRESULT hr = rem_add_ref(m->Server, &ifp->Ipid, ORPC_PUBLIC_REFS);

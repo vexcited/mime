@@ -78,7 +78,7 @@ static void set_channels(MimeDdsInfo *info, int fmt, unsigned channels, unsigned
     info->has_alpha = channels == 4;
 }
 
-/* returns false for a dxgi format that is not handled. */
+/* false for an unhandled dxgi format. */
 static bool dxgi_format(MimeDdsInfo *info, uint32_t f)
 {
     info->dxgi_format = f;
@@ -189,7 +189,7 @@ static bool dxgi_format(MimeDdsInfo *info, uint32_t f)
     }
 }
 
-/* the numeric d3d9 formats stored as a four cc. */
+/* d3d9 formats stored as a numeric fourcc. */
 static bool d3d9_format(MimeDdsInfo *info, uint32_t f)
 {
     switch (f) {
@@ -275,8 +275,8 @@ static bool legacy_format(MimeDdsInfo *info, uint32_t pf_flags, uint32_t fourcc,
             info->luminance = true;
             if ((r | a) & ~full) {
                 /*
-                 * some writers put the masks of a 32 bit pixel here. the gray gets the low half of the bits with
-                 * alpha, all of them without, and alpha the rest.
+                 * some writers put 32 bit pixel masks here. gray takes the low half of the bits when there is alpha,
+                 * all of them otherwise, and alpha the rest.
                  */
                 uint64_t low = a ? ((uint64_t)1 << (bpp / 2)) - 1 : full;
                 r = (uint32_t)low;
@@ -377,7 +377,7 @@ int mime_dds_parse(const void *data, size_t size, MimeDdsInfo *info)
         } else {
             return MIME_BCN_ERR_FORMAT;
         }
-        /* a count of 0 is written by some tools, it is read as 1. */
+        /* some tools write a count of 0, read it as 1. */
         if (arr > MIME_DDS_MAX_ARRAY)
             return MIME_BCN_ERR_FORMAT;
         info->array_size = arr ? arr : 1;
@@ -699,7 +699,7 @@ int mime_dds_write(const uint8_t *bgra, size_t stride, unsigned width, unsigned 
         wr32(h + 100, 0xff000000u);
     }
 
-    /* the levels, each from the one before it. */
+    /* each level is made from the one before it. */
     uint8_t *tmp[2] = {NULL, NULL};
     int rc = MIME_BCN_OK;
     if (levels > 1) {

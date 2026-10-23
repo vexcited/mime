@@ -1,8 +1,4 @@
-/*
- * the extended resolver GetAddrInfoEx, synchronous or completing in the
- * background, and the name space provider interface: lookups of services,
- * the list of providers and the catalog queries of WSC.
- */
+/* GetAddrInfoEx resolution and namespace provider queries. */
 #include "ws2_32_private.h"
 #include <mime/win32/iphlpapi.h>
 
@@ -42,7 +38,7 @@ typedef struct addrinfoexA {
 
 typedef void(CALLBACK *LOOKUP_COMPLETION)(DWORD error, DWORD bytes, LPOVERLAPPED overlapped);
 
-/* the provider every answer comes from, the tcpip name space of windows. */
+/* all answers use Windows' TCP/IP namespace provider. */
 static GUID g_dns_provider = {0x22059d40, 0x7e9e, 0x11cf, {0xae, 0x5a, 0x00, 0xaa, 0x00, 0xa7, 0x11, 0x2b}};
 static GUID g_nla_provider = {0x6642243a, 0x3ba8, 0x4aa6, {0xba, 0xa5, 0x2e, 0x0b, 0xd7, 0x1f, 0xdd, 0x83}};
 
@@ -63,7 +59,7 @@ void WSAAPI FreeAddrInfoEx(PADDRINFOEXA info)
     FreeAddrInfoExW((PADDRINFOEXW)info);
 }
 
-/* the answer of GetAddrInfoW, moved into the extended layout. */
+/* converts GetAddrInfoW results to the extended layout. */
 static int convert(PADDRINFOW list, PADDRINFOEXW *out)
 {
     PADDRINFOEXW *tail = out;
@@ -282,7 +278,7 @@ INT WSAAPI GetAddrInfoExOverlappedResult(LPOVERLAPPED overlapped)
     return overlapped ? (INT)overlapped->Internal : WSAEINVAL;
 }
 
-/* the ansi form converts the strings and the canonical names, and has no background mode. */
+/* the ANSI form converts the strings and the canonical names, and has no background mode. */
 INT WSAAPI GetAddrInfoExA(PCSTR name, PCSTR service, DWORD space, GUID * provider, const ADDRINFOEXA *hints,
                           PADDRINFOEXA *result, struct timeval *timeout, LPOVERLAPPED overlapped,
                           LOOKUP_COMPLETION completion, LPHANDLE handle)
@@ -394,8 +390,8 @@ INT WSAAPI WSAEnumNameSpaceProvidersA(LPDWORD length, WSANAMESPACE_INFOA *buffer
 }
 
 /*
- * lookups of services. only the network location awareness provider has anything to return: the networks the machine is
- * connected to, one per adapter that is up and holds an address. any other query is accepted and has nothing to return.
+ * only network location awareness returns services: one network per active adapter with an address. other queries
+ * succeed with no results.
  */
 typedef struct WSAQUERYSETW_ {
     DWORD dwSize;
@@ -432,7 +428,7 @@ typedef struct WSAQUERYSETW_ {
 /* the output flags of a network that was not there before the query. */
 #define RESULT_IS_ADDED 0x0010
 
-/* what a network's blob holds: records of 1048 bytes, a header of three words then the data. */
+/* network blobs contain 1048-byte records with three-word headers. */
 #define NLA_RECORD 1048
 #define NLA_CONNECTIVITY 3
 #define NLA_INTERFACE 1
@@ -468,7 +464,7 @@ typedef struct WS_LOOKUP {
 typedef ULONG(WINAPI *GET_ADAPTERS_ADDRESSES)(ULONG family, ULONG flags, PVOID reserved, PIP_ADAPTER_ADDRESSES addresses,
                                               PULONG size);
 
-/* the adapters that connect the machine: up, not the loopback, with an address. */
+/* active non-loopback adapters with an address. */
 static void nla_networks(WS_LOOKUP *l)
 {
     HMODULE ip = LoadLibraryW(L"iphlpapi.dll");
@@ -525,7 +521,6 @@ INT WSAAPI WSALookupServiceBeginW(void *restrictions, DWORD flags, LPHANDLE look
     if (q->dwNameSpace == NS_NLA && !nla)
         return WsFail(WSASERVICE_NOT_FOUND);
     if (nla) {
-        /* the checks of the provider, in its order. */
         if (f & LUP_CONTAINERS)
             return WsFail(WSANO_DATA);
         if (f & 0xA000)
@@ -567,7 +562,6 @@ INT WSAAPI WSALookupServiceBeginA(void *restrictions, DWORD flags, LPHANDLE look
 {
     if (!restrictions || !lookup || *(DWORD *)restrictions < 0x3C)
         return WSALookupServiceBeginW(restrictions, flags, lookup);
-    /* the same query with its name converted. */
     WSAQUERYSETW_ copy = *(WSAQUERYSETW_ *)restrictions;
     WCHAR name[256];
     if (copy.lpszServiceInstanceName) {
@@ -607,7 +601,7 @@ static INT lookup_next(HANDLE lookup, DWORD flags, LPDWORD length, void *results
         return WsFail(WSAEINVAL);
     if (!f)
         f = l->Flags;
-    /* the networks are read when the lookup begins; one flushed away is skipped, and a filter on the name keeps the matches. */
+    /* snapshots networks at lookup start, skips flushed entries and applies the name filter. */
     NLA_NETWORK *n = nullptr;
     while (!l->Ended && l->Next < l->Count) {
         NLA_NETWORK *c = &l->Networks[l->Next];

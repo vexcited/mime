@@ -1,8 +1,7 @@
 /*
- * red eye correction. for each area the effect decides where the eye is and how big it is, learns how red and how
- * dark each of 60 sectors around the center is, and then pulls the red of the pixels in that circle towards the
- * other colors by a limit the surroundings give. what the analysis adds up is not started again for the next area
- * or the next run, the numbers are kept in the effect.
+ * red eye correction. for each area the effect finds the eye's center and radius, measures how red and dark each of
+ * 60 sectors around the center is, then pulls the red of the pixels in the circle towards the other colors, limited
+ * by the surroundings. the analysis sums carry over to the next area and the next run.
  */
 #include "fx_core.h"
 
@@ -11,11 +10,10 @@
 typedef struct EyeState {
     RECT *areas;
     UINT count;
-    /* sums that go on from area to area. */
+    /* sums that carry over between areas. */
     float red_x, red_y, dark_x, dark_y;
     INT brightest, brightest_x, brightest_y;
     INT low, high;
-    /* the circle. */
     float center_x, center_y, radius;
     BOOL pale, small_area;
     float sector_red[SECTORS], sector_base[SECTORS];
@@ -67,7 +65,7 @@ static void eye_get(const void *state, void *out)
 
 /* ------------------------------------------------------------------ pixels and angles */
 
-/* the pixels the analysis reads, which are the result so far when the bitmap is worked on in place. */
+/* in place, these are the pixels corrected so far. */
 typedef struct EyePixels {
     const UINT32 *bits;
     INT x0, y0, width;
@@ -77,7 +75,7 @@ static UINT32 pixel_at(const EyePixels *p, INT x, INT y) { return p->bits[(SIZE_
 
 static float distance_of(float dx, float dy) { return mime_vec_sqrtf(dy * dy + dx * dx); }
 
-/* how far red leads the other colors, nothing when it does not. */
+/* how far red leads the other colors, or 0. */
 static float lead_of(float r, float g, float b)
 {
     if (!(r > g && r > b))
@@ -85,7 +83,7 @@ static float lead_of(float r, float g, float b)
     return g <= b ? r - b : r - g;
 }
 
-/* the slice of 6 degrees a direction from the center is in. a pixel in the row of the center and left of it is in the first. */
+/* the 6 degree sector of a direction from the center. a pixel on the center row is in sector 0. */
 static INT sector_of(float dx, float dy)
 {
     float degrees;
@@ -102,7 +100,7 @@ static INT sector_of(float dx, float dy)
     return sector < 0 ? 0 : sector >= SECTORS ? SECTORS - 1 : sector;
 }
 
-/* ------------------------------------------------------------------ the analysis */
+/* ------------------------------------------------------------------ analysis */
 
 static void channels_of(UINT32 p, float *r, float *g, float *b)
 {
@@ -111,7 +109,7 @@ static void channels_of(UINT32 p, float *r, float *g, float *b)
     *b = (float)(p & 255);
 }
 
-/* a pale eye has light green and blue near the middle of the area, a flash on a washed out face. */
+/* a pale eye has light green and blue near the middle of the area, as from a flash on a washed out face. */
 static void find_pale(EyeState *s, const EyePixels *px, const RECT *area)
 {
     float mx = (float)(area->left + area->right) * 0.5f, my = (float)(area->top + area->bottom) * 0.5f;
@@ -139,7 +137,7 @@ static void find_pale(EyeState *s, const EyePixels *px, const RECT *area)
     s->pale = mean_g > 150.0f && mean_b > 150.0f && mean_g + 10.0f > mean_r && mean_b + 10.0f > mean_r;
 }
 
-/* the middle of the eye from where the red is and where it is dark, and a first guess of the radius. */
+/* the eye center from where it is red and where it is dark, and a first guess at the radius. */
 static void find_center(EyeState *s, const EyePixels *px, const RECT *area)
 {
     INT histogram[256] = {0};
@@ -174,7 +172,7 @@ static void find_center(EyeState *s, const EyePixels *px, const RECT *area)
         s->red_x /= red_total;
         s->red_y /= red_total;
     }
-    /* with nothing dark the earlier circle stays. */
+    /* with nothing dark the earlier circle is kept. */
     if (dark_total == 0.0f)
         return;
     s->dark_x /= dark_total;
@@ -207,7 +205,7 @@ static void find_center(EyeState *s, const EyePixels *px, const RECT *area)
         s->center_x = (float)(area->left + area->right) * 0.5f;
         s->center_y = (float)(area->top + area->bottom) * 0.5f;
     }
-    /* the radius reaches from the center to the nearest edge of the area, counted from the coordinates themselves. */
+    /* the radius reaches the nearest edge of the area, measured on the raw coordinates. */
     float cx = s->center_x, cy = s->center_y;
     if (cx <= cy) {
         s->radius = cx;
@@ -228,7 +226,7 @@ static void find_center(EyeState *s, const EyePixels *px, const RECT *area)
     }
 }
 
-/* the rim of a pale eye, and the mean red and the mean of the other colors in each sector of the circle. */
+/* the rim of a pale eye, and per sector the mean red and the mean of the other colors. */
 static void find_references(EyeState *s, const EyePixels *px, const RECT *area)
 {
     if (s->pale) {
@@ -293,7 +291,7 @@ static void find_references(EyeState *s, const EyePixels *px, const RECT *area)
     }
 }
 
-/* ------------------------------------------------------------------ the correction */
+/* ------------------------------------------------------------------ correction */
 
 static void correct_area(EyeState *s, const EyePixels *px, const FxJob *job, const RECT *area)
 {
@@ -335,7 +333,7 @@ static void correct_area(EyeState *s, const EyePixels *px, const FxJob *job, con
             if (!(r > g && r > b))
                 continue;
             INT sector = sector_of(dx, dy);
-            /* the limit the sector gives, lower when the pixel is not as light as the sector is. */
+            /* the sector's limit, lower when the pixel is darker than the sector. */
             float by_sector = 255.0f, base = s->sector_base[sector];
             if (base != 0.0f) {
                 float here = (2.0f * b + 9.0f * g) / 11.0f;
@@ -354,7 +352,7 @@ static void correct_area(EyeState *s, const EyePixels *px, const FxJob *job, con
                 by_radius = ((d / s->radius) / 3.0f) + 0.667f;
             }
             by_radius *= s->sector_red[sector];
-            /* near a bright spot of the eye its own red is kept. */
+            /* near a bright spot in the eye the pixel keeps its red. */
             float by_spot = 255.0f;
             if ((UINT)(s->brightest - s->high) > 40 && s->radius * 0.667f > spot_distance) {
                 float sy = (float)y - by, sx = (float)x - bx;

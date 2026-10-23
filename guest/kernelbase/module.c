@@ -1,6 +1,4 @@
-/*
- * modules: dll loading, handles, file names and export lookup.
- */
+/* modules: dll loading, handles, file names and export lookup. */
 #include "kernelbase_private.h"
 
 #define LDR_ADDREF_DLL_PIN 0x00000001
@@ -186,7 +184,7 @@ DWORD WINAPI GetModuleFileNameA(HMODULE module, LPSTR buffer, DWORD size)
         WideCharToMultiByte(cp, 0, w, -1, buffer, (int)size, nullptr, nullptr);
         return (DWORD)need - 1;
     }
-    /* truncate on a character boundary and terminate, like windows. */
+    /* truncate on a character boundary and terminate, like Windows. */
     int written = 0;
     for (DWORD i = 0; w[i]; i++) {
         char tmp[8];
@@ -330,7 +328,7 @@ static void append_dir(PWSTR list, SIZE_T *n, SIZE_T capacity, PCWSTR dir, SIZE_
     list[*n] = 0;
 }
 
-/* builds the search path LdrLoadDll receives, or NULL to use the loader default. */
+/* the search path for LdrLoadDll, or NULL for the loader default. */
 static PWSTR build_search_path(LPCWSTR name, DWORD flags)
 {
     DWORD search = flags & (LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_APPLICATION_DIR |

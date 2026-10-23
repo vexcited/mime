@@ -16,7 +16,7 @@ static NTSTATUS read_bytes(CM_HIVE *hive, ULONG64 offset, PVOID buffer, ULONG le
     return NT_SUCCESS(status) && got == length ? STATUS_SUCCESS : STATUS_REGISTRY_CORRUPT;
 }
 
-/* reads length bytes at offset inside the data of a cell, checked against the cell size. */
+/* offset is inside the cell data, checked against the cell size. */
 static NTSTATUS read_cell(CM_HIVE *hive, ULONG cell, ULONG offset, PVOID buffer, ULONG length)
 {
     if (cell & 7)
@@ -102,7 +102,7 @@ NTSTATUS CmpReadKey(CM_HIVE *hive, ULONG cell, CM_HIVE_KEY *key)
     return STATUS_SUCCESS;
 }
 
-/* the security cell of a key node: a signature, two links, a count of the nodes sharing it, a size, the descriptor. */
+/* a security cell: signature, two links, count of nodes sharing it, size, then the descriptor. */
 NTSTATUS CmpReadSecurity(CM_HIVE *hive, ULONG cell, SD_BLOB **out)
 {
     ULONG security;

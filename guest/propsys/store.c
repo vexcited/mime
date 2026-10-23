@@ -1,8 +1,7 @@
 /*
- * the memory property store of PSCreateMemoryPropertyStore: values by key in
- * an open addressed table enumerated in slot order as windows' is, named
- * values beside them, and the serialized property storage format of
- * [MS-PROPSTORE] to save and load both.
+ * PSCreateMemoryPropertyStore: values by key in an open addressed table, enumerated
+ * in slot order like windows does, named values beside them. both are saved and
+ * loaded in the [MS-PROPSTORE] serialized format.
  */
 #include "propsys_private.h"
 
@@ -62,7 +61,7 @@ static BOOL same_key(const PROPERTYKEY *a, const PROPERTYKEY *b)
     return a->pid == b->pid && IsEqualGUID(&a->fmtid, &b->fmtid);
 }
 
-/* the slot holding key, or the free one it would go to. */
+/* the slot holding key, or the free slot it would go in. */
 static SLOT *find_slot(SLOT *slots, UINT size, const PROPERTYKEY *key)
 {
     for (UINT i = hash_key(key) % size;; i = (i + 1) % size) {
@@ -120,7 +119,7 @@ static void clear_all(STORE *store)
     store->name_count = store->name_capacity = 0;
 }
 
-/* takes value over on success. */
+/* takes ownership of value on success. */
 static HRESULT put_value(STORE *store, const PROPERTYKEY *key, PROPVARIANT *value, PSC_STATE state)
 {
     SLOT *slot = lookup(store, key);
@@ -157,7 +156,7 @@ static HRESULT set_value_and_state(STORE *store, const PROPERTYKEY *key, const P
         }
         return S_OK;
     }
-    /* stores treating new values as dirty skip what changes nothing. */
+    /* with FPSPS_TREAT_NEW_VALUES_AS_DIRTY, setting an unchanged value does nothing. */
     if (store->flags & FPSPS_TREAT_NEW_VALUES_AS_DIRTY) {
         if (slot ? !PropVariantCompareEx(&slot->value, value, PVCU_DEFAULT, PVCF_USESTRCMP) : value->vt == VT_EMPTY)
             return S_FALSE;
@@ -182,7 +181,7 @@ static NAMED *find_name(STORE *store, LPCWSTR name)
     return nullptr;
 }
 
-/* takes value over on success. */
+/* takes ownership of value on success. */
 static HRESULT put_named(STORE *store, LPCWSTR name, PROPVARIANT *value)
 {
     NAMED *named = find_name(store, name);
@@ -287,7 +286,7 @@ static void append_value(BUFFER *b, const void *id, DWORD id_size, BOOL named, c
     CoTaskMemFree(typed);
 }
 
-/* storages in the order their first value comes in the table, the named values last. */
+/* storages are written in the order their first value appears in the table, named values last. */
 static HRESULT serialize(STORE *store, BYTE **out, ULONG *size)
 {
     BUFFER b = {0};
@@ -792,7 +791,7 @@ static HRESULT WINAPI stream_is_dirty(IPersistStream *iface)
     return FROM(iface, stream)->dirty ? S_OK : S_FALSE;
 }
 
-/* the storage's size, then the storage. */
+/* the stream holds the storage size, then the storage. */
 static HRESULT WINAPI stream_load(IPersistStream *iface, IStream *stream)
 {
     if (!stream)
@@ -869,7 +868,7 @@ static ULONG WINAPI bag_release(IPropertyBag *iface)
     return release(FROM(iface, bag));
 }
 
-/* a missing name fails as property bags do, a typed variant receives its type. */
+/* a missing name fails like other property bags, a typed variant is converted to its type. */
 static HRESULT WINAPI bag_read(IPropertyBag *iface, LPCOLESTR name, VARIANT *value, IErrorLog *log)
 {
     STORE *store = FROM(iface, bag);

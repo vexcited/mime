@@ -1,8 +1,6 @@
 /*
- * iphlpapi: the ip helper. the machine's adapters are the host's network
- * interfaces, read from the socket driver, beside the software loopback
- * windows always has. every call works on a snapshot of them, taken at
- * most every half second.
+ * iphlpapi, the ip helper. adapters are the host's network interfaces, read from the socket driver, plus the
+ * software loopback windows always has. every call works on a snapshot taken at most every half second.
  */
 #include "private.h"
 
@@ -11,7 +9,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the socket driver */
+/* ------------------------------------------------------------------ socket driver */
 
 static SRWLOCK device_lock = SRWLOCK_INIT;
 static HANDLE device;
@@ -178,7 +176,7 @@ static ULONG speed_metric(ULONG64 speed)
     return 55;
 }
 
-/* a guid that stays the same for a host interface name. */
+/* a guid that is stable for a given host interface name. */
 static void name_guid(GUID *guid, const char *kind, const char *name)
 {
     ULONG64 h[2] = {0xCBF29CE484222325ull, 0x84222325CBF29CE4ull};
@@ -229,7 +227,7 @@ static void append_number(WCHAR *out, SIZE_T count, const WCHAR *prefix, ULONG n
     out[i] = 0;
 }
 
-/* ------------------------------------------------------------------ the snapshot */
+/* ------------------------------------------------------------------ snapshot */
 
 static const BYTE loopback6[16] = {[15] = 1};
 static const BYTE loopback4[4] = {127, 0, 0, 1};
@@ -248,7 +246,7 @@ static void add_loopback(IPH_SNAPSHOT *s)
     IPH_ADAPTER *a = &s->adapters[s->adapter_count++];
     a->index = LOOPBACK_INDEX;
     a->luid.Info.IfType = IF_TYPE_SOFTWARE_LOOPBACK;
-    /* every windows machine has its own loopback guid; this one is mime's. */
+    /* every windows machine has its own loopback guid, this one is mime's. */
     static const GUID guid = {0x2D6A9B3C, 0x5B0E, 0x11F0, {0x8E, 0x5B, 0x80, 0x6E, 0x6F, 0x6E, 0x69, 0x63}};
     a->guid = guid;
     guid_string(a->name, &a->guid);
@@ -328,7 +326,7 @@ static void add_multicast(IPH_SNAPSHOT *s, const IPH_ADAPTER *a, ADDRESS_FAMILY 
     m->scope = IphZone(a, family, bytes);
 }
 
-/* the address origins and states windows would show for a host address. */
+/* the address origin and state windows would show for a host address. */
 static void classify(IPH_ADDRESS *a)
 {
     BOOL dynamic = a->flags & MIME_AFD_ADDR_DYNAMIC;
@@ -371,7 +369,7 @@ static IPH_SNAPSHOT *allocate(ULONG links, ULONG addresses, ULONG routes)
     s->refs = 1;
     s->adapters = IphAlloc((links + 1) * sizeof(IPH_ADAPTER));
     s->addresses = IphAlloc((addresses + 2) * sizeof(IPH_ADDRESS));
-    /* each ipv4 address makes 3 routes and each ipv6 one 2, each adapter 4 more. */
+    /* 3 routes per ipv4 address, 2 per ipv6 address, plus 4 per adapter. */
     s->routes = IphAlloc((routes + addresses * 3 + (links + 1) * 4 + 8) * sizeof(IPH_ROUTE));
     s->multicasts = IphAlloc((addresses + (links + 1) * 10) * sizeof(IPH_ADDRESS));
     if (!s->adapters || !s->addresses || !s->routes || !s->multicasts) {
@@ -430,7 +428,7 @@ static void add_adapter_addresses(IPH_SNAPSHOT *s, IPH_ADAPTER *a, const MIME_AF
                                   const MIME_AFD_LINK_ADDRESS *list)
 {
     a->first_address = s->address_count;
-    /* ipv6 then ipv4, the addresses registered in dns first in each. */
+    /* ipv6 then ipv4, dns registered addresses first within each. */
     for (int pass = 0; pass < 4; pass++) {
         ADDRESS_FAMILY family = pass < 2 ? AF_INET6 : AF_INET;
         for (ULONG i = 0; c && i < c->Addresses; i++) {
@@ -474,7 +472,7 @@ static void loopback_routes(IPH_SNAPSHOT *s, const IPH_ADAPTER *a)
     add_route(s, a->index, AF_INET, broadcast, 32, nullptr, 0, ROUTE_METRIC, MIB_IPPROTO_LOCAL, NlroWellKnown, TRUE);
 }
 
-/* the on link routes the stack makes for an adapter's addresses. */
+/* the on link routes the stack creates for an adapter's addresses. */
 static void adapter_routes(IPH_SNAPSHOT *s, const IPH_ADAPTER *a)
 {
     static const BYTE multicast6[16] = {0xFF}, link6[16] = {0xFE, 0x80};
@@ -519,7 +517,7 @@ static void adapter_routes(IPH_SNAPSHOT *s, const IPH_ADAPTER *a)
     }
 }
 
-/* the groups windows joins on an adapter: all nodes, the solicited node of each address, mdns, llmnr and ssdp. */
+/* windows joins all nodes, each address's solicited node group, mdns, llmnr and ssdp on an adapter. */
 static void adapter_multicasts(IPH_SNAPSHOT *s, const IPH_ADAPTER *a)
 {
     if (a->type == IF_TYPE_SOFTWARE_LOOPBACK) {
@@ -675,7 +673,7 @@ static IPH_SNAPSHOT *build(void)
         if (a->up)
             adapter_routes(s, a);
     }
-    /* the host's routes through a gateway, of adapters that are up. */
+    /* the host's gateway routes, for adapters that are up. */
     for (ULONG i = 0; c && i < c->Routes; i++) {
         const MIME_AFD_ROUTE *r = &routes[i];
         const IPH_ADAPTER *a = IphAdapterByIndex(s, r->Index);
@@ -696,8 +694,8 @@ static IPH_SNAPSHOT *build(void)
     sort_routes(s);
     for (ULONG i = 0; i < s->adapter_count; i++)
         adapter_multicasts(s, &s->adapters[i]);
-    /* the resolver: the host's servers belong to the adapters with a default gateway, or else to those with an
-       address wider than the link. */
+    /* the host's dns servers go to the adapters with a default gateway, or else to those with an address wider
+       than the link. */
     if (c) {
         for (ULONG i = 0; i < c->Servers && i < MIME_AFD_MAX_DNS; i++) {
             const MIME_AFD_ADDRESS *h = &c->Server[i];
@@ -729,7 +727,7 @@ static IPH_SNAPSHOT *build(void)
     return s;
 }
 
-/* when even memory is missing, the loopback alone, from storage of our own. */
+/* out of memory: just the loopback, from static storage. */
 static IPH_SNAPSHOT *fallback(void)
 {
     static IPH_ADAPTER adapters[1];

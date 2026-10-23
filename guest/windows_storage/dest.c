@@ -1,9 +1,6 @@
 /*
- * jump lists: the list of destinations a program gives the taskbar button of its windows (ICustomDestinationList), the
- * collections it builds them in (CLSID_EnumerableObjectCollection), and the two classes that remove destinations and
- * read the recent and frequent lists. there is no taskbar to show a list, so a committed list is kept for the
- * life of the process, by app id, and the document lists are empty. the errors of a list used out of order are
- * guesses.
+ * ICustomDestinationList jump lists and their object collections. without a taskbar, committed lists are retained per
+ * app id for the process lifetime and document lists stay empty. errors for out-of-order calls are guessed.
  */
 #include "windows_storage_private.h"
 #include <mime/win32/shobjidl_ui.h>
@@ -13,7 +10,7 @@
 #define MAX_APPS 16
 #define DEFAULT_SLOTS 10
 
-/* ------------------------------------------------------------------ the collection */
+/* the collection. */
 
 typedef struct _COLLECTION {
     IObjectCollection Interface;
@@ -159,16 +156,16 @@ HRESULT ObjectCollectionCreate(IUnknown *outer, REFIID riid, void **object)
     return hr;
 }
 
-/* an empty array for the destinations nothing removed, as the interface asked for. */
+/* no destinations were removed, so return an empty array. */
 static HRESULT empty_array(REFIID riid, void **object)
 {
     return ObjectCollectionCreate(nullptr, riid, object);
 }
 
-/* ------------------------------------------------------------------ the destination list */
+/* the destination list. */
 
 typedef struct _CATEGORY {
-    LPWSTR Name; /* null for a known category */
+    LPWSTR Name; /* null for a known category. */
     KNOWNDESTCATEGORY Known;
     IObjectArray *Items;
 } CATEGORY;
@@ -257,7 +254,7 @@ static ULONG STDMETHODCALLTYPE dl_release(ICustomDestinationList *This)
     return (ULONG)refs;
 }
 
-/* the app id the list is for: the one given, else the process's explicit one. */
+/* use the supplied app id or the process explicit app id. */
 static void resolve_app_id(DESTINATION_LIST *l, WCHAR *id)
 {
     if (l->AppId[0]) {
@@ -306,7 +303,7 @@ static HRESULT STDMETHODCALLTYPE dl_begin_list(ICustomDestinationList *This, UIN
     return S_OK;
 }
 
-/* an item a list takes: a shell link or a shell item. */
+/* accept shell links or shell items. */
 static BOOL takes_item(IUnknown *item, BOOL tasks)
 {
     void *found = nullptr;
@@ -399,7 +396,7 @@ static HRESULT STDMETHODCALLTYPE dl_add_user_tasks(ICustomDestinationList *This,
     return S_OK;
 }
 
-/* the list of an app id, made when there is none, and the one that was kept replaced. */
+/* create or replace the committed list for this app id. */
 static APP_LIST *app_list(const WCHAR *id, BOOL create)
 {
     APP_LIST *free_slot = nullptr;
@@ -427,9 +424,8 @@ static void clear_app_list(APP_LIST *a)
 }
 
 /*
- * the tasks of a committed list go to the host, which can show them in the menu of the launcher entry of the program:
- * the title of a task is its System.Title, else its description, and what is run is the shortcut's target with its
- * arguments. the categories of destinations (documents, frequent and recent) have no place in a desktop's menu.
+ * send committed tasks to the host launcher menu. use System.Title or the description as the label and the shortcut
+ * target and arguments as the command. document, recent and frequent categories are not shown.
  */
 static void send_tasks(const WCHAR *id, IObjectArray *tasks)
 {
@@ -497,7 +493,7 @@ static HRESULT STDMETHODCALLTYPE dl_commit(ICustomDestinationList *This)
     if (a) {
         clear_app_list(a);
         wcscpy(a->AppId, id);
-        /* what the list built goes to the app's entry, the list starts over. */
+        /* commit to the app launcher entry and reset the builder. */
         a->Categories = l->Categories;
         a->CategoryCount = l->CategoryCount;
         a->Tasks = l->Tasks;
@@ -570,7 +566,7 @@ HRESULT DestinationListCreate(IUnknown *outer, REFIID riid, void **object)
     return hr;
 }
 
-/* ------------------------------------------------------------------ the destinations of an app */
+/* the destinations of an app. */
 
 typedef struct _APP_OBJECT {
     union {

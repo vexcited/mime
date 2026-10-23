@@ -1,11 +1,8 @@
 /*
- * raytracing: acceleration structures over the memory at the gpu virtual
- * addresses direct3d gives them. a gpu virtual address is a vulkan device
- * address, and direct3d's instance descriptions are vulkan's, so top level
- * structures read the addresses of bottom level ones as they are. each
- * address that held a build gets one VkAccelerationStructureKHR over the
- * rest of the resource made for acceleration structures holding it, as
- * direct3d never says how large one is.
+ * acceleration structures over the memory at the gpu virtual addresses Direct3D gives them. a gpu virtual address
+ * is a Vulkan device address and Direct3D's instance descriptions are Vulkan's, so top level structures read bottom
+ * level addresses as is. Direct3D never says how large a structure is, so each address that held a build gets one
+ * VkAccelerationStructureKHR over the rest of the acceleration structure resource holding it.
  */
 #include "d3d12_private.h"
 
@@ -13,7 +10,7 @@
 
 /* ------------------------------------------------------------------ objects */
 
-/* the region of the buffers made for acceleration structures holding va, NULL outside them. */
+/* NULL outside the buffers made for acceleration structures. */
 static const D3D12_GPU_VIRTUAL_ADDRESS_RANGE *region_of(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va)
 {
     UINT lo = 0, hi = device->as_region_count;
@@ -55,7 +52,7 @@ void D12AccelerationRegionAdd(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va, U
     ReleaseSRWLockExclusive(&device->as_lock);
 }
 
-/* the first entry at or after va, in the list sorted by address. */
+/* the first entry at or after va in the sorted list. */
 static UINT find(D12Device *device, D3D12_GPU_VIRTUAL_ADDRESS va)
 {
     UINT lo = 0, hi = device->as_count;
@@ -183,7 +180,7 @@ static VkIndexType index_type(DXGI_FORMAT format)
     }
 }
 
-/* direct3d's flags of builds and geometries are vulkan's. */
+/* Direct3D's build and geometry flags are Vulkan's. */
 static BOOL convert_inputs(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS *in, BuildInputs *out)
 {
     memset(out, 0, sizeof(*out));
@@ -285,7 +282,7 @@ void D12BuildAccelerationStructure(D12Device *device, VkCommandBuffer cmd,
     free_inputs(&b);
 }
 
-/* the queries of a kind of postbuild information, and where each goes in direct3d's structure. */
+/* the queries for a kind of postbuild info, and where each lands in Direct3D's structure. */
 static UINT postbuild_queries(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_TYPE type, VkQueryType out[2],
                               UINT *stride)
 {
@@ -359,7 +356,7 @@ void D12CopyAccelerationStructure(D12Device *device, VkCommandBuffer cmd, D3D12_
             vk->vkCmdCopyAccelerationStructureKHR(cmd, &info);
         break;
     }
-    /* direct3d's serialized header is vulkan's: the driver's identifier, the sizes and the count of addresses. */
+    /* Direct3D's serialized header is Vulkan's: driver identifier, sizes and address count. */
     case D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE_SERIALIZE: {
         VkCopyAccelerationStructureToMemoryInfoKHR info = {
             VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_TO_MEMORY_INFO_KHR};
@@ -386,7 +383,7 @@ void D12CopyAccelerationStructure(D12Device *device, VkCommandBuffer cmd, D3D12_
     }
 }
 
-/* direct3d's identifier of serialized data is vulkan's version data: the driver's uuid and its compatibility. */
+/* Direct3D's serialized data identifier is Vulkan's version data: the driver uuid and its compatibility. */
 UINT D12CheckDriverMatchingIdentifier(D12Device *device, UINT type, const void *identifier)
 {
     if (type != 0)
@@ -402,7 +399,7 @@ UINT D12CheckDriverMatchingIdentifier(D12Device *device, UINT type, const void *
 
 /* ------------------------------------------------------------------ indirect rays limited by a count */
 
-/* the words of direct3d's indirect rays arguments, and the word of their width. */
+/* Direct3D's indirect rays arguments in dwords, and the dword holding the width. */
 #define RAYS_WORDS (sizeof(D3D12_DISPATCH_RAYS_DESC) / 4)
 #define RAYS_WIDTH_WORD (offsetof(D3D12_DISPATCH_RAYS_DESC, Width) / 4)
 
@@ -418,9 +415,8 @@ static uint32_t aligned_load(SpvBuilder *b, uint32_t type, uint32_t ptr)
 }
 
 /*
- * a compute shader copying the commands of an indirect rays call one an
- * invocation, tightly packed, the width of those past the count zero, so
- * vulkan's indirect trace rays commands run only the first count.
+ * a compute shader that packs the indirect rays commands, one per invocation, and zeroes the width of those past
+ * the count, so Vulkan's indirect trace rays only runs the first count.
  */
 static uint32_t *count_shader(size_t *words)
 {

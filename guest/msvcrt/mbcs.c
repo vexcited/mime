@@ -1,7 +1,7 @@
 /*
- * the multibyte string functions with a locale argument and the checked ones, over the plain functions of string.c. The
- * locale argument is not looked at: the multibyte code page is the one of _setmbcp. The tests for the Japanese
- * characters hold only for code page 932, in the other pages no byte is a kana and no double byte is a hiragana.
+ * the _l and checked multibyte string functions, over the plain ones in string.c. the locale argument is ignored: the
+ * code page is the one set by _setmbcp. the Japanese character tests only hold for code page 932, in other pages no
+ * byte is a kana and no double byte character is a hiragana.
  */
 #include "msvcrt_private.h"
 
@@ -51,7 +51,7 @@ void __cdecl _mbccpy(unsigned char *dst, const unsigned char *src);
 int __cdecl _getmbcp(void);
 size_t __cdecl mbstowcs(wchar_t *dst, const char *src, size_t n);
 
-/* ------------------------------------------------------------------ the locale forms */
+/* ------------------------------------------------------------------ locale forms */
 
 #define L1(ret, name, base, t1, a1) \
     ret __cdecl name(t1 a1, void *locale) { return base(a1); }
@@ -99,7 +99,7 @@ L1(int, _ismbclower_l, _ismbclower, unsigned int, c)
 L1(int, _ismbblead_l, _ismbblead, unsigned int, c)
 L1(int, _ismbbtrail_l, _ismbbtrail, unsigned int, c)
 
-/* the collation of the multibyte functions compares the characters as they are, as the c locale does. */
+/* multibyte collation compares characters as they are, like the c locale. */
 int __cdecl _mbscoll(const unsigned char *a, const unsigned char *b)
 {
     return _mbscmp(a, b);
@@ -137,7 +137,6 @@ L3(int, _mbsnicoll_l, _mbsnicoll, const MB_UC *, a, const MB_UC *, b, size_t, n)
 L3(int, _mbsnbcoll_l, _mbsnbcoll, const MB_UC *, a, const MB_UC *, b, size_t, n)
 L3(int, _mbsnbicoll_l, _mbsnbicoll, const MB_UC *, a, const MB_UC *, b, size_t, n)
 
-/* the characters ahead, and the length cut to a number of characters or bytes. */
 unsigned char *__cdecl _mbsninc(const unsigned char *s, size_t n)
 {
     if (!s) {
@@ -168,7 +167,7 @@ size_t __cdecl _mbsnlen(const unsigned char *s, size_t max)
 
 L2(size_t, _mbsnlen_l, _mbsnlen, const MB_UC *, s, size_t, max)
 
-/* the characters of a string of at most max bytes, or -1 for a string that ends in the middle of a character. */
+/* character count of a string of at most max bytes, or -1 when it ends in the middle of a character. */
 size_t __cdecl _mbstrnlen(const char *s, size_t max)
 {
     if (!s) {
@@ -194,12 +193,12 @@ size_t __cdecl _mbstrnlen(const char *s, size_t max)
 L2(size_t, _mbstrnlen_l, _mbstrnlen, const char *, s, size_t, max)
 L1(size_t, _mbstrlen_l, _mbstrlen, const char *, s)
 
-/* ------------------------------------------------------------------ the checked ones */
+/* ------------------------------------------------------------------ checked forms */
 
 /*
- * the checks of the _s copies: a destination and its size, a source. When something is wrong the destination is made
- * the empty string, as the standard asks, and the error is EINVAL for a bad argument and ERANGE for no room. A copy of
- * count bytes stops at the end of the source and does not cut a character in two.
+ * the checks of the _s copies: a destination and its size, a source. on error the destination becomes the empty
+ * string, as the standard asks, with EINVAL for a bad argument and ERANGE for no room. a copy of count bytes stops at
+ * the end of the source and never splits a character.
  */
 static errno_t mb_copy_s(unsigned char *dst, size_t size, const unsigned char *src, size_t count, int bytes, int append,
                          int plain)
@@ -242,7 +241,7 @@ static errno_t mb_copy_s(unsigned char *dst, size_t size, const unsigned char *s
     }
     if (length >= room) {
         if (truncate) {
-            /* as much as fits, not cutting a character in two. */
+            /* as much as fits, without splitting a character. */
             size_t keep = room - 1;
             if (keep && MsvcrtMbLead(src[keep - 1]) && _mbsnbcnt(src, keep) < keep)
                 keep--;
@@ -317,7 +316,7 @@ errno_t __cdecl _mbsnbcat_s_l(unsigned char *dst, size_t size, const unsigned ch
     return _mbsnbcat_s(dst, size, src, count);
 }
 
-/* the character at src copied in one or two bytes; copied tells how many. */
+/* copies the character at src as one or two bytes; copied says how many. */
 errno_t __cdecl _mbccpy_s(unsigned char *dst, size_t size, int *copied, const unsigned char *src)
 {
     if (copied)
@@ -407,7 +406,7 @@ errno_t __cdecl _mbsupr_s_l(unsigned char *s, size_t size, void *locale)
     return _mbsupr_s(s, size);
 }
 
-/* the strings are made over with a character: set to c up to the end or up to count characters or bytes. */
+/* fills a string with c, to the end or for count characters. */
 unsigned char *__cdecl _mbsnset(unsigned char *s, unsigned int c, size_t count)
 {
     if (!s) {
@@ -449,7 +448,7 @@ unsigned char *__cdecl _mbsset(unsigned char *s, unsigned int c)
     return _mbsnset(s, c, (size_t)-1);
 }
 
-/* the same counted in bytes, so that a character is never half made. */
+/* the same counted in bytes, never leaving half a character. */
 unsigned char *__cdecl _mbsnbset(unsigned char *s, unsigned int c, size_t count)
 {
     if (!s) {
@@ -556,7 +555,6 @@ errno_t __cdecl _mbsnbset_s_l(unsigned char *s, size_t size, unsigned int c, siz
     return _mbsnbset_s(s, size, c, count);
 }
 
-/* the reentrant tokenizer: the position is kept in *context. */
 unsigned char *__cdecl _mbstok_s(unsigned char *s, const unsigned char *delim, unsigned char **context)
 {
     if (!delim || !context || (!s && !*context)) {
@@ -590,7 +588,6 @@ unsigned char *__cdecl _mbstok_s_l(unsigned char *s, const unsigned char *delim,
     return _mbstok_s(s, delim, context);
 }
 
-/* the characters of a string as wide ones, up to max, with the checks of the _s conversions. */
 errno_t __cdecl _mbstowcs_s_l(size_t *converted, wchar_t *dst, size_t size, const char *src, size_t max, void *locale)
 {
     extern errno_t __cdecl mbstowcs_s(size_t *, wchar_t *, size_t, const char *, size_t);
@@ -599,7 +596,6 @@ errno_t __cdecl _mbstowcs_s_l(size_t *converted, wchar_t *dst, size_t size, cons
 
 /* ------------------------------------------------------------------ single bytes */
 
-/* the code page in which the kana of Japan are bytes. */
 static int japanese(void)
 {
     return _getmbcp() == MB_CODEPAGE_JAPANESE;
@@ -676,7 +672,7 @@ L1(int, _ismbbgraph_l, _ismbbgraph, unsigned int, c)
 L1(int, _ismbbprint_l, _ismbbprint, unsigned int, c)
 L1(int, _ismbbpunct_l, _ismbbpunct, unsigned int, c)
 
-/* the kind of the byte at s[n]: 0 single, 1 lead, 2 trail, -1 for a lead byte without a trail or a place past the end. */
+/* the type of byte s[n]: 0 single, 1 lead, 2 trail, -1 for a lead without a trail or a position past the end. */
 int __cdecl _mbsbtype(const unsigned char *s, size_t n)
 {
     if (!s) {
@@ -794,7 +790,7 @@ L1(int, _ismbcprint_l, _ismbcprint, unsigned int, c)
 L1(int, _ismbcpunct_l, _ismbcpunct, unsigned int, c)
 L1(int, _ismbcblank_l, _ismbcblank, unsigned int, c)
 
-/* whether the byte at s starts a double byte character that is complete, and the lead and trail of a string. */
+/* lead and trail tests for a byte inside a string; a lead must start a complete double byte character. */
 int __cdecl _ismbslead(const unsigned char *start, const unsigned char *cur)
 {
     if (!start || !cur) {
@@ -826,7 +822,7 @@ int __cdecl _ismbstrail(const unsigned char *start, const unsigned char *cur)
 L2(int, _ismbslead_l, _ismbslead, const MB_UC *, start, const MB_UC *, cur)
 L2(int, _ismbstrail_l, _ismbstrail, const MB_UC *, start, const MB_UC *, cur)
 
-/* the conversion of a single byte character to its full width double byte form and back (code page 932). */
+/* single byte characters to their full width double byte forms and back, for code page 932. */
 unsigned int __cdecl _mbbtombc(unsigned int c)
 {
     if (!japanese())
@@ -881,7 +877,7 @@ unsigned int __cdecl _mbctokata(unsigned int c)
 L1(unsigned int, _mbctohira_l, _mbctohira, unsigned int, c)
 L1(unsigned int, _mbctokata_l, _mbctokata, unsigned int, c)
 
-/* shift jis to jis x 0208 and back: the pairs of 94 characters are folded two rows into one. */
+/* shift jis to jis x 0208 and back: two rows of 94 characters fold into one. */
 unsigned int __cdecl _mbcjmstojis(unsigned int c)
 {
     if (!japanese() || !is_legal_cp932(c))
@@ -922,12 +918,12 @@ unsigned int __cdecl _mbcjistojms(unsigned int c)
 L1(unsigned int, _mbcjmstojis_l, _mbcjmstojis, unsigned int, c)
 L1(unsigned int, _mbcjistojms_l, _mbcjistojms, unsigned int, c)
 
-/* ------------------------------------------------------------------ the tables */
+/* ------------------------------------------------------------------ tables */
 
 extern unsigned char _mbctype[257];
 extern unsigned char _mbcasemap[256];
 
-/* the tables are made with the code page, when it is first asked for. */
+/* the tables are built for the code page on first use. */
 unsigned char *__cdecl __p__mbctype(void)
 {
     _getmbcp();

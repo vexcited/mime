@@ -1,10 +1,10 @@
 #include "msi_private.h"
 
 /*
- * the queries of the installer: SELECT over one table or a join of several, with named columns or *, DISTINCT, a WHERE
- * clause of comparisons, IS NULL and IS NOT NULL joined by AND, OR, NOT and parentheses, and ORDER BY. Nothing writes.
- * A join is the product of its tables filtered by the clause, as windows has it; a condition is tested as soon as the
- * tables it names are bound, so a join on keys stays cheap.
+ * installer queries: SELECT over one table or a join, with named columns or *, DISTINCT, a WHERE clause of
+ * comparisons, IS NULL and IS NOT NULL combined with AND, OR, NOT and parentheses, and ORDER BY. read only. like
+ * Windows, a join is the product of its tables filtered by the clause. each condition is tested as soon as its tables
+ * are bound, so joins on keys stay cheap.
  */
 
 enum { TOKEN_END, TOKEN_NAME, TOKEN_STRING, TOKEN_NUMBER, TOKEN_SYMBOL, TOKEN_INVALID };
@@ -97,7 +97,7 @@ static void next_token(SQL_TOKEN *token)
     token->Next = p;
 }
 
-/* a keyword or a symbol: quoted names and strings are never taken for one. */
+/* matches a keyword or symbol. quoted names and strings never match. */
 static BOOL take(SQL_TOKEN *token, PCWSTR text)
 {
     if (token->Kind == TOKEN_INVALID || token->Kind == TOKEN_STRING || token->Quoted || _wcsicmp(token->Text, text))
@@ -152,7 +152,7 @@ static BOOL is_binary_column(const MIME_MSI_COLUMN *column)
     return (column->Type & 0x0fff) == 0x0900;
 }
 
-/* a column, with or without the table before it; a bare name must belong to one table of the query only. */
+/* a column, optionally table qualified. a bare name must belong to exactly one table of the query. */
 static UINT parse_reference(MSI_VIEW *view, SQL_TOKEN *token, ULONG *table_out, ULONG *column_out)
 {
     if (token->Kind != TOKEN_NAME)
@@ -347,7 +347,7 @@ static UINT parse_expression(MSI_VIEW *view, SQL_TOKEN *token, ULONG depth, SQL_
     return ERROR_SUCCESS;
 }
 
-/* the top level conditions joined by AND each become one test, run at the depth of the last table they name. */
+/* each top level AND term becomes one test, run at the depth of the last table it names. */
 static UINT split_conditions(MSI_VIEW *view, SQL_NODE *node)
 {
     if (node->Kind == NODE_AND) {
@@ -367,7 +367,7 @@ static UINT parse_view(MSI_VIEW *view, PCWSTR query)
     if (!take(&token, L"SELECT"))
         return ERROR_BAD_QUERY_SYNTAX;
     view->Distinct = take(&token, L"DISTINCT");
-    /* the columns are read before the tables they come from are known, so the query is scanned for FROM first. */
+    /* the column list comes before FROM, so scan ahead for the tables first. */
     SQL_TOKEN scan = token;
     BOOL found = FALSE;
     while (scan.Kind != TOKEN_END && scan.Kind != TOKEN_INVALID) {
@@ -391,7 +391,7 @@ static UINT parse_view(MSI_VIEW *view, PCWSTR query)
         view->TableCount++;
         next_token(&token);
     } while (take(&token, L","));
-    /* the column list, now that the tables are known. */
+    /* now the tables are known, parse the column list. */
     if (take(&columns, L"*")) {
         if (!is_keyword(&columns, L"FROM"))
             return ERROR_BAD_QUERY_SYNTAX;
@@ -475,7 +475,7 @@ UINT WINAPI MsiDatabaseOpenViewW(MSIHANDLE handle, LPCWSTR query, MSIHANDLE *out
     return error;
 }
 
-/* what a cell or a literal holds, without copying it. */
+/* a cell or literal value, not copied. */
 typedef struct SQL_VALUE {
     ULONG Kind;
     int Integer;
@@ -519,7 +519,7 @@ static SQL_VALUE operand_value(const MSI_VIEW *view, const SQL_OPERAND *operand,
     return value;
 }
 
-/* a number against a string is compared as text, the way a string column compared with a number in a clause does. */
+/* a number against a string compares as text, like a string column against a number in a clause. */
 static int compare_values(const SQL_VALUE *a, const SQL_VALUE *b)
 {
     if (a->Kind == FIELD_INTEGER && b->Kind == FIELD_INTEGER)
@@ -558,7 +558,7 @@ static BOOL evaluate(const MSI_VIEW *view, const SQL_NODE *node, const ULONG *ro
     SQL_VALUE b = operand_value(view, &node->Right, rows, parameters);
     if (a.Kind == FIELD_NULL || b.Kind == FIELD_NULL)
         return FALSE;
-    /* a column of numbers against a string holding a number is compared as numbers. */
+    /* a numeric column against a string holding a number compares as numbers. */
     SQL_VALUE converted;
     BOOL number_column = node->Left.Kind == OPERAND_COLUMN && a.Kind == FIELD_INTEGER;
     if (number_column && b.Kind == FIELD_STRING) {
@@ -666,7 +666,7 @@ static int compare_selected(const MSI_VIEW *view, const ULONG *a, const ULONG *b
     return 0;
 }
 
-/* a merge sort that keeps the order of equal rows, which the order of a table makes meaningful. */
+/* a stable merge sort, since table order is meaningful for equal rows. */
 static BOOL sort_tuples(MSI_VIEW *view, ULONG *tuples, ULONG count, BOOL by_selected)
 {
     ULONG width = view->TableCount;
@@ -719,7 +719,7 @@ UINT WINAPI MsiViewExecute(MSIHANDLE handle, MSIHANDLE parameters)
         if (!error && view->OrderCount && !sort_tuples(view, run.Tuples, run.Count, FALSE))
             error = ERROR_NOT_ENOUGH_MEMORY;
         if (!error && view->Distinct && run.Count > 1) {
-            /* equal rows sit together once the rows are sorted by what is selected. */
+            /* sorting by the selected columns brings equal rows together. */
             if (!sort_tuples(view, run.Tuples, run.Count, TRUE))
                 error = ERROR_NOT_ENOUGH_MEMORY;
             ULONG kept = 1, width = view->TableCount;
@@ -745,7 +745,7 @@ UINT WINAPI MsiViewExecute(MSIHANDLE handle, MSIHANDLE parameters)
     return error;
 }
 
-/* the name of the stream behind a binary cell: the table and the values of its key columns, joined by dots. */
+/* a binary cell's stream is named after the table and its key values, joined by dots. */
 static UINT binary_field(const MSI_VIEW *view, ULONG table, ULONG row, MIME_MSI_FIELD *field)
 {
     const MIME_MSI_TABLE *source = view->Tables[table];
@@ -830,7 +830,7 @@ UINT WINAPI MsiViewClose(MSIHANDLE handle)
     return view ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
 }
 
-/* the type of a column as the text MsiViewGetColumnInfo gives: a letter for the kind, capital when it may be null. */
+/* the MsiViewGetColumnInfo type text: a letter for the kind, uppercase when nullable. */
 static void column_type_text(const MIME_MSI_COLUMN *column, WCHAR out[16])
 {
     BOOL nullable = !!(column->Type & 0x1000);
@@ -911,7 +911,7 @@ UINT WINAPI MsiDatabaseGetPrimaryKeysW(MSIHANDLE handle, LPCWSTR table_name, MSI
     return error;
 }
 
-/* what is wrong with the row a modification was refused for; nothing is ever refused here. */
+/* no modification is ever refused here. */
 UINT WINAPI MsiViewGetErrorW(MSIHANDLE handle, LPWSTR column, LPDWORD size)
 {
     MIME_REMOTE(PROXY_ViewGetErrorW, UINT, MIME_ARG(handle), MIME_ARG(column), MIME_ARG(size));

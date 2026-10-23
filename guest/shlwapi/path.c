@@ -1,6 +1,6 @@
 /*
- * the path functions shlwapi keeps for itself: searching, compacting, folders and the user's
- * environment, over the ones kernelbase hosts.
+ * the path functions shlwapi implements itself: searching, compacting, folders and environment expansion.
+ * the rest live in kernelbase.
  */
 #include "shlwapi_private.h"
 
@@ -80,8 +80,8 @@ BOOL WINAPI PathFileExistsDefExtA(LPSTR path, DWORD which)
 
 /* ------------------------------------------------------------------ searching */
 
-/* the next element of a ";" list, unquoted and trimmed, and where the one after starts; NULL at
-   the end. */
+/* copies the next element of a ";" list, unquoted and trimmed, and returns where the one after starts,
+   or NULL at the end. */
 LPCWSTR WINAPI NextPathW(LPCWSTR list, LPWSTR out, int size);
 LPCWSTR WINAPI NextPathW(LPCWSTR list, LPWSTR out, int size)
 {
@@ -143,7 +143,7 @@ static BOOL try_directory(LPWSTR file, LPCWSTR directory, DWORD which)
     return TRUE;
 }
 
-/* the directories given, the system and windows directories, then those of PATH. */
+/* the given directories, then the system and windows directories, then PATH. */
 BOOL WINAPI PathFindOnPathExW(LPWSTR file, LPCWSTR *directories, DWORD which)
 {
     if (!file || !*file || !PathIsFileSpecW(file))
@@ -284,7 +284,7 @@ LPSTR WINAPI PathBuildRootA(LPSTR root, int drive)
     return root;
 }
 
-/* arguments after the program and the space before them go. */
+/* drops the arguments after the program, and the space before them. */
 void WINAPI PathRemoveArgsW(LPWSTR path)
 {
     if (!path)
@@ -319,7 +319,7 @@ void WINAPI PathRemoveArgsA(LPSTR path)
     }
 }
 
-/* "name[12].ext" back to "name.ext", what the download cache decorates with. */
+/* "name[12].ext" back to "name.ext", undoing the download cache's decoration. */
 void WINAPI PathUndecorateW(LPWSTR path)
 {
     if (!path)
@@ -388,7 +388,7 @@ BOOL WINAPI PathMakePrettyA(LPSTR path)
 
 /* ------------------------------------------------------------------ folders */
 
-/* the attribute value itself, FILE_ATTRIBUTE_DIRECTORY, not just TRUE. */
+/* returns FILE_ATTRIBUTE_DIRECTORY itself, not just TRUE. */
 BOOL WINAPI PathIsDirectoryW(LPCWSTR path)
 {
     if (!path)
@@ -514,7 +514,7 @@ BOOL WINAPI PathIsNetworkPathA(LPCSTR path)
     return result;
 }
 
-/* the content type the extension's association gives, compared without case. */
+/* compares the content type of the extension's association, ignoring case. */
 BOOL WINAPI PathIsContentTypeW(LPCWSTR path, LPCWSTR type)
 {
     if (!path || !type)
@@ -540,8 +540,8 @@ BOOL WINAPI PathIsContentTypeA(LPCSTR path, LPCSTR type)
 
 /* ------------------------------------------------------------------ compacting */
 
-/* a path shortened to max characters with the terminator: "..." replaces what comes before the
-   last component, and the component itself loses its end when it alone is too long. */
+/* max counts the terminator. "..." replaces what comes before the last component, and the component
+   itself is cut when it alone is too long. */
 BOOL WINAPI PathCompactPathExW(LPWSTR out, LPCWSTR path, UINT max, DWORD flags)
 {
     if (!out || !path || !max)
@@ -606,7 +606,7 @@ static UINT text_width(HDC dc, LPCWSTR text, int length)
     return (UINT)size.cx;
 }
 
-/* the path shortened in place until it fits width pixels in the device context's font. */
+/* shortens in place until it fits width pixels in the DC's font. */
 BOOL WINAPI PathCompactPathW(HDC dc, LPWSTR path, UINT width)
 {
     if (!path)
@@ -636,7 +636,7 @@ BOOL WINAPI PathCompactPathW(HDC dc, LPWSTR path, UINT width)
             }
         }
         if (!done) {
-            /* the name alone with dots, as many of its characters as fit. */
+            /* just the name with dots, as much of the name as fits. */
             int keep = file_length;
             for (; keep >= 0; keep--) {
                 memcpy(buffer, file, (SIZE_T)keep * sizeof(WCHAR));
@@ -666,7 +666,6 @@ BOOL WINAPI PathCompactPathA(HDC dc, LPSTR path, UINT width)
     return result;
 }
 
-/* the path compacted to the control's width in its font. */
 void WINAPI PathSetDlgItemPathW(HWND dialog, int id, LPCWSTR path)
 {
     HWND item = GetDlgItem(dialog, id);
@@ -693,7 +692,7 @@ void WINAPI PathSetDlgItemPathA(HWND dialog, int id, LPCSTR path)
     ShlFree(w);
 }
 
-/* ------------------------------------------------------------------ the environment */
+/* ------------------------------------------------------------------ environment */
 
 DWORD WINAPI SHExpandEnvironmentStringsForUserW(HANDLE token, LPCWSTR source, LPWSTR out, DWORD size);
 DWORD WINAPI SHExpandEnvironmentStringsForUserW(HANDLE token, LPCWSTR source, LPWSTR out, DWORD size)
@@ -725,7 +724,7 @@ DWORD WINAPI SHExpandEnvironmentStringsForUserA(HANDLE token, LPCSTR source, LPS
     return n;
 }
 
-/* an expanded copy in task memory. */
+/* the caller frees the result with CoTaskMemFree. */
 HRESULT WINAPI SHExpandEnvironmentStringsAlloc(LPCWSTR source, LPWSTR *out);
 HRESULT WINAPI SHExpandEnvironmentStringsAlloc(LPCWSTR source, LPWSTR *out)
 {

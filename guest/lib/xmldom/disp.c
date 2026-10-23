@@ -1,10 +1,9 @@
 /*
- * IDispatch for the dom's objects. every method and property is a row of a table: its name, its dispid, the kinds
- * of calls it answers, where its function is in the object's table of functions and the types of its arguments.
- * Invoke turns the variants of a call into the arguments of that function and its answer into a variant, so late
- * bound callers reach the same code as callers of the interfaces. the arguments of a row are written as letters:
- *   b bstr, l long, f boolean, n a node, v a variant, w a variant that may be left out,
- * then '>' and what the function hands back:
+ * IDispatch for the dom objects. each method or property is a table row: name, dispid, invoke kinds, vtable slot
+ * and argument types. Invoke converts variants to and from the vtable call, so late bound callers reach the same
+ * code. row arguments are letters:
+ *   b bstr, l long, f boolean, n a node, v a variant, w an optional variant,
+ * then '>' and the result:
  *   B bstr, L long, F boolean, V variant, N an object, U an unknown, and a minus for nothing.
  */
 #include <xmldom/xmldom.h>
@@ -87,7 +86,7 @@ static const XDisp text_rows[] = {
     ROW(L"splitText", 0x7b, CALL, XTextVtbl, splitText, "l>N"),
 };
 
-/* comments have the character data rows, the text rows without splitting. */
+/* comments get the text rows minus the last one, splitText. */
 #define COMMENT_ROWS (sizeof(text_rows) / sizeof(text_rows[0]) - 1)
 
 static const XDisp pi_rows[] = {
@@ -243,7 +242,7 @@ HRESULT xd_disp_names(const XDispSet *set, REFIID riid, LPOLESTR *names, UINT cn
     if (!names || !ids || !cnames)
         return E_INVALIDARG;
     if (!IsEqualIID(riid, &IID_NULL))
-        return (HRESULT)0x80020001L; /* the unknown interface error. */
+        return (HRESULT)0x80020001L; /* DISP_E_UNKNOWNINTERFACE. */
     for (UINT i = 0; i < cnames; i++)
         ids[i] = DISPID_UNKNOWN;
     for (UINT t = 0; t < 3 && set->t[t]; t++) {
@@ -426,7 +425,7 @@ HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, 
             const VARIANT *v = xv_deref(arg);
             if (v) {
                 if (v->vt & VT_BYREF) {
-                    /* a value passed by reference is read through. */
+                    /* a byref value is read through. */
                     if (FAILED(VariantCopyInd(c, v))) {
                         hr = DISP_E_TYPEMISMATCH;
                         break;

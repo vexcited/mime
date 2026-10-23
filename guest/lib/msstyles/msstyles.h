@@ -1,19 +1,17 @@
 /*
- * windows visual style file parser, the .msstyles format of windows 11.
+ * parser for windows 11 .msstyles visual style files.
  *
- * an msstyles file is a resource-only pe dll. the library reads the pe
- * headers and the resource tree itself, so the file only needs to be in
- * memory, not loaded. the optional .mui file supplies the localized string
- * table that holds fonts, display names and a few localized values.
+ * an msstyles file is a resource-only PE dll, parsed straight from memory
+ * without loading it. the optional .mui file holds the localized strings:
+ * fonts, display names and a few localized values.
  *
- * the file and mui bytes are never copied: they must stay valid and unchanged
- * while the MimeMsstyles referencing them is used. every read is bounds
- * checked, malformed files make the functions fail instead of crashing.
+ * neither buffer is copied, so both must stay valid and unchanged while the
+ * MimeMsstyles is in use. every read is bounds checked, malformed files fail.
  *
- * classes are identified by their index in the CMAP resource. parts and states
- * are the integers of vssym32.h, 0 meaning the class or part level. property
- * lookups follow the search order of uxtheme: state, part, class, then the
- * base class chain from BCMAP, then globals. see docs/msstyles.md.
+ * classes are indexes into the CMAP resource. parts and states are the
+ * vssym32.h integers, 0 meaning the class or part level. property lookups
+ * follow uxtheme's order: state, part, class, the BCMAP base class chain,
+ * then globals.
  */
 #ifndef MIME_LIB_MSSTYLES_H
 #define MIME_LIB_MSSTYLES_H
@@ -23,7 +21,7 @@
 
 #include "../alloc.h"
 
-/* primitive types, the type field of a property record. */
+/* values of the type field of a property record. */
 enum {
     MIME_TMT_ENUM = 200,
     MIME_TMT_STRING = 201,
@@ -45,7 +43,7 @@ enum {
     MIME_TMT_FLOATLIST = 217,
 };
 
-/* property ids used by the renderer, values of vssym32.h. */
+/* property ids the renderer uses, from vssym32.h. */
 enum {
     MIME_TMT_NAME = 600,
     MIME_TMT_DISPLAYNAME = 601,
@@ -200,7 +198,7 @@ enum {
     MIME_TMT_ATLASRECT = 8002,
 };
 
-/* enum values. */
+/* values of the enum properties. */
 enum { MIME_BT_IMAGEFILE = 0, MIME_BT_BORDERFILL = 1, MIME_BT_NONE = 2 };
 enum { MIME_ST_TRUESIZE = 0, MIME_ST_STRETCH = 1, MIME_ST_TILE = 2 };
 enum { MIME_IL_VERTICAL = 0, MIME_IL_HORIZONTAL = 1 };
@@ -228,7 +226,6 @@ typedef struct MimeMsstylesFont {
     uint16_t face[32];
 } MimeMsstylesFont;
 
-/* one raw property record. */
 typedef struct MimeMsstylesProp {
     int32_t prop, type;
     int32_t cls, part, state; /* where the record was found, after inheritance. */
@@ -239,7 +236,7 @@ typedef struct MimeMsstylesProp {
 
 typedef struct MimeMsstylesRec MimeMsstylesRec;
 
-/* parsed theme. treat the fields as private. */
+/* treat the fields as private. */
 typedef struct MimeMsstyles {
     const uint8_t *file, *mui;
     size_t file_size, mui_size;
@@ -259,15 +256,13 @@ typedef struct MimeMsstyles {
 
 enum { MIME_MSSTYLES_FORMAT_PNG = 1, MIME_MSSTYLES_FORMAT_BMP = 2 };
 
-/* image selection flags. */
 #define MIME_MSSTYLES_GLYPH 0x1u /* the glyph image instead of the background. */
 
 /*
- * everything a renderer needs to draw one part state. src is the frame for
- * the state inside the decoded bitmap. sizing margins are in source pixels,
- * margin_scale is the integer factor uxtheme applies to them, which is 1
- * below 385 dpi. composed images, used by aerolite, store two sub images per
- * frame: the base at src and an overlay at overlay_src.
+ * src is the state's frame inside the decoded bitmap. sizing margins are in
+ * source pixels, scaled by margin_scale like uxtheme does, which is 1 below
+ * 385 dpi. composed images, used by aerolite, hold two sub images per frame:
+ * the base at src and an overlay at overlay_src.
  */
 typedef struct MimeMsstylesImage {
     const uint8_t *data; /* encoded bytes: a png, or a bmp file starting with "BM". */
@@ -293,27 +288,23 @@ typedef struct MimeMsstylesImage {
     bool glyph_only, glyph_transparent;
 } MimeMsstylesImage;
 
-/* class matching flags. */
 #define MIME_MSSTYLES_DARK 0x1u /* try the DarkMode app names first, like a dark mode window. */
 
-/*
- * opens the theme with its first VARIANT. mui may be NULL. alloc is kept and
- * used for the indexes, released by close.
- */
+/* uses the first VARIANT. mui may be NULL. alloc is kept for the indexes until close. */
 bool mime_msstyles_open(MimeMsstyles *ms, const void *file, size_t size, const void *mui, size_t mui_size,
                         const MimeAllocator *alloc);
 
-/* same, choosing the variant by color and size names, NULL matching any. */
+/* picks the variant by color and size name, NULL matches any. */
 bool mime_msstyles_open_variant(MimeMsstyles *ms, const void *file, size_t size, const void *mui, size_t mui_size,
                                 const char *color, const char *size_name, const MimeAllocator *alloc);
 
 void mime_msstyles_close(MimeMsstyles *ms);
 
-/* finds a resource of the file, type and name being MAKEINTRESOURCE ids when name_str is NULL. */
+/* type and name are MAKEINTRESOURCE ids when name_str is NULL. */
 bool mime_msstyles_resource(const MimeMsstyles *ms, const char *type_str, uint32_t type_id, const char *name_str,
                             uint32_t name_id, const uint8_t **data, uint32_t *size);
 
-/* loads string id from the mui, then the file. returns the length, 0 if missing. */
+/* tries the mui, then the file. returns the length, 0 if missing. */
 size_t mime_msstyles_load_string(const MimeMsstyles *ms, uint32_t id, uint16_t *buf, size_t cap);
 
 uint32_t mime_msstyles_class_count(const MimeMsstyles *ms);
@@ -374,7 +365,7 @@ bool mime_msstyles_get_filename(const MimeMsstyles *ms, int cls, int part, int s
 bool mime_msstyles_get_stream(const MimeMsstyles *ms, int cls, int part, int state, int prop, const uint8_t **data,
                               uint32_t *size);
 
-/* decodes any record value, inheritance already applied. */
+/* decode any record value, inheritance already applied. */
 bool mime_msstyles_prop_int(const MimeMsstyles *ms, const MimeMsstylesProp *p, int32_t *out);
 bool mime_msstyles_prop_ints(const MimeMsstyles *ms, const MimeMsstylesProp *p, int32_t *out, uint32_t cap,
                              uint32_t *count);
@@ -387,7 +378,7 @@ bool mime_msstyles_sys_font(const MimeMsstyles *ms, int prop, unsigned dpi, Mime
 bool mime_msstyles_sys_int(const MimeMsstyles *ms, int prop, int32_t *out);
 bool mime_msstyles_sys_string(const MimeMsstyles *ms, int prop, uint16_t *buf, size_t cap);
 
-/* documentation strings of the RMAP, TMT_DISPLAYNAME and so on. */
+/* RMAP documentation strings: TMT_DISPLAYNAME and so on. */
 bool mime_msstyles_doc_string(const MimeMsstyles *ms, int prop, uint16_t *buf, size_t cap);
 
 /*

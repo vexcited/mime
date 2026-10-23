@@ -1,11 +1,8 @@
 /*
- * what the host keeps of shared direct3d resources and fences for processes other than the one that made them.
- *
- * Every process has a vulkan device of its own on the host, so memory and semaphores cross between processes as
- * opaque file descriptors. A process that shares a resource exports its memory under the id of the kernel object
- * the nt handle names; a process that opens the handle imports from that id. The descriptors stay here until the
- * kernel tells the object is gone with MIME_HC_GFX_SHARE_FREE, so a resource outlives the process that made it for as
- * long as a handle does. The same device in one process shares through its objects, not through here.
+ * shared Direct3D resources and fences. each guest process has its own host Vulkan device; memory and
+ * semaphores cross devices through opaque file descriptors. exports are keyed by the kernel object id behind
+ * the NT handle. descriptors remain until MIME_HC_GFX_SHARE_FREE, so resources outlive their creating process
+ * while handles remain. sharing within one device uses its objects directly.
  */
 #include "mvk_host.h"
 #include "../gpu/gpu.h"
@@ -26,7 +23,7 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static Share *g_shares;
 static bool g_limit_raised;
 
-/* every shared resource keeps a descriptor: the soft limit of a process is far fewer than a browser's textures. */
+/* each shared resource needs a descriptor; a browser can have more textures than the process's soft limit. */
 static void raise_limit(void)
 {
     if (g_limit_raised)
@@ -74,7 +71,7 @@ void mime_vk_share_free(uint64_t id)
     pthread_mutex_unlock(&g_lock);
 }
 
-/* keeps a descriptor under the id; one of a kind stays if there is one already. */
+/* keeps one descriptor of each kind under the id. */
 static VkResult keep(uint64_t id, int fd, bool memory)
 {
     raise_limit();
@@ -92,7 +89,7 @@ static VkResult keep(uint64_t id, int fd, bool memory)
     return result;
 }
 
-/* a copy of the descriptor kept, which an import takes. */
+/* duplicates the stored descriptor for an import. */
 static int take(uint64_t id, bool memory)
 {
     int fd = -1;
@@ -199,7 +196,7 @@ void mvk_share_export_semaphore(MvkCall *call)
     mvk_reply_end(call);
 }
 
-/* the payload of the semaphore kept under the id becomes the one of a semaphore of this device. */
+/* imports the stored semaphore payload into this device. */
 void mvk_share_import_semaphore(MvkCall *call)
 {
     MvkConnection *c = call->conn;

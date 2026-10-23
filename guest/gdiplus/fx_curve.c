@@ -1,17 +1,15 @@
 /*
- * the color curves. each color channel is a curve through 23 control points on a regular grid, the adjustments move
- * the points and the lookup table is a spline through them. the points a channel had before the last adjustment are
- * kept, so the same adjustment made again starts from there.
+ * color curves: each channel is a spline through 23 control points on a regular grid. the points from before the last
+ * adjustment are kept, so repeating an adjustment starts from there.
  */
 #include "fx_core.h"
 
 #define POINTS 23
 #define PI 3.14159265358979323846
 
-/* the adjustments, as the sdk numbers them. */
+/* numbered as in the sdk. */
 enum { ADJ_EXPOSURE, ADJ_DENSITY, ADJ_CONTRAST, ADJ_HIGHLIGHT, ADJ_SHADOW, ADJ_MIDTONE, ADJ_WHITE, ADJ_BLACK };
 
-/* the bumps the shaping adjustments use. */
 enum { BUMP_SHADOW, BUMP_CONTRAST, BUMP_HIGHLIGHT, BUMP_COUNT };
 
 typedef struct CurveLine {
@@ -22,14 +20,14 @@ typedef struct CurveLine {
 } CurveLine;
 
 typedef struct CurveState {
-    CurveLine line[3];  /* red, green and blue */
+    CurveLine line[3];  /* red, green and blue. */
     float bump[BUMP_COUNT][POINTS];
     BYTE tables[1024];
-    /* what was set last, which is also what the parameters read as. */
+    /* the last setting, which is also what reading the parameters returns. */
     INT adjustment, channel, value;
 } CurveState;
 
-/* ------------------------------------------------------------------ the bumps */
+/* ------------------------------------------------------------------ bumps */
 
 static double sine(double x)
 {
@@ -66,7 +64,7 @@ static void bumps_make(float bump[BUMP_COUNT][POINTS])
         bump[BUMP_SHADOW][6 + j] = (float)-gp_exp(-(double)(j * j) * PI / 30.25);
 }
 
-/* ------------------------------------------------------------------ the spline */
+/* ------------------------------------------------------------------ spline */
 
 static void line_reset(CurveLine *c)
 {
@@ -93,7 +91,7 @@ static void line_restore(CurveLine *c)
     memcpy(c->y, c->saved_y, sizeof(c->y));
 }
 
-/* the table of the natural cubic spline through the points, at the 256 inputs, and never going down. */
+/* a natural cubic spline through the points, sampled at 256 inputs and kept from going down. */
 static void line_fit(CurveLine *c)
 {
     float h = c->x[1] - c->x[0];
@@ -133,7 +131,7 @@ static void line_fit(CurveLine *c)
     }
 }
 
-/* ------------------------------------------------------------------ the adjustments */
+/* ------------------------------------------------------------------ adjustments */
 
 static float clamp_level(float v) { return v < 0.0f ? 0.0f : v > 255.0f ? 255.0f : v; }
 
@@ -143,7 +141,7 @@ static void line_density(CurveLine *c, float amount)
         c->y[i] = clamp_level(amount + c->y[i]);
 }
 
-/* the value of each point becomes the one the old curve had amount further on. */
+/* each point takes the value the old curve had amount further along. */
 static void line_exposure(CurveLine *c, float amount)
 {
     for (INT i = 0; i < POINTS; i++) {
@@ -165,7 +163,7 @@ static void line_midtone(CurveLine *c, float gamma)
     }
 }
 
-/* pushes the curve away from the diagonal along the other diagonal by the bump, then reads it back on the grid. */
+/* moves the curve along the other diagonal by the bump, then resamples it on the grid. */
 static void line_shape(CurveLine *c, const float *bump, float strength)
 {
     float at[POINTS], to[POINTS];
@@ -209,7 +207,7 @@ static void line_shape(CurveLine *c, const float *bump, float strength)
             c->y[i] = c->y[11];
 }
 
-/* spreads the range from black to white over the whole. */
+/* stretches the black to white range over the full range. */
 static void line_stretch(CurveLine *c)
 {
     float scale = (float)(255.0 / (double)(float)(c->white - c->black));
@@ -225,7 +223,7 @@ static void line_stretch(CurveLine *c)
 
 /* ------------------------------------------------------------------ setting */
 
-/* the channel a parameter selects: 0 to 2 is one of red, green and blue, 3 is all of them. */
+/* parameter 1 to 3 picks red, green or blue as 0 to 2, anything else is 3 for all of them. */
 static INT channel_index(INT channel) { return channel >= 1 && channel <= 3 ? channel - 1 : 3; }
 
 static void adjust(CurveState *s, INT adjustment, INT channel, float amount, const float *bump)
@@ -264,7 +262,6 @@ static void restore_all(CurveState *s)
         line_restore(&s->line[c]);
 }
 
-/* the black or the white point of one channel or all of them. */
 static GpStatus set_boundary(CurveState *s, INT channel, INT value, INT adjustment)
 {
     BOOL restore = s->adjustment == ADJ_WHITE || s->adjustment == ADJ_BLACK;
@@ -301,7 +298,7 @@ static GpStatus apply_value(CurveState *s, INT adjustment, INT channel, INT valu
     if (adjustment >= ADJ_WHITE) {
         if (value < 0 || value > 255)
             return InvalidParameter;
-        /* the white point at the top and the black point at the bottom are where they are. */
+        /* a white point of 255 or a black point of 0 changes nothing. */
         if ((adjustment == ADJ_WHITE && value == 255) || (adjustment == ADJ_BLACK && value == 0))
             return Ok;
         return set_boundary(s, channel, value, adjustment);
@@ -317,7 +314,7 @@ static GpStatus apply_value(CurveState *s, INT adjustment, INT channel, INT valu
     return Ok;
 }
 
-/* ------------------------------------------------------------------ the class */
+/* ------------------------------------------------------------------ class */
 
 static void curve_init(void *state)
 {
@@ -342,7 +339,7 @@ static GpStatus curve_set(void *state, const void *params, UINT size)
     s->channel = p->channel;
     s->value = p->adjustValue;
     GpStatus st = apply_value(s, p->adjustment, p->channel, p->adjustValue);
-    /* what was asked is remembered also when it was refused. */
+    /* the request is remembered even when it is refused. */
     s->adjustment = p->adjustment;
     return st;
 }
@@ -361,7 +358,7 @@ static const BYTE *curve_tables(void *state)
     CurveState *s = state;
     for (INT c = 0; c < 3; c++) {
         line_fit(&s->line[c]);
-        /* red is the first curve and goes to the last of the three color tables. */
+        /* red is the first curve but the last of the three color tables. */
         BYTE *table = s->tables + 256 * (2 - c);
         for (INT i = 0; i < 256; i++)
             table[i] = fx_round_byte(s->line[c].fitted[i]);

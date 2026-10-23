@@ -1,9 +1,6 @@
 /*
- * loads ntoskrnl.exe into guest memory and builds the x64 kernel page
- * tables, so the guest starts directly at its entry point in long mode.
- *
- * every root entry of the kernel half exists from the start: processes
- * copy that half, so they share all kernel tables created later.
+ * loads ntoskrnl.exe and x64 page tables for direct entry in long mode. all kernel-half root entries exist
+ * initially, so copied process roots share kernel tables added later.
  */
 #include "../vmm/vmm.h"
 
@@ -123,7 +120,7 @@ static bool apply_relocations(uint8_t *image, uint32_t image_size, uint32_t relo
             if (type == 0)
                 continue;
             if (type != 10 || rva + 8 > image_size)
-                return false; /* only IMAGE_REL_BASED_DIR64 on x64 */
+                return false; /* only IMAGE_REL_BASED_DIR64 on x64. */
             uint64_t v = rd64(image + rva) + (uint64_t)delta;
             memcpy(image + rva, &v, 8);
         }
@@ -194,10 +191,7 @@ bool mime_vm_load_kernel(MimeVm *vm)
         goto out;
     }
 
-    /*
-     * the tables follow the kernel: the 256 kernel root entries, the
-     * physmap of ram in 2 MiB pages, the rom and the kernel's own pages.
-     */
+    /* page tables follow the kernel: 256 kernel root entries, a 2 MiB-page RAM physmap, ROM and kernel pages. */
     uint64_t tables = MIME_ALIGN_UP(kernel_phys + span, 1ull << 21);
     uint64_t table_pages = 1 + 256 + (vm->ram_size >> 30) + 2 + (boot->rom_size >> 21) + 2 + (span >> 21) + 8;
     TableAlloc ta = {vm, tables, tables + table_pages * MIME_PAGE_SIZE};

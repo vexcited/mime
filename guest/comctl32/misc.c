@@ -1,12 +1,10 @@
-/*
- * common controls initialization and version.
- */
+/* common controls initialization and version. */
 #include "comctl32_private.h"
 
 #define MAKEDLLVERULL(major, minor, build, qfe)                                                                   \
     (((ULONGLONG)(major) << 48) | ((ULONGLONG)(minor) << 32) | ((ULONGLONG)(build) << 16) | (ULONGLONG)(qfe))
 
-/* version 6 registers nothing here; the classes are already there. */
+/* version 6 registers nothing here, the classes are registered at load. */
 WINCOMMCTRLAPI void WINAPI InitCommonControls(void)
 {
 }
@@ -19,7 +17,7 @@ WINCOMMCTRLAPI BOOL WINAPI InitCommonControlsEx(const INITCOMMONCONTROLSEX *init
     return TRUE;
 }
 
-/* the version of the windows 11 comctl32 6 side by side assembly; the build is mime's. */
+/* the windows 11 comctl32 6 side by side version, with mime's own build number. */
 WINCOMMCTRLAPI HRESULT WINAPI DllGetVersion(DLLVERSIONINFO *info)
 {
     if (!info || (info->cbSize != sizeof(DLLVERSIONINFO) && info->cbSize != sizeof(DLLVERSIONINFO2)))
@@ -59,7 +57,7 @@ WINCOMMCTRLAPI LANGID WINAPI GetMUILanguage(void)
     return g_mui_language;
 }
 
-/* the client rectangle less the visible controls named by the pairs of info, the first pair skipped. */
+/* the client rectangle minus the visible controls named by the pairs in info, skipping the first pair. */
 WINCOMMCTRLAPI void WINAPI GetEffectiveClientRect(HWND hwnd, LPRECT rect, const INT *info)
 {
     GetClientRect(hwnd, rect);
@@ -77,7 +75,7 @@ WINCOMMCTRLAPI void WINAPI GetEffectiveClientRect(HWND hwnd, LPRECT rect, const 
     }
 }
 
-/* the system icons come from imageres, whose artwork windows uses at any size. */
+/* system icons come from imageres, whose artwork windows uses at any size. */
 static WORD imageres_id(LPCWSTR name)
 {
     switch ((ULONG_PTR)name) {
@@ -137,7 +135,6 @@ WINCOMMCTRLAPI HRESULT WINAPI LoadIconMetric(HINSTANCE inst, PCWSTR name, int me
     return LoadIconWithScaleDown(inst, name, cx, cy, icon);
 }
 
-/* text over its shadow offset by dx and dy. */
 WINCOMMCTRLAPI int WINAPI DrawShadowText(HDC dc, LPCWSTR text, UINT count, RECT *rect, DWORD flags,
                                          COLORREF text_color, COLORREF shadow, int dx, int dy)
 {

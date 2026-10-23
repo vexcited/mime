@@ -42,7 +42,7 @@ static MIME_STRING32 copy_string32(PUCHAR *cursor, const UNICODE_STRING *source)
     return (MIME_STRING32){source->Length, (USHORT)(source->Length + sizeof(WCHAR)), (ULONG)(ULONG_PTR)text};
 }
 
-/* the current directory with room for a path of the longest length, so SetCurrentDirectory can change it in place. */
+/* room for the longest path, so SetCurrentDirectory can change the directory in place. */
 #define CURRENT_DIRECTORY_CHARS 261
 
 static MIME_STRING32 copy_directory32(PUCHAR *cursor, const UNICODE_STRING *source)
@@ -58,7 +58,7 @@ static MIME_STRING32 copy_directory32(PUCHAR *cursor, const UNICODE_STRING *sour
     return (MIME_STRING32){(USHORT)length, (USHORT)room, (ULONG)(ULONG_PTR)text};
 }
 
-/* fills a 32-bit peb from the native one, its process parameters and environment in memory below 2 GiB. */
+/* builds the 32-bit peb, process parameters and environment below 2 GiB from the native ones. */
 BOOLEAN MxFillPeb32(PVOID memory)
 {
     PPEB native = NtCurrentPeb();
@@ -146,10 +146,10 @@ PVOID MxCreateTeb32(PVOID peb)
 ULONG Mx32Win32kCall(ULONG number, const ULONG *arguments);
 
 
-/* how this cpu runs a 32-bit apc routine(context, ...): the native routine and its first argument. */
+/* the native routine and first argument that run a 32-bit apc routine(context, ...) on this cpu. */
 void Mx32ApcRoutine(ULONG routine, ULONG context, PVOID *native, PVOID *argument);
 
-/* i/o that may complete later: the kernel writes the 32-bit status block itself, told by bit 0 of the apc routine. */
+/* for i/o that completes later, bit 0 of the apc routine tells the kernel to write the 32-bit status block. */
 static PVOID io_apc32(ULONG routine, ULONG context, PVOID *apc_context)
 {
     PVOID native = nullptr;
@@ -159,7 +159,7 @@ static PVOID io_apc32(ULONG routine, ULONG context, PVOID *apc_context)
     return (PVOID)((ULONG_PTR)native | 1);
 }
 
-/* the handle a call made, narrowed into the caller's variable when it succeeded. */
+/* on success, narrows the new handle into the caller's variable. */
 static NTSTATUS handle_out(NTSTATUS status, ULONG address, HANDLE handle)
 {
     if (NT_SUCCESS(status))
@@ -169,7 +169,7 @@ static NTSTATUS handle_out(NTSTATUS status, ULONG address, HANDLE handle)
 
 /* ------------------------------------------------------------ processes and threads */
 
-/* a string of 32-bit process parameters, at an offset from them when they are not normalized. */
+/* in denormalized parameters, string buffers are offsets from base. */
 static UNICODE_STRING parameter_string(const MIME_STRING32 *s, ULONG base)
 {
     PWSTR text = s->Buffer ? pointer32(s->Buffer + base) : nullptr;
@@ -213,7 +213,7 @@ static void parameters64(const MIME_PARAMETERS32 *p, RTL_USER_PROCESS_PARAMETERS
     }
 }
 
-/* PS_ATTRIBUTE in a list after its total length, 16 bytes in a 32-bit program. */
+/* a 32-bit PS_ATTRIBUTE is 16 bytes and follows the list's total length. */
 typedef struct {
     ULONG_PTR Attribute;
     SIZE_T Size;
@@ -226,9 +226,8 @@ typedef struct {
 #define PS_ATTRIBUTE_MAXIMUM 32
 
 /*
- * NtCreateThreadEx with its attribute list widened. the thread's client id
- * and teb are given back in the 32-bit layout; the values of the other
- * attributes are handles or the addresses of what they describe.
+ * NtCreateThreadEx with the attribute list widened. the client id and teb
+ * come back in the 32-bit layout, other attribute values are handles or addresses.
  */
 static NTSTATUS create_thread32(const ULONG *a)
 {
@@ -250,7 +249,7 @@ static NTSTATUS create_thread32(const ULONG *a)
         for (ULONG i = 0; i < count; i++) {
             const ULONG *e = in + 1 + 4 * i;
             PS_ATTRIBUTE64 *o = &list.Attributes[i];
-            /* the parent process, debug object and token are handles, sign extended; the rest addresses. */
+            /* parent process, debug object and token are handles, sign extended. the rest are addresses. */
             BOOLEAN handle = e[0] >= 0x60000 && e[0] <= 0x60002;
             *o = (PS_ATTRIBUTE64){e[0], e[1], handle ? (ULONG_PTR)(LONG_PTR)(LONG)e[2] : e[2], nullptr};
             if (e[0] == PS_ATTRIBUTE_CLIENT_ID) {
@@ -298,10 +297,9 @@ static NTSTATUS virtual_memory_io32(BOOLEAN write, const ULONG *a)
 }
 
 /*
- * the extended parameters of an allocation or a view: each is 16 bytes in a
- * 32-bit program as well, with a 32-bit pointer or handle in the union, and
- * the address requirements are three 32-bit values. the native array and the
- * requirements it points to are made in one block of scratch memory.
+ * extended parameters are 16 bytes in a 32-bit program too, with a 32-bit
+ * pointer or handle in the union. address requirements are three 32-bit
+ * values. the native array and its requirements share one scratch block.
  */
 static NTSTATUS extended32(ULONG address, ULONG count, PMEM_EXTENDED_PARAMETER *out, PVOID *block)
 {
@@ -379,9 +377,8 @@ static NTSTATUS set_virtual_memory32(const ULONG *a)
 /* ------------------------------------------------------------ files */
 
 /*
- * FILE_RENAME_INFORMATION and FILE_LINK_INFORMATION, with or without
- * flags: a word of flags or a boolean, the root directory, then the
- * name's length and characters.
+ * FILE_RENAME_INFORMATION and FILE_LINK_INFORMATION, plain or Ex: flags or
+ * a boolean, the root directory, then the name length and characters.
  */
 static NTSTATUS set_rename32(const ULONG *a)
 {
@@ -409,7 +406,7 @@ static NTSTATUS set_rename32(const ULONG *a)
     return status;
 }
 
-/* the classes whose records are the same in both, a large integer at most. */
+/* classes whose records match in both widths, at most a large integer. */
 static BOOLEAN same_set_class(ULONG klass)
 {
     switch (klass) {
@@ -466,7 +463,7 @@ static NTSTATUS set_file32(const ULONG *a)
     return status;
 }
 
-/* WSABUF: a length then the data, 8 bytes in a 32-bit program, each widened for the socket driver. */
+/* a 32-bit WSABUF is a length and a pointer, 8 bytes, widened for the socket driver. */
 static NTSTATUS socket_transfer32(const ULONG *a, HANDLE file, HANDLE event, PVOID apc, PVOID context)
 {
     if (a[7] != sizeof(MIME_AFD_TRANSFER) || !a[6])
@@ -483,7 +480,7 @@ static NTSTATUS socket_transfer32(const ULONG *a, HANDLE file, HANDLE event, PVO
     for (ULONG i = 0; i < t.BufferCount; i++)
         buffers[i] = (MIME_AFD_BUFFER){in[2 * i], 0, in[2 * i + 1]};
     t.Buffers = (ULONG64)(ULONG_PTR)buffers;
-    /* the driver takes the buffers when the request starts, so they may go once it returns. */
+    /* the driver captures the buffers when the request starts, so they can be freed on return. */
     NTSTATUS status = NtDeviceIoControlFile(file, event, apc, context, pointer32(a[4]), a[5], &t, sizeof(t),
                                             pointer32(a[8]), a[9]);
     if (buffers != small)
@@ -535,9 +532,8 @@ static NTSTATUS remove_completions32(const ULONG *a)
 /* ------------------------------------------------------------ the call */
 
 /*
- * a descriptor with pointers of 32 bits made self relative, the form the kernel keeps: the header, then
- * the owner, group, sacl and dacl where they are asked for. a self relative one passes through, and so does
- * none. the copy comes from the scratch space of the call and is given back with Mx32FreeScratch.
+ * makes a 32-bit absolute descriptor self relative, the form the kernel keeps. a self relative one or NULL
+ * passes through. the copy lives in scratch memory, freed with Mx32FreeScratch.
  */
 static const UCHAR *relative_descriptor32(ULONG pointer, UCHAR **scratch)
 {
@@ -585,7 +581,7 @@ static NTSTATUS set_security32(const ULONG *a)
     return status;
 }
 
-/* the structures of an access check are the same in both widths, only the descriptor has pointers. */
+/* access check structures match in both widths, only the descriptor has pointers. */
 static NTSTATUS access_check32(const ULONG *a)
 {
     UCHAR *scratch;
@@ -600,12 +596,11 @@ static NTSTATUS access_check32(const ULONG *a)
 }
 
 /*
- * the redirection of files for a 32-bit program, as the wow64 of windows does it in its system calls: a path in
- * System32 is the same path in SysWOW64, where the 32-bit libraries and programs live. Mime guesses a few things the
- * real one does not do. The folders config and drivers and the ones windows leaves alone keep their path. A file that
- * only System32 has is still found there, as SysWOW64 holds just what Mime builds for 32 bits. A path that neither
- * has goes to SysWOW64, so what a program creates in System32 lands next to the 32-bit libraries. A program turns it
- * off for itself with Wow64DisableWow64FsRedirection, which sets a word of its teb, see wow32.h.
+ * file system redirection for 32-bit programs, like windows' wow64: a System32 path maps to SysWOW64, where the
+ * 32-bit dlls and programs live. Mime differs in a few ways. config, drivers and the folders windows exempts keep
+ * their path. a file only System32 has is still found there, since SysWOW64 holds only what Mime builds for 32 bits.
+ * a path neither has goes to SysWOW64, so files created in System32 land next to the 32-bit dlls.
+ * Wow64DisableWow64FsRedirection turns it off through a word of the teb, see wow32.h.
  */
 static BOOL redirection_off32(void)
 {
@@ -636,7 +631,7 @@ static BOOL starts_with_nocase32(PCWSTR text, SIZE_T chars, PCWSTR prefix, SIZE_
     return TRUE;
 }
 
-/* the name of a file call is changed in place to the redirected one, kept in the buffer given. */
+/* points the call's name at the redirected path, stored in buffer. */
 static void redirect_file32(OBJECT_ATTRIBUTES *oa, UNICODE_STRING *name, WCHAR *buffer, SIZE_T chars)
 {
     if (!oa->ObjectName || oa->RootDirectory || redirection_off32())
@@ -739,7 +734,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         name = string32(a[0]);
         return NtDisplayString(&name);
 
-    /* virtual memory: addresses and sizes zero extended, given back narrowed, inside the 32-bit space. */
+    /* virtual memory: addresses and sizes are zero extended in, narrowed out, and stay in the 32-bit space. */
     case MIME_SVC_NtAllocateVirtualMemory: {
         PVOID base = pointer32(*(PULONG)pointer32(a[1]));
         SIZE_T size = *(PULONG)pointer32(a[3]);
@@ -836,7 +831,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 
     /* processes and threads. */
     case MIME_SVC_NtCreateUserProcess: {
-        /* an image's creation information, which the kernel refuses too, and the attribute list. */
+        /* create info is refused, as the kernel does, and process parameters are required. */
         if (a[9] || !a[8])
             return a[8] ? STATUS_NOT_SUPPORTED : STATUS_INVALID_PARAMETER;
         PS_ATTRIBUTE_LIST *native_list = nullptr;
@@ -856,7 +851,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
                 PS_ATTRIBUTE *n = &native_list->Attributes[i];
                 n->Attribute = e[0];
                 n->Size = e[1];
-                /* the handle of an additive attribute is the value itself, the others point at it. */
+                /* token and parent process attributes hold the handle itself, the others point at their value. */
                 n->Value = e[0] == PS_ATTRIBUTE_TOKEN || e[0] == 0x60000 ? (ULONG_PTR)handle32(e[2]) : e[2];
                 n->ReturnLength = nullptr;
                 if ((e[0] == PS_ATTRIBUTE_TOKEN || e[0] == 0x60000) && e[1] == sizeof(ULONG))
@@ -1074,7 +1069,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             handles[i] = handle32(source[i]);
         return NtWaitForMultipleObjects(a[0], handles, a[2], (BOOLEAN)a[3], pointer32(a[4]));
     }
-    /* the waits of locks: an address only names the wait, and a thread id is a number, zero extended. */
+    /* lock waits: the address only names the wait and the thread id is a number, both zero extended. */
     case MIME_SVC_NtWaitForAlertByThreadId:
         return NtWaitForAlertByThreadId(pointer32(a[0]), pointer32(a[1]));
     case MIME_SVC_NtAlertThreadByThreadId:
@@ -1139,10 +1134,9 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtDeviceIoControlFile:
     case MIME_SVC_NtFsControlFile: {
         /*
-         * the buffers of every control mime's drivers answer hold numbers or
-         * fixed width addresses, so they pass through: the console's, the
-         * named pipes', hid's, xusb's, the system buttons' and the socket
-         * driver's, whose transfers only point at narrower WSABUF arrays.
+         * every control mime's drivers handle uses numbers or fixed width
+         * addresses, so buffers pass through: console, named pipes, hid, xusb,
+         * system buttons and sockets, whose transfers point at WSABUF arrays.
          */
         PVOID context;
         PVOID apc = io_apc32(a[2], a[3], &context);
@@ -1165,10 +1159,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return status;
     case MIME_SVC_NtQueryDirectoryFile:
     case MIME_SVC_NtQueryDirectoryFileEx:
-        /*
-         * the kernel answers before returning, for an asynchronous handle too,
-         * whose event is then set. it would not run an apc routine.
-         */
+        /* the kernel answers before returning, even on an asynchronous handle, whose event it then sets. no apc runs. */
         if (a[2])
             return STATUS_NOT_SUPPORTED;
         name = a[9] ? string32(a[9]) : (UNICODE_STRING){0};
@@ -1337,7 +1328,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtFlushKey(handle32(a[0]));
     case MIME_SVC_NtNotifyChangeKey:
     case MIME_SVC_NtNotifyChangeMultipleKeys: {
-        /* answers come later, to the 32-bit status block the kernel is told of through the apc routine. */
+        /* the answer comes later, into the 32-bit status block flagged through the apc routine. */
         PVOID context;
         if (number == MIME_SVC_NtNotifyChangeKey) {
             PVOID apc = io_apc32(a[2], a[3], &context);
@@ -1415,7 +1406,7 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         name = a[0] ? string32(a[0]) : (UNICODE_STRING){0};
         return NtQueryLicenseValue(a[0] ? &name : nullptr, pointer32(a[1]), pointer32(a[2]), a[3], pointer32(a[4]));
     case MIME_SVC_NtTraceEvent:
-        /* the high bit of the flags tells the event's records are 32-bit ones. */
+        /* the high bit of the flags marks the event records as 32-bit. */
         return NtTraceEvent(handle32(a[0]), a[1] | 0x80000000u, a[2], pointer32(a[3]));
     case MIME_SVC_NtTraceControl:
         return NtTraceControl(a[0], pointer32(a[1]), a[2], pointer32(a[3]), a[4], pointer32(a[5]));

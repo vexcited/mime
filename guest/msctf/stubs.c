@@ -1,7 +1,6 @@
 /*
- * the entry points of msctf.dll that need no state: input scopes, which say what kind of text a window takes and
- * which the host's input method has no use for, and the language bar and the ctfmon helper, which mime does not
- * have.
+ * stateless msctf.dll entry points: input scopes, which the host's input method ignores, and the language bar and
+ * ctfmon helpers, which mime does not have.
  */
 #include "msctf_private.h"
 

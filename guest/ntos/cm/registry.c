@@ -1,9 +1,8 @@
 /*
  * the registry: a tree of key nodes in memory, loaded lazily from hives,
- * exposed as Key objects below \REGISTRY in the object namespace, and the
- * Nt*Key system services. links such as CurrentControlSet are keys with a
- * SymbolicLinkValue, followed while parsing a path. access checks are not
- * enforced yet: every open is granted.
+ * exposed as Key objects below \REGISTRY, and the Nt*Key system services.
+ * links such as CurrentControlSet are keys with a SymbolicLinkValue,
+ * followed while parsing a path.
  */
 #include "cm.h"
 
@@ -20,13 +19,13 @@ typedef struct CM_PARSE_CONTEXT {
     ULONG Options;
     ULONG Disposition;
     BOOLEAN Replay;
-    KPROCESSOR_MODE Mode; /* of the program creating a key */
+    KPROCESSOR_MODE Mode; /* of the creating program */
     SD_BLOB *Creator;     /* the descriptor it offered for the new key */
-    BOOLEAN Check;        /* the program is held to the descriptors of the keys */
-    ACCESS_MASK Access;   /* what it asks for, and what its handle is given once checked */
+    BOOLEAN Check;        /* key descriptors apply to the program */
+    ACCESS_MASK Access;   /* requested, then granted once checked */
     ACCESS_MASK Granted;
     BOOLEAN Checked;
-    BOOLEAN ByHandle;        /* the walk starts at the key of a handle, which was opened for HandleAccess */
+    BOOLEAN ByHandle;        /* the walk starts at a handle's key, opened for HandleAccess */
     ACCESS_MASK HandleAccess;
 } CM_PARSE_CONTEXT;
 
@@ -68,7 +67,6 @@ static CM_NODE *new_node(CM_NODE *parent, const WCHAR *name, ULONG chars)
     return n;
 }
 
-/* inserts a child at its sorted position. */
 static void link_child(CM_NODE *parent, CM_NODE *child)
 {
     CM_NODE **link = &parent->Child;
@@ -98,7 +96,7 @@ static NTSTATUS load_child(PVOID context, ULONG cell)
     n->LastWrite = c->Key.LastWrite;
     if (c->Key.Flags & CM_HIVE_KEY_LINK)
         n->Flags |= CM_NODE_LINK;
-    /* the hive keeps its subkeys sorted, keys created before stay merged in order. */
+    /* the hive keeps subkeys sorted; keys created earlier are merged in order. */
     while (*c->Tail && compare_names((*c->Tail)->Name, (*c->Tail)->NameLength, n->Name, n->NameLength) < 0)
         c->Tail = &(*c->Tail)->Next;
     if (*c->Tail && compare_names((*c->Tail)->Name, (*c->Tail)->NameLength, n->Name, n->NameLength) == 0) {
@@ -172,7 +170,7 @@ NTSTATUS CmpLoadValues(CM_NODE *node)
         if (!NT_SUCCESS(status))
             break;
         if (CmpFindValue(node, name, chars)) {
-            ExFreePool(data); /* set since boot, the new value wins. */
+            ExFreePool(data); /* set since boot, that value wins. */
             continue;
         }
         /* the template hives were captured with the image mounted as X:, setup leaves them on C:. */
@@ -272,7 +270,7 @@ NTSTATUS CmpSetValue(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG type, 
     if (length)
         memcpy(copy, data, length);
     CM_VALUE *v = CmpFindValue(node, name, chars);
-    /* the same type and data again changes nothing: no record, no new time, nobody told. */
+    /* the same type and data again changes nothing: no record, no new time, no notification. */
     if (v && v->Type == type && v->DataLength == length && (!length || !memcmp(v->Data, data, length))) {
         ExFreePool(copy);
         return STATUS_SUCCESS;
@@ -332,7 +330,7 @@ NTSTATUS CmpDeleteValue(CM_NODE *node, const WCHAR *name, ULONG chars)
     return STATUS_OBJECT_NAME_NOT_FOUND;
 }
 
-/* the target of a link key, a \REGISTRY path, into a pool buffer. */
+/* the target, a \REGISTRY path, points into the value data. */
 static BOOLEAN link_target(CM_NODE *node, PWCHAR *target, ULONG *chars)
 {
     static const WCHAR name[] = L"SymbolicLinkValue";
@@ -349,7 +347,7 @@ static BOOLEAN link_target(CM_NODE *node, PWCHAR *target, ULONG *chars)
 
 /* ------------------------------------------------------------------ security */
 
-/* a refusal for the log: the key's path, the last of it that fits. */
+/* logs a refusal with the key's path, its tail if too long. */
 static void trace_key(CM_NODE *node, ACCESS_MASK access, NTSTATUS status)
 {
     if (!SeTraceAccess)
@@ -373,10 +371,6 @@ static SD_MAPPING key_mapping(void)
     return CmKeyType->Init.GenericMapping;
 }
 
-/*
- * the descriptor of a key, a reference: the one set on it, or what the hive keeps for it, else what its parent
- * hands down to a key of the user's. lock held.
- */
 static CM_HIVE *g_user_hive;
 static CM_NODE *g_user_key, *g_machine_key;
 
@@ -387,9 +381,8 @@ static BOOLEAN node_is(const CM_NODE *node, PCWSTR name)
 }
 
 /*
- * HKLM\Software\Mime\Installer and what is below it, where the installer of Mime records the products it puts in:
- * Mime's own catalog, which the user of the machine may write whatever the rights of his token, unlike the keys of the
- * machine that tell who may be elevated.
+ * HKLM\Software\Mime\Installer and below, where Mime's installer records the products it installs. the user may
+ * write there whatever his token's rights, unlike the machine keys that decide who may be elevated.
  */
 static BOOLEAN in_installer_catalog(const CM_NODE *node)
 {
@@ -401,13 +394,16 @@ static BOOLEAN in_installer_catalog(const CM_NODE *node)
     return FALSE;
 }
 
-/* HKCU\Software\AppDataLow, where low integrity programs may write, as the folder LocalLow is for files. */
+/* HKCU\Software\AppDataLow, writable by low integrity programs, like the LocalLow folder. */
 static BOOLEAN is_low_integrity_key(const CM_NODE *node)
 {
     return node_is(node, L"AppDataLow") && node->Parent && node_is(node->Parent, L"Software") &&
            node->Parent->Parent && node->Parent->Parent->Parent == g_user_key && g_user_key;
 }
 
+/*
+ * a referenced descriptor: the one set on the key, else the hive's, else what the parent hands down. lock held.
+ */
 static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
 {
     if (node->Sd) {
@@ -417,7 +413,7 @@ static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
     if (node->Hive && !(node->Flags & CM_NODE_SD_UNREADABLE)) {
         SD_BLOB *sd;
         if (NT_SUCCESS(CmpReadSecurity(node->Hive, node->Cell, &sd))) {
-            /* the hive of the user was made for no one in particular: the profile gives its user all of it, as windows does. */
+            /* the user hive was made for nobody in particular: like windows, the profile gives its user full access. */
             if (node->Hive == g_user_hive) {
                 UCHAR user[28];
                 SD_BLOB *owned;
@@ -458,7 +454,7 @@ static NTSTATUS effective_sd(CM_NODE *node, SD_BLOB **out)
     return status;
 }
 
-/* keeps a descriptor with a key, in the journal first. lock held. */
+/* journaled first. lock held. */
 static NTSTATUS store_sd(CM_NODE *node, SD_BLOB *sd)
 {
     LARGE_INTEGER changed = now();
@@ -474,13 +470,12 @@ static NTSTATUS store_sd(CM_NODE *node, SD_BLOB *sd)
 }
 
 /*
- * walks path below start, following links. path is a writable buffer of
- * MAX_PATH_CHARS characters. lock held.
+ * follows links. path is a writable buffer of MAX_PATH_CHARS characters. lock held.
  */
 static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, CM_PARSE_CONTEXT *create,
                      CM_NODE **out)
 {
-    /* a key made straight in the one a handle names is allowed by what the handle was opened for. */
+    /* creating a key directly under a handle's key depends on the handle's access. */
     BOOLEAN by_handle = create && create->ByHandle;
     ACCESS_MASK handle_access = create ? create->HandleAccess : 0;
     CM_NODE *node = start;
@@ -521,7 +516,7 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
                 return STATUS_CHILD_MUST_BE_VOLATILE;
             if (last && (create->Options & REG_OPTION_CREATE_LINK))
                 flags |= CM_NODE_LINK;
-            /* a program makes a key only in one it may create keys in. */
+            /* a program needs KEY_CREATE_SUB_KEY on the parent. */
             if (create->Check && by_handle && node == start && !(handle_access & KEY_CREATE_SUB_KEY_)) {
                 if (SeTraceAccess)
                     KiLogPrintf("  the key of a handle opened for %08x", handle_access);
@@ -544,7 +539,7 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
                     return status;
                 }
             }
-            /* the descriptor of a key a program makes, worked out first so a refused one makes nothing. */
+            /* the new key's descriptor is worked out first, so a refusal creates nothing. */
             SD_BLOB *sd = nullptr;
             if (last && !create->Replay && !create->Kernel && (create->Creator || !SeSdSubjectIsDefault())) {
                 SD_BLOB *parent_sd;
@@ -646,12 +641,12 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
     }
     ExAcquireFastMutex(&CmpLock);
     NTSTATUS status = walk(((CM_KEY_BODY *)object)->Node, path, len, attributes, context, &node);
-    /* a key that exists is opened with what its descriptor gives the program; one it just made is its own. */
+    /* an existing key is checked against its descriptor; a key the program just made is its own. */
     if (NT_SUCCESS(status) && ctx && ctx->Check && ctx->Disposition != REG_CREATED_NEW_KEY) {
         SD_BLOB *sd;
         status = effective_sd(node, &sd);
         if (NT_SUCCESS(status)) {
-            /* the flags that pick the view of a 32-bit program are no rights, the descriptor knows nothing of them. */
+            /* the wow64 view flags are not rights, the descriptor knows nothing of them. */
             status = SeCheckAccess(sd, key_mapping(), ctx->Access & ~(ACCESS_MASK)(KEY_WOW64_64KEY_ | KEY_WOW64_32KEY_), 0,
                                    (ctx->Options & REG_OPTION_BACKUP_RESTORE_) ? SE_ACCESS_BACKUP_INTENT : 0, &ctx->Granted);
             SeSdDereference(sd);
@@ -675,7 +670,7 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
     return status;
 }
 
-/* the last handle of a key ends what waits for it to change. */
+/* the last handle ends the change notifications waiting on it. */
 static void key_close(PEPROCESS process, PVOID object, ULONG handle_count)
 {
     if (handle_count <= 1)
@@ -725,7 +720,7 @@ static NTSTATUS key_put_security(PVOID object, PVOID blob)
     return status;
 }
 
-/* references a key handle and returns its node, refusing deleted keys. lock taken on success. */
+/* refuses deleted keys. takes the lock on success. */
 static NTSTATUS lock_key(HANDLE handle, CM_KEY_BODY **body, CM_NODE **node)
 {
     NTSTATUS status = ObReferenceHandle(handle, CmKeyType, KeGetPreviousMode(), (PVOID *)body, nullptr);
@@ -749,7 +744,7 @@ static void unlock_key(CM_KEY_BODY *body)
 
 /* ------------------------------------------------------------------ output */
 
-/* copies a fixed header and variable data out, with the windows partial copy rules. */
+/* copies a fixed header and variable data out, following the windows partial copy rules. */
 typedef struct OUT_BUFFER {
     PUCHAR Buffer;
     ULONG Size;
@@ -952,7 +947,7 @@ static NTSTATUS value_info(CM_VALUE *v, ULONG klass, OUT_BUFFER *o, ULONG *fixed
 
 /* ------------------------------------------------------------------ system services */
 
-/* ObOpenObjectByName for a key, whose handle gets what the descriptor of the key gave when it was checked. */
+/* the handle gets the access the key's descriptor granted when checked. */
 static NTSTATUS open_key(POBJECT_ATTRIBUTES oa, ACCESS_MASK access, CM_PARSE_CONTEXT *ctx, PHANDLE handle)
 {
     KPROCESSOR_MODE mode = KeGetPreviousMode();
@@ -1167,8 +1162,8 @@ static NTSTATUS delete_key(CM_NODE *node)
 }
 
 /*
- * a deletion in the journal takes the keys below with it. The journal that was compacted no longer holds the deletions
- * of the keys below a key that was deleted later, and those may be in the hive the journal replays onto.
+ * a journaled deletion takes the keys below with it. a compacted journal no longer holds the deletions of keys
+ * below a key deleted later, and those keys may still be in the hive the journal replays onto.
  */
 static NTSTATUS delete_tree(CM_NODE *node)
 {
@@ -1188,7 +1183,7 @@ static NTSTATUS delete_tree(CM_NODE *node)
 
 NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload)
 {
-    /* the path is worked on by the walk, which wants room to follow a link. replay is one thread at boot. */
+    /* the walk edits the path and needs room to follow a link. replay is single threaded at boot. */
     static PWCHAR path;
     if (!path)
         path = ExAllocatePool2(POOL_FLAG_NON_PAGED, MAX_PATH_CHARS * sizeof(WCHAR), KI_TAG('C', 'm', 'J', 'p'));
@@ -1444,7 +1439,7 @@ void CmInitSystem1(void)
     mount(machine, L"SOFTWARE", L"\\SystemRoot\\System32\\config\\SOFTWARE");
     mount(user, L".DEFAULT", L"\\SystemRoot\\System32\\config\\DEFAULT");
 
-    /* the logged on user's hive, loaded by the profile service on windows. */
+    /* the logged on user's hive, which the profile service loads on windows. */
     WCHAR sid[96] = {}, path[160] = {};
     _snwprintf(sid, RTL_NUMBER_OF(sid) - 1, L"S-1-5-21-%u-%u-%u-1001", HalBootInfo->user_sid[0], HalBootInfo->user_sid[1],
              HalBootInfo->user_sid[2]);
@@ -1455,7 +1450,7 @@ void CmInitSystem1(void)
     CmpJournalInitialize();
     KiBootStamp("journal");
 
-    /* the current control set, chosen from the restored select key. */
+    /* the current control set, from the restored Select key. */
     ULONG current = 1;
     CM_NODE *select = CmpOpenPath(L"\\REGISTRY\\MACHINE\\SYSTEM\\Select", FALSE);
     if (select) {
@@ -1468,9 +1463,9 @@ void CmInitSystem1(void)
     _snwprintf(target, RTL_NUMBER_OF(target) - 1, L"\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet%03u", current);
     link_key(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet", target);
     link_key(L"\\REGISTRY\\USER\\S-1-5-18", L"\\REGISTRY\\USER\\.DEFAULT");
-    /* the catalog of the installer exists from the start, for the rule of who may write in it. */
+    /* the installer catalog exists from the start, so its write rule applies. */
     CmpOpenPath(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Mime\\Installer", TRUE);
-    /* and the key of the user that low integrity programs write in, which a profile has from the start. */
+    /* and AppDataLow, which every profile has from the start. */
     WCHAR low_path[200] = {};
     _snwprintf(low_path, RTL_NUMBER_OF(low_path) - 1, L"\\REGISTRY\\USER\\%s\\Software\\AppDataLow", sid);
     CmpOpenPath(low_path, TRUE);
@@ -1490,8 +1485,8 @@ void CmInitSystem1(void)
 }
 
 /*
- * loading and unloading hives needs SeRestorePrivilege, which no token of
- * the session holds, so a caller gets what windows gives a user without it.
+ * loading and unloading hives needs SeRestorePrivilege, which no token of the
+ * session holds, so callers get what windows gives a user without it.
  */
 NTSTATUS NTAPI NtLoadKey(POBJECT_ATTRIBUTES target, POBJECT_ATTRIBUTES source)
 {

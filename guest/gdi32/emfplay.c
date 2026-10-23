@@ -1,22 +1,21 @@
 /*
- * gdi32 enhanced metafile playback: PlayEnhMetaFile, EnumEnhMetaFile and
+ * enhanced metafile playback: PlayEnhMetaFile, EnumEnhMetaFile and
  * PlayEnhMetaFileRecord.
  *
- * like windows, playback maps the metafile's device units, those of its
- * reference device, through its frame onto the destination rectangle. the
- * mapping records of the metafile go to a private dc of the reference
- * resolution, and the destination's world transform is that dc's world to
- * device transform followed by the frame mapping. clip regions are in the
- * reference device units, so they go through the frame mapping alone.
+ * like windows, playback maps the metafile's reference device units through
+ * its frame onto the destination rectangle. mapping records go to a private
+ * dc at the reference resolution, and the destination's world transform is
+ * that dc's world to device transform followed by the frame mapping. clip
+ * regions are in reference device units, so only the frame mapping applies.
  */
 #include "emf_private.h"
 
 struct EMF_PLAY {
     HDC Dc;
-    HDC Virtual; /* the metafile's own mapping */
-    XFORM Base;  /* reference device to destination device */
+    HDC Virtual; /* the metafile's own mapping. */
+    XFORM Base;  /* reference device to destination device. */
     int Saves;
-    BOOL Group;  /* the header opened a comment group on a metafile dc */
+    BOOL Group;  /* the header opened a comment group on a metafile dc. */
     volatile BOOL Cancel;
 };
 
@@ -41,7 +40,7 @@ static void heap_free(void *p)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, p);
 }
 
-/* CancelDC stops the playbacks on a dc. */
+/* for CancelDC: stops every playback on the dc. */
 BOOL EmfCancelPlay(HDC dc)
 {
     BOOL found = FALSE;
@@ -89,7 +88,7 @@ static void multiply(XFORM *out, const XFORM *a, const XFORM *b)
     *out = r;
 }
 
-/* the playback a handle table belongs to: its first entry is the metafile. */
+/* a handle table's first entry is the metafile, which knows its playback. */
 static EMF_PLAY *play_of(const HANDLETABLE *table)
 {
     if (!table)
@@ -98,7 +97,7 @@ static EMF_PLAY *play_of(const HANDLETABLE *table)
     return emf ? emf->Play : nullptr;
 }
 
-/* the destination's world transform: the metafile's mapping, then the frame. */
+/* the metafile's mapping, then the frame. */
 static BOOL apply_transform(EMF_PLAY *p)
 {
     XFORM m;
@@ -341,9 +340,9 @@ static BOOL play_stretchdibits(HDC dc, const ENHMETARECORD *r)
 }
 
 /*
- * like windows, the destination point goes through the metafile's mapping
- * and the bits are stretched at their size in device units, through the
- * frame mapping alone.
+ * like windows, the destination point goes through the metafile's mapping,
+ * but the bits keep their size in device units and only go through the frame
+ * mapping.
  */
 static BOOL play_setdibits(HDC dc, EMF_PLAY *p, const ENHMETARECORD *r)
 {
@@ -400,7 +399,7 @@ static BOOL play_text(HDC dc, const ENHMETARECORD *r, const EMRTEXT *t, BOOL wid
 #define ETO_NO_RECT 0x0100
 #define ETO_SMALL_CHARS 0x0200
 
-/* the compact text record of windows' spooler: a point, the counts, the scales, an optional rectangle and the text. */
+/* the compact text record of windows' spooler: a point, counts, scales, an optional rectangle and the text. */
 static BOOL play_smalltext(HDC dc, const ENHMETARECORD *r)
 {
     if (!fits(r, 0, 36))
@@ -514,7 +513,7 @@ static BOOL play_clip_region(HDC dc, EMF_PLAY *p, const ENHMETARECORD *r)
         return ExtSelectClipRgn(dc, nullptr, (int)mode) != ERROR;
     if (!fits(r, 16, size))
         return FALSE;
-    /* the region is in the reference device units, which the frame mapping takes to the destination's. */
+    /* the region is in reference device units, which the frame mapping takes to the destination's. */
     HRGN region = ExtCreateRegion(p ? &p->Base : nullptr, size, (const RGNDATA *)at(r, 16));
     if (!region)
         return FALSE;
@@ -549,7 +548,7 @@ static BOOL play_comment(HDC dc, const ENHMETARECORD *r)
     default:
         return GdiComment(dc, size, data);
     }
-    /* several formats of one picture: a normal dc plays the enhanced metafile among them, in its output rectangle. */
+    /* several formats of one picture: a normal dc plays the enhanced metafile one, in its output rectangle. */
     if (MfActive(dc))
         return GdiComment(dc, size, data);
     if (size < 28)
@@ -580,7 +579,7 @@ static BOOL play_comment(HDC dc, const ENHMETARECORD *r)
     return FALSE;
 }
 
-/* a metafile played into a metafile dc is a group, its frame in the reference device units. */
+/* into a metafile dc, a metafile plays as a group, its frame in reference device units. */
 static BOOL begin_group(HDC dc, const ENHMETAHEADER *h)
 {
     DWORD chars = h->nDescription;
@@ -1034,7 +1033,7 @@ WINGDIAPI BOOL WINAPI PlayEnhMetaFileRecord(HDC dc, LPHANDLETABLE table, const E
 
 /* ------------------------------------------------------------------ playback */
 
-/* like windows' reset of the destination before playback. */
+/* resets the destination before playback, like windows. */
 static void reset_dc(HDC dc)
 {
     SelectObject(dc, GetStockObject(WHITE_BRUSH));
@@ -1190,7 +1189,7 @@ static BOOL play(HDC dc, HENHMETAFILE handle, ENHMFENUMPROC proc, LPVOID param, 
         offset += r->nSize;
     }
     if (!stopped) {
-        /* levels the metafile left saved are restored, as a record of their own. */
+        /* states the metafile left saved are restored, as a record of their own. */
         if (p->Saves > 0) {
             EMRRESTOREDC restore = {{EMR_RESTOREDC, sizeof(EMRRESTOREDC)}, -p->Saves};
             if (proc) {

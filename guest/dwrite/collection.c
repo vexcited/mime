@@ -1,11 +1,11 @@
 /*
- * font collections: the families of the fonts directory or of the files a
- * loader names, and the family, font and font list objects they hand out.
+ * font collections, from the fonts directory or a loader's files, and the
+ * family, font and font list objects they hand out.
  *
- * A family of the typographic family name holds every face that shares it,
- * as DirectWrite's do. A face whose win32 family name differs is also listed
- * under that name, so that programs asking for "Segoe UI Light" the way GDI
- * names it find it. A family without bold or italic faces gets simulated ones.
+ * like DirectWrite, a typographic family holds every face that shares its
+ * name. a face whose win32 family name differs is also listed under that
+ * name, so "Segoe UI Light" is found the way GDI names it. families without
+ * bold or italic faces get simulated ones.
  */
 #include "dw_private.h"
 
@@ -210,7 +210,7 @@ static DwStrings *simulated_name(const DwStrings *base, DWRITE_FONT_SIMULATIONS 
     return names;
 }
 
-/* faces a family lacks are made from the ones it has: bold from the regular weights, oblique where no slanted face. */
+/* bold is simulated from the regular weights, oblique where no face is slanted. */
 static void add_simulations(DwFamily *f)
 {
     UINT32 real = f->count;
@@ -291,7 +291,6 @@ static void sort_entries(DwFamily *f)
     }
 }
 
-/* adds the faces of one file. */
 static void add_file(Builder *b, IDWriteFontFile *file)
 {
     BOOL supported;
@@ -324,7 +323,7 @@ static void add_file(Builder *b, IDWriteFontFile *file)
             DwFamily *f = family_for(b, family_names);
             if (f)
                 push_entry(f, &entry);
-            /* the win32 name of a face in a bigger family names a family of its own. */
+            /* a face whose win32 name differs from its bigger family also gets a family of its own. */
             if (win32 && family_names != win32 && DwCompareNames(DwStringsBest(win32, L"en-us"),
                                                                   DwStringsBest(family_names, L"en-us"))) {
                 DwFamily *g = family_for(b, win32);
@@ -361,7 +360,7 @@ static void sort_families(Builder *b)
     }
 }
 
-/* ------------------------------------------------------------------ the collection object */
+/* ------------------------------------------------------------------ collection object */
 
 static HRESULT WINAPI collection_query(IDWriteFontCollection *This, REFIID riid, void **out)
 {
@@ -538,7 +537,7 @@ HRESULT DwCollectionFromFiles(DwFactory *factory, IDWriteFontFile *const *files,
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the system collection */
+/* ------------------------------------------------------------------ system collection */
 
 static BOOL is_font_file(const WCHAR *name)
 {
@@ -692,7 +691,7 @@ static HRESULT WINAPI font_face_names(IDWriteFont1 *This, IDWriteLocalizedString
     return strings_out(e->face_names, names);
 }
 
-/* the name table record behind each informational string, 0 for the ones without one. */
+/* the name table id behind each informational string, 0 when there is none. */
 static UINT32 name_id_of(DWRITE_INFORMATIONAL_STRING_ID id)
 {
     switch (id) {

@@ -1,7 +1,4 @@
-/*
- * synchronization: kernel objects, waits, and the user mode primitives
- * implemented by ntdll.
- */
+/* synchronization: kernel objects, waits, and the user mode primitives ntdll implements. */
 #include "kernelbase_private.h"
 #include <mime/ntrtlsec.h>
 
@@ -17,7 +14,7 @@ static HANDLE finish_create(NTSTATUS status, HANDLE handle)
     return handle;
 }
 
-/* takes the handle by address, the open call must run before it is read. */
+/* takes the handle by address because the open call must run before it is read. */
 static HANDLE finish_open(NTSTATUS status, const HANDLE *handle)
 {
     if (!NT_SUCCESS(status)) {
@@ -299,7 +296,7 @@ HANDLE WINAPI OpenWaitableTimerW(DWORD access, BOOL inherit, LPCWSTR name)
     return finish_open(NtOpenTimer(&h, access, &oa), &h);
 }
 
-/* timer completion routines need kernel timer apcs, which NtSetTimer does not deliver yet. */
+/* completion routines need kernel timer apcs, which NtSetTimer does not deliver yet. */
 BOOL WINAPI SetWaitableTimerEx(HANDLE timer, const LARGE_INTEGER *due, LONG period, PTIMERAPCROUTINE completion,
                                LPVOID arg, PREASON_CONTEXT reason, ULONG tolerable_delay)
 {
@@ -319,7 +316,7 @@ BOOL WINAPI SetWaitableTimer(HANDLE timer, const LARGE_INTEGER *due, LONG period
 {
     if (!SetWaitableTimerEx(timer, due, period, completion, arg, nullptr, 0))
         return FALSE;
-    /* resuming a suspended system is not supported: windows reports it this way. */
+    /* windows reports resume support this way too. */
     if (resume)
         KbSetError(ERROR_NOT_SUPPORTED);
     return TRUE;
@@ -434,7 +431,7 @@ DWORD WINAPI SignalObjectAndWait(HANDLE signal, HANDLE wait, DWORD milliseconds,
     LARGE_INTEGER storage;
     PLARGE_INTEGER timeout = KbTimeout(&storage, milliseconds);
     if (alertable && KbRunPendingApcs()) {
-        /* the signal still happens; only the wait is cut short. */
+        /* the signal still happens, only the wait is cut short. */
         NTSTATUS status = NtSignalAndWaitForSingleObject(signal, wait, FALSE, &(LARGE_INTEGER){.QuadPart = 0});
         if (!NT_SUCCESS(status))
             return wait_result(status);
@@ -701,7 +698,7 @@ PSLIST_ENTRY WINAPI InterlockedPushEntrySList(PSLIST_HEADER head, PSLIST_ENTRY e
 
 PSLIST_ENTRY WINAPI InterlockedPushListSListEx(PSLIST_HEADER head, PSLIST_ENTRY first, PSLIST_ENTRY last, ULONG count)
 {
-    /* the entries are already chained from first to last: splice them in with one exchange. */
+    /* the entries are already chained, so one exchange splices them all in. */
     SLIST_HEADER old, next;
     old.Whole = __atomic_load_n(&head->Whole, __ATOMIC_ACQUIRE);
     do {
@@ -730,7 +727,7 @@ USHORT WINAPI QueryDepthSList(PSLIST_HEADER head)
 }
 
 #ifdef __x86_64__
-/* the 32 bit form of this one is fastcall in windows and has no export here. */
+/* the 32-bit form is fastcall on windows and is not exported here. */
 PSLIST_ENTRY WINAPI InterlockedPushListSList(PSLIST_HEADER head, PSLIST_ENTRY first, PSLIST_ENTRY last, ULONG count)
 {
     return InterlockedPushListSListEx(head, first, last, count);
@@ -738,8 +735,8 @@ PSLIST_ENTRY WINAPI InterlockedPushListSList(PSLIST_HEADER head, PSLIST_ENTRY fi
 #endif
 
 /*
- * the operations that compilers make inline are exports of kernelbase too. The functions get other names in source,
- * as the inline ones of the header have these, and take the symbols of the exports as their labels.
+ * kernelbase also exports the operations compilers inline. the header already uses these names for the inline
+ * versions, so the functions get other names here and take the export symbols as asm labels.
  */
 #ifdef __i386__
 #define EXPORT_LABEL(name, bytes) "_" name "@" #bytes
@@ -792,12 +789,11 @@ LONG64 WINAPI KbInterlockedCompareExchange64(LONG64 volatile *p, LONG64 exchange
 /* ------------------------------------------------------------------ private namespaces */
 
 /*
- * a boundary descriptor is a name and the sids a token must hold, and a private namespace is the directory of the
- * kernel that the descriptor names, with an alias that the creator gives it: a name of an object that begins with the
- * alias and a backslash is looked up in that directory. The directory lies in the base named objects of the session and
- * lives as long as a handle of it does. The sids make part of what the directory is called, so that other sids are another
- * namespace, but whether the token holds them is not asked (a guess: a program that names a group it is not in would get
- * ERROR_ACCESS_DENIED on windows).
+ * a boundary descriptor is a name plus the sids a token must hold. a private namespace is a kernel directory named
+ * after the descriptor, with an alias chosen by the creator: object names starting with the alias and a backslash are
+ * looked up in that directory. the directory lives in the session's base named objects for as long as a handle to it
+ * is open. the sids are part of the directory name, so other sids give another namespace, but token membership is not
+ * checked. windows would probably fail with ERROR_ACCESS_DENIED for a group the token is not in.
  */
 #define KB_BOUNDARY_MAGIC 0x444E4F42u /* BOND */
 #define KB_NAMESPACE_ALIASES 32
@@ -920,7 +916,7 @@ VOID WINAPI DeleteBoundaryDescriptor(HANDLE descriptor)
     KbFree(boundary);
 }
 
-/* the name of the directory: the name of the descriptor with the bytes of its sids, in characters a name allows. */
+/* the descriptor name followed by its sid bytes, encoded in characters a name allows. */
 static BOOL namespace_directory_name(KB_BOUNDARY *boundary, WCHAR *out, SIZE_T capacity)
 {
     SIZE_T length = 0;

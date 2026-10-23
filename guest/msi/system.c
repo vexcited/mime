@@ -2,9 +2,8 @@
 #include <mime/win32/shlobj.h>
 
 /*
- * the properties the installer sets about the machine, the user and the package before any action runs: the version
- * of the system, the places of the shell, the platform of the package. A package cannot count on a property of its own
- * table with one of these names: the machine is told, not asked.
+ * the properties the installer sets about the machine, the user and the package before any action runs: system
+ * version, shell folders, package platform. a package's Property table cannot override these names.
  */
 
 static UINT set_folder(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR path)
@@ -40,7 +39,7 @@ BOOL MimeMsiIs64BitPackage(MIME_MSI_PACKAGE *package)
     return is64;
 }
 
-/* the folders that depend on the scope of the installation, which is only known once the package had its say. */
+/* folders that depend on the installation scope, known only once the package's properties are in. */
 UINT MimeMsiSetScopeFolders(MIME_MSI_PACKAGE *package)
 {
     PCWSTR all_users = MimeMsiGetProperty(package, L"ALLUSERS");
@@ -129,7 +128,6 @@ UINT MimeMsiInitializeSystem(MIME_MSI_PACKAGE *package)
     error = error ? error : MimeMsiSetProperty(package, L"Privileged", L"1");
     error = error ? error : MimeMsiSetProperty(package, L"AdminUser", L"1");
 
-    /* the places of the machine. */
     WCHAR path[MAX_PATH];
     UINT length = GetWindowsDirectoryW(path, RTL_NUMBER_OF(path));
     if (!error && length && length < RTL_NUMBER_OF(path)) {
@@ -140,7 +138,7 @@ UINT MimeMsiInitializeSystem(MIME_MSI_PACKAGE *package)
     }
     length = GetSystemDirectoryW(path, RTL_NUMBER_OF(path));
 #ifndef _WIN64
-    /* a 32-bit installer sees the 32-bit system directory, the machine has the 64-bit one by its own name. */
+    /* a 32-bit installer sees the 32-bit system directory, the 64-bit one has its own name. */
     if (length && length < RTL_NUMBER_OF(path) && GetSystemWow64DirectoryW(path, RTL_NUMBER_OF(path))) {
         length = GetWindowsDirectoryW(path, RTL_NUMBER_OF(path));
         if (length && length + 9 < RTL_NUMBER_OF(path)) {
@@ -150,7 +148,7 @@ UINT MimeMsiInitializeSystem(MIME_MSI_PACKAGE *package)
     }
 #endif
     if (!error && length && length < RTL_NUMBER_OF(path)) {
-        /* the system directory of the processor of the package: a 32-bit package sees the 32-bit one. */
+        /* the system directory matching the package's processor. */
         if (is64) {
             error = set_folder(package, L"SystemFolder", path);
             error = error ? error : set_folder(package, L"System64Folder", path);
@@ -185,7 +183,7 @@ UINT MimeMsiInitializeSystem(MIME_MSI_PACKAGE *package)
         error = set_folder(package, L"TempFolder", path);
     error = error ? error : MimeMsiSetScopeFolders(package);
 
-    /* the code of the package is the revision number of its summary. */
+    /* the package code is the summary's revision number. */
     MIME_MSI_SUMMARY_VALUE revision;
     if (!error && !MimeMsiSummaryProperty(package->Database, 9, &revision)) {
         if (revision.Type == 30 && revision.Text)

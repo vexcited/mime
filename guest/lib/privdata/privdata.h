@@ -1,6 +1,6 @@
 /*
- * the private data of directx objects: bytes or an interface stored under
- * a guid by SetPrivateData and SetPrivateDataInterface.
+ * directx object private data: bytes or an interface stored under a guid by
+ * SetPrivateData and SetPrivateDataInterface.
  */
 #ifndef MIME_LIB_PRIVDATA_H
 #define MIME_LIB_PRIVDATA_H

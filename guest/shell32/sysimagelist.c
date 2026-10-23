@@ -1,20 +1,19 @@
 /*
- * the system image lists: SHGetImageList and what SHGetFileInfo answers for SHGFI_SYSICONINDEX.
+ * the system image lists behind SHGetImageList and SHGFI_SYSICONINDEX.
  *
- * there is one table of icon sources, and each list of a size has one image for each entry, in the same order, so an
- * index means the same icon in every size. An entry is added the first time a source is asked for, which adds an
- * image to every list that exists; a list made later is filled from the whole table. The first entries are the stock
- * icons of the old shell, whose numbers are the indexes of shell32's icons.
+ * one table of icon sources is shared by every size, so an index means the same icon in every list. a new source adds
+ * an image to every existing list, and a list made later is filled from the whole table. the first entries are the
+ * old shell's stock icons, whose numbers are shell32's icon indexes.
  */
 #include "shell32_private.h"
 #include <mime/win32/commctrl.h>
 
 #define LIST_COUNT 5
-/* the stock icons 0 to 17 hold their own numbers as indexes, and the arrow of a link follows them. */
+/* stock icons 0 to 17 sit at their own numbers, followed by the link arrow overlay. */
 #define RESERVED 18
 #define OVERLAY_ENTRY RESERVED
 #define FIXED_ENTRIES (RESERVED + 1)
-/* a table of this many icons is as many as a process asks for, then new sources show the plain document. */
+/* past this many entries, new sources show the plain document icon. */
 #define MAX_ENTRIES 2048
 
 typedef struct {
@@ -93,7 +92,7 @@ static int list_size(int which)
     }
 }
 
-/* puts the icon of an entry in a list, at the end, or leaves a blank where the icon could not be made. */
+/* leaves a blank image when the icon cannot be made, so indexes stay aligned. */
 static void append_image(int which, int index)
 {
     HICON icon = ShLoadIconSource(&g_entries[index].Source, g_sizes[which], g_sizes[which]);
@@ -134,7 +133,7 @@ static int append_entry(const SH_ICON_SOURCE *source, DWORD hash)
     return index;
 }
 
-/* the table starts with the fixed entries, which are never looked up by name. */
+/* the fixed entries are never looked up by name. */
 static BOOL start_table(void)
 {
     if (g_count)
@@ -150,7 +149,6 @@ static BOOL start_table(void)
     return TRUE;
 }
 
-/* the list of a size, made and filled when first asked for. */
 static HIMAGELIST list_locked(int which)
 {
     if (g_lists[which])
@@ -161,7 +159,7 @@ static HIMAGELIST list_locked(int which)
     HIMAGELIST list = g_comctl.Create(size, size, ILC_COLOR32 | ILC_MASK, g_count + 16, 16);
     if (!list)
         return nullptr;
-    /* a reference the table keeps, so that a program that destroys a list it was given leaves it standing. */
+    /* keep a reference so a program that destroys a list it was given does not free it. */
     void *extra;
     g_comctl.QueryInterface(list, &IID_IImageList2, &extra);
     g_lists[which] = list;
@@ -182,10 +180,7 @@ HIMAGELIST ShSystemList(int which)
     return list;
 }
 
-/*
- * the index of a source in the system lists, which makes the entry when there is none; the list of the large or the
- * small icons is made so that the index can be drawn from it.
- */
+/* adds the entry when missing, and makes the large or small list so the index can be drawn. */
 int ShSystemIconIndex(const SH_ICON_SOURCE *source, UINT small)
 {
     WCHAR key[MAX_PATH + 32];
@@ -226,7 +221,6 @@ SHSTDAPI HRESULT WINAPI SHGetImageList(int which, REFIID riid, void **object)
     return g_comctl.QueryInterface(list, riid, object);
 }
 
-/* the large and the small system lists, as handles. */
 SHSTDAPI BOOL WINAPI Shell_GetImageLists(struct _IMAGELIST **large, struct _IMAGELIST **small)
 {
     HIMAGELIST big = ShSystemList(SHIL_LARGE), little = ShSystemList(SHIL_SMALL);

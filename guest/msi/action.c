@@ -6,7 +6,7 @@ static BOOL string_column(const MIME_MSI_TABLE *table, ULONG column, PCWSTR name
            (table->Columns[column].Type & 0x0c00) == 0x0c00;
 }
 
-/* the description and the template of the data of an action, when the package has them. */
+/* an action's description and data template, when the package has them. */
 static void action_text(MSIHANDLE handle, PCWSTR action, PWSTR *description, PWSTR *template)
 {
     *description = *template = nullptr;
@@ -88,7 +88,7 @@ UINT WINAPI MsiDoActionW(MSIHANDLE handle, LPCWSTR action)
     if (error == MIME_MSI_UNLOCKED_PENDING)
         error = MimeMsiRunUnlocked(handle, package, action);
     else if (error == MIME_MSI_SCRIPT_PENDING) {
-        /* the script runs without the lock, its actions call the installer. */
+        /* the script runs without the lock because its actions call back into the installer. */
         UINT script_error = MimeMsiRunScript(handle, package);
         if (script_error) {
             MimeMsiRunRollback(package);
@@ -196,7 +196,7 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
     ReleaseSRWLockExclusive(&MimeMsiLock);
     BOOL ended = FALSE;
 #ifndef _WIN64
-    /* a 64-bit package puts its files in the folders of the 64-bit machine, which a 32-bit caller sees redirected. */
+    /* a 64-bit package installs into the 64-bit folders, which a 32-bit caller sees redirected. */
     PVOID redirection = nullptr;
     BOOL redirected = is64 && Wow64DisableWow64FsRedirection(&redirection);
 #endif
@@ -204,7 +204,7 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
         for (ULONG sequence = 1; sequence < 32768 && !error && !ended; sequence++)
             for (ULONG row = heads[sequence]; row != UINT32_MAX && !error && !ended; row = next[row]) {
                 error = run_sequence_row(handle, package, table, row);
-                /* an action can end the sequence early and well. */
+                /* an action may end the sequence early with success. */
                 if (error == ERROR_NO_MORE_ITEMS) {
                     error = ERROR_SUCCESS;
                     ended = TRUE;

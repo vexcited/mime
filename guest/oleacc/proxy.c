@@ -1,8 +1,7 @@
 /*
- * oleacc.dll: the accessible objects of windows and of their standard parts and controls, as active
- * accessibility's own proxies are for programs that do not implement IAccessible themselves. one proxy is a
- * window, or one of the objects of a window (client, title bar, scroll bars...), and its simple elements are
- * numbered children. see docs/oleacc.md.
+ * oleacc.dll: accessible objects for windows and their standard parts and controls, the proxies active accessibility
+ * provides for programs that do not implement IAccessible. a proxy is a window or one of its objects, such as the
+ * client, title bar or scroll bars, and its simple elements are numbered children.
  */
 #define OLEACCAPI
 #include <mime/win32/oleacc.h>
@@ -75,7 +74,7 @@ typedef struct PROXY {
     LONG refs;
     HWND hwnd;
     LONG object;
-    LONG next; /* the child the enumerator gives next, from 1 */
+    LONG next; /* the enumerator's next child, from 1. */
 } PROXY;
 
 static PROXY *from_window(void *p)
@@ -218,7 +217,7 @@ static LONG client_role(HWND hwnd, CLASS kind)
 
 /* ------------------------------------------------------------------ parts of a window */
 
-/* the objects a window is made of, in the order of its children: title bar, menu bar, client, scroll bars, grip. */
+/* a window's objects in child order: title bar, menu bar, client, scroll bars, grip. */
 static LONG window_parts(HWND hwnd, LONG parts[6])
 {
     LONG style = (LONG)GetWindowLongW(hwnd, GWL_STYLE);
@@ -237,7 +236,7 @@ static LONG window_parts(HWND hwnd, LONG parts[6])
     return n;
 }
 
-/* the simple elements of a title bar: the buttons that the style gives the window. */
+/* a title bar's simple elements: the buttons the window style gives it. */
 static LONG titlebar_buttons(HWND hwnd, LONG ids[5])
 {
     LONG style = (LONG)GetWindowLongW(hwnd, GWL_STYLE), ex = (LONG)GetWindowLongW(hwnd, GWL_EXSTYLE);
@@ -265,7 +264,7 @@ static HRESULT bstr_out(const WCHAR *text, BSTR *out)
     return *out ? S_OK : E_OUTOFMEMORY;
 }
 
-/* the text of a window, as a control's name: the ampersand that marks a mnemonic gone, a doubled one kept as one. */
+/* a window's text as a control name: a mnemonic ampersand removed, a doubled one kept as one. */
 static void strip_mnemonic(WCHAR *text)
 {
     WCHAR *to = text;
@@ -280,7 +279,7 @@ static void strip_mnemonic(WCHAR *text)
     *to = 0;
 }
 
-/* the mnemonic of a text, 0 if there is none. */
+/* 0 when the text has no mnemonic. */
 static WCHAR mnemonic(const WCHAR *text)
 {
     for (; *text; text++)
@@ -300,7 +299,7 @@ static BOOL window_text(HWND hwnd, WCHAR *text, int chars)
     return n > 0;
 }
 
-/* the name of a control that has no text of its own: the static control before it, without its colon. */
+/* a control without text of its own is named by the static control before it, minus its colon. */
 static BOOL label_text(HWND hwnd, WCHAR *text, int chars)
 {
     HWND label = GetWindow(hwnd, GW_HWNDPREV);
@@ -457,7 +456,7 @@ static HRESULT window_object(HWND hwnd, IDispatch **out)
     return AccessibleObjectFromWindow(hwnd, OBJID_WINDOW, &IID_IDispatch_, (void **)out);
 }
 
-/* the windows directly below a window, the topmost first. */
+/* the window's direct children, topmost first. */
 static LONG child_windows(HWND hwnd, HWND *list, LONG capacity)
 {
     LONG n = 0;
@@ -478,7 +477,7 @@ static HWND nth_child(HWND hwnd, LONG id)
     return nullptr;
 }
 
-/* what the numbered children of a proxy are. */
+/* what a proxy's numbered children are. */
 typedef enum { KIDS_NONE, KIDS_PARTS, KIDS_WINDOWS, KIDS_BUTTONS, KIDS_SCROLL, KIDS_ITEMS, KIDS_MENU } KIDS;
 
 static KIDS kids_of(const PROXY *p, CLASS *kind)
@@ -532,7 +531,7 @@ static LONG child_count(const PROXY *p)
     }
 }
 
-/* ------------------------------------------------------------------ the checks every method makes */
+/* ------------------------------------------------------------------ checks every method makes */
 
 static HRESULT child_id(VARIANT v, LONG *id)
 {
@@ -547,7 +546,7 @@ static HRESULT live(const PROXY *p)
     return p->hwnd == nullptr ? S_OK : IsWindow(p->hwnd) ? S_OK : E_DISCONNECTED;
 }
 
-/* a child that is a window of its own: the call goes to it, as the child itself. */
+/* a child that is a window of its own takes the call as the child itself. */
 static BOOL child_proxy(const PROXY *p, LONG id, IUnknown **target)
 {
     CLASS kind;
@@ -564,7 +563,7 @@ static BOOL child_proxy(const PROXY *p, LONG id, IUnknown **target)
     return TRUE;
 }
 
-/* a part of a window that a child number names. */
+/* the window part a child number names. */
 static BOOL part_of(const PROXY *p, LONG id, IUnknown **target)
 {
     LONG parts[6];
@@ -696,7 +695,7 @@ static HRESULT STDMETHODCALLTYPE acc_get_ids_of_names(void *self, REFIID riid, L
     return hr;
 }
 
-/* arguments of a call by automation come last first. */
+/* automation passes arguments in reverse order. */
 static VARIANT *argument(DISPPARAMS *params, UINT index)
 {
     return index < params->cArgs ? &params->rgvarg[params->cArgs - 1 - index] : nullptr;
@@ -874,7 +873,7 @@ static HRESULT STDMETHODCALLTYPE acc_get_child(void *self, VARIANT var, IDispatc
     return S_FALSE;
 }
 
-/* the name of one of the objects, its title bar buttons and scroll bar pieces named by numbers. */
+/* names the object itself, or its title bar buttons and scroll bar pieces by number. */
 static const WCHAR *element_name(const PROXY *p, LONG id)
 {
     LONG ids[5];
@@ -1270,7 +1269,7 @@ static HRESULT STDMETHODCALLTYPE acc_get_keyboard_shortcut(void *self, VARIANT v
     return bstr_out(shortcut, out);
 }
 
-/* the focused object under a proxy: itself, a child window, or no one. */
+/* the focused object under a proxy: itself, a child window, or none. */
 static HRESULT STDMETHODCALLTYPE acc_get_focus(void *self, VARIANT *out)
 {
     PROXY *p = self;
@@ -1537,7 +1536,7 @@ static HRESULT STDMETHODCALLTYPE acc_navigate(void *self, LONG direction, VARIAN
     }
     if (direction == NAVDIR_NEXT || direction == NAVDIR_PREVIOUS) {
         if (id) {
-            /* among the numbered children of a proxy. */
+            /* among the proxy's numbered children. */
             LONG to = id + (direction == NAVDIR_NEXT ? 1 : -1);
             if (to < 1 || to > count)
                 return S_FALSE;
@@ -1750,7 +1749,7 @@ static ULONG STDMETHODCALLTYPE enum_release(void *self)
     return acc_release(from_enumerator(self));
 }
 
-/* the children as numbers: a client of the caller's resolves them into objects when it wants them. */
+/* children are given as numbers, the caller's client resolves them into objects when it wants them. */
 static HRESULT STDMETHODCALLTYPE enum_next(void *self, ULONG count, VARIANT *items, ULONG *fetched)
 {
     PROXY *p = from_enumerator(self);
@@ -1804,7 +1803,7 @@ static HRESULT STDMETHODCALLTYPE enum_clone(void *self, void **out)
 static const OaEnumeratorVtbl enumerator_vtbl = {enum_query_interface, enum_add_ref, enum_release, enum_next,
                                                  enum_skip,            enum_reset,   enum_clone};
 
-/* ------------------------------------------------------------------ making one */
+/* ------------------------------------------------------------------ creation */
 
 static BOOL object_known(LONG object)
 {

@@ -1,12 +1,8 @@
 /*
- * application and assembly manifests: the xml subset real manifests use
- * and the model the activation context generator reads.
+ * application and assembly manifests: a small xml parser and the model the activation context generator reads.
  *
- * the text is turned into utf-16 first, from utf-8 or utf-16 with or
- * without a byte order mark, or from a single byte code page the xml
- * declaration names. the parser keeps comments, processing instructions,
- * cdata, entities and namespaces, and builds a small tree that the
- * interpretation below walks by namespace and local name.
+ * the text is converted to utf-16 first, from utf-8, utf-16 with or without a bom, or a single byte code page named
+ * by the xml declaration. comments, processing instructions, cdata, entities and namespaces are handled.
  */
 #include "sxs.h"
 
@@ -60,7 +56,7 @@ static PWSTR pool_strndup(PVOID *pool, PCWSTR s, SIZE_T chars)
     return copy;
 }
 
-/* grows an array in the pool by one element; the old storage stays in the pool. */
+/* the old storage stays in the pool. */
 static PVOID pool_append(PVOID *pool, PVOID array, ULONG *count, SIZE_T element)
 {
     UCHAR *grown = pool_alloc(pool, (*count + 1) * element);
@@ -79,7 +75,6 @@ static BOOLEAN is_space(WCHAR c)
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
-/* whether an <?xml ...?> declaration names an encoding other than utf-8 and utf-16. */
 static BOOLEAN declared_single_byte(const UCHAR *bytes, SIZE_T size)
 {
     if (size < 5 || memcmp(bytes, "<?xml", 5))
@@ -104,7 +99,7 @@ static BOOLEAN declared_single_byte(const UCHAR *bytes, SIZE_T size)
     return FALSE;
 }
 
-/* the text as nul terminated utf-16 from the process heap. */
+/* returns nul terminated utf-16 from the process heap. */
 static NTSTATUS decode(const void *data, SIZE_T size, PWSTR *out, SIZE_T *out_chars)
 {
     const UCHAR *bytes = data;
@@ -153,7 +148,7 @@ static NTSTATUS decode(const void *data, SIZE_T size, PWSTR *out, SIZE_T *out_ch
 /* ------------------------------------------------------------------ xml tree */
 
 typedef struct XML_ATTR {
-    PCWSTR Ns; /* NULL for unprefixed attributes */
+    PCWSTR Ns; /* NULL for unprefixed attributes. */
     PCWSTR Name;
     PCWSTR Value;
 } XML_ATTR;
@@ -169,7 +164,7 @@ typedef struct XML_NODE {
 } XML_NODE;
 
 typedef struct XML_BINDING {
-    PCWSTR Prefix; /* "" for the default namespace */
+    PCWSTR Prefix; /* "" for the default namespace. */
     SIZE_T PrefixChars;
     PCWSTR Uri;
     ULONG Depth;
@@ -195,7 +190,7 @@ static void skip_spaces(XML_PARSER *x)
         x->P++;
 }
 
-/* skips to just past a terminator; FALSE at the end of the text. */
+/* FALSE at the end of the text. */
 static BOOLEAN skip_past(XML_PARSER *x, PCWSTR terminator)
 {
     while (x->P < x->End) {
@@ -231,7 +226,7 @@ static void append_char(WCHAR *buffer, SIZE_T *n, WCHAR c)
     buffer[(*n)++] = c;
 }
 
-/* decodes one entity reference starting after '&'; FALSE when unknown. */
+/* starts after the '&', FALSE for an unknown entity. */
 static BOOLEAN read_entity(XML_PARSER *x, WCHAR *buffer, SIZE_T *n)
 {
     static const struct {
@@ -313,7 +308,6 @@ typedef struct RAW_ATTR {
     PWSTR Value;
 } RAW_ATTR;
 
-/* reads a quoted attribute value with its entities resolved. */
 static PWSTR read_value(XML_PARSER *x)
 {
     if (x->P >= x->End || (*x->P != '"' && *x->P != '\''))
@@ -351,7 +345,6 @@ static PWSTR read_value(XML_PARSER *x)
 
 static NTSTATUS parse_element(XML_PARSER *x, XML_NODE *parent, XML_NODE **out);
 
-/* character data, comments, processing instructions and child elements up to the end tag. */
 static NTSTATUS parse_content(XML_PARSER *x, XML_NODE *node, PCWSTR qname, SIZE_T qchars)
 {
     for (;;) {
@@ -566,7 +559,7 @@ static NTSTATUS parse_document(PCWSTR text, SIZE_T chars, PVOID *pool, XML_NODE 
             if (!NT_SUCCESS(status))
                 return status;
         } else if (*x.P == 0 && *root) {
-            /* trailing nul padding of resources. */
+            /* resources may be padded with trailing nuls. */
             x.P++;
         } else {
             return STATUS_SXS_CANT_GEN_ACTCTX;
@@ -692,7 +685,6 @@ static PWSTR dup(PVOID *pool, PCWSTR s)
     return s ? pool_strndup(pool, s, wcslen(s)) : nullptr;
 }
 
-/* the element's text without surrounding white space. */
 static PWSTR trimmed_text(PVOID *pool, const XML_NODE *n)
 {
     PCWSTR s = n->Text ? n->Text : L"";
@@ -753,7 +745,7 @@ static NTSTATUS read_interface(PVOID *pool, const XML_NODE *n, SXS_INTERFACE *it
     return STATUS_SUCCESS;
 }
 
-/* the name of a file element must stay inside the assembly's directory, as sxs.dll checks. */
+/* like sxs.dll, a file name must stay inside the assembly's directory. */
 static BOOLEAN valid_file_name(PCWSTR name)
 {
     if (!name || !*name || RtlDetermineDosPathNameType_U(name) != RtlPathTypeRelative)
@@ -831,7 +823,7 @@ static NTSTATUS read_file(PVOID *pool, const XML_NODE *n, SXS_MANIFEST *m)
             tl->HelpDir = dup(pool, attr(c, L"helpdir"));
             PCWSTR flags = attr(c, L"flags");
             if (flags) {
-                /* RESTRICTED, CONTROL, HIDDEN and HASDISKIMAGE, as TYPEFLAGS spells them. */
+                /* TYPEFLAGS names. */
                 static const PCWSTR names[] = {L"RESTRICTED", L"CONTROL", L"HIDDEN", L"HASDISKIMAGE"};
                 for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++)
                     if (wcsstr(flags, names[i]))
@@ -903,7 +895,7 @@ static void read_trust(const XML_NODE *n, SXS_MANIFEST *m)
 static NTSTATUS read_settings(PVOID *pool, const XML_NODE *n, SXS_MANIFEST *m)
 {
     for (const XML_NODE *w = n->First; w; w = w->Next) {
-        /* manifests often put windowsSettings itself in a settings namespace: its name decides. */
+        /* manifests often put windowsSettings itself in a settings namespace, so match by name. */
         if (!is(w, L"windowsSettings"))
             continue;
         for (const XML_NODE *s = w->First; s; s = s->Next) {

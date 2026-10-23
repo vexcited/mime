@@ -1,6 +1,5 @@
 /*
- * d3d10.dll and d3d10_1.dll: devices d3d11.dll makes, state blocks, and
- * what they read of compiled shaders.
+ * d3d10.dll and d3d10_1.dll: devices made by d3d11.dll, state blocks, and what they read from compiled shaders.
  */
 #ifndef D3D10_DLL_PRIVATE_H
 #define D3D10_DLL_PRIVATE_H

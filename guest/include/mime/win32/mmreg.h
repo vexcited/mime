@@ -1,6 +1,4 @@
-/*
- * wave formats, shared by winmm, msacm32, dsound and their callers.
- */
+/* wave formats, shared by winmm, msacm32, dsound and their callers. */
 #ifndef MIME_WIN32_MMREG_H
 #define MIME_WIN32_MMREG_H
 
@@ -113,7 +111,7 @@ typedef struct mpeglayer3waveformat_tag {
 #define SPEAKER_TOP_BACK_CENTER 0x10000
 #define SPEAKER_TOP_BACK_RIGHT 0x20000
 
-/* KSDATAFORMAT_SUBTYPE_PCM and KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, as the low word of their guids says. */
+/* KSDATAFORMAT_SUBTYPE_PCM and KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: the wave format tag is the guid's first field. */
 #define MIME_KSDATAFORMAT_SUBTYPE(tag) {(tag), 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}}
 
 #endif

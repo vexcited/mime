@@ -1,9 +1,8 @@
 /*
- * dates: the conversions between variant times, system times and strings.
+ * conversions between variant times, system times and strings.
  *
- * dates are days since 1899-12-30 with the time of day as the fraction,
- * whose sign never changes the time: -1.25 is 1899-12-29 06:00. numbers
- * parse into decimal digits first, then round half to even like windows.
+ * a date is days since 1899-12-30 with the time of day as the fraction, whose sign never changes the time: -1.25 is
+ * 1899-12-29 06:00. numbers parse into decimal digits first, then round half to even like windows.
  */
 #include "oleaut32_private.h"
 #include <mime/win32/winnls.h>
@@ -44,7 +43,7 @@ static LONG days_in_month(LONG y, LONG m)
     return days[m - 1] + (m == 2 && leap);
 }
 
-/* two digit years follow the windows window: 00 to 29 are 2000s, 30 to 99 are 1900s. */
+/* two digit years follow windows' rule: 00 to 29 are 2000s, 30 to 99 are 1900s. */
 static LONG full_year(LONG y)
 {
     return y < 30 ? y + 2000 : y < 100 ? y + 1900 : y;
@@ -69,7 +68,7 @@ WINOLEAUTAPI INT WINAPI SystemTimeToVariantTime(LPSYSTEMTIME time, double *date)
                      date);
 }
 
-/* splits a date into its calendar day and the seconds of its time, rounded to the nearest second. */
+/* the time is rounded to the nearest second. */
 static BOOL split_date(DATE date, LONG *days, LONG *seconds)
 {
     if (!(date >= DATE_MIN && date < DATE_MAX))
@@ -100,7 +99,7 @@ WINOLEAUTAPI INT WINAPI VariantTimeToSystemTime(DATE date, LPSYSTEMTIME time)
     time->wYear = (WORD)y;
     time->wMonth = (WORD)m;
     time->wDay = (WORD)d;
-    /* 1970-01-01 was a thursday. */
+    /* 1970-01-01 was a Thursday. */
     time->wDayOfWeek = (WORD)(((absolute % 7) + 11) % 7);
     time->wHour = (WORD)(seconds / 3600);
     time->wMinute = (WORD)(seconds / 60 % 60);
@@ -123,7 +122,7 @@ static const WCHAR *const g_months[12] = {L"january", L"february", L"march",    
 static const WCHAR *const g_days[7] = {L"sunday",   L"monday", L"tuesday", L"wednesday",
                                        L"thursday", L"friday", L"saturday"};
 
-/* a word that is a whole name or an abbreviation of at least three letters. */
+/* a whole name, or an abbreviation of at least three letters. */
 static BOOL name_matches(const WCHAR *word, int length, const WCHAR *name)
 {
     if (length < 3 || length > (int)wcslen(name))
@@ -215,7 +214,7 @@ WINOLEAUTAPI HRESULT WINAPI VarDateFromStr(LPCOLESTR string, LCID lcid, ULONG fl
         SYSTEMTIME now;
         GetLocalTime(&now);
         if (month) {
-            /* with a month name, the numbers are the day and the year, a year being large or four digits. */
+            /* with a month name, the numbers are the day and the year, the year being large or four digits. */
             if (number_count < 1 || number_count > 2)
                 return DISP_E_TYPEMISMATCH;
             int day_index = number_count == 2 && (number_digits[0] > 2 || numbers[0] > 31) ? 1 : 0;
@@ -257,9 +256,8 @@ WINOLEAUTAPI HRESULT WINAPI VarDateFromStr(LPCOLESTR string, LCID lcid, ULONG fl
 }
 
 /*
- * the short date of a day, also for the years before 1601 that the formatting of dates does not take: the day is formatted
- * in a year of the same calendar 400 years on, which has the same weekdays, and the year of the pattern is written in as
- * a literal, as many digits as the number has.
+ * also handles years before 1601, which date formatting refuses: the day is formatted 400 years later, which has the
+ * same weekdays, and the real year goes into the pattern as a literal with as many digits as it has.
  */
 static int format_short_date(LCID locale, DWORD override, const SYSTEMTIME *time, WCHAR *text, int size)
 {
@@ -317,7 +315,7 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromDate(DATE date, LCID lcid, ULONG flags, B
     LONG days, seconds;
     SYSTEMTIME time;
     if (flags & LOCALE_USE_NLS) {
-        /* the formats of the locale, the date and the time, always both, with the flags handed on as they are. */
+        /* the locale's date and time formats, always both, with the flags passed on unchanged. */
         memset(&time, 0, sizeof(time));
         VariantTimeToSystemTime(date, &time);
         DWORD pass = flags & ~(ULONG)LOCALE_USE_NLS;
@@ -370,7 +368,7 @@ WINOLEAUTAPI HRESULT WINAPI VarUdateFromDate(DATE date, ULONG flags, UDATE *udat
     return S_OK;
 }
 
-/* a field of a UDATE past its range rolls into the next one unless the date is to be checked. */
+/* a UDATE field past its range rolls into the next one unless the date is to be checked. */
 static HRESULT date_from_fields(const SYSTEMTIME *st, ULONG flags, DATE *out)
 {
     LONG y = st->wYear, m = st->wMonth, d = st->wDay, h = st->wHour, mi = st->wMinute, s = st->wSecond;
@@ -380,7 +378,7 @@ static HRESULT date_from_fields(const SYSTEMTIME *st, ULONG flags, DATE *out)
     }
     if (!(flags & VAR_VALIDDATE) && y < 100)
         y = full_year(y);
-    /* months into years. */
+    /* months roll into years. */
     LONG month0 = m - 1;
     y += month0 >= 0 ? month0 / 12 : -((11 - month0) / 12);
     month0 = ((month0 % 12) + 12) % 12;

@@ -1,7 +1,5 @@
-/*
- * memory and string functions, narrow and wide.
- */
-/* the definitions of the functions the builtins would call. */
+/* memory and string functions, narrow and wide. */
+/* this file defines the functions the builtins would call. */
 #define MIME_RTL_NO_BUILTINS
 #include "msvcrt_private.h"
 
@@ -1024,8 +1022,8 @@ extern unsigned char _mbctype[257];
 extern unsigned char _mbcasemap[256];
 
 /*
- * the tables the _ismbb macros read: for each byte the kinds of the _mbctype.h flags (symbol, punctuation, lead, trail,
- * single byte upper and lower case), and the byte with its case swapped.
+ * fills the tables the _ismbb macros read: per byte, its _mbctype.h flags for symbol, punctuation, lead, trail and
+ * single byte case, and the byte with its case swapped.
  */
 static void mbtables(void)
 {

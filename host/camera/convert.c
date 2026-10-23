@@ -10,14 +10,14 @@ typedef struct Source {
     int width, height;
     const uint8_t *plane[3];
     int stride[3];
-    bool packed;        /* yuy2 and uyvy: one plane of pairs of pixels */
+    bool packed;        /* YUY2 and UYVY: one plane of pairs of pixels. */
     bool uyvy;
-    bool interleaved;   /* nv12: the second plane holds cb and cr in turns */
-    bool swapped;       /* yv12: the third plane is cb */
-    int chroma_rows;    /* 1 when a chroma row serves two rows of the frame */
-    int chroma_cols;    /* 1 when a chroma sample serves two pixels, 0 when each pixel has its own */
+    bool interleaved;   /* NV12: the second plane holds cb and cr in turns. */
+    bool swapped;       /* YV12: the third plane is cb. */
+    int chroma_rows;    /* 1 when a chroma row serves two rows of the frame. */
+    int chroma_cols;    /* 1 when a chroma sample serves two pixels, 0 when each pixel has its own. */
     bool full_range;
-    bool grey;          /* one component: the chroma is neutral */
+    bool grey;          /* one component: the chroma is neutral. */
     uint8_t luma_map[256], chroma_map[256];
 } Source;
 
@@ -36,7 +36,7 @@ bool camera_can_convert(uint32_t src, uint32_t dst)
     }
 }
 
-/* one row of the frame as a row of luma and the rows of chroma at half the width, or luma alone with no chroma rows. */
+/* converts one row to luma and half-width chroma, or luma alone when no chroma rows are supplied. */
 static void source_row(const Source *s, int r, uint8_t *y, uint8_t *cb, uint8_t *cr)
 {
     int w = s->width, cw = (w + 1) / 2;
@@ -237,7 +237,7 @@ int camera_convert(CameraConverter *c, uint32_t src, const uint8_t *data, size_t
                     cr1[i] = (uint8_t)((cr1[i] + cr2[i] + 1) >> 1);
                 }
             } else {
-                /* the pair of rows shares its chroma, only the luma of the second is wanted. */
+                /* the rows share chroma, so only the second row's luma is needed. */
                 source_row(&s, r + 1, oy + (size_t)(r + 1) * w, nullptr, nullptr);
             }
         }

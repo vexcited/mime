@@ -1,8 +1,7 @@
 /*
- * dnsapi: the dns client. mime has no network and so no dns server: like
- * the windows resolver, local names are answered from the machine itself,
- * localhost and the computer name with the loopback addresses, and every
- * other name fails because no server is configured.
+ * the dns client. mime has no network and so no dns server. like the
+ * windows resolver, localhost and the computer name resolve to the
+ * loopback addresses; every other name fails since no server is configured.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winnls.h>
@@ -66,7 +65,7 @@ enum { DnsCharSetUnknown, DnsCharSetUnicode, DnsCharSetUtf8, DnsCharSetAnsi };
 #define DNS_INFO_NO_RECORDS 9501L
 #define DNS_ERROR_NO_DNS_SERVERS 9852L
 
-/* the time to live windows gives records of local names; guessed. */
+/* the ttl windows gives local name records; guessed. */
 #define LOCAL_TTL 1200
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
@@ -118,7 +117,7 @@ static BOOL is_local_name(const char *name)
     return GetComputerNameExA(ComputerNameNetBIOS, netbios, &n) && same_name(name, netbios);
 }
 
-/* the reverse names of the loopback addresses: 1.0.0.127.in-addr.arpa and the ip6.arpa form of ::1. */
+/* 1.0.0.127.in-addr.arpa and the ip6.arpa form of ::1. */
 static BOOL is_loopback_reverse(const char *name)
 {
     static const char v6[] = "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa";
@@ -144,7 +143,7 @@ static void *heap_alloc(SIZE_T size)
     return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
 }
 
-/* a record with its name stored after it, in the character set of the query. */
+/* the name is stored after the record, in the query's character set. */
 static PDNS_RECORD new_record(const char *name, int charset, WORD type, WORD length)
 {
     SIZE_T chars = strlen(name) + 1;
@@ -276,7 +275,7 @@ DNS_STATUS WINAPI DnsQuery_W(PCWSTR name, WORD type, DWORD options, PVOID extra,
         *results = nullptr;
         return ERROR_INVALID_NAME;
     }
-    /* a name outside ascii is never local, so the unicode copy of the query name is only needed for ascii. */
+    /* a non-ascii name is never local, so only ascii names need the unicode copy. */
     for (int i = 0; narrow[i]; i++) {
         if ((UCHAR)narrow[i] >= 0x80) {
             *results = nullptr;

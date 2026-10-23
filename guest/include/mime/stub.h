@@ -1,6 +1,4 @@
-/*
- * unimplemented entry points: each logs its name once to the debugger and fails cleanly.
- */
+/* unimplemented entry points: each logs its name once to the debugger and fails cleanly. */
 #pragma once
 #include <mime/win32/winbase.h>
 
@@ -21,7 +19,7 @@ static inline void MimeStubLog(LONG volatile *once, const char *dll, const char 
     OutputDebugStringA(text);
 }
 
-/* logs the enclosing function once, the caller then returns its failure value. */
+/* the caller then returns its failure value. */
 #define MIME_STUB(dll)                                                                                                \
     do {                                                                                                              \
         static LONG volatile mime_stub_once;                                                                          \

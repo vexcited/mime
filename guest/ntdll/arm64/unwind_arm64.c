@@ -1,10 +1,10 @@
 /*
  * the arm64 virtual unwinder, see unwind_arm64.h.
  *
- * the unwind codes of a function undo its prolog from the last instruction to the first, so an unwind from
- * the middle of the prolog skips the codes of the instructions that have not run, and one from the middle of
- * an epilog skips those of the instructions that have. packed unwind data holds the same information in a
- * word for the canonical frames, and is expanded to unwind codes here, so the one interpreter serves both.
+ * a function's unwind codes undo its prolog from the last instruction to the first, so an unwind from mid
+ * prolog skips the codes of instructions that have not run, and one from mid epilog skips those that have.
+ * packed unwind data encodes canonical frames in one word and is expanded to unwind codes here, so one
+ * interpreter serves both.
  */
 #include "unwind_arm64.h"
 
@@ -21,7 +21,7 @@ typedef struct LAYOUT {
     const uint8_t *codes;
     uint32_t size;
     uint32_t length;
-    /* the unwind codes are those of a fragment without a prolog or an epilog, or of a jump island. */
+    /* the codes belong to a fragment without prolog or epilog, or to a jump island. */
     int body_only;
     /* the epilog scopes of an unpacked record, or its only epilog that sits at the end of the function. */
     const uint32_t *scopes;
@@ -353,7 +353,7 @@ typedef struct SAVE {
     uint32_t release; /* bytes the stack pointer rises by after the load, for a pre-indexed store */
 } SAVE;
 
-/* the code at p as a register save, in its length, or 0 when it is another kind of code. */
+/* decodes the code at p as a register save; returns its length, or 0 for another kind of code. */
 static unsigned decode_save(const uint8_t *p, uint32_t room, SAVE *s)
 {
     uint8_t b = p[0];
@@ -573,7 +573,7 @@ static int execute(UNWINDER *u, const uint8_t *codes, uint32_t size, uint32_t in
     return u->fault ? STEP_FAIL : STEP_NEXT;
 }
 
-/* runs from a code on, skipping the first ones, which stand for instructions the pc is not past. */
+/* runs the codes from index on, skipping the first ones, which stand for instructions the pc has not passed. */
 static int run(UNWINDER *u, const uint8_t *codes, uint32_t size, uint32_t index, uint32_t skip)
 {
     while (index < size) {

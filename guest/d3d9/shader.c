@@ -1,7 +1,6 @@
 /*
- * IDirect3DVertexShader9 and IDirect3DPixelShader9: the bytecode, read
- * once, and its translations, one d3d11 shader for each key of the state
- * it depends on, made when first drawn with.
+ * IDirect3DVertexShader9 and IDirect3DPixelShader9: the bytecode is read
+ * once, then translated to a d3d11 shader per state key on first draw.
  */
 #include "d3d9_private.h"
 
@@ -27,7 +26,6 @@ static void destroy(D9Shader *s)
 
 static void destroy_resource(D9Resource *r) { destroy(CONTAINING_RECORD(r, D9Shader, base)); }
 
-/* the translation of the shader for a key, made the first time it is asked for. */
 D9Variant *D9ShaderVariant(D9Shader *s, const D9ShaderKey *key)
 {
     if (s->last && !memcmp(&s->last->key, key, sizeof(*key)))
@@ -51,7 +49,7 @@ D9Variant *D9ShaderVariant(D9Shader *s, const D9ShaderKey *key)
         if (FAILED(hr))
             D9Log("d3d9: d3d11 refused the translation of a %s shader: %08x", s->info.pixel ? "pixel" : "vertex", hr);
     }
-    /* a failed translation is kept, so the draws that need it skip without trying again. */
+    /* failed translations are kept, so draws that need them skip without retrying. */
     if (FAILED(hr))
         v->shader = nullptr;
     if (s->info.pixel) {
@@ -185,7 +183,7 @@ static HRESULT STDMETHODCALLTYPE decl_get_declaration(IDirect3DVertexDeclaration
     D9VertexDecl *d = decl_impl(iface);
     if (!count)
         return D3DERR_INVALIDCALL;
-    /* the count takes in the end marker, which is copied too. */
+    /* the count includes the end marker, which is copied too. */
     if (elements) {
         memcpy(elements, d->elements, d->count * sizeof(*elements));
         elements[d->count] = (D3DVERTEXELEMENT9)D3DDECL_END();
@@ -198,7 +196,7 @@ static const IDirect3DVertexDeclaration9Vtbl decl_vtbl = {
     decl_query, decl_add_ref, decl_release, decl_get_device, decl_get_declaration,
 };
 
-/* the flexible vertex format a declaration is, or 0 if none says it. */
+/* the fvf matching a declaration, or 0. */
 static DWORD fvf_of(const D3DVERTEXELEMENT9 *e, UINT count)
 {
     DWORD fvf = 0;
@@ -261,7 +259,7 @@ HRESULT D9CreateVertexDecl(D9Device *device, const D3DVERTEXELEMENT9 *elements, 
     return D3D_OK;
 }
 
-/* a flexible vertex format's declaration: position, blend weights, normal, size, colors, texture coordinates. */
+/* elements in fvf order: position, blend weights, normal, size, colors, texture coordinates. */
 UINT D9FvfElements(DWORD fvf, D3DVERTEXELEMENT9 *e)
 {
     UINT n = 0;
@@ -307,7 +305,7 @@ UINT D9FvfElements(DWORD fvf, D3DVERTEXELEMENT9 *e)
     return n;
 }
 
-/* the dxgi format of a declaration's type, and whether shaders read it as integers turned to floats. */
+/* also says whether shaders read the type as integers converted to floats. */
 static DXGI_FORMAT element_format(BYTE type, BYTE *integer)
 {
     *integer = 0;
@@ -355,7 +353,7 @@ static DXGI_FORMAT element_format(BYTE type, BYTE *integer)
     }
 }
 
-/* the integer inputs of a vertex shader's registers under a declaration: 2 bits each, 1 unsigned, 2 signed. */
+/* 2 bits per register: 1 unsigned, 2 signed. */
 UINT D9DeclIntegerInputs(const D9VertexDecl *d, const D9ShaderInfo *vs)
 {
     UINT bits = 0;
@@ -373,7 +371,6 @@ UINT D9DeclIntegerInputs(const D9VertexDecl *d, const D9ShaderInfo *vs)
     return bits;
 }
 
-/* the input layout of the declaration for a translation of a vertex shader, with the streams that are instanced. */
 ID3D11InputLayout *D9DeclLayout(D9VertexDecl *d, D9Device *device, D9Variant *vs, UINT instanced, const UINT *rates)
 {
     for (D9Layout *l = d->layouts; l; l = l->next)
@@ -390,7 +387,7 @@ ID3D11InputLayout *D9DeclLayout(D9VertexDecl *d, D9Device *device, D9Variant *vs
                                                 inst ? D3D11_INPUT_PER_INSTANCE_DATA : D3D11_INPUT_PER_VERTEX_DATA,
                                                 inst ? rates[e->Stream] : 0};
     }
-    /* inputs the declaration lacks read the zeros of the last stream, which binds an empty buffer. */
+    /* inputs missing from the declaration read zeros from the last stream, which binds an empty buffer. */
     const D9ShaderInfo *info = vs->info;
     for (UINT r = 0; r < 16; r++) {
         if (!(info->in_declared & (1u << r)))

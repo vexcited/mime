@@ -1,4 +1,4 @@
-/* generated from the pixel format table of windowscodecs.dll build 26300: guid, bits, channels, alpha, number kind, channel masks. The friendly names are made from the names of the guids, which is a guess. */
+/* pixel format GUIDs, sizes, channels, alpha, numeric types and masks. friendly names are guessed from GUID names. */
     {&GUID_WICPixelFormat1bppIndexed, 1, 1, 0, 1, 1, (const BYTE[]){0x01}, L"1bpp Indexed"},
     {&GUID_WICPixelFormat2bppIndexed, 2, 1, 0, 1, 1, (const BYTE[]){0x03}, L"2bpp Indexed"},
     {&GUID_WICPixelFormat4bppIndexed, 4, 1, 0, 1, 1, (const BYTE[]){0x0f}, L"4bpp Indexed"},

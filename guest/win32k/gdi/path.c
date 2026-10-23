@@ -1,7 +1,6 @@
 /*
- * paths: figures recorded between BeginPath and EndPath, then filled,
- * stroked, turned into regions or selected as the clip region. points are
- * kept in device coordinates, transformed when they are recorded, like gdi.
+ * paths: figures recorded between BeginPath and EndPath, then filled, stroked, turned into regions or selected as
+ * the clip region. like gdi, points are transformed when recorded and kept in device coordinates.
  */
 #include "../win32k.h"
 
@@ -310,7 +309,7 @@ BOOLEAN RgnFromPolygons(REGION *out, const POINT *pts, const ULONG *counts, ULON
     RECT *rects = nullptr;
     ULONG count = 0, capacity = 0;
     BOOLEAN ok = cross && spans;
-    LONG prev_first = -1, prev_count = 0; /* rects of the previous band, for vertical merging */
+    LONG prev_first = -1, prev_count = 0; /* rects of the previous band, for vertical merging. */
     for (LONG y = top; ok && y < bottom; y++) {
         /* edges are sampled at the pixel center, half open at their lower end. */
         LONG64 sy2 = (LONG64)y * 2 + 1;
@@ -325,7 +324,7 @@ BOOLEAN RgnFromPolygons(REGION *out, const POINT *pts, const ULONG *counts, ULON
                 /* x at the center line, rounded to the pixel whose center it passes. */
                 LONG64 num = (LONG64)(b.x - a.x) * (sy2 - ay);
                 LONG64 den = by - ay;
-                LONG64 x2 = (LONG64)a.x * 2 + num * 2 / den; /* doubled x */
+                LONG64 x2 = (LONG64)a.x * 2 + num * 2 / den; /* doubled x. */
                 cross[n].X = (LONG)(x2 >> 1);
                 cross[n].Dir = by > ay ? 1 : -1;
                 n++;
@@ -483,7 +482,7 @@ static double sqrt_d(double v)
 
 typedef struct OUTLINE_BUILDER {
     GDI_PATH *Path;
-    BOOLEAN Open; /* a figure was started */
+    BOOLEAN Open; /* a figure was started. */
     BOOLEAN Ok;
 } OUTLINE_BUILDER;
 
@@ -509,9 +508,8 @@ static void out_close(OUTLINE_BUILDER *b)
 }
 
 /*
- * an arc of at most half a turn around a center, from radius vector v to e,
- * after the point at v: halved until the chords are short. turn is the
- * rotation sign, which picks the middle of a half turn.
+ * an arc of at most half a turn around a center, from radius vector v to e, after the point at v, halved until the
+ * chords are short. turn is the rotation sign, which picks the middle of a half turn.
  */
 static void out_arc(OUTLINE_BUILDER *b, double cx, double cy, double vx, double vy, double ex, double ey, double h,
                     int turn, int depth)
@@ -534,9 +532,8 @@ static void out_arc(OUTLINE_BUILDER *b, double cx, double cy, double vx, double 
 }
 
 /*
- * the points of one side at a vertex where direction d1 turns into d2; n1
- * and n2 are their normals on this side. the outer side gets the join, the
- * inner side goes through the vertex so the winding stays whole.
+ * the points of one side at a vertex where direction d1 turns into d2, n1 and n2 being their normals on this side.
+ * the outer side gets the join, the inner side goes through the vertex so the winding stays whole.
  */
 static void out_join(OUTLINE_BUILDER *b, const WIDEN_PEN *pen, double px, double py, double n1x, double n1y,
                      double n2x, double n2y, double d1x, double d1y, double d2x, double d2y)
@@ -685,7 +682,7 @@ static void widen_pen(DC *dc, WIDEN_PEN *pen)
     pen->Miter = dc->State.MiterLimit;
 }
 
-/* the outline the pen of the dc would stroke along the path. */
+/* the outline the dc's pen would stroke along the path. */
 static BOOLEAN widen(DC *dc, GDI_PATH *out)
 {
     POLYGONS pg;

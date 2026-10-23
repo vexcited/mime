@@ -1,15 +1,14 @@
 /*
- * cooperative levels, display modes and exclusive mode, as windows'
- * ddraw does them on top of user32: modes are ChangeDisplaySettings modes,
- * an exclusive fullscreen program's window is made to cover the screen,
- * and ddraw follows its activation through a subclass of the window's
- * procedure. 320 by 200 and 320 by 240 mode x modes are emulated in a
- * 640 by 480 mode, as windows does where the display has no such mode.
+ * cooperative levels, display modes and exclusive mode on top of user32, as
+ * on Windows. modes are ChangeDisplaySettings modes, an exclusive fullscreen
+ * window is made to cover the screen, and ddraw follows its activation by
+ * subclassing it. where the display lacks them, 320x200 and 320x240 mode x
+ * modes are emulated in a 640x480 mode, as Windows does.
  */
 #include "ddraw_private.h"
 #include <mime/display_modes.h>
 
-/* exclusive mode is one object's in the process; windows holds it machine wide with a mutex. */
+/* exclusive mode is per process here, where Windows holds it machine wide with a mutex. */
 static DDRAW *g_exclusive;
 static const WCHAR WINDOW_PROC_PROP[] = L"MimeDDrawWindowProc";
 static const WCHAR DEVICE_CLASS[] = L"DirectDrawDeviceWnd";
@@ -50,7 +49,7 @@ void DdPixelFormatForBpp(DWORD bpp, DDPIXELFORMAT *pf)
     }
 }
 
-/* the mode the display is in, or the mode x one a program emulates in it. */
+/* the display's current mode, or the mode x mode a program emulates in it. */
 void DdCurrentMode(DDMODE *mode)
 {
     DEVMODEW dm = {.dmSize = sizeof(dm)};
@@ -71,7 +70,7 @@ void DdCurrentMode(DDMODE *mode)
     }
 }
 
-/* the desc of a mode as GetDisplayMode and EnumDisplayModes give it: 120 bytes to the first interfaces. */
+/* as GetDisplayMode and EnumDisplayModes fill it: 120 bytes for the first interfaces. */
 void DdFillModeDesc(DWORD version, DDSURFACEDESC2 *desc, DWORD width, DWORD height, DWORD bpp, DWORD refresh)
 {
     memset(desc, 0, sizeof(*desc));
@@ -84,7 +83,7 @@ void DdFillModeDesc(DWORD version, DDSURFACEDESC2 *desc, DWORD width, DWORD heig
     DdPixelFormatForBpp(bpp, &desc->ddpfPixelFormat);
 }
 
-/* windows' EnumDisplayModes: the display's modes without duplicates, 15 bits as 16, then mode x. */
+/* the display's modes without duplicates, 15 bits reported as 16, then mode x. */
 HRESULT DdEnumDisplayModes(DDRAW *dd, DWORD version, DWORD flags, const DDSURFACEDESC2 *filter, void *context,
                            void *callback)
 {
@@ -146,7 +145,7 @@ HRESULT DdEnumDisplayModes(DDRAW *dd, DWORD version, DWORD flags, const DDSURFAC
 
 /* ------------------------------------------------------------------ the window */
 
-/* windows' MakeFullscreen: the window covers the screen, topmost while the program is in front. */
+/* the window covers the screen, topmost while the program is in front. */
 static void make_fullscreen(DDRAW *dd, HWND window)
 {
     if (!window || !IsWindow(window))
@@ -177,7 +176,7 @@ static void unclip_cursor(DDRAW *dd)
     }
 }
 
-/* windows' handleActivateApp: an exclusive program losing the foreground gives back the display. */
+/* an exclusive program losing the foreground gives back the display. */
 static void activate_app(DDRAW *dd, BOOL active)
 {
     HWND window = dd->device;
@@ -283,7 +282,7 @@ static HWND create_device_window(DDRAW *dd)
                            GetSystemMetrics(SM_CYSCREEN), dd->focus, nullptr, DdModule, nullptr);
 }
 
-/* windows' DoneExclusiveMode. a first version object keeps its mode until it goes. */
+/* a first version object keeps its mode until it goes away. */
 void DdReleaseExclusive(DDRAW *dd)
 {
     if (g_exclusive != dd)
@@ -299,7 +298,7 @@ void DdReleaseExclusive(DDRAW *dd)
 
 /* ------------------------------------------------------------------ SetCooperativeLevel */
 
-/* windows' checks and their order; see docs/ddraw.md. */
+/* the checks run in the same order as on Windows. */
 HRESULT DdSetCooperativeLevel(DDRAW *dd, DWORD version, HWND window, DWORD flags)
 {
     if ((flags & 0xFFFF0000) || (flags & (DDSCL_FPUSETUP | DDSCL_FPUPRESERVE)) == (DDSCL_FPUSETUP | DDSCL_FPUPRESERVE))
@@ -409,10 +408,9 @@ HRESULT DdSetCooperativeLevel(DDRAW *dd, DWORD version, HWND window, DWORD flags
 /* ------------------------------------------------------------------ SetDisplayMode */
 
 /*
- * windows' SetDisplayMode: a ChangeDisplaySettings mode change that loses
- * every surface in video memory. any refresh rate takes the display's: the
- * emulated modes have no other, and a program asking 60 hz on a faster
- * panel would fail for nothing.
+ * a ChangeDisplaySettings mode change that loses every video memory surface.
+ * any refresh rate takes the display's: emulated modes have no other, and a
+ * program asking for 60 hz on a faster panel would fail for nothing.
  */
 HRESULT DdSetDisplayMode(DDRAW *dd, DWORD width, DWORD height, DWORD bpp, DWORD refresh, DWORD flags)
 {
@@ -473,7 +471,7 @@ HRESULT DdRestoreDisplayMode(DDRAW *dd)
 
 /* ------------------------------------------------------------------ vertical blank */
 
-/* the display's refresh on the performance counter's clock, as dxgi waits for it. */
+/* the display's refresh period on the performance counter clock, as dxgi waits for it. */
 static LONGLONG refresh_period(LARGE_INTEGER *now)
 {
     LARGE_INTEGER frequency;
@@ -484,7 +482,7 @@ static LONGLONG refresh_period(LARGE_INTEGER *now)
     return frequency.QuadPart / (mode.refresh > 1 ? mode.refresh : 60);
 }
 
-/* where the blank begins in a frame: the active lines, then a 20th of them blank. */
+/* the blank starts after the active lines and lasts a 20th of them. */
 static LONGLONG blank_start(LONGLONG period)
 {
     DDMODE mode;
@@ -506,7 +504,7 @@ static void wait_until(LONGLONG when)
         YieldProcessor();
 }
 
-/* windows polls the scan line: at once when already in the blank, its end after it for BLOCKEND. */
+/* waits for the blank, returning at once when already in it, then for its end with BLOCKEND. */
 HRESULT DdWaitForVerticalBlank(DWORD flags)
 {
     LARGE_INTEGER now;
@@ -519,7 +517,7 @@ HRESULT DdWaitForVerticalBlank(DWORD flags)
     return DD_OK;
 }
 
-/* the line the beam is on, from where the clock is in the frame; in the blank there is none. */
+/* the beam's line, from the clock's position in the frame. there is none during the blank. */
 HRESULT DdGetScanLine(DWORD *line)
 {
     LARGE_INTEGER now;

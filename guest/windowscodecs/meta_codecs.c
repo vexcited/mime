@@ -1,7 +1,4 @@
-/*
- * the metadata of jpeg and png files: the blocks a decoder reports, and the segments and chunks an encoder writes
- * from the blocks a program gave.
- */
+/* JPEG and PNG metadata parsing and serialization for decoder and encoder blocks. */
 #include "wic_codec.h"
 #include "wic_meta.h"
 #include "meta_internal.h"
@@ -10,7 +7,7 @@
 #include <tiff/tiff.h>
 #include <pngio/pngio.h>
 
-/* ------------------------------------------------------------------ small helpers */
+/* small helpers. */
 
 static HRESULT add_named(IWICMetadataReader *r, const WCHAR *name, PROPVARIANT *value)
 {
@@ -115,7 +112,7 @@ static HRESULT add_bytes(IWICMetadataReader *r, const WCHAR *name, const void *d
     return hr;
 }
 
-/* an item whose id is a string of the file, as the text chunks of png have. */
+/* string ids, as used by PNG text chunks. */
 static HRESULT add_keyed(IWICMetadataReader *r, const char *keyword, const char *text, SIZE_T length)
 {
     PROPVARIANT id, value;
@@ -139,7 +136,7 @@ static HRESULT add_keyed(IWICMetadataReader *r, const char *keyword, const char 
     return hr;
 }
 
-/* a block whose only item is another block. */
+/* wrap one block in another. */
 static HRESULT add_child(IWICMetadataReader *parent, IWICMetadataReader *child)
 {
     PROPVARIANT pv;
@@ -177,7 +174,7 @@ static HRESULT list_add_keyed(ReaderList *l, IWICMetadataReader *r, UINT key)
 
 static HRESULT list_add(ReaderList *l, IWICMetadataReader *r) { return list_add_keyed(l, r, 0); }
 
-/* puts the readers in the order of their keys, those with the same key stay as they are. */
+/* stable sort readers by key. */
 static void list_sort(ReaderList *l)
 {
     for (UINT i = 1; i < l->count; i++) {
@@ -202,7 +199,7 @@ static void list_free(ReaderList *l)
     memset(l, 0, sizeof(*l));
 }
 
-/* ------------------------------------------------------------------ jpeg */
+/* jpeg. */
 
 HRESULT WicJpegReaders(const BYTE *data, SIZE_T size, IWICMetadataReader ***out, UINT *count)
 {
@@ -250,7 +247,7 @@ HRESULT WicJpegReaders(const BYTE *data, SIZE_T size, IWICMetadataReader ***out,
             if (SUCCEEDED(hr))
                 hr = add_ansi(r, L"TextEntry", (const char *)seg.data, seg.size);
         } else if (seg.marker == 0xDB) {
-            /* a table of 64 entries, 8 or 16 bits each, the first is luminance and the second chrominance. */
+            /* 64 entries of 8 or 16 bits; the first table is luminance, the second chrominance. */
             const BYTE *p = seg.data;
             UINT left = seg.size;
             while (left > 64 && SUCCEEDED(hr)) {
@@ -316,7 +313,7 @@ HRESULT WicJpegReaders(const BYTE *data, SIZE_T size, IWICMetadataReader ***out,
     return *out ? S_OK : E_OUTOFMEMORY;
 }
 
-/* the app segments of the blocks a program set. the buffers are in the list and freed with it. */
+/* APP segments from application blocks; buffers belong to the list. */
 struct JpegSegmentList {
     MimeJpegAppSegment *segments;
     UINT count;
@@ -421,9 +418,9 @@ const MimeJpegAppSegment *WicJpegSegmentsData(const JpegSegmentList *l, UINT *co
     return l->segments;
 }
 
-/* ------------------------------------------------------------------ png */
+/* png. */
 
-/* where the chunks that become readers sit in the file, so the readers come in the order of the file. */
+/* preserve file order when exposing PNG chunks as metadata readers. */
 typedef struct PngOrder {
     UINT gama, chrm, srgb, iccp, bkgd, time, exif;
     UINT *texts;
@@ -678,7 +675,6 @@ static char *wide_to_utf8(const WCHAR *w, SIZE_T *length)
     return out;
 }
 
-/* copies the blocks of a frame writer into the parameters of the png encoder. */
 void WicPngApplyMetadata(PngMeta **out, MimePngioEncode *p, IWICMetadataBlockReader *blocks)
 {
     *out = nullptr;

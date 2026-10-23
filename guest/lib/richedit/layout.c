@@ -92,7 +92,7 @@ void ReInvalidateLayout(RE *e)
     e->dirty = TRUE;
 }
 
-/* ------------------------------------------------------------------ the view */
+/* ------------------------------------------------------------------ view */
 
 void ReComputeView(RE *e)
 {
@@ -173,7 +173,7 @@ static void roman(int n, BOOL upper, WCHAR *out, UINT cap)
     out[k] = 0;
 }
 
-/* the bullet or number a paragraph's first line shows. */
+/* the bullet or number shown on a paragraph's first line. */
 void ReBulletText(RE *e, const PARAFORMAT2 *pf, int number, WCHAR *out, UINT cap)
 {
     (void)e;
@@ -245,7 +245,7 @@ static BOOL ensure_xpos(RE *e)
     return TRUE;
 }
 
-/* lays out one paragraph, [ps, pe] with pe its mark, from y. */
+/* lays out [ps, pe] from y, pe being the paragraph mark. */
 static void layout_paragraph(RE *e, HDC dc, UINT ps, UINT pe, int *y, int *number, WORD *last_numbering)
 {
     const PARAFORMAT2 *pf = &e->paras[e->pfi[pe]];
@@ -348,7 +348,7 @@ static void layout_paragraph(RE *e, HDC dc, UINT ps, UINT pe, int *y, int *numbe
             end = pe + 1;
         if (end <= start)
             end = start + 1;
-        /* the line's height from the fonts on it. */
+        /* the line is as tall as the fonts on it. */
         int ascent = 0, descent = 0;
         UINT stop = end;
         for (UINT m = start; m < stop; m++) {
@@ -437,7 +437,7 @@ static void layout_pass(RE *e)
     e->content_height = y;
 }
 
-/* the scroll bars windows shows only when the text needs them, unless ES_DISABLENOSCROLL keeps them. */
+/* windows shows the scroll bars only when the text needs them, unless ES_DISABLENOSCROLL keeps them. */
 static BOOL fit_bars(RE *e)
 {
     if (!e->multiline)
@@ -519,7 +519,7 @@ UINT ReLineOf(RE *e, UINT cp, BOOL at_end)
     return lo;
 }
 
-/* the top left of the character at cp in client coordinates. */
+/* the top left of the character, in client coordinates. */
 POINT RePosFromCp(RE *e, UINT cp, BOOL at_end)
 {
     ReLayout(e);
@@ -631,7 +631,7 @@ static UINT top_line(RE *e)
     return l;
 }
 
-/* a vertical scroll command; returns what EM_SCROLL reports, the lines moved and TRUE. */
+/* returns what EM_SCROLL reports: the lines moved and TRUE. */
 LRESULT ReVScroll(RE *e, int code, int pos)
 {
     ReLayout(e);
@@ -734,7 +734,7 @@ void ReScrollCaret(RE *e)
     ReScrollTo(e, x, y);
 }
 
-/* EN_REQUESTRESIZE, when the size the text needs changed or EM_REQUESTRESIZE asks. */
+/* sent when the size the text needs changed or EM_REQUESTRESIZE asks. */
 void ReRequestResize(RE *e, BOOL force)
 {
     if (!(e->mask & ENM_REQUESTRESIZE))

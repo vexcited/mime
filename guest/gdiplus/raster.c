@@ -1,26 +1,24 @@
 /*
- * the scan converter of the drawing core. polygons in device space become rows of coverage, sampled the way
- * gdiplus.dll does it:
+ * the scan converter of the drawing core. polygons in device space become rows of coverage, sampled like gdi+:
  *
- * a vertex is rounded up to 1/16 pixel: the device coordinate is multiplied by 256, rounded, and the result
- * goes up to a multiple of 16. an edge is part of every sample row between its vertices, a row at the top
- * vertex counts and a row at the bottom one does not, and on a row its crossing is where the edge passes, moved
- * up to the next sample column. a span runs from one crossing to the next, left end in and right end out.
+ * a vertex is rounded up to 1/16 pixel: the device coordinate is multiplied by 256, rounded, then raised to a
+ * multiple of 16. an edge covers every sample row between its vertices, counting the row at the top vertex but not
+ * the one at the bottom, and on each row it crosses where it passes, moved up to the next sample column. a span
+ * runs from one crossing to the next, left end in and right end out.
  *
- * an aliased fill has one sample per pixel, at the pixel's own integer coordinate. antialiased fills move the
- * geometry half a pixel and sample on a lattice of 8 columns and 4 rows per pixel (8 and 8 for the second
- * mode); a pixel's coverage is the number of its samples inside, 0 to 32 or 64. the half pixel is why a
- * shape at integer coordinates is blurred half a pixel to the left and up unless the pixel offset mode shifts
- * the world by the same amount.
+ * an aliased fill has one sample per pixel, at the pixel's integer coordinate. antialiased fills move the geometry
+ * half a pixel and sample 8 columns by 4 rows per pixel, or 8 by 8 in the second mode, so coverage is 0 to 32 or
+ * 64. that half pixel blurs a shape at integer coordinates half a pixel left and up, unless the pixel offset mode
+ * shifts the world by the same amount.
  */
 #include "gp_private.h"
 
 typedef struct REdge {
-    long long q, r;   /* the crossing in sample units is q + (r != 0) on the current row, N = q * D + r */
-    long long sq, sr; /* the step of N from a row to the next, divided by D */
-    long long d;      /* D = 16 * dy */
-    INT k0, k1;       /* the sample rows: first, and one past the last */
-    INT cur;          /* the row q and r are for */
+    long long q, r;   /* the crossing in sample units is q + (r != 0) on the current row, N = q * D + r. */
+    long long sq, sr; /* the step of N from one row to the next, divided by D. */
+    long long d;      /* D = 16 * dy. */
+    INT k0, k1;       /* the first sample row, and one past the last. */
+    INT cur;          /* the row q and r are for. */
     INT dir;
 } REdge;
 
@@ -37,7 +35,7 @@ static long long floor_div(long long a, long long b)
     return q;
 }
 
-/* the fixed point coordinate of a device coordinate, in 1/16 pixel. */
+/* device coordinate to 1/16 pixel fixed point. */
 static INT to_fixed(float d)
 {
     if (d > 4000000.0f)
@@ -49,16 +47,16 @@ static INT to_fixed(float d)
 }
 
 typedef struct RasterState {
-    INT colshift;       /* log2 of the sample columns per pixel */
-    INT subshift;       /* log2 of the sample rows per pixel */
+    INT colshift;       /* log2 of the sample columns per pixel. */
+    INT subshift;       /* log2 of the sample rows per pixel. */
     INT cmax;
-    INT left, right;    /* the clip in pixels */
+    INT left, right;    /* the clip in pixels. */
     INT top, bottom;
     INT *cnt;
     INT *delta;
     UINT8 *cov;
-    INT row;            /* the pixel row being accumulated */
-    INT pmin, pmax;     /* the pixels touched on the row */
+    INT row;            /* the pixel row being accumulated. */
+    INT pmin, pmax;     /* the pixels touched on the row. */
     BOOL any;
     GSpanFn fn;
     void *user;
@@ -133,7 +131,7 @@ static void row_add(RasterState *s, INT cl, INT cr)
 
 static void sort_edges(REdge **e, INT n)
 {
-    /* shell sort by the first row */
+    /* shell sort by the first row. */
     for (INT gap = n / 2; gap > 0; gap /= 2) {
         for (INT i = gap; i < n; i++) {
             REdge *t = e[i];
@@ -192,7 +190,6 @@ GpStatus gp_raster(const MimeVecPolys *polys, INT fill_rule, INT aa, const RECT 
     INT width = s.right - s.left;
     INT kmin = s.top << s.subshift, kmax = s.bottom << s.subshift;
 
-    /* the edges */
     UINT total = 0;
     for (UINT i = 0; i < polys->nsubs; i++)
         total += polys->subs[i].count;

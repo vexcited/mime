@@ -1,6 +1,6 @@
 /*
- * font services: raw font data, outline text metrics, unicode coverage,
- * glyph indices and outlines, font enumeration and fonts added at run time.
+ * font services: raw font data, outline text metrics, unicode coverage, glyph indices and outlines, enumeration and
+ * fonts added at run time.
  */
 #include "font_private.h"
 #include "ttf/ttf_internal.h"
@@ -29,7 +29,7 @@ static LONG ceil_f(float v)
     return (float)i < v ? i + 1 : i;
 }
 
-/* the face of the font selected in a dc, without loading the font file. */
+/* the face selected in a dc, without loading the font file. */
 static FONT_FACE *dc_face(HDC hdc)
 {
     DC *dc = DcLookup(hdc);
@@ -289,7 +289,7 @@ typedef struct OUTLINE {
     UCHAR *On;
     ULONG Count;
     ULONG Capacity;
-    ULONG *Ends; /* index after the last point of each contour */
+    ULONG *Ends; /* index after the last point of each contour. */
     ULONG Contours;
     ULONG ContourCapacity;
     BOOLEAN Failed;
@@ -481,7 +481,7 @@ static ULONG contour_segments(const OUTLINE *o, ULONG first, ULONG end, float *s
             pending = TRUE;
         }
     }
-    /* a closing line back to the start is implied by gdi polygons. */
+    /* gdi polygons imply the closing line back to the start. */
     if (count && !out[count - 1].Curve && out[count - 1].X == x0 && out[count - 1].Y == y0)
         count--;
     return count;
@@ -683,9 +683,8 @@ static void rasterize_outline(const OUTLINE *o, const GLYPH_XFORM *t, LONG left,
 }
 
 /*
- * renders a glyph through the 2x2 part of a world transform, which maps y down
- * logical pixels to y down device pixels. returns pool coverage and its offset
- * from the glyph origin, or NULL for an empty glyph.
+ * renders a glyph through the 2x2 part of a world transform, which maps y down logical pixels to y down device
+ * pixels. returns pool coverage and its offset from the glyph origin, or NULL for an empty glyph.
  */
 UCHAR *FontRenderTransformed(FONT_INSTANCE *fi, USHORT index, const XFORM *m, LONG *left, LONG *top, LONG *width,
                              LONG *height)
@@ -794,7 +793,7 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
     LONG advance = cached ? cached->Advance : 0;
     gm.gmCellIncX = (short)round_f(advance * m11);
     gm.gmCellIncY = (short)round_f(advance * m12);
-    LONG bx0 = 0, by0 = 0, bx1 = 0, by1 = 0; /* bitmap box, y down */
+    LONG bx0 = 0, by0 = 0, bx1 = 0, by1 = 0; /* bitmap box, y down. */
     /* without rotation the rasterizer takes the matrix as scales and a shear: oblique = (shear m11 + m21) / m22. */
     MimeTtfRenderParams params = {sx * m11, sy * m22, 0, 0, m22 ? (shear * m11 + m21) / m22 : 0,
                                   fi->SimBold ? (float)W32Max(1, fi->EmPixels / 24) : 0.0f};
@@ -912,7 +911,7 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
 
 typedef struct CHARSET_INFO {
     UCHAR Charset;
-    UCHAR Bit; /* fsCsb[0] bit */
+    UCHAR Bit; /* fsCsb[0] bit. */
     PCWSTR Script;
 } CHARSET_INFO;
 
@@ -1064,7 +1063,7 @@ ULONG NTAPI NtGdiEnumFonts(HDC hdc, ULONG type, ULONG flags, ULONG face_chars, L
 #define FR_PRIVATE_FLAG 0x10
 #define FR_NOT_ENUM_FLAG 0x20
 
-/* the path list of AddFontResource is a single nt path here; gdi32 converts the dos name. */
+/* AddFontResource takes a single nt path here, gdi32 converts the dos name. */
 static PWSTR capture_path(LPCWSTR user, ULONG chars)
 {
     if (!user || !chars || chars >= MAX_PATH)
@@ -1161,7 +1160,7 @@ HANDLE NTAPI NtGdiAddFontMemResourceEx(PVOID data, DWORD size, PVOID dv, ULONG d
         count = FontRegisterMemory(copy, size, PsGetCurrentProcessId(), &file);
     if (file) {
         g_mem_fonts[slot] = file;
-        /* the handle encodes the slot; any nonzero value works for the caller. */
+        /* the handle encodes the slot, and any nonzero value works for the caller. */
         handle = (HANDLE)(ULONG_PTR)(0x4D000000u | (slot + 1));
     }
     UserLeave();

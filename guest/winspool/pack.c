@@ -1,6 +1,6 @@
 /*
- * the results of the Get and Enum functions: structures from the start of the caller's buffer and the
- * strings they point to from its end. a result is built once to measure it and once more into the buffer.
+ * builds results twice, first to measure and then to fill the caller's buffer. structures grow from the start;
+ * strings grow from the end.
  */
 #include "winspool_private.h"
 

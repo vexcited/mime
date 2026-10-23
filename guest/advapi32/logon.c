@@ -1,10 +1,9 @@
 /*
- * logon, and processes started as someone else.
+ * logon, and processes started as another user.
  *
- * there is no local security authority and no secondary logon service, and the machine has one interactive
- * user. logging on that user succeeds, whatever the password, with a copy of the token of the process; any other
- * account is unknown and fails like a wrong name or password does. a process started with a token is created
- * directly, with a primary copy of it.
+ * there is no lsa and no secondary logon service, and the machine has one interactive user. logging on as that user
+ * succeeds with any password and gives a copy of the process token; any other account fails like a wrong name or
+ * password. a process started with a token is created directly with a primary copy of it.
  */
 #include "advapi32_private.h"
 
@@ -36,7 +35,7 @@ WINBASEAPI BOOL WINAPI CreateProcessAsUserW(HANDLE token, LPCWSTR application, L
                                         DWORD flags, LPVOID environment, LPCWSTR directory, LPSTARTUPINFOW startup,
                                         LPPROCESS_INFORMATION info);
 
-/* the account of the session, as the user or user@machine and with the machine or . as domain. */
+/* the session's account, given as user or user@machine, with the machine or . as domain. */
 static BOOL is_session_user(PCWSTR user, PCWSTR domain)
 {
     WCHAR name[260], machine[64], local_user[260];
@@ -60,7 +59,7 @@ static BOOL is_session_user(PCWSTR user, PCWSTR domain)
     return !domain || !*domain || !wcscmp(domain, L".") || !_wcsicmp(domain, machine);
 }
 
-/* a copy of the process's token for a logon: a primary one, or for a network logon an impersonation one. */
+/* a copy of the process token: primary, or impersonation for a network logon. */
 static NTSTATUS logon_token(DWORD type, PHANDLE token)
 {
     HANDLE process_token;
@@ -82,7 +81,7 @@ static NTSTATUS logon_token(DWORD type, PHANDLE token)
     return status;
 }
 
-/* the logon sid of a token, in a block of the process heap. */
+/* the token's logon sid, in a process heap block. */
 static PSID logon_sid(HANDLE token)
 {
     TOKEN_GROUPS *groups = AdvQueryTokenGroups(token);
@@ -100,10 +99,7 @@ static PSID logon_sid(HANDLE token)
     return sid;
 }
 
-/*
- * the checks of LogonUser in the order windows makes them: the provider, the type, the name, the outputs.
- * the password is not looked at.
- */
+/* checks in the order windows does: provider, type, name, outputs. the password is ignored. */
 ADVAPI BOOL WINAPI LogonUserExW(LPCWSTR user, LPCWSTR domain, LPCWSTR password, DWORD type, DWORD provider,
                                 PHANDLE token, PSID *sid, PVOID *profile, LPDWORD profile_length,
                                 PQUOTA_LIMITS quota)
@@ -187,7 +183,7 @@ ADVAPI BOOL WINAPI LogonUserExA(LPCSTR user, LPCSTR domain, LPCSTR password, DWO
     return ok;
 }
 
-/* the secondary logon service starts a process with another token; here it is created at once. */
+/* windows has the secondary logon service start the process; here it is created directly. */
 ADVAPI BOOL WINAPI CreateProcessWithTokenW(HANDLE token, DWORD logon_flags, LPCWSTR application, LPWSTR command_line,
                                            DWORD creation_flags, LPVOID environment, LPCWSTR directory,
                                            LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info)
@@ -199,7 +195,7 @@ ADVAPI BOOL WINAPI CreateProcessWithTokenW(HANDLE token, DWORD logon_flags, LPCW
     memset(info, 0, sizeof(*info));
     HANDLE primary;
     OBJECT_ATTRIBUTES oa;
-    /* the copy is open to whoever the token was: it keeps the descriptor of the token it came from, as the one who made it set it. */
+    /* the copy keeps the source token's descriptor, so it stays open to whoever that token was. */
     UCHAR descriptor[1024];
     ULONG needed;
     PVOID sd = NT_SUCCESS(NtQuerySecurityObject(token, 0x1F /* owner, group, dacl, sacl, label */ & ~8u, descriptor,

@@ -1,7 +1,7 @@
 /*
- * the older url engine: a url broken into scheme, server, path segments, query and fragment, put
- * back together after dots are resolved. it canonicalizes what the newer engine leaves to it, and
- * UrlEscape, UrlGetPart, UrlIs, UrlCreateFromPath and PathCreateFromUrl read urls through it.
+ * the older url engine: splits a url into scheme, server, path segments, query and fragment, and rebuilds it after
+ * resolving dots. it handles what the newer engine gives up on, and UrlEscape, UrlGetPart, UrlIs, UrlCreateFromPath
+ * and PathCreateFromUrl use it.
  */
 #include "url_private.h"
 
@@ -124,12 +124,11 @@ static void lower_ascii(LPWSTR s)
             *s += 32;
 }
 
-/* the document extensions after which a file url's "#" starts a fragment. */
+/* in a file url, "#" only starts a fragment after one of these extensions. */
 static const PCWSTR fragment_extensions[] = {L".html", L".htm", L".xml",  L".doc",  L".xls",  L".ppt",  L".rtf",
                                              L".dot",  L".xlw", L".pps",  L".xlt",  L".hta",  L".pot",  L".pdf",
                                              L".xps",  L".xbap", L".xlsx", L".pptx", L".docx"};
 
-/* the text before at, starting at start, ends in a document extension. */
 static BOOL ends_with_extension(LPCWSTR start, LPCWSTR at)
 {
     SIZE_T before = (SIZE_T)(at - start);
@@ -190,7 +189,7 @@ static void add_segments(LPWSTR path, URL_PARTS *parts)
     }
 }
 
-/* the server of a file url by its count of slashes, at points at the first of them. */
+/* the server depends on the slash count. at points at the first slash. */
 static void file_server(LPWSTR *at, URL_PARTS *parts)
 {
     LPWSTR p = *at, last = p;
@@ -346,7 +345,7 @@ static int last_live(URL_SEGMENT *segments, UINT count)
     return -1;
 }
 
-/* "." goes, ".." takes the live segment before it unless that is ".." itself or a drive. */
+/* "." goes, ".." removes the live segment before it unless that is ".." itself or a drive. */
 static void canon_segments(URL_SEGMENT *segments, UINT count, BOOL drive)
 {
     for (UINT i = 0; i < count; i++) {
@@ -367,7 +366,7 @@ static void canon_segments(URL_SEGMENT *segments, UINT count, BOOL drive)
     }
 }
 
-/* the leading ".." of a relative path climb out of the base path, and vanish past its root. */
+/* leading ".." segments of a relative path climb the base path and vanish above its root. */
 static void canon_combine(URL_PARTS *parts)
 {
     for (UINT i = 0; i < parts->more_count; i++) {
@@ -417,7 +416,7 @@ static BOOL has_live(URL_SEGMENT *segments, UINT count)
     return last_live(segments, count) >= 0;
 }
 
-/* live segments joined by "/", a slash first when leading; whether the last one was empty. */
+/* joins live segments with "/", starting with one when leading. returns whether the last was empty. */
 static BOOL build_segments(URL_SEGMENT *segments, UINT count, URL_TEXT *out, BOOL leading)
 {
     BOOL first = TRUE, empty = FALSE;
@@ -496,7 +495,7 @@ void KbUrlBuild(URL_PARTS *parts, DWORD flags, URL_TEXT *out)
     }
 }
 
-/* backslashes after "file://", where wininet keeps a dos path. */
+/* wininet keeps a dos path with backslashes after "file://". */
 static void wininet_slashes(LPWSTR url)
 {
     if (!url || wcslen(url) <= 7)
@@ -506,8 +505,8 @@ static void wininet_slashes(LPWSTR url)
             *p = L'\\';
 }
 
-/* a dos path from a file url's parts: an optional "//server", the path with backslashes, then
-   unescaped unless the url had four slashes or URL_DONT_UNESCAPE asks otherwise. */
+/* an optional "//server", then the path with backslashes, unescaped unless the url had four
+   slashes or URL_DONT_UNESCAPE is set. */
 static HRESULT build_dos_path(URL_PARTS *parts, URL_TEXT *out, DWORD flags, BOOL wininet)
 {
     if (parts->count && is_drive(parts->path[0].text))
@@ -544,7 +543,7 @@ static HRESULT build_dos_path(URL_PARTS *parts, URL_TEXT *out, DWORD flags, BOOL
 
 /* ------------------------------------------------------------------ escaping */
 
-/* one character, how UrlEscape and the path escaping write it. */
+/* shared by UrlEscape and path escaping. */
 static void escape_char(URL_TEXT *out, LPCWSTR *at, DWORD flags)
 {
     static const WCHAR hex[] = L"0123456789ABCDEF";
@@ -584,7 +583,7 @@ static void escape_string(URL_TEXT *out, LPCWSTR s, DWORD flags)
         escape_char(out, &s, flags);
 }
 
-/* the live segments of parts escaped into a buffer the parts then point at. */
+/* escapes the live segments into store and points the parts at it. */
 static BOOL escape_segments(URL_PARTS *parts, DWORD flags, URL_TEXT *store)
 {
     URL_TEXT pieces[1];
@@ -787,8 +786,8 @@ static void clear_parts(URL_PARTS *parts)
     memset(parts, 0, sizeof(*parts));
 }
 
-/* the path of the result: a rooted relative path replaces the base's, below its drive when the
-   base has one; otherwise it goes below the base's folder, the base's last segment dropped. */
+/* a rooted relative path replaces the base's, below its drive if it has one. otherwise it goes in
+   the base's folder, dropping the base's last segment. */
 static void blend_path(URL_PARTS *rel, URL_PARTS *base, URL_PARTS *result)
 {
     if (rel->flags & PART_ROOTED) {
@@ -837,8 +836,8 @@ static void blend_path(URL_PARTS *rel, URL_PARTS *base, URL_PARTS *result)
         clear_parts(base);
 }
 
-/* the parts of a relative url resolved against a base's: what the relative one lacks comes from
-   the base, and a part that differs from the base's stops the base contributing the rest. */
+/* what the relative url lacks comes from the base, until a part differs from the base's: from
+   there on the base contributes nothing. */
 static void blend(URL_PARTS *rel, URL_PARTS *base, URL_PARTS *result)
 {
     memset(result, 0, sizeof(*result));

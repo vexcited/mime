@@ -1,12 +1,10 @@
 /*
- * Blt, BltFast and BltBatch, as windows checks and runs them. windows
- * picks for each blt between the display driver and its emulation layer
- * by the caps each has for the memory the surfaces are in; mime's
- * surfaces are all in memory, but the choice decides which features a blt
- * may use and which errors it returns, so it is made the same way: the
- * "hardware" caps are those of a display driver of the windows display
- * driver model, the emulation's are windows' own. the pixels are then
- * moved by blit.c. see docs/ddraw.md.
+ * Blt, BltFast and BltBatch, checked and run as on Windows. each blt picks
+ * between the display driver and the emulation layer by the caps each has
+ * for the surfaces' memory. mime's surfaces are all in memory, but the choice
+ * decides which features a blt may use and which errors it returns, so it is
+ * made the same way, with driver caps of a WDDM display driver. blit.c moves
+ * the pixels.
  */
 #include "ddraw_private.h"
 #include "blit.h"
@@ -20,13 +18,13 @@ typedef struct BLTCAPS {
 
 #define ROP_BIT(index) [(index) / 32] = 1u << ((index) % 32)
 
-/* windows' emulation: srcblt keys only, every stretch and mirror, three rops; the same between all memories. */
+/* the emulation layer: srcblt keys only, every stretch and mirror, three rops, the same for all memory. */
 static const BLTCAPS HEL = {0xF4C08241, DDCKEYCAPS_SRCBLT, 0x3FCE3, {[0] = 1, [6] = 1u << 12, [7] = 1u << 31}};
 
 /*
- * a display driver of the windows display driver model: keys, stretches,
- * mirrors and srccopy between surfaces in video memory, plain copies
- * between system and video memory, nothing between system memory ones.
+ * a WDDM display driver: keys, stretches, mirrors and srccopy between video
+ * memory surfaces, plain copies between system and video memory, nothing
+ * between system memory surfaces.
  */
 static const BLTCAPS HW = {0x95D207C1, DDCKEYCAPS_SRCBLT | DDCKEYCAPS_DESTBLT, 0x154E0, {[6] = 1u << 12}};
 static const BLTCAPS HW_SYSMEM = {DDCAPS_BLT, 0, 0, {[6] = 1u << 12}};
@@ -34,7 +32,7 @@ static const BLTCAPS HW_NONE = {};
 
 static_assert((0xCC / 32) == 6 && (0xCC % 32) == 12 && (0xFF / 32) == 7);
 
-/* the choice between the two, made cap by cap as windows' checks go. */
+/* driver or emulation, chosen cap by cap. */
 typedef struct CHOICE {
     const BLTCAPS *hw, *hel;
     BOOL force_hw, force_hel;
@@ -47,7 +45,7 @@ static DWORD field(const BLTCAPS *c, int which)
     return which == CAPS ? c->caps : which == CKEY ? c->ckey : c->fx;
 }
 
-/* windows' cap test: what both have is free, else the first that has it is forced. */
+/* a cap both have leaves the choice free, otherwise the first side that has it is forced. */
 static BOOL cap_test(CHOICE *ch, int which, DWORD bit, BOOL use_both)
 {
     BOOL hw = (field(ch->hw, which) & bit) == bit, hel = (field(ch->hel, which) & bit) == bit;
@@ -94,7 +92,6 @@ static BOOL is_fourcc(const DDSURF *s)
     return (s->format.pf.dwFlags & DDPF_FOURCC) != 0;
 }
 
-/* windows' initBltCaps and the forcing that follows it. */
 static void choose(CHOICE *ch, const DDSURF *dst, const DDSURF *src)
 {
     memset(ch, 0, sizeof(*ch));
@@ -136,7 +133,7 @@ static BOOL same_format(const DDSURF *a, const DDSURF *b)
     return TRUE;
 }
 
-/* the destination formats windows' emulation draws on. */
+/* destination formats the emulation layer draws on. */
 static BOOL hel_format(const DDSURF *s)
 {
     DWORD flags = s->format.pf.dwFlags;
@@ -174,15 +171,15 @@ static BYTE *at(DDSURF *s, LONG x, LONG y)
     return s->memory + (SSIZE_T)y * s->desc.lPitch + DdSurfBytes(s, x);
 }
 
-/* the work of one blt, rectangles already clipped. */
+/* one blt, rectangles already clipped. */
 typedef struct BLTJOB {
     DDSURF *dst, *src;
-    DWORD op;          /* DDBLT_ROP, DDBLT_COLORFILL or DDBLT_DEPTHFILL */
+    DWORD op;          /* DDBLT_ROP, DDBLT_COLORFILL or DDBLT_DEPTHFILL. */
     DWORD fill;
     BOOL mirror_x, mirror_y;
     BOOL src_key, dst_key;
     DWORD src_low, dst_low;
-    BOOL convert;      /* formats differ: the driver path converts */
+    BOOL convert;      /* formats differ, so the driver path converts. */
 } BLTJOB;
 
 static void run_rect(const BLTJOB *j, const RECT *d, const RECT *s)
@@ -220,7 +217,7 @@ static void run_rect(const BLTJOB *j, const RECT *d, const RECT *s)
     DdBlit(&b);
 }
 
-/* windows' XformRect: a clipped part of the destination and the part of the source it takes. */
+/* maps a clipped part of the destination to the part of the source it takes. */
 static void xform(const RECT *src, const RECT *dst, const RECT *clip, RECT *out, BOOL mirror_x, BOOL mirror_y)
 {
     LONG sw = src->right - src->left, sh = src->bottom - src->top;
@@ -266,7 +263,7 @@ static BOOL rect_inside(const RECT *r, const DDSURF *s)
     return r->left >= 0 && r->top >= 0 && r->right <= (LONG)s->desc.dwWidth && r->bottom <= (LONG)s->desc.dwHeight;
 }
 
-/* windows' step 15: keys become overrides, from the surfaces that hold them. */
+/* keys of the surfaces that hold them become overrides. */
 static HRESULT keys(DWORD *flags, const DDBLTFX *fx, DDSURF *dst, DDSURF *src, DWORD src_version, CHOICE *ch,
                     BLTJOB *job)
 {
@@ -306,7 +303,7 @@ static HRESULT keys(DWORD *flags, const DDBLTFX *fx, DDSURF *dst, DDSURF *src, D
             return DDERR_INVALIDPARAMS;
         if (!cap_test(ch, CKEY, DDCKEYCAPS_DESTBLT, TRUE))
             return DDERR_NOCOLORKEYHW;
-        /* a key asked through the first two surface interfaces comes from the source, as in windows. */
+        /* through the first two surface interfaces, the key comes from the source, as on Windows. */
         DDSURF *holder = src_version <= DDV2 ? src : dst;
         if (!holder)
             return DDERR_INVALIDPARAMS;
@@ -317,7 +314,7 @@ static HRESULT keys(DWORD *flags, const DDBLTFX *fx, DDSURF *dst, DDSURF *src, D
     return DD_OK;
 }
 
-/* which rops read the source and which the pattern, from the truth table index. */
+/* whether a rop reads the source or the pattern, from its truth table index. */
 static BOOL rop_uses_source(BYTE index)
 {
     return ((index >> 2) & 0x33) != (index & 0x33);
@@ -458,7 +455,7 @@ HRESULT DdBlt(DDSURF *dst, const RECT *dst_in, DDSURF *src, DWORD src_version, c
     }
     if (job.op != DDBLT_ROP)
         job.src = nullptr;
-    /* rectangles: the destination is cut by a clipper, the source never. */
+    /* a clipper cuts the destination rectangle, never the source. */
     RECT d = dst_in ? *dst_in : (RECT){0, 0, (LONG)dst->desc.dwWidth, (LONG)dst->desc.dwHeight};
     if (d.bottom - d.top <= 0 || d.right - d.left <= 0)
         return DDERR_INVALIDRECT;
@@ -475,7 +472,7 @@ HRESULT DdBlt(DDSURF *dst, const RECT *dst_in, DDSURF *src, DWORD src_version, c
     }
     if (ch.force_hw && ch.force_hel)
         return DDERR_NOBLTHW;
-    /* the pixels: emulation needs the same format, a driver converts. */
+    /* emulation needs matching formats, a driver converts. */
     if (job.src && !same_format(dst, job.src)) {
         if (ch.force_hel || !DdCanConvert(job.src, dst))
             return DDERR_UNSUPPORTED;
@@ -592,7 +589,7 @@ HRESULT DdBltFast(DDSURF *dst, DWORD x, DWORD y, DDSURF *src, const RECT *src_in
     return DD_OK;
 }
 
-/* windows checks the entries and blts nothing. */
+/* like Windows, checks the entries and blts nothing. */
 HRESULT DdBltBatch(DDSURF *dst, const DDBLTBATCH *batch, DWORD count)
 {
     if (dst->lost)

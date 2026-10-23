@@ -1,6 +1,4 @@
-/*
- * the metadata of the image formats, for the codecs.
- */
+/* codec metadata interfaces. */
 #ifndef WIC_META_CODECS_H
 #define WIC_META_CODECS_H
 
@@ -10,11 +8,11 @@
 #include <pngio/pngio.h>
 #include <tiff/tiff.h>
 
-/* ifd blocks. */
+/* IFD blocks. */
 HRESULT WicIfdFromTiffIndex(const GUID *format, const MimeTiff *tiff, UINT index, IWICMetadataReader **out);
 HRESULT WicIfdFromParsed(const GUID *format, const MimeTiffIfd *ifd, IWICMetadataReader **out);
 
-/* the entries of an ifd block for the encoder of tiff. */
+/* IFD entries for TIFF encoding. */
 typedef struct WicIfdSet WicIfdSet;
 HRESULT WicIfdSetCreate(IWICMetadataReader *ifd, WicIfdSet **set);
 void WicIfdSetFree(WicIfdSet *set);
@@ -22,7 +20,7 @@ const MimeTiffWEntry *WicIfdSetEntries(const WicIfdSet *set, UINT *count);
 const MimeTiffWIfd *WicIfdSetExif(const WicIfdSet *set);
 const MimeTiffWIfd *WicIfdSetGps(const WicIfdSet *set);
 
-/* xmp. the packet of a jpeg starts after its identifier, the writer can add it. */
+/* XMP packets exclude the JPEG identifier; the writer can prepend it. */
 HRESULT WicXmpFromPacket(const BYTE *data, SIZE_T size, IWICMetadataReader **out);
 HRESULT WicXmpToPacket(IWICMetadataReader *xmp, BOOL jpeg_header, BYTE **out, SIZE_T *size);
 

@@ -1,10 +1,10 @@
 /*
- * spooler functions added since windows vista: driver packages, core drivers,
- * named job properties and print workflow helpers.
+ * spooler functions added since Windows Vista: driver packages, core drivers, named job properties and print
+ * workflows.
  */
 #include "winspool_private.h"
 
-/* the environment check of the package functions, as an hresult. */
+/* package functions report environment errors as HRESULTs. */
 static HRESULT SpoolEnvironmentResultW(LPCWSTR environment)
 {
     return SpoolEnvironmentDirectory(environment) ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_ENVIRONMENT);
@@ -22,7 +22,6 @@ static HRESULT SpoolEnvironmentResultA(LPCSTR environment)
     return hr;
 }
 
-/* ------------------------------------------------------------------ core drivers */
 
 DECLSPEC_EXPORT HRESULT WINAPI CorePrinterDriverInstalledW(LPCWSTR server, LPCWSTR environment, GUID driver,
                                                                  FILETIME date, DWORDLONG version, BOOL *installed)
@@ -69,7 +68,6 @@ DECLSPEC_EXPORT HRESULT WINAPI GetCorePrinterDriversA(LPCSTR server, LPCSTR envi
     return SUCCEEDED(hr) ? SpoolGetCoreDrivers(keys, count, drivers) : hr;
 }
 
-/* ------------------------------------------------------------------ driver packages */
 
 /* the arguments are checked before the environment. */
 static BOOL SpoolPackagePathArgs(const void *package, const void *cab, DWORD cab_size, LPDWORD required)
@@ -134,7 +132,6 @@ DECLSPEC_EXPORT HRESULT WINAPI DeletePrinterDriverPackageA(LPCSTR server, LPCSTR
     return inf ? HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) : E_INVALIDARG;
 }
 
-/* ------------------------------------------------------------------ named job properties */
 
 /* jobs only exist on printers, so these all fail on the handle. */
 DECLSPEC_EXPORT DWORD WINAPI GetJobNamedPropertyValue(HANDLE printer, DWORD job, PCWSTR name, PVOID value)
@@ -162,7 +159,7 @@ DECLSPEC_EXPORT void WINAPI FreePrintNamedPropertyArray(DWORD count, PVOID *prop
 {
 }
 
-/* a PrintPropertyValue: the type, then a union whose string or buffer the spooler allocated. */
+/* PrintPropertyValue contains a type and a union with spooler-owned strings or buffers. */
 typedef struct SpoolPropertyValue {
     DWORD type;
     union {
@@ -190,7 +187,6 @@ DECLSPEC_EXPORT void WINAPI FreePrintPropertyValue(SpoolPropertyValue *value)
     }
 }
 
-/* ------------------------------------------------------------------ print workflow */
 
 DECLSPEC_EXPORT HRESULT WINAPI GetPrintOutputInfo(HWND window, PCWSTR printer, HANDLE *file, PWSTR *port)
 {
@@ -220,8 +216,7 @@ DECLSPEC_EXPORT DWORD WINAPI PrinterMessageBoxA(HANDLE printer, DWORD error, HWN
 }
 
 /*
- * the dialog that asks where a document that goes to a file port is saved: the name chosen, a buffer to
- * free with GlobalFree, NULL when the user cancelled, and (LPWSTR)-1 for a printer whose port is no file.
+ * returns a filename to free with GlobalFree, NULL on cancellation, or (LPWSTR)-1 for a printer without a file port.
  */
 DECLSPEC_EXPORT LPWSTR WINAPI StartDocDlgW(HANDLE printer, DOC_INFO_1W *info)
 {

@@ -1,14 +1,11 @@
-/*
- * the PDF writer of the print processor.
- */
 #ifndef MIME_WINSPOOL_PDF_H
 #define MIME_WINSPOOL_PDF_H
 
 typedef struct PdfWriter PdfWriter;
 
-/* starts a document in a file that is open for writing; the file stays the caller's to close. */
+/* starts a document on an open file; the caller remains responsible for closing the file. */
 PdfWriter *PdfCreate(HANDLE file, LPCWSTR title);
-/* adds a page of 32 bit pixels, a row after the other, top first; gray writes a gray scale page. */
+/* adds top-down rows of 32-bit pixels; gray requests grayscale output. */
 BOOL PdfAddImagePage(PdfWriter *pdf, const BYTE *bgra, int width, int height, int stride, int xdpi, int ydpi,
                      BOOL gray);
 UINT PdfPageCount(const PdfWriter *pdf);

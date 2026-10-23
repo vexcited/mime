@@ -1,6 +1,6 @@
 /*
- * user specific registry keys: one handle over the same path under HKEY_CURRENT_USER and
- * HKEY_LOCAL_MACHINE, read from the user's side first and written where the flags say.
+ * user specific registry keys: one handle over the same path under HKEY_CURRENT_USER and HKEY_LOCAL_MACHINE, read
+ * from the user's side first and written where the flags say.
  */
 #include "shlwapi_kb.h"
 
@@ -34,7 +34,7 @@ static LONG join_path(LPWSTR out, LPCWSTR base, LPCWSTR path)
     return ERROR_SUCCESS;
 }
 
-/* the side of a key, opened or created on demand. */
+/* opens or creates one side of the key on demand. */
 static HKEY side(US_KEY *k, BOOL user, BOOL create)
 {
     HKEY *slot = user ? &k->user : &k->machine;
@@ -176,7 +176,7 @@ LWSTDAPI LONG WINAPI SHRegQueryUSValueW(HUSKEY key, LPCWSTR value, DWORD *type, 
     return error;
 }
 
-/* a value of the ansi form: names widened, strings narrowed back into the caller's buffer. */
+/* for the ansi forms: narrows string data back into the caller's buffer. */
 static LONG narrow_value(LONG error, DWORD type, void *data, DWORD *size, const void *wide, DWORD wide_size)
 {
     if (error)
@@ -295,7 +295,7 @@ LWSTDAPI LONG WINAPI SHRegWriteUSValueA(HUSKEY key, LPCSTR value, DWORD type, co
     return error;
 }
 
-/* the sides a delete or an enumeration works on: the default is the user's when it is open. */
+/* the sides a delete or enumeration uses, by default the user's when it is open. */
 static HKEY pick(US_KEY *k, DWORD flags, BOOL *both)
 {
     *both = FALSE;
@@ -338,7 +338,7 @@ LWSTDAPI LONG WINAPI SHRegDeleteUSValueA(HUSKEY key, LPCSTR value, SHREGDEL_FLAG
     return error;
 }
 
-/* a subkey removed only when it has neither subkeys nor values. */
+/* only removes a subkey that has neither subkeys nor values. */
 static LONG delete_empty(HKEY h, LPCWSTR subkey)
 {
     if (!h)
@@ -384,7 +384,7 @@ LWSTDAPI LONG WINAPI SHRegDeleteEmptyUSKeyA(HUSKEY key, LPCSTR subkey, SHREGDEL_
     return error;
 }
 
-/* enumerations take one side; both at once is not something windows does either. */
+/* enumerations use one side, windows never does both at once either. */
 static HKEY enum_side(HUSKEY key, SHREGENUM_FLAGS flags, LONG *error)
 {
     US_KEY *k = us_key(key);
@@ -454,7 +454,7 @@ LWSTDAPI LONG WINAPI SHRegQueryInfoUSKeyA(HUSKEY key, DWORD *subkeys, DWORD *sub
              : error;
 }
 
-/* open, query and close in one call, the fallback also covering a key that is not there. */
+/* the fallback also covers a missing key. */
 LWSTDAPI LONG WINAPI SHRegGetUSValueW(LPCWSTR subkey, LPCWSTR value, DWORD *type, void *data, DWORD *size,
                                       BOOL ignore_hkcu, void *fallback, DWORD fallback_size)
 {
@@ -527,8 +527,8 @@ LWSTDAPI LONG WINAPI SHRegSetUSValueA(LPCSTR subkey, LPCSTR value, DWORD type, c
     return error;
 }
 
-/* "yes", "true" and "1" or a nonzero number are TRUE, "no", "false" and "0" FALSE, anything else
-   the fallback. */
+/* "yes", "true", "1" or a nonzero number are TRUE, "no", "false" and "0" are FALSE, anything else
+   gives the fallback. */
 LWSTDAPI BOOL WINAPI SHRegGetBoolUSValueW(LPCWSTR subkey, LPCWSTR value, BOOL ignore_hkcu, BOOL fallback)
 {
     BYTE data[64];

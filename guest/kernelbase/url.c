@@ -1,7 +1,6 @@
 /*
- * urls: the newer engine UrlCanonicalize and UrlCombine run first, which feeds a base and a
- * relative url through one output string that escapes, unescapes and resolves dots as it goes,
- * then the public url functions over it and over the older engine in urlparts.c.
+ * urls. UrlCanonicalize and UrlCombine try the newer engine first: it streams a base and a relative url into one output
+ * that escapes, unescapes and resolves dots as it goes. the older engine lives in urlparts.c.
  */
 #include "url_private.h"
 
@@ -96,7 +95,7 @@ static BOOL is_letter(WCHAR c)
     return KbIsDriveLetter(c);
 }
 
-/* tabs, line feeds and carriage returns vanish from urls wherever they are. */
+/* tabs, line feeds and carriage returns are dropped anywhere in a url. */
 static BOOL insignificant(WCHAR c)
 {
     return c == L'\t' || c == L'\n' || c == L'\r';
@@ -109,7 +108,7 @@ static LPCWSTR next_char(LPCWSTR p)
     return p;
 }
 
-/* ------------------------------------------------------------------ the output of the newer engine */
+/* ------------------------------------------------------------------ newer engine output */
 
 static const WCHAR empty_url[] = L"";
 
@@ -119,13 +118,13 @@ typedef struct {
     DWORD pos;                  /* the length plus one */
     URL_SCHEME scheme;
     DWORD scheme_flags;
-    DWORD mark;                 /* a position ".." stops at and erasing goes back to */
+    DWORD mark;                 /* ".." and erasing never go back past this */
     DWORD white;                /* where trailing white space started */
     DWORD query, fragment;      /* positions after "?" and of "#" */
     DWORD original_flags, flags;
     int mode;                   /* 1 unescapes, 2 escapes what is unsafe, 3 escapes spaces */
     BOOL slashes;               /* backslashes written as slashes */
-    BOOL percent;               /* inside an escape being undone */
+    BOOL percent;               /* inside a percent escape being decoded */
     WCHAR first_hex;
     BOOL failed;
 } OUT_URL;
@@ -181,8 +180,8 @@ static void put_escape(OUT_URL *o, WCHAR c)
     put(o, hex[c & 15]);
 }
 
-/* one character through the mode: undone escapes keep a decoded backslash a backslash, escaping
-   leaves slashes alone and escapes what is neither alphanumeric nor safe below 0x100. */
+/* when unescaping, a decoded backslash stays a backslash. escaping leaves slashes alone and escapes
+   anything below 0x100 that is neither alphanumeric nor safe. */
 static void accept(OUT_URL *o, WCHAR c)
 {
     track_white(o, c);
@@ -242,8 +241,8 @@ static void accept(OUT_URL *o, WCHAR c)
     base_accept(o, c);
 }
 
-/* the mode for what comes next: nothing in an opaque url escaping spaces, nothing in a query or
-   fragment kept as it is or escaped as unsafe. */
+/* no munging in an opaque url escaping only spaces, nor in a query or fragment that is kept as is
+   or escaped as unsafe. */
 static void enable_munging(OUT_URL *o)
 {
     o->mode = 0;
@@ -275,7 +274,6 @@ static void erase_marked(OUT_URL *o)
     }
 }
 
-/* the text since the mark equals s. */
 static BOOL marked_equals(OUT_URL *o, LPCWSTR s)
 {
     if (!o->mark)
@@ -284,7 +282,7 @@ static BOOL marked_equals(OUT_URL *o, LPCWSTR s)
     return wcslen(s) == length && !wcsncmp(o->text + o->mark - 1, s, length);
 }
 
-/* back to the previous separator, never past the mark; force goes even from a final one. */
+/* steps back to the previous separator, never past the mark. force also steps back from a trailing one. */
 static void contract(OUT_URL *o, BOOL force)
 {
     int at = (int)o->pos - 2, floor = (o->mark ? (int)o->mark : 1) - 1;
@@ -323,7 +321,7 @@ static BOOL detect_path(IN_URL *u)
     return c && c != L'#' && c != L'?';
 }
 
-/* a leading separator, consumed; an opaque url counts as one without. */
+/* consumes a leading separator. an opaque url counts as absolute without one. */
 static BOOL detect_absolute_path(IN_URL *u)
 {
     if (u->flags & SCHEME_OPAQUE)
@@ -335,8 +333,8 @@ static BOOL detect_absolute_path(IN_URL *u)
     return TRUE;
 }
 
-/* 1 for ".", 2 for "..", either ending the path or followed by a separator, a query or a
-   fragment; a backslash counts only in mk urls. */
+/* 1 for ".", 2 for "..", when followed by the end, a slash, a query or a fragment. a backslash
+   also ends them in mk urls. */
 static int detect_dots(IN_URL *u)
 {
     LPCWSTR p = next_char(u->cur);
@@ -397,7 +395,7 @@ static LPCWSTR feed_until(LPCWSTR p, OUT_URL *o, WCHAR a, WCHAR b)
     }
 }
 
-/* ":port", dropped when it is the scheme's default. */
+/* drops the port when it is the scheme's default. */
 static LPCWSTR feed_port(IN_URL *u, LPCWSTR p, OUT_URL *o)
 {
     o->mark = o->pos;
@@ -426,7 +424,7 @@ static LPCWSTR feed_port(IN_URL *u, LPCWSTR p, OUT_URL *o)
     return p;
 }
 
-/* up to two leading separators as they are. */
+/* copies up to two leading separators as is. */
 static LPCWSTR feed_slashes(LPCWSTR p, OUT_URL *o)
 {
     p = next_char(p);
@@ -441,7 +439,7 @@ static LPCWSTR feed_slashes(LPCWSTR p, OUT_URL *o)
     return p;
 }
 
-/* what follows a server: its separator, or "/" before a query or at the end of a hierarchical url. */
+/* writes the server's separator, or "/" before a query or at the end of a hierarchical url. */
 static void feed_server_end(IN_URL *u, LPCWSTR p, OUT_URL *o, BOOL slash_at_end)
 {
     u->cur = p;
@@ -459,7 +457,7 @@ static void feed_server_end(IN_URL *u, LPCWSTR p, OUT_URL *o, BOOL slash_at_end)
         accept(o, L'/');
 }
 
-/* "//", the host in lower case after any user name and password kept as they are, the port. */
+/* lower cases the host but keeps any user name and password as is. */
 static void feed_http_server(IN_URL *u, OUT_URL *o)
 {
     LPCWSTR p = feed_slashes(u->cur, o);
@@ -517,7 +515,7 @@ static void feed_ftp_server(IN_URL *u, OUT_URL *o)
     feed_server_end(u, p, o, TRUE);
 }
 
-/* a server scheme lower cases its host and drops a default port; any other keeps its text to the
+/* a server scheme lower cases its host and drops a default port, any other keeps its text up to the
    first slash. */
 static void feed_default_server(IN_URL *u, OUT_URL *o)
 {
@@ -555,7 +553,7 @@ static void feed_mk_server(IN_URL *u, OUT_URL *o)
     accept(o, L'/');
 }
 
-/* by the number of slashes: a server after two, five or six, none after one, three or seven. */
+/* by slash count: a server after two, five or six, none after one, three or seven. */
 static void feed_file_server(IN_URL *u, OUT_URL *o)
 {
     LPCWSTR p = next_char(u->cur);
@@ -656,8 +654,8 @@ static BOOL output_ends_with_extension(OUT_URL *o)
     return FALSE;
 }
 
-/* the path segment by segment: dots resolved at the start of each when simplifying, a file url
-   keeping "?" and a "#" not after a document extension in its path. */
+/* resolves dots at the start of each segment when simplifying. a file url keeps "?" in its path,
+   and "#" too unless it follows a document extension. */
 static void feed_path(IN_URL *u, OUT_URL *o, BOOL set_mark)
 {
     LPCWSTR p = next_char(u->cur);
@@ -737,7 +735,7 @@ static void feed_path(IN_URL *u, OUT_URL *o, BOOL set_mark)
     }
 }
 
-/* "?" and what follows, replacing a query the base gave, or "#" and what follows. */
+/* a relative query replaces the base's. */
 static void feed_query_fragment(IN_URL *u, OUT_URL *o)
 {
     LPCWSTR p = next_char(u->cur);
@@ -785,8 +783,8 @@ static void feed_query_fragment(IN_URL *u, OUT_URL *o)
     o->mark = 0;
 }
 
-/* a url's scheme when it has one: a drive or "\\" means file. with known set the relative url had
-   one, and the base only keeps going past its own when it is the same. */
+/* a drive or "\\" means file. known means the relative url had a scheme, and the base only
+   continues past its own when it is the same. */
 static BOOL detect_and_feed_scheme(IN_URL *u, OUT_URL *o, BOOL known)
 {
     LPCWSTR p = next_char(u->cur);
@@ -845,7 +843,7 @@ static BOOL detect_and_feed_scheme(IN_URL *u, OUT_URL *o, BOOL known)
     return TRUE;
 }
 
-/* the base and relative urls blended into o; E_FAIL leaves them to the older engine. */
+/* E_FAIL leaves the urls to the older engine. */
 static HRESULT blend_urls(IN_URL *base, IN_URL *rel, OUT_URL *o, DWORD flags)
 {
     BOOL rel_scheme = FALSE, base_scheme = FALSE, server_from_base = FALSE, server_from_rel = FALSE;
@@ -1074,7 +1072,7 @@ static LPCWSTR skip_blanks(LPCWSTR s)
     return s;
 }
 
-/* the newer engine first, the older one when it gives up, sized as FormUrlCombineResult sizes. */
+/* the newer engine first, the older one when it gives up, sized like FormUrlCombineResult. */
 static HRESULT combine_result(LPCWSTR base, LPCWSTR relative, LPWSTR out, DWORD *size, DWORD flags)
 {
     if ((flags & (URL_ESCAPE_UNSAFE | URL_ESCAPE_SPACES_ONLY)) == (URL_ESCAPE_UNSAFE | URL_ESCAPE_SPACES_ONLY))
@@ -1147,7 +1145,7 @@ LWSTDAPI HRESULT WINAPI UrlCombineW(LPCWSTR base, LPCWSTR relative, LPWSTR out, 
     return combine_result(base, relative, out, size, flags);
 }
 
-/* the ansi forms run the wide ones and copy the result back in the ansi code page. */
+/* the ansi forms call the wide ones and convert the result with the ansi code page. */
 static HRESULT ansi_result(HRESULT hr, LPCWSTR wide, LPSTR out, DWORD *size)
 {
     if (FAILED(hr))
@@ -1238,8 +1236,7 @@ HRESULT KbUrlUnescapeInPlace(LPWSTR url, DWORD flags)
     return S_OK;
 }
 
-/* escapes undone: with URL_UNESCAPE_INPLACE over url itself, nothing checked; "%00" is
-   E_INVALIDARG. */
+/* URL_UNESCAPE_INPLACE works on url itself with no size checks. "%00" is E_INVALIDARG. */
 LWSTDAPI HRESULT WINAPI UrlUnescapeW(LPWSTR url, LPWSTR out, DWORD *size, DWORD flags)
 {
     if (flags & URL_UNESCAPE_INPLACE)
@@ -1346,7 +1343,7 @@ LWSTDAPI HRESULT WINAPI UrlEscapeA(LPCSTR url, LPSTR out, DWORD *size, DWORD fla
 
 /* ------------------------------------------------------------------ parts */
 
-/* "user:password@host:port" broken into its pieces, a bracketed host keeping its colons. */
+/* splits "user:password@host:port". a bracketed host keeps its colons. */
 static void break_logon(LPWSTR server, LPWSTR *user, LPWSTR *password, LPWSTR *host, LPWSTR *port)
 {
     *user = *password = *port = nullptr;
@@ -1463,7 +1460,7 @@ LWSTDAPI HRESULT WINAPI UrlGetPartA(LPCSTR url, LPSTR out, DWORD *size, DWORD pa
 
 /* ------------------------------------------------------------------ what a url is */
 
-/* a guessed scheme for "www.", "ftp.", "mosaic" and "home" urls without one. */
+/* guesses a scheme for "www.", "ftp.", "mosaic" and "home" urls that lack one. */
 static BOOL guess_scheme(LPCWSTR url, URL_TEXT *out)
 {
     static const struct {
@@ -1575,7 +1572,7 @@ LWSTDAPI BOOL WINAPI PathIsURLA(LPCSTR path)
     return result;
 }
 
-/* the scheme and what follows it; a file url's suffix skips "//" and a third slash. */
+/* a file url's suffix skips "//" and a third slash. */
 LWSTDAPI HRESULT WINAPI ParseURLW(LPCWSTR url, PARSEDURLW *parsed)
 {
     if (!url || !parsed || parsed->cbSize != sizeof(PARSEDURLW))
@@ -1629,7 +1626,7 @@ LWSTDAPI HRESULT WINAPI ParseURLA(LPCSTR url, PARSEDURLA *parsed)
     return S_OK;
 }
 
-/* the "#" of a hierarchical url, for a file one only after a document extension. */
+/* in a file url, "#" only counts after a document extension. */
 LWSTDAPI LPCWSTR WINAPI UrlGetLocationW(LPCWSTR url)
 {
     if (!url)
@@ -1729,7 +1726,7 @@ LWSTDAPI HRESULT WINAPI PathCreateFromUrlA(LPCSTR url, LPSTR path, DWORD *size, 
     return hr;
 }
 
-/* a LocalAlloc copy of the path, the caller frees it with LocalFree. */
+/* the caller frees the path with LocalFree. */
 LWSTDAPI HRESULT WINAPI PathCreateFromUrlAlloc(LPCWSTR url, LPWSTR *path, DWORD flags)
 {
     if (!url || !path) {
@@ -1751,7 +1748,7 @@ LWSTDAPI HRESULT WINAPI PathCreateFromUrlAlloc(LPCWSTR url, LPWSTR *path, DWORD 
 
 /* ------------------------------------------------------------------ applying schemes */
 
-/* S_OK with the url given a scheme, S_FALSE when it keeps the one it has or none applies. */
+/* S_FALSE when the url keeps its scheme or none applies. */
 static HRESULT apply_scheme(LPCWSTR url, URL_TEXT *out, DWORD flags)
 {
     if (!(flags & URL_APPLY_FORCEAPPLY) && KbUrlSchemeLength(url))
@@ -1803,7 +1800,7 @@ LWSTDAPI HRESULT WINAPI UrlApplySchemeA(LPCSTR url, LPSTR out, DWORD *size, DWOR
     return hr;
 }
 
-/* the insertions, deletions and substitutions turning one scheme into another. */
+/* Levenshtein distance. */
 static SIZE_T edit_distance(LPCWSTR a, SIZE_T a_length, LPCWSTR b)
 {
     SIZE_T b_length = wcslen(b), row[40];
@@ -1828,8 +1825,8 @@ static SIZE_T edit_distance(LPCWSTR a, SIZE_T a_length, LPCWSTR b)
     return row[b_length];
 }
 
-/* a known or registered scheme, else the closest known one, followed by "//" for the schemes
-   with servers; S_FALSE when nothing is close enough. */
+/* keeps a known or registered scheme, else picks the closest known one, adding "//" for server
+   schemes. S_FALSE when nothing is close enough. */
 LWSTDAPI HRESULT WINAPI UrlFixupW(LPCWSTR url, LPWSTR out, DWORD size)
 {
     if (!url || !out)
@@ -1864,8 +1861,7 @@ LWSTDAPI HRESULT WINAPI UrlFixupW(LPCWSTR url, LPWSTR out, DWORD size)
         }
     }
     if (!fixed) {
-        /* the known scheme fewest edits away, one edit for up to four letters and two beyond,
-           the table's order breaking ties. */
+        /* allow one edit for up to four letters, two beyond. ties go to the earlier table entry. */
         SIZE_T best = length <= 4 ? 2 : 3;
         for (ULONG i = 0; i < RTL_NUMBER_OF(KbUrlSchemes); i++) {
             if (KbUrlSchemes[i].flags & SCHEME_SECURE)
@@ -1957,7 +1953,7 @@ static void drop_final_slash(LPWSTR s)
         s[length - 1] = 0;
 }
 
-/* both unescaped, a final slash dropped on request, then compared as strings. */
+/* unescapes both, optionally drops a final slash, then compares as strings. */
 LWSTDAPI int WINAPI UrlCompareW(LPCWSTR url1, LPCWSTR url2, BOOL ignore_slash)
 {
     if (!url1 || !url2)
@@ -1989,7 +1985,7 @@ LWSTDAPI int WINAPI UrlCompareA(LPCSTR url1, LPCSTR url2, BOOL ignore_slash)
     return result;
 }
 
-/* the AcceptLanguage of internet explorer's settings, else the user's locale name. */
+/* internet explorer's AcceptLanguage setting, else the user's locale name. */
 LWSTDAPI HRESULT WINAPI GetAcceptLanguagesW(LPWSTR languages, DWORD *size)
 {
     if (!size)
@@ -2046,7 +2042,7 @@ LWSTDAPI HRESULT WINAPI GetAcceptLanguagesA(LPSTR languages, DWORD *size)
     return hr;
 }
 
-/* internet explorer's enhanced security configuration, never on unless the user set IEHarden. */
+/* internet explorer enhanced security, off unless the user set IEHarden. */
 LWSTDAPI BOOL WINAPI IsInternetESCEnabled(void)
 {
     DWORD value = 0, size = sizeof(value);

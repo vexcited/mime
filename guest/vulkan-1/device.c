@@ -1,13 +1,13 @@
 /*
- * devices and what hangs from them that the wire describes by hand:
- * queues, memory, command buffers and their streams, submission,
- * synchronization, descriptor sets and query results.
+ * devices and the objects the wire describes by hand: queues, memory, command
+ * buffers and their streams, submission, synchronization, descriptor sets and
+ * query results.
  */
 #include "mvk_guest.h"
 
 /* ------------------------------------------------------------------ guest side maps */
 
-/* a small map from wire ids to guest records, for the objects the guest keeps state about. */
+/* maps wire ids to guest records, for objects the guest keeps state about. */
 typedef struct MapEntry {
     uint64_t id;
     void *value;
@@ -81,7 +81,7 @@ static void *map_get(Map *m, uint64_t id)
     return v;
 }
 
-/* removal keeps the slot, so probe chains stay whole; a later put reuses it. */
+/* removal keeps the slot so probe chains stay whole; a later put reuses it. */
 static void *map_take(Map *m, uint64_t id)
 {
     void *v = nullptr;
@@ -216,7 +216,7 @@ VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice device, const VkDeviceQueu
 /* ------------------------------------------------------------------ memory */
 
 typedef struct Memory {
-    void *base;      /* guest ram the host imported, NULL for memory the guest cannot map */
+    void *base;      /* guest ram the host imported, NULL when the guest cannot map it. */
     VkDeviceSize size;
 } Memory;
 
@@ -236,7 +236,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateMemory(VkDevice device, const VkMemoryA
     ULONG64 pa = 0;
     VkDeviceSize span = 0;
     if (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
-        /* new pages of the kernel's, which it hands over zeroed: d3d12 relies on that for the buffers it makes. */
+        /* fresh kernel pages come zeroed, and d3d12 relies on that for its buffers. */
         span = (info->allocationSize + 0xFFFF) & ~(VkDeviceSize)0xFFFF;
         m->base = mvk_block_alloc((SIZE_T)span, &pa);
         if (!m->base) {
@@ -265,7 +265,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateMemory(VkDevice device, const VkMemoryA
     return VK_SUCCESS;
 }
 
-/* memory the host imported from another process's device: the guest cannot map it. */
+/* imported from another process's device, so the guest cannot map it. */
 VkResult mvk_memory_imported(VkDeviceMemory memory, VkDeviceSize size)
 {
     Memory *m = zalloc(sizeof(*m));
@@ -284,7 +284,7 @@ VKAPI_ATTR void VKAPI_CALL vkFreeMemory(VkDevice device, VkDeviceMemory memory, 
     MvkEncoder *e = mvk_call_begin(MVK_OP_FREE_MEMORY);
     mvk_put_u64(e, (uint64_t)memory);
     mvk_call_end(e);
-    /* the ram goes back once the host freed its import. */
+    /* the ram is released once the host freed its import. */
     if (m && m->base)
         mvk_block_free_after(m->base, mvk_last_serial());
     zfree(m);
@@ -317,7 +317,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkUnmapMemory2(VkDevice device, const VkMemoryUnm
     return VK_SUCCESS;
 }
 
-/* the guest and the host share the same ram: nothing to flush or invalidate between them. */
+/* guest and host share the same ram, so there is nothing to flush or invalidate. */
 VKAPI_ATTR VkResult VKAPI_CALL vkFlushMappedMemoryRanges(VkDevice device, uint32_t count,
                                                          const VkMappedMemoryRange *ranges)
 {
@@ -344,10 +344,10 @@ typedef struct Chunk {
     struct Chunk *next;
     MvkStreamChunk *memory;
     uint64_t pa;
-    uint64_t serial; /* the host read it by this call */
+    uint64_t serial; /* the call the host read it in. */
 } Chunk;
 
-/* free chunks of every device, and chunks waiting for the host to read them. */
+/* free chunks of every device, and chunks the host has yet to read. */
 static SRWLOCK g_chunk_lock = SRWLOCK_INIT;
 static Chunk *g_free_chunks, *g_pending_chunks;
 
@@ -396,7 +396,7 @@ static Chunk *chunk_alloc(void)
 
 typedef struct Stream {
     Chunk *first, *last;
-    uint64_t read_serial; /* the call the host reads the stream in, 0 while still recording */
+    uint64_t read_serial; /* the call the host reads the stream in, 0 while recording. */
 } Stream;
 
 static Stream *stream_of(VkCommandBuffer buffer)
@@ -404,7 +404,7 @@ static Stream *stream_of(VkCommandBuffer buffer)
     return buffer->stream;
 }
 
-/* hands the chunks back, for reuse once the host read them. */
+/* chunks are reused once the host read them. */
 static void stream_release(Stream *s)
 {
     if (!s->first)
@@ -480,7 +480,7 @@ static int cmd_grow(MvkEncoder *e, size_t n)
     return 1;
 }
 
-/* a record that outgrows the room left in the chunk goes on in scratch memory. */
+/* a record that outgrows the chunk continues in scratch memory. */
 static int cmd_spill(MvkEncoder *e, size_t n)
 {
     VkCommandBuffer buffer = e->owner;
@@ -502,7 +502,7 @@ static int cmd_spill(MvkEncoder *e, size_t n)
     return 1;
 }
 
-/* a command is encoded in the stream's last chunk when it has room, without a copy. */
+/* a command that fits in the stream's last chunk is encoded there without a copy. */
 MvkEncoder *mvk_cmd_begin(VkCommandBuffer buffer, uint32_t op)
 {
     if (!buffer || !buffer->recording || !buffer->stream)
@@ -695,7 +695,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkBeginCommandBuffer(VkCommandBuffer buffer, cons
     return VK_SUCCESS;
 }
 
-/* the host records the whole buffer from its stream now. */
+/* the host records the whole buffer from its stream here. */
 VKAPI_ATTR VkResult VKAPI_CALL vkEndCommandBuffer(VkCommandBuffer buffer)
 {
     Stream *s = stream_of(buffer);
@@ -822,7 +822,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyFence(VkDevice device, VkFence fence, const 
     destroy_object(MVK_OP_DESTROY_FENCE, (uint64_t)fence);
 }
 
-/* milliseconds left of a timeout in nanoseconds begun at start, INFINITE for the longest. */
+/* timeout is in nanoseconds; INFINITE for the longest. */
 static ULONG remaining_ms(uint64_t timeout, ULONGLONG start)
 {
     if (timeout == UINT64_MAX)
@@ -832,9 +832,9 @@ static ULONG remaining_ms(uint64_t timeout, ULONGLONG start)
 }
 
 /*
- * the host's waits would hold every call of the process, so the guest
- * asks with timeouts of zero: for fences again after short sleeps, for
- * semaphores after the host's watcher says one reached what it waits for.
+ * a host wait would block every call of the process, so the guest polls with
+ * zero timeouts: fences after short sleeps, semaphores after the host's
+ * watcher reports one reached its value.
  */
 static VkResult wait_fences_now(uint32_t count, const VkFence *fences, VkBool32 all)
 {
@@ -882,9 +882,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkResetFences(VkDevice device, uint32_t count, co
 }
 
 /*
- * timeline semaphores whose values the host keeps in header slots, so
- * reading one asks nothing. a slot is reused once the host ran the
- * destruction of its last semaphore, after which it writes there no more.
+ * the host keeps timeline semaphore values in header slots, so reading one
+ * costs no call. a slot is reused once the host destroyed its last semaphore
+ * and writes there no more.
  */
 typedef struct Mirror {
     uint64_t semaphore;
@@ -952,7 +952,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroySemaphore(VkDevice device, VkSemaphore semap
 
 static VkResult get_semaphore_value(VkDevice device, VkSemaphore semaphore, uint64_t *value);
 
-/* whether mirrored values already show the wait done, which then asks nothing. */
+/* when the mirrored values already satisfy the wait, no call is needed. */
 static BOOL mirrors_reached(VkDevice device, const VkSemaphoreWaitInfo *info)
 {
     BOOL any = (info->flags & VK_SEMAPHORE_WAIT_ANY_BIT) != 0;
@@ -993,7 +993,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkWaitSemaphores(VkDevice device, const VkSemapho
             mvk_put_u64(e, info->pValues[i]);
         }
         mvk_call_end(e);
-        /* asked again at least every 100 ms, should a wake up be lost. */
+        /* poll at least every 100 ms in case a wake up is lost. */
         mvk_wait_events(seen, left < 100 ? left : 100);
     }
 }
@@ -1023,10 +1023,7 @@ static VkResult get_semaphore_value(VkDevice device, VkSemaphore semaphore, uint
     return r;
 }
 
-/*
- * the bytes of a descriptor: what the union points to goes across, ids for
- * the sampler and view, and the host gives the bytes its driver made.
- */
+/* the union's target crosses the wire, with ids for the sampler and view; the host returns its driver's bytes. */
 VKAPI_ATTR void VKAPI_CALL vkGetDescriptorEXT(VkDevice device, const VkDescriptorGetInfoEXT *info, size_t size,
                                               void *out)
 {
@@ -1094,7 +1091,7 @@ VKAPI_ATTR void VKAPI_CALL vkGetDescriptorEXT(VkDevice device, const VkDescripto
     mvk_call_done(d);
 }
 
-/* capture and replay of descriptors needs ids that last across runs, which the protocol does not keep. */
+/* capture and replay needs ids stable across runs, which the protocol does not keep. */
 VKAPI_ATTR VkResult VKAPI_CALL vkGetBufferOpaqueCaptureDescriptorDataEXT(VkDevice device,
                                                                          const VkBufferCaptureDescriptorDataInfoEXT *info,
                                                                          void *data)

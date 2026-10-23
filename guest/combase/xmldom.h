@@ -1,6 +1,5 @@
 /*
- * the XML document object model of Windows.Data.Xml.Dom, shared by its implementation and the toast notifications
- * that read their content from it.
+ * Windows.Data.Xml.Dom, shared with the toast code that reads its content from it.
  */
 #ifndef MIME_COMBASE_XMLDOM_H
 #define MIME_COMBASE_XMLDOM_H
@@ -12,61 +11,59 @@
 typedef struct XCTX XCTX;
 
 /*
- * a node. the nodes of a document live as long as any of them is held by a program: every node counts the references
- * programs hold of it, and the first one of a node takes a reference of the document's context, which frees all the
- * nodes when the last is given back. links between nodes take none.
+ * a document's nodes live as long as a program holds any of them. each node counts program references, and its first
+ * one takes a reference on the document's context, which frees every node when released. links between nodes take
+ * no references.
  */
 typedef struct XNODE {
     WRT_OBJECT Base;
     XCTX *Ctx;
     struct XNODE *CtxNext;
     NodeType Type;
-    WCHAR *Name;  /* the tag, the attribute, the target of an instruction */
-    WCHAR *Value; /* the text of a text, comment or section, the value of an attribute, the data of an instruction */
+    WCHAR *Name;  /* tag, attribute name or instruction target. */
+    WCHAR *Value; /* text of a text, comment or section, attribute value, or instruction data. */
     struct XNODE *Parent, *Prev, *Next, *First, *Last;
-    struct XNODE *Attrs;    /* an element's attributes, linked by AttrNext */
+    struct XNODE *Attrs;    /* an element's attributes, linked by AttrNext. */
     struct XNODE *AttrNext;
-    WCHAR *Uri; /* a document's address */
+    WCHAR *Uri; /* a document's address. */
 } XNODE;
 
-/* the node behind an interface pointer of this implementation, or null for another one. */
+/* null for another implementation's interfaces. */
 XNODE *CbXmlFromInterface(IUnknown *object);
 
 /* a new empty document with one reference. */
 HRESULT CbXmlNewDocument(IXmlDocument **document);
 
-/* loads text into a document that was made empty, replacing what it held. */
+/* the document must be empty; its content is replaced. */
 HRESULT CbXmlLoadText(XNODE *document, const WCHAR *text, SIZE_T length);
 
-/* the document's root element, or null. */
 XNODE *CbXmlRootElement(XNODE *document);
 
-/* an attribute by name, or null. */
 XNODE *CbXmlAttribute(XNODE *element, const WCHAR *name);
 
-/* the text content of a node and of everything under it, in a new allocation, free it with CbFree. */
+/* the text of a node and its descendants, freed with CbFree. */
 WCHAR *CbXmlInnerText(XNODE *node);
 
-/* the markup of a node in a new allocation, with its length in characters. */
+/* returns the length in characters. */
 WCHAR *CbXmlSerialize(XNODE *node, SIZE_T *length);
 
-/* a boxed string, a Windows.Foundation.PropertyValue holding it, and the string of a boxed value. */
+/* PropertyValue boxes holding a string. */
 HRESULT CbBoxString(const WCHAR *text, IInspectable **box);
 HRESULT CbUnboxString(IInspectable *box, WCHAR **text);
 
-/* a boxed date, which answers IReferenceDateTime and IPropertyValue. */
+/* answers IReferenceDateTime and IPropertyValue. */
 HRESULT CbBoxDateTime(DateTime time, IReferenceDateTime **box);
 
-/* one reference taken or dropped for a node, as a program does. */
+/* program references on a node. */
 ULONG CbXmlAddRef(XNODE *node);
 ULONG CbXmlRelease(XNODE *node);
 
-/* the table of the classes: Windows.Data.Xml.Dom.XmlDocument and Windows.Foundation.PropertyValue. */
+/* Windows.Data.Xml.Dom.XmlDocument and Windows.Foundation.PropertyValue. */
 extern const WCHAR CbXmlDocumentClass[], CbPropertyValueClass[];
 HRESULT CbXmlDocumentFactory(REFIID riid, void **factory);
 HRESULT CbPropertyValueFactory(REFIID riid, void **factory);
 
-/* toast.c: Windows.UI.Notifications. the manager answers only where the host can show notifications. */
+/* toast.c. the manager only answers where the host can show notifications. */
 extern const WCHAR CbToastManagerClass[], CbToastClass[];
 HRESULT CbToastManagerFactory(REFIID riid, void **factory);
 HRESULT CbToastFactory(REFIID riid, void **factory);

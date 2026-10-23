@@ -20,11 +20,10 @@ static SIZE_T env_size(PCWSTR env)
     return (SIZE_T)(p - env + 1);
 }
 
-/* finds the "name=" entry; returns its start or NULL. */
 static PCWSTR find_var(PCWSTR env, PCWSTR name, SIZE_T name_chars)
 {
     for (PCWSTR p = env; *p; p += wcslen(p) + 1) {
-        /* entries such as "=C:=C:\" start with '=' and belong to the name. */
+        /* in entries such as "=C:=C:\" the leading '=' is part of the name. */
         PCWSTR eq = wcschr(p + 1, '=');
         if (eq && (SIZE_T)(eq - p) == name_chars && !_wcsnicmp(p, name, name_chars))
             return p;
@@ -101,9 +100,9 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlDestroyEnvironment(PWSTR env)
 }
 
 /*
- * sets or removes (value NULL) a variable. the process environment is
- * replaced by a heap copy; the original block came from the kernel and is
- * never freed.
+ * a NULL value removes the variable. the process environment is replaced
+ * by a heap copy; the original block came from the kernel and is never
+ * freed.
  */
 NTDLL_EXPORT NTSTATUS NTAPI RtlSetEnvironmentVariable(PWSTR *env_ptr, PCUNICODE_STRING name, PCUNICODE_STRING value)
 {
@@ -129,7 +128,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlSetEnvironmentVariable(PWSTR *env_ptr, PCUNICODE_
             RtlReleasePebLock();
         return STATUS_NO_MEMORY;
     }
-    /* keep the block sorted the way windows does, by insertion before the first greater name. */
+    /* keep the block sorted like Windows: insert before the first greater name. */
     PWSTR out = fresh;
     BOOLEAN inserted = !value;
     for (PCWSTR p = env; *p; p += wcslen(p) + 1) {
@@ -183,7 +182,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlSetCurrentEnvironment(PWSTR env, PWSTR *old)
     return STATUS_SUCCESS;
 }
 
-/* expands %name% references; unknown names stay as written. */
+/* unknown %name% references stay as written. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlExpandEnvironmentStrings(PWSTR env, PCWSTR src, SIZE_T src_chars, PWSTR dst,
                                                         SIZE_T dst_chars, PSIZE_T return_chars)
 {

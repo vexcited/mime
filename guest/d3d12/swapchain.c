@@ -1,9 +1,7 @@
 /*
- * swap chains of a direct queue. the back buffers are textures of their
- * own, which the program renders to by index; Present blits the current
- * one to an image of a vulkan swap chain on the window, scaled to its
- * client area, on the queue after the work the program submitted, then
- * presents it. a sync interval of 0 presents immediately, others in fifo.
+ * swap chains of a direct queue. back buffers are textures of their own that the program renders to by index.
+ * Present blits the current one, scaled to the client area, to an image of a Vulkan swap chain on the window, on
+ * the queue after the program's work, then presents it. sync interval 0 presents immediately, others use fifo.
  */
 #include "d3d12_private.h"
 
@@ -20,7 +18,7 @@ typedef struct D12SwapChain {
     DXGI_SWAP_CHAIN_DESC1 desc;
     DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen;
     BOOL fullscreen_state;
-    /* the output a fullscreen swap chain owns, which its gamma controls. */
+    /* the output a fullscreen swap chain owns and controls the gamma of. */
     IDXGIOutput *owned;
     BOOL windowed_saved;
     RECT windowed_rect;
@@ -36,7 +34,7 @@ typedef struct D12SwapChain {
     UINT image_count;
     VkImage images[MAX_IMAGES];
     VkSemaphore present[MAX_IMAGES];
-    /* per slot of the frames in flight: acquire semaphore, commands and the serial that used them. */
+    /* per frame in flight: acquire semaphore, commands and the serial that used them. */
     VkCommandPool pool;
     VkSemaphore acquire[SLOTS];
     VkCommandBuffer commands[SLOTS];
@@ -166,7 +164,7 @@ static BOOL create_swapchain(D12SwapChain *sc, VkPresentModeKHR mode)
     return TRUE;
 }
 
-/* the back buffers: committed render targets of the description, which shaders may also read. */
+/* committed render targets per the description, which shaders may also read. */
 static HRESULT create_buffers(D12SwapChain *sc)
 {
     RECT client;
@@ -261,7 +259,7 @@ static HRESULT present(D12SwapChain *sc, UINT interval, UINT flags)
     barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = sc->images[index];
     barrier.subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    /* the back buffer's writes, which the program made before presenting, visible to the blit. */
+    /* makes the program's back buffer writes visible to the blit. */
     VkMemoryBarrier2 written = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
     written.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     written.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
@@ -311,7 +309,7 @@ static HRESULT present(D12SwapChain *sc, UINT interval, UINT flags)
     vk->vkQueuePresentKHR(sc->queue->queue, &info);
     ReleaseSRWLockExclusive(sc->queue->queue_lock);
 
-    /* no more frames ahead of the gpu than the latency allows: 3, as dxgi's default. */
+    /* no more frames ahead of the gpu than the latency allows, 3 by default like dxgi. */
     sc->present_count++;
     UINT latency = sc->desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT ? sc->max_latency : 3;
     latency = D12_MAX(1u, D12_MIN(latency, (UINT)SLOTS - 1));
@@ -394,7 +392,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_parent(IDXGISwapChain4 *iface, REFIID ri
     return factory->lpVtbl->QueryInterface(factory, riid, parent);
 }
 
-/* the device of a direct3d 12 swap chain is its queue. */
+/* the device of a Direct3D 12 swap chain is its queue. */
 static HRESULT STDMETHODCALLTYPE sc_get_device(IDXGISwapChain4 *iface, REFIID riid, void **device)
 {
     D12Queue *queue = impl(iface)->queue;
@@ -442,7 +440,7 @@ static void enter_fullscreen(D12SwapChain *sc, IDXGIOutput *output)
     SetWindowPos(sc->window, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
 }
 
-/* an owned output knows when its swap chain lets it go, and shows gdi's gamma again. */
+/* an owned output knows when its swap chain lets go, and shows gdi's gamma again. */
 static void own(IDXGIOutput *output, BOOL owned)
 {
     IMimeDXGIOutput *mime;
@@ -821,7 +819,7 @@ static const IDXGISwapChain4Vtbl sc_vtbl = {
     sc_set_hdr_meta_data,
 };
 
-/* direct3d 12 swap chains flip: two buffers at least, none multisampled. */
+/* Direct3D 12 swap chains flip: at least two buffers, none multisampled. */
 HRESULT D12CreateSwapChain(D12Queue *queue, IDXGIFactory *factory, HWND window, const DXGI_SWAP_CHAIN_DESC1 *desc,
                            const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen, IDXGISwapChain1 **out)
 {

@@ -5,7 +5,7 @@
 #include "win32k.h"
 #include <mime/msgtable.h>
 
-/* ------------------------------------------------------------------ queues */
+/* queues. */
 
 void QueueWake(W32THREAD *t, ULONG bits)
 {
@@ -70,11 +70,11 @@ void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state)
     QueueWake(t, bits);
 }
 
-/* ------------------------------------------------------------------ callbacks */
+/* callbacks. */
 
 #define ALIGN16(x) (((x) + 15) & ~(SIZE_T)15)
 
-/* a block over this does not go on the stack of the receiver, it is put in memory of its own. */
+/* larger blocks need a separate allocation in the receiver's address space. */
 #define MSG_INLINE_MAX 0x8000
 
 LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM wparam, LPARAM lparam,
@@ -87,7 +87,7 @@ LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM w
         return 0;
     if (lparam_kind == MIME_LPARAM_VALUE)
         lparam_size = 0;
-    /* a large block is put in memory of the receiver, below 4 GiB for a 32-bit one. */
+    /* allocate below 4 GiB for a 32-bit receiver. */
     PVOID external = nullptr;
     SIZE_T external_size = 0;
     if (lparam_size > MSG_INLINE_MAX) {
@@ -165,25 +165,23 @@ LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM w
     return result;
 }
 
-/* ------------------------------------------------------------------ sending */
+/* sending. */
 
 static ULONG64 now_ms(void);
 
-/* what a send waits for and what it learns. */
 typedef struct SEND_OPTS {
     ULONG Flags;            /* SMTO_* */
-    ULONG Timeout;          /* milliseconds, none when 0 */
-    BOOLEAN Owned;          /* the parameter block is pool memory the message takes over when the sender stops waiting */
-    SENDASYNCPROC AsyncProc; /* called in the sender's thread with the result, the sender not waiting */
+    ULONG Timeout;          /* milliseconds, none when 0. */
+    BOOLEAN Owned;          /* pool memory; ownership passes to the message when the sender stops waiting. */
+    SENDASYNCPROC AsyncProc; /* called in the sender's thread without blocking the sender. */
     ULONG_PTR AsyncData;
-    /* out */
     BOOLEAN TimedOut;
-    BOOLEAN Aborted;        /* the window or its thread went away */
-    BOOLEAN Refused;        /* not sent, the thread of the window is hung */
-    BOOLEAN Taken;          /* the block belongs to the message now */
+    BOOLEAN Aborted;        /* the window or its thread exited. */
+    BOOLEAN Refused;        /* not sent because the receiving thread is hung. */
+    BOOLEAN Taken;          /* the message owns the block. */
 } SEND_OPTS;
 
-/* a thread that has not looked at its queue for this long is not answering. */
+/* a thread is considered hung after this long without checking its queue. */
 #define HUNG_MS 5000
 
 static BOOLEAN thread_hung(W32THREAD *t)
@@ -203,7 +201,7 @@ static void free_sent(SENT_MESSAGE *sm)
     W32Free(sm);
 }
 
-/* the sender of a callback is told the result when it next serves its queue. */
+/* deliver the callback result when the sender next processes its queue. */
 static void queue_result_call(SENT_MESSAGE *sm, LRESULT result)
 {
     W32THREAD *sender = W32LookupThread(sm->SenderTid);
@@ -236,7 +234,7 @@ static void complete_sent(SENT_MESSAGE *sm, LRESULT result)
     KeSetEvent(&sm->Done, 0, FALSE);
 }
 
-/* the procedure of a SendMessageCallback gets the result in the thread that sent the message. */
+/* SendMessageCallback runs its callback in the sending thread. */
 static void call_async(W32THREAD *t, SENDASYNCPROC proc, HWND hwnd, UINT msg, ULONG_PTR data, LRESULT result)
 {
     MIME_SENDASYNC_ARGS args = {proc, hwnd, msg, data, result};
@@ -252,9 +250,8 @@ static void call_async(W32THREAD *t, SENDASYNCPROC proc, HWND hwnd, UINT msg, UL
 }
 
 /*
- * a sent message reaching its window procedure, between the thread's
- * WH_CALLWNDPROC and WH_CALLWNDPROCRET hooks. those see a pointer
- * parameter as 0: it lives in the kernel until the procedure gets it.
+ * run the window procedure between WH_CALLWNDPROC and WH_CALLWNDPROCRET. hooks see pointer parameters as 0 because
+ * the data stays in the kernel until the procedure receives it.
  */
 static LRESULT call_sent(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG kind, ULONG size, BOOLEAN own)
 {
@@ -307,7 +304,7 @@ void MsgProcessSent(W32THREAD *t)
                 sm->Aborted = TRUE;
         }
         t->Receiving = prev;
-        /* an answered message has no waiting sender any more, which owns it now. */
+        /* the sender now owns an answered message. */
         BOOLEAN replied = t->Replied;
         t->Replied = prev_replied;
         t->ReceivingKind = prev_kind;
@@ -361,7 +358,7 @@ static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam
             opts->Taken = opts->Owned;
         return 1;
     }
-    /* wait, while still serving messages sent to us so two threads sending to each other cannot deadlock. */
+    /* serve incoming messages while waiting to avoid deadlock between threads sending to each other. */
     BOOLEAN block = opts && (opts->Flags & SMTO_BLOCK);
     ULONG64 deadline = opts && opts->Timeout ? now_ms() + opts->Timeout : 0;
     BOOLEAN timed_out = FALSE;
@@ -398,7 +395,7 @@ static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam
     if (self)
         self->InWait = FALSE;
     if (!sm->Completed) {
-        /* the receiver will complete into a message nobody waits for. */
+        /* the receiver will complete the message after the sender has stopped waiting. */
         sm->Notify = TRUE;
         sm->Sender = nullptr;
         sm->Callback = FALSE;
@@ -434,9 +431,8 @@ static LRESULT send_to_window(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, UL
 }
 
 /*
- * a message from a thread of the kernel that has no queue, which the shutdown sends: it waits for the answer
- * for the time given, or until one of the events is set, and without the lock, so that the thread of the window
- * is free to answer. a message that was not answered is left to its thread, which frees it.
+ * send from a kernel thread without a queue, used during shutdown. wait without the lock until an answer, timeout or
+ * event so the receiving thread can respond. the receiver frees an unanswered message.
  */
 ULONG MsgSendSystem(HANDLE tid, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG64 timeout_ms,
                     PKEVENT *events, ULONG event_count, LRESULT *result)
@@ -493,7 +489,7 @@ LRESULT MsgSend(WND *w, UINT msg, WPARAM wparam, LPARAM lparam)
     return MsgSendKernel(w, msg, wparam, lparam, MIME_LPARAM_VALUE, 0);
 }
 
-/* ------------------------------------------------------------------ timers */
+/* timers. */
 
 typedef struct TIMER {
     LIST_ENTRY Links;
@@ -502,8 +498,8 @@ typedef struct TIMER {
     UINT_PTR Id;
     UINT Elapse;
     TIMERPROC Proc;
-    ULONG64 Due; /* milliseconds of interrupt time */
-    /* posts WM_SYSTIMER, as the caret's blinking does, apart from the program's timers of the same id. */
+    ULONG64 Due; /* milliseconds of interrupt time. */
+    /* WM_SYSTIMER timers, such as caret blinking, are separate from application timers with the same id. */
     BOOLEAN System;
 } TIMER;
 
@@ -678,7 +674,7 @@ BOOLEAN MsgFilterMatches(HWND hwnd, UINT msg, HWND filter, UINT min, UINT max)
     return hwnd_matches(hwnd, filter) && range_matches(msg, min, max);
 }
 
-/* ------------------------------------------------------------------ retrieval */
+/* retrieval. */
 
 static void set_message_state(W32THREAD *t, const MSG *m)
 {
@@ -780,7 +776,7 @@ scan_posted:
                 set_message_state(t, out);
                 if (!input_hook_discards(t, out, remove))
                     return TRUE;
-                /* a discarded message leaves the queue whatever the flags; the hook ran unlocked, so look again. */
+                /* discard regardless of flags. the hook ran unlocked, so find the message again. */
                 if (qm)
                     free_input(t, qm);
                 rescan = TRUE;
@@ -851,10 +847,6 @@ scan_posted:
     }
 }
 
-/*
- * what InSendMessageEx reports: a message another thread sent and waits for, one it did not wait for, one a callback
- * is called back for, and whether it was answered already.
- */
 ULONG MsgInSendFlags(W32THREAD *t)
 {
     if (!t || !t->ReceivingKind)
@@ -863,9 +855,8 @@ ULONG MsgInSendFlags(W32THREAD *t)
 }
 
 /*
- * ReplyMessage: the sender gets the result now and the procedure goes on. only a message with a plain parameter can
- * be answered early, since one with data copies it back when the procedure returns; for the others the answer comes
- * then, and the call still succeeds.
+ * ReplyMessage releases the sender while the procedure continues. only plain parameters can be answered early;
+ * messages with data must wait for copyback when the procedure returns, but the call still succeeds.
  */
 BOOLEAN MsgReply(W32THREAD *t, LRESULT result)
 {
@@ -879,7 +870,7 @@ BOOLEAN MsgReply(W32THREAD *t, LRESULT result)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ message services */
+/* message services. */
 
 static BOOL copy_msg_out(MSG *user, const MSG *m)
 {
@@ -899,7 +890,7 @@ BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
-    /* what is in the queue now is no longer new to MsgWaitForMultipleObjects. */
+    /* existing queue contents no longer count as new input for MsgWaitForMultipleObjects. */
     if (t)
         t->ChangeBits = 0;
     if (t && MsgPeek(t, &m, hwnd, min, max, PM_REMOVE, TRUE))
@@ -957,7 +948,6 @@ BOOL NTAPI NtUserWaitMessage(void)
     return TRUE;
 }
 
-/* the queue bits a thread has waiting, as GetQueueStatus reports them. */
 static ULONG pending_bits(W32THREAD *t)
 {
     ULONG pending = 0;
@@ -983,10 +973,8 @@ static ULONG pending_bits(W32THREAD *t)
 #define WAIT_IO 0xC0u
 
 /*
- * the handles and the queue together: the queue answers once input of
- * the mask arrived since the thread last looked, or with
- * MWMO_INPUTAVAILABLE whenever some waits. waiting for all handles is
- * left to user32.
+ * wake for matching input received since the last queue check, or any pending matching input with
+ * MWMO_INPUTAVAILABLE. user32 handles waiting for all handles.
  */
 DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_handles, DWORD timeout, DWORD mask,
                                               DWORD flags)
@@ -1121,7 +1109,7 @@ static BOOLEAN is_broadcast(HWND hwnd)
     return hwnd == HWND_BROADCAST || hwnd == (HWND)(LONG_PTR)-1 || hwnd == (HWND)0xFFFFFFFFull;
 }
 
-/* the windows a broadcast reaches, copied as the windows can come and go while it is sent. */
+/* snapshot broadcast recipients because windows may be created or destroyed during delivery. */
 static HWND *top_level_windows(ULONG *count)
 {
     WND *d = WndDesktop();
@@ -1141,14 +1129,11 @@ static HWND *top_level_windows(ULONG *count)
     return list;
 }
 
-/* the messages that never cross to a window of another process, whatever the window. */
+/* these messages never cross process boundaries. */
 #define MSG_INITDIALOG 0x0110
 #define MSG_NOTIFY 0x004E
 
-/*
- * whether the send or post of the message to a window in another process is refused. a dialog init and a notification
- * are sent only inside a process, and what a password edit control keeps does not leave its process.
- */
+/* dialog initialization, notifications and password edit contents stay within their process. */
 static BOOLEAN stays_in_process(const WND *w, UINT msg)
 {
     if (msg == MSG_INITDIALOG || msg == MSG_NOTIFY)
@@ -1158,7 +1143,7 @@ static BOOLEAN stays_in_process(const WND *w, UINT msg)
     return reveals_password && password_edit;
 }
 
-/* both ends of a block can be read, which is how far the sender's memory is trusted before a write into it is tried. */
+/* probe both ends before attempting to write into sender memory. */
 static BOOLEAN ends_readable(LPARAM user, SIZE_T size)
 {
     UCHAR byte;
@@ -1168,7 +1153,7 @@ static BOOLEAN ends_readable(LPARAM user, SIZE_T size)
            NT_SUCCESS(MimeCopyFromUser(&byte, (PVOID)(user + size - 1), 1));
 }
 
-/* a structure that carries its own size: the size has to be the one the message needs. */
+/* the supplied structure size must match the message. */
 static BOOLEAN sized_struct_usable(LPARAM lparam, ULONG expected)
 {
     DWORD claimed;
@@ -1181,15 +1166,15 @@ static BOOLEAN sized_struct_usable(LPARAM lparam, ULONG expected)
     return ends_readable(lparam, expected);
 }
 
-/* the device changes whose lparam is the data of the change, so that without it there is nothing to deliver. */
+/* these device changes require lparam data. */
 static BOOLEAN device_change_needs_data(WPARAM event)
 {
     return event == 0x8000 || event == 0x8004 || (event >= 0x8007 && event <= 0x800A);
 }
 
 /*
- * a send between two threads of one process hands the receiver the sender's own pointers, but the pointers still have to
- * be the kind the message needs: a send that could not have been copied is not delivered either.
+ * threads in one process share the sender's pointers, but still reject parameters that would fail cross-process
+ * copying.
  */
 static BOOLEAN local_pointers_usable(MSG_RULE rule, WPARAM wparam, LPARAM lparam)
 {
@@ -1247,10 +1232,7 @@ static LRESULT deliver(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG kin
     return send_to_window(w, msg, wparam, lparam, kind, size, opts);
 }
 
-/*
- * one message to one window for a program. the result of the form that waits is what the procedure returned, *ok
- * tells whether SendMessageTimeout reports success.
- */
+/* returns the window procedure result for a synchronous send; *ok supplies the SendMessageTimeout success flag. */
 static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, SEND_OPTS *opts, BOOLEAN *ok)
 {
     W32THREAD *self = W32GetThread();
@@ -1283,7 +1265,7 @@ static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD ty
     } else {
         LONG hint = -1;
         if (rule.Class == MC_ITEM_OUT) {
-            /* the control is asked how long the text is, which may let its window go. */
+            /* querying text length may destroy the control window. */
             HWND handle = WndHandle(w);
             hint = (LONG)send_to_window(w, msg == LB_GETTEXT ? LB_GETTEXTLEN : CB_GETLBTEXTLEN, wparam, 0,
                                         MIME_LPARAM_VALUE, 0, nullptr);
@@ -1320,13 +1302,13 @@ static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD ty
     return failed ? 0 : r;
 }
 
-/* the range of the messages programs define for themselves, which no window can be sent without a recipient. */
+/* application-defined messages have no recipient in a broadcast. */
 #define MSG_PROGRAM_FIRST 0x0400
 #define MSG_PROGRAM_LAST 0xBFFF
 
 /*
- * the send form of a broadcast: every top level window gets the message through the rules of a single send, except
- * that the messages of programs reach nobody, which is told as an invalid parameter while the call itself succeeds.
+ * broadcast to top level windows using single-send validation. application-defined messages reach nobody and set an
+ * invalid-parameter error, but the call succeeds.
  */
 static LRESULT broadcast_send(UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, SEND_OPTS *opts)
 {
@@ -1346,7 +1328,7 @@ static LRESULT broadcast_send(UINT msg, WPARAM wparam, LPARAM lparam, DWORD type
     return 1;
 }
 
-/* the kernel changed the offset of the clock at a change of daylight time; windows send WM_TIMECHANGE then, here it is posted. */
+/* the daylight time offset changed. Windows sends WM_TIMECHANGE; here it is posted. */
 void NTAPI W32TimeChange(void)
 {
     UserEnter();
@@ -1377,7 +1359,7 @@ static LRESULT send_user(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWOR
         opts.AsyncProc = cb.Proc;
         opts.AsyncData = cb.Data;
     }
-    /* a message with pointers cannot go to a window that is not waited for. */
+    /* pointer parameters require a synchronous send. */
     if ((type == MIME_MSGCALL_SENDNOTIFY || type == MIME_MSGCALL_SENDCALLBACK) && MimeMsgIsSyncOnly(msg, wparam, FALSE)) {
         W32SetLastError(ERROR_MESSAGE_SYNC_ONLY);
         return 0;
@@ -1404,7 +1386,6 @@ static LRESULT send_user(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWOR
     return r;
 }
 
-/* a form of BroadcastSystemMessage that posts, next to the ways to send. */
 #define BROADCAST_POST 100
 
 /* BroadcastSystemMessage: the recipients and the way to send were checked by user32. */
@@ -1483,10 +1464,7 @@ LRESULT NTAPI NtUserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     return r;
 }
 
-/*
- * whether a program may post the message to anything: the messages the window manager keeps for itself are refused, and
- * so are those that carry something of the sender, which cannot be posted.
- */
+/* reject reserved messages and messages with sender-owned data, which cannot be posted. */
 static BOOLEAN post_allowed(UINT msg, WPARAM wparam)
 {
     if (msg < MSG_PROGRAM_FIRST && MimeMsgIsPrivate(msg)) {
@@ -1500,13 +1478,13 @@ static BOOLEAN post_allowed(UINT msg, WPARAM wparam)
     return TRUE;
 }
 
-/* the messages of touch and gesture input, which only the input stack may post to a window. */
+/* only the input stack may post touch and gesture messages. */
 static BOOLEAN input_signal(UINT msg)
 {
     return msg == 0x0119 || msg == 0x011B || (msg >= 0x0241 && msg <= 0x0244);
 }
 
-/* the broadcast form of a post: every top level window that has a queue. */
+/* post to every top level window with a queue. */
 static BOOL post_to_all(UINT msg, WPARAM wparam, LPARAM lparam)
 {
     if (MimeMsgIsSyncOnly(msg, wparam, TRUE)) {
@@ -1514,7 +1492,7 @@ static BOOL post_to_all(UINT msg, WPARAM wparam, LPARAM lparam)
         return FALSE;
     }
     if (msg >= MSG_PROGRAM_FIRST && msg <= MSG_PROGRAM_LAST) {
-        /* nobody can be meant by a message of the program, and the call still succeeds. */
+        /* application-defined broadcasts have no recipients but still succeed. */
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return TRUE;
     }
@@ -1530,8 +1508,8 @@ static BOOL post_to_all(UINT msg, WPARAM wparam, LPARAM lparam)
 }
 
 /*
- * the checks of PostMessage, the first that fails deciding: a message number beyond 17 bits, one the window manager keeps
- * for itself, then what the window is. the window of another process takes only what may cross.
+ * PostMessage checks the 17-bit limit, reserved message numbers, then the window. cross-process posts also enforce
+ * message restrictions.
  */
 BOOL NTAPI NtUserPostMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
@@ -1590,7 +1568,7 @@ BOOL NTAPI NtUserPostThreadMessage(DWORD thread, UINT msg, WPARAM wparam, LPARAM
     return ok;
 }
 
-/* ------------------------------------------------------------------ default window procedure */
+/* default window procedure. */
 
 /* lparam access for the default procedure: user pointers when called by user32, kernel pointers otherwise. */
 static BOOLEAN read_lparam(PVOID dst, LPARAM lparam, SIZE_T size, BOOLEAN user)
@@ -1615,7 +1593,6 @@ static BOOLEAN write_lparam(LPARAM lparam, const void *src, SIZE_T size, BOOLEAN
     return NT_SUCCESS(MimeCopyToUser((PVOID)lparam, src, size));
 }
 
-/* copies a NUL terminated string. */
 static PWSTR capture_sz(LPARAM lparam, BOOLEAN user, ULONG *chars)
 {
     *chars = 0;
@@ -1662,7 +1639,7 @@ static void fill_client(WND *w, HDC hdc, HBRUSH hbrush)
         return;
     RECT r = {0, 0, w->ClientRect.right - w->ClientRect.left, w->ClientRect.bottom - w->ClientRect.top};
     if (dc->Window != w) {
-        /* a dc for another window, typically the parent: paint the window's client area in its coordinates. */
+        /* paint the client area in another window's DC, usually the parent's. */
         RECT c = w->ClientRect;
         WND *dw = dc->Window;
         if (dw)
@@ -1938,7 +1915,7 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         return (LRESULT)old;
     }
 
-    /* a result the input method committed becomes characters for a window that did not take it itself. */
+    /* deliver committed input method text as characters when the window did not handle it. */
     case WM_IME_COMPOSITION:
         if (lparam & 0x0800) /* GCS_RESULTSTR */
             return ImeDefaultCompositionChars(w);

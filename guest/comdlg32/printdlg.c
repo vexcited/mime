@@ -1,8 +1,6 @@
 /*
- * PrintDlg and PrintDlgEx. one window serves both: a printer chosen from the printers that exist with its
- * status, the settings of the printer (its own dialog, from winspool), what to print and how many copies.
- * the structures carry the answer in two global memory handles, the settings of the printer (a device
- * mode) and its names (device names), and, when asked, a device context of the printer.
+ * PrintDlg and PrintDlgEx share one window. the answer comes back in two global handles, a DEVMODE and a
+ * DEVNAMES, plus a printer device context when asked.
  */
 #include "printcommon.h"
 #include <mime/win32/shobjidl.h>
@@ -10,7 +8,7 @@
 MIME_DEFINE_GUID(IID_IPrintDialogCallback, 0x5852A2C3, 0x6530, 0x11D1, 0xB6, 0xA3, 0x00, 0x00, 0xF8, 0x75, 0x7B, 0xF9);
 MIME_DEFINE_GUID(IID_IPrintDialogServices, 0x509AAEDA, 0x5639, 0x11D1, 0xB6, 0xA3, 0x00, 0x00, 0xF8, 0x75, 0x7B, 0xF9);
 
-/* the flags of PRINTDLG that the dialogs of this file do not know, and those of PRINTDLGEX. */
+/* the PRINTDLG flags these dialogs do not handle, plus those of PRINTDLGEX. */
 #define PDEX_INVALID_FLAGS 0xEA22B840u
 
 typedef struct _PRINTSTATE PRINTSTATE;
@@ -32,7 +30,7 @@ struct _PRINTSTATE {
     DWORD From, To, Min, Max;
     DWORD Copies;
     BOOL Collate;
-    /* the ranges of PrintDlgEx, as the user typed them and as numbers. */
+    /* PrintDlgEx page ranges. */
     PRINTPAGERANGE *Ranges;
     DWORD RangeCount, MaxRanges;
     BOOL CopiesFixed, CollateFixed;
@@ -224,7 +222,7 @@ static void show_printer(PRINTSTATE *s)
     set_text(s, PRN_COMMENT, p->Comment);
 }
 
-/* whether the printer lets its device mode carry the copies and the collation. */
+/* whether the printer's device mode can carry copies and collation. */
 static void update_copies(PRINTSTATE *s)
 {
     BOOL fixed = FALSE, collate_fixed = FALSE;
@@ -308,7 +306,7 @@ static void fill_printers(PRINTSTATE *s)
         SendMessageW(combo, CB_SETCURSEL, (WPARAM)s->Current, 0);
 }
 
-/* the printer was changed: its settings are the defaults of the new one. */
+/* a new printer starts with its own defaults. */
 static void printer_changed(PRINTSTATE *s, int index)
 {
     if (index < 0 || index >= s->List.Count)
@@ -335,7 +333,7 @@ static void message(PRINTSTATE *s, LPCWSTR text, int focus)
         SetFocus(w);
 }
 
-/* one number of the page range, or an error that the caller shows. */
+/* on error the caller shows the message. */
 static BOOL page_number(PRINTSTATE *s, int id, DWORD *value, LPCWSTR empty_text)
 {
     BOOL ok;
@@ -354,7 +352,7 @@ static BOOL page_number(PRINTSTATE *s, int id, DWORD *value, LPCWSTR empty_text)
     return TRUE;
 }
 
-/* the text of the ranges: numbers and ranges separated by commas, each within the pages there are. */
+/* comma separated pages and ranges, each within the page count. */
 static BOOL parse_ranges(PRINTSTATE *s, LPCWSTR text)
 {
     DWORD count = 0;
@@ -587,7 +585,7 @@ static INT_PTR init_dialog(HWND hwnd, PRINTSTATE *s)
     }
     update_copies(s);
     if (s->Flags & PD_SHOWHELP) {
-        /* Help is shown. */
+        /* the Help button stays. */
     } else {
         HWND help = item(s, pshHelp);
         if (help) {
@@ -654,7 +652,7 @@ static INT_PTR CALLBACK print_proc(HWND hwnd, UINT message, WPARAM wparam, LPARA
 
 /* ------------------------------------------------------------------ running it */
 
-/* shows the dialog on the state; the result is 0 for cancel, 1 for print and 2 for apply, -1 when it failed. */
+/* returns 0 for cancel, 1 for print, 2 for apply and -1 on failure. */
 static int run_dialog(PRINTSTATE *s, const DLGSOURCE *source, DWORD *error)
 {
     const void *given = DlgFindTemplate(source, error);
@@ -685,7 +683,7 @@ static int run_dialog(PRINTSTATE *s, const DLGSOURCE *source, DWORD *error)
     return s->Result;
 }
 
-/* the first printer of the structure's handles that exists in the list, else the default one. */
+/* the first printer named by the structure's handles that exists, else the default one. */
 static void choose_printer(PRINTSTATE *s, HGLOBAL devmode, HGLOBAL devnames)
 {
     s->Current = -1;
@@ -706,7 +704,7 @@ static void choose_printer(PRINTSTATE *s, HGLOBAL devmode, HGLOBAL devnames)
         s->Current = s->List.Default;
 }
 
-/* the settings the dialog starts with: the device mode of the program when it is the printer's, else the defaults. */
+/* the program's device mode when it is for this printer, else the defaults. */
 static void initial_devmode(PRINTSTATE *s, HGLOBAL handle)
 {
     if (s->Current < 0)
@@ -725,13 +723,13 @@ static void initial_devmode(PRINTSTATE *s, HGLOBAL handle)
         s->Collate = s->Devmode->dmCollate != 0;
 }
 
-/* writes the answer: new handles for the device mode and the names, and the device context asked for. */
+/* new DEVMODE and DEVNAMES handles, and the device context when asked. */
 static BOOL make_results(PRINTSTATE *s, HGLOBAL *devmode_out, HGLOBAL *devnames_out, HDC *dc_out, DWORD flags)
 {
     const PRN_ITEM *p = &s->List.Items[s->Current];
     DEVMODEW *dm = s->Devmode;
     if (dm) {
-        /* without the flag the copies and the collation are the program's to do, the device mode has one copy. */
+        /* without the flag the program does copies and collation, and the device mode has one copy. */
         if (!(flags & PD_USEDEVMODECOPIESANDCOLLATE)) {
             if (dm->dmFields & DM_COPIES)
                 dm->dmCopies = 1;
@@ -774,7 +772,7 @@ static void free_state(PRINTSTATE *s)
         HeapFree(GetProcessHeap(), 0, s->Ranges);
 }
 
-/* the answer for the default printer, without a dialog. */
+/* the default printer's answer, without a dialog. */
 static BOOL return_default(PRINTSTATE *s, HGLOBAL *devmode, HGLOBAL *devnames, HDC *dc, DWORD flags)
 {
     if (s->List.Default < 0) {
@@ -791,8 +789,7 @@ static BOOL return_default(PRINTSTATE *s, HGLOBAL *devmode, HGLOBAL *devnames, H
 }
 
 /*
- * PrintDlgW, and PrintDlgA through it: the A structure has the layout of the wide one, its device mode and
- * device names handles are converted in and out.
+ * the A structure has the wide layout; its DEVMODE and DEVNAMES handles are converted in and out.
  */
 static BOOL print_dlg(PRINTDLGW *pd, BOOL ansi)
 {
@@ -901,7 +898,7 @@ static BOOL print_dlg(PRINTDLGW *pd, BOOL ansi)
                 mode = am;
                 names = an;
             }
-            /* the handles the program gave are replaced, as windows does. */
+            /* like windows, the program's handles are replaced. */
             if (mode_in)
                 GlobalFree(mode_in);
             if (names_in)
@@ -947,7 +944,7 @@ CDAPI BOOL WINAPI PrintDlgW(LPPRINTDLGW pd)
 
 CDAPI BOOL WINAPI PrintDlgA(LPPRINTDLGA pd)
 {
-    /* the structure has the layout of the wide one but for the names of templates. */
+    /* the ANSI structure has the wide layout except for the template names. */
     return print_dlg((PRINTDLGW *)pd, TRUE);
 }
 

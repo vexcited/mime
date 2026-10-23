@@ -1,5 +1,5 @@
 /*
- * one-shot deflate and zlib decoder, see rfc 1950 and rfc 1951.
+ * one-shot deflate and zlib decoder per rfc 1950 and 1951.
  * freestanding: needs only memcpy, memmove, memset and the allocator interface.
  */
 #ifndef MIME_LIB_PNG_INFLATE_H
@@ -24,8 +24,8 @@ enum {
 #define MIME_INFLATE_NO_CHECKSUM 0x2u /* with MIME_INFLATE_ZLIB, do not verify the adler32. */
 
 /*
- * decoder state, about 6 KiB. the fields are private; the type is public so a
- * caller can place it somewhere other than the stack with mime_inflate_with.
+ * about 6 KiB. the fields are private, the type is public so callers can keep
+ * it off the stack with mime_inflate_with.
  */
 typedef struct MimeInflate {
     const uint8_t *in;
@@ -51,10 +51,7 @@ typedef struct MimeInflate {
     uint16_t dist_sym[32];
 } MimeInflate;
 
-/*
- * decodes src into dst. *out_len, if not NULL, receives the number of bytes
- * written, also on failure. uses a MimeInflate on the stack.
- */
+/* *out_len, if not NULL, gets the bytes written, also on failure. the state lives on the stack. */
 int mime_inflate(const void *src, size_t src_len, void *dst, size_t dst_cap, size_t *out_len, unsigned flags);
 
 /* same as mime_inflate with caller provided state storage. */
@@ -62,10 +59,10 @@ int mime_inflate_with(MimeInflate *state, const void *src, size_t src_len, void 
                       size_t *out_len, unsigned flags);
 
 /*
- * decodes into a buffer obtained from alloc that grows as needed, starting at
- * size_hint bytes or a guess when 0, never larger than max_size, 0 meaning no
- * limit. on success *out receives the buffer, to release with mime_free, and
- * *out_len its used length. on failure *out is NULL.
+ * decodes into a growing buffer from alloc, starting at size_hint bytes or a
+ * guess when 0, never above max_size, 0 meaning no limit. on success *out gets
+ * the buffer, to release with mime_free, and *out_len its used length. on
+ * failure *out is NULL.
  */
 int mime_inflate_alloc(const void *src, size_t src_len, const MimeAllocator *alloc, size_t size_hint,
                        size_t max_size, void **out, size_t *out_len, unsigned flags);

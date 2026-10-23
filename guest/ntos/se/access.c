@@ -1,14 +1,12 @@
 /*
- * the access check of a descriptor for the sids and privileges of a token. NtAccessCheck offers it to programs that
- * decide for themselves what a client may do, and SeCheckAccess is the check the kernel makes when a program in
- * user mode opens or creates an object, a file or a key: the calling thread's token against the descriptor of the
- * object, in the order the kernel of windows does, see docs/ntoskrnl.md.
+ * the access check of a descriptor against a token's sids and privileges. NtAccessCheck offers it to servers that
+ * decide what a client may do, and SeCheckAccess is the kernel's check when user mode opens or creates an object, a
+ * file or a key: the calling thread's token against the object's descriptor, in the order windows uses.
  *
- * What a token is granted is the access its user and enabled groups are given by the entries of the list in order,
- * without what an entry for them denies, with the rights the owner has, and for the privileges the token holds
- * enabled the right to take ownership and to reach the system list. A restricted token and an app container token
- * are checked a second time against the sids that restrict them, and get what both checks grant. The mandatory
- * label takes away what a lower integrity level may not do.
+ * a token is granted what the aces give its user and enabled groups, in order, minus what an ace denies them, plus
+ * the owner's rights and, for enabled privileges, take ownership and access to the system list. restricted and app
+ * container tokens are checked a second time against their restricting sids and get what both checks grant. the
+ * mandatory label takes away what a lower integrity level may not do.
  */
 #include "se.h"
 #include <mime/ntrtlsec.h>
@@ -28,11 +26,11 @@
 #define PRIVILEGE_SET_HEADER 8
 #define LUID_AND_ATTRIBUTES_SIZE 12
 
-/* the sids a check matches the entries against, with the attributes the token gave them. */
+/* the sids a check matches aces against, with their token attributes. */
 typedef struct {
     const SEP_GROUP *Groups;
     ULONG Count;
-    BOOLEAN UserFirst; /* the first sid is the user, which is not a group that can be disabled */
+    BOOLEAN UserFirst; /* the first sid is the user, which cannot be disabled. */
 } IDENTITY;
 
 static const UCHAR g_owner_rights[12] = {1, 1, 0, 0, 0, 0, 0, 3, 4, 0, 0, 0};
@@ -51,7 +49,7 @@ static BOOLEAN identity_has(const IDENTITY *id, const UCHAR *sid, BOOLEAN deny)
     return FALSE;
 }
 
-/* the sid of an entry whose mask is where every access entry has it, or NULL for an entry of no sid. */
+/* the sid of an ace laid out like an access ace, or NULL for an ace without a sid. */
 static const UCHAR *ace_sid(const UCHAR *ace)
 {
     switch (ace[0]) {
@@ -78,7 +76,7 @@ static BOOLEAN is_allow(UCHAR type)
            type == ACCESS_ALLOWED_OBJECT_ACE_TYPE || type == ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE;
 }
 
-/* the entries of the list that are not only for what is inherited, in order, each as its sid and mapped mask. */
+/* walks the aces in order, skipping inherit only ones, each as its sid and mapped mask. */
 static void evaluate(const ACL *dacl, const UCHAR *owner, const IDENTITY *id, const ULONG *mapping, BOOLEAN owns,
                      ACCESS_MASK *allowed, ACCESS_MASK *denied)
 {
@@ -99,7 +97,7 @@ static void evaluate(const ACL *dacl, const UCHAR *owner, const IDENTITY *id, co
         if (!sid || (ace[1] & INHERIT_ONLY_ACE) || *(const USHORT *)(ace + 2) < 12)
             continue;
         BOOLEAN allow = is_allow(ace[0]);
-        /* an entry of the owner rights sid is for whoever owns the object. */
+        /* an owner rights ace applies to whoever owns the object. */
         BOOLEAN match = SepSidEqual(sid, g_owner_rights) ? owns : identity_has(id, sid, !allow);
         if (!match)
             continue;
@@ -123,14 +121,13 @@ static void evaluate(const ACL *dacl, const UCHAR *owner, const IDENTITY *id, co
 }
 
 /*
- * what the mandatory label of an object lets a token below it do, from the rules of the kernel's own check. A token
- * that does not enforce the policy, or that dominates the level of the object, is held back from nothing. A token
- * below it keeps the read and execute rights and the standard ones that go with them, and loses what the policy of the
- * label names: no read up takes the read rights, no execute up the execute rights, no write up the write rights and
- * delete, write dac, write owner and the system security right. A right that is also a read or an execute right
- * stays while the policy leaves that one alone, so synchronize and read control survive a no write up label.
+ * what an object's mandatory label lets a lower token do. a token that does not enforce the policy, or dominates the
+ * object's level, loses nothing. a token below it keeps the read and execute rights and the standard rights that go
+ * with them, and loses what the label policy names: no read up takes read rights, no execute up execute rights, no
+ * write up write rights plus delete, write dac, write owner and system security. a right that is also a read or
+ * execute right stays while the policy spares that one, so synchronize and read control survive no write up.
  */
-#define MIC_STANDARD_WRITE 0x010D0000 /* delete, write dac, write owner, access system security */
+#define MIC_STANDARD_WRITE 0x010D0000 /* delete, write dac, write owner, access system security. */
 
 static ACCESS_MASK label_mask(const TOKEN *token, ULONG level, ULONG policy, const ULONG *mapping)
 {
@@ -154,7 +151,7 @@ static ACCESS_MASK label_mask(const TOKEN *token, ULONG level, ULONG policy, con
     return mask;
 }
 
-/* the level and the policy of the label of a descriptor: the label ace in its list, else medium and no write up. */
+/* the level and policy of a descriptor's label ace, else medium and no write up. */
 static void sd_label(const UCHAR *sd, ULONG *level, ULONG *policy)
 {
     *level = 0x2000;
@@ -171,7 +168,7 @@ static void sd_label(const UCHAR *sd, ULONG *level, ULONG *policy)
         if (ace[1] & INHERIT_ONLY_ACE)
             return;
         const UCHAR *sid = ace + 8;
-        /* a label of another authority is none. */
+        /* a sid of another authority is not a label. */
         if (sid[1] && sid[7] == 16 && !sid[2] && !sid[3] && !sid[4] && !sid[5] && !sid[6])
             *level = *(const ULONG *)(sid + 8 + 4 * (sid[1] - 1));
         *policy = *(const ULONG *)(ace + 4);
@@ -179,7 +176,7 @@ static void sd_label(const UCHAR *sd, ULONG *level, ULONG *policy)
     }
 }
 
-/* the integrity level of the label of a descriptor, medium for one without. */
+/* medium for a descriptor without a label. */
 ULONG SeSdIntegrityLevel(const SD_BLOB *sd)
 {
     ULONG level, policy;
@@ -188,12 +185,12 @@ ULONG SeSdIntegrityLevel(const SD_BLOB *sd)
 }
 
 typedef struct {
-    ACCESS_MASK Granted;    /* with the rights the privileges add */
-    ACCESS_MASK ByList;     /* without them */
+    ACCESS_MASK Granted;    /* including what privileges add. */
+    ACCESS_MASK ByList;     /* excluding it. */
     BOOLEAN HasSecurity, HasOwnership;
 } VERDICT;
 
-/* whether the token is the owner of a descriptor: its user or an enabled group, and for a restricted token a restricting sid too. */
+/* the owner must be the token's user or an enabled group, and for a restricted token also a restricting sid. */
 static BOOLEAN token_owns(const TOKEN *token, const UCHAR *owner)
 {
     if (!owner)
@@ -213,7 +210,7 @@ static BOOLEAN token_owns(const TOKEN *token, const UCHAR *owner)
     return FALSE;
 }
 
-/* what a token is granted of the descriptor at most, for the bits asked for or all of them. */
+/* the most a token is granted of the descriptor, for the bits asked for or all of them. */
 static void check_token(const PTOKEN token, const UCHAR *sd, const ULONG *mapping, VERDICT *v)
 {
     PSID owner = nullptr;
@@ -231,7 +228,7 @@ static void check_token(const PTOKEN token, const UCHAR *sd, const ULONG *mappin
         evaluate(dacl, owner, &normal, mapping, owns, &allowed, &denied);
     ACCESS_MASK granted = allowed & ~denied;
 
-    /* a second pass against the sids that restrict the token: a write restricted one only checks the rights that write. */
+    /* a second pass against the restricting sids. a write restricted token only checks write rights there. */
     if (token->RestrictedCount) {
         IDENTITY restricting = {token->Restricted, token->RestrictedCount, FALSE};
         ACCESS_MASK second_allowed = 0, second_denied = 0;
@@ -358,7 +355,7 @@ NTSTATUS NTAPI NtAccessCheck(PVOID descriptor, HANDLE token_handle, ACCESS_MASK 
     ACCESS_MASK maximum = v.Granted;
     ACCESS_MASK granted = 0;
     NTSTATUS access_status = STATUS_SUCCESS;
-    /* the right to the system list is the privilege's alone, and a program that asked for it without one is told so. */
+    /* only the privilege grants the system list, and a caller that asked for it without one is told so. */
     if ((wanted & ACCESS_SYSTEM_SECURITY) && !v.HasSecurity) {
         access_status = STATUS_PRIVILEGE_NOT_HELD;
     } else if (desired & MAXIMUM_ALLOWED) {
@@ -375,14 +372,14 @@ NTSTATUS NTAPI NtAccessCheck(PVOID descriptor, HANDLE token_handle, ACCESS_MASK 
     if (access_status == STATUS_ACCESS_DENIED || access_status == STATUS_PRIVILEGE_NOT_HELD)
         granted = 0;
 
-    /* the privileges that decided it, in the set the caller gave. */
+    /* report the privileges that decided it in the caller's set. */
     ULONG used = 0;
     UCHAR set[PRIVILEGE_SET_HEADER + 2 * LUID_AND_ATTRIBUTES_SIZE] = {};
     ACCESS_MASK counted = (desired & MAXIMUM_ALLOWED) ? granted : wanted;
     if (NT_SUCCESS(access_status)) {
         if (v.HasOwnership && (counted & WRITE_OWNER_) && !(v.ByList & WRITE_OWNER_)) {
             *(ULONG64 *)(set + PRIVILEGE_SET_HEADER + used * LUID_AND_ATTRIBUTES_SIZE) = SE_TAKE_OWNERSHIP_PRIVILEGE;
-            *(ULONG *)(set + PRIVILEGE_SET_HEADER + used * LUID_AND_ATTRIBUTES_SIZE + 8) = 0x80000002; /* used for access, enabled */
+            *(ULONG *)(set + PRIVILEGE_SET_HEADER + used * LUID_AND_ATTRIBUTES_SIZE + 8) = 0x80000002; /* used for access, enabled. */
             used++;
         }
         if (v.HasSecurity && (counted & ACCESS_SYSTEM_SECURITY)) {
@@ -425,8 +422,8 @@ BOOLEAN SeTraceAccess;
 #define CACHE_ENTRIES 256
 
 /*
- * what a token is granted of a descriptor is the same every time, so it is kept by the token's id and the id of its
- * last change, the descriptor's serial and the type's mapping. Under SeLock like the token it was made from.
+ * a token's grant for a descriptor never changes, so it is cached by the token's id and modified id, the
+ * descriptor's serial and the type's mapping. guarded by SeLock like the token.
  */
 typedef struct {
     ULONG64 TokenId, ModifiedId, Serial;
@@ -452,7 +449,7 @@ static ACCESS_MASK map_generic(ACCESS_MASK mask, const ULONG *m)
     return mask;
 }
 
-/* the token a check is for, with SeLock held: the thread's own when it impersonates, else the process's. */
+/* call with SeLock held. the thread's token when it impersonates, else the process's. */
 static PTOKEN subject_locked(ULONG flags, BOOLEAN *impersonating)
 {
     PETHREAD thread = PsCurrentThread();
@@ -507,7 +504,7 @@ ULONG SeThreadIntegrityRid(void)
     return rid;
 }
 
-/* the entries of a descriptor's list and the groups of the token, for a denial that is not understood. */
+/* logs a descriptor's aces and the token's groups, to explain an unexpected denial. */
 static void sid_text(const UCHAR *sid, char *out, ULONG size)
 {
     ULONG n = 0;
@@ -598,7 +595,7 @@ NTSTATUS SeCheckAccess(const SD_BLOB *sd, SD_MAPPING mapping, ACCESS_MASK desire
         c->Verdict = v;
     }
     ACCESS_MASK have = v.Granted;
-    /* a file or key opened to back up or restore is open to the privileges meant for it, whatever the list says. */
+    /* a file or key opened for backup or restore gets what those privileges allow, whatever the list says. */
     if (flags & SE_ACCESS_BACKUP_INTENT) {
         if (t->Present & t->Enabled & (1ull << SE_BACKUP_PRIVILEGE))
             have |= mapping[0] | mapping[2] | READ_CONTROL_ | SYNCHRONIZE_ | ACCESS_SYSTEM_SECURITY;
@@ -609,7 +606,7 @@ NTSTATUS SeCheckAccess(const SD_BLOB *sd, SD_MAPPING mapping, ACCESS_MASK desire
     ExReleaseFastMutex(&SeLock);
     if (!want && !maximum && !previous)
         return STATUS_ACCESS_DENIED;
-    /* the right to the system list is the privilege's alone. */
+    /* only the privilege grants the system list. */
     if ((want & ACCESS_SYSTEM_SECURITY) && !has_security && !(have & ACCESS_SYSTEM_SECURITY))
         return STATUS_PRIVILEGE_NOT_HELD;
     if (want & ~have)

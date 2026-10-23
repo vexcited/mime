@@ -1,12 +1,9 @@
 /*
- * direct3d 11 video, the video processor (included by video.c): an enumerator that tells what a processor takes and gives, processors
- * with the state of their streams and output, the views of their textures, and VideoProcessorBlt, which draws
- * the streams into an output texture with one compute shader (tools/shaders/video.asm): the source resampled
- * with a bilinear filter to the destination rectangle, converted from the color space of the stream to the one
- * of the output. a processor takes planar 4:2:0 video and rgb textures and gives rgb textures. rotation and
- * mirroring are part of the resampling; filters, stereo, luma keys and palettes are not offered. the output is
- * made in a buffer, as raw words in the output's format, and copied into the texture, so nothing is asked of the
- * texture's binds but being a render target, as in direct3d.
+ * direct3d 11 video processors, included by video.c. VideoProcessorBlt draws the streams into the output texture
+ * with one compute shader: bilinear resampling to the destination rectangle, with rotation and mirroring, and
+ * conversion from the stream's color space to the output's. inputs are planar 4:2:0 video or rgb textures, outputs
+ * are rgb. filters, stereo, luma keys and palettes are not offered. the shader writes raw texels into a buffer that
+ * is then copied into the texture, so like direct3d the output only needs to be a render target.
  */
 #define MAX_STREAMS 1
 
@@ -20,7 +17,7 @@ typedef enum VpFormat {
     VP_RGBA16F = 3,
 } VpFormat;
 
-/* the formats a processor writes, and how many bytes a texel of each takes. */
+/* output formats, and the bytes per texel of each. */
 static VpFormat output_format(DXGI_FORMAT format, UINT *bytes)
 {
     *bytes = 4;
@@ -43,7 +40,7 @@ static VpFormat output_format(DXGI_FORMAT format, UINT *bytes)
     }
 }
 
-/* the formats a processor reads: video planes, and the rgb formats it writes. */
+/* input formats: video planes and the output formats. */
 static BOOL input_format(DXGI_FORMAT format)
 {
     UINT bytes;
@@ -59,11 +56,11 @@ typedef struct VpSpace {
     BOOL full;
     VpMatrix matrix;
     VpTransfer transfer;
-    /* chroma sited at the left, or at the top left too, of its luma samples. */
+    /* chroma sited left of its luma samples, and top too for top left. */
     BOOL left, top;
 } VpSpace;
 
-/* what a dxgi color space says: rgb or ycbcr, the range, the matrix, the transfer function and the chroma siting. */
+/* decodes a DXGI_COLOR_SPACE_TYPE: rgb or ycbcr, range, matrix, transfer function and chroma siting. */
 static BOOL space_of(DXGI_COLOR_SPACE_TYPE type, VpSpace *s)
 {
     *s = (VpSpace){};
@@ -97,7 +94,7 @@ static BOOL space_of(DXGI_COLOR_SPACE_TYPE type, VpSpace *s)
     return TRUE;
 }
 
-/* the legacy color space structure, as the space it names for a yuv stream or an rgb output. */
+/* the space a D3D11_VIDEO_PROCESSOR_COLOR_SPACE names for a yuv stream or an rgb output. */
 static VpSpace legacy_space(const D3D11_VIDEO_PROCESSOR_COLOR_SPACE *cs, BOOL rgb)
 {
     VpSpace s = {rgb, TRUE, cs->YCbCr_Matrix ? VP_BT709 : VP_BT601, VP_G22, TRUE};
@@ -126,7 +123,7 @@ typedef struct VpView {
     D3dResource *resource;
     D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input_desc;
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC output_desc;
-    /* an input view's planes as shaders read them, made when first drawn from. */
+    /* shader views of an input view's planes, made on first draw. */
     ID3D11ShaderResourceView *planes[2];
 } VpView;
 
@@ -180,7 +177,7 @@ typedef struct VideoProcessor {
     BOOL stereo_output;
     BOOL shader_usage;
     VpStream streams[MAX_STREAMS];
-    /* the buffer the shader writes, grown as the target does. */
+    /* written by the shader, grows with the target. */
     ID3D11Buffer *buffer;
     ID3D11UnorderedAccessView *buffer_view;
     UINT buffer_size;
@@ -250,7 +247,7 @@ static HRESULT STDMETHODCALLTYPE enum_get_content_desc(void *iface, D3D11_VIDEO_
     return S_OK;
 }
 
-/* the flags of a format: bit 0 read as a stream, bit 1 written as an output. */
+/* bit 0: readable as a stream, bit 1: writable as an output. */
 static UINT format_flags(D3dDevice *device, DXGI_FORMAT format)
 {
     UINT support = 0, bytes;
@@ -307,11 +304,11 @@ static HRESULT STDMETHODCALLTYPE enum_get_filter_range(void *iface, D3D11_VIDEO_
     if (!range)
         return E_INVALIDARG;
     memset(range, 0, sizeof(*range));
-    /* no filter is offered: the caps carry none of the bits a filter needs. */
+    /* no filter is offered: the caps carry no filter bits. */
     return E_INVALIDARG;
 }
 
-/* whether the processor converts a format and color space to another: planes and rgb to rgb, in the spaces it knows. */
+/* planes and rgb convert to rgb, in the known color spaces. */
 static HRESULT STDMETHODCALLTYPE enum_check_conversion(void *iface, DXGI_FORMAT in_format,
                                                        DXGI_COLOR_SPACE_TYPE in_space, DXGI_FORMAT out_format,
                                                        DXGI_COLOR_SPACE_TYPE out_space, BOOL *supported)
@@ -325,7 +322,7 @@ static HRESULT STDMETHODCALLTYPE enum_check_conversion(void *iface, DXGI_FORMAT 
     if (!(format_flags(device, in_format) & 1) || !(format_flags(device, out_format) & 2) ||
         !space_of(in_space, &in) || !space_of(out_space, &out))
         return S_OK;
-    /* a color space of rgb for rgb formats and of ycbcr for the planes, and no tone mapping of high dynamic range. */
+    /* rgb spaces for rgb formats, ycbcr for planes, and no hdr tone mapping. */
     BOOL planar = in_format == DXGI_FORMAT_NV12 || in_format == DXGI_FORMAT_P010 || in_format == DXGI_FORMAT_P016;
     if (in.rgb == planar || !out.rgb || in.transfer == VP_PQ || in.transfer == VP_HLG || out.transfer == VP_PQ ||
         out.transfer == VP_HLG)
@@ -548,7 +545,7 @@ static const ID3D11VideoProcessorOutputViewVtbl output_view_vtbl = {
     VTBL_FN(vpview_get_output_desc),
 };
 
-/* ------------------------------------------------------------------ the device's methods */
+/* ------------------------------------------------------------------ device methods */
 
 static VpEnum *enum_of(ID3D11VideoProcessorEnumerator *iface) { return iface ? enum_impl(iface) : nullptr; }
 
@@ -595,14 +592,13 @@ static HRESULT vp_create_processor(D3dDevice *device, ID3D11VideoProcessorEnumer
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ making a view */
+/* ------------------------------------------------------------------ view creation */
 
-/* the binds that let a texture be the input of a processor, besides none at all. */
+/* an input texture needs one of these binds, or no bind at all. */
 #define VP_INPUT_BINDS (D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_DECODER | \
                         D3D11_BIND_VIDEO_ENCODER | 0x800)
 #define VP_WHOLE_ARRAY 0xFFFFFFFFu
 
-/* whether the texture and the view of it fit an input of the processor. */
 static BOOL input_view_fits(const D3dResource *r, const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC *desc)
 {
     if (r->bind && !(r->bind & VP_INPUT_BINDS))
@@ -613,7 +609,7 @@ static BOOL input_view_fits(const D3dResource *r, const D3D11_VIDEO_PROCESSOR_IN
            desc->Texture2D.MipSlice < r->tex.mips;
 }
 
-/* whether the texture and the view of it fit the output of the processor. a stereo output would take two layers. */
+/* a stereo output would take two layers, so only one is allowed. */
 static BOOL output_view_fits(const D3dResource *r, const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC *desc)
 {
     if (!(r->bind & D3D11_BIND_RENDER_TARGET))
@@ -633,8 +629,8 @@ static BOOL output_view_fits(const D3dResource *r, const D3D11_VIDEO_PROCESSOR_O
 }
 
 /*
- * CreateVideoProcessorInputView and OutputView. every refusal is E_INVALIDARG. a call without a place for the view
- * only checks and answers S_FALSE when the view would be made.
+ * CreateVideoProcessorInputView and OutputView. every refusal is E_INVALIDARG. without out, the call only checks
+ * and returns S_FALSE when the view would be made.
  */
 static HRESULT vp_create_view(D3dDevice *device, BOOL is_output, ID3D11Resource *resource,
                               ID3D11VideoProcessorEnumerator *enumerator, const void *desc, void **out)
@@ -673,7 +669,7 @@ static HRESULT vp_create_view(D3dDevice *device, BOOL is_output, ID3D11Resource 
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the state of a processor */
+/* ------------------------------------------------------------------ processor state */
 
 static BOOL stream_ok(VideoProcessor *p, UINT stream) { return p && stream < MAX_STREAMS; }
 
@@ -849,7 +845,7 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetOutputShaderUsage(ID3D11VideoC
         *shader_usage = p->shader_usage;
 }
 
-/* the state of a stream: setters and getters of each member, as direct3d names them. */
+/* stream state setters and getters. */
 static void STDMETHODCALLTYPE vc_VideoProcessorSetStreamFrameFormat(ID3D11VideoContext1 *iface, ID3D11VideoProcessor *processor,
                                                       UINT stream, D3D11_VIDEO_FRAME_FORMAT format)
 {
@@ -1151,9 +1147,9 @@ static void STDMETHODCALLTYPE vc_VideoProcessorGetStreamFilter(ID3D11VideoContex
     *level = p->streams[stream].filters[filter];
 }
 
-/* ------------------------------------------------------------------ the draw */
+/* ------------------------------------------------------------------ drawing */
 
-/* what a processor draws with: the shader and the sampler, made once for the device. */
+/* made once per device. */
 typedef struct VpShared {
     ID3D11ComputeShader *shader;
     ID3D11SamplerState *sampler;
@@ -1209,7 +1205,7 @@ typedef struct VpParams {
     FLOAT background[4];
 } VpParams;
 
-/* a matrix of 2 by 3, as rows of an affine map. */
+/* 2x3 affine map, row major. */
 typedef struct Affine {
     FLOAT m[2][3];
 } Affine;
@@ -1225,7 +1221,7 @@ static Affine affine_multiply(Affine a, Affine b)
     return r;
 }
 
-/* the matrix from a (y, cb, cr) or (r, g, b) to the output's rgb: ranges, the luma coefficients, bit depth. */
+/* maps ycbcr or rgb to the output's rgb: ranges, luma coefficients and bit depth. */
 static void color_matrix(VpSpace in, VpSpace out, UINT depth, FLOAT matrix[3][4], FLOAT range[4], UINT *gamma)
 {
     FLOAT scale = depth == 10 ? 65535.0f / 65472.0f : 1.0f;
@@ -1233,7 +1229,7 @@ static void color_matrix(VpSpace in, VpSpace out, UINT depth, FLOAT matrix[3][4]
     FLOAT shift = depth == 10 ? 4.0f : 1.0f;
     memset(matrix, 0, 12 * sizeof(FLOAT));
     if (in.rgb) {
-        /* an rgb source: its range expanded to full. */
+        /* rgb sources only get their range expanded to full. */
         FLOAT a = in.full ? 1.0f : 255.0f / 219.0f, b = in.full ? 0.0f : -16.0f / 219.0f;
         for (UINT i = 0; i < 3; i++) {
             matrix[i][i] = a * scale;
@@ -1254,7 +1250,7 @@ static void color_matrix(VpSpace in, VpSpace out, UINT depth, FLOAT matrix[3][4]
         matrix[1][3] = -ya * yo - gu * mid - gv * mid;
         matrix[2][3] = -ya * yo - bu * mid;
     }
-    /* the output's range, and the transfer function when it differs. */
+    /* output range, and the transfer function when it differs. */
     range[0] = 0;
     range[1] = out.full ? 1.0f : 219.0f / 255.0f;
     range[2] = out.full ? 0.0f : 16.0f / 255.0f;
@@ -1269,7 +1265,7 @@ static void color_matrix(VpSpace in, VpSpace out, UINT depth, FLOAT matrix[3][4]
     }
 }
 
-/* a video color in rgb, from the ycbcr of the background as the legacy matrix says. */
+/* a ycbcr background converts with the bt.709 matrix. */
 static void background_rgb(const VideoProcessor *p, FLOAT rgba[4])
 {
     if (!p->background_ycbcr) {
@@ -1311,7 +1307,6 @@ static ID3D11ShaderResourceView *plane_view(D3dDevice *device, VpView *v, UINT p
     return v->planes[plane];
 }
 
-/* the buffer the shader writes, at least bytes long. */
 static BOOL ensure_buffer(D3dDevice *device, VideoProcessor *p, UINT bytes)
 {
     if (p->buffer && p->buffer_size >= bytes)
@@ -1343,8 +1338,8 @@ static RECT whole(UINT width, UINT height) { return (RECT){0, 0, (LONG)width, (L
 static LONG clamp_long(LONG v, LONG lo, LONG hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 /*
- * the draw of one stream: the compute shader over the target rectangle, then the buffer copied into the output's
- * texture. what the program had bound for compute is bound again after.
+ * runs the compute shader over the target rectangle, then copies the buffer into the output texture. the program's
+ * compute bindings are restored after.
  */
 static HRESULT draw_stream(D3dContext *c, VideoProcessor *p, VpView *out, VpView *in, const VpStream *stream, BOOL first)
 {
@@ -1400,13 +1395,13 @@ static HRESULT draw_stream(D3dContext *c, VideoProcessor *p, VpView *out, VpView
         dest.top = clamp_long(dest.top, 0, surface.bottom), dest.bottom = clamp_long(dest.bottom, 0, surface.bottom);
         if (source.right <= source.left || source.bottom <= source.top || dest.right <= dest.left ||
             dest.bottom <= dest.top) {
-            /* nothing of the source shows: the background alone. */
+            /* nothing of the source shows, only the background. */
             params.dest[0] = params.dest[1] = params.dest[2] = params.dest[3] = 0;
         } else {
             params.dest[0] = dest.left, params.dest[1] = dest.top, params.dest[2] = dest.right,
             params.dest[3] = dest.bottom;
         }
-        /* the output texel to the unit square of the destination, mirrored and turned, to the source's texture. */
+        /* output texel to the destination's unit square, mirrored and rotated, then to source texture coordinates. */
         FLOAT dw = (FLOAT)(dest.right - dest.left), dh = (FLOAT)(dest.bottom - dest.top);
         Affine to_unit = {{{dw ? 1.0f / dw : 0, 0, dw ? -(FLOAT)dest.left / dw : 0},
                            {0, dh ? 1.0f / dh : 0, dh ? -(FLOAT)dest.top / dh : 0}}};
@@ -1437,7 +1432,7 @@ static HRESULT draw_stream(D3dContext *c, VideoProcessor *p, VpView *out, VpView
         Affine map = affine_multiply(to_source, affine_multiply(turn, affine_multiply(mirror, to_unit)));
         params.u[0] = map.m[0][0], params.u[1] = map.m[0][1], params.u[2] = map.m[0][2];
         params.v[0] = map.m[1][0], params.v[1] = map.m[1][1], params.v[2] = map.m[1][2];
-        /* the plane views are of the one layer already. */
+        /* the plane views already select the layer. */
         params.slice = 0.0f;
 
         VpSpace in_space, out_space;
@@ -1458,7 +1453,7 @@ static HRESULT draw_stream(D3dContext *c, VideoProcessor *p, VpView *out, VpView
         in_space.rgb = !planar;
         color_matrix(in_space, out_space, depth, params.matrix, params.range, &params.gamma);
         params.mode = !planar;
-        /* chroma sited at the left of its luma samples is half a luma texel to the left of where the plane's texels say. */
+        /* left sited chroma sits half a luma texel left of where the plane's texels put it. */
         if (planar && in_space.left)
             params.u[3] = 0.5f / (FLOAT)se.width;
         if (planar && in_space.top)
@@ -1469,7 +1464,7 @@ static HRESULT draw_stream(D3dContext *c, VideoProcessor *p, VpView *out, VpView
             return E_FAIL;
         D3dContextUse(c, src);
     } else {
-        /* no stream: the background over the target, the color matrix not read. */
+        /* no stream: fill the target with the background, the color matrix is unused. */
         params.mode = 1;
         for (UINT i = 0; i < 3; i++)
             params.matrix[i][i] = 1.0f;
@@ -1485,7 +1480,7 @@ static HRESULT draw_stream(D3dContext *c, VideoProcessor *p, VpView *out, VpView
     }
     ctx->lpVtbl->UpdateSubresource(ctx, (ID3D11Resource *)p->constants, 0, nullptr, &params, 0, 0);
 
-    /* the compute state of the program is kept and bound again. */
+    /* save the program's compute state to restore it after. */
     ID3D11ComputeShader *saved_shader;
     ID3D11ShaderResourceView *saved_srv[2];
     ID3D11SamplerState *saved_sampler;
@@ -1521,7 +1516,7 @@ static HRESULT draw_stream(D3dContext *c, VideoProcessor *p, VpView *out, VpView
     if (saved_buffer)
         saved_buffer->lpVtbl->Release(saved_buffer);
 
-    /* the words the shader wrote, into the texture. */
+    /* copy the shader's output into the texture. */
     VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
     if (!cmd)
         return E_FAIL;
@@ -1557,7 +1552,7 @@ static HRESULT STDMETHODCALLTYPE vc_VideoProcessorBlt(ID3D11VideoContext1 *iface
     if (p->target_enabled && (p->target.right > (LONG)surface.width || p->target.bottom > (LONG)surface.height))
         return E_INVALIDARG;
     for (UINT i = 0; i < count; i++) {
-        /* a progressive stream makes one output frame, an interlaced one two. */
+        /* progressive streams make one output frame, interlaced ones two. */
         UINT frames = p->streams[i].frame_format == D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE ? 1 : 2;
         if (streams[i].OutputIndex >= frames)
             return E_INVALIDARG;
@@ -1578,7 +1573,7 @@ static HRESULT STDMETHODCALLTYPE vc_VideoProcessorBlt(ID3D11VideoContext1 *iface
             return hr;
         drawn = TRUE;
     }
-    /* no stream enabled: the background fills the target. */
+    /* with no stream enabled the background fills the target. */
     if (!drawn)
         return draw_stream(c, p, out, nullptr, &p->streams[0], TRUE);
     return S_OK;
@@ -1592,7 +1587,7 @@ static HRESULT STDMETHODCALLTYPE vc_VideoProcessorSetStreamExtension(ID3D11Video
     return E_NOTIMPL;
 }
 
-/* the methods of the device and context, the rest of video.c's tables. */
+/* entry points for video.c's tables. */
 HRESULT D3dVideoCreateEnumerator(D3dDevice *device, const D3D11_VIDEO_PROCESSOR_CONTENT_DESC *desc,
                                  ID3D11VideoProcessorEnumerator **out)
 {

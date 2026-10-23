@@ -1,6 +1,6 @@
 /*
- * gdi32 color keyed blits and gradient fills, composed in user mode from
- * 32 bpp dib sections, StretchDIBits and GdiAlphaBlend.
+ * color keyed blits and gradient fills, composed in user mode from 32 bpp dib
+ * sections, StretchDIBits and GdiAlphaBlend.
  */
 #include "gdi32_private.h"
 
@@ -47,7 +47,7 @@ static void canvas_close(CANVAS *c)
 
 static const BLENDFUNCTION per_pixel_alpha = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
 
-/* the bits of a key that survive the source format: 15 and 16 bpp keep 5 bits a channel. */
+/* only the key bits that survive the source format count: 15 and 16 bpp keep 5 bits a channel. */
 static DWORD key_mask(HDC src)
 {
     BITMAP bm;
@@ -92,8 +92,6 @@ WINGDIAPI BOOL WINAPI GdiTransparentBlt(HDC dst, int x, int y, int width, int he
     canvas_close(&c);
     return ok;
 }
-
-/* ------------------------------------------------------------------ gradients */
 
 #define CHANNEL(v) ((DWORD)((v) >> 8))
 #define MAX_EXTENT 16384

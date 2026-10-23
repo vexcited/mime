@@ -1,4 +1,4 @@
-/* the prompts, which windows hands to an internal api set mime does not have: ERROR_NOT_SUPPORTED. */
+/* the prompts need an internal api set mime lacks, so they return ERROR_NOT_SUPPORTED. */
 #include <mime/stubexport.h>
 
 MIME_STUB_ERROR("credui", BOOL, CredPackAuthenticationBufferA, 5, ERROR_CALL_NOT_IMPLEMENTED, FALSE)

@@ -1,12 +1,10 @@
 /*
- * the primary surface is the screen. what programs write to it reaches
- * their windows the way a display's scanout would show it: a thread
- * presents the parts written since the last refresh, a flip presents at
- * once. pixels go through gdi, which converts every format, 8 bit ones
- * with the primary's palette, into the window's surface; mode x's 320
- * pixel wide primary is stretched over the 640 by 480 mode it runs in.
- * a gamma ramp of the exclusive owner's primary is the display's, which
- * the host applies.
+ * the primary surface is the screen. writes reach the program's windows like
+ * a display's scanout: a thread presents what changed since the last refresh,
+ * and a flip presents at once. gdi converts every format into the window, 8 bit
+ * ones with the primary's palette. mode x's 320 pixel wide primary is stretched
+ * over its 640x480 mode. the host applies the exclusive owner primary's gamma
+ * ramp as the display's.
  */
 #include "ddraw_private.h"
 
@@ -20,7 +18,7 @@ typedef struct DIBINFO {
     };
 } DIBINFO;
 
-/* the dib header of a surface's pixels; false for formats gdi cannot read. */
+/* FALSE for formats gdi cannot read. */
 static BOOL describe(DDSURF *s, DIBINFO *info)
 {
     memset(&info->header, 0, sizeof(info->header));
@@ -68,7 +66,7 @@ static HWND target_window(DDSURF *primary)
     return dd->focus;
 }
 
-/* draws a rectangle of the primary, in screen coordinates, onto its window. */
+/* rect is in screen coordinates. */
 static void present_rect(DDSURF *primary, RECT rect)
 {
     DDRAW *dd = primary->dd;
@@ -87,11 +85,11 @@ static void present_rect(DDSURF *primary, RECT rect)
     HDC dc = GetDC(window);
     if (!dc)
         return;
-    /* mode x: the primary's pixels are twice their size on the screen. */
+    /* mode x: the primary's pixels show at twice their size. */
     LONG scale = (dd->flags & DDF_MODEX) && primary->desc.dwWidth == 320 ? 2 : 1;
     POINT origin = {rect.left * scale, rect.top * scale};
     ScreenToClient(window, &origin);
-    /* clipped to the clipper's region when there is one, as the screen would clip the window. */
+    /* clip to the clipper's region if any, as the screen would clip the window. */
     if (primary->clipper && !primary->clipper->window) {
         RGNDATA *region = DdClipRegion(primary->clipper, nullptr);
         if (region) {
@@ -107,7 +105,7 @@ static void present_rect(DDSURF *primary, RECT rect)
         }
     }
     LONG width = rect.right - rect.left, height = rect.bottom - rect.top;
-    /* the rows of the rectangle alone, so no source origin convention matters. */
+    /* only the rectangle's rows, so no source origin convention matters. */
     info.header.biHeight = -height;
     const BYTE *pixels = primary->memory + (SIZE_T)rect.top * primary->desc.lPitch;
     LONG src_x = rect.left;
@@ -121,7 +119,7 @@ static DWORD WINAPI scanout(void *arg)
     (void)arg;
     for (;;) {
         WaitForSingleObject(g_wake, INFINITE);
-        /* what a refresh shows: everything written since the last one. */
+        /* a refresh shows everything written since the last one. */
         Sleep(8);
         RtlEnterCriticalSection(&DdLock);
         for (LIST_ENTRY *e = DdObjects.Flink; e != &DdObjects; e = e->Flink) {
@@ -138,7 +136,7 @@ static DWORD WINAPI scanout(void *arg)
     return 0;
 }
 
-/* a rectangle of the primary, in its own coordinates, changed. */
+/* rect is in the primary's own coordinates. */
 void DdPresentDirty(DDSURF *primary, const RECT *rect)
 {
     DDRAW *dd = primary->dd;
@@ -154,7 +152,7 @@ void DdPresentDirty(DDSURF *primary, const RECT *rect)
         SetEvent(g_wake);
 }
 
-/* a flip shows the new front buffer whole, now. */
+/* a flip shows the whole new front buffer at once. */
 void DdPresentFlip(DDSURF *primary)
 {
     DDRAW *dd = primary->dd;

@@ -1,8 +1,7 @@
 /*
- * buffered painting: an off screen dc covering the target rectangle, in the
+ * buffered painting: an off screen dc over the target rectangle, in the
  * target's logical coordinates, copied or blended back by EndBufferedPaint.
- * animations are never started, which programs handle by painting the final
- * frame directly.
+ * animations never start; programs then paint the final frame directly.
  */
 #include "uxtheme_private.h"
 
@@ -43,7 +42,6 @@ static void lock_buffers(void)
     RtlEnterCriticalSection(&g_buffers.Lock);
 }
 
-/* checks the handle is a live buffer, optionally unlinking it. */
 static UX_BUFFER *find_buffer(HPAINTBUFFER handle, BOOL unlink)
 {
     lock_buffers();
@@ -135,7 +133,7 @@ THEMEAPI_(HPAINTBUFFER) BeginBufferedPaint(HDC target, const RECT *rect, BP_BUFF
     }
     b->OldBitmap = SelectObject(b->Dc, b->Bitmap);
     SetWindowOrgEx(b->Dc, rect->left, rect->top, nullptr);
-    /* the buffer starts with the drawing attributes of the target. */
+    /* start with the target's drawing attributes. */
     SelectObject(b->Dc, GetCurrentObject(target, OBJ_FONT));
     SelectObject(b->Dc, GetCurrentObject(target, OBJ_BRUSH));
     SelectObject(b->Dc, GetCurrentObject(target, OBJ_PEN));
@@ -211,7 +209,7 @@ THEMEAPI GetBufferedPaintBits(HPAINTBUFFER handle, RGBQUAD **bits, int *row_pixe
     return S_OK;
 }
 
-/* clears the pixels of rect, in target coordinates, or sets their alpha. */
+/* rect is in target coordinates. */
 static HRESULT for_pixels(HPAINTBUFFER handle, const RECT *rect, BOOL clear, BYTE alpha)
 {
     UX_BUFFER *b = find_buffer(handle, FALSE);
@@ -250,10 +248,7 @@ THEMEAPI BufferedPaintSetAlpha(HPAINTBUFFER handle, const RECT *rect, BYTE alpha
     return for_pixels(handle, rect, FALSE, alpha);
 }
 
-/*
- * no animation is ever running: the buffer paints the final state, *from is
- * NULL as windows returns it when the animation is skipped.
- */
+/* no animation ever runs: the buffer paints the final state, and *from is NULL as when windows skips one. */
 THEMEAPI_(HANIMATIONBUFFER) BeginBufferedAnimation(HWND hwnd, HDC target, const RECT *rect,
                                                    BP_BUFFERFORMAT format, BP_PAINTPARAMS *paint_params,
                                                    BP_ANIMATIONPARAMS *animation_params, HDC *from, HDC *to)

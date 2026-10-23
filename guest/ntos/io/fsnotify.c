@@ -1,15 +1,14 @@
 /*
- * directory change notifications of the host backed volumes: a request on the handle of a directory waits for a file
- * of it, or of the tree below it, to be made, removed, renamed or changed, and is answered with the names and what
- * happened to them. the changes the guest makes through mimefs are reported as they happen. what the host's own programs
- * do to the files is told by the host, with MIME_HC_FS_WATCH and on Linux through inotify: a directory is watched there while a
- * handle of it has made a request, and the changes come as records the host has queued, fetched when it raises
- * MIME_IRQ_FS by a thread of the kernel, and added to the watch like the guest's own.
+ * directory change notifications of the host backed volumes. a request on a directory handle waits for a file in it,
+ * or in the tree below it, to be created, removed, renamed or changed, and is answered with the names and actions.
+ * guest changes made through mimefs are reported as they happen. changes by host programs come from the host through
+ * MIME_HC_FS_WATCH, inotify on Linux: a directory is watched while a handle on it has made a request, and the host
+ * queues records and raises MIME_IRQ_FS, after which a kernel thread fetches them and reports them like guest changes.
  *
- * a handle keeps what happened between its requests, up to the size of the buffer of the last one, as windows does, and
- * answers the next request with it; past that it only knows something happened and the answer is STATUS_NOTIFY_ENUM_DIR
- * with nothing in the buffer, as for a request with no buffer at all. a request is answered as soon as there is
- * something to say, with as many whole records as fit.
+ * like windows, a handle keeps what happened between requests, up to the size of the last request's buffer, and
+ * answers the next request with it. past that it only knows something happened, and answers STATUS_NOTIFY_ENUM_DIR
+ * with an empty buffer, as for a request with no buffer. a request is answered as soon as there is something to say,
+ * with as many whole records as fit.
  */
 #include "../ntos.h"
 
@@ -26,24 +25,24 @@ typedef struct _FILE_NOTIFY_INFORMATION {
     WCHAR FileName[1];
 } FILE_NOTIFY_INFORMATION, *PFILE_NOTIFY_INFORMATION;
 
-/* one record as a request's buffer holds it: FILE_NOTIFY_INFORMATION with the name behind it. */
+/* a FILE_NOTIFY_INFORMATION record with its name after it. */
 #define RECORD_HEADER 12
 
 typedef struct FS_WATCH {
     LIST_ENTRY Links;
     PFILE_OBJECT File;
     ULONG Volume;
-    PWCHAR Path; /* of the directory below its volume, without a closing backslash */
+    PWCHAR Path; /* volume relative, no trailing backslash. */
     ULONG PathChars;
     ULONG Filter;
     BOOLEAN Tree;
     BOOLEAN Overflow;
-    LIST_ENTRY Pending; /* IO_USER_REQUEST, oldest first */
-    PUCHAR Saved;       /* whole records, the last one's NextEntryOffset 0 */
+    LIST_ENTRY Pending; /* IO_USER_REQUEST, oldest first. */
+    PUCHAR Saved;       /* whole records, the last one's NextEntryOffset is 0. */
     ULONG SavedLength, SavedCapacity;
-    ULONG Limit; /* the length of the last request's buffer */
-    ULONG HostId;     /* the host's name for the watch, 0 when the host does not watch it */
-    ULONG HostFilter; /* what the host watches it for */
+    ULONG Limit; /* buffer length of the last request. */
+    ULONG HostId;     /* the host's id for the watch, 0 when the host does not watch it. */
+    ULONG HostFilter; /* the filter the host watches with. */
     BOOLEAN HostTree;
 } FS_WATCH;
 
@@ -96,8 +95,8 @@ static void free_watch(FS_WATCH *w)
 }
 
 /*
- * the name of a changed path as the watch sees it, below its directory: the direct children of the directory, and
- * for a watch of a tree everything under it. NULL when the path is outside.
+ * the changed path relative to the watched directory: its direct children, or everything below it for a tree watch.
+ * NULL when the path is outside.
  */
 static const WCHAR *relative(const FS_WATCH *w, const WCHAR *path, ULONG chars, ULONG *out_chars)
 {
@@ -119,7 +118,7 @@ static const WCHAR *relative(const FS_WATCH *w, const WCHAR *path, ULONG chars, 
     return name;
 }
 
-/* what a request's buffer takes of the saved records: as many whole ones as fit, which are removed from the saved ones. */
+/* moves as many whole saved records as fit into a request's buffer. */
 static ULONG take(FS_WATCH *w, PUCHAR out, ULONG capacity)
 {
     ULONG used = 0, last = (ULONG)-1;
@@ -141,8 +140,8 @@ static ULONG take(FS_WATCH *w, PUCHAR out, ULONG capacity)
 }
 
 /*
- * what a request is told now: the saved records that fit its buffer, or that something happened that it cannot be told of,
- * because more was lost than the handle keeps or the request has no buffer. nothing saved is no answer yet.
+ * the saved records that fit, or just that something happened when more was lost than the handle keeps or the request
+ * has no buffer. FALSE when nothing is saved yet.
  */
 static BOOLEAN deliver(FS_WATCH *w, IO_USER_REQUEST *r, NTSTATUS *status, ULONG_PTR *information)
 {
@@ -172,7 +171,7 @@ static BOOLEAN deliver(FS_WATCH *w, IO_USER_REQUEST *r, NTSTATUS *status, ULONG_
     return TRUE;
 }
 
-/* answers the oldest requests while there is something to tell them. */
+/* answers the oldest requests while there is something to tell. */
 static void flush(FS_WATCH *w)
 {
     while (!IsListEmpty(&w->Pending)) {
@@ -186,14 +185,14 @@ static void flush(FS_WATCH *w)
     }
 }
 
-/* adds a record to the saved ones, unless it repeats the last. */
+/* saves a record unless it repeats the last one. */
 static void append(FS_WATCH *w, ULONG action, const WCHAR *name, ULONG chars)
 {
     ULONG name_bytes = chars * sizeof(WCHAR);
     ULONG size = (ULONG)((RECORD_HEADER + name_bytes + 3) & ~3u);
     if (w->Overflow)
         return;
-    /* a request with no buffer only wants to know that something happened. */
+    /* a request with no buffer only learns that something happened. */
     if (w->Limit == 0) {
         w->Overflow = TRUE;
         return;
@@ -237,7 +236,7 @@ static void append(FS_WATCH *w, ULONG action, const WCHAR *name, ULONG chars)
     w->SavedLength += size;
 }
 
-/* a change of a path, for the watches of the volume that want it. */
+/* reports a path change to the watches of the volume that want it. */
 static void report_one(ULONG volume, const WCHAR *path, ULONG chars, ULONG action, ULONG filter)
 {
     for (PLIST_ENTRY e = g_watches.Flink; e != &g_watches; e = e->Flink) {
@@ -255,13 +254,13 @@ static void flush_all(void)
         flush(CONTAINING_RECORD(e, FS_WATCH, Links));
 }
 
-/* a path of the volume as the file object holds it, a backslash first. */
+/* path is volume relative and starts with a backslash. */
 void FsNotifyReport(ULONG volume, PCUNICODE_STRING path, ULONG action, ULONG filter)
 {
     if (path && path->Length)
         FsAttrChanged(volume, path->Buffer, path->Length / sizeof(WCHAR),
                       action == FILE_ACTION_REMOVED && (filter & FILE_NOTIFY_CHANGE_DIR_NAME));
-    /* nothing watched, the usual case, costs no lock: a watch made at this very moment misses what it did not see. */
+    /* the usual case, nothing watched, takes no lock: a watch created right now misses this change. */
     if (!path || !path->Length || IsListEmpty(&g_watches))
         return;
     lock();
@@ -271,8 +270,8 @@ void FsNotifyReport(ULONG volume, PCUNICODE_STRING path, ULONG action, ULONG fil
 }
 
 /*
- * a file moved from one name to another. a watch that sees both is told the old name and the new one; one that sees only
- * the first is told the file is gone, and one that sees only the second, that it came.
+ * a watch that sees both names gets the old and the new name; one that sees only the old name is told the file is
+ * gone, and one that sees only the new name that it was added.
  */
 void FsNotifyRename(ULONG volume, PCUNICODE_STRING from, PCUNICODE_STRING to, BOOLEAN directory)
 {
@@ -304,7 +303,7 @@ void FsNotifyRename(ULONG volume, PCUNICODE_STRING from, PCUNICODE_STRING to, BO
     unlock();
 }
 
-/* the last handle of a directory closed: what waits on it is told so, and what it kept is dropped. */
+/* the last handle of a directory closed: pending requests end and saved records are dropped. */
 void FsNotifyCleanup(PFILE_OBJECT file)
 {
     lock();
@@ -343,11 +342,11 @@ NTSTATUS FsNotifyCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb)
     return found ? STATUS_SUCCESS : STATUS_NOT_FOUND;
 }
 
-/* ------------------------------------------------------------ the host's changes */
+/* ------------------------------------------------------------ host changes */
 
 #define HOST_BUFFER 0x8000
 
-/* the records the host queued for the watches, told as the guest's own changes are. */
+/* reports the records the host queued, like guest changes. */
 static void host_records(const UCHAR *buffer, ULONG length)
 {
     lock();
@@ -394,7 +393,7 @@ static void NTAPI host_worker(PVOID context)
     }
 }
 
-/* at interrupt level of the session: the thread that fetches does the rest. */
+/* at session interrupt level: the fetching thread does the rest. */
 void FsNotifyHostInterrupt(void)
 {
     KeSetEvent(&g_host_event, IO_NO_INCREMENT, FALSE);
@@ -408,7 +407,7 @@ void FsNotifyHostStart(void)
         __atomic_store_n(&g_host_thread, FALSE, __ATOMIC_SEQ_CST);
 }
 
-/* has the host watch the directory for this request's filter, with the lock held; a host that cannot leaves the guest's own. */
+/* lock held. a host that cannot watch leaves only the guest's own changes. */
 static void host_watch(FS_WATCH *w, ULONG64 host_handle)
 {
     if (g_host_unsupported || !host_handle)
@@ -452,13 +451,13 @@ static NTSTATUS notify_change(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, 
         return status;
     }
     IO_USER_REQUEST *r = IopNewUserRequest(file, event, routine, apc_context, iosb, buffer, length, &status);
-    /* a request with no event or routine starts afresh the file's own event, which waiting on the handle sees. */
+    /* with no event or apc routine, the request resets the file's own event, which a wait on the handle sees. */
     if (r && !event)
         KeClearEvent(&file->Event);
     ObDereferenceObject(file);
     if (!r)
         return status;
-    /* the request holds a reference of the file, the watch is the file's while it has a handle. */
+    /* the request holds a file reference; the watch belongs to the file while it has a handle. */
     lock();
     FS_WATCH *w = find(file);
     if (!w) {
@@ -487,7 +486,7 @@ static NTSTATUS notify_change(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, 
     w->Tree = tree != 0;
     w->Limit = length > SAVED_LIMIT ? SAVED_LIMIT : length;
     host_watch(w, host_handle);
-    /* what the handle kept since its last request is the answer, with nothing waiting for it. */
+    /* with nothing pending, records saved since the last request answer this one at once. */
     ULONG_PTR information;
     if (IsListEmpty(&w->Pending) && deliver(w, r, &status, &information)) {
         unlock();
@@ -510,7 +509,7 @@ NTSTATUS NTAPI NtNotifyChangeDirectoryFileEx(HANDLE handle, HANDLE event, PIO_AP
                                              PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, ULONG filter,
                                              BOOLEAN tree, ULONG information_class)
 {
-    /* the extended records of the other class carry more than a name; only the plain ones are made. */
+    /* only plain records are made, not the extended class. */
     if (information_class != 1)
         return STATUS_INVALID_PARAMETER;
     return notify_change(handle, event, apc, apc_context, iosb, buffer, length, filter, tree);

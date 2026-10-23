@@ -1,9 +1,6 @@
 /*
- * the schannel package of secur32: a tls 1.2 and 1.3 client behind the
- * security support provider interface, see docs/schannel.md.
- *
- * tls.c runs the protocol, cert.c reaches crypt32 for the server's
- * certificates and schannel.c maps both onto the sspi calls.
+ * secur32's schannel package: a tls 1.2 and 1.3 client behind sspi. tls.c runs the protocol, cert.c uses crypt32 for
+ * the server's certificates and schannel.c maps both onto the sspi calls.
  */
 #ifndef MIME_SECUR32_SCHANNEL_H
 #define MIME_SECUR32_SCHANNEL_H
@@ -12,7 +9,7 @@
 #include <mime/win32/wincrypt.h>
 #include <crypto/crypto.h>
 
-/* ------------------------------------------------------------------ the public constants schannel.h defines */
+/* ------------------------------------------------------------------ public schannel.h constants */
 
 #define SP_PROT_SSL3_CLIENT 0x00000020
 #define SP_PROT_TLS1_0_CLIENT 0x00000080
@@ -189,21 +186,19 @@ typedef struct SCH_SESSION_INFO {
 
 /* ------------------------------------------------------------------ credentials */
 
-/* what a schannel credential keeps of its authentication data. */
 typedef struct SCH_CONFIG {
-    /* the client protocols that may be negotiated, SP_PROT_TLS1_2_CLIENT and SP_PROT_TLS1_3_CLIENT. */
+    /* the client protocols that may be negotiated: SP_PROT_TLS1_2_CLIENT and SP_PROT_TLS1_3_CLIENT. */
     ULONG Protocols;
     ULONG Flags;
     ULONG MinStrength;
     ULONG MaxStrength;
 } SCH_CONFIG;
 
-/* reads SCHANNEL_CRED or SCH_CREDENTIALS, NULL meaning the defaults. */
+/* reads SCHANNEL_CRED or SCH_CREDENTIALS; NULL means the defaults. */
 void SchParseCredentials(const void *auth_data, SCH_CONFIG *config);
-/* the configuration of a live schannel credential. */
 bool SecSchannelConfig(PCredHandle handle, SCH_CONFIG *config);
 
-/* ------------------------------------------------------------------ the tls engine, tls.c */
+/* ------------------------------------------------------------------ tls engine, tls.c */
 
 typedef struct TLS TLS;
 
@@ -219,22 +214,21 @@ void TlsBufFree(TLS_BUF *b);
 
 TLS *TlsCreate(const SCH_CONFIG *config, ULONG requested, PCWSTR target);
 void TlsDestroy(TLS *t);
-/* the ClientHello, into the pending output. */
+/* queues the ClientHello in the pending output. */
 SECURITY_STATUS TlsStart(TLS *t, const BYTE *alpn, SIZE_T alpn_size);
 /*
- * runs the handshake over the server's records in input. consumed is the
- * bytes taken, missing what an incomplete record still needs. the records
- * to send collect in the pending output.
+ * runs the handshake over the server's records. consumed is the bytes taken, missing what an incomplete record still
+ * needs. records to send collect in the pending output.
  */
 SECURITY_STATUS TlsHandshake(TLS *t, BYTE *input, SIZE_T size, SIZE_T *consumed, SIZE_T *missing);
-/* the records waiting to be sent, which the caller hands over and empties. */
+/* records waiting to be sent; the caller hands them over and empties the buffer. */
 TLS_BUF *TlsOutput(TLS *t);
 bool TlsConnected(const TLS *t);
-/* the post handshake call of InitializeSecurityContext after SEC_I_RENEGOTIATE. */
+/* the InitializeSecurityContext call that follows SEC_I_RENEGOTIATE. */
 SECURITY_STATUS TlsPostHandshake(TLS *t, SIZE_T size, SIZE_T *consumed);
 
 typedef struct TLS_RECORD {
-    /* the record within the caller's buffer, decrypted in place. */
+    /* points into the caller's buffer, decrypted in place. */
     BYTE *Header;
     SIZE_T HeaderSize;
     BYTE *Data;
@@ -244,7 +238,7 @@ typedef struct TLS_RECORD {
 } TLS_RECORD;
 
 SECURITY_STATUS TlsDecrypt(TLS *t, BYTE *input, SIZE_T size, TLS_RECORD *record, SIZE_T *missing);
-/* encrypts size bytes at data, header bytes before and trailer room after it. */
+/* encrypts size bytes at data, with the header before it and trailer room after it. */
 SECURITY_STATUS TlsEncrypt(TLS *t, BYTE *header, BYTE *data, SIZE_T size, BYTE *trailer, SIZE_T trailer_room,
                            SIZE_T *trailer_used);
 void TlsStreamSizes(const TLS *t, SCH_STREAM_SIZES *sizes);
@@ -253,7 +247,7 @@ void TlsCipherInfo(const TLS *t, SCH_CIPHER_INFO *info);
 void TlsApplicationProtocol(const TLS *t, SCH_APPLICATION_PROTOCOL *protocol);
 void TlsSessionInfo(const TLS *t, SCH_SESSION_INFO *info);
 SECURITY_STATUS TlsKeyInfo(const TLS *t, SCH_KEY_INFO_W *info, bool ansi);
-/* the leaf certificate of the server, with the chain in its store, or NULL before it came. */
+/* the server's leaf certificate with the chain in its store, or NULL before it arrived. */
 PCCERT_CONTEXT TlsRemoteCertificate(const TLS *t);
 void TlsExpiry(const TLS *t, PTimeStamp expiry);
 /* queues close_notify or another alert for the next InitializeSecurityContext. */
@@ -274,21 +268,20 @@ typedef struct TLS_CERTS {
     PCCERT_CONTEXT Leaf;
 } TLS_CERTS;
 
-/* a memory store with the server's certificates, the leaf first; fails for one crypt32 cannot read. */
+/* a memory store of the server's certificates, leaf first; fails for one crypt32 cannot read. */
 SECURITY_STATUS SchLoadCertificates(TLS_CERTS *certs, const BYTE *const *der, const SIZE_T *sizes, DWORD count);
-/* the public key of the leaf certificate. */
 SECURITY_STATUS SchLeafKey(const TLS_CERTS *certs, TLS_PEER_KEY *key);
 void SchFreeKey(TLS_PEER_KEY *key);
-/* chain building and the ssl policy of crypt32, with the alert to send on failure. */
+/* crypt32 chain building and ssl policy, with the alert to send on failure. */
 SECURITY_STATUS SchValidateChain(const TLS_CERTS *certs, PCWSTR server, ULONG flags, BYTE *alert);
 void SchFreeCertificates(TLS_CERTS *certs);
 PCCERT_CONTEXT SchDuplicate(PCCERT_CONTEXT cert);
 void SchFreeCertificate(PCCERT_CONTEXT cert);
 
-/* the hooks of the crypto library. */
+/* crypto library hooks. */
 bool SchRandom(void *out, SIZE_T size);
 
-/* ------------------------------------------------------------------ the sspi side, schannel.c */
+/* ------------------------------------------------------------------ sspi side, schannel.c */
 
 SECURITY_STATUS SchInitialize(PCredHandle credential, PCtxtHandle context, PCWSTR target, ULONG flags,
                               PSecBufferDesc input, PCtxtHandle new_context, PSecBufferDesc output,
@@ -300,9 +293,9 @@ SECURITY_STATUS SchApplyControlToken(TLS *t, PSecBufferDesc input);
 
 /* ------------------------------------------------------------------ context handles, context.c */
 
-/* a new context handle of the schannel package around t. */
+/* wraps t in a new schannel context handle. */
 bool SecNewSchannelContext(const SEC_PACKAGE *package, TLS *t, PCtxtHandle handle);
-/* the engine behind a live schannel context handle, with its lock taken; SecReleaseSchannelContext drops it. */
+/* the engine behind a live schannel context handle, locked; SecReleaseSchannelContext unlocks it. */
 TLS *SecAcquireSchannelContext(PCtxtHandle handle);
 void SecReleaseSchannelContext(PCtxtHandle handle);
 

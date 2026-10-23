@@ -1,9 +1,8 @@
 /*
- * layered windows and window regions. the host composites premultiplied
- * window surfaces with per pixel alpha, so constant alpha, color keys and
- * window shapes are applied by composing the window surface into a second
- * surface that is presented instead. UpdateLayeredWindow writes the
- * caller's premultiplied pixels straight into the window surface.
+ * layered windows and window regions. the host composites premultiplied window surfaces with per pixel alpha, so
+ * constant alpha, color keys and window shapes are applied by composing the window surface into a second surface
+ * that is presented instead. UpdateLayeredWindow writes the caller's premultiplied pixels straight into the window
+ * surface.
  */
 #include "win32k.h"
 
@@ -36,7 +35,7 @@ static void redraw_all(WND *w)
         QueueWake(w->Thread, QS_PAINT);
 }
 
-/* returns the surface to hand to the host for the dirty rectangle of a top level window. */
+/* the surface to hand to the host for a top level window's dirty rectangle. */
 SURFACE *LayerPrepare(WND *w, const RECT *dirty)
 {
     SURFACE *s = w->Surface;
@@ -114,7 +113,6 @@ BOOLEAN LayerHitTest(WND *w, POINT pt)
     return RgnPtIn(w->Shape, pt.x - w->WindowRect.left, pt.y - w->WindowRect.top);
 }
 
-/* clears the layering state when WS_EX_LAYERED is removed. */
 void LayerStyleChanged(WND *w)
 {
     if (w->ExStyle & WS_EX_LAYERED)

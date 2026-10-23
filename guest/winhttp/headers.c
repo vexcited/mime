@@ -101,7 +101,7 @@ const char *WhKnownHeaderName(DWORD level)
     return level <= WINHTTP_QUERY_MAX ? Known[level].Name : nullptr;
 }
 
-/* ------------------------------------------------------------------ header lists */
+/* header lists. */
 
 void WhHeadersClear(WH_HEADERS *headers)
 {
@@ -169,7 +169,7 @@ void WhHeadersRemove(WH_HEADERS *headers, const char *name)
         RemoveAt(headers, header);
 }
 
-/* ------------------------------------------------------------------ adding */
+/* adding. */
 
 static BOOL HeaderNameChar(char c)
 {
@@ -412,7 +412,7 @@ DWORD WINAPI WinHttpAddRequestHeadersEx(HINTERNET handle, DWORD modifiers, ULONG
     return error;
 }
 
-/* ------------------------------------------------------------------ querying */
+/* querying. */
 
 typedef struct {
     char *Data;
@@ -441,7 +441,6 @@ static BOOL TextAddString(WH_TEXT *text, const char *data)
     return TextAdd(text, data, (DWORD)strlen(data));
 }
 
-/* the request line of a request as sent, with its path. */
 static BOOL RequestLine(WH_OBJECT *request, WH_TEXT *text)
 {
     char *verb = WhWideToAnsi(request->Verb, (DWORD)wcslen(request->Verb), nullptr);

@@ -1,8 +1,6 @@
 /*
- * msgsm32.acm, the gsm 6.10 codec: mono 8 and 16 bit pcm to and from gsm
- * 6.10 in windows' blocks of 65 bytes for 320 samples. realtime streams
- * are limited to the rates the user's configuration allows, as windows'
- * codec does.
+ * msgsm32.acm, the GSM 6.10 codec: mono 8 and 16-bit pcm to and from GSM 6.10 in 65-byte blocks of 320 samples.
+ * like the Windows codec, realtime streams are limited to the rates the user's configuration allows.
  */
 #include <mime/win32/winbase.h>
 #include <acmdrv/acmdrv.h>
@@ -47,7 +45,7 @@ static void make_gsm(WAVEFORMATEX *f, DWORD rate)
     ((GSM610WAVEFORMAT *)f)->wSamplesPerBlock = 320;
 }
 
-/* the realtime limits, as imaadp32 keeps them; a missing value means every rate. */
+/* realtime limits, stored like imaadp32's. a missing value allows every rate. */
 static void read_configuration(INSTANCE *in, const WCHAR *alias)
 {
     in->encode_setting = 0;
@@ -245,9 +243,8 @@ static LRESULT stream_size(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMSIZE *s)
 }
 
 /*
- * encoding pads a last partial block with silence, or with ACM_STREAMCONVERTF_BLOCKALIGN
- * keeps to whole blocks; the destination must hold every block, else
- * nothing is converted, as in windows.
+ * a last partial block is padded with silence, or dropped with ACM_STREAMCONVERTF_BLOCKALIGN. like Windows, nothing
+ * is converted unless the destination holds every block.
  */
 static LRESULT encode(STREAM *s, const WAVEFORMATEX *src, ACMDRVSTREAMHEADER *h)
 {
@@ -344,7 +341,7 @@ DECLSPEC_EXPORT LRESULT WINAPI DriverProc(DWORD_PTR id, HDRVR driver, UINT messa
     case DRV_QUERYCONFIGURE:
         return 1;
     case DRV_CONFIGURE:
-        /* the settings dialog is not there yet; the query by -1 says there is one. */
+        /* no settings dialog yet, but the -1 query still reports one. */
         return param1 == -1 ? 1 : DRVCNF_CANCEL;
     case ACMDM_DRIVER_DETAILS:
         return AcmdDetails((ACMDRIVERDETAILSW *)param1, 36, 0x04000000, ACMDRIVERDETAILS_SUPPORTF_CODEC, 2,

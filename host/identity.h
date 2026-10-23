@@ -1,7 +1,4 @@
-/*
- * identity of the installation: what windows setup and the first boot
- * experience choose once, computer name, user, machine sid, volume serial.
- */
+/* persistent installation identity: computer name, user, machine SID and volume serial. */
 #ifndef MIME_IDENTITY_H
 #define MIME_IDENTITY_H
 
@@ -13,16 +10,14 @@ typedef struct MimeIdentity {
     uint32_t sid[3];
     uint32_t volume_serial;
     uint64_t install_filetime;
-    char machine_serial[20]; /* serial of the case, as firmware reports it */
-    char machine_uuid[40];   /* smbios uuid, text form */
+    char machine_serial[20]; /* serial of the case, as firmware reports it. */
+    char machine_uuid[40];   /* SMBIOS UUID, text form. */
     char locale[32];         /* name of the locale of the user, empty until chosen. */
 } MimeIdentity;
 
 /*
- * the machine the guest presents itself as: a stock windows 11 arm64
- * computer, so that nothing in it can tell the mac, the hypervisor or the
- * apple hardware. fixed strings, the same for every installation, like a
- * hardware model is.
+ * fixed Windows 11 ARM64 hardware identity shared by installations, replacing the host's Mac and Apple hardware
+ * strings.
  */
 typedef struct MimeHardwareProfile {
     const char *cpu_name;

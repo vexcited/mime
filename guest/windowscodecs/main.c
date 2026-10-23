@@ -1,6 +1,4 @@
-/*
- * the counted objects of windowscodecs.dll: memory, the shared methods of IUnknown and the class factories.
- */
+/* windowscodecs object allocation, shared IUnknown methods and class factories. */
 #include "wic_private.h"
 
 int _fltused = 0x9875;
@@ -10,7 +8,6 @@ static LONG volatile g_locks;
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
 
-/* ------------------------------------------------------------------ memory */
 
 void *WicAlloc(SIZE_T size) { return HeapAlloc(GetProcessHeap(), 0, size ? size : 1); }
 
@@ -55,7 +52,6 @@ BOOL WicMul32(UINT a, UINT b, UINT *result)
 
 BOOL WicIsEqual(const GUID *a, const GUID *b) { return IsEqualGUID(a, b); }
 
-/* ------------------------------------------------------------------ objects */
 
 void *WicNew(SIZE_T size, const WicClass *cls)
 {
@@ -109,7 +105,7 @@ ULONG STDMETHODCALLTYPE WicRelease(void *This)
     WicBase *base = WicSlotBase(This);
     LONG refs = InterlockedDecrement(&base->refs);
     if (refs == 0) {
-        /* a destructor that hands out references while it runs is not given a second chance. */
+        /* do not destroy twice if a destructor hands out references. */
         base->refs = 0x40000000;
         if (base->cls->destroy)
             base->cls->destroy(base);
@@ -119,7 +115,6 @@ ULONG STDMETHODCALLTYPE WicRelease(void *This)
     return (ULONG)refs;
 }
 
-/* ------------------------------------------------------------------ class factories */
 
 typedef HRESULT (*WicCreator)(REFIID riid, void **object);
 
@@ -183,7 +178,7 @@ static HRESULT STDMETHODCALLTYPE factory_create(IClassFactory *This, IUnknown *o
     if (!object)
         return E_POINTER;
     *object = nullptr;
-    /* the outer object is ignored, as the class factories of windows' do. */
+    /* class factories ignore the outer object, as on Windows. */
     if (factory->create)
         return factory->create(riid, object);
     return WicCreateCodecObject(factory->clsid, riid, object);
@@ -201,7 +196,6 @@ static HRESULT STDMETHODCALLTYPE factory_lock(IClassFactory *This, BOOL lock)
 static const IClassFactoryVtbl g_factory_vtbl = {factory_qi, factory_addref, factory_release, factory_create,
                                                  factory_lock};
 
-/* the component of a codec guid, from components.c. */
 BOOL WicIsCodecClass(REFCLSID clsid);
 
 DECLSPEC_EXPORT HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void **object)

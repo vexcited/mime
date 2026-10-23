@@ -1,19 +1,16 @@
 /*
- * gdiplus.dll: startup, the allocator, the codes of the colors the drawing code shares and the constants the sdk
- * keeps in its import library. gdi+ has no background thread to run here, so the notification hooks only hand out
- * tokens.
+ * gdiplus.dll: startup, the allocator, shared color helpers and the constants the sdk keeps in its import library.
+ * there is no background thread, so the notification hooks only hand out tokens.
  */
 #include "gp_private.h"
 
-/* the marker the compiler asks of a module that uses floating point. */
+/* the compiler expects this symbol in modules that use floating point. */
 int _fltused = 0x9875;
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
 {
     return TRUE;
 }
-
-/* ------------------------------------------------------------------ memory */
 
 void *gp_alloc(SIZE_T size)
 {
@@ -53,9 +50,7 @@ static void vec_free(void *ctx, void *p) { gp_free(p); }
 
 const MimeAllocator gp_allocator = {vec_alloc, vec_free, nullptr};
 
-/* ------------------------------------------------------------------ colors */
-
-/* the exact rounded x / 255 of the pipeline: add 128, add that sum shifted by 8, shift by 8. */
+/* exact rounded x / 255: add 128, add that sum shifted by 8, shift by 8. */
 static UINT32 div255(UINT32 x)
 {
     x += 128;
@@ -73,7 +68,7 @@ UINT32 gp_premultiply(UINT32 argb)
     return a << 24 | r << 16 | g << 8 | b;
 }
 
-/* the table of gdiplus.dll is the 16.16 reciprocal 255 / a rounded down. */
+/* the 16.16 reciprocal 255 / a, rounded down, like gdi+. */
 static UINT32 unpremultiply_factor(UINT32 a)
 {
     return (UINT32)((255ull << 16) / a);
@@ -106,10 +101,8 @@ UINT32 gp_scale_pargb(UINT32 pargb, UINT32 v255)
     return a << 24 | r << 16 | g << 8 | b;
 }
 
-/* ------------------------------------------------------------------ startup */
-
 static LONG volatile g_token;
-/* the number of GdiplusStartup calls that GdiplusShutdown has not matched yet. */
+/* GdiplusStartup calls not yet matched by GdiplusShutdown. */
 static LONG volatile g_init_count;
 static ULONG_PTR g_init_token;
 
@@ -127,7 +120,7 @@ static void WINAPI notification_unhook(ULONG_PTR token)
 {
 }
 
-/* the first startup makes the token and the later ones count up from it. */
+/* the first startup makes the token, later ones count up from it. */
 WINGDIPAPI GpStatus WINAPI GdiplusStartup(ULONG_PTR *token, const GdiplusStartupInput *input,
                                           GdiplusStartupOutput *output)
 {
@@ -147,7 +140,7 @@ WINGDIPAPI GpStatus WINAPI GdiplusStartup(ULONG_PTR *token, const GdiplusStartup
     return Ok;
 }
 
-/* the token is not looked at: every call counts down one startup. */
+/* the token is ignored: every call undoes one startup. */
 WINGDIPAPI VOID WINAPI GdiplusShutdown(ULONG_PTR token)
 {
     LONG count = g_init_count;
@@ -168,7 +161,7 @@ WINGDIPAPI VOID WINAPI GdiplusNotificationUnhook(ULONG_PTR token)
 {
 }
 
-/* memory is handed out only while the library is started. */
+/* only while the library is started. */
 WINGDIPAPI void *WINAPI GdipAlloc(SIZE_T size)
 {
     return gp_started() ? HeapAlloc(GetProcessHeap(), 0, size) : nullptr;
@@ -179,7 +172,7 @@ WINGDIPAPI void WINAPI GdipFree(void *p)
     gp_free(p);
 }
 
-/* ------------------------------------------------------------------ the constants of the sdk */
+/* the constants of the sdk. */
 
 #define GUID_DEF(name, a, b, c, d0, d1, d2, d3, d4, d5, d6, d7) \
     const GUID name = {a, b, c, {d0, d1, d2, d3, d4, d5, d6, d7}}

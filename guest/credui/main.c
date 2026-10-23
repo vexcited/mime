@@ -1,7 +1,6 @@
 /*
- * credui: the credential prompts are the part windows itself leaves to an
- * internal api set, and without it every prompt answers ERROR_NOT_SUPPORTED,
- * as here. user name parsing and credential packing are real.
+ * credui. windows leaves the credential prompts to an internal api set; without it every prompt returns
+ * ERROR_NOT_SUPPORTED, as here. user name parsing and credential packing are real.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winnls.h>
@@ -15,7 +14,7 @@ BOOL WINAPI CredUIInitControls(void)
     return TRUE;
 }
 
-/* the characters account and domain names may not hold. */
+/* rejects the characters account and domain names may not hold. */
 static BOOL valid_name(LPCWSTR name, SIZE_T length, SIZE_T maximum)
 {
     if (!length || length > maximum)
@@ -35,7 +34,7 @@ static DWORD copy_out(LPCWSTR source, SIZE_T length, WCHAR *buffer, ULONG size)
     return ERROR_SUCCESS;
 }
 
-/* "domain\user" splits, "user@domain" stays whole as a upn, a marshaled credential stays whole, a bare name is
+/* "domain\user" splits, "user@domain" stays whole as a UPN, a marshaled credential stays whole, a bare name is
    refused. */
 DWORD WINAPI CredUIParseUserNameW(LPCWSTR name, WCHAR *user, ULONG user_size, WCHAR *domain, ULONG domain_size)
 {
@@ -102,9 +101,7 @@ BOOLEAN WINAPI SspiIsPromptingNeeded(ULONG status)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ packed credentials */
-
-/* KERB_INTERACTIVE_LOGON with its strings after it, their buffers as offsets from the start. */
+/* KERB_INTERACTIVE_LOGON followed by its strings, buffers stored as offsets from the start. */
 typedef struct {
     USHORT Length, MaximumLength;
     ULONG_PTR Buffer;

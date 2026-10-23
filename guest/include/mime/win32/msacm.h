@@ -1,7 +1,4 @@
-/*
- * the audio compression manager, msacm32.dll: drivers turning one wave
- * format into another, and what such a driver answers.
- */
+/* audio compression manager, msacm32.dll: drivers that convert between wave formats, and their replies. */
 #ifndef MIME_WIN32_MSACM_H
 #define MIME_WIN32_MSACM_H
 
@@ -179,7 +176,7 @@ typedef HACMSTREAM *LPHACMSTREAM;
 #define ACM_STREAMCONVERTF_START 0x00000010
 #define ACM_STREAMCONVERTF_END 0x00000020
 
-/* windows packs every structure of the acm to one byte. */
+/* windows packs every acm structure to one byte. */
 #pragma pack(push, 1)
 
 typedef struct wavefilter_tag {

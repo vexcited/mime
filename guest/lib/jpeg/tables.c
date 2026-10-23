@@ -1,7 +1,4 @@
-/*
- * the tables of the standard: the zigzag order, the examples of annex K and the mapping of a quality to
- * quantization tables.
- */
+/* the zigzag order, the example tables of annex K, and the quality to quantization table mapping. */
 #include "internal.h"
 
 const uint8_t jpeg_zigzag[64] = {
@@ -50,9 +47,9 @@ const JpegHuffSpec jpeg_std_ac[2] = {
 };
 
 /*
- * the quality sets how many times coarser than the tables of annex K the steps are. a quality of 50 keeps them,
- * and the factor follows a power of 9 / 8 of the distance to 100 above that and of the ratio to 50 below it, so it
- * falls smoothly to nothing at the top and grows quickly at the bottom.
+ * quality sets how much coarser than annex K's tables the steps are. 50 keeps them, above that the factor follows a
+ * power of 9 / 8 of the distance to 100, below it of the ratio to 50, so it falls smoothly to nothing at the top
+ * and grows quickly at the bottom.
  */
 static float square_root(float x)
 {

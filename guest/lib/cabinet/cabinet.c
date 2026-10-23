@@ -30,7 +30,7 @@
 #define TYPE_LZX 3
 
 typedef struct FOLDER {
-    uint32_t Start; /* of its first block in the file */
+    uint32_t Start; /* file offset of the first block. */
     uint16_t Blocks;
     uint16_t Type;
 } FOLDER;
@@ -42,7 +42,7 @@ struct MIME_CAB {
     uint8_t FolderReserve, DataReserve;
     bool SkipContinued, Sequential;
     FOLDER *Folder;
-    /* the file entries, as offsets into the file, in the order they are stored. */
+    /* file offsets of the file entries, in stored order. */
     uint32_t *FileAt;
     MIME_CAB_ALLOC Allocate;
     MIME_CAB_FREE Release;
@@ -73,7 +73,7 @@ static void put(MIME_CAB *cab, void *memory)
         free(memory);
 }
 
-/* the end of the zero terminated string at offset, inside the file; 0 when there is none. */
+/* one past the terminator of the string at offset, or 0 when it runs off the file. */
 static size_t string_end(const MIME_CAB *cab, size_t offset)
 {
     while (offset < cab->Size) {
@@ -90,7 +90,7 @@ int MimeCabOpen(MIME_CAB **out, const void *data, size_t size, MIME_CAB_ALLOC al
     *out = nullptr;
     if (!data || size < CFHEADER_SIZE || memcmp(p, "MSCF", 4))
         return MIME_CAB_BAD;
-    /* only version 1.3 has been made. */
+    /* only format version 1.3 exists. */
     if (p[24] != 3 || p[25] != 1)
         return MIME_CAB_BAD;
     MIME_CAB *cab = allocate ? allocate(sizeof(*cab)) : malloc(sizeof(*cab));
@@ -107,7 +107,7 @@ int MimeCabOpen(MIME_CAB **out, const void *data, size_t size, MIME_CAB_ALLOC al
     cab->Flags = word(p + 30);
     cab->SetId = word(p + 32);
     cab->Index = word(p + 34);
-    /* a cabinet that was cut off is not read. */
+    /* a truncated cabinet is refused. */
     if (total > size || total < CFHEADER_SIZE || files_at >= total) {
         MimeCabClose(cab);
         return MIME_CAB_BAD;
@@ -233,9 +233,9 @@ int MimeCabFolderType(const MIME_CAB *cab, unsigned folder, uint16_t *type)
     return MIME_CAB_OK;
 }
 
-/* ------------------------------------------------------------------ the checksum of a block */
+/* ------------------------------------------------------------------ block checksum */
 
-/* the words of the data xored together, and the last one to three bytes as the low bytes of a word. */
+/* xor of the dwords; the last one to three bytes form the low bytes of a final dword. */
 static uint32_t checksum(const uint8_t *data, size_t bytes, uint32_t sum)
 {
     for (size_t i = bytes / 4; i; i--, data += 4)
@@ -259,7 +259,7 @@ static uint32_t checksum(const uint8_t *data, size_t bytes, uint32_t sum)
 typedef struct INFLATE {
     uint8_t Window[32768];
     uint32_t Position;
-    /* of the block in hand. */
+    /* input of the current block. */
     const uint8_t *In;
     size_t InSize, InPos;
     uint32_t Bits, BitCount;
@@ -297,7 +297,7 @@ static int take_bits(INFLATE *z, unsigned n, uint32_t *value)
     return 1;
 }
 
-/* the canonical code of lengths; 0 for a complete code, positive for an incomplete one, negative for over subscribed. */
+/* builds the canonical code: 0 when complete, positive when incomplete, negative when oversubscribed. */
 static int make_code(CODE *code, const uint8_t *lengths, unsigned n)
 {
     memset(code->Count, 0, sizeof(code->Count));
@@ -381,7 +381,7 @@ static int inflate_codes(INFLATE *z, const CODE *literals, const CODE *distances
         if (!take_bits(z, distance_extra[symbol], &extra))
             return 0;
         distance = distance_base[symbol] + extra;
-        /* the history is the window, which holds what this block and the ones before it made. */
+        /* the window holds the history of this block and the ones before it. */
         if (distance > 32768u)
             return 0;
         for (uint32_t i = 0; i < length; i++)
@@ -477,7 +477,7 @@ static int inflate_dynamic(INFLATE *z)
     return inflate_codes(z, &litcode, &distcode);
 }
 
-/* one block of MSZIP: "CK" and a deflate stream whose last block ends it. */
+/* an MSZIP block: "CK" then a deflate stream that ends with its final block. */
 static int inflate_block(INFLATE *z, const uint8_t *in, size_t in_size, uint8_t *out, size_t out_size)
 {
     if (in_size < 2 || in[0] != 'C' || in[1] != 'K')
@@ -542,8 +542,8 @@ static int inflate_block(INFLATE *z, const uint8_t *in, size_t in_size, uint8_t 
 enum { BLOCK_NONE = 0, BLOCK_VERBATIM = 1, BLOCK_ALIGNED = 2, BLOCK_UNCOMPRESSED = 3 };
 
 typedef struct HUFFMAN {
-    uint16_t Fast[1u << FAST_BITS]; /* symbol << 5 | length, 0 for codes that are longer */
-    uint32_t First[17];             /* the first code of each length, left aligned to the length */
+    uint16_t Fast[1u << FAST_BITS]; /* symbol << 5 | length, 0 for longer codes. */
+    uint32_t First[17];             /* first code of each length, left aligned. */
     uint16_t Count[17];
     uint16_t Offset[17];
     uint16_t Sorted[LZX_MAIN_MAX];
@@ -596,7 +596,7 @@ static void bits_start(BITS *b, const uint8_t *data, size_t size)
     b->Available = 0;
 }
 
-/* words of 16 bits, the first byte the low one, and the bits of a word from the top; past the end it reads zeros. */
+/* little endian 16-bit words, bits taken from the top; reads zeros past the end. */
 static void bits_fill(BITS *b)
 {
     while (b->Available <= 48) {
@@ -630,7 +630,7 @@ static uint32_t bits_read(BITS *b, unsigned n)
     return v;
 }
 
-/* the bytes of the input that the reader has not used, for the data of an uncompressed block. */
+/* the first unread input byte, for uncompressed blocks. */
 static const uint8_t *bits_position(const BITS *b)
 {
     return b->Pointer - b->Available / 8;
@@ -642,7 +642,7 @@ static void huffman_clear(HUFFMAN *h, unsigned symbols)
     h->Symbols = (uint16_t)symbols;
 }
 
-/* returns 0 when the code is usable: over subscribed ones are refused, incomplete ones are not. */
+/* returns 0 when usable: oversubscribed codes are refused, incomplete ones accepted. */
 static int huffman_build(HUFFMAN *h, const uint8_t *lengths, unsigned symbols)
 {
     huffman_clear(h, symbols);
@@ -680,7 +680,7 @@ static int huffman_build(HUFFMAN *h, const uint8_t *lengths, unsigned symbols)
     return 0;
 }
 
-/* -1 when the bits are no code of the table. */
+/* -1 when the bits match no code. */
 static int huffman_decode(HUFFMAN *h, BITS *b)
 {
     bits_fill(b);
@@ -699,11 +699,7 @@ static int huffman_decode(HUFFMAN *h, BITS *b)
     return -1;
 }
 
-/*
- * the lengths of a range of symbols, as the lengths before them with a code of 17 or fewer steps: a pre tree of
- * twenty symbols tells how each length is changed from the one the block before it had, or that a run of zeros or of
- * one length follows.
- */
+/* lengths are coded as changes mod 17 from the previous block's, through a 20 symbol pretree that also codes runs. */
 static int read_lengths(LZX *z, uint8_t *lengths, unsigned first, unsigned last)
 {
     uint8_t pre[LZX_PRETREE_SYMBOLS];
@@ -723,7 +719,7 @@ static int read_lengths(LZX *z, uint8_t *lengths, unsigned first, unsigned last)
             while (run--)
                 lengths[x++] = 0;
         } else if (symbol == 19) {
-            /* a run of one length, which is the change of the first from its length before the block. */
+            /* a run of one length, coded as a change from the first symbol's previous length. */
             unsigned run = bits_read(&z->Bits, 1) + 4;
             int delta = huffman_decode(&tree, &z->Bits);
             if (delta < 0 || delta > 16 || x + run > last)
@@ -762,11 +758,11 @@ static int lzx_read_block_header(LZX *z)
             return FAIL(13);
         if (huffman_build(&z->Main, z->MainLengths, main_symbols) || huffman_build(&z->Length, z->LengthLengths, LZX_LENGTH_SYMBOLS))
             return FAIL(14);
-        /* a literal that starts a call to code of x86 programs: the frames are translated from then on. */
+        /* once 0xE8, the x86 call opcode, can be coded, frames are translated from then on. */
         if (z->MainLengths[0xE8] && z->TranslationSize)
             z->Translated = 1;
     } else {
-        /* an uncompressed block starts on a word, with the three recent offsets and then the bytes themselves. */
+        /* an uncompressed block is word aligned: the three recent offsets, then the raw bytes. */
         bits_skip(b, (unsigned)(b->Available % 16));
         const uint8_t *p = bits_position(b);
         if (p + 12 > b->End)
@@ -810,7 +806,7 @@ static LZX *lzx_create(MIME_CAB *cab, unsigned window_bits)
     return z;
 }
 
-/* turns the absolute addresses that the compressor made of the relative ones of call instructions back. */
+/* undoes the E8 translation: the compressor made call targets absolute. */
 static void lzx_translate(LZX *z, uint8_t *data, size_t size)
 {
     if (size <= 10)
@@ -835,7 +831,7 @@ static void lzx_translate(LZX *z, uint8_t *data, size_t size)
     }
 }
 
-/* one block of the stream, the bytes of one frame of up to 32768 of them. */
+/* decodes one frame of up to 32768 bytes. */
 static int lzx_frame(LZX *z, const uint8_t *in, size_t in_size, size_t out_size, const uint8_t **out)
 {
     BITS *b = &z->Bits;
@@ -865,7 +861,7 @@ static int lzx_frame(LZX *z, const uint8_t *in, size_t in_size, size_t out_size,
             for (size_t i = 0; i < run; i++)
                 z->Window[z->Position++ & mask] = p[i];
             b->Pointer = p + run;
-            /* an uncompressed block of an odd size is padded to a word. */
+            /* an odd sized uncompressed block is padded to a word. */
             if (!z->BlockRemaining && z->RawOdd && b->Pointer < b->End)
                 b->Pointer++;
             continue;
@@ -919,7 +915,7 @@ static int lzx_frame(LZX *z, const uint8_t *in, size_t in_size, size_t out_size,
                 z->Repeat[1] = z->Repeat[0];
                 z->Repeat[0] = offset;
             }
-            /* a match stays in its block and its frame, and looks back no farther than there is data. */
+            /* a match must stay in its block and frame and not reach back before the data starts. */
             uint64_t have = z->Produced + (out_size - todo - run);
             if (length > run || offset > z->WindowSize || offset > have)
                 return FAIL(6);
@@ -1030,17 +1026,14 @@ done:
     return result;
 }
 
-/*
- * the files of a folder, with the pieces of the folder that fall in each. Files are begun in the order of their
- * offsets, and may overlap or be the same data stored under two names, so several can be open at once.
- */
+/* files begin in offset order and may overlap or share data under two names, so several can be open at once. */
 typedef struct EXTRACT {
     MIME_CAB *Cab;
     const MIME_CAB_FILE_SINK *Sink;
     void *Context;
-    uint16_t *Order;  /* the files of the folder by index, in the order of their offsets */
-    uint16_t *Active; /* the positions in Order of the files that are being written */
-    void **Contexts;  /* of the files by their position in Order */
+    uint16_t *Order;  /* file indexes sorted by offset. */
+    uint16_t *Active; /* positions in Order of the files being written. */
+    void **Contexts;  /* indexed by position in Order. */
     uint32_t *Written;
     unsigned Count, Next, ActiveCount;
     int Failed, Corrupt;
@@ -1057,7 +1050,7 @@ static int extract_finish(EXTRACT *e, unsigned position_in_order)
     return 0;
 }
 
-/* whether the file waits for the ones being written: in sequential mode it does unless it starts inside one of them. */
+/* in sequential mode a file waits for the open ones unless it starts inside one of them. */
 static int extract_waits(const EXTRACT *e, const MIME_CAB_FILE *file)
 {
     if (!e->Cab->Sequential)
@@ -1077,7 +1070,7 @@ static int extract_piece(void *context, uint32_t offset, const uint8_t *data, si
     uint64_t end = (uint64_t)offset + length;
     MIME_CAB_FILE file;
     for (;;) {
-        /* the files that start before the end of this piece, one at a time when the caller wants each finished first. */
+        /* begin the files that start before this piece ends, one at a time in sequential mode. */
         while (e->Next < e->Count) {
             MimeCabFile(e->Cab, e->Order[e->Next], &file);
             if ((file.Offset >= end && file.Size) || extract_waits(e, &file))
@@ -1098,7 +1091,7 @@ static int extract_piece(void *context, uint32_t offset, const uint8_t *data, si
             uint64_t next = (uint64_t)file.Offset + e->Written[at], file_end = (uint64_t)file.Offset + file.Size;
             if (next < offset)
                 next = offset;
-            /* a file whose data went by before it was begun cannot be written whole. */
+            /* its data already went by, so it cannot be written whole. */
             if (next > file_end) {
                 e->Corrupt = 1;
                 return 1;
@@ -1120,7 +1113,7 @@ static int extract_piece(void *context, uint32_t offset, const uint8_t *data, si
             }
             i++;
         }
-        /* a file that was waiting for the one before it may begin in this piece. */
+        /* a file waiting on the previous one may begin in this piece. */
         if (!e->Cab->Sequential || e->Next >= e->Count)
             return 0;
         MimeCabFile(e->Cab, e->Order[e->Next], &file);
@@ -1167,7 +1160,7 @@ int MimeCabExtract(MIME_CAB *cab, const MIME_CAB_FILE_SINK *sink, void *context)
             MimeCabFile(cab, i, &file);
             if (file.Folder != folder)
                 continue;
-            /* inserted after the files that start no later, which keeps the order they are stored in. */
+            /* inserted after the files starting no later, so equal offsets keep stored order. */
             unsigned at = e.Count++;
             while (at > 0) {
                 MimeCabFile(cab, order[at - 1], &other);
@@ -1193,7 +1186,7 @@ int MimeCabExtract(MIME_CAB *cab, const MIME_CAB_FILE_SINK *sink, void *context)
             result = r;
             break;
         }
-        /* files of no bytes at the very end are not begun by a piece; any file that is open or waits had no data. */
+        /* empty files at the very end get no piece; any file still open or waiting had no data. */
         MIME_CAB_FILE file;
         while (e.Next < e.Count) {
             MimeCabFile(cab, order[e.Next], &file);

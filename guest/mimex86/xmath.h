@@ -1,6 +1,4 @@
-/*
- * elementary functions for the x87, see xmath.c.
- */
+/* elementary functions for the x87, see xmath.c. */
 #ifndef MIME_X86_XMATH_H
 #define MIME_X86_XMATH_H
 

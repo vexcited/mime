@@ -1,6 +1,6 @@
 /*
- * win32 base definitions shared by every user mode module: handle types,
- * geometry and the small helper macros of windef.h and minwindef.h.
+ * base definitions every user mode module shares: handle types, geometry and the helper macros of windef.h
+ * and minwindef.h.
  */
 #ifndef MIME_WIN32_WINDEF_H
 #define MIME_WIN32_WINDEF_H

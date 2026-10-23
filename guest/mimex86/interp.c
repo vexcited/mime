@@ -184,7 +184,7 @@ static uint64_t alu(X86Cpu *c, int op, int size, uint64_t a, uint64_t b)
     return res;
 }
 
-/* applies an alu operation to the modrm destination, atomically under lock. */
+/* atomic when the instruction has a lock prefix. */
 static void alu_rm(X86Cpu *c, const X86Insn *i, int op, int size, uint64_t b)
 {
     if (i->mod == 3) {
@@ -335,7 +335,7 @@ static uint64_t double_shift(X86Cpu *c, int size, uint64_t dst, uint64_t src, un
     uint64_t res;
     int cf;
     if (size == 2 && count > 16) {
-        /* undefined; behave like a 32 bit shift of src:dst. */
+        /* undefined, behave like a 32 bit shift of src:dst. */
         uint64_t wide = left ? (dst << 16) | src : (src << 16) | dst;
         if (left) {
             res = ((wide << count) >> 16) & mask;
@@ -778,7 +778,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
     uint8_t op = i->opcode;
     int size = i->opsize;
     switch (op) {
-    case 0x05: /* syscall: rcx and r11 change first, a service like NtContinue may then load everything */
+    case 0x05: /* syscall: set rcx and r11 first, a service like NtContinue may then reload every register. */
         c->r[X86_RCX] = c->rip;
         c->r[X86_R11] = x86_get_flags(c);
         c->env->syscall(c);
@@ -792,7 +792,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
         return;
     case 0x00:
     case 0x01:
-        if (op == 0x01 && i->modrm == 0xD0 && 0) /* xgetbv is reserved to processors reporting osxsave */
+        if (op == 0x01 && i->modrm == 0xD0 && 0) /* xgetbv is reserved to processors reporting osxsave. */
             return;
         x86_undefined(c);
     case 0x31: { /* rdtsc */
@@ -1033,7 +1033,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
         else if (size == 4)
             c->r[reg] = __builtin_bswap32((uint32_t)c->r[reg]);
         else
-            c->r[reg] &= ~0xFFFFull; /* undefined, zero like recent processors */
+            c->r[reg] &= ~0xFFFFull; /* undefined, zero it like recent processors do. */
         return;
     }
     case 0x77: /* emms */
@@ -1207,7 +1207,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
         write_greg(c, i, size, a);
         return;
     }
-    case 0x8E: /* mov sreg, rm: the flat segments stay as they are */
+    case 0x8E: /* mov sreg, rm: the flat segments stay as they are. */
         (void)read_rm(c, i, 2);
         return;
     case 0x8F: { /* pop rm */
@@ -1504,12 +1504,12 @@ typedef struct X86Block {
     struct X86Block *next;
     uint64_t rip;
     X86Native native;
-    struct X86Block *fallback; /* the x64 code of a native block, for when the native function declines */
-    struct X86Block *succ[2];  /* the blocks that last followed this one, skipping the hash lookup */
+    struct X86Block *fallback; /* x64 code of a native block, for when the native function declines. */
+    struct X86Block *succ[2];  /* the blocks that last followed this one, to skip the hash lookup. */
     uint64_t succ_rip[2];
-    uint32_t *jit;          /* the translated code, see jit.c */
-    uint16_t *jit_offsets;  /* code offset of each instruction and of the end */
-    uint32_t runs;          /* executions while not translated, ~0u once translation failed */
+    uint32_t *jit;          /* translated arm64 code. */
+    uint16_t *jit_offsets;  /* code offset of each instruction and of the end. */
+    uint32_t runs;          /* runs before translation, ~0u once translation failed. */
     uint32_t count;
     X86Insn insns[];
 } X86Block;
@@ -1520,7 +1520,7 @@ typedef struct X86BlockCache {
     size_t arena_used;
     size_t arena_size;
     struct X86BlockArena *arenas;
-    uint8_t *code;              /* the code arena being filled */
+    uint8_t *code;              /* the code arena being filled. */
     size_t code_used;
     struct X86BlockArena *code_arenas;
 } X86BlockCache;
@@ -1743,7 +1743,7 @@ static inline X86Block *lookup(X86Cpu *c, uint64_t rip)
     return translate(c, bc, rip, 1);
 }
 
-/* the block at rip, from the successors of the previous block when it went there before. */
+/* tries the previous block's successors before the hash lookup. */
 static inline X86Block *next_block(X86Cpu *c, X86Block *prev, uint64_t rip)
 {
     if (prev) {
@@ -1779,7 +1779,7 @@ uint32_t x86_jit_threshold = 16;
 #define CODE_ARENA_SIZE (4u << 20)
 #define JIT_MAX_WORDS 8192u
 
-/* translates a block to arm64 code; a block that does not translate keeps being interpreted. */
+/* a block that fails to translate keeps being interpreted. */
 static void jit_block(X86Cpu *c, X86Block *b)
 {
     X86BlockCache *bc = block_cache(c);
@@ -1823,7 +1823,7 @@ void x86_jit_fault(X86Cpu *c, uint64_t pc)
 void x86_run(X86Cpu *c)
 {
     X86Block *prev = nullptr;
-    c->jit_block = nullptr; /* after a fault in translated code restarted the run */
+    c->jit_block = nullptr; /* in case a fault in translated code restarted the run. */
     while (c->rip != c->exit_rip) {
         if (c->suspend_pending && *c->suspend_pending && c->env->suspend) {
             c->env->suspend(c);

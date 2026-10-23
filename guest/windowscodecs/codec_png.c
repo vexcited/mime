@@ -1,11 +1,9 @@
-/*
- * the png codec, over the png library that reads and writes the layouts WIC reports.
- */
+/* PNG codec using the library's WIC pixel layouts. */
 #include "wic_codec.h"
 #include "codec_util.h"
 #include "meta_codecs.h"
 
-/* ------------------------------------------------------------------ the decoder */
+/* the decoder. */
 
 typedef struct PngState {
     MimePngioDecoder *dec;
@@ -195,7 +193,7 @@ const WicDecoderOps wic_dec_png1 = {
     .metadata = png_metadata,
 };
 
-/* ------------------------------------------------------------------ the encoder */
+/* the encoder. */
 
 static const WicOptionDesc g_png_options[] = {
     {L"InterlaceOption", VT_BOOL, 0, 0, 1},

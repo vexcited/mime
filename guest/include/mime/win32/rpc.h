@@ -1,6 +1,4 @@
-/*
- * rpc runtime: bindings, servers, uuids, async calls and the status codes of rpcrt4.dll.
- */
+/* the rpc runtime of rpcrt4.dll: bindings, servers, uuids, async calls and status codes. */
 #ifndef MIME_WIN32_RPC_H
 #define MIME_WIN32_RPC_H
 
@@ -163,7 +161,7 @@ typedef void *RPC_AUTHZ_HANDLE;
 #define RPC_X_INVALID_PIPE_OPERATION RPC_X_WRONG_PIPE_ORDER
 
 
-/* the hresults of the rpc layer that com sees. */
+/* rpc hresults that com sees. */
 #ifndef RPC_E_CALL_REJECTED
 #define RPC_E_CALL_REJECTED ((HRESULT)0x80010001L)
 #endif
@@ -835,7 +833,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerInqDefaultPrincNameA(ULONG service, RPC_C
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerInqCallAttributesW(RPC_BINDING_HANDLE client, void *attributes);
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerInqCallAttributesA(RPC_BINDING_HANDLE client, void *attributes);
 
-/* ------------------------------------------------------------------ the server */
+/* ------------------------------------------------------------------ server */
 
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerUseProtseqW(RPC_WSTR protseq, unsigned int max_calls, void *sd);
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerUseProtseqA(RPC_CSTR protseq, unsigned int max_calls, void *sd);
@@ -907,7 +905,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcNetworkInqProtseqsA(RPC_PROTSEQ_VECTORA **vecto
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcProtseqVectorFreeW(RPC_PROTSEQ_VECTORW **vector);
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcProtseqVectorFreeA(RPC_PROTSEQ_VECTORA **vector);
 
-/* ------------------------------------------------------------------ the endpoint mapper */
+/* ------------------------------------------------------------------ endpoint mapper */
 
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcEpRegisterW(RPC_IF_HANDLE interface_spec, RPC_BINDING_VECTOR *bindings,
                                              UUID_VECTOR *objects, RPC_WSTR annotation);
@@ -952,7 +950,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcAsyncAbortCall(PRPC_ASYNC_STATE async, ULONG co
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcAsyncCancelCall(PRPC_ASYNC_STATE async, BOOL abort);
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcAsyncCleanupThread(DWORD timeout);
 
-/* ------------------------------------------------------------------ the runtime interface of stubs */
+/* ------------------------------------------------------------------ stub runtime */
 
 RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcNegotiateTransferSyntax(RPC_MESSAGE *message);
 RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcGetBuffer(RPC_MESSAGE *message);
@@ -966,7 +964,7 @@ RPCRTAPI void RPC_ENTRY I_RpcFree(void *object);
 RPCRTAPI void RPC_ENTRY I_RpcPauseExecution(ULONG milliseconds);
 RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcGetExtendedError(void);
 RPCRTAPI RPC_BINDING_HANDLE RPC_ENTRY I_RpcGetCurrentCallHandle(void);
-/* Mime's own: the function the calling thread waits for replies with, so that it can serve its windows meanwhile. */
+/* mime only: the wait function a thread uses for replies, so it keeps serving its windows meanwhile. */
 RPCRTAPI void RPC_ENTRY I_RpcMimeSetWaitFunction(DWORD(WINAPI *function)(DWORD, const HANDLE *, DWORD, void *),
                                                  void *context, void *previous[2]);
 RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcAsyncSetHandle(PRPC_MESSAGE message, PRPC_ASYNC_STATE async);

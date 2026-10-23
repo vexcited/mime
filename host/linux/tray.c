@@ -1,10 +1,7 @@
 /*
- * the notification area and the notifications of the desktop, over its session bus. an icon of the guest is a
- * StatusNotifierItem (org.kde.StatusNotifierItem, what Plasma and most other trays show), each on a connection of its
- * own so that the tray, which watches the connection, drops the icon when the guest removes it. the menu an icon opens is
- * a com.canonical.dbusmenu object, filled by the guest when the tray is about to show it: the program is asked for its
- * context menu, and what it pops up is sent here instead of being shown. a balloon is a notification of
- * org.freedesktop.Notifications. one thread of its own does the bus, so a slow tray never holds the guest's vcpus.
+ * guest icons use org.kde.StatusNotifierItem, each on a separate bus connection so removal disconnects the icon.
+ * com.canonical.dbusmenu menus are filled from the guest's context menu on demand; balloons use
+ * org.freedesktop.Notifications. a dedicated bus thread ensures a slow tray never blocks vCPUs.
  */
 #include "ui_internal.h"
 
@@ -30,8 +27,8 @@ uint64_t mime_ui_tray(const MimeTrayCommand *command)
 #define WATCHER "org.kde.StatusNotifierWatcher"
 #define ITEM_PATH "/StatusNotifierItem"
 #define MENU_PATH "/MenuBar"
-#define ASK_TIMEOUT_MS 800   /* what the guest has to answer a menu request with */
-#define CLOSE_DELAY_MS 300   /* a menu that closes may be closing after the click that chose */
+#define ASK_TIMEOUT_MS 800   /* guest menu-response timeout. */
+#define CLOSE_DELAY_MS 300   /* allows a click to arrive after menu closure. */
 
 typedef struct MenuItem {
     uint32_t parent;
@@ -52,10 +49,10 @@ typedef struct Item {
     uint32_t menu_revision;
     uint32_t menu_count;
     MenuItem *menu;
-    sd_bus_message *asking; /* a request to show the menu, waiting for the guest's menu */
+    sd_bus_message *asking; /* a request to show the menu, waiting for the guest's menu. */
     uint64_t asking_deadline;
-    uint64_t closed_deadline; /* the menu was closed, unless a choice comes */
-    uint32_t notification;    /* the server's number for the balloon on show, 0 for none */
+    uint64_t closed_deadline; /* the menu was closed, unless a choice comes. */
+    uint32_t notification;    /* the server's number for the balloon on show, 0 for none. */
     bool balloon_clicked;
     bool balloon_pending;
 } Item;
@@ -69,7 +66,7 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_ready = PTHREAD_COND_INITIALIZER;
 static Command *g_queue_head, *g_queue_tail;
 static int g_wake = -1;
-static int g_state; /* 0 not started, 1 starting, 2 running, 3 no bus */
+static int g_state; /* 0 not started, 1 starting, 2 running, 3 no bus. */
 
 /* used by the tray thread only. */
 static sd_bus *g_bus;
@@ -250,7 +247,7 @@ static const sd_bus_vtable item_vtable[] = {
 
 /* ------------------------------------------------------------------ the menu */
 
-/* a label as dbusmenu has it: _ marks the mnemonic where windows has &. */
+/* translates Windows' & mnemonic marker to dbusmenu's _. */
 static void menu_label(char *out, size_t size, const char *label)
 {
     size_t n = 0;
@@ -264,7 +261,7 @@ static void menu_label(char *out, size_t size, const char *label)
             out[n++] = '_';
             out[n++] = '_';
         } else if (*p == '\t') {
-            break; /* what follows the tab is a shortcut text, which the desktop draws itself */
+            break; /* what follows the tab is a shortcut text, which the desktop draws itself. */
         } else {
             out[n++] = *p;
         }
@@ -314,7 +311,7 @@ static int append_properties(sd_bus_message *m, const Item *item, uint32_t index
     return sd_bus_message_close_container(m);
 }
 
-/* a node and, to the depth asked (-1 for all), its children, as (ia{sv}av). */
+/* encodes a node and children to the requested depth, -1 for all, using the (ia{sv}av) signature. */
 static int append_node(sd_bus_message *m, const Item *item, uint32_t index, int depth)
 {
     uint32_t id = index == UINT32_MAX ? 0 : index + 1;
@@ -358,7 +355,7 @@ static int menu_get_layout(sd_bus_message *m, void *userdata, sd_bus_error *erro
     int r = sd_bus_message_read(m, "ii", &parent, &depth);
     if (r < 0)
         return r;
-    /* the names of the properties wanted are not looked at: every property of a node is given. */
+    /* returns all node properties, ignoring the requested property names. */
     sd_bus_message_skip(m, "as");
     if (parent < 0 || (uint32_t)parent > item->menu_count)
         return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "no such item");
@@ -411,7 +408,7 @@ static int menu_get_property(sd_bus_message *m, void *userdata, sd_bus_error *er
     return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "no such property");
 }
 
-/* a click, or the menu opening or closing; the desktop sends the closing of the menu as a closed event of the root. */
+/* handles clicks and menu state; desktop closure arrives as a closed event on the root. */
 static void menu_event(Item *item, int32_t id, const char *event)
 {
     if (!strcmp(event, "clicked")) {
@@ -465,7 +462,7 @@ static int menu_method_event_group(sd_bus_message *m, void *userdata, sd_bus_err
     return r < 0 ? r : 1;
 }
 
-/* the desktop will show the menu: the program is asked for it, and the answer waits for it. */
+/* requests the guest menu and waits before allowing the desktop to show it. */
 static int menu_about_to_show(sd_bus_message *m, void *userdata, sd_bus_error *error)
 {
     Item *item = userdata;
@@ -536,7 +533,7 @@ static const sd_bus_vtable menu_vtable[] = {
 
 static void register_item(Item *item)
 {
-    /* the item is at a path of the connection, which is the one the tray watches. */
+    /* registers the item's connection and object path with the tray watcher. */
     sd_bus_call_method_async(item->bus, nullptr, WATCHER, "/StatusNotifierWatcher", WATCHER, "RegisterStatusNotifierItem",
                              nullptr, nullptr, "s", ITEM_PATH);
 }
@@ -546,7 +543,7 @@ static int watcher_changed(sd_bus_message *m, void *userdata, sd_bus_error *erro
     const char *name, *old_owner, *new_owner;
     if (sd_bus_message_read(m, "sss", &name, &old_owner, &new_owner) < 0)
         return 0;
-    /* a tray that starts after the guest's programs has its icons put in. */
+    /* registers existing icons when a tray starts later. */
     if (!strcmp(name, WATCHER) && new_owner[0])
         for (Item *i = g_items; i; i = i->next)
             register_item(i);
@@ -811,7 +808,7 @@ static void run_command(const MimeTrayCommand *c)
     }
 }
 
-/* the timers of the items: a menu request the guest did not answer, a menu that closed. */
+/* expires unanswered menu requests and deferred menu closures. */
 static uint64_t run_timers(void)
 {
     uint64_t now = now_ms(), next = UINT64_MAX;

@@ -1,4 +1,4 @@
-/* what the conversions of 32-bit system calls share. */
+/* helpers shared by the 32-bit system call conversions. */
 #ifndef MIME_WOW32_CONVERT_H
 #define MIME_WOW32_CONVERT_H
 
@@ -14,7 +14,7 @@ static inline HANDLE handle32(ULONG value)
     return (HANDLE)(LONG_PTR)(LONG)value;
 }
 
-/* a size or count that does not fit 32 bits reads as the largest one, as windows' wow64 narrows them. */
+/* sizes and counts above 32 bits saturate, as windows' wow64 narrows them. */
 static inline ULONG saturate32(ULONG64 value)
 {
     return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : (ULONG)value;
@@ -58,17 +58,17 @@ static inline OBJECT_ATTRIBUTES attributes32(ULONG address, UNICODE_STRING *name
     return out;
 }
 
-/* native memory for what a call returns before it is narrowed, anywhere in the address space. */
+/* native scratch memory for results before they are narrowed, anywhere in the address space. */
 PVOID Mx32Scratch(SIZE_T size);
 void Mx32FreeScratch(PVOID base);
 
 PVOID MxCurrentPeb32(void);
 PVOID MxCurrentTeb32(void);
 
-/* the 32-bit teb of a thread whose native teb and process are known, 0 when it has none. */
+/* the 32-bit teb of a thread given its native teb and process, or 0. */
 ULONG Mx32TebOf(HANDLE process, PVOID teb);
 
-/* the information classes, wow32_query.c. each takes the 32-bit arguments of its service. */
+/* information classes, in wow32_query.c. each takes the 32-bit arguments of its service. */
 NTSTATUS Mx32QueryInformationProcess(const ULONG *a);
 NTSTATUS Mx32SetInformationProcess(const ULONG *a);
 NTSTATUS Mx32QueryInformationThread(const ULONG *a);

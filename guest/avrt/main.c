@@ -1,4 +1,4 @@
-/* mmcss is unavailable; callers retain their ordinary thread priority. */
+/* there is no MMCSS: threads keep their normal priority. */
 #include <mime/win32/winbase.h>
 
 #define ERROR_SERVICE_NOT_ACTIVE 1062L

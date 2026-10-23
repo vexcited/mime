@@ -1,21 +1,21 @@
 /*
- * metadata handlers that keep their items in memory, the readers and writers of blocks, and the enumerators over them.
- * every item is a schema, an id and a value, and a value that is another handler is a block inside the block.
+ * in-memory metadata handlers, block readers and writers, and enumerators. items contain schema, id and value;
+ * handler-valued items represent nested blocks.
  */
 #include "wic_codec.h"
 #include "wic_meta.h"
 #include "meta_internal.h"
 
-/* ------------------------------------------------------------------ property variants */
+/* property variants. */
 
 void WicPvInit(PROPVARIANT *pv) { memset(pv, 0, sizeof(*pv)); }
 
 BOOL WicPvIsEmpty(const PROPVARIANT *pv) { return !pv || pv->vt == VT_EMPTY; }
 
-/* two ids are the same when their types and values are. strings are compared as they are. */
+/* ids compare by type and value, with exact string matching. */
 BOOL WicPvSame(const PROPVARIANT *a, const PROPVARIANT *b)
 {
-    /* a name given as ansi is the wide one with the same characters. */
+    /* ANSI and wide names match by character value. */
     if ((a->vt == VT_LPSTR && b->vt == VT_LPWSTR) || (a->vt == VT_LPWSTR && b->vt == VT_LPSTR)) {
         const PROPVARIANT *n = a->vt == VT_LPSTR ? a : b, *w = a->vt == VT_LPSTR ? b : a;
         if (!n->pszVal || !w->pwszVal)
@@ -62,7 +62,7 @@ BOOL WicPvSame(const PROPVARIANT *a, const PROPVARIANT *b)
     }
 }
 
-/* ------------------------------------------------------------------ the handler */
+/* the handler. */
 
 typedef struct WicMetaHandler {
     WicBase base;
@@ -74,7 +74,7 @@ typedef struct WicMetaHandler {
     UINT count;
     UINT capacity;
     BOOL writable;
-    /* what a handler of the format needs to know to write itself, kept for the codecs. */
+    /* format-specific serialization state retained for codecs. */
     void *user;
 } WicMetaHandler;
 
@@ -198,7 +198,7 @@ static HRESULT STDMETHODCALLTYPE mh_get_value(void *This, const PROPVARIANT *sch
     return hr;
 }
 
-/* a snapshot of the items, enumerated. */
+/* enumerate an item snapshot. */
 typedef struct WicItemEnum {
     WicBase base;
     WicSlot slot;
@@ -322,7 +322,7 @@ static HRESULT STDMETHODCALLTYPE mh_get_enumerator(void *This, IWICEnumMetadataI
     return hr;
 }
 
-/* ------------------------------------------------------------------ the writer methods */
+/* the writer methods. */
 
 static HRESULT grow(WicMetaHandler *h)
 {
@@ -367,7 +367,7 @@ static HRESULT set_value(WicMetaHandler *h, const PROPVARIANT *schema, const PRO
         WicMetaItem fresh;
         hr = store_item(&fresh, schema, id, value);
         if (SUCCEEDED(hr)) {
-            /* a schema or an id left out keeps the one the item had. */
+            /* omitted schema or id fields retain their previous values. */
             if (WicPvIsEmpty(&fresh.id) && !WicPvIsEmpty(&old.id))
                 PropVariantCopy(&fresh.id, &old.id);
             if (WicPvIsEmpty(&fresh.schema) && !WicPvIsEmpty(&old.schema))
@@ -506,7 +506,7 @@ HRESULT WicMetaReaderCreate(const GUID *format, IWICMetadataReader **out)
     return hr;
 }
 
-/* the handler behind either kind, or NULL for an object that is not ours. */
+/* return our underlying handler, or NULL for foreign objects. */
 static WicMetaHandler *our_handler(IUnknown *object)
 {
     if (!object)
@@ -525,7 +525,7 @@ HRESULT WicMetaSetItem(IWICMetadataWriter *w, const PROPVARIANT *schema, const P
     return set_value(handler_from_writer(w), schema, id, value);
 }
 
-/* a handler made as a reader for a decoder to fill: the same object, filled through the private door. */
+/* create a reader that the decoder can fill through private methods. */
 HRESULT WicMetaAdd(IWICMetadataReader *r, const PROPVARIANT *schema, const PROPVARIANT *id, const PROPVARIANT *value)
 {
     WicMetaHandler *h = our_handler((IUnknown *)r);
@@ -639,7 +639,7 @@ HRESULT WicMetaSetNumbered(IWICMetadataWriter *h, UINT16 id, const PROPVARIANT *
     return set_value(handler_from_writer(h), nullptr, &pv, value);
 }
 
-/* ------------------------------------------------------------------ reads for the codecs */
+/* reads for the codecs. */
 
 static BOOL get_named(IWICMetadataReader *r, const WCHAR *name, PROPVARIANT *value)
 {
@@ -741,7 +741,7 @@ BOOL WicMetaGetAnsi(IWICMetadataReader *r, const WCHAR *name, char **text)
     return ok;
 }
 
-/* the number of items and a look at one without copying, for the codecs that serialize a handler. */
+/* borrow items without copying for serialization. */
 UINT WicMetaCount(IWICMetadataReader *r)
 {
     WicMetaHandler *h = our_handler((IUnknown *)r);
@@ -754,7 +754,7 @@ const WicMetaItem *WicMetaItemAt(IWICMetadataReader *r, UINT index)
     return h && index < h->count ? &h->items[index] : nullptr;
 }
 
-/* ------------------------------------------------------------------ blocks */
+/* blocks. */
 
 typedef struct WicBlocks {
     WicBase base;
@@ -868,7 +868,7 @@ static HRESULT STDMETHODCALLTYPE bk_initialize(void *This, IWICMetadataBlockRead
         hr = source->lpVtbl->GetReaderByIndex(source, i, &reader);
         if (FAILED(hr))
             break;
-        /* a copy a program can change: the items of the reader in a writer of the same format. */
+        /* copy reader items into a writable handler of the same format. */
         IWICMetadataWriter *writer = nullptr;
         hr = WicMetaCopyToWriter(reader, &writer);
         reader->lpVtbl->Release(reader);
@@ -1016,7 +1016,7 @@ IWICMetadataReader *WicBlocksFind(IWICMetadataBlockReader *blocks, const GUID *f
     return nullptr;
 }
 
-/* a writer with the items of a reader, items that are blocks copied too. */
+/* copy reader items into a writer, recursively copying nested blocks. */
 HRESULT WicMetaCopyToWriter(IWICMetadataReader *reader, IWICMetadataWriter **out)
 {
     GUID format;
@@ -1064,11 +1064,11 @@ HRESULT WicMetaCopyToWriter(IWICMetadataReader *reader, IWICMetadataWriter **out
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ enumerators of strings and objects */
+/* enumerators of strings and objects. */
 
 HRESULT WicEnumFromItems(IUnknown **items, UINT count, IEnumUnknown **out) { return WicEnumUnknownCreate(items, count, out); }
 
-/* the string enumerator, over names the caller has allocated with the task allocator. */
+/* enumerate names allocated with the task allocator. */
 typedef struct WicStringEnum {
     WicBase base;
     WicSlot slot;
@@ -1139,7 +1139,6 @@ static HRESULT STDMETHODCALLTYPE senum_clone(IEnumString *This, IEnumString **ou
     return senum_create_copy(e->names, e->count, e->position, out);
 }
 
-/* the vtable of IEnumString: the three of IUnknown, then Next, Skip, Reset and Clone. */
 static const void *const g_senum_vtbl[] = {VTBL_FN(WicQueryInterface), VTBL_FN(WicAddRef), VTBL_FN(WicRelease),
                                           VTBL_FN(senum_next),        VTBL_FN(senum_skip), VTBL_FN(senum_reset),
                                           VTBL_FN(senum_clone)};
@@ -1177,7 +1176,7 @@ HRESULT WicEnumStringCreate(WCHAR *const *names, UINT count, IEnumString **out)
     return senum_create_copy(names, count, 0, out);
 }
 
-/* ------------------------------------------------------------------ items put by decoders */
+/* items put by decoders. */
 
 static HRESULT put_named(IWICMetadataReader *r, const WCHAR *name, PROPVARIANT *value)
 {

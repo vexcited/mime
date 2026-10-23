@@ -1,14 +1,14 @@
 /*
- * shared textures, keyed mutexes and fences. A texture made to be shared keeps memory of its own that other
- * devices import; the first nt handle, legacy handle or keyed mutex acquire gives it a kernel object, which carries
- * what the texture was described with and the id the host keeps the memory under, see mime/gfxshare.h. A fence is a
- * timeline semaphore that is shared the same way.
+ * shared textures, keyed mutexes and fences. a shared texture has dedicated memory that other devices import. the
+ * first nt handle, legacy handle or keyed mutex acquire creates its kernel object, which carries the texture's
+ * description and the id the host keeps the memory under, see mime/gfxshare.h. fences are timeline semaphores
+ * shared the same way.
  */
 #include "d3d11_private.h"
 
 #include <mime/ntuser.h>
 
-/* direct3d 12's resource flags, which a texture made by direct3d 11 is described to it with. */
+/* direct3d 12 resource flags, used to describe direct3d 11 textures to direct3d 12. */
 #define RESOURCE_FLAG_ALLOW_RENDER_TARGET 0x1
 #define RESOURCE_FLAG_ALLOW_DEPTH_STENCIL 0x2
 #define RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS 0x4
@@ -17,10 +17,9 @@
 /* ------------------------------------------------------------------ creation rules */
 
 /*
- * What sharing allows. A texture made to be shared by nt handle is default usage and not multisampled, with the shared
- * or keyed mutex flag, and not a cube or clamped, all of those from the validator of d3d11.dll. The documentation of
- * the flags adds that the texture is two dimensional. A shared texture of the legacy kind has the same, with
- * multisampling refused as a guess. Mip levels and array sizes pass, as at feature level 11 they do in d3d11.dll.
+ * an nt handle shared texture must be default usage, not multisampled, have the shared or keyed mutex flag, and not
+ * be a cube or clamped. the documentation adds that it is 2D. legacy shared textures follow the same rules, refusing
+ * multisampling is a guess. mip levels and array sizes are not restricted, like windows at feature level 11.
  */
 HRESULT D3dShareCheck(D3D11_RESOURCE_DIMENSION dimension, UINT usage, UINT misc, UINT mips, UINT samples)
 {
@@ -37,7 +36,6 @@ HRESULT D3dShareCheck(D3D11_RESOURCE_DIMENSION dimension, UINT usage, UINT misc,
     return S_OK;
 }
 
-/* the capabilities of a texture bound as direct3d 11 says, in the words both runtimes read. */
 static UINT caps_of(UINT bind)
 {
     UINT caps = 0;
@@ -97,7 +95,7 @@ void D3dShareDescribe(D3dResource *r, const VkImageCreateInfo *info, UINT type_i
 
 /* ------------------------------------------------------------------ the kernel object */
 
-/* made when the texture needs it first, with the name and attributes of the call that does. */
+/* created on first need, with the name and attributes of that call. */
 static HRESULT ensure(D3dResource *r, BOOL legacy, LPCWSTR name, const SECURITY_ATTRIBUTES *attributes)
 {
     D3dDevice *device = r->child.device;
@@ -119,8 +117,8 @@ static HRESULT ensure(D3dResource *r, BOOL legacy, LPCWSTR name, const SECURITY_
 }
 
 /*
- * A handle to the texture. The nt handle needs the texture made for it; the legacy one needs it shared without,
- * and any other texture has none, which GetSharedHandle answers with success and no handle, as d3d11.dll does.
+ * nt handles need a texture made with SHARED_NTHANDLE, legacy handles a texture shared without it. for any other
+ * texture GetSharedHandle succeeds with no handle, like windows.
  */
 HRESULT D3dShareHandle(D3dResource *r, BOOL nt, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out)
 {
@@ -152,7 +150,7 @@ HRESULT D3dShareHandle(D3dResource *r, BOOL nt, const SECURITY_ATTRIBUTES *attri
 
 void D3dShareDestroy(D3dResource *r)
 {
-    /* a texture that goes while it holds the keyed mutex abandons it. */
+    /* destroying a texture that holds the keyed mutex abandons it. */
     if (r->keyed_acquired && r->share.handle)
         MimeShareAbandon(r->share.handle);
     MimeShareClose(&r->share);
@@ -160,7 +158,6 @@ void D3dShareDestroy(D3dResource *r)
     r->share_blob = nullptr;
 }
 
-/* the texture a description makes, in direct3d 11's words. */
 static BOOL describe_texture(const MimeShareBlob *b, D3D11_TEXTURE2D_DESC1 *desc)
 {
     if (b->magic != MIME_SHARE_MAGIC || b->kind != MIME_SHARE_TEXTURE || b->dimension != 2)
@@ -175,7 +172,7 @@ static BOOL describe_texture(const MimeShareBlob *b, D3D11_TEXTURE2D_DESC1 *desc
     desc->SampleDesc.Quality = b->quality;
     desc->Usage = D3D11_USAGE_DEFAULT;
     if (b->caps & MIME_SHARE_ORIGIN_D3D12) {
-        /* a texture of direct3d 12 is what its flags allow: the views it can be bound for. */
+        /* bind flags of a direct3d 12 texture come from the views its flags allow. */
         desc->BindFlags = ((b->caps & MIME_SHARE_CAN_RENDER) ? D3D11_BIND_RENDER_TARGET : 0) |
                           ((b->caps & MIME_SHARE_CAN_DEPTH) ? D3D11_BIND_DEPTH_STENCIL : 0) |
                           ((b->caps & MIME_SHARE_CAN_WRITE) ? D3D11_BIND_UNORDERED_ACCESS : 0) |
@@ -191,10 +188,7 @@ static BOOL describe_texture(const MimeShareBlob *b, D3D11_TEXTURE2D_DESC1 *desc
     return TRUE;
 }
 
-/*
- * The texture a handle names, as a texture of this device over memory imported from the object. A legacy handle is
- * a number that only the object of a texture still held opens.
- */
+/* opens a texture over memory imported from the object. a legacy handle only opens while its texture is alive. */
 HRESULT D3dShareOpen(D3dDevice *device, HANDLE handle, BOOL nt, REFIID riid, void **out)
 {
     if (!out)
@@ -295,14 +289,11 @@ static HRESULT STDMETHODCALLTYPE keyed_get_device(IDXGIKeyedMutex *iface, REFIID
 
 void D3dContextFlush(D3dContext *c);
 
-/* the answers AcquireSync gives besides S_OK: the constants of WaitForSingleObject, returned as they are. */
+/* AcquireSync returns these WaitForSingleObject constants as they are, besides S_OK. */
 #define KEYED_WAIT_ABANDONED ((HRESULT)0x00000080L)
 #define KEYED_WAIT_TIMEOUT ((HRESULT)0x00000102L)
 
-/*
- * Acquiring waits for the key. A mutex that is held already, here, is an invalid call, and the work the program
- * recorded is submitted first, as d3d11.dll flushes its context before it acquires.
- */
+/* acquiring a mutex already held is an invalid call. like windows, recorded work is flushed first. */
 static HRESULT STDMETHODCALLTYPE keyed_acquire_sync(IDXGIKeyedMutex *iface, UINT64 key, DWORD milliseconds)
 {
     D3dResource *r = keyed_impl(iface);
@@ -319,8 +310,8 @@ static HRESULT STDMETHODCALLTYPE keyed_acquire_sync(IDXGIKeyedMutex *iface, UINT
     if (status == STATUS_SUCCESS)
         r->keyed_acquired = TRUE;
     /*
-     * A timeout and an abandoned mutex are not errors but the wait constants, as documented for AcquireSync: the
-     * values 0x102 and 0x80 are non negative, so SUCCEEDED holds for them, and neither means the key was acquired.
+     * timeout and abandoned are the documented wait constants, not errors: 0x102 and 0x80 pass SUCCEEDED, yet
+     * neither means the key was acquired.
      */
     if (status == STATUS_TIMEOUT)
         return KEYED_WAIT_TIMEOUT;
@@ -330,8 +321,8 @@ static HRESULT STDMETHODCALLTYPE keyed_acquire_sync(IDXGIKeyedMutex *iface, UINT
 }
 
 /*
- * What the program drew is what the next device to acquire sees: the work is submitted and done before the key is
- * handed on, which orders the two devices' commands without a semaphore between them.
+ * the work is submitted and finished before the key is handed on, so the next device to acquire sees it. this
+ * orders the two devices' commands without a semaphore between them.
  */
 static HRESULT STDMETHODCALLTYPE keyed_release_sync(IDXGIKeyedMutex *iface, UINT64 key)
 {
@@ -361,7 +352,7 @@ static const IDXGIKeyedMutexVtbl keyed_vtbl = {
     keyed_release_sync,
 };
 
-/* the interface of a resource that was made with a keyed mutex, or opened from one that was. */
+/* also for resources opened from one made with a keyed mutex. */
 void *D3dShareKeyedMutex(D3dResource *r)
 {
     if (!(r->misc & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX))
@@ -378,15 +369,15 @@ typedef struct D3dFence {
     D3D11_FENCE_FLAG flags;
     VkSemaphore semaphore;
     /*
-     * The process's table entry that holds the semaphore, once it was shared by id or taken from another fence of the
-     * process that did: the semaphore goes with the last fence that holds it. None while the fence owns its own.
+     * the process table entry holding the semaphore once it was shared by id, or taken from another fence that was.
+     * the semaphore is destroyed with the last fence holding it. NULL while the fence owns its semaphore.
      */
     void *entry;
     SRWLOCK lock;
     MimeShare share;
-    /* the highest value a wait saw reached: the mirror of the host's value may be behind a moment. */
+    /* highest value a wait saw reached, since the mirrored host value can lag a moment. */
     volatile UINT64 observed;
-    /* the last submission that signals or waits for it: the fence goes once the gpu is done with that. */
+    /* last submission that signals or waits on it, the fence must outlive it. */
     volatile UINT64 last_use;
 } D3dFence;
 
@@ -419,7 +410,7 @@ static ULONG STDMETHODCALLTYPE fence_release(ID3D11Fence *iface)
         D3dDevice *device = f->child.device;
         /* work submitted may still wait on or signal it. */
         if (f->last_use > D3dCompleted(device)) {
-            /* a wait the program asked for is submitted with the next batch, which this one is. */
+            /* a pending program wait goes out with the next batch, so submit it. */
             D3dSubmit(device, VK_NULL_HANDLE, nullptr, nullptr);
             D3dWaitSerial(device, device->next_serial - 1);
         }
@@ -478,7 +469,7 @@ static UINT64 fence_value(D3dFence *f)
 
 static UINT64 STDMETHODCALLTYPE fence_get_completed_value(ID3D11Fence *iface) { return fence_value(fence_impl(iface)); }
 
-/* waits on the cpu, for an event or for the caller: a thread of the process' pool waits and sets the event. */
+/* event waits run on a thread pool thread that sets the event. */
 typedef struct FenceWait {
     D3dFence *fence;
     UINT64 value;
@@ -557,7 +548,7 @@ static HRESULT STDMETHODCALLTYPE fence_create_shared_handle(ID3D11Fence *iface, 
             MimeShareClose(&f->share);
             hr = E_FAIL;
         } else if (SUCCEEDED(hr)) {
-            /* the other devices of the process open this fence without importing it. */
+            /* other devices of the process then open this fence without importing it. */
             device->shared.adapter->lpVtbl->PublishSemaphore(device->shared.adapter, device->shared.vk, f->share.id,
                                                              (void *)f->semaphore, &f->entry);
         }
@@ -595,7 +586,7 @@ static D3dFence *alloc_fence(D3dDevice *device, D3D11_FENCE_FLAG flags)
     return f;
 }
 
-/* a fence with a semaphore of its own, exportable when it is made to be shared. */
+/* the semaphore is exportable when the fence is shared. */
 static HRESULT create_fence(D3dDevice *device, UINT64 value, D3D11_FENCE_FLAG flags, D3dFence **out)
 {
     D3dFence *f = alloc_fence(device, flags);
@@ -619,10 +610,9 @@ static HRESULT create_fence(D3dDevice *device, UINT64 value, D3D11_FENCE_FLAG fl
 }
 
 /*
- * The flags d3d11.dll accepts, in its order of checks: only the four flags, a fence that is not marked
- * non-monitored needs monitored fences of the adapter, which this one has, and then a non-monitored one needs
- * the adapter to have them and, as the adapter has both, the cross adapter flag; the cross adapter flag needs
- * the shared one. With no place for the fence, the arguments are checked and S_FALSE answers.
+ * the flag checks windows does: only the four flags. the adapter has monitored fences, so NON_MONITORED needs
+ * SHARED_CROSS_ADAPTER, and SHARED_CROSS_ADAPTER needs SHARED. without out, only the arguments are checked and
+ * S_FALSE is returned.
  */
 HRESULT D3dCreateFence(D3dDevice *device, UINT64 value, D3D11_FENCE_FLAG flags, REFIID riid, void **out)
 {
@@ -667,10 +657,10 @@ HRESULT D3dOpenSharedFence(D3dDevice *device, HANDLE handle, REFIID riid, void *
     void *semaphore = nullptr;
     if (device->shared.adapter->lpVtbl->OpenSemaphore(device->shared.adapter, device->shared.vk, own.id, &semaphore,
                                                       &f->entry) == S_OK) {
-        /* a fence of this process made it: the devices share its semaphore. */
+        /* made in this process: the devices share its semaphore. */
         f->semaphore = (VkSemaphore)semaphore;
     } else {
-        /* another process's: a semaphore here takes the payload, which nothing has to export again. */
+        /* made in another process: import the payload into a local semaphore, which never needs exporting again. */
         VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
         type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
         VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
@@ -691,7 +681,7 @@ HRESULT D3dOpenSharedFence(D3dDevice *device, HANDLE handle, REFIID riid, void *
     return hr;
 }
 
-/* ID3D11DeviceContext4::Signal: what the context recorded runs, then the fence takes the value. */
+/* ID3D11DeviceContext4::Signal: the recorded work runs, then the fence takes the value. */
 HRESULT D3dFenceSignal(D3dContext *c, ID3D11Fence *iface, UINT64 value)
 {
     if (!iface)
@@ -699,7 +689,7 @@ HRESULT D3dFenceSignal(D3dContext *c, ID3D11Fence *iface, UINT64 value)
     D3dFence *f = fence_impl(iface);
     if (f->child.device != c->child.device || c->type != D3D11_DEVICE_CONTEXT_IMMEDIATE)
         return E_INVALIDARG;
-    /* a timeline only goes up: a value at or below the present one signals nothing. */
+    /* a timeline only goes up: a value at or below the current one signals nothing. */
     VkSemaphoreSubmitInfo signal = {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
     signal.semaphore = f->semaphore;
     signal.value = value;
@@ -711,7 +701,7 @@ HRESULT D3dFenceSignal(D3dContext *c, ID3D11Fence *iface, UINT64 value)
     return S_OK;
 }
 
-/* ID3D11DeviceContext4::Wait: what the context records after this waits for the value. */
+/* ID3D11DeviceContext4::Wait: work recorded after this waits for the value. */
 HRESULT D3dFenceWait(D3dContext *c, ID3D11Fence *iface, UINT64 value)
 {
     if (!iface)

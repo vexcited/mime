@@ -1,12 +1,8 @@
 /*
- * the notification area. mime has no taskbar: an icon of Shell_NotifyIcon is an icon of the desktop of the host (a
- * status notifier item over its session bus), its tip and balloon are the host's, and a click on it reaches the
- * program's window as the icon's callback message, as the shell sends it. shell32 keeps what it checks, win32k the
- * icons: they are known by the process that made them and live as long as their window.
- *
- * the menu an icon shows is the desktop's. when the host asks for it the program is sent the message of a right
- * click, and what it then pops up with TrackPopupMenu is not shown but handed to the host as a menu of its own,
- * whose choice is the result of the call.
+ * Shell_NotifyIcon uses the host notification area through status notifier items on its session bus. the host shows
+ * tips and balloons and routes clicks to the application callback. shell32 validates state; win32k owns icons by
+ * process and window lifetime. for menus, send a right-click request and intercept TrackPopupMenu for the host to
+ * display; return the host selection to the application.
  */
 #include "win32k.h"
 
@@ -26,8 +22,8 @@
 #define NIN_BALLOONTIMEOUT (WM_USER + 4)
 #define NIN_BALLOONUSERCLICK (WM_USER + 5)
 
-#define MENU_ASK_MS 3000      /* what a program has to pop its menu up after it was asked for it */
-#define MENU_ANSWER_MS 60000  /* and what the person at the desktop has to choose */
+#define MENU_ASK_MS 3000      /* time allowed for the application to open its menu. */
+#define MENU_ANSWER_MS 60000  /* time allowed for the user to choose an item. */
 
 typedef struct TRAY {
     BOOLEAN Used;
@@ -44,9 +40,9 @@ static TRAY g_tray[TRAY_MAX];
 static ULONG g_next_host_id;
 static MimeTrayCommand *g_command;
 
-/* the menu the host is showing, one at a time as there is one pointer. */
+/* one active host menu, matching the single pointer. */
 static struct {
-    int State; /* 0 none, 1 asked for, 2 handed to the host, 3 chosen */
+    int State; /* 0 none, 1 asked for, 2 handed to the host, 3 chosen. */
     ULONG HostId;
     W32PROCESS *Process;
     HWND Window;
@@ -78,7 +74,6 @@ static ULONG64 send(MimeTrayCommand *c)
     return HalMimeHypercall(MIME_HC_TRAY, (ULONG64)MmGetPhysicalAddress(c).QuadPart, sizeof(*c), 0, 0, 0, 0, nullptr);
 }
 
-/* the name of the program: the file it runs from without its extension. */
 static void app_name(W32PROCESS *p, uint16_t *out)
 {
     ULONG start = 0, end = p ? p->ImageChars : 0;
@@ -100,8 +95,8 @@ static void app_name(W32PROCESS *p, uint16_t *out)
 }
 
 /*
- * the picture of an icon as the host wants it: argb, a first, not premultiplied, at most MIME_TRAY_PICTURE_MAX
- * pixels a side, taking one of every few pixels of a larger one.
+ * host icons use non-premultiplied ARGB with alpha first, capped at MIME_TRAY_PICTURE_MAX per side. subsample larger
+ * images.
  */
 static BOOLEAN picture(HICON icon, uint8_t *out, uint32_t *width, uint32_t *height)
 {
@@ -244,7 +239,7 @@ ULONG NTAPI NtUserMimeTray(ULONG op, PUCHAR user_request, ULONG size)
             t->Callback = r.Callback;
         if (r.Version)
             t->Version = r.Version;
-        /* the state that was set is kept by shell32, which gives the hidden bit as it is now. */
+        /* shell32 retains icon state and passes the current hidden bit. */
         send_icon(t, &r, (r.State & NIS_HIDDEN) != 0);
         if (r.Flags & NIF_INFO)
             send_balloon(t, &r);
@@ -296,7 +291,7 @@ ULONG NTAPI NtUserMimeTray(ULONG op, PUCHAR user_request, ULONG size)
     return result;
 }
 
-/* a message of the callback of an icon, in the form its version has. */
+/* format the callback according to the icon version. */
 static void callback(TRAY *t, UINT event, int32_t x, int32_t y)
 {
     WND *w = WndLookup(t->Window);
@@ -311,7 +306,7 @@ static void callback(TRAY *t, UINT event, int32_t x, int32_t y)
     QueuePost(w->Thread, t->Window, t->Callback, wparam, lparam);
 }
 
-/* the click on the icon as the version has it: the mouse messages, or the events of version 3 and later. */
+/* send mouse messages or version 3 and later events, according to the icon version. */
 static void click(TRAY *t, UINT select, UINT context, UINT down, UINT up, int32_t x, int32_t y)
 {
     if (t->Version >= 3 && select) {
@@ -333,7 +328,7 @@ static void wake(HWND window)
         QueuePost(w->Thread, window, WM_NULL, 0, 0);
 }
 
-/* where the host's tray is, in the guest's screen: the corner of the work area, where an icon would sit. */
+/* approximate the host tray at the work area corner in guest coordinates. */
 static void corner(int32_t *x, int32_t *y)
 {
     MIME_MONITOR_INFO m;
@@ -364,7 +359,7 @@ void TrayHostEvent(const MimeInputEvent *ev)
         callback(t, WM_MBUTTONUP, x, y);
         break;
     case MIME_TRAY_EVENT_MENU_REQUEST:
-        /* the program is asked as it is by a right click, and the menu it pops up goes to the host. */
+        /* send a right-click request and forward the resulting popup menu to the host. */
         g_menu.State = 1;
         g_menu.HostId = t->HostId;
         g_menu.Process = t->Process;
@@ -403,7 +398,7 @@ void TrayHostEvent(const MimeInputEvent *ev)
     }
 }
 
-/* an icon goes with its window. */
+/* destroy icons with their window. */
 void TrayWindowDestroyed(WND *w)
 {
     HWND handle = WndHandle(w);

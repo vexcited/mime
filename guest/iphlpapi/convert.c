@@ -1,7 +1,6 @@
 /*
- * interface names, indexes, luids, guids and aliases. a name is only the
- * luid spelled out, "<type>_<index>", so converting between the two never
- * looks at the adapters.
+ * interface names, indexes, luids, guids and aliases. a name is just the luid spelled out as "<type>_<index>", so
+ * converting between the two never looks at the adapters.
  */
 #include "private.h"
 
@@ -13,7 +12,7 @@ static const struct {
     {L"ppp", 23},      {L"tokenring", 9}, {L"tunnel", 131},  {L"wireless", 71},
 };
 
-/* the longest name: 20 characters. */
+/* the longest name is 20 characters. */
 #define NAME_CHARS 21
 
 DWORD NETIOAPI_API_ ConvertInterfaceLuidToNameW(const NET_LUID *luid, PWSTR name, SIZE_T length)
@@ -177,7 +176,7 @@ DWORD NETIOAPI_API_ ConvertInterfaceLuidToAlias(const NET_LUID *luid, PWSTR alia
     return error;
 }
 
-/* an exact alias first, ignoring case, and else the first alias the given one begins. */
+/* a case insensitive exact match first, else the first alias that starts with the given one. */
 DWORD NETIOAPI_API_ ConvertInterfaceAliasToLuid(const WCHAR *alias, PNET_LUID luid)
 {
     if (!alias || !luid || wcsnlen(alias, 256) >= 256)

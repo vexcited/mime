@@ -50,7 +50,7 @@ static inline void cm_journal_put64(uint8_t *p, uint64_t n)
     cm_journal_put32(p + 4, (uint32_t)(n >> 32));
 }
 
-/* the operations this build applies, any other record is framed, checked and skipped. */
+/* the operations this build applies; any other record is framed, checked and skipped. */
 static inline bool cm_journal_known(uint32_t operation)
 {
     return operation >= CM_JOURNAL_CREATE_KEY && operation <= CM_JOURNAL_SET_SECURITY;
@@ -61,7 +61,7 @@ static inline uint32_t cm_journal_size(const CmJournalRecord *r)
     return CM_JOURNAL_HEADER + r->path_bytes + r->name_bytes + r->data_bytes;
 }
 
-/* the tables of the crc, eight bytes at a time: the log is checked record by record at every boot. */
+/* slicing by eight: every boot checks the whole log record by record. */
 static inline const uint32_t (*cm_journal_crc_tables(void))[256]
 {
     static uint32_t table[8][256];
@@ -97,7 +97,7 @@ static inline uint32_t cm_journal_crc_update(const uint32_t (*t)[256], uint32_t 
     return crc;
 }
 
-/* the crc of the record with the four bytes of the crc field itself taken as zeros. */
+/* the crc field itself counts as four zero bytes. */
 static inline uint32_t cm_journal_crc(const uint8_t *p, size_t size)
 {
     const uint32_t (*t)[256] = cm_journal_crc_tables();
@@ -146,7 +146,7 @@ static inline bool cm_journal_decode(const uint8_t *p, size_t size, CmJournalRec
     r->name_bytes = cm_journal_get32(p + 28);
     r->data_bytes = cm_journal_get32(p + 32);
     r->last_write = cm_journal_get64(p + 40);
-    /* the framing holds for every record, so a later build can add operations a reader steps over. */
+    /* every record has this framing, so a reader can step over operations a later build adds. */
     if (!r->sequence || r->path_bytes > CM_JOURNAL_MAX_PATH || r->name_bytes > CM_JOURNAL_MAX_NAME ||
         r->data_bytes > CM_JOURNAL_MAX_DATA || cm_journal_get32(p + 4) != cm_journal_size(r))
         return false;
@@ -182,7 +182,7 @@ static inline bool cm_journal_validate(const uint8_t *p, size_t size, uint64_t s
     for (size_t i = 0; i < sizeof(prefix) - 1; i++)
         if (path[i * 2] != (uint8_t)prefix[i] || path[i * 2 + 1])
             return false;
-    /* the units of the name: none zero, no empty part between backslashes, no part past 255 units. */
+    /* name units: no zero, no empty part between backslashes, no part longer than 255 units. */
     unsigned segment = 0;
     for (const uint8_t *c = path + (sizeof(prefix) - 1) * 2, *end = path + r.path_bytes; c < end; c += 2) {
         unsigned unit = c[0] | (unsigned)c[1] << 8;

@@ -1,8 +1,6 @@
 /*
- * the ListBox and ComboLBox classes, as user32 of build 26300 has them:
- * items with strings, data or neither, one or many selected, owner drawn
- * at a fixed or variable height, in columns, with type-ahead, and the
- * list of a combo box tracking the mouse while dropped.
+ * the ListBox and ComboLBox classes: items with strings, data or neither, single or multiple selection, owner drawn
+ * at fixed or variable height, columns, type-ahead, and a combo box's list tracking the mouse while dropped.
  */
 #include "listbox.h"
 
@@ -45,7 +43,7 @@ static BOOL item_shown_selected(LISTBOX *lb, int i)
     return lb->mode == LB_SINGLE ? i == lb->sel : (lb->state[i] & 0xF0) != 0;
 }
 
-/* the droppable combo box this list belongs to, with its extended keyboard while closed. */
+/* TRUE for the list of a closed drop down combo using the extended keyboard UI. */
 static BOOL closed_ext_ui(LISTBOX *lb)
 {
     COMBO *cb = lb->combo;
@@ -65,7 +63,7 @@ static int system_font_height(void)
     return tm.tmHeight;
 }
 
-/* the average character of a font, as dialogs measure it. */
+/* average character size of a font, measured as dialogs do. */
 static void char_size(HWND hwnd, HFONT font, int *cx, int *cy)
 {
     static const WCHAR LETTERS[] = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -97,7 +95,7 @@ static void client_rect(LISTBOX *lb, RECT *r)
     GetClientRect(lb->hwnd, r);
 }
 
-/* the layout of columns and how many items a page holds. */
+/* computes the columns and how many items a page holds. */
 static void layout(LISTBOX *lb)
 {
     RECT r;
@@ -125,7 +123,7 @@ static void layout(LISTBOX *lb)
     }
 }
 
-/* how many items show from the top, partly shown ones counted when asked. */
+/* items shown from the top, counting partly shown ones when asked. */
 static int visible_count(LISTBOX *lb, BOOL partial)
 {
     RECT r;
@@ -163,7 +161,7 @@ static int last_full_visible(LISTBOX *lb)
     return last < lb->top ? lb->top : last;
 }
 
-/* an item's rectangle, in the coordinates of a dc shifted by the horizontal scroll; whether it shows. */
+/* rect is in dc coordinates shifted by the horizontal scroll. returns whether the item shows. */
 static BOOL item_rect(LISTBOX *lb, int index, RECT *rect)
 {
     RECT r;
@@ -221,7 +219,7 @@ static void invalidate_all(LISTBOX *lb)
         lb->deferred = TRUE;
 }
 
-/* the item under a client point, and whether the point is outside every item. */
+/* outside is set when the point misses every item. */
 static int hit_test(LISTBOX *lb, int x, int y, BOOL *outside)
 {
     RECT r;
@@ -310,7 +308,7 @@ static void set_bar(LISTBOX *lb, int bar, int max, int page, int pos)
     SetScrollInfo(lb->hwnd, bar, &si, lb->redraw);
 }
 
-/* the scroll bars of the styles the list was made with, after its items or size changed. */
+/* updates the scroll bars the list's styles ask for, after its items or size changed. */
 static void update_bars(LISTBOX *lb)
 {
     if ((!lb->vbar && !lb->hbar) || !lb->redraw)
@@ -406,7 +404,7 @@ static void set_x_origin(LISTBOX *lb, int x)
         draw_focus(lb, TRUE);
 }
 
-/* the top of the page ending at an item of a variable list. */
+/* top of the page that ends at index, for variable height lists. */
 static int page_up_top(LISTBOX *lb, int index)
 {
     RECT r;
@@ -470,7 +468,7 @@ static HWND color_target(LISTBOX *lb)
     return parent && parent != GetDesktopWindow() ? parent : lb->parent;
 }
 
-/* the brush the parent gives, with its colors in the dc. */
+/* the parent's brush, with its colors set in the dc. */
 static HBRUSH list_brush(LISTBOX *lb, HDC dc)
 {
     SetBkMode(dc, OPAQUE);
@@ -502,7 +500,7 @@ static void draw_item_message(LISTBOX *lb, HDC dc, int index, UINT action, UINT 
     SendMessageW(lb->parent, WM_DRAWITEM, (WPARAM)dis.CtlID, (LPARAM)&dis);
 }
 
-/* an item of a list without owner drawing: its text in the highlight or the list's colors. */
+/* non owner drawn items: the text in highlight or list colors. */
 static void draw_text_item(LISTBOX *lb, HDC dc, int index, BOOL selected, HBRUSH brush)
 {
     RECT r;
@@ -549,7 +547,7 @@ static void draw_text_item(LISTBOX *lb, HDC dc, int index, BOOL selected, HBRUSH
     SetBkColor(dc, back);
 }
 
-/* a dc for drawing outside WM_PAINT, with the font, clip and horizontal scroll of painting. */
+/* a dc for drawing outside WM_PAINT, with the same font, clip and horizontal scroll as painting. */
 static HDC list_dc(LISTBOX *lb, HGDIOBJ *old_font)
 {
     HDC dc = GetDC(lb->hwnd);
@@ -586,7 +584,7 @@ static void focus_in_dc(LISTBOX *lb, HDC dc, BOOL on)
     DrawFocusRect(dc, &r);
 }
 
-/* the focus rectangle, an xor, toggled to the state asked. */
+/* the focus rectangle is xor drawn, toggled to the requested state. */
 static void draw_focus(LISTBOX *lb, BOOL on)
 {
     if (on == lb->caret_on)
@@ -602,7 +600,7 @@ static void draw_focus(LISTBOX *lb, BOOL on)
     release_list_dc(lb, dc, old);
 }
 
-/* one item repainted as selected or not, without the rest. */
+/* repaints one item as selected or not. */
 static void invert_item(LISTBOX *lb, int index, BOOL on)
 {
     if (lb->nosel || !shown(lb) || index < 0 || index >= lb->count)
@@ -676,7 +674,7 @@ static void set_state(LISTBOX *lb, int i, BOOL selected, BOOL displayed)
     lb->state[i] = (BYTE)((selected ? 1 : 0) | (displayed ? 0x10 : 0));
 }
 
-/* every item outside a range to a value, the single selection dropped when outside. */
+/* sets every item outside a..b to value, and drops a single selection outside it. */
 static void reset_world(LISTBOX *lb, int a, int b, BOOL value)
 {
     int lo = a < b ? a : b, hi = a < b ? b : a;
@@ -704,7 +702,7 @@ static void reset_world(LISTBOX *lb, int a, int b, BOOL value)
 
 enum { HILITE_SHOWN = 1, HILITE_SELECTED = 2 };
 
-/* the items between two, the first excluded, given a state. */
+/* sets the items between i and j to value, i excluded. */
 static void alter_hilite(LISTBOX *lb, int i, int j, BOOL value, int which, BOOL restore)
 {
     if (i < 0 || j < 0)
@@ -725,7 +723,7 @@ static void alter_hilite(LISTBOX *lb, int i, int j, BOOL value, int which, BOOL 
     }
 }
 
-/* the extended block from the anchor moved to a new end, committed or only shown. */
+/* moves the end of the extended selection block, committed or only shown. */
 static void block_hilite(LISTBOX *lb, int end, BOOL commit)
 {
     int which = HILITE_SHOWN | (commit ? HILITE_SELECTED : 0);
@@ -773,7 +771,6 @@ static void move_caret(LISTBOX *lb, int index)
         NotifyWinEvent(EVENT_OBJECT_FOCUS, lb->hwnd, OBJID_CLIENT, index + 1);
 }
 
-/* the single selection moved to an item, or none. */
 static void select_single(LISTBOX *lb, int index)
 {
     if (index == lb->sel)
@@ -840,7 +837,7 @@ static int compare_strings(LISTBOX *lb, LPCWSTR item, LPCWSTR text)
     return CompareStringW(lb->locale, NORM_IGNORECASE, item, -1, text, -1) - CSTR_EQUAL;
 }
 
-/* the item compared with a new one through WM_COMPAREITEM: positive when the item goes after. */
+/* compares through WM_COMPAREITEM, positive when the item goes after the new one. */
 static int compare_data(LISTBOX *lb, int index, ULONG_PTR data, BOOL search)
 {
     COMPAREITEMSTRUCT cis = {ODT_LISTBOX, (UINT)id_of(lb), lb->hwnd};
@@ -962,7 +959,7 @@ static void delete_item_message(LISTBOX *lb, int index)
     SendMessageW(lb->parent, WM_DELETEITEM, (WPARAM)dis.CtlID, (LPARAM)&dis);
 }
 
-/* owner drawn items with data hear of their end, last first. */
+/* owner drawn items with data get a delete message, last first. */
 static void delete_all_messages(LISTBOX *lb)
 {
     if (lb->owner_draw && lb->has_data)
@@ -1241,7 +1238,7 @@ static LRESULT init_storage(LISTBOX *lb, int items, int bytes)
     return lb->capacity;
 }
 
-/* an item's line of a directory listing added: "[dir]" for directories. */
+/* adds a directory listing line, "[dir]" for directories. */
 static LRESULT add_file_line(LISTBOX *lb, const WIN32_FIND_DATAW *fd)
 {
     WCHAR line[MAX_PATH + 3];
@@ -1343,7 +1340,7 @@ static void button_up(LISTBOX *lb, int flags)
     }
 }
 
-/* the item under the pointer selected as a plain click would, without a notification. */
+/* selects like a plain click, without notifying. */
 static void plain_select(LISTBOX *lb, int index, BOOL selectable)
 {
     if (index != lb->caret)
@@ -1516,7 +1513,7 @@ static int page_size(LISTBOX *lb)
     return lb->full_max <= 1 ? lb->full_max : lb->full_max - 1;
 }
 
-/* where a key moves the caret: the selection follows unless multiple selection or add mode keep it. */
+/* the selection follows the caret unless multiple selection or add mode keeps it. */
 static void navigate(LISTBOX *lb, int target, BOOL toggle, BOOL shift)
 {
     if (target < 0)

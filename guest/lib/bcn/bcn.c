@@ -53,7 +53,7 @@ size_t mime_bcn_size(unsigned format, unsigned width, unsigned height)
     return (size_t)bytes;
 }
 
-/* the color part of bc1, with the 4 color mode forced for bc2 and bc3. */
+/* the bc1 color part, bc2 and bc3 force the 4 color mode. */
 static void bc1_color(const uint8_t *src, uint32_t out[16], bool four_colors, bool opaque)
 {
     uint32_t c0 = rd16(src), c1 = rd16(src + 2);
@@ -176,7 +176,6 @@ void mime_bcn_decode_bc3_block(const uint8_t *src, uint32_t out[16], unsigned fl
         premultiply(out);
 }
 
-/* decodes one block of any format into 16 pixels. */
 static void decode_block(unsigned format, const uint8_t *src, uint32_t px[16], unsigned flags)
 {
     switch (format) {
@@ -201,7 +200,7 @@ static void decode_block(unsigned format, const uint8_t *src, uint32_t px[16], u
     case MIME_BCN_BC5S: {
         uint8_t r[16], g[16];
         mime_bcn_decode_bc5_block(src, r, g, format == MIME_BCN_BC5S);
-        /* a channel that is not stored is zero, which is 128 in the biased signed formats. */
+        /* a missing channel is zero, which is 128 in the biased signed formats. */
         uint32_t blue = format == MIME_BCN_BC5S ? 128 : 0;
         for (int i = 0; i < 16; i++)
             px[i] = pack(r[i], g[i], blue, 255);

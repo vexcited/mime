@@ -1,7 +1,6 @@
 /*
- * the standard font: OleCreateFontIndirect makes an object with IFont, its dispatch form and IPersistStream. What a
- * font is lives in a record. The system fonts made from records are shared by all objects of the process through a
- * small cache, so two objects that describe the same font hold the same HFONT.
+ * the standard font object made by OleCreateFontIndirect, with IFont, IFontDisp and IPersistStream. HFONTs are
+ * cached process wide, so two objects describing the same font share one HFONT.
  */
 #include "olestd.h"
 
@@ -10,7 +9,7 @@
 #define STYLE_UNDERLINE 0x04
 #define STYLE_STRIKEOUT 0x08
 
-/* the sizes a font may have, as a CY value and as the number of pixels it is multiplied by its resolution to. */
+/* the largest font size, as a CY value and as points times dpi. */
 #define SIZE_LIMIT 0x270FD8F0
 #define SIZE_PIXEL_LIMIT 0x240000
 
@@ -31,7 +30,7 @@ typedef struct FONT_SPEC {
     WCHAR Face[FACE_CHARS];
 } FONT_SPEC;
 
-/* a font the system made, with the record asked for and the one that came out. */
+/* a cached HFONT, with the spec asked for and the one the system actually gave. */
 typedef struct FONT_SLOT {
     FONT_SPEC Asked, Got;
     HFONT Handle;
@@ -70,7 +69,7 @@ static FONT_OBJECT *object_of_persist(IPersistStream *p)
     return (FONT_OBJECT *)((char *)p - offsetof(FONT_OBJECT, Persist));
 }
 
-/* ------------------------------------------------------------------ records */
+/* ------------------------------------------------------------------ specs */
 
 static void spec_set_face(FONT_SPEC *spec, const WCHAR *name)
 {
@@ -99,7 +98,7 @@ static HRESULT last_error_result(void)
     return error ? (HRESULT)((error & 0xFFFF) | 0x80070000) : E_FAIL;
 }
 
-/* ------------------------------------------------------------------ the cache of system fonts */
+/* ------------------------------------------------------------------ font cache */
 
 static LONG slot_find(const FONT_SPEC *spec)
 {
@@ -120,7 +119,7 @@ static LONG slot_find_handle(HFONT handle)
     return -1;
 }
 
-/* an empty slot, taken from the ones nobody uses or from a bigger table. */
+/* reuses an unused slot or grows the table. */
 static LONG slot_claim(void)
 {
     for (ULONG i = 0; i < g_slot_count; i++) {
@@ -142,7 +141,7 @@ static LONG slot_claim(void)
     return first;
 }
 
-/* ------------------------------------------------------------------ resolving a record to a system font */
+/* ------------------------------------------------------------------ resolving to a system font */
 
 static LONG screen_dpi(void)
 {
@@ -158,7 +157,7 @@ static LONG screen_dpi(void)
     return dpi;
 }
 
-/* the vertical resolution of the context the object measures with, 96 when nobody can say. */
+/* the vertical dpi of the object's dc, 96 when unknown. */
 static LONG object_dpi(const FONT_OBJECT *object)
 {
     LONG dpi = object->Dc ? GetDeviceCaps(object->Dc, LOGPIXELSY) : screen_dpi();
@@ -182,7 +181,7 @@ static int CALLBACK note_charset(const LOGFONTW *face, const TEXTMETRICW *metric
     return 1;
 }
 
-/* the character set the face is available in, preferring the one the record has. -1 when there is none. */
+/* a charset the face exists in, preferring the spec's, or -1. */
 static int find_charset(HDC dc, const FONT_SPEC *spec, BOOL charset_leads)
 {
     LOGFONTW query = {};
@@ -205,7 +204,7 @@ static int pixel_height(const FONT_OBJECT *object, const FONT_SPEC *spec)
     return height < 1 ? 1 : height > 0x7FFFFFFF ? 0x7FFFFFFF : (int)height;
 }
 
-/* the record of the font the system really gave, from its metrics. */
+/* rebuilds the spec from the metrics of the font the system really gave. */
 static void spec_from_system(const FONT_OBJECT *object, const FONT_SPEC *asked, const TEXTMETRICW *metrics,
                              const WCHAR *face, FONT_SPEC *got)
 {
@@ -230,7 +229,7 @@ static void spec_from_system(const FONT_OBJECT *object, const FONT_SPEC *asked, 
     }
 }
 
-/* makes the object hold a system font for its record, from the cache or new. The cache lock is held. */
+/* takes an HFONT for the spec from the cache or creates one. Called with the cache lock held. */
 static HRESULT resolve_locked(FONT_OBJECT *object)
 {
     LONG hit = slot_find(&object->Spec);
@@ -300,7 +299,7 @@ static HRESULT font_ready(FONT_OBJECT *object)
     return hr;
 }
 
-/* the object lets go of its system font, which the next question asks for again. */
+/* drops the HFONT, the next query resolves it again. */
 static void font_forget(FONT_OBJECT *object)
 {
     if (object->Slot < 0)
@@ -405,7 +404,7 @@ static HRESULT STDMETHODCALLTYPE ifont_put_size(IFont *This, CY size)
     return S_OK;
 }
 
-/* the questions about a flag or number of the record: they all resolve the font first. */
+/* property getters resolve the font first. */
 static HRESULT ready_for(IFont *This, FONT_OBJECT **object, void *output)
 {
     if (!output)
@@ -769,7 +768,6 @@ static HRESULT font_get_member(IFont *font, DISPID id, VARIANT *result)
     return hr;
 }
 
-/* the type a member is set with. */
 static VARTYPE member_type(DISPID id)
 {
     switch (id) {
@@ -867,7 +865,7 @@ static HRESULT STDMETHODCALLTYPE ipersist_is_dirty(IPersistStream *This)
     return S_OK;
 }
 
-/* exactly `count` bytes of a stream, a short read being a failure. */
+/* a short read is a failure. */
 static HRESULT read_exact(IStream *stream, void *buffer, ULONG count)
 {
     BYTE *at = buffer;

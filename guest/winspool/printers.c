@@ -1,8 +1,6 @@
 /*
- * the printers that exist: the built in ones, their papers and resolutions, the default printer, and the
- * device modes that carry a printer's settings. a printer is not installed and cannot be removed, so
- * the table is code; what the user chose, the default printer and a device mode for each printer, lives
- * in the registry where Windows keeps it.
+ * built-in printers, papers and resolutions. printers cannot be installed or removed. the default printer and each
+ * user's device modes are stored in the Windows registry locations.
  */
 #include "winspool_private.h"
 #include <stddef.h>
@@ -129,7 +127,7 @@ const SpoolPaper *SpoolFindPaperByName(LPCWSTR name)
     return nullptr;
 }
 
-/* a page is drawn in memory at these resolutions, the largest is a page of about 9 million pixels at 300. */
+/* pages are rendered in memory; the largest is about 9 million pixels at 300 DPI. */
 static const int g_resolutions[] = {150, 300};
 
 int SpoolResolutionCount(void)
@@ -142,7 +140,7 @@ int SpoolResolutionAt(int index)
     return index >= 0 && index < SpoolResolutionCount() ? g_resolutions[index] : 0;
 }
 
-/* the supported resolution closest to a request: the quality values of Windows map to one of them. */
+/* chooses the nearest supported resolution, mapping Windows quality constants first. */
 static int distance(int a, int b)
 {
     return a > b ? a - b : b - a;
@@ -221,7 +219,7 @@ void SpoolMergeDevmode(int printer, DEVMODEW *dest, const DEVMODEW *src)
     if (!src || !dest)
         return;
     DWORD f = src->dmFields;
-    /* only what the size of the source covers is there, a short device mode ends before the later members. */
+    /* copies only fields covered by the source's dmSize. */
     SIZE_T size = src->dmSize;
     if ((f & DM_ORIENTATION) && size >= offsetof(DEVMODEW, dmOrientation) + 2 &&
         (src->dmOrientation == DMORIENT_PORTRAIT || src->dmOrientation == DMORIENT_LANDSCAPE))
@@ -281,7 +279,7 @@ void SpoolMergeDevmode(int printer, DEVMODEW *dest, const DEVMODEW *src)
     (void)printer;
 }
 
-/* what the user last chose for each printer, read from the registry the first time. */
+/* loads per-printer user settings from the registry on first use. */
 static DEVMODEW *g_user[ARRAYSIZE(g_printers)];
 static BOOL g_user_loaded[ARRAYSIZE(g_printers)];
 static SRWLOCK g_user_lock = SRWLOCK_INIT;

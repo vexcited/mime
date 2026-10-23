@@ -1,6 +1,6 @@
 /*
- * the thread manager. one lives for each thread that uses the framework; it keeps the thread's document managers,
- * which of them has the focus, and the sink window the host's input method reaches the thread through.
+ * the thread manager, one per thread using the framework. it keeps the thread's document managers, which one has the
+ * focus, and the sink window the host's input method reaches the thread through.
  */
 #include "msctf_private.h"
 
@@ -46,13 +46,13 @@ struct TM {
     void *Service;
 };
 
-/* the thread's manager, found without keeping it alive: it goes when its last user lets go. */
 WINUSERAPI BOOL WINAPI PeekMessageA(LPMSG msg, HWND hwnd, UINT min, UINT max, UINT remove);
 WINUSERAPI BOOL WINAPI GetMessageA(LPMSG msg, HWND hwnd, UINT min, UINT max);
 
+/* the thread's manager, held without a reference: it dies when its last user releases it. */
 static DWORD g_tls = TLS_OUT_OF_INDEXES;
 
-/* the client id every program gets, the atom of windows' own id for programs. */
+/* the client id every program gets, the atom Windows uses for programs. */
 #define APP_CLIENT 32
 
 static DWORD tls_index(void)
@@ -107,7 +107,7 @@ static ULONG tm_release(TM *tm)
 {
     LONG refs = InterlockedDecrement(&tm->Refs);
     if (!refs) {
-        /* the references the object keeps on itself through its documents must not revive it. */
+        /* references the object holds on itself through its documents must not revive it. */
         tm->Refs = 0x1000;
         tm_free(tm);
     }
@@ -212,7 +212,7 @@ DOC *TmDocumentForWindow(TM *tm, HWND hwnd)
     return nullptr;
 }
 
-/* whether a document set as the focus is for the window that has it: the window of its text store, or one around it. */
+/* a focus document fits when its text store's window is the focus window or one of its ancestors. */
 static BOOL document_fits(DOC *doc, HWND focus)
 {
     CTX *ctx = DocTopContext(doc);
@@ -222,8 +222,7 @@ static BOOL document_fits(DOC *doc, HWND focus)
     return window == focus || IsChild(window, focus) || IsChild(focus, window);
 }
 
-/* the document with the focus now: the one the focus window is associated with, else the one the program set, once
-   the thread has a window with the focus that it is for. */
+/* the focus window's associated document, else the one the program set, once its window has the focus. */
 DOC *TmFocusDoc(TM *tm)
 {
     HWND focus = GetFocus();
@@ -349,7 +348,7 @@ static HRESULT STDMETHODCALLTYPE tm_get_focus(ITfThreadMgrEx *This, ITfDocumentM
     TM *tm = CTF_OBJ(TM, Mgr, This);
     if (!out)
         return E_INVALIDARG;
-    /* the document in focus, else the one waiting for its window to get it. */
+    /* the focused document, else the one waiting for its window to get the focus. */
     DOC *doc = TmFocusDoc(tm);
     if (!doc)
         doc = tm->Focus;
@@ -407,7 +406,7 @@ static HRESULT STDMETHODCALLTYPE tm_associate_focus(ITfThreadMgrEx *This, HWND h
         }
     } else if (doc) {
         if (tm->AssocCount == MAX_ASSOC) {
-            /* the oldest association makes room: a window gone for long. */
+            /* evict the oldest association, likely for a window long gone. */
             DocRelease(tm->Assoc[0].Doc);
             memmove(&tm->Assoc[0], &tm->Assoc[1], (MAX_ASSOC - 1) * sizeof(ASSOC));
             tm->AssocCount--;
@@ -492,7 +491,7 @@ void TmFireContext(TM *tm, CTX *ctx, BOOL push)
 
 /* ------------------------------------------------------------------ ITfSource */
 
-/* the sinks a thread manager takes, in the order the cookies number them. */
+/* the sinks a thread manager takes. cookies encode the index in this list. */
 static const IID g_iid_private = {0xad56f402, 0xe162, 0x4f25, {0x90, 0x8f, 0x7d, 0x57, 0x7c, 0xf9, 0xbd, 0xa9}};
 static const IID g_iid_preserved_key = {0x6f77c993, 0xd2b1, 0x446e, {0x85, 0x3e, 0x59, 0x12, 0xef, 0xc8, 0xa2, 0x86}};
 static const IID g_iid_handwriting = {0xc6b8d7d1, 0x5c1e, 0x4f8c, {0x9a, 0x44, 0x2b, 0x6e, 0x31, 0x7a, 0x08, 0x5d}};
@@ -670,7 +669,7 @@ static HRESULT STDMETHODCALLTYPE client_get(ITfClientId *This, REFCLSID clsid, T
 {
     if (!clsid || !id)
         return E_INVALIDARG;
-    /* a client is known by the atom of its class id. */
+    /* a client id is the atom of its class id. */
     *id = CtfGuidAtom(clsid);
     return *id ? S_OK : E_OUTOFMEMORY;
 }
@@ -844,7 +843,7 @@ HRESULT TmCreateObject(REFIID riid, void **object)
     return tm_query(tm, riid, object);
 }
 
-/* whether an id was handed out: the program's own, the system's or one made from a class id. */
+/* whether an id was handed out: the program's, the system's or one made from a class id. */
 BOOL TmValidClient(TM *tm, TfClientId tid)
 {
     GUID guid;

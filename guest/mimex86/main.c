@@ -25,7 +25,7 @@ ULONG64 MxCallService(ULONG number, const ULONG64 *arguments);
 
 #define MX_EXPORT __declspec(dllexport)
 
-/* where translated code returns to its native caller: never mapped. */
+/* never mapped: translated code returning here goes back to its native caller. */
 #define MX_EXIT_ADDRESS 0x00007FFFFFFE0000ull
 
 /* x19 to x30, sp and d8 to d15, see mx_setjmp. */
@@ -41,7 +41,7 @@ extern UCHAR mx_svc_win32k[];
 /* one emulation started by the kernel entering user mode: a thread start, a callback, an apc. */
 typedef struct MX_FRAME {
     X86Cpu cpu;
-    MX_JUMP restart; /* where an exception redirected to x64 code resumes emulation */
+    MX_JUMP restart; /* where an exception redirected to x64 code resumes emulation. */
     struct MX_FRAME *outer;
     PVOID CallbackResult;
     ULONG CallbackLength;
@@ -50,12 +50,12 @@ typedef struct MX_FRAME {
 
 typedef struct MX_THREAD {
     MX_SUSPEND_GATE suspend;
-    MX_FRAME *frame; /* innermost emulation of the thread */
-    void *blocks;    /* decoded block cache, shared by the thread's emulations */
+    MX_FRAME *frame; /* innermost emulation of the thread. */
+    void *blocks;    /* decoded block cache, shared by the thread's emulations. */
     PVOID teb32;
-    uint64_t trace[X86_TRACE_SIZE]; /* the last blocks run, for crash reports */
+    uint64_t trace[X86_TRACE_SIZE]; /* the last blocks run, for crash reports. */
     uint32_t trace_pos;
-    uint64_t fault_trace[16];       /* the blocks before the last fault */
+    uint64_t fault_trace[16];       /* the blocks before the last fault. */
 } MX_THREAD;
 
 static struct {
@@ -373,7 +373,7 @@ static DECLSPEC_NORETURN void raise_from_cpu(MX_FRAME *f, EXCEPTION_RECORD *reco
     raise_in_x64(f, record, &ctx);
 }
 
-/* an exception raised by an export running natively; the x64 context is the export's entry. */
+/* an exception raised by an export running natively. the x64 context is the export's entry. */
 DECLSPEC_NORETURN void NTAPI MxRaiseStatus(NTSTATUS status)
 {
     EXCEPTION_RECORD record;
@@ -383,7 +383,7 @@ DECLSPEC_NORETURN void NTAPI MxRaiseStatus(NTSTATUS status)
     raise_from_cpu(current_thread()->frame, &record);
 }
 
-/* a fault detected by the core, cpu->rip is the faulting instruction. */
+/* a fault detected by the core. c->rip is the faulting instruction. */
 static void env_fault(X86Cpu *c, uint32_t code, uint64_t info0, uint64_t info1)
 {
     MX_THREAD *t = c->user;
@@ -422,7 +422,7 @@ static struct {
 } g_code[CODE_REGIONS];
 static volatile LONG g_code_count;
 static volatile LONG g_code_lock;
-static volatile BOOLEAN g_code_overflow; /* too many regions: every change drops the blocks */
+static volatile BOOLEAN g_code_overflow; /* too many regions: every change drops the blocks. */
 
 static void code_lock(void)
 {
@@ -572,7 +572,7 @@ static const MX_NATIVE_TABLE *g_native[256];
 
 static PVOID image_export(PVOID base, const char *name);
 
-/* maps a native system dll; its own preferred base keeps it apart from the x64 images. */
+/* maps a native system dll. its preferred base keeps it apart from the x64 images. */
 static NTSTATUS native_load(ULONG table, PCWSTR file_name, const char *export_name)
 {
     if (table >= RTL_NUMBER_OF(g_native) || !file_name || !export_name)
@@ -710,7 +710,7 @@ static void env_syscall(X86Cpu *c)
         suspend_gate(t, 1);
         *last_error = NtCurrentTeb()->LastErrorValue;
         c->r[X86_RAX] = (ULONG)status;
-        /* the kernel leaves its exception for a program with strict handle checks in the teb, to be raised in the emulated code. */
+        /* with strict handle checks, the kernel leaves its exception in the teb, to be raised in the emulated code. */
         if (NtCurrentTeb()->ExceptionCode) {
             EXCEPTION_RECORD record = {.ExceptionCode = NtCurrentTeb()->ExceptionCode};
             NtCurrentTeb()->ExceptionCode = 0;
@@ -886,7 +886,6 @@ static PVOID image_export(PVOID base, const char *name)
     return nullptr;
 }
 
-/* applies the base relocations of an image that did not load at its preferred base. */
 static void relocate(PVOID base)
 {
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)((PUCHAR)base + ((PIMAGE_DOS_HEADER)base)->e_lfanew);
@@ -1079,7 +1078,7 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserExceptionDispatcher(EXCEPTION_RECORD *rec
     x86_jit_fault(&f->cpu, context->Pc);
     f->cpu.rip = f->cpu.insn_rip;
     if (x64.ExceptionCode == STATUS_ACCESS_VIOLATION && x64.NumberParameters >= 2 && x64.ExceptionInformation[0] == 8)
-        x64.ExceptionInformation[0] = 0; /* the translator executes nothing from the faulting page */
+        x64.ExceptionInformation[0] = 0; /* the translator executes nothing from the faulting page. */
     raise_from_cpu(f, &x64);
 }
 

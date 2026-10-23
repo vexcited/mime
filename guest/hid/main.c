@@ -1,7 +1,6 @@
 /*
- * hid.dll: HidD_ asks a collection's driver with its device controls,
- * HidP_ reads and writes reports through the preparsed data the parser
- * of the kernel lays out. see docs/hid.md.
+ * hid.dll: HidD_ calls send device controls to a collection's driver, HidP_ calls read and write reports through
+ * the preparsed data laid out by the kernel's parser.
  */
 #define MIME_BUILD_HID
 #include <mime/nt.h>
@@ -50,7 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
 
 /* ------------------------------------------------------------ HidD */
 
-/* a synchronous handle asks plainly; an overlapped one waits on an event that keeps the packet from its port. */
+/* overlapped handles wait on an event with the low bit set, which keeps the packet off the completion port. */
 static BOOLEAN control(HANDLE device, ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len)
 {
     IO_STATUS_BLOCK io;
@@ -200,7 +199,7 @@ HIDAPI BOOLEAN NTAPI HidD_GetMsGenreDescriptor(HANDLE device, PVOID buffer, ULON
     return control(device, IOCTL_HID_GET_MS_GENRE_DESCRIPTOR, nullptr, 0, buffer, length);
 }
 
-/* the driver configuration calls, which hidclass does not implement. */
+/* hidclass does not implement the driver configuration calls. */
 HIDAPI BOOLEAN NTAPI HidD_GetConfiguration(HANDLE device, PHIDD_CONFIGURATION configuration, ULONG length)
 {
     if (length < sizeof(*configuration)) {
@@ -310,7 +309,7 @@ static BOOL kind_of(BLOB b, HIDP_REPORT_TYPE type, KIND *k)
     return TRUE;
 }
 
-/* the checks most HidP_ calls start with: the blob, the type, then the report's length. */
+/* checks most HidP_ calls start with: blob, type, then report length. */
 static NTSTATUS begin(BLOB b, HIDP_REPORT_TYPE type, ULONG report_length, KIND *k)
 {
     if (!signed_ok(b))
@@ -375,7 +374,7 @@ static void write_bits(PUCHAR report, ULONG length, ULONG offset, ULONG size, UL
     }
 }
 
-/* an array's caps run from those marked as more of it to the one of its first usage, stored last. */
+/* an array's caps are flagged CAP_ARRAY_MORE up to the last one, which holds its first usage. */
 static ULONG run_end(BLOB b, const KIND *k, ULONG index)
 {
     while (index + 1 < k->Last && (cap_at(b, index).Flags & CAP_ARRAY_MORE))
@@ -408,7 +407,7 @@ static BOOL array_usage(BLOB b, ULONG first, ULONG last, ULONG value, CAP *found
     return FALSE;
 }
 
-/* the inverse: where a usage sits among the array's usages, 0 when it is not one. */
+/* the inverse: a usage's one based index in the array, 0 when absent. */
 static ULONG array_index(BLOB b, ULONG first, ULONG last, USAGE usage)
 {
     ULONG index = 0;
@@ -456,7 +455,7 @@ HIDAPI NTSTATUS NTAPI HidP_GetCaps(PHIDP_PREPARSED_DATA data, PHIDP_CAPS caps)
     return HIDP_STATUS_SUCCESS;
 }
 
-/* both caps queries: what they fill and how they count. */
+/* shared by the button and value caps queries. */
 static NTSTATUS query_caps(HIDP_REPORT_TYPE type, USAGE page, USHORT link, USAGE usage, BOOL buttons, PVOID out,
                            PUSHORT length, BLOB b)
 {
@@ -575,7 +574,7 @@ HIDAPI NTSTATUS NTAPI HidP_GetLinkCollectionNodes(PHIDP_LINK_COLLECTION_NODE nod
     return room >= count ? HIDP_STATUS_SUCCESS : HIDP_STATUS_BUFFER_TOO_SMALL;
 }
 
-/* the signature check of these two passes when either dword is right. */
+/* for these two calls the signature check passes when either dword matches. */
 static BOOL loosely_signed(BLOB b)
 {
     return get32(b) == SIGNATURE0 || get32(b + 4) == SIGNATURE1;
@@ -610,7 +609,7 @@ HIDAPI ULONG NTAPI HidP_MaxDataListLength(HIDP_REPORT_TYPE type, PHIDP_PREPARSED
     return total;
 }
 
-/* HidP_GetUsages and its Ex form, which reports the page of each usage too. */
+/* HidP_GetUsages and its Ex form, which also reports each usage's page. */
 static NTSTATUS get_usages(HIDP_REPORT_TYPE type, USAGE page, USHORT link, PVOID list, BOOL pages, PULONG length,
                            BLOB b, const UCHAR *report, ULONG report_length)
 {
@@ -684,7 +683,6 @@ HIDAPI NTSTATUS NTAPI HidP_GetUsagesEx(HIDP_REPORT_TYPE type, USHORT link, PUSAG
     return get_usages(type, 0, link, list, TRUE, length, (BLOB)data, (const UCHAR *)report, report_length);
 }
 
-/* sets or clears one usage of a button cap. */
 static NTSTATUS set_usage(BLOB b, const KIND *k, USAGE page, USHORT link, USAGE usage, BOOL set, PUCHAR report,
                           ULONG report_length)
 {
@@ -788,7 +786,7 @@ HIDAPI NTSTATUS NTAPI HidP_UnsetUsages(HIDP_REPORT_TYPE type, USAGE page, USHORT
     return set_usages(type, page, link, list, length, (BLOB)data, (PUCHAR)report, report_length, FALSE);
 }
 
-/* the button arrays of the two calls: a cap of one usage and several fields, one bit each. */
+/* a button array: one usage cap with several one bit fields. */
 static NTSTATUS find_button_array(BLOB b, HIDP_REPORT_TYPE type, USAGE page, USHORT link, USAGE usage,
                                   const UCHAR *report, ULONG report_length, CAP *found)
 {
@@ -864,7 +862,7 @@ HIDAPI NTSTATUS NTAPI HidP_SetButtonArray(HIDP_REPORT_TYPE type, USAGE page, USH
     return HIDP_STATUS_SUCCESS;
 }
 
-/* the value cap of a usage and the bit offset of its field. */
+/* finds a usage's value cap and the bit offset of its field. */
 static NTSTATUS find_value(BLOB b, HIDP_REPORT_TYPE type, USAGE page, USHORT link, USAGE usage, const UCHAR *report,
                            ULONG report_length, CAP *found, ULONG *offset)
 {
@@ -1135,7 +1133,7 @@ static NTSTATUS set_datum(BLOB b, const KIND *k, const HIDP_DATA *d, PUCHAR repo
             not_pressed = TRUE;
             continue;
         }
-        /* the run this cap ends, back to where it starts. */
+        /* walk back to the first cap of the run this one ends. */
         ULONG first = i;
         while (first > k->First && (cap_at(b, first - 1).Flags & CAP_ARRAY_MORE))
             first--;
@@ -1359,7 +1357,7 @@ HIDAPI NTSTATUS NTAPI HidP_TranslateUsagesToI8042ScanCodes(PUSAGE list, ULONG le
     return HIDP_STATUS_SUCCESS;
 }
 
-/* the cap's unknown global items; on x64 they land over the upper half of the pointer, as windows puts them. */
+/* on x64 the unknown global items overlap the upper half of the pointer, like Windows. */
 HIDAPI NTSTATUS NTAPI HidP_GetExtendedAttributes(HIDP_REPORT_TYPE type, USHORT index, PHIDP_PREPARSED_DATA data,
                                                  PHIDP_EXTENDED_ATTRIBUTES attributes, PULONG length)
 {

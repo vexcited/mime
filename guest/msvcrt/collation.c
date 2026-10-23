@@ -1,4 +1,4 @@
-/* explicit locales follow the c locale supported by this runtime. */
+/* explicit locales behave like the C locale this runtime supports. */
 #include "msvcrt_private.h"
 
 int __cdecl strcoll(const char *a, const char *b);

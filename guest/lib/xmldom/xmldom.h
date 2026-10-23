@@ -1,6 +1,6 @@
 /*
- * the dom engine of msxml3.dll and msxml6.dll: a tree of nodes that are the com objects themselves, an xml parser,
- * a writer, an xpath 1.0 evaluator and the interfaces of the microsoft dom. see docs/msxml.md.
+ * the dom engine of msxml3.dll and msxml6.dll: nodes that are their own com objects, an xml parser, a writer and
+ * an xpath 1.0 evaluator.
  */
 #ifndef MIME_XMLDOM_H
 #define MIME_XMLDOM_H
@@ -35,7 +35,7 @@
 #define CLASS_E_CLASSNOTAVAILABLE ((HRESULT)0x80040111L)
 #endif
 
-/* the codes of the dom's own errors, the ids of its message table. */
+/* dom error codes, which are also the message table ids. */
 #define XE_OPEN_FILE 0xC00CE001u
 #define XE_UNDEFINED_ENTITY 0xC00CE002u
 #define XE_ENTITY_LOOP 0xC00CE003u
@@ -128,7 +128,6 @@ typedef struct XDoc XDoc;
 typedef struct XNode XNode;
 typedef struct XList XList;
 
-/* the numbers of dom node types, as the dom reports them. */
 enum {
     XN_ELEMENT = 1,
     XN_ATTRIBUTE = 2,
@@ -145,16 +144,14 @@ enum {
     XN_TYPES = 13,
 };
 
-/* node flags. */
-#define XF_XMLDECL 0x01   /* a processing instruction that is the xml declaration. */
-#define XF_EXPLICIT 0x02  /* an element with its end tag written, as one whose text was set to nothing. */
+#define XF_XMLDECL 0x01   /* the processing instruction is the xml declaration. */
+#define XF_EXPLICIT 0x02  /* written with an end tag, as after its text was set to empty. */
 #define XF_PRESERVE 0x04  /* an element under xml:space preserve. */
 
 /*
- * a node. the first member is the table of the interface of its type, so a node is its own com object. refs
- * counts the references made through com, subs the nodes of the subtree, itself included, that have any: a
- * subtree nobody refers to and that is not in a document is freed, and a document lives while any node of it is
- * referred to.
+ * a node is its own com object: the first member is its type's vtable. refs counts com references, subs the
+ * nodes of the subtree, itself included, that have any. an unreferenced subtree outside a document is freed, and a
+ * document lives while any of its nodes is referenced.
  */
 struct XNode {
     const void *vtbl;
@@ -168,16 +165,15 @@ struct XNode {
     XNode *last;
     XNode *prev;
     XNode *next;
-    XNode *attrs; /* an element's first attribute, they are chained by prev and next. */
+    XNode *attrs; /* first attribute, chained by prev and next. */
     XDoc *doc;
     const WCHAR *qname; /* an interned string. */
     const WCHAR *uri;   /* an interned string or null. */
     WCHAR *value;
     UINT length; /* of value. */
-    UINT order;  /* the place in the document, valid while doc->order_version is doc->version. */
+    UINT order;  /* position in the document, valid while doc->order_version is doc->version. */
 };
 
-/* what a failed parse or load leaves behind. */
 typedef struct XErr {
     LONG code;
     WCHAR *reason;
@@ -190,7 +186,6 @@ typedef struct XErr {
     WCHAR *param[3];
 } XErr;
 
-/* the bits of how a document behaves. */
 #define XDF_ASYNC 0x0001
 #define XDF_VALIDATE 0x0002
 #define XDF_RESOLVE 0x0004
@@ -223,10 +218,10 @@ typedef struct XEntity {
 
 struct XDoc {
     XNode node; /* the document node: must stay first. */
-    LONG live;  /* the nodes of the document that have references, the document node among them. */
+    LONG live;  /* referenced nodes, the document node included. */
     UINT flags;
-    UINT version;       /* counts the changes of the tree, for the lists that follow it. */
-    UINT order_version; /* the version the order of the nodes was numbered for. */
+    UINT version;       /* bumped on every tree change, live lists resync on it. */
+    UINT order_version; /* the version node order was last numbered at. */
     LONG ready_state;
     LONG max_depth;
     LONG max_size;
@@ -235,10 +230,10 @@ struct XDoc {
     XAtom **atoms;
     UINT atom_slots;
     UINT atom_count;
-    void *arena; /* the blocks that atoms and the like are cut from. */
+    void *arena; /* blocks that atoms and the like are carved from. */
     UINT8 *arena_cur;
     UINT8 *arena_end;
-    XNs *sel_ns; /* the prefixes of selection namespaces. */
+    XNs *sel_ns; /* SelectionNamespaces prefixes. */
     UINT sel_ns_count;
     WCHAR *sel_ns_text;
     XEntity *entities;
@@ -261,7 +256,6 @@ WCHAR *xd_wcsdup(const WCHAR *s, UINT length);
 UINT xd_wlen(const WCHAR *s);
 BSTR xd_bstr(const WCHAR *s, UINT length);
 
-/* a growing string. */
 typedef struct XBuf {
     WCHAR *s;
     UINT length;
@@ -274,10 +268,10 @@ void xb_put(XBuf *b, const WCHAR *s, UINT length);
 void xb_putc(XBuf *b, WCHAR c);
 void xb_puta(XBuf *b, const char *ascii);
 
-/* the interned strings of a document: equal strings are one pointer. */
+/* interned per document: equal strings share one pointer. */
 const WCHAR *xd_intern(XDoc *doc, const WCHAR *s, UINT length);
 UINT xd_atom_len(const WCHAR *atom);
-/* the interned copy of a string if the document has one, else null: no node can be named so. */
+/* the interned copy if there is one, else null, and then no node can have that name. */
 const WCHAR *xd_find_atom(XDoc *doc, const WCHAR *s, UINT length);
 void *xd_arena(XDoc *doc, SIZE_T size);
 void xd_atoms_free(XDoc *doc);
@@ -286,11 +280,10 @@ BOOL xd_is_name_start(UINT c);
 BOOL xd_is_name_char(UINT c);
 BOOL xd_is_space(WCHAR c);
 BOOL xd_is_xml_char(UINT c);
-/* the position of the first character that makes s a bad name, or -1 when it is one. */
+/* index of the first bad character, or -1 for a valid name. */
 int xd_check_name(const WCHAR *s, UINT length, BOOL allow_colon);
 int xd_wcsicmp(const WCHAR *a, const WCHAR *b);
 
-/* numbers the way xpath writes and reads them. */
 void xd_format_number(double value, XBuf *out);
 double xd_parse_number(const WCHAR *s, UINT length);
 double xd_nan(void);
@@ -298,7 +291,7 @@ BOOL xd_isnan(double value);
 
 /* ------------------------------------------------------------------ the tree, dom.c */
 
-extern LONG xd_objects; /* the live objects of the module, for DllCanUnloadNow. */
+extern LONG xd_objects; /* live module objects, for DllCanUnloadNow. */
 
 void xd_init(void);
 
@@ -311,10 +304,9 @@ BOOL xd_node_set_value_owned(XNode *n, WCHAR *value, UINT length);
 ULONG xn_addref(XNode *n);
 ULONG xn_release(XNode *n);
 HRESULT xn_query(XNode *n, REFIID riid, void **out);
-/* the table of the interface a node of this type shows. */
 const void *xd_vtbl_for(UINT type);
 
-/* tree surgery: the checks are done by the callers, these only link. */
+/* tree surgery: the callers do the checks, these only link. */
 void xd_link(XNode *parent, XNode *child, XNode *before);
 void xd_unlink(XNode *child);
 void xd_attr_link(XNode *element, XNode *attr);
@@ -334,17 +326,15 @@ BOOL xd_is_ancestor(XNode *maybe, XNode *of);
 const WCHAR *xd_local(const XNode *n);
 UINT xd_local_length(const XNode *n);
 BOOL xd_is_xmlns_attr(const XNode *n);
-/* the namespace uri bound to a prefix at an element, null for none. */
 const WCHAR *xd_lookup_ns(XNode *at, const WCHAR *prefix, UINT length);
 
 XNode *xd_clone(XNode *src, XDoc *into, BOOL deep);
-/* the text a node stands for, concatenated, to be freed with xd_free. */
 BOOL xd_text(XNode *n, XBuf *out);
 BOOL xd_set_text(XNode *n, const WCHAR *text, UINT length);
 void xd_normalize(XNode *n);
 void xd_number_order(XDoc *doc);
 
-/* the checks of inserting, replacing and removing children: a dom error code or zero. */
+/* child insert, replace and remove checks: a dom error code, or zero when allowed. */
 HRESULT xd_check_insert(XNode *parent, XNode *child, XNode *before);
 HRESULT xd_insert(XNode *parent, XNode *child, XNode *before, XNode **inserted);
 HRESULT xd_remove(XNode *parent, XNode *child);
@@ -352,7 +342,7 @@ HRESULT xd_remove(XNode *parent, XNode *child);
 /* ------------------------------------------------------------------ errors, messages.c */
 
 const WCHAR *xd_message(UINT id);
-/* the text of a code with %1 and %2 replaced, an allocated string. */
+/* an allocated message with %1 and %2 filled in. */
 WCHAR *xd_format(UINT id, const WCHAR *p1, const WCHAR *p2);
 void xd_err_clear(XDoc *doc);
 void xd_err_free(XErr *e);
@@ -360,31 +350,28 @@ void xd_err_set(XDoc *doc, UINT code, LONG line, LONG linepos, LONG filepos, con
                 const WCHAR *p1, const WCHAR *p2);
 void xd_err_set_reason(XDoc *doc, UINT code, const WCHAR *reason, const WCHAR *url);
 void xd_err_copy(XErr *to, const XErr *from);
-/* the message of a system or url error, for the reason of a file that could not be read. */
+/* a system or url error message, the reason given when a file could not be read. */
 const WCHAR *xd_system_message(UINT code);
 
 /* ------------------------------------------------------------------ parsing and writing, parse.c and write.c */
 
-/* parse flags. */
-#define XP_STRING 0x1 /* the input is a string of the caller, so the declared encoding means nothing. */
+#define XP_STRING 0x1 /* the input is a caller's string, so the declared encoding is ignored. */
 
 BOOL xd_parse(XDoc *doc, const WCHAR *text, UINT length, UINT flags);
-/* bytes in any encoding: a byte order mark, the declaration, utf-8 by default. */
+/* the encoding comes from a byte order mark, then the declaration, else utf-8. */
 BOOL xd_parse_bytes(XDoc *doc, const BYTE *data, UINT size);
 BOOL xd_load_file(XDoc *doc, const WCHAR *location);
-/* the text of an input line up to the character at an offset. */
+/* the line and line position of an offset in the input. */
 void xd_line_info(const WCHAR *text, UINT length, UINT offset, LONG *line, LONG *linepos);
 
-/* writes a node as xml. max is the highest character the output holds, the rest are written as references; the
-   declaration shows its encoding when it is the one named. */
+/* characters above max are written as references. the declaration shows its encoding when it is the one named. */
 void xd_write(XNode *n, XBuf *out, BOOL indent, UINT max, const WCHAR *encoding);
-/* the bytes of a document for a file or stream in an encoding, a byte order mark when the encoding has one. */
+/* text to bytes in an encoding, with a byte order mark when the encoding has one. */
 BOOL xd_encode(const WCHAR *text, UINT length, const WCHAR *encoding, BYTE **bytes, UINT *size);
 BOOL xd_valid_encoding(const WCHAR *name);
 UINT xd_code_page(const WCHAR *name);
 HRESULT xd_save_document(XDoc *doc, IStream *stream, const WCHAR *encoding);
 HRESULT xd_save_file(XDoc *doc, const WCHAR *path);
-/* the declaration's attribute of a document, null for none. */
 const WCHAR *xd_decl_attr(XDoc *doc, const char *name);
 
 /* ------------------------------------------------------------------ xpath, xpath.c */
@@ -397,7 +384,7 @@ typedef struct XSet {
 
 void xs_free(XSet *s);
 BOOL xs_add(XSet *s, XNode *n);
-/* evaluates expr with ctx as the context and the document's selection settings, the nodes in document order. */
+/* uses the document's selection settings, the nodes come out in document order. */
 HRESULT xp_select(XNode *ctx, const WCHAR *expr, XSet *out);
 HRESULT xp_select_in(XNode *ctx, const WCHAR *expr, const XNs *ns, UINT nscount, BOOL xpath, XSet *out);
 
@@ -406,9 +393,9 @@ HRESULT xp_select_in(XNode *ctx, const WCHAR *expr, const XNs *ns, UINT nscount,
 struct XList {
     const void *vtbl;
     LONG refs;
-    XNode *base; /* referred to while the list lives. */
+    XNode *base; /* referenced while the list lives. */
     UINT kind;
-    WCHAR *name; /* for a list of elements by tag name, the expression of a selection. */
+    WCHAR *name; /* the tag name of an element list, or the expression of a selection. */
     XNode **v;
     UINT n;
     UINT cap;
@@ -421,7 +408,7 @@ struct XList {
 };
 #define XL_CHILDREN 0
 #define XL_TAGNAME 1
-#define XL_NODES 2  /* a selection: the nodes were chosen once and are referred to. */
+#define XL_NODES 2  /* a selection: the nodes were chosen once and are referenced. */
 #define XL_ATTRIBUTES 3
 
 XList *xd_list_new(XNode *base, UINT kind, const WCHAR *name, BOOL selection);
@@ -436,14 +423,13 @@ HRESULT xd_create_enum(IUnknown *source, void **out);
 HRESULT xd_get_attributes(XNode *n, void **out);
 HRESULT xd_set_pi_data(XNode *n, const WCHAR *text, UINT length);
 HRESULT xd_check_new_name(const WCHAR *name, UINT length);
-/* a copy of a document as a document of its own, referred to once. */
+/* a copy of a document as a document of its own, with one reference. */
 XNode *xd_doc_clone(XDoc *doc, BOOL deep);
 void xd_doc_vtbl_init(void);
-/* a node as the pointer a caller keeps: referred to, or null. */
+/* adds a reference for the caller, null stays null. */
 void *xd_ref(XNode *n);
 
-/* the dispatch tables of each kind of object: a name, the dispid, the kinds of call it answers, the place of the
-   method in the table of functions and its arguments, see disp.c. */
+/* a dispatch table row, see disp.c. */
 typedef struct XDisp {
     const WCHAR *name;
     LONG id;
@@ -468,7 +454,6 @@ HRESULT xd_disp_names(const XDispSet *set, REFIID riid, LPOLESTR *names, UINT cn
 HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, LCID lcid, WORD flags,
                        DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *argerr);
 
-/* the settings of the classes a module serves. */
 typedef struct XClass {
     const CLSID *clsid;
     UINT flags;          /* XDF_ bits the document starts with. */
@@ -481,7 +466,6 @@ HRESULT xd_get_class_object(const XClass *classes, UINT count, REFCLSID clsid, R
 HRESULT xd_can_unload(void);
 HRESULT xd_register_server(const XClass *classes, UINT count, HMODULE module, BOOL unregister);
 
-/* variants as the dom reads them. */
 BOOL xv_to_string(const VARIANT *v, XBuf *out);
 BOOL xv_to_long(const VARIANT *v, LONG *out);
 BOOL xv_to_bool(const VARIANT *v, BOOL *out);
@@ -489,9 +473,9 @@ BOOL xd_node_is_ours(const void *p);
 WCHAR *xd_location_to_path(const WCHAR *location, BOOL *other);
 const VARIANT *xv_deref(const VARIANT *v);
 BOOL xv_is_missing(const VARIANT *v);
-/* the node a variant holds, referred to, or null: the caller releases it. */
+/* the node a variant holds, or null. the caller releases it. */
 XNode *xv_to_node(const VARIANT *v);
-/* answers a bstr: the string and S_OK, or nothing and S_FALSE when the string is null. */
+/* S_OK with the string, or S_FALSE and nothing when the string is null. */
 HRESULT xd_ret_string(BSTR *out, const WCHAR *s, UINT length);
 HRESULT xd_ret_buf(BSTR *out, XBuf *b);
 HRESULT xd_ret_node(XNode *n, void **out);

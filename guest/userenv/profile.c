@@ -1,10 +1,7 @@
 /*
- * user profile directories.
- *
- * the kernel registers the profile of the logged on user at boot, under
- * ProfileList\<sid> of the software hive, next to the profiles, default,
- * public and program data directories windows setup writes there. these
- * functions read that list, like userenv does on windows.
+ * user profile directories. the kernel registers the logged on user's profile
+ * at boot under ProfileList\<sid> of the software hive, next to the profile,
+ * default, public and program data directories windows setup writes there.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -21,7 +18,7 @@ FORCEINLINE void set_error(DWORD error)
     NtCurrentTeb()->LastErrorValue = error;
 }
 
-/* reads an expandable value of the profile list, or of one of its profiles; returns a win32 error. */
+/* reads an expandable value of the profile list or of one profile; returns a win32 error. */
 static DWORD profile_value(PCWSTR sid, PCWSTR value, PWSTR out, DWORD chars)
 {
     WCHAR path[192], raw[MAX_PATH];
@@ -45,7 +42,7 @@ static DWORD profile_value(PCWSTR sid, PCWSTR value, PWSTR out, DWORD chars)
     return n && n <= chars ? ERROR_SUCCESS : ERROR_INSUFFICIENT_BUFFER;
 }
 
-/* the string sid of a token's user, S-1-5-21-... */
+/* S-1-5-21-... */
 static BOOL token_sid_string(HANDLE token, PWSTR out, DWORD chars)
 {
     HANDLE opened = nullptr;
@@ -73,10 +70,7 @@ static BOOL token_sid_string(HANDLE token, PWSTR out, DWORD chars)
     return n > 0 && (DWORD)n < chars;
 }
 
-/*
- * copies a directory into the caller's buffer: the size counts the terminator
- * both on success and when the buffer is too small, as userenv does.
- */
+/* like userenv, the size counts the terminator both on success and when the buffer is too small. */
 static BOOL return_path(PCWSTR path, LPWSTR buffer, LPDWORD size)
 {
     DWORD n = (DWORD)wcslen(path) + 1;
@@ -177,7 +171,6 @@ USERENV BOOL WINAPI GetUserProfileDirectoryA(HANDLE token, LPSTR buffer, LPDWORD
     return user_profile(token, path) && return_path_ansi(path, *size ? buffer : nullptr, size);
 }
 
-/* one of the directories the profile list itself names. */
 static BOOL list_directory(PCWSTR value, PWSTR path)
 {
     DWORD error = profile_value(nullptr, value, path, MAX_PATH);
@@ -274,8 +267,8 @@ typedef struct {
 } PROFILEINFOA_;
 
 /*
- * the hive of the user is loaded by the kernel with the session, so a profile is loaded when its key under HKEY_USERS
- * is there, and loading it hands that key out. A user without one has no profile on this machine.
+ * the kernel loads the user's hive with the session, so a profile is loaded when its HKEY_USERS key exists,
+ * and loading hands that key out. a user without one has no profile here.
  */
 USERENV BOOL WINAPI LoadUserProfileW(HANDLE token, PROFILEINFOW_ *info)
 {

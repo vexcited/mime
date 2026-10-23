@@ -1,5 +1,5 @@
 /*
- * IDWriteLocalizedStrings: the names of a font in the languages its name table has.
+ * IDWriteLocalizedStrings: a font's names in the languages of its name table.
  */
 #include "dw_private.h"
 

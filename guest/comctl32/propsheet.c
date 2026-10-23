@@ -1,9 +1,7 @@
 /*
- * property sheets and wizards. A sheet is a dialog from a template made in
- * memory, the page dialogs are its children and are created when they are
- * first shown. Everything a page hears comes as WM_NOTIFY with PSN_ codes,
- * the answers travel in DWLP_MSGRESULT. The notes in docs/comctl32.md list
- * the rules this follows.
+ * property sheets and wizards. a sheet is a dialog built from an in-memory template, its pages are child
+ * dialogs created when first shown. pages hear everything as WM_NOTIFY with PSN_ codes and answer in
+ * DWLP_MSGRESULT.
  */
 #include "comctl32_private.h"
 
@@ -11,7 +9,7 @@
 #define RT_DIALOGW MAKEINTRESOURCEW(5)
 #define PAGE_MAGIC 0x50414745u
 
-/* the controls of the sheet template. */
+/* sheet template controls. */
 #define IDC_TAB 0x3020
 #define IDC_APPLYNOW 0x3021
 #define IDC_BACK 0x3023
@@ -19,13 +17,12 @@
 #define IDC_FINISH 0x3025
 #define IDC_BOTTOMLINE 0x3026
 #define IDC_TOPLINE 0x3027
-/* the command a click on the close box makes. */
+/* the command a click on the close box sends. */
 #define ID_CLOSEBOX 8
 
 #define WIZARD_MASK (PSH_WIZARD | PSH_WIZARD97_OLD | PSH_WIZARD_LITE | PSH_WIZARD97)
 #define WIZARD97_MASK (PSH_WIZARD97 | PSH_WIZARD97_OLD)
 
-/* sheet states. */
 #define STATE_CANCELTOCLOSE 0x02
 #define STATE_SHELLFONT 0x20
 
@@ -47,7 +44,7 @@
 #define HKM_SETHOTKEY (WM_USER + 1)
 #endif
 
-/* the second notification the tab control sends when an object is asked for. */
+/* the second notification the tab control sends when asked for an object. */
 typedef struct NMOBJECTNOTIFY_ {
     NMHDR hdr;
     int iItem;
@@ -58,17 +55,16 @@ typedef struct NMOBJECTNOTIFY_ {
 } NMOBJECTNOTIFY_;
 
 /*
- * A page. The handle callers hold is the address of this structure. Psp is
- * the sheet's copy of the page with wide strings and must stay last, as a
- * program may append fields of its own to the page it gives.
+ * callers hold the address of this structure as the page handle. Psp is the sheet's wide copy of the page and
+ * must stay last, as a program may append its own fields to the page it gives.
  */
 typedef struct PAGE {
     DWORD Magic;
-    /* the structure as an ansi caller gave it, with ansi strings. */
+    /* the page as an ansi caller gave it, with ansi strings. */
     BYTE *Shadow;
     HWND Hwnd;
     BOOL Changed;
-    /* the size of the dialog in pixels. */
+    /* in pixels. */
     int Cx, Cy;
     PROPSHEETPAGEW Psp;
 } PAGE;
@@ -89,7 +85,7 @@ typedef struct SHEET {
     BOOL ApplyAllowed;
     BOOL Ansi;
     BOOL Modeless;
-    /* where the pages go, in the client area of the sheet, and the size of the tab control when it was made. */
+    /* where pages go in the sheet's client area, and the tab control size when it was made. */
     RECT PageRect;
     int BaseCx, BaseCy;
     WORD Lang;
@@ -100,7 +96,7 @@ typedef struct SHEET {
     HICON LoadedIcon;
     HANDLE ActCtx;
     LPWSTR Caption, StartPage, IconName, WatermarkName, HeaderName;
-    /* the last font a page asked for and the base units it gave. */
+    /* the last font a page asked for, and its base units. */
     WCHAR FontFace[LF_FACESIZE];
     int FontPoint, FontCharset, FontItalic;
     SIZE FontUnits;
@@ -125,7 +121,7 @@ static const WCHAR g_prop[] = L"MimePropSheet";
 
 static const int g_normal_buttons[] = {IDOK, IDCANCEL, IDC_APPLYNOW, IDHELP, 0};
 static const int g_wizard_buttons[] = {IDC_BACK, IDC_NEXT, IDC_FINISH, IDCANCEL, IDHELP, 0};
-/* the buttons that may become the default one of a wizard, best first. */
+/* wizard buttons that may become the default, best first. */
 static const int g_default_buttons[] = {IDC_NEXT, IDC_FINISH, IDC_BACK, IDCANCEL};
 /* PSM_PRESSBUTTON indices to control ids. */
 static const int g_press_ids[] = {IDC_BACK, IDC_NEXT, IDC_FINISH, IDOK, IDC_APPLYNOW, IDCANCEL, IDHELP};
@@ -167,7 +163,7 @@ static void *dup_ansi(const char *s)
     return d;
 }
 
-/* a copy of text in the character set the sheet keeps; ansi text is only ever copied to ansi. */
+/* a copy in the sheet's character set. ansi text is only ever copied to ansi. */
 static void *dup_text(const void *s, BOOL src_wide, BOOL dst_wide)
 {
     if (src_wide == dst_wide)
@@ -192,10 +188,7 @@ static void free_slot(const void *s)
         CcFree((void *)s);
 }
 
-/*
- * Makes the page own the strings it points at and drops the pointers its
- * flags do not announce, as the page keeps them as it was made.
- */
+/* the page gets its own copies of its strings, and pointers its flags do not announce are dropped. */
 static BOOL copy_page_strings(PROPSHEETPAGEW *p, BOOL src_wide, BOOL dst_wide)
 {
     BOOL ok = TRUE;
@@ -262,7 +255,7 @@ static UINT call_page_callback(const SHEET *s, PAGE *p, UINT msg)
     const PROPSHEETPAGEW *psp = &p->Psp;
     if (!(psp->dwFlags & PSP_USECALLBACK) || !psp->pfnCallback)
         return 1;
-    /* a page of the first size can only be asked to create or release. */
+    /* a version 1 page can only be asked to create or release. */
     if (psp->dwSize <= PSP_V1_SIZE && msg != PSPCB_RELEASE && msg != PSPCB_CREATE)
         return 1;
     ULONG_PTR cookie = activate_context(s, p);
@@ -302,7 +295,7 @@ static HPROPSHEETPAGE create_page_handle(const PROPSHEETPAGEW *src, BOOL ansi)
     if (!src)
         return nullptr;
     DWORD size = src->dwSize;
-    /* the structure is one of the known sizes up to a page of memory, and uses no flag above the last one. */
+    /* a known size up to a page of memory, and no flag above the last one. */
     if (size < PSP_V1_SIZE || size > 4096 || (src->dwFlags & 0xFFF80000))
         return nullptr;
     PAGE *p = alloc_page(size);
@@ -334,7 +327,7 @@ static HPROPSHEETPAGE create_page_handle(const PROPSHEETPAGEW *src, BOOL ansi)
     return (HPROPSHEETPAGE)p;
 }
 
-/* a page of an ansi caller keeps its strings in two forms; the wide one follows what the callback did to the ansi one. */
+/* an ansi caller's page keeps its strings in both forms, the wide one follows what the callback did to the ansi one. */
 static void rethunk_shadow(PAGE *p)
 {
     if (!p->Shadow)
@@ -384,7 +377,7 @@ typedef struct TEMPLATE_INFO {
     const BYTE *FirstItem;
 } TEMPLATE_INFO;
 
-/* skips a name that is 0xFFFF and an ordinal, a string, or a lone zero. */
+/* skips a name: 0xFFFF and an ordinal, a string, or a lone zero. */
 static const BYTE *skip_name(const BYTE *p)
 {
     const WORD *w = (const WORD *)p;
@@ -445,7 +438,7 @@ static BOOL parse_template(const void *tmpl, TEMPLATE_INFO *t)
     return TRUE;
 }
 
-/* the size of a template in memory, which a page made with PSP_DLGINDIRECT has no other way to tell. */
+/* a PSP_DLGINDIRECT page has no other way to tell its template's size. */
 static SIZE_T template_size(const void *tmpl)
 {
     TEMPLATE_INFO t;
@@ -468,7 +461,7 @@ static BOOL CALLBACK first_language(HMODULE module, LPCWSTR type, LPCWSTR name, 
     return FALSE;
 }
 
-/* the language the pages are loaded in: with PSH_USEPAGELANG the first one the first page's dialog is found in. */
+/* with PSH_USEPAGELANG, the first language the first page's dialog is found in. */
 static WORD page_language(const SHEET *s)
 {
     WORD language = 0;
@@ -534,7 +527,7 @@ static BOOL get_page_info(const SHEET *s, const PAGE *p, PAGE_INFO *info, UINT w
             info->Italic = t.Italic;
             info->Charset = t.Charset;
             memcpy(info->Face, t.Face, sizeof(info->Face));
-            /* a sheet of shell fonts uses the font the shell picks for pages that ask for the old name. */
+            /* a shell font sheet gives the shell's font to pages that ask for the old name. */
             if ((s->State & STATE_SHELLFONT) && t.Ex && (t.Style & DS_SHELLFONT) == DS_SHELLFONT &&
                 !_wcsicmp(info->Face, L"MS Shell Dlg"))
                 CcCopyText(info->Face, LF_FACESIZE, L"MS Shell Dlg 2");
@@ -545,7 +538,7 @@ static BOOL get_page_info(const SHEET *s, const PAGE *p, PAGE_INFO *info, UINT w
 
 /* ------------------------------------------------------------------ page sizes */
 
-/* the base units of the font a page asks for; FALSE when it asks for none. */
+/* the base units of the font a page asks for, FALSE when it asks for none. */
 static BOOL page_font_units(SHEET *s, const PAGE_INFO *info, SIZE *units)
 {
     if (!info->HasFont || info->Point <= 0 || !info->Face[0])
@@ -599,7 +592,7 @@ static void compute_page_size(SHEET *s, PAGE *p, const PAGE_INFO *info)
     p->Cy = r.bottom;
 }
 
-/* the size the biggest page needs; the mask says which kind of page counts for the height. */
+/* the size the biggest page needs. the mask says which kinds of page count for the height. */
 #define SIZE_HEADER_PAGES 2
 #define SIZE_EXTERIOR_PAGES 1
 
@@ -621,7 +614,7 @@ static void ideal_page_size(const SHEET *s, SIZE *size, UINT which)
     }
 }
 
-/* ------------------------------------------------------------------ notifications to pages */
+/* ------------------------------------------------------------------ page notifications */
 
 static LRESULT notify_page(const SHEET *s, int index, UINT code, LPARAM lparam)
 {
@@ -640,7 +633,7 @@ static LRESULT notify_current(const SHEET *s, UINT code, LPARAM lparam)
     return notify_page(s, s->CurIndex, code, lparam);
 }
 
-/* ------------------------------------------------------------------ small helpers */
+/* ------------------------------------------------------------------ helpers */
 
 static HWND get_item_rect(HWND dlg, int id, RECT *r)
 {
@@ -689,7 +682,7 @@ static void remove_button(HWND dlg, int id, const int *ids)
         ShowWindow(item, SW_HIDE);
 }
 
-/* the tab control keeps one item per page, in the order of the pages. */
+/* the tab control has one item per page, in page order. */
 static HWND page_window(const SHEET *s, int index)
 {
     return index >= 0 && (UINT)index < s->Count ? s->Pages[index]->Hwnd : nullptr;
@@ -713,7 +706,7 @@ static int find_page_by_window(const SHEET *s, HWND hwnd)
     return -1;
 }
 
-/* the index of the page whose dialog id is given, or that many pages along when no id is given. */
+/* the page with the given dialog id, or step pages along when there is no id. */
 static int find_page_index(const SHEET *s, int current, UINT_PTR id, int step)
 {
     if (id) {
@@ -764,7 +757,7 @@ static void reset_wizard_buttons(SHEET *s)
         SendDlgItemMessageW(s->Hwnd, *id, BM_SETSTYLE, BS_PUSHBUTTON, TRUE);
 }
 
-/* the default button follows the first of the usual ones that can be clicked. */
+/* the default button is the first of the usual ones that can be clicked. */
 static BOOL reset_focus_and_default(SHEET *s)
 {
     HWND focus = GetFocus();
@@ -801,7 +794,7 @@ static void set_wizard_buttons(SHEET *s, DWORD flags)
         hidden = IDC_NEXT;
         EnableWindow(GetDlgItem(dlg, IDC_FINISH), (flags & PSWIZB_FINISH) != 0);
     }
-    /* a sheet with its own finish button keeps both on the screen. */
+    /* a sheet with its own finish button shows both. */
     if (!(s->Flags & PSH_WIZARDHASFINISH)) {
         ShowWindow(GetDlgItem(dlg, hidden), SW_HIDE);
         ShowWindow(GetDlgItem(dlg, shown), SW_SHOW);
@@ -857,7 +850,7 @@ static HWND create_page_dialog(SHEET *s, PAGE *p, DLGTEMPLATE *tmpl)
     DWORD *style = (DWORD *)tmpl;
     if (HIWORD(tmpl->style) == 0xFFFF)
         style = (DWORD *)((BYTE *)tmpl + 12);
-    /* a page is a child that takes part in the dialog keys and keeps only what a child may of its own styles. */
+    /* a page is a child that takes part in the dialog keys, and keeps only the styles a child may have. */
     DWORD keep = *style & (WS_CLIPCHILDREN | DS_SETFONT | DS_LOCALEDIT);
     if ((s->State & STATE_SHELLFONT) || (*style & DS_SHELLFONT) != DS_SHELLFONT)
         keep |= *style & DS_FIXEDSYS;
@@ -940,7 +933,7 @@ static void page_position(SHEET *s, int index, HWND page)
                  s->PageRect.bottom - s->PageRect.top, 0);
 }
 
-/* the focus goes to the first control of the page that can have it, or as the page asks. */
+/* the focus goes to the page's first control that can take it, or where the page asks. */
 static void set_new_default(SHEET *s)
 {
     HWND first = GetNextDlgTabItem(s->Current, nullptr, FALSE);
@@ -970,7 +963,7 @@ static void set_new_default(SHEET *s)
     SendMessageW(owner, DM_SETDEFID, def, 0);
 }
 
-/* shows the page the tab control selected; a page may send the sheet on to another one. */
+/* shows the page the tab control selected. a page may redirect to another one. */
 static void page_change(SHEET *s, int direction)
 {
     HWND tab = s->Tab;
@@ -996,7 +989,7 @@ static void page_change(SHEET *s, int direction)
         page_position(s, index, page);
         LRESULT answer = notify_page(s, index, PSN_SETACTIVE, 0);
         if (answer) {
-            /* the page asked for another one, by dialog id or, with -1, the next one in the direction. */
+            /* the page asked for another one by dialog id, or with -1 for the next one in the direction. */
             int other = find_page_index(s, index, answer == -1 ? 0 : (UINT_PTR)answer, direction);
             if (answer == -1 && (other == index || other >= (int)SendMessageW(tab, TCM_GETITEMCOUNT, 0, 0)))
                 other = s->CurIndex;
@@ -1038,7 +1031,7 @@ static void page_change(SHEET *s, int direction)
     }
 }
 
-/* asks the current page whether it may be left; TRUE when it refuses. */
+/* asks the current page whether it may be left, TRUE when it refuses. */
 static BOOL page_changing(SHEET *s)
 {
     return s->Current && notify_current(s, PSN_KILLACTIVE, 0) != 0;
@@ -1079,7 +1072,7 @@ static BOOL wizard_next_back(SHEET *s, UINT code)
     return index != -1 && page_set_selection(s, index, nullptr, step);
 }
 
-/* adds a page to a running sheet; FALSE when it has no usable dialog. */
+/* FALSE when the page has no usable dialog. */
 static BOOL insert_page(SHEET *s, UINT_PTR after, HPROPSHEETPAGE handle)
 {
     if (!is_page(handle) || s->Count >= MAX_PAGES)
@@ -1198,7 +1191,7 @@ static void page_unchanged(SHEET *s, HWND page)
     EnableWindow(GetDlgItem(s->Hwnd, IDC_APPLYNOW), FALSE);
 }
 
-/* ------------------------------------------------------------------ the buttons of the sheet */
+/* ------------------------------------------------------------------ sheet buttons */
 
 static void send_last_chance_apply(SHEET *s)
 {
@@ -1208,9 +1201,8 @@ static void send_last_chance_apply(SHEET *s)
 }
 
 /*
- * OK, Apply and Cancel. Both of the first two ask the page to give up the
- * focus and then tell every page that was ever shown; the sheet ends when
- * every page agreed.
+ * OK and Apply ask the page to give up the focus, then tell every page that was ever shown. the sheet ends when
+ * every page agrees.
  */
 static BOOL button_pushed(SHEET *s, UINT id)
 {
@@ -1394,7 +1386,7 @@ static BOOL handle_hotkey(HWND hwnd)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ headers of wizard 97 pages */
+/* ------------------------------------------------------------------ wizard 97 headers */
 
 static BOOL wizard_rect(const SHEET *s, int part, RECT *r)
 {
@@ -1438,7 +1430,7 @@ static int write_header_text(const SHEET *s, HDC dc, RECT *r, const WCHAR *text,
     return height;
 }
 
-/* the height of the header: room for the title and the longest subtitle. */
+/* room for the title and the longest subtitle. */
 static int compute_header_height(SHEET *s)
 {
     int height = 58, leading = 5, title_height = 25;
@@ -1517,7 +1509,7 @@ static void paint_header(SHEET *s, const PAGE *p, HDC dc)
         write_header_text(s, dc, &band, p->Psp.pszHeaderSubTitle, FALSE, DT_EDITCONTROL | DT_NOPREFIX | DT_WORDBREAK);
 }
 
-/* the left side of an exterior page shows the watermark and the rest is the window color. */
+/* an exterior page shows the watermark on its left, the window color elsewhere. */
 static BOOL erase_exterior(SHEET *s, HDC dc)
 {
     if (!s->Watermark)
@@ -1565,7 +1557,7 @@ static LRESULT CALLBACK wizard_page_proc(HWND hwnd, UINT msg, WPARAM wparam, LPA
     return DefSubclassProc(hwnd, msg, wparam, lparam);
 }
 
-/* a hidden wizard button must not answer the mnemonics of the characters typed. */
+/* a hidden wizard button must not answer mnemonics. */
 static LRESULT CALLBACK button_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data)
 {
     if (msg == WM_NCDESTROY) {
@@ -1613,7 +1605,7 @@ static BOOL resize_dialog(SHEET *s, int dx, int dy, int top_shift)
     HWND dlg = s->Hwnd;
     RECT r = {};
     HWND item;
-    /* the tab control and the page change by the amount the page area did. */
+    /* the tab control and the page change by as much as the page area did. */
     GetWindowRect(s->Tab, &r);
     MapWindowPoints(nullptr, dlg, (POINT *)&r, 2);
     SetWindowPos(s->Tab, nullptr, r.left, r.top, r.right - r.left + dx, r.bottom - r.top + vertical,
@@ -1731,7 +1723,7 @@ static void align4(TEMPLATE_WRITER *w)
     }
 }
 
-/* the template of a sheet in the form a resource has, or the extended form for a sheet of shell fonts. */
+/* a sheet template in resource form, or the extended form for a shell font sheet. */
 static void write_template(TEMPLATE_WRITER *w, const SHEET *s, BOOL ex)
 {
     BOOL wizard = is_wizard(s);
@@ -1797,7 +1789,7 @@ static void write_template(TEMPLATE_WRITER *w, const SHEET *s, BOOL ex)
     }
 }
 
-/* the template is made twice as big as it is so that the callback may add to it. */
+/* twice the needed size, so the callback may add to it. */
 static DLGTEMPLATE *build_template(const SHEET *s, BOOL ex)
 {
     TEMPLATE_WRITER w = {nullptr, 0, 0};
@@ -1812,7 +1804,7 @@ static DLGTEMPLATE *build_template(const SHEET *s, BOOL ex)
     return (DLGTEMPLATE *)data;
 }
 
-/* a sheet takes the font the shell picks only when every page asks for it in the extended form. */
+/* the shell font only when every page asks for it in the extended form. */
 static BOOL should_use_shell_font(SHEET *s)
 {
     for (UINT i = 0; i < s->Count; i++) {
@@ -1823,7 +1815,7 @@ static BOOL should_use_shell_font(SHEET *s)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ initialization of the sheet window */
+/* ------------------------------------------------------------------ sheet window setup */
 
 static void create_header_font(SHEET *s)
 {
@@ -1966,7 +1958,7 @@ static void init_sheet(HWND hwnd, SHEET *s)
         MapWindowPoints(nullptr, hwnd, (POINT *)&tab_rect, 2);
         create_header_font(s);
         header = compute_header_height(s);
-        /* an exterior page covers the sheet down to the buttons, and is not shorter than the header and the others. */
+        /* an exterior page covers the sheet down to the buttons, and is no shorter than the header and the other pages. */
         RECT margin = {0, 0, 0, 14};
         SIZE exterior;
         MapDialogRect(hwnd, &margin);
@@ -1982,7 +1974,7 @@ static void init_sheet(HWND hwnd, SHEET *s)
     int width = window.right - window.left + dx;
     int height = window.bottom - window.top + dy;
 
-    /* the sheet goes a little right and below the top left corner of its owner, or where windows are put by default. */
+    /* a little right of and below the owner's top left corner, or at the default window position. */
     UINT flags = SWP_NOZORDER | SWP_NOACTIVATE;
     RECT place = window;
     HWND parent = s->H.hwndParent;
@@ -2020,7 +2012,7 @@ static void init_sheet(HWND hwnd, SHEET *s)
     }
     SetWindowPos(hwnd, nullptr, left, top, width, height, flags);
 
-    /* the page area, in the coordinates of the sheet. */
+    /* the page area in sheet coordinates. */
     MapWindowPoints(s->Tab, hwnd, (POINT *)&display, 2);
     s->PageRect = display;
 
@@ -2043,7 +2035,7 @@ static void init_sheet(HWND hwnd, SHEET *s)
     }
     move_buttons(hwnd, ids, IDHELP, dx, dy);
 
-    /* the buttons the sheet does not use give their room to the others. */
+    /* unused buttons give their room to the others. */
     if (!(s->Flags & PSH_HASHELP))
         remove_button(hwnd, IDHELP, ids);
     if (!is_wizard(s)) {
@@ -2087,7 +2079,7 @@ static void init_sheet(HWND hwnd, SHEET *s)
     }
 }
 
-/* ------------------------------------------------------------------ the dialog procedure */
+/* ------------------------------------------------------------------ dialog procedure */
 
 static INT_PTR reply(HWND hwnd, LRESULT value)
 {
@@ -2095,7 +2087,7 @@ static INT_PTR reply(HWND hwnd, LRESULT value)
     return TRUE;
 }
 
-/* tells every page the tab control and the pages themselves, as a change of the system does. */
+/* tells the tab control and every page, as a system change would. */
 static INT_PTR broadcast(SHEET *s, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     UINT count = s->Count;
@@ -2143,7 +2135,7 @@ static INT_PTR on_notify(SHEET *s, HWND hwnd, NMHDR *hdr)
             SendMessageW(p->Hwnd, WM_NOTIFY, query.hdr.idFrom, (LPARAM)&query);
             n->hResult = query.hResult;
             n->pObject = query.hResult >= 0 ? query.pObject : nullptr;
-            /* an object the page handed out with a failure is let go. */
+            /* release an object the page handed out along with a failure. */
             if (query.hResult < 0 && query.pObject) {
                 void **vtable = *(void ***)query.pObject;
                 ((ULONG(WINAPI *)(void *))vtable[2])(query.pObject);
@@ -2387,7 +2379,7 @@ static INT_PTR CALLBACK sheet_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ the sheet */
+/* ------------------------------------------------------------------ sheet */
 
 static void free_sheet(SHEET *s)
 {
@@ -2418,7 +2410,7 @@ static void sheet_ncdestroy(SHEET *s, HWND hwnd)
         free_sheet(s);
 }
 
-/* copies a string of the header as the sheet keeps it, a resource id staying what it is. */
+/* copies a header string, leaving a resource id as is. */
 static LPWSTR copy_header_string(const void *s, BOOL ansi)
 {
     if (is_resource_id(s))
@@ -2426,7 +2418,7 @@ static LPWSTR copy_header_string(const void *s, BOOL ansi)
     return ansi ? CcStrDupAtoW(s) : CcStrDupW(s);
 }
 
-/* destroys the pages of a header the sheet could not be made of; pages given as structures were not made yet. */
+/* destroys the pages of a header the sheet failed to build from. pages given as structures were not made yet. */
 static void destroy_page_array(const PROPSHEETHEADERW_V2 *h)
 {
     if (!(h->dwFlags & PSH_PROPSHEETPAGE) && h->phpage)
@@ -2447,10 +2439,10 @@ static SHEET *create_sheet(const PROPSHEETHEADERW_V2 *h, BOOL ansi)
     s->Modeless = (h->dwFlags & PSH_MODELESS) != 0;
     if (!(s->Flags & PSH_USECALLBACK))
         s->H.pfnCallback = nullptr;
-    /* the aero wizard is shown as a wizard in the new style. */
+    /* an aero wizard shows as a new style wizard. */
     if (s->Flags & PSH_AEROWIZARD)
         s->Flags = (s->Flags & ~PSH_AEROWIZARD) | PSH_WIZARD97;
-    /* the old numbering of wizard 97 is drawn like the new one. */
+    /* the old wizard 97 flag draws like the new one. */
     if (s->Flags & PSH_WIZARD97_OLD)
         s->Flags = (s->Flags & ~PSH_WIZARD97_OLD) | PSH_WIZARD97;
     s->Caption = copy_header_string(h->pszCaption, ansi);
@@ -2550,7 +2542,7 @@ static INT_PTR run_sheet(SHEET *s)
         }
     }
     if (s->Current) {
-        /* the thread was asked to quit with the sheet open: it is cancelled and the request is passed on. */
+        /* the thread was asked to quit with the sheet open: cancel it and pass the request on. */
         button_pushed(s, IDCANCEL);
         PostQuitMessage((int)msg.wParam);
     }

@@ -1,8 +1,6 @@
 /*
- * key pairs: rsa, the nist curves for ecdh and ecdsa, and finite field
- * diffie-hellman. generation in two steps, the blob formats of import and
- * export, signatures, rsa encryption, secret agreement and the derivations
- * of an agreed secret.
+ * key pairs: rsa, ecdh and ecdsa on the nist curves, and finite field diffie-hellman. covers generation, blob
+ * import and export, signatures, rsa encryption, secret agreement and derivation.
  */
 #include "bcrypt_private.h"
 
@@ -122,14 +120,14 @@ NTSTATUS BcEccCurveProperty(const MimeEcCurve *curve, LPCWSTR property, PUCHAR o
     return STATUS_NOT_SUPPORTED;
 }
 
-/* the magics of the named curves, public then private, for ecdh then ecdsa. */
+/* blob magics of the named curves: public then private, ecdh then ecdsa. */
 static ULONG ec_magic(const MimeEcCurve *curve, BOOL ecdsa, BOOL private_key)
 {
     ULONG index = curve == &mime_p256 ? 1 : curve == &mime_p384 ? 3 : 5;
     return (ecdsa ? 0x00534345 : 0x004B4345) | (('0' + index + (private_key ? 1 : 0)) << 24);
 }
 
-/* the curve a blob magic names, null for the generic magics, and whether it holds a private key. */
+/* curve is null for the generic magics. */
 static BOOL ec_magic_parse(ULONG magic, BOOL ecdsa, const MimeEcCurve **curve, BOOL *private_key)
 {
     const MimeEcCurve *curves[3] = {&mime_p256, &mime_p384, &mime_p521};
@@ -275,7 +273,7 @@ static BOOL load(MimeBn *bn, const UCHAR **p, ULONG size)
     return ok;
 }
 
-/* a little endian field of a capi blob. */
+/* a little endian field of a CAPI blob. */
 static BOOL load_le(MimeBn *bn, const UCHAR **p, ULONG size)
 {
     UCHAR buffer[2048];
@@ -323,7 +321,7 @@ static NTSTATUS import_rsa(KEY_PAIR *key, LPCWSTR type, PUCHAR input, ULONG size
         if (size < sizeof(*h))
             return NTE_BAD_DATA_STATUS;
         ULONG magic = public_blob ? BCRYPT_RSAPUBLIC_MAGIC : full ? BCRYPT_RSAFULLPRIVATE_MAGIC : BCRYPT_RSAPRIVATE_MAGIC;
-        /* a private blob of the full kind imports as a private one too. */
+        /* a full private blob also imports as a plain private one. */
         if (h->Magic != magic && !(private_blob && !full && h->Magic == BCRYPT_RSAFULLPRIVATE_MAGIC))
             return NTE_BAD_DATA_STATUS;
         if (h->BitLength < 256 || h->BitLength > 16384)
@@ -771,7 +769,7 @@ NTSTATUS BcPairEncrypt(KEY_PAIR *key, PUCHAR input, ULONG size, void *padding, P
 
 /* ------------------------------------------------------------------ signatures */
 
-/* the DigestInfo prefixes a pkcs #1 signature may carry for a hash: with null parameters, without, and none for md5. */
+/* DigestInfo prefixes a pkcs #1 signature may carry: null parameters, no parameters, and none for md5. */
 static ULONG digest_prefixes(const ALG_INFO *info, ULONG hash_size, UCHAR prefixes[3][32], ULONG sizes[3])
 {
     UCHAR list[256];
@@ -984,7 +982,7 @@ const BCryptBuffer *BcParameter(const BCryptBufferDesc *list, ULONG type)
     return nullptr;
 }
 
-/* a hash named by a parameter, the default when absent; the name must end in its buffer. */
+/* falls back when absent; the name must be terminated inside its buffer. */
 static const MimeHashAlg *parameter_hash(const BCryptBufferDesc *list, const MimeHashAlg *fallback, BOOL *bad)
 {
     const BCryptBuffer *b = BcParameter(list, KDF_HASH_ALGORITHM);
@@ -1042,7 +1040,7 @@ BCRYPTAPI NTSTATUS WINAPI BCryptDeriveKey(BCRYPT_SECRET_HANDLE hSharedSecret, LP
     BOOL bad;
     UCHAR out[MIME_HASH_MAX_DIGEST * 2];
     if (!wcscmp(pwszKDF, BCRYPT_KDF_RAW_SECRET)) {
-        /* the secret in little endian order, its most significant bytes when truncated. */
+        /* little endian, keeping the most significant bytes when truncated. */
         ULONG n = length;
         if (pbDerivedKey && cbDerivedKey) {
             if (n > cbDerivedKey)
@@ -1138,7 +1136,7 @@ BCRYPTAPI NTSTATUS WINAPI BCryptDeriveKey(BCRYPT_SECRET_HANDLE hSharedSecret, LP
             done += n;
         }
         *pcbResult = cbDerivedKey;
-        /* the concatenation kdf consumes the secret, as windows does. */
+        /* like windows, the concatenation kdf uses up the secret. */
         secret->used = TRUE;
         SecureZeroMemory(out, sizeof(out));
         return STATUS_SUCCESS;

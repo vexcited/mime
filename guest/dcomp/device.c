@@ -1,8 +1,4 @@
-/*
- * the device: the interfaces a program creates objects with, in the tables of
- * windows' versions of it, and Commit, which makes the changes since the last
- * Commit the tree the compositor draws.
- */
+/* the device: the interfaces programs create objects with, laid out like each Windows version's, and Commit. */
 #include "dcomp_private.h"
 
 static CRITICAL_SECTION g_devices_lock;
@@ -27,9 +23,9 @@ void DcDeviceUnlock(DcDevice *device) { LeaveCriticalSection(&device->lock); }
 static DcDevice *dev(void *This) { return ((DcDeviceFace *)This)->device; }
 
 /*
- * the references of a device count its interfaces and every object made
- * with it, and change under one lock, so a callback that may come after the
- * last program reference can ask whether the device is still there.
+ * a device's references count its interfaces and every object made with it,
+ * all under one lock, so a callback arriving after the last program reference
+ * can check whether the device still exists.
  */
 ULONG DcDeviceAddRef(DcDevice *device)
 {
@@ -80,10 +76,7 @@ ULONG DcDeviceRelease(DcDevice *device)
 
 /* ------------------------------------------------------------------ creation */
 
-/*
- * the rendering device is the one the program draws surfaces with, which
- * must show the dxgi device interface of windows 8.1 and direct3d 11.1.
- */
+/* the device the program draws surfaces with must expose IDXGIDevice3 and ID3D11Device1. */
 HRESULT DcResolveRenderingDevice(IUnknown *rendering_device, ID3D11Device **d3d)
 {
     static const GUID IID_ID3D11Device1_ = {0xA04BFB29, 0x08EF, 0x43D6, {0xA4, 0x9C, 0xA9, 0xBD, 0xBD, 0xCB, 0xE6, 0x86}};
@@ -132,9 +125,8 @@ HRESULT DcDeviceCreate(UINT version, IUnknown *rendering_device, DcDevice **out)
 /* ------------------------------------------------------------------ IUnknown */
 
 /*
- * the interfaces of a device by version: the first version has the original
- * device, the second the desktop device and debug, the third the effects
- * and textures of device 3 to 5.
+ * version 1 has the original device, version 2 adds the desktop device and
+ * debug, version 3 the effects and textures of devices 3 to 5.
  */
 static HRESULT STDMETHODCALLTYPE dev_query(void *This, REFIID riid, void **out)
 {
@@ -181,7 +173,7 @@ HRESULT DcDeviceCommit(DcDevice *d)
         object->cls->commit(object);
     }
     d->commit_count++;
-    /* a transform, a clip or an effect changed may sit under any target. */
+    /* a changed transform, clip or effect may sit under any target. */
     if (changed) {
         for (DcTarget *t = d->targets; t; t = t->next_in_device)
             t->needs_compose = TRUE;
@@ -193,7 +185,7 @@ HRESULT DcDeviceCommit(DcDevice *d)
 
 static HRESULT STDMETHODCALLTYPE dev_commit(void *This) { return DcDeviceCommit(dev(This)); }
 
-/* the compositor draws as it commits, so there is nothing to wait for. */
+/* the compositor draws during Commit, so there is nothing to wait for. */
 static HRESULT STDMETHODCALLTYPE dev_wait_for_commit_completion(void *This) { return S_OK; }
 
 static HRESULT STDMETHODCALLTYPE dev_get_frame_statistics(void *This, DCOMPOSITION_FRAME_STATISTICS *stats)
@@ -243,7 +235,7 @@ static HRESULT STDMETHODCALLTYPE dev_create_visual(void *This, IDCompositionVisu
     return DcCreateVisual(dev(This), out);
 }
 
-/* a surface needs a direct3d device to hold its texture; a device made without one has none. */
+/* a surface's texture needs a Direct3D device, which a device made without one lacks. */
 static HRESULT STDMETHODCALLTYPE dev_create_surface(void *This, UINT width, UINT height, DXGI_FORMAT format,
                                                     DXGI_ALPHA_MODE alpha, IDCompositionSurface **out)
 {
@@ -291,7 +283,7 @@ static HRESULT STDMETHODCALLTYPE dev_create_surface_factory(void *This, IUnknown
     return hr;
 }
 
-/* a surface named by the handle of another process or another device: it shows what is bound to it. */
+/* a handle from another process or device: the surface shows what is bound to it. */
 static HRESULT STDMETHODCALLTYPE dev_create_surface_from_handle(void *This, HANDLE handle, IUnknown **out)
 {
     if (!out)
@@ -300,7 +292,7 @@ static HRESULT STDMETHODCALLTYPE dev_create_surface_from_handle(void *This, HAND
     return DcCreateSurfaceFromHandle(dev(This), handle, out);
 }
 
-/* the contents of a window are not offered as a surface. */
+/* window contents are not offered as a surface. */
 static HRESULT STDMETHODCALLTYPE dev_create_surface_from_hwnd(void *This, HWND hwnd, IUnknown **out)
 {
     if (!out)
@@ -372,7 +364,7 @@ static HRESULT STDMETHODCALLTYPE dev_create_animation(void *This, IDCompositionA
     return DcCreateAnimation(dev(This), out);
 }
 
-/* the effects built on direct2d's effect graph that are not drawn answer that they are not implemented. */
+/* Direct2D effect graph filters that are not drawn return E_NOTIMPL. */
 #define CREATE_FILTER(name, kind, type)                                                                                \
     static HRESULT STDMETHODCALLTYPE dev_create_##name(void *This, type **out)                                         \
     {                                                                                                                  \
@@ -397,7 +389,7 @@ static HRESULT STDMETHODCALLTYPE dev_create_unsupported_effect(void *This, void 
 
 /* ------------------------------------------------------------------ device 4 and 5 */
 
-/* textures bound with fences are not offered, so no device answers that it takes them. */
+/* textures bound with fences are not supported, so every device reports no support. */
 static HRESULT STDMETHODCALLTYPE dev_check_composition_texture_support(void *This, IUnknown *device, BOOL *supported)
 {
     if (!device || !supported)

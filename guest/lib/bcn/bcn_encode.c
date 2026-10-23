@@ -1,9 +1,8 @@
 #include "bcn.h"
 
 /*
- * bc1 range fit: the principal axis of the block colors gives the end points,
- * which are then refined by least squares against the indices they produce.
- * only 32 bit floats are used.
+ * bc1 range fit: the principal axis of the block colors gives the end points, then least squares against the indices
+ * they produce refines them. only 32 bit floats are used.
  */
 
 typedef struct Rgb {
@@ -41,7 +40,7 @@ static void unpack565(unsigned c, Rgb *out)
     out->b = (int)(b << 3 | b >> 2);
 }
 
-/* the palette a decoder builds from the two end points. */
+/* the palette a decoder builds from c0 and c1. */
 static void palette_of(unsigned c0, unsigned c1, bool four, Rgb pal[4])
 {
     Rgb a, b;
@@ -70,7 +69,7 @@ static inline int dist2(Rgb a, Rgb b)
     return dr * dr + dg * dg + db * db;
 }
 
-/* indices of the nearest palette entries and the total error. skip marks pixels without an index to choose. */
+/* nearest palette entries and the total error. skip marks pixels whose index does not matter. */
 static int assign(const Rgb px[16], unsigned skip, const Rgb pal[4], unsigned entries, unsigned idx[16])
 {
     int total = 0;
@@ -94,7 +93,7 @@ static int assign(const Rgb px[16], unsigned skip, const Rgb pal[4], unsigned en
     return total;
 }
 
-/* the bit layout of the indices is 0 c0, 1 c1, 2 and 3 between, written as the stream order. */
+/* index 0 is c0, 1 is c1, 2 and 3 lie between, packed in stream order. */
 static uint32_t pack_indices(const unsigned idx[16])
 {
     uint32_t bits = 0;
@@ -115,7 +114,7 @@ static void write_bc1(uint8_t out[8], unsigned c0, unsigned c1, uint32_t bits)
     out[7] = (uint8_t)(bits >> 24);
 }
 
-/* swaps the end points for the mode needed, and remaps the indices with them. */
+/* swaps the end points to select the wanted mode and remaps the indices to match. */
 static void order_endpoints(unsigned *c0, unsigned *c1, bool four, unsigned idx[16], unsigned skip)
 {
     bool swap = four ? *c0 < *c1 : *c0 > *c1;
@@ -137,7 +136,7 @@ static void order_endpoints(unsigned *c0, unsigned *c1, bool four, unsigned idx[
     }
 }
 
-/* the interpolation position of each index, in sixths: 0 and 6 are the end points. */
+/* in sixths: 0 and 6 are the end points. */
 static inline float position(unsigned idx, bool four)
 {
     if (four) {
@@ -153,7 +152,7 @@ static inline int expand_q(int q, bool six)
     return six ? (q << 2 | q >> 4) : (q << 3 | q >> 2);
 }
 
-/* the value that palette entry k has for the end point values a and b of one channel. */
+/* palette entry k for end point values a and b of one channel. */
 static inline int blend(int a, int b, unsigned k, bool four)
 {
     if (k == 0)
@@ -166,8 +165,8 @@ static inline int blend(int a, int b, unsigned k, bool four)
 }
 
 /*
- * solid blocks: the channels are independent once the palette entry is chosen,
- * so every entry is tried with the best nearby quantised end points per channel.
+ * solid blocks: once the palette entry is chosen the channels are independent, so try every entry with the best nearby
+ * quantised end points per channel.
  */
 static void solid_block(Rgb c, bool four, unsigned *best0, unsigned *best1)
 {
@@ -293,7 +292,7 @@ void mime_bcn_encode_bc1_block(const uint32_t src[16], uint8_t out[8], bool alph
         if (t > tmax)
             tmax = t;
     }
-    /* the axis is not unit length, the projection is divided by its squared length. */
+    /* the axis is not normalized, so divide the projection by its squared length. */
     float norm = axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2];
     float e0[3], e1[3];
     for (int c = 0; c < 3; c++) {
@@ -307,7 +306,7 @@ void mime_bcn_encode_bc1_block(const uint32_t src[16], uint8_t out[8], bool alph
     for (int round = 0; round < 3; round++) {
         c0 = pack565(quant5(e0[0]), quant6(e0[1]), quant5(e0[2]));
         c1 = pack565(quant5(e1[0]), quant6(e1[1]), quant5(e1[2]));
-        /* the decoder takes the four color mode only when c0 is above c1 and the three color mode otherwise. */
+        /* decoders use the four color mode only when c0 > c1. */
         if (four ? c0 < c1 : c0 > c1) {
             unsigned t = c0;
             c0 = c1;
@@ -394,7 +393,7 @@ void mime_bcn_encode_alpha_block(const uint8_t alpha[16], uint8_t out[8])
             for (unsigned i = 1; i <= 6; i++)
                 pal[1 + i] = ((7 - i) * e0 + i * e1) * 9363 >> 16;
         } else {
-            /* six values and the extremes, worth a try only if the block has them. */
+            /* six values plus 0 and 255, only worth trying when the block has an extreme. */
             if (!has0 && !has255)
                 break;
             if (hi_in < lo_in) {

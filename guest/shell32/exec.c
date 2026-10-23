@@ -1,14 +1,13 @@
 /*
  * launching documents and programs, and command line splitting.
  *
- * ShellExecute resolves the file, starts executables with CreateProcess and
- * other files through the open command of their registered type. there is
- * no explorer yet, so folders and urls without a registered handler fail
- * with SE_ERR_NOASSOC, the result windows gives for a type nobody handles.
+ * ShellExecute starts executables with CreateProcess and other files through their type's open command. there is
+ * no explorer yet, so folders and urls without a registered handler fail with SE_ERR_NOASSOC, as windows does for a
+ * type nobody handles.
  */
 #include "shell32_private.h"
 
-/* the value ShellExecute returns on success, as on windows. */
+/* ShellExecute's success value, as on windows. */
 #define SE_SUCCESS 42
 
 static HINSTANCE se_error(DWORD error)
@@ -79,7 +78,7 @@ static BOOL read_default(LPCWSTR subkey, LPWSTR out, DWORD chars)
     return TRUE;
 }
 
-/* the command of a verb for a type key such as "txtfile" or "http". */
+/* type is a key such as "txtfile" or "http". */
 static BOOL verb_command(LPCWSTR type, LPCWSTR verb, LPWSTR command, DWORD chars)
 {
     WCHAR subkey[MAX_PATH];
@@ -128,8 +127,8 @@ static LPWSTR build_command(LPCWSTR template, LPCWSTR file, LPCWSTR parameters)
 }
 
 /*
- * a process with the rights of an administrator is made by the broker (services.exe, through advapi32), which asks
- * nobody here: the machine has no consent interface and its policy is to approve (see docs/services.md).
+ * elevated processes come from the services.exe broker through advapi32. it never prompts: the machine has no
+ * consent interface and its policy is to approve.
  */
 typedef DWORD(WINAPI *LAUNCH_ELEVATED)(LPCWSTR application, LPCWSTR command, LPCWSTR directory, DWORD flags,
                                        const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *kind);
@@ -150,9 +149,8 @@ static BOOL run_elevated(LPCWSTR application, LPWSTR command, LPCWSTR directory,
 }
 
 /*
- * starts a program: with the token of this process, or elevated when the verb is runas. a program whose manifest
- * needs more than the token has is refused by CreateProcess with ERROR_ELEVATION_REQUIRED, and starts through the
- * broker, as it does when the shell is asked to open it on windows.
+ * runs with this process's token, or elevated for runas. like on windows, a program whose manifest needs more than
+ * the token has fails CreateProcess with ERROR_ELEVATION_REQUIRED and is then started through the broker.
  */
 static BOOL run(LPCWSTR application, LPWSTR command, LPCWSTR directory, int show, SHELLEXECUTEINFOW *info, BOOL elevate)
 {
@@ -273,7 +271,7 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
         return TRUE;
     }
 
-    /* the type of the extension, then the command of its verb. */
+    /* the extension's type, then its verb's command. */
     WCHAR type[MAX_PATH];
     LPCWSTR dot = wcsrchr(path, L'.');
     if (!dot || wcschr(dot, L'\\') || !read_default(dot, type, RTL_NUMBER_OF(type)))
@@ -281,7 +279,7 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
     return run_association(info, type, verb, path, parameters);
 }
 
-/* the program that opens a file: the file itself for programs, else the command of its type's open verb. */
+/* the file itself for programs, else its type's open command. */
 SHSTDAPI HINSTANCE WINAPI FindExecutableW(LPCWSTR file, LPCWSTR directory, LPWSTR result)
 {
     if (!result)

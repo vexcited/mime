@@ -1,8 +1,4 @@
-/*
- * the header control, SysHeader32: a row of items, each a column title
- * with text, an image or a bitmap, that the user resizes by dragging the
- * dividers and clicks or reorders when the style allows it.
- */
+/* the header control, SysHeader32: column titles the user resizes, clicks and reorders. */
 #include "comctl32_private.h"
 
 #define HDI_NOAUTOFORMAT 0x8000
@@ -33,10 +29,8 @@ typedef struct HEADER {
     int Focused;
     int Hot, HotDivider;
     UINT FilterTimeout;
-    /* divider tracking. */
     BOOL Tracking, FullDrag;
     int TrackItem, TrackOffset, TrackStart, TrackLine;
-    /* a pressed button and its drag. */
     int Pressed;
     BOOL PressedInside, Dragging;
     POINT Down;
@@ -56,7 +50,6 @@ static int order_of(HEADER *h, int index)
     return -1;
 }
 
-/* the left and right edges of an item, from the items before it in order. */
 static void item_edges(HEADER *h, int index, int *left, int *right)
 {
     int x = 0;
@@ -131,7 +124,7 @@ static void open_theme(HEADER *h)
 
 /* ------------------------------------------------------------------ notifications */
 
-/* the item an ansi parent sees: the same fields with the text converted. */
+/* an item as an ansi parent sees it, with the text converted. */
 typedef struct ITEM_COPY {
     HDITEMA Ansi;
     char *Buffer;
@@ -165,7 +158,6 @@ static LRESULT notify_header(HEADER *h, UINT code, int index, int button, HDITEM
     return r;
 }
 
-/* asks the parent for a callback text or image. */
 static void get_dispinfo(HEADER *h, int index, UINT mask, LPWSTR text, int max, int *image)
 {
     HDR_ITEM *it = &h->Items[index];
@@ -370,7 +362,7 @@ static BOOL set_item(HEADER *h, int index, HDITEMW *src, BOOL ansi)
         return FALSE;
     if (!src->mask)
         return TRUE;
-    /* an ansi caller's item reaches an ansi parent as it is. */
+    /* an ansi caller's item goes to an ansi parent unconverted. */
     if (ansi == !h->Notify.Unicode) {
         NMHEADERW nm = {};
         nm.iItem = index;
@@ -452,7 +444,7 @@ static BOOL set_item(HEADER *h, int index, HDITEMW *src, BOOL ansi)
     return TRUE;
 }
 
-/* sets the width the way the user does, with the change notifications. */
+/* like a user drag, with the change notifications. */
 static void user_set_width(HEADER *h, int index, int cxy)
 {
     HDITEMW item = {};
@@ -508,7 +500,7 @@ static int hit_test(HEADER *h, POINT pt, UINT *flags)
         }
         x = right;
     }
-    /* past the last item, its divider still reaches a little to the right. */
+    /* the last divider still grabs a little to its right. */
     if (h->Count && !(h->Style & HDS_NOSIZING)) {
         int last = h->Order[h->Count - 1];
         if (pt.x < x + 8 && !(h->Items[last].Fmt & HDF_FIXEDWIDTH)) {
@@ -652,7 +644,7 @@ static void draw_item(HEADER *h, HDC dc, int index, const RECT *rect)
             ar.bottom = ar.top + size.cy;
             DrawThemeBackground(h->Theme, dc, CC_HP_HEADERSORTARROW, state, &ar, nullptr);
         } else {
-            /* a small triangle in the space kept on the right. */
+            /* the sort arrow, in the space kept on the right. */
             int cx = r.right - sort_cx / 2 - 4, cy = (r.top + r.bottom) / 2;
             HPEN pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_GRAYTEXT));
             HGDIOBJ old = SelectObject(dc, pen);
@@ -741,7 +733,7 @@ static void paint(HEADER *h, HDC dc)
     SelectObject(dc, old_font);
 }
 
-/* the inverted line that follows a divider being dragged without full drag. */
+/* the inverted line that follows a dragged divider when full drag is off. */
 static void track_line(HEADER *h, int x)
 {
     HWND target = GetParent(h->Hwnd);
@@ -792,7 +784,7 @@ static void begin_tracking(HEADER *h, int index, POINT pt)
     h->TrackStart = h->Items[index].Cxy;
     int left, right;
     item_edges(h, index, &left, &right);
-    /* the offset of the grab point from the divider, then the width in progress. */
+    /* the width in progress, and the grab point's offset from the divider. */
     h->TrackOffset = h->TrackStart;
     h->Down.x = pt.x - right;
     h->TrackLine = INT_MIN;
@@ -858,7 +850,6 @@ static void set_hot(HEADER *h, int index)
     }
 }
 
-/* the position a dragged item would drop at, from a client x. */
 static int drop_order(HEADER *h, int x)
 {
     if (x <= 0)
@@ -1004,7 +995,7 @@ static void cancel_mouse(HEADER *h)
     }
 }
 
-/* ------------------------------------------------------------------ the width the list view autosizes to */
+/* ------------------------------------------------------------------ list view autosize */
 
 int HeaderItemWidth(HWND header, int index)
 {
@@ -1045,7 +1036,7 @@ int HeaderItemWidth(HWND header, int index)
     return width;
 }
 
-/* ------------------------------------------------------------------ the window procedure */
+/* ------------------------------------------------------------------ window procedure */
 
 static void destroy_items(HEADER *h)
 {

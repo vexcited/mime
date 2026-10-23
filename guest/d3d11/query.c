@@ -1,11 +1,9 @@
 /*
  * queries: events, occlusion, pipeline statistics and timestamps.
  *
- * vulkan queries come from pools of the device, each slot with readback
- * memory its result is copied to, so GetData only reads memory once the
- * submission that ended the query is done. a slot given up is reset from
- * the host when the gpu is done with it, and handed out again: no reset is
- * recorded, so a query may begin inside a render pass instance.
+ * each pool slot copies its result to readback memory, so GetData only reads memory once the submission that
+ * ended the query is done. freed slots are reset from the host once the gpu is done with them, never with a
+ * recorded reset, so a query may begin inside a render pass instance.
  */
 #include "d3d11_private.h"
 
@@ -33,11 +31,11 @@ static D3dQueryPool *new_pool(D3dDevice *device, D3dQueryKind kind)
     if (kind == D3D_QUERY_OCCLUSION) {
         info.queryType = VK_QUERY_TYPE_OCCLUSION;
     } else if (kind == D3D_QUERY_STATISTICS) {
-        /* the eleven counters in bit order are direct3d's in the order of its structure. */
+        /* the eleven counters in bit order match D3D11_QUERY_DATA_PIPELINE_STATISTICS. */
         info.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
         info.pipelineStatistics = (1u << 11) - 1;
     } else if (kind >= D3D_QUERY_STREAM0) {
-        /* primitives written, then primitives that would have been: direct3d's order too. */
+        /* primitives written, then primitives needed: same order as direct3d. */
         info.queryType = VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT;
     } else {
         info.queryType = VK_QUERY_TYPE_TIMESTAMP;
@@ -55,7 +53,7 @@ fail:
     return nullptr;
 }
 
-/* a slot reset and ready to begin: one the gpu is done with, or a new one. */
+/* returns a reset slot: a recycled one the gpu is done with, or a new one. */
 static BOOL alloc_slot(D3dDevice *device, D3dQueryKind kind, D3dQuerySlot *out)
 {
     BOOL ok = TRUE;
@@ -80,7 +78,7 @@ static BOOL alloc_slot(D3dDevice *device, D3dQueryKind kind, D3dQuerySlot *out)
     return ok;
 }
 
-/* the query lets go of its segments; one no query holds goes back to the pool once the gpu is done with it. */
+/* slots no other query holds go back to the pool once the gpu is done with them. */
 static void retire_slots(D3dDevice *device, D3dQuery *q)
 {
     AcquireSRWLockExclusive(&device->query_lock);
@@ -102,7 +100,7 @@ static void retire_slots(D3dDevice *device, D3dQuery *q)
         }
         struct D3dRetiredSlot *r = &retired->list[(retired->head + retired->count++) % retired->capacity];
         r->slot = q->slots[i];
-        /* what is recorded now may still use it. */
+        /* commands being recorded may still use it. */
         r->serial = device->next_serial;
     }
     ReleaseSRWLockExclusive(&device->query_lock);
@@ -158,7 +156,7 @@ static void copy_later(D3dContext *c, const D3dQuerySlot *slot)
     c->query_copies[c->query_copy_count++] = *slot;
 }
 
-/* a segment of a kind, counting for every query of the kind begun. */
+/* one segment counts for every begun query of its kind. */
 static void open_segment(D3dContext *c, VkCommandBuffer cmd, D3dQueryKind kind)
 {
     D3dDevice *device = c->child.device;
@@ -195,10 +193,7 @@ static void close_segment(D3dContext *c, VkCommandBuffer cmd, D3dQueryKind kind)
     c->segment_open[kind] = FALSE;
 }
 
-/*
- * begins the segments that count what comes: draws inside a render pass
- * instance, or for pipeline statistics dispatches outside one too.
- */
+/* segments count draws inside a render pass instance, and for pipeline statistics also dispatches outside one. */
 void D3dQueriesOpen(D3dContext *c, VkCommandBuffer cmd, BOOL drawing)
 {
     for (UINT kind = D3D_QUERY_OCCLUSION; kind < D3D_QUERY_KINDS; kind++)
@@ -206,14 +201,14 @@ void D3dQueriesOpen(D3dContext *c, VkCommandBuffer cmd, BOOL drawing)
             open_segment(c, cmd, kind);
 }
 
-/* ends the open segments, before the render pass instance or the command buffer ends. */
+/* must run before the render pass instance or the command buffer ends. */
 void D3dQueriesClose(D3dContext *c, VkCommandBuffer cmd)
 {
     for (UINT kind = D3D_QUERY_OCCLUSION; kind < D3D_QUERY_KINDS; kind++)
         close_segment(c, cmd, kind);
 }
 
-/* what was counted until now is not a query begun or ended now: the next draw begins new segments. */
+/* a query begun or ended now must not include what was counted before: the next draw opens new segments. */
 static void close_kinds(D3dContext *c, UINT kinds)
 {
     for (UINT kind = D3D_QUERY_OCCLUSION; kind < D3D_QUERY_KINDS; kind++)
@@ -221,7 +216,7 @@ static void close_kinds(D3dContext *c, UINT kinds)
             close_segment(c, c->cmd->buffer, kind);
 }
 
-/* copies the results of the ended segments to their readback memory; outside render pass instances. */
+/* must run outside render pass instances. */
 void D3dQueriesCopy(D3dContext *c, VkCommandBuffer cmd)
 {
     D3dVk *vk = &c->child.device->vk;
@@ -240,7 +235,7 @@ void D3dQueriesCopy(D3dContext *c, VkCommandBuffer cmd)
     c->query_copy_count = 0;
 }
 
-/* the context's queries left begun, at its destruction. */
+/* releases queries still begun when the context is destroyed. */
 void D3dQueriesRelease(D3dContext *c)
 {
     while (c->query_count) {
@@ -282,7 +277,7 @@ void D3dQueryBegin(D3dContext *c, D3dQuery *q)
     c->queries[c->query_count++] = q;
 }
 
-/* the end of a query: the submission that carries what came before it gives its result. */
+/* the result comes from the submission carrying the commands recorded before the end. */
 void D3dQueryEnd(D3dContext *c, D3dQuery *q)
 {
     D3dDevice *device = c->child.device;
@@ -290,7 +285,7 @@ void D3dQueryEnd(D3dContext *c, D3dQuery *q)
     q->begun = FALSE;
     q->ended = TRUE;
     q->polls = 0;
-    /* the queries of deferred contexts are not measured. */
+    /* deferred context queries are not measured. */
     if (c->type == D3D11_DEVICE_CONTEXT_DEFERRED)
         return;
     if (q->kinds == 1u << D3D_QUERY_TIMESTAMP) {
@@ -303,7 +298,7 @@ void D3dQueryEnd(D3dContext *c, D3dQuery *q)
         }
     } else if (q->kinds) {
         if (was_begun) {
-            /* the segment counted for this query ends with it; the others go on in a new one. */
+            /* end this query's segment; other queries continue in a new one. */
             close_kinds(c, q->kinds);
             for (UINT i = 0; i < c->query_count; i++)
                 if (c->queries[i] == q) {
@@ -316,7 +311,7 @@ void D3dQueryEnd(D3dContext *c, D3dQuery *q)
             retire_slots(device, q);
         }
     }
-    /* with nothing recorded since, what was submitted last gives the result. */
+    /* with nothing recorded since, the last submission gives the result. */
     q->serial = c->cmd ? device->next_serial : device->next_serial - 1;
 }
 
@@ -341,7 +336,6 @@ static UINT data_size(D3D11_QUERY query)
     }
 }
 
-/* the sum of a query's segments, counter by counter. */
 static void sum_slots(const D3dQuery *q, UINT64 *out, UINT counters)
 {
     memset(out, 0, counters * sizeof(UINT64));
@@ -355,9 +349,8 @@ static void sum_slots(const D3dQuery *q, UINT64 *out, UINT counters)
 }
 
 /*
- * as d3d11.dll checks before asking the driver: no flags but
- * D3D11_ASYNC_GETDATA_DONOTFLUSH, no size without data, the exact size with
- * data, and nothing while the query is begun.
+ * the same checks windows does before asking the driver: no flags but D3D11_ASYNC_GETDATA_DONOTFLUSH, no size
+ * without data, the exact size with data, and nothing while the query is begun.
  */
 HRESULT D3dQueryGetData(D3dContext *c, D3dQuery *q, void *data, UINT size, UINT flags)
 {
@@ -372,7 +365,7 @@ HRESULT D3dQueryGetData(D3dContext *c, D3dQuery *q, void *data, UINT size, UINT 
         data = nullptr;
     if (q->begun)
         return DXGI_ERROR_INVALID_CALL;
-    /* polling without flushes flushes anyway after 254 calls that found nothing. */
+    /* DONOTFLUSH polling still flushes after 254 calls that found nothing. */
     if (q->polls == 0xFE)
         flags &= ~D3D11_ASYNC_GETDATA_DONOTFLUSH;
     if (q->desc.Query != D3D11_QUERY_TIMESTAMP_DISJOINT) {
@@ -427,7 +420,7 @@ HRESULT D3dQueryGetData(D3dContext *c, D3dQuery *q, void *data, UINT size, UINT 
         D3D11_QUERY_DATA_PIPELINE_STATISTICS *d = data;
         if (q->kinds)
             sum_slots(q, (UINT64 *)d, 11);
-        /* below feature level 11_0 there are no hull, domain and compute shaders to count. */
+        /* below feature level 11_0 there are no hull, domain or compute shaders. */
         if (device->feature_level < D3D_FEATURE_LEVEL_11_0)
             d->HSInvocations = d->DSInvocations = d->CSInvocations = 0;
         break;
@@ -444,7 +437,7 @@ HRESULT D3dQueryGetData(D3dContext *c, D3dQuery *q, void *data, UINT size, UINT 
     case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM1:
     case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM2:
     case D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM3: {
-        /* a stream overflowed when it needed more room than it wrote; summed over streams, the same. */
+        /* overflow means more primitives were needed than written, also when summed over streams. */
         UINT64 counts[2];
         sum_slots(q, counts, 2);
         *(BOOL *)data = counts[1] > counts[0];
@@ -537,8 +530,7 @@ static const ID3D11Query1Vtbl query_vtbl = {
     VTBL_FN(query_get_desc1),
 };
 
-/* what vulkan counts a query with; none for those only waited on, or what the gpu cannot count. */
-/* the kinds of vulkan queries a query counts with; none for those only waited on, or what the gpu cannot count. */
+/* the vulkan query kinds a query counts with: none for queries only waited on or that the gpu cannot count. */
 static UINT query_kinds(D3dDevice *device, D3D11_QUERY query)
 {
     switch (query) {

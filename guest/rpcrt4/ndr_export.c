@@ -1,6 +1,6 @@
 /*
- * the entry points of the ndr engine for each type: sizing, marshaling, unmarshaling, measuring and freeing, which midl's
- * stubs and programs call one type at a time. Each starts a walk of the one pass.
+ * the per-type ndr entry points midl stubs and programs call: sizing, marshaling, unmarshaling, measuring and freeing.
+ * each runs a walk of that one pass.
  */
 #include "ndr.h"
 
@@ -59,7 +59,7 @@ RPCRTAPI unsigned char *RPC_ENTRY NdrRangeUnmarshall(PMIDL_STUB_MESSAGE m, unsig
     return nullptr;
 }
 
-/* the generic entry points: the type is whatever the format says. */
+/* the type is whatever the format says. */
 RPCRTAPI void RPC_ENTRY NdrTypeMarshall(PMIDL_STUB_MESSAGE m, unsigned char *memory, PFORMAT_STRING format)
 {
     NdrpWalkTop(m, NDR_MARSHAL, &memory, format, 0);
@@ -80,7 +80,6 @@ RPCRTAPI void RPC_ENTRY NdrTypeFree(PMIDL_STUB_MESSAGE m, unsigned char *memory,
     NdrpWalkTop(m, NDR_FREE, &memory, format, 0);
 }
 
-/* ------------------------------------------------------------------ simple types */
 
 RPCRTAPI void RPC_ENTRY NdrSimpleTypeMarshall(PMIDL_STUB_MESSAGE m, unsigned char *memory, unsigned char fc)
 {
@@ -102,16 +101,15 @@ RPCRTAPI unsigned char *RPC_ENTRY NdrUnmarshallBasetypeInline(PMIDL_STUB_MESSAGE
     return nullptr;
 }
 
-/* converts a simple type on the buffer in place to the form the stub would give it: a 16 bit enum to 32 bits. */
+/* converts a simple type in the buffer in place to its stub form: a 16 bit enum becomes 32 bits. */
 RPCRTAPI unsigned char *RPC_ENTRY NdrUserMarshalSimpleTypeConvert(ULONG *flags, unsigned char *buffer,
                                                                   unsigned char fc)
 {
-    /* the data representation of the call is the local one, so the value is as it stands. */
+    /* the call uses the local data representation, so the value needs no swapping. */
     buffer = (unsigned char *)(((ULONG_PTR)buffer + NdrSimpleAlign[fc]) & ~(ULONG_PTR)NdrSimpleAlign[fc]);
     return buffer + NdrSimpleWire[fc];
 }
 
-/* ------------------------------------------------------------------ user marshal info */
 
 RPCRTAPI RPC_STATUS RPC_ENTRY NdrGetUserMarshalInfo(ULONG *flags, ULONG level, NDR_USER_MARSHAL_INFO *info)
 {
@@ -121,7 +119,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY NdrGetUserMarshalInfo(ULONG *flags, ULONG level, N
     PMIDL_STUB_MESSAGE m = cb->pStubMsg;
     memset(&info->Level1, 0, sizeof(info->Level1));
     info->InformationLevel = 1;
-    /* the whole buffer of the message, so that a routine can check what it reads against its end. */
+    /* the whole message buffer, so a routine can bounds check what it reads. */
     info->Level1.Buffer = m->BufferStart ? m->BufferStart : m->Buffer;
     info->Level1.BufferSize = m->BufferStart ? (ULONG)(m->BufferEnd - m->BufferStart) : 0;
     info->Level1.pfnAllocate = m->pfnAllocate;
@@ -130,7 +128,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY NdrGetUserMarshalInfo(ULONG *flags, ULONG level, N
     return RPC_S_OK;
 }
 
-/* the structure the engine keeps for an unmarshaling: what it must not free as it is the receive buffer's. */
+/* records what unmarshaling must not free because it belongs to the receive buffer. */
 RPCRTAPI void RPC_ENTRY NdrCorrelationInitialize(PMIDL_STUB_MESSAGE m, void *memory, ULONG cache_size, ULONG flags)
 {
 }

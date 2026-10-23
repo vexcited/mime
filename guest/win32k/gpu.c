@@ -1,10 +1,8 @@
 /*
- * gpu channels. a process that renders through the gpu gets one block of
- * physically contiguous memory, mapped in the process and handed to the
- * host, which executes the commands the process writes there on metal
- * (mime/gpu.h). the process can add heap blocks for buffers and textures.
- * nothing here takes part in rendering: waiting and kicking are the only
- * calls made per frame, and only when the host or the gpu is behind.
+ * gpu channels, see mime/gpu.h. a process that renders through the gpu gets one block of physically contiguous
+ * memory, mapped in the process and handed to the host, which runs the commands written there on metal. the
+ * process can add heap blocks for buffers and textures. nothing here takes part in rendering: waiting and kicking
+ * are the only per frame calls, and only when the host or the gpu is behind.
  */
 #include "win32k.h"
 
@@ -34,7 +32,7 @@ static void free_block(GPU_BLOCK *b)
     memset(b, 0, sizeof(*b));
 }
 
-/* the block is aligned to its power of two size, so to the host's 16K pages too. */
+/* aligned to its power of two size, so to the host's 16K pages too. */
 static NTSTATUS alloc_block(GPU_BLOCK *b, SIZE_T size)
 {
     memset(b, 0, sizeof(*b));
@@ -135,8 +133,7 @@ NTSTATUS NTAPI NtGdiMimeGpuKick(void)
 }
 
 /*
- * sleeps until the gpu reaches fence. the host raises its interrupt when
- * done_fence passes wait_fence; the short timeout covers a wake up lost to
+ * the host raises its interrupt when done_fence passes wait_fence. the short timeout covers a wakeup lost to
  * another thread clearing the shared event.
  */
 NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms)
@@ -159,7 +156,7 @@ NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms)
         ULONGLONG now = KeQueryInterruptTime();
         if (timeout_ms != 0xFFFFFFFF && now >= deadline)
             return STATUS_TIMEOUT;
-        LARGE_INTEGER t = {.QuadPart = -100000}; /* 10 ms */
+        LARGE_INTEGER t = {.QuadPart = -100000}; /* 10 ms. */
         NTSTATUS s = KeWaitForSingleObject(event, UserRequest, UserMode, TRUE, &t);
         if (s != STATUS_SUCCESS && s != STATUS_TIMEOUT)
             return s;
@@ -169,7 +166,7 @@ NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms)
     return STATUS_SUCCESS;
 }
 
-/* the host window and the part of its surface a dc's window covers, nothing while it is hidden. */
+/* the host window and the part of its surface the dc's window covers, nothing while hidden. */
 BOOL NTAPI NtGdiMimeGpuGetSurface(HDC hdc, MIME_GPU_SURFACE *user_surface)
 {
     MIME_GPU_SURFACE s = {};

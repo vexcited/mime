@@ -1,12 +1,9 @@
-/*
- * the shlwapi string functions kernelbase exports: searching, comparing, copying and number
- * parsing, wide and ansi, plus QISearch and indirect strings.
- */
+/* the shlwapi string functions kernelbase exports, plus QISearch and indirect strings. */
 #include "shlwapi_kb.h"
 
 /* ------------------------------------------------------------------ characters */
 
-/* an ansi character as a WORD, the lead byte high for a double byte one. */
+/* a double byte character keeps its lead byte in the high byte. */
 static WORD ansi_char(LPCSTR p)
 {
     if (IsDBCSLeadByte((BYTE)p[0]) && p[1])
@@ -30,7 +27,7 @@ static BOOL wide_equal_nocase(LPCWSTR a, int alen, LPCWSTR b, int blen)
     return CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORECASE, a, alen, b, blen) == CSTR_EQUAL;
 }
 
-/* zero when the characters match without case, as the C runtime compares. */
+/* zero means a case insensitive match, like the C runtime. */
 LWSTDAPI BOOL WINAPI ChrCmpIW(WCHAR c1, WCHAR c2)
 {
     return !wide_equal_nocase(&c1, 1, &c2, 1);
@@ -152,7 +149,7 @@ LWSTDAPI LPSTR WINAPI StrChrIA(LPCSTR string, WORD c)
     return nullptr;
 }
 
-/* the last occurrence before end, or before the terminator without one. */
+/* searches up to end, or up to the terminator when end is NULL. */
 LWSTDAPI LPWSTR WINAPI StrRChrW(LPCWSTR string, LPCWSTR end, WCHAR c)
 {
     if (!string)
@@ -351,7 +348,7 @@ LWSTDAPI int WINAPI StrCmpNIA(LPCSTR s1, LPCSTR s2, int count)
     return compare_a(NORM_IGNORECASE, s1, bounded_a(s1, count), s2, bounded_a(s2, count));
 }
 
-/* the "C" forms compare code points, the "I" ones folding ascii case. */
+/* the C forms compare code points, the I forms fold ascii case. */
 static int ordinal(LPCWSTR a, LPCWSTR b, int count, BOOL fold)
 {
     for (; count; a++, b++, count--) {
@@ -426,7 +423,7 @@ LWSTDAPI int WINAPI StrCmpNICA(LPCSTR s1, LPCSTR s2, int count)
     return count > 0 ? ordinal_a(s1, s2, count, TRUE) : 0;
 }
 
-/* digit runs compare by value and letters without case, as explorer sorts names. */
+/* digit runs compare by value and letters ignore case, like explorer sorts names. */
 LWSTDAPI int WINAPI StrCmpLogicalW(LPCWSTR s1, LPCWSTR s2)
 {
     return compare(SORT_DIGITSASNUMBERS | NORM_IGNORECASE | NORM_LINGUISTIC_CASING, s1, -1, s2, -1);
@@ -516,7 +513,6 @@ LWSTDAPI LPSTR WINAPI StrStrIA(LPCSTR string, LPCSTR search)
     return nullptr;
 }
 
-/* the last match starting before end. */
 LWSTDAPI LPWSTR WINAPI StrRStrIW(LPCWSTR string, LPCWSTR end, LPCWSTR search)
 {
     if (!string || !search || !*search)
@@ -555,7 +551,7 @@ LWSTDAPI LPWSTR WINAPI StrCpyNW(LPWSTR dest, LPCWSTR src, int size)
     return dest;
 }
 
-/* the terminator of what was copied. */
+/* returns a pointer to the copied terminator. */
 LWSTDAPI LPWSTR WINAPI StrCpyNXW(LPWSTR dest, LPCWSTR src, int size)
 {
     if (!dest || !src || size <= 0)
@@ -600,7 +596,7 @@ LWSTDAPI LPSTR WINAPI StrCatBuffA(LPSTR dest, LPCSTR src, int size)
     return dest;
 }
 
-/* src appended at index at, the end of dest when at is -1; the index of the new terminator. */
+/* appends at index at, or at the end when at is -1, and returns the index of the new terminator. */
 LWSTDAPI DWORD WINAPI StrCatChainW(LPWSTR dest, DWORD size, DWORD at, LPCWSTR src)
 {
     if (!size)
@@ -615,7 +611,7 @@ LWSTDAPI DWORD WINAPI StrCatChainW(LPWSTR dest, DWORD size, DWORD at, LPCWSTR sr
     return at;
 }
 
-/* a LocalAlloc copy; a missing string gives an empty one. */
+/* the copy comes from LocalAlloc, and a NULL string gives an empty one. */
 LWSTDAPI LPWSTR WINAPI StrDupW(LPCWSTR string)
 {
     SIZE_T bytes = ((string ? wcslen(string) : 0) + 1) * sizeof(WCHAR);
@@ -702,8 +698,8 @@ LWSTDAPI BOOL WINAPI StrTrimA(LPSTR string, LPCSTR trim)
 
 /* ------------------------------------------------------------------ numbers */
 
-/* spaces, tabs and line feeds, a sign, then decimal digits or "0x" and hex digits that drop the
-   sign; at least one digit makes it TRUE, and the value wraps. */
+/* skips spaces, tabs and line feeds, then a sign and decimal digits, or "0x" and hex digits that
+   ignore the sign. one digit is enough for TRUE, and the value wraps. */
 static BOOL parse_int64(LPCWSTR string, DWORD flags, LONGLONG *value)
 {
     if (!string)
@@ -774,7 +770,7 @@ LWSTDAPI BOOL WINAPI StrToIntExA(LPCSTR string, DWORD flags, int *value)
     return result;
 }
 
-/* an optional minus and decimal digits, no spaces or plus. */
+/* only an optional minus and decimal digits, no spaces or plus. */
 LWSTDAPI int WINAPI StrToIntW(LPCWSTR string)
 {
     if (!string)
@@ -803,8 +799,7 @@ LWSTDAPI int WINAPI StrToIntA(LPCSTR string)
 
 /* ------------------------------------------------------------------ the rest */
 
-/* cuts an ansi string to fit size characters without splitting a double byte one; the length
-   kept with its terminator. */
+/* never splits a double byte character, returns the kept length including the terminator. */
 LWSTDAPI int WINAPI SHTruncateString(LPSTR string, UINT size)
 {
     if (!string || !size)
@@ -820,7 +815,7 @@ LWSTDAPI int WINAPI SHTruncateString(LPSTR string, UINT size)
     return (int)(p - string) + 1;
 }
 
-/* the first entry of the table for riid, or of the table for IUnknown; E_POINTER without out. */
+/* IID_IUnknown falls back to the first table entry. */
 LWSTDAPI HRESULT WINAPI QISearch(void *base, LPCQITAB table, REFIID riid, void **out)
 {
     if (!out)
@@ -842,7 +837,7 @@ LWSTDAPI HRESULT WINAPI QISearch(void *base, LPCQITAB table, REFIID riid, void *
     return S_OK;
 }
 
-/* string id in a module's RT_STRING table, read without user32. */
+/* reads RT_STRING directly so kernelbase does not need user32. */
 static HRESULT load_string(HMODULE module, UINT id, LPWSTR out, UINT size)
 {
     HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW((id >> 4) + 1), (LPCWSTR)RT_STRING);
@@ -863,8 +858,8 @@ static HRESULT load_string(HMODULE module, UINT id, LPWSTR out, UINT size)
     return S_OK;
 }
 
-/* "@file,-id" with an optional ";version" read from the file's string table, anything else
-   copied as it is. */
+/* "@file,-id" with an optional ";version" loads from the file's string table, anything else is
+   copied as is. */
 LWSTDAPI HRESULT WINAPI SHLoadIndirectString(LPCWSTR source, LPWSTR out, UINT size, void **reserved)
 {
     if (!source || !out || !size)

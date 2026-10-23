@@ -1,7 +1,7 @@
 /*
- * inf files: the text of an inf is read into sections of lines of fields, with the strings of its Strings section
- * replacing the %name% marks when a field is read, and a program walks them through contexts that name a file, a
- * section and a line. The files appended to a handle are searched after it, in the order they were appended.
+ * inf files: parsed into sections of lines of fields, walked through contexts naming a file, section and line.
+ * %name% marks are replaced from the Strings section when a field is read. appended files are searched after the
+ * handle's own, in append order.
  */
 #include "setup_private.h"
 
@@ -49,7 +49,7 @@ PSTR SetupToAnsi(PCWSTR text)
     return ansi;
 }
 
-/* ------------------------------------------------------------------ reading the text */
+/* ------------------------------------------------------------------ parsing */
 
 static BOOL grow(void **array, ULONG *capacity, ULONG count, SIZE_T item)
 {
@@ -83,7 +83,7 @@ static BOOL is_space(WCHAR c)
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
-/* a field of the text between two commas, without the blanks around it, and a pair of quotes made one, as the text says. */
+/* a field between two commas, trimmed, with each doubled quote made one. */
 static PWSTR make_field(PCWSTR start, PCWSTR end)
 {
     while (start < end && is_space(*start))
@@ -119,7 +119,7 @@ static BOOL add_field(INF_FILE *f, PWSTR text)
     return TRUE;
 }
 
-/* a logical line: the comment gone, the pieces after a backslash at the end of a line joined. */
+/* a logical line: the comment stripped, backslash continuations joined. */
 static BOOL parse_line(INF_FILE *f, PCWSTR line, SIZE_T length, INF_SECTION **section, UINT *error)
 {
     while (length && is_space(*line)) {
@@ -141,7 +141,6 @@ static BOOL parse_line(INF_FILE *f, PCWSTR line, SIZE_T length, INF_SECTION **se
         PWSTR name = piece(line + 1, end - 1);
         if (!name || !grow((void **)&f->Sections, &f->SectionCapacity, f->SectionCount, sizeof(INF_SECTION)))
             return FALSE;
-        /* blanks around the name are not part of it. */
         SIZE_T lead = 0, n = wcslen(name);
         while (name[lead] && is_space(name[lead]))
             lead++;
@@ -162,8 +161,7 @@ static BOOL parse_line(INF_FILE *f, PCWSTR line, SIZE_T length, INF_SECTION **se
     }
     if (!grow((void **)&f->Lines, &f->LineCapacity, f->LineCount, sizeof(INF_LINE)))
         return FALSE;
-    /* an equal sign outside the quotes makes what is before it the key, when no comma comes first: the fields of a line
-       that has a key after its commas may have an equal sign in them. */
+    /* an equal sign outside quotes splits off the key unless a comma comes first: fields may contain equal signs. */
     SIZE_T equal = length;
     BOOL quoted = FALSE;
     for (SIZE_T i = 0; i < length; i++) {
@@ -186,7 +184,7 @@ static BOOL parse_line(INF_FILE *f, PCWSTR line, SIZE_T length, INF_SECTION **se
             return FALSE;
         from = equal + 1;
     }
-    /* what follows is split at the commas that are not inside quotes. */
+    /* the rest splits at commas outside quotes. */
     quoted = FALSE;
     SIZE_T start = from;
     BOOL any = from < length;
@@ -205,7 +203,7 @@ static BOOL parse_line(INF_FILE *f, PCWSTR line, SIZE_T length, INF_SECTION **se
     return TRUE;
 }
 
-/* the comment at the end of a line is cut off: it starts at a semicolon outside the quotes. */
+/* a comment starts at a semicolon outside quotes. */
 static SIZE_T without_comment(PCWSTR line, SIZE_T length)
 {
     BOOL quoted = FALSE;
@@ -249,7 +247,7 @@ static BOOL parse_text(INF_FILE *f, PCWSTR text, SIZE_T length, UINT *error_line
             joined = bigger;
             joined_capacity = wanted;
         }
-        /* a line that goes on starts after the blanks the break leaves. */
+        /* a continued line resumes after the blanks following the break. */
         PCWSTR from = text + at;
         SIZE_T n = line_length;
         if (joined_length)
@@ -295,7 +293,7 @@ static void free_file(INF_FILE *f)
     }
 }
 
-/* the file as bytes, as the characters they are: a mark of byte order says utf-16 or utf-8, else the ansi code page. */
+/* a byte order mark means utf-16 or utf-8, otherwise the ansi code page. */
 static PWSTR read_text(PCWSTR path, SIZE_T *length)
 {
     HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
@@ -363,7 +361,7 @@ PCWSTR SetupInfRawField(INF_FILE *file, const INF_LINE *line, ULONG index)
     return value_of(file, line, index);
 }
 
-/* the strings of the file or the files appended to it. */
+/* searches the file and the files appended to it. */
 static PCWSTR string_value(INF_FILE *head, PCWSTR key, SIZE_T length, INF_FILE **owner)
 {
     for (INF_FILE *f = head; f; f = f->Next) {
@@ -401,7 +399,7 @@ PWSTR SetupInfExpand(INF_FILE *file, PCWSTR raw)
                     INF_FILE *owner;
                     PCWSTR value = string_value(file, p + 1, (SIZE_T)(close - p - 1), &owner);
                     if (value) {
-                        /* the value goes in as the string has it, with a doubled percent sign made one. */
+                        /* the value goes in as is, with a doubled percent sign made one. */
                         SIZE_T n = wcslen(value);
                         SIZE_T need = used + n + 1;
                         if (need > capacity) {
@@ -528,7 +526,7 @@ static BOOL find_line(INF_FILE *head, PCWSTR section, PCWSTR key, INF_FILE *from
                 context->Line = i;
                 return TRUE;
             }
-            /* the lines of a section are found in its first file that has the section; the next files go on after. */
+            /* a section's lines come from the first file that has it, then continue in the next files. */
         }
     }
     SetLastError(ERROR_LINE_NOT_FOUND);
@@ -607,7 +605,7 @@ static INF_FILE *open_file(PCWSTR name, UINT *error_line, DWORD *error)
     WCHAR full[MAX_PATH];
     PCWSTR path = name;
     if (!wcschr(name, '\\') && !wcschr(name, '/') && !wcschr(name, ':')) {
-        /* a name alone is looked for where windows keeps its inf files. */
+        /* a bare name is looked for in the windows inf folder. */
         UINT n = GetWindowsDirectoryW(full, MAX_PATH);
         WCHAR tried[MAX_PATH];
         wcscpy(tried, name);
@@ -713,7 +711,7 @@ SETUPAPI BOOL WINAPI SetupOpenAppendInfFileW(PCWSTR name, HINF inf, PUINT error_
         return FALSE;
     UINT line = 0;
     DWORD error = 0;
-    /* no name appends the files the first one lists as its layout. */
+    /* with no name, the layout files the first file lists are appended. */
     if (!name) {
         PCWSTR layout = version_value(head, L"LayoutFile");
         if (!layout) {
@@ -755,11 +753,11 @@ SETUPAPI VOID WINAPI SetupCloseInfFile(HINF inf)
     }
 }
 
-/* ------------------------------------------------------------------ information about a file */
+/* ------------------------------------------------------------------ SetupGetInfInformation */
 
 /*
- * what SetupGetInfInformation hands over is a buffer the program passes back: the style, the number of files, then for
- * each file the length of what follows it, its path and the Version section's keys and values as text.
+ * the buffer holds the style and the file count, then per file the length of what follows, its path, and the
+ * Version section's keys and values as text.
  */
 typedef struct INF_PART {
     DWORD Length;
@@ -800,7 +798,6 @@ SETUPAPI BOOL WINAPI SetupGetInfInformationW(LPCVOID spec, DWORD search, PSP_INF
     BOOL own;
     if (!search_info(spec, search, &f, &own))
         return FALSE;
-    /* one record per file, the path then the version section's pairs of key and value. */
     DWORD need = offsetof(SP_INF_INFORMATION, VersionData);
     DWORD files = 0;
     for (INF_FILE *p = f; p; p = p->Next) {
@@ -992,7 +989,7 @@ SETUPAPI BOOL WINAPI SetupGetInfFileListW(PCWSTR directory, DWORD style, PWSTR b
     DWORD need = 1;
     WIN32_FIND_DATAW find;
     HANDLE h = FindFirstFileW(pattern, &find);
-    /* the names, each ending in a zero, then one more. */
+    /* the names, each zero terminated, then one more zero. */
     for (BOOL ok = h != INVALID_HANDLE_VALUE; ok; ok = FindNextFileW(h, &find))
         need += (DWORD)wcslen(find.cFileName) + 1;
     if (h != INVALID_HANDLE_VALUE)
@@ -1190,7 +1187,7 @@ SETUPAPI BOOL WINAPI SetupGetStringFieldA(PINFCONTEXT context, DWORD field, PSTR
     return ok;
 }
 
-/* a number as the inf has it: decimal, or hexadecimal with 0x. */
+/* decimal, or hexadecimal with 0x. */
 static BOOL parse_number(PCWSTR text, LONG64 *value)
 {
     while (*text && is_space(*text))
@@ -1252,7 +1249,7 @@ SETUPAPI BOOL WINAPI SetupGetMultiSzFieldW(PINFCONTEXT context, DWORD field, PWS
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    /* the fields from this one on, each a string of its own, then an empty one. */
+    /* the fields from this one on, each zero terminated, then an empty one. */
     DWORD count = SetupGetFieldCount(context), need = 1;
     PWSTR *parts = SetupAlloc((count + 1) * sizeof(PWSTR));
     if (!parts)
@@ -1321,7 +1318,7 @@ SETUPAPI BOOL WINAPI SetupGetBinaryField(PINFCONTEXT context, DWORD field, PBYTE
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    /* each field from this one on is a byte, in hexadecimal. */
+    /* each field from this one on is a hexadecimal byte. */
     DWORD count = SetupGetFieldCount(context);
     DWORD need = field <= count ? count - field + 1 : 0;
     if (required)
@@ -1370,7 +1367,7 @@ SETUPAPI BOOL WINAPI SetupGetLineTextW(PINFCONTEXT context, HINF inf, PCWSTR sec
         return FALSE;
     for (DWORD i = 1; i <= count; i++) {
         parts[i - 1] = SetupContextField(at, i);
-        /* a number between percent signs is a directory id, a guess that dxupdate needs for its %11% lines. */
+        /* a number between percent signs is a directory id. a guess, needed by dxupdate's %11% lines. */
         if (parts[i - 1] && wcschr(parts[i - 1], '%')) {
             SIZE_T room = wcslen(parts[i - 1]) + MAX_PATH * 4;
             PWSTR wide = SetupAlloc(room * sizeof(WCHAR));

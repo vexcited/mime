@@ -1,6 +1,6 @@
 /*
- * file information and dropped file lists. The icons of SHGetFileInfo come from icons.c and the system image
- * lists from sysimagelist.c.
+ * file information and dropped file lists. SHGetFileInfo's icons come from icons.c, the system image lists from
+ * sysimagelist.c.
  */
 #include "shell32_private.h"
 
@@ -198,7 +198,7 @@ static DWORD_PTR exe_type(LPCWSTR path)
     return result;
 }
 
-/* the icon, icon index and icon location parts of a request; kind is 1 for the desktop and 2 for "This PC". */
+/* kind is 1 for the desktop and 2 for "This PC". */
 static DWORD_PTR icon_sections(LPCWSTR path, DWORD attributes, UINT flags, int kind, SHFILEINFOW *info)
 {
     SH_ICON_SOURCE source;
@@ -216,7 +216,7 @@ static DWORD_PTR icon_sections(LPCWSTR path, DWORD attributes, UINT flags, int k
             wcscpy(info->szDisplayName, location);
             info->iIcon = index;
         } else {
-            /* a picture that is no file is named by its place in the system list. */
+            /* a picture that is not a file is named by its system image list index. */
             info->szDisplayName[0] = 0;
             info->iIcon = ShSystemIconIndex(&source, small);
         }
@@ -250,7 +250,7 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEI
     if (flags & SHGFI_PIDL) {
         PCIDLIST_ABSOLUTE pidl = (PCIDLIST_ABSOLUTE)path;
         if (!ShPathFromIdList(pidl, full, MAX_PATH)) {
-            /* the desktop and "This PC" have no path, and a picture. */
+            /* the desktop and "This PC" have a picture but no path. */
             if (flags & ~(SHGFI_PIDL | SHGFI_ICON | SHGFI_SYSICONINDEX | SHGFI_ICONLOCATION | SHGFI_SMALLICON |
                           SHGFI_OPENICON | SHGFI_SHELLICONSIZE | SHGFI_LINKOVERLAY | SHGFI_SELECTED))
                 return 0;
@@ -260,7 +260,7 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEI
             full[0] = 0;
         }
     } else if ((flags & SHGFI_USEFILEATTRIBUTES) && is_relative(path)) {
-        /* a name that is not a place is taken from the root of the system drive. */
+        /* a name that is not a place is taken from the system drive's root. */
         WCHAR root[MAX_PATH];
         if (!GetWindowsDirectoryW(root, MAX_PATH) || wcslen(root) < 3 || wcslen(root) + wcslen(path) + 2 >= MAX_PATH)
             return 0;
@@ -275,7 +275,7 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEI
             return 0;
     }
     if (!kind) {
-        /* a root or a folder that is hidden is looked at, even when attributes were given. */
+        /* a hidden root or folder is examined even when attributes were given. */
         if ((flags & SHGFI_ATTRIBUTES) && (flags & SHGFI_USEFILEATTRIBUTES) &&
             (((attributes & 5) && (attributes & FILE_ATTRIBUTE_DIRECTORY)) || is_root(full)))
             flags &= ~SHGFI_USEFILEATTRIBUTES;

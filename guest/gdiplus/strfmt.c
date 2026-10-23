@@ -1,14 +1,12 @@
 /*
- * string formats: the alignment, trimming, tab stops and measurable ranges of a string, and the two formats every
- * program can ask for without making one.
+ * string formats: alignment, trimming, tab stops and measurable ranges, plus the two generic formats.
  */
 #include "text_private.h"
 
-/* the margin of a format without one of its own: a sixth of an em on each side. */
+/* the default margin: a sixth of an em on each side. */
 #define DEFAULT_MARGIN (1.0f / 6.0f)
 #define DEFAULT_TRACKING 1.03f
 
-/* the flags of the generic typographic format. */
 #define TYPOGRAPHIC_FLAGS \
     (StringFormatFlagsNoFitBlackBox | StringFormatFlagsLineLimit | StringFormatFlagsNoClip)
 

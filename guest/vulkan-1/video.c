@@ -1,12 +1,12 @@
 /*
  * video decoding through the host, see include/mime/mvk_video.h: private commands direct3d 11 finds through
- * vkGetDeviceProcAddr, which send dxva buffers over the wire for the host's video decode queue to run.
+ * vkGetDeviceProcAddr, sending dxva buffers over the wire to the host's video decode queue.
  */
 #include "mvk_guest.h"
 
 #include <mime/mvk_video.h>
 
-/* the decoding profiles the gpu has, at most capacity of them; count is the number there are. */
+/* fills at most capacity profiles; count gets the total. */
 VKAPI_ATTR VkResult VKAPI_CALL vkMimeVideoGetCaps(VkDevice device, uint32_t *count, MvkVideoCaps *caps, uint32_t capacity)
 {
     *count = 0;
@@ -56,7 +56,7 @@ VKAPI_ATTR void VKAPI_CALL vkMimeVideoDestroySession(VkDevice device, uint64_t s
     mvk_free_id(session);
 }
 
-/* the picture decode: sent without a reply, the host runs it in order and signals the semaphore. */
+/* no reply: the host runs it in order and signals the semaphore. */
 VKAPI_ATTR VkResult VKAPI_CALL vkMimeVideoDecode(VkDevice device, const MvkVideoDecodeInfo *info, uint64_t picture_image,
                                                  uint32_t picture_layer)
 {
@@ -86,7 +86,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkMimeVideoDecode(VkDevice device, const MvkVideo
     return VK_SUCCESS;
 }
 
-/* the entry points, for vkGetDeviceProcAddr. */
+/* for vkGetDeviceProcAddr. */
 const MvkProc mvk_video_procs[] = {
     {"vkMimeVideoGetCaps", (PFN_vkVoidFunction)vkMimeVideoGetCaps},
     {"vkMimeVideoCreateSession", (PFN_vkVoidFunction)vkMimeVideoCreateSession},

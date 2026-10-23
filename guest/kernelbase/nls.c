@@ -1,7 +1,4 @@
-/*
- * code pages: the tables of the ansi, oem and mac code pages, utf-8, utf-7 and the conversion functions between them and
- * utf-16. The tables come from tools/nls/gencp.py.
- */
+/* code pages: the ansi, oem and mac tables, utf-8, utf-7, and conversions between them and utf-16. */
 #include "kernelbase_private.h"
 #include "nls_cpdata.h"
 
@@ -73,7 +70,7 @@ static LONG wide_to_code(const NLS_CPDATA *p, WCHAR c)
     return (!v && c) ? -1 : (LONG)v;
 }
 
-/* whether a code stands for the character itself and not for a best fit of it. */
+/* FALSE when the code is only a best fit for c. */
 static BOOL code_round_trips(const NLS_CPDATA *p, WCHAR c, ULONG code)
 {
     if (code > 0xFF)
@@ -83,7 +80,7 @@ static BOOL code_round_trips(const NLS_CPDATA *p, WCHAR c, ULONG code)
     return single_to_wide(p, code) == c;
 }
 
-/* the pseudo code pages and the code page of the locale. */
+/* pseudo code pages resolve to the code page of the system or thread locale. */
 UINT KbLocaleCodePage(LCID lcid, UINT kind);
 
 static UINT resolve_code_page(UINT cp)
@@ -107,7 +104,7 @@ UINT KbResolveCodePage(UINT cp)
     return resolve_code_page(cp);
 }
 
-/* the table code pages and the unicode ones, which GetCPInfo knows. */
+/* the code pages GetCPInfo knows: the tables, utf-8 and utf-7. */
 static BOOL known_code_page(UINT cp)
 {
     return cp == CP_UTF8 || cp == CP_UTF7 || find_table_page(cp) != nullptr;
@@ -125,7 +122,7 @@ UINT WINAPI GetOEMCP(void)
 
 BOOL WINAPI IsValidCodePage(UINT cp)
 {
-    /* the pseudo code pages and the symbol one are not valid code page numbers here. */
+    /* the pseudo code pages and CP_SYMBOL are not valid here. */
     if (cp <= CP_THREAD_ACP || cp == CP_SYMBOL)
         return FALSE;
     return known_code_page(cp);
@@ -183,7 +180,7 @@ BOOL WINAPI GetCPInfoExW(UINT cp, DWORD flags, LPCPINFOEXW info)
     UINT resolved = resolve_code_page(cp);
     if (!fill_cp_info(cp, &basic, &u, &n, &name))
         return FALSE;
-    /* the unicode code pages answer whatever the flags are. */
+    /* utf-8 and utf-7 accept any flags. */
     if (flags && resolved != CP_UTF8 && resolved != CP_UTF7) {
         KbSetError(ERROR_INVALID_FLAGS);
         return FALSE;
@@ -526,8 +523,8 @@ static constexpr WCHAR g_glyphs[32] = {
 };
 
 /*
- * The decomposition MB_COMPOSITE makes: the canonical one of Unicode but for a few characters. The letters with a stroke
- * and the Greek ones with a tonos have another mark, and a few have none.
+ * MB_COMPOSITE decomposes canonically, except that letters with a stroke and Greek letters with a tonos use another
+ * mark, and a few have none.
  */
 typedef struct COMPOSITE_FORM {
     WCHAR Char;
@@ -554,7 +551,7 @@ static ULONG compose_pair(WCHAR base, WCHAR mark)
     ULONG r = KbUniCompose(base, mark, FALSE);
     if (!r)
         return 0;
-    /* the composites Windows decomposes another way are not composed this way. */
+    /* skip the composites Windows decomposes its own way. */
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_composite_forms); i++)
         if (g_composite_forms[i].Char == r)
             return 0;
@@ -578,11 +575,11 @@ static int composite_parts(WCHAR c, WCHAR *out)
     if (composite_exempt(c))
         return 0;
     int n = KbUniDecompose(c, FALSE, out);
-    /* a character whose decomposition is another one, such as the ohm sign, stays as it is. */
+    /* a singleton decomposition, like the ohm sign, leaves the character as it is. */
     return n > 1 ? n : 0;
 }
 
-/* one character of a table, decomposed when the caller asked for it. */
+/* decomposed when the flags ask for it. */
 static void put_table_wide(WIDE_OUT *o, WCHAR c, DWORD flags)
 {
     if ((flags & MB_COMPOSITE) && c >= 0xC0) {
@@ -612,7 +609,7 @@ static WCHAR single_with_glyphs(const NLS_CPDATA *p, UINT b, DWORD flags)
 
 #define GB_SUPPLEMENTARY_POINTER 189000
 
-/* the character of a four byte code, or 0 when the pointer stands for none. */
+/* 0 when the four byte pointer maps to no character. */
 static ULONG gb_char_of_pointer(ULONG pointer)
 {
     if (pointer == 7457)
@@ -660,7 +657,7 @@ static LONG gb_pointer_of_char(ULONG c)
     return (LONG)(g_nls_gb_pointer[found] + c - g_nls_gb_char[found]);
 }
 
-/* returns FALSE for a byte the code page does not define when the flags ask for an error. */
+/* FALSE for an undefined byte when the flags ask for an error. */
 static BOOL table_to_wide(const NLS_CPDATA *p, DWORD flags, const UCHAR *s, int n, WIDE_OUT *o)
 {
     BOOL strict = (flags & MB_ERR_INVALID_CHARS) != 0;
@@ -669,7 +666,7 @@ static BOOL table_to_wide(const NLS_CPDATA *p, DWORD flags, const UCHAR *s, int 
         if (!is_lead(p, b)) {
             WCHAR c = single_with_glyphs(p, b, flags);
             if (c == 0xFFFF) {
-                /* a byte that is no character of gb18030. */
+                /* not a gb18030 character. */
                 if (strict)
                     return FALSE;
                 put_wide(o, p->UnicodeDefault);
@@ -787,8 +784,8 @@ static void wide_to_table(TABLE_OUT *t, const WCHAR *s, int n)
             put_table_char(t, c);
             continue;
         }
-        /* a character and the nonspacing marks after it. The first mark composes with the character when Unicode has
-           the composite, the others and the marks of a cluster with no character are left over. */
+        /* the first mark after a character composes with it when Unicode has the composite. Further marks, and marks
+           with no base character, are left over. */
         int j = i + 1;
         BOOL lone_marks = KbUniIsNonspacing(c);
         if (lone_marks)

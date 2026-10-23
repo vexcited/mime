@@ -1,10 +1,9 @@
 /*
- * the engine: one thread mixing every playing buffer of the process into
- * a 48 khz stereo float stream for the host, in passes of 10 ms as
- * windows' audio engine runs. a pass advances each buffer's write cursor,
- * the play cursor trails it, and the notifications its play cursor
- * passed are signalled. without a host stream the passes follow the
- * clock, so cursors and notifications behave the same.
+ * the mixer: one thread mixes every playing buffer of the process into a
+ * 48 khz stereo float stream for the host, in 10 ms passes like windows'
+ * audio engine. a pass advances each write cursor, the play cursor trails
+ * it, and notifications the play cursor passed are signalled. without a
+ * host stream the passes follow the clock, so cursors behave the same.
  */
 #include "dsound_private.h"
 
@@ -12,7 +11,7 @@ static MimeOutput output;
 static BOOL output_open, output_failed;
 static HANDLE wake, thread;
 static float mix[MIX_PERIOD * MIX_CHANNELS];
-/* the clock of passes without a host stream. */
+/* paces the passes when there is no host stream. */
 static LARGE_INTEGER clock_start, clock_rate;
 static ULONG64 clock_passes;
 static BOOL running;
@@ -55,9 +54,8 @@ static inline float load_f32(const BYTE *p, UINT c)
 }
 
 /*
- * reads frames from the cursor at the buffer's rate, linearly between
- * neighbours, into the pass. returns the frames made, fewer when a buffer
- * that does not loop reaches its end.
+ * resamples from the cursor with linear interpolation. yields fewer frames
+ * when a non-looping buffer reaches its end.
  */
 #define MIX_LOOP(load)                                                                                                \
     for (; n < MIX_PERIOD; n++) {                                                                                     \
@@ -83,7 +81,7 @@ static inline float load_f32(const BYTE *p, UINT c)
                 index -= frames;                                                                                      \
     }
 
-/* mixes one pass of a buffer; false once a buffer that does not loop ran out. */
+/* returns FALSE once a non-looping buffer has run out. */
 static BOOL mix_buffer(DSBUFFER *b, const float device[2])
 {
     const WAVEFORMATEX *f = b->format;
@@ -136,7 +134,7 @@ static DWORD lead(DSBUFFER *b)
 {
     if (!(b->flags & DSBCAPS_TRUEPLAYPOSITION))
         return b->lead;
-    /* what the host has queued, in the buffer's frames. */
+    /* what the host has queued, in buffer frames. */
     UINT64 queued = output_open ? MimeOutputQueued(&output) : (UINT64)MIX_PERIOD * MIX_AHEAD;
     DWORD align = b->format->nBlockAlign;
     UINT64 bytes = queued * b->rate / MIX_RATE * align;
@@ -145,9 +143,9 @@ static DWORD lead(DSBUFFER *b)
 }
 
 /*
- * windows' cursors: the write cursor is where the engine reads next, the
- * play cursor trails it by the latency and never goes back, both aligned
- * to frames. a stopped buffer has both at its position.
+ * like windows, the write cursor is where the engine reads next and the play
+ * cursor trails it by the latency, never going back. both are frame aligned,
+ * and a stopped buffer has both at its position.
  */
 void DsMixerCursors(DSBUFFER *b, DWORD *play, DWORD *write)
 {
@@ -167,7 +165,7 @@ void DsMixerCursors(DSBUFFER *b, DWORD *play, DWORD *write)
     *write = position;
 }
 
-/* signals the notifications in [from, to) of the buffer, going round its end. */
+/* signals the notifications in [from, to), wrapping around the buffer end. */
 static void signal_range(DSBUFFER *b, DWORD from, DWORD to)
 {
     for (DWORD i = 0; i < b->notify_count; i++) {
@@ -186,7 +184,7 @@ static void signal_stop(DSBUFFER *b)
         SetEvent(b->notifies[b->notify_count - 1].event);
 }
 
-/* the buffer stops where its engine read last; DSBPN_OFFSETSTOP is signalled. */
+/* the buffer stops where the engine read last, and DSBPN_OFFSETSTOP is signalled. */
 void DsMixerStop(DSBUFFER *b)
 {
     if (!b->playing)
@@ -211,7 +209,7 @@ void DsMixerAdd(DSBUFFER *b)
 
 /* ------------------------------------------------------------------ focus */
 
-/* the foreground window's thread, none for a minimized one. */
+/* none when the foreground window is minimized. */
 static DWORD foreground_thread(void)
 {
     HWND window = GetForegroundWindow();
@@ -228,8 +226,8 @@ static DWORD foreground_thread(void)
 enum { FOCUS_ACTIVE, FOCUS_MUTED, FOCUS_LOST };
 
 /*
- * windows' GetBufferFocusState. what windows learns of other processes'
- * levels from its shared thread list is known here for this process only.
+ * GetBufferFocusState. windows sees other processes' levels through a shared
+ * thread list, here only this process is known.
  */
 static int focus_state(DSBUFFER *b, DWORD foreground, DWORD foreground_level)
 {
@@ -305,7 +303,7 @@ static void advance(DSBUFFER *b, const float device[2])
 {
     BOOL more = mix_buffer(b, device);
     if (more) {
-        /* the play cursor follows every pass, so it stays monotonic however rarely a program reads it. */
+        /* updated every pass so the play cursor stays monotonic however rarely it is read. */
         DWORD play, write;
         DsMixerCursors(b, &play, &write);
         if (b->notify_count && play != b->notify_play)
@@ -313,7 +311,7 @@ static void advance(DSBUFFER *b, const float device[2])
         b->notify_play = play;
         return;
     }
-    /* a buffer that does not loop ran out: what is left to play counts as played, and it rewinds. */
+    /* a non-looping buffer ran out: the rest counts as played and it rewinds. */
     if (b->notify_count && b->notify_play < b->size)
         signal_range(b, b->notify_play, b->size);
     b->playing = FALSE;
@@ -404,7 +402,7 @@ static void begin(void)
     QueryPerformanceCounter(&clock_start);
     clock_passes = 0;
     running = TRUE;
-    /* focus was not followed while nothing played. */
+    /* focus is not tracked while nothing plays. */
     update_focus(FALSE);
 }
 

@@ -61,12 +61,12 @@ typedef struct CM_HIVE_KEY {
 #define CM_HIVE_NAME_ASCII 0x0020
 
 NTSTATUS CmpOpenHive(PCWSTR path, CM_HIVE **out);
-/* the security descriptor the hive keeps for a key node, whole, in a blob. */
+/* the hive's security descriptor for a key node, whole, in a blob. */
 NTSTATUS CmpReadSecurity(CM_HIVE *hive, ULONG cell, SD_BLOB **out);
 NTSTATUS CmpReadKey(CM_HIVE *hive, ULONG cell, CM_HIVE_KEY *key);
-/* calls back for each subkey cell of a key node, in the hive's sorted order. */
+/* in the hive's sorted order. */
 NTSTATUS CmpForEachSubKey(CM_HIVE *hive, const CM_HIVE_KEY *key, NTSTATUS (*fn)(PVOID ctx, ULONG cell), PVOID ctx);
-/* reads value number index of a key: name, type and a pool copy of its data. */
+/* data gets a pool copy. */
 NTSTATUS CmpReadValue(CM_HIVE *hive, const CM_HIVE_KEY *key, ULONG index, PWCHAR name, PUSHORT name_chars,
                       PULONG type, PUCHAR *data, PULONG data_length);
 
@@ -96,7 +96,7 @@ typedef struct CM_NODE {
     ULONG Cell;
     ULONG Flags;
     CM_VALUE *Values;
-    SD_BLOB *Sd; /* the descriptor of the key: one a program set, or the hive's own once read */
+    SD_BLOB *Sd; /* set by a program, or the hive's own once read */
     LARGE_INTEGER LastWrite;
     USHORT NameLength;
     WCHAR Name[];
@@ -106,14 +106,14 @@ extern FAST_MUTEX CmpLock;
 extern CM_NODE *CmpRoot;
 extern POBJECT_TYPE CmKeyType;
 
-/* what an open key handle refers to: the node, and the block of the change notification asked on the handle. */
+/* an open key handle: the node, and the notify block of requests on the handle. */
 typedef struct CM_NOTIFY CM_NOTIFY;
 typedef struct CM_KEY_BODY {
     CM_NODE *Node;
     CM_NOTIFY *Notify;
 } CM_KEY_BODY;
 
-/* answers of change notifications are written once the lock is out, so it is released with this. */
+/* change notifications are answered once the lock is released, so release it with this. */
 extern volatile LONG CmpNotifyReady;
 void CmpNotifyFinish(void);
 static inline void CmpUnlock(void)
@@ -135,7 +135,7 @@ NTSTATUS CmpLoadValues(CM_NODE *node);
 NTSTATUS CmpLoadChildren(CM_NODE *node);
 ULONG CmpFullPath(CM_NODE *node, PWCHAR out, ULONG capacity);
 NTSTATUS CmpRestoreJournal(const CmJournalRecord *record, const UCHAR *payload);
-/* a referenced body for a key named by the caller, as a handle opened with that access would refer to. */
+/* references the body a handle opened with this access would refer to. */
 NTSTATUS CmpReferenceKeyByName(POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mode, ACCESS_MASK access,
                                CM_KEY_BODY **body);
 
@@ -144,9 +144,9 @@ NTSTATUS CmpReferenceKeyByName(POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mo
 void CmpNotifyInitialize(void);
 /* lock held: a key's names, values, attributes or security changed. */
 void CmpNotifyChange(CM_NODE *node, ULONG filter);
-/* lock held: the key was deleted. */
+/* lock held. */
 void CmpNotifyKeyDeleted(CM_NODE *node);
-/* the last handle of a key closed, or the body is deleted, lock not held. */
+/* lock not held. */
 void CmpNotifyClose(CM_KEY_BODY *body);
 void CmpNotifyDelete(CM_KEY_BODY *body);
 
@@ -156,15 +156,15 @@ void CmpJournalInitialize(void);
 void CmpJournalEnable(void);
 NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHAR *name, ULONG chars,
                          const void *data, ULONG length, LARGE_INTEGER last_write);
-/* compact.c: the records of a long journal that still count are written again, as the journal. */
+/* compact.c: rewrites the records of a long journal that still count as the new journal. */
 PVOID CmpCompactBegin(void);
 void CmpCompactNote(PVOID context, ULONG64 offset, const CmJournalRecord *record, const UCHAR *payload);
 void CmpCompactFinish(PVOID context, PFILE_OBJECT *journal, ULONG64 *offset, ULONG64 *sequence);
 void CmpCompactAbandon(PVOID context);
 NTSTATUS CmpJournalReadBytes(void *data, ULONG bytes, ULONG64 offset);
-/* starts the worker making appended records durable, once the system can run threads. */
+/* starts the worker that makes appended records durable, once threads can run. */
 void CmpJournalStart(void);
-/* what RegFlushKey asks for: every record appended before the call is on the host disk when it succeeds. */
+/* RegFlushKey: on success every record appended before the call is on the host disk. */
 NTSTATUS CmpJournalFlush(BOOLEAN volatile_key);
 
 /* ------------------------------------------------------------------ boot.c */
@@ -173,7 +173,7 @@ void CmpSpecialize(void);
 
 /* ------------------------------------------------------------------ certs.c */
 
-/* writes the roots of the host's certificate bundle into the machine's AuthRoot store, unjournaled. */
+/* unjournaled, so never saved. */
 void CmpImportHostRoots(void);
 
 #endif

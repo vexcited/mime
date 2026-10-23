@@ -1,7 +1,6 @@
 /*
- * services.exe: NotifyServiceStatusChange. a client asks to be told when a service enters a state, or when
- * services are created or deleted; the manager completes the request once, as windows does, and writes the
- * completion down a pipe the client keeps open for them.
+ * services.exe: NotifyServiceStatusChange. a request fires once, like windows, when its service enters a wanted
+ * state or services are created or deleted. completions go down a pipe the client keeps open.
  */
 #include "services.h"
 
@@ -46,7 +45,7 @@ static void unlink_client(NOTIFY *n)
     }
 }
 
-/* a request is done: it leaves its service and waits in the queue to be written. */
+/* a completed request leaves its service and is queued for writing. */
 static void complete(NOTIFY *n, DWORD status, DWORD triggered, SERVICE *s, const WCHAR *names, DWORD names_chars)
 {
     unlink_service(n);
@@ -78,7 +77,7 @@ void NotifyServiceChanged(SERVICE *s, DWORD old_state)
     }
 }
 
-/* the service is marked for deletion, or gone: the requests for a state end with an error. */
+/* the service is marked for deletion or gone: requests for a state fail. */
 void NotifyServiceDeleting(SERVICE *s, BOOL gone)
 {
     for (NOTIFY *n = s->Notify, *next; n; n = next) {
@@ -106,7 +105,7 @@ void NotifyCreatedDeleted(const WCHAR *name, BOOL created)
     SvcFree(names);
 }
 
-/* NotifyServiceStatusChange: the request is added, and met at once when the state is already one it asks for. */
+/* completes at once when the service is already in a wanted state. */
 DWORD NotifyRegister(CLIENT *client, SCHANDLE *handle, UINT64 block, DWORD mask, DWORD version, DWORD *status_out)
 {
     (void)status_out;
@@ -147,7 +146,6 @@ DWORD NotifyRegister(CLIENT *client, SCHANDLE *handle, UINT64 block, DWORD mask,
     return ERROR_SUCCESS;
 }
 
-/* a client is gone: its requests, and what is still queued for it. */
 void NotifyClientGone(CLIENT *client)
 {
     for (NOTIFY *n = client->Notifies, *next; n; n = next) {
@@ -155,7 +153,7 @@ void NotifyClientGone(CLIENT *client)
         if (!n->Queued)
             unlink_service(n);
         else {
-            /* it is in the queue: the writer drops it. */
+            /* already queued: the writer drops it. */
             n->Client = nullptr;
             continue;
         }
@@ -165,7 +163,7 @@ void NotifyClientGone(CLIENT *client)
     client->Notifies = nullptr;
 }
 
-/* writes one completion; the lock is not held. */
+/* the lock is not held. */
 static void write_one(NOTIFY *n, CLIENT *client, HANDLE pipe, HANDLE event)
 {
     SCM_WRITER w;
@@ -235,7 +233,7 @@ static DWORD WINAPI notifier(LPVOID unused)
     }
 }
 
-/* a client opens its pipe for completions: kept until the client goes. */
+/* the completion pipe is kept until the client goes. */
 DWORD NotifyAttach(CLIENT *client, HANDLE pipe)
 {
     if (client->NotifyPipe)

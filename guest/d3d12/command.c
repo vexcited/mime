@@ -1,10 +1,8 @@
 /*
- * command allocators and lists. an allocator is a vulkan command pool, a
- * list records into a command buffer of its allocator's, which mime's
- * vulkan-1 writes to guest memory and sends at Close. rendering begins at
- * the first draw after the targets change and ends before anything that
- * may not run inside it. root arguments are push constants, pushed for the
- * bind point that draws or dispatches; the heaps are descriptor buffers.
+ * command allocators and lists. an allocator is a vulkan command pool, and a list records into one of its command
+ * buffers, which mime's vulkan-1 writes to guest memory and sends at Close. rendering begins at the first draw
+ * after the targets change and ends before anything that may not run inside it. root arguments are push constants,
+ * pushed for the bind point that draws or dispatches. the heaps are descriptor buffers.
  */
 #include "d3d12_private.h"
 
@@ -55,7 +53,7 @@ BOOL D12ScratchAlloc(D12CommandAllocator *allocator, UINT64 size, UINT64 alignme
     if (!b)
         return FALSE;
     b->size = D12_MAX(size + alignment, (UINT64)1 << 20);
-    /* generated commands' preprocessing, indirect arguments shaders write through the address, clears copy from it. */
+    /* used for generated command preprocessing, indirect arguments shaders write, and clear sources. */
     VkBufferUsageFlags2CreateInfoKHR usage = {VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR};
     usage.usage = VK_BUFFER_USAGE_2_PREPROCESS_BUFFER_BIT_EXT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT_KHR |
                   VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT_KHR | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT_KHR |
@@ -191,7 +189,7 @@ static HRESULT STDMETHODCALLTYPE allocator_get_device(ID3D12CommandAllocator *if
     return D12ChildGetDevice(&allocator_impl(iface)->child, riid, device);
 }
 
-/* the program has waited for the gpu to be done with every list the allocator recorded. */
+/* the program must have waited for the gpu to finish every list the allocator recorded. */
 static HRESULT STDMETHODCALLTYPE allocator_reset(ID3D12CommandAllocator *iface)
 {
     D12CommandAllocator *allocator = allocator_impl(iface);
@@ -241,7 +239,7 @@ HRESULT D12CreateCommandAllocator(D12Device *device, D3D12_COMMAND_LIST_TYPE typ
     return S_OK;
 }
 
-/* a command buffer of the allocator not yet recorded since its reset. */
+/* returns a command buffer not yet recorded since the last reset. */
 static VkCommandBuffer allocator_take(D12CommandAllocator *allocator)
 {
     D12Device *device = allocator->child.device;
@@ -277,7 +275,7 @@ D12CommandList *D12CommandListFrom(ID3D12CommandList *iface)
     return iface ? CONTAINING_RECORD(iface, D12CommandList, iface) : nullptr;
 }
 
-/* the command buffer a closed list submits, or NULL. */
+/* NULL while the list is open or failed. */
 VkCommandBuffer D12CommandListBuffer(ID3D12CommandList *iface)
 {
     D12CommandList *list = D12CommandListFrom(iface);
@@ -298,7 +296,7 @@ static void end_rendering(D12CommandList *list)
     list->rendering = FALSE;
 }
 
-/* a full barrier, outside rendering: what came before is written and visible to what comes after. */
+/* a full barrier outside rendering: everything before is written and visible to everything after. */
 static void barrier(D12CommandList *list)
 {
     end_rendering(list);
@@ -307,9 +305,8 @@ static void barrier(D12CommandList *list)
 }
 
 /*
- * direct3d orders the draws and clears of a target as vulkan does only
- * within one rendering: before attachments or a clear write images an
- * earlier rendering or clear wrote, a barrier between them, outside rendering.
+ * direct3d orders draws and clears to a target, vulkan only within one rendering. so before attachments or a clear
+ * write an image an earlier rendering or clear wrote, a barrier goes between them, outside rendering.
  */
 static void order_targets(D12CommandList *list, const VkImage *images, UINT count)
 {
@@ -440,7 +437,7 @@ static void set_root_address(D12CommandList *list, BOOL compute, UINT index, D3D
 
 static void set_offsets(D12CommandList *list, VkPipelineBindPoint point, D12RootSignature *root);
 
-/* binds the heaps' descriptor buffers and points the sets at them for a bind point, as its root signature lays them. */
+/* binds the heaps' descriptor buffers, then points the bind point's sets at them per its root signature. */
 static void bind_sets(D12CommandList *list, BOOL compute)
 {
     D12Device *device = list->child.device;
@@ -466,7 +463,6 @@ static void bind_sets(D12CommandList *list, BOOL compute)
     s->sets_dirty = FALSE;
 }
 
-/* points a bind point's sets at the heaps' descriptor buffers, as a root signature lays them. */
 static void set_offsets(D12CommandList *list, VkPipelineBindPoint point, D12RootSignature *root)
 {
     D12Device *device = list->child.device;
@@ -486,13 +482,13 @@ static void set_offsets(D12CommandList *list, VkPipelineBindPoint point, D12Root
     }
 }
 
-/* push constants hold one bind point's root arguments at a time: the one about to run. */
+/* push constants hold the root arguments of one bind point at a time: the one about to run. */
 static void push_root(D12CommandList *list, BOOL compute)
 {
     D12RootState *s = root_state(list, compute);
     if (!s->root || !s->root->push_size || (list->pushed_compute == compute && !s->push_dirty))
         return;
-    /* push constants another layout or the other bind point wrote go again whole, otherwise the words changed. */
+    /* push everything if the other bind point pushed last, otherwise only the changed words. */
     UINT lo = 0, hi = s->root->push_size;
     if (list->pushed_compute == compute && s->push_hi > s->push_lo) {
         lo = s->push_lo * 4;
@@ -568,14 +564,14 @@ static void emit_viewports(D12CommandList *list)
     VkRect2D scissors[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
     for (UINT i = 0; i < count; i++) {
         viewports[i] = i < list->viewport_count ? list->viewports[i] : (VkViewport){0, 1, 1, -1, 0, 1};
-        /* direct3d 12 has no scissor enable: rectangles not set clip everything. */
+        /* direct3d 12 has no scissor enable: unset rectangles clip everything. */
         scissors[i] = i < list->scissor_count ? list->scissors[i] : (VkRect2D){{0, 0}, {0, 0}};
     }
     vk->vkCmdSetViewportWithCount(list->cmd, count, viewports);
     vk->vkCmdSetScissorWithCount(list->cmd, count, scissors);
 }
 
-/* what the graphics state leaves dynamic: depth bias, depth and stencil tests as the targets allow them. */
+/* the dynamic parts of the graphics state: depth bias, and depth and stencil tests as the targets allow. */
 static void emit_state(D12CommandList *list)
 {
     D12Device *device = list->child.device;
@@ -652,7 +648,7 @@ static void emit_buffers(D12CommandList *list)
 
 /* ------------------------------------------------------------------ rendering */
 
-/* begins rendering to the targets bound, as many and of the formats the graphics state renders to. */
+/* uses the attachment count and formats of the graphics state. */
 static void begin_rendering(D12CommandList *list)
 {
     D12Device *device = list->child.device;
@@ -688,7 +684,7 @@ static void begin_rendering(D12CommandList *list)
         info.pDepthAttachment = &depth;
     if (p->stencil_format && list->has_dsv && (list->dsv.range.aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT))
         info.pStencilAttachment = &stencil;
-    /* the image of rates, when it covers what is rendered. */
+    /* the shading rate image, if it covers the render area. */
     VkRenderingFragmentShadingRateAttachmentInfoKHR rates = {
         VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR};
     D12Resource *r = list->rate_image;
@@ -765,7 +761,7 @@ static void end_stream_output(D12CommandList *list)
 
 /* ------------------------------------------------------------------ draws and dispatches */
 
-/* direct3d's combiners are vulkan's, its sum of rates' logarithms a product of sizes. */
+/* direct3d's combiners map to vulkan's, its sum of log2 rates being a product of sizes. */
 static void emit_shading_rate(D12CommandList *list)
 {
     static const VkFragmentShadingRateCombinerOpKHR OPS[] = {
@@ -790,7 +786,7 @@ static BOOL prepare_draw(D12CommandList *list)
     if (!list->open || !p || p->compute || !list->graphics.root)
         return FALSE;
     BOOL so = p->stream_output && device->has_transform_feedback;
-    /* a state of other attachments than the rendering begun needs a rendering of its own. */
+    /* a pipeline with other attachment formats than the current rendering needs a new rendering. */
     BOOL layout = list->rendering && (list->render_rt_count != p->rt_count || list->render_depth_format != p->depth_format ||
                                       list->render_stencil_format != p->stencil_format);
     if (list->rendering && (list->targets_dirty || layout || (list->so_active && !so)))
@@ -802,7 +798,7 @@ static BOOL prepare_draw(D12CommandList *list)
         list->bound_graphics = p;
         list->state_dirty = TRUE;
     }
-    /* mesh pipelines have no topology or vertex buffers: those wait for the next pipeline of vertices. */
+    /* mesh pipelines have no topology or vertex buffers, those wait for the next vertex pipeline. */
     if (list->state_dirty) {
         emit_state(list);
         if (!p->mesh) {
@@ -1034,7 +1030,7 @@ static void STDMETHODCALLTYPE list_copy_buffer_region(ID3D12GraphicsCommandList1
     vk_of(list)->vkCmdCopyBuffer(list->cmd, s->buffer, d->buffer, 1, &region);
 }
 
-/* the image subresource a subresource index names, its plane's aspect alone. */
+/* only the aspect of the subresource's plane. */
 static VkImageSubresourceLayers subresource_layers(const D12Resource *r, UINT index)
 {
     UINT mip, layer, plane;
@@ -1042,7 +1038,6 @@ static VkImageSubresourceLayers subresource_layers(const D12Resource *r, UINT in
     return (VkImageSubresourceLayers){D12PlaneAspect(r, plane), mip, layer, 1};
 }
 
-/* a footprint's region of a buffer and a box of a texture, as vulkan copies them. */
 static VkBufferImageCopy footprint_region(const D12Resource *buffer, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT *fp,
                                           const D12Resource *image, UINT sub, VkOffset3D at, const D3D12_BOX *box,
                                           BOOL box_in_buffer)
@@ -1066,7 +1061,7 @@ static VkBufferImageCopy footprint_region(const D12Resource *buffer, const D3D12
         else
             region.imageOffset = (VkOffset3D){(INT)box->left, (INT)box->top, (INT)box->front};
     }
-    /* copies of block compressed mips smaller than a block take the mip's own size. */
+    /* block compressed mips smaller than a block copy at the mip's own size. */
     VkExtent3D mip = D12MipExtent(image, region.imageSubresource.mipLevel);
     extent.width = D12_MIN(extent.width, mip.width - (UINT)region.imageOffset.x);
     extent.height = D12_MIN(extent.height, mip.height - (UINT)region.imageOffset.y);
@@ -1075,7 +1070,6 @@ static VkBufferImageCopy footprint_region(const D12Resource *buffer, const D3D12
     return region;
 }
 
-/* the buffer and offset of an address of the allocator's scratch memory. */
 static BOOL scratch_buffer(D12CommandAllocator *allocator, VkDeviceAddress address, VkBuffer *buffer,
                            VkDeviceSize *offset)
 {
@@ -1100,7 +1094,7 @@ static void transfer_barrier(D12CommandList *list)
     vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
 }
 
-/* bytes a texel of one aspect of an image takes in a buffer. */
+/* bytes per texel of one aspect in a buffer. */
 static UINT aspect_bytes(const D12Resource *r, VkImageAspectFlags aspect)
 {
     if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT)
@@ -1111,9 +1105,8 @@ static UINT aspect_bytes(const D12Resource *r, VkImageAspectFlags aspect)
 }
 
 /*
- * a copy between images; direct3d also copies between a depth or stencil
- * plane and a color texture of its size, which vulkan does with
- * VK_KHR_maintenance8, and otherwise through the allocator's memory.
+ * direct3d also copies between a depth or stencil plane and a same sized color texture. vulkan does that with
+ * VK_KHR_maintenance8, otherwise it goes through the allocator's memory.
  */
 static void copy_image(D12CommandList *list, D12Resource *s, D12Resource *d, const VkImageCopy *region)
 {
@@ -1166,7 +1159,7 @@ static void STDMETHODCALLTYPE list_copy_texture_region(ID3D12GraphicsCommandList
             return;
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = dst->PlacedFootprint;
         VkBufferImageCopy region = footprint_region(d, &fp, s, src->SubresourceIndex, (VkOffset3D){0}, box, FALSE);
-        /* the destination point moves the buffer offset, in blocks. */
+        /* the destination point offsets into the buffer, in blocks. */
         const D3dFormat *f = D3dGetFormat(fp.Footprint.Format);
         UINT block = f->vk != VK_FORMAT_UNDEFINED ? f->block : 1, block_bytes = f->vk != VK_FORMAT_UNDEFINED ? f->block_bytes : 4;
         region.bufferOffset += (UINT64)z * fp.Footprint.RowPitch * (fp.Footprint.Height / block) +
@@ -1226,8 +1219,8 @@ static void STDMETHODCALLTYPE list_copy_resource(ID3D12GraphicsCommandList10 *if
 }
 
 /*
- * tiles to or from a buffer, 64 KiB a tile in the region's order: a tile
- * of a texture as rows of its shape, of a buffer or a mip tail its bytes.
+ * tiles to or from a buffer, 64 KiB per tile in region order. a texture tile is laid out as rows of the tile
+ * shape, a buffer or mip tail tile as its bytes.
  */
 static void STDMETHODCALLTYPE list_copy_tiles(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *tiled,
                                               const D3D12_TILED_RESOURCE_COORDINATE *start,
@@ -1257,7 +1250,7 @@ static void STDMETHODCALLTYPE list_copy_tiles(ID3D12GraphicsCommandList10 *iface
                                 &region);
             continue;
         }
-        /* packed mips have no layout direct3d tells: their tiles do not copy. */
+        /* direct3d defines no layout for packed mips, so their tiles do not copy. */
         if (place.packed)
             continue;
         VkBufferImageCopy region = {at, r->tile_shape.width, r->tile_shape.height,
@@ -1297,9 +1290,8 @@ static void STDMETHODCALLTYPE list_resolve_subresource(ID3D12GraphicsCommandList
 }
 
 /*
- * a min mip feedback map decoded to, or encoded from, a texture of R8_UINT
- * of its regions: a blit between its words and the bytes. mip region used
- * maps are not decoded.
+ * decodes a min mip feedback map to an R8_UINT texture of its regions, or encodes it back, with a blit. mip region
+ * used maps are not decoded.
  */
 static void code_feedback(D12CommandList *list, D12Resource *d, UINT dst_sub, D12Resource *s, UINT src_sub, BOOL decode)
 {
@@ -1356,7 +1348,7 @@ static void STDMETHODCALLTYPE list_rs_set_viewports(ID3D12GraphicsCommandList10 
         D3D12_VIEWPORT v = viewports[i];
         if (v.Width <= 0)
             v.Width = 1;
-        /* direct3d's y points down: a viewport of negative height flips vulkan's. */
+        /* direct3d's y points down, so a negative height viewport flips vulkan's. */
         list->viewports[i] = (VkViewport){v.TopLeftX, v.TopLeftY + v.Height, v.Width, -v.Height, v.MinDepth, v.MaxDepth};
         if (v.Height == 0)
             list->viewports[i].height = -1, list->viewports[i].y = v.TopLeftY + 1;
@@ -1542,7 +1534,7 @@ static BOOL is_uint(VkFormat f)
     }
 }
 
-/* clears rectangles of an attachment inside a rendering of its own. */
+/* clears rectangles of an attachment in a rendering of its own. */
 static void clear_attachment_rects(D12CommandList *list, const D12TargetView *t, const VkClearAttachment *clear,
                                    UINT rect_count, const D3D12_RECT *rects)
 {
@@ -1640,7 +1632,7 @@ static void STDMETHODCALLTYPE list_clear_depth_stencil_view(ID3D12GraphicsComman
     vk_of(list)->vkCmdClearDepthStencilImage(list->cmd, t->resource->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
 }
 
-/* fills a buffer range with a pattern of up to 16 bytes, words at once when it is one. */
+/* patterns of up to 16 bytes, filled a word at a time when the pattern fits in one. */
 static void fill_pattern(D12CommandList *list, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size,
                          const BYTE *pattern, UINT pattern_size)
 {
@@ -1668,9 +1660,8 @@ static void fill_pattern(D12CommandList *list, VkBuffer buffer, VkDeviceSize off
 }
 
 /*
- * rectangles of a storage image, which may not be a target: rows of the
- * packed value in scratch memory, filled once, copied over each rectangle
- * in bands of as many rows.
+ * a storage image may not be a render target, so rectangles are cleared by filling rows of the packed value in
+ * scratch memory once and copying them over each rectangle in bands of that many rows.
  */
 static void clear_uav_rects(D12CommandList *list, const D12DescriptorInfo *info, const UINT *uints,
                             const FLOAT *floats, UINT rect_count, const D3D12_RECT *rects)
@@ -1760,7 +1751,7 @@ static void clear_uav(D12CommandList *list, D3D12_CPU_DESCRIPTOR_HANDLE cpu, con
         else
             value.float32[i] = floats[i];
     }
-    /* uint clears of other formats write the values' bits, as their formats take them. */
+    /* uint clears of non-integer formats write the raw bits of the values, as the format stores them. */
     if (uints && !is_uint(info->format) && !is_sint(info->format)) {
         BYTE packed[16];
         UINT size;
@@ -1789,7 +1780,7 @@ static void STDMETHODCALLTYPE list_clear_uav_float(ID3D12GraphicsCommandList10 *
     clear_uav(impl(iface), cpu, nullptr, values, rect_count, rects);
 }
 
-/* the contents may go: nothing has to be done to lose them. */
+/* discarded contents may be lost, so nothing needs doing. */
 static void STDMETHODCALLTYPE list_discard_resource(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *resource,
                                                     const D3D12_DISCARD_REGION *region)
 {
@@ -1797,7 +1788,6 @@ static void STDMETHODCALLTYPE list_discard_resource(ID3D12GraphicsCommandList10 
 
 /* ------------------------------------------------------------------ barriers */
 
-/* the stages of every kind of shader the device runs. */
 static VkPipelineStageFlags2 shader_stages(D12Device *device)
 {
     VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
@@ -1815,10 +1805,8 @@ static VkPipelineStageFlags2 shader_stages(D12Device *device)
 }
 
 /*
- * the work a resource state covers and its accesses, with the vulkan
- * commands mime runs for it: clears and copies are transfers, uav clears
- * included. a state of no such bit, common or one unknown, is every
- * command's.
+ * the stages and accesses a resource state covers, including the vulkan commands mime runs for it: clears and
+ * copies are transfers, uav clears included. common, or a state with unknown bits, covers every command.
  */
 static void state_scope(D12Device *device, UINT state, VkPipelineStageFlags2 *stages, VkAccessFlags2 *access)
 {
@@ -1860,7 +1848,7 @@ static void state_scope(D12Device *device, UINT state, VkPipelineStageFlags2 *st
     if (state & D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) {
         s |= shaders & ~VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
         a |= VK_ACCESS_2_SHADER_READ_BIT;
-        /* the inputs of acceleration structure builds are in this state. */
+        /* acceleration structure build inputs are in this state. */
         if (device->has_rt)
             s |= VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
     }
@@ -1877,7 +1865,7 @@ static void state_scope(D12Device *device, UINT state, VkPipelineStageFlags2 *st
                  VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT;
         }
     }
-    /* indirect arguments and predicates: read by draws, by command generation, and by mime's compute shaders. */
+    /* indirect arguments and predicates: read by draws, command generation and mime's compute shaders. */
     if (state & D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT) {
         s |= VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
              VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
@@ -1922,10 +1910,9 @@ static void state_scope(D12Device *device, UINT state, VkPipelineStageFlags2 *st
 }
 
 /*
- * every image is in the general layout, so barriers only order memory, all
- * of a call's in one: a transition from the work of its state before to
- * that of its state after, a uav barrier between the work of views and
- * acceleration structures, an aliasing barrier between all work.
+ * every image stays in the general layout, so barriers only order memory, all of a call's in one: a transition
+ * from the work of the state before to that of the state after, a uav barrier between view and acceleration
+ * structure work, an aliasing barrier between all work.
  */
 static void STDMETHODCALLTYPE list_resource_barrier(ID3D12GraphicsCommandList10 *iface, UINT count,
                                                     const D3D12_RESOURCE_BARRIER *barriers)
@@ -1967,7 +1954,7 @@ static void STDMETHODCALLTYPE list_resource_barrier(ID3D12GraphicsCommandList10 
         list->written_count = 0;
 }
 
-/* the vulkan stages of enhanced barriers' synchronization scopes, with the commands mime runs for them. */
+/* vulkan stages for enhanced barrier sync scopes, including the commands mime runs for them. */
 static VkPipelineStageFlags2 sync_stages(D12Device *device, UINT sync)
 {
     VkPipelineStageFlags2 shaders = shader_stages(device), s = 0;
@@ -2001,7 +1988,7 @@ static VkPipelineStageFlags2 sync_stages(D12Device *device, UINT sync)
         s |= VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
     if (sync & (D3D12_BARRIER_SYNC_COPY | D3D12_BARRIER_SYNC_RESOLVE | D3D12_BARRIER_SYNC_CLEAR_UNORDERED_ACCESS_VIEW))
         s |= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
-    /* indirect arguments and predicates: read by draws, by command generation, and by mime's compute shaders. */
+    /* indirect arguments and predicates: read by draws, command generation and mime's compute shaders. */
     if (sync & D3D12_BARRIER_SYNC_EXECUTE_INDIRECT) {
         s |= VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
              VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
@@ -2022,7 +2009,7 @@ static VkPipelineStageFlags2 sync_stages(D12Device *device, UINT sync)
     return s;
 }
 
-/* the accesses direct3d writes through. */
+/* accesses that write. */
 #define WRITE_ACCESSES                                                                                                 \
     (D3D12_BARRIER_ACCESS_RENDER_TARGET | D3D12_BARRIER_ACCESS_UNORDERED_ACCESS |                                      \
      D3D12_BARRIER_ACCESS_DEPTH_STENCIL_WRITE | D3D12_BARRIER_ACCESS_STREAM_OUTPUT | D3D12_BARRIER_ACCESS_COPY_DEST |  \
@@ -2031,10 +2018,9 @@ static VkPipelineStageFlags2 sync_stages(D12Device *device, UINT sync)
      D3D12_BARRIER_ACCESS_VIDEO_ENCODE_WRITE)
 
 /*
- * one enhanced barrier into a memory barrier: its scopes are its
- * synchronizations, its writes made available as a whole and visible to
- * every access after, as images stay in the general layout. a barrier
- * that splits begins where it ends, waiting for everything before.
+ * folds one enhanced barrier into a memory barrier: the scopes come from its syncs, and its writes are made
+ * available as a whole and visible to every later access, since images stay in the general layout. a split
+ * barrier only takes effect at its end, waiting for everything before.
  */
 static void add_enhanced(D12Device *device, VkMemoryBarrier2 *b, UINT sync_before, UINT sync_after,
                          UINT access_before, UINT access_after)
@@ -2085,7 +2071,7 @@ static void STDMETHODCALLTYPE list_barrier(ID3D12GraphicsCommandList10 *iface, U
     }
     if (!b.srcStageMask && !b.dstStageMask)
         return;
-    /* no work before or after is still a dependency vulkan takes from the top or to the bottom. */
+    /* with no work before or after, vulkan still takes a dependency from the top or to the bottom. */
     if (!b.srcStageMask)
         b.srcStageMask = VK_PIPELINE_STAGE_2_NONE;
     end_rendering(list);
@@ -2209,7 +2195,7 @@ static void STDMETHODCALLTYPE list_resolve_query_data(ID3D12GraphicsCommandList1
     D12ResolveQueries(list, D12QueryHeapFrom(heap), type, start, count, D12ResourceFrom(dst), offset);
 }
 
-/* predication with vulkan's conditional rendering, which reads the predicate's low 32 bits. */
+/* uses vulkan conditional rendering, which reads the predicate's low 32 bits. */
 static void STDMETHODCALLTYPE list_set_predication(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *buffer,
                                                    UINT64 offset, D3D12_PREDICATION_OP op)
 {
@@ -2245,11 +2231,10 @@ static void STDMETHODCALLTYPE list_end_event(ID3D12GraphicsCommandList10 *iface)
 static VkPipeline prepare_rays(D12CommandList *list);
 
 /*
- * commands the gpu generates from the argument buffer, each changing root
- * arguments, vertex or index buffers before its draw or dispatch. root
- * arguments are push constants, and direct3d's addresses are vulkan's, so
- * the arguments are read as they are. the state they change is undefined
- * after, so it is set again at the next draw or dispatch.
+ * device generated commands from the argument buffer, each changing root arguments, vertex or index buffers before
+ * its draw or dispatch. root arguments are push constants and direct3d addresses are vulkan addresses, so the
+ * arguments are read as they are. the state they change is undefined afterwards, so the next draw or dispatch sets
+ * it again.
  */
 static void generated_commands(D12CommandList *list, D12CommandSignature *signature, D12Resource *args,
                                UINT64 arguments_offset, UINT max_count, D12Resource *counts, UINT64 count_offset)
@@ -2352,12 +2337,12 @@ static void STDMETHODCALLTYPE list_execute_indirect(ID3D12GraphicsCommandList10 
     case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH:
         if (!prepare_dispatch(list))
             return;
-        /* guessed: a count buffer's count is not read; every command up to the maximum runs. */
+        /* a guess: the count buffer is not read, every command up to the maximum runs. */
         for (UINT i = 0; i < max_count; i++)
             vk->vkCmdDispatchIndirect(list->cmd, args->buffer, offset + (VkDeviceSize)i * signature->stride);
         break;
     case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS: {
-        /* direct3d's arguments are vulkan's VkTraceRaysIndirectCommand2KHR, limited to a count by a copy. */
+        /* the arguments match VkTraceRaysIndirectCommand2KHR, limited to the count by a copy. */
         VkDeviceAddress at = args->va + arguments_offset;
         VkDeviceSize stride = signature->stride;
         if (counts) {
@@ -2387,7 +2372,7 @@ static void STDMETHODCALLTYPE list_execute_indirect(ID3D12GraphicsCommandList10 
     }
 }
 
-/* ------------------------------------------------------------------ the rest of the newer lists */
+/* ------------------------------------------------------------------ newer list methods */
 
 static void atomic_copy(D12CommandList *list, ID3D12Resource *dst, UINT64 dst_offset, ID3D12Resource *src,
                         UINT64 src_offset, UINT64 size)
@@ -2423,7 +2408,7 @@ static void STDMETHODCALLTYPE list_set_sample_positions(ID3D12GraphicsCommandLis
 
 static void STDMETHODCALLTYPE list_set_view_instance_mask(ID3D12GraphicsCommandList10 *iface, UINT mask) {}
 
-/* each parameter a destination address and a value. */
+/* each parameter is a destination address and a value. */
 static void STDMETHODCALLTYPE list_write_buffer_immediate(ID3D12GraphicsCommandList10 *iface, UINT count,
                                                           const void *parameters, const void *modes)
 {
@@ -2446,7 +2431,7 @@ static void STDMETHODCALLTYPE list_write_buffer_immediate(ID3D12GraphicsCommandL
 
 static void STDMETHODCALLTYPE list_set_protected_session(ID3D12GraphicsCommandList10 *iface, void *session) {}
 
-/* render passes: targets set, cleared as asked, resolved at the end. */
+/* sets the targets, clears them as asked, and resolves them at the end. */
 static void STDMETHODCALLTYPE list_begin_render_pass(ID3D12GraphicsCommandList10 *iface, UINT count,
                                                      const D3D12_RENDER_PASS_RENDER_TARGET_DESC *targets,
                                                      const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC *depth,
@@ -2510,7 +2495,7 @@ static void STDMETHODCALLTYPE list_build_acceleration_structure(
     D12BuildAccelerationStructure(device, list->cmd, desc);
     if (!count || !postbuild)
         return;
-    /* the information is of the finished build. */
+    /* postbuild info needs the finished build. */
     barrier(list);
     for (UINT i = 0; i < count; i++)
         D12EmitPostbuildInfo(list->allocator, list->cmd, &postbuild[i], 1, &desc->DestAccelerationStructureData);
@@ -2545,7 +2530,7 @@ static void STDMETHODCALLTYPE list_set_pipeline_state1(ID3D12GraphicsCommandList
         list->rt_state = D12StateObjectFrom(state);
 }
 
-/* binds the ray tracing pipeline and the compute root arguments for rays; the pipeline, VK_NULL_HANDLE for none. */
+/* binds the ray tracing pipeline and compute root arguments, returns VK_NULL_HANDLE if there is no pipeline. */
 static VkPipeline prepare_rays(D12CommandList *list)
 {
     VkPipeline pipeline = list->rt_state ? D12StateObjectPipeline(list->rt_state) : VK_NULL_HANDLE;
@@ -2564,7 +2549,7 @@ static VkPipeline prepare_rays(D12CommandList *list)
     return pipeline;
 }
 
-/* direct3d's shader tables are vulkan's: the ray generation record is a region of one record. */
+/* shader tables map directly. the ray generation record is a region of one record. */
 static void STDMETHODCALLTYPE list_dispatch_rays(ID3D12GraphicsCommandList10 *iface, const D3D12_DISPATCH_RAYS_DESC *desc)
 {
     D12CommandList *list = impl(iface);
@@ -2594,7 +2579,7 @@ static void STDMETHODCALLTYPE list_rs_set_shading_rate(ID3D12GraphicsCommandList
     list->rate_dirty = TRUE;
 }
 
-/* the image is an attachment of the rendering, which begins again with it. */
+/* the image is a rendering attachment, so rendering restarts with it. */
 static void STDMETHODCALLTYPE list_rs_set_shading_rate_image(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *image)
 {
     D12CommandList *list = impl(iface);
@@ -2620,9 +2605,8 @@ static void STDMETHODCALLTYPE list_set_program(ID3D12GraphicsCommandList10 *ifac
 /* ------------------------------------------------------------------ bundles */
 
 /*
- * a bundle records the calls made on it and the list executing it makes
- * them again, so it inherits that list's root signatures, arguments and
- * heaps, and leaves its own state behind, as direct3d's bundles do.
+ * a bundle records its calls and the executing list replays them, so like direct3d it inherits that list's root
+ * signatures, arguments and heaps, and leaves its own state behind.
  */
 enum {
     CALL_DRAW,
@@ -2651,7 +2635,7 @@ enum {
 
 typedef struct BundleCall {
     UINT op;
-    /* the bytes of the call, this header included. */
+    /* in bytes, header included. */
     UINT size;
     /* compute bind point for root calls. */
     UINT compute;
@@ -2659,7 +2643,7 @@ typedef struct BundleCall {
     UINT64 a[6];
 } BundleCall;
 
-/* a call to record, with room for extra bytes after it; NULL when out of memory. */
+/* extra is room for bytes after the call. NULL when out of memory. */
 static BundleCall *record(D12CommandList *list, UINT op, UINT extra)
 {
     if (!list->recording)
@@ -2969,7 +2953,7 @@ static HRESULT STDMETHODCALLTYPE bundle_reset(ID3D12GraphicsCommandList10 *iface
 
 static void STDMETHODCALLTYPE bundle_clear_state(ID3D12GraphicsCommandList10 *iface, ID3D12PipelineState *state) {}
 
-/* makes the calls a bundle recorded on the list executing it. */
+/* replays the bundle's calls on the executing list. */
 static void STDMETHODCALLTYPE list_execute_bundle(ID3D12GraphicsCommandList10 *iface, ID3D12GraphicsCommandList *bundle_iface)
 {
     D12CommandList *list = impl(iface), *bundle = bundle_iface ? impl((ID3D12GraphicsCommandList10 *)bundle_iface) : nullptr;
@@ -3143,7 +3127,7 @@ static const struct ID3D12GraphicsCommandList10Vtbl g_list_vtbl = {
     list_set_program,
 };
 
-/* a bundle records what it may hold; everything else does nothing, as no open list runs it. */
+/* a bundle records the calls it may hold. everything else does nothing, since no open list runs it. */
 static const struct ID3D12GraphicsCommandList10Vtbl g_bundle_vtbl = {
     list_query,
     list_add_ref,

@@ -1,9 +1,7 @@
 /*
- * dxva h.265 pictures as vulkan video decodes them. dxva holds no parameter sets, only what decoding needs of
- * them in the picture parameters, so the video, sequence and picture parameter sets vulkan wants are made from
- * those, one object for as long as the values do not change. what the picture predicts from is already resolved
- * by the program: the lists of the reference pictures name surfaces, and vulkan names the dpb slots the
- * decoder holds them in.
+ * converts DXVA H.265 pictures to Vulkan video. reconstruct video, sequence and picture parameter sets from
+ * the picture parameters and reuse them while unchanged. reference lists are already resolved to surfaces;
+ * map them to Vulkan DPB slots.
  */
 #include "video.h"
 
@@ -22,7 +20,7 @@ typedef struct H265Key {
     StdVideoH265ScalingLists lists;
 } H265Key;
 
-/* the sets of the sequence the slice headers name, which the gpu needs the count of and nothing more. */
+/* the GPU only needs the count of sequence reference sets named by slice headers. */
 typedef struct H265Tables {
     StdVideoH265ShortTermRefPicSet short_term[STD_VIDEO_H265_MAX_SHORT_TERM_REF_PIC_SETS];
     StdVideoH265LongTermRefPicsSps long_term;
@@ -139,10 +137,9 @@ bool video_h265_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeI
         return false;
     }
     f->current = cur;
-    /* the program keeps the pictures a later one predicts from in its list, which says which pictures were references. */
+    /* the reference list retains pictures that later frames may use. */
     f->is_reference = true;
 
-    /* the parameter sets. */
     H265Key key;
     memset(&key, 0, sizeof(key));
     bool deep = p.bit_depth_luma_minus8 != 0 || p.bit_depth_chroma_minus8 != 0;
@@ -161,7 +158,6 @@ bool video_h265_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeI
         if (in->qmatrix_size >= sizeof(q)) {
             memcpy(&q, in->qmatrix, sizeof(q));
         } else {
-            /* the flat lists. */
             memset(&q, 16, sizeof(q));
         }
         memcpy(key.lists.ScalingList4x4, q.lists_4x4, sizeof(q.lists_4x4));
@@ -193,7 +189,7 @@ bool video_h265_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeI
     }
     f->params = s->params;
 
-    /* the pictures of the dpb, by the slots they hold. */
+    /* maps DPB pictures to their slots. */
     uint8_t slot_of[LIST_SIZE];
     memset(slot_of, NO_REFERENCE, sizeof(slot_of));
     for (uint32_t i = 0; i < LIST_SIZE; i++) {
@@ -216,7 +212,7 @@ bool video_h265_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeI
         slot_of[i] = (uint8_t)r->slot;
     }
 
-    /* the picture itself, which is also the slot it is set up in. */
+    /* the output picture also supplies its setup slot. */
     uint32_t last = VIDEO_MAX_DPB;
     StdVideoDecodeH265ReferenceInfo *self = &f->u.h265.std_refs[last];
     self->PicOrderCntVal = p.curr_pic_order_cnt_val;
@@ -240,7 +236,7 @@ bool video_h265_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeI
         for (uint32_t i = 0; i < STD_VIDEO_DECODE_H265_REF_PIC_SET_LIST_SIZE; i++)
             slots[k][i] = sets[k][i] < LIST_SIZE ? slot_of[sets[k][i]] : NO_REFERENCE;
 
-    /* the slice segments: where each begins, the start code included, the pieces a chopped one continues in left out. */
+    /* slice segment offsets include start codes and omit continuation fragments. */
     uint32_t count = in->slices_size / sizeof(DxvaSliceShort);
     uint32_t n = 0;
     for (uint32_t i = 0; i < count && n < VIDEO_MAX_SLICES; i++) {

@@ -1,6 +1,6 @@
 /*
- * Numbers as decimals and as text: the checks and conversions of a DECIMAL, and the text of integers, floats and
- * decimals that VarBstrFrom* writes, with or without the number formatting of the locale.
+ * DECIMAL checks and conversions, and the text VarBstrFrom* writes for integers, floats and decimals, with or without
+ * the locale's number formatting.
  */
 #include "oleaut32_private.h"
 #include "dtoa.h"
@@ -11,13 +11,13 @@
 #define DECIMAL_NEG_BIT 0x80
 #define DECIMAL_MAX_SCALE 28
 
-/* a decimal has a scale up to 28 and a sign that is zero or the negative bit and nothing else. */
+/* scale is at most 28 and sign holds nothing but the negative bit. */
 BOOL AutDecimalValid(const DECIMAL *d)
 {
     return d->scale <= DECIMAL_MAX_SCALE && (d->sign & ~DECIMAL_NEG_BIT) == 0;
 }
 
-/* a 96 bit integer as three words, low first. */
+/* the 96-bit mantissa as three words, low first. */
 static void decimal_words(const DECIMAL *d, ULONG *w)
 {
     w[0] = (ULONG)d->Lo64;
@@ -42,7 +42,7 @@ static BOOL words_zero(const ULONG *w)
     return !w[0] && !w[1] && !w[2];
 }
 
-/* the 96 bits as decimal digits, most significant first; returns how many, none for zero. */
+/* most significant digit first, returns the count, 0 for zero. */
 static int words_digits(const ULONG *words, char *out)
 {
     ULONG w[3] = {words[0], words[1], words[2]};
@@ -55,12 +55,12 @@ static int words_digits(const ULONG *words, char *out)
     return count;
 }
 
-/* ten to the scale as doubles, rounded once, the way a table of constants holds them. */
+/* each power rounded once to a double, like a table of constants. */
 static const double g_ten_powers[DECIMAL_MAX_SCALE + 1] = {
     1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11, 1e12, 1e13, 1e14,
     1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22, 1e23, 1e24, 1e25, 1e26, 1e27, 1e28};
 
-/* windows adds the three words as doubles and divides by the power, so the last bit of a large decimal is its own. */
+/* like windows: sum the three words as doubles, then divide by the power, which can round the last bit. */
 double AutDecimalToDouble(const DECIMAL *d)
 {
     double v = (double)(ULONG)d->Lo64 + (double)(ULONG)(d->Lo64 >> 32) * 4294967296.0 +
@@ -69,7 +69,7 @@ double AutDecimalToDouble(const DECIMAL *d)
     return (d->sign & DECIMAL_NEG_BIT) ? -v : v;
 }
 
-/* the decimal rounded to a whole number, ties to the even: false when it does not fit 64 bits. */
+/* rounds half to even, false when the result does not fit 64 bits. */
 BOOL AutDecimalToInteger(const DECIMAL *d, BOOL *negative, ULONGLONG *magnitude)
 {
     ULONG w[3];
@@ -92,7 +92,7 @@ BOOL AutDecimalToInteger(const DECIMAL *d, BOOL *negative, ULONGLONG *magnitude)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the pieces of a locale */
+/* ------------------------------------------------------------------ locale settings */
 
 typedef struct {
     ULONG Override;
@@ -127,7 +127,7 @@ static void load_number_locale(LCID lcid, ULONG flags, NUMBER_LOCALE *l)
     l->Digits = locale_number(lcid, LOCALE_IDIGITS, l->Override, 2);
     l->LeadingZero = locale_number(lcid, LOCALE_ILZERO, l->Override, 1);
     l->NegativeOrder = locale_number(lcid, LOCALE_INEGNUMBER, l->Override, 1);
-    /* only the first group of the grouping is read, "3;2;0" being 3. */
+    /* only the first group is read, "3;2;0" gives 3. */
     WCHAR grouping[16];
     l->Grouping = 0;
     if (GetLocaleInfoW(lcid, LOCALE_SGROUPING | l->Override, grouping, RTL_NUMBER_OF(grouping)))
@@ -141,7 +141,7 @@ static HRESULT bstr_from_text(const WCHAR *text, BSTR *out)
     return *out ? S_OK : E_OUTOFMEMORY;
 }
 
-/* a plain number, such as "-1234.5", through the number format of the locale with the places it asks for. */
+/* formats a plain number such as "-1234.5" with the locale's number format and the given places. */
 static HRESULT bstr_from_nls(const WCHAR *plain, LCID lcid, ULONG flags, int places, BSTR *out)
 {
     NUMBER_LOCALE l;
@@ -224,7 +224,7 @@ static void put_string(TEXT_OUT *t, const WCHAR *s)
         put_char(t, *s++);
 }
 
-/* the leading digits of |x| rounded to n, a tie going away from zero, without trailing zeros; x is 0.digits * 10^point. */
+/* ties round away from zero, no trailing zeros, x = 0.digits * 10^point. */
 static int rounded_digits(double x, int n, char *digits, int *point)
 {
     char exact[48];
@@ -254,7 +254,7 @@ static int rounded_digits(double x, int n, char *digits, int *point)
     return n;
 }
 
-/* the text of a double the way the runtime library writes it with the digits of the type, in the separator of the locale. */
+/* writes x like the C runtime does with the type's digits, using the locale's decimal separator. */
 static void double_text(double x, int type_digits, const PLAIN_LOCALE *loc, TEXT_OUT *t)
 {
     ULONGLONG bits;
@@ -322,8 +322,8 @@ static void double_text(double x, int type_digits, const PLAIN_LOCALE *loc, TEXT
 }
 
 /*
- * Seventeen significant digits of the value written without an exponent, for the formatting of the locale. The places
- * beyond the one after the last the locale keeps cannot change the result, so they are not written.
+ * 17 significant digits without an exponent, for GetNumberFormatW. Places past one beyond what the locale keeps cannot
+ * change the result, so they are not written.
  */
 static BOOL double_plain(double x, int places, WCHAR *out)
 {
@@ -394,7 +394,7 @@ HRESULT AutFormatDecimal(BOOL negative, ULONG high, ULONGLONG low, int scale, LC
     if (!out)
         return E_INVALIDARG;
     int k = words_digits(w, digits);
-    /* zero has neither a sign nor places, and no number is written with zeros at the end of its places. */
+    /* zero has no sign and no places, and trailing zeros in the places are dropped. */
     if (!k)
         negative = FALSE, scale = 0;
     while (scale && k && digits[k - 1] == '0') {

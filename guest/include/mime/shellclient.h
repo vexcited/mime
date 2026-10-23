@@ -1,8 +1,7 @@
 /*
- * what the shell libraries tell the host's desktop through win32k (NtUserMimeShell): the application user model id
- * of a process and of a window, the progress, badge and attention of a window's button in the launcher, and a window's
- * request for attention. every call is a command of mime/abi.h; a host without a desktop to tell answers unsupported,
- * which no caller needs to know.
+ * what the shell libraries tell the host's desktop through NtUserMimeShell: the app user model id of a process
+ * or window, the progress, badge and attention state of a window's launcher button, and a window's request for
+ * attention. each call is a mime/abi.h command. a host without a desktop answers unsupported, which callers ignore.
  */
 #ifndef MIME_SHELLCLIENT_H
 #define MIME_SHELLCLIENT_H
@@ -28,13 +27,13 @@ FORCEINLINE void MimeShellClear(void *p, SIZE_T size)
         b[i] = 0;
 }
 
-/* the command goes to win32k, which checks that the window is the caller's. */
+/* win32k checks that the window belongs to the caller. */
 FORCEINLINE void MimeShellWindowCommand(MimeShellWindow *w)
 {
     NtUserMimeShell(MIME_SHELLOP_COMMAND, 0, (PUCHAR)w, sizeof(*w));
 }
 
-/* the id of the process, that its windows without one of their own have. */
+/* the process id applies to its windows that have none of their own. */
 FORCEINLINE void MimeShellProcessAppId(const WCHAR *aumid)
 {
     MimeShellWindow w;
@@ -45,7 +44,7 @@ FORCEINLINE void MimeShellProcessAppId(const WCHAR *aumid)
     MimeShellWindowCommand(&w);
 }
 
-/* the id of a window; none gives it back to its process. */
+/* a NULL id makes the window use its process's again. */
 FORCEINLINE void MimeShellWindowAppId(HWND window, const WCHAR *aumid)
 {
     MimeShellWindow w;

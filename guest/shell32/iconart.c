@@ -1,11 +1,11 @@
 /*
- * the icons shell32 draws when the system has no art for a thing: a page, a window, a folder, a drive and a few more.
- * every picture is made of filled polygons in a unit square, rasterized at a few times the size asked for and
- * averaged down, so edges are smooth at any size.
+ * the icons shell32 draws when the system has no art: a page, a window, a folder, a drive and a few more. each
+ * picture is filled polygons in a unit square, rasterized at a multiple of the size and averaged down so edges stay
+ * smooth at any size.
  */
 #include "shell32_private.h"
 
-/* the compiler asks for this symbol of any code that uses floating point. */
+/* the compiler wants this symbol in any code using floating point. */
 int _fltused = 0x9875;
 
 typedef struct {
@@ -14,7 +14,7 @@ typedef struct {
 
 typedef struct {
     int W, H;
-    /* the scale of the canvas to the picture. */
+    /* canvas size over picture size. */
     int Scale;
     /* premultiplied pixels, a b g r in the low to high bytes of each. */
     DWORD *Pixels;
@@ -63,7 +63,7 @@ static void sort_floats(float *v, int n)
     }
 }
 
-/* fills a polygon given in canvas pixels with a color that runs from top to bottom between two rows. */
+/* points are in canvas pixels. the color runs from top to bottom between two rows. */
 static void fill_polygon(CANVAS *c, const PT *p, int n, DWORD top, DWORD bottom, float row0, float row1)
 {
     float low = p[0].Y, high = p[0].Y;
@@ -102,7 +102,7 @@ static void fill_polygon(CANVAS *c, const PT *p, int n, DWORD top, DWORD bottom,
     }
 }
 
-/* the picture's unit square in canvas pixels. */
+/* maps the unit square to canvas pixels. */
 static PT unit(const CANVAS *c, float x, float y)
 {
     return (PT){x * (float)c->W, y * (float)c->H};
@@ -132,7 +132,7 @@ static void box(CANVAS *c, float x0, float y0, float x1, float y1, DWORD top, DW
 static const float g_arc[6][2] = {{1.0f, 0.0f},    {0.9511f, 0.3090f}, {0.8090f, 0.5878f},
                                   {0.5878f, 0.8090f}, {0.3090f, 0.9511f}, {0.0f, 1.0f}};
 
-/* a rectangle with rounded corners, its corners taken clockwise from the top right. */
+/* corners go clockwise from the top right. */
 static void round_box(CANVAS *c, float x0, float y0, float x1, float y1, float radius, DWORD top, DWORD bottom)
 {
     float xy[2 * 4 * 6];
@@ -167,11 +167,11 @@ static void round_box(CANVAS *c, float x0, float y0, float x1, float y1, float r
     poly(c, xy, n, top, bottom);
 }
 
-/* a circle or ellipse, as a polygon of 32 points. */
+/* a 32 point polygon. */
 static void disc(CANVAS *c, float mx, float my, float rx, float ry, DWORD top, DWORD bottom)
 {
     float xy[64];
-    /* the points of a regular 32 gon, in units of a radius. */
+    /* a regular 32 gon, in radius units. */
     static const float unit_cos[32] = {1.0f,   0.9808f, 0.9239f, 0.8315f, 0.7071f, 0.5556f, 0.3827f, 0.1951f,
                                        0.0f,   -0.1951f, -0.3827f, -0.5556f, -0.7071f, -0.8315f, -0.9239f, -0.9808f,
                                        -1.0f,  -0.9808f, -0.9239f, -0.8315f, -0.7071f, -0.5556f, -0.3827f, -0.1951f,
@@ -183,7 +183,7 @@ static void disc(CANVAS *c, float mx, float my, float rx, float ry, DWORD top, D
     poly(c, xy, 32, top, bottom);
 }
 
-/* an outlined shape: the border color first, then the fill of the same polygon moved in by the width of the line. */
+/* the border color first, then the fill inset by the line width. */
 static void outlined_box(CANVAS *c, float x0, float y0, float x1, float y1, float line, DWORD border, DWORD top,
                          DWORD bottom)
 {
@@ -237,7 +237,7 @@ static void draw_folder(CANVAS *c, BOOL open)
     }
 }
 
-/* a drive's body, with a light and a slot. */
+/* a drive body with a light and a slot. */
 static void draw_drive_body(CANVAS *c, float y, DWORD light)
 {
     const float top[8] = {0.06f, y + 0.12f, 0.18f, y, 0.82f, y, 0.94f, y + 0.12f};
@@ -301,8 +301,7 @@ static void draw_link(CANVAS *c)
 }
 
 /*
- * the picture of a kind at a size, premultiplied, which the caller frees with HeapFree. The kinds are the ART_ values
- * of shell32_private.h.
+ * premultiplied, freed by the caller with HeapFree. kinds are the ART_ values of shell32_private.h.
  */
 DWORD *ShIconArt(int kind, int cx, int cy)
 {
@@ -359,7 +358,7 @@ DWORD *ShIconArt(int kind, int cx, int cy)
         draw_page(&canvas, TRUE);
         break;
     }
-    /* the average of each block of samples. */
+    /* averages each block of samples. */
     for (int y = 0; y < cy; y++)
         for (int x = 0; x < cx; x++) {
             DWORD sum[4] = {0, 0, 0, 0};

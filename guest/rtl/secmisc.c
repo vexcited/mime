@@ -1,6 +1,6 @@
 /*
- * the rest of the rtl security routines that need neither a token nor a hash: app container sids, sid hash
- * tables, descriptor copies and normal forms, sid replacement and the descriptors built from ace tables.
+ * rtl security routines that need neither a token nor a hash: app container sids, sid hash tables, descriptor copies
+ * and normal forms, sid replacement and descriptors built from ace tables.
  */
 #define NTSYSAPI
 #include "rtl.h"
@@ -11,7 +11,7 @@
 
 static const UCHAR g_package_authority[6] = {0, 0, 0, 0, 0, 15};
 
-/* an application package authority sid whose first sub authority is the kind: 2 packages, 3 capabilities. */
+/* an application package authority sid whose first sub authority is the kind: 2 for packages, 3 for capabilities. */
 static BOOLEAN package_sid(const SID *sid, ULONG kind)
 {
     return sid->SubAuthorityCount >= 2 && sid->Revision == SID_REVISION &&
@@ -28,7 +28,7 @@ BOOLEAN NTAPI RtlIsCapabilitySid(PSID sid)
     return package_sid(sid, 3);
 }
 
-/* 1 is a child container, 2 a parent one and 3 a package sid of some other size. */
+/* type 1 is a child container, 2 a parent and 3 a package sid of any other size. */
 NTSTATUS NTAPI RtlGetAppContainerSidType(PSID sid, PULONG type)
 {
     const SID *s = sid;
@@ -48,7 +48,7 @@ NTSTATUS NTAPI RtlGetAppContainerSidType(PSID sid, PULONG type)
     return STATUS_NOT_APPCONTAINER;
 }
 
-/* the sid of the parent of a child container: the first eight sub authorities. */
+/* a child container's parent is its first eight sub authorities. */
 NTSTATUS NTAPI RtlGetAppContainerParent(PSID sid, PSID *parent)
 {
     const SID *s = sid;
@@ -68,7 +68,7 @@ NTSTATUS NTAPI RtlGetAppContainerParent(PSID sid, PSID *parent)
 
 #define HASH_BITS ((ULONG)(8 * sizeof(ULONG_PTR)))
 
-/* the byte that tells sids apart most is the lowest of the last sub authority, split in two nibbles. */
+/* the low byte of the last sub authority tells sids apart best, hashed as two nibbles. */
 static UCHAR hash_byte(const SID *sid)
 {
     return ((const UCHAR *)sid)[4 * (ULONG)sid->SubAuthorityCount + 4];
@@ -98,7 +98,7 @@ PSID_AND_ATTRIBUTES NTAPI RtlSidHashLookup(PSID_AND_ATTRIBUTES_HASH hash, PSID s
     const SID *s = sid;
     ULONG length = 8 + 4 * (ULONG)s->SubAuthorityCount;
     UCHAR b = hash_byte(s);
-    /* the entries that share both nibbles are the only ones worth comparing. */
+    /* only entries matching both nibbles are worth comparing. */
     ULONG_PTR candidates = hash->Hash[b & 0xF] & hash->Hash[16 + (b >> 4)];
     for (ULONG i = 0; candidates; i++, candidates >>= 1) {
         if (!(candidates & 1))
@@ -117,10 +117,10 @@ PSID_AND_ATTRIBUTES NTAPI RtlSidHashLookup(PSID_AND_ATTRIBUTES_HASH hash, PSID s
 
 /* ---------------------------------------------------------------- process protection */
 
-/* for each signer of the process doing the opening, the signers of the target it may open. */
+/* indexed by the opener's signer: the target signers it may open, as a bit set. */
 static const ULONG g_protected_access[9] = {0x0, 0x2, 0x4, 0x108, 0x110, 0x13E, 0x17E, 0x1FE, 0x0};
 
-/* a protection is a type in the low three bits and a signer above the fourth. */
+/* a protection level has the type in the low three bits and the signer in the high nibble. */
 BOOLEAN NTAPI RtlTestProtectedAccess(UCHAR source, UCHAR target)
 {
     if (!(target & 7))
@@ -133,7 +133,7 @@ BOOLEAN NTAPI RtlTestProtectedAccess(UCHAR source, UCHAR target)
 
 /* ---------------------------------------------------------------- security error codes */
 
-/* the sspi errors a descriptor routine may meet, as the status codes of the same trouble. */
+/* only the sspi errors a descriptor routine can hit. */
 NTSTATUS NTAPI RtlMapSecurityErrorToNtStatus(ULONG error)
 {
     switch (error) {
@@ -187,7 +187,7 @@ static PACL part_acl(PSECURITY_DESCRIPTOR sd, BOOLEAN dacl)
     return present ? acl : nullptr;
 }
 
-/* a copy of a self relative descriptor, in one block. an absolute one is made self relative on the way. */
+/* the copy is one self relative block; an absolute source is converted. */
 NTSTATUS NTAPI RtlCopySecurityDescriptor(PSECURITY_DESCRIPTOR source, PSECURITY_DESCRIPTOR *copy)
 {
     const SECURITY_DESCRIPTOR_RELATIVE *r = source;
@@ -224,7 +224,7 @@ NTSTATUS NTAPI RtlCopySecurityDescriptor(PSECURITY_DESCRIPTOR source, PSECURITY_
     return STATUS_SUCCESS;
 }
 
-/* only the bits of the control that a caller may set, 0x3FC0, are touched. */
+/* only the caller settable control bits, 0x3FC0, are touched. */
 NTSTATUS NTAPI RtlSetAttributesSecurityDescriptor(PSECURITY_DESCRIPTOR sd, SECURITY_DESCRIPTOR_CONTROL control,
                                                   PULONG revision)
 {
@@ -234,7 +234,7 @@ NTSTATUS NTAPI RtlSetAttributesSecurityDescriptor(PSECURITY_DESCRIPTOR sd, SECUR
     return RtlSetControlSecurityDescriptor(sd, control & 0x3FC0, control & 0x3FC0);
 }
 
-/* whether a sid is the old one, or the old one with one more relative id. */
+/* whether a sid is the old one, or the old one plus one relative id. */
 static BOOLEAN sid_has_prefix(const SID *sid, const SID *old)
 {
     if (sid->Revision != old->Revision)
@@ -262,15 +262,15 @@ static void replace_in_acl(const ACL *acl, const SID *old, const SID *replacemen
         if (ace[0] <= SYSTEM_ALARM_ACE_TYPE) {
             replace_in_sid((SID *)(ace + 8), old, replacement, changed);
         } else if (ace[0] == ACCESS_ALLOWED_COMPOUND_ACE_TYPE) {
-            /* the client is the second sid, after the server. */
+            /* the client sid follows the server sid. */
             replace_in_sid((SID *)(ace + 4 * (ULONG)ace[13] + 20), old, replacement, changed);
         }
     }
 }
 
 /*
- * swaps the leading sub authorities of every sid that starts with the old sid, as when a machine moves to
- * another domain: the owner, the group and the plain and compound aces. the new sid has the old one's size.
+ * replaces the leading sub authorities of every sid starting with the old sid, as when a machine moves to another
+ * domain: owner, group, plain and compound aces. the new sid has the same size as the old one.
  */
 NTSTATUS NTAPI RtlReplaceSidInSd(PSECURITY_DESCRIPTOR sd, PSID old, PSID replacement, PULONG changed)
 {
@@ -301,7 +301,7 @@ NTSTATUS NTAPI RtlReplaceSidInSd(PSECURITY_DESCRIPTOR sd, PSID old, PSID replace
 
 /* ---------------------------------------------------------------- normal form */
 
-/* the aces of a list in their compact form: a repeated allow ace once, then padded and with no slack. */
+/* compacts an acl: duplicate allow aces kept once, the size padded with no slack. */
 static ULONG compact_acl(PACL out, const ACL *acl, const GENERIC_MAPPING *mapping)
 {
     UCHAR *to = (UCHAR *)(out + 1);
@@ -311,7 +311,7 @@ static ULONG compact_acl(PACL out, const ACL *acl, const GENERIC_MAPPING *mappin
         ULONG size = *(const USHORT *)(ace + 2);
         UCHAR head[8];
         BOOLEAN remapped = FALSE;
-        /* the aces that apply to the object get their generic rights turned into specific ones. */
+        /* aces that apply to the object get their generic rights mapped. */
         if (mapping && size >= 8 && (ace[0] < 0xB || ace[0] == 13 || ace[0] == 14)) {
             memcpy(head, ace, 8);
             if (!(ace[1] & INHERIT_ONLY_ACE)) {
@@ -324,7 +324,7 @@ static ULONG compact_acl(PACL out, const ACL *acl, const GENERIC_MAPPING *mappin
                     wide |= mapping->GenericExecute;
                 if (wide & GENERIC_ALL)
                     wide |= mapping->GenericAll;
-                /* the audit types may keep the system access right. */
+                /* audit types may keep ACCESS_SYSTEM_SECURITY. */
                 ACCESS_MASK allowed = mapping->GenericAll | (((0x673u >> ace[0]) & 1) ? 0 : 0x01000000);
                 *(ULONG *)(head + 4) = wide & allowed & 0x0FFFFFFF;
             }
@@ -360,9 +360,9 @@ static ULONG compact_acl(PACL out, const ACL *acl, const GENERIC_MAPPING *mappin
 }
 
 /*
- * the form in which equal descriptors have equal bytes: sacl, dacl, owner and group in that order with no gaps,
- * an empty sacl left out, and compact lists. returns whether the descriptor was not in that form. unless that
- * is only asked, a normalized copy is written to the buffer given, else the descriptor itself is replaced.
+ * the normal form gives equal descriptors equal bytes: sacl, dacl, owner and group in that order with no gaps, an empty
+ * sacl dropped, and compact acls. returns whether the descriptor was not normal. unless only checking, a normalized copy
+ * goes to the given buffer, or replaces the descriptor itself.
  */
 BOOLEAN NTAPI RtlNormalizeSecurityDescriptor(PSECURITY_DESCRIPTOR *sd, ULONG length, PSECURITY_DESCRIPTOR *normal,
                                              PULONG normal_length, BOOLEAN check_only)
@@ -422,8 +422,8 @@ BOOLEAN NTAPI RtlNormalizeSecurityDescriptor(PSECURITY_DESCRIPTOR *sd, ULONG len
 /* ---------------------------------------------------------------- descriptors from ace tables */
 
 /*
- * an absolute descriptor from a table of aces, the allow and deny ones in its dacl and the audit ones in its
- * sacl, in one block with both lists after the header. each ace is four bytes larger than its sid needs.
+ * builds an absolute descriptor from an ace table: allow and deny aces in the dacl, audit aces in the sacl, both acls
+ * in the same block after the header. each ace is four bytes larger than its sid needs.
  */
 NTSTATUS NTAPI RtlCreateAndSetSD(RTL_ACE_DATA *table, ULONG count, PSID owner, PSID group, PSECURITY_DESCRIPTOR *result)
 {

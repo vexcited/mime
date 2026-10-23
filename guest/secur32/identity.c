@@ -1,12 +1,9 @@
 /*
- * the authentication identity helpers: SEC_WINNT_AUTH_IDENTITY_W and _A,
- * the versioned SEC_WINNT_AUTH_IDENTITY_EXW and the self relative
- * SEC_WINNT_AUTH_IDENTITY_EX2 that the opaque Sspi functions exchange.
+ * authentication identity helpers: SEC_WINNT_AUTH_IDENTITY_W and _A, the versioned SEC_WINNT_AUTH_IDENTITY_EXW and the
+ * self relative SEC_WINNT_AUTH_IDENTITY_EX2 that the opaque Sspi functions exchange.
  *
- * mime builds every identity it returns in the EX2 layout, one LocalAlloc
- * block whose password is a packed password credential, and reads all
- * three layouts. encrypting an identity needs the system's memory
- * encryption, which mime lacks.
+ * all three layouts are read, but returned identities are always EX2: one LocalAlloc block whose password is a packed
+ * password credential. encrypting an identity needs system memory encryption, which mime lacks.
  */
 #include "secur32_private.h"
 
@@ -26,7 +23,7 @@ MIME_STATIC_ASSERT(sizeof(PACKED_CREDENTIALS) == 28, "SEC_WINNT_AUTH_PACKED_CRED
     (SEC_WINNT_AUTH_IDENTITY_FLAGS_PROCESS_ENCRYPTED | SEC_WINNT_AUTH_IDENTITY_FLAGS_SYSTEM_PROTECTED |                 \
      SEC_WINNT_AUTH_IDENTITY_FLAGS_USER_PROTECTED)
 
-/* the parts of an identity, as process heap strings. */
+/* identity parts as process heap strings. */
 typedef struct IDENTITY {
     PWSTR User;
     PWSTR Domain;
@@ -85,7 +82,7 @@ static bool contained(ULONG offset, ULONG length, ULONG size)
     return offset + length >= offset && offset + length <= size;
 }
 
-/* the checks of SspiValidateAuthIdentity on the self relative layout. */
+/* the checks SspiValidateAuthIdentity makes on the self relative layout. */
 static bool valid_ex2(const SEC_WINNT_AUTH_IDENTITY_EX2 *e)
 {
     ULONG size = e->cbStructureLength;
@@ -150,7 +147,7 @@ static ULONG bytes_of(PCWSTR s)
     return s ? (ULONG)wcslen(s) * sizeof(WCHAR) : 0;
 }
 
-/* the identity as one self relative EX2 block from LocalAlloc. */
+/* builds the identity as one self relative EX2 block from LocalAlloc. */
 static NTSTATUS build_ex2(const IDENTITY *id, SEC_WINNT_AUTH_IDENTITY_EX2 **out, ULONG *size)
 {
     ULONG user = bytes_of(id->User), domain = bytes_of(id->Domain), password = bytes_of(id->Password);
@@ -224,7 +221,7 @@ SECURITYAPI void SEC_ENTRY SspiZeroAuthIdentity(PSEC_WINNT_AUTH_IDENTITY_OPAQUE 
         memset(w->Password, 0, w->PasswordLength * (w->Flags & SEC_WINNT_AUTH_IDENTITY_ANSI ? 1 : 2));
 }
 
-/* SspiFreeAuthIdentity frees the members of the plain and EX layouts unless they were packed with the structure. */
+/* frees the members of the plain and EX layouts, unless they were packed with the structure. */
 SECURITYAPI void SEC_ENTRY SspiFreeAuthIdentity(PSEC_WINNT_AUTH_IDENTITY_OPAQUE identity)
 {
     if (!identity)
@@ -302,7 +299,7 @@ static PWSTR local_string(PCWSTR s)
     return out;
 }
 
-/* sspicli returns the raw STATUS_INVALID_PARAMETER for a missing identity. */
+/* windows returns the raw STATUS_INVALID_PARAMETER for a missing identity. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiEncodeAuthIdentityAsStrings(PSEC_WINNT_AUTH_IDENTITY_OPAQUE identity,
                                                                       PCWSTR *user, PCWSTR *domain, PCWSTR *packed)
 {
@@ -331,7 +328,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiEncodeAuthIdentityAsStrings(PSEC_WINNT
     return SEC_E_OK;
 }
 
-/* a user of the form domain\user without a domain gives both parts; the packed string is a password. */
+/* a user of the form domain\user with no domain gives both parts; the packed string is a password. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiEncodeStringsAsAuthIdentity(PCWSTR user, PCWSTR domain, PCWSTR packed,
                                                                       PSEC_WINNT_AUTH_IDENTITY_OPAQUE *identity)
 {
@@ -427,7 +424,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiUnmarshalAuthIdentity(ULONG length, PC
     return SEC_E_OK;
 }
 
-/* process encryption uses the kernel's memory encryption, which mime does not have. */
+/* process encryption needs the kernel's memory encryption, which mime does not have. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiEncryptAuthIdentity(PSEC_WINNT_AUTH_IDENTITY_OPAQUE identity)
 {
     if (!identity)
@@ -442,7 +439,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiDecryptAuthIdentity(PSEC_WINNT_AUTH_ID
     return SspiIsAuthIdentityEncrypted(identity) ? SEC_E_UNSUPPORTED_FUNCTION : SEC_E_OK;
 }
 
-/* credential manager is not implemented, so there is no target to prepare. */
+/* there is no credential manager, so there is no target to prepare. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiPrepareForCredRead(PSEC_WINNT_AUTH_IDENTITY_OPAQUE identity, PCWSTR target,
                                                              PULONG type, PCWSTR *credman_target)
 {
@@ -473,10 +470,9 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiExcludePackage(PSEC_WINNT_AUTH_IDENTIT
 }
 
 /*
- * the host of a service principal name, class/host:port/service@realm, as
- * SspiHelperGetTargetHostName cuts it: between the first two slashes, then
- * before the last colon and the last at sign, without a trailing dollar.
- * a name without a slash is returned whole, cut at its last at sign.
+ * the host of a service principal name class/host:port/service@realm: the part between the first two slashes, cut
+ * before the last colon and the last at sign, without a trailing dollar. a name without a slash is returned whole, cut
+ * at its last at sign.
  */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SspiGetTargetHostName(PCWSTR target, PWSTR *host)
 {

@@ -1,9 +1,6 @@
 /*
- * win32 base api: kernel32.dll and kernelbase.dll.
- *
- * kernelbase implements everything; kernel32 forwards its exports there,
- * like windows does. the declarations below are what programs and the
- * other mime system dlls compile against.
+ * win32 base api of kernel32.dll and kernelbase.dll. kernelbase implements everything and kernel32
+ * forwards its exports there, like windows does.
  */
 #ifndef MIME_WIN32_WINBASE_H
 #define MIME_WIN32_WINBASE_H
@@ -507,7 +504,7 @@ WINBASEAPI BOOL WINAPI FlushViewOfFile(LPCVOID base, SIZE_T size);
 #define COPY_FILE_COPY_SYMLINK 0x00000800
 #define COPY_FILE_NO_BUFFERING 0x00001000
 
-/* CopyFile2 */
+/* CopyFile2. */
 typedef enum COPYFILE2_MESSAGE_TYPE {
     COPYFILE2_CALLBACK_NONE = 0,
     COPYFILE2_CALLBACK_CHUNK_STARTED,
@@ -651,7 +648,7 @@ typedef struct _WIN32_FIND_DATAA {
     CHAR cAlternateFileName[14];
 } WIN32_FIND_DATAA, *PWIN32_FIND_DATAA, *LPWIN32_FIND_DATAA;
 
-/* the sizes windows has; the old mac fields of the sdk only exist under _MAC. */
+/* windows' sizes: the sdk's old mac fields only exist under _MAC. */
 MIME_STATIC_ASSERT(sizeof(WIN32_FIND_DATAW) == 592 && sizeof(WIN32_FIND_DATAA) == 320, "find data layout");
 
 typedef enum _FINDEX_INFO_LEVELS {
@@ -820,7 +817,7 @@ typedef struct _CREATEFILE2_EXTENDED_PARAMETERS {
 } CREATEFILE2_EXTENDED_PARAMETERS, *PCREATEFILE2_EXTENDED_PARAMETERS, *LPCREATEFILE2_EXTENDED_PARAMETERS;
 WINBASEAPI HANDLE WINAPI CreateFile2(LPCWSTR name, DWORD access, DWORD share, DWORD disposition,
                                      LPCREATEFILE2_EXTENDED_PARAMETERS params);
-/* OpenFile and its record of the file. */
+/* OpenFile and its OFSTRUCT. */
 typedef struct _OFSTRUCT {
     BYTE cBytes;
     BYTE fFixedDisk;

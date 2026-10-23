@@ -1,10 +1,7 @@
 /*
- * marshaling within a process. an interface marshaled for another
- * apartment of the same process travels as an OBJREF whose standard part
- * names the object directly: mime has no proxies, so the unmarshaled
- * pointer is the object itself, a documented difference from windows,
- * which builds a proxy. objects implementing IMarshal, such as the free
- * threaded marshaler, write custom OBJREFs as on windows.
+ * marshaling within a process. an interface marshaled for another apartment of the same process travels as an OBJREF
+ * whose standard part names the object directly, so the unmarshaled pointer is the object itself where windows would
+ * build a proxy. objects implementing IMarshal, such as the free threaded marshaler, write custom OBJREFs as on windows.
  */
 #include "orpc.h"
 
@@ -35,7 +32,7 @@ static const IID IID_IAgileObject = {0x94ea2b94, 0xe9cc, 0x49e0, {0xc0, 0xff, 0x
 static const IID IID_IAgileReference = {0xc03f6a43, 0x65a4, 0x9818, {0x98, 0x7e, 0xe0, 0xb8, 0x10, 0xd2, 0xa6, 0xf2}};
 static const CLSID CLSID_InProcFreeMarshaler = {0x0000033A, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
 
-/* the standard part: where windows names an exporter, mime names the object and its marshaling. */
+/* the standard part: where windows names an exporter, this names the object and how it was marshaled. */
 typedef struct OBJREF_DIRECT {
     DWORD MarshalFlags;
     DWORD ProcessId;
@@ -63,12 +60,11 @@ static HRESULT read_all(IStream *stream, void *data, ULONG size)
     return FAILED(hr) ? hr : done == size ? S_OK : STG_E_READFAULT;
 }
 
-/* ------------------------------------------------------------------ the free threaded marshaler */
+/* ------------------------------------------------------------------ free threaded marshaler */
 
 /*
- * in process, the marshaler writes the object pointer itself, so every
- * apartment talks to the object directly; other contexts use standard
- * marshaling, as windows' marshaler hands them to the standard one.
+ * in process, the marshaler writes the object pointer itself so every apartment calls the object directly. other
+ * contexts get standard marshaling, as on windows.
  */
 typedef struct FTM {
     IMarshal Marshal;
@@ -249,7 +245,7 @@ WINOLEAPI HRESULT WINAPI CoCreateFreeThreadedMarshaler(IUnknown *outer, IUnknown
     return f ? S_OK : E_OUTOFMEMORY;
 }
 
-/* the unmarshaler a custom OBJREF names; the free threaded one is built in. */
+/* the free threaded unmarshaler is built in. */
 static HRESULT unmarshaler(REFCLSID clsid, IMarshal **out)
 {
     if (IsEqualGUID(clsid, &CLSID_InProcFreeMarshaler)) {
@@ -271,8 +267,8 @@ static HRESULT marshal_standard(IStream *stream, REFIID iid, IUnknown *object, D
     if (FAILED(hr))
         return hr;
     /*
-     * outside the process the object is served over rpc, through the stub of the interface, and one that has none cannot
-     * be marshaled: a pointer to it would mean nothing to the process it is sent to, and holds the object forever.
+     * outside the process the object is served over rpc through the interface's stub, so an interface without one
+     * cannot be marshaled: a raw pointer means nothing to the other process and would hold the object forever.
      */
     if (destination != MSHCTX_INPROC) {
         hr = OrpcMarshal(stream, iid, unknown, destination, flags);
@@ -561,7 +557,7 @@ WINOLEAPI HRESULT WINAPI RoGetAgileReference(DWORD options, REFIID iid, IUnknown
 
 static LONG g_server_refs;
 
-/* the process wide reference of a local server; the last release suspends its class objects. */
+/* the last release suspends the local server's class objects. */
 WINOLEAPI ULONG WINAPI CoAddRefServerProcess(void)
 {
     return (ULONG)InterlockedIncrement(&g_server_refs);
@@ -588,7 +584,7 @@ WINOLEAPI HRESULT WINAPI CoSuspendClassObjects(void)
     return S_OK;
 }
 
-/* the context of the call being served: the object that CoSwitchCallContext put there, or RPC_E_CALL_COMPLETE. */
+/* the object CoSwitchCallContext set, or RPC_E_CALL_COMPLETE. */
 WINOLEAPI HRESULT WINAPI CoGetCallContext(REFIID iid, void **context)
 {
     if (!context)
@@ -600,7 +596,7 @@ WINOLEAPI HRESULT WINAPI CoGetCallContext(REFIID iid, void **context)
     return t->CallContext->lpVtbl->QueryInterface(t->CallContext, iid, context);
 }
 
-/* only a proxy has a server process to let forward; a direct pointer has none. */
+/* only a proxy has a server process to allow, a direct pointer has none. */
 WINOLEAPI HRESULT WINAPI CoAllowSetForegroundWindow(IUnknown *object, void *reserved)
 {
     if (reserved || !object)
@@ -611,9 +607,9 @@ WINOLEAPI HRESULT WINAPI CoAllowSetForegroundWindow(IUnknown *object, void *rese
 /* ------------------------------------------------------------------ proxy and stub classes */
 
 /*
- * the class that marshals an interface. A class registered by CoRegisterPSClsid in this process comes first, then
- * the ProxyStubClsid32 of the interface in the registry. Nothing is marshaled by a proxy and a stub here, so the
- * answer only serves programs that ask. An interface nothing is registered for is REGDB_E_IIDNOTREG.
+ * a class registered with CoRegisterPSClsid in this process wins over the interface's ProxyStubClsid32 in the
+ * registry. nothing here marshals through these, the answer only serves programs that ask. an interface with nothing
+ * registered gives REGDB_E_IIDNOTREG.
  */
 #define PS_MAX 128
 
@@ -668,6 +664,6 @@ WINOLEAPI HRESULT WINAPI CoGetPSClsid(REFIID iid, CLSID *clsid)
     DWORD size = sizeof(text);
     if (!RegGetValueW(HKEY_CLASSES_ROOT, path, nullptr, RRF_RT_REG_SZ, nullptr, text, &size) && OleParseGuid(text, clsid))
         return S_OK;
-    /* the interfaces of automation have classes a system registers by itself, which nothing here needs registered. */
+    /* automation interfaces have classes the system registers itself, so they need no registration here. */
     return OrpcAutomationClass(iid, clsid) ? S_OK : REGDB_E_IIDNOTREG;
 }

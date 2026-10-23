@@ -1,7 +1,6 @@
 /*
- * input: a system thread drains host input events and queues them raw to
- * the thread owning the target window. the receiving thread turns them into
- * messages, so hit testing and activation run in the right context.
+ * input: a system thread drains host input events and queues them raw to the thread owning the target window. the
+ * receiving thread turns them into messages, so hit testing and activation run in the right context.
  */
 #include "win32k.h"
 
@@ -159,10 +158,9 @@ static W32THREAD *mouse_target_thread(const MimeInputEvent *ev)
 }
 
 /*
- * the left and right keys of a modifier follow the modifier state every
- * event carries, as the keyboard driver keeps them on windows: a modifier
- * press the host never forwarded, such as one made while another
- * application had the focus, still shows in GetKeyState(VK_LSHIFT).
+ * the left and right modifier keys follow the modifier state each event carries, like the windows keyboard driver
+ * keeps them: a press the host never forwarded, such as one made while another application had the focus, still
+ * shows in GetKeyState(VK_LSHIFT).
  */
 static void sync_async_sides(BOOLEAN on, UINT left, UINT right, UINT generic)
 {
@@ -394,7 +392,7 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
     QueuePostInput(t, ev, mouse_state);
 }
 
-/* the vk an event carries: the left and right modifier keys, never the generic ones. */
+/* events carry the left or right modifier key, never the generic one. */
 static UINT specific_vk(const KEYBDINPUT *ki)
 {
     BOOLEAN ext = (ki->dwFlags & KEYEVENTF_EXTENDEDKEY) != 0;
@@ -602,7 +600,7 @@ static UINT button_message(UINT button, BOOLEAN down, BOOLEAN nc)
     return nc ? base - (WM_LBUTTONDOWN - WM_NCLBUTTONDOWN) : base;
 }
 
-/* window under pt and its hit test result, skipping transparent children. */
+/* the window under pt and its hit test result, skipping transparent children. */
 static WND *hit_test(WND *top, POINT pt, LONG *hit)
 {
     WND *w = WndFromPoint(top, pt);

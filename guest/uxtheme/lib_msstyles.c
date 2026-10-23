@@ -1,4 +1,2 @@
-/*
- * the visual style parser of guest/lib, compiled into uxtheme.
- */
+/* the visual style parser of guest/lib. */
 #include "../lib/msstyles/msstyles.c"

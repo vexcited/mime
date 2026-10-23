@@ -1,6 +1,4 @@
-/*
- * kernel32 forwards almost everything to kernelbase; it keeps the thread start thunk.
- */
+/* kernel32 forwards almost everything to kernelbase. */
 #include <mime/win32/winbase.h>
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
@@ -17,10 +15,8 @@ __declspec(dllexport) void WINAPI BaseThreadInitThunk(ULONG flags, LPTHREAD_STAR
 }
 
 /*
- * the time functions that the api set of the multimedia time names, hosted by kernel32: the milliseconds since the machine
- * started, the resolution of the timers a program asked for with the counts that end it again, and the range of
- * resolutions. timeBeginPeriod raises the resolution of the clock for the process with NtSetTimerResolution as long as
- * a period is begun that no timeEndPeriod has ended.
+ * the multimedia time api set, hosted by kernel32. while any timeBeginPeriod is not yet ended by timeEndPeriod, the
+ * process clock resolution is raised with NtSetTimerResolution.
  */
 #define TIMERR_NOERROR 0
 #define TIMERR_NOCANDO 97
@@ -79,7 +75,7 @@ DECLSPEC_EXPORT UINT WINAPI timeGetDevCaps(KTIMECAPS *caps, UINT size)
     return TIMERR_NOERROR;
 }
 
-/* the smallest period that is begun is what the clock is set to. */
+/* the clock follows the smallest active period. */
 static void apply_periods(void)
 {
     UINT finest = 0;
@@ -136,7 +132,7 @@ DECLSPEC_EXPORT UINT WINAPI timeEndPeriod(UINT period)
     return result;
 }
 
-/* the older name of DnsHostnameToComputerNameExW, which only kernel32 has. */
+/* older name of DnsHostnameToComputerNameExW, only kernel32 exports it. */
 DECLSPEC_EXPORT BOOL WINAPI DnsHostnameToComputerNameW(LPCWSTR host, LPWSTR name, LPDWORD size)
 {
     return DnsHostnameToComputerNameExW(host, name, size);

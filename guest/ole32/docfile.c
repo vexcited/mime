@@ -1,12 +1,10 @@
 /*
- * structured storage: compound files made and read by StgCreateDocfile, StgOpenStorage and their forms over a byte
- * array. The file is read whole into a tree of storages and streams in memory, the elements work on the tree, and
- * the tree is written out again whole as a version 3 compound file with 512 byte sectors when it is committed, and
- * when the last of the objects of a direct mode file goes. Files of version 4 (4096 byte sectors) are read too.
+ * compound files for StgCreateDocfile, StgOpenStorage and their byte array forms. the file is read whole into an
+ * in memory tree of storages and streams, and written back whole as a version 3 file with 512 byte sectors on commit,
+ * and when the last object of a direct mode file goes. version 4 files with 4096 byte sectors are read too.
  *
- * Mime's choices, where nothing says otherwise: a stream or storage opened for a transaction works on a copy of
- * its element that a commit puts back; a transacted root is written only by its own commit; the file is rewritten
- * as a whole each time; locks of regions are refused as the compound file of Windows refuses them.
+ * choices made here: a transacted stream or storage works on a copy that commit puts back, a transacted root is only
+ * written by its own commit, and region locks are refused like windows' compound files refuse them.
  */
 #include "ole32_private.h"
 #include <mime/win32/objidl.h>
@@ -53,7 +51,7 @@
 
 static const BYTE g_signature[8] = {0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1};
 
-/* ------------------------------------------------------------------ the tree */
+/* ------------------------------------------------------------------ tree */
 
 typedef struct NODE NODE;
 struct NODE {
@@ -63,7 +61,7 @@ struct NODE {
     CLSID Clsid;
     DWORD State;
     FILETIME Created, Modified;
-    /* the storage this is an element of, nullptr for the root and for what has been destroyed. */
+    /* the parent storage, nullptr for the root and for destroyed elements. */
     NODE *Parent;
     BOOL Detached;
     NODE **Children;
@@ -121,7 +119,7 @@ static NODE *node_new(PCWSTR name, BYTE type)
     return node;
 }
 
-/* the order of the elements of a storage: the shorter name first, then by upper case code units. */
+/* shorter names sort first, then by upper case code units. */
 static int name_compare(PCWSTR a, PCWSTR b)
 {
     int la = (int)wcslen(a), lb = (int)wcslen(b);
@@ -157,7 +155,7 @@ static NODE *child_find(NODE *storage, PCWSTR name)
     return found ? storage->Children[at] : nullptr;
 }
 
-/* the child is put in its place and the tree owns the reference given. */
+/* the tree takes over the given reference. */
 static HRESULT child_add(NODE *storage, NODE *child)
 {
     BOOL found;
@@ -182,7 +180,7 @@ static HRESULT child_add(NODE *storage, NODE *child)
     return S_OK;
 }
 
-/* what is below a destroyed element reads as reverted. */
+/* everything below a destroyed element reads as reverted. */
 static void detach(NODE *node)
 {
     node->Detached = TRUE;
@@ -256,7 +254,7 @@ static NODE *node_copy(const NODE *source)
     return node;
 }
 
-/* the contents of a storage or stream taken from another node of the same kind, which is left empty. */
+/* the source node must be of the same kind and is left empty. */
 static void node_take(NODE *to, NODE *from)
 {
     for (ULONG i = 0; i < to->Count; i++) {
@@ -320,7 +318,7 @@ static const BYTE *sector_at(const READER *r, ULONG sector)
     return r->Image + offset;
 }
 
-/* the bytes of a chain, up to the size when it is given and as long as the chain goes when it is not. */
+/* reads up to size when sized, else to the end of the chain. */
 static HRESULT read_chain(const READER *r, ULONG first, ULONGLONG size, BOOL sized, BYTE **out, ULONGLONG *out_size)
 {
     ULONGLONG sectors = 0;
@@ -386,7 +384,7 @@ typedef struct {
 
 static HRESULT build_children(READER *r, DIRECTORY *d, NODE *parent, ULONG id, ULONG depth)
 {
-    /* the siblings of a storage are a tree, walked in order with the left subtree first. */
+    /* siblings form a tree, walked in order, left subtree first. */
     if (id == NOSTREAM)
         return S_OK;
     if (id >= d->Count || d->Seen[id] || depth > 4096)
@@ -463,7 +461,7 @@ static HRESULT parse_image(const BYTE *image, ULONGLONG length, NODE **root_out)
     ULONG first_difat = le32(image + 68), difat_count = le32(image + 72);
     if (!fat_sectors || (ULONGLONG)fat_sectors * r.SectorSize > length)
         return STG_E_DOCFILECORRUPT;
-    /* the table of the fat: the sectors named by the header, then by the chain of the extra sectors. */
+    /* fat sectors: those the header lists, then those of the extra difat sector chain. */
     ULONG *fat_list = OleAlloc((SIZE_T)fat_sectors * sizeof(ULONG));
     if (!fat_list)
         return STG_E_INSUFFICIENTMEMORY;
@@ -513,7 +511,7 @@ static HRESULT parse_image(const BYTE *image, ULONGLONG length, NODE **root_out)
     d.Count = (ULONG)(dir_size / 128);
     if (directory[66] != 5)
         goto done;
-    /* the mini fat and the mini stream, which is the stream of the root entry. */
+    /* the mini stream is the root entry's stream. */
     if (mini_count && first_mini < 0xFFFFFFFAu) {
         ULONGLONG got;
         hr = read_chain(&r, first_mini, 0, FALSE, &minifat_bytes, &got);
@@ -603,8 +601,8 @@ static HRESULT entry_push(ENTRIES *list, NODE *node, ULONG *id)
 }
 
 /*
- * the siblings first..first+count-1 are sorted, and become a balanced tree, red where its deepest level is not full and
- * black everywhere else, which keeps the rule of the red black tree that the compound file of Windows relies on.
+ * turns sorted siblings into a balanced tree, red on its deepest level when that level is not full and black elsewhere.
+ * windows' compound files rely on the red black rule this keeps.
  */
 static ULONG link_siblings(ENTRY *entries, ULONG first, ULONG count, ULONG depth, LONG red_depth)
 {
@@ -670,7 +668,7 @@ static ULONG ceil_div(ULONGLONG a, ULONG b)
     return (ULONG)((a + b - 1) / b);
 }
 
-/* the image of the tree: BYTE buffer from the heap and its length. */
+/* the file image goes in a heap buffer. */
 static HRESULT build_image(NODE *root, BYTE **image_out, ULONGLONG *length_out)
 {
     ENTRIES list = {};
@@ -684,7 +682,7 @@ static HRESULT build_image(NODE *root, BYTE **image_out, ULONGLONG *length_out)
     hr = layout_storage(&list, 0);
     if (FAILED(hr))
         goto done;
-    /* the mini stream holds the streams under the cutoff, in sectors of 64 bytes. */
+    /* the mini stream holds the streams under the cutoff, in 64 byte sectors. */
     ULONGLONG mini_sectors = 0, big_sectors = 0;
     for (ULONG i = 1; i < list.Count; i++) {
         NODE *n = list.Entries[i].Node;
@@ -728,7 +726,7 @@ static HRESULT build_image(NODE *root, BYTE **image_out, ULONGLONG *length_out)
         fat[i] = FREESECT;
     for (ULONG i = 0; i < minifat_sectors * 128; i++)
         minifat[i] = FREESECT;
-    /* the sectors in order: directory, mini fat, mini stream, big streams, fat, difat. */
+    /* sector order: directory, mini fat, mini stream, big streams, fat, difat. */
     ULONG next = 0;
     ULONG dir_start = next, minifat_start = ENDOFCHAIN, mini_start = ENDOFCHAIN;
     for (ULONG i = 0; i < dir_sectors; i++, next++)
@@ -768,7 +766,6 @@ static HRESULT build_image(NODE *root, BYTE **image_out, ULONGLONG *length_out)
     ULONG difat_start = difat_sectors ? next : ENDOFCHAIN;
     for (ULONG i = 0; i < difat_sectors; i++, next++)
         fat[next] = DIFSECT;
-    /* the directory. */
     BYTE *dir = image + 512 + (SIZE_T)dir_start * 512;
     for (ULONG i = 0; i < dir_sectors * 4; i++) {
         BYTE *e = dir + (SIZE_T)i * 128;
@@ -804,7 +801,7 @@ static HRESULT build_image(NODE *root, BYTE **image_out, ULONGLONG *length_out)
             put32(e + 116, 0);
         }
     }
-    /* what the sectors hold: the mini fat, the mini stream, the fat and the extra sectors of the difat. */
+    /* the mini fat, mini stream, fat and extra difat sectors. */
     if (minifat_sectors)
         for (ULONG i = 0; i < minifat_sectors * 128; i++)
             put32(image + 512 + (SIZE_T)minifat_start * 512 + i * 4, minifat[i]);
@@ -820,7 +817,6 @@ static HRESULT build_image(NODE *root, BYTE **image_out, ULONGLONG *length_out)
         }
         put32(p + 127 * 4, i + 1 < difat_sectors ? difat_start + i + 1 : ENDOFCHAIN);
     }
-    /* the header. */
     memcpy(image, g_signature, 8);
     put16(image + 24, 0x3E);
     put16(image + 26, 3);
@@ -849,7 +845,7 @@ done:
     return hr;
 }
 
-/* ------------------------------------------------------------------ the document */
+/* ------------------------------------------------------------------ document */
 
 typedef struct {
     LONG Refs;
@@ -1086,7 +1082,7 @@ static HRESULT WINAPI df_stream_commit(IStream *self, DWORD flags)
     DF_STREAM *s = (DF_STREAM *)self;
     AcquireSRWLockExclusive(&s->Doc->Lock);
     HRESULT hr = stream_check(s);
-    /* a stream has nothing of its own to write: the root of a direct mode file is written when it is released. */
+    /* streams write nothing themselves: a direct mode root is written when it is released. */
     ReleaseSRWLockExclusive(&s->Doc->Lock);
     return hr;
 }
@@ -1174,7 +1170,7 @@ static const IStreamVtbl g_stream_vtbl = {df_stream_query, df_stream_addref, df_
                                           df_stream_commit, df_stream_revert, df_stream_lock, df_stream_lock,
                                           df_stream_stat, df_stream_clone};
 
-/* ------------------------------------------------------------------ the enumerator of elements */
+/* ------------------------------------------------------------------ element enumerator */
 
 typedef struct DF_ENUM DF_ENUM;
 typedef struct {
@@ -1319,7 +1315,7 @@ typedef struct DF_STORAGE {
     IStorage Interface;
     LONG Refs;
     DOC *Doc;
-    /* what the object works on: the element itself, or for a transaction a copy of it. */
+    /* the element itself, or a copy of it for a transaction. */
     NODE *Node;
     NODE *Original;
     DWORD Mode;
@@ -1470,7 +1466,7 @@ static HRESULT WINAPI df_storage_create_storage(IStorage *self, LPCOLESTR name, 
             hr = STG_E_FILEALREADYEXISTS;
         } else {
             if (node) {
-                /* made again, it starts empty. */
+                /* recreated, it starts empty. */
                 NODE *fresh = node_new(name, STGTY_STORAGE);
                 if (!fresh) {
                     hr = STG_E_INSUFFICIENTMEMORY;
@@ -1535,7 +1531,7 @@ static HRESULT WINAPI df_storage_open_storage(IStorage *self, LPCOLESTR name, IS
     return hr;
 }
 
-/* a storage's elements into another storage, any implementation of it. */
+/* the destination may be any IStorage implementation. */
 static HRESULT copy_elements(NODE *node, IStorage *dest, DWORD excluded_types, SNB names)
 {
     for (ULONG i = 0; i < node->Count; i++) {
@@ -1602,7 +1598,7 @@ static HRESULT WINAPI df_storage_copy_to(IStorage *self, DWORD exclude_count, co
         else if (IsEqualIID(&exclude[i], &IID_IStream))
             excluded |= 2;
     }
-    /* the elements are copied from a snapshot, so that a destination in the same file can take its own lock. */
+    /* copy from a snapshot so a destination in the same file can take the lock. */
     AcquireSRWLockExclusive(&s->Doc->Lock);
     HRESULT hr = s->Node->Detached ? STG_E_REVERTED : S_OK;
     NODE *snapshot = nullptr;
@@ -1673,7 +1669,7 @@ static HRESULT WINAPI df_storage_commit(IStorage *self, DWORD flags)
     AcquireSRWLockExclusive(&s->Doc->Lock);
     HRESULT hr = s->Node->Detached ? STG_E_REVERTED : S_OK;
     if (SUCCEEDED(hr) && s->Original && s->Original != s->Node) {
-        /* a transaction on an element puts the copy back; the copy goes on as it is. */
+        /* commit puts the copy back into the element and keeps using the copy. */
         if (!s->Original->Detached) {
             NODE *copy = node_copy(s->Node);
             if (copy) {
@@ -1685,7 +1681,7 @@ static HRESULT WINAPI df_storage_commit(IStorage *self, DWORD flags)
             }
         }
     }
-    /* what a direct mode file has is written at once, and a transacted one by the commit of its root. */
+    /* a direct mode file is written now, a transacted one by its root's commit. */
     BOOL write = s->Root || !s->Doc->Transacted;
     if (SUCCEEDED(hr) && write && s->Doc->Writable && (s->Doc->Dirty || s->Root))
         hr = doc_write(s->Doc);
@@ -1707,7 +1703,7 @@ static HRESULT WINAPI df_storage_revert(IStorage *self)
             hr = STG_E_INSUFFICIENTMEMORY;
         }
     } else if (s->Root && s->Doc->Transacted) {
-        /* the file is read again, which is what is in it. */
+        /* reread the file to get what it holds. */
         ILockBytes *bytes = s->Doc->Bytes;
         STATSTG stat;
         hr = bytes->lpVtbl->Stat(bytes, &stat, STATFLAG_NONAME);
@@ -1797,7 +1793,7 @@ static HRESULT WINAPI df_storage_rename_element(IStorage *self, LPCOLESTR old_na
         } else if (child_find(s->Node, new_name) && name_compare(old_name, new_name)) {
             hr = STG_E_ACCESSDENIED;
         } else {
-            /* taken out and put back under its new name, so the order of the elements stays right. */
+            /* removed and reinserted under the new name to keep the elements sorted. */
             BOOL found;
             ULONG at = child_position(s->Node, node->Name, &found);
             memmove(s->Node->Children + at, s->Node->Children + at + 1, (s->Node->Count - at - 1) * sizeof(NODE *));
@@ -1873,7 +1869,7 @@ static HRESULT WINAPI df_storage_stat(IStorage *self, STATSTG *stat, DWORD flags
     AcquireSRWLockExclusive(&s->Doc->Lock);
     HRESULT hr = s->Node->Detached ? STG_E_REVERTED : S_OK;
     if (SUCCEEDED(hr)) {
-        /* the root of a file is named by the path of the file. */
+        /* a file's root is named by the file's path. */
         PCWSTR name = s->Root && s->Doc->Path ? s->Doc->Path : nullptr;
         hr = stat_node(s->Node, stat, flags, name, s->Mode);
     }
@@ -1888,7 +1884,7 @@ static const IStorageVtbl g_storage_vtbl = {
     df_storage_rename_element, df_storage_set_element_times, df_storage_set_class, df_storage_set_state_bits,
     df_storage_stat};
 
-/* the node is referenced once more for the object, and so is the element it is a copy of. */
+/* the object references the node, and the element the node copies. */
 static HRESULT storage_open_object(DOC *doc, NODE *node, NODE *original, DWORD mode, BOOL root, IStorage **out)
 {
     DF_STORAGE *s = OleAllocZero(sizeof(*s));
@@ -1909,7 +1905,7 @@ static HRESULT storage_open_object(DOC *doc, NODE *node, NODE *original, DWORD m
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the file as byte array */
+/* ------------------------------------------------------------------ the file as a byte array */
 
 typedef struct {
     ILockBytes Interface;
@@ -2066,7 +2062,7 @@ static HRESULT WINAPI fb_stat(ILockBytes *self, STATSTG *stat, DWORD flags)
 static const ILockBytesVtbl g_file_bytes_vtbl = {fb_query, fb_addref, fb_release, fb_read_at, fb_write_at,
                                                  fb_flush, fb_set_size, fb_lock, fb_lock, fb_stat};
 
-/* ------------------------------------------------------------------ making and opening documents */
+/* ------------------------------------------------------------------ creating and opening documents */
 
 static DWORD share_of(DWORD mode)
 {
@@ -2112,7 +2108,7 @@ static HRESULT doc_start(ILockBytes *bytes, NODE *root, DWORD mode, BOOL writabl
         doc->Path = copy_text(path);
     HRESULT hr = S_OK;
     if (writable && !root->Count && !root->Size) {
-        /* a new file is a compound file at once. */
+        /* a new file is written out as a compound file at once. */
         hr = doc_write(doc);
     }
     if (SUCCEEDED(hr))
@@ -2197,7 +2193,7 @@ WINOLEAPI HRESULT WINAPI StgCreateDocfile(LPCOLESTR name, DWORD mode, DWORD rese
     WCHAR temporary[MAX_PATH];
     BOOL delete_on_release = (mode & STGM_DELETEONRELEASE) != 0;
     if (!name) {
-        /* with no name the file is made in the temp folder and goes with the storage. */
+        /* without a name the file is made in the temp folder and goes away with the storage. */
         WCHAR folder[MAX_PATH];
         if (!GetTempPathW(MAX_PATH, folder) || !GetTempFileNameW(folder, L"~DF", 0, temporary))
             return STG_E_INSUFFICIENTMEMORY;

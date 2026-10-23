@@ -1,7 +1,6 @@
 /*
- * the dxgi device manager, sharing a direct3d 11 device between the parts
- * of a pipeline, and media buffers over a texture, read and written
- * through a staging copy while locked.
+ * the dxgi device manager, which shares a direct3d 11 device across a pipeline,
+ * and media buffers over a texture, accessed through a staging copy while locked.
  */
 #include "mfplat_private.h"
 #include <mime/win32/d3d11.h>
@@ -10,7 +9,7 @@
 
 typedef struct {
     UINT_PTR id;
-    /* cleared by ResetDevice, the handle then only closes. */
+    /* cleared by ResetDevice, after which the handle can only be closed. */
     BOOL valid;
     BOOL locked;
 } DeviceHandle;
@@ -25,7 +24,7 @@ typedef struct {
     DeviceHandle *handles;
     DWORD count;
     DWORD capacity;
-    /* the thread holding the device, and how many locks it holds. */
+    /* the thread holding the device and its lock count. */
     DWORD owner;
     LONG locks;
 } DeviceManager;
@@ -124,7 +123,7 @@ static HRESULT STDMETHODCALLTYPE manager_get_video_service(IMFDXGIDeviceManager 
     return hr;
 }
 
-/* one thread at a time holds the device, as often as it locks it. */
+/* one thread at a time holds the device, and it may lock it recursively. */
 static HRESULT STDMETHODCALLTYPE manager_lock_device(IMFDXGIDeviceManager *iface, HANDLE handle, REFIID riid,
                                                     void **object, BOOL block)
 {
@@ -162,7 +161,7 @@ done:
     return hr;
 }
 
-/* the lowest number no other handle has. */
+/* hands out the lowest free handle number. */
 static HRESULT STDMETHODCALLTYPE manager_open_device_handle(IMFDXGIDeviceManager *iface, HANDLE *handle)
 {
     DeviceManager *manager = device_manager(iface);
@@ -197,7 +196,7 @@ done:
     return hr;
 }
 
-/* a new device for the token CreateDXGIDeviceManager gave, the open handles going stale. */
+/* the token must be the one CreateDXGIDeviceManager gave. open handles go stale. */
 static HRESULT STDMETHODCALLTYPE manager_reset_device(IMFDXGIDeviceManager *iface, IUnknown *device, UINT token)
 {
     DeviceManager *manager = device_manager(iface);
@@ -257,7 +256,7 @@ static const IMFDXGIDeviceManagerVtbl DEVICE_MANAGER_VTBL = {
     manager_unlock_device,
 };
 
-/* the reset token is the tick count at creation, as windows makes it. */
+/* like windows, the reset token is the tick count at creation. */
 HRESULT WINAPI MFCreateDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **out)
 {
     if (!token || !out)
@@ -287,7 +286,7 @@ static BOOL CALLBACK init_shared(INIT_ONCE *once, void *parameter, void **contex
     return TRUE;
 }
 
-/* the process' shared manager, made by its first lock and released with its last unlock. */
+/* the process-wide manager is created by the first lock and released by the last unlock. */
 HRESULT WINAPI MFLockDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **manager)
 {
     if (!manager)
@@ -333,7 +332,7 @@ typedef struct {
     UINT subresource;
     BOOL bottom_up;
     D3D11_TEXTURE2D_DESC desc;
-    /* bytes per row and rows of the contiguous image, planes after each other. */
+    /* layout of the contiguous image, planes stored back to back. */
     DWORD pitch;
     DWORD rows;
     DWORD length;
@@ -344,7 +343,7 @@ typedef struct {
     IMFAttributes *attributes;
 } SurfaceBuffer;
 
-/* the row size and the rows of each format, chroma planes included. */
+/* the row count includes the chroma planes. */
 static void image_layout(DXGI_FORMAT format, UINT width, UINT height, DWORD *pitch, DWORD *rows)
 {
     *rows = height;
@@ -429,7 +428,7 @@ static ULONG surface_release(SurfaceBuffer *surface)
     return refs;
 }
 
-/* the row of the image at row, upside down for a bottom up rgb buffer. */
+/* bottom up rgb buffers store their rows upside down. */
 static BYTE *image_row(SurfaceBuffer *surface, DWORD row)
 {
     if (surface->bottom_up && rgb_format(surface->desc.Format))
@@ -437,7 +436,7 @@ static BYTE *image_row(SurfaceBuffer *surface, DWORD row)
     return surface->image + (SIZE_T)row * surface->pitch;
 }
 
-/* copies the subresource into the image through the staging texture, at the first lock. */
+/* runs at the first lock, copying through the staging texture. */
 static HRESULT surface_map(SurfaceBuffer *surface)
 {
     if (surface->locks++)
@@ -489,7 +488,7 @@ done:
     return hr;
 }
 
-/* writes the image back into the subresource, at the last unlock. */
+/* runs at the last unlock. */
 static HRESULT surface_unmap(SurfaceBuffer *surface)
 {
     if (!surface->locks)
@@ -517,7 +516,7 @@ static HRESULT surface_unmap(SurfaceBuffer *surface)
     return hr;
 }
 
-/* ------------------------------------------------------------------ the IMFMediaBuffer of surfaces */
+/* ------------------------------------------------------------------ IMFMediaBuffer */
 
 static HRESULT STDMETHODCALLTYPE surface_buffer_query_interface(IMFMediaBuffer *iface, REFIID riid, void **out)
 {
@@ -593,7 +592,7 @@ static const IMFMediaBufferVtbl SURFACE_BUFFER_VTBL = {
     surface_get_max_length,
 };
 
-/* ------------------------------------------------------------------ the IMF2DBuffer2 of surfaces */
+/* ------------------------------------------------------------------ IMF2DBuffer2 */
 
 static HRESULT STDMETHODCALLTYPE surface_2d_query_interface(IMF2DBuffer2 *iface, REFIID riid, void **out)
 {
@@ -730,7 +729,7 @@ static const IMF2DBuffer2Vtbl SURFACE_2D_VTBL = {
     surface_lock_2d_size,           surface_copy_2d_to,
 };
 
-/* ------------------------------------------------------------------ the IMFDXGIBuffer of surfaces */
+/* ------------------------------------------------------------------ IMFDXGIBuffer */
 
 static HRESULT STDMETHODCALLTYPE surface_dxgi_query_interface(IMFDXGIBuffer *iface, REFIID riid, void **out)
 {
@@ -784,7 +783,7 @@ static const IMFDXGIBufferVtbl SURFACE_DXGI_VTBL = {
     surface_get_subresource_index, surface_get_unknown,  surface_set_unknown,
 };
 
-/* a buffer over one subresource of a texture 2d, its length that of the whole image. */
+/* the buffer length covers the whole image. */
 HRESULT WINAPI MFCreateDXGISurfaceBuffer(REFIID riid, IUnknown *object, UINT subresource, BOOL bottom_up,
                                          IMFMediaBuffer **out)
 {

@@ -1,22 +1,14 @@
 /*
- * the guest's swapchains. their images are host images the guest renders
- * to, and a present blits one into a swapchain of the host's own, made on
- * the host window of the guest window, with the window's frame from the
- * guest surface around it. a presenter owns a host window's surface while
- * swapchains present to it, and gives the window back to sdl's renderer
- * once the last one goes.
+ * guest swapchains render into host images. a present blits one into a host window swapchain and draws the
+ * guest frame around it. a presenter owns the window surface until its last swapchain is destroyed, then
+ * returns it to SDL.
  *
- * acquire and present come without replies. a binary semaphore per image
- * orders them on the gpu: the blit of a present signals it, and the next
- * acquire of the image waits for it before it signals the guest.
+ * acquire and present have no replies. each image has a binary semaphore signaled by its present blit; the
+ * next acquire waits for it before signaling the guest.
  *
- * the host's acquire waits for the display, which would hold every later
- * call of the process, the next frame's included: a presenting thread per
- * connection does the acquire, the blit and the present. the connection's
- * thread only takes the guest's semaphores, in a submission that signals a
- * timeline value the blit waits for, and queues the present; an acquire of
- * an image whose present the presenting thread has not submitted yet waits
- * for it.
+ * a presenter thread per connection handles host acquire, blit and present, so display waits do not block
+ * later guest calls. the connection thread consumes guest semaphores and signals a timeline value for the
+ * blit, then queues the present. acquiring an image waits for its pending present to be submitted.
  */
 #include "mvk_host.h"
 #include "display.h"
@@ -66,11 +58,11 @@ typedef struct Swapchain {
     VkImage images[MAX_IMAGES];
     uint64_t image_ids[MAX_IMAGES];
     VkDeviceMemory memory[MAX_IMAGES];
-    VkSemaphore released[MAX_IMAGES]; /* signaled by the last present of the image */
+    VkSemaphore released[MAX_IMAGES]; /* signaled by the last present of the image. */
     bool pending[MAX_IMAGES];
-    uint32_t queued[MAX_IMAGES]; /* presents of the image the presenting thread did not submit yet */
-    bool flip; /* rows bottom first, as gl keeps them */
-    bool premultiplied; /* the alpha of the images shows what is behind the window */
+    uint32_t queued[MAX_IMAGES]; /* presents of the image the presenting thread did not submit yet. */
+    bool flip; /* bottom-first rows, as OpenGL stores them. */
+    bool premultiplied; /* the alpha of the images shows what is behind the window. */
 } Swapchain;
 
 typedef struct Frame {
@@ -79,10 +71,10 @@ typedef struct Frame {
     VkSemaphore acquired;
 } Frame;
 
-/* the display's gamma: the frame composed in an image of its own, then drawn through the ramp. */
+/* display gamma: compose the frame into an image, then draw it through the ramp. */
 typedef struct GammaPass {
-    bool broken; /* could not be made: frames show without the ramp */
-    VkFormat format; /* of the render pass and pipeline */
+    bool broken; /* could not be made: frames show without the ramp. */
+    VkFormat format; /* of the render pass and pipeline. */
     VkRenderPass pass;
     VkDescriptorSetLayout set_layout;
     VkPipelineLayout layout;
@@ -102,7 +94,7 @@ typedef struct GammaPass {
     VkDeviceMemory staging_memory;
     uint16_t *staging_map;
     uint32_t generation;
-    bool ramp_stale; /* the staging buffer holds a ramp the image has not */
+    bool ramp_stale; /* the staging buffer has a ramp update not yet uploaded. */
     bool ramp_valid;
     VkSwapchainKHR views_of;
     VkImageView views[MAX_HOST_IMAGES];
@@ -114,7 +106,7 @@ struct Presenter {
     MvkConnection *conn;
     int refs;
     pthread_mutex_t lock;
-    uint32_t generation; /* counts the host windows lost */
+    uint32_t generation;
     bool attached;
 
     VkSurfaceKHR surface;
@@ -123,8 +115,8 @@ struct Presenter {
     VkSwapchainKHR swapchain;
     VkFormat format;
     bool srgb;
-    bool premultiplied; /* the swapchain composes with alpha */
-    bool premultiplied_wanted; /* what the last swapchain asked for, which the surface may not offer */
+    bool premultiplied; /* the swapchain composes with alpha. */
+    bool premultiplied_wanted; /* what the last swapchain asked for, which the surface may not offer. */
     VkExtent2D extent;
     VkPresentModeKHR wanted_mode;
     bool stale;
@@ -158,10 +150,10 @@ struct Presenter {
     VkFormat last_format;
     bool last_valid;
     MimeRect last_client;
-    /* counts the images kept, and the one the readback buffer holds. */
+    /* image serial and serial cached in the readback buffer. */
     uint64_t last_serial;
     uint64_t readback_serial;
-    /* what a capture asks before it asks for pixels, under a lock of its own: a present holds the window's for a frame. */
+    /* capture metadata has a separate lock because presentation holds the window lock for a frame. */
     pthread_mutex_t info_lock;
     bool info_valid;
     uint32_t info_width, info_height;
@@ -181,7 +173,6 @@ struct Presenter {
     GammaPass gamma;
 };
 
-/* a present handed to the presenting thread. */
 typedef struct PresentJob {
     struct PresentJob *next;
     Swapchain *s;
@@ -189,7 +180,7 @@ typedef struct PresentJob {
     MimeRect client;
     VkQueue queue;
     uint32_t family;
-    uint64_t ready; /* the value of the ready timeline the guest's semaphores signal, 0 for none */
+    uint64_t ready; /* the value of the ready timeline the guest's semaphores signal, 0 for none. */
 } PresentJob;
 
 typedef struct MvkWsi {
@@ -307,7 +298,7 @@ static VkSemaphore new_semaphore(MvkConnection *c)
     return s;
 }
 
-/* ------------------------------------------------------------------ swapchains */
+/* ------------------------------------------------------------------ swapchains. */
 
 static void destroy_swapchain_images(MvkConnection *c, Swapchain *s)
 {
@@ -434,7 +425,7 @@ void mvk_wsi_create_swapchain(MvkCall *call)
     mvk_reply_end(call);
 }
 
-/* ------------------------------------------------------------------ presenters */
+/* ------------------------------------------------------------------ presenters. */
 
 static void wait_frames(MvkConnection *c, Presenter *p)
 {
@@ -489,7 +480,7 @@ static void drop_surface(MvkConnection *c, Presenter *p, bool idle)
 
 static void gamma_destroy(MvkConnection *c, Presenter *p);
 
-/* with the device idle: everything of the presenter. */
+/* the device must be idle before destroying the presenter. */
 static void destroy_presenter(MvkConnection *c, Presenter *p)
 {
     pthread_mutex_lock(&p->lock);
@@ -531,7 +522,7 @@ static void destroy_presenter(MvkConnection *c, Presenter *p)
     free(p);
 }
 
-/* the presenter of a window, made for the connection unless another one has it. */
+/* creates a presenter unless another connection owns the window. */
 static Presenter *presenter_get(MvkConnection *c, uint32_t window)
 {
     pthread_mutex_lock(&g_presenters_lock);
@@ -601,7 +592,7 @@ void mime_vk_window_lost(uint32_t id)
     pthread_mutex_unlock(&g_presenters_lock);
 }
 
-/* takes the host window from sdl and makes the surface, outside the presenter's lock. */
+/* takes the host window from SDL and makes the surface, outside the presenter's lock. */
 static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect client)
 {
     pthread_mutex_lock(&p->lock);
@@ -713,7 +704,7 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
     };
     VkSwapchainKHR swapchain;
     VkResult r = w->CreateSwapchain(c->device, &info, nullptr, &swapchain);
-    /* the old one goes either way, once nothing of it is in flight. */
+    /* destroy the old swapchain once no work uses it, even if replacement failed. */
     if (p->swapchain) {
         pthread_mutex_lock(&c->queue_lock);
         c->fn.vkQueueWaitIdle(queue);
@@ -827,7 +818,7 @@ static bool make_gdi(MvkConnection *c, Presenter *p, uint32_t width, uint32_t he
     return true;
 }
 
-/* the image the last present is kept in, the guest's size; false without one. */
+/* allocates a guest-sized image to retain the last present; false on failure. */
 static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkFormat format)
 {
     if (p->last && p->last_extent.width == extent.width && p->last_extent.height == extent.height &&
@@ -879,7 +870,7 @@ static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkForma
     return true;
 }
 
-/* ------------------------------------------------------------------ the display's gamma */
+/* ------------------------------------------------------------------ the display's gamma. */
 
 static void barrier(MvkConnection *c, VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
                     VkAccessFlags src_access, VkAccessFlags dst_access, VkPipelineStageFlags src_stage,
@@ -980,7 +971,7 @@ static bool gamma_image(MvkConnection *c, VkImageCreateInfo *info, VkImage *imag
     return c->fn.vkCreateImageView(c->device, &vi, nullptr, view) == VK_SUCCESS;
 }
 
-/* what stays for the presenter's life: the layouts, the sampler, the ramp's image and its staging buffer. */
+/* layouts, sampler, ramp image and staging buffer live with the presenter. */
 static bool gamma_base(MvkConnection *c, GammaPass *g)
 {
     if (g->set)
@@ -1191,7 +1182,7 @@ static bool gamma_views(MvkConnection *c, Presenter *p)
     return true;
 }
 
-/* whether this frame goes through the ramp, everything for it made and a new ramp staged. */
+/* prepares gamma resources and stages any new ramp for this frame. */
 static bool gamma_prepare(MvkConnection *c, Presenter *p)
 {
     GammaPass *g = &p->gamma;
@@ -1254,7 +1245,7 @@ static void gamma_record(MvkConnection *c, Presenter *p, VkCommandBuffer cmd, ui
     c->fn.vkCmdEndRenderPass(cmd);
 }
 
-/* ------------------------------------------------------------------ recording */
+/* ------------------------------------------------------------------ recording. */
 
 static void barrier(MvkConnection *c, VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
                     VkAccessFlags src_access, VkAccessFlags dst_access, VkPipelineStageFlags src_stage,
@@ -1419,7 +1410,7 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     c->fn.vkEndCommandBuffer(cmd);
 }
 
-/* ------------------------------------------------------------------ present */
+/* ------------------------------------------------------------------ present. */
 
 /* semaphores a submission waits for, the values of timelines among them. */
 typedef struct Waits {
@@ -1478,7 +1469,7 @@ static void refresh_shadow(Presenter *p, const MimeUiFrame *frame)
     }
 }
 
-/* the presenter's part of a present, under its lock: false when the window shows nothing of it. */
+/* under the presenter lock: returns false if the window will show nothing. */
 static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family, const Waits *waits, Swapchain *s,
                  uint32_t index, const MimeUiFrame *frame, MimeRect client)
 {
@@ -1574,7 +1565,7 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
     return false;
 }
 
-/* a present of one swapchain: on its window when it shows, otherwise only the image released. */
+/* presents one swapchain, or just releases its image when the window is hidden. */
 static void present_one(MvkConnection *c, VkQueue queue, uint32_t family, const Waits *waits, Swapchain *s,
                         uint32_t index, uint32_t window, MimeRect client)
 {
@@ -1713,10 +1704,8 @@ void mvk_wsi_present(MvkCall *call)
     MvkWsi *w = wsi_of(c);
     bool aside = w && start_presenting(c, w);
     /*
-     * the guest's semaphores are taken here, in ring order, before the
-     * guest may signal them again: once for several swapchains, then one
-     * after the other, or for the presenting thread in a submission that
-     * signals the next ready value.
+     * consume guest semaphores once in ring order, before the guest may signal them again. process multiple
+     * swapchains sequentially, or signal the next ready timeline value for the presenter thread.
      */
     uint64_t ready = 0;
     if (waits.count && (aside || count > 1)) {
@@ -1858,7 +1847,7 @@ void mvk_wsi_close(MvkConnection *c)
     c->wsi = nullptr;
 }
 
-/* ------------------------------------------------------------------ images of the host's own */
+/* ------------------------------------------------------------------ images of the host's own. */
 
 MvkImageChain *mvk_wsi_chain_create(MvkConnection *c, VkImage image, VkFormat format, VkExtent2D extent)
 {
@@ -1881,7 +1870,7 @@ MvkImageChain *mvk_wsi_chain_create(MvkConnection *c, VkImage image, VkFormat fo
     return s;
 }
 
-/* as a guest present of the chain's image, which waits for rendered. */
+/* presents a host-owned image after waiting for rendered. */
 void mvk_wsi_chain_present(MvkConnection *c, MvkImageChain *s, VkQueue queue, uint32_t family, VkSemaphore rendered,
                            uint32_t window, MimeRect client, bool sync)
 {
@@ -1924,7 +1913,7 @@ void mvk_wsi_chain_present(MvkConnection *c, MvkImageChain *s, VkQueue queue, ui
     pthread_mutex_unlock(&w->lock);
 }
 
-/* the semaphore the next rendering to the image waits for, once its present was submitted; null when none. */
+/* returns the semaphore for the next render after its present is submitted, or null. */
 VkSemaphore mvk_wsi_chain_acquire(MvkConnection *c, MvkImageChain *s)
 {
     MvkWsi *w = c->wsi;
@@ -1949,7 +1938,7 @@ void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s)
     free_swapchain(c, s);
 }
 
-/* ------------------------------------------------------------------ readback */
+/* ------------------------------------------------------------------ readback. */
 
 /* rows of 32 bit pixels with the alpha forced to opaque, which is what the guest composes them as. */
 static void copy_opaque(void *pixels, uint32_t stride, const uint8_t *from, uint32_t width, uint32_t height)
@@ -1963,9 +1952,8 @@ static void copy_opaque(void *pixels, uint32_t stride, const uint8_t *from, uint
 }
 
 /*
- * the last image presented to a window, copied as bgra rows into pixels
- * when it fits, with its size and the client rectangle it showed in,
- * relative to the window. false when the window presents nothing.
+ * copies the last presented image into BGRA rows if capacity permits. returns its size and window-relative
+ * client rectangle, or false if the window has no image.
  */
 bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
                       uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial)
@@ -1984,7 +1972,7 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
     MvkConnection *c = p->conn;
     bool ok = false;
     if (!pixels) {
-        /* the size and the serial, without waiting for a present to be done. */
+        /* reads size and serial without waiting for presentation. */
         pthread_mutex_lock(&p->info_lock);
         ok = p->info_valid;
         if (ok) {
@@ -2009,7 +1997,7 @@ bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, ui
         goto out;
     }
     VkDeviceSize size = (VkDeviceSize)p->last_extent.width * p->last_extent.height * 4;
-    /* the buffer still holds this image: a capture of an idle window copies from it without the gpu. */
+    /* reuse cached readback for an unchanged image, avoiding GPU work. */
     if (p->readback_serial == p->last_serial && p->readback_size >= size) {
         copy_opaque(pixels, stride, p->readback_map, p->last_extent.width, p->last_extent.height);
         ok = true;

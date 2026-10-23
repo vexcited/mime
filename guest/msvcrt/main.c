@@ -15,7 +15,7 @@ void MsvcrtStartupInit(void);
 void MsvcrtProcessDetach(void);
 void MsvcrtClockInit(void);
 
-/* the encoded callback of the program for its thread local destructors, run as a thread ends. */
+/* the program's encoded callback for its thread local destructors, run as a thread ends. */
 static PVOID g_exe_tls_callback;
 
 DECLSPEC_EXPORT void __cdecl _register_thread_local_exe_atexit_callback(void *callback)
@@ -176,7 +176,7 @@ void MsvcrtDosMapError(unsigned long oserr)
 
 typedef void(__cdecl *_invalid_parameter_handler)(const wchar_t *, const wchar_t *, const wchar_t *, unsigned int,
                                                   uintptr_t);
-static PVOID g_invalid_handler; /* encoded, NULL until a handler is set */
+static PVOID g_invalid_handler; /* encoded, NULL until a handler is set. */
 
 /* the encoding scrambles NULL too, so a handler never set is told apart before decoding. */
 static _invalid_parameter_handler invalid_handler(void)
@@ -264,7 +264,7 @@ static _PNH g_new_handler;
 
 int MsvcrtNewMode;
 
-/* the c++ exports _set_new_mode and its kin, in cxx.cpp, call these. */
+/* called by _set_new_mode and its kin in cxx.cpp. */
 int MsvcrtSetNewMode(int mode)
 {
     int old = g_new_mode;

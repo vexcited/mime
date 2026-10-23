@@ -1,6 +1,4 @@
-/*
- * resources: lookup, loading and enumeration of module resources.
- */
+/* module resources: lookup, loading and enumeration. */
 #include "kernelbase_private.h"
 
 static void set_resource_error(NTSTATUS status)
@@ -29,7 +27,7 @@ static HMODULE resolve_module(HMODULE module)
     return module ? module : (HMODULE)KbPeb()->ImageBaseAddress;
 }
 
-/* converts an ansi resource name, keeping integer ids as they are. */
+/* integer ids pass through unchanged. */
 static LPWSTR name_to_wide(LPCSTR name, BOOL *allocated)
 {
     *allocated = FALSE;
@@ -120,7 +118,7 @@ BOOL WINAPI FreeResource(HGLOBAL data)
 
 /* ------------------------------------------------------------------ enumeration */
 
-/* the name of a directory entry: an integer id, or a terminated copy of its string. */
+/* an integer id, or a terminated copy of the string name. */
 static LPWSTR entry_name(const IMAGE_RESOURCE_DIRECTORY *root, const IMAGE_RESOURCE_DIRECTORY_ENTRY *e, PWSTR buffer,
                          SIZE_T chars)
 {
@@ -374,7 +372,7 @@ typedef struct MESSAGE_RESOURCE_ENTRY {
 
 #define MESSAGE_RESOURCE_UNICODE 0x0001
 
-/* finds a message in a module's message table; the text is wide, allocated when converted. */
+/* the text is wide, and allocated when it had to be converted. */
 BOOL KbFindMessage(HMODULE module, DWORD id, DWORD lang, LPWSTR *text, BOOL *allocated)
 {
     *allocated = FALSE;

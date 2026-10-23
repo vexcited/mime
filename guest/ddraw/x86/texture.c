@@ -1,8 +1,8 @@
 /*
- * IDirect3DTexture and IDirect3DTexture2 of d3dim.dll, build 26300: an
- * object aggregated in a surface that a directdraw object of the first
- * versions makes on a query, whose count is the surface's. a device of the
- * first interfaces names it through a handle, one a device.
+ * IDirect3DTexture and IDirect3DTexture2: an object aggregated in a surface
+ * of a first version directdraw object on query, sharing the surface's
+ * refcount. a first interface device names it through a handle, one per
+ * device.
  */
 #include "d3d_private.h"
 
@@ -45,7 +45,7 @@ HRESULT D3dCreateTextureForSurface(DDSURF *surface, REFIID riid, IUnknown **inne
     return D3D_OK;
 }
 
-/* a handle going: materials naming it forget it, and so does the device's texture state. */
+/* materials naming the handle forget it, and so does the device's texture state. */
 static void free_handle(D3DTEXHANDLE *h)
 {
     D3DDEV *dev = h->dev;
@@ -174,7 +174,7 @@ static HRESULT get_handle(D3DTEXOBJ *t, D3DDEV *dev, D3DTEXTUREHANDLE *handle, B
     return DdLeave(D3D_OK);
 }
 
-/* the source's levels into the destination's, palettes and color keys included. */
+/* copies the levels, palettes and color keys included. */
 HRESULT D3dTextureLoad(DDSURF *dst, DDSURF *src)
 {
     DWORD entries = (dst->format.pf.dwFlags & DDPF_PALETTEINDEXED8)   ? 256

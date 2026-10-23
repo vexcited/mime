@@ -1,6 +1,4 @@
-/*
- * shared helpers, last error handling and generic handle functions.
- */
+/* shared helpers, last error and generic handle functions. */
 #include "kernelbase_private.h"
 
 /* ------------------------------------------------------------------ helpers */
@@ -180,7 +178,7 @@ BOOL KbNamedObjectAttributes(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR 
     InitializeObjectAttributes(oa, nullptr, attributes, nullptr, sa ? sa->lpSecurityDescriptor : nullptr);
     if (!name)
         return TRUE;
-    /* the alias of a private namespace stands for a directory of its own. */
+    /* a private namespace alias maps to its own directory. */
     HANDLE private_root = KbPrivateNamespaceLookup(&name);
     if (!private_root && !_wcsnicmp(name, L"Local\\", 6))
         name += 6;

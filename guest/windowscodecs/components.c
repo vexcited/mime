@@ -1,14 +1,11 @@
-/*
- * the components the library knows: decoders, encoders, pixel formats, converters and metadata handlers, as objects that
- * describe themselves and make the real ones, and the enumerators and finders that programs use to look for them.
- */
+/* component information, factories and enumeration for codecs, pixel formats, converters and metadata handlers. */
 #include "wic_codec.h"
 
 #include "meta_internal.h"
 
 #include "codecs_table.inc"
 
-/* ------------------------------------------------------------------ the tables */
+/* the tables. */
 
 const WicCodec *WicFindDecoder(const GUID *clsid)
 {
@@ -28,7 +25,7 @@ const WicCodec *WicFindEncoder(const GUID *clsid)
     return nullptr;
 }
 
-/* the newest decoder of a container is the one with the highest version bits, the later in the table. */
+/* the newest decoder has the highest version bits and appears later in the table. */
 const WicCodec *WicDecoderByContainer(const GUID *container, const GUID *vendor)
 {
     const WicCodec *found = nullptr;
@@ -38,7 +35,7 @@ const WicCodec *WicDecoderByContainer(const GUID *container, const GUID *vendor)
         if (IsEqualGUID(g_decoders[i].container, container) && (!found || g_decoders[i].versions >= found->versions))
             found = &g_decoders[i];
     }
-    /* the first png decoder is for version 1 of the library, which no program asks for by container. */
+    /* the first PNG decoder belongs to library version 1 and is not selected by container. */
     return found;
 }
 
@@ -79,7 +76,7 @@ const WicCodec *WicMatchDecoder(const BYTE *data, SIZE_T size)
         const WicCodec *codec = &g_decoders[i];
         for (UINT k = 0; k < codec->pattern_count; k++) {
             if (WicPatternMatches(&codec->patterns[k], data, size)) {
-                /* a later codec of the same container is the newer one. */
+                /* later entries for a container take precedence. */
                 if (!found || !IsEqualGUID(found->container, codec->container) || codec->versions >= found->versions)
                     found = codec;
                 break;
@@ -89,7 +86,7 @@ const WicCodec *WicMatchDecoder(const BYTE *data, SIZE_T size)
     return found;
 }
 
-/* ------------------------------------------------------------------ strings of components */
+/* strings of components. */
 
 static HRESULT return_string(const WCHAR *text, UINT size, WCHAR *buffer, UINT *actual)
 {
@@ -109,7 +106,7 @@ static HRESULT return_string(const WCHAR *text, UINT size, WCHAR *buffer, UINT *
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the info objects */
+/* the info objects. */
 
 typedef enum InfoKind { INFO_DECODER, INFO_ENCODER, INFO_PIXELFORMAT, INFO_CONVERTER } InfoKind;
 
@@ -190,7 +187,6 @@ static HRESULT STDMETHODCALLTYPE info_friendly_name(void *This, UINT size, WCHAR
         VTBL_FN(info_author), VTBL_FN(info_vendor), VTBL_FN(info_version), VTBL_FN(info_spec_version),                 \
         VTBL_FN(info_friendly_name)
 
-/* the codec info methods. */
 
 static HRESULT STDMETHODCALLTYPE codec_container(void *This, GUID *container)
 {
@@ -263,7 +259,7 @@ static HRESULT STDMETHODCALLTYPE codec_multiframe(void *This, BOOL *r) { return 
 
 static BOOL wild_match(const WCHAR *list, const WCHAR *text)
 {
-    /* a list of comma separated names, compared without regard to case. */
+    /* match comma-separated names without case sensitivity. */
     if (!list)
         return FALSE;
     SIZE_T length = wcslen(text);
@@ -394,7 +390,6 @@ static const IWICBitmapEncoderInfoVtbl g_encoder_info_vtbl = {
     COMPONENT_FUNCS, CODEC_FUNCS, encoder_info_create,
 };
 
-/* the pixel format info methods. */
 
 static HRESULT STDMETHODCALLTYPE format_guid(void *This, GUID *guid)
 {
@@ -478,7 +473,6 @@ static const IWICPixelFormatInfo2Vtbl g_format_info_vtbl = {
     VTBL_FN(format_channels), VTBL_FN(format_mask), VTBL_FN(format_transparency), VTBL_FN(format_numeric),
 };
 
-/* the converter info methods. */
 
 static HRESULT STDMETHODCALLTYPE converter_info_formats(IWICFormatConverterInfo *This, UINT count, GUID *formats,
                                                         UINT *actual)
@@ -593,7 +587,7 @@ HRESULT WicConverterInfoCreate(const GUID *clsid, IWICFormatConverterInfo **out)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ finding and enumerating */
+/* finding and enumerating. */
 
 
 HRESULT WicComponentInfo(const GUID *clsid, IWICComponentInfo **out)
@@ -726,7 +720,7 @@ static HRESULT enum_create(IUnknown **items, UINT count, UINT position, IEnumUnk
 HRESULT WicEnumerateComponents(DWORD types, DWORD options, IEnumUnknown **out)
 {
     *out = nullptr;
-    /* the flags that ask for disabled and unsigned components only find nothing among ours. */
+    /* none of our components are disabled or unsigned. */
     if ((options & WICComponentEnumerateDisabled) || (options & WICComponentEnumerateUnsigned))
         return enum_create(WicAlloc(sizeof(IUnknown *)), 0, 0, out);
     UINT capacity = 128 + WicFormatCount();

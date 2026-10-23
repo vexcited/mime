@@ -1,6 +1,3 @@
-/*
- * gdi32 internals shared between its files.
- */
 #pragma once
 #include <mime/nt.h>
 #include <mime/ntuser.h>
@@ -15,7 +12,7 @@ HPALETTE PalCurrent(HDC dc);
 void PalForgetDC(HDC dc);
 BOOL GdiSwapBrushOrigin(HDC dc, int x, int y, LPPOINT old);
 
-/* the size of a dib's color table and of its bits, shared with the metafile code. */
+/* dib color table and bits sizes, shared with the metafile code. */
 DWORD GdiDibTableSize(const BITMAPINFOHEADER *header, UINT usage);
 DWORD GdiDibBitsSize(const BITMAPINFOHEADER *header);
 
@@ -23,9 +20,9 @@ DWORD GdiDibBitsSize(const BITMAPINFOHEADER *header);
 
 /*
  * enhanced metafile dcs are win32k metafile dcs whose calls gdi32 also
- * records; windows metafile dcs exist only in gdi32, their handles carry
- * the type byte 0x66 like windows'. enhanced metafiles carry 0x46 and
- * windows metafiles 0x26.
+ * records. windows metafile dcs exist only in gdi32. handle type bytes match
+ * windows: 0x66 for a windows metafile dc, 0x46 for an enhanced metafile,
+ * 0x26 for a windows metafile.
  */
 #define MF_TYPE_WMF_DC 0x66
 #define MF_TYPE_EMF 0x46
@@ -40,16 +37,16 @@ static inline BOOL MfIsWmfDc(HDC dc)
     return (((ULONG_PTR)dc >> 16) & 0xFF) == MF_TYPE_WMF_DC;
 }
 
-/* a metafile dc of either kind, cheap while none exists. */
+/* either kind of metafile dc, cheap while none exists. */
 static inline BOOL MfActive(HDC dc)
 {
     return MfDcCount && (MfIsWmfDc(dc) || EmfDc(dc));
 }
 
 /*
- * records a call on a metafile dc: a failed record fails the call with fail,
- * a windows metafile dc stops there with wmf, an enhanced one goes on to
- * win32k, which keeps its state.
+ * records a call on a metafile dc. a failed record returns fail, a windows
+ * metafile dc then returns wmf, and an enhanced one goes on to win32k, which
+ * keeps its state.
  */
 #define MF_RECORD(dc, call, fail, wmf)                                                                                 \
     do {                                                                                                               \
@@ -62,7 +59,7 @@ static inline BOOL MfActive(HDC dc)
         }                                                                                                              \
     } while (0)
 
-/* the recorders, for both kinds of metafile dc. */
+/* recorders for both kinds of metafile dc. */
 BOOL MfSetValue(HDC dc, UINT emr, UINT meta, DWORD value);
 BOOL MfSetColor(HDC dc, UINT emr, UINT meta, COLORREF color);
 BOOL MfSetPoint(HDC dc, UINT emr, UINT meta, int x, int y);
@@ -110,7 +107,7 @@ BOOL MfDeleteDC(HDC dc);
 BOOL MfGetBounds(HDC dc, LPRECT rect, UINT flags, UINT *result);
 void MfSetBounds(struct EMF_DC *emf, const RECT *rect, UINT flags);
 
-/* windows metafile dcs, recorded in metafile.c. */
+/* metafile.c: windows metafile dcs. */
 BOOL WmfRecord(HDC dc, WORD function, UINT count, const WORD *params);
 BOOL WmfSelectObject(HDC dc, HGDIOBJ object, HGDIOBJ *previous);
 void WmfDeleteObject(HGDIOBJ object);
@@ -120,12 +117,11 @@ BOOL WmfDibRecord(HDC dc, WORD function, const WORD *params, UINT count, const B
 HDC WmfCreateDC(void);
 DWORD WmfObjectType(HGDIOBJ handle);
 
-/* the enhanced metafile recorder. */
 struct EMF_DC *EmfCreateDC(HDC ref, LPCWSTR file, const RECT *frame, LPCWSTR description, UINT desc_chars);
 void *EmfRecordAlloc(struct EMF_DC *emf, DWORD type, DWORD size);
 void EmfDestroy(struct EMF_DC *emf, BOOL delete_file);
 
-/* the enhanced metafile objects: a copy of the bits and the state of a playback. */
+/* an enhanced metafile: a copy of the bits and the state of its playback. */
 typedef struct EMF_PLAY EMF_PLAY;
 typedef struct EMF {
     BYTE *Data;
@@ -138,7 +134,7 @@ EMF *EmfLookup(HENHMETAFILE handle);
 BOOL EmfValid(const BYTE *data, DWORD size);
 BOOL EmfCancelPlay(HDC dc);
 
-/* ------------------------------------------------------------------ printers (printer.c) */
+/* ------------------------------------------------------------------ printers, printer.c */
 
 extern volatile LONG PrnDcCount;
 BOOL PrnIsPrinterDc(HDC dc);

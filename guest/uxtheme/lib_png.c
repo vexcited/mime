@@ -1,4 +1,2 @@
-/*
- * the png decoder of guest/lib, compiled into uxtheme.
- */
+/* the png decoder of guest/lib. */
 #include "../lib/png/png.c"

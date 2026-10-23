@@ -1,10 +1,7 @@
 /*
- * pseudo consoles: a console whose screen is carried to a terminal as the
- * bytes it speaks, and whose keys are carried back as the bytes it sends.
- * the console is a file of the console driver \Device\ConDrv\Pty, and two
- * threads of the process that made it move the bytes between the driver
- * and the pipes of the terminal. the processes made with the pseudo console
- * attribute are attached to the console of that file.
+ * pseudo consoles: the screen goes to a terminal as the bytes it speaks, and its keys come back as the bytes it sends.
+ * the console is a \Device\ConDrv\Pty file, and two threads of the creating process move the bytes between the driver
+ * and the terminal's pipes. processes created with the pseudo console attribute attach to that console.
  */
 #include "kernelbase_private.h"
 #include <mime/condrv.h>
@@ -13,12 +10,12 @@
 #define PTY_BUFFER 4096
 
 typedef struct KB_PTY {
-    HANDLE Console;  /* the file of the driver that is the console */
-    HANDLE Input;    /* the read end of the pipe the terminal types into, a copy */
-    HANDLE Output;   /* the write end of the pipe the terminal reads from, a copy */
-    HANDLE Reader;   /* the thread that takes the keys to the console */
-    HANDLE Writer;   /* the thread that takes the screen to the terminal */
-    volatile LONG Owners; /* the caller, the reader and the writer: the last to let go frees it */
+    HANDLE Console;  /* the driver file that is the console. */
+    HANDLE Input;    /* copy of the pipe end the terminal writes keys into. */
+    HANDLE Output;   /* copy of the pipe end the terminal reads the screen from. */
+    HANDLE Reader;   /* moves keys to the console. */
+    HANDLE Writer;   /* moves the screen to the terminal. */
+    volatile LONG Owners; /* the caller, the reader and the writer: the last one frees it. */
 } KB_PTY;
 
 static void release(KB_PTY *pty)
@@ -32,7 +29,7 @@ HANDLE KbPseudoConsoleHandle(HPCON console)
     return console ? ((KB_PTY *)console)->Console : nullptr;
 }
 
-/* the screen of the console, until it is closed and has nothing left to say. */
+/* runs until the console is closed and has nothing left to say. */
 static DWORD WINAPI pty_writer(LPVOID parameter)
 {
     KB_PTY *pty = parameter;
@@ -64,7 +61,7 @@ static DWORD WINAPI pty_writer(LPVOID parameter)
     return 0;
 }
 
-/* the keys of the terminal, until its pipe ends. */
+/* runs until the terminal's pipe ends. */
 static DWORD WINAPI pty_reader(LPVOID parameter)
 {
     KB_PTY *pty = parameter;
@@ -175,8 +172,8 @@ DECLSPEC_EXPORT HRESULT WINAPI ResizePseudoConsole(HPCON console, COORD size)
 }
 
 /*
- * closing hangs the console up: its processes are told, and what the console still has to say is carried to
- * the terminal by the writer, which ends when the last process has gone. nothing is waited for.
+ * closing hangs up the console: its processes are told, and the writer flushes what is left to the terminal and ends
+ * when the last process is gone. nothing is waited for.
  */
 DECLSPEC_EXPORT VOID WINAPI ClosePseudoConsole(HPCON console)
 {

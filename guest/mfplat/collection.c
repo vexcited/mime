@@ -168,7 +168,7 @@ typedef struct {
     QWORD position;
 } ByteStream;
 
-/* what BeginRead and BeginWrite did, the object of their result. */
+/* the state of a BeginRead or BeginWrite, the object of its result. */
 typedef struct {
     IUnknown iface;
     LONG refs;
@@ -287,7 +287,7 @@ static HRESULT STDMETHODCALLTYPE bs_is_end_of_stream(IMFByteStream *iface, BOOL 
     return hr;
 }
 
-/* the stream is seeked to the byte stream's own position before each transfer. */
+/* the stream is seeked to the byte stream's position before each transfer. */
 static HRESULT transfer(ByteStream *bs, BYTE *buffer, const BYTE *source, ULONG size, ULONG *done)
 {
     EnterCriticalSection(&bs->lock);
@@ -316,7 +316,7 @@ static HRESULT STDMETHODCALLTYPE bs_write(IMFByteStream *iface, const BYTE *buff
     return transfer(byte_stream(iface), nullptr, buffer, size, written);
 }
 
-/* done at once, the callback then called from the standard work queue. */
+/* the transfer happens at once, the callback then runs on the standard work queue. */
 static HRESULT begin(ByteStream *bs, BYTE *buffer, const BYTE *source, ULONG size, IMFAsyncCallback *callback,
                      IUnknown *state)
 {

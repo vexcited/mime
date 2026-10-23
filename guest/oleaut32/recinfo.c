@@ -1,8 +1,7 @@
 /*
- * record information: what a structure of a type library looks like in memory, so that automation can create, copy,
- * clear and read the fields of one. A record is described once per type, found again by its guid, and its fields are
- * kept as the list of what each holds: strings, interfaces, variants, arrays and records inside it are owned and need
- * more than a copy of the bytes.
+ * IRecordInfo: the in-memory layout of a type library structure, so automation can create, copy, clear and access its
+ * fields. One RECINFO exists per type, looked up by guid. Strings, interfaces, variants, arrays and nested records in
+ * fields are owned and need more than a byte copy.
  */
 #include "oleaut32_private.h"
 
@@ -14,20 +13,20 @@
 typedef struct RECINFO RECINFO;
 typedef struct FT FT;
 
-/* the type of a field after the library is looked into: what it owns is what the vt says. */
+/* a resolved field type: Vt says what it owns. */
 struct FT {
     VARTYPE Vt;
-    /* arrays: the type of an element as automation sees it, and the interface or record it is. */
+    /* arrays: the automation element type, and its interface or record. */
     VARTYPE ElemVt;
     GUID Iid;
     FT *Elem;
     RECINFO *Rec;
     USHORT Dims;
     SAFEARRAYBOUND *Bounds;
-    /* an interface pointer that is declared as a pointer to a type, which is assigned differently from a plain one. */
+    /* declared as a pointer to a named interface, which is assigned differently from a plain pointer. */
     BOOL ViaPointer;
     ULONG Size, Align;
-    /* the descriptor handed out for a field that is a fixed array. */
+    /* handed out for fixed array fields. */
     SAFEARRAY *Descriptor;
 };
 
@@ -63,7 +62,7 @@ static RECINFO *self_of(IRecordInfo *p)
     return (RECINFO *)p;
 }
 
-/* ------------------------------------------------------------------ the types of fields */
+/* ------------------------------------------------------------------ field types */
 
 static void ft_free(FT *t);
 static HRESULT ft_build(ITypeInfo *scope, const TYPEDESC *td, BOOL behind_pointer, int depth, FT **out);
@@ -139,7 +138,6 @@ static HRESULT ft_make(VARTYPE vt, ULONG size, ULONG align, FT **out)
     return S_OK;
 }
 
-/* a field that holds an interface, as a plain pointer or declared as a pointer to a named interface. */
 static HRESULT ft_interface(const TYPEATTR *ta, BOOL named, FT **out)
 {
     HRESULT hr = ft_make(kind_is_dispatch(ta) ? VT_DISPATCH : VT_UNKNOWN, sizeof(void *),
@@ -166,10 +164,7 @@ static HRESULT ft_record(ITypeInfo *info, FT **out)
     return hr;
 }
 
-/*
- * A type named by the library. Behind a pointer only an interface is accepted, an enumeration or a record has to be
- * held by value.
- */
+/* behind a pointer only an interface is accepted, enums and records must be held by value. */
 static HRESULT ft_build_user(ITypeInfo *scope, HREFTYPE ref, BOOL behind_pointer, int depth, FT **out)
 {
     ITypeInfo *info;
@@ -205,7 +200,6 @@ static HRESULT ft_build_user(ITypeInfo *scope, HREFTYPE ref, BOOL behind_pointer
     return hr;
 }
 
-/* the element of an array as automation names it. */
 static HRESULT elem_vt(FT *e, VARTYPE *vt)
 {
     switch (e->Vt) {
@@ -270,7 +264,7 @@ static HRESULT ft_fixed_array(ITypeInfo *scope, const TYPEDESC *td, int depth, F
     return S_OK;
 }
 
-/* behind_pointer is set while the type is what a pointer points to. */
+/* behind_pointer is set while resolving a pointer's target. */
 static HRESULT ft_build(ITypeInfo *scope, const TYPEDESC *td, BOOL behind_pointer, int depth, FT **out)
 {
     *out = nullptr;
@@ -365,7 +359,7 @@ static HRESULT ft_clear(const FT *t, void *p)
     }
 }
 
-/* copies a field into storage that holds nothing, undoing what it did if a part fails. */
+/* copies into empty storage, undoing partial work if a part fails. */
 static HRESULT ft_copy(const FT *t, const void *from, void *to)
 {
     switch (t->Vt) {
@@ -456,7 +450,7 @@ static void rec_destroy(RECINFO *r)
 static ULONG WINAPI ri_release(IRecordInfo *self)
 {
     RECINFO *r = self_of(self);
-    /* a record found by its guid is let go under the lock, or a lookup could bring it back to life. */
+    /* release under the lock, or a lookup by guid could revive the record. */
     EnterCriticalSection(&g_lock);
     LONG refs = InterlockedDecrement(&r->Refs);
     if (!refs) {
@@ -492,7 +486,7 @@ static HRESULT WINAPI ri_clear(IRecordInfo *self, PVOID record)
     return hr;
 }
 
-/* copies every field into storage that holds nothing, and puts it back to nothing if one field fails. */
+/* copies into empty storage and clears it again if any field fails. */
 static HRESULT copy_fields(RECINFO *r, const BYTE *source, BYTE *dest)
 {
     for (USHORT i = 0; i < r->FieldCount; i++) {
@@ -555,7 +549,7 @@ static HRESULT WINAPI ri_get_type_info(IRecordInfo *self, ITypeInfo **info)
     return S_OK;
 }
 
-/* the field of a name, ignoring the case, found in a list of the names in order. */
+/* field names match case insensitively. */
 static HRESULT field_index(RECINFO *r, LPCOLESTR name, ULONG *index)
 {
     for (USHORT i = 0; i < r->FieldCount; i++) {
@@ -567,7 +561,6 @@ static HRESULT field_index(RECINFO *r, LPCOLESTR name, ULONG *index)
     return TYPE_E_FIELDNOTFOUND;
 }
 
-/* the variant a field makes. */
 static HRESULT make_var(RECINFO *r, FIELD *f, void *p, VARIANT *out)
 {
     const FT *t = f->Type;
@@ -621,7 +614,7 @@ static HRESULT make_var(RECINFO *r, FIELD *f, void *p, VARIANT *out)
             return E_OUTOFMEMORY;
         ULONG stride = stride_of(t->Elem);
         if (array->cbElements != stride && t->ElemVt != VT_RECORD) {
-            /* the elements of the structure and those of the array can be spaced differently. */
+            /* the struct and the safe array may space elements differently. */
             SafeArrayDestroy(array);
             return TYPE_E_UNSUPFORMAT_;
         }
@@ -700,7 +693,7 @@ static HRESULT WINAPI ri_get_field(IRecordInfo *self, PVOID record, LPCOLESTR na
     return make_var(r, &r->Fields[index], (BYTE *)record + r->Fields[index].Offset, value);
 }
 
-/* a descriptor for a field that is a fixed array, which the caller points at the data to read or write it. */
+/* the caller points the descriptor at the record data to read or write the fixed array. */
 static HRESULT array_descriptor(RECINFO *r, FIELD *f, SAFEARRAY ***slot)
 {
     FT *t = f->Type;
@@ -783,7 +776,7 @@ static HRESULT WINAPI ri_get_field_no_copy(IRecordInfo *self, PVOID record, LPCO
     }
 }
 
-/* a value from a variant stored in a field, converted to its type. */
+/* converts v to the field type and stores it. */
 static HRESULT store_scalar(const FT *t, void *p, VARIANT *v)
 {
     VARTYPE vt = t->Vt;
@@ -814,7 +807,7 @@ static HRESULT store_scalar(const FT *t, void *p, VARIANT *v)
     }
 }
 
-/* the variant an array in a field has to be: of the element type and, for a fixed array, of the bounds. */
+/* the element type must match, and for a fixed array the bounds too. */
 static BOOL array_fits(const FT *t, const VARIANT *v)
 {
     if (!(v->vt & VT_ARRAY) || (v->vt & VT_BYREF) || !v->parray)
@@ -833,7 +826,7 @@ static BOOL array_fits(const FT *t, const VARIANT *v)
     return TRUE;
 }
 
-/* the default property of an object, as the value it stands for. */
+/* replaces an object with the value of its default property. */
 static HRESULT default_value(VARIANT *v)
 {
     IDispatch *object = v->pdispVal;
@@ -849,7 +842,7 @@ static HRESULT default_value(VARIANT *v)
     return S_OK;
 }
 
-/* assigns to the default property of the object a field already holds, which is how a value is put into an object. */
+/* a value is put into an object field by assigning the object's default property. */
 static HRESULT let_dispatch(IDispatch *target, VARIANT *value)
 {
     DISPID named = DISPID_PROPERTYPUT;
@@ -865,7 +858,7 @@ static HRESULT convert_in_place(VARIANT *v, VARTYPE vt)
     return VariantChangeTypeEx(v, v, 0x400, VARIANT_NOVALUEPROP, vt);
 }
 
-/* takes the object out of a variant that holds one, to be the new content of a field. */
+/* moves the object out of v into the field. */
 static void take_object(IUnknown **slot, VARIANT *v)
 {
     AutRelease(*slot);
@@ -873,7 +866,6 @@ static void take_object(IUnknown **slot, VARIANT *v)
     v->vt = VT_EMPTY;
 }
 
-/* the elements of an array value, copied over a fixed array of a field. */
 static HRESULT put_fixed_array(const FT *t, void *p, const VARIANT *v)
 {
     const SAFEARRAY *array = v->parray;
@@ -902,8 +894,8 @@ static HRESULT put_fixed_array(const FT *t, void *p, const VARIANT *v)
 }
 
 /*
- * Puts the value in v into a field. v belongs to this function: what the field takes is moved out of it, and what is
- * left is cleared by the caller. exact says that a string field takes only a string.
+ * v is owned here: what the field takes is moved out of it and the caller clears the rest. With exact, a string field
+ * accepts only a string.
  */
 static HRESULT put_by_value(FIELD *f, void *p, VARIANT *v, BOOL exact)
 {
@@ -973,7 +965,7 @@ static HRESULT put_by_value(FIELD *f, void *p, VARIANT *v, BOOL exact)
     }
 }
 
-/* a field that holds an object takes a new one without going through its default property. */
+/* object fields take the new object directly, bypassing the default property. */
 static HRESULT put_by_reference(FIELD *f, void *p, VARIANT *v)
 {
     const FT *t = f->Type;
@@ -1018,7 +1010,7 @@ static HRESULT put_field(RECINFO *r, ULONG flags, PVOID record, LPCOLESTR name, 
     hr = field_index(r, name, &index);
     if (FAILED(hr))
         return hr;
-    /* a value that is consumed is worked on where it is, so nothing is copied unless it is held by reference. */
+    /* a consumed value is used in place, only a by reference one is copied. */
     BOOL shallow = consume && !(value->vt & VT_BYREF);
     if (shallow) {
         work = *value;
@@ -1040,7 +1032,7 @@ static HRESULT put_field(RECINFO *r, ULONG flags, PVOID record, LPCOLESTR name, 
         VariantClear(&work);
         value->vt = VT_EMPTY;
     } else {
-        /* what was converted on the way is what the variant holds now. */
+        /* hand back whatever conversion left in the variant. */
         *value = work;
     }
     return hr;
@@ -1084,7 +1076,7 @@ static HRESULT WINAPI ri_get_field_names(IRecordInfo *self, ULONG *count, BSTR *
     return S_OK;
 }
 
-/* the library a record type is declared in, for a record information of another implementation. */
+/* the declaring library of a record type from another IRecordInfo implementation. */
 static BOOL library_of(IRecordInfo *record, TLIBATTR *out)
 {
     ITypeInfo *info;
@@ -1116,7 +1108,7 @@ static BOOL WINAPI ri_is_matching_type(IRecordInfo *self, IRecordInfo *other)
         return IsEqualGUID(&r->Guid, &o->Guid) && IsEqualGUID(&r->LibGuid, &o->LibGuid) && r->Major == o->Major &&
                r->Minor == o->Minor && r->Lcid == o->Lcid && r->Size == o->Size;
     }
-    /* another implementation is asked for the same things. */
+    /* other implementations are compared through their methods. */
     GUID guid;
     ULONG size;
     TLIBATTR lib;
@@ -1169,7 +1161,7 @@ static const IRecordInfoVtbl g_recinfo_vtbl = {
     ri_put_field,  ri_put_field_no_copy, ri_get_field_names, ri_is_matching_type, ri_create, ri_create_copy,
     ri_destroy};
 
-/* ------------------------------------------------------------------ finding them */
+/* ------------------------------------------------------------------ lookup */
 
 static BOOL ensure_lock(void)
 {
@@ -1240,7 +1232,7 @@ static HRESULT fill(RECINFO *r, ITypeInfo *info, TYPEATTR *ta)
         }
         info->lpVtbl->ReleaseVarDesc(info, vd);
         if (FAILED(hr)) {
-            /* the fields made so far are let go with the record, this one has no name to go with its type. */
+            /* count this field so its type is freed with the record, even though it has no name. */
             r->FieldCount = (USHORT)(i + 1);
             return hr;
         }
@@ -1321,7 +1313,7 @@ WINOLEAUTAPI HRESULT WINAPI GetRecordInfoFromTypeInfo(ITypeInfo *info, IRecordIn
         return hr;
     }
     EnterCriticalSection(&g_lock);
-    /* another thread may have made the same record meanwhile: it is the one that stays. */
+    /* another thread may have created the same record meanwhile: keep that one. */
     found = lookup(&identity);
     if (found) {
         LeaveCriticalSection(&g_lock);

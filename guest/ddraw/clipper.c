@@ -1,7 +1,7 @@
 /*
- * IDirectDrawClipper: a window whose client area clips, or a list of
- * rectangles. mime's windows are each a window of the host, so a window's
- * visible region is its client area.
+ * IDirectDrawClipper: clips to a window's client area or to a list of
+ * rectangles. each mime window is a host window, so its visible region is
+ * its client area.
  */
 #include "ddraw_private.h"
 
@@ -15,7 +15,7 @@ DDCLIP *DdClipFromIface(void *iface)
     return c->magic == CLIP_MAGIC ? c : nullptr;
 }
 
-/* clippers of DirectDrawCreateClipper belong to no object and live on their own. */
+/* clippers from DirectDrawCreateClipper belong to no object and live on their own. */
 static LIST_ENTRY g_loose = {&g_loose, &g_loose};
 
 HRESULT DdCreateClipper(DDRAW *dd, DWORD flags, DDCLIP **out, BOOL initialized)
@@ -59,7 +59,7 @@ static RGNDATA *make_region(const RECT *rects, DWORD count)
     return r;
 }
 
-/* the window's client area in screen coordinates, nothing when it is minimized. */
+/* client area in screen coordinates, FALSE when minimized. */
 static BOOL window_rect(HWND window, RECT *rect)
 {
     if (!IsWindow(window) || IsIconic(window) || !GetClientRect(window, rect))
@@ -68,7 +68,7 @@ static BOOL window_rect(HWND window, RECT *rect)
     return TRUE;
 }
 
-/* windows' ClipRgnToRect: each rectangle cut to the bounds, empty ones dropped; the header's bounds stay. */
+/* cuts each rectangle to the bounds and drops empty ones. the header's bounds stay. */
 static void clip_to(RGNDATA *r, const RECT *bounds)
 {
     if (!bounds)
@@ -102,8 +102,6 @@ RGNDATA *DdClipRegion(DDCLIP *c, const RECT *bounds)
         clip_to(r, bounds);
     return r;
 }
-
-/* ------------------------------------------------------------------ methods */
 
 static HRESULT STDMETHODCALLTYPE clipper_query(IDirectDrawClipper *This, REFIID riid, void **out)
 {
@@ -210,7 +208,7 @@ static HRESULT STDMETHODCALLTYPE clipper_get_hwnd(IDirectDrawClipper *This, HWND
     return DdLeave(DD_OK);
 }
 
-/* a clipper of CoCreateInstance joins the object it is initialized with, without referencing it. */
+/* a clipper from CoCreateInstance joins the object it is initialized with, without referencing it. */
 static HRESULT STDMETHODCALLTYPE clipper_initialize(IDirectDrawClipper *This, LPDIRECTDRAW ddraw, DWORD flags)
 {
     DDCLIP *c = DdClipFromIface(This);
@@ -243,7 +241,7 @@ static HRESULT STDMETHODCALLTYPE clipper_is_clip_list_changed(IDirectDrawClipper
     return DdLeave(DD_OK);
 }
 
-/* clippers of the first IDirectDraw take any header; later ones want rectangles. */
+/* clippers of the first IDirectDraw take any header, later ones want rectangles. */
 static HRESULT STDMETHODCALLTYPE clipper_set_clip_list(IDirectDrawClipper *This, LPRGNDATA data, DWORD flags)
 {
     HRESULT hr;

@@ -1,9 +1,7 @@
 /*
- * the Edit control: single line and multiline text, its selection and
- * caret, undo, the clipboard, scrolling, the keyboard and mouse, and the
- * notifications in windows' order. the text is utf-16 in a moveable local
- * block, the one EM_GETHANDLE gives out; a multiline edit keeps a table of
- * its lines, rebuilt after each change.
+ * the Edit control: single and multiline text, selection, caret, undo, clipboard, scrolling, keyboard and mouse, with
+ * notifications in windows' order. the text is utf-16 in the moveable local block EM_GETHANDLE returns. multiline
+ * edits keep a line table rebuilt after each change.
  */
 #include "user32_private.h"
 #include "listbox.h"
@@ -68,7 +66,7 @@ static UINT umin(UINT a, UINT b) { return a < b ? a : b; }
 
 static EDIT *edit_of(HWND hwnd) { return (EDIT *)GetWindowLongPtrW(hwnd, 0); }
 
-/* the text, which stays where it is between reallocations. */
+/* the block only moves when reallocated, so the pointer stays valid unlocked. */
 static WCHAR *T(EDIT *e)
 {
     WCHAR *t = LocalLock(e->handle);
@@ -154,7 +152,7 @@ static int next_tab(EDIT *e, int x)
     return (x / step + 1) * step;
 }
 
-/* the x of each boundary of text[start, end), from the line's origin; tabs stop where they stop. */
+/* x of each boundary in text[start, end) from the line's origin, tabs expanded. */
 static int *measure(EDIT *e, HDC dc, UINT start, UINT end)
 {
     UINT n = end - start;
@@ -240,7 +238,7 @@ static BOOL add_line(EDIT *e, UINT start, UINT end, int width)
     return TRUE;
 }
 
-/* the first index of the line break at or after i, the text's end without one. */
+/* index of the first line break at or after i, or the text's end. */
 static UINT hard_end(const WCHAR *t, UINT len, UINT i)
 {
     for (; i < len; i++)
@@ -367,7 +365,7 @@ static UINT line_end(EDIT *e, UINT l) { return e->multi ? e->lines[l].end : e->l
 
 static int sl_text_width(EDIT *e, HDC dc) { return width_of(e, dc, 0, e->len); }
 
-/* where the text of a line starts on screen, with its alignment and scroll. */
+/* x where a line's text starts on screen, after alignment and scroll. */
 static int line_origin(EDIT *e, HDC dc, UINT l)
 {
     int W = format_width(e);
@@ -387,7 +385,7 @@ static int line_origin(EDIT *e, HDC dc, UINT l)
     return e->fmt.left - e->x_scroll + offset;
 }
 
-/* the screen position of an index on a line, the index inside the line. */
+/* index must be inside line l. */
 static POINT position_on(EDIT *e, HDC dc, UINT l, UINT index)
 {
     UINT start = line_start(e, l), end = line_end(e, l);
@@ -399,7 +397,6 @@ static POINT position_on(EDIT *e, HDC dc, UINT l, UINT index)
     return p;
 }
 
-/* the boundary of a line nearest an x. */
 static UINT index_on_line(EDIT *e, HDC dc, UINT l, int x)
 {
     UINT start = line_start(e, l), end = line_end(e, l);
@@ -422,7 +419,7 @@ static UINT index_on_line(EDIT *e, HDC dc, UINT l, int x)
     return index;
 }
 
-/* the line a point falls on: one above the first visible above the text, one below the last below. */
+/* a point above the text gives the line before the first visible one, below it the line after the last. */
 static UINT line_at(EDIT *e, int y)
 {
     if (!e->multi)
@@ -464,7 +461,7 @@ static BOOL chunk_start(const WCHAR *t, UINT k)
     return !is_space(t[k]) && (full_width(t[k]) || full_width(t[k - 1]));
 }
 
-/* the word at an index, its end past its trailing spaces, as Ctrl with the arrows and double clicks see it. */
+/* words as Ctrl+arrows and double clicks see them: the end includes trailing spaces. */
 static void word_at(EDIT *e, UINT i, BOOL left, UINT *start, UINT *end)
 {
     UINT len = e->len;
@@ -548,7 +545,7 @@ static void update_scroll_bars(EDIT *e)
 
 static void place_caret(EDIT *e);
 
-/* moves to a line or pixel offset, clamped to what there is, telling the parent first. */
+/* clamps the line or pixel offset and notifies the parent before scrolling. */
 static void scroll_to(EDIT *e, BOOL vertical, int position, BOOL notify_scroll)
 {
     if (!e->multi)
@@ -577,7 +574,7 @@ static void scroll_to(EDIT *e, BOOL vertical, int position, BOOL notify_scroll)
     }
 }
 
-/* a scroll command; returns how far it moved. */
+/* returns how far it moved. */
 static LRESULT scroll_command(EDIT *e, BOOL vertical, int code, int amount)
 {
     int old = vertical ? (int)e->first_line : e->x_scroll, pos = old;
@@ -617,7 +614,7 @@ static LRESULT scroll_command(EDIT *e, BOOL vertical, int code, int amount)
     return now != old ? MAKELONG(now - old, TRUE) : 0;
 }
 
-/* keeps the caret in view: lines with auto vertical scroll, pixels with auto horizontal scroll. */
+/* scrolls by lines with auto vertical scroll, by pixels with auto horizontal scroll. */
 static void scroll_caret(EDIT *e)
 {
     if (!e->multi) {
@@ -731,7 +728,7 @@ static HBRUSH control_brush(EDIT *e, HDC dc)
 
 static BOOL shows_selection(EDIT *e) { return (e->focus || e->nohidesel) && e->sel_min != e->sel_max; }
 
-/* draws a run of a line, its pieces between tabs, opaque or over what is there. */
+/* draws a run piece by piece between tabs, opaque or transparent. */
 static void draw_run(EDIT *e, HDC dc, const WCHAR *t, const int *pos, UINT from, UINT to, int origin, int y,
                      BOOL opaque)
 {
@@ -768,7 +765,7 @@ static void draw_run(EDIT *e, HDC dc, const WCHAR *t, const int *pos, UINT from,
     }
 }
 
-/* a line with its selection, from its start, and the background to the right when asked. */
+/* draws a line with its selection, and fills the background to its right when asked. */
 static void draw_line(EDIT *e, HDC dc, UINT l, HBRUSH brush, BOOL fill_right)
 {
     UINT start = line_start(e, l), end = line_end(e, l);
@@ -855,8 +852,8 @@ static void paint(EDIT *e, HDC dc, const RECT *update)
 }
 
 /*
- * shows a change at once, drawn through the window's dc as windows' edit
- * does: what is invalid stays so, for a parent painting over its children.
+ * like windows, a change is drawn at once through the window dc. invalid areas stay invalid, for a parent that paints
+ * over its children.
  */
 static void redraw(EDIT *e, BOOL erase)
 {
@@ -1014,7 +1011,7 @@ static void after_change(EDIT *e)
         build_lines(e);
 }
 
-/* removes a range, recording it for undo; the caret goes to its start. */
+/* records the range for undo, the caret goes to its start. */
 static void delete_range(EDIT *e, UINT a, UINT b)
 {
     if (a >= b)
@@ -1038,7 +1035,7 @@ static BOOL delete_selection(EDIT *e)
     return TRUE;
 }
 
-/* what ES_UPPERCASE, ES_LOWERCASE and ES_OEMCONVERT make of inserted text. */
+/* applies ES_UPPERCASE, ES_LOWERCASE and ES_OEMCONVERT to inserted text. */
 static void filter(EDIT *e, WCHAR *s, UINT n)
 {
     DWORD style = (DWORD)GetWindowLongW(e->hwnd, GWL_STYLE);
@@ -1066,13 +1063,10 @@ static void filter(EDIT *e, WCHAR *s, UINT n)
     }
 }
 
-/* lines that would not fit an edit that cannot scroll down. */
+/* TRUE when the lines overflow an edit that cannot scroll down. */
 static BOOL too_many_lines(EDIT *e) { return e->multi && !e->auto_v && (int)e->line_count > e->visible_lines; }
 
-/*
- * inserts at the caret what the limits let in, and reports whether it was
- * cut short. without limits, as WM_SETTEXT does, everything goes in.
- */
+/* inserts at the caret as much as the limits allow. without limits, as for WM_SETTEXT, everything goes in. */
 static UINT insert_text(EDIT *e, const WCHAR *s, UINT n, BOOL limits, BOOL *truncated)
 {
     *truncated = FALSE;
@@ -1128,7 +1122,7 @@ static UINT insert_text(EDIT *e, const WCHAR *s, UINT n, BOOL limits, BOOL *trun
 
 static void value_changed(EDIT *e) { NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, e->hwnd, OBJID_CLIENT, 0); }
 
-/* the end of a change a program or the user made: windows' order of notifications and drawing. */
+/* ends a program or user change with notifications and drawing in windows' order. */
 static void changed(EDIT *e, BOOL maxtext)
 {
     if (!e->multi) {
@@ -1151,7 +1145,7 @@ static void changed(EDIT *e, BOOL maxtext)
     value_changed(e);
 }
 
-/* typing or pasting into a multiline edit: the insertion is taken back when the lines run out. */
+/* typed or pasted text is taken back when a multiline edit runs out of lines. */
 static UINT ml_insert(EDIT *e, const WCHAR *s, UINT n)
 {
     if (e->len >= e->limit) {
@@ -1183,7 +1177,7 @@ static UINT ml_insert(EDIT *e, const WCHAR *s, UINT n)
     return count;
 }
 
-/* replaces the whole text without limits, as WM_SETTEXT and EM_SETHANDLE leave it. */
+/* replaces the whole text without limits, for WM_SETTEXT and EM_SETHANDLE. */
 static void reset(EDIT *e)
 {
     e->caret = e->sel_min = e->sel_max = 0;
@@ -1228,7 +1222,7 @@ static BOOL set_text(EDIT *e, LPCWSTR s)
     return TRUE;
 }
 
-/* the character before the caret, a line break or a surrogate pair as one. */
+/* a line break or a surrogate pair counts as one character. */
 static UINT previous_char(EDIT *e, UINT i)
 {
     if (!i)
@@ -1257,7 +1251,7 @@ static UINT next_char(EDIT *e, UINT i)
     return i + 1;
 }
 
-/* backspace: the selection, or the character before the caret. */
+/* deletes the selection, or the character before the caret. */
 static BOOL backspace(EDIT *e)
 {
     if (delete_selection(e))
@@ -1513,7 +1507,7 @@ static void ml_char(EDIT *e, WCHAR c)
 
 /* ------------------------------------------------------------------ keys */
 
-/* a caret move, the selection kept from its anchor with shift. */
+/* with extend, the selection grows from the anchor. */
 static void move_caret(EDIT *e, UINT to, BOOL extend)
 {
     UINT anchor = extend ? anchor_of(e) : to;
@@ -1691,7 +1685,7 @@ static void sl_key(EDIT *e, UINT vk, LPARAM lparam)
 
 /* ------------------------------------------------------------------ mouse */
 
-/* a click at a point: the selection from the anchor with shift, the caret on the line clicked. */
+/* shift extends the selection from the anchor, and the caret goes on the clicked line. */
 static void click(EDIT *e, int x, int y, BOOL shift, BOOL keep_line)
 {
     UINT l;

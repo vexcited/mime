@@ -1,6 +1,6 @@
 /*
- * glBegin and glEnd, the client arrays of the fixed function pipeline and glArrayElement. the vertices of a glBegin
- * are collected here and drawn at glEnd in one draw by gl_draw_immediate in draw.c.
+ * glBegin and glEnd, the fixed function client arrays and glArrayElement. vertices between glBegin and glEnd are
+ * collected here and drawn at glEnd in one draw by gl_draw_immediate in draw.c.
  */
 #include "immediate.h"
 
@@ -182,7 +182,7 @@ GLAPI void APIENTRY glClientActiveTextureARB(GLenum texture)
     glClientActiveTexture(texture);
 }
 
-/* sets the pointer of an array whose size and type were checked. */
+/* size and type were already checked. */
 static void array_pointer(GlContext *ctx, GlVertexAttrib *a, GLint size, GLenum type, BOOL normalized, GLsizei stride,
                           const void *pointer)
 {
@@ -284,7 +284,7 @@ GLAPI void APIENTRY glIndexPointer(GLenum type, GLsizei stride, const void *poin
         gl_error(ctx, GL_INVALID_VALUE);
 }
 
-/* the formats of glInterleavedArrays: the sizes of the texture coordinate, color, normal and vertex. */
+/* glInterleavedArrays formats: sizes of the texture coordinate, color, normal and vertex. */
 typedef struct Interleaved {
     GLenum format;
     int texture, color, normal, vertex;
@@ -323,7 +323,7 @@ GLAPI void APIENTRY glInterleavedArrays(GLenum format, GLsizei stride, const voi
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
-    /* a color of bytes takes a whole float's room. */
+    /* a byte color takes a whole float's room. */
     GLsizei f = (GLsizei)sizeof(GLfloat);
     GLsizei color_bytes = layout->color_bytes ? f : layout->color * f;
     GLsizei natural = (layout->texture + layout->normal + layout->vertex) * f + color_bytes;

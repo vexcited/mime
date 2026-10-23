@@ -79,8 +79,7 @@ static LONG file_digest(WT_DER content, const WT_SUBJECT *subject)
     if (!WtTake(&input, 0x30, &data) || !WtTake(&input, 0x30, &digest) || input.size)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     BOOL cabinet = subject->digest_input != nullptr;
-    /* the cabinet's data comes in two kinds, the second with the digests of more parts of the file in its link,
-       which are not checked. */
+    /* the second cabinet content format includes additional digests in its link; these are not checked. */
     WT_BYTES probe = data.value;
     if (subject->installer ? !take_oid(&probe, oid_sip_info, sizeof(oid_sip_info))
         : cabinet ? !take_oid(&probe, oid_cab, sizeof(oid_cab)) &&
@@ -126,7 +125,7 @@ static DWORD header(BYTE *out, BYTE tag, DWORD length)
 
 static LONG signature(WT_DER attributes, WT_DER encrypted, ALG_ID alg, PCCERT_CONTEXT cert)
 {
-    /* crypt32's signed-blob verifier accepts the same rsa digest signature. */
+    /* crypt32's signed-blob verifier accepts the same RSA digest signature. */
     BYTE identifier[] = {0x30,0x0d,6,9,0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,11,5,0};
     if (alg == CALG_SHA1)
         identifier[12] = 5;
@@ -155,7 +154,7 @@ static LONG signature(WT_DER attributes, WT_DER encrypted, ALG_ID alg, PCCERT_CO
     return error;
 }
 
-/* the certificate of the store that has the issuer and the serial number, big endian without leading zeros. */
+/* finds the certificate by issuer and serial number, encoded big-endian without leading zeros. */
 static PCCERT_CONTEXT find_cert(HCERTSTORE store, WT_DER issuer, WT_DER serial)
 {
     CERT_NAME_BLOB name = {issuer.encoded.size, (BYTE *)issuer.encoded.data};
@@ -181,7 +180,7 @@ static PCCERT_CONTEXT find_cert(HCERTSTORE store, WT_DER issuer, WT_DER serial)
     return nullptr;
 }
 
-/* a signature made with rsa, named by the key or by the key and the digest. */
+/* RSA signatures may identify the key alone or the key and digest together. */
 static BOOL rsa_algorithm(WT_DER sequence, ALG_ID alg)
 {
     WT_BYTES input = sequence.value;
@@ -201,7 +200,7 @@ static BOOL two_digits(const BYTE *text, DWORD *value)
     return TRUE;
 }
 
-/* a UTCTime or a GeneralizedTime, ending with Z, as a file time. */
+/* converts UTCTime or GeneralizedTime ending in Z to file time. */
 static BOOL asn_time(WT_DER time, FILETIME *out)
 {
     const BYTE *t = time.value.data;
@@ -239,10 +238,8 @@ static BOOL asn_time(WT_DER time, FILETIME *out)
 }
 
 /*
- * the time of a counter signature on the signature of a signer: a signer information of its own, signed by a time
- * stamp service, whose message digest is the digest of the signature it stamps. A stamp that verifies, to a trusted
- * root as of the time it names, tells when the signature was made, which lets a certificate that has expired since
- * still vouch for it.
+ * a countersignature timestamps the signer's signature, using its digest as the message digest. verification to a
+ * root trusted at that time allows a signing certificate that has since expired.
  */
 static BOOL stamp_time(WT_DER attributes, WT_DER stamped, HCERTSTORE store, FILETIME *when)
 {
@@ -322,9 +319,8 @@ static BOOL stamp_time(WT_DER attributes, WT_DER stamped, HCERTSTORE store, FILE
 #define WTPF_DEFAULT_STATE 0x00023c00
 
 /*
- * the policy flags of the software publishing trust provider: a revocation check that cannot reach its server is
- * no failure for a publisher unless the state asks for one. A machine without the value has the default of a fresh
- * installation, which allows it for both kinds of publisher.
+ * software publishing policy decides whether an unreachable revocation server fails verification. the fresh-install
+ * default allows this for both publisher kinds.
  */
 static BOOL offline_revocation_allowed(void)
 {
@@ -380,8 +376,10 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
         para.cbSize = sizeof(para);
         para.RequestedUsage.Usage.cUsageIdentifier = 1;
         para.RequestedUsage.Usage.rgpszUsageIdentifier = usages;
-        /* the flags of the provider only narrow a check that fdwRevocationChecks asks for: none asked means none done,
-           whatever the flags say, and the whole chain is the check when they say nothing. */
+        /*
+         * provider flags only narrow fdwRevocationChecks: no requested check means none, and absent flags mean the
+         * whole chain.
+         */
         DWORD flags = 0;
         if (options->fdwRevocationChecks == WTD_REVOKE_WHOLECHAIN) {
             if (options->dwProvFlags & WTD_REVOCATION_CHECK_NONE)
@@ -410,7 +408,7 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
             if ((result == CRYPT_E_REVOCATION_OFFLINE_ || result == CRYPT_E_NO_REVOCATION_CHECK_) &&
                 offline_revocation_allowed())
                 result = 0;
-            /* the state of a verification keeps the chain, whatever the policy said. */
+            /* keeps the certificate chain even when policy rejects verification. */
             if (kept)
                 *kept = chain;
             else

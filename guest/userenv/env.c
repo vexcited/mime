@@ -1,7 +1,7 @@
 /*
- * environment blocks of a user, as profapi builds them for userenv: the
- * machine's variables first, then the user's, each later source replacing
- * what came before except Path, which the user's value extends.
+ * user environment blocks, as profapi builds them: machine variables first,
+ * then the user's, each replacing the earlier ones except Path, which the
+ * user's value extends.
  */
 #include <mime/nt.h>
 #include <mime/ntrtl.h>
@@ -48,7 +48,7 @@ static void expand_in(PWSTR env, PCWSTR raw, PWSTR out, DWORD chars)
     out[dest.Length / sizeof(WCHAR)] = 0;
 }
 
-/* every string value of a key; the user's Path is appended to the machine's with a semicolon. */
+/* the user's Path is appended to the machine's with a semicolon. */
 static void set_from_key(PWSTR *env, HKEY root, PCWSTR path, BOOL user)
 {
     HKEY key;
@@ -233,7 +233,7 @@ USERENV BOOL WINAPI CreateEnvironmentBlock(LPVOID *environment, HANDLE token, BO
     return TRUE;
 }
 
-/* the variables of the user's block replace the %names% of the text, the ones it lacks stay as written. */
+/* %names% the user's block lacks stay as written. */
 USERENV BOOL WINAPI ExpandEnvironmentStringsForUserW(HANDLE token, LPCWSTR source, LPWSTR destination, DWORD chars)
 {
     if (!source || !destination || !chars) {

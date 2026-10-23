@@ -1,4 +1,4 @@
-/* the tpm base services, tbs.h. */
+/* tpm base services, tbs.h. */
 #ifndef MIME_WIN32_TBS_H
 #define MIME_WIN32_TBS_H
 

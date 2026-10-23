@@ -1,11 +1,9 @@
 /*
- * from the planes of the components to pixels: the components with fewer samples than the picture are
- * interpolated linearly between the centers of their samples, a sample of the plane covering the area of
- * hmax / h by vmax / v pixels, and the colors are converted with the transforms of JFIF.
+ * from component planes to pixels: subsampled components are interpolated linearly between sample centers, each
+ * plane sample covering hmax / h by vmax / v pixels, and colors are converted with the JFIF transforms.
  *
- * the picture is made row by row. a component at the size of the picture is used from the plane as it is, the
- * others are brought to the width of the picture in a line buffer first, with a path of their own for the usual
- * halving of the width and height.
+ * the picture is made row by row. full size components are read from the plane as is, the others are first
+ * brought to the picture width in a line buffer, with a dedicated path for the usual halving in both directions.
  */
 #include "dec.h"
 
@@ -21,7 +19,7 @@ typedef struct Line {
 
 enum { LINE_DIRECT, LINE_H2V1, LINE_H2V2, LINE_H1V2, LINE_GENERIC };
 
-/* the two samples around a position and the weight of the second in 1/256, for output sample x of a ratio. */
+/* for output sample x at a ratio: the two samples around it and the second one's weight in 1/256. */
 static void plan_axis(uint32_t x, uint32_t num, uint32_t den, uint32_t limit, bool fancy, int32_t *i0, int32_t *i1,
                       uint8_t *frac)
 {
@@ -33,10 +31,7 @@ static void plan_axis(uint32_t x, uint32_t num, uint32_t den, uint32_t limit, bo
         *frac = 0;
         return;
     }
-    /*
-     * the center of output pixel x is at x plus a half, which in samples is that times num over den, and the
-     * center of sample i is at i plus a half.
-     */
+    /* output pixel x is centered at x + 0.5, that times num / den in samples, and sample i at i + 0.5. */
     int64_t pos = (int64_t)(((uint64_t)(2 * x + 1) * num) << 15) / (int64_t)den - 0x8000;
     int64_t i = pos >> 16;
     int a = (int)(i < 0 ? 0 : i >= (int64_t)limit ? (int64_t)limit - 1 : i);
@@ -104,7 +99,7 @@ static inline void h2v2_pair(const uint16_t *sum, uint32_t cw, uint8_t *out, uin
         out[2 * i + 1] = (uint8_t)((3 * c + n + 7) >> 4);
 }
 
-/* the same triangle over the sums: sixteenths in all. */
+/* the same triangle filter across the sums, in sixteenths. */
 static void line_h2v2(const uint16_t *sum, uint32_t cw, uint8_t *out, uint32_t w)
 {
     uint32_t i = 0;
@@ -185,10 +180,9 @@ static inline uint8_t clamp_u8(int v)
 }
 
 /*
- * the transform of JFIF with 14 bit fractions. red is the luma plus 1.402 times the red difference Cr less 128, blue
- * the luma plus 1.772 times the blue difference Cb less 128, and green the luma less 0.344136 times the blue difference
- * and 0.714136 times the red one, each product rounded to the nearest. a product fits in 16 bits by 16 bits, so
- * the vector code adds the pairs of products in one step.
+ * the JFIF transform with 14 bit fractions. red is Y + 1.402 (Cr - 128), blue Y + 1.772 (Cb - 128), and green
+ * Y - 0.344136 (Cb - 128) - 0.714136 (Cr - 128), each product rounded to nearest. a product fits 16 by 16 bits, so
+ * the vector code adds pairs of products in one step.
  */
 #define K_CR_R 22970
 #define K_CB_B 29032
@@ -315,7 +309,7 @@ int jpeg_output(Jpeg *j, uint8_t *dest, size_t stride)
         const JpegComp *c = &j->comp[i];
         Line *l = &ln[i];
         l->c = c;
-        /* the samples of the component against those of the output: positions scale by hn / hd and vn / vd. */
+        /* component samples against output samples: positions scale by hn / hd and vn / vd. */
         uint32_t hn = (uint32_t)c->h * (uint32_t)c->n, hd = (uint32_t)j->hmax * (uint32_t)j->scale;
         uint32_t vn = (uint32_t)c->v * (uint32_t)c->n, vd = (uint32_t)j->vmax * (uint32_t)j->scale;
         bool full_w = hn == hd, full_v = vn == vd;

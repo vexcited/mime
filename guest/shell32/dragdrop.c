@@ -1,13 +1,11 @@
 /*
- * the drag and drop helpers of the shell: the drag image of a drag source, the window that shows it over a
- * drop target, SHDoDragDrop and the format enumerator of SHCreateStdEnumFmtEtc.
+ * the shell's drag and drop helpers: a source's drag image, the window showing it over a target, SHDoDragDrop and
+ * SHCreateStdEnumFmtEtc.
  *
- * a source gives the helper its image, which goes into the data object as the two formats of Windows: "DragImageBits",
- * a header of the size, the hot spot, a bitmap handle and the color key, then the rows of 32 bit pixels bottom row
- * first with premultiplied alpha, and "DragContext", 16 bytes of which the second word says the bits are there. the
- * helper of a target takes them out of the data object, and shows them in a layered window that follows the pointer.
- * read from shell32.dll of build 26300, CDragDropHelper. when the host takes a drag over, ole32 reads the same two
- * formats to give the compositor the image of the drag.
+ * the image goes into the data object in the two Windows formats. "DragImageBits" is a header with the size, hot
+ * spot, bitmap handle and color key, then 32 bit premultiplied pixels bottom row first. "DragContext" is 16 bytes
+ * whose second word says the bits are there. the target helper shows them in a layered window that follows the
+ * pointer. when the host takes a drag over, ole32 reads the same formats to give the compositor the image.
  */
 #include "shell32_private.h"
 #include <mime/win32/shobjidl_ui.h>
@@ -20,14 +18,14 @@
 typedef struct _IMAGE_BITS {
     LONG Width, Height;
     LONG OffsetX, OffsetY;
-    DWORD Bitmap;   /* the handle the image came from, a leftover */
+    DWORD Bitmap;   /* the handle the image came from, unused. */
     COLORREF Key;
-    DWORD Pixels[1]; /* bottom row first, premultiplied */
+    DWORD Pixels[1]; /* bottom row first, premultiplied. */
 } IMAGE_BITS;
 
 #define IMAGE_HEADER 24
 
-/* shell32 does not import ole32, which a program using the helpers has loaded already. */
+/* shell32 does not import ole32, which programs using the helpers have loaded already. */
 static FARPROC ole_proc(const char *name)
 {
     HMODULE ole = LoadLibraryW(L"ole32.dll");
@@ -86,7 +84,7 @@ static UINT layered_format(void)
     return register_format(&format, L"DragIsShowingLayered");
 }
 
-/* a DWORD in the data object as a format of its own, which the source reads to see what the helper shows. */
+/* a DWORD in its own data object format, which the source reads to see what the helper shows. */
 static void set_dword(IDataObject *data, UINT format, DWORD value)
 {
     if (!data || !format)
@@ -109,10 +107,9 @@ static void set_dword(IDataObject *data, UINT format, DWORD value)
 }
 
 /*
- * the pixels of a bitmap as the helper keeps them, read in _ApplyAlphaToDragBitmap. a pixel with no alpha and some
- * color gets full alpha; pixels near the color key, each channel within 5, go clear; an image over 300 pixels
- * either way fades from its hot spot to its far edges; then the alpha is cut to three quarters and the colors
- * premultiplied. the fade and the three quarters are the default of Windows as read; the guesses are the rounding.
+ * a pixel with no alpha but some color gets full alpha, and pixels within 5 of the color key on every channel go
+ * clear. an image over 300 pixels either way fades from its hot spot to its far edges. then alpha is cut to three
+ * quarters and the colors premultiplied, like the Windows default. the rounding is a guess.
  */
 static IMAGE_BITS *bits_from_bitmap(HBITMAP bitmap, SIZE size, POINT offset, COLORREF key)
 {
@@ -182,7 +179,7 @@ static IMAGE_BITS *bits_from_bitmap(HBITMAP bitmap, SIZE size, POINT offset, COL
     return bits;
 }
 
-/* puts the image into the data object as the two formats; the object keeps what it takes, the helper frees the rest. */
+/* the object keeps what it takes, the helper frees the rest. */
 static HRESULT give_image(IDataObject *data, IMAGE_BITS *bits, DWORD flags)
 {
     SIZE_T size = IMAGE_HEADER + (SIZE_T)bits->Width * bits->Height * 4;
@@ -206,7 +203,7 @@ static HRESULT give_image(IDataObject *data, IMAGE_BITS *bits, DWORD flags)
         release_medium(&medium);
         return hr;
     }
-    /* the context: whether the layered image is in the object. */
+    /* the context says whether the layered image is in the object. */
     IStream *stream;
     hr = make_stream(&stream);
     if (FAILED(hr))
@@ -233,7 +230,7 @@ static HRESULT give_image(IDataObject *data, IMAGE_BITS *bits, DWORD flags)
     return hr;
 }
 
-/* the image of a data object, a copy, or the error the object gave when it has none. */
+/* returns a copy, or the object's error when it has no image. */
 static HRESULT take_image(IDataObject *data, IMAGE_BITS **out)
 {
     *out = nullptr;
@@ -284,7 +281,7 @@ static HRESULT take_image(IDataObject *data, IMAGE_BITS **out)
     return hr;
 }
 
-/* ------------------------------------------------------------------ the window of the image */
+/* ------------------------------------------------------------------ image window */
 
 static const WCHAR g_image_class[] = L"SysDragImage";
 
@@ -313,8 +310,8 @@ static BOOL register_image_class(void)
 }
 
 /*
- * a layered, topmost window that shows the image with its alpha, not activated, owned by the window of the target so
- * the host shows it as a popup of that window. the class and the styles are the shell's, but for the activation.
+ * a layered topmost window that is never activated, owned by the target's window so the host shows it as that
+ * window's popup. the class and styles match the shell's, except for activation.
  */
 static HWND make_image_window(const IMAGE_BITS *bits, POINT at, HWND owner)
 {
@@ -369,7 +366,7 @@ typedef struct _HELPER {
     HWND Window;
     BOOL Hidden;
     POINT Offset;
-    IDataObject *Data; /* the object the window was announced in, not referenced */
+    IDataObject *Data; /* the object the window was announced in, not referenced. */
 } HELPER;
 
 static HELPER *from_source(IDragSourceHelper2 *This)
@@ -382,7 +379,7 @@ static HELPER *from_target(IDropTargetHelper *This)
     return CONTAINING_RECORD(This, HELPER, Target);
 }
 
-/* the window and the image go; the data object is told it shows nothing any more. */
+/* the data object is told nothing is shown any more. */
 static void hide_image(HELPER *h)
 {
     if (h->Window)
@@ -440,7 +437,7 @@ static HRESULT STDMETHODCALLTYPE src_from_bitmap(IDragSourceHelper2 *This, LPSHD
         return E_INVALIDARG;
     HELPER *h = from_source(This);
     IMAGE_BITS *bits = bits_from_bitmap(image->hbmpDragImage, image->sizeDragImage, image->ptOffset, image->crColorKey);
-    /* the helper owns the bitmap from now on, whether it could use it or not. */
+    /* the helper owns the bitmap from now on, used or not. */
     if (image->hbmpDragImage)
         DeleteObject(image->hbmpDragImage);
     if (!bits)
@@ -448,7 +445,6 @@ static HRESULT STDMETHODCALLTYPE src_from_bitmap(IDragSourceHelper2 *This, LPSHD
     return give_image(data, bits, h->Flags);
 }
 
-/* the registered message a window answers with the image of its drag, "ShellGetDragImage". */
 static UINT drag_image_message(void)
 {
     static UINT message;
@@ -458,10 +454,9 @@ static UINT drag_image_message(void)
 }
 
 /*
- * the image of a window is what it asks the window for with ShellGetDragImage, its SHDRAGIMAGE filled in. a window
- * that gives none gets a picture of itself, kept to 400 pixels each way so a window as big as the screen is no
- * drag image. that is a guess: Windows draws the icons and names of the items of the data object instead, and has
- * no picture of the window.
+ * the window is asked to fill an SHDRAGIMAGE with ShellGetDragImage. one that does not gets a snapshot of itself, up
+ * to 400 pixels each way so a full screen window gets no image. that is a guess: Windows draws the data object's
+ * item icons and names instead.
  */
 static HRESULT STDMETHODCALLTYPE src_from_window(IDragSourceHelper2 *This, HWND window, POINT *point, IDataObject *data)
 {
@@ -539,8 +534,7 @@ static void place_image(HELPER *h, const POINT *point)
 }
 
 /*
- * the window the image belongs to: the target's, else the one under the pointer when it is the process's own, else the
- * active one.
+ * the target's window, else the window under the pointer if the process owns it, else the active one.
  */
 static HWND owner_of(HWND target, const POINT *point)
 {
@@ -563,7 +557,7 @@ static HRESULT STDMETHODCALLTYPE tgt_drag_enter(IDropTargetHelper *This, HWND ta
     hide_image(h);
     if (!data)
         return S_OK;
-    /* an object with no image gives the error it answered with, and nothing is shown. */
+    /* an object with no image returns its error, and nothing is shown. */
     HRESULT hr = take_image(data, &h->Image);
     if (FAILED(hr))
         return hr;
@@ -600,7 +594,7 @@ static HRESULT STDMETHODCALLTYPE tgt_drag_over(IDropTargetHelper *This, POINT *p
     return S_OK;
 }
 
-/* a drop ends the image like a leave does, Drop being DragLeave in Windows. */
+/* like Windows, a drop ends the image as DragLeave does. */
 static HRESULT STDMETHODCALLTYPE tgt_drop(IDropTargetHelper *This, IDataObject *data, POINT *point, DWORD effect)
 {
     return tgt_drag_leave(This);
@@ -719,7 +713,7 @@ static ULONG STDMETHODCALLTYPE ds_release(IDropSource *This)
     return (ULONG)refs;
 }
 
-/* escape cancels, the buttons going up drops. */
+/* escape cancels, releasing the buttons drops. */
 static HRESULT STDMETHODCALLTYPE ds_query_continue(IDropSource *This, BOOL escape, DWORD keys)
 {
     if (escape)
@@ -740,7 +734,7 @@ static const IDropSourceVtbl g_default_source_vtbl = {
 
 typedef HRESULT(WINAPI *DO_DRAG_DROP)(IDataObject *, IDropSource *, DWORD, DWORD *);
 
-/* the drag of a data object with the default source when there is none, the pointer drag of the shell. */
+/* uses the default source when none is given. */
 SHSTDAPI HRESULT WINAPI SHDoDragDrop(HWND window, IDataObject *data, IDropSource *source, DWORD effects,
                                      DWORD *effect)
 {

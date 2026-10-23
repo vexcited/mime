@@ -1,8 +1,8 @@
 /*
- * d3d10core.dll: once the core of direct3d 10, whose work d3d11.dll does
- * now. making a device answers that it is not implemented, as windows'
- * does; the rest is kmt.c's, shared with d3d10_1core.dll. only the count
- * of D3D10CoreCreateDevice's arguments is known, from the 32-bit dll.
+ * d3d10core.dll: the old direct3d 10 core, whose work d3d11.dll does now.
+ * like windows, making a device is not implemented. the rest is in kmt.c,
+ * shared with d3d10_1core.dll. only the argument count of
+ * D3D10CoreCreateDevice is known.
  */
 #include <mime/win32/winbase.h>
 

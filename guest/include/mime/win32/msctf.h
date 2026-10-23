@@ -1,8 +1,7 @@
 /*
- * the text services framework: how a program with a document and the text services that edit it meet. a thread
- * manager keeps the document managers of a thread, each a stack of contexts, and a context is the program's text
- * store as the services see it. interfaces are declared the C way, a struct whose first member points to a table
- * of functions, as msctf.h declares them.
+ * text services framework: connects a program's documents with the text services that edit them. a thread manager
+ * holds a thread's document managers, each a stack of contexts, and a context is the program's text store as the
+ * services see it.
  */
 #ifndef MIME_WIN32_MSCTF_H
 #define MIME_WIN32_MSCTF_H
@@ -1215,7 +1214,7 @@ struct IEnumTfPropertyValue {
     const IEnumTfPropertyValueVtbl *lpVtbl;
 };
 
-/* the owner of a context that has no text store of its own, which the thread manager asks about its window. */
+/* owns a context that has no text store of its own. the thread manager asks it about its window. */
 typedef struct ITfContextOwner ITfContextOwner;
 typedef struct ITfContextOwnerVtbl {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(ITfContextOwner *This, REFIID riid, void **ppvObject);
@@ -1232,7 +1231,7 @@ struct ITfContextOwner {
     const ITfContextOwnerVtbl *lpVtbl;
 };
 
-/* ------------------------------------------------------------------ entry points of msctf.dll */
+/* ------------------------------------------------------------------ msctf.dll entry points */
 
 TFAPI HRESULT WINAPI TF_CreateThreadMgr(ITfThreadMgr **thread_mgr);
 TFAPI HRESULT WINAPI TF_GetThreadMgr(ITfThreadMgr **thread_mgr);

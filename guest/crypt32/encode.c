@@ -1,5 +1,5 @@
 /*
- * CryptEncodeObject(Ex): the x.509 structures of wincrypt.h to der.
+ * CryptEncodeObject and CryptEncodeObjectEx: the X.509 structures of wincrypt.h to DER.
  */
 #include "crypt32_private.h"
 
@@ -135,7 +135,6 @@ static DWORD char_error(DWORD type)
     return CRYPT_E_NOT_CHAR_STRING;
 }
 
-/* encodes utf-16 text as a string of the given type. */
 static void enc_wide_value(enc_ctx *c, DWORD type, const WCHAR *s, DWORD n)
 {
     BYTE tag = CrTagFromStringType(type);

@@ -1,4 +1,4 @@
-/* xinput1_3.dll: the directx redistributable's xinput, on the engine the xinput dlls share. */
+/* xinput1_3.dll, the DirectX redistributable XInput, using the shared engine. */
 #include "../lib/xinput/xinput_private.h"
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)

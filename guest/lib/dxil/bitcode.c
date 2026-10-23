@@ -1,7 +1,6 @@
 /*
  * the llvm bitstream reader. records are read with the abbreviations of
- * their block and of the blockinfo block, and kept with their operands as
- * 64-bit values, the code first.
+ * their block and of blockinfo, and kept as 64-bit operands, code first.
  */
 #include "bitcode.h"
 
@@ -24,7 +23,7 @@ typedef struct AbbrevList {
     uint32_t count, capacity;
 } AbbrevList;
 
-/* the abbreviations blockinfo gives to blocks of an id. */
+/* abbreviations blockinfo gives to blocks of an id. */
 typedef struct BlockInfo {
     uint32_t id;
     AbbrevList abbrevs;
@@ -85,7 +84,7 @@ void bc_arena_release(BcArena *a, BcMark mark)
     a->end = mark.end;
 }
 
-/* grows an array of the arena by doubling. */
+/* doubles the capacity in the arena. */
 static void *grow(BcArena *a, void *items, uint32_t count, uint32_t *capacity, size_t size)
 {
     if (count < *capacity)
@@ -318,7 +317,7 @@ static void add_entry(Reader *r, Entries *e, BcRecord *record, BcBlock *block)
 
 static BcBlock *read_block(Reader *r, uint32_t id, uint32_t width, int depth);
 
-/* the entries up to the block's end, or to the stream's end at the top level. */
+/* up to the block's end, or the stream's end at the top level. */
 static void read_entries(Reader *r, BcBlock *block, uint32_t width, int depth)
 {
     AbbrevList local = {};
@@ -379,7 +378,7 @@ static void read_entries(Reader *r, BcBlock *block, uint32_t width, int depth)
         if (!rec)
             break;
         if (block->id == 0) {
-            /* blockinfo's records say which block the next abbreviations are for. */
+            /* SETBID says which block the following abbreviations are for. */
             if (rec->code == BLOCKINFO_SETBID && rec->count)
                 setting = block_info(r, (uint32_t)rec->ops[0], 1);
             continue;
@@ -410,7 +409,7 @@ static uint32_t read32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 
 
 BcBlock *bc_parse(const uint8_t *data, size_t size, BcArena *arena)
 {
-    /* the wrapper header some producers put first: magic, version, offset, size, cpu. */
+    /* some producers put a wrapper header first: magic, version, offset, size, cpu. */
     if (size >= 20 && read32(data) == 0x0B17C0DE) {
         uint32_t offset = read32(data + 8), length = read32(data + 12);
         if (offset > size || length > size - offset)

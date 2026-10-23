@@ -1,8 +1,7 @@
 /*
- * the active objects of automation: the object that an application makes available to scripts as the one running, under
- * the class it is. They are entries of the running object table, named by an item moniker of the exclamation mark and
- * the class identifier in braces, which is how the table of windows holds them, so that a script in another process of the
- * machine finds the object through the table across processes.
+ * automation active objects: the object an application offers to scripts as the running one for its class. like on
+ * windows they are running object table entries named by an item moniker of "!" and the braced class id, so scripts in
+ * other processes find them through the machine wide table.
  */
 #include "oleaut32_private.h"
 

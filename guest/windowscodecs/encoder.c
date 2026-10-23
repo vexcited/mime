@@ -1,6 +1,6 @@
 /*
- * the generic encoder: IWICBitmapEncoder, IWICBitmapFrameEncode and the property bag of a frame's options, over the
- * backend of one image format. A frame collects its pixels, and the backend writes them when the frame is committed.
+ * generic WIC encoder, frame and option-bag interfaces. frames collect pixels until commit, when the format backend
+ * writes them.
  */
 #include "wic_codec.h"
 #include "wic_meta.h"
@@ -69,7 +69,7 @@ static WicEncoder *encoder_from(IWICBitmapEncoder *This) { return WIC_FROM_SLOT(
 static WicFrameEncoder *fenc_from(IWICBitmapFrameEncode *This) { return WIC_FROM_SLOT(WicFrameEncoder, frame, This); }
 static WicOptionBag *bag_from(IPropertyBag2 *This) { return WIC_FROM_SLOT(WicOptionBag, bag, This); }
 
-/* ------------------------------------------------------------------ the options */
+/* the options. */
 
 static int find_option(const WicOptionBag *bag, const WCHAR *name)
 {
@@ -226,9 +226,9 @@ static HRESULT bag_create(const WicOptionDesc *descs, UINT count, IPropertyBag2 
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ a frame */
+/* a frame. */
 
-/* the format of the codec that is closest to the one asked for. */
+/* choose the closest supported codec format. */
 static void closest_format(const WicCodec *codec, const WicEncoderOps *ops, GUID *format)
 {
     for (UINT i = 0; i < codec->format_count; i++) {
@@ -265,7 +265,7 @@ static void closest_format(const WicCodec *codec, const WicEncoderOps *ops, GUID
                 score += (bits_want - bits_have) * 4;
             else
                 score += bits_have - bits_want;
-            /* premultiplied and straight alpha are close, straight is the common one. */
+            /* prefer straight alpha when selecting between straight and premultiplied formats. */
             if (want->alpha && have->alpha && wcsstr(want->name, L"PBGRA") != nullptr && wcsstr(have->name, L"PBGRA") == nullptr)
                 score += 1;
         } else {
@@ -301,14 +301,14 @@ static HRESULT STDMETHODCALLTYPE fenc_initialize(IWICBitmapFrameEncode *This, IP
     if (f->initialized)
         return WINCODEC_ERR_WRONGSTATE;
     if (options) {
-        /* the values of a bag we made are read back from it. */
+        /* read our option bags directly. */
         WicOptionBag *bag = bag_from(options);
         const WicEncoderOps *ops = f->encoder->ops;
         if (bag->base.cls == &g_bag_class && bag->descs == ops->options) {
             memcpy(f->values, bag->values, sizeof(f->values));
             f->set = bag->set;
         } else {
-            /* any other bag is asked for the properties by name. */
+            /* query other bags by property name. */
             for (UINT i = 0; i < ops->option_count && i < MAX_OPTIONS; i++) {
                 PROPBAG2 prop;
                 VARIANT value;
@@ -548,7 +548,7 @@ static HRESULT STDMETHODCALLTYPE fenc_write_source(IWICBitmapFrameEncode *This, 
                 converted = (IWICBitmapSource *)converter;
             }
         } else if (WicFormatIsIndexed(&f->format)) {
-            /* a palette made from the picture, as the encoders of windows do for gif. */
+            /* generate a palette from the image, like the Windows GIF encoder. */
             IWICPalette *palette;
             hr = WicPaletteCreate(&palette);
             if (SUCCEEDED(hr)) {
@@ -655,7 +655,7 @@ static HRESULT STDMETHODCALLTYPE fenc_get_metadata_writer(IWICBitmapFrameEncode 
     return hr;
 }
 
-/* the frame answers for the interfaces of its blocks with the object that holds them. */
+/* delegate metadata block interfaces to the frame's block object. */
 static HRESULT STDMETHODCALLTYPE fenc_query_interface(IWICBitmapFrameEncode *This, REFIID riid, void **object)
 {
     WicFrameEncoder *f = fenc_from(This);
@@ -682,7 +682,7 @@ static const IWICBitmapFrameEncodeVtbl g_fenc_vtbl = {
 static const WicIfaceEntry g_fenc_ifaces[] = {WIC_ENTRY(WicFrameEncoder, IID_IWICBitmapFrameEncode, frame)};
 static const WicClass g_fenc_class = {fenc_destroy, g_fenc_ifaces, 1};
 
-/* ------------------------------------------------------------------ the encoder */
+/* the encoder. */
 
 static void encoder_destroy(WicBase *base)
 {

@@ -1,9 +1,7 @@
 /*
- * textures. a texture lives on the host in metal's private storage once it
- * has an image; uploads go through the stream and a gpu copy. a texture
- * gets more mip levels when the application defines them or asks for
- * them, by copying into a new host texture. sampling parameters become
- * metal sampler states shared by content.
+ * textures. a texture lives on the host in Metal's private storage once it has an image; uploads go through the stream
+ * and a gpu copy. a texture gets more mip levels, when the application defines or asks for them, by copying into a new
+ * host texture. sampling parameters become Metal sampler states shared by content.
  */
 #include "opengl32.h"
 
@@ -604,7 +602,7 @@ static BOOL face_of(GLenum target, uint32_t *slice)
     return FALSE;
 }
 
-/* the mip chain of a texture, made on the host. */
+/* builds a texture's mip chain on the host. */
 static void generate_mipmaps(GlContext *ctx, GlTexture *t)
 {
     uint32_t want = full_levels(t->width, t->height, t->mtl_type == MTL_TEX_3D ? t->depth : 1);
@@ -1218,7 +1216,7 @@ BOOL gl_texture_ready(GlContext *ctx, GlTexture *t)
     return t && t->id && (t->defined_levels & 1);
 }
 
-/* a 1x1 black texture for samplers without a complete texture, as gl samples them. */
+/* a 1x1 black texture for samplers without a complete texture, as GL samples them. */
 uint32_t gl_dummy_texture(GlContext *ctx)
 {
     static uint32_t id;

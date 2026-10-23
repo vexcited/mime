@@ -1,7 +1,4 @@
-/*
- * ole data transfer: data objects, storage mediums, drag and drop and the
- * ole clipboard of ole32.dll.
- */
+/* ole data transfer: data objects, storage mediums, drag and drop and the ole32.dll clipboard. */
 #ifndef MIME_WIN32_OLEIDL_H
 #define MIME_WIN32_OLEIDL_H
 

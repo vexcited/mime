@@ -1,17 +1,17 @@
 /*
- * cached bitmaps, the abort and validation calls on images, and the test control hook.
+ * cached bitmaps, the abort and validation calls on images, and GdipTestControl.
  */
 #include "gp_private.h"
 
 typedef struct GCached {
     DWORD tag;
-    GBitmap *copy;  /* premultiplied */
+    GBitmap *copy;  /* premultiplied. */
 } GCached;
 
 typedef struct CachedSource {
     GSource base;
     const GBitmap *bits;
-    INT ox, oy;     /* device position of the first pixel */
+    INT ox, oy;     /* device position of the first pixel. */
 } CachedSource;
 
 static void cached_fetch(GSource *src, INT x, INT y, INT count, UINT32 *out)
@@ -67,7 +67,7 @@ WINGDIPAPI GpStatus WINAPI GdipDeleteCachedBitmap(GpCachedBitmap *cached)
     return Ok;
 }
 
-/* the bitmap goes to the device position given, whatever the transforms of the graphics are. */
+/* draws at the given device position, ignoring the graphics transforms. */
 WINGDIPAPI GpStatus WINAPI GdipDrawCachedBitmap(GpGraphics *graphics, GpCachedBitmap *cached, INT x, INT y)
 {
     GGraphics *g = gp_graphics_cast(graphics);
@@ -116,7 +116,7 @@ WINGDIPAPI GpStatus WINAPI GdipImageSetAbort(GpImage *image, GdiplusAbort *abort
     return Ok;
 }
 
-/* the switches of the library that programs and tests flip: forced bilinear drawing and color management. */
+/* GdipTestControl switches: forced bilinear drawing and color management. */
 BOOL gp_force_bilinear;
 BOOL gp_no_icm;
 

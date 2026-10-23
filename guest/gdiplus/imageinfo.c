@@ -1,6 +1,6 @@
 /*
- * what an image knows about itself besides its pixels: its size, flags, resolution and format, its frames and
- * properties, the thumbnail, turning and flipping, and the list of codecs.
+ * image metadata: size, flags, resolution, format, frames and properties, plus thumbnails, rotate and flip, and the
+ * codec list.
  */
 #include "gp_private.h"
 
@@ -62,7 +62,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetImagePixelFormat(GpImage *image, PixelFormat *
     return Ok;
 }
 
-/* the size in the units of the image, which are pixels for a bitmap. */
+/* in the image's units, pixels for a bitmap. */
 WINGDIPAPI GpStatus WINAPI GdipGetImageDimension(GpImage *image, REAL *width, REAL *height)
 {
     GBitmap *b = gp_bitmap_cast(image);
@@ -217,7 +217,7 @@ static GProperty *find_property(GBitmap *b, ULONG id)
     return nullptr;
 }
 
-/* a metafile has no properties, and the calls that look for one say so. */
+/* metafiles have no properties, and the property calls report that. */
 static BOOL is_metafile(GpImage *image) { return !gp_bitmap_cast(image) && gp_image_cast(image); }
 
 WINGDIPAPI GpStatus WINAPI GdipGetPropertyCount(GpImage *image, UINT *count)
@@ -259,7 +259,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetPropertyItemSize(GpImage *image, PROPID id, UI
     return Ok;
 }
 
-/* the item is written at the start of the buffer, its value follows it. */
+/* the item goes at the start of the buffer, its value right after it. */
 WINGDIPAPI GpStatus WINAPI GdipGetPropertyItem(GpImage *image, PROPID id, UINT size, PropertyItem *item)
 {
     GBitmap *b = gp_bitmap_cast(image);
@@ -361,7 +361,7 @@ WINGDIPAPI GpStatus WINAPI GdipRemovePropertyItem(GpImage *image, PROPID id)
     return Ok;
 }
 
-/* ------------------------------------------------------------------ turning, flipping, thumbnails */
+/* ------------------------------------------------------------------ rotate, flip, thumbnails */
 
 static UINT get_index(const BYTE *row, INT x, INT bits)
 {
@@ -382,7 +382,7 @@ static void set_index(BYTE *row, INT x, INT bits, UINT v)
     }
 }
 
-/* a quarter turn clockwise for each of rotate by 90, 180 and 270, then a mirror across the vertical axis. */
+/* a clockwise quarter turn for each of 90, 180 and 270, then a mirror across the vertical axis. */
 WINGDIPAPI GpStatus WINAPI GdipImageRotateFlip(GpImage *image, RotateFlipType type)
 {
     GBitmap *b = gp_bitmap_cast(image);
@@ -434,7 +434,7 @@ WINGDIPAPI GpStatus WINAPI GdipImageRotateFlip(GpImage *image, RotateFlipType ty
                           get_index(b->bits + (SSIZE_T)y * b->stride, x, bits));
         }
     }
-    /* the new pixels replace the old ones; the bitmap is the same object. */
+    /* the new pixels replace the old ones in the same object. */
     BYTE *old = b->owned;
     b->owned = t->owned;
     b->bits = t->bits;
@@ -453,9 +453,8 @@ WINGDIPAPI GpStatus WINAPI GdipImageRotateFlip(GpImage *image, RotateFlipType ty
 }
 
 /*
- * the picture scaled to the size, 120 pixels on the long side when a size is zero, as a bitmap with alpha. The
- * image keeps its proportions in the width and height given only when one of them is zero, which is how windows
- * treats it as well.
+ * a bitmap with alpha, 120 pixels on the long side when a size is zero. like windows, the proportions are kept only
+ * when one of width and height is zero.
  */
 WINGDIPAPI GpStatus WINAPI GdipGetImageThumbnail(GpImage *image, UINT width, UINT height, GpImage **thumbnail,
                                                  GetThumbnailImageAbort callback, VOID *data)
@@ -581,7 +580,7 @@ static GpStatus codec_sizes(DWORD flag, UINT *count, UINT *size)
     return Ok;
 }
 
-/* the list is the structures, then the strings and signatures they point at. */
+/* the structures come first, then the strings and signatures they point at. */
 static GpStatus codec_list(DWORD flag, UINT count, UINT size, ImageCodecInfo *list)
 {
     UINT want_count, want_size;
@@ -645,7 +644,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetImageDecoders(UINT count, UINT size, ImageCode
     return codec_list(ImageCodecFlagsDecoder, count, size, decoders);
 }
 
-/* the encoder of a class id. */
+/* the image format of an encoder class id. */
 const GUID *gp_encoder_format(const CLSID *clsid)
 {
     for (UINT i = 0; i < sizeof(g_codecs) / sizeof(g_codecs[0]); i++) {
@@ -655,9 +654,9 @@ const GUID *gp_encoder_format(const CLSID *clsid)
     return nullptr;
 }
 
-/* ------------------------------------------------------------------ the parameters of the encoders */
+/* ------------------------------------------------------------------ encoder parameters */
 
-/* the lists of the encoders, in the sizes gdiplus.dll has for them: the structures, then the values. */
+/* the structures, then the values, sized as windows reports them. */
 static UINT parameter_list_size(const GUID *format)
 {
     UINT header = (UINT)offsetof(EncoderParameters, Parameter);

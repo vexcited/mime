@@ -1,17 +1,17 @@
 /*
- * the server of rpc: the protocol sequences and endpoints it listens on, the interfaces registered with their managers,
- * the threads that accept connections and serve the calls that come over them.
+ * the rpc server: the protocol sequences and endpoints it listens on, registered interfaces and their managers, and the
+ * threads that accept connections and serve calls.
  *
- * Each endpoint is a pipe with a thread that accepts, and each connection has a thread that reads its requests and serves
- * them one after the other, as the calls of a connection are serial. A call is served by the dispatch routine of its interface
- * with a message the stub reads its buffer from; what the stub leaves in the message is the reply.
+ * each endpoint is a pipe with an accepting thread, and each connection has a thread that serves its requests one after
+ * the other, since calls on a connection are serial. the interface's dispatch routine serves a call with a message the
+ * stub reads its buffer from, and what the stub leaves in the message is the reply.
  */
 #include "rpcrt4_private.h"
 
 #define MAX_CONTEXTS 64
 #define MAX_ENDPOINTS 64
 
-/* ------------------------------------------------------------------ the state */
+/* ------------------------------------------------------------------ state */
 
 typedef struct SMGR {
     struct SMGR *Next;
@@ -49,8 +49,8 @@ typedef struct {
     BOOL Used;
     BOOL Checked;
     /*
-     * an interface of com, bound by the interface id of the com interface it carries: calls are made to the one ole
-     * dispatch function with a description that names that interface.
+     * a com interface, bound by the iid of the com interface it carries. calls go to the single ole dispatch function
+     * with a description naming that interface.
      */
     BOOL Ole;
     RPC_SERVER_INTERFACE OleIface;
@@ -68,7 +68,7 @@ typedef struct SCONN {
     ULONG ClientPid;
     USHORT MaxXmit;
     USHORT MaxRecv;
-    /* a request that comes in fragments. */
+    /* reassembles a fragmented request. */
     unsigned char *Assembly;
     ULONG AssemblyHave;
     ULONG AssemblyCapacity;
@@ -228,7 +228,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerRegisterIf3(RPC_IF_HANDLE interface_spec,
     if (!iface || iface->Length < NT351_INTERFACE_SIZE)
         return RPC_S_INVALID_ARG;
     if (flags & RPC_IF_AUTOLISTEN) {
-        /* an interface that starts the server for its own sake. */
+        /* the interface starts the server for its own sake. */
     }
     if (max_calls == 0)
         max_calls = RPC_C_LISTEN_MAX_CALLS_DEFAULT;
@@ -340,7 +340,7 @@ static RPC_STATUS unregister(RPC_IF_HANDLE interface_spec, UUID *type, BOOL wait
         ReleaseSRWLockExclusive(&g_lock);
         if (!gone)
             break;
-        /* the calls that are still in it finish first. */
+        /* calls still running in it finish first. */
         gone->Unregistering = TRUE;
         if (wait)
             while (gone->Active > 0)
@@ -549,7 +549,6 @@ static void random_name(const WCHAR *prefix, WCHAR *out, SIZE_T count)
     RpcStringFreeW(&text);
 }
 
-/* makes an endpoint and starts accepting on it. */
 static RPC_STATUS endpoint_create(PCWSTR protseq, PCWSTR endpoint, ULONG max_calls, void *sd, SENDPOINT **out)
 {
     RPC_STATUS status = protseq_status(protseq);
@@ -616,7 +615,7 @@ static RPC_STATUS use_protseq(PCWSTR protseq, ULONG max_calls, PCWSTR endpoint, 
     if (ensure_events())
         return RPC_S_OUT_OF_RESOURCES;
     if (!_wcsicmp(protseq, L"ncacn_np") && (!endpoint || !*endpoint)) {
-        /* a named pipe endpoint is named by the caller; a dynamic one is made as for the local sequence. */
+        /* the caller names a named pipe endpoint, a dynamic one is made like for the local sequence. */
     }
     return endpoint_create(protseq, endpoint, max_calls, sd, nullptr);
 }
@@ -675,7 +674,6 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerUseProtseqExA(RPC_CSTR protseq, unsigned 
     return RpcServerUseProtseqA(protseq, max_calls, sd);
 }
 
-/* the endpoints an interface names for a protocol sequence. */
 static RPC_STATUS use_protseq_if(PCWSTR protseq, ULONG max_calls, RPC_IF_HANDLE interface_spec, void *sd)
 {
     const RPC_SERVER_INTERFACE *iface = interface_spec;
@@ -755,7 +753,6 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerUseAllProtseqsIfEx(unsigned int max_calls
     return RpcServerUseAllProtseqsIf(max_calls, interface_spec, sd);
 }
 
-/* the handles that name the endpoints of the server. */
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerInqBindings(RPC_BINDING_VECTOR **vector)
 {
     if (!vector)
@@ -794,7 +791,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerInqBindings(RPC_BINDING_VECTOR **vector)
     return RPC_S_OK;
 }
 
-/* ------------------------------------------------------------------ the listener */
+/* ------------------------------------------------------------------ listener */
 
 static DWORD WINAPI connection_main(void *parameter);
 static void contexts_rundown(SCONN *conn);
@@ -841,7 +838,7 @@ static DWORD WINAPI listener_main(void *parameter)
         if (error != ERROR_SUCCESS && error != ERROR_PIPE_CONNECTED) {
             if (WaitForSingleObject(e->Stop, 0) == WAIT_OBJECT_0)
                 break;
-            /* a client that went away before it was accepted: the instance is reused. */
+            /* the client left before being accepted, so reuse the instance. */
             DisconnectNamedPipe(pipe);
             continue;
         }
@@ -876,7 +873,7 @@ static DWORD WINAPI listener_main(void *parameter)
     return 0;
 }
 
-/* ------------------------------------------------------------------ the connection */
+/* ------------------------------------------------------------------ connections */
 
 static void send_fault(SCONN *c, ULONG call_id, USHORT context_id, ULONG status, BOOL did_not_execute)
 {
@@ -903,7 +900,7 @@ static SIF *interface_for(const PDU_SYNTAX *abstract)
             found = s;
             break;
         }
-    /* a com interface is not registered by its own id: the interface registered for com serves them all. */
+    /* com interfaces are not registered by their own iid: the interface registered for com serves them all. */
     if (!found)
         for (SIF *s = g_interfaces; s; s = s->Next)
             if (!s->Unregistering && (s->Flags & RPC_IF_OLE)) {
@@ -914,7 +911,7 @@ static SIF *interface_for(const PDU_SYNTAX *abstract)
     return found;
 }
 
-/* does the interface speak this transfer syntax: its own, and the 64 bit one when it carries tables for it. */
+/* the interface's own transfer syntax, and ndr64 when it carries tables for it. */
 static BOOL interface_supports(const SIF *s, const PDU_SYNTAX *transfer, RPC_SYNTAX_IDENTIFIER *out)
 {
     RPC_SYNTAX_IDENTIFIER want = {transfer->Uuid, {transfer->Major, transfer->Minor}};
@@ -1015,7 +1012,7 @@ static void handle_bind(SCONN *c, const unsigned char *pdu, ULONG length)
             r += 4 + sizeof(PDU_SYNTAX);
         }
     }
-    /* the security the client asked for stays with the connection. */
+    /* the security the client asked for sticks to the connection. */
     if (h->AuthLength && length >= sizeof(PDU_SEC_TRAILER) + h->AuthLength) {
         const PDU_SEC_TRAILER *t = (const PDU_SEC_TRAILER *)(pdu + length - h->AuthLength - sizeof(PDU_SEC_TRAILER));
         c->AuthType = t->AuthType;
@@ -1039,7 +1036,6 @@ BINDING *RpcpCurrentCallBinding(void)
     return call ? call->Handle : nullptr;
 }
 
-/* a reply buffer for the call a server binding stands for. */
 RPC_STATUS RpcpServerGetBuffer(RPC_MESSAGE *message, BINDING *b)
 {
     SCALL *call = b->Call;
@@ -1061,7 +1057,7 @@ void RpcpServerFreeBuffer(RPC_MESSAGE *message)
     SCALL *call = b ? b->Call : nullptr;
     if (!call)
         return;
-    /* the request buffer and the reply buffer belong to the call, which frees them when it is done. */
+    /* the call owns the request and reply buffers and frees them when done. */
     if (message->Buffer == call->Reply)
         call->Reply = nullptr;
     if (message->Buffer == call->Request)
@@ -1089,7 +1085,7 @@ static ULONG exception_status(ULONG code)
     }
 }
 
-/* the matching manager of an interface for an object: the one of the object's type. */
+/* the manager registered for the object's type. */
 static RPC_MGR_EPV *manager_for(SIF *s, const UUID *object, RPC_STATUS *status)
 {
     static const UUID nil;
@@ -1115,7 +1111,7 @@ static RPC_MGR_EPV *manager_for(SIF *s, const UUID *object, RPC_STATUS *status)
     return epv;
 }
 
-/* the checks an interface asks of a connection that uses it: its flags and its callback. */
+/* the interface's flags and security callback decide whether the connection may use it. */
 static RPC_STATUS check_access(SCONN *c, SCONTEXT *ctx, SCALL *call)
 {
     SIF *s = ctx->If;
@@ -1197,7 +1193,7 @@ static void send_response(SCONN *c, SCALL *call, RPC_MESSAGE *m)
     HeapFree(GetProcessHeap(), 0, frag);
 }
 
-/* serves one request whose stub data is complete. */
+/* the request's stub data is complete. */
 static void serve(SCONN *c, ULONG call_id, USHORT context_id, USHORT opnum, const UUID *object, unsigned char *stub,
                   ULONG length, ULONG drep)
 {
@@ -1245,7 +1241,7 @@ static void serve(SCONN *c, ULONG call_id, USHORT context_id, USHORT opnum, cons
     if (!status)
         epv = manager_for(sif, object, &status);
     const RPC_DISPATCH_TABLE *table = sif->Iface->DispatchTable;
-    /* the one function of com takes every method. */
+    /* the single com dispatch function takes every method. */
     if (!status && (!table || (!ctx->Ole && opnum >= table->DispatchTableCount)))
         status = RPC_S_PROCNUM_OUT_OF_RANGE;
     if (status) {
@@ -1395,8 +1391,8 @@ static DWORD WINAPI connection_main(void *parameter)
 #include <mime/win32/rpcndr.h>
 
 /*
- * a context handle of the server: what the client holds is a handle of twenty bytes naming it, and the connection it belongs
- * to rundowns it if the client goes away. The first three words are those of NDR_SCONTEXT.
+ * the client holds a twenty byte handle naming it, and its connection runs it down if the client goes away. the first
+ * three words match NDR_SCONTEXT.
  */
 typedef struct SCTX {
     struct SCTX *Next;
@@ -1426,7 +1422,7 @@ static SCTX *ctx_lookup(const GUID *id)
     return nullptr;
 }
 
-/* the handle the buffer holds, or a new unregistered one for a null handle. */
+/* a null handle in the buffer gives a new unregistered context. */
 RPCRTAPI NDR_SCONTEXT RPC_ENTRY NDRSContextUnmarshall2(RPC_BINDING_HANDLE binding, void *buffer, ULONG drep, void *guard,
                                                        ULONG flags)
 {
@@ -1467,7 +1463,7 @@ static void ctx_unlink(SCTX *c)
     c->Registered = FALSE;
 }
 
-/* writes the handle: closed if the user's part is gone, else registered and named. */
+/* written as closed if the user's part is gone, else registered and named. */
 RPCRTAPI void RPC_ENTRY NDRSContextMarshall2(RPC_BINDING_HANDLE binding, NDR_SCONTEXT context, void *buffer,
                                              NDR_RUNDOWN rundown, void *guard, ULONG flags)
 {
@@ -1521,7 +1517,7 @@ RPCRTAPI void RPC_ENTRY NDRSContextMarshall(NDR_SCONTEXT context, void *buffer, 
     NDRSContextMarshall2(nullptr, context, buffer, rundown, nullptr, 0);
 }
 
-/* the context handles of a connection that ended: their users are told. */
+/* runs down the context handles of an ended connection. */
 static void contexts_rundown(SCONN *conn)
 {
     for (;;) {
@@ -1605,7 +1601,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcMgmtIsServerListening(RPC_BINDING_HANDLE bindin
     BINDING *b = RpcpBindingLookup(binding);
     if (!b)
         return RPC_S_INVALID_BINDING;
-    /* a remote server listens if it answers a connection. */
+    /* a remote server is listening if it accepts a connection. */
     RPC_STREAM s;
     RPC_STATUS status = RpcpStreamConnect(b, &s);
     if (status)
@@ -1659,11 +1655,9 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcMgmtStatsVectorFree(RPC_STATS_VECTOR **stats)
     return RPC_S_OK;
 }
 
-/* ------------------------------------------------------------------ the client of a call */
+/* ------------------------------------------------------------------ call client */
 
-/*
- * the connection a call comes over: for a handle that names a call being served, or the call of the thread if none is named.
- */
+/* the call a handle names, or the thread's current call when it names none. */
 static SCALL *call_of(RPC_BINDING_HANDLE handle, RPC_STATUS *status)
 {
     BINDING *b = handle ? RpcpBindingLookup(handle) : RpcpCurrentCallBinding();
@@ -1766,7 +1760,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerInqBindingHandle(RPC_BINDING_HANDLE *bind
     return RPC_S_OK;
 }
 
-/* the name of the account that makes the call, "domain\user", for what asks who calls. */
+/* the calling account as "domain\user". */
 static RPC_STATUS client_name(SCALL *call, WCHAR *name, ULONG count)
 {
     const RPC_ADVAPI *adv = RpcpAdvapi();
@@ -1912,7 +1906,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcBindingServerFromClient(RPC_BINDING_HANDLE clie
     return RPC_S_OK;
 }
 
-/* a call cancelled by its client is told to the thread that serves it. */
+/* tells the serving thread whether its client cancelled the call. */
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerTestCancel(RPC_BINDING_HANDLE binding)
 {
     RPC_STATUS status;

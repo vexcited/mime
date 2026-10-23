@@ -1,15 +1,12 @@
 /*
- * the provider side of ui automation on a machine where no client listens:
- * no screen reader, no inspector, no win event hook. events go nowhere and
- * succeed, a window's host provider describes the window itself.
+ * the provider side of UI Automation with no client listening: no screen reader, inspector or win event hook.
+ * events go nowhere and succeed, and a window's host provider describes the window itself.
  */
 #define UIAAPI
 #include <mime/win32/uiautomationcore.h>
 #include <mime/win32/winuser.h>
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
-
-/* ------------------------------------------------------------------ the reserved values */
 
 static HRESULT WINAPI reserved_query(IUnknown *iface, REFIID riid, void **object)
 {
@@ -23,7 +20,7 @@ static HRESULT WINAPI reserved_query(IUnknown *iface, REFIID riid, void **object
     return E_NOINTERFACE;
 }
 
-/* process wide singletons, handed out without a reference as windows' are. */
+/* process wide singletons, handed out without a reference like windows does. */
 static ULONG WINAPI reserved_add_ref(IUnknown *iface)
 {
     return 2;
@@ -52,8 +49,6 @@ HRESULT WINAPI UiaGetReservedNotSupportedValue(IUnknown **value)
     *value = &g_not_supported;
     return S_OK;
 }
-
-/* ------------------------------------------------------------------ the host provider of a window */
 
 typedef struct {
     IRawElementProviderSimple iface;
@@ -149,8 +144,6 @@ HRESULT WINAPI UiaHostProviderFromHwnd(HWND hwnd, IRawElementProviderSimple **pr
     *provider = &host->iface;
     return S_OK;
 }
-
-/* ------------------------------------------------------------------ servers and events */
 
 /* WM_GETOBJECT only comes from clients, and none listen. */
 LRESULT WINAPI UiaReturnRawElementProvider(HWND hwnd, WPARAM wparam, LPARAM lparam, IRawElementProviderSimple *element)

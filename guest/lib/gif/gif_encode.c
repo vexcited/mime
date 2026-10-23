@@ -51,8 +51,8 @@ typedef struct RowSource {
 /*
  * codes are written bit packed and flat into the tail of buf, then spread into
  * sub-blocks in place. the dictionary maps prefix code and next byte to a code
- * in open addressing, an entry is key << 12 | code and 0 is empty, as no code
- * is ever 0 or 1 in use of a string.
+ * in open addressing, an entry is key << 12 | code and 0 is empty, as no
+ * string ever gets code 0 or 1.
  */
 static int lzw_encode_rows(const RowSource *src, unsigned mcs, MimeGifBuffer *buf, const MimeAllocator *alloc)
 {

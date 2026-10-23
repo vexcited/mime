@@ -112,11 +112,8 @@ PCCERT_CONTEXT WINAPI CertCreateCertificateContext(DWORD dwCertEncodingType, con
 }
 
 /*
- * a certificate for a subject that signs itself with its own key: the public key of the provider's key is put in a
- * version 3 certificate with a random serial number, a validity of a year from now by default, and the signature
- * of the key. Mime has no private keys in its providers to make or sign with, so after the arguments are checked it
- * fails with NTE_NO_KEY (0x8009000D), the error of a container without one, and creates nothing. The last error is kept when a
- * step ends without one, as the binary keeps 0x8000FFFF for it.
+ * mime's providers have no private keys to make or sign with, so after checking the arguments this fails with
+ * NTE_NO_KEY, as for a container without a key, and creates nothing.
  */
 PCCERT_CONTEXT WINAPI CertCreateSelfSignCertificate(ULONG_PTR hCryptProvOrNCryptKey, PCERT_NAME_BLOB pSubjectIssuerBlob,
                                                     DWORD dwFlags, void *pKeyProvInfo, void *pSignatureAlgorithm,
@@ -392,7 +389,7 @@ BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
 
 static BOOL set_prop(cr_cert *cert, DWORD dwPropId, const void *pvData);
 
-/* a certificate of a registry store keeps its properties there too, all but the hash and the process handles. */
+/* a registry store certificate also keeps its properties in the registry, except the hashes and process handles. */
 BOOL WINAPI CertSetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD dwPropId, DWORD dwFlags,
                                               const void *pvData)
 {
@@ -526,7 +523,7 @@ BOOL WINAPI CertCompareIntegerBlob(PCRYPT_INTEGER_BLOB pInt1, PCRYPT_INTEGER_BLO
 {
     DWORD n1 = pInt1->cbData, n2 = pInt2->cbData;
     const BYTE *a = pInt1->pbData, *b = pInt2->pbData;
-    /* drops the sign extension bytes at the most significant, little endian, end. */
+    /* drops sign extension bytes at the most significant end, which comes last in little endian. */
     while (n1 > 1 && ((a[n1 - 1] == 0 && !(a[n1 - 2] & 0x80)) || (a[n1 - 1] == 0xFF && (a[n1 - 2] & 0x80))))
         n1--;
     while (n2 > 1 && ((b[n2 - 1] == 0 && !(b[n2 - 2] & 0x80)) || (b[n2 - 1] == 0xFF && (b[n2 - 2] & 0x80))))

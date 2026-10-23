@@ -1,5 +1,5 @@
 /*
- * crypt32 entry point, and the pkcs #12 functions.
+ * crypt32 entry point, and the PKCS #12 functions.
  */
 #include "crypt32_private.h"
 
@@ -33,9 +33,8 @@ BOOL WINAPI PFXIsPFXBlob(CRYPT_DATA_BLOB *pPFX)
 }
 
 /*
- * importing needs the pkcs #12 key derivation, rc2 and 3des or aes to open
- * the bags; none is implemented, so a valid blob fails as a bad password
- * does on windows.
+ * importing needs PKCS #12 key derivation, and RC2 and 3DES or AES to open the bags. none is implemented, so a
+ * valid blob fails as a wrong password does on windows.
  */
 HCERTSTORE WINAPI PFXImportCertStore(CRYPT_DATA_BLOB *pPFX, LPCWSTR szPassword, DWORD dwFlags)
 {

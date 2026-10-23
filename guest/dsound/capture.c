@@ -1,7 +1,7 @@
 /*
  * IDirectSoundCapture: the host has no recording path, so there is no
- * capture device. the creation functions fail as windows' do without one,
- * and the object the class factory makes stays uninitialized.
+ * capture device. creation fails like windows without one, and objects
+ * from the class factory stay uninitialized.
  */
 #include "dsound_private.h"
 

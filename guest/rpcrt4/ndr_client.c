@@ -1,5 +1,5 @@
 /*
- * the client side of the interpreter: NdrClientCall2 and the calls of proxies. A call finds its binding, sizes its buffer, fills
+ * the client side of the interpreter: NdrClientCall2 and proxy calls. a call finds its binding, sizes its buffer, fills
  * it with the [in] parameters, sends it, and reads the [out] parameters and the return value from the reply.
  */
 #include "ndr_proc.h"
@@ -10,7 +10,7 @@ static BOOL is_pointer_type(uchar fc)
     return (fc >= FC_RP && fc <= FC_FP) || fc == FC_IP || fc == FC_BIND_CONTEXT;
 }
 
-/* walks one parameter in the pass; the object a parameter names is in its slot, or is the slot. */
+/* the slot points to the parameter's object, or is the object. */
 static void param_walk(PMIDL_STUB_MESSAGE m, NDR_PASS pass, const NDR_PROC *p, const NDR_PARAM *prm, uchar *slot)
 {
     PFORMAT_STRING type = p->Types + prm->TypeOffset;
@@ -26,14 +26,12 @@ static void param_walk(PMIDL_STUB_MESSAGE m, NDR_PASS pass, const NDR_PROC *p, c
         *(uchar **)slot = object;
 }
 
-/* a simple type's value in the slot of a parameter passed by value. */
 static void simple_in(PMIDL_STUB_MESSAGE m, NDR_PASS pass, uchar *slot, uchar fc)
 {
     NDRC c = {m, pass, nullptr};
     NdrpSimple(&c, slot, fc);
 }
 
-/* the size of the parameters that need to be measured. */
 static void size_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
 {
     m->BufferLength = p->ClientSize;
@@ -116,7 +114,7 @@ static void unmarshal_params(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, ULONG_PTR 
     }
 }
 
-/* on failure, the [out] parameters hold nothing the caller could take for a result. */
+/* on failure, [out] parameters are cleared so the caller cannot take them for a result. */
 static void zero_out(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
 {
     for (ULONG i = 0; i < p->NumParams; i++) {
@@ -157,7 +155,7 @@ static void zero_out(PMIDL_STUB_MESSAGE m, const NDR_PROC *p)
 
 /* ------------------------------------------------------------------ binding */
 
-/* the binding handle a call uses: a parameter, a context handle's, the interface's own. */
+/* from a parameter, a context handle, or the interface itself. */
 static RPC_BINDING_HANDLE call_handle(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, void **generic_bound,
                                       const GENERIC_BINDING_ROUTINE_PAIR **generic_pair)
 {
@@ -240,7 +238,7 @@ static RPC_BINDING_HANDLE call_handle(PMIDL_STUB_MESSAGE m, const NDR_PROC *p, v
 
 /* ------------------------------------------------------------------ the call */
 
-/* the transport a call's buffer goes through: the rpc runtime, or the channel of a proxy. */
+/* buffers go through the rpc runtime, or through a proxy's channel. */
 extern void NdrpChannelGetBuffer(PMIDL_STUB_MESSAGE m);
 extern void NdrpChannelSendReceive(PMIDL_STUB_MESSAGE m);
 extern void NdrpChannelFreeBuffer(PMIDL_STUB_MESSAGE m);
@@ -290,7 +288,7 @@ CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, u
             handle = call_handle(&m, &p, &generic_bound, &generic_pair);
             msg.Handle = handle;
         }
-        /* a reference pointer that is not there cannot be sent or filled in. */
+        /* a null reference pointer cannot be sent or filled in. */
         for (ULONG i = 0; i < p.NumParams; i++) {
             const uchar *d = p.Params + 6 * i;
             ULONG attrs = *(const USHORT *)d;
@@ -301,11 +299,11 @@ CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, u
                 !*(void **)(args + *(const USHORT *)(d + 2)))
                 NDR_RAISE(RPC_X_NULL_REF_POINTER);
         }
-        /* what a method of an object returns in its [out] parameters is nothing until the reply says. */
+        /* an object method's [out] parameters are cleared until the reply fills them. */
         if (object)
             zero_out(&m, &p);
         size_params(&m, &p);
-        /* a format that undercounts the padding between its parts must not overrun the buffer. */
+        /* some formats undercount the padding between their parts. */
         m.BufferLength += NDR_BUFFER_SLACK;
         if (object) {
             msg.BufferLength = m.BufferLength;
@@ -355,7 +353,7 @@ CLIENT_CALL_RETURN NdrpClientCall(PMIDL_STUB_DESC desc, PFORMAT_STRING format, u
         if (object)
             return (CLIENT_CALL_RETURN){.Simple = (LONG_PTR)(LONG)NdrProxyErrorHandler(exception)};
         if (p.OiFlags & Oi_HAS_COMM_OR_FAULT) {
-            /* the status goes to the parameters the interface named for it, or is raised if they cannot take it. */
+            /* the status goes to the parameters the interface names for it, or is raised if they cannot take it. */
             const COMM_FAULT_OFFSETS *offsets = &desc->CommFaultOffsets[p.ProcNum];
             ULONG *comm = offsets->CommOffset == -1 ? nullptr : *(ULONG **)(args + offsets->CommOffset);
             ULONG *fault = offsets->FaultOffset == -1 ? nullptr : *(ULONG **)(args + offsets->FaultOffset);
@@ -380,7 +378,7 @@ RPCRTAPI CLIENT_CALL_RETURN RPC_VAR_ENTRY NdrClientCall2(PMIDL_STUB_DESC desc, P
     va_list ap;
     va_start(ap, format);
 #ifdef _WIN64
-    /* the arguments of the procedure are the variable ones of this call, floats widened to doubles. */
+    /* the procedure's arguments are this call's variadic ones, floats widened to doubles. */
     uchar *args = (uchar *)ap;
     BOOL promoted = TRUE;
 #else

@@ -1,13 +1,12 @@
 /*
- * image attributes: the color adjustments applied to the pixels of an image, a brush, a pen or text while it is
- * drawn, and the wrap mode that decides what lies beyond the edge of a picture. docs/gdiplus.md has the rules.
+ * image attributes: the color adjustments applied while an image, brush, pen or text is drawn, and the wrap mode
+ * for what lies beyond a picture's edge.
  */
 #include "gp_private.h"
 
 #define INT_MIN_VALUE (-2147483647 - 1)
 #define FLOAT_EPSILON 1.1920929e-7f
 
-/* the settings a type has switched on. */
 enum {
     ADJ_NOOP = 0x01,
     ADJ_MATRIX = 0x02,
@@ -20,7 +19,7 @@ enum {
     ADJ_PROFILE = 0x100,
 };
 
-/* how the color matrix is applied, found out from its values. */
+/* picked from the matrix values. */
 enum {
     MATRIX_NONE,
     MATRIX_FULL,
@@ -28,7 +27,7 @@ enum {
     MATRIX_TRANSLATE,
 };
 
-/* everything one type of object knows. the fields after the settings are derived from them by prepare. */
+/* one per ColorAdjustType. */
 typedef struct AdjustSet {
     UINT flags;
     ColorMatrixFlags matrix_flags;
@@ -40,18 +39,18 @@ typedef struct AdjustSet {
     ColorChannelFlags channel;
     UINT remap_count;
     ColorMap *remap;
-    /* derived */
+    /* derived by prepare. */
     UINT matrix_kind;
     BOOL lut_on;
-    int shift[4];            /* the translation of the matrix in R, G, B, A order */
-    BYTE scale[4][256];      /* R, G, B, A */
-    BYTE lut[256];           /* gamma and threshold */
-    UINT32 gray_table[256];  /* the pixels that replace gray ones when the matrix has an alternate for them */
+    int shift[4];            /* matrix translation, R, G, B, A order. */
+    BYTE scale[4][256];      /* R, G, B, A. */
+    BYTE lut[256];           /* gamma and threshold. */
+    UINT32 gray_table[256];  /* replacements for gray pixels when there is a gray matrix. */
 } AdjustSet;
 
 typedef struct GAttrs {
     DWORD tag;
-    /* a type that has no set of its own takes the default one, unless it was set to identity. */
+    /* a type without its own set uses the default one, unless it was set to identity. */
     AdjustSet *set[ColorAdjustTypeCount];
     BOOL identity[ColorAdjustTypeCount];
     BOOL cached_background;
@@ -120,7 +119,7 @@ WrapMode gp_attrs_wrap(const GAttrs *a, ARGB *clamp_color)
 
 /* ------------------------------------------------------------------ numbers */
 
-/* the conversion of the processor: anything that does not fit comes out as the lowest integer. */
+/* the processor's conversion: anything out of range becomes the lowest integer. */
 static int float_to_int(float x)
 {
     if (!(x >= -2147483648.0f && x < 2147483648.0f))
@@ -137,10 +136,9 @@ static BYTE clamp_int(int v)
 
 static float abs_float(float v) { return v < 0.0f ? -v : v; }
 
-/* a value on the 0..255 scale as an integer, rounded half up. */
 static int round_half_up(float x) { return float_to_int(mime_vec_floorf(x + 0.5f)); }
 
-/* the matrix on one pixel. the sums are taken in this order, and blue is clamped before it is rounded. */
+/* the sums go in this order, and blue is clamped before it is rounded. */
 static UINT32 matrix_pixel(const float *m, const float shift[4], UINT32 c)
 {
     float r = (float)((c >> 16) & 255), g = (float)((c >> 8) & 255), b = (float)(c & 255), a = (float)(c >> 24);
@@ -162,7 +160,7 @@ static BOOL is_gray(UINT32 c) { return ((c >> 16) & 255) == ((c >> 8) & 255) && 
 
 /* ------------------------------------------------------------------ preparing */
 
-/* NaN counts as equal here, as the comparison is written as "not different". */
+/* NaN counts as equal, since the test is written as "not different". */
 static BOOL differs_from(float v, float want) { return abs_float(v - want) >= FLOAT_EPSILON; }
 
 static void prepare_matrix(AdjustSet *s)
@@ -237,7 +235,6 @@ static void prepare(AdjustSet *s)
 
 /* ------------------------------------------------------------------ applying */
 
-/* the set that applies to a kind of object: its own, or the default when it has none and was not set to identity. */
 static const AdjustSet *pick(const GAttrs *a, ColorAdjustType type)
 {
     if ((UINT)type < 1 || (UINT)type > 4)
@@ -273,7 +270,7 @@ static void remap_pixels(const AdjustSet *s, UINT32 *argb, INT count)
     }
 }
 
-/* a pixel whose three colors lie in the range loses its alpha. */
+/* a pixel whose three colors are all in the key range loses its alpha. */
 static void key_pixels(const AdjustSet *s, UINT32 *argb, INT count)
 {
     UINT32 lo = s->key_low, hi = s->key_high;
@@ -323,7 +320,7 @@ static void matrix_pixels(const AdjustSet *s, UINT32 *argb, INT count)
     }
 }
 
-/* the gray the channel of a CMYK separation would be printed with. */
+/* the gray a CMYK separation channel would be printed with. */
 static UINT32 separate_channel(UINT32 c, ColorChannelFlags channel)
 {
     int part[3] = {255 - (int)((c >> 16) & 255), 255 - (int)((c >> 8) & 255), 255 - (int)(c & 255)};
@@ -360,7 +357,7 @@ void gp_attrs_apply(const GAttrs *a, ColorAdjustType type, UINT32 *argb, INT cou
 
 /* ------------------------------------------------------------------ api */
 
-/* the set of a type, made when it has none. NULL for a type that does not exist. */
+/* creates the set when missing. NULL for a type that does not exist. */
 static AdjustSet *set_for_write(GAttrs *a, ColorAdjustType type)
 {
     if ((UINT)type > 4)
@@ -376,7 +373,7 @@ static AdjustSet *set_for_write(GAttrs *a, ColorAdjustType type)
     return a->set[type];
 }
 
-/* switches settings off in the set a type has, which is none when it has no set. */
+/* does nothing for a type without a set. */
 static void set_clear_flags(GAttrs *a, ColorAdjustType type, UINT flags)
 {
     AdjustSet *s = a->set[type];
@@ -428,7 +425,7 @@ WINGDIPAPI GpStatus WINAPI GdipDisposeImageAttributes(GpImageAttributes *p)
     return Ok;
 }
 
-/* forgets what the type was given, the default's settings show through again. */
+/* the default's settings show through again. */
 WINGDIPAPI GpStatus WINAPI GdipResetImageAttributes(GpImageAttributes *p, ColorAdjustType type)
 {
     GAttrs *a = attrs_of(p, type);
@@ -440,7 +437,7 @@ WINGDIPAPI GpStatus WINAPI GdipResetImageAttributes(GpImageAttributes *p, ColorA
     return Ok;
 }
 
-/* the same, but the default's settings are shut out too. */
+/* like a reset, but the default's settings are shut out too. */
 WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesToIdentity(GpImageAttributes *p, ColorAdjustType type)
 {
     GAttrs *a = attrs_of(p, type);
@@ -465,7 +462,7 @@ WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesColorMatrix(GpImageAttributes *
     }
     if (!matrix && !gray)
         return InvalidParameter;
-    /* the set exists even when the arguments turn out wrong, which shuts the default out for the type. */
+    /* the set exists even if the arguments are wrong, which shuts the default out for the type. */
     AdjustSet *s = set_for_write(a, type);
     if (!s || !matrix)
         return InvalidParameter;
@@ -550,7 +547,7 @@ WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesColorKeys(GpImageAttributes *p,
         set_clear_flags(a, type, ADJ_KEYS);
         return Ok;
     }
-    /* the alpha bytes are not compared, only the three colors. */
+    /* only the three colors are compared, not alpha. */
     if (((low >> 16) & 255) > ((high >> 16) & 255) || ((low >> 8) & 255) > ((high >> 8) & 255) ||
         (low & 255) > (high & 255))
         return InvalidParameter;
@@ -583,7 +580,7 @@ WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesOutputChannel(GpImageAttributes
     return Ok;
 }
 
-/* the profile is checked for and remembered, but separation always uses the plain arithmetic. */
+/* the profile is checked and kept, but separation always uses plain arithmetic. */
 WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesOutputChannelColorProfile(GpImageAttributes *p, ColorAdjustType type,
                                                                            BOOL enable, const WCHAR *file)
 {
@@ -630,7 +627,7 @@ WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesRemapTable(GpImageAttributes *p
     return Ok;
 }
 
-/* nothing is validated: any mode is kept and drawing deals with what it does not know. */
+/* nothing is validated: any mode is kept and drawing handles unknown ones. */
 WINGDIPAPI GpStatus WINAPI GdipSetImageAttributesWrapMode(GpImageAttributes *p, WrapMode wrap, ARGB color, BOOL clamp)
 {
     GAttrs *a = gp_attrs_cast(p);

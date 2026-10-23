@@ -1,4 +1,4 @@
-/* the exports of the power service, which mime does not run: the rpc server is unavailable. */
+/* exports of the power service, which is not running: the rpc server is unavailable. */
 #include <mime/stubexport.h>
 
 MIME_STUB_RETURN("powrprof", BOOLEAN, CanUserWritePwrScheme, 0, FALSE)

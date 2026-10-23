@@ -1,8 +1,7 @@
 /*
- * dxgi.dll: the factory, the adapters and their outputs. adapters are the
- * gpus vulkan-1.dll offers, the host's; outputs are the monitors of user32.
- * swap chains belong to the direct3d device they present, which the
- * factory asks for them through IMimeDXGIPresenter.
+ * dxgi.dll: adapters are the host gpus vulkan-1.dll offers, outputs are
+ * user32's monitors. swap chains belong to the direct3d device they present,
+ * which the factory asks to make them through IMimeDXGIPresenter.
  */
 #ifndef DXGI_PRIVATE_H
 #define DXGI_PRIVATE_H
@@ -30,7 +29,7 @@ typedef struct DxgiGpu {
     LARGE_INTEGER umd_version;
 } DxgiGpu;
 
-/* the process' vulkan instance and its gpus, in the order adapters are enumerated. */
+/* the process's vulkan instance and its gpus, in adapter order. */
 typedef struct DxgiVulkan {
     VkInstance instance;
     PFN_vkGetInstanceProcAddr get_instance_proc;
@@ -64,7 +63,7 @@ HRESULT DxgiCreateFactory(UINT flags, REFIID riid, void **out);
 HRESULT DxgiCreateAdapter(DxgiFactory *factory, const DxgiGpu *gpu, REFIID riid, void **out);
 HRESULT DxgiCreateOutput(DxgiAdapter *adapter, HMONITOR monitor, IDXGIOutput **out);
 DxgiAdapter *DxgiAdapterFrom(IUnknown *unknown);
-/* shared.c: the vulkan device the direct3d devices of the process share. */
+/* shared.c: the vulkan device shared by the process's direct3d devices. */
 HRESULT DxgiAcquireShared(const DxgiGpu *gpu, const void *create_info, const void *profile, UINT profile_size,
                           MIME_DXGI_SHARED_VK **out);
 void DxgiReleaseShared(MIME_DXGI_SHARED_VK *shared);
@@ -72,7 +71,7 @@ HRESULT DxgiPublishSemaphore(MIME_DXGI_SHARED_VK *shared, UINT64 id, void *semap
 HRESULT DxgiOpenSemaphore(MIME_DXGI_SHARED_VK *shared, UINT64 id, void **semaphore, void **entry);
 void DxgiReleaseSemaphore(MIME_DXGI_SHARED_VK *shared, void *entry);
 BOOL DxgiMonitorNumber(HMONITOR monitor, UINT *number);
-/* duplication.c: v1 is DuplicateOutput1, whose arguments are checked and whose process needs per monitor dpi. */
+/* duplication.c: v1 is DuplicateOutput1, which checks its arguments and needs per monitor dpi. */
 HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR monitor, IUnknown *device, BOOL v1,
                             UINT flags, UINT count, const DXGI_FORMAT *formats, IDXGIOutputDuplication **out);
 

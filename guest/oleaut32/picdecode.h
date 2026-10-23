@@ -1,6 +1,5 @@
 /*
- * the image decoders behind OleLoadPicture: gif and jpeg files decoded to a bitmap in memory. They know nothing of
- * windows, so a host program can test them.
+ * the gif and jpeg decoders behind OleLoadPicture, decoding to an in-memory bitmap. They do not depend on Windows.
  */
 #ifndef MIME_OLEAUT32_PICDECODE_H
 #define MIME_OLEAUT32_PICDECODE_H
@@ -17,8 +16,8 @@
 #endif
 
 /*
- * a decoded picture. Rows run top down without padding. An image of 8 bits a pixel carries its palette as blue,
- * green, red and a zero; an image of 24 bits holds blue, green and red.
+ * rows run top down without padding. 8 bpp images carry a palette of blue, green, red and zero; 24 bpp pixels are
+ * blue, green, red.
  */
 typedef struct AUT_IMAGE {
     int width, height;
@@ -29,7 +28,7 @@ typedef struct AUT_IMAGE {
     unsigned char *pixels;
 } AUT_IMAGE;
 
-/* both return 1 when they made an image and 0 when the data is not one. */
+/* return 1 when an image was made, 0 when the data is not one. */
 int AutDecodeGif(const unsigned char *data, size_t size, AUT_IMAGE *image);
 int AutDecodeJpeg(const unsigned char *data, size_t size, AUT_IMAGE *image);
 void AutImageFree(AUT_IMAGE *image);

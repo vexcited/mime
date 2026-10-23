@@ -1,9 +1,6 @@
 /*
- * scroll bars and window scrolling. win32k keeps no scroll bar state, so
- * the information of each bar lives in a window property owned by this
- * process and is freed with the window. the frame does not draw the
- * standard bars yet; showing and hiding them changes the WS_HSCROLL and
- * WS_VSCROLL styles, which win32k uses to size the client area.
+ * scroll bars and window scrolling. win32k keeps no scroll bar state, so each
+ * bar lives in a window property of this process, freed with the window.
  */
 #include "user32_private.h"
 
@@ -18,7 +15,7 @@ typedef struct SCROLL_DATA {
 
 static const WCHAR *const g_scroll_prop[3] = {L"MimeScrollH", L"MimeScrollV", L"MimeScrollCtl"};
 
-/* a fresh bar has the range 0 to 100 like on windows. */
+/* a fresh bar has the range 0 to 100, like on windows. */
 static const SCROLL_DATA g_scroll_default = {0, 100, 0, 0, 0, ESB_ENABLE_BOTH};
 
 static BOOL own_window(HWND hwnd)
@@ -68,7 +65,7 @@ static BOOL valid_info_size(UINT size)
     return size == sizeof(SCROLLINFO) || size == offsetof(SCROLLINFO, nTrackPos);
 }
 
-/* toggles the scroll styles and lets win32k recompute the client area. */
+/* win32k sizes the client area from WS_HSCROLL and WS_VSCROLL. */
 static BOOL show_bars(HWND hwnd, int bar, BOOL show)
 {
     DWORD bits = bar == SB_HORZ ? WS_HSCROLL : bar == SB_VERT ? WS_VSCROLL : WS_HSCROLL | WS_VSCROLL;
@@ -89,7 +86,7 @@ static void redraw_bar(HWND hwnd, int bar)
         RedrawWindow(hwnd, nullptr, nullptr, RDW_FRAME | RDW_INVALIDATE);
 }
 
-/* stores the fields of info, clamps the page and position, returns the position. */
+/* clamps the page and position, returns the position. */
 static int set_info(HWND hwnd, int bar, const SCROLLINFO *info, BOOL redraw)
 {
     SCROLL_DATA *d = create_data(hwnd, bar);
@@ -141,7 +138,7 @@ static int set_info(HWND hwnd, int bar, const SCROLLINFO *info, BOOL redraw)
     return pos;
 }
 
-/* reads the bar, the default bar of a window with the scroll style when never set. */
+/* a window with the scroll style but no stored bar reads the default bar. */
 static BOOL get_info(HWND hwnd, int bar, SCROLLINFO *info)
 {
     const SCROLL_DATA *d = find_data(hwnd, bar);
@@ -177,7 +174,7 @@ static BOOL enable_arrows(HWND hwnd, int bar, UINT arrows)
     return TRUE;
 }
 
-/* the SBM_ messages of the scroll bar control, which keeps its state as an SB_CTL bar. */
+/* the scroll bar control keeps its state as an SB_CTL bar. */
 BOOL UserScrollBarMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
 {
     SCROLLINFO si = {sizeof(si)};
@@ -358,9 +355,8 @@ WINUSERAPI BOOL WINAPI EnableScrollBar(HWND hwnd, UINT bar, UINT arrows)
 /* ------------------------------------------------------------------ window scrolling */
 
 /*
- * the window contents are not moved: the whole scrolled rectangle is
- * reported and invalidated, so the application repaints it at the new
- * offset. child windows move when asked to.
+ * the contents are not moved: the whole scrolled rectangle is invalidated, so
+ * the application repaints it at the new offset. children move when asked to.
  */
 WINUSERAPI int WINAPI ScrollWindowEx(HWND hwnd, int dx, int dy, const RECT *rect, const RECT *clip, HRGN update,
                                      LPRECT update_rect, UINT flags)
@@ -409,7 +405,6 @@ WINUSERAPI BOOL WINAPI ScrollWindow(HWND hwnd, int dx, int dy, const RECT *rect,
 
 /* ------------------------------------------------------------------ drawing and tracking */
 
-/* where the parts of a bar lie: its arrows, the track between them and the thumb. */
 typedef struct BAR {
     BOOL vert, enabled;
     RECT arrow1, arrow2, track, thumb;
@@ -493,7 +488,7 @@ void UserDrawScrollBar(HWND hwnd, HDC dc)
     draw(hwnd, SB_CTL, dc, &r);
 }
 
-/* a standard bar's rectangle in screen coordinates, beside or under the client area. */
+/* in screen coordinates, beside or under the client area. */
 static BOOL standard_rect(HWND hwnd, int bar, RECT *r)
 {
     DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
@@ -510,7 +505,7 @@ static BOOL standard_rect(HWND hwnd, int bar, RECT *r)
     return TRUE;
 }
 
-/* the standard bars and the box between them, drawn after the rest of the frame. */
+/* drawn after the rest of the frame. */
 static void draw_standard(HWND hwnd)
 {
     RECT w, v, h;
@@ -552,7 +547,6 @@ static int part_at(const BAR *b, POINT pt)
     return at < start ? PART_PAGE1 : PART_PAGE2;
 }
 
-/* the position a thumb dragged to a point stands for. */
 static int thumb_position(const BAR *b, POINT pt, int grab)
 {
     const SCROLL_DATA *d = b->data;
@@ -566,10 +560,7 @@ static int thumb_position(const BAR *b, POINT pt, int grab)
     return free > 0 ? d->Min + UserMulDiv(at, steps, free) : d->Min;
 }
 
-/*
- * a press on a bar followed until the button is released: arrows and the
- * track repeat their line and page scrolls, the thumb is dragged.
- */
+/* runs until the button is released: arrows and the track repeat, the thumb is dragged. */
 static void track(HWND hwnd, int bar, POINT pt)
 {
     RECT r;
@@ -660,7 +651,7 @@ void UserTrackScrollBar(HWND hwnd, POINT screen)
     track(hwnd, SB_CTL, screen);
 }
 
-/* the part of DefWindowProc for the standard bars: drawing them with the frame, and presses on them. */
+/* the DefWindowProc part for the standard bars. */
 BOOL UserDefScrollBars(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
 {
     switch (msg) {

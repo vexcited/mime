@@ -1,13 +1,13 @@
 /*
- * gdi32: the gdi client. objects live in win32k; these wrappers marshal
- * arguments to the NtGdi services.
+ * gdi32: objects live in win32k, these wrappers marshal arguments to the
+ * NtGdi services.
  */
 #include "gdi32_private.h"
 #include <mime/win32/winnls.h>
 #include <mime/win32/d3dkmthk.h>
 #include <mime/stub.h>
 
-/* the linker's marker of floating point use, which the metafile code has. */
+/* tells the linker floating point is used, which the metafile code does. */
 int _fltused = 0x9875;
 
 static UCHAR handle_type(HGDIOBJ h)
@@ -33,7 +33,7 @@ WINGDIAPI DWORD WINAPI GetObjectType(HGDIOBJ h)
         return meta;
     switch (handle_type(h)) {
     case 0x01: {
-        /* a deleted dc has no type, as windows checks its handle table. */
+        /* like windows, a deleted dc has no type. */
         DWORD v;
         return NtGdiGetDCDword(h, MIME_DCDW_MAPMODE, &v) ? OBJ_DC : 0;
     }
@@ -130,9 +130,8 @@ WINGDIAPI HDC WINAPI CreateCompatibleDC(HDC dc)
 }
 
 /*
- * the display a name asks for, as gdi32full bCreateDCA reads it. a device argument that starts with \\.\DISPLAY wins,
- * then the driver DISPLAY, which is the whole screen, then a driver that starts with \\.\DISPLAY. anything else is
- * no display, and CreateDC then fails.
+ * a device that starts with \\.\DISPLAY wins, then the driver DISPLAY, which is the whole screen, then a driver that
+ * starts with \\.\DISPLAY. anything else is no display, and CreateDC fails.
  */
 static HDC open_display(LPCWSTR driver, LPCWSTR device)
 {
@@ -517,7 +516,7 @@ WINGDIAPI BOOL WINAPI GetViewportExtEx(HDC dc, LPSIZE size)
     return get_extent(dc, MIME_DCPT_VIEWPORTEXT, size);
 }
 
-/* scales an extent; the fixed modes keep theirs. */
+/* the fixed mapping modes keep their extents. */
 static BOOL scale_extent(HDC dc, BOOL viewport, int x_num, int x_denom, int y_num, int y_denom, LPSIZE old)
 {
     if (!x_num || !x_denom || !y_num || !y_denom) {
@@ -606,8 +605,8 @@ WINGDIAPI BOOL WINAPI CancelDC(HDC dc)
 }
 
 /*
- * the color profile of a dc: without one associated, windows reports the
- * srgb profile of the color directory for devices of more than 256 colors.
+ * without an associated profile, windows reports the color directory's srgb
+ * profile for devices of more than 256 colors.
  */
 WINGDIAPI BOOL WINAPI GetICMProfileW(HDC dc, LPDWORD size, LPWSTR file)
 {
@@ -677,7 +676,7 @@ WINGDIAPI HBITMAP WINAPI CreateBitmapIndirect(const BITMAP *bm)
     return NtGdiCreateBitmap(bm->bmWidth, bm->bmHeight, bm->bmPlanes, bm->bmBitsPixel, bm->bmBits);
 }
 
-/* a dc drawing into caller memory, as ddraw's surfaces have them. */
+/* a dc drawing into caller memory, as ddraw surfaces use. */
 WINGDIAPI NTSTATUS APIENTRY D3DKMTCreateDCFromMemory(D3DKMT_CREATEDCFROMMEMORY *desc)
 {
     return NtGdiDdDDICreateDCFromMemory(desc);
@@ -689,18 +688,17 @@ WINGDIAPI NTSTATUS APIENTRY D3DKMTDestroyDCFromMemory(const D3DKMT_DESTROYDCFROM
 }
 
 /*
- * the scheduling class of a process on the display's gpu. Mime has no gpu scheduler for programs to ask for time from,
- * so every process runs in the normal class, and a request for another is accepted and kept so that a query of it
- * answers what was asked.
+ * mime has no gpu scheduler, so every process runs in the normal class. a request for another is accepted and kept so
+ * that a query answers what was asked.
  */
 static volatile LONG g_gpu_priority_class = 1; /* D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL */
 
 WINGDIAPI NTSTATUS APIENTRY D3DKMTSetProcessSchedulingPriorityClass(HANDLE process, LONG priority_class)
 {
-    /* the classes run from idle (0) to realtime (5). */
+    /* classes run from idle, 0, to realtime, 5. */
     if (!process || priority_class < 0 || priority_class > 5)
         return (NTSTATUS)0xC000000D; /* STATUS_INVALID_PARAMETER */
-    /* only the process itself is kept, which is all a program asking for its own class needs. */
+    /* only the current process's class is kept, which is all a program asking for its own needs. */
     if (process == (HANDLE)(LONG_PTR)-1)
         g_gpu_priority_class = priority_class;
     return 0;
@@ -716,13 +714,13 @@ WINGDIAPI NTSTATUS APIENTRY D3DKMTGetProcessSchedulingPriorityClass(HANDLE proce
 
 /* ------------------------------------------------------------------ gamma */
 
-/* a dc of the display, which windows maps to its monitor; printers and metafiles have no ramp. */
+/* windows maps a display dc to its monitor; printers and metafiles have no ramp. */
 static BOOL display_dc(HDC dc)
 {
     return GetObjectType(dc) == OBJ_DC && GetDeviceCaps(dc, TECHNOLOGY) == DT_RASDISPLAY;
 }
 
-/* how far each entry's high byte may stray from its index, read once as windows' color server does. */
+/* how far each entry's high byte may stray from its index, read once like windows. */
 static LONG gamma_range(void)
 {
     static LONG range = -1;
@@ -745,7 +743,7 @@ WINGDIAPI BOOL WINAPI SetDeviceGammaRamp(HDC dc, LPVOID ramp)
     }
     if (!dc || !display_dc(dc))
         return FALSE;
-    /* no monotony is asked, and the low bytes are free. */
+    /* the ramp need not be monotonic, and the low bytes are free. */
     const WORD *values = ramp;
     LONG range = gamma_range();
     for (LONG i = 0; i < 3 * 256; i++) {
@@ -894,7 +892,7 @@ WINGDIAPI BOOL WINAPI SetBitmapDimensionEx(HBITMAP bitmap, int width, int height
         for (UINT i = 0; i < DIMENSION_MAX && slot < 0; i++)
             if (!g_dimensions[i].Bitmap)
                 slot = (int)i;
-        /* when full, reuse the oldest slot. */
+        /* when full, overwrite the first slot. */
         if (slot < 0)
             slot = 0;
     }
@@ -1530,7 +1528,7 @@ WINGDIAPI int WINAPI SetMetaRgn(HDC dc)
     return NtGdiSetMetaRgn(dc);
 }
 
-/* METARGN */
+/* 2 is the METARGN selector. */
 WINGDIAPI int WINAPI GetMetaRgn(HDC dc, HRGN region)
 {
     return NtGdiGetRandomRgn(dc, region, 2);

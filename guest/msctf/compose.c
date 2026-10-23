@@ -1,7 +1,6 @@
 /*
- * compositions: the text a text service is composing in a context, not final until it ends. the program that owns
- * the context is asked before one starts and told when it changes and ends, so it can show the text as being
- * composed.
+ * compositions: text a text service is composing in a context, not final until it ends. the context's owner is
+ * asked before one starts and told when it changes and ends, so it can show the text as being composed.
  */
 #include "msctf_private.h"
 
@@ -44,7 +43,7 @@ static void list_remove(CTX *ctx, COMP *comp)
     }
 }
 
-/* takes a composition out of the context: the owner is told, the property goes. */
+/* removes a composition from the context: the owner is told and the property goes. */
 static void finish(CTX *ctx, COMP *comp)
 {
     if (comp->Ended)
@@ -222,7 +221,7 @@ const ITfCompositionViewVtbl g_view_vtbl = {view_query, view_add_ref, view_relea
 
 /* ------------------------------------------------------------------ starting and finding */
 
-/* the composition's sink is told it ended, then it goes. */
+/* tells the composition's sink it ended, then removes it from the context. */
 static void end_through_sink(CTX *ctx, COMP *comp, TfEditCookie cookie)
 {
     comp_add_ref(comp);
@@ -252,7 +251,7 @@ static COMP *comp_create(CTX *ctx, const RNG *extent, ITfCompositionSink *sink, 
     return comp;
 }
 
-/* whether the context's owner lets the composition start. a context with no owner sink allows anything. */
+/* whether the context's owner lets the composition start. a context without an owner sink allows anything. */
 static HRESULT owner_allows(CTX *ctx, COMP *comp, BOOL *allowed)
 {
     *allowed = TRUE;
@@ -399,7 +398,7 @@ static HRESULT STDMETHODCALLTYPE term_query(ITfEditSession *This, REFIID riid, v
     return E_NOINTERFACE;
 }
 
-/* a session on the stack: nobody keeps it. */
+/* a session on the stack, so nobody holds a reference. */
 static ULONG STDMETHODCALLTYPE term_add_ref(ITfEditSession *This)
 {
     return 2;
@@ -443,7 +442,7 @@ HRESULT CompTerminateAll(CTX *ctx, ITfCompositionView *view)
     /* the sinks end a composition inside a write session of the system's. */
     HRESULT hr = CtxRequestSession(ctx, 64, &t.Iface, TF_ES_SYNC | TF_ES_READWRITE, &session);
     if (FAILED(hr) || FAILED(session) || ctx->Compositions == nullptr) {
-        /* the store could not give a lock now: the compositions end without their sinks being asked. */
+        /* the store could not grant a lock now, so the compositions end without asking their sinks. */
         if (only)
             finish(ctx, only);
         else

@@ -1,20 +1,15 @@
 /*
  * security contexts.
  *
- * the schannel package establishes real contexts through its tls client,
- * see schannel.c. mime has no kerberos, ntlm or digest implementation, so
- * the other packages never establish one: the first call of
- * InitializeSecurityContext or AcceptSecurityContext with a valid
- * credential fails with SEC_ESTABLISH_FAILURE. a handle that names no live
- * context is rejected with SEC_E_INVALID_HANDLE, as sspicli's
- * SecpValidateHandle does for handles it does not know.
+ * only schannel establishes real contexts, through its tls client in schannel.c. there is no kerberos, ntlm or digest,
+ * so for the other packages the first InitializeSecurityContext or AcceptSecurityContext with a valid credential fails
+ * with SEC_ESTABLISH_FAILURE. like windows, a handle naming no live context gets SEC_E_INVALID_HANDLE.
  */
 #include "schannel.h"
 
 /*
- * a live context: the lower half of its handle points to the package and
- * the upper half to this record, which stays alive while a call holds a
- * reference to it.
+ * the handle's lower half points to the package and its upper half to this record, which stays alive while a call
+ * holds a reference.
  */
 typedef struct SEC_CONTEXT {
     struct SEC_CONTEXT *Next;
@@ -27,7 +22,7 @@ typedef struct SEC_CONTEXT {
 static RTL_CRITICAL_SECTION g_lock = RTL_CRITICAL_SECTION_INIT;
 static SEC_CONTEXT *g_contexts;
 
-/* the context of a handle; the global lock must be held. */
+/* the caller holds g_lock. */
 static SEC_CONTEXT *find(PCtxtHandle handle)
 {
     if (!handle)
@@ -47,7 +42,6 @@ static void release(SEC_CONTEXT *c)
     SecHeapFree(c);
 }
 
-/* the context with a reference taken, or NULL. */
 static SEC_CONTEXT *reference(PCtxtHandle handle)
 {
     RtlEnterCriticalSection(&g_lock);
@@ -104,7 +98,7 @@ static SECURITY_STATUS establish(PCredHandle credential, PCtxtHandle context, UL
                                  ULONG flags, PSecBufferDesc input, PCtxtHandle new_context, PSecBufferDesc output,
                                  ULONG *attributes, PTimeStamp expiry)
 {
-    /* InitializeSecurityContextCommon and AcceptSecurityContext refuse two missing handles first. */
+    /* windows rejects both handles missing before anything else. */
     if (!credential && !context)
         return SEC_E_INVALID_HANDLE;
     if (context) {
@@ -120,7 +114,7 @@ static SECURITY_STATUS establish(PCredHandle credential, PCtxtHandle context, UL
         return SEC_E_INVALID_HANDLE;
     if (!(use & direction))
         return SEC_E_NO_CREDENTIALS;
-    /* the schannel client is the only package with an implementation; servers need certificates mime cannot hold. */
+    /* only the schannel client is implemented; servers need certificates mime cannot hold. */
     if (package->Kind == SEC_KIND_SCHANNEL && direction == SECPKG_CRED_OUTBOUND)
         return SchInitialize(credential, nullptr, target, flags, input, new_context, output, attributes, expiry);
     return SEC_ESTABLISH_FAILURE;
@@ -163,9 +157,8 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY AcceptSecurityContext(PCredHandle credenti
 }
 
 /*
- * sspicli returns success for a handle whose lower half is at most the
- * number of lsa packages, which includes a zeroed handle, before looking
- * the handle up.
+ * like windows, a handle whose lower half is at most the lsa package count, zeroed handles included, succeeds before
+ * any lookup.
  */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY DeleteSecurityContext(PCtxtHandle context)
 {
@@ -294,7 +287,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY DecryptMessage(PCtxtHandle context, PSecBu
     return status;
 }
 
-/* the names of EncryptMessage and DecryptMessage before windows 2000; sspicli exports the same code. */
+/* the pre windows 2000 names of EncryptMessage and DecryptMessage, same code. */
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SealMessage(PCtxtHandle context, ULONG qop, PSecBufferDesc message,
                                                   ULONG sequence)
 {
@@ -318,7 +311,7 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY ExportSecurityContext(PCtxtHandle context,
     return no_context(context);
 }
 
-/* no packed context can come from mime, which never exports one. */
+/* mime never exports a packed context, so none can be imported. */
 static SECURITY_STATUS import(const SEC_PACKAGE *package, PCtxtHandle context)
 {
     if (!package)

@@ -1,7 +1,4 @@
-/*
- * system information: processor and memory, versions, computer name and
- * the logical processor topology.
- */
+/* system information: processor, memory, versions, computer name and processor topology. */
 #include "kernelbase_private.h"
 
 #define SYSTEM_PERFORMANCE_AVAILABLE_PAGES 0x4C
@@ -28,7 +25,7 @@ static ULONG processor_count(void)
 
 /* ------------------------------------------------------------------ system info */
 
-/* the processor of the machine for GetNativeSystemInfo, the one a translated program is shown for GetSystemInfo. */
+/* GetNativeSystemInfo sees the real machine, GetSystemInfo the processor a translated program is shown. */
 static void system_info(LPSYSTEM_INFO info, BOOL native)
 {
     SYSTEM_BASIC_INFORMATION basic;
@@ -37,7 +34,7 @@ static void system_info(LPSYSTEM_INFO info, BOOL native)
     NtQuerySystemInformation(SystemProcessorInformation, &cpu, sizeof(cpu), nullptr);
     USHORT machine = cpu.ProcessorArchitecture;
 #if (defined(__x86_64__) && !defined(MIME_X64_NATIVE)) || defined(__i386__)
-    /* the processor the translator presents, family 6 model 0x9e stepping 10 as its cpuid says. */
+    /* the translator's cpuid reports family 6 model 0x9e stepping 10. */
 #ifdef __i386__
     cpu.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_INTEL;
 #else
@@ -74,7 +71,7 @@ void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
     system_info(info, FALSE);
 }
 
-/* the machine the system runs on: a 32-bit program on a 64-bit system, or an emulated one, is told the machine's. */
+/* 32-bit and emulated programs get the real machine here too. */
 void WINAPI GetNativeSystemInfo(LPSYSTEM_INFO info)
 {
     system_info(info, TRUE);
@@ -83,13 +80,11 @@ void WINAPI GetNativeSystemInfo(LPSYSTEM_INFO info)
 /* ------------------------------------------------------------------ versions */
 
 /*
- * programs without a compatibility manifest are told they run on windows
- * 8, version 6.2.9200, like windows does, and the windows 8.1 or 10 ids of
- * their manifest earn them more: KbReportedVersion decides it.
- * RtlGetVersion keeps reporting the truth.
+ * like windows, programs without a compatibility manifest see windows 8, 6.2.9200, and manifest ids for windows 8.1
+ * or 10 raise that. KbReportedVersion decides it, RtlGetVersion still reports the truth.
  */
 
-/* the handle count of 16-bit windows: there is no limit to raise. */
+/* 16-bit windows had a handle limit, there is none to raise. */
 UINT WINAPI SetHandleCount(UINT count) { return count; }
 
 DWORD WINAPI GetVersion(void)
@@ -182,7 +177,7 @@ BOOL WINAPI VerifyVersionInfoW(LPOSVERSIONINFOEXW info, DWORD type, DWORDLONG co
         KbSetError(ERROR_BAD_ARGUMENTS);
         return FALSE;
     }
-    /* the version compared is the one GetVersionEx reports, as RtlSwitchedVVI does it on windows. */
+    /* like windows, compare against the version GetVersionEx reports. */
     RTL_OSVERSIONINFOEXW cur;
     cur.dwOSVersionInfoSize = sizeof(cur);
     RtlGetVersion(&cur);
@@ -289,11 +284,11 @@ BOOL WINAPI GlobalMemoryStatusEx(LPMEMORYSTATUSEX status)
     status->dwMemoryLoad = total ? (DWORD)((total - available) * 100 / total) : 0;
     status->ullTotalPhys = total;
     status->ullAvailPhys = available;
-    /* the commit limit and what is left of it, as windows reports them. */
+    /* windows reports the commit limit and what is left of it here. */
     status->ullTotalPageFile = limit;
     status->ullAvailPageFile = limit - committed;
     status->ullTotalVirtual = basic.MaximumUserModeAddress - basic.MinimumUserModeAddress + 1;
-    /* what is left of the address space is what the process has not reserved. */
+    /* available virtual space is whatever the process has not reserved. */
     SIZE_T counters[sizeof(void *) == 8 ? 14 : 12] = {};
     ULONGLONG reserved = total - available;
     if (NT_SUCCESS(NtQueryInformationProcess(NtCurrentProcess(), ProcessVmCounters, counters, sizeof(counters), nullptr)))
@@ -332,7 +327,6 @@ BOOL WINAPI GetPhysicallyInstalledSystemMemory(PULONGLONG kilobytes)
 
 /* ------------------------------------------------------------------ computer name */
 
-/* reads a string value of the machine registry, as kernelbase does for computer names. */
 static DWORD read_machine_string(PCWSTR key, PCWSTR name, PWSTR out, DWORD capacity)
 {
     UNICODE_STRING path, value;
@@ -481,7 +475,7 @@ BOOL WINAPI GetLogicalProcessorInformation(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION
         return FALSE;
     }
     ULONG n = processor_count();
-    /* per core: the core and its two first level caches; then the l2, the package and the node. */
+    /* per core: the core and its two l1 caches, then the l2, the package and the node. */
     DWORD count = n * 3 + 3;
     DWORD need = count * sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
     if (*length < need || !buffer) {
@@ -695,10 +689,8 @@ BOOL WINAPI GetNumaAvailableMemoryNode(UCHAR node, PULONGLONG bytes)
 }
 
 /*
- * the firmware tables of the machine, the raw smbios data. the request
- * goes to the kernel through SystemFirmwareTableInformation, like the
- * windows implementation does, with the wdm buffer protocol: a too small
- * buffer learns the required size in TableBufferLength.
+ * raw smbios data through SystemFirmwareTableInformation, like windows. a buffer that is too small gets the required
+ * size back in TableBufferLength.
  */
 static UINT firmware_tables(ULONG action, DWORD provider, DWORD id, PVOID buffer, DWORD size, ULONG *ids)
 {
@@ -726,7 +718,7 @@ static UINT firmware_tables(ULONG action, DWORD provider, DWORD id, PVOID buffer
             memcpy(out, request->TableBuffer, request->TableBufferLength);
         result = request->TableBufferLength;
     } else if (status == STATUS_BUFFER_TOO_SMALL) {
-        /* a null buffer: the required size. a too small one: an error. */
+        /* a NULL buffer asks for the size, a small one is an error. */
         if (size) {
             result = 0;
             KbSetError(ERROR_INSUFFICIENT_BUFFER);
@@ -822,7 +814,7 @@ BOOL WINAPI Beep(DWORD frequency, DWORD duration)
 
 /* ------------------------------------------------------------------ safe mode and computer names */
 
-/* 0 for a normal start, 1 for safe mode, 2 for safe mode with a network: the option the loader recorded. */
+/* 0 for a normal boot, 1 for safe mode, 2 for safe mode with networking. */
 BOOL WINAPI GetOsSafeBootMode(PDWORD flags)
 {
     if (!flags) {
@@ -853,7 +845,7 @@ BOOL WINAPI GetOsSafeBootMode(PDWORD flags)
     return TRUE;
 }
 
-/* the name of the machine on the old networks from a dns host name: its first 15 characters in upper case. */
+/* the netbios name is the first 15 characters of the host name, upper cased. */
 BOOL WINAPI DnsHostnameToComputerNameExW(LPCWSTR host, LPWSTR name, LPDWORD size)
 {
     if (!host || !size) {
@@ -883,7 +875,7 @@ BOOL WINAPI DnsHostnameToComputerNameExW(LPCWSTR host, LPWSTR name, LPDWORD size
     return TRUE;
 }
 
-/* changing the name needs the rights of an administrator, which a program here never has. */
+/* renaming needs administrator rights, which programs here never have. */
 BOOL WINAPI SetComputerNameA(LPCSTR name)
 {
     KbSetError(ERROR_ACCESS_DENIED);

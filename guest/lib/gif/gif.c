@@ -98,7 +98,7 @@ static bool same_text(const uint8_t *a, const char *b, size_t n)
     return __builtin_memcmp(a, b, n) == 0;
 }
 
-/* a resynchronised image descriptor has to look sane, else its separator byte was junk. */
+/* a resynced image descriptor must look sane, else its separator byte was junk. */
 static bool image_plausible(const Scan *s, size_t sep)
 {
     const uint8_t *d = s->d;
@@ -138,7 +138,7 @@ static uint8_t app_kind(const uint8_t *hdr, size_t size, bool *netscape)
     return MIME_GIF_APP_OTHER;
 }
 
-/* parses one extension after its label. returns false when the data ended inside it. */
+/* parses one extension after its label. false when the data ends inside it. */
 static bool scan_extension(Scan *s, uint8_t label, Pending *pend, uint32_t *warn)
 {
     const uint8_t *d = s->d;
@@ -371,7 +371,7 @@ static void scan_blocks(Scan *s, uint32_t *warn)
     }
 }
 
-/* header and global palette. the frames are scanned by the caller. */
+/* header and global palette. the caller scans the frames. */
 static int scan_header(Scan *s)
 {
     const uint8_t *d = s->d;

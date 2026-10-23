@@ -32,7 +32,7 @@ void WINAPI ClearVariantArray(VARIANT *values, UINT count)
         VariantClear(&values[i]);
 }
 
-/* one value of a serialized storage, through a store that loads it. */
+/* reads one value by loading the storage into a memory store. */
 static HRESULT from_storage(PCUSERIALIZEDPROPSTORAGE storage, DWORD size, REFPROPERTYKEY key, LPCWSTR name,
                             PROPVARIANT *value)
 {
@@ -98,7 +98,7 @@ HRESULT WINAPI PSFormatForDisplay(REFPROPERTYKEY key, const PROPVARIANT *value, 
     return hr;
 }
 
-/* the schema has no descriptions to give. */
+/* there is no property schema, so no descriptions. */
 HRESULT WINAPI PSGetPropertyDescription(REFPROPERTYKEY key, REFIID riid, void **object)
 {
     if (object)

@@ -1,7 +1,6 @@
 /*
- * access tokens: opening, querying, duplicating and privileges.
- *
- * tokens are kernel objects; this file is the win32 side of their services.
+ * access tokens: opening, querying, duplicating and privileges. tokens are kernel objects; this is the win32 side of
+ * their services.
  */
 #include "advapi32_private.h"
 
@@ -97,7 +96,7 @@ ADVAPI BOOL WINAPI GetTokenInformation(HANDLE token, TOKEN_INFORMATION_CLASS kla
     return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
 }
 
-/* the security quality of service of every copy a thread makes: dynamic tracking, the whole identity. */
+/* the quality of service of every copy a thread makes: dynamic tracking, full identity. */
 typedef struct TOKEN_QOS {
     DWORD Length;
     SECURITY_IMPERSONATION_LEVEL ImpersonationLevel;
@@ -134,7 +133,7 @@ ADVAPI BOOL WINAPI AllocateLocallyUniqueId(PLUID luid)
     return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
 }
 
-/* the arrays of a restricted token are copied behind their counts, in the layout the kernel reads. */
+/* a restricted token's arrays are copied after their counts, in the layout the kernel reads. */
 ADVAPI BOOL WINAPI CreateRestrictedToken(HANDLE token, DWORD flags, DWORD disable_count, PSID_AND_ATTRIBUTES disable,
                                          DWORD delete_count, PLUID_AND_ATTRIBUTES delete_privileges,
                                          DWORD restrict_count, PSID_AND_ATTRIBUTES restrict_sids, PHANDLE result)
@@ -146,7 +145,7 @@ ADVAPI BOOL WINAPI CreateRestrictedToken(HANDLE token, DWORD flags, DWORD disabl
         if (!disable) {
             status = STATUS_INVALID_PARAMETER;
         } else if ((ULONG64)disable_count * sizeof(SID_AND_ATTRIBUTES) > 0xFFFFFFE0) {
-            status = (NTSTATUS)0xC0000095L; /* STATUS_INTEGER_OVERFLOW */
+            status = (NTSTATUS)0xC0000095L; /* STATUS_INTEGER_OVERFLOW. */
         } else {
             disabled = AdvAlloc(8 + (SIZE_T)disable_count * sizeof(SID_AND_ATTRIBUTES));
             if (!disabled) {
@@ -195,7 +194,7 @@ ADVAPI BOOL WINAPI CreateRestrictedToken(HANDLE token, DWORD flags, DWORD disabl
     return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
 }
 
-/* a token has restrictions when it has sids to restrict with. */
+/* a token is restricted when it has restricting sids. */
 ADVAPI BOOL WINAPI IsTokenRestricted(HANDLE token)
 {
     ULONG needed = 0;
@@ -215,7 +214,7 @@ ADVAPI BOOL WINAPI IsTokenRestricted(HANDLE token)
     return restricted;
 }
 
-/* ---------------------------------------------------------------- identities of threads */
+/* ---------------------------------------------------------------- thread identities */
 
 ADVAPI BOOL WINAPI SetThreadToken(PHANDLE thread, HANDLE token)
 {
@@ -238,7 +237,7 @@ ADVAPI BOOL WINAPI ImpersonateSelf(SECURITY_IMPERSONATION_LEVEL level)
     return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
 }
 
-/* an impersonation token is used as it is, a primary one through a copy that can impersonate. */
+/* an impersonation token is used directly, a primary one through a copy that can impersonate. */
 ADVAPI BOOL WINAPI ImpersonateLoggedOnUser(HANDLE token)
 {
     ULONG type = 0, returned;
@@ -267,7 +266,7 @@ ADVAPI BOOL WINAPI ImpersonateAnonymousToken(HANDLE thread)
     return NT_SUCCESS(status) ? TRUE : AdvSetStatus(status);
 }
 
-/* the server end of a pipe takes the identity of its client: FSCTL_PIPE_IMPERSONATE, waited for when pending. */
+/* the pipe server takes its client's identity with FSCTL_PIPE_IMPERSONATE, waiting when pending. */
 ADVAPI BOOL WINAPI ImpersonateNamedPipeClient(HANDLE pipe)
 {
     HANDLE event = nullptr;
@@ -315,7 +314,7 @@ ADVAPI BOOL WINAPI AdjustTokenGroups(HANDLE token, BOOL reset_to_default, PTOKEN
     return TRUE;
 }
 
-/* a token is a member of its user and of its enabled groups that are not for deny only, and of what restricts it. */
+/* a token is a member of its user, its enabled groups that are not deny only, and what restricts it. */
 ADVAPI BOOL WINAPI CheckTokenMembership(HANDLE token, PSID sid, PBOOL member)
 {
     if (!member || !AdvSidValid(sid)) {
@@ -337,7 +336,7 @@ ADVAPI BOOL WINAPI CheckTokenMembership(HANDLE token, PSID sid, PBOOL member)
         if ((a & SE_GROUP_ENABLED) && !(a & SE_GROUP_USE_FOR_DENY_ONLY) && AdvSidEqual(groups->Groups[i].Sid, sid))
             *member = TRUE;
     }
-    /* a restricted token also has to hold the sid among the ones that restrict it. */
+    /* a restricted token must also hold the sid among its restricting sids. */
     if (*member) {
         TOKEN_GROUPS *restricted = query_token(token, TokenRestrictedSids, &status);
         if (restricted && restricted->GroupCount) {
@@ -358,7 +357,7 @@ ADVAPI BOOL WINAPI CheckTokenMembership(HANDLE token, PSID sid, PBOOL member)
 
 /* ---------------------------------------------------------------- privilege names */
 
-/* the luid of each privilege is its index in this table, as on every windows system. */
+/* each privilege's luid is its index in this table, the same on every windows system. */
 static const PCWSTR g_privileges[] = {
     nullptr,
     nullptr,
@@ -429,7 +428,7 @@ ADVAPI BOOL WINAPI LookupPrivilegeValueA(LPCSTR system, LPCSTR name, PLUID luid)
     return ok;
 }
 
-/* the name and its length without the terminator; the size counts the terminator when too small. */
+/* returns the name and its length without the terminator; when too small the size counts the terminator. */
 ADVAPI BOOL WINAPI LookupPrivilegeNameW(LPCWSTR system, PLUID luid, LPWSTR name, LPDWORD size)
 {
     if (!luid || !size) {
@@ -480,7 +479,7 @@ ADVAPI BOOL WINAPI LookupPrivilegeNameA(LPCSTR system, PLUID luid, LPSTR name, L
     return TRUE;
 }
 
-/* the english text of each privilege, as the privilege translations of windows have it, by the luid of the privilege. */
+/* each privilege's english display text, as windows has it, by luid. */
 static const PCWSTR g_privilege_text[] = {
     nullptr,
     nullptr,
@@ -521,7 +520,7 @@ static const PCWSTR g_privilege_text[] = {
     L"Obtain an impersonation token for another user in the same session",
 };
 
-/* the text of a privilege by its name, the size counted as for the name of a privilege, and the language of the text. */
+/* a privilege's display text by name, sized like LookupPrivilegeName, plus the text's language. */
 ADVAPI BOOL WINAPI LookupPrivilegeDisplayNameW(LPCWSTR system, LPCWSTR name, LPWSTR display, LPDWORD size, LPDWORD language)
 {
     if (!name || !size) {
@@ -568,7 +567,7 @@ ADVAPI BOOL WINAPI LookupPrivilegeDisplayNameA(LPCSTR system, LPCSTR name, LPSTR
     if (!ok && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
         return FALSE;
     if (!ok) {
-        /* the longest text is not in the stack buffer: the size it needs is the one reported. */
+        /* a text too long for the stack buffer: pass on the size the wide call reported. */
         *size = length;
         return FALSE;
     }

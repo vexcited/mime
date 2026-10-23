@@ -1,7 +1,4 @@
-/*
- * small user32 services: rectangle arithmetic, wsprintf, character
- * classification and services that have nothing to do yet.
- */
+/* small user32 services: rectangle arithmetic, wsprintf, character classification and stubs. */
 #include "user32_private.h"
 
 #include <mime/pnp.h>
@@ -129,7 +126,7 @@ WINUSERAPI BOOL WINAPI PtInRect(const RECT *r, POINT pt)
 
 /* ------------------------------------------------------------------ wsprintf */
 
-/* wsprintf supports a subset of printf without floating point; the rtl formatter covers it. */
+/* wsprintf is a printf subset without floating point, which the rtl formatter covers. */
 WINUSERAPI int WINAPI wvsprintfW(LPWSTR buffer, LPCWSTR format, va_list args)
 {
     int n = _vsnwprintf(buffer, 1024, format, args);
@@ -229,7 +226,7 @@ WINUSERAPI LPSTR WINAPI CharNextA(LPCSTR s)
 
 DWORD CharUpperLowerBuffA(LPSTR text, DWORD length, BOOL upper);
 
-/* a character or a string through the case mapping of the ansi code page. */
+/* case maps a character or a string through the ansi code page. */
 static LPSTR map_ansi_case(LPSTR s, BOOL upper)
 {
     if (IS_INTRESOURCE(s)) {
@@ -276,9 +273,8 @@ WINUSERAPI BOOL WINAPI IsCharLowerW(WCHAR c)
 /* ------------------------------------------------------------------ accelerators */
 
 /*
- * an accelerator table is a process heap block on a list, the handle is
- * its address and is only used after it is found on the list. tables
- * loaded from resources are shared per resource like on windows.
+ * a table is a process heap block on a list. the handle is its address and is only used once found on the list. like
+ * windows, tables loaded from resources are shared per resource.
  */
 typedef struct ACCEL_TABLE {
     struct ACCEL_TABLE *Next;
@@ -413,7 +409,6 @@ WINUSERAPI BOOL WINAPI DestroyAcceleratorTable(HACCEL accel)
     return TRUE;
 }
 
-/* whether an entry matches a key or character message with the current modifier state. */
 static BOOL accel_matches(const ACCEL *a, const MSG *msg)
 {
     if (a->key != (WORD)msg->wParam)
@@ -475,7 +470,7 @@ WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg)
     return 1;
 }
 
-/* ------------------------------------------------------------------ services with nothing to do yet */
+/* ------------------------------------------------------------------ stubs */
 
 /* there is no help engine, like windows without WinHlp32. */
 WINUSERAPI BOOL WINAPI WinHelpW(HWND hwnd, LPCWSTR file, UINT command, ULONG_PTR data)
@@ -516,10 +511,8 @@ WINUSERAPI BOOL WINAPI FlashWindow(HWND hwnd, BOOL invert)
 }
 
 /*
- * a window that asks for attention has its button flash on the desktop, as the compositor does it. the caption's
- * flashing is not a thing the host draws; what it can show is the button, so FLASHW_CAPTION alone does nothing.
- * a guess at the rest: a flash that lasts until the window is in front (FLASHW_TIMERNOFG) is not made for the window
- * in front.
+ * the host can flash the window's taskbar button but not its caption, so FLASHW_CAPTION alone does nothing. a guess:
+ * FLASHW_TIMERNOFG does not flash the foreground window.
  */
 WINUSERAPI BOOL WINAPI FlashWindowEx(PFLASHWINFO info)
 {
@@ -636,7 +629,7 @@ WINUSERAPI HANDLE WINAPI RemovePropA(HWND hwnd, LPCSTR name)
 typedef BOOL(CALLBACK *PROPENUMPROCEXW)(HWND hwnd, LPWSTR name, HANDLE data, ULONG_PTR param);
 typedef BOOL(CALLBACK *PROPENUMPROCW)(HWND hwnd, LPCWSTR name, HANDLE data);
 
-/* calls the procedure for each property, string keys with their name; returns the last result, -1 for none. */
+/* string keys come with their name. returns the last result, or -1 for none. */
 static int enum_props(HWND hwnd, PROPENUMPROCEXW proc_ex, PROPENUMPROCW proc, ULONG_PTR param)
 {
     ULONG count = 0;
@@ -777,11 +770,9 @@ WINUSERAPI BOOL WINAPI CloseTouchInputHandle(HTOUCHINPUT input)
 /* ------------------------------------------------------------------ device and power notifications */
 
 /*
- * the registrations of this process. a device interface registration is delivered as windows' service manager does
- * it: from a thread of the process that waits for the plug and play tree to change, compares the interfaces with
- * those it saw, and sends WM_DEVICECHANGE to the window of each registration whose class came or went. every top
- * level window of the process hears DBT_DEVNODES_CHANGED when anything did. power setting events are never sent, as
- * there are none.
+ * like the windows service manager, a thread of the process waits for the plug and play tree to change, diffs the
+ * interfaces, and sends WM_DEVICECHANGE to each registration whose class came or went. every top level window of the
+ * process gets DBT_DEVNODES_CHANGED on any change. there are no power setting events to send.
  */
 typedef struct NOTIFY_REGISTRATION {
     struct NOTIFY_REGISTRATION *Next;
@@ -792,7 +783,6 @@ typedef struct NOTIFY_REGISTRATION {
     GUID Class;
 } NOTIFY_REGISTRATION;
 
-/* an interface the watcher knows: its class and path. */
 typedef struct SEEN_INTERFACE {
     GUID Class;
     WCHAR Path[MAX_PATH];
@@ -833,7 +823,7 @@ static NTSTATUS pnp_request(MIME_PNP_CLASS klass, ULONG flags, const GUID *guid,
     }
 }
 
-/* every interface of the tree with its class, or false when the tree cannot be read. */
+/* FALSE when the tree cannot be read. */
 static BOOL read_interfaces(SEEN_INTERFACE *list, ULONG *count)
 {
     MIME_PNP_REQUEST *r;
@@ -873,13 +863,13 @@ static BOOL CALLBACK send_devnodes_changed(HWND hwnd, LPARAM param)
 {
     DWORD process = 0;
     GetWindowThreadProcessId(hwnd, &process);
-    /* win32k keeps message only windows among the top level ones, so they hear of it too, which windows' do not. */
+    /* win32k lists message only windows as top level, so unlike on windows they get it too. */
     if (process == (DWORD)param)
         SendMessageTimeoutW(hwnd, WM_DEVICECHANGE, DBT_DEVNODES_CHANGED, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
     return TRUE;
 }
 
-/* one interface came or went: the registrations of its class hear of it. */
+/* notifies the registrations of the interface's class. */
 static void send_interface_event(WPARAM event, const SEEN_INTERFACE *x)
 {
     ULONG length = (ULONG)(wcslen(x->Path) + 1) * sizeof(WCHAR);
@@ -890,7 +880,7 @@ static void send_interface_event(WPARAM event, const SEEN_INTERFACE *x)
     data->dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
     data->dbcc_classguid = x->Class;
     memcpy(data->dbcc_name, x->Path, length);
-    /* the recipients are listed under the lock and sent to outside it: a window procedure may register another. */
+    /* collect under the lock and send outside it: a window procedure may register another. */
     HANDLE recipients[32];
     DWORD flags[32];
     ULONG n = 0;
@@ -921,7 +911,7 @@ static DWORD WINAPI watch_interfaces(void *param)
     BOOL known = FALSE;
     for (;;) {
         MIME_PNP_REQUEST *r;
-        /* a first look at what there is, then every change after it. */
+        /* a first snapshot, then each change after it. */
         NTSTATUS status = pnp_request(MIME_PNP_WAIT_CHANGE, generation, nullptr, nullptr, &r);
         if (!NT_SUCCESS(status)) {
             if (status == STATUS_ALERTED || status == STATUS_USER_APC)
@@ -1018,10 +1008,9 @@ static BOOL unregister_notification(PVOID handle, BOOL power)
 }
 
 /*
- * the filter says which interfaces: a class, or all of them with DEVICE_NOTIFY_ALL_INTERFACE_CLASSES. a filter of
- * the other kinds of device notification, a handle of a file, is accepted and never sent to as no handle's device
- * is removed. the device type 0x80000001 is refused with ERROR_INVALID_DATA by windows' user32 before the service
- * hears of it.
+ * the filter picks a class, or every class with DEVICE_NOTIFY_ALL_INTERFACE_CLASSES. file handle filters are accepted
+ * but never notified, since no handle's device is removed. like windows, device type 0x80000001 fails with
+ * ERROR_INVALID_DATA.
  */
 WINUSERAPI HDEVNOTIFY WINAPI RegisterDeviceNotificationW(HANDLE recipient, LPVOID filter, DWORD flags)
 {
@@ -1068,7 +1057,7 @@ WINUSERAPI BOOL WINAPI UnregisterPowerSettingNotification(HPOWERNOTIFY handle)
 
 /* ------------------------------------------------------------------ display devices */
 
-/* an adapter for each monitor of the host, with one monitor on it, named like the displays of windows. */
+/* one adapter per host monitor, each with one monitor, named like windows displays. */
 WINUSERAPI BOOL WINAPI EnumDisplayDevicesW(LPCWSTR device, DWORD index, PDISPLAY_DEVICEW info, DWORD flags)
 {
     if (!info || info->cb < offsetof(DISPLAY_DEVICEW, DeviceID)) {

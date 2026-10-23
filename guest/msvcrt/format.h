@@ -1,9 +1,9 @@
 /*
- * the printf formatting engine of msvcrt's _output and _woutput,
- * included by printf.c once per character type. it defines FORMAT_NAME
- * over format strings of FCHAR, writing FCHAR characters to a SINK.
- * FORMAT_WIDE is 1 for the wide engine, where %s and %c take wide
- * arguments and %S and %C narrow ones.
+ * the printf engine of msvcrt's _output and _woutput, included by
+ * printf.c once per character type. it defines FORMAT_NAME over FCHAR
+ * format strings, writing FCHAR characters to a SINK. FORMAT_WIDE is 1
+ * for the wide engine, where %s and %c take wide arguments and %S and %C
+ * narrow ones.
  *
  * the parser is msvcrt's state machine: a character that does not fit
  * the state ends the conversion and is printed, so "%y" prints "y".

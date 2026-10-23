@@ -47,14 +47,14 @@ static inline void pngio_put_be32(uint8_t *p, uint32_t v)
 /* adam7 passes: x0, y0, dx, dy. */
 extern const uint8_t pngio_adam7[7][4];
 
-/* geometry of one pass of the image, a single pass when not interlaced. */
+/* one pass of the image, the only one when not interlaced. */
 typedef struct PngioPass {
     uint32_t x0, y0, dx, dy;
     uint32_t w, h;
     size_t rowbytes; /* bytes of a filtered row without its filter byte. */
 } PngioPass;
 
-/* fills in the passes and returns how many, 1 or 7. bits_per_pixel is that of the file. */
+/* fills in the passes and returns how many, 1 or 7. bits_per_pixel is the file's. */
 unsigned pngio_pass_layout(uint32_t width, uint32_t height, bool interlaced, unsigned bits_per_pixel,
                            PngioPass pass[7]);
 
@@ -63,20 +63,20 @@ unsigned pngio_pass_layout(uint32_t width, uint32_t height, bool interlaced, uns
 /* in place, cur holds n filtered bytes. prev is the row above, zeros for the first. false on a bad type. */
 bool pngio_unfilter_row(uint8_t *cur, const uint8_t *prev, size_t n, unsigned bpp, unsigned type);
 
-/* dst gets the n bytes of cur filtered, cur and prev are the raw rows. dst must not overlap them. */
+/* dst gets cur filtered, cur and prev being raw rows. dst must not overlap them. */
 void pngio_filter_row(uint8_t *dst, const uint8_t *cur, const uint8_t *prev, size_t n, unsigned bpp, unsigned type);
 
 /* sum of the bytes read as signed values, absolute. */
 uint64_t pngio_abs_sum(const uint8_t *p, size_t n);
 
-/* channel shuffles on rows of pixels, count pixels, dst may equal src but must not partially overlap. */
+/* channel shuffles over count pixels. dst may equal src but must not partially overlap it. */
 void pngio_swap_rb24(uint8_t *dst, const uint8_t *src, size_t count);
 void pngio_swap_rb32(uint8_t *dst, const uint8_t *src, size_t count);
 void pngio_bgrx_to_rgb24(uint8_t *dst, const uint8_t *src, size_t count);
 void pngio_ga8_to_bgra(uint8_t *dst, const uint8_t *src, size_t count);
 void pngio_ga16_to_rgba64(uint8_t *dst, const uint8_t *src, size_t count);
 
-/* conversion between file rows and the formats, file rows being big endian and in rgb order. */
+/* converts between file rows, big endian in rgb order, and the formats. */
 typedef struct PngioConv {
     int kind;
     unsigned depth;  /* file bit depth. */
@@ -86,13 +86,13 @@ typedef struct PngioConv {
     uint32_t lut[16]; /* gray below 8 bits with a key: bgra per sample value. */
 } PngioConv;
 
-/* sets up the conversion of a file with this header into format, which must be native or raw for it. */
+/* format must be native or raw for this header. */
 void pngio_conv_init(PngioConv *cv, const MimePngioInfo *info, int format);
 
-/* converts count pixels of an unfiltered row. padding bits of the last byte of packed rows are cleared. */
+/* converts count pixels of an unfiltered row, clearing the padding bits of packed rows. */
 void pngio_conv_row(const PngioConv *cv, const uint8_t *src, uint8_t *dst, uint32_t count);
 
-/* the reverse, for the encoder: native row to file row of the given color type and depth. */
+/* the reverse for the encoder: native row to a file row of the given color type and depth. */
 void pngio_unconv_row(int format, const uint8_t *src, uint8_t *dst, uint32_t count);
 
 #endif

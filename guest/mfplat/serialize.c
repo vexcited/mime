@@ -1,7 +1,7 @@
 /*
  * attribute blobs and their stream form. a blob is the magic "AFMI", the
- * item count, a 32 byte entry per item and the data of the sized items
- * after the entries; interfaces are left out. see docs/mfplat.md.
+ * item count, a 32 byte entry per item, then the data of the sized items.
+ * interfaces are left out.
  */
 #include "mfplat_private.h"
 
@@ -22,7 +22,7 @@ static BOOL serialized(VARTYPE vt)
            vt == (VT_VECTOR | VT_UI1);
 }
 
-/* the data an item adds after the entries. */
+/* bytes the item adds after the entries. */
 static HRESULT data_size(const PROPVARIANT *value, UINT32 *size)
 {
     switch (value->vt) {
@@ -45,7 +45,7 @@ static HRESULT data_size(const PROPVARIANT *value, UINT32 *size)
     }
 }
 
-/* the blob size of the locked store, and its number of entries. */
+/* the caller holds the store lock. */
 static HRESULT measure(IMFAttributes *attributes, UINT32 *size, UINT32 *entries)
 {
     UINT32 count = 0, items = 0, data = 0;
@@ -163,7 +163,7 @@ done:
     return hr;
 }
 
-/* a range of the data area, after the entries and inside the buffer. */
+/* the range must lie in the data area, after the entries and inside the buffer. */
 static BOOL in_data(UINT32 offset, UINT32 length, UINT32 data_start, UINT size)
 {
     return offset >= data_start && offset <= size && length <= size - offset;
@@ -225,7 +225,7 @@ HRESULT WINAPI MFInitAttributesFromBlob(IMFAttributes *attributes, const UINT8 *
             break;
         }
         case VT_LPWSTR: {
-            /* an even length ending in its only null. */
+            /* strings have an even length and end in their only null. */
             if (length < 2 || (length & 1) || !in_data(offset, length, (UINT32)start, size)) {
                 hr = E_INVALIDARG;
                 break;
@@ -284,7 +284,7 @@ static HRESULT read_all(IStream *stream, void *data, ULONG size)
     return hr;
 }
 
-/* the interfaces, by reference, each as its key and an in process marshaling of it. */
+/* each interface is written as its key and an in process marshaling of it. */
 static HRESULT write_unknowns(IMFAttributes *attributes, IStream *stream)
 {
     UINT32 count = 0, unknowns = 0;
@@ -337,7 +337,7 @@ static HRESULT read_unknowns(IMFAttributes *attributes, IStream *stream)
     return hr;
 }
 
-/* the blob size, the blob, then the interfaces with MF_ATTRIBUTE_SERIALIZE_UNKNOWN_BYREF. */
+/* the blob size, the blob, then the interfaces when MF_ATTRIBUTE_SERIALIZE_UNKNOWN_BYREF is set. */
 HRESULT WINAPI MFSerializeAttributesToStream(IMFAttributes *attributes, DWORD options, IStream *stream)
 {
     UINT32 size = 0;

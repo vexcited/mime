@@ -72,7 +72,7 @@ static NTSTATUS exception_code(PKTRAP_FRAME frame, ULONG ec)
     case 0x3C: {
         ULONG imm = (ULONG)(frame->Esr & 0xFFFF);
         if (imm == 0xF003)
-            return STATUS_STACK_BUFFER_OVERRUN; /* __fastfail */
+            return STATUS_STACK_BUFFER_OVERRUN; /* __fastfail. */
         if (imm == 0xF004)
             return STATUS_INTEGER_DIVIDE_BY_ZERO;
         return STATUS_BREAKPOINT;
@@ -119,7 +119,7 @@ void KiUserExceptionHandler(PKTRAP_FRAME frame)
         KiApplyFaultStatus(&record);
     }
     if (record.ExceptionCode == STATUS_BREAKPOINT) {
-        /* brk does not advance the pc; windows reports the brk address and resumes after it. */
+        /* brk does not advance the pc, windows reports the brk address and resumes after it. */
         frame->Pc += 4;
         record.ExceptionAddress = (PVOID)(frame->Pc - 4);
     }
@@ -149,7 +149,7 @@ void KiKernelExceptionHandler(PKTRAP_FRAME frame)
         BOOLEAN write = ec == 0x25 && (frame->Esr & (1u << 6)) && !(frame->Esr & (1u << 8));
         ULONG_PTR far = frame->Far;
         if (far <= MIME_USER_ADDRESS_LIMIT && !(frame->Spsr & (1u << 7))) {
-            /* demand faults on user memory touched by the kernel, only from interruptible code. */
+            /* demand faults on user memory touched by the kernel, from interruptible code only. */
             KiEnableInterrupts();
             if (MmAccessFault(far, write, FALSE, KernelMode))
                 return;

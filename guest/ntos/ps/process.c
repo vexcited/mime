@@ -1,6 +1,4 @@
-/*
- * processes: object type, system process, client ids and termination.
- */
+/* processes: object type, system process, client ids and termination. */
 #include "../ntos.h"
 #include "../se/se.h"
 
@@ -80,10 +78,7 @@ NTSTATUS NTAPI PsLookupThreadByThreadId(HANDLE id, PETHREAD *thread)
     return *thread ? STATUS_SUCCESS : STATUS_INVALID_CID;
 }
 
-/*
- * a process or thread by handle. a caller in user mode needs the rights it asks for in the handle, the pseudo
- * handles of the caller have them all.
- */
+/* user mode callers need the asked rights in the handle. the caller's pseudo handles have them all. */
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process)
 {
     ACCESS_MASK granted = 0;
@@ -183,7 +178,7 @@ void PspNotifyProcess(PEPROCESS process, BOOLEAN create)
             g_process_notify[i](process->InheritedFromUniqueProcessId, process->UniqueProcessId, create);
 }
 
-/* the base priority a class of priority gives its threads. */
+/* the base priority of the threads of each priority class. */
 static const SCHAR g_class_base[] = {8, 4, 8, 13, 24, 6, 10};
 
 static void process_delete(PVOID object)
@@ -202,7 +197,6 @@ static void process_delete(PVOID object)
     KiReleaseDispatcherLock(s);
 }
 
-/* allocates a process object with its own address space. */
 NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out)
 {
     PEPROCESS process;
@@ -233,7 +227,7 @@ NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out)
         ObDereferenceObject(process);
         return status;
     }
-    /* a child keeps the processors of its parent and a low priority class. */
+    /* a child inherits its parent's affinity, and its priority class when that is idle or below normal. */
     if (parent) {
         process->Pcb.Affinity = parent->Pcb.Affinity;
         if (parent->PriorityClass == PROCESS_PRIORITY_CLASS_IDLE ||
@@ -254,7 +248,7 @@ NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out)
     return STATUS_SUCCESS;
 }
 
-/* runs in the context of the last exiting thread of the process. */
+/* runs on the last exiting thread of the process. */
 void PspProcessExit(PEPROCESS process)
 {
     KiLogPrintf("process %u (%s) exited with status %08x", (ULONG)(ULONG_PTR)process->UniqueProcessId,
@@ -323,7 +317,7 @@ NTSTATUS NTAPI NtTerminateProcess(HANDLE handle, NTSTATUS exit_status)
     return STATUS_SUCCESS;
 }
 
-/* the rights a class of NtQueryInformationProcess needs: the limited ones are for what anyone may see. */
+/* the limited rights are for what anyone may see. */
 static ACCESS_MASK query_rights(PROCESSINFOCLASS klass)
 {
     switch ((ULONG)klass) {
@@ -343,7 +337,7 @@ static ACCESS_MASK query_rights(PROCESSINFOCLASS klass)
     }
 }
 
-/* a handle that can query or change a process can also do what the limited rights allow. */
+/* full query or set rights imply the limited ones. */
 static ACCESS_MASK imply_process_access(ACCESS_MASK granted)
 {
     if ((granted & PROCESS_QUERY_INFORMATION) || (granted & (PROCESS_VM_OPERATION | PROCESS_VM_WRITE)) ==
@@ -354,7 +348,7 @@ static ACCESS_MASK imply_process_access(ACCESS_MASK granted)
     return granted;
 }
 
-/* the same for a thread: the limited query and set rights, and the right to resume that suspending comes with. */
+/* the same for a thread, and suspend implies resume. */
 static ACCESS_MASK imply_thread_access(ACCESS_MASK granted)
 {
     if (granted & THREAD_QUERY_INFORMATION)
@@ -366,7 +360,7 @@ static ACCESS_MASK imply_thread_access(ACCESS_MASK granted)
     return granted;
 }
 
-/* the handle values of a process, ProcessHandleTable: an array of 32-bit values. */
+/* ProcessHandleTable: an array of 32-bit handle values. */
 static NTSTATUS query_handle_table(PEPROCESS process, PVOID info, ULONG length, ULONG *size)
 {
     PHANDLE_TABLE table = &process->HandleTable;
@@ -388,7 +382,7 @@ static NTSTATUS query_handle_table(PEPROCESS process, PVOID info, ULONG length, 
     return status;
 }
 
-/* the kernel and user time of a process: the sum of its threads. */
+/* the sum of the times of its threads. */
 static void process_times(PEPROCESS process, ULONG64 *times)
 {
     ULONG64 kernel = 0, user = 0;
@@ -453,7 +447,7 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(out.times);
         break;
     case ProcessQuotaLimits: {
-        /* the default working set limits; they bind nothing in mime. */
+        /* default working set limits, which bind nothing here. */
         ULONG64 *quota = (ULONG64 *)out.bytes;
         quota[2] = 200 * PAGE_SIZE;
         quota[3] = 1345 * PAGE_SIZE;
@@ -468,12 +462,12 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(ULONG_PTR);
         break;
     case ProcessHandleCount:
-        /* the handles now and the most there were. */
+        /* current and peak handle count. */
         out.u32[0] = out.u32[1] = (ULONG)process->HandleTable.Count;
         size = 8;
         break;
     case ProcessWow64Information:
-        /* the 32-bit peb of a wow64 process, 0 for any other. */
+        /* the 32-bit peb of a wow64 process, else 0. */
         out.ptr = (ULONG_PTR)process->Wow64Peb;
         size = sizeof(ULONG_PTR);
         break;
@@ -486,7 +480,7 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(ULONG);
         break;
     case ProcessExecuteFlags:
-        /* execution disabled for data, permanently, with the dispatch and sehop defaults of a 64-bit process. */
+        /* permanent DEP, with the dispatch and sehop defaults of a 64-bit process. */
         out.u32[0] = 0x39;
         size = sizeof(ULONG);
         break;
@@ -518,7 +512,7 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         const WCHAR *path = process->ImagePath.Buffer;
         ULONG n = process->ImagePath.Length;
         ULONG prefix = 0;
-        /* the plain class names the image by the device that holds it, where the other one has the path of the drive. */
+        /* ProcessImageFileName gives the device path, the win32 class the drive path. */
         if ((ULONG)klass == ProcessImageFileName && n >= 2 * sizeof(WCHAR) && path[1] == L':') {
             static const WCHAR system_volume[] = L"\\Device\\HarddiskVolume1", host_volume[] = L"\\Device\\HarddiskVolume2";
             const WCHAR *volume = (path[0] | 0x20) == L'c' ? system_volume : host_volume;
@@ -556,7 +550,7 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
     return status;
 }
 
-/* the class a process has and a realtime one needs the privilege of raising priorities. */
+/* a realtime class needs the increase priority privilege. */
 static NTSTATUS set_priority_class(PEPROCESS process, UCHAR klass)
 {
     if (klass >= RTL_NUMBER_OF(g_class_base))
@@ -569,7 +563,7 @@ static NTSTATUS set_priority_class(PEPROCESS process, UCHAR klass)
     return STATUS_SUCCESS;
 }
 
-/* a process limits its threads to the processors it is given, and a thread with none of them gets all of them. */
+/* threads are held to the process mask, and a thread left with no processor in it gets the whole mask. */
 static void set_process_affinity(PEPROCESS process, ULONG64 mask)
 {
     ULONG64 s = KiAcquireDispatcherLock();
@@ -661,11 +655,11 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
         process->DefaultHardErrorMode = (ULONG)value | PspJobForcedErrorMode(process);
         break;
     case ProcessWorkingSetWatch:
-        /* the pages a process faults in are not recorded, so there is nothing to start. */
+        /* page faults are not recorded, so there is nothing to start. */
         status = STATUS_INVALID_INFO_CLASS;
         break;
     case MX_PROCESS_SHUTDOWN_PARAMETERS:
-        /* the level is taken as it is; of the flags only SHUTDOWN_NORETRY exists. */
+        /* any level is taken. SHUTDOWN_NORETRY is the only flag. */
         if ((ULONG)(value >> 32) & ~(ULONG)MX_SHUTDOWN_NORETRY) {
             status = MX_STATUS_BAD_SHUTDOWN_FLAGS;
         } else {
@@ -680,7 +674,6 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
     return status;
 }
 
-/* generic rights as the rights of a process. */
 static ACCESS_MASK map_process_access(ACCESS_MASK access)
 {
     if (access & (MAXIMUM_ALLOWED | GENERIC_ALL))
@@ -712,7 +705,7 @@ static ACCESS_MASK map_thread_access(ACCESS_MASK access)
     return mapped;
 }
 
-/* the client id and the attributes that matter of an open: whether the handle is inherited. */
+/* of the attributes, only handle inheritance matters. */
 static NTSTATUS open_attributes(POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid, CLIENT_ID *id, ULONG *handle_attributes)
 {
     OBJECT_ATTRIBUTES oa;
@@ -722,7 +715,7 @@ static NTSTATUS open_attributes(POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid, C
             return STATUS_ACCESS_VIOLATION;
         if (oa.Length != sizeof(oa))
             return STATUS_INVALID_PARAMETER;
-        /* processes and threads are found by their ids, not by name. */
+        /* processes and threads are found by id, not by name. */
         if (oa.ObjectName)
             return STATUS_INVALID_PARAMETER_MIX;
         *handle_attributes = oa.Attributes & OBJ_INHERIT;
@@ -743,7 +736,7 @@ NTSTATUS NTAPI NtOpenProcess(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBU
     if (!process)
         return STATUS_INVALID_CID;
     if (id.UniqueThread && (HANDLE)(ULONG_PTR)id.UniqueThread != nullptr) {
-        /* a thread id names the process of that thread, which must be this one. */
+        /* a thread id must belong to the process asked for. */
         PETHREAD thread = PspLookupThread(id.UniqueThread);
         if (!thread || (PEPROCESS)thread->Tcb.Process != process) {
             if (thread)
@@ -753,7 +746,7 @@ NTSTATUS NTAPI NtOpenProcess(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBU
         }
         ObDereferenceObject(thread);
     }
-    /* the right to debug opens every process to whoever holds it, the others are asked of the process's descriptor. */
+    /* the debug privilege opens any process, otherwise the process's descriptor decides. */
     ACCESS_MASK granted = access;
     if (!SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
         status = ObCheckOpenAccess(process, access, UserMode, &granted);

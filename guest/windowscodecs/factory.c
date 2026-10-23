@@ -1,7 +1,4 @@
-/*
- * IWICImagingFactory, IWICImagingFactory2 and IWICComponentFactory: the objects that programs ask windowscodecs.dll for
- * first, and what they make.
- */
+/* IWICImagingFactory, IWICImagingFactory2 and IWICComponentFactory implementations. */
 #include "wic_codec.h"
 #include "wic_meta.h"
 
@@ -11,7 +8,7 @@ typedef struct WicFactory {
     WicSlot component;
 } WicFactory;
 
-/* ------------------------------------------------------------------ decoders */
+/* decoders. */
 
 static HRESULT decoder_from_stream(IStream *stream, const GUID *vendor, WICDecodeOptions options,
                                    IWICBitmapDecoder **decoder)
@@ -138,7 +135,7 @@ static HRESULT STDMETHODCALLTYPE fac_create_encoder(IWICImagingFactory *This, RE
     return WicEncoderCreate(codec, encoder);
 }
 
-/* ------------------------------------------------------------------ the simple objects */
+/* the simple objects. */
 
 static HRESULT STDMETHODCALLTYPE fac_create_palette(IWICImagingFactory *This, IWICPalette **palette)
 {
@@ -362,7 +359,7 @@ static const IWICImagingFactory2Vtbl g_factory_vtbl = {
     WIC_IUNKNOWN_FUNCS, FACTORY_PREFIX, fac_create_image_encoder,
 };
 
-/* ------------------------------------------------------------------ the component factory */
+/* the component factory. */
 
 static HRESULT STDMETHODCALLTYPE cfac_create_reader(IWICComponentFactory *This, REFGUID format, const GUID *vendor,
                                                     DWORD options, IStream *stream, IWICMetadataReader **reader)
@@ -439,7 +436,7 @@ static HRESULT STDMETHODCALLTYPE cfac_property_bag(IWICComponentFactory *This, P
     if (!bag)
         return E_INVALIDARG;
     *bag = nullptr;
-    /* a bag of the options named by the properties, which the encoders of a container define. */
+    /* create an option bag from the container encoder's property definitions. */
     const WicCodec *codec = WicEncoderAt(0);
     (void)props;
     (void)count;
@@ -457,7 +454,7 @@ static const WicIfaceEntry g_factory_ifaces[] = {
     WIC_ENTRY(WicFactory, IID_IWICImagingFactory2, factory),
     WIC_ENTRY(WicFactory, IID_IWICComponentFactory, component),
 };
-/* the factory of either version answers for the interfaces of both, as windows' one object does. */
+/* both factory versions expose both sets of interfaces, as on Windows. */
 static const WicClass g_factory1_class = {nullptr, g_factory_ifaces, 3};
 static const WicClass g_factory2_class = {nullptr, g_factory_ifaces, 3};
 
@@ -482,7 +479,7 @@ DECLSPEC_EXPORT HRESULT WINAPI WICCreateImagingFactory_Proxy(UINT version, IWICI
     if (!factory)
         return E_INVALIDARG;
     *factory = nullptr;
-    /* version 0x236 and 0x237 are those of the sdks of windows 7 and 8. */
+    /* 0x236 and 0x237 are the Windows 7 and Windows 8 SDK versions. */
     if (version != WINCODEC_SDK_VERSION1 && version != WINCODEC_SDK_VERSION2)
         return WINCODEC_ERR_UNSUPPORTEDVERSION;
     return factory_create(version == WINCODEC_SDK_VERSION1 ? &g_factory1_class : &g_factory2_class,

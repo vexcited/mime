@@ -19,11 +19,9 @@
 #include <time.h>
 
 /*
- * gives free guest ram back to macOS. madvise alone does nothing to pages
- * the guest touched through stage 2, so the range leaves stage 2, gets
- * fresh anonymous memory and comes back: the old pages are freed and the
- * guest reads zeros. the guest no longer uses these pages, and no host
- * thread holds them (gpu and audio close before the guest frees).
+ * returns unused guest RAM to macOS. madvise cannot release pages touched through stage 2, so unmap them,
+ * replace them with fresh anonymous memory and remap them. the guest then reads zeros. no host thread may
+ * retain these pages; GPU and audio channels close before the guest frees them.
  */
 void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len)
 {
@@ -34,7 +32,7 @@ void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len)
         mime_error("cannot discard guest memory at 0x%llx", (unsigned long long)pa);
 }
 
-/* the name finder shows for the host root volume, which becomes the label of Z:. */
+/* Finder root volume name, used as the Z: label. */
 void mime_host_volume_label(char *out, size_t size)
 {
     struct attrlist attrs = {.bitmapcount = ATTR_BIT_MAP_COUNT, .volattr = ATTR_VOL_INFO | ATTR_VOL_NAME};
@@ -59,7 +57,7 @@ void mime_host_wake_word(uint32_t *word)
     os_sync_wake_by_address_all(word, 4, OS_SYNC_WAKE_BY_ADDRESS_NONE);
 }
 
-/* the framework backs guest ram in host pages already. */
+/* the framework backs guest RAM in host pages already. */
 void mime_vm_advise(MimeVm *vm, uint64_t pa, uint64_t len, uint32_t advice)
 {
 }
@@ -70,8 +68,8 @@ static uint64_t align_up(uint64_t v, uint64_t a)
 }
 
 /*
- * the framework emulates a gicv3 in the macos kernel: the virtual timer,
- * interrupt acknowledgement and wfi then never exit to this process.
+ * Hypervisor.framework emulates GICv3 in the kernel. virtual timers, interrupt acknowledgments and WFI
+ * never exit to this process.
  */
 static bool create_gic(MimeVm *vm)
 {
@@ -111,7 +109,7 @@ static bool create_gic(MimeVm *vm)
     return true;
 }
 
-/* one vcpu per host processor; the framework and the gic may allow fewer. */
+/* one vCPU per host processor; the framework and the GIC may allow fewer. */
 static uint32_t host_cpu_count(void)
 {
     int n = 1;
@@ -129,9 +127,8 @@ static uint32_t host_cpu_count(void)
 }
 
 /*
- * the guest sees as much memory as the mac has, like windows on the same
- * machine, since programs size their caches from it. it costs nothing until
- * touched, and free guest memory goes back to the host (MIME_HC_MEM_DISCARD).
+ * report host memory size so guest programs size their caches as on Windows. memory is allocated on touch and
+ * returned through MIME_HC_MEM_DISCARD.
  */
 uint64_t mime_vm_default_ram(void)
 {
@@ -173,10 +170,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
         return false;
     }
 
-    /*
-     * the system files, read only, copied from the executable's own pages
-     * chunk by chunk as the guest touches them (lazy.c).
-     */
+    /* system files are copied read-only from executable pages on first touch; see lazy.c. */
     if (!mime_lazy_init(&vm->rom, MIME_ROM_BASE, mime_rom_size(), -1, mime_rom, mime_rom_size())) {
         mime_error("cannot reserve memory for the system files");
         return false;
@@ -193,7 +187,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     struct timespec now;
     clock_gettime(CLOCK_REALTIME, &now);
     boot->boot_filetime = mime_unix_to_filetime(now);
-    /* the vcpu starts with a virtual counter offset of zero, so CNTVCT == mach_absolute_time. */
+    /* the vCPU starts with a virtual counter offset of zero, so CNTVCT == mach_absolute_time. */
     boot->boot_counter = mach_absolute_time();
     return create_gic(vm);
 }

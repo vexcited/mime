@@ -1,11 +1,7 @@
-/*
- * character classification, case mapping and the lstr* string functions.
- */
+/* character classification, case mapping and the lstr* functions. */
 #include "kernelbase_private.h"
 
-/* ------------------------------------------------------------------ case mapping */
-
-/* the simple case mappings of the Unicode standard, from the tables of unidata.c. */
+/* simple Unicode case mappings. */
 WCHAR KbDowncase(WCHAR c)
 {
     return (WCHAR)KbUniLower(c);
@@ -15,8 +11,6 @@ WCHAR KbUpcase(WCHAR c)
 {
     return (WCHAR)KbUniUpper(c);
 }
-
-/* ------------------------------------------------------------------ classification */
 
 WORD KbCharType1(WCHAR c)
 {
@@ -62,8 +56,6 @@ WORD KbCharType1(WCHAR c)
         return C1_DEFINED;
     return C1_ALPHA | C1_DEFINED;
 }
-
-/* ------------------------------------------------------------------ lstr functions */
 
 int WINAPI lstrlenW(LPCWSTR s)
 {
@@ -162,7 +154,7 @@ int WINAPI lstrcmpiA(LPCSTR a, LPCSTR b)
 }
 
 
-/* number times numerator over denominator through a 64 bit product, rounded half away from zero; -1 on a zero divisor or overflow. */
+/* rounds half away from zero, returns -1 on a zero divisor or overflow. */
 int WINAPI MulDiv(int number, int numerator, int denominator)
 {
     if (!denominator)

@@ -1,9 +1,8 @@
 /*
- * the compositor: walks the committed tree of a target, draws each visual's
- * content as a quad with the shaders of tools/shaders/dcomp.asm into the back
- * buffer of a swap chain on the window, and presents it. The drawing is
- * recorded on a deferred context and run on the device's immediate context
- * without disturbing the state the program left on it.
+ * the compositor: walks a target's committed tree, draws each visual's
+ * content as a quad into the back buffer of a swap chain on the window, and
+ * presents it. drawing is recorded on a deferred context and run on the
+ * immediate context without disturbing the state the program left on it.
  */
 #include "dcomp_private.h"
 #include "dcomp_dxbc.h"
@@ -96,7 +95,7 @@ static DcGpu *gpu_create(ID3D11Device *d3d)
             rt->SrcBlend = rt->SrcBlendAlpha = D3D11_BLEND_ONE;
             rt->DestBlend = rt->DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
         } else if (i == BLEND_INVERT) {
-            /* the destination inverted where the source has alpha, the source's color ignored. */
+            /* inverts the destination where the source has alpha, ignoring the source color. */
             rt->SrcBlend = rt->SrcBlendAlpha = D3D11_BLEND_INV_DEST_COLOR;
             rt->DestBlend = rt->DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
         } else {
@@ -121,7 +120,7 @@ static DcGpu *gpu_create(ID3D11Device *d3d)
         desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         ok = SUCCEEDED(d3d->lpVtbl->CreateBuffer(d3d, &desc, nullptr, &gpu->constants));
     }
-    /* the factory that made the device's adapter makes the swap chains of windows. */
+    /* window swap chains come from the factory that made the device's adapter. */
     IDXGIDevice *dxgi;
     if (ok && SUCCEEDED(d3d->lpVtbl->QueryInterface(d3d, &IID_IDXGIDevice, (void **)&dxgi))) {
         IDXGIAdapter *adapter;
@@ -166,7 +165,7 @@ void DcOutputRelease(DcOutput *output)
     memset(output, 0, sizeof(*output));
 }
 
-/* a swap chain of the size of the window's client area, made again when the window changes size. */
+/* the swap chain matches the client area and is remade when the window resizes. */
 static BOOL ensure_output(DcTarget *t, DcGpu *gpu, UINT width, UINT height)
 {
     DcOutput *o = &t->output;
@@ -193,7 +192,7 @@ static BOOL ensure_output(DcTarget *t, DcGpu *gpu, UINT width, UINT height)
         desc.BufferCount = 2;
         desc.Scaling = DXGI_SCALING_STRETCH;
         desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        /* the tree has per pixel alpha and the window shows what is behind it, so the host must too. */
+        /* the tree has per-pixel alpha and the window shows what is behind it, so the host must too. */
         desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
         if (FAILED(gpu->factory->lpVtbl->CreateSwapChainForHwnd(gpu->factory, (IUnknown *)gpu->device, t->hwnd, &desc,
                                                                 nullptr, nullptr, &o->swapchain)))
@@ -251,7 +250,7 @@ typedef struct DcBuild {
     BOOL failed;
 } DcBuild;
 
-/* a matrix of 3 by 2 in the affine form of the clips, multiplied: first applies a. */
+/* multiplies 3x2 affine matrices, a applies first. */
 static void affine_multiply(float out[6], const float a[6], const float b[6])
 {
     float r[6];
@@ -265,8 +264,8 @@ static void affine_multiply(float out[6], const float a[6], const float b[6])
 }
 
 /*
- * pieces of the color transforms of filter effects, as five rows of four applied to a row of red, green, blue,
- * alpha and one: first applies a.
+ * multiplies filter effect color transforms: five rows of four, applied to a row of red, green, blue, alpha and one.
+ * a applies first.
  */
 static void color_multiply(float out[20], const float a[20], const float b[20])
 {
@@ -305,7 +304,7 @@ static DcDraw *add_draw(DcBuild *c)
     return &c->draws[c->draw_count++];
 }
 
-/* draws one content: a quad of the shown part of its frame, with the clips and look the walk has gathered. */
+/* draws the shown part of a content's frame as a quad, with the clips and look gathered by the walk. */
 static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *w, DcContent *content)
 {
     DcFrame frame;
@@ -315,7 +314,7 @@ static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *w, Dc
     float height = (float)(frame.source.bottom - frame.source.top);
     if (width <= 0 || height <= 0 || !frame.width || !frame.height)
         return;
-    /* the quad's matrix: the unit square to the content's pixels, the swap chain's own scale, the walk, then clip space. */
+    /* unit square to content pixels, then the swap chain's own scale, the walk, and clip space. */
     float m[16], step[16];
     DcMatrixIdentity(m);
     m[0] = width;
@@ -335,7 +334,6 @@ static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *w, Dc
     step[12] = -1.0f;
     step[13] = 1.0f;
     DcMatrixMultiply(m, m, step);
-    /* a face turned away is not drawn when the visual says so. */
     if (w->backface == DCOMPOSITION_BACKFACE_VISIBILITY_HIDDEN) {
         float x0 = m[12] / m[15], y0 = m[13] / m[15];
         float x1 = (m[0] + m[12]) / (m[3] + m[15]), y1 = (m[1] + m[13]) / (m[3] + m[15]);
@@ -361,7 +359,7 @@ static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *w, Dc
     cb[23] = frame.alpha == DXGI_ALPHA_MODE_STRAIGHT ? 1.0f : frame.alpha == DXGI_ALPHA_MODE_IGNORE ? 2.0f : 0.0f;
     cb[24] = w->composite == DCOMPOSITION_COMPOSITE_MODE_DESTINATION_INVERT ? 1.0f : 0.0f;
     cb[25] = w->has_color ? 1.0f : 0.0f;
-    /* the clips are in the visual's space; the content is moved into it by the swap chain's scale first. */
+    /* clips are in the visual's space, so the swap chain's scale moves the content into it first. */
     float into[6] = {1, 0, 0, 1, 0, 0};
     if (frame.has_matrix) {
         into[0] = frame.matrix[0];
@@ -437,7 +435,7 @@ static void walk(DcBuild *c, const DcVisual *visual, const DcWalk *parent, UINT 
             memcpy(w.color, color, sizeof(color));
         w.has_color = TRUE;
     }
-    /* the clips of the visual's ancestors move into its own space, and its own comes with it. */
+    /* ancestor clips move into this visual's space, then its own clip is added. */
     BOOL affine = is_affine(local);
     float to_parent[6] = {local[0], local[1], local[4], local[5], local[12], local[13]};
     UINT n = 0;
@@ -469,7 +467,7 @@ static void walk(DcBuild *c, const DcVisual *visual, const DcWalk *parent, UINT 
 
 /* ------------------------------------------------------------------ composing */
 
-/* the first device that can draw a content of the tree, for a device made without one. */
+/* for a device made without one: the first device that can draw some content of the tree. */
 static ID3D11Device *tree_device(const DcVisual *visual, UINT depth)
 {
     const DcVisualState *s = &visual->committed;
@@ -572,7 +570,7 @@ HRESULT DcCompose(DcTarget *t)
     if (SUCCEEDED(hr)) {
         gpu->immediate->lpVtbl->ExecuteCommandList(gpu->immediate, list, TRUE);
         list->lpVtbl->Release(list);
-        /* the window shows the frame by the swap chain's own present, without waiting for the display. */
+        /* present without waiting for the display. */
         t->output.swapchain->lpVtbl->Present(t->output.swapchain, 0, 0);
         t->output.composed = TRUE;
     }
@@ -583,7 +581,6 @@ HRESULT DcCompose(DcTarget *t)
     return hr;
 }
 
-/* the targets that are flagged, or all of them. */
 void DcComposeAll(DcDevice *device, BOOL only_flagged)
 {
     for (DcTarget *t = device->targets; t; t = t->next_in_device)
@@ -591,7 +588,6 @@ void DcComposeAll(DcDevice *device, BOOL only_flagged)
             DcCompose(t);
 }
 
-/* whether a visual or one under it shows a source. */
 static BOOL uses_source(const DcVisual *visual, IUnknown *source, UINT depth)
 {
     const DcVisualState *s = &visual->committed;
@@ -605,7 +601,7 @@ static BOOL uses_source(const DcVisual *visual, IUnknown *source, UINT depth)
     return FALSE;
 }
 
-/* a swap chain presented: the targets that show it draw again. */
+/* a swap chain presented, so redraw the targets that show it. */
 void DcSourceFrame(DcDevice *device, IUnknown *chain)
 {
     IMimeDXGICompositionSource *source;
@@ -630,7 +626,7 @@ void WINAPI DcSourceNotify(void *context, IUnknown *source)
 
 /* ------------------------------------------------------------------ reading back */
 
-/* the bytes of a rectangle of the last frame, through a staging copy of the back buffer. */
+/* reads a rectangle of the last frame through a staging copy of the back buffer. */
 HRESULT DcReadTarget(DcTarget *t, const RECT *rect, void *pixels, UINT pitch)
 {
     DcOutput *o = &t->output;

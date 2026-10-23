@@ -1,8 +1,7 @@
 /*
- * private object security, shared by ntdll and the kernel: the descriptor a new object gets from its parent
- * and its creator, the parts of a descriptor read and changed, and the auto inheritance conversion. The
- * defaults a token gives are asked for through MIME_SEC_DEFAULTS, so a user mode caller can query the token
- * only when something is missing and the kernel can read it in place.
+ * private object security, shared by ntdll and the kernel: the descriptor a new object gets from its parent and creator,
+ * querying and setting descriptor parts, and auto inheritance conversion. token defaults come through MIME_SEC_DEFAULTS,
+ * so user mode queries the token only when something is missing and the kernel reads it in place.
  */
 #define NTSYSAPI
 #include "rtl.h"
@@ -71,10 +70,9 @@ static USHORT control_of(const void *sd)
 }
 
 /*
- * the generic rights of an ace turned into the specific ones of the object, the way the kernel does it when
- * a descriptor is set: the inherit only aces keep theirs for the children, the types with a mask are the
- * allow, deny, audit and alarm ones and their callback forms but not the object callback ones, and a right
- * the object does not have is dropped, the system access right being left only to the audit and alarm kinds.
+ * maps an ace's generic rights to specific ones, as the kernel does when a descriptor is set. inherit only aces keep
+ * theirs for the children. masks are mapped for allow, deny, audit and alarm aces and their callback forms, but not
+ * object callback ones. rights the object lacks are dropped, and only audit and alarm kinds keep ACCESS_SYSTEM_SECURITY.
  */
 static void map_ace(UCHAR *ace, const GENERIC_MAPPING *m)
 {
@@ -145,7 +143,7 @@ typedef struct {
     BOOLEAN auto_inherit;
 } INHERIT;
 
-/* the ace as the new object gets it, with its mask mapped and creator sids replaced. returns false when none. */
+/* the ace as the new object inherits it, mask mapped and creator sids replaced. returns false when there is none. */
 static BOOLEAN effective_ace(const INHERIT *in, const UCHAR *ace, BUFFER *out, BOOLEAN *changed)
 {
     UCHAR type = ace[0];
@@ -170,7 +168,7 @@ static BOOLEAN effective_ace(const INHERIT *in, const UCHAR *ace, BUFFER *out, B
             wide |= m->GenericExecute;
         if (wide & GENERIC_ALL)
             wide |= m->GenericAll;
-        /* the system access right only matters to the audit types. */
+        /* ACCESS_SYSTEM_SECURITY only matters to the audit types. */
         ULONG allowed = m->GenericAll;
         if (!((0x673u >> type) & 1))
             allowed |= 0x01000000;
@@ -192,7 +190,7 @@ static BOOLEAN effective_ace(const INHERIT *in, const UCHAR *ace, BUFFER *out, B
         return FALSE;
     }
 
-    /* an object ace for another kind of object does not apply, and one that does loses its inherited type. */
+    /* an object ace for another object type does not apply, and one that applies loses its inherited type. */
     ULONG head = sid_offset;
     UCHAR new_type = type;
     UCHAR head_bytes[48];
@@ -240,7 +238,7 @@ static BOOLEAN effective_ace(const INHERIT *in, const UCHAR *ace, BUFFER *out, B
     return TRUE;
 }
 
-/* the aces of a parent list that reach a new object, appended to the buffer. */
+/* appends the parent's aces that the new object inherits. */
 static NTSTATUS inherit_aces(const INHERIT *in, const ACL *parent, BUFFER *out, USHORT *count, UCHAR *revision)
 {
     BUFFER scratch = {};
@@ -248,7 +246,7 @@ static NTSTATUS inherit_aces(const INHERIT *in, const ACL *parent, BUFFER *out, 
     const UCHAR *ace = (const UCHAR *)(parent + 1);
     for (ULONG i = 0; i < parent->AceCount; i++, ace += *(const USHORT *)(ace + 2)) {
         UCHAR flags = ace[1];
-        /* the ace is for the new object itself when it names its kind, and still goes on to the children. */
+        /* an ace for the new object's kind applies to it and still propagates to the children. */
         BOOLEAN applies = (flags & (in->container ? CONTAINER_INHERIT_ACE : OBJECT_INHERIT_ACE)) != 0;
         BOOLEAN propagate = in->container && !(flags & NO_PROPAGATE_INHERIT_ACE) &&
                             (flags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE));
@@ -265,7 +263,7 @@ static NTSTATUS inherit_aces(const INHERIT *in, const ACL *parent, BUFFER *out, 
             scratch.data[1] = (UCHAR)(scratch.data[1] & 0xE0);
             if (in->auto_inherit)
                 scratch.data[1] |= INHERITED_ACE;
-            /* the ace carries the inheritance itself unless it had to be rewritten. */
+            /* the ace keeps its inheritance flags unless it had to be rewritten. */
             if (propagate && !changed) {
                 scratch.data[1] |= flags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE);
             }
@@ -302,7 +300,6 @@ static NTSTATUS inherit_aces(const INHERIT *in, const ACL *parent, BUFFER *out, 
     return status;
 }
 
-/* an acl made of the aces in the buffer, in a block of its own. */
 static PACL acl_from(BUFFER *aces, USHORT count, UCHAR revision)
 {
     ULONG size = padded(8 + aces->length);
@@ -320,7 +317,7 @@ static PACL acl_from(BUFFER *aces, USHORT count, UCHAR revision)
     return acl;
 }
 
-/* the aces of a list without the inherited ones, as explicit aces to keep. */
+/* appends the acl's explicit aces, skipping inherited ones. */
 static BOOLEAN keep_explicit(BUFFER *out, const ACL *acl, USHORT *count, UCHAR *revision)
 {
     const UCHAR *ace = (const UCHAR *)(acl + 1);
@@ -347,7 +344,7 @@ typedef struct {
     UCHAR rm_control;
 } PARTS;
 
-/* a self relative descriptor of the parts: sacl, dacl, owner and group in that order. */
+/* self relative layout: sacl, dacl, owner and group in that order. */
 static NTSTATUS make_relative(const PARTS *p, PSECURITY_DESCRIPTOR *result)
 {
     ULONG sacl = p->sacl ? padded(p->sacl->AclSize) : 0;
@@ -399,7 +396,7 @@ static void free_acl(PACL acl, BOOLEAN owned)
         MimeRtlFree(acl);
 }
 
-/* a block of its own with the acl in it, its generic rights mapped. */
+/* a heap copy of the acl with generic rights mapped. */
 static PACL copy_acl(const ACL *acl, const GENERIC_MAPPING *mapping)
 {
     if (!acl)
@@ -414,9 +411,8 @@ static PACL copy_acl(const ACL *acl, const GENERIC_MAPPING *mapping)
 }
 
 /*
- * one of the two acls of a new object. without auto inheritance an acl the creator gave is all there is, else
- * the creator's explicit aces come first, then what the parent hands down. returns false when there is
- * nothing, so the caller falls back to a default.
+ * one acl of a new object. without auto inheritance the creator's acl is used as is, otherwise the creator's explicit
+ * aces come first, then what the parent hands down. returns false when there is nothing, so the caller uses a default.
  */
 static NTSTATUS build_list(INHERIT *in, const ACL *creator_acl, BOOLEAN creator_present, BOOLEAN creator_default,
                            BOOLEAN protect, const ACL *parent_acl, PACL *out, BOOLEAN *present)
@@ -492,7 +488,7 @@ NTSTATUS MimeSecNewObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR crea
     if (!group && (flags & SEF_DEFAULT_GROUP_FROM_PARENT) && parent)
         RtlGetGroupSecurityDescriptor(parent, &group, &defaulted);
 
-    /* the token only matters for what nothing else decided. */
+    /* the token is only consulted for what nothing else decided. */
     PARTS parts = {};
     PACL dacl = nullptr, sacl = nullptr;
     NTSTATUS status = STATUS_SUCCESS;
@@ -511,10 +507,10 @@ NTSTATUS MimeSecNewObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR crea
     status = build_list(&in, creator_dacl, creator_has_dacl, creator_default, protect, parent_dacl, &dacl,
                         &dacl_present);
     if (NT_SUCCESS(status) && !dacl_present && protect && !creator_has_dacl) {
-        /* a list that is protected and was not given has nothing to inherit and nothing to default to: everyone. */
+        /* a protected acl that was not given has nothing to inherit or default to: everyone gets access. */
         dacl_present = TRUE;
     } else if (NT_SUCCESS(status) && !dacl_present) {
-        /* the default is what the creator offered as one, else the token's. */
+        /* the creator's default acl if it offered one, else the token's. */
         PACL source = nullptr;
         if (creator_has_dacl && creator_default) {
             source = creator_dacl;
@@ -570,7 +566,7 @@ NTSTATUS NTAPI RtlDeleteSecurityObject(PSECURITY_DESCRIPTOR *object)
 
 /* ---------------------------------------------------------------- query and set */
 
-/* which part of a sacl information bit an ace belongs to. */
+/* which sacl information bit an ace type falls under. */
 static ULONG sacl_kind(UCHAR type)
 {
     switch (type) {
@@ -583,7 +579,7 @@ static ULONG sacl_kind(UCHAR type)
     }
 }
 
-/* the aces of the kinds the information selects. size only when there is no destination. */
+/* the aces of the kinds the information selects; only measures without a destination. */
 ULONG MimeSecFilterSacl(const ACL *sacl, PACL out, ULONG information)
 {
     ULONG size = 8;
@@ -738,7 +734,7 @@ NTSTATUS NTAPI RtlSetSecurityObjectEx(SECURITY_INFORMATION information,
         parts.control |= old_control & (SE_DACL_PRESENT | SE_DACL_DEFAULTED | SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED);
     }
 
-    /* the kinds of sacl ace the information names come from the modification, the others stay. */
+    /* sacl ace kinds named by the information come from the modification, the others stay. */
     BUFFER merged = {};
     USHORT merged_count = 0;
     UCHAR merged_revision = ACL_REVISION;
@@ -849,7 +845,7 @@ static BOOLEAN same_ace(const UCHAR *a, const UCHAR *b)
     return memcmp(a + 4, b + 4, size - 4) == 0;
 }
 
-/* the aces of the current list the parent would have handed down are marked inherited and moved last. */
+/* aces of the current acl that the parent would have handed down are marked inherited and moved last. */
 static NTSTATUS convert_acl(const INHERIT *in, const ACL *parent, const ACL *current, PACL *result)
 {
     BUFFER wanted = {}, explicit_part = {}, inherited_part = {};

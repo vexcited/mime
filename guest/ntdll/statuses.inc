@@ -1,4 +1,4 @@
-/* every nt status that has a win32 error of its own, sorted by status. generated from the table of windows 11 build 26300. */
+/* nt statuses with a win32 error of their own, sorted by status, as windows 11 build 26300 maps them. */
 {0x00000001,731}, {0x00000002,732}, {0x00000003,733}, {0x0000003F,734}, {0x00000080,128}, {0x000000BF,736},
 {0x000000C0,737}, {0x000000FF,0}, {0x00000100,738}, {0x00000101,739}, {0x00000102,1460}, {0x00000103,997},
 {0x00000104,741}, {0x00000105,234}, {0x00000106,1300}, {0x00000107,1301}, {0x00000108,742}, {0x00000109,743},

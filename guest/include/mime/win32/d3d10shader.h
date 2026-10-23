@@ -1,8 +1,4 @@
-/*
- * direct3d 10 shader reflection: what d3d10.dll's D3D10ReflectShader
- * reads from a compiled shader. the enumerations are direct3d 11's. the
- * interfaces and their method order are windows'.
- */
+/* direct3d 10 shader reflection, from D3D10ReflectShader. the enumerations are direct3d 11's. */
 #ifndef MIME_WIN32_D3D10SHADER_H
 #define MIME_WIN32_D3D10SHADER_H
 

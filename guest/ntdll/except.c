@@ -1,10 +1,9 @@
 /*
  * exception raising and first chance dispatch.
  *
- * dispatch order: vectored exception handlers, then frame based handlers,
- * then the top level filter, and back to the kernel as second chance if none
- * took the exception. the frame based handlers are in x64/unwind.c,
- * x86/seh.c and arm64/unwind.c.
+ * dispatch order: vectored handlers, frame based handlers, the top level
+ * filter, then back to the kernel as second chance. the frame based
+ * handlers are in x64/unwind.c, x86/seh.c and arm64/unwind.c.
  */
 #include "ntdll_private.h"
 
@@ -75,7 +74,7 @@ NTDLL_EXPORT ULONG NTAPI RtlRemoveVectoredContinueHandler(PVOID handle)
     return remove_handler(&g_continue, handle);
 }
 
-/* used by kernel32!SetUnhandledExceptionFilter through RtlSetUnhandledExceptionFilter. */
+/* backs kernel32's SetUnhandledExceptionFilter. */
 NTDLL_EXPORT void NTAPI RtlSetUnhandledExceptionFilter(PVOID filter)
 {
     g_unhandled_filter = filter;

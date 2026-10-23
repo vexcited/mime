@@ -102,7 +102,6 @@ static void put_ref(XBuf *b, UINT c)
     xb_putc(b, ';');
 }
 
-/* text with the escapes of character data. */
 static void put_text(Writer *w, const WCHAR *s, UINT length)
 {
     XBuf *b = w->out;
@@ -165,7 +164,7 @@ static void put_attr_value(Writer *w, const WCHAR *s, UINT length)
             xb_puta(b, "&#xA;");
             break;
         case '\r':
-            /* a line end is one character reference, a pair of them too. */
+            /* a CR LF pair is one reference too. */
             xb_puta(b, "&#xA;");
             if (i + 1 < length && s[i + 1] == '\n')
                 i++;
@@ -201,7 +200,6 @@ static BOOL push_scope(Writer *w, const WCHAR *prefix, const WCHAR *uri)
     return TRUE;
 }
 
-/* the uri a prefix is bound to among the declarations written so far, null for none. */
 static const WCHAR *scope_lookup(Writer *w, const WCHAR *prefix, UINT plen)
 {
     for (UINT i = w->scope_count; i-- > 0;) {
@@ -269,7 +267,7 @@ static void write_start(Writer *w, XNode *n, BOOL empty)
         if (atom)
             push_scope(w, atom, a->value && *a->value ? xd_intern(n->doc, a->value, a->length) : nullptr);
     }
-    /* a name whose namespace is not declared in scope gets its declaration. */
+    /* an undeclared namespace gets a declaration on the element. */
     UINT plen = n->local ? (UINT)(n->local - 1) : 0;
     const WCHAR *bound = scope_lookup(w, n->qname, plen);
     if (n->uri) {
@@ -548,7 +546,7 @@ BOOL xd_encode(const WCHAR *text, UINT length, const WCHAR *encoding, BYTE **byt
     XBuf8 b = {};
     if (page == 1200 || page == 1201) {
         BOOL big = page == 1201;
-        /* byte order marks come with the encoding. */
+        /* utf-16 output starts with a byte order mark. */
         BYTE bom[2] = {big ? 0xFE : 0xFF, big ? 0xFF : 0xFE};
         b8_put(&b, bom, 2);
         for (UINT i = 0; i < length; i++) {
@@ -590,7 +588,7 @@ BOOL xd_encode(const WCHAR *text, UINT length, const WCHAR *encoding, BYTE **byt
     return TRUE;
 }
 
-/* the highest character an encoding holds without references. */
+/* the highest character an encoding holds, the rest become references. */
 static UINT encoding_max(const WCHAR *encoding)
 {
     UINT page = xd_code_page(encoding);

@@ -1,9 +1,7 @@
 /*
- * the Windows Runtime wrappers of Direct3D 11 objects: CreateDirect3D11DeviceFromDXGIDevice and
- * CreateDirect3D11SurfaceFromDXGISurface make the IDirect3DDevice and IDirect3DSurface that Windows.Graphics.Capture
- * and the other runtime classes take and hand out. a wrapper holds the Direct3D object it was made from until it
- * is closed, gives it back to GetInterface, and has no other interface a program may enumerate (read from
- * d3d11.dll's dxrt11::Direct3DDevice).
+ * Windows Runtime wrappers of Direct3D 11 objects: the IDirect3DDevice and IDirect3DSurface that
+ * Windows.Graphics.Capture and other runtime classes take and hand out. a wrapper holds its Direct3D object until
+ * closed, returns it from GetInterface, and exposes no other interface a program may enumerate.
  */
 #include "d3d11_private.h"
 #include <mime/winrt_object.h>
@@ -11,7 +9,7 @@
 typedef struct WRAPPER {
     WRT_OBJECT Base;
     CRITICAL_SECTION Lock;
-    /* an IDXGIDevice3 for a device, an IDXGISurface for a surface; none once closed. */
+    /* IDXGIDevice3 for a device, IDXGISurface for a surface, NULL once closed. */
     IUnknown *Object;
 } WRAPPER;
 
@@ -29,7 +27,7 @@ static void wrapper_destroy(WRT_OBJECT *object)
     HeapFree(GetProcessHeap(), 0, w);
 }
 
-/* the held object, with a reference, or RO_E_CLOSED. */
+/* returns a reference to the held object, or RO_E_CLOSED. */
 static HRESULT wrapper_object(WRAPPER *w, IUnknown **object)
 {
     EnterCriticalSection(&w->Lock);
@@ -95,7 +93,6 @@ static HRESULT STDMETHODCALLTYPE closable_close(IClosable *This)
     return wrapper_close(wrapper_of(This));
 }
 
-/* the Direct3D object behind the wrapper, asked for by interface. */
 static HRESULT STDMETHODCALLTYPE access_get_interface(IDirect3DDxgiInterfaceAccess *This, REFIID riid, void **object)
 {
     IUnknown *held;
@@ -145,7 +142,7 @@ static HRESULT wrap(const WRT_CLASS *class, const void *const *vtables, IUnknown
     return S_OK;
 }
 
-/* the device has to answer IDXGIDevice3, whose Trim the wrapper passes on. */
+/* the device must support IDXGIDevice3, whose Trim the wrapper forwards. */
 D3D11API HRESULT WINAPI CreateDirect3D11DeviceFromDXGIDevice(IDXGIDevice *device, IInspectable **result)
 {
     if (!result)

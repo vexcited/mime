@@ -1,7 +1,4 @@
-/*
- * the exports of d3d8.dll: the direct3d 8 object and the shader
- * validators windows ships with it.
- */
+/* d3d8.dll exports: the Direct3D 8 object and the shader validators windows ships with it. */
 #include "d3d8_private.h"
 
 int _fltused = 0x9875;
@@ -27,7 +24,7 @@ void D8Log(const char *format, ...)
     OutputDebugStringA(text);
 }
 
-/* directx 8.0 programs pass 120, those of 8.1 220, and the later sdks numbers up to 319. */
+/* DirectX 8.0 programs pass 120, 8.1 ones 220, and later sdks up to 319. */
 __declspec(dllexport) IDirect3D8 *WINAPI Direct3DCreate8(UINT sdk)
 {
     if (sdk != 120 && (sdk < 220 || sdk > 319))

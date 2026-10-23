@@ -1,7 +1,6 @@
 /*
- * riched20.dll, rich edit 3.0: the classes RichEdit20W and RichEdit20A
- * over the shared engine, and the 1.0 emulation riched32.dll's class
- * runs on.
+ * riched20.dll, rich edit 3.0: RichEdit20W and RichEdit20A over the shared engine,
+ * plus the 1.0 emulation riched32 uses.
  */
 #include <richedit/richedit_private.h>
 
@@ -22,7 +21,7 @@ LRESULT WINAPI RichEdit10ANSIWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     return ReWndProc(hwnd, msg, wparam, lparam, TRUE, TRUE, FALSE);
 }
 
-/* windows registers REListBox20W and REComboBox20W here; their rich list boxes are not offered. */
+/* windows registers REListBox20W and REComboBox20W here, mime does not offer them. */
 int WINAPI REExtendedRegisterClass(void)
 {
     return 0;

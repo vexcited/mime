@@ -1,6 +1,6 @@
 /*
- * mswsock forwards every function to wsock32, which implements the extension functions and the name services that
- * Windows keeps here (wsock32 forwards the other way on Windows, to this library).
+ * mswsock forwards everything to wsock32, which implements the extension functions and name services. on Windows the
+ * forwarding goes the other way.
  */
 #include <mime/win32/winbase.h>
 

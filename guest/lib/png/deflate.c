@@ -1,7 +1,6 @@
 /*
- * zlib encoder, see deflate.h. matches are found with a chain of the positions that share the hash of
- * their next three bytes; the symbols of up to 32768 matches and literals form a block, which gets
- * the huffman codes that suit it.
+ * zlib encoder. matches come from hash chains of positions whose next three bytes hash alike, and each block
+ * of up to 32768 literals and matches gets its own huffman codes.
  */
 #include "deflate.h"
 
@@ -18,7 +17,7 @@
 #define BLOCK_TOKENS 32768
 #define MAX_BITS 15
 
-/* a token is a literal (distance 0, the byte in length) or a match. */
+/* distance 0 marks a literal, its byte stored in length. */
 typedef struct Token {
     uint16_t length;
     uint16_t distance;
@@ -73,7 +72,7 @@ static void flush_bits(Out *o)
     o->count = 0;
 }
 
-/* ------------------------------------------------------------------ the tables of the format */
+/* ------------------------------------------------------------------ format tables */
 
 static const uint16_t g_length_base[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
                                            31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
@@ -104,7 +103,7 @@ static int dist_code(int distance)
 
 /* ------------------------------------------------------------------ huffman codes */
 
-/* code lengths for the frequencies, none above limit: the tree is rebuilt with flatter frequencies until it fits. */
+/* no code length may exceed limit: rebuild the tree with flatter frequencies until it fits. */
 typedef struct Node {
     uint32_t weight;
     int left, right;
@@ -128,7 +127,7 @@ static int tree_depths(const uint32_t *freq, int n, uint8_t *lengths, int limit,
             lengths[order[0]] = 1;
             return 1;
         }
-        /* leaves sorted by weight, then merged with the queue of the nodes made. */
+        /* sort leaves by weight, then merge them with the queue of built nodes. */
         for (int i = 1; i < count; i++) {
             int v = order[i], j = i - 1;
             while (j >= 0 && f[order[j]] > f[v]) {
@@ -155,7 +154,7 @@ static int tree_depths(const uint32_t *freq, int n, uint8_t *lengths, int limit,
             nodes[made].right = pick[1];
             made++;
         }
-        /* depths from the root by walking the nodes backwards, a parent is made after its children. */
+        /* a parent is built after its children, so walking the nodes backwards yields depths from the root. */
         int depth[640];
         depth[total - 1] = 0;
         int deepest = 0;
@@ -173,7 +172,7 @@ static int tree_depths(const uint32_t *freq, int n, uint8_t *lengths, int limit,
         for (int i = 0; i < n; i++)
             if (f[i])
                 f[i] = (f[i] + 1) / 2 ? (f[i] + 1) / 2 : 1;
-        /* halving may not change the shape; a floor keeps it moving. */
+        /* halving may leave the shape unchanged, a floor keeps it moving. */
         for (int i = 0; i < n; i++)
             if (f[i] && f[i] < 2 && freq[i] > 1)
                 f[i] = 2;
@@ -230,7 +229,7 @@ static void write_block(Out *o, const Token *tokens, int count, int final, const
         dist_freq[0] = 1;
     tree_depths(dist_freq, 30, dist_len, MAX_BITS, nodes, order);
     if (dist_used <= 1) {
-        /* a single distance code still needs a second one for a complete tree on some decoders. */
+        /* some decoders need a second distance code to see a complete tree. */
         int other = dist_len[0] ? 1 : 0;
         dist_len[0] = 1;
         dist_len[other] = 1;
@@ -240,7 +239,7 @@ static void write_block(Out *o, const Token *tokens, int count, int final, const
         hlit--;
     while (hdist > 1 && !dist_len[hdist - 1])
         hdist--;
-    /* the lengths of both alphabets as one run, coded with the symbols of the length alphabet. */
+    /* both alphabets' code lengths form one run, coded with the code length alphabet. */
     uint8_t all[316];
     for (int i = 0; i < hlit; i++)
         all[i] = lit_len[i];
@@ -284,7 +283,7 @@ static void write_block(Out *o, const Token *tokens, int count, int final, const
     while (hclen > 4 && !clen_len[g_clen_order[hclen - 1]])
         hclen--;
 
-    /* the size of this block coded as stored data, to use that when it is smaller. */
+    /* the size as a stored block, used instead when smaller. */
     uint64_t bits = 3 + 5 + 5 + 4 + 3ull * hclen;
     for (int i = 0; i < nsyms; i++)
         bits += clen_len[syms[i]] + (syms[i] == 16 ? 2 : syms[i] == 17 ? 3 : syms[i] == 18 ? 7 : 0);
@@ -341,7 +340,7 @@ static void write_block(Out *o, const Token *tokens, int count, int final, const
     put_bits(o, lit_code[256], lit_len[256]);
 }
 
-/* ------------------------------------------------------------------ the encoder */
+/* ------------------------------------------------------------------ encoder */
 
 static uint32_t hash3(const uint8_t *p)
 {

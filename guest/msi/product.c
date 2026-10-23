@@ -126,7 +126,7 @@ UINT WINAPI MsiEnumRelatedProductsW(LPCWSTR upgrade, DWORD reserved, DWORD index
     return enumerate_catalog(L"UpgradeCodes", packed, index, product);
 }
 
-/* removing the patches of a product is not done: nothing is applied in a way that can be taken apart. */
+/* not supported: patches are not applied in a way that can be undone. */
 UINT WINAPI MsiRemovePatchesW(LPCWSTR patches, LPCWSTR product, INSTALLTYPE type, LPCWSTR command)
 {
     WCHAR packed[33];

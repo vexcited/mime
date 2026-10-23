@@ -1,9 +1,9 @@
 /*
  * mciwave.dll, the waveaudio device: wave files played through winmm's
- * wave output, positions in milliseconds, bytes or samples rounded as
- * windows' driver rounds them, and its notifications: a new play
- * supersedes the last one's, stop, seek and close abort it. there is no
- * wave input, so nothing records.
+ * wave output, positions in milliseconds, bytes or samples rounded like
+ * windows rounds them. a new play supersedes the last one's notification,
+ * and stop, seek and close abort it. there is no wave input, so nothing
+ * records.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
@@ -27,23 +27,23 @@ typedef struct WAVE {
     DWORD time_format;
     UINT output, input;
     DWORD seconds;
-    /* playing */
+    /* playback state. */
     HWAVEOUT out;
     HANDLE thread, event;
     volatile BOOL quit;
     int mode;
     BOOL hold, failed;
-    DWORD from, to, next; /* the range in bytes, and what is queued up to */
-    DWORD position;       /* while idle */
+    DWORD from, to, next; /* the range in bytes, and how far it is queued. */
+    DWORD position;       /* the position while idle. */
     WAVEHDR headers[MAX_BUFFERS];
     DWORD chunk;
-    HWND callback;        /* of the pending notification */
+    HWND callback;        /* window of the pending notification. */
     BOOL pending;
 } WAVE;
 
 static HMODULE g_module;
 static DWORD g_seconds = 4;
-static UINT g_tables[256]; /* the command table each device id loaded */
+static UINT g_tables[256]; /* the command table each device id loaded. */
 
 /* ------------------------------------------------------------------ notifications */
 
@@ -60,7 +60,7 @@ static void settle(WAVE *w, UINT status)
     }
 }
 
-/* a command's own notification, after any pending one is superseded. */
+/* sends a command's own notification, superseding any pending one. */
 static MCIERROR done(WAVE *w, MCIERROR r, DWORD flags, DWORD_PTR parms)
 {
     if (!r && (flags & MCI_NOTIFY) && parms) {
@@ -207,7 +207,7 @@ static MCIERROR start_output(WAVE *w, BOOL paused)
     return MMSYSERR_NOERROR;
 }
 
-/* stops playing where it is, the position kept, a pending play told it was aborted. */
+/* stops where it is and keeps the position, a pending play is told it was aborted. */
 static void stop(WAVE *w, BOOL abort)
 {
     if (w->mode != MODE_IDLE) {
@@ -401,7 +401,7 @@ static MCIERROR open(MCIDEVICEID id, DWORD flags, MCI_WAVE_OPEN_PARMSW *p)
     MCIERROR r = MMSYSERR_NOERROR;
     const WCHAR *name = element ? p->lpstrElementName : nullptr;
     if (name && !name[0]) {
-        /* a new file: empty, mono 8 bit pcm at 11025 hz. */
+        /* a new file: empty, mono 8-bit pcm at 11025 hz. */
         w->format = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(WAVEFORMATEX));
         if (w->format)
             *w->format = (WAVEFORMATEX){WAVE_FORMAT_PCM, 1, 11025, 11025, 1, 8, 0};
@@ -888,7 +888,7 @@ DECLSPEC_EXPORT LRESULT WINAPI DriverProc(DWORD_PTR id, HDRVR driver, UINT messa
         MCI_OPEN_DRIVER_PARMS *p = (MCI_OPEN_DRIVER_PARMS *)param2;
         if (!p)
             return 1;
-        /* the installation's parameter is the seconds of buffering, 2 to 9. */
+        /* the install parameter is the seconds of buffering, 2 to 9. */
         const WCHAR *s = p->lpstrParams;
         if (s && *s >= '2' && *s <= '9' && !s[1])
             g_seconds = *s - '0';

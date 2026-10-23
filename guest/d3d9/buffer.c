@@ -1,10 +1,8 @@
 /*
- * IDirect3DVertexBuffer9 and IDirect3DIndexBuffer9. dynamic buffers are
- * d3d11 dynamic buffers: D3DLOCK_DISCARD maps them anew, which renames
- * them rather than waiting, and D3DLOCK_NOOVERWRITE maps what the gpu may
- * still read. other buffers keep their bytes in memory, which locks hand
- * out and unlocking uploads in the order of the gpu's work, so a lock
- * never waits either.
+ * vertex and index buffers. dynamic buffers are d3d11 dynamic buffers:
+ * D3DLOCK_DISCARD renames them instead of waiting, and D3DLOCK_NOOVERWRITE
+ * maps what the gpu may still read. other buffers keep a copy in memory,
+ * uploaded on unlock in gpu order, so a lock never waits either.
  */
 #include "d3d9_private.h"
 
@@ -24,10 +22,10 @@ static void destroy(D9Buffer *b)
 
 static void destroy_resource(D9Resource *r) { destroy(CONTAINING_RECORD(r, D9Buffer, base)); }
 
-/* whether the gpu reads the buffer's own memory: dynamic buffers, mapped. */
+/* mapped dynamic buffers have no copy in memory. */
 static BOOL mapped(const D9Buffer *b) { return b->memory == nullptr; }
 
-/* the gpu is done with what it was given: a plain lock of a dynamic buffer it used waits for that. */
+/* a plain lock of a dynamic buffer the gpu used waits for the gpu to finish. */
 static void wait_idle(D9Device *d)
 {
     D3D11_QUERY_DESC desc = {D3D11_QUERY_EVENT};
@@ -105,8 +103,6 @@ static HRESULT unlock(D9Buffer *b)
     b->dirty_lo = b->dirty_hi = 0;
     return D3D_OK;
 }
-
-/* ------------------------------------------------------------------ methods */
 
 static HRESULT STDMETHODCALLTYPE buffer_query(IDirect3DVertexBuffer9 *iface, REFIID riid, void **out)
 {
@@ -228,7 +224,7 @@ HRESULT D9CreateBuffer(D9Device *device, BOOL index, UINT size, DWORD usage, DWO
                    index ? format : D3DFMT_VERTEXDATA, destroy_resource);
     b->size = size;
     b->fvf = index ? 0 : fvf;
-    /* dynamic buffers that are only written are mapped; the others keep their bytes in memory. */
+    /* only write-only dynamic buffers are mapped, the others keep a copy in memory. */
     BOOL dynamic = (usage & D3DUSAGE_DYNAMIC) && (usage & D3DUSAGE_WRITEONLY) && pool == D3DPOOL_DEFAULT;
     D3D11_BUFFER_DESC desc = {D9_ALIGN(size, 4), dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT,
                               index ? D3D11_BIND_INDEX_BUFFER : D3D11_BIND_VERTEX_BUFFER,

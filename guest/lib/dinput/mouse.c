@@ -1,7 +1,7 @@
 /*
- * the system mouse: three axes and up to eight buttons of a 20 byte
- * state, relative by nature, and for an exclusive acquisition the cursor
- * hidden in the middle of the window and put back afterwards.
+ * the system mouse: three axes and up to eight buttons in a 20 byte state,
+ * always relative. exclusive acquisition hides the cursor in the middle of
+ * the window and puts it back afterwards.
  */
 #include "dinput_private.h"
 
@@ -51,7 +51,6 @@ static HRESULT mouse_cooperate(DIDEV *dev, HWND window, DWORD flags)
     return DI_OK;
 }
 
-/* exclusive: the cursor saved, moved to the middle of the window and hidden. */
 static void mouse_acquire(DIDEV *dev)
 {
     if (!(dev->em & DIEM_EXCLUSIVE))

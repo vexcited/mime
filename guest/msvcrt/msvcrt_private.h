@@ -223,7 +223,6 @@ static inline MSVCRT_IOINFO *MsvcrtFd(int fd)
     return &MsvcrtIoinfo[fd >> IOINFO_L2E][fd & (IOINFO_ARRAY_ELTS - 1)];
 }
 
-/* nonzero when fd is a valid, open descriptor. */
 static inline int MsvcrtFdValid(int fd)
 {
     return fd >= 0 && fd < MsvcrtNhandle && (MsvcrtFd(fd)->osfile & FOPEN);
@@ -278,7 +277,7 @@ typedef struct {
     int fpecode;
     /* c++ exception handling, MSVCRT_EH_THREAD of cxx.h. */
     void *eh[48];
-    /* the encoded handler of invalid parameters of this thread, which comes before the one of the process. */
+    /* this thread's encoded invalid parameter handler, which takes precedence over the process one. */
     void *invalid_handler;
 } MSVCRT_THREAD_DATA;
 

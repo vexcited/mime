@@ -1,7 +1,6 @@
 /*
- * pipeline states: the shaders, compiled when the state is made, the root
- * signature known, into vulkan shader objects, and the fixed function
- * state the command list sets dynamically when the pipeline state is set.
+ * pipeline states: shaders are compiled into Vulkan shader objects at creation, once the root signature is known.
+ * the command list sets the fixed function state dynamically when the state is set.
  */
 #include "d3d12_private.h"
 
@@ -73,7 +72,7 @@ static HRESULT STDMETHODCALLTYPE pipeline_get_device(ID3D12PipelineState *iface,
     return D12ChildGetDevice(&impl(iface)->child, riid, device);
 }
 
-/* the cached blob names nothing: states given it back compile again, which the shader objects make cheap. */
+/* the cached blob holds nothing: states given it back compile again, which shader objects make cheap. */
 static HRESULT STDMETHODCALLTYPE pipeline_get_cached_blob(ID3D12PipelineState *iface, ID3DBlob **blob)
 {
     if (!blob)
@@ -96,11 +95,11 @@ static const struct ID3D12PipelineStateVtbl g_pipeline_vtbl = {
 
 /* ------------------------------------------------------------------ shaders */
 
-/* the program each stage takes, as dxbc and dxil number them: 13 mesh and 14 amplification shaders. */
+/* each stage's program type as dxbc and dxil number them: 13 is mesh, 14 amplification. */
 static constexpr int PROGRAMS[D12_STAGES] = {DXBC_VERTEX, DXBC_HULL,    DXBC_DOMAIN, DXBC_GEOMETRY,
                                          DXBC_PIXEL,  DXBC_COMPUTE, 14,          13};
 
-/* the kind of program a container holds, from its dxbc code or its dxil part's header. */
+/* read from the dxbc code or the dxil part's header. */
 static int program_of(const void *bytecode, SIZE_T length)
 {
     uint32_t size;
@@ -113,16 +112,15 @@ static int program_of(const void *bytecode, SIZE_T length)
 }
 
 /*
- * a compiled stage: its SPIR-V handed to the pipeline itself with
- * VK_KHR_maintenance5, as no shader module then outlives the call while
- * the host compiles the pipeline aside, or a shader module.
+ * with VK_KHR_maintenance5 the SPIR-V goes straight into the pipeline, so no shader module outlives the call while
+ * the host compiles the pipeline aside. otherwise a shader module.
  */
 typedef struct D12Shader {
     BOOL present;
     VkShaderModule module;
     VkShaderModuleCreateInfo code;
     DxbcShaderInfo info;
-    /* the wave size a WaveSize attribute asks of vulkan, chained before the code. */
+    /* the size a WaveSize attribute asks for, chained before the code. */
     VkPipelineShaderStageRequiredSubgroupSizeCreateInfo wave;
 } D12Shader;
 
@@ -149,7 +147,6 @@ static void release_shader(D12Device *device, D12Shader *shader)
     shader->present = FALSE;
 }
 
-/* compiles a stage against the root signature. */
 static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stage stage,
                              const D3D12_SHADER_BYTECODE *code, DxbcCompileOptions *options, D12Shader *shader)
 {
@@ -178,7 +175,7 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
         dxbc_free(&info, &g_d12_allocator);
         return E_INVALIDARG;
     }
-    /* WaveSize: the preferred size, else the smallest of the range the gpu runs for the stage. */
+    /* WaveSize: the preferred size, else the smallest in the range the gpu runs for the stage. */
     if (info.wave_min) {
         static const VkShaderStageFlags STAGES[D12_STAGES] = {
             [D12_CS] = VK_SHADER_STAGE_COMPUTE_BIT, [D12_AS] = VK_SHADER_STAGE_TASK_BIT_EXT,
@@ -199,7 +196,7 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
             dxbc_free(&info, &g_d12_allocator);
             return E_INVALIDARG;
         }
-        /* a gpu of one size runs it as it is; one of several is told the size where the stage may be. */
+        /* a gpu with one wave size runs it as is; one with several is told the size where the stage allows it. */
         if (device->wave_min != device->wave_max && control) {
             shader->wave.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO;
             shader->wave.requiredSubgroupSize = size;
@@ -222,7 +219,7 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
     return S_OK;
 }
 
-/* the root signature given, or the one a shader carries. */
+/* the given root signature, or the one a shader carries. */
 static HRESULT pick_root(D12Device *device, D12PipelineState *state, ID3D12RootSignature *given,
                          const D3D12_SHADER_BYTECODE *const *codes, UINT count)
 {
@@ -295,7 +292,7 @@ HRESULT D12CreateComputePipeline(D12Device *device, const D3D12_COMPUTE_PIPELINE
 
 /* ------------------------------------------------------------------ graphics */
 
-/* the vertex input the input layout makes of the vertex shader's inputs. */
+/* maps the input layout onto the vertex shader's inputs. */
 static HRESULT input_layout(D12PipelineState *state, const D3D12_INPUT_LAYOUT_DESC *layout,
                             const D3D12_SHADER_BYTECODE *vs)
 {
@@ -341,7 +338,7 @@ static HRESULT input_layout(D12PipelineState *state, const D3D12_INPUT_LAYOUT_DE
     return hr;
 }
 
-/* the declaration as the compiler takes it, its names copied into the same block. */
+/* converts to the compiler's declaration, with the names copied into the same block. */
 static DxbcStreamOutput *stream_output(const D3D12_STREAM_OUTPUT_DESC *so)
 {
     DxbcStreamOutput *out = HeapAlloc(GetProcessHeap(), 0, so->NumEntries * sizeof(*out) + 1);
@@ -355,7 +352,7 @@ static DxbcStreamOutput *stream_output(const D3D12_STREAM_OUTPUT_DESC *so)
     return out;
 }
 
-/* the gs input primitive a topology type draws, as dcl_inputprimitive numbers them. */
+/* the gs input primitive of a topology type, numbered as dcl_inputprimitive. */
 static UINT input_primitive(D3D12_PRIMITIVE_TOPOLOGY_TYPE type)
 {
     switch (type) {
@@ -368,7 +365,7 @@ static UINT input_primitive(D3D12_PRIMITIVE_TOPOLOGY_TYPE type)
     }
 }
 
-/* a graphics description in its widest form, what the stream and the plain description both fill. */
+/* the widest graphics description, filled from either the stream or the plain description. */
 typedef struct GraphicsDesc {
     ID3D12RootSignature *root;
     D3D12_SHADER_BYTECODE shaders[D12_STAGES];
@@ -514,7 +511,7 @@ static VkStencilOpState stencil_state(const D3D12_DEPTH_STENCILOP_DESC1 *d)
                               d->StencilWriteMask, 0};
 }
 
-/* the vulkan pipeline of a graphics state: what direct3d 12 fixes in it, the rest dynamic. */
+/* only what Direct3D 12 fixes goes into the pipeline, the rest is dynamic. */
 static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const GraphicsDesc *g,
                               const D12Shader *shaders)
 {
@@ -587,7 +584,7 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
     UINT rasterized = state->stream_output ? state->rasterized_stream : 0;
     stream.rasterizationStream = rasterized < 4 ? rasterized : 0;
     VkPipelineRasterizationStateCreateInfo raster = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-    /* direct3d clamps depth to the viewport always; turning clipping off leaves only the clamp. */
+    /* Direct3D always clamps depth to the viewport; turning clipping off leaves only the clamp. */
     if (device->has_depth_clip) {
         raster.depthClampEnable = TRUE;
         clip.pNext = raster.pNext;
@@ -673,7 +670,7 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
         dynamic[13] = dynamic[14];
         dynamic_info.dynamicStateCount--;
     }
-    /* mesh pipelines have no vertex input: neither topology, restart, strides nor patches. */
+    /* mesh pipelines have no vertex input: no topology, restart, strides or patches. */
     if (state->mesh) {
         UINT kept = 0;
         for (UINT i = 0; i < dynamic_info.dynamicStateCount; i++)
@@ -726,9 +723,8 @@ static HRESULT build_graphics(D12Device *device, D12PipelineState *state, const 
 }
 
 /*
- * a mesh pipeline links its stages by semantic: the mesh shader writes
- * where the pixel shader reads, which also learns what comes per
- * primitive.
+ * mesh stages link by semantic: the pixel shader reads where the mesh shader writes, and learns which inputs come
+ * per primitive.
  */
 static HRESULT link_mesh(const GraphicsDesc *g, DxbcSignature *ps_inputs, DxbcSignature *primitives)
 {
@@ -774,7 +770,7 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
     if (SUCCEEDED(hr) && mesh)
         hr = link_mesh(g, &ps_inputs, &primitives);
 
-    /* stream output goes from the geometry shader, or one passing through the last stage before it. */
+    /* stream output comes from the geometry shader, or from a passthrough of the last stage before it. */
     DxbcStreamOutput *so = nullptr;
     UINT strides[4] = {};
     BOOL with_so = g->so.NumEntries && g->so.pSODeclaration;
@@ -866,7 +862,7 @@ HRESULT D12CreateGraphicsPipeline(D12Device *device, const D3D12_GRAPHICS_PIPELI
 
 /* ------------------------------------------------------------------ pipeline state streams */
 
-/* each subobject is its type then its structure, at the structure's alignment, padded to a pointer's. */
+/* each subobject is a type then its structure at the structure's alignment, padded to pointer size. */
 #define SUBOBJECT(type) {sizeof(type), alignof(type)}
 static const struct {
     UINT size, align;

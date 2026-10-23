@@ -1,6 +1,6 @@
 /*
- * what the translator would otherwise take from libraries: 128 bit
- * division for the core and the allocation hooks of the shared runtime.
+ * what the translator would otherwise take from libraries: 128 bit division
+ * for the core and the allocation hooks of the shared runtime.
  */
 #define MIME_NTDLL
 #define NTSYSCALLAPI

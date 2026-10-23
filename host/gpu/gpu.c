@@ -1,18 +1,8 @@
 /*
- * gpu channels on metal.
- *
- * each guest process that renders gets a channel (mime/gpu.h): a thread
- * here executes the commands it writes in its ring, in order, and encodes
- * them for metal. the commands are already metal level, so this is mostly
- * a thin replay: the guest keeps the graphics api state, decides render
- * passes and only sends what changes. memory the commands name is guest
- * memory that metal reads and writes in place through buffers made over the
- * guest ram mapping.
- *
- * guest programs are compiled on a concurrent queue (shader.c) while the
- * ring goes on; a pipeline waits for its program. surfaces keep a back
- * buffer the guest renders to, copied to a CAMetalLayer on the window at
- * each present.
+ * Metal command replay over mime/gpu.h channels. each guest process has a worker reading its Metal-level command
+ * ring; the guest owns API state and render-pass decisions. Metal buffers map guest RAM directly. shader.c compiles
+ * programs concurrently, pipelines wait for them, and each present copies a surface's back buffer to its window's
+ * CAMetalLayer.
  */
 #include "gpu.h"
 
@@ -118,17 +108,15 @@ enum {
 /* ---------------------------------------------------------------- objects */
 
 /*
- * what an attachment holds, followed in encoding order so passes skip the
- * memory traffic gl does not need: undefined contents are never loaded, a
- * clear only the gpu would read back becomes a clear load action, and an
- * attachment a pass leaves untouched is not stored again.
+ * tracks attachment contents in encoding order: undefined data is never loaded, pending clears become load actions,
+ * and untouched attachments avoid stores.
  */
 enum { TRACK_DATA, TRACK_UNDEFINED, TRACK_CLEARED };
 
 typedef struct Aspect {
     uint8_t kind;
-    bool materialized; /* a cleared aspect whose memory holds the clear value */
-    float value[4];    /* the clear color, or the depth in value[0] */
+    bool materialized; /* a cleared aspect whose memory holds the clear value. */
+    float value[4];    /* the clear color, or the depth in value[0]. */
     uint32_t stencil;
 } Aspect;
 
@@ -152,7 +140,7 @@ typedef struct Program {
 } Program;
 
 typedef struct Surface {
-    id color, depth; /* depth holds the stencil too when both exist */
+    id color, depth; /* depth holds the stencil too when both exist. */
     Track color_track, depth_track;
     void *layer;
     uint32_t width, height, samples;
@@ -180,7 +168,7 @@ typedef struct Channel {
     pthread_mutex_t lock;
     pthread_cond_t cond;
     bool kicked, stop;
-    volatile long outstanding; /* command buffers whose completion handler has not run */
+    volatile long outstanding; /* command buffers whose completion handler has not run. */
 
     id queue;
     id cb, render, blit;
@@ -203,19 +191,16 @@ typedef struct Channel {
     uint16_t pass_color[MIME_GPU_MAX_COLORS], pass_depth, pass_stencil;
     uint32_t pass_samples;
     /*
-     * the guest's open pass. its encoder starts at the first draw, so clears
-     * before it become load actions; an encoder ended by a copy or a commit
-     * before the guest ends the pass continues in a new one that keeps the
-     * contents. enc_load is the load action the encoder used for each
-     * attachment, colors then depth and stencil, and written the attachments
-     * its draws and clears wrote.
+     * defers the guest pass's encoder until the first draw so clears become load actions. copies or commits may
+     * split it into encoders that preserve contents. enc_load records each attachment's load action; written tracks
+     * draws and clears.
      */
     MimeGpuPass pass;
     bool pass_live, pass_started;
     uint8_t enc_load[MIME_GPU_MAX_COLORS + 2];
     bool enc_unknown[MIME_GPU_MAX_COLORS + 2];
     uint32_t written;
-    uint8_t depth_flags; /* of the bound depth stencil state: 1 writes depth, 2 writes stencil */
+    uint8_t depth_flags; /* of the bound depth stencil state: 1 writes depth, 2 writes stencil. */
     uint8_t *depth_state_flags;
     uint32_t depth_state_flags_cap;
     /* a fence or flush met while an encoder was open, committed once it ends or the guest waits for it. */
@@ -284,7 +269,6 @@ static Channel *find_channel(uint64_t id_)
     return c;
 }
 
-/* grows a table indexed by guest object id. */
 static void *slot(void **table, uint32_t *cap, uint32_t id_, size_t size)
 {
     if (id_ >= *cap) {
@@ -324,7 +308,7 @@ static void lose(Channel *c, const char *why)
     c->hdr->lost = 1;
 }
 
-/* the metal buffer and offset of guest heap memory, NULL when out of range. */
+/* the Metal buffer and offset of guest heap memory, NULL when out of range. */
 static id heap(Channel *c, const MimeGpuMem *m, uint64_t size, uint64_t *offset)
 {
     if (m->block >= MIME_GPU_MAX_BLOCKS || !c->blocks[m->block] || m->offset > c->block_size[m->block] ||
@@ -391,7 +375,7 @@ static void signal_fence(Channel *c, uint64_t value)
         mime_vm_raise_irq(c->vm, MIME_IRQ_GPU);
 }
 
-/* commits the work so far; fence, when not 0, is signaled once the gpu finished it. */
+/* commits pending work and signals a nonzero fence after GPU completion. */
 static void commit(Channel *c, uint64_t fence)
 {
     end_render(c);
@@ -863,7 +847,7 @@ static void surface_destroy(Channel *c, uint32_t id_)
     memset(s, 0, sizeof(*s));
 }
 
-/* copies the back buffer into the layer's next drawable; the layer flips it to gl's orientation. */
+/* copies the back buffer into the layer's next drawable; the layer flips it to OpenGL's orientation. */
 static void present(Channel *c, uint32_t id_)
 {
     if (id_ >= c->surfaces_cap || !c->surfaces[id_].layer || !c->surfaces[id_].window_id) {
@@ -939,7 +923,7 @@ static MimeGpuAttachment *pass_att(Channel *c, int i)
     return i < MIME_GPU_MAX_COLORS ? &c->pass.color[i] : i == MIME_GPU_MAX_COLORS ? &c->pass.depth : &c->pass.stencil;
 }
 
-/* the followed aspect attachment i renders to, NULL when its contents are not followed. */
+/* returns the tracked attachment aspect, or NULL when untracked. */
 static Aspect *pass_aspect(Channel *c, int i)
 {
     MimeGpuAttachment *a = pass_att(c, i);
@@ -990,7 +974,7 @@ static id new_encoder(Channel *c, id rp)
     return e;
 }
 
-/* opens the encoder of the guest pass, its load actions taken from what each attachment holds. */
+/* opens the pass encoder using tracked attachment contents for load actions. */
 static bool ensure_encoder(Channel *c)
 {
     if (c->render)
@@ -1022,7 +1006,7 @@ static bool ensure_encoder(Channel *c)
             else
                 c->pass.clear_stencil = as->stencil;
         }
-        /* a followed attachment's store is decided when the encoder ends, by what it wrote. */
+        /* decides a tracked attachment's store action when the encoder ends. */
         if (as && store == STORE_STORE) {
             store = STORE_UNKNOWN;
             c->enc_unknown[i] = true;
@@ -1057,11 +1041,8 @@ static bool ensure_encoder(Channel *c)
 }
 
 /*
- * ends the open encoder of the guest pass. a followed attachment is stored
- * only when the encoder wrote it or loaded what it holds: a cleared one
- * nothing drew to keeps its clear as state, the next pass loading it clears
- * again. a pass segment without an encoder does no gpu work when every
- * attachment is followed.
+ * stores tracked attachments only if written or loaded. an untouched clear stays deferred for the next pass. a
+ * segment without an encoder does no GPU work when all attachments are tracked.
  */
 static void end_render(Channel *c)
 {
@@ -1122,7 +1103,7 @@ static void end_render(Channel *c)
     pass_continue(c);
 }
 
-/* gives a cleared aspect nothing stored yet its clear value in memory, for reads outside passes. */
+/* materializes a deferred clear before reads outside passes. */
 static void materialize(Channel *c, uint32_t id_, bool surface, bool depth)
 {
     Track *t = track_of(c, id_, surface, depth);
@@ -1248,7 +1229,6 @@ static void pass_begin(Channel *c, const MimeGpuPass *p)
     c->st.dirty = DIRTY_ALL;
 }
 
-/* whether texture id_ is an attachment of the guest pass. */
 static bool in_pass(Channel *c, uint32_t id_, bool surface)
 {
     if (!c->pass_live)
@@ -1261,7 +1241,6 @@ static bool in_pass(Channel *c, uint32_t id_, bool surface)
     return false;
 }
 
-/* applies the state the guest changed since the last draw. */
 static bool flush_state(Channel *c)
 {
     if (!c->st.pipeline || !ensure_encoder(c))
@@ -1286,7 +1265,7 @@ static bool flush_state(Channel *c)
     if (d & DIRTY_VIEWPORT)
         ((void (*)(id, SEL, MTLViewport))objc_msgSend)(e, S("setViewport:"), c->st.viewport);
     if (d & DIRTY_SCISSOR) {
-        /* metal wants the rectangle inside the attachments. */
+        /* Metal wants the rectangle inside the attachments. */
         int64_t x0 = 0, y0 = 0, x1 = c->pass_width, y1 = c->pass_height;
         if (c->st.has_scissor) {
             x0 = c->st.scissor.x > 0 ? c->st.scissor.x : 0;
@@ -1600,7 +1579,7 @@ static void blit(Channel *c, const MimeGpuBlit *b)
     }
     end_blit(c);
     if (src_samples > 1 && dst_samples == 1 && !depth) {
-        /* a resolve: the whole source into the destination, which has its size. */
+        /* resolves the whole source into an equally sized destination. */
         id rp = MSG(F_id, CLS("MTLRenderPassDescriptor"), "renderPassDescriptor");
         id att = MSG(F_id_u, MSG(F_id, rp, "colorAttachments"), "objectAtIndexedSubscript:", (NSUInteger)0);
         MSG(F_v_id, att, "setTexture:", src);
@@ -1616,7 +1595,7 @@ static void blit(Channel *c, const MimeGpuBlit *b)
     }
     if (depth || src_samples > 1)
         return;
-    /* a stretch: draws the source rectangle over the destination one. */
+    /* stretches the source rectangle over the destination rectangle. */
     uint32_t format = (uint32_t)MSG(NSUInteger (*)(id, SEL), dst, "pixelFormat");
     id ps = blit_pipeline(c, format);
     if (!ps)
@@ -1950,7 +1929,7 @@ static bool held(Channel *c, uint64_t fence)
     return fence > c->committed_fence && fence <= c->deferred_fence;
 }
 
-/* whether the guest waits for a fence held back, not one the ring has not reached yet. */
+/* checks for a guest waiting on a deferred fence, excluding fences the ring has not reached. */
 static bool fence_wanted(Channel *c)
 {
     return held(c, __atomic_load_n(&c->hdr->want_fence, __ATOMIC_ACQUIRE)) ||

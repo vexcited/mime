@@ -1,6 +1,4 @@
-/*
- * odbc32 internal interface: handle objects, diagnostics and string helpers.
- */
+/* odbc32 internal interface: handle objects, diagnostics and string helpers. */
 #ifndef MIME_ODBC32_PRIVATE_H
 #define MIME_ODBC32_PRIVATE_H
 
@@ -83,7 +81,7 @@ FORCEINLINE void OdbcFree(PVOID p)
 void OdbcLock(void);
 void OdbcUnlock(void);
 
-/* finds a live handle of the given type, NULL when the value is not one. */
+/* NULL when the value is not a live handle of that type. */
 OdbcHandle *OdbcLookup(SQLHANDLE handle, SQLSMALLINT type);
 OdbcEnv *OdbcLookupEnv(SQLHANDLE handle);
 OdbcDbc *OdbcLookupDbc(SQLHANDLE handle);
@@ -108,10 +106,7 @@ FORCEINLINE BOOL OdbcBadLength(SQLINTEGER length)
     return length < 0 && length != SQL_NTS;
 }
 
-/*
- * copies a string into a caller buffer of max units, always terminating it.
- * returns TRUE when it was truncated.
- */
+/* copies into a caller buffer of max units, always terminated. returns TRUE when truncated. */
 BOOL OdbcCopyW(PCWSTR src, SQLWCHAR *dst, SQLLEN max);
 BOOL OdbcCopyA(PCSTR src, SQLCHAR *dst, SQLLEN max);
 

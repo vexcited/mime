@@ -1,6 +1,4 @@
-/*
- * rpcrt4 entry point.
- */
+/* rpcrt4 entry point. */
 #include "rpcrt4_private.h"
 
 int _fltused = 0x9875;
@@ -20,7 +18,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 }
 
 
-/* mime has no rpc server runtime, so no call is ever being served on this thread. */
+/* always reports that no call is being served. */
 RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcOpenClientProcess(void *binding, ULONG access, void **process)
 {
     if (process)
@@ -28,13 +26,11 @@ RPCRTAPI RPC_STATUS RPC_ENTRY I_RpcOpenClientProcess(void *binding, ULONG access
     return RPC_S_NO_CALL_ACTIVE;
 }
 
-/* ------------------------------------------------------------------ exceptions and statuses */
-
 /* exceptions that mean the process is in trouble, which a server must not swallow. */
 static const ULONG g_fatal[] = {0xC0000005, 0xC0000194, 0xC00000AA, 0x80000002, 0xC0000096, 0xC000001D, 0x80000003,
                                 0xC00000FD, 0xC0000235, 0xC0000006, 0xC0000420, 0xC0000409, 0x80000001, 0xC00002C9};
 
-/* the filter of the exception handlers around a call: take the exception unless it is one of the fatal ones. */
+/* handles every exception except the fatal ones. */
 RPCRTAPI int RPC_ENTRY I_RpcExceptionFilter(ULONG code)
 {
     for (unsigned i = 0; i < sizeof(g_fatal) / sizeof(g_fatal[0]); i++)
@@ -48,7 +44,7 @@ RPCRTAPI int RPC_ENTRY RpcExceptionFilter(ULONG code)
     return I_RpcExceptionFilter(code);
 }
 
-/* the exception of a failed call, noncontinuable; an access violation is raised as ERROR_NOACCESS. */
+/* raised noncontinuable, an access violation becomes ERROR_NOACCESS. */
 RPCRTAPI DECLSPEC_NORETURN void RPC_ENTRY RpcRaiseException(RPC_STATUS status)
 {
     RaiseException(status == (RPC_STATUS)0xC0000005 ? 998 : (DWORD)status, EXCEPTION_NONCONTINUABLE, 0, nullptr);
@@ -56,7 +52,7 @@ RPCRTAPI DECLSPEC_NORETURN void RPC_ENTRY RpcRaiseException(RPC_STATUS status)
         ;
 }
 
-/* the pairs of an rpc or win32 status and the ntstatus that goes with it. */
+/* rpc or win32 status to NTSTATUS. */
 static const struct {
     ULONG Status;
     ULONG Nt;
@@ -90,7 +86,7 @@ static const struct {
     {1331, 0xC0000072u}, {1328, 0xC000006Fu}, {1909, 0xC0000234u}, {1323, 0xC000006Au},
 };
 
-/* the ntstatus of a status; a status already negative is one, any other without an entry is STATUS_UNSUCCESSFUL. */
+/* a negative status is already an NTSTATUS, any other without an entry is STATUS_UNSUCCESSFUL. */
 RPCRTAPI LONG RPC_ENTRY I_RpcMapWin32Status(RPC_STATUS status)
 {
     for (unsigned i = 0; i < sizeof(g_status_map) / sizeof(g_status_map[0]); i++)
@@ -99,9 +95,7 @@ RPCRTAPI LONG RPC_ENTRY I_RpcMapWin32Status(RPC_STATUS status)
     return status < 0 ? status : (LONG)0xC0000001;
 }
 
-/* ------------------------------------------------------------------ memory for the ndr engine */
-
-/* the engine allocates through ole32's task allocator, found when first needed. */
+/* the ndr engine allocates through ole32's task allocator, loaded on first use. */
 static void *(WINAPI *g_task_alloc)(SIZE_T);
 static void(WINAPI *g_task_free)(void *);
 
@@ -127,8 +121,6 @@ RPCRTAPI void RPC_ENTRY NdrOleFree(void *memory)
     if (load_task_allocator())
         g_task_free(memory);
 }
-
-/* ------------------------------------------------------------------ asynchronous calls */
 
 #define RPC_ASYNC_SIGNATURE 0x43594E41u
 

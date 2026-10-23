@@ -1,4 +1,3 @@
-/* propsys.dll's own declarations. */
 #pragma once
 
 #define PSSTDAPI HRESULT WINAPI
@@ -8,12 +7,11 @@
 #include <mime/win32/winnls.h>
 #include <mime/win32/winuser.h>
 
-/* the elements a property value holds: 1 for a scalar, the count of a vector or a one dimensional array. */
+/* 1 for a scalar, else the element count of a vector or one dimensional array. */
 ULONG PsElementCount(const PROPVARIANT *value);
-/* whether vt names a type a PROPVARIANT may carry, as propsys checks it. */
 BOOL PsValidType(VARTYPE vt);
 BOOL PsValidValue(const PROPVARIANT *value);
-/* the size of one element of a vector of the given base type, 0 for none. */
+/* 0 when base is not a vector element type. */
 UINT PsElementSize(VARTYPE base);
 
 HRESULT PsAllocString(LPCWSTR source, LPWSTR *out);

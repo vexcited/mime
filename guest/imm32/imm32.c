@@ -1,10 +1,8 @@
 /*
- * imm32: input contexts. they keep their windows, positions, fonts and
- * status like windows. the input method is the host's: when the desktop
- * has one, win32k sends the composition messages to the window with the
- * focus and the composition strings come from it; without one nothing
- * composes. there is no ime window and no candidate list, the host's input
- * method draws its own, near the place the program says text is entered.
+ * imm32: input contexts keep their windows, positions, fonts and status like on Windows. the input method is the
+ * host's: when the desktop has one, win32k sends the composition messages and strings to the focus window,
+ * otherwise nothing composes. there is no ime window or candidate list, the host's input method draws its own near
+ * where the program says text is entered.
  */
 #define MIME_BUILD_IMM32
 #include <mime/nt.h>
@@ -22,8 +20,8 @@ WINUSERAPI HWND WINAPI GetFocus(void);
 WINUSERAPI UINT WINAPI RegisterWindowMessageW(LPCWSTR name);
 
 /*
- * the window property holding the associated context; 1 stands for an explicit NULL association. its name is a
- * registered atom, which win32k looks up by name to know which windows took no part in input methods.
+ * window property holding the associated context, 1 means an explicit NULL association. its name is a registered
+ * atom that win32k looks up to find the windows that opted out of input methods.
  */
 #define IMM_PROP_NAME L"MimeImmContext"
 static LPCWSTR imm_prop(void)
@@ -75,7 +73,7 @@ static HIMC to_handle(ULONG index)
     return (HIMC)(ULONG_PTR)((index + 1) * 4);
 }
 
-/* the context of a handle, with the lock held. */
+/* call with the lock held. */
 static IMM_CONTEXT *from_handle(HIMC himc)
 {
     ULONG_PTR v = (ULONG_PTR)himc;
@@ -116,7 +114,7 @@ static HIMC new_context(DWORD thread, BOOL is_default)
     return to_handle(i);
 }
 
-/* the default context of a thread, created on first use. */
+/* a thread's default context, created on first use. */
 static HIMC thread_context(DWORD thread)
 {
     for (ULONG i = 0; i < g_imm.Count; i++)
@@ -125,7 +123,7 @@ static HIMC thread_context(DWORD thread)
     return new_context(thread, TRUE);
 }
 
-/* the context a window uses, with the lock held. FALSE for windows of other processes. */
+/* call with the lock held. FALSE for windows of other processes. */
 static BOOL window_context(HWND hwnd, HIMC *himc)
 {
     DWORD pid = 0, thread = GetWindowThreadProcessId(hwnd, &pid);
@@ -245,7 +243,6 @@ IMMAPI BOOL WINAPI ImmAssociateContextEx(HWND hwnd, HIMC himc, DWORD flags)
     return ok;
 }
 
-/* whether the calling thread owns the context. */
 static BOOL own_context(HIMC himc)
 {
     lock();
@@ -267,7 +264,7 @@ IMMAPI LONG WINAPI ImmGetCompositionStringA(HIMC himc, DWORD index, LPVOID buffe
         return 0;
     if (index != GCS_COMPSTR && index != GCS_COMPREADSTR && index != GCS_RESULTSTR && index != GCS_RESULTREADSTR)
         return (LONG)NtUserMimeIme(MIME_IME_GET, index, 0, buffer, size);
-    /* the text in the ansi code page; clause and attribute counts are the same for single byte characters. */
+    /* converts to the ansi code page, clause and attribute counts match for single byte characters. */
     WCHAR wide[512];
     LONG bytes = (LONG)NtUserMimeIme(MIME_IME_GET, index, 0, (PUCHAR)wide, sizeof(wide));
     int chars = bytes / (int)sizeof(WCHAR);
@@ -297,7 +294,7 @@ IMMAPI BOOL WINAPI ImmGetCompositionWindow(HIMC himc, LPCOMPOSITIONFORM form)
     return c != nullptr;
 }
 
-/* tells the host where text is entered, in client coordinates of the window with the focus. */
+/* tells the host where text is entered, in client coordinates of the focus window. */
 static void report_area(const POINT *at, const RECT *exclude, LONG height)
 {
     HWND focus = GetFocus();
@@ -438,7 +435,7 @@ IMMAPI BOOL WINAPI ImmSetConversionStatus(HIMC himc, DWORD conversion, DWORD sen
     return ok;
 }
 
-/* completing or cancelling the composition is what the host's input method can be told. */
+/* the host's input method can only be told to complete or cancel the composition. */
 IMMAPI BOOL WINAPI ImmNotifyIME(HIMC himc, DWORD action, DWORD index, DWORD value)
 {
     if (action != NI_COMPOSITIONSTR || (index != CPS_COMPLETE && index != CPS_CANCEL) || !own_context(himc))
@@ -446,13 +443,13 @@ IMMAPI BOOL WINAPI ImmNotifyIME(HIMC himc, DWORD action, DWORD index, DWORD valu
     return NtUserMimeIme(MIME_IME_NOTIFY, index, 0, nullptr, 0) != 0;
 }
 
-/* no ime processed the key, which windows reports as VK_PROCESSKEY. */
+/* no ime processed the key, which Windows reports as VK_PROCESSKEY. */
 IMMAPI UINT WINAPI ImmGetVirtualKey(HWND hwnd)
 {
     return VK_PROCESSKEY;
 }
 
-/* windows creates an "IME" class window per thread; mime has none, which callers handle as NULL. */
+/* Windows creates an "IME" class window per thread. mime has none, and callers handle NULL. */
 IMMAPI HWND WINAPI ImmGetDefaultIMEWnd(HWND hwnd)
 {
     return nullptr;
@@ -493,7 +490,7 @@ IMMAPI UINT WINAPI ImmGetIMEFileNameW(HKL hkl, LPWSTR buffer, UINT size)
     return 0;
 }
 
-/* the ansi form, which turns the name to the ansi code page; no layout has an editor here, so the name is empty. */
+/* no layout has an editor here, so the name is empty. */
 IMMAPI UINT WINAPI ImmGetIMEFileNameA(HKL hkl, LPSTR buffer, UINT size)
 {
     WCHAR wide[MAX_PATH];

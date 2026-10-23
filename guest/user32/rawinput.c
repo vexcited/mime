@@ -31,7 +31,7 @@ WINUSERAPI UINT WINAPI GetRawInputDeviceInfoW(HANDLE device, UINT command, LPVOI
     return NtUserGetRawInputDeviceInfo(device, command, data, size);
 }
 
-/* the name in the ansi code page, its size in bytes; the rest as the wide version. */
+/* the device name comes back in the ansi code page with its size in bytes, other commands go to the wide version. */
 WINUSERAPI UINT WINAPI GetRawInputDeviceInfoA(HANDLE device, UINT command, LPVOID data, PUINT size)
 {
     if (command != RIDI_DEVICENAME)

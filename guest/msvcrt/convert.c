@@ -1,7 +1,4 @@
-/*
- * integer conversions: strtol and atoi families, narrow and wide, and
- * the integer to string functions.
- */
+/* integer conversions: the strtol and atoi families, narrow and wide, and integer to string. */
 #include "msvcrt_private.h"
 
 #define FL_UNSIGNED 1
@@ -31,7 +28,7 @@ static int char_is_space(unsigned c, int wide)
     return (MsvcrtCtype[c + 1] & _SPACE) != 0;
 }
 
-/* value of digit c, -1 when it is no digit or letter. */
+/* the value of digit c, or -1 when it is not a digit or letter. */
 static int digit_value(unsigned c, int wide)
 {
     if (wide) {
@@ -52,9 +49,8 @@ static int digit_value(unsigned c, int wide)
 }
 
 /*
- * msvcrt's strtoxl: clears errno, skips spaces, takes a sign and a base
- * prefix, then digits. without overflow checks the value wraps, as atoi.
- * returns the 64 bit magnitude, clamped and negated like the binary.
+ * msvcrt's strtoxl: clears errno, skips spaces, takes a sign and a base prefix, then digits. without overflow checks
+ * the value wraps like atoi. returns the 64-bit magnitude, clamped and negated like msvcrt.
  */
 static uint64_t strtox(const void *str, void *end, int base, int flags, int bits, int nocheck, int wide)
 {
@@ -279,8 +275,8 @@ long long __cdecl _wtoi64_l(const wchar_t *s, void *locale)
 }
 
 /*
- * the c99 names of the 64 bit conversions: long long and intmax_t are the 64 bit integer of _strtoi64, and the locale
- * of the _l forms is not looked at.
+ * the C99 names of the 64-bit conversions: long long and intmax_t are _strtoi64's 64-bit integer, and the _l forms
+ * ignore the locale.
  */
 long long __cdecl strtoll(const char *s, char **end, int base)
 {

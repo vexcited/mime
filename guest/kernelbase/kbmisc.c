@@ -1,7 +1,4 @@
-/*
- * small functions of kernelbase that the api sets of windows name and no other file holds: delay load failures,
- * quirks, the presence of an api set, procedure addresses for a caller and the fate of a process out of memory.
- */
+/* small api set functions with no better home: delay load failures, quirks, api set presence and so on. */
 #include "kernelbase_private.h"
 
 #define DELAY_LOAD_FAILURE_EXCEPTION 0x505
@@ -10,9 +7,8 @@
 NTSYSAPI NTSTATUS NTAPI RtlIsApiSetImplemented(PCSTR contract);
 
 /*
- * what a delay load that failed gets: windows keeps a table of modules and the stand-in functions they get, so
- * that a program survives a missing optional dll. Mime keeps none, and the failure raises the exception that
- * the table's absence would, with the module and the procedure as its arguments.
+ * windows keeps a table of stub functions so a program survives a missing optional dll. mime has none, so this raises
+ * the exception a missing table entry would, with the module and procedure as arguments.
  */
 DECLSPEC_EXPORT PVOID WINAPI DelayLoadFailureHook(LPCSTR dll, LPCSTR procedure)
 {
@@ -26,7 +22,7 @@ DECLSPEC_EXPORT PVOID WINAPI DelayLoadFailureHook(LPCSTR dll, LPCSTR procedure)
     return nullptr;
 }
 
-/* no package says which quirks it wants, so none is enabled. */
+/* no package asks for quirks, so none is enabled. */
 BOOL WINAPI QuirkIsEnabled(UINT quirk)
 {
     return FALSE;
@@ -42,10 +38,7 @@ BOOL WINAPI IsApiSetImplemented(PCSTR contract)
     return RtlIsApiSetImplemented(contract) >= 0;
 }
 
-/*
- * the address of an export, with the caller that asks. A null module is the program; a module handle with its
- * low bits set is a file mapped as data and has no exports to give.
- */
+/* a NULL module is the program; a handle with low bits set is a data mapped file and has no exports. */
 FARPROC WINAPI GetProcAddressForCaller(HMODULE module, LPCSTR name, PVOID caller)
 {
     if (!module)
@@ -58,9 +51,8 @@ FARPROC WINAPI GetProcAddressForCaller(HMODULE module, LPCSTR name, PVOID caller
 }
 
 /*
- * ends the process for want of memory, after reporting what the allocation asked for and what the process and its
- * job had: the fifth parameter tells a process that had its memory priority lowered. The values after the size
- * are a guess at what Windows' fields hold: the commit charge, the shared commit and the commit limit of the job.
+ * raises a fail fast with the failed size and the process and job memory figures; the fifth parameter flags a
+ * lowered memory priority. the values after the size are a guess: commit charge, shared commit and job commit limit.
  */
 void WINAPI TerminateProcessOnMemoryExhaustion(SIZE_T failed_size)
 {
@@ -102,7 +94,7 @@ BOOL WINAPI NeedCurrentDirectoryForExePathA(LPCSTR name)
     return strchr(name, '\\') != nullptr || GetEnvironmentVariableW(L"NoDefaultCurrentDirectoryInExePath", nullptr, 0) == 0;
 }
 
-/* the System32 of the machine the program runs on, or the directory of the 32-bit or 32-bit ARM files. */
+/* System32 for the host machine, or the directory of the 32-bit or 32-bit ARM files. */
 UINT WINAPI GetSystemWow64Directory2W(LPWSTR buffer, UINT size, WORD machine)
 {
     PCWSTR suffix;

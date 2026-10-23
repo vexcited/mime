@@ -1,8 +1,7 @@
 /*
- * the conversions between the OEM character set of the console and the ANSI character set of the windows: byte by
- * byte through a table for the ansi forms, which may work in place, and through Unicode for the wide ones. Windows
- * builds its two 256 byte tables when the session starts; here each is built the first time it is used, from the
- * code pages of the machine through Unicode, which is a guess at how windows fills it.
+ * OEM to ANSI conversions and back. the ansi forms go byte by byte through a table and may work in place, the wide
+ * forms go through Unicode. windows builds its two 256 byte tables at session start, here each is built on first use
+ * from the machine's code pages through Unicode, a guess at how windows fills them.
  */
 #include "user32_private.h"
 #include <mime/win32/winuser.h>
@@ -90,7 +89,7 @@ WINUSERAPI BOOL WINAPI CharToOemA(LPCSTR source, LPSTR destination)
     return TRUE;
 }
 
-/* the wide forms refuse a destination that is the source, which would be a different size. */
+/* the wide forms refuse a destination equal to the source, since the sizes differ. */
 WINUSERAPI BOOL WINAPI OemToCharBuffW(LPCSTR source, LPWSTR destination, DWORD count)
 {
     return source && destination && (const void *)source != (const void *)destination &&
@@ -106,7 +105,7 @@ WINUSERAPI BOOL WINAPI OemToCharW(LPCSTR source, LPWSTR destination)
     return TRUE;
 }
 
-/* a character the OEM page has no form for becomes an underscore, and the destination may take two bytes for each. */
+/* characters missing from the OEM page become an underscore. the destination may need two bytes per character. */
 WINUSERAPI BOOL WINAPI CharToOemBuffW(LPCWSTR source, LPSTR destination, DWORD count)
 {
     if (!source || !destination || (const void *)source == (const void *)destination)

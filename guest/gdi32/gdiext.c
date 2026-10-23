@@ -1,6 +1,6 @@
 /*
- * gdi32 functions that the api sweep found missing: the ANSI forms of the text functions, the small wrappers
- * over what win32k offers, palette and color table calls, line enumeration and the brush origin.
+ * the ANSI text functions, small wrappers over win32k, palette and color table calls, line enumeration and the brush
+ * origin.
  */
 #include "gdi32_private.h"
 #include <mime/win32/wingdi.h>
@@ -22,11 +22,10 @@ static BOOL dc_valid(HDC dc)
     return NtGdiGetDCDword(dc, MIME_DCDW_MAPMODE, &v);
 }
 
-/* ------------------------------------------------------------------ the ANSI forms of the text functions */
+/* ------------------------------------------------------------------ ANSI text functions */
 
 /*
- * a character code of the ANSI code page as the wide character it stands for. A double byte code has its lead
- * byte in the high byte. Characters the code page lacks fail.
+ * a double byte code has its lead byte in the high byte. characters the ANSI code page lacks fail.
  */
 static BOOL code_to_wide(UINT code, WCHAR *wide)
 {
@@ -38,7 +37,7 @@ static BOOL code_to_wide(UINT code, WCHAR *wide)
     return MultiByteToWideChar(CP_ACP, 0, bytes, n, wide, 1) == 1;
 }
 
-/* the wide characters of a range of codes, an unmapped one standing for the default character. */
+/* unmapped codes become the default character. */
 static WCHAR *wide_range(UINT first, UINT last)
 {
     if (last < first || last - first > 0xFFFF)
@@ -183,7 +182,7 @@ WINGDIAPI BOOL WINAPI GetTextExtentExPointI(HDC dc, LPWORD glyphs, int count, in
                                  size, MIME_GTEE_INDICES);
 }
 
-/* the glyphs of an ANSI string; a count of 0 is 0 glyphs, a negative one -1 (GDI_ERROR) with a bad parameter. */
+/* a count of 0 gives 0 glyphs, a negative one GDI_ERROR with a bad parameter. */
 WINGDIAPI DWORD WINAPI GetGlyphIndicesA(HDC dc, LPCSTR text, int count, LPWORD indices, DWORD flags)
 {
     if (count < 0) {
@@ -270,7 +269,7 @@ WINGDIAPI BOOL WINAPI RemoveFontResourceA(LPCSTR name)
     return RemoveFontResourceExA(name, 0, nullptr);
 }
 
-/* the rasterizer: truetype is enabled and available, the language id is the system's; fewer bytes than the structure holds copy as far as they go. */
+/* truetype is enabled and available, the language id is the system's. a short buffer gets what fits. */
 WINGDIAPI BOOL WINAPI GetRasterizerCaps(LPRASTERIZER_STATUS status, UINT bytes)
 {
     RASTERIZER_STATUS full = {sizeof(RASTERIZER_STATUS), TT_ENABLED | TT_AVAILABLE, 0x0409};
@@ -351,10 +350,9 @@ WINGDIAPI HBRUSH WINAPI CreateDIBPatternBrush(HGLOBAL packed, UINT usage)
 }
 
 /*
- * fills the area around a point with the brush of the dc, reading the pixels back to find where the area ends.
- * FLOODFILLBORDER spreads over everything that is not the color given, FLOODFILLSURFACE over everything that is.
- * The point itself must be inside the clip and be part of the area. The area is built as a region of runs and
- * painted in one call.
+ * fills around a point with the dc's brush, reading pixels back to find the edge. FLOODFILLBORDER spreads over
+ * everything that is not the given color, FLOODFILLSURFACE over everything that is. the point must be inside the
+ * clip and part of the area. the area is built as a region of runs and painted in one call.
  */
 BOOL FloodFillDc(HDC dc, int x, int y, COLORREF color, UINT type)
 {
@@ -451,8 +449,8 @@ WINGDIAPI BOOL WINAPI FloodFill(HDC dc, int x, int y, COLORREF color)
 }
 
 /*
- * the points of a line, the way windows steps it: along the longer axis, a step in the other when the error
- * term goes below zero. The end point is not given.
+ * steps like windows: along the longer axis, stepping the other when the error term goes below zero. the end point
+ * is not given.
  */
 WINGDIAPI BOOL WINAPI LineDDA(int x0, int y0, int x1, int y1, LINEDDAPROC proc, LPARAM param)
 {
@@ -483,7 +481,7 @@ WINGDIAPI BOOL WINAPI LineDDA(int x0, int y0, int x1, int y1, LINEDDAPROC proc, 
     return TRUE;
 }
 
-/* xform1 followed by xform2: the product of the matrices as windows lays them out, row vectors. */
+/* first then second: the matrix product in windows' row vector layout. */
 WINGDIAPI BOOL WINAPI CombineTransform(LPXFORM out, const XFORM *first, const XFORM *second)
 {
     if (!out || !first || !second)
@@ -500,8 +498,7 @@ WINGDIAPI BOOL WINAPI CombineTransform(LPXFORM out, const XFORM *first, const XF
 }
 
 /*
- * there is no aspect ratio filter on a display, and a printer's is its device's; this is the answer a device with
- * none gives.
+ * a display has no aspect ratio filter and a printer's is its device's, so this answers as a device without one.
  */
 WINGDIAPI BOOL WINAPI GetAspectRatioFilterEx(HDC dc, LPSIZE size)
 {
@@ -524,8 +521,8 @@ WINGDIAPI BOOL WINAPI UpdateColors(HDC dc)
 }
 
 /*
- * a brush is realized as it is selected, so there is nothing to undo; a palette's realization is not kept, and
- * any other object only has to exist. The stock objects of a program count as existing.
+ * a brush is realized when selected, so there is nothing to undo. a palette's realization is not kept, and any other
+ * object only has to exist, stock objects included.
  */
 WINGDIAPI BOOL WINAPI UnrealizeObject(HGDIOBJ object)
 {
@@ -536,7 +533,7 @@ WINGDIAPI BOOL WINAPI UnrealizeObject(HGDIOBJ object)
     return GetObjectType(object) != 0;
 }
 
-/* ------------------------------------------------------------------ the brush origin of a dc */
+/* ------------------------------------------------------------------ brush origin */
 
 #define ORIGIN_MAX 64
 
@@ -555,7 +552,7 @@ void GdiForgetBrushOrigin(HDC dc)
     RtlReleaseSRWLockExclusive(&g_origin_lock);
 }
 
-/* the origin is kept and read back, and drawing does not use it: patterns always start at the dc's origin. */
+/* the origin is only kept and read back: patterns always start at the dc's origin. */
 BOOL GdiSwapBrushOrigin(HDC dc, int x, int y, LPPOINT old)
 {
     if (!dc_valid(dc))
@@ -598,7 +595,7 @@ WINGDIAPI BOOL WINAPI GetBrushOrgEx(HDC dc, LPPOINT point)
 
 /* ------------------------------------------------------------------ dib color tables */
 
-/* the color table of the dib section selected into a dc: how many entries it gave, 0 for other bitmaps. */
+/* returns how many entries were copied, 0 when the selected bitmap is not a dib section. */
 WINGDIAPI UINT WINAPI GetDIBColorTable(HDC dc, UINT start, UINT count, RGBQUAD *colors)
 {
     if (!count)

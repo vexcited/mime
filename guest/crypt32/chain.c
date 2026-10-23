@@ -1,11 +1,9 @@
 /*
- * certificate chains: chain engines, chain building, the chain policies
- * and CertFindChainInStore.
+ * certificate chains: engines, chain building, policies and CertFindChainInStore.
  *
- * a chain that reaches a self signed certificate is trusted when the
- * engine's Root store holds it: the logical Root store of the current user
- * or the local machine, with the roots the host's bundle seeds into the
- * machine's AuthRoot store, or the engine's exclusive or restricted roots.
+ * a chain ending in a self signed certificate is trusted when the engine's Root store holds it: the logical Root
+ * store of the current user or local machine, plus the roots the host's bundle seeds into the machine's AuthRoot
+ * store, or the engine's exclusive or restricted roots.
  */
 #include "crypt32_private.h"
 
@@ -76,11 +74,10 @@ BOOL CrUsageAllowed(PCCERT_CONTEXT cert, const CERT_USAGE_MATCH *usage)
 /* ------------------------------------------------------------------ engines */
 
 /*
- * an engine searches its world for issuers and trusts the roots of its
- * location's Root store, or only its exclusive or restricted root store
- * when it has one. the Disallowed store marks certificates distrusted.
- * the default engines of the current user and the local machine are built
- * once and rebuilt when the registry under their stores changes.
+ * an engine searches its stores for issuers and trusts the roots of its location's Root store, or only its
+ * exclusive or restricted roots when it has them. the Disallowed store marks certificates distrusted. the default
+ * engines of the current user and local machine are built once, and rebuilt when the registry under their stores
+ * changes.
  */
 static HCERTSTORE open_system(DWORD location, PCWSTR name)
 {
@@ -112,7 +109,7 @@ static cr_engine *new_engine(DWORD flags)
     return engine;
 }
 
-/* the system stores of a location: its roots, the intermediate authorities, the user's own and trusted ones. */
+/* a location's roots, intermediate authorities, and the user's own and trusted stores. */
 static void add_system_stores(cr_engine *engine, DWORD location)
 {
     engine->generation = CrRegGeneration;
@@ -144,7 +141,7 @@ static void release_engine(cr_engine *engine)
 static SRWLOCK default_lock = SRWLOCK_INIT;
 static cr_engine *defaults[2];
 
-/* whether a default engine's stores are older than the registry, looked at once a second at most. */
+/* whether a default engine's stores are older than the registry, checked at most once a second. */
 static BOOL engine_stale(cr_engine *engine)
 {
     if (engine->generation != CrRegGeneration)
@@ -157,7 +154,7 @@ static BOOL engine_stale(cr_engine *engine)
            (engine->disallowed && CrStoreChanged(CrStore(engine->disallowed)));
 }
 
-/* the default engine of a location, referenced, built on first use and after its stores changed. */
+/* returns a reference; built on first use and again after its stores changed. */
 static cr_engine *default_engine(BOOL machine, BOOL rebuild)
 {
     AcquireSRWLockExclusive(&default_lock);
@@ -224,7 +221,7 @@ static BOOL is_default(HCERTCHAINENGINE handle)
     return handle == HCCE_CURRENT_USER || handle == HCCE_LOCAL_MACHINE || handle == HCCE_SERIAL_LOCAL_MACHINE;
 }
 
-/* the engine of a handle, referenced; null for a handle that is not one. */
+/* returns a reference, or null when the handle is not an engine. */
 static cr_engine *engine_of(HCERTCHAINENGINE handle)
 {
     if (is_default(handle))
@@ -268,7 +265,6 @@ static BOOL key_id_of(PCCERT_CONTEXT cert, BYTE *id, DWORD *size)
     return CertGetCertificateContextProperty(cert, CERT_KEY_IDENTIFIER_PROP_ID, id, size);
 }
 
-/* the authority key identifier of a certificate, if it has one. */
 static BOOL authority_key_id(PCCERT_CONTEXT cert, BYTE *id, DWORD *size)
 {
     const CERT_INFO *info = cert->pCertInfo;
@@ -392,8 +388,8 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
         *ppChainContext = nullptr;
     if (!pCertContext || !ppChainContext || !pChainPara || pvReserved)
         return CrFail(E_INVALIDARG);
-    /* the parameters are read as far as their size says, as the structure grew with the versions: a program that gives
-       a size of 0 asks for nothing in particular. */
+    /* the structure grew over versions, so read only as much as cbSize covers. a size of 0 asks for nothing in
+       particular. */
     CERT_CHAIN_PARA normalized = {};
     memcpy(&normalized, pChainPara, pChainPara->cbSize < sizeof(normalized) ? pChainPara->cbSize : sizeof(normalized));
     normalized.cbSize = sizeof(normalized);
@@ -605,10 +601,10 @@ static BOOL server_name_matches(PCCERT_CONTEXT cert, LPCWSTR host)
 }
 
 /*
- * whether the chain ends in one of the roots of the Microsoft program: the certificates the system trusts for its own
- * code. They are known by the SHA-1 hash of the certificate; the five here are the ones the root store of Windows
- * keeps (Microsoft Root Authority, Microsoft Authenticode(tm) Root Authority, Microsoft Root Certificate Authority and
- * its 2010 and 2011 successors). The test roots and the key lists of the program are not looked at.
+ * whether the chain ends in a Microsoft program root, a certificate the system trusts for its own code, known by its
+ * SHA-1 hash. these are the five the Windows root store keeps: Microsoft Root Authority, Microsoft Authenticode Root
+ * Authority, Microsoft Root Certificate Authority and its 2010 and 2011 successors. test roots and the program's key
+ * lists are not checked.
  */
 static BOOL microsoft_root(PCCERT_CHAIN_CONTEXT chain)
 {

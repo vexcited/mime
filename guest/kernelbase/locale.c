@@ -1,6 +1,6 @@
 /*
- * locales: identifiers and names, the information about a locale, the default locales and their lists. The data of the
- * locales is in tables that tools/nls/genlocale.py makes of Unicode CLDR and of the constants of windows.
+ * locales: identifiers, names, locale information and the default locales. The tables are built from Unicode CLDR and
+ * Windows constants.
  */
 #include "kernelbase_private.h"
 #include "nls_locslots.h"
@@ -40,7 +40,7 @@ BOOL KbLocaleIsNeutral(UINT locale)
     return is_neutral(locale);
 }
 
-/* the locale a neutral one stands for when it has to be specific. */
+/* the specific locale a neutral one stands for. */
 UINT KbLocaleSpecific(UINT locale)
 {
     return g_nls_heads[locale].Default;
@@ -48,7 +48,7 @@ UINT KbLocaleSpecific(UINT locale)
 
 /* ------------------------------------------------------------------ names and identifiers */
 
-/* names are ascii but for the few of other scripts, so the comparison folds the ascii letters. */
+/* names are almost all ascii, so only ascii letters are folded. */
 static int compare_names(PCWSTR a, PCWSTR b)
 {
     for (;; a++, b++) {
@@ -111,11 +111,11 @@ static UINT find_neutral_lcid(LCID lcid)
     return NO_LOCALE;
 }
 
-/* the alternate sort orders: a name with an underscore, and the identifier with the sort in its high word. */
+/* alternate sorts: the name has an underscore, the identifier has the sort in its high word. */
 typedef NLS_ALTERNATE ALTERNATE_SORT;
 #define g_alternate_sorts g_nls_alternates
 
-/* names windows still has for identifiers without a locale of the data. */
+/* names Windows still knows for identifiers that have no locale data. */
 static const ALTERNATE_SORT g_legacy_names[] = {
     {0x0000081A, L"sr-Latn-CS"}, {0x00000C1A, L"sr-Cyrl-CS"}, {0x00000501, L"qps-ploc"},
     {0x000005FE, L"qps-ploca"},  {0x00000901, L"qps-Latn-x-sh"}, {0x000009FF, L"qps-plocm"},
@@ -159,7 +159,7 @@ static LCID system_lcid(void)
     return g_system_lcid;
 }
 
-/* the identifiers that stand for a default instead of a locale. */
+/* maps the identifiers that stand for a default to a real locale. */
 LCID KbResolveLcid(LCID lcid)
 {
     LANGID lang = LANGIDFROMLCID(lcid);
@@ -177,8 +177,8 @@ LCID KbResolveLcid(LCID lcid)
 }
 
 /*
- * the locale an identifier stands for. The language part chooses it, the sort order of the high word is ignored, and
- * a neutral identifier gives a neutral locale only when the caller accepts one.
+ * only the language part picks the locale, the sort order in the high word is ignored. A neutral identifier gives a
+ * neutral locale only when allow_neutral is set.
  */
 UINT KbLocaleFromLcid(LCID lcid, BOOL allow_neutral)
 {
@@ -189,7 +189,7 @@ UINT KbLocaleFromLcid(LCID lcid, BOOL allow_neutral)
         return locale;
     locale = find_neutral_lcid(lang);
     if (locale == NO_LOCALE) {
-        /* a neutral language alone is the language of its default region. */
+        /* a bare neutral language means its default region. */
         LCID primary = lang & 0x3FF;
         if (lang == primary) {
             for (ULONG i = 0; i < RTL_NUMBER_OF(g_nls_neutral_lcids); i++)
@@ -209,18 +209,18 @@ BOOL KbIsSupportedLcid(LCID lcid)
     return KbLocaleFromLcid(lcid, TRUE) != NO_LOCALE;
 }
 
-/* the ansi, oem or mac code page of a locale: 0, 1 or 2. */
+/* kind is 0 for ansi, 1 for oem, 2 for mac. */
 UINT KbLocaleCodePage(LCID lcid, UINT kind)
 {
     UINT locale = KbLocaleFromLcid(lcid, FALSE);
     if (locale == NO_LOCALE)
         locale = english();
     INT cp = KbLocaleNumber(locale, kind == 0 ? NLS_N_IDEFAULTANSICODEPAGE : kind == 1 ? NLS_N_IDEFAULTCODEPAGE : NLS_N_IDEFAULTMACCODEPAGE);
-    /* a locale without a code page of its own, such as the Indian ones, uses the one of utf-8. */
+    /* locales with no code page of their own, like the Indian ones, use utf-8. */
     return cp > 1 ? (UINT)cp : CP_UTF8;
 }
 
-/* the locale of a name: the empty name is the invariant locale, NULL the user's. */
+/* the empty name is the invariant locale, NULL the user's. */
 UINT KbLocaleFromName(LPCWSTR name)
 {
     if (!name)
@@ -347,10 +347,10 @@ int WINAPI LCIDToLocaleName(LCID locale, LPWSTR name, int size, DWORD flags)
         return 0;
     }
     LCID resolved = KbResolveLcid(locale);
-    /* the Dari identifier is the Persian locale of Iran. */
+    /* Dari maps to the Persian locale of Iran. */
     if ((resolved & 0xFFFF) == 0x008C)
         resolved = (resolved & ~0xFFFFu) | 0x0429;
-    /* the alternate sort orders have names of their own. */
+    /* alternate sorts have names of their own. */
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_alternate_sorts); i++)
         if (g_alternate_sorts[i].Lcid == resolved)
             return copy_locale_name(g_alternate_sorts[i].Name, name, size);
@@ -359,7 +359,7 @@ int WINAPI LCIDToLocaleName(LCID locale, LPWSTR name, int size, DWORD flags)
         for (ULONG i = 0; i < RTL_NUMBER_OF(g_legacy_names); i++)
             if (g_legacy_names[i].Lcid == (resolved & 0xFFFF))
                 return copy_locale_name(g_legacy_names[i].Name, name, size);
-        /* an identifier of no language at all, such as 0x2000, is taken for the one of the user. */
+        /* identifiers with no language, such as 0x2000, mean the user's locale. */
         if (PRIMARYLANGID(resolved) == 0 && (resolved & 0xFFFF) >= 0x2000 && (resolved & 0xFFFF) < 0x5000)
             l = KbLocaleFromLcid(user_lcid(), (flags & LOCALE_ALLOW_NEUTRAL_NAMES) != 0);
     }
@@ -371,9 +371,8 @@ int WINAPI LCIDToLocaleName(LCID locale, LPWSTR name, int size, DWORD flags)
 }
 
 /*
- * whether a name is a well formed language tag: a language of two or three letters, a script of four, a region of two
- * letters or three digits, variants, extensions after a single letter and private use after an x, the subtags separated
- * by hyphens or underscores.
+ * a well formed tag: a 2 or 3 letter language, a 4 letter script, a region of 2 letters or 3 digits, variants,
+ * extensions after a single letter and private use after x, separated by hyphens or underscores.
  */
 static BOOL well_formed_tag(PCWSTR name)
 {
@@ -402,7 +401,7 @@ static BOOL well_formed_tag(PCWSTR name)
             digits &= subtag[i] >= '0' && subtag[i] <= '9';
         }
         if (first) {
-            /* the one letter i is the start of the old tags, and x a tag of private use. */
+            /* a lone i starts a legacy tag, a lone x a private use one. */
             if (!alpha || (n < 2 && !((subtag[0] | 0x20) == 'i' || (subtag[0] | 0x20) == 'x')) || n > 3)
                 return FALSE;
             if ((subtag[0] | 0x20) == 'x' && n == 1)
@@ -410,7 +409,7 @@ static BOOL well_formed_tag(PCWSTR name)
             first = FALSE;
             position = position == 5 ? 5 : 1;
         } else if (position == 5) {
-            /* anything after the private use mark. */
+            /* anything goes after the private use mark. */
         } else if (n == 1) {
             if ((subtag[0] | 0x20) == 'x')
                 position = 5;
@@ -438,7 +437,7 @@ static BOOL well_formed_tag(PCWSTR name)
     return TRUE;
 }
 
-/* a name with its underscores written as hyphens, which is how a tag is looked up. */
+/* tags are looked up with underscores turned into hyphens. */
 static BOOL normalized_name(PCWSTR name, WCHAR *out)
 {
     SIZE_T n = 0;
@@ -452,8 +451,8 @@ static BOOL normalized_name(PCWSTR name, WCHAR *out)
 }
 
 /*
- * the locale of a tag that names a script a locale of its region writes by default, without the script: zh-Hans-CN is
- * zh-CN. Returns NO_LOCALE when the name has no such short form.
+ * a tag whose script is its region's default resolves without the script: zh-Hans-CN is zh-CN. NO_LOCALE when there
+ * is no such short form.
  */
 static UINT find_without_script(PCWSTR name)
 {
@@ -470,7 +469,7 @@ static UINT find_without_script(PCWSTR name)
     UINT locale = find_name(shorter);
     if (locale == NO_LOCALE)
         return NO_LOCALE;
-    /* the script is redundant when the locale found has it as the one it writes. */
+    /* the script is redundant when it is the locale's default one. */
     PCWSTR scripts = KbLocaleText(locale, NLS_S_SSCRIPTS);
     WCHAR script[6] = {dash[1], dash[2], dash[3], dash[4], ';', 0};
     script[0] = (WCHAR)(script[0] & ~0x20);
@@ -512,8 +511,8 @@ LCID WINAPI LocaleNameToLCID(LPCWSTR name, DWORD flags)
 }
 
 /*
- * the locale a name resolves to: itself when windows has it, else the closest one found by taking subtags off the end,
- * and a neutral locale becomes its default region. A name no locale starts with resolves to the empty name.
+ * a name resolves to itself when Windows has it, else to the closest locale found by dropping trailing subtags. A
+ * neutral locale becomes its default region, and a name that matches nothing resolves to the empty name.
  */
 int WINAPI ResolveLocaleName(LPCWSTR name, LPWSTR resolved, int size)
 {
@@ -523,7 +522,7 @@ int WINAPI ResolveLocaleName(LPCWSTR name, LPWSTR resolved, int size)
     }
     WCHAR work[LOCALE_NAME_MAX_LENGTH];
     SIZE_T length = 0;
-    /* the sort order after an underscore, the extensions after a singleton and the private use are dropped first. */
+    /* the sort after an underscore, extensions after a singleton and private use are dropped first. */
     for (; name[length] && length < RTL_NUMBER_OF(work) - 1; length++) {
         WCHAR c = name[length];
         if (c == '_')
@@ -577,7 +576,7 @@ LCID WINAPI ConvertDefaultLocale(LCID locale)
         return resolved;
     if (locale_lcid(l, FALSE) == 0x1000 || (resolved & 0xFFFF) == 0x1000)
         return 0x0C00;
-    /* a neutral identifier is the main region of its language, a specific one stays as it is with its sort order. */
+    /* a neutral identifier becomes its language's main region, a specific one keeps its sort order. */
     if (find_lcid(resolved & 0xFFFF) != NO_LOCALE)
         return resolved;
     return locale_lcid(l, FALSE);
@@ -592,7 +591,7 @@ BOOL WINAPI IsValidLocale(LCID locale, DWORD flags)
     LANGID lang = LANGIDFROMLCID(locale);
     if (find_lcid(lang) != NO_LOCALE)
         return TRUE;
-    /* neutral identifiers with a script in them are locales, those of a bare language are not. */
+    /* neutral identifiers with a script are locales, bare languages are not. */
     return lang > 0x3FF && find_neutral_lcid(lang) != NO_LOCALE;
 }
 
@@ -605,7 +604,7 @@ BOOL WINAPI IsValidLocaleName(LPCWSTR name)
 
 /* ------------------------------------------------------------------ geographic location */
 
-/* the nation SetUserGeoID kept in the international settings, 0 when none was. */
+/* the nation SetUserGeoID stored in the international settings, or 0. */
 static GEOID stored_nation(void)
 {
     HKEY key;
@@ -647,9 +646,9 @@ int WINAPI GetUserDefaultGeoName(LPWSTR name, int size)
 
 typedef struct LOCALE_VALUE {
     PCWSTR Text;  /* string value, or NULL when numeric. */
-    DWORD Number; /* numeric value. */
-    BOOL Hex;     /* numeric values printed as four hex digits. */
-    BOOL Width3;  /* and the one printed with three digits at least. */
+    DWORD Number;
+    BOOL Hex;     /* printed as four hex digits. */
+    BOOL Width3;  /* printed with at least three digits. */
     BOOL Binary;  /* LOCALE_FONTSIGNATURE. */
 } LOCALE_VALUE;
 
@@ -668,7 +667,7 @@ static const NLS_ITEM *find_item(LCTYPE type)
     return nullptr;
 }
 
-/* looks up one item; returns FALSE for unknown types. */
+/* FALSE for unknown types. */
 static BOOL locale_value(UINT locale, LCTYPE type, BOOL genitive, LOCALE_VALUE *v)
 {
     memset(v, 0, sizeof(*v));
@@ -676,7 +675,7 @@ static BOOL locale_value(UINT locale, LCTYPE type, BOOL genitive, LOCALE_VALUE *
         v->Binary = TRUE;
         return TRUE;
     }
-    /* the locales of the data are not custom ones. */
+    /* no built-in locale is a custom one. */
     if (type == 0x7D)
         return TRUE;
     if (genitive && type >= LOCALE_SMONTHNAME1 && type <= LOCALE_SMONTHNAME12) {
@@ -687,7 +686,7 @@ static BOOL locale_value(UINT locale, LCTYPE type, BOOL genitive, LOCALE_VALUE *
         v->Text = KbLocaleText(locale, NLS_S_GENABBREV1 + (type - LOCALE_SABBREVMONTHNAME1));
         return TRUE;
     }
-    /* the types above the ones of windows are the data the system keeps for itself. */
+    /* types from 0x3000 up are the system's private data, not Windows types. */
     const NLS_ITEM *item = type >= 0x3000 ? nullptr : find_item(type);
     if (!item)
         return FALSE;
@@ -712,7 +711,7 @@ static int get_locale_info(UINT locale, LCTYPE lctype, LPWSTR data, int size)
         return 0;
     }
     LOCALE_VALUE v;
-    /* the name of the sort order is of the alternate sorts alone. */
+    /* only alternate sorts have a sort name. */
     if (type == LOCALE_SSORTNAME) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
@@ -846,7 +845,7 @@ BOOL WINAPI SetLocaleInfoA(LCID locale, LCTYPE type, LPCSTR data)
 
 /* ------------------------------------------------------------------ enumeration */
 
-/* the identifiers of the locales and of the alternate sort orders, in increasing order, as the flags ask for them. */
+/* locale and alternate sort identifiers in increasing order, filtered by flags. */
 static BOOL enumerate_identifiers(DWORD flags, BOOL (*emit)(LCID, PVOID), PVOID context)
 {
     DWORD kind = flags & (LCID_INSTALLED | LCID_SUPPORTED);
@@ -855,7 +854,7 @@ static BOOL enumerate_identifiers(DWORD flags, BOOL (*emit)(LCID, PVOID), PVOID 
         KbSetError(ERROR_INVALID_FLAGS);
         return FALSE;
     }
-    /* the locales, among them the traditional sort order of Spanish that has an identifier of its own. */
+    /* traditional Spanish sort is among the locales, it has its own identifier. */
     ULONG i = 0, k = 0;
     while (kind && (i < RTL_NUMBER_OF(g_nls_lcids) || k < RTL_NUMBER_OF(g_alternate_sorts))) {
         LCID next = 0xFFFFFFFFu;
@@ -954,19 +953,18 @@ BOOL WINAPI EnumSystemLocalesEx(LOCALE_ENUMPROCEX proc, DWORD flags, LPARAM para
     return TRUE;
 }
 
-/* the locales of the data, for the other files of the national language support. */
 UINT KbLocaleCount(void)
 {
     return RTL_NUMBER_OF(g_nls_heads);
 }
 
-/* the calendars of a locale, the first its own and the others the ones it also supports; the list ends with a zero. */
+/* the locale's own calendar first, then the others it supports, ended by a zero. */
 const UINT8 *KbLocaleCalendars(UINT locale)
 {
     return &g_nls_callist[locale * 8];
 }
 
-/* a string of the record of a calendar for a locale, NULL when the locale has none. */
+/* NULL when the locale has no such calendar. */
 PCWSTR KbLocaleCalendarText(UINT locale, UINT kind, UINT slot)
 {
     UINT16 key = (UINT16)(locale * 8 + kind);
@@ -1062,10 +1060,7 @@ BOOL WINAPI GetFileMUIPath(DWORD flags, PCWSTR file, PWSTR language, PULONG lang
 
 /* ------------------------------------------------------------------ language groups */
 
-/*
- * language groups 1 to 17 are valid. The locales of a group are those whose ansi code page the group stands for, Western
- * Europe being the Latin 1 and Greek ones and the group of the others.
- */
+/* groups 1 to 17 are valid. A locale belongs to the group of its ansi code page. */
 BOOL WINAPI IsValidLanguageGroup(LGRPID group, DWORD flags)
 {
     return !(flags & ~(DWORD)(LGRPID_INSTALLED | LGRPID_SUPPORTED)) &&
@@ -1095,7 +1090,6 @@ static const struct {
     {LGRPID_ARMENIAN, L"Armenian"},
 };
 
-/* the group of a locale, by the code page it uses. */
 static LGRPID language_group_of(UINT locale)
 {
     switch (g_nls_heads[locale].Lcid & 0xFFFF) {
@@ -1188,9 +1182,8 @@ static BOOL script_list_valid(PCWSTR s, int n)
 }
 
 /*
- * whether the scripts of a text are all among those of a locale. Both are lists of four letter names, each followed
- * by a semicolon. With the flag 1 the common script Latn is let through. FALSE with no error is a script that is not
- * in the locale's list, with the error 87 for lists that are not in the form.
+ * both lists are four letter script names, each followed by a semicolon. Flag 1 lets the common script Latn through.
+ * FALSE with no error means a script is missing from the locale's list, error 87 means a malformed list.
  */
 BOOL WINAPI VerifyScripts(DWORD flags, LPCWSTR locale_scripts, int locale_length, LPCWSTR test_scripts, int test_length)
 {

@@ -1,9 +1,8 @@
 /*
- * the window procedure: creation as windows' host does it, the messages
- * of the edit control and of rich edit, ansi windows converting their
- * strings, EN_MSGFILTER, and the notifications windows defers to the end
- * of the outermost message: EN_MAXTEXT, EN_SELCHANGE, EN_ERRSPACE and
- * EN_CHANGE, in that order.
+ * the window procedure: creation, the edit control and rich edit messages,
+ * string conversion for ansi windows, EN_MSGFILTER, and the notifications
+ * windows defers to the end of the outermost message: EN_MAXTEXT,
+ * EN_SELCHANGE, EN_ERRSPACE and EN_CHANGE, in that order.
  */
 #include "richedit_private.h"
 
@@ -125,9 +124,9 @@ static void flush(RE *e)
     }
 }
 
-/* ------------------------------------------------------------------ the selection */
+/* ------------------------------------------------------------------ selection */
 
-/* as windows' range clamps: both ends within the story, an empty one not past the final mark. */
+/* clamps like windows' ranges: both ends inside the story, an empty one not past the final mark. */
 void ReSetSelection(RE *e, UINT anchor, UINT active)
 {
     UINT len = e->len;
@@ -153,7 +152,7 @@ void ReSetSelection(RE *e, UINT anchor, UINT active)
     RePlaceCaret(e);
 }
 
-/* EM_SETSEL and EM_EXSETSEL; returns the larger end. */
+/* EM_SETSEL and EM_EXSETSEL, returns the larger end. */
 static LRESULT set_sel(RE *e, LONG start, LONG end)
 {
     UINT anchor, active;
@@ -202,7 +201,7 @@ static BOOL is_rtf(const char *s)
     return p[0] == 'r' && p[1] == 't' && p[2] == 'f';
 }
 
-/* turns crlf and lone line feeds into paragraph marks; a single line control keeps the first line. */
+/* crlf and lone line feeds become paragraph marks. a single line control keeps the first line. */
 static UINT cleanse(RE *e, WCHAR *s, UINT n)
 {
     UINT k = 0;
@@ -221,7 +220,7 @@ static UINT cleanse(RE *e, WCHAR *s, UINT n)
     return k;
 }
 
-/* SetText: the whole story or the selection, plain or rtf; returns 1 or the characters inserted. */
+/* SetText: the whole story or the selection, plain or rtf. returns 1 or the characters inserted. */
 static LRESULT set_text(RE *e, DWORD flags, UINT cp, const void *data)
 {
     BOOL sel = (flags & ST_SELECTION) != 0;
@@ -344,7 +343,7 @@ static LRESULT get_text_length_ex(RE *e, const GETTEXTLENGTHEX *gl)
     return k;
 }
 
-/* copies wide text out as the window's kind of string, terminated; returns what was copied. */
+/* copies wide text out in the window's kind of string, terminated. returns what was copied. */
 static LRESULT put_string(RE *e, const WCHAR *s, UINT n, void *out, UINT room, BOOL terminate)
 {
     if (!out)
@@ -388,7 +387,7 @@ static BOOL ansi_cf(UINT size)
     return size == sizeof(CHARFORMATA) || size == sizeof(CHARFORMAT2A);
 }
 
-/* a CHARFORMAT of any size as a full CHARFORMAT2W, and the mask it carries. */
+/* any CHARFORMAT size widened to a CHARFORMAT2W, returning the mask it carries. */
 static DWORD cf_in(const void *p, CHARFORMAT2W *cf)
 {
     UINT size = *(const UINT *)p;
@@ -889,7 +888,7 @@ static LRESULT on_create(RE *e)
     return 0;
 }
 
-/* WM_SETFONT: the font's format for all the text, or as the default when there is none. */
+/* WM_SETFONT: the font's format for all the text, or as the default when there is no text. */
 static void set_font(RE *e, HFONT font, BOOL redraw)
 {
     RE_FMT f;
@@ -914,7 +913,7 @@ static void set_font(RE *e, HFONT font, BOOL redraw)
         ReCreateCaret(e);
 }
 
-/* ------------------------------------------------------------------ the ole interface */
+/* ------------------------------------------------------------------ ole interface */
 
 typedef struct RE_OLE {
     const void *vtbl;
@@ -970,7 +969,7 @@ static LRESULT get_ole(RE *e, void **out)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ links and the cursor */
+/* ------------------------------------------------------------------ links and cursor */
 
 static BOOL is_link(RE *e, UINT cp)
 {
@@ -990,7 +989,7 @@ static UINT link_at_point(RE *e, int x, int y)
         return (UINT)-1;
     BOOL at_end;
     UINT cp = ReCpFromPoint(e, x, y, &at_end);
-    /* the point must be over the character itself, not past the line's end. */
+    /* the point must be over the character itself, not past the end of the line. */
     UINT l = ReLineOf(e, cp, at_end);
     const RE_LINE *line = &e->lines[l];
     int vx = x - e->view.left + e->xscroll - line->x;
@@ -1096,7 +1095,7 @@ static BOOL dialog_char(RE *e, WCHAR c)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ the dispatch */
+/* ------------------------------------------------------------------ dispatch */
 
 static BOOL filtered(RE *e, UINT msg)
 {

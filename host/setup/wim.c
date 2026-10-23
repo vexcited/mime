@@ -44,24 +44,21 @@ enum {
     WIM_CTYPE_LZMS = 3,
 };
 
-/*
- * a solid resource compresses many blobs as one stream. it starts with
- * its own header and a table holding the compressed size of every chunk.
- */
+/* solid resources compress multiple blobs in one stream, prefixed by a header and per-chunk compressed sizes. */
 typedef struct WimSolid {
     WimResource res;
     uint64_t size; /* uncompressed */
     uint32_t chunk_size;
     uint32_t ctype;
     uint64_t chunk_count;
-    uint64_t *chunk_start; /* chunk_count + 1 file offsets, loaded on first use */
+    uint64_t *chunk_start; /* chunk_count + 1 file offsets, loaded on first use. */
 } WimSolid;
 
 typedef struct WimBlob {
-    WimResource res; /* the blob's own resource, unless it lives in a solid one */
+    WimResource res; /* the blob's own resource, unless it lives in a solid one. */
     uint64_t size;
-    int32_t solid; /* index into the solid resources or -1 */
-    uint64_t solid_offset; /* within the uncompressed solid stream */
+    int32_t solid; /* index into the solid resources or -1. */
+    uint64_t solid_offset; /* within the uncompressed solid stream. */
     uint8_t hash[20];
     bool used;
 } WimBlob;
@@ -76,15 +73,15 @@ struct MimeWim {
     WimResource blob_table_res;
     WimResource xml_res;
 
-    WimBlob *blobs; /* open addressing hash table keyed by sha-1 */
+    WimBlob *blobs; /* open addressing hash table keyed by SHA-1. */
     size_t blob_capacity;
-    WimResource *metadata; /* metadata resources, in image order */
+    WimResource *metadata; /* metadata resources, in image order. */
     uint32_t metadata_count;
 
     uint16_t *xml;
     size_t xml_chars;
 
-    uint8_t *meta_data; /* decompressed metadata of the selected image */
+    uint8_t *meta_data; /* decompressed metadata of the selected image. */
     uint64_t meta_size;
     MimeWimDentry *root;
     MimeWimDentry *dentry_pool;
@@ -206,9 +203,8 @@ static bool decompress_chunk(MimeWim *wim, uint32_t ctype, const uint8_t *in, si
 }
 
 /*
- * reads a resource and streams the uncompressed bytes into sink.
- * compressed resources start with a chunk table that holds the offsets
- * of chunks 1..n-1 relative to the end of the table.
+ * streams a resource into sink. compressed resources begin with offsets of chunks 1..n-1 relative to the end
+ * of the chunk table.
  */
 static bool read_resource(MimeWim *wim, const WimResource *res, MimeWimSink sink, void *ctx)
 {
@@ -429,10 +425,8 @@ static bool add_solid(MimeWim *wim, const WimResource *res)
 }
 
 /*
- * a run of entries flagged solid lists solid resources, marked by a magic
- * uncompressed size, and the blobs inside them. a blob offset counts from
- * the start of the first resource of the run, as if the run's resources
- * were one stream.
+ * solid entries describe resources marked by a magic uncompressed size, followed by their blobs. blob offsets
+ * count from the first resource in the run, treating the resources as one stream.
  */
 static bool load_solid_run(MimeWim *wim, const uint8_t *table, size_t first, size_t end)
 {
@@ -614,7 +608,7 @@ uint32_t mime_wim_image_count(const MimeWim *wim)
     return wim->image_count;
 }
 
-/* finds an ascii tag inside the utf-16 xml between from and to. */
+/* finds an ASCII tag inside the UTF-16 XML between from and to. */
 static size_t xml_find(const MimeWim *wim, size_t from, size_t to, const char *needle)
 {
     size_t n = strlen(needle);
@@ -858,7 +852,7 @@ uint64_t mime_wim_blob_order(MimeWim *wim, const uint8_t hash[20])
     WimSolid *s = &wim->solids[b->solid];
     if (!load_solid_chunks(wim, s))
         return s->res.offset;
-    /* where the blob roughly sits in the file, exact to the chunk. */
+    /* file position rounded to the containing chunk. */
     uint64_t chunk = b->solid_offset / s->chunk_size;
     if (chunk >= s->chunk_count)
         return s->chunk_start[s->chunk_count];

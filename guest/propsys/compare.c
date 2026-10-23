@@ -11,7 +11,7 @@ static int sign(LONGLONG v)
     return v < 0 ? -1 : v > 0;
 }
 
-/* the units of PVCU_*: the coarser fields of both times compare, the finer ones are ignored. */
+/* compares down to the PVCU_* unit, finer fields are ignored. */
 static int compare_filetime(const FILETIME *a, const FILETIME *b, PROPVAR_COMPARE_UNIT unit)
 {
     if (unit == PVCU_DEFAULT)
@@ -148,7 +148,6 @@ INT WINAPI PropVariantCompareEx(const PROPVARIANT *a, const PROPVARIANT *b, PROP
     return result;
 }
 
-/* the value of a numeric variant as a signed, an unsigned or a floating number. */
 typedef enum { NUMBER_NONE, NUMBER_SIGNED, NUMBER_UNSIGNED, NUMBER_REAL } NUMBER_KIND;
 
 static NUMBER_KIND number(const VARIANT *v, LONGLONG *s, ULONGLONG *u, double *r)

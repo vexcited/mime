@@ -1,7 +1,6 @@
 /*
- * connection handles: attributes, connecting, information, transactions and
- * the data source and driver lists. no odbc driver is installed, so a
- * connection can never be opened.
+ * connection handles: attributes, connecting, information, transactions and the data source and driver lists. no
+ * odbc driver is installed, so a connection can never be opened.
  */
 #include "odbc32_private.h"
 
@@ -101,7 +100,7 @@ SQLRETURN OdbcSetConnectAttr(SQLHDBC handle, SQLINTEGER attribute, SQLPOINTER va
     return rc;
 }
 
-/* copies a string attribute; lengths are in bytes for unicode, characters for ansi. */
+/* lengths are in bytes for unicode, in characters for ansi. */
 static SQLRETURN OdbcOutputAttrString(OdbcDbc *dbc, PCWSTR text, SQLPOINTER value, SQLINTEGER buffer_length,
                                       SQLINTEGER *length, BOOL ansi)
 {
@@ -310,7 +309,6 @@ DECLSPEC_EXPORT SQLRETURN SQL_API SQLBrowseConnectA(SQLHDBC dbc, SQLCHAR *in, SQ
     return OdbcDriverConnect(dbc, in_length, out_max, SQL_DRIVER_NOPROMPT);
 }
 
-/* fails on a valid connection handle with the given diagnostic. */
 static SQLRETURN OdbcDbcFail(SQLHDBC handle, enum OdbcError error)
 {
     OdbcLock();

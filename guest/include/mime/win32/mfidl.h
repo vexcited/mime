@@ -1,8 +1,4 @@
-/*
- * media foundation's pipeline objects: presentation and stream
- * descriptors, media type handlers, media sources and their streams, and
- * the capture devices of mf.dll.
- */
+/* media foundation pipeline objects: descriptors, media type handlers, sources, streams and mf.dll capture devices. */
 #ifndef MIME_WIN32_MFIDL_H
 #define MIME_WIN32_MFIDL_H
 
@@ -99,7 +95,7 @@ MIME_DEFINE_GUID(MF_SD_PROTECTED, 0x00AF2181, 0xBDC2, 0x423C, 0xAB, 0xCA, 0xF5, 
 MIME_DEFINE_GUID(MF_EVENT_SOURCE_ACTUAL_START, 0xA8CC55A9, 0x6B31, 0x419F, 0x84, 0x5D, 0xFF, 0xB3, 0x51, 0xA2, 0x43,
                  0x4B);
 
-/* the capture devices of mf.dll. */
+/* mf.dll capture devices. */
 MIME_DEFINE_GUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, 0xC60AC5FE, 0x252A, 0x478F, 0xA0, 0xEF, 0xBC, 0x8F, 0xA5, 0xF7,
                  0xCA, 0xD3);
 MIME_DEFINE_GUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID, 0x8AC3587A, 0x4AE7, 0x42D8, 0x99, 0xE0, 0x0A, 0x60,

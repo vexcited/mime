@@ -1,8 +1,7 @@
 /*
- * the security support provider interface of the schannel package: the
- * credential forms, InitializeSecurityContext with schannel's token and
- * extra buffers, the stream buffers of EncryptMessage and DecryptMessage,
- * the context attributes and the control tokens. tls.c does the protocol.
+ * the sspi side of the schannel package: credential forms, InitializeSecurityContext with schannel's token and extra
+ * buffers, EncryptMessage and DecryptMessage stream buffers, context attributes and control tokens. tls.c does the
+ * protocol.
  */
 #include "schannel.h"
 
@@ -17,7 +16,7 @@ void SchParseCredentials(const void *auth_data, SCH_CONFIG *config)
         if (version == SCH_CREDENTIALS_VERSION) {
             const SCH_CRED_V5 *c = auth_data;
             config->Flags = c->dwFlags;
-            /* parameters tied to alpn ids only apply to those protocols, which mime does not track. */
+            /* parameters tied to alpn ids only apply to those protocols, which are not tracked. */
             for (DWORD i = 0; c->pTlsParameters && i < c->cTlsParameters; i++)
                 if (!c->pTlsParameters[i].cAlpnIds)
                     disabled |= c->pTlsParameters[i].grbitDisabledProtocols;
@@ -29,7 +28,7 @@ void SchParseCredentials(const void *auth_data, SCH_CONFIG *config)
             config->MaxStrength = c->dwMaximumCipherStrength;
         }
     }
-    /* no protocols means the system's defaults, tls 1.2 and 1.3 on windows 11. */
+    /* no protocols means the system defaults: tls 1.2 and 1.3 on windows 11. */
     ULONG supported = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT;
     config->Protocols = (enabled ? enabled : supported) & supported & ~disabled;
 }
@@ -47,9 +46,8 @@ static SecBuffer *find_buffer(PSecBufferDesc desc, ULONG type)
 }
 
 /*
- * the alpn names of a SEC_APPLICATION_PROTOCOLS buffer: ProtocolListsSize,
- * then lists of a 32-bit extension, a 16-bit size and the names in their
- * wire form.
+ * a SEC_APPLICATION_PROTOCOLS buffer: ProtocolListsSize, then lists of a 32-bit extension, a 16-bit size and the
+ * names in wire form.
  */
 static SECURITY_STATUS read_alpn(PSecBufferDesc input, BYTE *out, SIZE_T capacity, SIZE_T *size)
 {
@@ -126,7 +124,7 @@ static SECURITY_STATUS emit(TLS *t, PSecBufferDesc output, ULONG flags)
     return status;
 }
 
-/* schannel reports unread input in the second buffer, the first empty one after the token. */
+/* unread input is reported in the second buffer, the first empty one after the token. */
 static void report_input(PSecBufferDesc input, SecBuffer *token, SIZE_T consumed, SIZE_T missing,
                          SECURITY_STATUS status)
 {
@@ -269,7 +267,7 @@ SECURITY_STATUS SchEncrypt(TLS *t, PSecBufferDesc message)
             trailer->cbBuffer = (ULONG)used;
         return status;
     }
-    /* like schannel, a record that does not fit the buffers as they are is built aside and spread over them. */
+    /* like schannel, a record that does not fit the buffers as given is built aside and spread over them. */
     SIZE_T capacity = hcb + n + tcb;
     if (capacity < head + n)
         return SEC_E_ENCRYPT_FAILURE;
@@ -304,7 +302,7 @@ SECURITY_STATUS SchDecrypt(TLS *t, PSecBufferDesc message)
 {
     if (!message || !message->pBuffers)
         return SEC_E_INVALID_TOKEN;
-    /* schannel wants the data buffer and three empty ones for the header, the data and the trailer or extra. */
+    /* the data buffer plus three empty ones for the header, the data and the trailer or extra. */
     SecBuffer *data = nullptr, *empty[3] = {};
     ULONG empties = 0;
     for (ULONG i = 0; i < message->cBuffers; i++) {
@@ -328,9 +326,8 @@ SECURITY_STATUS SchDecrypt(TLS *t, PSecBufferDesc message)
         return status;
     }
     /*
-     * schannel lays out the buffers for data and SEC_I_RENEGOTIATE only; a
-     * closing alert gets the same layout here, with no data, so that
-     * callers scanning for the data buffer find none.
+     * schannel lays out buffers only for data and SEC_I_RENEGOTIATE. a closing alert gets the same layout with no
+     * data, so callers scanning for the data buffer find none.
      */
     if (status != SEC_E_OK && status != SEC_I_RENEGOTIATE && status != SEC_I_CONTEXT_EXPIRED &&
         status != SEC_I_NO_RENEGOTIATION)
@@ -364,7 +361,7 @@ SECURITY_STATUS SchQueryAttributes(TLS *t, ULONG attribute, void *buffer, bool a
         *(PCCERT_CONTEXT *)buffer = cert;
         return SEC_E_OK;
     }
-    /* the rest lives in the user mode half of schannel, which exists once the handshake is over. */
+    /* the rest belongs to schannel's user mode half, which exists only after the handshake. */
     if (!TlsConnected(t))
         return SEC_E_INVALID_HANDLE;
     switch (attribute) {

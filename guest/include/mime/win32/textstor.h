@@ -1,7 +1,6 @@
 /*
- * the text store of the text services framework: how a program with a document offers its text, selection and
- * layout to the text services that edit it, as textstor.h declares them. interfaces are declared the C way, a
- * struct whose first member points to a table of functions.
+ * the text services framework text store of textstor.h: how a document offers its text, selection and layout to
+ * the text services that edit it. interfaces are C structs whose first member points to a vtable.
  */
 #ifndef MIME_WIN32_TEXTSTOR_H
 #define MIME_WIN32_TEXTSTOR_H
@@ -25,7 +24,7 @@
 
 #define TS_DEFAULT_SELECTION (~0u)
 
-/* the dynamic and static flags of TS_STATUS. */
+/* TS_STATUS dynamic and static flags. */
 #define TS_SD_READONLY 0x1
 #define TS_SD_LOADING 0x2
 #define TS_SS_DISJOINTSEL 0x1

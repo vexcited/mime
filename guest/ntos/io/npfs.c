@@ -8,8 +8,8 @@
  * copies into the caller's address space, writes its i/o status block,
  * signals its event and posts its completion packet. synchronous callers
  * sleep until their request completes. writes are buffered without a
- * quota and always complete at once, a documented difference from
- * windows, which blocks writers of a full pipe.
+ * quota and always complete at once, unlike windows, which blocks
+ * writers of a full pipe.
  */
 #include "../ntos.h"
 
@@ -59,17 +59,17 @@
 typedef struct NP_DATA {
     LIST_ENTRY Links;
     ULONG Length;
-    ULONG Offset; /* bytes of the message already read */
+    ULONG Offset; /* bytes of the message already read. */
     UCHAR Data[];
 } NP_DATA;
 
-/* what one end reads: the data written by the other end, and the reads waiting for it. */
+/* what one end reads: the other end's data, and the reads waiting for it. */
 typedef struct NP_QUEUE {
     LIST_ENTRY Data;
     ULONG Bytes;
     ULONG Messages;
     LIST_ENTRY Readers;
-    BOOLEAN Consumed; /* something was read from it since the instance was connected */
+    BOOLEAN Consumed; /* something was read since the instance connected. */
 } NP_QUEUE;
 
 typedef struct NP_PIPE {
@@ -82,7 +82,7 @@ typedef struct NP_PIPE {
     ULONG OutQuota;
     LONGLONG DefaultTimeout;
     LIST_ENTRY InstanceList;
-    SD_BLOB *Sd; /* the descriptor of the pipe, shared by its instances */
+    SD_BLOB *Sd; /* the pipe's descriptor, shared by its instances. */
 } NP_PIPE;
 
 typedef struct NP_INSTANCE {
@@ -95,16 +95,15 @@ typedef struct NP_INSTANCE {
     NP_QUEUE ToServer;
     NP_QUEUE ToClient;
     LIST_ENTRY Listeners;
-    ULONG ReadMode[2];       /* by end: server, client */
+    ULONG ReadMode[2];       /* by end: server, client. */
     ULONG CompletionMode[2];
-    ULONG ProcessId[2];      /* of the process that opened each end */
-    struct _TOKEN *ClientToken; /* the identity the client's end acts with, referenced */
-    ULONG ClientLevel;          /* the impersonation level the client opened with */
+    ULONG ProcessId[2];      /* the process that opened each end. */
+    struct _TOKEN *ClientToken; /* the identity the client end acts with, referenced. */
+    ULONG ClientLevel;          /* the impersonation level the client opened with. */
     BOOLEAN ClientEffectiveOnly;
-    BOOLEAN ClientImpersonating; /* ClientToken is a thread's, not the process's */
+    BOOLEAN ClientImpersonating; /* ClientToken is a thread's, not the process's. */
 } NP_INSTANCE;
 
-/* a pending request of a caller. */
 typedef struct NP_REQUEST {
     LIST_ENTRY Links;
     PEPROCESS Process;
@@ -116,15 +115,15 @@ typedef struct NP_REQUEST {
     PIO_STATUS_BLOCK Iosb;
     PVOID Buffer;
     ULONG Length;
-    BOOLEAN Waiter; /* a synchronous caller sleeps on Done and frees the request */
-    BOOLEAN Immediate; /* completed before its call returned */
-    BOOLEAN Completed; /* set with the lock, once it left the lists */
+    BOOLEAN Waiter; /* a synchronous caller sleeps on Done and frees the request. */
+    BOOLEAN Immediate; /* completed before its call returned. */
+    BOOLEAN Completed; /* set under the lock once it left the lists. */
     KEVENT Done;
     NTSTATUS Status;
     ULONG_PTR Information;
 } NP_REQUEST;
 
-/* the arguments NtCreateNamedPipeFile passes to the create request of its thread. */
+/* the arguments NtCreateNamedPipeFile passes to its thread's create request. */
 typedef struct NP_CREATE {
     ULONG Type;
     ULONG ReadMode;
@@ -137,7 +136,7 @@ typedef struct NP_CREATE {
 } NP_CREATE;
 
 static PDEVICE_OBJECT g_device;
-static FAST_MUTEX g_lock; /* a plain atomic when no one else holds it, which is nearly always: the kernel lock is held */
+static FAST_MUTEX g_lock; /* almost always uncontended, since the kernel lock is held. */
 static KMUTEX g_create_lock;
 static LIST_ENTRY g_pipes;
 static NP_CREATE *volatile g_create_owner_params;
@@ -172,7 +171,6 @@ static ULONG end_index(PFILE_OBJECT file)
     return file->FsContext2 == END_SERVER ? 0 : 1;
 }
 
-/* the queue an end reads from. */
 static NP_QUEUE *read_queue(NP_INSTANCE *in, PFILE_OBJECT file)
 {
     return file->FsContext2 == END_SERVER ? &in->ToServer : &in->ToClient;
@@ -235,9 +233,9 @@ static void free_request(NP_REQUEST *r)
 }
 
 /*
- * a read or a write is a request on the stack of the call until it has to wait: most complete before they return,
- * and then nothing is allocated or referenced but the event the caller named. A request that goes pending is
- * copied to the pool with the references that keep what it names alive.
+ * a read or write lives on the call's stack until it has to wait: most complete before returning, with nothing
+ * allocated or referenced but the caller's event. a request that goes pending is copied to the pool with references
+ * that keep what it names alive.
  */
 static BOOLEAN init_call(NP_REQUEST *r, PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID apc_context,
                          PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, NTSTATUS *status)
@@ -263,7 +261,7 @@ static BOOLEAN init_call(NP_REQUEST *r, PFILE_OBJECT file, HANDLE event, PVOID a
 
 static void finish_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information);
 
-/* ends a call on the stack: its status comes back from the system call too. */
+/* ends a call on the stack: its status is also the system call's. */
 static NTSTATUS call_done(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
 {
     r->Immediate = TRUE;
@@ -273,7 +271,7 @@ static NTSTATUS call_done(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
     return status;
 }
 
-/* the pooled copy of a call that has to wait, which owns the event now. */
+/* the pooled copy of a call that has to wait, which now owns the event. */
 static NP_REQUEST *call_to_pool(NP_REQUEST *call)
 {
     NP_REQUEST *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('N', 'p', 'R', 'q'));
@@ -288,8 +286,8 @@ static NP_REQUEST *call_to_pool(NP_REQUEST *call)
     return r;
 }
 
-/* reports the result to the caller: status block, event and completion port, which an error that
-   ended the request before it went pending skips, like windows. */
+/* reports to the caller: status block, event and completion port. like windows, an error that ended the request
+   before it went pending skips them. */
 static void finish_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
 {
     r->Status = status;
@@ -311,7 +309,7 @@ static void finish_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information
     }
 }
 
-/* completes a request that went pending: the waiter frees it, otherwise it ends here. */
+/* completes a pending request: a waiter frees it itself, otherwise it is freed here. */
 static void complete_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
 {
     r->Completed = TRUE;
@@ -322,7 +320,7 @@ static void complete_request(NP_REQUEST *r, NTSTATUS status, ULONG_PTR informati
         free_request(r);
 }
 
-/* ends an immediate request: the caller's status comes back from the system call too. */
+/* ends an immediate request: its status is also the system call's. */
 static NTSTATUS immediate(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
 {
     r->Immediate = TRUE;
@@ -331,8 +329,8 @@ static NTSTATUS immediate(NP_REQUEST *r, NTSTATUS status, ULONG_PTR information)
     return status;
 }
 
-/* called with the lock held, releases it: sleeps for a synchronous caller, or reports pending. the request
-   may complete and go away as soon as the lock is released. */
+/* called with the lock held and releases it: sleeps for a synchronous caller, or returns pending. the request
+   may complete and be freed as soon as the lock is released. */
 static NTSTATUS pending(NP_REQUEST *r)
 {
     BOOLEAN waiter = r->Waiter;
@@ -340,7 +338,7 @@ static NTSTATUS pending(NP_REQUEST *r)
     if (!waiter)
         return STATUS_PENDING;
     if (KeWaitForSingleObject(&r->Done, UserRequest, UserMode, FALSE, nullptr) != STATUS_WAIT_0) {
-        /* the thread is ending, which a request waiting for a pipe must not keep from happening: it leaves. */
+        /* the thread is ending, and a pipe wait must not hold that up: it leaves. */
         lock();
         if (!r->Completed) {
             RemoveEntryList(&r->Links);
@@ -360,7 +358,7 @@ static void fail_all(LIST_ENTRY *list, NTSTATUS status)
         complete_request(CONTAINING_RECORD(RemoveHeadList(list), NP_REQUEST, Links), status, 0);
 }
 
-/* for the thread dump: a queue with data and a reader that waits for it was left by a lost wake. */
+/* for the thread dump: a queue with data and a waiting reader means a lost wake. */
 void NpfsDumpState(void)
 {
     ULONG instances = 0, waiting = 0;
@@ -372,7 +370,7 @@ void NpfsDumpState(void)
             NP_QUEUE *queues[2] = {&in->ToServer, &in->ToClient};
             instances++;
             for (ULONG k = 0; k < 2; k++) {
-                /* a queue is read by the end it is named for: ToServer by the server's. */
+                /* each queue is read by the end it is named for: ToServer by the server. */
                 BOOLEAN reader = !IsListEmpty(&queues[k]->Readers);
                 waiting += reader;
                 if (!IsListEmpty(&queues[k]->Data))
@@ -388,7 +386,7 @@ void NpfsDumpState(void)
 
 /* ------------------------------------------------------------ data */
 
-/* moves data of q into a reader's buffer; returns the status of the read and the bytes moved. */
+/* moves data from q into a reader's buffer; returns the read status and the bytes moved. */
 static NTSTATUS take_data(NP_QUEUE *q, ULONG mode, PEPROCESS process, PUCHAR buffer, ULONG length, ULONG *moved)
 {
     ULONG done = 0;
@@ -430,7 +428,6 @@ static NTSTATUS take_data(NP_QUEUE *q, ULONG mode, PEPROCESS process, PUCHAR buf
     return status;
 }
 
-/* gives queued data to waiting readers. */
 static void serve_readers(NP_INSTANCE *in, NP_QUEUE *q, ULONG mode)
 {
     while (!IsListEmpty(&q->Readers) && !IsListEmpty(&q->Data)) {
@@ -441,7 +438,6 @@ static void serve_readers(NP_INSTANCE *in, NP_QUEUE *q, ULONG mode)
     }
 }
 
-/* the read mode of the end that reads q. */
 static ULONG reader_mode(NP_INSTANCE *in, NP_QUEUE *q)
 {
     return in->ReadMode[q == &in->ToServer ? 0 : 1];
@@ -488,7 +484,7 @@ static void release_instance(NP_INSTANCE *in)
     }
 }
 
-/* the pipe name of a create, without its leading backslash. */
+/* without its leading backslash. */
 static void pipe_name(PFILE_OBJECT file, PUNICODE_STRING name)
 {
     *name = file->FileName;
@@ -504,8 +500,8 @@ static void pipe_name(PFILE_OBJECT file, PUNICODE_STRING name)
 #endif
 
 /*
- * a program that opens a pipe is held to its descriptor: a client to the rights it asks for, which become the rights
- * of its handle, and a server that makes another instance of a pipe to the right to make one.
+ * a program opening a pipe is held to its descriptor: a client to the rights it asks for, which its handle gets, and
+ * a server creating another instance to the right to create one.
  */
 static NTSTATUS check_pipe(PIO_STACK_LOCATION stack, NP_PIPE *p, ACCESS_MASK asked, BOOLEAN client)
 {
@@ -628,7 +624,7 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
     PETHREAD client = PsCurrentThread();
     in->ClientToken = SepReferenceEffectiveToken(client);
     in->ClientImpersonating = client->ImpersonationToken != nullptr;
-    in->ClientLevel = client->CreateQos ? client->CreateQos - 1u : 2u; /* impersonation unless the client said */
+    in->ClientLevel = client->CreateQos ? client->CreateQos - 1u : 2u; /* impersonation unless the client said otherwise. */
     in->ClientEffectiveOnly = client->CreateQos && client->CreateQosEffective;
     file->FsContext = in;
     file->FsContext2 = END_CLIENT;
@@ -663,7 +659,7 @@ static NTSTATUS NTAPI np_create(PDEVICE_OBJECT device, PIRP irp)
     return complete_irp(irp, status, NT_SUCCESS(status) ? FILE_OPENED : 0);
 }
 
-/* the descriptor of a pipe is the pipe's, not the end's, and its root has none. */
+/* the descriptor belongs to the pipe, not the end, and the root has none. */
 static NTSTATUS NTAPI np_query_security(PDEVICE_OBJECT device, PIRP irp)
 {
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
@@ -778,7 +774,7 @@ static NTSTATUS NTAPI np_query(PDEVICE_OBJECT device, PIRP irp)
             FILE_PIPE_LOCAL_INFORMATION *p = buf;
             memset(p, 0, sizeof(*p));
             p->NamedPipeType = in->Pipe->Type;
-            p->NamedPipeConfiguration = 2; /* full duplex */
+            p->NamedPipeConfiguration = 2; /* full duplex. */
             p->MaximumInstances = in->Pipe->MaxInstances;
             p->CurrentInstances = in->Pipe->Instances;
             p->InboundQuota = in->Pipe->InQuota;
@@ -792,7 +788,7 @@ static NTSTATUS NTAPI np_query(PDEVICE_OBJECT device, PIRP irp)
         }
         break;
     case FileNameInformation: {
-        /* the name inside the pipe volume: a backslash and the pipe name, which is what a root handle has alone. */
+        /* the name within the pipe volume: a backslash and the pipe name, or the backslash alone for a root handle. */
         if (length < offsetof(FILE_NAME_INFORMATION, FileName)) {
             status = STATUS_INFO_LENGTH_MISMATCH;
             break;
@@ -950,7 +946,7 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
         return status;
     PUCHAR copy = nullptr;
     if (write && length) {
-        /* the data is taken now, in the writer's address space. */
+        /* the data is copied now, in the writer's address space. */
         copy = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NP_DATA) + length, KI_TAG('N', 'p', 'D', 't'));
         if (!copy)
             return call_done(&call, STATUS_INSUFFICIENT_RESOURCES, 0);
@@ -983,7 +979,7 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
                 ExFreePool(copy);
             return call_done(&call, st, 0);
         }
-        /* a client that impersonates, or stopped, is the identity its next data carries. */
+        /* a client that impersonates, or stopped doing so, sends its current identity with the next data. */
         if (!server && (PsCurrentThread()->ImpersonationToken || in->ClientImpersonating)) {
             struct _TOKEN *now = SepReferenceEffectiveToken(PsCurrentThread());
             if (in->ClientToken)
@@ -1100,8 +1096,8 @@ static NTSTATUS peek(NP_REQUEST *r, NP_INSTANCE *in, PFILE_OBJECT file, PVOID ou
 
 /*
  * writes a message and reads the answer as one request. the end must read
- * messages and have nothing left to read, a guess of windows' checks. the lock
- * is held, and released when the request goes pending.
+ * messages and have nothing left to read, a guess at windows' checks. the
+ * lock is held, and released when the request goes pending.
  */
 static NTSTATUS transceive(NP_REQUEST *r, NP_INSTANCE *in, PFILE_OBJECT file, PVOID input, ULONG in_len,
                            BOOLEAN *released)
@@ -1139,7 +1135,7 @@ static NTSTATUS transceive(NP_REQUEST *r, NP_INSTANCE *in, PFILE_OBJECT file, PV
     return pending(r);
 }
 
-/* waits for a listening instance of a pipe, polling, for at most the timeout. */
+/* polls for a listening instance of a pipe, for at most the timeout. */
 static NTSTATUS wait_pipe(const FILE_PIPE_WAIT_FOR_BUFFER *w, ULONG in_len)
 {
     if (in_len < offsetof(FILE_PIPE_WAIT_FOR_BUFFER, Name) || w->NameLength > in_len - offsetof(FILE_PIPE_WAIT_FOR_BUFFER, Name))
@@ -1160,11 +1156,11 @@ static NTSTATUS wait_pipe(const FILE_PIPE_WAIT_FOR_BUFFER *w, ULONG in_len)
             return STATUS_OBJECT_NAME_NOT_FOUND;
         if (ready)
             return STATUS_SUCCESS;
-        /* relative timeouts are negative counts of 100ns; zero or positive values give up now. */
+        /* relative timeouts are negative counts of 100 ns; zero or positive values give up now. */
         if (remaining >= 0)
             return STATUS_IO_TIMEOUT;
         LARGE_INTEGER step;
-        step.QuadPart = -100000; /* 10 ms */
+        step.QuadPart = -100000; /* 10 ms. */
         NTSTATUS st = KeDelayExecutionThread(UserMode, TRUE, &step);
         if (st != STATUS_SUCCESS)
             return st;
@@ -1239,7 +1235,7 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
         unlock();
         return immediate(r, status, 0);
     case FSCTL_PIPE_IMPERSONATE: {
-        /* the server's thread takes the identity of the client of the data it read. */
+        /* the server thread takes the identity of the client whose data it read. */
         struct _TOKEN *client = in->ClientToken;
         if (file->FsContext2 != END_SERVER) {
             status = STATUS_ILLEGAL_FUNCTION;
@@ -1270,7 +1266,7 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
         }
     case FSCTL_PIPE_GET_PIPE_ATTRIBUTE:
     case FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE: {
-        /* the processes and sessions of the two ends, asked by name. */
+        /* the processes and sessions of the two ends, queried by name. */
         char name[32] = {};
         ULONG value = 0;
         status = in_len && in_len < sizeof(name) ? KiCopyFromUser(name, input, in_len) : STATUS_INVALID_PARAMETER;
@@ -1295,7 +1291,7 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
     }
 }
 
-/* cancels the pending requests of a caller on a file: all of them, or the one of an apc context. */
+/* cancels a caller's pending requests on a file: all of them, or the one with apc_context. */
 NTSTATUS NpfsCancel(PFILE_OBJECT file, PEPROCESS process, BOOLEAN one, PVOID apc_context)
 {
     NTSTATUS found = STATUS_NOT_FOUND;

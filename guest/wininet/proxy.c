@@ -1,7 +1,4 @@
-/*
- * proxies: the list of INTERNET_OPEN_TYPE_PROXY, or internet explorer's settings for
- * INTERNET_OPEN_TYPE_PRECONFIG, the entry for a scheme and the bypass list.
- */
+/* proxy selection and bypass rules for explicit lists or Internet Explorer preconfiguration. */
 #include "wininet_private.h"
 
 #define SETTINGS_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"
@@ -41,7 +38,7 @@ static DWORD BlobDword(const BYTE *data, DWORD size, DWORD *offset)
     return value;
 }
 
-/* a length prefixed ansi string of the blob, NULL when empty or cut. */
+/* length-prefixed ANSI blob string; NULL if empty or truncated. */
 static PWSTR BlobString(const BYTE *data, DWORD size, DWORD *offset)
 {
     DWORD length = BlobDword(data, size, offset);
@@ -54,10 +51,7 @@ static PWSTR BlobString(const BYTE *data, DWORD size, DWORD *offset)
     return length ? InetWiden(text, (int)length) : nullptr;
 }
 
-/*
- * the per user settings: the DefaultConnectionSettings blob internet explorer writes, else the older
- * ProxyEnable, ProxyServer and ProxyOverride values.
- */
+/* prefer the per-user DefaultConnectionSettings blob, falling back to ProxyEnable, ProxyServer and ProxyOverride. */
 BOOL InetReadIEProxy(PWSTR *proxy, PWSTR *bypass)
 {
     *proxy = *bypass = nullptr;
@@ -93,7 +87,7 @@ BOOL InetReadIEProxy(PWSTR *proxy, PWSTR *bypass)
     return FALSE;
 }
 
-/* the entry of a proxy list for a scheme: "scheme=host:port" first, else an entry without a scheme. */
+/* prefer "scheme=host:port", then an entry without a scheme. */
 static BOOL ProxyForScheme(LPCWSTR list, BOOL secure, PWSTR host, DWORD capacity, INTERNET_PORT *port)
 {
     LPCWSTR scheme = secure ? L"https" : L"http";
@@ -128,7 +122,7 @@ static BOOL ProxyForScheme(LPCWSTR list, BOOL secure, PWSTR host, DWORD capacity
     for (LPCWSTR q = best; q < best_end; q++)
         if (*q == ':')
             colon = q;
-    /* a bracketed ipv6 address keeps its colons. */
+    /* preserve colons inside bracketed IPv6 addresses. */
     if (best[0] == '[') {
         LPCWSTR close = best;
         while (close < best_end && *close != ']')

@@ -1,8 +1,6 @@
 /*
- * Windows.UI.ViewManagement.UISettings: the user interface metrics, colors
- * and text scale programs read to match the system. values come from user32
- * and the registry when asked; change events are accepted but never fire,
- * since nothing changes these settings while programs run.
+ * Windows.UI.ViewManagement.UISettings: ui metrics, colors and text scale, read from user32 and the registry on
+ * demand. change events are accepted but never fire, since nothing changes these settings while programs run.
  */
 #include "combase_private.h"
 #include <mime/win32/winuser.h>
@@ -229,7 +227,7 @@ static UI_COLOR from_colorref(COLORREF c)
     return color(GetRValue(c), GetGValue(c), GetBValue(c));
 }
 
-/* the accent as dwm keeps it, 0xAABBGGRR, or the default blue. */
+/* the accent as dwm stores it, 0xAABBGGRR, or the default blue. */
 static UI_COLOR accent(void)
 {
     DWORD abgr = read_dword(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\DWM", L"AccentColor", 0xFFD47800);
@@ -465,7 +463,7 @@ static HRESULT STDMETHODCALLTYPE factory_query(IActivationFactory *This, REFIID 
     return E_NOINTERFACE;
 }
 
-/* the factory is static: references do not change its lifetime. */
+/* the factory is static, references do not affect its lifetime. */
 static ULONG STDMETHODCALLTYPE factory_add_ref(IActivationFactory *This)
 {
     return 2;

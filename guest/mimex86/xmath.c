@@ -88,10 +88,10 @@ static double cos_kernel(double x)
            z * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11)))));
 }
 
-/* reduces x by multiples of pi/2; returns the quadrant. */
+/* reduces x by multiples of pi/2 and returns the quadrant. */
 static int reduce(double x, double *r)
 {
-    /* pi/2 split in 33 bit parts, so n times each part is exact for moderate n. */
+    /* pi/2 split in 33-bit parts, so n times each part is exact for moderate n. */
     static const double pio2_1 = 1.57079632673412561417e+00, pio2_2 = 6.07710050630396597660e-11,
                         pio2_3 = 2.02226624871116645580e-21, pio2_3t = 8.47842766036889956997e-32;
     double n = __builtin_rint(x * 6.36619772367581382433e-01);

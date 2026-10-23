@@ -1,6 +1,6 @@
 /*
- * com helpers: the IUnknown_* calls through optional interfaces, connection points, property
- * bags, streams, data block lists, shared memory and threads.
+ * COM helpers: IUnknown_* calls through optional interfaces, connection points, property bags, streams,
+ * data block lists, shared memory and threads.
  */
 #include "shlwapi_private.h"
 
@@ -53,7 +53,7 @@ HRESULT WINAPI IUnknown_Exec(IUnknown *unknown, const GUID *group, DWORD id, DWO
     return hr;
 }
 
-/* the window of whichever of four interfaces the object has, each with GetWindow first. */
+/* tries four interfaces that each start with GetWindow. */
 HRESULT WINAPI IUnknown_GetWindow(IUnknown *unknown, HWND *window)
 {
     static const IID *const sources[] = {&IID_IOleWindow, &IID_IInternetSecurityMgrSite, &IID_IShellView,
@@ -160,7 +160,7 @@ HRESULT WINAPI IUnknown_OnFocusChangeIS(IUnknown *unknown, IUnknown *object, BOO
     return hr;
 }
 
-/* a service offered through the site's IProfferService, or taken back without a provider. */
+/* goes through the site's IProfferService. a NULL provider revokes the service. */
 HRESULT WINAPI IUnknown_ProfferService(IUnknown *site, REFGUID service, IServiceProvider *provider, DWORD *cookie);
 HRESULT WINAPI IUnknown_ProfferService(IUnknown *site, REFGUID service, IServiceProvider *provider, DWORD *cookie)
 {
@@ -199,7 +199,7 @@ HRESULT WINAPI IUnknown_RemoveBackReferences(IUnknown *unknown)
     return unknown ? E_NOINTERFACE : E_INVALIDARG;
 }
 
-/* an aggregated object's interface, the reference counted on the outer object instead. */
+/* the reference is counted on the outer object, not on the aggregated one. */
 HRESULT WINAPI SHWeakQueryInterface(IUnknown *outer, IUnknown *inner, REFIID riid, void **out);
 HRESULT WINAPI SHWeakQueryInterface(IUnknown *outer, IUnknown *inner, REFIID riid, void **out)
 {
@@ -221,7 +221,7 @@ void WINAPI SHWeakReleaseInterface(IUnknown *outer, IUnknown **pointer)
     *pointer = nullptr;
 }
 
-/* the value paired with a key, -1 without one. */
+/* -1 when the key is missing. */
 int WINAPI SHSearchMapInt(const int *keys, const int *values, int count, int key);
 int WINAPI SHSearchMapInt(const int *keys, const int *values, int count, int key)
 {
@@ -297,7 +297,7 @@ typedef struct {
     UINT cNamedArgs;
 } SHL_DISPPARAMS;
 
-/* pairs of a type and a value, stored last to first as IDispatch::Invoke wants them. */
+/* the varargs are type and value pairs, stored last to first as IDispatch::Invoke wants. */
 HRESULT WINAPI SHPackDispParamsV(SHL_DISPPARAMS *params, VARIANTARG *args, UINT count, va_list list);
 HRESULT WINAPI SHPackDispParamsV(SHL_DISPPARAMS *params, VARIANTARG *args, UINT count, va_list list)
 {
@@ -580,7 +580,7 @@ HRESULT WINAPI SHPropertyBag_WriteStream(IPropertyBag *bag, LPCWSTR name, IStrea
     return SHPropertyBag_WriteUnknown(bag, name, (IUnknown *)value);
 }
 
-/* an empty variant written over the property. */
+/* writes an empty variant over the property. */
 HRESULT WINAPI SHPropertyBag_Delete(IPropertyBag *bag, LPCWSTR name);
 HRESULT WINAPI SHPropertyBag_Delete(IPropertyBag *bag, LPCWSTR name)
 {
@@ -694,7 +694,7 @@ static HRESULT write_exact(IStream *stream, const void *data, ULONG size)
     return hr;
 }
 
-/* a DWORD count of characters, then the characters without a terminator. */
+/* a DWORD character count, then the characters without a terminator. */
 HRESULT WINAPI IStream_ReadStrLong(IStream *stream, LPWSTR *out);
 HRESULT WINAPI IStream_ReadStrLong(IStream *stream, LPWSTR *out)
 {
@@ -740,7 +740,7 @@ static ULONG pidl_size(const BYTE *pidl)
     return size + sizeof(USHORT);
 }
 
-/* an item id list after its size in bytes. */
+/* the byte size, then the item id list. */
 HRESULT WINAPI IStream_ReadPidl(IStream *stream, struct _ITEMIDLIST **out);
 HRESULT WINAPI IStream_ReadPidl(IStream *stream, struct _ITEMIDLIST **out)
 {
@@ -777,7 +777,6 @@ HRESULT WINAPI IStream_WritePidl(IStream *stream, const struct _ITEMIDLIST *pidl
     return hr;
 }
 
-/* a win32 error as the storage error it means. */
 HRESULT WINAPI MapWin32ErrorToSTG(HRESULT hr);
 HRESULT WINAPI MapWin32ErrorToSTG(HRESULT hr)
 {
@@ -802,7 +801,6 @@ HRESULT WINAPI MapWin32ErrorToSTG(HRESULT hr)
     return hr;
 }
 
-/* an STGM mode as CreateFile's access, sharing and disposition. */
 HRESULT WINAPI ModeToCreateFileFlags(DWORD mode, BOOL create, DWORD *access, DWORD *share, DWORD *disposition);
 HRESULT WINAPI ModeToCreateFileFlags(DWORD mode, BOOL create, DWORD *access, DWORD *share, DWORD *disposition)
 {
@@ -916,7 +914,7 @@ BOOL WINAPI SHRemoveDataBlock(void **list, DWORD signature)
     return TRUE;
 }
 
-/* a copy of the block appended, replacing one with the same signature. */
+/* appends a copy, replacing any block with the same signature. */
 BOOL WINAPI SHAddDataBlock(void **list, const DATABLOCK_HEADER *block);
 BOOL WINAPI SHAddDataBlock(void **list, const DATABLOCK_HEADER *block)
 {
@@ -983,7 +981,7 @@ HRESULT WINAPI SHReadDataBlockList(IStream *stream, void **list)
 
 /* ------------------------------------------------------------------ shared memory */
 
-/* a mapping with the size of its data before it, owned by the target process. */
+/* the data size comes before the data. the mapping belongs to the target process. */
 typedef struct {
     DWORD size;
     DWORD reserved;
@@ -1083,7 +1081,7 @@ BOOL WINAPI SHQueueUserWorkItem(LPTHREAD_START_ROUTINE function, void *context, 
     return QueueUserWorkItem(function, context, WT_EXECUTEDEFAULT);
 }
 
-/* the wait keeps answering messages sent to this thread, and those of mask too. */
+/* keeps dispatching sent messages, and the ones in mask, while waiting. */
 static DWORD wait_pumping(HANDLE handle, DWORD timeout, DWORD mask)
 {
     DWORD start = GetTickCount();

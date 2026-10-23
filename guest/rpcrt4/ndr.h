@@ -1,11 +1,10 @@
 /*
  * the ndr engine, private to rpcrt4.
  *
- * A walk goes over one object by its type format string in one of five passes: it sizes the buffer the object needs,
- * marshals it into the buffer, unmarshals it from the buffer, measures the memory unmarshaling would take, or frees what
- * unmarshaling allocated. One walker serves the five, because the order of what is on the wire does not depend on
- * what the pass does with it. Pointers inside an object are written where they stand and their referents are queued,
- * and the queue runs when the outermost construct is done, which is the order midl's stubs expect.
+ * a walk goes over one object by its type format string in one of five passes: size the buffer, marshal, unmarshal,
+ * measure the memory unmarshaling would take, or free what unmarshaling allocated. one walker serves all five since the
+ * wire order does not depend on the pass. an embedded pointer's referent is written in place and its pointee is queued
+ * until the outermost construct is done, which is the order midl stubs expect.
  */
 #ifndef MIME_RPCRT4_NDR_H
 #define MIME_RPCRT4_NDR_H
@@ -25,23 +24,22 @@ typedef enum {
 
 #define NDR_WIRE_READ(pass) ((pass) == NDR_UNMARSHAL || (pass) == NDR_MEMSIZE)
 
-/* flags of a walk. */
+/* walk flags. */
 #define NDRF_MUSTALLOC 0x01
-/* the object is inside another: for a pointer, its pointee waits in the queue. */
+/* the object is inside another, so a pointer's pointee waits in the queue. */
 #define NDRF_EMBEDDED 0x02
-/* an enclosing construct reserved the counts of conformance. */
+/* an enclosing construct reserved the conformance counts. */
 #define NDRF_CONF_DONE 0x04
 
-/* the bytes added to the size of a buffer, for the alignment that the sizes in a format may not count. */
+/* padding a format's sizes may not account for. */
 #define NDR_BUFFER_SLACK 8
 
-/* the most one object of the wire can ask the stub to allocate. */
+/* the most one wire object can make the stub allocate. */
 #define NDR_MAX_ALLOC 0x10000000u
 
-/* the memory of an object that the pass measuring does not have. */
+/* stands in for object memory the measuring pass does not have. */
 #define NDR_DUMMY ((uchar *)16)
 
-/* the most dimensions of conformance one construct carries. */
 #define NDR_MAX_DIMS 8
 
 typedef struct NDR_QITEM {
@@ -50,7 +48,7 @@ typedef struct NDR_QITEM {
     uchar *Pointer;
     PFORMAT_STRING Format;
     ULONG RefId;
-    /* the structure the pointer was in, which a count of the pointee may be a field of. */
+    /* the enclosing structure, since a count of the pointee may be one of its fields. */
     uchar *Memory;
 } NDR_QITEM;
 
@@ -59,7 +57,7 @@ typedef struct NDR_QCHUNK {
     NDR_QITEM Items[64];
 } NDR_QCHUNK;
 
-/* the state of the walk in progress, hanging from pPointerQueueState. */
+/* the state of the walk in progress, hung off pPointerQueueState. */
 struct NDR_POINTER_QUEUE_STATE {
     NDR_PASS Pass;
     NDR_QITEM *Head;
@@ -67,24 +65,24 @@ struct NDR_POINTER_QUEUE_STATE {
     NDR_QCHUNK *Chunks;
     ULONG Used;
     NDR_QCHUNK First;
-    /* the id under which the next pointee allocated is filed, for a full pointer. */
+    /* the full pointer ref id the next allocated pointee is filed under. */
     ULONG PendingRefId;
-    /* the counts of conformance an enclosing construct reserved, and which one the next array takes. */
+    /* the conformance counts an enclosing construct reserved, and which one the next array takes. */
     ULONG_PTR Conf[NDR_MAX_DIMS];
     ULONG *Slots;
     ULONG Dims;
     ULONG Next;
     ULONG Depth;
-    /* the value the next pointer unmarshaled takes in its slot, instead of the referent a structure copy left there. */
+    /* replaces the referent a structure copy left in the next unmarshaled pointer's slot. */
     uchar *Preset;
     BOOL HasPreset;
-    /* the pointers a structure had in memory before a copy from the buffer overwrote them, for its pointer layout. */
+    /* a structure's pointers from before a buffer copy overwrote them, for its pointer layout. */
     uchar *Old;
-    /* memory that lives as long as the walk. */
+    /* freed with the walk. */
     struct NDR_SCRATCH *Scratch;
     /*
-     * how many complex structures and arrays the walk is inside. The pointees of embedded pointers wait for the end of the
-     * outermost of those, in order; inside the other constructs they follow the construct they are in at once.
+     * how many complex structures and arrays the walk is inside. embedded pointees wait, in order, for the end of the
+     * outermost one. inside other constructs they follow their construct at once.
      */
     ULONG Regions;
     BOOL Draining;
@@ -99,20 +97,17 @@ typedef struct NDRC {
 } NDRC;
 
 #ifdef NDR_TRACE
-/* a build with NDR_TRACE defined reports where each status is raised. */
+/* reports where each status is raised. */
 void NdrpTraceRaise(ULONG status, const char *file, int line);
 #define NDR_RAISE(status) (NdrpTraceRaise((ULONG)(status), __FILE__, __LINE__), RpcRaiseException(status))
 #else
 #define NDR_RAISE(status) RpcRaiseException(status)
 #endif
 
-/* where a pointer's referent stands on the wire: at the cursor, or at an address in the object copied already. */
+/* the referent goes at the cursor, rather than at an address in an object already copied. */
 #define NDR_WIRE_CURSOR ((uchar *)1)
 
-/*
- * the interface pointers of the buffer, which com marshals: sizing and marshaling one, unmarshaling it, releasing it, and
- * skipping it while measuring memory.
- */
+/* interface pointers in the buffer are marshaled by com. */
 typedef struct {
     void (*Size)(NDRC *c, uchar *pointer, PFORMAT_STRING format);
     void (*Marshal)(NDRC *c, uchar *pointer, PFORMAT_STRING format);
@@ -147,9 +142,8 @@ void *NdrpScratch(NDRC *c, SIZE_T size);
 void NdrpRegionEnter(NDRC *c);
 
 /*
- * counts read from the wire must be the ones the parameters or fields they are correlated with say, or the stub would
- * allocate for one number and walk, free and marshal for another. A count that depends on a parameter that is not read yet is
- * checked when all of them are.
+ * a count read from the wire must match the parameter or field it correlates with, or the stub would allocate for one
+ * number and walk, free and marshal for another. a count depending on a parameter not read yet is checked once all are.
  */
 void NdrpCheckCount(NDRC *c, uchar *memory, PFORMAT_STRING desc, ULONG_PTR wire);
 void NdrpCheckVariance(NDRC *c, uchar *memory, PFORMAT_STRING desc, ULONG offset, ULONG actual);
@@ -175,7 +169,7 @@ void NdrpQueueUser(NDRC *c, uchar *object, PFORMAT_STRING format);
 void NdrpContextHandle(NDRC *c, uchar **memory, PFORMAT_STRING format);
 void NdrpContextRecordsFree(PMIDL_STUB_MESSAGE m);
 
-/* the descriptors of correlation are this much longer than four bytes when a procedure has the new kind. */
+/* correlation descriptors of the new kind are longer than four bytes. */
 #define NDR_DESC_SIZE(m) (4 + (m)->CorrDespIncrement)
 
 #endif

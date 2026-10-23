@@ -1,6 +1,4 @@
-/*
- * ole automation: strings, variants and safe arrays of oleaut32.dll.
- */
+/* ole automation: oleaut32.dll strings, variants and safe arrays. */
 #ifndef MIME_WIN32_OLEAUTO_H
 #define MIME_WIN32_OLEAUTO_H
 
@@ -453,7 +451,7 @@ WINOLEAUTAPI INT WINAPI DosDateTimeToVariantTime(USHORT dos_date, USHORT dos_tim
 WINOLEAUTAPI HRESULT WINAPI VectorFromBstr(BSTR bstr, SAFEARRAY **array);
 WINOLEAUTAPI HRESULT WINAPI BstrFromVector(SAFEARRAY *array, BSTR *bstr);
 
-/* ------------------------------------------------------------------ the conversions between types */
+/* ------------------------------------------------------------------ type conversions */
 
 WINOLEAUTAPI HRESULT WINAPI VarUI1FromI2(SHORT in, BYTE *out);
 WINOLEAUTAPI HRESULT WINAPI VarUI1FromI4(LONG in, BYTE *out);
@@ -981,7 +979,6 @@ typedef struct tagCUSTDATA {
 } CUSTDATA, *LPCUSTDATA;
 
 
-/* IDispatch. */
 #define IDispatch_METHODS(T)                                                                                           \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *GetTypeInfoCount)(T * This, UINT * count);                                              \
@@ -992,7 +989,6 @@ typedef struct tagCUSTDATA {
                                        VARIANT * result, EXCEPINFO * excep, UINT * arg_err);
 MIME_COM_INTERFACE(IDispatch)
 
-/* IEnumVARIANT. */
 typedef struct IEnumVARIANT IEnumVARIANT;
 #define IEnumVARIANT_METHODS(T)                                                                                        \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
@@ -1002,7 +998,6 @@ typedef struct IEnumVARIANT IEnumVARIANT;
     HRESULT(STDMETHODCALLTYPE *Clone)(T * This, IEnumVARIANT * *enumerator);
 MIME_COM_INTERFACE(IEnumVARIANT)
 
-/* ITypeComp. */
 #define ITypeComp_METHODS(T)                                                                                           \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *Bind)(T * This, LPOLESTR name, ULONG hash, WORD flags, ITypeInfo * *info,               \
@@ -1010,7 +1005,6 @@ MIME_COM_INTERFACE(IEnumVARIANT)
     HRESULT(STDMETHODCALLTYPE *BindType)(T * This, LPOLESTR name, ULONG hash, ITypeInfo * *info, ITypeComp * *comp);
 MIME_COM_INTERFACE(ITypeComp)
 
-/* ITypeInfo. */
 #define ITypeInfo_METHODS(T)                                                                                           \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *GetTypeAttr)(T * This, TYPEATTR * *attr);                                               \
@@ -1037,7 +1031,6 @@ MIME_COM_INTERFACE(ITypeComp)
     void(STDMETHODCALLTYPE *ReleaseVarDesc)(T * This, VARDESC * desc);
 MIME_COM_INTERFACE(ITypeInfo)
 
-/* ITypeInfo2. */
 typedef struct ITypeInfo2 ITypeInfo2;
 #define ITypeInfo2_METHODS(T)                                                                                          \
     ITypeInfo_METHODS(T)                                                                                               \
@@ -1059,7 +1052,6 @@ typedef struct ITypeInfo2 ITypeInfo2;
     HRESULT(STDMETHODCALLTYPE *GetAllImplTypeCustData)(T * This, UINT index, CUSTDATA * data);
 MIME_COM_INTERFACE(ITypeInfo2)
 
-/* ITypeLib. */
 #define ITypeLib_METHODS(T)                                                                                            \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     UINT(STDMETHODCALLTYPE *GetTypeInfoCount)(T * This);                                                               \
@@ -1076,7 +1068,6 @@ MIME_COM_INTERFACE(ITypeInfo2)
     void(STDMETHODCALLTYPE *ReleaseTLibAttr)(T * This, TLIBATTR * attr);
 MIME_COM_INTERFACE(ITypeLib)
 
-/* ITypeLib2. */
 typedef struct ITypeLib2 ITypeLib2;
 #define ITypeLib2_METHODS(T)                                                                                           \
     ITypeLib_METHODS(T)                                                                                                \
@@ -1087,7 +1078,6 @@ typedef struct ITypeLib2 ITypeLib2;
     HRESULT(STDMETHODCALLTYPE *GetAllCustData)(T * This, CUSTDATA * data);
 MIME_COM_INTERFACE(ITypeLib2)
 
-/* ICreateTypeInfo. */
 #define ICreateTypeInfo_METHODS(T)                                                                                     \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *SetGuid)(T * This, REFGUID guid);                                                       \
@@ -1115,7 +1105,6 @@ MIME_COM_INTERFACE(ITypeLib2)
     HRESULT(STDMETHODCALLTYPE *LayOut)(T * This);
 MIME_COM_INTERFACE(ICreateTypeInfo)
 
-/* ICreateTypeInfo2. */
 typedef struct ICreateTypeInfo2 ICreateTypeInfo2;
 #define ICreateTypeInfo2_METHODS(T)                                                                                    \
     ICreateTypeInfo_METHODS(T)                                                                                         \
@@ -1159,7 +1148,6 @@ typedef struct ICreateTypeLib2 ICreateTypeLib2;
     HRESULT(STDMETHODCALLTYPE *SetHelpStringDll)(T * This, LPOLESTR dll);
 MIME_COM_INTERFACE(ICreateTypeLib2)
 
-/* IRecordInfo. */
 #define IRecordInfo_METHODS(T)                                                                                         \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *RecordInit)(T * This, PVOID record);                                                    \
@@ -1336,7 +1324,7 @@ WINOLEAUTAPI HRESULT WINAPI GetVarConversionLocaleSetting(DWORD *setting);
 WINOLEAUTAPI HRESULT WINAPI GetAltMonthNames(LCID lcid, LPOLESTR **names);
 WINOLEAUTAPI void WINAPI SetOaNoCache(void);
 
-/* the wire forms of the types that oleaut32 marshals: sizes, marshals, unmarshals and frees. */
+/* wire forms of the types oleaut32 marshals: size, marshal, unmarshal and free. */
 typedef struct _USER_MARSHAL_CB USER_MARSHAL_CB;
 WINOLEAUTAPI ULONG WINAPI BSTR_UserSize(ULONG *flags, ULONG offset, BSTR *value);
 WINOLEAUTAPI BYTE *WINAPI BSTR_UserMarshal(ULONG *flags, BYTE *buffer, BSTR *value);
@@ -1362,12 +1350,12 @@ WINOLEAUTAPI ULONG WINAPI LPSAFEARRAY_UserSize64(ULONG *flags, ULONG offset, LPS
 WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_UserMarshal64(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value);
 WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_UserUnmarshal64(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value);
 WINOLEAUTAPI void WINAPI LPSAFEARRAY_UserFree64(ULONG *flags, LPSAFEARRAY *value);
-/* the forms that take the interface of the elements of an array of objects, which the array may not know. */
+/* these take the element interface of an object array, which the array may not know. */
 WINOLEAUTAPI ULONG WINAPI LPSAFEARRAY_Size(ULONG *flags, ULONG offset, LPSAFEARRAY *value, const GUID *iid);
 WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_Marshal(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value, const GUID *iid);
 WINOLEAUTAPI BYTE *WINAPI LPSAFEARRAY_Unmarshal(ULONG *flags, BYTE *buffer, LPSAFEARRAY *value, const GUID *iid);
 
-/* the layouts the mingw headers and windows' own libraries have. */
+/* sizes match the mingw headers and windows' libraries. */
 #define MIME_OA_SIZE(T, x86, x64) MIME_STATIC_ASSERT(sizeof(T) == (sizeof(void *) == 4 ? (x86) : (x64)), #T " size")
 MIME_OA_SIZE(TYPEDESC, 8, 16);
 MIME_OA_SIZE(ARRAYDESC, 20, 32);

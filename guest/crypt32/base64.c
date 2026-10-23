@@ -1,7 +1,6 @@
 /*
- * CryptBinaryToString and CryptStringToBinary: base64, pem headers and the
- * hexadecimal dump formats, byte for byte as crypt32.dll of windows 11
- * produces and accepts them.
+ * CryptBinaryToString and CryptStringToBinary: base64, PEM headers and the hex dump formats, matching windows 11
+ * byte for byte.
  */
 #include "crypt32_private.h"
 

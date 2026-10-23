@@ -1,6 +1,6 @@
 /*
- * xpath 1.0: a parser for expressions and an evaluator over the dom. the selection language "XSLPattern" of msxml3
- * is the same engine with zero based indexes and the dollar operators.
+ * xpath 1.0 over the dom. msxml3's XSLPattern selection language is the same engine with zero based indexes and the
+ * dollar operators.
  */
 #include <xmldom/xmldom.h>
 
@@ -34,7 +34,7 @@ static XNode *tree_root(XNode *n)
     return n;
 }
 
-/* numbers a tree that is not a document's own, which the document does not remember. */
+/* numbers a detached tree, whose order the document does not track. */
 static void number_tree(XNode *root)
 {
     UINT order = 0;
@@ -92,7 +92,6 @@ static void merge_sort(XNode **v, XNode **tmp, UINT n)
     memcpy(v, tmp, (SIZE_T)n * sizeof(XNode *));
 }
 
-/* document order, each node once. */
 static void sort_unique(XSet *s)
 {
     if (s->n < 2)
@@ -199,12 +198,11 @@ typedef struct Parser {
     UINT nscount;
     BOOL xpath;
     XDoc *doc;
-    /* the token being looked at. */
     int kind;
     const WCHAR *tstart;
     UINT tlen;
     double tnum;
-    UINT colon; /* where the colon of a name is, zero for none. */
+    UINT colon; /* offset of the colon in a name, 0 for none. */
     BOOL func_follows;
     int prev;
 } Parser;
@@ -621,7 +619,6 @@ static const struct {
     {"ancestor-or-self", AX_ANCESTOR_OR_SELF},
 };
 
-/* the namespace a prefix stands for in the selection settings. */
 static const WCHAR *resolve_prefix(Parser *ps, const WCHAR *prefix, UINT length, BOOL *found)
 {
     for (UINT i = 0; i < ps->nscount; i++) {
@@ -692,7 +689,7 @@ static Step *parse_step(Parser *ps)
         }
         st->test = NT_ANY;
         st->uri = uri;
-        st->element_default_ns = found; /* a wildcard in one namespace. */
+        st->element_default_ns = found;
         next_token(ps);
     } else if (ps->kind == T_NAME) {
         const WCHAR *name = ps->tstart;
@@ -734,7 +731,7 @@ static Step *parse_step(Parser *ps)
                     return nullptr;
                 }
                 if (!found) {
-                    /* xslpattern takes a prefix nobody declared as the prefix the document uses. */
+                    /* xslpattern treats an undeclared prefix as the prefix the document uses. */
                     st->by_prefix = TRUE;
                     st->prefix = name;
                     st->plen = colon;
@@ -745,8 +742,7 @@ static Step *parse_step(Parser *ps)
                 st->local = name;
                 st->llen = len;
                 if (!ps->xpath) {
-                    /* xslpattern: a name without a prefix is one of the nodes that have none, whatever their
-                       namespace. */
+                    /* xslpattern: an unprefixed name matches nodes without a prefix, whatever their namespace. */
                     st->by_prefix = TRUE;
                 } else {
                     /* the default namespace of the selection, for element names. */
@@ -778,7 +774,7 @@ static Step *descendant_or_self_step(Parser *ps)
     return st;
 }
 
-/* a relative path: steps joined by slashes. first is the step already parsed, may be null. */
+/* first is a step already parsed, or null. */
 static BOOL parse_steps(Parser *ps, Expr *path, Step *first)
 {
     Step **tail = &path->steps;
@@ -880,7 +876,6 @@ static Expr *parse_primary(Parser *ps)
         fail(ps, XE_NO_VARIABLES);
         return nullptr;
     case T_NAME: {
-        /* a function call. */
         const WCHAR *name = ps->tstart;
         UINT len = ps->tlen;
         int id = -1;
@@ -1365,7 +1360,7 @@ static BOOL test_node(Step *st, XNode *n)
     return FALSE;
 }
 
-/* the nodes of an axis from a node, in the axis' own order, collected when they pass the node test. */
+/* the nodes of an axis in the axis' own order, filtered by the node test. */
 static BOOL gather(Step *st, XNode *c, XSet *out)
 {
     switch (st->axis) {
@@ -1519,7 +1514,7 @@ static BOOL reverse_axis(int axis)
 
 static HRESULT eval(Expr *x, Env *env, Val *out);
 
-/* narrows a candidate set by a predicate, the positions counted along the axis. */
+/* narrows a set by a predicate, positions counted along the axis. */
 static HRESULT apply_predicate(Expr *pred, XSet *set, Env *env, BOOL zero_based)
 {
     XSet kept = {};

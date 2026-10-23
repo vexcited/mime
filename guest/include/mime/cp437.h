@@ -1,4 +1,4 @@
-/* the characters of the oem code page 437 above the ascii range, which ntdll and kernelbase both convert with. */
+/* oem code page 437 above the ascii range, shared by ntdll and kernelbase. */
 #ifndef MIME_CP437_H
 #define MIME_CP437_H
 

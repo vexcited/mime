@@ -1,12 +1,11 @@
 /*
- * the guest's toast notifications on the desktop's notification server (org.freedesktop.Notifications), over the
- * session bus. a toast is a notification with its title, body, picture, buttons as actions and, where the server has
- * an inline reply, a reply box. what the person does comes back as MIME_INPUT_SHELL. one thread of its own does the
- * bus, on a connection of its own, so a slow server never holds the guest's vcpus. see docs/host.md.
+ * guest toasts through org.freedesktop.Notifications on a dedicated bus thread, so a slow server never blocks vCPUs.
+ * titles, bodies, images and buttons map to notifications; supported servers provide inline replies. actions return
+ * as MIME_INPUT_SHELL.
  */
 #include "ui_internal.h"
 
-/* what the guest's shell asks of the desktop: windows and the launcher here, toasts on the bus. */
+/* guest shell requests: Windows, launcher entries and toast notifications. */
 static uint64_t toast_command(void *command, size_t size, uint64_t *value);
 
 uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
@@ -55,17 +54,17 @@ void mime_shell_launcher_update(const MimeLauncherUpdate *update)
 
 typedef struct Toast {
     struct Toast *next;
-    uint32_t id;         /* the guest's number */
-    uint32_t server_id;  /* the server's, 0 until it answers */
+    uint32_t id;         /* the guest's number. */
+    uint32_t server_id;  /* the server's, 0 until it answers. */
     uint32_t process_id;
     char aumid[256];
     char tag[128];
     char group[128];
-    bool answered;       /* the person acted on it: its closing is no news */
-    bool hide;           /* the program took it away before the server had answered */
+    bool answered;       /* the person acted on it: its closing is no news. */
+    bool hide;           /* the program took it away before the server had answered. */
 } Toast;
 
-/* what was typed into the reply boxes, for the guest to fetch: the lock covers it. */
+/* reply text retained for the guest, protected by the lock. */
 #define REPLIES_MAX 16
 static struct {
     uint32_t id, length;
@@ -86,10 +85,10 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_ready = PTHREAD_COND_INITIALIZER;
 static Command *g_queue_head, *g_queue_tail;
 static int g_wake = -1;
-static int g_state; /* 0 not started, 1 starting, 2 running, 3 no bus */
-static bool g_server;       /* a notification server is on the bus */
-static bool g_markup;       /* and it shows markup in the body */
-static bool g_inline_reply; /* and has the reply box of Plasma */
+static int g_state; /* 0 not started, 1 starting, 2 running, 3 no bus. */
+static bool g_server;       /* a notification server is on the bus. */
+static bool g_markup;       /* and it shows markup in the body. */
+static bool g_inline_reply; /* and has the reply box of Plasma. */
 static bool g_body_images;
 
 /* used by the shell thread only, except the replies which the lock covers. */
@@ -195,7 +194,7 @@ static int closed_signal(sd_bus_message *m, void *userdata, sd_bus_error *error)
     return 0;
 }
 
-/* the server hands a token before the action of a click, with which the program's window may come to the front. */
+/* the server supplies an activation token before the click action, allowing the target window to be raised. */
 static int token_signal(sd_bus_message *m, void *userdata, sd_bus_error *error)
 {
     uint32_t id;
@@ -235,7 +234,7 @@ static int replied_signal(sd_bus_message *m, void *userdata, sd_bus_error *error
     Toast *t = find_server(id);
     if (!t || t->answered)
         return 0;
-    /* the text in utf-16, kept for the guest to fetch. */
+    /* retains reply text as UTF-16 for guest retrieval. */
     size_t n = strlen(text);
     uint16_t units[256];
     uint32_t count = 0;
@@ -302,7 +301,7 @@ static int notify_reply(sd_bus_message *reply, void *userdata, sd_bus_error *err
     return 0;
 }
 
-/* a path of the guest as a path of the host, empty when it is none or does not exist. */
+/* resolves a guest path to an existing host path, or an empty string. */
 static bool host_picture(const uint16_t *units, char *out, size_t size)
 {
     char guest[1024];
@@ -313,7 +312,7 @@ static bool host_picture(const uint16_t *units, char *out, size_t size)
     return paths && mime_paths_to_host(paths, guest, out, size) && mime_file_exists(out);
 }
 
-/* the text with the characters a markup body would take for tags made harmless. */
+/* escapes markup-sensitive characters in notification text. */
 static void body_text(char *out, size_t size, const char *text)
 {
     size_t k = 0;
@@ -436,7 +435,7 @@ static void hide_toast(const MimeShellToast *c)
         t->hide = true;
 }
 
-/* the toasts of an application, those of the tag and group when given. */
+/* selects an application's toasts, optionally matching tag and group. */
 static void remove_toasts(const MimeShellToast *c)
 {
     char aumid[256], tag[128], group[128];
@@ -453,7 +452,7 @@ static void remove_toasts(const MimeShellToast *c)
     }
 }
 
-/* the properties of a launcher entry, as the signal Plasma and the docks that follow Unity's launcher take them. */
+/* publishes launcher properties through Unity-compatible signals used by Plasma and other docks. */
 static void run_launcher(const MimeLauncherUpdate *u)
 {
     sd_bus_message *m;

@@ -4,7 +4,7 @@
 #include <string.h>
 
 #define LZX_NUM_CHARS 256
-#define LZX_POSITION_SLOTS 30 /* for a 32 KiB window */
+#define LZX_POSITION_SLOTS 30 /* for a 32 KiB window. */
 #define LZX_MAIN_SYMS (LZX_NUM_CHARS + LZX_POSITION_SLOTS * 8)
 #define LZX_LEN_SYMS 249
 #define LZX_ALIGNED_SYMS 8
@@ -22,7 +22,7 @@ enum {
 #define FAST_BITS 11
 
 typedef struct HuffTable {
-    uint16_t fast[1 << FAST_BITS]; /* symbol << 5 | length, 0 for slow path */
+    uint16_t fast[1 << FAST_BITS]; /* symbol << 5 | length, 0 for slow path. */
     uint16_t count[LZX_MAX_CODE_LEN + 1];
     uint16_t offset[LZX_MAX_CODE_LEN + 1];
     uint32_t first[LZX_MAX_CODE_LEN + 1];
@@ -33,8 +33,8 @@ typedef struct HuffTable {
 typedef struct BitReader {
     const uint8_t *data;
     size_t size;
-    size_t pos; /* next byte to load into the buffer */
-    uint64_t buf; /* left aligned */
+    size_t pos; /* next byte to load into the buffer. */
+    uint64_t buf; /* left aligned. */
     uint32_t bits;
     bool overrun;
 } BitReader;

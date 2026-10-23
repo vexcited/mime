@@ -1,7 +1,7 @@
 /*
- * descriptor update templates. the guest keeps each template and turns an
- * update through it into the plain writes it stands for, so the host sees
- * vkUpdateDescriptorSets and vkCmdPushDescriptorSet only.
+ * descriptor update templates. the guest expands each templated update into
+ * plain writes, so the host only sees vkUpdateDescriptorSets and
+ * vkCmdPushDescriptorSet.
  */
 #include "mvk_guest.h"
 
@@ -23,7 +23,7 @@ VKAPI_ATTR void VKAPI_CALL mvk_raw_vkDestroyDescriptorUpdateTemplate(VkDevice de
                                                                     const VkAllocationCallbacks *allocator);
 
 static SRWLOCK g_lock = SRWLOCK_INIT;
-static Template **g_templates; /* by id, the ids being small */
+static Template **g_templates; /* indexed by id, ids are small. */
 static size_t g_capacity;
 
 static Template *find(VkDescriptorUpdateTemplate tmpl)
@@ -100,10 +100,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorUpdateTemplate(VkDevice device, Vk
     mvk_raw_vkDestroyDescriptorUpdateTemplate(device, tmpl, allocator);
 }
 
-/*
- * the writes a template stands for, with their image, buffer and view
- * arrays gathered from the strided data into the scratch arrays given.
- */
+/* image, buffer and view arrays are gathered from the strided data into the given scratch arrays. */
 typedef struct Writes {
     VkWriteDescriptorSet *writes;
     VkDescriptorImageInfo *images;
@@ -182,7 +179,7 @@ static BOOL build(const Template *t, VkDescriptorSet set, const void *data, Writ
                 memcpy(&w->views[views++], src + k * e->stride, sizeof(VkBufferView));
             break;
         case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK: {
-            /* the count is in bytes, read from the offset at once. */
+            /* the count is in bytes, read at the offset in one go. */
             VkWriteDescriptorSetInlineUniformBlock *b = &w->inline_blocks[blocks++];
             b->sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
             b->dataSize = e->descriptorCount;

@@ -1,7 +1,4 @@
-/*
- * string comparison, searching, mapping, folding, classification and
- * normalization.
- */
+/* string comparison, searching, mapping, folding, classification and normalization. */
 #include "kernelbase_private.h"
 #include "nls_locslots.h"
 
@@ -32,7 +29,6 @@ typedef struct DECOMPOSITION {
 /* latin-1 letters whose lower case form is 0x20 higher. */
 #define L1(c, base, mark) {(c), (base), (mark)}, {(c) + 0x20, (base) + 32, (mark)}
 
-/* canonical decompositions. */
 static const DECOMPOSITION g_decompositions[] = {
     L1(0xC0, 'A', GRAVE),      L1(0xC1, 'A', ACUTE),      L1(0xC2, 'A', CIRCUMFLEX), L1(0xC3, 'A', TILDE),
     L1(0xC4, 'A', DIAERESIS),  L1(0xC5, 'A', RING),       L1(0xC7, 'C', CEDILLA),    L1(0xC8, 'E', GRAVE),
@@ -84,7 +80,6 @@ static BOOL is_combining(WCHAR c)
            (c >= 0x20D0 && c <= 0x20FF) || (c >= 0xFE20 && c <= 0xFE2F);
 }
 
-/* ligatures that expand to two letters. */
 static BOOL expand_ligature(WCHAR c, WCHAR out[2])
 {
     switch (c) {
@@ -159,7 +154,7 @@ static int string_length(LPCWSTR s, int len)
 
 /* ------------------------------------------------------------------ sort orders */
 
-/* the sort order a locale name or an identifier stands for, and whether its language casts i and I in the Turkish way. */
+/* the sort order of a locale name or lcid, and whether its language uses Turkish i and I casing. */
 typedef struct SORT_ORDER {
     UINT Collator;
     BOOL Turkic;
@@ -180,7 +175,7 @@ static SORT_ORDER sort_of_locale(UINT locale, PCSTR alternate)
     return o;
 }
 
-/* the sorts that have a name of their own, written after an underscore in the name of the locale. */
+/* sorts with their own name, written after an underscore in the locale name. */
 static PCSTR alternate_of_suffix(PCWSTR suffix)
 {
     static const struct {
@@ -224,7 +219,7 @@ static SORT_ORDER sort_of_lcid(LCID lcid)
         alternate = "de@phonebook";
         break;
     case 0x040A:
-        /* the traditional Spanish order is the sort of its own identifier, 0x040A. */
+        /* traditional Spanish has its own lcid, 0x040A. */
         alternate = "es@traditional";
         break;
     }
@@ -295,7 +290,7 @@ int WINAPI CompareStringA(LCID locale, DWORD flags, LPCSTR a, int alen, LPCSTR b
     if (wa && wb) {
         MultiByteToWideChar(cp, 0, a, alen, wa, wa_len);
         MultiByteToWideChar(cp, 0, b, blen, wb, wb_len);
-        /* a terminator included by a length of -1 is not part of the comparison. */
+        /* a terminator included by a length of -1 is not compared. */
         if (alen < 0 && wa_len)
             wa_len--;
         if (blen < 0 && wb_len)
@@ -960,9 +955,8 @@ int WINAPI GetStringScripts(DWORD flags, LPCWSTR string, int length, LPWSTR scri
 /* ------------------------------------------------------------------ normalization */
 
 /*
- * the normalization forms of the Unicode standard: the characters are decomposed, as far as their canonical decomposition
- * goes or their compatibility one for the forms of that name, the marks are put in the order of their combining classes,
- * and the composed forms put the characters together again where the standard allows.
+ * Unicode normalization: decompose canonically, or by compatibility for the K forms, sort marks by combining class,
+ * then recompose for the composed forms where the standard allows.
  */
 static int normalize(NORM_FORM form, LPCWSTR src, int len, LPWSTR dst, int dst_len)
 {
@@ -1021,7 +1015,7 @@ static int normalize(NORM_FORM form, LPCWSTR src, int len, LPWSTR dst, int dst_l
         for (int k = 0; k < m; k++)
             cps[count++] = decoded[k];
     }
-    /* the marks of each run in the order of their classes. */
+    /* sort each run of marks by combining class. */
     for (SIZE_T i = 0; i < count;) {
         if (!KbUniCcc(cps[i])) {
             i++;

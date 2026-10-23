@@ -1,8 +1,7 @@
 /*
- * the time zone of the host as Windows names it. the host's zone is an IANA id such as Europe/Paris, the guest's
- * registry keeps Windows' own zones, each a key of HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones with
- * its rules. the table lists the cities and regions each Windows zone covers, written from the names of the zones
- * and of the places in them; a zone it does not list leaves the guest with the host's offset alone.
+ * maps host IANA time zones to Windows registry names under HKLM\SOFTWARE\Microsoft\Windows
+ * NT\CurrentVersion\Time Zones. the table uses cities and regions named by each zone. unmatched zones leave
+ * the guest with only the host UTC offset.
  */
 #include "vmm.h"
 
@@ -13,7 +12,7 @@
 
 static const struct {
     const char *Windows;
-    const char *Iana; /* space separated */
+    const char *Iana; /* space separated. */
 } g_zones[] = {
     {"Dateline Standard Time", "Etc/GMT+12"},
     {"UTC-11", "Etc/GMT+11 Pacific/Pago_Pago Pacific/Niue Pacific/Midway"},
@@ -156,7 +155,6 @@ static const struct {
     {"Easter Island Standard Time", "Pacific/Easter Chile/EasterIsland"},
 };
 
-/* whether a space separated list holds the name. */
 static bool listed(const char *list, const char *name)
 {
     size_t n = strlen(name);
@@ -182,7 +180,7 @@ const char *mime_windows_time_zone(const char *iana)
     return nullptr;
 }
 
-/* the host's zone: where /etc/localtime points, or what TZ names, or the zone of the file /etc/timezone holds. */
+/* finds the host zone from /etc/localtime, TZ or /etc/timezone. */
 bool mime_host_time_zone(char *out, size_t size)
 {
     out[0] = 0;

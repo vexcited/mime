@@ -1,8 +1,6 @@
 /*
- * xdg-activation, for what sdl does not do: asking the compositor for a window's attention without taking the focus, and
- * raising a window with the token a notification gave, so that a click on a notification brings the program's window to
- * the front as the click of a person on that program does. the protocol has no generated header here; its requests and
- * its one event are described from the specification, as the viewporter is in ui.c.
+ * XDG activation for attention requests and notification tokens, which SDL does not handle here. requests and events
+ * are described directly from the protocol specification, as for the viewporter in ui.c.
  */
 #include "ui_internal.h"
 
@@ -76,7 +74,7 @@ static void token_done(void *data, struct wl_proxy *proxy, const char *token)
     t->done = true;
 }
 
-/* the compositor makes a token of the request, which has no serial and no surface: it cannot be a user's action. */
+/* a request without a serial or surface cannot represent user input. */
 static bool make_token(struct wl_display *display, const char *app_id, Token *token)
 {
     struct wl_proxy *proxy = wl_proxy_marshal_flags(g_activation, 1, &token_interface,
@@ -97,7 +95,7 @@ static void activate(struct wl_display *display, struct wl_surface *surface, con
     wl_display_flush(display);
 }
 
-/* the window asks for attention, which the compositor shows without moving the focus. true when it could be asked. */
+/* requests attention without moving focus; returns whether the request was sent. */
 bool mime_activation_attention(struct wl_display *display, struct wl_surface *surface, const char *app_id)
 {
     if (!display || !surface || !bind(display))
@@ -109,7 +107,7 @@ bool mime_activation_attention(struct wl_display *display, struct wl_surface *su
     return true;
 }
 
-/* the window is raised with a token the desktop gave, a notification's. */
+/* raises the window using a notification's activation token. */
 bool mime_activation_activate(struct wl_display *display, struct wl_surface *surface, const char *token)
 {
     if (!display || !surface || !token || !*token || !bind(display))

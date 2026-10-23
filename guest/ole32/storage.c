@@ -1,6 +1,6 @@
 /*
- * compound document storage: the signature test, the class helpers that work over any IStorage or IStream, and the
- * helpers of files. The documents themselves are in docfile.c.
+ * compound document helpers: the signature test, class helpers over any IStorage or IStream, and file helpers. the
+ * documents themselves are in docfile.c.
  */
 #include "ole32_private.h"
 #include <mime/stub.h>
@@ -45,7 +45,7 @@ WINOLEAPI HRESULT WINAPI WriteClassStg(IStorage *storage, REFCLSID clsid)
     return storage->lpVtbl->SetClass(storage, clsid);
 }
 
-/* the 16 bytes of a class id from the stream; fewer than that is STG_E_READFAULT, a stream that fails its own error. */
+/* fewer than 16 bytes is STG_E_READFAULT, a failing stream returns its own error. */
 WINOLEAPI HRESULT WINAPI ReadClassStm(IStream *stream, CLSID *clsid)
 {
     if (!stream || !clsid)
@@ -61,7 +61,6 @@ WINOLEAPI HRESULT WINAPI ReadClassStm(IStream *stream, CLSID *clsid)
     return S_OK;
 }
 
-/* a byte array that starts with the signature of compound files. */
 WINOLEAPI HRESULT WINAPI StgIsStorageILockBytes(ILockBytes *bytes)
 {
     if (!bytes)
@@ -77,7 +76,7 @@ WINOLEAPI HRESULT WINAPI StgIsStorageILockBytes(ILockBytes *bytes)
     return memcmp(header, g_signature, sizeof(header)) ? S_FALSE : S_OK;
 }
 
-/* the times of a file or storage file, the ones given only. */
+/* sets only the times given. */
 WINOLEAPI HRESULT WINAPI StgSetTimes(LPCOLESTR name, const FILETIME *created, const FILETIME *accessed,
                                      const FILETIME *modified)
 {
@@ -97,9 +96,8 @@ WINOLEAPI HRESULT WINAPI StgSetTimes(LPCOLESTR name, const FILETIME *created, co
 }
 
 /*
- * the class of a file: the class of a compound file's storage when it has one, else the class registered for the
- * extension through HKCR\.ext and the ProgID it names. The patterns of HKCR\FileType are not looked at. A name
- * with no extension, or one nothing is registered for, is MK_E_INVALIDEXTENSION.
+ * a compound file's storage class when it has one, else the class registered for the extension through HKCR\.ext and
+ * its ProgID. HKCR\FileType patterns are ignored. no extension, or an unregistered one, gives MK_E_INVALIDEXTENSION.
  */
 WINOLEAPI HRESULT WINAPI GetClassFile(LPCOLESTR name, CLSID *clsid)
 {
@@ -174,7 +172,7 @@ WINOLEAPI HRESULT WINAPI SetConvertStg(IStorage *storage, BOOL convert)
 #define STGFMT_ANY 4
 #define STGFMT_DOCFILE 5
 
-/* only the interface of storages is made here; a new or opened docfile goes the way of StgCreateDocfile. */
+/* only the IStorage interface is made here, new or opened docfiles go through StgCreateDocfile. */
 WINOLEAPI HRESULT WINAPI StgCreateStorageEx(LPCOLESTR name, DWORD mode, DWORD format, DWORD attributes,
                                             void *options, void *reserved, REFIID iid, void **result)
 {

@@ -1,8 +1,4 @@
-/*
- * MessageBox: builds an in memory dialog template sized exactly like the
- * windows 11 user32 (SoftModalMessageBox) and runs it with its own dialog
- * procedure. see docs/messagebox.md.
- */
+/* MessageBox builds an in memory dialog template sized like windows 11's and runs it with its own dialog procedure. */
 #include "user32_private.h"
 
 #define MB_HELP_FLAG 0x00004000u
@@ -28,11 +24,11 @@ typedef struct MSGBOX {
     MSGBOXPARAMSW Params;
     UINT Count;
     UINT Default;
-    UINT CancelKind; /* 1: MB_OK, 2: an IDCANCEL button exists, 0: none */
+    UINT CancelKind; /* 1: MB_OK, 2: an IDCANCEL button exists, 0: none. */
     int Ids[4];
     WCHAR Texts[4][16];
     DWORD Timeout;
-    RECT Command;    /* the gray band, client coordinates */
+    RECT Command;    /* the gray band, in client coordinates. */
     HICON UserIcon;
 } MSGBOX;
 
@@ -112,7 +108,7 @@ static void align(TEMPLATE_BUFFER *t)
         t->Data[t->Size++] = 0;
 }
 
-/* pixels to dialog units, rounded the way MB_UpdateDlgItem does. */
+/* pixels to dialog units, rounded like windows. */
 static short to_dlu_x(int px, int cx)
 {
     return (short)((4 * px + cx / 2) / cx);
@@ -290,7 +286,7 @@ static int box_layout_and_run(MSGBOX *mb)
         caption = caption_buf;
     }
 
-    DWORD ex_text = (style >> 7) & 0x1000; /* MB_RIGHT gives WS_EX_RIGHT */
+    DWORD ex_text = (style >> 7) & 0x1000; /* MB_RIGHT gives WS_EX_RIGHT. */
     BOOL right = (style & MB_RIGHT) != 0;
     if ((style & MB_RTLREADING) || (text[0] == 0x200F && text[1] == 0x200F)) {
         ex_text = WS_EX_LAYOUTRTL;
@@ -358,7 +354,7 @@ static int box_layout_and_run(MSGBOX *mb)
     RECT work = mi.rcWork;
     int WW = work.right - work.left, WH = work.bottom - work.top;
 
-    /* MB_CalcDialogSize: try 278 dialog units, then 5/8, 6/8 and 7/8 of the work area. */
+    /* try a width of 278 dialog units, then 5/8, 6/8 and 7/8 of the work area. */
     const UINT measure = DT_WORDBREAK | DT_EXPANDTABS | DT_EXTERNALLEADING | DT_CALCRECT | DT_NOPREFIX | DT_EDITCONTROL;
     int cand[4] = {(278 * cx + 2) >> 2, (5 * WW + 4) / 8, (6 * WW + 4) / 8, (7 * WW + 4) / 8};
     int W = 0, H = 0, TW = 0, TH = 0;
@@ -387,7 +383,7 @@ static int box_layout_and_run(MSGBOX *mb)
     int band_top = content + 2 * V14;
     mb->Command = (RECT){0, band_top, W, band_top + 2 * V9 + V14};
 
-    /* position: centered on the work area, cascading over boxes already open. */
+    /* centered on the work area, cascading over boxes already open. */
     LONG k = g_open_boxes;
     int x = CXS * k + (work.left + work.right - W) / 2;
     if (x < work.left)
@@ -423,10 +419,10 @@ static int box_layout_and_run(MSGBOX *mb)
     hdr.cx = (short)((4 * (W - 6) + cx / 2) / cx);
     hdr.cy = (short)((8 * (H - C - 6) + cy / 2) / cy);
     put(&t, &hdr, sizeof(hdr));
-    put_word(&t, 0); /* menu */
-    put_word(&t, 0); /* class */
+    put_word(&t, 0); /* menu. */
+    put_word(&t, 0); /* class. */
     put_string(&t, caption);
-    put_word(&t, 0x7FFF); /* the message box font */
+    put_word(&t, 0x7FFF); /* the message box font. */
     put_word(&t, 0);
 
     int bx = W - M - BT, by = H - V9 - C - V14;

@@ -1,6 +1,5 @@
 /*
- * runtime library shared by the kernel and ntdll. both export these
- * functions, exactly like ntoskrnl.exe and ntdll.dll do on windows.
+ * runtime library shared by the kernel and ntdll, which both export it like ntoskrnl.exe and ntdll.dll do.
  */
 #ifndef MIME_RTL_H
 #define MIME_RTL_H
@@ -12,9 +11,8 @@ void *memmove(void *dst, const void *src, size_t n);
 void *memset(void *dst, int c, size_t n);
 int memcmp(const void *a, const void *b, size_t n);
 /*
- * freestanding code has no builtins, so a copy of four bytes would call
- * memcpy: these name the builtins, which inline fixed sizes and call the
- * runtime for the rest.
+ * freestanding code has no implicit builtins, so a 4-byte copy would call memcpy. these name the builtins, which
+ * inline fixed sizes and call the runtime otherwise.
  */
 #if defined(__clang__) && !defined(MIME_RTL_NO_BUILTINS)
 #define memcpy(d, s, n) __builtin_memcpy((d), (s), (n))

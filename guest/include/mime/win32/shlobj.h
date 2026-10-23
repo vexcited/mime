@@ -1,7 +1,4 @@
-/*
- * shell objects: item id lists, special and known folders, shell items
- * and folder browsing of shell32.dll.
- */
+/* shell32 shell objects: item id lists, special and known folders, shell items and folder browsing. */
 #ifndef MIME_WIN32_SHLOBJ_H
 #define MIME_WIN32_SHLOBJ_H
 
@@ -112,7 +109,7 @@ typedef const GUID *REFKNOWNFOLDERID;
 #define KF_FLAG_SIMPLE_IDLIST 0x00000100
 #define KF_FLAG_ALIAS_ONLY 0x80000000
 
-/* known folder ids, read from the windows 11 headers' values and checked against windows.storage.dll. */
+/* known folder ids, with the windows 11 sdk values. */
 MIME_DEFINE_GUID(FOLDERID_Desktop, 0xB4BFCC3A, 0xDB2C, 0x424C, 0xB0, 0x29, 0x7F, 0xE9, 0x9A, 0x87, 0xC6, 0x41);
 MIME_DEFINE_GUID(FOLDERID_Programs, 0xA77F5D77, 0x2E2B, 0x44C3, 0xA6, 0xA2, 0xAB, 0xA6, 0x01, 0x05, 0x4A, 0x51);
 MIME_DEFINE_GUID(FOLDERID_Documents, 0xFDD39AD0, 0x238F, 0x46AF, 0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7);

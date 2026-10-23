@@ -1,6 +1,6 @@
 /*
  * miscellaneous runtime services: error translation, debug output,
- * versions, time, pointers encoding and memory helpers.
+ * versions, time, pointer encoding and memory helpers.
  */
 #include "ntdll_private.h"
 
@@ -11,15 +11,14 @@ typedef struct STATUS_MAP {
     ULONG Error;
 } STATUS_MAP;
 
-/* sorted by status for the binary search. */
+/* sorted by status for binary search. */
 static const STATUS_MAP g_status_map[] = {
 #include "statuses.inc"
 };
 
 /*
- * windows' rules: success is 0 and a pending status is ERROR_IO_PENDING, a status with the customer bit is
- * its own error, a win32 error in a status of facility 7 is the error itself, the rest is looked up, in
- * the table with the mapped bits of an ntstatus that was made from an hresult cleared.
+ * like windows: STATUS_PENDING is ERROR_IO_PENDING, a status with the customer bit is its own error, facility 7
+ * carries a win32 error in its low word, and a status made from an hresult is looked up with those bits cleared.
  */
 NTDLL_EXPORT ULONG NTAPI RtlNtStatusToDosErrorNoTeb(NTSTATUS status)
 {
@@ -44,7 +43,7 @@ NTDLL_EXPORT ULONG NTAPI RtlNtStatusToDosErrorNoTeb(NTSTATUS status)
         else
             hi = mid;
     }
-    /* what has no entry but a win32 error of facility 1 in the low word. */
+    /* unlisted facility 1 statuses carry a win32 error in the low word. */
     if ((value & 0xFFFF0000) == 0xC0010000)
         return value & 0xFFFF;
     return 317; /* ERROR_MR_MID_NOT_FOUND */
@@ -145,8 +144,8 @@ NTDLL_EXPORT void NTAPI DbgUserBreakPoint(void)
 
 /*
  * three condition bits per VER_ type, at the position of the type's
- * highest bit, ORed into the mask. bit 63 marks a mask built this way,
- * which RtlVerifyVersionInfo reads per type. no type gives 0.
+ * highest bit. bit 63 marks a mask built this way, which
+ * RtlVerifyVersionInfo reads per type.
  */
 NTDLL_EXPORT ULONGLONG NTAPI VerSetConditionMask(ULONGLONG mask, ULONG type, UCHAR condition)
 {
@@ -187,7 +186,7 @@ NTDLL_EXPORT void NTAPI RtlGetNtVersionNumbers(PULONG major, PULONG minor, PULON
         *build = 0xF0000000u | peb->OSBuildNumber;
 }
 
-/* a REG_DWORD of a key of the machine, false when the value is not there. */
+/* FALSE when the value is missing. */
 static BOOLEAN read_machine_ulong(PCWSTR path, PCWSTR value_name, ULONG *value)
 {
     UNICODE_STRING name;
@@ -213,10 +212,7 @@ static BOOLEAN read_machine_ulong(PCWSTR path, PCWSTR value_name, ULONG *value)
     return found;
 }
 
-/*
- * the build as one 64 bit number, major, minor, build and the update revision in 16 bits each, the
- * device family, 3 for a desktop, and the form the oem key names, 0 when unspecified.
- */
+/* version packs major, minor, build and UBR in 16 bits each. form comes from the OEM key, 0 when unset. */
 NTDLL_EXPORT void NTAPI RtlGetDeviceFamilyInfoEnum(ULONGLONG *version, ULONG *family, ULONG *form)
 {
     static const WCHAR current_version[] = L"\\Registry\\Machine\\Software\\Microsoft\\Windows NT\\CurrentVersion";
@@ -241,7 +237,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlGetNtProductType(ULONG *type)
     return TRUE;
 }
 
-/* the policy of account control the kernel read at the start: elevation, virtualization and installer detection, one bit each. */
+/* the uac policy read by the kernel at boot: elevation, virtualization and installer detection, one bit each. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlQueryElevationFlags(PULONG flags)
 {
     if (!flags)
@@ -262,7 +258,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlIsProcessorFeaturePresent(ULONG feature)
 
 /* ------------------------------------------------------------------ time */
 
-/* the kernel lets user mode read the processor's counter, the performance counter of every processor. */
+/* user mode may read the processor counter directly, it is the performance counter on every processor. */
 NTDLL_EXPORT BOOLEAN NTAPI RtlQueryPerformanceCounter(PLARGE_INTEGER counter)
 {
     counter->QuadPart = (LONGLONG)MimeReadQpc();
@@ -355,8 +351,8 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlTimeFieldsToTime(PTIME_FIELDS tf, PLARGE_INTEGER t
 }
 
 /*
- * the time as the fields of the calendar. The weekday counts from Sunday; 1 January 1601 was a Monday. Times of
- * the leap seconds Windows can keep in the process block are not told apart here.
+ * the weekday counts from Sunday, 1 January 1601 was a Monday. leap seconds that Windows can keep in the process
+ * block are ignored.
  */
 NTDLL_EXPORT void NTAPI RtlTimeToTimeFields(PLARGE_INTEGER time, PVOID fields)
 {
@@ -367,7 +363,7 @@ NTDLL_EXPORT void NTAPI RtlTimeToTimeFields(PLARGE_INTEGER time, PVOID fields)
     ULONG rest = (ULONG)(milliseconds % 86400000);
     tf->Weekday = (SHORT)((days + 1) % 7);
     LONG year = 1601;
-    /* 146097 days are 400 years of the gregorian calendar, 36524 a century and 1461 four years. */
+    /* 146097 days are 400 gregorian years, 36524 a century and 1461 four years. */
     year += 400 * (LONG)(days / 146097);
     days %= 146097;
     LONG centuries = (LONG)(days / 36524);
@@ -502,7 +498,7 @@ NTDLL_EXPORT ULONG NTAPI RtlComputeCrc32(ULONG initial, const UCHAR *data, ULONG
 
 NTDLL_EXPORT ULONG NTAPI RtlRandomEx(PULONG seed)
 {
-    /* the park miller generator ntdll documents for RtlRandom. */
+    /* the park miller generator documented for RtlRandom. */
     ULONG64 next = ((ULONG64)*seed * 16807u) % 0x7FFFFFFFu;
     *seed = (ULONG)next;
     return (ULONG)next;

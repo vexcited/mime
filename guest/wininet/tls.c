@@ -1,7 +1,6 @@
 /*
- * https through the schannel package of secur32, loaded at run time as windows' wininet does: the handshake,
- * records sealed with EncryptMessage and opened with DecryptMessage, and the validation of the server's
- * certificate through crypt32, where each SECURITY_FLAG_IGNORE_* flag lifts its own check.
+ * HTTPS through dynamically loaded Schannel, using EncryptMessage and DecryptMessage. crypt32 validates the server
+ * certificate; each SECURITY_FLAG_IGNORE_* suppresses only its corresponding check.
  */
 #include "wininet_private.h"
 
@@ -128,7 +127,7 @@ static DWORD SendToken(INET_CONN *conn, SecBuffer *token)
     return error;
 }
 
-/* runs InitializeSecurityContext until the handshake ends, from the raw bytes already read. */
+/* continue InitializeSecurityContext with received bytes until the handshake ends. */
 static DWORD Negotiate(INET_CONN *conn, LPCWSTR host, BOOL initial, DWORD timeout)
 {
     ULONG flags = ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_EXTENDED_ERROR |
@@ -174,7 +173,7 @@ static DWORD Negotiate(INET_CONN *conn, LPCWSTR host, BOOL initial, DWORD timeou
     }
 }
 
-/* a failed check: its error, the _SECURITY_FLAG_CERT_* bit it reports and the flag that ignores it. */
+/* map a failed check to its error, _SECURITY_FLAG_CERT_* bit and ignore flag. */
 typedef struct {
     HRESULT Status;
     DWORD Error;
@@ -199,8 +198,8 @@ static const INET_CERT_CHECK Checks[] = {
 };
 
 /*
- * validates the server's chain for host. the first check the flags do not lift fails the request with its
- * error; every failed check is reported in the security flags.
+ * validate the server chain for host. return the first non-ignored error and record every failed check in the
+ * security flags.
  */
 static DWORD Validate(INET_CONN *conn, LPCWSTR host, DWORD security_flags)
 {
@@ -216,7 +215,7 @@ static DWORD Validate(INET_CONN *conn, LPCWSTR host, DWORD security_flags)
     if (!Crypt32.GetChain(nullptr, conn->Certificate, nullptr, conn->Certificate->hCertStore, &para, 0, nullptr,
                           &chain))
         return ERROR_INTERNET_SEC_INVALID_CERT;
-    /* an ip literal has no brackets in the certificate. */
+    /* certificate IP literals omit brackets. */
     WCHAR name[INTERNET_MAX_HOST_NAME_LENGTH];
     lstrcpynW(name, host, ARRAYSIZE(name));
     DWORD length = (DWORD)lstrlenW(name);
@@ -278,7 +277,7 @@ DWORD InetTlsHandshake(INET_CONN *conn, LPCWSTR host, DWORD security_flags, DWOR
                                                               &conn->Credentials, nullptr);
     if (status != SEC_E_OK)
         return ERROR_INTERNET_SECURITY_CHANNEL_ERROR;
-    /* sni carries names only, so an ip literal goes without one. */
+    /* omit SNI for IP literals; it carries DNS names only. */
     BOOL literal = host[0] == '[';
     if (!literal) {
         literal = TRUE;
@@ -363,7 +362,7 @@ DWORD InetTlsSend(INET_CONN *conn, const void *data, DWORD size, DWORD timeout)
     return error;
 }
 
-/* decrypts at least one record into the plaintext buffer, or marks the end of the stream. */
+/* decrypt at least one record into the plaintext buffer, or mark EOF. */
 DWORD InetTlsFill(INET_CONN *conn, DWORD timeout)
 {
     while (TRUE) {
@@ -451,7 +450,7 @@ static LPWSTR LocalString(LPCWSTR text)
     return copy;
 }
 
-/* a certificate name with its parts on lines of their own. */
+/* format certificate name components on separate lines. */
 static LPWSTR NameText(PCERT_NAME_BLOB name)
 {
     if (!Crypt32.NameToStr)
@@ -474,7 +473,7 @@ BOOL InetCertificateInfo(PCCERT_CONTEXT certificate, DWORD strength, INTERNET_CE
     info->lpszSubjectInfo = NameText((PCERT_NAME_BLOB)&cert->Subject);
     info->lpszIssuerInfo = NameText((PCERT_NAME_BLOB)&cert->Issuer);
     info->dwKeySize = strength;
-    /* windows leaves the algorithm names empty. */
+    /* Windows leaves algorithm names empty. */
     info->lpszProtocolName = nullptr;
     info->lpszSignatureAlgName = nullptr;
     info->lpszEncryptionAlgName = nullptr;

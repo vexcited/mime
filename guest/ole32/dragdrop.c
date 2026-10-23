@@ -1,9 +1,7 @@
 /*
- * drag and drop: the drop targets registered per window and the modal
- * DoDragDrop loop, which follows the mouse inside the window it began in. a
- * drag that leaves that window is handed to the host (hostdnd.c), which
- * carries it to programs of the desktop and to the guest's other windows,
- * and brings back how it ended.
+ * drag and drop: per window drop targets and the modal DoDragDrop loop, which follows the mouse inside the window it
+ * began in. a drag that leaves that window goes to the host, see hostdnd.c, which carries it to desktop programs and
+ * other guest windows and reports how it ended.
  */
 #include "ole32_private.h"
 
@@ -59,7 +57,7 @@ WINOLEAPI HRESULT WINAPI RegisterDragDrop(HWND hwnd, IDropTarget *target)
     g_drops[g_drop_count++] = (DROP_ENTRY){hwnd, target};
     ReleaseSRWLockExclusive(&g_drop_lock);
     SetPropW(hwnd, g_target_prop, (HANDLE)target);
-    /* drags from the host's programs reach the target through the thread's message loop. */
+    /* drags from host programs reach the target through the thread's message loop. */
     OleHostDndRegister(hwnd);
     return S_OK;
 }
@@ -82,7 +80,7 @@ WINOLEAPI HRESULT WINAPI RevokeDragDrop(HWND hwnd)
     return S_OK;
 }
 
-/* the target of the window or its nearest registered ancestor, referenced. */
+/* returns the referenced target of the window or of its nearest registered ancestor. */
 IDropTarget *OleFindDropTarget(HWND hwnd)
 {
     for (; hwnd; hwnd = GetAncestor(hwnd, GA_PARENT)) {
@@ -98,7 +96,6 @@ IDropTarget *OleFindDropTarget(HWND hwnd)
     return nullptr;
 }
 
-/* ------------------------------------------------------------------ the drag loop */
 
 static BOOL key_down(int vk)
 {
@@ -125,7 +122,7 @@ static DWORD current_key_state(void)
 
 /*
  * dispatches pending messages except mouse and keyboard input, which belongs
- * to the drag. returns FALSE when WM_QUIT arrived; it is posted again.
+ * to the drag. returns FALSE on WM_QUIT, which is posted again.
  */
 static BOOL pump_messages(BOOL *escape)
 {
@@ -191,7 +188,7 @@ WINOLEAPI HRESULT WINAPI DoDragDrop(IDataObject *data, IDropSource *source, DWOR
         POINTL pt = {cursor.x, cursor.y};
 
         if (host) {
-            /* the host runs the drag now; its end comes through the messages pumped above. */
+            /* the host runs the drag now, its end arrives through the messages pumped above. */
             bool dropped;
             DWORD host_effect;
             if (OleHostDragEnded(&dropped, &host_effect)) {
@@ -214,7 +211,7 @@ WINOLEAPI HRESULT WINAPI DoDragDrop(IDataObject *data, IDropSource *source, DWOR
         if (hr != S_OK)
             break;
 
-        /* out of the window it began in, the drag goes on in the host's hands, if it can take it. */
+        /* once out of its window, the drag continues in the host if the host can take it. */
         if (cursor_left(source_top) && OleHostDragBegin(data, ok_effects)) {
             if (target) {
                 target->lpVtbl->DragLeave(target);

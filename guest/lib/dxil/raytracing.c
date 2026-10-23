@@ -1,8 +1,7 @@
 /*
- * ray tracing: the stages of ray tracing pipelines, to SPV_KHR_ray_tracing,
- * and ray queries of shader model 6.5, to SPV_KHR_ray_query. a handle dxil
- * gives a query is an index in an array of them, so handles may go through
- * phis, selects and arrays as dxil lets them.
+ * ray tracing pipeline stages, to SPV_KHR_ray_tracing, and shader model 6.5
+ * ray queries, to SPV_KHR_ray_query. a dxil query handle is an index into an
+ * array of queries, so handles can flow through phis, selects and arrays.
  */
 #include "internal.h"
 
@@ -23,7 +22,7 @@ static int is_allocation(Compiler *c, const DxFunction *f, const DxInst *ins)
     return op && op->kind == DV_INT && op->bits == OP_ALLOCATE;
 }
 
-/* each allocation is a query of the array, numbered in the order of the function's instructions. */
+/* each allocation gets a slot of the query array, numbered in instruction order. */
 void dxil_prepare_ray_queries(Compiler *c, const DxFunction *f)
 {
     uint32_t n = 0;
@@ -54,7 +53,7 @@ static uint32_t query(Compiler *c, uint32_t id)
                   spv_type_pointer(&c->b, SpvStorageClassPrivate, spv_type_opaque(&c->b, SpvOpTypeRayQueryKHR)), w, 2);
 }
 
-/* the flags the query's allocation gives, a constant when its handle is one or all allocations agree. */
+/* the query's allocation flags, a constant when its handle is one or all allocations agree. */
 static uint32_t allocation_flags(Compiler *c, uint32_t id)
 {
     uint64_t k = dxil_constant(c, id, ~0ull);
@@ -100,14 +99,14 @@ static int trace(Compiler *c, const DxInst *ins)
     return 0;
 }
 
-/* what the state operations read: the spir-v op, whether it takes committed or candidate, the result's shape. */
+/* a state read: its spir-v op, committed or candidate, and the result shape. */
 typedef struct StateOp {
     uint16_t dx;
     uint16_t spv;
     int8_t committed;
     /* 0 a float, 1 an unsigned integer, 2 a bool, 3 a vec2, 4 a vec3, 5 a 4x3 matrix. */
     uint8_t shape;
-    /* the bool result is the opposite. */
+    /* dxil wants the negated bool. */
     uint8_t negate;
 } StateOp;
 
@@ -168,7 +167,7 @@ static int state(Compiler *c, const DxInst *ins, const StateOp *s)
             return dxil_fail(c, "a ray query vector read at an index that is not constant");
         v = dxil_extract(c, c->t_f32, v, (uint32_t)i);
     } else if (s->shape == 5) {
-        /* dxil reads row and column of the 3x4 matrix, spir-v has its 4 columns of 3. */
+        /* dxil indexes the 3x4 matrix by row and column, spir-v stores 4 columns of 3. */
         uint64_t row = dxil_constant(c, ins->ops[3], ~0ull), col = dxil_constant(c, ins->ops[4], ~0ull);
         if (row >= 3 || col >= 4)
             return dxil_fail(c, "a ray query matrix read at an index that is not constant");
@@ -195,7 +194,7 @@ static uint32_t pointee_type(Compiler *c, uint32_t dx_pointer_type, uint32_t *dx
     return dxil_type(c, t->element);
 }
 
-/* the payload of a hit or miss shader, a callable shader's data, and the attributes of a hit. */
+/* binds a hit or miss shader's payload, a callable shader's data and a hit's attributes. */
 int dxil_ray_arguments(Compiler *c, const DxFunction *f)
 {
     const DxType *ft = &c->m.types[f->type];
@@ -216,7 +215,7 @@ int dxil_ray_arguments(Compiler *c, const DxFunction *f)
     return c->error ? -1 : 0;
 }
 
-/* the variable a trace or call passes, one by type, each at a location of its own. */
+/* the variable a trace or call passes, one per type, each at its own location. */
 static uint32_t outgoing(Compiler *c, uint32_t type, uint32_t storage)
 {
     uint32_t location = 0;
@@ -237,7 +236,7 @@ static uint32_t outgoing(Compiler *c, uint32_t type, uint32_t storage)
     return var;
 }
 
-/* a call passing what a pointer points to, written back after. */
+/* passes the pointee through a call and writes it back after. */
 static int pass_through(Compiler *c, uint32_t pointer, uint32_t storage, uint32_t op, const uint32_t *w, uint32_t n)
 {
     uint32_t type;
@@ -290,7 +289,7 @@ static int report_hit(Compiler *c, const DxInst *ins)
     return 0;
 }
 
-/* a system value of the ray tracing stages: its built-in, its type and how dxil indexes it. */
+/* a ray tracing system value: its built-in, type and how dxil indexes it. */
 typedef struct RaySystemValue {
     uint16_t dx;
     uint16_t builtin;

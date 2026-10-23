@@ -1,7 +1,4 @@
-/*
- * the layout of the uniform array the built-in fixed function program reads: vec4 slots, shared by the shader text in
- * fixedshader.c and the code that fills it in fixed.c.
- */
+/* layout of the vec4 uniform array the built-in fixed function program reads, shared by fixedshader.c and fixed.c. */
 #ifndef MIME_OPENGL32_FIXED_H
 #define MIME_OPENGL32_FIXED_H
 

@@ -1,11 +1,9 @@
 /*
- * image lists: same sized images in one vertical strip, image i starting
- * at row i * cy of a 32 bpp dib section, with an optional 1 bpp mask strip
- * where a set bit is a transparent pixel.
+ * image lists: same sized images in one vertical strip of a 32 bpp dib section, image i at row i * cy, with an
+ * optional 1 bpp mask strip where a set bit is transparent.
  *
- * every list stores 32 bpp pixels whatever depth it was created with.
- * images with alpha are kept premultiplied and drawn with GdiAlphaBlend;
- * the others keep alpha 0 and are drawn through their mask.
+ * every list stores 32 bpp pixels whatever depth it was created with. images with alpha are kept premultiplied
+ * and drawn with GdiAlphaBlend, the others keep alpha 0 and are drawn through their mask.
  */
 #include "comctl32_private.h"
 
@@ -34,7 +32,7 @@ typedef struct _IMAGELIST {
     RECT OverlayBox[15];
     BOOL OverlayOpaque[15];
     BYTE *Items;
-    /* the original size of each image, cx in the low word and cy in the high one, 0 when none was set. */
+    /* each image's original size, cx in the low word and cy in the high word, 0 when unset. */
     DWORD *Original;
 } IMAGELIST;
 
@@ -64,7 +62,7 @@ static inline int strip_height(const IMAGELIST *il, int capacity)
     return il->Cy * capacity;
 }
 
-/* pixel row y of the strip, counted from the top. */
+/* y counts from the top of the strip. */
 static inline DWORD *image_row(IMAGELIST *il, int y)
 {
     return (DWORD *)(il->Bits + (SIZE_T)(strip_height(il, il->Capacity) - 1 - y) * (SIZE_T)il->Cx * 4);
@@ -109,7 +107,6 @@ static HBITMAP create_dib(int width, int height, int bpp, void **bits)
     return CreateDIBSection(nullptr, (BITMAPINFO *)&bi, DIB_RGB_COLORS, bits, nullptr, 0);
 }
 
-/* moves the strip to a new capacity, keeping the images that still fit. */
 static BOOL set_capacity(IMAGELIST *il, int capacity)
 {
     void *bits = nullptr, *mask_bits = nullptr;
@@ -192,7 +189,6 @@ static int grow_step(int grow)
     return g < 4 ? 4 : g;
 }
 
-/* frees the strips, dcs and item tables, leaving an empty list without storage. */
 static void release_storage(IMAGELIST *il)
 {
     if (il->Image) {
@@ -243,7 +239,7 @@ static BOOL init_list(IMAGELIST *il, int cx, int cy, UINT flags, int initial, in
     return TRUE;
 }
 
-/* a list object that Initialize has not set up yet: no storage, no images. */
+/* not usable until Initialize sets up its storage. */
 static IMAGELIST *new_object(void)
 {
     IMAGELIST *il = CcAlloc(sizeof(*il));
@@ -429,13 +425,13 @@ static void apply_background(IMAGELIST *il, int index)
     }
 }
 
-/* a bitmap read as 32 bpp pixels, top down rows. */
+/* a bitmap read as 32 bpp pixels, rows top down. */
 typedef struct PIXELS {
     DWORD *Data;
     int Width, Height, Bpp;
 } PIXELS;
 
-/* blits the bitmap into a dib of ours, which keeps the alpha of 32 bpp sources. */
+/* blitting into our own dib keeps the alpha of 32 bpp sources. */
 static BOOL read_bitmap(HBITMAP bitmap, PIXELS *p)
 {
     BITMAP bm;
@@ -482,10 +478,7 @@ static inline DWORD pixel_at(const PIXELS *p, int x, int y)
     return p->Data[(SIZE_T)y * (SIZE_T)p->Width + (SIZE_T)x];
 }
 
-/*
- * stores one image from column sx of the pixels. mask pixels that are not
- * black are transparent; without a mask the image is opaque.
- */
+/* mask pixels that are not black are transparent. without a mask the image is opaque. */
 static void store_image(IMAGELIST *il, int index, const PIXELS *src, int sx, const PIXELS *mask)
 {
     if (!il->Bits)
@@ -560,7 +553,7 @@ WINCOMMCTRLAPI int WINAPI ImageList_Add(HIMAGELIST himl, HBITMAP image, HBITMAP 
     return index;
 }
 
-/* the caller's bitmap gets its masked pixels blackened, as windows does with DSna. */
+/* windows blackens the masked pixels of the caller's bitmap with DSna. */
 static void blacken_source(HBITMAP bitmap, PIXELS *pixels)
 {
     BITMAPINFOHEADER h = {};
@@ -809,7 +802,7 @@ static void blit(HDC dst, int x, int y, int cx, int cy, HDC src, int sx, int sy,
         StretchBlt(dst, x, y, cx, cy, src, sx, sy, sw, sh, rop);
 }
 
-/* blits a mask with its set bits white and clear bits black, whatever the target's colors. */
+/* blits a mask with set bits white and clear bits black, whatever the target's colors. */
 static void blit_mask(HDC dst, int x, int y, int cx, int cy, const DRAW_SOURCE *s, DWORD rop)
 {
     COLORREF text = SetTextColor(dst, RGB(0, 0, 0)), bk = SetBkColor(dst, RGB(255, 255, 255));
@@ -846,7 +839,7 @@ static void render(HDC dst, int x, int y, int cx, int cy, const DRAW_SOURCE *s, 
     blit(dst, x, y, cx, cy, s->Dc, s->X, s->Y, s->Width, s->Height, SRCPAINT);
 }
 
-/* a private copy of one image, for drawing it changed. */
+/* a private copy of one image, to draw it modified. */
 typedef struct SCRATCH {
     HDC Dc, MaskDc;
     HBITMAP Image, Mask;
@@ -1204,7 +1197,7 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Copy(HIMAGELIST dst, int i_dst, HIMAGELIST 
     return TRUE;
 }
 
-/* draws image i of a list over a merged image: colors where it is opaque, the masks anded. */
+/* draws image i of src over a merged image: its colors where it is opaque, the masks anded. */
 static void merge_into(IMAGELIST *dst, IMAGELIST *src, int i, int ox, int oy)
 {
     if (i < 0 || i >= src->Count || !src->Bits || !dst->Bits)
@@ -1385,7 +1378,7 @@ WINCOMMCTRLAPI int WINAPI ImageList_SetColorTable(HIMAGELIST himl, int start, in
     return get_list(himl) ? 0 : -1;
 }
 
-/* the stream format is not implemented; these fail cleanly. */
+/* the stream format is not implemented, these fail cleanly. */
 WINCOMMCTRLAPI HIMAGELIST WINAPI ImageList_Read(struct IStream *stream)
 {
     return nullptr;
@@ -1600,7 +1593,7 @@ static inline BOOL valid_index(const IMAGELIST *il, int i)
     return i >= 0 && i < il->Count;
 }
 
-/* the list behind an interface pointer of the caller, which keeps its own reference. */
+/* the caller keeps its own reference on the interface. */
 static HRESULT list_from_unknown(IUnknown *unk, IMAGELIST **out)
 {
     *out = nullptr;
@@ -1615,7 +1608,7 @@ static HRESULT list_from_unknown(IUnknown *unk, IMAGELIST **out)
     return *out ? S_OK : E_INVALIDARG;
 }
 
-/* the decorators are a private interface of windows; one that answers is accepted and not used. */
+/* decorators are a private windows interface: any that answers is accepted and not used. */
 static HRESULT check_decorator(IUnknown *decorator)
 {
     if (!decorator)
@@ -1752,7 +1745,7 @@ static HRESULT STDMETHODCALLTYPE il_Copy(IImageList2 *iface, int dst, IUnknown *
     return ImageList_Copy((HIMAGELIST)il, dst, (HIMAGELIST)il, src, flags) ? S_OK : E_FAIL;
 }
 
-/* hands out a new list through riid, dropping the creation reference. */
+/* returns a new list through riid and drops the creation reference. */
 static HRESULT give_list(IMAGELIST *il, REFIID riid, void **object)
 {
     HRESULT hr = il_QueryInterface((IImageList2 *)il, riid, object);
@@ -1958,7 +1951,7 @@ static HRESULT STDMETHODCALLTYPE il_SetOriginalSize(IImageList2 *iface, int i, i
     return S_OK;
 }
 
-/* a plain list has no callback: windows does not implement these for it. */
+/* a plain list has no callback, and windows does not implement these for it. */
 static HRESULT STDMETHODCALLTYPE il_SetCallback(IImageList2 *iface, IUnknown *callback)
 {
     return E_NOTIMPL;
@@ -1982,7 +1975,7 @@ static HRESULT STDMETHODCALLTYPE il_DiscardImages(IImageList2 *iface, int first,
     return E_NOTIMPL;
 }
 
-/* makes the image and its overlay present, which they always are; nothing is drawn. */
+/* the images are always present, so nothing is drawn. */
 static HRESULT STDMETHODCALLTYPE il_PreloadImages(IImageList2 *iface, IMAGELISTDRAWPARAMS *params)
 {
     if (!params ||
@@ -2046,7 +2039,7 @@ static HRESULT STDMETHODCALLTYPE il_Replace2(IImageList2 *iface, int i, HBITMAP 
     return S_OK;
 }
 
-/* copies image src of another list over image i, stretched when the sizes differ. */
+/* copies image src of another list over image i, stretched when sizes differ. */
 static HRESULT STDMETHODCALLTYPE il_ReplaceFromImageList(IImageList2 *iface, int i, IImageList *source, int src,
                                                          IUnknown *decorator, DWORD flags)
 {
@@ -2145,7 +2138,7 @@ WINCOMMCTRLAPI HRESULT WINAPI HIMAGELIST_QueryInterface(HIMAGELIST himl, REFIID 
     return il_QueryInterface((IImageList2 *)il, riid, object);
 }
 
-/* the list it makes is empty and without storage until IImageList2::Initialize. */
+/* the list stays empty and without storage until IImageList2::Initialize. */
 WINCOMMCTRLAPI HRESULT WINAPI ImageList_CoCreateInstance(REFCLSID clsid, const IUnknown *outer, REFIID riid,
                                                          void **object)
 {

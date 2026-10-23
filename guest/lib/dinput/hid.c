@@ -1,8 +1,8 @@
 /*
- * hid collections, as windows' dinput sees them: listed through setupapi
- * and hid.dll, each device's objects made from the caps of its preparsed
- * data, its reports read by the worker thread of the process and cooked
- * through the calibration of each axis. see docs/dinput.md.
+ * hid collections as dinput sees them: listed through setupapi and hid.dll,
+ * each device's objects built from the caps of its preparsed data, its
+ * reports read by the process worker thread and cooked through each axis's
+ * calibration.
  */
 #include "dinput_private.h"
 #include <mime/win32/hidpi.h>
@@ -41,7 +41,7 @@ static struct {
     BOOL(WINAPI *Destroy)(HDEVINFO);
 } g_api;
 
-/* windows' dinput loads them itself, and a missing function only fails the calls that need it. */
+/* loaded at runtime like windows does, so a missing function only fails the calls that need it. */
 static BOOL load_api(void)
 {
     if (g_api.tried)
@@ -84,7 +84,7 @@ static void vidpid_name(WCHAR *out, USHORT vid, USHORT pid)
     wsprintfW(out, L"VID_%04X&PID_%04X", vid, pid);
 }
 
-/* the key of the nth device of a vendor and product, where its guid and joystick id live. */
+/* the key of the nth device with this vendor and product, holding its guid and joystick id. */
 static HKEY calibration_key(USHORT vid, USHORT pid, DWORD slot)
 {
     WCHAR path[200], name[32];
@@ -96,7 +96,7 @@ static HKEY calibration_key(USHORT vid, USHORT pid, DWORD slot)
     return key;
 }
 
-/* the oem key of a vendor and product, the user's copy before the machine's. */
+/* the oem key of a vendor and product, the user's before the machine's. */
 static HKEY oem_key(USHORT vid, USHORT pid, BOOL write)
 {
     WCHAR path[200], name[32];
@@ -186,7 +186,7 @@ static HANDLE open_path(const WCHAR *path, DWORD flags)
                        flags, nullptr);
 }
 
-/* a new interface: listed when it opens for reading and writing and its caps read. */
+/* listed only if it opens for read and write and its caps can be read. */
 static BOOL add_entry(const WCHAR *path)
 {
     if (g_count >= MAX_LIST)
@@ -279,7 +279,7 @@ void DiHidRebuild(BOOL force)
     }
     g_built = now;
     g_ever_built = TRUE;
-    /* entries whose path no longer opens go first. */
+    /* drop entries whose path no longer opens. */
     DWORD kept = 0;
     for (DWORD i = 0; i < g_count; i++) {
         HANDLE file = open_path(g_list[i].path, 0);
@@ -387,16 +387,16 @@ BOOL DiHidByJoystick(DWORD id, GUID *instance, USHORT *vid, USHORT *pid, USHORT 
 /* ------------------------------------------------------------------ calibration */
 
 typedef struct CAL {
-    LONG cmin, cctr, cmax; /* raw calibration */
-    LONG rmin, rmax, rctr; /* the range reported */
+    LONG cmin, cctr, cmax; /* raw calibration. */
+    LONG rmin, rmax, rctr; /* reported range. */
     DWORD dz, sat, mode;
-    BOOL legacy_raw; /* dinput.dll before 7: raw values of a signed range come back from 0 */
+    BOOL legacy_raw; /* dinput.dll before 7: raw values of a signed range come back from 0. */
     DWORD cpoints;
     CPOINT cp[MAXCPOINTSNUM];
     LONG low_sat, low_len, low_out, low_span, hi_dz, hi_len, hi_out, hi_span;
 } CAL;
 
-/* windows' CCal_RecalcRange: each half of the raw range around the center, past the dead zone up to the saturation. */
+/* maps each half of the raw range around the center, from past the dead zone up to the saturation. */
 static void recalc(CAL *c)
 {
     LONG s = (LONG)(c->sat > c->dz ? c->sat : c->dz), dz = (LONG)c->dz;
@@ -449,7 +449,7 @@ typedef struct HIDOBJ {
     BYTE kind;
     BYTE report_type; /* HidP_* */
     BOOL pov, absolute, calibrated, is_signed;
-    USHORT index;     /* the data index */
+    USHORT index;     /* data index. */
     BYTE bits;
     LONG lmin, lmax, pmin, pmax;
     WORD granularity;
@@ -463,7 +463,7 @@ typedef struct HIDDEV {
     PHIDP_PREPARSED_DATA ppd;
     HIDP_CAPS caps;
     HIDOBJ obj[DI_MAX_OBJECTS];
-    int by_index[MAX_INDICES]; /* the input object of each data index, -1 for none */
+    int by_index[MAX_INDICES]; /* the input object of each data index, -1 for none. */
     ULONG raw[MAX_INDICES];
     BYTE native[DI_MAX_STATE];
     HIDP_DATA *data;
@@ -498,7 +498,6 @@ static const USAGE_INFO *usage_info(USHORT page, USHORT usage)
     return nullptr;
 }
 
-/* the pages whose input values are axes. */
 static BOOL axis_page(USHORT page, USHORT usage)
 {
     switch (page) {
@@ -535,7 +534,7 @@ static BOOL button_page(USHORT page, USHORT usage)
     }
 }
 
-/* windows' fixups of a value's ranges, false when it cannot be read. */
+/* fixes a value's ranges as windows does; false when it cannot be read. */
 static BOOL fix_ranges(HIDOBJ *o, const HIDP_VALUE_CAPS *v)
 {
     LONG n = v->BitSize ? v->BitSize : 1;
@@ -693,7 +692,7 @@ static void free_caps(CAPS_SET *c)
     HeapFree(GetProcessHeap(), 0, c->buttons);
 }
 
-/* windows' refusal of a value range that is not one usage, a bug its code has. */
+/* like windows, refuses a value range that is not a single usage. */
 static BOOL bad_ranges(const CAPS_SET *c)
 {
     for (USHORT i = 0; i < c->value_count; i++)
@@ -828,7 +827,7 @@ static void make_buttons(DIDEV *dev, HIDDEV *h, const CAPS_SET *c, HIDP_REPORT_T
     }
 }
 
-/* windows' CHid_MungeNotKeyboard: instances from usages, the array order kept. */
+/* instance numbers from usages, keeping the array order. */
 static void renumber(DIDEV *dev, HIDDEV *h)
 {
     DWORD top_button = 0;
@@ -907,7 +906,7 @@ static DWORD validate(DWORD type, DWORD buttons, DWORD flags)
     return t | 1u << 8;
 }
 
-/* dinput8's final type from the axes, buttons and oem data (the car controller rules left out). */
+/* dinput8's final type from the axes, buttons and oem data; the car controller rules are left out. */
 static DWORD final_type8(DIDEV *dev, HIDDEV *h)
 {
     BYTE t = h->entry.type8;
@@ -1191,7 +1190,7 @@ done:
 /* a read of one report on its own handle; the completion runs on the worker thread. */
 struct READER {
     OVERLAPPED overlapped;
-    DIDEV *dev;     /* null once the device let it go */
+    DIDEV *dev;     /* null once the device releases it. */
     HANDLE file;
     ULONG length;
     BYTE *buffer;
@@ -1265,7 +1264,7 @@ static BOOL issue_read(READER *r)
     return ReadFileEx(r->file, r->buffer, r->length, &r->overlapped, read_done);
 }
 
-/* the device is gone: the reader is let go of here, as no read of it is left to complete. */
+/* the device is gone and no read is pending, so the reader is freed here. */
 static void reader_lost(READER *r)
 {
     DIDEV *dev = r->dev;
@@ -1503,7 +1502,7 @@ static HRESULT hid_get_property(DIDEV *dev, DWORD id, const DIOBJECT *object, DI
             return DIERR_UNSUPPORTED;
         vidpid_name(((DIPROPSTRING *)h)->wsz, hid->entry.vid, hid->entry.pid);
         return DI_OK;
-    case 16: /* GETPORTDISPLAYNAME, the parent's description in place of its friendly name */
+    case 16: /* GETPORTDISPLAYNAME: the parent's description instead of its friendly name. */
         DiCopyW(((DIPROPSTRING *)h)->wsz, dev->name, DI_MAX_PATH);
         return S_FALSE;
     case 13: /* INSTANCENAME */

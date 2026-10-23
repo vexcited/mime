@@ -1,7 +1,6 @@
 /*
- * the system services of access tokens: opening, querying and setting,
- * copying and filtering, adjusting privileges and groups, the identity of
- * threads and the token of a new process.
+ * access token system services: opening, querying, setting, copying, filtering, adjusting privileges and groups,
+ * thread identity and the token of a new process.
  */
 #include "se.h"
 
@@ -86,7 +85,7 @@ static NTSTATUS write_length(PULONG returned, ULONG value)
     return write_caller(returned, &value, sizeof(value));
 }
 
-/* a sid of the caller, validated; sid must hold SEP_SID_MAX bytes. */
+/* validates a caller sid. sid must hold SEP_SID_MAX bytes. */
 static NTSTATUS capture_sid(const void *user, UCHAR *sid)
 {
     UCHAR header[2];
@@ -101,7 +100,7 @@ static NTSTATUS capture_sid(const void *user, UCHAR *sid)
     return SepSidValid(sid, 8 + 4 * (SIZE_T)header[1]) ? STATUS_SUCCESS : STATUS_INVALID_SID;
 }
 
-/* a TOKEN_GROUPS of the caller as groups; free the array with ExFreePool. */
+/* a caller TOKEN_GROUPS as groups. free the array with ExFreePool. */
 static NTSTATUS capture_groups(const void *user, SEP_GROUP **out, ULONG *count)
 {
     *out = nullptr;
@@ -139,7 +138,7 @@ static NTSTATUS capture_groups(const void *user, SEP_GROUP **out, ULONG *count)
     return STATUS_SUCCESS;
 }
 
-/* a TOKEN_PRIVILEGES of the caller: the luids, which only count by their low part, and the attributes. */
+/* a caller TOKEN_PRIVILEGES: the luids, of which only the low part counts, and the attributes. */
 static NTSTATUS capture_privileges(const void *user, ULONG **luids, ULONG **attributes, ULONG *count)
 {
     *luids = *attributes = nullptr;
@@ -305,7 +304,7 @@ NTSTATUS NTAPI NtDuplicateToken(HANDLE token_handle, ACCESS_MASK access, POBJECT
 static UCHAR g_lowbox_sids[SEP_LOWBOX_MAX][SEP_SID_MAX];
 static ULONG g_lowbox_count;
 
-/* the number of an app container, the same for every token with its package sid; zero when the table is full. */
+/* shared by every token with the same package sid, zero when the table is full. */
 static ULONG lowbox_number(const UCHAR *package)
 {
     for (ULONG i = 0; i < g_lowbox_count; i++)
@@ -331,9 +330,8 @@ static BOOLEAN sid_is_capability(const UCHAR *sid)
 }
 
 /*
- * a copy of a token that acts inside an app container: for the package, with the capabilities. the handles are
- * of the directories windows keeps the container's names in, which mime does not have; they are read and left
- * alone.
+ * a copy of a token that acts inside an app container, for the package with the capabilities. the handles are of
+ * the directories windows keeps the container's names in, which do not exist here, so they are read and ignored.
  */
 NTSTATUS NTAPI NtCreateLowBoxToken(PHANDLE new_token, HANDLE token_handle, ACCESS_MASK access,
                                    POBJECT_ATTRIBUTES attributes, PVOID package_sid, ULONG capability_count,
@@ -382,7 +380,7 @@ NTSTATUS NTAPI NtCreateLowBoxToken(PHANDLE new_token, HANDLE token_handle, ACCES
             status = capture_sid(entry.Sid, caps[i].Sid);
         if (NT_SUCCESS(status) && (!sid_is_capability(caps[i].Sid) || (entry.Attributes & SE_GROUP_INVALID_BITS)))
             status = STATUS_INVALID_PARAMETER;
-        /* none twice. */
+        /* no duplicates. */
         for (ULONG j = 0; NT_SUCCESS(status) && j < i; j++)
             if (SepSidEqual(caps[i].Sid, caps[j].Sid))
                 status = STATUS_INVALID_PARAMETER;
@@ -438,7 +436,7 @@ NTSTATUS NTAPI NtFilterToken(HANDLE token_handle, ULONG flags, PVOID sids_to_dis
         status = capture_privileges(privileges_to_delete, &luids, &attributes, &delete_count);
     if (NT_SUCCESS(status))
         status = capture_groups(restricted_sids, &restricting, &restrict_count);
-    /* a sid to restricting with has no attributes of its own. */
+    /* a restricting sid has no attributes of its own. */
     for (ULONG i = 0; NT_SUCCESS(status) && i < restrict_count; i++)
         if (restricting[i].Attributes)
             status = STATUS_INVALID_PARAMETER;
@@ -447,7 +445,7 @@ NTSTATUS NTAPI NtFilterToken(HANDLE token_handle, ULONG flags, PVOID sids_to_dis
         status = SepReferenceTokenByHandle(token_handle, TOKEN_DUPLICATE, &source, nullptr);
     if (NT_SUCCESS(status)) {
         for (ULONG i = 0; i < restrict_count; i++) {
-            /* packages and capabilities are not sids to restricting with. */
+            /* packages and capabilities cannot be restricting sids. */
             ULONG first = restricting[i].Sid[1] ? ((ULONG *)(restricting[i].Sid + 8))[0] : 0;
             if (restricting[i].Sid[7] == 15 && restricting[i].Sid[1] && (first == 2 || first == 3))
                 status = STATUS_INVALID_PARAMETER;
@@ -481,10 +479,9 @@ NTSTATUS NTAPI NtFilterToken(HANDLE token_handle, ULONG flags, PVOID sids_to_dis
 }
 
 /*
- * NtCreateToken: the one call that makes a token from nothing, for the service control manager and what logs
- * users on. it needs SeCreateTokenPrivilege enabled. the user comes first, the groups after it, and a group that
- * carries SE_GROUP_INTEGRITY is the label. the owner has to be the user or a group that may own, the primary group
- * one of the sids of the token.
+ * NtCreateToken: makes a token from nothing, for the service control manager and logon code. it needs
+ * SeCreateTokenPrivilege enabled. the user comes first, then the groups, and a group with SE_GROUP_INTEGRITY is the
+ * label. the owner must be the user or a group that may own, the primary group one of the token's sids.
  */
 NTSTATUS NTAPI NtCreateToken(PHANDLE token_handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG type,
                              PLUID authentication_id, PLARGE_INTEGER expiration, PVOID user, PVOID groups,
@@ -659,7 +656,7 @@ NTSTATUS NTAPI NtCreateToken(PHANDLE token_handle, ACCESS_MASK access, POBJECT_A
 /* ------------------------------------------------------------------ querying */
 
 typedef struct OUTPUT {
-    PUCHAR Data; /* NULL while only measuring */
+    PUCHAR Data; /* NULL while only measuring. */
     ULONG_PTR Base;
     ULONG Size;
 } OUTPUT;
@@ -688,7 +685,7 @@ static void out_pointer(OUTPUT *o, ULONG at, ULONG target)
     out_write(o, at, &p, sizeof(p));
 }
 
-/* a sid_and_attributes of the given sid, the sid placed after it where the caller said. */
+/* a SID_AND_ATTRIBUTES entry, with the sid stored where the caller said. */
 static void out_sid_entry(OUTPUT *o, ULONG entry, const void *sid, ULONG attributes)
 {
     ULONG at = out_alloc(o, SepSidLength(sid), 4);
@@ -705,7 +702,7 @@ static void out_groups(OUTPUT *o, const SEP_GROUP *groups, ULONG count, ULONG st
         out_sid_entry(o, head + 8 + 16 * (i - start), groups[i].Sid, groups[i].Attributes);
 }
 
-/* a pointer to a sid, or null, then the sid. */
+/* a pointer to a sid, or NULL, then the sid. */
 static void out_sid_pointer(OUTPUT *o, const void *sid)
 {
     ULONG head = out_alloc(o, 8, 8);
@@ -716,7 +713,7 @@ static void out_sid_pointer(OUTPUT *o, const void *sid)
     }
 }
 
-/* the privileges as an array of luids and attributes, in luid order; their number. */
+/* the privileges as luid and attribute pairs in luid order. returns their count. */
 static ULONG out_privilege_entries(OUTPUT *o, ULONG at, const TOKEN *t)
 {
     ULONG n = 0;
@@ -737,8 +734,8 @@ static void out_bytes_ulong(OUTPUT *o, ULONG value)
 }
 
 /*
- * what NtQueryInformationToken answers, in the layouts of the 64-bit TOKEN_ structures. the sizes are those of
- * windows' answers, byte for byte. the lock is held.
+ * NtQueryInformationToken in the 64-bit TOKEN_ layouts, with sizes matching windows byte for byte. call with the
+ * lock held.
  */
 static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
 {
@@ -857,7 +854,7 @@ static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
         out_bytes_ulong(o, t->ElevationType);
         return STATUS_SUCCESS;
     case TokenElevation:
-        /* a token of a pair is as its type says; one that is alone is elevated by what it holds. */
+        /* a token of a pair reports its type. a lone token is elevated by what it holds. */
         out_bytes_ulong(o, t->ElevationType == SEP_ELEVATION_FULL      ? 1
                            : t->ElevationType == SEP_ELEVATION_LIMITED ? 0
                                                                        : SepElevated(t));
@@ -941,13 +938,13 @@ static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
     }
 }
 
-/* the required access of a class: the source needs a right of its own. */
+/* TokenSource needs a right of its own. */
 static ACCESS_MASK query_access(ULONG klass)
 {
     return klass == TokenSource ? TOKEN_QUERY_SOURCE : TOKEN_QUERY;
 }
 
-/* the handle of a linked token: a copy that can only identify, or a primary one for the trusted. */
+/* a handle to the linked token: an identify only copy, or a primary one for the trusted. */
 static NTSTATUS query_linked(PTOKEN token, ULONG length, PVOID info, PULONG returned)
 {
     NTSTATUS status = write_length(returned, 8);
@@ -1190,7 +1187,7 @@ NTSTATUS NTAPI NtSetInformationToken(HANDLE handle, ULONG klass, PVOID info, ULO
         status = read_caller(&value, info, sizeof(value));
         if (!NT_SUCCESS(status))
             break;
-        /* allowing virtualization takes the right to create tokens, ui access the tcb privilege to turn on. */
+        /* allowing virtualization needs the create token privilege, turning on ui access the tcb privilege. */
         if ((klass == TokenVirtualizationAllowed && !SepSinglePrivilegeCheck(SE_CREATE_TOKEN_PRIVILEGE, mode)) ||
             (klass == TokenUIAccess && value && !SepSinglePrivilegeCheck(SE_TCB_PRIVILEGE, mode))) {
             status = STATUS_PRIVILEGE_NOT_HELD;
@@ -1230,7 +1227,7 @@ NTSTATUS NTAPI NtSetInformationToken(HANDLE handle, ULONG klass, PVOID info, ULO
             break;
         }
         ULONG rid = sid_rid_of(sid);
-        /* asked before the lock, which the check takes too. */
+        /* checked before taking the lock, since the check takes it too. */
         BOOLEAN trusted = SepSinglePrivilegeCheck(SE_TCB_PRIVILEGE, mode);
         ExAcquireFastMutex(&SeLock);
         if (t->IntegrityIndex < 0) {
@@ -1602,7 +1599,7 @@ NTSTATUS NTAPI NtImpersonateAnonymousToken(HANDLE thread_handle)
         ObDereferenceObject(thread);
         return STATUS_ACCESS_DENIED;
     }
-    /* a restricted process, but a write restricted one, may not become anonymous. */
+    /* a restricted process may not become anonymous, unless it is only write restricted. */
     PTOKEN process_token = SepReferencePrimaryToken(PsCurrentProcess());
     BOOLEAN restricted = FALSE;
     if (process_token) {
@@ -1621,7 +1618,7 @@ NTSTATUS NTAPI NtImpersonateAnonymousToken(HANDLE thread_handle)
 
 /* ------------------------------------------------------------------ the token of a process */
 
-/* whether a process may hand the token to a new process without a privilege: it descends from its own. */
+/* a process may hand a token it descends from to a new process without a privilege. */
 static BOOLEAN token_assignable(PTOKEN token)
 {
     PTOKEN pt = SepReferencePrimaryToken(PsCurrentProcess());
@@ -1640,9 +1637,9 @@ static BOOLEAN token_assignable(PTOKEN token)
 }
 
 /*
- * the token of a new process given as a handle: it needs the right to be assigned, and either to descend from
- * the creator's token or the privilege to assign tokens. a token that only impersonates can only identify when
- * its level is low, and is made primary otherwise.
+ * a token handle for a new process needs the right to be assigned, and the token must descend from the creator's or
+ * the creator needs the privilege to assign tokens. an impersonation token whose level is low can only identify,
+ * otherwise it is made primary.
  */
 NTSTATUS SepReferenceTokenForNewProcess(HANDLE handle, PTOKEN *out)
 {
@@ -1672,7 +1669,7 @@ NTSTATUS SepReferenceTokenForNewProcess(HANDLE handle, PTOKEN *out)
     return STATUS_SUCCESS;
 }
 
-/* NtSetInformationProcess(ProcessAccessToken): a process that has not started takes another primary token. */
+/* NtSetInformationProcess(ProcessAccessToken): a process that has not started yet takes another primary token. */
 NTSTATUS SepSetProcessAccessToken(HANDLE process_handle, PVOID info, ULONG length)
 {
     HANDLE pair[2];

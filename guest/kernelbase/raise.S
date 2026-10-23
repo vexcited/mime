@@ -1,7 +1,6 @@
 /*
- * RaiseException captures the caller's state at its own entry, so a handler
- * that continues execution resumes right after the call with every callee
- * saved register intact. KbRaiseExceptionWithContext builds the record.
+ * RaiseException captures the caller's state at its own entry, so a handler that continues resumes right after the
+ * call with every callee saved register intact. KbRaiseExceptionWithContext builds the record.
  */
     .text
 

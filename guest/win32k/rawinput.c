@@ -1,19 +1,12 @@
 /*
- * raw input and the cursor's confinement. every keyboard and mouse event
- * becomes a packet that processes registered for its device get as
- * WM_INPUT, before the legacy messages, which a registration with
- * RIDEV_NOLEGACY suppresses. packets live in a ring: a handle stays valid
- * until the ring comes round, where windows frees it once the message is
- * done (guessed: no program reads a packet that late).
- *
- * the host pointer follows what the foreground program asks of the
- * cursor: kept in the ClipCursor rectangle, or locked to report motion
- * alone when the program hides the cursor and confines it, captures the
- * mouse through raw input or keeps moving it back.
+ * registered processes receive WM_INPUT before legacy messages; RIDEV_NOLEGACY suppresses the latter. packets stay
+ * valid until the ring wraps, unlike Windows, which frees them after message processing. guessed: no program
+ * reads a packet that late. the host pointer follows ClipCursor and locks for relative motion when the foreground
+ * program hides and confines the cursor, captures raw input, or recenters it.
  */
 #include "win32k.h"
 
-/* the handles and names of the system's keyboard and mouse (guessed: windows' depend on the hardware). */
+/* guessed keyboard and mouse handles and names; Windows values depend on hardware. */
 #define KEYBOARD_HANDLE ((HANDLE)(ULONG_PTR)0x10041)
 #define MOUSE_HANDLE ((HANDLE)(ULONG_PTR)0x10043)
 static const WCHAR KEYBOARD_NAME[] = L"\\\\?\\ACPI#MIME0303#0#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}";
@@ -23,13 +16,12 @@ static const WCHAR MOUSE_NAME[] = L"\\\\?\\ACPI#MIME0F13#0#{378de44c-56ef-11d1-b
 #define RING 1024
 #define MAX_PADS 16
 #define MAX_HID_DATA 32
-/* the room a packet takes as the caller reads it. */
 #define MAX_PACKET (sizeof(RAWINPUTHEADER) + 8 + MAX_HID_DATA)
 
 typedef struct W32RAW {
     RAWINPUTDEVICE Devices[MAX_REGISTRATIONS];
     ULONG Count;
-    BOOLEAN Warped; /* moved the hidden cursor with SetCursorPos */
+    BOOLEAN Warped; /* moved the hidden cursor with SetCursorPos. */
 } W32RAW;
 
 typedef struct PACKET {
@@ -47,7 +39,7 @@ typedef struct PACKET {
     };
 } PACKET;
 
-/* a game controller's hid collection, a device of raw input. */
+/* a game controller HID collection exposed through raw input. */
 typedef struct HID_DEVICE {
     BOOLEAN Used;
     ULONG HostId;
@@ -67,15 +59,14 @@ static W32PROCESS *g_clip_owner;
 static ULONG g_pointer = MIME_POINTER_FREE, g_pointer_window;
 static RECT g_pointer_rect;
 
-/* ------------------------------------------------------------------ the cursor */
+/* the cursor. */
 
-/* all of the monitors. */
 static RECT screen(void)
 {
     return MonitorVirtualScreen();
 }
 
-/* where the cursor may go: the clip rectangle, else the screen; its right and bottom edges excluded. */
+/* use the clip rectangle or the screen, excluding the right and bottom edges. */
 POINT InputClampCursor(POINT pt)
 {
     RECT r = g_clipped ? g_clip : screen();
@@ -101,7 +92,6 @@ static BOOLEAN captures_mouse(const W32RAW *raw)
     return FALSE;
 }
 
-/* what the host pointer does, from the foreground program's cursor. */
 void InputUpdatePointer(void)
 {
     ULONG mode = MIME_POINTER_FREE, window = 0;
@@ -129,7 +119,7 @@ void InputUpdatePointer(void)
                      (ULONG64)(LONG64)rect.right, (ULONG64)(LONG64)rect.bottom, nullptr);
 }
 
-/* a program moved the cursor; one that hid it is recentering it to read motion. */
+/* moving a hidden cursor indicates recentering for relative motion. */
 void InputCursorMoved(void)
 {
     InputCursorPos = InputClampCursor(InputCursorPos);
@@ -145,7 +135,7 @@ void InputCursorMoved(void)
     }
 }
 
-/* the cursor shows again: moving it is no longer a way of reading motion. */
+/* a visible cursor no longer indicates recentering. */
 void InputCursorShown(void)
 {
     WND *fg = InputForeground;
@@ -155,7 +145,7 @@ void InputCursorShown(void)
     InputUpdatePointer();
 }
 
-/* the foreground went to another program: the clip it did not set goes (guessed: windows keeps it). */
+/* clear clipping on a foreground process change. guessed behavior; Windows keeps it. */
 void InputForegroundChanged(void)
 {
     WND *fg = InputForeground;
@@ -179,7 +169,7 @@ BOOL NTAPI NtUserClipCursor(const RECT *user_rect)
         g_clipped = FALSE;
         g_clip_owner = nullptr;
     } else {
-        /* windows orders the edges and keeps the result on the screen. */
+        /* Windows orders the edges and clips to the screen. */
         if (r.left > r.right) {
             LONG t = r.left;
             r.left = r.right;
@@ -219,7 +209,7 @@ BOOL NTAPI NtUserGetClipCursor(LPRECT user_rect)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ registration */
+/* registration. */
 
 static BOOLEAN usage_matches(const RAWINPUTDEVICE *d, USHORT page, USHORT usage)
 {
@@ -228,7 +218,7 @@ static BOOLEAN usage_matches(const RAWINPUTDEVICE *d, USHORT page, USHORT usage)
     return d->usUsage == usage || ((d->dwFlags & RIDEV_EXMODEMASK) == RIDEV_PAGEONLY && !d->usUsage);
 }
 
-/* the registration of a process for a device, an exact usage before a whole page; null when excluded. */
+/* prefer an exact usage registration over a usage page; return null when excluded. */
 static const RAWINPUTDEVICE *registration(const W32RAW *raw, USHORT page, USHORT usage)
 {
     const RAWINPUTDEVICE *page_only = nullptr;
@@ -244,7 +234,7 @@ static const RAWINPUTDEVICE *registration(const W32RAW *raw, USHORT page, USHORT
     return page_only;
 }
 
-/* what a registration for an exact usage hears of the devices present when it is made or dropped. */
+/* notify an exact usage registration of existing devices when it is added or removed. */
 static void notify_device(const RAWINPUTDEVICE *d, HWND target, BOOLEAN arrival)
 {
     WND *w = WndLookup(target);
@@ -260,7 +250,7 @@ static void notify_device(const RAWINPUTDEVICE *d, HWND target, BOOLEAN arrival)
             QueuePost(w->Thread, target, WM_INPUT_DEVICE_CHANGE, change, (LPARAM)g_hid[i].Handle);
 }
 
-/* windows' checks of one entry, then each replaces the process's registration of its usage. */
+/* validate each entry, then replace the process's registration for its usage. */
 BOOL NTAPI NtUserRegisterRawInputDevices(PCRAWINPUTDEVICE user_devices, UINT count, UINT size)
 {
     if (size != sizeof(RAWINPUTDEVICE) || !count || count > MAX_REGISTRATIONS) {
@@ -382,13 +372,11 @@ void RawFreeProcess(W32PROCESS *p)
     InputUpdatePointer();
 }
 
-/* ------------------------------------------------------------------ delivery */
+/* delivery. */
 
 /*
- * a packet to every process registered for its device: the foreground
- * one at its target or focus window, the others when they asked for
- * input in the background. true when the foreground process wants no
- * legacy messages for it.
+ * deliver to registered processes: the foreground target or focus window, and background subscribers. return true if
+ * the foreground registration suppresses legacy messages.
  */
 static BOOLEAN deliver_usage(PACKET *packet, USHORT page, USHORT usage)
 {
@@ -433,7 +421,7 @@ static BOOLEAN deliver(PACKET *packet, USHORT usage)
     return deliver_usage(packet, 1, usage);
 }
 
-/* the raw form of a host event, false to keep its legacy messages. */
+/* return false to keep the legacy messages for this host event. */
 BOOLEAN RawInputEvent(const MimeInputEvent *ev, BOOLEAN injected)
 {
     PACKET packet = {};
@@ -457,7 +445,7 @@ BOOLEAN RawInputEvent(const MimeInputEvent *ev, BOOLEAN injected)
         packet.Keyboard.VKey = (USHORT)vk;
         packet.Keyboard.Message = alt ? (up ? WM_SYSKEYUP : WM_SYSKEYDOWN) : (up ? WM_KEYUP : WM_KEYDOWN);
         if (vk == VK_PAUSE) {
-            /* pause is e1 1d 45, two packets. */
+            /* Pause is e1 1d 45, sent in two packets. */
             packet.Keyboard.MakeCode = 0x1D;
             packet.Keyboard.Flags = RI_KEY_E1 | (up ? RI_KEY_BREAK : 0);
             deliver(&packet, 6);
@@ -497,7 +485,7 @@ BOOLEAN RawInputEvent(const MimeInputEvent *ev, BOOLEAN injected)
     }
 }
 
-/* ------------------------------------------------------------------ reading packets */
+/* reading packets. */
 
 static PACKET *lookup(HRAWINPUT input)
 {
@@ -515,7 +503,7 @@ static UINT body_size(const PACKET *p)
     return p->Type == RIM_TYPEMOUSE ? sizeof(RAWMOUSE) : sizeof(RAWKEYBOARD);
 }
 
-/* a packet as the caller reads it: header, then its device's data. */
+/* caller layout: header followed by device data. */
 static UINT render(const PACKET *p, BYTE *out)
 {
     RAWINPUTHEADER h = {p->Type, (DWORD)(sizeof(h) + body_size(p)), p->Device, p->Wparam};
@@ -569,7 +557,7 @@ UINT NTAPI NtUserGetRawInputData(HRAWINPUT input, UINT command, PVOID user_data,
     return need;
 }
 
-/* the WM_INPUT messages of the calling thread, as many as fit, taken off its queue. */
+/* remove as many WM_INPUT messages from the calling thread queue as fit. */
 UINT NTAPI NtUserGetRawInputBuffer(PRAWINPUT user_data, PUINT user_size, UINT header_size)
 {
     if (header_size != sizeof(RAWINPUTHEADER) || !user_size) {
@@ -630,7 +618,7 @@ UINT NTAPI NtUserGetRawInputBuffer(PRAWINPUT user_data, PUINT user_size, UINT he
     return count;
 }
 
-/* ------------------------------------------------------------------ devices */
+/* devices. */
 
 static HID_DEVICE *hid_device(HANDLE handle)
 {
@@ -640,7 +628,7 @@ static HID_DEVICE *hid_device(HANDLE handle)
     return nullptr;
 }
 
-/* the keyboard and the mouse, then the hid collections in the order they came. */
+/* keyboard, mouse, then HID collections in arrival order. */
 UINT NTAPI NtUserGetRawInputDeviceList(PRAWINPUTDEVICELIST user_list, PUINT user_count, UINT size)
 {
     RAWINPUTDEVICELIST devices[2 + MAX_PADS] = {{KEYBOARD_HANDLE, RIM_TYPEKEYBOARD}, {MOUSE_HANDLE, RIM_TYPEMOUSE}};
@@ -655,7 +643,7 @@ UINT NTAPI NtUserGetRawInputDeviceList(PRAWINPUTDEVICELIST user_list, PUINT user
     for (ULONG i = 0; i < MAX_PADS; i++)
         if (g_hid[i].Used)
             order[pads++] = &g_hid[i];
-    /* handles grow with each arrival, which is the order windows lists them in. */
+    /* increasing handles preserve the Windows device listing order. */
     for (UINT i = 1; i < pads; i++)
         for (UINT j = i; j && order[j - 1]->Handle > order[j]->Handle; j--) {
             HID_DEVICE *t = order[j];
@@ -688,7 +676,7 @@ UINT NTAPI NtUserGetRawInputDeviceList(PRAWINPUTDEVICELIST user_list, PUINT user
     return have;
 }
 
-/* the name in characters, the rest in bytes; null data asks for the size. */
+/* name sizes are in characters; other sizes are in bytes. null data queries the size. */
 UINT NTAPI NtUserGetRawInputDeviceInfo(HANDLE device, UINT command, PVOID user_data, PUINT user_size)
 {
     UINT size;
@@ -748,7 +736,7 @@ UINT NTAPI NtUserGetRawInputDeviceInfo(HANDLE device, UINT command, PVOID user_d
         }
         break;
     case RIDI_PREPARSEDDATA:
-        /* the bytes HidD_GetPreparsedData gives; the keyboard and mouse are no hid devices to their readers. */
+        /* HidD_GetPreparsedData bytes; keyboards and mice are not exposed as HID devices here. */
         data = hid ? copy.Info.Preparsed : nullptr;
         units = need = hid ? copy.Info.PreparsedLength : 0;
         break;
@@ -770,9 +758,9 @@ UINT NTAPI NtUserGetRawInputDeviceInfo(HANDLE device, UINT command, PVOID user_d
     return units;
 }
 
-/* ------------------------------------------------------------------ game controllers */
+/* game controllers. */
 
-/* tells every process whose registration takes a collection's usage that it came or went. */
+/* notify processes registered for this usage of collection arrival or removal. */
 static void notify_all(const HID_DEVICE *d, BOOLEAN arrival)
 {
     for (PLIST_ENTRY e = W32Processes.Flink; e != &W32Processes; e = e->Flink) {
@@ -785,7 +773,7 @@ static void notify_all(const HID_DEVICE *d, BOOLEAN arrival)
     }
 }
 
-/* a controller's collection comes and goes with it, and each new state is one report to its readers. */
+/* each controller collection follows device lifetime; each state update produces one report. */
 void RawPadEvent(const MimeInputEvent *ev)
 {
     HID_DEVICE *d = nullptr;
@@ -801,7 +789,7 @@ void RawPadEvent(const MimeInputEvent *ev)
             return;
         d->Used = TRUE;
         d->HostId = ev->pad;
-        /* windows' user handles of devices, guessed. */
+        /* guessed Windows device handles. */
         d->Handle = (HANDLE)(ULONG_PTR)(0x10101 + 2 * g_hid_handles++);
         notify_all(d, TRUE);
         return;

@@ -34,7 +34,7 @@ FORCEINLINE BOOL CrFail(DWORD error)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ der reading (asn1.c) */
+/* ------------------------------------------------------------------ der reading, asn1.c */
 
 #define ASN_BOOLEAN 0x01
 #define ASN_INTEGER 0x02
@@ -61,7 +61,7 @@ FORCEINLINE BOOL CrFail(DWORD error)
 #define ASN_CONTEXT(n) (0x80 | (n))
 #define ASN_CONSTRUCTED_CONTEXT(n) (0xA0 | (n))
 
-/* one tag length value element. */
+/* one tag, length, value element. */
 typedef struct {
     BYTE tag;
     const BYTE *content;
@@ -89,7 +89,7 @@ DWORD DerParseOid(const der_item *item, char *out, DWORD size);
 DWORD DerParseTime(const der_item *item, FILETIME *ft);
 DWORD DerParseInt(const der_item *item, int *value);
 
-/* ------------------------------------------------------------------ der writing (asn1.c) */
+/* ------------------------------------------------------------------ der writing, asn1.c */
 
 typedef struct {
     BYTE *data;
@@ -110,7 +110,7 @@ void DerWriteIntLe(der_writer *w, const BYTE *le, DWORD size, BOOL unsigned_valu
 void DerWriteInt(der_writer *w, int value);
 void DerWriteTime(der_writer *w, const FILETIME *ft);
 
-/* ------------------------------------------------------------------ decoded structure layout (decode.c) */
+/* ------------------------------------------------------------------ decoded structure layout, decode.c */
 
 typedef struct {
     BYTE *base;
@@ -130,7 +130,7 @@ DWORD CrStringTypeFromTag(BYTE tag);
 BYTE CrTagFromStringType(DWORD type);
 BOOL CrIsPrintable(const WCHAR *s, DWORD n);
 
-/* ------------------------------------------------------------------ hashes (hash.c) */
+/* ------------------------------------------------------------------ hashes, hash.c */
 
 #define CR_MAX_HASH 64
 
@@ -138,23 +138,23 @@ DWORD CrHashSize(ALG_ID alg);
 BOOL CrHash(ALG_ID alg, const BYTE *data, DWORD size, BYTE *out);
 ALG_ID CrHashFromOid(LPCSTR oid);
 
-/* ------------------------------------------------------------------ signatures (rsa.c) */
+/* ------------------------------------------------------------------ signatures, rsa.c */
 
 /* verifies the signature of an encoded signed blob; returns an error code or 0. */
 DWORD CrVerifySignedBlob(const BYTE *encoded, DWORD size, const CERT_PUBLIC_KEY_INFO *key);
 DWORD CrRsaModulusBits(const CERT_PUBLIC_KEY_INFO *key);
 
-/* ------------------------------------------------------------------ oids (oid.c) */
+/* ------------------------------------------------------------------ oids, oid.c */
 
 PCCRYPT_OID_INFO CrFindOid(LPCSTR oid, DWORD group);
 PCCRYPT_OID_INFO CrFindOidByName(LPCWSTR name, DWORD group);
 
-/* ------------------------------------------------------------------ names (name.c) */
+/* ------------------------------------------------------------------ names, name.c */
 
 DWORD CrNameToStr(const CERT_NAME_BLOB *name, DWORD str_type, WCHAR *out, DWORD capacity);
 DWORD CrGetNameString(PCCERT_CONTEXT cert, DWORD type, DWORD flags, void *para, WCHAR *out, DWORD capacity);
 
-/* ------------------------------------------------------------------ certificates and stores (cert.c, store.c) */
+/* ------------------------------------------------------------------ certificates and stores, cert.c and store.c */
 
 typedef struct cr_prop {
     struct cr_prop *next;
@@ -183,8 +183,8 @@ typedef struct cr_reg {
     HKEY key;
     BOOL loading;
     ULONGLONG stamp;
-    cr_change *change;  /* the registry watched for the events programs asked to hear of changes with */
-    HANDLE internal;    /* auto reset, set when the registry changed since the store was read */
+    cr_change *change;  /* the registry watch behind the events programs registered for changes. */
+    HANDLE internal;    /* auto reset, set when the registry changed since the store was read. */
 } cr_reg;
 
 struct cr_store {
@@ -202,7 +202,7 @@ struct cr_store {
     DWORD child_count;
     WCHAR *localized_name;
     cr_reg *reg;
-    HANDLE auto_event; /* CERT_STORE_CTRL_AUTO_RESYNC: set when a store is to be read again before it is used */
+    HANDLE auto_event; /* CERT_STORE_CTRL_AUTO_RESYNC: set when the store must be reread before use. */
 };
 
 void CrInitLock(void);
@@ -229,7 +229,7 @@ void CrSerializeCert(der_writer *w, PCCERT_CONTEXT cert);
 /* drops the certificates a store holds, keeping those the program still references alive. */
 BOOL CrEmptyStore(cr_store *store);
 
-/* ------------------------------------------------------------------ system stores (sysstore.c) */
+/* ------------------------------------------------------------------ system stores, sysstore.c */
 
 /* the system, system registry and physical providers of CertOpenStore. */
 HCERTSTORE CrOpenSystemStore(ULONG_PTR provider, DWORD flags, const void *para);
@@ -242,14 +242,14 @@ void CrRegClose(cr_store *store);
 BOOL CrResyncStore(cr_store *store);
 /* CertControlStore of a store with no members: false with ERROR_CALL_NOT_IMPLEMENTED unless a registry store. */
 BOOL CrControlStore(cr_store *store, DWORD flags, DWORD type, HANDLE *event);
-/* the store is read again if its auto resync event says the registry changed, see CertControlStore. */
+/* rereads the store when its auto resync event says the registry changed. */
 void CrAutoResync(cr_store *store);
 /* whether the registry under a store changed since it was read. */
 BOOL CrStoreChanged(cr_store *store);
 /* bumped by every write this process makes to a registry store. */
 extern LONG CrRegGeneration;
 
-/* ------------------------------------------------------------------ chains (chain.c) */
+/* ------------------------------------------------------------------ chains, chain.c */
 
 BOOL CrIsSelfIssued(PCCERT_CONTEXT cert);
 BOOL CrUsageAllowed(PCCERT_CONTEXT cert, const CERT_USAGE_MATCH *usage);

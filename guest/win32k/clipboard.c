@@ -1,25 +1,20 @@
 /*
- * the clipboard of the session: formats with their data, the owner, the
- * viewer chain and format listeners. memory formats are stored as copies
- * of their bytes so any process can read them; gdi formats keep their
- * handle.
+ * the session clipboard. memory formats are stored as copies of their bytes so any process can read them, gdi
+ * formats keep their handle.
  *
- * the contents are shared with the host clipboard, text, images, html,
- * files and links, see MIME_CLIP_* in abi.h. closing the clipboard after a
- * change offers the kinds it can give, and the host asks for the data of one
- * only when another host program pastes; what another host application
- * copies replaces the contents with ownerless formats whose data is read
- * from the host only when a program asks for it.
+ * the contents are shared with the host clipboard, see MIME_CLIP_* in abi.h. closing the clipboard after a change
+ * offers the host what it can take, and the host asks for the data only when a host program pastes. a host copy
+ * replaces the contents with ownerless formats that are read from the host on demand.
  */
 #include "win32k.h"
 
 typedef struct CLIP_FORMAT {
     UINT Format;
     BOOLEAN Gdi;
-    BOOLEAN Delayed;  /* rendered on demand by the owner with WM_RENDERFORMAT */
+    BOOLEAN Delayed;  /* the owner renders it on WM_RENDERFORMAT. */
     BOOLEAN Synthesized;
-    ULONG HostKind;   /* a MIME_CLIP_* kind of the host's clipboard, fetched on demand; 0 for the session's own */
-    HANDLE Handle;    /* gdi formats */
+    ULONG HostKind;   /* MIME_CLIP_* kind fetched from the host on demand, 0 for the session's own. */
+    HANDLE Handle;    /* gdi formats. */
     PUCHAR Data;
     SIZE_T Size;
 } CLIP_FORMAT;
@@ -36,14 +31,14 @@ static W32THREAD *g_owner_thread;
 static HWND g_viewer;
 static HWND g_listeners[MAX_LISTENERS];
 static DWORD g_sequence = 1;
-static BOOLEAN g_changed;    /* the clipboard changed while open */
-static BOOLEAN g_rendering;  /* the owner is answering WM_RENDERFORMAT */
-static BOOLEAN g_host_pending; /* the host clipboard changed while the clipboard was open */
-static ULONG g_host_mask;      /* the kinds the host clipboard holds */
+static BOOLEAN g_changed;    /* the clipboard changed while open. */
+static BOOLEAN g_rendering;  /* the owner is answering WM_RENDERFORMAT. */
+static BOOLEAN g_host_pending; /* the host clipboard changed while the clipboard was open. */
+static ULONG g_host_mask;      /* the kinds the host clipboard holds. */
 static ULONG g_host_generation;
-static BOOLEAN g_host_fetch_failed; /* the host answered unsupported to a fetch: it only shares text */
-static BOOLEAN g_offer_unsupported; /* the host takes text only, in one piece */
-static ULONG g_offer_sequence;      /* the clipboard sequence number the host was offered */
+static BOOLEAN g_host_fetch_failed; /* a fetch got unsupported: the host only shares text. */
+static BOOLEAN g_offer_unsupported; /* the host takes text only, in one piece. */
+static ULONG g_offer_sequence;      /* the sequence number the host was last offered. */
 static ATOM g_format_png, g_format_html, g_format_url, g_format_effect;
 
 static BOOLEAN is_gdi_format(UINT format)
@@ -113,8 +108,8 @@ static void add_synthesized(UINT format)
 }
 
 /*
- * the formats the system provides from the ones a program set, in the order windows lists them: the locale
- * and the other text formats, then the other image formats. user32 converts their data when asked.
+ * formats the system derives from the ones a program set, in windows' order: the locale and the other text
+ * formats, then the other image formats. user32 converts the data when asked.
  */
 static void synthesize_formats(void)
 {
@@ -125,7 +120,7 @@ static void synthesize_formats(void)
             f->Format = CF_LOCALE;
             f->Data = W32Alloc(sizeof(DWORD));
             if (f->Data) {
-                *(DWORD *)f->Data = 0x0409; /* en-US, the locale of the session */
+                *(DWORD *)f->Data = 0x0409; /* en-US, the session locale. */
                 f->Size = sizeof(DWORD);
             }
         }
@@ -144,7 +139,7 @@ static void synthesize_formats(void)
 
 #define HOST_CHUNK 65536
 
-static PUCHAR g_host_page; /* hypercall bounce buffer, used under the user lock */
+static PUCHAR g_host_page; /* hypercall bounce buffer, used under the user lock. */
 
 static BOOLEAN host_page(void)
 {
@@ -155,7 +150,6 @@ static BOOLEAN host_page(void)
 
 static void render_format(CLIP_FORMAT *f);
 
-/* the numbers of the registered formats the host kinds map to. */
 static void register_formats(void)
 {
     if (!g_format_png) {
@@ -166,7 +160,7 @@ static void register_formats(void)
     }
 }
 
-/* the clipboard format a kind is carried in, and the other way round; with the user lock. */
+/* maps a host kind to its clipboard format and back. needs the user lock. */
 UINT ClipboardFormatOfKind(ULONG kind)
 {
     register_formats();
@@ -199,14 +193,13 @@ ULONG ClipboardKindOfFormat(UINT format)
     return 0;
 }
 
-/* a format a program stored, as opposed to one the system derives or the host owns. */
+/* a format a program stored, not one the system derives or the host owns. */
 static CLIP_FORMAT *own_format(UINT format)
 {
     CLIP_FORMAT *f = format ? find_format(format) : nullptr;
     return f && !f->Synthesized && !f->HostKind ? f : nullptr;
 }
 
-/* the kinds the formats of the session's own programs can give the host. */
 static ULONG offerable_kinds(void)
 {
     register_formats();
@@ -225,13 +218,13 @@ static ULONG offerable_kinds(void)
         mask |= MIME_CLIP_HDROP;
     if (own_format(g_format_url))
         mask |= MIME_CLIP_URL;
-    /* whether files are cut goes with them. */
+    /* the drop effect says whether the files were cut, so it goes with them. */
     if ((mask & MIME_CLIP_HDROP) && own_format(g_format_effect))
         mask |= MIME_CLIP_DROPEFFECT;
     return mask;
 }
 
-/* a 32 bit dib of a bitmap, bottom row first. */
+/* 32 bit dib, bottom row first. */
 static PUCHAR bitmap_to_dib(HANDLE bitmap, SIZE_T *size)
 {
     SURFACE *s = SurfaceLookup((HBITMAP)bitmap);
@@ -259,8 +252,8 @@ static PUCHAR bitmap_to_dib(HANDLE bitmap, SIZE_T *size)
 }
 
 /*
- * a copy of the bytes of a kind, rendering a delayed format first, which gives up the user lock while the owner
- * answers. text is utf-16 without its terminator, the other kinds are the bytes of the format.
+ * a delayed format is rendered first, which drops the user lock while the owner answers. text comes back as
+ * utf-16 without its terminator, other kinds as the raw format bytes.
  */
 static PUCHAR gather(ULONG kind, SIZE_T *size)
 {
@@ -332,7 +325,7 @@ static PUCHAR gather(ULONG kind, SIZE_T *size)
             *size = chars * sizeof(WCHAR);
             return copy;
         }
-        /* ansi and oem text widened as latin 1, which covers ascii. */
+        /* ansi and oem text are widened as latin 1, which covers ascii. */
         while (chars < f->Size && f->Data[chars])
             chars++;
         PWCHAR wide = W32Alloc(chars * sizeof(WCHAR) + 2);
@@ -346,7 +339,7 @@ static PUCHAR gather(ULONG kind, SIZE_T *size)
     return nullptr;
 }
 
-/* sends chunks of a request's answer, or says there is none. runs without the user lock. */
+/* sends the answer in chunks, or an empty answer. runs without the user lock. */
 static void provide(ULONG request, const UCHAR *data, SIZE_T size)
 {
     if (!data || !size) {
@@ -375,7 +368,7 @@ typedef struct CLIP_REQUEST {
     ULONG Sequence;
 } CLIP_REQUEST;
 
-/* answers one paste of a host program. its own thread, as the owner of a delayed format may take long to answer. */
+/* one thread per host paste, since the owner of a delayed format may be slow to answer. */
 static void NTAPI request_thread(PVOID context)
 {
     CLIP_REQUEST *r = context;
@@ -384,7 +377,7 @@ static void NTAPI request_thread(PVOID context)
     UserEnter();
     if (r->Sequence == g_sequence) {
         data = gather(r->Kind, &size);
-        /* the owner rendered while we waited: something else may have taken the clipboard over. */
+        /* something else may have taken the clipboard over while the owner rendered. */
         if (r->Sequence != g_sequence) {
             W32Free(data);
             data = nullptr;
@@ -397,7 +390,6 @@ static void NTAPI request_thread(PVOID context)
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
-/* the host asks for a kind of what the session offered. */
 void ClipboardHostRequest(ULONG kind, ULONG id)
 {
     CLIP_REQUEST *r = W32Alloc(sizeof(*r));
@@ -413,7 +405,7 @@ void ClipboardHostRequest(ULONG kind, ULONG id)
     HalMimeHypercall(MIME_HC_CLIP_PROVIDE, id, 0, 0, 0, MIME_CLIP_NONE, 0, nullptr);
 }
 
-/* sends the text of the clipboard to a host that only takes text, an empty text when it has none. */
+/* for hosts that only take text. sends an empty text when there is none. */
 static void push_text_to_host(void)
 {
     if (!host_page())
@@ -434,14 +426,14 @@ static void push_text_to_host(void)
     W32Free(text);
 }
 
-/* tells the host what the clipboard holds now, so it can ask for the data of a kind when it is pasted. */
+/* the host only asks for the data of a kind when it is pasted. */
 static void offer_to_host(void)
 {
     if (g_offer_unsupported) {
         push_text_to_host();
         return;
     }
-    /* contents the host gave us and nobody changed are the host's still. */
+    /* unchanged contents that came from the host still belong to it. */
     ULONG mask = offerable_kinds();
     g_offer_sequence = g_sequence;
     if (HalMimeHypercall(MIME_HC_CLIP_OFFER, mask, 0, 0, 0, 0, 0, nullptr) == MIME_HC_STATUS_UNSUPPORTED) {
@@ -450,7 +442,7 @@ static void offer_to_host(void)
     }
 }
 
-/* reads the host's data of a kind into a host format; leaves it without data when the host has none. */
+/* leaves the format empty when the host has no data. */
 static void fetch_host(CLIP_FORMAT *f)
 {
     f->Delayed = FALSE;
@@ -463,7 +455,7 @@ static void fetch_host(CLIP_FORMAT *f)
                                                : MIME_HC_STATUS_UNSUPPORTED;
     } else {
         status = HalMimeHypercall(MIME_HC_CLIP_FETCH, f->HostKind, pa, 0, 0, g_host_generation, 0, &total);
-        /* a host that shares text only answers unsupported: its text comes through the older call. */
+        /* a text-only host answers unsupported: its text comes through the older call. */
         if (status == MIME_HC_STATUS_UNSUPPORTED) {
             g_host_fetch_failed = TRUE;
             status = f->HostKind == MIME_CLIP_TEXT ? HalMimeHypercall(MIME_HC_CLIP_GET, pa, 0, 0, 0, 0, 0, &total)
@@ -507,7 +499,7 @@ static void add_host_format(UINT format, ULONG kind)
     f->HostKind = kind;
 }
 
-/* another host application copied: the contents become what it holds, not read yet. */
+/* a host application copied: take over its contents, read lazily. */
 static void pull_from_host(void)
 {
     WND *old = g_owner ? WndLookup(g_owner) : nullptr;
@@ -535,7 +527,7 @@ static void pull_from_host(void)
         add_host_format(g_format_effect, MIME_CLIP_DROPEFFECT);
     synthesize_formats();
     g_sequence++;
-    /* what the guest offered the host is gone from it. */
+    /* the host no longer holds what the guest offered. */
     g_offer_sequence = g_sequence;
     /* posted rather than sent: this runs on the input thread. */
     for (ULONG i = 0; i < MAX_LISTENERS; i++) {
@@ -563,8 +555,8 @@ void ClipboardHostChanged(ULONG mask, ULONG generation)
 /* ------------------------------------------------------------------ cleanup */
 
 /*
- * the owner is destroyed: it renders every delayed format first, from WM_RENDERALLFORMATS, before it gets
- * WM_DESTROY. what it leaves unrendered is dropped, which counts as a change.
+ * the owner gets WM_RENDERALLFORMATS before WM_DESTROY. whatever it leaves unrendered is dropped, which counts as
+ * a change.
  */
 void ClipboardDisown(WND *w)
 {
@@ -601,7 +593,6 @@ void ClipboardWindowDestroyed(WND *w)
     if (g_open_window == h)
         g_open_window = nullptr;
     if (g_owner == h) {
-        /* windows sends WM_RENDERALLFORMATS first; formats that were never rendered are dropped. */
         ULONG kept = 0;
         for (ULONG i = 0; i < g_format_count; i++) {
             if (g_formats[i].Delayed)
@@ -703,7 +694,7 @@ BOOL NTAPI NtUserEmptyClipboard(void)
     W32THREAD *t = W32GetThread();
     BOOL ok = caller_has_open(t);
     if (ok) {
-        /* the owner hears that its contents go, even when it is the window emptying them, as xxxEmptyClipboard does. */
+        /* like windows, the owner gets WM_DESTROYCLIPBOARD even when it is the one emptying the clipboard. */
         WND *old = g_owner ? WndLookup(g_owner) : nullptr;
         if (old)
             MsgSendKernel(old, WM_DESTROYCLIPBOARD, 0, 0, MIME_LPARAM_VALUE, 0);
@@ -770,7 +761,7 @@ HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_D
             f->Size = d.Data ? d.Size : 0;
             copy = nullptr;
             if (f->Gdi && handle) {
-                /* the clipboard owns gdi objects from now on, beyond the life of the process. */
+                /* the clipboard now owns the gdi object, beyond the life of the process. */
                 GDI_OBJECT *o = GdiLookup(handle, 0);
                 if (o)
                     o->OwnerPid = 0;
@@ -790,7 +781,7 @@ HANDLE NTAPI NtUserSetClipboardData(UINT format, HANDLE handle, MIME_CLIPBOARD_D
     return result;
 }
 
-/* asks the owner to render a delayed format; returns with the lock held. */
+/* returns with the lock held. */
 static void render_format(CLIP_FORMAT *f)
 {
     if (f->HostKind) {
@@ -831,7 +822,7 @@ HANDLE NTAPI NtUserGetClipboardData(UINT format, MIME_CLIPBOARD_DATA *user_data)
             f = find_format(format);
         }
         if (!f || f->Delayed || f->Synthesized) {
-            /* missing format; synthesized ones are converted by user32 from a stored text format. */
+            /* missing. user32 converts synthesized formats from a stored text format. */
         } else if (f->Gdi) {
             result = f->Handle;
             d.Gdi = TRUE;
@@ -881,7 +872,7 @@ BOOL NTAPI NtUserIsClipboardFormatAvailable(UINT format)
     return r;
 }
 
-/* the formats on the clipboard, synthesized ones too, without opening it: the count, even when there is room for fewer. */
+/* includes synthesized formats, and returns the full count even when there is room for fewer. */
 BOOL NTAPI NtUserGetUpdatedClipboardFormats(UINT *user_formats, UINT count, UINT *user_out)
 {
     if (!user_out) {

@@ -1,6 +1,4 @@
-/*
- * IWICPalette: up to 256 colors, the predefined palettes of windows, and palettes made from the colors of a bitmap.
- */
+/* IWICPalette: up to 256 colors from predefined Windows palettes or bitmap quantization. */
 #include "wic_private.h"
 
 #define PALETTE_MAX 256
@@ -18,7 +16,7 @@ typedef struct WicPalette {
 static const BYTE g_cube[10][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {2, 2, 2}, {3, 3, 3},
                                    {4, 4, 4}, {5, 5, 5}, {6, 6, 6}, {6, 7, 6}, {8, 8, 4}};
 
-/* the sixteen colors of the standard display, added to the smaller halftone palettes when they are not in the cube. */
+/* add missing standard display colors to smaller halftone cubes. */
 static const WICColor g_system[16] = {0xff000000, 0xffffffff, 0xffc0c0c0, 0xff808080, 0xff800000, 0xffff0000,
                                       0xff008000, 0xff00ff00, 0xff000080, 0xff0000ff, 0xff808000, 0xffffff00,
                                       0xff800080, 0xffff00ff, 0xff008080, 0xff00ffff};
@@ -88,7 +86,7 @@ UINT WicPredefinedPalette(WICBitmapPaletteType type, BOOL transparent, WICColor 
     return count;
 }
 
-/* ------------------------------------------------------------------ median cut */
+/* median cut. */
 
 typedef struct Box {
     UINT first, count; /* in the sorted bin list. */
@@ -121,7 +119,7 @@ static void box_bounds(Box *box, const Bin *bins)
 
 static void sort_bins(Bin *bins, UINT first, UINT count, int channel)
 {
-    /* an insertion sort on the channel, bins of a box are few after the first cuts, and a merge pass would not pay. */
+    /* use insertion sort after the first cuts, when boxes have too few bins to justify merging. */
     UINT shift = channel == 0 ? 10 : channel == 1 ? 5 : 0;
     if (count > 64) {
         /* a shell sort for the large first boxes. */
@@ -159,7 +157,7 @@ static HRESULT median_cut(Bin *bins, UINT bin_count, UINT target, WICColor *colo
     boxes[0].count = bin_count;
     box_bounds(&boxes[0], bins);
     while (box_count < target) {
-        /* the box with the most pixels that can still be cut. */
+        /* choose the most populated box that can still be split. */
         int best = -1;
         UINT best_population = 0;
         for (UINT i = 0; i < box_count; i++) {
@@ -175,7 +173,7 @@ static HRESULT median_cut(Bin *bins, UINT bin_count, UINT target, WICColor *colo
         UINT widest = 0;
         for (int k = 0; k < 3; k++) {
             UINT extent = (UINT)(box->hi[k] - box->lo[k]);
-            /* green counts more, as the eye sees it. */
+            /* weight green more heavily for perceptual distance. */
             UINT weight = k == 1 ? extent * 3 : k == 0 ? extent * 2 : extent;
             if (weight >= widest) {
                 widest = weight;
@@ -289,7 +287,7 @@ HRESULT WicPaletteFromBitmap(IWICBitmapSource *source, UINT count, BOOL transpar
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the object */
+/* the object. */
 
 static WicPalette *palette_from(IWICPalette *This) { return WIC_FROM_SLOT(WicPalette, palette, This); }
 

@@ -1,7 +1,6 @@
 /*
- * dhcpcsvc: the dhcp client api in front of the dhcp client service, which
- * mime does not run. the calls check their arguments as windows' do, then
- * find no service to ask.
+ * the dhcp client api. mime runs no dhcp client service, so calls check
+ * their arguments like windows, then find no service to ask.
  */
 #include <mime/win32/winbase.h>
 

@@ -1,7 +1,7 @@
 /*
- * IUri: CreateUri splits a uri after rfc 3986 and canonicalizes it the way windows' iertutil does for its
- * known schemes: the scheme and host lowered, dot segments removed, escaped unreserved characters decoded,
- * forbidden ones escaped, the root path added and default ports left out of the authority.
+ * IUri: CreateUri splits a uri per rfc 3986 and canonicalizes known schemes like windows does: scheme and host
+ * lowered, dot segments removed, escaped unreserved characters decoded, forbidden ones escaped, the root path added
+ * and default ports left out of the authority.
  */
 #include "urlmon_private.h"
 
@@ -14,7 +14,7 @@ typedef struct {
     DWORD Kind;
 } SCHEME_INFO;
 
-/* iertutil's table of known schemes, with their default ports. */
+/* the known schemes and their default ports. */
 static const SCHEME_INFO Schemes[] = {
     {L"ftp", URL_SCHEME_FTP, 21, KIND_HIERARCHICAL},
     {L"http", URL_SCHEME_HTTP, 80, KIND_HIERARCHICAL},
@@ -103,7 +103,7 @@ static void AddChar(TEXT *text, WCHAR c)
     Add(text, &c, 1);
 }
 
-/* the text built, NULL when building failed; an empty builder gives an empty string. */
+/* NULL when building failed. an empty builder gives an empty string. */
 static PWSTR Finish(TEXT *text)
 {
     if (text->Failed) {
@@ -153,10 +153,7 @@ static BOOL IsForbidden(WCHAR c)
            c == '}' || c == '|' || c == '^' || c == '\\';
 }
 
-/*
- * one component: escaped unreserved characters decoded, forbidden ones and stray percent signs escaped with
- * upper case digits.
- */
+/* decodes escaped unreserved characters, escapes forbidden ones and stray percent signs with upper case digits. */
 static PWSTR CanonicalPart(LPCWSTR part, BOOL decode, BOOL encode)
 {
     TEXT text = {0};
@@ -189,7 +186,7 @@ static PWSTR CanonicalPart(LPCWSTR part, BOOL decode, BOOL encode)
     return Finish(&text);
 }
 
-/* removes the dot segments of a path, rfc 3986 5.2.4, in place. */
+/* rfc 3986 5.2.4, in place. */
 static void RemoveDots(PWSTR path)
 {
     PWSTR copy = UrlDuplicate(path);
@@ -317,7 +314,7 @@ static HRESULT ParseAuthority(URI *uri, LPCWSTR start, LPCWSTR end)
     return S_OK;
 }
 
-/* the pre-processing of html uris: no surrounding blanks, no tabs or line breaks. */
+/* html uri pre-processing: strips surrounding blanks, tabs and line breaks. */
 static PWSTR PreProcess(LPCWSTR text, DWORD flags)
 {
     DWORD length = (DWORD)lstrlenW(text);
@@ -336,7 +333,7 @@ static PWSTR PreProcess(LPCWSTR text, DWORD flags)
     return Finish(&out);
 }
 
-/* a local path as the file url windows makes of it. */
+/* turns a local path into the file url windows makes of it. */
 static PWSTR ImplicitFile(LPCWSTR text)
 {
     TEXT out = {0};
@@ -422,7 +419,7 @@ static HRESULT Parse(URI *uri, LPCWSTR input)
         }
         p = end;
     } else if (kind == KIND_HIERARCHICAL && uri->Info->Port) {
-        /* the schemes with servers need one. */
+        /* schemes with servers require one. */
         hr = E_INVALIDARG;
     }
     if (SUCCEEDED(hr) && kind == KIND_HIERARCHICAL && uri->HasAuthority && (!uri->Host || !uri->Host[0]) &&
@@ -592,7 +589,7 @@ static LPCWSTR Extension(URI *uri)
     return dot ? dot : nullptr;
 }
 
-/* a string property, NULL when the uri has none. the result is a heap string. */
+/* returns a heap string, or NULL when the uri has none. */
 static PWSTR StringProperty(URI *uri, Uri_PROPERTY property, DWORD flags)
 {
     TEXT text = {0};
@@ -896,7 +893,7 @@ static const IUriVtbl UriVtbl = {
 
 /* ------------------------------------------------------------------ creation */
 
-/* the flag pairs that contradict each other, and the defaults when neither is given. */
+/* rejects contradicting flag pairs and fills in the defaults when neither is given. */
 static HRESULT CheckFlags(DWORD *flags)
 {
     static const DWORD pairs[][2] = {
@@ -981,7 +978,7 @@ DECLSPEC_EXPORT HRESULT WINAPI CreateUriWithFragment(LPCWSTR uri, LPCWSTR fragme
     return hr;
 }
 
-/* resolves a relative reference against a base, rfc 3986 5.2.2, both given as IUri. */
+/* rfc 3986 5.2.2 reference resolution. */
 DECLSPEC_EXPORT HRESULT WINAPI CoInternetCombineIUri(IUri *base, IUri *relative, DWORD flags, IUri **result,
                                                     DWORD_PTR reserved)
 {

@@ -1,8 +1,8 @@
 /*
- * IDirect3DVertexBuffer7, read from d3dim700.dll of build 26300: system
- * memory vertices a device draws from or ProcessVertices writes. windows
- * keeps them in a locked execute buffer surface; nothing of that is seen
- * but the pointer, which stays the same for the buffer's life.
+ * IDirect3DVertexBuffer7: system memory vertices a device draws from or
+ * ProcessVertices writes. windows keeps them in a locked execute buffer
+ * surface; only the pointer shows, and it stays the same for the buffer's
+ * life.
  */
 #include "d3d_private.h"
 
@@ -43,7 +43,7 @@ HRESULT D3dCreateVertexBuffer7(D3DOBJ *d3d, const D3DVERTEXBUFFERDESC *desc, DWO
         return D3DERR_TOOMANYVERTICES;
     if (desc->dwCaps & D3DVBCAPS_OPTIMIZED)
         return DDERR_INVALIDPARAMS;
-    /* a surface of no width, which ddraw refuses, guessed. */
+    /* a zero width surface, which ddraw refuses; guessed. */
     if (!desc->dwNumVertices)
         return DDERR_INVALIDPARAMS;
     HRESULT hr;
@@ -136,7 +136,7 @@ static HRESULT process(D3DVB *dst, D3DDEV *dev, DWORD op, DWORD dst_index, DWORD
     return D3dProcess(dev, src, src_fvf, dst->data + (SIZE_T)dst_index * dst->stride, dst->desc.dwFVF, count, op, flags);
 }
 
-/* the source's vertices transformed, and lit if asked, into this buffer's layout. */
+/* transforms the source's vertices, lit if asked, into this buffer's layout. */
 static HRESULT STDMETHODCALLTYPE vb7_process_vertices(IDirect3DVertexBuffer7 *This, DWORD op, DWORD dst_index,
                                                       DWORD count, LPDIRECT3DVERTEXBUFFER7 src_iface, DWORD src_index,
                                                       LPDIRECT3DDEVICE7 device, DWORD flags)
@@ -190,7 +190,7 @@ static HRESULT STDMETHODCALLTYPE vb7_get_desc(IDirect3DVertexBuffer7 *This, LPD3
     return D3D_OK;
 }
 
-/* the format checks of d3dim700's ValidateFVF. */
+/* d3dim700's format checks. */
 static BOOL valid_fvf(DWORD fvf)
 {
     DWORD sets = (fvf & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;
@@ -235,7 +235,7 @@ static const IDirect3DVertexBuffer7Vtbl vb7_vtbl = {
     vb7_process_vertices_strided,
 };
 
-/* ------------------------------------------------------------------ the first interface's, d3dim.dll's */
+/* ------------------------------------------------------------------ the first interface */
 
 D3DVB *D3dVbFromIface1(void *iface)
 {
@@ -243,7 +243,7 @@ D3DVB *D3dVbFromIface1(void *iface)
     return i && i->lpVtbl == &vb1_vtbl ? CONTAINING_RECORD(i, D3DVB, iface1) : nullptr;
 }
 
-/* only the low twelve bits of a format, a stride made of them. */
+/* only the low twelve bits of a format count, and the stride comes from them. */
 HRESULT D3dCreateVertexBuffer1(D3DOBJ *d3d, const D3DVERTEXBUFFERDESC *desc, DWORD flags,
                                IDirect3DVertexBuffer **out)
 {
@@ -258,7 +258,7 @@ HRESULT D3dCreateVertexBuffer1(D3DOBJ *d3d, const D3DVERTEXBUFFERDESC *desc, DWO
         return DDERR_INVALIDPARAMS;
     HRESULT hr;
     D3DVB *vb = create(d3d, desc, &hr);
-    /* the seventh's methods serve it too, through a vtable no caller sees. */
+    /* the version 7 methods serve it too, through a vtable no caller sees. */
     if (vb) {
         vb->iface7.lpVtbl = &vb7_vtbl;
         vb->iface1.lpVtbl = &vb1_vtbl;
@@ -308,7 +308,7 @@ static HRESULT STDMETHODCALLTYPE vb1_unlock(IDirect3DVertexBuffer *This)
     return vb ? vb7_unlock(&vb->iface7) : DDERR_INVALIDOBJECT;
 }
 
-/* through the device's current viewport, lights and material; transforming always. */
+/* uses the device's current viewport, lights and material, and always transforms. */
 static HRESULT STDMETHODCALLTYPE vb1_process_vertices(IDirect3DVertexBuffer *This, DWORD op, DWORD dst_index,
                                                       DWORD count, LPDIRECT3DVERTEXBUFFER src_iface, DWORD src_index,
                                                       LPDIRECT3DDEVICE3 device, DWORD flags)

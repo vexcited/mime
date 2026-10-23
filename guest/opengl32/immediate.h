@@ -1,6 +1,6 @@
 /*
- * the vertex commands of immediate mode. they are small and called a lot, so the work is here and inline: a vertex
- * copies the current color, normal and texture coordinate next to its position.
+ * immediate mode vertex commands, inline since they are small and hot: a vertex copies the current color, normal and
+ * texture coordinate next to its position.
  */
 #ifndef MIME_OPENGL32_IMMEDIATE_H
 #define MIME_OPENGL32_IMMEDIATE_H
@@ -48,7 +48,7 @@ static inline void gl_ff_normal(GlContext *ctx, GLfloat x, GLfloat y, GLfloat z)
     f->varying |= 2;
 }
 
-/* a texture coordinate of a unit; FALSE when the unit does not exist. */
+/* FALSE when the unit does not exist. */
 static inline BOOL gl_ff_texcoord(GlContext *ctx, GLuint unit, GLfloat s, GLfloat t, GLfloat r, GLfloat q)
 {
     GlFixed *f = &ctx->ff;

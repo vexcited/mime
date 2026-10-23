@@ -1,10 +1,6 @@
 /*
- * combase entry point and windows runtime activation.
- *
- * on windows, combase holds the com and windows runtime cores that ole32
- * forwards to. mime keeps com in ole32; combase answers the runtime calls:
- * apartment initialization and the activation factories of the classes it
- * implements, looked up by name.
+ * combase entry point and windows runtime activation. on windows combase holds the COM and runtime cores that ole32
+ * forwards to; mime keeps COM in ole32, and combase only answers the runtime calls.
  */
 #include "combase_private.h"
 #include "xmldom.h"
@@ -19,9 +15,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 }
 
 /*
- * runtime apartments map to com ones, which ole32 keeps. it is reached at
- * run time so combase does not link to ole32, which windows forwards the
- * other way.
+ * runtime apartments are COM apartments. ole32 is loaded at run time so combase does not link to it, since windows
+ * forwards the other way.
  */
 typedef HRESULT(WINAPI *CO_INITIALIZE_EX)(LPVOID, DWORD);
 typedef void(WINAPI *CO_UNINITIALIZE)(void);
@@ -80,7 +75,7 @@ ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void 
     HRESULT registered = CbRegisteredFactory(class_id, riid, factory);
     if (registered != REGDB_E_CLASSNOTREG)
         return registered;
-    /* a program that asks for a class that is not here is told so in the log, for finding what it wants next. */
+    /* log missing classes, to see what programs want next. */
     char text[200];
     int n = _snprintf(text, sizeof(text), "combase: no runtime class %.*ls\n", (int)(length < 120 ? length : 120), name);
     if (n > 0)
@@ -102,9 +97,7 @@ ROAPI HRESULT WINAPI RoActivateInstance(HSTRING class_id, IInspectable **instanc
     return hr;
 }
 
-/* ------------------------------------------------------------------ error reporting */
-
-/* runtime errors carry no restricted error information yet, the result alone describes them. */
+/* there is no restricted error information yet, the HRESULT alone describes an error. */
 ROAPI BOOL WINAPI RoOriginateError(HRESULT error, HSTRING message)
 {
     return FALSE;

@@ -1,7 +1,4 @@
-/*
- * the shell light weight utilities kernelbase hosts for shlwapi: paths, strings, urls and the
- * user specific registry helpers, shared by their source files.
- */
+/* shared declarations for the shlwapi helpers kernelbase hosts: paths, strings, urls and per-user registry. */
 #ifndef MIME_KERNELBASE_SHLWAPI_KB_H
 #define MIME_KERNELBASE_SHLWAPI_KB_H
 
@@ -15,7 +12,7 @@ FORCEINLINE BOOL KbIsDriveLetter(WCHAR c)
     return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z');
 }
 
-/* ansi characters of the ansi code page, one or two bytes. */
+/* steps over one ansi character, one or two bytes. */
 FORCEINLINE LPSTR KbShNextA(LPCSTR p)
 {
     if (!*p)
@@ -35,7 +32,7 @@ FORCEINLINE LPSTR KbShPrevA(LPCSTR start, LPCSTR p)
 PWSTR KbShAnsiToWide(LPCSTR s);
 BOOL KbShWideToAnsiBuffer(LPCWSTR wide, LPSTR out, int size);
 
-/* the character after the root of a path, NULL for a relative one; the forms PathCchSkipRoot knows. */
+/* the character after the root, NULL for a relative path. Knows the roots PathCchSkipRoot knows. */
 LPCWSTR KbShSkipRoot(LPCWSTR path);
 
 /* copies a string into a counted buffer, failing as StringCchCopy does. */

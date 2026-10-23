@@ -1,13 +1,12 @@
 /*
- * the window system. a surface is the guest's own: its window. a
- * swapchain's images are host images, and the host shows a present in a
- * swapchain of its own on the window's host window, so acquire and
- * present go without a reply. the images are handed out in turn, and the
- * host orders each acquire after the gpu is done with the image's last
- * present.
+ * the window system. a surface is just its window. swapchain images are host
+ * images, and the host presents them through its own swapchain on the
+ * window's host window, so acquire and present need no reply. images are
+ * handed out in turn, and the host orders each acquire after the gpu is done
+ * with the image's last present.
  *
- * as with the drivers of windows, a swapchain whose window changed size
- * is out of date, and the surface reports the client area of its window.
+ * as with windows drivers, a swapchain whose window changed size is out of
+ * date, and the surface reports its window's client area.
  */
 #include "mvk_guest.h"
 
@@ -40,7 +39,7 @@ static MvkSwapchain *swapchain_of(VkSwapchainKHR swapchain)
     return (MvkSwapchain *)(uintptr_t)swapchain;
 }
 
-/* the client area of the window, zero while it is minimized. */
+/* zero while minimized. */
 static VkExtent2D client_extent(HWND hwnd)
 {
     RECT r;
@@ -336,7 +335,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImage2KHR(VkDevice device, const VkA
     return vkAcquireNextImageKHR(device, info->swapchain, info->timeout, info->semaphore, info->fence, index);
 }
 
-/* where the window shows the swapchain: its top level window, and the client area in that window. */
+/* the swapchain shows in the top level window, at the client area's place in it. */
 static void target(HWND hwnd, uint32_t *window, RECT *client)
 {
     HWND top = GetAncestor(hwnd, GA_ROOT);

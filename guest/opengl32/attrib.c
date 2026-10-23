@@ -1,7 +1,6 @@
 /*
- * glPushAttrib and glPopAttrib, glPushClientAttrib and glPopClientAttrib. a push copies the state of the groups the
- * mask names, and a pop writes it back, group by group, so what the groups share is restored in the order of the
- * groups. the stacks are 16 deep, as Windows has them.
+ * glPushAttrib, glPopAttrib and the client variants. a pop writes the groups back one at a time, so state shared by
+ * groups is restored in group order. the stacks are 16 deep, as on Windows.
  */
 #include "opengl32.h"
 
@@ -380,7 +379,7 @@ GLAPI void APIENTRY glPopClientAttrib(void)
     }
     const ClientEntry *e = (const ClientEntry *)ctx->client_attrib_stack + --ctx->client_attrib_depth;
     if (e->mask & GL_CLIENT_VERTEX_ARRAY_BIT) {
-        /* the arrays go back into the vertex array object that is bound, with the name it has. */
+        /* the arrays go back into the bound vertex array object, under its current name. */
         GLuint name = ctx->vao->name;
         *ctx->vao = e->array;
         ctx->vao->name = name;

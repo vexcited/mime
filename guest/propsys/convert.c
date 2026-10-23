@@ -1,7 +1,6 @@
 /*
- * PropVariantChangeType: each element goes through one of the primary types,
- * the signed and unsigned integers, doubles, booleans, wide strings, file
- * times and clsids; the other types are reached through them.
+ * PropVariantChangeType: every conversion goes through a primary type: signed and
+ * unsigned integers, doubles, booleans, wide strings, file times and clsids.
  */
 #include "propsys_private.h"
 
@@ -92,7 +91,7 @@ static HRESULT integer_string(BOOL is_signed, ULONGLONG bits, LPWSTR *out)
     return PsAllocString(p, out);
 }
 
-/* banker's rounding, as the VarXxFromR8 conversions round. */
+/* banker's rounding, like the VarXxFromR8 conversions. */
 static double round_even(double x)
 {
     if (x >= 4503599627370496.0 || x <= -4503599627370496.0)
@@ -129,7 +128,7 @@ static BOOL is_space(WCHAR c)
     return c == ' ' || (c >= 9 && c <= 13);
 }
 
-/* _wcstoi64 and _wcstoui64 over the whole string, base 0 unless hex is refused; garbage or overflow fail. */
+/* the whole string must parse, in base 0 unless hex is refused. garbage or overflow fail. */
 static HRESULT parse_integer(LPCWSTR s, BOOL is_signed, PROPVAR_CHANGE_FLAGS flags, ULONGLONG *out)
 {
     *out = 0;
@@ -222,7 +221,7 @@ static BOOL read_number(LPCWSTR *s, UINT digits_min, UINT digits_max, USHORT *va
     return n >= digits_min;
 }
 
-/* the ISO 8601 forms: a date, a time after T, fractions and a zone. */
+/* ISO 8601: a date, a time after T, fractions and a zone. */
 static HRESULT iso8601_filetime(LPCWSTR s, FILETIME *out)
 {
     SYSTEMTIME time = {0};
@@ -317,7 +316,7 @@ static HRESULT guid_string(const GUID *guid, LPWSTR *out)
     return PsAllocString(text, out);
 }
 
-/* a primary source to a primary target, the target zeroed by the caller. */
+/* the caller zeroes the target. */
 static HRESULT coerce_primary(VARTYPE from, const void *source, VARTYPE to, void *out, PROPVAR_CHANGE_FLAGS flags)
 {
     if (from == VT_LPWSTR) {
@@ -393,7 +392,7 @@ static HRESULT coerce_primary(VARTYPE from, const void *source, VARTYPE to, void
         }
         if (!integer_type(to))
             return DISP_E_TYPEMISMATCH;
-        /* a boolean keeps its bits in every integer, true is all ones without an overflow. */
+        /* true becomes all ones in any integer, without reporting an overflow. */
         if (from == VT_BOOL) {
             store_integer(to, out, bits);
             return S_OK;
@@ -453,7 +452,6 @@ static HRESULT filetime_to_date(const FILETIME *time, DATE *out)
     return S_OK;
 }
 
-/* one element of base type from at source to base type to at out. */
 HRESULT PsCoerceElement(VARTYPE from, const void *source, VARTYPE to, void *out, PROPVAR_CHANGE_FLAGS flags)
 {
     union {
@@ -578,7 +576,7 @@ HRESULT PsCoerceElement(VARTYPE from, const void *source, VARTYPE to, void *out,
     return hr;
 }
 
-/* a vector of one base type to an array of the same, as PropVariantToVariant does. */
+/* like PropVariantToVariant, a vector becomes an array of the same base type. */
 static HRESULT coerce_to_vector(PROPVARIANT *dest, const PROPVARIANT *source, PROPVAR_CHANGE_FLAGS flags,
                                 VARTYPE type)
 {

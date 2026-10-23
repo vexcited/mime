@@ -1,5 +1,5 @@
 /*
- * brushes: the solid, hatch, texture, linear gradient and path gradient brushes of the flat api.
+ * the solid, hatch, texture, linear gradient and path gradient brushes of the flat api.
  */
 #include "gp_private.h"
 
@@ -93,7 +93,7 @@ GBrush *gp_brush_clone(const GBrush *s)
     return b;
 }
 
-/* ------------------------------------------------------------------ the common calls */
+/* ------------------------------------------------------------------ common calls */
 
 WINGDIPAPI GpStatus WINAPI GdipCloneBrush(GpBrush *brush, GpBrush **clone)
 {
@@ -122,7 +122,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetBrushType(GpBrush *brush, GpBrushType *type)
     return Ok;
 }
 
-/* the checked brush of one kind: NULL when it is no brush, and the status for the caller. */
+/* NULL when it is not a brush of that kind, with the status for the caller. */
 static GBrush *brush_of(void *brush, BrushType type, GpStatus *status)
 {
     GBrush *b = gp_brush_cast(brush);
@@ -132,7 +132,7 @@ static GBrush *brush_of(void *brush, BrushType type, GpStatus *status)
 
 static BOOL wrap_valid(WrapMode m) { return m >= WrapModeTile && m <= WrapModeClamp; }
 
-/* the transform calls are the same for every kind that has one. */
+/* every kind with a transform shares these calls. */
 static GpStatus brush_get_transform(GBrush *b, GpMatrix *matrix)
 {
     GMatrix *m = gp_matrix_cast(matrix);
@@ -568,7 +568,7 @@ static GpStatus preset_set(GBrush *b, const ARGB *colors, const float *positions
     return Ok;
 }
 
-/* the rise of the bell at step k of 255, in 1/65536 of the full height. */
+/* the bell's rise at step k of 255, in 1/65536 of the full height. */
 static float sigma_rise(INT k)
 {
     const float *table = gp_sigma_table();
@@ -576,8 +576,8 @@ static float sigma_rise(INT k)
 }
 
 /*
- * a bell shaped blend peaking at the focus. Without a focus inside the brush the bell is one rise in 256 steps, or
- * one fall when the focus is at the start. With a focus the blend rises to it and falls from it.
+ * a bell shaped blend peaking at the focus. without a focus inside the brush the bell is one rise in 256 steps, or
+ * one fall when the focus is at the start. with a focus the blend rises to it and falls after it.
  */
 static GpStatus blend_sigma(GBrush *b, float focus, float scale)
 {
@@ -659,7 +659,7 @@ static GpStatus line_new(INT mode, ARGB c1, ARGB c2, WrapMode wrap, GBrush **out
     return Ok;
 }
 
-/* two coordinates that differ by less than a part in a million of the second. */
+/* true when they differ by less than a millionth of the second. */
 static BOOL close_float(float a, float b)
 {
     float diff = (a - b) / (b == 0.0f ? 1.0f : b);
@@ -682,7 +682,7 @@ WINGDIPAPI GpStatus WINAPI GdipCreateLineBrush(const GpPointF *p1, const GpPoint
         return st;
     b->p1 = *p1;
     b->p2 = *p2;
-    /* the rectangle that holds the points, a line along an axis gets the other side as long as itself. */
+    /* the box holding the points. a line along an axis gets a square box. */
     float width = p2->X > p1->X ? p2->X - p1->X : p1->X - p2->X;
     float height = p2->Y > p1->Y ? p2->Y - p1->Y : p1->Y - p2->Y;
     b->rect.X = p1->X < p2->X ? p1->X : p2->X;
@@ -1144,7 +1144,7 @@ WINGDIPAPI GpStatus WINAPI GdipSetPathGradientSurroundColorsWithCount(GpPathGrad
         return OutOfMemory;
     for (INT i = 0; i < n; i++)
         copy[i] = colors[i];
-    /* the points without a color of their own take the last one */
+    /* points without a color of their own take the last one. */
     for (UINT i = (UINT)n; i < b->pg_path->path.count; i++)
         copy[i] = colors[n - 1];
     gp_free(b->surround);

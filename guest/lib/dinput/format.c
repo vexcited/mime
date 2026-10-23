@@ -1,7 +1,7 @@
 /*
- * data formats: windows' matching of an application's objects to the
- * device's, the state copied into the application's layout, and finding
- * an object by offset or id.
+ * data formats: matching an application's objects to the device's as
+ * windows does, copying the state into the application's layout, and
+ * finding an object by offset or id.
  */
 #include "dinput_private.h"
 
@@ -27,8 +27,8 @@ static BOOL object_matches(DIDEV *dev, const DIOBJECTDATAFORMAT *o, const DIOBJE
 }
 
 /*
- * the previous format goes first, so a failure leaves none. the
- * instance mask of dinput before version 7 is the old DIDFT_ANYINSTANCE.
+ * the previous format is dropped first, so a failure leaves none. before
+ * version 7 the instance mask is the old DIDFT_ANYINSTANCE.
  */
 HRESULT DiSetDataFormat(DIDEV *dev, const DIDATAFORMAT *df)
 {
@@ -89,7 +89,7 @@ HRESULT DiSetDataFormat(DIDEV *dev, const DIDATAFORMAT *df)
         dev->relative = TRUE;
         break;
     case DIDF_ABSAXIS | DIDF_RELAXIS:
-        /* windows keeps the format it has installed and still fails. */
+        /* like windows, keep the installed format but still fail. */
         return E_INVALIDARG;
     }
     return DI_OK;
@@ -133,7 +133,7 @@ void DiReadState(DIDEV *dev, BYTE *out)
             memset(out + dev->missing_povs[i], 0xFF, 4);
 }
 
-/* an object by its offset in the application's format or by id, the last first; -1 for none. */
+/* by offset in the application's format or by id, searching from the last; -1 for none. */
 int DiFindObject(DIDEV *dev, DWORD id, DWORD how)
 {
     if (how == DIPH_BYOFFSET) {

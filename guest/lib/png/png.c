@@ -170,10 +170,7 @@ static void parse_trns(const uint8_t *b, uint32_t len, PngParse *p)
     p->info.has_alpha = true;
 }
 
-/*
- * walks the chunk list. with stop_at_idat the walk ends at the first IDAT
- * chunk, otherwise it needs IEND and all IDAT chunks must be consecutive.
- */
+/* with stop_at_idat the walk ends at the first IDAT, otherwise it needs IEND and consecutive IDATs. */
 static int parse(const uint8_t *d, size_t size, bool check_crc, bool stop_at_idat, PngParse *p)
 {
     bool seen_ihdr = false, idat_run = false, idat_done = false;
@@ -215,7 +212,7 @@ static int parse(const uint8_t *d, size_t size, bool check_crc, bool stop_at_ida
             seen_ihdr = true;
             break;
         case CHUNK_PLTE:
-            /* a palette after the image data is ignored, it is only a suggestion for non indexed images. */
+            /* a palette after the image data is only a suggestion for non indexed images, ignore it. */
             if (p->idat_count || p->has_plte)
                 break;
             if (len == 0 || len % 3 || len > 768)
@@ -457,7 +454,7 @@ int mime_png_decode(const void *data, size_t size, const MimeAllocator *alloc, u
     if (out_stride / 4 < p.info.width)
         return MIME_PNG_ERR_PARAM;
 
-    /* sizes stay far below overflow with 16384 pixels per side, the checks guard 32 bit targets. */
+    /* sizes stay far below overflow at 16384 pixels per side, the checks are for 32 bit targets. */
     size_t bits_per_pixel = (size_t)p.channels * p.info.bit_depth;
     size_t bpp = bits_per_pixel >= 8 ? bits_per_pixel / 8 : 1;
     npass = p.info.interlaced ? 7 : 1;
@@ -487,7 +484,7 @@ int mime_png_decode(const void *data, size_t size, const MimeAllocator *alloc, u
             max_rowbytes = ps->rowbytes;
     }
 
-    /* workspace: decoder state, the filtered image data and a zero row standing in above the first row. */
+    /* workspace: decoder state, the filtered image data and a zero row above the first row. */
     size_t state_size = (sizeof(MimeInflate) + 15) & ~(size_t)15;
     size_t ws_size;
     if (ckd_add(&ws_size, state_size, total) ||

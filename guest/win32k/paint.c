@@ -4,7 +4,7 @@
  */
 #include "win32k.h"
 
-/* ------------------------------------------------------------------ host channel */
+/* host channel. */
 
 /* hypercall buffers: physically contiguous pages, serialized by the user lock. */
 static MimeWinConfig *g_config;
@@ -54,9 +54,8 @@ static MimeRect mime_rect(const RECT *r)
 }
 
 /*
- * the corner radius the dwm gives a window: none when maximized, the one
- * DWMWA_WINDOW_CORNER_PREFERENCE asks for, else the frame's. dwmapi keeps
- * the preference as a window property holding the value plus one.
+ * maximized windows have no rounded corners. otherwise use DWMWA_WINDOW_CORNER_PREFERENCE or the frame default.
+ * dwmapi stores the preference plus one in a window property.
  */
 static uint32_t corner_radius(WND *w, const FRAME_METRICS *m)
 {
@@ -116,17 +115,17 @@ static void host_icon(WND *w)
         w->HostIcon = icon;
 }
 
-/* the window relative part of a window that is drawn, and the part that takes the mouse. */
+/* visible and mouse-sensitive bounds relative to the window. */
 static void host_rects(WND *w, const FRAME_METRICS *m, RECT *visible, RECT *input)
 {
     FrameGetVisibleRect(w, visible);
     *input = *visible;
-    /* a sizable frame takes the mouse over its invisible resize border, like the dwm's. */
+    /* sizable frames receive mouse input over the invisible resize border, like DWM frames. */
     if ((w->Style & WS_THICKFRAME) && !(w->Style & (WS_MAXIMIZE | WS_MINIMIZE)) && m->VisibleInset)
         *input = (RECT){0, 0, w->WindowRect.right - w->WindowRect.left, w->WindowRect.bottom - w->WindowRect.top};
 }
 
-/* the part of a window its host window covers: what is drawn and the resize border around it. */
+/* host bounds include the visible window and its resize border. */
 void HostPart(WND *w, RECT *part)
 {
     FRAME_METRICS m;
@@ -176,7 +175,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
         c->flags |= MIME_WIN_MAXIMIZABLE;
     if ((w->ExStyle & WS_EX_APPWINDOW) || (!w->Owner && !(w->ExStyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))))
         c->flags |= MIME_WIN_APPWINDOW;
-    /* a thin border, which godot keeps on its fullscreen window, is no title bar. */
+    /* a thin border, as on Godot fullscreen windows, does not imply a title bar. */
     BOOLEAN fullscreen = (w->Flags & WNDF_FULLSCREEN) ||
                          ((w->Style & WS_CAPTION) != WS_CAPTION && !(w->Style & (WS_THICKFRAME | WS_MINIMIZE)) &&
                           MonitorCoveredBy(&w->WindowRect));
@@ -218,7 +217,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
         c->drag[i] = mime_rect(&drag[i]);
     c->owner_id = w->Owner ? window_id(w->Owner) : 0;
     c->dpi = WndHostDpi(w);
-    /* the compositor keeps a window it sizes to what its program allows, the largest only when the program set one. */
+    /* constrain compositor resizing to application limits; apply a maximum only if one was set. */
     if ((w->Style & WS_THICKFRAME) && !(w->Style & WS_MINIMIZE)) {
         POINT min = w->MinTrack.x ? w->MinTrack : (POINT){MetricsGet(SM_CXMINTRACK, WndGetDpi(w)), MetricsGet(SM_CYMINTRACK, WndGetDpi(w))};
         c->min_width = min.x;
@@ -247,7 +246,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
         w->HostIcon = nullptr;
 }
 
-/* the compositor moves or sizes a window under the pointer. it takes the button with it, the guest sees it go up. */
+/* the compositor takes over the button during a move or resize; release it in the guest. */
 BOOLEAN HostMoveSize(WND *w, ULONG edge)
 {
     if (!(w->Flags & WNDF_HOST_WINDOW) || !host_buffers())
@@ -261,7 +260,7 @@ BOOLEAN HostMoveSize(WND *w, ULONG edge)
 void HostPresent(WND *w, const RECT *dirty)
 {
     ScreenSerial++;
-    /* a window without a redirection bitmap shows what the program composes in it, never its gdi surface. */
+    /* windows without a redirection bitmap show application-composed contents, never their GDI surface. */
     if (w->ExStyle & WS_EX_NOREDIRECTIONBITMAP)
         return;
     SURFACE *s = LayerPrepare(w, dirty);
@@ -308,7 +307,7 @@ BOOL NTAPI NtUserMessageBeep(UINT type)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ presentation */
+/* presentation. */
 
 void PaintPresent(WND *top)
 {
@@ -317,7 +316,7 @@ void PaintPresent(WND *top)
         return;
     if (!WndIsVisible(top) || (top->Style & WS_MINIMIZE))
         return;
-    /* a frame that still has to be drawn would show up as garbage on the first present. */
+    /* draw a pending frame before the first present. */
     if (!(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && !(top->LayerFlags & MIME_LAYER_UPDATE))
         return;
     RECT dirty = s->Dirty;
@@ -339,7 +338,7 @@ void PaintFlushThread(W32THREAD *t)
             PaintPresent(c);
 }
 
-/* a surface may still be selected by window dcs when its window is resized or destroyed. */
+/* a surface may still be selected by window DCs when its window is resized or destroyed. */
 void PaintRetireSurface(SURFACE *s)
 {
     if (!s)
@@ -351,7 +350,7 @@ void PaintRetireSurface(SURFACE *s)
         SurfaceDestroy(s);
 }
 
-/* ------------------------------------------------------------------ window dcs */
+/* window dcs. */
 
 HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
 {
@@ -363,7 +362,7 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
     WND *top = w ? WndTopLevel(w) : nullptr;
     SURFACE *s = top && top != WndDesktop() ? top->Surface : nullptr;
     if (!top || top == WndDesktop()) {
-        /* the screen and the desktop: the virtual screen, composed when read, in the coordinates of programs. */
+        /* screen and desktop DCs use virtual screen coordinates and are composed on read. */
         SURFACE *screen = ScreenSurface();
         if (screen) {
             POINT origin = ScreenOrigin();
@@ -375,7 +374,7 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
         }
     }
     if (!s) {
-        /* hidden windows and the desktop: a dc that measures but draws nowhere. */
+        /* hidden windows and the desktop get a DC that measures without drawing. */
         dc->DefaultBitmap = SurfaceCreate(1, 1, 32, 0);
         if (!dc->DefaultBitmap) {
             DcFree(dc);
@@ -415,10 +414,7 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
     return (HDC)dc->Header.Handle;
 }
 
-/*
- * the dc of one monitor, the device \\.\DISPLAYn: the screen's surface seen through the monitor, whose top left
- * corner is the dc's 0, 0, as win32kbase GetMonitorDC sets the origin of a device dc.
- */
+/* a monitor DC exposes the screen through its display rectangle, with the monitor corner at DC origin 0, 0. */
 HDC PaintGetMonitorDC(ULONG index)
 {
     MIME_MONITOR_INFO m;
@@ -478,9 +474,8 @@ int NTAPI NtUserReleaseDC(HWND hwnd, HDC hdc)
         WND *top = dc->Window ? WndTopLevel(dc->Window) : nullptr;
         PaintReleaseDC(dc);
         /*
-         * drawing outside the paint cycle reaches the screen now, from any
-         * thread, as the dwm composes it. a thread that never pumps still
-         * gets its frame, drawn here as showing the window would draw it.
+         * present drawing outside the paint cycle from any thread. draw a pending frame even if the thread never
+         * pumps messages.
          */
         if (top && !(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && top->Thread == W32GetThread()) {
             UserReference(&top->Header);
@@ -500,7 +495,7 @@ int NTAPI NtUserReleaseDC(HWND hwnd, HDC hdc)
     return ok;
 }
 
-/* ------------------------------------------------------------------ the paint cycle */
+/* the paint cycle. */
 
 HDC PaintBegin(WND *w, PAINTSTRUCT *ps)
 {
@@ -581,7 +576,7 @@ BOOL NTAPI NtUserEndPaint(HWND hwnd, const PAINTSTRUCT *user_ps)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ invalidation services */
+/* invalidation services. */
 
 static void client_rect_to_screen(WND *w, RECT *r)
 {
@@ -603,7 +598,7 @@ static void update_now(WND *w, BOOLEAN children)
         } else {
             p->Flags &= ~WNDF_INTERNAL_PAINT;
             MsgSend(p, WM_PAINT, 0, 0);
-            /* a window procedure that does not validate would loop forever. */
+            /* force validation to prevent an endless paint loop. */
             if (!p->Header.Destroyed && !RgnIsEmpty(&p->Update))
                 WndValidate(p, nullptr);
         }
@@ -626,7 +621,6 @@ BOOL NTAPI NtUserRedrawWindow(HWND hwnd, const RECT *user_rect, HRGN region, UIN
     UserEnter();
     WND *w = hwnd ? WndLookup(hwnd) : nullptr;
     if (!hwnd) {
-        /* the whole screen: every top level window. */
         WND *desktop = WndDesktop();
         for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next)
             if (c->Style & WS_VISIBLE)

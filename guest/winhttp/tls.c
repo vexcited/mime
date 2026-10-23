@@ -1,7 +1,4 @@
-/*
- * tls for https through the schannel package of secur32: the handshake, then records sealed with
- * EncryptMessage and opened with DecryptMessage.
- */
+/* HTTPS through Schannel: handshake, EncryptMessage and DecryptMessage. */
 #include "winhttp_private.h"
 #include <mime/win32/wincrypt.h>
 
@@ -63,7 +60,7 @@ static BOOL CALLBACK LoadTable(PINIT_ONCE once, PVOID parameter, PVOID *context)
     return TRUE;
 }
 
-/* the SECURE_FAILURE flags and the winhttp error of a failed handshake. */
+/* map handshake failures to SECURE_FAILURE flags and WinHTTP errors. */
 static DWORD MapFailure(SECURITY_STATUS status, DWORD *failure)
 {
     switch (status) {
@@ -121,7 +118,7 @@ static DWORD SendToken(WH_CONN *conn, SecBuffer *token, int timeout)
     return error;
 }
 
-/* runs InitializeSecurityContext until the handshake ends, starting from the raw bytes already read. */
+/* continue InitializeSecurityContext with the bytes already received until the handshake ends. */
 static DWORD Negotiate(WH_CONN *conn, LPCWSTR host, BOOL initial, int timeout, DWORD *failure)
 {
     ULONG flags = ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_EXTENDED_ERROR |
@@ -187,7 +184,6 @@ static BOOL CALLBACK LoadCrypt(PINIT_ONCE once, PVOID parameter, PVOID *context)
     return TRUE;
 }
 
-/* the SECURE_FAILURE flag of a chain policy error. */
 static DWORD PolicyFailure(DWORD error)
 {
     switch (error) {
@@ -210,8 +206,8 @@ static DWORD PolicyFailure(DWORD error)
 }
 
 /*
- * with some certificate errors ignored, schannel leaves the server's chain to winhttp, which checks it with
- * the ssl policy and the ignored errors as its checks, so ignoring an unknown authority still checks the name.
+ * when Schannel delegates chain validation, apply SSL policy with only the requested checks disabled. ignoring an
+ * unknown authority must still check the hostname.
  */
 static DWORD VerifyServer(WH_CONN *conn, LPCWSTR host, DWORD security_flags, DWORD *failure)
 {
@@ -351,7 +347,7 @@ DWORD WhTlsSend(WH_CONN *conn, const void *data, DWORD size, int timeout)
     return error;
 }
 
-/* decrypts at least one record into the plaintext buffer, or marks the end of the stream. */
+/* decrypt at least one record into the plaintext buffer, or mark EOF. */
 DWORD WhTlsFill(WH_CONN *conn, int timeout)
 {
     while (TRUE) {

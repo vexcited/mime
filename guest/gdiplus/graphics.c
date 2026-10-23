@@ -1,6 +1,4 @@
-/*
- * graphics: the Graphics object: where it draws, its modes, transforms, clip and the stack of saved states.
- */
+/* the Graphics object: its target, modes, transforms, clip and saved states. */
 #include "gp_private.h"
 
 GGraphics *gp_graphics_cast(const void *p)
@@ -26,7 +24,7 @@ void gp_graphics_page_scale(const GGraphics *g, float *sx, float *sy)
     switch (g->page_unit) {
     case UnitDisplay:
         if (g->target || g->hdc) {
-            /* a display device counts its unit in pixels */
+            /* a display device counts its unit in pixels. */
             *sx = *sy = k;
             return;
         }
@@ -74,7 +72,7 @@ const MimeVecMatrix *gp_graphics_w2d(GGraphics *g)
 {
     if (!g->w2d_valid) {
         MimeVecMatrix m = gp_graphics_w2d_base(g);
-        /* the pixel offset modes that put the pixel centers at half integers move the picture back by half a pixel */
+        /* the half pixel offset modes shift the picture back by half a pixel. */
         if (g->pixel_offset == PixelOffsetModeHighQuality || g->pixel_offset == PixelOffsetModeHalf) {
             m.dx -= 0.5f;
             m.dy -= 0.5f;
@@ -89,7 +87,7 @@ float gp_graphics_unit_to_world(const GGraphics *g, GpUnit unit)
 {
     if (unit == UnitWorld)
         return 1.0f;
-    /* pixels of the unit, then back to world units through the page scale (the world transform is left out) */
+    /* unit to pixels, then back to world units through the page scale, ignoring the world transform. */
     float px = gp_unit_to_pixels(unit, g->dpi_x);
     float sx, sy;
     gp_graphics_page_scale(g, &sx, &sy);
@@ -137,7 +135,7 @@ static GpStatus graphics_from_hdc(HDC hdc, HWND hwnd, BOOL owns, GpGraphics **gr
         g->dpi_x = 96.0f;
     if (g->dpi_y <= 0.0f)
         g->dpi_y = 96.0f;
-    /* the extent of the surface: a bitmap in a memory device context, else the display */
+    /* the surface size: the bitmap selected in a memory device context, else the display. */
     HGDIOBJ obj = GetCurrentObject(hdc, OBJ_BITMAP);
     BITMAP bm;
     if (GetObjectType(hdc) == OBJ_MEMDC && obj && GetObjectW(obj, sizeof(bm), &bm)) {
@@ -151,7 +149,7 @@ static GpStatus graphics_from_hdc(HDC hdc, HWND hwnd, BOOL owns, GpGraphics **gr
     return Ok;
 }
 
-/* a graphics that records into a metafile has no surface, only the size of the page it draws on. */
+/* a recording graphics has no surface, only the size of its page. */
 GGraphics *gp_graphics_new_recording(struct GMetafile *meta, float dpi_x, float dpi_y, INT width, INT height)
 {
     GGraphics *g = gp_alloc_zero(sizeof(*g));
@@ -271,7 +269,7 @@ WINGDIPAPI GpStatus WINAPI GdipFlush(GpGraphics *graphics, GpFlushIntention inte
     return Ok;
 }
 
-/* ------------------------------------------------------------------ the device context of a graphics */
+/* ------------------------------------------------------------------ device context */
 
 WINGDIPAPI GpStatus WINAPI GdipGetDC(GpGraphics *graphics, HDC *hdc)
 {
@@ -288,7 +286,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetDC(GpGraphics *graphics, HDC *hdc)
     }
     if (g->hdc && !g->target) {
         g->got_dc = TRUE;
-        /* the clip of the graphics follows the context while it is out */
+        /* the graphics clip applies to the context while it is out. */
         *hdc = g->hdc;
         return Ok;
     }
@@ -453,7 +451,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetTextContrast(GpGraphics *graphics, UINT *contr
     return Ok;
 }
 
-/* the quality modes resolve to the mode they stand for, like gdi+ has it. */
+/* like gdi+, the quality modes resolve to a concrete mode. */
 WINGDIPAPI GpStatus WINAPI GdipSetInterpolationMode(GpGraphics *graphics, GpInterpolationMode mode)
 {
     GFX_FREE(g, graphics);
@@ -627,7 +625,6 @@ WINGDIPAPI GpStatus WINAPI GdipGetDpiY(GpGraphics *graphics, REAL *dpi)
     return Ok;
 }
 
-/* the matrix from one coordinate space to another. */
 static BOOL space_matrix(GGraphics *g, GpCoordinateSpace dst, GpCoordinateSpace src, MimeVecMatrix *out)
 {
     float sx, sy;
@@ -635,7 +632,7 @@ static BOOL space_matrix(GGraphics *g, GpCoordinateSpace dst, GpCoordinateSpace 
     MimeVecMatrix scale = {sx, 0, 0, sy, 0, 0};
     MimeVecMatrix up;
     mime_vec_matrix_identity(&up);
-    /* src to device */
+    /* src to device. */
     if (src == CoordinateSpaceWorld) {
         mime_vec_matrix_multiply(&up, &g->world, &scale);
     } else if (src == CoordinateSpacePage) {
@@ -703,7 +700,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetNearestColor(GpGraphics *graphics, ARGB *color
     if (!color)
         return InvalidParameter;
     if (g->target) {
-        /* a bitmap of fewer bits keeps what the format can hold */
+        /* a lower bit depth bitmap keeps only what its format can hold. */
         UINT32 c = *color;
         BYTE row[8];
         gp_row_from_argb(row, g->target->format, g->target->palette, 0, 1, &c);
@@ -742,7 +739,6 @@ WINGDIPAPI GpStatus WINAPI GdipComment(GpGraphics *graphics, UINT size, const BY
 
 /* ------------------------------------------------------------------ clip */
 
-/* the device rectangle of the whole target, as a vector rectangle. */
 static MimeVecRect target_rect(const GGraphics *g)
 {
     RECT b;
@@ -751,7 +747,7 @@ static MimeVecRect target_rect(const GGraphics *g)
     return r;
 }
 
-/* the clip in effect as a mask, the whole target when none is set. */
+/* the whole target when no clip is set. */
 static GpStatus clip_current(GGraphics *g, MimeVecMask *out)
 {
     if (g->clip_set)
@@ -760,7 +756,7 @@ static GpStatus clip_current(GGraphics *g, MimeVecMask *out)
     return mime_vec_mask_set_rect(out, &r) == MIME_VEC_OK ? Ok : OutOfMemory;
 }
 
-/* installs a mask as the clip under a combine mode. the mask is taken over. */
+/* takes ownership of the mask. */
 static GpStatus clip_apply(GGraphics *g, MimeVecMask *mask, CombineMode mode)
 {
     GpStatus st = Ok;
@@ -931,7 +927,7 @@ WINGDIPAPI GpStatus WINAPI GdipTranslateClipI(GpGraphics *graphics, INT dx, INT 
     return GdipTranslateClip(graphics, (float)dx, (float)dy);
 }
 
-/* the clip as a region in world units: a rectangle when the device mask is one, else a union of its runs. */
+/* in world units: a rectangle when the device mask is one, else a union of its runs. */
 WINGDIPAPI GpStatus WINAPI GdipGetClip(GpGraphics *graphics, GpRegion *region)
 {
     GFX(g, graphics);
@@ -1205,7 +1201,7 @@ static GpStatus pop_to(GGraphics *g, UINT id, INT kind)
         s = s->next;
     if (!s || s->kind != kind)
         return Ok;
-    /* the states above it go too */
+    /* the states above it go too. */
     while (g->states != s) {
         GState *top = g->states;
         g->states = top->next;
@@ -1251,7 +1247,7 @@ WINGDIPAPI GpStatus WINAPI GdipBeginContainer2(GpGraphics *graphics, GraphicsCon
     GpStatus st = push_state(g, 1, &id);
     if (st != Ok)
         return st;
-    /* the new container starts with no world transform, but draws where its parent does */
+    /* the new container starts with no world transform, but draws where its parent does. */
     MimeVecMatrix total = gp_graphics_w2d_base(g);
     g->container = total;
     mime_vec_matrix_identity(&g->world);
@@ -1281,7 +1277,7 @@ WINGDIPAPI GpStatus WINAPI GdipBeginContainer(GpGraphics *graphics, const GpRect
         return st;
     if (recording)
         gp_rec_begin_container(g, *container, dst, src, unit);
-    /* the source rectangle is in the unit, the destination in the world of the parent */
+    /* the source rectangle is in unit, the destination in the parent's world. */
     float k = unit == UnitPixel ? 1.0f : gp_unit_to_pixels(unit, g->dpi_x);
     MimeVecMatrix map;
     float sx = dst->Width / (src->Width * k), sy = dst->Height / (src->Height * k);
@@ -1314,7 +1310,7 @@ WINGDIPAPI GpStatus WINAPI GdipEndContainer(GpGraphics *graphics, GraphicsContai
     return pop_to(g, container, 1);
 }
 
-/* ------------------------------------------------------------------ a device context for a bitmap */
+/* ------------------------------------------------------------------ bitmap device context */
 
 GpStatus gp_graphics_make_bitmap_dc(GGraphics *g, HDC *out)
 {
@@ -1366,7 +1362,7 @@ void gp_graphics_release_bitmap_dc(GGraphics *g, HDC dc, BOOL write_back)
             UINT32 *orig = g->bitmap_copy + (SSIZE_T)y * b->width;
             BOOL changed = FALSE;
             for (INT x = 0; x < b->width; x++) {
-                /* what GDI drew has no alpha of its own, it is opaque */
+                /* GDI output has no alpha, so it is opaque. */
                 if ((row[x] & 0x00ffffffu) != (orig[x] & 0x00ffffffu)) {
                     row[x] |= 0xff000000u;
                     changed = TRUE;

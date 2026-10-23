@@ -1,6 +1,6 @@
 /*
- * IWICColorContext, which holds a profile or the name of a color space, and IWICColorTransform, which passes pixels
- * on in the format asked for: there is no color management here, so profiles are carried but not applied.
+ * IWICColorContext stores profiles and color spaces. IWICColorTransform converts pixel formats but does not apply
+ * profiles.
  */
 #include "wic_private.h"
 
@@ -77,7 +77,7 @@ static HRESULT STDMETHODCALLTYPE context_init_memory(IWICColorContext *This, con
 static HRESULT STDMETHODCALLTYPE context_init_exif(IWICColorContext *This, UINT value)
 {
     WicColorContext *c = context_from(This);
-    /* 1 is sRGB, 2 is adobe rgb, and 0xffff is uncalibrated, which the exif tag also allows. */
+    /* EXIF color space: 1 is sRGB, 2 is Adobe RGB, 0xffff is uncalibrated. */
     if (value != 1 && value != 2)
         return E_INVALIDARG;
     EnterCriticalSection(&c->lock);
@@ -152,7 +152,6 @@ HRESULT WicColorContextCreate(IWICColorContext **out)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the transform */
 
 typedef struct WicColorTransform {
     WicBase base;

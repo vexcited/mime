@@ -1,7 +1,4 @@
-/*
- * the gate of win32u's system call stubs on x64, as windows' 32-bit
- * win32u has it: through the 32-bit ntdll's Wow64Transition.
- */
+/* 32-bit win32u system calls use ntdll's Wow64Transition on x64. */
     .text
     .globl  _Wow64SystemServiceCall
     .p2align 4

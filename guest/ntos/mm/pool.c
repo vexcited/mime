@@ -1,12 +1,11 @@
 /*
- * kernel pool. small allocations come from per size class slabs carved
- * out of physmap pages; allocations above 2 KiB are whole pages, page
- * aligned like on windows, with their size recorded in the pfn.
+ * kernel pool. small allocations come from per size class slabs in physmap pages. allocations above
+ * 2 KiB are whole page aligned pages, like on Windows, with their size kept in the pfn.
  */
 #include "../ntos.h"
 
 #define POOL_MAGIC 0x504Du
-#define POOL_LARGE_MARK 0x4C415247u /* stored in MMPFN.ShareCount of the first page */
+#define POOL_LARGE_MARK 0x4C415247u /* stored in MMPFN.ShareCount of the first page. */
 
 typedef struct POOL_HEADER {
     ULONG Tag;
@@ -54,7 +53,7 @@ static BOOLEAN refill(int cls)
     return TRUE;
 }
 
-/* the largest request that is tried: more than the address space holds, which a size added to a header would wrap. */
+/* above any real address space, and low enough that adding a header size cannot wrap. */
 #define POOL_MAX_REQUEST (1ull << 46)
 
 static PVOID pool_alloc(SIZE_T size, ULONG tag, BOOLEAN zero)
@@ -74,7 +73,7 @@ static PVOID pool_alloc(SIZE_T size, ULONG tag, BOOLEAN zero)
         p->ShareCount = POOL_LARGE_MARK;
         p->Order = 0;
         p->Flags |= MM_PFN_POOL;
-        /* remember the page count in the second word of the pfn list entry. */
+        /* the pfn list entry holds the page count and the tag. */
         p->ListEntry.Flink = (PLIST_ENTRY)(ULONG_PTR)pages;
         p->ListEntry.Blink = (PLIST_ENTRY)(ULONG_PTR)tag;
         ULONG64 state = KiDisableInterrupts();
@@ -110,7 +109,7 @@ static void pool_free(PVOID p)
         ULONG64 pa = HalPhysicalOf(p);
         PMMPFN pfn = MiGetPfn(pa);
         if (!pfn || pfn->ShareCount != POOL_LARGE_MARK)
-            KeBugCheckEx(0x000000C2, 7, (ULONG_PTR)p, (ULONG_PTR)__builtin_return_address(0), 0); /* BAD_POOL_CALLER, with the caller */
+            KeBugCheckEx(0x000000C2, 7, (ULONG_PTR)p, (ULONG_PTR)__builtin_return_address(0), 0); /* BAD_POOL_CALLER, with the caller. */
         SIZE_T pages = (SIZE_T)(ULONG_PTR)pfn->ListEntry.Flink;
         pfn->ShareCount = 0;
         ULONG64 state = KiDisableInterrupts();
@@ -121,7 +120,7 @@ static void pool_free(PVOID p)
     }
     POOL_HEADER *h = (POOL_HEADER *)p - 1;
     if (h->Magic != POOL_MAGIC || h->Class >= POOL_CLASSES)
-        KeBugCheckEx(0x00000019, 0x20, (ULONG_PTR)p, h->Magic, h->Class); /* BAD_POOL_HEADER */
+        KeBugCheckEx(0x00000019, 0x20, (ULONG_PTR)p, h->Magic, h->Class); /* BAD_POOL_HEADER. */
     int cls = h->Class;
     h->Magic = 0;
     ULONG64 state = KiDisableInterrupts();
@@ -136,7 +135,7 @@ PVOID NTAPI ExAllocatePool2(POOL_FLAGS flags, SIZE_T size, ULONG tag)
 {
     PVOID p = pool_alloc(size, tag, !(flags & POOL_FLAG_UNINITIALIZED));
     if (!p && (flags & POOL_FLAG_RAISE_ON_FAILURE))
-        KeBugCheckEx(0x00000041, size, 0, 0, 0); /* MUST_SUCCEED_POOL_EMPTY */
+        KeBugCheckEx(0x00000041, size, 0, 0, 0); /* MUST_SUCCEED_POOL_EMPTY. */
     return p;
 }
 

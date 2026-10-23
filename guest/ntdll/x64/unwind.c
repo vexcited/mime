@@ -2,10 +2,9 @@
  * x64 structured exception handling: unwind data lookup, the virtual
  * unwinder, frame based dispatch, unwinding and the c language handler.
  *
- * the unwind data format is the public x64 one (UNWIND_INFO and its
- * UNWIND_CODE array); the dispatch protocol follows what the x64
- * handlers of compilers expect from ntdll: DISPATCHER_CONTEXT, the
- * EXCEPTION_UNWINDING, EXCEPTION_EXIT_UNWIND and EXCEPTION_TARGET_UNWIND
+ * the unwind data is the public x64 UNWIND_INFO format. dispatch follows
+ * what compiler generated handlers expect from ntdll: DISPATCHER_CONTEXT,
+ * the EXCEPTION_UNWINDING, EXCEPTION_EXIT_UNWIND and EXCEPTION_TARGET_UNWIND
  * flags, and collided unwinds.
  */
 #include "../ntdll_private.h"
@@ -97,7 +96,7 @@ typedef struct _KNONVOLATILE_CONTEXT_POINTERS {
 
 /* ------------------------------------------------------------ function tables */
 
-/* tables registered at run time with RtlAddFunctionTable, for generated code. */
+/* tables registered at run time with RtlAddFunctionTable for generated code. */
 typedef struct DYNAMIC_TABLE {
     LIST_ENTRY Links;
     PRUNTIME_FUNCTION Table;
@@ -278,7 +277,6 @@ static M128A *xmm(PCONTEXT c, ULONG reg)
     return &c->Xmm0 + reg;
 }
 
-/* the number of slots an unwind code uses. */
 static ULONG code_slots(const UNWIND_CODE *code)
 {
     switch (code->UnwindOp) {
@@ -297,14 +295,14 @@ static ULONG code_slots(const UNWIND_CODE *code)
 }
 
 /*
- * when pc sits in an epilog, the rest of the epilog is executed
- * instead of the unwind codes: an optional stack release, pops of
- * nonvolatile registers, then ret or a jump out of the function.
+ * when pc sits in an epilog, the rest of the epilog is emulated instead of
+ * the unwind codes: an optional stack release, pops of nonvolatile
+ * registers, then ret or a jump out of the function.
  */
 static BOOLEAN in_epilog(ULONG64 pc, ULONG64 base, PRUNTIME_FUNCTION f, const UNWIND_INFO *info)
 {
     const UCHAR *p = (const UCHAR *)pc;
-    /* add rsp, imm8 / imm32, or lea rsp, [frame + disp]. */
+    /* add rsp, imm8 or imm32, or lea rsp, [frame + disp]. */
     if ((p[0] & 0xF8) == 0x48) {
         if (p[1] == 0x83 && p[2] == 0xC4)
             p += 4;
@@ -416,10 +414,10 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
     }
     *establisher_frame = have_frame ? frame_base : c->Rsp;
     /*
-     * saves made with mov and the frame register are found from the frame
-     * base, the stack pointer once the prolog ran: the body may have moved
-     * rsp since, and the codes restore the frame register before reaching
-     * the one that set it.
+     * mov saves and the frame register are found from the frame base, the
+     * stack pointer right after the prolog: the body may have moved rsp
+     * since, and the codes restore the frame register before reaching the
+     * one that set it.
      */
     ULONG64 frame = *establisher_frame;
 
@@ -432,7 +430,7 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
     for (;;) {
         for (ULONG i = 0; i < info->CountOfCodes; i += code_slots(&info->UnwindCode[i])) {
             const UNWIND_CODE *code = &info->UnwindCode[i];
-            /* codes of instructions the prolog has not executed yet are skipped. */
+            /* skip codes for prolog instructions that have not run yet. */
             if (offset < code->CodeOffset && offset < info->SizeOfProlog)
                 continue;
             ULONG op = code->UnwindOp, opinfo = code->OpInfo;
@@ -483,7 +481,7 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
                 c->Rsp = *(ULONG64 *)(c->Rsp + 24);
                 *handler_data = nullptr;
                 return nullptr;
-            default: /* epilog descriptors and spare codes describe nothing to undo here. */
+            default: /* epilog descriptors and spare codes have nothing to undo. */
                 break;
             }
         }
@@ -493,7 +491,7 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
         PRUNTIME_FUNCTION chained =
             (PRUNTIME_FUNCTION)&info->UnwindCode[(info->CountOfCodes + 1) & ~1];
         info = (const UNWIND_INFO *)(base + chained->UnwindData);
-        offset = ~0ull; /* the prolog of a chained parent ran completely */
+        offset = ~0ull; /* a chained parent's prolog ran completely. */
     }
 
     c->Rip = *(ULONG64 *)c->Rsp;
@@ -513,7 +511,7 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
     return nullptr;
 }
 
-/* one frame up: virtual unwind, or a leaf function returning straight away. */
+/* virtual unwind, or a leaf function returning straight away. */
 static PEXCEPTION_ROUTINE unwind_frame(ULONG type, PCONTEXT c, PDISPATCHER_CONTEXT dc)
 {
     ULONG64 base = 0;
@@ -604,7 +602,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
 
 PVOID RtlpCallConsolidate(PCONTEXT context, PVOID(NTAPI *callback)(PEXCEPTION_RECORD), PEXCEPTION_RECORD record);
 
-/* the jmp_buf of the x64 c runtime, which longjmp unwinds to with STATUS_LONGJUMP. */
+/* the x64 c runtime jmp_buf, which longjmp unwinds to with STATUS_LONGJUMP. */
 typedef struct _JUMP_BUFFER {
     ULONG64 Frame, Rbx, Rsp, Rbp, Rsi, Rdi, R12, R13, R14, R15, Rip;
     ULONG MxCsr;
@@ -613,9 +611,9 @@ typedef struct _JUMP_BUFFER {
 } JUMP_BUFFER;
 
 /*
- * resumes a context an unwind reached. a consolidation first runs its
- * callback, the catch block of a c++ exception, which returns where to
- * continue; a longjmp takes the registers its jmp_buf saved.
+ * a consolidation first runs its callback, the catch block of a c++
+ * exception, which returns where to continue. a longjmp takes the
+ * registers its jmp_buf saved.
  */
 NTDLL_EXPORT void NTAPI RtlRestoreContext(PCONTEXT context, PEXCEPTION_RECORD record)
 {
@@ -656,7 +654,7 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
     if (!target_frame)
         record->ExceptionFlags |= EXCEPTION_EXIT_UNWIND;
 
-    /* the frame of the caller of this function. */
+    /* this function's caller frame. */
     CONTEXT c;
     RtlCaptureContext(&c);
     DISPATCHER_CONTEXT dc;
@@ -681,7 +679,7 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
             EXCEPTION_DISPOSITION r = handler(record, (PVOID)dc.EstablisherFrame, &c, &dc);
             record->ExceptionFlags &= ~(EXCEPTION_COLLIDED_UNWIND | EXCEPTION_TARGET_UNWIND);
             if (r == ExceptionCollidedUnwind) {
-                /* another unwind went through this frame: continue from where it stopped. */
+                /* another unwind went through this frame, continue from where it stopped. */
                 record->ExceptionFlags |= EXCEPTION_COLLIDED_UNWIND;
             } else if (r != ExceptionContinueSearch) {
                 RtlRaiseStatus(STATUS_INVALID_DISPOSITION);
@@ -757,7 +755,7 @@ NTDLL_EXPORT EXCEPTION_DISPOSITION NTAPI __C_specific_handler(PEXCEPTION_RECORD 
             target < scopes->ScopeRecord[i].EndAddress)
             break;
         if (scopes->ScopeRecord[i].JumpTarget) {
-            /* an __except block of the target frame: the unwind stops at it. */
+            /* the unwind stops at an __except block of the target frame. */
             if ((record->ExceptionFlags & EXCEPTION_TARGET_UNWIND) && target == scopes->ScopeRecord[i].JumpTarget)
                 break;
             continue;

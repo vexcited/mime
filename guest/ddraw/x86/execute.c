@@ -1,9 +1,9 @@
 /*
- * execute buffers of IDirect3DDevice, read from d3dim.dll of build 26300:
- * a stream of instructions the device interprets at Execute. vertices are
- * transformed and lit here into screen space, as windows' front end
- * does, primitives cut against the view volume before they are drawn,
- * and the clip status and extents kept for the stream to read back.
+ * IDirect3DDevice execute buffers: an instruction stream the device
+ * interprets at Execute. vertices are transformed and lit into screen
+ * space here like windows' front end, primitives are clipped to the view
+ * volume before drawing, and the clip status and extents are kept for the
+ * stream to read back.
  */
 #include "d3d_private.h"
 
@@ -15,7 +15,7 @@ D3DEXECBUF *D3dExecuteBufferFrom(void *iface)
     return i && i->lpVtbl == &buffer_vtbl ? CONTAINING_RECORD(i, D3DEXECBUF, iface) : nullptr;
 }
 
-/* system memory of the size asked, whatever the caps say. */
+/* system memory of the requested size, whatever the caps say. */
 HRESULT D3dCreateExecuteBuffer(D3DDEV *dev, const D3DEXECUTEBUFFERDESC *desc, IDirect3DExecuteBuffer **out)
 {
     DWORD max = dev->legacy->sw.dwMaxBufferSize;
@@ -38,7 +38,7 @@ HRESULT D3dCreateExecuteBuffer(D3DDEV *dev, const D3DEXECUTEBUFFERDESC *desc, ID
     return D3D_OK;
 }
 
-/* a buffer outliving its device draws nothing more. */
+/* a buffer that outlives its device draws nothing more. */
 void D3dExecuteBufferDeviceGone(D3DEXECBUF *b)
 {
     RemoveEntryList(&b->links);
@@ -176,16 +176,16 @@ static const IDirect3DExecuteBufferVtbl buffer_vtbl = {
 typedef struct RUN {
     D3DDEV *dev;
     D3DEXECBUF *b;
-    BOOL clipped;           /* clipping, as no COPY has run yet in a clipped Execute */
+    BOOL clipped;           /* clipping, as no COPY has run yet in a clipped Execute. */
     const D3DRECT *pick;
-    const BYTE *start;      /* the first instruction, which pick records count from */
-    DWORD count;            /* vertices of the stream, after which clipped ones are added */
+    const BYTE *start;      /* the first instruction, which pick records count from. */
+    DWORD count;            /* the stream's vertices; clipped ones are added after. */
     DWORD extra;
     WORD *indices;
     DWORD index_count, index_capacity;
 } RUN;
 
-/* room for the stream's vertices and those clipping makes. */
+/* room for the stream's vertices and those clipping adds. */
 static BOOL reserve(D3DLEGACY *l, DWORD n)
 {
     if (n <= l->tl_capacity)
@@ -236,7 +236,6 @@ static WORD clip_code(const float *c)
     return code;
 }
 
-/* a clip space position on the target, through the viewport the device has. */
 static void to_screen(D3DDEV *dev, const float *c, D3DTLVERTEX *v)
 {
     const D3DVIEWPORT7 *vp = &dev->viewport;
@@ -263,7 +262,7 @@ static HRESULT process_vertices(RUN *run, const D3DPROCESSVERTICES *p)
     D3DLEGACY *l = dev->legacy;
     DWORD op = p->dwFlags & D3DPROCESSVERTICES_OPMASK, count = p->dwCount;
     l->stats.dwVerticesProcessed += count;
-    /* the source counts in vertices from the start of the buffer, as windows ignores the vertex offset. */
+    /* wStart counts vertices from the buffer start; windows ignores the vertex offset. */
     SIZE_T src_offset = (SIZE_T)p->wStart * sizeof(D3DTLVERTEX);
     if (src_offset >= run->b->size)
         return D3D_OK;
@@ -344,7 +343,7 @@ static HRESULT process_vertices(RUN *run, const D3DPROCESSVERTICES *p)
 
 /* ------------------------------------------------------------------ clipping */
 
-/* a vertex between two others, at t from the first, in clip space and in every attribute. */
+/* interpolates the clip space position and every attribute at t from a to b. */
 static DWORD lerp_vertex(RUN *run, DWORD a, DWORD b, float t)
 {
     D3DLEGACY *l = run->dev->legacy;
@@ -375,7 +374,7 @@ static DWORD lerp_vertex(RUN *run, DWORD a, DWORD b, float t)
     return n;
 }
 
-/* the signed distance to a plane of the view volume, inside when not negative. */
+/* inside when not negative. */
 static float plane_distance(const float *c, int plane)
 {
     switch (plane) {
@@ -394,7 +393,7 @@ static float plane_distance(const float *c, int plane)
     }
 }
 
-/* a polygon cut by each plane its vertices cross, sutherland and hodgman's way. */
+/* sutherland-hodgman, against each plane the vertices cross. */
 static DWORD clip_polygon(RUN *run, DWORD *in, DWORD n, WORD codes)
 {
     D3DLEGACY *l = run->dev->legacy;
@@ -447,7 +446,7 @@ static HRESULT flush(RUN *run, D3DPRIMITIVETYPE type)
 
 /* ------------------------------------------------------------------ picking */
 
-/* whether the pick pixel falls in a clockwise screen triangle, and the depth there. */
+/* tests the pick pixel against a clockwise screen triangle and returns the depth there. */
 static BOOL pick_test(const D3DTLVERTEX *a, const D3DTLVERTEX *b, const D3DTLVERTEX *c, LONG px, LONG py, float *z)
 {
     float ay = (float)(LONG)a->sy, by = (float)(LONG)b->sy, cy = (float)(LONG)c->sy;
@@ -461,7 +460,7 @@ static BOOL pick_test(const D3DTLVERTEX *a, const D3DTLVERTEX *b, const D3DTLVER
     float bottom = ay > by ? (ay > cy ? ay : cy) : (by > cy ? by : cy);
     if (y < top || y >= bottom)
         return FALSE;
-    /* the span of the scanline between the edges it crosses. */
+    /* the scanline span between the edges it crosses. */
     const float xs[3] = {a->sx, b->sx, c->sx}, ys[3] = {ay, by, cy};
     float left = 3.4e38f, right = -3.4e38f;
     for (int i = 0; i < 3; i++) {
@@ -535,7 +534,7 @@ static HRESULT triangles(RUN *run, const D3DTRIANGLE *t, DWORD count)
             if (!add_index(run, v[0]) || !add_index(run, v[k]) || !add_index(run, v[k + 1]))
                 return DDERR_OUTOFMEMORY;
         }
-        /* the indices stay within a word. */
+        /* indices must fit in a word. */
         if (run->count + run->extra > 0xFFF0) {
             HRESULT hr = flush(run, D3DPT_TRIANGLELIST);
             if (FAILED(hr))
@@ -568,7 +567,7 @@ static HRESULT lines(RUN *run, const D3DLINE *line, DWORD count)
         if (run->clipped && (ca & cb))
             continue;
         if (run->clipped && ((ca | cb) & 0x3F)) {
-            /* the segment's part inside every plane. */
+            /* the part of the segment inside every plane. */
             float t0 = 0.0f, t1 = 1.0f;
             for (int plane = 0; plane < 6; plane++) {
                 float da = plane_distance(l->tl_clip + (SIZE_T)a * 4, plane);
@@ -626,7 +625,7 @@ static HRESULT state_transform(RUN *run, const D3DSTATE *s, DWORD count)
         }
         if (type < 32 && (l->transform_locks >> type & 1))
             continue;
-        /* a null handle ends the instruction, without an error. */
+        /* a null handle ends the instruction without an error. */
         if (!value)
             return D3D_OK;
         if (type < D3DTRANSFORMSTATE_WORLD || type > D3DTRANSFORMSTATE_PROJECTION)
@@ -727,7 +726,7 @@ static void write_status(D3DDEV *dev, D3DSTATUS *out)
     out->drExtent.y2 = y2 > vb ? vb : y2;
 }
 
-/* the stream from its first instruction to EXIT, its end or an opcode it does not know. */
+/* runs from the first instruction to EXIT, the end, or an unknown opcode. */
 static HRESULT interpret(RUN *run, D3DSTATUS *status)
 {
     D3DDEV *dev = run->dev;
@@ -740,7 +739,7 @@ static HRESULT interpret(RUN *run, D3DSTATUS *status)
     if (data->dwInstructionLength && data->dwInstructionLength < (DWORD)(end - ip))
         end = ip + data->dwInstructionLength;
     run->start = ip;
-    /* as many vertices as the device takes at least, as windows sizes its buffer. */
+    /* at least as many vertices as the device takes, as windows sizes its buffer. */
     DWORD max = dev->hal ? l->hw.dwMaxVertexCount : l->sw.dwMaxVertexCount;
     run->count = data->dwVertexCount > max ? data->dwVertexCount : max;
     if (run->count > 0xFFF0)
@@ -865,7 +864,7 @@ HRESULT D3dExecute(D3DDEV *dev, D3DEXECBUF *b, DWORD flags)
     return hr;
 }
 
-/* the triangles under a pixel, whatever happens to the pass; the status it makes is dropped. */
+/* collects the triangles under a pixel whatever happens to the pass, and drops the status it makes. */
 HRESULT D3dPick(D3DDEV *dev, D3DEXECBUF *b, const D3DRECT *rect)
 {
     D3DLEGACY *l = dev->legacy;

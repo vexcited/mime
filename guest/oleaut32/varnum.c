@@ -1,26 +1,22 @@
-/*
- * VarParseNumFromStr and VarNumFromParseNum: reading a number out of text, and choosing the variant type that holds it.
- * Written from the documented behaviour and from what the oleaut32 of windows answers, see docs/oleaut32.md.
- */
+/* VarParseNumFromStr and VarNumFromParseNum: parse a number from text and pick the variant type that holds it. */
 #include "oleaut32_private.h"
 #include "dtoa.h"
 
 int _fltused = 0x9875;
 
-/* the sign byte of a decimal that is negative. */
 #define DECIMAL_NEG 0x80
 
-/* ------------------------------------------------------------------ the symbols of a locale */
+/* ------------------------------------------------------------------ locale symbols */
 
 #define MAX_CURRENCY 24
 
 typedef struct {
-    /* zero where the locale has no such separator. */
+    /* zero when the locale has no such separator. */
     WCHAR Decimal;
     WCHAR Thousand;
     WCHAR MoneyDecimal;
     WCHAR MoneyThousand;
-    /* a thousands separator that is a space also accepts a plain space. */
+    /* a space thousands separator also accepts a plain space. */
     BOOL ThousandIsSpace;
     int CurrencyLength;
     WCHAR Currency[MAX_CURRENCY];
@@ -34,7 +30,7 @@ static BOOL is_white(WCHAR c)
            c == 0x3000;
 }
 
-/* the first character of a piece of locale information, or the fallback when the locale does not answer. */
+/* the first character of the locale info, or fallback when the locale has none. */
 static WCHAR locale_char(LCID lcid, LCTYPE type, WCHAR fallback)
 {
     WCHAR text[8];
@@ -60,9 +56,9 @@ static void load_symbols(LCID lcid, ULONG locale_flags, SYMBOLS *s)
     }
 }
 
-/* ------------------------------------------------------------------ the parser */
+/* ------------------------------------------------------------------ parser */
 
-/* the largest exponent written after the e that is taken; a bigger one is an overflow. */
+/* the largest exponent accepted after the e, a bigger one overflows. */
 #define MAX_EXPONENT 1073741819
 
 typedef struct {
@@ -76,10 +72,10 @@ typedef struct {
     int Count;
     int Power;
     int Shift;
-    /* a sign or an opening parenthesis was read, which a second one cannot follow. */
+    /* a sign or opening parenthesis was read, so a second one may not follow. */
     BOOL Signed;
     BOOL ParenOpen;
-    /* a separator that was not asked for ended the number. */
+    /* an unrequested separator ended the number. */
     BOOL Closed;
 } PARSE;
 
@@ -111,7 +107,7 @@ static BOOL take_sign(PARSE *p)
     return TRUE;
 }
 
-/* the symbol of the currency, in any case. */
+/* the currency symbol, case-insensitive. */
 static BOOL take_currency(PARSE *p)
 {
     const SYMBOLS *s = &p->Symbols;
@@ -134,15 +130,15 @@ static BOOL is_digit(WCHAR c)
     return c >= L'0' && c <= L'9';
 }
 
-/* the separator of thousands of the locale, which also is a plain space when it is some kind of space. */
+/* the locale's thousands separator, plus a plain space when it is some kind of space. */
 static BOOL is_thousand(const SYMBOLS *s, WCHAR c)
 {
     return c && ((s->Thousand && c == s->Thousand) || (s->ThousandIsSpace && c == L' '));
 }
 
 /*
- * The digits, thousands separators and decimal point. Digits that do not fit are dropped and counted in the power of
- * ten, and trailing zeros move into it as well. Returns false when there is not a digit to be read.
+ * digits that do not fit are dropped and counted in the power of ten, and trailing zeros move into it too. returns
+ * false when there is no digit.
  */
 static BOOL take_digits(PARSE *p)
 {
@@ -158,7 +154,7 @@ static BOOL take_digits(PARSE *p)
             seen = TRUE;
             BYTE d = (BYTE)(c - L'0');
             if (d == 0 && !count) {
-                /* a zero with no digit kept before it is a place after the point, and a power of ten before it. */
+                /* a zero before any kept digit is not stored: after the point it lowers the power, before it raises it. */
                 if (fraction && !cut_fraction)
                     power--;
                 else if (!fraction && started)
@@ -182,7 +178,7 @@ static BOOL take_digits(PARSE *p)
         } else if (seen && c && c == s->MoneyThousand && (p->In & NUMPRS_THOUSANDS) && (p->In & NUMPRS_CURRENCY)) {
             flags |= NUMPRS_THOUSANDS | NUMPRS_CURRENCY;
         } else if (seen && is_thousand(s, c) && is_white(c)) {
-            /* a separator that is a space and was not asked for ends the number, and nothing after it is looked at. */
+            /* an unrequested space separator ends the number and nothing after it is read. */
             ended = TRUE;
             break;
         } else if (!fraction && c && c == s->Decimal) {
@@ -218,8 +214,8 @@ static BOOL take_digits(PARSE *p)
 }
 
 /*
- * An exponent after the digits: e or d, a sign if there is one, and at least one digit. Without them nothing is taken.
- * Returns false for one too large to keep.
+ * e or d, an optional sign and at least one digit, otherwise nothing is taken. returns false when the exponent is too
+ * large.
  */
 static BOOL take_exponent(PARSE *p)
 {
@@ -249,7 +245,7 @@ static BOOL take_exponent(PARSE *p)
     return TRUE;
 }
 
-/* whatever may follow the digits: white space, a sign, the closing parenthesis and the symbol of the currency. */
+/* what may follow the digits: white space, a sign, a closing parenthesis and the currency symbol. */
 static void take_trailing(PARSE *p)
 {
     for (;;) {
@@ -287,8 +283,8 @@ static int digit_value(WCHAR c, int shift)
 }
 
 /*
- * &H and &O numbers: the digits are kept as they are, in the base of the shift, without leading zeros. Too many of
- * them for the buffer is an overflow, reported at the last digit that was kept.
+ * &H and &O numbers: digits are kept as is in their base, without leading zeros. more than the buffer holds is an
+ * overflow, reported at the last kept digit.
  */
 static HRESULT parse_based(PARSE *p)
 {
@@ -382,7 +378,7 @@ WINOLEAUTAPI HRESULT WINAPI VarParseNumFromStr(LPCOLESTR text, LCID lcid, ULONG 
     else
         hr = parse_decimal(&p);
 
-    /* an overflow stops where it was found, and with the whole text asked for that is a mismatch. */
+    /* an overflow stops where it was found, which is a mismatch when the whole text was required. */
     if (hr == S_OK || hr == DISP_E_OVERFLOW) {
         if ((p.In & NUMPRS_USE_ALL) && *p.At)
             hr = DISP_E_TYPEMISMATCH;
@@ -397,7 +393,7 @@ WINOLEAUTAPI HRESULT WINAPI VarParseNumFromStr(LPCOLESTR text, LCID lcid, ULONG 
 
 /* ------------------------------------------------------------------ wide integers */
 
-/* an unsigned integer of 160 bits, which holds any decimal that has a chance to fit a currency or a decimal. */
+/* a 160-bit unsigned integer, enough for any decimal that could fit a currency or a decimal. */
 #define WIDE_LIMBS 5
 
 typedef struct {
@@ -425,7 +421,7 @@ static void wide_add_one(WIDE *w)
     w->Over = TRUE;
 }
 
-/* the value as 64 bits, false when it does not fit. */
+/* false when it does not fit in 64 bits. */
 static BOOL wide_u64(const WIDE *w, ULONGLONG *v)
 {
     if (w->Over)
@@ -437,29 +433,27 @@ static BOOL wide_u64(const WIDE *w, ULONGLONG *v)
     return TRUE;
 }
 
-/* the value fits in 96 bits. */
 static BOOL wide_fits96(const WIDE *w)
 {
     return !w->Over && !w->L[3] && !w->L[4];
 }
 
-/* ------------------------------------------------------------------ the number as the digits left it */
+/* ------------------------------------------------------------------ parsed numbers */
 
 typedef struct {
     BOOL Negative;
     BOOL Inexact;
     BOOL Zero;
-    /* the digits, as they are. */
     const BYTE *Digits;
     int Count;
-    /* ten to this multiplies the digits as an integer; far larger than the digits can make it. */
+    /* the digits as an integer are multiplied by ten to this, which may be huge. */
     LONGLONG Power;
-    /* the number was a bit pattern, whose value a double takes by arithmetic and not from the digits. */
+    /* a based number: a double takes its value by arithmetic, not from the digits. */
     BOOL FromBits;
     ULONGLONG Bits;
 } NUM;
 
-/* the number as the caller wrote it: windows does not take zeros off either end of the digits. */
+/* windows does not trim zeros off either end of the digits. */
 static void num_from_parse(const NUMPARSE *np, const BYTE *digits, NUM *n)
 {
     n->Negative = (np->dwOutFlags & NUMPRS_NEG) != 0;
@@ -476,7 +470,7 @@ static void num_from_parse(const NUMPARSE *np, const BYTE *digits, NUM *n)
         }
 }
 
-/* the digits and the power for an unsigned integer, with zeros in front of them up to the length asked for. */
+/* the digits of v, zero padded in front to length. */
 static void num_from_integer(ULONGLONG v, BOOL negative, int length, LONGLONG power, BYTE *buffer, NUM *n)
 {
     ULONGLONG value = v;
@@ -501,7 +495,7 @@ static void num_from_integer(ULONGLONG v, BOOL negative, int length, LONGLONG po
         buffer[padding + i] = reversed[count - 1 - i];
 }
 
-/* the digits times ten to the power, as long as that is below 2^160. */
+/* the digits times ten to power, as long as that stays below 2^160. */
 static void num_wide(const NUM *n, LONGLONG power, WIDE *w)
 {
     memset(w, 0, sizeof(*w));
@@ -512,9 +506,8 @@ static void num_wide(const NUM *n, LONGLONG power, WIDE *w)
 }
 
 /*
- * The digits as an integer of the scale asked for: ten to the power of the number divided by ten to minus scale, so
- * the number is rounded to a multiple of ten to minus scale when it has more places. Ties go to the even, or up when the
- * number was cut short of digits already.
+ * the digits as an integer at the given scale, rounded to a multiple of ten to minus scale when there are more places.
+ * ties go to even, or up when digits were already cut off.
  */
 static void num_scaled(const NUM *n, int scale, WIDE *w)
 {
@@ -523,7 +516,7 @@ static void num_scaled(const NUM *n, int scale, WIDE *w)
         memset(w, 0, sizeof(*w));
         if (n->Zero)
             return;
-        /* a power beyond sixty is out of reach of 160 bits for any digit that is not zero. */
+        /* a power beyond 60 cannot fit in 160 bits for any nonzero digit. */
         if (shift > 60)
             w->Over = TRUE;
         else
@@ -535,7 +528,7 @@ static void num_scaled(const NUM *n, int scale, WIDE *w)
     memset(w, 0, sizeof(*w));
     for (int i = 0; i < keep; i++)
         wide_mul_add(w, 10, n->Digits[i]);
-    /* the first digit that goes decides, the ones after it say whether it is exactly half. */
+    /* the first dropped digit decides, the rest tell whether it is exactly half. */
     int cut = 0;
     BOOL rest = FALSE;
     if (drop > n->Count) {
@@ -557,7 +550,7 @@ static void num_scaled(const NUM *n, int scale, WIDE *w)
         wide_add_one(w);
 }
 
-/* ------------------------------------------------------------------ the types */
+/* ------------------------------------------------------------------ types */
 
 typedef struct {
     VARTYPE Vt;
@@ -565,7 +558,7 @@ typedef struct {
     BOOL Signed;
 } INT_TYPE;
 
-/* the order in which a whole number looks for a home. */
+/* the order in which a whole number tries the integer types. */
 static const INT_TYPE g_int_types[] = {{VT_I1, 8, TRUE},   {VT_UI1, 8, FALSE},  {VT_I2, 16, TRUE},  {VT_UI2, 16, FALSE},
                                        {VT_I4, 32, TRUE},  {VT_UI4, 32, FALSE}, {VT_I8, 64, TRUE},   {VT_UI8, 64, FALSE}};
 
@@ -583,7 +576,7 @@ static void put_integer(VARIANT *out, VARTYPE vt, ULONGLONG bits)
     }
 }
 
-/* a magnitude and a sign into the first of the integer types asked for that holds it. */
+/* stores into the first requested integer type that holds the value. */
 static BOOL store_integer(ULONG vtbits, BOOL negative, ULONGLONG magnitude, VARIANT *out)
 {
     if (!magnitude)
@@ -594,7 +587,7 @@ static BOOL store_integer(ULONG vtbits, BOOL negative, ULONGLONG magnitude, VARI
             continue;
         ULONGLONG limit;
         if (t->Signed)
-            /* windows lets any negative number through to the 64 bit type, wrapped, as long as it has 64 bits. */
+            /* windows lets any negative number through to the 64-bit type, wrapped, as long as it fits 64 bits. */
             limit = t->Bits == 64 && negative ? 0xFFFFFFFFFFFFFFFFull
                                               : (1ull << (t->Bits - 1)) - 1 + (negative ? 1 : 0);
         else if (negative)
@@ -609,11 +602,11 @@ static BOOL store_integer(ULONG vtbits, BOOL negative, ULONGLONG magnitude, VARI
     return FALSE;
 }
 
-/* the whole part of the number as a magnitude, rounded when asked to: false when it is beyond 64 bits. */
+/* the whole part as a magnitude, rounded if asked; false beyond 64 bits. */
 static BOOL num_round_u64(const NUM *n, ULONGLONG *v)
 {
     WIDE w;
-    /* a number of more than twenty digits is out of reach, though it be zero. */
+    /* more than twenty digits is out of reach, even if they are zeros. */
     if (n->Count + n->Power > 20)
         return FALSE;
     num_scaled(n, 0, &w);
@@ -646,14 +639,13 @@ static double u64_to_double(ULONGLONG v)
     return (double)(LONGLONG)((v >> 1) | (v & 1)) * 2.0;
 }
 
-/* the value of the digits, signed, in a double. */
 static double num_double(const NUM *n)
 {
     if (n->Zero)
         return n->Negative ? -0.0 : 0.0;
     double v;
     if (n->FromBits && n->Power) {
-        /* windows scales a double of the integer by a double of the power, and its last bit shows it. */
+        /* like windows, scale a double of the integer by a double of the power, which shows in the last bit. */
         LONGLONG power = n->Power < 0 ? -n->Power : n->Power;
         BYTE one = 1;
         if (power > 400)
@@ -679,12 +671,12 @@ static BOOL is_infinite(double v)
     return v - v != 0;
 }
 
-/* a currency of the number: exact when it has no more than four places, otherwise rounded to four. */
+/* exact when there are at most four places, otherwise rounded to four. */
 static BOOL currency_fits(const NUM *n, BOOL exact, WIDE *w)
 {
     if (exact && n->Power < -4)
         return FALSE;
-    /* more than fifteen digits before the point are out of reach, though they be zeros. */
+    /* more than fifteen digits before the point are out of reach, even zeros. */
     if (n->Count + n->Power > 15)
         return FALSE;
     ULONGLONG v;
@@ -711,14 +703,14 @@ static void put_decimal(VARIANT *out, const WIDE *w, int scale, BOOL negative)
 }
 
 /*
- * The decimal of the number: the digits as they are when they fit 96 bits and a scale of 28. Otherwise the places are cut
- * off one at a time, rounded, until they do; the number of digits that are left is returned in *kept, and a number whose
- * every digit is lost gives zero. False when nothing can be done, as for a whole number of 30 digits.
+ * the digits as they are with a scale of 28 when they fit 96 bits, otherwise places are cut off one at a time, rounded,
+ * until they do. *kept gets the digits left, and a number that loses every digit gives zero. false when nothing works,
+ * as for a whole number of 30 digits.
  */
 static BOOL decimal_fits(const NUM *n, WIDE *w, int *scale, int *kept)
 {
     *kept = n->Count;
-    /* more than 29 digits before the point are out of reach, though they be zeros. */
+    /* more than 29 digits before the point are out of reach, even zeros. */
     if (n->Power >= 0 && n->Count + n->Power > 29)
         return FALSE;
     if (n->Power >= 0) {
@@ -728,14 +720,14 @@ static BOOL decimal_fits(const NUM *n, WIDE *w, int *scale, int *kept)
     }
     LONGLONG places = -n->Power;
     if (n->Count - places < -28) {
-        /* the first digit is already beyond the last place that a decimal has. */
+        /* the first digit is already past the last decimal place. */
         memset(w, 0, sizeof(*w));
         *scale = 0;
         *kept = 0;
         return TRUE;
     }
     for (int s = places > 28 ? 28 : (int)places; s >= 0; s--) {
-        /* the digits left count as the digits there are, whatever their value, and are at most 29. */
+        /* the digits left count whatever their value, and are at most 29. */
         if (n->Count - (places - s) > 29)
             continue;
         num_scaled(n, s, w);
@@ -748,13 +740,13 @@ static BOOL decimal_fits(const NUM *n, WIDE *w, int *scale, int *kept)
     return FALSE;
 }
 
-/* the first of the real, currency and decimal types asked for that holds the number, after the integers. */
+/* the first requested real, currency or decimal type that holds the number, tried after the integers. */
 static HRESULT store_other(const NUM *n, ULONG vtbits, BOOL whole, LONGLONG places4, LONGLONG places8, VARIANT *out)
 {
     BOOL r4 = (vtbits & VTBIT_R4) != 0, r8 = (vtbits & VTBIT_R8) != 0;
     BOOL cy = (vtbits & VTBIT_CY) != 0, dec = (vtbits & VTBIT_DECIMAL) != 0;
 
-    /* a whole number that a float keeps whole has no use for the other types. */
+    /* a whole number a float keeps exactly needs no other type. */
     if (whole) {
         if (r4 && places4 <= 7 && places8 <= 15) {
             put_real(out, num_double(n), TRUE);
@@ -765,7 +757,7 @@ static HRESULT store_other(const NUM *n, ULONG vtbits, BOOL whole, LONGLONG plac
             return S_OK;
         }
     }
-    /* what the currency would keep of the number, in digits. */
+    /* how many digits the currency would keep. */
     LONGLONG currency_digits = n->Count + n->Power + 4;
     WIDE cw, dw;
     int dscale = 0, dkept = 0;
@@ -776,7 +768,7 @@ static HRESULT store_other(const NUM *n, ULONG vtbits, BOOL whole, LONGLONG plac
         put_currency(out, &cw, n->Negative);
         return S_OK;
     }
-    /* with many digits, a decimal and a currency are chosen by what the currency would keep, not by what is exact. */
+    /* with many digits, decimal versus currency is chosen by what the currency would keep, not by exactness. */
     if (cy && dec && !r8 && !r4 && n->Count >= 16 && currency_digits >= 8 && currency_fits(n, FALSE, &cw)) {
         put_currency(out, &cw, n->Negative);
         return S_OK;
@@ -786,7 +778,7 @@ static HRESULT store_other(const NUM *n, ULONG vtbits, BOOL whole, LONGLONG plac
         return S_OK;
     }
     if (r8 || r4) {
-        /* a float is kept for the numbers that the types asked for cannot hold as many digits of as it does. */
+        /* a float wins when the requested types cannot hold as many of the digits as it does. */
         if (decimal_ok && dkept >= 16) {
             put_decimal(out, &dw, dscale, n->Negative);
             return S_OK;
@@ -819,7 +811,7 @@ static HRESULT choose_decimal(const NUM *n, ULONG vtbits, VARIANT *out)
     BOOL whole = n->Power >= 0;
     BOOL has_fraction_type = (vtbits & (VTBIT_R4 | VTBIT_R8 | VTBIT_CY | VTBIT_DECIMAL)) != 0;
     ULONGLONG magnitude;
-    /* with more than fifteen digits, an integer is the choice only when nothing else could hold the number. */
+    /* with more than fifteen digits, an integer is chosen only when nothing else could hold the number. */
     if ((whole || !has_fraction_type) && (n->Count <= 15 || !has_fraction_type)) {
         if (num_round_u64(n, &magnitude) && store_integer(vtbits, n->Negative, magnitude, out))
             return S_OK;
@@ -831,7 +823,7 @@ static HRESULT choose_decimal(const NUM *n, ULONG vtbits, VARIANT *out)
 
 /* ------------------------------------------------------------------ hexadecimal and octal */
 
-/* the integer the digits make, whose length in bits is returned; false when it takes more than 64. */
+/* false when the value takes more than 64 bits; *bits gets its length. */
 static BOOL based_value(const NUMPARSE *np, const BYTE *digits, ULONGLONG *v, int *bits)
 {
     ULONGLONG value = 0;
@@ -858,8 +850,8 @@ static BOOL based_value(const NUMPARSE *np, const BYTE *digits, ULONGLONG *v, in
 }
 
 /*
- * The signed types take what fits in them as the bits of the number say, a number of 32 bits with its top bit set being
- * negative; one of more bits than that is cut to the width of the type. The unsigned ones need the value to fit.
+ * signed types take the bits as they are, so a 32-bit number with its top bit set is negative, and wider numbers are
+ * truncated to the type. unsigned types need the value to fit.
  */
 static BOOL based_fits(const INT_TYPE *t, ULONGLONG v, int bits)
 {
@@ -885,7 +877,7 @@ static HRESULT choose_based(const NUMPARSE *np, const BYTE *digits, ULONG vtbits
             return S_OK;
         }
     }
-    /* the others are negative when the number says so or its top bit does, and are weighed by the unsigned digits. */
+    /* the others are negative when the number or its top bit says so, and are sized by the unsigned digits. */
     BOOL top = (bits == 32 || bits == 64) && ((v >> (bits - 1)) & 1);
     ULONGLONG magnitude = v;
     if (top)
@@ -896,8 +888,8 @@ static HRESULT choose_based(const NUMPARSE *np, const BYTE *digits, ULONG vtbits
     if (bits == 64)
         vtbits &= ~(ULONG)VTBIT_CY;
     /*
-     * A hexadecimal number of 13 to 15 digits that a currency refuses, asked for with a decimal and no real, comes out as
-     * a decimal made of its digits read as decimal ones, 0xFFFFFFFFFFFFF being 16666666666665. That is windows' answer.
+     * like windows, a 13 to 15 digit hexadecimal number the currency refuses, requested with a decimal and no real,
+     * becomes a decimal of its digits read as decimal ones: 0xFFFFFFFFFFFFF is 16666666666665.
      */
     WIDE cw;
     if ((vtbits & VTBIT_CY) && (vtbits & VTBIT_DECIMAL) && !(vtbits & (VTBIT_R4 | VTBIT_R8)) && np->cDig >= 13 &&
@@ -910,8 +902,8 @@ static HRESULT choose_based(const NUMPARSE *np, const BYTE *digits, ULONG vtbits
         return S_OK;
     }
     /*
-     * A double keeps whole as many digits as were written. A float keeps as many as the value has and, when the power of
-     * ten is not below zero, as were written.
+     * a double keeps as many whole digits as were written. a float keeps as many as the value has and, when the power of
+     * ten is not negative, as were written.
      */
     LONGLONG places = 0;
     for (ULONGLONG t = magnitude; t; t /= 10)

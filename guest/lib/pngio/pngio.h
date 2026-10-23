@@ -1,8 +1,7 @@
 /*
- * png reader and writer working in native pixel layouts, see the png specification
- * iso 15948 or the w3c png second edition. unlike png.h, which only produces 32 bpp bgra, the
- * decoder here hands out the layout an imaging api such as wic reports for the file, and
- * the encoder takes the same layouts.
+ * png reader and writer working in native pixel layouts, per iso 15948. unlike png.h, which only produces
+ * 32 bpp bgra, the decoder hands out the layout an imaging api like wic reports for the file, and the
+ * encoder takes the same layouts.
  * freestanding: needs only memcpy, memmove, memset, memcmp and the allocator interface.
  */
 #ifndef MIME_LIB_PNGIO_PNGIO_H
@@ -29,7 +28,7 @@ enum {
 #define MIME_PNGIO_SKIP_ADLER 0x2u /* do not verify the zlib adler32. */
 #define MIME_PNGIO_RAW 0x4u        /* deliver the file's own sample layout, see the raw formats below. */
 
-/* default limit of width times height, the width and the height are also capped at 2147483647. */
+/* default limit on width times height. width and height are also capped at 2147483647. */
 #define MIME_PNGIO_MAX_PIXELS (1u << 28)
 
 /* png color types. */
@@ -157,7 +156,7 @@ enum {
     MIME_PNGIO_POS_AFTER_IDAT = 2,
 };
 
-/* a chunk kept verbatim, decoder side the private and unknown ancillary ones. */
+/* a chunk kept verbatim: on decode, the private and unknown ancillary ones. */
 typedef struct MimePngioChunk {
     char type[4];
     const void *data;
@@ -171,7 +170,7 @@ enum {
     MIME_PNGIO_TEXT_ITXT = 2,   /* iTXt, utf-8. */
 };
 
-/* a text item as stored. the strings are null terminated and point into the input. */
+/* strings are null terminated and point into the input. */
 typedef struct MimePngioText {
     unsigned kind;
     const char *keyword;            /* latin-1. */
@@ -184,7 +183,7 @@ typedef struct MimePngioText {
 } MimePngioText;
 
 /*
- * decoder behaviour, where the specification leaves room.
+ * decoder behaviour where the specification leaves room.
  *
  * checksums: a bad crc in a critical chunk is MIME_PNGIO_ERR_CRC unless MIME_PNGIO_SKIP_CRC, except for
  * IEND, whose crc is not looked at once the image data is complete. a bad crc in an ancillary chunk drops
@@ -212,17 +211,16 @@ typedef struct MimePngioText {
  */
 typedef struct MimePngioDecoder MimePngioDecoder;
 
-/* true when data starts with the png signature. */
 bool mime_pngio_is_png(const void *data, size_t size);
 
 /*
- * parses all chunks except the image data content. data must stay valid until
+ * parses every chunk but the image data content. data must stay valid until
  * mime_pngio_close, the info and metadata point into it. alloc is copied.
  */
 int mime_pngio_open(const void *data, size_t size, const MimeAllocator *alloc, unsigned flags,
                     MimePngioDecoder **out);
 
-/* same, with another limit on width times height, 0 for the default. */
+/* with another limit on width times height, 0 for the default. */
 int mime_pngio_open_limit(const void *data, size_t size, const MimeAllocator *alloc, unsigned flags,
                           uint64_t max_pixels, MimePngioDecoder **out);
 
@@ -234,19 +232,19 @@ const MimePngioInfo *mime_pngio_info(const MimePngioDecoder *dec);
 int mime_pngio_native_format(const MimePngioInfo *info);
 int mime_pngio_raw_format(const MimePngioInfo *info);
 
-/* the format this decoder delivers, native or raw following the open flags. */
+/* native or raw, following the open flags. */
 int mime_pngio_format(const MimePngioDecoder *dec);
 
 /*
- * decodes the whole image into out, height rows of stride bytes, stride being at least
- * mime_pngio_row_bytes of the format and the width. may be called repeatedly.
+ * out holds height rows of stride bytes, at least mime_pngio_row_bytes of the
+ * format and width. may be called repeatedly.
  */
 int mime_pngio_decode(MimePngioDecoder *dec, void *out, size_t stride);
 
 /*
- * decodes the count rows from row y into out, whose first row is row y. the inflated image stays
- * in memory until mime_pngio_close or the next mime_pngio_decode, so rows can be requested in any
- * order without inflating again. interlaced images are decoded whole into a cache first.
+ * out's first row is row y. the inflated image stays in memory until mime_pngio_close or the next
+ * mime_pngio_decode, so rows can come in any order without inflating again. interlaced images are
+ * decoded whole into a cache first.
  */
 int mime_pngio_decode_rows(MimePngioDecoder *dec, uint32_t y, uint32_t count, void *out, size_t stride);
 
@@ -258,9 +256,9 @@ int mime_pngio_text(const MimePngioDecoder *dec, unsigned index, MimePngioText *
 int mime_pngio_chunk(const MimePngioDecoder *dec, unsigned index, MimePngioChunk *chunk);
 
 /*
- * the text of an item, decompressed when needed, in a buffer of size + 1 bytes with a null
- * terminator after the data. release with mime_pngio_free. a text that fails to decompress
- * gives MIME_PNGIO_ERR_DATA. the size is bounded to 64 MiB.
+ * the item's text, decompressed when needed, in a buffer of size + 1 bytes ending in a null.
+ * release with mime_pngio_free. a text that fails to decompress gives MIME_PNGIO_ERR_DATA.
+ * the size is bounded to 64 MiB.
  */
 int mime_pngio_text_data(const MimePngioDecoder *dec, unsigned index, void **data, size_t *size);
 
@@ -270,8 +268,8 @@ int mime_pngio_iccp_data(const MimePngioDecoder *dec, void **data, size_t *size)
 void mime_pngio_free(const MimePngioDecoder *dec, void *p);
 
 /*
- * decodes a file into a buffer from alloc, release with mime_free. info, format and stride
- * may be NULL. the row stride is the smallest one.
+ * the buffer comes from alloc, release with mime_free. info, format and stride
+ * may be NULL. rows use the smallest stride.
  */
 int mime_pngio_decode_alloc(const void *data, size_t size, const MimeAllocator *alloc, unsigned flags,
                             void **pixels, size_t *stride, MimePngioInfo *info, int *format);
@@ -348,18 +346,18 @@ typedef struct MimePngioEncode {
     unsigned chunk_count;
 } MimePngioEncode;
 
-/* writes a png file into a buffer from params->alloc, release with mime_free. */
+/* the buffer comes from params->alloc, release with mime_free. */
 int mime_pngio_encode(const MimePngioEncode *params, void **out, size_t *out_size);
 
 /* helpers. */
 
-/* swaps the bytes of count 16 bit units, src and dst may be equal or must not overlap. */
+/* src and dst may be equal but must not otherwise overlap. */
 void mime_pngio_swap16(void *dst, const void *src, size_t count);
 
-/* crc32 as used by png, start with 0. */
+/* the png crc32, start with 0. */
 uint32_t mime_pngio_crc32(uint32_t crc, const void *data, size_t size);
 
-/* chooses between the sse2 and the scalar code, on by default where compiled in. for tests. */
+/* switches between the sse2 and scalar code. sse2 is on by default where compiled in. */
 void mime_pngio_set_simd(bool enable);
 
 #endif

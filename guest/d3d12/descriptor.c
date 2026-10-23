@@ -1,14 +1,8 @@
 /*
- * descriptors. a shader visible heap of cbvs, srvs and uavs is a descriptor
- * buffer in guest memory: first the descriptor of its records, then an
- * array of mutable descriptors, an image or a texel buffer each, then the
- * records, which describe the buffers shaders read through device
- * addresses: constant buffers, raw and structured views. a sampler heap is
- * an array of sampler descriptors. heaps the gpu does not see have the same
- * bytes in plain memory, and what ClearUnorderedAccessView needs beside
- * them; render target and depth stencil heaps hold what rendering needs.
- * the bytes of vulkan descriptors come from vkGetDescriptorEXT, a round
- * trip to the host, so they are made once per view and kept.
+ * a shader visible cbv, srv and uav heap is a descriptor buffer in guest memory: first the descriptor of its
+ * records, then one mutable descriptor per slot, an image or a texel buffer, then the records describing the
+ * buffers shaders read by device address: constant buffers, raw and structured views. a sampler heap is an array
+ * of sampler descriptors. vkGetDescriptorEXT is a host round trip, so each view's bytes are made once and kept.
  */
 #include "d3d12_private.h"
 
@@ -16,7 +10,7 @@
 
 /* ------------------------------------------------------------------ the heap table */
 
-/* the heaps by id, in pages made as ids grow, so a handle finds its heap without a lock. */
+/* heaps by id, in pages added as ids grow, so a handle finds its heap without a lock. */
 static D12DescriptorHeap **heap_slot(D12Device *device, UINT id, BOOL make)
 {
     UINT page = id / PAGE_HEAPS;
@@ -134,7 +128,7 @@ static void address_descriptor(D12Device *device, VkDescriptorType type, VkDevic
     device->vk.vkGetDescriptorEXT(device->vk.device, &info, descriptor_size(device, type), out);
 }
 
-/* the descriptor of a typed buffer view, kept by address, range and format. */
+/* the descriptor of a typed buffer view, cached by address, range and format. */
 static void texel_descriptor(D12Device *device, BOOL storage, VkDeviceAddress address, VkDeviceSize range,
                              VkFormat format, BYTE *out)
 {
@@ -257,10 +251,7 @@ static VkSampler create_sampler(D12Device *device, const D3D12_SAMPLER_DESC2 *d)
     return sampler;
 }
 
-/*
- * a sampler for a description, made once: vulkan allows few samplers and
- * programs make the same ones over and over. its descriptor too if asked.
- */
+/* samplers are made once per description: Vulkan allows few and programs make the same ones over and over. */
 VkSampler D12Sampler(D12Device *device, const D3D12_SAMPLER_DESC2 *desc, const BYTE **descriptor)
 {
     D3D12_SAMPLER_DESC2 key = *desc;
@@ -275,7 +266,7 @@ VkSampler D12Sampler(D12Device *device, const D3D12_SAMPLER_DESC2 *desc, const B
         }
     }
     VkSampler sampler = VK_NULL_HANDLE;
-    /* entries never move once handed out: the list is as long as vulkan allows samplers at once. */
+    /* entries never move once handed out, so the list is sized to Vulkan's sampler limit. */
     if (!device->samplers) {
         device->sampler_capacity = device->properties.limits.maxSamplerAllocationCount;
         device->samplers = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, device->sampler_capacity * sizeof(D12SamplerEntry));
@@ -310,7 +301,7 @@ HRESULT D12DescriptorsInit(D12Device *device)
     device->heaps = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 256 * sizeof(void *));
     if (!device->heaps)
         return E_OUTOFMEMORY;
-    /* id 0 stands for no heap, so no handle is 0. */
+    /* id 0 means no heap, so no handle is 0. */
     device->heap_next_id = 1;
 
     const VkPhysicalDeviceLimits *limits = &device->properties.limits;
@@ -330,7 +321,7 @@ HRESULT D12DescriptorsInit(D12Device *device)
     VkMutableDescriptorTypeCreateInfoEXT mutable_info = {VK_STRUCTURE_TYPE_MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_EXT};
     mutable_info.mutableDescriptorTypeListCount = 1;
     mutable_info.pMutableDescriptorTypeLists = &list;
-    /* the heaps' bindings are as long as their buffers: a variable count, for heaps of any size. */
+    /* variable count bindings, so heaps of any size fit. */
     VkDescriptorBindingFlags partial =
         VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
     VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags = {
@@ -360,7 +351,7 @@ HRESULT D12DescriptorsInit(D12Device *device)
     if (vk->vkCreateDescriptorSetLayout(vk->device, &info, nullptr, &device->record_layout) != VK_SUCCESS)
         return E_FAIL;
 
-    /* the views of 64-bit texels that typed views' 64-bit atomics go through, beside the heap's descriptors. */
+    /* 64-bit texel views, which typed views' 64-bit atomics go through. */
     if (device->has_atomic64) {
         static const VkDescriptorType atomic_types[] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                                         VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER};
@@ -384,7 +375,7 @@ HRESULT D12DescriptorsInit(D12Device *device)
     if (vk->vkCreateDescriptorSetLayout(vk->device, &info, nullptr, &device->empty_layout) != VK_SUCCESS)
         return E_FAIL;
 
-    /* a mutable descriptor takes the room of the largest it may be, as the layout's size says. */
+    /* a mutable descriptor is as large as the largest type it may hold, per the layout's size. */
     UINT stride = 0;
     for (UINT i = 0; i < RTL_NUMBER_OF(mutable_types); i++)
         stride = D12_MAX(stride, descriptor_size(device, mutable_types[i]));
@@ -411,7 +402,7 @@ HRESULT D12DescriptorsInit(D12Device *device)
                        device->null_descriptors[D12_DESC_STORAGE_TEXEL]);
     memcpy(device->null_descriptors[D12_DESC_NONE], device->null_descriptors[D12_DESC_SAMPLED_IMAGE], 64);
 
-    /* what null views' records point to: never written, never read for real. */
+    /* what null views' records point to: never written and never really read. */
     HRESULT hr = D12Alloc(device, D12_MEMORY_DEVICE, ~0u, 256, 256, FALSE, &device->null_buffer);
     if (FAILED(hr))
         return hr;
@@ -701,7 +692,7 @@ HRESULT D12CreateDescriptorHeap(D12Device *device, const D3D12_DESCRIPTOR_HEAP_D
 
 /* ------------------------------------------------------------------ writing descriptors */
 
-/* writes a cbv, srv or uav: its vulkan descriptor, its record, its view of 64-bit texels and what cpu heaps keep of it. */
+/* a cbv, srv or uav write fills its Vulkan descriptor, its record, its 64-bit texel view and the cpu heap info. */
 static void write_atomic_view(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE dest, const BYTE *descriptor,
                               const DxbcRecord *record, const D12DescriptorInfo *info, const BYTE *atomic)
 {
@@ -743,7 +734,7 @@ void D12CreateCbv(D12Device *device, const D3D12_CONSTANT_BUFFER_VIEW_DESC *desc
     write_view(device, dest, device->null_descriptors[D12_DESC_SAMPLED_IMAGE], &record, nullptr);
 }
 
-/* the format, aspect and swizzle of a texture view, depth formats through their depth or stencil plane. */
+/* depth formats go through their depth or stencil plane. */
 static BOOL view_format(const D12Resource *r, DXGI_FORMAT format, BOOL attachment, UINT plane, VkFormat *vk,
                         VkImageAspectFlags *aspect, VkComponentMapping *swizzle)
 {
@@ -762,7 +753,7 @@ static BOOL view_format(const D12Resource *r, DXGI_FORMAT format, BOOL attachmen
         if (attachment) {
             *aspect = r->aspect;
         } else if ((f->flags & D3D_FORMAT_STENCIL && !(f->flags & D3D_FORMAT_DEPTH)) || plane == 1) {
-            /* the stencil reads in green, as direct3d's G8 says. */
+            /* stencil reads in green, like Direct3D's G8. */
             *aspect = VK_IMAGE_ASPECT_STENCIL_BIT;
             *swizzle = (VkComponentMapping){VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_R,
                                             VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_ONE};
@@ -781,7 +772,7 @@ static BOOL view_format(const D12Resource *r, DXGI_FORMAT format, BOOL attachmen
     return TRUE;
 }
 
-/* the srv's component mapping on top of the format's own swizzle. */
+/* the srv's component mapping, applied on top of the format's swizzle. */
 static VkComponentMapping apply_mapping(VkComponentMapping base, UINT mapping)
 {
     const VkComponentSwizzle *b = &base.r;
@@ -798,7 +789,7 @@ static VkComponentMapping apply_mapping(VkComponentMapping base, UINT mapping)
     return (VkComponentMapping){out[0], out[1], out[2], out[3]};
 }
 
-/* the srv a null description asks for: the whole texture in its format. */
+/* a null description means the whole texture in its format. */
 static void default_srv(const D12Resource *r, D3D12_SHADER_RESOURCE_VIEW_DESC *d)
 {
     memset(d, 0, sizeof(*d));
@@ -831,7 +822,7 @@ static void default_srv(const D12Resource *r, D3D12_SHADER_RESOURCE_VIEW_DESC *d
     }
 }
 
-/* the bytes of an image view's descriptor of a type, asked for once. */
+/* fetched from the host once per view and type. */
 static const BYTE *view_descriptor(D12Device *device, D12ImageView *view, BOOL storage)
 {
     if (!view->have[storage]) {
@@ -842,7 +833,7 @@ static const BYTE *view_descriptor(D12Device *device, D12ImageView *view, BOOL s
     return view->descriptor[storage];
 }
 
-/* the element size of a buffer view: a structure, a raw word or a texel of its format. */
+/* a structure, a raw dword or a texel of the format. */
 static UINT element_size(DXGI_FORMAT format, UINT stride, BOOL raw)
 {
     if (stride)
@@ -1066,7 +1057,7 @@ void D12CreateUav(D12Device *device, D12Resource *resource, D12Resource *counter
     D12ImageView *view = D12ResourceView(resource, &info, VK_IMAGE_USAGE_STORAGE_BIT);
     if (!view)
         return;
-    /* two words a texel: a view of 64-bit texels too, for 64-bit atomics. */
+    /* two dwords per texel: also make a 64-bit view for 64-bit atomics. */
     const BYTE *atomic = nullptr;
     if (device->atomic_stride && (info.format == VK_FORMAT_R32G32_UINT || info.format == VK_FORMAT_R32G32_SINT)) {
         VkImageViewCreateInfo wide = info;
@@ -1103,7 +1094,7 @@ const D12DescriptorInfo *D12DescriptorInfoFrom(D12Device *device, D3D12_CPU_DESC
     return heap && heap->infos ? &heap->infos[index] : nullptr;
 }
 
-/* the mip, layers and extent of an attachment; slices of a volume are layers of a 2d array view. */
+/* slices of a volume become layers of a 2d array view. */
 static BOOL attachment(D12Resource *r, UINT mip, UINT layer, UINT layers, BOOL array, BOOL one_d, D12TargetView *t,
                        VkImageViewCreateInfo *info)
 {

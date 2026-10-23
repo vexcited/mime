@@ -1,7 +1,6 @@
 /*
- * the list view, SysListView32: items with text, an image, a state and
- * subitems, shown as large icons, small icons, a list or a report whose
- * columns live in a header control.
+ * the list view, SysListView32: items with subitems shown as large icons, small icons, a list or a report.
+ * report columns live in a header control.
  */
 #include "comctl32_private.h"
 
@@ -31,7 +30,7 @@ typedef struct LISTVIEW {
     int View;
     LV_ITEM **Items;
     int Count, Capacity;
-    /* the states of owner data items, one byte each. */
+    /* owner data item states, one byte each. */
     BYTE *DataStates;
     int DataStatesSize;
     HWND Header;
@@ -118,7 +117,7 @@ static int column_count(LISTVIEW *lv)
     return lv->Header ? (int)SendMessageW(lv->Header, HDM_GETITEMCOUNT, 0, 0) : 0;
 }
 
-/* the subitem slot, made on demand; unset subitems are callbacks. */
+/* created on demand. unset subitems are callbacks. */
 static LV_SUBITEM *subitem(LV_ITEM *it, int sub, BOOL create)
 {
     if (sub < 1)
@@ -165,7 +164,7 @@ static void measure_font(LISTVIEW *lv)
     ReleaseDC(lv->Hwnd, dc);
 }
 
-/* the row height: the font, the images and a border, at least the font with the in place edit's padding. */
+/* the row height: font, images and a border, at least the font plus the in place edit's padding. */
 static void compute_metrics(LISTVIEW *lv)
 {
     int image_cy = 0, state_cy = 0;
@@ -261,7 +260,6 @@ static LRESULT notify_listview(LISTVIEW *lv, UINT code, int item, int sub, UINT 
     return CcNotify(&lv->Notify, code, &nm.hdr);
 }
 
-/* asks the parent for what an item keeps as a callback. */
 static void get_dispinfo(LISTVIEW *lv, int i, int sub, UINT mask, LPWSTR text, int max, int *image, int *indent,
                          UINT *state)
 {
@@ -340,7 +338,7 @@ static void get_dispinfo(LISTVIEW *lv, int i, int sub, UINT mask, LPWSTR text, i
     }
 }
 
-/* what an item or subitem shows, callbacks resolved. */
+/* what an item or subitem shows, with callbacks resolved. */
 static void display_info(LISTVIEW *lv, int i, int sub, LPWSTR text, int max, int *image)
 {
     UINT mask = 0;
@@ -394,7 +392,7 @@ static void layout_header(LISTVIEW *lv)
     lv->HeaderHeight = wp.cy;
 }
 
-/* where an item sits: its cell in the icon views, its column and row in list view. */
+/* the item's cell in the icon views, its column and row in list view. */
 static void item_origin(LISTVIEW *lv, int i, POINT *pt)
 {
     RECT client;
@@ -712,10 +710,7 @@ static void deselect_all_but(LISTVIEW *lv, int keep)
             set_state(lv, k, 0, LVIS_SELECTED);
 }
 
-/*
- * changes one item: LVN_ITEMCHANGING always, the change, then
- * LVN_ITEMCHANGED with the fields that really changed.
- */
+/* LVN_ITEMCHANGING always, then the change, then LVN_ITEMCHANGED with the fields that really changed. */
 static BOOL change_item(LISTVIEW *lv, int i, const LVITEMW *src, BOOL ansi)
 {
     UINT mask = src->mask & ~(LVIF_DI_SETITEM | LVIF_NORECOMPUTE);
@@ -1373,7 +1368,7 @@ static BOOL delete_column(LISTVIEW *lv, int index)
     return TRUE;
 }
 
-/* the width a column needs for its items, LVSCW_AUTOSIZE. */
+/* LVSCW_AUTOSIZE: the width the column's items need. */
 static int autosize_width(LISTVIEW *lv, int column)
 {
     int edge = GetSystemMetrics(SM_CXEDGE);
@@ -2246,7 +2241,7 @@ static void on_scroll(LISTVIEW *lv, int bar, int code)
         scroll_to(lv, pos, lv->ScrollY);
 }
 
-/* ------------------------------------------------------------------ the header's notifications */
+/* ------------------------------------------------------------------ header notifications */
 
 static LRESULT header_notify(LISTVIEW *lv, NMHDR *hdr)
 {
@@ -2274,14 +2269,14 @@ static LRESULT header_notify(LISTVIEW *lv, NMHDR *hdr)
         invalidate_all(lv);
         break;
     }
-    /* the parent sees every header notification, coming from the header. */
+    /* the parent sees every header notification, as sent by the header. */
     LRESULT r = lv->Notify.Parent ? SendMessageW(lv->Notify.Parent, WM_NOTIFY, hdr->idFrom, (LPARAM)hdr) : 0;
     if (hdr->code == HDN_ITEMCHANGEDW || hdr->code == HDN_ITEMCHANGEDA || hdr->code == HDN_ENDDRAG)
         invalidate_all(lv);
     return r != 0;
 }
 
-/* ------------------------------------------------------------------ the window procedure */
+/* ------------------------------------------------------------------ window procedure */
 
 static void set_view(LISTVIEW *lv, int view)
 {
@@ -2492,7 +2487,7 @@ LRESULT CALLBACK ListViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return 0;
     }
     case WM_DESTROY:
-        /* the items go with their notifications while the parent is still there. */
+        /* delete the items with their notifications while the parent is still there. */
         lv->Redraw = FALSE;
         delete_all(lv);
         if (lv->Theme)
@@ -2906,7 +2901,7 @@ LRESULT CALLBACK ListViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     }
     case LVM_SETITEMCOUNT:
         if (!is_ownerdata(lv)) {
-            /* only a hint: a reasonable reservation is made, the rest grows on demand. */
+            /* only a hint: reserve a reasonable amount, the rest grows on demand. */
             if ((int)wparam > lv->Capacity && wparam <= 0x100000) {
                 LV_ITEM **items = CcReAlloc(lv->Items, wparam * sizeof(LV_ITEM *));
                 if (items) {

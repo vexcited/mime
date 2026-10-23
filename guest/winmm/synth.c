@@ -1,10 +1,7 @@
 /*
- * the microsoft gs wavetable synth: the instruments of the dls sound set
- * windows keeps in drivers\gm.dls, played by 40 voices at 22050 hz into an
- * output stream of the process. what each message does follows windows'
- * synth, a copy of directmusic's: gm, gs and xg resets, gs part channels,
- * rpns 0 to 2, volume and expression on a 40 log10 curve and a constant
- * power pan, with neither reverb nor chorus heard.
+ * GS wavetable synth using drivers\gm.dls, with 40 voices at 22050 Hz. supports GM, GS and XG resets, GS part
+ * channels, RPNs 0 to 2, a 40 log10 volume and expression curve, and constant-power panning. reverb and chorus are
+ * not rendered.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -15,7 +12,7 @@
 #define RATE 22050
 #define BLOCK 32
 #define VOICES 40
-#define QUEUE_FRAMES 1100 /* about 50 ms ahead of the host */
+#define QUEUE_FRAMES 1100 /* about 50 ms ahead of the host. */
 #define SILENT_DB -96.0f
 
 #define SRC_NONE 0
@@ -53,7 +50,7 @@ typedef struct WAVE {
     WSMP wsmp;
 } WAVE;
 
-/* an envelope in the units of dls: times in time cents, the sustain in tenths of a percent. */
+/* DLS envelope units: time cents and sustain in tenths of a percent. */
 typedef struct ENVELOPE {
     LONG attack, decay, release, sustain;
     LONG velocity_attack, key_decay;
@@ -83,7 +80,7 @@ typedef struct INSTRUMENT {
 typedef struct EG {
     int stage;
     float level, time;
-    float attack, decay, sustain, release; /* seconds, the sustain in 0 to 1000 */
+    float attack, decay, sustain, release; /* seconds, the sustain in 0 to 1000. */
 } EG;
 
 typedef struct VOICE {
@@ -95,11 +92,11 @@ typedef struct VOICE {
     const WAVE *wave;
     const ARTICULATION *art;
     WSMP smp;
-    UINT64 position;   /* in 32.32 frames of the wave */
+    UINT64 position;   /* in 32.32 frames of the wave. */
     float cents, ratio, static_db;
     EG eg1, eg2;
     float lfo_phase, lfo_step, lfo_delay;
-    float left, right; /* the gains of the last block */
+    float left, right; /* the gains of the last block. */
     DWORD priority;
     UINT64 started;
 } VOICE;
@@ -139,8 +136,8 @@ struct SYNTH {
     volatile BOOL quit;
 };
 
-static float g_curve[128]; /* 40 log10 of v over 127 */
-static float g_pan[128];   /* 10 log10 of p over 127 */
+static float g_curve[128]; /* 40 log10 of v over 127. */
+static float g_pan[128];   /* 10 log10 of p over 127. */
 static float g_sine[257];
 
 /* ------------------------------------------------------------------ math */
@@ -275,8 +272,8 @@ static void parse_wsmp(const CHUNK *c, WSMP *w)
 static void default_art(ARTICULATION *a)
 {
     memset(a, 0, sizeof(*a));
-    a->lfo_frequency = (LONG)(-851.3 * 65536); /* 5 hz */
-    a->lfo_delay = (LONG)(-7973.0 * 65536);    /* 10 ms */
+    a->lfo_frequency = (LONG)(-851.3 * 65536); /* 5 Hz. */
+    a->lfo_delay = (LONG)(-7973.0 * 65536);    /* 10 ms. */
     a->eg1.attack = a->eg1.decay = a->eg1.release = ABSENT_TIME;
     a->eg2.attack = a->eg2.decay = a->eg2.release = ABSENT_TIME;
     a->eg1.sustain = a->eg2.sustain = 1000 << 16;
@@ -328,7 +325,7 @@ static void parse_art(const CHUNK *c, ARTICULATION *a)
     }
 }
 
-/* the articulation of a list of lart or lar2, the last art1 or art2 in it counting. */
+/* uses the last art1 or art2 articulation in a lart or lar2 list. */
 static const ARTICULATION *parse_lart(SYNTH *s, const CHUNK *list)
 {
     ARTICULATION *a = &s->arts[s->art_count];
@@ -420,7 +417,7 @@ static BOOL parse_wave(const CHUNK *list, WAVE *w)
     return format && w->data && w->rate;
 }
 
-/* counts the lists that need storage, so one allocation of each kind holds them. */
+/* counts storage before allocating each kind once. */
 static void count_lists(const BYTE *p, const BYTE *end, DWORD *arts)
 {
     CHUNK c;
@@ -511,7 +508,7 @@ static void set_program(PART *p)
     p->patch = (p->drums ? DRUMS : 0) | (DWORD)p->bank_msb << 16 | (DWORD)p->bank_lsb << 8 | p->program;
 }
 
-/* gm, gs and xg resets clear the modes and tunings, then every part is set up as at power on. */
+/* GM, GS and XG resets clear modes and tunings, then restore each part's power-on state. */
 static void system_reset(SYNTH *s, BOOL gs, BOOL xg)
 {
     s->gs = gs;
@@ -559,7 +556,7 @@ static void eg_release(EG *eg)
         eg->stage = EG_RELEASE;
 }
 
-/* the envelope after dt seconds: attack and decay to sustain, release down; levels 0 to 1000. */
+/* advances the envelope by dt seconds through attack, decay, sustain and release; levels range from 0 to 1000. */
 static void eg_step(EG *eg, float dt, BOOL volume)
 {
     switch (eg->stage) {
@@ -600,7 +597,7 @@ static void release_voice(VOICE *v)
     eg_release(&v->eg2);
 }
 
-/* a voice cut within a few milliseconds, as a choke or a retrigger does. */
+/* cuts a voice within a few milliseconds for choking or retriggering. */
 static void quick_stop(VOICE *v)
 {
     release_voice(v);
@@ -847,7 +844,7 @@ static void controller(SYNTH *s, int part, BYTE number, BYTE value)
     }
 }
 
-/* running status and system messages are dropped, as windows' synth does. */
+/* running status and system messages are dropped, as Windows' synth does. */
 static void short_message(SYNTH *s, DWORD message)
 {
     BYTE status = (BYTE)message, a = (BYTE)(message >> 8) & 0x7F, b = (BYTE)(message >> 16) & 0x7F;
@@ -1102,7 +1099,7 @@ void SynthLong(SYNTH *s, const BYTE *data, DWORD size)
     RtlLeaveCriticalSection(&s->lock);
 }
 
-/* all notes off then a reset of the controllers on each channel, the notes left to their release. */
+/* sends all-notes-off and resets each channel's controllers, allowing notes to finish their release. */
 void SynthReset(SYNTH *s)
 {
     RtlEnterCriticalSection(&s->lock);

@@ -1,7 +1,7 @@
 /*
- * the amplitude of each tenth of a decibel of attenuation, from 0.1 to
- * 96.4 db: 65536 times 10 to the -k/200, rounded down, as windows'
- * DBToAmpFactor tables it. generated, not to be edited.
+ * the amplitude for each tenth of a decibel of attenuation, 0.1 to 96.4
+ * db: 65536 times 10 to the -k/200, rounded down, matching windows.
+ * generated, do not edit.
  */
 static const WORD amplitude_table[964] = {
     64785, 64044, 63311, 62586, 61869, 61161, 60461, 59769, 59085, 58409, 57740, 57079, 56426, 55780, 55141, 54510,

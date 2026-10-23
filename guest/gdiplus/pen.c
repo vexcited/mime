@@ -1,6 +1,6 @@
 /*
- * pens and line caps: the Pen of the flat api, its widening of a path into the outline the fill loop draws, and
- * the custom and adjustable arrow caps.
+ * pens and line caps: the flat api Pen, widening a path into the outline the fill draws, and custom and adjustable
+ * arrow caps.
  */
 #include "gp_private.h"
 
@@ -600,7 +600,6 @@ WINGDIPAPI GpStatus WINAPI GdipGetPenCompoundArray(GpPen *pen, REAL *array, INT 
 
 /* ------------------------------------------------------------------ widening */
 
-/* the factor from the width of a pen in its unit to pixels on a device of the given resolution. */
 static float unit_pixels(GpUnit unit, float dpi)
 {
     switch (unit) {
@@ -622,7 +621,7 @@ float gp_unit_to_pixels(GpUnit unit, float dpi) { return unit_pixels(unit, dpi);
 static void stroke_setup(const GPen *pen, float width, MimeVecStroke *s, const MimeVecMatrix *out, float flatness)
 {
     mime_vec_stroke_defaults(s, width);
-    /* the end of a custom cap is drawn with the base cap of the custom cap */
+    /* a custom cap's line end uses its base cap. */
     s->start_cap = pen->start_cap == LineCapCustom ? (pen->custom_start ? pen->custom_start->base_cap : MIME_VEC_CAP_FLAT)
                                                    : pen->start_cap;
     s->end_cap = pen->end_cap == LineCapCustom ? (pen->custom_end ? pen->custom_end->base_cap : MIME_VEC_CAP_FLAT)
@@ -642,9 +641,8 @@ static void stroke_setup(const GPen *pen, float width, MimeVecStroke *s, const M
 }
 
 /*
- * the outline of a stroke. the path is in world space, the widened polygons come out in the space of the
- * matrix, or the world when there is none. device_dpi is the resolution for pens whose width is not in world
- * units, 0 when the pen is in world units.
+ * the path is in world space, the widened polygons come out in the space of world_to_out, or world space without
+ * one. dpi is the resolution for pens whose width is not in world units, 0 for pens in world units.
  */
 GpStatus gp_pen_widen_ex(const GPen *pen, const MimeVecPath *path, const MimeVecMatrix *world_to_out, float flatness,
                          float dpi, MimeVecPolys *out)
@@ -667,7 +665,7 @@ GpStatus gp_pen_widen_ex(const GPen *pen, const MimeVecPath *path, const MimeVec
         float scale = mime_vec_matrix_max_scale(&outm);
         min_width = scale > 0.0f ? 1.0f / scale : 1.0f;
     } else {
-        /* the width is in device pixels and does not follow the world transform */
+        /* the width is in device pixels and does not follow the world transform. */
         mime_vec_matrix_multiply(&in, &w2o, &nib_inv);
         outm = pen->xform;
         width = pen->width * unit_pixels(pen->unit, dpi > 0.0f ? dpi : 96.0f);
@@ -697,7 +695,7 @@ GpStatus gp_pen_widen_ex(const GPen *pen, const MimeVecPath *path, const MimeVec
         st = gp_path_status(e);
     }
     if (st == Ok && (cap_fills.nsubs || cap_strokes.nsubs)) {
-        /* the caps join the polygons of the line, with the same winding as them so nothing cancels */
+        /* the cap polygons join the line's with the same winding, so nothing cancels. */
         float sign = gp_polys_orientation(out);
         for (UINT i = 0; i < cap_strokes.nsubs && st == Ok; i++)
             st = gp_path_status(mime_vec_polys_add_sub(out, cap_strokes.pts + cap_strokes.subs[i].first,
@@ -914,7 +912,7 @@ WINGDIPAPI GpStatus WINAPI GdipGetCustomLineCapWidthScale(GpCustomLineCap *cap, 
     return Ok;
 }
 
-/* the arrow is a custom cap whose paths follow its width, height and inset. */
+/* rebuilds the arrow's paths from its width, height and inset. */
 static GpStatus arrow_update(GCap *c)
 {
     GPath *p = gp_path_new(FillModeWinding);
@@ -935,7 +933,7 @@ static GpStatus arrow_update(GCap *c)
         c->fill = p;
     else
         c->stroke = p;
-    /* the line stops where the arrow is as wide as the line */
+    /* the line stops where the arrow is as wide as the line. */
     c->width_scale = 1.0f;
     c->base_inset = w != 0.0f ? h / w : 0.0f;
     return Ok;

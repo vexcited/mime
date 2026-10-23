@@ -1,10 +1,10 @@
 /*
- * plug and play, as much as user mode sees of it: a tree of device
- * nodes named by their instance ids, their properties in the Enum keys of
- * the registry where windows keeps them, and their device interfaces as
- * symbolic links in \GLOBAL?? named as windows names them. drivers of
- * mime add and remove devices; cfgmgr32 reads the tree through
- * NtPlugPlayControl, whose requests are mime's own.
+ * plug and play, as much of it as user mode sees: a tree of device nodes
+ * named by instance id, their properties in the registry's Enum keys where
+ * windows keeps them, and their device interfaces as symbolic links in
+ * \GLOBAL?? named the windows way. mime's drivers add and remove devices;
+ * cfgmgr32 reads the tree through NtPlugPlayControl with mime's own
+ * requests.
  */
 #define MIME_KERNEL_PNP
 #include "../cm/cm.h"
@@ -24,14 +24,13 @@ typedef struct DEVNODE {
 typedef struct DEVINTERFACE {
     LIST_ENTRY Links;
     GUID Class;
-    WCHAR Link[LINK_CHARS]; /* the name in \GLOBAL?? */
-    WCHAR Reference[REFERENCE_CHARS]; /* the reference string, which the path of the interface ends with */
+    WCHAR Link[LINK_CHARS]; /* the name in \GLOBAL??. */
+    WCHAR Reference[REFERENCE_CHARS]; /* the reference string, which ends the interface path. */
 } DEVINTERFACE;
 
 /*
- * what changes in the tree is announced with a generation: it goes up at every change, and a program waits for a
- * generation other than the one it saw. each generation has its own event, signaled when the next one begins, so a
- * change between a program's look and its wait is never lost.
+ * tree changes bump a generation, and a program waits for a generation other than the one it saw. each generation
+ * has its own event, signaled when the next one begins, so a change between a look and a wait is never lost.
  */
 typedef struct PNP_EPOCH {
     KEVENT Event;
@@ -64,7 +63,7 @@ static void epoch_release(PNP_EPOCH *e)
         ExFreePool(e);
 }
 
-/* a change was made, with the lock held: the programs waiting for one wake. */
+/* lock held. wakes the programs waiting for a change. */
 static void changed(void)
 {
     g_generation++;
@@ -111,10 +110,7 @@ static void set_value(CM_NODE *key, PCWSTR name, PCWSTR value, BOOLEAN multi)
 
 /* ------------------------------------------------------------------ devices */
 
-/*
- * a device present from now on, under its parent, with the properties
- * windows' installers would leave in its Enum key.
- */
+/* adds a device under its parent, with the properties windows' installers would leave in its Enum key. */
 NTSTATUS NTAPI MimePnpAddDevice(PCWSTR instance, PCWSTR parent, const MIME_DEVICE_PROPERTIES *props)
 {
     if (wcslen(instance) >= INSTANCE_CHARS)
@@ -159,7 +155,7 @@ static void remove_interface(DEVINTERFACE *i)
     ExFreePool(i);
 }
 
-/* a device gone, and its children with it; their Enum keys stay, as windows keeps them. */
+/* removes a device and its children; like windows, their Enum keys stay. */
 void NTAPI MimePnpRemoveDevice(PCWSTR instance)
 {
     lock();
@@ -181,9 +177,9 @@ void NTAPI MimePnpRemoveDevice(PCWSTR instance)
 }
 
 /*
- * windows' name for an interface: the instance id with # for \, then
- * the class in braces, lowercase as device paths show it. a reference string follows the path after a
- * backslash and is not part of the link, it is the name the device is opened with.
+ * windows names an interface by its instance id with # for \, then the class in braces, lowercase as device paths
+ * show it. a reference string follows the path after a backslash: it is not part of the link, it is the name the
+ * device is opened with.
  */
 NTSTATUS NTAPI MimePnpAddInterfaceRef(PCWSTR instance, const GUID *klass, PCWSTR device, PCWSTR reference)
 {
@@ -233,7 +229,7 @@ NTSTATUS NTAPI MimePnpAddInterface(PCWSTR instance, const GUID *klass, PCWSTR de
 
 /* ------------------------------------------------------------------ NtPlugPlayControl */
 
-/* appends a string to a multi-sz being built, counting what it needs past the end. */
+/* appends a string to a multi-sz, counting what it needs past the end. */
 static void append(MIME_PNP_REQUEST *r, ULONG capacity, ULONG *at, PCWSTR prefix, PCWSTR s)
 {
     SIZE_T p = prefix ? wcslen(prefix) : 0, n = wcslen(s);
@@ -245,7 +241,7 @@ static void append(MIME_PNP_REQUEST *r, ULONG capacity, ULONG *at, PCWSTR prefix
     *at += (ULONG)(p + n + 1);
 }
 
-/* the path of an interface, \\?\ and its link, and the reference string after a backslash. */
+/* \\?\, the link, then a backslash and the reference string. */
 static void append_path(MIME_PNP_REQUEST *r, ULONG capacity, ULONG *at, const DEVINTERFACE *i)
 {
     SIZE_T prefix = 4, n = wcslen(i->Link), ref = i->Reference[0] ? wcslen(i->Reference) + 1 : 0;
@@ -261,7 +257,7 @@ static void append_path(MIME_PNP_REQUEST *r, ULONG capacity, ULONG *at, const DE
     *at += (ULONG)(prefix + n + ref + 1);
 }
 
-/* whether a path, without its \\?\ prefix, names the interface. */
+/* path has no \\?\ prefix. */
 static BOOLEAN path_matches(const DEVINTERFACE *i, PCWSTR path)
 {
     SIZE_T n = wcslen(i->Link);
@@ -277,7 +273,7 @@ static NTSTATUS answer(MIME_PNP_REQUEST *r, ULONG capacity, MIME_PNP_CLASS klass
     ULONG at = 0;
     switch (klass) {
     case MIME_PNP_LIST_INTERFACES:
-        /* the paths of the interfaces of a class, of one device or of all. */
+        /* the interface paths of a class, for one device or all. */
         for (LIST_ENTRY *e = g_devnodes.Flink; e != &g_devnodes; e = e->Flink) {
             DEVNODE *d = CONTAINING_RECORD(e, DEVNODE, Links);
             if (r->Instance[0] && !same(d->Instance, r->Instance))
@@ -294,7 +290,7 @@ static NTSTATUS answer(MIME_PNP_REQUEST *r, ULONG capacity, MIME_PNP_CLASS klass
             append(r, capacity, &at, nullptr, CONTAINING_RECORD(e, DEVNODE, Links)->Instance);
         break;
     case MIME_PNP_INTERFACE_DEVICE: {
-        /* the device of an interface path, \\?\ or not, and its class. */
+        /* the device and class of an interface path, with or without \\?\. */
         PCWSTR path = r->Instance;
         if (!wcsncmp(path, L"\\\\?\\", 4) || !wcsncmp(path, L"\\??\\", 4))
             path += 4;
@@ -350,7 +346,7 @@ done:
     return STATUS_SUCCESS;
 }
 
-/* waits for a generation other than the one asked about, with no lock held while it sleeps. */
+/* waits for a generation other than the given one, sleeping without the lock. */
 static NTSTATUS wait_change(MIME_PNP_REQUEST *r)
 {
     for (;;) {

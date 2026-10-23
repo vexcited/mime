@@ -1,7 +1,4 @@
-/*
- * object manager: object types, reference counting, handles and the
- * object namespace.
- */
+/* object manager: object types, reference counting, handles and the object namespace. */
 #include "../ntos.h"
 #include <mime/ntrtlsec.h>
 
@@ -32,7 +29,7 @@ POBJECT_TYPE ObCreateObjectType(PCWSTR name, const OBJECT_TYPE_INITIALIZER *init
     return type;
 }
 
-/* what NtQueryObject says of a type, in windows' layout. */
+/* NtQueryObject's type information, in Windows' layout. */
 typedef struct OB_TYPE_INFORMATION {
     UNICODE_STRING TypeName;
     ULONG TotalNumberOfObjects, TotalNumberOfHandles;
@@ -50,7 +47,7 @@ typedef struct OB_TYPE_INFORMATION {
 } OB_TYPE_INFORMATION;
 MIME_STATIC_ASSERT(sizeof(OB_TYPE_INFORMATION) == 0x68, "OB_TYPE_INFORMATION");
 
-/* the generic rights of the types programs open most, the others map them all to nothing. */
+/* generic mappings of the types programs open most. other types map only GENERIC_ALL. */
 static GENERIC_MAPPING mapping_of(PCWSTR name, ACCESS_MASK all)
 {
     static const struct {
@@ -83,13 +80,13 @@ ACCESS_MASK ObMapGenericAccess(POBJECT_TYPE type, ACCESS_MASK mask)
     return mask;
 }
 
-/* the size a type's information takes with its name after it, padded to eight. */
+/* the type information with its name after it, padded to eight bytes. */
 static ULONG type_information_size(POBJECT_TYPE type)
 {
     return (ULONG)(sizeof(OB_TYPE_INFORMATION) + ((type->Name.Length + sizeof(WCHAR) + 7) & ~7u));
 }
 
-/* builds it for a buffer that will be at user_base in the caller. */
+/* out will be copied to user_base in the caller, so the name pointer is relative to that. */
 static void build_type_information(POBJECT_TYPE type, PUCHAR out, PUCHAR user_base)
 {
     OB_TYPE_INFORMATION *info = (OB_TYPE_INFORMATION *)out;
@@ -117,7 +114,7 @@ static NTSTATUS return_answer(const void *answer, ULONG need, PVOID info, ULONG 
     return KiCopyToUser(info, answer, need);
 }
 
-/* ObjectTypesInformation: the count, then every type's information, each starting on eight bytes. */
+/* ObjectTypesInformation: the count, then each type's information, each aligned to eight bytes. */
 NTSTATUS ObQueryAllTypesInformation(PVOID info, ULONG length, PULONG returned)
 {
     ULONG need = 8;
@@ -193,7 +190,7 @@ LONG_PTR FASTCALL ObfDereferenceObject(PVOID object)
     if (count == 0)
         delete_object(h);
     else if (count < 0)
-        KeBugCheckEx(0x00000018, 0, (ULONG_PTR)object, (ULONG_PTR)count, 0); /* REFERENCE_BY_POINTER */
+        KeBugCheckEx(0x00000018, 0, (ULONG_PTR)object, (ULONG_PTR)count, 0); /* REFERENCE_BY_POINTER. */
     return count;
 }
 
@@ -276,7 +273,7 @@ NTSTATUS ObInsertIntoDirectory(POBJECT_DIRECTORY dir, PVOID object, PCUNICODE_ST
     e->Next = dir->Buckets[bucket];
     dir->Buckets[bucket] = e;
     h->Directory = dir;
-    /* an object that comes without a descriptor was put here by the kernel, not made by a program. */
+    /* an object inserted without a descriptor was placed by the kernel, not created by a program. */
     if (h->Flags & OB_FLAG_SD_PENDING)
         h->Flags |= OB_FLAG_BOOT;
     KeReleaseSpinLock(&g_namespace_lock, irql);
@@ -305,14 +302,13 @@ static void remove_from_directory(OBJECT_HEADER *h)
 }
 
 /*
- * resolves an absolute path. symbolic links are followed; when a component
- * is an object with a parse procedure (devices), the rest of the path is
- * handed to it, which is how file opens reach file system drivers.
+ * symbolic links are followed. when a component has a parse procedure, as devices do, the rest of the
+ * path is handed to it, which is how file opens reach file system drivers.
  */
 NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes, POBJECT_TYPE type,
                             KPROCESSOR_MODE mode, PVOID parse_context, PVOID *object)
 {
-    /* object attributes with no name are an empty one: with a root directory that is the directory, without one a name nobody can parse. */
+    /* no name means an empty one: the root directory itself, or without a root a name nobody can parse. */
     UNICODE_STRING nothing = {};
     if (!name)
         name = &nothing;
@@ -332,7 +328,7 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
             ExFreePool(path);
             return status;
         }
-        /* what the handle was opened for is what a parse procedure may rely on, as the registry does to make a key in it. */
+        /* parse procedures may rely on the root handle's access, as the registry does to create a key under it. */
         if (thread) {
             thread->ParseRootObject = current;
             thread->ParseRootAccess = root_access;
@@ -373,7 +369,7 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
     for (;;) {
         OBJECT_HEADER *ch = OBJECT_TO_HEADER(current);
         if (ch->Type != ObDirectoryType && ch->Type->Init.ParseProcedure && (pos < len || parse_context)) {
-            /* the remaining path keeps its leading backslash, an empty one opens the object itself. */
+            /* the remaining path keeps its leading backslash. an empty one opens the object itself. */
             UNICODE_STRING complete = {(USHORT)(len * 2), (USHORT)(len * 2), path};
             UNICODE_STRING remaining = {(USHORT)((len - pos) * 2), (USHORT)((len - pos) * 2), path + pos};
             status = ch->Type->Init.ParseProcedure(current, type, attributes, &complete, &remaining, parse_context,
@@ -398,7 +394,7 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
         ULONG start = pos;
         while (pos < len && path[pos] != '\\')
             pos++;
-        /* a program without the privilege to bypass traverse checking needs the right to pass through each directory. */
+        /* without the bypass traverse privilege, a program needs traverse access on each directory. */
         if (mode == UserMode && SeAccessEnforced) {
             if (bypass < 0)
                 bypass = SeThreadBypassesTraverse();
@@ -454,7 +450,7 @@ NTSTATUS NTAPI ObReferenceObjectByName(PUNICODE_STRING name, ULONG attributes, P
     return ObLookupObjectName(name, nullptr, attributes, type, mode, parse_context, object);
 }
 
-/* creates (or opens) a directory chain such as L"\\Device". */
+/* creates or opens a directory chain such as L"\\Device". */
 NTSTATUS ObCreateDirectory(PCWSTR path, POBJECT_DIRECTORY *out)
 {
     UNICODE_STRING name;
@@ -575,7 +571,7 @@ NTSTATUS NTAPI IoDeleteSymbolicLink(PUNICODE_STRING link)
 
 void ObMakeTemporaryObject(PVOID object)
 {
-    /* drops the reference that kept a permanent object named, it leaves with its last reference. */
+    /* drops the reference that kept a permanent object named, so it leaves with its last reference. */
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
     if (__atomic_fetch_and(&h->Flags, ~OB_FLAG_PERMANENT, __ATOMIC_ACQ_REL) & OB_FLAG_PERMANENT)
         ObDereferenceObject(object);
@@ -583,7 +579,6 @@ void ObMakeTemporaryObject(PVOID object)
 
 NTSTATUS ObQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars)
 {
-    /* builds the full path by walking up the directories. */
     WCHAR tmp[512];
     ULONG pos = RTL_NUMBER_OF(tmp);
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
@@ -648,14 +643,14 @@ void ObInitialize(void)
     ObCreateSymbolicLink(L"\\SystemRoot", L"\\GLOBAL??\\C:\\Windows");
     ObCreateSymbolicLink(L"\\GLOBAL??\\Global", L"\\GLOBAL??");
     ObCreateSymbolicLink(L"\\Sessions\\1\\BaseNamedObjects\\Global", L"\\BaseNamedObjects");
-    /* Session\<n>\ names reach the objects of a session from any other. */
+    /* Session\<n>\ names reach another session's objects. */
     ObCreateSymbolicLink(L"\\Sessions\\1\\BaseNamedObjects\\Session", L"\\Sessions\\BNOLINKS");
     ObCreateSymbolicLink(L"\\Sessions\\BNOLINKS\\1", L"\\Sessions\\1\\BaseNamedObjects");
     ObCreateSymbolicLink(L"\\BaseNamedObjects\\Global", L"\\BaseNamedObjects");
     ObCreateSymbolicLink(L"\\BaseNamedObjects\\Session", L"\\Sessions\\BNOLINKS");
 }
 
-/* ------------------------------------------------------------------ listing a directory */
+/* ------------------------------------------------------------------ directory listing */
 
 typedef struct DIRECTORY_INFORMATION {
     UNICODE_STRING Name;
@@ -663,9 +658,8 @@ typedef struct DIRECTORY_INFORMATION {
 } DIRECTORY_INFORMATION;
 
 /*
- * windows' layout: the entries, a zeroed one, then their strings, each
- * ending in a null; the context is the index of the next entry, in the
- * order of the hash buckets.
+ * Windows' layout: the entries, a zeroed entry, then their null terminated strings. the context is the
+ * index of the next entry, in hash bucket order.
  */
 NTSTATUS NTAPI NtQueryDirectoryObject(HANDLE handle, PVOID buffer, ULONG length, BOOLEAN single, BOOLEAN restart,
                                       PULONG user_context, PULONG user_returned)
@@ -686,7 +680,7 @@ NTSTATUS NTAPI NtQueryDirectoryObject(HANDLE handle, PVOID buffer, ULONG length,
         ObDereferenceObject(dir);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    /* first pass counts what fits, second writes it; names are copied under the lock. */
+    /* the first pass counts what fits, the second writes it. names are copied under the lock. */
     ULONG index = 0, taken = 0, needed = 0;
     SIZE_T strings = 0;
     BOOLEAN more = FALSE;
@@ -751,7 +745,7 @@ written:
         return STATUS_BUFFER_TOO_SMALL;
     }
     memset((DIRECTORY_INFORMATION *)out + taken, 0, sizeof(DIRECTORY_INFORMATION));
-    /* the pointers become the caller's. */
+    /* rebase the string pointers onto the caller's buffer. */
     for (ULONG i = 0; i < taken; i++) {
         DIRECTORY_INFORMATION *info = (DIRECTORY_INFORMATION *)out + i;
         info->Name.Buffer = (PWSTR)((PUCHAR)buffer + ((PUCHAR)info->Name.Buffer - out));

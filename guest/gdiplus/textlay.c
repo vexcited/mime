@@ -1,10 +1,9 @@
 /*
- * the layout of a string: characters become items, items become lines of positioned glyphs.
+ * string layout: characters become items, items become lines of positioned glyphs.
  *
- * There are two ways to lay a string out. The quick one takes a single line of plain characters on a device that
- * only scales, and works in the design units of the font. The general one works on a grid of 2048 units to the em
- * and handles everything else: wrapping, trimming, tabs, hotkeys, fallback fonts and text that runs right to left.
- * Both produce the same GTextLayout, in the units of the layout rectangle.
+ * the quick path handles a single line of plain characters on a device that only scales, in the font's design
+ * units. the general path works on a grid of 2048 units per em and handles everything else: wrapping, trimming,
+ * tabs, hotkeys, fallback fonts and right to left text. both produce a GTextLayout in layout rectangle units.
  */
 #include "text_private.h"
 
@@ -81,7 +80,7 @@ static UINT16 classify(UINT32 c)
     return cls;
 }
 
-/* the direction a character has by itself. */
+/* a character's own bidi direction. */
 static int bidi_type(UINT32 c)
 {
     if (in_range(c, 0x30, 0x39) || in_range(c, 0x660, 0x669) || in_range(c, 0x6F0, 0x6F9))
@@ -94,7 +93,7 @@ static int bidi_type(UINT32 c)
     return BIDI_NEUTRAL;
 }
 
-/* characters the quick path leaves to the general one. */
+/* FALSE for characters the quick path leaves to the general one. */
 static BOOL quick_character_ok(UINT32 c)
 {
     if (c < 0x20 || in_range(c, 0x7F, 0x9F) || c == 0xAD || c > 0xFFFF)
@@ -102,7 +101,7 @@ static BOOL quick_character_ok(UINT32 c)
     if (in_range(c, 0x200B, 0x200F) || in_range(c, 0x202A, 0x202E) || in_range(c, 0x2060, 0x2064) ||
         in_range(c, 0x2066, 0x206F) || c == 0xFEFF || in_range(c, 0xD800, 0xDFFF))
         return FALSE;
-    /* combining marks, then the scripts that join, reorder or stack. */
+    /* combining marks, then scripts that join, reorder or stack. */
     if (in_range(c, 0x0300, 0x036F) || in_range(c, 0x0590, 0x109F) || in_range(c, 0x1700, 0x18AF) ||
         in_range(c, 0x1DC0, 0x1DFF) || in_range(c, 0x20D0, 0x20FF) || in_range(c, 0xFB1D, 0xFDFF) ||
         in_range(c, 0xFE00, 0xFE0F) || in_range(c, 0xFE20, 0xFE2F) || in_range(c, 0xFE70, 0xFEFF))
@@ -110,7 +109,7 @@ static BOOL quick_character_ok(UINT32 c)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the state of a layout */
+/* ------------------------------------------------------------------ layout state */
 
 typedef struct GItem {
     UINT32 cp;
@@ -118,13 +117,13 @@ typedef struct GItem {
     UINT16 cls;
     const GFace *face;      /* NULL when the item has no glyph. */
     INT src_begin, src_end;
-    INT adv;                /* in grid units; a tab's is found when its line is scanned. */
+    INT adv;                /* in grid units, a tab's is set when its line is scanned. */
     BYTE level;
     BYTE underline;
-    BYTE slow;              /* the quick path cannot have it. */
+    BYTE slow;              /* the quick path cannot handle it. */
 } GItem;
 
-/* a glyph on its way into a line. */
+/* a glyph about to go into a line. */
 typedef struct Rec {
     GTextGlyph g;
     INT adv;
@@ -192,14 +191,14 @@ static GpStatus item_push(Ctx *c, INT *capacity, GItem **items, GItem **slot)
     return Ok;
 }
 
-/* the advance of a glyph in grid units, or in design units for the quick path with a factor of 1. */
+/* advance in grid units, or design units when the quick path passes a factor of 1. */
 static INT scaled_advance(INT design, double factor)
 {
     float v = (float)((double)design * factor);
     return (INT)mime_vec_floorf(v + 0.5f);
 }
 
-/* characters to items: hotkeys are taken out, surrogates paired and every character given its glyph. */
+/* characters to items: strips hotkey markers, pairs surrogates and looks up each glyph. */
 static GpStatus build_items(Ctx *c)
 {
     const GTextInput *in = c->in;
@@ -254,7 +253,7 @@ static GpStatus build_items(Ctx *c)
             it->face = c->face;
             it->glyph = gp_face_glyph(c->face, cp);
             if (!it->glyph && c->fallback) {
-                /* a missing glyph sends the string to the general path, where another font may have it */
+                /* a missing glyph sends the string to the general path, where another font may have it. */
                 UINT16 glyph;
                 const GFace *other = gp_fallback_face(cp, in->style, &glyph);
                 it->slow = TRUE;
@@ -272,7 +271,7 @@ static GpStatus build_items(Ctx *c)
 
 /* ------------------------------------------------------------------ bidirectional levels */
 
-/* levels of the items of one paragraph, by a simplified form of the unicode algorithm. */
+/* bidi levels for one paragraph, a simplified Unicode bidi algorithm. */
 static void assign_levels(Ctx *c, INT a, INT b)
 {
     GItem *items = c->items;
@@ -300,7 +299,7 @@ static void assign_levels(Ctx *c, INT a, INT b)
         }
         cls[i] = (BYTE)t;
     }
-    /* neutrals take the direction of both neighbours when they agree, else the direction of the paragraph. */
+    /* neutrals take their neighbours' direction when both agree, else the paragraph's. */
     for (INT i = 0; i < count;) {
         if (cls[i] != BIDI_NEUTRAL) {
             i++;
@@ -331,7 +330,6 @@ static void assign_levels(Ctx *c, INT a, INT b)
 
 /* ------------------------------------------------------------------ tabs and breaks */
 
-/* the position the next tab stop after pen is at. */
 static INT next_tab_stop(const Ctx *c, INT pen)
 {
     if (c->has_stops) {
@@ -351,7 +349,7 @@ static INT item_advance(const Ctx *c, GItem *it, INT pen)
     return it->adv;
 }
 
-/* the advances of the items of a range, from the start of a line. */
+/* sums the advances of a range from the line start, settling tab widths. */
 static INT settle(Ctx *c, INT a, INT b)
 {
     INT pen = 0;
@@ -360,7 +358,7 @@ static INT settle(Ctx *c, INT a, INT b)
     return pen;
 }
 
-/* the width of a range without the blanks that hang over its end. */
+/* range width without trailing blanks. */
 static INT visible_width(const Ctx *c, INT a, INT b)
 {
     INT end = b;
@@ -374,7 +372,6 @@ static INT visible_width(const Ctx *c, INT a, INT b)
     return sum;
 }
 
-/* a line may be broken before item i. */
 static BOOL can_break_before(const GItem *items, INT i)
 {
     const GItem *a = &items[i - 1], *b = &items[i];
@@ -390,7 +387,7 @@ static BOOL can_break_before(const GItem *items, INT i)
     return FALSE;
 }
 
-/* where the line that starts at pos ends when the text wraps. */
+/* end of the wrapped line starting at pos. */
 static INT wrap_line(Ctx *c, INT pos, INT pe)
 {
     INT pen = 0, last_break = -1;
@@ -413,7 +410,7 @@ static BOOL is_ellipsis_mode(StringTrimming m)
     return m == StringTrimmingEllipsisCharacter || m == StringTrimmingEllipsisWord || m == StringTrimmingEllipsisPath;
 }
 
-/* the part of the range from pos to pe that shows when the line does not fit, and force always puts the ellipsis. */
+/* what shows of pos..pe when the line does not fit, force always adds the ellipsis. */
 static void cut_line(Ctx *c, INT pos, INT pe, BOOL force, LineSpec *spec)
 {
     StringTrimming mode = c->trimming;
@@ -454,7 +451,7 @@ static void cut_line(Ctx *c, INT pos, INT pe, BOOL force, LineSpec *spec)
                 spec->b0 = sep;
                 spec->b1 = pe;
             } else {
-                /* even the last segment is too long: the end of the line is what shows. */
+                /* even the last segment is too long, so the end of the line shows. */
                 INT pen = 0, s = pe;
                 while (s > pos && pen + items[s - 1].adv <= room) {
                     pen += items[s - 1].adv;
@@ -538,7 +535,7 @@ static void reverse_recs(Rec *r, INT a, INT b)
     }
 }
 
-/* the records of a line in display order: runs of each level from the highest down to the lowest odd are turned. */
+/* display order: reverses runs from the highest level down to the lowest odd one. */
 static void reorder_recs(Rec *r, INT n)
 {
     int highest = 0, lowest_odd = 255;
@@ -586,7 +583,6 @@ static GpStatus rec_add_items(Ctx *c, INT *n, INT a, INT b)
     return Ok;
 }
 
-/* puts a line of the general path into the layout. */
 static GpStatus emit_line(Ctx *c, const LineSpec *spec, INT src_begin, INT src_end)
 {
     GTextLayout *L = c->out;
@@ -609,7 +605,7 @@ static GpStatus emit_line(Ctx *c, const LineSpec *spec, INT src_begin, INT src_e
     if (status != Ok)
         return status;
 
-    /* blanks that end the line hang over it and are not part of its width. */
+    /* trailing blanks hang over the line end and do not count in its width. */
     INT total = 0, hanging = 0;
     for (INT i = 0; i < n; i++)
         total += c->recs[i].adv;
@@ -734,7 +730,7 @@ static GpStatus layout_general(Ctx *c)
     if (status != Ok)
         return status;
 
-    /* when text was left out, the last line that shows says so. */
+    /* when text was dropped, the last shown line gets the trimming. */
     if (dropped && !c->nowrap && c->trimming != StringTrimmingNone && L->line_count > 0) {
         GTextLine *last = &L->lines[L->line_count - 1];
         if (c->trimming == StringTrimmingWord) {
@@ -751,7 +747,7 @@ static GpStatus layout_general(Ctx *c)
         }
     }
 
-    /* what the lines add up to. */
+    /* line tops and the block height. */
     for (INT i = 0; i < L->line_count; i++)
         L->lines[i].top = (float)i * (float)c->pitch_g / c->scale;
     BOOL eighth = L->line_count > 0 && (c->no_format || c->lead_fraction != 0.0f);
@@ -822,7 +818,7 @@ static BOOL layout_quick(Ctx *c, BOOL *done)
         g->advance = (float)adv * to_world;
         x += adv;
     }
-    /* the width leaves out the blanks that end the line. */
+    /* the width excludes trailing blanks. */
     INT visible = c->n;
     if (!c->measure_trailing) {
         while (visible > 0 && (c->items[visible - 1].cls & CL_SPACE))
@@ -872,7 +868,7 @@ void gp_text_layout_free(GTextLayout *layout)
     memset(layout, 0, sizeof(*layout));
 }
 
-/* the grid advance of a character with the font's design advance and no tracking, for the ellipsis. */
+/* the ellipsis glyph, or three dots, with grid advances from design advances and no tracking. */
 static void ellipsis_prepare(Ctx *c)
 {
     UINT16 glyph = gp_face_glyph(c->face, 0x2026);
@@ -922,7 +918,7 @@ GpStatus gp_text_layout(const GTextInput *in, GTextLayout *out)
     Ctx c;
     memset(&c, 0, sizeof(c));
     memset(out, 0, sizeof(*out));
-    /* a size the grid cannot hold gives no text at all */
+    /* a size the grid cannot hold gives no text at all. */
     if (!(in->size > 1.0e-4f) || in->size > 1.0e7f || in->length <= 0) {
         out->x = in->x;
         out->y = in->y;

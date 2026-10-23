@@ -1,12 +1,10 @@
 /*
- * the window frame, drawn by win32k in the role of the desktop window
- * manager: a windows 11 caption with the caption button images of the
- * DWMWindow atlas in aero.msstyles, the visible 1 pixel border and rounded
- * corners being applied by the host compositor.
+ * the window frame, drawn by win32k in the role of the desktop window manager: a windows 11 caption using the
+ * caption button images of the DWMWindow atlas in aero.msstyles. the host compositor adds the 1 pixel border and
+ * the rounded corners.
  *
- * resizable windows keep the windows 10 and 11 invisible resize borders:
- * their window rectangle extends 7 pixels at 96 dpi beyond the visible
- * frame on the left, right and bottom.
+ * resizable windows keep the invisible resize borders of windows 10 and 11: the window rectangle extends 7 pixels
+ * at 96 dpi beyond the visible frame on the left, right and bottom.
  */
 #include "win32k.h"
 #include <msstyles/msstyles.h>
@@ -130,7 +128,7 @@ static BOOLEAN has_help(WND *w)
     return (w->ExStyle & WS_EX_CONTEXTHELP) && !has_minmax(w);
 }
 
-/* window relative rectangles of the caption buttons, right to left. */
+/* window relative, right to left. */
 void FrameGetButtonRect(WND *w, int button, RECT *r)
 {
     *r = (RECT){0, 0, 0, 0};
@@ -207,7 +205,7 @@ ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max)
     FrameGetVisibleRect(w, &vis);
     LONG top = vis.top;
     if ((w->Style & WS_THICKFRAME) && !(w->Style & WS_MAXIMIZE))
-        top += scale(4, WndGetDpi(w)); /* leave the top resize strip to the window */
+        top += scale(4, WndGetDpi(w)); /* leave the top resize strip to the window. */
     rects[0] = (RECT){vis.left, top, caption_buttons_left(w), m.Top};
     return RectEmpty(&rects[0]) ? 0 : 1;
 }
@@ -384,7 +382,7 @@ static BOOLEAN load_theme(void)
     return TRUE;
 }
 
-/* frame of an atlas part: the part rectangle split vertically into IMAGECOUNT frames, each inset by 1 pixel. */
+/* the part rectangle is split vertically into IMAGECOUNT frames, each inset by 1 pixel. */
 static BOOLEAN atlas_frame(int part, int frame, RECT *out)
 {
     MimeMsstylesRect r;
@@ -446,7 +444,7 @@ static void draw_text(SURFACE *s, const REGION *clip, FONT_INSTANCE *fi, LONG x,
     }
 }
 
-/* a title that does not fit ends with "..." like the windows caption. */
+/* like the windows caption, a title that does not fit ends with "...". */
 static ULONG fit_title(FONT_INSTANCE *fi, PCWSTR text, ULONG count, LONG width, PWSTR out, ULONG cap)
 {
     if (FontTextWidth(fi, text, count, 0) <= width) {
@@ -478,7 +476,7 @@ static void draw_atlas(SURFACE *dst, const REGION *clip, const RECT *dst_rect, c
     AlphaBlendSurface(dst, clip, dst_rect, g_theme.Atlas, src, blend);
 }
 
-/* the built in glyphs when the theme is missing: 1 pixel strokes scaled to the dpi. */
+/* fallback glyphs when the theme is missing: 1 pixel strokes scaled to the dpi. */
 static void draw_fallback_glyph(SURFACE *s, const REGION *clip, int button, BOOLEAN maximized, const RECT *br,
                                 ULONG pixel, UINT dpi)
 {
@@ -669,7 +667,7 @@ void FramePaint(WND *w)
             draw_button(w, s, &clip, origin, buttons[i], dpi, active);
     }
     RgnFree(&clip);
-    /* the frame is drawn straight into the surface, so the present has to know. */
+    /* drawn straight into the surface, so the present needs to know. */
     SurfaceMarkDirty(s, &window);
     if (top->Thread == W32GetThread() && (top->Flags & WNDF_PRESENTED))
         PaintPresent(top);

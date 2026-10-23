@@ -1,6 +1,4 @@
-/*
- * registry functions over the Nt key services.
- */
+/* registry functions over the NT key services. */
 #include "kernelbase_private.h"
 
 NTSYSAPI NTSTATUS NTAPI RtlOpenCurrentUser(ACCESS_MASK access, PHANDLE key);
@@ -59,7 +57,7 @@ typedef struct KB_KEY_FULL {
 
 static const PCWSTR g_predefined_paths[PREDEFINED_COUNT] = {
     L"\\Registry\\Machine\\Software\\Classes",
-    nullptr, /* HKEY_CURRENT_USER, the key of the token's user */
+    nullptr, /* HKEY_CURRENT_USER, the token user's key. */
     L"\\Registry\\Machine",
     L"\\Registry\\User",
     nullptr,
@@ -92,7 +90,7 @@ static LONG open_path(PCWSTR path, ACCESS_MASK access, HANDLE *out)
     return to_error(NtOpenKey(out, access, &oa));
 }
 
-/* resolves a key argument to an Nt handle; predefined keys are opened once and cached. */
+/* predefined keys are opened once and cached. */
 static LONG resolve_key(HKEY key, HANDLE *out)
 {
     if (!key)
@@ -172,7 +170,7 @@ LSTATUS WINAPI RegOpenKeyExW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM acc
     return ERROR_SUCCESS;
 }
 
-/* a handle of its own to a key, a predefined one included, with the access of the key. */
+/* a new handle with the same access, predefined keys included. */
 LSTATUS WINAPI RegDuplicateHKey(HKEY key, HKEY *result)
 {
     if (!result)
@@ -385,7 +383,6 @@ LSTATUS WINAPI RegDisablePredefinedCacheEx(void)
 
 /* ------------------------------------------------------------------ values */
 
-/* queries one value into a heap buffer. */
 static LONG query_value(HANDLE key, LPCWSTR name, KB_KEY_VALUE_PARTIAL **out)
 {
     UNICODE_STRING us;
@@ -497,7 +494,7 @@ LSTATUS WINAPI RegSetValueExW(HKEY key, LPCWSTR name, DWORD reserved, DWORD type
         return error;
     UNICODE_STRING us;
     RtlInitUnicodeString(&us, name ? name : L"");
-    /* a string missing its terminator gets one, like windows does. */
+    /* a string missing its terminator gets one, as Windows does. */
     if (is_string_type(type) && data && size >= sizeof(WCHAR) && (size & 1) == 0 &&
         ((LPCWSTR)data)[size / sizeof(WCHAR) - 1] != 0) {
         PBYTE copy = KbAlloc(size + sizeof(WCHAR));
@@ -1109,13 +1106,13 @@ LSTATUS WINAPI RegNotifyChangeKeyValue(HKEY key, BOOL subtree, DWORD filter, HAN
     LONG error = resolve_key(key, &h);
     if (error)
         return error;
-    /* every request names the same status block, as in windows: the call returns before the answer comes. */
+    /* every request shares one status block, as on Windows, since the call returns before the answer comes. */
     static IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtNotifyChangeKey(h, event, nullptr, nullptr, &iosb, filter, (BOOLEAN)subtree, nullptr, 0, (BOOLEAN)async);
     return to_error(status);
 }
 
-/* a hive file loaded under a key of HKLM or HKU; the kernel decides by the caller's privilege. */
+/* loads a hive under HKLM or HKU, the kernel checks the caller's privilege. */
 DECLSPEC_EXPORT LSTATUS WINAPI RegLoadKeyW(HKEY key, LPCWSTR subkey, LPCWSTR file)
 {
     if (key == HKEY_PERFORMANCE_DATA)
@@ -1178,11 +1175,10 @@ DECLSPEC_EXPORT LSTATUS WINAPI RegUnLoadKeyA(HKEY key, LPCSTR subkey)
 }
 
 /*
- * RegLoadMUIStringW: a value that is a reference to a string in a resource file, "@file,-id", is loaded from there.
- * The size of the string is told in pcbData, in bytes with the terminator. A buffer too small is ERROR_MORE_DATA, with
- * REG_MUI_STRING_TRUNCATE the string is cut and terminated instead and no size is asked for. A value that is not a
- * reference is ERROR_INVALID_DATA, as is one of another type. The directory with the files of the languages is not
- * looked at, the string is read from the file itself. Strings of packaged apps ("@{...}") are not offered either.
+ * RegLoadMUIStringW: a value of the form "@file,-id" is loaded from that resource file. pcbData gets the size in bytes
+ * with the terminator. A short buffer is ERROR_MORE_DATA, unless REG_MUI_STRING_TRUNCATE cuts and terminates the
+ * string, in which case no size is asked for. A value that is no such reference, or of another type, is
+ * ERROR_INVALID_DATA. The language directory is not searched, and packaged app strings "@{...}" are not supported.
  */
 HRESULT WINAPI SHLoadIndirectString(LPCWSTR source, LPWSTR out, UINT size, void **reserved);
 
@@ -1232,8 +1228,8 @@ LSTATUS WINAPI RegLoadMUIStringW(HKEY key, LPCWSTR value, LPWSTR out, DWORD out_
 }
 
 /*
- * the narrow form converts the value name and the directory, asks for the wide string and converts it back. The size
- * told is in bytes of the narrow string with its terminator; that it is the narrow size and not the wide one is a guess.
+ * converts the value name and directory, asks for the wide string and converts it back. The size reported is in bytes
+ * of the narrow string with its terminator, which is a guess.
  */
 LSTATUS WINAPI RegLoadMUIStringA(HKEY key, LPCSTR value, LPSTR out, DWORD out_size, LPDWORD needed, DWORD flags,
                                  LPCSTR directory)
@@ -1276,9 +1272,8 @@ LSTATUS WINAPI RegLoadMUIStringA(HKEY key, LPCSTR value, LPSTR out, DWORD out_si
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ copying and the files of hives */
+/* ------------------------------------------------------------------ copying and hive files */
 
-/* the values of one key put into another one, the class of the source kept when the key is made. */
 static LSTATUS copy_values(HKEY from, HKEY to)
 {
     DWORD values, name_max, data_max;
@@ -1304,7 +1299,7 @@ static LSTATUS copy_values(HKEY from, HKEY to)
     return error;
 }
 
-/* a key with the class of the key it copies, and its values. */
+/* the copy keeps the source's class and values. */
 static LSTATUS copy_key(HKEY from, HKEY to_parent, LPCWSTR name, HKEY *copy_from, HKEY *copy_to, int depth)
 {
     HKEY source = from, target = to_parent;
@@ -1352,8 +1347,8 @@ static LSTATUS copy_key(HKEY from, HKEY to_parent, LPCWSTR name, HKEY *copy_from
 }
 
 /*
- * RegCopyTree: the values and subkeys of the key, or of one of its subkeys, written into another key, each subkey made
- * with the class of the one it copies. Security descriptors are not copied and nothing of the destination is deleted.
+ * RegCopyTree: subkeys are created with the class of their source. Security descriptors are not copied and nothing in
+ * the destination is deleted.
  */
 LSTATUS WINAPI RegCopyTreeW(HKEY source, LPCWSTR subkey, HKEY destination)
 {
@@ -1381,9 +1376,9 @@ LSTATUS WINAPI RegCopyTreeA(HKEY source, LPCSTR subkey, HKEY destination)
 }
 
 /*
- * RegQueryMultipleValues: the values named in the list read in one call. The data are put one after another in the
- * buffer, each entry gets its length, type and the place of its data; the total length is stored. A buffer too small
- * is ERROR_MORE_DATA with the length it needs, a name that is not there ERROR_FILE_NOT_FOUND.
+ * RegQueryMultipleValues: the data are packed one after another in the buffer, each entry gets its length, type and
+ * data pointer, and total gets the length. A short buffer is ERROR_MORE_DATA with the length needed, a missing name
+ * ERROR_FILE_NOT_FOUND.
  */
 LSTATUS WINAPI RegQueryMultipleValuesW(HKEY key, VALENTW *list, DWORD count, LPWSTR buffer, LPDWORD total)
 {
@@ -1453,8 +1448,8 @@ LSTATUS WINAPI RegQueryMultipleValuesA(HKEY key, VALENTA *list, DWORD count, LPS
 }
 
 /*
- * the classes of a user: the hive that Windows loads as <sid>_Classes. There is none here, the classes of the user
- * live under Software\Classes of the user's own key, which is opened instead when the hive is not found.
+ * Windows loads a user's classes as the <sid>_Classes hive. There is none here, so the user's own Software\Classes key
+ * is opened instead when the hive is not found.
  */
 NTSYSAPI NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PVOID sid, BOOLEAN allocate);
 
@@ -1462,7 +1457,7 @@ LSTATUS WINAPI RegOpenUserClassesRoot(HANDLE token, DWORD options, REGSAM access
 {
     if (!result || !token || options)
         return ERROR_INVALID_PARAMETER;
-    /* the user is the first field of the token user record, a pointer to the sid. */
+    /* TOKEN_USER starts with the pointer to the user's sid. */
     UCHAR buffer[256];
     ULONG length = 0;
     NTSTATUS status = NtQueryInformationToken(token, 1, buffer, sizeof(buffer), &length);
@@ -1493,10 +1488,8 @@ LSTATUS WINAPI RegOpenUserClassesRoot(HANDLE token, DWORD options, REGSAM access
 }
 
 /*
- * saving, restoring and replacing the files of hives, and loading an application's hive, take hive files, which this
- * registry has not got. Saving, restoring and replacing need a privilege that no token here holds and say so; loading
- * a hive of an application, which needs none, fails for the file that is not there and says that it is not supported
- * for a file that is.
+ * there are no hive files here. Saving, restoring and replacing hives need a privilege no token holds and fail with
+ * that. Loading an application hive needs none: it fails for a missing file and reports not supported otherwise.
  */
 static LSTATUS hive_privilege(HKEY key, LPCWSTR file)
 {

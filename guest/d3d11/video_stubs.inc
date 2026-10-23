@@ -1,5 +1,5 @@
-/* the video context and device methods that are not backed by anything, generated from the interface lists: they
-   return what Direct3D returns for an object that cannot exist here, E_NOTIMPL or nothing. */
+/* video context and device methods with nothing behind them: they return E_NOTIMPL or nothing, as direct3d does
+   for an object that cannot exist. */
 
 static HRESULT STDMETHODCALLTYPE vc_stub_VideoProcessorSetOutputExtension(ID3D11VideoContext1 *This, ID3D11VideoProcessor *processor, const GUID *guid, UINT data_size, void *data)
 {

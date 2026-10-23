@@ -1,8 +1,6 @@
 /*
- * the objects of a direct3d 8 device: surfaces, volumes, textures,
- * buffers and swap chains, each over its direct3d 9 object. a texture
- * makes the objects of its levels once, so asking for a level gives the
- * same pointer each time, and those count their references with it.
+ * surfaces, volumes, textures, buffers and swap chains, each over its Direct3D 9 object. a texture makes its level
+ * objects once, so asking for a level returns the same pointer every time, and levels count references with it.
  */
 #include "d3d8_private.h"
 
@@ -222,7 +220,7 @@ static DWORD set_lod(D8Object *o, DWORD lod)
     return old;
 }
 
-/* the methods every interface has, written once for each, as their vtables take their own types. */
+/* written once per interface, since each vtable takes its own types. */
 #define COMMON_METHODS(prefix, I)                                                                                      \
     static HRESULT STDMETHODCALLTYPE prefix##_query(I *iface, REFIID riid, void **out)                                 \
     {                                                                                                                  \
@@ -277,7 +275,7 @@ static DWORD set_lod(D8Object *o, DWORD lod)
 
 /* ------------------------------------------------------------------ rectangles */
 
-/* a rectangle inside a level, on whole blocks for the compressed formats. */
+/* inside the level, on whole blocks for compressed formats. */
 static BOOL valid_rect(const D8Object *o, const RECT *r, UINT width, UINT height)
 {
     width = D8_MAX(width, 1);
@@ -368,7 +366,7 @@ static HRESULT lock_surface(D8Object *s, D3DLOCKED_RECT *locked, const RECT *rec
     return D3D_OK;
 }
 
-/* a level the texture unlocks goes to direct3d 9 even when not locked, as windows' goes to its driver. */
+/* a texture unlocks its levels in Direct3D 9 even when not locked, as windows passes it to its driver. */
 static HRESULT unlock_surface(D8Object *s, BOOL checked)
 {
     if (!s->locks)
@@ -640,7 +638,7 @@ static const IDirect3DVolumeTexture8Vtbl volume_texture_vtbl = {
     volume_texture_lock_box,         volume_texture_unlock_box,     volume_texture_add_dirty_box,
 };
 
-/* a level of a texture: its own object over direct3d 9's, counted with the texture. */
+/* a level gets its own object over Direct3D 9's, counted with the texture. */
 static D8Object *new_level(D8Object *t, const void *vtbl, UINT kind, IUnknown *l9, UINT level, UINT face)
 {
     D8Object *l = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*l));
@@ -667,7 +665,7 @@ static D8Object *new_level(D8Object *t, const void *vtbl, UINT kind, IUnknown *l
     return l;
 }
 
-/* what programs may lock: textures in memory, dynamic ones, and those of formats the runtime has no size for. */
+/* programs may lock textures in memory, dynamic ones, and those in formats the runtime has no size for. */
 static BOOL texture_lockable(D3DPOOL pool, DWORD usage, D3DFORMAT format)
 {
     if (pool != D3DPOOL_DEFAULT)
@@ -751,7 +749,7 @@ HRESULT D8WrapTexture(D8Device *d, UINT kind, IUnknown *t9, DWORD usage, D3DPOOL
 
 static IDirect3DVertexBuffer9 *buffer9(D8Object *o) { return (IDirect3DVertexBuffer9 *)o->d9; }
 
-/* windows checks nothing of a lock: the range is kept inside the buffer, the pointer is where it was asked. */
+/* windows checks nothing on lock: the range is kept inside the buffer and the pointer is where asked. */
 static HRESULT lock_buffer(D8Object *b, UINT offset, UINT size, BYTE **data, DWORD flags)
 {
     UINT at = D8_MIN(offset, b->size);
@@ -886,7 +884,7 @@ void D8SwapChainDrop(D8Object *sc)
     sc->d9 = nullptr;
 }
 
-/* takes the back buffers of the swap chain direct3d 9 has, after its creation or a reset. */
+/* takes the back buffers of the Direct3D 9 swap chain after its creation or a reset. */
 HRESULT D8SwapChainTake(D8Object *sc, const D3DPRESENT_PARAMETERS *params)
 {
     IDirect3DSwapChain9 *sc9 = swapchain9(sc);

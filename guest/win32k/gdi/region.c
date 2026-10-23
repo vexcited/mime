@@ -1,10 +1,9 @@
 /*
  * regions as y-x banded rectangle lists.
  *
- * the rectangles of a region are sorted by top, then by left. rectangles
- * of one band share top and bottom and never touch horizontally, and two
- * adjacent bands never have identical spans, so every region has a single
- * canonical form and equality is a plain comparison.
+ * rectangles are sorted by top, then by left. rectangles of one band share top and bottom and never touch
+ * horizontally, and adjacent bands never have identical spans, so every region has one canonical form and equality
+ * is a plain comparison.
  */
 #include "../win32k.h"
 
@@ -157,10 +156,9 @@ BOOLEAN RgnEqual(const REGION *a, const REGION *b)
 /* ------------------------------------------------------------------ combination */
 
 /*
- * x spans of one region within the band [y0, y1); returns the number of spans. the bands come in ascending order, so the
- * rectangles that end above this one can never be in a later one: *first skips them for good, which makes a combination
- * linear in the rectangles instead of the square of them. two regions of 9000 rectangles took more than a minute, with
- * the kernel lock held.
+ * x spans of a region within the band [y0, y1), returns the span count. bands come in ascending order, so
+ * rectangles ending above this band can never be in a later one: *first skips them for good, which keeps a
+ * combination linear in the rectangles instead of quadratic.
  */
 static ULONG band_spans(const REGION *r, ULONG *first, LONG y0, LONG y1, LONG *spans, ULONG max_pairs)
 {
@@ -196,7 +194,7 @@ static BOOLEAN op_result(int mode, BOOLEAN in_a, BOOLEAN in_b)
     }
 }
 
-/* combines two sorted span lists; returns the number of output spans. */
+/* returns the number of output spans. */
 static ULONG combine_spans(const LONG *a, ULONG na, const LONG *b, ULONG nb, int mode, LONG *out)
 {
     ULONG ia = 0, ib = 0, n = 0;
@@ -220,7 +218,7 @@ static ULONG combine_spans(const LONG *a, ULONG na, const LONG *b, ULONG nb, int
             start = x;
         } else if (!now && inside && x > start) {
             if (n && out[2 * n - 1] == start)
-                out[2 * n - 1] = x; /* touching spans merge */
+                out[2 * n - 1] = x; /* touching spans merge. */
             else {
                 out[2 * n] = start;
                 out[2 * n + 1] = x;
@@ -266,7 +264,6 @@ BOOLEAN RgnCombine(REGION *dst, const REGION *a, const REGION *b, int mode)
 {
     if (mode == RGN_COPY)
         return RgnCopy(dst, a);
-    /* fast paths. */
     if (mode == RGN_AND && (!a->Count || !b->Count)) {
         RgnClear(dst);
         return TRUE;
@@ -370,7 +367,7 @@ BOOLEAN RgnCombineRect(REGION *dst, const REGION *a, const RECT *rect, int mode)
         r.Capacity = 1;
         r.Extents = one;
     }
-    /* the temporary region borrows the stack rectangle; never free it. */
+    /* the temporary region borrows the stack rectangle, never free it. */
     REGION tmp;
     RgnInit(&tmp);
     BOOLEAN ok = RgnCombine(&tmp, a, &r, mode);

@@ -1,7 +1,6 @@
 /*
- * mime setup: imports the windows assets mime relies on (fonts, theme,
- * icons, localized strings) from a user supplied installation iso, and
- * lays out the C: drive of the machine.
+ * imports fonts, themes, icons and localized strings from a user-supplied Windows installation ISO and
+ * creates the guest C: drive.
  */
 #include "../mime_host.h"
 #include "../mime_cli.h"
@@ -19,16 +18,14 @@
 #include <unistd.h>
 
 typedef struct ExtractRule {
-    const char *source;      /* path inside the image */
-    const char *destination; /* path relative to drive_c */
+    const char *source;      /* path inside the image. */
+    const char *destination; /* path relative to drive_c. */
     bool optional;
 } ExtractRule;
 
 /*
- * mime reimplements the code of every system module, but reuses data
- * that only the user's own windows copy can provide. real system binaries
- * that carry resources are stored as SystemResources/<name>.mun, the
- * windows mechanism for resource-only companions of system modules.
+ * system code is reimplemented; data comes from the user's Windows copy. binaries containing resources are
+ * stored as SystemResources/<name>.mun, following Windows resource-only companion files.
  */
 static const ExtractRule g_rules[] = {
     {"Windows/Fonts", "Windows/Fonts", false},
@@ -39,9 +36,9 @@ static const ExtractRule g_rules[] = {
     {"Windows/System32/en-US/kernelbase.dll.mui", "Windows/System32/en-US/kernelbase.dll.mui", true},
     {"Windows/System32/en-US/kernel32.dll.mui", "Windows/System32/en-US/kernel32.dll.mui", true},
     {"Windows/Media", "Windows/Media", true},
-    /* the sort order of windows, which only the tests that compare Mime with it read. */
+    /* Windows sort order data. */
     {"Windows/Globalization/Sorting/SortDefault.nls", "Windows/Globalization/Sorting/SortDefault.nls", true},
-    /* the sound set of the gs wavetable synth. */
+    /* GS wavetable synthesizer sound set. */
     {"Windows/System32/drivers/gm.dls", "Windows/System32/drivers/gm.dls", true},
     /* the registry hives of a fresh install, which the kernel loads and specializes at boot. */
     {"Windows/System32/config/SYSTEM", "Windows/System32/config/SYSTEM", false},
@@ -60,7 +57,7 @@ static const char *const g_skeleton[] = {
     "Program Files",
     "Program Files (x86)",
 #ifdef __aarch64__
-    "Program Files (Arm)", /* arm64 windows only */
+    "Program Files (Arm)", /* arm64 windows only. */
 #endif
     "ProgramData",
     "Users/Public",
@@ -121,7 +118,7 @@ typedef struct PendingList {
     size_t count, capacity;
 } PendingList;
 
-/* creates the directories right away and queues the files. */
+/* creates directories immediately and queues file extraction. */
 static bool collect_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_path, PendingList *list)
 {
     if (d->attributes & MIME_FILE_ATTRIBUTE_REPARSE_POINT)
@@ -163,7 +160,7 @@ static int compare_pending(const void *a, const void *b)
     return x->order < y->order ? -1 : x->order > y->order;
 }
 
-/* extracts in wim order so a compressed chunk is read once for all its files. */
+/* extracts in WIM order so a compressed chunk is read once for all its files. */
 static bool extract_pending(MimeWim *wim, PendingList *list, ExtractStats *stats)
 {
     qsort(list->items, list->count, sizeof(PendingFile), compare_pending);
@@ -197,7 +194,7 @@ static void trim(char *s)
         start++;
     if (start)
         memmove(s, s + start, len - start + 1);
-    /* drag and drop from finder quotes paths or escapes spaces. */
+    /* drag and drop from Finder quotes paths or escapes spaces. */
     len = strlen(s);
     if (len >= 2 && (s[0] == '\'' || s[0] == '"') && s[len - 1] == s[0]) {
         memmove(s, s + 1, len - 2);
@@ -276,7 +273,7 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
         mime_error("%s is not a locale of the system", locale_name);
         return 2;
     }
-    /* the language alone changes the installation that is already there. */
+    /* changing only the language updates the existing installation. */
     if (locale_name && !iso[0] && mime_is_setup(paths)) {
         mime_identity_set_locale(paths, locale_name);
         printf("The locale of the user is %s.\n", locale.name);

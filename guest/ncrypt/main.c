@@ -1,7 +1,6 @@
 /*
- * ncrypt: the key storage router with the microsoft software key storage
- * provider, whose keys are bcrypt keys: what the cng primitives of bcrypt
- * can do, the provider does, and what they cannot fails with
+ * ncrypt: the key storage router and the Microsoft software key storage
+ * provider, whose keys are bcrypt keys. what bcrypt cannot do fails with
  * NTE_NOT_SUPPORTED. named keys persist as their private blob under the
  * user's or the machine's Crypto\Keys directory. the platform crypto
  * provider finds no tpm.
@@ -18,7 +17,7 @@
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
 
-/* ------------------------------------------------------------------ bcrypt, as far as it goes */
+/* ------------------------------------------------------------------ bcrypt */
 
 typedef void *BCRYPT_HANDLE;
 static struct {
@@ -62,7 +61,7 @@ static void bcrypt(void)
     InitOnceExecuteOnce(&g_bcrypt_once, load_bcrypt, nullptr, nullptr);
 }
 
-/* bcrypt's ntstatus as the nte code the router hands out. */
+/* maps a bcrypt NTSTATUS to the NTE code the router returns. */
 static SECURITY_STATUS normalize(LONG status)
 {
     switch ((ULONG)status) {
@@ -180,7 +179,7 @@ static int find_algorithm(LPCWSTR name)
     return -1;
 }
 
-/* an algorithm of the provider's list that bcrypt can open. */
+/* opens an algorithm from the provider's list with bcrypt. */
 static SECURITY_STATUS open_algorithm(LPCWSTR name, BCRYPT_HANDLE *alg)
 {
     *alg = nullptr;
@@ -281,7 +280,7 @@ BOOL WINAPI NCryptIsKeyHandle(NCRYPT_KEY_HANDLE handle)
 
 /* ------------------------------------------------------------------ persistence */
 
-/* the key's file: the hex of its name under Microsoft\Crypto\Keys of the user or the machine. */
+/* a key's file is its name in hex under the user's or the machine's Microsoft\Crypto\Keys. */
 static BOOL key_path(LPCWSTR name, DWORD flags, WCHAR *path)
 {
     WCHAR base[MAX_PATH];
@@ -645,7 +644,7 @@ SECURITY_STATUS WINAPI NCryptGetProperty(NCRYPT_HANDLE handle, LPCWSTR property,
     return NTE_NOT_SUPPORTED;
 }
 
-/* the creation properties, until the key is finalized. */
+/* only creation properties can be set, and only until the key is finalized. */
 SECURITY_STATUS WINAPI NCryptSetProperty(NCRYPT_HANDLE handle, LPCWSTR property, PBYTE input, DWORD size,
                                          DWORD flags)
 {

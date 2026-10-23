@@ -393,7 +393,7 @@ BOOL WINAPI CryptMsgGetParam(HCRYPTMSG handle, DWORD type, DWORD index, void *ou
 #define CMSG_SIGNER_ONLY_FLAG 0x2
 #define CMSG_USE_SIGNER_INDEX_FLAG 0x4
 
-/* the algorithm a digest object identifier names, 0 for one that is not known. */
+/* 0 for an unknown oid. */
 static ALG_ID digest_algorithm(const char *oid)
 {
     static const struct {
@@ -425,9 +425,9 @@ static DWORD der_header(BYTE *out, BYTE tag, DWORD length)
 }
 
 /*
- * whether the signer of the message signed its content with the key of the certificate: the digest of the content
- * has to be the message digest the signer attests to, and the rsa signature has to hold over the attributes. Only
- * a signer with signed attributes is judged.
+ * whether the signer signed the content with the certificate's key: the content digest must match the message
+ * digest the signer attests to, and the RSA signature must hold over the attributes. only signers with signed
+ * attributes are judged.
  */
 static DWORD verify_signature(const MESSAGE *message, der_item signer, PCCERT_CONTEXT cert)
 {
@@ -445,7 +445,7 @@ static DWORD verify_signature(const MESSAGE *message, der_item signer, PCCERT_CO
     ALG_ID alg = digest_algorithm(name);
     if (!alg)
         return NTE_BAD_ALGID;
-    /* the digest the signer attests to, among the attributes. */
+    /* the message digest attribute the signer attests to. */
     der_reader attrs = {auth.content, auth.length};
     const BYTE *attested = nullptr;
     DWORD attested_size = 0;
@@ -474,7 +474,7 @@ static DWORD verify_signature(const MESSAGE *message, der_item signer, PCCERT_CO
         return GetLastError();
     if (digest_size != attested_size || memcmp(digest, attested, digest_size))
         return NTE_BAD_SIGNATURE;
-    /* the signed attributes are made again as a set, the signature around them as crypt32's verifier takes it. */
+    /* re-encode the signed attributes as a set, wrapped in the signed form crypt32's verifier takes. */
     BYTE identifier[] = {0x30, 0x0d, 6, 9, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 1, 1, 11, 5, 0};
     if (alg == CALG_SHA1)
         identifier[12] = 5;
@@ -509,9 +509,9 @@ static DWORD verify_signature(const MESSAGE *message, der_item signer, PCCERT_CO
 }
 
 /*
- * the certificate of a signer of the message, found by issuer and serial number among the certificates of the message
- * and the stores given. Unless the flags ask for the signer alone, or trust it, the signature of the signer is checked
- * with the key of that certificate, which says nothing of whether anyone trusts the certificate.
+ * finds the signer's certificate by issuer and serial number among the message's certificates and the given stores.
+ * unless the flags ask for the signer alone or trust it, the signature is checked with that certificate's key, which
+ * says nothing about whether the certificate is trusted.
  */
 BOOL WINAPI CryptMsgGetAndVerifySigner(HCRYPTMSG handle, DWORD store_count, HCERTSTORE *stores, DWORD flags,
                                        PCCERT_CONTEXT *signer, DWORD *signer_index)
@@ -696,7 +696,7 @@ static void compound_release(void *memory)
     CrFree(memory);
 }
 
-/* a package of the installer keeps its signature in the stream named with the character 5 and DigitalSignature. */
+/* an installer package keeps its signature in the stream named with character 5 then DigitalSignature. */
 static DWORD embedded_package(const BYTE *bytes, DWORD size, BYTE **signature, DWORD *length)
 {
     static const BYTE magic[8] = {0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1};
@@ -792,7 +792,7 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
                                                   CERT_STORE_ADD_ALWAYS, nullptr)))
                 error = CRYPT_E_ASN1_CORRUPT;
         }
-        /* the current store has no crl insertion support. */
+        /* the current store has no CRL insertion support. */
         if (!error && message->crl_count)
             error = ERROR_NOT_SUPPORTED;
     }

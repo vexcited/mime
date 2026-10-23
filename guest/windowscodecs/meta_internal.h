@@ -1,6 +1,4 @@
-/*
- * the parts of the metadata code that its files share.
- */
+/* shared metadata implementation interfaces. */
 #ifndef WIC_META_INTERNAL_H
 #define WIC_META_INTERNAL_H
 
@@ -28,7 +26,7 @@ BOOL WicPvSame(const PROPVARIANT *a, const PROPVARIANT *b);
 HRESULT WicMetaReaderCreate(const GUID *format, IWICMetadataReader **reader);
 HRESULT WicMetaAdd(IWICMetadataReader *reader, const PROPVARIANT *schema, const PROPVARIANT *id,
                    const PROPVARIANT *value);
-/* adds a named item of a number to a reader a decoder fills. a bool takes 0 or 1. */
+/* add a named numeric item to a decoder reader; bool accepts 0 or 1. */
 HRESULT WicMetaPutNamed(IWICMetadataReader *reader, const WCHAR *name, VARTYPE vt, UINT64 value);
 HRESULT WicMetaPutAnsi(IWICMetadataReader *reader, const WCHAR *name, const char *text, SIZE_T length);
 HRESULT WicMetaPutBytes(IWICMetadataReader *reader, const WCHAR *name, const void *data, UINT size);
@@ -37,7 +35,7 @@ const WicMetaItem *WicMetaItemAt(IWICMetadataReader *reader, UINT index);
 HRESULT WicMetaCopyToWriter(IWICMetadataReader *reader, IWICMetadataWriter **writer);
 HRESULT WicMetaHandlerInfoCreate(const GUID *format, BOOL writer, IWICMetadataHandlerInfo **info);
 
-/* enumerators. the items array and the references in it are taken. */
+/* enumerators take ownership of the array and its references. */
 HRESULT WicEnumFromItems(IUnknown **items, UINT count, IEnumUnknown **out);
 HRESULT WicEnumUnknownCreate(IUnknown **items, UINT count, IEnumUnknown **out);
 HRESULT WicEnumStringCreate(WCHAR *const *names, UINT count, IEnumString **out);
@@ -50,9 +48,9 @@ const WCHAR *WicSchemaPrefix(const GUID *format, const WCHAR *uri);
 const GUID *WicFormatOfClass(const GUID *clsid);
 BOOL WicIsMetadataClass(const GUID *clsid);
 
-/* the values of the standard items, made from and turned into the property variants of tiff and exif. */
+/* convert standard values to and from TIFF and EXIF property variants. */
 HRESULT WicIfdFromTiff(const GUID *format, const void *data, size_t size, IWICMetadataReader **reader);
-/* the blob of an ifd handler and the handlers below it, in the byte order, with or without the exif prefix. */
+/* serialize an IFD handler and its children in the requested byte order, with optional EXIF prefix. */
 HRESULT WicIfdToTiff(IWICMetadataReader *ifd, BOOL big_endian, BOOL prefix, BYTE **blob, SIZE_T *size);
 
 #endif

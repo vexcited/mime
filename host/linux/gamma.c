@@ -1,8 +1,6 @@
 /*
- * the display's gamma ramp, which windows' display driver applies to all
- * that is shown: kept here for the windows of the guest, applied by the
- * presenter of vulkan swapchains in a pass of its own and by the window
- * code as it uploads a surface. an identity ramp turns it off.
+ * guest display gamma ramp, applied by a Vulkan presentation pass or during surface uploads. the identity ramp
+ * disables correction.
  */
 #include "gamma.h"
 
@@ -56,14 +54,14 @@ bool mime_gamma_table(uint8_t table[3][256])
     return active;
 }
 
-/* a triangle over the target, then each pixel of the composed frame through the ramp. */
+/* draws a fullscreen triangle, applying the ramp to each composed pixel. */
 static const char VERTEX[] = "#version 450\n"
                              "void main() {\n"
                              "    vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);\n"
                              "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
                              "}\n";
 
-/* an srgb target encodes what it is given, so the ramp's value is handed over decoded. */
+/* an sRGB target encodes what it is given, so the ramp's value is handed over decoded. */
 static const char FRAGMENT[] =
     "#version 450\n"
     "layout(set = 0, binding = 0) uniform sampler2D frame;\n"

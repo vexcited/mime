@@ -1,22 +1,20 @@
 /*
- * services.exe: who may do what. the manager and every service have a security descriptor; a client is checked
- * against it with the token it connected with, through the impersonation of the named pipe.
+ * services.exe access checks. the manager and every service have a security descriptor, checked against the token the
+ * client connected with, obtained by impersonating the named pipe.
  */
 #include "services.h"
 #include <crypto/crypto.h>
 
 PSECURITY_DESCRIPTOR g_manager_sd;
-/* the rights windows maps the generic ones of the manager and of a service to, read from services.exe. */
+/* windows' generic mappings for the manager and for services. */
 GENERIC_MAPPING g_manager_mapping = {0x20014, 0x20022, 0x20009, 0xF003F};
 GENERIC_MAPPING g_service_mapping = {0x2008D, 0x20002, 0x20170, 0xF01FF};
 static PSECURITY_DESCRIPTOR g_default_service_sd;
 
 /*
- * the default descriptors, in the form windows' own tools print them (read from services.exe, which builds them
- * from the same sids): the manager lets everyone connect, the interactive users and services list and read, the
- * system also change the boot configuration and the administrators do all. a service lets the system and the
- * administrators do what they need and the interactive users and services query, interrogate and send controls of
- * their own.
+ * windows' default descriptors. the manager lets everyone connect, interactive users and services list and read, the
+ * system also change the boot configuration, and administrators do everything. a service lets the system and
+ * administrators do what they need, and interactive users and services query, interrogate and send user controls.
  */
 static const WCHAR g_manager_sddl[] =
     L"O:SYG:SYD:(A;;CC;;;AU)(A;;CCLCRPRC;;;IU)(A;;CCLCRPRC;;;SU)(A;;CCLCRPWPRC;;;SY)(A;;KA;;;BA)(A;;CC;;;AC)";
@@ -54,7 +52,7 @@ static PSECURITY_DESCRIPTOR from_registry(HKEY key)
 
 void AccessInit(void)
 {
-    /* the descriptor of the manager is kept below ServiceGroupOrder, where windows keeps it. */
+    /* windows keeps the manager's descriptor below ServiceGroupOrder. */
     HKEY key;
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\ServiceGroupOrder\\Security", 0, KEY_READ,
                       &key) == ERROR_SUCCESS) {
@@ -74,7 +72,7 @@ PSECURITY_DESCRIPTOR AccessDefaultServiceSd(void)
     return g_default_service_sd;
 }
 
-/* the descriptor of a service, from its key the first time. */
+/* read from the service's key on first use. */
 DWORD AccessReadSd(SERVICE *s)
 {
     if (s->Sd)
@@ -111,7 +109,7 @@ DWORD AccessWriteSd(SERVICE *s)
     return error;
 }
 
-/* what the client is granted of the rights it asks for; the answer is ERROR_ACCESS_DENIED when it is granted none. */
+/* what the client is granted of the rights it asks for; ERROR_ACCESS_DENIED when it gets none. */
 DWORD AccessCheckClient(HANDLE pipe, PSECURITY_DESCRIPTOR sd, DWORD desired, const GENERIC_MAPPING *mapping,
                         DWORD *granted)
 {
@@ -139,7 +137,7 @@ DWORD AccessCheckClient(HANDLE pipe, PSECURITY_DESCRIPTOR sd, DWORD desired, con
     return error;
 }
 
-/* DOMAIN\name of the client, for the owner of the lock. */
+/* DOMAIN\name of the client, for the lock owner. */
 DWORD AccessClientName(HANDLE pipe, WCHAR *name, DWORD chars)
 {
     if (!ImpersonateNamedPipeClient(pipe))
@@ -167,7 +165,7 @@ DWORD AccessClientName(HANDLE pipe, WCHAR *name, DWORD chars)
     return error;
 }
 
-/* the security information a query or a change names must be among the four that exist. */
+/* the security information must only name the four parts that exist. */
 DWORD AccessQuerySd(PSECURITY_DESCRIPTOR sd, DWORD information, void *out, DWORD size, DWORD *needed)
 {
     BOOL present, defaulted;
@@ -202,7 +200,7 @@ DWORD AccessQuerySd(PSECURITY_DESCRIPTOR sd, DWORD information, void *out, DWORD
     return error == ERROR_INSUFFICIENT_BUFFER ? ERROR_INSUFFICIENT_BUFFER : error;
 }
 
-/* ------------------------------------------------------------------ the token of a service process */
+/* ------------------------------------------------------------------ service process tokens */
 
 static void make_sid(BYTE *sid, BYTE authority, DWORD count, const DWORD *sub)
 {
@@ -213,7 +211,7 @@ static void make_sid(BYTE *sid, BYTE authority, DWORD count, const DWORD *sub)
     memcpy(sid + 8, sub, count * 4);
 }
 
-/* S-1-5-80 and the five numbers of the sha-1 of the upper case name, the sid of the service itself. */
+/* the service's own sid: S-1-5-80 and the five words of the sha-1 of the upper case name. */
 DWORD AccessServiceSid(const WCHAR *name, BYTE *sid)
 {
     WCHAR upper[SVC_NAME_MAX + 1];
@@ -234,8 +232,8 @@ typedef struct TOKEN_GROUP_ {
 } TOKEN_GROUP_;
 
 /*
- * the token of a service that runs as one of the service accounts: the sid of the account, its usual groups and
- * its privileges, made the way the account of a logon is made. the accounts of a user are logged on instead.
+ * the token of a service running as one of the service accounts: the account sid, its usual groups and privileges,
+ * built as a logon would build them. user accounts are logged on instead.
  */
 static HANDLE build_service_token(DWORD account, const WCHAR *name, DWORD sid_type, DWORD *error)
 {
@@ -265,7 +263,7 @@ static HANDLE build_service_token(DWORD account, const WCHAR *name, DWORD sid_ty
         DWORD Count;
         TOKEN_GROUP_ Groups[9];
     } groups = {};
-    const DWORD normal = 7;           /* mandatory, enabled by default, enabled */
+    const DWORD normal = 7;           /* mandatory, enabled by default, enabled. */
     const DWORD owner_group = 7 | 8;
     (void)owner_group;
     DWORD n = 0;
@@ -280,7 +278,7 @@ static HANDLE build_service_token(DWORD account, const WCHAR *name, DWORD sid_ty
         AccessServiceSid(name, service_sid);
         groups.Groups[n++] = (TOKEN_GROUP_){service_sid, normal | 8};
     }
-    groups.Groups[n++] = (TOKEN_GROUP_){label, 0x60}; /* the integrity label, enabled */
+    groups.Groups[n++] = (TOKEN_GROUP_){label, 0x60}; /* integrity label, enabled. */
     groups.Count = n;
 
     static const WCHAR *const names[] = {L"SeChangeNotifyPrivilege", L"SeCreateGlobalPrivilege",
@@ -291,7 +289,7 @@ static HANDLE build_service_token(DWORD account, const WCHAR *name, DWORD sid_ty
     } privileges = {};
     for (DWORD i = 0; i < RTL_NUMBER_OF(names); i++) {
         if (LookupPrivilegeValueW(nullptr, names[i], &privileges.Privileges[privileges.Count].Luid)) {
-            /* the first three are enabled, as the account's logon enables them. */
+            /* the first three are enabled, as a logon of the account enables them. */
             privileges.Privileges[privileges.Count].Attributes = i < 3 ? 3 : 1;
             privileges.Count++;
         }
@@ -327,7 +325,7 @@ static HANDLE build_service_token(DWORD account, const WCHAR *name, DWORD sid_ty
     return token;
 }
 
-/* the token the process of a service runs with, NULL when the one services.exe has is the right one. */
+/* the token for a service's process, NULL when services.exe's own token is the right one. */
 HANDLE AccessServiceToken(SERVICE *s, DWORD *error)
 {
     *error = 0;
@@ -380,7 +378,7 @@ HANDLE AccessServiceToken(SERVICE *s, DWORD *error)
     return token;
 }
 
-/* replaces the parts of a descriptor the information names with the ones of the modification. */
+/* replaces the descriptor parts the information names with the modification's. */
 DWORD AccessSetSd(PSECURITY_DESCRIPTOR *sdp, DWORD information, PSECURITY_DESCRIPTOR modification)
 {
     BOOL present = FALSE, defaulted = FALSE;

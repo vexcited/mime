@@ -1,6 +1,6 @@
 /*
- * riched32.dll, rich edit 1.0: windows' riched32 exports nothing and
- * registers the ansi class RICHEDIT over riched20's 1.0 emulation.
+ * riched32.dll, rich edit 1.0: like windows, it exports nothing and registers
+ * the ANSI class RICHEDIT over riched20's 1.0 emulation.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>

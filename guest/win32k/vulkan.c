@@ -1,10 +1,6 @@
 /*
- * vulkan connections. a process that uses vulkan gets one block of
- * physically contiguous memory, mapped in the process and handed to the
- * host, which runs the calls the process writes there (mime/mvk_wire.h).
- * the memory the process maps through vulkan, and the streams of its
- * command buffers, are more such blocks: the host reads them, and imports
- * the mapped ones into its driver, in place.
+ * Vulkan connections use physically contiguous blocks shared with the host. the call block follows mime/mvk_wire.h;
+ * mapped memory and command streams use additional blocks that the host reads or imports directly.
  */
 #include "win32k.h"
 
@@ -26,7 +22,7 @@ typedef struct W32VK {
     VK_BLOCK *Blocks;
 } W32VK;
 
-/* unmap is FALSE when the process is gone, its address space with it. */
+/* skip unmapping after the process address space is gone. */
 static void free_block(VK_BLOCK *b, BOOLEAN unmap)
 {
     if (b->User && unmap)
@@ -92,7 +88,7 @@ NTSTATUS NTAPI NtGdiMimeVkOpen(PVOID *base)
     return MimeCopyToUser(base, &user, sizeof(user));
 }
 
-/* a block of the process's memory the host reads in place: mapped memory or command streams. */
+/* shared process memory for mapped buffers or command streams. */
 NTSTATUS NTAPI NtGdiMimeVkAlloc(SIZE_T size, PVOID *base, PULONG64 pa)
 {
     if (size < 0x1000 || size > (256u << 20))
@@ -123,7 +119,7 @@ NTSTATUS NTAPI NtGdiMimeVkAlloc(SIZE_T size, PVOID *base, PULONG64 pa)
     return STATUS_SUCCESS;
 }
 
-/* the caller frees a block only once the host stopped using it, see vulkan-1.dll. */
+/* free only after the host stops using the block, as required by Vulkan-1.dll. */
 NTSTATUS NTAPI NtGdiMimeVkFree(PVOID base)
 {
     UserEnter();
@@ -152,7 +148,7 @@ NTSTATUS NTAPI NtGdiMimeVkKick(void)
     return STATUS_SUCCESS;
 }
 
-/* sleeps until the host's count of watched semaphores reached differs from what the thread saw. */
+/* wait for the host count of reached semaphore values to change. */
 static NTSTATUS wait_events(MvkHeader *h, ULONG64 seen, ULONG timeout_ms)
 {
     PKEVENT event = HalMimeGetGpuEvent();
@@ -167,7 +163,7 @@ static NTSTATUS wait_events(MvkHeader *h, ULONG64 seen, ULONG timeout_ms)
             return STATUS_SUCCESS;
         if (timeout_ms != 0xFFFFFFFF && KeQueryInterruptTime() >= deadline)
             return STATUS_TIMEOUT;
-        LARGE_INTEGER t = {.QuadPart = -100000}; /* 10 ms */
+        LARGE_INTEGER t = {.QuadPart = -100000}; /* 10 ms. */
         NTSTATUS s = KeWaitForSingleObject(event, UserRequest, UserMode, TRUE, &t);
         if (s != STATUS_SUCCESS && s != STATUS_TIMEOUT)
             return s;
@@ -175,10 +171,8 @@ static NTSTATUS wait_events(MvkHeader *h, ULONG64 seen, ULONG timeout_ms)
 }
 
 /*
- * sleeps until the host ran the call of serial. the host raises its
- * interrupt when done passes wait_serial; the short timeout covers a wake
- * up lost to another thread clearing the shared event. a serial with
- * MVK_WAIT_EVENTS waits for the count of watched semaphores instead.
+ * wait for the host to execute serial. it interrupts when done passes wait_serial; a short timeout covers another
+ * thread clearing the shared event. MVK_WAIT_EVENTS instead waits for the reached-semaphore count.
  */
 NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms)
 {
@@ -201,7 +195,7 @@ NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms)
             break;
         if (timeout_ms != 0xFFFFFFFF && KeQueryInterruptTime() >= deadline)
             return STATUS_TIMEOUT;
-        LARGE_INTEGER t = {.QuadPart = -100000}; /* 10 ms */
+        LARGE_INTEGER t = {.QuadPart = -100000}; /* 10 ms. */
         NTSTATUS s = KeWaitForSingleObject(event, UserRequest, UserMode, TRUE, &t);
         if (s != STATUS_SUCCESS && s != STATUS_TIMEOUT)
             return s;
@@ -211,7 +205,7 @@ NTSTATUS NTAPI NtGdiMimeVkWait(ULONG64 serial, ULONG timeout_ms)
     return STATUS_SUCCESS;
 }
 
-/* the host is done with the memory once the close returns. */
+/* close returns only after the host stops using the memory. */
 void VkFreeProcess(W32PROCESS *p)
 {
     W32VK *v = p->Vk;

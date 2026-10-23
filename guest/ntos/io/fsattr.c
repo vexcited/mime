@@ -1,42 +1,35 @@
 /*
- * the attributes of names, kept for a short time. A browser asks about the same names again and again, a name it probes to
- * find one that is free, a file it checks before it opens it, and each ask was an exit to the host, 7 microseconds and the
- * host's own stat. A query by name, NtQueryAttributesFile or NtQueryFullAttributesFile, is answered from here when the
- * name was asked about lately, and so is a name that was not there.
+ * a short-lived cache of name attributes for NtQueryAttributesFile and NtQueryFullAttributesFile. programs probe the
+ * same names over and over, and each query cost a host exit plus a host stat. missing names are cached too.
  *
- * An entry is the volume, the name below it as the file object holds it, compared without regard to case, and what the
- * host answered: the attributes of the file, or that there was none. It lasts until one of these.
+ * an entry is keyed by volume and case-insensitive name, and lasts until:
  *
- *  - The guest changes the file or its directory in any way. The notification of changes hears of all of them, writes,
- *    sizes, times, creations, removals and renames, through FsNotifyReport and FsNotifyRename. The entry of the name goes,
- *    so does the entry of its directory, whose times move, and for a directory removed or moved everything below it.
- *  - The host's own programs change it. The host tells that through the watch it keeps on the directory, inotify on Linux,
- *    see host/vmm/fswatch.c. A name is kept only while its directory has such a watch. The watch is made when a directory
- *    is asked about for the second time lately. There are 24 at most, and the one asked about least recently makes room. The
- *    host tells the changes of its programs and not those it made for the guest, which the guest knew first.
- *  - Half a second passes. That is all that is left of the changes the watch cannot tell: a write of the host in the 8
- *    milliseconds after one of the guest's to the same file, or a file the guest changed through a view of it, whose time
- *    the host sets when it writes the pages out.
+ *  - the guest changes the file or its directory. FsNotifyReport and FsNotifyRename drop the name, its directory,
+ *    whose times move, and for a removed or moved directory everything below it.
+ *  - a host program changes it, which the host reports through a watch on the directory, inotify on Linux. names are
+ *    kept only while their directory is watched. a directory gets a watch the second time it is asked about lately,
+ *    24 at most, least recently used evicted. the host only reports changes it did not make for the guest.
+ *  - half a second passes. this covers what the watch cannot see: a host write within 8 ms of a guest write to the
+ *    same file, or a file changed through a view, whose time the host sets when it writes the pages out.
  *
- * An answer of the host that crossed a change is not kept. Every change counts, and an answer is kept only if no change
- * counted between its question and its answer.
+ * an answer is kept only if no change counted between its query and its answer.
  */
 #include "../ntos.h"
 
 #define ATTR_BUCKETS 1024
 #define ATTR_MAX 4096
-#define ATTR_LIFE 5000000ll /* 500 ms, in 100 nanosecond units */
+#define ATTR_LIFE 5000000ll /* 500 ms in 100 ns units. */
 #define ATTR_WATCHES 24
 #define ATTR_RING 128
 #define ATTR_VISITS 32
 #define ATTR_VISIT_LIFE (20000000ll)
 
 typedef struct ATTR_ENTRY {
-    struct ATTR_ENTRY *Next; /* hash chain */
-    LIST_ENTRY Lru;          /* most recently used first */
+    struct ATTR_ENTRY *Next;
+    LIST_ENTRY Lru;          /* most recently used first. */
     ULONG Volume;
     ULONG Hash;
-    LONG Watch; /* the slot of the watch that covers its directory */
+    LONG Watch; /* watch slot of its directory. */
     LONGLONG Born;
     BOOLEAN Missing;
     USHORT Chars;
@@ -48,9 +41,9 @@ typedef struct ATTR_WATCH {
     BOOLEAN Used;
     ULONG Id;
     ULONG Volume;
-    ULONG Hash; /* of the directory's name */
+    ULONG Hash; /* of the directory name. */
     USHORT Chars;
-    PWCHAR Path; /* of the directory below its volume, no closing backslash, the root as one backslash */
+    PWCHAR Path; /* volume relative, no trailing backslash, the root is one backslash. */
     LONGLONG Used_At;
 } ATTR_WATCH;
 
@@ -59,20 +52,19 @@ static ATTR_ENTRY *g_buckets[ATTR_BUCKETS];
 static LIST_ENTRY g_lru;
 static ULONG g_entries;
 /*
- * the changes that came lately, to tell an answer of the host that crossed one that touches it: an answer is kept only if no
- * change to its name, or to a name below it for a directory, counted between its question and its answer. a change of other
- * names, which a browser makes all the time, does not stop it.
+ * recent changes, so an answer that raced a change to its name, or below it for a directory, is not kept. changes to
+ * other names do not count.
  */
 typedef struct ATTR_CHANGE {
     ULONG Volume, Name, Parent;
     BOOLEAN Tree;
 } ATTR_CHANGE;
 static ATTR_CHANGE g_ring[ATTR_RING];
-static LONG g_seq;           /* changes counted, with the lock */
-static volatile LONG g_fills; /* questions of the host asked and not answered */
+static LONG g_seq;           /* change counter, under the lock. */
+static volatile LONG g_fills; /* host queries in flight. */
 static ATTR_WATCH g_watches[ATTR_WATCHES];
 static ULONG g_next_id = MIME_FS_WATCH_ID_ATTRIBUTES;
-static BOOLEAN g_disabled; /* the host cannot watch a directory */
+static BOOLEAN g_disabled; /* the host cannot watch directories. */
 static struct {
     ULONG Volume, Hash;
     LONGLONG At;
@@ -106,7 +98,7 @@ static BOOLEAN same_name(const WCHAR *a, const WCHAR *b, ULONG chars)
     return TRUE;
 }
 
-/* the length of the directory part of a name: up to the last backslash, a name directly below the root has the root. */
+/* up to the last backslash; a name directly below the root keeps the root. */
 static ULONG parent_chars(const WCHAR *name, ULONG chars)
 {
     while (chars > 1 && name[chars - 1] == '\\')
@@ -136,7 +128,7 @@ static ATTR_ENTRY *find_entry(ULONG volume, const WCHAR *name, ULONG chars, ULON
     return nullptr;
 }
 
-/* with the lock held. */
+/* lock held. */
 static void drop_name(ULONG volume, const WCHAR *name, ULONG chars, ULONG hash)
 {
     ATTR_ENTRY *e = find_entry(volume, name, chars, hash);
@@ -144,7 +136,7 @@ static void drop_name(ULONG volume, const WCHAR *name, ULONG chars, ULONG hash)
         unlink_entry(e);
 }
 
-/* with the lock held: the name, and everything below it when `tree`. */
+/* lock held. drops the name and everything below it. */
 static void drop_below(ULONG volume, const WCHAR *name, ULONG chars)
 {
     for (PLIST_ENTRY l = g_lru.Flink; l != &g_lru;) {
@@ -159,10 +151,8 @@ static void drop_below(ULONG volume, const WCHAR *name, ULONG chars)
 static void drop_watch(LONG slot);
 
 /*
- * the names a change of `name` touches: itself and its directory, whose times and size follow it. A directory that goes or
- * moves takes the watches of it and of the directories below it, which stay with the directory of the host and not with its
- * name, and a directory made later under that name is not what they watch. The change is also written down for the answers
- * that are on their way.
+ * drops the name and its directory, whose times and size follow it. a directory that goes or moves also loses the
+ * watches on it and below it: they follow the host directory, not the name. the change is logged for queries in flight.
  */
 static void changed_locked(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN tree)
 {
@@ -191,7 +181,7 @@ static void changed_locked(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN
 
 void FsAttrChanged(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN tree)
 {
-    /* nothing kept and no question on its way: nothing to drop and no one to tell. */
+    /* nothing cached and no query in flight. */
     if (!__atomic_load_n(&g_entries, __ATOMIC_ACQUIRE) && !__atomic_load_n(&g_fills, __ATOMIC_ACQUIRE))
         return;
     if (!chars)
@@ -201,7 +191,7 @@ void FsAttrChanged(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN tree)
     ExReleaseFastMutex(&g_lock);
 }
 
-/* whether a change touched a name since the question, with the lock held. */
+/* lock held. whether a change touched the name since the query began. */
 static BOOLEAN crossed(ULONG volume, ULONG hash, LONG token)
 {
     LONG n = g_seq - token;
@@ -217,7 +207,7 @@ static BOOLEAN crossed(ULONG volume, ULONG hash, LONG token)
     return FALSE;
 }
 
-/* with the lock held. */
+/* lock held. */
 static void drop_watch(LONG slot)
 {
     ATTR_WATCH *w = &g_watches[slot];
@@ -230,12 +220,12 @@ static void drop_watch(LONG slot)
     ExFreePool(w->Path);
     HalHypercallUnlocked(MIME_HC_FS_UNWATCH, w->Id, 0, 0, 0, 0, 0, nullptr);
     memset(w, 0, sizeof(*w));
-    /* an answer on its way from that directory is not kept. */
+    /* a query in flight under that directory is not kept. */
     g_ring[(ULONG)g_seq % ATTR_RING].Tree = TRUE;
     g_seq++;
 }
 
-/* the watch of a directory, with the lock held. */
+/* lock held. */
 static LONG watch_of(ULONG volume, const WCHAR *dir, ULONG chars, ULONG hash)
 {
     for (LONG i = 0; i < ATTR_WATCHES; i++) {
@@ -246,7 +236,7 @@ static LONG watch_of(ULONG volume, const WCHAR *dir, ULONG chars, ULONG hash)
     return -1;
 }
 
-/* whether the directory was asked about lately, and if it was not, that it is now. */
+/* whether the directory was asked about lately; marks it if not. */
 static BOOLEAN seen_lately(ULONG volume, ULONG hash)
 {
     LONGLONG now = (LONGLONG)KeQueryInterruptTime();
@@ -269,7 +259,7 @@ static BOOLEAN seen_lately(ULONG volume, ULONG hash)
     return FALSE;
 }
 
-/* has the host watch a directory, with the lock held. the slot, or -1. */
+/* lock held. returns the slot, or -1. */
 static LONG make_watch(ULONG volume, const WCHAR *dir, ULONG chars, ULONG hash)
 {
     LONG slot = -1, oldest = 0;
@@ -326,9 +316,8 @@ static LONG make_watch(ULONG volume, const WCHAR *dir, ULONG chars, ULONG hash)
 }
 
 /*
- * the start of a query that may be kept. When a directory that was asked about lately is not watched, the host is asked to
- * watch it before the question, so that nothing can change unseen between the answer and the watch. TRUE means the answer
- * may be kept, and FsAttrKeep is called with it, whatever the answer was.
+ * an unwatched directory asked about lately gets its watch before the query, so nothing changes unseen between the
+ * answer and the watch. on TRUE the caller passes the answer to FsAttrKeep, whatever it is.
  */
 BOOLEAN FsAttrBegin(ULONG volume, PCUNICODE_STRING name, PLONG token)
 {
@@ -352,7 +341,7 @@ BOOLEAN FsAttrBegin(ULONG volume, PCUNICODE_STRING name, PLONG token)
     return covered;
 }
 
-/* what is known of a name, when it is: missing or its attributes. */
+/* a cached answer: missing, or the attributes. */
 BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, MimeFsInfo *info)
 {
     if (!__atomic_load_n(&g_entries, __ATOMIC_ACQUIRE))
@@ -380,10 +369,7 @@ BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, Mime
     return found;
 }
 
-/*
- * ends a question of the host that FsAttrBegin allowed to keep, and keeps its answer if no change touched the name since and its
- * directory is still watched.
- */
+/* caches the answer if nothing touched the name since FsAttrBegin and the directory is still watched. */
 void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInfo *info, LONG token)
 {
     ULONG chars = name->Length / sizeof(WCHAR);
@@ -422,7 +408,7 @@ void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInf
     ExReleaseFastMutex(&g_lock);
 }
 
-/* a change the host's programs made to a name of a directory it watches for the entries, or more than it could tell. */
+/* a host program changed a name in a watched directory, or the host lost events. */
 void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BOOLEAN overflow)
 {
     ExAcquireFastMutex(&g_lock);
@@ -431,7 +417,7 @@ void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BO
         if (!w->Used || w->Id != id)
             continue;
         if (overflow || !chars) {
-            /* the directory is gone or its events were lost: nothing about it holds, and it is watched again if asked about. */
+            /* the directory is gone or its events were lost: drop it all, it gets a new watch on demand. */
             drop_watch(i);
             break;
         }
@@ -446,7 +432,7 @@ void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BO
         if (w->Chars > 1)
             full[at++] = '\\';
         memcpy(full + at, name, chars * sizeof(WCHAR));
-        /* whether a name removed or moved was a directory is not told, so what was below it goes too. */
+        /* the host does not say whether a removed or moved name was a directory, so drop what was below it too. */
         BOOLEAN below = action == MIME_FS_CHANGE_REMOVED || action == MIME_FS_CHANGE_RENAMED_OLD ||
                         action == MIME_FS_CHANGE_RENAMED_NEW;
         changed_locked(w->Volume, full, total, below);

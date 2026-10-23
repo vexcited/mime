@@ -1,7 +1,4 @@
-/*
- * time: the time zone of _tzset, conversions between time_t and
- * struct tm, strftime, asctime and the clock functions.
- */
+/* time zones, time_t and struct tm conversions, strftime, asctime and the clock functions. */
 #include "msvcrt_private.h"
 
 #define MAX_TIME64 32535215999ll /* 3000-12-31 23:59:59 */
@@ -19,7 +16,6 @@ static wchar_t g_wtzname_std[64] = L"PST";
 static wchar_t g_wtzname_dst[64] = L"PDT";
 static wchar_t *g_wtzname[2] = {g_wtzname_std, g_wtzname_dst};
 
-/* the exported data. */
 long _timezone = 8 * 3600;
 int _daylight = 1;
 long _dstbias = -3600;
@@ -38,7 +34,7 @@ static void publish(void)
     MultiByteToWideChar(CP_ACP, 0, g_tzname_dst, -1, g_wtzname_dst, 64);
 }
 
-/* a time zone like "EST5EDT" or "CET-1:00CEST" from the TZ variable. */
+/* parses a TZ value like "EST5EDT" or "CET-1:00CEST". */
 static void parse_tz(const char *tz)
 {
     strncpy(g_tzname_std, tz, 3);
@@ -281,7 +277,7 @@ static void compute_rule(int year, DST_RULE *r)
         start_ms = ((s->wHour * 60 + s->wMinute) * 60 + s->wSecond) * 1000 + s->wMilliseconds;
         end_ms = ((e->wHour * 60 + e->wMinute) * 60 + e->wSecond) * 1000 + e->wMilliseconds;
     } else if (year >= 107) {
-        /* united states rules since 2007, used with a TZ variable like msvcrt. */
+        /* a TZ variable gets the united states rules since 2007, like msvcrt. */
         r->start_yday = rule_yday(year, 3, 2, 0, 0, 0);
         r->end_yday = rule_yday(year, 11, 1, 0, 0, 0);
         start_ms = end_ms = 2 * 3600 * 1000;
@@ -547,14 +543,13 @@ double __cdecl _difftime32(__time32_t a, __time32_t b)
     return (double)a - (double)b;
 }
 
-/* seconds since 1970 of a utc file time. */
 __time64_t MsvcrtFileTimeToTime(const FILETIME *ft)
 {
     ULONGLONG v = (ULONGLONG)ft->dwHighDateTime << 32 | ft->dwLowDateTime;
     return (__time64_t)((long long)(v - EPOCH_FILETIME) / 10000000);
 }
 
-/* the time_t of a local date like msvcrt's __loctotime64_t. */
+/* like msvcrt's __loctotime64_t. */
 __time64_t MsvcrtLocalToTime(int year, int month, int day, int hour, int min, int sec, int dst)
 {
     struct tm tm = {sec, min, hour, day, month - 1, year - 1900, 0, 0, dst};
@@ -863,7 +858,7 @@ static void strf_num(STRF *s, int value, int digits, int nozero)
 
 static int strf_expand(STRF *s, const char *fmt, const struct tm *tm);
 
-/* one conversion of the c locale; returns 0 for an unknown one. */
+/* one conversion in the c locale; returns 0 for an unknown one. */
 static int strf_conv(STRF *s, char c, int alt, const struct tm *tm)
 {
     int hour12 = tm->tm_hour % 12;
@@ -1063,11 +1058,11 @@ size_t __cdecl _wcsftime_l(wchar_t *buf, size_t size, const wchar_t *fmt, const 
     return wcsftime(buf, size, fmt, tm);
 }
 
-/* ------------------------------------------------------------------ the names of the time */
+/* ------------------------------------------------------------------ time names */
 
 /*
- * the day and month names the way the c++ library asks for them: one string with a separator in front of each name,
- * the short one and the long one of every day or month. Only the names of the c locale are known.
+ * day and month names as the c++ library wants them: one string with a separator before each name, the short then
+ * the long name of every day or month. only the c locale's names are known.
  */
 static void *names_string(const char *const *names, int count, int wide)
 {
@@ -1117,7 +1112,7 @@ DECLSPEC_EXPORT wchar_t *__cdecl _W_Getmonths(void)
     return names_string(g_months, 12, 1);
 }
 
-/* an opaque block that _Strftime and _Wcsftime are given back, to be freed by the caller. */
+/* an opaque block for _Strftime and _Wcsftime, freed by the caller. */
 DECLSPEC_EXPORT void *__cdecl _Gettnames(void)
 {
     return calloc(1, 256);

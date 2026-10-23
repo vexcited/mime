@@ -1,19 +1,18 @@
 /*
- * audio clients of the render and capture endpoints. a client owns one host stream
- * (mime/audio.h): GetBuffer hands out the ring in place and ReleaseBuffer
- * publishes the frames by advancing written, while the host's output
- * callback advances played. a request that would wrap around the end of the
- * ring goes through a bounce buffer instead. event driven clients get their
- * event set once per engine period while they run. a capture client has the
- * stream turned around: the host publishes the frames it captured by
- * advancing written, and the program hands packets back by advancing played.
+ * audio clients of the render and capture endpoints. each client owns one host
+ * stream from mime/audio.h: GetBuffer hands out the ring in place, ReleaseBuffer
+ * publishes frames by advancing written, and the host's output callback advances
+ * played. a request that would wrap past the ring's end goes through a bounce
+ * buffer. event driven clients get their event set once per engine period while
+ * running. capture runs the other way: the host advances written as it captures,
+ * the program advances played as it releases packets.
  */
 #include "mmdevapi_private.h"
 
 #include <mime/audio.h>
 
-#define PERIOD (REFERENCE_TIME)100000      /* 10 ms, in 100 ns units */
-#define MIN_BUFFER (REFERENCE_TIME)400000  /* 40 ms, room for a guest busy elsewhere */
+#define PERIOD (REFERENCE_TIME)100000      /* 10 ms, in 100 ns units. */
+#define MIN_BUFFER (REFERENCE_TIME)400000  /* 40 ms, room for a guest busy elsewhere. */
 #define MAX_BUFFER (REFERENCE_TIME)20000000
 
 typedef struct CLIENT {
@@ -34,11 +33,11 @@ typedef struct CLIENT {
     BYTE *ring;
     HANDLE event, thread;
     volatile LONG quit;
-    UINT32 pending; /* frames handed out by GetBuffer */
+    UINT32 pending; /* frames handed out by GetBuffer. */
     BYTE *scratch;
     BOOL bounced;
     BOOL capture;
-    UINT64 dropped; /* the host's dropped frames the program has been told of */
+    UINT64 dropped; /* host dropped frames the program was already told of. */
     float master, channel[8];
     BOOL mute;
 } CLIENT;
@@ -554,7 +553,7 @@ static HRESULT STDMETHODCALLTYPE capture_query(void *This, REFIID riid, void **o
 static ULONG STDMETHODCALLTYPE capture_add_ref(void *This) { return client_add_ref(&FROM(capture_client, This)->client); }
 static ULONG STDMETHODCALLTYPE capture_release(void *This) { return client_release(&FROM(capture_client, This)->client); }
 
-/* a packet is one engine period: nothing is offered until that many frames have come. */
+/* a packet is one engine period, nothing is offered until that many frames have come. */
 static UINT32 packet_frames(CLIENT *c)
 {
     return (UINT32)((UINT64)c->rate * PERIOD / 10000000);
@@ -595,7 +594,7 @@ static HRESULT STDMETHODCALLTYPE capture_get_buffer(void *This, BYTE **data, UIN
     } else {
         *data = c->ring + (SIZE_T)start * c->frame_bytes;
     }
-    /* frames the host had to drop come as a discontinuity once. */
+    /* frames the host dropped are reported once, as a discontinuity. */
     UINT64 dropped = __atomic_load_n(&c->hdr->underruns, __ATOMIC_RELAXED);
     if (dropped != c->dropped) {
         c->dropped = dropped;

@@ -1,8 +1,7 @@
 /*
- * certificate stores: memory, collection, file, pkcs #7 and serialized
- * stores, and the functions that add, find and enumerate their
- * certificates. system stores live in sysstore.c; the changes made to one
- * backed by the registry are written through from here.
+ * certificate stores: memory, collection, file, PKCS #7 and serialized stores, and adding, finding and enumerating
+ * their certificates. system stores live in sysstore.c; changes to a registry backed one are written through from
+ * here.
  */
 #include "crypt32_private.h"
 
@@ -1117,7 +1116,7 @@ static BOOL enable_auto_resync(cr_store *store)
     return TRUE;
 }
 
-/* errors of a member that has no such control, or no registry, count for nothing if another member took it. */
+/* a member lacking the control or a registry does not matter if another member took it. */
 static BOOL benign(DWORD error)
 {
     return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || error == ERROR_CALL_NOT_IMPLEMENTED;

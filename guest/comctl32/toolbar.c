@@ -1,7 +1,4 @@
-/*
- * the toolbar, ToolbarWindow32: a row of buttons with images from image
- * lists and optional text, sending WM_COMMAND when clicked.
- */
+/* the toolbar, ToolbarWindow32: buttons with image list images and optional text that send WM_COMMAND. */
 #include "comctl32_private.h"
 
 typedef struct TB_ITEM {
@@ -81,7 +78,7 @@ static int text_extent(TOOLBAR *t, LPCWSTR text, int *cy)
     return size.cx;
 }
 
-/* the button size: the bitmap and padding, with room for text below it, or beside it with TBSTYLE_LIST. */
+/* the bitmap plus padding, with room for text below it, or beside it with TBSTYLE_LIST. */
 static void compute_button_size(TOOLBAR *t)
 {
     if (t->FixedButtonSize)
@@ -299,7 +296,7 @@ static BOOL delete_button(TOOLBAR *t, int index)
 
 static void uncheck_group(TOOLBAR *t, int index)
 {
-    /* the group is the run of CHECKGROUP buttons around the index. */
+    /* the group is the run of CHECKGROUP buttons around index. */
     for (int k = index - 1; k >= 0 && (t->Items[k].Style & BTNS_CHECKGROUP) == BTNS_CHECKGROUP; k--)
         t->Items[k].State &= ~TBSTATE_CHECKED;
     for (int k = index + 1; k < t->Count && (t->Items[k].Style & BTNS_CHECKGROUP) == BTNS_CHECKGROUP; k++)
@@ -758,7 +755,7 @@ LRESULT CALLBACK ToolbarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             int n = LoadStringW((HINSTANCE)wparam, (UINT)lparam, buffer, 512);
             if (n <= 0)
                 return -1;
-            /* the first character separates the strings of a resource. */
+            /* the first character of a resource is the string separator. */
             WCHAR sep = buffer[0];
             LPWSTR p = buffer + 1;
             while (*p) {
@@ -891,7 +888,7 @@ WINCOMMCTRLAPI HWND WINAPI CreateToolbarEx(HWND hwnd, DWORD style, UINT id, int 
     return tb;
 }
 
-/* the first toolbar api: buttons without data or strings. */
+/* the oldest toolbar api: buttons without data or strings. */
 WINCOMMCTRLAPI HWND WINAPI CreateToolbar(HWND hwnd, DWORD style, UINT id, int bitmaps, HINSTANCE bm_inst,
                                          UINT_PTR bm_id, LPCTBBUTTON buttons, int count)
 {

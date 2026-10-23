@@ -1,8 +1,7 @@
 /*
- * lzms decompressor for wim resources, the format of install.esd.
- * every chunk is an independent lzms stream: a range coder reads 16 bit
- * words from the front, adaptive huffman codes read them from the back,
- * and an x86 filter turns absolute call targets back into relative ones.
+ * LZMS decompressor for WIM resources in install.esd. each chunk has an independent range coder reading
+ * 16-bit words from the front and adaptive Huffman codes reading from the back. an x86 filter restores
+ * relative call targets.
  */
 #ifndef MIME_LZMS_H
 #define MIME_LZMS_H

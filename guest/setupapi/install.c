@@ -1,13 +1,13 @@
 /*
- * installing from an inf: the directories the numbers of an inf name, where the files of a section come from, and the
- * directives of an install section: the files to copy, delete and rename (queued, then written together), the registry
- * to add and delete, the ini files to change, the libraries to register, the other files to include.
+ * installing from an inf: directory ids, file sources, and the install section directives. file copies, deletes and
+ * renames are queued and committed together, the others edit the registry and ini files, register libraries and
+ * include other infs.
  */
 #include "setup_private.h"
 
 #define PROFILE_INI_LIMIT 4096
 
-/* ------------------------------------------------------------------ the directories */
+/* ------------------------------------------------------------------ directory ids */
 
 static BOOL set_known(PCWSTR base, PCWSTR rest, PWSTR out, SIZE_T chars)
 {
@@ -92,7 +92,7 @@ BOOL SetupDirectoryPath(INF_FILE *file, UINT id, PCWSTR absolute, PWSTR out, SIZ
     case 53:
         return csidl_path(0x28, out, chars); /* CSIDL_PROFILE */
     default:
-        /* the numbers from 16384 on are the folders of the shell, by their CSIDL. */
+        /* ids from 16384 on are shell folders by CSIDL. */
         if (id >= 0x4000 && id < 0x4100)
             return csidl_path((int)(id - 0x4000), out, chars);
         return FALSE;
@@ -169,15 +169,15 @@ SETUPAPI BOOL WINAPI SetupSetDirectoryIdA(HINF handle, DWORD id, PCSTR directory
     return ok;
 }
 
-/* ------------------------------------------------------------------ the sections of an inf */
+/* ------------------------------------------------------------------ sections */
 
-/* a section of a file by the name it has with the decorations of this machine first; the head file's chain is searched. */
+/* tries the name with this machine's decorations first, across the head file's chain. */
 static BOOL find_decorated(INF_FILE *head, PCWSTR name, PWSTR out, SIZE_T chars)
 {
     return SetupDecoratedSection(head, name, out, chars);
 }
 
-/* the first line of a section, by key, in any of the files. */
+/* searches every file of the chain. */
 static BOOL line_of(INF_FILE *head, PCWSTR section, PCWSTR key, INFCONTEXT *context)
 {
     WCHAR decorated[256];
@@ -192,7 +192,7 @@ static PWSTR field_of(const INFCONTEXT *context, DWORD field)
     return SetupContextField(context, field);
 }
 
-/* the number a field holds, or the fallback when it is empty. */
+/* the field's number, or the fallback when it is empty. */
 static LONG64 number_of(const INFCONTEXT *context, DWORD field, LONG64 fallback)
 {
     PWSTR text = field_of(context, field);
@@ -206,7 +206,7 @@ static LONG64 number_of(const INFCONTEXT *context, DWORD field, LONG64 fallback)
     return value;
 }
 
-/* the directory a file section's files go to: its line in DestinationDirs, else the default. */
+/* the section's DestinationDirs line, else DefaultDestDir. */
 static BOOL destination_of(INF_FILE *head, PCWSTR section, PWSTR out, SIZE_T chars)
 {
     INFCONTEXT line;
@@ -257,8 +257,8 @@ static void join(PWSTR out, SIZE_T chars, PCWSTR a, PCWSTR b)
 }
 
 /*
- * where a file of the inf is: its line in SourceDisksFiles names the disk (and a folder on it), and the disk's line in
- * SourceDisksNames the path that disk has under the root of the sources. A file the inf does not list is in the root.
+ * SourceDisksFiles names a file's disk and optional subfolder, SourceDisksNames the disk's path under the source
+ * root. a file the inf does not list is in the root.
  */
 static BOOL source_of(INF_FILE *head, INF_FILE *layout, PCWSTR file, PCWSTR root, PWSTR directory, SIZE_T chars,
                       PWSTR description, PWSTR tag, UINT *disk)
@@ -309,7 +309,7 @@ static BOOL source_of(INF_FILE *head, INF_FILE *layout, PCWSTR file, PCWSTR root
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the file directives */
+/* ------------------------------------------------------------------ file directives */
 
 static DWORD copy_style(DWORD flags)
 {
@@ -337,7 +337,7 @@ static DWORD copy_style(DWORD flags)
     return style;
 }
 
-/* the names a directive lists: sections, or @file for a file alone. */
+/* a directive lists sections, or @file for a single file. */
 static BOOL each_name(INF_FILE *head, PCWSTR section, PCWSTR directive,
                       BOOL (*visit)(INF_FILE *head, PCWSTR name, void *state), void *state)
 {
@@ -488,7 +488,7 @@ BOOL SetupQueueSections(HSPFILEQ queue, INF_FILE *file, INF_FILE *layout, PCWSTR
         return FALSE;
     FILE_STATE state = {q, layout, source_root, style, copies, deletes, renames, 0};
     BOOL ok = TRUE;
-    /* deleting and renaming come before copying, as the sections that copy may depend on it. */
+    /* deletes and renames come before copies, which may depend on them. */
     if (deletes)
         ok = each_name(file, section, L"DelFiles", queue_delete_name, &state);
     if (ok && renames)
@@ -600,7 +600,7 @@ SETUPAPI BOOL WINAPI SetupQueueRenameSectionA(HSPFILEQ queue, HINF handle, HINF 
     return ok;
 }
 
-/* ------------------------------------------------------------------ the registry */
+/* ------------------------------------------------------------------ registry */
 
 #define FLG_ADDREG_BINVALUETYPE 0x00000001
 #define FLG_ADDREG_NOCLOBBER 0x00000002
@@ -658,7 +658,6 @@ static DWORD parse_dword(PCWSTR text)
     return value;
 }
 
-/* one line of AddReg. */
 static BOOL add_reg_line(INF_FILE *head, const INFCONTEXT *line, HKEY relative)
 {
     PWSTR root_name = field_of(line, 1), subkey = field_of(line, 2), value_name = field_of(line, 3);
@@ -684,7 +683,7 @@ static BOOL add_reg_line(INF_FILE *head, const INFCONTEXT *line, HKEY relative)
             }
         }
         if (ok && (flags & FLG_ADDREG_KEYONLY)) {
-            /* the key is all. */
+            /* only the key is created. */
         } else if (ok && (flags & FLG_ADDREG_DELVAL)) {
             RegDeleteValueW(key, value_name && *value_name ? value_name : nullptr);
         } else if (ok) {
@@ -693,9 +692,9 @@ static BOOL add_reg_line(INF_FILE *head, const INFCONTEXT *line, HKEY relative)
             DWORD exists_type = 0, exists_size = 0;
             BOOL exists = RegQueryValueExW(key, name, nullptr, &exists_type, nullptr, &exists_size) == ERROR_SUCCESS;
             if (exists && (flags & FLG_ADDREG_NOCLOBBER)) {
-                /* left as it is. */
+                /* kept as is. */
             } else if (!exists && (flags & FLG_ADDREG_OVERWRITEONLY)) {
-                /* there is nothing to overwrite. */
+                /* nothing to overwrite. */
             } else {
                 DWORD count = SetupGetFieldCount((PINFCONTEXT)line);
                 LSTATUS r = ERROR_SUCCESS;
@@ -713,7 +712,7 @@ static BOOL add_reg_line(INF_FILE *head, const INFCONTEXT *line, HKEY relative)
                     r = RegSetValueExW(key, name, 0, type_bits == 0x00000001 ? REG_BINARY : REG_NONE, bytes, got);
                     SetupFree(bytes);
                 } else if (type_bits == FLG_ADDREG_TYPE_MULTI_SZ) {
-                    /* the strings in the line, with those the value has already when they are to be appended. */
+                    /* the line's strings, after the existing ones when appending. */
                     SIZE_T total = 1;
                     PWSTR *parts = SetupAlloc((count + 1) * sizeof(PWSTR));
                     DWORD n = 0;
@@ -758,7 +757,7 @@ static BOOL add_reg_line(INF_FILE *head, const INFCONTEXT *line, HKEY relative)
                     SetupFree(old);
                     SetupFree(all);
                 } else {
-                    /* a string, or one to be expanded; a line without a value is the empty string. */
+                    /* a plain or expandable string, empty when the line has no value. */
                     PWSTR text = field_of(line, 5);
                     WCHAR value[2048];
                     SetupExpandDirectories(head, text ? text : L"", value, RTL_NUMBER_OF(value));
@@ -825,7 +824,7 @@ static BOOL registry_section(INF_FILE *head, PCWSTR name, void *state_)
 
 /* ------------------------------------------------------------------ ini files, libraries, the rest */
 
-/* UpdateInis: a line of ini file, section, old entry and new entry; the new entry replaces the old, or is added. */
+/* UpdateInis lines: ini file, section, old entry, new entry. the new entry replaces the old one or is added. */
 static BOOL ini_section(INF_FILE *head, PCWSTR name, void *state)
 {
     INFCONTEXT line;
@@ -837,7 +836,7 @@ static BOOL ini_section(INF_FILE *head, PCWSTR name, void *state)
         if (file && section) {
             SetupExpandDirectories(head, file, path, MAX_PATH);
             if (old && *old) {
-                /* the key of the old entry is the text before its equals sign. */
+                /* the old entry's key is the text before its equals sign. */
                 WCHAR key[256];
                 SetupCopyText(key, old, RTL_NUMBER_OF(key));
                 key[RTL_NUMBER_OF(key) - 1] = 0;
@@ -941,7 +940,6 @@ static BOOL include_names(INF_FILE *head, PCWSTR section, PCWSTR directive, HINF
     return TRUE;
 }
 
-/* the names of a directive, one at a time. */
 static BOOL names_of(INF_FILE *head, PCWSTR section, PCWSTR directive, BOOL (*visit)(INF_FILE *, PCWSTR, void *), void *state)
 {
     return each_name(head, section, directive, visit, state);
@@ -976,7 +974,7 @@ static BOOL run_section(INF_FILE *head, HINF handle, PCWSTR name, UINT flags, HK
     }
     BOOL ok = TRUE;
     include_names(head, name, L"Include", handle);
-    /* Needs: the sections another file has, run first. */
+    /* Needs: sections of the included files, run first. */
     {
         INFCONTEXT line;
         if (line_of(head, name, L"Needs", &line)) {
@@ -1047,7 +1045,7 @@ BOOL SetupInstallInfSection(HWND owner, HINF handle, PCWSTR section, UINT flags,
     return run_section(head, handle, name, flags, key_root, source_root, copy_flags, handler, context, ansi, 0);
 }
 
-/* ------------------------------------------------------------------ what the inf says of a file */
+/* ------------------------------------------------------------------ file paths */
 
 SETUPAPI BOOL WINAPI SetupGetTargetPathW(HINF handle, PINFCONTEXT context, PCWSTR section, PWSTR buffer, DWORD size,
                                          PDWORD required)

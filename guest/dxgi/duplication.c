@@ -1,8 +1,7 @@
 /*
- * output duplication: IDXGIOutputDuplication over win32k's capture (guest/win32k/capture.c). the kernel composes
- * the monitor, gives the rows that changed into a buffer of the process and keeps the rectangles and the
- * pointer's image apart; a frame here is that buffer written into the program's Direct3D 11 texture, which is
- * the one resource every AcquireNextFrame returns.
+ * IDXGIOutputDuplication over win32k's capture in guest/win32k/capture.c. the kernel composes the monitor, writes
+ * the changed rows into a process buffer and reports dirty rectangles and the pointer image separately. a frame is
+ * that buffer copied into the program's Direct3D 11 texture, the one resource every AcquireNextFrame returns.
  */
 #include "dxgi_private.h"
 #include <mime/ntuser.h>
@@ -27,11 +26,11 @@ typedef struct DxgiDuplication {
     DXGI_FORMAT format;
     UINT width, height;
     BYTE *pixels;
-    /* a frame was acquired and not released, another is being waited for, and the kernel lost the monitor. */
+    /* a frame is held, another call is waiting for one, the kernel lost the monitor. */
     BOOL acquired, acquiring, lost;
     UINT dirty_count;
     RECT dirty[DUPLICATION_RECTS];
-    /* the image of the pointer as the last frame that had one gave it. */
+    /* the pointer image from the last frame that had one. */
     MIME_CAPTURE_SHAPE shape;
     BYTE *shape_pixels;
     MimePrivateData data;
@@ -42,13 +41,12 @@ static DxgiDuplication *impl(IDXGIOutputDuplication *iface)
     return CONTAINING_RECORD(iface, DxgiDuplication, iface);
 }
 
-/* the errors dxgi.dll makes of the kernel's statuses. */
 static HRESULT status_to_hresult(LONG status)
 {
     switch ((ULONG)status) {
     case 0:
         return S_OK;
-    case 0xC0000225: /* STATUS_NOT_FOUND: the monitor is not what the duplication was made for. */
+    case 0xC0000225: /* STATUS_NOT_FOUND: no longer the monitor the duplication was made for. */
         return DXGI_ERROR_ACCESS_LOST;
     case 0xC00000AB: /* STATUS_INSTANCE_NOT_AVAILABLE */
         return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
@@ -132,7 +130,6 @@ static HRESULT STDMETHODCALLTYPE dup_get_private_data(IDXGIOutputDuplication *if
     return MimePrivateGet(&impl(iface)->data, guid, size, data);
 }
 
-/* the parent of a duplication is its output. */
 static HRESULT STDMETHODCALLTYPE dup_get_parent(IDXGIOutputDuplication *iface, REFIID riid, void **parent)
 {
     if (!parent)
@@ -146,7 +143,7 @@ static void STDMETHODCALLTYPE dup_get_desc(IDXGIOutputDuplication *iface, DXGI_O
     *desc = impl(iface)->desc;
 }
 
-/* sleeps to the next blank of the display, or to the end of the wait when that comes first. */
+/* sleeps until the next vblank, or the end of the wait if that comes first. */
 static void sleep_to_blank(ULONGLONG remaining_ms)
 {
     MIME_VBLANK vblank;
@@ -158,7 +155,7 @@ static void sleep_to_blank(ULONGLONG remaining_ms)
     Sleep((DWORD)(ms < remaining_ms ? (ms ? ms : 1) : remaining_ms));
 }
 
-/* the rows the kernel wrote into the texture, one rectangle at a time. */
+/* copies the rows the kernel wrote into the texture, one dirty rectangle at a time. */
 static void upload(DxgiDuplication *d)
 {
     ID3D11DeviceContext *c = d->context;
@@ -197,7 +194,7 @@ static HRESULT STDMETHODCALLTYPE dup_acquire_next_frame(IDXGIOutputDuplication *
 {
     DxgiDuplication *d = impl(iface);
     EnterCriticalSection(&d->lock);
-    /* a frame not released yet, or another thread waiting, is an invalid call before anything else is checked. */
+    /* a held frame or another waiting thread is checked before anything else. */
     if (d->acquired || d->acquiring) {
         LeaveCriticalSection(&d->lock);
         return DXGI_ERROR_INVALID_CALL;
@@ -213,7 +210,7 @@ static HRESULT STDMETHODCALLTYPE dup_acquire_next_frame(IDXGIOutputDuplication *
     d->acquiring = TRUE;
     LeaveCriticalSection(&d->lock);
 
-    /* frames come with the display's blanks: the kernel is asked once a blank until one has changed. */
+    /* frames follow vblanks: the kernel is polled once per vblank until something changed. */
     ULONGLONG start = GetTickCount64();
     MIME_CAPTURE_FRAME frame;
     LONG status;
@@ -300,7 +297,7 @@ static HRESULT STDMETHODCALLTYPE dup_get_frame_dirty_rects(IDXGIOutputDuplicatio
     return hr;
 }
 
-/* the desktop never moves a block of its pixels here, windows that move are rectangles that changed. */
+/* the desktop never moves pixel blocks here, moved windows show up as dirty rectangles. */
 static HRESULT STDMETHODCALLTYPE dup_get_frame_move_rects(IDXGIOutputDuplication *iface, UINT size,
                                                           DXGI_OUTDUPL_MOVE_RECT *rects, UINT *required)
 {
@@ -346,7 +343,7 @@ static HRESULT STDMETHODCALLTYPE dup_get_frame_pointer_shape(IDXGIOutputDuplicat
     return hr;
 }
 
-/* the desktop image is in video memory, which only the system memory kind of duplication maps. */
+/* the desktop image is in video memory, which only system memory duplications can map. */
 static HRESULT STDMETHODCALLTYPE dup_map_desktop_surface(IDXGIOutputDuplication *iface, DXGI_MAPPED_RECT *rect)
 {
     if (!rect)
@@ -388,8 +385,8 @@ static const IDXGIOutputDuplicationVtbl dup_vtbl = {
 };
 
 /*
- * the format of the texture frames are written to: the desktop's own when the program lists it, else the first
- * of the listed formats that are the same pixels in another order or encoding.
+ * the desktop's own format when the program lists it, else the first listed format with the same pixels in
+ * another order or encoding.
  */
 static BOOL pick_format(UINT count, const DXGI_FORMAT *formats, DXGI_FORMAT *picked)
 {
@@ -407,7 +404,7 @@ static BOOL pick_format(UINT count, const DXGI_FORMAT *formats, DXGI_FORMAT *pic
     return FALSE;
 }
 
-/* a monitor's number, the one its device name ends with. */
+/* the number the monitor's device name ends with. */
 BOOL DxgiMonitorNumber(HMONITOR monitor, UINT *number)
 {
     MONITORINFOEXW info = {sizeof(info)};
@@ -433,7 +430,7 @@ HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR 
         return E_INVALIDARG;
     *out = nullptr;
     if (v1) {
-        /* only the compositor's capture of the interface is a flag, and the call needs per monitor dpi. */
+        /* 1 is the only valid flag, and the call needs per monitor dpi awareness. */
         if (flags & ~1u || !count || !formats)
             return E_INVALIDARG;
         if (GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()) != DPI_AWARENESS_PER_MONITOR_AWARE)
@@ -472,7 +469,7 @@ HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR 
 
     UINT index;
     MIME_CAPTURE_OPEN open = {};
-    /* an output that is not attached any more (dxgi.dll's own check, read from DuplicateOutputInternal). */
+    /* like windows, an output that is no longer attached fails here. */
     if (!DxgiMonitorNumber(monitor, &index)) {
         d3d->lpVtbl->Release(d3d);
         return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
@@ -512,7 +509,7 @@ HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR 
     d->desc.Rotation = DXGI_MODE_ROTATION_IDENTITY;
     d->pixels = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)open.Width * open.Height * 4);
 
-    /* a texture the program can copy from, sample or draw over, as the frames of windows' duplications are. */
+    /* like windows' duplication frames, the program can copy from, sample or draw over the texture. */
     D3D11_TEXTURE2D_DESC td = {.Width = open.Width,
                                .Height = open.Height,
                                .MipLevels = 1,

@@ -1,6 +1,4 @@
-/*
- * windows.storage internal interface shared by its source files.
- */
+/* shared windows.storage interfaces. */
 #ifndef MIME_WINDOWS_STORAGE_PRIVATE_H
 #define MIME_WINDOWS_STORAGE_PRIVATE_H
 
@@ -14,18 +12,17 @@
 #define LNK_HEADER_SIZE 0x4C
 #define LNK_STRING_MAX 260
 
-/* the extra data blocks windows.storage knows by signature, besides those in shobjidl.h. */
+/* extra data signatures beyond those in shobjidl.h. */
 #define LNK_SIG_TRACKER 0xA0000003
 #define LNK_SIG_VISTA_IDLIST 0xA000000C
 
-/* an extra data block, kept as read, the size and signature included in Data. */
+/* preserved block bytes, including size and signature in Data. */
 typedef struct _LINK_BLOCK {
     struct _LINK_BLOCK *Next;
     DWORD Size;
     BYTE Data[];
 } LINK_BLOCK;
 
-/* a shortcut, with the interfaces it answers to. */
 typedef struct _LINK {
     IShellLinkW LinkW;
     IShellLinkA LinkA;
@@ -43,7 +40,7 @@ typedef struct _LINK {
     int IconIndex;
     DWORD ShowCmd;
     WORD HotKey;
-    /* the access the file was opened with, which property writes need. */
+    /* open access mode; property writes require write access. */
     DWORD Mode;
     BOOL Dirty;
 
@@ -51,7 +48,7 @@ typedef struct _LINK {
     BYTE *Info;
     DWORD InfoSize;
     LPWSTR Name, RelativePath, WorkingDir, Arguments, IconLocation;
-    /* the file the relative path is worked out from, and the file the link was loaded from or saved to. */
+    /* base for relative paths and the file last loaded or saved. */
     LPWSTR RelativeSource, CurFile;
     LINK_BLOCK *Blocks;
 
@@ -60,10 +57,10 @@ typedef struct _LINK {
     IUnknown *SiteObject;
 } LINK;
 
-/* link.c */
+/* link.c. */
 HRESULT LinkCreate(IUnknown *outer, REFIID riid, void **object);
 
-/* linkfile.c */
+/* linkfile.c. */
 void *LkAlloc(SIZE_T size);
 void LkFree(void *p);
 LPWSTR LkDup(LPCWSTR text);
@@ -84,7 +81,7 @@ HRESULT ObjectCollectionCreate(IUnknown *outer, REFIID riid, void **object);
 HRESULT ApplicationDestinationsCreate(IUnknown *outer, REFIID riid, void **object);
 HRESULT ApplicationDocumentListsCreate(IUnknown *outer, REFIID riid, void **object);
 
-/* fileoperation.c */
+/* fileoperation.c. */
 HRESULT FileOperationCreate(IUnknown *outer, REFIID riid, void **object);
 
 #endif

@@ -1,7 +1,7 @@
 /*
  * media events and the event queue every event generator keeps. a queue
- * hands its events to one reader at a time, waiting in GetEvent or through
- * a BeginGetEvent callback run on the callback's work queue.
+ * serves one reader at a time, either waiting in GetEvent or through a
+ * BeginGetEvent callback run on the callback's work queue.
  */
 #include "mfplat_private.h"
 
@@ -147,7 +147,7 @@ static void release_reader(EventQueue *queue)
     queue->state = nullptr;
 }
 
-/* the head event to whoever waits for one: GetEvent wakes, a callback gets a result on its work queue. */
+/* GetEvent wakes up, a callback gets a result on its work queue. */
 static void dispatch(EventQueue *queue)
 {
     if (!queue->head || queue->reader != READER_WAITING)
@@ -271,7 +271,6 @@ static HRESULT STDMETHODCALLTYPE queue_begin_get_event(IMFMediaEventQueue *iface
     return hr;
 }
 
-/* the head event, for the result its callback was given. */
 static HRESULT STDMETHODCALLTYPE queue_end_get_event(IMFMediaEventQueue *iface, IMFAsyncResult *result,
                                                      IMFMediaEvent **event)
 {
@@ -346,7 +345,7 @@ static HRESULT STDMETHODCALLTYPE queue_queue_event_param_unk(IMFMediaEventQueue 
     return queue_queue_event_param_var(iface, type, extended, status, &value);
 }
 
-/* drops the events and a pending callback without calling it, and wakes GetEvent. */
+/* a pending callback is dropped without being called. */
 static HRESULT STDMETHODCALLTYPE queue_shutdown(IMFMediaEventQueue *iface)
 {
     EventQueue *queue = event_queue(iface);

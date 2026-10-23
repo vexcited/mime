@@ -1,10 +1,9 @@
 /*
- * mfreadwrite.dll: the source reader over a media source. it starts the
- * source at the first read, asks each stream for samples and queues what
- * the streams send. there is no decoder, so a stream's types are the ones
- * its source offers. reads block, or with MF_SOURCE_READER_ASYNC_CALLBACK
- * run on a work queue of the reader and end in the callback's OnReadSample.
- * see docs/mfplat.md.
+ * mfreadwrite.dll: the source reader over a media source. the source starts
+ * at the first read, each stream is asked for samples and what they send is
+ * queued. there is no decoder, so a stream's types are the ones its source
+ * offers. reads block, or with MF_SOURCE_READER_ASYNC_CALLBACK run on the
+ * reader's work queue and end in the callback's OnReadSample.
  */
 #define MIME_BUILD_MFREADWRITE
 #include <mime/nt.h>
@@ -13,7 +12,7 @@
 #include <mime/win32/mfreadwrite.h>
 
 #define CURRENT_TYPE_INDEX 0xFFFFFFFF
-/* the work queue of the event callbacks, apart from the reads that wait for them. */
+/* event callbacks run on their own queue, apart from the reads that wait for them. */
 #define EVENT_QUEUE MFASYNC_CALLBACK_QUEUE_MULTITHREADED
 
 typedef struct SourceReader SourceReader;
@@ -40,7 +39,7 @@ typedef struct {
     BOOL ended;
 } ReaderStream;
 
-/* a read for the reader's work queue, in asynchronous mode. */
+/* an asynchronous read, run on the reader's work queue. */
 typedef struct {
     IUnknown iface;
     LONG refs;
@@ -52,7 +51,7 @@ struct SourceReader {
     IMFSourceReader iface;
     IMFAsyncCallback source_callback;
     IMFAsyncCallback read_callback;
-    /* the program's references, and those plus the ones of pending callbacks. */
+    /* refs counts the program's references, total adds those of pending callbacks. */
     LONG refs;
     LONG total;
     CRITICAL_SECTION lock;
@@ -68,7 +67,7 @@ struct SourceReader {
     BOOL starting;
     BOOL shutdown;
     HRESULT error;
-    /* where the first start begins, VT_EMPTY for the source's current position. */
+    /* where the first start begins. VT_EMPTY means the source's current position. */
     PROPVARIANT position;
 };
 
@@ -145,7 +144,7 @@ static void push_sample(ReaderStream *stream, IMFSample *sample, DWORD flags, LO
     stream->tail = entry;
 }
 
-/* the stream an index names: a number, or the first video or audio stream. */
+/* the index is a stream number, or names the first video or audio stream. */
 static ReaderStream *find_stream(SourceReader *reader, DWORD index)
 {
     if (index == MF_SOURCE_READER_FIRST_VIDEO_STREAM || index == MF_SOURCE_READER_FIRST_AUDIO_STREAM) {
@@ -198,7 +197,7 @@ static ULONG STDMETHODCALLTYPE source_callback_release(IMFAsyncCallback *iface)
     return 1;
 }
 
-/* the stream of a new or updated stream event, by its descriptor's identifier. */
+/* matches the stream by its descriptor's identifier. */
 static void attach_stream(SourceReader *reader, IMFMediaStream *media_stream)
 {
     IMFStreamDescriptor *descriptor = nullptr;
@@ -290,7 +289,7 @@ static ULONG STDMETHODCALLTYPE stream_callback_release(IMFAsyncCallback *iface)
     return 1;
 }
 
-/* samples, ticks and the end of the stream, queued for the reads. */
+/* queues samples, ticks and end of stream for the reads. */
 static HRESULT STDMETHODCALLTYPE stream_callback_invoke(IMFAsyncCallback *iface, IMFAsyncResult *result)
 {
     ReaderStream *stream = stream_callback_stream(iface);
@@ -352,7 +351,7 @@ static const IMFAsyncCallbackVtbl STREAM_CALLBACK_VTBL = {
 
 /* ------------------------------------------------------------------ reading */
 
-/* starts the source with the selected streams, at the first read, and waits for it under the lock. */
+/* called at the first read. waits for the source to start, under the lock. */
 static HRESULT start_locked(SourceReader *reader)
 {
     if (reader->started)
@@ -375,7 +374,7 @@ static HRESULT start_locked(SourceReader *reader)
     return reader->started ? S_OK : reader->error;
 }
 
-/* asks a stream that has nothing queued for its next sample. */
+/* only for a stream that has nothing queued. */
 static void request_locked(SourceReader *reader, ReaderStream *stream)
 {
     if (stream->head || stream->ended || stream->requested || !stream->stream)
@@ -393,7 +392,7 @@ static void request_locked(SourceReader *reader, ReaderStream *stream)
         stream->requested = FALSE;
 }
 
-/* the next sample of the stream or of any selected one, waiting for it. */
+/* blocks until the stream, or any selected stream, has a sample. */
 static HRESULT read_sample(SourceReader *reader, DWORD index, DWORD control, DWORD *actual, DWORD *flags,
                            LONGLONG *timestamp, IMFSample **sample)
 {
@@ -523,7 +522,7 @@ static HRESULT STDMETHODCALLTYPE read_callback_get_parameters(IMFAsyncCallback *
     return S_OK;
 }
 
-/* an asynchronous read, or a flush when the request has no stream, done on the reader's queue. */
+/* a request without a stream is a flush. */
 static HRESULT STDMETHODCALLTYPE read_callback_invoke(IMFAsyncCallback *iface, IMFAsyncResult *result)
 {
     SourceReader *reader = read_callback_reader(iface);
@@ -615,8 +614,8 @@ static void reader_free(SourceReader *reader)
 }
 
 /*
- * the last release shuts the source down, unless the attributes said to
- * leave it, and the reader goes once its pending callbacks have returned.
+ * the last release shuts the source down unless the attributes say to keep
+ * it. the reader is freed once its pending callbacks return.
  */
 static ULONG STDMETHODCALLTYPE reader_release(IMFSourceReader *iface)
 {
@@ -677,7 +676,7 @@ static HRESULT STDMETHODCALLTYPE reader_set_stream_selection(IMFSourceReader *if
     return hr;
 }
 
-/* a copy of one of the source's types, or of the stream's current one. */
+/* returns a copy of a source type, or of the stream's current one. */
 static HRESULT STDMETHODCALLTYPE reader_get_native_media_type(IMFSourceReader *iface, DWORD index, DWORD type_index,
                                                              IMFMediaType **type)
 {
@@ -718,8 +717,8 @@ static HRESULT STDMETHODCALLTYPE reader_get_current_media_type(IMFSourceReader *
 }
 
 /*
- * a type whose every attribute one of the native types shares selects that
- * native type. another subtype would need a decoder, and there is none.
+ * selects the native type that shares every attribute of the given type.
+ * other subtypes would need a decoder, and there is none.
  */
 static HRESULT STDMETHODCALLTYPE reader_set_current_media_type(IMFSourceReader *iface, DWORD index, DWORD *reserved,
                                                               IMFMediaType *type)
@@ -775,7 +774,7 @@ static void flush_locked(SourceReader *reader, DWORD index)
     }
 }
 
-/* restarts the source at a position in 100 ns units, dropping what was queued. */
+/* the position is in 100 ns units. queued samples are dropped. */
 static HRESULT STDMETHODCALLTYPE reader_set_current_position(IMFSourceReader *iface, REFGUID format,
                                                             const PROPVARIANT *position)
 {
@@ -831,7 +830,7 @@ static HRESULT STDMETHODCALLTYPE reader_read_sample(IMFSourceReader *iface, DWOR
     return hr;
 }
 
-/* drops the queued samples; an asynchronous reader tells its callback's OnFlush. */
+/* an asynchronous reader also calls the callback's OnFlush. */
 static HRESULT STDMETHODCALLTYPE reader_flush(IMFSourceReader *iface, DWORD index)
 {
     SourceReader *reader = source_reader(iface);
@@ -848,7 +847,7 @@ static HRESULT STDMETHODCALLTYPE reader_flush(IMFSourceReader *iface, DWORD inde
     return hr;
 }
 
-/* the source's own services; streams have no transform to ask. */
+/* only the source's own services: streams have no transform to ask. */
 static HRESULT STDMETHODCALLTYPE reader_get_service_for_stream(IMFSourceReader *iface, DWORD index, REFGUID service,
                                                               REFIID riid, void **object)
 {
@@ -932,7 +931,7 @@ static HRESULT reader_init(SourceReader *reader, IMFAttributes *attributes)
             hr = stream->descriptor->lpVtbl->GetMediaTypeHandler(stream->descriptor, &stream->handler);
         if (FAILED(hr))
             return hr;
-        /* the source's current type, else its first one, is where every stream starts. */
+        /* every stream starts with the source's current type, else its first one. */
         if (FAILED(stream->handler->lpVtbl->GetCurrentMediaType(stream->handler, &stream->current)) &&
             SUCCEEDED(stream->handler->lpVtbl->GetMediaTypeByIndex(stream->handler, 0, &stream->current)))
             stream->handler->lpVtbl->SetCurrentMediaType(stream->handler, stream->current);

@@ -1,9 +1,7 @@
 /*
- * the output of a program on a screen buffer: text, the control characters
- * and the escape sequences, see conscreen.h. the parser follows the usual
- * state machine of the vt500 terminals; what the sequences do follows what
- * conhost does, and every change of the cells that the terminal can be told
- * of by the same sequence is sent as it is made.
+ * program output on a screen buffer: text, control characters and escape sequences. the parser is the usual vt500
+ * state machine, the sequences behave as in conhost, and every cell change the terminal can reproduce with the same
+ * sequence is forwarded as it is made.
  */
 #include "conscreen_p.h"
 
@@ -99,7 +97,7 @@ void clear_cell_partner(CsBuffer *b, int y, int x)
     }
 }
 
-/* erases cells of one row in the buffer with a cell, a wide character cut by the edge goes whole. */
+/* a wide character cut by either edge is erased whole. */
 static void erase_with(CsBuffer *b, int y, int x0, int x1, CsCell blank)
 {
     if (y < 0 || y >= b->Grid.Height)
@@ -148,7 +146,7 @@ static bool full_margins(const CsBuffer *b)
     return b->Top == 0 && b->Bottom == b->Window.Bottom - b->Window.Top;
 }
 
-/* the escape sequences are in charge of this buffer: they fill with the erase attributes. */
+/* escape sequences drive this buffer, so fills use the erase attributes. */
 static bool vt_mode(const CsBuffer *b)
 {
     return (b->Mode & (CS_PROCESSED_OUTPUT | CS_VIRTUAL_TERMINAL_PROCESSING)) ==
@@ -156,10 +154,8 @@ static bool vt_mode(const CsBuffer *b)
 }
 
 /*
- * scrolls the rows of the margins by count: the viewport rows top..bottom
- * of the buffer. a scroll of the whole viewport slides the viewport down
- * over a buffer that has more rows below it, as conhost does. fill is what
- * the rows that come in are filled with.
+ * scrolls the margin rows top..bottom, viewport relative, by count, filling the rows that come in. scrolling the
+ * whole viewport slides it down over a buffer with more rows below, as conhost does.
  */
 void CsScrollRegion(CsBuffer *b, int top, int bottom, int count, bool up, CsCell fill)
 {
@@ -172,7 +168,7 @@ void CsScrollRegion(CsBuffer *b, int top, int bottom, int count, bool up, CsCell
     bool whole = full_margins(b);
     bool fwd = CsForwarding(b);
     if (up && whole && b->Window.Bottom < b->Grid.Height - 1 && count == 1 && !b->Main) {
-        /* the viewport slides: the row below it comes into view. */
+        /* the viewport slides down to show the next row. */
         b->Window.Top++;
         b->Window.Bottom++;
         if (fwd) {
@@ -188,7 +184,7 @@ void CsScrollRegion(CsBuffer *b, int top, int bottom, int count, bool up, CsCell
     if (up && whole && w + top == 0)
         b->Scrolls += (unsigned)count;
     if (fwd && whole) {
-        /* the terminal scrolls its screen, its shadow is the same. */
+        /* the terminal scrolls its screen, so scroll the shadow the same way. */
         CsGridScroll(&t->Shadow, top, bottom, count, up, fill);
     } else {
         CsMarkRows(b, w + top, w + bottom, false);
@@ -205,9 +201,8 @@ static CsCell scroll_fill(const CsBuffer *b)
 }
 
 /*
- * the cursor goes down a row, to the left edge too when carriage is set;
- * the rows scroll when it was at the bottom of the margins. a terminal that
- * shows the buffer is told by the line feed it scrolls with.
+ * moves the cursor down a row, and to the left edge when carriage is set, scrolling when it was on the bottom
+ * margin. a terminal showing the buffer scrolls with the line feed it is sent.
  */
 void CsNewline(CsBuffer *b, bool carriage)
 {
@@ -259,23 +254,21 @@ static void reverse_index(CsBuffer *b)
 
 /* ------------------------------------------------------------------ printing */
 
-/* the text goes on in the next row. */
 static void wrap_row(CsBuffer *b)
 {
     b->Grid.Rows[b->CursorY].Wrapped = true;
     CsNewline(b, true);
 }
 
-/* the terminal's own wrapping is what the buffer asked for. */
+/* the terminal's autowrap follows the buffer's wrap mode. */
 static void host_wrap_mode(CsBuffer *b)
 {
     CsHostWrap(b->Term, (b->Mode & CS_WRAP_AT_EOL_OUTPUT) != 0);
 }
 
 /*
- * a character of the width 1 or 2 at the cursor. in the escape sequence
- * mode the cursor stays on the last column with the wrap pending, as in a
- * terminal; in the plain mode of the console it moves on at once.
+ * places a character of width 1 or 2 at the cursor. in escape sequence mode the cursor stays on the last column with
+ * the wrap pending, as in a terminal. in the console's plain mode it moves on at once.
  */
 void CsPlaceChar(CsBuffer *b, uint32_t cp, int width)
 {
@@ -289,14 +282,14 @@ void CsPlaceChar(CsBuffer *b, uint32_t cp, int width)
         b->WrapPending = false;
     }
     if (width == 2 && b->CursorX == right) {
-        /* there is no room for the second half: the line wraps first. */
+        /* no room for the second half, so the line wraps first. */
         if (!autowrap)
             return;
         CsCell blank = CsBlank(b);
         b->Grid.Rows[b->CursorY].Cells[b->CursorX] = blank;
         CsMark(b, b->CursorY, b->CursorX, b->CursorX, true);
         if (CsForwarding(b)) {
-            /* the terminal does the same with the character it is sent next. */
+            /* the terminal blanks the cell too when it gets the next character. */
             CsShadowFill(t, b->CursorY - b->Window.Top, b->CursorY - b->Window.Top, b->CursorX, b->CursorX, blank);
         }
         wrap_row(b);
@@ -357,7 +350,7 @@ void CsPlaceChar(CsBuffer *b, uint32_t cp, int width)
         if (autowrap && delayed) {
             b->WrapPending = true;
         } else if (autowrap) {
-            /* the plain mode moves to the next row at once, and the terminal, which waits, is moved too. */
+            /* plain mode moves to the next row at once, so move the waiting terminal too. */
             bool sync = fwd;
             wrap_row(b);
             if (sync) {
@@ -392,7 +385,7 @@ static int prev_tab(const CsBuffer *b, int x)
 
 static void carriage_return(CsBuffer *b)
 {
-    /* inside the margins the cursor goes to the left margin, which is the edge of the window here. */
+    /* inside the margins the cursor goes to the left margin, here the window's edge. */
     b->CursorX = b->Window.Left;
     b->WrapPending = false;
 }
@@ -404,7 +397,7 @@ static void bell(CsBuffer *b)
     CsOutString(b->Term, "\x07");
 }
 
-/* a control character of the escape sequence mode. */
+/* a control character in escape sequence mode. */
 static void execute(CsBuffer *b, uint32_t c)
 {
     b->LastChar = 0;
@@ -440,7 +433,7 @@ static void execute(CsBuffer *b, uint32_t c)
     }
 }
 
-/* the glyph of a control character in the oem code page 437 and its relatives. */
+/* control character glyphs in oem code page 437 and its relatives. */
 static const uint16_t g_oem_glyphs[32] = {
     0x0020, 0x263A, 0x263B, 0x2665, 0x2666, 0x2663, 0x2660, 0x2022, 0x25D8, 0x25CB, 0x25D9,
     0x2642, 0x2640, 0x266A, 0x266B, 0x263C, 0x25BA, 0x25C4, 0x2195, 0x203C, 0x00B6, 0x00A7,
@@ -459,7 +452,7 @@ static void place(CsBuffer *b, uint32_t c)
     if (c >= 0x10000 && w == 1)
         w = 2;
     if (w == 0) {
-        /* a mark joins the character before it, which the cells cannot show, but the terminal can. */
+        /* a combining mark joins the previous character: the cells cannot show it, but the terminal can. */
         if (CsForwarding(b))
             CsOutUtf8(b->Term, c);
         return;
@@ -467,7 +460,7 @@ static void place(CsBuffer *b, uint32_t c)
     CsPlaceChar(b, c, w);
 }
 
-/* a printable character, mapped through the character set in use. */
+/* a printable character, mapped through the active character set. */
 static void print(CsBuffer *b, uint32_t c)
 {
     bool graphics = b->ShiftOut ? b->Charset1Graphics : b->Charset0Graphics;
@@ -513,7 +506,6 @@ static void clear_params(CsBuffer *b)
     b->ParserIntermediate2 = 0;
 }
 
-/* parameter i, with a default for an omitted one. */
 static int param(const CsBuffer *b, int i, int def)
 {
     if (i >= b->ParserParamCount || b->ParserParams[i] < 0)
@@ -521,7 +513,7 @@ static int param(const CsBuffer *b, int i, int def)
     return b->ParserParams[i];
 }
 
-/* a missing, zero or negative parameter is 1. */
+/* a missing, zero or negative parameter gives def. */
 static int param_nz(const CsBuffer *b, int i, int def)
 {
     int v = param(b, i, def);
@@ -540,7 +532,7 @@ static void finish_param(CsBuffer *b)
 
 static void cursor_to(CsBuffer *b, int col, int row)
 {
-    /* the coordinates are the viewport's, or the margins' in the origin mode. */
+    /* coordinates are viewport relative, or margin relative in origin mode. */
     int top = b->OriginMode ? b->Top : 0;
     int bottom = b->OriginMode ? b->Bottom : b->Window.Bottom - b->Window.Top;
     row = CS_MAX(top, CS_MIN(top + row, bottom));
@@ -581,7 +573,7 @@ static CsCell erase_cell(const CsBuffer *b)
     return b->EraseDefault ? CsBlankOf(b->DefaultAttr) : CsEraseBlank(b);
 }
 
-/* returns false for a mode the sequence does not have. */
+/* false for a mode the sequence does not have. */
 static bool erase_display(CsBuffer *b, int mode)
 {
     if (mode < 0 || mode > 3)
@@ -727,7 +719,7 @@ static void insert_lines(CsBuffer *b, int n, bool insert)
         CsGridScroll(&b->Grid, b->Window.Top + vy, b->Window.Top + b->Bottom, n, !insert, fill);
         CsMarkRows(b, b->Window.Top + vy, b->Window.Top + b->Bottom, false);
     }
-    /* the cursor goes to the left edge, as in the terminals that the escape sequences come from. */
+    /* the cursor goes to the left edge, as in the terminals the escape sequences come from. */
     b->CursorX = b->Window.Left;
 }
 
@@ -752,10 +744,7 @@ static void set_underline(CsExt *e, unsigned style)
     e->Style = (uint16_t)((e->Style & ~CS_STYLE_UNDERLINE_MASK) | (style << CS_STYLE_UNDERLINE_SHIFT));
 }
 
-/*
- * the select graphic rendition: every parameter is applied in turn to a
- * copy of the attribute, which then becomes the attribute of the text.
- */
+/* sgr: each parameter is applied in turn to a copy of the attribute, which then becomes the text attribute. */
 static void sgr(CsBuffer *b)
 {
     CsTerminal *t = b->Term;
@@ -1025,14 +1014,13 @@ static void set_mode(CsBuffer *b, int mode, bool on, bool priv)
 }
 
 /*
- * the alternate screen: a buffer of the size of the viewport that is shown
- * instead of this one until the program leaves it. the terminal gets the
- * same switch when it is the main screen that is shown.
+ * the alternate screen is a viewport-sized buffer shown instead of this one until the program leaves it. the terminal
+ * switches screens too when the main screen is the one shown.
  */
 static void alt_screen(CsBuffer *b, bool enter)
 {
     CsTerminal *t = b->Term;
-    /* the sequences of the alternate screen reach the buffer that has it, whichever one the program wrote to. */
+    /* alternate screen sequences act on the buffer that owns it, whichever one the program wrote to. */
     if (b->Main) {
         if (enter)
             return;
@@ -1080,11 +1068,11 @@ static void alt_screen(CsBuffer *b, bool enter)
         bool was_shown = t->Shown == b;
         b->Alt = nullptr;
         alt->Main = nullptr;
-        /* the main buffer takes the mode the program left the alternate one with. */
+        /* the main buffer takes the mode the program left the alternate one in. */
         b->Mode = alt->Mode;
         b->CursorVisible = alt->CursorVisible;
         b->CursorSize = alt->CursorSize;
-        /* the parser is still inside this buffer; the loop that feeds it destroys it. */
+        /* the parser is still inside this buffer, so the loop feeding it destroys it. */
         alt->Detached = true;
         if (was_shown && !t->Headless) {
             if (t->HostAlt && b == t->Main) {
@@ -1092,7 +1080,7 @@ static void alt_screen(CsBuffer *b, bool enter)
                 t->HostAlt = false;
                 t->HostKnown = false;
                 t->HostAttrKnown = false;
-                /* the terminal shows the screen it had; the cells are compared with that. */
+                /* the terminal shows its old screen again, and the cells are diffed against that. */
             }
             CsMarkRows(b, b->Window.Top, b->Window.Bottom, false);
         }
@@ -1186,14 +1174,14 @@ static void csi_dispatch(CsBuffer *b, uint32_t final)
     CsTerminal *t = b->Term;
     if (b->ParserHasParam || b->ParserParamCount == 0)
         finish_param(b);
-    /* an empty list is one omitted parameter, but SGR and the like read the count as it was typed. */
+    /* an empty list is one omitted parameter, but SGR and similar read the count as typed. */
     if (b->ParserParamCount == 1 && b->ParserParams[0] < 0 && final == 'm')
         b->ParserParamCount = 0;
     if (final != 'b')
         b->LastChar = 0;
     bool priv = b->ParserPrefix == '?';
     char im = b->ParserIntermediate;
-    /* a colon belongs to the select graphic rendition only. */
+    /* colons are for SGR only. */
     if (final != 'm') {
         for (int i = 0; i < b->ParserParamCount; i++)
             if (b->ParserParamSub[i])
@@ -1449,7 +1437,7 @@ static void esc_dispatch(CsBuffer *b, uint32_t final)
     }
     if (b->ParserIntermediate == '#') {
         if (final == '8') {
-            /* the screen of E's, with the colors and none of the flags. */
+            /* fill the screen with E's, in the text colors without flags. */
             CsCell cell = CsBlankOf(CsEraseAttr(b->Term, b->Attr));
             cell.Char = 'E';
             for (int y = b->Window.Top; y <= b->Window.Bottom; y++) {
@@ -1496,7 +1484,7 @@ static void esc_dispatch(CsBuffer *b, uint32_t final)
         CsReplyString(b->Term, "\x1b[?61;6;7;21;22;23;24;28;32;42c");
         break;
     case 'c': {
-        /* a full reset: the screen is cleared, the modes are the defaults. */
+        /* a full reset clears the screen and restores the default modes. */
         if (b->Main) {
             alt_screen(b, false);
             return;
@@ -1554,7 +1542,7 @@ static void osc_dispatch(CsBuffer *b)
     case 0:
     case 1:
     case 2: {
-        /* the title: utf-8 to utf-16. an empty one changes nothing. */
+        /* the title, utf-8 to utf-16. an empty one changes nothing. */
         unsigned n = 0;
         const uint8_t *s = (const uint8_t *)p;
         if (!*s)
@@ -1584,7 +1572,7 @@ static void osc_dispatch(CsBuffer *b)
         break;
     }
     case 4: {
-        /* palette entries n;color pairs: the sixteen first ones are the console's table. */
+        /* n;color palette pairs: the first sixteen entries are the console's table. */
         char *q = p;
         while (*q) {
             char *end;
@@ -1693,7 +1681,7 @@ static void osc_add(CsBuffer *b, uint32_t c)
 
 static void feed(CsBuffer *b, uint32_t c)
 {
-    /* controls that act whatever the state is */
+    /* controls that act in any state. */
     if (c == 0x18 || c == 0x1A) {
         CsParserReset(b);
         if (c == 0x1A)
@@ -1818,7 +1806,7 @@ static void feed(CsBuffer *b, uint32_t c)
             }
             return;
         }
-        /* a character no sequence has: the sequence is abandoned and the character is text. */
+        /* a character no sequence uses abandons the sequence and is printed as text. */
         b->ParserState = ST_GROUND;
         print(b, c);
         return;
@@ -1852,7 +1840,7 @@ static void feed(CsBuffer *b, uint32_t c)
 
 /* ------------------------------------------------------------------ the text of the plain mode */
 
-/* the backspace of the plain mode goes to the start of the cell before, and never to the row before. */
+/* plain mode backspace goes to the start of the previous cell, never to the row above. */
 static void legacy_backspace(CsBuffer *b)
 {
     if (b->WrapPending)
@@ -1864,7 +1852,7 @@ static void legacy_backspace(CsBuffer *b)
     }
 }
 
-/* a tab writes blanks up to the next multiple of 8, over what is there. */
+/* writes blanks up to the next multiple of 8, over what is there. */
 static void legacy_tab(CsBuffer *b)
 {
     int left = b->Grid.Width - b->CursorX;
@@ -1875,10 +1863,10 @@ static void legacy_tab(CsBuffer *b)
         CsPlaceChar(b, ' ', 1);
 }
 
-/* text of a buffer that does not take escape sequences. */
+/* a character for a buffer without escape sequence processing. */
 static void legacy_char(CsBuffer *b, uint32_t c)
 {
-    /* a wrap the escape sequence mode left pending happens first, if the cursor has not moved. */
+    /* a wrap left pending by escape sequence mode happens first, if the cursor has not moved. */
     if (b->WrapPending) {
         if (b->Mode & CS_WRAP_AT_EOL_OUTPUT)
             wrap_row(b);
@@ -1886,7 +1874,7 @@ static void legacy_char(CsBuffer *b, uint32_t c)
     }
     if (!(b->Mode & CS_PROCESSED_OUTPUT)) {
         if (c < 0x20 || c == 0x7F) {
-            /* the control code is kept in the cell as it is. */
+            /* the control code is stored in the cell as is. */
             CsPlaceChar(b, c, 1);
             return;
         }
@@ -1916,7 +1904,7 @@ static void legacy_char(CsBuffer *b, uint32_t c)
         break;
     }
     if (c < 0x20 || c == 0x7F) {
-        /* the glyphs of the oem code pages; the code page of utf-8 has none. */
+        /* oem code page glyphs, the utf-8 code page has none. */
         if (!b->Term->OemGlyphs)
             return;
         c = c == 0x7F ? 0x2302 : g_oem_glyphs[c];
@@ -1927,7 +1915,7 @@ static void legacy_char(CsBuffer *b, uint32_t c)
 void CsPutText(CsBuffer *root, const uint16_t *text, size_t count)
 {
     for (size_t i = 0; i < count; i++) {
-        /* the buffer that takes the text can change in the middle of it, with the alternate screen. */
+        /* the alternate screen can change the target buffer in the middle of the text. */
         CsBuffer *b = CsEffective(root);
         bool vt = vt_mode(b);
         uint32_t c = text[i];
@@ -1946,7 +1934,7 @@ void CsPutText(CsBuffer *root, const uint16_t *text, size_t count)
                 c = 0xFFFD;
             }
         } else if (b->HighSurrogate) {
-            /* the pair never ended. */
+            /* the pair was never completed. */
             b->HighSurrogate = 0;
             if (vt)
                 feed(b, 0xFFFD);

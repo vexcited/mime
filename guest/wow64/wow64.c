@@ -1,16 +1,8 @@
 /*
- * wow64.dll runs a 32-bit program on x64 as windows' wow64 does. the 64-bit
- * ntdll loads it and calls Wow64LdrpInitialize on every thread, which maps
- * the 32-bit ntdll, starts the thread's 32-bit code through wow64cpu.dll
- * and never returns. each system call of 32-bit code comes back here to be
- * converted (wow32.c, wow64win.dll for win32k) and made.
- *
- * a simulation runs 32-bit code until a call into it returns. calls the
- * 64-bit side makes into 32-bit code, window callbacks, nest one of their
- * own on the 32-bit stack below the code waiting in its system call. an
- * exception of 32-bit code reaches the 64-bit KiUserExceptionDispatcher,
- * whose Wow64PrepareForException hook leaves for the innermost simulation,
- * which sends it to the 32-bit ntdll's dispatcher.
+ * runs 32-bit programs on x64. 64-bit ntdll calls Wow64LdrpInitialize for each thread; it maps 32-bit ntdll, enters
+ * wow64cpu and never returns. system calls return here for conversion by wow32.c or wow64win. callbacks nest
+ * simulations below the suspended 32-bit stack. Wow64PrepareForException redirects 32-bit faults from the native
+ * dispatcher to the innermost simulation and then 32-bit ntdll.
  */
 #define MIME_WOW64_DLL
 #include <mime/ntrtl.h>
@@ -41,21 +33,21 @@ typedef struct WOW64_FRAME {
     WOW64_JUMP Jump;
     struct WOW64_FRAME *Outer;
     BOOLEAN Callback;
-    NTSTATUS Status; /* of a callback's NtCallbackReturn */
+    NTSTATUS Status; /* of a callback's NtCallbackReturn. */
     ULONG Result, ResultLength;
 } WOW64_FRAME;
 
 typedef struct WOW64_THREAD {
-    WOW64_FRAME *Frame; /* the innermost simulation */
+    WOW64_FRAME *Frame; /* the innermost simulation. */
     MIME_EXCEPTION32 Record;
-    I386_CONTEXT Context; /* of the exception the innermost simulation delivers */
+    I386_CONTEXT Context; /* of the exception the innermost simulation delivers. */
 } WOW64_THREAD;
 
 static struct {
     MIME_PEB32 *Peb32;
     PVOID Ntdll32;
     ULONG LdrInitializeThunk, UserThreadStart, ExceptionDispatcher, CallbackDispatcher;
-    ULONG ReturnAddress; /* the gate calls into 32-bit code return to */
+    ULONG ReturnAddress; /* the gate calls into 32-bit code return to. */
     PUCHAR Wow64Info;
     void(NTAPI *Simulate)(void);
     WOW64WIN_SYSTEM_CALL Win32kCall;
@@ -160,7 +152,7 @@ static PVOID procedure(PVOID dll, const char *name)
 
 /* ------------------------------------------------------------ contexts */
 
-/* the extended state a 32-bit thread starts with: the x87 control word and mxcsr windows sets. */
+/* initial x87 control word and MXCSR for a 32-bit thread. */
 static void initial_extended_state(I386_CONTEXT *context)
 {
     memset(context->ExtendedRegisters, 0, sizeof(context->ExtendedRegisters));
@@ -169,7 +161,7 @@ static void initial_extended_state(I386_CONTEXT *context)
     *(ULONG *)(context->ExtendedRegisters + 28) = 0xFFFF;
 }
 
-/* the parts of a 32-bit context its flags name, into the thread's cpu area, restored in full on the way back. */
+/* copies selected 32-bit context fields into the CPU area, which is restored in full on return. */
 static void set_context32(PWOW64_CPURESERVED cpu, const I386_CONTEXT *in)
 {
     I386_CONTEXT *c = &cpu->Context;
@@ -203,7 +195,7 @@ static void get_context32(PWOW64_CPURESERVED cpu, I386_CONTEXT *out)
     out->SegFs = TEB32_SEGMENT;
 }
 
-/* a 64-bit context of 32-bit code, as the kernel reports a fault, in the 32-bit layout. */
+/* converts the kernel's native fault context to the 32-bit layout. */
 static void context64_to_32(const CONTEXT *in, I386_CONTEXT *out)
 {
     memset(out, 0, sizeof(*out));
@@ -271,11 +263,7 @@ static void simulate(WOW64_THREAD *t, WOW64_FRAME *f)
     t->Frame = f->Outer;
 }
 
-/*
- * calls 32-bit code with stdcall arguments, below the 32-bit stack of the
- * code waiting in its system call, whose state comes back afterwards.
- * returns eax of a function that returns.
- */
+/* calls stdcall code below the suspended 32-bit stack and restores its state afterwards. returns the callee's EAX. */
 static ULONG call32(WOW64_FRAME *f, ULONG function, const ULONG *arguments, ULONG count, ULONG stack)
 {
     WOW64_THREAD *t = current_thread();
@@ -316,10 +304,8 @@ static void deliver_exception(WOW64_THREAD *t)
 }
 
 /*
- * the 64-bit KiUserExceptionDispatcher calls this first. an exception of
- * 32-bit code leaves the 64-bit dispatcher for the innermost simulation,
- * which sends it to the 32-bit ntdll; one of 64-bit code is dispatched as
- * usual.
+ * called first by the native KiUserExceptionDispatcher. redirects 32-bit faults to the innermost simulation and
+ * 32-bit ntdll; native faults continue through the usual dispatcher.
  */
 WOW64API void NTAPI Wow64PrepareForException(PEXCEPTION_RECORD record, PCONTEXT context)
 {
@@ -354,10 +340,8 @@ WOW64API NTSTATUS NTAPI Wow64KiUserCallbackDispatcher(ULONG api, ULONG arguments
 }
 
 /*
- * a 32-bit apc routine(argument1, argument2, argument3), queued as this
- * 64-bit routine with the 32-bit one in the upper half of its first
- * argument, as windows' wow64 queues them. it runs below the 32-bit stack,
- * or below the 64-bit dispatcher when the apc interrupted 32-bit code.
+ * the 32-bit APC address is encoded in the upper half of the first argument. runs the three-argument APC below the
+ * 32-bit stack, or below the native dispatcher if it interrupted 32-bit code.
  */
 WOW64API void NTAPI Wow64ApcRoutine(PVOID packed, PVOID argument2, PVOID argument3, PCONTEXT interrupted)
 {
@@ -380,14 +364,14 @@ void Mx32ApcRoutine(ULONG routine, ULONG context, PVOID *native, PVOID *argument
 static NTSTATUS queue_apc32(const ULONG *a)
 {
     ULONG64 packed = (ULONG64)a[1] << 32 | a[2];
-    /* the routine also takes the context, which user apc delivery passes as a fourth argument. */
+    /* the routine also takes the context, which user APC delivery passes as a fourth argument. */
     return NtQueueApcThread((HANDLE)(LONG_PTR)(LONG)a[0], (PPS_APC_ROUTINE)(void *)Wow64ApcRoutine, (PVOID)packed,
                             (PVOID)(ULONG_PTR)a[3], (PVOID)(ULONG_PTR)a[4]);
 }
 
 /* ------------------------------------------------------------ system calls */
 
-/* another thread's 32-bit context: the kernel's report when it runs 32-bit code, else its cpu area. */
+/* gets another thread's 32-bit context from the kernel when it runs 32-bit code, otherwise from its CPU area. */
 static NTSTATUS other_thread_cpu(HANDLE thread, ULONG_PTR *area)
 {
     THREAD_BASIC_INFORMATION info;
@@ -454,7 +438,7 @@ static DECLSPEC_NORETURN void unhandled32(const MIME_EXCEPTION32 *record, const 
         ;
 }
 
-/* the calls that replace the 32-bit state or are served here; true when number is one of them. */
+/* handles calls that replace 32-bit state or are implemented here; returns whether the number matched. */
 static BOOLEAN special_service(ULONG number, PULONG a, LONG *result)
 {
     PWOW64_CPURESERVED cpu = Wow64CpuArea();
@@ -513,9 +497,8 @@ static BOOLEAN special_service(ULONG number, PULONG a, LONG *result)
 }
 
 /*
- * one system call of 32-bit code: the number with windows' fast path in
- * its upper word, the arguments after the caller's return address. the
- * calls that replace the 32-bit state return the eax of the new one.
+ * dispatches a 32-bit system call. the upper word encodes the Windows fast path and arguments follow the return
+ * address. calls replacing CPU state return the new EAX.
  */
 WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
 {
@@ -537,11 +520,9 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
     PTEB teb = NtCurrentTeb();
     teb->LastErrorValue = *last_error;
     /*
-     * the kernel answers a pointer of the program that points at nothing with STATUS_ACCESS_VIOLATION, a guard page with
-     * STATUS_GUARD_PAGE_VIOLATION, and the thunks that translate the arguments read those pointers in this process: a fault
-     * there is the same answer. It ended the process
-     * instead, with an exception no 32-bit handler could take, for a program that hands a system call a bad pointer to
-     * learn that it is one.
+     * argument conversion reads user pointers in this process. return STATUS_ACCESS_VIOLATION or
+     * STATUS_GUARD_PAGE_VIOLATION for faults, as the kernel would, rather than terminating with a native exception
+     * no 32-bit handler can catch.
      */
     NTSTATUS status;
     teb->ExceptionCode = 0;
@@ -557,8 +538,8 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
     if (status == STATUS_NOT_IMPLEMENTED)
         Mx32Unsupported(number);
     /*
-     * a program with strict handle checks gets an exception for a handle that is none: the kernel leaves its code in the
-     * teb, and it is raised in the code that made the call, as it would after the call returned.
+     * strict handle checks leave the exception code in the TEB. raise it in the caller's code as if the system call
+     * had returned.
      */
     WOW64_THREAD *thread = current_thread();
     if (teb->ExceptionCode && thread) {
@@ -582,8 +563,8 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
 /* ------------------------------------------------------------ start */
 
 /*
- * the 32-bit ntdll, with the entry points wow64 calls and its gate pointed at wow64cpu's. the kernel mapped
- * it with the process and left its base in a spare pointer of the peb; a process made without it maps it here.
+ * locates 32-bit ntdll and its entry points, then installs wow64cpu's gate. the kernel stores its base in a spare
+ * PEB pointer; map it here if the kernel did not.
  */
 static void map_ntdll32(ULONG transition)
 {
@@ -627,7 +608,7 @@ static void process_init(void)
     g.Peb32 = (MIME_PEB32 *)(ULONG_PTR) * (PULONG)(Wow64CurrentTeb32() + MIME_TEB32_PEB);
     if (!MxFillPeb32(g.Peb32))
         fatal("cannot create the 32-bit process parameters", STATUS_NO_MEMORY);
-    /* the wow64 info follows the 32-bit peb, as on windows: the native page size first. */
+    /* the WOW64 info follows the 32-bit PEB, as on windows: the native page size first. */
     g.Wow64Info = (PUCHAR)g.Peb32 + 0x490;
     *(PULONG)g.Wow64Info = 0x1000;
 
@@ -651,10 +632,8 @@ static void process_init(void)
 }
 
 /*
- * the first code of every thread of a 32-bit program, from the 64-bit
- * ntdll: context is the 64-bit start the kernel made, rcx the 32-bit start
- * address and rdx its parameter. the 32-bit ntdll initializes the thread
- * in LdrInitializeThunk, then continues into its RtlUserThreadStart.
+ * native ntdll starts each 32-bit thread here. context holds the native start state, RCX the 32-bit entry point, and
+ * RDX its argument. 32-bit ntdll initializes through LdrInitializeThunk and continues into RtlUserThreadStart.
  */
 WOW64API DECLSPEC_NORETURN void NTAPI Wow64LdrpInitialize(PCONTEXT context)
 {

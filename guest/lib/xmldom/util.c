@@ -1,4 +1,4 @@
-/* memory, growing strings, interned strings, character classes and the numbers of xpath. */
+/* memory, growable strings, interned strings, character classes and xpath numbers. */
 #include <xmldom/xmldom.h>
 
 int _fltused = 0x9875;
@@ -399,7 +399,7 @@ void xd_format_number(double value, XBuf *out)
         d[n++] = (WCHAR)('0' + (UINT)(digits % 10));
         digits /= 10;
     }
-    /* d holds the digits backwards, fifteen of them; exp10 is the power of the last. */
+    /* d holds fifteen digits backwards, exp10 is the power of the last. */
     WCHAR text[16];
     for (UINT i = 0; i < n; i++)
         text[i] = d[n - 1 - i];

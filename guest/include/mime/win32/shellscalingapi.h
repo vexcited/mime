@@ -1,4 +1,4 @@
-/* the scaling api of shcore.dll, shellscalingapi.h, and the shcore stream and registry helpers. */
+/* shcore.dll: the scaling api of shellscalingapi.h plus the stream and registry helpers. */
 #ifndef MIME_WIN32_SHELLSCALINGAPI_H
 #define MIME_WIN32_SHELLSCALINGAPI_H
 

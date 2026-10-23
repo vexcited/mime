@@ -1,13 +1,11 @@
 /*
- * internet addresses and their text: the four forms of the conversions of ntdll, for version 4 and 6, to and from
- * wide and narrow strings. An address of version 4 is four bytes in network order, an address of version 6 sixteen; ports
- * are in network order and the scope of version 6 in host order.
+ * ipv4 and ipv6 address to and from text, wide and narrow. addresses and ports are in network order, the ipv6 scope
+ * in host order.
  *
- * A string with a terminator argument is parsed as far as it is an address, and the argument says where it ended. The
- * string of the extended forms must be an address entirely, with a scope (version 6) and a port as they come after it.
- * Version 4 in non strict form takes the forms of inet_addr: one to four numbers, in decimal, octal with a leading zero or
- * hexadecimal with 0x, the last one filling the bytes that remain. The strict form takes four decimal numbers without a
- * leading zero (a guess: windows may take leading zeros there as decimal).
+ * the terminator forms parse as far as the text is an address and report where it ended. the Ex forms need the whole
+ * string to be an address, optionally followed by a scope and a port. non strict ipv4 takes the inet_addr forms: one to
+ * four decimal, 0-prefixed octal or 0x hex numbers, the last one filling the remaining bytes. strict ipv4 takes four
+ * decimal numbers without leading zeros, a guess: windows may accept leading zeros there as decimal.
  */
 #include "ntdll_private.h"
 
@@ -29,7 +27,6 @@ static int hex_value(WCHAR c)
     return -1;
 }
 
-/* a narrow string as wide characters in the buffer of the caller, and where the wide parse ended in the narrow one. */
 static BOOLEAN widen(PCSTR text, WCHAR *out)
 {
     ULONG i = 0;
@@ -42,9 +39,8 @@ static BOOLEAN widen(PCSTR text, WCHAR *out)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ version 4 */
+/* ------------------------------------------------------------------ ipv4 */
 
-/* the numbers of an address of version 4 from the front of the text, and the end of them. */
 static const WCHAR *ipv4_parse(const WCHAR *s, BOOLEAN strict, ULONG *address)
 {
     ULONGLONG values[4];
@@ -77,7 +73,7 @@ static const WCHAR *ipv4_parse(const WCHAR *s, BOOLEAN strict, ULONG *address)
         values[count++] = value;
         if (*at != L'.' || count == 4)
             break;
-        /* a dot after the numbers belongs to them only when another number follows. */
+        /* a trailing dot is part of the address only when a number follows. */
         if (!is_digit(at[1]))
             break;
         at++;
@@ -101,7 +97,7 @@ static const WCHAR *ipv4_parse(const WCHAR *s, BOOLEAN strict, ULONG *address)
     return at;
 }
 
-/* a port after a colon, in network order, to the end of the text. */
+/* the port must run to the end of the text, it is returned in network order. */
 static BOOLEAN parse_port(const WCHAR *s, USHORT *port)
 {
     if (!is_digit(*s))
@@ -181,7 +177,6 @@ NTSTATUS NTAPI RtlIpv4StringToAddressExA(PCSTR s, BOOLEAN strict, PVOID address,
     return ipv4_to_address_ex(text, strict, address, port);
 }
 
-/* the text of an address of version 4 and the port after a colon when there is one. */
 static ULONG ipv4_format(const UCHAR *a, USHORT port, WCHAR *out)
 {
     ULONG n = 0;
@@ -254,9 +249,9 @@ NTSTATUS NTAPI RtlIpv4AddressToStringExA(const VOID *address, USHORT port, PSTR 
     return STATUS_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ version 6 */
+/* ------------------------------------------------------------------ ipv6 */
 
-/* the groups of an address of version 6 from the front of the text, with a dotted tail of version 4 where one ends it. */
+/* the address may end in a dotted ipv4 tail. */
 static const WCHAR *ipv6_parse(const WCHAR *s, UCHAR out[16])
 {
     USHORT groups[8] = {};
@@ -275,11 +270,11 @@ static const WCHAR *ipv6_parse(const WCHAR *s, UCHAR out[16])
         for (; hex_value(*at) >= 0 && digits < 4; at++, digits++)
             value = value * 16 + (ULONG)hex_value(*at);
         if (!digits) {
-            /* nothing but a colon pair that has just been taken may be here. */
+            /* only valid right after a "::". */
             break;
         }
         if (*at == L'.') {
-            /* the last two groups are an address of version 4. */
+            /* the last two groups are an ipv4 address. */
             ULONG v4;
             if (count > 6)
                 return nullptr;
@@ -426,8 +421,8 @@ static ULONG put_hex(WCHAR *out, ULONG value)
     return n;
 }
 
-/* the text of an address of version 6 as windows writes it, the longest run of zero groups (of two or more) as a pair of
-   colons and a tail of version 4 where the address is mapped, compatible or an isatap address. */
+/* like windows: the longest run of two or more zero groups becomes "::", and mapped, compatible and isatap addresses
+   get a dotted ipv4 tail. */
 static ULONG ipv6_format(const UCHAR *a, ULONG scope, USHORT port, WCHAR *out)
 {
     USHORT g[8];

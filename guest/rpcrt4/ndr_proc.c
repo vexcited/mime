@@ -1,14 +1,10 @@
 /*
- * the interpreter of procedure format strings: a call made by a client or served by a server, described by the format string
- * midl wrote for the procedure. A procedure is a header (handle, flags, number, size of its stack frame), the sizes of its
- * buffers and then one descriptor for each parameter: its attributes, its place in the frame and its type.
+ * the interpreter of procedure format strings. a procedure is a header: handle, flags, number and stack frame size, then
+ * its buffer sizes, then one descriptor per parameter giving its attributes, frame offset and type.
  */
 #include "ndr.h"
 #include "ndr_proc.h"
 
-/* ------------------------------------------------------------------ the procedure */
-
-/* reads the header and the parameter list of a procedure's format. */
 void NdrpParseProc(PFORMAT_STRING f, NDR_PROC *p)
 {
     memset(p, 0, sizeof(*p));
@@ -52,8 +48,6 @@ PFORMAT_STRING NdrpParamTypeFormat(const NDR_PROC *p, const NDR_PARAM *param)
     return p->Types + param->TypeOffset;
 }
 
-/* ------------------------------------------------------------------ stub message setup */
-
 void NdrpInitStubMessage(PMIDL_STUB_MESSAGE m, PRPC_MESSAGE msg, PMIDL_STUB_DESC desc, BOOL client, const NDR_PROC *p)
 {
     memset(m, 0, sizeof(*m));
@@ -77,8 +71,6 @@ void NdrpInitStubMessage(PMIDL_STUB_MESSAGE m, PRPC_MESSAGE msg, PMIDL_STUB_DESC
     if (desc->Version > NDR_STUB_VERSION_MAX)
         NDR_RAISE(RPC_X_WRONG_STUB_VERSION);
 }
-
-/* ------------------------------------------------------------------ buffers */
 
 RPCRTAPI unsigned char *RPC_ENTRY NdrGetBuffer(PMIDL_STUB_MESSAGE m, ULONG length, RPC_BINDING_HANDLE handle)
 {
@@ -190,11 +182,9 @@ RPCRTAPI void RPC_ENTRY NdrConvert(PMIDL_STUB_MESSAGE m, PFORMAT_STRING format)
     NdrConvert2(m, format, 0);
 }
 
-/* ------------------------------------------------------------------ status mapping */
-
 /*
- * the statuses of a failed call the parameters of the procedure can receive: the ones of the communication with the server
- * and the ones of the server's own failure. A status that neither can take is raised.
+ * the communication failures a procedure's comm status parameter can receive. the rest go to the fault status, and a
+ * status neither parameter can take is raised.
  */
 static const LONG g_comm_statuses[] = {
     RPC_S_OUT_OF_RESOURCES, RPC_S_SERVER_UNAVAILABLE, RPC_S_SERVER_TOO_BUSY,  RPC_S_CALL_FAILED_DNE,
@@ -225,9 +215,7 @@ RPCRTAPI RPC_STATUS RPC_ENTRY NdrMapCommAndFaultStatus(PMIDL_STUB_MESSAGE m, ULO
     return status;
 }
 
-/* ------------------------------------------------------------------ context handles */
-
-/* the hresult a call on a proxy answers with when the rpc runtime failed. */
+/* the HRESULT a proxy call returns when the rpc runtime failed. */
 RPCRTAPI HRESULT RPC_ENTRY NdrProxyErrorHandler(DWORD code)
 {
     if ((LONG)code < 0 && (code >> 16) == 0x8001)

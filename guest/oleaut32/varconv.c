@@ -1,8 +1,7 @@
 /*
- * the conversions between the types of variants that have exports of their own: VarI2FromR8, VarBstrFromCy and the
- * rest of the family. Every number becomes one of five kinds first and is stored from there, so each target has its
- * rule for overflow and rounding once: floats round half to even to integers, a currency keeps four decimals, a
- * decimal is exact.
+ * variant conversions that have their own exports: VarI2FromR8, VarBstrFromCy and the rest. every number becomes one
+ * of five kinds first, so each target has one rule for overflow and rounding: floats round half to even into
+ * integers, a currency keeps four decimals, a decimal is exact.
  */
 #include "oleaut32_private.h"
 #include "dtoa.h"
@@ -131,14 +130,14 @@ typedef struct {
     double Lo, Hi;
 } ITYPE;
 
-/* a double is in range when Lo <= it < Hi, which is where it rounds into the type. */
+/* a double is in range when Lo <= d < Hi, the interval that rounds into the type. */
 static const ITYPE T_I1 = {-128, 127, -128.5, 127.5};
 static const ITYPE T_UI1 = {0, 255, -0.5, 255.5};
 static const ITYPE T_I2 = {-32768, 32767, -32768.5, 32767.5};
 static const ITYPE T_UI2 = {0, 65535, -0.5, 65535.5};
 static const ITYPE T_I4 = {-2147483647ll - 1, 2147483647, -2147483648.5, 2147483647.5};
 static const ITYPE T_UI4 = {0, 4294967295ull, -0.5, 4294967295.5};
-/* windows rejects floats beyond 2^62 for the signed 64 bit type, though it would hold more, and takes the unsigned one up to 2^64. */
+/* windows rejects floats beyond 2^62 for the signed 64-bit type though it holds more, and takes unsigned up to 2^64. */
 static const ITYPE T_I8 = {-9223372036854775807ll - 1, 9223372036854775807ull, -4611686018427387904.0,
                            4611686018427387904.0};
 static const ITYPE T_UI8 = {0, 0xFFFFFFFFFFFFFFFFull, -0.5, 18446744073709551616.0};
@@ -199,8 +198,8 @@ static HRESULT num_to_int(const AUT_NUM *n, const ITYPE *t, LONGLONG *out)
 }
 
 /*
- * A currency as a 64 bit integer. Windows rounds with the low 32 bits of the stored value only, so a negative currency
- * that fits in 32 bits is always taken one further from zero, and a large one is nudged by whatever the low half leaves.
+ * windows rounds a currency using only the low 32 bits of the stored value, so a negative currency that fits in 32
+ * bits always goes one further from zero, and a large one is nudged by whatever the low half leaves.
  */
 static HRESULT cy_to_i8(LONGLONG cy, LONGLONG *out)
 {
@@ -239,8 +238,8 @@ static HRESULT store_I8(const AUT_NUM *n, LONGLONG *out)
 }
 
 /*
- * An unsigned 64 bit integer from a decimal: without a scale the words are taken as they are, and only a negative one
- * with both low words set is refused, so minus one is one. With a scale the value goes through a double.
+ * without a scale the decimal's words are taken as is and only a negative one with both low words set is refused, so
+ * minus one becomes one. with a scale the value goes through a double.
  */
 static HRESULT store_UI8(const AUT_NUM *n, ULONGLONG *out)
 {
@@ -302,7 +301,7 @@ static HRESULT store_R4(const AUT_NUM *n, FLOAT *out)
     HRESULT hr = num_to_r8(n, &d);
     if (FAILED(hr))
         return hr;
-    /* from one step above minus the limit to the middle between the largest float and 2^128, which is a tie that goes to infinity. */
+    /* from one step above minus the limit up to the midpoint of FLT_MAX and 2^128, a tie that rounds to infinity. */
     if (!(d >= double_from_bits(0xC7EFFFFFEFFFFFFFull) && d <= double_from_bits(0x47EFFFFFF0000000ull)))
         return DISP_E_OVERFLOW;
     *out = (float)d;
@@ -364,7 +363,7 @@ static HRESULT cy_from_dec(const DECIMAL *decimal, CY *result)
     return S_OK;
 }
 
-/* a currency from a number: integers stop at a whole count that leaves the room windows keeps, floats at the range of the type. */
+/* integers stop at the whole count windows leaves room for, floats at the range of the type. */
 static HRESULT store_Cy(const AUT_NUM *n, CY *out)
 {
     switch (n->Kind) {
@@ -394,7 +393,7 @@ static HRESULT store_Cy(const AUT_NUM *n, CY *out)
 }
 
 
-/* ten to a small power, as the double that windows has in a table. */
+/* ten to a small power, matching the table of doubles windows uses. */
 static double pow10_double(int n)
 {
     static const double table[30] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11, 1e12, 1e13, 1e14,
@@ -415,7 +414,7 @@ static ULONGLONG power_of_ten(int n)
     return r;
 }
 
-/* the digits times ten to a power, as the three words of a decimal; FALSE when they do not fit. */
+/* FALSE when mantissa * 10^power does not fit in 96 bits. */
 static BOOL mul_pow10_96(ULONGLONG mantissa, int power, DECIMAL *out)
 {
     ULONG w[3] = {(ULONG)mantissa, (ULONG)(mantissa >> 32), 0};
@@ -435,10 +434,10 @@ static BOOL mul_pow10_96(ULONGLONG mantissa, int power, DECIMAL *out)
 }
 
 /*
- * A float or a double as a decimal, the way windows does it and not by the shortest digits: the value is scaled by a power
- * of ten from an estimate of its size so that a fixed count of digits is kept, rounded half to even, and then trailing
- * zeros are taken off, but never more than the digits kept, so a carry that makes a power of ten keeps a few zeros. The
- * estimate of the power is the exponent times log10(2) as a fraction of 65536.
+ * like windows, this does not use the shortest digits: the value is scaled by a power of ten estimated from its size
+ * so a fixed count of digits is kept, rounded half to even, then trailing zeros are dropped, but never more than the
+ * digits kept, so a carry into a power of ten keeps a few zeros. the power estimate is the exponent times log10(2) as a
+ * fraction of 65536.
  */
 static HRESULT dec_from_real(double value, BOOL single, DECIMAL *out)
 {
@@ -607,9 +606,9 @@ HRESULT AutNumStore(const AUT_NUM *n, VARTYPE vt, VARIANT *dest, LCID lcid, ULON
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the exports from numbers */
+/* ------------------------------------------------------------------ exports from numbers */
 
-/* a boolean is a short that the small types take as it is, the 32 and 64 bit ones sign extended: -1 is all ones. */
+/* a boolean is a short: small types take it as is, 32 and 64-bit ones sign extend it, so -1 is all ones. */
 #define FROM_BOOL(To, ToT, value)                                                                                      \
     WINOLEAUTAPI HRESULT WINAPI Var##To##FromBool(VARIANT_BOOL in, ToT *out)                                           \
     {                                                                                                                  \
@@ -819,12 +818,9 @@ WINOLEAUTAPI HRESULT WINAPI VarDecFromBool(VARIANT_BOOL in, DECIMAL *out)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the exports from strings */
+/* ------------------------------------------------------------------ exports from strings */
 
-/*
- * The conversions from text read the digits with all the parse flags and ask for one type. The size of the buffer of
- * digits is what decides how far a hexadecimal number reaches and whether a fraction rounds away.
- */
+/* the size of the digit buffer decides how far a hexadecimal number reaches and whether a fraction rounds away. */
 static HRESULT read_digits(LPCOLESTR text, LCID lcid, ULONG flags, int capacity, NUMPARSE *np, BYTE *digits)
 {
     memset(np, 0, sizeof(*np));
@@ -844,7 +840,7 @@ static HRESULT read_typed(LPCOLESTR text, LCID lcid, ULONG flags, int capacity, 
     return VarNumFromParseNum(&np, digits, type_bit, value);
 }
 
-/* 32 and 64 bit integers add the digits up themselves, so a based number is a bit pattern and a fraction rounds to even. */
+/* 32 and 64-bit integers sum the digits themselves, so a based number is a bit pattern and a fraction rounds to even. */
 static HRESULT read_integer(LPCOLESTR text, LCID lcid, ULONG flags, int capacity, int bits, ULONGLONG *out)
 {
     NUMPARSE np;
@@ -1003,17 +999,17 @@ WINOLEAUTAPI HRESULT WINAPI VarDecFromStr(LPCOLESTR in, LCID lcid, ULONG flags, 
         return E_INVALIDARG;
     VARIANT value;
     HRESULT hr = read_typed(in, lcid, flags, 30, VTBIT_DECIMAL, &value);
-    /* the first two bytes of the decimal stay what the parse left, the type of the variant it was made in. */
+    /* the first two bytes keep what the parse left there: the vt of the variant it was built in. */
     if (SUCCEEDED(hr))
         *out = value.decVal;
     return hr;
 }
 
-/* ------------------------------------------------------------------ the names of booleans */
+/* ------------------------------------------------------------------ boolean names */
 
 typedef struct {
     LCID Lcid;
-    /* the primary language, or zero where only the exact locale matches. */
+    /* the primary language, or zero when only the exact locale matches. */
     USHORT Language;
     const WCHAR *False, *True;
 } BOOL_NAMES;
@@ -1046,7 +1042,7 @@ static const BOOL_NAMES g_bool_names[] = {
     {0x424, 0x24, L"Neresnično", L"Resnično"},
 };
 
-/* English unless the local names were asked for and the locale has some. */
+/* English unless local names were asked for and the locale has them. */
 static const BOOL_NAMES *bool_names_for(LCID lcid, ULONG flags)
 {
     if (!(flags & VARIANT_LOCALBOOL))
@@ -1063,7 +1059,7 @@ static const BOOL_NAMES *bool_names_for(LCID lcid, ULONG flags)
     return &g_bool_names[0];
 }
 
-/* only the letters of the alphabet of ASCII fold, whatever the language is. */
+/* only ASCII letters fold, whatever the language. */
 static BOOL same_name_ignoring_case(const WCHAR *text, const WCHAR *name)
 {
     for (; *text && *name; text++, name++) {
@@ -1108,9 +1104,9 @@ WINOLEAUTAPI HRESULT WINAPI VarBoolFromStr(LPCOLESTR in, LCID lcid, ULONG flags,
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the value of an object */
+/* ------------------------------------------------------------------ object values */
 
-/* the default property of an object, which may not be another object. */
+/* the object's default property, which must not be another object. */
 HRESULT AutExtractValueProperty(IDispatch *object, LCID lcid, VARIANT *result)
 {
     VariantInit(result);
@@ -1177,7 +1173,7 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromDisp(IDispatch *in, LCID lcid, ULONG flag
     return hr;
 }
 
-/* ------------------------------------------------------------------ the exports to strings */
+/* ------------------------------------------------------------------ exports to strings */
 
 #define BSTR_INTEGER(Src, SrcT, UNSIGNED)                                                                              \
     WINOLEAUTAPI HRESULT WINAPI VarBstrFrom##Src(SrcT in, LCID lcid, ULONG flags, BSTR *out)                           \
@@ -1211,10 +1207,10 @@ WINOLEAUTAPI HRESULT WINAPI VarBstrFromCy(CY value, LCID lcid, ULONG flags, BSTR
     BOOL negative = value.int64 < 0;
     ULONGLONG magnitude = negative ? 0 - (ULONGLONG)value.int64 : (ULONGLONG)value.int64;
     if (flags & LOCALE_USE_NLS) {
-        /* the digits with a point put in four from the end. */
+        /* the digits with a point inserted four from the end. */
         WCHAR whole[32];
         int length = AutFormatInteger(value.int64, FALSE, whole);
-        /* with fewer than four digits windows works in front of its buffer, and what comes out depends on what was there. */
+        /* with fewer than four digits windows reads in front of its buffer, so the output depends on what was there. */
         if (length < 4)
             return E_INVALIDARG;
         WCHAR digits[40];

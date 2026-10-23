@@ -1,7 +1,6 @@
 /*
- * writing images: a bitmap is handed to the encoder of the imaging component, with the settings of the
- * encoder parameters. a gif or a tiff can take several frames, the encoder then stays open in the first image
- * until the last frame is added.
+ * writing images: a bitmap goes to the WIC encoder with the settings from the encoder parameters. a gif or tiff can
+ * take several frames, and the encoder then stays open in the first image until the last frame is added.
  */
 #include "gp_private.h"
 #include <mime/win32/wincodec.h>
@@ -12,14 +11,14 @@ const GUID *gp_encoder_format(const CLSID *clsid);
 
 static BOOL same_guid(const GUID *a, const GUID *b) { return !memcmp(a, b, sizeof(GUID)); }
 
-/* ------------------------------------------------------------------ the parameters */
+/* ------------------------------------------------------------------ parameters */
 
 typedef struct SaveParams {
-    int quality;       /* 0..100, -1 when not given */
-    int compression;   /* the tiff compression method of the component, -1 when not given */
-    int depth;         /* the color depth of a tiff, 0 when not given */
-    int transform;     /* WICBitmapTransformOptions, 0 for none */
-    int flag;          /* the save flag value, 0 when not given */
+    int quality;       /* 0..100, -1 when not given. */
+    int compression;   /* the WIC tiff compression method, -1 when not given. */
+    int depth;         /* the tiff color depth, 0 when not given. */
+    int transform;     /* WICBitmapTransformOptions, 0 for none. */
+    int flag;          /* the save flag value, 0 when not given. */
     BOOL cmyk;
 } SaveParams;
 
@@ -123,7 +122,7 @@ static GpStatus parse_params(const EncoderParameters *p, SaveParams *out)
     return Ok;
 }
 
-/* ------------------------------------------------------------------ the encoder in use */
+/* ------------------------------------------------------------------ encoder state */
 
 typedef struct SaveState {
     IWICBitmapEncoder *encoder;
@@ -165,9 +164,9 @@ static BOOL multi_frame_format(const GUID *format)
     return same_guid(format, &ImageFormatGIF) || same_guid(format, &ImageFormatTIFF);
 }
 
-/* ------------------------------------------------------------------ the pixels */
+/* ------------------------------------------------------------------ pixels */
 
-/* the bitmap as a bitmap of the component, with its palette. */
+/* wraps the bitmap as a WIC bitmap, with its palette. */
 static GpStatus make_source(IWICImagingFactory *factory, GBitmap *b, IWICBitmap **out)
 {
     const GUID *format = gp_wic_format_of(b->format);
@@ -175,7 +174,7 @@ static GpStatus make_source(IWICImagingFactory *factory, GBitmap *b, IWICBitmap 
     PixelFormat used = b->format;
     UINT stride;
     if (!format) {
-        /* a format the component does not have is written as argb */
+        /* formats WIC lacks are written as argb. */
         format = &GUID_WICPixelFormat32bppBGRA;
         used = PixelFormat32bppARGB;
     }
@@ -255,8 +254,8 @@ static UINT indexed_bits(const GUID *f)
 }
 
 /*
- * the palette that colors get reduced to. a picture that is indexed already keeps its colors, otherwise the
- * halftone palettes stand in, with a clear color when pixels are transparent.
+ * the palette colors get reduced to. an indexed picture keeps its colors, otherwise the halftone palettes stand in,
+ * with a clear color when pixels are transparent.
  */
 static IWICPalette *palette_for(IWICImagingFactory *factory, IWICBitmapSource *src, UINT bits, BOOL transparent)
 {
@@ -301,7 +300,7 @@ static const GUID *depth_format(int depth)
     }
 }
 
-/* converts a source to a pixel format, with the palette of an indexed one. */
+/* an indexed target gets a palette. */
 static GpStatus convert_source(IWICImagingFactory *factory, IWICBitmapSource *src, const GUID *target,
                                BOOL transparent, IWICBitmapSource **out, IWICPalette **palette)
 {
@@ -473,7 +472,7 @@ static void write_properties(IWICBitmapFrameEncode *frame, const GUID *format, G
     w->lpVtbl->Release(w);
 }
 
-/* the delay of a gif frame, in hundredths of a second, from the property that lists them. */
+/* the gif frame delay, in 1/100 s, from the property that lists them. */
 static void write_gif_frame(IWICBitmapFrameEncode *frame, GBitmap *b, UINT index)
 {
     for (UINT i = 0; i < b->prop_count; i++) {
@@ -620,7 +619,7 @@ static GpStatus encode_frame(IWICImagingFactory *factory, SaveState *s, GBitmap 
         }
         if (palette) {
             frame->lpVtbl->SetPalette(frame, palette);
-            /* the first frame of a gif gives the global color table */
+            /* the first frame of a gif gives the global color table. */
             if (s->frames == 0 && same_guid(s->format, &ImageFormatGIF))
                 s->encoder->lpVtbl->SetPalette(s->encoder, palette);
         }
@@ -651,7 +650,7 @@ done:
     return st;
 }
 
-/* ------------------------------------------------------------------ the api */
+/* ------------------------------------------------------------------ api */
 
 static GpStatus open_state(IWICImagingFactory *factory, const GUID *format, const WCHAR *file, IStream *stream,
                            SaveState **out)
@@ -673,7 +672,7 @@ static GpStatus open_state(IWICImagingFactory *factory, const GUID *format, cons
         if (FAILED(hr)) {
             ws->lpVtbl->Release(ws);
             state_free(s);
-            /* a failure of the file system is a win32 error with its code as the last error */
+            /* file system failures become a win32 error with the code as the last error. */
             SetLastError(HRESULT_CODE(hr));
             return Win32Error;
         }
@@ -693,7 +692,7 @@ static GpStatus open_state(IWICImagingFactory *factory, const GUID *format, cons
     return Ok;
 }
 
-/* the bitmap an image stands for when it is written: a vector image is drawn first. */
+/* a vector image is drawn into a bitmap first. */
 static GpStatus bitmap_of(GpImage *image, GBitmap **b, BOOL *temporary)
 {
     *temporary = FALSE;
@@ -716,7 +715,7 @@ static GpStatus save_image(GpImage *image, const WCHAR *file, IStream *stream, c
     BOOL temporary;
     if (!image || !clsid || (!file && !stream))
         return InvalidParameter;
-    /* a codec that is not there maps to the status of a missing file, as in windows */
+    /* like windows, a missing codec gives the missing file status. */
     const GUID *format = gp_encoder_format(clsid);
     if (!format)
         return FileNotFound;
@@ -732,7 +731,7 @@ static GpStatus save_image(GpImage *image, const WCHAR *file, IStream *stream, c
         goto out;
     }
     if (b->save_state) {
-        /* an earlier multi frame save is still open and is finished first */
+        /* an earlier multi frame save is still open and is finished first. */
         state_free(b->save_state);
         b->save_state = nullptr;
     }
@@ -789,7 +788,7 @@ static GpStatus finish_state(GBitmap *b)
     return st;
 }
 
-/* adds the frame of an image to the save that image started. */
+/* adds a frame to the save that owner started. */
 static GpStatus add_frame(GBitmap *owner, GpImage *frame_image, const EncoderParameters *params)
 {
     SaveParams sp;

@@ -1,22 +1,19 @@
-/*
- * metadata: the handlers that read and write the blocks of a container or a frame, and the query language over them.
- */
+/* metadata handlers, block readers and writers, and query interfaces. */
 #ifndef WIC_META_H
 #define WIC_META_H
 
 #include "wic_codec.h"
 
-/* a block reader over readers, which it references. */
+/* block readers retain references to their readers. */
 HRESULT WicBlockReaderCreate(const GUID *container, IWICMetadataReader *const *readers, UINT count,
                              IWICMetadataBlockReader **reader);
-/* a block writer, empty. */
 HRESULT WicBlockWriterCreate(const GUID *container, IWICMetadataBlockWriter **writer);
 
-/* handlers that hold their items in memory, for the codecs to fill and to read. */
+/* in-memory handlers filled and read by codecs. */
 HRESULT WicMetaHandlerCreate(const GUID *format, IWICMetadataWriter **handler);
 HRESULT WicMetaSetItem(IWICMetadataWriter *handler, const PROPVARIANT *schema, const PROPVARIANT *id,
                        const PROPVARIANT *value);
-/* items named by a string, as the png and gif handlers have. */
+/* string-keyed items used by PNG and GIF handlers. */
 HRESULT WicMetaSetU8(IWICMetadataWriter *h, const WCHAR *name, BYTE value);
 HRESULT WicMetaSetU16(IWICMetadataWriter *h, const WCHAR *name, UINT16 value);
 HRESULT WicMetaSetU32(IWICMetadataWriter *h, const WCHAR *name, UINT32 value);
@@ -25,12 +22,12 @@ HRESULT WicMetaSetAnsi(IWICMetadataWriter *h, const WCHAR *name, const char *tex
 HRESULT WicMetaSetBytes(IWICMetadataWriter *h, const WCHAR *name, const BYTE *data, UINT size);
 /* items numbered, as in an ifd. */
 HRESULT WicMetaSetNumbered(IWICMetadataWriter *h, UINT16 id, const PROPVARIANT *value);
-/* reads. the result is false when the handler has no such item or it is of another kind. */
+/* reads return false for missing items or type mismatches. */
 BOOL WicMetaGetU32(IWICMetadataReader *h, const WCHAR *name, UINT32 *value);
 BOOL WicMetaGetBool(IWICMetadataReader *h, const WCHAR *name, BOOL *value);
 BOOL WicMetaGetBytes(IWICMetadataReader *h, const WCHAR *name, BYTE **data, UINT *size);
 BOOL WicMetaGetAnsi(IWICMetadataReader *h, const WCHAR *name, char **text);
-/* the reader of the block of the format, referenced, or NULL. */
+/* return a referenced block reader for this format, or NULL. */
 IWICMetadataReader *WicBlocksFind(IWICMetadataBlockReader *blocks, const GUID *format);
 /* a query reader over the readers of a block reader. */
 HRESULT WicQueryFromBlocks(IWICMetadataBlockReader *blocks, IWICMetadataQueryReader **query);

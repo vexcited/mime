@@ -1,7 +1,6 @@
 /*
- * the objects a visual refers to for its place and look: transforms, effect
- * groups, rectangle clips and filter effects. Their properties are numbers
- * or animations and are read when a frame is composed.
+ * transforms, effect groups, rectangle clips and filter effects. their
+ * properties are numbers or animations, read when a frame is composed.
  */
 #include "dcomp_private.h"
 
@@ -35,7 +34,7 @@ static HRESULT set_animation(DcObject *owner, DcFloat *slot, IDCompositionAnimat
     return S_OK;
 }
 
-/* the references an object counts, assigned under the device's lock. */
+/* called with the device lock held. */
 static void assign(DcObject **slot, DcObject *object)
 {
     if (object)
@@ -157,7 +156,7 @@ static HRESULT STDMETHODCALLTYPE tr_query(void *This, REFIID riid, void **out)
 static ULONG STDMETHODCALLTYPE tr_add_ref(void *This) { return DcObjectAddRef(&tr_impl(This)->base); }
 static ULONG STDMETHODCALLTYPE tr_release(void *This) { return DcObjectRelease(&tr_impl(This)->base); }
 
-/* one setter for a value and one for an animation, of the property at an index. */
+/* a value setter and an animation setter for the property at an index. */
 #define PROPERTY(prefix, name, index)                                                                                  \
     static HRESULT STDMETHODCALLTYPE prefix##_##name##_a(void *This, IDCompositionAnimation *animation)                \
     {                                                                                                                  \
@@ -358,7 +357,7 @@ HRESULT DcCreateTransform(DcDevice *device, DcTransformKind kind, void **out)
     return S_OK;
 }
 
-/* a group lists transforms of its device; one of 2d accepts no 3d transform. */
+/* a group takes transforms of its own device, and a 2d group accepts no 3d transform. */
 HRESULT DcCreateTransformGroup(DcDevice *device, BOOL three, void *const *transforms, UINT count, void **out)
 {
     if (!transforms || !out)
@@ -399,7 +398,6 @@ HRESULT DcCreateTransformGroup(DcDevice *device, BOOL three, void *const *transf
     return S_OK;
 }
 
-/* the matrix of a committed transform at a time. */
 BOOL DcTransformMatrix(const DcObject *object, UINT64 now, float m[16])
 {
     if (!object || object->cls->kind != DC_TRANSFORM)
@@ -697,7 +695,7 @@ HRESULT DcCreateRectangleClip(DcDevice *device, IDCompositionRectangleClip **out
     return S_OK;
 }
 
-/* the committed rectangle, then the radii of the corners in the order top left, top right, bottom left, bottom right. */
+/* the committed rectangle, then corner radii: top left, top right, bottom left, bottom right. */
 BOOL DcClipValues(const DcObject *object, UINT64 now, float rect[4], float radii[8])
 {
     if (!object || object->cls->kind != DC_CLIP)
@@ -755,7 +753,7 @@ static HRESULT STDMETHODCALLTYPE fx_query(void *This, REFIID riid, void **out)
 static ULONG STDMETHODCALLTYPE fx_add_ref(void *This) { return DcObjectAddRef(&fx_impl(This)->base); }
 static ULONG STDMETHODCALLTYPE fx_release(void *This) { return DcObjectRelease(&fx_impl(This)->base); }
 
-/* every one of these filters takes one input, which a visual's content is. */
+/* each of these filters takes one input, the visual's content. */
 static HRESULT STDMETHODCALLTYPE fx_set_input(void *This, UINT index, IUnknown *input, UINT flags)
 {
     return index ? E_INVALIDARG : S_OK;
@@ -957,7 +955,7 @@ HRESULT DcCreateFilter(DcDevice *device, DcFilterKind kind, void **out)
     return S_OK;
 }
 
-/* the color transform of a committed filter: a color matrix, or the saturation as one. */
+/* a color matrix, or the saturation expressed as one. */
 BOOL DcFilterColor(const DcObject *object, UINT64 now, float color[20])
 {
     if (!object || object->cls->kind != DC_FILTER)

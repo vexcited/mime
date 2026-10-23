@@ -1,7 +1,6 @@
 /*
- * the host's cameras through video4linux2: the device nodes in /dev that capture video, their formats, sizes and
- * rates, and a stream that reads frames from memory mapped buffers. a node is found again after it is unplugged by
- * the place it is plugged in, which a udev rule or a rename of the node does not change.
+ * V4L2 camera discovery and streaming from memory-mapped buffers. physical connection identifies a camera across
+ * reconnects, independently of device-node renames or udev rules.
  */
 #include "../camera/backend.h"
 
@@ -108,7 +107,7 @@ static const uint32_t common_sizes[][2] = {
 };
 static const uint32_t common_rates[] = {5, 10, 15, 20, 24, 25, 30, 50, 60};
 
-/* the rates of one size: what the driver lists, a few of the usual ones when it gives a range. */
+/* uses enumerated frame rates, or common rates within a reported range. */
 static void enumerate_intervals(int fd, FormatList *l, uint32_t pixel_format, uint32_t fourcc, uint32_t w, uint32_t h)
 {
     struct v4l2_frmivalenum iv = {.pixel_format = pixel_format, .width = w, .height = h};
@@ -117,7 +116,6 @@ static void enumerate_intervals(int fd, FormatList *l, uint32_t pixel_format, ui
             add_format(l, fourcc, w, h, iv.discrete.denominator, iv.discrete.numerator);
             continue;
         }
-        /* a range of intervals, so a range of rates. */
         double fastest = (double)iv.stepwise.min.denominator / iv.stepwise.min.numerator;
         double slowest = (double)iv.stepwise.max.denominator / iv.stepwise.max.numerator;
         for (size_t i = 0; i < MIME_ARRAY_COUNT(common_rates); i++)
@@ -155,7 +153,7 @@ static void enumerate_formats(int fd, FormatList *l)
             break;
         }
         if (sz.index == 0) {
-            /* a driver that cannot say what sizes it has: what it is set to. */
+            /* falls back to the current size if the driver cannot enumerate sizes. */
             struct v4l2_format cur = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE};
             if (xioctl(fd, VIDIOC_G_FMT, &cur) == 0)
                 enumerate_intervals(fd, l, fd_desc.pixelformat, fourcc, cur.fmt.pix.width, cur.fmt.pix.height);
@@ -183,7 +181,7 @@ static void usb_identity(const char *node, MimeCameraInfo *info, char *product, 
     if (!realpath(link, real))
         return;
     snprintf(device_path, device_size, "%s", real);
-    /* the interface is under the usb device, whose id and strings the camera is known by. */
+    /* the parent USB device supplies the camera ID and strings. */
     snprintf(file, sizeof(file), "%s/bInterfaceNumber", real);
     if (read_sysfs(file, text, sizeof(text)))
         info->interface_number = (uint16_t)strtoul(text, nullptr, 16);
@@ -234,7 +232,7 @@ static void probe(const char *node, CameraList *list)
     }
     char product[96] = "", device[PATH_MAX] = "";
     usb_identity(node, &s->info, product, sizeof(product), device, sizeof(device));
-    /* the card is "product: interface" for usb cameras, the product alone is what windows shows. */
+    /* USB cards report "product: interface"; Windows shows only the product. */
     char card[64];
     snprintf(card, sizeof(card), "%s", (const char *)cap.card);
     char *colon = strstr(card, ": ");
@@ -256,7 +254,7 @@ static int by_node(const void *a, const void *b)
 
 static void scan(CameraList *list)
 {
-    /* MIME_CAMERA_REAL=0 hides the host's own cameras, for tests that count them. */
+    /* MIME_CAMERA_REAL=0 hides host cameras. */
     const char *real = getenv("MIME_CAMERA_REAL");
     if (real && !strcmp(real, "0"))
         return;
@@ -292,7 +290,7 @@ static int watch_fd(void)
     return g_inotify;
 }
 
-/* a node of video appeared, went or changed: what else is made or removed in /dev is not for this. */
+/* ignores events for non-video device nodes. */
 static bool watch_drain(void)
 {
     char buffer[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
@@ -360,7 +358,7 @@ static void *capture(void *arg)
         if ((b.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK) == V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC &&
             (b.timestamp.tv_sec || b.timestamp.tv_usec)) {
             uint64_t stamp = (uint64_t)b.timestamp.tv_sec * 1000000000ull + (uint64_t)b.timestamp.tv_usec * 1000ull;
-            /* a driver's clock that is not this one would put frames far from now. */
+            /* rejects timestamps from an incompatible clock. */
             if (stamp <= ns && ns - stamp < 2000000000ull)
                 ns = stamp;
         }
@@ -431,7 +429,7 @@ static void *start(const CameraSource *source, const MimeCameraFormat *format, C
         release(s);
         return nullptr;
     }
-    /* motion jpeg is what the driver calls it: ask for the name the camera listed. */
+    /* uses the motion JPEG format name reported by this camera. */
     uint32_t native = 0;
     if (format->fourcc == MIME_CAMERA_FOURCC_MJPG) {
         struct v4l2_fmtdesc d = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE};
@@ -511,9 +509,9 @@ static void stop(void *stream)
 typedef struct Mapping {
     uint32_t set, property;
     uint32_t cid;
-    uint32_t auto_cid;   /* the control that makes it automatic, 0 for none */
-    bool auto_menu;      /* the auto control is the exposure menu rather than a boolean */
-    bool exposure;       /* the value is the base 2 logarithm of seconds, not a count of 100 microseconds */
+    uint32_t auto_cid;   /* the control that makes it automatic, 0 for none. */
+    bool auto_menu;      /* the auto control is the exposure menu rather than a boolean. */
+    bool exposure;       /* the value is the base 2 logarithm of seconds, not a count of 100 microseconds. */
 } Mapping;
 
 static const Mapping g_mappings[] = {
@@ -558,7 +556,7 @@ static int set_ctrl(int fd, uint32_t cid, int32_t value)
     return xioctl(fd, VIDIOC_S_CTRL, &c);
 }
 
-/* an exposure time in units of 100 microseconds as the power of two of seconds it is closest to from below. */
+/* converts 100-microsecond units to the nearest lower power-of-two seconds. */
 static int32_t exposure_to_log2(int32_t t)
 {
     return (int32_t)floor(log2(t <= 0 ? 1.0 : t * 1e-4));
@@ -618,7 +616,7 @@ static void control(const CameraSource *source, MimeCameraControl *c)
             c->max = q.maximum;
             c->default_value = q.default_value;
         }
-        [[fallthrough]]; /* the range also says what the value is */
+        [[fallthrough]]; /* the range also says what the value is. */
     case MIME_CAMERA_CONTROL_GET:
         if (get_ctrl(fd, m->cid, &value) < 0)
             c->status = (int32_t)status_of(errno);

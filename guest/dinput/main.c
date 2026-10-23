@@ -24,7 +24,7 @@ DECLSPEC_EXPORT HRESULT WINAPI DirectInputCreateW(HINSTANCE instance, DWORD vers
     return DiCreateHelper(instance, version, &IID_IDirectInputW, (void **)out, outer, FALSE);
 }
 
-/* the six interfaces of directinput 1 to 7 alone; the pointer stays untouched otherwise. */
+/* only the six directinput 1 to 7 interfaces; otherwise the pointer is left untouched. */
 DECLSPEC_EXPORT HRESULT WINAPI DirectInputCreateEx(HINSTANCE instance, DWORD version, REFIID riid, void **out,
                                                    IUnknown *outer)
 {

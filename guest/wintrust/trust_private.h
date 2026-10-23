@@ -8,14 +8,16 @@ typedef struct { const BYTE *data; DWORD size; } WT_BYTES;
 typedef struct { WT_BYTES encoded, value; BYTE tag; } WT_DER;
 BOOL WtTake(WT_BYTES *input, BYTE tag, WT_DER *item);
 BOOL WtOid(WT_DER item, const BYTE *value, DWORD size);
-/* what a signature covers: the image of a portable executable without the fields the signature is kept in, or the
-   bytes a cabinet's digest is made of, which the subject's reader has put together. */
+/*
+ * digest input assembled by the subject reader: PE bytes excluding signature-related fields, or the signed cabinet
+ * bytes.
+ */
 typedef struct {
     const BYTE *image;
     DWORD size, checksum, directory, certificate;
     const BYTE *digest_input;
     DWORD digest_size;
-    /* the bytes are those of a windows installer package, whose signature names its format with a sip identifier. */
+    /* Windows Installer package bytes, identified by the signature's SIP identifier. */
     BOOL installer;
 } WT_SUBJECT;
 LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);

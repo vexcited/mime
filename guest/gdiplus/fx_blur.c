@@ -1,7 +1,7 @@
 /*
- * blur and sharpen. the blur is a gaussian run along the rows and then along the columns, each line on its own
- * for the four bytes of a pixel. a large radius works on lines that are averaged down by a power of two and
- * brought back up by interpolation, which keeps the kernel short.
+ * blur and sharpen. the blur runs a gaussian along the rows, then the columns, on each of a pixel's four bytes. a
+ * large radius works on lines averaged down by a power of two and interpolated back up, which keeps the kernel
+ * short.
  */
 #include "fx_core.h"
 
@@ -17,17 +17,17 @@ typedef struct SharpenState {
     float amount;
 } SharpenState;
 
-/* the edge of a line is mirrored about its end pixel, or transparent. */
+/* a line's edge is mirrored about its end pixel, or transparent. */
 enum { EDGE_MIRROR, EDGE_TRANSPARENT };
 
-/* ------------------------------------------------------------------ the kernel */
+/* ------------------------------------------------------------------ kernel */
 
 typedef struct BlurPlan {
-    INT shift;           /* the lines are averaged in blocks of 1 << shift pixels */
-    INT taps;            /* the center and the taps - 1 on each side */
-    INT reach;           /* the pixels the edge of a line is made up for */
+    INT shift;           /* lines are averaged in blocks of 1 << shift pixels. */
+    INT taps;            /* the center plus taps - 1 on each side. */
+    INT reach;           /* how many pixels past each line end are made up. */
     INT edge;
-    /* the product of a byte and the weight of each tap, for the four bytes of a sum. */
+    /* each byte value times each tap weight, for the four bytes of a sum. */
     UINT16 product[BLUR_MAX_TAPS][256];
 } BlurPlan;
 
@@ -56,7 +56,7 @@ static BOOL plan_make(BlurPlan *plan, float radius, INT edge)
         return FALSE;
     plan->taps = taps;
     plan->reach = 2 * ((taps + 1) / 2) - 1;
-    /* the weights of a gaussian, 1.4 steps wide at the radius, the center counted once and the others twice. */
+    /* gaussian weights, 1.4 steps wide at the radius, the center counted once and the others twice. */
     float weight[BLUR_MAX_TAPS];
     float step = 1.4f / reduced, at = 0.0f, sum = 0.0f;
     for (INT j = 0; j < taps; j++) {
@@ -67,7 +67,7 @@ static BOOL plan_make(BlurPlan *plan, float radius, INT edge)
     float norm = (float)(1.0 / (double)sum);
     for (INT j = 0; j < taps; j++)
         weight[j] *= norm;
-    /* the center is met on both sides of the sum below. */
+    /* the sum below meets the center on both sides. */
     weight[0] *= 0.5f;
     for (INT j = 0; j < taps; j++)
         for (INT b = 0; b < 256; b++)
@@ -78,13 +78,13 @@ static BOOL plan_make(BlurPlan *plan, float radius, INT edge)
 /* ------------------------------------------------------------------ one line */
 
 typedef struct LineBuffers {
-    BYTE *padded;   /* a line with the edge made up for on both sides */
-    BYTE *samples;  /* the averaged line */
-    BYTE *smooth;   /* the averaged line after the filter */
-    BYTE *whole;    /* the result before it is put in its column */
+    BYTE *padded;   /* the line with its edges made up on both sides. */
+    BYTE *samples;  /* the averaged line. */
+    BYTE *smooth;   /* the averaged line after the filter. */
+    BYTE *whole;    /* the result before it goes into its column. */
 } LineBuffers;
 
-/* the line in padded + reach, with the pixels beyond its ends. */
+/* writes the line at padded + reach, with the pixels beyond its ends filled in. */
 static void pad_line(const BlurPlan *plan, BYTE *padded, const BYTE *line, INT n)
 {
     INT reach = plan->reach;
@@ -98,7 +98,7 @@ static void pad_line(const BlurPlan *plan, BYTE *padded, const BYTE *line, INT n
             before = line[i];
             after = line[n - 1 - i];
         } else {
-            /* a line this short has nothing to mirror, its end pixels go on. */
+            /* a line this short has nothing to mirror, its end pixels repeat. */
             before = line[0];
             after = line[n - 1];
         }
@@ -119,10 +119,10 @@ static void filter_line(const BlurPlan *plan, const BYTE *padded, INT n, BYTE *o
     }
 }
 
-/* how a value changes from one pixel to the next on the way to the next sample, in 1/128 of a byte. */
+/* the per pixel change toward the next sample, in 1/128 of a byte. */
 static INT slope_of(const BYTE *s, INT i, INT block) { return ((INT)s[i + 1] - (INT)s[i]) * 128 / block; }
 
-/* a value that left the range of a 16 bit number is taken to the end the slope points to. */
+/* a value outside the 16 bit range goes to the end the slope points to. */
 static INT keep_in_range(INT v, INT slope)
 {
     if (v < 0 || v > 32767)
@@ -131,15 +131,15 @@ static INT keep_in_range(INT v, INT slope)
 }
 
 /*
- * brings the samples back to n pixels. a sample stands for the middle of its block, between two samples the
- * value is on the line between them, and before the first and after the last the slope goes on.
+ * scales the samples back to n pixels. a sample sits at the middle of its block, values between two samples are
+ * interpolated linearly, and the slope continues before the first and after the last.
  */
 static void scale_up(const BYTE *s, INT m, INT shift, BYTE *out, INT n)
 {
     INT block = 1 << shift, half = block >> 1;
     INT first = m > 1 ? slope_of(s, 0, block) : 0;
     INT back = -first;
-    /* the pixels before the middle of the first block, walked from the middle outwards. */
+    /* pixels before the middle of the first block, walked outwards from the middle. */
     INT lead = fx_min(half, n);
     INT v = keep_in_range(back / 2 + ((INT)s[0] << 7), back);
     for (INT p = lead - 1; p >= 0; p--) {
@@ -187,8 +187,8 @@ static void blur_line(const BlurPlan *plan, const BYTE *line, INT n, BYTE *out, 
 }
 
 /*
- * blurs the lines of a plane of w by h bytes and stores the result turned, a pixel at x, y of the input goes to
- * y, x of the output. two passes bring the plane back the right way.
+ * blurs the lines of a w by h byte plane and stores the result transposed: input x, y goes to output y, x. two
+ * passes bring the plane back the right way.
  */
 static void blur_pass(const BlurPlan *plan, const BYTE *in, INT w, INT h, BYTE *out, LineBuffers *buf)
 {
@@ -199,7 +199,7 @@ static void blur_pass(const BlurPlan *plan, const BYTE *in, INT w, INT h, BYTE *
     }
 }
 
-/* the blurred planes of the pixels in bw by bh, with the source at ox and oy. blue, green, red and alpha. */
+/* bw by bh planes with the source at ox, oy, in blue, green, red, alpha order. */
 static GpStatus blur_pixels(const UINT32 *src, INT sw, INT sh, INT ox, INT oy, INT bw, INT bh, float radius, INT edge,
                             BYTE **planes)
 {
@@ -248,7 +248,7 @@ static GpStatus blur_pixels(const UINT32 *src, INT sw, INT sh, INT ox, INT oy, I
     return Ok;
 }
 
-/* ------------------------------------------------------------------ the blur */
+/* ------------------------------------------------------------------ blur */
 
 static void blur_init(void *state)
 {
@@ -265,7 +265,7 @@ static GpStatus blur_set(void *state, const void *params, UINT size)
     const BlurParams *p = params;
     if (size != sizeof(BlurParams))
         return InvalidParameter;
-    /* the comparison is false for a number that is not one. */
+    /* written so that NaN fails the check. */
     if (!(p->radius >= 0.0f && p->radius <= 256.0f))
         return InvalidParameter;
     s->radius = p->radius;
@@ -323,7 +323,7 @@ const FxClass fx_class_blur = {
     blur_run, nullptr,
 };
 
-/* ------------------------------------------------------------------ the sharpen */
+/* ------------------------------------------------------------------ sharpen */
 
 static void sharpen_init(void *state)
 {
@@ -368,7 +368,7 @@ static GpStatus sharpen_run(void *state, const FxJob *job)
         if (st != Ok)
             return st;
     }
-    /* the picture is the original pushed away from the blurred one, in weights with 6 fractional bits. */
+    /* the original pushed away from the blurred picture, weights with 6 fractional bits. */
     float strength = (0.4f - s->amount * 0.4f / 100.0f) + 0.6f;
     double denom = 2.0 * strength - 1.0;
     INT push = (INT)((float)(strength / denom) * 262144.0f + 2048.0f) >> 12;
@@ -384,7 +384,7 @@ static GpStatus sharpen_run(void *state, const FxJob *job)
                 INT blurred = planes ? planes[c * count + at] : o4[c];
                 n4[c] = fx_byte((push * o4[c] - pull * blurred + 32) >> 6);
             }
-            /* a pixel that is not opaque is at least as opaque as its brightest color. */
+            /* a non opaque pixel is at least as opaque as its brightest color. */
             if (n4[3] < 255)
                 n4[3] = fx_max(n4[3], fx_max(n4[2], fx_max(n4[1], n4[0])));
             job->dst[(SIZE_T)y * aw + x] = (UINT32)n4[3] << 24 | (UINT32)n4[2] << 16 | (UINT32)n4[1] << 8 | (UINT32)n4[0];

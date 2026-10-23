@@ -1,7 +1,6 @@
 /*
- * serialized property values: the TypedPropertyValue of the property set
- * format with unicode strings, as StgSerializePropVariant writes them and
- * the memory store keeps them.
+ * serialized property values: the TypedPropertyValue of the property set format,
+ * with Unicode strings, as StgSerializePropVariant writes them.
  */
 #include "propsys_private.h"
 

@@ -221,7 +221,7 @@ static void line(HDC dc, int x0, int y0, int x1, int y1)
     LineTo(dc, x1, y1);
 }
 
-/* a glyph drawn in color inside the square centered in r. */
+/* the glyph fills the square centered in r. */
 static void draw_glyph(HDC dc, const RECT *r, int glyph, COLORREF color)
 {
     int w = r->right - r->left, h = r->bottom - r->top;
@@ -301,7 +301,7 @@ static void draw_glyph(HDC dc, const RECT *r, int glyph, COLORREF color)
     DeleteObject(brush);
 }
 
-/* the raised or pushed button face, r becomes the area inside the edge. */
+/* draws a raised or pushed face and shrinks r to the area inside the edge. */
 static void draw_face(HDC dc, RECT *r, UINT state)
 {
     UINT edge = (state & (DFCS_PUSHED | DFCS_CHECKED)) ? EDGE_SUNKEN : EDGE_RAISED;
@@ -543,10 +543,7 @@ static BOOL draw_state_item(HDC dc, DRAWSTATEPROC proc, UINT type, LPARAM ldata,
     return ok;
 }
 
-/*
- * disabled text and complex items get the classic embossed look; icons
- * and bitmaps are drawn unchanged whatever the state.
- */
+/* disabled text and complex items get the classic embossed look, icons and bitmaps are drawn unchanged. */
 WINUSERAPI BOOL WINAPI DrawStateW(HDC dc, HBRUSH brush, DRAWSTATEPROC proc, LPARAM ldata, WPARAM wdata, int x, int y,
                                   int cx, int cy, UINT flags)
 {
@@ -577,9 +574,8 @@ WINUSERAPI BOOL WINAPI DrawStateW(HDC dc, HBRUSH brush, DRAWSTATEPROC proc, LPAR
 }
 
 /*
- * plain text is drawn in the gray text color. a callback draws black on
- * white into a memory bitmap, whose black pixels are then painted with
- * the brush, the gray text brush by default.
+ * plain text is drawn in the gray text color. a callback draws black on white into a memory bitmap, whose black
+ * pixels are then painted with the brush, the gray text brush by default.
  */
 WINUSERAPI BOOL WINAPI GrayStringW(HDC dc, HBRUSH brush, GRAYSTRINGPROC proc, LPARAM data, int count, int x, int y,
                                    int cx, int cy)
@@ -636,7 +632,7 @@ WINUSERAPI BOOL WINAPI GrayStringW(HDC dc, HBRUSH brush, GRAYSTRINGPROC proc, LP
 /* ------------------------------------------------------------------ DrawText */
 
 typedef struct TEXT_LINE {
-    int start;  /* index in the processed text */
+    int start;  /* index in the processed text. */
     int length;
     int width;
 } TEXT_LINE;
@@ -814,7 +810,7 @@ WINUSERAPI int WINAPI DrawTextExW(HDC dc, LPWSTR text, int count, LPRECT rect, U
     if (params && params->iTabLength)
         tab_width = tm.tmAveCharWidth * params->iTabLength;
 
-    /* processed copy with prefixes removed, room for an ellipsis. */
+    /* processed copy without prefixes, with room for an ellipsis. */
     LPWSTR buf = UserAlloc(((SIZE_T)count + 4) * sizeof(WCHAR));
     if (!buf)
         return 0;

@@ -1,7 +1,4 @@
-/*
- * the camera service: the host's cameras as the guest's, the streams that carry their frames, and a thread that
- * notices cameras coming and going. see mime/camera.h for the shared memory of a stream and docs/camera.md.
- */
+/* camera discovery, hotplug and frame delivery to the guest. mime/camera.h defines shared stream memory. */
 #include "camera.h"
 
 #include "backend.h"
@@ -21,7 +18,7 @@ typedef struct Stream {
     bool running;
     uint32_t handle;
     uint32_t camera;
-    CameraSource source; /* a copy for the backend, without formats */
+    CameraSource source; /* a copy for the backend, without formats. */
     MimeCameraFormat format;
     uint32_t out_fourcc;
     bool convert;
@@ -31,10 +28,10 @@ typedef struct Stream {
     uint32_t slots, slot_bytes;
     CameraConverter converter;
     void *backend_stream;
-    uint64_t frames;     /* published, touched by the delivery thread only */
+    uint64_t frames;     /* published, touched by the delivery thread only. */
     uint64_t last_wake_ns;
     uint32_t next_slot;
-    pthread_mutex_t lock; /* start and stop */
+    pthread_mutex_t lock; /* start and stop. */
 } Stream;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -114,10 +111,9 @@ static Stream *find_stream(uint64_t handle)
 
 /* ------------------------------------------------------------------ the cameras */
 
-/* what each backend found when it was last asked, so that one's change does not make the others look again. */
+/* caches each backend's last scan so one backend's changes do not rescan the others. */
 static CameraList g_found[MIME_ARRAY_COUNT(g_backends)];
 
-/* a copy of every camera found, formats included. */
 static CameraList combine(void)
 {
     CameraList list = {};
@@ -137,7 +133,7 @@ static CameraList combine(void)
     return list;
 }
 
-/* looks at the host again, at the backends of the mask. true when the set of cameras or their modes changed. */
+/* rescans backends selected by mask and reports changes in cameras or modes. */
 static bool rescan(unsigned dirty)
 {
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_backends); i++) {
@@ -192,7 +188,7 @@ static bool rescan(unsigned dirty)
     g_cameras = list;
     g_have_scan = true;
     pthread_cond_broadcast(&g_scanned);
-    /* the streams of a camera that went are told, whoever is waiting for their frames wakes up and finds out. */
+    /* marks removed cameras' streams and wakes waiting readers. */
     for (int i = 0; i < MAX_STREAMS; i++) {
         Stream *s = &g_streams[i];
         if (s->used && !find_source(s->camera)) {
@@ -223,7 +219,7 @@ static void *monitor(void *arg)
                 fds[n] = (struct pollfd){.fd = fd, .events = POLLIN};
                 owner[n++] = b;
             }
-            /* the backends that look on a timer have their own deadlines, which noise on the others does not move. */
+            /* timed backends have independent deadlines, unaffected by events from other backends. */
             int period = b->poll_ms ? b->poll_ms() : 0;
             if (!period) {
                 next_poll[i] = 0;
@@ -282,9 +278,8 @@ void mime_camera_init(MimeCameraNotify notify)
 }
 
 /*
- * the guest asks before the first scan is over only if it boots faster than the host looks at its cameras. a camera
- * that hangs its driver must not hang the guest's boot: after a few seconds the list is what there is, and the cameras
- * that turn up later arrive as changes.
+ * a hung camera driver must not block guest boot. limits the initial scan wait to a few seconds, then returns the
+ * partial list; later discoveries arrive as hotplug events.
  */
 static void wait_for_scan(void)
 {
@@ -347,7 +342,7 @@ uint64_t mime_camera_open(MimeVm *vm, uint64_t camera, uint64_t pa, uint64_t siz
     MimeCameraHeader *hdr = mime_vm_phys(vm, pa, size);
     if (!hdr)
         return MIME_HC_STATUS_INVALID;
-    /* the guest may change its block as it goes: what is asked for is read once. */
+    /* snapshots the request because the guest can change shared memory concurrently. */
     MimeCameraHeader req;
     memcpy(&req, hdr, offsetof(MimeCameraHeader, frame_fourcc));
     MimeCameraFormat want = {req.source_fourcc, req.width, req.height, req.fps_num, req.fps_den};
@@ -417,7 +412,7 @@ uint64_t mime_camera_open(MimeVm *vm, uint64_t camera, uint64_t pa, uint64_t siz
     return MIME_HC_STATUS_OK;
 }
 
-/* a slot to fill: a free one, else the oldest frame the guest has not taken, which a newer one replaces. */
+/* uses a free slot or replaces the oldest frame the guest has not taken. */
 static int take_slot(Stream *s)
 {
     MimeCameraHeader *h = s->hdr;
@@ -456,7 +451,7 @@ static void wake_guest(Stream *s)
 {
     uint64_t now = camera_now_ns();
     uint32_t was = __atomic_exchange_n(&s->hdr->wake, 1, __ATOMIC_ACQ_REL);
-    /* a notification the machine dropped would leave the guest waiting for ever: it is repeated now and then. */
+    /* repeats notifications periodically so a dropped interrupt cannot leave the guest waiting forever. */
     if (!was || now - s->last_wake_ns > 250000000ull) {
         s->last_wake_ns = now;
         if (g_notify)
@@ -548,7 +543,7 @@ void mime_camera_close(uint64_t handle)
         return;
     }
     pthread_mutex_lock(&s->lock);
-    /* no new start finds it, and the backend ends its thread before this returns. */
+    /* removes the stream from lookup and waits for its backend thread to stop. */
     s->used = false;
     pthread_mutex_unlock(&g_lock);
     if (s->running)

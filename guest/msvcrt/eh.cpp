@@ -2,20 +2,18 @@
  * c++ exceptions as msvc and clang compile them: _CxxThrowException
  * raises 0xE06D7363 with the object and its throw information, and the
  * frame handler of each function with try blocks or objects to destroy
- * finds a catch block for it, unwinds to it and runs it.
+ * finds a catch block, unwinds to it and runs it.
  *
- * a function's description comes in three forms, decoded here into one:
- * the FuncInfo of x86, whose fields are addresses and whose state is a
- * variable of the frame; the FuncInfo of x64 and arm64 (__CxxFrameHandler3),
- * whose fields are rvas, its state looked up from the instruction pointer;
- * and the compressed one of __CxxFrameHandler4.
+ * function descriptions come in three forms, decoded here into one: the
+ * x86 FuncInfo, with addresses and the state in a frame variable; the x64
+ * and arm64 FuncInfo of __CxxFrameHandler3, with rvas and the state looked
+ * up from the instruction pointer; and the compressed __CxxFrameHandler4 one.
  *
- * on 64-bit windows catch blocks and destructors are funclets, called
- * with the frame of the function they belong to; a catch runs from
- * RtlUnwindEx's consolidation callback once the frames above it are
- * unwound, and returns where to continue. on x86 they are code of the
- * function itself, called with its ebp, and the handler goes on to the
- * continuation itself.
+ * on 64-bit windows catch blocks and destructors are funclets called with
+ * their function's frame; a catch runs from RtlUnwindEx's consolidation
+ * callback once the frames above it are unwound, and returns where to
+ * continue. on x86 they are code inside the function, called with its ebp,
+ * and the handler jumps to the continuation itself.
  */
 #include "cxx.h"
 
@@ -27,7 +25,7 @@
 #define UNWIND_FLAGS (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND)
 #define EXCEPTION_TARGET_UNWIND 0x20
 
-/* the flags of a function: synchronous exceptions only, and noexcept. */
+/* function flags: synchronous exceptions only, and noexcept. */
 #define FUNC_EHS 1
 #define FUNC_NOEXCEPT 4
 
@@ -81,7 +79,7 @@ struct CATCHABLE {
     int copy;
 };
 
-/* what the record of a c++ exception names: the object, its throw information, and the image of the rvas. */
+/* what a c++ exception record carries: the object, its throw information and the image base for the rvas. */
 struct CXX_THROW {
     void *object;
     const THROW_INFO *info;
@@ -118,7 +116,7 @@ static int catchable_count(const CXX_THROW *t)
     return static_cast<const CATCHABLE_ARRAY *>(AT(t->base, t->info->catchables))->count;
 }
 
-/* the subobject of a base class within the object thrown. */
+/* where a base class subobject sits in the thrown object. */
 static void *adjust_pointer(void *object, const RTTI_PMD &where)
 {
     char *p = static_cast<char *>(object) + where.mdisp;
@@ -153,7 +151,7 @@ struct EH_HANDLER {
     int catch_object;
     ULONG_PTR code;
     int frame;
-    /* __CxxFrameHandler4: where the function goes on, which catch funclets return the index of. */
+    /* __CxxFrameHandler4: continuation addresses, catch funclets return an index into them. */
     int continuations;
     ULONG_PTR continuation[2];
 };
@@ -164,7 +162,7 @@ struct EH_TRY {
     EH_HANDLER *handlers;
 };
 
-/* a state's action: a funclet, or, from __CxxFrameHandler4, a destructor of the object at or through an offset. */
+/* a state's action: a funclet, or for __CxxFrameHandler4 a destructor of the object at or through an offset. */
 enum { ACTION_FUNCLET, ACTION_OBJECT, ACTION_POINTER };
 
 struct EH_UNWIND {
@@ -188,12 +186,12 @@ struct EH_FUNCTION {
     int ips;
     EH_IP *ip_map;
     ULONG flags;
-    /* a catch funclet's own description, of __CxxFrameHandler4: where its frame keeps its function's. */
+    /* __CxxFrameHandler4 catch funclet: catch_frame is where its frame keeps the parent function's frame. */
     bool is_catch;
     ULONG catch_frame;
 };
 
-/* a function's decoded description, kept for its next exception: they are read only and few. */
+/* decoded descriptions are cached for the next exception: they are read only and few. */
 static SRWLOCK g_cache_lock = SRWLOCK_INIT;
 static EH_FUNCTION **g_cache;
 static ULONG g_cache_count, g_cache_capacity;
@@ -259,7 +257,7 @@ static void *allocate(size_t size)
     return p;
 }
 
-/* the FuncInfo of __CxxFrameHandler3 and before; base is 0 on x86, where its fields are addresses. */
+/* the FuncInfo of __CxxFrameHandler3 and older; base is 0 on x86, where the fields are addresses. */
 struct FUNC_INFO3 {
     ULONG magic;
     int max_state;
@@ -360,7 +358,7 @@ static bool type_match(const EH_HANDLER *h, const CATCHABLE *c, const CXX_THROW 
     return true;
 }
 
-/* the catchable type of the exception a handler takes, or null. */
+/* the catchable type a handler takes for this exception, or null. */
 static const CATCHABLE *handler_match(const EH_HANDLER *h, const CXX_THROW *t)
 {
     for (int i = 0; i < catchable_count(t); i++) {
@@ -382,7 +380,7 @@ extern "C" int MsvcrtIsExceptionTypeof(const type_info *type, const EXCEPTION_RE
     return 0;
 }
 
-/* the catch object: a reference to the object, a copy of it or of a pointer, at frame + offset. */
+/* builds the catch object at frame + offset: a reference to the object, or a copy of it or of a pointer. */
 static void build_catch_object(const EH_HANDLER *h, const CATCHABLE *c, const CXX_THROW *t, ULONG_PTR frame)
 {
     if (!c || catch_all(h) || !h->catch_object)
@@ -412,7 +410,7 @@ struct MSVCRT_CATCH {
     CXX_THROW thrown;
     EXCEPTION_RECORD record;
     CONTEXT *context;
-    /* x86: the frame and try block of the catch, and the registration around it. */
+    /* x86: the catch's frame and try block, and the registration around it. */
     const void *frame;
     const void *try_block;
     void *registration;
@@ -436,9 +434,8 @@ static void push_catch(MSVCRT_CATCH *c, const EXCEPTION_RECORD *record, const CX
 }
 
 /*
- * a catch block ends: its exception object is destroyed unless an outer
- * catch block still has it, or the exception it was rethrown as is being
- * caught.
+ * ending a catch block destroys its exception object, unless an outer catch
+ * still holds it or the exception it was rethrown as is being caught.
  */
 static void pop_catch(MSVCRT_CATCH *c)
 {
@@ -464,7 +461,7 @@ extern "C" __declspec(noreturn) void __stdcall _CxxThrowException(void *object, 
 {
     MSVCRT_EH_THREAD *thread = MsvcrtEhThread();
     if (!info) {
-        /* throw; rethrows the exception of the catch block running. */
+        /* throw; rethrows the exception of the running catch block. */
         MSVCRT_CATCH *c = thread->catches;
         if (!c)
             terminate();
@@ -491,7 +488,7 @@ extern "C" __declspec(noreturn) void __stdcall _CxxThrowException(void *object, 
 
 static void call_action(ULONG_PTR action, ULONG_PTR frame);
 
-/* the destructors of the states from current down to target, each state left before its action runs. */
+/* runs destructors from state current down to target, leaving each state before its action runs. */
 static int unwind_to(const EH_FUNCTION *f, ULONG_PTR frame, int current, int target)
 {
     while (current > target && current < f->max_state) {
@@ -519,7 +516,7 @@ static int state_from_ip(const EH_FUNCTION *f, ULONG_PTR ip)
 }
 #endif
 
-/* exceptions the function lets through: noexcept ones end the program. */
+/* an exception escapes the function: a noexcept function ends the program. */
 static void escaped(const EH_FUNCTION *f)
 {
     if (f->flags & FUNC_NOEXCEPT)
@@ -528,7 +525,7 @@ static void escaped(const EH_FUNCTION *f)
 
 typedef void(__cdecl *translator_t)(unsigned, EXCEPTION_POINTERS *);
 
-/* whether a try block of the function covers a state, and so may catch. */
+/* whether a try block covers the state, so the function may catch. */
 static bool covered(const EH_FUNCTION *f, int state)
 {
     for (int i = 0; i < f->tries; i++)
@@ -560,7 +557,7 @@ typedef struct _DISPATCHER_CONTEXT {
 #endif
 } DISPATCHER_CONTEXT;
 
-/* the pc to find the state of a function by: on arm64 an unwound frame's pc is the instruction after its call. */
+/* the pc to look up a state by: on arm64 an unwound frame's pc is the instruction after its call. */
 static ULONG_PTR control_pc(const DISPATCHER_CONTEXT *dc)
 {
 #ifdef __aarch64__
@@ -576,9 +573,9 @@ typedef ULONG_PTR (*funclet_t)(ULONG_PTR, ULONG_PTR);
 static void call_action(ULONG_PTR action, ULONG_PTR frame) { ((funclet_t)action)(0, frame); }
 
 /*
- * the state of a function while a catch block of it runs, kept per
- * thread: the frame's own instruction pointer is still the throw's, in
- * the try block the catch has unwound.
+ * a function's state while one of its catch blocks runs, kept per thread:
+ * the frame's instruction pointer still points at the throw, inside the
+ * try block the catch has unwound.
  */
 static bool kept_state(ULONG_PTR frame, int *state)
 {
@@ -612,7 +609,7 @@ static void keep_state(ULONG_PTR frame, int state)
     }
 }
 
-/* where a frame's function is: a catch funclet's frame keeps the frame of the function it belongs to. */
+/* where a frame's function is: a catch funclet's frame keeps its parent function's frame. */
 struct EH_WHERE {
     ULONG_PTR frame;
     const EH_TRY *catch_try;
@@ -654,7 +651,7 @@ static void locate(const EH_FUNCTION *f, ULONG_PTR establisher, const DISPATCHER
         w->state = kept;
 }
 
-/* the parameters of the consolidation record a catch unwinds with. */
+/* consolidation record parameters for a catch unwind. */
 enum {
     CATCH_CALLBACK,
     CATCH_FRAME,
@@ -663,13 +660,13 @@ enum {
     CATCH_RECORD,
     CATCH_FUNCTION,
     CATCH_CONTEXT,
-    /* the try block is in a catch funclet: the funclet goes on, the function keeps its state. */
+    /* the try block is inside a catch funclet: the funclet continues, the function keeps its state. */
     CATCH_IN_FUNCLET,
     CATCH_HANDLER,
     CATCH_PARAMS
 };
 
-/* a catch block in progress whose frame an unwind leaves, as a new exception goes past it. */
+/* a running catch block whose frame an unwind leaves, as a new exception passes it. */
 struct CATCH_GUARD {
     MSVCRT_CATCH *c;
     bool done;
@@ -681,8 +678,8 @@ struct CATCH_GUARD {
 };
 
 /*
- * the consolidation callback: runs the catch funclet, with the frames
- * above its function unwound, and returns where the function goes on.
+ * the consolidation callback: runs the catch funclet once the frames above
+ * its function are unwound, and returns where the function continues.
  */
 static void *__stdcall call_catch(EXCEPTION_RECORD *consolidate)
 {
@@ -727,7 +724,7 @@ static __declspec(noreturn) void catch_it(EXCEPTION_RECORD *record, ULONG_PTR es
     p[CATCH_FUNCTION] = (ULONG_PTR)f;
     p[CATCH_CONTEXT] = (ULONG_PTR)context;
     p[CATCH_HANDLER] = (ULONG_PTR)h;
-    /* a try block within the catch funclet running goes on in that funclet, else in its function. */
+    /* a try block inside the running catch funclet continues in that funclet, else in its function. */
     bool in_funclet = w->catch_try && t->low > w->catch_try->high && t->high <= w->catch_try->catch_high;
     p[CATCH_IN_FUNCLET] = in_funclet;
     RtlUnwindEx((void *)(in_funclet ? establisher : w->frame), (void *)dc->ControlPc, &consolidate, nullptr, context,
@@ -762,7 +759,7 @@ static EXCEPTION_DISPOSITION frame_handler(EXCEPTION_RECORD *record, ULONG_PTR e
     if (!cxx) {
         MSVCRT_EH_THREAD *thread = MsvcrtEhThread();
         if (thread->translator && covered(f, w.state)) {
-            /* the translator throws a c++ exception of its own, which this dispatch then finds. */
+            /* the translator throws its own c++ exception, which this dispatch then finds. */
             EXCEPTION_POINTERS pointers = {record, context};
             ((translator_t)thread->translator)(record->ExceptionCode, &pointers);
         }
@@ -795,7 +792,7 @@ extern "C" EXCEPTION_DISPOSITION __cdecl __CxxFrameHandler3(EXCEPTION_RECORD *re
 
 /* ------------------------------------------------------------------ __CxxFrameHandler4 */
 
-/* the compressed integers: the low bits say the length, 1 to 4 bytes, or 5 with the value in the last four. */
+/* compressed integers: the low bits give the length, 1 to 4 bytes, or 5 with the value in the last four. */
 struct FH4_READER {
     const BYTE *p;
     ULONG unsigned_value()
@@ -838,7 +835,7 @@ struct FH4_READER {
 #define FH4_EHS 0x20
 #define FH4_NOEXCEPT 0x40
 
-/* the first instruction of the function a frame is in, its chained unwind information followed back. */
+/* the function's first instruction, following chained unwind info back. */
 static ULONG_PTR function_start(const DISPATCHER_CONTEXT *dc)
 {
     const ULONG *entry = static_cast<const ULONG *>(dc->FunctionEntry);
@@ -894,7 +891,7 @@ static EH_FUNCTION *decode4(const BYTE *info, const DISPATCHER_CONTEXT *dc)
     f->flags = (header & FH4_EHS ? FUNC_EHS : 0) | (header & FH4_NOEXCEPT ? FUNC_NOEXCEPT : 0);
     ULONG_PTR start = function_start(dc);
 
-    /* the unwind map: entries in state order, each linked back to the one it unwinds to, or to the count for none. */
+    /* entries come in state order, each linked to the one it unwinds to, or to the count for none. */
     if (unwind_map) {
         FH4_READER u = {(const BYTE *)AT(base, unwind_map)};
         const BYTE *map_start = u.p;
@@ -952,7 +949,7 @@ static EH_FUNCTION *decode4(const BYTE *info, const DISPATCHER_CONTEXT *dc)
         }
     }
 
-    /* the instruction pointer map: offsets from the function's start, or one map per separated part of it. */
+    /* the ip map holds offsets from the function start, or one map per separated part. */
     if (header & FH4_SEPARATED) {
         FH4_READER sep = {(const BYTE *)AT(base, ip_map)};
         ULONG parts = sep.unsigned_value();
@@ -967,7 +964,7 @@ static EH_FUNCTION *decode4(const BYTE *info, const DISPATCHER_CONTEXT *dc)
             int part_start = sep.int32();
             decode_ip_map4(f->ip_map, &f->ips, base, sep.int32(), (ULONG_PTR)AT(base, part_start));
         }
-        /* the parts may be anywhere: their entries in address order. */
+        /* the parts may be anywhere, so put their entries in address order. */
         for (int i = 1; i < f->ips; i++)
             for (int j = i; j > 0 && f->ip_map[j - 1].ip > f->ip_map[j].ip; j--) {
                 EH_IP swap = f->ip_map[j];
@@ -1004,7 +1001,7 @@ extern "C" EXCEPTION_DISPOSITION __cdecl __CxxFrameHandler(EXCEPTION_RECORD *rec
 
 /* ================================================================== x86 */
 
-/* a c++ frame's registration, 0xC below its ebp, the stack pointer of the function 4 below it. */
+/* a c++ frame's registration sits 0xC below ebp, the function's stack pointer 4 below that. */
 struct EH_NODE {
     EH_NODE *next;
     void *handler;
@@ -1033,7 +1030,7 @@ struct CATCH_REGISTRATION {
     void *handler;
     MSVCRT_CATCH *c;
     bool done;
-    /* the frame's saved stack pointer before the catch block put its own there. */
+    /* the frame's saved stack pointer from before the catch block put its own there. */
     EH_NODE *node;
     ULONG saved_esp;
 };
@@ -1057,9 +1054,9 @@ static __declspec(noreturn) void catch_it(EXCEPTION_RECORD *record, EH_NODE *nod
         build_catch_object(h, c, thrown, node_ebp(node));
     MsvcrtEhThread()->caught_object = thrown ? thrown->object : nullptr;
     /*
-     * a try block within a catch block of this frame still running unwinds
-     * no further than that catch's registration, which stays, as the catch
-     * block goes on after this one.
+     * a try block inside a still running catch block of this frame unwinds
+     * only to that catch's registration, which stays because that catch
+     * block continues after this one.
      */
     void *target = node;
     for (MSVCRT_CATCH *outer = MsvcrtEhThread()->catches; outer; outer = outer->next) {
@@ -1074,7 +1071,7 @@ static __declspec(noreturn) void catch_it(EXCEPTION_RECORD *record, EH_NODE *nod
     node->state = t->low - 1;
     MSVCRT_CATCH entry;
     push_catch(&entry, record, thrown, context);
-    /* catch blocks keep their own stack pointer where the function's is: the continuation needs the one before. */
+    /* catch blocks put their own stack pointer where the function's is, and the continuation needs the old one. */
     CATCH_REGISTRATION guard = {read_fs0(), (void *)catch_guard, &entry, false, node, ((ULONG *)node)[-1]};
     entry.frame = node;
     entry.try_block = t;
@@ -1132,7 +1129,7 @@ struct JUMP_BUFFER {
     int TryLevel;
 };
 
-/* longjmp out of a c++ frame: its destructors down to the level setjmp saw; the handler's thunk gives FuncInfo. */
+/* longjmp out of a c++ frame: runs its destructors down to the level setjmp saw; the handler's thunk gives FuncInfo. */
 extern "C" void __stdcall __CxxLongjmpUnwind(JUMP_BUFFER *buf)
 {
     EH_NODE *node = buf->Registration;
@@ -1159,7 +1156,7 @@ extern "C" void __stdcall __CxxCallUnwindDelDtor(void(__cdecl *destructor)(void 
 
 #endif
 
-/* ------------------------------------------------------------------ helpers of other runtimes */
+/* ------------------------------------------------------------------ helpers for other runtimes */
 
 extern "C" int __cdecl __CxxDetectRethrow(EXCEPTION_POINTERS *pointers)
 {
@@ -1167,7 +1164,7 @@ extern "C" int __cdecl __CxxDetectRethrow(EXCEPTION_POINTERS *pointers)
     return r && (ULONG)r->ExceptionCode == CXX_EXCEPTION && r->NumberParameters >= 3 && !r->ExceptionInformation[2];
 }
 
-/* catch blocks of managed code: whether the exception is of a type, with no catch object built here. */
+/* catch filter for managed code: whether the exception is of a type, without building a catch object. */
 extern "C" int __cdecl __CxxExceptionFilter(EXCEPTION_POINTERS *pointers, const type_info *type, int adjectives,
                                             void *build)
 {
@@ -1198,7 +1195,7 @@ extern "C" int __cdecl __CxxUnregisterExceptionObject(void *storage, int rethrow
     return 0;
 }
 
-/* the exception the newest catch block handles, as vcruntime's helpers of current compilers ask for it. */
+/* the exception the newest catch block handles, which current vcruntime helpers ask for. */
 extern "C" void **__cdecl __current_exception(void) { return &MsvcrtEhThread()->current_record; }
 extern "C" void **__cdecl __current_exception_context(void) { return &MsvcrtEhThread()->current_context; }
 extern "C" int *__cdecl __processing_throw(void) { return &MsvcrtEhThread()->throws; }

@@ -1,8 +1,6 @@
 /*
- * direct3d 1 to 7: the types, states and instructions the interfaces of
- * d3d.h take. the values are windows', as programs pass them. this header
- * and d3d9types.h describe the same names differently, so a file takes
- * one of them.
+ * direct3d 1 to 7 types, states and instructions for d3d.h, with windows' values.
+ * d3d9types.h defines the same names differently, so include only one of them.
  */
 #ifndef MIME_WIN32_D3DTYPES_H
 #define MIME_WIN32_D3DTYPES_H
@@ -589,7 +587,7 @@ typedef enum _D3DRENDERSTATETYPE {
     D3DRENDERSTATE_VERTEXBLEND = 151,
     D3DRENDERSTATE_CLIPPLANEENABLE = 152,
 
-    /* the states of the first interfaces, gone from the seventh. */
+    /* only in the interfaces before the seventh. */
     D3DRENDERSTATE_TEXTUREHANDLE = 1,
     D3DRENDERSTATE_TEXTUREADDRESS = 3,
     D3DRENDERSTATE_WRAPU = 5,
@@ -797,7 +795,7 @@ typedef enum _D3DTEXTUREMIPFILTER {
     D3DTFP_FORCE_DWORD = 0x7FFFFFFF
 } D3DTEXTUREMIPFILTER;
 
-/* ------------------------------------------------------------------ primitives of execute buffers */
+/* ------------------------------------------------------------------ execute buffer primitives */
 
 #define D3DTRIFLAG_START 0x00000000
 #define D3DTRIFLAG_STARTFLAT(len) (len)

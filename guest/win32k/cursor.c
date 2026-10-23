@@ -11,8 +11,8 @@ typedef struct CURICON {
     LONG Width;
     LONG Height;
     POINT Hotspot;
-    SURFACE *Image;  /* premultiplied 32 bpp */
-    ULONG System;    /* MIME_CURSOR_* + 1 for system cursors, 0 otherwise */
+    SURFACE *Image;  /* premultiplied 32 bpp. */
+    ULONG System;    /* MIME_CURSOR_* + 1 for system cursors, 0 otherwise. */
     W32PROCESS *Process;
 } CURICON;
 
@@ -21,7 +21,6 @@ static CURICON *lookup(HICON icon)
     return (CURICON *)UserLookup(icon, USER_TYPE_CURSOR);
 }
 
-/* whether a handle is a cursor or an icon, whatever the image. */
 BOOLEAN CursorValid(HICON icon)
 {
     return lookup(icon) != nullptr;
@@ -95,7 +94,6 @@ HICON NTAPI NtUserCreateEmptyCurObject(BOOL icon)
     return h;
 }
 
-/* converts the bitmaps given by user32 into a premultiplied image. */
 static SURFACE *build_image(const MIME_CURSOR_DATA *d)
 {
     LONG w = (LONG)d->Width, h = (LONG)d->Height;
@@ -188,7 +186,7 @@ BOOL NTAPI NtUserDestroyCursor(HICON icon, BOOL force)
     return c != nullptr;
 }
 
-/* a process owned 32 bpp bitmap copy of the image, for GetIconInfo. */
+/* a 32 bpp bitmap copy owned by the process, for GetIconInfo. */
 static HBITMAP export_bitmap(SURFACE *src, BOOLEAN mask)
 {
     SURFACE *s = SurfaceCreate(src->Width, src->Height, mask ? 1 : 32, 0);

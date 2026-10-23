@@ -44,7 +44,7 @@ static ULONG low(ULONG_PTR v)
     return (ULONG)v;
 }
 
-/* the structure of a hook in its x86 layout, its size; 0 for one it does not know. */
+/* converts hook data to the x86 layout and returns its size, or 0 for an unknown hook. */
 static ULONG hook_data32(int id, const UCHAR *in, ULONG size, UCHAR *out)
 {
     switch (id) {
@@ -102,7 +102,7 @@ static ULONG hook_data32(int id, const UCHAR *in, ULONG size, UCHAR *out)
     }
 }
 
-/* what a hook changed, back into the kernel's copy: a message alone can be. */
+/* copies what the hook changed back into the kernel's copy. only a message can change. */
 static void hook_data64(int id, const UCHAR *in, ULONG size, UCHAR *out, ULONG out_size)
 {
     if (id != WH_GETMESSAGE || size < sizeof(MSG32) || out_size < sizeof(MSG))
@@ -154,7 +154,7 @@ static BOOLEAN marshal_hook(ULONG *stack, PVOID arguments, ULONG length, MX_CALL
     *out = (HOOKPROC32){low((ULONG_PTR)in->Proc), in->Id, in->Code, low(in->Wparam), low(in->Lparam), in->Ansi, 0};
     if (in->DataSize) {
         out->DataSize = hook_data32(in->Id, in->Data, in->DataSize, out->Data);
-        /* an unknown structure would reach the hook in the wrong layout: it gets none. */
+        /* an unknown structure would reach the hook in the wrong layout, so it gets none. */
         if (!out->DataSize)
             out->Lparam = 0;
     }
@@ -163,7 +163,7 @@ static BOOLEAN marshal_hook(ULONG *stack, PVOID arguments, ULONG length, MX_CALL
     return TRUE;
 }
 
-/* a block of memory below 4 GiB, for what is too large to go on the stack. */
+/* memory below 4 GiB for data too large for the stack. */
 static PVOID block_allocate(SIZE_T size)
 {
     PVOID base = nullptr;
@@ -181,7 +181,7 @@ static void block_release(PVOID base)
         NtFreeVirtualMemory(NtCurrentProcess(), &base, &size, MEM_RELEASE);
 }
 
-/* a copy of data sent between processes, with the pointer inside it turned into where the data starts. */
+/* WM_COPYDATA larger than this goes in a separate block. its lpData becomes where the data starts. */
 #define INLINE_MAX 0x8000
 
 BOOLEAN Mx32MarshalCallback(ULONG *stack, ULONG api, PVOID arguments, ULONG length, MX_CALLBACK32 *callback)
@@ -204,7 +204,7 @@ BOOLEAN Mx32MarshalCallback(ULONG *stack, ULONG api, PVOID arguments, ULONG leng
     if (!external && in->DataSize > length - sizeof(*in))
         return FALSE;
     ULONG bytes = in->DataSize;
-    /* the structure as the program has it, whose size is not the one win32k put there. */
+    /* the 32-bit size of the structure, which differs from the one win32k sent. */
     ULONG fixed = kind == MIME_LPARAM_IN || kind == MIME_LPARAM_INOUT ? lay_size32(in->Msg) : 0;
     if (fixed && bytes < lay_size64(in->Msg))
         return FALSE;
@@ -219,7 +219,7 @@ BOOLEAN Mx32MarshalCallback(ULONG *stack, ULONG api, PVOID arguments, ULONG leng
         size32 = bytes - sizeof(MDICREATESTRUCTW) + 36;
     else if (in->Msg == WM_NCCALCSIZE && kind == MIME_LPARAM_INOUT && in->Wparam && bytes >= sizeof(NCCALCSIZE_PARAMS) + sizeof(WINDOWPOS))
         size32 = 3 * sizeof(RECT) + 4 + sizeof(WINDOWPOS32);
-    /* a block too large for the stack stays where win32k put it, or is made elsewhere if it needs converting. */
+    /* a block too large for the stack stays where win32k put it, unless it needs converting. */
     BOOLEAN keep_external = external && !copydata && !fixed && !mdi;
     if (external && !keep_external && !copydata)
         return FALSE;
@@ -265,7 +265,7 @@ BOOLEAN Mx32MarshalCallback(ULONG *stack, ULONG api, PVOID arguments, ULONG leng
     } else if (mdi) {
         const MDICREATESTRUCTW *m = (const void *)source;
         ULONG *small = (void *)target;
-        /* the strings follow the structure, which is smaller, so their places move up. */
+        /* the strings follow the smaller 32-bit structure, so their offsets move up. */
         ULONG cls = (ULONG_PTR)m->szClass >= 0x10000 ? (ULONG)((ULONG_PTR)m->szClass - 20) : (ULONG)(ULONG_PTR)m->szClass;
         ULONG title = (ULONG_PTR)m->szTitle >= 0x10000 ? (ULONG)((ULONG_PTR)m->szTitle - 20) : (ULONG)(ULONG_PTR)m->szTitle;
         small[0] = cls;
@@ -297,7 +297,7 @@ PVOID Mx32CallbackResult(const MX_CALLBACK32 *callback, PVOID result, ULONG *len
         return nullptr;
     const ULONG *small = result;
     if (callback->Api == MIME_CB_TIMERPROC || callback->Api == MIME_CB_SENDASYNC) {
-        /* the arguments are done with; the result takes their place. */
+        /* the arguments are no longer needed, the result overwrites them. */
         MIME_CALLBACK_RESULT *out = callback->Native;
         *out = (MIME_CALLBACK_RESULT){(LONG)small[0], 0, 0};
         *length = sizeof(*out);

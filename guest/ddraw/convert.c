@@ -1,8 +1,7 @@
 /*
- * what a display driver does that windows' emulation does not: blts
- * between formats, as d3d9's StretchRect converts rgb, palettized and
- * packed yuv sources to rgb, and the blocks of four character code
- * surfaces, copied whole.
+ * what a display driver does and the emulation layer does not: blts between
+ * formats, converting rgb, palettized and packed yuv sources to rgb like
+ * d3d9's StretchRect, and whole-block copies of four character code surfaces.
  */
 #include "ddraw_private.h"
 
@@ -67,7 +66,7 @@ static BOOL layout(const DDSURF *s, LAYOUT *l)
     return TRUE;
 }
 
-/* sources of any of the layouts, destinations rgb. */
+/* any source layout, rgb destinations only. */
 BOOL DdCanConvert(const DDSURF *src, const DDSURF *dst)
 {
     LAYOUT s, d;
@@ -129,7 +128,7 @@ static DWORD yuv(int y, int u, int v)
            (DWORD)clamp((c - 100 * d - 208 * e + 128) >> 8) << 8 | clamp((c + 516 * d + 128) >> 8);
 }
 
-/* a source pixel as a8r8g8b8. */
+/* reads a source pixel as a8r8g8b8. */
 static DWORD fetch(const LAYOUT *l, const BYTE *row, LONG x)
 {
     switch (l->kind) {
@@ -160,7 +159,7 @@ static DWORD pack(const LAYOUT *l, DWORD argb)
            reduce(argb & 0xFF, &l->b);
 }
 
-/* nearest point stretching, as the emulation's blts do. */
+/* nearest point stretching, like the emulation layer's blts. */
 void DdBlitConvert(DDSURF *dst, const RECT *d, DDSURF *src, const RECT *s, BOOL mirror_x, BOOL mirror_y)
 {
     LAYOUT sl, dl;
@@ -184,8 +183,8 @@ void DdBlitConvert(DDSURF *dst, const RECT *d, DDSURF *src, const RECT *s, BOOL 
 }
 
 /*
- * four character code surfaces of the same format: whole blocks, which
- * a driver copies without stretching; packed yuv by pixel pairs.
+ * four character code surfaces of the same format: a driver copies whole
+ * blocks without stretching, packed yuv by pixel pairs.
  */
 HRESULT DdBltBlocks(DDSURF *dst, const RECT *d, DDSURF *src, const RECT *s)
 {

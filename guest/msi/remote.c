@@ -1,18 +1,16 @@
 #include "msi_private.h"
 
 /*
- * the host of the custom actions that the installer cannot load: a 32-bit library in the installer of a 64-bit
- * machine. The installer starts the 32-bit msiexec.exe as the host, with the name of a pipe, and asks it to load the
- * library and run its entry point for a session. The library calls the functions of msi.dll as it always does, and
- * the msi.dll of the host, which holds no installation, sends each call over the pipe to the installer, which makes it
- * on the real handles and sends back what came out. Both sides keep the table below, so a function is known by its
- * place in it.
+ * the host for custom action libraries the installer cannot load: 32-bit libraries under a 64-bit installer. the
+ * installer starts the 32-bit msiexec.exe with a pipe name and asks it to load the library and run its entry point for
+ * a session. the library calls msi.dll as usual, and the host's msi.dll, which holds no installation, forwards each
+ * call over the pipe to the installer, which runs it on the real handles and sends back the results. both sides
+ * share the table below, so a function is known by its index.
  *
- * A message is a length, a kind and the content. A call holds the number of the function and its arguments in the
- * order of its signature, a reply the result and what came out in the same order. A signature has a letter for each
- * argument: i a number or a handle, W a string that is read, o a number that is written, H a handle that is written,
- * T a string of the length of a product code that is written, B and S a string that is written and the size of the
- * buffer that is read and written, b and S the same for bytes.
+ * a message is a length, a kind and the content. a call holds the function number and its arguments in signature
+ * order, a reply the result and the outputs in the same order. a signature has one letter per argument: i a number
+ * or handle, W an input string, o an output number, H an output handle, T an output string the length of a product
+ * code, B and S an output string and its in/out buffer size, b and S the same for bytes.
  */
 
 enum { MESSAGE_CALL = 1, MESSAGE_REPLY, MESSAGE_RUN, MESSAGE_RESULT, MESSAGE_QUIT };
@@ -131,7 +129,7 @@ static const BYTE *get_bytes(MESSAGE *message, SIZE_T length)
     return at;
 }
 
-/* a string that was put: an allocated copy, or null when it was absent. */
+/* returns an allocated copy of the next string, or NULL when it was absent. */
 static PWSTR get_text(MESSAGE *message)
 {
     if (!get_u32(message))
@@ -199,7 +197,7 @@ static BOOL receive_message(HANDLE pipe, ULONG *kind, MESSAGE *content)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the side of the library */
+/* ------------------------------------------------------------------ library side */
 
 static HANDLE g_client_pipe;
 static SRWLOCK g_client_lock = SRWLOCK_INIT;
@@ -284,7 +282,7 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
     return result;
 }
 
-/* runs in the host: loads the libraries it is asked to and runs their entry points for a session of the installer. */
+/* runs in the host: loads the requested libraries and runs their entry points for an installer session. */
 UINT WINAPI MsiCustomActionServer(LPCWSTR pipe_name)
 {
     HANDLE pipe = INVALID_HANDLE_VALUE;
@@ -346,7 +344,7 @@ UINT WINAPI MsiCustomActionServer(LPCWSTR pipe_name)
     return status;
 }
 
-/* ------------------------------------------------------------------ the side of the installer */
+/* ------------------------------------------------------------------ installer side */
 
 static HANDLE g_host_pipe, g_host_process;
 static SRWLOCK g_host_lock = SRWLOCK_INIT;
@@ -379,7 +377,7 @@ typedef struct HOST_WATCH {
     volatile LONG Connected;
 } HOST_WATCH;
 
-/* a host that dies before it connects would leave the installer waiting for it: this wakes the wait. */
+/* wakes the pending connect if the host dies before connecting. */
 static DWORD WINAPI watch_host(PVOID parameter)
 {
     HOST_WATCH *watch = parameter;
@@ -425,7 +423,7 @@ static UINT start_host(void)
         WaitForSingleObject(watcher, INFINITE);
         CloseHandle(watcher);
     }
-    /* the connection of the watcher is not the host's: a pipe that took a client but no host is no good. */
+    /* the client may be the watcher rather than the host, so a dead host is a failure. */
     if (!connected || WaitForSingleObject(process.hProcess, 0) != WAIT_TIMEOUT) {
         CloseHandle(pipe);
         TerminateProcess(process.hProcess, 1);
@@ -437,7 +435,7 @@ static UINT start_host(void)
     return ERROR_SUCCESS;
 }
 
-/* the call of a function from the library, made on the handles of the installer. */
+/* runs a call from the library on the installer's real handles. */
 static BOOL serve_call(MESSAGE *request, MESSAGE *reply)
 {
     ULONG id = get_u32(request);
@@ -474,7 +472,7 @@ static BOOL serve_call(MESSAGE *request, MESSAGE *reply)
             break;
         }
     }
-    /* a buffer is as big as the caller says its size is, with room for an end. */
+    /* buffers are as large as the caller's size, plus room for a terminator. */
     for (ULONG k = 0; k < buffer_count && !request->Failed; k++) {
         if (!present[k])
             continue;
@@ -497,7 +495,7 @@ static BOOL serve_call(MESSAGE *request, MESSAGE *reply)
         case 'S': {
             ULONG value = has_size[s] ? sizes[s] : 0;
             put_u32(reply, value);
-            /* what the buffer before it holds goes along: a string up to its end, bytes as many as the size says. */
+            /* the preceding buffer's content goes along: a string up to its terminator, bytes up to the size. */
             ULONG data_bytes = 0;
             const void *data = b ? buffers[b - 1] : nullptr;
             if (data)

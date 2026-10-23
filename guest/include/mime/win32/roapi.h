@@ -1,6 +1,4 @@
-/*
- * windows runtime basics of combase.dll: strings, activation and IInspectable.
- */
+/* windows runtime basics of combase.dll: strings, activation and IInspectable. */
 #ifndef MIME_WIN32_ROAPI_H
 #define MIME_WIN32_ROAPI_H
 
@@ -14,7 +12,7 @@
 
 typedef struct HSTRING__ *HSTRING;
 
-/* the caller provided header of a string reference, opaque like on windows. */
+/* caller-provided string reference header, opaque like on windows. */
 typedef struct HSTRING_HEADER {
     union {
         PVOID Reserved1;

@@ -302,7 +302,7 @@ enum DxbcResourceDimension {
     RES_STRUCTURED_BUFFER = 12,
 };
 
-/* the per component return types of resource declarations. */
+/* per component return types of resource declarations. */
 enum DxbcReturnType {
     RET_UNORM = 1,
     RET_SNORM = 2,
@@ -313,7 +313,7 @@ enum DxbcReturnType {
     RET_DOUBLE = 7,
 };
 
-/* system values of declarations; signature elements number them alike. */
+/* system values of declarations, numbered the same in signature elements. */
 enum DxbcSystemValue {
     SV_UNDEFINED = 0,
     SV_POSITION = 1,
@@ -344,7 +344,7 @@ enum DxbcSystemValue {
     SV_MIME_POINT_COORD = 0x4D51,
 };
 
-/* the pixel shader interpolation modes of dcl_input_ps. */
+/* dcl_input_ps interpolation modes. */
 enum DxbcInterpolation {
     INTERP_UNDEFINED = 0,
     INTERP_CONSTANT = 1,
@@ -374,7 +374,7 @@ enum DxbcInterpolation {
 #define TOK_SAMPLER_MODE(t) (((t) >> 11) & 0xF)
 #define TOK_CUSTOMDATA_CLASS(t) ((t) >> 11)
 
-/* the sync flags of sync. */
+/* sync flags. */
 #define SYNC_THREADS_IN_GROUP 0x1
 #define SYNC_GROUP_SHARED_MEMORY 0x2
 #define SYNC_UAV_GROUP 0x4

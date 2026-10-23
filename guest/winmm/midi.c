@@ -1,10 +1,7 @@
 /*
- * midi output as winmmbase gives it. device 0 is the gs wavetable synth,
- * the one device windows always has; the mapper, id -1, sends every
- * channel to it. each may be open once per process, and the synth takes
- * long messages at once, so their headers complete before the call
- * returns. streams are winmm's own sequencer over a device, as windows
- * plays them on the synth, which cannot stream. there are no midi inputs.
+ * MIDI output device 0 is the GS wavetable synth; MIDI_MAPPER, ID -1, sends every channel to it. each opens once per
+ * process. the synth completes long-message headers synchronously. winmm sequences streams over the synth, which
+ * cannot stream itself. there are no MIDI inputs.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -19,11 +16,11 @@ typedef struct STREAM STREAM;
 
 typedef struct MIDI_OUT {
     struct MIDI_OUT *next;
-    UINT id;           /* 0 or MIDI_MAPPER */
+    UINT id;           /* 0 or MIDI_MAPPER. */
     DWORD callback;
     DWORD_PTR target, instance;
-    BYTE status;       /* the mapper's running status */
-    STREAM *stream;    /* when the handle is a stream */
+    BYTE status;       /* the mapper's running status. */
+    STREAM *stream;    /* when the handle is a stream. */
     volatile LONG busy;
 } MIDI_OUT;
 
@@ -34,14 +31,14 @@ struct STREAM {
     volatile BOOL quit;
     BOOL paused;
     DWORD division, tempo;
-    LONG64 tick0;      /* the tick at time0 */
-    DWORD time0;       /* timeGetTime of tick0 while running */
-    DWORD played_ms;   /* the playing time before time0 */
+    LONG64 tick0;      /* the tick at time0. */
+    DWORD time0;       /* timeGetTime of tick0 while running. */
+    DWORD played_ms;   /* the playing time before time0. */
     MIDIHDR *head, *tail;
-    DWORD offset;      /* of the next event in the head */
-    LONG64 event_tick; /* of the next event, once its delta is counted */
+    DWORD offset;      /* of the next event in the head. */
+    LONG64 event_tick; /* of the next event, once its delta is counted. */
     BOOL delta_counted;
-    BOOL called;       /* the position callback of the next event went out */
+    BOOL called;       /* the position callback of the next event went out. */
     BYTE status;
     BYTE notes[16][128];
 };
@@ -49,9 +46,9 @@ struct STREAM {
 static RTL_CRITICAL_SECTION g_lock = {nullptr, -1, 0, nullptr, nullptr, 0};
 static MIDI_OUT *g_outs;
 static SYNTH *g_synth;
-static MIDI_OUT *g_synth_owner;     /* the handle of device 0, or of the mapper holding it */
+static MIDI_OUT *g_synth_owner;     /* the handle of device 0, or of the mapper holding it. */
 static BOOL g_mapper_open;
-static BOOL g_mapper_caps;          /* the mapper learned its target's support */
+static BOOL g_mapper_caps;          /* the mapper learned its target's support. */
 static DWORD g_mapper_volume = 0xFFFFFFFF;
 
 /* ------------------------------------------------------------------ handles */
@@ -548,7 +545,7 @@ static LONG64 current_tick(const STREAM *s)
     return s->tick0 + (LONG64)(DWORD)(now_ms() - s->time0) * num / den;
 }
 
-/* the clock restarted at a tick, keeping the time that tick fell on. */
+/* restarts the clock at a tick while preserving that tick's timestamp. */
 static void rebase(STREAM *s, LONG64 tick)
 {
     if (s->paused) {
@@ -605,8 +602,8 @@ static void play_short(STREAM *s, DWORD event)
 }
 
 /*
- * plays every event whose time has come; returns the milliseconds until
- * the next, or INFINITE. finished headers are handed back through done.
+ * plays due events and returns milliseconds until the next, or INFINITE. completed headers are returned through
+ * done.
  */
 static DWORD play_due(STREAM *s, MIDIHDR **done, DWORD *done_count, MIDIHDR **position_cb, DWORD max)
 {
@@ -754,7 +751,7 @@ WINMMAPI MMRESULT WINAPI midiStreamOpen(LPHMIDISTRM out, LPUINT id, DWORD count,
     return MMSYSERR_NOERROR;
 }
 
-/* every queued header goes back to the program, the clock to zero, and playing notes are ended. */
+/* returns queued headers, resets the clock and ends playing notes. */
 static MMRESULT stream_stop(STREAM *s, BOOL reset)
 {
     RtlEnterCriticalSection(&s->lock);

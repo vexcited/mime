@@ -1,12 +1,11 @@
 /*
- * process mitigation policies: what a process was created with, what it asks for later and what the
- * kernel enforces of it. a program gives CreateProcess two words of creation flags, kernelbase repacks
- * them as the mitigation options attribute, and the flag word of each PROCESS_MITIGATION_POLICY class
- * is derived here. a policy can be turned on and never off again.
+ * process mitigation policies. kernelbase repacks the two creation flag words of CreateProcess as the mitigation
+ * options attribute, and the flag word of each PROCESS_MITIGATION_POLICY class is derived here. a policy can be
+ * turned on but never off.
  *
- * enforced: a ban on dynamic code (memory that is writable and executable, or newly executable), for
- * the threads that did not opt out, and the ban on creating child processes. recorded and reported
- * only: the rest, among them the win32k system call ban and strict handle checks.
+ * enforced: the dynamic code ban on writable and executable or newly executable memory, for threads that did not
+ * opt out, and the child process ban. the rest, such as the win32k system call ban and strict handle checks, is
+ * only recorded and reported.
  */
 #include "../ntos.h"
 
@@ -14,7 +13,7 @@
 
 static const MIME_MITIGATION_FIELD g_fields[] = {MIME_MITIGATION_FIELDS};
 
-/* the options of the kernel's layout as the program's two words of flags. */
+/* converts the kernel's option layout back to the program's two flag words. */
 void PspUnpackMitigationOptions(const ULONG64 map[3], ULONG64 flags[2])
 {
     flags[0] = flags[1] = 0;
@@ -36,7 +35,7 @@ static ULONG field(const ULONG64 *flags, ULONG word, ULONG shift)
     return (ULONG)(flags[word] >> shift) & 3;
 }
 
-/* the flag word of every policy class, from the creation flags. */
+/* fills the flag word of every policy class from the creation flags. */
 static void derive(PEPROCESS process)
 {
     const ULONG64 *w = process->MitigationFlags;
@@ -67,8 +66,8 @@ static void derive(PEPROCESS process)
 }
 
 /*
- * the options a new process is created with. a field the creator left alone is the parent's, the rest
- * is the creator's, unless the parent marked its own field with the third bit.
+ * a field the creator left alone is inherited from the parent. the rest is the creator's, unless the parent marked
+ * its own field with the third bit.
  */
 void PspApplyMitigationOptions(PEPROCESS process, PEPROCESS parent, const ULONG64 requested[3])
 {
@@ -93,7 +92,6 @@ void PspApplyChildProcessPolicy(PEPROCESS process, ULONG policy)
         (policy & MIME_CHILD_PROCESS_RESTRICTED_UNLESS_SECURE ? MIME_CHILD_PROCESS_ALLOW_SECURE : 0);
 }
 
-/* the bits each class defines. */
 static BOOLEAN valid_flags(ULONG policy, ULONG flags)
 {
     static const ULONG masks[MIME_POLICY_COUNT] = {
@@ -115,9 +113,8 @@ static BOOLEAN valid_flags(ULONG policy, ULONG flags)
 }
 
 /*
- * NtSetInformationProcess(ProcessMitigationPolicy): the policy and its new flag word. only the policies a
- * program can ask for after it started are taken, and only for the process itself, except that a thread
- * may change the dynamic code policy of another process that allows a downgrade.
+ * NtSetInformationProcess(ProcessMitigationPolicy). only policies a program may set after start are taken, and only
+ * for itself, except that a thread may change the dynamic code policy of another process that allows a downgrade.
  */
 NTSTATUS PspSetMitigationPolicy(HANDLE handle, PVOID info, ULONG length)
 {
@@ -150,7 +147,7 @@ NTSTATUS PspSetMitigationPolicy(HANDLE handle, PVOID info, ULONG length)
     }
     if (!valid_flags(policy, flags))
         return STATUS_INVALID_PARAMETER;
-    /* opting out and downgrading only make sense next to the ban itself. */
+    /* opting out and downgrading only make sense together with the ban. */
     if (policy == MIME_POLICY_DYNAMIC_CODE) {
         if (!(flags & MIME_DYNAMIC_CODE_PROHIBIT) && (flags & (MIME_DYNAMIC_CODE_THREAD_OPT_OUT | MIME_DYNAMIC_CODE_REMOTE_DOWNGRADE)))
             return STATUS_INVALID_PARAMETER;
@@ -161,13 +158,13 @@ NTSTATUS PspSetMitigationPolicy(HANDLE handle, PVOID info, ULONG length)
         return status;
     ULONG current = process->MitigationPolicy[policy];
     if (policy == MIME_POLICY_DYNAMIC_CODE && process != PsCurrentProcess()) {
-        /* another process only lets its ban be lifted, and only if it said so. */
+        /* another process may only have its ban lifted, and only if it allows that. */
         if ((current & MIME_DYNAMIC_CODE_REMOTE_DOWNGRADE) && !(flags & MIME_DYNAMIC_CODE_PROHIBIT))
             process->MitigationPolicy[policy] = current & MIME_DYNAMIC_CODE_REMOTE_DOWNGRADE;
         else
             status = STATUS_ACCESS_DENIED;
     } else if (current & ~flags) {
-        /* nothing a policy turned on is turned off. */
+        /* a policy that is on cannot be turned off. */
         status = STATUS_ACCESS_DENIED;
     } else {
         process->MitigationPolicy[policy] = current | flags;
@@ -178,7 +175,7 @@ NTSTATUS PspSetMitigationPolicy(HANDLE handle, PVOID info, ULONG length)
     return status;
 }
 
-/* the flag word of a class, for a caller of NtQueryInformationProcess: the class in, the flags out. */
+/* NtQueryInformationProcess: the class comes in, its flag word goes out. */
 NTSTATUS PspQueryMitigationPolicy(PEPROCESS process, PVOID info, ULONG length, PULONG returned)
 {
     if (length != 8)
@@ -230,7 +227,7 @@ NTSTATUS PspSetThreadDynamicCodePolicy(PETHREAD thread, PVOID info, ULONG length
     PEPROCESS process = (PEPROCESS)thread->Tcb.Process;
     if (value > MIME_THREAD_DYNAMIC_CODE_ALLOW)
         return STATUS_INVALID_PARAMETER;
-    /* a thread opts out of a ban that allows it, and only for itself. */
+    /* a thread may only opt itself out, and only of a ban that allows it. */
     if (thread != PsCurrentThread())
         return STATUS_INVALID_PARAMETER;
     if (value && !(process->MitigationPolicy[MIME_POLICY_DYNAMIC_CODE] & MIME_DYNAMIC_CODE_THREAD_OPT_OUT))
@@ -239,7 +236,7 @@ NTSTATUS PspSetThreadDynamicCodePolicy(PETHREAD thread, PVOID info, ULONG length
     return STATUS_SUCCESS;
 }
 
-/* whether the calling thread may not make memory of a process executable that was not code. */
+/* TRUE when the calling thread may not make memory of target executable that was not code. */
 BOOLEAN PsDynamicCodeBlocked(PEPROCESS target)
 {
     ULONG policy = target->MitigationPolicy[MIME_POLICY_DYNAMIC_CODE];

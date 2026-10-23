@@ -1,11 +1,11 @@
 /*
- * structures a dxil function's control flow as spir-v requires: loops get
- * a header block holding only their phis, one continue block holding the
- * back edge and one merge block only their exits reach, every branch a
- * selection construct with a merge block of its own, found as the nearest
- * post-dominator in the loop's body, and shared merges a ladder of blocks.
- * edges to a return block shared with other paths become copies of it when
- * they would leave a construct.
+ * structures a dxil function's control flow for spir-v. each loop gets a
+ * header holding only its phis, one continue block with the back edge and
+ * one merge block only its exits reach. every branch becomes a selection
+ * with its own merge, the nearest post-dominator in the loop body, and
+ * shared merges become a ladder of blocks. edges to a return block shared
+ * with other paths get their own copy of it when they would leave a
+ * construct.
  */
 #include "cfg.h"
 
@@ -30,7 +30,7 @@ static void *alloc(Cfg *c, size_t size)
 
 static uint32_t *u32s(Cfg *c, uint32_t count) { return alloc(c, count * sizeof(uint32_t)); }
 
-/* a temporary, zeroed, gone at the release of the pass's mark. */
+/* zeroed, freed when the pass's mark is released. */
 static void *tmp(Cfg *c, size_t size)
 {
     void *p = bc_arena_alloc(&c->scratch, size ? size : 1);
@@ -174,7 +174,7 @@ static int live(const Cfg *c, uint32_t b) { return b < c->count && !c->blocks[b]
 
 static int orphan(const Cfg *c, uint32_t b) { return c->blocks[b].idom == DX_NONE; }
 
-/* the reverse post order from the entry; returns the count, blocks nothing reaches left out. */
+/* returns the count, leaving out unreachable blocks. */
 static uint32_t reverse_post_order(Cfg *c, uint32_t *order)
 {
     BcMark mark = bc_arena_mark(&c->scratch);
@@ -207,7 +207,7 @@ static uint32_t reverse_post_order(Cfg *c, uint32_t *order)
     return count;
 }
 
-/* the predecessors and dominators of the blocks as they are now. */
+/* recomputes predecessors and dominators. */
 static void analyze(Cfg *c)
 {
     uint32_t n = c->count, edges = 0;
@@ -264,7 +264,7 @@ static void analyze(Cfg *c)
         index[b] = DX_NONE;
     for (uint32_t i = 0; i < count; i++)
         index[order[i]] = i;
-    /* cooper, harvey and kennedy's iteration over the reverse post order. */
+    /* Cooper, Harvey and Kennedy's iteration over the reverse post order. */
     c->blocks[c->entry].idom = c->entry;
     for (int changed = 1; changed;) {
         changed = 0;
@@ -314,7 +314,7 @@ int cfg_dominates(const Cfg *c, uint32_t a, uint32_t b)
 
 static int is_exit_block(const CfgBlock *b) { return b->term == TERM_RETURN || b->term == TERM_UNREACHABLE; }
 
-/* an edge to a block that only returns, which no other block reaches: a return in place. */
+/* an edge to a block that only returns and has no other predecessor: a return in place. */
 static int terminal(const Cfg *c, uint32_t from, uint32_t to)
 {
     const CfgBlock *t = &c->blocks[to];
@@ -424,7 +424,7 @@ static void remove_dead(Cfg *c)
     bc_arena_release(&c->scratch, mark);
 }
 
-/* a block on the edges from preds to m, taking their entries of m's phis. */
+/* a block between preds and m, taking over their entries of m's phis. */
 static uint32_t ladder(Cfg *c, uint32_t m, const uint32_t *preds, uint32_t count)
 {
     uint32_t l = add_block(c);
@@ -457,7 +457,7 @@ static uint32_t ladder(Cfg *c, uint32_t m, const uint32_t *preds, uint32_t count
     return c->error[0] ? DX_NONE : l;
 }
 
-/* the edge from p to return block t goes to a copy of t of its own. */
+/* gives the edge from p to return block t its own copy of t. */
 static void copy_exit(Cfg *c, uint32_t p, uint32_t t)
 {
     uint32_t copy = add_block(c);
@@ -494,7 +494,7 @@ typedef struct Exit {
     uint32_t from, to;
 } Exit;
 
-/* one block the loop's exits all go to, which switches to their targets. */
+/* one block all the loop's exits go to, which switches to their targets. */
 static uint32_t dispatch(Cfg *c, Exit *exits, uint32_t count, const uint32_t *targets, uint32_t target_count)
 {
     uint32_t i32 = int32_type(c);
@@ -568,7 +568,7 @@ static uint32_t dispatch(Cfg *c, Exit *exits, uint32_t count, const uint32_t *ta
 
 /* ------------------------------------------------------------------ loops */
 
-/* the body of the loop at h: the blocks that reach its back edges without passing h. */
+/* the blocks that reach h's back edges without passing h. */
 static uint32_t loop_body(Cfg *c, uint32_t h, uint8_t *in_body, uint32_t *list)
 {
     __builtin_memset(in_body, 0, c->count);
@@ -605,7 +605,7 @@ static int is_loop_head(const Cfg *c, uint32_t h)
     return 0;
 }
 
-/* a block taking the edges to h and its phis, so h's code may branch and the loop header holds nothing else. */
+/* takes over the edges to h and its phis, so h's code may branch and the header holds nothing else. */
 static uint32_t hoist(Cfg *c, uint32_t h)
 {
     uint32_t top = add_block(c);
@@ -648,7 +648,7 @@ static int canonicalize_loop(Cfg *c, uint32_t h)
     uint32_t body_limit = cont;
     analyze(c);
 
-    /* its exits: edges out of the body other than returns in place. */
+    /* exits: edges out of the body other than returns in place. */
     uint32_t merge = DX_NONE;
     for (int round = 0; merge == DX_NONE; round++) {
         BcMark inner = bc_arena_mark(&c->scratch);
@@ -730,7 +730,7 @@ static int canonicalize_loop(Cfg *c, uint32_t h)
     return c->error[0] ? -1 : 0;
 }
 
-/* canonicalizes the loops, the innermost first, as their body is the smallest. */
+/* innermost loops first, as their body is the smallest. */
 static int structure_loops(Cfg *c)
 {
     for (uint32_t round = 0; round < 100000; round++) {
@@ -762,7 +762,7 @@ static int structure_loops(Cfg *c)
     return fail(c, "too many loops");
 }
 
-/* every block's innermost loop, and each loop's parent: the smallest other loop holding it. */
+/* each block's innermost loop, and each loop's parent: the smallest other loop holding it. */
 static void assign_loops(Cfg *c)
 {
     BcMark mark = bc_arena_mark(&c->scratch);
@@ -816,7 +816,7 @@ static int in_loop(const Cfg *c, uint32_t b, uint32_t h)
     return 0;
 }
 
-/* the loop whose body a block's selections belong to: a header belongs to its parent's. */
+/* the loop owning a block's selections. a header's belong to its parent's body. */
 static uint32_t region_of(const Cfg *c, uint32_t b)
 {
     const CfgBlock *blk = &c->blocks[b];
@@ -825,7 +825,7 @@ static uint32_t region_of(const Cfg *c, uint32_t b)
 
 /* ------------------------------------------------------------------ selections */
 
-/* immediate dominators of a graph in compressed rows from entry, by the same iteration. */
+/* the same iteration, on a graph in compressed rows. */
 static void graph_dominators(Cfg *c, uint32_t n, const uint32_t *start, const uint32_t *edges, uint32_t entry,
                              uint32_t *idom)
 {
@@ -908,12 +908,12 @@ static int leaves_region(const Cfg *c, uint32_t r, uint32_t to)
 }
 
 /*
- * the merges of the selections of a region: the top level, r == DX_NONE,
- * or a loop's body. the post-dominators are of the reversed region graph,
- * inner loops one node going to their merge, with an exit node after the
- * blocks that go nowhere and after the continue block. a block that can
- * reach the continue block merges where its paths that do meet, its
- * breaks and returns left aside.
+ * finds the selection merges of a region: the top level when r is DX_NONE,
+ * or a loop body. post-dominators come from the reversed region graph,
+ * with inner loops as one node going to their merge and an exit node after
+ * the blocks that go nowhere and after the continue block. a block that can
+ * reach the continue block merges where its paths that do meet, leaving its
+ * breaks and returns aside.
  */
 static int region_merges(Cfg *c, uint32_t r)
 {
@@ -936,7 +936,7 @@ static int region_merges(Cfg *c, uint32_t r)
         return 0;
     }
     uint32_t cont = r != DX_NONE ? c->blocks[r].cont : DX_NONE;
-    /* the region's successors of each node, in compressed rows. */
+    /* each node's successors in the region, in compressed rows. */
     uint32_t *start = tmp32(c, count + 1), *edges = tmp32(c, edge_room);
     if (!start || !edges)
         return -1;
@@ -964,7 +964,7 @@ static int region_merges(Cfg *c, uint32_t r)
         }
     }
     start[count] = at;
-    /* the blocks that reach the continue block. */
+    /* blocks that reach the continue block. */
     uint8_t *alive = tmp(c, count);
     if (!alive)
         return -1;
@@ -985,8 +985,8 @@ static int region_merges(Cfg *c, uint32_t r)
         }
     }
     /*
-     * two reversed graphs, the exit node count: of every node, and of the
-     * nodes that reach the continue block.
+     * two reversed graphs with node count as the exit: one of every node,
+     * one of the nodes that reach the continue block.
      */
     uint32_t *ipdom[2];
     for (int pass = 0; pass < 2; pass++) {
@@ -1049,7 +1049,7 @@ static int region_merges(Cfg *c, uint32_t r)
     return c->error[0] ? -1 : 0;
 }
 
-/* an edge of a region's selection graph: no return in place, break or continue. */
+/* a selection graph edge: not a return in place, break or continue. */
 static int region_edge(const Cfg *c, uint32_t r, uint32_t u, uint32_t t)
 {
     if (terminal(c, u, t) || c->blocks[u].header == HEADER_LOOP || region_of(c, u) != r)
@@ -1060,10 +1060,11 @@ static int region_edge(const Cfg *c, uint32_t r, uint32_t u, uint32_t t)
 }
 
 /*
- * a selection whose blocks also go to blocks it does not dominate, other
+ * a selection whose blocks also reach blocks it does not dominate, other
  * than its merge, jumps into a sibling construct. the edges into those
- * blocks and the merge from the blocks around them then all go through one
- * block switching between them. 1 when it changed the graph.
+ * blocks, and into the merge from the blocks around them, then all go
+ * through one block that switches between them. returns 1 when it changed
+ * the graph.
  */
 static int funnel(Cfg *c)
 {
@@ -1142,7 +1143,6 @@ static int funnel(Cfg *c)
     return 0;
 }
 
-/* whether n lies in the construct the header x opens. */
 static int in_construct(const Cfg *c, uint32_t x, uint32_t n)
 {
     const CfgBlock *h = &c->blocks[x];
@@ -1168,7 +1168,7 @@ static uint32_t enclosing(const Cfg *c, uint32_t n, uint32_t from)
     }
 }
 
-/* gives each header whose merge others also reach a merge block of its own, outer headers first. */
+/* gives each header whose merge other headers also reach its own merge block, outer headers first. */
 static int ladders(Cfg *c)
 {
     BcMark mark = bc_arena_mark(&c->scratch);
@@ -1230,7 +1230,7 @@ static int ladders(Cfg *c)
     return c->error[0] ? -1 : 0;
 }
 
-/* whether an edge keeps to spir-v's rules: inside its construct, to its merge, or a break or continue. */
+/* spir-v allows edges inside their construct, to its merge, or breaks and continues. */
 static int edge_valid(const Cfg *c, uint32_t n, uint32_t t)
 {
     uint32_t s = enclosing(c, n, n);
@@ -1253,7 +1253,7 @@ static int edge_valid(const Cfg *c, uint32_t n, uint32_t t)
     return 0;
 }
 
-/* 1 when every edge keeps to the rules, 0 with the first that does not in from and to. */
+/* 1 when every edge is valid, otherwise 0 with the first bad edge in from and to. */
 static int valid(const Cfg *c, uint32_t *from, uint32_t *to)
 {
     for (uint32_t b = 0; b < c->count; b++) {
@@ -1284,7 +1284,7 @@ static char *put_number(char *at, uint32_t v)
     return at;
 }
 
-/* every edge from a branch to a shared return block goes to a copy of it. */
+/* gives every branch edge to a shared return block its own copy. */
 static int copy_returns(Cfg *c)
 {
     int copied = 0;

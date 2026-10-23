@@ -1,6 +1,4 @@
-/*
- * user object handles and window classes.
- */
+/* user object handles and window classes. */
 #include "win32k.h"
 
 /* ------------------------------------------------------------------ handles */
@@ -58,7 +56,7 @@ USER_OBJECT *UserLookup(HANDLE handle, UCHAR type)
     USER_OBJECT *o = g_user_table[i].Object;
     if (!o || (type && o->Type != type) || o->Destroyed)
         return nullptr;
-    /* a zero generation word matches any generation, like windows accepts 16 bit handles. */
+    /* a zero generation matches any, like windows accepts 16-bit handles. */
     USHORT gen = (USHORT)(v >> 16);
     if (gen && gen != g_user_table[i].Generation)
         return nullptr;
@@ -89,11 +87,11 @@ typedef struct SYSTEM_CLASS {
     ULONG Fnid;
     UINT Style;
     int WindowExtra;
-    int Brush; /* system color + 1, 0 for none */
+    int Brush; /* system color + 1, 0 for none. */
     PCWSTR Cursor;
 } SYSTEM_CLASS;
 
-/* the built in classes; their procedures come from user32 at registration time. */
+/* their procedures come from user32 at registration time. */
 static const SYSTEM_CLASS g_builtin[] = {
     {L"Button", 0x0080, MIME_FNID_BUTTON, CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW | CS_PARENTDC, 8, 0, IDC_ARROW},
     {L"Edit", 0x0081, MIME_FNID_EDIT, CS_DBLCLKS | CS_PARENTDC, 8, 0, IDC_IBEAM},
@@ -137,7 +135,7 @@ static BOOLEAN class_matches(WND_CLASS *c, PCWSTR name, ATOM atom)
     return c->Name && name && !_wcsicmp(c->Name, name);
 }
 
-/* search order of windows: local classes, global classes of the process, then system classes. */
+/* windows search order: local classes, global classes of the process, then system classes. */
 WND_CLASS *ClassFind(W32PROCESS *p, PCWSTR name, ATOM atom, HINSTANCE instance)
 {
     if (p) {
@@ -146,14 +144,14 @@ WND_CLASS *ClassFind(W32PROCESS *p, PCWSTR name, ATOM atom, HINSTANCE instance)
             if (class_matches(c, name, atom) && (!instance || c->Instance == instance))
                 return c;
         }
-        /* a local class of another module of the same process still matches without an exact instance. */
+        /* a local class of another module in the process still matches without an exact instance. */
         for (PLIST_ENTRY e = p->Classes.Flink; e != &p->Classes; e = e->Flink) {
             WND_CLASS *c = CONTAINING_RECORD(e, WND_CLASS, Links);
             if (class_matches(c, name, atom) && (c->Style & CS_GLOBALCLASS))
                 return c;
         }
     }
-    /* a global class is global to the modules of the process that made it, no other process sees it. */
+    /* a global class is only global within its process. */
     for (PLIST_ENTRY e = g_global_classes.Flink; e != &g_global_classes; e = e->Flink) {
         WND_CLASS *c = CONTAINING_RECORD(e, WND_CLASS, Links);
         if (class_matches(c, name, atom) && (!p || c->Process == p))
@@ -168,8 +166,8 @@ WND_CLASS *ClassFind(W32PROCESS *p, PCWSTR name, ATOM atom, HINSTANCE instance)
 }
 
 /*
- * the procedure a process runs for a class. The built in classes are one set for the whole machine, but their
- * procedures live in the user32 of each process, a 32 bit one or a 64 bit one, so the process gives its own.
+ * the built in classes are shared machine wide, but their procedures live in each process's user32, 32-bit or
+ * 64-bit, so the process supplies its own.
  */
 WNDPROC ClassProc(const WND_CLASS *c, W32PROCESS *p)
 {
@@ -367,9 +365,8 @@ int NTAPI NtUserGetClassName(HWND hwnd, BOOL real, PUNICODE_STRING user_name)
     return (int)n;
 }
 
-/* ------------------------------------------------------------------ changing a class */
+/* ------------------------------------------------------------------ class changes */
 
-/* the windows of a process that use a class, from the tree under the desktop. */
 static void move_windows(WND *w, WND_CLASS *from, WND_CLASS *to, W32PROCESS *p)
 {
     for (; w; w = w->Next) {
@@ -383,14 +380,12 @@ static void move_windows(WND *w, WND_CLASS *from, WND_CLASS *to, W32PROCESS *p)
 }
 
 /*
- * the class of a window, as the process may change it: a class of the process is its own; a system class, or a
- * global class of another process, is copied first and the windows of the process move to the copy, as windows
- * keeps a version of every class for each process.
+ * like windows, each process gets its own version of a class it changes: a system class or another process's
+ * global class is copied first, and the process's windows move to the copy.
  */
 static WND_CLASS *private_class(WND *w, W32PROCESS *p)
 {
     WND_CLASS *c = w->Class;
-    /* a class the process registered itself, or a copy it made of another, is its own. */
     if (c->Process == p && !c->System)
         return c;
     for (PLIST_ENTRY e = p->Classes.Flink; e != &p->Classes; e = e->Flink)
@@ -413,7 +408,7 @@ static WND_CLASS *private_class(WND *w, W32PROCESS *p)
     return copy;
 }
 
-/* the values of a class that are as wide as a pointer, which the 32 bit and the 16 bit forms cannot reach. */
+/* pointer sized values, which the 32-bit and 16-bit forms cannot reach. */
 static BOOLEAN pointer_index(int index)
 {
     return index == GCL_MENUNAME || index == GCLP_HBRBACKGROUND || index == GCLP_HCURSOR || index == GCLP_HICON ||
@@ -427,11 +422,10 @@ static BOOLEAN class_index_known(int index)
 }
 
 /*
- * SetClassLongPtr, the 32 bit SetClassLong and SetClassWord. The window has to belong to the process
- * (ERROR_ACCESS_DENIED otherwise); the old value comes back. An index past the class's extra bytes is
- * ERROR_INVALID_INDEX, as is a pointer sized value through the 32 bit form; the size of the extra bytes and the
- * atom cannot be set. Icons and cursors have to be handles of that kind (ERROR_INVALID_ICON_HANDLE or
- * ERROR_INVALID_CURSOR_HANDLE). The values are changed in the class copy of the process.
+ * SetClassLongPtr, SetClassLong and SetClassWord; the old value comes back. the window must belong to the
+ * process, else ERROR_ACCESS_DENIED. an index past the extra bytes, or a pointer sized value through the 32-bit
+ * form, is ERROR_INVALID_INDEX; the extra byte size and the atom cannot be set. icons and cursors must be handles
+ * of that kind, else ERROR_INVALID_ICON_HANDLE or ERROR_INVALID_CURSOR_HANDLE. changes go to the process's copy.
  */
 static ULONG_PTR set_class_value(HWND hwnd, int index, ULONG_PTR value, BOOL ansi, SIZE_T width)
 {
@@ -512,7 +506,7 @@ static ULONG_PTR set_class_value(HWND hwnd, int index, ULONG_PTR value, BOOL ans
         c->WindowExtra = (int)value;
         break;
     case GCL_MENUNAME: {
-        /* a name or a resource number; the string is copied from the caller's memory. */
+        /* a name or a resource number; a name is copied from the caller's memory. */
         old = (ULONG_PTR)c->MenuName;
         if (!value || IS_INTRESOURCE(value)) {
             menu = (PWSTR)value;

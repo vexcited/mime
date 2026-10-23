@@ -1,6 +1,4 @@
-/*
- * exceptions and debugging.
- */
+/* exceptions and debugging. */
 #include "kernelbase_private.h"
 
 #define STATUS_FAIL_FAST_EXCEPTION ((NTSTATUS)0xC0000602L)
@@ -75,10 +73,10 @@ static void describe_address(PVOID address, char *out, SIZE_T size)
 
 LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
 {
-    /* an exception raised while another was dispatched is not reported or filtered again: the first one's turn ends the process. */
+    /* a nested exception is not reported or filtered again: the first one ends the process. */
     if (info && info->ExceptionRecord && (info->ExceptionRecord->ExceptionFlags & EXCEPTION_NESTED_CALL))
         return EXCEPTION_CONTINUE_SEARCH;
-    /* no filter was ever set while the slot is still zero, not an encoded null. */
+    /* a zero slot means no filter was ever set, it is not an encoded NULL. */
     LPTOP_LEVEL_EXCEPTION_FILTER filter = g_top_filter ? RtlDecodePointer(g_top_filter) : nullptr;
     if (filter && __atomic_add_fetch(&g_in_filter, 1, __ATOMIC_ACQ_REL) == 1) {
         LONG r = filter(info);
@@ -134,8 +132,6 @@ ULONG WINAPI RemoveVectoredContinueHandler(PVOID handle)
 {
     return RtlRemoveVectoredContinueHandler(handle);
 }
-
-/* ------------------------------------------------------------------ debug output */
 
 /* windows raises DBG_PRINTEXCEPTION_C for a debugger; without one the text goes straight to the terminal. */
 void WINAPI OutputDebugStringW(LPCWSTR text)
@@ -219,8 +215,6 @@ void WINAPI FatalExit(int code)
     DbgPrint("FatalExit: %d\n", code);
     ExitProcess((UINT)code);
 }
-
-/* ------------------------------------------------------------------ restart and recovery */
 
 HRESULT WINAPI RegisterApplicationRestart(PCWSTR command_line, DWORD flags)
 {

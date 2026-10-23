@@ -1,4 +1,4 @@
-/* the compiler from dxil to spir-v, internal to it. */
+/* internal to the dxil compiler. */
 #ifndef MIME_LIB_DXIL_INTERNAL_H
 #define MIME_LIB_DXIL_INTERNAL_H
 
@@ -9,10 +9,7 @@
 
 #include "GLSL.std.450.h"
 
-/*
- * dxil's enums, in the order DXIL.rst lists them; the numbers were checked
- * against the metadata and annotations dxc writes.
- */
+/* dxil's enums in DXIL.rst order, checked against the metadata and annotations dxc writes. */
 enum {
     KIND_PIXEL,
     KIND_VERTEX,
@@ -120,28 +117,28 @@ enum {
 
 enum { CLASS_SRV, CLASS_UAV, CLASS_CBV, CLASS_SAMPLER };
 
-/* a signature element and the variable or built-in it lives in. */
+/* a signature element and the variable or built-in holding it. */
 typedef struct SigElement {
     uint32_t id;
     const char *name;
     uint32_t semantic_index;
     uint8_t comp, kind, interp;
     uint32_t rows, cols;
-    /* the packed place, -1 for system values outside the packed registers. */
+    /* packed row, -1 for system values outside the packed registers. */
     int32_t row;
     uint32_t col;
-    /* made at the first access: the variable, the type of one row and of the whole. */
+    /* made at first access: the variable, and the types of one row and of the whole. */
     uint32_t var;
     uint32_t row_type, var_type;
     uint32_t scalar;
     /* whether a built-in holds it, and how its components are indexed: 0 a scalar, 1 a vector, 2 by row, 3 distances. */
     uint8_t builtin;
     uint8_t shape;
-    /* a value the rasterizer takes also goes to its location, for a following stage. */
+    /* values the rasterizer takes also go to their location, for a following stage. */
     uint32_t loc_var, loc_scalar;
-    /* a mesh shader's output no pixel shader reads. */
+    /* a mesh shader output no pixel shader reads. */
     uint8_t dropped;
-    /* a pixel shader's input GetAttributeAtVertex reads, an array of the triangle's vertices. */
+    /* a pixel shader input GetAttributeAtVertex reads, an array of the triangle's vertices. */
     uint8_t per_vertex;
     /* clip and cull distances: the first index in their built-in array. */
     uint32_t distance_base;
@@ -152,11 +149,11 @@ typedef struct Signature {
     uint32_t count;
 } Signature;
 
-/* what a handle reaches: a range of the metadata or what annotateHandle says. */
+/* a metadata range, or what annotateHandle says. */
 typedef struct ResourceInfo {
     uint8_t cls, kind, comp, components;
     uint32_t space, lower, size;
-    /* structured buffers: the stride; constant buffers: their size. */
+    /* stride for structured buffers, size for constant buffers. */
     uint32_t stride;
     uint32_t samples;
     uint8_t counter, coherent, rov, comparison;
@@ -168,7 +165,7 @@ typedef struct ResourceInfo {
 
 typedef struct Handle {
     ResourceInfo r;
-    /* the dxil value of the register, absolute in its space, or of the heap index. */
+    /* the register's dxil value, absolute in its space, or the heap index's. */
     uint32_t index;
     uint8_t heap, nonuniform, annotated;
     /* libraries: the register as a spir-v value, instead of index. */
@@ -180,14 +177,14 @@ enum { VAL_NONE, VAL_PLAIN, VAL_PARTS, VAL_HANDLE, VAL_POINTER };
 /* a dxil value as spir-v has it. */
 typedef struct Value {
     uint8_t kind;
-    /* the value stays in a variable, as its definition no longer dominates its uses. */
+    /* kept in a variable since its definition no longer dominates its uses. */
     uint8_t demoted;
     uint32_t id;
-    /* the spir-v type of plain values, the pointee's of pointers. */
+    /* spir-v type of plain values, the pointee's for pointers. */
     uint32_t type;
-    /* the storage class of pointers. */
+    /* storage class of pointers. */
     uint32_t storage;
-    /* the components of a structure some operations return. */
+    /* components of a structure some operations return. */
     uint32_t *parts;
     uint32_t part_count;
     uint32_t handle;
@@ -217,15 +214,14 @@ typedef struct Compiler {
     int native16;
     /* a compute shader takes derivatives over quads of four consecutive threads. */
     int compute_derivatives;
-    /* the shader asks whether what it reads is mapped: its image reads are sparse ones. */
+    /* the shader asks whether its reads are mapped, so image reads are sparse. */
     int residency;
     const char *error;
 
-    /* types. */
     uint32_t t_void, t_bool, t_f32, t_u32, t_f16, t_u16, t_f64, t_u64;
     uint32_t t_vec[5], t_uvec[5], t_bvec[5];
     uint32_t *type_map;
-    /* groupshared memory's types: floats as integers of their width, which atomics take. */
+    /* groupshared types: floats stored as integers of their width, as atomics need. */
     uint32_t *shared_map;
 
     /* values: the module's, then the function's. */
@@ -234,9 +230,9 @@ typedef struct Compiler {
     uint32_t value_count;
     Handle *handles;
     uint32_t handle_count, handle_capacity;
-    /* the ids of the cfg's added values. */
+    /* ids of the cfg's added values. */
     uint32_t *synth;
-    /* by function value: the parts of a structure extractvalue reads, all ones when used whole. */
+    /* per function value: the structure parts extractvalue reads, all ones when used whole. */
     uint32_t *part_masks;
 
     /* the entry point's description. */
@@ -244,12 +240,12 @@ typedef struct Compiler {
     ResourceInfo *ranges[4];
     uint32_t range_count[4];
     uint32_t thread_group[3];
-    /* WaveSize: the smallest, the largest and the preferred size of the waves, 0 for any. */
+    /* WaveSize: smallest, largest and preferred wave sizes, 0 for any. */
     uint32_t wave_min, wave_max, wave_preferred;
     uint32_t gs_input, gs_max_vertices, gs_topology, gs_instances, gs_streams;
     uint32_t cp_in, cp_out, tess_domain, tess_partitioning, tess_primitive;
     uint32_t max_tess_factor;
-    /* mesh shaders: their outputs' counts and topology; task shaders: what the returns emit. */
+    /* mesh shaders: output counts and topology. task shaders: what the returns emit. */
     uint32_t mesh_vertices, mesh_primitives, mesh_topology;
     uint32_t payload, payload_type;
     uint32_t task_counts[3];
@@ -257,7 +253,6 @@ typedef struct Compiler {
     uint64_t flags;
     int depth_mode;
 
-    /* the interface the entry point lists. */
     uint32_t *interface;
     uint32_t interface_count, interface_capacity;
     struct {
@@ -282,22 +277,22 @@ typedef struct Compiler {
     uint32_t *block_end;
     PhiFixup *fixups;
     uint32_t fixup_count, fixup_capacity;
-    /* the resolved operands of phis, by fixup. */
+    /* resolved phi operands, by fixup. */
     uint32_t *phi_values;
     uint32_t current;
-    /* ray tracing stages: the variables of payloads and hit attributes, the shader record. */
+    /* ray tracing stages: payload and hit attribute variables, and the shader record. */
     uint32_t hit_attributes, incoming, record;
     struct {
         uint32_t type, var, storage;
     } payloads[8];
     uint32_t payload_count;
-    /* ray queries: an array of them, a handle its index, and the flags each allocation gives. */
+    /* ray queries: an array of them indexed by handle, and the flags each allocation gives. */
     uint32_t ray_queries, ray_query_count, ray_query_flags;
     uint32_t *ray_query_constant_flags;
-    /* by query, the instruction allocating it. */
+    /* the instruction allocating each query. */
     uint32_t *ray_query_insts;
 
-    /* hull shaders: the invocation's control point, as dxil's outputs need it. */
+    /* hull shaders: the invocation's control point, which dxil's outputs need. */
     uint32_t invocation;
     int in_patch_function;
 } Compiler;
@@ -316,7 +311,7 @@ uint64_t dxil_constant(Compiler *c, uint32_t id, uint64_t fallback);
 int dxil_is_constant(Compiler *c, uint32_t id);
 int dxil_derivatives(Compiler *c);
 int dxil_is_undef(Compiler *c, uint32_t id);
-/* a value converted to a type: a bitcast or a conversion of widths. */
+/* a bitcast or a width conversion. */
 uint32_t dxil_convert(Compiler *c, uint32_t value, uint32_t from, uint32_t to);
 uint32_t dxil_extract(Compiler *c, uint32_t type, uint32_t value, uint32_t index);
 uint32_t dxil_vector(Compiler *c, uint32_t scalar_type, const uint32_t *parts, uint32_t count);
@@ -327,7 +322,7 @@ uint32_t dxil_builtin(Compiler *c, uint32_t which, uint32_t storage, uint32_t ty
 /* a structure result of several parts. */
 void dxil_set_parts(Compiler *c, uint32_t id, const uint32_t *parts, uint32_t count);
 void dxil_set_plain(Compiler *c, uint32_t id, uint32_t spv);
-/* the start and end of an if, inside the block being written. */
+/* an if inside the block being written. */
 void dxil_begin_if(Compiler *c, uint32_t cond, uint32_t *merge);
 void dxil_end_if(Compiler *c, uint32_t merge);
 
@@ -348,7 +343,7 @@ void dxil_emit_tasks(Compiler *c);
 
 /* resource.c: handles and the operations of resources. */
 int dxil_read_resources(Compiler *c, const DxMetadata *list);
-/* libraries: a load or element of a resource's global, which gives a handle; 1 when it is one. */
+/* libraries: a load or element of a resource's global gives a handle. 1 when it is one. */
 int dxil_resource_global(Compiler *c, const DxInst *ins);
 int dxil_resource_op(Compiler *c, const DxInst *ins, uint32_t op);
 
@@ -359,7 +354,7 @@ int dxil_math_op(Compiler *c, const DxInst *ins, uint32_t op);
 void dxil_prepare_ray_queries(Compiler *c, const DxFunction *f);
 int dxil_ray_op(Compiler *c, const DxInst *ins, uint32_t op);
 int dxil_is_ray_stage(uint32_t kind);
-/* an entry function's payload and attributes, the variables of the stage. */
+/* the stage variables for an entry function's payload and attributes. */
 int dxil_ray_arguments(Compiler *c, const DxFunction *f);
 /* the acceleration structure a handle reaches. */
 uint32_t dxil_acceleration_structure(Compiler *c, uint32_t handle);

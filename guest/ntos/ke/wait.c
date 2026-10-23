@@ -115,7 +115,7 @@ LONG NTAPI KeReleaseMutant(PRKMUTANT mutant, KPRIORITY increment, BOOLEAN abando
     LONG old = mutant->Header.SignalState;
     if (!abandoned && mutant->OwnerThread != KiCurrentThread()) {
         KiReleaseDispatcherLock(s);
-        return (LONG)0x80000000; /* caller maps to STATUS_MUTANT_NOT_OWNED */
+        return (LONG)0x80000000; /* the caller maps this to STATUS_MUTANT_NOT_OWNED. */
     }
     if (abandoned) {
         mutant->Header.SignalState = 1;
@@ -182,7 +182,7 @@ static BOOLEAN acquire_object(PDISPATCHER_HEADER h, PKTHREAD thread)
     return FALSE;
 }
 
-/* dispatcher lock held. the object of a wait that could end now, which no wake should have left sleeping, or null. */
+/* dispatcher lock held. an object that would satisfy the thread's wait right now, a sign of a lost wake, or null. */
 PVOID KiSatisfiedWaitObject(PKTHREAD thread)
 {
     if (thread->State != Waiting || !thread->WaitBlockList)

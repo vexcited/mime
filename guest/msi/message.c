@@ -6,7 +6,7 @@ static HWND ui_window;
 static INSTALLUI_HANDLER_RECORD ui_handler;
 static DWORD ui_filter;
 static PVOID ui_context;
-/* the handler of MsiSetExternalUI, which is given the text of the message and not the record. */
+/* the MsiSetExternalUI handler, which gets the message text instead of the record. */
 static INSTALLUI_HANDLERW text_handler;
 static BOOL text_handler_ansi;
 static DWORD text_filter;
@@ -61,7 +61,7 @@ UINT WINAPI MsiSetExternalUIRecord(INSTALLUI_HANDLER_RECORD handler, DWORD filte
     return ERROR_SUCCESS;
 }
 
-/* the filter takes the message kinds and nothing of the bits of the log modes that are not messages. */
+/* the filter keeps only message kinds, dropping log mode bits that are not messages. */
 static BOOL set_text_handler(INSTALLUI_HANDLERW handler, DWORD filter, PVOID context, BOOL ansi,
                              INSTALLUI_HANDLERW *previous)
 {
@@ -209,7 +209,7 @@ int WINAPI MsiProcessMessage(MSIHANDLE install, INSTALLMESSAGE type, MSIHANDLE h
     PVOID context = ui_context;
     HWND window = ui_window;
     INSTALLUILEVEL level = ui_level;
-    /* the record handler wins over the one of the text. */
+    /* the record handler takes precedence over the text handler. */
     INSTALLUI_HANDLERW legacy = !handler && (text_filter & (1u << kind)) ? text_handler : nullptr;
     BOOL legacy_ansi = text_handler_ansi;
     PVOID legacy_context = text_context;

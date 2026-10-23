@@ -1,6 +1,5 @@
 /*
- * der reading and writing shared by the encoders, the decoders and the
- * certificate code.
+ * DER reading and writing shared by the encoders, decoders and certificate code.
  */
 #include "crypt32_private.h"
 

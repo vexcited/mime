@@ -1,62 +1,59 @@
 /*
- * the messages whose parameters point to memory: which they are, what a send to another process copies of what
- * they point to, and what comes back. a thread and the thread of another process share nothing, so the data goes
- * into the kernel, the receiver gets its own copy through the window procedure callback, and what the procedure
- * wrote is copied to the sender after it returned. docs/win32k.md says how each kind of message is treated.
+ * pointer parameters cross process boundaries through kernel copies. the window procedure callback gives the receiver
+ * its own copy, then copies results back to the sender.
  */
 #include "win32k.h"
 #include <mime/msgtable.h>
 
-/* the largest block copied for a message, in bytes. a program asking for more is refused. */
+/* maximum copied message payload, in bytes; larger requests fail. */
 #define MSG_MAX_BLOCK (64u << 20)
-/* the characters a text query is given room for, whatever its buffer size claims. */
+/* maximum text query capacity, regardless of the claimed buffer size. */
 #define MSG_MAX_TEXT (1u << 22)
 
 #define RULE(class, layout, size) ((MSG_RULE){(class), (layout), (size)})
 
-/* ------------------------------------------------------------------ which message means what */
+/* which message means what. */
 
 /*
- * the messages whose parameters are more than numbers, in the order of their numbers. a message that is not here is
- * a plain value unless the window manager keeps it for itself. `Wide` marks a structure with fields as wide as a
- * pointer, which a 32-bit program holds in another layout.
+ * message parameter layouts, sorted by message number. unlisted messages carry plain values unless reserved by the
+ * window manager. `Wide` marks pointer-sized fields requiring a different 32-bit layout.
  */
 typedef struct MSG_ENTRY {
     USHORT Msg;
     UCHAR Class;
     UCHAR Wide;
-    USHORT Size; /* bytes of a structure of fixed size, in the layout of a 64-bit program */
+    USHORT Size; /* bytes of a structure of fixed size, in the layout of a 64-bit program. */
 } MSG_ENTRY;
 
 static const MSG_ENTRY g_classified[] = {
     {0x0001, MC_CREATE, 0, 0},         /* WM_CREATE */
     {0x000C, MC_STRING_IN, 0, 0},      /* WM_SETTEXT */
     {0x000D, MC_STRING_OUT, 0, 0},     /* WM_GETTEXT */
-    {0x001A, MC_STRING_IN, 0, 0},      /* WM_SETTINGCHANGE, the name of the section */
-    {0x001B, MC_STRING_IN, 0, 0},      /* WM_DEVMODECHANGE, the name of the device */
-    {0x0024, MC_STRUCT_INOUT, 0, 40},  /* WM_GETMINMAXINFO, five points */
+    {0x001A, MC_STRING_IN, 0, 0},      /* WM_SETTINGCHANGE, the name of the section. */
+    {0x001B, MC_STRING_IN, 0, 0},      /* WM_DEVMODECHANGE, the name of the device. */
+    {0x0024, MC_STRUCT_INOUT, 0, 40},  /* WM_GETMINMAXINFO, five points. */
     {0x002B, MC_STRUCT_IN, 1, 64},     /* WM_DRAWITEM */
-    {0x002C, MC_STRUCT_INOUT, 1, 32},  /* WM_MEASUREITEM, the owner fills in the size */
+    {0x002C, MC_STRUCT_INOUT, 1, 32},  /* WM_MEASUREITEM, the owner fills in the size. */
     {0x002D, MC_STRUCT_IN, 1, 32},     /* WM_DELETEITEM */
-    {0x0038, MC_WINHELP, 0, 0},        /* the help request of the old help engine */
+    {0x0038, MC_WINHELP, 0, 0},        /* the help request of the old help engine. */
     {0x0039, MC_STRUCT_IN, 1, 56},     /* WM_COMPAREITEM */
-    {0x0046, MC_STRUCT_INOUT, 1, 40},  /* WM_WINDOWPOSCHANGING, the receiver may change it */
+    {0x0046, MC_STRUCT_INOUT, 1, 40},  /* WM_WINDOWPOSCHANGING, the receiver may change it. */
     {0x0047, MC_STRUCT_IN, 1, 40},     /* WM_WINDOWPOSCHANGED */
-    {0x0049, MC_COPYGLOBAL, 0, 0},     /* a copy of global memory for a window of another process */
-    {0x004A, MC_COPYDATA, 1, 0},       /* WM_COPYDATA, a 32-bit program has a block with narrow fields */
-    {0x0053, MC_HELP, 1, 40},          /* WM_HELP, says how large it is */
+    {0x0049, MC_COPYGLOBAL, 0, 0},     /* a copy of global memory for a window of another process. */
+    {0x004A, MC_COPYDATA, 1, 0},       /* WM_COPYDATA, a 32-bit program has a block with narrow fields. */
+    {0x0053, MC_HELP, 1, 40},          /* WM_HELP, says how large it is. */
     {0x007C, MC_STRUCT_INOUT, 0, 8},   /* WM_STYLECHANGING */
     {0x007D, MC_STRUCT_INOUT, 0, 8},   /* WM_STYLECHANGED */
     {0x0081, MC_CREATE, 0, 0},         /* WM_NCCREATE */
-    {0x0083, MC_NCCALCSIZE, 1, 0},     /* WM_NCCALCSIZE, a rectangle or the parameters with a position */
-    {0x0087, MC_OPTMSG, 1, 48},        /* WM_GETDLGCODE, a message of the key being tested, or none */
-    {0x008B, MC_STRUCT_INOUT, 0, 16},  /* a rectangle, undocumented */
+    {0x0083, MC_NCCALCSIZE, 1, 0},     /* WM_NCCALCSIZE, a rectangle or the parameters with a position. */
+    {0x0087, MC_OPTMSG, 1, 48},        /* WM_GETDLGCODE, a message of the key being tested, or none. */
+    {0x008B, MC_STRUCT_INOUT, 0, 16},  /* a rectangle, undocumented. */
     {0x00B0, MC_PTR2, 0, 0},           /* EM_GETSEL */
     {0x00B2, MC_STRUCT_OUT, 0, 16},    /* EM_GETRECT */
     {0x00B3, MC_STRUCT_INOUT, 0, 16},  /* EM_SETRECT */
     {0x00B4, MC_STRUCT_INOUT, 0, 16},  /* EM_SETRECTNP */
     {0x00C2, MC_STRING_IN, 0, 0},      /* EM_REPLACESEL */
-    {0x00C4, MC_LINE_OUT, 0, 0},       /* EM_GETLINE, the room is the first word of the buffer */
+    {0x00C4, MC_LINE_OUT, 0, 0},       /* EM_GETLINE, the room is the first word of the buffer. */
     {0x00CB, MC_UINTS_IN, 0, 0},       /* EM_SETTABSTOPS */
     {0x00E3, MC_PTR2, 0, 0},           /* SBM_GETRANGE */
     {0x00E9, MC_STRUCT_INOUT, 0, 28},  /* SBM_SETSCROLLINFO */
@@ -65,7 +62,7 @@ static const MSG_ENTRY g_classified[] = {
     {0x0124, MC_STRUCT_INOUT, 1, 32},  /* WM_MENUGETOBJECT */
     {0x0140, MC_PTR2, 0, 0},           /* CB_GETEDITSEL */
     {0x0143, MC_ITEM_CB, 0, 0},        /* CB_ADDSTRING */
-    {0x0145, MC_STRING_IN, 0, 0},      /* CB_DIR, the file pattern */
+    {0x0145, MC_STRING_IN, 0, 0},      /* CB_DIR, the file pattern. */
     {0x0148, MC_ITEM_OUT, 0, 0},       /* CB_GETLBTEXT */
     {0x014A, MC_ITEM_CB, 0, 0},        /* CB_INSERTSTRING */
     {0x014C, MC_ITEM_CB, 0, 0},        /* CB_FINDSTRING */
@@ -77,34 +74,34 @@ static const MSG_ENTRY g_classified[] = {
     {0x0181, MC_ITEM_LB, 0, 0},        /* LB_INSERTSTRING */
     {0x0189, MC_ITEM_OUT, 0, 0},       /* LB_GETTEXT */
     {0x018C, MC_ITEM_LB, 0, 0},        /* LB_SELECTSTRING */
-    {0x018D, MC_STRING_IN, 0, 0},      /* LB_DIR, the file pattern */
+    {0x018D, MC_STRING_IN, 0, 0},      /* LB_DIR, the file pattern. */
     {0x018F, MC_ITEM_LB, 0, 0},        /* LB_FINDSTRING */
     {0x0191, MC_UINTS_OUT, 0, 0},      /* LB_GETSELITEMS */
     {0x0192, MC_UINTS_IN, 0, 0},       /* LB_SETTABSTOPS */
     {0x0196, MC_STRING_IN, 0, 0},      /* LB_ADDFILE */
-    {0x0198, MC_STRUCT_INOUT, 0, 16},  /* LB_GETITEMRECT, the index goes in with the rectangle */
+    {0x0198, MC_STRUCT_INOUT, 0, 16},  /* LB_GETITEMRECT, the index goes in with the rectangle. */
     {0x01A2, MC_ITEM_LB, 0, 0},        /* LB_FINDSTRINGEXACT */
-    {0x01AA, MC_ITEM_LB, 0, 0},        /* LB_INSERTSTRING_UPPER, undocumented */
-    {0x01AB, MC_ITEM_LB, 0, 0},        /* LB_INSERTSTRING_LOWER, undocumented */
-    {0x01AC, MC_ITEM_LB, 0, 0},        /* LB_ADDSTRING_UPPER, undocumented */
-    {0x01AD, MC_ITEM_LB, 0, 0},        /* LB_ADDSTRING_LOWER, undocumented */
-    {0x01EB, MC_WPTR, 0, 0},           /* undocumented, answers through wparam */
+    {0x01AA, MC_ITEM_LB, 0, 0},        /* LB_INSERTSTRING_UPPER, undocumented. */
+    {0x01AB, MC_ITEM_LB, 0, 0},        /* LB_INSERTSTRING_LOWER, undocumented. */
+    {0x01AC, MC_ITEM_LB, 0, 0},        /* LB_ADDSTRING_UPPER, undocumented. */
+    {0x01AD, MC_ITEM_LB, 0, 0},        /* LB_ADDSTRING_LOWER, undocumented. */
+    {0x01EB, MC_WPTR, 0, 0},           /* undocumented, answers through wparam. */
     {0x0213, MC_STRUCT_INOUT, 1, 24},  /* WM_NEXTMENU */
     {0x0214, MC_STRUCT_INOUT, 0, 16},  /* WM_SIZING */
     {0x0216, MC_STRUCT_INOUT, 0, 16},  /* WM_MOVING */
     {0x0218, MC_POWER, 0, 0},          /* WM_POWERBROADCAST */
     {0x0219, MC_DEVCHANGE, 0, 0},      /* WM_DEVICECHANGE */
-    {0x0220, MC_MDICREATE, 1, 0},      /* WM_MDICREATE, with a class, a title and an owner */
-    {0x0229, MC_PTR2, 0, 0},           /* WM_MDIGETACTIVE, both parameters may point at an answer */
-    {0x022A, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops */
-    {0x022B, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops */
-    {0x022D, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops */
-    {0x022E, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops */
-    {0x022F, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops */
-    {0x02E0, MC_STRUCT_INOUT, 0, 16},  /* WM_DPICHANGED, the suggested rectangle */
-    {0x02E4, MC_STRUCT_INOUT, 0, 8},   /* WM_GETDPISCALEDSIZE, a size */
+    {0x0220, MC_MDICREATE, 1, 0},      /* WM_MDICREATE, with a class, a title and an owner. */
+    {0x0229, MC_PTR2, 0, 0},           /* WM_MDIGETACTIVE, both parameters may point at an answer. */
+    {0x022A, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops. */
+    {0x022B, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops. */
+    {0x022D, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops. */
+    {0x022E, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops. */
+    {0x022F, MC_STRUCT_INOUT, 1, 48},  /* undocumented, a structure of drops. */
+    {0x02E0, MC_STRUCT_INOUT, 0, 16},  /* WM_DPICHANGED, the suggested rectangle. */
+    {0x02E4, MC_STRUCT_INOUT, 0, 8},   /* WM_GETDPISCALEDSIZE, a size. */
     {0x030C, MC_FORMAT_OUT, 0, 0},     /* WM_ASKCBFORMATNAME */
-    {0x033F, MC_TITLEBAR, 0, 140},     /* WM_GETTITLEBARINFOEX, says how large it is */
+    {0x033F, MC_TITLEBAR, 0, 140},     /* WM_GETTITLEBARINFOEX, says how large it is. */
 };
 
 MSG_RULE MsgRuleFor(UINT msg)
@@ -124,7 +121,7 @@ MSG_RULE MsgRuleFor(UINT msg)
     return RULE(MimeMsgKernelOnly(msg) ? MC_KERNEL : MC_VALUE, 0, 0);
 }
 
-/* ------------------------------------------------------------------ reading the sender's memory */
+/* reading the sender's memory. */
 
 static BOOLEAN user_read(PVOID dst, LPARAM user, SIZE_T size)
 {
@@ -136,10 +133,7 @@ static BOOLEAN user_write(LPARAM user, const void *src, SIZE_T size)
     return NT_SUCCESS(MimeCopyToUser((PVOID)user, src, size));
 }
 
-/*
- * a string ends at its terminator, which may sit at the end of the last page there is, so it is read to the end of
- * each page in turn.
- */
+/* read strings one page at a time: a terminator may be at the end of the last mapped page. */
 static BOOLEAN read_wstring(LPARAM user, PWSTR *out, ULONG *chars)
 {
     *out = nullptr;
@@ -190,9 +184,9 @@ static PVOID block(ULONG size)
     return size <= MSG_MAX_BLOCK ? W32Alloc(size ? size : 1) : nullptr;
 }
 
-/* ------------------------------------------------------------------ copying in */
+/* copying in. */
 
-/* a block holding the structure of the sender, or nothing at all if it cannot be read. */
+/* copy the sender structure, or return nothing if unreadable. */
 static BOOLEAN capture_struct(MSG_CAPTURE *c, LPARAM user, ULONG size, ULONG kind, BOOLEAN read)
 {
     if (!user)
@@ -207,7 +201,7 @@ static BOOLEAN capture_struct(MSG_CAPTURE *c, LPARAM user, ULONG size, ULONG kin
     return TRUE;
 }
 
-/* a string with room for the characters a query for text asks for, zeroed. */
+/* allocate a zeroed text query buffer. */
 static BOOLEAN capture_text_room(MSG_CAPTURE *c, ULONG chars)
 {
     c->Buffer = block(((SIZE_T)chars + 2) * sizeof(WCHAR));
@@ -219,7 +213,7 @@ static BOOLEAN capture_text_room(MSG_CAPTURE *c, ULONG chars)
     return TRUE;
 }
 
-/* the sender's buffer must be there at both ends, as a write into it will be tried. */
+/* both ends of the sender buffer must be accessible before copyback. */
 static BOOLEAN probe_buffer(LPARAM user, ULONG bytes)
 {
     UCHAR byte;
@@ -248,7 +242,7 @@ static BOOLEAN capture_string(MSG_CAPTURE *c, LPARAM user)
     return TRUE;
 }
 
-/* a string held in a structure comes in after it, the structure keeping the place it was put at. */
+/* append embedded string data after the structure and record its offset. */
 static BOOLEAN append_string(MSG_CAPTURE *c, ULONG_PTR *field, ULONG min_pointer)
 {
     ULONG_PTR user = *field;
@@ -297,7 +291,10 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
         return capture_string(c, lparam);
     case MC_STRING_OUT:
     case MC_FORMAT_OUT: {
-        /* wparam characters of room: more than the limit is refused with no error, and the format name needs room. */
+        /*
+         * wparam is the capacity in characters. exceeding the limit fails without an error; format names need nonzero
+         * capacity.
+         */
         if (wparam > 0x3FFFFFFF) {
             W32SetLastError(0);
             return FALSE;
@@ -316,7 +313,7 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
         return capture_text_room(c, room);
     }
     case MC_LINE_OUT: {
-        /* the first word of the buffer is the room, in characters, and the line is written over it. */
+        /* the first word holds capacity in characters and is overwritten by line text. */
         USHORT room;
         if (!lparam || !user_read(&room, lparam, sizeof(room)) || room < 1 || !probe_buffer(lparam, room * 2u))
             return FALSE;
@@ -327,7 +324,7 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
         return TRUE;
     }
     case MC_ITEM_OUT: {
-        /* the text is as long as the control says, and it needs a terminator. an item without text gives its data. */
+        /* use the reported text length plus a terminator; textless items return item data. */
         if (hint < 0) {
             c->Refused = (LRESULT)-1;
             return FALSE;
@@ -352,7 +349,7 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
         return TRUE;
     case MC_TITLEBAR:
     case MC_HELP: {
-        /* a structure that says how large it is, and has to say it right. */
+        /* require the expected structure size. */
         DWORD claimed;
         if (!lparam || !user_read(&claimed, lparam, sizeof(claimed)))
             return FALSE;
@@ -380,7 +377,7 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
             return FALSE;
         if (cd.lpData && size && !user_read((PUCHAR)c->Buffer + sizeof(cd), (LPARAM)cd.lpData, size))
             return FALSE;
-        /* the padding after the size is cleared, and the data is where the structure says it is. */
+        /* clear padding after the size; the structure locates the data. */
         COPYDATASTRUCT *out = c->Buffer;
         out->dwData = cd.dwData;
         memset(&out->cbData, 0, 8);
@@ -422,7 +419,7 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
         c->Size = sizeof(mdi);
         c->Kind = MIME_LPARAM_IN;
         MDICREATESTRUCTW *copy = c->Buffer;
-        /* the class may be an atom, a small number, which stays as it is. */
+        /* small class values are atoms and pass through unchanged. */
         ULONG_PTR cls = (ULONG_PTR)copy->szClass, title = (ULONG_PTR)copy->szTitle;
         if (!append_string(c, &cls, 0x10000))
             return FALSE;
@@ -463,7 +460,7 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
             return TRUE;
         return capture_struct(c, lparam, (ULONG)wparam * 4, MIME_LPARAM_INOUT, FALSE);
     case MC_DEVCHANGE: {
-        /* a change of the device that carries a structure: its first field is how many bytes it is. */
+        /* the first field gives the device change structure size in bytes. */
         if (!lparam) {
             if (wparam == 0x8000 || wparam == 0x8004 || (wparam >= 0x8007 && wparam <= 0x800A)) {
                 W32SetLastError(ERROR_INVALID_PARAMETER);
@@ -480,7 +477,7 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
             W32SetLastError(ERROR_INVALID_PARAMETER);
             return FALSE;
         }
-        /* two zero bytes follow, so that a name in the structure always ends. */
+        /* append two zero bytes to terminate any embedded name. */
         c->Buffer = block(size + 2);
         if (!c->Buffer || !user_read(c->Buffer, lparam, size))
             return FALSE;
@@ -497,7 +494,7 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
         return capture_struct(c, lparam, 20 + length, MIME_LPARAM_IN, TRUE);
     }
     case MC_WINHELP: {
-        /* only the low half of the first field counts as the size, and the copy keeps it as its first word. */
+        /* only the low half of the size field counts; preserve it as the first word. */
         DWORD first;
         if (!lparam || !user_read(&first, lparam, sizeof(first)))
             return FALSE;
@@ -524,9 +521,8 @@ void MsgCaptureFree(MSG_CAPTURE *c)
     c->Buffer = nullptr;
 }
 
-/* ------------------------------------------------------------------ copying out */
+/* copying out. */
 
-/* the characters of a text up to its terminator, at most the room there is. */
 static ULONG text_chars(const WCHAR *text, ULONG room)
 {
     ULONG n = 0;
@@ -536,8 +532,8 @@ static ULONG text_chars(const WCHAR *text, ULONG room)
 }
 
 /*
- * what the procedure wrote goes back into the sender's memory. nothing is copied when the send did not finish,
- * and a write that fails is dropped, as the sender may have unmapped what it passed.
+ * copy procedure results back only after a completed send. ignore write failures because the sender may have unmapped
+ * its buffer.
  */
 void MsgCaptureFinish(MSG_CAPTURE *c, LRESULT *result, BOOLEAN completed)
 {
@@ -546,7 +542,7 @@ void MsgCaptureFinish(MSG_CAPTURE *c, LRESULT *result, BOOLEAN completed)
     switch (c->Class) {
     case MC_STRING_OUT:
     case MC_FORMAT_OUT: {
-        /* the text written is cut to what the result says and to the room the sender really has. */
+        /* limit text to the reported result and actual sender capacity. */
         LRESULT n = *result;
         ULONG room = (ULONG)c->UserWparam;
         if (n <= 0) {
@@ -571,7 +567,7 @@ void MsgCaptureFinish(MSG_CAPTURE *c, LRESULT *result, BOOLEAN completed)
         return;
     }
     case MC_LINE_OUT: {
-        /* the characters of the line come back without an end, and a line of none leaves an empty string. */
+        /* line text has no terminator; a zero-length line returns an empty string. */
         LRESULT n = *result;
         if (n <= 0) {
             WCHAR end = 0;
@@ -585,14 +581,14 @@ void MsgCaptureFinish(MSG_CAPTURE *c, LRESULT *result, BOOLEAN completed)
     case MC_ITEM_OUT: {
         LRESULT n = *result;
         if (c->ItemData) {
-            /* an item without text answers with its data, as many bytes as the control says it is. */
+            /* textless items return item data using the control-reported byte count. */
             if (n > 0)
                 user_write(c->UserLparam, c->Buffer, (SIZE_T)n < sizeof(ULONG_PTR) ? (SIZE_T)n : sizeof(ULONG_PTR));
             return;
         }
         if (n < 0)
             return;
-        /* the text and its end fit the room the sender was asked to have, whatever the receiver wrote. */
+        /* cap text and terminator to the capacity requested from the sender. */
         ULONG got = text_chars(c->Buffer, c->Capacity - 1);
         user_write(c->UserLparam, c->Buffer, ((SIZE_T)got + 1) * sizeof(WCHAR));
         if ((ULONG_PTR)n > got)
@@ -610,7 +606,7 @@ void MsgCaptureFinish(MSG_CAPTURE *c, LRESULT *result, BOOLEAN completed)
             user_write(c->UserLparam, c->Buffer, c->Size);
             return;
         }
-        /* the position goes where the sender keeps it, and the pointer to it stays the sender's. */
+        /* copy the position back without replacing the sender's pointer. */
         user_write(c->UserLparam, c->Buffer, 48);
         user_write(c->UserPos, (PUCHAR)c->Buffer + sizeof(NCCALCSIZE_PARAMS), sizeof(WINDOWPOS));
         return;

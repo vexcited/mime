@@ -1,7 +1,6 @@
 /*
- * shell items over item id lists, shell item arrays and their enumerators,
- * and the other small shell objects: the task allocator, association handler
- * enumeration and folder browsing.
+ * shell items over item id lists, shell item arrays and their enumerators, and small shell objects: the task
+ * allocator, association handler enumeration and folder browsing.
  */
 #include "shell32_private.h"
 
@@ -51,8 +50,7 @@ static LPCWSTR file_name(LPCWSTR path)
 /* ------------------------------------------------------------------ IShellItem */
 
 /*
- * an item is the absolute list it names. the path of a file system item is
- * worked out once, when the item is made.
+ * an item is the absolute list it names. a file system item's path is worked out once, at creation.
  */
 typedef struct _SH_ITEM {
     IShellItem Interface;
@@ -79,7 +77,7 @@ static SH_ITEM *item_from_factory(IShellItemImageFactory *This)
     return (SH_ITEM *)((BYTE *)This - offsetof(SH_ITEM, Factory));
 }
 
-/* the item of a list, which the item takes over. */
+/* the item takes ownership of the list. */
 static HRESULT create_item(PIDLIST_ABSOLUTE pidl, REFIID riid, void **object)
 {
     SH_ITEM *item = ShAllocZero(sizeof(*item));
@@ -189,7 +187,7 @@ static ULONG STDMETHODCALLTYPE enum_release(IEnumShellItems *This)
     return (ULONG)refs;
 }
 
-/* the next entry of the folder that is listed: hidden and system files are left out. */
+/* hidden and system files are skipped. */
 static BOOL enum_next_entry(ITEM_ENUM *e, WIN32_FIND_DATAW *data)
 {
     while (!e->Done) {
@@ -546,7 +544,7 @@ static HRESULT STDMETHODCALLTYPE persist_get_class_id(IPersistIDList *This, CLSI
     return S_OK;
 }
 
-/* an item is made with its list and keeps it. */
+/* an item keeps the list it was made with. */
 static HRESULT STDMETHODCALLTYPE persist_set_id_list(IPersistIDList *This, PCIDLIST_ABSOLUTE pidl)
 {
     return HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED);
@@ -582,7 +580,7 @@ static ULONG STDMETHODCALLTYPE factory_release(IShellItemImageFactory *This)
     return item_release(&item_from_factory(This)->Interface);
 }
 
-/* the thumbnail or the icon of the item, see ShItemImage in thumbnail.c. */
+/* the thumbnail or the icon, see ShItemImage in thumbnail.c. */
 static HRESULT STDMETHODCALLTYPE factory_get_image(IShellItemImageFactory *This, SIZE size, SIIGBF flags,
                                                    HBITMAP *bitmap)
 {
@@ -598,7 +596,7 @@ static const IShellItemImageFactoryVtbl g_factory_vtbl = {
 
 /* ------------------------------------------------------------------ making items */
 
-/* whether the bind context carries the find data of an item that need not exist. */
+/* whether the bind context carries find data for an item that need not exist. */
 static BOOL has_bind_data(IBindCtx *context)
 {
     if (!context)
@@ -610,7 +608,7 @@ static BOOL has_bind_data(IBindCtx *context)
     return TRUE;
 }
 
-/* the list of a parsing name: a path, existing or described by bind data, or a virtual folder's class. */
+/* a path, existing or described by bind data, or a virtual folder's class. */
 HRESULT ShParseName(PCWSTR name, IBindCtx *context, PIDLIST_ABSOLUTE *pidl, DWORD *attributes)
 {
     *pidl = nullptr;
@@ -689,7 +687,7 @@ SHSTDAPI HRESULT WINAPI SHGetNameFromIDList(PCIDLIST_ABSOLUTE pidl, SIGDN form, 
     return hr;
 }
 
-/* an item of a list the caller gives up. */
+/* the caller gives up the list. */
 HRESULT ShItemFromList(PIDLIST_ABSOLUTE pidl, REFIID riid, void **object)
 {
     return create_item(pidl, riid, object);
@@ -895,7 +893,7 @@ static const IShellItemArrayVtbl g_array_vtbl = {
     array_get_item_at,     array_enum_items,
 };
 
-/* an array of copies of absolute lists. */
+/* copies the absolute lists. */
 HRESULT ShArrayFromLists(UINT count, PCIDLIST_ABSOLUTE *lists, IShellItemArray **array)
 {
     ITEM_ARRAY *a = ShAllocZero(sizeof(*a));

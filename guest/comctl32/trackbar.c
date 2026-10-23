@@ -1,7 +1,4 @@
-/*
- * the trackbar, msctls_trackbar32: a thumb slid along a channel through a
- * range, with tick marks, an optional selection range and buddy windows.
- */
+/* the trackbar, msctls_trackbar32: a thumb on a channel, with ticks, an optional selection range and buddies. */
 #include "comctl32_private.h"
 
 typedef struct TRACKBAR {
@@ -40,7 +37,7 @@ static int page_size(TRACKBAR *t)
     return p > 0 ? p : 1;
 }
 
-/* the channel, inset by half a thumb at each end, and the thumb's size. */
+/* the channel inset by half a thumb at each end, and the thumb's size. */
 static void channel_rect(TRACKBAR *t, RECT *r)
 {
     RECT client;
@@ -101,7 +98,7 @@ static void notify_scroll(TRACKBAR *t, int code)
     SendMessageW(t->Notify.Parent, msg, MAKEWPARAM(code, pos), (LPARAM)t->Hwnd);
 }
 
-/* moves the thumb, asking first when TBS_NOTIFYBEFOREMOVE wants it. */
+/* asks first when TBS_NOTIFYBEFOREMOVE is set. */
 static BOOL move_to(TRACKBAR *t, int pos, int reason)
 {
     pos = clamp_pos(t, pos);

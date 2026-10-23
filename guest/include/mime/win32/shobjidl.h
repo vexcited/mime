@@ -1,9 +1,6 @@
 /*
- * the shell's object interfaces: shortcuts and their persistence, shell item
- * arrays and enumerators, and the common item dialogs of comdlg32.dll with
- * their events and customization, as shobjidl_core.h and shobjidl.h declare
- * them. interfaces are declared the C way, a struct whose first member points
- * to a table of functions.
+ * shell object interfaces of shobjidl_core.h and shobjidl.h: shortcuts, shell item arrays and enumerators, and
+ * the common item dialogs of comdlg32.dll. interfaces are C structs whose first member points to a vtable.
  */
 #ifndef MIME_WIN32_SHOBJIDL_H
 #define MIME_WIN32_SHOBJIDL_H
@@ -202,7 +199,7 @@ struct IShellLinkW {
     const IShellLinkWVtbl *lpVtbl;
 };
 
-/* the LinkFlags of the shortcut header, SHELL_LINK_DATA_FLAGS. */
+/* LinkFlags in the shortcut header, SHELL_LINK_DATA_FLAGS. */
 #define SLDF_HAS_ID_LIST 0x00000001
 #define SLDF_HAS_LINK_INFO 0x00000002
 #define SLDF_HAS_NAME 0x00000004
@@ -229,7 +226,7 @@ struct IShellLinkW {
 #define SLDF_PREFER_ENVIRONMENT_PATH 0x02000000
 #define SLDF_KEEP_LOCAL_IDLIST_FOR_UNC_TARGET 0x04000000
 
-/* the extra data blocks, each starting with a size and a signature. */
+/* extra data blocks each start with a size and a signature. */
 typedef struct tagDATABLOCKHEADER {
     DWORD cbSize;
     DWORD dwSignature;
@@ -298,7 +295,7 @@ typedef int SIIGBF;
 #define SIIGBF_ICONBACKGROUND 0x00000080
 #define SIIGBF_SCALEUP 0x00000100
 
-/* the failures of thumbnail extraction, from thumbcache.h. */
+/* thumbnail extraction failures, from thumbcache.h. */
 #define WTS_E_FAILEDEXTRACTION ((HRESULT)0x8004B200L)
 #define WTS_E_EXTRACTIONTIMEDOUT ((HRESULT)0x8004B201L)
 #define WTS_E_SURROGATEUNAVAILABLE ((HRESULT)0x8004B202L)
@@ -418,7 +415,7 @@ struct IShellItemFilter {
     const IShellItemFilterVtbl *lpVtbl;
 };
 
-/* a bind context parameter that gives the find data of an item that may not exist. */
+/* bind context parameter carrying find data for an item that may not exist. */
 typedef struct IFileSystemBindData IFileSystemBindData;
 typedef struct IFileSystemBindDataVtbl {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(IFileSystemBindData *This, REFIID riid, void **object);
@@ -572,7 +569,7 @@ struct IFileOpenDialog {
 
 typedef struct IFileOperationProgressSink IFileOperationProgressSink;
 
-/* what IFileOperation::SetOperationFlags takes besides the FOF flags of shellapi.h. */
+/* IFileOperation::SetOperationFlags values beyond the FOF flags of shellapi.h. */
 #define FOF_NO_UI (FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR)
 #define FOFX_NOSKIPJUNCTIONS 0x00010000
 #define FOFX_PREFERHARDLINK 0x00020000
@@ -590,7 +587,7 @@ typedef struct IFileOperationProgressSink IFileOperationProgressSink;
 #define FOFX_COPYASDOWNLOAD 0x40000000
 #define FOFX_DONTDISPLAYLOCATIONS 0x80000000
 
-/* the flags the progress sink's Pre and Post calls get. */
+/* flags passed to the progress sink's Pre and Post calls. */
 #define TSF_NORMAL 0
 #define TSF_FAIL_EXIST 0
 #define TSF_RENAME_EXIST 0x1
@@ -606,7 +603,7 @@ typedef struct IFileOperationProgressSink IFileOperationProgressSink;
 #define TSF_MOVE_AS_COPY_DELETE 0x400
 #define TSF_SUSPEND_SHELLEVENTS 0x800
 
-/* success codes of the copy engine, which a sink may receive in a Post call. */
+/* copy engine success codes a sink may get in a Post call. */
 #define COPYENGINE_S_DONT_PROCESS_CHILDREN ((HRESULT)0x00270008L)
 #define COPYENGINE_E_USER_CANCELLED ((HRESULT)0x80270000L)
 

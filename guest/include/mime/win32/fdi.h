@@ -1,7 +1,4 @@
-/*
- * the cabinet reader of cabinet.dll: a callback for each step of the file system and for each file, and the structures
- * the callbacks share with the caller.
- */
+/* cabinet.dll's cabinet reader: callbacks for file system access and for each file, and the structures they share. */
 #ifndef MIME_WIN32_FDI_H
 #define MIME_WIN32_FDI_H
 

@@ -1,4 +1,4 @@
-/* the console driver's state, shared by console.c, the consoles, and condev.c, the device that programs open. */
+/* console driver state shared by console.c, the consoles, and condev.c, the device programs open. */
 #ifndef MIME_CONSOLE_P_H
 #define MIME_CONSOLE_P_H
 
@@ -27,21 +27,20 @@
 #define ENABLE_AUTO_POSITION 0x100
 #define ENABLE_VIRTUAL_TERMINAL_INPUT 0x200
 #define INPUT_MODE_MASK 0x3FF
-#define DEFAULT_INPUT_MODE 0x17 /* processed, line, echo, mouse */
+#define DEFAULT_INPUT_MODE 0x17 /* processed, line, echo, mouse. */
 #define INPUT_MODE_EXTENDED (ENABLE_INSERT_MODE | ENABLE_QUICK_EDIT_MODE | ENABLE_EXTENDED_FLAGS | ENABLE_AUTO_POSITION)
 
 /*
- * input waiting to be read: the bytes of a redirected input, or records,
- * which is what a terminal's input is decoded into and what programs
+ * input waiting to be read: redirected input bytes, or records, which terminal input is decoded into and programs
  * write. a chunk of no bytes is an end of file.
  */
 typedef struct CON_CHUNK {
     LIST_ENTRY Links;
     BOOLEAN Records;
-    ULONG Length;    /* bytes or records */
-    ULONG First;     /* the first not read */
-    ULONG Offset;    /* bytes of the first record's character already read */
-    ULONG HostBytes; /* acknowledged to the host once read */
+    ULONG Length;    /* bytes or records. */
+    ULONG First;     /* the first one not read. */
+    ULONG Offset;    /* bytes of the first record's character already read. */
+    ULONG HostBytes; /* acknowledged to the host once read. */
     union {
         UCHAR Data[1];
         MIME_CONDRV_RECORD Record[1];
@@ -49,9 +48,9 @@ typedef struct CON_CHUNK {
 } CON_CHUNK;
 
 typedef enum {
-    CON_BACKEND_RUN,  /* the terminal of a host run */
-    CON_BACKEND_PTY,  /* a pseudo console: the owner carries the bytes */
-    CON_BACKEND_NONE, /* nothing shows it */
+    CON_BACKEND_RUN,  /* a host run's terminal. */
+    CON_BACKEND_PTY,  /* a pseudo console, whose owner carries the bytes. */
+    CON_BACKEND_NONE, /* nothing shows it. */
 } CON_BACKEND;
 
 typedef struct CON_PTY_CHUNK {
@@ -62,59 +61,57 @@ typedef struct CON_PTY_CHUNK {
 
 struct _MIME_CONSOLE {
     LIST_ENTRY Links;
-    LONG References; /* attached processes, handles, the host run and waiting readers */
+    LONG References; /* attached processes, handles, the host run and waiting readers. */
     ULONG64 RequestId;
     CON_BACKEND Backend;
-    ULONG Flags; /* MIME_CONDRV_TTY_... and MIME_CONDRV_CLOSED */
-    ULONG InputMode; /* without the bits of the extended flags, which are kept below */
+    ULONG Flags; /* MIME_CONDRV_TTY_... and MIME_CONDRV_CLOSED. */
+    ULONG InputMode; /* without the extended flag bits, which are kept below. */
     BOOLEAN QuickEdit, InsertDefault, AutoPosition, ExtendedGiven;
-    ULONG AbortGeneration; /* counts the ctrl+c and ctrl+break that end the reads that wait */
+    ULONG AbortGeneration; /* bumped by each ctrl+c and ctrl+break that ends waiting reads. */
     UINT InputCp, OutputCp;
     WCHAR Title[260];
     WCHAR OriginalTitle[260];
     BOOLEAN TitleSet;
 
-    /* the screen buffers and the terminal they are shown on */
     CsTerminal Term;
     CsBuffer *Main;
     ULONG OutStream;
-    PWCHAR Scratch; /* wide text of one write */
+    PWCHAR Scratch; /* the wide text of one write. */
     ULONG ScratchLength;
-    UCHAR WriteCarry[4]; /* a utf-8 character cut between two writes */
+    UCHAR WriteCarry[4]; /* a utf-8 character cut between two writes. */
     ULONG WriteCarryLength;
 
-    /* input */
     LIST_ENTRY Input;
-    ULONG InputBytes;  /* in byte chunks */
-    ULONG InputEvents; /* records not read */
-    KEVENT InputReady; /* set while input, an end of file or the closing waits */
+    ULONG InputBytes;  /* in byte chunks. */
+    ULONG InputEvents; /* unread records. */
+    KEVENT InputReady; /* set while input, an end of file or the close waits. */
     LIST_ENTRY InputHandles;
-    UCHAR Carry[16]; /* terminal input that does not make a whole key yet */
+    UCHAR Carry[16]; /* terminal input that does not make a whole key yet. */
     ULONG CarryLength;
-    ULONG PendingAck; /* host bytes that made no record yet */
+    ULONG PendingAck; /* host bytes that made no record yet. */
     BOOLEAN HasAnsiCarry;
-    MIME_CONDRV_RECORD AnsiCarry; /* the lead byte WriteConsoleInputA got without its trail byte */
-    BOOLEAN OutputPaused;         /* by the pause key */
+    MIME_CONDRV_RECORD AnsiCarry; /* a lead byte WriteConsoleInputA got without its trail byte. */
+    BOOLEAN OutputPaused;         /* by the pause key. */
     KEVENT OutputResumed;
-    PWCHAR LinePending; /* characters of a line that the reader had no room for */
+    PWCHAR LinePending; /* line characters the reader had no room for. */
     ULONG LinePendingLength, LinePendingFirst;
-    ULONG LinePendingLines; /* lines of that, when an alias made several: each read takes one */
-    PUCHAR BytePending; /* bytes of the input code page of the same */
+    ULONG LinePendingLines; /* when an alias made several lines, each read takes one. */
+    PUCHAR BytePending; /* the same in input code page bytes. */
     ULONG BytePendingLength, BytePendingFirst;
-    ULONG MouseButtons; /* the buttons the terminal reported down */
-    ULONG64 LastClick;  /* time and place of the last press, for the double click flag */
+    ULONG MouseButtons; /* the buttons the terminal reported down. */
+    ULONG64 LastClick;  /* time and place of the last press, for the double click flag. */
     SHORT LastClickX, LastClickY;
     ULONG LastClickButton;
     ConLineState *Lines;
 
-    /* a pseudo console */
+    /* pseudo console. */
     LIST_ENTRY PtyOut;
     ULONG PtyQueued;
     KEVENT PtyReady;
     KEVENT PtySpace;
     PKPROCESS PtyOwner;
     ULONG PtyFlags;
-    BOOLEAN AwaitCursor; /* the console waits for the report of the cursor of the terminal */
+    BOOLEAN AwaitCursor; /* waiting for the terminal's cursor position report. */
 };
 
 typedef enum {
@@ -127,14 +124,14 @@ typedef enum {
 typedef struct CON_HANDLE {
     CON_HANDLE_KIND Kind;
     MIME_CONSOLE *Console;
-    CsBuffer *Buffer; /* an output handle's screen buffer */
+    CsBuffer *Buffer; /* an output handle's screen buffer. */
     PFILE_OBJECT File;
     LIST_ENTRY Links;
 } CON_HANDLE;
 
 extern FAST_MUTEX g_con_lock;
 
-/* console.c */
+/* console.c. */
 MIME_CONSOLE *ConProcessConsole(PEPROCESS process);
 void ConRelease(MIME_CONSOLE *c);
 void ConReference(MIME_CONSOLE *c);
@@ -158,7 +155,7 @@ void ConSendOutput(MIME_CONSOLE *c, const void *data, ULONG length, ULONG stream
 void ConWriteInputText(MIME_CONSOLE *c, const WCHAR *text, ULONG count);
 void ConSetTitle(MIME_CONSOLE *c, const WCHAR *title, ULONG count);
 
-/* the input queue, with the lock held */
+/* the input queue, called with the lock held. */
 CON_CHUNK *ConNewChunk(BOOLEAN records, ULONG length);
 void ConQueueChunk(MIME_CONSOLE *c, CON_CHUNK *k, BOOLEAN head);
 void ConFreeChunk(MIME_CONSOLE *c, CON_CHUNK *k, ULONG *acked);
@@ -168,7 +165,7 @@ NTSTATUS ConWriteRecords(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count, BO
 void ConAfterRead(MIME_CONSOLE *c, ULONG acked, BOOLEAN clear);
 void ConFlushInput(MIME_CONSOLE *c);
 
-/* code pages, condev.c */
+/* code pages, in condev.c. */
 ULONG ConBytesToWide(UINT cp, const UCHAR *in, ULONG length, PWCHAR out, ULONG room, UCHAR carry[4], PULONG carry_length,
                      PULONG consumed);
 ULONG ConWideToBytes(UINT cp, const WCHAR *in, ULONG count, PUCHAR out, ULONG room, PULONG consumed);

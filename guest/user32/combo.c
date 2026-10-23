@@ -1,9 +1,7 @@
 /*
- * the ComboBox class, as user32 of build 26300 has it: an edit or a
- * static area over a list box, which drops down below or above it for a
- * drop down combo and stays under it for a simple one. the list belongs
- * to the desktop while it drops, sending its notifications to the combo,
- * which turns them into its own.
+ * the ComboBox class: an edit or static area over a list box. the list drops below or above a drop down combo and
+ * stays under a simple one. while dropped it belongs to the desktop and notifies the combo, which turns the
+ * notifications into its own.
  */
 #include "listbox.h"
 
@@ -20,7 +18,7 @@ static int combo_id(COMBO *cb)
     return (int)GetWindowLongPtrW(cb->hwnd, GWLP_ID);
 }
 
-/* the combo's notifications, unconditional, to its parent or itself without one. */
+/* always sent, to the parent or to the combo itself when it has none. */
 static void notify(COMBO *cb, int code)
 {
     HWND to = cb->parent ? cb->parent : cb->hwnd;
@@ -101,7 +99,7 @@ static int drop_width(COMBO *cb)
     return cb->cx_drop > cb->cx_combo ? cb->cx_drop : cb->cx_combo;
 }
 
-/* the rectangles recomputed, the edit moved, and the list placed and closed. */
+/* recomputes the rectangles, moves the edit, then places and closes the list. */
 static void position(COMBO *cb)
 {
     compute_rects(cb);
@@ -140,7 +138,7 @@ static void select_all_edit(COMBO *cb)
         SendMessageW(cb->edit, EM_SETSEL, 0, -1);
 }
 
-/* the edit or static area showing the list's selection. */
+/* shows the list's selection in the edit or static area. */
 void ComboRefreshClosed(COMBO *cb)
 {
     if (!cb->has_edit) {
@@ -166,7 +164,7 @@ void ComboRefreshClosed(COMBO *cb)
         select_all_edit(cb);
 }
 
-/* the list put on the edit's text: its prefix match the caret and top, selected unless asked not to. */
+/* moves the list's caret and top to the item matching the edit's prefix, selecting it unless told not to. */
 static int sync_list(COMBO *cb, BOOL select)
 {
     int n = GetWindowTextLengthW(cb->edit);
@@ -182,7 +180,7 @@ static int sync_list(COMBO *cb, BOOL select)
     return found;
 }
 
-/* the edit's text completed to the item it names exactly or begins. */
+/* completes the edit's text to the item it matches exactly or by prefix. */
 static void complete_edit(COMBO *cb)
 {
     int n = GetWindowTextLengthW(cb->edit);
@@ -655,7 +653,7 @@ static LRESULT wheel(COMBO *cb, UINT msg, WPARAM wparam, LPARAM lparam)
     return 1;
 }
 
-/* keys of a drop down list, the combo having the focus: most go to the list. */
+/* a drop down list combo keeps the focus itself, and most keys go to the list. */
 static void key_down(COMBO *cb, WPARAM vk, LPARAM lparam)
 {
     if ((vk == VK_RETURN || vk == VK_ESCAPE) && cb->list_visible) {
@@ -663,7 +661,7 @@ static void key_down(COMBO *cb, WPARAM vk, LPARAM lparam)
         return;
     }
     if (cb->has_edit) {
-        /* what the edit hands over: page keys, F4, and the arrows. */
+        /* the keys the edit hands over: page keys, F4 and the arrows. */
         if (vk == VK_UP || vk == VK_DOWN) {
             if (cb->list_visible || !cb->extended_ui) {
                 to_list(cb, WM_KEYDOWN, vk, lparam);
@@ -1109,7 +1107,7 @@ LRESULT CALLBACK ComboBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
-/* a combo box or its list answers for itself; any other window is asked. */
+/* a combo box or its list answers directly, any other window is asked. */
 WINUSERAPI BOOL WINAPI GetComboBoxInfo(HWND hwnd, PCOMBOBOXINFO info)
 {
     if (!info || info->cbSize != sizeof(COMBOBOXINFO)) {

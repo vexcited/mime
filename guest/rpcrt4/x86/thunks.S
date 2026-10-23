@@ -1,11 +1,11 @@
 /*
- * the thunks of proxies, as in the x64 file. The methods are stdcall, so after the call the common code takes the
- * arguments off the stack for the caller, as many bytes as the procedure's frame is.
+ * proxy thunks, as on x64. the methods are stdcall, so the common code pops the procedure's frame size off the
+ * caller's stack after the call.
  */
     .altmacro
     .text
 
-/* a thunk, and for the methods 3 to 32 a name that windows' proxy dlls call through combase, which forwards here. */
+/* methods 3 to 32 also get the exported names that proxy dlls reach through combase. */
     .macro  stubless_thunk n
     .if \n >= 3 && \n <= 32
     .globl  _ObjectStublessClient\n

@@ -1,12 +1,12 @@
 /*
- * the thunks of proxies. A stubless method of a proxy is a thunk that says which method it is and joins the common code,
- * which puts the arguments in a frame the interpreter reads. A method of a base interface that has a proxy of its own goes
- * to that proxy, with the proxy's own interface pointer as this. Thunk i is at the start of its table plus 16 times i.
+ * proxy thunks. a stubless method loads its method number and jumps to the common code, which builds the frame the
+ * interpreter reads. a method of a base interface with its own proxy is forwarded to that proxy with its own interface
+ * pointer as this. thunk i is at 16 * i from the start of its table.
  */
     .altmacro
     .text
 
-/* a thunk, and for the methods 3 to 32 a name that windows' proxy dlls call through combase, which forwards here. */
+/* methods 3 to 32 also get the exported names that proxy dlls reach through combase. */
     .macro  stubless_thunk n
     .if \n >= 3 && \n <= 32
     .globl  ObjectStublessClient\n
@@ -41,8 +41,8 @@ NdrpStublessThunks:
     .endr
 
 /*
- * eax is the method. The four registers go to their home slots, which the caller left room for right below the other
- * arguments, and the four floating point ones to a place of their own.
+ * eax is the method number. the integer registers go to the home slots the caller reserved below the stack
+ * arguments, and the float registers to a separate area.
  */
     .globl  NdrpStublessCommon
     .seh_proc NdrpStublessCommon

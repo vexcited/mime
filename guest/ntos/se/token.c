@@ -1,14 +1,10 @@
 /*
- * access tokens: the objects, the tokens of the system, of the session's
- * user and of the anonymous logon, copying and filtering, and the
- * impersonation of threads.
+ * access tokens: the system, session user and anonymous logon tokens, copying and filtering, and thread
+ * impersonation.
  *
- * every process of the session runs with the token of the logged on user,
- * as a member of the administrators group filtered by uac the way windows
- * starts programs; the system process has the system token. the filtered
- * administrator has the full token as its linked token. access checks are
- * not enforced, but the tokens answer every question programs ask of them
- * and the rules of copying, filtering and impersonating are windows'.
+ * session processes run with the logged on user's token, an administrator filtered by uac the way windows starts
+ * programs, and the system process has the system token. the filtered token has the full one as its linked token.
+ * copying, filtering and impersonating follow windows' rules.
  */
 #include "se.h"
 #include <mime/wow32.h>
@@ -69,7 +65,7 @@ static BOOLEAN sid_is_label(const void *sid)
     return s[1] == 1 && s[7] == 16 && !s[2] && !s[3] && !s[4] && !s[5] && !s[6];
 }
 
-/* the groups windows takes away from a lua token and denies. */
+/* the groups a lua token gets as deny only. */
 BOOLEAN SepIsElevatedGroup(const SEP_GROUP *group)
 {
     static const ULONG rids[] = {512, 516, 521, 498, 517, 518, 519, 520, 544, 547, 548, 549, 550, 551, 553, 554, 556,
@@ -107,7 +103,7 @@ ULONG SepPrivilegeCount(const TOKEN *t)
     return (ULONG)__builtin_popcountll(t->Present);
 }
 
-/* the privileges that make a token elevated, as windows judges it. */
+/* the privileges that make windows count a token as elevated. */
 ULONG SepElevated(const TOKEN *t)
 {
     if (t->Present & 0x1120160684ull)
@@ -186,7 +182,7 @@ static BOOLEAN token_groups(PTOKEN t, const GROUP_SPEC *user, const GROUP_SPEC *
     return TRUE;
 }
 
-/* an acl of two aces granting everything, to the sids given. */
+/* an acl of two aces granting everything to the given sids. */
 static void token_dacl(PTOKEN t, const void *first, const void *second)
 {
     ULONG a = SepSidLength(first), b = SepSidLength(second);
@@ -201,9 +197,9 @@ static void token_dacl(PTOKEN t, const void *first, const void *second)
     const void *sids[2] = {first, second};
     for (int i = 0; i < 2; i++) {
         ULONG length = SepSidLength(sids[i]);
-        ace[0] = 0; /* ACCESS_ALLOWED_ACE_TYPE */
+        ace[0] = 0; /* ACCESS_ALLOWED_ACE_TYPE. */
         *(PUSHORT)(ace + 2) = (USHORT)(8 + length);
-        *(PULONG)(ace + 4) = 0x10000000; /* GENERIC_ALL */
+        *(PULONG)(ace + 4) = 0x10000000; /* GENERIC_ALL. */
         memcpy(ace + 8, sids[i], length);
         ace += 8 + length;
     }
@@ -219,7 +215,7 @@ static ULONG64 privilege_set(const ULONG *luids, ULONG count)
     return bits;
 }
 
-/* the privileges of a filtered administrator: only the harmless ones remain. */
+/* a filtered administrator keeps only the harmless privileges. */
 static const ULONG g_limited_privileges[] = {19, 23, 25, 33, 34};
 
 /* everything an elevated administrator holds, and the three it has enabled. */
@@ -259,7 +255,7 @@ static PTOKEN make_system_token(void)
         ObDereferenceObject(t);
         return nullptr;
     }
-    t->OwnerIndex = 1; /* the administrators group owns what the system creates */
+    t->OwnerIndex = 1; /* the administrators group owns what the system creates. */
     memcpy(t->PrimaryGroup, t->Groups[0].Sid, SepSidLength(t->Groups[0].Sid));
     static const UCHAR system_sid[12] = {1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0};
     token_dacl(t, system_sid, t->Groups[1].Sid);
@@ -347,7 +343,7 @@ static PTOKEN make_anonymous_token(void)
 
 /* ------------------------------------------------------------------ copies */
 
-/* copies the contents of a token into one just made; the lock is held. */
+/* copies a token's contents into a fresh one. call with the lock held. */
 static NTSTATUS token_copy(PTOKEN dst, const TOKEN *src)
 {
     memcpy(dst->Source, src->Source, sizeof(dst->Source));
@@ -403,7 +399,7 @@ static NTSTATUS token_copy(PTOKEN dst, const TOKEN *src)
     return STATUS_SUCCESS;
 }
 
-/* removes the groups that are not enabled, and the privileges. the lock is held. */
+/* removes the disabled groups and the privileges. call with the lock held. */
 static void token_effective_only(PTOKEN t)
 {
     t->Present &= t->Enabled;
@@ -464,8 +460,8 @@ static BOOLEAN group_in(const SEP_GROUP *groups, ULONG count, const void *sid)
 #define LUA_KEEP_PLAIN 0xFFFFFFEEDFE9F97Bull
 
 /*
- * the token of NtFilterToken: groups turned deny only, privileges deleted, sids to restricting with. the sids to
- * restricting a restricted token with must be among its own, else the request is refused.
+ * NtFilterToken: groups turned deny only, privileges deleted, restricting sids added. a restricted token may only be
+ * restricted with sids among its own, else the request is refused.
  */
 NTSTATUS SepFilter(const PTOKEN source, ULONG flags, ULONG disable_count, const SEP_GROUP *disable, ULONG delete_count,
                    const ULONG *delete_luids, ULONG restrict_count, const SEP_GROUP *restricting, PTOKEN *out)
@@ -485,7 +481,7 @@ NTSTATUS SepFilter(const PTOKEN source, ULONG flags, ULONG disable_count, const 
     t->ParentTokenId = source->TokenId;
     t->Flags &= ~(TOKEN_WRITE_RESTRICTED | TOKEN_SESSION_NOT_REFERENCED | TOKEN_VIRTUALIZE_ENABLED);
 
-    /* the sids to restricting with; a restricted token keeps only those it already restricts with. */
+    /* restricting sids. a restricted token keeps only those it already restricts with. */
     ULONG kept = 0;
     SEP_GROUP *list = nullptr;
     if (restrict_count) {
@@ -520,7 +516,7 @@ NTSTATUS SepFilter(const PTOKEN source, ULONG flags, ULONG disable_count, const 
         ExFreePool(list);
     }
 
-    /* groups turned into deny only, the user included. */
+    /* groups turned deny only, the user included. */
     BOOLEAN elevated_found = FALSE;
     for (ULONG i = 0; i < t->GroupCount; i++) {
         SEP_GROUP *g = &t->Groups[i];
@@ -540,7 +536,6 @@ NTSTATUS SepFilter(const PTOKEN source, ULONG flags, ULONG disable_count, const 
             t->OwnerIndex = 0;
     }
 
-    /* privileges. */
     ULONG before = SepPrivilegeCount(t);
     if (flags & DISABLE_MAX_PRIVILEGE) {
         t->Present &= privilege_bit(23);
@@ -567,7 +562,7 @@ NTSTATUS SepFilter(const PTOKEN source, ULONG flags, ULONG disable_count, const 
         t->Flags |= TOKEN_IS_RESTRICTED | TOKEN_IS_FILTERED;
     if (flags & WRITE_RESTRICTED)
         t->Flags |= TOKEN_WRITE_RESTRICTED | TOKEN_IS_RESTRICTED;
-    /* a whole token cut down is not whole any more: it is the limited half of a pair with the one it came from. */
+    /* a cut down full token is no longer full: it becomes the limited half of a pair with its source. */
     if (t->ElevationType == SEP_ELEVATION_FULL && !SepElevated(t)) {
         t->ElevationType = SEP_ELEVATION_LIMITED;
         if (t->Linked)
@@ -581,7 +576,7 @@ NTSTATUS SepFilter(const PTOKEN source, ULONG flags, ULONG disable_count, const 
 
 /* ------------------------------------------------------------------ handles */
 
-/* the generic rights of a token and the maximum. */
+/* maps generic rights and MAXIMUM_ALLOWED to token rights. */
 ACCESS_MASK SepMapTokenAccess(ACCESS_MASK access)
 {
     if (access & 0x02000000) /* MAXIMUM_ALLOWED */
@@ -597,7 +592,7 @@ ACCESS_MASK SepMapTokenAccess(ACCESS_MASK access)
     return access & ~0xF0000000u;
 }
 
-/* adds an entry for a sid to the list of the token's descriptor, which it has by now. */
+/* appends an ace for a sid to the token's descriptor, which it has by now. */
 static void append_ace(PTOKEN token, ACCESS_MASK mask, const UCHAR *sid)
 {
     SD_BLOB *sd, *made;
@@ -611,7 +606,7 @@ static void append_ace(PTOKEN token, ACCESS_MASK mask, const UCHAR *sid)
     SeSdDereference(sd);
 }
 
-/* the entry the default list gets for a package, so what the app container makes is its own to use. */
+/* the default dacl ace for a package, so what the app container makes is its own to use. */
 static void append_default_ace(PTOKEN token, const UCHAR *sid)
 {
     ULONG sid_size = SepSidLength(sid), ace_size = 8 + sid_size;
@@ -628,7 +623,7 @@ static void append_default_ace(PTOKEN token, const UCHAR *sid)
     PUCHAR ace = acl + size;
     ace[0] = 0;
     *(PUSHORT)(ace + 2) = (USHORT)ace_size;
-    *(PULONG)(ace + 4) = 0x10000000; /* GENERIC_ALL */
+    *(PULONG)(ace + 4) = 0x10000000; /* GENERIC_ALL. */
     memcpy(ace + 8, sid, sid_size);
     *(PUSHORT)(acl + 2) = (USHORT)((size + ace_size + 3) & ~3u);
     (*(PUSHORT)(acl + 4))++;
@@ -639,8 +634,8 @@ static void append_default_ace(PTOKEN token, const UCHAR *sid)
 }
 
 /*
- * what the descriptor of a token gets once it exists, as the kernel of windows gives it: the administrators may query
- * every one, and an app container's token is open to the package, whose default list also names it.
+ * like windows, the administrators may query every token, and an app container token is open to its package, which
+ * its default dacl also names.
  */
 void SepFinalizeTokenSecurity(PTOKEN token)
 {
@@ -657,8 +652,8 @@ void SepAddPackageToDefaultList(PTOKEN token)
 }
 
 /*
- * the descriptor of a token: the one its maker offered, else with its own subject the token's own default list and level,
- * as a token made for a process has, or the maker's default.
+ * the descriptor its maker offered, else with own_subject one from the token's own default dacl and level, as a
+ * process token has, else the maker's default.
  */
 NTSTATUS SepAssignTokenSecurity(PTOKEN token, const OBJECT_ATTRIBUTES *attributes, BOOLEAN own_subject)
 {
@@ -691,7 +686,7 @@ NTSTATUS SepInsertToken(PTOKEN token, ACCESS_MASK access, ULONG attributes, PHAN
     return NT_SUCCESS(status) ? ObStoreHandle(handle, h) : status;
 }
 
-/* a handle to a token that exists, which the caller is asked for: its descriptor decides, against the process's own token with as_self. */
+/* opens an existing token. its descriptor decides, checked against the process's own token with as_self. */
 NTSTATUS SepOpenToken(PTOKEN token, ACCESS_MASK access, ULONG attributes, BOOLEAN as_self, PHANDLE handle)
 {
     ACCESS_MASK granted = access;
@@ -703,7 +698,7 @@ NTSTATUS SepOpenToken(PTOKEN token, ACCESS_MASK access, ULONG attributes, BOOLEA
     return SepInsertToken(token, granted, attributes, handle);
 }
 
-/* the token behind a handle that grants the rights; the pseudo handles stand for the current ones. */
+/* the pseudo handles stand for the current tokens. */
 NTSTATUS SepReferenceTokenByHandle(HANDLE handle, ACCESS_MASK required, PTOKEN *token, ACCESS_MASK *granted)
 {
     LONG_PTR pseudo = (LONG_PTR)handle;
@@ -756,14 +751,13 @@ NTSTATUS SepReferenceTokenByHandle(HANDLE handle, ACCESS_MASK required, PTOKEN *
 /* ------------------------------------------------------------------ the tokens of processes and threads */
 
 /*
- * a new process gets a copy of its parent's token, with a number of its own; the system process, which the
- * processes of the host's requests are children of, gives the user's.
+ * a new process gets its own copy of its parent's token. children of the system process, which serves the host's
+ * requests, get the user's.
  */
 /*
- * the descriptors of a new process and its first thread: made with the token the process runs with as the subject, not
- * the creator's, so a sandbox that gives a process a token of another identity gets processes that identity can use,
- * and the offers of the creator are held to that subject. The creator's token is the subject only for the checks of
- * what the offers name.
+ * the descriptors of a new process and its first thread use the process's token as the subject, not the creator's,
+ * so a sandbox that gives a process another identity gets processes that identity can use. the creator's token is
+ * the subject only when checking what its offered descriptors name.
  */
 NTSTATUS SepAssignNewProcessSecurity(PEPROCESS process, PETHREAD thread, SD_BLOB *process_offer, SD_BLOB *thread_offer,
                                      KPROCESSOR_MODE mode)
@@ -804,8 +798,8 @@ NTSTATUS SepAssignProcessToken(PEPROCESS child, PEPROCESS parent)
 }
 
 /*
- * the token of the service control manager: a copy of the system's own, in session 0 where the services live.
- * referenced, to be given to SepSetProcessToken.
+ * the service control manager's token: a copy of the system token in session 0, where services live. referenced,
+ * for SepSetProcessToken.
  */
 PTOKEN SepCreateServiceControllerToken(void)
 {
@@ -817,7 +811,7 @@ PTOKEN SepCreateServiceControllerToken(void)
     return t;
 }
 
-/* the whole token of the user the machine runs for, for a program that asked for the rights of an administrator. */
+/* the full token of the machine's user, for a program that asked for administrator rights. */
 PTOKEN SepCreateElevatedUserToken(void)
 {
     ExAcquireFastMutex(&SeLock);
@@ -826,7 +820,7 @@ PTOKEN SepCreateElevatedUserToken(void)
     return t;
 }
 
-/* the session a process runs in, which is its token's. */
+/* a process's session is its token's. */
 ULONG SepTokenSessionId(PEPROCESS process)
 {
     ExAcquireFastMutex(&SeLock);
@@ -837,9 +831,8 @@ ULONG SepTokenSessionId(PEPROCESS process)
 }
 
 /*
- * an explicit token for a new process. The process runs with a copy of it, as in windows, so the descriptor of the token
- * it runs with is its own and the token it was made from stays free for the next process. (ProcessAccessToken is
- * the way to give a process the token itself, see SepSetProcessAccessToken.)
+ * the process runs with a copy of the token, as in windows, so its token's descriptor is its own and the given token
+ * stays free for the next process. ProcessAccessToken hands a process the token itself, see SepSetProcessAccessToken.
  */
 void SepSetProcessToken(PEPROCESS process, PTOKEN token)
 {
@@ -865,7 +858,7 @@ void SepFreeProcessToken(PEPROCESS process)
         ObDereferenceObject(t);
 }
 
-/* the token a thread acts with, referenced. */
+/* the token the thread acts with, referenced. */
 PTOKEN SepReferenceEffectiveToken(PETHREAD thread)
 {
     ExAcquireFastMutex(&SeLock);
@@ -886,7 +879,7 @@ PTOKEN SepReferencePrimaryToken(PEPROCESS process)
     return t;
 }
 
-/* whether the current thread holds a privilege enabled; kernel callers hold them all. */
+/* kernel callers hold every privilege. */
 BOOLEAN SepSinglePrivilegeCheck(ULONG luid, KPROCESSOR_MODE mode)
 {
     if (mode == KernelMode)
@@ -911,7 +904,7 @@ BOOLEAN SepCanImpersonate(PTOKEN pt, PTOKEN target, ULONG level)
 {
     if (level < SecurityImpersonation || !pt)
         return TRUE;
-    /* anyone may become the anonymous logon, but a process of an app container. */
+    /* anyone but an app container process may become the anonymous logon. */
     if (target->AuthenticationId == ANONYMOUS_LUID) {
         if (!(pt->Flags & TOKEN_LOWBOX))
             return TRUE;
@@ -933,7 +926,7 @@ BOOLEAN SepCanImpersonate(PTOKEN pt, PTOKEN target, ULONG level)
     return pt->SessionId == target->SessionId || target->SessionId != 0;
 }
 
-/* tells the thread's own teb, and the 32-bit one, whether it impersonates. */
+/* tells the thread's teb, and its 32-bit one, whether it impersonates. */
 static void write_teb(PETHREAD thread, ULONG impersonating)
 {
     PTEB teb = thread->Tcb.Teb;
@@ -955,8 +948,8 @@ static void write_teb(PETHREAD thread, ULONG impersonating)
 }
 
 /*
- * makes a thread act with a token, or with its process's again when there is none. a process that may not take
- * the token's identity at the level asked is given a copy that can only identify, as windows does.
+ * with no token the thread goes back to its process's. like windows, a process that may not take the token's
+ * identity at the asked level gets a copy that can only identify.
  */
 NTSTATUS SepImpersonateClient(PETHREAD thread, PTOKEN token, BOOLEAN copy_on_open, BOOLEAN effective_only, ULONG level)
 {
@@ -994,7 +987,7 @@ NTSTATUS SepImpersonateClient(PETHREAD thread, PTOKEN token, BOOLEAN copy_on_ope
     return status;
 }
 
-/* a copy of an identity for a named pipe's client, which can only be impersonated. */
+/* a copy of a named pipe client's identity, which can only be impersonated. */
 PTOKEN SepDuplicateForPipe(PTOKEN token, ULONG level, BOOLEAN effective_only)
 {
     ExAcquireFastMutex(&SeLock);
@@ -1011,7 +1004,7 @@ void SepFreeThreadToken(PETHREAD thread)
         ObDereferenceObject(t);
 }
 
-/* the token of the user the machine runs for, whose defaults files and keys show that nobody made otherwise. */
+/* the machine user's token, whose defaults files and keys show when nobody set otherwise. */
 PTOKEN SepReferenceSessionToken(void)
 {
     ObReferenceObject(g_session_token);
@@ -1052,12 +1045,12 @@ void SepInitialize(void)
     g_elevated_token->Linked = g_session_token;
     g_elevated_token->ParentTokenId = g_session_token->ParentTokenId;
 
-    /* the tokens of the machine are open to the users they are of. */
+    /* the machine's tokens are open to their own users. */
     SepAssignTokenSecurity(g_system_token, nullptr, TRUE);
     SepAssignTokenSecurity(g_session_token, nullptr, TRUE);
     SepAssignTokenSecurity(g_elevated_token, nullptr, TRUE);
     SepAssignTokenSecurity(g_anonymous_token, nullptr, TRUE);
-    /* the system process, which was made before tokens could be. */
+    /* the system process was made before tokens could be. */
     g_system_token->InUse = TRUE;
     ObReferenceObject(g_system_token);
     PsInitialSystemProcess->Token = g_system_token;

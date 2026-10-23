@@ -1,8 +1,7 @@
 /*
- * the list of drivers: the installable ones of the registry's Drivers32
- * key named msacm.*, the internal pcm converter after them, and those a
- * program adds, local ones first for their thread. their order is the
- * priority the user's "Priority v4.00" key keeps.
+ * the driver list: the installable msacm.* drivers of the registry's Drivers32
+ * key, then the internal pcm converter, then those a program adds, a thread's
+ * local ones first. the order is the priority the user's "Priority v4.00" key keeps.
  */
 #include "msacm32_private.h"
 
@@ -14,7 +13,7 @@ WINUSERAPI DWORD WINAPI CharLowerBuffW(LPWSTR s, DWORD n);
 
 static ACMDRIVERID_ *g_ids;
 static BOOL g_booted;
-/* the thread deferring the saving of priorities between ACM_DRIVERPRIORITYF_BEGIN and END. */
+/* the thread deferring priority saves between ACM_DRIVERPRIORITYF_BEGIN and END. */
 static DWORD g_priority_thread;
 
 static HANDLE heap(void)
@@ -74,7 +73,7 @@ BOOL AcmHasFilterTag(const ACMDRIVERID_ *id, DWORD tag)
     return FALSE;
 }
 
-/* the driver id of a driver id, a driver or a stream, the handle being valid. */
+/* the driver id behind a valid driver id, driver or stream handle. */
 ACMDRIVERID_ *AcmIdOf(HACMOBJ handle)
 {
     DWORD type = *(DWORD *)handle;
@@ -109,7 +108,7 @@ LRESULT AcmIdMessage(ACMDRIVERID_ *id, UINT message, LPARAM param1, LPARAM param
     return r;
 }
 
-/* a message to an open driver; the caller holds the lock of the driver or of the stream sending it. */
+/* the caller holds the lock of the driver or of the stream sending the message. */
 LRESULT AcmDriverMessage(ACMDRIVER_ *driver, UINT message, LPARAM param1, LPARAM param2)
 {
     if (!driver)
@@ -227,7 +226,7 @@ static MMRESULT load(ACMDRIVERID_ *id)
     return r;
 }
 
-/* closes the driver of a loaded id; open drivers keep it. */
+/* closes a loaded id's driver. open drivers keep it. */
 static MMRESULT unload(ACMDRIVERID_ *id)
 {
     if (!(id->state & ID_LOADED))
@@ -340,7 +339,7 @@ static HKEY open_acm_key(const WCHAR *name)
     return key;
 }
 
-/* renumbers the global drivers from 1 in their order. */
+/* renumbers the global drivers from 1 in order. */
 static void refresh_priorities(void)
 {
     DWORD n = 1;
@@ -349,7 +348,7 @@ static void refresh_priorities(void)
             id->priority = n++;
 }
 
-/* enables or disables a driver and moves it to a priority among the global drivers, -1 being the last. */
+/* enables or disables a driver and moves it among the global drivers, priority -1 meaning last. */
 static void set_priority(ACMDRIVERID_ *id, DWORD priority, DWORD flags)
 {
     if ((flags & ACM_DRIVERPRIORITYF_ABLEMASK) == ACM_DRIVERPRIORITYF_ENABLE)
@@ -384,7 +383,7 @@ static BOOL priority_matches(const ACMDRIVERID_ *id, const WCHAR *value)
     return (value[0] == '0' || value[0] == '1') && value[1] == ',' && value[2] == ' ' && !lstrcmpW(value + 3, id->alias);
 }
 
-/* puts the drivers in the order the user's key keeps; TRUE when something moved. */
+/* reorders the drivers as the user's key says, TRUE when something moved. */
 static BOOL restore_priorities(void)
 {
     HKEY key = open_acm_key(L"Priority v4.00");
@@ -416,7 +415,7 @@ static BOOL restore_priorities(void)
 
 /*
  * writes the order of the global drivers, keeping the values of drivers not
- * installed now before the driver that followed them.
+ * installed now in front of the driver that followed them.
  */
 static void save_priorities(void)
 {
@@ -496,7 +495,7 @@ static void broadcast(void)
     }
 }
 
-/* after the list of global drivers changed: saved and told, unless a thread defers it. */
+/* after the global list changed: saved and broadcast, unless a thread defers it. */
 static void list_changed(void)
 {
     refresh_priorities();
@@ -506,7 +505,7 @@ static void list_changed(void)
     broadcast();
 }
 
-/* the order another process may have saved, re-read before enumerations as windows does. */
+/* re-reads the order another process may have saved, before enumerations, as windows does. */
 static void sync_priorities(void)
 {
     if (AcmEnumerating() || g_priority_thread)
@@ -619,7 +618,7 @@ static MMRESULT add(ACMDRIVERID_ **out, HINSTANCE module, LPARAM param, DWORD pr
     return MMSYSERR_NOERROR;
 }
 
-/* the drivers32 entries named msacm.*, then the pcm converter unless the user turned it off. */
+/* the Drivers32 entries named msacm.*, then the pcm converter unless the user turned it off. */
 BOOL AcmBoot(void)
 {
     if (g_booted)
@@ -861,7 +860,6 @@ MSACMAPI MMRESULT WINAPI acmDriverClose(HACMDRIVER had, DWORD flags)
     return AcmCloseDriver((ACMDRIVER_ *)had);
 }
 
-/* the configuration dialog, through the driver of the id. */
 static LRESULT configure(ACMDRIVERID_ *id, HWND window)
 {
     if (!(id->state & ID_CONFIGURABLE))
@@ -906,7 +904,7 @@ MSACMAPI LRESULT WINAPI acmDriverMessage(HACMDRIVER had, UINT message, LPARAM pa
     return MMSYSERR_INVALHANDLE;
 }
 
-/* the details the driver gives, with the disabled and local bits of its state. */
+/* the driver's details, with the disabled and local bits of its state. */
 static MMRESULT details(ACMDRIVERID_ *id, ACMDRIVERDETAILSW *out)
 {
     if (id->state & ID_NOTIFY)

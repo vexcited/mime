@@ -22,7 +22,7 @@ static UNICODE_STRING str32(ULONG value)
     return s ? (UNICODE_STRING){s->Length, s->MaximumLength, ptr32(s->Buffer)} : (UNICODE_STRING){0};
 }
 
-/* object attributes of x86 code, with the name they point at. */
+/* widens x86 object attributes and the name they point at. */
 static OBJECT_ATTRIBUTES oa32(ULONG value, UNICODE_STRING *name)
 {
     const MIME_OBJECT_ATTRIBUTES32 *a = ptr32(value);
@@ -40,7 +40,7 @@ static OBJECT_ATTRIBUTES oa32(ULONG value, UNICODE_STRING *name)
     return out;
 }
 
-/* the x86 MSG ends with the point: 28 bytes, a word more would be written over what follows it. */
+/* the x86 MSG ends with the point at 28 bytes, writing a word more would clobber what follows. */
 typedef struct MSG32 {
     ULONG Hwnd, Message, Wparam, Lparam, Time;
     POINT Point;
@@ -59,7 +59,7 @@ static MSG message64(const MSG32 *m)
     return (MSG){ptr32(m->Hwnd), m->Message, m->Wparam, (LONG_PTR)(ULONG_PTR)m->Lparam, m->Time, m->Point, 0};
 }
 
-/* a counted string's length back into the x86 one the call filled. */
+/* copies a counted string's length back into the x86 one the call filled. */
 static void set_length32(ULONG value, const UNICODE_STRING *s)
 {
     if (value)
@@ -82,7 +82,7 @@ static void release(PVOID base)
         NtFreeVirtualMemory(NtCurrentProcess(), &base, &size, MEM_RELEASE);
 }
 
-/* the 48-byte x86 MENUITEMINFOW widened; the 44-byte one before hbmpItem too. */
+/* widens the 48-byte x86 MENUITEMINFOW, or the older 44-byte one without hbmpItem. */
 static BOOLEAN menu_item64(const ULONG *p, MENUITEMINFOW *info)
 {
     if (!p || (p[0] != 48 && p[0] != 44))
@@ -93,8 +93,8 @@ static BOOLEAN menu_item64(const ULONG *p, MENUITEMINFOW *info)
 }
 
 /*
- * the x86 OUTLINETEXTMETRICW: the same fields up to the four name offsets,
- * which are 4 bytes each with no padding before them, then the strings.
+ * the x86 OUTLINETEXTMETRICW matches up to the four name offsets, which are
+ * 4 bytes each with no padding before them. the strings follow.
  */
 static ULONG outline_metrics32(const ULONG *a)
 {
@@ -128,7 +128,7 @@ static ULONG outline_metrics32(const ULONG *a)
     return n;
 }
 
-/* lists of handles, or of atoms with handles, narrowed into the x86 buffer. */
+/* narrows lists of handles, or of atoms with handles, into the x86 buffer. */
 static ULONG handle_list32(ULONG number, const ULONG *a)
 {
     BOOLEAN props = number == MIME_SVC_NtUserBuildPropList;
@@ -170,7 +170,7 @@ static ULONG handle_list32(ULONG number, const ULONG *a)
     return (ULONG)status;
 }
 
-/* the 28-byte x86 INPUT records widened, sent in batches. */
+/* widens the 28-byte x86 INPUT records and sends them in batches. */
 static ULONG send_input32(const ULONG *a)
 {
     if (a[2] != 28 || !a[1])
@@ -202,9 +202,8 @@ static ULONG send_input32(const ULONG *a)
 }
 
 /*
- * the object records with a pointer sized member: BITMAP and the DIBSECTION
- * that starts with one keep bmBits, LOGBRUSH keeps lbHatch. the others have
- * the same layout, so they pass through.
+ * object records with a pointer sized member: BITMAP and the DIBSECTION that
+ * starts with one keep bmBits, LOGBRUSH keeps lbHatch. the rest pass through.
  */
 static ULONG get_object32(const ULONG *a)
 {
@@ -314,7 +313,7 @@ static ULONG registered_raw32(const ULONG *a)
     return result;
 }
 
-/* the 16-byte x86 header before the same device data. */
+/* the x86 header is 16 bytes, the device data after it is the same. */
 static ULONG raw_data32(const ULONG *a)
 {
     UINT *size = ptr32(a[3]);
@@ -348,7 +347,7 @@ static ULONG raw_data32(const ULONG *a)
     return need;
 }
 
-/* windows hands x86 programs this buffer with 64-bit headers, the data 8 bytes later. */
+/* windows gives x86 programs this buffer with 64-bit headers, the data 8 bytes later. */
 static ULONG raw_buffer32(const ULONG *a)
 {
     ULONG64 v[3] = {a[0], a[1], a[2] == 16 ? sizeof(RAWINPUTHEADER) : 0};
@@ -391,7 +390,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[0] = (ULONG_PTR)&info;
         return (ULONG)MxCallService(number, v);
     }
-    /* the vulkan connection: its memory lies below 4 gib in a 32-bit process, so pointers narrow. */
+    /* the vulkan connection lives below 4 GiB in a 32-bit process, so pointers narrow. */
     case MIME_SVC_NtGdiMimeVkOpen: {
         PVOID base = nullptr;
         v[0] = (ULONG_PTR)&base;
@@ -513,7 +512,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         return atom;
     }
     case MIME_SVC_NtUserThunkedMenuItemInfo: {
-        /* the 48-byte x86 MENUITEMINFOW, widened; the text comes separately as a counted string. */
+        /* the 48-byte x86 MENUITEMINFOW, widened. the text comes separately as a counted string. */
         const ULONG *p = ptr32(a[4]);
         if (!p || p[0] != 48)
             return FALSE;
@@ -666,13 +665,12 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtUserMessageCall: {
         for (ULONG i = 0; i < 7; i++)
             v[i] = a[i];
-        /* the window and both parameters are sign extended, as a pointer below 2 GiB is not changed by it and
-           a number like -16 stays itself. */
+        /* the window and both parameters are sign extended: a pointer below 2 GiB is unchanged and -16 stays -16. */
         v[0] = (LONG64)(LONG)a[0];
         v[2] = (LONG64)(LONG)a[2];
         v[3] = (LONG64)(LONG)a[3];
         UINT msg = a[1];
-        /* the structures of the message the 32-bit program points to are made over in the layout of win32k. */
+        /* the message structures the 32-bit program points to are rebuilt in win32k's layout. */
         UCHAR copy[160];
         PVOID user = ptr32(a[3]);
         ULONG fixed = a[5] <= MIME_MSGCALL_SENDCALLBACK && user ? lay_size32(msg) : 0;
@@ -682,7 +680,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
             lay_to64(msg, user, copy);
             v[3] = (ULONG_PTR)copy;
         } else if (calc) {
-            /* three rectangles and the position they come with, which the program points to. */
+            /* three rectangles and the position the program points to. */
             NCCALCSIZE_PARAMS *params = (void *)copy;
             memset(copy, 0, sizeof(copy));
             memcpy(params->rgrc, user, sizeof(params->rgrc));

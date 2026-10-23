@@ -1,9 +1,7 @@
-/*
- * text output and measurement services.
- */
+/* text output and measurement services. */
 #include "../win32k.h"
 
-/* code points from utf-16, surrogate pairs combined. */
+/* combines surrogate pairs. */
 static ULONG next_char(PCWSTR text, ULONG count, ULONG *i)
 {
     WCHAR c = text[(*i)++];
@@ -13,8 +11,8 @@ static ULONG next_char(PCWSTR text, ULONG count, ULONG *i)
 }
 
 /*
- * the glyph matrix: the world transform and the page scale without its
- * flips, so text stays upright in mapping modes where y goes up, like windows.
+ * the world transform and the page scale without its flips, so text stays upright in mapping modes where y goes
+ * up, like windows.
  */
 static void glyph_matrix(DC *dc, XFORM *g)
 {
@@ -38,7 +36,7 @@ static LONG round_f(float v)
     return (LONG)(v >= 0 ? v + 0.5f : v - 0.5f);
 }
 
-/* a point at an offset in text space from a surface origin. */
+/* offsets a surface origin by a text space vector. */
 static void text_point(const XFORM *g, LONG ox, LONG oy, LONG dx, LONG dy, LONG *x, LONG *y)
 {
     *x = ox + round_f((float)dx * g->eM11 + (float)dy * g->eM21);
@@ -65,9 +63,8 @@ static RECT transformed_bounds(const XFORM *g, LONG ox, LONG oy, LONG l, LONG t,
 }
 
 /*
- * text under a transform: the font keeps its logical size, the reference
- * point goes through the transform and the glyphs and their offsets through
- * the glyph matrix, so scaled and rotated text look like windows draws them.
+ * the font keeps its logical size, the reference point goes through the transform and the glyphs and their offsets
+ * through the glyph matrix, so scaled and rotated text look like windows draws them.
  */
 static void TextDrawTransformed(DC *dc, FONT_INSTANCE *fi, const REGION *clip, LONG x, LONG y, UINT options,
                                 PCWSTR text, ULONG count, const INT *dx, LONG width)

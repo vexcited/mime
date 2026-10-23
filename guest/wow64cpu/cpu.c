@@ -1,7 +1,6 @@
 /*
- * wow64cpu.dll: the x64 processor of wow64. 32-bit code runs natively in
- * the 32-bit code segment and comes back for each system call, which
- * wow64.dll converts and makes. see x64/cpu.S.
+ * runs WOW64 code natively in the 32-bit code segment. system calls return through x64/cpu.S to wow64.dll for
+ * conversion.
  */
 #include <mime/ntrtl.h>
 
@@ -24,9 +23,8 @@ BOOL WINAPI DllMain(PVOID instance, ULONG reason, PVOID reserved)
 }
 
 /*
- * runs the thread's 32-bit code, making its system calls, until a call
- * into it returns. the code reaches the 64-bit side again through the
- * gates, so they must sit below 4 GiB.
+ * runs 32-bit code until the call returns, dispatching system calls through the gates. the gates must reside below 4
+ * GiB.
  */
 CPU_EXPORT void NTAPI BTCpuSimulate(void)
 {
@@ -51,7 +49,7 @@ CPU_EXPORT NTSTATUS NTAPI BTCpuThreadInit(void)
     return STATUS_SUCCESS;
 }
 
-/* the 32-bit addresses wow64.dll gives ntdll's Wow64Transition and the calls it makes into 32-bit code. */
+/* 32-bit gate addresses for ntdll's Wow64Transition and calls from wow64.dll. */
 CPU_EXPORT ULONG NTAPI Wow64CpuGetTransition(void)
 {
     return (ULONG)(ULONG_PTR)Wow64CpuTransition;

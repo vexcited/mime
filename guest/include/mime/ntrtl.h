@@ -1,7 +1,4 @@
-/*
- * user mode runtime exported by ntdll.dll: heaps, locks, the loader,
- * paths, environment, errors and exceptions.
- */
+/* the user mode runtime of ntdll.dll: heaps, locks, the loader, paths, environment, errors and exceptions. */
 #ifndef MIME_NTRTL_H
 #define MIME_NTRTL_H
 
@@ -17,7 +14,6 @@
 #endif
 #endif
 
-/* heap flags. */
 #define HEAP_NO_SERIALIZE 0x00000001
 #define HEAP_GROWABLE 0x00000002
 #define HEAP_GENERATE_EXCEPTIONS 0x00000004
@@ -25,7 +21,6 @@
 #define HEAP_REALLOC_IN_PLACE_ONLY 0x00000010
 #define HEAP_CREATE_ENABLE_EXECUTE 0x00040000
 
-/* dll entry reasons. */
 #define DLL_PROCESS_DETACH 0
 #define DLL_PROCESS_ATTACH 1
 #define DLL_THREAD_ATTACH 2
@@ -60,10 +55,10 @@ typedef struct _RTL_CRITICAL_SECTION {
 } RTL_CRITICAL_SECTION, *PRTL_CRITICAL_SECTION;
 MIME_STATIC_ASSERT(sizeof(RTL_CRITICAL_SECTION) == (sizeof(void *) == 4 ? 24 : 40), "RTL_CRITICAL_SECTION");
 
-/* a free critical section, usable as a static initializer. its debug information is the -1 windows gives one that has none. */
+/* a static initializer. like windows, a section without debug information has -1 there. */
 #define RTL_CRITICAL_SECTION_INIT {(PRTL_CRITICAL_SECTION_DEBUG)(LONG_PTR)-1, -1, 0, NULL, NULL, 0}
 
-/* the flags of RtlInitializeCriticalSectionEx, which windows keeps in the high bits of the spin count. */
+/* RtlInitializeCriticalSectionEx flags, kept in the high bits of the spin count. */
 #define RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO 0x01000000
 #define RTL_CRITICAL_SECTION_FLAG_DYNAMIC_SPIN 0x02000000
 #define RTL_CRITICAL_SECTION_FLAG_STATIC_INIT 0x04000000
@@ -97,7 +92,7 @@ typedef union DECLSPEC_ALIGN(8) _SLIST_HEADER {
     } S;
 } SLIST_HEADER, *PSLIST_HEADER;
 #else
-/* 16 byte header: next pointer and a depth and sequence word, updated with casp. */
+/* updated with casp as one 16 byte value. */
 typedef union DECLSPEC_ALIGN(16) _SLIST_HEADER {
     struct {
         ULONGLONG Alignment;
@@ -105,7 +100,7 @@ typedef union DECLSPEC_ALIGN(16) _SLIST_HEADER {
     };
     struct {
         PSLIST_ENTRY Next;
-        ULONGLONG DepthSequence; /* depth in bits 0..15, sequence above */
+        ULONGLONG DepthSequence; /* depth in bits 0 to 15, sequence above. */
     } S;
     unsigned __int128 Whole;
 } SLIST_HEADER, *PSLIST_HEADER;
@@ -301,7 +296,7 @@ NTSYSAPI PSLIST_ENTRY NTAPI RtlInterlockedFlushSList(PSLIST_HEADER head);
 NTSYSAPI USHORT NTAPI RtlQueryDepthSList(PSLIST_HEADER head);
 NTSYSAPI PSLIST_ENTRY NTAPI RtlFirstEntrySList(const SLIST_HEADER *head);
 
-/* the windows notification facility */
+/* windows notification facility. */
 typedef NTSTATUS(NTAPI *PWNF_USER_CALLBACK)(WNF_STATE_NAME state_name, WNF_CHANGE_STAMP change_stamp,
                                             PWNF_TYPE_ID type_id, PVOID context, const VOID *buffer, ULONG size);
 NTSYSAPI NTSTATUS NTAPI RtlQueryWnfStateData(PWNF_CHANGE_STAMP change_stamp, WNF_STATE_NAME state_name,

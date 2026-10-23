@@ -1,9 +1,9 @@
 /*
- * what the window manager does with a message by its number, for the numbers below WM_USER: the ones that cannot be
- * posted, the ones a program may not post, and the ones that only the window manager itself sends.
+ * how the window manager treats messages below WM_USER: which cannot be posted, which a program may not post, and
+ * which only the window manager sends.
  *
- * each set is a sorted list of numbers, one to a line with the name of the message and why it is there. docs/win32k.md
- * gives the reasons. a message of WM_USER or above is in none of them, as its parameters are the program's own.
+ * each set is a sorted list, one number per line with the message name and why it is listed. messages at WM_USER or
+ * above are in none of them, since their parameters belong to the program.
  */
 #ifndef MIME_MSGTABLE_H
 #define MIME_MSGTABLE_H
@@ -11,8 +11,8 @@
 #include <mime/nt.h>
 
 /*
- * the messages that cannot be posted, or sent without waiting for the answer: they carry a pointer or a handle of
- * the sender, which is gone by the time a posted message is read, or the sender needs what the receiver returns.
+ * messages that cannot be posted or sent without waiting: they carry a pointer or handle of the sender that is gone
+ * by the time a posted message is read, or the sender needs the receiver's answer.
  */
 static const USHORT g_sync_only_messages[] = {
     0x0001, /* WM_CREATE, a CREATESTRUCT */
@@ -195,7 +195,6 @@ static const USHORT g_kernel_only_messages[] = {
 /* a device or power event that carries a structure sets this bit of its wparam. */
 #define MSG_EVENT_HAS_DATA 0x8000
 
-/* binary search of a sorted list of numbers. */
 static inline BOOLEAN MimeMsgListed(const USHORT *list, ULONG count, UINT msg)
 {
     ULONG low = 0, high = count;
@@ -210,8 +209,8 @@ static inline BOOLEAN MimeMsgListed(const USHORT *list, ULONG count, UINT msg)
 }
 
 /*
- * whether the message cannot be posted or sent without waiting. a device change with data cannot, whichever way it is
- * sent; a power broadcast with data cannot be posted, and a send of it waits anyway.
+ * a device change with data can never be posted or sent without waiting. a power broadcast with data cannot be
+ * posted, and sending it waits anyway.
  */
 static inline BOOLEAN MimeMsgIsSyncOnly(UINT msg, WPARAM wparam, BOOLEAN post)
 {

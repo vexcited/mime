@@ -1,7 +1,7 @@
 /*
- * context handles. A server gives a client a handle of twenty bytes for state it keeps; the client holds it as an opaque pointer
- * that names the server too, and passes it back to the calls that use that state. The server side of the table is with the
- * server (rpc_server.c); the client side and the parts that marshal a handle are here.
+ * context handles. a server gives a client a twenty byte handle for state it keeps. the client holds it as an opaque
+ * pointer that also names the server, and passes it back to calls using that state. the server side lives in
+ * rpc_server.c, the client side and marshaling are here.
  */
 #include "ndr_proc.h"
 
@@ -41,7 +41,7 @@ RPCRTAPI void RPC_ENTRY NDRCContextMarshall(NDR_CCONTEXT context, void *buffer)
     }
 }
 
-/* takes the handle on the wire; a null one closes the context, and a new one makes it and records the server it came from. */
+/* a null handle on the wire closes the context, a new one creates it and records the server it came from. */
 RPCRTAPI void RPC_ENTRY NDRCContextUnmarshall(NDR_CCONTEXT *context, RPC_BINDING_HANDLE binding, void *buffer, ULONG drep)
 {
     CCTX *c = *context;
@@ -94,8 +94,6 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcSsGetContextBinding(void *context, RPC_BINDING_
     *binding = c->Binding;
     return RPC_S_OK;
 }
-
-/* ------------------------------------------------------------------ the wrappers of the stub */
 
 RPCRTAPI void RPC_ENTRY NdrClientContextMarshall(PMIDL_STUB_MESSAGE m, NDR_CCONTEXT context, int check)
 {
@@ -167,9 +165,7 @@ RPCRTAPI void RPC_ENTRY NdrServerContextMarshall(PMIDL_STUB_MESSAGE m, NDR_SCONT
     NdrServerContextNewMarshall(m, context, rundown, format);
 }
 
-/* ------------------------------------------------------------------ the walker */
-
-/* what the server remembers of the context handles of a call between its [in] part and its [out] part. */
+/* what the server keeps of a call's context handles between its [in] and [out] parts. */
 typedef struct CTXREC {
     struct CTXREC *Next;
     uchar **Cell;
@@ -206,7 +202,6 @@ static void record_add(PMIDL_STUB_MESSAGE m, uchar **cell, NDR_SCONTEXT context)
     m->ContextHandleHash = r;
 }
 
-/* a context handle given by its type: counted, written to the wire and read from it as the side of the call needs. */
 void NdrpContextHandle(NDRC *c, uchar **pm, PFORMAT_STRING f)
 {
     PMIDL_STUB_MESSAGE m = c->M;

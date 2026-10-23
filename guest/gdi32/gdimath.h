@@ -1,6 +1,6 @@
 /*
- * the little floating point gdi32 needs, without a c library: square
- * roots, sines, cosines and arc tangents in double precision.
+ * the floating point gdi32 needs without a c library: square roots, sines,
+ * cosines and arc tangents in double precision.
  */
 #pragma once
 
@@ -20,7 +20,7 @@ static inline double GdiSqrt(double v)
     return r;
 }
 
-/* sine and cosine: the angle reduced to a quarter turn around zero, then their series. */
+/* the angle is reduced to a quarter turn around zero, then both series run. */
 static inline void GdiSinCos(double a, double *s, double *c)
 {
     double turns = a / (GDI_PI / 2);
@@ -49,7 +49,7 @@ static inline void GdiSinCos(double a, double *s, double *c)
     }
 }
 
-/* the arc tangent of a ratio up to one, from its series after two halvings of the angle. */
+/* for ratios up to one: the series after two halvings of the angle. */
 static inline double gdi_atan_small(double x)
 {
     for (int i = 0; i < 2; i++)

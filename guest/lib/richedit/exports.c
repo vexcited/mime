@@ -1,7 +1,6 @@
 /*
- * what riched20.dll and msftedit.dll both export: the interface
- * identifiers, and text services, which this engine does not offer
- * without a window.
+ * exports shared by riched20.dll and msftedit.dll: the interface ids, and
+ * text services, which this engine does not offer without a window.
  */
 #include "richedit_private.h"
 
@@ -27,7 +26,7 @@ HRESULT WINAPI CreateTextServices(void *outer, void *host, void **out)
     return E_NOTIMPL;
 }
 
-/* the classes of a dll; the ansi one too unless its name is null. */
+/* the ansi class is registered too unless its name is null. */
 BOOL ReRegisterClasses(HINSTANCE module, const WCHAR *wide, WNDPROC wide_proc, const char *ansi, WNDPROC ansi_proc)
 {
     WNDCLASSW wc;

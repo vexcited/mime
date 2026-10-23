@@ -1,8 +1,6 @@
 /*
- * GetOpenFileName and GetSaveFileName, over the file dialog window of
- * filedlg.c: the structure's filters, names and flags become the dialog's,
- * and what the user chose is written back as the structure promises, in the
- * buffer of one path, or a folder and the names in it for several.
+ * GetOpenFileName and GetSaveFileName over the file dialog window of filedlg.c. the choice goes back in the
+ * buffer as one path, or as a folder followed by the names for several.
  */
 #include "filedlg.h"
 #include <mime/win32/shlwapi.h>
@@ -11,7 +9,7 @@
 #define FNERR_BUFFERTOOSMALL 0x3003
 #endif
 
-/* the flags that mean the same as the options of the item dialogs. */
+/* the flags that match item dialog options. */
 #define SHARED_FLAGS                                                                                               \
     (OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR | OFN_ALLOWMULTISELECT | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST |        \
      OFN_CREATEPROMPT | OFN_SHAREAWARE | OFN_NOREADONLYRETURN | OFN_NOTESTFILECREATE | OFN_NODEREFERENCELINKS |    \
@@ -29,7 +27,7 @@ typedef struct _OFN_RUN {
 
 /* ------------------------------------------------------------------ the hook */
 
-/* a notification to the hook; the answer is what it left in the message result. */
+/* the hook answers through the message result it sets. */
 static LRESULT notify_hook(OFN_RUN *run, UINT code, LPWSTR file)
 {
     OFNOTIFYW notify;
@@ -45,7 +43,7 @@ static LRESULT notify_hook(OFN_RUN *run, UINT code, LPWSTR file)
     return GetWindowLongPtrW(run->Hook, DWLP_MSGRESULT);
 }
 
-/* the hook of an explorer style dialog lives in a child of the dialog, which is the window it works with. */
+/* an explorer style hook lives in a child window of the dialog. */
 static void make_hook(OFN_RUN *run, HWND parent)
 {
     static const WORD child[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 'S', 'e', 'g', 'o', 'e', ' ', 'U', 'I', 0};
@@ -69,7 +67,7 @@ static BOOL ends_with_slash(LPCWSTR text)
     return n && (text[n - 1] == L'\\' || text[n - 1] == L'/');
 }
 
-/* the offsets of the structure for a path in one string. */
+/* nFileOffset and nFileExtension for a single path. */
 static void offsets_of(LPCWSTR path, WORD *file, WORD *extension)
 {
     LPCWSTR name = path;
@@ -85,9 +83,8 @@ static void offsets_of(LPCWSTR path, WORD *file, WORD *extension)
 }
 
 /*
- * writes the results into the file buffer: one path alone, or the folder and then each name, in the explorer
- * style the folder and the names ended by a zero, in the old style separated by blanks. FALSE when it does not fit,
- * with the size it needs in the first character.
+ * one path alone, or the folder then each name: explorer style ends each with a zero, the old style separates
+ * them with blanks. FALSE when it does not fit, with the needed size in the first character.
  */
 static BOOL store_results(OFN_RUN *run, FILEDLG *dialog)
 {
@@ -144,7 +141,6 @@ static BOOL store_results(OFN_RUN *run, FILEDLG *dialog)
         }
         out[at] = 0;
     }
-    /* the name alone, for the program that wants it. */
     if (ofn->lpstrFileTitle && ofn->nMaxFileTitle) {
         LPCWSTR name = PathFindFileNameW(first);
         lstrcpynW(ofn->lpstrFileTitle, name, (int)ofn->nMaxFileTitle);
@@ -160,7 +156,7 @@ static void ofn_initialized(FILEDLG *dialog, void *context)
     if ((run->Ofn->Flags & OFN_ENABLEHOOK) && run->Ofn->lpfnHook && (run->Ofn->Flags & OFN_EXPLORER)) {
         make_hook(run, FdWindow(dialog));
         notify_hook(run, CDN_INITDONE, nullptr);
-        /* the folder the dialog opened in was reached before the hook was there. */
+        /* the hook did not exist yet when the dialog reached its first folder. */
         notify_hook(run, CDN_FOLDERCHANGE, nullptr);
     }
 }
@@ -203,7 +199,7 @@ static const FILEDLG_EVENTS g_ofn_events = {
 
 /* ------------------------------------------------------------------ the structure's filters */
 
-/* the filter strings in pairs of a name and a spec, ended by an empty string. */
+/* filters come as name and spec pairs, ended by an empty string. */
 static UINT count_pairs(LPCWSTR filter)
 {
     UINT n = 0;
@@ -298,7 +294,7 @@ static BOOL file_name_w(LPOPENFILENAMEW ofn, BOOL save)
     if (!save && !(ofn->Flags & OFN_HIDEREADONLY))
         FdSetReadOnlyBox(dialog, TRUE, (ofn->Flags & OFN_READONLY) != 0);
 
-    /* the file name box starts with the name part of the buffer, and its folder is a start for the dialog. */
+    /* the name box starts with the name part of the buffer, and its folder is where the dialog starts. */
     WCHAR folder[MAX_PATH];
     folder[0] = 0;
     if (ofn->lpstrFile[0]) {
@@ -327,7 +323,7 @@ static BOOL file_name_w(LPOPENFILENAMEW ofn, BOOL save)
     HRESULT hr = FdShow(dialog, ofn->hwndOwner);
     BOOL ok = SUCCEEDED(hr) && FdResultCount(dialog) && !run.Error;
     if (ok) {
-        /* the results were written at the file ok; the rest of the structure follows. */
+        /* the results were written at file ok, the rest of the structure follows. */
         ofn->Flags &= ~OFN_READONLY;
         if (FdReadOnlyChecked(dialog))
             ofn->Flags |= OFN_READONLY;
@@ -379,7 +375,7 @@ static LPWSTR widen(LPCSTR text)
     return wide;
 }
 
-/* a list of strings ended by an empty one, as the filters are. */
+/* a list of strings ended by an empty one, like the filters. */
 static LPWSTR widen_list(LPCSTR list, DWORD *chars)
 {
     if (!list)
@@ -398,7 +394,7 @@ static LPWSTR widen_list(LPCSTR list, DWORD *chars)
     return wide;
 }
 
-/* the text of a buffer of strings, converted back until the double zero or the end. */
+/* converts a buffer of strings back, up to the double zero or the end. */
 static void narrow_buffer(LPCWSTR wide, DWORD wide_chars, LPSTR out, DWORD out_chars)
 {
     DWORD length = 0;
@@ -438,7 +434,7 @@ static BOOL file_name_a(LPOPENFILENAMEA ofn, BOOL save)
     w.Flags = ofn->Flags;
     w.lCustData = ofn->lCustData;
     w.FlagsEx = ofn->FlagsEx;
-    /* hooks and templates are of the ansi structure, which the wide dialog cannot give them. */
+    /* hooks and templates expect the ANSI structure, which the wide dialog cannot give them. */
     w.Flags &= ~(OFN_ENABLEHOOK | OFN_ENABLETEMPLATE | OFN_ENABLETEMPLATEHANDLE);
     w.lpstrFilter = widen_list(ofn->lpstrFilter, nullptr);
     DWORD custom_chars = 0;
@@ -459,7 +455,6 @@ static BOOL file_name_a(LPOPENFILENAMEA ofn, BOOL save)
     w.lpstrDefExt = widen(ofn->lpstrDefExt);
     BOOL ok = w.lpstrFile ? file_name_w(&w, save) : FALSE;
     if (ok || CommDlgExtendedError() == FNERR_BUFFERTOOSMALL) {
-        /* the offsets are of the ansi text. */
         narrow_buffer(w.lpstrFile, ofn->nMaxFile, ofn->lpstrFile, ofn->nMaxFile);
         if (ok) {
             ofn->Flags = (ofn->Flags & (OFN_ENABLEHOOK | OFN_ENABLETEMPLATE | OFN_ENABLETEMPLATEHANDLE)) |
@@ -468,7 +463,7 @@ static BOOL file_name_a(LPOPENFILENAMEA ofn, BOOL save)
             if (ofn->lpstrFileTitle && ofn->nMaxFileTitle)
                 WideCharToMultiByte(CP_ACP, 0, w.lpstrFileTitle, -1, ofn->lpstrFileTitle, (int)ofn->nMaxFileTitle,
                                     nullptr, nullptr);
-            /* the offsets are in the wide string, so the ansi ones count the bytes of what comes before. */
+            /* ANSI offsets count the bytes before each wide offset. */
             int offset = WideCharToMultiByte(CP_ACP, 0, w.lpstrFile, w.nFileOffset, nullptr, 0, nullptr, nullptr);
             ofn->nFileOffset = (WORD)(offset > 0 ? offset : 0);
             int extension = w.nFileExtension ? WideCharToMultiByte(CP_ACP, 0, w.lpstrFile, w.nFileExtension, nullptr, 0,

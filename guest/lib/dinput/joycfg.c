@@ -1,8 +1,8 @@
 /*
  * IDirectInputJoyConfig of dinput.dll, aggregated in a directinput object
- * as windows makes it. what winmm reads through it: the device a joystick
- * id names, and a legacy hardware configuration, from the registry where
- * windows keeps one or else made from the device. see docs/dinput.md.
+ * as windows does. winmm reads two things through it: the device a
+ * joystick id names, and a legacy hardware configuration, from the
+ * registry when windows keeps one there or else made from the device.
  */
 #include "dinput_private.h"
 
@@ -47,7 +47,7 @@ static JOYCFG *from(IDirectInputJoyConfig *This)
     return (JOYCFG *)This;
 }
 
-/* the unknown is the outer object's. */
+/* IUnknown is the outer object's. */
 static HRESULT STDMETHODCALLTYPE jc_query(IDirectInputJoyConfig *This, REFIID riid, void **out)
 {
     IUnknown *outer = (IUnknown *)&from(This)->outer->vtbl_w;
@@ -88,7 +88,7 @@ static HRESULT STDMETHODCALLTYPE jc_cooperate(IDirectInputJoyConfig *This, HWND 
     return DI_OK;
 }
 
-/* the configuration changed: every window hears it, as windows' joystick applet tells them. */
+/* tells every window the configuration changed, as windows' joystick applet does. */
 static HRESULT STDMETHODCALLTYPE jc_notify(IDirectInputJoyConfig *This)
 {
     if (!from(This)->acquired)
@@ -123,7 +123,7 @@ static HRESULT STDMETHODCALLTYPE jc_delete_type(IDirectInputJoyConfig *This, LPC
     return changes(from(This));
 }
 
-/* windows' table of the legacy axes and the usages that fill each, the first present winning. */
+/* the legacy axes and the usages that can fill each, the first present winning. */
 static const struct {
     USHORT usages[5][2];
     DWORD flag;
@@ -142,7 +142,7 @@ static DWORD *pos_field(JOYPOS *p, int axis)
     return fields[axis];
 }
 
-/* windows' DIWdm_JoyHidMapping: the legacy configuration of a hid joystick, from its objects. */
+/* builds a hid joystick's legacy configuration from its objects. */
 static HRESULT make_config(DIOBJ *obj, UINT id, const GUID *instance, USHORT vid, USHORT pid, USHORT usage,
                            JOYREGHWCONFIG *hwc)
 {
@@ -209,7 +209,7 @@ static HRESULT make_config(DIOBJ *obj, UINT id, const GUID *instance, USHORT vid
     return DI_OK;
 }
 
-/* windows' JoyReg_GetConfig: the device of the id, the configuration stored for it or one made from it, its gain. */
+/* the id's device, the configuration stored for it or one made from it, and its gain. */
 static HRESULT STDMETHODCALLTYPE jc_get_config(IDirectInputJoyConfig *This, UINT id, LPDIJOYCONFIG config, DWORD flags)
 {
     JOYCFG *j = from(This);
@@ -276,7 +276,7 @@ static HRESULT STDMETHODCALLTYPE jc_delete_config(IDirectInputJoyConfig *This, U
     return changes(from(This));
 }
 
-/* the defaults of a profile that never set them (guessed: windows keeps them under the joystick settings). */
+/* the defaults of a profile that never set them. */
 static HRESULT STDMETHODCALLTYPE jc_get_user(IDirectInputJoyConfig *This, LPDIJOYUSERVALUES values, DWORD flags)
 {
     if (!values)

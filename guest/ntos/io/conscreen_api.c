@@ -1,7 +1,5 @@
 /*
- * what calls on a screen buffer do to its cells: the information of the
- * buffer, the cursor and the window, and reading, writing, filling and
- * scrolling rectangles of cells. see conscreen.h.
+ * screen buffer calls: buffer info, cursor and window, and reading, writing, filling and scrolling cell rectangles.
  */
 #include "conscreen_p.h"
 
@@ -20,7 +18,7 @@ void CsGetInfo(CsBuffer *b, CsInfo *info)
     info->Cursor.Y = (int16_t)b->CursorY;
     info->Attributes = b->Attr.Attr & (uint16_t)~CS_DBCS_MASK;
     info->Window = b->Window;
-    /* nothing limits the window of a console that has none but the buffer. */
+    /* with no console window, only the buffer limits the window. */
     info->MaxWindow.X = (int16_t)b->Grid.Width;
     info->MaxWindow.Y = (int16_t)b->Grid.Height;
     info->PopupAttributes = b->PopupAttr;
@@ -29,7 +27,7 @@ void CsGetInfo(CsBuffer *b, CsInfo *info)
     info->CursorVisible = b->CursorVisible;
 }
 
-/* the viewport changed: the terminal is shown the rows again. */
+/* the viewport changed, so its rows are sent to the terminal again. */
 static void window_changed(CsBuffer *b)
 {
     CsTerminal *t = b->Term;
@@ -41,7 +39,7 @@ static void window_changed(CsBuffer *b)
     }
 }
 
-/* the viewport moves by the least that puts the cursor in it. */
+/* moves the viewport by the least that brings the cursor into it. */
 static void follow_cursor(CsBuffer *b)
 {
     int h = b->Window.Bottom - b->Window.Top + 1;
@@ -95,15 +93,14 @@ CsResult CsSetCursorInfo(CsBuffer *b, int size, bool visible)
 
 void CsSetAttributes(CsBuffer *b, uint16_t attributes)
 {
-    /* the attributes of the buffer of the handle, not the alternate buffer's. */
+    /* the handle's own buffer, not the alternate one. */
     b->Attr = CsAttrFromLegacy(b->Term, attributes & (uint16_t)~CS_DBCS_MASK);
 }
 
 /* ------------------------------------------------------------------ size and window */
 
 /*
- * a new grid of another size: the rows are kept from the top, unless the
- * cursor is below the new bottom, and then the rows that end with its row.
+ * rows are kept from the top, unless the cursor is below the new bottom: then the rows ending with the cursor row.
  */
 static CsResult resize_grid(CsBuffer *b, int width, int height)
 {
@@ -125,7 +122,7 @@ static CsResult resize_grid(CsBuffer *b, int width, int height)
     for (int y = 0; y < ch; y++) {
         CsRow *from = &b->Grid.Rows[y + skip];
         memcpy(fresh.Rows[y].Cells, from->Cells, sizeof(CsCell) * (size_t)cw);
-        /* a wide character cut in two is not one. */
+        /* a wide character cut in half becomes a blank. */
         if (cw < b->Grid.Width && cw > 0 && (fresh.Rows[y].Cells[cw - 1].Flags & (CS_CELL_LEAD | CS_CELL_PAIR)))
             fresh.Rows[y].Cells[cw - 1] = blank;
         fresh.Rows[y].Wrapped = from->Wrapped;
@@ -145,7 +142,7 @@ static CsResult resize_grid(CsBuffer *b, int width, int height)
     return CS_OK;
 }
 
-/* a terminal that can be asked is asked to be as big as the window the program made. */
+/* asks a resizable terminal to match the window the program set. */
 static void follow_window(CsBuffer *b)
 {
     CsTerminal *t = b->Term;
@@ -168,7 +165,7 @@ static void follow_window(CsBuffer *b)
     CsMarkRows(b, b->Window.Top, b->Window.Bottom, true);
 }
 
-/* the viewport stays inside the buffer, moved back by as much as it stuck out; else the cursor is kept inside. */
+/* pulls the viewport back inside the buffer by as much as it sticks out, and clamps the cursor. */
 static void after_resize(CsBuffer *b)
 {
     int over_x = b->Window.Right + 1 - b->Grid.Width, over_y = b->Window.Bottom + 1 - b->Grid.Height;
@@ -228,7 +225,7 @@ CsResult CsSetWindow(CsBuffer *b, bool absolute, CsRect w)
     if (r.Right < r.Left || r.Bottom < r.Top)
         return CS_INVALID_PARAMETER;
     int width = r.Right - r.Left + 1, height = r.Bottom - r.Top + 1;
-    /* a console that is a terminal's has one size for its buffer and its window. */
+    /* a console that belongs to a terminal has one size for its buffer and window. */
     if (b->Term->TerminalSized && (width != b->Grid.Width || height != b->Grid.Height)) {
         CsResult res = CsResizeBuffer(b, width, height);
         if (res != CS_OK)
@@ -237,7 +234,7 @@ CsResult CsSetWindow(CsBuffer *b, bool absolute, CsRect w)
         r.Right = (int16_t)(width - 1);
         r.Bottom = (int16_t)(height - 1);
     }
-    /* the window is clamped to the buffer and then moved to lie inside it. */
+    /* clamp the window to the buffer size, then move it inside. */
     width = CS_MIN(CS_MAX(width, 1), b->Grid.Width);
     height = CS_MIN(CS_MAX(height, 1), b->Grid.Height);
     int left = CS_MAX(0, CS_MIN(r.Left, b->Grid.Width - width)), top = CS_MAX(0, CS_MIN(r.Top, b->Grid.Height - height));
@@ -256,7 +253,7 @@ CsResult CsSetInfo(CsBuffer *b, const CsInfo *info)
     b = CsEffective(b);
     if (info->Size.X <= 0 || info->Size.Y <= 0 || info->Size.X == 0x7FFF || info->Size.Y == 0x7FFF)
         return CS_INVALID_PARAMETER;
-    /* a resize that fails is not told: the rest is set. */
+    /* a failed resize is not reported, the rest is still set. */
     if (info->Size.X != b->Grid.Width || info->Size.Y != b->Grid.Height)
         (void)CsResizeBuffer(b, info->Size.X, info->Size.Y);
     memcpy(b->ColorTable, info->ColorTable, sizeof(b->ColorTable));
@@ -289,7 +286,7 @@ CsResult CsSetInfo(CsBuffer *b, const CsInfo *info)
 
 /* ------------------------------------------------------------------ rectangles */
 
-/* the half of a wide character as an attribute word and a character. */
+/* a cell as CHAR_INFO, with the lead and trail bits for wide character halves. */
 static CsCharInfo cell_info(const CsRow *row, int x, int width)
 {
     const CsCell *c = &row->Cells[x];
@@ -297,7 +294,7 @@ static CsCharInfo cell_info(const CsRow *row, int x, int width)
     i.Char = c->Char;
     i.Attributes = (uint16_t)(c->Attr & ~CS_DBCS_MASK);
     if (c->Flags & CS_CELL_PAIR) {
-        /* a pair of units cannot be told in one: it is the replacement character. */
+        /* one CHAR_INFO cannot hold a surrogate pair, so report the replacement character. */
         i.Char = 0xFFFD;
     }
     if (c->Flags & CS_CELL_LEAD)
@@ -312,11 +309,6 @@ static CsCharInfo cell_info(const CsRow *row, int x, int width)
     return i;
 }
 
-/*
- * the rectangle is clipped to the buffer; data has the width of the
- * rectangle that was asked for and the cells that were clipped from the left
- * and the top are left alone in it. the clipped rectangle is stored back.
- */
 CsResult CsReadOutput(CsBuffer *b, CsCharInfo *data, CsRect *rect)
 {
     b = CsEffective(b);
@@ -395,7 +387,7 @@ CsResult CsWriteOutput(CsBuffer *b, const CsCharInfo *data, CsRect *rect)
     return CS_OK;
 }
 
-/* the cells from a coordinate on, row after row. */
+/* how many of count cells exist from start on, row after row. */
 static size_t span(const CsBuffer *b, CsCoord start, size_t count)
 {
     if (!inside(b, start))
@@ -407,7 +399,7 @@ static size_t span(const CsBuffer *b, CsCoord start, size_t count)
 
 #define CELL_AT(b, index) (&(b)->Grid.Rows[(index) / (size_t)(b)->Grid.Width].Cells[(index) % (size_t)(b)->Grid.Width])
 
-/* the characters of cells: the right half of a wide character gives none, and a half cut by the ends is a blank. */
+/* the right half of a wide character gives no character, and a half cut off by either end reads as a blank. */
 size_t CsReadChars(CsBuffer *b, CsCoord start, uint16_t *out, size_t count)
 {
     b = CsEffective(b);
@@ -457,7 +449,7 @@ static void mark_span(CsBuffer *b, size_t first, size_t n)
     }
 }
 
-/* characters written over the cells, the attributes kept; a wide one takes two cells. returns the units taken. */
+/* writes characters and keeps the attributes, a wide one takes two cells. returns the units taken. */
 CsResult CsWriteChars(CsBuffer *b, CsCoord start, const uint16_t *text, size_t count, size_t *written)
 {
     b = CsEffective(b);
@@ -484,7 +476,7 @@ CsResult CsWriteChars(CsBuffer *b, CsCoord start, const uint16_t *text, size_t c
         if (width == 0)
             width = 1;
         if (width == 2 && (pos % (size_t)b->Grid.Width) == (size_t)b->Grid.Width - 1) {
-            /* no room for the second half at the end of a row: a blank is left and the glyph goes to the next row. */
+            /* no room for the second half at the end of a row: leave a blank and move the glyph to the next row. */
             CsCell *edge = CELL_AT(b, pos);
             edge->Char = ' ';
             edge->Flags = 0;
@@ -547,7 +539,7 @@ CsResult CsWriteAttributes(CsBuffer *b, CsCoord start, const uint16_t *attribute
     return CS_OK;
 }
 
-/* fills cells with a character, the attributes kept; a wide character takes two cells each. */
+/* keeps the attributes. each wide character takes two cells. */
 size_t CsFillChars(CsBuffer *b, CsCoord start, uint16_t ch, size_t count)
 {
     b = CsEffective(b);
@@ -605,7 +597,7 @@ CsResult CsScroll(CsBuffer *b, CsRect src, const CsRect *clip_in, CsCoord dest, 
 {
     b = CsEffective(b);
     CsRect buffer = {0, 0, (int16_t)(b->Grid.Width - 1), (int16_t)(b->Grid.Height - 1)};
-    /* the source is cut to the buffer, and the clip is cut to the buffer too. */
+    /* cut both the source and the clip to the buffer. */
     CsRect s = {(int16_t)CS_MAX(src.Left, 0), (int16_t)CS_MAX(src.Top, 0), (int16_t)CS_MIN(src.Right, buffer.Right),
                 (int16_t)CS_MIN(src.Bottom, buffer.Bottom)};
     if (!rect_valid(&s))
@@ -619,7 +611,7 @@ CsResult CsScroll(CsBuffer *b, CsRect src, const CsRect *clip_in, CsCoord dest, 
     }
     if (!rect_valid(&clip))
         return CS_OK;
-    /* a fill of nothing at all is blanks in the colors of the text. */
+    /* an all-zero fill means blanks in the text colors. */
     CsCell filler;
     if (fill.Char == 0 && (fill.Attributes & ~CS_DBCS_MASK) == 0) {
         filler = CsBlank(b);
@@ -627,7 +619,7 @@ CsResult CsScroll(CsBuffer *b, CsRect src, const CsRect *clip_in, CsCoord dest, 
         CsAttr a = CsAttrFromLegacy(b->Term, fill.Attributes & (uint16_t)~CS_DBCS_MASK);
         filler = (CsCell){fill.Char, a.Attr, a.Ext, 0};
     }
-    /* the part of the source that can be moved is inside the clip; the destination is that, moved, inside the clip. */
+    /* only the source part inside the clip moves, and only its destination part inside the clip is written. */
     CsRect from = {(int16_t)CS_MAX(s.Left, clip.Left), (int16_t)CS_MAX(s.Top, clip.Top),
                    (int16_t)CS_MIN(s.Right, clip.Right), (int16_t)CS_MIN(s.Bottom, clip.Bottom)};
     if (!rect_valid(&from))
@@ -638,7 +630,7 @@ CsResult CsScroll(CsBuffer *b, CsRect src, const CsRect *clip_in, CsCoord dest, 
         return CS_NO_MEMORY;
     for (int y = 0; y < h; y++)
         memcpy(copy + (size_t)y * (size_t)w, &b->Grid.Rows[from.Top + y].Cells[from.Left], sizeof(CsCell) * (size_t)w);
-    /* the destination keeps its place relative to the whole source rectangle, whatever was cut from it. */
+    /* the destination keeps its offset from the whole source rectangle, whatever was cut from it. */
     int dx = dest.X + (from.Left - src.Left), dy = dest.Y + (from.Top - src.Top);
     for (int y = from.Top; y <= from.Bottom; y++)
         CsRowFill(&b->Grid.Rows[y], from.Left, from.Right, filler);

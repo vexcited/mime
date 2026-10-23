@@ -1,7 +1,6 @@
 /*
- * CryptAcquireCertificatePrivateKey: the key a certificate's properties
- * name, opened through the legacy providers of advapi32 or the key storage
- * providers of ncrypt, in the order and with the checks crypt32 applies.
+ * CryptAcquireCertificatePrivateKey: opens the key a certificate's properties name, through advapi32's legacy
+ * providers or ncrypt's key storage providers, in crypt32's order and with its checks.
  */
 #include "crypt32_private.h"
 
@@ -346,9 +345,8 @@ BOOL WINAPI CryptAcquireCertificatePrivateKey(PCCERT_CONTEXT pCert, DWORD dwFlag
 }
 
 /*
- * the public key of a certificate as a key of a legacy provider: the modulus and exponent of an RSA key are made a
- * public key blob, which the provider imports. The algorithm is the one given, or key exchange for an RSA key. Keys of
- * other algorithms are not made: Mime's providers have no use for them.
+ * only RSA keys are imported: the modulus and exponent become a public key blob for the provider. the algorithm is
+ * the one given, or key exchange by default. mime's providers have no use for other algorithms.
  */
 BOOL WINAPI CryptImportPublicKeyInfoEx(HCRYPTPROV hCryptProv, DWORD dwCertEncodingType, PCERT_PUBLIC_KEY_INFO pInfo,
                                        ALG_ID aiKeyAlg, DWORD dwFlags, void *pvAuxInfo, HCRYPTKEY *phKey)

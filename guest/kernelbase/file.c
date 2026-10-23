@@ -1,7 +1,4 @@
-/*
- * files: creation, synchronous i/o, information, directories, copying,
- * moving and enumeration.
- */
+/* files: creation, synchronous i/o, information, directories, copying, moving and enumeration. */
 #include "kernelbase_private.h"
 
 #define FILE_NO_INTERMEDIATE_BUFFERING 0x00000008
@@ -54,7 +51,6 @@ static void set_filetime(FILETIME *ft, LONGLONG v)
     ft->dwHighDateTime = (DWORD)((ULONGLONG)v >> 32);
 }
 
-/* opens a dos path with the nt api; returns the status. */
 static NTSTATUS open_path(LPCWSTR path, ACCESS_MASK access, ULONG share, ULONG options, PHANDLE handle)
 {
     UNICODE_STRING nt;
@@ -68,7 +64,7 @@ static NTSTATUS open_path(LPCWSTR path, ACCESS_MASK access, ULONG share, ULONG o
     return status;
 }
 
-/* path errors for a missing file report the parent directory when that is what is missing. */
+/* a missing file reports its parent directory when that is what is missing. */
 static BOOL set_path_status(NTSTATUS status)
 {
     return KbSetStatus(status);
@@ -156,7 +152,7 @@ HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_AT
     if (sa && sa->bInheritHandle)
         attributes |= OBJ_INHERIT;
     InitializeObjectAttributes(&oa, &nt, attributes, nullptr, sa ? sa->lpSecurityDescriptor : nullptr);
-    /* the impersonation a server of a named pipe may do of this client, when the program said. */
+    /* how far a named pipe server may impersonate this client, when the program asks. */
     struct {
         ULONG Length, ImpersonationLevel;
         UCHAR ContextTrackingMode, EffectiveOnly;
@@ -219,7 +215,7 @@ HANDLE WINAPI CreateFile2(LPCWSTR name, DWORD access, DWORD share, DWORD disposi
     return CreateFileW(name, access, share, sa, disposition, flags, template_file);
 }
 
-/* ------------------------------------------------------------------ 16 bit style file functions */
+/* ------------------------------------------------------------------ 16-bit file functions */
 
 HFILE WINAPI _lopen(LPCSTR path, int mode)
 {
@@ -274,7 +270,6 @@ LONG WINAPI _llseek(HFILE file, LONG offset, int origin)
 
 #define FILE_REMOVABLE_MEDIA 0x00000001
 
-/* the sharing a style asks for. */
 static DWORD style_share(UINT style)
 {
     switch (style & 0x70) {
@@ -289,10 +284,9 @@ static DWORD style_share(UINT style)
 }
 
 /*
- * the 16 bit way to open a file. The name is looked for along the search path unless the style says to reopen the file
- * of the record; the record keeps the full path, the time of the last write for OF_VERIFY and the error. Styles that
- * parse, test for or delete the file give 1 for a success, the others the handle. OF_PROMPT does not ask the user to
- * put the disk back, as the hard error that asks is not shown here.
+ * the 16-bit way to open a file. the name is looked up along the search path unless the style reopens the record's
+ * file; the record keeps the full path, the last write time for OF_VERIFY and the error. parse, exist and delete styles
+ * return 1 on success, the others the handle. OF_PROMPT never asks for the disk, as that hard error is not shown here.
  */
 HFILE WINAPI OpenFile(LPCSTR name, LPOFSTRUCT record, UINT style)
 {
@@ -327,7 +321,7 @@ HFILE WINAPI OpenFile(LPCSTR name, LPOFSTRUCT record, UINT style)
             goto done;
         }
         if (!n) {
-            /* not on the path: the name in the current directory, which may be about to be created. */
+            /* not on the path: use the current directory, the file may be about to be created. */
             not_found = TRUE;
             n = GetFullPathNameA(name, sizeof(record->szPathName) - 1, record->szPathName, &part);
             if (!n || n > sizeof(record->szPathName) - 1) {
@@ -405,7 +399,7 @@ static HANDLE overlapped_event(LPOVERLAPPED ov)
     return ov ? (HANDLE)((ULONG_PTR)ov->hEvent & ~(ULONG_PTR)1) : nullptr;
 }
 
-/* the completion port packet of a request names its OVERLAPPED, unless the low bit of hEvent is set. */
+/* the low bit of hEvent suppresses the completion packet. */
 static PVOID overlapped_port_context(LPOVERLAPPED ov)
 {
     return ((ULONG_PTR)ov->hEvent & 1) ? nullptr : ov;
@@ -498,7 +492,7 @@ BOOL WINAPI WriteFile(HANDLE file, LPCVOID buffer, DWORD length, LPDWORD written
     return TRUE;
 }
 
-/* the kernel queues this as a user apc when the request completes: the routine runs at an alertable wait. */
+/* the kernel queues this as a user apc on completion, so the routine runs at an alertable wait. */
 static void NTAPI completion_apc(PVOID routine, PIO_STATUS_BLOCK iosb, ULONG reserved)
 {
     KbNoteApc();
@@ -1628,13 +1622,13 @@ BOOLEAN WINAPI CreateSymbolicLinkW(LPCWSTR link, LPCWSTR target, DWORD flags)
 typedef struct FIND_STATE {
     ULONG Magic;
     HANDLE Directory;
-    ULONG Offset; /* of the next entry, or ~0 when the buffer is used up. */
+    ULONG Offset; /* of the next entry, ~0 when the buffer is used up. */
     FINDEX_INFO_LEVELS Level;
     RTL_CRITICAL_SECTION Lock;
     ULONG_PTR Buffer[FIND_BUFFER_SIZE / sizeof(ULONG_PTR)];
 } FIND_STATE;
 
-/* rewrites a win32 pattern with the dos wildcards the file system matches like windows does. */
+/* rewrites a win32 pattern with the dos wildcards the file system matches, as windows does. */
 static void convert_pattern(PCWSTR in, SIZE_T n, PWSTR out)
 {
     if (n == 3 && in[0] == '*' && in[1] == '.' && in[2] == '*') {
@@ -1681,7 +1675,7 @@ static void fill_find_data(const FILE_BOTH_DIR_INFORMATION *e, FINDEX_INFO_LEVEL
     }
 }
 
-/* returns the next entry, refilling the buffer as needed; NULL with the last error set at the end. */
+/* refills the buffer as needed; NULL with the last error set at the end. */
 static const FILE_BOTH_DIR_INFORMATION *next_entry(FIND_STATE *f, PUNICODE_STRING pattern, BOOLEAN first)
 {
     if (f->Offset == (ULONG)~0u) {
@@ -1807,7 +1801,7 @@ BOOL WINAPI FindNextFileW(HANDLE find, LPWIN32_FIND_DATAW data)
 
 #define NAME_FIND_MAGIC 0x4E444E46u /* "FNDN". */
 
-/* the handle FindFirstFileNameW gives: the names of the links of a file, one by one. */
+/* FindFirstFileNameW's handle: the file's link names, one by one. */
 typedef struct NAME_FIND {
     ULONG Magic;
     ULONG Next;
@@ -1889,10 +1883,7 @@ BOOL WINAPI FindNextFileA(HANDLE find, LPWIN32_FIND_DATAA data)
 
 #define FILE_NOTIFY_VALID_MASK 0x00000FFF
 
-/*
- * the request of a change notification handle, which FindNextChangeNotification makes again: the filter and the tree
- * flag the handle was given, kept by the handle.
- */
+/* the filter and tree flag of the handle, so FindNextChangeNotification can repeat the request. */
 typedef struct _CHANGE_HANDLE {
     struct _CHANGE_HANDLE *Next;
     HANDLE Directory;
@@ -1903,7 +1894,7 @@ typedef struct _CHANGE_HANDLE {
 static SRWLOCK g_change_lock = SRWLOCK_INIT;
 static CHANGE_HANDLE *g_changes;
 
-/* a directory opened to be watched: for listing only, shared with everyone, not synchronous so a request waits apart. */
+/* the directory is opened for listing only, fully shared and asynchronous so a request waits apart. */
 HANDLE WINAPI FindFirstChangeNotificationW(LPCWSTR path, BOOL subtree, DWORD filter)
 {
     if (!path || !filter || (filter & ~FILE_NOTIFY_VALID_MASK)) {
@@ -1949,7 +1940,7 @@ HANDLE WINAPI FindFirstChangeNotificationA(LPCSTR path, BOOL subtree, DWORD filt
     return FindFirstChangeNotificationW(wide, subtree, filter);
 }
 
-/* the next change, with what happened since the handle last signalled kept for it. */
+/* waits for the next change; what happened since the handle last signalled is kept for it. */
 BOOL WINAPI FindNextChangeNotification(HANDLE handle)
 {
     CHANGE_HANDLE c = {};
@@ -1986,9 +1977,9 @@ BOOL WINAPI FindCloseChangeNotification(HANDLE handle)
 }
 
 /*
- * what happened in a directory, as records of FILE_NOTIFY_INFORMATION in the buffer. an overlapped request finishes
- * through its event, completion port or routine, and the call itself succeeds once the request is made; with no bytes
- * returned the buffer was too small to say what, and the caller reads the directory again.
+ * fills the buffer with FILE_NOTIFY_INFORMATION records. an overlapped request finishes through its event, completion
+ * port or routine, and the call succeeds once the request is made. zero bytes returned means the buffer was too small,
+ * and the caller rereads the directory.
  */
 BOOL WINAPI ReadDirectoryChangesW(HANDLE directory, LPVOID buffer, DWORD length, BOOL subtree, DWORD filter,
                                   LPDWORD returned, LPOVERLAPPED overlapped, LPOVERLAPPED_COMPLETION_ROUTINE routine)
@@ -2034,7 +2025,7 @@ BOOL WINAPI ReadDirectoryChangesW(HANDLE directory, LPVOID buffer, DWORD length,
     return TRUE;
 }
 
-/* a new handle to the file of another, through its path. */
+/* opens the same file again, through its path. */
 HANDLE WINAPI ReOpenFile(HANDLE original, DWORD access, DWORD share, DWORD flags)
 {
     WCHAR path[MAX_PATH + 8];
@@ -2058,7 +2049,7 @@ BOOL WINAPI SetFileCompletionNotificationModes(HANDLE file, UCHAR flags)
 
 /* ------------------------------------------------------------------ names of links and compressed sizes */
 
-/* copies the next name into the caller's buffer, or says how long the buffer has to be. */
+/* copies the next name into the caller's buffer, or reports the length needed. */
 static BOOL give_link_name(NAME_FIND *f, LPDWORD length, PWSTR buffer)
 {
     PCWSTR name = f->Names[f->Next];
@@ -2075,8 +2066,8 @@ static BOOL give_link_name(NAME_FIND *f, LPDWORD length, PWSTR buffer)
 }
 
 /*
- * the file system tells of one name for a file here, the one it was opened by, so the enumeration holds one link: the
- * path from the root of the volume.
+ * the file system only reports the name a file was opened by, so the enumeration holds one link: the path from the
+ * volume root.
  */
 HANDLE WINAPI FindFirstFileNameW(LPCWSTR path, DWORD flags, LPDWORD length, PWSTR buffer)
 {
@@ -2137,7 +2128,7 @@ BOOL WINAPI FindNextFileNameW(HANDLE find, LPDWORD length, PWSTR buffer)
 
 #define FILE_COMPRESSION_INFORMATION_CLASS 28
 
-/* the size on the disk of a compressed or sparse file; the size of the file where the file system does not say. */
+/* the on disk size of a compressed or sparse file, or the file size when the file system does not say. */
 DWORD WINAPI GetCompressedFileSizeW(LPCWSTR name, LPDWORD high)
 {
     HANDLE file = CreateFileW(name, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -2179,10 +2170,7 @@ DWORD WINAPI GetCompressedFileSizeA(LPCSTR name, LPDWORD high)
 
 /* ------------------------------------------------------------------ CopyFile2 */
 
-/*
- * the progress of a copy for the routine of CopyFile2, which takes messages. The messages are the start of the
- * stream and the end of each chunk, with the numbers of the copy so far.
- */
+/* progress for the CopyFile2 callback: a stream start message, then one per chunk with the totals so far. */
 typedef struct COPY2_CONTEXT {
     PCOPYFILE2_PROGRESS_ROUTINE Routine;
     PVOID Context;
@@ -2232,7 +2220,7 @@ HRESULT WINAPI CopyFile2(PCWSTR source, PCWSTR destination, COPYFILE2_EXTENDED_P
     DWORD flags = 0;
     BOOL *cancel = nullptr;
     if (parameters) {
-        /* the larger form of the structure adds fields that only an all zero tail is valid for here. */
+        /* the larger structure adds fields, accepted here only when all zero. */
         if (parameters->dwSize != sizeof(*parameters)) {
             if (parameters->dwSize != 112)
                 return HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER);

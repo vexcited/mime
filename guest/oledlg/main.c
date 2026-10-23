@@ -1,7 +1,4 @@
-/*
- * oledlg.dll: the ole user interface dialogs. mime shows none of them yet;
- * each reports that the user cancelled.
- */
+/* oledlg.dll: the OLE user interface dialogs. none is shown yet, each reports that the user cancelled. */
 #define OLEDLGAPI DECLSPEC_EXPORT
 #include <mime/win32/oledlg.h>
 #include <mime/stub.h>

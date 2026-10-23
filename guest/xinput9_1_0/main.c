@@ -1,7 +1,4 @@
-/*
- * xinput9_1_0.dll: windows' wrapper over xinput1_4, loaded on first use,
- * whose capabilities are the fixed ones of the first xinput.
- */
+/* loads xinput1_4 on first use, but reports the original XInput's fixed capabilities. */
 #define MIME_BUILD_XINPUT
 #include <mime/win32/winbase.h>
 #include <mime/win32/objbase.h>
@@ -65,7 +62,7 @@ XINPUTAPI DWORD WINAPI XInputGetCapabilities(DWORD index, DWORD flags, XINPUT_CA
     return result;
 }
 
-/* no headset is ever found: both ids stay empty, the result telling only whether a pad is there. */
+/* headset IDs stay empty; the result only reports whether a controller is connected. */
 XINPUTAPI DWORD WINAPI XInputGetDSoundAudioDeviceGuids(DWORD index, GUID *render, GUID *capture)
 {
     if (!render || !capture)

@@ -1,7 +1,6 @@
 /*
- * a setjmp pair private to wow64: an exception of 32-bit code and the
- * return of a callback leave the simulation they happened in through it.
- * the callee saved state of the windows x64 abi, the stack and the return.
+ * private WOW64 setjmp pair for leaving a simulation after an exception or callback return. preserves Windows x64
+ * callee-saved registers, stack and return address.
  */
     .text
 
@@ -34,7 +33,7 @@ Wow64SetJump:
     xorl    %eax, %eax
     ret
 
-/* void Wow64LongJump(WOW64_JUMP *jump, int value), value 0 returning 1 */
+/* void Wow64LongJump(WOW64_JUMP *jump, int value), value 0 returning 1. */
     .globl  Wow64LongJump
     .p2align 4
 Wow64LongJump:

@@ -1,19 +1,19 @@
 /*
- * the identity of a thread: acting as the process again, with a copy of its token.
+ * thread impersonation of its own process.
  */
 #include "ntdll_private.h"
 
 NTSYSCALLAPI NTSTATUS NTAPI NtDuplicateToken(HANDLE token, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
                                              BOOLEAN effective_only, ULONG type, PHANDLE result);
 
-/* the thread impersonates its own process, at the level given; the token can be kept. */
+/* thread_token, when given, receives the impersonation token. */
 NTDLL_EXPORT NTSTATUS NTAPI RtlImpersonateSelfEx(ULONG level, ACCESS_MASK additional, PHANDLE thread_token)
 {
     HANDLE process_token, copy;
     NTSTATUS status = NtOpenProcessToken(NtCurrentProcess(), 0x0002 /* TOKEN_DUPLICATE */, &process_token);
     if (!NT_SUCCESS(status))
         return status;
-    /* dynamic tracking, as the security quality of service of every call that makes a copy for a thread. */
+    /* dynamic tracking, like every call that copies a token for a thread. */
     struct {
         ULONG Length, Level;
         UCHAR Tracking, Effective;

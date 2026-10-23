@@ -1,4 +1,4 @@
-/* generated from the name tables of windowscodecs.dll build 26300: short names of metadata formats and containers, and of the xmp schemas. */
+/* short names for metadata formats, containers and XMP schemas. */
 static const struct { const WCHAR *name; const GUID *guid; } g_short_names[] = {
     {L"ifd", &GUID_MetadataFormatIfd},
     {L"app1", &GUID_MetadataFormatApp1},

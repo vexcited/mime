@@ -1,8 +1,6 @@
 /*
- * direct3d 12: devices, queues, command lists and the objects they use.
- * the interfaces and their method order are windows', as d3d12core.dll's
- * vtables lay them out; methods returning structures take the return
- * pointer after this, as windows' compiler passes it.
+ * direct3d 12: devices, queues, command lists and the objects they use, in windows' vtable order. methods that
+ * return a structure take the return pointer right after this, as msvc passes it.
  */
 #ifndef MIME_WIN32_D3D12_H
 #define MIME_WIN32_D3D12_H
@@ -2118,7 +2116,7 @@ typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS1 {
     BOOL Int64ShaderOps;
 } D3D12_FEATURE_DATA_D3D12_OPTIONS1;
 
-/* enhanced barriers: values confirmed against D3D12Core.dll's conversion of resource states. */
+/* enhanced barriers. */
 typedef enum D3D12_BARRIER_TYPE {
     D3D12_BARRIER_TYPE_GLOBAL = 0,
     D3D12_BARRIER_TYPE_TEXTURE = 1,
@@ -2260,7 +2258,7 @@ typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS6 {
     BOOL BackgroundProcessingSupported;
 } D3D12_FEATURE_DATA_D3D12_OPTIONS6;
 
-/* the log2 of a coarse pixel's width over two bits, then of its height. */
+/* log2 of the coarse pixel width in bits 2 and 3, log2 of its height in bits 0 and 1. */
 typedef enum D3D12_SHADING_RATE {
     D3D12_SHADING_RATE_1X1 = 0x0,
     D3D12_SHADING_RATE_1X2 = 0x1,
@@ -2295,7 +2293,7 @@ typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS3 {
 } D3D12_FEATURE_DATA_D3D12_OPTIONS3;
 
 typedef struct D3D12_FEATURE_DATA_D3D12_OPTIONS12 {
-    INT MSPrimitivesPipelineStatisticIncludesCulledPrimitives; /* a D3D12_TRI_STATE */
+    INT MSPrimitivesPipelineStatisticIncludesCulledPrimitives; /* a D3D12_TRI_STATE. */
     BOOL EnhancedBarriersSupported;
     BOOL RelaxedFormatCastingSupported;
 } D3D12_FEATURE_DATA_D3D12_OPTIONS12;
@@ -3132,7 +3130,6 @@ D3D12API HRESULT WINAPI D3D12CreateRootSignatureDeserializer(const void *data, S
 D3D12API HRESULT WINAPI D3D12CreateVersionedRootSignatureDeserializer(const void *data, SIZE_T size, REFIID riid,
                                                                       void **deserializer);
 
-/* the layouts programs and the runtime agree on. */
 MIME_STATIC_ASSERT(sizeof(D3D12_RESOURCE_DESC) == 56, "D3D12_RESOURCE_DESC");
 MIME_STATIC_ASSERT(sizeof(D3D12_HEAP_PROPERTIES) == 20, "D3D12_HEAP_PROPERTIES");
 MIME_STATIC_ASSERT(sizeof(D3D12_SAMPLER_DESC) == 52, "D3D12_SAMPLER_DESC");

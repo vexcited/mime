@@ -1,8 +1,8 @@
 /*
- * the capture engine over a media source: it starts the source for a preview, takes the frames the source sends and
- * hands them to the callback of the preview sink's stream, in the format the stream was given. a camera's source
- * converts its frames to that format itself when it can (mime/win32/mimecamera.h), so nothing is decoded or reshuffled
- * here. recording and photos need encoders and a camera's own photo stream, which there are none of. see docs/camera.md.
+ * the capture engine over a media source: it starts the source for a preview and hands its frames to the preview
+ * sink stream's callback, in the format the stream was given. a camera source converts frames itself when it can,
+ * see mime/win32/mimecamera.h, so nothing is decoded or reshuffled here. recording and photos would need encoders
+ * and a camera photo stream, and there are none.
  */
 #define MIME_BUILD_MFCAPTUREENGINE
 #include <mime/nt.h>
@@ -20,7 +20,7 @@ enum { ENGINE_NEW, ENGINE_INITIALIZING, ENGINE_READY, ENGINE_FAILED };
 
 typedef struct Engine Engine;
 
-/* a stream of a sink: the source stream it takes, the type its samples have and who gets them. */
+/* a sink stream: the source stream it takes, its sample type and who gets the samples. */
 typedef struct SinkStream {
     BOOL used;
     DWORD source_stream;
@@ -50,7 +50,7 @@ typedef struct PhotoSink {
     IMFCaptureEngineOnSampleCallback *callback;
 } PhotoSink;
 
-/* where the source's and the stream's events end up. detached when the engine goes, the pending reads are ignored. */
+/* receives source and stream events. detached when the engine goes, pending reads are then ignored. */
 typedef struct EventHandler {
     IMFAsyncCallback iface;
     LONG refs;
@@ -59,7 +59,7 @@ typedef struct EventHandler {
     BOOL stream;
 } EventHandler;
 
-/* what the program's event callback is given, in order, on a thread of its own. */
+/* events for the program's callback, delivered in order on a thread of their own. */
 typedef struct Dispatch {
     IMFAsyncCallback iface;
     LONG refs;
@@ -168,7 +168,7 @@ static const IMFAsyncCallbackVtbl DISPATCH_VTBL = {
     dispatch_query_interface, dispatch_add_ref, dispatch_release, dispatch_get_parameters, dispatch_invoke,
 };
 
-/* an event of the engine for the program: its type is the extended one, its status the outcome. */
+/* the event type is the extended one, the status is the outcome. */
 static void post_event(Engine *e, REFGUID kind, HRESULT status, DWORD stream_index)
 {
     Dispatch *d;
@@ -237,7 +237,7 @@ static ULONG STDMETHODCALLTYPE handler_release(IMFAsyncCallback *iface)
     return (ULONG)refs;
 }
 
-/* the events are read on threads that may wait: the program's callbacks run on them. */
+/* events are read on threads that may block, the program's callbacks run on them. */
 static HRESULT STDMETHODCALLTYPE handler_get_parameters(IMFAsyncCallback *iface, DWORD *flags, DWORD *queue)
 {
     *flags = 0;
@@ -297,7 +297,7 @@ static void source_event(Engine *e, IMFMediaEvent *event)
         e->starting = FALSE;
         e->state = ENGINE_FAILED;
         LeaveCriticalSection(&e->lock);
-        /* a camera that cannot start is announced as started first, then the error follows, as windows' engine does. */
+        /* like windows, a camera that cannot start is reported started first, then the error follows. */
         if (was_starting)
             post_event(e, &MF_CAPTURE_ENGINE_PREVIEW_STARTED, S_OK, ~0u);
         post_event(e, &MF_CAPTURE_ENGINE_ERROR, FAILED(status) ? status : E_FAIL, ~0u);
@@ -367,7 +367,7 @@ static HRESULT STDMETHODCALLTYPE handler_invoke(IMFAsyncCallback *iface, IMFAsyn
         else
             source_event(e, event);
         event->lpVtbl->Release(event);
-        /* and the next. a stream that was replaced stops being read. */
+        /* read the next event, unless the stream was replaced. */
         EnterCriticalSection(&h->lock);
         BOOL again = h->engine == e && (h->stream ? e->stream == (IMFMediaStream *)generator : TRUE);
         LeaveCriticalSection(&h->lock);
@@ -441,7 +441,7 @@ static ULONG STDMETHODCALLTYPE csrc_release(IMFCaptureSource *iface)
     return (ULONG)refs;
 }
 
-/* the stream indexes a program may use: the source's only one, or the names that mean the preferred one. */
+/* the source's only stream index, or the special values meaning the preferred one. */
 static BOOL resolve_stream(DWORD index, DWORD *resolved)
 {
     if (index == 0 || index == MF_CAPTURE_ENGINE_FIRST_SOURCE_INDEX ||
@@ -557,7 +557,7 @@ static HRESULT STDMETHODCALLTYPE csrc_get_available_type(IMFCaptureSource *iface
     hr = e->handler->lpVtbl->GetMediaTypeByIndex(e->handler, index, &native);
     if (FAILED(hr))
         return hr;
-    /* a copy, so a program that adds to it leaves the camera's types alone. */
+    /* a copy, so a program that changes it leaves the camera's types alone. */
     hr = MFCreateMediaType(type);
     if (SUCCEEDED(hr))
         hr = ((IMFAttributes *)native)->lpVtbl->CopyAllItems((IMFAttributes *)native, (IMFAttributes *)*type);
@@ -639,7 +639,7 @@ static HRESULT STDMETHODCALLTYPE csrc_get_stream_count(IMFCaptureSource *iface, 
     return hr;
 }
 
-/* the one stream of a camera is the one a preview is taken from. */
+/* a camera's one stream is the preview stream. */
 static HRESULT STDMETHODCALLTYPE csrc_get_stream_category(IMFCaptureSource *iface, DWORD stream,
                                                           MF_CAPTURE_ENGINE_STREAM_CATEGORY *category)
 {
@@ -713,7 +713,7 @@ static ULONG sink_release(Engine *e)
     return (ULONG)refs;
 }
 
-/* the type of the camera now: what a stream of a sink can be given depends on it. */
+/* what a sink stream can be given depends on the camera's current type. */
 static BOOL current_subtype(Engine *e, GUID *subtype)
 {
     IMFMediaType *type = nullptr;
@@ -904,7 +904,7 @@ static HRESULT STDMETHODCALLTYPE pv_remove_all(IMFCapturePreviewSink *i)
 {
     return sink_remove_all(&PREVIEW(i)->sink);
 }
-/* drawing into a window is for the video renderer, which there is none of. */
+/* drawing into a window needs the video renderer, which does not exist. */
 static HRESULT STDMETHODCALLTYPE pv_set_render_handle(IMFCapturePreviewSink *i, HANDLE handle)
 {
     return E_NOTIMPL;
@@ -956,7 +956,7 @@ static const IMFCapturePreviewSinkVtbl PREVIEW_VTBL = {
     pv_get_mirror, pv_set_mirror, pv_get_rotation, pv_set_rotation, pv_set_custom_sink,
 };
 
-/* the record sink: there is no encoder to write a file with. */
+/* the record sink: there is no encoder to write a file. */
 #define RECORD(i) (CONTAINING_RECORD((i), RecordSink, iface))
 
 static HRESULT STDMETHODCALLTYPE rc_query_interface(IMFCaptureRecordSink *i, REFIID riid, void **out)
@@ -1172,7 +1172,7 @@ static void engine_destroy(Engine *e)
     heap_free(e);
 }
 
-/* the work of Initialize, on the queue the events use: the source, its descriptors and what the engine listens to. */
+/* Initialize's work, on the event queue: the source, its descriptors and what the engine listens to. */
 static HRESULT initialize_source(Engine *e, IUnknown *video)
 {
     HRESULT hr;
@@ -1193,7 +1193,7 @@ static HRESULT initialize_source(Engine *e, IUnknown *video)
             e->activate = activate;
         }
     } else {
-        /* the first camera of the host, as the default one. */
+        /* the host's first camera is the default. */
         IMFAttributes *attributes;
         IMFActivate **activates = nullptr;
         UINT32 count = 0;
@@ -1268,7 +1268,7 @@ static HRESULT STDMETHODCALLTYPE eng_initialize(IMFCaptureEngine *iface, IMFCapt
         e->queue_held = SUCCEEDED(hr);
     }
     LeaveCriticalSection(&e->lock);
-    /* only a video source is served: a program that wants audio gets none. */
+    /* only video is served, a program that wants audio gets none. */
     UINT32 video_only = 0;
     if (SUCCEEDED(hr) && attributes)
         attributes->lpVtbl->GetUINT32(attributes, &MF_CAPTURE_ENGINE_USE_AUDIO_DEVICE_ONLY, &video_only);
@@ -1279,12 +1279,12 @@ static HRESULT STDMETHODCALLTYPE eng_initialize(IMFCaptureEngine *iface, IMFCapt
     EnterCriticalSection(&e->lock);
     e->state = SUCCEEDED(hr) ? ENGINE_READY : ENGINE_FAILED;
     LeaveCriticalSection(&e->lock);
-    /* the outcome comes as an event, whichever it is. */
+    /* the outcome comes as an event either way. */
     post_event(e, &MF_CAPTURE_ENGINE_INITIALIZED, hr, ~0u);
     return S_OK;
 }
 
-/* the stream to run: the first of the preview sink, or a default one made from the camera's. */
+/* the preview sink's first stream, or a default one made from the camera's type. */
 static HRESULT prepare_preview(Engine *e)
 {
     SinkStream *s = nullptr;
@@ -1295,7 +1295,7 @@ static HRESULT prepare_preview(Engine *e)
     if (!current_subtype(e, &source_subtype))
         return MF_E_INVALIDMEDIATYPE;
     if (!s) {
-        /* a sink with no stream gets the camera's own format when that is raw, else the common one. */
+        /* a sink with no stream gets the camera's own format when raw, else the common one. */
         IMFMediaType *type = nullptr;
         HRESULT hr = MFCreateMediaType(&type);
         if (FAILED(hr))
@@ -1381,7 +1381,7 @@ static HRESULT STDMETHODCALLTYPE eng_stop_preview(IMFCaptureEngine *iface)
     return hr;
 }
 
-/* a change of the camera's mode while it runs: the source starts again with the new one. */
+/* the camera's mode changed while running: restart the source with the new one. */
 static void restart_preview(Engine *e)
 {
     if (SUCCEEDED(prepare_preview(e)))
@@ -1483,7 +1483,7 @@ HRESULT WINAPI MFCreateCaptureEngine(IMFCaptureEngine **engine)
     return hr;
 }
 
-/* the class factory object a program asks for first, and the engines it makes. */
+/* the class object a program asks for first, and the engines it makes. */
 typedef struct Factory {
     IMFCaptureEngineClassFactory iface;
 } Factory;
@@ -1532,7 +1532,7 @@ static const IMFCaptureEngineClassFactoryVtbl FACTORY_VTBL = {fac_query_interfac
                                                               fac_create_instance};
 static Factory g_factory = {{&FACTORY_VTBL}};
 
-/* what the class object makes: a class factory or an engine, whichever the interface asked for names. */
+/* a class factory or an engine, whichever the interface names. */
 static HRESULT make_object(REFIID riid, void **out)
 {
     if (IsEqualIID(riid, &IID_IMFCaptureEngineClassFactory)) {
@@ -1603,7 +1603,7 @@ HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void **out)
     return g_class.iface.lpVtbl->QueryInterface(&g_class.iface, riid, out);
 }
 
-/* engines are counted by their own references; the module stays loaded for the programs that hold them. */
+/* engines hold their own references, the module stays loaded for programs that hold them. */
 HRESULT WINAPI DllCanUnloadNow(void)
 {
     return S_FALSE;

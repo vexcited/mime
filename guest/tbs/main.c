@@ -1,7 +1,6 @@
 /*
- * tbs: the tpm base services of a machine without a tpm. every call checks
- * its arguments as windows' does, then finds no device: contexts cannot be
- * created, so every context handle is invalid.
+ * tpm base services for a machine without a tpm. calls check their arguments like windows, then find no device, so
+ * contexts cannot be created and every context handle is invalid.
  */
 #define TBSAPI
 #include <mime/win32/tbs.h>
@@ -37,7 +36,7 @@ TBS_RESULT WINAPI Tbsip_Cancel_Commands(TBS_HCONTEXT context)
     return TBS_E_INVALID_CONTEXT;
 }
 
-/* locality zero only, the buffers before the context. */
+/* only locality zero, and the buffers are checked before the context. */
 static TBS_RESULT submit(TBS_HCONTEXT context, TBS_COMMAND_LOCALITY locality, TBS_COMMAND_PRIORITY priority,
                          const BYTE *command, UINT32 size, PBYTE result, PUINT32 result_size)
 {
@@ -78,7 +77,7 @@ TBS_RESULT WINAPI Tbsi_Physical_Presence_Command(TBS_HCONTEXT context, const BYT
     return TBS_E_INVALID_CONTEXT;
 }
 
-/* the measured boot log windows keeps in the registry, which a machine without a tpm does not have. */
+/* windows keeps the measured boot log in the registry. a machine without a tpm has none. */
 TBS_RESULT WINAPI Tbsi_Get_TCG_Log(TBS_HCONTEXT context, PBYTE log, PUINT32 size)
 {
     if (!size)
@@ -88,7 +87,7 @@ TBS_RESULT WINAPI Tbsi_Get_TCG_Log(TBS_HCONTEXT context, PBYTE log, PUINT32 size
     HKEY key;
     LONG error = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Control\\IntegrityServices", 0,
                                KEY_QUERY_VALUE, &key);
-    /* windows always has the key, so its absence is a missing log too. */
+    /* windows always has the key, so a missing key means a missing log. */
     if (error)
         return error == ERROR_FILE_NOT_FOUND ? TBS_E_NO_EVENT_LOG : HRESULT_FROM_WIN32((ULONG)error);
     DWORD bytes = 0;

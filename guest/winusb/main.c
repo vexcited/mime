@@ -1,9 +1,7 @@
 /*
- * winusb: no usb device is bound to winusb in mime, so no interface handle
- * ever exists. initializing checks the device handle as windows does and
- * then fails with the error the device's driver gives the winusb request;
- * the calls on interface handles fail with ERROR_INVALID_HANDLE; parsing
- * descriptors is real.
+ * no USB device is bound to winusb, so no interface handles exist. initialization validates the device handle then
+ * returns its driver's winusb query error; interface calls return ERROR_INVALID_HANDLE. descriptor parsing is
+ * implemented.
  */
 #define WINUSBAPI
 #include <mime/win32/winusb.h>
@@ -54,7 +52,7 @@ BOOL WINAPI WinUsb_ControlTransfer(WINUSB_INTERFACE_HANDLE handle, WINUSB_SETUP_
     return FALSE;
 }
 
-/* the next descriptor of the type from start on, as long as the lengths stay inside the buffer. */
+/* finds the next descriptor of the requested type, checking each length against the buffer. */
 PUSB_COMMON_DESCRIPTOR WINAPI WinUsb_ParseDescriptors(PVOID buffer, ULONG length, PVOID start, LONG type)
 {
     BYTE *end = (BYTE *)buffer + length, *at = start;

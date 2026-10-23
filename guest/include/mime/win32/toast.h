@@ -1,7 +1,6 @@
 /*
- * the windows runtime interfaces behind toast notifications: Windows.Data.Xml.Dom, the boxed values of
- * Windows.Foundation, and Windows.UI.Notifications. every method list is a macro, so the implementations and the
- * programs that call them share the layouts.
+ * windows runtime interfaces behind toast notifications: Windows.Data.Xml.Dom, Windows.Foundation boxed values and
+ * Windows.UI.Notifications. method lists are macros so implementations and callers share the layouts.
  */
 #ifndef MIME_WIN32_TOAST_H
 #define MIME_WIN32_TOAST_H
@@ -10,7 +9,7 @@
 #include <mime/win32/notificationactivationcallback.h>
 
 typedef struct DateTime {
-    INT64 UniversalTime; /* 100 nanosecond units since 1601 */
+    INT64 UniversalTime; /* 100 nanosecond units since 1601. */
 } DateTime;
 
 /* ------------------------------------------------------------------ Windows.Foundation */
@@ -86,7 +85,7 @@ typedef struct IReferenceDateTime IReferenceDateTime;
     HRESULT(STDMETHODCALLTYPE *get_Value)(T * This, DateTime * value);
 MIME_COM_INTERFACE(IReferenceDateTime)
 
-/* only the scalar creators are named, the arrays and the structures are one failing function. */
+/* only scalar creators are named, array and structure creators share one failing function. */
 typedef struct IPropertyValueStatics IPropertyValueStatics;
 #define IPropertyValueStatics_METHODS(T)                                                                               \
     MIME_INSPECTABLE_METHODS(T)                                                                                        \
@@ -146,7 +145,7 @@ MIME_DEFINE_GUID(IID_IPropertyValueStatics, 0x629BDBC8, 0xD932, 0x4FF4, 0x96, 0x
 MIME_DEFINE_GUID(IID_IReferenceDateTime, 0x5541D8A7, 0x497C, 0x5AA4, 0x86, 0xFC, 0x77, 0x13, 0xAD, 0xBF, 0x2A, 0x2C);
 
 
-/* IMap<HSTRING, IInspectable>, the interface of a property set, which holds what a person typed into a toast. */
+/* IMap<HSTRING, IInspectable>, a property set: it holds what the user typed into a toast. */
 typedef struct IInspectableMap IInspectableMap;
 #define IInspectableMap_METHODS(T)                                                                                     \
     MIME_INSPECTABLE_METHODS(T)                                                                                        \
@@ -342,7 +341,7 @@ MIME_COM_INTERFACE(IXmlCharacterData)
     HRESULT(STDMETHODCALLTYPE *SplitText)(T * This, UINT32 offset, IXmlText * *second);
 MIME_COM_INTERFACE(IXmlText)
 
-/* interfaces that add no method to their parent. */
+/* interfaces that add no methods to their parent. */
 #define IXmlComment_METHODS(T) MIME_INSPECTABLE_METHODS(T)
 MIME_COM_INTERFACE(IXmlComment)
 #define IXmlCDataSection_METHODS(T) MIME_INSPECTABLE_METHODS(T)
@@ -585,7 +584,7 @@ MIME_DEFINE_GUID(IID_IToastFailedEventArgs, 0x35176862, 0xCFD4, 0x44F8, 0xAD, 0x
 /* IVectorView<ToastNotification>. */
 MIME_DEFINE_GUID(IID_IVectorViewToast, 0xA819F3DE, 0x60AA, 0x5159, 0x84, 0x07, 0xF0, 0xA7, 0xFB, 0x1F, 0x68, 0x32);
 
-/* the error a program gets for a notifier of a process that has no identity: element not found. */
+/* a notifier for a process with no identity fails with element not found. */
 #define TOAST_E_NO_IDENTITY ((HRESULT)0x80070490)
 
 #endif

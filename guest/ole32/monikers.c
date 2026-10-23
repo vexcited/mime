@@ -1,8 +1,6 @@
 /*
- * the monikers ole32 makes: the item moniker, the file moniker and the generic composite of them. A moniker names an
- * object and finds it; the running object table keeps a name with an object that runs. These are the ones programs make
- * with CreateItemMoniker, CreateFileMoniker and CreateGenericComposite, and the display names those programs ask for.
- * The anti moniker, the pointer moniker and the class moniker are not here.
+ * the item, file and generic composite monikers programs make with CreateItemMoniker, CreateFileMoniker and
+ * CreateGenericComposite, with the display names they ask for. anti, pointer and class monikers are missing.
  */
 #include "ole32_private.h"
 #include <mime/stub.h>
@@ -22,7 +20,7 @@ MIME_DEFINE_GUID(CLSID_FileMoniker_, 0x00000303, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0
 MIME_DEFINE_GUID(CLSID_ItemMoniker_, 0x00000304, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
 MIME_DEFINE_GUID(CLSID_CompositeMoniker_, 0x00000309, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
 
-/* an item container, the interface an item moniker binds through when it has a moniker to its left. */
+/* what an item moniker binds through when it has a moniker to its left. */
 typedef struct IOleItemContainer IOleItemContainer;
 typedef struct IOleItemContainerVtbl {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(IOleItemContainer *, REFIID, void **);
@@ -122,7 +120,7 @@ static HRESULT STDMETHODCALLTYPE mk_is_dirty(IMoniker *self)
     return S_FALSE;
 }
 
-/* ------------------------------------------------------------------ creation and the stream form */
+/* ------------------------------------------------------------------ creation and persistence */
 
 static MK *mk_new(MK_KIND kind)
 {
@@ -174,7 +172,7 @@ WINOLEAPI HRESULT WINAPI CreateFileMoniker(LPCOLESTR path, IMoniker **moniker)
     return S_OK;
 }
 
-/* the components of a moniker in order, composites flattened; the references are taken. */
+/* flattens composites into their components in order, taking references. */
 static HRESULT flatten(IMoniker *moniker, IMoniker **list, ULONG *count, ULONG capacity)
 {
     MK *mk = mk_of(moniker);
@@ -211,7 +209,7 @@ WINOLEAPI HRESULT WINAPI CreateGenericComposite(IMoniker *first, IMoniker *rest,
     return S_OK;
 }
 
-/* a string as the stream holds it: its length with the end, and the bytes in the ansi code page. */
+/* the stream holds the length including the terminator, then the bytes in the ansi code page. */
 static HRESULT write_text(IStream *stream, const WCHAR *text)
 {
     int bytes = WideCharToMultiByte(CP_ACP, 0, text, -1, nullptr, 0, nullptr, nullptr);
@@ -439,7 +437,7 @@ static HRESULT STDMETHODCALLTYPE mk_bind_to_object(IMoniker *self, IBindCtx *con
     if (!context)
         return E_INVALIDARG;
     if (mk->Kind == KIND_COMPOSITE) {
-        /* the last component is bound with the rest to its left. */
+        /* the last component binds with the rest to its left. */
         IMoniker *whole = left ? nullptr : mk->Left;
         if (left)
             CreateGenericComposite(left, mk->Left, &whole);
@@ -459,7 +457,7 @@ static HRESULT STDMETHODCALLTYPE mk_bind_to_object(IMoniker *self, IBindCtx *con
         container->lpVtbl->Release(container);
         return hr;
     }
-    /* a file moniker binds to the object the class of the file makes, which needs the class of the file. */
+    /* binding a file moniker needs the file's class to make its object. */
     return MK_E_NOTBINDABLE_;
 }
 
@@ -497,7 +495,7 @@ static HRESULT STDMETHODCALLTYPE mk_compose_with(IMoniker *self, IMoniker *right
     return CreateGenericComposite(self, right, composite);
 }
 
-/* the components of a composite are enumerated, a simple moniker has none. */
+/* a simple moniker has no components to enumerate. */
 static HRESULT STDMETHODCALLTYPE mk_enum(IMoniker *self, BOOL forward, IEnumMoniker **enumerator)
 {
     if (!enumerator)
@@ -568,7 +566,7 @@ static const IMonikerVtbl mk_vtable = {
     mk_common_prefix, mk_relative_path, mk_get_display_name, mk_parse_display_name, mk_is_system,
 };
 
-/* the key of a moniker in the table across processes: its class and the lower case of its display name. */
+/* the key in the machine wide table: the moniker's class and its lower case display name. */
 BOOL MonikerRotKey(IMoniker *moniker, WCHAR *out, ULONG chars)
 {
     CLSID clsid = {};

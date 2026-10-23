@@ -1,6 +1,6 @@
 /*
- * the objects of a type library: ITypeLib2 and the ITypeComp of a library, the loading of libraries from files and
- * resources of programs, and the registry of libraries (RegisterTypeLib and what finds a library again by its id).
+ * ITypeLib2 and the library's ITypeComp, loading libraries from files and program resources, and the registry:
+ * RegisterTypeLib and lookup by library id.
  */
 #include "typelib.h"
 #include <mime/win32/winnls.h>
@@ -18,7 +18,7 @@ static void copy_wide(WCHAR *to, const WCHAR *from, size_t capacity)
     to[n] = 0;
 }
 
-/* ------------------------------------------------------------------ the loaded libraries */
+/* ------------------------------------------------------------------ library cache */
 
 typedef struct CACHE_ENTRY {
     struct CACHE_ENTRY *Next;
@@ -101,7 +101,7 @@ static void cache_remove(TL_LIB *lib)
     LeaveCriticalSection(&g_cache_lock);
 }
 
-/* ------------------------------------------------------------------ the object */
+/* ------------------------------------------------------------------ ITypeLib2 */
 
 TL_LIB *TlLibCreate(void)
 {
@@ -140,7 +140,7 @@ void TlLibAddRef(TL_LIB *lib)
 void TlLibRelease(TL_LIB *lib)
 {
     if (InterlockedDecrement(&lib->Refs) == 0) {
-        /* a lookup in the cache may have raced with the last release: it only takes references that are alive. */
+        /* a cache lookup may race with the last release, so it only takes references on live libraries. */
         TlLibDestroy(lib);
     }
 }
@@ -344,7 +344,7 @@ static HRESULT WINAPI tl_get_documentation(ITypeLib2 *self, INT index, BSTR *nam
     return hr;
 }
 
-/* whether a name is used for a type, a member or a parameter, and the library's own spelling of it. */
+/* whether a type, member or parameter uses the name, and the library's own spelling of it. */
 static BOOL find_name_in_type(TL_TYPE *t, LPCOLESTR name, MEMBERID *id, const WCHAR **spelling, BOOL params)
 {
     const WCHAR *type_name = TlTypeName(t);
@@ -508,7 +508,7 @@ const ITypeLib2Vtbl g_typelib_vtbl = {
     tl_get_type_info_of_guid, tl_get_lib_attr, tl_get_type_comp, tl_get_documentation, tl_is_name, tl_find_name,
     tl_release_tlib_attr, tl_get_cust_data, tl_get_lib_statistics, tl_get_documentation2, tl_get_all_cust_data};
 
-/* ------------------------------------------------------------------ ITypeComp of a library */
+/* ------------------------------------------------------------------ library ITypeComp */
 
 static HRESULT WINAPI lc_query(ITypeComp *self, REFIID iid, void **out)
 {
@@ -526,7 +526,7 @@ static ULONG WINAPI lc_release(ITypeComp *self)
 HRESULT TlBindName(TYPEINFO *info, LPCOLESTR name, WORD flags, ITypeInfo **found, DESCKIND *kind, BINDPTR *bind,
                    int depth);
 
-/* the names of a library that no type needs to be named for: the members of modules and enumerations. */
+/* binds names usable without qualifying them by type: members of modules and enumerations. */
 static HRESULT WINAPI lc_bind(ITypeComp *self, LPOLESTR name, ULONG hash, WORD flags, ITypeInfo **found,
                               DESCKIND *kind, BINDPTR *bind)
 {
@@ -536,7 +536,7 @@ static HRESULT WINAPI lc_bind(ITypeComp *self, LPOLESTR name, ULONG hash, WORD f
     *found = nullptr;
     *kind = DESCKIND_NONE;
     memset(bind, 0, sizeof(*bind));
-    /* a type of that name is bound as a scope. */
+    /* a type name binds as a scope. */
     for (ULONG i = 0; i < lib->TypeCount; i++) {
         TL_TYPE *t = lib->Types[i];
         const WCHAR *n = TlTypeName(t);
@@ -560,7 +560,7 @@ static HRESULT WINAPI lc_bind(ITypeComp *self, LPOLESTR name, ULONG hash, WORD f
             return S_OK;
         }
     }
-    /* the functions, variables and constants of modules and enumerations. */
+    /* functions, variables and constants of modules and enumerations. */
     for (ULONG i = 0; i < lib->TypeCount; i++) {
         TL_TYPE *t = lib->Types[i];
         if (t->Kind != TKIND_MODULE && t->Kind != TKIND_ENUM)
@@ -605,7 +605,7 @@ static HRESULT WINAPI lc_bind_type(ITypeComp *self, LPOLESTR name, ULONG hash, I
 
 const ITypeCompVtbl g_typelib_comp_vtbl = {lc_query, lc_addref, lc_release, lc_bind, lc_bind_type};
 
-/* ------------------------------------------------------------------ references to types of other libraries */
+/* ------------------------------------------------------------------ imported libraries */
 
 static HRESULT import_lib(TL_LIB *lib, ULONG index, ITypeLib **out)
 {
@@ -627,7 +627,7 @@ static HRESULT import_lib(TL_LIB *lib, ULONG index, ITypeLib **out)
     TL_IMPORT *imp = &lib->Imports[index];
     HRESULT hr = LoadRegTypeLib(&imp->Lib, imp->Major, imp->Minor, imp->Lcid, &loaded);
     if (FAILED(hr) && imp->File) {
-        /* next to the library that wants it. */
+        /* try the importing library's directory first. */
         WCHAR path[MAX_PATH];
         path[0] = 0;
         if (lib->Path) {
@@ -731,7 +731,7 @@ static void release_image(void *context, const BYTE *image)
     AutFree(h);
 }
 
-/* the number a library path ends in after a backslash: the resource of a program that holds the library. */
+/* a trailing \N names the type library resource N of a program. */
 static BOOL split_resource_suffix(WCHAR *path, int *id)
 {
     size_t length = wcslen(path);
@@ -740,7 +740,7 @@ static BOOL split_resource_suffix(WCHAR *path, int *id)
         i--;
     if (i == length || i == 0 || path[i - 1] != L'\\')
         return FALSE;
-    /* the part before must be a file; "dir\123" with a directory 123 is not a resource. */
+    /* the prefix must be a file: "dir\123" with a directory 123 is not a resource. */
     int value = 0;
     for (size_t k = i; k < length; k++)
         value = value * 10 + (path[k] - L'0');
@@ -760,7 +760,7 @@ static BOOL looks_like_path(const WCHAR *file)
     return wcschr(file, L'\\') || wcschr(file, L'/') || (file[0] && file[1] == L':');
 }
 
-/* the file as the library loader finds it: where it says, or on the search path of the system. */
+/* the path as given, or found on the system search path. */
 static HRESULT resolve_path(LPCOLESTR file, WCHAR *full, int *resource_id)
 {
     WCHAR path[MAX_PATH];
@@ -826,7 +826,7 @@ static HRESULT map_file(const WCHAR *path, IMAGE_HOLD **hold, const BYTE **image
     return S_OK;
 }
 
-/* the type library resource of a program or library: resource number id, or the first one. */
+/* the TYPELIB resource numbered id, or the first one. */
 static HRESULT load_resource(const WCHAR *path, int id, IMAGE_HOLD **hold, const BYTE **image, SIZE_T *size)
 {
     HMODULE module = LoadLibraryExW(path, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
@@ -836,7 +836,7 @@ static HRESULT load_resource(const WCHAR *path, int id, IMAGE_HOLD **hold, const
         return TYPE_E_CANTLOADLIBRARY;
     HRSRC found = FindResourceW(module, MAKEINTRESOURCEW(id < 0 ? 1 : id), L"TYPELIB");
     if (!found && id < 0) {
-        /* the first resource of the type, whatever its number. */
+        /* any number will do. */
         found = nullptr;
     }
     if (!found) {
@@ -870,7 +870,7 @@ HRESULT TlLoadFile(LPCOLESTR file, SYSKIND kind, TL_LIB **result)
     HRESULT hr = resolve_path(file, full, &resource_id);
     if (FAILED(hr))
         return hr;
-    /* 32-bit windows kept its first library of types in a file that 64-bit windows has only in the new format. */
+    /* 64-bit windows only ships stdole32.tlb's contents as stdole2.tlb. */
     const WCHAR *name = wcsrchr(full, L'\\');
     WCHAR stdole[MAX_PATH];
     if (name && !_wcsicmp(name + 1, L"stdole32.tlb") && sizeof(void *) == 8) {
@@ -898,7 +898,7 @@ HRESULT TlLoadFile(LPCOLESTR file, SYSKIND kind, TL_LIB **result)
         if (FAILED(hr))
             return hr;
     } else if (size < 4 || (memcmp(image, "MSFT", 4) && memcmp(image, "SLTG", 4))) {
-        /* a file that is neither a program nor a type library is not one the loader gets as far as reading. */
+        /* neither a PE image nor a type library. */
         release_image(hold, image);
         return TYPE_E_CANTLOADLIBRARY;
     }
@@ -952,7 +952,7 @@ WINOLEAUTAPI HRESULT WINAPI LoadTypeLib(LPCOLESTR file, ITypeLib **out)
     return LoadTypeLibEx(file, REGKIND_REGISTER, out);
 }
 
-/* ------------------------------------------------------------------ the registry */
+/* ------------------------------------------------------------------ registry */
 
 static void format_version(WORD major, WORD minor, WCHAR *out)
 {
@@ -1027,7 +1027,7 @@ static HRESULT register_lib(ITypeLib *lib, LPCOLESTR path, LPCOLESTR help_dir, H
     wsprintfW(sub, L"%ls\\%ls\\%ls", key, lcid, platform);
     if (set_default(root, sub, nullptr, full))
         goto done;
-    /* the directory of the help files: given, or the one of the library unless a registration holds one already. */
+    /* the help directory given, else the library's own unless one is already registered. */
     wsprintfW(sub, L"%ls\\HELPDIR", key);
     HKEY existing;
     BOOL has_help = !help_dir && !RegOpenKeyExW(root, sub, 0, KEY_READ, &existing);
@@ -1049,7 +1049,7 @@ static HRESULT register_lib(ITypeLib *lib, LPCOLESTR path, LPCOLESTR help_dir, H
             goto done;
     }
     hr = S_OK;
-    /* the interfaces that automation marshals with the type library. */
+    /* interfaces automation marshals through the type library. */
     UINT count = lib->lpVtbl->GetTypeInfoCount(lib);
     for (UINT i = 0; i < count && SUCCEEDED(hr); i++) {
         TYPEKIND kind;
@@ -1151,7 +1151,7 @@ static HRESULT unregister_lib(REFGUID guid, WORD major, WORD minor, LCID lcid, S
     RegCloseKey(key);
     if (RegDeleteTreeW(root, path))
         return TYPE_E_REGISTRYACCESS;
-    /* the keys above it go when nothing else is under them but the flags and the help directory. */
+    /* parent keys go once only FLAGS and HELPDIR remain under them. */
     wsprintfW(path, L"TypeLib\\%ls\\%ls\\%ls", g, version, l);
     if (!RegOpenKeyExW(root, path, 0, KEY_READ, &key)) {
         BOOL empty = key_is_empty(key);
@@ -1206,7 +1206,7 @@ WINOLEAUTAPI HRESULT WINAPI UnRegisterTypeLibForUser(REFGUID guid, WORD major, W
     return hr;
 }
 
-/* the best registered version for a request: the same major version, and the highest minor not below the one asked. */
+/* same major version and the highest minor not below the one asked for. */
 static BOOL find_version(HKEY libkey, WORD major, WORD minor, WORD *found_major, WORD *found_minor)
 {
     WCHAR name[40];
@@ -1253,7 +1253,7 @@ static BOOL find_version(HKEY libkey, WORD major, WORD minor, WORD *found_major,
     return found;
 }
 
-/* the registered path of a library of a language: that language, the main language without the sublanguage, neutral. */
+/* tries the exact language, then the primary language, then neutral. */
 static HRESULT registered_path(HKEY classes, REFGUID guid, WORD major, WORD minor, LCID lcid, SYSKIND syskind,
                                BSTR *path)
 {

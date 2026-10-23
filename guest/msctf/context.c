@@ -1,7 +1,7 @@
 /*
- * contexts: a program's document as the framework sees it. the program's text store is behind it; edit sessions
- * are how a text service reaches the text, each run while the store holds a lock for the context. this file keeps
- * the lock: it asks the store for one, runs the sessions it grants it for, and tells the sinks what they changed.
+ * contexts: a program's document as the framework sees it, backed by the program's text store. edit sessions are
+ * how a text service reaches the text, each run while the store holds a lock for the context. this file manages that
+ * lock: it asks the store for one, runs the sessions it was granted for, and tells sinks what they changed.
  */
 #include "msctf_private.h"
 
@@ -185,7 +185,7 @@ BOOL CtxCheckCookie(CTX *ctx, TfEditCookie cookie, BOOL write)
     return cookie == ctx->CookieRead || (cookie == ctx->CookieWrite && ctx->Lock == TS_LF_READWRITE);
 }
 
-/* a cookie is made for each session and never repeats soon, so a stale one is caught. */
+/* each session gets a fresh cookie that does not repeat soon, so a stale one is caught. */
 static TfEditCookie new_cookie(CTX *ctx, BOOL write)
 {
     return ((++ctx->CookieSerial & 0x3FFFFFFF) << 2 | (write ? 2 : 1)) | 0x40000000;
@@ -226,7 +226,7 @@ static void notify_end_edit(CTX *ctx, TfEditCookie cookie)
     record->lpVtbl->Release(record);
 }
 
-/* runs one session under the lock held, with cookies of its own. */
+/* runs one session under the held lock, with its own cookies. */
 static HRESULT run_session(CTX *ctx, ITfEditSession *session, TfClientId client, BOOL write)
 {
     TfEditCookie read = ctx->CookieRead, written = ctx->CookieWrite;
@@ -256,14 +256,14 @@ static HRESULT run_session(CTX *ctx, ITfEditSession *session, TfClientId client,
     return hr;
 }
 
-/* the session of a queue entry has run or was refused: its requester gets the answer. */
+/* a queued session ran or was refused: its requester gets the answer. */
 static void finish_entry(PENDING *p, HRESULT hr)
 {
     if (p->Result)
         *p->Result = hr;
     p->Done = TRUE;
     p->Session->lpVtbl->Release(p->Session);
-    /* an entry somebody waits for is freed by that one. */
+    /* an entry somebody waits for is freed by the waiter. */
     if (!p->Waited)
         CtfFree(p);
 }
@@ -293,14 +293,14 @@ static PENDING *pending_tail(CTX *ctx)
     return tail;
 }
 
-/* a lock for the entries still waiting is asked for later, from the message loop. */
+/* the lock for entries still waiting is requested later, from the message loop. */
 static void post_lock_for_rest(CTX *ctx)
 {
     if (ctx->Pending && !ctx->LockPosted && ServicePostLock(ctx))
         ctx->LockPosted = TRUE;
 }
 
-/* the store grants the lock it was asked for: the sessions that waited for it run. */
+/* the store grants the requested lock and the waiting sessions run. */
 static HRESULT grant(CTX *ctx, DWORD flags)
 {
     if ((flags & ~(DWORD)(TS_LF_SYNC | TS_LF_READWRITE)) || !(flags & TS_LF_READWRITE))
@@ -309,7 +309,7 @@ static HRESULT grant(CTX *ctx, DWORD flags)
         return E_UNEXPECTED;
 
     BOOL write = (flags & TS_LF_READWRITE) == TS_LF_READWRITE;
-    /* a grant inside another one does not own the lock state and leaves it as it found it. */
+    /* a nested grant does not own the lock state and leaves it as it found it. */
     DWORD outer = ctx->Lock;
     if (!outer || write)
         ctx->Lock = write ? TS_LF_READWRITE : TS_LF_READ;
@@ -318,7 +318,7 @@ static HRESULT grant(CTX *ctx, DWORD flags)
     HRESULT answer = S_OK;
     PENDING *tail = pending_tail(ctx);
     if (tail && (tail->Flags & TF_ES_SYNC)) {
-        /* the request this grant answers is the newest one, and only it runs. */
+        /* this grant answers the newest request, and only that one runs. */
         unlink_pending(ctx, tail);
         if (pending_writes(tail) && !write) {
             finish_entry(tail, E_UNEXPECTED);
@@ -327,7 +327,7 @@ static HRESULT grant(CTX *ctx, DWORD flags)
             answer = run_entry(ctx, tail);
         }
     } else {
-        /* the entries that came after the grant do not run under it. */
+        /* entries queued after the grant do not run under it. */
         ULONG left = 0;
         for (PENDING *p = ctx->Pending; p; p = p->Next)
             left++;
@@ -349,7 +349,7 @@ static HRESULT grant(CTX *ctx, DWORD flags)
     return answer;
 }
 
-/* the lock asked for earlier, from the message loop, for the sessions that cannot run in the call that queued them. */
+/* requests the deferred lock from the message loop, for sessions that could not run in the call that queued them. */
 void CtxRunPostponed(CTX *ctx)
 {
     ctx->LockPosted = FALSE;
@@ -373,19 +373,19 @@ static void queue_pending(CTX *ctx, PENDING *p)
     *link = p;
 }
 
-/* the bits a request may carry besides the documented ones: a marker Windows tolerates. */
+/* an undocumented bit a request may carry, which Windows tolerates. */
 #define REQUEST_INTERNAL_BIT 0x10
 #define REQUEST_WRITE_BIT 0x4
 #define REQUEST_KNOWN_BITS (TF_ES_SYNC | TF_ES_READWRITE | TF_ES_ASYNC | REQUEST_INTERNAL_BIT)
 
-/* a request that is not answered yet is kept as an ordinary queued entry from now on. */
+/* an unanswered request becomes an ordinary queued entry from now on. */
 static void detach_waiter(PENDING *p)
 {
     p->Waited = FALSE;
     p->Result = nullptr;
 }
 
-/* a session asked for inside the one running: it joins that one when the lock held covers it. */
+/* a session requested inside the running one joins it when the held lock covers it. */
 static HRESULT run_inside_session(CTX *ctx, TfClientId tid, ITfEditSession *session, BOOL write, HRESULT *result)
 {
     if (tid != ctx->SessionClient || (write && !ctx->SessionWrite)) {
@@ -440,7 +440,7 @@ HRESULT CtxRequestSession(CTX *ctx, TfClientId tid, ITfEditSession *session, DWO
         return S_OK;
     }
 
-    /* the store sees the request as it was made, so that it may still answer asynchronously when none was asked. */
+    /* the store sees the request as made, so it may still answer asynchronously when no mode was asked. */
     DWORD lock_flags = flags & (TF_ES_SYNC | TF_ES_READWRITE);
     HRESULT session_hr = E_FAIL;
     entry->Waited = TRUE;
@@ -497,7 +497,7 @@ static HRESULT STDMETHODCALLTYPE ss_on_text_change(ITextStoreACPSink *This, DWOR
     CTX *ctx = from_sink(This);
     if (!change)
         return E_INVALIDARG;
-    /* the store tells of the changes it makes itself, not of the ones a session asked for. */
+    /* the store reports its own changes, not the ones a session asked for. */
     if (ctx->InSession)
         return TS_E_NOLOCK;
     if (change->acpStart == change->acpOldEnd && change->acpStart == change->acpNewEnd)
@@ -754,7 +754,7 @@ static HRESULT STDMETHODCALLTYPE c_get_app_property(ITfContext *This, REFGUID gu
 static HRESULT STDMETHODCALLTYPE c_track(ITfContext *This, const GUID **props, ULONG count, const GUID **app_props,
                                          ULONG app_count, ITfReadOnlyProperty **property)
 {
-    /* the properties of the program itself are not kept: only the framework's are tracked. */
+    /* only the framework's properties are tracked, not the program's own. */
     return PropsTrack(CTF_OBJ(CTX, Context, This), props, count, property);
 }
 
@@ -795,8 +795,8 @@ const ITfContextVtbl g_context_vtbl = {Context_query, Context_add_ref, Context_r
 /* ------------------------------------------------------------------ the empty context */
 
 /*
- * a document that has no context gives this one when asked for its top or its base: every request of it is
- * answered that the context is empty.
+ * a document with no context returns this one for its top or base. every request on it answers that the
+ * context is empty.
  */
 static HRESULT STDMETHODCALLTYPE em_query(ITfContext *This, REFIID riid, void **object)
 {

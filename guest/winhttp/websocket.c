@@ -1,6 +1,4 @@
-/*
- * websockets over an upgraded request: rfc 6455 frames, masked from the client, with the close handshake.
- */
+/* RFC 6455 frames and close handshake over upgraded requests; client frames are masked. */
 #include "winhttp_private.h"
 
 enum { OP_CONTINUATION = 0, OP_TEXT = 1, OP_BINARY = 2, OP_CLOSE = 8, OP_PING = 9, OP_PONG = 10 };
@@ -116,7 +114,7 @@ static DWORD ReadExact(WH_OBJECT *socket, BYTE *data, DWORD length)
     return ERROR_SUCCESS;
 }
 
-/* reads a frame header, answering pings and recording close frames on the way. */
+/* read the frame header while answering pings and recording close frames. */
 static DWORD NextFrame(WH_OBJECT *socket)
 {
     while (TRUE) {
@@ -188,7 +186,7 @@ static DWORD Receive(WH_OBJECT *socket, BYTE *buffer, DWORD length, DWORD *read,
     DWORD error = ReadExact(socket, buffer, count);
     if (error)
         return error;
-    /* servers do not mask, a masked frame is unmasked as if read whole. */
+    /* servers do not mask; apply the supplied mask if present. */
     if (socket->WsMasked)
         for (DWORD i = 0; i < count; i++)
             buffer[i] ^= socket->WsMask[i & 3];
@@ -314,7 +312,7 @@ static DWORD WINAPI AsyncJob(LPVOID parameter)
     return 0;
 }
 
-/* runs a websocket operation now, or on a pool thread for an asynchronous session. */
+/* run immediately or on a pool thread for asynchronous sessions. */
 static DWORD Dispatch(WH_OBJECT *socket, WH_WS_JOB *job, DWORD *read, WINHTTP_WEB_SOCKET_BUFFER_TYPE *type)
 {
     if (!WhIsAsync(socket)) {

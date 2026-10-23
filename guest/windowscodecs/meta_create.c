@@ -1,6 +1,4 @@
-/*
- * making handlers from the factory: empty ones, ones read from a stream, and the functions that serialize them.
- */
+/* metadata handler construction, stream parsing and serialization. */
 #include "wic_codec.h"
 #include "wic_meta.h"
 #include "meta_internal.h"
@@ -65,7 +63,7 @@ HRESULT WicMetaCreateReaderFromContainer(const GUID *container, const GUID *vend
     HRESULT hr = WicReadStream(stream, &data, &size, 0x10000000);
     if (FAILED(hr))
         return hr;
-    /* the first bytes tell what the block is. */
+    /* identify the block from its leading bytes. */
     if (size >= 6 && !memcmp(data, "Exif\0\0", 6)) {
         IWICMetadataReader *app1, *ifd;
         hr = WicMetaReaderCreate(&GUID_MetadataFormatApp1, &app1);
@@ -113,7 +111,6 @@ HRESULT WicMetaFastEncoderFromFrame(IWICBitmapFrameDecode *frame, IWICFastMetada
     return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 }
 
-/* ------------------------------------------------------------------ the serialize exports */
 
 static HRESULT content_of(IWICMetadataWriter *writer, BYTE **blob, SIZE_T *size, DWORD options)
 {

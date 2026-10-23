@@ -1,8 +1,7 @@
 /*
- * the providers of performance counters of the second kind, PerfStartProviderEx and its companions: a provider writes
- * its counters into memory that a consumer would read through the performance data helper, and none exists here. The
- * calls accept what a provider does and hand back blocks of their own, so that the provider runs; the counters are never
- * published to anybody.
+ * version 2 performance counter providers, PerfStartProviderEx and friends. a provider writes counters to memory that
+ * consumers read through the performance data helper, which does not exist here. the calls accept what a provider
+ * does and return their own blocks so it runs, but the counters are never published.
  */
 #include "advapi32_private.h"
 
@@ -11,7 +10,7 @@ typedef struct PERF_PROVIDER {
     GUID Id;
 } PERF_PROVIDER;
 
-/* the header of the block of an instance: the counter set, the identifier and the name, with room for the counter values. */
+/* an instance block header: counter set, id and name, with room for the counter values. */
 typedef struct PERF_INSTANCE {
     GUID CounterSet;
     ULONG InstanceId;
@@ -24,7 +23,7 @@ typedef struct PERF_INSTANCE {
 static SRWLOCK g_perf_lock = SRWLOCK_INIT;
 static PERF_PROVIDER *g_providers;
 
-/* whether the handle is a provider that is started, with the lock held. */
+/* the started provider the handle names, or NULL. the caller holds the lock. */
 static PERF_PROVIDER *provider_of(HANDLE handle)
 {
     for (PERF_PROVIDER *p = g_providers; p; p = p->Next)

@@ -1,6 +1,4 @@
-/*
- * the state of a decode, shared by the parts of the decoder.
- */
+/* decoder state, shared by the decoder files. */
 #ifndef MIME_LIB_JPEG_DEC_H
 #define MIME_LIB_JPEG_DEC_H
 
@@ -8,7 +6,7 @@
 
 #define FAST_BITS 9
 
-/* a huffman table for decoding: a lookup for the short codes and the limits of the longer ones. */
+/* a decoding huffman table: a lookup for the short codes and limits for the longer ones. */
 typedef struct JpegHuff {
     uint16_t fast[1 << FAST_BITS]; /* the length in the high byte and the symbol in the low one, 0 for none. */
     int32_t limit[17];             /* the first 16 bit window past the codes of each length. */
@@ -19,17 +17,17 @@ typedef struct JpegHuff {
 
 typedef struct JpegComp {
     uint8_t id, h, v, tq;
-    uint32_t bw, bh;   /* the blocks of the padded storage. */
-    uint32_t cbw, cbh; /* the blocks that cover the component, which is what a single component scan codes. */
-    int n;             /* the size of the transform of its blocks, 8, 4, 2 or 1. */
-    uint32_t cw, ch;   /* the samples of the component after the transform. */
+    uint32_t bw, bh;   /* blocks of the padded storage. */
+    uint32_t cbw, cbh; /* blocks covering the component, which is what a single component scan codes. */
+    int n;             /* transform size of its blocks, 8, 4, 2 or 1. */
+    uint32_t cw, ch;   /* samples of the component after the transform. */
     uint32_t pw, ph;   /* the plane in samples, padded to whole MCUs. */
     uint8_t *plane;
-    int16_t *coef; /* all the blocks, when scans have to be put together. */
+    int16_t *coef; /* all the blocks, when scans must be combined. */
     float dq[64];
     bool dq_ready;
     int pred;
-    int td, ta; /* the tables of the scan that is being decoded. */
+    int td, ta; /* the tables of the scan being decoded. */
 } JpegComp;
 
 typedef struct Jpeg {
@@ -55,7 +53,7 @@ typedef struct Jpeg {
     JpegHuff dc[4], ac[4];
     uint32_t restart;
 
-    /* what the application segments say. */
+    /* from the application segments. */
     bool jfif, adobe;
     uint8_t jfif_major, jfif_minor, density_unit, thumb_width, thumb_height, adobe_transform;
     uint16_t x_density, y_density;
@@ -74,7 +72,7 @@ int jpeg_color_space(const Jpeg *j);
 /* memory that is freed when the decode ends. */
 void *jpeg_alloc(Jpeg *j, size_t size);
 
-/* the upsampling and color conversion of the planes into dest. */
+/* upsamples and color converts the planes into dest. */
 int jpeg_output(Jpeg *j, uint8_t *dest, size_t stride);
 
 #endif

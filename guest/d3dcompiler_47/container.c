@@ -1,17 +1,16 @@
 /*
- * the dxbc container as d3dcompiler_47.dll checks and rebuilds it: the
- * parts D3DGetBlobPart hands out, the chunk D3DSetBlobPart replaces and
- * the chunks D3DStripShader drops. a container it builds is the header,
- * the chunk offsets and the chunks in order, with the checksum of
- * guest/lib/dxbc, the one windows' retail builds compute.
+ * the dxbc container: the parts D3DGetBlobPart returns, the chunk
+ * D3DSetBlobPart replaces and the chunks D3DStripShader drops. a built
+ * container is the header, the chunk offsets and the chunks in order, with
+ * the checksum from guest/lib/dxbc, the one windows' retail builds compute.
  */
 #include "d3dcompiler_private.h"
 
 static UINT read32(const BYTE *p) { return p[0] | p[1] << 8 | p[2] << 16 | (UINT)p[3] << 24; }
 
 /*
- * the header's size must be the size given, its version 1, and its chunks
- * must follow the offsets back to back, as CDXBCParser::ReadDXBC requires.
+ * like windows, the header size must match, the version must be 1, and
+ * the chunks must follow their offsets back to back.
  */
 static BOOL valid_layout(const BYTE *b, UINT size)
 {
@@ -34,7 +33,7 @@ static BOOL valid_layout(const BYTE *b, UINT size)
     return TRUE;
 }
 
-/* sixteen bytes of 1 stand for a checksum not to verify. */
+/* sixteen bytes of 1 mean the checksum is not verified. */
 static BOOL checksum_skipped(const BYTE *b)
 {
     for (int i = 4; i < 20; i++)
@@ -154,7 +153,7 @@ HRESULT DcBuilderFinish(DcBuilder *b, ID3DBlob **out)
 
 /* ------------------------------------------------------------------ parts */
 
-/* the newer variant of a signature chunk when the container has it. */
+/* prefers the newer variant of a signature chunk when present. */
 static UINT signature_variant(const DcContainer *c, UINT tag)
 {
     static const UINT variants[][3] = {

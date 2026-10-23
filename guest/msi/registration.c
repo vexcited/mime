@@ -8,7 +8,6 @@ static UINT write_text(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, PCWSTR
     return MimeMsiWriteRegistry(package, root, path, name, REG_SZ, value, (DWORD)(characters * sizeof(WCHAR)));
 }
 
-/* the product goes entirely: every feature of it is removed. */
 static BOOL removing_product(const MIME_MSI_PACKAGE *package)
 {
     return package->Maintenance && !_wcsicmp(MimeMsiGetProperty(package, L"REMOVE"), L"ALL");
@@ -23,7 +22,7 @@ static UINT uninstall_key(MIME_MSI_PACKAGE *package, WCHAR path[160])
     return ERROR_SUCCESS;
 }
 
-/* the view of the registry that the entries of the product list are in: the native one for a 64-bit package. */
+/* uninstall entries live in the native registry view for a 64-bit package. */
 static DWORD uninstall_view(const MIME_MSI_PACKAGE *package)
 {
 #ifdef _WIN64
@@ -38,7 +37,7 @@ static UINT write_number(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, PCWS
     return MimeMsiWriteRegistry(package, root, path, name, REG_DWORD, &value, sizeof(value));
 }
 
-/* the entry of the list of installed programs, with what the properties of the package say about it. */
+/* writes the installed programs entry from the package properties. */
 static UINT write_uninstall_entry(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR cache)
 {
     WCHAR path[160];
@@ -120,7 +119,7 @@ static UINT write_uninstall_entry(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR c
             size = size * 10 + (DWORD)(*digit - L'0');
         error = write_number(package, root, path, L"EstimatedSize", size);
     }
-    /* the icon of the list is a file of the folder of the installer, made from the Icon table. */
+    /* the list icon is written from the Icon table into the installer folder. */
     PCWSTR icon = MimeMsiGetProperty(package, L"ARPPRODUCTICON");
     if (!error && *icon) {
         WCHAR stream[256];
@@ -152,7 +151,7 @@ static UINT unregister_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path
         return ERROR_SUCCESS;
     if (error)
         return error;
-    /* the cached package and its transforms are files of the machine like the others. */
+    /* the cached package and its transforms are machine files like any other. */
     PWSTR local = nullptr;
     if (!MimeMsiRegistryText(key, L"LocalPackage", &local) && local) {
         error = MimeMsiRemoveFile(package, local);
@@ -175,7 +174,7 @@ static UINT unregister_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path
     RegCloseKey(key);
     if (!error)
         error = MimeMsiDeleteRegistryTree(package, root, path, 0);
-    /* the entry of the list of programs and the icon that went with it. */
+    /* the installed programs entry and its icon. */
     WCHAR entry[160];
     if (!error && !uninstall_key(package, entry)) {
         DWORD previous = package->RegistryView;
@@ -346,14 +345,14 @@ UINT MimeMsiRegistrationAction(MIME_MSI_PACKAGE *package, PCWSTR action)
         return UINT32_MAX;
     if (!package->TransactionActive || (package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE))
         return ERROR_FUNCTION_NOT_CALLED;
-    /* a product that was unregistered has no catalog left to validate the maintenance against. */
+    /* an unregistered product has no catalog left to validate maintenance against. */
     if (package->Maintenance && !(removing_product(package) && package->CatalogRegistered)) {
         UINT error = MimeMsiValidateMaintenance(package);
         if (error)
             return error;
     }
     PCWSTR all_users = MimeMsiGetProperty(package, L"ALLUSERS");
-    /* 2 is all users when the installation can, which an administrator can. */
+    /* 2 means all users when possible, which it is for an administrator. */
     if (*all_users && wcscmp(all_users, L"1") && wcscmp(all_users, L"2"))
         return ERROR_CALL_NOT_IMPLEMENTED;
     HKEY root = *all_users ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;

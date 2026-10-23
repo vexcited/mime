@@ -1,16 +1,16 @@
 /*
- * which records of the registry journal still matter. the journal only grows: every value ever written is in
- * it, and a replay at every boot reads all of it. what a record does is replace one thing, so only the last
- * record of each thing counts, and a key deleted takes everything older below it away:
+ * which registry journal records still matter. the journal only grows and every boot replays all of it. each
+ * record replaces one thing, so only the last record of each thing counts, and deleting a key drops everything
+ * older below it:
  *
- *   - a value is set or deleted by name, and the last record of the name wins;
- *   - the descriptor of a key is set, the last record wins;
- *   - a key is created, which twice is once;
- *   - a key is deleted, and the records before it for the key or any key below it do nothing.
+ *   - a value is set or deleted by name, the last record for the name wins.
+ *   - a key's descriptor is set, the last record wins.
+ *   - a key is created, twice is the same as once.
+ *   - a key is deleted, and earlier records for it or any key below it do nothing.
  *
- * the records are noted in order while the journal is replayed, and decided last to first, so that a deleted key
- * is known when the older records under it come. what is kept is in the order it had. the includer gives
- * CM_COMPACT_ALLOC and CM_COMPACT_FREE.
+ * records are noted in order during replay and decided last to first, so a deleted key is known before the
+ * older records under it. kept records stay in their order. the includer defines CM_COMPACT_ALLOC and
+ * CM_COMPACT_FREE.
  */
 #ifndef MIME_CM_JOURNAL_COMPACT_H
 #define MIME_CM_JOURNAL_COMPACT_H
@@ -30,24 +30,24 @@ typedef struct CmCompactRecord {
 typedef struct CmCompactKey {
     uint64_t hash;
     uint32_t parent;
-    uint32_t dead; /* a record for this key or one below it, older than the deletion of this key, does nothing */
+    uint32_t dead; /* records for this key or below, older than its deletion, do nothing */
 } CmCompactKey;
 
 typedef struct CmCompact {
     CmCompactRecord *records;
     uint32_t record_count, record_capacity;
-    CmCompactKey *keys; /* number 0 is the root, above every path */
+    CmCompactKey *keys; /* 0 is the root, above every path */
     uint32_t key_count, key_capacity;
     uint32_t *table; /* open addressing over keys by hash, key number + 1 */
     uint32_t table_size;
     bool failed;
-    bool unknown; /* a record whose operation this build does not know: nothing is compacted */
+    bool unknown; /* an unknown operation was seen: nothing is compacted */
 } CmCompact;
 
 #define CM_COMPACT_FNV_OFFSET 0xcbf29ce484222325ull
 #define CM_COMPACT_FNV_PRIME 0x100000001b3ull
 
-/* a unit of a name as the registry compares it: ascii letters in upper case. */
+/* the registry compares names with ascii letters upper cased. */
 static inline uint32_t cm_compact_fold(uint32_t unit)
 {
     return unit >= 'a' && unit <= 'z' ? unit - 32 : unit;
@@ -118,7 +118,7 @@ static inline bool cm_compact_grow_table(CmCompact *c)
     return true;
 }
 
-/* the number of the key with this hash of its path, made when there is none. */
+/* finds or adds the key with this path hash. */
 static inline uint32_t cm_compact_key(CmCompact *c, uint64_t hash, uint32_t parent)
 {
     uint32_t at = (uint32_t)(hash >> 32) & (c->table_size - 1);
@@ -153,7 +153,7 @@ static inline uint32_t cm_compact_key(CmCompact *c, uint64_t hash, uint32_t pare
     return id;
 }
 
-/* notes the record at this offset of the journal: its path and name as the units of its payload. */
+/* the payload starts with the path and name units. */
 static inline void cm_compact_note(CmCompact *c, uint64_t offset, const CmJournalRecord *r, const uint8_t *payload)
 {
     if (c->failed || c->unknown)
@@ -174,7 +174,7 @@ static inline void cm_compact_note(CmCompact *c, uint64_t offset, const CmJourna
         c->records = records;
         c->record_capacity = capacity;
     }
-    /* every prefix of the path that ends at a backslash is a key, and so is the whole path. */
+    /* every path prefix ending at a backslash is a key, and so is the whole path. */
     uint64_t hash = CM_COMPACT_FNV_OFFSET;
     uint32_t parent = 0;
     for (uint32_t i = 0; i + 1 < r->path_bytes; i += 2) {
@@ -216,8 +216,7 @@ static inline void cm_compact_note(CmCompact *c, uint64_t offset, const CmJourna
 }
 
 /*
- * decides which records stay, last to first. returns false when it cannot, and true with the records marked and
- * the bytes of the ones that stay.
+ * marks the records that stay, last to first, and totals their bytes. returns false when it cannot decide.
  */
 static inline bool cm_compact_decide(CmCompact *c, uint64_t *kept_bytes, uint32_t *kept_count, uint32_t *largest)
 {

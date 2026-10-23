@@ -246,7 +246,7 @@ static void postprocess(Dec *d, uint8_t *buf, const Geo *g)
             tiff_predictor_undo(buf + (size_t)r * g->row_bytes, (size_t)g->buf_w * d->spp_buf, d->spp_buf, d->unit);
 }
 
-/* decodes a chunk into dst, which holds g->need bytes. */
+/* dst holds g->need bytes. */
 static int decode_chunk(Dec *d, const MimeTiffChunk *c, uint8_t *dst, const Geo *g)
 {
     int rc;
@@ -299,19 +299,17 @@ static inline uint8_t clamp8(int32_t v)
 }
 
 
-/* a product of two 16.16 numbers. */
 static inline int32_t fixed_mul(int32_t a, int32_t b)
 {
     return (int32_t)(((int64_t)a * b + 0x8000) >> 16);
 }
 
 /*
- * the conversion of section 21 of the specification. a code is first stretched from its reference black and white
- * to the nominal range, 0 to 255 for the luma and minus 127 to 127 for the chroma, and then red is the luma plus Cr
- * times twice the weight left by LumaRed, blue the same with Cb and LumaBlue, and green is the luma less LumaBlue
- * times blue and LumaRed times red, over LumaGreen. putting the first two into the third leaves green as the luma
- * less Cb times gb and Cr times gr, gb being LumaBlue times the weight of blue over LumaGreen and gr the same for
- * red. an empty reference range falls back to the default one.
+ * the YCbCr to RGB conversion of section 21 of the specification. codes are first stretched from the reference
+ * black and white to 0..255 for luma and -127..127 for chroma. red is luma plus Cr times 2 - 2 LumaRed, blue the
+ * same with Cb and LumaBlue, and green, once red and blue are substituted, is luma less Cb times gb and Cr times
+ * gr, where gb is LumaBlue times the blue weight over LumaGreen and gr likewise for red. an empty reference range
+ * falls back to the default one.
  */
 static void ycc_prepare(Dec *d)
 {
@@ -349,8 +347,8 @@ static inline uint8_t round_sample(int32_t v)
 }
 
 /*
- * the rows r0 to r1 of a chunk made of units. a unit is the samples of the luma of a cell of yh by yv pixels, row
- * by row, followed by the one Cb and the one Cr of the cell, which every pixel of the cell shares.
+ * rows r0 to r1 of a chunk of units. a unit is the luma of a yh by yv cell, row by row, then the one Cb and one
+ * Cr that every pixel of the cell shares.
  */
 static void emit_ycc(const Dec *d, const MimeTiffChunk *c, const Geo *g, const uint8_t *buf, uint32_t r0, uint32_t r1,
                      uint32_t y0, uint8_t *out, size_t stride)
@@ -386,7 +384,7 @@ static void emit_ycc(const Dec *d, const MimeTiffChunk *c, const Geo *g, const u
     }
 }
 
-/* copies the rows r0 to r1 of chunk c, which is in buf, to out whose first row is image row y0. */
+/* copies rows r0 to r1 of chunk c from buf to out, whose first row is image row y0. */
 static void emit(Dec *d, const MimeTiffChunk *c, const Geo *g, const uint8_t *buf, uint32_t r0, uint32_t r1,
                  uint32_t y0, uint8_t *out, size_t stride)
 {

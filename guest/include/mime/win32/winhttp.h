@@ -1,6 +1,5 @@
 /*
- * windows http services: winhttp.dll. the handles, requests, url, proxy and
- * websocket api of winhttp.h, with the 64 bit layouts.
+ * winhttp.dll: the handle, request, url, proxy and websocket api of winhttp.h, with the 64-bit layouts.
  */
 #ifndef MIME_WIN32_WINHTTP_H
 #define MIME_WIN32_WINHTTP_H

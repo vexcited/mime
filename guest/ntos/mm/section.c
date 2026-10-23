@@ -1,18 +1,13 @@
 /*
- * section objects: image sections built from pe files, file backed and
- * pagefile backed data sections, and mapping views of them.
+ * section objects: image sections from PE files, file and pagefile backed data sections, and views.
  *
- * an image section keeps one prototype copy of the image laid out at its
- * preferred base. views at that base share read-only pages; writable
- * pages are private copies. relocated views get private copies of every
- * page with the base relocations applied.
+ * an image section keeps one prototype copy of the image laid out at its preferred base. views at that
+ * base share the read-only pages and get private copies of writable ones.
  *
- * prototype pages are built on first touch from the file's read only
- * pages, the rom for the system files and the host window for the others
- * (IoGetFileWindow). a page is the file's own page whenever the file page
- * is byte for byte the loaded page, which the 4K file alignment of mime's
- * images makes the common case. pagefile backed pages start as demand
- * zero. images of the system files are built once and cached.
+ * prototype pages are built on first touch from the file's read-only pages: the rom for system files,
+ * the host window for others, see IoGetFileWindow. when the loaded page equals the file page byte for
+ * byte, which mime's 4K file alignment makes common, the file page itself is used. pagefile backed
+ * pages start as demand zero. images of the system files are built once and cached.
  */
 #include "../ntos.h"
 
@@ -55,7 +50,6 @@ static void section_delete(PVOID object)
         ExFreePool(s->FileName.Buffer);
 }
 
-/* a section whose pages are all absent until built by MiSectionPage. */
 static NTSTATUS alloc_section(ULONG64 size, PSECTION *out)
 {
     PSECTION s;
@@ -85,11 +79,11 @@ static IMAGE_DATA_DIRECTORY image_directory(const IMAGE_NT_HEADERS64 *nt, ULONG 
 
 static void load_image_page(const UCHAR *file, ULONG64 file_size, const IMAGE_NT_HEADERS64 *nt, ULONG page, PUCHAR out);
 
-/* builds prototype page `index`, returning a new ram page or a page of the source. */
+/* returns a new ram page or a page of the source. */
 static ULONG64 build_page(PSECTION s, ULONG index)
 {
     ULONG64 off = (ULONG64)index << PAGE_SHIFT;
-    ULONG64 source_pages = ROUND_TO_PAGES(s->SourceSize); /* the rom and windows pad files with zeros */
+    ULONG64 source_pages = ROUND_TO_PAGES(s->SourceSize); /* the rom and windows pad files with zeros. */
     if (!s->SourcePa || ((s->Flags & SEC_IMAGE) == 0 && off >= s->SourceSize))
         return MmAllocatePage();
     const UCHAR *src = HalPhysmap(s->SourcePa);
@@ -115,7 +109,7 @@ static ULONG64 build_page(PSECTION s, ULONG index)
     return pa;
 }
 
-/* the prototype page `index` of a section, built on first use. 0 when out of memory. */
+/* built on first use. 0 when out of memory. */
 ULONG64 MiSectionPage(PSECTION s, ULONG index)
 {
     ULONG64 pa = __atomic_load_n(&s->Pages[index], __ATOMIC_ACQUIRE);
@@ -133,37 +127,33 @@ ULONG64 MiSectionPage(PSECTION s, ULONG index)
     return pa;
 }
 
-/* the pte of a view page left for the first touch, see MmAccessFault. */
+/* a view page left for the first touch, see MmAccessFault. */
 ULONG64 MiSectionSwPte(ULONG protect)
 {
     return MM_SWPTE_COMMITTED | MM_SWPTE_SECTION | ((ULONG64)(protect & 0x7FF) << MM_SWPTE_PROT_SHIFT);
 }
 
-/*
- * the attributes of a view page. the rom and the read only windows are read only to
- * the guest, so writable views of their pages copy on write.
- */
+/* the rom and read-only windows are read-only to the guest, so writable views of their pages copy on write. */
 ULONG64 MiSectionPteAttrs(PSECTION s, ULONG protect, ULONG64 pa, BOOLEAN shared)
 {
     ULONG64 attrs = MiProtectToPte(protect, TRUE) | (shared ? MM_PTE_SW_SHARED : 0);
-    /* the pages of a file's writable window are the file's, and what a view writes goes there. */
+    /* writes to a file's writable window go straight to the file. */
     if (!MiGetPfn(pa) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) && !(s->Flags & MI_SECTION_WRITABLE_WINDOW))
         attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_COW;
     return attrs;
 }
 
 /*
- * relocating a view of an image away from its base. windows relocates the pages that the base relocation
- * table touches and leaves the others shared with the file. so does mime, but when a page is first
- * touched and not when the view is made, which for a browser's image of hundreds of megabytes is the
- * difference between a few thousand pages and every one. the pages relocated for the base the first view
- * was made at belong to the section, and views at that base share them; a view elsewhere gets private ones.
+ * like Windows, a view away from the image base relocates only the pages the relocation table touches
+ * and shares the rest with the file. mime does it on first touch rather than at map time, which matters
+ * for images of hundreds of megabytes. pages relocated for the first view's base belong to the section
+ * and are shared by views at that base. views elsewhere get private ones.
  */
 #define RELOC_NO_BLOCK 0x7FFFFFFFu
 #define RELOC_BLOCK_MASK 0x7FFFFFFFu
-#define RELOC_STRADDLED 0x80000000u /* a fixup of the page before reaches into this page */
+#define RELOC_STRADDLED 0x80000000u /* a fixup of the previous page reaches into this one. */
 
-/* bytes of the image as the file has it, from the prototype pages. */
+/* reads image bytes as the file has them, from the prototype pages. */
 static BOOLEAN read_prototype(PSECTION s, ULONG64 rva, void *out, ULONG length)
 {
     PUCHAR bytes = out;
@@ -188,10 +178,10 @@ static ULONG fixup_width(USHORT entry)
     return type == IMAGE_REL_BASED_DIR64 ? 8 : type == IMAGE_REL_BASED_HIGHLOW ? 4 : 0;
 }
 
-/* the largest block of the relocation table: one page of 16 bit entries and the header. */
+/* the largest relocation block accepted: a page's worth of 16-bit entries. */
 #define RELOC_BLOCK_ENTRIES 2048
 
-/* reads a block of the table. false when it is not one that fits a page, or reaches past the table. */
+/* false when the block is larger than a page's worth or runs past the table. */
 static BOOLEAN read_reloc_block(PSECTION s, ULONG offset, IMAGE_BASE_RELOCATION *block, USHORT *entries, ULONG *count)
 {
     if (offset + sizeof(*block) > s->RelocSize || !read_prototype(s, (ULONG64)s->RelocRva + offset, block, sizeof(*block)))
@@ -205,7 +195,7 @@ static BOOLEAN read_reloc_block(PSECTION s, ULONG offset, IMAGE_BASE_RELOCATION 
     return !n || read_prototype(s, (ULONG64)s->RelocRva + offset + sizeof(*block), entries, n * 2);
 }
 
-/* the index of the table, or null when it is not one the index can describe. */
+/* maps each page to its relocation block. null when the table has a layout the index cannot describe. */
 static ULONG *reloc_index(PSECTION s)
 {
     ULONG state = __atomic_load_n(&s->RelocIndexState, __ATOMIC_ACQUIRE);
@@ -232,7 +222,7 @@ static ULONG *reloc_index(PSECTION s)
         ULONG page = block.VirtualAddress >> PAGE_SHIFT;
         if (page < s->PageCount) {
             if ((index[page] & RELOC_BLOCK_MASK) != RELOC_NO_BLOCK) {
-                ok = FALSE; /* two blocks for a page */
+                ok = FALSE; /* two blocks for one page. */
                 break;
             }
             index[page] = (index[page] & RELOC_STRADDLED) | offset;
@@ -261,9 +251,8 @@ static BOOLEAN page_needs_relocation(PSECTION s, ULONG64 index)
 }
 
 /*
- * fixes up one page of the image in out, a copy of the file's page. the entries of the page's own block that
- * start in it change its bytes, and the ones of the block before that start in the page before and end in
- * this one change the first of them: the part of the new value that falls in this page is written.
+ * applies the fixups of one block to page, held in out as a copy of the file's page. with the previous
+ * page's block, only fixups that straddle into this page apply, and only their bytes in this page are written.
  */
 static BOOLEAN relocate_block(PSECTION s, ULONG offset, ULONG block_page, ULONG page, LONG64 delta, PUCHAR out)
 {
@@ -317,7 +306,7 @@ static BOOLEAN build_relocated_page(PSECTION s, ULONG page, LONG64 delta, PUCHAR
     return TRUE;
 }
 
-/* the relocated page the section keeps for its base, built if it is not there yet; 0 when out of memory. */
+/* the relocated page the section keeps for its shared base. 0 when out of memory. */
 static ULONG64 shared_relocated_page(PSECTION s, ULONG page, LONG64 delta)
 {
     ULONG64 pa = __atomic_load_n(&s->RelocPages[page], __ATOMIC_ACQUIRE);
@@ -347,7 +336,7 @@ BOOLEAN MiSectionFaultPage(PMMVAD vad, ULONG_PTR page, ULONG protect, ULONG64 *p
     ULONG64 source = MiSectionPage(s, (ULONG)index);
     if (!source)
         return FALSE;
-    /* a page the host took away is an error for the thread that touches it, however many times it does. */
+    /* a page the host took away faults the thread that touches it, every time. */
     if (MmWindowPageLost(s, source)) {
         MmWindowLostFault();
         return FALSE;
@@ -397,7 +386,7 @@ ULONG64 MiSectionReadyPage(PMMVAD vad, ULONG64 index, ULONG protect)
     return source;
 }
 
-/* builds every page, for mappings that cannot fault such as system space views. */
+/* for mappings that cannot fault, such as system space views. */
 static BOOLEAN commit_all(PSECTION s)
 {
     for (ULONG i = 0; i < s->PageCount; i++)
@@ -406,7 +395,6 @@ static BOOLEAN commit_all(PSECTION s)
     return TRUE;
 }
 
-/* copies bytes into the section's page array at a byte offset. */
 static void scatter(PSECTION s, ULONG64 offset, const void *data, SIZE_T length)
 {
     const UCHAR *src = data;
@@ -514,7 +502,6 @@ NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *
     info->Characteristics = nt->FileHeader.Characteristics;
     info->StackReserve = opt->SizeOfStackReserve;
     info->StackCommit = opt->SizeOfStackCommit;
-    /* images with no absolute references need no relocation records. */
     info->Relocatable = !(nt->FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED);
     return STATUS_SUCCESS;
 }
@@ -550,7 +537,6 @@ static NTSTATUS set_file_name(PSECTION s, PFILE_OBJECT file)
     return STATUS_SUCCESS;
 }
 
-/* fills the per page protections of an image section from its section headers. */
 static NTSTATUS image_protections(PSECTION s, const IMAGE_NT_HEADERS64 *nt)
 {
     s->PageProtect = ExAllocatePool2(POOL_FLAG_NON_PAGED, s->PageCount, KI_TAG('M', 'm', 'P', 'p'));
@@ -576,7 +562,7 @@ static NTSTATUS image_protections(PSECTION s, const IMAGE_NT_HEADERS64 *nt)
     return STATUS_SUCCESS;
 }
 
-/* builds image page `page` of a pe file held in memory, as the loader lays it out. */
+/* lays out one page of an in-memory PE file the way the loader would. */
 static void load_image_page(const UCHAR *file, ULONG64 file_size, const IMAGE_NT_HEADERS64 *nt, ULONG page, PUCHAR out)
 {
     ULONG64 start = (ULONG64)page << PAGE_SHIFT, end = start + PAGE_SIZE;
@@ -601,7 +587,7 @@ static void load_image_page(const UCHAR *file, ULONG64 file_size, const IMAGE_NT
 static PSECTION g_rom_images[64];
 static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out);
 
-/* an image section built lazily from file data the guest can read in place. takes over `ref`. */
+/* built lazily from file data the guest can read in place. takes ownership of ref. */
 static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size, PVOID ref, PSECTION *out)
 {
     const UCHAR *data = HalPhysmap(pa);
@@ -648,8 +634,8 @@ static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size,
 static PSECTION g_rom_images[64];
 
 /*
- * the image sections of files, weakly: a section leaves the table when it is deleted. the window of the
- * file stays mapped as long as a section holds it, so the same address and size mean the same bytes.
+ * weak table of file image sections: a section leaves it when deleted. a section keeps its file window
+ * mapped, so the same address and size mean the same bytes.
  */
 static PSECTION g_file_images[128];
 
@@ -695,7 +681,7 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
         }
     }
     if (IoGetFileWindow(file, &pa, &size, &ref)) {
-        /* the processes that run an image share its section: the pages built and relocated for one serve the rest. */
+        /* processes running the same image share its section, and so its built and relocated pages. */
         PSECTION shared = index >= RTL_NUMBER_OF(g_rom_images) ? find_file_image(pa, size) : nullptr;
         if (shared) {
             IoReleaseFileWindow(ref);
@@ -718,7 +704,7 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
     return create_copied_image(file, out);
 }
 
-/* files no window covers, such as files opened for writing: the image is read into memory. */
+/* for files no window covers, such as files opened for writing: the image is read into memory. */
 static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out)
 {
     PUCHAR headers = ExAllocatePool2(POOL_FLAG_NON_PAGED, PAGE_SIZE, KI_TAG('M', 'm', 'H', 'd'));
@@ -797,7 +783,7 @@ NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULO
         if (!NT_SUCCESS(status))
             return status;
         if (size == 0)
-            return (NTSTATUS)0xC000011FL; /* STATUS_MAPPED_FILE_SIZE_ZERO */
+            return (NTSTATUS)0xC000011FL; /* STATUS_MAPPED_FILE_SIZE_ZERO. */
     }
     if (size == 0)
         return STATUS_INVALID_PARAMETER_4;
@@ -811,13 +797,13 @@ NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULO
         ULONG64 pa, file_size;
         BOOLEAN writable = (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) != 0;
         if (writable && IoGetFileWindowEx(file, TRUE, size, &pa, &file_size, &s->SourceRef)) {
-            /* the views write the file's own pages, which a read or a write of the file sees as they are. */
+            /* views write the file's own pages, so file reads and writes see them at once. */
             s->SourcePa = pa;
             s->SourceSize = file_size;
             s->Flags |= MI_SECTION_WRITABLE_WINDOW;
             MmWindowSectionAttach(s);
         } else if (!writable && IoGetFileWindow(file, &pa, &file_size, &s->SourceRef)) {
-            /* views of a read only section share the file's pages. */
+            /* views of a read-only section share the file's pages. */
             s->SourcePa = pa;
             s->SourceSize = file_size;
             s->Flags |= MI_SECTION_SHARE_SOURCE;
@@ -838,7 +824,7 @@ NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULO
     return STATUS_SUCCESS;
 }
 
-/* bytes of the image from its private pages, which are not next to each other in memory. */
+/* reads image bytes from private pages that are not contiguous in memory. */
 static void read_private(const ULONG64 *pages, ULONG64 rva, void *out, ULONG length)
 {
     PUCHAR bytes = out;
@@ -869,7 +855,7 @@ static void apply_relocations(PSECTION s, ULONG64 *pages, ULONG_PTR base)
             ULONG64 target = block.VirtualAddress + (entry & 0xFFF);
             if (target + width > s->Size)
                 continue;
-            /* a relocation may straddle two pages. */
+            /* a fixup may straddle two pages. */
             UCHAR bytes[8];
             for (int b = 0; b < width; b++)
                 bytes[b] = *((PUCHAR)HalPhysmap(pages[(target + b) >> PAGE_SHIFT]) + ((target + b) & (PAGE_SIZE - 1)));
@@ -926,7 +912,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
                 MiUnlockAddressSpace(as);
                 return STATUS_CONFLICTING_ADDRESSES;
             }
-            /* the views of an image away from its base share relocated pages when they are all at one base. */
+            /* reuse the section's relocated base so views there can share relocated pages. */
             if (s->RelocBase && MiRangeIsFree(as, s->RelocBase, s->RelocBase + bytes))
                 va = s->RelocBase;
             else
@@ -964,7 +950,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
 
     PMMVAD vad = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MMVAD), KI_TAG('M', 'm', 'V', 'd'));
     ULONG64 *private_pages = nullptr;
-    /* a table the index cannot describe is relocated whole, now, in pages of the view's own. */
+    /* a table the index cannot describe is relocated whole, right now, into private pages. */
     BOOLEAN lazy = vad && image && relocated && reloc_index(s) != nullptr;
     if (vad && image && relocated && !lazy)
         private_pages = ExAllocatePool2(POOL_FLAG_NON_PAGED, pages * sizeof(ULONG64), KI_TAG('M', 'm', 'R', 'p'));
@@ -1023,16 +1009,12 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
             apply_relocations(s, private_pages, va);
     }
 
-    /*
-     * pages the section already holds are mapped now; the others, and the
-     * writable image pages that need a private copy, on first touch.
-     */
+    /* pages the section already holds are mapped now. the rest, and writable image pages that need a private copy, on first touch. */
     for (SIZE_T i = 0; i < pages && NT_SUCCESS(status); i++) {
         ULONG_PTR pva = va + (i << PAGE_SHIFT);
         ULONG prot = image ? s->PageProtect[i] : protect;
         BOOLEAN writable = (prot & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) != 0;
         if (lazy) {
-            /* the pages that are ready and shared are mapped, the others come with the first touch. */
             ULONG64 ready = MiSectionReadyPage(vad, i, prot);
             if (ready) {
                 if (!MiMapPage(as->Root, pva, ready, MiSectionPteAttrs(s, prot, ready, TRUE)))
@@ -1080,10 +1062,7 @@ NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 
     return MiMapViewOfSectionEx(s, process, base, offset, view_size, protect, allocation_type, 0, nullptr);
 }
 
-/*
- * unmaps the view holding an address. with preserve the range stays
- * reserved as a placeholder, which only a view made in one can do.
- */
+/* with preserve the range stays reserved as a placeholder, which only works for a view made in one. */
 NTSTATUS MiUnmapViewOfSectionEx(PEPROCESS process, PVOID base, ULONG flags)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
@@ -1205,7 +1184,7 @@ NTSTATUS NTAPI NtCreateSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
     }
     PSECTION section;
     if (allocation & SEC_IMAGE) {
-        /* a process that refuses images with a low label does not get a section of one. */
+        /* a process that refuses low label images gets no section of one. */
         if (file && (PsGetCurrentProcess()->MitigationPolicy[MIME_POLICY_IMAGE_LOAD] & MIME_IMAGE_LOAD_NO_LOW_LABEL)) {
             SD_BLOB *sd;
             if (NT_SUCCESS(ObReferenceSecurity(file, &sd)) && sd) {
@@ -1290,10 +1269,10 @@ NTSTATUS NTAPI NtMapViewOfSection(HANDLE section_handle, HANDLE process_handle, 
         ObDereferenceObject(section);
         return status;
     }
-    /* data mapped as code is dynamic code. */
+    /* data mapped executable counts as dynamic code. */
     if ((protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) &&
         !(section->Flags & SEC_IMAGE) && PsDynamicCodeBlocked(process))
-        status = (NTSTATUS)0xC0000604L; /* STATUS_DYNAMIC_CODE_BLOCKED */
+        status = (NTSTATUS)0xC0000604L; /* STATUS_DYNAMIC_CODE_BLOCKED. */
     else
         status = MiMapViewOfSectionEx(section, process, &b, (ULONG64)off.QuadPart, &vs, protect, allocation_type,
                                       zero_bits, nullptr);
@@ -1307,11 +1286,7 @@ NTSTATUS NTAPI NtMapViewOfSection(HANDLE section_handle, HANDLE process_handle, 
     return status;
 }
 
-/*
- * the view services with extended parameters. the section's protection
- * limits come from the access of its handle in windows; mime checks the
- * allocation type and the protection only.
- */
+/* Windows limits the protection by the section handle's access. mime only checks the allocation type and protection. */
 NTSTATUS NTAPI NtMapViewOfSectionEx(HANDLE section_handle, HANDLE process_handle, PVOID *base, PLARGE_INTEGER offset,
                                     PSIZE_T view_size, ULONG allocation_type, ULONG protect,
                                     PMEM_EXTENDED_PARAMETER parameters, ULONG count)

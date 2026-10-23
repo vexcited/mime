@@ -2,9 +2,8 @@
 #define MIME_HOST_CAMERA_CONVERT_H
 
 /*
- * frames of one format into another, for the formats cameras send (yuy2, uyvy, nv12, i420, yv12 and motion jpeg) and
- * the formats the guest asks for (yuy2, nv12 and i420). the outputs are studio range bt.601 as windows' video
- * processor makes them, so a motion jpeg frame, whose samples are full range, is scaled.
+ * converts YUY2, UYVY, NV12, I420, YV12 and motion JPEG to YUY2, NV12 or I420. output uses studio-range BT.601, so
+ * full-range motion JPEG samples are scaled.
  */
 #include "jpeg.h"
 
@@ -18,13 +17,12 @@ typedef struct CameraConverter {
     size_t rows_capacity;
 } CameraConverter;
 
-/* whether a frame of format src can become one of format dst. */
 bool camera_can_convert(uint32_t src, uint32_t dst);
 
 enum {
-    CAMERA_CONVERT_FAILED,  /* nothing was converted: the frame is no frame of that format and size */
+    CAMERA_CONVERT_FAILED,  /* invalid frame format or size; nothing converted. */
     CAMERA_CONVERT_OK,
-    CAMERA_CONVERT_DAMAGED, /* all of it was converted, but the frame was cut short or damaged, and some of it is stale */
+    CAMERA_CONVERT_DAMAGED, /* conversion completed, but damage or truncation left some stale pixels. */
 };
 
 /* out has room for mime_camera_frame_bytes(dst, width, height). */

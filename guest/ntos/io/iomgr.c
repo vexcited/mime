@@ -19,10 +19,10 @@ typedef struct _OPEN_PACKET {
     ULONG ShareAccess;
     PFILE_OBJECT RelatedFile;
     IO_STATUS_BLOCK Iosb;
-    BOOLEAN StatOnly; /* only the attributes of the name are wanted, see SL_OPEN_STAT_ONLY */
-    SD_BLOB *Creator; /* the descriptor the creator offered, a file made by the open gets it */
-    BOOLEAN UserMode; /* a program asked for the open, which the file system holds to the descriptors */
-    BOOLEAN Checked;  /* the file system checked it, and GrantedAccess is what the handle gets */
+    BOOLEAN StatOnly; /* only the attributes of the name are wanted, see SL_OPEN_STAT_ONLY. */
+    SD_BLOB *Creator; /* the creator's descriptor, given to a file the open creates. */
+    BOOLEAN UserMode; /* a program asked, so the file system enforces the descriptors. */
+    BOOLEAN Checked;  /* the file system checked access and GrantedAccess is what the handle gets. */
     ACCESS_MASK GrantedAccess;
 } OPEN_PACKET, *POPEN_PACKET;
 
@@ -174,7 +174,7 @@ NTSTATUS FASTCALL IofCallDriver(PDEVICE_OBJECT device, PIRP irp)
 {
     irp->CurrentLocation--;
     if (irp->CurrentLocation <= 0)
-        KeBugCheckEx(0x00000035, (ULONG_PTR)irp, 0, 0, 0); /* NO_MORE_IRP_STACK_LOCATIONS */
+        KeBugCheckEx(0x00000035, (ULONG_PTR)irp, 0, 0, 0); /* NO_MORE_IRP_STACK_LOCATIONS. */
     PIO_STACK_LOCATION stack = --irp->Tail.Overlay.CurrentStackLocation;
     stack->DeviceObject = device;
     return device->DriverObject->MajorFunction[stack->MajorFunction](device, irp);
@@ -207,7 +207,6 @@ void FASTCALL IofCompleteRequest(PIRP irp, CCHAR boost)
         KeSetEvent(irp->UserEvent, boost, FALSE);
 }
 
-/* issues an irp to the file's device and waits for completion. */
 NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOID buffer, ULONG length,
                                PIO_STACK_LOCATION params, PIO_STATUS_BLOCK iosb)
 {
@@ -274,7 +273,6 @@ NTSTATUS IoQueryFileSize(PFILE_OBJECT file, ULONG64 *size)
     return status;
 }
 
-/* object manager parse procedure of device objects. */
 static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICODE_STRING complete,
                              PUNICODE_STRING remaining, PVOID context, PVOID *found)
 {
@@ -305,7 +303,7 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
     file->ReadAccess = (op->DesiredAccess & (FILE_READ_DATA | GENERIC_READ | GENERIC_ALL | MAXIMUM_ALLOWED)) != 0;
     file->WriteAccess = (op->DesiredAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA | GENERIC_WRITE | GENERIC_ALL)) != 0;
     file->DeleteAccess = (op->DesiredAccess & DELETE) != 0;
-    /* a handle that may only append writes at the end of the file, whatever offset the write names. */
+    /* an append-only handle writes at the end of the file, whatever offset the write names. */
     if ((op->DesiredAccess & FILE_APPEND_DATA) &&
         !(op->DesiredAccess & (FILE_WRITE_DATA | GENERIC_WRITE | GENERIC_ALL | MAXIMUM_ALLOWED)))
         file->Flags |= FO_APPEND_ONLY;
@@ -338,7 +336,7 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
     op->Checked = security.Checked;
     op->GrantedAccess = security.GrantedAccess;
     if (!NT_SUCCESS(status)) {
-        file->DeviceObject = nullptr; /* never opened, no close irp */
+        file->DeviceObject = nullptr; /* never opened, no close irp. */
         ObDereferenceObject(file);
         return status;
     }
@@ -370,9 +368,9 @@ static PVOID file_wait_object(PVOID object)
 }
 
 /*
- * the descriptor of a file is its file system's: a query returns it whole as a reference in the information
- * of the status block, a set takes the whole new one in the first argument. A device that does not answer
- * has none, and the object manager keeps the descriptor with the file object itself.
+ * a file's descriptor belongs to its file system: a query returns the whole descriptor as a reference in the status
+ * block's information, a set passes the whole new one as the first argument. for a device that does not answer, the
+ * object manager keeps the descriptor on the file object.
  */
 static NTSTATUS file_get_security(PVOID object, PVOID *blob)
 {

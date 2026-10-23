@@ -1,4 +1,4 @@
-/* the decoded form of shader model 4 and 5 instructions, internal to the compiler. */
+/* decoded shader model 4 and 5 instructions, internal to the compiler. */
 #ifndef MIME_LIB_DXBC_INTERNAL_H
 #define MIME_LIB_DXBC_INTERNAL_H
 
@@ -25,7 +25,7 @@ struct DxbcOperand {
     uint32_t modifier;
     /* shader model 5.1: the index may differ between invocations. */
     int nonuniform;
-    /* the minimum precision of the extended operand token, for disassembly. */
+    /* minimum precision from the extended operand token, for disassembly. */
     uint32_t min_precision;
     uint32_t immediate[4];
     uint64_t immediate64[2];
@@ -41,17 +41,17 @@ typedef struct DxbcInstruction {
     int saturate;
     int nonzero;
     uint32_t precise;
-    /* the extended opcode tokens: immediate offsets, the resource dimension and return type. */
+    /* extended opcode tokens: immediate offsets, resource dimension and return type. */
     int8_t offset[3];
     uint32_t resource_dimension;
     uint32_t resource_stride;
     uint32_t return_type[4];
     uint32_t operand_count;
     DxbcOperand operands[DXBC_MAX_OPERANDS];
-    /* the words after the operands of declarations. */
+    /* raw words after a declaration's operands. */
     const uint32_t *extra;
     uint32_t extra_count;
-    /* the operands relative indices point to. */
+    /* operands that relative indices point to. */
     DxbcOperand relative[8];
     uint32_t relative_count;
 } DxbcInstruction;

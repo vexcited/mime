@@ -1,8 +1,7 @@
 /*
- * d3d10_1.dll: direct3d 10.1 devices, d3d11.dll's at the feature level
- * asked, and the version of d3d10_1core.dll. what d3d10.dll implements,
- * blobs, state blocks and shaders, is d3d10.dll's, loaded when first
- * asked for as windows' d3d10_1.dll does it.
+ * d3d10_1.dll: direct3d 10.1 devices are d3d11.dll devices at the requested
+ * feature level. blobs, state blocks and shaders forward to d3d10.dll, loaded
+ * on first use like windows does.
  */
 #define MIME_BUILD_D3D10_1
 #include "../d3d10/d3d10_private.h"
@@ -12,9 +11,9 @@ int _fltused = 0x9875;
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
 
 /*
- * 10.0, 10.1 and the 9_x levels. a software driver needs its module or an
- * adapter, the others no module. bgra support stays, unlike d3d10.dll's,
- * and the flag of direct3d 10 is only passed on when given.
+ * levels 10.0, 10.1 and 9_x. a software driver needs its module or an
+ * adapter, other drivers no module. unlike d3d10.dll, bgra support stays,
+ * and the direct3d 10 flag is passed on only when given.
  */
 D3D10_1API HRESULT WINAPI D3D10CreateDeviceAndSwapChain1(IDXGIAdapter *adapter, D3D10_DRIVER_TYPE type,
                                                          HMODULE software, UINT flags, D3D10_FEATURE_LEVEL1 level,
@@ -50,7 +49,7 @@ D3D10_1API HRESULT WINAPI D3D10CreateDeviceAndSwapChain1(IDXGIAdapter *adapter, 
         d3d11->lpVtbl->Release(d3d11);
     if (SUCCEEDED(hr) && *device)
         hr = D3d10Protect((IUnknown *)*device, (*device)->lpVtbl->GetCreationFlags(*device));
-    /* a level the adapter cannot reach is no such interface. */
+    /* an unsupported level reports E_NOINTERFACE. */
     return hr == DXGI_ERROR_UNSUPPORTED ? E_NOINTERFACE : hr;
 }
 
@@ -60,8 +59,6 @@ D3D10_1API HRESULT WINAPI D3D10CreateDevice1(IDXGIAdapter *adapter, D3D10_DRIVER
 {
     return D3D10CreateDeviceAndSwapChain1(adapter, type, software, flags, level, sdk, nullptr, nullptr, device);
 }
-
-/* ------------------------------------------------------------------ d3d10_1core.dll */
 
 static FARPROC core_entry(const char *name)
 {
@@ -81,9 +78,7 @@ D3D10API HRESULT WINAPI D3D10RegisterLayers(void)
     return reg ? reg() : E_NOTIMPL;
 }
 
-/* ------------------------------------------------------------------ d3d10.dll */
-
-/* d3d10.dll's export, the error of loading it when it cannot be. */
+/* gives the load error when d3d10.dll cannot be loaded. */
 static HRESULT d3d10_entry(const char *name, FARPROC *out)
 {
     HMODULE d3d10 = LoadLibraryW(L"d3d10.dll");
@@ -154,7 +149,7 @@ FORWARD(HRESULT, D3D10StateBlockMaskDisableAll, (D3D10_STATE_BLOCK_MASK * mask),
 FORWARD(BOOL, D3D10StateBlockMaskGetSetting, (D3D10_STATE_BLOCK_MASK * mask, D3D10_DEVICE_STATE_TYPES type, UINT entry),
         (mask, type, entry), FALSE)
 
-/* the effects framework of direct3d 10.1 is d3d10.dll's, which reads fx_4_1 as fx_4_0. */
+/* effects forward to d3d10.dll, which reads fx_4_1 like fx_4_0. */
 FORWARD(HRESULT, D3D10CreateEffectFromMemory,
         (void *data, SIZE_T length, UINT flags, ID3D10Device *device, ID3D10EffectPool *pool, ID3D10Effect **effect),
         (data, length, flags, device, pool, effect), hr)

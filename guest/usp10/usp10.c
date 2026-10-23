@@ -1,11 +1,11 @@
 /*
  * uniscribe for left to right text and simple right to left runs: items by
  * script class and bidi level, one glyph per code point, widths from the
- * font. without contextual shaping, complex scripts render their nominal
- * glyphs.
+ * font. there is no contextual shaping, so complex scripts render their
+ * nominal glyphs.
  *
  * glyph ids come from gdi32's GetGlyphIndicesW and GetCharABCWidthsI. when
- * they are missing, glyphs are the characters themselves, reported with
+ * those are missing, glyphs are the characters themselves, flagged with
  * fNoGlyphIndex.
  */
 #include "usp10_private.h"
@@ -86,7 +86,7 @@ static BOOL is_digit(UINT c)
     return c >= '0' && c <= '9';
 }
 
-/* neither strong left to right nor right to left: spaces, punctuation, symbols, digits, controls. */
+/* not strongly directional: spaces, punctuation, symbols, digits, controls. */
 static BOOL is_neutral(UINT c)
 {
     if (c < 0x80)
@@ -106,7 +106,6 @@ static int char_script(UINT c)
     return USP_LATIN;
 }
 
-/* reads the code point at *i, advancing past a surrogate pair. */
 static UINT next_cp(const WCHAR *s, int count, int *i)
 {
     UINT c = s[(*i)++];
@@ -202,7 +201,7 @@ void UspFree(void *p)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, p);
 }
 
-/* the cache of *cache, created from dc. E_PENDING when neither exists, like windows. */
+/* like windows, E_PENDING when there is neither a cache nor a dc. */
 HRESULT UspGetCache(HDC dc, SCRIPT_CACHE *cache, USP_CACHE **out)
 {
     if (!cache)
@@ -251,7 +250,7 @@ USPAPI ScriptFreeCache(SCRIPT_CACHE *cache)
     return S_OK;
 }
 
-/* the glyph of a bmp character; 0xFFFF when unknown and dc is NULL, glyph 0 when the font lacks it. */
+/* 0xFFFF when unknown and dc is NULL, glyph 0 when the font lacks it. */
 static WORD lookup_glyph(USP_CACHE *c, HDC dc, WCHAR ch, BOOL *missing)
 {
     *missing = FALSE;
@@ -276,7 +275,7 @@ static WORD lookup_glyph(USP_CACHE *c, HDC dc, WCHAR ch, BOOL *missing)
     return g;
 }
 
-/* the width of a glyph, a character when no_index; FALSE when unknown and dc is NULL. */
+/* glyph is a character when no_index; FALSE when unknown and dc is NULL. */
 static BOOL lookup_abc(USP_CACHE *c, HDC dc, WORD glyph, BOOL no_index, ABC *abc)
 {
     BYTE *known = c->Known[glyph >> 8];
@@ -350,7 +349,7 @@ USPAPI ScriptShape(HDC dc, SCRIPT_CACHE *cache, const WCHAR *chars, int count, i
         if (zero)
             id = lookup_glyph(c, dc, blank, &missing);
         else if (cp > 0xFFFF) {
-            /* 16 bit glyph ids cannot hold supplementary characters without a font cmap. */
+            /* 16-bit glyph ids cannot hold supplementary characters without a font cmap. */
             id = c->Real ? 0 : (WORD)c->Metrics.tmDefaultChar;
             missing = c->Real;
         } else
@@ -540,13 +539,12 @@ USPAPI ScriptBreak(const WCHAR *chars, int count, const SCRIPT_ANALYSIS *analysi
     return S_OK;
 }
 
-/* glyph advances in logical order and the total width. */
 static int logical_advance(int glyph, int glyphs, const int *advances, BOOL rtl)
 {
     return advances[rtl ? glyphs - 1 - glyph : glyph];
 }
 
-/* the logical x of the leading or trailing edge of cp, from the logical start of the run. */
+/* measured from the logical start of the run. */
 static int logical_x(int cp, BOOL trailing, int chars, int glyphs, const WORD *clusters, const int *advances,
                      BOOL rtl, int total)
 {
@@ -621,7 +619,7 @@ USPAPI ScriptXtoCP(int x, int chars, int glyphs, const WORD *clusters, const SCR
     return S_OK;
 }
 
-/* visual order of runs: from the highest level down to the lowest odd one, reverse every sequence at or above it. */
+/* from the highest level down to the lowest odd one, reverse every sequence at or above it. */
 USPAPI ScriptLayout(int runs, const BYTE *levels, int *visual_to_logical, int *logical_to_visual)
 {
     if (!levels || runs <= 0 || (!visual_to_logical && !logical_to_visual))
@@ -725,20 +723,16 @@ USPAPI ScriptApplyDigitSubstitution(const SCRIPT_DIGITSUBSTITUTE *sds, SCRIPT_CO
 
 /* ------------------------------------------------------------------ justification */
 
-/*
- * where a word takes its kashida, by the class of the glyph that offers it:
- * the lowest wins, classes 8 and up never.
- */
+/* a word puts its kashida at the glyph class ranked lowest here; classes 8 and up never take one. */
 static constexpr BYTE g_kashida_rank[16] = {8, 8, 8, 8, 8, 8, 8, 6, 0, 3, 2, 5, 7, 4, 1, 1};
 
 enum { JUSTIFY_NONE, JUSTIFY_KASHIDA, JUSTIFY_CHARACTER, JUSTIFY_BLANK };
 
 /*
- * widening goes to one kashida point per word when the font has them and
- * the space allows min_kashida each; otherwise to blanks, up to three
- * average widths each, then a pixel at a time to blanks and characters
- * from the end. narrowing takes a pixel at a time from every glyph that
- * justifies, from the end.
+ * widening uses one kashida point per word when the font has them and there
+ * is room for min_kashida each; otherwise blanks, up to three average widths
+ * each, then a pixel at a time to blanks and characters from the end.
+ * narrowing takes a pixel at a time from every justifiable glyph, from the end.
  */
 USPAPI ScriptJustify(const SCRIPT_VISATTR *attrs, const int *advances, int glyphs, int dx, int min_kashida,
                      int *justify)
@@ -773,7 +767,7 @@ USPAPI ScriptJustify(const SCRIPT_VISATTR *attrs, const int *advances, int glyph
         if (j == SCRIPT_JUSTIFY_CHARACTER || j == SCRIPT_JUSTIFY_BLANK || j == SCRIPT_JUSTIFY_ARABIC_BLANK) {
             if (last)
                 continue;
-            /* a word ends: its kashida point stays. */
+            /* the word ends, so its kashida point is kept. */
             if (point >= 0 && point != i) {
                 kind[point] = JUSTIFY_KASHIDA;
                 kashidas++;
@@ -907,7 +901,7 @@ USPAPI ScriptJustify(const SCRIPT_VISATTR *attrs, const int *advances, int glyph
     return hr;
 }
 
-/* the cluster starting at character first: where the next starts and its glyphs [*g0, *g1). */
+/* returns where the next cluster starts and this one's glyphs [*g0, *g1). */
 static void cluster_glyphs(const WORD *clusters, int chars, int glyphs, BOOL rtl, int first, int *next, int *g0,
                            int *g1)
 {
@@ -928,7 +922,7 @@ static void cluster_glyphs(const WORD *clusters, int chars, int glyphs, BOOL rtl
         *g0 = *g1;
 }
 
-/* each cluster's width shared between its characters, the first ones taking what does not divide. */
+/* a cluster's width is split between its characters, the first ones taking the remainder. */
 USPAPI ScriptGetLogicalWidths(const SCRIPT_ANALYSIS *analysis, int chars, int glyphs, const int *glyph_widths,
                               const WORD *clusters, const SCRIPT_VISATTR *attrs, int *dx)
 {
@@ -949,7 +943,7 @@ USPAPI ScriptGetLogicalWidths(const SCRIPT_ANALYSIS *analysis, int chars, int gl
     return S_OK;
 }
 
-/* each cluster takes the widths of its characters, the difference going to its last glyph in logical order. */
+/* a cluster takes its characters' widths, the difference going to its last glyph in logical order. */
 USPAPI ScriptApplyLogicalWidth(const int *dx, int chars, int glyphs, const WORD *clusters, const SCRIPT_VISATTR *attrs,
                                const int *advances, const SCRIPT_ANALYSIS *analysis, ABC *abc, int *justify)
 {
@@ -979,7 +973,7 @@ USPAPI ScriptApplyLogicalWidth(const int *dx, int chars, int glyphs, const WORD 
     return S_OK;
 }
 
-/* the opentype script tag of an item's script, bytes in font order. */
+/* bytes in font order. */
 OPENTYPE_TAG UspScriptTag(int script)
 {
     switch (script) {
@@ -991,7 +985,7 @@ OPENTYPE_TAG UspScriptTag(int script)
     }
 }
 
-/* ------------------------------------------------------------------ uniscribe's own allocator */
+/* ------------------------------------------------------------------ allocator */
 
 USPAPI UspAllocCache(int size, void **out)
 {

@@ -1,10 +1,7 @@
-/*
- * ExitWindowsEx and the reasons a window gives for blocking a shutdown. the work is the kernel's, which plays
- * csrss and winlogon: see docs/shutdown.md for the order of things.
- */
+/* ExitWindowsEx and shutdown block reasons. the kernel does the work, playing csrss and winlogon. */
 #include "user32_private.h"
 
-/* the status the kernel answers a thread that has windows of its own with. */
+/* what the kernel answers a thread that owns windows. */
 #ifndef STATUS_CANT_WAIT
 #define STATUS_CANT_WAIT ((NTSTATUS)0xC00000D8L)
 #endif
@@ -16,7 +13,7 @@ typedef struct EXIT_REQUEST {
 
 static BOOL ask_for_shutdown(UINT flags, DWORD reason, BOOL from_helper);
 
-/* what the helper thread runs: the same request, ending with 0 for a success and else with its last error. */
+/* returns 0 on success, else the last error. */
 static DWORD WINAPI helper_thread(LPVOID parameter)
 {
     const EXIT_REQUEST *request = parameter;
@@ -25,7 +22,7 @@ static DWORD WINAPI helper_thread(LPVOID parameter)
     return RtlGetLastWin32Error();
 }
 
-/* the thread has windows, so it cannot wait for the shutdown: another thread asks while this one serves its messages. */
+/* a thread with windows cannot wait for the shutdown, so another thread asks while this one pumps messages. */
 static BOOL ask_from_helper(UINT flags, DWORD reason)
 {
     EXIT_REQUEST request = {flags, reason};
@@ -59,7 +56,7 @@ static BOOL ask_from_helper(UINT flags, DWORD reason)
 
 static BOOL ask_for_shutdown(UINT flags, DWORD reason, BOOL from_helper)
 {
-    /* a process in a job that forbids it may not log off, and is not told why. */
+    /* a job may forbid logoff, and the process is not told why. */
     if (!NtUserPrepareForLogoff())
         return FALSE;
     LONG status = NtUserMimeExitWindows(flags, reason);
@@ -80,8 +77,8 @@ WINUSERAPI BOOL WINAPI ExitWindowsEx(UINT flags, DWORD reason)
 /* ------------------------------------------------------------------ block reasons */
 
 /*
- * the reason may be 256 characters at most and must be given. the kernel answers a window of another process
- * with 5, a result that is not zero and that the call hands on as it is.
+ * the reason is required and at most 256 characters. for a window of another process the kernel answers 5,
+ * which the call returns as is.
  */
 WINUSERAPI BOOL WINAPI ShutdownBlockReasonCreate(HWND hwnd, LPCWSTR reason)
 {

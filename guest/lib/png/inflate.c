@@ -7,19 +7,19 @@
 #define DIST_MASK ((1u << DIST_BITS) - 1)
 #define CL_MASK ((1u << CL_BITS) - 1)
 
-/* room needed by the fast loop: the longest match plus the overshoot of 16 byte copies. */
+/* margin for the fast loop: the longest match plus the overshoot of 16 byte copies. */
 #define FAST_OUT_MARGIN (258 + 32)
 
-/* internal result of a huffman block: the end of block code was decoded. */
+/* a huffman block decoded its end of block code. */
 #define BLOCK_END 1
 
 enum { M_ZHEADER, M_HEADER, M_STORED, M_HUFF, M_TRAILER, M_DONE };
 
 /*
  * table entry layout: bits 0-3 code length, bits 4-7 extra bits, bits 8-9
- * kind, bits 16-31 value. K_SLOW entries send decoding to the canonical
- * decoder, either because the code is longer than the table index or because
- * the prefix is unused or maps to an invalid symbol.
+ * kind, bits 16-31 value. K_SLOW entries go to the canonical decoder, when
+ * the code is longer than the table index or the prefix is unused or maps to
+ * an invalid symbol.
  */
 enum { K_LIT, K_BASE, K_EOB, K_SLOW };
 #define E_LEN(e) ((e) & 15u)
@@ -101,11 +101,7 @@ static uint32_t sym_entry(int type, unsigned sym, unsigned len)
     return SLOW_ENTRY;
 }
 
-/*
- * builds the lookup table and the canonical decoding data from code lengths.
- * fails on an over-subscribed code. incomplete codes are accepted; their
- * unused codes fail when decoded.
- */
+/* fails on an over-subscribed code. incomplete codes are fine until an unused code is decoded. */
 static bool build_table(const uint8_t *lens, unsigned n, int type, uint32_t *table, unsigned tbits,
                         uint16_t *count, uint16_t *sym)
 {
@@ -149,7 +145,7 @@ static bool build_table(const uint8_t *lens, unsigned n, int type, uint32_t *tab
     return true;
 }
 
-/* bit by bit canonical decoding, used for long and invalid codes. */
+/* bit by bit canonical decoding for long and invalid codes. */
 static int slow_decode(uint64_t bits, const uint16_t *count, const uint16_t *sym, unsigned *used)
 {
     int code = 0, first = 0, index = 0;
@@ -182,7 +178,7 @@ static void refill_slow(MimeInflate *s)
     }
 }
 
-/* true once bits past the end of the input, read as zeros, have been consumed. */
+/* true once bits past the end of the input, read as zeros, were consumed. */
 static inline bool past_end(const MimeInflate *s)
 {
     return s->overrun * 8 > s->bitcnt;
@@ -196,7 +192,7 @@ static inline uint32_t take_bits(MimeInflate *s, unsigned n)
     return v;
 }
 
-/* decodes one symbol, the caller has refilled the bit buffer. */
+/* the caller has refilled the bit buffer. */
 static int decode_sym(MimeInflate *s, const uint32_t *table, unsigned mask, const uint16_t *count,
                       const uint16_t *sym, int type, uint32_t *entry)
 {
@@ -218,7 +214,7 @@ static int decode_sym(MimeInflate *s, const uint32_t *table, unsigned mask, cons
     return MIME_INFLATE_OK;
 }
 
-/* drops bits up to a byte boundary and gives the whole bytes left in the bit buffer back to the input. */
+/* drops bits up to a byte boundary and returns the whole bytes left in the bit buffer to the input. */
 static int byte_align_input(MimeInflate *s)
 {
     unsigned drop = s->bitcnt & 7;
@@ -377,7 +373,7 @@ static int stored_block(MimeInflate *s)
     return MIME_INFLATE_OK;
 }
 
-/* copies a match byte by byte up to the end of the output, saving the rest for later. */
+/* copies byte by byte up to the end of the output and saves the rest for later. */
 static int copy_match_slow(MimeInflate *s, uint32_t len, uint32_t dist)
 {
     uint8_t *out = s->out;
@@ -398,9 +394,9 @@ static int copy_match_slow(MimeInflate *s, uint32_t len, uint32_t dist)
 }
 
 /*
- * decodes symbols while at least 8 input bytes and FAST_OUT_MARGIN output
- * bytes remain, so that one refill covers a whole length and distance pair
- * of at most 48 bits and no output bound check is needed per symbol.
+ * runs while at least 8 input bytes and FAST_OUT_MARGIN output bytes remain,
+ * so one refill covers a whole length and distance pair of at most 48 bits
+ * and no symbol needs an output bound check.
  */
 static int fast_loop(MimeInflate *s)
 {
@@ -514,7 +510,7 @@ static int fast_loop(MimeInflate *s)
     return ret;
 }
 
-/* decodes one symbol with full bound checks. */
+/* with full bound checks. */
 static int slow_symbol(MimeInflate *s)
 {
     uint32_t e;

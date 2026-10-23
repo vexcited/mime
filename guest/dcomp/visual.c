@@ -1,7 +1,6 @@
 /*
- * visuals and targets. A visual holds the properties of a node of the tree
- * and the nodes under it; changes go to its pending state and become what the
- * compositor draws at Commit. A target binds a root visual to a window.
+ * visuals and targets. changes to a visual go to its pending state and become
+ * what the compositor draws at Commit. a target binds a root visual to a window.
  */
 #include "dcomp_private.h"
 
@@ -91,7 +90,7 @@ static void vis_commit(DcObject *object)
     for (UINT i = 0; i < dst->child_count; i++)
         DcObjectAddRef(&children[i]->base);
     state_free(&old);
-    /* the targets that show this visual's tree draw it again. */
+    /* redraw the targets that show this visual's tree. */
     for (DcTarget *t = object->device->targets; t; t = t->next_in_device)
         t->needs_compose = TRUE;
 }
@@ -207,7 +206,7 @@ static HRESULT STDMETHODCALLTYPE vis_set_opacity(void *This, float opacity)
     return set_float(v, &v->pending.opacity, opacity);
 }
 
-/* a transform given as an object of the visual's device, or none. */
+/* the transform must be an object of the visual's device, or NULL. */
 static HRESULT set_transform_object(DcVisual *v, IUnknown *transform)
 {
     DcObject *object = nullptr;
@@ -405,7 +404,7 @@ static HRESULT STDMETHODCALLTYPE vis_set_clip(void *This, const D2D_RECT_F *rect
     return S_OK;
 }
 
-/* what the visual shows: a surface, a swap chain made for composition or a texture; nothing clears it. */
+/* a surface, a swap chain made for composition or a texture. NULL clears it. */
 static HRESULT STDMETHODCALLTYPE vis_set_content(void *This, IUnknown *content)
 {
     DcVisual *v = vis_impl(This);
@@ -451,7 +450,6 @@ static void remove_child(DcVisual *parent, UINT index)
     DcObjectRelease(&child->base);
 }
 
-/* whether a visual is the other or under it in the pending tree. */
 static BOOL is_within(const DcVisual *ancestor, const DcVisual *visual)
 {
     for (; visual; visual = visual->parent)
@@ -461,8 +459,8 @@ static BOOL is_within(const DcVisual *ancestor, const DcVisual *visual)
 }
 
 /*
- * inserts a child over or under another, or on top or at the bottom of the
- * others when no other is named. A child of another visual moves.
+ * inserts a child above or below a reference visual, or at the top or bottom
+ * when there is none. a child of another visual moves here.
  */
 static HRESULT STDMETHODCALLTYPE vis_add_visual(void *This, IDCompositionVisual *visual, BOOL above,
                                                 IDCompositionVisual *reference)
@@ -687,8 +685,8 @@ static HRESULT STDMETHODCALLTYPE tg_set_root(IDCompositionTarget *iface, IDCompo
 static const IDCompositionTargetVtbl tg_vtbl = {tg_query, tg_add_ref, tg_release, tg_set_root};
 
 /*
- * a target binds a window of this process: one target for each window and
- * topmost flag, since the compositor draws a window's targets itself.
+ * the window must belong to this process. one target per window and topmost
+ * flag, since the compositor draws a window's targets itself.
  */
 HRESULT DcCreateTarget(DcDevice *device, HWND hwnd, BOOL topmost, IDCompositionTarget **out)
 {

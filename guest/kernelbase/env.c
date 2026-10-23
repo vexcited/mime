@@ -1,6 +1,4 @@
-/*
- * environment variables.
- */
+/* environment variables. */
 #include "kernelbase_private.h"
 
 DWORD WINAPI GetEnvironmentVariableW(LPCWSTR name, LPWSTR buffer, DWORD size)

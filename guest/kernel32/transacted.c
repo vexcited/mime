@@ -1,14 +1,11 @@
 /*
- * the transacted file functions of kernel32. Windows gives every one of them the same shape: a transaction handle of 0
- * or -1 is ERROR_INVALID_TRANSACTION, else the thread's current transaction is set to the handle, the plain function
- * runs and the current transaction is cleared. Mime has no kernel transaction manager and no ktmw32.dll, so no handle
- * of a transaction exists and no handle can pass: what is left of the shape is the argument checks and their errors.
- * A handle that is not 0 or -1 gets ERROR_INVALID_HANDLE, which is a guess at what the file system answers for an
- * object that is not a transaction.
+ * transacted file functions. on Windows each one rejects a transaction handle of 0 or -1 with
+ * ERROR_INVALID_TRANSACTION, else sets it as the thread's current transaction around the plain function. mime has no
+ * kernel transaction manager and no ktmw32.dll, so no handle can be valid: only the argument checks remain. any
+ * other handle gets ERROR_INVALID_HANDLE, a guess at what the file system says for a non transaction object.
  */
 #include <mime/win32/winbase.h>
 
-/* what FindFirstStreamW asks for. */
 typedef enum _STREAM_INFO_LEVELS {
     FindStreamInfoStandard,
     FindStreamInfoMaxInfoLevel
@@ -18,14 +15,13 @@ typedef enum _STREAM_INFO_LEVELS {
 
 #define ERROR_INVALID_TRANSACTION_ 6700
 
-/* sets the error for a transaction handle that cannot be used, always. */
 static void transaction_error(HANDLE transaction)
 {
     SetLastError(transaction == nullptr || transaction == INVALID_HANDLE_VALUE ? ERROR_INVALID_TRANSACTION_
                                                                                 : ERROR_INVALID_HANDLE);
 }
 
-/* the ansi name of a function that takes one, as a wide name that is freed afterwards; false with the error set. */
+/* converts an ansi name to a heap wide string the caller frees; FALSE with the error set. */
 static BOOL wide_name(LPCSTR name, LPWSTR *out)
 {
     *out = nullptr;
@@ -86,7 +82,7 @@ EXPORT_STD(BOOL, CreateDirectoryTransactedW, (LPCWSTR template_dir, LPCWSTR dire
 EXPORT_STD(BOOL, CreateDirectoryTransactedA, (LPCSTR template_dir, LPCSTR directory, LPSECURITY_ATTRIBUTES sa,
                                               HANDLE transaction))
 {
-    /* the template may be absent, the new directory may not. */
+    /* the template may be NULL, the new directory may not. */
     LPWSTR a = nullptr, b;
     if (template_dir && !wide_name(template_dir, &a))
         return FALSE;
@@ -100,7 +96,7 @@ EXPORT_STD(BOOL, CreateDirectoryTransactedA, (LPCSTR template_dir, LPCSTR direct
     return ok;
 }
 
-/* an extended parameter is not accepted, whatever the handle is. */
+/* an extended parameter is rejected whatever the handle. */
 EXPORT_STD(HANDLE, CreateFileTransactedW, (LPCWSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa,
                                            DWORD disposition, DWORD flags, HANDLE template_file, HANDLE transaction,
                                            PUSHORT mini_version, PVOID extended))
@@ -299,7 +295,7 @@ EXPORT_STD(BOOL, MoveFileTransactedA, (LPCSTR existing, LPCSTR target, LPPROGRES
     LPWSTR a, b = nullptr;
     if (!wide_name(existing, &a))
         return FALSE;
-    /* the new name may be absent for a delayed delete. */
+    /* the new name may be NULL for a delayed delete. */
     if (target && !wide_name(target, &b)) {
         free_name(a);
         return FALSE;

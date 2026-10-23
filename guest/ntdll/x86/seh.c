@@ -1,8 +1,8 @@
 /*
- * frame based exceptions of x86 programs: the handlers of the list at
- * fs:0, newest first, called in dispatch and in unwinds, each in a
- * registration of ntdll's own that marks exceptions raised in a handler
- * as nested and unwinds that run into one another as collided.
+ * x86 frame based exceptions: the handlers on the fs:0 list, newest first,
+ * called during dispatch and unwind. each call is wrapped in an ntdll
+ * registration that marks exceptions raised in a handler as nested and
+ * overlapping unwinds as collided.
  */
 #include "../ntdll_private.h"
 
@@ -21,7 +21,7 @@ typedef struct _EXCEPTION_REGISTRATION_RECORD {
     PEXCEPTION_ROUTINE Handler;
 } EXCEPTION_REGISTRATION_RECORD;
 
-/* ntdll's registration around a handler: the frame it was called for follows. */
+/* wraps a handler call, followed by the frame it was called for. */
 typedef struct NESTED_REGISTRATION {
     EXCEPTION_REGISTRATION_RECORD Record;
     EXCEPTION_REGISTRATION_RECORD *Frame;
@@ -58,7 +58,7 @@ EXCEPTION_DISPOSITION __cdecl RtlpCollidedUnwindHandler(PEXCEPTION_RECORD record
     return ExceptionCollidedUnwind;
 }
 
-/* whether a registration lies in the thread's stack, as windows checks before calling it. */
+/* like windows, a registration must lie in the thread's stack before it is called. */
 static BOOLEAN in_stack(EXCEPTION_REGISTRATION_RECORD *frame)
 {
     TEB *teb = NtCurrentTeb();
@@ -97,7 +97,7 @@ BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCONTEXT conte
         case ExceptionContinueSearch:
             break;
         case ExceptionNestedException:
-            /* the exception came from a handler: frames up to the one it was called for are skipped as nested. */
+            /* raised from a handler: frames up to the one it was called for are skipped as nested. */
             record->ExceptionFlags |= EXCEPTION_NESTED_CALL;
             if (dispatcher > nested)
                 nested = dispatcher;
@@ -117,10 +117,10 @@ BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCONTEXT conte
 }
 
 /*
- * calls the handlers of the frames newer than the target with the
- * unwinding flags, taking each off the list, then returns to the caller,
- * which goes on to the target frame's code itself. without a target the
- * whole list is unwound.
+ * calls the handlers of frames newer than the target with the unwinding
+ * flags, removing each from the list, then returns. the caller jumps to
+ * the target frame's code itself. without a target the whole list is
+ * unwound.
  */
 NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value)
 {

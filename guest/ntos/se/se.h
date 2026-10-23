@@ -1,8 +1,6 @@
 /*
- * the security reference monitor's internal interface: access token objects.
- *
- * a token keeps its sids in fixed slots, so copying, filtering and removing
- * groups never move a pointer. every change of a token happens under SeLock.
+ * the security reference monitor's internal interface: access token objects. a token keeps its sids in fixed slots,
+ * so copying, filtering and removing groups never move a pointer. every token change happens under SeLock.
  */
 #ifndef MIME_SE_H
 #define MIME_SE_H
@@ -10,7 +8,7 @@
 #include "../ntos.h"
 
 
-#define SEP_SID_MAX 68 /* 8 bytes and 15 sub authorities */
+#define SEP_SID_MAX 68 /* 8 bytes plus 15 sub authorities. */
 #define SEP_MAX_GROUPS 0x1000
 #define SEP_PRIVILEGE_FIRST 2
 #define SEP_PRIVILEGE_LAST 36
@@ -23,7 +21,6 @@
 #define SecurityImpersonation 2
 #define SecurityDelegation 3
 
-/* the access rights of tokens. */
 #define TOKEN_ASSIGN_PRIMARY 0x0001
 #define TOKEN_DUPLICATE 0x0002
 #define TOKEN_IMPERSONATE 0x0004
@@ -52,7 +49,7 @@
 #define SE_PRIVILEGE_REMOVED 0x4
 #define SE_PRIVILEGE_VALID (SE_PRIVILEGE_ENABLED_BY_DEFAULT | SE_PRIVILEGE_ENABLED | SE_PRIVILEGE_REMOVED)
 
-/* the privileges by their luid. */
+/* privilege luids. */
 #define SE_TCB_PRIVILEGE 7
 #define SE_INC_BASE_PRIORITY_PRIVILEGE 14
 #define SE_SECURITY_PRIVILEGE 8
@@ -61,7 +58,7 @@
 #define SE_CHANGE_NOTIFY_PRIVILEGE 23
 #define SE_IMPERSONATE_PRIVILEGE 29
 
-/* the flags of a token, the values windows keeps in TokenFlags. */
+/* TokenFlags values, as windows keeps them. */
 #define TOKEN_WRITE_RESTRICTED 0x8
 #define TOKEN_IS_RESTRICTED 0x10
 #define TOKEN_SESSION_NOT_REFERENCED 0x20
@@ -73,13 +70,13 @@
 #define TOKEN_NOT_LOW 0x2000
 #define TOKEN_LOWBOX 0x4000
 
-/* the arguments of NtFilterToken. */
+/* NtFilterToken flags. */
 #define DISABLE_MAX_PRIVILEGE 0x1
 #define SANDBOX_INERT 0x2
 #define LUA_TOKEN 0x4
 #define WRITE_RESTRICTED 0x8
 
-/* what a token is for, as the elevation queries tell it. */
+/* the elevation type the queries report. */
 #define SEP_ELEVATION_DEFAULT 1
 #define SEP_ELEVATION_FULL 2
 #define SEP_ELEVATION_LIMITED 3
@@ -95,32 +92,32 @@ typedef struct SEP_GROUP {
 } SEP_GROUP;
 
 typedef struct _TOKEN {
-    UCHAR Source[16]; /* TOKEN_SOURCE */
+    UCHAR Source[16]; /* TOKEN_SOURCE. */
     ULONG64 TokenId, AuthenticationId, ParentTokenId, ModifiedId, Origin;
     LARGE_INTEGER ExpirationTime;
     ULONG Type;
     ULONG ImpersonationLevel;
     ULONG Flags;
-    BOOLEAN InUse; /* the primary token of a process */
+    BOOLEAN InUse; /* the primary token of a process. */
     ULONG SessionId;
     ULONG ElevationType;
-    ULONG64 Present, Enabled, EnabledByDefault; /* privileges, one bit per luid */
-    ULONG GroupCount; /* the user is group 0 */
+    ULONG64 Present, Enabled, EnabledByDefault; /* privileges, one bit per luid. */
+    ULONG GroupCount; /* the user is group 0. */
     SEP_GROUP *Groups;
     ULONG RestrictedCount;
     SEP_GROUP *Restricted;
     ULONG OwnerIndex;
-    LONG IntegrityIndex; /* -1 for untrusted */
+    LONG IntegrityIndex; /* -1 for untrusted. */
     ULONG MandatoryPolicy;
     UCHAR PrimaryGroup[SEP_SID_MAX];
     ULONG DefaultDaclSize;
-    PUCHAR DefaultDacl; /* a copy, NULL for none */
+    PUCHAR DefaultDacl; /* a copy, NULL for none. */
     ULONG DynamicCharged;
-    struct _TOKEN *Linked; /* the other half of a filtered administrator's pair, referenced */
+    struct _TOKEN *Linked; /* the other half of a filtered administrator's pair, referenced. */
     ULONG LowboxNumber;
     ULONG CapabilityCount;
     SEP_GROUP *Capabilities;
-    UCHAR AppContainerSid[SEP_SID_MAX]; /* only with TOKEN_LOWBOX */
+    UCHAR AppContainerSid[SEP_SID_MAX]; /* only with TOKEN_LOWBOX. */
 } TOKEN, *PTOKEN;
 
 extern POBJECT_TYPE SeTokenObjectType;

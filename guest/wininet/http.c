@@ -1,7 +1,4 @@
-/*
- * http headers: the request header list of HttpAddRequestHeaders, and HttpQueryInfo over the request and the
- * response. wininet keeps both lists in the ansi code page, so the A functions are the real ones.
- */
+/* HttpAddRequestHeaders and HttpQueryInfo use ANSI header lists; wide APIs wrap the ANSI implementation. */
 #include "wininet_private.h"
 
 /* the header of each HttpQueryInfo level and the modifier flags it accepts. */
@@ -117,7 +114,7 @@ const char *InetLevelName(DWORD level)
     return level <= HTTP_QUERY_MAX ? Levels[level].Name : nullptr;
 }
 
-/* ------------------------------------------------------------------ header lists */
+/* header lists. */
 
 void InetHeadersClear(INET_HEADERS *headers)
 {
@@ -158,7 +155,7 @@ static BOOL NameIs(const char *name, const char *other, DWORD other_length)
     return strlen(name) == other_length && !_strnicmp(name, other, other_length);
 }
 
-/* the position of the nth header with this name, or UINT32_MAX. */
+/* return the nth matching header position, or UINT32_MAX. */
 static DWORD FindHeader(const INET_HEADERS *headers, const char *name, DWORD name_length, DWORD nth)
 {
     for (DWORD i = 0; i < headers->Count; i++)
@@ -300,9 +297,9 @@ DECLSPEC_EXPORT BOOL WINAPI HttpAddRequestHeadersW(HINTERNET request, LPCWSTR he
     return ok;
 }
 
-/* ------------------------------------------------------------------ queries */
+/* queries. */
 
-/* copies text out, the length without the terminator after and with it when too small. */
+/* report length without the terminator on success, including it when the buffer is too small. */
 static DWORD ReturnText(const char *text, DWORD length, LPVOID buffer, LPDWORD size)
 {
     if (!buffer || *size < length + 1) {
@@ -315,7 +312,7 @@ static DWORD ReturnText(const char *text, DWORD length, LPVOID buffer, LPDWORD s
     return ERROR_SUCCESS;
 }
 
-/* the start line and the headers, each line ended by a crlf or a nul, crlf blocks ended by an empty line. */
+/* serialize the start line and headers with CRLF or NUL separators. CRLF blocks end with an empty line. */
 static DWORD RawHeaders(const char *first, const INET_HEADERS *headers, BOOL crlf, LPVOID buffer, LPDWORD size)
 {
     DWORD separator = crlf ? 2 : 1;
@@ -347,7 +344,7 @@ static DWORD RawHeaders(const char *first, const INET_HEADERS *headers, BOOL crl
     return ERROR_SUCCESS;
 }
 
-/* the leading digits of a header value as wininet reads numbers. */
+/* parse leading decimal digits as WinINet does. */
 static DWORD ParseNumber(const char *value, ULONGLONG *number, BOOL wide)
 {
     ULONGLONG v = 0;
@@ -365,7 +362,6 @@ static DWORD ParseNumber(const char *value, ULONGLONG *number, BOOL wide)
     return ERROR_SUCCESS;
 }
 
-/* a header value in the form the modifiers ask for. */
 static DWORD FormatValue(const char *value, DWORD level, LPVOID buffer, LPDWORD size)
 {
     if (level & HTTP_QUERY_FLAG_SYSTEMTIME) {
@@ -407,7 +403,6 @@ static DWORD QueryHeader(const INET_HEADERS *headers, const char *name, DWORD na
                          LPVOID buffer, LPDWORD size, LPDWORD index)
 {
     if (level & HTTP_QUERY_FLAG_COALESCE_WITH_COMMA) {
-        /* every value of the header joined by commas. */
         SIZE_T length = 0;
         DWORD count = 0;
         for (DWORD i = 0; i < headers->Count; i++)
@@ -512,7 +507,7 @@ static DWORD QueryResponse(INET_OBJECT *request, DWORD level, const char *name, 
     return QueryHeader(&request->Response, name, name_length, level, buffer, size, index);
 }
 
-/* modifier combinations windows rejects as invalid parameters. */
+/* Windows rejects these modifier combinations. */
 static BOOL BadModifiers(DWORD level)
 {
     static const DWORD pairs[] = {
@@ -546,7 +541,7 @@ DECLSPEC_EXPORT BOOL WINAPI HttpQueryInfoA(HINTERNET request, DWORD level, LPVOI
                        (field >= HTTP_QUERY_VERSION && field <= HTTP_QUERY_RAW_HEADERS_CRLF))) {
         error = ERROR_HTTP_HEADER_NOT_FOUND;
     } else if (field == HTTP_QUERY_CUSTOM) {
-        /* the name ends at a colon or a line break, and spaces or control characters make it invalid. */
+        /* names end at a colon or line break; spaces and controls are invalid. */
         name = buffer;
         if (!name) {
             error = ERROR_INVALID_PARAMETER;
@@ -596,8 +591,8 @@ DECLSPEC_EXPORT BOOL WINAPI HttpQueryInfoA(HINTERNET request, DWORD level, LPVOI
 }
 
 /*
- * windows forwards to HttpQueryInfoA: numbers and times pass through, text is widened in place, its length
- * then counted in bytes, without the terminator after and with it when the buffer was too small.
+ * forward to HttpQueryInfoA. numbers and times pass through; widen text in place and report byte length, excluding
+ * the terminator on success and including it for a short buffer.
  */
 DECLSPEC_EXPORT BOOL WINAPI HttpQueryInfoW(HINTERNET request, DWORD level, LPVOID buffer, LPDWORD length,
                                           LPDWORD index)

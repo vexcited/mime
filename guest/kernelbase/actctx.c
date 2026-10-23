@@ -1,8 +1,6 @@
 /*
- * activation contexts for win32: CreateActCtx and its companions, which
- * kernel32 implements on windows with ntdll's runtime and csrss's sxs.dll.
- * mime's ntdll generates the context data itself. also the settings that
- * follow the program's manifest: the version windows reports, long paths.
+ * activation contexts: CreateActCtx and friends, which Windows implements in kernel32 with ntdll and csrss's sxs.dll.
+ * mime's ntdll builds the context data itself. also the manifest driven settings: reported version and long paths.
  */
 #include "kernelbase_private.h"
 
@@ -14,7 +12,7 @@ static BOOL fail(NTSTATUS status)
     return FALSE;
 }
 
-/* the data of a context created here goes with its last reference. */
+/* frees the data of a context created here when its last reference goes. */
 static void NTAPI notification(ULONG type, PACTIVATION_CONTEXT context, const void *data, PVOID notification_context,
                                PVOID notification_data, PBOOLEAN disable)
 {
@@ -24,7 +22,6 @@ static void NTAPI notification(ULONG type, PACTIVATION_CONTEXT context, const vo
         *disable = TRUE;
 }
 
-/* whether a structure of size bytes reaches the end of the member at offset. */
 static BOOL reaches(ULONG size, SIZE_T end)
 {
     return size >= end;
@@ -38,7 +35,7 @@ static BOOL file_exists(PCWSTR path)
     return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-/* dir\name in a new heap string. */
+/* dir\name followed by suffix, in a new heap string. */
 static PWSTR join(PCWSTR dir, PCWSTR name, PCWSTR suffix)
 {
     SIZE_T a = wcslen(dir), b = wcslen(name), c = suffix ? wcslen(suffix) : 0;
@@ -85,7 +82,7 @@ HANDLE WINAPI CreateActCtxW(PCACTCTXW actctx)
     if (flags & ACTCTX_FLAG_PROCESSOR_ARCHITECTURE_VALID) {
         arch = actctx->wProcessorArchitecture;
 #ifdef __i386__
-        /* a 32-bit process takes its own processor, 0 meaning it too, or any. */
+        /* a 32-bit process accepts x86, which is 0, or any. */
         if (arch == PROCESSOR_ARCHITECTURE_INTEL)
             arch = PROCESSOR_ARCHITECTURE_IA32_ON_WIN64;
         if (arch != 0xFFFF && arch != PROCESSOR_ARCHITECTURE_IA32_ON_WIN64)
@@ -173,7 +170,7 @@ HANDLE WINAPI CreateActCtxW(PCACTCTXW actctx)
     if (!NT_SUCCESS(status))
         goto done;
     if (flags & ACTCTX_FLAG_SET_PROCESS_DEFAULT) {
-        /* the process default has no handle: success is NULL. */
+        /* the process default context has no handle: success returns NULL. */
         if (InterlockedCompareExchangePointer(&KbPeb()->ActivationContextData, data, nullptr)) {
             status = STATUS_SXS_PROCESS_DEFAULT_ALREADY_SET;
             goto done;
@@ -199,7 +196,7 @@ done:
     return result;
 }
 
-/* the ansi structure has its own size checks, each one member off from the wide one's. */
+/* the ansi structure has its own size checks, each one member off from the wide ones. */
 HANDLE WINAPI CreateActCtxA(PCACTCTXA actctx)
 {
     NTSTATUS status = STATUS_INVALID_PARAMETER;
@@ -243,7 +240,7 @@ HANDLE WINAPI CreateActCtxA(PCACTCTXA actctx)
         else if (actctx->lpResourceName)
             w.lpResourceName = resource = KbAnsiToWide(actctx->lpResourceName);
     }
-    /* lpApplicationName is not carried over, as windows' CreateActCtxA drops it. */
+    /* like windows' CreateActCtxA, lpApplicationName is dropped. */
     HANDLE result = CreateActCtxW(&w);
     DWORD error = GetLastError();
     KbFree(source);
@@ -269,7 +266,7 @@ BOOL WINAPI ZombifyActCtx(HANDLE actctx)
     return NT_SUCCESS(status) ? TRUE : fail(status);
 }
 
-/* the context is not referenced: a frame of ActivateActCtx keeps no reference, as on windows. */
+/* like windows, an activation frame holds no reference to the context. */
 BOOL WINAPI ActivateActCtx(HANDLE actctx, ULONG_PTR *cookie)
 {
     if (actctx == INVALID_HANDLE_VALUE)
@@ -294,7 +291,7 @@ BOOL WINAPI GetCurrentActCtx(HANDLE *actctx)
     return NT_SUCCESS(status) ? TRUE : fail(status);
 }
 
-/* checks the caller's structure, then has ntdll fill a full sized one it copies back. */
+/* checks the caller's structure, then has ntdll fill a full sized one that is copied back. */
 static BOOL find_parameters(DWORD flags, PACTCTX_SECTION_KEYED_DATA data, ULONG *rtl_flags)
 {
     *rtl_flags = 0;
@@ -494,13 +491,12 @@ BOOL WINAPI QueryActCtxSettingsW(DWORD flags, HANDLE actctx, PCWSTR ns, PCWSTR n
     return NT_SUCCESS(status) ? TRUE : fail(status);
 }
 
-/* ------------------------------------------------------------------ what follows the program's manifest */
+/* ------------------------------------------------------------------ manifest settings */
 
 /*
- * the version a program is told. windows picks a compatibility level from
- * the program's subsystem version and the supportedOS ids of its manifest,
- * a subsystem version above 9 meaning the newest: below windows 8.1 the
- * answer is 6.2.9200, at 8.1 it is 6.3.9600, from 10 on the truth.
+ * the version a program is told. windows picks a compatibility level from the subsystem version and the manifest's
+ * supportedOS ids, a subsystem version above 9 meaning the newest: below windows 8.1 the answer is 6.2.9200, at 8.1
+ * it is 6.3.9600, from 10 on the real version.
  */
 void KbReportedVersion(PULONG major, PULONG minor, PULONG build)
 {
@@ -570,10 +566,7 @@ void KbInitializeLongPaths(void)
     RegCloseKey(key);
 }
 
-/*
- * a thread created in this process starts with its creator's context
- * active, unless the context's manifest says noInherit.
- */
+/* a new thread starts with its creator's context active, unless that manifest says noInherit. */
 BOOL KbInheritActivationContext(HANDLE process, PACTIVATION_CONTEXT *context)
 {
     *context = nullptr;

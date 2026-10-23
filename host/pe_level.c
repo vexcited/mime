@@ -1,7 +1,6 @@
 /*
- * the level a program asks for in its manifest: whether it needs the rights of an administrator. the machine decides
- * with the token it has what to do about it (see docs/services.md); the host reads the file, which it can without
- * the machine's help, so that `mime run` can start a program that requires an administrator the way the shell does.
+ * reads the manifest execution level so `mime run` can request administrator rights as the shell does. the
+ * guest decides how to launch with its token.
  */
 #include "mime_host.h"
 
@@ -46,7 +45,7 @@ static bool to_offset(const Layout *l, uint32_t rva, uint64_t *offset)
     return false;
 }
 
-/* the entry of one level of the resource tree with the id, or the first when the id is 0. */
+/* finds a resource entry by id, or the first entry when id is 0. */
 static bool entry_of(int fd, const Layout *l, uint32_t directory, uint32_t id, uint32_t *next, bool *branch)
 {
     uint64_t at;
@@ -70,7 +69,7 @@ static bool entry_of(int fd, const Layout *l, uint32_t directory, uint32_t id, u
     return false;
 }
 
-/* the manifest of the process, resource 1 of type 24, in a block; null when there is none. */
+/* loads the process manifest, resource 1 of type 24; null if absent. */
 static uint8_t *manifest_of(int fd, uint32_t *size)
 {
     uint8_t dos[64], headers[24 + 240];
@@ -112,7 +111,7 @@ static uint8_t *manifest_of(int fd, uint32_t *size)
     return manifest;
 }
 
-/* the text of a manifest as bytes of ascii: one in utf-16 loses its high bytes. */
+/* extracts ASCII bytes from a manifest, dropping high bytes for UTF-16. */
 static size_t narrow(uint8_t *text, size_t size)
 {
     bool wide = size >= 4 && ((text[0] == 0xFF && text[1] == 0xFE) || (text[1] == 0 && text[3] == 0));

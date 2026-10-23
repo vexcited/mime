@@ -4,12 +4,12 @@
  * each processor's virtual timer is one-shot. a busy processor programs
  * it for its next quantum tick; the timer processor, the last one that
  * queued the earliest timer, also programs the first expiring timer and
- * the periodic tick (15.625 ms) keeping KUSER_SHARED_DATA fresh. short
+ * the periodic 15.625 ms tick that keeps KUSER_SHARED_DATA fresh. short
  * sleeps are precise without a fast tick, and idle processors sleep.
  */
 #include "../ntos.h"
 
-static LIST_ENTRY g_timer_list; /* sorted by due interrupt time */
+static LIST_ENTRY g_timer_list; /* sorted by due interrupt time. */
 static ULONG64 g_next_tick;
 static ULONG64 g_boot_counter;
 static ULONG g_timer_cpu;
@@ -21,11 +21,11 @@ ULONG64 KiQueryInterruptTime(void)
 }
 
 /*
- * the performance counter is the hal's counter from boot. a tsc counts in
- * gigahertz where windows programs expect the 10 MHz of windows' counter,
- * and some multiply it by a billion: it is slowed down by a power of two
- * to between 10 and 20 MHz. user mode reads it itself, from the bias and
- * shift in KUSER_SHARED_DATA.
+ * the performance counter is the hal's counter since boot. a tsc runs in
+ * gigahertz while windows programs expect windows' 10 MHz, and some
+ * multiply it by a billion, so it is divided by a power of two into 10 to
+ * 20 MHz. user mode reads it itself, with the bias and shift in
+ * KUSER_SHARED_DATA.
  */
 static UCHAR qpc_shift(void)
 {
@@ -47,7 +47,7 @@ static ULONG64 qpc_of(ULONG64 counter)
     return (counter - g_boot_counter) >> qpc_shift();
 }
 
-/* 100ns per count in 64.64 fixed point: 10^7 * 2^64 / frequency, by long division, or 0 below 10 MHz. */
+/* 100 ns per count in 64.64 fixed point: 10^7 * 2^64 / frequency, by long division, or 0 below 10 MHz. */
 static ULONG64 qpc_increment(void)
 {
     static ULONG64 cached;
@@ -113,10 +113,10 @@ void KiProgramNextTimer(void)
     }
 #ifdef __x86_64__
     /*
-     * the timer fires once. writing it exits to the host, and a thread that waits and wakes in a few
-     * microseconds would do it twice each time, so a timer that is armed already for the same time or
-     * an earlier one is left to fire: its interrupt finds nothing to do, or this deadline not come, and
-     * arms the next. there is no disarming either, the interrupt does that.
+     * the timer is one-shot and writing it exits to the host, which a thread that waits and wakes within a few
+     * microseconds would pay twice each time. so a timer already armed for the same or an earlier time is left to
+     * fire: its interrupt finds nothing due, or this deadline not yet come, and arms the next. there is no disarming
+     * either, the interrupt does that.
      */
     if (deadline == ~0ull) {
         if (KiOptions & KI_OPT_EAGER_TIMER) {
@@ -141,8 +141,8 @@ void KiProgramNextTimer(void)
         return;
     }
     /*
-     * macos wakes an idle processor late by about an eighth of its wait:
-     * aiming at 7/8 of a long wait, the early interrupt arms the rest.
+     * macOS wakes an idle processor about an eighth of its wait late, so a
+     * long wait aims at 7/8 and the early interrupt arms the rest.
      */
     ULONG64 now = KiQueryInterruptTime();
     if (deadline > now + 2000)
@@ -164,7 +164,6 @@ void KiInsertTimer(PKTIMER timer, ULONG64 due)
             break;
         e = e->Flink;
     }
-    /* insert before e. */
     timer->TimerListEntry.Flink = e;
     timer->TimerListEntry.Blink = e->Blink;
     e->Blink->Flink = &timer->TimerListEntry;
@@ -230,8 +229,8 @@ BOOLEAN NTAPI KeReadStateTimer(PKTIMER timer)
 
 /*
  * the times at this tick, and what user mode needs to add the time since:
- * the performance counter then and 100ns per count in 64.64 fixed point,
- * under TimeUpdateLock, odd while it changes.
+ * the performance counter then and 100 ns per count in 64.64 fixed point,
+ * under TimeUpdateLock, which is odd while it changes.
  */
 static void update_shared_time(ULONG64 counter)
 {
@@ -361,8 +360,8 @@ void KiInitializeTimers(void)
     InitializeListHead(&g_timer_list);
     g_boot_counter = HalBootInfo->boot_counter;
     KeBootFiletime = HalBootInfo->boot_filetime;
-    /* time-offset=<seconds> in the kernel options puts the clock that many seconds from the host's, to be at a change of
-       daylight time when a test needs it. */
+    /* the kernel option time-offset=<seconds> shifts the clock from the host's, for instance to sit at a daylight
+       saving change. */
     const char *offset = strstr(HalBootInfo->cmdline, "time-offset=");
     if (offset) {
         offset += 12;

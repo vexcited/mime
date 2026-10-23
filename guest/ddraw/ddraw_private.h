@@ -1,4 +1,3 @@
-/* what the parts of ddraw share. */
 #ifndef DDRAW_PRIVATE_H
 #define DDRAW_PRIVATE_H
 
@@ -23,21 +22,21 @@ typedef struct DDSURF DDSURF;
 typedef struct DDPAL DDPAL;
 typedef struct DDCLIP DDCLIP;
 
-/* the interface versions, as the vtables of an object know them. */
+/* interface versions, as an object's vtables know them. */
 enum { DDV1 = 1, DDV2 = 2, DDV3 = 3, DDV4 = 4, DDV7 = 7 };
 
 /* ------------------------------------------------------------------ the directdraw object */
 
 /* cooperative state. */
-#define DDF_LEVELSET 0x0001   /* SetCooperativeLevel was called */
+#define DDF_LEVELSET 0x0001   /* SetCooperativeLevel was called. */
 #define DDF_FULLSCREEN 0x0002
-#define DDF_EXCLUSIVE 0x0004  /* holds exclusive mode now */
-#define DDF_MODESET 0x0008    /* changed the display mode */
-#define DDF_MODEX 0x0010      /* allowed mode x */
-#define DDF_ACTIVE 0x0020     /* the exclusive window is active */
-#define DDF_SUBCLASSED 0x0040 /* the focus window's procedure is ddraw's */
-#define DDF_CLIPPED 0x0080    /* clipped the cursor to the screen */
-#define DDF_DEVICEWINDOW 0x0100 /* created its device window */
+#define DDF_EXCLUSIVE 0x0004  /* holds exclusive mode now. */
+#define DDF_MODESET 0x0008    /* changed the display mode. */
+#define DDF_MODEX 0x0010      /* mode x allowed. */
+#define DDF_ACTIVE 0x0020     /* the exclusive window is active. */
+#define DDF_SUBCLASSED 0x0040 /* ddraw subclassed the focus window. */
+#define DDF_CLIPPED 0x0080    /* clipped the cursor to the screen. */
+#define DDF_DEVICEWINDOW 0x0100 /* created its own device window. */
 
 struct DDRAW {
     IDirectDraw iface1;
@@ -45,25 +44,25 @@ struct DDRAW {
     IDirectDraw4 iface4;
     IDirectDraw7 iface7;
     LONG ref1, ref2, ref4, ref7;
-    LONG ref;  /* all interfaces together */
+    LONG ref;  /* all interfaces together. */
     DWORD magic;
     BOOL initialized;
-    BOOL dx7;     /* made by DirectDrawCreateEx, as directx 7 makes its objects */
+    BOOL dx7;     /* made by DirectDrawCreateEx, so it behaves as directx 7's. */
     DWORD flags;
-    DWORD level;  /* the DDSCL flags of the last call */
-    BOOL level_v1; /* set through IDirectDraw, whose mode outlives exclusive mode */
-    HWND focus;   /* the focus window */
-    HWND device;  /* the device window, the focus window unless one was set */
+    DWORD level;  /* DDSCL flags of the last call. */
+    BOOL level_v1; /* set through IDirectDraw, whose mode outlives exclusive mode. */
+    HWND focus;
+    HWND device;  /* the focus window unless one was set. */
     /* the mode the program set, 0 for the desktop's. */
     DWORD mode_width, mode_height, mode_bpp, mode_refresh;
     DDSURF *primary;
-    DWORD snapshot_width, snapshot_height, snapshot_bpp; /* the mode TestCooperativeLevel compares with */
-    RECT dirty;   /* of the primary, waiting for the next refresh */
+    DWORD snapshot_width, snapshot_height, snapshot_bpp; /* the mode TestCooperativeLevel compares with. */
+    RECT dirty;   /* primary area waiting for the next refresh. */
     LIST_ENTRY surfaces;
     LIST_ENTRY palettes;
     LIST_ENTRY clippers;
-    struct D3DOBJ *d3d; /* its direct3d object, made at the first query */
-    LIST_ENTRY links; /* in the process's list */
+    struct D3DOBJ *d3d; /* made at the first query. */
+    LIST_ENTRY links; /* in the process's list. */
 };
 
 #define DDRAW_MAGIC 0x57415244
@@ -107,46 +106,45 @@ HRESULT DdWaitForVerticalBlank(DWORD flags);
 HRESULT DdGetScanLine(DWORD *line);
 void DdReleaseExclusive(DDRAW *dd);
 BOOL DdIsExclusiveOwner(DDRAW *dd);
-/* the primary's gamma ramp on the display while its object is the active exclusive owner, else taken off. */
+/* shows the primary's gamma ramp while its object is the active exclusive owner, else removes it. */
 void DdShowGamma(DDRAW *dd);
 void DdHideGamma(DDSURF *primary);
 DDRAW *DdExclusiveOwner(void);
 
 /* ------------------------------------------------------------------ surfaces */
 
-/* how a surface's pixels are laid out. */
 typedef struct DDFORMAT {
     DDPIXELFORMAT pf;
-    DWORD bpp;       /* bits a pixel, 0 for block compressed */
-    DWORD block;     /* bytes of a 4x4 block for dxt, 0 otherwise */
-    D3DDDIFORMAT gdi; /* what a dc over it is, D3DDDIFMT_UNKNOWN for none */
+    DWORD bpp;       /* bits per pixel, 0 for block compressed. */
+    DWORD block;     /* bytes per 4x4 dxt block, 0 otherwise. */
+    D3DDDIFORMAT gdi; /* the format of a dc over it, D3DDDIFMT_UNKNOWN for none. */
 } DDFORMAT;
 
 typedef struct DDLOCKED {
     RECT rect;
-    BYTE *pointer;    /* what Lock returned, which the first interfaces unlock with */
+    BYTE *pointer;    /* what Lock returned, which the first interfaces unlock with. */
 } DDLOCKED;
 
 typedef struct DDPRIVATE {
     LIST_ENTRY links;
     GUID tag;
     DWORD flags;
-    DWORD uniqueness; /* the surface's when set, for DDSPD_VOLATILE */
+    DWORD uniqueness; /* the surface's when set, for DDSPD_VOLATILE. */
     DWORD size;
     BYTE data[];
 } DDPRIVATE;
 
-/* surface memory, which duplicates of a surface share. */
+/* surface memory, shared by duplicates. */
 typedef struct DDMEM {
     LONG ref;
     BYTE *base;
 } DDMEM;
 
-/* a surface attached to another, holding a reference on the interface given unless implicit. */
+/* holds a reference on the given interface unless implicit. */
 typedef struct DDATTACH {
     LIST_ENTRY links;
     DDSURF *surface;
-    DWORD version;    /* of the interface the reference is on */
+    DWORD version;    /* of the interface the reference is on. */
     BOOL implicit;
 } DDATTACH;
 
@@ -159,29 +157,29 @@ struct DDSURF {
     IDirectDrawGammaControl gamma_iface;
     IDirectDrawColorControl color_iface;
     LONG ref1, ref2, ref3, ref4, ref7, ref_gamma, ref_color;
-    LONG ref;          /* all interfaces together */
+    LONG ref;          /* all interfaces together. */
     DWORD magic;
-    DWORD version;     /* of the interface that created it */
-    DDRAW *dd;         /* null once its directdraw object is gone */
-    void *creator;     /* the directdraw interface a version 4 or 7 surface holds */
-    void *creator_iface; /* the directdraw interface it was made through, for GetDDInterface */
-    DDSURFACEDESC2 desc; /* as GetSurfaceDesc reports it, lpSurface null */
+    DWORD version;     /* of the interface that created it. */
+    DDRAW *dd;         /* NULL once its directdraw object is gone. */
+    void *creator;     /* the directdraw interface a version 4 or 7 surface holds. */
+    void *creator_iface; /* the directdraw interface it was made through, for GetDDInterface. */
+    DDSURFACEDESC2 desc; /* as GetSurfaceDesc reports it, lpSurface NULL. */
     DDFORMAT format;
-    BOOL explicit_format; /* created with DDSD_PIXELFORMAT */
-    BYTE *memory;      /* the pixels, rows desc.lPitch apart */
-    struct DDMEM *mem; /* what memory was allocated as, shared by duplicates; null for client memory */
-    SIZE_T bytes;      /* of the memory */
-    BOOL sysmem_requested; /* created with DDSCAPS_SYSTEMMEMORY, so a program may give its memory */
+    BOOL explicit_format; /* created with DDSD_PIXELFORMAT. */
+    BYTE *memory;      /* rows desc.lPitch apart. */
+    struct DDMEM *mem; /* the allocation, shared by duplicates, NULL for client memory. */
+    SIZE_T bytes;
+    BOOL sysmem_requested; /* created with DDSCAPS_SYSTEMMEMORY, so a program may give its memory. */
     BOOL lost;
-    BOOL freeing;      /* in its final release */
-    BOOL gdi;          /* holds the memory gdi shows, the front of the primary's chain */
+    BOOL freeing;      /* in its final release. */
+    BOOL gdi;          /* holds the memory gdi shows, the front of the primary's chain. */
     DDPAL *palette;
     DDCLIP *clipper;
-    DWORD ckeys;       /* the DDSD_CK flags of keys set */
-    LIST_ENTRY attached;  /* DDATTACH of surfaces attached to it, newest first */
-    BOOL implicit;     /* created with its complex surface, freed with its root */
-    BOOL created_front, created_back; /* caps it had at creation, back after a detach */
-    DWORD usage;       /* locks and dcs out */
+    DWORD ckeys;       /* DDSD_CK flags of the keys set. */
+    LIST_ENTRY attached;  /* DDATTACH entries, newest first. */
+    BOOL implicit;     /* created with its complex surface, freed with its root. */
+    BOOL created_front, created_back; /* caps it had at creation, restored after a detach. */
+    DWORD usage;       /* locks and dcs out. */
     DWORD rect_locks;
     DDLOCKED locks[16];
     BOOL readonly_lock;
@@ -190,13 +188,13 @@ struct DDSURF {
     DWORD uniqueness;
     DWORD priority, lod;
     LIST_ENTRY private_data;
-    DDGAMMARAMP *gamma; /* of the primary, null for none */
-    BOOL gamma_shown;   /* on the display, as the exclusive owner's */
-    DDMODE mode;       /* the display mode it was made in */
-    DWORD generation;  /* counts every change of its pixels */
-    struct D3DSURFX *d3d; /* its copy where direct3d draws, which travels with the memory */
-    struct D3DAGG *aggregates; /* the direct3d objects aggregated in it, released with it */
-    LIST_ENTRY links;  /* in the directdraw object's list */
+    DDGAMMARAMP *gamma; /* of the primary, NULL for none. */
+    BOOL gamma_shown;   /* on the display, as the exclusive owner's. */
+    DDMODE mode;       /* the display mode it was made in. */
+    DWORD generation;  /* bumped on every pixel change. */
+    struct D3DSURFX *d3d; /* the copy direct3d draws to, which travels with the memory. */
+    struct D3DAGG *aggregates; /* direct3d objects aggregated in it, released with it. */
+    LIST_ENTRY links;  /* in the directdraw object's list. */
 };
 
 #define SURF_MAGIC 0x46525553
@@ -234,7 +232,7 @@ HRESULT DdBlt(DDSURF *dst, const RECT *dst_rect, DDSURF *src, DWORD src_version,
               DDBLTFX *fx, DWORD dst_version);
 HRESULT DdBltFast(DDSURF *dst, DWORD x, DWORD y, DDSURF *src, const RECT *src_rect, DWORD flags, DWORD dst_version);
 HRESULT DdBltBatch(DDSURF *dst, const DDBLTBATCH *batch, DWORD count);
-/* convert.c: between formats, and the blocks of four character code surfaces. */
+/* convert.c */
 BOOL DdCanConvert(const DDSURF *src, const DDSURF *dst);
 void DdBlitConvert(DDSURF *dst, const RECT *d, DDSURF *src, const RECT *s, BOOL mirror_x, BOOL mirror_y);
 HRESULT DdBltBlocks(DDSURF *dst, const RECT *d, DDSURF *src, const RECT *s);
@@ -247,10 +245,10 @@ struct DDPAL {
     DWORD magic;
     DDRAW *dd;
     DWORD caps;
-    DWORD count;     /* entries */
+    DWORD count;
     PALETTEENTRY entries[256];
-    DWORD uniqueness; /* changes with every SetEntries */
-    void *owner;      /* the IDirectDraw4 or 7 that made it, which it holds */
+    DWORD uniqueness; /* changes with every SetEntries. */
+    void *owner;      /* the IDirectDraw4 or 7 that made it, which it holds. */
     LIST_ENTRY links;
 };
 
@@ -264,12 +262,12 @@ struct DDCLIP {
     IDirectDrawClipper iface;
     LONG ref;
     DWORD magic;
-    DDRAW *dd;        /* null for one of DirectDrawCreateClipper */
+    DDRAW *dd;        /* NULL for one from DirectDrawCreateClipper. */
     BOOL initialized;
     HWND window;
-    RGNDATA *list;    /* a clip list set, when there is no window */
-    DWORD version;    /* of the object that made it, 0 for none */
-    void *owner;      /* the IDirectDraw4 or 7 that made it, which it holds */
+    RGNDATA *list;    /* a clip list, when there is no window. */
+    DWORD version;    /* of the object that made it, 0 for none. */
+    void *owner;      /* the IDirectDraw4 or 7 that made it, which it holds. */
     LIST_ENTRY links;
 };
 
@@ -278,28 +276,28 @@ struct DDCLIP {
 DDCLIP *DdClipFromIface(void *iface);
 HRESULT DdCreateClipper(DDRAW *dd, DWORD flags, DDCLIP **out, BOOL initialized);
 void DdClipKill(DDCLIP *c);
-/* the clip rectangles in screen coordinates, or null for none; free with HeapFree. */
+/* clip rectangles in screen coordinates, or NULL for none. free with HeapFree. */
 RGNDATA *DdClipRegion(DDCLIP *c, const RECT *bounds);
 
-/* present.c: the primary surface reaching the screen. */
+/* present.c */
 void DdPresentDirty(DDSURF *primary, const RECT *rect);
 void DdPresentFlip(DDSURF *primary);
 void DdPresentStop(DDRAW *dd);
 
-/* x86/: direct3d 1 to 7, which only 32-bit windows has. */
+/* direct3d 1 to 7 live in x86/, since only 32-bit Windows has them. */
 #ifdef _WIN64
 static inline void DdSurfSync(DDSURF *s) {}
 static inline void D3dSurfFree(DDSURF *s) {}
 static inline void D3dSurfDepthFill(DDSURF *s, const RECT *rect, DWORD value) {}
 #else
-/* the memory current before the cpu reads or writes it, direct3d's drawing read back. */
+/* brings the memory up to date before the cpu touches it, reading back direct3d's drawing. */
 void DdSurfSync(DDSURF *s);
 void D3dSurfFree(DDSURF *s);
 /* a depth fill reaches the depth buffer direct3d draws with. */
 void D3dSurfDepthFill(DDSURF *s, const RECT *rect, DWORD value);
 HRESULT D3dObjQuery(DDRAW *dd, DWORD version, REFIID riid, void **out);
 void D3dObjDestroy(DDRAW *dd);
-/* the textures and first devices aggregated in a surface of the first directdraw versions. */
+/* textures and first devices aggregated in surfaces of the first directdraw versions. */
 HRESULT D3dSurfQuery(DDSURF *s, REFIID riid, void **out);
 #endif
 

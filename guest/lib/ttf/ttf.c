@@ -1,6 +1,4 @@
-/*
- * truetype font file parsing.
- */
+/* truetype font file parsing. */
 #include "ttf.h"
 #include "ttf_internal.h"
 

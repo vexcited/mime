@@ -1,7 +1,6 @@
 /*
- * x86 and x64 instruction decoder: prefixes, opcode maps, modrm, sib,
- * displacement and immediates. the meaning of each opcode is left to
- * the interpreter; this only finds the instruction's fields and length.
+ * x86 and x64 instruction decoder. it only finds an instruction's fields and
+ * length, the interpreter gives each opcode its meaning.
  */
 #include "x86.h"
 
@@ -104,11 +103,11 @@ int x86_decode(X86Insn *insn, const uint8_t *code, uint64_t address, int mode64)
             rex = c;
             p++;
             if ((*p & 0xF0) == 0x40)
-                continue; /* a later rex replaces this one */
+                continue; /* a later rex replaces this one. */
             uint8_t n = *p;
             if (n == 0xF0 || n == 0xF2 || n == 0xF3 || n == 0x66 || n == 0x67 || n == 0x64 || n == 0x65 ||
                 n == 0x26 || n == 0x2E || n == 0x36 || n == 0x3E) {
-                rex = 0; /* a prefix after rex cancels it */
+                rex = 0; /* a prefix after rex cancels it. */
                 continue;
             }
             break;

@@ -1,7 +1,7 @@
 /*
  * sound buffers: secondary buffers the mixer plays, and a device's primary
- * buffer, which a program writes itself only at DSSCL_WRITEPRIMARY. their
- * checks and error codes are windows'.
+ * buffer, which a program only writes at DSSCL_WRITEPRIMARY. checks and
+ * error codes match windows.
  */
 #include "dsound_private.h"
 
@@ -22,13 +22,13 @@ static HANDLE heap(void)
     return GetProcessHeap();
 }
 
-/* the silence of a format: 0x80 for 8 bit samples, zeros otherwise. */
+/* 0x80 for 8-bit samples, zeros otherwise. */
 static void silence(BYTE *p, DWORD size, const WAVEFORMATEX *f)
 {
     memset(p, f->wBitsPerSample == 8 ? 0x80 : 0, size);
 }
 
-/* how far windows' play cursor trails its write cursor: the user's maximum latency, 30 ms, at most half the buffer. */
+/* how far windows' play cursor trails its write cursor: the user's maximum latency of 30 ms, at most half the buffer. */
 static DWORD play_lead(const DSBUFFER *b)
 {
     DWORD ms = 30, type, size = sizeof(ms);
@@ -66,7 +66,7 @@ HRESULT DsBufferInit(DSBUFFER *b, DSDEVICE *d, const DSBUFFERDESC *desc)
     if (!b->format)
         return DSERR_OUTOFMEMORY;
     if (b->primary) {
-        /* windows' first primary format, and room for 32 kb in it. */
+        /* windows' initial primary format, with room for 32 kb. */
         WAVEFORMATEX f = {WAVE_FORMAT_PCM, 2, 22050, 44100, 2, 8, 0};
         *b->format = f;
         b->size = 32768;
@@ -104,7 +104,7 @@ HRESULT DsBufferInit(DSBUFFER *b, DSDEVICE *d, const DSBUFFERDESC *desc)
     return DS_OK;
 }
 
-/* the same data and format, its own position, volume and state. */
+/* shares data and format, with its own position, volume and state. */
 HRESULT DsBufferDuplicate(DSBUFFER *source, DSBUFFER **out)
 {
     if (source->flags & DSBCAPS_CTRLFX)
@@ -159,7 +159,7 @@ static void free_data(DSBUFFER *b)
     b->notify_count = 0;
 }
 
-/* the device went away: the buffer stops and keeps only what its interfaces need to fail. */
+/* the device is gone: the buffer stops and keeps only what its interfaces need to fail. */
 void DsBufferKill(DSBUFFER *b)
 {
     DsMixerRemove(b);
@@ -200,7 +200,7 @@ void DsPrimaryGains(DSDEVICE *d, float gains[2])
     gains[1] = volume || pan ? speaker_gain(volume, pan, TRUE) : 1.0f;
 }
 
-/* where a speaker of the source sits between the left and right speakers, 0 left to 2 right, or 3 for none. */
+/* where a source speaker sits between left and right, 0 left to 2 right, or 3 for none. */
 static BYTE speaker_place(DWORD bit)
 {
     switch (bit) {
@@ -224,11 +224,11 @@ static BYTE speaker_place(DWORD bit)
 }
 
 /*
- * the mixing matrix windows' engine builds for a buffer: each speaker of
- * the source on the stereo speakers, a mono source and centre speakers on
- * both at -3 db, then each output row scaled by the volume and pan of its
- * side. sources of more than two speakers have no matrix known from
- * windows; theirs follow the side of each speaker.
+ * the mixing matrix windows' engine builds: each source speaker on the
+ * stereo speakers, mono and centre speakers on both at -3 db, then each
+ * output row scaled by its side's volume and pan. no windows matrix is
+ * known for sources of more than two speakers; theirs follow each
+ * speaker's side.
  */
 static void matrix_2d(DSBUFFER *b, LONG volume, LONG pan)
 {
@@ -574,7 +574,7 @@ static HRESULT start(DSBUFFER *b, DWORD priority, DWORD flags)
         }
         return DS_OK;
     }
-    /* a level has to be set, for a window of some thread. */
+    /* a cooperative level must be set, for some thread's window. */
     if (!d->thread || !d->level)
         return DSERR_PRIOLEVELNEEDED;
     if (priority && !(b->flags & DSBCAPS_LOCDEFER))
@@ -734,7 +734,7 @@ static HRESULT STDMETHODCALLTYPE buffer_stop(IDirectSoundBuffer8 *This)
     return leave(DS_OK);
 }
 
-/* each pointer must start a region locked now; the regions end. */
+/* each pointer must start a currently locked region; the regions end. */
 static HRESULT STDMETHODCALLTYPE buffer_unlock(IDirectSoundBuffer8 *This, LPVOID audio1, DWORD bytes1, LPVOID audio2,
                                                DWORD bytes2)
 {
@@ -775,7 +775,7 @@ static HRESULT STDMETHODCALLTYPE buffer_restore(IDirectSoundBuffer8 *This)
     return leave(DS_OK);
 }
 
-/* effects need windows' dsdmo objects, which are not there; a buffer created for them takes none. */
+/* effects need windows' dsdmo objects, which are missing; a buffer created for them takes none. */
 static HRESULT STDMETHODCALLTYPE buffer_set_fx(IDirectSoundBuffer8 *This, DWORD count, LPDSEFFECTDESC effects,
                                                LPDWORD results)
 {
@@ -856,7 +856,7 @@ static ULONG STDMETHODCALLTYPE notify_release(IDirectSoundNotify *This)
     return DsBufferRelease(from_notify(This));
 }
 
-/* offsets aligned down to frames and sorted; each below the size or DSBPN_OFFSETSTOP last, none twice. */
+/* offsets are aligned down to frames and sorted; each below the size or DSBPN_OFFSETSTOP last, none twice. */
 static HRESULT STDMETHODCALLTYPE notify_set(IDirectSoundNotify *This, DWORD count, LPCDSBPOSITIONNOTIFY notifies)
 {
     DSBUFFER *b = from_notify(This);
@@ -926,7 +926,7 @@ static ULONG STDMETHODCALLTYPE props_release(IKsPropertySet *This)
     return DsBufferRelease(from_props(This));
 }
 
-/* no property set reaches a driver: eax and its kin are for hardware the engine never had. */
+/* no property set reaches a driver: eax and similar sets are for hardware the engine never had. */
 static HRESULT STDMETHODCALLTYPE props_get(IKsPropertySet *This, REFGUID set, ULONG id, LPVOID instance,
                                            ULONG instance_size, LPVOID data, ULONG data_size, PULONG returned)
 {

@@ -755,7 +755,6 @@ static const USAGE_NAME NAMES[] = {
     {0x1AAB, L"Create New Effect"},
 };
 
-/* the base of each usage page whose usages have names. */
 static USHORT page_base(USHORT page)
 {
     switch (page) {

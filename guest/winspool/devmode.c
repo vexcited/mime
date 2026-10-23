@@ -1,11 +1,8 @@
-/*
- * device modes: validation, document properties and device capabilities.
- * without printer drivers no device can be queried.
- */
+/* device mode validation, document properties and device capabilities. */
 #include "winspool_private.h"
 #include <stddef.h>
 
-/* the device mode size each field needs, the end offset of its member. */
+/* minimum dmSize for each field, including its full member. */
 #define FIELD_END(type, member) (offsetof(type, member) + sizeof(((type *)0)->member))
 #define DEVMODE_FIELDS(type)                                                                                      \
     {                                                                                                             \
@@ -49,7 +46,7 @@ typedef struct {
 static const SpoolDevmodeField g_fields_w[] = DEVMODE_FIELDS(DEVMODEW);
 static const SpoolDevmodeField g_fields_a[] = DEVMODE_FIELDS(DEVMODEA);
 
-/* checks the header, then that every field dmFields announces fits in dmSize. */
+/* checks the header, then verifies every field in dmFields fits in dmSize. */
 static BOOL SpoolCheckFields(const SpoolDevmodeField *fields, SIZE_T count, DWORD present, WORD size, WORD extra,
                              SIZE_T minimum)
 {
@@ -64,7 +61,7 @@ static BOOL SpoolCheckFields(const SpoolDevmodeField *fields, SIZE_T count, DWOR
     return TRUE;
 }
 
-/* validates a unicode device mode and terminates its names, as the spooler client does. */
+/* validates a Unicode device mode and terminates its names. */
 static BOOL SpoolValidDevmodeW(PDEVMODEW dm)
 {
     if (!dm || dm == (PDEVMODEW)(LONG_PTR)-1 ||
@@ -113,7 +110,7 @@ DECLSPEC_EXPORT BOOL WINAPI IsValidDevmodeA(PDEVMODEA devmode, SIZE_T size)
 
 /* ------------------------------------------------------------------ document properties */
 
-/* the printer a call names: by its handle, else by the device name which is opened for the call. */
+/* uses the supplied printer handle or opens the named device for this call. */
 static int SpoolDeviceOf(HANDLE printer, LPCWSTR device)
 {
     if (printer) {
@@ -133,9 +130,8 @@ static int SpoolDeviceOf(HANDLE printer, LPCWSTR device)
 }
 
 /*
- * after the mode checks windows opens the device when no handle is given, then validates the handle. a
- * mode of 0 asks for the size of the output; DM_IN_BUFFER merges the input into the settings, DM_PROMPT
- * lets the user change them and answers IDOK or IDCANCEL, DM_OUT_BUFFER writes them, DM_UPDATE keeps them.
+ * validates modes, opens the named device if needed, then validates the handle. mode 0 queries size; DM_IN_BUFFER
+ * merges settings, DM_PROMPT returns IDOK or IDCANCEL, DM_OUT_BUFFER writes settings and DM_UPDATE saves them.
  */
 static LONG SpoolDocumentProperties(HWND window, HANDLE printer, LPCWSTR device, PDEVMODEW output,
                                     const DEVMODEW *input, DWORD mode)
@@ -207,7 +203,7 @@ DECLSPEC_EXPORT LONG WINAPI DocumentPropertiesA(HWND window, HANDLE printer, LPS
     return result;
 }
 
-/* the page of the driver's own options: this driver has none beyond the preferences. */
+/* this driver has no options beyond the printing preferences. */
 DECLSPEC_EXPORT LONG WINAPI AdvancedDocumentPropertiesW(HWND window, HANDLE printer, LPWSTR device,
                                                               PDEVMODEW output, PDEVMODEW input)
 {
@@ -277,7 +273,7 @@ static int SpoolCapNames(const WCHAR **names, int count, void *output, int width
     return count;
 }
 
-/* the answers of DeviceCapabilities, wide: the callers that want ANSI text pass ansi. */
+/* DeviceCapabilities results, optionally converted to ANSI text. */
 static int SpoolCapabilities(int index, WORD capability, void *output, const DEVMODEW *devmode, BOOL ansi)
 {
     (void)devmode;

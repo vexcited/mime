@@ -1,7 +1,6 @@
 /*
- * the category manager and the display attribute manager. a guid atom stands for a guid within the process, the
- * way a property carries it; the display attributes are the ones the host's input method uses, as there are no
- * text services registering their own.
+ * the category manager and the display attribute manager. a guid atom stands for a guid within the process, as a
+ * property carries it. the display attributes are the host input method's, since no text services register their own.
  */
 #include "msctf_private.h"
 
@@ -342,7 +341,7 @@ static ULONG STDMETHODCALLTYPE cat_release(ITfCategoryMgr *This)
     return refs;
 }
 
-/* registrations go to the registry of the text services installed, of which there are none. */
+/* registrations go to the registry of installed text services, of which there are none. */
 static HRESULT STDMETHODCALLTYPE cat_register(ITfCategoryMgr *This, REFCLSID clsid, REFGUID catid, REFGUID guid)
 {
     return E_ACCESSDENIED;

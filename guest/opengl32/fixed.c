@@ -1,7 +1,7 @@
 /*
- * the state of the fixed function pipeline: matrix stacks, lighting, fog, the texture environment and the
- * capabilities that switch them. a draw without a program packs it into the uniform array of the built-in program
- * in fixedshader.c when it changed. Matrices are column major floats, as gl keeps them.
+ * fixed function pipeline state: matrix stacks, lighting, fog, the texture environment and their capabilities. a draw
+ * without a program packs it into the built-in program's uniform array, see fixedshader.c, when it changed. matrices
+ * are column major floats, as GL keeps them.
  */
 #include "fixed.h"
 
@@ -275,7 +275,7 @@ GLAPI void APIENTRY glMultTransposeMatrixdARB(const GLdouble *m)
     glMultTransposeMatrixd(m);
 }
 
-/* the depths are the stack's limits less one: an entry more fits while the top is below the last slot. */
+/* the depths are the stack limits minus one: another entry fits while the top is below the last slot. */
 static GLint stack_limit(GlContext *ctx)
 {
     switch (ctx->ff.matrix_mode) {
@@ -420,7 +420,7 @@ GLAPI void APIENTRY glFrustum(GLdouble left, GLdouble right, GLdouble bottom, GL
     multiply_top(ctx, m);
 }
 
-/* sine and cosine of an angle in degrees, exact at the multiples of ninety. */
+/* splits degrees into a quadrant and a small angle in radians, so multiples of ninety stay exact. */
 static double reduce(double degrees, int *quadrant)
 {
     double turns = degrees / 90.0;
@@ -429,7 +429,7 @@ static double reduce(double degrees, int *quadrant)
     return (degrees - whole * 90.0) * 0.017453292519943295;
 }
 
-/* the sine and cosine of a small angle by their series, which is exact enough within a quarter turn. */
+/* the series is accurate enough within a quarter turn. */
 static void small_angle(double x, double *s, double *c)
 {
     double x2 = x * x;
@@ -477,7 +477,7 @@ static double cosine(double degrees)
     return c;
 }
 
-/* ---------------------------------------------------------------- shading and the texture environment */
+/* ---------------------------------------------------------------- shading and texture environment */
 
 GLAPI void APIENTRY glShadeModel(GLenum mode)
 {
@@ -616,7 +616,7 @@ GLAPI void APIENTRY glTexEnviv(GLenum target, GLenum pname, const GLint *params)
     tex_env(ctx, target, pname, v, TRUE);
 }
 
-/* the values of a texture environment parameter; returns how many, or 0 after raising the error. */
+/* returns how many values, or 0 after raising the error. */
 static int get_tex_env(GlContext *ctx, GLenum target, GLenum pname, GLfloat *v)
 {
     GlFixed *f = &ctx->ff;
@@ -789,7 +789,6 @@ static int light_size(GLenum pname)
     }
 }
 
-/* ints[] tells the values are integers, whose colors are scaled. */
 static void light(GlContext *ctx, GLenum light_enum, GLenum pname, const GLfloat *v, BOOL vector)
 {
     GlLight *l = light_of(ctx, light_enum);
@@ -996,7 +995,7 @@ GLAPI void APIENTRY glLightModeliv(GLenum pname, const GLint *params)
     light_model(ctx, pname, v, TRUE);
 }
 
-/* which material parameter the color material follows, as the shader numbers them; 0 for none. */
+/* the material parameter the color material follows, numbered as in the shader; 0 for none. */
 static int tracked_parameter(const GlFixed *f)
 {
     if (!f->color_material)
@@ -1204,7 +1203,7 @@ GLAPI void APIENTRY glGetMaterialiv(GLenum face, GLenum pname, GLint *params)
         params[i] = color ? color_to_int(v[i]) : (GLint)(v[i] < 0 ? v[i] - 0.5f : v[i] + 0.5f);
 }
 
-/* ---------------------------------------------------------------- the render mode */
+/* ---------------------------------------------------------------- render mode */
 
 #define NAME_STACK_DEPTH 128
 
@@ -1305,7 +1304,7 @@ GLAPI void APIENTRY glPassThrough(GLfloat token)
 
 /* ---------------------------------------------------------------- capabilities */
 
-/* the capabilities that only have to read back what was set: the rest of the fixed function ones. */
+/* fixed function capabilities that only need to read back what was set. */
 static const GLenum g_stored_caps[] = {
     GL_LINE_SMOOTH,        GL_POINT_SMOOTH,       GL_POLYGON_SMOOTH,    GL_LINE_STIPPLE,      GL_POLYGON_STIPPLE,
     GL_AUTO_NORMAL,        GL_COLOR_LOGIC_OP,     GL_INDEX_LOGIC_OP,    GL_TEXTURE_GEN_S,     GL_TEXTURE_GEN_T,
@@ -1330,7 +1329,7 @@ static int stored_index(GLenum cap)
     return -1;
 }
 
-/* a capability of the fixed function pipeline: TRUE when it is one, whatever it did. */
+/* TRUE when cap belongs to the fixed function pipeline, whatever it did. */
 BOOL gl_ff_capability(GlContext *ctx, GLenum cap, BOOL on)
 {
     GlFixed *f = &ctx->ff;
@@ -1380,7 +1379,7 @@ BOOL gl_ff_capability(GlContext *ctx, GLenum cap, BOOL on)
     return TRUE;
 }
 
-/* the client states that exist without doing anything: edge flags, color indexes, secondary colors, fog coordinates. */
+/* client states accepted but doing nothing: edge flags, color indexes, secondary colors, fog coordinates. */
 int gl_ff_unused_array(GLenum cap)
 {
     switch (cap) {
@@ -1453,7 +1452,7 @@ static int array_query(GlContext *ctx, int which, GLenum kind, GLdouble *v)
     return 1;
 }
 
-/* the values of the fixed function state that glGet reads; returns how many, 0 for a name that is not its own. */
+/* the fixed function values glGet reads; returns how many, 0 for a name it does not own. */
 int gl_ff_get(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
 {
     GlFixed *f = &ctx->ff;
@@ -1642,7 +1641,7 @@ int gl_ff_get(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
     return 16;
 }
 
-/* ---------------------------------------------------------------- the uniform array */
+/* ---------------------------------------------------------------- uniform array */
 
 static GLfloat texture_format_bits(GLenum internal)
 {
@@ -1784,7 +1783,7 @@ void gl_ff_pack(GlContext *ctx, GLfloat (*u)[4])
         set4(u[FF_U_NORMAL + c], n[c * 3], n[c * 3 + 1], n[c * 3 + 2], 0);
     put_matrix(&u[FF_U_TEXMAT], f->texture[0][f->texture_depth[0]]);
 
-    /* the alpha function is numbered from never, and always means the test is off. */
+    /* the alpha function counts from GL_NEVER, and always means the test is off. */
     GLfloat func = f->alpha_test ? (GLfloat)(f->alpha_func - GL_NEVER) : 7;
     GLfloat fogmode = !f->fog ? 0 : f->fog_mode == GL_LINEAR ? 1 : f->fog_mode == GL_EXP ? 2 : 3;
     set4(u[FF_U_FLAGS0], f->lighting, func, f->alpha_ref, fogmode);

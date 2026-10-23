@@ -1,9 +1,9 @@
 /*
  * writing: EM_STREAMOUT of plain text and rtf, and the rtf writer the
- * clipboard shares. the rtf is what windows' control writes: a font and
- * a color table, \viewkind4\uc1, then paragraphs with the differences of
- * their formats, characters outside the code page as \u with a ?
- * fallback, and the final paragraph mark as \par.
+ * clipboard shares. the rtf matches what windows writes: a font and a color
+ * table, \viewkind4\uc1, then paragraphs with their format differences,
+ * characters outside the code page as \u with a ? fallback, and the final
+ * paragraph mark as \par.
  */
 #include "richedit_private.h"
 
@@ -346,7 +346,7 @@ char *ReWriteRtf(RE *e, UINT from, UINT to, UINT *size)
     return o.data;
 }
 
-/* hands bytes to the application in chunks; FALSE once it fails or takes less. */
+/* hands bytes to the application in chunks. FALSE once it fails or takes less. */
 static BOOL write_out(EDITSTREAM *es, const BYTE *data, UINT size, LONG *written)
 {
     while (size) {

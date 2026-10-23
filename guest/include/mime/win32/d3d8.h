@@ -1,9 +1,7 @@
 /*
- * direct3d 8: the types that differ from direct3d 9's, the d3dvsd tokens
- * of vertex declarations and the interfaces, in windows' method order.
- * the types both versions share come from d3d9types.h. a file that
- * includes d3d9.h first gets the types of this header with an 8 after
- * their names.
+ * direct3d 8: the types that differ from direct3d 9, the d3dvsd vertex declaration tokens and the interfaces, in
+ * windows' method order. shared types come from d3d9types.h. when d3d9.h is included first, this header's types
+ * get an 8 appended to their names.
  */
 #ifndef MIME_WIN32_D3D8_H
 #define MIME_WIN32_D3D8_H
@@ -64,7 +62,7 @@ typedef DWORD D3DSWAPEFFECT;
 #define D3DERR_DRIVERINVALIDCALL MAKE_D3DHRESULT(2157)
 #endif
 
-/* the swap effect, states and caps direct3d 9 renamed or dropped. */
+/* the swap effect, states and caps that direct3d 9 renamed or dropped. */
 #define D3DSWAPEFFECT_COPY_VSYNC 4
 #define D3DCAPS2_NO2DDURING3DSCENE 0x00000002
 #define D3DCAPS2_CANRENDERWINDOWED 0x00080000
@@ -171,7 +169,7 @@ typedef D3DCLIPSTATUS9 D3DCLIPSTATUS8;
 #define D3DVSDE_POSITION2 15
 #define D3DVSDE_NORMAL2 16
 
-/* ------------------------------------------------------------------ the types of their own */
+/* ------------------------------------------------------------------ types of its own */
 
 typedef struct MIME_D3D8_NAME(_D3DPRESENT_PARAMETERS_) {
     UINT BackBufferWidth, BackBufferHeight;
@@ -211,7 +209,7 @@ typedef struct MIME_D3D8_NAME(_D3DVOLUME_DESC) {
 #define D3D8_SURFACE_DESC MIME_D3D8_NAME(D3DSURFACE_DESC)
 #define D3D8_VOLUME_DESC MIME_D3D8_NAME(D3DVOLUME_DESC)
 
-/* windows packs the direct3d 8 types to 4 bytes, which the driver version needs. */
+/* windows packs the direct3d 8 types to 4 bytes, which matters for DriverVersion. */
 #pragma pack(push, 4)
 typedef struct _D3DADAPTER_IDENTIFIER8 {
     char Driver[512];

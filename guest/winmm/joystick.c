@@ -1,9 +1,7 @@
 /*
- * the legacy joystick api, as windows' winmm builds it on directinput 5:
- * dinput.dll's joystick configuration names the device of an id, which is
- * opened once and read through a private data format whose slots winmm
- * assigns from the device's objects. records unused for two to three
- * minutes are closed by a monitor thread. see docs/winmm.md.
+ * legacy joystick API over DirectInput 5. dinput.dll's joystick configuration maps IDs to devices. each device is
+ * opened once with a private data format built from its objects; a monitor closes records unused for two to three
+ * minutes.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -22,7 +20,7 @@ typedef HRESULT(WINAPI *DIRECTINPUTCREATEW)(HINSTANCE, DWORD, IDirectInputW **, 
 typedef struct JOYSTICK {
     IDirectInputDevice2W *device;
     DWORD di_buttons;
-    DWORD mode;      /* JOY_RETURNRAWDATA and JOY_USEDEADZONE as programmed */
+    DWORD mode;      /* JOY_RETURNRAWDATA and JOY_USEDEADZONE as programmed. */
     HWND capture;
     UINT period;
     UINT threshold;
@@ -47,7 +45,7 @@ static JOYINFO g_previous[2];
 static BOOL g_monitor;
 static HANDLE g_event;
 
-/* the first call of a process: the message, and the wheel option windows creates in the registry. */
+/* initializes the process's message and the wheel option Windows creates in the registry. */
 static BOOL CALLBACK init_once(INIT_ONCE *once, void *parameter, void **context)
 {
     g_changed_message = RegisterWindowMessageW(L"MSJSTICK_VJOYD_MSGSTR");
@@ -99,7 +97,7 @@ static void reset_format(void)
     memset(g_candidates, 0, sizeof(g_candidates));
 }
 
-/* windows' categories of the objects dinput.dll shows an old version: usages first, then guids. */
+/* categorizes the objects exposed to old DirectInput versions by usage, then GUID. */
 static BOOL CALLBACK classify(LPCDIDEVICEOBJECTINSTANCEW o, void *context)
 {
     if (o->dwSize < 28)
@@ -133,7 +131,7 @@ static BOOL CALLBACK classify(LPCDIDEVICEOBJECTINSTANCEW o, void *context)
     if (index <= C_RZ && !(o->dwType & DIDFT_AXIS))
         return DIENUM_CONTINUE;
     CANDIDATE *c = &g_candidates[index];
-    /* axes and the pov keep the first, buttons the last. */
+    /* axes and the POV keep the first, buttons the last. */
     if (index <= C_POV && c->present)
         return DIENUM_CONTINUE;
     *c = (CANDIDATE){o->guidType, o->dwType, o->dwFlags, TRUE};
@@ -148,7 +146,7 @@ static void assign(int slot, int candidate)
     g_slots[slot].dwFlags = c->flags;
 }
 
-/* windows' AssignMappings: the slots each axis may take, in order, and the caps they give. */
+/* candidate slots for each axis, in priority order, and their capabilities. */
 static void assign_slots(JOYCAPSW *caps)
 {
     BOOL used[CANDIDATES] = {};
@@ -245,7 +243,7 @@ static void close_all(void)
         close_joystick(i);
 }
 
-/* windows' joyOpen, with the lock held: the cached record, else the device found, mapped and acquired. */
+/* returns the cached device or finds, maps and acquires it. the lock must be held. */
 static HRESULT open_joystick(UINT id, JOYCAPSW *caps_out)
 {
     if (id >= MAX_JOYSTICKS)
@@ -323,7 +321,7 @@ static HRESULT open_joystick(UINT id, JOYCAPSW *caps_out)
         LocalFree(j);
         return hr;
     }
-    /* the pedals of a wheel would be combined here: windows' test needs a brake in the v slot, which nothing takes. */
+    /* wheel pedals would be combined here, but the required brake slot V is never assigned. */
     caps.wMid = LOWORD(info.guidProduct.Data1);
     caps.wPid = HIWORD(info.guidProduct.Data1);
     lstrcpynW(caps.szPname, L"Microsoft PC-joystick driver", MAXPNAMELEN);
@@ -437,9 +435,8 @@ WINMMAPI MMRESULT WINAPI joyGetDevCapsA(UINT_PTR id, LPJOYCAPSA caps, UINT size)
 }
 
 /*
- * windows' mode switch: raw before the dead zone, each switch leaving the
- * device unacquired. turning one off clears the other's cached bit, so
- * the dead zone can stay programmed while winmm thinks it gone.
+ * switch raw mode before dead zone mode; each switch unacquires the device. disabling either clears the other's
+ * cached bit, so the dead zone may remain programmed after winmm forgets it.
  */
 static BOOL switch_mode(JOYSTICK *j, DWORD wanted)
 {
@@ -576,11 +573,7 @@ static DWORD distance(UINT a, UINT b)
     return a > b ? a - b : b - a;
 }
 
-/*
- * windows' poll callback: it reads the joystick of the capture's index,
- * not the captured id, and posts buttons one to four, moves and z moves
- * to the capture window.
- */
+/* polls the capture's index, not its joystick ID, and posts buttons 1 to 4, movement and Z movement. */
 static void CALLBACK poll(HWND hwnd, UINT msg, UINT_PTR event, DWORD time)
 {
     RtlEnterCriticalSection(&g_lock);
@@ -680,7 +673,7 @@ WINMMAPI MMRESULT WINAPI joyConfigChanged(DWORD flags)
     return JOYERR_NOERROR;
 }
 
-/* the devices go with the dll, directinput's objects too unless dinput.dll already went. */
+/* closes devices and releases DirectInput objects unless dinput.dll has already unloaded. */
 void WinmmJoyDetach(void)
 {
     if (g_event) {
@@ -703,7 +696,7 @@ void WinmmJoyDetach(void)
 }
 
 #ifdef __i386__
-/* the 16-bit thunk of ntvdm, which a 32-bit process under wow64 never has. */
+/* the 16-bit thunk of NTVDM, which a 32-bit process under WOW64 never has. */
 WINMMAPI MMRESULT WINAPI joy32Message(UINT id, UINT msg, DWORD_PTR p1, DWORD_PTR p2, UINT size)
 {
     return 97;

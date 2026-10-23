@@ -1,8 +1,4 @@
-/*
- * direct3d 11 shader reflection: what d3dcompiler_47.dll's D3DReflect
- * reads from a compiled shader. the interfaces and their method order are
- * windows', as programs call them through the vtables.
- */
+/* direct3d 11 shader reflection, from d3dcompiler_47.dll's D3DReflect, in windows' vtable order. */
 #ifndef MIME_WIN32_D3D11SHADER_H
 #define MIME_WIN32_D3D11SHADER_H
 
@@ -178,7 +174,7 @@ typedef enum D3D_MIN_PRECISION {
     D3D_MIN_PRECISION_ANY_10 = 0xF1
 } D3D_MIN_PRECISION;
 
-/* the input primitives of geometry shaders, patches being 8 + control points. */
+/* geometry shader input primitives. a patch of n control points is 7 + n. */
 typedef enum D3D_PRIMITIVE {
     D3D_PRIMITIVE_UNDEFINED = 0,
     D3D_PRIMITIVE_POINT = 1,
@@ -213,7 +209,6 @@ typedef enum D3D_TESSELLATOR_OUTPUT_PRIMITIVE {
     D3D_TESSELLATOR_OUTPUT_TRIANGLE_CCW = 4
 } D3D_TESSELLATOR_OUTPUT_PRIMITIVE;
 
-/* GetRequiresFlags. */
 #define D3D_SHADER_REQUIRES_DOUBLES 0x00000001
 #define D3D_SHADER_REQUIRES_EARLY_DEPTH_STENCIL 0x00000002
 #define D3D_SHADER_REQUIRES_UAVS_AT_EVERY_STAGE 0x00000004
@@ -224,7 +219,7 @@ typedef enum D3D_TESSELLATOR_OUTPUT_PRIMITIVE {
 #define D3D_SHADER_REQUIRES_LEVEL_9_COMPARISON_FILTERING 0x00000080
 #define D3D_SHADER_REQUIRES_TILED_RESOURCES 0x00000100
 
-/* the program type of a version, as D3D11_SHADER_DESC holds it. */
+/* the program type in a D3D11_SHADER_DESC version. */
 #define D3D11_SHVER_PIXEL_SHADER 0
 #define D3D11_SHVER_VERTEX_SHADER 1
 #define D3D11_SHVER_GEOMETRY_SHADER 2
@@ -414,7 +409,7 @@ struct ID3D11ShaderReflection {
 };
 
 MIME_DEFINE_GUID(IID_ID3D11ShaderReflection, 0x8D536CA1, 0x0CCA, 0x4956, 0xA8, 0x37, 0x78, 0x69, 0x63, 0x75, 0x55, 0x84);
-/* the direct3d 12 reflection, which D3DReflect also answers. */
+/* D3DReflect also answers the direct3d 12 reflection. */
 MIME_DEFINE_GUID(IID_ID3D12ShaderReflection, 0x5A58797D, 0xA72C, 0x478D, 0x8B, 0xA2, 0xEF, 0xC6, 0xB0, 0xEF, 0xE8, 0x8E);
 
 #endif

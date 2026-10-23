@@ -1,6 +1,6 @@
 /*
- * visual style property ids and enumerated values, the TMT_ constants of
- * vssym32.h. part and state ids of each class are left to the callers.
+ * visual style property ids and enumerated values, the TMT_ constants of vssym32.h.
+ * callers define the part and state ids of each class.
  */
 #ifndef MIME_WIN32_VSSYM32_H
 #define MIME_WIN32_VSSYM32_H

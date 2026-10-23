@@ -1,6 +1,4 @@
-/*
- * window, class, coordinate and dpi services.
- */
+/* window, class, coordinate and dpi services. */
 #include "user32_private.h"
 #include <mime/stub.h>
 
@@ -120,7 +118,7 @@ WINUSERAPI int WINAPI GetClassNameW(HWND hwnd, LPWSTR buffer, int count)
     return NtUserGetClassName(hwnd, FALSE, &s);
 }
 
-/* the class name of the system class a window is built on; mime keeps no superclass link, so it is the real name. */
+/* mime keeps no superclass link, so this is the real class name. */
 WINUSERAPI UINT WINAPI RealGetWindowClassW(HWND hwnd, LPWSTR buffer, UINT count)
 {
     if (!count || !buffer)
@@ -171,7 +169,6 @@ WINUSERAPI DWORD WINAPI GetClassLongA(HWND hwnd, int index)
     return (DWORD)GetClassLongPtrA(hwnd, index);
 }
 
-/* the atom of the class or a word of its extra bytes, 0 with the last error set for a window or an index it has not. */
 WINUSERAPI WORD WINAPI GetClassWord(HWND hwnd, int index)
 {
     if (!IsWindow(hwnd)) {
@@ -181,7 +178,7 @@ WINUSERAPI WORD WINAPI GetClassWord(HWND hwnd, int index)
     return (WORD)NtUserCallHwndParam(hwnd, (ULONG_PTR)(LONG_PTR)index, MIME_HWNDPARAM_GETCLASSWORD);
 }
 
-/* the 32 bit form: on a 32 bit program it is also the one for pointer sized values. */
+/* in a 32-bit program this is also the pointer sized form. */
 WINUSERAPI DWORD WINAPI SetClassLongW(HWND hwnd, int index, LONG value)
 {
 #ifdef __i386__
@@ -253,7 +250,7 @@ WINUSERAPI BOOL WINAPI MoveWindow(HWND hwnd, int x, int y, int width, int height
 
 /* ------------------------------------------------------------------ deferred positions */
 
-/* the positions are collected, then applied in order by EndDeferWindowPos. */
+/* collected, then applied in order by EndDeferWindowPos. */
 typedef struct DEFER_POS {
     DWORD Magic;
     UINT Count;
@@ -261,7 +258,7 @@ typedef struct DEFER_POS {
     WINDOWPOS *Items;
 } DEFER_POS;
 
-#define DEFER_MAGIC 0x50574444u /* DDWP. */
+#define DEFER_MAGIC 0x50574444u /* DDWP */
 
 static DEFER_POS *defer_pos(HDWP dwp)
 {
@@ -406,7 +403,6 @@ WINUSERAPI BOOL WINAPI IsWindowEnabled(HWND hwnd)
     return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISENABLED);
 }
 
-/* a minimized window comes back to the size and place it had. */
 WINUSERAPI BOOL WINAPI OpenIcon(HWND hwnd)
 {
     if (!IsIconic(hwnd))
@@ -415,7 +411,7 @@ WINUSERAPI BOOL WINAPI OpenIcon(HWND hwnd)
     return TRUE;
 }
 
-/* a window that asks for the messages of the shell about the windows of other programs gets none: nothing here makes them. */
+/* nothing here generates shell hook messages, so the window never gets any. */
 WINUSERAPI BOOL WINAPI RegisterShellHookWindow(HWND hwnd)
 {
     return IsWindow(hwnd);
@@ -426,7 +422,7 @@ WINUSERAPI BOOL WINAPI DeregisterShellHookWindow(HWND hwnd)
     return IsWindow(hwnd);
 }
 
-/* icons are read from the resources of a file by the shell, whose function this stands behind: the file has none here. */
+/* the shell extracts icons from file resources; no file has any here. */
 WINUSERAPI UINT WINAPI PrivateExtractIconsW(LPCWSTR file, int index, int cx, int cy, HICON *icons, UINT *ids, UINT count,
                                            UINT flags)
 {
@@ -443,7 +439,7 @@ WINUSERAPI BOOL WINAPI IsIconic(HWND hwnd)
     return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISICONIC);
 }
 
-/* minimizes a window: the name is older than the one of the button, nothing is destroyed. A window that is none fails. */
+/* despite the name this minimizes the window, nothing is destroyed. */
 WINUSERAPI BOOL WINAPI CloseWindow(HWND hwnd)
 {
     if (!IsWindow(hwnd)) {
@@ -459,7 +455,7 @@ WINUSERAPI BOOL WINAPI IsZoomed(HWND hwnd)
     return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISZOOMED);
 }
 
-/* whether the window procedure takes unicode messages, which follows how the window or its class was made. */
+/* follows how the window or its class was registered. */
 WINUSERAPI BOOL WINAPI IsWindowUnicode(HWND hwnd)
 {
     return (BOOL)NtUserCallHwnd(hwnd, MIME_HWND_ISUNICODE);
@@ -560,7 +556,7 @@ WINUSERAPI HWND WINAPI WindowFromPoint(POINT pt)
                                     MIME_TWOPARAM_WINDOWFROMPOINT);
 }
 
-/* the first child that contains the point and passes the CWP_ filters, the parent itself otherwise. */
+/* returns the parent itself when no child matches. */
 WINUSERAPI HWND WINAPI ChildWindowFromPointEx(HWND parent, POINT pt, UINT flags)
 {
     RECT client;
@@ -586,7 +582,7 @@ WINUSERAPI HWND WINAPI ChildWindowFromPointEx(HWND parent, POINT pt, UINT flags)
     return parent;
 }
 
-/* like ChildWindowFromPointEx skipping invisible and transparent children, group boxes only win when nothing else does. */
+/* skips invisible and transparent children; group boxes only win when nothing else does. */
 WINUSERAPI HWND WINAPI RealChildWindowFromPoint(HWND parent, POINT pt)
 {
     RECT client;
@@ -615,7 +611,7 @@ WINUSERAPI HWND WINAPI RealChildWindowFromPoint(HWND parent, POINT pt)
 
 /* ------------------------------------------------------------------ owned popups */
 
-/* win32k keeps no last active popup, the active window stands for it when hwnd owns it. */
+/* win32k keeps no last active popup, so the active window stands in when hwnd owns it. */
 WINUSERAPI HWND WINAPI GetLastActivePopup(HWND hwnd)
 {
     if (!IsWindow(hwnd))
@@ -650,7 +646,7 @@ static BOOL CALLBACK show_owned_popup(HWND hwnd, LPARAM param)
     return TRUE;
 }
 
-/* hides the visible popups of the owner, and shows again only those it hid. */
+/* shows again only the popups it hid. */
 WINUSERAPI BOOL WINAPI ShowOwnedPopups(HWND owner, BOOL show)
 {
     if (!IsWindow(owner)) {
@@ -684,7 +680,7 @@ WINUSERAPI LONG WINAPI GetWindowLongA(HWND hwnd, int index)
     return (LONG)GetWindowLongPtrW(hwnd, index);
 }
 
-/* a 32-bit pointer is a long, so 32-bit programs write four bytes of window extra. */
+/* a 32-bit pointer is a long, so 32-bit programs write four bytes. */
 WINUSERAPI LONG_PTR WINAPI SetWindowLongPtrW(HWND hwnd, int index, LONG_PTR value)
 {
 #ifdef _WIN64
@@ -731,9 +727,8 @@ WINUSERAPI BOOL WINAPI SetWindowTextA(HWND hwnd, LPCSTR text)
 }
 
 /*
- * a window of another process never gets WM_GETTEXT, which its owner might be too busy to answer: the default
- * procedure reads the text the system keeps for the window, so a control that holds its own text, as an edit does,
- * shows only its title. windows of the calling process ask their procedure.
+ * a window of another process never gets WM_GETTEXT, since its owner may be too busy to answer. the stored title
+ * is read instead, so a control like an edit shows only its title. windows of this process ask their procedure.
  */
 static LRESULT window_text_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi)
 {
@@ -817,8 +812,8 @@ WINUSERAPI BOOL WINAPI EnumWindows(WNDENUMPROC proc, LPARAM param)
 }
 
 /*
- * the top level windows of a desktop. Mime keeps one tree of windows for every desktop of a window station, so the
- * windows of the desktop a handle names are those of the one tree, a guess; a handle that is no desktop is refused.
+ * mime keeps one window tree for all desktops of a window station, so every desktop gets the same windows.
+ * a handle that is no desktop is refused.
  */
 WINUSERAPI BOOL WINAPI EnumDesktopWindows(HDESK desktop, WNDENUMPROC proc, LPARAM param)
 {
@@ -999,7 +994,7 @@ WINUSERAPI BOOL WINAPI IsProcessDPIAware(void)
     return UserDpiAwareness != 0;
 }
 
-/* the awareness a manifest set cannot change, as windows refuses with access denied. */
+/* like windows, a manifest set awareness cannot change: access denied. */
 WINUSERAPI BOOL WINAPI SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
 {
     LONG_PTR value = (LONG_PTR)context;
@@ -1135,14 +1130,14 @@ static HMONITOR monitor_handle(ULONG index)
     return (HMONITOR)(ULONG_PTR)(FIRST_MONITOR + index);
 }
 
-/* the monitors, the primary first: how many of them. */
+/* primary first, returns the count. */
 static ULONG get_monitors(MIME_MONITOR_INFO *list)
 {
     ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
     return count > MIME_USER_MAX_MONITORS ? 0 : count;
 }
 
-/* the monitor most of the rectangle is on; else what the flags ask for, the nearest or the primary or none. */
+/* the monitor holding most of the rectangle, else the nearest, the primary or none as flags ask. */
 static HMONITOR monitor_for(const RECT *rect, DWORD flags)
 {
     if (flags > MONITOR_DEFAULTTONEAREST) {
@@ -1158,7 +1153,7 @@ static HMONITOR monitor_for(const RECT *rect, DWORD flags)
         LONG64 area = 0;
         if (IntersectRect(&overlap, rect, &list[i].Rect))
             area = (LONG64)(overlap.right - overlap.left) * (overlap.bottom - overlap.top);
-        /* a point is an empty rectangle that still counts inside. */
+        /* a point is an empty rectangle that still counts as inside. */
         else if (rect->left == rect->right && rect->top == rect->bottom && rect->left >= list[i].Rect.left &&
                  rect->left < list[i].Rect.right && rect->top >= list[i].Rect.top && rect->top < list[i].Rect.bottom)
             area = 1;
@@ -1243,7 +1238,7 @@ WINUSERAPI BOOL WINAPI EnumDisplayMonitors(HDC dc, LPCRECT clip, MONITORENUMPROC
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    /* the handles are the ones of this moment: a monitor gone while the callbacks run is not asked about. */
+    /* the list is a snapshot taken before the callbacks run. */
     for (ULONG i = 0; i < count; i++) {
         RECT rect = list[i].Rect;
         if (clip && !IntersectRect(&rect, &rect, clip))

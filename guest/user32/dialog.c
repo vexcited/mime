@@ -10,8 +10,8 @@
 typedef struct DIALOG {
     HFONT Font;
     BOOL OwnsFont;
-    LONG BaseX;     /* average character width */
-    LONG BaseY;     /* character height */
+    LONG BaseX;     /* average character width. */
+    LONG BaseY;     /* character height. */
     UINT DefId;
     HWND FocusSave;
     BOOL Ended;
@@ -442,9 +442,8 @@ LRESULT CALLBACK DialogProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 /* ------------------------------------------------------------------ creation */
 
 /*
- * the message box font: lfMessageFont scaled from the session dpi with a
- * signed division that truncates toward zero, so -12 becomes -11 like on
- * windows. dialogs with point size 0x7FFF use it.
+ * lfMessageFont scaled to the session dpi. the signed division truncates toward zero, so -12 becomes -11 like on
+ * windows. dialogs with point size 0x7FFF use this font.
  */
 HFONT UserGetMessageBoxFont(UINT dpi)
 {

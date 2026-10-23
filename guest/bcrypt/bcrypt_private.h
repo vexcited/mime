@@ -1,4 +1,3 @@
-/* what the files of bcrypt.dll share. */
 #ifndef MIME_BCRYPT_PRIVATE_H
 #define MIME_BCRYPT_PRIVATE_H
 
@@ -9,11 +8,11 @@
 #ifndef STATUS_INTEGER_OVERFLOW
 #define STATUS_INTEGER_OVERFLOW ((NTSTATUS)0xC0000095L)
 #endif
-/* bcrypt hands out these two hresults for bad rsa blobs. */
+/* bcrypt returns these HRESULTs for bad rsa blobs. */
 #define NTE_BAD_DATA_STATUS ((NTSTATUS)0x80090005L)
 #define NTE_NOT_SUPPORTED_STATUS ((NTSTATUS)0x80090029L)
 
-/* the magics of windows' objects, kept so a handle looks the same to code that peeks at it. */
+/* windows' object magics, so code that peeks at a handle sees the same values. */
 #define ALG_MAGIC 0x55555551
 #define KEY_MAGIC 0x55555552
 #define HASH_MAGIC 0x55555553
@@ -21,7 +20,7 @@
 
 #define ALG_FLAG_PSEUDO 0x80000000u
 
-/* the chaining modes in the order of the primitive provider. */
+/* in the primitive provider's order. */
 enum { MODE_NA, MODE_CBC, MODE_ECB, MODE_CFB, MODE_CCM, MODE_GCM };
 
 enum {
@@ -37,16 +36,15 @@ typedef struct ALG_INFO {
     const WCHAR *name;
     ULONG id;
     ULONG iface;
-    /* hashes: the primitive and the provider's object lengths, plain and keyed. */
+    /* hashes: object lengths are the provider's, unkeyed and keyed. */
     const MimeHashAlg *hash;
     ULONG object_length;
     ULONG hmac_object_length;
-    /* ciphers: block size, key sizes in bytes, the modes allowed as a bit mask and the default. */
+    /* ciphers: key sizes in bytes, modes as a bit mask plus the default. */
     ULONG block;
     ULONG key_min, key_max, key_increment;
     ULONG modes;
     ULONG mode;
-    /* the curve of the named curve algorithms. */
     const MimeEcCurve *curve;
 } ALG_INFO;
 
@@ -106,7 +104,7 @@ typedef struct KEY {
     } u;
 } KEY;
 
-/* the head every key shares, so a handle tells its kind before its layout. */
+/* the header every key shares, so a handle's kind is known before its layout. */
 typedef struct KEY_HEADER {
     ULONG size;
     ULONG magic;
@@ -129,7 +127,7 @@ typedef struct KDF_KEY {
     UCHAR prk[MIME_HASH_MAX_DIGEST];
 } KDF_KEY;
 
-/* asymmetric keys are heap objects, as windows allocates them. */
+/* asymmetric keys are heap objects, like on windows. */
 typedef struct KEY_PAIR {
     ULONG size;
     ULONG magic;

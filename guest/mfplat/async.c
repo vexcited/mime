@@ -1,8 +1,7 @@
 /*
- * asynchronous results and the work queues that invoke their callbacks.
- * each queue is a thread of its own, started at its first item; the
- * standard queues share their ids with windows, the ones a program
- * allocates get ids of their own. see docs/mfplat.md.
+ * async results and the work queues that invoke their callbacks. each queue is a
+ * thread of its own, started at its first item. the standard queues share
+ * windows' ids, queues a program allocates get ids of their own.
  */
 #include "mfplat_private.h"
 
@@ -177,7 +176,7 @@ HRESULT WINAPI MFCreateAsyncResult(IUnknown *object, IMFAsyncCallback *callback,
     return MfAsyncResultCreate(object, callback, state, result);
 }
 
-/* the callback of a result mfplat created; other results have none it knows of. */
+/* only results mfplat created have a callback it knows of. */
 HRESULT WINAPI MFInvokeCallback(IMFAsyncResult *result)
 {
     if (!result)
@@ -196,7 +195,7 @@ static BOOL standard_queue(DWORD id)
     return id >= MFASYNC_CALLBACK_QUEUE_STANDARD && id <= MFASYNC_CALLBACK_QUEUE_LONG_FUNCTION;
 }
 
-/* the queue of id under the lock, the shared ones made at their first use. */
+/* call with the lock held. the shared queues are made at first use. */
 static WorkQueue *find_queue(DWORD id)
 {
     if (id == MFASYNC_CALLBACK_QUEUE_UNDEFINED)
@@ -257,7 +256,7 @@ static DWORD WINAPI queue_thread(void *parameter)
     return 0;
 }
 
-/* the result to the queue's thread, which calls its callback's Invoke. */
+/* hands the result to the queue's thread, which calls its callback's Invoke. */
 static HRESULT queue_result_locked(DWORD id, IMFAsyncResult *result)
 {
     if (!MfStarted() || g_stopping)
@@ -293,7 +292,7 @@ HRESULT MfQueueResult(DWORD queue, IMFAsyncResult *result)
     return hr;
 }
 
-/* stops every thread, dropping what was queued; MFStartup starts them again. */
+/* stops every thread and drops what was queued, MFStartup starts them again. */
 void MfWorkQueuesShutdown(void)
 {
     init();

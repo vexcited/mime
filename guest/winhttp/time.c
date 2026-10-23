@@ -1,6 +1,4 @@
-/*
- * http dates: WinHttpTimeFromSystemTime, WinHttpTimeToSystemTime and the parser of the systemtime header queries.
- */
+/* HTTP date conversion and SYSTEMTIME header parsing. */
 #include "winhttp_private.h"
 
 static const char *const Days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
@@ -10,7 +8,7 @@ static const char *const Months[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun
 #define WORD_ZONE (-3)
 #define WORD_UNKNOWN (-2)
 
-/* a day or month name by its first letters, as winhttp tells them apart. */
+/* match day and month names by their leading letters. */
 static int MapWord(const char *p)
 {
     char a = (char)(p[0] & 0xDF), b = (char)(p[1] & 0xDF), c = p[1] ? (char)(p[2] & 0xDF) : 0;

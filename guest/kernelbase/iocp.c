@@ -1,6 +1,4 @@
-/*
- * i/o completion ports over the kernel's IoCompletion objects.
- */
+/* i/o completion ports over the kernel's IoCompletion objects. */
 #include "kernelbase_private.h"
 
 typedef struct KB_FILE_COMPLETION_INFORMATION {

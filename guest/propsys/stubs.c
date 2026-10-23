@@ -1,4 +1,4 @@
-/* the exports mime does not implement, failing as windows does without the feature. */
+/* unimplemented exports, failing like windows does without the feature. */
 #include <mime/stubexport.h>
 
 MIME_STUB_RETURN("propsys", HRESULT, GetProxyDllInfo, 2, E_NOTIMPL)

@@ -1,15 +1,14 @@
 /*
- * gdi32 enhanced metafiles: the metafile objects, the metafile dcs and the
- * records they collect, and the functions that make, copy, read and delete
- * metafiles. what each drawing call records is in mfrecord.c, playback in
- * emfplay.c.
+ * enhanced metafiles: metafile objects, metafile dcs and their records, and
+ * the functions that make, copy, read and delete metafiles. per call
+ * recording is in mfrecord.c, playback in emfplay.c.
  *
  * like windows, a metafile dc is a win32k dc of the reference device that
- * keeps the dc state, while gdi32 writes the records: the header first,
- * then one record per call, objects created on their first selection with
- * the lowest free handle table index, and bounds in device units of the
- * reference device. closing it writes the end of file record and, without
- * a frame from the caller, the frame from the bounds.
+ * keeps the dc state while gdi32 writes the records: the header, then one
+ * record per call. objects are created on first selection at the lowest free
+ * handle table index, and bounds are in reference device units. closing
+ * writes the end of file record and, if the caller gave no frame, derives
+ * the frame from the bounds.
  */
 #include "emf_private.h"
 #include <mime/win32/winnls.h>
@@ -60,7 +59,7 @@ static void *heap_realloc(void *p, SIZE_T size)
     return RtlReAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, p, size);
 }
 
-/* what makes bits a metafile, as windows checks them. */
+/* the checks windows makes before accepting bits as a metafile. */
 BOOL EmfValid(const BYTE *data, DWORD size)
 {
     if (!data || size < 88)
@@ -70,7 +69,7 @@ BOOL EmfValid(const BYTE *data, DWORD size)
            h->nSize >= 88 && h->nSize <= h->nBytes && !(h->nBytes & 3) && h->nHandles;
 }
 
-/* takes the bits, allocated from the process heap. */
+/* takes ownership of bits allocated from the process heap. */
 HENHMETAFILE EmfCreateHandle(BYTE *data, DWORD size)
 {
     EMF *emf = heap_zalloc(sizeof(EMF));
@@ -160,7 +159,7 @@ static BOOL reserve(EMF_DC *emf, DWORD more)
     return TRUE;
 }
 
-/* a zeroed record of the type, its size rounded up to four bytes; valid until the next one. */
+/* a zeroed record, its size rounded up to four bytes; valid until the next call. */
 void *EmfRecordAlloc(EMF_DC *emf, DWORD type, DWORD size)
 {
     size = (size + 3) & ~3u;
@@ -175,7 +174,7 @@ void *EmfRecordAlloc(EMF_DC *emf, DWORD type, DWORD size)
     return r;
 }
 
-/* the capabilities of the reference device, kept since it may go away first. */
+/* kept since the reference device may go away first. */
 static void snapshot_caps(EMF_DC *emf, HDC ref)
 {
     for (int i = 0; i < EMF_CAPS; i++)
@@ -255,7 +254,7 @@ fail:
     return nullptr;
 }
 
-/* forgets the dc; its win32k dc goes too. */
+/* also deletes the underlying win32k dc. */
 void EmfDestroy(EMF_DC *emf, BOOL delete_file)
 {
     RtlAcquireSRWLockExclusive(&g_lock);
@@ -363,7 +362,7 @@ void EmfClipChanged(EMF_DC *emf)
     emf->ClipKnown = FALSE;
 }
 
-/* the device bounds of the clip and meta regions, as windows clips record bounds to them. */
+/* like windows, record bounds are clipped to the clip and meta regions. */
 static BOOL clip_bounds(EMF_DC *emf, RECT *out)
 {
     if (!emf->ClipKnown) {
@@ -566,8 +565,8 @@ static BOOL record_brush(EMF_DC *emf, DWORD index, HGDIOBJ brush)
 }
 
 /*
- * fonts are recorded as windows records them: the logical font, the full
- * name, style and script, then the design vector, 368 bytes for no axes.
+ * like windows: the logical font, the full name, style and script, then the
+ * design vector, 368 bytes with no axes.
  */
 #define EMF_FONT_RECORD 368u
 #define STAMP_DESIGNVECTOR 0x08007664u
@@ -582,7 +581,6 @@ static BOOL record_font(EMF_DC *emf, DWORD index, HGDIOBJ font)
         return FALSE;
     ((EMREXTCREATEFONTINDIRECTW *)r)->ihFont = index;
     ((EMREXTCREATEFONTINDIRECTW *)r)->elfw = lf;
-    /* the design vector follows the full name, style and script. */
     DWORD *dv = (DWORD *)(r + 12 + sizeof(LOGFONTW) + (LF_FULLFACESIZE + 2 * LF_FACESIZE) * sizeof(WCHAR));
     dv[0] = STAMP_DESIGNVECTOR;
     dv[1] = 0;
@@ -607,7 +605,7 @@ static BOOL record_palette(EMF_DC *emf, DWORD index, HPALETTE palette)
     return TRUE;
 }
 
-/* the handle table index of an object, created in the metafile on first use; 0 when it cannot be. */
+/* the object's handle table index, created in the metafile on first use; 0 on failure. */
 DWORD EmfObjectIndex(EMF_DC *emf, HGDIOBJ object, BOOL *created)
 {
     if (created)
@@ -676,7 +674,7 @@ void MfDeleteObject(HGDIOBJ object)
 
 /* ------------------------------------------------------------------ creating and closing */
 
-/* the length of a description, both strings and their two terminating nulls. */
+/* both strings and their two terminating nulls. */
 static UINT description_chars(LPCWSTR description)
 {
     if (!description)
@@ -730,7 +728,7 @@ WINGDIAPI HENHMETAFILE WINAPI CloseEnhMetaFile(HDC dc)
         SetLastError(ERROR_INVALID_HANDLE);
         return nullptr;
     }
-    /* unwinds the saved states to the first, as windows does. */
+    /* unwinds the saved states to the first, like windows. */
     RestoreDC(dc, 1);
     EMREOF *eof = EmfRecordAlloc(emf, EMR_EOF, sizeof(EMREOF));
     if (eof) {
@@ -897,7 +895,7 @@ WINGDIAPI HENHMETAFILE WINAPI CopyEnhMetaFileA(HENHMETAFILE handle, LPCSTR file)
 
 /* ------------------------------------------------------------------ header, description and palette */
 
-/* copies 88, 100 or 108 bytes, as much as the buffer and the header allow, and says so in nSize. */
+/* copies 88, 100 or 108 bytes, as much as the buffer and header allow, and sets nSize to match. */
 WINGDIAPI UINT WINAPI GetEnhMetaFileHeader(HENHMETAFILE handle, UINT size, LPENHMETAHEADER header)
 {
     EMF *emf = EmfLookup(handle);
@@ -969,7 +967,7 @@ WINGDIAPI UINT WINAPI GetEnhMetaFileDescriptionA(HENHMETAFILE handle, UINT count
     return n ? (UINT)n : GDI_ERROR;
 }
 
-/* the palette of the end of file record, which the last dword locates. */
+/* the palette lives in the end of file record, which the last dword locates. */
 WINGDIAPI UINT WINAPI GetEnhMetaFilePaletteEntries(HENHMETAFILE handle, UINT count, LPPALETTEENTRY entries)
 {
     EMF *emf = EmfLookup(handle);

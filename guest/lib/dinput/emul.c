@@ -1,11 +1,10 @@
 /*
- * where keyboard and mouse data come from, as windows' dinput gets it: a
- * worker thread of the process with a hidden window registered for raw
- * input, the shared state of every keyboard and every mouse device of
- * the process, events buffered for each acquired device and sequence
- * numbers common to every process. also the system wide table of
- * exclusive acquisitions and the hook that takes foreground devices away
- * when their window loses activation.
+ * keyboard and mouse input: a worker thread with a hidden window registered
+ * for raw input, state shared by every keyboard and every mouse device of
+ * the process, events buffered per acquired device, and sequence numbers
+ * shared by every process. also the system wide table of exclusive
+ * acquisitions and the hook that unacquires foreground devices when their
+ * window loses activation.
  */
 #include "dinput_private.h"
 
@@ -13,13 +12,13 @@ BYTE DiKeyState[256];
 DIMOUSE DiMouseState;
 
 static LIST_ENTRY g_acquired = {&g_acquired, &g_acquired};
-static LONG g_keyboards = -1, g_mice = -1; /* acquired instances, -1 before the first */
+static LONG g_keyboards = -1, g_mice = -1; /* acquired instances, -1 before the first. */
 static LONG g_exclusive_keyboards, g_exclusive_mice;
 HANDLE DiWorker;
 static HWND g_window;
 static BOOL g_pending_e1;
 
-/* the scan codes windows' default translation table changes: numlock and pause swapped, right shift as left. */
+/* windows' default scan code translation: numlock and pause swapped, right shift as left. */
 static BYTE translate(BYTE sc)
 {
     switch (sc) {
@@ -68,7 +67,7 @@ static BOOL shared(void)
     return TRUE;
 }
 
-/* one number for each input report of any device of any process, never 0. */
+/* a sequence number per input report across every device and process, never 0. */
 DWORD DiNextSequence(void)
 {
     LONG *counter = shared() ? (LONG *)(g_shared + 4) : &g_local_sequence;
@@ -78,7 +77,7 @@ DWORD DiNextSequence(void)
     return (DWORD)v;
 }
 
-/* the clock sequence of the guids dinput makes, shared like the sequence numbers (guessed place). */
+/* the clock sequence of the guids dinput makes, shared like the sequence numbers. */
 LONG DiNextUuidCounter(void)
 {
     static LONG local;
@@ -104,9 +103,9 @@ static DWORD window_pid(HWND window)
 }
 
 /*
- * windows' Excl_Acquire: the window must be ours; a record of the same
- * instance is taken over unless its owner is alive, foreground, and its
- * window is not the foreground one.
+ * the window must be ours. a record of the same instance is taken over
+ * unless its owner is alive, foreground, and its window is not the
+ * foreground one.
  */
 BOOL DiExclusiveTake(DIDEV *dev, HRESULT *hr)
 {
@@ -166,7 +165,7 @@ static void signal_class(BOOL keyboard)
     }
 }
 
-/* windows' CDIRaw_ProcessInput for a keyboard: the scan code with its prefixes as a DIK code. */
+/* the scan code and its prefixes become a DIK code. */
 static void keyboard_input(const RAWKEYBOARD *k)
 {
     if (g_keyboards <= 0)
@@ -213,7 +212,7 @@ static DIDEV *first_mouse(void)
     return nullptr;
 }
 
-/* windows' CDIRaw_ProcessInput for a mouse: every mouse merged, axes then buttons, one sequence per report. */
+/* every mouse merged into one: axes then buttons, one sequence number per report. */
 static void mouse_input(const RAWMOUSE *m)
 {
     static RAWMOUSE previous;
@@ -223,7 +222,7 @@ static void mouse_input(const RAWMOUSE *m)
     LONG dx = m->lLastX, dy = m->lLastY;
     SHORT wheel = (m->usButtonFlags & RI_MOUSE_WHEEL) ? (SHORT)m->usButtonData : 0;
     if (m->usFlags & MOUSE_MOVE_ABSOLUTE) {
-        /* tablets and remote sessions: the difference from the previous report. */
+        /* tablets and remote sessions report absolute positions: take the difference from the last report. */
         RAWMOUSE prev = previous;
         BOOL had = have_previous;
         previous = *m;
@@ -344,9 +343,9 @@ BOOL DiStartWorker(void)
 }
 
 /*
- * windows' registrations: input sink when shared, no legacy messages and
- * no hot keys or mouse capture when exclusive, no hot keys alone for
- * NOWINKEY. the latest acquisition wins.
+ * like windows: an input sink when shared; no legacy messages, hot keys or
+ * mouse capture when exclusive; only no hot keys for NOWINKEY. the latest
+ * acquisition wins.
  */
 static void register_device(BOOL keyboard, DWORD em)
 {
@@ -366,7 +365,7 @@ static void unregister_device(BOOL keyboard, LONG remaining)
         register_device(keyboard, 0);
 }
 
-/* the first mouse of the process: buttons as they are, axes from somewhere arbitrary, as windows does. */
+/* the process's first mouse: buttons as they are, axes from an arbitrary origin, as windows does. */
 static void seed_mouse(void)
 {
     DiMouseState.buttons[0] = GetAsyncKeyState(VK_LBUTTON) < 0 ? 0x80 : 0;
@@ -438,7 +437,7 @@ void DiEmulUnacquire(DIDEV *dev)
 static DIDEV *g_foreground[MAX_FOREGROUND];
 static DWORD g_foreground_count;
 
-/* one hook for each thread whose windows foreground devices cooperate with. */
+/* one hook per thread owning a window that foreground devices cooperate with. */
 static struct {
     DWORD tid;
     HHOOK hook;
@@ -455,9 +454,9 @@ static void forget_foreground(DIDEV *dev)
 }
 
 /*
- * windows' CDIDev_CallWndProc: activation going either way, or the
- * window minimized after losing focus, takes every foreground device of
- * the process away and removes the hook.
+ * activation changing either way, or the window minimized after losing
+ * focus, unacquires every foreground device of the process and removes
+ * the hook.
  */
 static LRESULT CALLBACK watch(int code, WPARAM wparam, LPARAM lparam)
 {

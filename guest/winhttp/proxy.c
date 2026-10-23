@@ -1,7 +1,4 @@
-/*
- * proxies: the default and per user configuration, the proxy of a request, auto detection and the
- * proxy resolver.
- */
+/* proxy configuration, selection and automatic resolution. */
 #include "winhttp_private.h"
 #include <mime/stub.h>
 
@@ -69,7 +66,7 @@ static DWORD BlobDword(WH_BLOB *blob)
     return value;
 }
 
-/* a length prefixed ansi string of the blob, NULL when empty or cut. */
+/* length-prefixed ANSI blob string; NULL if empty or truncated. */
 static PWSTR BlobString(WH_BLOB *blob)
 {
     DWORD length = BlobDword(blob);
@@ -187,7 +184,7 @@ BOOL WINAPI WinHttpGetIEProxyConfigForCurrentUser(WINHTTP_CURRENT_USER_IE_PROXY_
     DWORD flags = BLOB_AUTO_DETECT;
     PWSTR proxy = nullptr, bypass = nullptr, url = nullptr;
     WH_BLOB blob = {data, size, 0};
-    /* without settings, or with settings older than ie 5, windows reports automatic detection. */
+    /* missing or pre-IE 5 settings imply automatic detection on Windows. */
     if (data && BlobDword(&blob) >= 0x3C) {
         BlobDword(&blob);
         flags = BlobDword(&blob);
@@ -212,9 +209,9 @@ BOOL WINAPI WinHttpGetIEProxyConfigForCurrentUser(WINHTTP_CURRENT_USER_IE_PROXY_
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ proxy lists */
+/* proxy lists. */
 
-/* the entry of a proxy list for a scheme: "scheme=host:port" first, else an entry without a scheme. */
+/* prefer "scheme=host:port", then an entry without a scheme. */
 static BOOL ProxyForScheme(LPCWSTR list, BOOL secure, PWSTR host, DWORD capacity, INTERNET_PORT *port)
 {
     LPCWSTR scheme = secure ? L"https" : L"http";
@@ -325,7 +322,7 @@ BOOL WhPickProxy(WH_OBJECT *request, LPCWSTR host, BOOL secure, PWSTR proxy_host
     return found;
 }
 
-/* ------------------------------------------------------------------ auto proxy */
+/* auto proxy. */
 
 static BOOL ValidOptions(const WINHTTP_AUTOPROXY_OPTIONS *options)
 {
@@ -400,8 +397,8 @@ static DWORD Download(LPCWSTR url, char **script, DWORD *length)
 }
 
 /*
- * mime has no javascript engine: a script whose FindProxyForURL returns one constant string is
- * understood, anything else is reported as a script windows could not run.
+ * without a JavaScript engine, only constant-string FindProxyForURL results are supported. other scripts return the
+ * Windows script-execution error.
  */
 static DWORD RunScript(const char *script, PWSTR *answer)
 {
@@ -478,7 +475,7 @@ static DWORD ParseAnswer(LPCWSTR answer, WINHTTP_PROXY_RESULT *result)
     return ERROR_SUCCESS;
 }
 
-/* a step of the proxy resolution that took long, to the debug output: a browser's first request waits for it. */
+/* log slow resolution steps; the browser's first request waits for them. */
 static void TraceSlow(const char *what, ULONGLONG began, DWORD error)
 {
     ULONGLONG took = GetTickCount64() - began;
@@ -496,7 +493,7 @@ static DWORD DetectUrl(DWORD flags, PWSTR *url)
     ADDRINFOW hints = {0}, *addresses = nullptr;
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    /* dhcp option 252 does not exist under mime, so only the dns name of wpad is tried. */
+    /* DHCP option 252 is unavailable; try only the WPAD DNS name. */
     ULONGLONG began = GetTickCount64();
     if (!(flags & WINHTTP_AUTO_DETECT_TYPE_DNS_A) || GetAddrInfoW(L"wpad", L"80", &hints, &addresses) || !addresses) {
         TraceSlow("the lookup of wpad", began, ERROR_WINHTTP_AUTODETECTION_FAILED);
@@ -508,7 +505,6 @@ static DWORD DetectUrl(DWORD flags, PWSTR *url)
     return *url ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
 }
 
-/* the whole resolution of WinHttpGetProxyForUrl and the resolver, into a proxy result. */
 static DWORD Resolve(LPCWSTR url, const WINHTTP_AUTOPROXY_OPTIONS *options, WINHTTP_PROXY_RESULT *result)
 {
     memset(result, 0, sizeof(*result));
@@ -581,7 +577,7 @@ BOOL WINAPI WinHttpGetProxyForUrl(HINTERNET handle, LPCWSTR url, WINHTTP_AUTOPRO
         error = ERROR_WINHTTP_BAD_AUTO_PROXY_SCRIPT;
     if (error)
         return WhFail(error);
-    /* the entries become a proxy list, or no proxy when the first answer is DIRECT. */
+    /* build the proxy list; a leading DIRECT result selects no proxy. */
     info->dwAccessType = WINHTTP_ACCESS_TYPE_NO_PROXY;
     if (result.cEntries && result.pEntries[0].fProxy) {
         SIZE_T size = 1;
@@ -625,7 +621,7 @@ BOOL WINAPI WinHttpDetectAutoProxyConfigUrl(DWORD flags, LPWSTR *url)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ the resolver */
+/* the resolver. */
 
 DWORD WINAPI WinHttpCreateProxyResolver(HINTERNET handle, HINTERNET *resolver)
 {
@@ -699,7 +695,7 @@ DWORD WINAPI WinHttpGetProxyForUrlEx2(HINTERNET handle, PCWSTR url, WINHTTP_AUTO
         return ERROR_WINHTTP_INCORRECT_HANDLE_TYPE;
     }
     EnterCriticalSection(&resolver->Lock);
-    /* one resolution per resolver, reported through a callback that takes completions and errors. */
+    /* allow one resolution per resolver and report completion or error through its callback. */
     if (resolver->ResolverBusy || resolver->ResolverUsed || !resolver->Callback ||
         (resolver->NotifyFlags & (WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE | WINHTTP_CALLBACK_STATUS_REQUEST_ERROR)) !=
             (WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE | WINHTTP_CALLBACK_STATUS_REQUEST_ERROR)) {

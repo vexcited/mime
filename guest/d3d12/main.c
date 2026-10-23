@@ -1,7 +1,6 @@
 /*
- * the exports of d3d12.dll: devices, one per adapter as windows hands them
- * out, root signature serialization and the configuration objects of
- * D3D12GetInterface. the debug layer does nothing, as nothing validates.
+ * d3d12.dll exports: one device per adapter as windows hands them out, root signature serialization and the
+ * D3D12GetInterface configuration objects. the debug layer does nothing, since nothing validates.
  */
 #include "d3d12_private.h"
 
@@ -78,7 +77,7 @@ HRESULT D12CreateBlob(const void *data, SIZE_T size, ID3DBlob **out)
 
 /* ------------------------------------------------------------------ devices */
 
-/* the devices made, one per adapter, as D3D12CreateDevice returns the adapter's device while it lives. */
+/* one device per adapter: D3D12CreateDevice returns the adapter's device while it lives. */
 static SRWLOCK g_devices_lock = SRWLOCK_INIT;
 static D12Device *g_devices[16];
 
@@ -98,7 +97,7 @@ static HRESULT first_adapter(IDXGIAdapter **adapter)
     return hr == DXGI_ERROR_NOT_FOUND ? E_FAIL : hr;
 }
 
-/* called by the device when its last reference goes, under the lock so no creation finds it dying. */
+/* runs under the lock when the last reference goes, so no creation finds a dying device. */
 BOOL D12DeviceUnlist(D12Device *device)
 {
     AcquireSRWLockExclusive(&g_devices_lock);
@@ -192,7 +191,7 @@ D3D12API HRESULT WINAPI D3D12CreateDevice(IUnknown *adapter, D3D_FEATURE_LEVEL l
 
 /* ------------------------------------------------------------------ the debug layer */
 
-/* ID3D12Debug6 and what came before it; ID3D12Debug2 alone differs, its own interface. */
+/* ID3D12Debug6 and its predecessors; only ID3D12Debug2 is a separate interface. */
 typedef struct D12Debug {
     ID3D12Debug6 iface;
     ID3D12Debug2 debug2;
@@ -318,7 +317,7 @@ static const struct ID3D12DeviceRemovedExtendedDataSettingsVtbl g_dred_vtbl = {
     dred_query, dred_add_ref, dred_release, dred_set, dred_set, dred_set, dred_set, (void *)dred_set,
 };
 
-/* what windows exports as D3D12DeviceRemovedExtendedData: its version first, the rest zero. */
+/* the D3D12DeviceRemovedExtendedData export: the version first, the rest zero. */
 __declspec(dllexport) UINT D3D12DeviceRemovedExtendedData[16] = {3};
 
 /* ------------------------------------------------------------------ device factories and the sdk configuration */
@@ -519,11 +518,7 @@ D3D12API HRESULT WINAPI D3D12SerializeVersionedRootSignature(
     return D12SerializeRootSignature(desc, blob, error);
 }
 
-/*
- * a deserializer keeps the description it parsed, first, and those it
- * converted it to by version, each one block, handed out as long as it
- * lives.
- */
+/* keeps the parsed description first, then each converted version in one block, valid while it lives. */
 typedef struct D12Deserializer {
     ID3D12VersionedRootSignatureDeserializer iface;
     ID3D12RootSignatureDeserializer v10;
@@ -661,13 +656,13 @@ D3D12API HRESULT WINAPI D3D12CreateVersionedRootSignatureDeserializer(const void
     return create_deserializer(data, size, riid, out);
 }
 
-/* ------------------------------------------------------------------ the rest of windows' exports */
+/* ------------------------------------------------------------------ other exports */
 
 D3D12API HRESULT WINAPI D3D12CoreCreateLayeredDevice(const void *args) { return E_NOTIMPL; }
 __declspec(dllexport) SIZE_T WINAPI D3D12CoreGetLayeredDeviceSize(const void *args, UINT count) { return 0; }
 D3D12API HRESULT WINAPI D3D12CoreRegisterLayers(const void *layers, UINT count) { return E_NOTIMPL; }
 
-/* pix events, which nothing records: the thread info leaves no room, so events ask for a block and get none. */
+/* pix events are not recorded: the thread info leaves no room, so events ask for a block and get none. */
 static UINT64 g_pix_info[4];
 __declspec(dllexport) void *WINAPI D3D12PIXGetThreadInfo(void) { return g_pix_info; }
 __declspec(dllexport) UINT64 WINAPI D3D12PIXEventsReplaceBlock(BOOL get_new) { return 0; }
@@ -678,7 +673,7 @@ __declspec(dllexport) void WINAPI SetAppCompatStringPointer(SIZE_T size, const c
 
 __declspec(dllexport) BOOL WINAPI GetBehaviorValue(const char *name, UINT64 *value) { return FALSE; }
 
-/* ordinal 99, D3D12CreateAdditionalDevice: a device beside the adapter's own, which windows' layers make. */
+/* ordinal 99: a device beside the adapter's own, made by windows' layers. */
 D3D12API HRESULT WINAPI D3D12CreateAdditionalDevice(IUnknown *adapter, D3D_FEATURE_LEVEL level,
                                                                  REFIID riid, void **out)
 {

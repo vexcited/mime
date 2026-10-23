@@ -1,6 +1,4 @@
-/*
- * svchost.exe: the command line, the group in the registry and the table the service dispatcher is given.
- */
+/* svchost.exe: the command line, the group's registry settings and the service dispatcher table. */
 #include "svchost.h"
 #include <stdarg.h>
 
@@ -34,7 +32,7 @@ WCHAR *HostDup(const WCHAR *s)
     return copy;
 }
 
-/* ------------------------------------------------------------------ the command line */
+/* ------------------------------------------------------------------ command line */
 
 static BOOL is_blank(WCHAR c)
 {
@@ -42,9 +40,8 @@ static BOOL is_blank(WCHAR c)
 }
 
 /*
- * `<program> [-k <group>] [-s <service>] [-p]`, with - or / before each option and no case.
- * the program name ends at the first blank; the group and the service may be quoted. the options are taken
- * from the copy of the line, which is cut into the words.
+ * `<program> [-k <group>] [-s <service>] [-p]`, options start with - or / and ignore case. the program name ends at
+ * the first blank, the group and service may be quoted. the words are cut out of a copy of the line.
  */
 static BOOL parse_command(const WCHAR *line, HOST_OPTIONS *o)
 {
@@ -101,7 +98,7 @@ static BOOL parse_command(const WCHAR *line, HOST_OPTIONS *o)
 }
 
 
-/* ------------------------------------------------------------------ the group */
+/* ------------------------------------------------------------------ group */
 
 #define GROUP_FLAG_ALLOW_LOWBOX 0x02
 #define GROUP_FLAG_NO_GUI 0x08
@@ -118,14 +115,14 @@ static BOOL parse_command(const WCHAR *line, HOST_OPTIONS *o)
 
 WINADVAPI BOOL WINAPI IsValidSecurityDescriptor(PSECURITY_DESCRIPTOR descriptor);
 
-/* what the key of the group says about the setup of the process. */
+/* process setup read from the group's key. */
 typedef struct GROUP_SETTINGS {
     BOOL init_com_security;
     DWORD authn_level;
     DWORD impersonation_level;
     DWORD capabilities;
     DWORD flags;
-    void *access_descriptor; /* a self relative descriptor of the registry, null for none */
+    void *access_descriptor; /* self relative, from the registry, or null. */
     DWORD dynamic_code;
     DWORD signature;
     DWORD extension_points;
@@ -153,7 +150,7 @@ static BOOL add_name(NAME_LIST *list, WCHAR *name)
     return TRUE;
 }
 
-/* a value that is a DWORD, or nothing. */
+/* fails unless the value is a DWORD. */
 static BOOL get_dword(HKEY key, const WCHAR *name, DWORD *out)
 {
     DWORD type = 0, data = 0, size = sizeof(data);
@@ -163,7 +160,7 @@ static BOOL get_dword(HKEY key, const WCHAR *name, DWORD *out)
     return TRUE;
 }
 
-/* the strings of the multi string value named like the group. */
+/* the multi string value named after the group. */
 static void names_from_value(HKEY svchost, const WCHAR *group, NAME_LIST *list)
 {
     DWORD type = 0, size = 0;
@@ -181,7 +178,6 @@ static void names_from_value(HKEY svchost, const WCHAR *group, NAME_LIST *list)
         add_name(list, s);
 }
 
-/* the names of the keys below the key of the group. */
 static void names_from_subkeys(HKEY group_key, NAME_LIST *list)
 {
     for (DWORD index = 0;; index++) {
@@ -207,7 +203,7 @@ static BOOL mitigation_switch_on(void)
     return on != 0;
 }
 
-/* a policy takes the value of the key, and else the default of the process. */
+/* the group's value, else the process default. */
 static DWORD policy_value(HKEY group, const WCHAR *name, DWORD fallback)
 {
     DWORD value;
@@ -253,7 +249,7 @@ static void read_settings(HKEY group, const HOST_OPTIONS *o, GROUP_SETTINGS *g)
     g->redirection_trust = policy_value(group, L"RedirectionTrustPolicy", 2);
 }
 
-/* the services of the group: the value and the subkeys, and the one of `-s` when the line has it. */
+/* services come from the group's value and subkeys, plus the `-s` one when given. */
 static BOOL load_group(const HOST_OPTIONS *o, NAME_LIST *list, GROUP_SETTINGS *settings)
 {
     HKEY svchost, group;
@@ -277,7 +273,7 @@ static BOOL load_group(const HOST_OPTIONS *o, NAME_LIST *list, GROUP_SETTINGS *s
     return list->count != 0;
 }
 
-/* ------------------------------------------------------------------ COM and the mitigation policies */
+/* ------------------------------------------------------------------ COM and mitigation policies */
 
 typedef HRESULT(WINAPI *CO_INITIALIZE_EX)(void *reserved, DWORD model);
 typedef void(WINAPI *CO_UNINITIALIZE)(void);
@@ -286,9 +282,9 @@ typedef HRESULT(WINAPI *CO_INITIALIZE_SECURITY)(PSECURITY_DESCRIPTOR sd, LONG co
                                                 DWORD capabilities, void *reserved3);
 typedef BOOL(WINAPI *SET_MITIGATION_POLICY)(int policy, void *buffer, SIZE_T length);
 
-static CO_UNINITIALIZE g_co_uninitialize; /* set once this process has initialized COM */
+static CO_UNINITIALIZE g_co_uninitialize; /* set once this process has initialized COM. */
 
-/* the descriptor COM checks callers against when the registry gives none: services and administrators. */
+/* used when the registry gives none: system, administrators and service accounts, plus what the flags allow. */
 static PSECURITY_DESCRIPTOR default_access_descriptor(DWORD flags)
 {
     WCHAR text[160] = L"O:SYG:SYD:(A;;0x3;;;SY)(A;;0x3;;;BA)(A;;0x3;;;LS)(A;;0x3;;;NS)";
@@ -340,7 +336,7 @@ static void apply_mitigations(const GROUP_SETTINGS *g)
             HostLog("svchost: policy %d refused, error %lu", wanted[i].policy, GetLastError());
 }
 
-/* ------------------------------------------------------------------ the process */
+/* ------------------------------------------------------------------ process */
 
 void entry(void)
 {

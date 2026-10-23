@@ -2,14 +2,11 @@
 #include "../lib/compound/compound.h"
 
 /*
- * the signature of a windows installer package (or of a patch), which is a compound file. It sits in the stream named
- * with the character 5 and DigitalSignature, a signed data structure whose content names the package format with a
- * sip identifier and carries the digest of the package. The digest is made of the bytes of the streams in order:
- * sorted by the bytes of their names as the directory keeps them, a shorter name before a longer one that starts with
- * it, the signature streams left out; a storage is the bytes of its own children and then its class id, and the bytes
- * of the root end with its class id. A package that has the extended signature (the stream whose name has the
- * character 5 and MsiDigitalSignatureEx) begins with the bytes of that stream. The extended signature holds a digest of the
- * names and sizes of the streams, which is not computed here: only that it is part of what was signed is checked.
+ * Windows Installer signatures use the stream named character 5 plus DigitalSignature. its signed content identifies
+ * the package format with a SIP identifier and carries the digest. streams are hashed in bytewise name order,
+ * shorter prefixes first, excluding signature streams. each storage hashes its children followed by its class ID;
+ * the root also ends with its class ID. the character 5 plus MsiDigitalSignatureEx stream, if present, is prepended.
+ * its digest of stream names and sizes is not recomputed here; only its inclusion in the signed content is checked.
  */
 #define MAX_ENTRIES 65536
 #define SIGNATURE_NAME L"\x05" L"DigitalSignature"
@@ -37,7 +34,7 @@ static void append(COLLECT *c, const void *data, DWORD size)
     c->Size += size;
 }
 
-/* the names as the directory holds them, the first bytes that differ decide, else the shorter name goes first. */
+/* compares raw directory name bytes, shorter prefixes first. */
 static int compare(const void *first, const void *second)
 {
     const BYTE *a = *(const BYTE *const *)first, *b = *(const BYTE *const *)second;
@@ -47,7 +44,7 @@ static int compare(const void *first, const void *second)
     return c ? c : (la > lb) - (la < lb);
 }
 
-/* a shell sort, as the lists are short and the sort needs nothing of the C library. */
+/* shell sort suits these short lists and needs no C library. */
 static void sort(const BYTE **list, DWORD count)
 {
     for (DWORD gap = count / 2; gap; gap /= 2) {
@@ -68,7 +65,7 @@ static BOOL name_is(const BYTE *entry, PCWSTR name)
     return length == (chars + 1) * 2 && !memcmp(entry, name, chars * 2);
 }
 
-/* the entries of a storage by the order of the tree, which the sort then replaces. */
+/* collects storage entries in tree order before sorting them. */
 static BOOL children(const MIME_CFB *file, uint32_t first, const BYTE **list, DWORD *count)
 {
     uint32_t stack[64];

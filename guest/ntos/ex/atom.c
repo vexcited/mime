@@ -1,8 +1,7 @@
 /*
- * the global atom table every process of the session shares: integer
+ * the global atom table shared by every process of the session: integer
  * atoms below 0xC000 named "#n", string atoms from 0xC000 compared without
- * case and counted by their users, as windows' rtl atom tables keep them.
- * see docs/ntoskrnl.md.
+ * case and reference counted, as in windows' rtl atom tables.
  */
 #include "../ntos.h"
 
@@ -25,7 +24,7 @@ typedef struct ATOM_TABLE {
     ULONG Used;
 } ATOM_TABLE;
 
-/* the table of the session, and the private ones of the jobs that restrict global atoms, made when first used. */
+/* the session table; jobs that restrict global atoms get a private one, made on first use. */
 static ATOM_TABLE g_global;
 static KGUARDED_MUTEX g_lock;
 
@@ -43,7 +42,7 @@ void ExpFreeAtomTable(PVOID table)
     ExFreePool(t);
 }
 
-/* the table the calling process uses: the private one of its job when the job holds global atoms to itself. */
+/* the job's private table when the job keeps global atoms to itself. */
 static ATOM_TABLE *table_of_caller(void)
 {
     PVOID *slot = PspJobAtomTableSlot(PsCurrentProcess());
@@ -67,7 +66,7 @@ static void unlock(void)
     KeReleaseGuardedMutex(&g_lock);
 }
 
-/* "#n" with decimal digits alone names the integer atom n, which must lie below 0xC000. */
+/* "#n" with decimal digits only names integer atom n, which must be below 0xC000. */
 static BOOLEAN integer_atom(const WCHAR *name, ULONG chars, USHORT *atom, NTSTATUS *status)
 {
     if (!chars || name[0] != L'#')
@@ -113,7 +112,7 @@ static ATOM_ENTRY *entry_of(ATOM_TABLE *t, USHORT atom)
     return e && e->Count ? e : nullptr;
 }
 
-/* the caller's counted name, copied in; a name too long for an atom is refused. */
+/* names too long for an atom are refused. */
 static NTSTATUS capture(PWSTR user_name, ULONG length, WCHAR *name, ULONG *chars)
 {
     if (!user_name || (length & 1))
@@ -185,7 +184,7 @@ NTSTATUS NTAPI NtAddAtom(PWSTR name, ULONG length, PUSHORT atom)
     return add_atom(name, length, atom);
 }
 
-/* the flags say which table; the one of the caller is used, the session's unless its job keeps its own. */
+/* uses the caller's table: the session's, unless its job keeps its own. */
 NTSTATUS NTAPI NtAddAtomEx(PWSTR name, ULONG length, PUSHORT atom, ULONG flags)
 {
     return add_atom(name, length, atom);
@@ -212,7 +211,7 @@ NTSTATUS NTAPI NtFindAtom(PWSTR user_name, ULONG length, PUSHORT user_atom)
     return store_atom(user_atom, (USHORT)(FIRST_STRING_ATOM + index));
 }
 
-/* a user less; the last one frees the atom, unless it is pinned. integer atoms are never stored. */
+/* drops one reference; the last frees the atom unless pinned. integer atoms are never stored. */
 NTSTATUS NTAPI NtDeleteAtom(USHORT atom)
 {
     if (atom && atom < FIRST_STRING_ATOM)
@@ -240,7 +239,7 @@ NTSTATUS NTAPI NtQueryInformationAtom(USHORT atom, ULONG klass, PVOID info, ULON
         USHORT count, flags, chars;
         WCHAR name[MAX_NAME + 1];
         if (atom && atom < FIRST_STRING_ATOM) {
-            /* an integer atom answers for its "#n" name, pinned, with one user. */
+            /* an integer atom reports its "#n" name, pinned, with one reference. */
             WCHAR digits[8];
             ULONG n = 0, v = atom;
             do
@@ -269,7 +268,7 @@ NTSTATUS NTAPI NtQueryInformationAtom(USHORT atom, ULONG klass, PVOID info, ULON
         name[chars] = 0;
         if (length < 8)
             return STATUS_INFO_LENGTH_MISMATCH;
-        /* the name is cut to fit, guessed from rtl's copy. */
+        /* the name is cut to fit, like rtl's copy. */
         ULONG room = (length - 6) / sizeof(WCHAR);
         if (room <= chars) {
             chars = (USHORT)(room ? room - 1 : 0);

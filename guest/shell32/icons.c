@@ -1,16 +1,15 @@
 /*
- * icons: where the icon of a file comes from, how an icon is loaded at a size, the stock icons, and the
- * IExtractIcon object over a file name.
+ * icons: where a file's icon comes from, loading an icon at a size, stock icons, and IExtractIcon over a file name.
  *
- * the art of the system lives in imageres.dll, which Windows 11 keeps in SystemResources as imageres.dll.mun; a path
- * that names a library without icons is looked up there too. shell32.dll has no icons of its own here, so its
- * indexes, which are the numbers of the stock icons, are answered from the stock table.
+ * system art lives in imageres.dll, which Windows 11 keeps in SystemResources as imageres.dll.mun. a path naming a
+ * library without icons is looked up there too. shell32.dll has no icons of its own here, so its indexes, which are
+ * the stock icon numbers, come from the stock table.
  */
 #include "shell32_private.h"
 
 typedef struct {
     int Siid;
-    /* the icon group of imageres.dll, 0 for none. */
+    /* the imageres.dll icon group, 0 for none. */
     int Resource;
     int Art;
 } STOCK_ICON;
@@ -99,7 +98,7 @@ static BOOL windows_directory(WCHAR *path, UINT chars)
     return n && n < chars;
 }
 
-/* the icon libraries of the system are kept mapped: opened for their resources they are never written. */
+/* system icon libraries stay mapped: opened for resources, they are never written. */
 typedef struct {
     WCHAR Path[MAX_PATH];
     HMODULE Module;
@@ -117,7 +116,7 @@ static BOOL in_windows_directory(LPCWSTR path)
     return !_wcsnicmp(path, windir, length) && path[length] == L'\\';
 }
 
-/* the file mapped as data, from the cache when it belongs to the system; owned says it must be freed. */
+/* maps the file as data, cached when it is a system library. owned says the caller must free it. */
 static HMODULE open_module(LPCWSTR path, BOOL *owned)
 {
     BOOL cache = in_windows_directory(path);
@@ -171,7 +170,6 @@ static BOOL CALLBACK group_callback(HMODULE module, LPCWSTR type, LPWSTR name, L
     return FALSE;
 }
 
-/* the number of icon groups of a module. */
 static UINT count_groups(HMODULE module)
 {
     GROUP_SEARCH search = {(UINT)-1, 0, nullptr};
@@ -179,7 +177,7 @@ static UINT count_groups(HMODULE module)
     return search.Seen;
 }
 
-/* the icon of a group, found by position or by minus its resource id. */
+/* by position, or by the negated resource id. */
 static HICON load_group(HMODULE module, int index, int cx, int cy)
 {
     if (index < 0)
@@ -209,13 +207,13 @@ static BOOL resource_file(LPCWSTR path, WCHAR *out)
 
 static HICON load_stock(int siid, int cx, int cy);
 
-/* a number of the library that shell32.dll would have, which is the stock icon of the same number. */
+/* shell32.dll icon indexes are the stock icons of the same number. */
 static BOOL is_shell32(LPCWSTR path)
 {
     return !_wcsicmp(base_name(path), L"shell32.dll");
 }
 
-/* the file a name stands for, which may be a library of icons that only exists in SystemResources. */
+/* a name may stand for an icon library that only exists in SystemResources. */
 BOOL ShIconFindFile(LPCWSTR file, WCHAR *path)
 {
     DWORD n = SearchPathW(nullptr, file, nullptr, MAX_PATH, path, nullptr);
@@ -319,7 +317,7 @@ HICON ShIconFromPixels(const DWORD *pixels, int cx, int cy)
     return icon;
 }
 
-/* the premultiplied pixels of an icon, which the caller frees. */
+/* premultiplied, freed by the caller. */
 DWORD *ShIconPixels(HICON icon, int *cx, int *cy)
 {
     ICONINFO info;
@@ -355,7 +353,7 @@ DWORD *ShIconPixels(HICON icon, int *cx, int *cy)
     return pixels;
 }
 
-/* a color pixel premultiplied by an opacity. */
+/* premultiplies a color pixel by an opacity. */
 static DWORD scale_pixel(DWORD p, DWORD opacity)
 {
     DWORD out = 0;
@@ -364,7 +362,7 @@ static DWORD scale_pixel(DWORD p, DWORD opacity)
     return out;
 }
 
-/* the icon laid under another, or blended half with the selection color. */
+/* draws the overlay over the base icon, and blends half with the selection color when selected. */
 HICON ShDecorateIcon(HICON base, HICON overlay, BOOL selected)
 {
     int cx, cy;
@@ -445,7 +443,7 @@ HICON ShLoadStockIcon(int siid, int cx, int cy)
     return load_stock(siid, cx, cy);
 }
 
-/* the stock icon a library path and index name, for the locations the shell hands out. */
+/* the library path and index naming a stock icon, for the locations the shell hands out. */
 static void stock_location(int siid, WCHAR *path, int *index)
 {
     WCHAR windir[MAX_PATH];
@@ -488,7 +486,7 @@ static BOOL parse_number(LPCWSTR text, int *value)
     return TRUE;
 }
 
-/* "path,index" with the quotes and the environment of a registered icon; %1 is the file itself. */
+/* "path,index" with quotes and environment variables. %1 is the file itself. */
 static BOOL parse_location(LPCWSTR text, LPCWSTR self, SH_ICON_SOURCE *out)
 {
     WCHAR work[MAX_PATH * 2];
@@ -552,7 +550,7 @@ static BOOL parse_location(LPCWSTR text, LPCWSTR self, SH_ICON_SOURCE *out)
     return TRUE;
 }
 
-/* the registered DefaultIcon of an extension, through the chain of classes the association code walks. */
+/* the extension's DefaultIcon, following the class chain the association code walks. */
 static BOOL registered_icon(LPCWSTR extension, LPWSTR text, DWORD chars)
 {
     HMODULE shlwapi = LoadLibraryW(L"shlwapi.dll");
@@ -564,7 +562,7 @@ static BOOL registered_icon(LPCWSTR extension, LPWSTR text, DWORD chars)
     return SUCCEEDED(query(0, 15, extension, nullptr, text, &size)) && text[0];
 }
 
-/* whether the extension has a class at all, which makes the plain page a document with a program. */
+/* a registered class turns the plain page into a document with a program. */
 static BOOL extension_registered(LPCWSTR extension)
 {
     HKEY key;
@@ -584,7 +582,7 @@ void ShIconSourceStock(int siid, SH_ICON_SOURCE *source)
     source->Fallback = siid;
 }
 
-/* a folder with a desktop.ini naming an icon, which Windows reads when the folder is read only or a system one. */
+/* a desktop.ini icon, which Windows reads for read only or system folders. */
 static BOOL folder_ini_icon(LPCWSTR folder, SH_ICON_SOURCE *out)
 {
     WCHAR ini[MAX_PATH], text[MAX_PATH * 2];
@@ -610,9 +608,8 @@ static BOOL folder_ini_icon(LPCWSTR folder, SH_ICON_SOURCE *out)
 }
 
 /*
- * where the icon of a path comes from. attributes say whether it is a folder; disk says the file system may be asked
- * about it, which a request by attributes forbids; open picks the open folder. A file named by an executable or an
- * icon file shows its own picture.
+ * attributes say whether it is a folder. disk allows asking the file system, which a request by attributes forbids.
+ * open picks the open folder. executables and icon files show their own picture.
  */
 void ShIconSourceForPath(LPCWSTR path, DWORD attributes, BOOL disk, BOOL open, SH_ICON_SOURCE *source)
 {
@@ -656,7 +653,7 @@ void ShIconSourceForPath(LPCWSTR path, DWORD attributes, BOOL disk, BOOL open, S
     BOOL program = has_extension(path, L".exe") || has_extension(path, L".scr") || has_extension(path, L".com");
     if (registered_icon(dot, text, RTL_NUMBER_OF(text)) && parse_location(text, path, source)) {
         source->Fallback = program ? SIID_APPLICATION : extension_registered(dot) ? SIID_DOCASSOC : SIID_DOCNOASSOC;
-        /* the first icons of shell32 are the stock icons, and are told apart from the library's own. */
+        /* shell32's first icons are the stock icons, told apart from the library's own. */
         if (is_shell32(source->Path) && source->Index >= 0 && source->Index <= SIID_MYNETWORK) {
             int stock = source->Index;
             ShIconSourceStock(stock, source);
@@ -675,7 +672,7 @@ void ShIconSourceForPath(LPCWSTR path, DWORD attributes, BOOL disk, BOOL open, S
     source->Fallback = extension_registered(dot) ? SIID_DOCASSOC : SIID_DOCNOASSOC;
 }
 
-/* the icon at a size: the file, then its fallback stock icon, then something drawn. */
+/* tries the file, then its fallback stock icon, then a drawing. */
 HICON ShLoadIconSource(const SH_ICON_SOURCE *source, int cx, int cy)
 {
     HICON icon = nullptr;
@@ -686,7 +683,7 @@ HICON ShLoadIconSource(const SH_ICON_SOURCE *source, int cx, int cy)
     return load_stock(source->Stock >= 0 ? source->Stock : source->Fallback, cx, cy);
 }
 
-/* a text that tells sources apart, and stands for a stock icon by its number. */
+/* a key that tells sources apart, naming a stock icon by its number. */
 void ShIconSourceKey(const SH_ICON_SOURCE *source, WCHAR *key, SIZE_T chars)
 {
     if (source->Stock >= 0 || !source->Path[0]) {
@@ -699,7 +696,7 @@ void ShIconSourceKey(const SH_ICON_SOURCE *source, WCHAR *key, SIZE_T chars)
     key[chars - 1] = 0;
 }
 
-/* the path and index of a source as SHGFI_ICONLOCATION states them, and whether it is a file at all. */
+/* as SHGFI_ICONLOCATION states them. returns whether it is a file at all. */
 BOOL ShIconSourceLocation(const SH_ICON_SOURCE *source, WCHAR *path, int *index)
 {
     if (source->Stock < 0 && source->Path[0]) {
@@ -744,8 +741,8 @@ SHSTDAPI HRESULT WINAPI SHGetStockIconInfo(SHSTOCKICONID id, UINT flags, SHSTOCK
 }
 
 /*
- * the icon a request of SHGetFileInfo or SHGetStockIconInfo asks for: the system's large or small size, or the
- * shell's, with the arrow of a link and the blend of a selection when they are asked for.
+ * for SHGetFileInfo and SHGetStockIconInfo: the system's large or small size or the shell's, with the link arrow and
+ * the selection blend when asked.
  */
 HICON ShIconForRequest(const SH_ICON_SOURCE *source, UINT flags)
 {
@@ -810,7 +807,7 @@ static ULONG extract_release(FILE_EXTRACT *e)
     return (ULONG)refs;
 }
 
-/* the location and the flags of the icon: a file is the icon of its class, a stock icon is named by "*". */
+/* a file uses its class's icon, a stock icon is named "*". */
 static HRESULT extract_location(FILE_EXTRACT *e, UINT flags, WCHAR *file, UINT chars, int *index, UINT *out_flags)
 {
     const SH_ICON_SOURCE *source = (flags & GIL_OPENICON) ? &e->OpenSource : &e->Source;
@@ -927,7 +924,7 @@ static HRESULT STDMETHODCALLTYPE ea_extract(IExtractIconA *This, PCSTR file, UIN
 
 static const IExtractIconAVtbl g_extract_ansi_vtbl = {ea_query, ea_add_ref, ea_release, ea_location, ea_extract};
 
-/* an icon extractor for a file name and its attributes, which the file need not have. */
+/* the file need not exist. */
 SHSTDAPI HRESULT WINAPI SHCreateFileExtractIconW(LPCWSTR file, DWORD attributes, REFIID riid, void **object)
 {
     if (!object)
@@ -956,7 +953,7 @@ SHSTDAPI HRESULT WINAPI SHCreateFileExtractIconA(LPCSTR file, DWORD attributes, 
     return hr;
 }
 
-/* icons of a file at the two sizes in the halves of size, as the extractors of the shell take them. */
+/* the two sizes are packed in the halves of size, as shell extractors take them. */
 SHSTDAPI HRESULT WINAPI SHDefExtractIconW(LPCWSTR file, int index, UINT flags, HICON *large, HICON *small, UINT size)
 {
     return extract_icons(file, (UINT)index, large, small, size);

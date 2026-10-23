@@ -1,9 +1,9 @@
 /*
- * ndfapi: network diagnostics incidents. creating one only records what is
- * to be diagnosed, as on windows; executing a web, connectivity or
- * connection incident hands the user to the contact support app, as
- * windows 11 does, and the scripted diagnostics of the others need a
- * diagnostic service mime does not run.
+ * ndfapi: network diagnostics incidents. creating one only records what to
+ * diagnose, as on Windows. executing a web, connectivity or connection
+ * incident sends the user to the contact support app, as Windows 11 does.
+ * the scripted diagnostics of the others need a diagnostic service mime
+ * does not run.
  */
 #include <mime/win32/objbase.h>
 

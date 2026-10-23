@@ -1,21 +1,9 @@
 /*
- * glsl programs to metal shading language, or to spir-v for vulkan.
- *
- * the guest sends a program's glsl sources as the application wrote them.
- * sources older than glsl 3.30 are lifted to 3.30 with a few macros, then
- * glslang compiles both stages to spir-v under the relaxed vulkan rules,
- * which gather the loose uniforms into one block, and SPIRV-Cross writes
- * metal source for each stage. vulkan takes glslang's spir-v itself, with the
- * locations and bindings chosen here written into its decorations. the
- * reflection the guest needs to answer gl
- * queries is read from the spir-v: attribute locations, follow the
- * application's bindings, the uniform block layout and the texture slots
- * of every sampler.
- *
- * on metal vertex positions are flipped vertically and depth is moved to
- * metal's range, so rows of every texture keep gl's order, bottom first.
- * vulkan's framebuffer rows already run that way from gl's bottom, and its
- * pipelines take gl's depth range.
+ * compiles GLSL to SPIR-V for Vulkan or MSL for Metal. sources older than GLSL 3.30 are adapted with macros; relaxed
+ * Vulkan rules combine loose uniforms into one block. SPIRV-Cross emits MSL and reflection supplies attribute
+ * locations, uniform layout and sampler slots. Vulkan uses the SPIR-V with assigned locations and bindings. Metal
+ * flips vertex Y and remaps depth to preserve OpenGL's bottom-first texture rows; Vulkan uses those rows and
+ * OpenGL's depth range directly.
  */
 #include "shader.h"
 
@@ -73,7 +61,6 @@ static bool is_ident(char c)
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
 }
 
-/* whether the identifier occurs in the source, as a whole token. */
 static bool uses(const char *src, const char *word)
 {
     size_t n = strlen(word);
@@ -105,10 +92,7 @@ static int frag_data_count(const char *src)
     return count;
 }
 
-/*
- * returns the source as glslang should compile it. the version line is
- * replaced by a blank one so the line numbers of errors stay right.
- */
+/* replaces the version directive with a blank line to preserve diagnostic line numbers. */
 static char *lift_source(const char *src, size_t len, bool fragment)
 {
     char *text = malloc(len + 1);
@@ -166,7 +150,7 @@ static char *lift_source(const char *src, size_t len, bool fragment)
                       "#define texture1D texture\n#define texture3D texture\n#define texture2DRect texture\n"
                       "#define shadow2D(s, c) vec4(texture(s, c))\n#define shadow2DProj(s, c) vec4(textureProj(s, c))\n");
     } else {
-        /* keeps the version and drops a compatibility profile, which spir-v does not have. */
+        /* keeps the version and drops a compatibility profile, which SPIR-V does not have. */
         buf_fmt(&out, "#version %d\n", version);
     }
 
@@ -330,7 +314,7 @@ static Uniform *add_uniform(Program *p, const char *name)
     return u;
 }
 
-/* adds the members of a block struct, flattened the way gl names them. */
+/* flattens block members using OpenGL naming rules. */
 static void reflect_struct(Program *p, spvc_compiler c, spvc_type_id type_id, const char *prefix, uint32_t base)
 {
     spvc_type t = spvc_compiler_get_type_handle(c, type_id);
@@ -493,7 +477,7 @@ static bool assign_attribs(Program *p, spvc_compiler c, const char *bindings, si
     return true;
 }
 
-/* the fragment stage reads each varying where the vertex stage wrote the one of the same name. */
+/* matches fragment inputs to vertex outputs by name. */
 static void match_varyings(spvc_compiler vs, spvc_compiler fs)
 {
     size_t vn, fn;
@@ -632,7 +616,7 @@ static char *compile_msl(Program *p, spvc_compiler c, const char *stage)
     return strdup(src);
 }
 #else
-/* a compiler for reflection alone: the spir-v stays glslang's. */
+/* a compiler for reflection alone: the SPIR-V stays glslang's. */
 static spvc_compiler msl_compiler(spvc_context ctx, const uint32_t *spirv, size_t words, bool vertex)
 {
     spvc_parsed_ir ir;
@@ -644,7 +628,7 @@ static spvc_compiler msl_compiler(spvc_context ctx, const uint32_t *spirv, size_
     return c;
 }
 
-/* writes the locations and bindings the compiler holds now into the decorations of the spir-v. */
+/* writes assigned locations and bindings into SPIR-V decorations. */
 static void patch_spirv(spvc_compiler c, uint32_t *words, size_t count)
 {
     for (size_t i = 5; i < count;) {
@@ -729,7 +713,7 @@ static void write_info(Program *p, bool ok, MimeShaderResult *out)
     info.block_offset = (uint32_t)b.len;
     for (unsigned i = 0; i < info.block_count; i++)
         buf_add(&b, &p->blocks[i].info, sizeof(MimeGpuUniformBlockInfo));
-    info.uniform_bytes = (p->uniform_bytes + 15) & ~15u; /* metal rounds the struct up to its alignment. */
+    info.uniform_bytes = (p->uniform_bytes + 15) & ~15u; /* Metal rounds the struct up to its alignment. */
     for (unsigned i = 0; i < info.attrib_count; i++) {
         ((MimeGpuAttribInfo *)(b.data + info.attrib_offset))[i].name_offset = (uint32_t)b.len;
         buf_add(&b, p->attribs[i].name, strlen(p->attribs[i].name) + 1);

@@ -1,6 +1,3 @@
-/*
- * ole32 entry point.
- */
 #include "ole32_private.h"
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)

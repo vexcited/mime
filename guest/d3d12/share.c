@@ -1,12 +1,11 @@
 /*
- * committed textures that are shared: made with D3D12_HEAP_FLAG_SHARED they own memory that other devices import,
- * and CreateSharedHandle gives them a kernel object carrying what they were described with and the id the host
- * keeps the memory under, see mime/gfxshare.h. A texture of direct3d 11 that was shared opens here as a committed
- * texture of the same memory.
+ * textures made with D3D12_HEAP_FLAG_SHARED own memory that other devices import. CreateSharedHandle gives them a
+ * kernel object holding their description and the id the host keeps the memory under, see mime/gfxshare.h. shared
+ * Direct3D 11 textures open here as committed textures over the same memory.
  */
 #include "d3d12_private.h"
 
-/* direct3d 11's bind flags, which a texture made here is described to it with. */
+/* Direct3D 11 bind flags, used to describe textures made here to Direct3D 11. */
 #define BIND_SHADER_RESOURCE 0x8
 #define BIND_RENDER_TARGET 0x20
 #define BIND_DEPTH_STENCIL 0x40
@@ -58,7 +57,7 @@ void D12ShareDestroy(D12Resource *r)
     r->share_blob = nullptr;
 }
 
-/* the handle to a committed texture made to be shared; the first one makes the object. */
+/* the first handle makes the object. */
 HRESULT D12ResourceShare(D12Resource *r, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out)
 {
     D12Device *device = r->child.device;
@@ -84,9 +83,9 @@ HRESULT D12ResourceShare(D12Resource *r, const SECURITY_ATTRIBUTES *attributes, 
 }
 
 /*
- * The texture a handle names, as a committed texture of this device in the common state. A texture of direct3d 11
- * has the flags its bind flags imply: render target, depth stencil and unordered access allow those, a depth
- * stencil that is not bound for shaders denies them.
+ * opens as a committed texture in the common state. a Direct3D 11 texture gets the flags its bind flags imply:
+ * render target, depth stencil and unordered access allow those, and a depth stencil not bound for shaders denies
+ * shader access.
  */
 HRESULT D12OpenSharedResource(D12Device *device, HANDLE handle, REFIID riid, void **out)
 {
@@ -113,7 +112,7 @@ HRESULT D12OpenSharedResource(D12Device *device, HANDLE handle, REFIID riid, voi
     desc.SampleDesc.Count = blob.samples;
     desc.SampleDesc.Quality = blob.quality;
     desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-    /* an opened shared texture is accessible from any queue and device, which its flags say. */
+    /* an opened shared texture is usable from any queue and device, so its flags say so. */
     desc.Flags = (D3D12_RESOURCE_FLAGS)(blob.d3d12_flags | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
     D3D12_HEAP_PROPERTIES props = {};
     props.Type = D3D12_HEAP_TYPE_DEFAULT;

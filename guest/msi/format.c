@@ -64,7 +64,7 @@ static UINT substitute(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record,
     if (!wcscmp(token, L"~"))
         return append_text(out, L"", 1);
     if (*token == L'#' || *token == L'!' || *token == L'$') {
-        /* the place of a file, or of the directory of a component. */
+        /* [#file] and [!file] give a file's path, [$component] its directory. */
         PWSTR path = nullptr;
         UINT error = *token == L'$' ? MimeMsiComponentDirectory(package, token + 1, &path) :
                                       MimeMsiFileTargetPath(package, token + 1, &path);
@@ -105,7 +105,7 @@ static UINT format_part(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *record
         return ERROR_INVALID_PARAMETER;
     while (**cursor && **cursor != end) {
         if (properties && **cursor == L'{') {
-            /* a group whose properties are all set is kept, any other one is dropped. */
+            /* a {...} group is kept only when all its properties are set. */
             PCWSTR close = wcschr(*cursor, L'}'), open = wcschr(*cursor, L'[');
             if (close && open && open < close) {
                 (*cursor)++;

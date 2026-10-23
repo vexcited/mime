@@ -1,4 +1,4 @@
-/* the texts of errors and the record of the last one a document had. */
+/* error message texts and a document's last error. */
 #include <xmldom/xmldom.h>
 
 typedef struct XMessage {
@@ -12,7 +12,7 @@ static const XMessage messages[] = {
 
 const WCHAR *xd_message(UINT id)
 {
-    /* the limits are reported with the text of the message about a constraint, naming which. */
+    /* the limits use a constraint violation message that names the limit. */
     if (id == XE_MAX_DEPTH)
         return L"Operation aborted: MaxElementDepth constraint violated.\r\n";
     if (id == XE_MAX_SIZE)
@@ -23,7 +23,6 @@ const WCHAR *xd_message(UINT id)
     return nullptr;
 }
 
-/* a message with its %1 and %2 filled in. */
 WCHAR *xd_format(UINT id, const WCHAR *p1, const WCHAR *p2)
 {
     const WCHAR *text = xd_message(id);
@@ -121,7 +120,7 @@ void xd_err_set(XDoc *doc, UINT code, LONG line, LONG linepos, LONG filepos, con
     }
 }
 
-/* a resource that could not be read: the system's words for the code, then which resource it was. */
+/* the reason is the system message for the code, then the resource name. */
 void xd_err_set_reason(XDoc *doc, UINT code, const WCHAR *reason, const WCHAR *url)
 {
     xd_err_free(&doc->err);

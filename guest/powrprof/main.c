@@ -1,7 +1,6 @@
 /*
- * powrprof: the power information windows' kernel answers, as a desktop
- * machine on mains power without a battery, sleep states or hibernation
- * file reports it, and the balanced scheme the power service would hold.
+ * powrprof: the power information windows reports for a desktop on mains power with no battery, sleep states or
+ * hibernation file, and the balanced scheme the power service would hold.
  */
 #define POWRPROFAPI
 #include <mime/win32/powrprof.h>

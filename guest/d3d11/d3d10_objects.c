@@ -1,9 +1,7 @@
 /*
- * the direct3d 10 interfaces of resources, views, states, shaders, input
- * layouts and queries, as d3d11.dll's C10and11 classes give them: one
- * object answering both versions, its references and private data shared.
- * resources and queries map, begin, end and read back through the
- * immediate context.
+ * direct3d 10 interfaces of resources, views, states, shaders, input layouts
+ * and queries: one object answers both versions and shares its references and
+ * private data. maps and queries go through the immediate context.
  */
 #include "d3d10_private.h"
 
@@ -28,7 +26,7 @@ static void get_device(D3dDevice *device, ID3D10Device **out)
     device->iface.lpVtbl->QueryInterface(&device->iface, &IID_ID3D10Device, (void **)out);
 }
 
-/* what every object shares: its identity, references and private data are the direct3d 11 object's. */
+/* identity, references and private data are the direct3d 11 object's. */
 #define CHILD_METHODS(prefix, type, unknown)                                                                           \
     static type *prefix##_impl(void *iface) { return D3D10_IMPL(type, iface); }                                       \
     static IUnknown *prefix##_unknown(void *iface)                                                                     \
@@ -96,7 +94,7 @@ static UINT STDMETHODCALLTYPE resource_get_eviction_priority(void *iface)
 /* keyed mutexes and gdi compatibility move back down to direct3d 10's bits. */
 static UINT misc10(UINT misc) { return (misc & 7) | ((misc >> 4) & 0x30); }
 
-/* a subresource mapped through the immediate context, NULL when it fails. */
+/* maps through the immediate context, giving NULL on failure. */
 static HRESULT map(void *iface, UINT sub, D3D10_MAP type, UINT flags, D3D11_MAPPED_SUBRESOURCE *mapped)
 {
     D3dResource *r = resource_impl(iface);
@@ -223,7 +221,7 @@ static void STDMETHODCALLTYPE view_get_resource(void *iface, ID3D10Resource **re
     r->lpVtbl->QueryInterface(r, &IID_ID3D10Resource, (void **)resource);
 }
 
-/* direct3d 10's descriptions of shader resource and render target views are direct3d 11's, by layout. */
+/* direct3d 10 shader resource and render target view descriptions share direct3d 11's layout. */
 static void STDMETHODCALLTYPE srv_get_desc(void *iface, D3D10_SHADER_RESOURCE_VIEW_DESC *desc)
 {
     ID3D11ShaderResourceView *srv = (ID3D11ShaderResourceView *)&view_impl(iface)->iface;
@@ -262,10 +260,7 @@ static const ID3D10ShaderResourceView1Vtbl srv_vtbl = {VIEW_VTBL, VTBL_FN(srv_ge
 static const ID3D10RenderTargetViewVtbl rtv_vtbl = {VIEW_VTBL, VTBL_FN(rtv_get_desc)};
 static const ID3D10DepthStencilViewVtbl dsv_vtbl = {VIEW_VTBL, VTBL_FN(dsv_get_desc)};
 
-/*
- * raw buffer views, views of structured buffers and read only depth views
- * have no direct3d 10 interface, nor have unordered access views.
- */
+/* raw and structured buffer views, read only depth views and unordered access views have no direct3d 10 interface. */
 void *D3d10ViewInterface(D3dView *view, REFIID riid)
 {
     const void *vtbl = nullptr;
@@ -308,7 +303,7 @@ CHILD_METHODS(ds, D3dDepthStencilState, &o->iface)
 CHILD_METHODS(sampler, D3dSamplerState, &o->iface)
 CHILD_METHODS(layout, D3dInputLayout, &o->iface)
 
-/* each target's enable and mask, and the blend of the first target blending, or of the first. */
+/* per target enables and masks. the blend comes from the first blending target, or else the first target. */
 static void STDMETHODCALLTYPE blend_get_desc(void *iface, D3D10_BLEND_DESC *desc)
 {
     const D3D11_BLEND_DESC1 *d = &blend_impl(iface)->desc;
@@ -398,7 +393,7 @@ void *D3d10InputLayoutInterface(D3dInputLayout *layout, REFIID riid)
 
 CHILD_METHODS(shader, D3dShader, &o->iface)
 
-/* the vertex, geometry and pixel shader interfaces are a device child's. */
+/* the vertex, geometry and pixel shader interfaces only have device child methods. */
 static const ID3D10VertexShaderVtbl shader_vtbl = {CHILD_VTBL(shader)};
 
 void *D3d10ShaderInterface(D3dShader *shader, REFIID riid)
@@ -428,7 +423,7 @@ static void STDMETHODCALLTYPE async_end(void *iface)
     c->lpVtbl->End(c, (ID3D11Asynchronous *)&q->iface);
 }
 
-/* direct3d 10's sizes, its pipeline statistics without the stages direct3d 11 added. */
+/* direct3d 10 sizes: pipeline statistics lack the stages direct3d 11 added. */
 static UINT STDMETHODCALLTYPE async_get_data_size(void *iface)
 {
     D3dQuery *q = async_impl(iface);
@@ -451,10 +446,7 @@ static UINT STDMETHODCALLTYPE async_get_data_size(void *iface)
     }
 }
 
-/*
- * read as direct3d 11 reads it, into a buffer of direct3d 11's size, then
- * copied out at direct3d 10's, which the size asked must be.
- */
+/* reads at direct3d 11's size, then copies out direct3d 10's, which the size given must match. */
 static HRESULT STDMETHODCALLTYPE async_get_data(void *iface, void *data, UINT size, UINT flags)
 {
     D3dQuery *q = async_impl(iface);
@@ -481,7 +473,7 @@ static const ID3D10QueryVtbl query_vtbl = {CHILD_VTBL(async),          VTBL_FN(a
                                            VTBL_FN(async_end),         VTBL_FN(async_get_data),
                                            VTBL_FN(async_get_data_size), VTBL_FN(async_get_desc)};
 
-/* every query is an ID3D10Query, predicates ID3D10Predicate too. there are no counters. */
+/* every query is an ID3D10Query, predicates are ID3D10Predicate too. there are no counters. */
 void *D3d10AsyncInterface(D3dQuery *q, REFIID riid)
 {
     D3D11_QUERY query = q->desc.Query;

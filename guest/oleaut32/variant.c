@@ -1,10 +1,8 @@
-/*
- * variants: initialization, clearing, copying and the change of type.
- */
+/* variant initialization, clearing, copying and type changes. */
 #include "oleaut32_private.h"
 #include <mime/win32/winnls.h>
 
-/* whether vt names a type a variant may hold, by value or with VT_BYREF or VT_ARRAY. */
+/* whether a variant may hold vt, by value or with VT_BYREF or VT_ARRAY. */
 BOOL AutValidVariantType(VARTYPE vt)
 {
     VARTYPE base = vt & VT_TYPEMASK;
@@ -103,7 +101,7 @@ WINOLEAUTAPI HRESULT WINAPI VariantCopy(VARIANTARG *dst, const VARIANTARG *src)
     return S_OK;
 }
 
-/* the size in bytes of a value of vt, for the types that VT_BYREF can point at. */
+/* only for the types VT_BYREF can point at. */
 static SIZE_T value_size(VARTYPE vt)
 {
     switch (vt & VT_TYPEMASK) {
@@ -129,10 +127,7 @@ static SIZE_T value_size(VARTYPE vt)
     }
 }
 
-/*
- * the value a VT_BYREF variant points to, as a variant that borrows it: nothing in it is owned. FALSE for a type that
- * cannot be pointed at.
- */
+/* the target of a VT_BYREF variant as a variant that borrows it and owns nothing. fails for types that cannot be pointed at. */
 static HRESULT deref_variant(const VARIANT *source, VARIANT *value)
 {
     VARIANT in = *source;
@@ -169,7 +164,6 @@ static HRESULT deref_variant(const VARIANT *source, VARIANT *value)
     return S_OK;
 }
 
-/* copies the variant a VT_BYREF variant points to, or the variant itself. */
 WINOLEAUTAPI HRESULT WINAPI VariantCopyInd(VARIANT *dst, const VARIANTARG *src)
 {
     if (!dst || !src)
@@ -190,7 +184,7 @@ WINOLEAUTAPI HRESULT WINAPI VariantCopyInd(VARIANT *dst, const VARIANTARG *src)
         if (FAILED(hr))
             return hr == DISP_E_TYPEMISMATCH ? DISP_E_BADVARTYPE : hr;
     }
-    /* the value is borrowed; VariantCopy makes the owned copy. */
+    /* borrowed, VariantCopy makes the owned copy. */
     VARIANT temp;
     temp.vt = VT_EMPTY;
     HRESULT hr = VariantCopy(&temp, &value);
@@ -205,7 +199,7 @@ WINOLEAUTAPI HRESULT WINAPI VariantCopyInd(VARIANT *dst, const VARIANTARG *src)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ the change of type */
+/* ------------------------------------------------------------------ type changes */
 
 static BOOL is_integer_vt(VARTYPE vt)
 {
@@ -219,8 +213,8 @@ static BOOL is_number_vt(VARTYPE vt)
 }
 
 /*
- * integers of the same size, or a boolean, change to another by their bits, without a check: -1 as an unsigned short
- * is 65535. Everything else about numbers goes through the checked conversions.
+ * integers of the same size, or a boolean, convert by their bits unchecked: -1 as an unsigned short is 65535. other
+ * numbers go through the checked conversions.
  */
 static BOOL copy_integer_bits(const VARIANT *s, VARTYPE dvt, VARIANT *d)
 {
@@ -230,7 +224,7 @@ static BOOL copy_integer_bits(const VARIANT *s, VARTYPE dvt, VARIANT *d)
     int ssize = value_size(svt), dsize = value_size(dvt);
     BOOL same_size = ssize == dsize && svt != VT_BOOL;
     if (svt == VT_BOOL) {
-        /* a boolean is a short, which widens with its sign into the integers and is cut for the bytes. */
+        /* a boolean is a short: it sign extends into the integers and is truncated for the bytes. */
         if (dvt == VT_I8 || dvt == VT_UI8)
             d->llVal = s->iVal;
         else if (dsize == 4)
@@ -242,7 +236,7 @@ static BOOL copy_integer_bits(const VARIANT *s, VARTYPE dvt, VARIANT *d)
         d->vt = dvt;
         return TRUE;
     }
-    /* a boolean is true as -1, so a number becomes one by its value. */
+    /* true is -1, so a number becomes a boolean by its value. */
     if (!same_size || dvt == VT_BOOL)
         return FALSE;
     memcpy(&d->llVal, &s->llVal, ssize);
@@ -260,7 +254,7 @@ static ULONG nls_flags(USHORT flags)
     return f;
 }
 
-/* the locale the conversions read: the user's for 0 and LOCALE_USER_DEFAULT, then the system's for LOCALE_SYSTEM_DEFAULT. */
+/* 0 and LOCALE_USER_DEFAULT mean the user's locale, LOCALE_SYSTEM_DEFAULT the system's. */
 static LCID effective_lcid(LCID lcid)
 {
     if (!(lcid & ~(LCID)LOCALE_USER_DEFAULT))
@@ -344,7 +338,7 @@ static HRESULT convert_to_string(const VARIANT *s, VARIANT *d, LCID lcid, USHORT
     return S_OK;
 }
 
-/* the change of a value that is not a reference, into a variant that owns the result. */
+/* s is not a reference, d owns the result. */
 static HRESULT change_value(const VARIANT *s, VARTYPE dvt, VARIANT *d, LCID lcid, USHORT flags)
 {
     VARTYPE svt = s->vt;
@@ -363,7 +357,7 @@ static HRESULT change_value(const VARIANT *s, VARTYPE dvt, VARIANT *d, LCID lcid
         return VariantCopy(d, s);
     }
     if (dvt == VT_EMPTY || dvt == VT_NULL) {
-        /* anything but the types that have no value of their own turns into the empty or null variant. */
+        /* only types with a plain value can become VT_EMPTY or VT_NULL. */
         if (svt == VT_NULL || svt == VT_ERROR || (svt & (VT_ARRAY | VT_VECTOR)) || svt == VT_RECORD)
             return DISP_E_TYPEMISMATCH;
         if (svt != VT_EMPTY && !is_number_vt(svt) && svt != VT_BSTR && svt != VT_DISPATCH && svt != VT_UNKNOWN)
@@ -373,7 +367,7 @@ static HRESULT change_value(const VARIANT *s, VARTYPE dvt, VARIANT *d, LCID lcid
     }
     if (svt & VT_ARRAY) {
         if (svt == (VT_ARRAY | VT_UI1) && dvt == VT_BSTR) {
-            /* no array is no string. */
+            /* a NULL array becomes a NULL string. */
             if (!s->parray) {
                 d->bstrVal = nullptr;
                 d->vt = VT_BSTR;
@@ -448,7 +442,7 @@ static HRESULT change_value(const VARIANT *s, VARTYPE dvt, VARIANT *d, LCID lcid
     }
     if (!is_number_vt(dvt))
         return DISP_E_TYPEMISMATCH;
-    /* an int has no way to a 64 bit integer in the table of windows, which an unsigned int has. */
+    /* windows converts VT_UINT to 64-bit integers but not VT_INT. */
     if (svt == VT_INT && (dvt == VT_I8 || dvt == VT_UI8))
         return DISP_E_TYPEMISMATCH;
     if (copy_integer_bits(s, dvt, d))
@@ -459,7 +453,7 @@ static HRESULT change_value(const VARIANT *s, VARTYPE dvt, VARIANT *d, LCID lcid
     return AutNumStore(&n, dvt, d, lcid, nls_flags(flags));
 }
 
-/* S_OK for a target a change of type can be asked for, and S_FALSE for the type of the source when it is a by reference array. */
+/* S_OK for a valid target, S_FALSE when vt is the source type and the source is a by-reference array. */
 static HRESULT check_target_type(const VARIANT *src, VARTYPE vt)
 {
     if (vt < VT_VARIANT)
@@ -477,7 +471,6 @@ static HRESULT check_target_type(const VARIANT *src, VARTYPE vt)
     return S_OK;
 }
 
-/* the value to convert, borrowed from a variant or from what it points to. */
 static HRESULT borrow_value(const VARIANT *src, VARIANT *value)
 {
     VARTYPE base = src->vt & VT_TYPEMASK;

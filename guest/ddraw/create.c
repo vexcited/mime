@@ -1,17 +1,15 @@
 /*
- * surface creation, as windows checks and builds surfaces: the desc and
- * caps checks of checkSurfaceDesc and checkCaps, the memory a surface
- * goes in, the surfaces of a complex one and how they are linked, their
- * caps, sizes, formats and pitches. mime's "video memory" is memory like
- * the rest, created where a driver of the windows display driver model
- * would create it. see docs/ddraw.md.
+ * surface creation, checked and built as on Windows: desc and caps checks,
+ * the memory a surface goes in, the surfaces of a complex one and their
+ * links, caps, sizes, formats and pitches. mime's video memory is ordinary
+ * memory, used wherever a WDDM driver would use video memory.
  */
 #include "ddraw_private.h"
 #include <mime/win32/dxgi.h>
 
 #define DDERR_NOEXECUTEHW MAKE_DDHRESULT(593)
 
-/* the surface caps of the driver and of the emulation: what each can make. */
+/* the surface caps the driver and the emulation layer can each make. */
 #define HAL_SURFACE_CAPS 0x30C6727Cu
 #define HEL_SURFACE_CAPS 0x00C21350u
 
@@ -21,7 +19,7 @@ typedef struct KNOWN {
     DWORD flags, bits, m0, m1, m2, m3;
 } KNOWN;
 
-/* windows' emulation: the formats of textures and cube maps. */
+/* emulation layer formats for textures and cube maps. */
 static const KNOWN TEXTURE_FORMATS[] = {
     {0x840, 1}, {0x850, 1}, {0x1040, 2}, {0x1050, 2}, {0x48, 4}, {0x58, 4}, {0x60, 8},
     {0x40, 8, 0xE0, 0x1C, 0x03, 0},
@@ -57,7 +55,7 @@ static const KNOWN TEXTURE_FORMATS[] = {
     {0xC0000, 32, 0xFF, 0xFF00, 0xFF0000},
 };
 
-/* windows' emulation: the formats of offscreen plain surfaces other than the display's. */
+/* emulation layer formats for offscreen plain surfaces besides the display's. */
 static const KNOWN OFFSCREEN_FORMATS[] = {
     {0x840, 1}, {0x1040, 2}, {0x48, 4}, {0x60, 8},
     {0x40, 16, 0xF800, 0x7E0, 0x1F, 0},
@@ -78,7 +76,7 @@ static const KNOWN OFFSCREEN_FORMATS[] = {
     {0x41, 16, 0xF00, 0xF0, 0xF, 0xF000},
 };
 
-/* windows' compare of a format with a known one: the flags exactly, then what those flags give meaning to. */
+/* the flags must match exactly, then the fields those flags give meaning to. */
 static BOOL format_is(const DDPIXELFORMAT *pf, const KNOWN *k)
 {
     if (pf->dwFlags != k->flags)
@@ -130,7 +128,7 @@ static void display_format(DDPIXELFORMAT *pf, DWORD *bpp_out)
         *bpp_out = mode.bpp;
 }
 
-/* windows' doPixelFormatsMatch, by what a format's flags give meaning to. */
+/* compares only the fields a format's flags give meaning to. */
 static BOOL formats_match(const DDPIXELFORMAT *a, const DDPIXELFORMAT *b)
 {
     if (a->dwFlags != b->dwFlags)
@@ -147,7 +145,7 @@ static BOOL formats_match(const DDPIXELFORMAT *a, const DDPIXELFORMAT *b)
     return TRUE;
 }
 
-/* ------------------------------------------------------------------ checkCaps */
+/* ------------------------------------------------------------------ caps checks */
 
 static HRESULT check_caps(DWORD caps, DWORD version, const DDSCAPS2 *c2)
 {
@@ -218,7 +216,7 @@ static HRESULT check_caps(DWORD caps, DWORD version, const DDSCAPS2 *c2)
     return DD_OK;
 }
 
-/* ------------------------------------------------------------------ checkSurfaceDesc */
+/* ------------------------------------------------------------------ desc checks */
 
 static BOOL power_of_two(DWORD v, DWORD *log)
 {
@@ -233,7 +231,7 @@ static BOOL power_of_two(DWORD v, DWORD *log)
     return TRUE;
 }
 
-/* keys windows' surfaces can have at creation: the driver's for video memory, the emulation's for system memory. */
+/* keys allowed at creation: the driver's for video memory, the emulation layer's for system memory. */
 static HRESULT check_key(DWORD slot, const DDCOLORKEY *key, DWORD caps)
 {
     BOOL range = key->dwColorSpaceLowValue != key->dwColorSpaceHighValue;
@@ -388,7 +386,7 @@ static HRESULT check_desc(DDSURFACEDESC2 *d, DWORD version, BOOL v1_desc)
     return DD_OK;
 }
 
-/* windows' initMipMapDim: the size of a level count, or the count of a size. */
+/* derives the size from a level count, or the level count from a size. */
 static HRESULT mip_dims(DDSURFACEDESC2 *d, DWORD version)
 {
     if ((d->ddsCaps.dwCaps & (DDSCAPS_COMPLEX | DDSCAPS_FLIP)) != DDSCAPS_COMPLEX)
@@ -426,7 +424,7 @@ static DWORD block_size(DWORD fourcc)
     }
 }
 
-/* system memory: rows a multiple of 4 bytes, zeroed; block compressed surfaces of transparent black blocks. */
+/* system memory: rows a multiple of 4 bytes, zeroed. block compressed surfaces start as transparent black blocks. */
 static BOOL allocate(DDSURF *s)
 {
     DWORD w = s->desc.dwWidth, h = s->desc.dwHeight;
@@ -513,9 +511,8 @@ static BOOL link_implicit(DDSURF *from, DDSURF *to)
 }
 
 /*
- * windows' createSurface after the checks: the surfaces of the structure,
- * their caps from the root's, their sizes, formats and memory, linked as
- * windows links them.
+ * builds the surfaces of the structure after the checks: caps from the
+ * root's, sizes, formats and memory, linked as on Windows.
  */
 static HRESULT build(DDRAW *dd, DWORD version, DDSURFACEDESC2 *d, BOOL hal, BOOL own_format_forced, DDSURF **out)
 {
@@ -555,7 +552,7 @@ static HRESULT build(DDRAW *dd, DWORD version, DDSURFACEDESC2 *d, BOOL hal, BOOL
         if (owner && owner != dd)
             return DDERR_NOEXCLUSIVEMODE;
     }
-    /* the format: the desc's, else the display's; a surface keeps its own when asked or different. */
+    /* the desc's format, else the display's. a surface keeps its own when asked or different. */
     DDPIXELFORMAT display;
     DWORD display_bpp;
     display_format(&display, &display_bpp);
@@ -579,7 +576,7 @@ static HRESULT build(DDRAW *dd, DWORD version, DDSURFACEDESC2 *d, BOOL hal, BOOL
         pf.dwZBitMask = d->dwZBufferBitDepth >= 32 ? 0xFFFFFFFF : (1u << d->dwZBufferBitDepth) - 1;
         explicit_format = TRUE;
     }
-    /* what can be made: the emulation's formats; the driver's are those and the display's, palettes aside. */
+    /* the emulation layer makes its formats, the driver those plus the display's, palettes aside. */
     BOOL different = explicit_format && !formats_match(&pf, &display);
     if (!(caps & DDSCAPS_EXECUTEBUFFER)) {
         BOOL ok = TRUE;
@@ -607,7 +604,7 @@ static HRESULT build(DDRAW *dd, DWORD version, DDSURFACEDESC2 *d, BOOL hal, BOOL
         memset(&format, 0, sizeof(format));
         format.bpp = 8;
     }
-    /* how many: the back buffers or levels, a z buffer of a complex surface, the faces of a cube map. */
+    /* the back buffers or levels, a complex surface's z buffer, a cube map's faces. */
     DWORD count = n + 1;
     BOOL has_z = (caps & (DDSCAPS_ZBUFFER | DDSCAPS_COMPLEX)) == (DDSCAPS_ZBUFFER | DDSCAPS_COMPLEX);
     if (has_z)
@@ -747,7 +744,7 @@ static HRESULT build(DDRAW *dd, DWORD version, DDSURFACEDESC2 *d, BOOL hal, BOOL
         if ((sc & DDSCAPS_PRIMARYSURFACE) || (i && (list[0]->desc.ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE)))
             s->gdi = i == 0;
     }
-    /* video memory: the budget a driver would charge. */
+    /* video memory: charge the budget a driver would. */
     if (SUCCEEDED(hr) && hal) {
         DWORD total = 0, free_bytes = 0;
         DdGetVidMem(dd, DDSCAPS_VIDEOMEMORY | DDSCAPS_LOCALVIDMEM, &total, &free_bytes);
@@ -792,7 +789,7 @@ static HRESULT build(DDRAW *dd, DWORD version, DDSURFACEDESC2 *d, BOOL hal, BOOL
     return DD_OK;
 }
 
-/* the key slots of a desc, set as SetColorKey would set them. */
+/* sets the desc's key slots as SetColorKey would. */
 static void apply_keys(DDSURF *s, const DDSURFACEDESC2 *d)
 {
     if (d->dwFlags & DDSD_CKSRCBLT) {
@@ -806,10 +803,9 @@ static void apply_keys(DDSURF *s, const DDSURFACEDESC2 *d)
 }
 
 /*
- * windows' InternalCreateSurface: client memory rules, then the memory a
- * surface goes in: video memory unless asked otherwise, system memory when
- * that fails for anything but bad parameters, managed textures in system
- * memory as on the windows display driver model.
+ * client memory rules, then placement: video memory unless asked otherwise,
+ * falling back to system memory on any failure but bad parameters. managed
+ * textures go in system memory, as with WDDM.
  */
 HRESULT DdCreateSurface(DDRAW *dd, DWORD version, const DDSURFACEDESC2 *in, DDSURF **out)
 {
@@ -938,7 +934,7 @@ HRESULT DdSurfDuplicate(DDRAW *dd, DDSURF *src, DDSURF **out)
     return DD_OK;
 }
 
-/* windows' CANBECREATED: each size of the modes and each rgb depth, tried by making the surface. */
+/* tries each display mode size and each rgb depth by creating the surface. */
 HRESULT DdEnumCreatable(DDRAW *dd, DWORD version, DDSURFACEDESC2 *desc, void *context, void *callback)
 {
     static const DWORD DEPTHS[][4] = {{8, 0xE0, 0x1C, 0x03}, {16, 0xF800, 0x7E0, 0x1F},
@@ -989,7 +985,7 @@ HRESULT DdEnumCreatable(DDRAW *dd, DWORD version, DDSURFACEDESC2 *desc, void *co
     return DD_OK;
 }
 
-/* the d3d interfaces of a surface are d3dim's, which 64-bit windows has none of. */
+/* the d3d surface interfaces belong to d3dim, which 64-bit Windows lacks. */
 HRESULT DdSurfQueryD3D(DDSURF *s, REFIID riid, void **out)
 {
 #ifdef _WIN64

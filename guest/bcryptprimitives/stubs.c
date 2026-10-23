@@ -1,4 +1,4 @@
-/* the primitive tables of the cng providers, which mime does not have: unknown algorithms everywhere. */
+/* cng provider primitive tables are not implemented: every algorithm is unknown. */
 #include <mime/stubexport.h>
 
 MIME_STUB_RETURN("bcryptprimitives", NTSTATUS, GetAsymmetricEncryptionInterface, 4, STATUS_NOT_SUPPORTED)

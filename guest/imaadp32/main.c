@@ -1,9 +1,7 @@
 /*
- * imaadp32.acm, the ima adpcm codec: 8 and 16 bit pcm, mono and stereo,
- * to and from 4 bit ima adpcm in blocks, a header of the first sample and
- * the step index per channel, then nibbles, stereo in groups of eight
- * samples per channel. realtime streams are limited to the rates the
- * user's configuration allows, as windows' codec does.
+ * imaadp32.acm, the IMA ADPCM codec: 8 and 16-bit mono or stereo pcm to and from 4-bit IMA ADPCM blocks. a block
+ * holds the first sample and step index of each channel, then nibbles, stereo in groups of eight samples per
+ * channel. realtime streams are limited to the rates the user's configuration allows, like Windows' codec.
  */
 #include <mime/win32/winbase.h>
 #include <acmdrv/acmdrv.h>
@@ -11,17 +9,17 @@
 #define WAVE_FORMAT_IMA_ADPCM 0x0011
 
 typedef struct INSTANCE {
-    DWORD encode_setting, decode_setting; /* indices into rate_limits */
+    DWORD encode_setting, decode_setting; /* indices into rate_limits. */
 } INSTANCE;
 
 typedef struct STREAM {
     BOOL encode;
-    int index[2]; /* the encoder's step index per channel, kept between conversions */
+    int index[2]; /* encoder step index per channel, kept between conversions. */
 } STREAM;
 
 static const DWORD rates[] = {8000, 11025, 22050, 44100};
 
-/* the samples per second of one channel times the channels each setting allows in real time. */
+/* samples per second times channels that each setting allows in real time. */
 static const DWORD rate_limits[] = {0, 8000, 11025, 16000, 22050, 44100, 88200};
 
 static const SHORT steps[89] = {
@@ -87,12 +85,11 @@ static void make_ima(WAVEFORMATEX *f, WORD channels, DWORD rate)
     f->nAvgBytesPerSec = rate * f->nBlockAlign / spb;
 }
 
-/* ------------------------------------------------------------------ the configuration */
+/* ------------------------------------------------------------------ configuration */
 
 /*
- * the realtime limits of HKCU\Software\Microsoft\Multimedia\<alias>; windows
- * measures the processor when they are missing and writes what it found,
- * which on any recent machine is every rate.
+ * realtime limits from HKCU\Software\Microsoft\Multimedia\<alias>. when they are missing Windows benchmarks the
+ * cpu and writes the result, which on any recent machine allows every rate.
  */
 static void read_configuration(INSTANCE *in, const WCHAR *alias)
 {
@@ -126,14 +123,14 @@ static void read_configuration(INSTANCE *in, const WCHAR *alias)
     RegCloseKey(key);
 }
 
-/* ------------------------------------------------------------------ the codec */
+/* ------------------------------------------------------------------ codec */
 
 static int sample_of(const BYTE *p, BOOL bits16)
 {
     return bits16 ? *(const SHORT *)p : (p[0] - 128) << 8;
 }
 
-/* one sample's code, the predictor following the reconstruction. */
+/* encodes one sample, the predictor tracks the decoder's reconstruction. */
 static int encode_sample(int sample, int *predictor, int *index)
 {
     int step = steps[*index], diff = sample - *predictor;
@@ -172,7 +169,7 @@ static int decode_sample(int code, int *predictor, int *index)
     return *predictor;
 }
 
-/* writes up to the room left, as windows' codec does, dropping what does not fit. */
+/* writes until the output is full and drops the rest, like Windows' codec. */
 typedef struct SINK {
     BYTE *p;
     DWORD room;
@@ -254,7 +251,7 @@ static DWORD encode_stereo(const BYTE *in, DWORD bytes, BOOL bits16, BYTE *out, 
     return (DWORD)(o.p - out);
 }
 
-/* a header with a step index out of range ends the conversion with nothing written, as windows does. */
+/* a header with an out of range step index ends the conversion with nothing written, like Windows. */
 static DWORD decode_mono(const BYTE *in, DWORD bytes, BYTE *out, DWORD room, BOOL bits16, WORD align)
 {
     SINK o = {out, room};
@@ -503,9 +500,8 @@ static LRESULT stream_size(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMSIZE *s)
 }
 
 /*
- * whole blocks are converted; without ACM_STREAMCONVERTF_BLOCKALIGN the
- * whole source counts as used, the partial block at its end dropped, as
- * windows' codec does.
+ * converts whole blocks. without ACM_STREAMCONVERTF_BLOCKALIGN the whole source counts as used and a trailing
+ * partial block is dropped, like Windows' codec.
  */
 static LRESULT stream_convert(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMHEADER *h)
 {
@@ -566,7 +562,7 @@ DECLSPEC_EXPORT LRESULT WINAPI DriverProc(DWORD_PTR id, HDRVR driver, UINT messa
     case DRV_QUERYCONFIGURE:
         return 1;
     case DRV_CONFIGURE:
-        /* the settings dialog is not there yet; the query by -1 says there is one. */
+        /* no settings dialog yet, but the -1 query says there is one. */
         return param1 == -1 ? 1 : DRVCNF_CANCEL;
     case ACMDM_DRIVER_DETAILS:
         return AcmdDetails((ACMDRIVERDETAILSW *)param1, 34, 0x04000000, ACMDRIVERDETAILS_SUPPORTF_CODEC, 2,

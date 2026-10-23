@@ -1,7 +1,6 @@
 /*
- * bind contexts and the running object table. The table holds the objects of the process with the monikers that name
- * them, and publishes each to the table across processes (orpc_rot.c) where the other processes of the machine find it.
- * The monikers are in monikers.c.
+ * bind contexts and the running object table. the table holds this process's objects with the monikers naming them,
+ * and publishes each to the machine wide table in orpc_rot.c. the monikers themselves are in monikers.c.
  */
 #include "ole32_private.h"
 #include "orpc.h"
@@ -114,7 +113,7 @@ static const IEnumMonikerVtbl moniker_enum_vtable = {
     moniker_enum_skip,  moniker_enum_reset,  moniker_enum_clone,
 };
 
-/* ------------------------------------------------------------------ the running object table */
+/* ------------------------------------------------------------------ running object table */
 
 #define ROT_KEY_CHARS 256
 BOOL MonikerRotKey(IMoniker *moniker, WCHAR *out, ULONG chars);
@@ -131,7 +130,7 @@ static ROT_ENTRY *g_rot;
 static ULONG g_rot_count, g_rot_capacity;
 static DWORD g_rot_cookie;
 
-/* the referenced names of every entry, so that IsEqual runs without the lock held. */
+/* references every entry's name so IsEqual can run without the lock held. */
 static IMoniker **rot_snapshot(ULONG *count)
 {
     AcquireSRWLockShared(&g_rot_lock);
@@ -155,7 +154,7 @@ static void release_names(IMoniker **names, ULONG count)
     OleFree(names);
 }
 
-/* finds the registered entry equal to name; returns its referenced object and time. */
+/* returns the referenced object and time of the entry equal to name. */
 static BOOL rot_find(IMoniker *name, IUnknown **object, FILETIME *time)
 {
     ULONG count;
@@ -251,8 +250,8 @@ static HRESULT WINAPI rot_register(IRunningObjectTable *self, DWORD flags, IUnkn
     *cookie = entry->Cookie;
     FILETIME time = entry->Time;
     ReleaseSRWLockExclusive(&g_rot_lock);
-    /* and for the other processes of the machine, which find the entry by the key of the moniker. A cookie is of one
-       process only, so the table across them keeps the process with it. */
+    /* also publish it for other processes, which find it by the moniker's key. a cookie belongs to one process, so
+       the shared table stores the process with it. */
     WCHAR key[ROT_KEY_CHARS];
     if (MonikerRotKey(name, key, RTL_NUMBER_OF(key)))
         OrpcRotPublish(key, object, flags, *cookie, &time);
@@ -373,7 +372,7 @@ typedef struct {
     BIND_OPTS3 Options;
 } BIND_CONTEXT;
 
-/* grows an array of items of the given size to hold one more. */
+/* makes room for one more item of the given size. */
 static BOOL grow(void **items, ULONG count, ULONG *capacity, SIZE_T size)
 {
     if (count < *capacity)
@@ -505,7 +504,7 @@ static HRESULT WINAPI bind_get_rot(IBindCtx *self, IRunningObjectTable **table)
     return GetRunningObjectTable(0, table);
 }
 
-/* the index of the parameter named key, or -1; the lock is held. */
+/* -1 when absent. called with the lock held. */
 static LONG find_param(BIND_CONTEXT *bc, LPCOLESTR key)
 {
     for (ULONG i = 0; i < bc->ParamCount; i++)

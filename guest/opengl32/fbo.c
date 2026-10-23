@@ -1,11 +1,9 @@
 /*
  * framebuffers, renderbuffers and render passes.
  *
- * gl has no passes: one starts when a draw or a clear reaches a target and
- * lasts until the target changes or something must run outside it, like a
- * copy or a readback. a clear issued before anything is drawn becomes the
- * pass's load action, which costs nothing; a clear in the middle of a pass
- * draws through the scissor.
+ * GL has no passes: one starts when a draw or clear reaches a target and lasts until the target changes or something
+ * must run outside it, like a copy or a readback. a clear issued before anything is drawn becomes the pass's load
+ * action, which costs nothing; a clear in the middle of a pass draws through the scissor.
  */
 #include "opengl32.h"
 
@@ -565,9 +563,8 @@ BOOL gl_read_source(GlContext *ctx, MimeGpuAttachment *a, uint32_t *format, uint
 }
 
 /*
- * the buffer depth or stencil reads come from, the read framebuffer's or
- * the window's, and the format of what a copy of it gives: the depth or the
- * stencil alone of a format with both. flags is what the copy names.
+ * the buffer depth or stencil reads come from, the read framebuffer's or the window's, and the format a copy of it
+ * gives: only the depth or the stencil part of a combined format. flags is what the copy names.
  */
 BOOL gl_read_depth_source(GlContext *ctx, BOOL stencil, MimeGpuAttachment *a, uint32_t *format, uint32_t *flags,
                           uint32_t *width, uint32_t *height)
@@ -651,7 +648,7 @@ static void begin(GlContext *ctx, const GlTarget *t, BOOL clear_pending)
     ctx->dirty |= DIRTY_VIEWPORT | DIRTY_SCISSOR;
 }
 
-/* opens a pass on the draw target, executing a pending clear of it as the load action. */
+/* opens a pass on the draw target, using a pending clear of it as the load action. */
 void gl_begin_pass(GlContext *ctx)
 {
     take_channel(ctx);
@@ -682,7 +679,7 @@ void gl_begin_pass(GlContext *ctx)
     ctx->dirty |= DIRTY_PIPELINE;
 }
 
-/* executes a clear still waiting for its pass, on the target it was made for. */
+/* runs a clear still waiting for its pass, on the target it was made for. */
 void gl_flush_clears(GlContext *ctx)
 {
     if (!ctx->pending_clear.mask)

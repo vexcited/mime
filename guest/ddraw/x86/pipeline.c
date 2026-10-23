@@ -1,12 +1,12 @@
 /*
- * the front end of d3dim700 on the cpu, for ProcessVertices: vertices
- * transformed by world, view and projection to the screen, lit in camera
- * space and fogged as direct3d 7 does, their colors and
- * texture coordinates copied into the layout of the destination.
+ * the cpu front end for ProcessVertices: vertices go through world, view
+ * and projection to the screen, are lit in camera space and fogged like
+ * direct3d 7, and their colors and texture coordinates are copied into
+ * the destination layout.
  */
 #include "d3d_private.h"
 
-/* msvcrt's, as windows' d3dim700 takes them. */
+/* from msvcrt, like windows' d3dim700. */
 double __cdecl sqrt(double x);
 double __cdecl pow(double x, double y);
 double __cdecl exp(double x);
@@ -55,7 +55,7 @@ static D3DMATRIX mul(const D3DMATRIX *a, const D3DMATRIX *b)
     return r;
 }
 
-/* the inverse of the upper 3x3, transposed: what normals go through; the identity when singular. */
+/* normals go through the transposed inverse of the upper 3x3; the identity when singular. */
 static void normal_matrix(const D3DMATRIX *m, float out[3][3])
 {
     float a = m->_11, b = m->_12, c = m->_13, d = m->_21, e = m->_22, f = m->_23, g = m->_31, h = m->_32, i = m->_33;
@@ -121,7 +121,7 @@ static DWORD alpha_of(float a)
     return clamp_byte(a * 255.0f);
 }
 
-/* where the parts of a vertex of a format lie. */
+/* where each part of a vertex lies for a format. */
 typedef struct LAYOUT {
     DWORD stride, position, normal, diffuse, specular, tex[8], tex_size[8], sets, weights;
     BOOL has_normal, has_diffuse, has_specular;
@@ -168,7 +168,7 @@ static DWORD read_dword(const BYTE *p, DWORD offset)
     return v;
 }
 
-/* the vertex's color for a material source, or none. */
+/* the vertex color for a material source, if the vertex has it. */
 static BOOL source_color(D3DDEV *dev, DWORD state, const LAYOUT *l, const BYTE *v, DWORD *color)
 {
     if (!dev->rs[D3DRENDERSTATE_COLORVERTEX])
@@ -187,11 +187,11 @@ static BOOL source_color(D3DDEV *dev, DWORD state, const LAYOUT *l, const BYTE *
 
 typedef struct LIT {
     D3DLIGHT7 light;
-    VEC position, direction; /* in camera space, the direction toward the light */
+    VEC position, direction; /* in camera space; direction points toward the light. */
     float cos_theta, cos_phi, spot_scale;
 } LIT;
 
-/* one vertex lit by every enabled light, camera space position and normal given. */
+/* p and n are the camera space position and normal. */
 static void light_vertex(D3DDEV *dev, const LIT *lights, DWORD count, const LAYOUT *l, const BYTE *v, VEC p, VEC n,
                          BOOL has_normal, DWORD *diffuse_out, DWORD *specular_out)
 {
@@ -271,7 +271,7 @@ static void light_vertex(D3DDEV *dev, const LIT *lights, DWORD count, const LAYO
         *specular_out = l->has_specular ? read_dword(v, l->specular) : 0;
 }
 
-/* the fog factor of a camera space distance, 1 for none. */
+/* 1 for no fog. */
 static float fog_factor(D3DDEV *dev, float d)
 {
     float start = 0.0f, end = 0.0f, density = 0.0f;
@@ -395,14 +395,14 @@ HRESULT D3dProcess(D3DDEV *dev, const BYTE *src, DWORD src_fvf, BYTE *dst, DWORD
 /* a light of the current viewport, in camera space. */
 typedef struct OLDLIT {
     const D3DLIGHT2 *light;
-    BOOL second;          /* a D3DLIGHT2, whose range, attenuation and falloff differ */
+    BOOL second;          /* a D3DLIGHT2, whose range, attenuation and falloff differ. */
     VEC color, position;
-    VEC axis;             /* the spot's direction, from the light */
-    VEC toward;           /* toward a directional or parallel point light */
+    VEC axis;             /* the spot direction, from the light. */
+    VEC toward;           /* toward a directional or parallel point light. */
     float cos_umbra, cos_penumbra, linear, inv_width;
 } OLDLIT;
 
-/* how much of a point or spot light reaches a vertex, 0 for nothing; dir is toward the light. */
+/* how much of a point or spot light reaches a vertex, 0 for none; dir points toward the light. */
 static float old_attenuation(const OLDLIT *lit, VEC p, VEC *dir)
 {
     const D3DLIGHT2 *L = lit->light;
@@ -416,7 +416,7 @@ static float old_attenuation(const OLDLIT *lit, VEC p, VEC *dir)
     *dir = scale(d, 1.0f / dist);
     float factor;
     if (lit->second) {
-        /* the attenuation of the second light multiplies, by how far within the range. */
+        /* a D3DLIGHT2's attenuation is multiplied by how far within the range the vertex is. */
         float t = (L->dvRange - dist) / L->dvRange;
         factor = L->dvAttenuation0 + L->dvAttenuation1 * t + L->dvAttenuation2 * t * t;
         if (L->dvAttenuation0 == 0.0f && L->dvAttenuation1 == 0.0f && L->dvAttenuation2 == 0.0f)
@@ -444,12 +444,11 @@ static float old_attenuation(const OLDLIT *lit, VEC p, VEC *dir)
 }
 
 /*
- * vertices lit by the lights of the current viewport and the current
- * material: the ambient light state on the material's ambient, its
- * emissive, then each light's color on its diffuse and, from a halfway
- * vector to the eye, its specular. vertex colors stand for the
- * material's diffuse and specular when COLORVERTEX is on, guessed from
- * directx 6's description.
+ * lights vertices with the current viewport's lights and material: the
+ * ambient light state on the material's ambient, plus emissive, then each
+ * light's color on the diffuse and, from a halfway vector to the eye, the
+ * specular. with COLORVERTEX on, vertex colors stand in for the material's
+ * diffuse and specular, guessed from directx 6's description.
  */
 void D3dLegacyLight(D3DDEV *dev, const BYTE *src, DWORD fvf, DWORD count, BYTE *dst, DWORD dst_stride)
 {
@@ -557,7 +556,7 @@ void D3dLegacyLight(D3DDEV *dev, const BYTE *src, DWORD fvf, DWORD count, BYTE *
         HeapFree(GetProcessHeap(), 0, lights);
 }
 
-/* the fog of the light states for a camera space depth, when FOGENABLE asks for vertex fog. */
+/* vertex fog from the light states, when FOGENABLE asks for it. */
 DWORD D3dLegacyFog(D3DDEV *dev, float z)
 {
     const DWORD *s = dev->legacy->light_states;
@@ -581,7 +580,7 @@ DWORD D3dLegacyFog(D3DDEV *dev, float z)
     return clamp_byte((f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f) * 255.0f);
 }
 
-/* the colors a vertex has, white and black when it has none. */
+/* white and black when the vertex has none. */
 static void vertex_colors(const LAYOUT *l, const BYTE *v, DWORD *colors)
 {
     colors[0] = l->has_diffuse ? read_dword(v, l->diffuse) : 0xFFFFFFFF;

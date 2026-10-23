@@ -1,7 +1,4 @@
-/*
- * a PDF writer for pages that are pictures: each page is one image of the size of the page, flate coded with
- * the "up" predictor of PNG so that the white that most pages are mostly made of costs next to nothing.
- */
+/* writes each PDF page as one image, compressed with Flate and PNG's up predictor to compress repeated rows. */
 #include "winspool_private.h"
 #include "pdf.h"
 #include <png/deflate.h>
@@ -78,7 +75,7 @@ static void putf(PdfWriter *w, const char *format, ...)
         put(w, text, (SIZE_T)(n < (int)sizeof(text) ? n : (int)sizeof(text) - 1));
 }
 
-/* the number of the next object, whose offset is noted. */
+/* records the offset of the next object. */
 static UINT begin_object(PdfWriter *w)
 {
     if (w->ObjectCount == w->ObjectCapacity) {
@@ -98,7 +95,7 @@ static UINT begin_object(PdfWriter *w)
     return number;
 }
 
-/* a text string of a document: UTF-16 with a byte order mark, in hexadecimal. */
+/* document strings use hexadecimal UTF-16 with a byte order mark. */
 static void put_title(PdfWriter *w, LPCWSTR text)
 {
     putf(w, "<FEFF");
@@ -107,7 +104,7 @@ static void put_title(PdfWriter *w, LPCWSTR text)
     putf(w, ">");
 }
 
-/* a length in points with two decimals, from pixels at a resolution. */
+/* converts pixels at a given resolution to points with two decimals. */
 static void put_points(PdfWriter *w, int pixels, int dpi)
 {
     long long hundredths = ((long long)pixels * 7200 + dpi / 2) / dpi;
@@ -221,7 +218,7 @@ BOOL PdfFinish(PdfWriter *w)
 {
     if (!w)
         return FALSE;
-    /* the page tree, the catalog and the information are objects 2, 1 and 3 and are written here. */
+    /* writes the page tree, catalog and information as objects 2, 1 and 3. */
     w->Offsets[1] = w->Offset;
     putf(w, "2 0 obj\n<< /Type /Pages /Count %u /Kids [", w->PageCount);
     for (UINT i = 0; i < w->PageCount; i++)

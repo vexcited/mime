@@ -1,7 +1,6 @@
 /*
- * the device: the vulkan device of an adapter with what direct3d 12 needs
- * enabled, the device's own commands, the features it reports and
- * ID3D12Device14, whose methods mostly hand over to the other files.
+ * the device: an adapter's Vulkan device with what Direct3D 12 needs enabled, its own commands, the features it
+ * reports and ID3D12Device14, whose methods mostly hand over to the other files.
  */
 #include "d3d12_private.h"
 
@@ -31,9 +30,8 @@ HRESULT D12ChildGetDevice(D12Child *child, REFIID riid, void **out)
 }
 
 /*
- * vulkan objects the program released. direct3d 12 programs keep what the
- * gpu uses alive until it is done, and mime's vulkan-1 runs the destruction
- * after the commands recorded before it, so they go at once.
+ * Direct3D 12 programs keep what the gpu uses alive until it is done, and mime's vulkan-1 destroys an object
+ * only after the commands recorded before, so released objects can go at once.
  */
 void D12Defer(D12Device *device, VkObjectType type, UINT64 handle)
 {
@@ -82,10 +80,8 @@ void D12Defer(D12Device *device, VkObjectType type, UINT64 handle)
 /* ------------------------------------------------------------------ the device's own commands */
 
 /*
- * images start in the undefined layout and live in the general one: the
- * device records their transitions and the queue that submits next runs
- * them first. the init timeline orders them before every other queue's
- * later work.
+ * images start in the undefined layout and live in the general one. the device records their transitions and the
+ * next queue to submit runs them first; the init timeline orders them before every other queue's later work.
  */
 VkCommandBuffer D12InitCommands(D12Device *device)
 {
@@ -117,7 +113,7 @@ VkCommandBuffer D12InitCommands(D12Device *device)
 
 void D12InitDone(D12Device *device) { LeaveCriticalSection(&device->init_lock); }
 
-/* ends the commands recorded for a submission, with the serial of the init timeline it signals; NULL when none. */
+/* ends the recorded commands and returns them with the init timeline serial they signal, NULL when none. */
 VkCommandBuffer D12TakeInitCommands(D12Device *device, UINT64 *serial)
 {
     EnterCriticalSection(&device->init_lock);
@@ -150,8 +146,8 @@ void D12Barrier(D12Device *device, VkCommandBuffer cmd)
 /* ------------------------------------------------------------------ creation */
 
 /*
- * the vulkan device is the one the direct3d devices of the process share, see vkprofile.h: it is made for both
- * apis with the queues of its family, and the first of those queues is left to direct3d 11.
+ * all Direct3D devices of the process share one Vulkan device, see vkprofile.h. it is made for both APIs with the
+ * queues of its family, and the first of those queues is left to Direct3D 11.
  */
 static HRESULT create_vulkan_device(D12Device *device, IDXGIAdapter *adapter, const MIME_DXGI_VULKAN *v)
 {
@@ -428,7 +424,7 @@ static UINT plane_count(DXGI_FORMAT format)
     }
 }
 
-/* the features whose data is a list of dwords: their size and the dwords that are not zero. */
+/* features whose data is a list of dwords: the size and the nonzero dwords. */
 typedef struct FeatureWords {
     D3D12_FEATURE feature;
     UINT size;
@@ -450,7 +446,7 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     FEATURE(D3D12_FEATURE_DISPLAYABLE, 8, FALSE, 0);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS6, 20, device->vrs_more_rates, device->vrs_viewports, device->vrs_tier,
             device->vrs_tile, FALSE);
-    /* sampler feedback at tier 0.9, its maps storage images of words. */
+    /* sampler feedback at tier 0.9; its maps are storage images of dwords. */
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS7, 8, device->has_mesh ? D3D12_MESH_SHADER_TIER_1 : 0, 90);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS8, 4, TRUE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS9, 24, FALSE, FALSE, device->has_atomic64, device->has_shared_atomic64, FALSE, 0);
@@ -460,7 +456,7 @@ static void fixed_features(D12Device *device, FeatureWords *list, UINT *count)
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS12, 12, 0, TRUE, TRUE);
     /* a negative viewport height flips y and min depth above max depth flips z, as in vulkan. */
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS13, 24, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE);
-    /* advanced texture operations need offsets that are not constant, writable multisampled textures storage ones. */
+    /* advanced texture ops need non-constant offsets, writable msaa textures need msaa storage images. */
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS14, 12, device->has_maintenance8, device->has_msaa_storage, TRUE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS15, 8, TRUE, TRUE);
     FEATURE(D3D12_FEATURE_D3D12_OPTIONS16, 8, TRUE, FALSE);
@@ -584,7 +580,7 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D12Device14 *if
         CHECK(D3D12_FEATURE_DATA_SHADER_MODEL)
         if (d->HighestShaderModel < D3D_SHADER_MODEL_5_1 || d->HighestShaderModel > D3D_SHADER_MODEL_6_9)
             return E_INVALIDARG;
-        /* dxil up to shader model 6.8 compiles; mesh, ray tracing and the rest of what is optional others report. */
+        /* dxil up to shader model 6.8 compiles; optional features like mesh and ray tracing are reported elsewhere. */
         if (d->HighestShaderModel > D3D_SHADER_MODEL_6_8)
             d->HighestShaderModel = D3D_SHADER_MODEL_6_8;
         return S_OK;
@@ -599,7 +595,7 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D12Device14 *if
         d->WaveOps = device->has_waves;
         d->WaveLaneCountMin = device->wave_min;
         d->WaveLaneCountMax = device->wave_max;
-        /* guessed: vulkan does not tell how many lanes run at once. */
+        /* guessed: Vulkan does not say how many lanes run at once. */
         d->TotalLaneCount = sub.subgroupSize * 32;
         d->ExpandedComputeResourceStates = TRUE;
         d->Int64ShaderOps = f2.features.shaderInt64;
@@ -620,7 +616,7 @@ static HRESULT STDMETHODCALLTYPE device_check_feature_support(ID3D12Device14 *if
     case D3D12_FEATURE_SERIALIZATION:
     case D3D12_FEATURE_PROTECTED_RESOURCE_SESSION_SUPPORT:
     case D3D12_FEATURE_PROTECTED_RESOURCE_SESSION_TYPE_COUNT: {
-        /* a node index, which must be 0, then nothing supported. */
+        /* a node index that must be 0, then a support value that is always 0. */
         if (size != 8)
             return E_INVALIDARG;
         UINT *words = data;
@@ -702,7 +698,7 @@ static HRESULT STDMETHODCALLTYPE device_set_name(ID3D12Device14 *iface, LPCWSTR 
 
 static UINT STDMETHODCALLTYPE device_get_node_count(ID3D12Device14 *iface) { return 1; }
 
-/* hands out a new object's interface as the program asked, releasing the reference made with it. */
+/* returns a new object's interface as asked and drops the creation reference. */
 static HRESULT hand_out(HRESULT hr, IUnknown *object, REFIID riid, void **out)
 {
     if (FAILED(hr))
@@ -798,7 +794,7 @@ static HRESULT STDMETHODCALLTYPE device_create_command_list(ID3D12Device14 *ifac
     return hand_out(hr, SUCCEEDED(hr) ? (IUnknown *)&list->iface : nullptr, riid, out);
 }
 
-/* a list made closed, without an allocator until its first Reset. */
+/* the list starts closed, with no allocator until its first Reset. */
 static HRESULT STDMETHODCALLTYPE device_create_command_list1(ID3D12Device14 *iface, UINT node_mask,
                                                              D3D12_COMMAND_LIST_TYPE type,
                                                              D3D12_COMMAND_LIST_FLAGS flags, REFIID riid, void **out)
@@ -900,7 +896,7 @@ static void STDMETHODCALLTYPE device_create_sampler2(ID3D12Device14 *iface, cons
         D12CreateSampler(impl(iface), desc, handle);
 }
 
-/* a feedback map's view: of its 32-bit words, an array when its texture has layers. */
+/* a view of the feedback map's 32-bit words, an array when the texture has layers. */
 static void STDMETHODCALLTYPE device_create_sampler_feedback_uav(ID3D12Device14 *iface, ID3D12Resource *target,
                                                                  ID3D12Resource *feedback,
                                                                  D3D12_CPU_DESCRIPTOR_HANDLE handle)
@@ -916,7 +912,7 @@ static void STDMETHODCALLTYPE device_create_sampler_feedback_uav(ID3D12Device14 
     D12CreateUav(impl(iface), r, nullptr, &desc, handle);
 }
 
-/* copies ranges of descriptors, each source and destination range cut where the other ends. */
+/* source and destination ranges are cut wherever either one ends. */
 static void STDMETHODCALLTYPE device_copy_descriptors(ID3D12Device14 *iface, UINT dst_count,
                                                       const D3D12_CPU_DESCRIPTOR_HANDLE *dst_starts,
                                                       const UINT *dst_sizes, UINT src_count,
@@ -963,7 +959,7 @@ static D3D12_RESOURCE_DESC1 desc1_of(const D3D12_RESOURCE_DESC *desc)
     return d1;
 }
 
-/* the allocation info of several resources placed one after the other, each at its alignment. */
+/* several resources placed one after another, each at its alignment. */
 static D3D12_RESOURCE_ALLOCATION_INFO allocation_info(D12Device *device, UINT count, const D3D12_RESOURCE_DESC *descs,
                                                       const D3D12_RESOURCE_DESC1 *descs1,
                                                       D3D12_RESOURCE_ALLOCATION_INFO1 *infos)
@@ -1021,7 +1017,7 @@ static D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE device_get_resource_all
     return ret;
 }
 
-/* the heap properties a heap type stands for: on a discrete gpu, upload is write combined, readback write back. */
+/* on a discrete gpu, upload is write combined and readback is write back. */
 static D3D12_HEAP_PROPERTIES *STDMETHODCALLTYPE device_get_custom_heap_properties(ID3D12Device14 *iface,
                                                                                   D3D12_HEAP_PROPERTIES *ret,
                                                                                   UINT node_mask,
@@ -1107,7 +1103,7 @@ static HRESULT STDMETHODCALLTYPE device_create_committed_resource2(ID3D12Device1
     return create_resource(impl(iface), props, flags, desc, nullptr, 0, state, clear, riid, out);
 }
 
-/* enhanced barriers' initial layout: every image lives in the general layout, so it says nothing. */
+/* every image lives in the general layout, so the initial layout of enhanced barriers is ignored. */
 static HRESULT STDMETHODCALLTYPE device_create_committed_resource3(
     ID3D12Device14 *iface, const D3D12_HEAP_PROPERTIES *props, D3D12_HEAP_FLAGS flags,
     const D3D12_RESOURCE_DESC1 *desc, UINT layout, const D3D12_CLEAR_VALUE *clear, void *session, UINT32 castable_count,
@@ -1178,7 +1174,7 @@ static HRESULT STDMETHODCALLTYPE device_create_placed_resource2(ID3D12Device14 *
     return device_create_placed_resource1(iface, heap, offset, desc, D3D12_RESOURCE_STATE_COMMON, clear, riid, out);
 }
 
-/* reserved resources, at the tier of tiled resources the options report. */
+/* supported at the tiled resources tier the options report. */
 static HRESULT STDMETHODCALLTYPE device_create_reserved_resource(ID3D12Device14 *iface, const D3D12_RESOURCE_DESC *desc,
                                                                  D3D12_RESOURCE_STATES state,
                                                                  const D3D12_CLEAR_VALUE *clear, REFIID riid,
@@ -1218,9 +1214,8 @@ static void validation_error(D12Device *device, const char *message)
 }
 
 /*
- * A handle for a fence, committed resource or heap that was made to be shared. The checks and their order are
- * those of D3D12Core.dll: the object and the handle are required, the object must have been made shareable, and
- * the access of a fence and of a heap's handle must be GENERIC_ALL.
+ * the checks run in the same order as on windows: object and handle are required, the object must be shareable,
+ * and fences and heaps need GENERIC_ALL access.
  */
 static HRESULT STDMETHODCALLTYPE device_create_shared_handle(ID3D12Device14 *iface, ID3D12DeviceChild *object,
                                                              const SECURITY_ATTRIBUTES *attributes, DWORD access,
@@ -1272,7 +1267,7 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_handle(ID3D12Device14 *iface
 {
     D12Device *device = impl(iface);
     UINT kind = 0;
-    /* a legacy shared handle has bit 1 set, which no nt handle does: it names a resource of direct3d 11. */
+    /* legacy shared handles have bit 1 set, which no NT handle has, and name Direct3D 11 resources. */
     if ((ULONG_PTR)handle & MIME_LEGACY_HANDLE_BIT) {
         HANDLE nt;
         HRESULT opened = MimeShareOpenLegacy(MimeLegacyNumber(handle), &nt);
@@ -1298,8 +1293,8 @@ static HRESULT STDMETHODCALLTYPE device_open_shared_handle(ID3D12Device14 *iface
 }
 
 /*
- * Any access but GENERIC_ALL is refused before anything is looked up, and a name is tried as a resource, then as a
- * fence, as D3D12Core.dll tries it.
+ * like windows, any access but GENERIC_ALL fails before the lookup, and a name is tried as a resource, then as a
+ * fence.
  */
 static HRESULT STDMETHODCALLTYPE device_open_shared_handle_by_name(ID3D12Device14 *iface, LPCWSTR name, DWORD access,
                                                                    HANDLE *handle)
@@ -1438,7 +1433,7 @@ static LUID *STDMETHODCALLTYPE device_get_adapter_luid(ID3D12Device14 *iface, LU
     return ret;
 }
 
-/* pipeline libraries need a driver that serializes pipelines, which windows reports as unsupported. */
+/* pipeline libraries need a driver that serializes pipelines, so this reports them unsupported like windows does. */
 static HRESULT STDMETHODCALLTYPE device_create_pipeline_library(ID3D12Device14 *iface, const void *blob, SIZE_T size,
                                                                 REFIID riid, void **out)
 {

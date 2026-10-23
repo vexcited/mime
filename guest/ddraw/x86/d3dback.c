@@ -1,8 +1,8 @@
 /*
- * the direct3d 9 device direct3d 1 to 7 draw through. d3d9.dll is loaded
- * at the first use, and the device presents nothing: its targets are the
- * copies of surfaces, read back when the cpu wants their pixels. every
- * call comes with ddraw's lock held.
+ * the direct3d 9 device that direct3d 1 to 7 draw through. d3d9.dll loads
+ * on first use and the device presents nothing: its targets are surface
+ * copies, read back when the cpu wants their pixels. every call runs with
+ * ddraw's lock held.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
@@ -20,9 +20,9 @@ struct DbImage {
     DWORD usage;
     D3DFORMAT format;
     UINT width, height, levels;
-    IDirect3DBaseTexture9 *texture; /* a texture or a cube texture */
-    IDirect3DSurface9 *surface;     /* a target or depth surface not sampled */
-    IDirect3DSurface9 *staging;     /* system memory copy of a target, for reads and writes */
+    IDirect3DBaseTexture9 *texture; /* a texture or a cube texture. */
+    IDirect3DSurface9 *surface;     /* a target or depth surface that is not sampled. */
+    IDirect3DSurface9 *staging;     /* system memory copy of a target, for reads and writes. */
 };
 
 static DbDevice g_dev;
@@ -56,7 +56,7 @@ DbDevice *DbDeviceGet(void)
     pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
     pp.hDeviceWindow = g_dev.window;
     pp.Windowed = TRUE;
-    /* direct3d 7 sets the fpu up itself, or leaves it as the program asked. */
+    /* direct3d 7 sets up the fpu itself or leaves it as the program set it. */
     HRESULT hr = d3d->lpVtbl->CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, g_dev.window,
                                            D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_FPU_PRESERVE, &pp,
                                            &g_dev.device);
@@ -268,7 +268,7 @@ BOOL DbImageWrite(DbImage *image, UINT face, UINT level, const RECT *rect, const
     UINT bytes = bytes_of(image->format, (UINT)(r.right - r.left)), rows = rows_of(image->format, (UINT)(r.bottom - r.top));
     D3DLOCKED_RECT locked;
     if (image->usage & DB_TARGET) {
-        /* through the system memory copy, which UpdateSurface takes to the target. */
+        /* goes through the system memory copy, which UpdateSurface copies to the target. */
         if (FAILED(image->staging->lpVtbl->LockRect(image->staging, &locked, &r, 0)))
             return FALSE;
         copy_rows(locked.pBits, (UINT)locked.Pitch, data, pitch, bytes, rows);

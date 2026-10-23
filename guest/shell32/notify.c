@@ -1,16 +1,7 @@
-/*
- * shell change notification registrations, the user notification state,
- * revealing items in a folder and the default application queries of
- * IApplicationAssociationRegistration.
- */
+/* shell change notifications, the user notification state, revealing items and IApplicationAssociationRegistration. */
 #include "shell32_private.h"
 
-/* ------------------------------------------------------------------ change notifications */
-
-/*
- * registrations of this process. events reach no other process, as there
- * is no shell to relay them, and SHChangeNotify posts nothing.
- */
+/* with no shell to relay them, events never leave this process and SHChangeNotify posts nothing. */
 typedef struct SH_REGISTRATION {
     ULONG Id;
     HWND Window;
@@ -53,11 +44,7 @@ SHSTDAPI BOOL WINAPI SHChangeNotifyDeregister(ULONG id)
     return found;
 }
 
-/*
- * the message of a registration carries a handle to the event, which these two functions open and close: with no shell that
- * relays events no message with such a handle ever arrives, so none can be locked. They are exported by number, as
- * programs that take part in the notifications of the shell call them.
- */
+/* no shell relays events, so no message ever carries an event handle to lock. exported by ordinal. */
 SHSTDAPI HANDLE WINAPI SHChangeNotification_Lock(HANDLE change, DWORD process, PIDLIST_ABSOLUTE **pidls, LONG *event)
 {
     if (pidls)
@@ -74,12 +61,10 @@ SHSTDAPI BOOL WINAPI SHChangeNotification_Unlock(HANDLE lock)
     return FALSE;
 }
 
-/* ------------------------------------------------------------------ notification state */
-
 #define QUNS_BUSY 1
 #define WM_QUERY_NOTIFICATION_STATE (WM_USER + 0x3EF)
 
-/* windows asks the taskbar and reports busy when it does not answer, as here without one. */
+/* asks the taskbar like windows, and reports busy when there is none or it does not answer. */
 SHSTDAPI HRESULT WINAPI SHQueryUserNotificationState(int *state)
 {
     if (!state)
@@ -93,9 +78,7 @@ SHSTDAPI HRESULT WINAPI SHQueryUserNotificationState(int *state)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ revealing items */
-
-/* windows has explorer open the folder; without one the request fails like a missing handler. */
+/* windows has explorer open the folder. without explorer this fails like a missing handler. */
 SHSTDAPI HRESULT WINAPI SHOpenFolderAndSelectItems(PCIDLIST_ABSOLUTE folder, UINT count, PCUITEMID_CHILD *items,
                                                    DWORD flags)
 {
@@ -103,8 +86,6 @@ SHSTDAPI HRESULT WINAPI SHOpenFolderAndSelectItems(PCIDLIST_ABSOLUTE folder, UIN
         return E_INVALIDARG;
     return HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION);
 }
-
-/* ------------------------------------------------------------------ association registration */
 
 typedef enum {
     AT_FILEEXTENSION,
@@ -168,7 +149,7 @@ static ULONG STDMETHODCALLTYPE aar_release(IApplicationAssociationRegistration *
     return refs;
 }
 
-/* the user's choice of an extension or protocol, then the class registered for it. */
+/* the user's UserChoice first, then the class registered for the extension. */
 static HRESULT current_default(LPCWSTR query, ASSOCIATIONTYPE type, LPWSTR *result)
 {
     WCHAR path[512], value[256];
@@ -222,7 +203,7 @@ static HRESULT STDMETHODCALLTYPE aar_query_current_default(IApplicationAssociati
     return current_default(query, type, result);
 }
 
-/* the application's registered capabilities name the class it would use for the query. */
+/* the class the application's registered capabilities give for the query. */
 static BOOL app_class(LPCWSTR app, LPCWSTR query, ASSOCIATIONTYPE type, LPWSTR out, DWORD size)
 {
     WCHAR capabilities[512], path[600];
@@ -271,7 +252,7 @@ static HRESULT STDMETHODCALLTYPE aar_query_app_is_default_all(IApplicationAssoci
     return S_OK;
 }
 
-/* windows 8 and later no longer let programs take a default themselves. */
+/* since windows 8 programs can no longer make themselves the default. */
 static HRESULT STDMETHODCALLTYPE aar_set_app_as_default(IApplicationAssociationRegistration *self, LPCWSTR app,
                                                         LPCWSTR query, ASSOCIATIONTYPE type)
 {

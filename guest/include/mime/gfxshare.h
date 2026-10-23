@@ -1,13 +1,13 @@
 /*
- * shared direct3d resources and fences: the kernel objects behind the nt handles CreateSharedHandle makes, and the
- * services that make, open and synchronize them, in win32k gfxshare.c.
+ * shared direct3d resources and fences: the kernel objects behind the nt handles CreateSharedHandle returns, and the
+ * services in win32k's gfxshare.c that create, open and synchronize them.
  *
- * an object is a shared resource, of the type DxgkSharedResource, or a synchronization object, DxgkSharedSyncObject. It names
- * the memory or semaphore the host keeps for the other processes by an id, and carries the bytes its creator
- * described the resource with, which an opening device builds its own object from. A resource can also be a keyed
- * mutex, a lock that is taken with a key and released with another.
+ * an object is a shared resource, type DxgkSharedResource, or a sync object, DxgkSharedSyncObject. it names by id
+ * the memory or semaphore the host keeps for other processes, and carries the creator's description of the
+ * resource, from which an opening device builds its own object. a resource can also be a keyed mutex, taken with
+ * one key and released with another.
  *
- * the services take one structure of explicit sizes, so 32-bit processes pass theirs as they are.
+ * the services take one structure with explicit sizes, so 32-bit processes pass theirs unchanged.
  */
 #ifndef MIME_GFXSHARE_H
 #define MIME_GFXSHARE_H
@@ -17,7 +17,7 @@
 #define MIME_GFXSHARE_RESOURCE 1
 #define MIME_GFXSHARE_SYNC 2
 
-/* the bytes a creator describes its object with. */
+/* maximum size of the creator's object description. */
 #define MIME_GFXSHARE_MAX_DATA 256
 
 /* services of NtGdiMimeGfxShare. */

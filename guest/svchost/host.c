@@ -1,6 +1,6 @@
 /*
- * the services of a group: loading the ServiceDll of one when the manager starts it, the functions a DLL can take
- * from the host and the unloading of the DLL once the service is done.
+ * hosting a group's service DLLs: loading a ServiceDll when the manager starts its service, the functions the host
+ * offers the DLL, and unloading the DLL once the service is done.
  */
 #include "svchost.h"
 
@@ -9,7 +9,7 @@
 #define RPC_S_ALREADY_LISTENING_ 1713
 #define UNLOAD_WAIT_MS 5000
 
-/* ------------------------------------------------------------------ the globals a DLL may ask for */
+/* ------------------------------------------------------------------ service globals */
 
 typedef LONG(WINAPI *RPC_START_FUNCTION)(const WCHAR *endpoint, void *interface_spec);
 typedef LONG(WINAPI *RPC_STOP_FUNCTION)(void *interface_spec);
@@ -19,8 +19,8 @@ typedef DWORD(WINAPI *UNREGISTER_STOP_FUNCTION)(HANDLE wait);
 typedef void(WINAPI *PUSH_GLOBALS)(void *globals);
 
 /*
- * what SvchostPushServiceGlobals and SvchostPushServiceGlobalsEx of a service DLL are given: the old function gets
- * the pointer to the first sid, the new one the whole block. the DLL calls the functions at the end by address.
+ * passed to the DLL's SvchostPushServiceGlobals or SvchostPushServiceGlobalsEx: the old one gets a pointer to the
+ * first sid, the new one the whole block. the DLL calls the function pointers at the end.
  */
 typedef struct SVCHOST_GLOBAL_DATA {
     ULONG Version;
@@ -49,9 +49,9 @@ static HOST_SERVICE *find_service(const WCHAR *name)
     return nullptr;
 }
 
-/* ------------------------------------------------------------------ the use count of the DLL */
+/* ------------------------------------------------------------------ DLL use count */
 
-/* drops one use. the last one frees the DLL when the service asked for that. */
+/* the last use frees the DLL when the service asked for that. */
 static void drop_use(HOST_SERVICE *svc)
 {
     AcquireSRWLockExclusive(&svc->lock);
@@ -74,7 +74,6 @@ static void drop_use(HOST_SERVICE *svc)
     WakeAllConditionVariable(&svc->unloaded);
 }
 
-/* the wait of a registered stop callback has ended. */
 static void CALLBACK stop_event_fired(PVOID parameter, BOOLEAN timed_out)
 {
     HOST_SERVICE *svc = parameter;
@@ -107,7 +106,7 @@ void HostWaitForUnloads(void)
 
 /* ------------------------------------------------------------------ stop callbacks */
 
-/* long_only: the new flavour of the function honours only the long function flag of the wait flags. */
+/* long_only: the newer function honors only the long function flag of the wait flags. */
 static DWORD register_stop(HANDLE *wait, const WCHAR *name, HANDLE event, void *callback, void *context, DWORD flags,
                            BOOL long_only)
 {
@@ -155,7 +154,7 @@ static DWORD WINAPI unregister_stop(HANDLE wait)
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ the RPC servers of a DLL */
+/* ------------------------------------------------------------------ RPC servers */
 
 typedef LONG(WINAPI *USE_PROTSEQ_EP)(const WCHAR *protseq, UINT max_calls, const WCHAR *endpoint, void *sd);
 typedef LONG(WINAPI *REGISTER_IF)(void *interface_spec, void *type_uuid, void *manager_epv);
@@ -247,7 +246,7 @@ static BOOL build_globals(void)
     return TRUE;
 }
 
-/* the block is made by the first service that needs it. */
+/* the first service that needs the block builds it. */
 static BOOL globals_ready(void)
 {
     AcquireSRWLockExclusive(&g_globals_lock);
@@ -256,12 +255,12 @@ static BOOL globals_ready(void)
     return ok;
 }
 
-/* ------------------------------------------------------------------ finding the DLL of a service */
+/* ------------------------------------------------------------------ finding a service's DLL */
 
 #define ROOT_OF_SERVICES L"System\\CurrentControlSet\\Services\\"
 #define DLL_PATH_CHARS 260
 
-/* the values of a service live in its Parameters key, or in the key of the service when that is not there. */
+/* values live in the service's Parameters key, or in the service key itself when there is none. */
 static DWORD open_values(const WCHAR *name, HKEY *key)
 {
     WCHAR path[MAX_PATH];
@@ -288,8 +287,8 @@ static BOOL read_nonzero_dword(HKEY key, const WCHAR *value)
 }
 
 /*
- * a path value: it has to be a non empty expandable string. what comes back is expanded with the environment of the
- * process and in lower case, in a block of the heap. `optional` lets a value that is missing give no path and no error.
+ * the value must be a non empty REG_EXPAND_SZ. it comes back expanded with the process environment and lowercased, on
+ * the heap. `optional` lets a missing value give no path and no error.
  */
 static DWORD read_path_value(HKEY key, const WCHAR *value, BOOL optional, WCHAR **path)
 {
@@ -322,7 +321,7 @@ static DWORD read_path_value(HKEY key, const WCHAR *value, BOOL optional, WCHAR 
     return ERROR_SUCCESS;
 }
 
-/* the ServiceMain value names another function than ServiceMain. */
+/* the ServiceMain value can name a different entry point. */
 static CHAR *read_main_export(HKEY key)
 {
     WCHAR text[128];
@@ -354,7 +353,7 @@ static DWORD make_context(HOST_SERVICE *svc)
     return ERROR_SUCCESS;
 }
 
-/* the first start learns where the DLL is. a later start only renews the context of a DLL that was unloaded. */
+/* the first start finds the DLL. later starts only renew the activation context of an unloaded DLL. */
 static DWORD locate_dll(HOST_SERVICE *svc, HKEY values)
 {
     if (!svc->dll_path) {
@@ -382,7 +381,7 @@ typedef struct ENTRY_POINTS {
     PUSH_GLOBALS push_ex;
 } ENTRY_POINTS;
 
-/* loads the DLL when needed and finds its functions, all inside the activation context of the manifest. */
+/* loading and lookups run inside the manifest's activation context. */
 static DWORD find_entry_points(HOST_SERVICE *svc, ENTRY_POINTS *found)
 {
     ULONG_PTR cookie = 0;
@@ -431,7 +430,7 @@ static void report_stopped(const WCHAR *name, DWORD error)
     SetServiceStatus(handle, &status);
 }
 
-/* the two switches of the key that can be set once and stay. */
+/* once set, these two switches stay set. */
 static void read_switches(HOST_SERVICE *svc, HKEY values)
 {
     if (read_nonzero_dword(values, L"ServiceDllUnloadOnStop"))

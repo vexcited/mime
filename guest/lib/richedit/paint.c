@@ -1,7 +1,7 @@
 /*
- * painting: the background, the lines' runs in their fonts and colors,
- * the selection, bullets and numbers, through a bitmap so nothing
- * flickers; and the caret.
+ * painting: the background, each line's runs in their fonts and colors, the
+ * selection, bullets and numbers, drawn through a bitmap to avoid flicker.
+ * also the caret.
  */
 #include "richedit_private.h"
 
@@ -170,8 +170,6 @@ void RePaint(RE *e, HDC target, const RECT *update)
         DeleteDC(dc);
     }
 }
-
-/* ------------------------------------------------------------------ the caret */
 
 static int caret_height(RE *e)
 {

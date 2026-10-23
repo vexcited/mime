@@ -1,8 +1,7 @@
 /*
- * Windows.Internal.System.Profile.RegionPolicyEvaluator: the services of Windows that depend on the region of the
- * device (the integrated services of the European Economic Area, for one) ask whether a policy is enabled there. The
- * statics read a policy set that Windows keeps in a json file next to its libraries and the region of the device. Mime
- * has no such file, which windows treats as a set without policies: every policy is not configured.
+ * Windows.Internal.System.Profile.RegionPolicyEvaluator: region dependent services, such as the EEA integrated
+ * services, ask whether a policy is enabled. Windows reads the policy set from a json file next to its libraries.
+ * mime has no such file, which windows treats as an empty set: every policy is not configured.
  */
 #include "combase_private.h"
 #include <mime/winrt_object.h>
@@ -28,14 +27,14 @@ MIME_COM_INTERFACE(IRegionPolicyFactory)
 
 WRT_INSPECTABLE_THUNKS(IRegionPolicyFactory)
 
-/* the states are 0 for a policy the set does not name, 1 for one that is enabled for the region and 2 for one that is not. */
+/* 0 when the set does not name the policy, 1 when enabled for the region, 2 when not. */
 static HRESULT STDMETHODCALLTYPE evaluate(IRegionPolicyEvaluatorStatics *This, GUID policy, INT32 *state)
 {
     *state = 0;
     return S_OK;
 }
 
-/* and so is the answer after a read of the set that ignores what was kept from the last one. */
+/* same answer after an uncached reread of the set. */
 static HRESULT STDMETHODCALLTYPE evaluate_again(IRegionPolicyEvaluatorStatics *This, GUID policy, INT32 *state)
 {
     *state = 0;

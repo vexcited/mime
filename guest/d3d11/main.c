@@ -1,7 +1,6 @@
 /*
- * the exports of d3d11.dll: device creation, on an adapter of dxgi or on
- * the first one. every driver type gets the hardware device; the debug
- * layer is missing, as on a pc without the graphics tools.
+ * d3d11.dll exports. every driver type gets the hardware device. the debug layer is missing, as on a pc without
+ * the graphics tools.
  */
 #include "d3d11_private.h"
 
@@ -57,7 +56,7 @@ D3D11API HRESULT WINAPI D3D11CreateDevice(IDXGIAdapter *adapter, D3D_DRIVER_TYPE
     ULONGLONG began = GetTickCount64();
     hr = D3dCreateDevice(adapter, flags, levels, count, &object);
     adapter->lpVtbl->Release(adapter);
-    /* a device is a connection to the host's driver, and a browser makes several before its first frame. */
+    /* each device is a host driver connection, and browsers make several before their first frame. */
     if (GetTickCount64() - began >= 20)
         D3dLog("d3d11: a device took %lu ms", (unsigned long)(GetTickCount64() - began));
     if (FAILED(hr)) {
@@ -122,7 +121,7 @@ D3D11API HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D
     return S_OK;
 }
 
-/* direct3d 11 on 12 needs direct3d 12, which is absent. */
+/* direct3d 11 on 12 is not offered. */
 D3D11API HRESULT WINAPI D3D11On12CreateDevice(IUnknown *device, UINT flags, const D3D_FEATURE_LEVEL *levels,
                                               UINT count, IUnknown *const *queues, UINT queue_count, UINT node_mask,
                                               ID3D11Device **out, ID3D11DeviceContext **context,

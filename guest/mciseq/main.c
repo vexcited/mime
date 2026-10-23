@@ -1,9 +1,9 @@
 /*
  * mciseq.dll, the sequencer device: standard midi files of format 0 and 1,
- * and rmid files, played on a midi output port it opens at play and closes
- * at stop. it keeps windows' driver's ways: tempo only from the first
- * track, song pointer positions by default, files rejected unless every
- * track ends with its end of track event, and pause that closes the port.
+ * and rmid files, played on a midi output port opened at play and closed at
+ * stop. like windows: tempo only from the first track, song pointer
+ * positions by default, files rejected unless every track ends with its end
+ * of track event, and pause closes the port.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
@@ -17,13 +17,13 @@
 
 typedef struct TRACK {
     const BYTE *start, *end, *p;
-    DWORD tick;      /* of the next event */
+    DWORD tick;      /* tick of the next event. */
     BYTE status;
     BOOL ended;
 } TRACK;
 
 typedef struct SEGMENT {
-    DWORD tick, ms, us; /* where a tempo starts, and its microseconds a tick */
+    DWORD tick, ms, us; /* where a tempo starts, and its microseconds per tick. */
 } SEGMENT;
 
 typedef struct SEQ {
@@ -38,18 +38,18 @@ typedef struct SEQ {
     DWORD ppqn, fps, tpf;
     SEGMENT *map;
     UINT segments;
-    DWORD length;    /* in ticks */
-    DWORD offset;    /* smpte offset of the file, packed */
+    DWORD length;    /* in ticks. */
+    DWORD offset;    /* smpte offset of the file, packed. */
     DWORD time_format;
     UINT port;
-    /* playing */
+    /* playback state. */
     HMIDIOUT out;
     HANDLE thread, event;
     volatile BOOL quit;
     int mode;
     DWORD position, to;
-    DWORD tick0, time0, us; /* the clock while playing */
-    DWORD forced_us;        /* a tempo set by command, which the file's no longer changes */
+    DWORD tick0, time0, us; /* the clock while playing. */
+    DWORD forced_us;        /* a tempo set by command, which the file's tempo events no longer change. */
     BOOL sounding[16][128];
     HWND callback;
     BOOL pending;
@@ -108,8 +108,8 @@ static BOOL add_segment(SEQ *s, DWORD tick, DWORD tempo)
 }
 
 /*
- * walks a track once: its length in ticks, its tempo changes when it is
- * the first, and whether it holds a status windows' driver refuses.
+ * one pass over a track: its length in ticks, its tempo changes when it is
+ * the first, and whether it holds a status windows refuses.
  */
 static BOOL scan(SEQ *s, const TRACK *t, BOOL first)
 {
@@ -303,7 +303,7 @@ static DWORD from_format(const SEQ *s, DWORD value)
     return ms_to_tick(s, value);
 }
 
-/* a position in the current format no further than the end. */
+/* a position in the current time format, no further than the end. */
 static BOOL in_range(const SEQ *s, DWORD value)
 {
     if (is_smpte(s->time_format)) {
@@ -396,10 +396,7 @@ static TRACK *next_track(SEQ *s)
     return best;
 }
 
-/*
- * one event of a track. chasing sends what sets a channel up but no note;
- * tempo comes from the first track only.
- */
+/* chasing sends channel setup events but no notes. tempo comes from the first track only. */
 static void play_event(SEQ *s, TRACK *t, BOOL chase)
 {
     const BYTE *end = t->end;
@@ -459,7 +456,7 @@ static void play_event(SEQ *s, TRACK *t, BOOL chase)
     }
 }
 
-/* to a tick from the start, every setup event sent on the way. */
+/* seeks to a tick from the start, sending every setup event on the way. */
 static void chase_to(SEQ *s, DWORD tick)
 {
     rewind_tracks(s);
@@ -755,7 +752,7 @@ static MCIERROR status(SEQ *s, DWORD flags, MCI_STATUS_PARMS *p)
     }
 }
 
-/* one item a call, as windows' driver takes them. */
+/* like windows, one item per call. */
 static MCIERROR set(SEQ *s, DWORD flags, MCI_SEQ_SET_PARMS *p)
 {
     DWORD items = MCI_SET_TIME_FORMAT | MCI_SEQ_SET_TEMPO | MCI_SEQ_SET_PORT | MCI_SEQ_SET_SLAVE |

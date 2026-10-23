@@ -1,6 +1,4 @@
-/*
- * gdi definitions shared by gdi32, user32, win32k and applications.
- */
+/* gdi definitions shared by gdi32, user32, win32k and applications. */
 #ifndef MIME_WIN32_WINGDI_H
 #define MIME_WIN32_WINGDI_H
 
@@ -1217,7 +1215,6 @@ WINGDIAPI UINT WINAPI GetNearestPaletteIndex(HPALETTE palette, COLORREF color);
 WINGDIAPI UINT WINAPI GetSystemPaletteEntries(HDC dc, UINT start, UINT count, LPPALETTEENTRY entries);
 WINGDIAPI UINT WINAPI SetDIBColorTable(HDC dc, UINT start, UINT count, const RGBQUAD *colors);
 
-/* the functions the api sweep added; see docs/gdi32.md. */
 typedef struct tagRASTERIZER_STATUS {
     short nSize;
     short wFlags;
@@ -1816,7 +1813,7 @@ typedef struct tagEMRCREATEDIBPATTERNBRUSHPT {
 typedef struct tagEMREXTCREATEFONTINDIRECTW {
     EMR emr;
     DWORD ihFont;
-    LOGFONTW elfw; /* followed by the rest of an ENUMLOGFONTEXDVW when the record is longer */
+    LOGFONTW elfw; /* the rest of an ENUMLOGFONTEXDVW follows when the record is longer. */
 } EMREXTCREATEFONTINDIRECTW, *PEMREXTCREATEFONTINDIRECTW;
 
 typedef struct tagEMRCREATEPALETTE {

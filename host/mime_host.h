@@ -1,6 +1,4 @@
-/*
- * mime host side common declarations.
- */
+/* common host declarations. */
 #ifndef MIME_HOST_H
 #define MIME_HOST_H
 
@@ -45,7 +43,7 @@ void mime_logv(MimeLogLevel level, const char *fmt, va_list ap);
 #define mime_warn(...) mime_log(MIME_LOG_WARN, __VA_ARGS__)
 #define mime_error(...) mime_log(MIME_LOG_ERROR, __VA_ARGS__)
 
-/* paths.c, xdg base directories. */
+/* paths.c, XDG base directories. */
 typedef struct MimePaths {
     char config[MIME_PATH_MAX];  /* $XDG_CONFIG_HOME/mime */
     char data[MIME_PATH_MAX];    /* $XDG_DATA_HOME/mime */
@@ -55,10 +53,10 @@ typedef struct MimePaths {
     char drive_c[MIME_PATH_MAX]; /* data/drive_c */
     char socket[MIME_PATH_MAX];  /* runtime/mime.sock */
     char pidfile[MIME_PATH_MAX]; /* runtime/mime.pid */
-    char lockfile[MIME_PATH_MAX]; /* per user, outside the xdg dirs */
+    char lockfile[MIME_PATH_MAX]; /* per user, outside the XDG dirs. */
     char logfile[MIME_PATH_MAX]; /* state/vmm.log */
     char setup_stamp[MIME_PATH_MAX];
-    char exe_dir[MIME_PATH_MAX];  /* directory of the running mime binary */
+    char exe_dir[MIME_PATH_MAX];  /* directory of the running mime binary. */
 } MimePaths;
 
 bool mime_paths_init(MimePaths *paths);
@@ -67,7 +65,7 @@ bool mime_paths_ensure(const MimePaths *paths);
 void mime_paths_to_guest(const MimePaths *paths, const char *host, char *out, size_t size);
 /* the reverse, for C: and Z: paths with either separator; the result never leaves the drive. */
 bool mime_paths_to_host(const MimePaths *paths, const char *guest, char *out, size_t size);
-/* pe_level.c: 0 when the manifest of a program names no level, else 1 asInvoker, 2 highestAvailable, 3 requireAdministrator. */
+/* manifest execution level: 0 absent, 1 asInvoker, 2 highestAvailable, 3 requireAdministrator. */
 uint32_t mime_pe_run_level(const char *path);
 /* the paths of the running machine process. */
 const MimePaths *mime_daemon_paths(void);

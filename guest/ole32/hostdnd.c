@@ -1,11 +1,9 @@
 /*
- * drag and drop with the host's programs, the ole side. win32k posts WM_MIME_HOSTDND to the thread of a window
- * that registered an IDropTarget (RegisterDragDrop), and user32 calls the handler here with the phase of the drag.
- * the data object the target gets is backed by the drag: its formats are the ones the host's types give, and the
- * data of a format is read from the host when the target asks, in chunks. a drag the other way, from a thread in
- * DoDragDrop, is announced to the host with the kinds its data object can give; the host asks for the data of a
- * kind when another program reads it, and this thread answers from the data object, since the message goes
- * through the thread's loop.
+ * the ole side of drag and drop with host programs. win32k posts WM_MIME_HOSTDND to the thread of a window registered
+ * with RegisterDragDrop, and user32 calls the handler here with the drag's phase. the target's data object is backed
+ * by the drag: its formats come from the host's types, and data is read from the host in chunks on demand. for a drag
+ * out of DoDragDrop, the host learns which kinds the data object offers and asks for one when another program reads
+ * it. this thread answers from the data object, since the request comes through its message loop.
  */
 #include "ole32_private.h"
 
@@ -43,7 +41,7 @@ static void init_formats(void)
 #define format_file_w() (init_formats(), g_file_w)
 #define format_file_a() (init_formats(), g_file_a)
 
-/* the kind of data a clipboard format carries between the guest and the host, 0 for none. */
+/* the host data kind a clipboard format maps to, 0 for none. */
 static ULONG kind_of_format(UINT format)
 {
     switch (format) {
@@ -67,7 +65,7 @@ static ULONG kind_of_format(UINT format)
     return 0;
 }
 
-/* ------------------------------------------------------------------ the data object of a host drag */
+/* ------------------------------------------------------------------ data object of a host drag */
 
 typedef struct _HOST_DATA {
     IDataObject Interface;
@@ -93,7 +91,7 @@ static void add_format(HOST_DATA *d, UINT format)
         d->Formats[d->Count++] = (CLIPFORMAT)format;
 }
 
-/* the whole of a format the host holds; text gets its terminator. */
+/* fetches a whole format from the host, text gets a terminator. */
 static BYTE *fetch_whole(ULONG session, UINT format, SIZE_T *size)
 {
     ULONG total = 0;
@@ -128,7 +126,7 @@ static HGLOBAL make_global(const void *data, SIZE_T size)
     return g;
 }
 
-/* the first file of a DROPFILES block, wide. */
+/* the first file of a DROPFILES block, as wide text. */
 static WCHAR *first_file(const BYTE *block, SIZE_T size)
 {
     if (size < 24)
@@ -163,7 +161,7 @@ static WCHAR *first_file(const BYTE *block, SIZE_T size)
     return copy;
 }
 
-/* wide text as ansi or oem, terminated. */
+/* converts wide text to terminated ansi or oem text. */
 static HGLOBAL narrow(const WCHAR *w, UINT codepage)
 {
     int bytes = WideCharToMultiByte(codepage, 0, w, -1, nullptr, 0, nullptr, nullptr);
@@ -230,7 +228,7 @@ static HRESULT STDMETHODCALLTYPE hd_get_data(IDataObject *This, FORMATETC *forma
     if (!has_format(d, format->cfFormat))
         return DV_E_FORMATETC;
     UINT cf = format->cfFormat, from = cf;
-    /* the formats derived from another: ansi text from the wide one, a file name from the list of files. */
+    /* derived formats: ansi text from wide text, a file name from the file list. */
     if (cf == CF_TEXT || cf == CF_OEMTEXT)
         from = CF_UNICODETEXT;
     else if (cf == format_url_a())
@@ -243,7 +241,7 @@ static HRESULT STDMETHODCALLTYPE hd_get_data(IDataObject *This, FORMATETC *forma
         return DV_E_FORMATETC;
     HGLOBAL g = nullptr;
     if (from == cf) {
-        /* the host's text has no terminator of its own: the zeroes after it are. */
+        /* host text has no terminator, the zeroes appended after it serve as one. */
         g = make_global(data, cf == CF_UNICODETEXT ? size + sizeof(WCHAR) : size);
     } else if (cf == CF_TEXT || cf == CF_OEMTEXT) {
         g = narrow((const WCHAR *)data, cf == CF_OEMTEXT ? CP_OEMCP : CP_ACP);
@@ -350,7 +348,7 @@ static HOST_DATA *host_data_create(ULONG session, const ULONG *state)
     return d;
 }
 
-/* ------------------------------------------------------------------ the target's side */
+/* ------------------------------------------------------------------ target side */
 
 typedef struct _ENTERED {
     ULONG Session;
@@ -362,7 +360,7 @@ typedef struct _ENTERED {
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static ENTERED g_entered[4];
 
-/* the drag over a window, with the target and data object it has; referenced, or null. */
+/* the drag entered over a window, with its target and data object referenced. */
 static bool take_entered(ULONG session, HWND window, ENTERED *out, bool remove)
 {
     bool found = false;
@@ -397,7 +395,7 @@ static void put_entered(const ENTERED *e)
     g_entered[slot] = *e;
     ReleaseSRWLockExclusive(&g_lock);
     if (old.Target) {
-        /* a drag nobody ended. */
+        /* a drag that never ended. */
         old.Target->lpVtbl->DragLeave(old.Target);
         old.Target->lpVtbl->Release(old.Target);
         old.Data->Interface.lpVtbl->Release(&old.Data->Interface);
@@ -431,10 +429,10 @@ static void target_phase(HWND hwnd, ULONG phase, ULONG session)
     DWORD allowed = state[1], keys = state[2], effect = allowed;
     POINTL pt = {(LONG)state[3], (LONG)state[4]};
     bool drop = phase == MIME_DND_PHASE_DROP;
-    /* we own a reference to the target and the data object of the entry, which a drop takes out of the table. */
+    /* we own the entry's target and data object references, and a drop takes the entry out of the table. */
     bool entered = take_entered(session, hwnd, &e, drop);
     if (!entered) {
-        /* the first message for this window enters it, whatever its phase. */
+        /* the first message for a window enters it, whatever its phase. */
         IDropTarget *target = OleFindDropTarget(hwnd);
         HOST_DATA *data = target ? host_data_create(session, state) : nullptr;
         if (!data) {
@@ -465,7 +463,7 @@ static void target_phase(HWND hwnd, ULONG phase, ULONG session)
     release_entered(&e);
 }
 
-/* ------------------------------------------------------------------ the source's side */
+/* ------------------------------------------------------------------ source side */
 
 typedef struct _HOST_DRAG {
     IDataObject *Data;
@@ -477,7 +475,7 @@ typedef struct _HOST_DRAG {
 
 static HOST_DRAG g_drag;
 
-/* the bytes of a kind from the data object, text without a terminator; null when it has none. */
+/* text comes without a terminator. null when the data object lacks the kind. */
 static BYTE *gather(IDataObject *data, ULONG kind, SIZE_T *size)
 {
     UINT candidates[3] = {0, 0, 0};
@@ -589,7 +587,6 @@ static void source_end(void)
     g_drag.Ended = true;
 }
 
-/* the kinds a data object can give the host. */
 static ULONG kinds_of(IDataObject *data)
 {
     ULONG kinds = 0;
@@ -600,7 +597,7 @@ static ULONG kinds_of(IDataObject *data)
         while (e->lpVtbl->Next(e, 1, &format, &fetched) == S_OK && fetched == 1) {
             if (format.tymed & TYMED_HGLOBAL) {
                 kinds |= kind_of_format(format.cfFormat);
-                /* ansi text and links make the same kinds as the wide ones, which gather widens. */
+                /* ansi text and links map to the wide kinds, gather widens them. */
                 if (format.cfFormat == CF_TEXT || format.cfFormat == CF_OEMTEXT)
                     kinds |= MIME_CLIP_TEXT;
             }
@@ -611,12 +608,12 @@ static ULONG kinds_of(IDataObject *data)
     return kinds;
 }
 
-/* ------------------------------------------------------------------ the image of a drag */
+/* ------------------------------------------------------------------ drag image */
 
 /*
- * the drag image the source's helper put into the data object, as the MimeDragIcon the host shows with the drag.
- * shell32's dragdrop.c has the formats: "DragContext" says the image is there and "DragImageBits" holds it, bottom
- * row first. an image over 512 pixels is taken down by whole pixels to fit. null when the object has none; the buffer is the caller's.
+ * turns the drag image the source's helper put in the data object into the MimeDragIcon the host shows. as in shell32's
+ * dragdrop.c, "DragContext" says an image is there and "DragImageBits" holds it, bottom row first. images over 512
+ * pixels are scaled down by whole pixels. null when there is none, the caller owns the buffer.
  */
 static MimeDragIcon *make_icon(IDataObject *data, ULONG *bytes)
 {
@@ -673,8 +670,8 @@ static MimeDragIcon *make_icon(IDataObject *data, ULONG *bytes)
 }
 
 /*
- * the drag of DoDragDrop has left the source's window: the host takes it over. false when it cannot, as without a
- * display or when nothing the data object has crosses over; the drag then goes on inside the guest.
+ * the DoDragDrop drag left the source's window and the host takes it over. false when it cannot, such as without a
+ * display or when nothing in the data object crosses over, and the drag then stays in the guest.
  */
 bool OleHostDragBegin(IDataObject *data, DWORD allowed)
 {
@@ -683,7 +680,7 @@ bool OleHostDragBegin(IDataObject *data, DWORD allowed)
     ULONG kinds = kinds_of(data);
     if (!kinds)
         return false;
-    /* the image goes before the start, which hands it to the compositor as the icon of the drag. */
+    /* send the image before the start, which hands it to the compositor as the drag icon. */
     ULONG icon_bytes = 0;
     MimeDragIcon *icon = make_icon(data, &icon_bytes);
     if (icon) {
@@ -698,7 +695,6 @@ bool OleHostDragBegin(IDataObject *data, DWORD allowed)
     return true;
 }
 
-/* whether the host's drag has ended, and how. */
 bool OleHostDragEnded(bool *dropped, DWORD *effect)
 {
     if (!g_drag.Data || !g_drag.Ended)
@@ -724,7 +720,7 @@ void OleHostDragFinish(void)
     data->lpVtbl->Release(data);
 }
 
-/* ------------------------------------------------------------------ the entry points */
+/* ------------------------------------------------------------------ entry points */
 
 void WINAPI OleHostDndHandler(HWND hwnd, LPARAM lparam)
 {

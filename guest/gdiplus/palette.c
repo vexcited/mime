@@ -1,12 +1,10 @@
-/*
- * the predefined palettes and the palettes made from a picture, from the imaging component's palette object.
- */
+/* predefined palettes and palettes made from a picture, through the WIC palette object. */
 #include "gp_private.h"
 #include <mime/win32/wincodec.h>
 
 GpStatus gp_wic_factory(IWICImagingFactory **factory);
 
-/* the entries of a palette of the component, the count is returned. */
+/* returns the entry count. */
 static UINT wic_palette_entries(WICBitmapPaletteType type, BOOL transparent, GBitmap *source, UINT count, ARGB *out)
 {
     IWICImagingFactory *factory;
@@ -68,7 +66,7 @@ void gp_palette_halftone256(ARGB *entries)
 {
     UINT n = wic_palette_entries(WICBitmapPaletteTypeFixedHalftone256, FALSE, nullptr, 0, entries);
     if (n < 256) {
-        /* without the component a ramp of gray stands in */
+        /* without WIC a gray ramp stands in. */
         for (UINT i = n; i < 256; i++)
             entries[i] = 0xff000000u | i << 16 | i << 8 | i;
     }

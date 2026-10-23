@@ -1,16 +1,15 @@
 /*
- * root signatures: their serialized form, a dxbc container with an RTS0
- * part as D3D12Core.dll writes it (see docs/d3d12.md), their descriptions
- * in each version, and the root signature object: where each parameter
- * lies in the push constants and what the compiler finds through them.
+ * root signatures: the serialized form, a dxbc container with an RTS0 part laid out like windows writes it, the
+ * descriptions of each version, and the object: where each parameter sits in the push constants and what the
+ * compiler finds through them.
  */
 #include "d3d12_private.h"
 
 #define TAG_RTS0 0x30535452
 
 /*
- * a description in its widest form, version 1.2's structures, with the
- * version it came in: what parsing, conversion and serialization share.
+ * the widest description, in version 1.2's structures, with the version it came in. parsing, conversion and
+ * serialization share it.
  */
 typedef struct RootDesc {
     D3D_ROOT_SIGNATURE_VERSION version;
@@ -40,7 +39,7 @@ static HRESULT root_desc_alloc(RootDesc *d)
     return S_OK;
 }
 
-/* version 1.0 says nothing of volatility: its descriptors and data are volatile, samplers' descriptors alone. */
+/* version 1.0 has no volatility flags: descriptors and data count as volatile, for samplers only descriptors. */
 static D3D12_DESCRIPTOR_RANGE_FLAGS default_range_flags(D3D12_DESCRIPTOR_RANGE_TYPE type)
 {
     if (type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER)
@@ -55,7 +54,7 @@ static HRESULT root_desc_from(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *v, Root
     if (v->Version < D3D_ROOT_SIGNATURE_VERSION_1_0 || v->Version > D3D_ROOT_SIGNATURE_VERSION_1_2)
         return E_INVALIDARG;
     BOOL v10 = v->Version == D3D_ROOT_SIGNATURE_VERSION_1_0;
-    /* the three versions' descriptions share their layout but for the structures they point to. */
+    /* the three versions share a layout except for the structures they point to. */
     d->flags = v->Desc_1_0.Flags;
     d->param_count = v->Desc_1_0.NumParameters;
     d->sampler_count = v->Desc_1_0.NumStaticSamplers;
@@ -125,7 +124,7 @@ static HRESULT root_desc_from(const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *v, Root
     return S_OK;
 }
 
-/* the description at a version, in one block: the description, its parameters, ranges and samplers. */
+/* one block holding the description, its parameters, ranges and samplers. */
 static HRESULT root_desc_to(const RootDesc *d, D3D_ROOT_SIGNATURE_VERSION version,
                             D3D12_VERSIONED_ROOT_SIGNATURE_DESC **out)
 {
@@ -305,7 +304,7 @@ static HRESULT parse_rts0(const BYTE *data, SIZE_T size, RootDesc *d)
     return S_OK;
 }
 
-/* the root signature of a serialized one or of a shader that carries it. */
+/* from a serialized root signature or a shader that carries one. */
 static HRESULT parse_blob(const void *blob, SIZE_T size, RootDesc *d)
 {
     if (!blob || size < 32 || dxbc_check(blob, size))
@@ -328,7 +327,7 @@ HRESULT D12ParseRootSignature(const void *data, SIZE_T size, D3D12_VERSIONED_ROO
     return hr;
 }
 
-/* the part's bytes, laid out as windows lays them: the header, the parameters, their payloads, the samplers. */
+/* the part's bytes in windows' layout: header, parameters, their payloads, samplers. */
 typedef struct Writer {
     BYTE *data;
     UINT size, capacity;
@@ -595,7 +594,7 @@ static const struct ID3D12RootSignatureVtbl g_root_vtbl = {
     root_get_device,
 };
 
-/* the stages a visibility shows a parameter to, as the bits of D12Stage. */
+/* the stages a visibility exposes a parameter to, as D12Stage bits. */
 static UINT visibility_stages(D3D12_SHADER_VISIBILITY visibility)
 {
     switch (visibility) {
@@ -627,7 +626,7 @@ static constexpr BYTE g_range_bind[] = {
     [D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER] = DXBC_BIND_SAMPLER,
 };
 
-/* the bindings of the root signature visible to a stage, for the compiler; the caller frees them. */
+/* the bindings visible to a stage, for the compiler; the caller frees them. */
 DxbcRootBinding *D12RootBindings(D12RootSignature *root, D12Stage stage, UINT *count)
 {
     DxbcRootBinding *out = HeapAlloc(GetProcessHeap(), 0, (root->binding_count + 1) * sizeof(*out));
@@ -640,7 +639,6 @@ DxbcRootBinding *D12RootBindings(D12RootSignature *root, D12Stage stage, UINT *c
     return out;
 }
 
-/* a static sampler as the sampler description it stands for. */
 static void static_sampler_desc(const D3D12_STATIC_SAMPLER_DESC1 *s, D3D12_SAMPLER_DESC2 *d)
 {
     static const FLOAT colors[][4] = {
@@ -705,8 +703,8 @@ HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size,
     root->param_count = d.param_count;
 
     /*
-     * each parameter's place in the push constants: a table's heap index, the constants, a buffer's address.
-     * a local root signature's are in the shader record instead, tables and addresses 8 bytes aligned to 8.
+     * each parameter's place in the push constants: a table's heap index, the constants or a buffer address. a local
+     * root signature's live in the shader record instead, with tables and addresses 8 bytes aligned.
      */
     BOOL local = (d.flags & D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE) != 0;
     UINT push = 0;
@@ -814,7 +812,7 @@ HRESULT D12CreateRootSignature(D12Device *device, const void *blob, SIZE_T size,
         VkDescriptorSetLayout sets[5] = {device->resource_layout, device->sampler_layout,
                                          root->static_layout ? root->static_layout : device->empty_layout,
                                          device->record_layout, device->atomic_layout};
-        /* the shaders' block of root arguments spans the 64 dwords a root signature may take. */
+        /* the shaders' root argument block spans the 64 dwords a root signature may take. */
         VkPushConstantRange range = {VK_SHADER_STAGE_ALL, 0, D12_PUSH_SIZE};
         VkPipelineLayoutCreateInfo info = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         info.setLayoutCount = device->atomic_layout ? 5 : 4;

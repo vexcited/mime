@@ -1,6 +1,4 @@
-/*
- * active accessibility: the object proxies of oleacc.dll.
- */
+/* active accessibility: the object proxies of oleacc.dll. */
 #ifndef MIME_WIN32_OLEACC_H
 #define MIME_WIN32_OLEACC_H
 

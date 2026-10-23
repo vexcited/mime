@@ -1,7 +1,6 @@
 /*
- * the host's reading of a Windows shortcut (MS-SHLLINK): what the target is, how it is started, how it is described and
- * what its application user model id is. the shell link of the guest is a file of the guest's drive, so the host can
- * read what a program wrote without asking the guest. the format is documented, nothing here is the guest's code.
+ * reads Windows shortcuts using MS-SHLLINK: target, launch settings, description and application user model
+ * id. shortcuts live on the guest drive, so the host can read them directly.
  */
 #include "lnk.h"
 
@@ -32,8 +31,7 @@ static uint16_t u16(const uint8_t *p)
     return (uint16_t)(p[0] | p[1] << 8);
 }
 
-/* the text of ANSI bytes, as the code page of the machine that wrote it was a Latin one: bytes above 0x7F become the
- * code points of the same value. */
+/* interprets ANSI bytes as a Latin code page, mapping bytes above 0x7F to the same Unicode values. */
 static void ansi(char *out, size_t size, const uint8_t *p, size_t max)
 {
     size_t n = 0;
@@ -61,7 +59,7 @@ static void wide(char *out, size_t size, const uint8_t *p, size_t chars)
     mime_utf16_to_utf8(out, size, buffer, n);
 }
 
-/* a counted string of the string data, advancing the offset; false when the file is cut short. */
+/* reads a counted string and advances the offset; false for truncated data. */
 static bool string_data(const uint8_t *d, size_t size, size_t *at, bool unicode, char *out, size_t out_size)
 {
     out[0] = 0;
@@ -175,7 +173,6 @@ bool mime_lnk_parse(const void *data, size_t size, MimeLink *out)
         string_data(d, size, &at, unicode, out->arguments, sizeof(out->arguments));
     if (flags & FLAG_ICON_LOCATION)
         string_data(d, size, &at, unicode, out->icon, sizeof(out->icon));
-    /* the blocks of extra data. */
     while (at + 8 <= size) {
         uint32_t block = u32(d + at), signature = u32(d + at + 4);
         if (block < 4 || at + block > size)

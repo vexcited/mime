@@ -1,16 +1,12 @@
 /*
- * item id lists, in the format shell32 gives them on windows: a list is a
- * run of items, each a 16-bit size followed by that many bytes less two, the
- * run ended by a zero size.
+ * item id lists in the windows format: each item is a 16-bit size followed by size - 2 bytes, and a zero size ends
+ * the list.
  *
- * the items mime builds are the ones windows builds for paths. the first is
- * the root of "This PC", a class id item (type 0x1f), then a drive item (type
- * 0x2f, the root path in ANSI) and a file entry per folder or file (types 0x31
- * and 0x32): size, dos time, attributes, the name in the ANSI code page and an
- * extension block 0xbeef0004 version 9 with the creation and access times and
- * the full name in UTF-16. lists read from windows' own shortcuts parse too,
- * the extension block of versions 3 and up and the UTF-16 names of types 0x35
- * and 0x36. other items, as the shell's virtual folders, only name their class.
+ * path items match what windows builds: a "This PC" class id item, type 0x1f, a drive item, type 0x2f with the root
+ * path in ANSI, then a file entry per folder or file, types 0x31 and 0x32: size, dos time, attributes, the ANSI name
+ * and a 0xbeef0004 version 9 extension block with the creation and access times and the UTF-16 name. lists from
+ * windows shortcuts parse too, with extension blocks of version 3 and up and the UTF-16 names of types 0x35 and 0x36.
+ * other items, like virtual folders, only name their class.
  */
 #include "shell32_private.h"
 
@@ -137,7 +133,7 @@ SHSTDAPI PIDLIST_RELATIVE WINAPI ILAppendID(PIDLIST_RELATIVE pidl, const SHITEMI
     return (PIDLIST_RELATIVE)list;
 }
 
-/* ------------------------------------------------------------------ names of items */
+/* ------------------------------------------------------------------ item names */
 
 static BOOL is_file_entry(const BYTE *item)
 {
@@ -149,7 +145,7 @@ static BOOL is_drive(const BYTE *item)
     return (item[2] & ID_DRIVE_MASK) == ID_DRIVE;
 }
 
-/* the extension block of a file entry, found through the offset in its last word. */
+/* the last word of a file entry is the offset of its extension block. */
 static const BYTE *find_extension(const BYTE *item)
 {
     USHORT size = *(const USHORT *)item;
@@ -165,7 +161,7 @@ static const BYTE *find_extension(const BYTE *item)
     return ext;
 }
 
-/* the name of a file entry or drive item, from the extension block when the item has one. */
+/* prefers the UTF-16 name of the extension block when the item has one. */
 static BOOL item_name(const BYTE *item, WCHAR *name, ULONG chars)
 {
     USHORT size = *(const USHORT *)item;
@@ -216,7 +212,6 @@ static BOOL item_name(const BYTE *item, WCHAR *name, ULONG chars)
     return n > 0;
 }
 
-/* the name of the last item of a list, for display. */
 BOOL ShIdListLastName(PCUIDLIST_ABSOLUTE pidl, LPWSTR name, ULONG chars)
 {
     const BYTE *last = (const BYTE *)ILFindLastID(pidl);
@@ -245,7 +240,6 @@ static BYTE *put_dword(BYTE *p, DWORD value)
     return p + sizeof(value);
 }
 
-/* the class id item of a shell folder. */
 static PIDLIST_ABSOLUTE class_item(BYTE sort, const GUID *clsid)
 {
     BYTE *list = ShAllocZero(4 + sizeof(GUID) + sizeof(USHORT));
@@ -258,7 +252,6 @@ static PIDLIST_ABSOLUTE class_item(BYTE sort, const GUID *clsid)
     return (PIDLIST_ABSOLUTE)list;
 }
 
-/* appends a file entry for one name to a growing list, which becomes the result. */
 static BYTE *append_item(BYTE *list, SIZE_T *used, const BYTE *item, SIZE_T size)
 {
     BYTE *grown = HeapReAlloc(GetProcessHeap(), 0, list, *used + size + sizeof(USHORT));
@@ -272,7 +265,6 @@ static BYTE *append_item(BYTE *list, SIZE_T *used, const BYTE *item, SIZE_T size
     return grown;
 }
 
-/* a file entry for a name, with what is known of the file. */
 static BYTE *make_entry(LPCWSTR name, BOOL folder, const WIN32_FILE_ATTRIBUTE_DATA *data, SIZE_T *size)
 {
     char ansi[MAX_PATH * 2];
@@ -339,7 +331,7 @@ static BYTE *make_drive(WCHAR letter, SIZE_T *size)
     return item;
 }
 
-/* a UNC share root, the one item of a network path before its folders. */
+/* the UNC share root item, which comes before the folders of a network path. */
 static BYTE *make_share(LPCWSTR share, SIZE_T length, SIZE_T *size)
 {
     char ansi[MAX_PATH * 2];
@@ -376,7 +368,7 @@ PIDLIST_ABSOLUTE ShClassList(BYTE sort, const GUID *clsid)
     return class_item(sort, clsid);
 }
 
-/* the list of a full path, whether or not it exists; what is on disk gives times, sizes and attributes. */
+/* the path need not exist. when it does, the disk gives times, sizes and attributes. */
 PIDLIST_ABSOLUTE ShIdListFromPath(LPCWSTR path)
 {
     SIZE_T length = wcslen(path);
@@ -475,7 +467,6 @@ PIDLIST_ABSOLUTE ShIdListFromPath(LPCWSTR path)
     return (PIDLIST_ABSOLUTE)list;
 }
 
-/* the list of a file found in a folder. */
 PIDLIST_ABSOLUTE ShChildList(PCIDLIST_ABSOLUTE folder, const WIN32_FIND_DATAW *find)
 {
     WIN32_FILE_ATTRIBUTE_DATA data = {find->dwFileAttributes, find->ftCreationTime, find->ftLastAccessTime,
@@ -497,7 +488,7 @@ PIDLIST_ABSOLUTE ShChildList(PCIDLIST_ABSOLUTE folder, const WIN32_FIND_DATAW *f
 
 /* ------------------------------------------------------------------ reading lists */
 
-/* the path a class id item stands for, when it is a folder with one. */
+/* the folder path of a class id item, if it has one. */
 static BOOL class_path(const BYTE *item, WCHAR *path)
 {
     const GUID *clsid = (const GUID *)(item + 4);
@@ -520,7 +511,6 @@ BOOL ShIsComputerItem(const BYTE *item)
            IsEqualGUID((const GUID *)(item + 4), &g_computer);
 }
 
-/* the file system path of an absolute list, or FALSE for what has none. */
 BOOL ShPathFromIdList(PCUIDLIST_ABSOLUTE pidl, LPWSTR path, DWORD chars)
 {
     if (!path || !chars)
@@ -590,7 +580,7 @@ BOOL ShPathFromIdList(PCUIDLIST_ABSOLUTE pidl, LPWSTR path, DWORD chars)
     return TRUE;
 }
 
-/* whether two lists name the same thing: file system lists by path, the rest by bytes. */
+/* file system lists compare by path, the rest by bytes. */
 SHSTDAPI BOOL WINAPI ILIsEqual(PCIDLIST_ABSOLUTE a, PCIDLIST_ABSOLUTE b)
 {
     if (a == b)
@@ -604,7 +594,7 @@ SHSTDAPI BOOL WINAPI ILIsEqual(PCIDLIST_ABSOLUTE a, PCIDLIST_ABSOLUTE b)
     return size == ILGetSize(b) && !memcmp(a, b, size);
 }
 
-/* two items match when they have the same kind and name. */
+/* items match by kind and name. */
 static BOOL same_item(const BYTE *a, const BYTE *b)
 {
     WCHAR name_a[MAX_PATH], name_b[MAX_PATH];
@@ -613,7 +603,6 @@ static BOOL same_item(const BYTE *a, const BYTE *b)
     return *(const USHORT *)a == *(const USHORT *)b && !memcmp(a, b, *(const USHORT *)a);
 }
 
-/* the items of child after the ones it shares with parent, or NULL when it is not below it. */
 SHSTDAPI PUIDLIST_RELATIVE WINAPI ILFindChild(PCIDLIST_ABSOLUTE parent, PCIDLIST_ABSOLUTE child)
 {
     if (!parent || !child)
@@ -646,7 +635,7 @@ SHSTDAPI PIDLIST_ABSOLUTE WINAPI ILCreateFromPathA(PCSTR path)
     return pidl;
 }
 
-/* a list on a stream is its size with the zero item included, in 16 bits, and then its bytes. */
+/* stream format: a 16-bit size that counts the terminating zero item, then the bytes. */
 SHSTDAPI HRESULT WINAPI ILSaveToStream(IStream *stream, PCUIDLIST_RELATIVE pidl)
 {
     UINT size = ILGetSize(pidl);
@@ -691,7 +680,7 @@ SHSTDAPI HRESULT WINAPI ILLoadFromStreamEx(IStream *stream, PIDLIST_RELATIVE *pi
     return hr;
 }
 
-/* the list of a path as the shortcut code wants it: nothing is checked, a missing file is a file. */
+/* nothing is checked on disk: a missing path is taken as a file. */
 SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHSimpleIDListFromPath(PCWSTR path)
 {
     if (!path)

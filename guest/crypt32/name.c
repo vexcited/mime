@@ -1,14 +1,12 @@
 /*
- * x.500 names as text: CertNameToStr, CertStrToName, CertGetNameString and
- * CertRDNValueToStr. the separators, quoting rules and keys follow
- * crypt32.dll of windows 11.
+ * X.500 names as text: CertNameToStr, CertStrToName, CertGetNameString and CertRDNValueToStr, with windows 11's
+ * separators, quoting rules and keys.
  */
 #include "crypt32_private.h"
 
 /*
- * counts and stores characters like crypt32 does: one place stays for the
- * terminator, and once only it is left the count stops growing, so a
- * truncated result reports the length actually written.
+ * counts and stores characters like crypt32: one place is kept for the terminator, and once only that is left the
+ * count stops growing, so a truncated result reports the length actually written.
  */
 typedef struct {
     WCHAR *buffer;

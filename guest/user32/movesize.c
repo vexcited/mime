@@ -1,15 +1,11 @@
 /*
- * the move and size loop DefWindowProc runs for SC_MOVE and SC_SIZE, as
- * windows does: a press on a sizing border becomes SC_SIZE with the edge,
- * then the window follows the mouse until the button goes up. the program
- * sees WM_ENTERSIZEMOVE, WM_SIZING or WM_MOVING at each step and
- * WM_EXITSIZEMOVE at the end; Escape puts the window back. started from the
- * keyboard, the arrows move or size by 8 pixels and Enter ends.
+ * the move and size loop DefWindowProc runs for SC_MOVE and SC_SIZE. like windows, a press on a sizing border becomes
+ * SC_SIZE with the edge, then the window follows the mouse until the button goes up. the program gets
+ * WM_ENTERSIZEMOVE, WM_SIZING or WM_MOVING at each step, and WM_EXITSIZEMOVE at the end. Escape restores the window.
+ * from the keyboard, the arrows move or size by 8 pixels and Enter ends.
  *
- * a host that moves windows itself (the compositor of a Wayland desktop) is
- * asked to take over once the pointer has dragged past the drag distance, and
- * then does the moving or sizing under the pointer; the loop ends with the
- * button, which win32k lets go of for the guest.
+ * a host that moves windows itself, like a Wayland compositor, takes over once the pointer drags past the drag
+ * distance. the loop then ends with the button, which win32k releases for the guest.
  */
 #include "user32_private.h"
 
@@ -17,15 +13,15 @@
 
 typedef struct MOVESIZE {
     HWND Window;
-    HWND Parent; /* child windows are placed in their parent's client coordinates */
+    HWND Parent; /* child windows are placed in their parent's client coordinates. */
     BOOL Size;
-    UINT Edge; /* WMSZ_ value, 0 until a key picks one */
+    UINT Edge; /* WMSZ_ value, 0 until a key picks one. */
     RECT Start;
     POINT Origin;
-    POINT Offset; /* keyboard steps */
-    BOOL Tracked; /* the pointer moved during the loop */
-    BOOL Mouse; /* a press started it */
-    BOOL Host; /* the host moves or sizes the window */
+    POINT Offset; /* keyboard steps. */
+    BOOL Tracked; /* the pointer moved during the loop. */
+    BOOL Mouse; /* a press started it. */
+    BOOL Host; /* the host moves or sizes the window. */
     BOOL HostRefused;
     BOOL Maximized;
     BOOL RestoredMaximized;
@@ -85,8 +81,8 @@ static void set_cursor(const MOVESIZE *ms)
 }
 
 /*
- * hands the window to the host: a size at once, as the edge was pressed, a move once the pointer has dragged, so a
- * click or a double click on a caption stays the program's. true when it took over.
+ * sizing is handed over at once since the edge was pressed, moving only after a drag, so clicks and double clicks on
+ * a caption stay the program's. TRUE when the host took over.
  */
 static BOOL host_takes_over(MOVESIZE *ms, POINT pt)
 {
@@ -281,7 +277,7 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
             break;
         }
         case WM_LBUTTONUP:
-            /* a release without movement leaves alone a window macos moved itself. */
+            /* a release without movement leaves alone a window macOS moved itself. */
             if (mouse && ms.Tracked)
                 track(&ms, msg.pt);
             done = mouse;
@@ -337,8 +333,8 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
 }
 
 /*
- * the parts of DefWindowProc that run in user32: sizing border presses and
- * the move and size commands. returns TRUE when the message was handled.
+ * the parts of DefWindowProc that run in user32: sizing border presses and the move and size commands. returns TRUE
+ * when the message was handled.
  */
 BOOL UserDefMoveSize(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
 {
@@ -353,8 +349,8 @@ BOOL UserDefMoveSize(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT 
             return TRUE;
         }
         /*
-         * a caption the host drags itself reports the release with the press;
-         * the others, such as a client area answering HTCAPTION, move here.
+         * a caption the host drags itself queues the release with the press. other cases, such as a client area
+         * answering HTCAPTION, move here.
          */
         MSG up;
         if (wparam == HTCAPTION &&

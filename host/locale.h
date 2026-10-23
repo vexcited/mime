@@ -1,6 +1,4 @@
-/*
- * the locale of the guest's user: what the installation is set to, and what the host's own settings give.
- */
+/* guest user locale from installation settings and the host environment. */
 #ifndef MIME_LOCALE_H
 #define MIME_LOCALE_H
 
@@ -14,13 +12,13 @@ typedef struct MimeLocale {
     uint16_t oem_code_page;
 } MimeLocale;
 
-/* finds a locale by its name, a language alone giving the main region of it. */
+/* looks up a locale; a language alone selects its main region. */
 bool mime_locale_find(const char *name, MimeLocale *out);
 
-/* the locale the host's environment names, en-US when it names none that exists. */
+/* host environment locale, defaulting to en-US if unsupported. */
 void mime_locale_from_host(MimeLocale *out);
 
-/* what a language tag or a name of the C library, such as fr_FR.UTF-8@euro, stands for; the name written as a tag. */
+/* normalizes language tags and C library names such as fr_FR.UTF-8@euro to a tag. */
 bool mime_locale_tag(const char *text, char *out, unsigned size);
 
 #endif

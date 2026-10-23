@@ -1,7 +1,6 @@
 /*
- * shaders: dxbc compiled to spir-v and made a vulkan shader object, which
- * any other bound shaders combine with at draw time, as direct3d binds
- * them. all stages share one pipeline layout: the heap and the tables.
+ * shaders: dxbc compiled to spir-v as vulkan shader objects, so any combination can be bound at draw time like in
+ * direct3d. all stages share one pipeline layout: the heap and the binding tables.
  */
 #include "d3d11_private.h"
 
@@ -87,7 +86,7 @@ static HRESULT STDMETHODCALLTYPE shader_set_private_data_interface(void *iface, 
     return MimePrivateSetInterface(&impl(iface)->child.data, guid, data);
 }
 
-/* every stage's vtable is the device child's alone. */
+/* all stages share the device child vtable. */
 static const ID3D11VertexShaderVtbl shader_vtbl = {
     VTBL_FN(shader_query),           VTBL_FN(shader_add_ref),         VTBL_FN(shader_release),
     VTBL_FN(shader_get_device),      VTBL_FN(shader_get_private_data), VTBL_FN(shader_set_private_data),
@@ -101,7 +100,6 @@ static const VkShaderStageFlagBits VK_STAGES[D3D_STAGES] = {
     VK_SHADER_STAGE_GEOMETRY_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,             VK_SHADER_STAGE_COMPUTE_BIT,
 };
 
-/* the stages that may follow, as enabled on the device. */
 static VkShaderStageFlags next_stages(D3dDevice *device, D3dStage stage)
 {
     VkShaderStageFlags gs = device->has_geometry ? VK_SHADER_STAGE_GEOMETRY_BIT : 0;
@@ -120,7 +118,7 @@ static VkShaderStageFlags next_stages(D3dDevice *device, D3dStage stage)
     }
 }
 
-/* the shader program a container holds, from its code's version token. */
+/* the program type from the code chunk's version token. */
 static int program_of(const void *bytecode, SIZE_T length)
 {
     uint32_t size;
@@ -137,12 +135,10 @@ static BOOL has_trailing_digit(const char *name)
 }
 
 /*
- * the declaration as d3d11.dll checks it at feature level 11_0 and later:
- * entries in stream order, at most 128 a stream, each buffer of one stream,
- * gaps without semantic index or start component, components that fit in
- * four, names without a trailing digit, no entry twice, strides for every
- * buffer written, and each entry an output of its stream's signature with
- * the components it takes. without strides, each buffer's is the size of
+ * the declaration checks windows does at feature level 11_0 and later: entries in stream order, at most 128 per
+ * stream, each buffer used by one stream, gaps without semantic index or start component, components that fit in
+ * four, names without a trailing digit, no entry twice, a stride for every buffer written, and each entry an output
+ * of its stream's signature with the components it takes. without strides, each buffer's stride is the size of
  * its entries.
  */
 static BOOL check_stream_output(const void *bytecode, SIZE_T length, const D3D11_SO_DECLARATION_ENTRY *so,
@@ -179,7 +175,7 @@ static BOOL check_stream_output(const void *bytecode, SIZE_T length, const D3D11
                 !_stricmp(so[k].SemanticName, e->SemanticName) &&
                 (((1u << so[k].ComponentCount) - 1) << so[k].StartComponent & mask))
                 ok = FALSE;
-        /* the entry's components, relative to the element's first. */
+        /* the mask is relative to the element's first component. */
         const DxbcSignatureElement *found = nullptr;
         for (UINT k = 0; k < sig.count && !found; k++)
             if (sig.elements[k].stream == e->Stream && sig.elements[k].semantic_index == e->SemanticIndex &&
@@ -228,9 +224,8 @@ static DxbcCompileOptions so_options(const D3dShader *shader)
 }
 
 /*
- * the shader of a stream output geometry shader for input primitives of the
- * kind of dcl_inputprimitive: itself, or for one made from a vertex or
- * domain shader the pass through variant, compiled when first drawn with.
+ * picks the stream output geometry shader for a dcl_inputprimitive kind. one made from a vertex or domain shader
+ * gets a pass-through variant per primitive, compiled on first draw.
  */
 VkShaderEXT D3dShaderVariant(D3dShader *shader, UINT primitive)
 {
@@ -251,7 +246,7 @@ VkShaderEXT D3dShaderVariant(D3dShader *shader, UINT primitive)
     g_d3d_allocator.free(nullptr, gs);
     if (!variant)
         return shader->shader;
-    /* two threads made the same variant: the first one made is kept. handles are 64 bits wide everywhere. */
+    /* if two threads raced, keep the first variant. handles are 64 bits wide everywhere. */
     LONG64 value, old;
     memcpy(&value, &variant, sizeof(value));
     old = InterlockedCompareExchange64((LONG64 *)&shader->so_variants[primitive], value, 0);
@@ -262,7 +257,7 @@ VkShaderEXT D3dShaderVariant(D3dShader *shader, UINT primitive)
     return variant;
 }
 
-/* a copy of the declaration whose names outlive the program's. */
+/* copies the declaration so its names outlive the program's. */
 static BOOL keep_declaration(D3dShader *shader, const D3D11_SO_DECLARATION_ENTRY *so, UINT count)
 {
     SIZE_T names = 0;
@@ -331,7 +326,7 @@ HRESULT D3dCreateShader(D3dDevice *device, D3dStage stage, const void *bytecode,
     SIZE_T code_length = length;
     void *passthrough = nullptr;
     if (with_so && program != DXBC_GEOMETRY) {
-        /* triangles first, which most draws are; other primitives when drawn. */
+        /* compile the triangle variant now since most draws use it, the others on first use. */
         shader->so_source = HeapAlloc(GetProcessHeap(), 0, length);
         if (!shader->so_source) {
             free_shader(shader);
@@ -360,7 +355,7 @@ HRESULT D3dCreateShader(D3dDevice *device, D3dStage stage, const void *bytecode,
     }
     if (shader->so_source)
         shader->so_variants[3] = shader->shader;
-    /* the spir-v went to the driver; the rest of the description stays. */
+    /* the driver has the spir-v now, the rest of the info is still needed. */
     g_d3d_allocator.free(nullptr, shader->info.spirv);
     shader->info.spirv = nullptr;
     shader->iface.vs.lpVtbl = &shader_vtbl;

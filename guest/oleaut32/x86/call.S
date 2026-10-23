@@ -1,7 +1,7 @@
 /*
- * calls a function with arguments held in slots, pushed in order, and takes the stack back whether the function popped its
- * arguments or not. The result is in edx and eax. AutCallEx(function, slots, count, kind, keep): when the function returns a
- * float (kind 1) or a double (kind 2) the value is taken off the x87 stack into keep.
+ * AutCallEx(function, slots, count, kind, keep): pushes the slots in order and restores the stack whether or not the
+ * function popped its arguments. the result is in edx:eax. for a float result, kind 1, or a double, kind 2, the value
+ * is popped off the x87 stack into keep.
  */
     .text
     .globl  _AutCallEx

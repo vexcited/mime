@@ -41,7 +41,7 @@ static const WCHAR *const type_names[XN_TYPES] = {
     L"comment", L"document", L"documenttype", L"documentfragment", L"notation",
 };
 
-/* the data of a processing instruction: the declaration's attributes written out. */
+/* the xml declaration's data is its attributes written out. */
 static void pi_data(XNode *n, XBuf *out)
 {
     if (!(n->flags & XF_XMLDECL)) {
@@ -60,7 +60,7 @@ static void pi_data(XNode *n, XBuf *out)
     }
 }
 
-/* the data of the declaration is its three attributes. */
+/* the declaration's data is parsed back into its three attributes. */
 static HRESULT set_decl_data(XNode *n, const WCHAR *text, UINT length)
 {
     while (n->attrs) {
@@ -305,7 +305,7 @@ static HRESULT STDMETHODCALLTYPE n_replaceChild(XNode *n, XNode *node, XNode *ol
     HRESULT hr = xd_check_insert(n, node, old);
     if (FAILED(hr))
         return hr;
-    /* the new node takes the place of the old, which has to stay a child while it is checked. */
+    /* old must stay a child until the checks are done. */
     XNode *after = old->next;
     xn_addref(old);
     xd_unlink(old);
@@ -375,7 +375,7 @@ static HRESULT STDMETHODCALLTYPE n_cloneNode(XNode *n, VARIANT_BOOL deep, void *
         XNode *c = xd_doc_clone((XDoc *)n, deep != 0);
         if (!c)
             return E_OUTOFMEMORY;
-        *out = c; /* the new document's own reference. */
+        *out = c; /* already referenced by its creation. */
         return S_OK;
     }
     XNode *c = xd_clone(n, n->doc, deep != 0);
@@ -625,7 +625,7 @@ static HRESULT STDMETHODCALLTYPE e_getAttribute(XNode *n, BSTR name, VARIANT *v)
     return S_OK;
 }
 
-/* a name for a new element or attribute: valid, with at most one colon. */
+/* a valid name with at most one colon. */
 HRESULT xd_check_new_name(const WCHAR *name, UINT length)
 {
     if (!name || !length)
@@ -653,7 +653,7 @@ static HRESULT STDMETHODCALLTYPE e_setAttribute(XNode *n, BSTR name, VARIANT val
             xb_free(&b);
             return E_OUTOFMEMORY;
         }
-        /* a declaration binds its prefix in the namespace of declarations. */
+        /* xmlns attributes belong to the xmlns namespace. */
         if (xd_is_xmlns_attr(a))
             a->uri = xd_intern(n->doc, L"http://www.w3.org/2000/xmlns/", (UINT)-1);
         xd_attr_link(n, a);
@@ -806,7 +806,6 @@ static HRESULT STDMETHODCALLTYPE c_substringData(XNode *n, LONG offset, LONG cou
     return xd_ret_string(p, (n->value ? n->value : L"") + offset, take);
 }
 
-/* replaces count characters at offset with text. */
 static HRESULT splice(XNode *n, LONG offset, LONG count, const WCHAR *text, UINT tlen)
 {
     if (offset < 0 || (UINT)offset > n->length || count < 0)

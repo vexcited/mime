@@ -1,16 +1,15 @@
 /*
- * the clipboard client. win32k stores the data of every format; memory
- * formats travel as bytes and come back as global memory owned by the
- * clipboard, cached per process until the contents change. text formats
- * the owner did not store are converted from another text format here.
+ * the clipboard client. win32k stores every format's data. memory formats travel as bytes and come back as
+ * clipboard-owned global memory, cached per process until the contents change. missing text formats are converted
+ * from another text format here.
  */
 #include "user32_private.h"
 
 typedef struct CLIP_CACHE {
     UINT Format;
     HGLOBAL Handle;
-    BOOL Gdi;       /* the handle is a bitmap */
-    DWORD Sequence; /* clipboard sequence number the data belongs to */
+    BOOL Gdi;       /* the handle is a bitmap. */
+    DWORD Sequence; /* clipboard sequence number of the data. */
 } CLIP_CACHE;
 
 #define CACHE_SIZE 32
@@ -131,7 +130,7 @@ WINUSERAPI HANDLE WINAPI SetClipboardData(UINT format, HANDLE data)
     GlobalUnlock(data);
     if (!r)
         return nullptr;
-    /* the clipboard owns the memory now; this process keeps reading it until the contents change. */
+    /* the clipboard owns the memory now, this process keeps reading it until the contents change. */
     cache_store(format, data, NtUserGetClipboardSequenceNumber());
     return data;
 }
@@ -161,7 +160,6 @@ static HGLOBAL fetch_memory(UINT format, DWORD *sequence)
     return mem;
 }
 
-/* builds a text format from another one the clipboard holds. */
 static HANDLE synthesize_text(UINT format)
 {
     static const UINT sources[] = {CF_UNICODETEXT, CF_TEXT, CF_OEMTEXT};
@@ -208,7 +206,7 @@ static HANDLE synthesize_text(UINT format)
                     GlobalUnlock(out);
                 }
             } else {
-                /* ansi and oem: through unicode. */
+                /* ansi and oem convert through unicode. */
                 int n = MultiByteToWideChar(cp, 0, a, chars, nullptr, 0);
                 WCHAR *w = UserAlloc(((SIZE_T)n + 1) * sizeof(WCHAR));
                 if (w) {
@@ -238,7 +236,6 @@ static HANDLE synthesize_text(UINT format)
 
 #define BI_ALPHABITFIELDS 6
 
-/* the header of a version 5 dib. */
 typedef struct DIBV5 {
     DWORD bV5Size;
     LONG bV5Width;
@@ -266,7 +263,7 @@ typedef struct DIBV5 {
     DWORD bV5Reserved;
 } DIBV5;
 
-/* the bytes of the color table of a device independent bitmap, which include the masks of 16 and 32 bit ones. */
+/* color table size in bytes, counting the masks of 16 and 32 bit dibs. */
 static SIZE_T dib_table_size(const BITMAPINFOHEADER *h, SIZE_T available)
 {
     if (h->biBitCount <= 8) {
@@ -282,7 +279,7 @@ static SIZE_T dib_table_size(const BITMAPINFOHEADER *h, SIZE_T available)
     return h->biClrUsed ? (SIZE_T)h->biClrUsed * 4 : 0;
 }
 
-/* the size of the pixels, the bytes the header says or its rows. */
+/* biSizeImage for compressed dibs, else computed from the rows. */
 static SIZE_T dib_pixel_size(const BITMAPINFOHEADER *h)
 {
     if (h->biSizeImage && h->biCompression != BI_RGB && h->biCompression != BI_BITFIELDS)
@@ -292,7 +289,7 @@ static SIZE_T dib_pixel_size(const BITMAPINFOHEADER *h)
     return stride * (SIZE_T)height;
 }
 
-/* a version 5 dib as a plain one: the header shrinks, the masks of a bit field dib follow it. */
+/* the header shrinks and bit field masks move right after it. */
 static HGLOBAL v5_to_dib(const BYTE *in, SIZE_T size)
 {
     const DIBV5 *v5 = (const DIBV5 *)in;
@@ -331,7 +328,7 @@ static HGLOBAL v5_to_dib(const BYTE *in, SIZE_T size)
     return g;
 }
 
-/* a plain dib as a version 5 one, in the srgb color space, with the masks in the header. */
+/* the result is tagged sRGB and carries the masks in its header. */
 static HGLOBAL dib_to_v5(const BYTE *in, SIZE_T size)
 {
     const BITMAPINFOHEADER *h = (const BITMAPINFOHEADER *)in;
@@ -369,7 +366,7 @@ static HGLOBAL dib_to_v5(const BYTE *in, SIZE_T size)
     return g;
 }
 
-/* a device dependent bitmap of the display's format from a dib. */
+/* the bitmap gets the display's format. */
 static HBITMAP dib_to_bitmap(const BYTE *in, SIZE_T size)
 {
     const BITMAPINFOHEADER *h = (const BITMAPINFOHEADER *)in;
@@ -384,7 +381,7 @@ static HBITMAP dib_to_bitmap(const BYTE *in, SIZE_T size)
     return bitmap;
 }
 
-/* a dib of a bitmap: the depth of the bitmap, up to 32 bits, with masks for the 16 and 32 bit ones. */
+/* keeps the bitmap's depth up to 32 bits, with masks for 16 and 32 bit dibs. */
 static HGLOBAL bitmap_to_dib(HBITMAP bitmap)
 {
     BITMAP info;
@@ -412,7 +409,7 @@ static HGLOBAL bitmap_to_dib(HBITMAP bitmap)
     h->biBitCount = bits;
     h->biCompression = masks ? BI_BITFIELDS : BI_RGB;
     HDC dc = GetDC(nullptr);
-    /* the masks need the header first: the bits of a 16 or 32 bit dib are read with the header's own compression. */
+    /* GetDIBits reads 16 and 32 bit dibs with the header's compression, so it is set before the call. */
     BYTE *bits_at = out + sizeof(*h) + table;
     int lines = GetDIBits(dc, bitmap, 0, (UINT)info.bmHeight, bits_at, (BITMAPINFO *)out, DIB_RGB_COLORS);
     ReleaseDC(nullptr, dc);
@@ -434,10 +431,9 @@ static HGLOBAL bitmap_to_dib(HBITMAP bitmap)
     return g;
 }
 
-/* an image format built from another one the clipboard holds. */
 static HANDLE synthesize_image(UINT format)
 {
-    /* the first source is the one that needs the least conversion. */
+    /* least conversion first. */
     UINT preferred[2];
     if (format == CF_DIB) {
         preferred[0] = CF_DIBV5;
@@ -560,7 +556,7 @@ WINUSERAPI UINT WINAPI RegisterClipboardFormatW(LPCWSTR name)
         SetLastError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    /* registered formats share the atom table of registered window messages, like windows. */
+    /* like windows, registered formats share the atoms of registered window messages. */
     UNICODE_STRING s;
     RtlInitUnicodeString(&s, name);
     return NtUserRegisterWindowMessage(&s);

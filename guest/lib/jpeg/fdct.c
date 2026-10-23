@@ -1,7 +1,6 @@
 /*
- * the forward transform of a block and its quantization. the transform is the transpose of the one in idct.c: the
- * sums of the samples at n and 7 minus n give the even coefficients and their differences the odd ones, the odd part
- * being a 4 by 4 matrix of cosines.
+ * the forward block transform and quantization, the transpose of idct.c's: the sums of samples n and 7 - n give the
+ * even coefficients and their differences the odd ones, the odd part being a 4 by 4 matrix of cosines.
  */
 #include "internal.h"
 
@@ -69,7 +68,7 @@ static inline void fdct8_vec(const __m128 *x, __m128 *y)
                       _mm_mul_ps(d3, c1));
 }
 
-/* four coefficients scaled to steps, rounded half away from zero, as 32 bit integers. */
+/* four coefficients divided by their steps, rounded half away from zero, as 32 bit integers. */
 static inline __m128i quantize4(__m128 v, __m128 inv)
 {
     __m128 x = _mm_mul_ps(v, inv);
@@ -90,7 +89,7 @@ void jpeg_fdct_quant(const uint8_t *samples, size_t stride, const float *inv_qua
         a[0][y] = _mm_sub_ps(_mm_cvtepi32_ps(_mm_unpacklo_epi16(p, zero)), center);
         a[1][y] = _mm_sub_ps(_mm_cvtepi32_ps(_mm_unpackhi_epi16(p, zero)), center);
     }
-    /* down the columns, half 0 being the columns 0 to 3. */
+    /* down the columns, half 0 holding columns 0 to 3. */
     fdct8_vec(a[0], b[0]);
     fdct8_vec(a[1], b[1]);
     /* along the rows: the lanes become the vertical frequencies. */

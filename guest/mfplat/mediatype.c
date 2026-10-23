@@ -1,4 +1,4 @@
-/* media types over the attribute store, and their conversion from and to wave formats. */
+/* media types over the attribute store, and their conversion to and from wave formats. */
 #include "mfplat_private.h"
 
 typedef struct {
@@ -28,7 +28,7 @@ static HRESULT STDMETHODCALLTYPE type_is_compressed_format(IMFMediaType *iface, 
     return S_OK;
 }
 
-/* the ratios of two types agree to a thousandth, or one of them has none. */
+/* ratios match within a thousandth, or when either type has none. */
 static BOOL ratios_equal(IMFMediaType *a, IMFMediaType *b, REFGUID key)
 {
     UINT64 x, y;
@@ -124,11 +124,9 @@ HRESULT WINAPI MFCreateMediaType(IMFMediaType **type)
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ wave formats */
-
 #define WAVE_FORMAT_MPEG_HEAAC 0x1610
 
-/* the speakers of 0 to 8 channels: mono, stereo, 2.1, quad, 4.1, 5.1, 6.1 and 7.1. */
+/* default speaker masks for 0 to 8 channels: mono, stereo, 2.1, quad, 4.1, 5.1, 6.1 and 7.1. */
 static const DWORD DEFAULT_MASKS[9] = {0x0, 0x4, 0x3, 0x7, 0x33, 0x37, 0x3F, 0x13F, 0x63F};
 
 static DWORD default_mask(UINT32 channels)
@@ -144,7 +142,7 @@ static UINT32 get_uint32(IMFMediaType *type, REFGUID key)
     return value;
 }
 
-/* the format tag of a subtype in the base guid, or 0xFFFF for another subtype. */
+/* 0xFFFF when the subtype is not in the base guid. */
 static DWORD format_tag(REFGUID subtype)
 {
     GUID base = MFAudioFormat_Base;
@@ -153,11 +151,10 @@ static DWORD format_tag(REFGUID subtype)
 }
 
 /*
- * an extensible format, unless the subtype is a wave tag that a plain one
- * describes: no channel mask but the default one, no valid bits but all of
- * them, and no pcm or float of more than 16 bits or 2 channels. the type
- * may ask for a plain one with MF_MT_AUDIO_PREFER_WAVEFORMATEX, ignored
- * when it has a channel mask.
+ * an extensible format unless the subtype is a wave tag a plain format can
+ * describe: only the default channel mask, all bits valid, and no pcm or
+ * float over 16 bits or 2 channels. MF_MT_AUDIO_PREFER_WAVEFORMATEX asks
+ * for a plain one, but is ignored when the type has a channel mask.
  */
 HRESULT WINAPI MFCreateWaveFormatExFromMFMediaType(IMFMediaType *type, WAVEFORMATEX **format, UINT32 *size,
                                                    UINT32 flags)
@@ -269,7 +266,7 @@ HRESULT WINAPI MFInitMediaTypeFromWaveFormatEx(IMFMediaType *type, const WAVEFOR
         user = (const BYTE *)format + sizeof(WAVEFORMATEX);
         user_size = format->cbSize;
         if (format->wFormatTag == WAVE_FORMAT_MPEG_HEAAC) {
-            /* the payload type and the profile and level, the first words of HEAACWAVEINFO. */
+            /* payload type, profile and level: the first words of HEAACWAVEINFO. */
             if (sizeof(WAVEFORMATEX) + (UINT32)format->cbSize < 30)
                 return E_INVALIDARG;
             WORD info[2];

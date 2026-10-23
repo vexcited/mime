@@ -1,10 +1,8 @@
 /*
- * the records of the console input buffer. a terminal sends characters and
- * escape sequences; the console reports keys, so input is decoded into a
- * press and a release per key, with the us layout's virtual keys and scan
- * codes. a program that set ENABLE_VIRTUAL_TERMINAL_INPUT gets the
- * characters as they came instead, and keys written to it become the
- * sequences a terminal would send, as conhost does.
+ * console input records. a terminal sends characters and escape sequences but the console reports keys, so input is
+ * decoded into a press and a release per key, with us layout virtual keys and scan codes. a program that set
+ * ENABLE_VIRTUAL_TERMINAL_INPUT gets the characters as they came, and keys written to it become the sequences a
+ * terminal would send, as conhost does.
  */
 #include "../ntos.h"
 #include "coninput.h"
@@ -61,8 +59,8 @@ static void key_record(MIME_CONDRV_RECORD *r, BOOLEAN down, USHORT vk, USHORT sc
 }
 
 /*
- * a key press and release, as the console reports a typed key. when the key is typed with shift, alt or
- * ctrl the presses of those keys go around it, in that order, and their releases after it in the other.
+ * a typed key as a press and release. shift, alt and ctrl presses come before it in that order, and their releases
+ * after it in reverse order.
  */
 static ULONG key_pair(MIME_CONDRV_RECORD *out, ULONG room, USHORT vk, USHORT scan, WCHAR ch, ULONG state)
 {
@@ -95,7 +93,7 @@ static ULONG key_pair(MIME_CONDRV_RECORD *out, ULONG room, USHORT vk, USHORT sca
     return n;
 }
 
-/* a key press and release with no keys around it, as the console reports ctrl+c. */
+/* a press and release with no modifier keys around it, as the console reports ctrl+c. */
 static ULONG plain_pair(MIME_CONDRV_RECORD *out, ULONG room, USHORT vk, USHORT scan, WCHAR ch, ULONG state)
 {
     if (room < 2)
@@ -152,7 +150,7 @@ static void ascii_key(UCHAR c, USHORT *vk, USHORT *scan, BOOLEAN *shift)
     }
 }
 
-/* the escape sequences terminals send for the keys without a character. */
+/* the escape sequences terminals send for keys without a character. */
 static const struct {
     const char *seq;
     USHORT vk, scan;
@@ -169,8 +167,8 @@ static const struct {
 };
 
 /*
- * decodes the escape sequence at p into a key. returns FALSE for one it
- * does not know, and sets *partial when the input ends before its final byte.
+ * decodes the escape sequence at p into a key. returns FALSE for an unknown one, and sets *partial when the input
+ * ends before its final byte.
  */
 static BOOLEAN escape_key(const UCHAR *p, ULONG length, ULONG *used, USHORT *vk, USHORT *scan, ULONG *state,
                           BOOLEAN *partial)
@@ -209,7 +207,7 @@ static BOOLEAN escape_key(const UCHAR *p, ULONG length, ULONG *used, USHORT *vk,
             continue;
         *vk = g_escape_keys[k].vk;
         *scan = g_escape_keys[k].scan;
-        /* the keys of the cursor pad are enhanced when a csi sequence sends them, the function keys never. */
+        /* cursor pad keys sent by a csi sequence are enhanced, function keys never are. */
         BOOLEAN pad = (g_escape_keys[k].vk >= VK_PRIOR && g_escape_keys[k].vk <= VK_DOWN) ||
                       g_escape_keys[k].vk == VK_INSERT || g_escape_keys[k].vk == VK_DELETE;
         *state = g_escape_keys[k].vk == VK_TAB ? CON_SHIFT : pad && seq[0] == '[' ? CON_ENHANCED_KEY : 0;
@@ -258,8 +256,7 @@ static ULONG utf8_char(const UCHAR *p, ULONG length, BOOLEAN more, WCHAR w[2], U
 #define WHEEL_DELTA 128
 
 /*
- * the sequence that starts at p, ESC [ then parameters then a final byte.
- * returns 1 and the length when it is whole, 0 when the input ends inside
+ * scans ESC [, parameters and a final byte at p. returns 1 and the length when whole, 0 when the input ends inside
  * it, -1 when it is no sequence.
  */
 static int csi_scan(const UCHAR *p, ULONG length, ULONG *used, LONG params[8], ULONG *count, UCHAR *prefix, UCHAR *final)
@@ -306,7 +303,7 @@ static ULONG mouse_modifiers(LONG b)
     return state;
 }
 
-/* a mouse report: b is the button code of the report, x and y the 1 based cell, release when it is a release. */
+/* a mouse report: b is the report's button code, x and y the 1-based cell. */
 static ULONG mouse_records(CON_DECODE *st, LONG b, LONG x, LONG y, BOOLEAN release, MIME_CONDRV_RECORD *out, ULONG room)
 {
     if (!st->Mouse || room < 1)
@@ -318,8 +315,7 @@ static ULONG mouse_records(CON_DECODE *st, LONG b, LONG x, LONG y, BOOLEAN relea
     r->Mouse.Y = (SHORT)(y - 1 + st->OriginY);
     r->Mouse.ControlKeyState = mouse_modifiers(b);
     if (b & 64) {
-        /* the wheel: the sign of the high word says which way, and the flag whether it is the horizontal wheel. */
-        /* the console of windows ignores the horizontal wheel. */
+        /* the wheel: the high word's sign gives the direction. the windows console ignores the horizontal wheel. */
         if ((b & 3) >= 2)
             return 0;
         LONG delta = (b & 1) ? -WHEEL_DELTA : WHEEL_DELTA;
@@ -334,7 +330,7 @@ static ULONG mouse_records(CON_DECODE *st, LONG b, LONG x, LONG y, BOOLEAN relea
     else
         button = code == 0 ? BUTTON_LEFT : code == 1 ? BUTTON_MIDDLE : code == 2 ? BUTTON_RIGHT : 0;
     if (b & 32) {
-        /* a move, with the buttons that are down. */
+        /* a move, with the buttons held. */
         r->Mouse.ButtonState = st->Buttons;
         r->Mouse.EventFlags = CON_MOUSE_MOVED;
         return 1;
@@ -363,7 +359,7 @@ static ULONG mouse_records(CON_DECODE *st, LONG b, LONG x, LONG y, BOOLEAN relea
     return 1;
 }
 
-/* the sequences that are no keys. returns the records made, or -1 when the sequence is not one of them. */
+/* sequences that are not keys. returns the records made, or -1 when the sequence is not one of them. */
 static int special_csi(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN more, ULONG *used, MIME_CONDRV_RECORD *out,
                        ULONG room, BOOLEAN *partial)
 {
@@ -394,7 +390,7 @@ static int special_csi(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN mor
         st->Paste = params[0] == 200;
         return 0;
     }
-    /* the win32 input mode: virtual key, scan code, character, down, control keys and repeat count */
+    /* win32 input mode: virtual key, scan code, character, down, control keys and repeat count. */
     if (!prefix && final == '_' && count >= 4 && room >= 1) {
         MIME_CONDRV_RECORD *r = &out[0];
         key_record(r, params[3] > 0, params[0] > 0 ? (USHORT)params[0] : 0, params[1] > 0 ? (USHORT)params[1] : 0,
@@ -402,7 +398,7 @@ static int special_csi(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN mor
         r->Key.RepeatCount = count > 5 && params[5] > 0 ? (USHORT)params[5] : 1;
         return 1;
     }
-    /* the old report: ESC [ M and three bytes */
+    /* the old ESC [ M report has three bytes after the final, the caller decodes it. */
     return -1;
 }
 
@@ -429,7 +425,7 @@ ULONG ConDecodeInput(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN more,
                 break;
         }
         if (vt) {
-            /* the characters as they came: a press of no key for each unit, the program reads the sequences itself. */
+            /* raw characters: a press of no key per unit, the program parses the sequences itself. */
             WCHAR w[2] = {c, 0};
             ULONG units = 1;
             if (c >= 0x80) {
@@ -527,15 +523,15 @@ ULONG ConDecodeInput(CON_DECODE *st, const UCHAR *p, ULONG length, BOOLEAN more,
 /* ------------------------------------------------------------------ keys as vt sequences */
 
 /*
- * A key becomes the sequence a terminal sends for it. Every sequence has one of four shapes, so they are built from
- * the key's shape and its modifiers instead of being listed.
+ * a key becomes the sequence a terminal sends for it. every sequence has one of four shapes, so they are built from
+ * the key's shape and modifiers instead of being listed.
  *
  *   cursor    ESC [ final, or ESC O final in application mode, with modifiers ESC [ 1 ; m final
  *   function  ESC O final for F1 to F4, with modifiers ESC [ 1 ; m final
  *   tilde     ESC [ number ~, with modifiers ESC [ number ; m ~
  *   plain     a few characters
  *
- * The digit m is the character '1' plus 1 for shift, 2 for alt and 4 for ctrl.
+ * m is the character '1' plus 1 for shift, 2 for alt and 4 for ctrl.
  */
 typedef struct VT_TEXT {
     char Chars[16];
@@ -556,10 +552,10 @@ static void text_number(VT_TEXT *t, unsigned n)
 
 typedef enum { SHAPE_NONE, SHAPE_CURSOR, SHAPE_FUNCTION, SHAPE_TILDE } KEY_SHAPE;
 
-/* the final character of a cursor or function key and the number of a tilde key. */
+/* the final character of a cursor or function key, or the number of a tilde key. */
 static KEY_SHAPE key_shape(USHORT vk, char *final, unsigned *number)
 {
-    static const char cursor_finals[] = {'F', 'H', 'D', 'A', 'C', 'B'}; /* end, home, left, up, right, down */
+    static const char cursor_finals[] = {'F', 'H', 'D', 'A', 'C', 'B'}; /* end, home, left, up, right, down. */
     if (vk >= VK_END && vk <= VK_DOWN) {
         *final = cursor_finals[vk - VK_END];
         return SHAPE_CURSOR;
@@ -610,7 +606,7 @@ static void shaped_sequence(VT_TEXT *t, KEY_SHAPE shape, char final, unsigned nu
 /* the keys whose sequence depends on exactly which of shift, alt and ctrl are held. */
 static BOOLEAN exact_sequence(VT_TEXT *t, USHORT vk, BOOLEAN shift, BOOLEAN alt, BOOLEAN ctrl)
 {
-    /* ctrl with a digit or space, as terminals fill the gap: 2 and space are NUL, 3 to 7 follow ESC, 8 is DEL. */
+    /* ctrl with a digit or space, filled in as terminals do: 2 and space are NUL, 3 to 7 follow ESC, 8 is DEL. */
     if (ctrl && !alt && !shift && (vk == VK_SPACE || (vk >= '2' && vk <= '8'))) {
         text_char(t, vk == VK_SPACE || vk == '2' ? 0 : vk == '8' ? 0x7F : (char)(0x1B + (vk - '3')));
         return TRUE;
@@ -727,22 +723,21 @@ BOOLEAN ConTranslateKey(const MIME_CONDRV_RECORD *r, BOOLEAN cursor_application,
 
 /* ------------------------------------------------------------------ merging */
 
-/* characters that take two cells. */
 static BOOLEAN is_wide(WCHAR c)
 {
     static const struct {
         WCHAR First, Last;
     } ranges[] = {
-        {0x1100, 0x115F}, /* hangul jamo, the leading consonants */
-        {0x2E80, 0x303E}, /* cjk radicals, kangxi, ideographic punctuation */
-        {0x3041, 0x33FF}, /* hiragana, katakana, bopomofo, hangul compatibility, enclosed cjk */
-        {0x3400, 0x4DBF}, /* cjk extension a */
-        {0x4E00, 0xA4CF}, /* cjk unified ideographs and yi */
-        {0xAC00, 0xD7A3}, /* hangul syllables */
-        {0xF900, 0xFAFF}, /* cjk compatibility ideographs */
-        {0xFE30, 0xFE6F}, /* cjk compatibility forms and small forms */
-        {0xFF00, 0xFF60}, /* full width forms */
-        {0xFFE0, 0xFFE6}, /* full width signs */
+        {0x1100, 0x115F}, /* hangul jamo, the leading consonants. */
+        {0x2E80, 0x303E}, /* cjk radicals, kangxi, ideographic punctuation. */
+        {0x3041, 0x33FF}, /* hiragana, katakana, bopomofo, hangul compatibility, enclosed cjk. */
+        {0x3400, 0x4DBF}, /* cjk extension a. */
+        {0x4E00, 0xA4CF}, /* cjk unified ideographs and yi. */
+        {0xAC00, 0xD7A3}, /* hangul syllables. */
+        {0xF900, 0xFAFF}, /* cjk compatibility ideographs. */
+        {0xFE30, 0xFE6F}, /* cjk compatibility forms and small forms. */
+        {0xFF00, 0xFF60}, /* full width forms. */
+        {0xFFE0, 0xFFE6}, /* full width signs. */
     };
     for (ULONG i = 0; i < sizeof(ranges) / sizeof(ranges[0]); i++) {
         if (c >= ranges[i].First && c <= ranges[i].Last)

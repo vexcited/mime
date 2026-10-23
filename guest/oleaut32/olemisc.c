@@ -1,6 +1,6 @@
 /*
- * the picture functions around the objects: loading from files and paths, saving, colors, cursors and the property
- * frame, which has no window to show.
+ * picture helpers: loading from files and paths, saving, colors, cursors and the property frame, which has no
+ * window to show.
  */
 #include "picture.h"
 
@@ -41,7 +41,7 @@ static ULONG STDMETHODCALLTYPE fs_release(IStream *This)
     return refs;
 }
 
-/* what the visual basic runtime calls the errors of a file, as the reference reports them. */
+/* maps a win32 file error to the Visual Basic runtime error. */
 static HRESULT file_error(DWORD error)
 {
     static const DWORD table[][2] = {
@@ -130,7 +130,7 @@ static const IStreamVtbl file_stream_vtbl = {
     fs_copy_to, fs_commit, fs_revert, fs_lock, fs_lock, fs_stat, fs_clone,
 };
 
-/* the file as a stream, to read or to write over, with the error code of the visual basic runtime. */
+/* opens the file for reading or overwriting, failing with Visual Basic runtime errors. */
 static HRESULT file_stream(const WCHAR *path, BOOL write, IStream **stream)
 {
     HANDLE file = write ? CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
@@ -178,7 +178,7 @@ static int hex_digit(WCHAR c)
     return -1;
 }
 
-/* the local path of a file url: a host is a share, percent escapes are utf-8 and the slashes turn around. */
+/* a host means a UNC share, percent escapes are UTF-8 and slashes become backslashes. */
 static BOOL url_to_path(const WCHAR *url, WCHAR *path, int capacity)
 {
     const WCHAR *p = url + 5;
@@ -205,7 +205,7 @@ static BOOL url_to_path(const WCHAR *url, WCHAR *path, int capacity)
         } else if (*p < 0x80) {
             bytes[count++] = *p == '/' ? '\\' : (char)*p;
         } else {
-            /* a character the url spelled out is turned to utf-8 by hand. */
+            /* encode a raw non-ASCII character as UTF-8. */
             if (*p < 0x800) {
                 bytes[count++] = (char)(0xC0 | *p >> 6);
                 bytes[count++] = (char)(0x80 | (*p & 0x3F));
@@ -248,7 +248,7 @@ WINOLEAUTAPI HRESULT WINAPI OleLoadPicturePath(LPOLESTR path, LPUNKNOWN caller, 
     HRESULT hr;
     WCHAR local[MAX_PATH];
     if (path_is_url(path) && _wcsnicmp(path, L"file:", 5)) {
-        /* a url is fetched by urlmon, which is loaded when one is asked for. */
+        /* urlmon is loaded only when a url needs fetching. */
         HMODULE urlmon = LoadLibraryW(L"urlmon.dll");
         URL_OPEN_BLOCKING_STREAM open =
             urlmon ? (URL_OPEN_BLOCKING_STREAM)GetProcAddress(urlmon, "URLOpenBlockingStreamW") : nullptr;
@@ -271,7 +271,7 @@ WINOLEAUTAPI HRESULT WINAPI OleLoadPicturePath(LPOLESTR path, LPUNKNOWN caller, 
         if (FAILED(hr))
             return INET_E_RESOURCE_NOT_FOUND;
     }
-    /* the second bit asks for the picture as it will be used, the original format is not kept. */
+    /* bit 1 of reserved means the original format is not kept. */
     hr = OleLoadPictureEx(stream, 0, (reserved & 2) != 0, riid, 0, 0, 0, object);
     stream->lpVtbl->Release(stream);
     if (FAILED(hr)) {
@@ -281,7 +281,7 @@ WINOLEAUTAPI HRESULT WINAPI OleLoadPicturePath(LPOLESTR path, LPUNKNOWN caller, 
     return hr;
 }
 
-/* a file name given as a variant, which can be missing or hold a string. */
+/* the file name may be missing or a string, possibly by reference. */
 static HRESULT file_name(const VARIANT *file, BSTR *name, BOOL *missing)
 {
     *name = nullptr;
@@ -356,8 +356,8 @@ WINOLEAUTAPI HRESULT WINAPI OleSavePictureFile(LPDISPATCH picture, BSTR file)
 /* ------------------------------------------------------------------ colors, cursors, property frames */
 
 /*
- * a color of automation: a plain rgb value, an index into a palette, a color relative to a palette, or a system
- * color. A palette makes a plain value palette relative.
+ * an OLE_COLOR is a plain rgb value, a palette index, a palette relative color or a system color. With a palette, a
+ * plain value becomes palette relative.
  */
 WINOLEAUTAPI HRESULT WINAPI OleTranslateColor(OLE_COLOR color, HPALETTE palette, COLORREF *result)
 {

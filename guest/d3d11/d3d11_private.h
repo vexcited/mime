@@ -1,10 +1,9 @@
 /*
- * d3d11.dll: direct3d 11 over vulkan 1.3, written for the way mime's
- * vulkan-1.dll works: every call is a message to the host, so nothing
- * a frame does may wait for an answer. resources live in a few large
- * allocations, views are descriptors in heaps indexed by the shaders, and
- * shaders are vulkan shader objects with all other state dynamic, so a
- * draw only records commands.
+ * d3d11.dll: direct3d 11 over vulkan 1.3. every call into mime's vulkan-1.dll
+ * is a message to the host, so nothing a frame does may wait for an answer.
+ * resources live in a few large allocations, views are descriptors in heaps
+ * indexed by the shaders, and shaders are vulkan shader objects with all other
+ * state dynamic, so a draw only records commands.
  */
 #ifndef D3D11_PRIVATE_H
 #define D3D11_PRIVATE_H
@@ -175,7 +174,7 @@
     X(vkCmdEndTransformFeedbackEXT)                                                                                    \
     X(vkCmdDrawIndirectByteCountEXT)
 
-/* video decoding, the private commands of mime's vulkan-1.dll, see include/mime/mvk_video.h. */
+/* video decoding through private commands of mime's vulkan-1.dll, see include/mime/mvk_video.h. */
 typedef VkResult(VKAPI_PTR *PFN_vkMimeVideoGetCaps)(VkDevice device, uint32_t *count, MvkVideoCaps *caps, uint32_t capacity);
 typedef VkResult(VKAPI_PTR *PFN_vkMimeVideoCreateSession)(VkDevice device, const MvkVideoSessionInfo *info,
                                                           uint64_t *session);
@@ -192,12 +191,12 @@ typedef struct D3dVk {
     D3D_VK_INSTANCE_FUNCS(X)
     D3D_VK_DEVICE_FUNCS(X)
 #undef X
-    /* null where the host does not decode video. */
+    /* NULL when the host cannot decode video. */
     PFN_vkMimeVideoGetCaps vkMimeVideoGetCaps;
     PFN_vkMimeVideoCreateSession vkMimeVideoCreateSession;
     PFN_vkMimeVideoDestroySession vkMimeVideoDestroySession;
     PFN_vkMimeVideoDecode vkMimeVideoDecode;
-    /* memory and semaphores crossing to other devices, see mime/mvk_share.h. */
+    /* memory and semaphores shared with other devices, see mime/mvk_share.h. */
     PFN_vkMimeShareExportMemory vkMimeShareExportMemory;
     PFN_vkMimeShareImportMemory vkMimeShareImportMemory;
     PFN_vkMimeShareExportSemaphore vkMimeShareExportSemaphore;
@@ -208,7 +207,7 @@ typedef struct D3dVk {
 
 #include "format.h"
 
-/* the bit depths the gpu decodes video in, as the pictures' formats say. */
+/* video decode bit depths, from the picture formats. */
 #define D3D_VIDEO_8BIT 1
 #define D3D_VIDEO_10BIT 2
 
@@ -220,7 +219,7 @@ typedef struct D3dBlock D3dBlock;
 typedef struct D3dAllocation {
     D3dBlock *block;
     VkDeviceMemory memory;
-    /* the vulkan buffer spanning a buffer block, null in image blocks. */
+    /* spans the whole buffer block, NULL in image blocks. */
     VkBuffer buffer;
     VkDeviceSize offset;
     VkDeviceSize size;
@@ -228,13 +227,13 @@ typedef struct D3dAllocation {
 } D3dAllocation;
 
 typedef enum D3dMemoryKind {
-    D3D_MEMORY_DEVICE,   /* the gpu's own memory, not mapped */
-    D3D_MEMORY_UPLOAD,   /* guest ram the gpu reads, written by the cpu */
-    D3D_MEMORY_READBACK, /* guest ram the gpu writes and the cpu reads, cached */
+    D3D_MEMORY_DEVICE,   /* gpu memory, not mapped. */
+    D3D_MEMORY_UPLOAD,   /* guest ram the cpu writes and the gpu reads. */
+    D3D_MEMORY_READBACK, /* guest ram the gpu writes and the cpu reads, cached. */
     D3D_MEMORY_KINDS
 } D3dMemoryKind;
 
-/* the ring of upload memory: per frame data, renamed buffers and descriptor tables. */
+/* the upload ring holds per frame data, renamed buffers and descriptor tables. */
 typedef struct D3dRingChunk D3dRingChunk;
 typedef struct D3dCbChunk D3dCbChunk;
 
@@ -242,7 +241,7 @@ typedef struct D3dRingSlice {
     D3dRingChunk *chunk;
     VkBuffer buffer;
     VkDeviceSize offset;
-    /* the offset from the chunk's start, as dynamic offsets of its descriptors count. */
+    /* from the chunk's start, as the descriptors' dynamic offsets count. */
     VkDeviceSize chunk_offset;
     BYTE *mapped;
 } D3dRingSlice;
@@ -259,14 +258,14 @@ typedef struct D3d10Iface {
     const void *lpVtbl;
 } D3d10Iface;
 
-/* the state shared by everything the device makes. */
+/* common to everything the device makes. */
 typedef struct D3dChild {
     LONG refs;
     D3dDevice *device;
     MimePrivateData data;
 } D3dChild;
 
-/* a heap index of each descriptor array, 0 being the null descriptor. */
+/* descriptor array kinds. index 0 of each is the null descriptor. */
 enum {
     D3D_HEAP_SAMPLED_IMAGE,
     D3D_HEAP_STORAGE_IMAGE,
@@ -282,7 +281,7 @@ typedef struct D3dHeap {
     VkDescriptorSet set;
     UINT capacity[D3D_HEAP_KINDS];
     UINT next[D3D_HEAP_KINDS];
-    /* indices freed, with the submission after which the gpu is done with them. */
+    /* freed indices and the submission after which the gpu is done with each. */
     struct {
         UINT *index;
         UINT64 *serial;
@@ -291,7 +290,7 @@ typedef struct D3dHeap {
 } D3dHeap;
 
 UINT D3dHeapAlloc(D3dDevice *device, UINT kind);
-/* count indices in a row, never freed, or 0 when the heap has no such room left. */
+/* count consecutive indices, never freed. 0 when the heap is out of room. */
 UINT D3dHeapAllocRange(D3dDevice *device, UINT kind, UINT count);
 void D3dHeapFree(D3dDevice *device, UINT kind, UINT index);
 void D3dHeapWriteImage(D3dDevice *device, UINT kind, UINT index, VkImageView view);
@@ -303,21 +302,21 @@ void D3dHeapWriteBuffers(D3dDevice *device, UINT index, VkBuffer buffer, VkDevic
                          VkDeviceSize range, UINT count);
 
 struct D3dResource {
-    ID3D11Resource *iface; /* the object's own interface, a buffer or a texture */
+    ID3D11Resource *iface; /* a buffer or texture interface. */
     IDXGIResource1 dxgi;
     IDXGISurface2 surface;
     D3dChild child;
     D3D11_RESOURCE_DIMENSION dimension;
     D3D11_USAGE usage;
     UINT bind, cpu_access, misc;
-    /* the image is sampled for the video processor though the program did not bind it for shaders. */
+    /* the video processor samples the image though the program did not bind it for shaders. */
     BOOL video_sampled;
     UINT eviction_priority;
     /* the submission after which the gpu no longer reads or writes it. */
     UINT64 last_use;
-    /* the command list being recorded that last noted its use, so each notes it once. */
+    /* the last recording command list to note its use, so each list notes it once. */
     UINT64 list_mark;
-    /* buffers: their bytes in a buffer block or, renamed, in the ring. */
+    /* buffer bytes live in a buffer block, or in the ring once renamed. */
     struct {
         UINT size, stride;
         D3dAllocation alloc;
@@ -326,17 +325,16 @@ struct D3dResource {
         BYTE *mapped;
         /* changes with each rename, so contexts rebind. */
         UINT version;
-        /* the ranges a dynamic buffer left behind, for reuse. */
+        /* ranges left behind by renames, for reuse. */
         void *spares;
-        /* the uniform buffer descriptor of the whole current range, made when first bound. */
+        /* uniform buffer descriptor of the whole current range, made on first bind. */
         UINT cbv;
-        /* a dynamic constant buffer discarded into the constant buffer ring: its chunk and descriptor. */
+        /* chunk and descriptor of a dynamic constant buffer discarded into the constant buffer ring. */
         D3dCbChunk *cb_chunk;
         UINT cb_cbv;
-        /* stream output targets: where in the buffer the count of bytes written is, after the data. */
+        /* stream output targets keep their written byte count here, after the data. */
         VkDeviceSize so_counter;
     } buf;
-    /* textures. */
     struct {
         DXGI_FORMAT format;
         const D3dFormat *fmt;
@@ -344,12 +342,12 @@ struct D3dResource {
         VkImage image;
         D3dAllocation alloc;
         VkImageAspectFlags aspect;
-        /* staging and dynamic textures: their subresources packed in a mapped buffer. */
+        /* staging and dynamic textures pack their subresources in a mapped buffer. */
         D3dAllocation staging;
         UINT *sub_offset;
         UINT *sub_row_pitch;
         UINT *sub_slice_pitch;
-        /* dynamic textures whose mapped bytes still need copying to the image. */
+        /* a dynamic texture's mapped bytes still need copying to the image. */
         BOOL dirty;
     } tex;
     union {
@@ -358,7 +356,6 @@ struct D3dResource {
         D3D11_TEXTURE2D_DESC1 texture2d;
         D3D11_TEXTURE3D_DESC1 texture3d;
     } desc;
-    /* buffers and textures of each dimension: one interface pointer. */
     union {
         ID3D11Buffer buffer;
         ID3D11Texture1D texture1d;
@@ -368,8 +365,8 @@ struct D3dResource {
     BOOL swapchain;
     D3d10Iface d3d10;
     /*
-     * sharing: what a texture made to be shared was described with, the kernel object once it has a handle or was
-     * opened from one, and the keyed mutex, whose acquire is noted by the device that made it.
+     * sharing: the description a shared texture was made with, the kernel object once it has or came from a
+     * handle, and the keyed mutex, whose acquire the creating device notes.
      */
     MimeShareBlob *share_blob;
     MimeShare share;
@@ -383,16 +380,16 @@ HRESULT D3dCreateBuffer(D3dDevice *device, const D3D11_BUFFER_DESC *desc, const 
                         D3dResource **out);
 HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, const void *desc,
                          const D3D11_SUBRESOURCE_DATA *data, D3dResource **out);
-/* share.c: textures made to be shared and the handles that open them, keyed mutexes and fences. */
+/* share.c: shared textures and their handles, keyed mutexes and fences. */
 #define D3D_SHARE_MISC (D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX | D3D11_RESOURCE_MISC_SHARED_NTHANDLE)
 HRESULT D3dShareCheck(D3D11_RESOURCE_DIMENSION dimension, UINT usage, UINT misc, UINT mips, UINT samples);
-/* the description a shared texture is made with: the blob of its kernel object. */
+/* stores the shared texture's description in its kernel object's blob. */
 void D3dShareDescribe(D3dResource *r, const VkImageCreateInfo *info, UINT type_index, UINT64 memory_size);
 HRESULT D3dShareHandle(D3dResource *r, BOOL nt, const SECURITY_ATTRIBUTES *attributes, LPCWSTR name, HANDLE *out);
 HRESULT D3dShareOpen(D3dDevice *device, HANDLE handle, BOOL nt, REFIID riid, void **out);
 void D3dShareDestroy(D3dResource *r);
 void *D3dShareKeyedMutex(D3dResource *r);
-/* the texture a description makes, memory imported from the object that is opened: the creation of resource.c. */
+/* resource.c creates the texture with memory imported from the opened object. */
 typedef struct D3dImport {
     const MimeShareBlob *blob;
     MimeShare share;
@@ -414,9 +411,8 @@ BOOL D3dBufferDiscardCb(D3dDevice *device, D3dResource *resource, BOOL *retired)
 void D3dImageCopyRegions(const D3dResource *resource, UINT index, VkDeviceSize base, VkBufferImageCopy *regions,
                          UINT *count);
 
-/* views: a descriptor in the heap and what it covers. */
 typedef enum D3dViewKind { D3D_VIEW_SRV, D3D_VIEW_RTV, D3D_VIEW_DSV, D3D_VIEW_UAV } D3dViewKind;
-/* a shader view the video processor makes, which needs no bind flag, only taken by D3dCreateView. */
+/* a shader view the video processor makes without a bind flag. only D3dCreateView takes it. */
 #define D3D_VIEW_PLANE ((D3dViewKind)4)
 
 struct D3dView {
@@ -445,9 +441,9 @@ struct D3dView {
     VkImageSubresourceRange range;
     VkExtent3D extent;
     UINT samples;
-    /* the first element and count of buffer views, in bytes. */
+    /* buffer view range, in bytes. */
     UINT buffer_offset, buffer_size;
-    /* append and consume buffers: the hidden counter. */
+    /* the hidden counter of append and consume buffers. */
     D3dAllocation counter;
     VkBufferView counter_view;
     UINT counter_index;
@@ -523,10 +519,10 @@ typedef struct D3dShader {
     VkShaderEXT shader;
     DxbcShaderInfo info;
     /*
-     * geometry shaders with stream output: the stream rasterized. one made
-     * from a vertex or domain shader passes vertices through, compiled for
-     * each kind of input primitive when first drawn with: its source and
-     * declaration, and the variants by dcl_inputprimitive.
+     * stream output: the rasterized stream. one made from a vertex or domain
+     * shader passes vertices through and is compiled per input primitive on
+     * first draw, so it keeps its source, declaration and variants by
+     * dcl_inputprimitive.
      */
     BOOL so;
     UINT rasterized_stream;
@@ -541,14 +537,14 @@ typedef struct D3dShader {
 
 VkShaderEXT D3dShaderVariant(D3dShader *shader, UINT primitive);
 
-/* the per stage table of heap indices the shader reads, compact as dxbc.h lays it out. */
+/* per stage table of the heap indices the shader reads, laid out as dxbc.h says. */
 typedef struct D3dBindingTable {
     UINT entries[DXBC_TABLE_DWORDS];
 } D3dBindingTable;
 
 /* ------------------------------------------------------------------ queries */
 
-/* what a query counts with: the kinds of vulkan queries behind direct3d's. */
+/* the vulkan query kinds behind direct3d's queries. */
 typedef enum D3dQueryKind {
     D3D_QUERY_NONE,
     D3D_QUERY_OCCLUSION,
@@ -558,7 +554,7 @@ typedef enum D3dQueryKind {
     D3D_QUERY_KINDS = D3D_QUERY_STREAM0 + D3D11_SO_STREAM_COUNT
 } D3dQueryKind;
 
-/* vulkan queries of one kind, the readback memory their results are copied to, and how many queries hold each. */
+/* vulkan queries of one kind, their readback memory, and how many direct3d queries hold each. */
 typedef struct D3dQueryPool {
     struct D3dQueryPool *next;
     D3dQueryKind kind;
@@ -573,7 +569,7 @@ typedef struct D3dQuerySlot {
     UINT index;
 } D3dQuerySlot;
 
-/* slots given up, in the order they were, waiting for the gpu to be done with them. */
+/* released slots, in release order, waiting for the gpu to finish with them. */
 typedef struct D3dRetiredSlots {
     struct D3dRetiredSlot {
         D3dQuerySlot slot;
@@ -586,14 +582,14 @@ typedef struct D3dQuery {
     ID3D11Query1 iface;
     D3dChild child;
     D3D11_QUERY_DESC1 desc;
-    /* the kinds it counts with, all streams for stream output over every stream. */
+    /* the kinds it counts with. stream output over every stream uses all streams. */
     UINT kinds;
     /* the submission that carries its end. */
     UINT64 serial;
     BOOL begun, ended;
-    /* calls of GetData without a flush that found it not ready, since the end. */
+    /* GetData calls without a flush that found it not ready since End. */
     BYTE polls;
-    /* the segments it was begun over, its result their sum. */
+    /* the segments it spans. its result is their sum. */
     D3dQuerySlot *slots;
     UINT slot_count, slot_capacity;
     D3d10Iface d3d10;
@@ -637,7 +633,7 @@ struct D3dDevice {
     /* ID3D10Device1, for devices d3d10.dll and d3d10_1.dll make. */
     D3d10Iface d3d10;
     LONG refs;
-    /* the adapter the device was made on, which GetAdapter hands out. */
+    /* returned by GetAdapter. */
     IDXGIAdapter *adapter;
     D3D_FEATURE_LEVEL feature_level;
     UINT flags;
@@ -655,14 +651,14 @@ struct D3dDevice {
     BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
     BOOL has_video;
-    /* what the shared device enables for direct3d 12 that shader objects want state for before every draw. */
+    /* features the shared device enables for direct3d 12, whose state shader objects need before every draw. */
     BOOL has_vrs, has_conservative, has_mesh;
 
-    /* the queue is shared by the process's devices on the adapter, submissions from contexts and swap chains alike. */
+    /* all of the process's devices on the adapter share the queue, for context and swap chain submissions alike. */
     SRWLOCK *queue_lock;
     MimeVkShared shared;
     VkSemaphore timeline;
-    /* fences the program has the next submission wait for, under the queue's lock. */
+    /* fences the next submission waits for, guarded by the queue lock. */
 #define D3D_MAX_FENCE_WAITS 8
     struct {
         VkSemaphore semaphore;
@@ -671,12 +667,12 @@ struct D3dDevice {
     UINT fence_wait_count;
     UINT64 next_serial;
     volatile UINT64 completed;
-    /* ranges dynamic buffers took new since the last submission. */
+    /* dynamic buffer renames since the last submission. */
     UINT renames;
 
     /*
-     * video decoding: what the host's decode queue can do, asked once, and the timeline it signals as pictures
-     * are decoded, which the next submission waits for.
+     * video decoding: the host decode queue's capabilities, queried once, and the timeline it signals per decoded
+     * picture, which the next submission waits for.
      */
     SRWLOCK video_lock;
     BOOL video_probed;
@@ -687,24 +683,21 @@ struct D3dDevice {
     UINT64 video_value, video_waited;
     void *video_processor;
 
-    /* memory. */
     SRWLOCK memory_lock;
     D3dBlock *blocks;
     UINT buffer_types[D3D_MEMORY_KINDS];
     UINT image_type_device;
 
-    /* the upload ring. */
     SRWLOCK ring_lock;
     D3dRingChunk *ring_chunks;
     D3dRingChunk *ring_current;
 
-    /* the constant buffer ring: where dynamic constant buffers go when discarded. */
+    /* where dynamic constant buffers go when discarded. */
     SRWLOCK cb_lock;
     D3dCbChunk *cb_chunks;
     D3dCbChunk *cb_current;
     UINT cb_chunk_count;
 
-    /* descriptors. */
     D3dHeap heap;
     VkDescriptorSetLayout heap_layout;
     VkDescriptorSetLayout table_layout;
@@ -713,7 +706,7 @@ struct D3dDevice {
     VkDescriptorPool table_pool;
     VkSampler null_sampler;
 
-    /* work done outside the context, initial data and image layouts, run before the context's. */
+    /* the device's own work, initial data and image layouts, submitted before the context's. */
     CRITICAL_SECTION init_lock;
     VkCommandPool init_pool;
     D3dCommandBuffer init_cmd;
@@ -721,27 +714,25 @@ struct D3dDevice {
 
     D3dContext *immediate;
 
-    /* what streams out to slots without a buffer, which keeps nothing. */
+    /* stream output target for empty slots, which keeps nothing. */
     D3dAllocation so_dummy;
 
-    /* query slots. */
     SRWLOCK query_lock;
     D3dQueryPool *query_pools[D3D_QUERY_KINDS];
     D3dRetiredSlots query_retired[D3D_QUERY_KINDS];
 
-    /* deferred destruction. */
     SRWLOCK garbage_lock;
     D3dGarbage *garbage;
     UINT garbage_count, garbage_capacity;
 
-    /* state objects, one per distinct description as direct3d hands them out. */
+    /* like direct3d, one state object per distinct description. */
     CRITICAL_SECTION state_lock;
     struct D3dBlendState *blend_states;
     struct D3dRasterizerState *rasterizer_states;
     struct D3dDepthStencilState *depth_stencil_states;
     struct D3dSamplerState *sampler_states;
 
-    /* uniform buffer descriptors by buffer, offset and size. */
+    /* uniform buffer descriptors, keyed by buffer, offset and size. */
     SRWLOCK cbv_lock;
     struct D3dCbvEntry *cbv;
     UINT cbv_count, cbv_capacity;
@@ -772,12 +763,12 @@ VkCommandBuffer D3dTakeInitCommands(D3dDevice *device);
 HRESULT D3dAllocBuffer(D3dDevice *device, D3dMemoryKind kind, VkDeviceSize size, VkDeviceSize align,
                        D3dAllocation *out);
 HRESULT D3dAllocImage(D3dDevice *device, VkImage image, D3dAllocation *out);
-/* an image of memory of its own that other devices can import, or memory imported from one: the shared id of the object. */
+/* an image with its own memory that other devices can import, or memory imported by the object's shared id. */
 HRESULT D3dAllocImageShared(D3dDevice *device, VkImage image, UINT64 import_id, const MimeShareBlob *blob,
                             D3dAllocation *out, UINT *type_index);
 void D3dFree(D3dDevice *device, D3dAllocation *alloc);
 BOOL D3dRingAlloc(D3dDevice *device, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out);
-/* chunks owned by command lists: made like the ring's, returned to it when the list is done. */
+/* chunks owned by command lists, made like the ring's and returned to it when the list is done. */
 D3dRingChunk *D3dRingChunkNew(D3dDevice *device, VkDeviceSize size);
 BOOL D3dRingChunkAlloc(D3dRingChunk *chunk, VkDeviceSize size, VkDeviceSize align, D3dRingSlice *out);
 void D3dRingTrim(D3dDevice *device, const D3dRingSlice *slice, VkDeviceSize reserved, VkDeviceSize used);
@@ -787,9 +778,9 @@ VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk);
 void D3dMemoryDestroy(D3dDevice *device);
 
 /*
- * a dynamic constant buffer's bytes after a discard: a slice of a chunk
- * whose uniform buffer descriptors, one each 256 bytes, were made with it.
- * a chunk is reused once no buffer is in it and the gpu is done with it.
+ * a dynamic constant buffer's bytes after a discard: a slice of a chunk made
+ * with one uniform buffer descriptor per 256 bytes. a chunk is reused once no
+ * buffer is in it and the gpu is done with it.
  */
 typedef struct D3dCbSlice {
     D3dCbChunk *chunk;
@@ -798,11 +789,11 @@ typedef struct D3dCbSlice {
     BYTE *mapped;
     UINT cbv;
 } D3dCbSlice;
-/* a slice, and whether the chunk before was retired, which the caller submits for. */
+/* *retired says the previous chunk was retired, and the caller must submit. */
 BOOL D3dCbAlloc(D3dDevice *device, VkDeviceSize size, D3dCbSlice *out, BOOL *retired);
 void D3dCbUnpin(D3dDevice *device, D3dCbChunk *chunk, UINT64 serial);
 
-/* the flags a format supports, for CheckFormatSupport. */
+/* for CheckFormatSupport. */
 UINT D3dFormatSupport(D3dDevice *device, DXGI_FORMAT format, UINT *support2);
 VkImageUsageFlags D3dImageUsage(UINT bind, UINT misc, D3D11_USAGE usage);
 
@@ -810,11 +801,11 @@ VkImageUsageFlags D3dImageUsage(UINT bind, UINT misc, D3D11_USAGE usage);
 
 typedef struct D3dStageState {
     D3dShader *shader;
-    /* the table uploaded last holds what is bound. */
+    /* the last uploaded table matches what is bound. */
     BOOL table_valid;
     /*
-     * the resource behind each entry of the table, and for buffers the
-     * version it was read at: a renamed buffer makes the table stale.
+     * the resource behind each table entry, and for buffers the version it
+     * was read at: a renamed buffer makes the table stale.
      */
     D3dResource *table_resources[DXBC_TABLE_DWORDS];
     UINT table_versions[DXBC_TABLE_DWORDS];
@@ -825,7 +816,7 @@ typedef struct D3dStageState {
     UINT cb_count[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT];
     D3dView *srv[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT];
     D3dSamplerState *sampler[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT];
-    /* compute: the unordered access views. */
+    /* compute unordered access views. */
     D3dView *uav[D3D11_1_UAV_SLOT_COUNT];
     D3dBindingTable table;
 } D3dStageState;
@@ -841,13 +832,12 @@ struct D3dContext {
     CRITICAL_SECTION lock;
     BOOL protected_;
 
-    /* recording. */
     VkCommandPool pool;
     D3dCommandBuffer *buffers;
     UINT buffer_count;
     D3dCommandBuffer *cmd;
     BOOL rendering;
-    /* rendering ended to draw something writing views: the next draws reload the targets. */
+    /* rendering ended after a draw that wrote views, so the next draws reload the targets. */
     BOOL pending_barrier;
     BOOL state_dirty;
     /* the dynamic state set in the command buffer, so draws set only what changed. */
@@ -867,7 +857,7 @@ struct D3dContext {
     BOOL tables_bound[2];
     BOOL heap_bound[2];
     BOOL compute_bound;
-    /* the geometry shader bound, a variant for stream output from a vertex shader; transform feedback begun. */
+    /* the bound geometry shader, maybe a stream output variant made from a vertex shader. */
     VkShaderEXT bound_gs;
     BOOL xfb_active;
     UINT render_samples;
@@ -877,7 +867,7 @@ struct D3dContext {
     D3dInputLayout *layout;
     D3D11_PRIMITIVE_TOPOLOGY topology;
     D3dResource *vb[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
-    /* past the last vertex buffer bound. */
+    /* one past the last bound vertex buffer. */
     UINT vb_high;
     UINT vb_stride[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
     UINT vb_offset[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
@@ -888,7 +878,6 @@ struct D3dContext {
     UINT ib_version;
     BOOL ia_dirty, vertex_input_dirty;
 
-    /* the stages. */
     D3dStageState stages[D3D_STAGES];
     BOOL shaders_dirty;
 
@@ -908,16 +897,13 @@ struct D3dContext {
     D3dView *om_uav[D3D11_1_UAV_SLOT_COUNT];
     UINT om_uav_start;
     BOOL targets_dirty, rs_dirty, om_dirty, viewports_dirty;
-    /* every resource bound for output, gathered when inputs are checked against them. */
+    /* every resource bound for output, to check inputs against. */
     D3dResource *outputs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT + 1 + 2 * D3D11_1_UAV_SLOT_COUNT +
                          D3D11_SO_BUFFER_SLOT_COUNT];
     UINT output_count;
     BOOL outputs_dirty;
 
-    /*
-     * deferred contexts: the pool of the command buffer being recorded,
-     * and the ring chunks and resources the command list will own.
-     */
+    /* deferred contexts: the recording's command pool, and the ring chunks and resources the command list will own. */
     VkCommandPool list_pool;
     D3dCommandBuffer list_cmd;
     D3dRingChunk **list_chunks;
@@ -925,7 +911,7 @@ struct D3dContext {
     D3dResource **list_resources;
     UINT list_resource_count, list_resource_capacity;
     UINT64 list_id;
-    /* dynamic buffers a deferred context discarded: the list's own bytes stand for them. */
+    /* dynamic buffers a deferred context discarded, replaced by the list's own bytes. */
     struct D3dListRange {
         D3dResource *resource;
         D3dRingSlice slice;
@@ -943,11 +929,11 @@ struct D3dContext {
     UINT list_map_count;
 
     /*
-     * the queries begun and not ended. they count in segments: a vulkan
-     * query of each kind at a time, as vulkan has no more, nor any across
-     * render pass instances or command buffers. a segment ends when the
-     * queries begun change, and counts for all of them. then the slots
-     * whose results are still to copy.
+     * queries begun and not ended. they count in segments: one vulkan query
+     * per kind at a time, since vulkan allows no more, nor any across render
+     * pass instances or command buffers. a segment ends when the set of begun
+     * queries changes, and counts for all of them. then the slots whose
+     * results are still to copy.
      */
     D3dQuery **queries;
     UINT query_count, query_capacity;
@@ -956,7 +942,6 @@ struct D3dContext {
     D3dQuerySlot *query_copies;
     UINT query_copy_count, query_copy_capacity;
 
-    /* stream output and predication. */
     D3dResource *so[D3D11_SO_BUFFER_SLOT_COUNT];
     UINT so_offset[D3D11_SO_BUFFER_SLOT_COUNT];
     ID3D11Predicate *predicate;
@@ -966,10 +951,10 @@ struct D3dContext {
 extern const MimeAllocator g_d3d_allocator;
 
 /*
- * the device's lock for the length of a call. the calls of the immediate context take it while the program has multithread
- * protection on, which costs a load and a branch while it is off, and the device's calls that make objects and ask
- * questions always, unless the device is single threaded. put D3D_SYNC at the top of a method of the immediate context or
- * D3D_DEVICE_SYNC at the top of one of the device's: the lock is let go when the scope ends, whatever way it ends.
+ * holds the device lock for the length of a call. immediate context calls take it only while multithread protection
+ * is on, which costs a load and a branch when off. device calls that make objects or ask questions always take it,
+ * unless the device is single threaded. put D3D_SYNC at the top of an immediate context method or D3D_DEVICE_SYNC at
+ * the top of a device method: the lock is released when the scope ends, however it ends.
  */
 static inline CRITICAL_SECTION *D3dSyncEnter(D3dContext *context)
 {
@@ -1000,7 +985,7 @@ static inline void D3dSyncLeave(CRITICAL_SECTION **held)
 HRESULT D3dCreateContext(D3dDevice *device, D3D11_DEVICE_CONTEXT_TYPE type, D3dContext **out);
 void D3dContextDestroy(D3dContext *context);
 D3dContext *D3dContextFrom(ID3D11DeviceContext *iface);
-/* the ID3D11Multithread of an immediate context that has one, and its state, which the device shares. */
+/* the immediate context's ID3D11Multithread, if any. its state is the device's. */
 void *D3dMultithreadInterface(D3dContext *context);
 BOOL D3dSetProtected(D3dContext *context, BOOL protect);
 /* records into the context's command buffer, ending rendering for transfers. */
@@ -1008,7 +993,7 @@ VkCommandBuffer D3dContextCommands(D3dContext *context, BOOL transfer);
 void D3dContextFlush(D3dContext *context);
 UINT64 D3dContextSubmit(D3dContext *context, const VkSemaphoreSubmitInfo *wait, const VkSemaphoreSubmitInfo *signal);
 void D3dContextUseList(D3dContext *context, D3dResource *resource);
-/* the resource is read or written by what is being recorded: on the immediate context, a serial. */
+/* marks the resource used by the recording: a serial on the immediate context. */
 static inline void D3dContextUse(D3dContext *context, D3dResource *resource)
 {
     if (!resource)
@@ -1062,9 +1047,8 @@ void D3dQueriesRelease(D3dContext *context);
 void D3dQueryPoolsDestroy(D3dDevice *device);
 
 /*
- * d3d10_device.c and d3d10_objects.c: the direct3d 10 interface of an object
- * for an iid, or NULL. d3d10.dll and d3d10_1.dll make devices with these
- * flags, which give them ID3D10Device1.
+ * d3d10_device.c and d3d10_objects.c: an object's direct3d 10 interface for an iid, or NULL. d3d10.dll and
+ * d3d10_1.dll make devices with these flags to get ID3D10Device1.
  */
 #define D3D_CREATE_DEVICE_D3D10 0x40000000
 #define D3D_CREATE_DEVICE_D3D10_1 0x80000000
@@ -1104,7 +1088,7 @@ HRESULT D3dVideoCreateOutputView(D3dDevice *device, ID3D11Resource *resource,
                                  const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC *desc,
                                  ID3D11VideoProcessorOutputView **out);
 
-/* the debug output of the dll, to the kernel debugger log. */
+/* writes to the kernel debugger log. */
 void D3dLog(const char *format, ...);
 
 #endif

@@ -1,11 +1,9 @@
 /*
- * the offset of the clock from utc, which follows the rules of the machine's zone. Windows keeps the rules the kernel
- * reads in the key TimeZoneInformation and works out from them which period it is, standard or daylight time, and
- * the instant of the next change. It writes the offset into the shared data page, with TimeZoneId and the period
- * the offset is good for, sets a timer for the change and, when it comes, does it all again and tells the
- * windows of the desktop the clock changed. Here the same: the rules come from the key, which cm/boot.c fills with the
- * machine's zone for the year, the timer is a kernel timer, and the windows hear WM_TIMECHANGE through win32k.
- * See docs/ntoskrnl.md.
+ * the clock's offset from utc, following the machine's zone rules. like windows, the kernel reads the rules from
+ * TimeZoneInformation, works out whether it is standard or daylight time and when the next change comes, writes the
+ * offset, TimeZoneId and the period it holds for into the shared data page, and sets a timer for the change. when it
+ * fires it does all that again and tells desktop windows the clock changed. cm/boot.c fills the key with the
+ * machine's zone for the year, and windows get WM_TIMECHANGE through win32k.
  */
 #include "../ntos.h"
 
@@ -30,11 +28,11 @@ static KDPC g_dpc;
 static KEVENT g_event;
 static TZ_RULES g_rules;
 static ULONG g_rules_year;
-static LONG g_bias_minutes; /* of the period now, utc = local + bias */
+static LONG g_bias_minutes; /* of the current period, utc = local + bias */
 
-/* ------------------------------------------------------------ calendar, in 100 ns from 1601 */
+/* ------------------------------------------------------------ calendar, in 100 ns units from 1601 */
 
-/* days from 1601-01-01 to a day of the proleptic Gregorian calendar. */
+/* days from 1601-01-01, proleptic Gregorian calendar. */
 static LONG64 days_from_civil(LONG64 year, ULONG month, ULONG day)
 {
     year -= month <= 2;
@@ -64,14 +62,14 @@ static ULONG days_in_month(ULONG year, ULONG month)
     return days[month - 1];
 }
 
-/* the local time a rule changes the clock in a year, FALSE for a rule that names no month. */
+/* the local time a rule changes the clock in a year, FALSE when the rule names no month. */
 static BOOLEAN cutover(const TZ_DATE *d, ULONG year, LONG64 *local)
 {
     if (!d->Month || d->Month > 12)
         return FALSE;
     LONG64 day;
     if (d->Year) {
-        /* a date of one year. */
+        /* a date in one specific year. */
         day = days_from_civil(d->Year, d->Month, d->Day && d->Day <= days_in_month(d->Year, d->Month) ? d->Day : 1);
     } else {
         /* the n-th weekday of the month, the fifth meaning the last. */
@@ -111,8 +109,8 @@ static BOOLEAN load_rules(TZ_RULES *rules)
 }
 
 /*
- * which period the instant is in, its offset in minutes, and the instant of the next change, 0 for none. A zone
- * whose rules lack a month for either change has no daylight time, and the offset is its bias.
+ * the period an instant falls in, its offset in minutes, and the next change, 0 for none. a zone whose rules
+ * lack a month for either change has no daylight time, and the offset is its bias.
  */
 static void evaluate(const TZ_RULES *r, LONG64 now, LONG *bias, ULONG *id, LONG64 *since, LONG64 *next)
 {
@@ -132,7 +130,7 @@ static void evaluate(const TZ_RULES *r, LONG64 now, LONG *bias, ULONG *id, LONG6
     ULONG year = year_of(now - (LONG64)(r->Bias + r->StandardBias) * MINUTE_HNS);
     for (ULONG y = year - 1; y <= year + 1; y++) {
         LONG64 local;
-        /* the change to daylight time is told in standard time, the change back in daylight time. */
+        /* the change to daylight time is given in standard time, the change back in daylight time. */
         if (cutover(&r->DaylightDate, y, &local)) {
             changes[count].utc = local + (LONG64)(r->Bias + r->StandardBias) * MINUTE_HNS;
             changes[count++].daylight = TRUE;
@@ -168,7 +166,7 @@ static void write_page(LONG bias_minutes, ULONG id, LONG64 start, LONG64 end)
 {
     KUSER_SHARED_DATA *k = SharedUserData;
     LONG64 bias = (LONG64)bias_minutes * MINUTE_HNS;
-    /* the stamp is odd while the fields change, and the bias is read until its two halves of the high part agree. */
+    /* the stamp is odd while the fields change; readers retry until the two high halves of the bias agree. */
     __atomic_add_fetch(&k->TimeZoneBiasStamp, 1, __ATOMIC_SEQ_CST);
     k->TimeZoneBias.High2Time = (LONG)(bias >> 32);
     k->TimeZoneBias.LowPart = (ULONG)bias;
@@ -179,13 +177,13 @@ static void write_page(LONG bias_minutes, ULONG id, LONG64 start, LONG64 end)
     __atomic_add_fetch(&k->TimeZoneBiasStamp, 1, __ATOMIC_SEQ_CST);
 }
 
-/* works the period out again and writes it. returns whether the offset of the clock changed. */
+/* returns whether the clock's offset changed. */
 static BOOLEAN refresh(BOOLEAN boot)
 {
     LARGE_INTEGER now;
     KeQuerySystemTime(&now);
     ULONG year = year_of(now.QuadPart);
-    /* the rules of a zone that changed them are those of the year the clock is in. */
+    /* a zone that changed its rules uses those of the current year. */
     if (HalBootInfo->timezone_key[0] && year != g_rules_year) {
         if (!boot)
             CmRefreshTimeZoneRules(year);
@@ -199,8 +197,8 @@ static BOOLEAN refresh(BOOLEAN boot)
     LONG64 since = 0, next = 0;
     if (g_rules_year) {
         evaluate(&g_rules, now.QuadPart, &bias, &id, &since, &next);
-        /* the host is the truth about its own clock: rules that give neither of the zone's two offsets for the host's
-           are not the host's zone, and the offset the machine started with stays, with no change to come. */
+        /* the host is the truth about its own clock: rules giving neither of their two offsets for it are not
+           the host's zone, so the boot offset stays with no change to come. */
         if (boot && bias != HalBootInfo->timezone_bias && g_rules.Bias + g_rules.DaylightBias != HalBootInfo->timezone_bias &&
             g_rules.Bias + g_rules.StandardBias != HalBootInfo->timezone_bias) {
             KiLogPrintf("time zone: the rules give %d minutes and the host %d, the host's stays", bias, HalBootInfo->timezone_bias);

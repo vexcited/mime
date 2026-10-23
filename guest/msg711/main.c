@@ -1,7 +1,6 @@
 /*
- * msg711.acm, the ccitt g.711 codec: 16 bit pcm to and from a-law and
- * u-law, and a-law to and from u-law, one byte per sample, by the tables
- * of the recommendation.
+ * msg711.acm, the CCITT G.711 codec: 16-bit pcm to and from a-law and u-law, and a-law to and from u-law, one byte
+ * per sample, using the recommendation's tables.
  */
 #include <mime/win32/winbase.h>
 #include <acmdrv/acmdrv.h>
@@ -12,7 +11,7 @@
 static const DWORD rates[] = {8000, 11025, 16000, 22050, 44100};
 static const DWORD index_to_tag[] = {WAVE_FORMAT_PCM, WAVE_FORMAT_ALAW, WAVE_FORMAT_MULAW};
 
-/* g.711 tables 3 and 4, the u-law code of an a-law one and back, for positive codes after the even bit flips. */
+/* G.711 tables 3 and 4: a-law to u-law and back, for positive codes after the even bit inversion. */
 static const BYTE a2u[128] = {
     1,  3,  5,  7,  9,  11, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,  30,  31,  32,  32,
     33, 33, 34, 34, 35, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 48, 49, 49,  50,  51,  52,  53,
@@ -46,7 +45,7 @@ static SHORT ulaw_to_pcm(BYTE u)
     return (SHORT)(u & 0x80 ? 0x84 - value : value - 0x84);
 }
 
-/* the magnitude and the sign bit of a sample, -32768 taken as 32767. */
+/* the magnitude and sign bit of a sample, with -32768 taken as 32767. */
 static unsigned magnitude(SHORT sample, BYTE *sign)
 {
     if (sample >= 0) {
@@ -80,7 +79,7 @@ static BYTE pcm_to_ulaw(SHORT sample)
         return sign;
     if (v < 0x1F)
         return (BYTE)(sign | (127 - (v >> 1)));
-    /* segment s starts at 32 << s, less a bias of 33, the steps doubling. */
+    /* segment s starts at 32 << s less a bias of 33, and its steps double. */
     unsigned segment = 1;
     while (v >= (32u << segment) + (32u << segment) - 33 && segment < 7)
         segment++;
@@ -189,7 +188,7 @@ static LRESULT format_details(ACMFORMATDETAILSW *d, DWORD flags)
     return MMSYSERR_NOERROR;
 }
 
-/* the other side of a conversion: pcm for g.711, a-law for pcm, the fields the caller fixes kept. */
+/* suggests the other side: pcm for G.711, a-law for pcm, keeping the fields the caller fixed. */
 static LRESULT suggest(ACMDRVFORMATSUGGEST *s)
 {
     DWORD flags = s->fdwSuggest;
@@ -309,7 +308,7 @@ static LRESULT stream_open(ACMDRVSTREAMINSTANCE *in)
     return MMSYSERR_NOERROR;
 }
 
-/* every whole frame or nothing: a destination too small fails. */
+/* whole frames only: a destination too small fails. */
 static LRESULT stream_size(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMSIZE *s)
 {
     const WAVEFORMATEX *src = in->pwfxSrc, *dst = in->pwfxDst;
@@ -383,7 +382,7 @@ static LRESULT stream_convert(const ACMDRVSTREAMINSTANCE *in, ACMDRVSTREAMHEADER
         h->cbDstLengthUsed = (DWORD)((BYTE *)samples - h->pbDst);
         return MMSYSERR_NOERROR;
     }
-    /* windows reports the source used even when the destination is too small. */
+    /* Windows reports the source used even when the destination is too small. */
     DWORD n = h->cbSrcLength - h->cbSrcLength % src->nChannels;
     h->cbSrcLengthUsed = n;
     if (n > h->cbDstLength)

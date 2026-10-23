@@ -1,6 +1,4 @@
-/*
- * internet extensions: wininet.dll. the handle, url, option, http and cookie api of wininet.h.
- */
+/* wininet.dll: the handle, url, option, http and cookie api of wininet.h. */
 #ifndef MIME_WIN32_WININET_H
 #define MIME_WIN32_WININET_H
 
@@ -144,7 +142,7 @@ typedef struct {
     WCHAR Locator[MAX_GOPHER_LOCATOR_LENGTH + 1];
 } GOPHER_FIND_DATAW, *LPGOPHER_FIND_DATAW;
 
-/* the attribute union is never filled by mime, the enumerator only needs its pointer. */
+/* mime never fills the attribute union, the enumerator only needs its pointer. */
 typedef struct GOPHER_ATTRIBUTE_TYPE GOPHER_ATTRIBUTE_TYPE, *LPGOPHER_ATTRIBUTE_TYPE;
 typedef BOOL(CALLBACK *GOPHER_ATTRIBUTE_ENUMERATOR)(LPGOPHER_ATTRIBUTE_TYPE info, DWORD error);
 
@@ -342,7 +340,7 @@ typedef BOOL(CALLBACK *GOPHER_ATTRIBUTE_ENUMERATOR)(LPGOPHER_ATTRIBUTE_TYPE info
 #define _SECURITY_FLAG_CERT_CN_INVALID 0x02000000
 #define _SECURITY_FLAG_CERT_DATE_INVALID 0x04000000
 
-/* the certificate of INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT, its strings from LocalAlloc. */
+/* INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT, its strings come from LocalAlloc. */
 typedef struct {
     FILETIME ftExpiry;
     FILETIME ftStart;

@@ -1,4 +1,4 @@
-/* the gs wavetable synth behind midi output device 0. */
+/* GS wavetable synth for MIDI output device 0. */
 #ifndef WINMM_SYNTH_H
 #define WINMM_SYNTH_H
 

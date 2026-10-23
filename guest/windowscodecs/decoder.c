@@ -1,6 +1,6 @@
 /*
- * the generic decoder: IWICBitmapDecoder and IWICBitmapFrameDecode over the backend of one image format. The file is read
- * into memory, the backend parses it, and a frame is decoded whole when its pixels are first asked for.
+ * generic WIC decoder and frame interfaces. read the file into memory, parse through a format backend, and decode
+ * each whole frame on its first pixel request.
  */
 #include "wic_codec.h"
 #include "wic_meta.h"
@@ -43,7 +43,7 @@ typedef struct WicFrame {
 static WicDecoder *decoder_from(IWICBitmapDecoder *This) { return WIC_FROM_SLOT(WicDecoder, decoder, This); }
 static WicFrame *frame_from(IWICBitmapFrameDecode *This) { return WIC_FROM_SLOT(WicFrame, frame, This); }
 
-/* ------------------------------------------------------------------ decoding a frame */
+/* decoding a frame. */
 
 static HRESULT frame_cache(WicDecoder *d, UINT index, const WicFrameInfo *info, BYTE **pixels, UINT *stride)
 {
@@ -81,7 +81,7 @@ static HRESULT frame_cache(WicDecoder *d, UINT index, const WicFrameInfo *info, 
     return hr;
 }
 
-/* ------------------------------------------------------------------ the frame */
+/* the frame. */
 
 static void frame_destroy(WicBase *base)
 {
@@ -209,7 +209,6 @@ static const IWICBitmapFrameDecodeVtbl g_frame_vtbl = {
     frame_get_metadata, frame_get_contexts, frame_get_thumbnail,
 };
 
-/* the metadata block reader of a frame. */
 
 static WicFrame *frame_of_blocks(void *This) { return WIC_FROM_SLOT(WicFrame, blocks, This); }
 
@@ -287,7 +286,7 @@ static const IWICMetadataBlockReaderVtbl g_blocks_vtbl = {
     WIC_IUNKNOWN_FUNCS, blocks_get_container, blocks_get_count, blocks_get_reader, blocks_get_enumerator,
 };
 
-/* the source transform of a frame that decodes at a fraction of its size. */
+/* scaled frame decoding through IWICBitmapSourceTransform. */
 
 static WicFrame *frame_of_transform(void *This) { return WIC_FROM_SLOT(WicFrame, transform, This); }
 
@@ -383,7 +382,7 @@ static const WicIfaceEntry g_frame_ifaces[] = {
 };
 static const WicClass g_frame_class = {frame_destroy, g_frame_ifaces, 4};
 
-/* ------------------------------------------------------------------ the decoder */
+/* the decoder. */
 
 static void decoder_destroy(WicBase *base)
 {
@@ -563,7 +562,7 @@ static HRESULT STDMETHODCALLTYPE decoder_get_contexts(IWICBitmapDecoder *This, U
         return E_INVALIDARG;
     if (!d->ready)
         return WINCODEC_ERR_NOTINITIALIZED;
-    /* the color contexts of a container are those of the first frame, for the codecs that have any. */
+    /* container color contexts come from the first frame when supported. */
     if (!d->ops->profile_count)
         return WINCODEC_ERR_UNSUPPORTEDOPERATION;
     UINT total = d->ops->profile_count(d->state, ~0u);
@@ -658,7 +657,7 @@ HRESULT WicDecoderCreate(const WicCodec *codec, IWICBitmapDecoder **out)
     return S_OK;
 }
 
-/* the decoder for the content of the stream, which has been opened. */
+/* select a decoder for the open stream contents. */
 HRESULT WicDecoderFromStream(IStream *stream, const GUID *vendor, WICDecodeOptions options, IWICBitmapDecoder **out)
 {
     *out = nullptr;

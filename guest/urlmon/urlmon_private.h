@@ -1,6 +1,3 @@
-/*
- * urlmon internals: what the download, moniker, uri and parsing files share.
- */
 #pragma once
 #ifndef MIME_BUILD_URLMON
 #define MIME_BUILD_URLMON
@@ -18,17 +15,17 @@ void UrlFree(void *memory);
 PWSTR UrlDuplicate(LPCWSTR text);
 PWSTR UrlDuplicateN(LPCWSTR text, DWORD length);
 PWSTR UrlWiden(LPCSTR text);
-/* the session's user agent, in the ansi code page. */
+/* in the ANSI code page. */
 const char *UrlUserAgent(void);
 
 /* download.c */
-/* a growable stream over memory, read from the start and written at the end. */
+/* a growable memory stream, read from the start and written at the end. */
 IStream *UrlCreateDataStream(void);
 HRESULT UrlStreamAppend(IStream *stream, const void *data, DWORD size);
 
 enum { URL_SINK_FILE, URL_SINK_STREAM, URL_SINK_PUSH, URL_SINK_CACHE };
 
-/* binds a url synchronously, reporting to callback, into the sink the kind names. */
+/* binds synchronously into the sink kind names, reporting to callback. */
 HRESULT UrlDownload(LPCWSTR url, DWORD kind, DWORD bindf, IBindStatusCallback *callback, LPCWSTR file,
                     IStream **stream, PWSTR cache_file, DWORD cache_length);
 

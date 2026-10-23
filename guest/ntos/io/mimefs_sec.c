@@ -1,19 +1,18 @@
 /*
- * the security descriptors of the files mimefs serves.
+ * security descriptors of the files mimefs serves.
  *
- * A descriptor lives with its file, in the host's extended attributes; a file nobody gave one shows what an
- * NTFS volume would give it: what its nearest stored ancestor hands down, or the descriptor of a directory
- * that a fresh installation has (the root, Windows, Program Files and the profile of the user). Such a file
- * keeps nothing, so a file made by the user costs no more than on any other file system, and a directory
- * whose list changes shows the change in the files below that have no list of their own. The system files the
- * machine ships belong to the TrustedInstaller, as on windows.
+ * a descriptor is stored with its file, in the host's extended attributes. a file without one shows what NTFS would
+ * give it: what its nearest stored ancestor passes down, or the descriptor of a directory a fresh installation has,
+ * the root, Windows, Program Files and the user's profile. such files store nothing, so user files cost no more than
+ * on any other file system, and a change to a directory's list shows in the files below it that have none of their
+ * own. as on windows, the system files the machine ships belong to TrustedInstaller.
  *
- * All of this is a guess at the volume of a real installation, made from what the images of windows show.
+ * the defaults approximate a real installation.
  */
 #include "../ntos.h"
 #include <mime/ntrtlsec.h>
 
-/* the access masks of the volume's defaults. */
+/* access masks for the default descriptors. */
 #define FILE_ALL 0x1F01FF
 #define FILE_MODIFY 0x1301BF
 #define FILE_READ_EXECUTE 0x1200A9
@@ -29,7 +28,7 @@ static SD_MAPPING file_mapping(void)
 
 static SD_BLOB *g_root, *g_system_directory, *g_installer_cache, *g_profile, *g_locallow, *g_rom_file;
 
-/* the sid of the user, S-1-5-21-a-b-c-1001, and his primary group, None. */
+/* the user's sid, S-1-5-21-a-b-c-1001, and its primary group, None. */
 static void user_sids(UCHAR user[28], UCHAR none[28])
 {
     ULONG sub[5] = {21, HalBootInfo->user_sid[0], HalBootInfo->user_sid[1], HalBootInfo->user_sid[2], 1001};
@@ -42,7 +41,7 @@ static void user_sids(UCHAR user[28], UCHAR none[28])
     *(ULONG *)(none + 24) = 513;
 }
 
-/* the sid of the user of the machine, 28 bytes. */
+/* the machine user's sid, 28 bytes. */
 void MimeUserSid(UCHAR sid[28])
 {
     UCHAR none[28];
@@ -76,8 +75,8 @@ static void build_seeds(void)
               &g_system_directory);
 
     /*
-     * the packages the installer of Mime keeps for repair: anyone may put one there, as a program installed for a user
-     * keeps its own, and no one changes what another put there. This is Mime's folder, not one windows has for users.
+     * Mime's installer package cache, which windows has no equivalent of: anyone may add a package, as per-user
+     * installs keep their own, and no one may change another's.
      */
     SD_ACE cache[] = {{0, FILE_ALL, SeSidTrustedInstaller},
                       {CONTAINER_INHERIT_ACE | INHERIT_ONLY_ACE, GENERIC_ALL_, SeSidTrustedInstaller},
@@ -95,7 +94,7 @@ static void build_seeds(void)
                         {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
                         {ACE_OI_CI, FILE_ALL, user}};
     SeSdBuild(user, none, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, profile, 3, &g_profile);
-    /* the folder low integrity programs write in is the profile's, labelled low for all it holds. */
+    /* the profile's folder for low integrity programs, labelled low for everything in it. */
     if (g_profile && !NT_SUCCESS(SeSdAddInheritedLabel(g_profile, 0x1000, &g_locallow)))
         g_locallow = nullptr;
 
@@ -161,7 +160,7 @@ static BOOLEAN component_is(const PATH *p, ULONG index, PCWSTR text)
     return TRUE;
 }
 
-/* the directory of a fresh installation a prefix of the path of this many components is, or NULL. */
+/* the fresh installation directory the path's first `depth` components name, or NULL. */
 static SD_BLOB *seed_at(const PATH *p, ULONG depth)
 {
     if (depth == 0)
@@ -207,7 +206,7 @@ static NTSTATUS host_status(ULONG64 hs)
     }
 }
 
-/* the descriptor stored for a file or the nearest ancestor: *depth is the distance up, NULL when none. */
+/* the descriptor stored for the file or its nearest ancestor; *distance is how far up, NULL when none. */
 static NTSTATUS read_stored(ULONG64 host, ULONG up, SD_BLOB **stored, ULONG *distance)
 {
     ULONG room = MIMEFS_SD_ROOM;
@@ -224,12 +223,12 @@ static NTSTATUS read_stored(ULONG64 host, ULONG up, SD_BLOB **stored, ULONG *dis
             room = length;
             continue;
         }
-        /* a volume that keeps descriptors only for the files themselves has none to show above one: the answer is none. */
+        /* a volume that stores descriptors only on the files themselves has none above one. */
         NTSTATUS status = hs == MIME_HC_STATUS_OK || hs == MIME_HC_STATUS_NOT_FOUND ? STATUS_SUCCESS : host_status(hs);
         if (hs == MIME_HC_STATUS_NOT_FOUND)
             length = 0;
         if (NT_SUCCESS(status) && length) {
-            /* something the host holds that is no descriptor is as good as nothing. */
+            /* stored bytes that are not a descriptor count as none. */
             if (!NT_SUCCESS(SeSdFromBytes(buffer, length, stored)))
                 *stored = nullptr;
             else
@@ -248,7 +247,7 @@ NTSTATUS MimeFsRomSecurity(SD_BLOB **out)
     return STATUS_SUCCESS;
 }
 
-/* what the host said of the stored descriptors when it opened a file, or nothing. */
+/* what the host reported about stored descriptors when it opened the file, if anything. */
 static NTSTATUS stored_for(const MIMEFS_STORED *known, ULONG64 host, ULONG up, SD_BLOB **stored, ULONG *distance)
 {
     *stored = nullptr;
@@ -267,9 +266,8 @@ static NTSTATUS stored_for(const MIMEFS_STORED *known, ULONG64 host, ULONG up, S
 }
 
 /*
- * what the files with no descriptor of their own show is the same until a descriptor is stored somewhere or a name is
- * moved, so the answers are kept by the name and the kind, with the count of those changes and the stamp of the
- * session token they were made with.
+ * what files without a descriptor of their own show only changes when a descriptor is stored or a name moves, so the
+ * answers are cached by name and kind, with that change count and the stamp of the session token they were made with.
  */
 #define EFFECTIVE_CACHE 512
 
@@ -298,8 +296,8 @@ static ULONG64 name_hash(ULONG volume, const PATH *p, ULONG count, BOOLEAN direc
 }
 
 /*
- * the descriptor of the file `up` levels above the one open, whole. volume is the host volume, path the name
- * of the open file inside it. known is what the open told of the stored descriptors, if it was asked.
+ * the whole descriptor of the file `up` levels above the open one. volume is the host volume, path the open file's
+ * name in it, known what the open reported about stored descriptors, if it was asked.
  */
 static NTSTATUS effective(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULONG up, BOOLEAN directory,
                           const MIMEFS_STORED *known, SD_BLOB **out)
@@ -317,7 +315,7 @@ static NTSTATUS effective(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULO
         return status;
     ULONG64 key = 0, stamp = 0, epoch = 0;
     if (!stored) {
-        /* nothing is stored above: the answer is what the name alone gives, which is kept. */
+        /* nothing stored above: the answer depends on the name alone and is cached. */
         key = name_hash(volume, &p, count, directory);
         epoch = g_epoch;
         stamp = SeSessionTokenStamp();
@@ -352,7 +350,7 @@ static NTSTATUS effective(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULO
         if (stored)
             SeSdDereference(stored);
     }
-    /* each level between hands down to the next, which is a directory until the last. */
+    /* each level passes down to the next, a directory until the last. */
     for (LONG d = depth; d < (LONG)count && NT_SUCCESS(status); d++) {
         SD_BLOB *child = nullptr;
         status = SeSdDerive(base, file_mapping(), (d + 1 < (LONG)count) || directory, &child);
@@ -390,7 +388,7 @@ NTSTATUS MimeFsStoreSecurity(ULONG64 host, SD_BLOB *sd)
     return host_status(hs);
 }
 
-/* ---------------------------------------------------------------- the check of an open */
+/* ---------------------------------------------------------------- open checks */
 
 #define FILE_LIST_DIRECTORY_ 0x0001
 #define FILE_WRITE_DATA_ 0x0002
@@ -402,10 +400,7 @@ NTSTATUS MimeFsStoreSecurity(ULONG64 host, SD_BLOB *sd)
 
 #define FILE_TRAVERSE_ 0x0020
 
-/*
- * every directory on the way to a file must let the program through, unless the program holds the privilege that
- * skips the check. The volume's root is one of them.
- */
+/* every directory on the way, the volume root included, must allow traversal, unless the bypass privilege is held. */
 static NTSTATUS check_traverse(ULONG volume, ULONG64 host, PCUNICODE_STRING path, const MIMEFS_STORED *known, ULONG flags)
 {
     PATH p;
@@ -429,17 +424,16 @@ static NTSTATUS check_traverse(ULONG volume, ULONG64 host, PCUNICODE_STRING path
 }
 
 /*
- * whether a program in user mode may open a file the way it asks to, and with what rights its handle is made.
+ * whether a user mode program may open a file as asked, and the rights its handle gets.
  *
- * A file that is made needs the right to add a file or a directory to the one it goes into, and the maker gets
- * what it asked for. A file that exists is checked against its own descriptor, with what the disposition adds: an
- * overwrite writes the data, a supersede deletes, delete on close deletes. Two rights also come from the directory
- * above, as on ntfs: delete child there is delete here, and list directory there is read attributes here.
- * Backup intent opens up to the privileges for backup and restore. (From the documentation of the file system's
- * behaviour, not read from the driver: the exact set the privileges grant is a guess.)
+ * creating a file needs the right to add a file or subdirectory to its parent, and the creator gets what it asked
+ * for. an existing file is checked against its own descriptor plus what the disposition adds: overwrite writes data,
+ * supersede and delete on close delete. as on ntfs, two rights also come from the parent: delete child there grants
+ * delete here, and list directory there grants read attributes here. backup intent grants up to the backup and
+ * restore privileges; the exact set they grant is a guess.
  *
- * STATUS_MORE_PROCESSING_REQUIRED says the answer needs the descriptor of the directory and the open has no handle to ask
- * the host with; the caller opens again with one.
+ * STATUS_MORE_PROCESSING_REQUIRED means the parent's descriptor is needed and the open has no handle to ask the host
+ * with; the caller opens again with one.
  */
 NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, ACCESS_MASK desired,
                          ULONG options, ULONG disposition, BOOLEAN created, const MIMEFS_STORED *known, ACCESS_MASK *granted)
@@ -465,7 +459,7 @@ NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOL
         if (parent)
             SeSdDereference(parent);
         if (NT_SUCCESS(status)) {
-            /* the maker has what it asked for, whatever the descriptor it just got says. */
+            /* the creator gets what it asked for, whatever its new descriptor says. */
             ACCESS_MASK mapped = desired & ~(ACCESS_MASK)MAXIMUM_ALLOWED_;
             RtlMapGenericMask(&mapped, (const GENERIC_MAPPING *)mapping);
             *granted = (desired & MAXIMUM_ALLOWED_) ? mapped | mapping[3] : mapped;
@@ -489,7 +483,7 @@ NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOL
         KiLogPrintf("  the file");
         SeTraceDescriptor(sd);
     }
-    /* the rights the directory above lends: what is left to ask for, or with the maximum what is added. */
+    /* the rights the parent lends: what is left to ask for, or with MAXIMUM_ALLOWED what is added. */
     ACCESS_MASK mapped = want & ~(ACCESS_MASK)MAXIMUM_ALLOWED_;
     RtlMapGenericMask(&mapped, (const GENERIC_MAPPING *)mapping);
     BOOLEAN wants_loan = (mapped & (DELETE_ | FILE_READ_ATTRIBUTES_)) != 0 || (desired & MAXIMUM_ALLOWED_);
@@ -517,7 +511,7 @@ NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOL
         lent |= FILE_READ_ATTRIBUTES_;
     SeSdDereference(parent);
     if (desired & MAXIMUM_ALLOWED_) {
-        /* the maximum of the file, and the two rights if the directory lends them. */
+        /* the file's maximum, plus the two rights if the parent lends them. */
         ACCESS_MASK own = 0;
         if (SeCheckAccess(sd, mapping, MAXIMUM_ALLOWED_, 0, flags, &own) != STATUS_SUCCESS)
             own = 0;
@@ -535,7 +529,7 @@ NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOL
     return status;
 }
 
-/* the same for a file of the rom, which is read only: its descriptor is the one all of them share. */
+/* the same for a rom file, which is read only and shares one descriptor with the other rom files. */
 NTSTATUS MimeFsCheckRomOpen(ACCESS_MASK desired, ULONG options, ACCESS_MASK *granted)
 {
     ready();
@@ -544,8 +538,8 @@ NTSTATUS MimeFsCheckRomOpen(ACCESS_MASK desired, ULONG options, ACCESS_MASK *gra
 }
 
 /*
- * the descriptor of a file that has just been made, from its creator and its parent, stored with it when the
- * creator asked for anything or does not make things the way the user of the machine does.
+ * builds a new file's descriptor from its creator and parent, and stores it when the creator asked for one or does not
+ * create things the way the machine's user does.
  */
 NTSTATUS MimeFsAssignNewFile(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, SD_BLOB *creator,
                              KPROCESSOR_MODE mode)

@@ -31,14 +31,14 @@ typedef struct CHOOSER {
     LPWSTR name;
     DWORD name_size;
     DWORD enum_flags;
-    const void *enum_item;    /* pwfxEnum or pwfltrEnum */
+    const void *enum_item;    /* pwfxEnum or pwfltrEnum. */
     HOOK hook;
     LPARAM custom;
-    const void *initial;      /* the caller's format or filter with INITTO */
+    const void *initial;      /* the caller's format or filter, with INITTO. */
     HWND dialog, names, tags, items, ok, cancel, help, save, remove;
     int tab;
     UINT help_message;
-    void *chosen;             /* ours, the selection at OK */
+    void *chosen;             /* our copy of the selection at OK. */
     WCHAR chosen_name[128];
 } CHOOSER;
 
@@ -177,7 +177,7 @@ static HKEY names_key(const CHOOSER *c, REGSAM access)
     return key;
 }
 
-/* a name windows' setup made, which the user cannot remove. */
+/* a name windows setup created, which the user cannot remove. */
 static BOOL system_name(const WCHAR *name)
 {
     WCHAR list[512];
@@ -204,7 +204,7 @@ static BOOL hook_accepts(CHOOSER *c, WPARAM what, LPARAM item)
     return !c->hook || c->hook(c->dialog, c->filter ? MM_ACM_FILTERCHOOSE : MM_ACM_FORMATCHOOSE, what, item);
 }
 
-/* the saved item the drivers and the restrictions accept. */
+/* whether the drivers and restrictions accept a saved item. */
 static BOOL usable(CHOOSER *c, const void *item, DWORD size)
 {
     if (c->filter) {
@@ -301,7 +301,7 @@ static BOOL CALLBACK add_item_format(HACMDRIVERID id, LPACMFORMATDETAILSW d, DWO
     FILL *f = (FILL *)instance;
     if (d->pwfx->wFormatTag != f->tag || !hook_accepts(f->c, FORMATCHOOSE_FORMAT_VERIFY, (LPARAM)d->pwfx))
         return TRUE;
-    /* the attributes and the rate in kilobytes, apart at the tab stop. */
+    /* the attributes and the rate in kilobytes, split at the tab stop. */
     WCHAR text[ACMFORMATDETAILS_FORMAT_CHARS + 24];
     wsprintfW(text, L"%s\t%lu kb/sec", d->szFormat, d->pwfx->nAvgBytesPerSec >> 10);
     LRESULT at = SendMessageW(f->c->items, CB_ADDSTRING, 0, (LPARAM)text);
@@ -321,7 +321,6 @@ static BOOL CALLBACK add_item_filter(HACMDRIVERID id, LPACMFILTERDETAILSW d, DWO
     return TRUE;
 }
 
-/* enumerates the items of a tag into the callback. */
 static void enum_items(CHOOSER *c, DWORD tag, void *callback, FILL *fill)
 {
     if (c->filter) {
@@ -426,7 +425,7 @@ static DWORD tag_of(const CHOOSER *c, const void *item)
     return c->filter ? ((const WAVEFILTER *)item)->dwFilterTag : ((const WAVEFORMATEX *)item)->wFormatTag;
 }
 
-/* selects the tag and attributes of an item; FALSE when the lists lack it. */
+/* selects an item's tag and attributes, FALSE when the lists lack it. */
 static BOOL select_item(CHOOSER *c, const void *item)
 {
     int n = (int)SendMessageW(c->tags, CB_GETCOUNT, 0, 0);
@@ -447,7 +446,7 @@ static BOOL select_item(CHOOSER *c, const void *item)
     return FALSE;
 }
 
-/* the name whose item the attributes show, or untitled. */
+/* selects the name whose item the attributes show, or untitled. */
 static void match_name(CHOOSER *c)
 {
     const void *item = selected_item(c);
@@ -736,7 +735,7 @@ static INT_PTR CALLBACK chooser_proc(HWND dialog, UINT msg, WPARAM wparam, LPARA
     return FALSE;
 }
 
-/* runs the dialog: 1 for OK, 0 for cancel, -1 when it could not be made. */
+/* 1 for OK, 0 for cancel, -1 when the dialog could not be created. */
 static INT_PTR run(CHOOSER *c, HINSTANCE instance, LPCWSTR template_name)
 {
     if (c->style & ACMFORMATCHOOSE_STYLEF_ENABLETEMPLATEHANDLE)

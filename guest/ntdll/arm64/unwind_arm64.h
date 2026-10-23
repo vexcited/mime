@@ -1,8 +1,6 @@
 /*
- * the arm64 virtual unwinder: unwind data of .pdata and .xdata, as Microsoft documents them in "ARM64
- * exception handling", undone register by register.
- *
- * the file depends on nothing of ntdll, so a host test can run it over the unwind data of compiled code.
+ * the arm64 virtual unwinder for .pdata and .xdata unwind data, as Microsoft documents it in "ARM64
+ * exception handling". it depends on nothing in ntdll.
  */
 #ifndef MIME_NTDLL_ARM64_UNWIND_H
 #define MIME_NTDLL_ARM64_UNWIND_H
@@ -46,7 +44,7 @@ typedef struct A64_POINTERS {
 typedef struct A64_UNWIND_RESULT {
     /* the frame pointer of a function that has one, else its stack pointer when the unwind began. */
     uint64_t establisher;
-    /* the rva of the language handler and the data that follows it, none for a function without. */
+    /* the rva of the language handler and its data, none for a function without one. */
     uint32_t handler;
     const void *handler_data;
 } A64_UNWIND_RESULT;

@@ -1,8 +1,7 @@
 /*
- * dxva h.264 pictures as vulkan video decodes them. the sequence and picture parameter sets are not in the
- * buffers a dxva decoder is given, only what decoding needs of them, so the parameter sets vulkan wants are
- * made from that, one object for as long as the values do not change; the scaling lists dxva gives are the
- * ones in use, already chosen between the sequence's and the picture's, so they go in the sequence.
+ * converts DXVA H.264 pictures to Vulkan video. reconstruct the missing sequence and picture parameter sets
+ * from picture parameters and reuse the object while unchanged. DXVA has already selected the active scaling
+ * lists from the sequence and picture, so put them in the sequence.
  */
 #include "video.h"
 
@@ -54,7 +53,7 @@ static uint32_t bits_ue(Bits *b)
     return zeros >= 32 ? 0 : ((1u << zeros) - 1) + bits_get(b, zeros);
 }
 
-/* the nal unit type and, of an idr picture, its idr_pic_id, read from the first slice. */
+/* reads the NAL type and IDR pic id from the first slice. */
 static void first_slice(const MvkVideoDecodeInfo *in, const DxvaPicParamsH264 *p, bool *idr, uint32_t *idr_pic_id)
 {
     *idr = false;
@@ -121,7 +120,6 @@ bool video_h264_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeI
     f->current = cur;
     f->is_reference = p.ref_pic_flag;
 
-    /* the parameter sets. */
     H264Key key;
     memset(&key, 0, sizeof(key));
     StdVideoH264SequenceParameterSet *sps = &key.sps;
@@ -179,7 +177,7 @@ bool video_h264_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeI
     }
     f->params = s->params;
 
-    /* the pictures the slices refer to, by the slots they hold. */
+    /* maps reference pictures to DPB slots. */
     for (uint32_t i = 0; i < 16; i++) {
         DxvaPicEntry e = p.ref_frame_list[i];
         if (e.byte == DXVA_INVALID_ENTRY)
@@ -203,7 +201,7 @@ bool video_h264_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeI
         f->ref_pictures[k] = r;
     }
 
-    /* the picture itself, which is also the slot it is set up in. */
+    /* the output picture also supplies its setup slot. */
     uint32_t last = VIDEO_MAX_DPB;
     StdVideoDecodeH264ReferenceInfo *self = &f->u.h264.std_refs[last];
     self->FrameNum = p.frame_num;
@@ -229,7 +227,7 @@ bool video_h264_prepare(MvkConnection *c, VideoSession *s, const MvkVideoDecodeI
     pic->PicOrderCnt[0] = p.curr_field_order_cnt[0];
     pic->PicOrderCnt[1] = p.curr_field_order_cnt[1];
 
-    /* the slices: where each begins, the start code included, the pieces a chopped slice continues in left out. */
+    /* slice offsets include start codes and omit continuation fragments. */
     uint32_t count = in->slices_size / sizeof(DxvaSliceShort);
     uint32_t n = 0;
     for (uint32_t i = 0; i < count && n < VIDEO_MAX_SLICES; i++) {

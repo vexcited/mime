@@ -1,19 +1,19 @@
 /*
- * the filters that resize a picture before it is sampled: the area filter of the high quality interpolation modes
- * and the box average that shrinks a big picture first. docs/gdiplus.md has the rules the numbers come from.
+ * filters that resize a picture before it is sampled: the area filter of the high quality interpolation modes and
+ * the box average that shrinks a big picture first.
  *
- * everything is in 16.16 fractions of a pixel. The area filter takes the weight of a pixel as the difference of two
- * entries of a table, the running integral of the kernel, so the weights of a window always add up to one.
+ * everything is in 16.16 fractions of a pixel. the area filter takes a pixel's weight as the difference of two
+ * entries of a table holding the running integral of the kernel, so the weights of a window always sum to one.
  */
 #include "image_private.h"
 
-/* ------------------------------------------------------------------ the kernels */
+/* ------------------------------------------------------------------ kernels */
 
 enum {
-    CUBIC_ENTRIES = 1025,  /* the kernel reaches two pixel units each side, entries 1/128 of a unit apart */
+    CUBIC_ENTRIES = 1025,  /* the kernel reaches two pixel units each side, entries 1/128 of a unit apart. */
     CUBIC_CENTER = 512,
     CUBIC_SHIFT = 8,
-    LINEAR_ENTRIES = 513,  /* it reaches one pixel unit each side */
+    LINEAR_ENTRIES = 513,  /* one pixel unit each side. */
     LINEAR_CENTER = 256,
     LINEAR_SHIFT = 9,
 };
@@ -22,7 +22,7 @@ static INT g_cubic_integral[CUBIC_ENTRIES];
 static INT g_linear_integral[LINEAR_ENTRIES];
 static volatile LONG g_tables_ready;
 
-/* the cubic convolution kernel with the sharpest parameter, -1, which is zero past two pixels. */
+/* cubic convolution with the sharpest parameter, -1, zero past two pixels. */
 static double cubic_kernel(double x)
 {
     if (x < 0.0)
@@ -41,7 +41,7 @@ static double triangle_kernel(double x)
     return x < 1.0 ? 1.0 - x : 0.0;
 }
 
-/* the running integral of a kernel from first on in steps of 1/128, scaled so that all of it is 65536. */
+/* the running integral of a kernel from first on, in steps of 1/128, scaled so the total is 65536. */
 static void integrate(double (*kernel)(double), double first, INT entries, INT *table)
 {
     double sum[CUBIC_ENTRIES];
@@ -65,16 +65,15 @@ static void tables_prepare(void)
     g_tables_ready = 1;
 }
 
-/* ------------------------------------------------------------------ the area filter */
+/* ------------------------------------------------------------------ area filter */
 
-/* one axis of the result: where its first line is in the picture, how far apart the lines are and what each reaches. */
 typedef struct Axis {
-    INT start;     /* the position in the picture of the first line of the result */
-    INT step;      /* the distance in the picture between two lines of the result */
-    INT support;   /* how far the kernel reaches each side of a position */
-    INT inv;       /* one over the support */
-    INT first;     /* the device line of the first line of the result */
-    INT count;     /* lines in the result */
+    INT start;     /* the picture position of the first result line. */
+    INT step;      /* the picture distance between two result lines. */
+    INT support;   /* how far the kernel reaches each side of a position. */
+    INT inv;       /* one over the support. */
+    INT first;     /* the device line of the first result line. */
+    INT count;     /* lines in the result. */
 } Axis;
 
 typedef struct Stretch {
@@ -83,16 +82,16 @@ typedef struct Stretch {
     SSIZE_T stride;
     INT wrap;
     UINT32 clamp;
-    BOOL clear;        /* the clamp color is clear, so what lies outside weighs nothing */
+    BOOL clear;        /* the clamp color is clear, so what lies outside weighs nothing. */
     Axis x, y;
     const INT *table;
     INT table_last, table_center, table_shift;
-    /* the weights of each column of the result, the same for every row of the picture */
+    /* per-column weights, the same for every picture row. */
     INT *col_left;
     INT *col_len;
     INT *col_weights;
     INT col_window;
-    /* the rows filtered across, kept for the next lines of the result */
+    /* rows already filtered across, kept for the next result lines. */
     UINT32 *rows;
     INT *row_key;
     INT row_slots;
@@ -103,7 +102,7 @@ typedef struct Stretch {
 
 static BOOL inside(float v) { return v >= -32768.0f && v <= 32767.0f; }
 
-/* a position stays a 32 bit number when it is moved by the support. */
+/* a position moved by the support still fits in 32 bits. */
 static BOOL reach_fits(INT start, INT support)
 {
     INT64 p = (INT64)start - 0x8000;
@@ -111,9 +110,8 @@ static BOOL reach_fits(INT start, INT support)
 }
 
 /*
- * the lines of the result along one axis. The picture is read from s0 for a length slen, and it goes to the device
- * from d0 for a length dlen, either of which can be negative for a mirror. Line n of the result is the device line
- * first + n.
+ * the result lines along one axis. the picture is read from s0 for slen and goes to the device from d0 for dlen,
+ * either negative for a mirror. result line n is device line first + n.
  */
 static BOOL axis_make(Axis *a, float s0, float slen, float d0, float dlen, BOOL cubic)
 {
@@ -122,7 +120,7 @@ static BOOL axis_make(Axis *a, float s0, float slen, float d0, float dlen, BOOL 
     a->step = fix16(slen / dlen);
     if (a->step == 0)
         return FALSE;
-    /* the edges in sixteenths of a pixel */
+    /* the edges in sixteenths of a pixel. */
     INT e0 = floor_int(d0 * 16.0f + 0.5f), e1 = floor_int((slen * (dlen / slen) + d0) * 16.0f + 0.5f);
     if (e0 > e1) {
         INT t = e0;
@@ -145,7 +143,7 @@ static BOOL axis_make(Axis *a, float s0, float slen, float d0, float dlen, BOOL 
     return reach_fits(a->start, a->support);
 }
 
-/* the sums of the four channels made into a pixel: rounded, the alpha held to 255 and the colors to the alpha. */
+/* packs channel sums into a pixel: rounded, alpha clamped to 255 and colors to the alpha. */
 static UINT32 pack_sums(INT a, INT r, INT g, INT b)
 {
     a = (a + 0x8000) >> 16;
@@ -189,7 +187,7 @@ static INT table_at(const Stretch *s, INT64 idx)
     return s->table[i];
 }
 
-/* the weights of the lines from left to right around position c: each is the kernel's mass between the line and the one before. */
+/* line weights left to right around position c, each the kernel's mass between that line and the previous one. */
 static INT line_weights(const Stretch *s, const Axis *a, INT64 c, INT left, INT count, INT *out)
 {
     INT64 idx = ((INT64)a->inv * (((INT64)left << 16) - c)) >> 16;
@@ -287,7 +285,6 @@ fail:
     return nullptr;
 }
 
-/* a row of the picture filtered across to the columns of the result. */
 static void filter_across(const Stretch *s, const UINT32 *row, UINT32 *out)
 {
     BOOL mirror = s->wrap == 1 || s->wrap == 3;
@@ -315,7 +312,7 @@ static void filter_across(const Stretch *s, const UINT32 *row, UINT32 *out)
     }
 }
 
-/* the filtered row for a row of the picture, made when it is not kept already. */
+/* computed unless already kept. */
 static const UINT32 *filtered_row(Stretch *s, INT key)
 {
     INT slot = key % s->row_slots;
@@ -382,9 +379,9 @@ void stretch_run(Stretch *s, INT y, INT x0, INT x1, UINT32 *out)
     }
 }
 
-/* ------------------------------------------------------------------ the box average */
+/* ------------------------------------------------------------------ box average */
 
-/* a row of premultiplied pixels averaged across to nw pixels, each of the pixels under one counting by its part. */
+/* averages a premultiplied row across to nw pixels, each source pixel counting by the part under the output pixel. */
 static void average_across(const UINT32 *row, INT w, INT nw, UINT64 step, UINT64 inv, UINT32 *out)
 {
     if (nw == w) {
@@ -443,7 +440,7 @@ GpStatus area_scale(const GBitmap *b, struct GAttrs *attrs, INT nw, INT nh, INT 
     BOOL adjust = attrs && gp_attrs_active(attrs, ColorAdjustTypeBitmap);
 
     INT first, last, row;
-    INT64 room;    /* what is left of the line of the result in 16.16 lines of the picture */
+    INT64 room;    /* what is left of the result line, in 16.16 picture lines. */
     if (nh == h) {
         first = top;
         last = bottom;

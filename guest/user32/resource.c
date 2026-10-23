@@ -1,7 +1,6 @@
 /*
- * resources: string tables, icons and cursors. the system resources of
- * user32 live in SystemResources\user32.dll.mun and en-US\user32.dll.mui,
- * read straight from the files.
+ * string tables, icons and cursors. user32's own resources are read straight from SystemResources\user32.dll.mun and
+ * en-US\user32.dll.mui.
  */
 #include "user32_private.h"
 #include <png/png.h>
@@ -9,9 +8,8 @@
 /* ------------------------------------------------------------------ raw pe resource files */
 
 /*
- * the files are read on demand: imageres.dll.mun is tens of megabytes and
- * only a few of its resources are ever used. found resources are cached for
- * the life of the process because callers keep pointers to them.
+ * files are read on demand: imageres.dll.mun is tens of megabytes and only a few of its resources are used. found
+ * resources are cached for the life of the process because callers keep pointers to them.
  */
 typedef struct USER_RESDATA {
     struct USER_RESDATA *Next;
@@ -23,7 +21,7 @@ typedef struct USER_RESDATA {
 struct USER_RESFILE {
     HANDLE File;
     ULONG64 Size;
-    ULONG ResourceOffset; /* file offset of the resource directory */
+    ULONG ResourceOffset; /* file offset of the resource directory. */
     ULONG Sections;
     IMAGE_SECTION_HEADER *Section;
     RTL_CRITICAL_SECTION Lock;
@@ -302,7 +300,7 @@ typedef struct GRPICONDIR {
 
 typedef struct ICON_IMAGE {
     int Width, Height;
-    PULONG Pixels; /* premultiplied bgra, top down */
+    PULONG Pixels; /* premultiplied bgra, top down. */
 } ICON_IMAGE;
 
 static void *png_alloc(void *ctx, size_t size)
@@ -421,7 +419,7 @@ static HICON create_icon_object(const ICON_IMAGE *img, BOOL icon, POINT hotspot,
     return h;
 }
 
-/* scales an image to the size asked for with a box filter, when no exact size exists; 0 keeps the size it has. */
+/* box filter scaling for when no exact size exists. a size of 0 keeps the current one. */
 static void scale_image(ICON_IMAGE *img, int cx, int cy, POINT *hotspot)
 {
     if ((!cx || img->Width == cx) && (!cy || img->Height == cy))
@@ -483,7 +481,7 @@ static WORD pick_icon(const GRPICONDIR *dir, DWORD size, int cx, int cy, BOOL ic
 typedef struct SHARED_ICON {
     struct SHARED_ICON *Next;
     HINSTANCE Module;
-    ULONG_PTR Name; /* resource id, or a hash for string names */
+    ULONG_PTR Name; /* resource id, or a hash for string names. */
     int Cx, Cy;
     BOOL Icon;
     HICON Handle;
@@ -611,9 +609,8 @@ static HICON load_shared(HINSTANCE module, LPCWSTR name, int cx, int cy, BOOL ic
 }
 
 /*
- * LoadIconWithScaleDown of comctl32 v6, which the themed Static uses for
- * SS_ICON: the IDI_ values come from imageres, where the windows 11 artwork
- * lives, and the image is never shared.
+ * LoadIconWithScaleDown of comctl32 v6, used by the themed Static for SS_ICON. IDI_ values come from imageres, where
+ * the windows 11 artwork lives, and the image is never shared.
  */
 HICON UserLoadIconWithScaleDown(HINSTANCE instance, LPCWSTR name, int cx, int cy)
 {
@@ -652,7 +649,7 @@ HICON UserLoadIconWithScaleDown(HINSTANCE instance, LPCWSTR name, int cx, int cy
     return LoadImageW(instance, name, IMAGE_ICON, cx, cy, 0);
 }
 
-/* the whole of a file in memory, up to 32 MiB; the caller frees it. */
+/* reads a whole file of up to 32 MiB, the caller frees it. */
 static UCHAR *read_file(LPCWSTR path, DWORD *size)
 {
     HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
@@ -679,12 +676,12 @@ typedef struct FILE_ICON_ENTRY {
 } FILE_ICON_ENTRY;
 
 /*
- * an icon or cursor file: a directory of images, of which the one nearest to the size asked for is taken, as it is
- * from a group in a resource. A cursor's hot spot is in the directory entry, where an icon has planes and bits.
+ * an icon or cursor file is a directory of images, and the one nearest the requested size is taken, as from a
+ * resource group. a cursor's hot spot is in the directory entry, where an icon has planes and bits.
  */
 static HICON load_icon_file(LPCWSTR path, int cx, int cy, BOOL icon)
 {
-    /* a size of 0 keeps the size of the image, and picks the one that suits the system's. */
+    /* a size of 0 picks the image that suits the system size and keeps its own size. */
     int want_cx = cx ? cx : GetSystemMetrics(icon ? SM_CXICON : SM_CXCURSOR);
     int want_cy = cy ? cy : GetSystemMetrics(icon ? SM_CYICON : SM_CYCURSOR);
     DWORD size;
@@ -735,7 +732,7 @@ done:
     return result;
 }
 
-/* a bitmap file: the file header, the dib and its bits at the offset the header gives; a dib section with the flag. */
+/* the bits sit at the offset the file header gives. the dib section flag makes a dib section. */
 static HBITMAP load_bitmap_file(LPCWSTR path, UINT flags)
 {
     DWORD size;
@@ -954,7 +951,7 @@ WINUSERAPI BOOL WINAPI GetCursorInfo(PCURSORINFO info)
     return NtUserGetCursorInfo(info);
 }
 
-/* a monochrome cursor from and and xor planes, word aligned rows like CreateBitmap. */
+/* a monochrome cursor from AND and XOR planes, with word aligned rows like CreateBitmap. */
 WINUSERAPI HCURSOR WINAPI CreateCursor(HINSTANCE instance, int hot_x, int hot_y, int width, int height,
                                        const void *and_plane, const void *xor_plane)
 {
@@ -981,9 +978,9 @@ WINUSERAPI HCURSOR WINAPI CreateCursor(HINSTANCE instance, int hot_x, int hot_y,
 }
 
 /*
- * the image of an icon or cursor resource, at the size asked for: a size of 0 is the one the image has, or with
- * LR_DEFAULTSIZE the system's. Nothing is returned, and no error is set, for no data, fewer bytes than a header
- * and an image take, or a version that is not 2.0 or 3.0. Animated cursors, which start with RIFF, are not read.
+ * a size of 0 keeps the image's size, or takes the system's with LR_DEFAULTSIZE. returns NULL without setting an
+ * error for no data, too few bytes for a header and an image, or a version other than 2.0 or 3.0. animated cursors,
+ * which start with RIFF, are not read.
  */
 WINUSERAPI HICON WINAPI CreateIconFromResourceEx(PBYTE data, DWORD size, BOOL icon, DWORD version, int cx, int cy,
                                                  UINT flags)

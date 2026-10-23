@@ -1,15 +1,14 @@
 /*
- * the input method of the host, for programs that use the input method manager. the host reports a composition
- * as events (MIME_INPUT_IME) with the text queued behind them; this turns them into the messages an IME sends:
- * WM_IME_STARTCOMPOSITION, WM_IME_COMPOSITION with GCS_COMPSTR and its attributes while the text is composed or
- * with GCS_RESULTSTR when it is committed, and WM_IME_ENDCOMPOSITION. the window that gets them is the one with
- * the focus of the foreground thread. a program that does not handle them lets DefWindowProc turn the result
- * into WM_IME_CHAR and WM_CHAR, as windows does.
+ * the host input method, for programs that use the input method manager. the host reports a composition as
+ * MIME_INPUT_IME events with the text queued behind them, and this turns them into the messages an IME sends:
+ * WM_IME_STARTCOMPOSITION, WM_IME_COMPOSITION with GCS_COMPSTR and its attributes while composing or with
+ * GCS_RESULTSTR on commit, and WM_IME_ENDCOMPOSITION. they go to the focus window of the foreground thread. like
+ * windows, DefWindowProc turns an unhandled result into WM_IME_CHAR and WM_CHAR.
  *
- * the strings stay here for ImmGetCompositionString, one composition at a time, as there is one keyboard.
+ * the strings stay here for ImmGetCompositionString, one composition at a time since there is one keyboard.
  *
- * a thread that uses the text services framework has a sink window, MIME_IME_TSF. the events go to it as one
- * message, and it either takes them, composing in the program's own document, or declines, and the messages above
+ * a thread that uses the text services framework has a MIME_IME_TSF sink window. the events go to it as one
+ * message, and it either takes them, composing in the program's own document, or declines and the messages above
  * follow.
  */
 #include "win32k.h"
@@ -37,19 +36,19 @@
 
 static struct {
     BOOLEAN Composing;
-    HWND Window;               /* the window that got the start */
+    HWND Window;               /* the window that got the start. */
     ULONG CompLength;
     WCHAR Comp[IME_MAX];
     UCHAR Attr[IME_MAX];
-    ULONG Clause[3];           /* boundaries: 0, the target's, the end */
+    ULONG Clause[3];           /* boundaries: 0, the target's, the end. */
     ULONG ClauseCount;
     ULONG Cursor;
     ULONG DeltaStart;
     ULONG ResultLength;
     WCHAR Result[IME_MAX];
-    WCHAR Pending[IME_MAX];    /* the text of the event the sink window is being sent */
+    WCHAR Pending[IME_MAX];    /* the text of the event being sent to the sink window. */
     ULONG PendingLength;
-    PWCHAR Page;               /* the hypercall buffer */
+    PWCHAR Page;               /* the hypercall buffer. */
     BOOLEAN Queried, Available;
     HWND AreaWindow;
     LONG Area[5];
@@ -66,7 +65,7 @@ static BOOLEAN available(void)
     return g_ime.Available;
 }
 
-/* the window an input method composes for: the focus of the foreground thread. */
+/* the focus window of the foreground thread. */
 static WND *target_window(void)
 {
     if (!InputForeground || !InputForeground->Thread)
@@ -76,7 +75,7 @@ static WND *target_window(void)
     return w ? w : WndLookup(t->Active);
 }
 
-/* takes the oldest text the host has queued; length in characters, 0 for none. */
+/* takes the oldest text the host queued. the length is in characters, 0 for none. */
 static ULONG take_text(PWCHAR out, ULONG max)
 {
     if (!g_ime.Page)
@@ -94,7 +93,6 @@ static ULONG take_text(PWCHAR out, ULONG max)
     return n;
 }
 
-/* sends an input method message to the composing window. */
 static void send(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     WND *w = WndLookup(hwnd);
@@ -121,7 +119,7 @@ static void begin_composition(HWND window)
     send(window, WM_IME_STARTCOMPOSITION, 0, 0);
 }
 
-/* the strings of a preedit text: the selected part is the clause being converted. */
+/* the selected part of the preedit text is the clause being converted. */
 static void set_preedit(ULONG length, LONG begin, LONG end)
 {
     ULONG old = g_ime.CompLength;
@@ -152,7 +150,7 @@ static BOOLEAN ime_disabled(WND *w)
     return atom && PropGetData(w, atom) == (HANDLE)1;
 }
 
-/* offers the event to the text services framework of the window's thread: whether it took it. */
+/* returns whether the text services framework of the window's thread took the event. */
 static BOOLEAN offer_to_text_services(WND *target, const MimeInputEvent *ev, const WCHAR *text, ULONG n)
 {
     W32THREAD *t = target->Thread;
@@ -161,7 +159,7 @@ static BOOLEAN offer_to_text_services(WND *target, const MimeInputEvent *ev, con
         return FALSE;
     memcpy(g_ime.Pending, text, n * sizeof(WCHAR));
     g_ime.PendingLength = n;
-    /* the selected part as two words, each the position plus one, 0 for none. */
+    /* the selected part as two words, each the position plus one, or 0 for none. */
     LPARAM selection = 0;
     if (ev->flags == MIME_IME_PREEDIT)
         selection = (LPARAM)(((ev->x >= 0 ? ev->x + 1 : 0) & 0xFFFF) | ((ev->y >= 0 ? ev->y + 1 : 0) & 0xFFFF) << 16);
@@ -180,11 +178,11 @@ void ImeHostEvent(const MimeInputEvent *ev)
         return;
     }
     HWND window = WndHandle(target);
-    /* a composition the input method manager has begun goes on through it, whatever the framework would have done. */
+    /* a composition the input method manager started stays with it, whatever the framework would do. */
     if (!g_ime.Composing && offer_to_text_services(target, ev, text, n))
         return;
     if (ime_disabled(target)) {
-        /* what is committed is typed, and a composition is nobody's. */
+        /* committed text is typed, and the composition belongs to nobody. */
         if (ev->flags == MIME_IME_COMMIT)
             for (ULONG i = 0; i < n; i++)
                 QueuePost(target->Thread, window, WM_CHAR, text[i], 1);
@@ -238,7 +236,7 @@ void ImeWindowDestroyed(WND *w)
         g_ime.AreaWindow = nullptr;
 }
 
-/* what DefWindowProc does with a committed result: the characters, one WM_IME_CHAR each. */
+/* what DefWindowProc does with a committed result: one WM_IME_CHAR per character. */
 LRESULT ImeDefaultCompositionChars(WND *w)
 {
     WCHAR result[IME_MAX];
@@ -253,7 +251,7 @@ LRESULT ImeDefaultCompositionChars(WND *w)
     return 0;
 }
 
-/* ends the composition of the program: its text is the result when completed, else dropped; the host forgets it. */
+/* a completed composition becomes the result, otherwise it is dropped. the host forgets it either way. */
 static void finish_composition(BOOLEAN complete)
 {
     HalMimeHypercall(MIME_HC_IME_CONTROL, MIME_IME_CANCEL, (ULONG64)(ULONG_PTR)g_ime.Window, 0, 0, 0, 0, nullptr);
@@ -270,8 +268,8 @@ static void finish_composition(BOOLEAN complete)
 }
 
 /*
- * a composition belongs to the window that has the focus: when the focus moves to another window, or to none, it is
- * completed where it was. a guess: an input method of windows completes it when its context is deactivated.
+ * a composition belongs to the focus window: when the focus moves elsewhere, or nowhere, it is completed where it
+ * was. this is a guess at windows, where an input method completes it when its context is deactivated.
  */
 void ImeFocusChanged(void)
 {
@@ -291,7 +289,7 @@ void ImeFocusChanged(void)
     UserDereference(&w->Header);
 }
 
-/* tells the host where text is entered: client coordinates of a window of this thread. */
+/* tells the host where text is entered, in client coordinates of a window of this thread. */
 static void set_area(HWND hwnd, const LONG *area)
 {
     WND *w = WndLookup(hwnd);
@@ -373,7 +371,7 @@ ULONG NTAPI NtUserMimeIme(ULONG op, ULONG_PTR a, ULONG_PTR b, PUCHAR buffer, ULO
         break;
     case MIME_IME_GET: {
         WND *w = g_ime.Composing || g_ime.ResultLength ? WndLookup(g_ime.Window) : nullptr;
-        /* the composition is the thread's of the window it composes for. */
+        /* the composition belongs to the thread of the window it composes for. */
         if (!w || w->Thread != t)
             break;
         const VOID *data = nullptr;

@@ -4,7 +4,7 @@ static volatile LONG installing;
 static volatile DWORD installing_thread;
 static ULONG nested_installs;
 
-/* one installation at a time, but the one that is running may start another from the same thread, as an upgrade does. */
+/* one installation at a time, though a running one may start another on the same thread, as an upgrade does. */
 static BOOL begin_install(void)
 {
     if (!InterlockedCompareExchange(&installing, 1, 0)) {
@@ -113,7 +113,7 @@ static UINT install_transforms(MSIHANDLE *handle, PCWSTR command)
     return error;
 }
 
-/* the patches of the PATCH property go into the database of the package, which then opens again with them. */
+/* applies the PATCH property's patches to the package database, then reopens it. */
 static UINT install_patches(MSIHANDLE *handle, PCWSTR command)
 {
     AcquireSRWLockShared(&MimeMsiLock);
@@ -241,7 +241,7 @@ UINT WINAPI MsiInstallProductW(LPCWSTR path, LPCWSTR command)
         return ERROR_INSTALL_ALREADY_RUNNING;
     MSIHANDLE handle = 0;
     UINT error = MsiOpenPackageW(path, &handle);
-    /* a package that is not there, or not a package, is one that could not be opened. */
+    /* a missing file or one that is not a package counts as a package that could not be opened. */
     if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
         error = ERROR_INSTALL_PACKAGE_OPEN_FAILED;
     if (!error)
@@ -314,7 +314,7 @@ UINT WINAPI MsiConfigureProductExW(LPCWSTR product, int level, INSTALLSTATE stat
     if (!error) {
         package->ConfigureDefaults = TRUE;
         if (state == INSTALLSTATE_ABSENT) {
-            /* the product goes with all of its features. */
+            /* removing the product removes all of its features. */
             if (*MimeMsiGetProperty(package, L"ADDLOCAL") || *MimeMsiGetProperty(package, L"ADDSOURCE") ||
                 *MimeMsiGetProperty(package, L"REINSTALL"))
                 error = ERROR_INVALID_PARAMETER;

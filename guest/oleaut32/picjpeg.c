@@ -1,6 +1,6 @@
 /*
- * jpeg pictures: the decoder is the jpeg library, which gives gray or blue, green, red pixels, or the ink of four
- * colors. A gray picture keeps 8 bits and a palette of grays, the others become 24 bits.
+ * jpeg pictures decoded by libjpeg, which gives gray, bgr or cmyk pixels. Gray stays 8 bpp with a gray palette, the
+ * rest become 24 bpp.
  */
 #include "picdecode.h"
 #include <jpeg/jpeg.h>
@@ -19,7 +19,7 @@ static void jpeg_free(void *context, void *block)
 
 static const MimeAllocator g_allocator = {jpeg_alloc, jpeg_free, nullptr};
 
-/* the ink of cmyk with 0 for none, as the light that is left: each ink takes its share of what the others let through. */
+/* ink 0 is none; each ink absorbs its share of the light the others let through. */
 static void cmyk_to_bgr(const unsigned char *ink, unsigned char *bgr)
 {
     unsigned black_left = 255u - ink[3];

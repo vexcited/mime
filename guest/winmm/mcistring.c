@@ -1,8 +1,6 @@
 /*
- * mciSendString: a command line read word by word against the command
- * tables into the parameter block mciSendCommand takes, and the answer
- * printed back. a device the string names that is not open is opened for
- * the command on mci's window thread, and closed again after it.
+ * parses mciSendString commands using the command tables and formats their results. devices opened for a command run
+ * on MCI's window thread and close afterwards.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -15,7 +13,7 @@ typedef struct ARG {
     DWORD flag;
     WORD kind;
     UINT offset;
-    const BYTE *items; /* the constants of a group */
+    const BYTE *items; /* the constants of a group. */
 } ARG;
 
 static BOOL is_space(WCHAR c)
@@ -24,8 +22,8 @@ static BOOL is_space(WCHAR c)
 }
 
 /*
- * a word up to a space outside quotes. a quote opens quoting only at the
- * start, two quotes inside give one, and nothing may follow the closing one.
+ * reads up to an unquoted space. quoting starts only at the beginning of a word; doubled quotes escape a quote, and
+ * nothing may follow the closing quote.
  */
 static MCIERROR token(const WCHAR **at, WCHAR *out)
 {
@@ -60,7 +58,7 @@ static MCIERROR token(const WCHAR **at, WCHAR *out)
     return MMSYSERR_NOERROR;
 }
 
-/* a keyword at p: letters of the input folded to lower case, one space of it matching a run of spaces. */
+/* matches a keyword case-insensitively, allowing a run of input spaces for one keyword space. */
 static int match(const WCHAR *keyword, const WCHAR *p)
 {
     const WCHAR *start = p;
@@ -167,7 +165,7 @@ static UINT arg_size(WORD kind)
     }
 }
 
-/* the arguments of a command in table order, each with its place in the block. */
+/* command arguments in table order, with their parameter block offsets. */
 static UINT layout(const BYTE *command, ARG *args, WORD *return_kind, UINT *size)
 {
     const WCHAR *word;
@@ -315,10 +313,8 @@ static void free_strings(MCI_REPARSE *r)
 }
 
 /*
- * the words after the device against the command's entries, the first
- * matching entry winning; a word no keyword names goes to the unnamed
- * entry. open passes over words it does not know, for the device's own
- * open command to read once its driver loaded.
+ * matches arguments against command entries, taking the first match or the unnamed entry for unknown words. open
+ * leaves unknown words for the driver's command table to parse after loading.
  */
 MCIERROR MciParseArgs(const BYTE *command, const WCHAR *args, BOOL open, MCI_REPARSE *out)
 {
@@ -732,8 +728,8 @@ static WCHAR *widen(const char *s)
 }
 
 /*
- * the strings of an ansi block, found by the command table of the
- * message, made wide for the call and the answer made narrow again.
+ * converts strings in an ANSI parameter block to Unicode for the call, then converts the result back. the command
+ * table identifies the strings.
  */
 WINMMAPI MCIERROR WINAPI mciSendCommandA(MCIDEVICEID id, UINT message, DWORD_PTR flags, DWORD_PTR parms)
 {

@@ -1,7 +1,4 @@
-/*
- * the background machine process: owns the virtual
- * machine, the cocoa run loop and the control socket.
- */
+/* background process owning the VM, Cocoa run loop and control socket. */
 #include "camera/camera.h"
 #include "instance.h"
 #include "ipc.h"
@@ -32,16 +29,15 @@
 #define MAX_RUNS 256
 
 /*
- * a `mime run` connection. its client thread owns the descriptor and reads
- * the terminal's input and signals from it until the client hangs up;
- * guest events write to it until the run is finished.
+ * a Mime run connection: its client thread owns the descriptor and reads input and signals; guest events write
+ * replies until completion.
  */
 typedef struct PendingRun {
     bool used;
-    bool finished; /* the exit or an error was sent */
+    bool finished; /* the exit or an error was sent. */
     uint64_t request_id;
     int fd;
-    uint32_t in_flight; /* console input sent and not read by the guest yet */
+    uint32_t in_flight; /* console input sent and not read by the guest yet. */
 } PendingRun;
 
 static MimeVm g_vm;
@@ -57,7 +53,7 @@ static uint64_t g_start_ns;
 static uint64_t g_next_request = 1;
 static pthread_mutex_t g_runs_lock = PTHREAD_MUTEX_INITIALIZER;
 static PendingRun g_runs[MAX_RUNS];
-static pthread_cond_t g_credit = PTHREAD_COND_INITIALIZER; /* in_flight went down */
+static pthread_cond_t g_credit = PTHREAD_COND_INITIALIZER; /* in_flight went down. */
 static int g_stop_fds[16];
 static int g_stop_count;
 
@@ -291,7 +287,7 @@ static uint64_t handle_run(int fd, char *payload, uint32_t size)
     run->cmdline_chars = n_cmd;
     run->cwd_chars = n_cwd;
     run->flags = header.flags & (MIME_RUN_TTY_INPUT | MIME_RUN_TTY_OUTPUT | MIME_RUN_TTY_ERROR);
-    /* a program that asks for the rights of an administrator is started with them when the machine's policy lets it. */
+    /* grants requested administrator rights when machine policy permits. */
     char file[MIME_PATH_MAX];
     if (mime_paths_to_host(g_paths, image, file, sizeof(file)))
         run->flags |= mime_pe_run_level(file) << MIME_RUN_LEVEL_SHIFT;
@@ -344,9 +340,8 @@ static void queue_console(uint32_t type, uint64_t request, uint32_t value, const
 }
 
 /*
- * relays the terminal of a run to its console until the client hangs up:
- * input as the guest takes it, ctrl events and size changes. the hangup
- * closes the console, which the guest's programs see as CTRL_CLOSE_EVENT.
+ * relays input, control events and size changes until disconnect. closing the console sends guest programs
+ * CTRL_CLOSE_EVENT.
  */
 static void serve_run(int fd, uint64_t request)
 {
@@ -489,7 +484,7 @@ static void on_input(void *ctx, const MimeInputEvent *ev)
     mime_vm_queue_input(&g_vm, ev);
 }
 
-/* cameras came or went, or a camera stream has frames: the guest hears of it as input. */
+/* camera changes and frames reach the guest as input notifications. */
 static void on_camera(uint32_t kind, uint32_t stream)
 {
     MimeInputEvent ev = {.type = MIME_INPUT_CAMERA, .flags = kind, .x = (int32_t)stream};
@@ -512,10 +507,8 @@ static void on_profile_signal(int sig) { mime_vcpu_toggle_profile(); }
 
 #ifdef __linux__
 /*
- * MIME_HOST_PROFILE=<file> samples the host's own code: a timer of the
- * process's cpu time interrupts whichever thread runs, its instruction
- * pointer and thread are kept, and the samples go to the file at exit
- * with the process's mappings, for tools/hostprof.py.
+ * MIME_HOST_PROFILE selects an output file for host CPU-time samples. the timer samples the running thread's
+ * instruction pointer and ID; exit writes samples and process mappings.
  */
 #include <signal.h>
 #include <sys/prctl.h>
@@ -525,7 +518,7 @@ static void on_profile_signal(int sig) { mime_vcpu_toggle_profile(); }
 #define HOST_PROFILE_MAX (4u << 20)
 static uint64_t *g_host_ips;
 static uint32_t *g_host_tids;
-/* the names of the threads sampled, taken as they run, as many end before the dump. */
+/* captures thread names while sampling because threads may exit before the dump. */
 static struct {
     uint32_t tid;
     char name[16];
@@ -617,14 +610,13 @@ static bool listen_socket(const MimePaths *paths)
 }
 
 /*
- * a crash of the machine process logs where it happened, for llvm-symbolizer, then dies as it would have: the
- * handler's own backtrace stops at the signal frame, so the instruction and the frames of the thread that
- * faulted are taken from its context.
+ * logs a faulting thread's instruction pointer and frames for llvm-symbolizer, then terminates normally for the
+ * signal. the handler's own backtrace would stop at the signal frame.
  */
 static void on_fatal_signal(int sig, siginfo_t *info, void *context)
 {
 #ifdef __linux__
-    /* a file of a window was shortened under a page this thread touched: the page is replaced by zeros. */
+    /* replaces a mapped page with zeros if its backing file was truncated. */
     if (sig == SIGBUS && info && mime_window_bus_fault(info->si_addr))
         return;
 #endif
@@ -682,8 +674,8 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     signal(SIGPIPE, SIG_IGN);
     signal(SIGTERM, on_signal);
     signal(SIGINT, on_signal);
-    signal(SIGUSR1, on_dump_signal); /* kill -USR1 dumps the vcpu state to the log */
-    signal(SIGPROF, on_profile_signal); /* kill -PROF starts and stops the profiler */
+    signal(SIGUSR1, on_dump_signal); /* kill -USR1 dumps the vcpu state to the log. */
+    signal(SIGPROF, on_profile_signal); /* kill -PROF starts and stops the profiler. */
     host_profile_start();
     {
         /* loaded now, as the handler cannot load libgcc. */
@@ -707,10 +699,8 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
 #endif
         setrlimit(RLIMIT_NOFILE, &files);
         /*
-         * the table of descriptors grows when a new one is past its end, and a process with threads waits a
-         * grace period of rcu for the old table to go, several milliseconds in which no thread can open or close
-         * anything: Helium's start did it five times, and stopped all its file calls at once. One process with
-         * a single thread does not wait, so the table is made as long as it will be before the threads.
+         * growing Linux's descriptor table after threads start requires an RCU grace period that stalls all opens
+         * and closes for several milliseconds. preallocate it while single-threaded to avoid repeated stalls.
          */
         int wide = fcntl(STDIN_FILENO, F_DUPFD_CLOEXEC, (int)MIME_MIN(files.rlim_cur - 1, (rlim_t)65535));
         if (wide >= 0)
@@ -735,24 +725,23 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
 
     if (!mime_vm_load_kernel(&g_vm))
         return 1;
-    /* the cameras are looked at while the guest boots, which asks for them. */
+    /* scans cameras concurrently with guest boot. */
     mime_camera_init(on_camera);
     if (!mime_vm_start(&g_vm))
         return 1;
     uint64_t started_ns = mime_now_ns();
 
     /*
-     * the guest boots while this thread connects to the desktop, which takes as long: its window manager
-     * waits for the display at the end of its start.
+     * connects to the desktop during guest boot; the guest window manager waits for display initialization before
+     * finishing.
      */
     mime_ui_init(on_input, nullptr);
     mime_ui_desktop_start(g_paths);
     uint64_t ui_ns = mime_now_ns();
 #ifdef __linux__
     /*
-     * the driver takes 200 ms to load and make a device, which the boot and the first program's start overlap.
-     * It starts once the desktop's libraries are loaded: the loader takes a lock for each library, and the
-     * driver's holds it for 15 ms.
+     * overlaps the driver's roughly 200 ms startup with guest boot and application startup. begin after loading
+     * desktop libraries to avoid the driver's 15 ms loader lock delay.
      */
     mime_vk_warm_up();
 #endif

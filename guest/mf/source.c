@@ -1,14 +1,13 @@
 /*
- * the media source of a camera: one video stream offering the camera's formats, started and stopped like any live
- * source, whose samples are frames of the memory the host fills (mime/camera.h). the samples point into that memory,
- * and a frame goes back to the host when the program has let go of its sample. the controls of the camera answer
- * through the camera control and the video processing amplifier interfaces. see docs/camera.md.
+ * the media source of a camera: one live video stream offering the camera's formats. samples point into frame
+ * memory the host fills, see mime/camera.h, and a frame goes back to the host once the program releases its sample.
+ * camera controls go through the camera control and video processing amplifier interfaces.
  */
 #include "camera.h"
 
 #define MAX_SLOTS 6
 #define MIN_SLOTS 3
-/* a stream's memory is one run of contiguous pages: large frames get fewer slots to keep it under this. */
+/* a stream's memory is one contiguous run of pages, large frames get fewer slots to stay under this. */
 #define STREAM_BUDGET (64u << 20)
 #define MAX_TOKENS 16
 
@@ -16,7 +15,7 @@ enum { STATE_STOPPED, STATE_STARTED, STATE_SHUTDOWN };
 
 typedef struct CamSource CamSource;
 
-/* a stream opened in the kernel, kept as long as a program holds one of its samples. */
+/* a kernel stream, kept while a program holds one of its samples. */
 typedef struct CamContext {
     LONG refs;
     CamDevice *device;
@@ -25,10 +24,10 @@ typedef struct CamContext {
     BYTE *base;
     DWORD size;
     LONG outstanding;
-    DWORD max_outstanding; /* the samples a program may hold at once, the host keeps the other slots to write in */
-    UINT64 mf_open;     /* MFGetSystemTime when the stream opened, the clock the samples' reference times are on */
+    DWORD max_outstanding; /* samples a program may hold at once, the host keeps the other slots to write in. */
+    UINT64 mf_open;     /* MFGetSystemTime when the stream opened, the clock of the sample times. */
     BOOL open;
-    DWORD format_index;  /* of the device's formats, the mode it runs */
+    DWORD format_index;  /* index of the device format it runs. */
     DWORD output_fourcc;
 } CamContext;
 
@@ -37,7 +36,7 @@ typedef struct CamStream {
     CamSource *source;
     IMFMediaEventQueue *queue;
     IMFStreamDescriptor *descriptor;
-    CRITICAL_SECTION lock;        /* the tokens, and what the pump knows between frames */
+    CRITICAL_SECTION lock;        /* guards the tokens and the pump's state between frames. */
     IUnknown *tokens[MAX_TOKENS];
     DWORD token_count;
     UINT64 last_sequence;
@@ -54,22 +53,22 @@ struct CamSource {
     LONG refs;
     CRITICAL_SECTION lock;
     int state;
-    BOOL announced;               /* MENewStream was sent */
+    BOOL announced;               /* MENewStream was sent. */
     IMFMediaEventQueue *queue;
     IMFAttributes *attributes;
     IMFPresentationDescriptor *descriptor;
     CamStream stream;
     CamDevice *device;
-    DWORD *type_format;           /* the device format of each media type, the default type first */
+    DWORD *type_format;           /* the device format of each media type, the default type first. */
     DWORD type_count;
     CamContext *context;
     HANDLE pump;
     HANDLE stop_event;
-    DWORD output_fourcc;          /* 0 for as the camera sends it */
+    DWORD output_fourcc;          /* 0 for the camera's own format. */
     IUnknown *d3d_manager;
 };
 
-/* ------------------------------------------------------------------ memory buffers over the camera's frames */
+/* ------------------------------------------------------------------ buffers over camera frames */
 
 typedef struct CamBuffer {
     IMFMediaBuffer iface;
@@ -112,7 +111,7 @@ static ULONG STDMETHODCALLTYPE buf_release(IMFMediaBuffer *iface)
     LONG refs = InterlockedDecrement(&b->refs);
     if (!refs) {
         CamContext *c = b->context;
-        /* the frame goes back to the host, and the pump is woken: frames may be waiting for the room. */
+        /* give the frame back to the host and wake the pump, frames may be waiting for the slot. */
         __atomic_store_n(&c->hdr->slot[b->slot].state, MIME_CAMERA_SLOT_FREE, __ATOMIC_RELEASE);
         InterlockedDecrement(&c->outstanding);
         SetEvent(c->event);
@@ -148,7 +147,7 @@ static HRESULT STDMETHODCALLTYPE buf_get_current_length(IMFMediaBuffer *iface, D
     return S_OK;
 }
 
-/* the frame is the host's, written once: a program may shorten what it sees of it. */
+/* the host writes the frame once, a program may only shorten what it sees. */
 static HRESULT STDMETHODCALLTYPE buf_set_current_length(IMFMediaBuffer *iface, DWORD length)
 {
     CamBuffer *b = CONTAINING_RECORD(iface, CamBuffer, iface);
@@ -185,7 +184,7 @@ static void context_release(CamContext *c)
     CamFree(c);
 }
 
-/* what failing to start a camera is called: the other program has it, or it is gone. */
+/* another program has the camera, or it is gone. */
 static HRESULT start_error(HRESULT win32)
 {
     if (win32 == HRESULT_FROM_WIN32(ERROR_DEVICE_NOT_CONNECTED) ||
@@ -212,7 +211,7 @@ static HRESULT open_context(CamSource *s, DWORD format_index, DWORD output, CamC
     MimeCameraOpen request = {};
     request.format = s->device->formats[format_index];
     request.output_fourcc = output;
-    /* the room of a frame, as the kernel sizes a slot, decides how many fit the budget. */
+    /* the slot size the kernel uses decides how many frames fit the budget. */
     DWORD frame = mime_camera_frame_bytes(output ? output : request.format.fourcc, request.format.width,
                                           request.format.height);
     DWORD slot = frame ? frame : request.format.width * request.format.height + 65536;
@@ -272,7 +271,7 @@ static HRESULT make_sample(CamSource *s, CamContext *c, DWORD slot, BOOL discont
     HRESULT hr = MFCreateSample(&sample);
     if (SUCCEEDED(hr))
         hr = sample->lpVtbl->AddBuffer(sample, &b->iface);
-    /* the sample has it now, or the buffer goes back to the host. */
+    /* the sample holds it now, or the buffer goes back to the host. */
     b->iface.lpVtbl->Release(&b->iface);
     if (FAILED(hr)) {
         if (sample)
@@ -291,7 +290,7 @@ static HRESULT make_sample(CamSource *s, CamContext *c, DWORD slot, BOOL discont
         SAMPLE_ATTRS(sample)->lpVtbl->SetUINT32(SAMPLE_ATTRS(sample), &MFSampleExtension_Discontinuity, 1);
     if (m->flags & MIME_CAMERA_FRAME_CORRUPT)
         SAMPLE_ATTRS(sample)->lpVtbl->SetUINT32(SAMPLE_ATTRS(sample), &MFSampleExtension_FrameCorruption, 1);
-    /* a program that asked for a sample with a token gets its token back on the one that answers. */
+    /* a sample answering a request carries that request's token. */
     EnterCriticalSection(&stream->lock);
     IUnknown *token = nullptr;
     if (stream->token_count) {
@@ -308,7 +307,7 @@ static HRESULT make_sample(CamSource *s, CamContext *c, DWORD slot, BOOL discont
     return S_OK;
 }
 
-/* the frames that are ready, newest first taken, the older ones given back: a program that cannot keep up sees the
+/* the newest ready frame is delivered and older ones are given back: a program that cannot keep up sees the
    present, not the past. */
 static void deliver_frames(CamSource *s, CamContext *c)
 {
@@ -360,7 +359,7 @@ static DWORD WINAPI pump_thread(void *param)
             break;
         uint32_t error = __atomic_load_n(&c->hdr->error, __ATOMIC_ACQUIRE);
         if (error != MIME_CAMERA_ERROR_NONE && !reported) {
-            /* the camera went or stopped: the program is told once, and the frames already there are still given. */
+            /* the camera went away or stopped: report it once, frames already there are still delivered. */
             reported = TRUE;
             s->queue->lpVtbl->QueueEventParamVar(s->queue, MEError, &GUID_NULL,
                                                  error == MIME_CAMERA_ERROR_LOST ? MF_E_VIDEO_RECORDING_DEVICE_INVALIDATED
@@ -428,7 +427,7 @@ static HRESULT make_type(const MimeCameraFormat *f, IMFMediaType **out)
     return S_OK;
 }
 
-/* the mode a program that picks none gets: the usual 640 by 480 at 30 frames in a raw format, else the first. */
+/* the default mode: 640 by 480 at 30 frames per second in a raw format, else the first. */
 static DWORD default_format(const CamDevice *d)
 {
     DWORD best = 0;
@@ -447,7 +446,6 @@ static DWORD default_format(const CamDevice *d)
     return best;
 }
 
-/* the format of the device a media type names. */
 static BOOL find_format(CamSource *s, IMFMediaType *type, DWORD *index)
 {
     IMFAttributes *a = (IMFAttributes *)type;
@@ -493,7 +491,7 @@ static HRESULT STDMETHODCALLTYPE strm_query_interface(IMFMediaStream *iface, REF
     return E_NOINTERFACE;
 }
 
-/* the stream lives with its source: they are counted as one. */
+/* the stream lives with its source and shares its reference count. */
 static ULONG STDMETHODCALLTYPE strm_add_ref(IMFMediaStream *iface)
 {
     return (ULONG)InterlockedIncrement(&stream_of(iface)->source->refs);
@@ -559,7 +557,7 @@ static HRESULT STDMETHODCALLTYPE strm_get_stream_descriptor(IMFMediaStream *ifac
     return S_OK;
 }
 
-/* a live stream sends its frames as they come: a request only leaves its token to go with one. */
+/* a live stream sends frames as they come, a request only leaves its token for one. */
 static HRESULT STDMETHODCALLTYPE strm_request_sample(IMFMediaStream *iface, IUnknown *token)
 {
     CamStream *s = stream_of(iface);
@@ -643,7 +641,7 @@ static void source_stop_locked(CamSource *s, BOOL send_events)
     }
 }
 
-/* the end of the source: the stream stops, the memory the frames were in is given back once the last sample is. */
+/* the stream stops, and the frame memory is freed once the last sample is released. */
 static HRESULT source_shutdown_locked(CamSource *s)
 {
     if (s->state == STATE_SHUTDOWN)
@@ -767,7 +765,7 @@ static HRESULT STDMETHODCALLTYPE src_start(IMFMediaSourceEx *iface, IMFPresentat
         sd->lpVtbl->Release(sd);
         return MF_E_SHUTDOWN;
     }
-    /* the type the program chose on the stream's handler is the mode to run. */
+    /* the type chosen on the stream's handler is the mode to run. */
     DWORD format = 0;
     hr = S_OK;
     if (selected) {
@@ -798,7 +796,7 @@ static HRESULT STDMETHODCALLTYPE src_start(IMFMediaSourceEx *iface, IMFPresentat
         LeaveCriticalSection(&s->lock);
         return S_OK;
     }
-    /* a stream running another mode, or delivering another format, is opened again. */
+    /* reopen a stream running another mode or delivering another format. */
     DWORD wanted = s->output_fourcc ? s->output_fourcc : s->device->formats[format].fourcc;
     BOOL running = s->state == STATE_STARTED;
     if (s->context && (s->context->format_index != format || s->context->output_fourcc != wanted)) {
@@ -904,7 +902,7 @@ static HRESULT STDMETHODCALLTYPE src_get_stream_attributes(IMFMediaSourceEx *ifa
     return MFCreateAttributes(attributes, 0);
 }
 
-/* the manager is kept and not used: the frames are in memory, and a program that wants textures copies them. */
+/* the manager is kept but unused: frames are in memory, a program that wants textures copies them. */
 static HRESULT STDMETHODCALLTYPE src_set_d3d_manager(IMFMediaSourceEx *iface, IUnknown *manager)
 {
     CamSource *s = source_of(iface);
@@ -951,7 +949,7 @@ FORWARD_IUNKNOWN(ks, IKsControl, ks)
 FORWARD_IUNKNOWN(sd, IMFShutdown, shutdown)
 FORWARD_IUNKNOWN(mime, IMimeCaptureSource, mime)
 
-/* the services of a camera that windows has, such as its extended controls, are not here. */
+/* windows camera services, such as extended controls, are not supported. */
 static HRESULT STDMETHODCALLTYPE svc_get_service(IMFGetService *iface, REFGUID service, REFIID riid, void **out)
 {
     if (!out)
@@ -977,7 +975,7 @@ static HRESULT STDMETHODCALLTYPE sd_get_status(IMFShutdown *iface, DWORD *status
 
 static const IMFShutdownVtbl SHUTDOWN_VTBL = {sd_query_interface, sd_add_ref, sd_release, sd_shutdown, sd_get_status};
 
-/* kernel streaming's own requests are for the driver's properties, which this camera has none of. */
+/* kernel streaming requests are for driver properties, and this camera has none. */
 static HRESULT STDMETHODCALLTYPE ks_property(IKsControl *iface, PKSPROPERTY property, ULONG length, void *data,
                                              ULONG data_length, ULONG *returned)
 {
@@ -1004,7 +1002,7 @@ static HRESULT STDMETHODCALLTYPE ks_event(IKsControl *iface, PKSEVENT event, ULO
 
 static const IKsControlVtbl KS_VTBL = {ks_query_interface, ks_add_ref, ks_release, ks_property, ks_method, ks_event};
 
-/* the controls: a request to the camera, whose answer says what the camera could do. */
+/* the camera's answer says what it could do. */
 static HRESULT control(CamSource *s, DWORD set, LONG property, DWORD operation, MimeCameraControl *c)
 {
     if (s->state == STATE_SHUTDOWN)
@@ -1173,7 +1171,7 @@ HRESULT CamCreateSource(IMFAttributes *attributes, IMFMediaSource **out)
         if (!types || !s->type_format)
             hr = E_OUTOFMEMORY;
     }
-    /* the default mode first, the others in the order the camera lists them. */
+    /* the default mode first, the others in the camera's order. */
     if (SUCCEEDED(hr)) {
         DWORD first = default_format(device), n = 0;
         s->type_format[n++] = first;

@@ -1,8 +1,6 @@
 /*
- * lzx decompressor for wim resources.
- * every wim chunk is an independent lzx stream: the window is the chunk,
- * there is no intel e8 header (translation is always on with a fixed
- * translation size of 12000000) and recent offsets start at 1.
+ * LZX decompressor for WIM resources. each chunk is an independent stream and its own window. there is no
+ * Intel E8 header: translation is always enabled with size 12000000. recent offsets start at 1.
  */
 #ifndef MIME_LZX_H
 #define MIME_LZX_H

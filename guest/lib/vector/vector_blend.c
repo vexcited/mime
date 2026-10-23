@@ -1,14 +1,12 @@
 /*
- * scanline blending of coverage masked sources into 32 bit BGRA rows.
- * the formulas and the rounding are documented in vector.h.
+ * scanline blending of coverage masked sources into 32 bit BGRA rows. vector.h
+ * documents the formulas and the rounding.
  */
 #include "vector_internal.h"
 
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
-
-/* scalar. */
 
 static inline uint32_t clamp255(uint32_t v)
 {
@@ -41,7 +39,6 @@ static inline uint32_t over_pargb(uint32_t d, uint32_t sc, uint32_t sa)
     return make(a, r, g, b);
 }
 
-/* straight color over a straight destination. */
 static inline uint32_t over_argb(uint32_t d, uint32_t sc, uint32_t sa)
 {
     uint32_t da = d >> 24;
@@ -134,8 +131,6 @@ static uint32_t blend_px(uint32_t d, uint32_t s, uint32_t cov, uint32_t alpha, i
     uint32_t r = ((sc >> 16 & 255) * ws + (d >> 16 & 255) * wd + h) / den;
     return make(mime_vec_div255(den), r, g, b);
 }
-
-/* SSE2. */
 
 #if defined(__SSE2__)
 

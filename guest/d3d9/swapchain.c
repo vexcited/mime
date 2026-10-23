@@ -1,16 +1,15 @@
 /*
- * IDirect3DSwapChain9Ex: the back buffers programs render to, typeless so
- * srgb writes may view them, and a dxgi swap chain on the window whose
- * buffer is the size of the window's client area. presents stretch the
- * first back buffer, or the rectangle asked, over the client area or the
- * rectangle asked, as direct3d 9 does in windows.
+ * IDirect3DSwapChain9Ex: typeless back buffers so srgb writes can view
+ * them, and a dxgi swap chain on the window sized to its client area. like
+ * windows, presents stretch the first back buffer or the source rectangle
+ * over the client area or the destination rectangle.
  */
 #include "d3d9_private.h"
 #include <mime/ntuser.h>
 
 static D9SwapChain *impl(IDirect3DSwapChain9Ex *iface) { return CONTAINING_RECORD(iface, D9SwapChain, iface); }
 
-/* what direct3d 9 fills in itself: sizes of the window, the display's format, one buffer. */
+/* fills in the direct3d 9 defaults: the window size, the display format, one buffer. */
 static HRESULT normalize(D9Device *device, D3DPRESENT_PARAMETERS *params, HWND *window)
 {
     *window = params->hDeviceWindow ? params->hDeviceWindow : device->creation.hFocusWindow;
@@ -78,7 +77,7 @@ static DXGI_FORMAT dxgi_format(D3DFORMAT format)
                                                                         : DXGI_FORMAT_B8G8R8A8_UNORM;
 }
 
-/* the size a window's buffers have: its client area in windows, the back buffer's in fullscreen. */
+/* the client area when windowed, the back buffer size when fullscreen. */
 static void output_size(const D9SwapChain *sc, HWND window, UINT *width, UINT *height)
 {
     RECT client = {};
@@ -118,7 +117,7 @@ static HRESULT make_output(D9SwapChain *sc, HWND window, D9Output *o)
     return o->dxgi->lpVtbl->GetBuffer(o->dxgi, 0, &IID_ID3D11Texture2D, (void **)&o->buffer);
 }
 
-/* the buffers follow the window's client area, which programs resize without telling direct3d. */
+/* the buffers follow the client area, which programs resize without telling direct3d. */
 static HRESULT fit_output(D9SwapChain *sc, D9Output *o)
 {
     UINT width, height;
@@ -200,7 +199,7 @@ void D9DestroySwapChain(D9SwapChain *sc)
     HeapFree(GetProcessHeap(), 0, sc);
 }
 
-/* whether a program still holds a back buffer, which Reset refuses. */
+/* Reset fails while a program still holds a back buffer. */
 BOOL D9SwapChainInUse(const D9SwapChain *sc)
 {
     for (UINT i = 0; i < sc->back_buffer_count; i++)
@@ -232,7 +231,7 @@ HRESULT D9ResetSwapChain(D9SwapChain *sc, D3DPRESENT_PARAMETERS *params)
     return D3D_OK;
 }
 
-/* the output of a window presents name, made the first time. */
+/* the output for a window a present names, made on first use. */
 static D9Output *output_of(D9SwapChain *sc, HWND window)
 {
     if (!window || window == sc->window)
@@ -254,10 +253,7 @@ static D9Output *output_of(D9SwapChain *sc, HWND window)
     return &sc->others[sc->other_count++];
 }
 
-/*
- * the parts of the source and destination rectangles that are inside
- * their surfaces, cut in proportion so the stretch stays the same.
- */
+/* clips both rectangles to their surfaces, cut in proportion so the stretch stays the same. */
 static BOOL clip_stretch(RECT *src, RECT *dst, LONG src_w, LONG src_h, LONG dst_w, LONG dst_h)
 {
     if (src->right <= src->left || src->bottom <= src->top || dst->right <= dst->left || dst->bottom <= dst->top)
@@ -287,7 +283,7 @@ static BOOL clip_stretch(RECT *src, RECT *dst, LONG src_w, LONG src_h, LONG dst_
     return src->right > src->left && src->bottom > src->top && dst->right > dst->left && dst->bottom > dst->top;
 }
 
-/* the back buffer as a single sampled texture, resolved when it is multisampled. */
+/* multisampled back buffers are resolved first. */
 static ID3D11Resource *present_source(D9SwapChain *sc, D9Surface *back)
 {
     if (!back->texture)
@@ -316,7 +312,7 @@ HRESULT D9Present(D9SwapChain *sc, const RECT *source, const RECT *dest, HWND wi
     D9Device *device = sc->device;
     D9Surface *back = sc->back_buffers[0];
     D3DSWAPEFFECT effect = sc->params.SwapEffect;
-    /* as d3d9.dll checks: flips take no rectangles, and only copies and flipex dirty regions. */
+    /* like windows, flips take no rectangles, and only copy and flipex take dirty regions. */
     if ((effect == D3DSWAPEFFECT_FLIP && (source || dest || dirty)) ||
         (effect == D3DSWAPEFFECT_FLIPEX && (source || dest || window)) ||
         (dirty && effect != D3DSWAPEFFECT_COPY && effect != D3DSWAPEFFECT_FLIPEX))
@@ -334,7 +330,7 @@ HRESULT D9Present(D9SwapChain *sc, const RECT *source, const RECT *dest, HWND wi
         if (clip_stretch(&sr, &dr, back->width, back->height, o->width, o->height)) {
             BOOL linear = sr.right - sr.left != dr.right - dr.left || sr.bottom - sr.top != dr.bottom - dr.top;
             if (!whole && !o->front) {
-                /* what the window showed is gone with dxgi's discarded buffers: the back buffer stands for it, a guess. */
+                /* dxgi discarded what the window showed, so the back buffer stands in for it, a guess. */
                 D3D11_TEXTURE2D_DESC desc;
                 o->buffer->lpVtbl->GetDesc(o->buffer, &desc);
                 desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -434,10 +430,9 @@ static HRESULT STDMETHODCALLTYPE sc_present(IDirect3DSwapChain9Ex *iface, const 
 }
 
 /*
- * a copy of the screen the swap chain's adapter shows, as d3d9.dll makes
- * it for windows: a system memory A8R8G8B8 surface of the device, at
- * least the screen's size, gets the monitor's pixels through gdi from
- * the screen, which win32k composes from the windows and their presents.
+ * like windows, copies what the adapter's screen shows into a system
+ * memory A8R8G8B8 surface at least the screen's size, read through gdi
+ * from what win32k composes.
  */
 static HRESULT STDMETHODCALLTYPE sc_get_front_buffer_data(IDirect3DSwapChain9Ex *iface, IDirect3DSurface9 *dest)
 {
@@ -503,7 +498,7 @@ static HRESULT STDMETHODCALLTYPE sc_get_back_buffer(IDirect3DSwapChain9Ex *iface
     return D3D_OK;
 }
 
-/* the scanline from the time within the refresh: a guess, with no vertical blank to read. */
+/* guesses the scanline from the time within the refresh, as there is no vertical blank to read. */
 HRESULT D9RasterStatus(D9SwapChain *sc, D3DRASTER_STATUS *status)
 {
     if (!status)

@@ -1,7 +1,7 @@
 /*
  * msctf.dll: the text services framework. the thread manager, document managers and contexts are the program's
- * side of it; the text service is the host's input method, in service.c, which edits a document through the
- * program's own text store as a text service of Windows does. see docs/msctf.md.
+ * side. the text service is the host's input method, in service.c, which edits through the program's text store
+ * like a Windows text service does.
  */
 #include "msctf_private.h"
 
@@ -57,8 +57,6 @@ void CtfObjectDestroyed(void)
     InterlockedDecrement(&g_objects);
 }
 
-/* ------------------------------------------------------------------ sink lists */
-
 HRESULT SinksAdvise(SINKS *sinks, const IID *const *allowed, ULONG allowed_count, REFIID iid, IUnknown *sink,
                     DWORD *cookie)
 {
@@ -74,7 +72,7 @@ HRESULT SinksAdvise(SINKS *sinks, const IID *const *allowed, ULONG allowed_count
     if (position == allowed_count)
         return CONNECT_E_CANNOTCONNECT;
 
-    /* the number of a new sink follows the highest one of its interface still advised. */
+    /* a new sink's number is one past the highest still advised for its interface. */
     DWORD highest = 0;
     for (ULONG i = 0; i < sinks->Count; i++) {
         if (sinks->Items[i].Index == position && (sinks->Items[i].Cookie & 0xFFFFFF) > highest)
@@ -165,8 +163,6 @@ void SinksSnapshotFree(IUnknown **items, ULONG count)
     CtfFree(items);
 }
 
-/* ------------------------------------------------------------------ class objects */
-
 typedef struct {
     IClassFactory iface;
     CLSID clsid;
@@ -252,8 +248,6 @@ HRESULT WINAPI DllCanUnloadNow(void)
 {
     return g_objects ? S_FALSE : S_OK;
 }
-
-/* ------------------------------------------------------------------ creation functions */
 
 HRESULT WINAPI TF_CreateThreadMgr(ITfThreadMgr **thread_mgr)
 {

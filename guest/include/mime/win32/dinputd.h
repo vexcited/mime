@@ -1,7 +1,4 @@
-/*
- * dinputd.h: directinput's joystick configuration, IDirectInputJoyConfig,
- * and the legacy joystick registry structures winmm shares with it.
- */
+/* directinput joystick configuration and the legacy joystick registry structures winmm shares. */
 #ifndef MIME_WIN32_DINPUTD_H
 #define MIME_WIN32_DINPUTD_H
 
@@ -102,7 +99,7 @@ typedef BOOL(CALLBACK *LPDIJOYTYPECALLBACK)(LPCWSTR type, LPVOID context);
 
 typedef struct IDirectInputJoyConfig IDirectInputJoyConfig, *LPDIRECTINPUTJOYCONFIG;
 
-/* the type information structures are passed through untouched here. */
+/* type information structures are passed through as is. */
 #define IDirectInputJoyConfig_METHODS(T)                                                                               \
     MIME_IUNKNOWN_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *Acquire)(T * This);                                                                    \

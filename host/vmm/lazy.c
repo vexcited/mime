@@ -1,11 +1,9 @@
 /*
- * guest physical regions filled on first touch: the system files and the
- * host file windows. the guest sees read only memory; a region starts
- * unmapped and the stage 2 fault of a touched chunk copies the chunk into
- * anonymous memory and maps it, so only data the guest reads costs memory.
+ * fills guest physical regions on first touch: system files and host file windows. a stage 2 fault copies the
+ * touched chunk into anonymous memory and maps it read-only, allocating only for accessed data.
  *
- * file pages are never handed to the hypervisor: macos panics when a page
- * some process runs as code enters a vm's stage 2 tables.
+ * never hand file pages to the hypervisor: macOS panics if a page executed by a host process enters VM stage
+ * 2 tables.
  */
 #include "vmm.h"
 
@@ -85,7 +83,7 @@ bool mime_lazy_fill(MimeLazyRegion *r, uint64_t ipa)
     uint64_t off = MIME_ALIGN_DOWN(ipa - r->ipa, (uint64_t)MIME_LAZY_CHUNK);
     uint64_t c = off / MIME_LAZY_CHUNK;
     if (r->filled[c / CHUNK_BITS] & (1ull << (c % CHUNK_BITS)))
-        return true; /* another vcpu filled it first */
+        return true; /* another vCPU filled it first. */
     uint64_t len = chunk_length(r, off);
     uint64_t avail = off < r->src_size ? MIME_MIN(len, r->src_size - off) : 0;
     if (r->fd >= 0) {

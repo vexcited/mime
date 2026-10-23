@@ -1,4 +1,4 @@
-/* the texts of winmm's errors, those of windows' winmmbase. */
+/* winmm error messages. */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
 

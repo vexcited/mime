@@ -87,7 +87,7 @@ static float arith_f(int op, float a, float b)
     case 0x5D: return (isnan_f(a) || isnan_f(b) || !(a < b)) ? b : a; /* min */
     case 0x5F: return (isnan_f(a) || isnan_f(b) || !(a > b)) ? b : a; /* max */
     case 0x51: r = __builtin_sqrtf(b); return isnan_f(r) ? (isnan_f(b) ? u2f(f2u(b) | 0x00400000u) : u2f(F32_QNAN)) : r;
-    case 0x52: return 1.0f / __builtin_sqrtf(b); /* rsqrt, exact instead of approximate */
+    case 0x52: return 1.0f / __builtin_sqrtf(b); /* rsqrt, exact instead of approximate. */
     case 0x53: return 1.0f / b;                  /* rcp */
     default: return a;
     }
@@ -275,8 +275,8 @@ static void unpack(X86Xmm *d, const X86Xmm *s, int n, int esize, int high)
 }
 
 /*
- * integer operations of the 0f map shared by mmx (n = 8) and sse2 (n = 16).
- * returns 0 for opcodes that are not one of them.
+ * integer operations of the 0f map, shared by mmx with n = 8 and sse2 with
+ * n = 16. returns 0 for other opcodes.
  */
 static int simd_int(X86Cpu *c, uint8_t op, X86Xmm *d, X86Xmm *s, int n)
 {
@@ -460,7 +460,7 @@ static int simd_0f38(X86Cpu *c, uint8_t op, X86Xmm *d, X86Xmm *s, int n)
             f |= X86_CF;
         c->flags = (c->flags & ~X86_ARITH_FLAGS) | f;
         c->lf_op = X86_LF_NONE;
-        return 2; /* no destination write */
+        return 2; /* no destination write. */
     }
     case 0x20: for (k = 0; k < 8; k++) t.sw[k] = s->sb[k]; *d = t; return 1;
     case 0x21: for (k = 0; k < 4; k++) t.sd[k] = s->sb[k]; *d = t; return 1;
@@ -769,7 +769,7 @@ void x86_exec_sse(X86Cpu *c, const X86Insn *i)
     }
     if (i->map == 2) {
         if (op == 0xF0 || op == 0xF1)
-            x86_undefined(c); /* movbe and crc32 are not reported */
+            x86_undefined(c); /* movbe and crc32 are not reported. */
         if (pfx == 0) {
             exec_mmx(c, i);
             return;

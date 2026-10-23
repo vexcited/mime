@@ -1,14 +1,13 @@
 /*
- * RaiseException captures the caller's state at its own entry, so a handler
- * that continues execution resumes right after the call with every callee
- * saved register intact. KbRaiseExceptionWithContext builds the record.
+ * RaiseException captures the caller's state on entry, so a handler that continues resumes right after the call with
+ * every callee saved register intact.
  */
     .text
 
     .globl  RaiseException
     .p2align 4
 RaiseException:
-    /* CONTEXT at rsp + 0x30, the home area of the call below it. */
+    /* CONTEXT at rsp + 0x30, above the home area of the calls below. */
     subq    $0x508, %rsp
     movq    %rcx, 0x508+0x08(%rsp)
     movq    %rdx, 0x508+0x10(%rsp)

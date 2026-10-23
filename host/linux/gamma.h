@@ -1,4 +1,4 @@
-/* the display's gamma ramp, kept for the presenters and windows of the linux host. */
+/* the display's gamma ramp, kept for the presenters and windows of the Linux host. */
 #ifndef MIME_HOST_GAMMA_H
 #define MIME_HOST_GAMMA_H
 
@@ -12,7 +12,7 @@ void mime_gamma_set(const uint16_t *ramp);
 bool mime_gamma_ramp(uint16_t ramp[3][256], uint32_t *generation);
 /* each channel's 8-bit output for an 8-bit input; false while it is the identity. */
 bool mime_gamma_table(uint8_t table[3][256]);
-/* the spir-v of the pass that draws a composed frame through the ramp. */
+/* the SPIR-V of the pass that draws a composed frame through the ramp. */
 bool mime_gamma_shaders(const uint32_t **vertex, size_t *vertex_size, const uint32_t **fragment, size_t *fragment_size);
 
 #endif

@@ -1,6 +1,6 @@
 /*
- * _setjmp and the register half of longjmp for x64, with msvcrt's jump
- * buffer: Frame, Rbx, Rsp, Rbp, Rsi, Rdi, R12 to R15, Rip, MxCsr, FpCsr,
+ * _setjmp and the register half of longjmp for x64. msvcrt's jump buffer
+ * holds Frame, Rbx, Rsp, Rbp, Rsi, Rdi, R12 to R15, Rip, MxCsr, FpCsr,
  * Spare, then Xmm6 to Xmm15 from offset 0x60.
  *
  * _setjmp     rcx = jump buffer, rdx = frame for unwinding or 0

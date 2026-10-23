@@ -1,10 +1,10 @@
 /*
- * font files: the references programs and collections hold to them, the
- * loader of files on disk and its memory mapped streams.
+ * font file references, the loader of files on disk and its memory mapped
+ * streams.
  */
 #include "dw_private.h"
 
-/* ------------------------------------------------------------------ streams over mapped files */
+/* ------------------------------------------------------------------ mapped file streams */
 
 typedef struct DwMappedStream {
     const IDWriteFontFileStreamVtbl *lpVtbl;
@@ -83,9 +83,9 @@ static const IDWriteFontFileStreamVtbl g_stream_vtbl = {
     stream_query, stream_addref, stream_release, stream_read, stream_release_fragment, stream_size, stream_time,
 };
 
-/* ------------------------------------------------------------------ the local loader */
+/* ------------------------------------------------------------------ local loader */
 
-/* a key is the write time the reference was made with, then the path with its terminator. */
+/* the write time the reference was made with, then the path and its terminator. */
 typedef struct DwLocalKey {
     UINT64 write_time;
     WCHAR path[1];
@@ -208,7 +208,7 @@ static IDWriteLocalFontFileLoader g_local_loader = {&g_local_vtbl};
 
 IDWriteLocalFontFileLoader *DwLocalLoader(void) { return &g_local_loader; }
 
-/* ------------------------------------------------------------------ the file object */
+/* ------------------------------------------------------------------ file object */
 
 static HRESULT WINAPI file_query(IDWriteFontFile *This, REFIID riid, void **out)
 {

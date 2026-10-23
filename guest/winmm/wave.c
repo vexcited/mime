@@ -1,11 +1,7 @@
 /*
- * wave output and input. the one output device is the host's default
- * output: each open device is a stream of the process (lib/audio/output.c)
- * fed by a thread of its own, which copies the queued headers into the
- * stream's ring and returns each to the program once the host played its
- * last frame. formats the stream does not take, eight bit samples, are
- * widened on the way; compressed ones go through msacm32 when the program
- * asks for the mapper. there is no input device.
+ * wave output through the host's default device. each open device has a lib/audio/output.c stream and a thread
+ * feeding queued headers; headers return once their last frame has played. eight-bit samples are widened; the mapper
+ * converts compressed formats through msacm32. there is no input device.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -16,15 +12,15 @@
 #define MAPPER_NAME L"Microsoft Sound Mapper"
 #define FEED_MS 5
 
-/* the compiler references it from code using floating point, without a crt to define it. */
+/* floating-point code references this symbol, normally supplied by the CRT. */
 int _fltused = 0x9875;
 
 typedef struct DONE {
     WAVEHDR *header;
-    UINT64 end; /* the stream frame its last frame lands on */
+    UINT64 end; /* the stream frame its last frame lands on. */
 } DONE;
 
-/* an msacm32 stream turning a compressed format into pcm, loaded when needed. */
+/* an msacm32 stream turning a compressed format into PCM, loaded when needed. */
 typedef struct ACM {
     HANDLE stream;
     BYTE *in, *out;
@@ -38,22 +34,22 @@ typedef struct WAVE_OUT {
     RTL_CRITICAL_SECTION lock;
     DWORD callback, flags;
     DWORD_PTR target, instance;
-    WAVEFORMATEXTENSIBLE format; /* what the program writes */
-    UINT32 in_frame;             /* bytes per frame of it */
-    BOOL widen8;                 /* eight bit samples widened to sixteen */
-    BOOL mapped;                 /* through msacm32 */
+    WAVEFORMATEXTENSIBLE format; /* what the program writes. */
+    UINT32 in_frame;             /* bytes per frame of it. */
+    BOOL widen8;                 /* eight bit samples widened to sixteen. */
+    BOOL mapped;                 /* through msacm32. */
     ACM acm;
     MimeOutput out;
-    WAVEHDR *head, *tail;        /* queued, the first one being played from offset */
+    WAVEHDR *head, *tail;        /* queued, the first one being played from offset. */
     DWORD offset;
-    WAVEHDR *loop;               /* the header a loop starts at */
+    WAVEHDR *loop;               /* the header a loop starts at. */
     DWORD loops;
     BOOL break_loop;
     DONE *done;
     UINT32 done_count, done_cap;
     BOOL paused;
-    UINT64 base;                 /* the stream frame position zero is at */
-    WORD left, right;            /* volume */
+    UINT64 base;                 /* the stream frame position zero is at. */
+    WORD left, right;            /* volume. */
     HANDLE thread, wake;
     volatile BOOL quit;
 } WAVE_OUT;
@@ -109,7 +105,7 @@ static void notify(WAVE_OUT *w, UINT message, DWORD_PTR param1)
 static const GUID g_pcm = MIME_KSDATAFORMAT_SUBTYPE(WAVE_FORMAT_PCM);
 static const GUID g_float = MIME_KSDATAFORMAT_SUBTYPE(WAVE_FORMAT_IEEE_FLOAT);
 
-/* the pcm or float layout of a format, false for what the stream cannot play as it is. */
+/* validates a PCM or float format the stream can play directly. */
 static BOOL linear_format(const WAVEFORMATEX *f, UINT32 *bits, BOOL *is_float)
 {
     WORD tag = f->wFormatTag;
@@ -188,7 +184,7 @@ static BOOL load_acm(void)
 #define ACM_STREAMCONVERTF_BLOCKALIGN 0x00000004
 #define ACM_STREAMSIZEF_SOURCE 0x00000000
 
-/* a pcm format msacm32 turns this one into, and the stream doing it. */
+/* opens an msacm32 stream converting the format to PCM. */
 static BOOL open_acm(ACM *a, const WAVEFORMATEX *format)
 {
     if (!load_acm())
@@ -223,7 +219,7 @@ static void close_acm(ACM *a)
     memset(a, 0, sizeof(*a));
 }
 
-/* converts what input there is into pcm; whole blocks unless final. */
+/* converts what input there is into PCM; whole blocks unless final. */
 static void run_acm(ACM *a, BOOL final)
 {
     ACMSTREAMHEADER_ h = {sizeof(h)};
@@ -293,9 +289,8 @@ static void push_done(WAVE_OUT *w, WAVEHDR *h, UINT64 end)
 }
 
 /*
- * the current header was played through. inside a loop it waits for the
- * loop's end, which goes back to the loop's start or, after the last
- * iteration, returns every header of the loop.
+ * completed headers in a loop stay queued until the loop ends. another iteration restarts at the first header; the
+ * final iteration returns them all.
  */
 static void header_finished(WAVE_OUT *w)
 {
@@ -333,7 +328,6 @@ static void begin_header(WAVE_OUT *w)
     }
 }
 
-/* moves queued data into the stream while it has room. */
 static void feed(WAVE_OUT *w)
 {
     UINT32 in_bits = w->format.Format.wBitsPerSample;
@@ -387,7 +381,7 @@ static void feed(WAVE_OUT *w)
         MimeOutputStart(&w->out);
 }
 
-/* headers whose last frame the host played, taken from the done list into finished. */
+/* moves headers whose last frame has played from done to finished. */
 static UINT32 collect(WAVE_OUT *w, WAVEHDR **finished, UINT32 max, BOOL all)
 {
     UINT64 played = MimeOutputPlayed(&w->out);
@@ -450,7 +444,7 @@ WINMMAPI UINT WINAPI waveOutGetNumDevs(void)
     return 1;
 }
 
-/* a device number, the mapper, or an open device. */
+/* accepts a device number, the mapper or an open device handle. */
 static MMRESULT caps_device(UINT_PTR id, BOOL *mapper)
 {
     *mapper = id == WAVE_MAPPER || id == (UINT_PTR)(UINT)WAVE_MAPPER;
@@ -703,7 +697,7 @@ WINMMAPI MMRESULT WINAPI waveOutRestart(HWAVEOUT handle)
     return MMSYSERR_NOERROR;
 }
 
-/* stops, returns every header, and the position goes back to zero. */
+/* stops playback, returns every queued header and resets the position to zero. */
 WINMMAPI MMRESULT WINAPI waveOutReset(HWAVEOUT handle)
 {
     WAVE_OUT *w = find_out(handle);
@@ -771,7 +765,7 @@ WINMMAPI MMRESULT WINAPI waveOutGetPosition(HWAVEOUT handle, LPMMTIME time, UINT
         break;
     }
     default:
-        /* the formats a device does not give fall back to bytes, of what the program wrote. */
+        /* unsupported position formats fall back to bytes supplied by the application. */
         time->wType = TIME_BYTES;
         time->u.cb = (DWORD)(frames * w->format.Format.nBlockAlign);
         break;
@@ -799,7 +793,10 @@ static void apply_volume(WAVE_OUT *w)
     WORD level = w->left > w->right ? w->left : w->right;
     float device = ((g_device_volume & 0xFFFF) > (g_device_volume >> 16) ? (g_device_volume & 0xFFFF)
                                                                             : (g_device_volume >> 16)) / 65535.0f;
-    /* equal channels scale on the host; unequal ones in the feed, the host keeping the device's. */
+    /*
+     * equal channel volumes scale on the host; unequal ones scale while feeding, leaving the device volume on the
+     * host.
+     */
     MimeOutputVolume(&w->out, (w->left == w->right ? level / 65535.0f : 1.0f) * device);
 }
 

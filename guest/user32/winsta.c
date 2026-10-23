@@ -1,6 +1,4 @@
-/*
- * window stations and desktops, objects of win32k reached by handle.
- */
+/* window stations and desktops, win32k objects reached by handle. */
 #include "user32_private.h"
 
 typedef BOOL(CALLBACK *NAMEENUMPROCA)(LPSTR name, LPARAM param);
@@ -152,7 +150,7 @@ WINUSERAPI BOOL WINAPI GetUserObjectInformationW(HANDLE object, int index, PVOID
     return NtUserGetObjectInformation(object, (DWORD)index, info, length, needed);
 }
 
-/* the name and type come back in the ansi code page, their sizes counted in its bytes. */
+/* name and type come back in the ansi code page, sizes counted in its bytes. */
 WINUSERAPI BOOL WINAPI GetUserObjectInformationA(HANDLE object, int index, PVOID info, DWORD length, LPDWORD needed)
 {
     if (index != 2 && index != 3)
@@ -182,7 +180,7 @@ WINUSERAPI BOOL WINAPI SetUserObjectInformationA(HANDLE object, int index, PVOID
     return SetUserObjectInformationW(object, index, info, length);
 }
 
-/* the names of a list, each given to the callback until it returns zero, whose value is the result. */
+/* stops when the callback returns zero, and returns what the callback returned. */
 static BOOL enum_names(HWINSTA winsta, void *proc, LPARAM param, BOOL ansi)
 {
     ULONG needed = 0;
@@ -233,7 +231,7 @@ WINUSERAPI BOOL WINAPI EnumDesktopsA(HWINSTA winsta, NAMEENUMPROCA proc, LPARAM 
     return enum_names(winsta ? winsta : GetProcessWindowStation(), (void *)proc, param, TRUE);
 }
 
-/* ------------------------------------------------------------------ the session's input and resources */
+/* ------------------------------------------------------------------ input and resources */
 
 WINUSERAPI BOOL WINAPI GetLastInputInfo(PLASTINPUTINFO info)
 {
@@ -245,7 +243,7 @@ WINUSERAPI BOOL WINAPI GetLastInputInfo(PLASTINPUTINFO info)
     return TRUE;
 }
 
-/* GR_GLOBAL counts the whole session's objects, which mime answers with the caller's. */
+/* GR_GLOBAL should count the whole session, mime counts only the caller's objects. */
 WINUSERAPI DWORD WINAPI GetGuiResources(HANDLE process, DWORD flags)
 {
     return NtUserGetGuiResources(process, flags);
@@ -255,7 +253,7 @@ WINUSERAPI DWORD WINAPI GetGuiResources(HANDLE process, DWORD flags)
 
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, ULONG info, PVOID descriptor, ULONG length, PULONG needed);
 
-/* the descriptor of a window station or desktop is the kernel's. */
+/* the kernel holds the descriptor of window stations and desktops. */
 WINUSERAPI BOOL WINAPI SetUserObjectSecurity(HANDLE object, PVOID information, PVOID descriptor)
 {
     if (!information || !descriptor) {

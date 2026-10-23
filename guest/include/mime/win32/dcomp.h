@@ -1,9 +1,4 @@
-/*
- * dcomp: composition of visuals into windows. the interfaces and their method
- * order are windows', as programs call them through the vtables; where a
- * method has an overload for an animation and one for a value, the animation
- * comes first, as in windows' own vtables.
- */
+/* dcomp: composing visuals into windows. method order matches windows' vtables. */
 #ifndef MIME_WIN32_DCOMP_H
 #define MIME_WIN32_DCOMP_H
 
@@ -11,7 +6,7 @@
 #include <mime/win32/dxgi.h>
 #include <mime/win32/d3d9types.h>
 
-/* ------------------------------------------------------------------ direct2d types the interfaces take */
+/* ------------------------------------------------------------------ direct2d types */
 
 typedef struct D2D_RECT_F {
     float left, top, right, bottom;
@@ -128,7 +123,7 @@ typedef struct DCompositionInkTrailPoint {
 #define DCOMPOSITION_ERROR_SURFACE_BEING_RENDERED ((HRESULT)0x88980801)
 #define DCOMPOSITION_ERROR_SURFACE_NOT_BEING_RENDERED ((HRESULT)0x88980802)
 
-/* the statistics of the compositor's clock. */
+/* compositor clock statistics. */
 typedef UINT64 COMPOSITION_FRAME_ID;
 
 typedef enum COMPOSITION_FRAME_ID_TYPE {
@@ -249,7 +244,7 @@ typedef struct IDCompositionInkTrailDevice IDCompositionInkTrailDevice;
 #define IDCompositionTransform3D_METHODS(T) IDCompositionEffect_METHODS(T)
 #define IDCompositionTransform_METHODS(T) IDCompositionTransform3D_METHODS(T)
 
-/* a property that is a value or an animation: the animation comes first. */
+/* a property set from an animation or a value. the animation overload comes first in the vtable. */
 #define DCOMP_FLOAT_PROPERTY(T, name)                                                                                  \
     HRESULT(STDMETHODCALLTYPE *name##A)(T * This, IDCompositionAnimation * animation);                                 \
     HRESULT(STDMETHODCALLTYPE *name)(T * This, float value);

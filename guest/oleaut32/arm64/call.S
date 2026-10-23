@@ -1,8 +1,7 @@
 /*
- * calls a function with arguments held in slots: the first eight go to the integer registers and, the same bits, to the
- * floating point ones, since the caller does not know which are which, and the rest on the stack. x0 is the function, x1
- * the slots, w2 their number, x4 where to keep d0, which holds the result of a function that returns a float, or null; the
- * result is in x0.
+ * calls a function with arguments in slots. the first eight go to both the integer and the floating point registers,
+ * since the caller does not know which are which, and the rest go on the stack. x0 is the function, x1 the slots, w2
+ * their count, x4 where to store d0 for a float result or null. the result is in x0.
  */
     .text
     .globl  AutCallEx
@@ -22,7 +21,7 @@ AutCallEx:
     mov     w11, w2
     cmp     x11, #8
     b.ls    2f
-    /* the arguments past the eighth, rounded up to an even number of slots, then probed down a page at a time. */
+    /* slots past the eighth, rounded up to an even count, with the stack probed a page at a time. */
     sub     x12, x11, #8
     add     x13, x12, #1
     and     x13, x13, #-2
@@ -46,7 +45,7 @@ AutCallEx:
     add     x15, x15, #1
     b       4b
 2:
-    /* a call with fewer than eight slots reads the zeros past them, which the caller left in the array. */
+    /* with fewer than eight slots this reads the zeros the caller left past them. */
     ldp     x0, x1, [x10, #0]
     ldp     x2, x3, [x10, #16]
     ldp     x4, x5, [x10, #32]

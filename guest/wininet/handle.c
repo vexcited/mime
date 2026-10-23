@@ -176,7 +176,7 @@ INET_OBJECT *InetSession(INET_OBJECT *object)
     return object;
 }
 
-/* a new object with one reference for the table and one for the caller, or NULL with the error set. */
+/* allocate with table and caller references, or return NULL with an error. */
 static INET_OBJECT *CreateObject(DWORD type, INET_OBJECT *parent)
 {
     INET_OBJECT *object = InetAllocZero(sizeof(*object));
@@ -245,8 +245,8 @@ void InetNotify(INET_OBJECT *object, DWORD status, LPVOID information, DWORD len
 }
 
 /*
- * wininet keeps its strings in the ansi code page: the callbacks of InternetSetStatusCallbackW get the name being
- * resolved and the redirect url wide, every other string, as the addresses, stays ansi.
+ * strings use the ANSI code page. InternetSetStatusCallbackW widens resolved names and redirect URLs only; addresses
+ * and other strings stay ANSI.
  */
 void InetNotifyString(INET_OBJECT *object, DWORD status, LPCWSTR text)
 {
@@ -320,7 +320,7 @@ HINTERNET InetConnect(INET_OBJECT *parent, LPCWSTR server, INTERNET_PORT port, L
         error = ERROR_INVALID_PARAMETER;
     else if (service == INTERNET_SERVICE_HTTP)
         type = INTERNET_HANDLE_TYPE_CONNECT_HTTP;
-    /* ftp logs in during InternetConnect, and mime has no ftp client. */
+    /* FTP login would happen during InternetConnect; no FTP client is implemented. */
     else if (service == INTERNET_SERVICE_FTP)
         error = ERROR_INTERNET_CANNOT_CONNECT;
     else if (service == INTERNET_SERVICE_GOPHER)
@@ -485,7 +485,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetCloseHandle(HINTERNET handle)
             Slots[i] = nullptr;
         }
     ReleaseSRWLockExclusive(&TableLock);
-    /* a request busy on its worker gets its closing notification there, after the operation's. */
+    /* the worker sends closing notification after its operation notification. */
     BOOL *deferred = InetAllocZero(count * sizeof(*deferred));
     for (DWORD i = 0; i < count; i++)
         if (closed[i]->Type == INTERNET_HANDLE_TYPE_HTTP_REQUEST && InetRequestClosing(closed[i]) && deferred)
@@ -539,7 +539,7 @@ DECLSPEC_EXPORT INTERNET_STATUS_CALLBACK WINAPI InternetSetStatusCallback(HINTER
     return SetCallback(handle, callback, FALSE);
 }
 
-/* copies a DWORD option out, or reports the size needed. */
+/* return a DWORD option or the required size. */
 static BOOL QueryDword(DWORD value, LPVOID buffer, LPDWORD length)
 {
     if (*length < sizeof(DWORD)) {
@@ -564,7 +564,7 @@ static BOOL QueryPointer(ULONG_PTR value, LPVOID buffer, LPDWORD length)
     return TRUE;
 }
 
-/* copies a string option out; on success the length is in characters without the terminator. */
+/* return string length without the terminator on success. */
 static BOOL QueryString(LPCWSTR text, LPVOID buffer, LPDWORD length)
 {
     DWORD chars = text ? lstrlenW(text) : 0;
@@ -590,7 +590,7 @@ PWSTR InetRequestUrl(INET_OBJECT *request)
         wsprintfW(port, L":%u", request->HostPort);
     LPCWSTR scheme = secure ? L"https://" : L"http://";
     LPCWSTR object = request->Object;
-    /* an object that is a whole url, as proxies get, stands alone. */
+    /* full-URL objects, such as proxies, are standalone. */
     BOOL absolute = !_wcsnicmp(object, L"http://", 7) || !_wcsnicmp(object, L"https://", 8);
     LPCWSTR parts[] = {scheme, request->Host, port, object[0] == L'/' ? L"" : L"/", object};
     SIZE_T chars = 1;
@@ -614,7 +614,7 @@ static BOOL IsRequest(INET_OBJECT *object)
     return object && object->Type == INTERNET_HANDLE_TYPE_HTTP_REQUEST;
 }
 
-/* INTERNET_PROXY_INFO with its ansi strings after it, as windows' A and W functions both return it. */
+/* both A and W functions return INTERNET_PROXY_INFO followed by ANSI strings. */
 static BOOL QueryProxy(INET_OBJECT *object, LPVOID buffer, LPDWORD length)
 {
     DWORD type = INTERNET_OPEN_TYPE_DIRECT;
@@ -662,7 +662,7 @@ static BOOL QueryProxy(INET_OBJECT *object, LPVOID buffer, LPDWORD length)
     return ok;
 }
 
-/* the certificate of a secure request as INTERNET_CERTIFICATE_INFO with ansi strings, for A and W alike. */
+/* both A and W functions return INTERNET_CERTIFICATE_INFO with ANSI strings. */
 static BOOL QueryCertificate(INET_OBJECT *request, LPVOID buffer, LPDWORD length)
 {
     if (!request->Certificate)
@@ -851,7 +851,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetQueryOptionW(HINTERNET handle, DWORD option,
     } else if (option == INTERNET_OPTION_SECURITY_CERTIFICATE) {
         ok = QueryCertificateText(object, buffer, length);
     } else if (option == INTERNET_OPTION_DATAFILE_NAME) {
-        /* nothing is cached, so no response has a file. */
+        /* without a cache, responses have no backing file. */
         ok = InetFail(ERROR_INTERNET_ITEM_NOT_FOUND);
     } else {
         ok = InetFail(ERROR_INTERNET_INVALID_OPTION);
@@ -860,7 +860,6 @@ DECLSPEC_EXPORT BOOL WINAPI InternetQueryOptionW(HINTERNET handle, DWORD option,
     return ok;
 }
 
-/* replaces a string option of an object with a copy of the new value. */
 static BOOL SetString(PWSTR *field, LPCWSTR value, DWORD length)
 {
     PWSTR copy = InetDuplicateN(value ? value : L"", value ? length : 0);
@@ -874,7 +873,7 @@ static BOOL SetString(PWSTR *field, LPCWSTR value, DWORD length)
     return TRUE;
 }
 
-/* the length in characters of a wide string option, which may be terminated before its byte length. */
+/* measure wide option text, honoring terminators before the byte limit. */
 static DWORD StringLength(LPCWSTR value, DWORD bytes)
 {
     DWORD chars = 0;
@@ -922,7 +921,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetSetOptionW(HINTERNET handle, DWORD option, L
                option == INTERNET_OPTION_SUPPRESS_BEHAVIOR || option == INTERNET_OPTION_CODEPAGE ||
                option == INTERNET_OPTION_ENCODE_EXTRA || option == INTERNET_OPTION_REQUEST_PRIORITY ||
                option == INTERNET_OPTION_IDN || option == INTERNET_OPTION_COOKIES_3RD_PARTY) {
-        /* settings without an effect here: proxies are read for each request and nothing is cached. */
+        /* no effect: proxy settings are read per request and caching is absent. */
     } else if (option == INTERNET_OPTION_HANDLE_TYPE || option == INTERNET_OPTION_VERSION ||
                option == INTERNET_OPTION_URL || option == INTERNET_OPTION_CONNECTED_STATE ||
                option == INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT ||

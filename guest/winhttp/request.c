@@ -1,14 +1,11 @@
-/*
- * the http engine: connections and their pool, sending requests, reading responses and bodies, redirects,
- * decompression, and the worker thread of asynchronous requests.
- */
+/* HTTP connections, requests, responses, redirects, decompression and asynchronous workers. */
 #include "winhttp_private.h"
 #include "png/inflate.h"
 
 #define WH_IDLE_MAX 8
 #define WH_BUFFER 16384
 
-/* ------------------------------------------------------------------ sockets */
+/* sockets. */
 
 static DWORD SocketError(WH_CONN *conn)
 {
@@ -57,7 +54,6 @@ DWORD WhConnRecv(WH_CONN *conn, void *data, DWORD size, DWORD *got, int timeout)
     return ERROR_SUCCESS;
 }
 
-/* makes room at the end of the plaintext buffer. */
 static BOOL Reserve(WH_CONN *conn, DWORD room)
 {
     if (conn->Start == conn->End)
@@ -82,7 +78,7 @@ static BOOL Reserve(WH_CONN *conn, DWORD room)
     return TRUE;
 }
 
-/* reads more plaintext into the buffer; at the end of the stream Eof is set and nothing is added. */
+/* append plaintext; EOF sets Eof without adding data. */
 static DWORD Fill(WH_CONN *conn, int timeout)
 {
     if (conn->Eof)
@@ -101,7 +97,7 @@ static DWORD Fill(WH_CONN *conn, int timeout)
     return ERROR_SUCCESS;
 }
 
-/* the plaintext appended by tls after decrypting. */
+/* append plaintext decrypted by TLS. */
 BOOL WhConnAppend(WH_CONN *conn, const void *data, DWORD size)
 {
     if (!Reserve(conn, size))
@@ -116,7 +112,7 @@ static DWORD Buffered(WH_CONN *conn)
     return conn->End - conn->Start;
 }
 
-/* one line without its CRLF, at most limit bytes, into a heap string. */
+/* read up to limit bytes into a heap string, excluding CRLF. */
 static DWORD ReadLine(WH_CONN *conn, char **line, DWORD limit, int timeout, DWORD *total)
 {
     while (TRUE) {
@@ -157,7 +153,7 @@ void WhConnClose(WH_OBJECT *notify, WH_CONN *conn)
     WhFree(conn);
 }
 
-/* ------------------------------------------------------------------ the pool */
+/* the pool. */
 
 static WH_CONN *TakeIdle(WH_OBJECT *session, LPCWSTR host, INTERNET_PORT port, BOOL secure, BOOL proxy)
 {
@@ -207,7 +203,7 @@ void WhSessionCleanup(WH_OBJECT *session)
     }
 }
 
-/* the connection of a request goes back to the pool when its response ended cleanly, else it is closed. */
+/* pool connections after a clean response end; close others. */
 static void FinishConnection(WH_OBJECT *request)
 {
     EnterCriticalSection(&request->Lock);
@@ -230,7 +226,7 @@ void WhDropConnection(WH_OBJECT *request)
     WhConnClose(nullptr, conn);
 }
 
-/* ------------------------------------------------------------------ connecting */
+/* connecting. */
 
 static DWORD ConnectSocket(SOCKET s, const struct sockaddr *address, int length, int timeout)
 {
@@ -272,7 +268,6 @@ static void AddressText(const struct sockaddr *address, PWSTR text, DWORD capaci
         InetNtopW(AF_INET6, &((const struct sockaddr_in6 *)address)->sin6_addr, text, capacity);
 }
 
-/* a new connection to host:port with the progress notifications of winhttp. */
 static DWORD OpenConnection(WH_OBJECT *request, LPCWSTR host, INTERNET_PORT port, WH_CONN **result)
 {
     WCHAR name[INTERNET_MAX_HOST_NAME_LENGTH];
@@ -280,7 +275,7 @@ static DWORD OpenConnection(WH_OBJECT *request, LPCWSTR host, INTERNET_PORT port
     if (length >= ARRAYSIZE(name))
         return ERROR_WINHTTP_INVALID_URL;
     memcpy(name, host, (length + 1) * sizeof(WCHAR));
-    /* a bracketed ipv6 literal resolves without its brackets. */
+    /* strip brackets before resolving IPv6 literals. */
     if (name[0] == '[' && length > 2 && name[length - 1] == ']') {
         memmove(name, name + 1, (length - 2) * sizeof(WCHAR));
         name[length - 2] = 0;
@@ -337,7 +332,7 @@ static void SetConn(WH_OBJECT *request, WH_CONN *conn)
         shutdown(conn->Socket, SD_BOTH);
 }
 
-/* the http/1.1 tunnel of an https request through a proxy. */
+/* HTTP/1.1 tunnel for an HTTPS request through a proxy. */
 static DWORD Tunnel(WH_OBJECT *request, WH_CONN *conn)
 {
     char *host = WhWideToAnsi(request->Host, (DWORD)wcslen(request->Host), nullptr);
@@ -367,7 +362,7 @@ static DWORD Tunnel(WH_OBJECT *request, WH_CONN *conn)
     return ok ? ERROR_SUCCESS : ERROR_WINHTTP_CANNOT_CONNECT;
 }
 
-/* a connection for the request: a pooled one when possible, else a new one with tls when secure. */
+/* reuse a pooled connection when possible; otherwise connect and negotiate TLS if secure. */
 static DWORD Connect(WH_OBJECT *request, BOOL allow_reuse)
 {
     WH_OBJECT *session = WhSession(request);
@@ -405,7 +400,7 @@ static DWORD Connect(WH_OBJECT *request, BOOL allow_reuse)
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ sending */
+/* sending. */
 
 typedef struct {
     char *Data;
@@ -502,7 +497,6 @@ static BOOL VerbIs(WH_OBJECT *request, LPCWSTR verb)
     return !_wcsicmp(request->Verb, verb);
 }
 
-/* the request line and headers as winhttp puts them on the wire. */
 static DWORD BuildRequest(WH_OBJECT *request, BOOL via_proxy, WH_OUT *out)
 {
     WH_HEADERS *headers = &request->Request;
@@ -593,7 +587,7 @@ static DWORD Cancelled(WH_OBJECT *request, DWORD error)
     return request->Closed ? ERROR_WINHTTP_OPERATION_CANCELLED : error;
 }
 
-/* connects, sends the headers and the optional data; a pooled connection the server closed is retried once. */
+/* send headers and optional data, retrying once if the server closed a pooled connection. */
 static DWORD Transmit(WH_OBJECT *request)
 {
     for (DWORD attempt = 0; attempt < 2; attempt++) {
@@ -676,7 +670,7 @@ DWORD WhWrite(WH_OBJECT *request, const void *buffer, DWORD size, DWORD *written
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ responses */
+/* responses. */
 
 static BOOL ValueHas(const char *value, const char *token)
 {
@@ -696,7 +690,6 @@ static BOOL ValueHas(const char *value, const char *token)
     return FALSE;
 }
 
-/* the status line and headers of one response. */
 static DWORD ReadHead(WH_OBJECT *request)
 {
     WH_CONN *conn = request->Conn;
@@ -814,7 +807,7 @@ static void SetupBody(WH_OBJECT *request)
     }
 }
 
-/* the next chunk size, consuming the trailers after the last one. */
+/* read the next chunk size; consume trailers after the final chunk. */
 static DWORD NextChunk(WH_OBJECT *request)
 {
     WH_CONN *conn = request->Conn;
@@ -855,7 +848,7 @@ static DWORD NextChunk(WH_OBJECT *request)
     return ERROR_SUCCESS;
 }
 
-/* how much of the body the buffer holds now, filling it once when it holds none. */
+/* return buffered body size, reading once if empty. */
 static DWORD Available(WH_OBJECT *request, BOOL wait, DWORD *available)
 {
     *available = 0;
@@ -903,7 +896,6 @@ static DWORD Available(WH_OBJECT *request, BOOL wait, DWORD *available)
     return ERROR_SUCCESS;
 }
 
-/* copies body bytes out of the connection buffer. */
 static DWORD Consume(WH_OBJECT *request, BYTE *buffer, DWORD size)
 {
     if (request->BodyMode == WH_BODY_MEMORY) {
@@ -973,7 +965,7 @@ DWORD WhQueryAvailable(WH_OBJECT *request, DWORD *available)
     return Available(request, TRUE, available);
 }
 
-/* ------------------------------------------------------------------ decompression */
+/* decompression. */
 
 static void *InflateAlloc(void *context, size_t size)
 {
@@ -1063,14 +1055,14 @@ static DWORD Decompress(WH_OBJECT *request, BOOL gzip)
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ redirects */
+/* redirects. */
 
 static int SchemeDefault(BOOL secure)
 {
     return secure ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT;
 }
 
-/* the absolute url of a Location value, relative ones resolved against the request. */
+/* resolve relative Location values against the request URL. */
 static PWSTR ResolveLocation(WH_OBJECT *request, const char *location)
 {
     PWSTR value = WhAnsiToWide(location, (DWORD)strlen(location));
@@ -1162,7 +1154,7 @@ static DWORD ApplyRedirect(WH_OBJECT *request, LPCWSTR url)
     return ERROR_SUCCESS;
 }
 
-/* drains what is left of a body so the connection can carry the next request. */
+/* drain the body before reusing the connection. */
 static void Drain(WH_OBJECT *request)
 {
     BYTE scratch[4096];
@@ -1178,7 +1170,7 @@ static void Drain(WH_OBJECT *request)
     FinishConnection(request);
 }
 
-/* follows a redirect when the policy allows it, TRUE when a new request went out. */
+/* follow policy-permitted redirects; TRUE means a new request was sent. */
 static DWORD Redirect(WH_OBJECT *request, BOOL *followed)
 {
     *followed = FALSE;
@@ -1247,7 +1239,7 @@ DWORD WhReceiveResponse(WH_OBJECT *request)
         WhNotify(request, WINHTTP_CALLBACK_STATUS_RECEIVING_RESPONSE, nullptr, 0);
         ResetResponse(request);
         error = ReadHead(request);
-        /* a pooled connection the server had closed: the request goes out again once. */
+        /* retry once if the server closed the pooled connection. */
         if (error == ERROR_WINHTTP_CONNECTION_ERROR && request->ConnReused && !request->Closed &&
             request->TotalLength == request->OptionalLength) {
             request->ConnReused = FALSE;
@@ -1298,7 +1290,7 @@ DWORD WhReceiveResponse(WH_OBJECT *request)
     return ERROR_SUCCESS;
 }
 
-/* ------------------------------------------------------------------ the api */
+/* the api. */
 
 static WH_OBJECT *ReferenceRequest(HINTERNET handle)
 {
@@ -1350,7 +1342,6 @@ static DWORD RunOp(WH_OBJECT *request, DWORD op, DWORD *count)
     return ERROR_SUCCESS;
 }
 
-/* the state a completed operation leaves the request in. */
 static void AfterOp(WH_OBJECT *request, DWORD op, DWORD error)
 {
     if (op == WH_OP_SEND)
@@ -1414,7 +1405,7 @@ static DWORD WINAPI Worker(LPVOID parameter)
     return 0;
 }
 
-/* runs an operation: on the worker thread of an asynchronous session, on the caller's otherwise. */
+/* run on the session worker for asynchronous sessions, otherwise on the caller. */
 static BOOL Start(WH_OBJECT *request, DWORD op, LPVOID buffer, DWORD size, LPDWORD count)
 {
     if (!WhIsAsync(request)) {
@@ -1538,7 +1529,7 @@ BOOL WINAPI WinHttpSendRequest(HINTERNET handle, LPCWSTR headers, DWORD headers_
             request->OptionalLength = optional_length;
             request->TotalLength = total;
             request->Written = 0;
-            /* winhttp frames the chunks itself only with WINHTTP_FLAG_AUTOMATIC_CHUNKING. */
+            /* WinHTTP adds chunk framing only with WINHTTP_FLAG_AUTOMATIC_CHUNKING. */
             request->ChunkedUpload = !chunked && request->Flags & WINHTTP_FLAG_AUTOMATIC_CHUNKING && !total;
         }
     }
@@ -1621,7 +1612,7 @@ BOOL WINAPI WinHttpWriteData(HINTERNET handle, LPCVOID buffer, DWORD size, LPDWO
     return ok;
 }
 
-/* ------------------------------------------------------------------ authentication */
+/* authentication. */
 
 BOOL WINAPI WinHttpQueryAuthSchemes(HINTERNET handle, LPDWORD supported, LPDWORD first, LPDWORD target)
 {

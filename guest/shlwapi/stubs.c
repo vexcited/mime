@@ -1,11 +1,10 @@
 /*
- * the exports mime does not implement: zones, the shell's context menus and folders, property
- * stores and the browser. each logs once and fails the way a caller handles, with windows' x86
- * stack sizes.
+ * unimplemented exports: zones, shell context menus and folders, property stores and the browser. each logs once
+ * and fails in a way callers handle, with windows' x86 stack sizes.
  */
 #include "shlwapi_private.h"
 
-/* zones grant everything, there being no internet explorer to configure them. */
+/* zones grant everything since there is no internet explorer to configure them. */
 SHLWAPI_STUB(HRESULT, ZoneCheckUrlA, 4, S_OK)
 SHLWAPI_STUB(HRESULT, ZoneCheckUrlW, 4, S_OK)
 SHLWAPI_STUB(HRESULT, ZoneCheckUrlExA, 8, S_OK)
@@ -124,7 +123,7 @@ HRESULT WINAPI SHGetInverseCMAP(BYTE *map, ULONG size)
     return E_NOTIMPL;
 }
 
-/* a bind context asking to skip binding through a junction; there are none to skip. */
+/* there are no junctions to skip. */
 BOOL WINAPI SHSkipJunction(IBindCtx *context, const CLSID *clsid)
 {
     return FALSE;

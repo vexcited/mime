@@ -1,12 +1,9 @@
 /*
- * the test camera: cameras that exist only because MIME_FAKE_CAMERA says so, drawing a known picture so that tests can
- * check what reaches the guest. "1" makes one camera for as long as the machine runs. any other value is the path of
- * a file the camera is plugged in while it exists: each line of it names a camera, an empty file makes a camera
- * called "Mime Fake Camera". creating and removing the file is plugging and unplugging.
- *
- * the picture is eight colour bars under a strip that counts frames: 16 blocks of 8 by 8 pixels, a lit one (luma 235)
- * for each bit of the frame number from 0, an unlit one (luma 16) for the others. the bars are white, yellow, cyan,
- * green, magenta, red, blue and black at the usual studio levels. the brightness control moves the luma of the bars.
+ * synthetic cameras selected by MIME_FAKE_CAMERA. "1" keeps one camera present; otherwise the value names a file
+ * with one camera per line. an empty file creates "Mime Fake Camera". creating or deleting it connects or
+ * disconnects cameras. frames show eight studio-range color bars: white, yellow, cyan, green, magenta, red, blue and
+ * black. the first eight rows contain 16 blocks of 8 by 8 pixels encoding the frame number from zero, with luma 235
+ * for set bits and 16 otherwise. brightness adjusts the bars' luma.
  */
 #include "backend.h"
 #include "convert.h"
@@ -98,7 +95,7 @@ static void scan(CameraList *list)
     fclose(f);
 }
 
-/* the controls: brightness in the video processing amplifier and a zoom that does nothing. */
+/* brightness changes the picture; zoom is accepted without effect. */
 static int g_brightness[MAX_FAKE] = {128, 128, 128, 128};
 static int g_zoom[MAX_FAKE] = {100, 100, 100, 100};
 
@@ -135,7 +132,6 @@ static void control(const CameraSource *source, MimeCameraControl *c)
     }
 }
 
-/* ------------------------------------------------------------------ the picture */
 
 static const uint8_t g_bars[8][3] = {
     {235, 128, 128}, {210, 16, 146}, {170, 166, 16}, {145, 54, 34}, {106, 202, 222}, {81, 90, 240}, {41, 240, 110},
@@ -200,7 +196,7 @@ static void *produce(void *arg)
     uint64_t interval = 1000000000ull * fs->format.fps_den / fs->format.fps_num;
     uint64_t next = camera_now_ns() + interval;
     for (uint32_t n = 0;; n++) {
-        /* sleeps to the frame's time in slices, so that stopping is heard within a few milliseconds. */
+        /* sleeps in short slices until the frame deadline so stop is handled within a few milliseconds. */
         for (uint64_t now = camera_now_ns(); now < next && !__atomic_load_n(&fs->stop, __ATOMIC_ACQUIRE);
              now = camera_now_ns()) {
             uint64_t left = next - now;

@@ -13,7 +13,7 @@ ULONG64 *MiKernelRoot(void)
 void MiInitializeKernelTables(MimeBootInfo *boot)
 {
     g_kernel_root = (ULONG64 *)HalPhysmap(boot->ttbr1_phys);
-    /* tables built by the vmm are already in use; keep them reserved. */
+    /* the vmm's tables are already in use, keep them reserved. */
 }
 
 static inline ULONG table_index(ULONG_PTR va, int level)
@@ -38,7 +38,7 @@ ULONG64 *MiWalk(ULONG64 *root, ULONG_PTR va, BOOLEAN create, int level)
             KiDataSyncBarrier();
             *entry = pa | MM_PTE_VALID | MM_PTE_TABLE;
         } else if (!(*entry & MM_PTE_TABLE)) {
-            return nullptr; /* block mapping, cannot descend */
+            return nullptr; /* block mapping, cannot descend. */
         }
         table = (ULONG64 *)HalPhysmap(*entry & MM_PTE_ADDR_MASK);
     }
@@ -147,7 +147,7 @@ ULONG64 MiUnmapPage(ULONG64 *root, ULONG_PTR va, USHORT asid)
     return old;
 }
 
-/* break-before-make for a run of ptes: the valid ones are cleared and invalidated together, then all are stored. */
+/* break-before-make for a run of ptes: valid ones are cleared and invalidated together, then all are stored. */
 void MiRewritePtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, const ULONG64 *values, USHORT asid)
 {
     SIZE_T first = count, last = 0;
@@ -172,7 +172,7 @@ void MiRewritePtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, const ULONG64 *valu
         KiInstructionBarrier();
 }
 
-/* clears a run of ptes, handing back the old entries once the translations are gone. */
+/* old receives the previous entries once the translations are gone. */
 void MiClearPtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, USHORT asid, ULONG64 *old)
 {
     SIZE_T first = count, last = 0;
@@ -190,7 +190,6 @@ void MiClearPtes(ULONG64 *pte, ULONG_PTR va, SIZE_T count, USHORT asid, ULONG64 
         MiFlushTlbRange(va + (first << PAGE_SHIFT), last - first + 1, asid);
 }
 
-/* windows page protection to a user or kernel page descriptor. */
 ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user)
 {
     ULONG64 pte = MM_PTE_ATTR(0) | MM_PTE_SH_INNER | MM_PTE_AF;
@@ -216,7 +215,7 @@ ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user)
         pte |= MM_PTE_SW_COW;
     if (protect & PAGE_NOCACHE)
         pte = (pte & ~MM_PTE_ATTR(7)) | MM_PTE_ATTR(2);
-    /* the page and its data stay, out of reach of user mode. */
+    /* the page and its data stay, out of user mode's reach. */
     if (user && ((protect & 0xFF) == PAGE_NOACCESS || (protect & PAGE_GUARD))) {
         pte &= ~MM_PTE_AP_EL0;
         if (protect & PAGE_GUARD)
@@ -234,7 +233,7 @@ ULONG MiPteToProtect(ULONG64 pte)
     }
     BOOLEAN user = (pte & MM_PTE_AP_EL0) != 0;
     BOOLEAN ro = (pte & MM_PTE_AP_RO) != 0 && !(pte & MM_PTE_SW_WATCH);
-    /* a user page out of reach of user mode keeps its user execute permission. */
+    /* a user page hidden from user mode keeps its user execute permission. */
     BOOLEAN exec = (user || (pte & MM_PTE_NG)) ? !(pte & MM_PTE_UXN) : !(pte & MM_PTE_PXN);
     ULONG protect;
     if (pte & MM_PTE_SW_COW)
@@ -248,7 +247,7 @@ ULONG MiPteToProtect(ULONG64 pte)
     return protect;
 }
 
-/* gives a present page more access than it had. */
+/* only ever widens access on a present page. */
 void MiUpgradePte(ULONG64 *root, ULONG_PTR va, ULONG64 value, USHORT asid)
 {
     MiWritePte(root, va, value, asid);
@@ -265,7 +264,7 @@ BOOLEAN NTAPI MmIsAddressValid(PVOID va)
     return pte && (*pte & MM_PTE_VALID);
 }
 
-/* ttbr0 of the system process: user space is empty, the kernel lives in ttbr1. */
+/* the system process ttbr0: user space is empty, the kernel lives in ttbr1. */
 ULONG64 MiCreateSystemRoot(void)
 {
     return MmAllocatePage();

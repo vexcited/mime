@@ -43,24 +43,19 @@ typedef struct MimePngInfo {
     bool has_alpha; /* alpha channel or tRNS transparency. */
 } MimePngInfo;
 
-/* true when data starts with the png signature. */
 bool mime_png_is_png(const void *data, size_t size);
 
 /* reads the header and the chunks before the image data, without crc checks. */
 bool mime_png_info(const void *data, size_t size, MimePngInfo *info);
 
 /*
- * decodes into out, which holds height rows of out_stride bytes, out_stride
- * being at least width * 4. pixels are b, g, r, a bytes. alloc provides
- * temporary memory only.
+ * out holds height rows of out_stride bytes, at least width * 4. pixels are
+ * b, g, r, a bytes. alloc provides temporary memory only.
  */
 int mime_png_decode(const void *data, size_t size, const MimeAllocator *alloc, unsigned flags, uint8_t *out,
                     size_t out_stride);
 
-/*
- * same, allocating the output with alloc, rows of width * 4 bytes. release
- * *out with mime_free. info may be NULL.
- */
+/* allocates the output from alloc, rows of width * 4 bytes. release *out with mime_free. info may be NULL. */
 int mime_png_decode_alloc(const void *data, size_t size, const MimeAllocator *alloc, unsigned flags, uint8_t **out,
                           MimePngInfo *info);
 

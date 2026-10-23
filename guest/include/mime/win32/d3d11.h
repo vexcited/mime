@@ -1,8 +1,4 @@
-/*
- * direct3d 11: devices, contexts and the objects they create. the
- * interfaces and their method order are windows', as programs call them
- * through the vtables.
- */
+/* direct3d 11: devices, contexts and the objects they create, in windows' vtable order. */
 #ifndef MIME_WIN32_D3D11_H
 #define MIME_WIN32_D3D11_H
 
@@ -843,7 +839,7 @@ typedef struct D3D11_RASTERIZER_DESC2 {
     D3D11_CONSERVATIVE_RASTERIZATION_MODE ConservativeRaster;
 } D3D11_RASTERIZER_DESC2;
 
-/* filters encode min, mag and mip as bits 4, 2 and 0, anisotropy as 0x40 and the reduction above 7. */
+/* min, mag and mip are bits 4, 2 and 0, anisotropy is 0x40 and the reduction starts at bit 7. */
 typedef enum D3D11_FILTER {
     D3D11_FILTER_MIN_MAG_MIP_POINT = 0x00,
     D3D11_FILTER_MIN_MAG_POINT_MIP_LINEAR = 0x01,

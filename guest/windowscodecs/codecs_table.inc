@@ -1,6 +1,5 @@
-/* generated from the codec tables of windowscodecs.dll build 26300: names, types, extensions, signatures and pixel formats. */
+/* codec names, types, extensions, signatures and pixel formats. */
 
-/* the backends the tables name. */
 extern const WicDecoderOps wic_dec_bmp;
 extern const WicDecoderOps wic_dec_gif;
 extern const WicDecoderOps wic_dec_ico;

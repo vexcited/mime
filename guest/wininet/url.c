@@ -1,7 +1,6 @@
 /*
- * url strings: InternetCrackUrl splits a url into its components and InternetCanonicalizeUrl encodes it and
- * removes its dot segments. both work on code units, so the ansi forms see each byte as one unit and keep
- * offsets into the caller's string.
+ * URL parsing and canonicalization work on code units. ANSI bytes each occupy one unit, preserving offsets into the
+ * caller string.
  */
 #include "wininet_private.h"
 
@@ -55,7 +54,7 @@ static BOOL IsEscape(const URL_TEXT *url, DWORD i, DWORD end)
            HexValue(UnitAt(url, i + 2)) >= 0;
 }
 
-/* two slashes, backslashes being accepted for them as windows does. */
+/* accept backslashes as the two URL slashes, like Windows. */
 static BOOL IsSlashes(const URL_TEXT *url, DWORD at)
 {
     if (at + 2 > url->Length)
@@ -64,7 +63,7 @@ static BOOL IsSlashes(const URL_TEXT *url, DWORD at)
     return (a == L'/' || a == L'\\') && (b == L'/' || b == L'\\');
 }
 
-/* the length of a scheme ending with a colon at the start of the url, or 0. */
+/* return the initial scheme length through the colon, or 0. */
 static DWORD SchemeLength(const URL_TEXT *url)
 {
     DWORD i = 0;
@@ -113,7 +112,7 @@ static int SchemeIndex(const URL_TEXT *url, DWORD length)
     return -1;
 }
 
-/* ---------------------------------------------------------------- InternetCrackUrl */
+/* InternetCrackUrl. */
 
 typedef struct {
     DWORD Start;
@@ -197,7 +196,7 @@ static DWORD SplitUrl(const URL_TEXT *url, BOOL want_extra, URL_RANGE parts[PART
     return ERROR_SUCCESS;
 }
 
-/* fills one component: a pointer into the url when the caller gave none, else a copy into its buffer. */
+/* return a pointer when no buffer was supplied, otherwise copy the component. */
 static DWORD StoreComponent(const URL_TEXT *url, URL_RANGE range, void **pointer, DWORD *length, BOOL decode)
 {
     if (!*length)
@@ -285,7 +284,7 @@ DECLSPEC_EXPORT BOOL WINAPI InternetCrackUrlA(LPCSTR url, DWORD length, DWORD fl
     return CrackUrl(url, FALSE, length, flags, (URL_COMPONENTSW *)components);
 }
 
-/* ---------------------------------------------------------------- InternetCanonicalizeUrl */
+/* InternetCanonicalizeUrl. */
 
 typedef struct {
     WCHAR *Units;
@@ -315,8 +314,7 @@ static void PutEscaped(URL_OUTPUT *out, unsigned value)
     Put(out, (WCHAR)hex[value & 15]);
 }
 
-/* writes the unit at i with the encoding the flags ask for and returns the units used. wide urls escape
- * units above ascii as utf-8, ansi urls escape each byte. */
+/* encode unit i and return the units written. wide URLs escape non-ASCII units as UTF-8; ANSI URLs escape bytes. */
 static DWORD PutEncoded(URL_OUTPUT *out, const WCHAR *units, DWORD count, DWORD i, BOOL wide, DWORD flags)
 {
     WCHAR c = units[i];
@@ -348,7 +346,6 @@ static DWORD PutEncoded(URL_OUTPUT *out, const WCHAR *units, DWORD count, DWORD 
     return used;
 }
 
-/* encodes or decodes a run of units as the flags ask. */
 static void PutRun(URL_OUTPUT *out, const WCHAR *units, DWORD count, BOOL wide, DWORD flags)
 {
     for (DWORD i = 0; i < count;) {
@@ -365,7 +362,6 @@ static void PutRun(URL_OUTPUT *out, const WCHAR *units, DWORD count, BOOL wide, 
     }
 }
 
-/* the end of the next path segment of units starting at a slash or at the path start. */
 static DWORD SegmentEnd(const WCHAR *units, DWORD at, DWORD end)
 {
     DWORD i = at < end && units[at] == L'/' ? at + 1 : at;
@@ -382,7 +378,7 @@ static BOOL Matches(const WCHAR *units, DWORD at, DWORD end, const char *text)
     return TRUE;
 }
 
-/* removes the dot segments of a path in place, as in rfc 3986 section 5.2.4, and returns its new length. */
+/* remove dot segments in place under RFC 3986 section 5.2.4 and return the new length. */
 static DWORD RemoveDotSegments(WCHAR *units, DWORD length)
 {
     DWORD in = 0, out = 0;
@@ -420,7 +416,7 @@ static DWORD RemoveDotSegments(WCHAR *units, DWORD length)
 
 static DWORD Canonicalize(const URL_TEXT *url, DWORD flags, URL_OUTPUT *out)
 {
-    /* a widened working copy, ansi bytes becoming one unit each. */
+    /* widen ANSI bytes individually into working code units. */
     WCHAR *units = HeapAlloc(GetProcessHeap(), 0, ((SIZE_T)url->Length + 2) * sizeof(WCHAR));
     if (!units)
         return ERROR_NOT_ENOUGH_MEMORY;
@@ -435,7 +431,7 @@ static DWORD Canonicalize(const URL_TEXT *url, DWORD flags, URL_OUTPUT *out)
     DWORD rest = at;
     while (rest < url->Length && units[rest] != L'?' && units[rest] != L'#')
         rest++;
-    /* the authority and path, with backslashes as slashes and dot segments removed in hierarchical urls. */
+    /* normalize hierarchical URL authority and path: convert backslashes and remove dot segments. */
     DWORD length = rest;
     if (hierarchical) {
         for (DWORD i = at; i < rest; i++)

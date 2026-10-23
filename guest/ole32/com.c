@@ -1,19 +1,16 @@
 /*
- * the com runtime: apartments, the task allocator, guid strings and the
- * activation of in process servers registered under HKCR\CLSID.
- *
- * on windows ole32 forwards these to combase.dll; mime keeps them in
- * ole32 itself.
+ * the COM runtime: apartments, the task allocator, guid strings and activation of in process servers under HKCR\CLSID.
+ * windows ole32 forwards these to combase.dll, here they live in ole32.
  */
 #include "orpc.h"
 
 static DWORD g_tls = TLS_OUT_OF_INDEXES;
 static SRWLOCK g_lock = SRWLOCK_INIT;
-/* the threads in the multithreaded apartment, which other threads join implicitly. */
+/* threads in the multithreaded apartment, which other threads join implicitly. */
 static LONG g_mta_threads;
-/* the users of the multithreaded apartment that hold it open without a thread of theirs in it, CoIncrementMTAUsage. */
+/* holders of the multithreaded apartment with no thread in it, see CoIncrementMTAUsage. */
 static LONG g_mta_usage;
-/* the first single threaded apartment of the process. */
+/* the process's first single threaded apartment. */
 static DWORD g_main_sta;
 
 void OleProcessAttach(void)
@@ -146,7 +143,7 @@ WINOLEAPI HRESULT WINAPI CoGetApartmentType(APTTYPE *type, APTTYPEQUALIFIER *qua
     return CO_E_NOTINITIALIZED;
 }
 
-/* the usage count of the multithreaded apartment, for code that needs it to exist and has no thread to put in it. */
+/* keeps the multithreaded apartment alive for code that has no thread to put in it. */
 void OleMtaUsage(LONG delta)
 {
     InterlockedExchangeAdd(&g_mta_usage, delta);
@@ -163,7 +160,7 @@ WINOLEAPI DWORD WINAPI CoGetCurrentProcess(void)
     return t->ProcessId;
 }
 
-/* ------------------------------------------------------------------ the task allocator */
+/* ------------------------------------------------------------------ task allocator */
 
 WINOLEAPI void *WINAPI CoTaskMemAlloc(SIZE_T size)
 {
@@ -346,8 +343,8 @@ WINOLEAPI HRESULT WINAPI StringFromIID(REFIID iid, LPOLESTR *string)
 }
 
 /*
- * opens a key of the classes: the user's own registrations come first, as the merged view of HKCR gives them, then the
- * machine's. a program that installs for one user, as a browser does, registers its servers below HKCU.
+ * the user's registrations come before the machine's, as in the merged HKCR view. per user installs such as browsers
+ * register their servers below HKCU.
  */
 LSTATUS OleOpenClassesKey(LPCWSTR subkey, REGSAM access, HKEY *key)
 {
@@ -363,7 +360,7 @@ LSTATUS OleOpenClassesKey(LPCWSTR subkey, REGSAM access, HKEY *key)
     return RegOpenKeyExW(HKEY_CLASSES_ROOT, subkey, 0, access, key);
 }
 
-/* reads a string value of HKCR\subkey, expanding REG_EXPAND_SZ. */
+/* expands REG_EXPAND_SZ values. */
 static BOOL read_class_string(LPCWSTR subkey, LPCWSTR name, WCHAR *out, DWORD chars)
 {
     HKEY key;
@@ -466,7 +463,7 @@ WINOLEAPI HRESULT WINAPI CoCreateGuid(GUID *guid)
             return HRESULT_FROM_WIN32(GetLastError());
     }
     LONG status = create(guid);
-    /* RPC_S_UUID_LOCAL_ONLY still produced a valid uuid. */
+    /* RPC_S_UUID_LOCAL_ONLY still gives a valid uuid. */
     return status && status != 1824 ? HRESULT_FROM_WIN32(status) : S_OK;
 }
 
@@ -474,7 +471,7 @@ WINOLEAPI HRESULT WINAPI CoCreateGuid(GUID *guid)
 
 #define MAX_SERVERS 64
 
-/* the dlls loaded for activation, kept until CoFreeUnusedLibraries finds them idle. */
+/* dlls loaded for activation, kept until CoFreeUnusedLibraries finds them idle. */
 static HMODULE g_servers[MAX_SERVERS];
 
 static void remember_server(HMODULE module)
@@ -484,7 +481,7 @@ static void remember_server(HMODULE module)
     for (int i = 0; i < MAX_SERVERS; i++) {
         if (g_servers[i] == module) {
             ReleaseSRWLockExclusive(&g_lock);
-            /* drop the reference of this load, the cached one keeps it loaded. */
+            /* the cached load keeps it loaded. */
             FreeLibrary(module);
             return;
         }
@@ -535,9 +532,9 @@ typedef struct _CLASS_ENTRY {
     DWORD Context;
     DWORD Flags;
     DWORD Cookie;
-    /* a single use local server class already handed out. */
+    /* a single use local server class that was already handed out. */
     BOOL Used;
-    /* offered to other processes: a local server class waits for CoResumeClassObjects when it was registered suspended. */
+    /* offered to other processes. a suspended local server class waits for CoResumeClassObjects. */
     BOOL Local, Published;
 } CLASS_ENTRY;
 
@@ -605,7 +602,7 @@ WINOLEAPI HRESULT WINAPI CoRevokeClassObject(DWORD cookie)
     return S_OK;
 }
 
-/* the referenced object registered for the class in one of the contexts, or NULL. */
+/* returns a referenced object, or NULL. */
 static IUnknown *find_registered_class(REFCLSID clsid, DWORD context)
 {
     IUnknown *object = nullptr;
@@ -641,8 +638,8 @@ LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key
 }
 
 /*
- * the class a class converts to on its own: HKCR\CLSID\{clsid}\AutoConvertTo. A class without the key gets
- * itself back with REGDB_E_KEYMISSING, one that is not registered REGDB_E_CLASSNOTREG.
+ * reads HKCR\CLSID\{clsid}\AutoConvertTo. without the key the class itself comes back with REGDB_E_KEYMISSING, an
+ * unregistered class fails with REGDB_E_CLASSNOTREG.
  */
 WINOLEAPI HRESULT WINAPI OleGetAutoConvert(REFCLSID old_clsid, LPCLSID new_clsid)
 {
@@ -666,7 +663,7 @@ WINOLEAPI HRESULT WINAPI OleGetAutoConvert(REFCLSID old_clsid, LPCLSID new_clsid
     return S_OK;
 }
 
-/* sets the class a class converts to, or removes the key for CLSID_NULL. */
+/* CLSID_NULL removes the key. */
 WINOLEAPI HRESULT WINAPI OleSetAutoConvert(REFCLSID old_clsid, REFCLSID new_clsid)
 {
     if (!old_clsid || !new_clsid)
@@ -695,7 +692,7 @@ WINOLEAPI HRESULT WINAPI OleSetAutoConvert(REFCLSID old_clsid, REFCLSID new_clsi
     return hr;
 }
 
-/* the class named by HKCR\CLSID\{clsid}\TreatAs. */
+/* reads HKCR\CLSID\{clsid}\TreatAs. */
 static BOOL get_treat_as(REFCLSID clsid, CLSID *treat)
 {
     WCHAR subkey[64], value[64];
@@ -706,7 +703,7 @@ static BOOL get_treat_as(REFCLSID clsid, CLSID *treat)
            !IsEqualCLSID(treat, &CLSID_NULL);
 }
 
-/* the class that stands for another one, or the class itself with S_FALSE. */
+/* without a TreatAs class, returns the class itself with S_FALSE. */
 WINOLEAPI HRESULT WINAPI CoGetTreatAsClass(REFCLSID clsid, CLSID *treat)
 {
     if (!clsid || !treat)
@@ -777,7 +774,6 @@ WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *s
     return OrpcClassGet(clsid, riid, object);
 }
 
-/* the classes registered suspended are offered to other processes. */
 void OleLocalServersResume(void)
 {
     for (;;) {
@@ -842,8 +838,7 @@ WINOLEAPI HRESULT WINAPI CoCreateInstanceEx(REFCLSID clsid, IUnknown *outer, DWO
     return found == count ? S_OK : CO_S_NOTALLINTERFACES;
 }
 
-/* loads a library by its path, with the search of the loader for its dependents; the second argument asks that it is
-   freed with CoFreeUnusedLibraries, which a library loaded here is not (a guess that nothing relies on it). */
+/* auto_free is ignored: CoFreeUnusedLibraries never frees these, assuming nothing relies on it. */
 WINOLEAPI HINSTANCE WINAPI CoLoadLibrary(LPOLESTR file, BOOL auto_free)
 {
     if (!file) {

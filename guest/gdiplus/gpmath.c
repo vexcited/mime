@@ -1,6 +1,5 @@
 /*
- * powers and logarithms for the pieces of the library that raise a number to a real exponent. The guest has
- * no math library, so doubles are reduced to a small range and summed as series.
+ * log, exp and pow. the guest has no math library, so doubles are reduced to a small range and summed as series.
  */
 #include "gp_private.h"
 
@@ -57,9 +56,9 @@ double gp_pow(double x, double y)
 }
 
 /*
- * the first half of the sigma bell shape: how far a blend has come, in 1/65536, at the first 128 of 256 steps. the
- * shape is the rising half of a gaussian bell summed up, a gaussian one sixth wide centered in the middle, scaled to
- * run from 0 to 65536 over the 256 steps. the second half is the mirror image. the form of the curve is a guess.
+ * the rising half of the sigma bell blend: how far a blend has come, in 1/65536, at the first 128 of 256 steps. it is
+ * the running integral of a gaussian one sixth wide centered in the middle, scaled to 0..65536 over the 256 steps.
+ * the second half mirrors it. the exact curve is a guess.
  */
 static double bell_area(double upto, INT steps)
 {

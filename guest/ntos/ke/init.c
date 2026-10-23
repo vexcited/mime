@@ -135,7 +135,7 @@ static DECLSPEC_NORETURN void idle_loop(void)
     }
 }
 
-/* the secondary processors, each started on its idle thread's stack by the host. */
+/* the host starts each secondary processor on its idle thread's stack. */
 void KiStartProcessors(void)
 {
     ULONG count = HalBootInfo->cpu_count;
@@ -190,7 +190,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     HalInitialize(boot);
     KiBootStamp("hal");
     KiKernelLockPhys = HalPhysicalOf((const void *)KiKernelLock);
-    /* a hold of the lock over 100 microseconds is worth telling by what held it. */
+    /* lock holds over 100 microseconds are recorded with what held the lock. */
     KiLongHoldTicks = HalHnsToCounter(1000);
     if (boot->magic != MIME_BOOT_MAGIC || boot->version != MIME_ABI_VERSION)
         HalPanic("boot information mismatch between the vmm and the kernel");
@@ -257,7 +257,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     PETHREAD phase1;
     NTSTATUS status = PspCreateThread(PsInitialSystemProcess, TRUE, KiPhase1Initialization, nullptr, &phase1);
     if (!NT_SUCCESS(status))
-        KeBugCheckEx(0x00000032, status, 0, 0, 0); /* PHASE1_INITIALIZATION_FAILED */
+        KeBugCheckEx(0x00000032, status, 0, 0, 0); /* PHASE1_INITIALIZATION_FAILED. */
     KiStartThread(&phase1->Tcb);
     ObDereferenceObject(phase1);
     KiStartProcessors();
@@ -278,7 +278,7 @@ static void KiPhase1Initialization(PVOID context)
     NTSTATUS status = PspInitializeSystemDll();
     KiBootStamp("system dll");
     if (!NT_SUCCESS(status))
-        KeBugCheckEx(0x0000006B, status, 0, 0, 0); /* PROCESS1_INITIALIZATION_FAILED */
+        KeBugCheckEx(0x0000006B, status, 0, 0, 0); /* PROCESS1_INITIALIZATION_FAILED. */
 
     UNICODE_STRING win32k = RTL_CONSTANT_STRING(L"\\SystemRoot\\System32\\win32k.sys");
     PVOID base, entry;

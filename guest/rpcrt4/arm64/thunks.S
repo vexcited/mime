@@ -1,11 +1,11 @@
 /*
- * the thunks of proxies, as in the x64 file. The eight integer registers are saved right below the arguments the caller
- * put on the stack, so that the arguments are one frame, and the eight floating point ones next to them.
+ * proxy thunks, as in the x64 file. the eight integer registers are saved right below the caller's stack arguments so
+ * all arguments form one frame, and the eight floating point registers next to them.
  */
     .altmacro
     .text
 
-/* a thunk, and for the methods 3 to 32 a name that windows' proxy dlls call through combase, which forwards here. */
+/* methods 3 to 32 also get a named entry, which windows proxy dlls call through combase forwarding here. */
     .macro  stubless_thunk n
     .if \n >= 3 && \n <= 32
     .globl  ObjectStublessClient\n

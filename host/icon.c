@@ -13,7 +13,6 @@ static uint16_t u16(const uint8_t *p)
     return (uint16_t)(p[0] | p[1] << 8);
 }
 
-/* ------------------------------------------------------------------ png */
 
 static uint32_t g_crc_table[256];
 
@@ -118,9 +117,8 @@ bool mime_png_encode(const uint8_t *rgba, uint32_t width, uint32_t height, void 
     return true;
 }
 
-/* ------------------------------------------------------------------ ico */
 
-/* the picture of a bitmap in an icon: the pixels of the colors and the mask below them, upright, as rgba. */
+/* decodes an icon bitmap and its trailing mask into upright RGBA pixels. */
 static bool dib_to_rgba(const uint8_t *d, size_t size, uint32_t side_w, uint32_t side_h, uint8_t **rgba)
 {
     if (size < 40 || u32(d) < 40)
@@ -198,7 +196,7 @@ bool mime_ico_to_png(const void *ico, size_t size, void **png, size_t *png_size,
     unsigned count = u16(d + 4);
     if (size < 6 + (size_t)count * 16)
         return false;
-    /* the largest picture is tried first, then the smaller ones when it cannot be read. */
+    /* tries images from largest to smallest until one decodes. */
     bool tried[256] = {};
     for (unsigned round = 0; round < count && round < 256; round++) {
         int best = -1;

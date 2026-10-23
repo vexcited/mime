@@ -1,7 +1,7 @@
 /*
- * the standard picture: OleCreatePictureIndirect and OleLoadPictureEx make an object with IPicture, IPicture2, its
- * dispatch form and IPersistStream. The object keeps one image, the file it came from when it may be written back
- * as it was, and which handles it is to delete.
+ * the standard picture object made by OleCreatePictureIndirect and OleLoadPictureEx, with IPicture, IPicture2,
+ * IPictureDisp and IPersistStream. It holds one image, the original file bytes when they may be written back
+ * unchanged, and which handles it must delete.
  */
 #include "picture.h"
 
@@ -48,7 +48,7 @@ static void put_u32(BYTE *p, ULONG v)
     p[3] = (BYTE)(v >> 24);
 }
 
-/* a picture that was never given anything is as good as an empty one to the outside. */
+/* a picture never given anything looks empty from outside. */
 static SHORT kind_of(const PICTURE_OBJECT *object)
 {
     return object->Image.Kind == PIC_UNSET ? PICTYPE_NONE : object->Image.Kind;
@@ -81,7 +81,6 @@ static ULONG picture_release(PICTURE_OBJECT *object)
 
 /* ------------------------------------------------------------------ handles */
 
-/* the handle a picture of this kind is drawn with. */
 static HRESULT handle_of(const PICTURE_OBJECT *object, ULONG_PTR *handle)
 {
     *handle = 0;
@@ -95,7 +94,7 @@ static HRESULT handle_of(const PICTURE_OBJECT *object, ULONG_PTR *handle)
     }
 }
 
-/* a handle as 32 bits. S_FALSE tells that it does not fit, as a value that grows with zeros or with its sign. */
+/* S_FALSE when the handle does not survive truncation to 32 bits, by zero or sign extension. */
 static HRESULT narrow(ULONG_PTR handle, OLE_HANDLE *result)
 {
     *result = (OLE_HANDLE)handle;
@@ -168,7 +167,7 @@ static HRESULT get_palette_narrow(PICTURE_OBJECT *object, OLE_HANDLE *palette)
     return narrow(value, palette);
 }
 
-/* ------------------------------------------------------------------ the methods both interfaces share */
+/* ------------------------------------------------------------------ shared by IPicture and IPicture2 */
 
 static HRESULT picture_get_type(PICTURE_OBJECT *object, SHORT *type)
 {
@@ -248,7 +247,7 @@ static HRESULT picture_get_attributes(PICTURE_OBJECT *object, DWORD *attributes)
     }
 }
 
-/* the bytes the picture is written as: the file it came from when asked for and kept, else a fresh copy. */
+/* the original file when asked for and kept, else a freshly serialized copy. */
 static HRESULT picture_bytes(PICTURE_OBJECT *object, BOOL copy, const BYTE **bytes, ULONG *size, BYTE **owned)
 {
     *owned = nullptr;
@@ -583,7 +582,6 @@ static HRESULT disp_get(PICTURE_OBJECT *object, DISPID id, VARIANT *result)
     }
 }
 
-/* the whole number of a variant, when it is one. */
 static BOOL whole_number(const VARIANT *v, BOOL *negative, ULONGLONG *magnitude)
 {
     LONGLONG value;
@@ -624,7 +622,7 @@ static HRESULT disp_put_palette(PICTURE_OBJECT *object, DISPID id, const VARIANT
     return palette_set(object, palette);
 }
 
-/* an integer argument of Render: 32 bits, or 16 or 64 where the signature allows. */
+/* 32 bits, or 16 or 64 where the Render signature allows. */
 static BOOL render_integer(const VARIANT *v, BOOL allow_small, BOOL allow_wide, LONGLONG *value)
 {
     if (V_VT(v) == VT_I4) {
@@ -731,7 +729,7 @@ static HRESULT STDMETHODCALLTYPE ipersist_is_dirty(IPersistStream *This)
     return S_OK;
 }
 
-/* the picture takes what the stream holds in place of its own, and only when all of it was understood. */
+/* the current image is replaced only when the whole stream was understood. */
 static HRESULT STDMETHODCALLTYPE ipersist_load(IPersistStream *This, IStream *stream)
 {
     PICTURE_OBJECT *object = object_of_persist(This);
@@ -752,7 +750,7 @@ static HRESULT STDMETHODCALLTYPE ipersist_load(IPersistStream *This, IStream *st
     return S_OK;
 }
 
-/* what is written for the picture: the mark of the stream format, the length and the file. */
+/* writes the "lt" mark, the length, then the file. */
 static HRESULT STDMETHODCALLTYPE ipersist_save(IPersistStream *This, IStream *stream, BOOL clear_dirty)
 {
     PICTURE_OBJECT *object = object_of_persist(This);
@@ -830,7 +828,7 @@ static PICTURE_OBJECT *picture_new(BOOL keep)
     return object;
 }
 
-/* the object is handed out through the interface asked for, and the reference of its maker goes. */
+/* returns the requested interface and drops the creator's reference. */
 static HRESULT picture_hand_out(PICTURE_OBJECT *object, REFIID riid, void **result)
 {
     HRESULT hr = picture_query(object, riid, result);

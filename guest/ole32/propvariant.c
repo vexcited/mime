@@ -219,7 +219,7 @@ static SIZE_T vector_element_size(VARTYPE type)
     }
 }
 
-/* copies the elements of a vector whose array was already duplicated byte for byte. */
+/* the vector's array itself was already duplicated byte for byte. */
 static HRESULT copy_vector_items(VARTYPE type, PROPVARIANT *dest, const PROPVARIANT *source)
 {
     for (ULONG i = 0; i < source->caub.cElems; i++) {
@@ -344,7 +344,7 @@ WINOLEAPI HRESULT WINAPI PropVariantCopy(PROPVARIANT *dest, const PROPVARIANT *s
     memcpy(dest, source, sizeof(*dest));
     HRESULT hr = copy_value(dest, source);
     if (FAILED(hr)) {
-        /* free what the copy owns so far; borrowed pointers were replaced or cut off. */
+        /* free what the copy owns so far, borrowed pointers were replaced or cut off. */
         VARTYPE type = source->vt & VT_TYPEMASK;
         if (hr != DISP_E_BADVARTYPE && (source->vt & VT_VECTOR))
             PropVariantClear(dest);

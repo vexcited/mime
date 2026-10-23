@@ -1,10 +1,7 @@
-/*
- * the small exports of oleaut32 that are settings and tables: the version, the setting of how conversions read the
- * locale, and the names of months that some languages have in a second form.
- */
+/* small oleaut32 exports: the build version, the conversion locale setting and alternate month names. */
 #include "oleaut32_private.h"
 
-/* the user's overrides of the locale are not read by the conversions when this holds LOCALE_NOUSEROVERRIDE. */
+/* LOCALE_NOUSEROVERRIDE here makes conversions ignore the user's locale overrides. */
 ULONG g_process_nls_flags;
 
 WINOLEAUTAPI ULONG WINAPI OaBuildVersion(void)
@@ -12,7 +9,7 @@ WINOLEAUTAPI ULONG WINAPI OaBuildVersion(void)
     return 0x00321396;
 }
 
-/* the registry of type libraries is the machine's here, so there is nothing for the setting to change. */
+/* the type library registry is machine wide here, so this setting changes nothing. */
 static volatile LONG g_per_user_type_libraries;
 
 WINOLEAUTAPI void WINAPI OaEnablePerUserTLibRegistration(void)
@@ -20,13 +17,13 @@ WINOLEAUTAPI void WINAPI OaEnablePerUserTLibRegistration(void)
     InterlockedExchange(&g_per_user_type_libraries, 1);
 }
 
-/* nothing is kept for a thread that has to be given back. */
+/* no per-thread state to release. */
 WINOLEAUTAPI HRESULT WINAPI OACleanup(void)
 {
     return S_OK;
 }
 
-/* 0 and 1 read the locale with the user's changes, 2 without them, and 1 also keeps the user's locale in a cache. */
+/* 0 and 1 honor the user's locale overrides, 2 ignores them, and 1 also caches the user's locale. */
 static volatile LONG g_conversion_setting;
 
 WINOLEAUTAPI HRESULT WINAPI SetVarConversionLocaleSetting(DWORD setting)
@@ -46,7 +43,7 @@ WINOLEAUTAPI HRESULT WINAPI GetVarConversionLocaleSetting(DWORD *setting)
     return S_OK;
 }
 
-/* the names of the months in the form some languages use when a day goes before them. */
+/* month names in the form some languages use after a day number. */
 static LPOLESTR g_hijri[13] = {L"محرم",
                                L"صفر",
                                L"ربيع الاول",

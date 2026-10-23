@@ -1,19 +1,14 @@
 /*
- * schannel entry point and its own exports.
- *
- * the security support provider interface of schannel is forwarded to
- * secur32 by schannel.def. what remains are the lsa package entry points,
- * which only lsa calls and mime has no lsa to host, and the Ssl helpers.
- * the tls client lives in secur32 with the interface; the helpers that need
- * certificates or the session cache fail, while the ClientHello parsers,
- * the random bits and the constant answers are real.
+ * schannel's own exports. schannel.def forwards the sspi interface to secur32, which also holds the tls client. what is
+ * left are the lsa package entry points, which only lsa calls, and the Ssl helpers. helpers that need certificates or
+ * the session cache fail; the ClientHello parsers, random bits and constant answers are real.
  */
 #include <mime/win32/sspi.h>
 #include <mime/win32/winnls.h>
 
 #define SECPKG_INTERFACE_VERSION 0x00010000
 
-/* the certificate SslCrackCertificate returns, from schannel.h. */
+/* what SslCrackCertificate returns, as in schannel.h. */
 typedef struct _X509Certificate {
     DWORD Version;
     DWORD SerialNumber[4];
@@ -49,7 +44,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 
 /* ------------------------------------------------------------------ lsa package entry points */
 
-/* lsa loads schannel with this to get its two package tables; mime runs no lsa. */
+/* lsa calls this to get the two package tables; there is no lsa here. */
 __declspec(dllexport) NTSTATUS NTAPI SpLsaModeInitialize(ULONG lsa_version, PULONG package_version, PVOID *tables,
                                                          PULONG count)
 {
@@ -58,7 +53,7 @@ __declspec(dllexport) NTSTATUS NTAPI SpLsaModeInitialize(ULONG lsa_version, PULO
     return STATUS_NOT_SUPPORTED;
 }
 
-/* the user mode half that runs in the client process after lsa established a context. */
+/* the user mode half, run in the client process once lsa established a context. */
 __declspec(dllexport) NTSTATUS NTAPI SpUserModeInitialize(ULONG lsa_version, PULONG package_version, PVOID *tables,
                                                           PULONG count)
 {
@@ -70,10 +65,8 @@ __declspec(dllexport) NTSTATUS NTAPI SpUserModeInitialize(ULONG lsa_version, PUL
 /* ------------------------------------------------------------------ session cache */
 
 /*
- * SslEmptyCacheW asks the schannel package in lsa through LsaConnectUntrusted
- * and stores the nt status of a failure as the last error. without lsa the
- * connection fails the way it does there: the event lsa sets when it accepts
- * clients does not exist.
+ * SslEmptyCacheW reaches lsa through LsaConnectUntrusted and stores the failure status as the last error. without lsa
+ * the connection fails as it would there: the event lsa sets when it accepts clients does not exist.
  */
 __declspec(dllexport) BOOL WINAPI SslEmptyCacheW(LPWSTR target, DWORD flags)
 {
@@ -114,7 +107,7 @@ __declspec(dllexport) BOOL WINAPI SslEmptyCacheA(LPSTR target, DWORD flags)
 
 /* ------------------------------------------------------------------ certificates and keys */
 
-/* decoding a certificate needs crypt32's certificate parser, which schannel cannot use yet. */
+/* decoding needs crypt32's certificate parser, which schannel cannot use yet. */
 __declspec(dllexport) BOOL WINAPI SslCrackCertificate(PUCHAR certificate, DWORD size, DWORD flags,
                                                       PX509Certificate *result)
 {
@@ -122,7 +115,7 @@ __declspec(dllexport) BOOL WINAPI SslCrackCertificate(PUCHAR certificate, DWORD 
     return FALSE;
 }
 
-/* schannel allocates the certificate and its key with LocalAlloc. */
+/* the certificate and its key come from LocalAlloc. */
 __declspec(dllexport) void WINAPI SslFreeCertificate(PX509Certificate certificate)
 {
     if (certificate) {
@@ -131,7 +124,7 @@ __declspec(dllexport) void WINAPI SslFreeCertificate(PX509Certificate certificat
     }
 }
 
-/* schannel returns FALSE without doing anything. */
+/* windows returns FALSE without doing anything. */
 __declspec(dllexport) BOOL WINAPI SslLoadCertificate(PUCHAR certificate, DWORD size, BOOL unused)
 {
     return FALSE;
@@ -144,7 +137,7 @@ __declspec(dllexport) DWORD WINAPI SslGetMaximumKeySize(DWORD reserved)
 
 typedef BOOLEAN(WINAPI *RTL_GEN_RANDOM)(PVOID, ULONG);
 
-/* advapi32's generator, which reads the kernel's cng device, as schannel's comes from bcryptprimitives. */
+/* uses advapi32's generator, which reads the kernel's cng device. */
 __declspec(dllexport) void WINAPI SslGenerateRandomBits(PUCHAR data, LONG size)
 {
     static RTL_GEN_RANDOM gen_random;
@@ -156,7 +149,7 @@ __declspec(dllexport) void WINAPI SslGenerateRandomBits(PUCHAR data, LONG size)
     }
     if (gen_random && gen_random(data, (ULONG)size))
         return;
-    /* without it, a generator seeded from the performance counter, not fit for keys. */
+    /* fallback seeded from the performance counter, not fit for keys. */
     static ULONG seed;
     LARGE_INTEGER counter;
     NtQueryPerformanceCounter(&counter, nullptr);
@@ -166,13 +159,13 @@ __declspec(dllexport) void WINAPI SslGenerateRandomBits(PUCHAR data, LONG size)
     seed = s;
 }
 
-/* lsa calls this on its own context records; any other caller gets FALSE, as for an unknown package id. */
+/* only lsa's own context records are valid; anyone else gets FALSE, as for an unknown package id. */
 __declspec(dllexport) BOOLEAN WINAPI SslFreeCustomBuffer(PVOID context, PVOID package, PVOID buffer, BOOLEAN remove)
 {
     return FALSE;
 }
 
-/* the store is a serialized crypt32 store, which schannel cannot open yet. */
+/* a serialized crypt32 store, which schannel cannot open yet. */
 __declspec(dllexport) SECURITY_STATUS WINAPI SslDeserializeCertificateStore(CRYPT_DATA_BLOB store,
                                                                             const void **certificate)
 {
@@ -214,7 +207,7 @@ static bool take_vector(READER *r, DWORD width, READER *out)
     return take(r, n, nullptr);
 }
 
-/* the extension block of a ClientHello handshake message, false when malformed. */
+/* the extension block of a ClientHello message, false when malformed. */
 static bool hello_extensions(const BYTE *message, DWORD size, READER *extensions)
 {
     READER r = {message, size}, body, skip;
@@ -232,7 +225,7 @@ static bool hello_extensions(const BYTE *message, DWORD size, READER *extensions
     return take_vector(&body, 2, extensions);
 }
 
-/* the ClientHello message of the records, with the bytes still missing when it is cut short. */
+/* finds the ClientHello in the records, with the missing byte count when it is cut short. */
 static SECURITY_STATUS hello_message(const BYTE *data, DWORD size, DWORD options, const BYTE **message,
                                      DWORD *length, DWORD *missing)
 {
@@ -267,7 +260,7 @@ static bool next_extension(READER *extensions, WORD *type, READER *data)
     return take_vector(extensions, 2, data);
 }
 
-/* the host name of the server name extension of a ClientHello, NULL without one. */
+/* the server name extension's host name, NULL without one. */
 __declspec(dllexport) SECURITY_STATUS WINAPI SslGetServerIdentity(PBYTE hello, DWORD size, PBYTE *identity,
                                                                   PDWORD identity_size, DWORD flags)
 {
@@ -315,7 +308,7 @@ __declspec(dllexport) SECURITY_STATUS WINAPI SslGetServerIdentity(PBYTE hello, D
     return SEC_E_OK;
 }
 
-/* the extensions of the requested types in a ClientHello, pointing into it; absent ones stay empty. */
+/* the requested extensions, pointing into the hello; absent ones stay empty. */
 __declspec(dllexport) SECURITY_STATUS WINAPI SslGetExtensions(const BYTE *hello, DWORD size,
                                                               SCH_EXTENSION_DATA *wanted, BYTE count, DWORD *missing,
                                                               DWORD options)
@@ -353,7 +346,7 @@ __declspec(dllexport) SECURITY_STATUS WINAPI SslGetExtensions(const BYTE *hello,
 
 /* ------------------------------------------------------------------ SslCopyTlsExtensions */
 
-/* SCH_COPY_EXTS_DATA as schannel fills it: whether the extension came, its size, then the caller's buffer. */
+/* SCH_COPY_EXTS_DATA: whether the extension came, its size, then the caller's buffer. */
 typedef struct _SCH_COPY_EXTS_DATA {
     WORD ExtensionType;
     BYTE Found;
@@ -363,11 +356,11 @@ typedef struct _SCH_COPY_EXTS_DATA {
     PBYTE Buffer;
 } SCH_COPY_EXTS_DATA;
 
-/* schannel's defaults for MessageLimitServer and MessageLimitServerClientAuth. */
+/* the defaults of MessageLimitServer and MessageLimitServerClientAuth. */
 #define MESSAGE_LIMIT_SERVER 0x4000
 #define MESSAGE_LIMIT_SERVER_CLIENT_AUTH 0x8000
 
-/* reads a handshake message across the records that carry it, like schannel's TlsRecordParser. */
+/* reads a handshake message across the records that carry it. */
 typedef struct RECORDS {
     const BYTE *Data;
     DWORD Left;
@@ -402,7 +395,7 @@ static SECURITY_STATUS next_record(RECORDS *r)
     return SEC_E_OK;
 }
 
-/* size bytes of the message into out, or skipped without out. */
+/* reads size bytes into out, or skips them without out. */
 static SECURITY_STATUS read_field(RECORDS *r, BYTE *out, DWORD size)
 {
     while (size) {
@@ -439,7 +432,7 @@ static SECURITY_STATUS read_number(RECORDS *r, DWORD width, DWORD *value)
     return status;
 }
 
-/* the extension types schannel knows, which a ClientHello may carry once each; -1 for the others. */
+/* the extension types schannel knows, allowed once each in a ClientHello; -1 for the others. */
 static int known_extension(WORD type)
 {
     static const WORD known[] = {0,  1,  2,  3,  4,  5,  6,  10, 11, 13, 14, 16,     23,
@@ -491,7 +484,7 @@ static SECURITY_STATUS copy_extensions(RECORDS *r, SCH_COPY_EXTS_DATA *wanted, B
     return too_small ? SEC_E_BUFFER_TOO_SMALL : SEC_E_OK;
 }
 
-/* a vector with a length of width bytes, skipped; its size must lie in [low, high] and within left. */
+/* skips a vector with a width byte length, which must lie in [low, high] and within left. */
 static SECURITY_STATUS skip_vector(RECORDS *r, DWORD *left, DWORD width, DWORD low, DWORD high, bool even)
 {
     DWORD n;
@@ -507,7 +500,7 @@ static SECURITY_STATUS skip_vector(RECORDS *r, DWORD *left, DWORD width, DWORD l
     return read_field(r, nullptr, n);
 }
 
-/* a message other than a ClientHello has no extensions to copy; one that ends before its extensions neither. */
+/* a message other than a ClientHello, or one that ends before its extensions, has nothing to copy. */
 static SECURITY_STATUS copy_from_hello(RECORDS *r, SCH_COPY_EXTS_DATA *wanted, BYTE count, DWORD limit)
 {
     DWORD type, left, value;
@@ -520,7 +513,7 @@ static SECURITY_STATUS copy_from_hello(RECORDS *r, SCH_COPY_EXTS_DATA *wanted, B
         return status;
     if (limit && left > limit)
         return SEC_E_ILLEGAL_MESSAGE;
-    /* the version, below the dtls ones, and the random. */
+    /* the version, which must be below the dtls ones, and the random. */
     if (left < 2 + 32)
         return SEC_E_ILLEGAL_MESSAGE;
     if ((status = read_number(r, 2, &value)))
@@ -543,11 +536,7 @@ static SECURITY_STATUS copy_from_hello(RECORDS *r, SCH_COPY_EXTS_DATA *wanted, B
     return copy_extensions(r, wanted, count, value);
 }
 
-/*
- * copies the requested extensions of a ClientHello, which may span records,
- * into the caller's buffers. schannel runs this behind a servicing feature
- * switch, taken as enabled.
- */
+/* copies the requested extensions of a ClientHello, which may span records, into the caller's buffers. */
 __declspec(dllexport) SECURITY_STATUS WINAPI SslCopyTlsExtensions(const BYTE *hello, DWORD size,
                                                                   SCH_COPY_EXTS_DATA *wanted, BYTE count,
                                                                   DWORD *missing, DWORD options)
@@ -563,7 +552,7 @@ __declspec(dllexport) SECURITY_STATUS WINAPI SslCopyTlsExtensions(const BYTE *he
                     duplicate = true;
         }
         if (!duplicate) {
-            /* option 1 is a server that asks for a client certificate, which allows the larger limit. */
+            /* option 1 is a server asking for a client certificate, which allows the larger limit. */
             DWORD limit = MESSAGE_LIMIT_SERVER;
             if ((options & 1) && limit <= MESSAGE_LIMIT_SERVER_CLIENT_AUTH)
                 limit = MESSAGE_LIMIT_SERVER_CLIENT_AUTH;
@@ -575,7 +564,7 @@ __declspec(dllexport) SECURITY_STATUS WINAPI SslCopyTlsExtensions(const BYTE *he
     }
     if (!wanted)
         return status;
-    /* what was not found, or everything after a failure, comes back empty. */
+    /* extensions not found, or all of them after a failure, come back empty. */
     for (BYTE i = 0; i < count; i++) {
         if (wanted[i].Found && (!status || status == SEC_E_BUFFER_TOO_SMALL))
             continue;

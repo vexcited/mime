@@ -1,9 +1,7 @@
 /*
- * buffers and textures. a buffer is a range of a buffer block; dynamic
- * ones move to a new range when the program discards them while the gpu
- * may still read the old one, so mapping never waits. textures are images
- * in the general layout, except staging textures, which are their
- * subresources packed in mapped memory, as the cpu reads and writes them.
+ * buffers and textures. a buffer is a range of a buffer block. a discarded dynamic buffer moves to a new range
+ * while the gpu may still read the old one, so mapping never waits. textures are images in the general layout,
+ * except staging textures, whose subresources are packed in mapped memory for the cpu.
  */
 #include "d3d11_private.h"
 
@@ -12,14 +10,11 @@
 typedef struct D3dSpare {
     D3dAllocation alloc;
     UINT64 serial;
-    /* the descriptor of the whole range, kept with it. */
+    /* whole-range descriptor, travels with the range. */
     UINT cbv;
 } D3dSpare;
 
-/*
- * the renamed ranges of dynamic buffers, waiting for the gpu to be done with
- * them: a ring in the order they were given up, so in serial order.
- */
+/* old ranges of renamed dynamic buffers, waiting for the gpu: a ring in release order, so in serial order. */
 typedef struct D3dSpares {
     D3dSpare *list;
     UINT head, count, capacity;
@@ -93,13 +88,8 @@ void D3dResourceRelease(D3dResource *r)
 static D3dSpares *spares_of(D3dResource *r) { return (D3dSpares *)r->buf.spares; }
 
 /*
- * a fresh range for a discarded dynamic buffer: one the gpu is done with,
- * or a new one. the old range waits for what was recorded up to now.
- */
-/*
- * a dynamic constant buffer discarded: a new slice of the constant buffer
- * ring, its descriptor made long ago. buffers that already left the ring
- * for a range of their own keep renaming that way.
+ * a discarded dynamic constant buffer takes a new slice of the constant buffer ring, whose descriptors already
+ * exist. buffers that already moved to a range of their own keep using D3dBufferRename.
  */
 BOOL D3dBufferDiscardCb(D3dDevice *device, D3dResource *r, BOOL *retired)
 {
@@ -119,6 +109,7 @@ BOOL D3dBufferDiscardCb(D3dDevice *device, D3dResource *r, BOOL *retired)
     return TRUE;
 }
 
+/* takes a range the gpu is done with, or a new one. the old range waits for what was recorded up to now. */
 BOOL D3dBufferRename(D3dDevice *device, D3dResource *r)
 {
     D3dSpares *spares = spares_of(r);
@@ -128,7 +119,7 @@ BOOL D3dBufferRename(D3dDevice *device, D3dResource *r)
             return FALSE;
         r->buf.spares = spares;
     }
-    /* asking the gpu where it is costs a round trip: only before growing. */
+    /* asking the gpu for its progress costs a round trip, so only do it before growing. */
     BOOL reuse = spares->count && (spares->list[spares->head].serial <= device->completed ||
                                    spares->list[spares->head].serial <= D3dCompleted(device));
     D3dAllocation next;
@@ -186,7 +177,6 @@ static void free_spares(D3dResource *r)
     r->buf.spares = nullptr;
 }
 
-/* the uniform buffer descriptor of a range of the buffer's current bytes. */
 UINT D3dBufferCbv(D3dResource *r, UINT offset, UINT size)
 {
     if (offset >= r->buf.size)
@@ -197,7 +187,7 @@ UINT D3dBufferCbv(D3dResource *r, UINT offset, UINT size)
         return r->buf.cb_cbv;
     if (offset || D3D_MIN(size, whole) != whole)
         return D3dCbvIndex(r->child.device, r->buf.buffer, r->buf.offset + offset, size);
-    /* the whole range, the usual binding, has its own descriptor that renames carry along. */
+    /* the usual whole-range binding has its own descriptor, carried along by renames. */
     if (r->buf.cbv)
         return r->buf.cbv;
     D3dDevice *device = r->child.device;
@@ -589,7 +579,6 @@ static D3dResource *new_resource(D3dDevice *device, D3D11_RESOURCE_DIMENSION dim
     return r;
 }
 
-/* copies the program's bytes to device memory through the ring, in the init commands. */
 static BOOL upload_buffer(D3dDevice *device, VkBuffer buffer, VkDeviceSize offset, const void *data, UINT size)
 {
     D3dRingSlice slice;
@@ -636,8 +625,8 @@ HRESULT D3dCreateBuffer(D3dDevice *device, const D3D11_BUFFER_DESC *desc, const 
     r->buf.stride = desc->StructureByteStride;
     D3dMemoryKind kind = D3D_MEMORY_DEVICE;
     /*
-     * constant buffers alone live in mapped memory: UpdateSubresource then
-     * renames them as discards do, without stopping rendering for a copy.
+     * default constant buffers live in mapped memory too: UpdateSubresource renames them like a discard, so
+     * rendering never stops for a copy.
      */
     if (desc->Usage == D3D11_USAGE_DYNAMIC ||
         (desc->Usage == D3D11_USAGE_DEFAULT && desc->BindFlags == D3D11_BIND_CONSTANT_BUFFER))
@@ -666,7 +655,7 @@ HRESULT D3dCreateBuffer(D3dDevice *device, const D3D11_BUFFER_DESC *desc, const 
             return E_OUTOFMEMORY;
         }
     } else if (!r->buf.mapped) {
-        /* direct3d hands out zeroed buffers. */
+        /* direct3d buffers start zeroed. */
         VkCommandBuffer cmd = D3dInitCommands(device);
         device->vk.vkCmdFillBuffer(cmd, r->buf.buffer, r->buf.offset, size, 0);
         D3dInitDone(device);
@@ -674,7 +663,7 @@ HRESULT D3dCreateBuffer(D3dDevice *device, const D3D11_BUFFER_DESC *desc, const 
         memset(r->buf.mapped, 0, size);
     }
     if (r->buf.so_counter && data && data->pSysMem) {
-        /* nothing streamed out yet. */
+        /* zero the stream output counter. */
         VkCommandBuffer cmd = D3dInitCommands(device);
         device->vk.vkCmdFillBuffer(cmd, r->buf.buffer, r->buf.offset + r->buf.so_counter, 4, 0);
         D3dInitDone(device);
@@ -683,7 +672,6 @@ HRESULT D3dCreateBuffer(D3dDevice *device, const D3D11_BUFFER_DESC *desc, const 
     return S_OK;
 }
 
-/* the packed layout of a staging texture: each subresource's offset and pitches. */
 static BOOL layout_staging(D3dResource *r, VkDeviceSize *total)
 {
     UINT count = D3dSubresourceCount(r);
@@ -701,7 +689,7 @@ static BOOL layout_staging(D3dResource *r, VkDeviceSize *total)
         VkExtent3D e = D3dMipExtent(r, mip);
         UINT row = (e.width + f->block - 1) / f->block * f->block_bytes;
         UINT rows = (e.height + f->block - 1) / f->block;
-        /* a video picture holds its chroma plane, half as tall, after the luma plane. */
+        /* video formats store the half-height chroma plane after the luma plane. */
         if (f->flags & D3D_FORMAT_PLANAR)
             rows = rows * 3 / 2;
         offset = D3D_ALIGN(offset, align);
@@ -714,7 +702,6 @@ static BOOL layout_staging(D3dResource *r, VkDeviceSize *total)
     return TRUE;
 }
 
-/* the copy region of a subresource between its image and its packed bytes. */
 static VkBufferImageCopy staging_region(const D3dResource *r, UINT index, VkDeviceSize base)
 {
     UINT mip, layer;
@@ -731,12 +718,12 @@ static VkBufferImageCopy staging_region(const D3dResource *r, UINT index, VkDevi
     return c;
 }
 
-/* depth and stencil copy one aspect at a time; buffers hold the depth before the stencil. */
+/* depth and stencil copy one aspect at a time, the buffer holds depth before stencil. */
 void D3dImageCopyRegions(const D3dResource *r, UINT index, VkDeviceSize base, VkBufferImageCopy *regions,
                          UINT *count)
 {
     if (r->tex.fmt->flags & D3D_FORMAT_PLANAR) {
-        /* the luma plane, then the chroma plane whose texels are two samples, below it in the packed bytes. */
+        /* luma plane, then the chroma plane below it, each chroma texel holding two samples. */
         UINT mip, layer;
         D3dSubresourceDecompose(r, index, &mip, &layer);
         UINT row = r->tex.sub_row_pitch[index], sample = r->tex.fmt->block_bytes;
@@ -788,7 +775,7 @@ static HRESULT upload_texture(D3dDevice *device, D3dResource *r, const D3D11_SUB
             continue;
         }
         if (f->flags & D3D_FORMAT_PLANAR) {
-            /* the planes in one packed block, copied to the image a plane each. */
+            /* both planes go into one packed upload, then copy to the image one plane at a time. */
             D3dRingSlice packed;
             VkDeviceSize total = (VkDeviceSize)row * (rows + rows / 2);
             if (!D3dRingAlloc(device, total, 16, &packed))
@@ -956,7 +943,7 @@ static HRESULT create_texture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimens
         info.samples = samples;
         info.tiling = VK_IMAGE_TILING_OPTIMAL;
         info.usage = D3dImageUsage(bind, misc, usage);
-        /* the video processor reads these through shader views whatever the program bound. */
+        /* the video processor samples these whatever the program bound. */
         if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE2D && !(info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) &&
             ((f->flags & D3D_FORMAT_PLANAR) || (bind & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_DECODER)))) {
             VkFormatProperties fp;
@@ -974,7 +961,7 @@ static HRESULT create_texture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimens
             info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
         if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D && (bind & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS)))
             info.flags |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
-        /* a shared image is made as the first device made it, so the memory means the same to every device. */
+        /* shared images use the first device's creation parameters, so the memory means the same everywhere. */
         VkExternalMemoryImageCreateInfo external = {VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO, nullptr,
                                                     VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT};
         if (shared) {
@@ -1013,7 +1000,7 @@ static HRESULT create_texture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimens
                 D3dShareDescribe(r, &info, type_index, r->tex.alloc.size);
             }
         }
-        /* the general layout for good, and zeroed, as direct3d hands out textures. */
+        /* textures stay in the general layout and start zeroed, as in direct3d. */
         VkCommandBuffer cmd = D3dInitCommands(device);
         VkImageMemoryBarrier2 barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
         barrier.srcStageMask = VK_PIPELINE_STAGE_2_NONE;
@@ -1057,7 +1044,7 @@ HRESULT D3dCreateTexture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimension, 
     return create_texture(device, dimension, desc, data, nullptr, out);
 }
 
-/* a texture over the memory of a shared object: its description is the one the object was made with. */
+/* the description is the one the shared object was made with. */
 HRESULT D3dCreateTextureImported(D3dDevice *device, const D3D11_TEXTURE2D_DESC1 *desc, const D3dImport *import,
                                  D3dResource **out)
 {

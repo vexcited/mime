@@ -1,7 +1,6 @@
 /*
- * wsock32 forwards the Berkeley socket calls to ws2_32 and implements what Windows keeps in mswsock for it: AcceptEx and
- * TransmitFile through the extension functions of the provider, the protocol and service type enumerations, the name
- * space calls of winsock 1.1 and the unix remnants. See docs/ws2_32.md.
+ * Berkeley socket forwarding to ws2_32, provider extensions for AcceptEx and TransmitFile, Winsock 1.1 protocol and
+ * service queries, and legacy Unix entry points.
  */
 #include <mime/win32/ws2tcpip.h>
 #include <mime/win32/winsock2.h>
@@ -77,7 +76,7 @@ BOOL WSAAPI TransmitFile(SOCKET s, HANDLE file, DWORD count, DWORD per_send, LPO
     return ((TRANSMIT_FILE)transmit)(s, file, count, per_send, overlapped, buffers, flags);
 }
 
-/* a receive that tells a message cut short by the buffer with MSG_PARTIAL. */
+/* reports a truncated receive with MSG_PARTIAL. */
 int WSAAPI WSARecvEx(SOCKET s, char *buffer, int length, int *flags)
 {
     WSABUF wsabuf = {(ULONG)length, buffer};
@@ -133,7 +132,7 @@ ULONG WSAAPI inet_network(const char *text)
     return 0;
 }
 
-/* the text of the error with the caller's words before it, on the standard error output. */
+/* writes the caller's prefix and error text to standard error. */
 void WSAAPI s_perror(char *prefix, int error)
 {
     char message[512];
@@ -153,9 +152,8 @@ void WSAAPI s_perror(char *prefix, int error)
 }
 
 /*
- * a domain name out of a dns message: labels joined with dots, a dot inside a label escaped with a backslash, pointers
- * of the compression followed within the message. The bytes of the name in the message are returned, -1 for a name that
- * does not fit or runs outside of the message.
+ * expands DNS labels, following compression pointers within the message and escaping dots inside labels. returns the
+ * encoded length, or -1 if the name exceeds the message or output buffer.
  */
 int WSAAPI dn_expand(const unsigned char *message, const unsigned char *end, const unsigned char *source, char *name,
                      int size)
@@ -217,9 +215,8 @@ typedef struct {
 } PROTOCOL_INFOW;
 
 /*
- * the transports of the winsock catalog that are ipv4 and listed in protocols, as records with their names behind them.
- * A buffer that is too small is WSAENOBUFS with the size in length. The service flags are the catalog's, which share
- * their values with the ones of this interface for the first twelve.
+ * lists selected IPv4 transports from the Winsock catalog with names after the records. WSAENOBUFS reports required
+ * bytes in length. the first twelve service flag bits match this interface.
  */
 INT WSAAPI EnumProtocolsW(LPINT protocols, LPVOID buffer, LPDWORD length)
 {
@@ -296,9 +293,8 @@ static BOOL port_type(const GUID *type, USHORT *port, int *protocol)
 }
 
 /*
- * the type of a service is made from its port: 0x90000 or 0xA0000 for tcp or udp with the port in the low word and the
- * constant tail of the winsock service types. The entries a registry of service types and the table of well known
- * guids could add are not looked at.
+ * service types encode TCP or UDP as 0x90000 or 0xA0000 plus the port in the low word and the fixed Winsock GUID
+ * tail. registry types and well-known GUID tables are not consulted.
  */
 INT WSAAPI GetTypeByNameA(LPSTR name, LPGUID type)
 {
@@ -378,9 +374,8 @@ typedef struct {
 } CSADDR_INFO;
 
 /*
- * the ipv4 addresses of a host as socket addresses to connect to, one for each protocol asked for: tcp and udp when
- * none is, or the ones in the list. A service type of the port kind gives the port. The names of the aliases are not
- * given, the alias buffer is left empty.
+ * returns IPv4 socket addresses for each requested protocol, defaulting to TCP and UDP. port-based service types
+ * supply the port. aliases are not returned.
  */
 INT WSAAPI GetAddressByNameW(DWORD name_space, LPGUID type, LPWSTR name, LPINT protocols, DWORD resolution,
                              PVOID async_info, PVOID buffer, LPDWORD length, LPWSTR aliases, LPDWORD alias_length)
@@ -475,10 +470,7 @@ INT WSAAPI GetAddressByNameA(DWORD name_space, LPGUID type, LPSTR name, LPINT pr
     return n;
 }
 
-/*
- * no name space here keeps services or lets them be registered, so the calls check their arguments as the others do and
- * find no name space to ask.
- */
+/* validates arguments, then reports no namespace: none here stores or registers services. */
 INT WSAAPI GetServiceW(DWORD name_space, LPGUID type, LPWSTR name, DWORD properties, PVOID buffer, LPDWORD size,
                        PVOID async_info)
 {
@@ -520,14 +512,14 @@ INT WSAAPI SetServiceA(DWORD name_space, DWORD operation, DWORD flags, PVOID inf
     return SetServiceW(name_space, operation, flags, info, async_info, status);
 }
 
-/* the name spaces of mswsock's own are not reported, only the version of the interface. */
+/* reports only the interface version, omitting mswsock's built-in namespaces. */
 INT WSAAPI NPLoadNameSpaces(LPDWORD version, PVOID routines, LPDWORD length)
 {
     *version = 1;
     return 0;
 }
 
-/* there is no earlier winsock configuration to bring over. */
+/* there is no earlier Winsock configuration to bring over. */
 INT WSAAPI MigrateWinsockConfiguration(PVOID a, PVOID b, PVOID c)
 {
     return 0;

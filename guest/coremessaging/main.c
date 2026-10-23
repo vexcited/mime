@@ -1,8 +1,7 @@
 /*
- * CoreMessaging.dll: the dispatcher queues of Windows.System, the part programs reach through the plain exports. A
- * queue is a hidden window on the thread it belongs to, and TryEnqueue posts a message for it, so work runs where
- * the thread's own message loop dispatches it, as a dispatcher queue of a thread with a window does. A dedicated
- * queue has a thread of its own with that loop. Timers and the asynchronous shutdown are not offered.
+ * CoreMessaging.dll: the Windows.System dispatcher queues behind the plain exports. a queue is a hidden window on
+ * its thread and TryEnqueue posts it a message, so work runs from that thread's own message loop. a dedicated
+ * queue gets a thread of its own running that loop. timers and asynchronous shutdown are not offered.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
@@ -101,7 +100,7 @@ static HWND make_window(void)
     return CreateWindowExW(0, WINDOW_CLASS, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
 }
 
-/* the dedicated queue's thread: the window, then the loop that runs what is posted until the queue goes. */
+/* creates the window, then runs posted work until the queue goes away. */
 static DWORD WINAPI dedicated_thread(void *param)
 {
     QUEUE *queue = (QUEUE *)param;
@@ -161,7 +160,7 @@ static HRESULT STDMETHODCALLTYPE queue_try_enqueue(IDispatcherQueue *This, IDisp
 static HRESULT STDMETHODCALLTYPE queue_try_enqueue_priority(IDispatcherQueue *This, INT32 priority,
                                                             IDispatcherQueueHandler *callback, BOOLEAN *result)
 {
-    /* the priorities are low, normal and high, 0 to 2. */
+    /* low, normal and high. */
     if (priority < -1 || priority > 1) {
         if (result)
             *result = FALSE;
@@ -247,7 +246,7 @@ static QUEUE *queue_make(BOOL dedicated)
     return queue;
 }
 
-/* the order the checks go in is the one of CreateDispatcherQueueController of windows 11. */
+/* the checks run in the same order as on windows 11. */
 __declspec(dllexport) HRESULT WINAPI CreateDispatcherQueueController(DispatcherQueueOptions options, void **result)
 {
     if (!result)
@@ -274,7 +273,7 @@ __declspec(dllexport) HRESULT WINAPI CreateDispatcherQueueController(DispatcherQ
     return S_OK;
 }
 
-/* the queue of the calling thread is not tracked: none is the answer of a thread that has not made one. */
+/* the calling thread's queue is not tracked, so this answers as for a thread that made none. */
 __declspec(dllexport) HRESULT WINAPI GetDispatcherQueueForCurrentThread(void **result)
 {
     if (!result)

@@ -1,7 +1,4 @@
-/*
- * window properties: atom keyed handles attached to a window. string keys
- * are global atoms added by user32, like windows.
- */
+/* window properties use atom keys. user32 interns string keys as global atoms. */
 #include "win32k.h"
 
 static WND_PROP *find_prop(WND *w, ATOM atom)
@@ -26,7 +23,7 @@ HANDLE PropGetData(WND *w, ATOM atom)
     return p ? p->Data : nullptr;
 }
 
-/* the dwm attributes dwmapi stores as properties change how the host shows the window. */
+/* DWM properties stored by dwmapi affect the host window. */
 static void prop_changed(WND *w, ATOM atom)
 {
     if (atom == AtomFind(L"MimeDwmCorner") && WndIsTopLevel(w))

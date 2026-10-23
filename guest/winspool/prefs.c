@@ -1,7 +1,4 @@
-/*
- * the printing preferences: the paper, the orientation, the quality and the color of a printer, in a
- * dialog made from a template in memory.
- */
+/* printing preferences dialog built from an in-memory template. */
 #include "winspool_private.h"
 
 #define ID_PAPER 101

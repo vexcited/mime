@@ -1,16 +1,14 @@
 /*
- * the compiler from dxbc to spir-v.
+ * compiles dxbc to spir-v.
  *
- * registers are private vec4 variables of floats, other types reached by
- * bitcasts, as dxbc's registers have no type. inputs and outputs are
- * private arrays the entry point fills from the interface before the
- * shader's body runs and copies to the interface after it, so system
- * values, packing and relative indexing stay simple. the body is a
- * function of its own, ret returning from it; subroutines are functions.
+ * dxbc registers are untyped, so they become private float vec4 variables
+ * and other types go through bitcasts. inputs and outputs are private arrays
+ * the entry point fills before the body runs and copies out after it, which
+ * keeps system values, packing and relative indexing simple. the body is its
+ * own function and ret returns from it. subroutines are functions too.
  *
- * resources are reached through mime's heap: the stage's table gives the
- * heap index of each slot, and variables of every image type the shader
- * needs alias the heap's arrays.
+ * resources go through mime's heap: the stage's table gives each slot's heap
+ * index, and a variable per image type the shader needs aliases the heap.
  */
 #include "internal.h"
 #include "spvbuild.h"
@@ -25,7 +23,7 @@ typedef enum Kind { K_FLOAT, K_UINT, K_INT, K_KINDS } Kind;
 
 typedef struct Resource {
     int declared;
-    /* shader model 5.1: the registers and the space the range covers. */
+    /* shader model 5.1: the range's registers and space. */
     uint32_t lower, space;
     uint32_t dim;
     Kind kind;
@@ -42,7 +40,7 @@ typedef struct Flow {
     uint32_t cont;
     uint32_t header;
     uint32_t else_label;
-    /* switches: the label of each case in order, and where the next case is in the list. */
+    /* switches: case labels in order, and where the next case is in the list. */
     uint32_t *labels;
     uint32_t *values;
     uint32_t count;
@@ -55,7 +53,7 @@ enum { FLOW_IF, FLOW_LOOP, FLOW_SWITCH };
 
 typedef struct InputDecl {
     int declared;
-    /* the components read from the interface, and those the system value fills. */
+    /* components read from the interface, and those the system value fills. */
     uint8_t mask;
     uint8_t sv_mask;
     uint32_t sv;
@@ -81,24 +79,23 @@ typedef struct Compiler {
     const uint32_t *code;
     uint32_t code_count;
     const char *error;
-    /* the compact table: the position plus one of each entry the code reads. */
+    /* compact table position plus one of each entry the code reads. */
     uint16_t table_map[DXBC_TABLE_DWORDS];
 
-    /* types; those of doubles made at their first use, with their capability. */
+    /* double types are made at first use, with their capability. */
     uint32_t t_void, t_bool, t_f32, t_u32, t_i32;
     uint32_t t_f64, t_dvec2;
-    /* dcl_hs_maxtessfactor, the bits of a float; 0 without one. */
+    /* dcl_hs_maxtessfactor as float bits, 0 without one. */
     uint32_t max_tess_factor;
-    /* the clamp of the level of detail of the sample being compiled, for the clamped forms. */
+    /* lod clamp of the sample being compiled, for the clamped forms. */
     const DxbcOperand *min_lod;
-    /* a form that writes a residency status is being compiled: its read's status, 0 where all was mapped. */
+    /* residency status of the read being compiled, 0 when all was mapped. */
     int feedback;
     uint32_t feedback_status;
     uint32_t sample_positions;
     uint32_t t_vec[K_KINDS][5];
     uint32_t t_bvec[5];
 
-    /* registers. */
     uint32_t temps[MAX_TEMPS];
     uint32_t temp_count;
     uint32_t indexable[256];
@@ -114,11 +111,9 @@ typedef struct Compiler {
     uint32_t tgsm_size[256];
     uint32_t tgsm_stride[256];
 
-    /* the interface the entry point lists. */
     uint32_t interface[256];
     uint32_t interface_count;
 
-    /* the heap and the table. */
     uint32_t table;
     uint32_t cb_heap;
     uint32_t sampler_heap;
@@ -130,22 +125,21 @@ typedef struct Compiler {
     Resource srv[128];
     Resource uav[64];
     uint32_t sampler_mode[16];
-    /* shader model 5.1: the first register and the space of each constant buffer and sampler range. */
+    /* shader model 5.1: first register and space of each constant buffer and sampler range. */
     uint32_t cb_lower[32], cb_space[32];
     uint32_t sampler_lower[16], sampler_space[16];
     int sm51;
-    /* direct3d 12: the push constants, the static samplers and the records of the heap. */
+    /* direct3d 12: push constants, static samplers and heap records. */
     uint32_t push;
     uint32_t static_samplers;
     uint32_t records;
     uint32_t root_vec4_pointer, root_word_pointer;
 
-    /* built-in variables, made when first used: inputs and outputs apart. */
+    /* built-in variables made at first use, inputs and outputs apart. */
     uint32_t builtins[2][64];
 
-    /* functions. */
     uint32_t body;
-    /* subroutines: their label numbers, where their code starts, their functions. */
+    /* subroutines: label numbers, code starts and functions. */
     uint32_t label_number[MAX_LABELS];
     uint32_t label_at[MAX_LABELS];
     uint32_t label_fn[MAX_LABELS];
@@ -157,14 +151,14 @@ typedef struct Compiler {
     uint32_t global_flags;
     uint32_t thread_group[3];
 
-    /* geometry shaders: vertices per input primitive, the output topology and vertex count, instances, streams. */
+    /* geometry shaders: vertices per input primitive, output topology and vertex count, instances, streams. */
     uint32_t gs_primitive;
     uint32_t gs_vertices;
     uint32_t gs_topology;
     uint32_t gs_max_vertices;
     uint32_t gs_instances;
     uint32_t gs_streams;
-    /* stream output: an output variable for each captured declaration entry, and the stream rasterized. */
+    /* stream output: an output variable per captured declaration entry, and the rasterized stream. */
     struct Capture {
         uint32_t var, reg, stream;
         uint8_t first, count;
@@ -175,9 +169,8 @@ typedef struct Compiler {
     uint32_t raster_stream;
 
     /*
-     * hull and domain shaders: the phase being read, the control point
-     * counts, the tessellator's description, and the phases of a hull
-     * shader with where their code is.
+     * hull and domain shaders: the phase being read, control point counts,
+     * the tessellator description, and each hull phase with its code.
      */
     int phase;
     uint32_t cp_in, cp_out;
@@ -223,7 +216,7 @@ static uint32_t fconst(Compiler *c, float v)
     return spv_const(&c->b, c->t_f32, bits);
 }
 
-/* a vector of the kind with each component the same constant bits. */
+/* a constant vector with every component set to bits. */
 static uint32_t splat_const(Compiler *c, Kind k, uint32_t n, uint32_t bits)
 {
     uint32_t s = spv_const(&c->b, scalar_type(c, k), bits);
@@ -273,7 +266,7 @@ static void decorate1(Compiler *c, uint32_t id, uint32_t decoration, uint32_t va
     spv_decorate(&c->b, id, decoration, &value, 1);
 }
 
-/* the boolean of a d3d condition: a register component compared with zero. */
+/* d3d conditions test a register component against zero. */
 static uint32_t nonzero(Compiler *c, uint32_t value, uint32_t n)
 {
     return spv_op2(&c->b, SpvOpINotEqual, c->t_bvec[n], value, splat_const(c, K_UINT, n, 0));
@@ -287,7 +280,7 @@ static uint32_t bool_to_mask(Compiler *c, uint32_t value, uint32_t n)
 
 /* ------------------------------------------------------------------ the table and the heap */
 
-/* the table entry, a heap index, at its place in the shader's compact table. */
+/* reads a heap index from its slot in the shader's compact table. */
 static uint32_t table_entry(Compiler *c, uint32_t entry)
 {
     if (!c->table_map[entry]) {
@@ -300,7 +293,7 @@ static uint32_t table_entry(Compiler *c, uint32_t entry)
     return spv_load(&c->b, c->t_u32, ptr);
 }
 
-/* the heap's array of an image type: a variable aliasing the binding of its descriptor kind. */
+/* a heap array of an image type, aliasing the binding of its descriptor kind. */
 static uint32_t image_heap(Compiler *c, uint32_t image_type, uint32_t binding)
 {
     for (uint32_t i = 0; i < c->image_var_count; i++)
@@ -323,7 +316,6 @@ static uint32_t image_heap(Compiler *c, uint32_t image_type, uint32_t binding)
 
 static uint32_t sampled_kind_type(Compiler *c, Kind k) { return scalar_type(c, k); }
 
-/* the spir-v dimension, arrayness and multisampling of a resource dimension. */
 static void image_shape(uint32_t dim, uint32_t *spv_dim, uint32_t *arrayed, uint32_t *ms)
 {
     *arrayed = *ms = 0;
@@ -375,7 +367,6 @@ static void image_capabilities(Compiler *c, uint32_t spv_dim, uint32_t arrayed, 
         spv_capability(&c->b, SpvCapabilityImageMSArray);
 }
 
-/* the image type of a shader resource view slot, and the heap binding of its descriptors. */
 static uint32_t srv_image_type(Compiler *c, uint32_t slot, int depth, uint32_t *binding)
 {
     Resource *r = &c->srv[slot];
@@ -411,7 +402,6 @@ static uint32_t index_value(Compiler *c, const DxbcIndex *index);
 
 /* ------------------------------------------------------------------ the root signature */
 
-/* the binding of the root signature that covers a register of a space. */
 static const DxbcRootBinding *root_binding(Compiler *c, uint32_t type, uint32_t space, uint32_t reg)
 {
     const DxbcCompileOptions *o = c->options;
@@ -424,7 +414,7 @@ static const DxbcRootBinding *root_binding(Compiler *c, uint32_t type, uint32_t 
     return nullptr;
 }
 
-/* a dword of the push constants, the offset a uint value in bytes. */
+/* byte_offset is a uint value id. */
 static uint32_t push_word(Compiler *c, uint32_t byte_offset)
 {
     if (!c->push) {
@@ -443,7 +433,7 @@ static uint32_t push_word(Compiler *c, uint32_t byte_offset)
     return spv_load(&c->b, c->t_u32, ptr);
 }
 
-/* the register an operand names: its range's first register in shader model 5.0, the second index in 5.1. */
+/* shader model 5.0 names the range's first register, 5.1 puts the register in the second index. */
 static uint32_t operand_register(Compiler *c, const DxbcOperand *op, uint32_t lower)
 {
     if (!c->sm51)
@@ -451,10 +441,7 @@ static uint32_t operand_register(Compiler *c, const DxbcOperand *op, uint32_t lo
     return index_value(c, &op->index[1]);
 }
 
-/*
- * the heap index of a descriptor: the stage's table entry in direct3d 11,
- * the table's first index plus the register's place in it in direct3d 12.
- */
+/* direct3d 11 reads the stage's table entry, direct3d 12 adds the register's offset to the table's first index. */
 static uint32_t heap_index(Compiler *c, uint32_t type, uint32_t entry, uint32_t space, uint32_t lower,
                            const DxbcOperand *op)
 {
@@ -470,7 +457,7 @@ static uint32_t heap_index(Compiler *c, uint32_t type, uint32_t entry, uint32_t 
                    from_base);
 }
 
-/* the render targets' sample count: in the table for direct3d 11, known when compiled for direct3d 12. */
+/* render target sample count: in the table for direct3d 11, known at compile time for direct3d 12. */
 static uint32_t rasterizer_samples(Compiler *c)
 {
     if (c->options && c->options->root_signature)
@@ -478,7 +465,6 @@ static uint32_t rasterizer_samples(Compiler *c)
     return table_entry(c, DXBC_TABLE_SAMPLE_COUNT);
 }
 
-/* marks a value as differing between invocations, for an index of the heap of a binding. */
 static uint32_t nonuniform(Compiler *c, uint32_t id, uint32_t binding)
 {
     static const uint32_t capabilities[] = {
@@ -495,7 +481,6 @@ static uint32_t nonuniform(Compiler *c, uint32_t id, uint32_t binding)
     return id;
 }
 
-/* a pointer to the heap's descriptor at an index. */
 static uint32_t descriptor_pointer(Compiler *c, uint32_t image_type, uint32_t binding, uint32_t index)
 {
     uint32_t heap = image_heap(c, image_type, binding);
@@ -503,7 +488,7 @@ static uint32_t descriptor_pointer(Compiler *c, uint32_t image_type, uint32_t bi
     return spv_access(&c->b, ptr_type, heap, &index, 1);
 }
 
-/* the heap's descriptor for a resource operand, marked when its index is not uniform. */
+/* marked nonuniform when the operand's index is. */
 static uint32_t operand_descriptor(Compiler *c, const DxbcOperand *op, uint32_t type, uint32_t binding,
                                    uint32_t index)
 {
@@ -532,7 +517,7 @@ static uint32_t uav_pointer(Compiler *c, const DxbcOperand *op, uint32_t *type)
     return operand_descriptor(c, op, *type, binding, index);
 }
 
-/* a sampler of the heap, or of the root signature's static samplers. */
+/* from the heap or the root signature's static samplers. */
 static uint32_t load_sampler(Compiler *c, const DxbcOperand *op)
 {
     uint32_t type = spv_type_sampler(&c->b), slot = op->index[0].immediate & 15;
@@ -567,7 +552,7 @@ static uint32_t load_sampler(Compiler *c, const DxbcOperand *op)
     return nonuniform(c, spv_load(&c->b, type, ptr), DXBC_HEAP_SAMPLER);
 }
 
-/* a device address, a uvec2, as a pointer of the type into physical storage. */
+/* address is a uvec2. */
 static uint32_t address_pointer(Compiler *c, uint32_t address, uint32_t pointer_type)
 {
     spv_capability(&c->b, SpvCapabilityPhysicalStorageBufferAddresses);
@@ -575,14 +560,14 @@ static uint32_t address_pointer(Compiler *c, uint32_t address, uint32_t pointer_
     return spv_op1(&c->b, SpvOpBitcast, pointer_type, address);
 }
 
-/* the device address of a root descriptor, in the push constants. */
+/* root descriptor addresses live in the push constants. */
 static uint32_t root_address(Compiler *c, const DxbcRootBinding *b)
 {
     uint32_t parts[2] = {push_word(c, uconst(c, b->push_offset)), push_word(c, uconst(c, b->push_offset + 4))};
     return spv_op(&c->b, SpvOpCompositeConstruct, c->t_vec[K_UINT][2], parts, 2);
 }
 
-/* half of the record of a heap descriptor: address, size and stride, then the counter's address. */
+/* a heap descriptor record has two halves: address, size and stride, then the counter's address. */
 static uint32_t heap_record(Compiler *c, uint32_t index, uint32_t half)
 {
     uint32_t v4 = c->t_vec[K_UINT][4];
@@ -605,14 +590,13 @@ static uint32_t heap_record(Compiler *c, uint32_t index, uint32_t half)
                     spv_access(&c->b, spv_type_pointer(&c->b, SpvStorageClassStorageBuffer, v4), c->records, indices, 2));
 }
 
-/* two components of a uvec4 as a uvec2. */
 static uint32_t uvec2_of(Compiler *c, uint32_t v, uint32_t first)
 {
     uint32_t w[4] = {v, v, first, first + 1};
     return spv_op(&c->b, SpvOpVectorShuffle, c->t_vec[K_UINT][2], w, 4);
 }
 
-/* the type of a pointer to an array of what a root descriptor holds, vec4 for constants, words for the rest. */
+/* root descriptors hold vec4s for constants and words for the rest. */
 static uint32_t root_array_pointer(Compiler *c, uint32_t element, uint32_t stride)
 {
     uint32_t *cached = stride == 16 ? &c->root_vec4_pointer : &c->root_word_pointer;
@@ -627,7 +611,7 @@ static uint32_t root_array_pointer(Compiler *c, uint32_t element, uint32_t strid
     return *cached = spv_type_pointer(&c->b, SpvStorageClassPhysicalStorageBuffer, block);
 }
 
-/* a loaded vec4 of a constant buffer, the element a uint value: from the heap, a device address or push constants. */
+/* loads a constant buffer vec4 from the heap, a device address or the push constants. */
 static uint32_t cb_load(Compiler *c, uint32_t slot, uint32_t element, const DxbcOperand *op)
 {
     uint32_t v4 = c->t_vec[K_FLOAT][4];
@@ -644,7 +628,7 @@ static uint32_t cb_load(Compiler *c, uint32_t slot, uint32_t element, const Dxbc
                 parts[i] = push_word(c, spv_op2(&c->b, SpvOpIAdd, c->t_u32, base, uconst(c, 4 * i)));
             return spv_op1(&c->b, SpvOpBitcast, v4, spv_op(&c->b, SpvOpCompositeConstruct, c->t_vec[K_UINT][4], parts, 4));
         }
-        /* a table's views are read through their records, out of bounds reads giving zero. */
+        /* table views go through their records, and out of bounds reads give zero. */
         uint32_t address, in = 0;
         if (b->source == DXBC_SOURCE_ADDRESS) {
             address = root_address(c, b);
@@ -688,9 +672,9 @@ static uint32_t cb_load(Compiler *c, uint32_t slot, uint32_t element, const Dxbc
 }
 
 /*
- * a raw or structured view of direct3d 12, read and written through its
- * device address: a root descriptor's, unchecked, or a table's, whose
- * record gives the size in bytes and the counter's address.
+ * a direct3d 12 raw or structured view, accessed by device address. root
+ * descriptors are unchecked, a table view's record gives the size in bytes
+ * and the counter's address.
  */
 typedef struct RootBuffer {
     uint32_t address;
@@ -724,14 +708,12 @@ static int root_buffer(Compiler *c, const DxbcOperand *resource, RootBuffer *out
     return 1;
 }
 
-/* whether a word is inside a view with a record. */
 static uint32_t word_in_bounds(Compiler *c, const RootBuffer *rb, uint32_t word)
 {
     uint32_t words = spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, rb->size, uconst(c, 2));
     return spv_op2(&c->b, SpvOpULessThan, c->t_bool, word, words);
 }
 
-/* a pointer to a word of a buffer at a device address. */
 static uint32_t root_word_pointer(Compiler *c, uint32_t address, uint32_t word)
 {
     uint32_t ptr = address_pointer(c, address, root_array_pointer(c, c->t_u32, 4));
@@ -743,7 +725,7 @@ static uint32_t root_word_pointer(Compiler *c, uint32_t address, uint32_t word)
 
 static uint32_t load_scalar(Compiler *c, const DxbcOperand *op, uint32_t component, Kind k);
 
-/* the value of an index: its immediate plus its register, as a uint. */
+/* immediate plus relative register, as a uint. */
 static uint32_t index_value(Compiler *c, const DxbcIndex *index)
 {
     uint32_t imm = uconst(c, index->immediate);
@@ -753,7 +735,7 @@ static uint32_t index_value(Compiler *c, const DxbcIndex *index)
     return index->immediate ? spv_op2(&c->b, SpvOpIAdd, c->t_u32, rel, imm) : rel;
 }
 
-/* a pointer to the vec4 of floats an operand names, for registers kept in variables. */
+/* only for registers kept in variables. */
 static uint32_t register_pointer(Compiler *c, const DxbcOperand *op)
 {
     uint32_t vec4 = c->t_vec[K_FLOAT][4];
@@ -835,7 +817,7 @@ static uint32_t register_pointer(Compiler *c, const DxbcOperand *op)
 
 static uint32_t builtin(Compiler *c, uint32_t which, uint32_t storage, uint32_t type);
 
-/* the system value operands of compute and pixel shaders, as a uvec4 or float vec4. */
+/* compute and pixel shader system value operands, as a uvec4 or a float vec4. */
 static uint32_t system_operand(Compiler *c, const DxbcOperand *op, Kind *kind)
 {
     uint32_t uvec3 = c->t_vec[K_UINT][3], u4 = c->t_vec[K_UINT][4];
@@ -900,7 +882,7 @@ static uint32_t system_operand(Compiler *c, const DxbcOperand *op, Kind *kind)
     return spv_op(&c->b, SpvOpCompositeConstruct, u4, parts, 4);
 }
 
-/* the whole vec4 an operand reads, before its swizzle, as the kind it is stored in. */
+/* the whole vec4 before swizzling, in the kind it is stored as. */
 static uint32_t load_vec4(Compiler *c, const DxbcOperand *op, Kind *stored)
 {
     uint32_t vec4 = c->t_vec[K_FLOAT][4];
@@ -952,7 +934,6 @@ static uint32_t load_vec4(Compiler *c, const DxbcOperand *op, Kind *stored)
     }
 }
 
-/* applies a source modifier to a value of the kind. */
 static uint32_t modify(Compiler *c, uint32_t value, Kind k, uint32_t n, uint32_t modifier)
 {
     uint32_t type = vec_type(c, k, n);
@@ -974,11 +955,7 @@ static uint32_t modify(Compiler *c, uint32_t value, Kind k, uint32_t n, uint32_t
     return value;
 }
 
-/*
- * the components of a source operand that the destination mask writes,
- * swizzled, as n components of the kind asked: dxbc picks source
- * component swizzle[i] for destination component i.
- */
+/* destination component i reads source component swizzle[i], for the components the mask writes. */
 static uint32_t load(Compiler *c, const DxbcOperand *op, uint8_t mask, Kind k)
 {
     Kind stored;
@@ -1001,7 +978,7 @@ static uint32_t load(Compiler *c, const DxbcOperand *op, uint8_t mask, Kind k)
     return op->modifier ? modify(c, v, k, n, op->modifier) : v;
 }
 
-/* one component of an operand, that of swizzle position component. */
+/* component is a swizzle position. */
 static uint32_t load_scalar(Compiler *c, const DxbcOperand *op, uint32_t component, Kind k)
 {
     DxbcOperand copy = *op;
@@ -1009,7 +986,7 @@ static uint32_t load_scalar(Compiler *c, const DxbcOperand *op, uint32_t compone
     return load(c, &copy, 1, k);
 }
 
-/* the first n components of an operand, in swizzle order, as for addresses and coordinates. */
+/* the first n swizzled components, as addresses and coordinates use. */
 static uint32_t load_first(Compiler *c, const DxbcOperand *op, uint32_t n, Kind k)
 {
     return load(c, op, (uint8_t)((1 << n) - 1), k);
@@ -1018,10 +995,7 @@ static uint32_t load_first(Compiler *c, const DxbcOperand *op, uint32_t n, Kind 
 static void store_output_special(Compiler *c, const DxbcOperand *op, uint32_t value, Kind k);
 static uint32_t begin_conditional(Compiler *c, uint32_t cond, uint32_t *merge);
 
-/*
- * writes n components of the kind to the destination's mask, saturated if
- * the instruction says so.
- */
+/* applies the instruction's saturate. */
 static void store(Compiler *c, const DxbcInstruction *ins, const DxbcOperand *op, uint32_t value, Kind k)
 {
     if (op->type == OPERAND_NULL)
@@ -1053,7 +1027,7 @@ static void store(Compiler *c, const DxbcInstruction *ins, const DxbcOperand *op
     }
 }
 
-/* a value of n components spread to a destination mask from a full vec4 of results. */
+/* picks the components a destination mask writes out of a full vec4 result. */
 static uint32_t pick(Compiler *c, uint32_t vec4, Kind k, uint8_t mask, const uint8_t *swizzle)
 {
     uint32_t n = popcount(mask);
@@ -1093,7 +1067,6 @@ static uint32_t builtin(Compiler *c, uint32_t which, uint32_t storage, uint32_t 
     return var;
 }
 
-/* the system value of an input register, as uint bits or floats. */
 static uint32_t system_input(Compiler *c, uint32_t sv, Kind *kind)
 {
     *kind = K_UINT;
@@ -1157,7 +1130,7 @@ static uint32_t system_input(Compiler *c, uint32_t sv, Kind *kind)
     }
 }
 
-/* the signature element of a register's component, for its component type. */
+/* the signature element covering a register's mask, used for its component type. */
 static const DxbcSignatureElement *signature_element(const DxbcSignature *sig, uint32_t reg, uint8_t mask)
 {
     for (uint32_t i = 0; i < sig->count; i++)
@@ -1168,7 +1141,7 @@ static const DxbcSignatureElement *signature_element(const DxbcSignature *sig, u
 
 static Kind component_kind(uint32_t type) { return type == 1 ? K_UINT : type == 2 ? K_INT : K_FLOAT; }
 
-/* the input variables of the declared registers, read into the private array. */
+/* copies the declared input registers into the private array. */
 static void load_inputs(Compiler *c)
 {
     uint32_t v4 = c->t_vec[K_FLOAT][4];
@@ -1179,7 +1152,7 @@ static void load_inputs(Compiler *c)
         if (!d->declared)
             continue;
         uint8_t plain = d->mask;
-        /* system values fill their components; a register may also hold plain ones. */
+        /* system values fill their components, and a register may also hold plain ones. */
         if (d->sv != SV_UNDEFINED) {
             Kind kind;
             uint32_t value = system_input(c, d->sv, &kind);
@@ -1200,7 +1173,7 @@ static void load_inputs(Compiler *c)
         }
         if (!plain)
             continue;
-        /* the vertex shader's inputs take the type of their attribute's format. */
+        /* vertex shader inputs take their attribute format's type. */
         Kind kind = K_FLOAT;
         if (c->program == DXBC_VERTEX) {
             const DxbcSignatureElement *e = signature_element(&c->info->inputs, reg, plain);
@@ -1254,7 +1227,7 @@ static void load_inputs(Compiler *c)
     }
 }
 
-/* the clip or cull distances of the inputs, their count and a register's first one, in signature order. */
+/* counts the input clip or cull distances and finds a register's first one, in signature order. */
 static uint32_t input_distances(Compiler *c, uint32_t sv, uint32_t reg, uint32_t *base)
 {
     uint32_t n = 0;
@@ -1271,9 +1244,9 @@ static uint32_t input_distances(Compiler *c, uint32_t sv, uint32_t reg, uint32_t
 }
 
 /*
- * a system value each vertex brings: its clip or cull distances, or the
- * point size, from the built ins of the stage before. the others, such
- * as the layer, read as zeros, which vulkan does not pass between stages.
+ * per vertex system values: clip or cull distances, or the point size, come
+ * from the previous stage's built-ins. the rest, such as the layer, read as
+ * zero since vulkan does not pass them between stages.
  */
 static void load_vertex_system_value(Compiler *c, InputDecl *d, uint32_t reg, uint32_t vertices)
 {
@@ -1308,10 +1281,7 @@ static void load_vertex_system_value(Compiler *c, InputDecl *d, uint32_t reg, ui
     }
 }
 
-/*
- * the inputs of geometry, hull and domain shaders: an array per register,
- * a vec4 per vertex of the primitive or control point of the patch.
- */
+/* geometry, hull and domain inputs: an array per register, a vec4 per vertex or control point. */
 static void load_vertex_inputs(Compiler *c, uint32_t vertices)
 {
     uint32_t v4 = c->t_vec[K_FLOAT][4];
@@ -1354,9 +1324,8 @@ static void load_vertex_inputs(Compiler *c, uint32_t vertices)
 }
 
 /*
- * the system value a declaration names. instructions name each edge and
- * inside factor apart, 11 to 22, where signatures and SV_ name kinds of
- * factors, 11 to 16.
+ * instructions number each edge and inside factor apart, 11 to 22, where
+ * signatures and SV_ name kinds of factors, 11 to 16.
  */
 static uint32_t token_sv(uint32_t name)
 {
@@ -1372,7 +1341,7 @@ static uint32_t token_sv(uint32_t name)
                       : name == 21 ? SV_FINAL_LINE_DETAIL_TESSFACTOR : SV_FINAL_LINE_DENSITY_TESSFACTOR;
 }
 
-/* the tessellation factor a patch constant system value is, as the index of the outer or inner level. */
+/* the outer or inner level index of a tessellation factor system value. */
 static int tess_factor(Compiler *c, uint32_t sv, uint32_t reg, uint8_t mask, int *inner)
 {
     const DxbcSignatureElement *e = signature_element(&c->info->patch_constants, reg, mask);
@@ -1406,7 +1375,7 @@ static uint32_t tess_level(Compiler *c, int inner, uint32_t storage)
     return var;
 }
 
-/* the patch constants of a hull shader: tessellation factors and patch outputs. */
+/* writes the hull shader's tessellation factors and patch outputs. */
 static void store_patch_constants(Compiler *c)
 {
     uint32_t v4 = c->t_vec[K_FLOAT][4];
@@ -1419,7 +1388,7 @@ static void store_patch_constants(Compiler *c)
         uint32_t index = uconst(c, reg);
         uint32_t value = spv_load(&c->b, v4, spv_access(&c->b, vptr, c->patch_regs, &index, 1));
         if (d->sv_mask) {
-            /* each component of the register is a factor of its own, as the signature numbers them. */
+            /* each register component is its own factor, as the signature numbers them. */
             for (uint32_t i = 0; i < 4; i++) {
                 if (!(d->sv_mask & (1 << i)))
                     continue;
@@ -1449,7 +1418,7 @@ static void store_patch_constants(Compiler *c)
     }
 }
 
-/* the patch constants a domain shader reads: patch inputs and the tessellation factors. */
+/* reads the domain shader's patch inputs and tessellation factors. */
 static void load_patch_constants(Compiler *c)
 {
     uint32_t v4 = c->t_vec[K_FLOAT][4];
@@ -1484,10 +1453,10 @@ static void load_patch_constants(Compiler *c)
 }
 
 /*
- * the hull shader: each invocation runs the control point phase for its
- * control point, or copies its input through without one; after a
- * barrier the first runs the fork and join phases, each instance in turn,
- * and writes the patch constants.
+ * each hull invocation runs the control point phase for its control point,
+ * or copies its input through when there is none. after a barrier the first
+ * invocation runs every fork and join phase instance in turn and writes the
+ * patch constants.
  */
 static void hull_main(Compiler *c, uint32_t cp_fn)
 {
@@ -1530,7 +1499,7 @@ static void hull_main(Compiler *c, uint32_t cp_fn)
     spv_label(b, merge);
 }
 
-/* the output control points of a hull shader: an array per register, a vec4 per control point. */
+/* an array per register, a vec4 per control point. */
 static void make_control_point_outputs(Compiler *c)
 {
     uint32_t array = spv_type_array(&c->b, c->t_vec[K_FLOAT][4], c->cp_out ? c->cp_out : 1);
@@ -1544,7 +1513,7 @@ static void make_control_point_outputs(Compiler *c)
     }
 }
 
-/* the clip or cull distance array of the outputs, its size from the signature. */
+/* the size of the output clip or cull distance array, from the signature. */
 static uint32_t distance_count(Compiler *c, uint32_t sv)
 {
     uint32_t n = 0;
@@ -1554,7 +1523,7 @@ static uint32_t distance_count(Compiler *c, uint32_t sv)
     return n;
 }
 
-/* the first distance index of a register's components, in signature order. */
+/* a register's first distance index, in signature order. */
 static uint32_t distance_base(Compiler *c, uint32_t sv, uint32_t reg)
 {
     uint32_t n = 0;
@@ -1569,7 +1538,6 @@ static uint32_t distance_base(Compiler *c, uint32_t sv, uint32_t reg)
     return n;
 }
 
-/* copies the private outputs to the interface. */
 static void store_outputs(Compiler *c)
 {
     uint32_t v4 = c->t_vec[K_FLOAT][4];
@@ -1660,9 +1628,9 @@ static int same_name(const char *a, const char *b)
 }
 
 /*
- * the output variables stream output captures: one per declaration entry,
- * past the registers, with its buffer, the buffer's stride and its offset
- * there. entries without a name are gaps in their buffer.
+ * stream output gets one output variable per declaration entry, after the
+ * registers, with its buffer, stride and offset. unnamed entries are gaps
+ * in their buffer.
  */
 static void declare_captures(Compiler *c)
 {
@@ -1673,7 +1641,7 @@ static void declare_captures(Compiler *c)
     c->captures = mime_alloc(c->alloc, o->so_count * sizeof(*c->captures));
     if (!c->captures)
         return;
-    /* past the registers that have locations: system values are built ins and take none. */
+    /* after the registers with locations. system values are built-ins and take none. */
     uint32_t location = 0;
     for (uint32_t reg = 0; reg < c->output_count; reg++)
         if (c->output_decl[reg].declared && c->output_decl[reg].sv == SV_UNDEFINED)
@@ -1725,7 +1693,7 @@ static void declare_captures(Compiler *c)
     }
 }
 
-/* the captured components of the outputs, before an emit to the stream. */
+/* runs before each emit to the stream. */
 static void store_captures(Compiler *c, uint32_t stream)
 {
     if (!c->captures_declared)
@@ -1776,7 +1744,7 @@ static Kind return_kind(uint32_t token)
     }
 }
 
-/* reads the declarations, before any code is made, so registers and resources are known. */
+/* reads the declarations first so registers and resources are known before any code is made. */
 static int prepass(Compiler *c)
 {
     DxbcReader r = {c->code, c->code_count, 0};
@@ -1789,7 +1757,7 @@ static int prepass(Compiler *c)
         case OP_DCL_TEMPS:
             if (!ins.extra_count || x[0] > MAX_TEMPS)
                 return fail(c, "too many temporaries");
-            /* each hull shader phase declares its own: they share the largest set. */
+            /* each hull shader phase declares its own temps, and they share the largest set. */
             if (x[0] > c->temp_count)
                 c->temp_count = x[0];
             break;
@@ -1879,7 +1847,7 @@ static int prepass(Compiler *c)
         case OP_DCL_INPUT_PS_SIV: {
             if (op->type != OPERAND_INPUT && op->type != OPERAND_INPUT_CONTROL_POINT &&
                 op->type != OPERAND_INPUT_PATCH_CONSTANT) {
-                /* system value operands, read where they are used. */
+                /* system value operands are read where they are used. */
                 break;
             }
             uint32_t reg = op->index[op->index_count ? op->index_count - 1 : 0].immediate;
@@ -2022,7 +1990,7 @@ static int prepass(Compiler *c)
         case OP_HS_FORK_PHASE:
         case OP_HS_JOIN_PHASE: {
             uint32_t here = (uint32_t)(ins.words - c->code);
-            /* the phase before ends here. */
+            /* this ends the previous phase. */
             if (c->phase == PHASE_CONTROL_POINT)
                 c->cp_end = here;
             else if ((c->phase == PHASE_FORK || c->phase == PHASE_JOIN) && c->phase_count)
@@ -2082,7 +2050,7 @@ static int prepass(Compiler *c)
     }
     if (res < 0)
         return fail(c, "malformed bytecode");
-    /* a hull shader without a control point phase passes its inputs through: the registers its outputs name. */
+    /* without a control point phase, a hull shader passes its inputs through to the registers its outputs name. */
     if (c->program == DXBC_HULL && !c->has_cp_phase)
         for (uint32_t i = 0; i < c->info->outputs.count; i++) {
             uint32_t reg = c->info->outputs.elements[i].reg;
@@ -2096,7 +2064,6 @@ static int prepass(Compiler *c)
     return 0;
 }
 
-/* the globals of the registers the declarations named. */
 static void make_registers(Compiler *c)
 {
     uint32_t v4 = c->t_vec[K_FLOAT][4];
@@ -2147,7 +2114,6 @@ static uint32_t binary(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kin
     return r;
 }
 
-/* the destination gets op of its two sources, all of the kind. */
 static void alu2(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kind k)
 {
     uint8_t mask = dst_mask(&ins->operands[0]);
@@ -2214,7 +2180,7 @@ static void shift(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kind k)
     store(c, ins, &ins->operands[0], spv_op2(&c->b, op, vec_type(c, k, n), a, amount), k);
 }
 
-/* the field width and offset of a bit field component, the width clipped to the bits left. */
+/* the width is clipped to the bits left above the offset. */
 static void bit_field(Compiler *c, uint32_t *width, uint32_t *offset)
 {
     uint32_t mask = uconst(c, 31);
@@ -2283,9 +2249,9 @@ static void firstbit(Compiler *c, const DxbcInstruction *ins, uint32_t instructi
 /* ------------------------------------------------------------------ doubles */
 
 /*
- * a register holds two doubles, x and z their low halves, y and w their
- * high ones. double operations work on both lanes of the swizzled sources
- * and write the lanes the destination mask names, xy the first and zw the
+ * a register holds two doubles: x and z are their low halves, y and w the
+ * high ones. double ops work on both lanes of the swizzled sources and
+ * write the lanes the destination mask names, xy the first and zw the
  * second.
  */
 static uint32_t dvec2_type(Compiler *c)
@@ -2310,7 +2276,7 @@ static uint32_t dconst(Compiler *c, double value)
     return spv_const_composite(&c->b, c->t_dvec2, parts, 2);
 }
 
-/* the two doubles of a source, its modifiers applied to them. */
+/* applies the source modifiers. */
 static uint32_t load_doubles(Compiler *c, const DxbcOperand *op)
 {
     DxbcOperand plain = *op;
@@ -2324,7 +2290,7 @@ static uint32_t load_doubles(Compiler *c, const DxbcOperand *op)
     return v;
 }
 
-/* the lanes of two doubles the destination mask names, saturated if asked. */
+/* writes the lanes the mask names, saturated if asked. */
 static void store_doubles(Compiler *c, const DxbcInstruction *ins, const DxbcOperand *dst, uint32_t value)
 {
     if (ins->saturate) {
@@ -2346,7 +2312,7 @@ static void store_doubles(Compiler *c, const DxbcInstruction *ins, const DxbcOpe
     store(c, nullptr, dst, bits, K_UINT);
 }
 
-/* 32 bit results of the double lanes, to the destination's components in order. */
+/* one 32-bit result per double lane, to the destination's components in order. */
 static void store_lanes(Compiler *c, const DxbcOperand *dst, uint32_t value, Kind k)
 {
     uint32_t n = popcount(dst_mask(dst));
@@ -2380,7 +2346,6 @@ static void double_compare(Compiler *c, const DxbcInstruction *ins, uint32_t op)
     store_lanes(c, &ins->operands[0], r, K_UINT);
 }
 
-/* doubles to 32 bit values, to the destination's components in order. */
 static void double_to(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kind out)
 {
     uint32_t a = load_doubles(c, &ins->operands[1]);
@@ -2388,7 +2353,7 @@ static void double_to(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kind
     store_lanes(c, &ins->operands[0], r, out);
 }
 
-/* 32 bit values to doubles: the source's first two components, lane by lane. */
+/* converts the source's first two components, one per lane. */
 static void double_from(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kind in)
 {
     uint32_t a = load(c, &ins->operands[1], 3, in);
@@ -2403,7 +2368,7 @@ static void double_movc(Compiler *c, const DxbcInstruction *ins)
     store_doubles(c, ins, &ins->operands[0], spv_op3(&c->b, SpvOpSelect, c->t_dvec2, cond, a, b));
 }
 
-/* the two results of a wide multiply, carry or borrow: high or carry first, as dxbc orders them. */
+/* wide multiply, carry or borrow: dxbc puts the high half or the carry first. */
 static void wide(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kind k, int low_second)
 {
     const DxbcOperand *d0 = &ins->operands[0], *d1 = &ins->operands[1];
@@ -2499,7 +2464,7 @@ static void rcp(Compiler *c, const DxbcInstruction *ins)
           K_FLOAT);
 }
 
-/* converting halves: the low 16 bits of each component. */
+/* halves live in the low 16 bits of each component. */
 static void half(Compiler *c, const DxbcInstruction *ins, int to_half)
 {
     uint8_t mask = dst_mask(&ins->operands[0]);
@@ -2529,7 +2494,7 @@ static void half(Compiler *c, const DxbcInstruction *ins, int to_half)
 
 /* ------------------------------------------------------------------ textures */
 
-/* the coordinates a dimension samples with, and those of its gradients and offsets. */
+/* coordinate count of a dimension, and of its gradients and offsets. */
 static uint32_t coord_count(uint32_t dim)
 {
     switch (dim) {
@@ -2564,7 +2529,7 @@ static uint32_t spatial_count(uint32_t dim)
     }
 }
 
-/* the immediate offsets of the instruction, as a constant, or 0 without any. */
+/* 0 without immediate offsets. */
 static uint32_t const_offset(Compiler *c, const DxbcInstruction *ins, uint32_t dim)
 {
     if (!ins->offset[0] && !ins->offset[1] && !ins->offset[2])
@@ -2593,7 +2558,7 @@ static int resource_slot(Compiler *c, const DxbcOperand *op, Resource **r)
     return -1;
 }
 
-/* stores a vec4 result of a texture operation, swizzled by the resource operand. */
+/* texture results are swizzled by the resource operand. */
 static void store_texel(Compiler *c, const DxbcInstruction *ins, const DxbcOperand *resource, uint32_t vec4, Kind k)
 {
     const DxbcOperand *d = &ins->operands[0];
@@ -2601,9 +2566,8 @@ static void store_texel(Compiler *c, const DxbcInstruction *ins, const DxbcOpera
 }
 
 /*
- * an image read, through its sparse twin for the forms that write a
- * residency status when reads may find tiles mapped to nothing: the
- * status is 0 where every texel was mapped and 1 where one was not.
+ * forms that write a residency status use the sparse read when tiles may be
+ * unmapped: status 0 means every texel was mapped, 1 that one was not.
  */
 static uint32_t image_read(Compiler *c, uint32_t opcode, uint32_t type, const uint32_t *w, uint32_t count)
 {
@@ -2771,7 +2735,7 @@ static void fetch(Compiler *c, const DxbcInstruction *ins)
     store_texel(c, ins, resource, result, r->kind);
 }
 
-/* the size of a view and its mip count, as resinfo answers: floats, their reciprocals or uints. */
+/* view size and mip count, as floats, reciprocals or uints. */
 static void resinfo(Compiler *c, const DxbcInstruction *ins)
 {
     const DxbcOperand *resource = &ins->operands[2];
@@ -2835,7 +2799,7 @@ static void resinfo(Compiler *c, const DxbcInstruction *ins)
     store_texel(c, ins, resource, f, K_FLOAT);
 }
 
-/* the element count of buffer views: bytes for raw ones, structures for structured ones. */
+/* counts bytes for raw views, structures for structured ones. */
 static void bufinfo(Compiler *c, const DxbcInstruction *ins)
 {
     const DxbcOperand *resource = &ins->operands[1];
@@ -2890,7 +2854,7 @@ static void sampleinfo(Compiler *c, const DxbcInstruction *ins)
     const DxbcOperand *resource = &ins->operands[1];
     uint32_t count;
     if (resource->type == OPERAND_RASTERIZER) {
-        /* the render targets' sample count, which the device puts in the table. */
+        /* the device puts the render target sample count in the table. */
         count = rasterizer_samples(c);
     } else {
         Resource *r;
@@ -2913,7 +2877,7 @@ static void sampleinfo(Compiler *c, const DxbcInstruction *ins)
 
 /* ------------------------------------------------------------------ buffers, unordered access and shared memory */
 
-/* the word an address names: bytes for raw access, structure and byte offset for structured access. */
+/* raw addresses are in bytes, structured ones a structure index and byte offset. */
 static uint32_t word_index(Compiler *c, const DxbcOperand *address, const DxbcOperand *offset, uint32_t stride)
 {
     uint32_t a = load_scalar(c, address, address->swizzle[0], K_UINT);
@@ -2924,7 +2888,7 @@ static uint32_t word_index(Compiler *c, const DxbcOperand *address, const DxbcOp
     return spv_op2(&c->b, SpvOpShiftRightLogical, c->t_u32, a, uconst(c, 2));
 }
 
-/* reads one word of a raw or structured resource: a view or shared memory. */
+/* from a view or shared memory. */
 static uint32_t read_word(Compiler *c, const DxbcOperand *resource, uint32_t word)
 {
     if (resource->type == OPERAND_THREAD_GROUP_SHARED_MEMORY) {
@@ -2995,7 +2959,7 @@ static uint32_t stride_of(Compiler *c, const DxbcOperand *resource)
     return slot < 128 ? c->srv[slot].stride : 0;
 }
 
-/* ld_raw and ld_structured: the words the resource's swizzle names from the address. */
+/* ld_raw and ld_structured: reads the words the resource swizzle names. */
 static void load_words(Compiler *c, const DxbcInstruction *ins, int structured)
 {
     const DxbcOperand *resource = &ins->operands[structured ? 3 : 2];
@@ -3011,7 +2975,7 @@ static void load_words(Compiler *c, const DxbcInstruction *ins, int structured)
     store(c, ins, &ins->operands[0], v, K_UINT);
 }
 
-/* store_raw and store_structured: the value's components to consecutive words. */
+/* store_raw and store_structured: components go to consecutive words. */
 static void store_words(Compiler *c, const DxbcInstruction *ins, int structured)
 {
     const DxbcOperand *resource = &ins->operands[0];
@@ -3057,7 +3021,7 @@ static void store_typed(Compiler *c, const DxbcInstruction *ins)
     spv_op_void(&c->b, SpvOpImageWrite, w, 3);
 }
 
-/* a pointer to the word an atomic works on, in a view or in shared memory, and whether it is in bounds. */
+/* in a view or shared memory, also reporting whether the word is in bounds. */
 static uint32_t atomic_pointer(Compiler *c, const DxbcOperand *resource, const DxbcOperand *address, Kind *k,
                                uint32_t *scope, uint32_t *in)
 {
@@ -3191,7 +3155,7 @@ static void counter(Compiler *c, const DxbcInstruction *ins)
     uint32_t ptr;
     RootBuffer rb;
     if (root_buffer(c, view, &rb)) {
-        /* direct3d 12's record of the view has its counter's address. */
+        /* in direct3d 12 the view's record holds the counter's address. */
         if (!rb.counter) {
             fail(c, "counter of a root descriptor");
             return;
@@ -3234,7 +3198,7 @@ static void sync(Compiler *c, const DxbcInstruction *ins)
     }
 }
 
-/* eval_*: an input interpolated elsewhere than the pixel's center. */
+/* eval_*: interpolates an input away from the pixel center. */
 static void eval(Compiler *c, const DxbcInstruction *ins)
 {
     const DxbcOperand *input = &ins->operands[1];
@@ -3290,7 +3254,7 @@ static Flow *push_flow(Compiler *c, int kind)
     return f;
 }
 
-/* the innermost loop, or loop or switch for break. */
+/* the innermost loop, or loop or switch when breaking. */
 static Flow *break_target(Compiler *c, int loops_only)
 {
     for (uint32_t i = c->flow_depth; i > 0; i--) {
@@ -3302,14 +3266,14 @@ static Flow *break_target(Compiler *c, int loops_only)
     return nullptr;
 }
 
-/* the condition of a conditional instruction: its operand compared with zero as the token says. */
+/* compares the operand with zero as the token says. */
 static uint32_t condition(Compiler *c, const DxbcInstruction *ins, const DxbcOperand *op)
 {
     uint32_t v = load_scalar(c, op, op->swizzle[0], K_UINT);
     return spv_op2(&c->b, ins->nonzero ? SpvOpINotEqual : SpvOpIEqual, c->t_bool, v, uconst(c, 0));
 }
 
-/* opens a selection that runs a block when the condition holds, returning the block's label. */
+/* returns the label of the block run when cond holds. */
 static uint32_t begin_conditional(Compiler *c, uint32_t cond, uint32_t *merge)
 {
     uint32_t then = spv_id(&c->b);
@@ -3321,10 +3285,10 @@ static uint32_t begin_conditional(Compiler *c, uint32_t cond, uint32_t *merge)
     return then;
 }
 
-/* code after a branch that left the block: unreachable, in a block of its own. */
+/* unreachable code after a branch gets a block of its own. */
 static void dead_block(Compiler *c) { spv_label(&c->b, spv_id(&c->b)); }
 
-/* the case values and labels of the switch starting at the reader's position, its nested switches skipped. */
+/* collects the case values and labels of the switch at the reader's position, skipping nested switches. */
 static int scan_switch(Compiler *c, uint32_t at, Flow *f)
 {
     DxbcReader r = {c->code, c->code_count, at};
@@ -3570,10 +3534,7 @@ static int control_flow(Compiler *c, const DxbcInstruction *ins, uint32_t at)
 
 /* ------------------------------------------------------------------ instructions */
 
-/*
- * float to integer conversions as direct3d defines them where vulkan does
- * not: values past the range saturate, nan becomes 0.
- */
+/* direct3d saturates out of range values and turns nan into 0, vulkan leaves them undefined. */
 static void float_to_int(Compiler *c, const DxbcInstruction *ins, int is_signed)
 {
     uint8_t mask = dst_mask(&ins->operands[0]);
@@ -3594,7 +3555,7 @@ static void float_to_int(Compiler *c, const DxbcInstruction *ins, int is_signed)
     store(c, ins, &ins->operands[0], r, k);
 }
 
-/* masked sums of absolute differences: the bytes of each component where the reference byte is not zero. */
+/* masked sum of absolute differences: skips bytes where the reference byte is zero. */
 static void msad(Compiler *c, const DxbcInstruction *ins)
 {
     uint8_t mask = dst_mask(&ins->operands[0]);
@@ -3614,16 +3575,16 @@ static void msad(Compiler *c, const DxbcInstruction *ins)
 }
 
 /*
- * direct3d's standard sample positions, in sixteenths of a pixel from its
- * center, for 1, 2, 4, 8 and 16 samples: those of count n start at n - 1.
- * vulkan's standard sample locations are the same.
+ * direct3d's standard sample positions in sixteenths of a pixel from the
+ * center, for 1, 2, 4, 8 and 16 samples: count n starts at index n - 1.
+ * vulkan's standard locations match.
  */
 static constexpr int8_t SAMPLE_POSITIONS[31][2] = {
     {0, 0},   {4, 4},   {-4, -4}, {-2, -6}, {6, -2}, {-6, 2}, {2, 6},  {1, -3},  {-1, 3},  {5, 1},   {-3, -5},
     {-5, 5},  {-7, -1}, {3, 7},   {7, -7},  {1, 1},  {-1, -3}, {-3, 2}, {4, -1},  {-5, -2}, {2, 5},   {5, 3},
     {3, -5},  {-2, 6},  {0, -7},  {-4, -6}, {-6, 4}, {-8, 0},  {7, -4}, {6, 7},   {-7, -8}};
 
-/* the sample count of a resource operand, or of the render targets for the rasterizer. */
+/* the rasterizer operand gives the render targets' count. */
 static uint32_t sample_count(Compiler *c, const DxbcOperand *resource)
 {
     if (resource->type == OPERAND_RASTERIZER)
@@ -3638,7 +3599,7 @@ static uint32_t sample_count(Compiler *c, const DxbcOperand *resource)
     return spv_op1(&c->b, SpvOpImageQuerySamples, c->t_u32, image);
 }
 
-/* where a sample is in its pixel; the center for a sample index past the count, or counts without a pattern. */
+/* the center for an index past the count, or for counts without a standard pattern. */
 static void samplepos(Compiler *c, const DxbcInstruction *ins)
 {
     const DxbcOperand *resource = &ins->operands[1];
@@ -3674,10 +3635,10 @@ static void samplepos(Compiler *c, const DxbcInstruction *ins)
 }
 
 /*
- * the forms of tiled resources that also write a residency status: the
- * plain form, its reads sparse ones where tiles may map nothing, and their
- * status, which check_access_fully_mapped reads, 0 when all was mapped.
- * the clamped forms clamp the level of detail of the sample.
+ * tiled resource forms that also write a residency status: run the plain
+ * form with sparse reads where tiles may be unmapped, and write the status
+ * check_access_fully_mapped reads, 0 when all was mapped. the clamped forms
+ * also clamp the sample's level of detail.
  */
 static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at);
 
@@ -4168,7 +4129,6 @@ static int instruction(Compiler *c, const DxbcInstruction *ins, uint32_t at)
     return c->error ? -1 : 0;
 }
 
-/* the code from at to end, a function body. */
 static int compile_range(Compiler *c, uint32_t at, uint32_t end)
 {
     DxbcReader r = {c->code, end, at};
@@ -4307,7 +4267,7 @@ static int build(Compiler *c)
                 spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, d, 2);
             }
         }
-        /* forceEarlyDepthStencil of the global flags. */
+        /* the forceEarlyDepthStencil global flag. */
         if (c->global_flags & 4) {
             uint32_t e[2] = {main, SpvExecutionModeEarlyFragmentTests};
             spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, e, 2);
@@ -4332,7 +4292,7 @@ static int build(Compiler *c)
         }
     } else if (c->program == DXBC_HULL || c->program == DXBC_DOMAIN) {
         spv_capability(b, SpvCapabilityTessellation);
-        /* the domain, then for hull shaders the partitioning and the primitives' winding or points. */
+        /* the domain, then for hull shaders the partitioning and the output winding or points. */
         static const uint32_t DOMAINS[4] = {SpvExecutionModeTriangles, SpvExecutionModeIsolines,
                                             SpvExecutionModeTriangles, SpvExecutionModeQuads};
         uint32_t domain[2] = {main, DOMAINS[c->tess_domain & 3]};
@@ -4395,7 +4355,7 @@ int dxbc_compile(const void *bytecode, size_t length, const DxbcCompileOptions *
     c->program = info->program;
     c->binding = table_binding(info->program);
     c->sm51 = info->major > 5 || (info->major == 5 && info->minor >= 1);
-    /* with no stream rasterized the device discards what is; the first stream keeps the interface whole. */
+    /* with no rasterized stream the device discards rasterization, so stream 0 still feeds the interface. */
     if (options && options->so_count && options->rasterized_stream < 4)
         c->raster_stream = options->rasterized_stream;
     c->code = code + 2;

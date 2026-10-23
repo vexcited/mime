@@ -1,7 +1,7 @@
 /*
- * the link control, SysLink: text with links in it, <a href="url" id="name">text</a>, wrapped to the width of the
- * control. A link is drawn underlined in the hot light color, answers a click or a key with NM_CLICK or NM_RETURN and
- * tells its text, address and identifier through LM_GETITEM.
+ * the link control, SysLink: text with <a href="url" id="name">text</a> links, wrapped to the control's width.
+ * links draw underlined in the hot light color, answer clicks and keys with NM_CLICK or NM_RETURN, and report
+ * their text, address and id through LM_GETITEM.
  */
 #include "comctl32_private.h"
 
@@ -51,10 +51,10 @@ typedef struct LHITTESTINFO_ {
     LITEM_ item;
 } LHITTESTINFO_;
 
-/* a word of the text, in one link or in none, and where the last layout put it. */
+/* a word of the text, its link if any, and where the last layout put it. */
 typedef struct PIECE {
     int Start, Length;
-    int Link; /* -1 for text outside the links */
+    int Link; /* -1 outside links. */
     RECT Rect;
 } PIECE;
 
@@ -69,12 +69,12 @@ typedef struct SYSLINK {
     DWORD Style;
     CC_NOTIFY Notify;
     HFONT Font;
-    PWSTR Text; /* what is shown, the markup taken out */
+    PWSTR Text; /* the text without markup. */
     PIECE *Pieces;
     int PieceCount;
     LINK *Links;
     int LinkCount;
-    int Focus; /* the link with the focus, -1 for none */
+    int Focus; /* -1 for none. */
     int Pressed;
     int Hot;
     int LayoutWidth;
@@ -101,7 +101,7 @@ static void clear(SYSLINK *s)
     s->LayoutWidth = -1;
 }
 
-/* the attribute of a tag, in double or single quotes. */
+/* a tag attribute's value, in double or single quotes. */
 static BOOL attribute(PCWSTR tag, SIZE_T length, PCWSTR name, WCHAR *out, SIZE_T capacity)
 {
     SIZE_T n = wcslen(name);
@@ -124,7 +124,7 @@ static BOOL attribute(PCWSTR tag, SIZE_T length, PCWSTR name, WCHAR *out, SIZE_T
     return FALSE;
 }
 
-/* turns the markup into plain text, the links and the words with the link each belongs to. */
+/* splits the markup into plain text, links and words, each word with its link. */
 static BOOL parse(SYSLINK *s, PCWSTR markup)
 {
     clear(s);
@@ -203,7 +203,7 @@ static void reload(SYSLINK *s)
     CcFree(markup);
 }
 
-/* puts the words on lines no wider than the width; returns the height. */
+/* wraps the words to width, returns the height. */
 static int layout(SYSLINK *s, HDC dc, int width)
 {
     TEXTMETRICW tm;

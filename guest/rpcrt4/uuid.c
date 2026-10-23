@@ -1,9 +1,8 @@
 /*
- * uuids: creation, string conversion and comparison.
+ * uuid creation, string conversion and comparison.
  *
- * mime has no cryptographic random source yet, so random uuids come from a
- * xoshiro256** generator seeded from timers, ids and addresses, with the
- * performance counter mixed in at every call.
+ * there is no cryptographic random source yet, so random uuids come from xoshiro256** seeded from timers, ids and
+ * addresses, with the performance counter mixed in at every call.
  */
 #include "rpcrt4_private.h"
 
@@ -96,9 +95,8 @@ RPCRTAPI RPC_STATUS RPC_ENTRY UuidCreate(UUID *uuid)
 }
 
 /*
- * a version 1 uuid. there is no network adapter to take the node from, so
- * the node is random with the multicast bit set and the status says the
- * uuid is only unique on this machine, as windows does without an adapter.
+ * a version 1 uuid. with no network adapter the node is random with the multicast bit set, and like windows the
+ * status says the uuid is only unique on this machine.
  */
 RPCRTAPI RPC_STATUS RPC_ENTRY UuidCreateSequential(UUID *uuid)
 {
@@ -172,7 +170,7 @@ static int hex_digit(unsigned c)
     return -1;
 }
 
-/* parses "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" from characters of either width. */
+/* parses "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" from narrow or wide characters. */
 static RPC_STATUS parse_uuid(const void *string, SIZE_T width, UUID *uuid)
 {
     if (!uuid)
@@ -293,7 +291,7 @@ RPCRTAPI int RPC_ENTRY UuidIsNil(UUID *uuid, RPC_STATUS *status)
     return UuidCompare(uuid, nullptr, status) == 0;
 }
 
-/* a 16 bit fold of the uuid; the windows hash function is not reproduced. */
+/* a 16-bit fold of the uuid, not the windows hash function. */
 RPCRTAPI unsigned short RPC_ENTRY UuidHash(UUID *uuid, RPC_STATUS *status)
 {
     if (status)

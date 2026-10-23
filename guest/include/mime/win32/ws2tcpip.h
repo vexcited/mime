@@ -1,7 +1,4 @@
-/*
- * windows sockets 2 tcp/ip extensions: name resolution, address strings
- * and the ip level structures of ws2tcpip.h and ws2ipdef.h.
- */
+/* ws2tcpip.h and ws2ipdef.h: name resolution, address strings and ip level structures. */
 #ifndef MIME_WIN32_WS2TCPIP_H
 #define MIME_WIN32_WS2TCPIP_H
 
@@ -79,7 +76,6 @@ typedef struct addrinfoW {
 #define INET_ADDRSTRLEN 22
 #define INET6_ADDRSTRLEN 65
 
-/* an ipv4 or ipv6 address with its family, used by the ip helper. */
 typedef union _SOCKADDR_INET {
     SOCKADDR_IN Ipv4;
     SOCKADDR_IN6 Ipv6;

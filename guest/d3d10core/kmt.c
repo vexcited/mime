@@ -1,6 +1,6 @@
 /*
- * what d3d10core.dll and d3d10_1core.dll share: the version, the layers,
- * the driver entry points d3d11.dll answers for, and the kernel thunks the
+ * shared by d3d10core.dll and d3d10_1core.dll: the version, the layers, the
+ * driver entry points d3d11.dll answers for, and the kernel thunks the
  * reference rasterizer once called, which do nothing and succeed.
  */
 #include <mime/win32/winbase.h>
@@ -23,8 +23,6 @@ DECLSPEC_EXPORT HRESULT WINAPI D3D10CoreGetSupportedVersions(void *adapter, UINT
     return E_NOTIMPL;
 }
 
-/* ------------------------------------------------------------------ driver entry points */
-
 typedef HRESULT(APIENTRY *OpenAdapter)(void *args);
 
 static HRESULT open_adapter(const char *name, void *args)
@@ -37,8 +35,6 @@ static HRESULT open_adapter(const char *name, void *args)
 DECLSPEC_EXPORT HRESULT APIENTRY OpenAdapter10(void *args) { return open_adapter("OpenAdapter10", args); }
 
 DECLSPEC_EXPORT HRESULT APIENTRY OpenAdapter10_2(void *args) { return open_adapter("OpenAdapter10_2", args); }
-
-/* ------------------------------------------------------------------ kernel thunks */
 
 #define KMT_NOP(name)                                                                                                  \
     DECLSPEC_EXPORT LONG APIENTRY name(void *args) { return 0; }
@@ -84,7 +80,7 @@ typedef struct KmtQueryAdapterInfo {
     UINT size;
 } KmtQueryAdapterInfo;
 
-/* the user mode driver's name is this dll's path; the other kinds answer zeros or nothing. */
+/* the user mode driver name is this dll's path. other queries return zeros or nothing. */
 DECLSPEC_EXPORT LONG APIENTRY D3DKMTQueryAdapterInfo(KmtQueryAdapterInfo *info)
 {
     if (info->type == 1) {
@@ -124,7 +120,7 @@ typedef struct KmtOpenAdapterFromHdc {
     UINT source;
 } KmtOpenAdapterFromHdc;
 
-/* every display is the same fake adapter, under a new identifier each time. */
+/* every display is the same fake adapter, with a new identifier each time. */
 DECLSPEC_EXPORT LONG APIENTRY D3DKMTOpenAdapterFromHdc(KmtOpenAdapterFromHdc *open)
 {
     static LONG next;

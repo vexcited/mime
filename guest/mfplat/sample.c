@@ -4,7 +4,7 @@
 typedef struct {
     MfObject base;
     DWORD flags;
-    /* which of time and duration were set, as bits 1 and 2. */
+    /* bits 1 and 2 record whether time and duration were set. */
     DWORD has;
     LONGLONG time;
     LONGLONG duration;
@@ -178,7 +178,7 @@ static HRESULT STDMETHODCALLTYPE sample_get_total_length(IMFSample *iface, DWORD
     return S_OK;
 }
 
-/* the buffers one after the other, the destination's length becoming their total. */
+/* concatenates the buffers and sets the destination length to their total. */
 static HRESULT STDMETHODCALLTYPE sample_copy_to_buffer(IMFSample *iface, IMFMediaBuffer *dest)
 {
     Sample *sample = sample_of(iface);
@@ -212,7 +212,7 @@ static HRESULT STDMETHODCALLTYPE sample_copy_to_buffer(IMFSample *iface, IMFMedi
     return hr;
 }
 
-/* a single buffer as it is, several copied into a new one that replaces them. */
+/* a single buffer is returned as is. several are copied into a new one that replaces them. */
 static HRESULT STDMETHODCALLTYPE sample_convert_to_contiguous_buffer(IMFSample *iface, IMFMediaBuffer **out)
 {
     Sample *sample = sample_of(iface);
