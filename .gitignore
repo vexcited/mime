@@ -2,19 +2,10 @@
 /build/
 /build-*/
 
-# editors and tools
+# editors
 .idea/
 .vscode/
 .cache/
-*.i64
-*.id0
-*.id1
-*.id2
-*.nam
-*.til
 
 # macos
 .DS_Store
-
-# python
-__pycache__/

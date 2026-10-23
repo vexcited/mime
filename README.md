@@ -5,7 +5,7 @@ Unlike Wine, which translates the Windows API into host calls, Mime boots its ow
 > [!NOTE]
 > Mime is at an early stage.
 
-Mime runs ARM64, x64, and experimental [32-bit x86 programs](docs/x86.md) on macOS, and x64 and 32-bit x86 programs on Linux, the 32-bit ones natively through WOW64. API coverage differs between architectures.
+Mime runs ARM64, x64, and experimental 32-bit x86 programs on macOS, and x64 and 32-bit x86 programs on Linux, the 32-bit ones natively through WOW64. API coverage differs between architectures.
 
 ## Getting started
 
@@ -18,11 +18,11 @@ export PATH="$(brew --prefix llvm)/bin:$PATH"
 cmake --preset default
 cmake --build --preset default
 build/mime setup ~/Downloads/Windows11_arm64.iso
-build/mime run build/examples/messagebox.exe
+build/mime run ~/Downloads/program.exe
 build/mime down
 ```
 
-On Linux you need an x86_64 machine with KVM, LLVM with clang and lld, CMake, Ninja, SDL3, `wayland-client`, a Vulkan loader for [Vulkan](docs/vulkan.md) programs, and a Windows 11 or 10 `x64` ISO. The machine runs the x64 kernel and system DLLs, and programs use the host's GPU through Vulkan. See [the Linux host](docs/host.md#linux).
+On Linux you need an x86_64 machine with KVM, LLVM with clang and lld, CMake, Ninja, SDL3, `wayland-client`, a Vulkan loader for Vulkan programs, and a Windows 11 or 10 `x64` ISO. The machine runs the x64 kernel and system DLLs, and programs use the host's GPU through Vulkan.
 
 ```sh
 sudo pacman -S llvm clang lld cmake ninja sdl3 wayland vulkan-icd-loader # on arch linux
@@ -30,7 +30,7 @@ sudo pacman -S llvm clang lld cmake ninja sdl3 wayland vulkan-icd-loader # on ar
 cmake --preset default
 cmake --build --preset default
 build/mime setup ~/Downloads/Windows11_x64.iso
-build/mime run build/examples/x64/messagebox.exe
+build/mime run ~/Downloads/program.exe
 build/mime down
 ```
 
@@ -44,7 +44,7 @@ build/mime down
 
 ## Progress
 
-How much of Windows 11 build 26300 Mime implements, counted in exported functions and system services. A function counts once it exists, even if partial: the [documentation](docs/README.md) tells which ones are complete.
+How much of Windows 11 build 26300 Mime implements, counted in exported functions and system services. A function counts once it exists, even if partial.
 
 | Unit                                | Progress                   | Implemented |
 |-------------------------------------|----------------------------|-------------|
@@ -74,4 +74,3 @@ How much of Windows 11 build 26300 Mime implements, counted in exported function
 ## Learn more
 
 - [Contributing](CONTRIBUTING.md): build, run, debug and how Mime works.
-- [Documentation](docs/README.md): every reimplemented Windows component, function by function.

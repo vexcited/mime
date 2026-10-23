@@ -15,33 +15,26 @@ cmake --preset default
 cmake --build --preset default
 ```
 
-On Linux the build needs LLVM itself besides clang and lld: `llvm-nm`, `llvm-rc`, `llvm-strip`,
-`llvm-readobj` and `llvm-dlltool` come from it, `llvm` on Arch Linux. The guest runs the host's processor:
-arm64 on macOS, x64 on Linux x86_64. Linux arm64 has no virtual machine backend yet, so there the build
-makes the arm64 guest only. `cmake --preset arm64` builds the arm64 guest on any machine, into `build-arm64`.
+On Linux the build needs LLVM itself besides clang and lld: `llvm-rc` and `llvm-dlltool` come from it,
+`llvm` on Arch Linux. The guest runs the host's processor: arm64 on macOS, x64 on Linux x86_64. Linux arm64
+has no virtual machine backend yet, so there the build makes the arm64 guest only. `cmake --preset arm64`
+builds the arm64 guest on any machine, into `build-arm64`.
 
-| Target                                  | Output                                                                                    |
-|-----------------------------------------|-------------------------------------------------------------------------------------------|
-| `cmake --build build`                   | Everything below but the tests.                                                           |
-| `cmake --build build --target mime`     | `build/mime`, the command line program with the system files embedded, ad hoc signed.     |
-| `cmake --build build --target guest`    | `build/guest`: `ntoskrnl.exe`, `win32k.sys` and the system DLLs of each processor.        |
-| `cmake --build build --target examples` | `build/examples/x64/*.exe`, one program per file in `examples/`, and arm64 ones on macOS. |
-| `cmake --build build --target tests`    | `build/tests/<processor>/*.exe`, the test programs.                                       |
-| `cmake --build build --target test-x86` | Builds and runs the 32-bit suite, `tools/runtime32/run.py`.                               |
-| `cmake --build build --target test-shutdown` | Shuts the machine down and logs the user off with programs running, and checks what they saw, `tools/runtime32/run_shutdown.py`; the 32-bit suite runs it too. |
-| `cmake --build build --target test-services` | Runs the service control manager across processors, the services of DLLs that `svchost.exe` hosts, and a shutdown and a start of the machine with services, `tools/runtime32/run_services.py`; the 32-bit suite runs it too. |
-| `cmake --build build --target test-vkspare` | Makes Direct3D 11 devices in programs of the machine and checks which ones the host made ahead and which they made themselves, `tools/runtime32/run_vkspare.py`. |
-| `cmake --build build --target test-console` | Runs the x64 tests that need standard streams (`stdio`, on a pipe) and a terminal (`coninput`, on a pseudo terminal), `tools/runtime32/run_console.py`. |
-| `cmake --build build --target test-unwind-arm64` | Runs the arm64 unwinder on the host over the unwind data clang makes for arm64 Windows, `tools/test_unwind_arm64.c`; see [arm64 exceptions](docs/arm64.md). |
-| `cmake --build build --target clean`    | Removes what the build made.                                                              |
+| Target                                | Output                                                                                |
+|---------------------------------------|---------------------------------------------------------------------------------------|
+| `cmake --build build`                 | Everything below.                                                                     |
+| `cmake --build build --target mime`   | `build/mime`, the command line program with the system files embedded, ad hoc signed. |
+| `cmake --build build --target guest`  | `build/guest`: `ntoskrnl.exe`, `win32k.sys` and the system DLLs of each processor.    |
+| `cmake --build build --target clean`  | Removes what the build made.                                                          |
 
-`build/compile_commands.json` gives editors the flags of every file.
+`build/compile_commands.json` gives editors the flags of every file. `gen/` holds the generated tables and export
+definitions, committed so the build runs no generator.
 
 ## Running
 
 ```sh
 build/mime setup /path/to/Windows11_arm64.iso   # once
-build/mime run build/examples/messagebox.exe    # starts the machine if needed
+build/mime run /path/to/program.exe             # starts the machine if needed
 build/mime down
 ```
 
@@ -124,16 +117,11 @@ registry hives `mime setup` imported from the ISO and specializes them into
 this machine's installation at every boot, and loads `win32k.sys` as a
 driver, like Windows.
 
-**System calls use the real Windows numbers.** `tools/syscalls` holds the
-service tables of Windows 11 build 26300 arm64. Windows numbers its services
-the same on every architecture: the x64 `ntdll.dll` and `win32u.dll` of build
-26300 carry exactly these numbers, so the same tables serve the x64 build.
-`tools/gensyscalls.c` turns them into the stubs of `ntdll.dll` and
-`win32u.dll`, with the bytes of Windows' own stubs on x64, and
-`tools/genservices.c` registers every `Nt*` function the kernel defines. A
-service Mime does not implement yet returns `STATUS_NOT_IMPLEMENTED`. As on
-x64 Windows, the x64 `NtQuerySystemTime` reads the shared page instead of
-entering the kernel.
+**System calls use the Windows numbers.** Windows 11 build 26300 numbers its services the same on every
+architecture, so one table serves the arm64 and x64 builds. `gen/` holds the stubs of `ntdll.dll` and
+`win32u.dll` and the table of every `Nt*` function the kernel defines. A service Mime does not implement yet
+returns `STATUS_NOT_IMPLEMENTED`. As on x64 Windows, the x64 `NtQuerySystemTime` reads the shared page
+instead of entering the kernel.
 
 **The user mode DLLs** (`guest/ntdll`, `guest/kernelbase`, `guest/user32`,
 `guest/gdi32`) reimplement the Windows API on top of those system calls, with
@@ -157,21 +145,13 @@ decoder and Windows visual style parser in `guest/lib`, using the fonts and the
 | `guest/rtl/`, `guest/crt/`                                                              | Runtime shared by the kernel and `ntdll.dll`.                                                                                          |
 | `guest/lib/`                                                                            | TrueType, PNG and visual style libraries.                                                                                              |
 | `guest/include/`                                                                        | Windows and NT headers, written for Mime.                                                                                              |
-| `tools/`                                                                                | Build generators (syscalls, embedded files, version resources, checksums), syscall tables and `progress.sh`.                           |
+| `gen/`                                                                                  | Generated system call stubs, service tables, national language tables, export definitions and version resources.                      |
 | `CMakeLists.txt`, `cmake/`                                                              | The build.                                                                                                                             |
-| `examples/`                                                                             | Small Windows programs built against Mime.                                                                                             |
-| `docs/`                                                                                 | One page per Windows component.                                                                                                        |
 
-## Reverse engineering rules
+## Rules
 
-- Behavior is studied on real Windows binaries, with a disassembler or by
-  observing them. Never copy code from Microsoft, Wine, ReactOS or any other
-  project. Write what the binary does, in your own code.
-- Note what you learned in `docs/`, with the build and function it comes from.
-  A number or behavior that is guessed rather than read must say so.
-- When you implement a function, update its row in the matching `docs/` page.
-- To refresh the progress table of the README, extract `Windows/System32` of
-  the build 26300 arm64 ISO and run `tools/progress.sh <that System32>`.
+- Mime is written from scratch. Never copy code from Microsoft, Wine, ReactOS or any other project.
+- A number or behavior that is guessed must say so.
 
 ## Code style
 
@@ -179,7 +159,7 @@ decoder and Windows visual style parser in `guest/lib`, using the fonts and the
   `<stdckdint.h>`. Four spaces, braces on the same line except for functions.
 - Mime's own names use the `Mime`/`mime_` prefixes; Windows functions keep
   their Windows names and signatures.
-- Comments are short, lowercase except identifiers, and end with a dot. Skip
+- Comments are short, lowercase except identifiers and proper names, and end with a dot. Skip
   the comment when the code already says it.
 - The build must stay free of warnings.
 
