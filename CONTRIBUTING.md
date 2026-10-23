@@ -1,152 +1,87 @@
-# Contributing to Mime
+# Contributing
 
-Thanks for your interest. This guide explains how to build and run Mime, how it works in the big lines, and the few rules the code follows.
+Thanks for your interest. This guide explains how to build and run Mime and the rules the code follows.
+For an overview of [how Mime works](README.md#how-mime-works), see the README.
 
 ## Building
 
-Mime builds with CMake and Ninja, and LLVM's clang 19 or later, which compiles both the host program and
-the Windows side. Apple's own `clang` cannot produce Windows binaries, so on macOS put Homebrew's first in
-`PATH`.
+Mime needs CMake 3.30 or later, Ninja, and LLVM's `clang` 19 or later, `lld`, `llvm-rc` and `llvm-dlltool`.
+Clang compiles both the host program and the Windows side.
+
+### macOS
+
+Running Mime requires an Apple silicon Mac. Install Apple's Command Line Tools if they are missing:
+
+```sh
+xcode-select --install
+```
+
+With [Homebrew](https://brew.sh/) installed, install the build tools and put its LLVM first in `PATH`,
+since Apple's `clang` cannot produce Windows binaries:
 
 ```sh
 brew install llvm lld cmake ninja
 export PATH="$(brew --prefix llvm)/bin:$PATH"
-cmake --preset default
-cmake --build --preset default
 ```
 
-On Linux the build needs LLVM itself besides clang and lld: `llvm-rc` and `llvm-dlltool` come from it,
-`llvm` on Arch Linux. The guest runs the host's processor: arm64 on macOS, x64 on Linux x86_64. Linux arm64
-has no virtual machine backend yet, so there the build makes the arm64 guest only. `cmake --preset arm64`
-builds the arm64 guest on any machine, into `build-arm64`.
+### Linux
 
-| Target                                | Output                                                                                |
-|---------------------------------------|---------------------------------------------------------------------------------------|
-| `cmake --build build`                 | Everything below.                                                                     |
-| `cmake --build build --target mime`   | `build/mime`, the command line program with the system files embedded, ad hoc signed. |
-| `cmake --build build --target guest`  | `build/guest`: `ntoskrnl.exe`, `win32k.sys` and the system DLLs of each processor.    |
-| `cmake --build build --target clean`  | Removes what the build made.                                                          |
+Running Mime requires x86_64 Linux with KVM enabled and read/write access to `/dev/kvm`.
+Building also needs a C++ standard library and its development files, pkg-config, and the SDL3 and
+Wayland client development libraries.
 
-`build/compile_commands.json` gives editors the flags of every file. `gen/` holds the generated tables and export
-definitions, committed so the build runs no generator.
+On Arch Linux, update the system and install the requirements:
+
+```sh
+sudo pacman -Syu --needed base-devel clang llvm lld cmake ninja sdl3 wayland
+```
+
+`base-devel` includes GCC's C++ development files and `pkgconf`, which provides pkg-config.
+The separate `llvm` package supplies `llvm-rc` and `llvm-dlltool`. Arch's library packages include
+their development files, so no separate `-dev` packages are needed.
+
+The optional libsystemd development files enable tray icons and notifications. On Arch they come
+with `systemd`, normally already installed; if needed, install it with `sudo pacman -S --needed systemd`.
+On other distributions, install the equivalent packages, keeping the minimum tool versions above.
+
+### Build
+
+From the repository root, configure once and build:
+
+```sh
+cmake --preset default
+ninja -C build
+```
+
+The preset selects Ninja and keeps build files in `build/`. After editing code, run `ninja -C build`
+again; it rebuilds what changed and runs jobs in parallel automatically. To remove build outputs,
+use `ninja -C build clean`. Cleaning is not needed for normal rebuilds.
+
+The default guest is ARM64 on macOS and x64 on x86_64 Linux. Linux ARM64 has no virtual machine
+backend yet, so it builds only the guest. To build only the ARM64 guest on either platform:
+
+```sh
+cmake --preset arm64
+ninja -C build-arm64
+```
+
+`build/compile_commands.json` gives editors the compiler flags. `gen/` holds committed tables and
+export definitions; files generated during the build go in `build/gen/`.
 
 ## Running
 
 ```sh
-build/mime setup /path/to/Windows11_arm64.iso   # once
-build/mime run /path/to/program.exe             # starts the machine if needed
+build/mime setup /path/to/windows.iso
+build/mime run /path/to/program.exe
 build/mime down
 ```
-
-`build/mime` is self contained: the kernel, drivers and DLLs are embedded in
-it and mapped into the virtual machine, never written to disk, so it is the
-only file to distribute. The machine uses the files of the binary that
-started it, so to test a change: `cmake --build build`, `mime down`, then `mime run` again.
-
-Mime follows the XDG base directories:
 
 | Path                              | Content                                |
 |-----------------------------------|----------------------------------------|
 | `~/.local/share/mime/drive_c`     | The C: drive seen by Windows programs. |
 | `~/.local/state/mime/vmm.log`     | Kernel and machine log.                |
 
-Only one machine runs per user. It shows as `mime-vmm` in `ps`. Mime needs
-macOS 15 or later for the framework's virtual interrupt controller.
-
-### Debugging
-
-- Read `~/.local/state/mime/vmm.log`: the kernel and `DbgPrint` write there.
-- `pkill -USR1 mime-vmm` dumps the registers, a backtrace and the count of
-  each kind of exit to the host into the log. It locates a hang, and exits
-  are what to watch when working on speed: an idle machine makes none. On
-  Linux the process is named `mime`: `kill -USR1 $(pgrep -f '^mime-vmm')`.
-  The guest then also logs every thread of every process: its state, the
-  object it waits for (and in how many milliseconds a timed wait ends), where its user code called the kernel and the return
-  address on its stack, which `llvm-symbolizer` turns into the call that
-  blocks.
-- On Linux, `kill -PROF $(pgrep -f '^mime-vmm')` starts sampling where the
-  virtual CPUs run, about 4000 times a second each, and a second one stops
-  and logs the 400 hottest addresses with their counts. A user mode address
-  shows as the module it falls in and its offset, found from the image
-  headers in guest memory; add the module's image base to symbolize it.
-  Idle processors show as the kernel's halt.
-- Guest binaries carry DWARF debug info and are linked at fixed addresses, so
-  a guest address symbolizes directly:
-  `llvm-symbolizer --obj=build/guest/system32/ntoskrnl.exe 0xfffff80000212345`.
-
-## How Mime works
-
-```
- macOS                                                         
- ┌──────────────────────────────────────────────────────────┐
- │ mime (command line) ── unix socket ── mime-vmm (machine) │
- │                                         │ Hypervisor.framework
- │                                         │ Cocoa windows, host files
- └─────────────────────────────────────────┼────────────────┘
-                                           │ hypercalls (hvc #0)
- virtual machine, arm64                    │
- ┌─────────────────────────────────────────┼────────────────┐
- │ kernel mode   ntoskrnl.exe ── win32k.sys┘                │
- │                    ▲             ▲                       │
- │                    │ syscalls    │ syscalls              │
- │ user mode     ntdll.dll       win32u.dll                 │
- │                    ▲             ▲                       │
- │               kernelbase.dll  user32.dll, gdi32.dll      │
- │                    ▲             ▲                       │
- │               kernel32.dll       │                       │
- │                    ▲             │                       │
- │                   program.exe ───┘                       │
- └──────────────────────────────────────────────────────────┘
-```
-
-**The host** (`host/`) is a single `mime` binary. The command line talks to a
-background machine process over a unix socket. That process creates a
-Hypervisor.framework virtual machine, loads `ntoskrnl.exe` into it and runs
-its virtual CPUs. The guest kernel reaches the host only through a small set
-of hypercalls defined in [`include/mime/abi.h`](include/mime/abi.h): logging,
-file access to the C: drive, input events and window presentation, which the
-host shows as native Cocoa windows. Everything else stays inside the VM: the
-timer and interrupts go through the framework's virtual GIC, and the system
-files are mapped into guest memory, so an idle machine never wakes the host. `mime setup` reads the ISO directly
-(UDF, WIM and LZX decoders in `host/setup`) to import fonts, themes and icons.
-
-**The kernel** (`guest/ntos`) is an NT kernel written from scratch: scheduler,
-memory manager, object manager, processes and threads, I/O manager with a file
-system backed by the host, the registry and access tokens. It loads the
-registry hives `mime setup` imported from the ISO and specializes them into
-this machine's installation at every boot, and loads `win32k.sys` as a
-driver, like Windows.
-
-**System calls use the Windows numbers.** Windows 11 build 26300 numbers its services the same on every
-architecture, so one table serves the arm64 and x64 builds. `gen/` holds the stubs of `ntdll.dll` and
-`win32u.dll` and the table of every `Nt*` function the kernel defines. A service Mime does not implement yet
-returns `STATUS_NOT_IMPLEMENTED`. As on x64 Windows, the x64 `NtQuerySystemTime` reads the shared page
-instead of entering the kernel.
-
-**The user mode DLLs** (`guest/ntdll`, `guest/kernelbase`, `guest/user32`,
-`guest/gdi32`) reimplement the Windows API on top of those system calls, with
-the same layering as Windows: `kernel32.dll` only forwards to `kernelbase.dll`,
-and `user32.dll` calls into `win32k.sys`, which calls back into `user32.dll`
-for window procedures.
-
-**Drawing** happens in `win32k.sys`, with its own TrueType rasterizer, PNG
-decoder and Windows visual style parser in `guest/lib`, using the fonts and the
-`aero.msstyles` theme imported from your ISO.
-
-## Repository layout
-
-| Path                                                                                    | Content                                                                                                                                |
-|-----------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
-| `host/`                                                                                 | The macOS program: command line, setup, VM and UI.                                                                                     |
-| `include/mime/`                                                                         | The host and guest ABI.                                                                                                                |
-| `guest/ntos/`                                                                           | `ntoskrnl.exe`: `ke` core, `mm` memory, `ob` objects, `ps` processes, `io` files, `cm` registry, `se` security, `ex` executive, `hal`. |
-| `guest/win32k/`                                                                         | `win32k.sys`, window manager and GDI.                                                                                                  |
-| `guest/ntdll/`, `guest/kernelbase/`, `guest/kernel32/`, `guest/user32/`, `guest/gdi32/` | The system DLLs.                                                                                                                       |
-| `guest/rtl/`, `guest/crt/`                                                              | Runtime shared by the kernel and `ntdll.dll`.                                                                                          |
-| `guest/lib/`                                                                            | TrueType, PNG and visual style libraries.                                                                                              |
-| `guest/include/`                                                                        | Windows and NT headers, written for Mime.                                                                                              |
-| `gen/`                                                                                  | Generated system call stubs, service tables, national language tables, export definitions and version resources.                      |
-| `CMakeLists.txt`, `cmake/`                                                              | The build.                                                                                                                             |
+Only one machine runs per user, it shows as `mime-vmm` in any process manager.
 
 ## Rules
 
@@ -159,8 +94,6 @@ decoder and Windows visual style parser in `guest/lib`, using the fonts and the
   `<stdckdint.h>`. Four spaces, braces on the same line except for functions.
 - Mime's own names use the `Mime`/`mime_` prefixes; Windows functions keep
   their Windows names and signatures.
-- Comments are short, lowercase except identifiers and proper names, and end with a dot. Skip
-  the comment when the code already says it.
 - The build must stay free of warnings.
 
 ## Commits
