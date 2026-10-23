@@ -170,6 +170,7 @@ static bool slot_add(DirNames *d, const char *name)
     return true;
 }
 
+#ifdef __linux__
 static void slot_remove(DirNames *d, const char *name)
 {
     if (!d->buckets)
@@ -186,6 +187,8 @@ static void slot_remove(DirNames *d, const char *name)
         }
     }
 }
+
+#endif
 
 /* the entry whose name is the component's but for case. */
 static bool slot_find(const DirNames *d, const char *component, char *spelling)
