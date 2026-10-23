@@ -1,0 +1,20 @@
+LIBRARY d3d12.dll
+EXPORTS
+    D3D12CoreCreateLayeredDevice=_D3D12CoreCreateLayeredDevice@4 @103
+    D3D12CoreGetLayeredDeviceSize=_D3D12CoreGetLayeredDeviceSize@8 @104
+    D3D12CoreRegisterLayers=_D3D12CoreRegisterLayers@8 @105
+    D3D12CreateAdditionalDevice=_D3D12CreateAdditionalDevice@16 @99 NONAME
+    D3D12CreateDevice=_D3D12CreateDevice@16 @101
+    D3D12CreateRootSignatureDeserializer=_D3D12CreateRootSignatureDeserializer@16 @106
+    D3D12CreateVersionedRootSignatureDeserializer=_D3D12CreateVersionedRootSignatureDeserializer@16 @107
+    D3D12EnableExperimentalFeatures=_D3D12EnableExperimentalFeatures@16 @109
+    D3D12GetDebugInterface=_D3D12GetDebugInterface@8 @102
+    D3D12GetInterface=_D3D12GetInterface@12 @110
+    D3D12PIXEventsReplaceBlock=_D3D12PIXEventsReplaceBlock@4 @111
+    D3D12PIXGetThreadInfo=_D3D12PIXGetThreadInfo@0 @112
+    D3D12PIXNotifyWakeFromFenceSignal=_D3D12PIXNotifyWakeFromFenceSignal@4 @113
+    D3D12PIXReportCounter=_D3D12PIXReportCounter@8 @114
+    D3D12SerializeRootSignature=_D3D12SerializeRootSignature@16 @115
+    D3D12SerializeVersionedRootSignature=_D3D12SerializeVersionedRootSignature@12 @116
+    GetBehaviorValue=_GetBehaviorValue@8 @117
+    SetAppCompatStringPointer=_SetAppCompatStringPointer@8 @100

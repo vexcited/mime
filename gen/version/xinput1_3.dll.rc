@@ -1,0 +1,28 @@
+1 VERSIONINFO
+FILEVERSION 9, 18, 944, 0
+PRODUCTVERSION 9, 18, 944, 0
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 2
+FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Microsoft Corporation"
+            VALUE "FileDescription", "Microsoft Common Controller API"
+            VALUE "FileVersion", "9.18.944.0"
+            VALUE "InternalName", "XInput1_3.dll"
+            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "OriginalFilename", "XInput1_3.dll"
+            VALUE "ProductName", "Microsoft\256 DirectX for Windows\256"
+            VALUE "ProductVersion", "9.18.944.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

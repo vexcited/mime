@@ -1,0 +1,5114 @@
+/* generated, native calls of the x64 opengl32.dll, see mime/mx64.h. */
+	.text
+	.globl	glAccum
+	.p2align	4, 0x90
+glAccum:
+	movq	%rcx, %r10
+	movl	$0x7e010000, %eax
+	syscall
+	retq
+
+	.globl	glActiveTexture
+	.p2align	4, 0x90
+glActiveTexture:
+	movq	%rcx, %r10
+	movl	$0x7e010001, %eax
+	syscall
+	retq
+
+	.globl	glAlphaFunc
+	.p2align	4, 0x90
+glAlphaFunc:
+	movq	%rcx, %r10
+	movl	$0x7e010002, %eax
+	syscall
+	retq
+
+	.globl	glAreTexturesResident
+	.p2align	4, 0x90
+glAreTexturesResident:
+	movq	%rcx, %r10
+	movl	$0x7e010003, %eax
+	syscall
+	retq
+
+	.globl	glArrayElement
+	.p2align	4, 0x90
+glArrayElement:
+	movq	%rcx, %r10
+	movl	$0x7e010004, %eax
+	syscall
+	retq
+
+	.globl	glAttachShader
+	.p2align	4, 0x90
+glAttachShader:
+	movq	%rcx, %r10
+	movl	$0x7e010005, %eax
+	syscall
+	retq
+
+	.globl	glBegin
+	.p2align	4, 0x90
+glBegin:
+	movq	%rcx, %r10
+	movl	$0x7e010006, %eax
+	syscall
+	retq
+
+	.globl	glBeginQuery
+	.p2align	4, 0x90
+glBeginQuery:
+	movq	%rcx, %r10
+	movl	$0x7e010007, %eax
+	syscall
+	retq
+
+	.globl	glBindAttribLocation
+	.p2align	4, 0x90
+glBindAttribLocation:
+	movq	%rcx, %r10
+	movl	$0x7e010008, %eax
+	syscall
+	retq
+
+	.globl	glBindBuffer
+	.p2align	4, 0x90
+glBindBuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010009, %eax
+	syscall
+	retq
+
+	.globl	glBindBufferBase
+	.p2align	4, 0x90
+glBindBufferBase:
+	movq	%rcx, %r10
+	movl	$0x7e01000a, %eax
+	syscall
+	retq
+
+	.globl	glBindBufferRange
+	.p2align	4, 0x90
+glBindBufferRange:
+	movq	%rcx, %r10
+	movl	$0x7e01000b, %eax
+	syscall
+	retq
+
+	.globl	glBindFragDataLocation
+	.p2align	4, 0x90
+glBindFragDataLocation:
+	movq	%rcx, %r10
+	movl	$0x7e01000c, %eax
+	syscall
+	retq
+
+	.globl	glBindFramebuffer
+	.p2align	4, 0x90
+glBindFramebuffer:
+	movq	%rcx, %r10
+	movl	$0x7e01000d, %eax
+	syscall
+	retq
+
+	.globl	glBindRenderbuffer
+	.p2align	4, 0x90
+glBindRenderbuffer:
+	movq	%rcx, %r10
+	movl	$0x7e01000e, %eax
+	syscall
+	retq
+
+	.globl	glBindTexture
+	.p2align	4, 0x90
+glBindTexture:
+	movq	%rcx, %r10
+	movl	$0x7e01000f, %eax
+	syscall
+	retq
+
+	.globl	glBindVertexArray
+	.p2align	4, 0x90
+glBindVertexArray:
+	movq	%rcx, %r10
+	movl	$0x7e010010, %eax
+	syscall
+	retq
+
+	.globl	glBitmap
+	.p2align	4, 0x90
+glBitmap:
+	movq	%rcx, %r10
+	movl	$0x7e010011, %eax
+	syscall
+	retq
+
+	.globl	glBlendColor
+	.p2align	4, 0x90
+glBlendColor:
+	movq	%rcx, %r10
+	movl	$0x7e010012, %eax
+	syscall
+	retq
+
+	.globl	glBlendEquation
+	.p2align	4, 0x90
+glBlendEquation:
+	movq	%rcx, %r10
+	movl	$0x7e010013, %eax
+	syscall
+	retq
+
+	.globl	glBlendEquationSeparate
+	.p2align	4, 0x90
+glBlendEquationSeparate:
+	movq	%rcx, %r10
+	movl	$0x7e010014, %eax
+	syscall
+	retq
+
+	.globl	glBlendFunc
+	.p2align	4, 0x90
+glBlendFunc:
+	movq	%rcx, %r10
+	movl	$0x7e010015, %eax
+	syscall
+	retq
+
+	.globl	glBlendFuncSeparate
+	.p2align	4, 0x90
+glBlendFuncSeparate:
+	movq	%rcx, %r10
+	movl	$0x7e010016, %eax
+	syscall
+	retq
+
+	.globl	glBlitFramebuffer
+	.p2align	4, 0x90
+glBlitFramebuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010017, %eax
+	syscall
+	retq
+
+	.globl	glBufferData
+	.p2align	4, 0x90
+glBufferData:
+	movq	%rcx, %r10
+	movl	$0x7e010018, %eax
+	syscall
+	retq
+
+	.globl	glBufferStorage
+	.p2align	4, 0x90
+glBufferStorage:
+	movq	%rcx, %r10
+	movl	$0x7e010019, %eax
+	syscall
+	retq
+
+	.globl	glBufferSubData
+	.p2align	4, 0x90
+glBufferSubData:
+	movq	%rcx, %r10
+	movl	$0x7e01001a, %eax
+	syscall
+	retq
+
+	.globl	glCallList
+	.p2align	4, 0x90
+glCallList:
+	movq	%rcx, %r10
+	movl	$0x7e01001b, %eax
+	syscall
+	retq
+
+	.globl	glCallLists
+	.p2align	4, 0x90
+glCallLists:
+	movq	%rcx, %r10
+	movl	$0x7e01001c, %eax
+	syscall
+	retq
+
+	.globl	glCheckFramebufferStatus
+	.p2align	4, 0x90
+glCheckFramebufferStatus:
+	movq	%rcx, %r10
+	movl	$0x7e01001d, %eax
+	syscall
+	retq
+
+	.globl	glClear
+	.p2align	4, 0x90
+glClear:
+	movq	%rcx, %r10
+	movl	$0x7e01001e, %eax
+	syscall
+	retq
+
+	.globl	glClearAccum
+	.p2align	4, 0x90
+glClearAccum:
+	movq	%rcx, %r10
+	movl	$0x7e01001f, %eax
+	syscall
+	retq
+
+	.globl	glClearBufferfi
+	.p2align	4, 0x90
+glClearBufferfi:
+	movq	%rcx, %r10
+	movl	$0x7e010020, %eax
+	syscall
+	retq
+
+	.globl	glClearBufferfv
+	.p2align	4, 0x90
+glClearBufferfv:
+	movq	%rcx, %r10
+	movl	$0x7e010021, %eax
+	syscall
+	retq
+
+	.globl	glClearBufferiv
+	.p2align	4, 0x90
+glClearBufferiv:
+	movq	%rcx, %r10
+	movl	$0x7e010022, %eax
+	syscall
+	retq
+
+	.globl	glClearColor
+	.p2align	4, 0x90
+glClearColor:
+	movq	%rcx, %r10
+	movl	$0x7e010023, %eax
+	syscall
+	retq
+
+	.globl	glClearDepth
+	.p2align	4, 0x90
+glClearDepth:
+	movq	%rcx, %r10
+	movl	$0x7e010024, %eax
+	syscall
+	retq
+
+	.globl	glClearDepthf
+	.p2align	4, 0x90
+glClearDepthf:
+	movq	%rcx, %r10
+	movl	$0x7e010025, %eax
+	syscall
+	retq
+
+	.globl	glClearIndex
+	.p2align	4, 0x90
+glClearIndex:
+	movq	%rcx, %r10
+	movl	$0x7e010026, %eax
+	syscall
+	retq
+
+	.globl	glClearStencil
+	.p2align	4, 0x90
+glClearStencil:
+	movq	%rcx, %r10
+	movl	$0x7e010027, %eax
+	syscall
+	retq
+
+	.globl	glClientActiveTexture
+	.p2align	4, 0x90
+glClientActiveTexture:
+	movq	%rcx, %r10
+	movl	$0x7e010028, %eax
+	syscall
+	retq
+
+	.globl	glClientActiveTextureARB
+	.p2align	4, 0x90
+glClientActiveTextureARB:
+	movq	%rcx, %r10
+	movl	$0x7e010029, %eax
+	syscall
+	retq
+
+	.globl	glClientWaitSync
+	.p2align	4, 0x90
+glClientWaitSync:
+	movq	%rcx, %r10
+	movl	$0x7e01002a, %eax
+	syscall
+	retq
+
+	.globl	glClipPlane
+	.p2align	4, 0x90
+glClipPlane:
+	movq	%rcx, %r10
+	movl	$0x7e01002b, %eax
+	syscall
+	retq
+
+	.globl	glColor3b
+	.p2align	4, 0x90
+glColor3b:
+	movq	%rcx, %r10
+	movl	$0x7e01002c, %eax
+	syscall
+	retq
+
+	.globl	glColor3bv
+	.p2align	4, 0x90
+glColor3bv:
+	movq	%rcx, %r10
+	movl	$0x7e01002d, %eax
+	syscall
+	retq
+
+	.globl	glColor3d
+	.p2align	4, 0x90
+glColor3d:
+	movq	%rcx, %r10
+	movl	$0x7e01002e, %eax
+	syscall
+	retq
+
+	.globl	glColor3dv
+	.p2align	4, 0x90
+glColor3dv:
+	movq	%rcx, %r10
+	movl	$0x7e01002f, %eax
+	syscall
+	retq
+
+	.globl	glColor3f
+	.p2align	4, 0x90
+glColor3f:
+	movq	%rcx, %r10
+	movl	$0x7e010030, %eax
+	syscall
+	retq
+
+	.globl	glColor3fv
+	.p2align	4, 0x90
+glColor3fv:
+	movq	%rcx, %r10
+	movl	$0x7e010031, %eax
+	syscall
+	retq
+
+	.globl	glColor3i
+	.p2align	4, 0x90
+glColor3i:
+	movq	%rcx, %r10
+	movl	$0x7e010032, %eax
+	syscall
+	retq
+
+	.globl	glColor3iv
+	.p2align	4, 0x90
+glColor3iv:
+	movq	%rcx, %r10
+	movl	$0x7e010033, %eax
+	syscall
+	retq
+
+	.globl	glColor3s
+	.p2align	4, 0x90
+glColor3s:
+	movq	%rcx, %r10
+	movl	$0x7e010034, %eax
+	syscall
+	retq
+
+	.globl	glColor3sv
+	.p2align	4, 0x90
+glColor3sv:
+	movq	%rcx, %r10
+	movl	$0x7e010035, %eax
+	syscall
+	retq
+
+	.globl	glColor3ub
+	.p2align	4, 0x90
+glColor3ub:
+	movq	%rcx, %r10
+	movl	$0x7e010036, %eax
+	syscall
+	retq
+
+	.globl	glColor3ubv
+	.p2align	4, 0x90
+glColor3ubv:
+	movq	%rcx, %r10
+	movl	$0x7e010037, %eax
+	syscall
+	retq
+
+	.globl	glColor3ui
+	.p2align	4, 0x90
+glColor3ui:
+	movq	%rcx, %r10
+	movl	$0x7e010038, %eax
+	syscall
+	retq
+
+	.globl	glColor3uiv
+	.p2align	4, 0x90
+glColor3uiv:
+	movq	%rcx, %r10
+	movl	$0x7e010039, %eax
+	syscall
+	retq
+
+	.globl	glColor3us
+	.p2align	4, 0x90
+glColor3us:
+	movq	%rcx, %r10
+	movl	$0x7e01003a, %eax
+	syscall
+	retq
+
+	.globl	glColor3usv
+	.p2align	4, 0x90
+glColor3usv:
+	movq	%rcx, %r10
+	movl	$0x7e01003b, %eax
+	syscall
+	retq
+
+	.globl	glColor4b
+	.p2align	4, 0x90
+glColor4b:
+	movq	%rcx, %r10
+	movl	$0x7e01003c, %eax
+	syscall
+	retq
+
+	.globl	glColor4bv
+	.p2align	4, 0x90
+glColor4bv:
+	movq	%rcx, %r10
+	movl	$0x7e01003d, %eax
+	syscall
+	retq
+
+	.globl	glColor4d
+	.p2align	4, 0x90
+glColor4d:
+	movq	%rcx, %r10
+	movl	$0x7e01003e, %eax
+	syscall
+	retq
+
+	.globl	glColor4dv
+	.p2align	4, 0x90
+glColor4dv:
+	movq	%rcx, %r10
+	movl	$0x7e01003f, %eax
+	syscall
+	retq
+
+	.globl	glColor4f
+	.p2align	4, 0x90
+glColor4f:
+	movq	%rcx, %r10
+	movl	$0x7e010040, %eax
+	syscall
+	retq
+
+	.globl	glColor4fv
+	.p2align	4, 0x90
+glColor4fv:
+	movq	%rcx, %r10
+	movl	$0x7e010041, %eax
+	syscall
+	retq
+
+	.globl	glColor4i
+	.p2align	4, 0x90
+glColor4i:
+	movq	%rcx, %r10
+	movl	$0x7e010042, %eax
+	syscall
+	retq
+
+	.globl	glColor4iv
+	.p2align	4, 0x90
+glColor4iv:
+	movq	%rcx, %r10
+	movl	$0x7e010043, %eax
+	syscall
+	retq
+
+	.globl	glColor4s
+	.p2align	4, 0x90
+glColor4s:
+	movq	%rcx, %r10
+	movl	$0x7e010044, %eax
+	syscall
+	retq
+
+	.globl	glColor4sv
+	.p2align	4, 0x90
+glColor4sv:
+	movq	%rcx, %r10
+	movl	$0x7e010045, %eax
+	syscall
+	retq
+
+	.globl	glColor4ub
+	.p2align	4, 0x90
+glColor4ub:
+	movq	%rcx, %r10
+	movl	$0x7e010046, %eax
+	syscall
+	retq
+
+	.globl	glColor4ubv
+	.p2align	4, 0x90
+glColor4ubv:
+	movq	%rcx, %r10
+	movl	$0x7e010047, %eax
+	syscall
+	retq
+
+	.globl	glColor4ui
+	.p2align	4, 0x90
+glColor4ui:
+	movq	%rcx, %r10
+	movl	$0x7e010048, %eax
+	syscall
+	retq
+
+	.globl	glColor4uiv
+	.p2align	4, 0x90
+glColor4uiv:
+	movq	%rcx, %r10
+	movl	$0x7e010049, %eax
+	syscall
+	retq
+
+	.globl	glColor4us
+	.p2align	4, 0x90
+glColor4us:
+	movq	%rcx, %r10
+	movl	$0x7e01004a, %eax
+	syscall
+	retq
+
+	.globl	glColor4usv
+	.p2align	4, 0x90
+glColor4usv:
+	movq	%rcx, %r10
+	movl	$0x7e01004b, %eax
+	syscall
+	retq
+
+	.globl	glColorMask
+	.p2align	4, 0x90
+glColorMask:
+	movq	%rcx, %r10
+	movl	$0x7e01004c, %eax
+	syscall
+	retq
+
+	.globl	glColorMaski
+	.p2align	4, 0x90
+glColorMaski:
+	movq	%rcx, %r10
+	movl	$0x7e01004d, %eax
+	syscall
+	retq
+
+	.globl	glColorMaterial
+	.p2align	4, 0x90
+glColorMaterial:
+	movq	%rcx, %r10
+	movl	$0x7e01004e, %eax
+	syscall
+	retq
+
+	.globl	glColorPointer
+	.p2align	4, 0x90
+glColorPointer:
+	movq	%rcx, %r10
+	movl	$0x7e01004f, %eax
+	syscall
+	retq
+
+	.globl	glCompileShader
+	.p2align	4, 0x90
+glCompileShader:
+	movq	%rcx, %r10
+	movl	$0x7e010050, %eax
+	syscall
+	retq
+
+	.globl	glCompressedTexImage2D
+	.p2align	4, 0x90
+glCompressedTexImage2D:
+	movq	%rcx, %r10
+	movl	$0x7e010051, %eax
+	syscall
+	retq
+
+	.globl	glCompressedTexSubImage2D
+	.p2align	4, 0x90
+glCompressedTexSubImage2D:
+	movq	%rcx, %r10
+	movl	$0x7e010052, %eax
+	syscall
+	retq
+
+	.globl	glCopyBufferSubData
+	.p2align	4, 0x90
+glCopyBufferSubData:
+	movq	%rcx, %r10
+	movl	$0x7e010053, %eax
+	syscall
+	retq
+
+	.globl	glCopyPixels
+	.p2align	4, 0x90
+glCopyPixels:
+	movq	%rcx, %r10
+	movl	$0x7e010054, %eax
+	syscall
+	retq
+
+	.globl	glCopyTexImage1D
+	.p2align	4, 0x90
+glCopyTexImage1D:
+	movq	%rcx, %r10
+	movl	$0x7e010055, %eax
+	syscall
+	retq
+
+	.globl	glCopyTexImage2D
+	.p2align	4, 0x90
+glCopyTexImage2D:
+	movq	%rcx, %r10
+	movl	$0x7e010056, %eax
+	syscall
+	retq
+
+	.globl	glCopyTexSubImage1D
+	.p2align	4, 0x90
+glCopyTexSubImage1D:
+	movq	%rcx, %r10
+	movl	$0x7e010057, %eax
+	syscall
+	retq
+
+	.globl	glCopyTexSubImage2D
+	.p2align	4, 0x90
+glCopyTexSubImage2D:
+	movq	%rcx, %r10
+	movl	$0x7e010058, %eax
+	syscall
+	retq
+
+	.globl	glCreateBuffers
+	.p2align	4, 0x90
+glCreateBuffers:
+	movq	%rcx, %r10
+	movl	$0x7e010059, %eax
+	syscall
+	retq
+
+	.globl	glCreateProgram
+	.p2align	4, 0x90
+glCreateProgram:
+	movq	%rcx, %r10
+	movl	$0x7e01005a, %eax
+	syscall
+	retq
+
+	.globl	glCreateShader
+	.p2align	4, 0x90
+glCreateShader:
+	movq	%rcx, %r10
+	movl	$0x7e01005b, %eax
+	syscall
+	retq
+
+	.globl	glCullFace
+	.p2align	4, 0x90
+glCullFace:
+	movq	%rcx, %r10
+	movl	$0x7e01005c, %eax
+	syscall
+	retq
+
+	.globl	glDebugMessageCallback
+	.p2align	4, 0x90
+glDebugMessageCallback:
+	movq	%rcx, %r10
+	movl	$0x7e01005d, %eax
+	syscall
+	retq
+
+	.globl	glDebugMessageControl
+	.p2align	4, 0x90
+glDebugMessageControl:
+	movq	%rcx, %r10
+	movl	$0x7e01005e, %eax
+	syscall
+	retq
+
+	.globl	glDebugMessageInsert
+	.p2align	4, 0x90
+glDebugMessageInsert:
+	movq	%rcx, %r10
+	movl	$0x7e01005f, %eax
+	syscall
+	retq
+
+	.globl	glDeleteBuffers
+	.p2align	4, 0x90
+glDeleteBuffers:
+	movq	%rcx, %r10
+	movl	$0x7e010060, %eax
+	syscall
+	retq
+
+	.globl	glDeleteFramebuffers
+	.p2align	4, 0x90
+glDeleteFramebuffers:
+	movq	%rcx, %r10
+	movl	$0x7e010061, %eax
+	syscall
+	retq
+
+	.globl	glDeleteLists
+	.p2align	4, 0x90
+glDeleteLists:
+	movq	%rcx, %r10
+	movl	$0x7e010062, %eax
+	syscall
+	retq
+
+	.globl	glDeleteProgram
+	.p2align	4, 0x90
+glDeleteProgram:
+	movq	%rcx, %r10
+	movl	$0x7e010063, %eax
+	syscall
+	retq
+
+	.globl	glDeleteQueries
+	.p2align	4, 0x90
+glDeleteQueries:
+	movq	%rcx, %r10
+	movl	$0x7e010064, %eax
+	syscall
+	retq
+
+	.globl	glDeleteRenderbuffers
+	.p2align	4, 0x90
+glDeleteRenderbuffers:
+	movq	%rcx, %r10
+	movl	$0x7e010065, %eax
+	syscall
+	retq
+
+	.globl	glDeleteShader
+	.p2align	4, 0x90
+glDeleteShader:
+	movq	%rcx, %r10
+	movl	$0x7e010066, %eax
+	syscall
+	retq
+
+	.globl	glDeleteSync
+	.p2align	4, 0x90
+glDeleteSync:
+	movq	%rcx, %r10
+	movl	$0x7e010067, %eax
+	syscall
+	retq
+
+	.globl	glDeleteTextures
+	.p2align	4, 0x90
+glDeleteTextures:
+	movq	%rcx, %r10
+	movl	$0x7e010068, %eax
+	syscall
+	retq
+
+	.globl	glDeleteVertexArrays
+	.p2align	4, 0x90
+glDeleteVertexArrays:
+	movq	%rcx, %r10
+	movl	$0x7e010069, %eax
+	syscall
+	retq
+
+	.globl	glDepthFunc
+	.p2align	4, 0x90
+glDepthFunc:
+	movq	%rcx, %r10
+	movl	$0x7e01006a, %eax
+	syscall
+	retq
+
+	.globl	glDepthMask
+	.p2align	4, 0x90
+glDepthMask:
+	movq	%rcx, %r10
+	movl	$0x7e01006b, %eax
+	syscall
+	retq
+
+	.globl	glDepthRange
+	.p2align	4, 0x90
+glDepthRange:
+	movq	%rcx, %r10
+	movl	$0x7e01006c, %eax
+	syscall
+	retq
+
+	.globl	glDepthRangef
+	.p2align	4, 0x90
+glDepthRangef:
+	movq	%rcx, %r10
+	movl	$0x7e01006d, %eax
+	syscall
+	retq
+
+	.globl	glDetachShader
+	.p2align	4, 0x90
+glDetachShader:
+	movq	%rcx, %r10
+	movl	$0x7e01006e, %eax
+	syscall
+	retq
+
+	.globl	glDisable
+	.p2align	4, 0x90
+glDisable:
+	movq	%rcx, %r10
+	movl	$0x7e01006f, %eax
+	syscall
+	retq
+
+	.globl	glDisableClientState
+	.p2align	4, 0x90
+glDisableClientState:
+	movq	%rcx, %r10
+	movl	$0x7e010070, %eax
+	syscall
+	retq
+
+	.globl	glDisableVertexAttribArray
+	.p2align	4, 0x90
+glDisableVertexAttribArray:
+	movq	%rcx, %r10
+	movl	$0x7e010071, %eax
+	syscall
+	retq
+
+	.globl	glDisablei
+	.p2align	4, 0x90
+glDisablei:
+	movq	%rcx, %r10
+	movl	$0x7e010072, %eax
+	syscall
+	retq
+
+	.globl	glDiscardFramebufferEXT
+	.p2align	4, 0x90
+glDiscardFramebufferEXT:
+	movq	%rcx, %r10
+	movl	$0x7e010073, %eax
+	syscall
+	retq
+
+	.globl	glDrawArrays
+	.p2align	4, 0x90
+glDrawArrays:
+	movq	%rcx, %r10
+	movl	$0x7e010074, %eax
+	syscall
+	retq
+
+	.globl	glDrawArraysInstanced
+	.p2align	4, 0x90
+glDrawArraysInstanced:
+	movq	%rcx, %r10
+	movl	$0x7e010075, %eax
+	syscall
+	retq
+
+	.globl	glDrawArraysInstancedBaseInstance
+	.p2align	4, 0x90
+glDrawArraysInstancedBaseInstance:
+	movq	%rcx, %r10
+	movl	$0x7e010076, %eax
+	syscall
+	retq
+
+	.globl	glDrawBuffer
+	.p2align	4, 0x90
+glDrawBuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010077, %eax
+	syscall
+	retq
+
+	.globl	glDrawBuffers
+	.p2align	4, 0x90
+glDrawBuffers:
+	movq	%rcx, %r10
+	movl	$0x7e010078, %eax
+	syscall
+	retq
+
+	.globl	glDrawElements
+	.p2align	4, 0x90
+glDrawElements:
+	movq	%rcx, %r10
+	movl	$0x7e010079, %eax
+	syscall
+	retq
+
+	.globl	glDrawElementsBaseVertex
+	.p2align	4, 0x90
+glDrawElementsBaseVertex:
+	movq	%rcx, %r10
+	movl	$0x7e01007a, %eax
+	syscall
+	retq
+
+	.globl	glDrawElementsInstanced
+	.p2align	4, 0x90
+glDrawElementsInstanced:
+	movq	%rcx, %r10
+	movl	$0x7e01007b, %eax
+	syscall
+	retq
+
+	.globl	glDrawElementsInstancedBaseVertex
+	.p2align	4, 0x90
+glDrawElementsInstancedBaseVertex:
+	movq	%rcx, %r10
+	movl	$0x7e01007c, %eax
+	syscall
+	retq
+
+	.globl	glDrawPixels
+	.p2align	4, 0x90
+glDrawPixels:
+	movq	%rcx, %r10
+	movl	$0x7e01007d, %eax
+	syscall
+	retq
+
+	.globl	glDrawRangeElements
+	.p2align	4, 0x90
+glDrawRangeElements:
+	movq	%rcx, %r10
+	movl	$0x7e01007e, %eax
+	syscall
+	retq
+
+	.globl	glDrawRangeElementsBaseVertex
+	.p2align	4, 0x90
+glDrawRangeElementsBaseVertex:
+	movq	%rcx, %r10
+	movl	$0x7e01007f, %eax
+	syscall
+	retq
+
+	.globl	glEdgeFlag
+	.p2align	4, 0x90
+glEdgeFlag:
+	movq	%rcx, %r10
+	movl	$0x7e010080, %eax
+	syscall
+	retq
+
+	.globl	glEdgeFlagPointer
+	.p2align	4, 0x90
+glEdgeFlagPointer:
+	movq	%rcx, %r10
+	movl	$0x7e010081, %eax
+	syscall
+	retq
+
+	.globl	glEdgeFlagv
+	.p2align	4, 0x90
+glEdgeFlagv:
+	movq	%rcx, %r10
+	movl	$0x7e010082, %eax
+	syscall
+	retq
+
+	.globl	glEnable
+	.p2align	4, 0x90
+glEnable:
+	movq	%rcx, %r10
+	movl	$0x7e010083, %eax
+	syscall
+	retq
+
+	.globl	glEnableClientState
+	.p2align	4, 0x90
+glEnableClientState:
+	movq	%rcx, %r10
+	movl	$0x7e010084, %eax
+	syscall
+	retq
+
+	.globl	glEnableVertexAttribArray
+	.p2align	4, 0x90
+glEnableVertexAttribArray:
+	movq	%rcx, %r10
+	movl	$0x7e010085, %eax
+	syscall
+	retq
+
+	.globl	glEnablei
+	.p2align	4, 0x90
+glEnablei:
+	movq	%rcx, %r10
+	movl	$0x7e010086, %eax
+	syscall
+	retq
+
+	.globl	glEnd
+	.p2align	4, 0x90
+glEnd:
+	movq	%rcx, %r10
+	movl	$0x7e010087, %eax
+	syscall
+	retq
+
+	.globl	glEndList
+	.p2align	4, 0x90
+glEndList:
+	movq	%rcx, %r10
+	movl	$0x7e010088, %eax
+	syscall
+	retq
+
+	.globl	glEndQuery
+	.p2align	4, 0x90
+glEndQuery:
+	movq	%rcx, %r10
+	movl	$0x7e010089, %eax
+	syscall
+	retq
+
+	.globl	glEvalCoord1d
+	.p2align	4, 0x90
+glEvalCoord1d:
+	movq	%rcx, %r10
+	movl	$0x7e01008a, %eax
+	syscall
+	retq
+
+	.globl	glEvalCoord1dv
+	.p2align	4, 0x90
+glEvalCoord1dv:
+	movq	%rcx, %r10
+	movl	$0x7e01008b, %eax
+	syscall
+	retq
+
+	.globl	glEvalCoord1f
+	.p2align	4, 0x90
+glEvalCoord1f:
+	movq	%rcx, %r10
+	movl	$0x7e01008c, %eax
+	syscall
+	retq
+
+	.globl	glEvalCoord1fv
+	.p2align	4, 0x90
+glEvalCoord1fv:
+	movq	%rcx, %r10
+	movl	$0x7e01008d, %eax
+	syscall
+	retq
+
+	.globl	glEvalCoord2d
+	.p2align	4, 0x90
+glEvalCoord2d:
+	movq	%rcx, %r10
+	movl	$0x7e01008e, %eax
+	syscall
+	retq
+
+	.globl	glEvalCoord2dv
+	.p2align	4, 0x90
+glEvalCoord2dv:
+	movq	%rcx, %r10
+	movl	$0x7e01008f, %eax
+	syscall
+	retq
+
+	.globl	glEvalCoord2f
+	.p2align	4, 0x90
+glEvalCoord2f:
+	movq	%rcx, %r10
+	movl	$0x7e010090, %eax
+	syscall
+	retq
+
+	.globl	glEvalCoord2fv
+	.p2align	4, 0x90
+glEvalCoord2fv:
+	movq	%rcx, %r10
+	movl	$0x7e010091, %eax
+	syscall
+	retq
+
+	.globl	glEvalMesh1
+	.p2align	4, 0x90
+glEvalMesh1:
+	movq	%rcx, %r10
+	movl	$0x7e010092, %eax
+	syscall
+	retq
+
+	.globl	glEvalMesh2
+	.p2align	4, 0x90
+glEvalMesh2:
+	movq	%rcx, %r10
+	movl	$0x7e010093, %eax
+	syscall
+	retq
+
+	.globl	glEvalPoint1
+	.p2align	4, 0x90
+glEvalPoint1:
+	movq	%rcx, %r10
+	movl	$0x7e010094, %eax
+	syscall
+	retq
+
+	.globl	glEvalPoint2
+	.p2align	4, 0x90
+glEvalPoint2:
+	movq	%rcx, %r10
+	movl	$0x7e010095, %eax
+	syscall
+	retq
+
+	.globl	glFeedbackBuffer
+	.p2align	4, 0x90
+glFeedbackBuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010096, %eax
+	syscall
+	retq
+
+	.globl	glFenceSync
+	.p2align	4, 0x90
+glFenceSync:
+	movq	%rcx, %r10
+	movl	$0x7e010097, %eax
+	syscall
+	retq
+
+	.globl	glFinish
+	.p2align	4, 0x90
+glFinish:
+	movq	%rcx, %r10
+	movl	$0x7e010098, %eax
+	syscall
+	retq
+
+	.globl	glFlush
+	.p2align	4, 0x90
+glFlush:
+	movq	%rcx, %r10
+	movl	$0x7e010099, %eax
+	syscall
+	retq
+
+	.globl	glFlushMappedBufferRange
+	.p2align	4, 0x90
+glFlushMappedBufferRange:
+	movq	%rcx, %r10
+	movl	$0x7e01009a, %eax
+	syscall
+	retq
+
+	.globl	glFogf
+	.p2align	4, 0x90
+glFogf:
+	movq	%rcx, %r10
+	movl	$0x7e01009b, %eax
+	syscall
+	retq
+
+	.globl	glFogfv
+	.p2align	4, 0x90
+glFogfv:
+	movq	%rcx, %r10
+	movl	$0x7e01009c, %eax
+	syscall
+	retq
+
+	.globl	glFogi
+	.p2align	4, 0x90
+glFogi:
+	movq	%rcx, %r10
+	movl	$0x7e01009d, %eax
+	syscall
+	retq
+
+	.globl	glFogiv
+	.p2align	4, 0x90
+glFogiv:
+	movq	%rcx, %r10
+	movl	$0x7e01009e, %eax
+	syscall
+	retq
+
+	.globl	glFramebufferRenderbuffer
+	.p2align	4, 0x90
+glFramebufferRenderbuffer:
+	movq	%rcx, %r10
+	movl	$0x7e01009f, %eax
+	syscall
+	retq
+
+	.globl	glFramebufferTexture
+	.p2align	4, 0x90
+glFramebufferTexture:
+	movq	%rcx, %r10
+	movl	$0x7e0100a0, %eax
+	syscall
+	retq
+
+	.globl	glFramebufferTexture1D
+	.p2align	4, 0x90
+glFramebufferTexture1D:
+	movq	%rcx, %r10
+	movl	$0x7e0100a1, %eax
+	syscall
+	retq
+
+	.globl	glFramebufferTexture2D
+	.p2align	4, 0x90
+glFramebufferTexture2D:
+	movq	%rcx, %r10
+	movl	$0x7e0100a2, %eax
+	syscall
+	retq
+
+	.globl	glFramebufferTextureLayer
+	.p2align	4, 0x90
+glFramebufferTextureLayer:
+	movq	%rcx, %r10
+	movl	$0x7e0100a3, %eax
+	syscall
+	retq
+
+	.globl	glFrontFace
+	.p2align	4, 0x90
+glFrontFace:
+	movq	%rcx, %r10
+	movl	$0x7e0100a4, %eax
+	syscall
+	retq
+
+	.globl	glFrustum
+	.p2align	4, 0x90
+glFrustum:
+	movq	%rcx, %r10
+	movl	$0x7e0100a5, %eax
+	syscall
+	retq
+
+	.globl	glGenBuffers
+	.p2align	4, 0x90
+glGenBuffers:
+	movq	%rcx, %r10
+	movl	$0x7e0100a6, %eax
+	syscall
+	retq
+
+	.globl	glGenFramebuffers
+	.p2align	4, 0x90
+glGenFramebuffers:
+	movq	%rcx, %r10
+	movl	$0x7e0100a7, %eax
+	syscall
+	retq
+
+	.globl	glGenLists
+	.p2align	4, 0x90
+glGenLists:
+	movq	%rcx, %r10
+	movl	$0x7e0100a8, %eax
+	syscall
+	retq
+
+	.globl	glGenQueries
+	.p2align	4, 0x90
+glGenQueries:
+	movq	%rcx, %r10
+	movl	$0x7e0100a9, %eax
+	syscall
+	retq
+
+	.globl	glGenRenderbuffers
+	.p2align	4, 0x90
+glGenRenderbuffers:
+	movq	%rcx, %r10
+	movl	$0x7e0100aa, %eax
+	syscall
+	retq
+
+	.globl	glGenTextures
+	.p2align	4, 0x90
+glGenTextures:
+	movq	%rcx, %r10
+	movl	$0x7e0100ab, %eax
+	syscall
+	retq
+
+	.globl	glGenVertexArrays
+	.p2align	4, 0x90
+glGenVertexArrays:
+	movq	%rcx, %r10
+	movl	$0x7e0100ac, %eax
+	syscall
+	retq
+
+	.globl	glGenerateMipmap
+	.p2align	4, 0x90
+glGenerateMipmap:
+	movq	%rcx, %r10
+	movl	$0x7e0100ad, %eax
+	syscall
+	retq
+
+	.globl	glGetActiveAttrib
+	.p2align	4, 0x90
+glGetActiveAttrib:
+	movq	%rcx, %r10
+	movl	$0x7e0100ae, %eax
+	syscall
+	retq
+
+	.globl	glGetActiveUniform
+	.p2align	4, 0x90
+glGetActiveUniform:
+	movq	%rcx, %r10
+	movl	$0x7e0100af, %eax
+	syscall
+	retq
+
+	.globl	glGetActiveUniformBlockName
+	.p2align	4, 0x90
+glGetActiveUniformBlockName:
+	movq	%rcx, %r10
+	movl	$0x7e0100b0, %eax
+	syscall
+	retq
+
+	.globl	glGetActiveUniformBlockiv
+	.p2align	4, 0x90
+glGetActiveUniformBlockiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100b1, %eax
+	syscall
+	retq
+
+	.globl	glGetActiveUniformsiv
+	.p2align	4, 0x90
+glGetActiveUniformsiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100b2, %eax
+	syscall
+	retq
+
+	.globl	glGetAttachedShaders
+	.p2align	4, 0x90
+glGetAttachedShaders:
+	movq	%rcx, %r10
+	movl	$0x7e0100b3, %eax
+	syscall
+	retq
+
+	.globl	glGetAttribLocation
+	.p2align	4, 0x90
+glGetAttribLocation:
+	movq	%rcx, %r10
+	movl	$0x7e0100b4, %eax
+	syscall
+	retq
+
+	.globl	glGetBooleani_v
+	.p2align	4, 0x90
+glGetBooleani_v:
+	movq	%rcx, %r10
+	movl	$0x7e0100b5, %eax
+	syscall
+	retq
+
+	.globl	glGetBooleanv
+	.p2align	4, 0x90
+glGetBooleanv:
+	movq	%rcx, %r10
+	movl	$0x7e0100b6, %eax
+	syscall
+	retq
+
+	.globl	glGetBufferParameteri64v
+	.p2align	4, 0x90
+glGetBufferParameteri64v:
+	movq	%rcx, %r10
+	movl	$0x7e0100b7, %eax
+	syscall
+	retq
+
+	.globl	glGetBufferParameteriv
+	.p2align	4, 0x90
+glGetBufferParameteriv:
+	movq	%rcx, %r10
+	movl	$0x7e0100b8, %eax
+	syscall
+	retq
+
+	.globl	glGetBufferPointerv
+	.p2align	4, 0x90
+glGetBufferPointerv:
+	movq	%rcx, %r10
+	movl	$0x7e0100b9, %eax
+	syscall
+	retq
+
+	.globl	glGetBufferSubData
+	.p2align	4, 0x90
+glGetBufferSubData:
+	movq	%rcx, %r10
+	movl	$0x7e0100ba, %eax
+	syscall
+	retq
+
+	.globl	glGetClipPlane
+	.p2align	4, 0x90
+glGetClipPlane:
+	movq	%rcx, %r10
+	movl	$0x7e0100bb, %eax
+	syscall
+	retq
+
+	.globl	glGetDebugMessageLog
+	.p2align	4, 0x90
+glGetDebugMessageLog:
+	movq	%rcx, %r10
+	movl	$0x7e0100bc, %eax
+	syscall
+	retq
+
+	.globl	glGetDoublev
+	.p2align	4, 0x90
+glGetDoublev:
+	movq	%rcx, %r10
+	movl	$0x7e0100bd, %eax
+	syscall
+	retq
+
+	.globl	glGetError
+	.p2align	4, 0x90
+glGetError:
+	movq	%rcx, %r10
+	movl	$0x7e0100be, %eax
+	syscall
+	retq
+
+	.globl	glGetFloatv
+	.p2align	4, 0x90
+glGetFloatv:
+	movq	%rcx, %r10
+	movl	$0x7e0100bf, %eax
+	syscall
+	retq
+
+	.globl	glGetFramebufferAttachmentParameteriv
+	.p2align	4, 0x90
+glGetFramebufferAttachmentParameteriv:
+	movq	%rcx, %r10
+	movl	$0x7e0100c0, %eax
+	syscall
+	retq
+
+	.globl	glGetInteger64v
+	.p2align	4, 0x90
+glGetInteger64v:
+	movq	%rcx, %r10
+	movl	$0x7e0100c1, %eax
+	syscall
+	retq
+
+	.globl	glGetIntegeri_v
+	.p2align	4, 0x90
+glGetIntegeri_v:
+	movq	%rcx, %r10
+	movl	$0x7e0100c2, %eax
+	syscall
+	retq
+
+	.globl	glGetIntegerv
+	.p2align	4, 0x90
+glGetIntegerv:
+	movq	%rcx, %r10
+	movl	$0x7e0100c3, %eax
+	syscall
+	retq
+
+	.globl	glGetLightfv
+	.p2align	4, 0x90
+glGetLightfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100c4, %eax
+	syscall
+	retq
+
+	.globl	glGetLightiv
+	.p2align	4, 0x90
+glGetLightiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100c5, %eax
+	syscall
+	retq
+
+	.globl	glGetMapdv
+	.p2align	4, 0x90
+glGetMapdv:
+	movq	%rcx, %r10
+	movl	$0x7e0100c6, %eax
+	syscall
+	retq
+
+	.globl	glGetMapfv
+	.p2align	4, 0x90
+glGetMapfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100c7, %eax
+	syscall
+	retq
+
+	.globl	glGetMapiv
+	.p2align	4, 0x90
+glGetMapiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100c8, %eax
+	syscall
+	retq
+
+	.globl	glGetMaterialfv
+	.p2align	4, 0x90
+glGetMaterialfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100c9, %eax
+	syscall
+	retq
+
+	.globl	glGetMaterialiv
+	.p2align	4, 0x90
+glGetMaterialiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100ca, %eax
+	syscall
+	retq
+
+	.globl	glGetPixelMapfv
+	.p2align	4, 0x90
+glGetPixelMapfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100cb, %eax
+	syscall
+	retq
+
+	.globl	glGetPixelMapuiv
+	.p2align	4, 0x90
+glGetPixelMapuiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100cc, %eax
+	syscall
+	retq
+
+	.globl	glGetPixelMapusv
+	.p2align	4, 0x90
+glGetPixelMapusv:
+	movq	%rcx, %r10
+	movl	$0x7e0100cd, %eax
+	syscall
+	retq
+
+	.globl	glGetPointerv
+	.p2align	4, 0x90
+glGetPointerv:
+	movq	%rcx, %r10
+	movl	$0x7e0100ce, %eax
+	syscall
+	retq
+
+	.globl	glGetPolygonStipple
+	.p2align	4, 0x90
+glGetPolygonStipple:
+	movq	%rcx, %r10
+	movl	$0x7e0100cf, %eax
+	syscall
+	retq
+
+	.globl	glGetProgramInfoLog
+	.p2align	4, 0x90
+glGetProgramInfoLog:
+	movq	%rcx, %r10
+	movl	$0x7e0100d0, %eax
+	syscall
+	retq
+
+	.globl	glGetProgramiv
+	.p2align	4, 0x90
+glGetProgramiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100d1, %eax
+	syscall
+	retq
+
+	.globl	glGetQueryObjecti64v
+	.p2align	4, 0x90
+glGetQueryObjecti64v:
+	movq	%rcx, %r10
+	movl	$0x7e0100d2, %eax
+	syscall
+	retq
+
+	.globl	glGetQueryObjectiv
+	.p2align	4, 0x90
+glGetQueryObjectiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100d3, %eax
+	syscall
+	retq
+
+	.globl	glGetQueryObjectui64v
+	.p2align	4, 0x90
+glGetQueryObjectui64v:
+	movq	%rcx, %r10
+	movl	$0x7e0100d4, %eax
+	syscall
+	retq
+
+	.globl	glGetQueryObjectuiv
+	.p2align	4, 0x90
+glGetQueryObjectuiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100d5, %eax
+	syscall
+	retq
+
+	.globl	glGetQueryiv
+	.p2align	4, 0x90
+glGetQueryiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100d6, %eax
+	syscall
+	retq
+
+	.globl	glGetRenderbufferParameteriv
+	.p2align	4, 0x90
+glGetRenderbufferParameteriv:
+	movq	%rcx, %r10
+	movl	$0x7e0100d7, %eax
+	syscall
+	retq
+
+	.globl	glGetShaderInfoLog
+	.p2align	4, 0x90
+glGetShaderInfoLog:
+	movq	%rcx, %r10
+	movl	$0x7e0100d8, %eax
+	syscall
+	retq
+
+	.globl	glGetShaderPrecisionFormat
+	.p2align	4, 0x90
+glGetShaderPrecisionFormat:
+	movq	%rcx, %r10
+	movl	$0x7e0100d9, %eax
+	syscall
+	retq
+
+	.globl	glGetShaderSource
+	.p2align	4, 0x90
+glGetShaderSource:
+	movq	%rcx, %r10
+	movl	$0x7e0100da, %eax
+	syscall
+	retq
+
+	.globl	glGetShaderiv
+	.p2align	4, 0x90
+glGetShaderiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100db, %eax
+	syscall
+	retq
+
+	.globl	glGetString
+	.p2align	4, 0x90
+glGetString:
+	movq	%rcx, %r10
+	movl	$0x7e0100dc, %eax
+	syscall
+	retq
+
+	.globl	glGetStringi
+	.p2align	4, 0x90
+glGetStringi:
+	movq	%rcx, %r10
+	movl	$0x7e0100dd, %eax
+	syscall
+	retq
+
+	.globl	glGetSynciv
+	.p2align	4, 0x90
+glGetSynciv:
+	movq	%rcx, %r10
+	movl	$0x7e0100de, %eax
+	syscall
+	retq
+
+	.globl	glGetTexEnvfv
+	.p2align	4, 0x90
+glGetTexEnvfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100df, %eax
+	syscall
+	retq
+
+	.globl	glGetTexEnviv
+	.p2align	4, 0x90
+glGetTexEnviv:
+	movq	%rcx, %r10
+	movl	$0x7e0100e0, %eax
+	syscall
+	retq
+
+	.globl	glGetTexGendv
+	.p2align	4, 0x90
+glGetTexGendv:
+	movq	%rcx, %r10
+	movl	$0x7e0100e1, %eax
+	syscall
+	retq
+
+	.globl	glGetTexGenfv
+	.p2align	4, 0x90
+glGetTexGenfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100e2, %eax
+	syscall
+	retq
+
+	.globl	glGetTexGeniv
+	.p2align	4, 0x90
+glGetTexGeniv:
+	movq	%rcx, %r10
+	movl	$0x7e0100e3, %eax
+	syscall
+	retq
+
+	.globl	glGetTexImage
+	.p2align	4, 0x90
+glGetTexImage:
+	movq	%rcx, %r10
+	movl	$0x7e0100e4, %eax
+	syscall
+	retq
+
+	.globl	glGetTexLevelParameterfv
+	.p2align	4, 0x90
+glGetTexLevelParameterfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100e5, %eax
+	syscall
+	retq
+
+	.globl	glGetTexLevelParameteriv
+	.p2align	4, 0x90
+glGetTexLevelParameteriv:
+	movq	%rcx, %r10
+	movl	$0x7e0100e6, %eax
+	syscall
+	retq
+
+	.globl	glGetTexParameterfv
+	.p2align	4, 0x90
+glGetTexParameterfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100e7, %eax
+	syscall
+	retq
+
+	.globl	glGetTexParameteriv
+	.p2align	4, 0x90
+glGetTexParameteriv:
+	movq	%rcx, %r10
+	movl	$0x7e0100e8, %eax
+	syscall
+	retq
+
+	.globl	glGetUniformBlockIndex
+	.p2align	4, 0x90
+glGetUniformBlockIndex:
+	movq	%rcx, %r10
+	movl	$0x7e0100e9, %eax
+	syscall
+	retq
+
+	.globl	glGetUniformLocation
+	.p2align	4, 0x90
+glGetUniformLocation:
+	movq	%rcx, %r10
+	movl	$0x7e0100ea, %eax
+	syscall
+	retq
+
+	.globl	glGetUniformfv
+	.p2align	4, 0x90
+glGetUniformfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100eb, %eax
+	syscall
+	retq
+
+	.globl	glGetUniformiv
+	.p2align	4, 0x90
+glGetUniformiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100ec, %eax
+	syscall
+	retq
+
+	.globl	glGetVertexAttribIiv
+	.p2align	4, 0x90
+glGetVertexAttribIiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100ed, %eax
+	syscall
+	retq
+
+	.globl	glGetVertexAttribIuiv
+	.p2align	4, 0x90
+glGetVertexAttribIuiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100ee, %eax
+	syscall
+	retq
+
+	.globl	glGetVertexAttribPointerv
+	.p2align	4, 0x90
+glGetVertexAttribPointerv:
+	movq	%rcx, %r10
+	movl	$0x7e0100ef, %eax
+	syscall
+	retq
+
+	.globl	glGetVertexAttribfv
+	.p2align	4, 0x90
+glGetVertexAttribfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100f0, %eax
+	syscall
+	retq
+
+	.globl	glGetVertexAttribiv
+	.p2align	4, 0x90
+glGetVertexAttribiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100f1, %eax
+	syscall
+	retq
+
+	.globl	glHint
+	.p2align	4, 0x90
+glHint:
+	movq	%rcx, %r10
+	movl	$0x7e0100f2, %eax
+	syscall
+	retq
+
+	.globl	glIndexMask
+	.p2align	4, 0x90
+glIndexMask:
+	movq	%rcx, %r10
+	movl	$0x7e0100f3, %eax
+	syscall
+	retq
+
+	.globl	glIndexPointer
+	.p2align	4, 0x90
+glIndexPointer:
+	movq	%rcx, %r10
+	movl	$0x7e0100f4, %eax
+	syscall
+	retq
+
+	.globl	glIndexd
+	.p2align	4, 0x90
+glIndexd:
+	movq	%rcx, %r10
+	movl	$0x7e0100f5, %eax
+	syscall
+	retq
+
+	.globl	glIndexdv
+	.p2align	4, 0x90
+glIndexdv:
+	movq	%rcx, %r10
+	movl	$0x7e0100f6, %eax
+	syscall
+	retq
+
+	.globl	glIndexf
+	.p2align	4, 0x90
+glIndexf:
+	movq	%rcx, %r10
+	movl	$0x7e0100f7, %eax
+	syscall
+	retq
+
+	.globl	glIndexfv
+	.p2align	4, 0x90
+glIndexfv:
+	movq	%rcx, %r10
+	movl	$0x7e0100f8, %eax
+	syscall
+	retq
+
+	.globl	glIndexi
+	.p2align	4, 0x90
+glIndexi:
+	movq	%rcx, %r10
+	movl	$0x7e0100f9, %eax
+	syscall
+	retq
+
+	.globl	glIndexiv
+	.p2align	4, 0x90
+glIndexiv:
+	movq	%rcx, %r10
+	movl	$0x7e0100fa, %eax
+	syscall
+	retq
+
+	.globl	glIndexs
+	.p2align	4, 0x90
+glIndexs:
+	movq	%rcx, %r10
+	movl	$0x7e0100fb, %eax
+	syscall
+	retq
+
+	.globl	glIndexsv
+	.p2align	4, 0x90
+glIndexsv:
+	movq	%rcx, %r10
+	movl	$0x7e0100fc, %eax
+	syscall
+	retq
+
+	.globl	glIndexub
+	.p2align	4, 0x90
+glIndexub:
+	movq	%rcx, %r10
+	movl	$0x7e0100fd, %eax
+	syscall
+	retq
+
+	.globl	glIndexubv
+	.p2align	4, 0x90
+glIndexubv:
+	movq	%rcx, %r10
+	movl	$0x7e0100fe, %eax
+	syscall
+	retq
+
+	.globl	glInitNames
+	.p2align	4, 0x90
+glInitNames:
+	movq	%rcx, %r10
+	movl	$0x7e0100ff, %eax
+	syscall
+	retq
+
+	.globl	glInterleavedArrays
+	.p2align	4, 0x90
+glInterleavedArrays:
+	movq	%rcx, %r10
+	movl	$0x7e010100, %eax
+	syscall
+	retq
+
+	.globl	glInvalidateFramebuffer
+	.p2align	4, 0x90
+glInvalidateFramebuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010101, %eax
+	syscall
+	retq
+
+	.globl	glIsBuffer
+	.p2align	4, 0x90
+glIsBuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010102, %eax
+	syscall
+	retq
+
+	.globl	glIsEnabled
+	.p2align	4, 0x90
+glIsEnabled:
+	movq	%rcx, %r10
+	movl	$0x7e010103, %eax
+	syscall
+	retq
+
+	.globl	glIsEnabledi
+	.p2align	4, 0x90
+glIsEnabledi:
+	movq	%rcx, %r10
+	movl	$0x7e010104, %eax
+	syscall
+	retq
+
+	.globl	glIsFramebuffer
+	.p2align	4, 0x90
+glIsFramebuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010105, %eax
+	syscall
+	retq
+
+	.globl	glIsList
+	.p2align	4, 0x90
+glIsList:
+	movq	%rcx, %r10
+	movl	$0x7e010106, %eax
+	syscall
+	retq
+
+	.globl	glIsProgram
+	.p2align	4, 0x90
+glIsProgram:
+	movq	%rcx, %r10
+	movl	$0x7e010107, %eax
+	syscall
+	retq
+
+	.globl	glIsQuery
+	.p2align	4, 0x90
+glIsQuery:
+	movq	%rcx, %r10
+	movl	$0x7e010108, %eax
+	syscall
+	retq
+
+	.globl	glIsRenderbuffer
+	.p2align	4, 0x90
+glIsRenderbuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010109, %eax
+	syscall
+	retq
+
+	.globl	glIsShader
+	.p2align	4, 0x90
+glIsShader:
+	movq	%rcx, %r10
+	movl	$0x7e01010a, %eax
+	syscall
+	retq
+
+	.globl	glIsSync
+	.p2align	4, 0x90
+glIsSync:
+	movq	%rcx, %r10
+	movl	$0x7e01010b, %eax
+	syscall
+	retq
+
+	.globl	glIsTexture
+	.p2align	4, 0x90
+glIsTexture:
+	movq	%rcx, %r10
+	movl	$0x7e01010c, %eax
+	syscall
+	retq
+
+	.globl	glIsVertexArray
+	.p2align	4, 0x90
+glIsVertexArray:
+	movq	%rcx, %r10
+	movl	$0x7e01010d, %eax
+	syscall
+	retq
+
+	.globl	glLightModelf
+	.p2align	4, 0x90
+glLightModelf:
+	movq	%rcx, %r10
+	movl	$0x7e01010e, %eax
+	syscall
+	retq
+
+	.globl	glLightModelfv
+	.p2align	4, 0x90
+glLightModelfv:
+	movq	%rcx, %r10
+	movl	$0x7e01010f, %eax
+	syscall
+	retq
+
+	.globl	glLightModeli
+	.p2align	4, 0x90
+glLightModeli:
+	movq	%rcx, %r10
+	movl	$0x7e010110, %eax
+	syscall
+	retq
+
+	.globl	glLightModeliv
+	.p2align	4, 0x90
+glLightModeliv:
+	movq	%rcx, %r10
+	movl	$0x7e010111, %eax
+	syscall
+	retq
+
+	.globl	glLightf
+	.p2align	4, 0x90
+glLightf:
+	movq	%rcx, %r10
+	movl	$0x7e010112, %eax
+	syscall
+	retq
+
+	.globl	glLightfv
+	.p2align	4, 0x90
+glLightfv:
+	movq	%rcx, %r10
+	movl	$0x7e010113, %eax
+	syscall
+	retq
+
+	.globl	glLighti
+	.p2align	4, 0x90
+glLighti:
+	movq	%rcx, %r10
+	movl	$0x7e010114, %eax
+	syscall
+	retq
+
+	.globl	glLightiv
+	.p2align	4, 0x90
+glLightiv:
+	movq	%rcx, %r10
+	movl	$0x7e010115, %eax
+	syscall
+	retq
+
+	.globl	glLineStipple
+	.p2align	4, 0x90
+glLineStipple:
+	movq	%rcx, %r10
+	movl	$0x7e010116, %eax
+	syscall
+	retq
+
+	.globl	glLineWidth
+	.p2align	4, 0x90
+glLineWidth:
+	movq	%rcx, %r10
+	movl	$0x7e010117, %eax
+	syscall
+	retq
+
+	.globl	glLinkProgram
+	.p2align	4, 0x90
+glLinkProgram:
+	movq	%rcx, %r10
+	movl	$0x7e010118, %eax
+	syscall
+	retq
+
+	.globl	glListBase
+	.p2align	4, 0x90
+glListBase:
+	movq	%rcx, %r10
+	movl	$0x7e010119, %eax
+	syscall
+	retq
+
+	.globl	glLoadIdentity
+	.p2align	4, 0x90
+glLoadIdentity:
+	movq	%rcx, %r10
+	movl	$0x7e01011a, %eax
+	syscall
+	retq
+
+	.globl	glLoadMatrixd
+	.p2align	4, 0x90
+glLoadMatrixd:
+	movq	%rcx, %r10
+	movl	$0x7e01011b, %eax
+	syscall
+	retq
+
+	.globl	glLoadMatrixf
+	.p2align	4, 0x90
+glLoadMatrixf:
+	movq	%rcx, %r10
+	movl	$0x7e01011c, %eax
+	syscall
+	retq
+
+	.globl	glLoadName
+	.p2align	4, 0x90
+glLoadName:
+	movq	%rcx, %r10
+	movl	$0x7e01011d, %eax
+	syscall
+	retq
+
+	.globl	glLoadTransposeMatrixd
+	.p2align	4, 0x90
+glLoadTransposeMatrixd:
+	movq	%rcx, %r10
+	movl	$0x7e01011e, %eax
+	syscall
+	retq
+
+	.globl	glLoadTransposeMatrixdARB
+	.p2align	4, 0x90
+glLoadTransposeMatrixdARB:
+	movq	%rcx, %r10
+	movl	$0x7e01011f, %eax
+	syscall
+	retq
+
+	.globl	glLoadTransposeMatrixf
+	.p2align	4, 0x90
+glLoadTransposeMatrixf:
+	movq	%rcx, %r10
+	movl	$0x7e010120, %eax
+	syscall
+	retq
+
+	.globl	glLoadTransposeMatrixfARB
+	.p2align	4, 0x90
+glLoadTransposeMatrixfARB:
+	movq	%rcx, %r10
+	movl	$0x7e010121, %eax
+	syscall
+	retq
+
+	.globl	glLogicOp
+	.p2align	4, 0x90
+glLogicOp:
+	movq	%rcx, %r10
+	movl	$0x7e010122, %eax
+	syscall
+	retq
+
+	.globl	glMap1d
+	.p2align	4, 0x90
+glMap1d:
+	movq	%rcx, %r10
+	movl	$0x7e010123, %eax
+	syscall
+	retq
+
+	.globl	glMap1f
+	.p2align	4, 0x90
+glMap1f:
+	movq	%rcx, %r10
+	movl	$0x7e010124, %eax
+	syscall
+	retq
+
+	.globl	glMap2d
+	.p2align	4, 0x90
+glMap2d:
+	movq	%rcx, %r10
+	movl	$0x7e010125, %eax
+	syscall
+	retq
+
+	.globl	glMap2f
+	.p2align	4, 0x90
+glMap2f:
+	movq	%rcx, %r10
+	movl	$0x7e010126, %eax
+	syscall
+	retq
+
+	.globl	glMapBuffer
+	.p2align	4, 0x90
+glMapBuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010127, %eax
+	syscall
+	retq
+
+	.globl	glMapBufferRange
+	.p2align	4, 0x90
+glMapBufferRange:
+	movq	%rcx, %r10
+	movl	$0x7e010128, %eax
+	syscall
+	retq
+
+	.globl	glMapGrid1d
+	.p2align	4, 0x90
+glMapGrid1d:
+	movq	%rcx, %r10
+	movl	$0x7e010129, %eax
+	syscall
+	retq
+
+	.globl	glMapGrid1f
+	.p2align	4, 0x90
+glMapGrid1f:
+	movq	%rcx, %r10
+	movl	$0x7e01012a, %eax
+	syscall
+	retq
+
+	.globl	glMapGrid2d
+	.p2align	4, 0x90
+glMapGrid2d:
+	movq	%rcx, %r10
+	movl	$0x7e01012b, %eax
+	syscall
+	retq
+
+	.globl	glMapGrid2f
+	.p2align	4, 0x90
+glMapGrid2f:
+	movq	%rcx, %r10
+	movl	$0x7e01012c, %eax
+	syscall
+	retq
+
+	.globl	glMaterialf
+	.p2align	4, 0x90
+glMaterialf:
+	movq	%rcx, %r10
+	movl	$0x7e01012d, %eax
+	syscall
+	retq
+
+	.globl	glMaterialfv
+	.p2align	4, 0x90
+glMaterialfv:
+	movq	%rcx, %r10
+	movl	$0x7e01012e, %eax
+	syscall
+	retq
+
+	.globl	glMateriali
+	.p2align	4, 0x90
+glMateriali:
+	movq	%rcx, %r10
+	movl	$0x7e01012f, %eax
+	syscall
+	retq
+
+	.globl	glMaterialiv
+	.p2align	4, 0x90
+glMaterialiv:
+	movq	%rcx, %r10
+	movl	$0x7e010130, %eax
+	syscall
+	retq
+
+	.globl	glMatrixMode
+	.p2align	4, 0x90
+glMatrixMode:
+	movq	%rcx, %r10
+	movl	$0x7e010131, %eax
+	syscall
+	retq
+
+	.globl	glMultMatrixd
+	.p2align	4, 0x90
+glMultMatrixd:
+	movq	%rcx, %r10
+	movl	$0x7e010132, %eax
+	syscall
+	retq
+
+	.globl	glMultMatrixf
+	.p2align	4, 0x90
+glMultMatrixf:
+	movq	%rcx, %r10
+	movl	$0x7e010133, %eax
+	syscall
+	retq
+
+	.globl	glMultTransposeMatrixd
+	.p2align	4, 0x90
+glMultTransposeMatrixd:
+	movq	%rcx, %r10
+	movl	$0x7e010134, %eax
+	syscall
+	retq
+
+	.globl	glMultTransposeMatrixdARB
+	.p2align	4, 0x90
+glMultTransposeMatrixdARB:
+	movq	%rcx, %r10
+	movl	$0x7e010135, %eax
+	syscall
+	retq
+
+	.globl	glMultTransposeMatrixf
+	.p2align	4, 0x90
+glMultTransposeMatrixf:
+	movq	%rcx, %r10
+	movl	$0x7e010136, %eax
+	syscall
+	retq
+
+	.globl	glMultTransposeMatrixfARB
+	.p2align	4, 0x90
+glMultTransposeMatrixfARB:
+	movq	%rcx, %r10
+	movl	$0x7e010137, %eax
+	syscall
+	retq
+
+	.globl	glMultiDrawArrays
+	.p2align	4, 0x90
+glMultiDrawArrays:
+	movq	%rcx, %r10
+	movl	$0x7e010138, %eax
+	syscall
+	retq
+
+	.globl	glMultiDrawElements
+	.p2align	4, 0x90
+glMultiDrawElements:
+	movq	%rcx, %r10
+	movl	$0x7e010139, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1d
+	.p2align	4, 0x90
+glMultiTexCoord1d:
+	movq	%rcx, %r10
+	movl	$0x7e01013a, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1dARB
+	.p2align	4, 0x90
+glMultiTexCoord1dARB:
+	movq	%rcx, %r10
+	movl	$0x7e01013b, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1dv
+	.p2align	4, 0x90
+glMultiTexCoord1dv:
+	movq	%rcx, %r10
+	movl	$0x7e01013c, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1dvARB
+	.p2align	4, 0x90
+glMultiTexCoord1dvARB:
+	movq	%rcx, %r10
+	movl	$0x7e01013d, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1f
+	.p2align	4, 0x90
+glMultiTexCoord1f:
+	movq	%rcx, %r10
+	movl	$0x7e01013e, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1fARB
+	.p2align	4, 0x90
+glMultiTexCoord1fARB:
+	movq	%rcx, %r10
+	movl	$0x7e01013f, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1fv
+	.p2align	4, 0x90
+glMultiTexCoord1fv:
+	movq	%rcx, %r10
+	movl	$0x7e010140, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1fvARB
+	.p2align	4, 0x90
+glMultiTexCoord1fvARB:
+	movq	%rcx, %r10
+	movl	$0x7e010141, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1i
+	.p2align	4, 0x90
+glMultiTexCoord1i:
+	movq	%rcx, %r10
+	movl	$0x7e010142, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1iARB
+	.p2align	4, 0x90
+glMultiTexCoord1iARB:
+	movq	%rcx, %r10
+	movl	$0x7e010143, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1iv
+	.p2align	4, 0x90
+glMultiTexCoord1iv:
+	movq	%rcx, %r10
+	movl	$0x7e010144, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1ivARB
+	.p2align	4, 0x90
+glMultiTexCoord1ivARB:
+	movq	%rcx, %r10
+	movl	$0x7e010145, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1s
+	.p2align	4, 0x90
+glMultiTexCoord1s:
+	movq	%rcx, %r10
+	movl	$0x7e010146, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1sARB
+	.p2align	4, 0x90
+glMultiTexCoord1sARB:
+	movq	%rcx, %r10
+	movl	$0x7e010147, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1sv
+	.p2align	4, 0x90
+glMultiTexCoord1sv:
+	movq	%rcx, %r10
+	movl	$0x7e010148, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord1svARB
+	.p2align	4, 0x90
+glMultiTexCoord1svARB:
+	movq	%rcx, %r10
+	movl	$0x7e010149, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2d
+	.p2align	4, 0x90
+glMultiTexCoord2d:
+	movq	%rcx, %r10
+	movl	$0x7e01014a, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2dARB
+	.p2align	4, 0x90
+glMultiTexCoord2dARB:
+	movq	%rcx, %r10
+	movl	$0x7e01014b, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2dv
+	.p2align	4, 0x90
+glMultiTexCoord2dv:
+	movq	%rcx, %r10
+	movl	$0x7e01014c, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2dvARB
+	.p2align	4, 0x90
+glMultiTexCoord2dvARB:
+	movq	%rcx, %r10
+	movl	$0x7e01014d, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2f
+	.p2align	4, 0x90
+glMultiTexCoord2f:
+	movq	%rcx, %r10
+	movl	$0x7e01014e, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2fARB
+	.p2align	4, 0x90
+glMultiTexCoord2fARB:
+	movq	%rcx, %r10
+	movl	$0x7e01014f, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2fv
+	.p2align	4, 0x90
+glMultiTexCoord2fv:
+	movq	%rcx, %r10
+	movl	$0x7e010150, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2fvARB
+	.p2align	4, 0x90
+glMultiTexCoord2fvARB:
+	movq	%rcx, %r10
+	movl	$0x7e010151, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2i
+	.p2align	4, 0x90
+glMultiTexCoord2i:
+	movq	%rcx, %r10
+	movl	$0x7e010152, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2iARB
+	.p2align	4, 0x90
+glMultiTexCoord2iARB:
+	movq	%rcx, %r10
+	movl	$0x7e010153, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2iv
+	.p2align	4, 0x90
+glMultiTexCoord2iv:
+	movq	%rcx, %r10
+	movl	$0x7e010154, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2ivARB
+	.p2align	4, 0x90
+glMultiTexCoord2ivARB:
+	movq	%rcx, %r10
+	movl	$0x7e010155, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2s
+	.p2align	4, 0x90
+glMultiTexCoord2s:
+	movq	%rcx, %r10
+	movl	$0x7e010156, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2sARB
+	.p2align	4, 0x90
+glMultiTexCoord2sARB:
+	movq	%rcx, %r10
+	movl	$0x7e010157, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2sv
+	.p2align	4, 0x90
+glMultiTexCoord2sv:
+	movq	%rcx, %r10
+	movl	$0x7e010158, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord2svARB
+	.p2align	4, 0x90
+glMultiTexCoord2svARB:
+	movq	%rcx, %r10
+	movl	$0x7e010159, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3d
+	.p2align	4, 0x90
+glMultiTexCoord3d:
+	movq	%rcx, %r10
+	movl	$0x7e01015a, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3dARB
+	.p2align	4, 0x90
+glMultiTexCoord3dARB:
+	movq	%rcx, %r10
+	movl	$0x7e01015b, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3dv
+	.p2align	4, 0x90
+glMultiTexCoord3dv:
+	movq	%rcx, %r10
+	movl	$0x7e01015c, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3dvARB
+	.p2align	4, 0x90
+glMultiTexCoord3dvARB:
+	movq	%rcx, %r10
+	movl	$0x7e01015d, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3f
+	.p2align	4, 0x90
+glMultiTexCoord3f:
+	movq	%rcx, %r10
+	movl	$0x7e01015e, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3fARB
+	.p2align	4, 0x90
+glMultiTexCoord3fARB:
+	movq	%rcx, %r10
+	movl	$0x7e01015f, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3fv
+	.p2align	4, 0x90
+glMultiTexCoord3fv:
+	movq	%rcx, %r10
+	movl	$0x7e010160, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3fvARB
+	.p2align	4, 0x90
+glMultiTexCoord3fvARB:
+	movq	%rcx, %r10
+	movl	$0x7e010161, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3i
+	.p2align	4, 0x90
+glMultiTexCoord3i:
+	movq	%rcx, %r10
+	movl	$0x7e010162, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3iARB
+	.p2align	4, 0x90
+glMultiTexCoord3iARB:
+	movq	%rcx, %r10
+	movl	$0x7e010163, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3iv
+	.p2align	4, 0x90
+glMultiTexCoord3iv:
+	movq	%rcx, %r10
+	movl	$0x7e010164, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3ivARB
+	.p2align	4, 0x90
+glMultiTexCoord3ivARB:
+	movq	%rcx, %r10
+	movl	$0x7e010165, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3s
+	.p2align	4, 0x90
+glMultiTexCoord3s:
+	movq	%rcx, %r10
+	movl	$0x7e010166, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3sARB
+	.p2align	4, 0x90
+glMultiTexCoord3sARB:
+	movq	%rcx, %r10
+	movl	$0x7e010167, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3sv
+	.p2align	4, 0x90
+glMultiTexCoord3sv:
+	movq	%rcx, %r10
+	movl	$0x7e010168, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord3svARB
+	.p2align	4, 0x90
+glMultiTexCoord3svARB:
+	movq	%rcx, %r10
+	movl	$0x7e010169, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4d
+	.p2align	4, 0x90
+glMultiTexCoord4d:
+	movq	%rcx, %r10
+	movl	$0x7e01016a, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4dARB
+	.p2align	4, 0x90
+glMultiTexCoord4dARB:
+	movq	%rcx, %r10
+	movl	$0x7e01016b, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4dv
+	.p2align	4, 0x90
+glMultiTexCoord4dv:
+	movq	%rcx, %r10
+	movl	$0x7e01016c, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4dvARB
+	.p2align	4, 0x90
+glMultiTexCoord4dvARB:
+	movq	%rcx, %r10
+	movl	$0x7e01016d, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4f
+	.p2align	4, 0x90
+glMultiTexCoord4f:
+	movq	%rcx, %r10
+	movl	$0x7e01016e, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4fARB
+	.p2align	4, 0x90
+glMultiTexCoord4fARB:
+	movq	%rcx, %r10
+	movl	$0x7e01016f, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4fv
+	.p2align	4, 0x90
+glMultiTexCoord4fv:
+	movq	%rcx, %r10
+	movl	$0x7e010170, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4fvARB
+	.p2align	4, 0x90
+glMultiTexCoord4fvARB:
+	movq	%rcx, %r10
+	movl	$0x7e010171, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4i
+	.p2align	4, 0x90
+glMultiTexCoord4i:
+	movq	%rcx, %r10
+	movl	$0x7e010172, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4iARB
+	.p2align	4, 0x90
+glMultiTexCoord4iARB:
+	movq	%rcx, %r10
+	movl	$0x7e010173, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4iv
+	.p2align	4, 0x90
+glMultiTexCoord4iv:
+	movq	%rcx, %r10
+	movl	$0x7e010174, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4ivARB
+	.p2align	4, 0x90
+glMultiTexCoord4ivARB:
+	movq	%rcx, %r10
+	movl	$0x7e010175, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4s
+	.p2align	4, 0x90
+glMultiTexCoord4s:
+	movq	%rcx, %r10
+	movl	$0x7e010176, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4sARB
+	.p2align	4, 0x90
+glMultiTexCoord4sARB:
+	movq	%rcx, %r10
+	movl	$0x7e010177, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4sv
+	.p2align	4, 0x90
+glMultiTexCoord4sv:
+	movq	%rcx, %r10
+	movl	$0x7e010178, %eax
+	syscall
+	retq
+
+	.globl	glMultiTexCoord4svARB
+	.p2align	4, 0x90
+glMultiTexCoord4svARB:
+	movq	%rcx, %r10
+	movl	$0x7e010179, %eax
+	syscall
+	retq
+
+	.globl	glNewList
+	.p2align	4, 0x90
+glNewList:
+	movq	%rcx, %r10
+	movl	$0x7e01017a, %eax
+	syscall
+	retq
+
+	.globl	glNormal3b
+	.p2align	4, 0x90
+glNormal3b:
+	movq	%rcx, %r10
+	movl	$0x7e01017b, %eax
+	syscall
+	retq
+
+	.globl	glNormal3bv
+	.p2align	4, 0x90
+glNormal3bv:
+	movq	%rcx, %r10
+	movl	$0x7e01017c, %eax
+	syscall
+	retq
+
+	.globl	glNormal3d
+	.p2align	4, 0x90
+glNormal3d:
+	movq	%rcx, %r10
+	movl	$0x7e01017d, %eax
+	syscall
+	retq
+
+	.globl	glNormal3dv
+	.p2align	4, 0x90
+glNormal3dv:
+	movq	%rcx, %r10
+	movl	$0x7e01017e, %eax
+	syscall
+	retq
+
+	.globl	glNormal3f
+	.p2align	4, 0x90
+glNormal3f:
+	movq	%rcx, %r10
+	movl	$0x7e01017f, %eax
+	syscall
+	retq
+
+	.globl	glNormal3fv
+	.p2align	4, 0x90
+glNormal3fv:
+	movq	%rcx, %r10
+	movl	$0x7e010180, %eax
+	syscall
+	retq
+
+	.globl	glNormal3i
+	.p2align	4, 0x90
+glNormal3i:
+	movq	%rcx, %r10
+	movl	$0x7e010181, %eax
+	syscall
+	retq
+
+	.globl	glNormal3iv
+	.p2align	4, 0x90
+glNormal3iv:
+	movq	%rcx, %r10
+	movl	$0x7e010182, %eax
+	syscall
+	retq
+
+	.globl	glNormal3s
+	.p2align	4, 0x90
+glNormal3s:
+	movq	%rcx, %r10
+	movl	$0x7e010183, %eax
+	syscall
+	retq
+
+	.globl	glNormal3sv
+	.p2align	4, 0x90
+glNormal3sv:
+	movq	%rcx, %r10
+	movl	$0x7e010184, %eax
+	syscall
+	retq
+
+	.globl	glNormalPointer
+	.p2align	4, 0x90
+glNormalPointer:
+	movq	%rcx, %r10
+	movl	$0x7e010185, %eax
+	syscall
+	retq
+
+	.globl	glObjectLabel
+	.p2align	4, 0x90
+glObjectLabel:
+	movq	%rcx, %r10
+	movl	$0x7e010186, %eax
+	syscall
+	retq
+
+	.globl	glOrtho
+	.p2align	4, 0x90
+glOrtho:
+	movq	%rcx, %r10
+	movl	$0x7e010187, %eax
+	syscall
+	retq
+
+	.globl	glPassThrough
+	.p2align	4, 0x90
+glPassThrough:
+	movq	%rcx, %r10
+	movl	$0x7e010188, %eax
+	syscall
+	retq
+
+	.globl	glPixelMapfv
+	.p2align	4, 0x90
+glPixelMapfv:
+	movq	%rcx, %r10
+	movl	$0x7e010189, %eax
+	syscall
+	retq
+
+	.globl	glPixelMapuiv
+	.p2align	4, 0x90
+glPixelMapuiv:
+	movq	%rcx, %r10
+	movl	$0x7e01018a, %eax
+	syscall
+	retq
+
+	.globl	glPixelMapusv
+	.p2align	4, 0x90
+glPixelMapusv:
+	movq	%rcx, %r10
+	movl	$0x7e01018b, %eax
+	syscall
+	retq
+
+	.globl	glPixelStoref
+	.p2align	4, 0x90
+glPixelStoref:
+	movq	%rcx, %r10
+	movl	$0x7e01018c, %eax
+	syscall
+	retq
+
+	.globl	glPixelStorei
+	.p2align	4, 0x90
+glPixelStorei:
+	movq	%rcx, %r10
+	movl	$0x7e01018d, %eax
+	syscall
+	retq
+
+	.globl	glPixelTransferf
+	.p2align	4, 0x90
+glPixelTransferf:
+	movq	%rcx, %r10
+	movl	$0x7e01018e, %eax
+	syscall
+	retq
+
+	.globl	glPixelTransferi
+	.p2align	4, 0x90
+glPixelTransferi:
+	movq	%rcx, %r10
+	movl	$0x7e01018f, %eax
+	syscall
+	retq
+
+	.globl	glPixelZoom
+	.p2align	4, 0x90
+glPixelZoom:
+	movq	%rcx, %r10
+	movl	$0x7e010190, %eax
+	syscall
+	retq
+
+	.globl	glPointSize
+	.p2align	4, 0x90
+glPointSize:
+	movq	%rcx, %r10
+	movl	$0x7e010191, %eax
+	syscall
+	retq
+
+	.globl	glPolygonMode
+	.p2align	4, 0x90
+glPolygonMode:
+	movq	%rcx, %r10
+	movl	$0x7e010192, %eax
+	syscall
+	retq
+
+	.globl	glPolygonOffset
+	.p2align	4, 0x90
+glPolygonOffset:
+	movq	%rcx, %r10
+	movl	$0x7e010193, %eax
+	syscall
+	retq
+
+	.globl	glPolygonStipple
+	.p2align	4, 0x90
+glPolygonStipple:
+	movq	%rcx, %r10
+	movl	$0x7e010194, %eax
+	syscall
+	retq
+
+	.globl	glPopAttrib
+	.p2align	4, 0x90
+glPopAttrib:
+	movq	%rcx, %r10
+	movl	$0x7e010195, %eax
+	syscall
+	retq
+
+	.globl	glPopClientAttrib
+	.p2align	4, 0x90
+glPopClientAttrib:
+	movq	%rcx, %r10
+	movl	$0x7e010196, %eax
+	syscall
+	retq
+
+	.globl	glPopDebugGroup
+	.p2align	4, 0x90
+glPopDebugGroup:
+	movq	%rcx, %r10
+	movl	$0x7e010197, %eax
+	syscall
+	retq
+
+	.globl	glPopMatrix
+	.p2align	4, 0x90
+glPopMatrix:
+	movq	%rcx, %r10
+	movl	$0x7e010198, %eax
+	syscall
+	retq
+
+	.globl	glPopName
+	.p2align	4, 0x90
+glPopName:
+	movq	%rcx, %r10
+	movl	$0x7e010199, %eax
+	syscall
+	retq
+
+	.globl	glPrioritizeTextures
+	.p2align	4, 0x90
+glPrioritizeTextures:
+	movq	%rcx, %r10
+	movl	$0x7e01019a, %eax
+	syscall
+	retq
+
+	.globl	glPushAttrib
+	.p2align	4, 0x90
+glPushAttrib:
+	movq	%rcx, %r10
+	movl	$0x7e01019b, %eax
+	syscall
+	retq
+
+	.globl	glPushClientAttrib
+	.p2align	4, 0x90
+glPushClientAttrib:
+	movq	%rcx, %r10
+	movl	$0x7e01019c, %eax
+	syscall
+	retq
+
+	.globl	glPushDebugGroup
+	.p2align	4, 0x90
+glPushDebugGroup:
+	movq	%rcx, %r10
+	movl	$0x7e01019d, %eax
+	syscall
+	retq
+
+	.globl	glPushMatrix
+	.p2align	4, 0x90
+glPushMatrix:
+	movq	%rcx, %r10
+	movl	$0x7e01019e, %eax
+	syscall
+	retq
+
+	.globl	glPushName
+	.p2align	4, 0x90
+glPushName:
+	movq	%rcx, %r10
+	movl	$0x7e01019f, %eax
+	syscall
+	retq
+
+	.globl	glQueryCounter
+	.p2align	4, 0x90
+glQueryCounter:
+	movq	%rcx, %r10
+	movl	$0x7e0101a0, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos2d
+	.p2align	4, 0x90
+glRasterPos2d:
+	movq	%rcx, %r10
+	movl	$0x7e0101a1, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos2dv
+	.p2align	4, 0x90
+glRasterPos2dv:
+	movq	%rcx, %r10
+	movl	$0x7e0101a2, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos2f
+	.p2align	4, 0x90
+glRasterPos2f:
+	movq	%rcx, %r10
+	movl	$0x7e0101a3, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos2fv
+	.p2align	4, 0x90
+glRasterPos2fv:
+	movq	%rcx, %r10
+	movl	$0x7e0101a4, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos2i
+	.p2align	4, 0x90
+glRasterPos2i:
+	movq	%rcx, %r10
+	movl	$0x7e0101a5, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos2iv
+	.p2align	4, 0x90
+glRasterPos2iv:
+	movq	%rcx, %r10
+	movl	$0x7e0101a6, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos2s
+	.p2align	4, 0x90
+glRasterPos2s:
+	movq	%rcx, %r10
+	movl	$0x7e0101a7, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos2sv
+	.p2align	4, 0x90
+glRasterPos2sv:
+	movq	%rcx, %r10
+	movl	$0x7e0101a8, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos3d
+	.p2align	4, 0x90
+glRasterPos3d:
+	movq	%rcx, %r10
+	movl	$0x7e0101a9, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos3dv
+	.p2align	4, 0x90
+glRasterPos3dv:
+	movq	%rcx, %r10
+	movl	$0x7e0101aa, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos3f
+	.p2align	4, 0x90
+glRasterPos3f:
+	movq	%rcx, %r10
+	movl	$0x7e0101ab, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos3fv
+	.p2align	4, 0x90
+glRasterPos3fv:
+	movq	%rcx, %r10
+	movl	$0x7e0101ac, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos3i
+	.p2align	4, 0x90
+glRasterPos3i:
+	movq	%rcx, %r10
+	movl	$0x7e0101ad, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos3iv
+	.p2align	4, 0x90
+glRasterPos3iv:
+	movq	%rcx, %r10
+	movl	$0x7e0101ae, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos3s
+	.p2align	4, 0x90
+glRasterPos3s:
+	movq	%rcx, %r10
+	movl	$0x7e0101af, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos3sv
+	.p2align	4, 0x90
+glRasterPos3sv:
+	movq	%rcx, %r10
+	movl	$0x7e0101b0, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos4d
+	.p2align	4, 0x90
+glRasterPos4d:
+	movq	%rcx, %r10
+	movl	$0x7e0101b1, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos4dv
+	.p2align	4, 0x90
+glRasterPos4dv:
+	movq	%rcx, %r10
+	movl	$0x7e0101b2, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos4f
+	.p2align	4, 0x90
+glRasterPos4f:
+	movq	%rcx, %r10
+	movl	$0x7e0101b3, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos4fv
+	.p2align	4, 0x90
+glRasterPos4fv:
+	movq	%rcx, %r10
+	movl	$0x7e0101b4, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos4i
+	.p2align	4, 0x90
+glRasterPos4i:
+	movq	%rcx, %r10
+	movl	$0x7e0101b5, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos4iv
+	.p2align	4, 0x90
+glRasterPos4iv:
+	movq	%rcx, %r10
+	movl	$0x7e0101b6, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos4s
+	.p2align	4, 0x90
+glRasterPos4s:
+	movq	%rcx, %r10
+	movl	$0x7e0101b7, %eax
+	syscall
+	retq
+
+	.globl	glRasterPos4sv
+	.p2align	4, 0x90
+glRasterPos4sv:
+	movq	%rcx, %r10
+	movl	$0x7e0101b8, %eax
+	syscall
+	retq
+
+	.globl	glReadBuffer
+	.p2align	4, 0x90
+glReadBuffer:
+	movq	%rcx, %r10
+	movl	$0x7e0101b9, %eax
+	syscall
+	retq
+
+	.globl	glReadPixels
+	.p2align	4, 0x90
+glReadPixels:
+	movq	%rcx, %r10
+	movl	$0x7e0101ba, %eax
+	syscall
+	retq
+
+	.globl	glRectd
+	.p2align	4, 0x90
+glRectd:
+	movq	%rcx, %r10
+	movl	$0x7e0101bb, %eax
+	syscall
+	retq
+
+	.globl	glRectdv
+	.p2align	4, 0x90
+glRectdv:
+	movq	%rcx, %r10
+	movl	$0x7e0101bc, %eax
+	syscall
+	retq
+
+	.globl	glRectf
+	.p2align	4, 0x90
+glRectf:
+	movq	%rcx, %r10
+	movl	$0x7e0101bd, %eax
+	syscall
+	retq
+
+	.globl	glRectfv
+	.p2align	4, 0x90
+glRectfv:
+	movq	%rcx, %r10
+	movl	$0x7e0101be, %eax
+	syscall
+	retq
+
+	.globl	glRecti
+	.p2align	4, 0x90
+glRecti:
+	movq	%rcx, %r10
+	movl	$0x7e0101bf, %eax
+	syscall
+	retq
+
+	.globl	glRectiv
+	.p2align	4, 0x90
+glRectiv:
+	movq	%rcx, %r10
+	movl	$0x7e0101c0, %eax
+	syscall
+	retq
+
+	.globl	glRects
+	.p2align	4, 0x90
+glRects:
+	movq	%rcx, %r10
+	movl	$0x7e0101c1, %eax
+	syscall
+	retq
+
+	.globl	glRectsv
+	.p2align	4, 0x90
+glRectsv:
+	movq	%rcx, %r10
+	movl	$0x7e0101c2, %eax
+	syscall
+	retq
+
+	.globl	glReleaseShaderCompiler
+	.p2align	4, 0x90
+glReleaseShaderCompiler:
+	movq	%rcx, %r10
+	movl	$0x7e0101c3, %eax
+	syscall
+	retq
+
+	.globl	glRenderMode
+	.p2align	4, 0x90
+glRenderMode:
+	movq	%rcx, %r10
+	movl	$0x7e0101c4, %eax
+	syscall
+	retq
+
+	.globl	glRenderbufferStorage
+	.p2align	4, 0x90
+glRenderbufferStorage:
+	movq	%rcx, %r10
+	movl	$0x7e0101c5, %eax
+	syscall
+	retq
+
+	.globl	glRenderbufferStorageMultisample
+	.p2align	4, 0x90
+glRenderbufferStorageMultisample:
+	movq	%rcx, %r10
+	movl	$0x7e0101c6, %eax
+	syscall
+	retq
+
+	.globl	glRotated
+	.p2align	4, 0x90
+glRotated:
+	movq	%rcx, %r10
+	movl	$0x7e0101c7, %eax
+	syscall
+	retq
+
+	.globl	glRotatef
+	.p2align	4, 0x90
+glRotatef:
+	movq	%rcx, %r10
+	movl	$0x7e0101c8, %eax
+	syscall
+	retq
+
+	.globl	glScaled
+	.p2align	4, 0x90
+glScaled:
+	movq	%rcx, %r10
+	movl	$0x7e0101c9, %eax
+	syscall
+	retq
+
+	.globl	glScalef
+	.p2align	4, 0x90
+glScalef:
+	movq	%rcx, %r10
+	movl	$0x7e0101ca, %eax
+	syscall
+	retq
+
+	.globl	glScissor
+	.p2align	4, 0x90
+glScissor:
+	movq	%rcx, %r10
+	movl	$0x7e0101cb, %eax
+	syscall
+	retq
+
+	.globl	glSelectBuffer
+	.p2align	4, 0x90
+glSelectBuffer:
+	movq	%rcx, %r10
+	movl	$0x7e0101cc, %eax
+	syscall
+	retq
+
+	.globl	glShadeModel
+	.p2align	4, 0x90
+glShadeModel:
+	movq	%rcx, %r10
+	movl	$0x7e0101cd, %eax
+	syscall
+	retq
+
+	.globl	glShaderSource
+	.p2align	4, 0x90
+glShaderSource:
+	movq	%rcx, %r10
+	movl	$0x7e0101ce, %eax
+	syscall
+	retq
+
+	.globl	glStencilFunc
+	.p2align	4, 0x90
+glStencilFunc:
+	movq	%rcx, %r10
+	movl	$0x7e0101cf, %eax
+	syscall
+	retq
+
+	.globl	glStencilFuncSeparate
+	.p2align	4, 0x90
+glStencilFuncSeparate:
+	movq	%rcx, %r10
+	movl	$0x7e0101d0, %eax
+	syscall
+	retq
+
+	.globl	glStencilMask
+	.p2align	4, 0x90
+glStencilMask:
+	movq	%rcx, %r10
+	movl	$0x7e0101d1, %eax
+	syscall
+	retq
+
+	.globl	glStencilMaskSeparate
+	.p2align	4, 0x90
+glStencilMaskSeparate:
+	movq	%rcx, %r10
+	movl	$0x7e0101d2, %eax
+	syscall
+	retq
+
+	.globl	glStencilOp
+	.p2align	4, 0x90
+glStencilOp:
+	movq	%rcx, %r10
+	movl	$0x7e0101d3, %eax
+	syscall
+	retq
+
+	.globl	glStencilOpSeparate
+	.p2align	4, 0x90
+glStencilOpSeparate:
+	movq	%rcx, %r10
+	movl	$0x7e0101d4, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord1d
+	.p2align	4, 0x90
+glTexCoord1d:
+	movq	%rcx, %r10
+	movl	$0x7e0101d5, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord1dv
+	.p2align	4, 0x90
+glTexCoord1dv:
+	movq	%rcx, %r10
+	movl	$0x7e0101d6, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord1f
+	.p2align	4, 0x90
+glTexCoord1f:
+	movq	%rcx, %r10
+	movl	$0x7e0101d7, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord1fv
+	.p2align	4, 0x90
+glTexCoord1fv:
+	movq	%rcx, %r10
+	movl	$0x7e0101d8, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord1i
+	.p2align	4, 0x90
+glTexCoord1i:
+	movq	%rcx, %r10
+	movl	$0x7e0101d9, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord1iv
+	.p2align	4, 0x90
+glTexCoord1iv:
+	movq	%rcx, %r10
+	movl	$0x7e0101da, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord1s
+	.p2align	4, 0x90
+glTexCoord1s:
+	movq	%rcx, %r10
+	movl	$0x7e0101db, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord1sv
+	.p2align	4, 0x90
+glTexCoord1sv:
+	movq	%rcx, %r10
+	movl	$0x7e0101dc, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord2d
+	.p2align	4, 0x90
+glTexCoord2d:
+	movq	%rcx, %r10
+	movl	$0x7e0101dd, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord2dv
+	.p2align	4, 0x90
+glTexCoord2dv:
+	movq	%rcx, %r10
+	movl	$0x7e0101de, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord2f
+	.p2align	4, 0x90
+glTexCoord2f:
+	movq	%rcx, %r10
+	movl	$0x7e0101df, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord2fv
+	.p2align	4, 0x90
+glTexCoord2fv:
+	movq	%rcx, %r10
+	movl	$0x7e0101e0, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord2i
+	.p2align	4, 0x90
+glTexCoord2i:
+	movq	%rcx, %r10
+	movl	$0x7e0101e1, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord2iv
+	.p2align	4, 0x90
+glTexCoord2iv:
+	movq	%rcx, %r10
+	movl	$0x7e0101e2, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord2s
+	.p2align	4, 0x90
+glTexCoord2s:
+	movq	%rcx, %r10
+	movl	$0x7e0101e3, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord2sv
+	.p2align	4, 0x90
+glTexCoord2sv:
+	movq	%rcx, %r10
+	movl	$0x7e0101e4, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord3d
+	.p2align	4, 0x90
+glTexCoord3d:
+	movq	%rcx, %r10
+	movl	$0x7e0101e5, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord3dv
+	.p2align	4, 0x90
+glTexCoord3dv:
+	movq	%rcx, %r10
+	movl	$0x7e0101e6, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord3f
+	.p2align	4, 0x90
+glTexCoord3f:
+	movq	%rcx, %r10
+	movl	$0x7e0101e7, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord3fv
+	.p2align	4, 0x90
+glTexCoord3fv:
+	movq	%rcx, %r10
+	movl	$0x7e0101e8, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord3i
+	.p2align	4, 0x90
+glTexCoord3i:
+	movq	%rcx, %r10
+	movl	$0x7e0101e9, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord3iv
+	.p2align	4, 0x90
+glTexCoord3iv:
+	movq	%rcx, %r10
+	movl	$0x7e0101ea, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord3s
+	.p2align	4, 0x90
+glTexCoord3s:
+	movq	%rcx, %r10
+	movl	$0x7e0101eb, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord3sv
+	.p2align	4, 0x90
+glTexCoord3sv:
+	movq	%rcx, %r10
+	movl	$0x7e0101ec, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord4d
+	.p2align	4, 0x90
+glTexCoord4d:
+	movq	%rcx, %r10
+	movl	$0x7e0101ed, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord4dv
+	.p2align	4, 0x90
+glTexCoord4dv:
+	movq	%rcx, %r10
+	movl	$0x7e0101ee, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord4f
+	.p2align	4, 0x90
+glTexCoord4f:
+	movq	%rcx, %r10
+	movl	$0x7e0101ef, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord4fv
+	.p2align	4, 0x90
+glTexCoord4fv:
+	movq	%rcx, %r10
+	movl	$0x7e0101f0, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord4i
+	.p2align	4, 0x90
+glTexCoord4i:
+	movq	%rcx, %r10
+	movl	$0x7e0101f1, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord4iv
+	.p2align	4, 0x90
+glTexCoord4iv:
+	movq	%rcx, %r10
+	movl	$0x7e0101f2, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord4s
+	.p2align	4, 0x90
+glTexCoord4s:
+	movq	%rcx, %r10
+	movl	$0x7e0101f3, %eax
+	syscall
+	retq
+
+	.globl	glTexCoord4sv
+	.p2align	4, 0x90
+glTexCoord4sv:
+	movq	%rcx, %r10
+	movl	$0x7e0101f4, %eax
+	syscall
+	retq
+
+	.globl	glTexCoordPointer
+	.p2align	4, 0x90
+glTexCoordPointer:
+	movq	%rcx, %r10
+	movl	$0x7e0101f5, %eax
+	syscall
+	retq
+
+	.globl	glTexEnvf
+	.p2align	4, 0x90
+glTexEnvf:
+	movq	%rcx, %r10
+	movl	$0x7e0101f6, %eax
+	syscall
+	retq
+
+	.globl	glTexEnvfv
+	.p2align	4, 0x90
+glTexEnvfv:
+	movq	%rcx, %r10
+	movl	$0x7e0101f7, %eax
+	syscall
+	retq
+
+	.globl	glTexEnvi
+	.p2align	4, 0x90
+glTexEnvi:
+	movq	%rcx, %r10
+	movl	$0x7e0101f8, %eax
+	syscall
+	retq
+
+	.globl	glTexEnviv
+	.p2align	4, 0x90
+glTexEnviv:
+	movq	%rcx, %r10
+	movl	$0x7e0101f9, %eax
+	syscall
+	retq
+
+	.globl	glTexGend
+	.p2align	4, 0x90
+glTexGend:
+	movq	%rcx, %r10
+	movl	$0x7e0101fa, %eax
+	syscall
+	retq
+
+	.globl	glTexGendv
+	.p2align	4, 0x90
+glTexGendv:
+	movq	%rcx, %r10
+	movl	$0x7e0101fb, %eax
+	syscall
+	retq
+
+	.globl	glTexGenf
+	.p2align	4, 0x90
+glTexGenf:
+	movq	%rcx, %r10
+	movl	$0x7e0101fc, %eax
+	syscall
+	retq
+
+	.globl	glTexGenfv
+	.p2align	4, 0x90
+glTexGenfv:
+	movq	%rcx, %r10
+	movl	$0x7e0101fd, %eax
+	syscall
+	retq
+
+	.globl	glTexGeni
+	.p2align	4, 0x90
+glTexGeni:
+	movq	%rcx, %r10
+	movl	$0x7e0101fe, %eax
+	syscall
+	retq
+
+	.globl	glTexGeniv
+	.p2align	4, 0x90
+glTexGeniv:
+	movq	%rcx, %r10
+	movl	$0x7e0101ff, %eax
+	syscall
+	retq
+
+	.globl	glTexImage1D
+	.p2align	4, 0x90
+glTexImage1D:
+	movq	%rcx, %r10
+	movl	$0x7e010200, %eax
+	syscall
+	retq
+
+	.globl	glTexImage2D
+	.p2align	4, 0x90
+glTexImage2D:
+	movq	%rcx, %r10
+	movl	$0x7e010201, %eax
+	syscall
+	retq
+
+	.globl	glTexImage2DMultisample
+	.p2align	4, 0x90
+glTexImage2DMultisample:
+	movq	%rcx, %r10
+	movl	$0x7e010202, %eax
+	syscall
+	retq
+
+	.globl	glTexImage3D
+	.p2align	4, 0x90
+glTexImage3D:
+	movq	%rcx, %r10
+	movl	$0x7e010203, %eax
+	syscall
+	retq
+
+	.globl	glTexParameterf
+	.p2align	4, 0x90
+glTexParameterf:
+	movq	%rcx, %r10
+	movl	$0x7e010204, %eax
+	syscall
+	retq
+
+	.globl	glTexParameterfv
+	.p2align	4, 0x90
+glTexParameterfv:
+	movq	%rcx, %r10
+	movl	$0x7e010205, %eax
+	syscall
+	retq
+
+	.globl	glTexParameteri
+	.p2align	4, 0x90
+glTexParameteri:
+	movq	%rcx, %r10
+	movl	$0x7e010206, %eax
+	syscall
+	retq
+
+	.globl	glTexParameteriv
+	.p2align	4, 0x90
+glTexParameteriv:
+	movq	%rcx, %r10
+	movl	$0x7e010207, %eax
+	syscall
+	retq
+
+	.globl	glTexStorage2D
+	.p2align	4, 0x90
+glTexStorage2D:
+	movq	%rcx, %r10
+	movl	$0x7e010208, %eax
+	syscall
+	retq
+
+	.globl	glTexStorage3D
+	.p2align	4, 0x90
+glTexStorage3D:
+	movq	%rcx, %r10
+	movl	$0x7e010209, %eax
+	syscall
+	retq
+
+	.globl	glTexSubImage1D
+	.p2align	4, 0x90
+glTexSubImage1D:
+	movq	%rcx, %r10
+	movl	$0x7e01020a, %eax
+	syscall
+	retq
+
+	.globl	glTexSubImage2D
+	.p2align	4, 0x90
+glTexSubImage2D:
+	movq	%rcx, %r10
+	movl	$0x7e01020b, %eax
+	syscall
+	retq
+
+	.globl	glTexSubImage3D
+	.p2align	4, 0x90
+glTexSubImage3D:
+	movq	%rcx, %r10
+	movl	$0x7e01020c, %eax
+	syscall
+	retq
+
+	.globl	glTranslated
+	.p2align	4, 0x90
+glTranslated:
+	movq	%rcx, %r10
+	movl	$0x7e01020d, %eax
+	syscall
+	retq
+
+	.globl	glTranslatef
+	.p2align	4, 0x90
+glTranslatef:
+	movq	%rcx, %r10
+	movl	$0x7e01020e, %eax
+	syscall
+	retq
+
+	.globl	glUniform1f
+	.p2align	4, 0x90
+glUniform1f:
+	movq	%rcx, %r10
+	movl	$0x7e01020f, %eax
+	syscall
+	retq
+
+	.globl	glUniform1fv
+	.p2align	4, 0x90
+glUniform1fv:
+	movq	%rcx, %r10
+	movl	$0x7e010210, %eax
+	syscall
+	retq
+
+	.globl	glUniform1i
+	.p2align	4, 0x90
+glUniform1i:
+	movq	%rcx, %r10
+	movl	$0x7e010211, %eax
+	syscall
+	retq
+
+	.globl	glUniform1iv
+	.p2align	4, 0x90
+glUniform1iv:
+	movq	%rcx, %r10
+	movl	$0x7e010212, %eax
+	syscall
+	retq
+
+	.globl	glUniform1ui
+	.p2align	4, 0x90
+glUniform1ui:
+	movq	%rcx, %r10
+	movl	$0x7e010213, %eax
+	syscall
+	retq
+
+	.globl	glUniform1uiv
+	.p2align	4, 0x90
+glUniform1uiv:
+	movq	%rcx, %r10
+	movl	$0x7e010214, %eax
+	syscall
+	retq
+
+	.globl	glUniform2f
+	.p2align	4, 0x90
+glUniform2f:
+	movq	%rcx, %r10
+	movl	$0x7e010215, %eax
+	syscall
+	retq
+
+	.globl	glUniform2fv
+	.p2align	4, 0x90
+glUniform2fv:
+	movq	%rcx, %r10
+	movl	$0x7e010216, %eax
+	syscall
+	retq
+
+	.globl	glUniform2i
+	.p2align	4, 0x90
+glUniform2i:
+	movq	%rcx, %r10
+	movl	$0x7e010217, %eax
+	syscall
+	retq
+
+	.globl	glUniform2iv
+	.p2align	4, 0x90
+glUniform2iv:
+	movq	%rcx, %r10
+	movl	$0x7e010218, %eax
+	syscall
+	retq
+
+	.globl	glUniform2ui
+	.p2align	4, 0x90
+glUniform2ui:
+	movq	%rcx, %r10
+	movl	$0x7e010219, %eax
+	syscall
+	retq
+
+	.globl	glUniform2uiv
+	.p2align	4, 0x90
+glUniform2uiv:
+	movq	%rcx, %r10
+	movl	$0x7e01021a, %eax
+	syscall
+	retq
+
+	.globl	glUniform3f
+	.p2align	4, 0x90
+glUniform3f:
+	movq	%rcx, %r10
+	movl	$0x7e01021b, %eax
+	syscall
+	retq
+
+	.globl	glUniform3fv
+	.p2align	4, 0x90
+glUniform3fv:
+	movq	%rcx, %r10
+	movl	$0x7e01021c, %eax
+	syscall
+	retq
+
+	.globl	glUniform3i
+	.p2align	4, 0x90
+glUniform3i:
+	movq	%rcx, %r10
+	movl	$0x7e01021d, %eax
+	syscall
+	retq
+
+	.globl	glUniform3iv
+	.p2align	4, 0x90
+glUniform3iv:
+	movq	%rcx, %r10
+	movl	$0x7e01021e, %eax
+	syscall
+	retq
+
+	.globl	glUniform3ui
+	.p2align	4, 0x90
+glUniform3ui:
+	movq	%rcx, %r10
+	movl	$0x7e01021f, %eax
+	syscall
+	retq
+
+	.globl	glUniform3uiv
+	.p2align	4, 0x90
+glUniform3uiv:
+	movq	%rcx, %r10
+	movl	$0x7e010220, %eax
+	syscall
+	retq
+
+	.globl	glUniform4f
+	.p2align	4, 0x90
+glUniform4f:
+	movq	%rcx, %r10
+	movl	$0x7e010221, %eax
+	syscall
+	retq
+
+	.globl	glUniform4fv
+	.p2align	4, 0x90
+glUniform4fv:
+	movq	%rcx, %r10
+	movl	$0x7e010222, %eax
+	syscall
+	retq
+
+	.globl	glUniform4i
+	.p2align	4, 0x90
+glUniform4i:
+	movq	%rcx, %r10
+	movl	$0x7e010223, %eax
+	syscall
+	retq
+
+	.globl	glUniform4iv
+	.p2align	4, 0x90
+glUniform4iv:
+	movq	%rcx, %r10
+	movl	$0x7e010224, %eax
+	syscall
+	retq
+
+	.globl	glUniform4ui
+	.p2align	4, 0x90
+glUniform4ui:
+	movq	%rcx, %r10
+	movl	$0x7e010225, %eax
+	syscall
+	retq
+
+	.globl	glUniform4uiv
+	.p2align	4, 0x90
+glUniform4uiv:
+	movq	%rcx, %r10
+	movl	$0x7e010226, %eax
+	syscall
+	retq
+
+	.globl	glUniformBlockBinding
+	.p2align	4, 0x90
+glUniformBlockBinding:
+	movq	%rcx, %r10
+	movl	$0x7e010227, %eax
+	syscall
+	retq
+
+	.globl	glUniformMatrix2fv
+	.p2align	4, 0x90
+glUniformMatrix2fv:
+	movq	%rcx, %r10
+	movl	$0x7e010228, %eax
+	syscall
+	retq
+
+	.globl	glUniformMatrix2x3fv
+	.p2align	4, 0x90
+glUniformMatrix2x3fv:
+	movq	%rcx, %r10
+	movl	$0x7e010229, %eax
+	syscall
+	retq
+
+	.globl	glUniformMatrix2x4fv
+	.p2align	4, 0x90
+glUniformMatrix2x4fv:
+	movq	%rcx, %r10
+	movl	$0x7e01022a, %eax
+	syscall
+	retq
+
+	.globl	glUniformMatrix3fv
+	.p2align	4, 0x90
+glUniformMatrix3fv:
+	movq	%rcx, %r10
+	movl	$0x7e01022b, %eax
+	syscall
+	retq
+
+	.globl	glUniformMatrix3x2fv
+	.p2align	4, 0x90
+glUniformMatrix3x2fv:
+	movq	%rcx, %r10
+	movl	$0x7e01022c, %eax
+	syscall
+	retq
+
+	.globl	glUniformMatrix3x4fv
+	.p2align	4, 0x90
+glUniformMatrix3x4fv:
+	movq	%rcx, %r10
+	movl	$0x7e01022d, %eax
+	syscall
+	retq
+
+	.globl	glUniformMatrix4fv
+	.p2align	4, 0x90
+glUniformMatrix4fv:
+	movq	%rcx, %r10
+	movl	$0x7e01022e, %eax
+	syscall
+	retq
+
+	.globl	glUniformMatrix4x2fv
+	.p2align	4, 0x90
+glUniformMatrix4x2fv:
+	movq	%rcx, %r10
+	movl	$0x7e01022f, %eax
+	syscall
+	retq
+
+	.globl	glUniformMatrix4x3fv
+	.p2align	4, 0x90
+glUniformMatrix4x3fv:
+	movq	%rcx, %r10
+	movl	$0x7e010230, %eax
+	syscall
+	retq
+
+	.globl	glUnmapBuffer
+	.p2align	4, 0x90
+glUnmapBuffer:
+	movq	%rcx, %r10
+	movl	$0x7e010231, %eax
+	syscall
+	retq
+
+	.globl	glUseProgram
+	.p2align	4, 0x90
+glUseProgram:
+	movq	%rcx, %r10
+	movl	$0x7e010232, %eax
+	syscall
+	retq
+
+	.globl	glValidateProgram
+	.p2align	4, 0x90
+glValidateProgram:
+	movq	%rcx, %r10
+	movl	$0x7e010233, %eax
+	syscall
+	retq
+
+	.globl	glVertex2d
+	.p2align	4, 0x90
+glVertex2d:
+	movq	%rcx, %r10
+	movl	$0x7e010234, %eax
+	syscall
+	retq
+
+	.globl	glVertex2dv
+	.p2align	4, 0x90
+glVertex2dv:
+	movq	%rcx, %r10
+	movl	$0x7e010235, %eax
+	syscall
+	retq
+
+	.globl	glVertex2f
+	.p2align	4, 0x90
+glVertex2f:
+	movq	%rcx, %r10
+	movl	$0x7e010236, %eax
+	syscall
+	retq
+
+	.globl	glVertex2fv
+	.p2align	4, 0x90
+glVertex2fv:
+	movq	%rcx, %r10
+	movl	$0x7e010237, %eax
+	syscall
+	retq
+
+	.globl	glVertex2i
+	.p2align	4, 0x90
+glVertex2i:
+	movq	%rcx, %r10
+	movl	$0x7e010238, %eax
+	syscall
+	retq
+
+	.globl	glVertex2iv
+	.p2align	4, 0x90
+glVertex2iv:
+	movq	%rcx, %r10
+	movl	$0x7e010239, %eax
+	syscall
+	retq
+
+	.globl	glVertex2s
+	.p2align	4, 0x90
+glVertex2s:
+	movq	%rcx, %r10
+	movl	$0x7e01023a, %eax
+	syscall
+	retq
+
+	.globl	glVertex2sv
+	.p2align	4, 0x90
+glVertex2sv:
+	movq	%rcx, %r10
+	movl	$0x7e01023b, %eax
+	syscall
+	retq
+
+	.globl	glVertex3d
+	.p2align	4, 0x90
+glVertex3d:
+	movq	%rcx, %r10
+	movl	$0x7e01023c, %eax
+	syscall
+	retq
+
+	.globl	glVertex3dv
+	.p2align	4, 0x90
+glVertex3dv:
+	movq	%rcx, %r10
+	movl	$0x7e01023d, %eax
+	syscall
+	retq
+
+	.globl	glVertex3f
+	.p2align	4, 0x90
+glVertex3f:
+	movq	%rcx, %r10
+	movl	$0x7e01023e, %eax
+	syscall
+	retq
+
+	.globl	glVertex3fv
+	.p2align	4, 0x90
+glVertex3fv:
+	movq	%rcx, %r10
+	movl	$0x7e01023f, %eax
+	syscall
+	retq
+
+	.globl	glVertex3i
+	.p2align	4, 0x90
+glVertex3i:
+	movq	%rcx, %r10
+	movl	$0x7e010240, %eax
+	syscall
+	retq
+
+	.globl	glVertex3iv
+	.p2align	4, 0x90
+glVertex3iv:
+	movq	%rcx, %r10
+	movl	$0x7e010241, %eax
+	syscall
+	retq
+
+	.globl	glVertex3s
+	.p2align	4, 0x90
+glVertex3s:
+	movq	%rcx, %r10
+	movl	$0x7e010242, %eax
+	syscall
+	retq
+
+	.globl	glVertex3sv
+	.p2align	4, 0x90
+glVertex3sv:
+	movq	%rcx, %r10
+	movl	$0x7e010243, %eax
+	syscall
+	retq
+
+	.globl	glVertex4d
+	.p2align	4, 0x90
+glVertex4d:
+	movq	%rcx, %r10
+	movl	$0x7e010244, %eax
+	syscall
+	retq
+
+	.globl	glVertex4dv
+	.p2align	4, 0x90
+glVertex4dv:
+	movq	%rcx, %r10
+	movl	$0x7e010245, %eax
+	syscall
+	retq
+
+	.globl	glVertex4f
+	.p2align	4, 0x90
+glVertex4f:
+	movq	%rcx, %r10
+	movl	$0x7e010246, %eax
+	syscall
+	retq
+
+	.globl	glVertex4fv
+	.p2align	4, 0x90
+glVertex4fv:
+	movq	%rcx, %r10
+	movl	$0x7e010247, %eax
+	syscall
+	retq
+
+	.globl	glVertex4i
+	.p2align	4, 0x90
+glVertex4i:
+	movq	%rcx, %r10
+	movl	$0x7e010248, %eax
+	syscall
+	retq
+
+	.globl	glVertex4iv
+	.p2align	4, 0x90
+glVertex4iv:
+	movq	%rcx, %r10
+	movl	$0x7e010249, %eax
+	syscall
+	retq
+
+	.globl	glVertex4s
+	.p2align	4, 0x90
+glVertex4s:
+	movq	%rcx, %r10
+	movl	$0x7e01024a, %eax
+	syscall
+	retq
+
+	.globl	glVertex4sv
+	.p2align	4, 0x90
+glVertex4sv:
+	movq	%rcx, %r10
+	movl	$0x7e01024b, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttrib1f
+	.p2align	4, 0x90
+glVertexAttrib1f:
+	movq	%rcx, %r10
+	movl	$0x7e01024c, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttrib1fv
+	.p2align	4, 0x90
+glVertexAttrib1fv:
+	movq	%rcx, %r10
+	movl	$0x7e01024d, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttrib2f
+	.p2align	4, 0x90
+glVertexAttrib2f:
+	movq	%rcx, %r10
+	movl	$0x7e01024e, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttrib2fv
+	.p2align	4, 0x90
+glVertexAttrib2fv:
+	movq	%rcx, %r10
+	movl	$0x7e01024f, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttrib3f
+	.p2align	4, 0x90
+glVertexAttrib3f:
+	movq	%rcx, %r10
+	movl	$0x7e010250, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttrib3fv
+	.p2align	4, 0x90
+glVertexAttrib3fv:
+	movq	%rcx, %r10
+	movl	$0x7e010251, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttrib4Nub
+	.p2align	4, 0x90
+glVertexAttrib4Nub:
+	movq	%rcx, %r10
+	movl	$0x7e010252, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttrib4f
+	.p2align	4, 0x90
+glVertexAttrib4f:
+	movq	%rcx, %r10
+	movl	$0x7e010253, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttrib4fv
+	.p2align	4, 0x90
+glVertexAttrib4fv:
+	movq	%rcx, %r10
+	movl	$0x7e010254, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttribDivisor
+	.p2align	4, 0x90
+glVertexAttribDivisor:
+	movq	%rcx, %r10
+	movl	$0x7e010255, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttribI4i
+	.p2align	4, 0x90
+glVertexAttribI4i:
+	movq	%rcx, %r10
+	movl	$0x7e010256, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttribI4iv
+	.p2align	4, 0x90
+glVertexAttribI4iv:
+	movq	%rcx, %r10
+	movl	$0x7e010257, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttribI4ui
+	.p2align	4, 0x90
+glVertexAttribI4ui:
+	movq	%rcx, %r10
+	movl	$0x7e010258, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttribI4uiv
+	.p2align	4, 0x90
+glVertexAttribI4uiv:
+	movq	%rcx, %r10
+	movl	$0x7e010259, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttribIPointer
+	.p2align	4, 0x90
+glVertexAttribIPointer:
+	movq	%rcx, %r10
+	movl	$0x7e01025a, %eax
+	syscall
+	retq
+
+	.globl	glVertexAttribPointer
+	.p2align	4, 0x90
+glVertexAttribPointer:
+	movq	%rcx, %r10
+	movl	$0x7e01025b, %eax
+	syscall
+	retq
+
+	.globl	glVertexPointer
+	.p2align	4, 0x90
+glVertexPointer:
+	movq	%rcx, %r10
+	movl	$0x7e01025c, %eax
+	syscall
+	retq
+
+	.globl	glViewport
+	.p2align	4, 0x90
+glViewport:
+	movq	%rcx, %r10
+	movl	$0x7e01025d, %eax
+	syscall
+	retq
+
+	.globl	glWaitSync
+	.p2align	4, 0x90
+glWaitSync:
+	movq	%rcx, %r10
+	movl	$0x7e01025e, %eax
+	syscall
+	retq
+
+	.globl	wglChoosePixelFormat
+	.p2align	4, 0x90
+wglChoosePixelFormat:
+	movq	%rcx, %r10
+	movl	$0x7e01025f, %eax
+	syscall
+	retq
+
+	.globl	wglChoosePixelFormatARB
+	.p2align	4, 0x90
+wglChoosePixelFormatARB:
+	movq	%rcx, %r10
+	movl	$0x7e010260, %eax
+	syscall
+	retq
+
+	.globl	wglCopyContext
+	.p2align	4, 0x90
+wglCopyContext:
+	movq	%rcx, %r10
+	movl	$0x7e010261, %eax
+	syscall
+	retq
+
+	.globl	wglCreateContext
+	.p2align	4, 0x90
+wglCreateContext:
+	movq	%rcx, %r10
+	movl	$0x7e010262, %eax
+	syscall
+	retq
+
+	.globl	wglCreateContextAttribsARB
+	.p2align	4, 0x90
+wglCreateContextAttribsARB:
+	movq	%rcx, %r10
+	movl	$0x7e010263, %eax
+	syscall
+	retq
+
+	.globl	wglCreateLayerContext
+	.p2align	4, 0x90
+wglCreateLayerContext:
+	movq	%rcx, %r10
+	movl	$0x7e010264, %eax
+	syscall
+	retq
+
+	.globl	wglDeleteContext
+	.p2align	4, 0x90
+wglDeleteContext:
+	movq	%rcx, %r10
+	movl	$0x7e010265, %eax
+	syscall
+	retq
+
+	.globl	wglDescribeLayerPlane
+	.p2align	4, 0x90
+wglDescribeLayerPlane:
+	movq	%rcx, %r10
+	movl	$0x7e010266, %eax
+	syscall
+	retq
+
+	.globl	wglDescribePixelFormat
+	.p2align	4, 0x90
+wglDescribePixelFormat:
+	movq	%rcx, %r10
+	movl	$0x7e010267, %eax
+	syscall
+	retq
+
+	.globl	wglGetCurrentContext
+	.p2align	4, 0x90
+wglGetCurrentContext:
+	movq	%rcx, %r10
+	movl	$0x7e010268, %eax
+	syscall
+	retq
+
+	.globl	wglGetCurrentDC
+	.p2align	4, 0x90
+wglGetCurrentDC:
+	movq	%rcx, %r10
+	movl	$0x7e010269, %eax
+	syscall
+	retq
+
+	.globl	wglGetCurrentReadDCARB
+	.p2align	4, 0x90
+wglGetCurrentReadDCARB:
+	movq	%rcx, %r10
+	movl	$0x7e01026a, %eax
+	syscall
+	retq
+
+	.globl	wglGetExtensionsStringARB
+	.p2align	4, 0x90
+wglGetExtensionsStringARB:
+	movq	%rcx, %r10
+	movl	$0x7e01026b, %eax
+	syscall
+	retq
+
+	.globl	wglGetExtensionsStringEXT
+	.p2align	4, 0x90
+wglGetExtensionsStringEXT:
+	movq	%rcx, %r10
+	movl	$0x7e01026c, %eax
+	syscall
+	retq
+
+	.globl	wglGetLayerPaletteEntries
+	.p2align	4, 0x90
+wglGetLayerPaletteEntries:
+	movq	%rcx, %r10
+	movl	$0x7e01026d, %eax
+	syscall
+	retq
+
+	.globl	wglGetPixelFormat
+	.p2align	4, 0x90
+wglGetPixelFormat:
+	movq	%rcx, %r10
+	movl	$0x7e01026e, %eax
+	syscall
+	retq
+
+	.globl	wglGetPixelFormatAttribfvARB
+	.p2align	4, 0x90
+wglGetPixelFormatAttribfvARB:
+	movq	%rcx, %r10
+	movl	$0x7e01026f, %eax
+	syscall
+	retq
+
+	.globl	wglGetPixelFormatAttribivARB
+	.p2align	4, 0x90
+wglGetPixelFormatAttribivARB:
+	movq	%rcx, %r10
+	movl	$0x7e010270, %eax
+	syscall
+	retq
+
+	.globl	wglGetSwapIntervalEXT
+	.p2align	4, 0x90
+wglGetSwapIntervalEXT:
+	movq	%rcx, %r10
+	movl	$0x7e010271, %eax
+	syscall
+	retq
+
+	.globl	wglMakeContextCurrentARB
+	.p2align	4, 0x90
+wglMakeContextCurrentARB:
+	movq	%rcx, %r10
+	movl	$0x7e010272, %eax
+	syscall
+	retq
+
+	.globl	wglMakeCurrent
+	.p2align	4, 0x90
+wglMakeCurrent:
+	movq	%rcx, %r10
+	movl	$0x7e010273, %eax
+	syscall
+	retq
+
+	.globl	wglRealizeLayerPalette
+	.p2align	4, 0x90
+wglRealizeLayerPalette:
+	movq	%rcx, %r10
+	movl	$0x7e010274, %eax
+	syscall
+	retq
+
+	.globl	wglSetLayerPaletteEntries
+	.p2align	4, 0x90
+wglSetLayerPaletteEntries:
+	movq	%rcx, %r10
+	movl	$0x7e010275, %eax
+	syscall
+	retq
+
+	.globl	wglSetPixelFormat
+	.p2align	4, 0x90
+wglSetPixelFormat:
+	movq	%rcx, %r10
+	movl	$0x7e010276, %eax
+	syscall
+	retq
+
+	.globl	wglShareLists
+	.p2align	4, 0x90
+wglShareLists:
+	movq	%rcx, %r10
+	movl	$0x7e010277, %eax
+	syscall
+	retq
+
+	.globl	wglSwapBuffers
+	.p2align	4, 0x90
+wglSwapBuffers:
+	movq	%rcx, %r10
+	movl	$0x7e010278, %eax
+	syscall
+	retq
+
+	.globl	wglSwapIntervalEXT
+	.p2align	4, 0x90
+wglSwapIntervalEXT:
+	movq	%rcx, %r10
+	movl	$0x7e010279, %eax
+	syscall
+	retq
+
+	.globl	wglSwapLayerBuffers
+	.p2align	4, 0x90
+wglSwapLayerBuffers:
+	movq	%rcx, %r10
+	movl	$0x7e01027a, %eax
+	syscall
+	retq
+
+	.globl	wglUseFontBitmapsA
+	.p2align	4, 0x90
+wglUseFontBitmapsA:
+	movq	%rcx, %r10
+	movl	$0x7e01027b, %eax
+	syscall
+	retq
+
+	.globl	wglUseFontBitmapsW
+	.p2align	4, 0x90
+wglUseFontBitmapsW:
+	movq	%rcx, %r10
+	movl	$0x7e01027c, %eax
+	syscall
+	retq
+
+	.globl	wglUseFontOutlinesA
+	.p2align	4, 0x90
+wglUseFontOutlinesA:
+	movq	%rcx, %r10
+	movl	$0x7e01027d, %eax
+	syscall
+	retq
+
+	.globl	wglUseFontOutlinesW
+	.p2align	4, 0x90
+wglUseFontOutlinesW:
+	movq	%rcx, %r10
+	movl	$0x7e01027e, %eax
+	syscall
+	retq
+

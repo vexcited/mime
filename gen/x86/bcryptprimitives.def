@@ -1,0 +1,13 @@
+LIBRARY bcryptprimitives.dll
+EXPORTS
+    GetAsymmetricEncryptionInterface=_GetAsymmetricEncryptionInterface@16 @1
+    GetCipherInterface=_GetCipherInterface@16 @2
+    GetHashInterface=_GetHashInterface@16 @3
+    GetKeyDerivationInterface=_GetKeyDerivationInterface@16 @4
+    GetKeyEncapsulationInterface=_GetKeyEncapsulationInterface@16 @5
+    GetRngInterface=_GetRngInterface@12 @6
+    GetSecretAgreementInterface=_GetSecretAgreementInterface@16 @7
+    GetSignatureInterface=_GetSignatureInterface@16 @8
+    MSCryptConvertRsaPrivateBlobToFullRsaBlob=_MSCryptConvertRsaPrivateBlobToFullRsaBlob@20 @9
+    ProcessPrng=_ProcessPrng@8 @10
+    ProcessPrngGuid=_ProcessPrngGuid@4 @11

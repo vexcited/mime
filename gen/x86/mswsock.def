@@ -1,0 +1,18 @@
+LIBRARY mswsock.dll
+EXPORTS
+    AcceptEx=wsock32.AcceptEx
+    EnumProtocolsA=wsock32.EnumProtocolsA
+    EnumProtocolsW=wsock32.EnumProtocolsW
+    GetAcceptExSockaddrs=wsock32.GetAcceptExSockaddrs
+    GetNameByTypeA=wsock32.GetNameByTypeA
+    GetNameByTypeW=wsock32.GetNameByTypeW
+    GetServiceA=wsock32.GetServiceA
+    GetServiceW=wsock32.GetServiceW
+    GetTypeByNameA=wsock32.GetTypeByNameA
+    GetTypeByNameW=wsock32.GetTypeByNameW
+    MigrateWinsockConfiguration=wsock32.MigrateWinsockConfiguration
+    NPLoadNameSpaces=wsock32.NPLoadNameSpaces
+    SetServiceA=wsock32.SetServiceA
+    SetServiceW=wsock32.SetServiceW
+    TransmitFile=wsock32.TransmitFile
+    WSARecvEx=wsock32.WSARecvEx

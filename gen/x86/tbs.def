@@ -1,0 +1,25 @@
+LIBRARY tbs.dll
+EXPORTS
+    GetDeviceID=_GetDeviceID@16 @3
+    GetDeviceIDString=_GetDeviceIDString@16 @4
+    GetDeviceIDWithTimeout=_GetDeviceIDWithTimeout@20 @5
+    Tbsi_Context_Create=_Tbsi_Context_Create@8 @6
+    Tbsi_Create_Attestation_From_Log=_Tbsi_Create_Attestation_From_Log@36 @1
+    Tbsi_Create_Windows_Key=_Tbsi_Create_Windows_Key@4 @7
+    Tbsi_FilterLog=_Tbsi_FilterLog@24 @8
+    Tbsi_GetDeviceInfo=_Tbsi_GetDeviceInfo@8 @9
+    Tbsi_Get_OwnerAuth=_Tbsi_Get_OwnerAuth@16 @10
+    Tbsi_Get_TCG_Log=_Tbsi_Get_TCG_Log@12 @11
+    Tbsi_Get_TCG_Log_Ex=_Tbsi_Get_TCG_Log_Ex@12 @12
+    Tbsi_Get_TCG_Logs=_Tbsi_Get_TCG_Logs@24 @2
+    Tbsi_Is_Tpm_Present=_Tbsi_Is_Tpm_Present@0 @13
+    Tbsi_Physical_Presence_Command=_Tbsi_Physical_Presence_Command@20 @14
+    Tbsi_Revoke_Attestation=_Tbsi_Revoke_Attestation@0 @15
+    Tbsi_ShaHash=_Tbsi_ShaHash@32 @16
+    Tbsi_Tpm_Vendor_Maintenance_Mode=_Tbsi_Tpm_Vendor_Maintenance_Mode@8 @17
+    Tbsip_Cancel_Commands=_Tbsip_Cancel_Commands@4 @18
+    Tbsip_Context_Close=_Tbsip_Context_Close@4 @19
+    Tbsip_Submit_Command=_Tbsip_Submit_Command@28 @20
+    Tbsip_Submit_Command_NonBlocking=_Tbsip_Submit_Command_NonBlocking@28 @21
+    Tbsip_TestInterruptInformation=_Tbsip_TestInterruptInformation@4 @22
+    Tbsip_TestMorBit=_Tbsip_TestMorBit@4 @23

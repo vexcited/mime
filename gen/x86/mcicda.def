@@ -1,0 +1,3 @@
+LIBRARY mcicda.dll
+EXPORTS
+    DriverProc=_DriverProc@20

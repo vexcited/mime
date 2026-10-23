@@ -1,0 +1,31 @@
+LIBRARY activeds.dll
+EXPORTS
+    ADsBuildEnumerator=_ADsBuildEnumerator@8 @4
+    ADsBuildVarArrayInt=_ADsBuildVarArrayInt@12 @8
+    ADsBuildVarArrayStr=_ADsBuildVarArrayStr@12 @7
+    ADsDecodeBinaryData=_ADsDecodeBinaryData@12 @24
+    ADsEncodeBinaryData=_ADsEncodeBinaryData@12 @20
+    ADsEnumerateNext=_ADsEnumerateNext@16 @6
+    ADsFreeEnumerator=_ADsFreeEnumerator@4 @5
+    ADsGetLastError=_ADsGetLastError@20 @13
+    ADsGetObject=_ADsGetObject@12 @3
+    ADsOpenObject=_ADsOpenObject@24 @9
+    ADsSetLastError=_ADsSetLastError@12 @12
+    AdsFreeAdsValues=_AdsFreeAdsValues@8 @23
+    AdsTypeToPropVariant2=_AdsTypeToPropVariant2@12 @25
+    AdsTypeToPropVariant=_AdsTypeToPropVariant@12 @22
+    AllocADsMem=_AllocADsMem@4 @14
+    AllocADsStr=_AllocADsStr@4 @17
+    BinarySDToSecurityDescriptor=_BinarySDToSecurityDescriptor@20 @29
+    ConvertSecDescriptorToVariant=_ConvertSecDescriptorToVariant@20 @27
+    ConvertSecurityDescriptorToSecDes=_ConvertSecurityDescriptorToSecDes@24 @28
+    ConvertTrusteeToSid=_ConvertTrusteeToSid@20 @31
+    DllCanUnloadNow=_DllCanUnloadNow@0 @10
+    DllGetClassObject=_DllGetClassObject@12 @11
+    FreeADsMem=_FreeADsMem@4 @15
+    FreeADsStr=_FreeADsStr@4 @18
+    PropVariantToAdsType2=_PropVariantToAdsType2@16 @26
+    PropVariantToAdsType=_PropVariantToAdsType@16 @21
+    ReallocADsMem=_ReallocADsMem@12 @16
+    ReallocADsStr=_ReallocADsStr@8 @19
+    SecurityDescriptorToBinarySD=_SecurityDescriptorToBinarySD@36 @30

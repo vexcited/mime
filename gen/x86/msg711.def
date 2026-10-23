@@ -1,0 +1,3 @@
+LIBRARY msg711.acm
+EXPORTS
+    DriverProc=_DriverProc@20

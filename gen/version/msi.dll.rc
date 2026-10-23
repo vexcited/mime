@@ -1,0 +1,28 @@
+1 VERSIONINFO
+FILEVERSION 5, 0, 26100, 9444
+PRODUCTVERSION 5, 0, 26100, 9444
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 2
+FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Microsoft Corporation"
+            VALUE "FileDescription", "Windows Installer"
+            VALUE "FileVersion", "5.0.26100.9444"
+            VALUE "InternalName", "msi"
+            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "OriginalFilename", "msi.dll"
+            VALUE "ProductName", "Windows Installer - Unicode"
+            VALUE "ProductVersion", "5.0.26100.9444"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

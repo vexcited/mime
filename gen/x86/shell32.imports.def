@@ -1,0 +1,101 @@
+LIBRARY shell32.dll
+EXPORTS
+    CommandLineToArgvW@8
+    DllCanUnloadNow@0 @278
+    DllGetClassObject@12 @280
+    DragAcceptFiles@8
+    DragFinish@4
+    DragQueryFileA@16
+    DragQueryFileW@16
+    DragQueryPoint@8
+    ExtractIconA@12
+    ExtractIconExA@20
+    ExtractIconExW@20
+    ExtractIconW@12
+    FileIconInit@4
+    FindExecutableA@12
+    FindExecutableW@12
+    GetCurrentProcessExplicitAppUserModelID@4
+    ILAppendID@12 @154
+    ILClone@4 @18
+    ILCloneFirst@4 @19
+    ILCombine@8 @25
+    ILCreateFromPathA@4 @189
+    ILCreateFromPathW@4 @190
+    ILFindChild@8 @24
+    ILFindLastID@4 @16
+    ILFree@4 @155
+    ILGetNext@4 @153
+    ILGetSize@4 @152
+    ILIsEqual@8 @21
+    ILIsParent@12 @23
+    ILLoadFromStreamEx@8 @846
+    ILRemoveLastID@4 @17
+    ILSaveToStream@8 @27
+    IsUserAnAdmin@0 @680
+    SHAddToRecentDocs@8
+    SHAppBarMessage@8
+    SHAssocEnumHandlers@12
+    SHBrowseForFolderA@4
+    SHBrowseForFolderW@4
+    SHChangeNotification_Lock@16 @644
+    SHChangeNotification_Unlock@4 @645
+    SHChangeNotify@16
+    SHChangeNotifyDeregister@4 @4
+    SHChangeNotifyRegister@24 @2
+    SHCreateAssociationRegistration@8
+    SHCreateDirectory@8 @165
+    SHCreateDirectoryExA@12
+    SHCreateDirectoryExW@12
+    SHCreateFileExtractIconA@16
+    SHCreateFileExtractIconW@16
+    SHCreateItemFromIDList@12
+    SHCreateItemFromParsingName@16
+    SHCreateItemInKnownFolder@20
+    SHCreateItemWithParent@20 @346
+    SHCreateShellItemArray@20 @351
+    SHCreateShellItemArrayFromIDLists@12 @353
+    SHCreateShellItemArrayFromShellItem@12 @354
+    SHCreateStdEnumFmtEtc@12 @74
+    SHDefExtractIconA@24
+    SHDefExtractIconW@24
+    SHDoDragDrop@20 @88
+    SHFileOperationA@4
+    SHFileOperationW@4
+    SHGetDesktopFolder@4
+    SHGetFileInfoA@20
+    SHGetFileInfoW@20
+    SHGetFolderLocation@20
+    SHGetFolderPathA@20
+    SHGetFolderPathAndSubDirA@24
+    SHGetFolderPathAndSubDirW@24
+    SHGetFolderPathW@20
+    SHGetIDListFromObject@8 @507
+    SHGetImageList@12
+    SHGetKnownFolderIDList@16
+    SHGetKnownFolderItem@20 @514
+    SHGetKnownFolderPath@16
+    SHGetMalloc@4
+    SHGetNameFromIDList@12
+    SHGetPathFromIDListA@8
+    SHGetPathFromIDListEx@16
+    SHGetPathFromIDListW@8
+    SHGetPropertyStoreForWindow@12
+    SHGetSpecialFolderLocation@12
+    SHGetSpecialFolderPathA@16
+    SHGetSpecialFolderPathW@16
+    SHGetStockIconInfo@12
+    SHOpenFolderAndSelectItems@16
+    SHOpenWithDialog@8
+    SHParseDisplayName@20
+    SHQueryUserNotificationState@4
+    SHSimpleIDListFromPath@4 @162
+    SetCurrentProcessExplicitAppUserModelID@4
+    ShellExecuteA@24
+    ShellExecuteExA@4
+    ShellExecuteExW@4
+    ShellExecuteW@24
+    Shell_GetImageLists@8
+    Shell_NotifyIconA@8
+    Shell_NotifyIconGetRect@8
+    Shell_NotifyIconW@8

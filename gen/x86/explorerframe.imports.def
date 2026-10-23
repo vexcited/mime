@@ -1,0 +1,5 @@
+LIBRARY explorerframe.dll
+EXPORTS
+    DllCanUnloadNow@0 @112
+    DllGetClassObject@12 @113
+    DllGetVersion@4 @114

@@ -1,0 +1,14 @@
+LIBRARY prntvpt.dll
+EXPORTS
+    DllMain=_DllMain@12
+    PTCloseProvider=_PTCloseProvider@4
+    PTConvertDevModeToPrintTicket=_PTConvertDevModeToPrintTicket@20
+    PTConvertPrintTicketToDevMode=_PTConvertPrintTicketToDevMode@28
+    PTGetPrintCapabilities=_PTGetPrintCapabilities@16
+    PTGetPrintDeviceCapabilities=_PTGetPrintDeviceCapabilities@16
+    PTGetPrintDeviceResources=_PTGetPrintDeviceResources@20
+    PTMergeAndValidatePrintTicket=_PTMergeAndValidatePrintTicket@24
+    PTOpenProvider=_PTOpenProvider@12
+    PTOpenProviderEx=_PTOpenProviderEx@20
+    PTQuerySchemaVersionSupport=_PTQuerySchemaVersionSupport@8
+    PTReleaseMemory=_PTReleaseMemory@4

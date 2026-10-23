@@ -1,0 +1,18 @@
+LIBRARY oleacc.dll
+EXPORTS
+    AccessibleChildren=_AccessibleChildren@20
+    AccessibleObjectFromEvent=_AccessibleObjectFromEvent@20
+    AccessibleObjectFromPoint=_AccessibleObjectFromPoint@16
+    AccessibleObjectFromWindow=_AccessibleObjectFromWindow@16
+    CreateStdAccessibleObject=_CreateStdAccessibleObject@16
+    CreateStdAccessibleProxyA=_CreateStdAccessibleProxyA@20
+    CreateStdAccessibleProxyW=_CreateStdAccessibleProxyW@20
+    GetOleaccVersionInfo=_GetOleaccVersionInfo@8
+    GetProcessHandleFromHwnd=_GetProcessHandleFromHwnd@4
+    GetRoleTextA=_GetRoleTextA@12
+    GetRoleTextW=_GetRoleTextW@12
+    GetStateTextA=_GetStateTextA@12
+    GetStateTextW=_GetStateTextW@12
+    LresultFromObject=_LresultFromObject@12
+    ObjectFromLresult=_ObjectFromLresult@16
+    WindowFromAccessibleObject=_WindowFromAccessibleObject@8

@@ -1,0 +1,16 @@
+LIBRARY lz32.dll
+EXPORTS
+    CopyLZFile@8 @1
+    GetExpandedNameA@8 @2
+    GetExpandedNameW@8 @3
+    LZClose@4 @4
+    LZCloseFile@4 @5
+    LZCopy@8 @6
+    LZCreateFileW@20 @7
+    LZDone@0 @8
+    LZInit@4 @9
+    LZOpenFileA@12 @10
+    LZOpenFileW@12 @11
+    LZRead@12 @12
+    LZSeek@12 @13
+    LZStart@0 @14

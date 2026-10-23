@@ -1,0 +1,265 @@
+LIBRARY combase.dll
+EXPORTS
+    GetRestrictedErrorInfo@4
+    RoActivateInstance@8
+    RoCaptureErrorContext@4
+    RoFailFastWithErrorContext@4
+    RoGetActivationFactory@12
+    RoGetApartmentIdentifier@4
+    RoInitialize@4
+    RoOriginateError@8
+    RoOriginateErrorW@12
+    RoOriginateLanguageException@12
+    RoRegisterActivationFactories@16
+    RoRegisterForApartmentShutdown@12
+    RoRevokeActivationFactories@4
+    RoTransformError@12
+    RoUninitialize@0
+    RoUnregisterForApartmentShutdown@4
+    SetRestrictedErrorInfo@4
+    WindowsCompareStringOrdinal@12
+    WindowsConcatString@12
+    WindowsCreateString@12
+    WindowsCreateStringReference@16
+    WindowsDeleteString@4
+    WindowsDeleteStringBuffer@4
+    WindowsDuplicateString@8
+    WindowsGetStringLen@4
+    WindowsGetStringRawBuffer@8
+    WindowsIsStringEmpty@4
+    WindowsPreallocateStringBuffer@12
+    WindowsPromoteStringBuffer@8
+    WindowsReplaceString@16
+    WindowsStringHasEmbeddedNull@8
+    WindowsSubstring@12
+    WindowsSubstringWithSpecifiedLength@16
+    WindowsTrimStringEnd@12
+    WindowsTrimStringStart@12
+    CLSIDFromProgID@8 @113
+    CLSIDFromString@8 @115
+    CStdStubBuffer_AddRef@4 @239
+    CStdStubBuffer_Connect@8 @240
+    CStdStubBuffer_CountRefs@4 @241
+    CStdStubBuffer_DebugServerQueryInterface@8 @242
+    CStdStubBuffer_DebugServerRelease@8 @243
+    CStdStubBuffer_Disconnect@4 @244
+    CStdStubBuffer_Invoke@12 @245
+    CStdStubBuffer_IsIIDSupported@8 @246
+    CStdStubBuffer_QueryInterface@12 @247
+    CoAddRefServerProcess@0 @254
+    CoCancelCall@8 @256
+    CoCreateFreeThreadedMarshaler@8 @259
+    CoCreateGuid@4 @260
+    CoCreateInstance@20 @261
+    CoCreateInstanceEx@24 @262
+    CoDecrementMTAUsage@4 @269
+    CoDisableCallCancellation@4 @270
+    CoDisconnectObject@8 @272
+    CoDoesOtherSideSupportUDTMarshaling@4 @181
+    CoDoesOtherSideVariantMarshalingNeedTrailingPadding@4 @180
+    CoEnableCallCancellation@4 @273
+    CoFreeUnusedLibraries@0 @275
+    CoFreeUnusedLibrariesEx@8 @276
+    CoGetApartmentType@8 @279
+    CoGetCallContext@8 @280
+    CoGetCallContextOfObject@12 @167
+    CoGetCallerTID@4 @282
+    CoGetCancelObject@12 @283
+    CoGetClassObject@20 @284
+    CoGetContextToken@4 @287
+    CoGetCurrentLogicalThreadId@4 @288
+    CoGetCurrentProcess@0 @289
+    CoGetInterfaceAndReleaseStream@12 @294
+    CoGetMalloc@8 @295
+    CoGetMarshalSizeMax@24 @296
+    CoGetObjectContext@8 @299
+    CoGetPSClsid@8 @300
+    CoGetTreatAsClass@8 @305
+    CoImpersonateClient@0 @306
+    CoIncrementMTAUsage@4 @307
+    CoInitializeEx@8 @308
+    CoInitializeSecurity@36 @309
+    CoIsHandlerConnected@4 @312
+    CoLockObjectExternal@12 @314
+    CoMarshalHresult@8 @315
+    CoMarshalInterThreadInterfaceInStream@12 @316
+    CoMarshalInterface@24 @317
+    CoRegisterClassObject@20 @325
+    CoRegisterInitializeSpy@8 @328
+    CoRegisterMessageFilter@8 @330
+    CoRegisterPSClsid@8 @331
+    CoReleaseMarshalData@4 @335
+    CoReleaseServerProcess@0 @336
+    CoResumeClassObjects@0 @337
+    CoRevertToSelf@0 @339
+    CoRevokeClassObject@4 @340
+    CoRevokeInitializeSpy@8 @343
+    CoSetCancelObject@4 @346
+    CoSetProxyBlanket@32 @349
+    CoSuspendClassObjects@0 @350
+    CoSwitchCallContext@8 @351
+    CoTaskMemAlloc@4 @352
+    CoTaskMemFree@4 @353
+    CoTaskMemRealloc@8 @354
+    CoTestCancel@0 @355
+    CoTreatAsClass@8 @356
+    CoUninitialize@0 @357
+    CoUnmarshalHresult@8 @359
+    CoUnmarshalInterface@12 @360
+    CoWaitForMultipleHandles@20 @364
+    CreateErrorInfo@4 @366
+    CreateStreamOnHGlobal@12 @367
+    DcomChannelSetHResult@12 @368
+    GetErrorInfo@8 @376
+    GetHGlobalFromStream@8 @378
+    HACCEL_UserFree@8 @381
+    HACCEL_UserFree64@8 @382
+    HACCEL_UserMarshal@12 @383
+    HACCEL_UserMarshal64@12 @384
+    HACCEL_UserSize@12 @385
+    HACCEL_UserSize64@12 @386
+    HACCEL_UserUnmarshal@12 @387
+    HACCEL_UserUnmarshal64@12 @388
+    HBITMAP_UserFree@8 @389
+    HBITMAP_UserFree64@8 @390
+    HBITMAP_UserMarshal@12 @391
+    HBITMAP_UserMarshal64@12 @392
+    HBITMAP_UserSize@12 @393
+    HBITMAP_UserSize64@12 @394
+    HBITMAP_UserUnmarshal@12 @395
+    HBITMAP_UserUnmarshal64@12 @396
+    HBRUSH_UserFree@8 @397
+    HBRUSH_UserFree64@8 @398
+    HBRUSH_UserMarshal@12 @399
+    HBRUSH_UserMarshal64@12 @400
+    HBRUSH_UserSize@12 @401
+    HBRUSH_UserSize64@12 @402
+    HBRUSH_UserUnmarshal@12 @403
+    HBRUSH_UserUnmarshal64@12 @404
+    HDC_UserFree@8 @405
+    HDC_UserFree64@8 @406
+    HDC_UserMarshal@12 @407
+    HDC_UserMarshal64@12 @408
+    HDC_UserSize@12 @409
+    HDC_UserSize64@12 @410
+    HDC_UserUnmarshal@12 @411
+    HDC_UserUnmarshal64@12 @412
+    HGLOBAL_UserFree@8 @413
+    HGLOBAL_UserFree64@8 @414
+    HGLOBAL_UserMarshal@12 @415
+    HGLOBAL_UserMarshal64@12 @416
+    HGLOBAL_UserSize@12 @417
+    HGLOBAL_UserSize64@12 @418
+    HGLOBAL_UserUnmarshal@12 @419
+    HGLOBAL_UserUnmarshal64@12 @420
+    HICON_UserFree@8 @421
+    HICON_UserFree64@8 @422
+    HICON_UserMarshal@12 @423
+    HICON_UserMarshal64@12 @424
+    HICON_UserSize@12 @425
+    HICON_UserSize64@12 @426
+    HICON_UserUnmarshal@12 @427
+    HICON_UserUnmarshal64@12 @428
+    HMENU_UserFree@8 @429
+    HMENU_UserFree64@8 @430
+    HMENU_UserMarshal@12 @431
+    HMENU_UserMarshal64@12 @432
+    HMENU_UserSize@12 @433
+    HMENU_UserSize64@12 @434
+    HMENU_UserUnmarshal@12 @435
+    HMENU_UserUnmarshal64@12 @436
+    HMONITOR_UserFree@8 @437
+    HMONITOR_UserFree64@8 @438
+    HMONITOR_UserMarshal@12 @439
+    HMONITOR_UserMarshal64@12 @440
+    HMONITOR_UserSize@12 @441
+    HMONITOR_UserSize64@12 @442
+    HMONITOR_UserUnmarshal@12 @443
+    HMONITOR_UserUnmarshal64@12 @444
+    HWND_UserFree@8 @461
+    HWND_UserFree64@8 @462
+    HWND_UserMarshal@12 @463
+    HWND_UserMarshal64@12 @464
+    HWND_UserSize@12 @465
+    HWND_UserSize64@12 @466
+    HWND_UserUnmarshal@12 @467
+    HWND_UserUnmarshal64@12 @468
+    IIDFromString@8 @470
+    NdrCStdStubBuffer2_Release@8 @532
+    NdrCStdStubBuffer_Release@8 @533
+    NdrProxyForwardingFunction10 @39
+    NdrProxyForwardingFunction11 @40
+    NdrProxyForwardingFunction12 @41
+    NdrProxyForwardingFunction13 @42
+    NdrProxyForwardingFunction14 @43
+    NdrProxyForwardingFunction15 @44
+    NdrProxyForwardingFunction16 @45
+    NdrProxyForwardingFunction17 @46
+    NdrProxyForwardingFunction18 @47
+    NdrProxyForwardingFunction19 @48
+    NdrProxyForwardingFunction20 @49
+    NdrProxyForwardingFunction21 @50
+    NdrProxyForwardingFunction22 @51
+    NdrProxyForwardingFunction23 @52
+    NdrProxyForwardingFunction24 @53
+    NdrProxyForwardingFunction25 @54
+    NdrProxyForwardingFunction26 @55
+    NdrProxyForwardingFunction27 @56
+    NdrProxyForwardingFunction28 @57
+    NdrProxyForwardingFunction29 @58
+    NdrProxyForwardingFunction3 @32
+    NdrProxyForwardingFunction30 @59
+    NdrProxyForwardingFunction31 @60
+    NdrProxyForwardingFunction32 @61
+    NdrProxyForwardingFunction4 @33
+    NdrProxyForwardingFunction5 @34
+    NdrProxyForwardingFunction6 @35
+    NdrProxyForwardingFunction7 @36
+    NdrProxyForwardingFunction8 @37
+    NdrProxyForwardingFunction9 @38
+    ObjectStublessClient10 @9
+    ObjectStublessClient11 @10
+    ObjectStublessClient12 @11
+    ObjectStublessClient13 @12
+    ObjectStublessClient14 @13
+    ObjectStublessClient15 @14
+    ObjectStublessClient16 @15
+    ObjectStublessClient17 @16
+    ObjectStublessClient18 @17
+    ObjectStublessClient19 @18
+    ObjectStublessClient20 @19
+    ObjectStublessClient21 @20
+    ObjectStublessClient22 @21
+    ObjectStublessClient23 @22
+    ObjectStublessClient24 @23
+    ObjectStublessClient25 @24
+    ObjectStublessClient26 @25
+    ObjectStublessClient27 @26
+    ObjectStublessClient28 @27
+    ObjectStublessClient29 @28
+    ObjectStublessClient3 @2
+    ObjectStublessClient30 @29
+    ObjectStublessClient31 @30
+    ObjectStublessClient32 @31
+    ObjectStublessClient4 @3
+    ObjectStublessClient5 @4
+    ObjectStublessClient6 @5
+    ObjectStublessClient7 @6
+    ObjectStublessClient8 @7
+    ObjectStublessClient9 @8
+    ProgIDFromCLSID@8 @538
+    PropVariantClear@4 @539
+    PropVariantCopy@8 @540
+    RoGetAgileReference@16 @549
+    SetErrorInfo@8 @575
+    StringFromCLSID@8 @577
+    StringFromGUID2@12 @578
+    StringFromIID@8 @579
+    WdtpInterfacePointer_UserFree@4 @581
+    WdtpInterfacePointer_UserFree64@4 @582
+    WdtpInterfacePointer_UserMarshal@20 @583
+    WdtpInterfacePointer_UserMarshal64@20 @584
+    WdtpInterfacePointer_UserSize@20 @585
+    WdtpInterfacePointer_UserSize64@20 @586
+    WdtpInterfacePointer_UserUnmarshal@16 @587
+    WdtpInterfacePointer_UserUnmarshal64@16 @588

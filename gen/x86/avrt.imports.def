@@ -1,0 +1,5 @@
+LIBRARY avrt.dll
+EXPORTS
+    AvRevertMmThreadCharacteristics@4
+    AvSetMmThreadCharacteristicsW@8
+    AvSetMmThreadPriority@8

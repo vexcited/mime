@@ -1,0 +1,987 @@
+/* generated, do not edit. */
+#pragma once
+#define MIME_NT_SERVICES_BASE 0x0000
+#define MIME_NT_SERVICES_COUNT 489
+#define MIME_SVC_NtAccessCheck 0x0000
+#define MIME_SVC_NtWorkerFactoryWorkerReady 0x0001
+#define MIME_SVC_NtAcceptConnectPort 0x0002
+#define MIME_SVC_NtMapUserPhysicalPagesScatter 0x0003
+#define MIME_SVC_NtWaitForSingleObject 0x0004
+#define MIME_SVC_NtCallbackReturn 0x0005
+#define MIME_SVC_NtReadFile 0x0006
+#define MIME_SVC_NtDeviceIoControlFile 0x0007
+#define MIME_SVC_NtWriteFile 0x0008
+#define MIME_SVC_NtRemoveIoCompletion 0x0009
+#define MIME_SVC_NtReleaseSemaphore 0x000A
+#define MIME_SVC_NtReplyWaitReceivePort 0x000B
+#define MIME_SVC_NtReplyPort 0x000C
+#define MIME_SVC_NtSetInformationThread 0x000D
+#define MIME_SVC_NtSetEvent 0x000E
+#define MIME_SVC_NtClose 0x000F
+#define MIME_SVC_NtQueryObject 0x0010
+#define MIME_SVC_NtQueryInformationFile 0x0011
+#define MIME_SVC_NtOpenKey 0x0012
+#define MIME_SVC_NtEnumerateValueKey 0x0013
+#define MIME_SVC_NtFindAtom 0x0014
+#define MIME_SVC_NtQueryDefaultLocale 0x0015
+#define MIME_SVC_NtQueryKey 0x0016
+#define MIME_SVC_NtQueryValueKey 0x0017
+#define MIME_SVC_NtAllocateVirtualMemory 0x0018
+#define MIME_SVC_NtQueryInformationProcess 0x0019
+#define MIME_SVC_NtWaitForMultipleObjects32 0x001A
+#define MIME_SVC_NtWriteFileGather 0x001B
+#define MIME_SVC_NtSetInformationProcess 0x001C
+#define MIME_SVC_NtCreateKey 0x001D
+#define MIME_SVC_NtFreeVirtualMemory 0x001E
+#define MIME_SVC_NtImpersonateClientOfPort 0x001F
+#define MIME_SVC_NtReleaseMutant 0x0020
+#define MIME_SVC_NtQueryInformationToken 0x0021
+#define MIME_SVC_NtRequestWaitReplyPort 0x0022
+#define MIME_SVC_NtQueryVirtualMemory 0x0023
+#define MIME_SVC_NtOpenThreadToken 0x0024
+#define MIME_SVC_NtQueryInformationThread 0x0025
+#define MIME_SVC_NtOpenProcess 0x0026
+#define MIME_SVC_NtSetInformationFile 0x0027
+#define MIME_SVC_NtMapViewOfSection 0x0028
+#define MIME_SVC_NtAccessCheckAndAuditAlarm 0x0029
+#define MIME_SVC_NtUnmapViewOfSection 0x002A
+#define MIME_SVC_NtReplyWaitReceivePortEx 0x002B
+#define MIME_SVC_NtTerminateProcess 0x002C
+#define MIME_SVC_NtSetEventBoostPriority 0x002D
+#define MIME_SVC_NtReadFileScatter 0x002E
+#define MIME_SVC_NtOpenThreadTokenEx 0x002F
+#define MIME_SVC_NtOpenProcessTokenEx 0x0030
+#define MIME_SVC_NtQueryPerformanceCounter 0x0031
+#define MIME_SVC_NtEnumerateKey 0x0032
+#define MIME_SVC_NtOpenFile 0x0033
+#define MIME_SVC_NtDelayExecution 0x0034
+#define MIME_SVC_NtQueryDirectoryFile 0x0035
+#define MIME_SVC_NtQuerySystemInformation 0x0036
+#define MIME_SVC_RtlGetNativeSystemInformation 0x0036
+#define MIME_SVC_NtOpenSection 0x0037
+#define MIME_SVC_NtQueryTimer 0x0038
+#define MIME_SVC_NtFsControlFile 0x0039
+#define MIME_SVC_NtWriteVirtualMemory 0x003A
+#define MIME_SVC_NtCloseObjectAuditAlarm 0x003B
+#define MIME_SVC_NtDuplicateObject 0x003C
+#define MIME_SVC_NtQueryAttributesFile 0x003D
+#define MIME_SVC_NtClearEvent 0x003E
+#define MIME_SVC_NtReadVirtualMemory 0x003F
+#define MIME_SVC_NtOpenEvent 0x0040
+#define MIME_SVC_NtAdjustPrivilegesToken 0x0041
+#define MIME_SVC_NtDuplicateToken 0x0042
+#define MIME_SVC_NtContinue 0x0043
+#define MIME_SVC_NtQueryDefaultUILanguage 0x0044
+#define MIME_SVC_NtQueueApcThread 0x0045
+#define MIME_SVC_NtYieldExecution 0x0046
+#define MIME_SVC_NtAddAtom 0x0047
+#define MIME_SVC_NtCreateEvent 0x0048
+#define MIME_SVC_NtQueryVolumeInformationFile 0x0049
+#define MIME_SVC_NtCreateSection 0x004A
+#define MIME_SVC_NtFlushBuffersFile 0x004B
+#define MIME_SVC_NtApphelpCacheControl 0x004C
+#define MIME_SVC_NtCreateProcessEx 0x004D
+#define MIME_SVC_NtCreateThread 0x004E
+#define MIME_SVC_NtIsProcessInJob 0x004F
+#define MIME_SVC_NtProtectVirtualMemory 0x0050
+#define MIME_SVC_NtQuerySection 0x0051
+#define MIME_SVC_NtResumeThread 0x0052
+#define MIME_SVC_NtTerminateThread 0x0053
+#define MIME_SVC_NtReadRequestData 0x0054
+#define MIME_SVC_NtCreateFile 0x0055
+#define MIME_SVC_NtQueryEvent 0x0056
+#define MIME_SVC_NtWriteRequestData 0x0057
+#define MIME_SVC_NtOpenDirectoryObject 0x0058
+#define MIME_SVC_NtAccessCheckByTypeAndAuditAlarm 0x0059
+#define MIME_SVC_NtQuerySystemTime 0x005A
+#define MIME_SVC_NtWaitForMultipleObjects 0x005B
+#define MIME_SVC_NtSetInformationObject 0x005C
+#define MIME_SVC_NtCancelIoFile 0x005D
+#define MIME_SVC_NtTraceEvent 0x005E
+#define MIME_SVC_NtPowerInformation 0x005F
+#define MIME_SVC_NtSetValueKey 0x0060
+#define MIME_SVC_NtCancelTimer 0x0061
+#define MIME_SVC_NtSetTimer 0x0062
+#define MIME_SVC_NtAccessCheckByType 0x0063
+#define MIME_SVC_NtAccessCheckByTypeResultList 0x0064
+#define MIME_SVC_NtAccessCheckByTypeResultListAndAuditAlarm 0x0065
+#define MIME_SVC_NtAccessCheckByTypeResultListAndAuditAlarmByHandle 0x0066
+#define MIME_SVC_NtAcquireCrossVmMutant 0x0067
+#define MIME_SVC_NtAcquireProcessActivityReference 0x0068
+#define MIME_SVC_NtAddAtomEx 0x0069
+#define MIME_SVC_NtAddBootEntry 0x006A
+#define MIME_SVC_NtAddDriverEntry 0x006B
+#define MIME_SVC_NtAdjustGroupsToken 0x006C
+#define MIME_SVC_NtAdjustTokenClaimsAndDeviceGroups 0x006D
+#define MIME_SVC_NtAlertMultipleThreadByThreadId 0x006E
+#define MIME_SVC_NtAlertResumeThread 0x006F
+#define MIME_SVC_NtAlertThread 0x0070
+#define MIME_SVC_NtAlertThreadByThreadId 0x0071
+#define MIME_SVC_NtAlertThreadByThreadIdEx 0x0072
+#define MIME_SVC_NtAllocateLocallyUniqueId 0x0073
+#define MIME_SVC_NtAllocateReserveObject 0x0074
+#define MIME_SVC_NtAllocateUserPhysicalPages 0x0075
+#define MIME_SVC_NtAllocateUserPhysicalPagesEx 0x0076
+#define MIME_SVC_NtAllocateUuids 0x0077
+#define MIME_SVC_NtAllocateVirtualMemoryEx 0x0078
+#define MIME_SVC_NtAlpcAcceptConnectPort 0x0079
+#define MIME_SVC_NtAlpcCancelMessage 0x007A
+#define MIME_SVC_NtAlpcConnectPort 0x007B
+#define MIME_SVC_NtAlpcConnectPortEx 0x007C
+#define MIME_SVC_NtAlpcCreatePort 0x007D
+#define MIME_SVC_NtAlpcCreatePortSection 0x007E
+#define MIME_SVC_NtAlpcCreateResourceReserve 0x007F
+#define MIME_SVC_NtAlpcCreateSectionView 0x0080
+#define MIME_SVC_NtAlpcCreateSecurityContext 0x0081
+#define MIME_SVC_NtAlpcDeletePortSection 0x0082
+#define MIME_SVC_NtAlpcDeleteResourceReserve 0x0083
+#define MIME_SVC_NtAlpcDeleteSectionView 0x0084
+#define MIME_SVC_NtAlpcDeleteSecurityContext 0x0085
+#define MIME_SVC_NtAlpcDisconnectPort 0x0086
+#define MIME_SVC_NtAlpcImpersonateClientContainerOfPort 0x0087
+#define MIME_SVC_NtAlpcImpersonateClientOfPort 0x0088
+#define MIME_SVC_NtAlpcOpenSenderProcess 0x0089
+#define MIME_SVC_NtAlpcOpenSenderThread 0x008A
+#define MIME_SVC_NtAlpcQueryInformation 0x008B
+#define MIME_SVC_NtAlpcQueryInformationMessage 0x008C
+#define MIME_SVC_NtAlpcRevokeSecurityContext 0x008D
+#define MIME_SVC_NtAlpcSendWaitReceivePort 0x008E
+#define MIME_SVC_NtAlpcSetInformation 0x008F
+#define MIME_SVC_NtAreMappedFilesTheSame 0x0090
+#define MIME_SVC_NtAssignProcessToJobObject 0x0091
+#define MIME_SVC_NtAssociateWaitCompletionPacket 0x0092
+#define MIME_SVC_NtCallEnclave 0x0093
+#define MIME_SVC_NtCancelIoFileEx 0x0094
+#define MIME_SVC_NtCancelSynchronousIoFile 0x0095
+#define MIME_SVC_NtCancelTimer2 0x0096
+#define MIME_SVC_NtCancelWaitCompletionPacket 0x0097
+#define MIME_SVC_NtChangeProcessState 0x0098
+#define MIME_SVC_NtChangeThreadState 0x0099
+#define MIME_SVC_NtCommitComplete 0x009A
+#define MIME_SVC_NtCommitEnlistment 0x009B
+#define MIME_SVC_NtCommitRegistryTransaction 0x009C
+#define MIME_SVC_NtCommitTransaction 0x009D
+#define MIME_SVC_NtCompactKeys 0x009E
+#define MIME_SVC_NtCompareObjects 0x009F
+#define MIME_SVC_NtCompareSigningLevels 0x00A0
+#define MIME_SVC_NtCompareTokens 0x00A1
+#define MIME_SVC_NtCompleteConnectPort 0x00A2
+#define MIME_SVC_NtCompressKey 0x00A3
+#define MIME_SVC_NtConnectPort 0x00A4
+#define MIME_SVC_NtContinueEx 0x00A5
+#define MIME_SVC_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter 0x00A6
+#define MIME_SVC_NtCopyFileChunk 0x00A7
+#define MIME_SVC_NtCreateCpuPartition 0x00A8
+#define MIME_SVC_NtCreateCrossVmEvent 0x00A9
+#define MIME_SVC_NtCreateCrossVmMutant 0x00AA
+#define MIME_SVC_NtCreateDebugObject 0x00AB
+#define MIME_SVC_NtCreateDirectoryObject 0x00AC
+#define MIME_SVC_NtCreateDirectoryObjectEx 0x00AD
+#define MIME_SVC_NtCreateEnclave 0x00AE
+#define MIME_SVC_NtCreateEnlistment 0x00AF
+#define MIME_SVC_NtCreateEventPair 0x00B0
+#define MIME_SVC_NtCreateIRTimer 0x00B1
+#define MIME_SVC_NtCreateIoCompletion 0x00B2
+#define MIME_SVC_NtCreateIoRing 0x00B3
+#define MIME_SVC_NtCreateJobObject 0x00B4
+#define MIME_SVC_NtCreateJobSet 0x00B5
+#define MIME_SVC_NtCreateKeyTransacted 0x00B6
+#define MIME_SVC_NtCreateKeyedEvent 0x00B7
+#define MIME_SVC_NtCreateLowBoxToken 0x00B8
+#define MIME_SVC_NtCreateMailslotFile 0x00B9
+#define MIME_SVC_NtCreateMutant 0x00BA
+#define MIME_SVC_NtCreateNamedPipeFile 0x00BB
+#define MIME_SVC_NtCreatePagingFile 0x00BC
+#define MIME_SVC_NtCreatePartition 0x00BD
+#define MIME_SVC_NtCreatePort 0x00BE
+#define MIME_SVC_NtCreatePrivateNamespace 0x00BF
+#define MIME_SVC_NtCreateProcess 0x00C0
+#define MIME_SVC_NtCreateProcessStateChange 0x00C1
+#define MIME_SVC_NtCreateProfile 0x00C2
+#define MIME_SVC_NtCreateProfileEx 0x00C3
+#define MIME_SVC_NtCreateRegistryTransaction 0x00C4
+#define MIME_SVC_NtCreateResourceManager 0x00C5
+#define MIME_SVC_NtCreateSectionEx 0x00C6
+#define MIME_SVC_NtCreateSemaphore 0x00C7
+#define MIME_SVC_NtCreateSymbolicLinkObject 0x00C8
+#define MIME_SVC_NtCreateThreadEx 0x00C9
+#define MIME_SVC_NtCreateThreadStateChange 0x00CA
+#define MIME_SVC_NtCreateTimer 0x00CB
+#define MIME_SVC_NtCreateTimer2 0x00CC
+#define MIME_SVC_NtCreateToken 0x00CD
+#define MIME_SVC_NtCreateTokenEx 0x00CE
+#define MIME_SVC_NtCreateTransaction 0x00CF
+#define MIME_SVC_NtCreateTransactionManager 0x00D0
+#define MIME_SVC_NtCreateUserProcess 0x00D1
+#define MIME_SVC_NtCreateWaitCompletionPacket 0x00D2
+#define MIME_SVC_NtCreateWaitablePort 0x00D3
+#define MIME_SVC_NtCreateWnfStateName 0x00D4
+#define MIME_SVC_NtCreateWorkerFactory 0x00D5
+#define MIME_SVC_NtDebugActiveProcess 0x00D6
+#define MIME_SVC_NtDebugContinue 0x00D7
+#define MIME_SVC_NtDeleteAtom 0x00D8
+#define MIME_SVC_NtDeleteBootEntry 0x00D9
+#define MIME_SVC_NtDeleteDriverEntry 0x00DA
+#define MIME_SVC_NtDeleteFile 0x00DB
+#define MIME_SVC_NtDeleteKey 0x00DC
+#define MIME_SVC_NtDeleteObjectAuditAlarm 0x00DD
+#define MIME_SVC_NtDeletePrivateNamespace 0x00DE
+#define MIME_SVC_NtDeleteValueKey 0x00DF
+#define MIME_SVC_NtDeleteWnfStateData 0x00E0
+#define MIME_SVC_NtDeleteWnfStateName 0x00E1
+#define MIME_SVC_NtDirectGraphicsCall 0x00E2
+#define MIME_SVC_NtDisableLastKnownGood 0x00E3
+#define MIME_SVC_NtDisplayString 0x00E4
+#define MIME_SVC_NtDrawText 0x00E5
+#define MIME_SVC_NtEnableLastKnownGood 0x00E6
+#define MIME_SVC_NtEnumerateBootEntries 0x00E7
+#define MIME_SVC_NtEnumerateDriverEntries 0x00E8
+#define MIME_SVC_NtEnumerateSystemEnvironmentValuesEx 0x00E9
+#define MIME_SVC_NtEnumerateTransactionObject 0x00EA
+#define MIME_SVC_NtExtendSection 0x00EB
+#define MIME_SVC_NtFilterBootOption 0x00EC
+#define MIME_SVC_NtFilterToken 0x00ED
+#define MIME_SVC_NtFilterTokenEx 0x00EE
+#define MIME_SVC_NtFlushBuffersFileEx 0x00EF
+#define MIME_SVC_NtFlushInstallUILanguage 0x00F0
+#define MIME_SVC_NtFlushInstructionCache 0x00F1
+#define MIME_SVC_NtFlushKey 0x00F2
+#define MIME_SVC_NtFlushProcessWriteBuffers 0x00F3
+#define MIME_SVC_NtFlushVirtualMemory 0x00F4
+#define MIME_SVC_NtFlushWriteBuffer 0x00F5
+#define MIME_SVC_NtFreeUserPhysicalPages 0x00F6
+#define MIME_SVC_NtFreezeRegistry 0x00F7
+#define MIME_SVC_NtFreezeTransactions 0x00F8
+#define MIME_SVC_NtGetCachedSigningLevel 0x00F9
+#define MIME_SVC_NtGetCompleteWnfStateSubscription 0x00FA
+#define MIME_SVC_NtGetContextThread 0x00FB
+#define MIME_SVC_NtGetCurrentProcessorNumber 0x00FC
+#define MIME_SVC_NtGetCurrentProcessorNumberEx 0x00FD
+#define MIME_SVC_NtGetDevicePowerState 0x00FE
+#define MIME_SVC_NtGetMUIRegistryInfo 0x00FF
+#define MIME_SVC_NtGetNextProcess 0x0100
+#define MIME_SVC_NtGetNextThread 0x0101
+#define MIME_SVC_NtGetNlsSectionPtr 0x0102
+#define MIME_SVC_NtGetNotificationResourceManager 0x0103
+#define MIME_SVC_NtGetWriteWatch 0x0104
+#define MIME_SVC_NtImpersonateAnonymousToken 0x0105
+#define MIME_SVC_NtImpersonateThread 0x0106
+#define MIME_SVC_NtInitializeEnclave 0x0107
+#define MIME_SVC_NtInitializeNlsFiles 0x0108
+#define MIME_SVC_NtInitializeRegistry 0x0109
+#define MIME_SVC_NtInitiatePowerAction 0x010A
+#define MIME_SVC_NtIsSystemResumeAutomatic 0x010B
+#define MIME_SVC_NtIsUILanguageComitted 0x010C
+#define MIME_SVC_NtListenPort 0x010D
+#define MIME_SVC_NtLoadDriver 0x010E
+#define MIME_SVC_NtLoadEnclaveData 0x010F
+#define MIME_SVC_NtLoadKey 0x0110
+#define MIME_SVC_NtLoadKey2 0x0111
+#define MIME_SVC_NtLoadKey3 0x0112
+#define MIME_SVC_NtLoadKeyEx 0x0113
+#define MIME_SVC_NtLockFile 0x0114
+#define MIME_SVC_NtLockProductActivationKeys 0x0115
+#define MIME_SVC_NtLockRegistryKey 0x0116
+#define MIME_SVC_NtLockVirtualMemory 0x0117
+#define MIME_SVC_NtMakePermanentObject 0x0118
+#define MIME_SVC_NtMakeTemporaryObject 0x0119
+#define MIME_SVC_NtManageHotPatch 0x011A
+#define MIME_SVC_NtManagePartition 0x011B
+#define MIME_SVC_NtMapCMFModule 0x011C
+#define MIME_SVC_NtMapUserPhysicalPages 0x011D
+#define MIME_SVC_NtMapViewOfSectionEx 0x011E
+#define MIME_SVC_NtModifyBootEntry 0x011F
+#define MIME_SVC_NtModifyDriverEntry 0x0120
+#define MIME_SVC_NtNotifyChangeDirectoryFile 0x0121
+#define MIME_SVC_NtNotifyChangeDirectoryFileEx 0x0122
+#define MIME_SVC_NtNotifyChangeKey 0x0123
+#define MIME_SVC_NtNotifyChangeMultipleKeys 0x0124
+#define MIME_SVC_NtNotifyChangeSession 0x0125
+#define MIME_SVC_NtOpenCpuPartition 0x0126
+#define MIME_SVC_NtOpenEnlistment 0x0127
+#define MIME_SVC_NtOpenEventPair 0x0128
+#define MIME_SVC_NtOpenIoCompletion 0x0129
+#define MIME_SVC_NtOpenJobObject 0x012A
+#define MIME_SVC_NtOpenKeyEx 0x012B
+#define MIME_SVC_NtOpenKeyTransacted 0x012C
+#define MIME_SVC_NtOpenKeyTransactedEx 0x012D
+#define MIME_SVC_NtOpenKeyedEvent 0x012E
+#define MIME_SVC_NtOpenMutant 0x012F
+#define MIME_SVC_NtOpenObjectAuditAlarm 0x0130
+#define MIME_SVC_NtOpenPartition 0x0131
+#define MIME_SVC_NtOpenPrivateNamespace 0x0132
+#define MIME_SVC_NtOpenProcessToken 0x0133
+#define MIME_SVC_NtOpenRegistryTransaction 0x0134
+#define MIME_SVC_NtOpenResourceManager 0x0135
+#define MIME_SVC_NtOpenSemaphore 0x0136
+#define MIME_SVC_NtOpenSession 0x0137
+#define MIME_SVC_NtOpenSymbolicLinkObject 0x0138
+#define MIME_SVC_NtOpenThread 0x0139
+#define MIME_SVC_NtOpenTimer 0x013A
+#define MIME_SVC_NtOpenTransaction 0x013B
+#define MIME_SVC_NtOpenTransactionManager 0x013C
+#define MIME_SVC_NtPlugPlayControl 0x013D
+#define MIME_SVC_NtPrePrepareComplete 0x013E
+#define MIME_SVC_NtPrePrepareEnlistment 0x013F
+#define MIME_SVC_NtPrepareComplete 0x0140
+#define MIME_SVC_NtPrepareEnlistment 0x0141
+#define MIME_SVC_NtPrivilegeCheck 0x0142
+#define MIME_SVC_NtPrivilegeObjectAuditAlarm 0x0143
+#define MIME_SVC_NtPrivilegedServiceAuditAlarm 0x0144
+#define MIME_SVC_NtPropagationComplete 0x0145
+#define MIME_SVC_NtPropagationFailed 0x0146
+#define MIME_SVC_NtPssCaptureVaSpaceBulk 0x0147
+#define MIME_SVC_NtPulseEvent 0x0148
+#define MIME_SVC_NtQueryAuxiliaryCounterFrequency 0x0149
+#define MIME_SVC_NtQueryBootEntryOrder 0x014A
+#define MIME_SVC_NtQueryBootOptions 0x014B
+#define MIME_SVC_NtQueryDebugFilterState 0x014C
+#define MIME_SVC_NtQueryDirectoryFileEx 0x014D
+#define MIME_SVC_NtQueryDirectoryObject 0x014E
+#define MIME_SVC_NtQueryDriverEntryOrder 0x014F
+#define MIME_SVC_NtQueryEaFile 0x0150
+#define MIME_SVC_NtQueryFullAttributesFile 0x0151
+#define MIME_SVC_NtQueryInformationAtom 0x0152
+#define MIME_SVC_NtQueryInformationByName 0x0153
+#define MIME_SVC_NtQueryInformationCpuPartition 0x0154
+#define MIME_SVC_NtQueryInformationEnlistment 0x0155
+#define MIME_SVC_NtQueryInformationJobObject 0x0156
+#define MIME_SVC_NtQueryInformationPort 0x0157
+#define MIME_SVC_NtQueryInformationResourceManager 0x0158
+#define MIME_SVC_NtQueryInformationTransaction 0x0159
+#define MIME_SVC_NtQueryInformationTransactionManager 0x015A
+#define MIME_SVC_NtQueryInformationWorkerFactory 0x015B
+#define MIME_SVC_NtQueryInstallUILanguage 0x015C
+#define MIME_SVC_NtQueryIntervalProfile 0x015D
+#define MIME_SVC_NtQueryIoCompletion 0x015E
+#define MIME_SVC_NtQueryIoRingCapabilities 0x015F
+#define MIME_SVC_NtQueryLicenseValue 0x0160
+#define MIME_SVC_NtQueryMultipleValueKey 0x0161
+#define MIME_SVC_NtQueryMutant 0x0162
+#define MIME_SVC_NtQueryOpenSubKeys 0x0163
+#define MIME_SVC_NtQueryOpenSubKeysEx 0x0164
+#define MIME_SVC_NtQueryPortInformationProcess 0x0165
+#define MIME_SVC_NtQueryQuotaInformationFile 0x0166
+#define MIME_SVC_NtQuerySecurityAttributesToken 0x0167
+#define MIME_SVC_NtQuerySecurityObject 0x0168
+#define MIME_SVC_NtQuerySecurityPolicy 0x0169
+#define MIME_SVC_NtQuerySemaphore 0x016A
+#define MIME_SVC_NtQuerySymbolicLinkObject 0x016B
+#define MIME_SVC_NtQuerySystemEnvironmentValue 0x016C
+#define MIME_SVC_NtQuerySystemEnvironmentValueEx 0x016D
+#define MIME_SVC_NtQuerySystemInformationEx 0x016E
+#define MIME_SVC_NtQueryTimerResolution 0x016F
+#define MIME_SVC_NtQueryWnfStateData 0x0170
+#define MIME_SVC_NtQueryWnfStateNameInformation 0x0171
+#define MIME_SVC_NtQueueApcThreadEx 0x0172
+#define MIME_SVC_NtQueueApcThreadEx2 0x0173
+#define MIME_SVC_NtRaiseException 0x0174
+#define MIME_SVC_NtRaiseHardError 0x0175
+#define MIME_SVC_NtReadOnlyEnlistment 0x0176
+#define MIME_SVC_NtReadVirtualMemoryEx 0x0177
+#define MIME_SVC_NtRecoverEnlistment 0x0178
+#define MIME_SVC_NtRecoverResourceManager 0x0179
+#define MIME_SVC_NtRecoverTransactionManager 0x017A
+#define MIME_SVC_NtRegisterProtocolAddressInformation 0x017B
+#define MIME_SVC_NtRegisterThreadTerminatePort 0x017C
+#define MIME_SVC_NtReleaseKeyedEvent 0x017D
+#define MIME_SVC_NtReleaseWorkerFactoryWorker 0x017E
+#define MIME_SVC_NtRemoveIoCompletionEx 0x017F
+#define MIME_SVC_NtRemoveProcessDebug 0x0180
+#define MIME_SVC_NtRenameKey 0x0181
+#define MIME_SVC_NtRenameTransactionManager 0x0182
+#define MIME_SVC_NtReplaceKey 0x0183
+#define MIME_SVC_NtReplacePartitionUnit 0x0184
+#define MIME_SVC_NtReplyWaitReplyPort 0x0185
+#define MIME_SVC_NtRequestPort 0x0186
+#define MIME_SVC_NtResetEvent 0x0187
+#define MIME_SVC_NtResetWriteWatch 0x0188
+#define MIME_SVC_NtRestoreKey 0x0189
+#define MIME_SVC_NtResumeProcess 0x018A
+#define MIME_SVC_NtRevertContainerImpersonation 0x018B
+#define MIME_SVC_NtRollbackComplete 0x018C
+#define MIME_SVC_NtRollbackEnlistment 0x018D
+#define MIME_SVC_NtRollbackRegistryTransaction 0x018E
+#define MIME_SVC_NtRollbackTransaction 0x018F
+#define MIME_SVC_NtRollforwardTransactionManager 0x0190
+#define MIME_SVC_NtSaveKey 0x0191
+#define MIME_SVC_NtSaveKeyEx 0x0192
+#define MIME_SVC_NtSaveMergedKeys 0x0193
+#define MIME_SVC_NtSecureConnectPort 0x0194
+#define MIME_SVC_NtSerializeBoot 0x0195
+#define MIME_SVC_NtSetBootEntryOrder 0x0196
+#define MIME_SVC_NtSetBootOptions 0x0197
+#define MIME_SVC_NtSetCachedSigningLevel 0x0198
+#define MIME_SVC_NtSetCachedSigningLevel2 0x0199
+#define MIME_SVC_NtSetContextThread 0x019A
+#define MIME_SVC_NtSetDebugFilterState 0x019B
+#define MIME_SVC_NtSetDefaultHardErrorPort 0x019C
+#define MIME_SVC_NtSetDefaultLocale 0x019D
+#define MIME_SVC_NtSetDefaultUILanguage 0x019E
+#define MIME_SVC_NtSetDriverEntryOrder 0x019F
+#define MIME_SVC_NtSetEaFile 0x01A0
+#define MIME_SVC_NtSetEventEx 0x01A1
+#define MIME_SVC_NtSetHighEventPair 0x01A2
+#define MIME_SVC_NtSetHighWaitLowEventPair 0x01A3
+#define MIME_SVC_NtSetIRTimer 0x01A4
+#define MIME_SVC_NtSetInformationCpuPartition 0x01A5
+#define MIME_SVC_NtSetInformationDebugObject 0x01A6
+#define MIME_SVC_NtSetInformationEnlistment 0x01A7
+#define MIME_SVC_NtSetInformationIoRing 0x01A8
+#define MIME_SVC_NtSetInformationJobObject 0x01A9
+#define MIME_SVC_NtSetInformationKey 0x01AA
+#define MIME_SVC_NtSetInformationResourceManager 0x01AB
+#define MIME_SVC_NtSetInformationSymbolicLink 0x01AC
+#define MIME_SVC_NtSetInformationToken 0x01AD
+#define MIME_SVC_NtSetInformationTransaction 0x01AE
+#define MIME_SVC_NtSetInformationTransactionManager 0x01AF
+#define MIME_SVC_NtSetInformationVirtualMemory 0x01B0
+#define MIME_SVC_NtSetInformationWorkerFactory 0x01B1
+#define MIME_SVC_NtSetIntervalProfile 0x01B2
+#define MIME_SVC_NtSetIoCompletion 0x01B3
+#define MIME_SVC_NtSetIoCompletionEx 0x01B4
+#define MIME_SVC_NtSetLdtEntries 0x01B5
+#define MIME_SVC_NtSetLowEventPair 0x01B6
+#define MIME_SVC_NtSetLowWaitHighEventPair 0x01B7
+#define MIME_SVC_NtSetQuotaInformationFile 0x01B8
+#define MIME_SVC_NtSetSecurityObject 0x01B9
+#define MIME_SVC_NtSetSystemEnvironmentValue 0x01BA
+#define MIME_SVC_NtSetSystemEnvironmentValueEx 0x01BB
+#define MIME_SVC_NtSetSystemInformation 0x01BC
+#define MIME_SVC_NtSetSystemPowerState 0x01BD
+#define MIME_SVC_NtSetSystemTime 0x01BE
+#define MIME_SVC_NtSetThreadExecutionState 0x01BF
+#define MIME_SVC_NtSetTimer2 0x01C0
+#define MIME_SVC_NtSetTimerEx 0x01C1
+#define MIME_SVC_NtSetTimerResolution 0x01C2
+#define MIME_SVC_NtSetUuidSeed 0x01C3
+#define MIME_SVC_NtSetVolumeInformationFile 0x01C4
+#define MIME_SVC_NtSetWnfProcessNotificationEvent 0x01C5
+#define MIME_SVC_NtShutdownSystem 0x01C6
+#define MIME_SVC_NtShutdownWorkerFactory 0x01C7
+#define MIME_SVC_NtSignalAndWaitForSingleObject 0x01C8
+#define MIME_SVC_NtSinglePhaseReject 0x01C9
+#define MIME_SVC_NtStartProfile 0x01CA
+#define MIME_SVC_NtStopProfile 0x01CB
+#define MIME_SVC_NtSubmitIoRing 0x01CC
+#define MIME_SVC_NtSubscribeWnfStateChange 0x01CD
+#define MIME_SVC_NtSuspendProcess 0x01CE
+#define MIME_SVC_NtSuspendThread 0x01CF
+#define MIME_SVC_NtSystemDebugControl 0x01D0
+#define MIME_SVC_NtTerminateEnclave 0x01D1
+#define MIME_SVC_NtTerminateJobObject 0x01D2
+#define MIME_SVC_NtTestAlert 0x01D3
+#define MIME_SVC_NtThawRegistry 0x01D4
+#define MIME_SVC_NtThawTransactions 0x01D5
+#define MIME_SVC_NtTraceControl 0x01D6
+#define MIME_SVC_NtTranslateFilePath 0x01D7
+#define MIME_SVC_NtUmsThreadYield 0x01D8
+#define MIME_SVC_NtUnloadDriver 0x01D9
+#define MIME_SVC_NtUnloadKey 0x01DA
+#define MIME_SVC_NtUnloadKey2 0x01DB
+#define MIME_SVC_NtUnloadKeyEx 0x01DC
+#define MIME_SVC_NtUnlockFile 0x01DD
+#define MIME_SVC_NtUnlockVirtualMemory 0x01DE
+#define MIME_SVC_NtUnmapViewOfSectionEx 0x01DF
+#define MIME_SVC_NtUnsubscribeWnfStateChange 0x01E0
+#define MIME_SVC_NtUpdateWnfStateData 0x01E1
+#define MIME_SVC_NtVdmControl 0x01E2
+#define MIME_SVC_NtWaitForAlertByThreadId 0x01E3
+#define MIME_SVC_NtWaitForDebugEvent 0x01E4
+#define MIME_SVC_NtWaitForKeyedEvent 0x01E5
+#define MIME_SVC_NtWaitForWorkViaWorkerFactory 0x01E6
+#define MIME_SVC_NtWaitHighEventPair 0x01E7
+#define MIME_SVC_NtWaitLowEventPair 0x01E8
+#ifdef MIME_NT_SERVICES_DEFINE_NAMES
+static const char *const MIME_NT_SERVICES_NAMES[MIME_NT_SERVICES_COUNT] = {
+    [0x000] = "NtAccessCheck",
+    [0x001] = "NtWorkerFactoryWorkerReady",
+    [0x002] = "NtAcceptConnectPort",
+    [0x003] = "NtMapUserPhysicalPagesScatter",
+    [0x004] = "NtWaitForSingleObject",
+    [0x005] = "NtCallbackReturn",
+    [0x006] = "NtReadFile",
+    [0x007] = "NtDeviceIoControlFile",
+    [0x008] = "NtWriteFile",
+    [0x009] = "NtRemoveIoCompletion",
+    [0x00A] = "NtReleaseSemaphore",
+    [0x00B] = "NtReplyWaitReceivePort",
+    [0x00C] = "NtReplyPort",
+    [0x00D] = "NtSetInformationThread",
+    [0x00E] = "NtSetEvent",
+    [0x00F] = "NtClose",
+    [0x010] = "NtQueryObject",
+    [0x011] = "NtQueryInformationFile",
+    [0x012] = "NtOpenKey",
+    [0x013] = "NtEnumerateValueKey",
+    [0x014] = "NtFindAtom",
+    [0x015] = "NtQueryDefaultLocale",
+    [0x016] = "NtQueryKey",
+    [0x017] = "NtQueryValueKey",
+    [0x018] = "NtAllocateVirtualMemory",
+    [0x019] = "NtQueryInformationProcess",
+    [0x01A] = "NtWaitForMultipleObjects32",
+    [0x01B] = "NtWriteFileGather",
+    [0x01C] = "NtSetInformationProcess",
+    [0x01D] = "NtCreateKey",
+    [0x01E] = "NtFreeVirtualMemory",
+    [0x01F] = "NtImpersonateClientOfPort",
+    [0x020] = "NtReleaseMutant",
+    [0x021] = "NtQueryInformationToken",
+    [0x022] = "NtRequestWaitReplyPort",
+    [0x023] = "NtQueryVirtualMemory",
+    [0x024] = "NtOpenThreadToken",
+    [0x025] = "NtQueryInformationThread",
+    [0x026] = "NtOpenProcess",
+    [0x027] = "NtSetInformationFile",
+    [0x028] = "NtMapViewOfSection",
+    [0x029] = "NtAccessCheckAndAuditAlarm",
+    [0x02A] = "NtUnmapViewOfSection",
+    [0x02B] = "NtReplyWaitReceivePortEx",
+    [0x02C] = "NtTerminateProcess",
+    [0x02D] = "NtSetEventBoostPriority",
+    [0x02E] = "NtReadFileScatter",
+    [0x02F] = "NtOpenThreadTokenEx",
+    [0x030] = "NtOpenProcessTokenEx",
+    [0x031] = "NtQueryPerformanceCounter",
+    [0x032] = "NtEnumerateKey",
+    [0x033] = "NtOpenFile",
+    [0x034] = "NtDelayExecution",
+    [0x035] = "NtQueryDirectoryFile",
+    [0x036] = "NtQuerySystemInformation",
+    [0x037] = "NtOpenSection",
+    [0x038] = "NtQueryTimer",
+    [0x039] = "NtFsControlFile",
+    [0x03A] = "NtWriteVirtualMemory",
+    [0x03B] = "NtCloseObjectAuditAlarm",
+    [0x03C] = "NtDuplicateObject",
+    [0x03D] = "NtQueryAttributesFile",
+    [0x03E] = "NtClearEvent",
+    [0x03F] = "NtReadVirtualMemory",
+    [0x040] = "NtOpenEvent",
+    [0x041] = "NtAdjustPrivilegesToken",
+    [0x042] = "NtDuplicateToken",
+    [0x043] = "NtContinue",
+    [0x044] = "NtQueryDefaultUILanguage",
+    [0x045] = "NtQueueApcThread",
+    [0x046] = "NtYieldExecution",
+    [0x047] = "NtAddAtom",
+    [0x048] = "NtCreateEvent",
+    [0x049] = "NtQueryVolumeInformationFile",
+    [0x04A] = "NtCreateSection",
+    [0x04B] = "NtFlushBuffersFile",
+    [0x04C] = "NtApphelpCacheControl",
+    [0x04D] = "NtCreateProcessEx",
+    [0x04E] = "NtCreateThread",
+    [0x04F] = "NtIsProcessInJob",
+    [0x050] = "NtProtectVirtualMemory",
+    [0x051] = "NtQuerySection",
+    [0x052] = "NtResumeThread",
+    [0x053] = "NtTerminateThread",
+    [0x054] = "NtReadRequestData",
+    [0x055] = "NtCreateFile",
+    [0x056] = "NtQueryEvent",
+    [0x057] = "NtWriteRequestData",
+    [0x058] = "NtOpenDirectoryObject",
+    [0x059] = "NtAccessCheckByTypeAndAuditAlarm",
+    [0x05A] = "NtQuerySystemTime",
+    [0x05B] = "NtWaitForMultipleObjects",
+    [0x05C] = "NtSetInformationObject",
+    [0x05D] = "NtCancelIoFile",
+    [0x05E] = "NtTraceEvent",
+    [0x05F] = "NtPowerInformation",
+    [0x060] = "NtSetValueKey",
+    [0x061] = "NtCancelTimer",
+    [0x062] = "NtSetTimer",
+    [0x063] = "NtAccessCheckByType",
+    [0x064] = "NtAccessCheckByTypeResultList",
+    [0x065] = "NtAccessCheckByTypeResultListAndAuditAlarm",
+    [0x066] = "NtAccessCheckByTypeResultListAndAuditAlarmByHandle",
+    [0x067] = "NtAcquireCrossVmMutant",
+    [0x068] = "NtAcquireProcessActivityReference",
+    [0x069] = "NtAddAtomEx",
+    [0x06A] = "NtAddBootEntry",
+    [0x06B] = "NtAddDriverEntry",
+    [0x06C] = "NtAdjustGroupsToken",
+    [0x06D] = "NtAdjustTokenClaimsAndDeviceGroups",
+    [0x06E] = "NtAlertMultipleThreadByThreadId",
+    [0x06F] = "NtAlertResumeThread",
+    [0x070] = "NtAlertThread",
+    [0x071] = "NtAlertThreadByThreadId",
+    [0x072] = "NtAlertThreadByThreadIdEx",
+    [0x073] = "NtAllocateLocallyUniqueId",
+    [0x074] = "NtAllocateReserveObject",
+    [0x075] = "NtAllocateUserPhysicalPages",
+    [0x076] = "NtAllocateUserPhysicalPagesEx",
+    [0x077] = "NtAllocateUuids",
+    [0x078] = "NtAllocateVirtualMemoryEx",
+    [0x079] = "NtAlpcAcceptConnectPort",
+    [0x07A] = "NtAlpcCancelMessage",
+    [0x07B] = "NtAlpcConnectPort",
+    [0x07C] = "NtAlpcConnectPortEx",
+    [0x07D] = "NtAlpcCreatePort",
+    [0x07E] = "NtAlpcCreatePortSection",
+    [0x07F] = "NtAlpcCreateResourceReserve",
+    [0x080] = "NtAlpcCreateSectionView",
+    [0x081] = "NtAlpcCreateSecurityContext",
+    [0x082] = "NtAlpcDeletePortSection",
+    [0x083] = "NtAlpcDeleteResourceReserve",
+    [0x084] = "NtAlpcDeleteSectionView",
+    [0x085] = "NtAlpcDeleteSecurityContext",
+    [0x086] = "NtAlpcDisconnectPort",
+    [0x087] = "NtAlpcImpersonateClientContainerOfPort",
+    [0x088] = "NtAlpcImpersonateClientOfPort",
+    [0x089] = "NtAlpcOpenSenderProcess",
+    [0x08A] = "NtAlpcOpenSenderThread",
+    [0x08B] = "NtAlpcQueryInformation",
+    [0x08C] = "NtAlpcQueryInformationMessage",
+    [0x08D] = "NtAlpcRevokeSecurityContext",
+    [0x08E] = "NtAlpcSendWaitReceivePort",
+    [0x08F] = "NtAlpcSetInformation",
+    [0x090] = "NtAreMappedFilesTheSame",
+    [0x091] = "NtAssignProcessToJobObject",
+    [0x092] = "NtAssociateWaitCompletionPacket",
+    [0x093] = "NtCallEnclave",
+    [0x094] = "NtCancelIoFileEx",
+    [0x095] = "NtCancelSynchronousIoFile",
+    [0x096] = "NtCancelTimer2",
+    [0x097] = "NtCancelWaitCompletionPacket",
+    [0x098] = "NtChangeProcessState",
+    [0x099] = "NtChangeThreadState",
+    [0x09A] = "NtCommitComplete",
+    [0x09B] = "NtCommitEnlistment",
+    [0x09C] = "NtCommitRegistryTransaction",
+    [0x09D] = "NtCommitTransaction",
+    [0x09E] = "NtCompactKeys",
+    [0x09F] = "NtCompareObjects",
+    [0x0A0] = "NtCompareSigningLevels",
+    [0x0A1] = "NtCompareTokens",
+    [0x0A2] = "NtCompleteConnectPort",
+    [0x0A3] = "NtCompressKey",
+    [0x0A4] = "NtConnectPort",
+    [0x0A5] = "NtContinueEx",
+    [0x0A6] = "NtConvertBetweenAuxiliaryCounterAndPerformanceCounter",
+    [0x0A7] = "NtCopyFileChunk",
+    [0x0A8] = "NtCreateCpuPartition",
+    [0x0A9] = "NtCreateCrossVmEvent",
+    [0x0AA] = "NtCreateCrossVmMutant",
+    [0x0AB] = "NtCreateDebugObject",
+    [0x0AC] = "NtCreateDirectoryObject",
+    [0x0AD] = "NtCreateDirectoryObjectEx",
+    [0x0AE] = "NtCreateEnclave",
+    [0x0AF] = "NtCreateEnlistment",
+    [0x0B0] = "NtCreateEventPair",
+    [0x0B1] = "NtCreateIRTimer",
+    [0x0B2] = "NtCreateIoCompletion",
+    [0x0B3] = "NtCreateIoRing",
+    [0x0B4] = "NtCreateJobObject",
+    [0x0B5] = "NtCreateJobSet",
+    [0x0B6] = "NtCreateKeyTransacted",
+    [0x0B7] = "NtCreateKeyedEvent",
+    [0x0B8] = "NtCreateLowBoxToken",
+    [0x0B9] = "NtCreateMailslotFile",
+    [0x0BA] = "NtCreateMutant",
+    [0x0BB] = "NtCreateNamedPipeFile",
+    [0x0BC] = "NtCreatePagingFile",
+    [0x0BD] = "NtCreatePartition",
+    [0x0BE] = "NtCreatePort",
+    [0x0BF] = "NtCreatePrivateNamespace",
+    [0x0C0] = "NtCreateProcess",
+    [0x0C1] = "NtCreateProcessStateChange",
+    [0x0C2] = "NtCreateProfile",
+    [0x0C3] = "NtCreateProfileEx",
+    [0x0C4] = "NtCreateRegistryTransaction",
+    [0x0C5] = "NtCreateResourceManager",
+    [0x0C6] = "NtCreateSectionEx",
+    [0x0C7] = "NtCreateSemaphore",
+    [0x0C8] = "NtCreateSymbolicLinkObject",
+    [0x0C9] = "NtCreateThreadEx",
+    [0x0CA] = "NtCreateThreadStateChange",
+    [0x0CB] = "NtCreateTimer",
+    [0x0CC] = "NtCreateTimer2",
+    [0x0CD] = "NtCreateToken",
+    [0x0CE] = "NtCreateTokenEx",
+    [0x0CF] = "NtCreateTransaction",
+    [0x0D0] = "NtCreateTransactionManager",
+    [0x0D1] = "NtCreateUserProcess",
+    [0x0D2] = "NtCreateWaitCompletionPacket",
+    [0x0D3] = "NtCreateWaitablePort",
+    [0x0D4] = "NtCreateWnfStateName",
+    [0x0D5] = "NtCreateWorkerFactory",
+    [0x0D6] = "NtDebugActiveProcess",
+    [0x0D7] = "NtDebugContinue",
+    [0x0D8] = "NtDeleteAtom",
+    [0x0D9] = "NtDeleteBootEntry",
+    [0x0DA] = "NtDeleteDriverEntry",
+    [0x0DB] = "NtDeleteFile",
+    [0x0DC] = "NtDeleteKey",
+    [0x0DD] = "NtDeleteObjectAuditAlarm",
+    [0x0DE] = "NtDeletePrivateNamespace",
+    [0x0DF] = "NtDeleteValueKey",
+    [0x0E0] = "NtDeleteWnfStateData",
+    [0x0E1] = "NtDeleteWnfStateName",
+    [0x0E2] = "NtDirectGraphicsCall",
+    [0x0E3] = "NtDisableLastKnownGood",
+    [0x0E4] = "NtDisplayString",
+    [0x0E5] = "NtDrawText",
+    [0x0E6] = "NtEnableLastKnownGood",
+    [0x0E7] = "NtEnumerateBootEntries",
+    [0x0E8] = "NtEnumerateDriverEntries",
+    [0x0E9] = "NtEnumerateSystemEnvironmentValuesEx",
+    [0x0EA] = "NtEnumerateTransactionObject",
+    [0x0EB] = "NtExtendSection",
+    [0x0EC] = "NtFilterBootOption",
+    [0x0ED] = "NtFilterToken",
+    [0x0EE] = "NtFilterTokenEx",
+    [0x0EF] = "NtFlushBuffersFileEx",
+    [0x0F0] = "NtFlushInstallUILanguage",
+    [0x0F1] = "NtFlushInstructionCache",
+    [0x0F2] = "NtFlushKey",
+    [0x0F3] = "NtFlushProcessWriteBuffers",
+    [0x0F4] = "NtFlushVirtualMemory",
+    [0x0F5] = "NtFlushWriteBuffer",
+    [0x0F6] = "NtFreeUserPhysicalPages",
+    [0x0F7] = "NtFreezeRegistry",
+    [0x0F8] = "NtFreezeTransactions",
+    [0x0F9] = "NtGetCachedSigningLevel",
+    [0x0FA] = "NtGetCompleteWnfStateSubscription",
+    [0x0FB] = "NtGetContextThread",
+    [0x0FC] = "NtGetCurrentProcessorNumber",
+    [0x0FD] = "NtGetCurrentProcessorNumberEx",
+    [0x0FE] = "NtGetDevicePowerState",
+    [0x0FF] = "NtGetMUIRegistryInfo",
+    [0x100] = "NtGetNextProcess",
+    [0x101] = "NtGetNextThread",
+    [0x102] = "NtGetNlsSectionPtr",
+    [0x103] = "NtGetNotificationResourceManager",
+    [0x104] = "NtGetWriteWatch",
+    [0x105] = "NtImpersonateAnonymousToken",
+    [0x106] = "NtImpersonateThread",
+    [0x107] = "NtInitializeEnclave",
+    [0x108] = "NtInitializeNlsFiles",
+    [0x109] = "NtInitializeRegistry",
+    [0x10A] = "NtInitiatePowerAction",
+    [0x10B] = "NtIsSystemResumeAutomatic",
+    [0x10C] = "NtIsUILanguageComitted",
+    [0x10D] = "NtListenPort",
+    [0x10E] = "NtLoadDriver",
+    [0x10F] = "NtLoadEnclaveData",
+    [0x110] = "NtLoadKey",
+    [0x111] = "NtLoadKey2",
+    [0x112] = "NtLoadKey3",
+    [0x113] = "NtLoadKeyEx",
+    [0x114] = "NtLockFile",
+    [0x115] = "NtLockProductActivationKeys",
+    [0x116] = "NtLockRegistryKey",
+    [0x117] = "NtLockVirtualMemory",
+    [0x118] = "NtMakePermanentObject",
+    [0x119] = "NtMakeTemporaryObject",
+    [0x11A] = "NtManageHotPatch",
+    [0x11B] = "NtManagePartition",
+    [0x11C] = "NtMapCMFModule",
+    [0x11D] = "NtMapUserPhysicalPages",
+    [0x11E] = "NtMapViewOfSectionEx",
+    [0x11F] = "NtModifyBootEntry",
+    [0x120] = "NtModifyDriverEntry",
+    [0x121] = "NtNotifyChangeDirectoryFile",
+    [0x122] = "NtNotifyChangeDirectoryFileEx",
+    [0x123] = "NtNotifyChangeKey",
+    [0x124] = "NtNotifyChangeMultipleKeys",
+    [0x125] = "NtNotifyChangeSession",
+    [0x126] = "NtOpenCpuPartition",
+    [0x127] = "NtOpenEnlistment",
+    [0x128] = "NtOpenEventPair",
+    [0x129] = "NtOpenIoCompletion",
+    [0x12A] = "NtOpenJobObject",
+    [0x12B] = "NtOpenKeyEx",
+    [0x12C] = "NtOpenKeyTransacted",
+    [0x12D] = "NtOpenKeyTransactedEx",
+    [0x12E] = "NtOpenKeyedEvent",
+    [0x12F] = "NtOpenMutant",
+    [0x130] = "NtOpenObjectAuditAlarm",
+    [0x131] = "NtOpenPartition",
+    [0x132] = "NtOpenPrivateNamespace",
+    [0x133] = "NtOpenProcessToken",
+    [0x134] = "NtOpenRegistryTransaction",
+    [0x135] = "NtOpenResourceManager",
+    [0x136] = "NtOpenSemaphore",
+    [0x137] = "NtOpenSession",
+    [0x138] = "NtOpenSymbolicLinkObject",
+    [0x139] = "NtOpenThread",
+    [0x13A] = "NtOpenTimer",
+    [0x13B] = "NtOpenTransaction",
+    [0x13C] = "NtOpenTransactionManager",
+    [0x13D] = "NtPlugPlayControl",
+    [0x13E] = "NtPrePrepareComplete",
+    [0x13F] = "NtPrePrepareEnlistment",
+    [0x140] = "NtPrepareComplete",
+    [0x141] = "NtPrepareEnlistment",
+    [0x142] = "NtPrivilegeCheck",
+    [0x143] = "NtPrivilegeObjectAuditAlarm",
+    [0x144] = "NtPrivilegedServiceAuditAlarm",
+    [0x145] = "NtPropagationComplete",
+    [0x146] = "NtPropagationFailed",
+    [0x147] = "NtPssCaptureVaSpaceBulk",
+    [0x148] = "NtPulseEvent",
+    [0x149] = "NtQueryAuxiliaryCounterFrequency",
+    [0x14A] = "NtQueryBootEntryOrder",
+    [0x14B] = "NtQueryBootOptions",
+    [0x14C] = "NtQueryDebugFilterState",
+    [0x14D] = "NtQueryDirectoryFileEx",
+    [0x14E] = "NtQueryDirectoryObject",
+    [0x14F] = "NtQueryDriverEntryOrder",
+    [0x150] = "NtQueryEaFile",
+    [0x151] = "NtQueryFullAttributesFile",
+    [0x152] = "NtQueryInformationAtom",
+    [0x153] = "NtQueryInformationByName",
+    [0x154] = "NtQueryInformationCpuPartition",
+    [0x155] = "NtQueryInformationEnlistment",
+    [0x156] = "NtQueryInformationJobObject",
+    [0x157] = "NtQueryInformationPort",
+    [0x158] = "NtQueryInformationResourceManager",
+    [0x159] = "NtQueryInformationTransaction",
+    [0x15A] = "NtQueryInformationTransactionManager",
+    [0x15B] = "NtQueryInformationWorkerFactory",
+    [0x15C] = "NtQueryInstallUILanguage",
+    [0x15D] = "NtQueryIntervalProfile",
+    [0x15E] = "NtQueryIoCompletion",
+    [0x15F] = "NtQueryIoRingCapabilities",
+    [0x160] = "NtQueryLicenseValue",
+    [0x161] = "NtQueryMultipleValueKey",
+    [0x162] = "NtQueryMutant",
+    [0x163] = "NtQueryOpenSubKeys",
+    [0x164] = "NtQueryOpenSubKeysEx",
+    [0x165] = "NtQueryPortInformationProcess",
+    [0x166] = "NtQueryQuotaInformationFile",
+    [0x167] = "NtQuerySecurityAttributesToken",
+    [0x168] = "NtQuerySecurityObject",
+    [0x169] = "NtQuerySecurityPolicy",
+    [0x16A] = "NtQuerySemaphore",
+    [0x16B] = "NtQuerySymbolicLinkObject",
+    [0x16C] = "NtQuerySystemEnvironmentValue",
+    [0x16D] = "NtQuerySystemEnvironmentValueEx",
+    [0x16E] = "NtQuerySystemInformationEx",
+    [0x16F] = "NtQueryTimerResolution",
+    [0x170] = "NtQueryWnfStateData",
+    [0x171] = "NtQueryWnfStateNameInformation",
+    [0x172] = "NtQueueApcThreadEx",
+    [0x173] = "NtQueueApcThreadEx2",
+    [0x174] = "NtRaiseException",
+    [0x175] = "NtRaiseHardError",
+    [0x176] = "NtReadOnlyEnlistment",
+    [0x177] = "NtReadVirtualMemoryEx",
+    [0x178] = "NtRecoverEnlistment",
+    [0x179] = "NtRecoverResourceManager",
+    [0x17A] = "NtRecoverTransactionManager",
+    [0x17B] = "NtRegisterProtocolAddressInformation",
+    [0x17C] = "NtRegisterThreadTerminatePort",
+    [0x17D] = "NtReleaseKeyedEvent",
+    [0x17E] = "NtReleaseWorkerFactoryWorker",
+    [0x17F] = "NtRemoveIoCompletionEx",
+    [0x180] = "NtRemoveProcessDebug",
+    [0x181] = "NtRenameKey",
+    [0x182] = "NtRenameTransactionManager",
+    [0x183] = "NtReplaceKey",
+    [0x184] = "NtReplacePartitionUnit",
+    [0x185] = "NtReplyWaitReplyPort",
+    [0x186] = "NtRequestPort",
+    [0x187] = "NtResetEvent",
+    [0x188] = "NtResetWriteWatch",
+    [0x189] = "NtRestoreKey",
+    [0x18A] = "NtResumeProcess",
+    [0x18B] = "NtRevertContainerImpersonation",
+    [0x18C] = "NtRollbackComplete",
+    [0x18D] = "NtRollbackEnlistment",
+    [0x18E] = "NtRollbackRegistryTransaction",
+    [0x18F] = "NtRollbackTransaction",
+    [0x190] = "NtRollforwardTransactionManager",
+    [0x191] = "NtSaveKey",
+    [0x192] = "NtSaveKeyEx",
+    [0x193] = "NtSaveMergedKeys",
+    [0x194] = "NtSecureConnectPort",
+    [0x195] = "NtSerializeBoot",
+    [0x196] = "NtSetBootEntryOrder",
+    [0x197] = "NtSetBootOptions",
+    [0x198] = "NtSetCachedSigningLevel",
+    [0x199] = "NtSetCachedSigningLevel2",
+    [0x19A] = "NtSetContextThread",
+    [0x19B] = "NtSetDebugFilterState",
+    [0x19C] = "NtSetDefaultHardErrorPort",
+    [0x19D] = "NtSetDefaultLocale",
+    [0x19E] = "NtSetDefaultUILanguage",
+    [0x19F] = "NtSetDriverEntryOrder",
+    [0x1A0] = "NtSetEaFile",
+    [0x1A1] = "NtSetEventEx",
+    [0x1A2] = "NtSetHighEventPair",
+    [0x1A3] = "NtSetHighWaitLowEventPair",
+    [0x1A4] = "NtSetIRTimer",
+    [0x1A5] = "NtSetInformationCpuPartition",
+    [0x1A6] = "NtSetInformationDebugObject",
+    [0x1A7] = "NtSetInformationEnlistment",
+    [0x1A8] = "NtSetInformationIoRing",
+    [0x1A9] = "NtSetInformationJobObject",
+    [0x1AA] = "NtSetInformationKey",
+    [0x1AB] = "NtSetInformationResourceManager",
+    [0x1AC] = "NtSetInformationSymbolicLink",
+    [0x1AD] = "NtSetInformationToken",
+    [0x1AE] = "NtSetInformationTransaction",
+    [0x1AF] = "NtSetInformationTransactionManager",
+    [0x1B0] = "NtSetInformationVirtualMemory",
+    [0x1B1] = "NtSetInformationWorkerFactory",
+    [0x1B2] = "NtSetIntervalProfile",
+    [0x1B3] = "NtSetIoCompletion",
+    [0x1B4] = "NtSetIoCompletionEx",
+    [0x1B5] = "NtSetLdtEntries",
+    [0x1B6] = "NtSetLowEventPair",
+    [0x1B7] = "NtSetLowWaitHighEventPair",
+    [0x1B8] = "NtSetQuotaInformationFile",
+    [0x1B9] = "NtSetSecurityObject",
+    [0x1BA] = "NtSetSystemEnvironmentValue",
+    [0x1BB] = "NtSetSystemEnvironmentValueEx",
+    [0x1BC] = "NtSetSystemInformation",
+    [0x1BD] = "NtSetSystemPowerState",
+    [0x1BE] = "NtSetSystemTime",
+    [0x1BF] = "NtSetThreadExecutionState",
+    [0x1C0] = "NtSetTimer2",
+    [0x1C1] = "NtSetTimerEx",
+    [0x1C2] = "NtSetTimerResolution",
+    [0x1C3] = "NtSetUuidSeed",
+    [0x1C4] = "NtSetVolumeInformationFile",
+    [0x1C5] = "NtSetWnfProcessNotificationEvent",
+    [0x1C6] = "NtShutdownSystem",
+    [0x1C7] = "NtShutdownWorkerFactory",
+    [0x1C8] = "NtSignalAndWaitForSingleObject",
+    [0x1C9] = "NtSinglePhaseReject",
+    [0x1CA] = "NtStartProfile",
+    [0x1CB] = "NtStopProfile",
+    [0x1CC] = "NtSubmitIoRing",
+    [0x1CD] = "NtSubscribeWnfStateChange",
+    [0x1CE] = "NtSuspendProcess",
+    [0x1CF] = "NtSuspendThread",
+    [0x1D0] = "NtSystemDebugControl",
+    [0x1D1] = "NtTerminateEnclave",
+    [0x1D2] = "NtTerminateJobObject",
+    [0x1D3] = "NtTestAlert",
+    [0x1D4] = "NtThawRegistry",
+    [0x1D5] = "NtThawTransactions",
+    [0x1D6] = "NtTraceControl",
+    [0x1D7] = "NtTranslateFilePath",
+    [0x1D8] = "NtUmsThreadYield",
+    [0x1D9] = "NtUnloadDriver",
+    [0x1DA] = "NtUnloadKey",
+    [0x1DB] = "NtUnloadKey2",
+    [0x1DC] = "NtUnloadKeyEx",
+    [0x1DD] = "NtUnlockFile",
+    [0x1DE] = "NtUnlockVirtualMemory",
+    [0x1DF] = "NtUnmapViewOfSectionEx",
+    [0x1E0] = "NtUnsubscribeWnfStateChange",
+    [0x1E1] = "NtUpdateWnfStateData",
+    [0x1E2] = "NtVdmControl",
+    [0x1E3] = "NtWaitForAlertByThreadId",
+    [0x1E4] = "NtWaitForDebugEvent",
+    [0x1E5] = "NtWaitForKeyedEvent",
+    [0x1E6] = "NtWaitForWorkViaWorkerFactory",
+    [0x1E7] = "NtWaitHighEventPair",
+    [0x1E8] = "NtWaitLowEventPair",
+};
+#endif

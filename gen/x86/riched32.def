@@ -1,0 +1,2 @@
+LIBRARY riched32.dll
+EXPORTS

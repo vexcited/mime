@@ -1,0 +1,7 @@
+LIBRARY xinput9_1_0.dll
+EXPORTS
+    DllMain=_DllMain@12 @1
+    XInputGetCapabilities=_XInputGetCapabilities@12 @2
+    XInputGetDSoundAudioDeviceGuids=_XInputGetDSoundAudioDeviceGuids@12 @3
+    XInputGetState=_XInputGetState@8 @4
+    XInputSetState=_XInputSetState@8 @5

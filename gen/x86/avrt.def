@@ -1,0 +1,5 @@
+LIBRARY avrt.dll
+EXPORTS
+    AvRevertMmThreadCharacteristics=_AvRevertMmThreadCharacteristics@4
+    AvSetMmThreadCharacteristicsW=_AvSetMmThreadCharacteristicsW@8
+    AvSetMmThreadPriority=_AvSetMmThreadPriority@8

@@ -1,0 +1,3 @@
+LIBRARY mciseq.dll
+EXPORTS
+    DriverProc=_DriverProc@20

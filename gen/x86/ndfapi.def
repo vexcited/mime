@@ -1,0 +1,30 @@
+LIBRARY ndfapi.dll
+EXPORTS
+    DllCanUnloadNow=_DllCanUnloadNow@0 @7
+    DllGetClassObject=_DllGetClassObject@12 @8
+    DllRegisterServer=_DllRegisterServer@0 @9
+    DllUnregisterServer=_DllUnregisterServer@0 @10
+    NdfCancelIncident=_NdfCancelIncident@4 @11
+    NdfCloseIncident=_NdfCloseIncident@4 @12
+    NdfCreateConnectivityIncident=_NdfCreateConnectivityIncident@4 @13
+    NdfCreateDNSIncident=_NdfCreateDNSIncident@12 @14
+    NdfCreateGroupingIncident=_NdfCreateGroupingIncident@28 @15
+    NdfCreateInboundIncident=_NdfCreateInboundIncident@28 @16
+    NdfCreateIncident=_NdfCreateIncident@16 @17
+    NdfCreateNetConnectionIncident=_NdfCreateNetConnectionIncident@20 @18
+    NdfCreatePnrpIncident=_NdfCreatePnrpIncident@20 @19
+    NdfCreateSharingIncident=_NdfCreateSharingIncident@8 @20
+    NdfCreateWebIncident=_NdfCreateWebIncident@8 @21
+    NdfCreateWebIncidentEx=_NdfCreateWebIncidentEx@16 @22
+    NdfCreateWinSockIncident=_NdfCreateWinSockIncident@24 @23
+    NdfDiagnoseIncident=_NdfDiagnoseIncident@20 @24
+    NdfExecuteDiagnosis=_NdfExecuteDiagnosis@8 @25
+    NdfGetTraceFile=_NdfGetTraceFile@8 @26
+    NdfRepairIncident=_NdfRepairIncident@12 @27
+    NdfRepairIncidentEx=_NdfRepairIncidentEx@16 @28
+    NdfRunDllDiagnoseIncident=_NdfRunDllDiagnoseIncident@16 @1
+    NdfRunDllDiagnoseNetConnectionIncident=_NdfRunDllDiagnoseNetConnectionIncident@16 @2
+    NdfRunDllDiagnoseWithAnswerFile=_NdfRunDllDiagnoseWithAnswerFile@16 @3
+    NdfRunDllDuplicateIPDefendingSystem=_NdfRunDllDuplicateIPDefendingSystem@16 @4
+    NdfRunDllDuplicateIPOffendingSystem=_NdfRunDllDuplicateIPOffendingSystem@16 @5
+    NdfRunDllHelpTopic=_NdfRunDllHelpTopic@16 @6

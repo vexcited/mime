@@ -1,0 +1,6 @@
+LIBRARY msimg32.dll
+EXPORTS
+    AlphaBlend=_AlphaBlend@44
+    GradientFill=_GradientFill@24
+    TransparentBlt=_TransparentBlt@44
+    vSetDdrawflag=_vSetDdrawflag@0

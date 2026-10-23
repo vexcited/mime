@@ -1,0 +1,6 @@
+LIBRARY mpr.dll
+EXPORTS
+    WNetCancelConnectionW@8
+    WNetGetConnectionA@12
+    WNetGetConnectionW@12
+    WNetUseConnectionW@32

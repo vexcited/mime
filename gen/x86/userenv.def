@@ -1,0 +1,27 @@
+LIBRARY userenv.dll
+EXPORTS
+    CreateAppContainerProfile=_CreateAppContainerProfile@24
+    CreateEnvironmentBlock=_CreateEnvironmentBlock@12
+    DeleteAppContainerProfile=_DeleteAppContainerProfile@4
+    DeriveAppContainerSidFromAppContainerName=_DeriveAppContainerSidFromAppContainerName@8
+    DestroyEnvironmentBlock=_DestroyEnvironmentBlock@4
+    EnterCriticalPolicySection=_EnterCriticalPolicySection@4
+    ExpandEnvironmentStringsForUserA=_ExpandEnvironmentStringsForUserA@16
+    ExpandEnvironmentStringsForUserW=_ExpandEnvironmentStringsForUserW@16
+    GetAllUsersProfileDirectoryA=_GetAllUsersProfileDirectoryA@8
+    GetAllUsersProfileDirectoryW=_GetAllUsersProfileDirectoryW@8
+    GetAppContainerFolderPath=_GetAppContainerFolderPath@8
+    GetAppContainerRegistryLocation=_GetAppContainerRegistryLocation@8
+    GetDefaultUserProfileDirectoryA=_GetDefaultUserProfileDirectoryA@8
+    GetDefaultUserProfileDirectoryW=_GetDefaultUserProfileDirectoryW@8
+    GetProfileType=_GetProfileType@4
+    GetProfilesDirectoryA=_GetProfilesDirectoryA@8
+    GetProfilesDirectoryW=_GetProfilesDirectoryW@8
+    GetUserProfileDirectoryA=_GetUserProfileDirectoryA@12
+    GetUserProfileDirectoryW=_GetUserProfileDirectoryW@12
+    LeaveCriticalPolicySection=_LeaveCriticalPolicySection@4
+    LoadUserProfileA=_LoadUserProfileA@8
+    LoadUserProfileW=_LoadUserProfileW@8
+    RegisterGPNotification=_RegisterGPNotification@8
+    UnloadUserProfile=_UnloadUserProfile@8
+    UnregisterGPNotification=_UnregisterGPNotification@4

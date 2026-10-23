@@ -1,0 +1,20 @@
+LIBRARY msctf.dll
+EXPORTS
+    DllCanUnloadNow@0 @31
+    DllGetClassObject@12 @32
+    DllRegisterServer@0 @33
+    DllUnregisterServer@0 @34
+    SetInputScope@8 @40
+    SetInputScopeXML@8 @41
+    SetInputScopes@28 @42
+    TF_CreateCategoryMgr@4 @47
+    TF_CreateDisplayAttributeMgr@4 @50
+    TF_CreateInputProcessorProfiles@4 @51
+    TF_CreateLangBarItemMgr@4 @52
+    TF_CreateLangBarMgr@4 @53
+    TF_CreateThreadMgr@4 @54
+    TF_GetThreadMgr@4 @62
+    TF_InitSystem@0 @63
+    TF_IsCtfmonRunning@0 @65
+    TF_IsLanguageBarEnabled@0 @66
+    TF_UninitSystem@0 @76

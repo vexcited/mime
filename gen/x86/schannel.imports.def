@@ -1,0 +1,16 @@
+LIBRARY schannel.dll
+EXPORTS
+    SpLsaModeInitialize@16
+    SpUserModeInitialize@16
+    SslCopyTlsExtensions@24
+    SslCrackCertificate@16
+    SslDeserializeCertificateStore@12
+    SslEmptyCacheA@8
+    SslEmptyCacheW@8
+    SslFreeCertificate@4
+    SslFreeCustomBuffer@16
+    SslGenerateRandomBits@8
+    SslGetExtensions@24
+    SslGetMaximumKeySize@4
+    SslGetServerIdentity@20
+    SslLoadCertificate@12

@@ -1,0 +1,28 @@
+LIBRARY credui.dll
+EXPORTS
+    CredPackAuthenticationBufferA=_CredPackAuthenticationBufferA@20 @1
+    CredPackAuthenticationBufferW=_CredPackAuthenticationBufferW@20 @2
+    CredUICmdLinePromptForCredentialsA=_CredUICmdLinePromptForCredentialsA@36 @3
+    CredUICmdLinePromptForCredentialsW=_CredUICmdLinePromptForCredentialsW@36 @4
+    CredUIConfirmCredentialsA=_CredUIConfirmCredentialsA@8 @5
+    CredUIConfirmCredentialsW=_CredUIConfirmCredentialsW@8 @6
+    CredUIInitControls=_CredUIInitControls@0 @7
+    CredUIParseUserNameA=_CredUIParseUserNameA@20 @8
+    CredUIParseUserNameW=_CredUIParseUserNameW@20 @9
+    CredUIPromptForCredentialsA=_CredUIPromptForCredentialsA@40 @10
+    CredUIPromptForCredentialsW=_CredUIPromptForCredentialsW@40 @11
+    CredUIPromptForWindowsCredentialsA=_CredUIPromptForWindowsCredentialsA@36 @12
+    CredUIPromptForWindowsCredentialsW=_CredUIPromptForWindowsCredentialsW@36 @13
+    CredUIPromptForWindowsCredentialsWorker=_CredUIPromptForWindowsCredentialsWorker@44 @14
+    CredUIReadSSOCredA=_CredUIReadSSOCredA@8 @15
+    CredUIReadSSOCredW=_CredUIReadSSOCredW@8 @16
+    CredUIStoreSSOCredA=_CredUIStoreSSOCredA@16 @17
+    CredUIStoreSSOCredW=_CredUIStoreSSOCredW@16 @18
+    CredUnPackAuthenticationBufferA=_CredUnPackAuthenticationBufferA@36 @19
+    CredUnPackAuthenticationBufferW=_CredUnPackAuthenticationBufferW@36 @20
+    SspiGetCredUIContext=_SspiGetCredUIContext@20 @21
+    SspiIsPromptingNeeded=_SspiIsPromptingNeeded@4 @22
+    SspiPromptForCredentialsA=_SspiPromptForCredentialsA@32 @23
+    SspiPromptForCredentialsW=_SspiPromptForCredentialsW@32 @24
+    SspiUnmarshalCredUIContext=_SspiUnmarshalCredUIContext@12 @25
+    SspiUpdateCredentials=_SspiUpdateCredentials@16 @26

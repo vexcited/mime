@@ -1,0 +1,3 @@
+LIBRARY msgsm32.acm
+EXPORTS
+    DriverProc@20

@@ -1,0 +1,28 @@
+1 VERSIONINFO
+FILEVERSION 10, 0, 26100, 8972
+PRODUCTVERSION 10, 0, 26100, 8972
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 1
+FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Microsoft Corporation"
+            VALUE "FileDescription", "Multimedia Realtime Runtime"
+            VALUE "FileVersion", "10.0.26100.8972 (WinBuild.160101.0800)"
+            VALUE "InternalName", "avrt.dll"
+            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "OriginalFilename", "avrt.dll"
+            VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
+            VALUE "ProductVersion", "10.0.26100.8972"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

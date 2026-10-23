@@ -1,0 +1,9 @@
+LIBRARY cabinet.dll
+EXPORTS
+    DllGetVersion=_DllGetVersion@4 @2
+    FDICopy=FDICopy @22
+    FDICreate=FDICreate @20
+    FDIDestroy=FDIDestroy @23
+    FDIIsCabinet=FDIIsCabinet @21
+    FDITruncateCabinet=FDITruncateCabinet @24
+    GetDllVersion=_GetDllVersion@0 @1

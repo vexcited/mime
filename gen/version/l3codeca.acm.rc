@@ -1,0 +1,28 @@
+1 VERSIONINFO
+FILEVERSION 1, 9, 0, 401
+PRODUCTVERSION 1, 0, 0, 0
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x4
+FILETYPE 3
+FILESUBTYPE 9
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Fraunhofer Institut Integrierte Schaltungen IIS"
+            VALUE "FileDescription", "MPEG Layer-3 Audio Codec for MSACM"
+            VALUE "FileVersion", "1, 9, 0, 0401"
+            VALUE "InternalName", "l3codec.acm"
+            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "OriginalFilename", "l3codec.acm"
+            VALUE "ProductName", "MPEG Layer-3 Audio Codec for MSACM"
+            VALUE "ProductVersion", "1, 0, 0, 0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

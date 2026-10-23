@@ -1,0 +1,27 @@
+LIBRARY userenv.dll
+EXPORTS
+    CreateAppContainerProfile@24
+    CreateEnvironmentBlock@12
+    DeleteAppContainerProfile@4
+    DeriveAppContainerSidFromAppContainerName@8
+    DestroyEnvironmentBlock@4
+    EnterCriticalPolicySection@4
+    ExpandEnvironmentStringsForUserA@16
+    ExpandEnvironmentStringsForUserW@16
+    GetAllUsersProfileDirectoryA@8
+    GetAllUsersProfileDirectoryW@8
+    GetAppContainerFolderPath@8
+    GetAppContainerRegistryLocation@8
+    GetDefaultUserProfileDirectoryA@8
+    GetDefaultUserProfileDirectoryW@8
+    GetProfileType@4
+    GetProfilesDirectoryA@8
+    GetProfilesDirectoryW@8
+    GetUserProfileDirectoryA@12
+    GetUserProfileDirectoryW@12
+    LeaveCriticalPolicySection@4
+    LoadUserProfileA@8
+    LoadUserProfileW@8
+    RegisterGPNotification@8
+    UnloadUserProfile@8
+    UnregisterGPNotification@4

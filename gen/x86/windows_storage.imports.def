@@ -1,0 +1,4 @@
+LIBRARY windows.storage.dll
+EXPORTS
+    DllCanUnloadNow@0
+    DllGetClassObject@12

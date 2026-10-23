@@ -1,0 +1,5 @@
+LIBRARY mfcaptureengine.dll
+EXPORTS
+    DllCanUnloadNow@0
+    DllGetClassObject@12
+    MFCreateCaptureEngine@4

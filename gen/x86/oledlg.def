@@ -1,0 +1,3 @@
+LIBRARY oledlg.dll
+EXPORTS
+    OleUIBusyW=_OleUIBusyW@4

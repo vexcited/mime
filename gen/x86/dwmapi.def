@@ -1,0 +1,15 @@
+LIBRARY dwmapi.dll
+EXPORTS
+    DwmDefWindowProc=_DwmDefWindowProc@20
+    DwmEnableBlurBehindWindow=_DwmEnableBlurBehindWindow@8
+    DwmEnableComposition=_DwmEnableComposition@4
+    DwmEnableMMCSS=_DwmEnableMMCSS@4
+    DwmExtendFrameIntoClientArea=_DwmExtendFrameIntoClientArea@8
+    DwmFlush=_DwmFlush@0
+    DwmGetColorizationColor=_DwmGetColorizationColor@8
+    DwmGetCompositionTimingInfo=_DwmGetCompositionTimingInfo@8
+    DwmGetWindowAttribute=_DwmGetWindowAttribute@16
+    DwmInvalidateIconicBitmaps=_DwmInvalidateIconicBitmaps@4
+    DwmIsCompositionEnabled=_DwmIsCompositionEnabled@4
+    DwmSetIconicThumbnail=_DwmSetIconicThumbnail@12
+    DwmSetWindowAttribute=_DwmSetWindowAttribute@16

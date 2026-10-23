@@ -1,0 +1,19 @@
+LIBRARY d3d9.dll
+EXPORTS
+    D3DPERF_BeginEvent@8 @27
+    D3DPERF_EndEvent@0 @28
+    D3DPERF_GetStatus@0 @29
+    D3DPERF_QueryRepeatFrame@0 @30
+    D3DPERF_SetMarker@8 @31
+    D3DPERF_SetOptions@4 @32
+    D3DPERF_SetRegion@8 @33
+    DebugSetLevel@0 @34
+    DebugSetMute@0 @35
+    Direct3D9EnableMaximizedWindowedModeShim@4 @36
+    Direct3DCreate9@4 @37
+    Direct3DCreate9Ex@8 @38
+    Direct3DCreate9On12@12 @20
+    Direct3DCreate9On12Ex@16 @21
+    Direct3DShaderValidatorCreate9@0 @24
+    PSGPError@12 @25
+    PSGPSampleTexture@20 @26

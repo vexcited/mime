@@ -1,4 +1,4 @@
-# writes OUTPUT with the contents of the files of INPUTS, one after the other.
+# concatenates INPUTS into OUTPUT.
 set(text "")
 foreach(input IN LISTS INPUTS)
     file(READ ${input} part)

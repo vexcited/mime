@@ -1,8 +1,7 @@
-# mime build, with llvm: clang, lld-link, llvm-nm, llvm-rc, llvm-strip, llvm-readobj and llvm-dlltool.
+# needs llvm: clang, lld-link, llvm-rc and llvm-dlltool. apple's clang cannot target windows.
 #   cmake --preset default && cmake --build --preset default
 #
-# the guest runs the host's processor: arm64 on macos, x64 on linux x86_64, where the x64 system dlls
-# of guest/sysx64 become C:\Windows\System32. one clang builds both sides, so it must be llvm's own.
+# the guest runs the host's processor: arm64 on macOS, x64 on Linux, where guest/sysx64 is the guest's System32.
 cmake_minimum_required(VERSION 3.30)
 
 if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED ENV{CC})
@@ -14,13 +13,15 @@ endif()
 if(NOT DEFINED CMAKE_ASM_COMPILER AND NOT DEFINED ENV{ASM})
     set(CMAKE_ASM_COMPILER clang)
 endif()
-# -O2 -g without NDEBUG, as asserts stay on, and assembly without debug information.
+# asserts stay on, so no NDEBUG. assembly gets no debug information.
 set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "build type")
 set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g" CACHE STRING "")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g" CACHE STRING "")
 set(CMAKE_ASM_FLAGS_RELWITHDEBINFO "" CACHE STRING "")
 
 project(mime LANGUAGES C CXX ASM)
+# cmake passes -arch on apple silicon, which clang rejects for windows targets.
+unset(_CMAKE_APPLE_ARCHS_DEFAULT)
 
 if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_VERSION VERSION_LESS 19)
     message(FATAL_ERROR "mime needs llvm's clang 19 or later, not ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}: "
@@ -33,9 +34,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(cmake/toolchain.cmake)
 include(cmake/guest.cmake)
-include(cmake/generated.cmake)
 include(cmake/kernel.cmake)
 include(cmake/user.cmake)
 include(cmake/x86.cmake)
 include(cmake/host.cmake)
-include(cmake/tests.cmake)

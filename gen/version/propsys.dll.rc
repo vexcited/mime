@@ -1,0 +1,28 @@
+1 VERSIONINFO
+FILEVERSION 7, 0, 26100, 9278
+PRODUCTVERSION 7, 0, 26100, 9278
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 2
+FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Microsoft Corporation"
+            VALUE "FileDescription", "Microsoft Property System"
+            VALUE "FileVersion", "7.0.26100.9278 (WinBuild.160101.0800)"
+            VALUE "InternalName", "propsys.dll"
+            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "OriginalFilename", "propsys.dll"
+            VALUE "ProductName", "Windows\256 Search"
+            VALUE "ProductVersion", "7.0.26100.9278"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

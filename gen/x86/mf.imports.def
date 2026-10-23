@@ -1,0 +1,7 @@
+LIBRARY mf.dll
+EXPORTS
+    MFCreateDeviceSource@8
+    MFCreateDeviceSourceActivate@8
+    MFEnumDeviceSources@12
+    MFGetService@16
+    MFShutdownObject@4

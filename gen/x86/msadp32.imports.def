@@ -1,0 +1,3 @@
+LIBRARY msadp32.acm
+EXPORTS
+    DriverProc@20

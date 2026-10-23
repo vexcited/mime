@@ -1,54 +1,32 @@
-# x86 user mode, the same sources with 32-bit layouts and stdcall exports, into SysWOW64.
+# x86 user mode: the same sources with 32-bit layouts and stdcall exports, into SysWOW64.
 
 set(gen86 ${MIME_GEN}/x86)
+# the system call stubs go through Wow64Transition on x64, through int 0x2e to the translator on arm64.
+set(stubs86 ${gen86})
+if(MIME_GUEST_ARCH STREQUAL "x64")
+    set(stubs86 ${gen86}/wow64)
+endif()
 
-# ntdll and its system call stubs.
-mime_objects(x86-ntsyscalls x86 SOURCES ${gen86}/ntdll_syscalls.S)
+mime_objects(x86-ntsyscalls x86 SOURCES ${stubs86}/ntdll_syscalls.S)
 mime_glob(sources guest/ntdll/*.c guest/ntdll/x86/*.c guest/ntdll/x86/*.S)
 mime_objects(x86-ntdll x86 SOURCES ${sources} guest/lib/crypto/hash.c INCLUDES guest/ntdll guest/lib)
 set(objects x86-ntdll x86-ntsyscalls ${MIME_RUNTIME_x86})
-mime_object_list(files ${objects})
-mime_object_targets(targets ${objects})
-add_custom_command(OUTPUT ${gen86}/ntdll.def ${gen86}/ntdll.imports.def
-    COMMAND Python3::Interpreter tools/genx86exports.py ntdll ${gen86}/ntdll ${MIME_NATIVE_x86_REF}/ntdll.dll ${files}
-    DEPENDS tools/genx86exports.py ${MIME_NATIVE_x86_REF}/ntdll.dll ${files} ${targets}
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} COMMAND_EXPAND_LISTS VERBATIM)
 mime_dll(ntdll x86 BASE 0x77000000 ENTRY /noentry OBJECTS ${objects} DEF ${gen86}/ntdll.def
-    IMPORTS_DEF ${gen86}/ntdll.imports.def DEPENDS ${gen86}/ntdll.imports.def)
+    IMPORTS_DEF ${gen86}/ntdll.imports.def)
 
 mime_sources(sources kernelbase x86)
 mime_dll(kernelbase x86 BASE 0x76000000 SOURCES ${sources} OBJECTS x86-chkstk OPTIONS -DMIME_BUILD_KERNELBASE
     IMPORTS ntdll)
 
-# kernel32 forwards to kernelbase, but for what only x86's kernel32 exports itself, stdcall decorated.
-set(kernel32_own timeGetTime@0 timeGetSystemTime@8
-    timeGetDevCaps@8 timeBeginPeriod@4 timeEndPeriod@4 DnsHostnameToComputerNameW@12)
-# the transacted file functions, with the bytes of arguments each takes.
-foreach(name CopyFileTransacted:28 CreateDirectoryTransacted:16 CreateFileTransacted:40 CreateHardLinkTransacted:16
-    CreateSymbolicLinkTransacted:16 DeleteFileTransacted:8 FindFirstFileTransacted:28 GetCompressedFileSizeTransacted:12
-    GetFileAttributesTransacted:16 GetFullPathNameTransacted:20 GetLongPathNameTransacted:16 MoveFileTransacted:24
-    RemoveDirectoryTransacted:8 SetFileAttributesTransacted:12)
-    string(REPLACE ":" ";" name ${name})
-    list(GET name 0 base)
-    list(GET name 1 bytes)
-    list(APPEND kernel32_own ${base}A@${bytes} ${base}W@${bytes})
-endforeach()
-list(APPEND kernel32_own FindFirstFileNameTransactedW@20 FindFirstStreamTransactedW@20 GetBinaryTypeA@8 GetBinaryTypeW@8
-    GetBinaryType@8 SetSystemPowerState@8)
-add_custom_command(OUTPUT ${gen86}/kernel32.def ${gen86}/kernel32.imports.def ${gen86}/kernel32_thunks.S
-    COMMAND Python3::Interpreter tools/gendef.py forward32 ${gen86}/kernel32.def ${gen86}/kernel32.imports.def
-        ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def --thunks ${gen86}/kernel32_thunks.S
-        guest/kernel32/forwarded.txt ${kernel32_own}
-    DEPENDS tools/gendef.py guest/kernel32/forwarded.txt ${MIME_SYSX86}/kernelbase.dll ${gen86}/kernelbase.imports.def
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} VERBATIM)
+# kernel32 forwards to kernelbase, except for the few functions only the x86 one exports.
 mime_objects(x86-kernel32-thunks x86 SOURCES ${gen86}/kernel32_thunks.S)
 mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel32/transacted.c guest/kernel32/binary.c
     OBJECTS x86-kernel32-thunks
     OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS kernelbase ntdll DEF ${gen86}/kernel32.def
-    IMPORTS_DEF ${gen86}/kernel32.imports.def DEPENDS ${gen86}/kernel32.imports.def)
+    IMPORTS_DEF ${gen86}/kernel32.imports.def)
 
 # on x64 the stubs reach the 32-bit ntdll's Wow64Transition through a gate of their own.
-set(sources ${gen86}/win32u_syscalls.S)
+set(sources ${stubs86}/win32u_syscalls.S)
 set(imports)
 if(MIME_GUEST_ARCH STREQUAL "x64")
     list(APPEND sources guest/win32u/x86/wow64.S)
@@ -89,16 +67,11 @@ set(MIME_X86_DLLS
     cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
     dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports)
 set(base ntdll kernel32)
-# rpcrt4 catches exceptions with frame handlers of the c runtime.
+# rpcrt4 and ole32 catch exceptions with the frame handlers of msvcrt.
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
-# ole32 reaches other processes with rpc, and catches the faults of stubs with the frame handlers of the c runtime.
 set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
-set(depends_ole32 mime-gen-ole32)
-set(depends_oleaut32 mime-gen-oleaut32)
-# oleaut32 makes objects with ole32 and asks it for guid strings.
 set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
-# the imaging component makes bitmaps of handles with gdi, and reads icons with user32.
 set(wic_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(dialog_imports ntdll kernel32 user32 gdi32 win32u comctl32 shell32 shlwapi ole32 advapi32)
@@ -114,14 +87,13 @@ set(advpack_imports ntdll kernel32 advapi32 version)
 set(objects_advpack x86-lib-cabinet)
 set(objects_cabinet x86-lib-cabinet)
 set(objects_wintrust x86-lib-compound)
-# msxml3 and msxml6 are two faces of one dom engine.
+# msxml3 and msxml6 share one dom engine.
 set(msxml_imports ntdll kernel32 ole32 oleaut32 advapi32)
 foreach(msxml msxml3 msxml6)
     set(objects_${msxml} x86-lib-xmldom)
     set(includes_${msxml} guest/lib)
 endforeach()
 set(sfc_os_imports ntdll kernel32 advapi32 version)
-# the installer makes shortcuts and users, reads versions and loads the custom actions of its packages.
 set(msi_imports ntdll kernel32 user32 gdi32 win32u advapi32 shell32 ole32 version)
 set(oleacc_imports ntdll kernel32 user32 ole32 oleaut32)
 set(ctf_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
@@ -130,16 +102,15 @@ set(user_gdi ntdll kernel32 user32 gdi32)
 set(gdiplus_imports ntdll kernel32 user32 gdi32 ole32)
 set(crypt ntdll kernel32 crypt32)
 set(acm ntdll kernel32 user32 gdi32 winmm)
-# direct3d 1 to 7 in ddraw, whose front end takes its math from msvcrt as windows' does.
+# ddraw's direct3d front end takes its math from msvcrt.
 set(direct3d ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(setup ntdll kernel32 cfgmgr32 advapi32 version)
 set(objects_setupapi x86-lib-cabinet)
 set(xinput ntdll kernel32 user32 setupapi)
 set(http ntdll kernel32 user32 ws2_32)
-# wininet combines urls with the engine of kernelbase.
 set(wininet_imports ntdll kernel32 user32 ws2_32 kernelbase)
 set(urlmon_imports ntdll kernel32 user32 wininet ole32 oleaut32)
-# oleaut32 divides 64 bit numbers by one another in its conversions, and decodes jpeg pictures with the jpeg library.
+# x86-div provides the 64-bit division helpers.
 set(objects_oleaut32 x86-div x86-lib-jpeg)
 set(includes_oleaut32 guest/lib)
 set(objects_msi x86-lib-compound x86-lib-cabinet)
@@ -169,11 +140,10 @@ set(objects_wininet x86-lib-png:guest/lib/png/inflate.c)
 set(includes_wininet guest/lib)
 
 if(MIME_GUEST_ARCH STREQUAL "x64")
-    # vulkan-1, dxgi and direct3d for 32-bit programs on the linux host: the same sources with 32-bit
-    # layouts, which speak the same wire.
+    # vulkan-1, dxgi and direct3d for 32-bit programs on Linux, speaking the same wire.
     mime_dll(vulkan-1 x86 BASE 0x53000000 SOURCES ${MIME_VULKAN_SOURCES} ${MIME_VULKAN_GEN_SOURCES}
         OBJECTS x86-chkstk OPTIONS ${MIME_VULKAN_OPTIONS} INCLUDES ${MIME_VULKAN_INCLUDES}
-        IMPORTS ntdll kernel32 win32u user32 DEPENDS mime-gen-vulkan)
+        IMPORTS ntdll kernel32 win32u user32)
     list(APPEND MIME_X86_DLLS dxgi:0x52000000:all_five d3d11:0x50000000:all_five d3dcompiler_47:0x4F000000:all_five
         d3d10core:0x4E000000:base d3d10_1core:0x4D000000:base d3d10:0x4C000000:all_five d3d10_1:0x4B000000:all_five
         d3d12:0x4A000000:all_five d3d9:0x49000000:all_five dcomp:0x13000000:all_five)
@@ -186,13 +156,9 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
     set(objects_d3d12 x86-lib-privdata x86-lib-dxbc x86-lib-dxil x86-d3d11:guest/d3d11/format.c x86-d3d11:guest/d3d11/vkprofile.c x86-d3d11:guest/d3d11/gfxshare.c)
     set(objects_d3d9 x86-lib-privdata x86-lib-dxbc:guest/lib/dxbc/container.c)
     set(includes_dxgi third_party/khronos)
-    # the video processor's compute shader is assembled at build time.
-    set(includes_d3d11 third_party/khronos ${MIME_SHADERS_GEN})
-    set(depends_d3d11 mime-gen-shaders)
+    set(includes_d3d11 third_party/khronos ${MIME_GEN}/shaders)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
-    # dcomp draws with shaders assembled at build time.
-    set(includes_dcomp ${MIME_SHADERS_GEN})
-    set(depends_dcomp mime-gen-shaders)
+    set(includes_dcomp ${MIME_GEN}/shaders)
 endif()
 
 foreach(entry IN LISTS MIME_X86_DLLS)
@@ -210,15 +176,15 @@ foreach(entry IN LISTS MIME_X86_DLLS)
 endforeach()
 
 if(MIME_GUEST_ARCH STREQUAL "x64")
-    # direct3d 8 over the 32-bit d3d9. windows has no 64-bit d3d8 to take the exports from, so its .def is ours.
+    # direct3d 8 over the 32-bit d3d9. it only exists as x86, so its .def files live with its sources.
     mime_sources(sources d3d8 x86)
     mime_dll(d3d8 x86 BASE 0x32000000 SOURCES ${sources} OBJECTS x86-chkstk x86-lib-privdata
         DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.def IMPORTS_DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.imports.def
         IMPORTS ntdll kernel32 user32 gdi32 d3d9)
 endif()
 
-# the rich edit control: riched20 and msftedit share one engine and list their exports by hand, with the
-# ordinals and data exports windows' have; riched32 registers its class over riched20's procedure.
+# riched20 and msftedit share one engine and list their x86 exports by hand, ordinals and data included. riched32
+# registers its class over riched20's procedure.
 foreach(entry riched20:0x18000000 msftedit:0x17000000)
     string(REPLACE ":" ";" entry ${entry})
     list(GET entry 0 name)
@@ -231,55 +197,31 @@ endforeach()
 mime_sources(sources riched32 x86)
 mime_dll(riched32 x86 BASE 0x16000000 SOURCES ${sources} OBJECTS x86-chkstk IMPORTS ntdll kernel32 user32 riched20)
 
-# winspool is a driver file.
 mime_glob(sources guest/winspool/*.c)
 mime_dll(winspool x86 BASE 0x55000000 FILE winspool.drv SOURCES ${sources}
     OBJECTS x86-chkstk x86-lib-png:guest/lib/png/deflate.c x86-lib-png:guest/lib/png/inflate.c INCLUDES guest/lib
     IMPORTS ntdll kernel32 user32 gdi32)
 
-# bthprops is a control panel file.
 mime_sources(sources bthprops x86)
 mime_dll(bthprops x86 BASE 0x1F000000 FILE bthprops.cpl SOURCES ${sources} OBJECTS x86-chkstk IMPORTS ${all_five})
 
-# msvcrt keeps its own definitions: the x64 list where x86 defines the same, the helpers only x86 has, and what
-# the native build exports through dllexport.
 mime_sources(sources msvcrt x86)
 mime_objects(x86-msvcrt x86 SOURCES ${sources} INCLUDES guest/msvcrt)
-set(objects x86-msvcrt x86-chkstk x86-div)
-mime_object_list(files ${objects})
-mime_object_targets(targets ${objects})
-add_custom_command(OUTPUT ${gen86}/msvcrt.def ${gen86}/msvcrt.imports.def
-    COMMAND Python3::Interpreter tools/genx86def.py msvcrt ${gen86}/msvcrt
-        guest/msvcrt/msvcrt.def,guest/msvcrt/x86/msvcrt.def,${MIME_NATIVE_x86_REF}/msvcrt.dll ${files}
-    DEPENDS tools/genx86def.py guest/msvcrt/msvcrt.def guest/msvcrt/x86/msvcrt.def ${MIME_NATIVE_x86_REF}/msvcrt.dll
-        ${files} ${targets}
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} COMMAND_EXPAND_LISTS VERBATIM)
-mime_dll(msvcrt x86 BASE 0x48000000 OBJECTS ${objects} IMPORTS ntdll kernel32 DEF ${gen86}/msvcrt.def
-    IMPORTS_DEF ${gen86}/msvcrt.imports.def DEPENDS ${gen86}/msvcrt.imports.def)
+mime_dll(msvcrt x86 BASE 0x48000000 OBJECTS x86-msvcrt x86-chkstk x86-div IMPORTS ntdll kernel32
+    DEF ${gen86}/msvcrt.def IMPORTS_DEF ${gen86}/msvcrt.imports.def)
 
-# ucrtbase forwards to msvcrt as on x64.
 mime_objects(x86-ucrtbase x86 SOURCES guest/ucrtbase/main.c INCLUDES guest/ucrtbase)
-set(objects x86-ucrtbase x86-chkstk)
-mime_object_list(files ${objects})
-mime_object_targets(targets ${objects})
-add_custom_command(OUTPUT ${gen86}/ucrtbase.def ${gen86}/ucrtbase.imports.def
-    COMMAND Python3::Interpreter tools/genx86def.py ucrtbase ${gen86}/ucrtbase guest/ucrtbase/ucrtbase.def ${files}
-    DEPENDS tools/genx86def.py guest/ucrtbase/ucrtbase.def ${files} ${targets}
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} COMMAND_EXPAND_LISTS VERBATIM)
-mime_dll(ucrtbase x86 BASE 0x47000000 ENTRY /noentry OBJECTS ${objects} DEF ${gen86}/ucrtbase.def
-    IMPORTS_DEF ${gen86}/ucrtbase.imports.def DEPENDS ${gen86}/ucrtbase.imports.def ${MIME_LIB_x86}/msvcrt.lib)
+mime_dll(ucrtbase x86 BASE 0x47000000 ENTRY /noentry OBJECTS x86-ucrtbase x86-chkstk DEF ${gen86}/ucrtbase.def
+    IMPORTS_DEF ${gen86}/ucrtbase.imports.def DEPENDS ${MIME_LIB_x86}/msvcrt.lib)
 
-# opengl for 32-bit programs: the same implementation over the same gpu channel, its system calls through the
-# 32-bit ntdll and win32u.
-mime_dll(opengl32 x86 BASE 0x44000000 ENTRY /noentry SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GL_GEN}/procs.c
+# opengl for 32-bit programs, making its system calls through the 32-bit ntdll and win32u.
+mime_dll(opengl32 x86 BASE 0x44000000 ENTRY /noentry SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GEN}/opengl32/procs.c
     OBJECTS ${MIME_RUNTIME_x86} OPTIONS ${opengl32_options} INCLUDES ${opengl32_includes} IMPORTS ntdll win32u)
 
-# the audio endpoints of 32-bit programs.
 mime_dll(mmdevapi x86 BASE 0x45000000 SOURCES ${MIME_MMDEVAPI_SOURCES} OBJECTS x86-chkstk
     IMPORTS ntdll kernel32 user32 gdi32 win32u)
 mime_dll(avrt x86 BASE 0x43000000 SOURCES guest/avrt/main.c OBJECTS x86-chkstk IMPORTS ntdll kernel32 user32 gdi32 win32u)
 
-# the mci drivers of 32-bit programs.
 set(MIME_X86_MCI_DRIVERS mciwave:0x30000000:winmm mciseq:0x2F000000:winmm mciqtz32:0x2E000000:winmm,msacm32
     mcicda:0x2D000000:winmm)
 foreach(entry IN LISTS MIME_X86_MCI_DRIVERS)
@@ -292,7 +234,6 @@ foreach(entry IN LISTS MIME_X86_MCI_DRIVERS)
     mime_dll(${name} x86 BASE ${base} SOURCES ${sources} OBJECTS x86-chkstk IMPORTS ntdll kernel32 user32 ${extra})
 endforeach()
 
-# the acm codecs of 32-bit programs.
 set(MIME_X86_ACM_CODECS msg711:0x41000000 imaadp32:0x40000000 msadp32:0x3F000000 msgsm32:0x3E000000
     l3codeca:0x31000000)
 foreach(entry IN LISTS MIME_X86_ACM_CODECS)

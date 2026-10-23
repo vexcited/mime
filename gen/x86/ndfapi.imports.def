@@ -1,0 +1,30 @@
+LIBRARY ndfapi.dll
+EXPORTS
+    DllCanUnloadNow@0 @7
+    DllGetClassObject@12 @8
+    DllRegisterServer@0 @9
+    DllUnregisterServer@0 @10
+    NdfCancelIncident@4 @11
+    NdfCloseIncident@4 @12
+    NdfCreateConnectivityIncident@4 @13
+    NdfCreateDNSIncident@12 @14
+    NdfCreateGroupingIncident@28 @15
+    NdfCreateInboundIncident@28 @16
+    NdfCreateIncident@16 @17
+    NdfCreateNetConnectionIncident@20 @18
+    NdfCreatePnrpIncident@20 @19
+    NdfCreateSharingIncident@8 @20
+    NdfCreateWebIncident@8 @21
+    NdfCreateWebIncidentEx@16 @22
+    NdfCreateWinSockIncident@24 @23
+    NdfDiagnoseIncident@20 @24
+    NdfExecuteDiagnosis@8 @25
+    NdfGetTraceFile@8 @26
+    NdfRepairIncident@12 @27
+    NdfRepairIncidentEx@16 @28
+    NdfRunDllDiagnoseIncident@16 @1
+    NdfRunDllDiagnoseNetConnectionIncident@16 @2
+    NdfRunDllDiagnoseWithAnswerFile@16 @3
+    NdfRunDllDuplicateIPDefendingSystem@16 @4
+    NdfRunDllDuplicateIPOffendingSystem@16 @5
+    NdfRunDllHelpTopic@16 @6

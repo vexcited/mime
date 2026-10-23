@@ -1,0 +1,20 @@
+LIBRARY sfc_os.dll
+EXPORTS
+    BeginFileMapEnumeration=_BeginFileMapEnumeration@12 @1
+    CloseFileMapEnumeration=_CloseFileMapEnumeration@4 @2
+    GetNextFileMapContent=_GetNextFileMapContent@20 @3
+    SRSetRestorePointA=_SRSetRestorePointA@8 @4
+    SRSetRestorePointW=_SRSetRestorePointW@8 @5
+    SfcClose=_SfcClose@4 @6
+    SfcConnectToServer=_SfcConnectToServer@4 @7
+    SfcFileException=_SfcFileException@12 @8
+    SfcGetNextProtectedFile=_SfcGetNextProtectedFile@8 @9
+    SfcInitProt=_SfcInitProt@28 @10
+    SfcInitiateScan=_SfcInitiateScan@8 @11
+    SfcInstallProtectedFiles=_SfcInstallProtectedFiles@28 @12
+    SfcIsFileProtected=_SfcIsFileProtected@8 @13
+    SfcIsKeyProtected=_SfcIsKeyProtected@12 @14
+    SfcTerminateWatcherThread=_SfcTerminateWatcherThread@0 @15
+    SfpDeleteCatalog=_SfpDeleteCatalog@8 @16
+    SfpInstallCatalog=_SfpInstallCatalog@12 @17
+    SfpVerifyFile=_SfpVerifyFile@12 @18

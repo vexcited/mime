@@ -1,0 +1,5 @@
+LIBRARY mmdevapi.dll
+EXPORTS
+    ActivateAudioInterfaceAsync@20 @17
+    DllCanUnloadNow@0
+    DllGetClassObject@12
