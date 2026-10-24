@@ -4,7 +4,6 @@
 #include "../identity.h"
 #include "../rom.h"
 
-#include <sys/attr.h>
 #include <unistd.h>
 
 #include <Hypervisor/Hypervisor.h>
@@ -32,18 +31,11 @@ void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len)
         mime_error("cannot discard guest memory at 0x%llx", (unsigned long long)pa);
 }
 
-/* Finder root volume name, used as the Z: label. */
+/* the Z: label. the host volume name, "Macintosh HD" and the like, would tell the mac the machine runs on, so
+ * the drive answers the plain name a data volume of a pc would carry. */
 void mime_host_volume_label(char *out, size_t size)
 {
-    struct attrlist attrs = {.bitmapcount = ATTR_BIT_MAP_COUNT, .volattr = ATTR_VOL_INFO | ATTR_VOL_NAME};
-    struct {
-        uint32_t length;
-        attrreference_t name;
-        char data[256];
-    } __attribute__((packed)) buf;
-    mime_strlcpy(out, "Macintosh HD", size);
-    if (getattrlist("/", &attrs, &buf, sizeof(buf), 0) == 0)
-        mime_strlcpy(out, (const char *)&buf.name + buf.name.attr_dataoffset, size);
+    mime_strlcpy(out, "Data", size);
 }
 
 void mime_host_wait_word(uint32_t *word, uint32_t value, uint64_t timeout_ns)
@@ -109,7 +101,9 @@ static bool create_gic(MimeVm *vm)
     return true;
 }
 
-/* one vCPU per host processor; the framework and the GIC may allow fewer. */
+/* one vCPU per host processor; the framework and the GIC may allow fewer. the reference machine has twelve
+ * cores, which the firm tables describe, so a host with more runs twelve and the count stays the one of the
+ * machine. */
 static uint32_t host_cpu_count(void)
 {
     int n = 1;
@@ -123,6 +117,8 @@ static uint32_t host_cpu_count(void)
     if (hv_gic_get_redistributor_region_size(&region) == HV_SUCCESS &&
         hv_gic_get_redistributor_size(&frame) == HV_SUCCESS && frame && (size_t)n > region / frame)
         n = (int)(region / frame);
+    if (n > 12)
+        n = 12;
     return (uint32_t)MIME_MIN(n, MIME_VMM_MAX_VCPUS);
 }
 

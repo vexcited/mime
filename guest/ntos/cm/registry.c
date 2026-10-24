@@ -384,13 +384,14 @@ static BOOLEAN node_is(const CM_NODE *node, PCWSTR name)
 }
 
 /*
- * HKLM\Software\Mime\Installer and below, where Mime's installer records the products it installs. the user may
- * write there whatever his token's rights, unlike the machine keys that decide who may be elevated.
+ * HKLM\Software\Classes\Installer and below, where the products of the installer are recorded. the user may write
+ * there whatever his token's rights, unlike the machine keys that decide who may be elevated, as windows' own
+ * installer keeps its bookkeeping under the user's own classes key for a per user install.
  */
 static BOOLEAN in_installer_catalog(const CM_NODE *node)
 {
     for (; node; node = node->Parent) {
-        if (node_is(node, L"Installer") && node->Parent && node_is(node->Parent, L"Mime") && node->Parent->Parent &&
+        if (node_is(node, L"Installer") && node->Parent && node_is(node->Parent, L"Classes") && node->Parent->Parent &&
             node_is(node->Parent->Parent, L"SOFTWARE") && g_machine_key && node->Parent->Parent->Parent == g_machine_key)
             return TRUE;
     }
@@ -1507,7 +1508,7 @@ void CmInitSystem1(void)
     link_key(L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet", target);
     link_key(L"\\REGISTRY\\USER\\S-1-5-18", L"\\REGISTRY\\USER\\.DEFAULT");
     /* the installer catalog exists from the start, so its write rule applies. */
-    CmpOpenPath(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Mime\\Installer", TRUE);
+    CmpOpenPath(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Classes\\Installer", TRUE);
     /* and AppDataLow, which every profile has from the start. */
     WCHAR low_path[200] = {};
     _snwprintf(low_path, RTL_NUMBER_OF(low_path) - 1, L"\\REGISTRY\\USER\\%s\\Software\\AppDataLow", sid);

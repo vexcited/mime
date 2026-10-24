@@ -45,7 +45,17 @@ typedef struct _TPM_DEVICE_INFO {
     UINT32 tpmImpRevision;
 } TPM_DEVICE_INFO, *PTPM_DEVICE_INFO;
 
+TBSAPI BOOL WINAPI Tbsi_Is_Tpm_Present(void);
 TBSAPI TBS_RESULT WINAPI Tbsi_GetDeviceInfo(UINT32 size, PVOID info);
+TBSAPI TBS_RESULT WINAPI Tbsip_Cancel_Commands(TBS_HCONTEXT context);
+TBSAPI TBS_RESULT WINAPI Tbsip_Submit_Command_NonBlocking(TBS_HCONTEXT context, TBS_COMMAND_LOCALITY locality,
+                                                          TBS_COMMAND_PRIORITY priority, const BYTE *command,
+                                                          UINT32 size, PBYTE result, PUINT32 result_size);
+TBSAPI TBS_RESULT WINAPI Tbsi_Physical_Presence_Command(TBS_HCONTEXT context, const BYTE *input, UINT32 input_size,
+                                                        PBYTE output, PUINT32 output_size);
+TBSAPI TBS_RESULT WINAPI Tbsi_Get_TCG_Log_Ex(UINT32 type, PBYTE log, PUINT32 size);
+TBSAPI TBS_RESULT WINAPI Tbsi_Revoke_Attestation(void);
+TBSAPI TBS_RESULT WINAPI Tbsi_Create_Windows_Key(UINT32 key);
 TBSAPI TBS_RESULT WINAPI Tbsi_Context_Create(PCTBS_CONTEXT_PARAMS params, PTBS_HCONTEXT context);
 TBSAPI TBS_RESULT WINAPI Tbsip_Context_Close(TBS_HCONTEXT context);
 TBSAPI TBS_RESULT WINAPI Tbsip_Submit_Command(TBS_HCONTEXT context, TBS_COMMAND_LOCALITY locality,

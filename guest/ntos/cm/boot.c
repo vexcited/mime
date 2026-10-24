@@ -4,6 +4,7 @@
  * machine and user identity, hardware description, processor variables.
  */
 #include "cm.h"
+#include "../ex/acpi_tables.h"
 
 #define NT_CURRENT_VERSION L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"
 #define CONTROL L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control"
@@ -355,6 +356,38 @@ static void processor_environment(void)
     set_sz(ENVIRONMENT, L"NUMBER_OF_PROCESSORS", REG_SZ, text);
 }
 
+/* the table headers of the firmware, under HARDWARE\ACPI as acpi.sys keeps them, one key for each table and
+ * the four byte words of its header, so a reader of the registry finds the same oem ids as the tables. */
+static void acpi_description(void)
+{
+    static const WCHAR root[] = L"\\REGISTRY\\MACHINE\\HARDWARE\\ACPI";
+    CmpOpenPath(root, TRUE);
+    for (ULONG i = 0; i < ACPI_TABLE_COUNT; i++) {
+        const ACPI_TABLE_INFO *table = &acpi_tables[i];
+        char signature[5] = {};
+        memcpy(signature, &table->Signature, 4);
+        WCHAR wide_sig[5], oem[7], table_id[9];
+        widen(wide_sig, RTL_NUMBER_OF(wide_sig), signature);
+        widen(oem, RTL_NUMBER_OF(oem), (const char *)table->Data + 10);
+        widen(table_id, RTL_NUMBER_OF(table_id), (const char *)table->Data + 16);
+        WCHAR path[160] = {};
+        _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"%ls\\%ls\\%ls\\00000000", root, wide_sig, oem);
+        /* the table id may hold a space: keep it, the instance is the leaf. */
+        WCHAR with_id[180] = {};
+        _snwprintf(with_id, RTL_NUMBER_OF(with_id) - 1, L"%ls\\%ls\\%ls\\00000000", root, wide_sig, oem, table_id);
+        if (!CmpOpenPath(with_id, TRUE))
+            continue;
+        for (ULONG at = 0; at + 4 <= 36; at += 4) {
+            WCHAR name[9];
+            _snwprintf(name, RTL_NUMBER_OF(name), L"%08x", at);
+            ULONG word;
+            memcpy(&word, table->Data + at, sizeof(word));
+            set_dword(with_id, name, word);
+        }
+        (void)path;
+    }
+}
+
 void CmpSpecialize(void)
 {
     WCHAR computer[16], user[24], sid[96] = {};
@@ -368,6 +401,7 @@ void CmpSpecialize(void)
     volatile_environment(computer, user, sid);
     shell_state(sid);
     firmware();
+    acpi_description();
     machine_guid();
     time_zone();
     locale(sid);

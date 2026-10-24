@@ -1,5 +1,6 @@
 /* system information and time services. */
 #include "../ntos.h"
+#include "acpi_tables.h"
 
 NTSTATUS NTAPI NtQuerySystemTime(PLARGE_INTEGER time)
 {
@@ -268,8 +269,67 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
 }
 
 /*
- * SystemFirmwareTableInformation: only the RSMB provider, the raw smbios data.
- * like wdm, a too small buffer gets the required size in TableBufferLength.
+ * the raw firmware data of the acpi tables, under the RSDT provider: the
+ * enumeration lists the signatures and a get copies the table of one, like
+ * acpi.sys serves the tables it mapped. like wdm, a too small buffer gets the
+ * required size in TableBufferLength.
+ */
+static NTSTATUS query_acpi_tables(PVOID info, ULONG length, ULONG header_size, SYSTEM_FIRMWARE_TABLE_INFORMATION *header,
+                                  PULONG returned)
+{
+    if (header->Action == SystemFirmwareTable_Enumerate) {
+        ULONG need = header_size + ACPI_TABLE_COUNT * sizeof(ULONG);
+        if (header->TableBufferLength < ACPI_TABLE_COUNT * sizeof(ULONG) || length < need) {
+            header->TableBufferLength = ACPI_TABLE_COUNT * sizeof(ULONG);
+            NTSTATUS status = KiCopyToUser(info, header, header_size);
+            if (NT_SUCCESS(status) && returned)
+                status = KiCopyToUser(returned, &need, sizeof(need));
+            return NT_SUCCESS(status) ? STATUS_BUFFER_TOO_SMALL : status;
+        }
+        UCHAR *out = ExAllocatePool2(POOL_FLAG_NON_PAGED, need, KI_TAG('A', 'c', 'p', 'E'));
+        if (!out)
+            return STATUS_INSUFFICIENT_RESOURCES;
+        header->TableBufferLength = ACPI_TABLE_COUNT * sizeof(ULONG);
+        memcpy(out, header, header_size);
+        for (ULONG i = 0; i < ACPI_TABLE_COUNT; i++)
+            memcpy(out + header_size + i * sizeof(ULONG), &acpi_tables[i].Signature, sizeof(ULONG));
+        NTSTATUS status = copy_info(info, out, need, length, returned);
+        ExFreePool(out);
+        return status;
+    }
+
+    if (header->Action != SystemFirmwareTable_Get)
+        return STATUS_INVALID_PARAMETER;
+    const ACPI_TABLE_INFO *table = nullptr;
+    for (ULONG i = 0; i < ACPI_TABLE_COUNT; i++)
+        if (acpi_tables[i].Signature == header->TableId)
+            table = &acpi_tables[i];
+    if (!table)
+        return STATUS_INVALID_PARAMETER;
+
+    ULONG need = header_size + table->Size;
+    if (header->TableBufferLength < table->Size || length < need) {
+        header->TableBufferLength = table->Size;
+        NTSTATUS status = KiCopyToUser(info, header, header_size);
+        if (NT_SUCCESS(status) && returned)
+            status = KiCopyToUser(returned, &need, sizeof(need));
+        return NT_SUCCESS(status) ? STATUS_BUFFER_TOO_SMALL : status;
+    }
+    UCHAR *out = ExAllocatePool2(POOL_FLAG_NON_PAGED, need, KI_TAG('A', 'c', 'p', 'T'));
+    if (!out)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    header->TableBufferLength = table->Size;
+    memcpy(out, header, header_size);
+    memcpy(out + header_size, table->Data, table->Size);
+    NTSTATUS status = copy_info(info, out, need, length, returned);
+    ExFreePool(out);
+    return status;
+}
+
+/*
+ * SystemFirmwareTableInformation: the RSMB provider, the raw smbios data, and the
+ * RSDT one, the acpi tables of the reference machine. like wdm, a too small
+ * buffer gets the required size in TableBufferLength.
  */
 static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
 {
@@ -280,6 +340,9 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
     NTSTATUS status = KiCopyFromUser(&header, info, header_size);
     if (!NT_SUCCESS(status))
         return status;
+    /* the acpi tables first: their headers are the same, their data is the table itself. */
+    if (header.ProviderSignature == 'RSDT')
+        return query_acpi_tables(info, length, header_size, &header, returned);
     if (header.ProviderSignature != 'RSMB')
         return STATUS_INVALID_PARAMETER;
 

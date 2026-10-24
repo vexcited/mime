@@ -22,9 +22,10 @@ ULONG64 KiQueryInterruptTime(void)
 
 /*
  * the performance counter is the hal's counter since boot. a tsc runs in
- * gigahertz while windows programs expect windows' 10 MHz, and some
- * multiply it by a billion, so it is divided by a power of two into 10 to
- * 20 MHz. user mode reads it itself, with the bias and shift in
+ * gigahertz while windows programs expect tens of megahertz, and some
+ * multiply it by a billion, so it is divided by a power of two below 30 MHz.
+ * a counter that already is, like the 24 MHz of the architected timer, comes
+ * through whole. user mode reads it itself, with the bias and shift in
  * KUSER_SHARED_DATA.
  */
 static UCHAR qpc_shift(void)
@@ -32,7 +33,7 @@ static UCHAR qpc_shift(void)
     ULONG64 f = HalBootInfo->timer_frequency;
     UCHAR shift = 0;
     if (f > 100000000)
-        while ((f >> shift) > 20000000)
+        while ((f >> shift) > 30000000)
             shift++;
     return shift;
 }

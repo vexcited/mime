@@ -57,7 +57,7 @@ static void profile_sample(MimeVcpu *vcpu);
 
 void mime_host_volume_label(char *out, size_t size)
 {
-    mime_strlcpy(out, "Linux", size);
+    mime_strlcpy(out, "Data", size);
 }
 
 void mime_host_wait_word(uint32_t *word, uint32_t value, uint64_t timeout_ns)
@@ -89,7 +89,8 @@ static uint32_t host_cpu_count(void)
     long n = sysconf(_SC_NPROCESSORS_ONLN);
     if (n < 1)
         n = 1;
-    return (uint32_t)MIME_MIN((uint64_t)n, MIME_VMM_MAX_VCPUS);
+    /* twelve at most, the cores the firm tables of the reference machine describe. */
+    return (uint32_t)MIME_MIN((uint64_t)n, MIME_MIN(MIME_VMM_MAX_VCPUS, 12));
 }
 
 /* checks whether transparent huge pages are always enabled or enabled on request. */

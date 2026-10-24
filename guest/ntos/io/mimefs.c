@@ -324,6 +324,14 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     if (!req)
         return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
     ULONG chars = file->FileName.Length / sizeof(WCHAR);
+    /* the volume itself, opened as \\.\C:, has no name under the device: it answers the ioctls of the drive. */
+    if (!chars) {
+        ExFreePool(req);
+        if (disposition != FILE_OPEN && disposition != FILE_OPEN_IF)
+            return complete(irp, STATUS_OBJECT_NAME_COLLISION, 0);
+        file->FsContext = nullptr;
+        return complete(irp, STATUS_SUCCESS, FILE_OPENED);
+    }
     if (chars > RTL_NUMBER_OF(req->path)) {
         ExFreePool(req);
         return complete(irp, STATUS_NAME_TOO_LONG, 0);
@@ -1315,6 +1323,180 @@ static NTSTATUS NTAPI mimefs_set_security(PDEVICE_OBJECT device, PIRP irp)
     return complete(irp, MimeFsStoreSecurity(fcb->HostHandle, stack->Parameters.Others.Argument1), 0);
 }
 
+/*
+ * the storage ioctls a fingerprint of the machine reads: the device number, the descriptor of the nvme drive
+ * the reference machine ships, its geometry and the extents of the volume. a volume has no bus of its own, so the
+ * answers name the drive the way stornvme reports one.
+ */
+#define IOCTL_STORAGE_QUERY_PROPERTY 0x002D1400u
+#define IOCTL_STORAGE_GET_DEVICE_NUMBER 0x002D1080u
+#define IOCTL_STORAGE_CHECK_VERIFY 0x002D4800u
+#define IOCTL_DISK_GET_DRIVE_GEOMETRY_EX 0x000700A0u
+#define IOCTL_DISK_GET_LENGTH_INFO 0x0007405Cu
+#define IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS 0x00560000u
+
+typedef struct MIMEFS_DEVICE_NUMBER {
+    ULONG DeviceType;
+    ULONG DeviceNumber;
+    ULONG PartitionNumber;
+} MIMEFS_DEVICE_NUMBER;
+
+typedef struct MIMEFS_DEVICE_DESCRIPTOR {
+    ULONG Version;
+    ULONG Size;
+    UCHAR DeviceType;
+    UCHAR DeviceTypeModifier;
+    BOOLEAN RemovableMedia;
+    BOOLEAN CommandQueueing;
+    ULONG VendorIdOffset;
+    ULONG ProductIdOffset;
+    ULONG ProductRevisionOffset;
+    ULONG SerialNumberOffset;
+    ULONG BusType;
+    ULONG RawPropertiesLength;
+} MIMEFS_DEVICE_DESCRIPTOR;
+
+typedef struct MIMEFS_DISK_GEOMETRY {
+    LONGLONG Cylinders;
+    ULONG MediaType;
+    ULONG TracksPerCylinder;
+    ULONG SectorsPerTrack;
+    ULONG BytesPerSector;
+} MIMEFS_DISK_GEOMETRY;
+
+static NTSTATUS volume_bytes(MIMEFS_VOLUME *vol, ULONGLONG *bytes)
+{
+    MimeFsVolumeInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*info), KI_TAG('F', 's', 'V', 'l'));
+    if (!info)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    NTSTATUS status = host_status(HalHypercall(MIME_HC_FS_VOLUME_QUERY, vol->HostVolume, HalPhysicalOf(info), 0, 0, 0,
+                                               0, nullptr), FALSE);
+    if (NT_SUCCESS(status))
+        *bytes = info->total_units * info->bytes_per_unit;
+    ExFreePool(info);
+    return status;
+}
+
+/* a serial of the drive, from the uuid of the machine so it keeps. */
+static void drive_serial(PUCHAR out)
+{
+    static const char hex[] = "0123456789abcdef";
+    for (ULONG i = 0; i < 12; i++)
+        out[i] = hex[HalBootInfo->system_uuid[i % 16] & 0xF];
+    out[12] = 0;
+}
+
+static NTSTATUS storage_query(PIRP irp, PIO_STACK_LOCATION stack, MIMEFS_VOLUME *vol, ULONG length)
+{
+    /* only the standard query of the device property is answered. */
+    if (stack->Parameters.DeviceIoControl.InputBufferLength < 8)
+        return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
+    const ULONG *query = irp->UserBuffer;
+    if (query[0] != 0 || query[1] != 0)
+        return complete(irp, STATUS_INVALID_PARAMETER, 0);
+
+    static const char vendor[] = "NVMe    ";
+    static const char product[] = "KBG40ZNS1T02 NVMe KIOXIA 1024GB";
+    static const char revision[] = "AGXA0101";
+    char serial[16];
+    drive_serial((PUCHAR)serial);
+    ULONG need = sizeof(MIMEFS_DEVICE_DESCRIPTOR) + sizeof(vendor) + sizeof(product) + sizeof(revision) + sizeof(serial);
+    if (length < need)
+        return complete(irp, STATUS_BUFFER_TOO_SMALL, need);
+
+    MIMEFS_DEVICE_DESCRIPTOR *desc = (MIMEFS_DEVICE_DESCRIPTOR *)irp->UserBuffer;
+    memset(desc, 0, need);
+    desc->Version = sizeof(*desc);
+    desc->Size = need;
+    desc->DeviceType = 0x07; /* disk */
+    desc->RemovableMedia = FALSE;
+    desc->CommandQueueing = TRUE;
+    desc->BusType = 0x11; /* Nvme */
+    ULONG at = sizeof(*desc);
+    desc->VendorIdOffset = at;
+    memcpy((PUCHAR)desc + at, vendor, sizeof(vendor));
+    at += sizeof(vendor);
+    desc->ProductIdOffset = at;
+    memcpy((PUCHAR)desc + at, product, sizeof(product));
+    at += sizeof(product);
+    desc->ProductRevisionOffset = at;
+    memcpy((PUCHAR)desc + at, revision, sizeof(revision));
+    at += sizeof(revision);
+    desc->SerialNumberOffset = at;
+    memcpy((PUCHAR)desc + at, serial, sizeof(serial));
+    at += sizeof(serial);
+    (void)vol;
+    return complete(irp, STATUS_SUCCESS, need);
+}
+
+static NTSTATUS NTAPI mimefs_device_control(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    MIMEFS_VOLUME *vol = device->DeviceExtension;
+    ULONG length = stack->Parameters.DeviceIoControl.OutputBufferLength;
+    switch (stack->Parameters.DeviceIoControl.IoControlCode) {
+    case IOCTL_STORAGE_QUERY_PROPERTY:
+        return storage_query(irp, stack, vol, length);
+    case IOCTL_STORAGE_GET_DEVICE_NUMBER: {
+        if (length < sizeof(MIMEFS_DEVICE_NUMBER))
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, sizeof(MIMEFS_DEVICE_NUMBER));
+        MIMEFS_DEVICE_NUMBER *number = (MIMEFS_DEVICE_NUMBER *)irp->UserBuffer;
+        number->DeviceType = FILE_DEVICE_DISK;
+        number->DeviceNumber = vol->HostVolume;
+        number->PartitionNumber = vol->HostVolume + 1;
+        return complete(irp, STATUS_SUCCESS, sizeof(*number));
+    }
+    case IOCTL_STORAGE_CHECK_VERIFY:
+        return complete(irp, STATUS_SUCCESS, 0);
+    case IOCTL_DISK_GET_LENGTH_INFO: {
+        ULONGLONG bytes;
+        NTSTATUS status = volume_bytes(vol, &bytes);
+        if (!NT_SUCCESS(status))
+            return complete(irp, status, 0);
+        if (length < sizeof(bytes))
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, sizeof(bytes));
+        *(ULONGLONG *)irp->UserBuffer = bytes;
+        return complete(irp, STATUS_SUCCESS, sizeof(bytes));
+    }
+    case IOCTL_DISK_GET_DRIVE_GEOMETRY_EX: {
+        ULONGLONG bytes;
+        NTSTATUS status = volume_bytes(vol, &bytes);
+        if (!NT_SUCCESS(status))
+            return complete(irp, status, 0);
+        ULONG need = sizeof(MIMEFS_DISK_GEOMETRY) + sizeof(LONGLONG);
+        if (length < need)
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, need);
+        MIMEFS_DISK_GEOMETRY *geometry = (MIMEFS_DISK_GEOMETRY *)irp->UserBuffer;
+        memset(geometry, 0, need);
+        geometry->MediaType = 12; /* fixed */
+        geometry->TracksPerCylinder = 255;
+        geometry->SectorsPerTrack = 63;
+        geometry->BytesPerSector = 512;
+        ULONGLONG sectors = bytes / 512;
+        geometry->Cylinders = (LONGLONG)(sectors / (255ull * 63ull));
+        *(ULONGLONG *)((PUCHAR)geometry + sizeof(*geometry)) = bytes;
+        return complete(irp, STATUS_SUCCESS, need);
+    }
+    case IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS: {
+        /* numberOfDiskExtents, then the extents: disk number, offset, length. */
+        ULONG need = sizeof(ULONG) + 3 * sizeof(LONGLONG);
+        if (length < need)
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, need);
+        ULONG *count = (ULONG *)irp->UserBuffer;
+        LONGLONG *extent = (LONGLONG *)(count + 1);
+        *count = 1;
+        extent[0] = (LONGLONG)vol->HostVolume;
+        extent[1] = 0;
+        NTSTATUS status = volume_bytes(vol, (ULONGLONG *)&extent[2]);
+        if (!NT_SUCCESS(status))
+            return complete(irp, status, 0);
+        return complete(irp, STATUS_SUCCESS, need);
+    }
+    default:
+        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    }
+}
+
 static NTSTATUS NTAPI mimefs_flush(PDEVICE_OBJECT device, PIRP irp)
 {
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
@@ -1365,6 +1547,7 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
     driver->MajorFunction[IRP_MJ_SET_INFORMATION] = mimefs_set_info;
     driver->MajorFunction[IRP_MJ_DIRECTORY_CONTROL] = mimefs_directory;
     driver->MajorFunction[IRP_MJ_QUERY_VOLUME_INFORMATION] = mimefs_query_volume;
+    driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = mimefs_device_control;
     driver->MajorFunction[IRP_MJ_FLUSH_BUFFERS] = mimefs_flush;
     driver->MajorFunction[IRP_MJ_QUERY_SECURITY] = mimefs_query_security;
     driver->MajorFunction[IRP_MJ_SET_SECURITY] = mimefs_set_security;
