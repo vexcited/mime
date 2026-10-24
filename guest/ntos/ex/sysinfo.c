@@ -306,6 +306,24 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
         smb_end(&b);
     }
 
+    /* type 32, the boot information: no errors. */
+    smb_begin(&b, 32, 0x0020);
+    for (int i = 0; i < 6; i++)
+        smb_byte(&b, 0);
+    smb_byte(&b, 0); /* boot status, no errors */
+    smb_end(&b);
+
+    /* type 43, the firmware tpm the machine has. */
+    smb_begin(&b, 43, 0x0043);
+    smb_put(&b, "MSFT", 4); /* vendor id */
+    smb_byte(&b, 2);        /* major spec version */
+    smb_byte(&b, 0);        /* minor */
+    smb_dword(&b, 1);       /* firmware version 1.0 */
+    smb_byte(&b, smb_string(&b, "Firmware TPM"));
+    smb_qword(&b, 0x06); /* enabled and active */
+    smb_dword(&b, 0);    /* no oem data */
+    smb_end(&b);
+
     /* the end of the table. */
     smb_begin(&b, 127, 0x0005);
     smb_end(&b);
