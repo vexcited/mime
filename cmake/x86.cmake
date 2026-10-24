@@ -1,7 +1,4 @@
-# x86 user mode: the same sources with 32-bit layouts and stdcall exports, into SysWOW64.
-
 set(gen86 ${MIME_GEN}/x86)
-# the system call stubs go through Wow64Transition on x64, through int 0x2e to the translator on arm64.
 set(stubs86 ${gen86})
 if(MIME_GUEST_ARCH STREQUAL "x64")
     set(stubs86 ${gen86}/wow64)
@@ -18,7 +15,6 @@ mime_sources(sources kernelbase x86)
 mime_dll(kernelbase x86 BASE 0x76000000 SOURCES ${sources} OBJECTS x86-chkstk OPTIONS -DMIME_BUILD_KERNELBASE
     IMPORTS ntdll)
 
-# kernel32 forwards to kernelbase, except for the few functions only the x86 one exports.
 mime_objects(x86-kernel32-thunks x86 SOURCES ${gen86}/kernel32_thunks.S)
 mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel32/transacted.c guest/kernel32/binary.c
     OBJECTS x86-kernel32-thunks
@@ -27,7 +23,6 @@ mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel
 
 mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c OBJECTS x86-chkstk IMPORTS ntdll kernel32)
 
-# on x64 the stubs reach the 32-bit ntdll's Wow64Transition through a gate of their own.
 set(sources ${stubs86}/win32u_syscalls.S)
 set(imports)
 if(MIME_GUEST_ARCH STREQUAL "x64")
@@ -69,7 +64,6 @@ set(MIME_X86_DLLS
     cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
     dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports)
 set(base ntdll kernel32)
-# rpcrt4 and ole32 catch exceptions with the frame handlers of msvcrt.
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
 set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4)
@@ -89,7 +83,6 @@ set(advpack_imports ntdll kernel32 advapi32 version)
 set(objects_advpack x86-lib-cabinet)
 set(objects_cabinet x86-lib-cabinet)
 set(objects_wintrust x86-lib-compound)
-# msxml3 and msxml6 share one dom engine.
 set(msxml_imports ntdll kernel32 ole32 oleaut32 advapi32)
 foreach(msxml msxml3 msxml6)
     set(objects_${msxml} x86-lib-xmldom)
@@ -104,7 +97,6 @@ set(user_gdi ntdll kernel32 user32 gdi32)
 set(gdiplus_imports ntdll kernel32 user32 gdi32 ole32)
 set(crypt ntdll kernel32 crypt32)
 set(acm ntdll kernel32 user32 gdi32 winmm)
-# ddraw's direct3d front end takes its math from msvcrt.
 set(direct3d ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(setup ntdll kernel32 cfgmgr32 advapi32 version)
 set(objects_setupapi x86-lib-cabinet)
@@ -112,7 +104,6 @@ set(xinput ntdll kernel32 user32 setupapi)
 set(http ntdll kernel32 user32 ws2_32)
 set(wininet_imports ntdll kernel32 user32 ws2_32 kernelbase)
 set(urlmon_imports ntdll kernel32 user32 wininet ole32 oleaut32)
-# x86-div provides the 64-bit division helpers.
 set(objects_oleaut32 x86-div x86-lib-jpeg)
 set(includes_oleaut32 guest/lib)
 set(objects_msi x86-lib-compound x86-lib-cabinet)
@@ -149,7 +140,6 @@ list(APPEND MIME_X86_DLLS d3dcompiler_47:0x4F000000:all_five)
 set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c)
 
 if(MIME_GUEST_ARCH STREQUAL "x64")
-    # vulkan-1, dxgi and direct3d for 32-bit programs on Linux, speaking the same wire.
     mime_dll(vulkan-1 x86 BASE 0x53000000 SOURCES ${MIME_VULKAN_SOURCES} ${MIME_VULKAN_GEN_SOURCES}
         OBJECTS x86-chkstk OPTIONS ${MIME_VULKAN_OPTIONS} INCLUDES ${MIME_VULKAN_INCLUDES}
         IMPORTS ntdll kernel32 win32u user32)
@@ -184,15 +174,12 @@ foreach(entry IN LISTS MIME_X86_DLLS)
 endforeach()
 
 if(MIME_GUEST_ARCH STREQUAL "x64")
-    # direct3d 8 over the 32-bit d3d9. it only exists as x86, so its .def files live with its sources.
     mime_sources(sources d3d8 x86)
     mime_dll(d3d8 x86 BASE 0x32000000 SOURCES ${sources} OBJECTS x86-chkstk x86-lib-privdata
         DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.def IMPORTS_DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.imports.def
         IMPORTS ntdll kernel32 user32 gdi32 d3d9)
 endif()
 
-# riched20 and msftedit share one engine and list their x86 exports by hand, ordinals and data included. riched32
-# registers its class over riched20's procedure.
 foreach(entry riched20:0x18000000 msftedit:0x17000000)
     string(REPLACE ":" ";" entry ${entry})
     list(GET entry 0 name)
@@ -222,7 +209,6 @@ mime_objects(x86-ucrtbase x86 SOURCES guest/ucrtbase/main.c INCLUDES guest/ucrtb
 mime_dll(ucrtbase x86 BASE 0x47000000 ENTRY /noentry OBJECTS x86-ucrtbase x86-chkstk DEF ${gen86}/ucrtbase.def
     IMPORTS_DEF ${gen86}/ucrtbase.imports.def DEPENDS ${MIME_LIB_x86}/msvcrt.lib)
 
-# opengl for 32-bit programs, making its system calls through the 32-bit ntdll and win32u.
 mime_dll(opengl32 x86 BASE 0x44000000 ENTRY /noentry SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GEN}/opengl32/procs.c
     OBJECTS ${MIME_RUNTIME_x86} OPTIONS ${opengl32_options} INCLUDES ${opengl32_includes} IMPORTS ntdll win32u)
 

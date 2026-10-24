@@ -1,5 +1,3 @@
-# ntoskrnl.exe and win32k.sys, for the guest processor.
-
 set(ntos_options -DMIME_KERNEL=1)
 mime_glob(rtl_sources guest/rtl/*.c)
 mime_glob(crt_sources guest/crt/*.c)
@@ -13,7 +11,6 @@ mime_glob(ntos_common guest/ntos/*.c guest/ntos/*/*.c)
 list(FILTER ntos_common EXCLUDE REGEX "/guest/ntos/arch/")
 mime_glob(ntos_arch guest/ntos/arch/${MIME_GUEST_ARCH}/*.c)
 
-# hash.c names the host's root certificates in the registry, see guest/ntos/cm/certs.c.
 mime_objects(kernel-ntos kernel SOURCES ${ntos_common} ${ntos_arch} ${ntos_asm} guest/lib/crypto/hash.c
     OPTIONS ${ntos_options} INCLUDES guest/ntos guest/lib)
 mime_objects(kernel-rtl kernel SOURCES ${rtl_sources} OPTIONS ${ntos_options} INCLUDES guest/ntos)

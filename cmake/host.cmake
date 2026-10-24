@@ -1,5 +1,3 @@
-# the mime command, with the guest files embedded in its rom.
-
 get_property(rom_files GLOBAL PROPERTY MIME_ROM_FILES)
 add_custom_command(OUTPUT ${MIME_BUILD_GEN}/rom.S
     COMMAND ${CMAKE_COMMAND} -DOUTPUT=${MIME_BUILD_GEN}/rom.S -DSYSTEM=${CMAKE_SYSTEM_NAME} "-DFILES=${rom_files}"
@@ -14,13 +12,11 @@ if(NOT MIME_BUILD_HOST)
 endif()
 
 set(host_warnings -Wall -Wextra -Wimplicit-fallthrough -Wno-unused-parameter)
-# the Linux host code uses gnu extensions.
 set(host_gnu ON)
 if(APPLE)
     set(host_gnu OFF)
 endif()
 
-# the host gpu compiles glsl with glslang, then SPIRV-Cross reflects it and writes metal on macOS.
 mime_glob(shaderc_sources third_party/glslang/glslang/GenericCodeGen/*.cpp
     third_party/glslang/glslang/MachineIndependent/*.cpp
     third_party/glslang/glslang/MachineIndependent/preprocessor/*.cpp third_party/glslang/glslang/ResourceLimits/*.cpp
@@ -58,10 +54,8 @@ if(APPLE)
         COMMAND codesign -s - -f --entitlements ${CMAKE_SOURCE_DIR}/host/mime.entitlements $<TARGET_FILE:mime>
         VERBATIM)
 else()
-    # KVM, plus the Linux ui, gpu and audio in place of the macOS frameworks.
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(HOST_LIBS REQUIRED IMPORTED_TARGET sdl3 wayland-client)
-    # without D-Bus the guest's notification icons and balloons are not shown.
     pkg_check_modules(HOST_SDBUS IMPORTED_TARGET libsystemd)
     find_package(Threads REQUIRED)
     mime_glob(host_sources host/*.c host/setup/*.c host/linux/*.c host/vmm/*.c host/camera/*.c)
@@ -102,6 +96,5 @@ target_include_directories(mime PRIVATE include ${MIME_GEN})
 target_compile_options(mime PRIVATE $<$<COMPILE_LANGUAGE:C>:${host_warnings}>)
 set_target_properties(mime PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS ${host_gnu}
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-# .incbin is not seen by the dependency scanner.
 set_source_files_properties(${MIME_BUILD_GEN}/rom.S PROPERTIES OBJECT_DEPENDS "${rom_files}")
 add_dependencies(mime rom)

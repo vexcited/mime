@@ -1,6 +1,3 @@
-# writes the assembly that embeds FILES into mime, see MimeRomHeader. files land in System32, or in SysX64 and SysWOW64
-# for those under sysx64/ and syswow64/, page aligned so the guest maps them in place.
-# mach-o symbols take a leading underscore, elf ones do not.
 if(SYSTEM STREQUAL "Darwin")
     set(section ".section __TEXT,__const")
     set(prefix _)

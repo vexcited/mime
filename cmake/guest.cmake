@@ -1,6 +1,3 @@
-# guest code is compiled as object libraries, so every source shows up in compile_commands.json, then linked by
-# lld-link from custom commands.
-
 set(MIME_TRIPLE_x64 --target=x86_64-pc-windows-msvc -march=x86-64 -mcx16)
 set(MIME_TRIPLE_arm64 --target=aarch64-pc-windows-msvc -march=armv8.2-a)
 set(MIME_TRIPLE_x86 --target=i686-pc-windows-msvc -march=pentium4)
@@ -11,11 +8,8 @@ set(MIME_MACHINE_x86 x86)
 set(MIME_GUEST_C_OPTIONS -ffreestanding -nostdlibinc -fms-extensions -fno-stack-protector -gdwarf
     -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=
     -Wall -Wextra -Wimplicit-fallthrough -Wno-unused-parameter -Wno-missing-field-initializers)
-# the crt implements the Microsoft c++ abi, exceptions and rtti included.
 set(MIME_GUEST_CXX_OPTIONS -fno-threadsafe-statics -fexceptions -fcxx-exceptions)
 
-# a flavor is a target processor plus shared flags. kernel builds ntoskrnl.exe and win32k.sys for the guest
-# processor, arm64, x64 and x86 build the user mode dlls.
 function(mime_flavor name arch)
     add_library(mime-flags-${name} INTERFACE)
     target_compile_options(mime-flags-${name} INTERFACE ${MIME_TRIPLE_${arch}}
@@ -26,18 +20,14 @@ function(mime_flavor name arch)
 endfunction()
 
 mime_flavor(kernel ${MIME_GUEST_ARCH})
-# -ffreestanding drops unwind tables, but exceptions unwind through every dll.
 mime_flavor(arm64 arm64 -fasynchronous-unwind-tables)
 if(MIME_GUEST_ARCH STREQUAL "x64")
-    # on an x64 host these run natively instead of through the translator.
     mime_flavor(x64 x64 -fasynchronous-unwind-tables -DMIME_X64_NATIVE=1)
 else()
     mime_flavor(x64 x64 -fasynchronous-unwind-tables)
 endif()
 mime_flavor(x86 x86)
 
-# mime_objects(<target> <flavor> SOURCES <files>... [OPTIONS <c flags>...] [INCLUDES <dirs>...] [DEPENDS <targets>...])
-# OPTIONS apply to c and c++, not to assembly.
 function(mime_objects target flavor)
     cmake_parse_arguments(PARSE_ARGV 2 arg "" "" "SOURCES;OPTIONS;INCLUDES;DEPENDS")
     add_library(${target} OBJECT EXCLUDE_FROM_ALL ${arg_SOURCES})
@@ -56,7 +46,6 @@ function(mime_objects target flavor)
     endif()
 endfunction()
 
-# a spec is an object library, or <library>:<source> for a single object of it.
 function(mime_object_list out)
     set(list)
     foreach(spec IN LISTS ARGN)
@@ -86,8 +75,6 @@ function(mime_only_targets out)
     set(${out} ${list} PARENT_SCOPE)
 endfunction()
 
-# the version resource of <name>, followed by the resource script given after arch. x86 has a version of its own
-# only where it differs.
 function(mime_resource name arch)
     get_property(done GLOBAL PROPERTY MIME_RESOURCE_${arch}_${name})
     if(done)
@@ -108,17 +95,9 @@ function(mime_resource name arch)
         DEPENDS ${inputs} cmake/concat.cmake VERBATIM)
 endfunction()
 
-# /build-id gives the links with and without debug information the same debug directory, so the same layout.
 set(MIME_LINK_FLAGS /nologo /debug:dwarf /build-id /nodefaultlib /opt:ref /incremental:no /filealign:0x1000
     /version:10.0 /osversion:10.0 /Brepro /release)
 
-# mime_link(<output> <arch> OBJECTS <specs>... [LIBS <files>...] [FLAGS <lld-link flags>...] [DEPENDS <files>...]
-#           [IMPLIB <lib>] [RESOURCE <file name>] [RESOURCE_SCRIPT <rc>] [IMPORTS <imports.def>]
-#           [ROM <file>] [GROUPS <groups>...])
-# links a pe file. IMPLIB has lld-link write the import library, IMPORTS has llvm-dlltool make it from a
-# definition of stdcall names instead, as x86 import libraries keep the decoration the dll drops.
-# ROM links it again without debug information for the rom, at the same addresses as the copy in guest/ that
-# symbolizes them.
 function(mime_link output arch)
     cmake_parse_arguments(PARSE_ARGV 2 arg "" "IMPLIB;RESOURCE;RESOURCE_SCRIPT;IMPORTS;ROM"
         "OBJECTS;LIBS;FLAGS;DEPENDS;GROUPS")
@@ -171,7 +150,6 @@ function(mime_link output arch)
     endforeach()
 endfunction()
 
-# target <name> builds the files of group <name>.
 function(mime_group name)
     cmake_parse_arguments(PARSE_ARGV 1 arg "ALL" "" "DEPENDS")
     get_property(files GLOBAL PROPERTY MIME_GROUP_${name})
@@ -182,7 +160,6 @@ function(mime_group name)
     add_custom_target(${name} ${all} DEPENDS ${files} ${arg_DEPENDS})
 endfunction()
 
-# globs relative to the source directory, sorted per pattern so the link order stays stable.
 function(mime_glob out)
     set(files)
     foreach(pattern IN LISTS ARGN)

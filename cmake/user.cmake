@@ -1,6 +1,3 @@
-# user mode dlls: on arm64, arm64 ones go to System32 and x64 ones to SysX64. on x64, x64 ones go to System32. x86
-# ones always go to SysWOW64.
-
 if(MIME_GUEST_ARCH STREQUAL "arm64")
     set(MIME_USER_ARCHS arm64 x64)
 else()
@@ -24,7 +21,6 @@ set(MIME_DLL_FLAGS_arm64 /dll /subsystem:console,10.0 /highentropyva /dynamicbas
 set(MIME_DLL_FLAGS_x64 ${MIME_DLL_FLAGS_arm64})
 set(MIME_DLL_FLAGS_x86 /dll /subsystem:console,6.0 /dynamicbase /stack:0x40000,0x1000)
 
-# linked into everything: the rtl, the crt and the stack probe.
 set(MIME_CHKSTK_arm64 guest/crt/chkstk.S)
 set(MIME_CHKSTK_x64 guest/crt/x64/chkstk.S)
 set(MIME_CHKSTK_x86 guest/crt/x86/chkstk.S)
@@ -43,11 +39,6 @@ set(MIME_RUNTIME_arm64 arm64-rtl arm64-crt arm64-chkstk)
 set(MIME_RUNTIME_x64 x64-rtl x64-crt x64-chkstk)
 set(MIME_RUNTIME_x86 x86-rtl x86-crt x86-chkstk x86-div)
 
-# mime_dll(<name> <arch> BASE <address> [FILE <file name>] [ENTRY <flag>] [SOURCES <files>...] [OBJECTS <specs>...]
-#          [OPTIONS <flags>...] [INCLUDES <dirs>...] [IMPORTS <dlls>...] [LIBS <files>...] [FLAGS <flags>...]
-#          [DEF <file>] [IMPORTS_DEF <file>] [DEPENDS <targets or files>...] [NOIMPLIB])
-# builds guest/<name> with -Iguest/<name> and links it against the import libraries of IMPORTS. an x86 dll without
-# DEF takes its exports from gen/x86.
 function(mime_dll name arch)
     cmake_parse_arguments(PARSE_ARGV 2 arg "NOIMPLIB" "BASE;FILE;ENTRY;DEF;IMPORTS_DEF"
         "SOURCES;OBJECTS;OPTIONS;INCLUDES;IMPORTS;LIBS;FLAGS;DEPENDS")
@@ -81,7 +72,6 @@ function(mime_dll name arch)
             list(APPEND depends ${item})
         endif()
     endforeach()
-    # extra resources, like the command tables of mci drivers, live next to the sources.
     set(script)
     if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
         set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
@@ -119,7 +109,6 @@ function(mime_dll name arch)
     endif()
 endfunction()
 
-# the sources of guest/<name> for one processor, with the assembly of guest/<name>/<arch>.
 function(mime_sources out name arch)
     if(arch STREQUAL "x86")
         mime_glob(files guest/${name}/*.c guest/${name}/*.cpp guest/${name}/x86/*.c guest/${name}/x86/*.S)
@@ -138,7 +127,6 @@ set(MIME_SYSCALLS_x64 ${MIME_GEN}/ntdll_syscalls_x64.S)
 set(MIME_WIN32K_SYSCALLS_arm64 ${MIME_GEN}/win32u_syscalls.S)
 set(MIME_WIN32K_SYSCALLS_x64 ${MIME_GEN}/win32u_syscalls_x64.S)
 
-# the core dlls of each native processor.
 foreach(arch IN LISTS MIME_USER_ARCHS)
     mime_objects(${arch}-ntsyscalls ${arch} SOURCES ${MIME_SYSCALLS_${arch}})
     mime_objects(${arch}-win32ksyscalls ${arch} SOURCES ${MIME_WIN32K_SYSCALLS_${arch}})
@@ -160,8 +148,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     mime_dll(kernelbase ${arch} BASE 0x7FFB00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk
         OPTIONS -DMIME_BUILD_KERNELBASE IMPORTS ntdll)
 
-    # most kernel32 exports are thunks into kernelbase, not forwarders: programs that parse the export table
-    # expect code there.
     mime_objects(${arch}-kernel32-thunks ${arch} SOURCES ${MIME_GEN}/${arch}/kernel32_thunks.S)
     mime_sources(sources kernel32 ${arch})
     mime_dll(kernel32 ${arch} BASE 0x7FFA00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk ${arch}-kernel32-thunks
@@ -180,7 +166,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         IMPORTS ntdll kernel32 win32u gdi32 FLAGS /subsystem:windows,10.0)
 endforeach()
 
-# the x86 and x64 translator, mapped into emulated processes on arm64. it imports nothing.
 if(MIME_GUEST_ARCH STREQUAL "arm64")
     mime_glob(sources guest/xta64/*.c guest/xta64/*.S)
     mime_dll(xta64 arm64 BASE 0x7FFD00000000 ENTRY /noentry SOURCES ${sources}
@@ -188,7 +173,6 @@ if(MIME_GUEST_ARCH STREQUAL "arm64")
         FLAGS /export:RtlUserThreadStart=MxUserThreadStart NOIMPLIB)
 endif()
 
-# the other dlls, at the base addresses windows uses. they import the core dlls and whatever libs_<name> adds.
 set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF080000000 ws2_32:0x7FF6D0000000 iphlpapi:0x7FF6C0000000
     dnsapi:0x7FF6B0000000 ole32:0x7FF6A0000000 oleaut32:0x7FF690000000 rpcrt4:0x7FF680000000
     shell32:0x7FF670000000 shlwapi:0x7FF660000000 comdlg32:0x7FF650000000 comctl32:0x7FF640000000
@@ -220,7 +204,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet)
     set(libs_sfc_os ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
     set(objects_cabinet ${arch}-lib-cabinet)
-    # msxml3 and msxml6 share one dom engine.
     foreach(msxml msxml3 msxml6)
         set(objects_${msxml} ${arch}-lib-xmldom)
         set(includes_${msxml} guest/lib)
@@ -232,10 +215,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         ${MIME_LIB_${arch}}/version.lib)
     set(objects_winmm ${arch}-lib-audio)
     set(objects_dsound ${arch}-lib-audio)
-    # dinput8 and dinput share one engine.
     set(objects_dinput8 ${arch}-lib-dinput)
     set(objects_dinput ${arch}-lib-dinput)
-    # so do the xinput versions.
     foreach(xinput xinput1_4 xinput1_3 xinput1_2 xinput1_1)
         set(objects_${xinput} ${arch}-lib-xinput)
         set(libs_${xinput} ${MIME_LIB_${arch}}/setupapi.lib)
@@ -249,7 +230,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_windowscodecs ${MIME_LIB_${arch}}/ole32.lib)
     set(objects_dwrite ${arch}-lib-ttf)
     set(includes_dwrite guest/lib)
-    # advapi32 only takes the parts of the crypto library it needs.
     set(objects_bcrypt ${arch}-lib-crypto)
     set(objects_combase ${arch}-lib-crypto:guest/lib/crypto/hash.c)
     set(includes_combase guest/lib)
@@ -262,7 +242,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     foreach(crypto bcrypt crypt32 secur32 advapi32)
         set(includes_${crypto} guest/lib)
     endforeach()
-    # riched20 and msftedit share one engine, riched32 wraps riched20.
     set(objects_riched20 ${arch}-lib-richedit)
     set(objects_msftedit ${arch}-lib-richedit)
     set(includes_riched20 guest/lib)
@@ -272,9 +251,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_oleaut32 ${arch}-lib-jpeg)
     set(includes_oleaut32 guest/lib)
     set(libs_ole32 ${MIME_LIB_${arch}}/rpcrt4.lib)
-    # winhttp and wininet inflate gzip and deflate bodies with the png decoder's inflate.
     set(objects_winhttp ${arch}-lib-png:guest/lib/png/inflate.c)
-    # winspool deflates the pages of the PDF files it writes.
     set(objects_winspool ${arch}-lib-png:guest/lib/png/deflate.c ${arch}-lib-png:guest/lib/png/inflate.c)
     set(includes_winspool guest/lib)
     set(includes_winhttp guest/lib)
@@ -286,9 +263,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_urlmon ${MIME_LIB_${arch}}/wininet.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(objects_dxgi ${arch}-lib-privdata)
     set(objects_d3d11 ${arch}-lib-privdata ${arch}-lib-dxbc)
-    # d3d12 shares d3d11's format table and vulkan glue.
     set(objects_d3d12 ${arch}-lib-privdata ${arch}-lib-dxbc ${arch}-lib-dxil ${arch}-d3d11:guest/d3d11/format.c ${arch}-d3d11:guest/d3d11/vkprofile.c ${arch}-d3d11:guest/d3d11/gfxshare.c)
-    # d3dcompiler_47 needs the dxbc reader, not the compiler.
     set(objects_d3dcompiler_47 ${arch}-lib-dxbc:guest/lib/dxbc/container.c ${arch}-lib-dxbc:guest/lib/dxbc/reader.c)
     set(objects_d3d9 ${arch}-lib-privdata ${arch}-lib-dxbc:guest/lib/dxbc/container.c)
     set(objects_d3d10 ${arch}-lib-dxbc:guest/lib/dxbc/container.c)
@@ -338,7 +313,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     endforeach()
 endforeach()
 
-# services.exe, the service control manager, started at boot from the native System32.
 mime_glob(services_sources guest/services/*.c)
 set(services_arch ${MIME_GUEST_ARCH})
 mime_objects(${services_arch}-services ${services_arch} SOURCES ${services_sources} INCLUDES guest/services guest/lib)
@@ -349,7 +323,6 @@ mime_link(${MIME_OUT_${services_arch}}/services.exe ${services_arch}
     FLAGS /subsystem:console,10.0 /entry:entry /base:0x7FF6A8000000 /highentropyva /dynamicbase /stack:0x100000,0x4000
     RESOURCE services.exe ROM ${MIME_ROM_${services_arch}}/services.exe GROUPS guest)
 
-# svchost.exe hosts services that live in dlls, with a 32-bit one for 32-bit dlls.
 mime_glob(svchost_sources guest/svchost/*.c)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
@@ -366,7 +339,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     endif()
 endforeach()
 
-# msiexec.exe, with a 32-bit one that also runs the 32-bit custom actions of packages.
 mime_glob(msiexec_sources guest/msiexec/*.c)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
@@ -383,7 +355,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     endif()
 endforeach()
 
-# regsvr32.exe, native and 32-bit.
 mime_glob(regsvr32_sources guest/regsvr32/*.c)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
@@ -400,7 +371,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     endif()
 endforeach()
 
-# the acm codecs registered under Drivers32.
 set(MIME_ACM_CODECS msg711:0x7FF360000000 imaadp32:0x7FF350000000 msadp32:0x7FF340000000 msgsm32:0x7FF330000000
     l3codeca:0x7FF3F0000000)
 foreach(arch IN LISTS MIME_USER_ARCHS)
@@ -414,7 +384,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     endforeach()
 endforeach()
 
-# the mci drivers registered under [MCI32].
 set(MIME_MCI_DRIVERS mciwave:0x7FF280000000:winmm mciseq:0x7FF270000000:winmm
     mciqtz32:0x7FF260000000:winmm,msacm32 mcicda:0x7FF250000000:winmm)
 foreach(arch IN LISTS MIME_USER_ARCHS)
@@ -433,8 +402,6 @@ endforeach()
 mime_glob(MIME_MMDEVAPI_SOURCES guest/mmdevapi/*.c)
 mime_glob(MIME_OPENGL32_SOURCES guest/opengl32/*.c)
 
-# opengl on the host gpu. the native dll has no imports so the translator can also map it into x64 processes,
-# where an x64 opengl32.dll of stubs forwards to it, see mime/mx64.h.
 set(opengl32_options -Wno-ignored-attributes -DNTSYSCALLAPI= -DW32KAPI=)
 set(opengl32_includes guest/opengl32 third_party/khronos)
 if(MIME_GUEST_ARCH STREQUAL "arm64")
@@ -454,7 +421,6 @@ else()
 endif()
 
 if(MIME_GUEST_ARCH STREQUAL "x64")
-    # vulkan, forwarded over the wire to the host's driver.
     mime_glob(MIME_VULKAN_SOURCES guest/vulkan-1/*.c)
     set(MIME_VULKAN_GEN_SOURCES mvk_structs.c mvk_guest_commands.c mvk_guest_out.c mvk_guest_procs.c)
     list(TRANSFORM MIME_VULKAN_GEN_SOURCES PREPEND ${MIME_GEN}/vulkan/)
@@ -464,8 +430,6 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
         OBJECTS x64-chkstk OPTIONS ${MIME_VULKAN_OPTIONS} INCLUDES ${MIME_VULKAN_INCLUDES}
         IMPORTS ntdll kernel32 win32u user32 DEF ${MIME_GEN}/vulkan/mvk_exports.def)
 
-    # wow64 for 32-bit programs on x64. wow64.dll and wow64win.dll reuse the translator's conversions, wow64cpu.dll
-    # sits below 4 GiB so 32-bit code can jump back to it.
     mime_objects(x64-wow32 x64 SOURCES guest/xta64/wow32.c guest/xta64/wow32_query.c guest/xta64/wow32_win32k.c
         guest/xta64/wow32_callback.c
         OPTIONS -fno-math-errno INCLUDES guest/xta64)
