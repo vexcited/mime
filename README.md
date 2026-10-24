@@ -19,7 +19,7 @@ Windows programs use those DLLs and system calls to access files, create windows
 - The [guest kernel](guest/ntos/), manages processes, threads, memory, files and the registry. It loads `win32k.sys` to handle window management, input and GDI drawing. When it needs host services, such as file access, window display, networking, audio or GPU work, it makes hypercalls through Mime's [host interface](include/mime/abi.h).
 - The [Windows DLLs](guest/), implement the APIs programs expect, including `kernel32.dll`, `user32.dll` and `gdi32.dll`. They use `ntdll.dll` and `win32u.dll` to make system calls into the guest kernel when needed.
 
-The guest kernel runs on the host's processor architecture. On macOS, Mime's `mimex86.dll` translates x64 and x86 program code to run on ARM64. On x86_64 Linux, x64 code runs directly and 32-bit x86 code runs directly through Mime's WOW64 layer, which adapts its system calls to the 64-bit kernel.
+The guest kernel runs on the host's processor architecture. On macOS, Mime's `xta64.dll` translates x64 and x86 program code to run on ARM64. On x86_64 Linux, x64 code runs directly and 32-bit x86 code runs directly through Mime's WOW64 layer, which adapts its system calls to the 64-bit kernel.
 
 `mime setup` reads your Windows ISO to create the `C:` drive and import fonts, themes, icons and
 registry hives. Mime provides the kernel and system DLL implementations; the imported resources
