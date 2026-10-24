@@ -225,6 +225,28 @@ static void firmware(void)
     set_sz(sysinfo, L"SystemVersion", REG_SZ, L"1");
 }
 
+/*
+ * the display class key and the video key of the adapter, where its device key leads: the driver description and
+ * the identifiers a device reader of the class finds, the name and vendor of the reference gpu.
+ */
+static void display_adapter(void)
+{
+    static const WCHAR class_key[] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Class"
+                                    L"\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000";
+    static const WCHAR video_key[] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Video"
+                                    L"\\{b3f36b7e-6a4d-5a41-9e2c-4d8fa1c7e903}\\0000";
+    static const PCWSTR keys[] = {class_key, video_key};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(keys); i++) {
+        if (!CmpOpenPath(keys[i], TRUE))
+            continue;
+        set_sz(keys[i], L"DriverDesc", REG_SZ, L"Qualcomm(R) Adreno(TM) X1-85 GPU");
+        set_sz(keys[i], L"ProviderName", REG_SZ, L"Qualcomm");
+        set_sz(keys[i], L"MatchingDeviceId", REG_SZ, L"ACPI\\VEN_QCOM&DEV_0C36&SUBSYS_10280C69&REV_0086");
+        set_sz(keys[i], L"InfPath", REG_SZ, L"oem12.inf");
+        set_sz(keys[i], L"InfSection", REG_SZ, L"qcdx8380_DevDesc");
+    }
+}
+
 /* windows setup draws this guid at install time. */
 static void machine_guid(void)
 {
@@ -406,6 +428,7 @@ void CmpSpecialize(void)
     shell_state(sid);
     firmware();
     acpi_description();
+    display_adapter();
     machine_guid();
     time_zone();
     locale(sid);
