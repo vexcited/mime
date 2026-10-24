@@ -694,7 +694,7 @@ BOOL WINAPI GetNumaAvailableMemoryNode(UCHAR node, PULONGLONG bytes)
  */
 static UINT firmware_tables(ULONG action, DWORD provider, DWORD id, PVOID buffer, DWORD size, ULONG *ids)
 {
-    if (provider != 'RSMB' && provider != 'RSDT') {
+    if (provider != 'RSMB' && provider != 'RSDT' && provider != 'ACPI' && provider != 'FIRM') {
         KbSetError(ERROR_NOT_FOUND);
         return 0;
     }

@@ -340,9 +340,32 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
     NTSTATUS status = KiCopyFromUser(&header, info, header_size);
     if (!NT_SUCCESS(status))
         return status;
-    /* the acpi tables first: their headers are the same, their data is the table itself. */
-    if (header.ProviderSignature == 'RSDT')
+    /* the acpi tables first, under either of their provider names: their data is the table itself. */
+    if (header.ProviderSignature == 'ACPI' || header.ProviderSignature == 'RSDT')
         return query_acpi_tables(info, length, header_size, &header, returned);
+    /* the provider list itself. */
+    if (header.ProviderSignature == 'FIRM') {
+        static const ULONG providers[] = {'ACPI', 'RSMB'};
+        ULONG need = header_size + sizeof(providers);
+        if (header.Action != SystemFirmwareTable_Enumerate)
+            return STATUS_INVALID_PARAMETER;
+        if (header.TableBufferLength < sizeof(providers) || length < need) {
+            header.TableBufferLength = sizeof(providers);
+            NTSTATUS status = KiCopyToUser(info, &header, header_size);
+            if (NT_SUCCESS(status) && returned)
+                status = KiCopyToUser(returned, &need, sizeof(need));
+            return NT_SUCCESS(status) ? STATUS_BUFFER_TOO_SMALL : status;
+        }
+        header.TableBufferLength = sizeof(providers);
+        UCHAR *out = ExAllocatePool2(POOL_FLAG_NON_PAGED, need, KI_TAG('F', 'i', 'r', 'm'));
+        if (!out)
+            return STATUS_INSUFFICIENT_RESOURCES;
+        memcpy(out, &header, header_size);
+        memcpy(out + header_size, providers, sizeof(providers));
+        NTSTATUS status = copy_info(info, out, need, length, returned);
+        ExFreePool(out);
+        return status;
+    }
     if (header.ProviderSignature != 'RSMB')
         return STATUS_INVALID_PARAMETER;
 
@@ -894,6 +917,10 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     }
     case SystemFirmwareTableInformation:
         return query_firmware_tables(info, length, returned);
+    case SystemSecureBootInformation: {
+        UCHAR enabled = 1;
+        return copy_info(info, &enabled, sizeof(enabled), length, returned);
+    }
     case SystemHypervisorDetailInformation: {
         /*
          * the hypervisor leaves in windows' order: vendor and maximum, interface,

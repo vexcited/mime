@@ -2121,6 +2121,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemEmulationProcessorInformation = 63,
     SystemLogicalProcessorInformation = 73,
     SystemFirmwareTableInformation = 76,
+    SystemSecureBootInformation = 145,
     SystemProcessorFeaturesInformation = 154,
     SystemHypervisorDetailInformation = 185,
 } SYSTEM_INFORMATION_CLASS;
