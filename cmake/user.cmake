@@ -182,7 +182,7 @@ endforeach()
 
 # the x86 and x64 translator, mapped into emulated processes on arm64. it imports nothing.
 if(MIME_GUEST_ARCH STREQUAL "arm64")
-    mime_glob(sources guest/mimex86/*.c guest/mimex86/*.S)
+    mime_glob(sources guest/xta64/*.c guest/xta64/*.S)
     mime_dll(xta64 arm64 BASE 0x7FFD00000000 ENTRY /noentry SOURCES ${sources}
         OBJECTS arm64-ntsyscalls ${MIME_RUNTIME_arm64} OPTIONS -fno-math-errno
         FLAGS /export:RtlUserThreadStart=MxUserThreadStart NOIMPLIB)
@@ -466,17 +466,17 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
 
     # wow64 for 32-bit programs on x64. wow64.dll and wow64win.dll reuse the translator's conversions, wow64cpu.dll
     # sits below 4 GiB so 32-bit code can jump back to it.
-    mime_objects(x64-wow32 x64 SOURCES guest/mimex86/wow32.c guest/mimex86/wow32_query.c guest/mimex86/wow32_win32k.c
-        guest/mimex86/wow32_callback.c
-        OPTIONS -fno-math-errno INCLUDES guest/mimex86)
+    mime_objects(x64-wow32 x64 SOURCES guest/xta64/wow32.c guest/xta64/wow32_query.c guest/xta64/wow32_win32k.c
+        guest/xta64/wow32_callback.c
+        OPTIONS -fno-math-errno INCLUDES guest/xta64)
     mime_sources(sources wow64 x64)
     mime_dll(wow64 x64 BASE 0x7FF420000000 SOURCES ${sources}
-        OBJECTS x64-chkstk x64-wow32:guest/mimex86/wow32.c x64-wow32:guest/mimex86/wow32_query.c
-        INCLUDES guest/mimex86 IMPORTS ntdll)
+        OBJECTS x64-chkstk x64-wow32:guest/xta64/wow32.c x64-wow32:guest/xta64/wow32_query.c
+        INCLUDES guest/xta64 IMPORTS ntdll)
     mime_sources(sources wow64win x64)
     mime_dll(wow64win x64 BASE 0x7FF410000000 SOURCES ${sources}
-        OBJECTS x64-chkstk x64-wow32:guest/mimex86/wow32_win32k.c x64-wow32:guest/mimex86/wow32_callback.c
-        INCLUDES guest/mimex86 IMPORTS ntdll wow64)
+        OBJECTS x64-chkstk x64-wow32:guest/xta64/wow32_win32k.c x64-wow32:guest/xta64/wow32_callback.c
+        INCLUDES guest/xta64 IMPORTS ntdll wow64)
     mime_sources(sources wow64cpu x64)
     mime_dll(wow64cpu x64 BASE 0x78000000 SOURCES ${sources} OBJECTS x64-chkstk IMPORTS ntdll wow64)
 endif()
