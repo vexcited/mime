@@ -111,7 +111,12 @@ typedef struct CM_NOTIFY CM_NOTIFY;
 typedef struct CM_KEY_BODY {
     CM_NODE *Node;
     CM_NOTIFY *Notify;
+    UCHAR RegistryView;
+    BOOLEAN PhysicalView;
 } CM_KEY_BODY;
+
+NTSTATUS CmpMapRegistryView(CM_KEY_BODY *root, ULONG view, PWCHAR path, ULONG *length, ULONG capacity,
+                            CM_NODE **start, BOOLEAN *physical, BOOLEAN *container);
 
 /* change notifications are answered once the lock is released, so release it with this. */
 extern volatile LONG CmpNotifyReady;

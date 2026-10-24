@@ -59,6 +59,7 @@ typedef struct PROVIDER {
     DWORD Flags;
     ULONG Name;      /* index in g_providers. */
     ULONG Algorithm; /* the next PP_ENUMALGS entry. */
+    PWSTR Prompt;
     CHAR Container[MAX_PATH];
 } PROVIDER;
 
@@ -67,9 +68,11 @@ typedef struct KEY {
     PROVIDER *Provider;
     DWORD Algorithm;
     DWORD Size;
+    BOOL Exportable;
     /* symmetric key state kept between encrypt calls: mode, chaining value, stream. */
     DWORD Mode;
     BOOL Started;
+    BYTE InitialIv[16];
     BYTE Iv[16];
     MimeRc4 Rc4;
     BYTE Blob[];
@@ -216,6 +219,7 @@ ADVAPI BOOL WINAPI CryptReleaseContext(HCRYPTPROV handle, DWORD flags)
     }
     if (InterlockedDecrement(&p->References) == 0) {
         p->Magic = 0;
+        AdvFree(p->Prompt);
         AdvFree(p);
     }
     return TRUE;
@@ -261,11 +265,14 @@ ADVAPI BOOL WINAPI CryptImportKey(HCRYPTPROV handle, const BYTE *data, DWORD siz
         AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
         return FALSE;
     }
+    memset(k, 0, sizeof(*k));
     k->Magic = KEY_MAGIC;
     k->Provider = p;
     k->Algorithm = h->aiKeyAlg;
     k->Size = size;
+    k->Exportable = (flags & 1) != 0;
     memcpy(k->Blob, data, size);
+    InterlockedIncrement(&p->References);
     *result = (HCRYPTKEY)k;
     return TRUE;
 }
@@ -279,6 +286,7 @@ ADVAPI BOOL WINAPI CryptDestroyKey(HCRYPTKEY handle)
     }
     k->Magic = 0;
     SecureZeroMemory(k->Blob, k->Size);
+    CryptReleaseContext((HCRYPTPROV)k->Provider, 0);
     AdvFree(k);
     return TRUE;
 }
@@ -420,6 +428,79 @@ static BOOL return_param(const void *value, DWORD size, BYTE *data, DWORD *lengt
     memcpy(data, value, size);
     *length = size;
     return TRUE;
+}
+
+ADVAPI BOOL WINAPI CryptGetDefaultProviderW(DWORD type, DWORD *reserved, DWORD flags, PWSTR name, DWORD *size)
+{
+    if (!type || type > 999 || reserved || !size) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (flags > 2) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    WCHAR path[96], value[256];
+    _snwprintf(path, RTL_NUMBER_OF(path), L"SOFTWARE\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type %03u", type);
+    DWORD bytes = sizeof(value);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, path, L"Name", RRF_RT_REG_SZ, nullptr, value, &bytes)) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return return_param(value, bytes, (BYTE *)name, size);
+}
+
+ADVAPI BOOL WINAPI CryptGetDefaultProviderA(DWORD type, DWORD *reserved, DWORD flags, PSTR name, DWORD *size)
+{
+    if (!size) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    WCHAR wide[256];
+    DWORD bytes = sizeof(wide);
+    if (!CryptGetDefaultProviderW(type, reserved, flags, wide, &bytes))
+        return FALSE;
+    CHAR ansi[768];
+    int count = WideCharToMultiByte(CP_ACP, 0, wide, -1, ansi, sizeof(ansi), nullptr, nullptr);
+    return count && return_param(ansi, count, (BYTE *)name, size);
+}
+
+static HWND g_provider_window;
+
+ADVAPI BOOL WINAPI CryptSetProvParam(HCRYPTPROV handle, DWORD param, const BYTE *data, DWORD flags)
+{
+    if (param == 1) {
+        if (!data) {
+            AdvSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        memcpy(&g_provider_window, data, sizeof(g_provider_window));
+        return TRUE;
+    }
+    PROVIDER *p = provider(handle);
+    if (!p)
+        return FALSE;
+    if (flags) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    if (param == 21) {
+        PWSTR prompt = nullptr;
+        if (data) {
+            SIZE_T size = (wcslen((PCWSTR)data) + 1) * sizeof(WCHAR);
+            prompt = AdvAlloc(size);
+            if (!prompt) {
+                AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+                return FALSE;
+            }
+            memcpy(prompt, data, size);
+        }
+        AdvFree(p->Prompt);
+        p->Prompt = prompt;
+        return TRUE;
+    }
+    AdvSetError(NTE_BAD_TYPE);
+    return FALSE;
 }
 
 ADVAPI BOOL WINAPI CryptGetHashParam(HCRYPTHASH handle, DWORD param, BYTE *data, DWORD *length, DWORD flags)
@@ -672,6 +753,10 @@ ADVAPI BOOL WINAPI CryptExportKey(HCRYPTKEY handle, HCRYPTKEY wrap, DWORD type, 
         return FALSE;
     }
     const BLOBHEADER *h = (const BLOBHEADER *)k->Blob;
+    if ((type == PRIVATEKEYBLOB || type == PLAINTEXTKEYBLOB) && !k->Exportable) {
+        AdvSetError(NTE_BAD_KEY_STATE);
+        return FALSE;
+    }
     if (type == h->bType)
         return return_param(k->Blob, k->Size, data, length);
     if (type == PUBLICKEYBLOB && h->bType == PRIVATEKEYBLOB &&
@@ -761,6 +846,228 @@ static BOOL block_cipher(const KEY *k, const MimeCipher **cipher, BLOCK_KEY *con
     return TRUE;
 }
 
+static DWORD key_bits(const KEY *key)
+{
+    DWORD bytes;
+    if (symmetric_bytes(key, &bytes))
+        return bytes * 8;
+    if ((key->Algorithm == CALG_RSA_SIGN || key->Algorithm == CALG_RSA_KEYX) && key->Size >= sizeof(BLOBHEADER) + 12)
+        return *(const DWORD *)(key->Blob + sizeof(BLOBHEADER) + 4);
+    return 0;
+}
+
+static DWORD key_block_size(const KEY *key)
+{
+    switch (key->Algorithm) {
+    case CALG_DES:
+    case CALG_3DES:
+    case CALG_3DES_112:
+    case CALG_RC2:
+        return 8;
+    case CALG_AES_128:
+    case CALG_AES_192:
+    case CALG_AES_256:
+        return 16;
+    default:
+        return 0;
+    }
+}
+
+ADVAPI BOOL WINAPI CryptGetKeyParam(HCRYPTKEY handle, DWORD param, BYTE *data, DWORD *length, DWORD flags)
+{
+    KEY *key = key_object(handle);
+    if (!key)
+        return FALSE;
+    if (!length || flags) {
+        AdvSetError(flags ? NTE_BAD_FLAGS : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD value, block = key_block_size(key);
+    switch (param) {
+    case 1:
+        return return_param(key->InitialIv, block, data, length);
+    case 3:
+        value = block != 0;
+        break;
+    case 4:
+        value = key->Mode ? key->Mode : CRYPT_MODE_CBC;
+        break;
+    case 7:
+        value = key->Algorithm;
+        break;
+    case 8:
+        value = block * 8;
+        if (key->Algorithm == CALG_RSA_SIGN || key->Algorithm == CALG_RSA_KEYX)
+            value = key_bits(key);
+        break;
+    case 9:
+        value = key_bits(key);
+        break;
+    default:
+        AdvSetError(NTE_BAD_TYPE);
+        return FALSE;
+    }
+    return return_param(&value, sizeof(value), data, length);
+}
+
+ADVAPI BOOL WINAPI CryptSetKeyParam(HCRYPTKEY handle, DWORD param, const BYTE *data, DWORD flags)
+{
+    KEY *key = key_object(handle);
+    if (!key)
+        return FALSE;
+    if (flags || !data) {
+        AdvSetError(flags ? NTE_BAD_FLAGS : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD block = key_block_size(key), value;
+    if (param == 1) {
+        memcpy(key->InitialIv, data, block);
+        return TRUE;
+    }
+    memcpy(&value, data, sizeof(value));
+    if (param == 4) {
+        if (!block) {
+            AdvSetError(NTE_BAD_KEY);
+            return FALSE;
+        }
+        if (value < 1 || value > 4) {
+            AdvSetError(NTE_BAD_DATA);
+            return FALSE;
+        }
+        if (value > CRYPT_MODE_ECB) {
+            AdvSetError(ERROR_NOT_SUPPORTED);
+            return FALSE;
+        }
+        key->Mode = value;
+        return TRUE;
+    }
+    if (param == 3) {
+        if (value == 1)
+            return TRUE;
+        AdvSetError(NTE_BAD_DATA);
+        return FALSE;
+    }
+    AdvSetError(NTE_BAD_TYPE);
+    return FALSE;
+}
+
+static void bn_little_endian(const MimeBn *number, BYTE *bytes, DWORD size)
+{
+    mime_bn_to_bytes(number, bytes, size);
+    for (DWORD i = 0; i < size / 2; i++) {
+        BYTE saved = bytes[i];
+        bytes[i] = bytes[size - 1 - i];
+        bytes[size - 1 - i] = saved;
+    }
+}
+
+ADVAPI BOOL WINAPI CryptGenKey(HCRYPTPROV handle, DWORD algorithm, DWORD flags, HCRYPTKEY *result)
+{
+    PROVIDER *p = provider(handle);
+    if (!p)
+        return FALSE;
+    if (!result) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *result = 0;
+    if (flags & 0x1fe8) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    /* persistent containers, user protection and salted generation are not implemented. */
+    if (flags & 0xfffe) {
+        AdvSetError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+    if (algorithm == AT_KEYEXCHANGE)
+        algorithm = CALG_RSA_KEYX;
+    if (algorithm == AT_SIGNATURE)
+        algorithm = CALG_RSA_SIGN;
+    DWORD bits = flags >> 16, bytes;
+    BOOL rsa_key = algorithm == CALG_RSA_KEYX || algorithm == CALG_RSA_SIGN;
+    switch (algorithm) {
+    case CALG_RSA_KEYX:
+    case CALG_RSA_SIGN:
+        bits = bits ? bits : 1024;
+        if (bits < 512 || bits > 16384 || bits % 16) {
+            AdvSetError(NTE_BAD_FLAGS);
+            return FALSE;
+        }
+        bytes = bits / 8;
+        break;
+    case CALG_DES: bytes = 8; break;
+    case CALG_3DES: bytes = 24; break;
+    case CALG_3DES_112: bytes = 16; break;
+    case CALG_AES_128: bytes = 16; break;
+    case CALG_AES_192: bytes = 24; break;
+    case CALG_AES_256: bytes = 32; break;
+    case CALG_RC4:
+        bits = bits ? bits : 128;
+        if (bits < 40 || bits > 128 || bits % 8) {
+            AdvSetError(NTE_BAD_FLAGS);
+            return FALSE;
+        }
+        bytes = bits / 8;
+        break;
+    default:
+        AdvSetError(NTE_BAD_ALGID);
+        return FALSE;
+    }
+    if (!rsa_key && bits && bits != bytes * 8) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    DWORD size = sizeof(BLOBHEADER) + (rsa_key ? 12 + bytes * 9 / 2 : 4 + bytes);
+    BYTE *blob = AdvAlloc(size);
+    if (!blob) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    memset(blob, 0, size);
+    BLOBHEADER *header = (BLOBHEADER *)blob;
+    header->bType = rsa_key ? PRIVATEKEYBLOB : PLAINTEXTKEYBLOB;
+    header->bVersion = 2;
+    header->aiKeyAlg = algorithm;
+    BOOL ok = FALSE;
+    if (rsa_key) {
+        MimeRsa *rsa = mime_rsa_new();
+        int status = rsa ? mime_rsa_generate(rsa, bits) : MIME_CRYPTO_ERR_NOMEM;
+        if (!status) {
+            DWORD *rsa_header = (DWORD *)(blob + sizeof(*header));
+            rsa_header[0] = 0x32415352;
+            rsa_header[1] = bits;
+            rsa_header[2] = 65537;
+            BYTE *part = blob + sizeof(*header) + 12;
+            const MimeBn *numbers[] = {&rsa->n, &rsa->p, &rsa->q, &rsa->dp, &rsa->dq, &rsa->qinv, &rsa->d};
+            for (ULONG i = 0; i < RTL_NUMBER_OF(numbers); i++) {
+                DWORD length = i == 0 || i == 6 ? bytes : bytes / 2;
+                bn_little_endian(numbers[i], part, length);
+                part += length;
+            }
+            ok = TRUE;
+        } else {
+            AdvSetError(status == MIME_CRYPTO_ERR_NOMEM ? ERROR_NOT_ENOUGH_MEMORY : NTE_BAD_DATA);
+        }
+        if (rsa)
+            mime_rsa_free(rsa);
+    } else {
+        *(DWORD *)(blob + sizeof(*header)) = bytes;
+        BYTE *material = blob + sizeof(*header) + 4;
+        ok = AdvGenRandom(material, bytes);
+        if (ok && (algorithm == CALG_DES || algorithm == CALG_3DES || algorithm == CALG_3DES_112))
+            for (DWORD i = 0; i < bytes; i++) {
+                BYTE value = material[i] & 0xfe;
+                material[i] = value | (BYTE)(1 ^ (__builtin_popcount(value) & 1));
+            }
+    }
+    if (ok)
+        ok = CryptImportKey(handle, blob, size, 0, flags & 1, result);
+    SecureZeroMemory(blob, size);
+    AdvFree(blob);
+    return ok;
+}
+
 /*
  * encrypts or decrypts in place like the provider symmetric keys: a block cipher in the key's mode, chained from a zero
  * IV by default, with last block padding, or a stream cipher whose state carries to the next call. a final call pads a
@@ -800,6 +1107,7 @@ static BOOL symmetric(HCRYPTKEY handle, BOOL final, BYTE *data, DWORD *length, D
     }
     if (!k->Started) {
         k->Started = TRUE;
+        memcpy(k->Iv, k->InitialIv, sizeof(k->Iv));
         if (!k->Mode)
             k->Mode = CRYPT_MODE_CBC;
     }
@@ -847,7 +1155,6 @@ static BOOL symmetric(HCRYPTKEY handle, BOOL final, BYTE *data, DWORD *length, D
     }
     if (final) {
         k->Started = FALSE;
-        memset(k->Iv, 0, sizeof(k->Iv));
     }
     return TRUE;
 }
@@ -972,6 +1279,8 @@ ADVAPI BOOL WINAPI CryptDeriveKey(HCRYPTPROV handle, DWORD algorithm, HCRYPTHASH
     k->Provider = p;
     k->Algorithm = algorithm;
     k->Size = size;
+    k->Exportable = (flags & 1) != 0;
+    InterlockedIncrement(&p->References);
     *result = (HCRYPTKEY)k;
     return TRUE;
 }

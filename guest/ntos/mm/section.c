@@ -1142,6 +1142,19 @@ NTSTATUS NTAPI MimeMmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *secti
     return STATUS_SUCCESS;
 }
 
+NTSTATUS NTAPI MimeMmMapWritableSection(PVOID object, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *size)
+{
+    PSECTION section = object;
+    if (section->Flags & SEC_IMAGE)
+        return STATUS_INVALID_PARAMETER;
+    if (!(section->Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)))
+        return STATUS_SECTION_PROTECTION;
+    if (offset & 0xffff)
+        return STATUS_INVALID_PARAMETER;
+    ULONG protect = section->Protect & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY) ? PAGE_WRITECOPY : PAGE_READWRITE;
+    return MiMapViewOfSection(section, process, base, offset, size, protect, 0);
+}
+
 NTSTATUS NTAPI MmMapSharedSectionUser(PVOID section, PEPROCESS process, PVOID *user_base, BOOLEAN writable)
 {
     SIZE_T size = 0;

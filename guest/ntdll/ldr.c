@@ -8,6 +8,7 @@
 #define LDRP_DONT_CALL_FOR_THREADS 0x00040000
 #define LDRP_LOAD_IN_PROGRESS 0x00001000
 #define LDRP_STATIC_LINK 0x00000002
+#define LDRP_COR_IMAGE 0x00400000
 #define LDRP_COR_ILONLY 0x01000000
 
 typedef struct LDR_COR_HEADER {
@@ -30,7 +31,13 @@ RTL_CRITICAL_SECTION LdrpLoaderLock = RTL_CRITICAL_SECTION_INIT;
 PVOID LdrpKernel32ThreadInitThunk;
 
 static PEB_LDR_DATA g_ldr;
+typedef struct FORWARD_DEPENDENCY {
+    struct FORWARD_DEPENDENCY *Next;
+    PLDR_DATA_TABLE_ENTRY Source, Target;
+} FORWARD_DEPENDENCY;
+static FORWARD_DEPENDENCY *g_forward_dependencies;
 static BOOLEAN g_process_initialized;
+static int(NTAPI *g_cor_exe_main)(void);
 
 /* like windows, a 32-bit program on x64 has the 64-bit side load only wow64.dll, then every thread runs
    Wow64LdrpInitialize, which never returns. */
@@ -108,17 +115,37 @@ PVOID LdrpImageDirectory(PVOID base, USHORT index, PULONG size)
     return (PUCHAR)base + dir->VirtualAddress;
 }
 
-static BOOLEAN is_il_only(PVOID base)
+static const LDR_COR_HEADER *cor_header(PVOID base)
 {
     ULONG size = 0;
     const LDR_COR_HEADER *cor = LdrpImageDirectory(base, COR_DIRECTORY, &size);
-    if (!cor || size < sizeof(*cor) || cor->Size < sizeof(*cor) || cor->Size > size ||
-        (cor->Flags & (COR_ILONLY | COR_NATIVE_ENTRYPOINT)) != COR_ILONLY)
-        return FALSE;
+    if (!cor || size < sizeof(*cor) || cor->Size < sizeof(*cor) || cor->Size > size)
+        return nullptr;
     PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
     ULONG image_size = nt->OptionalHeader.SizeOfImage;
-    return cor->Metadata.VirtualAddress && cor->Metadata.Size >= 16 && cor->Metadata.VirtualAddress < image_size &&
-        cor->Metadata.Size <= image_size - cor->Metadata.VirtualAddress;
+    if (!cor->Metadata.VirtualAddress || cor->Metadata.Size < 16 || cor->Metadata.VirtualAddress >= image_size ||
+        cor->Metadata.Size > image_size - cor->Metadata.VirtualAddress)
+        return nullptr;
+    return cor;
+}
+
+static BOOLEAN has_cor_directory(PVOID base)
+{
+    PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
+    const IMAGE_OPTIONAL_HEADER32 *pe32 = (void *)&nt->OptionalHeader;
+    const IMAGE_OPTIONAL_HEADER64 *pe64 = (void *)&nt->OptionalHeader;
+    BOOLEAN narrow = pe32->Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC;
+    ULONG count = narrow ? pe32->NumberOfRvaAndSizes : pe64->NumberOfRvaAndSizes;
+    if (count <= COR_DIRECTORY)
+        return FALSE;
+    const IMAGE_DATA_DIRECTORY *dir = narrow ? &pe32->DataDirectory[COR_DIRECTORY] : &pe64->DataDirectory[COR_DIRECTORY];
+    return dir->VirtualAddress || dir->Size;
+}
+
+static BOOLEAN is_il_only(PVOID base)
+{
+    const LDR_COR_HEADER *cor = cor_header(base);
+    return cor && (cor->Flags & (COR_ILONLY | COR_NATIVE_ENTRYPOINT)) == COR_ILONLY;
 }
 
 static BOOLEAN is_portable_il(PVOID base)
@@ -184,6 +211,8 @@ static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
     e->ReferenceCount = 1;
     if (nt->FileHeader.Characteristics & IMAGE_FILE_DLL)
         e->Flags |= LDRP_IMAGE_DLL;
+    if (has_cor_directory(base))
+        e->Flags |= LDRP_COR_IMAGE;
     if (is_il_only(base)) {
         e->Flags |= LDRP_COR_ILONLY;
         e->EntryPoint = nullptr;
@@ -199,6 +228,16 @@ static void release_tls(PLDR_DATA_TABLE_ENTRY e);
 
 static void destroy_entry(PLDR_DATA_TABLE_ENTRY e)
 {
+    FORWARD_DEPENDENCY **link = &g_forward_dependencies;
+    while (*link) {
+        FORWARD_DEPENDENCY *dependency = *link;
+        if (dependency->Source == e || dependency->Target == e) {
+            *link = dependency->Next;
+            heap_free(dependency);
+        } else {
+            link = &dependency->Next;
+        }
+    }
     release_tls(e);
     RtlReleaseActivationContext(e->EntryPointActivationContext);
     RemoveEntryList(&e->InLoadOrderLinks);
@@ -619,7 +658,7 @@ static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_
 static NTSTATUS resolve_export(PLDR_DATA_TABLE_ENTRY module, PCSTR name, USHORT hint, ULONG ordinal, PVOID *address,
                                LOAD_CONTEXT *ctx, ULONG depth);
 
-static NTSTATUS resolve_forwarder(PCSTR forward, PVOID *address, LOAD_CONTEXT *ctx, ULONG depth)
+static NTSTATUS resolve_forwarder(PLDR_DATA_TABLE_ENTRY source, PCSTR forward, PVOID *address, LOAD_CONTEXT *ctx, ULONG depth)
 {
     PCSTR dot = strrchr(forward, '.');
     if (!dot || dot == forward || depth > 16)
@@ -637,6 +676,20 @@ static NTSTATUS resolve_forwarder(PCSTR forward, PVOID *address, LOAD_CONTEXT *c
     NTSTATUS status = load_dll(dll, ctx, &target);
     if (!NT_SUCCESS(status))
         return status;
+    if (source != target) {
+        FORWARD_DEPENDENCY *dependency = g_forward_dependencies;
+        while (dependency && (dependency->Source != source || dependency->Target != target))
+            dependency = dependency->Next;
+        if (!dependency) {
+            dependency = heap_alloc(sizeof(*dependency));
+            if (!dependency)
+                return STATUS_NO_MEMORY;
+            dependency->Source = source;
+            dependency->Target = target;
+            dependency->Next = g_forward_dependencies;
+            g_forward_dependencies = dependency;
+        }
+    }
     if (dot[1] == '#') {
         ULONG ordinal = 0;
         for (PCSTR p = dot + 2; *p >= '0' && *p <= '9'; p++)
@@ -686,7 +739,7 @@ static NTSTATUS resolve_export(PLDR_DATA_TABLE_ENTRY module, PCSTR name, USHORT 
         return name ? STATUS_ENTRYPOINT_NOT_FOUND : STATUS_ORDINAL_NOT_FOUND;
     PUCHAR target = base + functions[index];
     if (target >= (PUCHAR)exp && target < (PUCHAR)exp + dir_size)
-        return resolve_forwarder((PCSTR)target, address, ctx, depth);
+        return resolve_forwarder(module, (PCSTR)target, address, ctx, depth);
     *address = target;
     return STATUS_SUCCESS;
 }
@@ -902,22 +955,17 @@ static BOOLEAN call_entry(PLDR_DATA_TABLE_ENTRY e, ULONG reason, PVOID reserved)
     return ok;
 }
 
-/* PROCESS_ATTACH for every uninitialized module, dependencies first. */
+static NTSTATUS init_module(PLDR_DATA_TABLE_ENTRY e, PVOID reserved);
+
+/* process attach for every uninitialized module, dependencies first. */
 static NTSTATUS run_initializers(PVOID reserved)
 {
     for (PLIST_ENTRY l = g_ldr.InInitializationOrderModuleList.Flink; l != &g_ldr.InInitializationOrderModuleList;
          l = l->Flink) {
         PLDR_DATA_TABLE_ENTRY e = CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InInitializationOrderLinks);
-        if (e->Flags & (LDRP_PROCESS_ATTACH_CALLED | LDRP_ENTRY_PROCESSED))
-            continue;
-        e->Flags |= LDRP_ENTRY_PROCESSED;
-        if (!(e->Flags & LDRP_IMAGE_DLL))
-            continue;
-        if (!call_entry(e, DLL_PROCESS_ATTACH, reserved)) {
-            DbgPrint("ntdll: initialization of %wZ failed\n", &e->BaseDllName);
-            return STATUS_DLL_INIT_FAILED;
-        }
-        e->Flags |= LDRP_PROCESS_ATTACH_CALLED;
+        NTSTATUS status = init_module(e, reserved);
+        if (!NT_SUCCESS(status))
+            return status;
     }
     return STATUS_SUCCESS;
 }
@@ -928,6 +976,18 @@ static NTSTATUS init_module(PLDR_DATA_TABLE_ENTRY e, PVOID reserved)
     if (e->Flags & (LDRP_PROCESS_ATTACH_CALLED | LDRP_ENTRY_PROCESSED))
         return STATUS_SUCCESS;
     e->Flags |= LDRP_ENTRY_PROCESSED;
+    /* forwarded exports need their implementation initialized before callers attach. */
+    for (;;) {
+        FORWARD_DEPENDENCY *dependency = g_forward_dependencies;
+        while (dependency && (dependency->Source != e ||
+               (dependency->Target->Flags & (LDRP_PROCESS_ATTACH_CALLED | LDRP_ENTRY_PROCESSED))))
+            dependency = dependency->Next;
+        if (!dependency)
+            break;
+        NTSTATUS status = init_module(dependency->Target, reserved);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
     ULONG size;
     IMAGE_IMPORT_DESCRIPTOR *desc = (e->Flags & LDRP_COR_ILONLY) ? nullptr :
                                     LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_IMPORT, &size);
@@ -1055,6 +1115,56 @@ static void fatal(PCSTR what, NTSTATUS status)
     NtTerminateProcess(NtCurrentProcess(), status);
 }
 
+static NTSTATUS initialize_cor(PLDR_DATA_TABLE_ENTRY exe, LOAD_CONTEXT *ctx)
+{
+    if (!cor_header(exe->DllBase))
+        return STATUS_INVALID_IMAGE_FORMAT;
+    WCHAR path[MAX_PATH];
+    SIZE_T length;
+    RtlAcquirePebLock();
+    BOOLEAN override = RtlQueryEnvironmentVariable(nullptr, L"COMPLUS_InstallRoot", 19, nullptr, 0, &length) ==
+                           STATUS_BUFFER_TOO_SMALL &&
+                       RtlQueryEnvironmentVariable(nullptr, L"COMPLUS_Version", 15, nullptr, 0, &length) ==
+                           STATUS_BUFFER_TOO_SMALL;
+    RtlReleasePebLock();
+    path[0] = 0;
+    if (!override)
+        wcscpy(path, g_system32);
+    wcscat(path, L"mscoree.dll");
+    PLDR_DATA_TABLE_ENTRY runtime;
+    NTSTATUS status = load_dll(path, ctx, &runtime);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint("ntdll: %wZ requires the CLR runtime loader %ws (%08x)\n", &exe->BaseDllName, path, status);
+        return status;
+    }
+    PVOID entry;
+    status = resolve_export(runtime, "_CorExeMain", 0, 0, &entry, ctx, 0);
+    if (!NT_SUCCESS(status)) {
+        report_missing(exe, "mscoree.dll", "_CorExeMain", 0, status);
+        return status;
+    }
+    if ((exe->Flags & LDRP_COR_ILONLY) && LdrpImageDirectory(exe->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, nullptr))
+        return STATUS_INVALID_IMAGE_FORMAT;
+    g_cor_exe_main = (int(NTAPI *)(void))entry;
+    return STATUS_SUCCESS;
+}
+
+static ULONG NTAPI start_managed_process(PVOID parameter)
+{
+    RtlExitUserProcess((NTSTATUS)g_cor_exe_main());
+}
+
+static void set_process_start(PCONTEXT context, PVOID entry)
+{
+#if defined(__i386__)
+    ((PULONG)(ULONG_PTR)context->Esp)[1] = (ULONG)(ULONG_PTR)entry;
+#elif defined(__x86_64__)
+    context->Rcx = (ULONG64)entry;
+#else
+    context->X0 = (ULONG64)entry;
+#endif
+}
+
 #if defined(__x86_64__) && defined(MIME_X64_NATIVE)
 static void load_wow64(LOAD_CONTEXT *ctx)
 {
@@ -1135,6 +1245,11 @@ static void initialize_process(PCONTEXT context)
     status = LdrpSxsInitializeProcess(peb->ImageBaseAddress, peb->ProcessParameters->ImagePathName.Buffer);
     if (!NT_SUCCESS(status))
         fatal("the program's side by side configuration is incorrect", status);
+    if (exe->Flags & LDRP_COR_IMAGE) {
+        status = initialize_cor(exe, &ctx);
+        if (!NT_SUCCESS(status))
+            fatal("cannot initialize the CLR for the program", status);
+    }
     /* every win32 process gets kernel32, imported or not. */
     if (peb->ImageSubsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI || peb->ImageSubsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI) {
         PLDR_DATA_TABLE_ENTRY k32;
@@ -1158,6 +1273,8 @@ static void initialize_process(PCONTEXT context)
         fatal("dll initialization failed", status);
     exe->Flags |= LDRP_ENTRY_PROCESSED;
     call_tls_callbacks(exe, DLL_PROCESS_ATTACH);
+    if (g_cor_exe_main)
+        set_process_start(context, start_managed_process);
     RtlLeaveCriticalSection(&LdrpLoaderLock);
 }
 

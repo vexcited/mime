@@ -29,6 +29,17 @@
 #define TLS_MINIMUM_AVAILABLE 64
 #define TLS_EXPANSION_SLOTS 1024
 
+typedef struct _RTL_BITMAP {
+    ULONG SizeOfBitMap;
+    PULONG Buffer;
+} RTL_BITMAP, *PRTL_BITMAP;
+
+NTSYSAPI void NTAPI RtlInitializeBitMap(PRTL_BITMAP bitmap, PULONG buffer, ULONG size);
+NTSYSAPI void NTAPI RtlSetBits(PRTL_BITMAP bitmap, ULONG start, ULONG count);
+NTSYSAPI void NTAPI RtlClearBits(PRTL_BITMAP bitmap, ULONG start, ULONG count);
+NTSYSAPI ULONG NTAPI RtlFindClearBitsAndSet(PRTL_BITMAP bitmap, ULONG count, ULONG hint);
+NTSYSAPI ULONG NTAPI DbgPrompt(PCSTR prompt, PSTR response, ULONG capacity);
+
 typedef BOOLEAN(NTAPI *PDLL_INIT_ROUTINE)(PVOID base, ULONG reason, PCONTEXT context);
 typedef void(NTAPI *PIMAGE_TLS_CALLBACK)(PVOID base, ULONG reason, PVOID reserved);
 typedef LONG(NTAPI *PVECTORED_EXCEPTION_HANDLER)(PEXCEPTION_POINTERS info);
@@ -205,7 +216,8 @@ NTSYSAPI ULONG NTAPI RtlGetLastWin32Error(void);
 NTSYSAPI void NTAPI RtlSetLastWin32Error(ULONG error);
 NTSYSAPI void NTAPI RtlRestoreLastWin32Error(ULONG error);
 NTSYSAPI void NTAPI RtlSetLastWin32ErrorAndNtStatusFromNtStatus(NTSTATUS status);
-NTSYSAPI ULONG vDbgPrintEx(ULONG component, ULONG level, PCSTR format, va_list ap);
+NTSYSAPI ULONG NTAPI vDbgPrintEx(ULONG component, ULONG level, PCSTR format, va_list ap);
+NTSYSAPI ULONG NTAPI vDbgPrintExWithPrefix(PCSTR prefix, ULONG component, ULONG level, PCSTR format, va_list ap);
 NTSYSAPI ULONG DbgPrintEx(ULONG component, ULONG level, PCSTR format, ...);
 NTSYSAPI ULONG DbgPrint(PCSTR format, ...);
 NTSYSAPI void NTAPI DbgBreakPoint(void);

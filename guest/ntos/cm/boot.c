@@ -158,6 +158,16 @@ static void volatile_environment(PCWSTR computer, PCWSTR user, PCWSTR sid)
     set_sz(sub, L"SESSIONNAME", REG_SZ, L"Console");
 }
 
+/* the notification area has a per-user settings key even before it has saved any icons. */
+static void shell_state(PCWSTR sid)
+{
+    WCHAR path[256];
+    _snwprintf(path, RTL_NUMBER_OF(path),
+               L"\\REGISTRY\\USER\\%ls\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows"
+               L"\\CurrentVersion\\TrayNotify", sid);
+    open_key(path);
+}
+
 /* HARDWARE\DESCRIPTION, rebuilt by the kernel at every boot. */
 static void hardware(void)
 {
@@ -356,6 +366,7 @@ void CmpSpecialize(void)
     version_data(user);
     identity(computer, user, sid);
     volatile_environment(computer, user, sid);
+    shell_state(sid);
     firmware();
     machine_guid();
     time_zone();

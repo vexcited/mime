@@ -96,14 +96,29 @@ static void output_utf8(const char *text, SIZE_T length)
     }
 }
 
-NTDLL_EXPORT ULONG vDbgPrintEx(ULONG component, ULONG level, PCSTR format, va_list ap)
+NTDLL_EXPORT ULONG NTAPI vDbgPrintExWithPrefix(PCSTR prefix, ULONG component, ULONG level, PCSTR format,
+                                             va_list ap)
 {
-    char buf[1024];
-    int n = _vsnprintf(buf, sizeof(buf), format, ap);
-    if (n < 0 || n >= (int)sizeof(buf))
-        n = (int)strlen(buf);
-    output_utf8(buf, (SIZE_T)n);
+    char buf[512];
+    SIZE_T prefix_length = strnlen(prefix, sizeof(buf) - 1);
+    memcpy(buf, prefix, prefix_length);
+    SIZE_T available = sizeof(buf) - prefix_length;
+    int n = mime_vformat(buf + prefix_length, available, format, ap);
+    SIZE_T length = prefix_length;
+    if (n < 0 || (SIZE_T)n >= available) {
+        length = sizeof(buf) - 1;
+        buf[length - 1] = '\n';
+        buf[length] = 0;
+    } else {
+        length += (SIZE_T)n;
+    }
+    output_utf8(buf, length);
     return STATUS_SUCCESS;
+}
+
+NTDLL_EXPORT ULONG NTAPI vDbgPrintEx(ULONG component, ULONG level, PCSTR format, va_list ap)
+{
+    return vDbgPrintExWithPrefix("", component, level, format, ap);
 }
 
 NTDLL_EXPORT ULONG DbgPrintEx(ULONG component, ULONG level, PCSTR format, ...)

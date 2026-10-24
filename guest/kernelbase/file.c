@@ -785,27 +785,45 @@ DWORD WINAPI GetFileType(HANDLE file)
     }
 }
 
-/* the kernel has no byte range locks yet: locking always succeeds. */
 BOOL WINAPI LockFile(HANDLE file, DWORD offset_low, DWORD offset_high, DWORD length_low, DWORD length_high)
 {
-    return TRUE;
+    LARGE_INTEGER offset = {.LowPart = offset_low, .HighPart = (LONG)offset_high};
+    LARGE_INTEGER length = {.LowPart = length_low, .HighPart = (LONG)length_high};
+    IO_STATUS_BLOCK io;
+    NTSTATUS status = NtLockFile(file, nullptr, nullptr, nullptr, &io, &offset, &length, 0, TRUE, TRUE);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
 BOOL WINAPI LockFileEx(HANDLE file, DWORD flags, DWORD reserved, DWORD length_low, DWORD length_high,
                        LPOVERLAPPED overlapped)
 {
-    if (reserved || !overlapped) {
+    if (reserved || !overlapped || (flags & ~(LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY))) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    overlapped->Internal = STATUS_SUCCESS;
+    LARGE_INTEGER offset = {.LowPart = overlapped->Offset, .HighPart = (LONG)overlapped->OffsetHigh};
+    LARGE_INTEGER length = {.LowPart = length_low, .HighPart = (LONG)length_high};
+    overlapped->Internal = STATUS_PENDING;
     overlapped->InternalHigh = 0;
-    return TRUE;
+    NTSTATUS status = NtLockFile(file, overlapped_event(overlapped), nullptr, overlapped_port_context(overlapped),
+                                 (PIO_STATUS_BLOCK)overlapped, &offset, &length, 0,
+                                 (flags & LOCKFILE_FAIL_IMMEDIATELY) != 0, (flags & LOCKFILE_EXCLUSIVE_LOCK) != 0);
+    if (status == STATUS_PENDING) {
+        KbSetError(ERROR_IO_PENDING);
+        return FALSE;
+    }
+    if (!NT_SUCCESS(status))
+        overlapped->Internal = status;
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
 BOOL WINAPI UnlockFile(HANDLE file, DWORD offset_low, DWORD offset_high, DWORD length_low, DWORD length_high)
 {
-    return TRUE;
+    LARGE_INTEGER offset = {.LowPart = offset_low, .HighPart = (LONG)offset_high};
+    LARGE_INTEGER length = {.LowPart = length_low, .HighPart = (LONG)length_high};
+    IO_STATUS_BLOCK io;
+    NTSTATUS status = NtUnlockFile(file, &io, &offset, &length, 0);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
 BOOL WINAPI UnlockFileEx(HANDLE file, DWORD reserved, DWORD length_low, DWORD length_high, LPOVERLAPPED overlapped)
@@ -814,7 +832,7 @@ BOOL WINAPI UnlockFileEx(HANDLE file, DWORD reserved, DWORD length_low, DWORD le
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    return TRUE;
+    return UnlockFile(file, overlapped->Offset, overlapped->OffsetHigh, length_low, length_high);
 }
 
 /* ------------------------------------------------------------------ attributes and information */

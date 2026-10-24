@@ -6,6 +6,9 @@ EXPORTS
     RoFailFastWithErrorContext@4
     RoGetActivationFactory@12
     RoGetApartmentIdentifier@4
+    RoGetParameterizedTypeInstanceIID@20
+    RoFreeParameterizedTypeExtra@4
+    RoParameterizedTypeExtraGetTypeSignature@4
     RoInitialize@4
     RoOriginateError@8
     RoOriginateErrorW@12

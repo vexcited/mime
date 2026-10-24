@@ -1,5 +1,6 @@
 LIBRARY gdi32.dll
 EXPORTS
+    DrawEscape@16
     AbortDoc@4
     AbortPath@4
     AddFontMemResourceEx@16

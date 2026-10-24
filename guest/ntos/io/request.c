@@ -121,6 +121,8 @@ NTSTATUS IopPendUserRequest(IO_USER_REQUEST *r)
         /* the thread is ending: its requests on the file are cancelled, which completes this one. */
         if (IopIsPad(r->File))
             PadCancel(r->File, r->Thread, nullptr);
+        else if (IopIsMimeFs(r->File))
+            FsLocksCancel(r->File, r->Thread, r->Iosb);
         KeWaitForSingleObject(&r->Done, Executive, KernelMode, FALSE, nullptr);
     }
     NTSTATUS status = r->Status;

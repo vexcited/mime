@@ -32,55 +32,66 @@ static PHANDLE_TABLE table_for(HANDLE handle, KPROCESSOR_MODE mode, PEPROCESS *o
 
 NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle)
 {
-    if (OBJECT_TO_HEADER(object)->Type->Init.ImplyAccess)
-        access = OBJECT_TO_HEADER(object)->Type->Init.ImplyAccess(access);
+    OBJECT_HEADER *header = OBJECT_TO_HEADER(object);
+    if (header->Type->Init.ImplyAccess)
+        access = header->Type->Init.ImplyAccess(access);
     PHANDLE_TABLE table = &process->HandleTable;
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
-    ULONG index = table->FirstFree;
-    while (index < table->Capacity && table->Entries[index].Object)
-        index++;
-    if (index >= table->Capacity) {
-        ULONG new_capacity = table->Capacity * 2;
-        if (new_capacity > (1u << 24)) {
+    PHANDLE_TABLE_ENTRY prepared = nullptr;
+    ULONG prepared_capacity = 0;
+    for (;;) {
+        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+        if (!table->Entries || !table->Capacity) {
             KeReleaseSpinLock(&table->Lock, irql);
-            return STATUS_INSUFFICIENT_RESOURCES;
+            if (prepared)
+                ExFreePool(prepared);
+            return STATUS_PROCESS_IS_TERMINATING;
         }
+        ULONG index = table->FirstFree;
+        while (index < table->Capacity && table->Entries[index].Object)
+            index++;
+        PHANDLE_TABLE_ENTRY old = nullptr;
+        if (index >= table->Capacity) {
+            if (prepared_capacity > table->Capacity) {
+                memcpy(prepared, table->Entries, table->Capacity * sizeof(HANDLE_TABLE_ENTRY));
+                old = table->Entries;
+                index = table->Capacity;
+                table->Entries = prepared;
+                table->Capacity = prepared_capacity;
+                prepared = nullptr;
+            } else {
+                ULONG capacity = table->Capacity;
+                KeReleaseSpinLock(&table->Lock, irql);
+                if (prepared)
+                    ExFreePool(prepared);
+                if (capacity >= (1u << 24))
+                    return STATUS_INSUFFICIENT_RESOURCES;
+                prepared_capacity = capacity * 2;
+                prepared = ExAllocatePool2(POOL_FLAG_NON_PAGED,
+                                           prepared_capacity * sizeof(HANDLE_TABLE_ENTRY), KI_TAG('O', 'b', 'H', 't'));
+                if (!prepared)
+                    return STATUS_INSUFFICIENT_RESOURCES;
+                continue;
+            }
+        }
+        /* publish the handle counts before another thread can close the new entry. */
+        __atomic_add_fetch(&header->HandleCount, 1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&header->Type->TotalHandles, 1, __ATOMIC_RELAXED);
+        table->Entries[index].Object = object;
+        table->Entries[index].GrantedAccess = access;
+        table->Entries[index].Attributes = attributes & OBJ_INHERIT;
+        table->Count++;
+        table->FirstFree = index + 1;
         KeReleaseSpinLock(&table->Lock, irql);
-        PHANDLE_TABLE_ENTRY entries = ExAllocatePool2(POOL_FLAG_NON_PAGED, new_capacity * sizeof(HANDLE_TABLE_ENTRY),
-                                                      KI_TAG('O', 'b', 'H', 't'));
-        if (!entries)
-            return STATUS_INSUFFICIENT_RESOURCES;
-        irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
-        if (table->Capacity < new_capacity) {
-            memcpy(entries, table->Entries, table->Capacity * sizeof(HANDLE_TABLE_ENTRY));
-            PHANDLE_TABLE_ENTRY old = table->Entries;
-            index = table->Capacity;
-            table->Entries = entries;
-            table->Capacity = new_capacity;
-            KeReleaseSpinLock(&table->Lock, irql);
+        if (old)
             ExFreePool(old);
-            irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
-        } else {
-            KeReleaseSpinLock(&table->Lock, irql);
-            ExFreePool(entries);
-            return ObCreateHandle(process, object, access, attributes, handle);
-        }
+        if (prepared)
+            ExFreePool(prepared);
+        HANDLE value = INDEX_TO_HANDLE(index);
+        if (process == PsInitialSystemProcess && (attributes & OBJ_KERNEL_HANDLE))
+            value = (HANDLE)((ULONG_PTR)value | KERNEL_HANDLE_BIT);
+        *handle = value;
+        return STATUS_SUCCESS;
     }
-    table->Entries[index].Object = object;
-    table->Entries[index].GrantedAccess = access;
-    table->Entries[index].Attributes = attributes & OBJ_INHERIT;
-    table->Count++;
-    table->FirstFree = index + 1;
-    KeReleaseSpinLock(&table->Lock, irql);
-
-    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
-    __atomic_add_fetch(&h->HandleCount, 1, __ATOMIC_RELAXED);
-    __atomic_add_fetch(&h->Type->TotalHandles, 1, __ATOMIC_RELAXED);
-    HANDLE value = INDEX_TO_HANDLE(index);
-    if (process == PsInitialSystemProcess && (attributes & OBJ_KERNEL_HANDLE))
-        value = (HANDLE)((ULONG_PTR)value | KERNEL_HANDLE_BIT);
-    *handle = value;
-    return STATUS_SUCCESS;
 }
 
 static BOOLEAN handle_listed(const HANDLE *list, ULONG count, ULONG_PTR index)
@@ -372,6 +383,16 @@ NTSTATUS NTAPI ObReferenceObjectByHandle(HANDLE handle, ACCESS_MASK access, POBJ
     return ObReferenceHandle(handle, type, mode, object, nullptr);
 }
 
+static void close_object_handle(PEPROCESS process, PVOID object)
+{
+    OBJECT_HEADER *header = OBJECT_TO_HEADER(object);
+    LONG_PTR remaining = __atomic_sub_fetch(&header->HandleCount, 1, __ATOMIC_ACQ_REL);
+    __atomic_sub_fetch(&header->Type->TotalHandles, 1, __ATOMIC_RELAXED);
+    if (header->Type->Init.CloseProcedure)
+        header->Type->Init.CloseProcedure(process, object, (ULONG)remaining + 1);
+    ObDereferenceObject(object);
+}
+
 static NTSTATUS close_in_table(PEPROCESS process, PHANDLE_TABLE table, ULONG_PTR index)
 {
     KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
@@ -386,13 +407,7 @@ static NTSTATUS close_in_table(PEPROCESS process, PHANDLE_TABLE table, ULONG_PTR
         table->FirstFree = (ULONG)index;
     KeReleaseSpinLock(&table->Lock, irql);
 
-    OBJECT_HEADER *h = OBJECT_TO_HEADER(obj);
-    LONG_PTR remaining = __atomic_sub_fetch(&h->HandleCount, 1, __ATOMIC_ACQ_REL);
-    __atomic_sub_fetch(&h->Type->TotalHandles, 1, __ATOMIC_RELAXED);
-    if (h->Type->Init.CloseProcedure)
-        h->Type->Init.CloseProcedure(process, obj, (ULONG)remaining + 1);
-    /* unnamed temporary objects leave the namespace with their last handle. */
-    ObDereferenceObject(obj);
+    close_object_handle(process, obj);
     return STATUS_SUCCESS;
 }
 
@@ -468,14 +483,19 @@ NTSTATUS NTAPI ZwClose(HANDLE handle)
 void ObKillProcessHandles(PEPROCESS process)
 {
     PHANDLE_TABLE table = &process->HandleTable;
-    for (ULONG i = 0; i < table->Capacity; i++) {
-        if (table->Entries && table->Entries[i].Object)
-            close_in_table(process, table, i);
-    }
-    if (table->Entries)
-        ExFreePool(table->Entries);
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    PHANDLE_TABLE_ENTRY entries = table->Entries;
+    ULONG capacity = table->Capacity;
     table->Entries = nullptr;
     table->Capacity = 0;
+    table->Count = 0;
+    table->FirstFree = 0;
+    KeReleaseSpinLock(&table->Lock, irql);
+    for (ULONG i = 0; i < capacity; i++)
+        if (entries[i].Object)
+            close_object_handle(process, entries[i].Object);
+    if (entries)
+        ExFreePool(entries);
 }
 
 NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,

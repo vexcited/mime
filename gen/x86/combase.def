@@ -6,6 +6,9 @@ EXPORTS
     RoFailFastWithErrorContext=_RoFailFastWithErrorContext@4
     RoGetActivationFactory=_RoGetActivationFactory@12
     RoGetApartmentIdentifier=_RoGetApartmentIdentifier@4
+    RoGetParameterizedTypeInstanceIID=_RoGetParameterizedTypeInstanceIID@20
+    RoFreeParameterizedTypeExtra=_RoFreeParameterizedTypeExtra@4
+    RoParameterizedTypeExtraGetTypeSignature=_RoParameterizedTypeExtraGetTypeSignature@4
     RoInitialize=_RoInitialize@4
     RoOriginateError=_RoOriginateError@8
     RoOriginateErrorW=_RoOriginateErrorW@12

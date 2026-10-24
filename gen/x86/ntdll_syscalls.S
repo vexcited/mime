@@ -1210,3 +1210,17 @@ _NtAdjustPrivilegesToken@24:
     movl %esp, %edx
     int $0x2e
     retl $24
+    .p2align 4, 0x90
+    .globl _NtLockFile@40
+_NtLockFile@40:
+    movl $0x114, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $40
+    .p2align 4, 0x90
+    .globl _NtUnlockFile@20
+_NtUnlockFile@20:
+    movl $0x1dd, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $20

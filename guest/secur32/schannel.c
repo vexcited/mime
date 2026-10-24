@@ -45,6 +45,21 @@ static SecBuffer *find_buffer(PSecBufferDesc desc, ULONG type)
     return nullptr;
 }
 
+static SecBuffer *output_token(PSecBufferDesc desc, ULONG flags)
+{
+    SecBuffer *token = nullptr;
+    if (!desc || !desc->pBuffers)
+        return nullptr;
+    for (ULONG i = 0; i < desc->cBuffers; ++i) {
+        SecBuffer *buffer = &desc->pBuffers[i];
+        ULONG type = buffer->BufferType & ~SECBUFFER_ATTRMASK;
+        if (type == SECBUFFER_TOKEN ||
+            (!token && type == SECBUFFER_EMPTY && (flags & ISC_REQ_ALLOCATE_MEMORY)))
+            token = buffer;
+    }
+    return token;
+}
+
 /*
  * a SEC_APPLICATION_PROTOCOLS buffer: ProtocolListsSize, then lists of a 32-bit extension, a 16-bit size and the
  * names in wire form.
@@ -92,8 +107,10 @@ static SECURITY_STATUS read_alpn(PSecBufferDesc input, BYTE *out, SIZE_T capacit
 static SECURITY_STATUS emit(TLS *t, PSecBufferDesc output, ULONG flags)
 {
     TLS_BUF *out = TlsOutput(t);
-    SecBuffer *token = find_buffer(output, SECBUFFER_TOKEN);
+    SecBuffer *token = output_token(output, flags);
     SECURITY_STATUS status = SEC_E_OK;
+    if (token)
+        token->BufferType = SECBUFFER_TOKEN;
     if (out->Failed) {
         status = SEC_E_INSUFFICIENT_MEMORY;
     } else if (!token) {
@@ -181,7 +198,7 @@ SECURITY_STATUS SchInitialize(PCredHandle credential, PCtxtHandle context, PCWST
             return status;
         }
         if (!SecNewSchannelContext(package, t, new_context)) {
-            SecBuffer *token = find_buffer(output, SECBUFFER_TOKEN);
+            SecBuffer *token = output_token(output, flags);
             if (token && (flags & ISC_REQ_ALLOCATE_MEMORY)) {
                 LocalFree(token->pvBuffer);
                 token->pvBuffer = nullptr;

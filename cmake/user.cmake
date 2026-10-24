@@ -167,6 +167,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     mime_dll(kernel32 ${arch} BASE 0x7FFA00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk ${arch}-kernel32-thunks
         OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS ntdll kernelbase DEF ${MIME_GEN}/${arch}/kernel32.def)
 
+    mime_dll(mscoree ${arch} BASE 0x7FF7B0000000 SOURCES guest/mscoree/main.c OBJECTS ${arch}-chkstk
+        IMPORTS ntdll kernel32 DEF ${MIME_GEN}/${arch}/mscoree.def)
+
     mime_sources(sources gdi32 ${arch})
     mime_dll(gdi32 ${arch} BASE 0x7FF800000000 SOURCES ${sources} OBJECTS ${arch}-chkstk
         OPTIONS -DMIME_BUILD_GDI32 IMPORTS ntdll kernel32 win32u)
@@ -248,6 +251,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_dwrite guest/lib)
     # advapi32 only takes the parts of the crypto library it needs.
     set(objects_bcrypt ${arch}-lib-crypto)
+    set(objects_combase ${arch}-lib-crypto:guest/lib/crypto/hash.c)
+    set(includes_combase guest/lib)
     set(objects_crypt32 ${arch}-lib-crypto ${arch}-lib-compound)
     set(objects_secur32 ${arch}-lib-crypto)
     set(objects_advapi32 ${arch}-lib-crypto:guest/lib/crypto/hash.c ${arch}-lib-crypto:guest/lib/crypto/stream.c

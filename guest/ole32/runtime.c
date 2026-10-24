@@ -1,20 +1,6 @@
 /* unsupported marshaling paths fail before exposing an unusable interface. */
 #include "orpc.h"
 
-WINOLEAPI HRESULT WINAPI CoGetContextToken(ULONG_PTR *token)
-{
-    if (!token) return E_POINTER;
-    *token = 0;
-    HRESULT hr = OleCheckApartment();
-    return FAILED(hr) ? hr : E_NOTIMPL;
-}
-WINOLEAPI HRESULT WINAPI CoGetObjectContext(REFIID iid, void **result)
-{
-    if (!result) return E_POINTER;
-    *result = nullptr;
-    HRESULT hr = OleCheckApartment();
-    return FAILED(hr) ? hr : E_NOINTERFACE;
-}
 WINOLEAPI HRESULT WINAPI CoRegisterInitializeSpy(IUnknown *spy, ULARGE_INTEGER *cookie)
 {
     if (!cookie || !spy) return E_INVALIDARG;

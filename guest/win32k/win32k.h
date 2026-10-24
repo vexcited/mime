@@ -164,6 +164,10 @@ typedef struct SURFACE {
     DWORD Masks[3]; /* 16 and 32 bpp bitfields. */
     PVOID UserBits;  /* user mode address of a DIB section. */
     SIZE_T UserSize;
+    PEPROCESS UserOwner;
+    PVOID UserViewBase;
+    HANDLE UserSection;
+    DWORD UserSectionOffset;
     BITMAPINFOHEADER Info; /* as created, for GetObject. */
     RECT Dirty;      /* device surfaces: area changed since the last present. */
     struct WND *Window;

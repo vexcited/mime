@@ -112,9 +112,21 @@ void SurfaceDestroy(SURFACE *s)
         else
             W32Free(s->Bits);
     } else if ((s->Flags & SURF_USER_BITS) && s->UserBits && !(s->Flags & SURF_FOREIGN)) {
-        PVOID base = s->UserBits;
-        SIZE_T size = 0;
-        ZwFreeVirtualMemory(NtCurrentProcess(), &base, &size, MEM_RELEASE);
+        PKPROCESS state = nullptr;
+        BOOLEAN attached = s->UserOwner && s->UserOwner != PsGetCurrentProcess();
+        if (attached)
+            KeStackAttachProcess((PRKPROCESS)s->UserOwner, &state);
+        if (s->UserViewBase) {
+            ZwUnmapViewOfSection(NtCurrentProcess(), s->UserViewBase);
+        } else {
+            PVOID base = s->UserBits;
+            SIZE_T size = 0;
+            ZwFreeVirtualMemory(NtCurrentProcess(), &base, &size, MEM_RELEASE);
+        }
+        if (attached)
+            KeUnstackDetachProcess(&state);
+        if (s->UserOwner)
+            ObDereferenceObject(s->UserOwner);
     }
     W32Free(s);
 }
@@ -396,20 +408,40 @@ HBITMAP NTAPI NtGdiCreateCompatibleBitmap(HDC hdc, int width, int height)
 HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const BITMAPINFO *user_info, UINT usage,
                                      UINT header_size, ULONG flags, ULONG_PTR color_space, PVOID *bits_out)
 {
+    PVOID user = nullptr, view_base = nullptr;
+    if (bits_out && !NT_SUCCESS(MimeCopyToUser(bits_out, &user, sizeof(user))))
+        return nullptr;
     DIB_DESC d;
     BITMAPINFO *info = capture_info(user_info, usage, &d, FALSE);
-    if (!info)
-        return nullptr;
-    if (section) {
-        /* file mapping backed dib sections are not supported yet. */
-        W32Free(info);
+    if (!info) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
     SIZE_T size = (SIZE_T)d.Stride * (SIZE_T)d.Height;
-    PVOID user = nullptr;
-    SIZE_T alloc = size;
-    if (!NT_SUCCESS(ZwAllocateVirtualMemory(NtCurrentProcess(), &user, 0, &alloc, MEM_RESERVE | MEM_COMMIT,
-                                            PAGE_READWRITE))) {
+    NTSTATUS status = STATUS_SUCCESS;
+    if (section) {
+        PVOID object = nullptr;
+        ACCESS_MASK access = 0;
+        status = offset & 3 ? STATUS_INVALID_PARAMETER :
+            ObReferenceHandle(section, *MmSectionObjectType, KeGetPreviousMode(), &object, &access);
+        if (NT_SUCCESS(status)) {
+            if ((access & (SECTION_MAP_READ | SECTION_MAP_WRITE)) != (SECTION_MAP_READ | SECTION_MAP_WRITE)) {
+                status = STATUS_ACCESS_DENIED;
+            } else {
+                SIZE_T view_size = size + (offset & 0xffff);
+                status = MimeMmMapWritableSection(object, PsGetCurrentProcess(), &view_base,
+                                                   offset & ~0xffffull, &view_size);
+                if (NT_SUCCESS(status))
+                    user = (PUCHAR)view_base + (offset & 0xffff);
+            }
+            ObDereferenceObject(object);
+        }
+    } else {
+        SIZE_T alloc = size;
+        status = ZwAllocateVirtualMemory(NtCurrentProcess(), &user, 0, &alloc, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    }
+    if (!NT_SUCCESS(status)) {
+        W32SetLastError(section ? ERROR_INVALID_PARAMETER : ERROR_NOT_ENOUGH_MEMORY);
         W32Free(info);
         return nullptr;
     }
@@ -423,6 +455,9 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
         s->Flags = SURF_USER_BITS | (d.TopDown ? SURF_TOPDOWN : 0);
         s->UserBits = user;
         s->UserSize = size;
+        s->UserViewBase = view_base;
+        s->UserSection = section;
+        s->UserSectionOffset = section ? offset : 0;
         s->Stride = d.TopDown ? d.Stride : -d.Stride;
         s->Bits = d.TopDown ? (PUCHAR)user : (PUCHAR)user + (SIZE_T)(d.Height - 1) * (SIZE_T)d.Stride;
         default_masks(s);
@@ -434,16 +469,24 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
         } else if (d.Compression == BI_BITFIELDS) {
             memcpy(s->Masks, info->bmiColors, sizeof(s->Masks));
         }
-        if (GdiCreateHandle(&s->Header, GDI_TYPE_BITMAP))
+        if (GdiCreateHandle(&s->Header, GDI_TYPE_BITMAP)) {
             h = (HBITMAP)s->Header.Handle;
-        else
-            W32Free(s), s = nullptr;
+            s->UserOwner = PsGetCurrentProcess();
+            ObReferenceObject(s->UserOwner);
+        } else {
+            W32Free(s);
+        }
     }
     UserLeave();
     W32Free(info);
     if (!h) {
-        SIZE_T zero = 0;
-        ZwFreeVirtualMemory(NtCurrentProcess(), &user, &zero, MEM_RELEASE);
+        if (view_base) {
+            ZwUnmapViewOfSection(NtCurrentProcess(), view_base);
+        } else {
+            SIZE_T zero = 0;
+            ZwFreeVirtualMemory(NtCurrentProcess(), &user, &zero, MEM_RELEASE);
+        }
+        W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
         return nullptr;
     }
     if (bits_out && !NT_SUCCESS(MimeCopyToUser(bits_out, &user, sizeof(user)))) {

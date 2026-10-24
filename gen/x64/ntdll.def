@@ -1445,6 +1445,7 @@ EXPORTS
     towlower
     towupper
     vDbgPrintEx
+    vDbgPrintExWithPrefix
     wcscat
     wcschr
     wcscmp
@@ -1454,3 +1455,8 @@ EXPORTS
     wcsnlen
     wcsrchr
     wcsstr
+    DbgPrompt
+    RtlClearBits
+    RtlFindClearBitsAndSet
+    RtlInitializeBitMap
+    RtlSetBits

@@ -625,3 +625,12 @@ EXPORTS
     TraceMessage
     TraceMessageVa@24
     UnregisterTraceGuids@8
+    CryptGenKey@16
+    CryptGetDefaultProviderA@20
+    CryptGetDefaultProviderW@20
+    CryptGetKeyParam@20
+    CryptSetKeyParam@16
+    CryptSetProvParam@16
+    SaferCreateLevel@20
+    SaferCloseLevel@4
+    SaferComputeTokenFromLevel@20

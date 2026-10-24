@@ -139,10 +139,10 @@ LSTATUS WINAPI RegOpenKeyExW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM acc
 {
     if (!result)
         return ERROR_INVALID_PARAMETER;
-    if (options & ~(DWORD)REG_OPTION_OPEN_LINK)
+    if ((options & ~(DWORD)REG_OPTION_OPEN_LINK) || (access & KEY_WOW64_RES) == KEY_WOW64_RES)
         return ERROR_INVALID_PARAMETER;
     *result = nullptr;
-    if ((!subkey || !*subkey) && is_predefined(key)) {
+    if ((!subkey || !*subkey) && is_predefined(key) && !(access & KEY_WOW64_RES)) {
         HANDLE h;
         LONG error = resolve_key(key, &h);
         if (!error)
@@ -159,8 +159,8 @@ LSTATUS WINAPI RegOpenKeyExW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM acc
     InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE | ((options & REG_OPTION_OPEN_LINK) ? OBJ_OPENLINK : 0),
                                root, nullptr);
     HANDLE h;
-    NTSTATUS status = NtOpenKey(&h, clean_access(access), &oa);
-    if (!NT_SUCCESS(status) && !us.Length) {
+    NTSTATUS status = NtOpenKey(&h, access, &oa);
+    if (!NT_SUCCESS(status) && !us.Length && !(access & KEY_WOW64_RES)) {
         /* an empty name reopens the key itself. */
         status = NtDuplicateObject(NtCurrentProcess(), root, NtCurrentProcess(), &h, clean_access(access), 0, 0);
     }
@@ -245,7 +245,7 @@ static NTSTATUS create_key_path(PHANDLE key, ACCESS_MASK access, POBJECT_ATTRIBU
     parent_attributes.ObjectName = &parent;
     parent_attributes.Attributes &= ~OBJ_OPENLINK;
     HANDLE parent_key;
-    status = create_key_path(&parent_key, KEY_CREATE_SUB_KEY, &parent_attributes, nullptr,
+    status = create_key_path(&parent_key, KEY_CREATE_SUB_KEY | (access & KEY_WOW64_RES), &parent_attributes, nullptr,
                               options & ~(ULONG)REG_OPTION_CREATE_LINK, nullptr);
     if (!NT_SUCCESS(status))
         return status;
@@ -265,7 +265,7 @@ static NTSTATUS create_key_path(PHANDLE key, ACCESS_MASK access, POBJECT_ATTRIBU
 LSTATUS WINAPI RegCreateKeyExW(HKEY key, LPCWSTR subkey, DWORD reserved, LPWSTR klass, DWORD options, REGSAM access,
                                const SECURITY_ATTRIBUTES *sa, HKEY *result, LPDWORD disposition)
 {
-    if (!result || !subkey || reserved)
+    if (!result || !subkey || reserved || (access & KEY_WOW64_RES) == KEY_WOW64_RES)
         return ERROR_INVALID_PARAMETER;
     if (options & ~(DWORD)(REG_OPTION_VOLATILE | REG_OPTION_CREATE_LINK | REG_OPTION_BACKUP_RESTORE |
                            REG_OPTION_OPEN_LINK))
@@ -285,7 +285,7 @@ LSTATUS WINAPI RegCreateKeyExW(HKEY key, LPCWSTR subkey, DWORD reserved, LPWSTR 
         RtlInitUnicodeString(&class_name, klass);
     HANDLE h;
     ULONG disp = 0;
-    NTSTATUS status = create_key_path(&h, clean_access(access), &oa, klass ? &class_name : nullptr,
+    NTSTATUS status = create_key_path(&h, access, &oa, klass ? &class_name : nullptr,
                                        options & ~(DWORD)REG_OPTION_OPEN_LINK, &disp);
     if (!NT_SUCCESS(status))
         return to_error(status);
@@ -343,12 +343,10 @@ LSTATUS WINAPI RegCloseKey(HKEY key)
 
 LSTATUS WINAPI RegOpenCurrentUser(REGSAM access, HKEY *result)
 {
-    if (!result)
+    if (!result || (access & KEY_WOW64_RES) == KEY_WOW64_RES)
         return ERROR_INVALID_PARAMETER;
-    HANDLE h;
-    LONG error = open_path(g_predefined_paths[1], clean_access(access), &h);
-    *result = error ? HKEY_CURRENT_USER : (HKEY)h;
-    return ERROR_SUCCESS;
+    *result = nullptr;
+    return to_error(RtlOpenCurrentUser(access, (PHANDLE)result));
 }
 
 LSTATUS WINAPI RegOverridePredefKey(HKEY key, HKEY new_key)
@@ -560,14 +558,18 @@ LSTATUS WINAPI RegGetValueW(HKEY key, LPCWSTR subkey, LPCWSTR value, DWORD flags
                             LPDWORD size)
 {
     /* an expandable value is expanded and reported as a string, so a request for expandable ones alone finds none. */
-    if ((data && !size) || !(flags & RRF_RT_ANY))
+    DWORD view_flags = flags & (RRF_SUBKEY_WOW6432KEY | RRF_SUBKEY_WOW6464KEY);
+    if ((data && !size) || !(flags & RRF_RT_ANY) ||
+        view_flags == (RRF_SUBKEY_WOW6432KEY | RRF_SUBKEY_WOW6464KEY))
         return ERROR_INVALID_PARAMETER;
     DWORD capacity = data ? *size : 0;
     if (data && (flags & RRF_ZEROONFAILURE))
         memset(data, 0, capacity);
     HKEY opened = nullptr;
     if (subkey && *subkey) {
-        LONG error = RegOpenKeyExW(key, subkey, 0, KEY_QUERY_VALUE, &opened);
+        REGSAM view = view_flags == RRF_SUBKEY_WOW6432KEY ? KEY_WOW64_32KEY :
+                      view_flags == RRF_SUBKEY_WOW6464KEY ? KEY_WOW64_64KEY : 0;
+        LONG error = RegOpenKeyExW(key, subkey, 0, KEY_QUERY_VALUE | view, &opened);
         if (error)
             return error;
         key = opened;

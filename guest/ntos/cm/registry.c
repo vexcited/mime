@@ -27,6 +27,9 @@ typedef struct CM_PARSE_CONTEXT {
     BOOLEAN Checked;
     BOOLEAN ByHandle;        /* the walk starts at a handle's key, opened for HandleAccess */
     ACCESS_MASK HandleAccess;
+    UCHAR RegistryView;
+    BOOLEAN SelectView;
+    BOOLEAN ViewContainer;
 } CM_PARSE_CONTEXT;
 
 #define KEY_CREATE_SUB_KEY_ 0x0004
@@ -505,8 +508,12 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
         if (!NT_SUCCESS(status))
             return status;
         CM_NODE *child = CmpFindChild(node, path + begin, chars);
+        BOOLEAN view_container = create && create->ViewContainer &&
+                                 compare_names(path + begin, chars, L"Wow6432Node", 11) == 0;
+        if (view_container)
+            create->ViewContainer = FALSE;
         if (!child) {
-            if (!create || !create->Create || (!last && !create->Kernel))
+            if (!create || !create->Create || (!last && !create->Kernel && !view_container))
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             ULONG flags = 0;
             if ((create->Options & REG_OPTION_VOLATILE) ||
@@ -616,6 +623,8 @@ static NTSTATUS new_body(CM_NODE *node, PVOID *out)
     if (NT_SUCCESS(status)) {
         body->Node = node;
         body->Notify = nullptr;
+        body->RegistryView = 0;
+        body->PhysicalView = FALSE;
         *out = body;
     }
     return status;
@@ -640,7 +649,22 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
         ctx->HandleAccess = PsCurrentThread()->ParseRootAccess;
     }
     ExAcquireFastMutex(&CmpLock);
-    NTSTATUS status = walk(((CM_KEY_BODY *)object)->Node, path, len, attributes, context, &node);
+    CM_KEY_BODY *root = object;
+    CM_NODE *start = root->Node;
+    ULONG view = root->RegistryView;
+    BOOLEAN physical = root->PhysicalView;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (ctx && ctx->SelectView) {
+        if (ctx->RegistryView)
+            view = ctx->RegistryView;
+        if (!view)
+            view = ctx->Mode == UserMode && PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386 ? 32 : 64;
+        status = CmpMapRegistryView(root, view, path, &len, MAX_PATH_CHARS, &start, &physical, &ctx->ViewContainer);
+        if (start != root->Node)
+            ctx->ByHandle = FALSE;
+    }
+    if (NT_SUCCESS(status))
+        status = walk(start, path, len, attributes, context, &node);
     /* an existing key is checked against its descriptor; a key the program just made is its own. */
     if (NT_SUCCESS(status) && ctx && ctx->Check && ctx->Disposition != REG_CREATED_NEW_KEY) {
         SD_BLOB *sd;
@@ -665,8 +689,13 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
     }
     CmpUnlock();
     ExFreePool(path);
-    if (NT_SUCCESS(status))
+    if (NT_SUCCESS(status)) {
         status = new_body(node, found);
+        if (NT_SUCCESS(status)) {
+            ((CM_KEY_BODY *)*found)->RegistryView = (UCHAR)view;
+            ((CM_KEY_BODY *)*found)->PhysicalView = physical;
+        }
+    }
     return status;
 }
 
@@ -692,6 +721,14 @@ NTSTATUS CmpReferenceKeyByName(POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mo
         return status;
     oa.Attributes |= OBJ_KERNEL_HANDLE;
     CM_PARSE_CONTEXT ctx = {FALSE, FALSE, 0, 0};
+    ctx.Mode = mode;
+    ctx.SelectView = mode == UserMode || (access & (KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_));
+    ctx.RegistryView = access & KEY_WOW64_32KEY_ ? 32 : access & KEY_WOW64_64KEY_ ? 64 : 0;
+    if ((access & (KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_)) == (KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_)) {
+        KiFreeCapturedString(&name);
+        return STATUS_INVALID_PARAMETER;
+    }
+    access &= ~(ACCESS_MASK)(KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_);
     HANDLE h;
     status = ObOpenObjectByName(&oa, CmKeyType, mode, access, &ctx, &h);
     KiFreeCapturedString(&name);
@@ -953,6 +990,12 @@ static NTSTATUS open_key(POBJECT_ATTRIBUTES oa, ACCESS_MASK access, CM_PARSE_CON
     KPROCESSOR_MODE mode = KeGetPreviousMode();
     if (!oa->ObjectName)
         return STATUS_OBJECT_NAME_INVALID;
+    ULONG selectors = access & (KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_);
+    if (selectors == (KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_))
+        return STATUS_INVALID_PARAMETER;
+    ctx->SelectView = mode == UserMode || selectors;
+    ctx->RegistryView = selectors & KEY_WOW64_32KEY_ ? 32 : selectors & KEY_WOW64_64KEY_ ? 64 : 0;
+    access &= ~(ACCESS_MASK)(KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_);
     ctx->Mode = mode;
     ctx->Check = mode == UserMode && SeAccessCheckRequired();
     ctx->Access = access;

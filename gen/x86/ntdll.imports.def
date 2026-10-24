@@ -181,6 +181,8 @@ EXPORTS
     NtQueryWnfStateNameInformation@20
     NtQueueApcThread@20
     NtRaiseException@12
+    NtLockFile@40
+    NtUnlockFile@20
     NtReadFile@36
     NtReadVirtualMemory@20
     NtReleaseMutant@8
@@ -626,7 +628,8 @@ EXPORTS
     toupper
     towlower
     towupper
-    vDbgPrintEx
+    vDbgPrintEx@16
+    vDbgPrintExWithPrefix@20
     wcscat
     wcschr
     wcscmp
@@ -639,3 +642,8 @@ EXPORTS
     RtlActivateActivationContextUnsafeFast@8
     RtlDeactivateActivationContextUnsafeFast@4
     Wow64Transition DATA
+    DbgPrompt@12
+    RtlClearBits@12
+    RtlFindClearBitsAndSet@12
+    RtlInitializeBitMap@12
+    RtlSetBits@12

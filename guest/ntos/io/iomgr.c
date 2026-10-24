@@ -348,6 +348,7 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
 static void file_close(PEPROCESS process, PVOID object, ULONG handle_count)
 {
     PFILE_OBJECT file = object;
+    FsLocksCleanup(file, process);
     if (handle_count == 1 && file->DeviceObject)
         IopSynchronousRequest(file, IRP_MJ_CLEANUP, 0, nullptr, 0, nullptr, nullptr);
 }

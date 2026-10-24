@@ -31,9 +31,17 @@ typedef struct _OLE_THREAD {
        apartment flags there: 0x80 single threaded, 0x100 multithreaded. */
     PVOID ThreadBase, SmAllocator;
     DWORD ApartmentId, ApartmentFlags;
+    LONG TlsMapIndex;
+    PVOID TlsSlot;
     LONG ComInits;
-    BOOL Sta;
     LONG OleInits;
+    DWORD Calls;
+    PVOID ServerCall, CallObjectCache, ContextStack, ObjectServer;
+    DWORD NativeCallerThread;
+    /* native clr reads this cached context directly from the ole tls block. */
+    IUnknown *CachedContext;
+    PVOID CurrentContext;
+    BOOL Sta;
     /* what CoGetCurrentProcess returns, unique per thread. */
     DWORD ProcessId;
     /* set by CoRegisterMessageFilter, referenced. */
@@ -61,12 +69,17 @@ typedef struct _OLE_THREAD {
     HRESULT CallResult;
 } OLE_THREAD;
 
+static_assert(offsetof(OLE_THREAD, CachedContext) == (sizeof(void *) == 4 ? 0x38 : 0x60));
+static_assert(offsetof(OLE_THREAD, CurrentContext) == (sizeof(void *) == 4 ? 0x3c : 0x68));
+
 OLE_THREAD *OleThreadState(BOOL create);
 void OleThreadDetach(void);
 void OleProcessAttach(void);
 
 /* com.c */
 void OleMtaUsage(LONG delta);
+void OleContextMtaUsers(LONG delta);
+void OleContextLeave(OLE_THREAD *thread);
 
 /* CO_E_NOTINITIALIZED when the calling thread has no apartment. */
 HRESULT OleCheckApartment(void);

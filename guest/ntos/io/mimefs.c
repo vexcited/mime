@@ -72,6 +72,18 @@ static NTSTATUS complete(PIRP irp, NTSTATUS status, ULONG_PTR info)
 
 static PDRIVER_OBJECT g_driver;
 
+BOOLEAN MimeFsLockIdentity(PFILE_OBJECT file, PULONG volume, PULONG64 file_id)
+{
+    if (!IopIsMimeFs(file))
+        return FALSE;
+    MIMEFS_FCB *fcb = file->FsContext;
+    if (!fcb || fcb->Directory || fcb->StatOnly)
+        return FALSE;
+    *volume = fcb->Rom ? ~0u : fcb->Volume;
+    *file_id = fcb->Rom ? (ULONG64)(ULONG_PTR)fcb->Rom : fcb->FileId;
+    return TRUE;
+}
+
 static WCHAR fold(WCHAR c)
 {
     return c >= 'a' && c <= 'z' ? (WCHAR)(c - 32) : c;
@@ -1343,6 +1355,7 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
     FsAttrInitialize();
     FsWbInitialize();
     FsNotifyInitialize();
+    FsLocksInitialize();
     driver->MajorFunction[IRP_MJ_CREATE] = mimefs_create;
     driver->MajorFunction[IRP_MJ_CLEANUP] = mimefs_cleanup;
     driver->MajorFunction[IRP_MJ_CLOSE] = mimefs_close;

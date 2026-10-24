@@ -259,6 +259,7 @@ EXPORTS
     MmIsAddressValid
     MmLoadSystemImage
     MmMapPagesInSystem
+    MimeMmMapWritableSection
     MmMapSharedSectionUser
     MmMapViewInSystemSpace
     MmQueryVmCounters

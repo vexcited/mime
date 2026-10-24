@@ -1210,3 +1210,17 @@ _NtAdjustPrivilegesToken@24:
     movl $_Wow64SystemServiceCall, %edx
     calll *%edx
     retl $24
+    .p2align 4, 0x90
+    .globl _NtLockFile@40
+_NtLockFile@40:
+    movl $0x114, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $40
+    .p2align 4, 0x90
+    .globl _NtUnlockFile@20
+_NtUnlockFile@20:
+    movl $0x1dd, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $20

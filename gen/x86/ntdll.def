@@ -181,6 +181,8 @@ EXPORTS
     NtQueryWnfStateNameInformation=_NtQueryWnfStateNameInformation@20
     NtQueueApcThread=_NtQueueApcThread@20
     NtRaiseException=_NtRaiseException@12
+    NtLockFile=_NtLockFile@40
+    NtUnlockFile=_NtUnlockFile@20
     NtReadFile=_NtReadFile@36
     NtReadVirtualMemory=_NtReadVirtualMemory@20
     NtReleaseMutant=_NtReleaseMutant@8
@@ -626,7 +628,8 @@ EXPORTS
     toupper=toupper
     towlower=towlower
     towupper=towupper
-    vDbgPrintEx=vDbgPrintEx
+    vDbgPrintEx=_vDbgPrintEx@16
+    vDbgPrintExWithPrefix=_vDbgPrintExWithPrefix@20
     wcscat=wcscat
     wcschr=wcschr
     wcscmp=wcscmp
@@ -639,3 +642,8 @@ EXPORTS
     RtlActivateActivationContextUnsafeFast=@RtlActivateActivationContextUnsafeFast@8
     RtlDeactivateActivationContextUnsafeFast=@RtlDeactivateActivationContextUnsafeFast@4
     Wow64Transition DATA
+    DbgPrompt=_DbgPrompt@12
+    RtlClearBits=_RtlClearBits@12
+    RtlFindClearBitsAndSet=_RtlFindClearBitsAndSet@12
+    RtlInitializeBitMap=_RtlInitializeBitMap@12
+    RtlSetBits=_RtlSetBits@12

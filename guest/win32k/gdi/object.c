@@ -393,7 +393,9 @@ int NTAPI NtGdiExtGetObjectW(HANDLE handle, int size, PVOID buffer)
             needed = sizeof(BITMAP);
             if (s->UserBits) {
                 out.dib.dsBm.bmBits = s->UserBits;
-                out.dib.dsBm.bmWidthBytes = s->Stride;
+                out.dib.dsBm.bmWidthBytes = s->Stride < 0 ? -s->Stride : s->Stride;
+                out.dib.dshSection = s->UserSection;
+                out.dib.dsOffset = s->UserSectionOffset;
                 out.dib.dsBmih = s->Info;
                 memcpy(out.dib.dsBitfields, s->Masks, sizeof(s->Masks));
                 if (size >= (int)sizeof(DIBSECTION))

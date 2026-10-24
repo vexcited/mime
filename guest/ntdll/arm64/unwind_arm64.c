@@ -444,8 +444,6 @@ typedef struct UNWINDER {
     A64_POINTERS *p;
     uint64_t low, high;
     int fault;
-    int fp_seen;
-    uint64_t fp_value;
     int clear_flag;
 } UNWINDER;
 
@@ -510,12 +508,8 @@ static int execute(UNWINDER *u, const uint8_t *codes, uint32_t size, uint32_t in
     } else if (b == 0xE0) {
         c->sp += (((uint64_t)b1 << 16) | ((uint64_t)codes[index + 2] << 8) | codes[index + 3]) * 16;
     } else if (b == CODE_SET_FP) {
-        u->fp_seen = 1;
-        u->fp_value = c->x[A64_FP];
         c->sp = c->x[A64_FP];
     } else if (b == 0xE2) {
-        u->fp_seen = 1;
-        u->fp_value = c->x[A64_FP];
         c->sp = c->x[A64_FP] - (uint64_t)b1 * 8;
     } else if (b == CODE_NOP) {
         /* nothing to undo. */
@@ -651,12 +645,12 @@ int a64_virtual_unwind(uint64_t image_base, uint64_t pc, const A64_FUNCTION *fun
     u.p = pointers;
     u.low = low;
     u.high = high;
-    uint64_t sp = context->sp;
     int step = run(&u, codes, size, index, skip);
     if (step == STEP_FAIL)
         return 0;
 
-    result->establisher = u.fp_seen ? u.fp_value : sp;
+    /* arm64 handlers address their frame from the caller's restored stack pointer. */
+    result->establisher = context->sp;
     result->handler = 0;
     result->handler_data = nullptr;
     if (step == STEP_END) {

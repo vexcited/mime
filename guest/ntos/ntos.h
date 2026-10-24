@@ -1276,6 +1276,12 @@ NTSTATUS IopCopyToRequester(IO_USER_REQUEST *r, PVOID dst, const void *src, SIZE
 void IopCompleteUserRequest(IO_USER_REQUEST *r, NTSTATUS status, ULONG_PTR information);
 NTSTATUS IopImmediateUserRequest(IO_USER_REQUEST *r, NTSTATUS status, ULONG_PTR information);
 NTSTATUS IopPendUserRequest(IO_USER_REQUEST *r);
+void FsLocksInitialize(void);
+void FsLocksCleanup(PFILE_OBJECT file, PEPROCESS process);
+NTSTATUS FsLocksCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
+NTSTATUS FsLocksCheck(PFILE_OBJECT file, BOOLEAN write, ULONG64 start, ULONG length, ULONG key);
+BOOLEAN MimeFsLockIdentity(PFILE_OBJECT file, PULONG volume, PULONG64 file_id);
+
 /* fsnotify.c: file changes reported to watched directories. */
 #define FILE_NOTIFY_CHANGE_FILE_NAME 0x00000001
 #define FILE_NOTIFY_CHANGE_DIR_NAME 0x00000002

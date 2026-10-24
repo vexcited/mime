@@ -130,7 +130,7 @@ static NTSTATUS reference_file(HANDLE handle, PFILE_OBJECT *file)
 }
 
 static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_routine, PVOID apc_context,
-                        PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, PLARGE_INTEGER byte_offset)
+                        PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, PLARGE_INTEGER byte_offset, PULONG key)
 {
     PFILE_OBJECT file;
     NTSTATUS status = reference_file(handle, &file);
@@ -164,6 +164,15 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
             return status;
         }
     }
+    ULONG lock_key = 0;
+    if (key) {
+        status = mode == UserMode ? KiCopyFromUser(&lock_key, key, sizeof(lock_key)) :
+                                    (lock_key = *key, STATUS_SUCCESS);
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(file);
+            return status;
+        }
+    }
     BOOLEAN use_position = offset.QuadPart == -1 || (offset.LowPart == FILE_USE_FILE_POINTER_POSITION && offset.HighPart == -1);
     /* writes go to the end of the file when the handle only appends, or when the offset names the end. */
     BOOLEAN to_end = write && ((file->Flags & FO_APPEND_ONLY) ||
@@ -177,6 +186,14 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         offset = file->CurrentByteOffset;
     }
 
+    status = FsLocksCheck(file, write, offset.QuadPart, length, lock_key);
+    if (!NT_SUCCESS(status)) {
+        unlock_file(file);
+        IO_STATUS_BLOCK denied = {{status}, 0};
+        store_iosb(iosb, &denied);
+        ObDereferenceObject(file);
+        return status;
+    }
     PUCHAR bounce = nullptr;
     if (mode == UserMode && length) {
         bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, length < IO_BOUNCE_SIZE ? length : IO_BOUNCE_SIZE, KI_TAG('I', 'o', 'B', 'n'));
@@ -250,7 +267,7 @@ NTSTATUS NTAPI NtReadFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOI
     PVOID routine = (PVOID)apc;
     if (KeGetPreviousMode() == UserMode)
         IopTakeIosb32(&routine, &iosb);
-    return rw_file(FALSE, handle, event, routine, apc_context, iosb, buffer, length, offset);
+    return rw_file(FALSE, handle, event, routine, apc_context, iosb, buffer, length, offset, key);
 }
 
 NTSTATUS NTAPI NtWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
@@ -259,7 +276,7 @@ NTSTATUS NTAPI NtWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVO
     PVOID routine = (PVOID)apc;
     if (KeGetPreviousMode() == UserMode)
         IopTakeIosb32(&routine, &iosb);
-    return rw_file(TRUE, handle, event, routine, apc_context, iosb, buffer, length, offset);
+    return rw_file(TRUE, handle, event, routine, apc_context, iosb, buffer, length, offset, key);
 }
 
 NTSTATUS NTAPI ZwQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,
@@ -272,13 +289,13 @@ NTSTATUS NTAPI ZwQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE
 NTSTATUS NTAPI ZwReadFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                           PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    ZW_WRAP(rw_file(FALSE, handle, event, nullptr, nullptr, iosb, buffer, length, offset));
+    ZW_WRAP(rw_file(FALSE, handle, event, nullptr, nullptr, iosb, buffer, length, offset, key));
 }
 
 NTSTATUS NTAPI ZwWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                            PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    ZW_WRAP(rw_file(TRUE, handle, event, nullptr, nullptr, iosb, buffer, length, offset));
+    ZW_WRAP(rw_file(TRUE, handle, event, nullptr, nullptr, iosb, buffer, length, offset, key));
 }
 
 static NTSTATUS query_file(PFILE_OBJECT file, PVOID info, ULONG length, FILE_INFORMATION_CLASS klass, PULONG written)
@@ -751,8 +768,10 @@ NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
         AfdCancel(file, PsCurrentThread(), nullptr);
     else if (IopIsPad(file))
         PadCancel(file, PsCurrentThread(), nullptr);
-    else if (IopIsMimeFs(file))
+    else if (IopIsMimeFs(file)) {
         FsNotifyCancel(file, PsCurrentThread(), nullptr);
+        FsLocksCancel(file, PsCurrentThread(), nullptr);
+    }
     ObDereferenceObject(file);
     IO_STATUS_BLOCK io = {};
     store_iosb(iosb, &io);
@@ -772,8 +791,12 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
         status = AfdCancel(file, nullptr, request);
     else if (IopIsPad(file))
         status = PadCancel(file, nullptr, request);
-    else if (IopIsMimeFs(file))
+    else if (IopIsMimeFs(file)) {
         status = FsNotifyCancel(file, nullptr, request);
+        NTSTATUS locks = FsLocksCancel(file, nullptr, request);
+        if (NT_SUCCESS(locks))
+            status = locks;
+    }
     else
         status = STATUS_NOT_FOUND;
     ObDereferenceObject(file);

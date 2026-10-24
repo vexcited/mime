@@ -43,15 +43,17 @@ static void release_call_state(OLE_THREAD *t)
 
 static void leave_apartment(OLE_THREAD *t)
 {
+    OleContextLeave(t);
     if (t->Sta)
         OrpcApartmentLeave(t);
     IMessageFilter *filter = t->MessageFilter;
     t->MessageFilter = nullptr;
     if (filter)
         filter->lpVtbl->Release(filter);
-    if (!t->Sta)
+    if (!t->Sta) {
         InterlockedDecrement(&g_mta_threads);
-    else
+        OleContextMtaUsers(-1);
+    } else
         InterlockedCompareExchange((LONG volatile *)&g_main_sta, 0, (LONG)GetCurrentThreadId());
     t->ApartmentFlags &= ~(OLE_TLS_LOCALTID | OLE_TLS_APARTMENTTHREADED | OLE_TLS_MULTITHREADED);
     t->ApartmentId = 0;
@@ -102,8 +104,10 @@ WINOLEAPI HRESULT WINAPI CoInitializeEx(void *reserved, DWORD flags)
     t->ApartmentId = GetCurrentThreadId();
     if (sta)
         InterlockedCompareExchange((LONG volatile *)&g_main_sta, (LONG)GetCurrentThreadId(), 0);
-    else
+    else {
+        OleContextMtaUsers(1);
         InterlockedIncrement(&g_mta_threads);
+    }
     return S_OK;
 }
 
@@ -146,6 +150,7 @@ WINOLEAPI HRESULT WINAPI CoGetApartmentType(APTTYPE *type, APTTYPEQUALIFIER *qua
 /* keeps the multithreaded apartment alive for code that has no thread to put in it. */
 void OleMtaUsage(LONG delta)
 {
+    OleContextMtaUsers(delta);
     InterlockedExchangeAdd(&g_mta_usage, delta);
 }
 

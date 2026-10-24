@@ -625,3 +625,12 @@ EXPORTS
     TraceMessage=ntdll.EtwTraceMessage
     TraceMessageVa=ntdll.EtwTraceMessageVa
     UnregisterTraceGuids=ntdll.EtwUnregisterTraceGuids
+    CryptGenKey=_CryptGenKey@16
+    CryptGetDefaultProviderA=_CryptGetDefaultProviderA@20
+    CryptGetDefaultProviderW=_CryptGetDefaultProviderW@20
+    CryptGetKeyParam=_CryptGetKeyParam@20
+    CryptSetKeyParam=_CryptSetKeyParam@16
+    CryptSetProvParam=_CryptSetProvParam@16
+    SaferCreateLevel=_SaferCreateLevel@20
+    SaferCloseLevel=_SaferCloseLevel@4
+    SaferComputeTokenFromLevel=_SaferComputeTokenFromLevel@20

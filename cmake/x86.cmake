@@ -25,6 +25,8 @@ mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel
     OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS kernelbase ntdll DEF ${gen86}/kernel32.def
     IMPORTS_DEF ${gen86}/kernel32.imports.def)
 
+mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c OBJECTS x86-chkstk IMPORTS ntdll kernel32)
+
 # on x64 the stubs reach the 32-bit ntdll's Wow64Transition through a gate of their own.
 set(sources ${stubs86}/win32u_syscalls.S)
 set(imports)
@@ -51,7 +53,7 @@ set(MIME_X86_DLLS
     msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
     gdiplus:0x5b000000:gdiplus_imports wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
     oleacc:0x57000000:oleacc_imports oledlg:0x56000000:user combase:0x54000000:all_five usp10:0x51000000:gdi
-    cfgmgr32:0x39000000:base setupapi:0x46000000:setup msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
+    cfgmgr32:0x39000000:base setupapi:0x46000000:setup dwrite:0x45000000:all_five msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
     dinput8:0x3B000000:all_five dinput:0x3A000000:all_five hid:0x38000000:base xinput1_4:0x37000000:xinput
     xinput1_3:0x36000000:xinput xinput1_2:0x35000000:xinput xinput1_1:0x34000000:xinput xinput9_1_0:0x33000000:base
     winhttp:0x2C000000:http windows_storage:0x15000000:storage_imports explorerframe:0x14000000:all_five
@@ -123,9 +125,13 @@ foreach(xinput xinput1_4 xinput1_3 xinput1_2 xinput1_1)
 endforeach()
 set(objects_gdiplus x86-lib-vector x86-lib-ttf x86-div)
 set(includes_gdiplus guest/lib)
+set(objects_dwrite x86-lib-ttf x86-div)
+set(includes_dwrite guest/lib)
 set(objects_windowscodecs x86-lib-png:guest/lib/png/inflate.c x86-lib-png:guest/lib/png/deflate.c x86-lib-pngio x86-lib-jpeg x86-lib-tiff x86-lib-gif x86-lib-bcn x86-div)
 set(includes_windowscodecs guest/lib)
 set(objects_bcrypt x86-lib-crypto)
+set(objects_combase x86-lib-crypto:guest/lib/crypto/hash.c)
+set(includes_combase guest/lib)
 set(objects_crypt32 x86-lib-crypto x86-lib-compound)
 set(objects_secur32 x86-lib-crypto)
 set(objects_advapi32 x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/stream.c
@@ -139,17 +145,19 @@ set(includes_winhttp guest/lib)
 set(objects_wininet x86-lib-png:guest/lib/png/inflate.c)
 set(includes_wininet guest/lib)
 
+list(APPEND MIME_X86_DLLS d3dcompiler_47:0x4F000000:all_five)
+set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c)
+
 if(MIME_GUEST_ARCH STREQUAL "x64")
     # vulkan-1, dxgi and direct3d for 32-bit programs on Linux, speaking the same wire.
     mime_dll(vulkan-1 x86 BASE 0x53000000 SOURCES ${MIME_VULKAN_SOURCES} ${MIME_VULKAN_GEN_SOURCES}
         OBJECTS x86-chkstk OPTIONS ${MIME_VULKAN_OPTIONS} INCLUDES ${MIME_VULKAN_INCLUDES}
         IMPORTS ntdll kernel32 win32u user32)
-    list(APPEND MIME_X86_DLLS dxgi:0x52000000:all_five d3d11:0x50000000:all_five d3dcompiler_47:0x4F000000:all_five
+    list(APPEND MIME_X86_DLLS dxgi:0x52000000:all_five d3d11:0x50000000:all_five
         d3d10core:0x4E000000:base d3d10_1core:0x4D000000:base d3d10:0x4C000000:all_five d3d10_1:0x4B000000:all_five
         d3d12:0x4A000000:all_five d3d9:0x49000000:all_five dcomp:0x13000000:all_five)
     set(objects_dxgi x86-lib-privdata)
     set(objects_d3d11 x86-lib-privdata x86-lib-dxbc)
-    set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c)
     set(objects_d3d10 x86-lib-dxbc:guest/lib/dxbc/container.c)
     set(objects_d3d10_1 x86-d3d10:guest/d3d10/create.c)
     set(objects_d3d10_1core x86-d3d10core:guest/d3d10core/kmt.c)

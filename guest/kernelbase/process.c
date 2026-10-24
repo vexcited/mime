@@ -956,6 +956,12 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
         environment = converted;
     } else if (environment) {
         env_bytes = environment_bytes(environment);
+    } else {
+        converted = GetEnvironmentStringsW();
+        if (!converted)
+            return FALSE;
+        environment = converted;
+        env_bytes = environment_bytes(converted);
     }
 
     RTL_USER_PROCESS_PARAMETERS pp = {};

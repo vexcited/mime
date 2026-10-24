@@ -392,6 +392,15 @@ WINGDIAPI LONG WINAPI SetBitmapBits(HBITMAP bitmap, DWORD size, const void *bits
 
 /* ------------------------------------------------------------------ escapes */
 
+WINGDIAPI int WINAPI DrawEscape(HDC dc, int escape, int in_size, LPCSTR in)
+{
+    DWORD type = GetObjectType(dc);
+    if (type != OBJ_DC && type != OBJ_MEMDC && type != OBJ_METADC && type != OBJ_ENHMETADC)
+        SetLastError(ERROR_INVALID_HANDLE);
+    /* mime's display backend provides no driver drawing escapes. */
+    return 0;
+}
+
 /* the display driver has no escapes. QUERYESCSUPPORT answers for the ones gdi32 handles itself. */
 WINGDIAPI int WINAPI ExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out)
 {

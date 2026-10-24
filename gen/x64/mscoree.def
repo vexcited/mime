@@ -1,0 +1,11 @@
+LIBRARY mscoree.dll
+EXPORTS
+    GetCLRUEFManager @24 NONAME
+    GetVersionExWrapper @142 NONAME
+    _CorExeMain @137
+    CLRCreateInstance @38
+    CorBindToRuntime @47
+    CreateConfigStream @58
+    GetCORVersion @72
+    GetProcessExecutableHeap @29
+    GetRequestedRuntimeInfo @87

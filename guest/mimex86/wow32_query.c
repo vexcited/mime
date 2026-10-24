@@ -977,6 +977,8 @@ static ULONG out32_alloc(OUT32 *o, ULONG bytes)
 {
     ULONG at = o->Size;
     o->Size += bytes;
+    if (o->Data)
+        memset(o->Data + at, 0, bytes);
     return at;
 }
 

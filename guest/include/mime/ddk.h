@@ -994,6 +994,8 @@ NTKERNELAPI const void *NTAPI HalMimeGetBootInfo(void);
 NTKERNELAPI PVOID NTAPI MmAllocateContiguousPages(SIZE_T bytes);
 NTKERNELAPI void NTAPI MmFreeContiguousPages(PVOID va, SIZE_T bytes);
 NTKERNELAPI NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base, PVOID *section);
+NTKERNELAPI NTSTATUS NTAPI MimeMmMapWritableSection(PVOID section, PEPROCESS process, PVOID *base,
+                                                    ULONG64 offset, SIZE_T *size);
 NTKERNELAPI NTSTATUS NTAPI MmMapSharedSectionUser(PVOID section, PEPROCESS process, PVOID *user_base,
                                                   BOOLEAN writable);
 NTKERNELAPI void NTAPI MmSetProcessCallbackTable(PEPROCESS process, PVOID table);

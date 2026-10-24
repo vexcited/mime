@@ -42,7 +42,7 @@ typedef struct A64_POINTERS {
 } A64_POINTERS;
 
 typedef struct A64_UNWIND_RESULT {
-    /* the frame pointer of a function that has one, else its stack pointer when the unwind began. */
+    /* the caller's stack pointer after the frame has been unwound. */
     uint64_t establisher;
     /* the rva of the language handler and its data, none for a function without one. */
     uint32_t handler;

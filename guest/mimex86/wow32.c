@@ -1111,6 +1111,16 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
                                        a[12], pointer32(a[13]));
         store_iosb32(a[3], &io);
         return handle_out(status, a[0], handle);
+    case MIME_SVC_NtLockFile: {
+        PVOID context;
+        PVOID apc = io_apc32(a[2], a[3], &context);
+        return NtLockFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]),
+                          pointer32(a[6]), a[7], (BOOLEAN)a[8], (BOOLEAN)a[9]);
+    }
+    case MIME_SVC_NtUnlockFile:
+        status = NtUnlockFile(handle32(a[0]), &io, pointer32(a[2]), pointer32(a[3]), a[4]);
+        store_iosb32(a[1], &io);
+        return status;
     case MIME_SVC_NtReadFile:
     case MIME_SVC_NtWriteFile: {
         PVOID context;

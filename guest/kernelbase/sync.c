@@ -833,7 +833,9 @@ HANDLE KbPrivateNamespaceLookup(LPCWSTR *name)
 
 HANDLE WINAPI CreateBoundaryDescriptorW(LPCWSTR name, ULONG flags)
 {
-    if (!name || !*name || flags) {
+    if (flags & ~CREATE_BOUNDARY_DESCRIPTOR_ADD_APPCONTAINER_SID)
+        return nullptr;
+    if (!name || !*name) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
@@ -917,7 +919,7 @@ VOID WINAPI DeleteBoundaryDescriptor(HANDLE descriptor)
 }
 
 /* the descriptor name followed by its sid bytes, encoded in characters a name allows. */
-static BOOL namespace_directory_name(KB_BOUNDARY *boundary, WCHAR *out, SIZE_T capacity)
+static BOOL namespace_directory_name(KB_BOUNDARY *boundary, PSID package, WCHAR *out, SIZE_T capacity)
 {
     SIZE_T length = 0;
     static const WCHAR prefix[] = L"PrivateNamespace.";
@@ -925,21 +927,70 @@ static BOOL namespace_directory_name(KB_BOUNDARY *boundary, WCHAR *out, SIZE_T c
     SIZE_T need = wcslen(prefix) + wcslen(boundary->Name) + 1;
     for (ULONG i = 0; i < boundary->SidCount; i++)
         need += 1 + 2 * (SIZE_T)RtlLengthSid(boundary->Sids[i]);
+    if (package)
+        need += 1 + 2 * (SIZE_T)RtlLengthSid(package);
     if (need > capacity)
         return FALSE;
     wcscpy(out, prefix);
     length = wcslen(out);
     for (const WCHAR *c = boundary->Name; *c; c++)
         out[length++] = *c == L'\\' ? L'/' : *c;
-    for (ULONG i = 0; i < boundary->SidCount; i++) {
+    for (ULONG i = 0; i < boundary->SidCount + (package != nullptr); i++) {
         out[length++] = L'.';
-        const UCHAR *bytes = boundary->Sids[i];
-        for (ULONG j = 0, n = RtlLengthSid(boundary->Sids[i]); j < n; j++) {
+        PSID sid = i < boundary->SidCount ? boundary->Sids[i] : package;
+        const UCHAR *bytes = sid;
+        for (ULONG j = 0, n = RtlLengthSid(sid); j < n; j++) {
             out[length++] = digits[bytes[j] >> 4];
             out[length++] = digits[bytes[j] & 15];
         }
     }
     out[length] = 0;
+    return TRUE;
+}
+
+/* capture the effective package at namespace use, leaving the caller's descriptor unchanged. */
+static BOOL namespace_package(KB_BOUNDARY *boundary, BOOL create, PVOID buffer, ULONG size, PSID *added)
+{
+    *added = nullptr;
+    BOOL append = (boundary->Flags & CREATE_BOUNDARY_DESCRIPTOR_ADD_APPCONTAINER_SID) != 0;
+    if (!append && !create)
+        return TRUE;
+    ULONG required;
+    NTSTATUS status = NtQueryInformationToken((HANDLE)(LONG_PTR)-6, 31, buffer, size, &required);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    PSID package = *(PSID *)buffer;
+    ULONG package_count = 0;
+    BOOL own_package = FALSE;
+    for (ULONG i = 0; i < boundary->SidCount; i++) {
+        PSID sid = boundary->Sids[i];
+        if (package && RtlEqualSid(sid, package)) {
+            if (append) {
+                KbSetError(ERROR_INVALID_PARAMETER);
+                return FALSE;
+            }
+            own_package = TRUE;
+        }
+        if (create && RtlIsPackageSid(sid)) {
+            package_count++;
+            if (package && !RtlEqualSid(sid, package)) {
+                KbSetError(ERROR_ACCESS_DENIED);
+                return FALSE;
+            }
+        }
+    }
+    if (create) {
+        if (package_count + (append && package != nullptr) > 1) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        if (package && !append && !own_package) {
+            KbSetError(ERROR_ACCESS_DENIED);
+            return FALSE;
+        }
+    }
+    if (append)
+        *added = package;
     return TRUE;
 }
 
@@ -950,8 +1001,15 @@ static HANDLE open_namespace(HANDLE descriptor, LPCWSTR alias, BOOL create, cons
         KbSetError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
+    union {
+        PVOID Align;
+        UCHAR Bytes[sizeof(PVOID) + 68];
+    } package_info;
+    PSID package;
+    if (!namespace_package(boundary, create, &package_info, sizeof(package_info), &package))
+        return nullptr;
     WCHAR directory[512];
-    if (!namespace_directory_name(boundary, directory, RTL_NUMBER_OF(directory))) {
+    if (!namespace_directory_name(boundary, package, directory, RTL_NUMBER_OF(directory))) {
         KbSetError(ERROR_FILENAME_EXCED_RANGE);
         return nullptr;
     }

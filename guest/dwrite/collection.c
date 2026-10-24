@@ -867,7 +867,7 @@ typedef struct DwFontList {
     UINT32 *order;
 } DwFontList;
 
-static HRESULT list_query(IDWriteFontList *This, REFIID riid, void **out)
+static HRESULT WINAPI list_query(IDWriteFontList *This, REFIID riid, void **out)
 {
     if (!out)
         return E_POINTER;

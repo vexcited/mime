@@ -188,6 +188,8 @@ void OrpcApartmentLeave(OLE_THREAD *t)
 
 HRESULT OrpcRunInApartment(APARTMENT *a, ORPC_RUN function, void *context)
 {
+    if (a->Dead)
+        return RPC_E_DISCONNECTED_HR;
     if (a->Mta || a->ThreadId == GetCurrentThreadId()) {
         function(context);
         return S_OK;
@@ -198,14 +200,17 @@ HRESULT OrpcRunInApartment(APARTMENT *a, ORPC_RUN function, void *context)
     if (!q)
         return RPC_E_DISCONNECTED_HR;
     OLE_THREAD *me = OleThreadState(TRUE);
-    HANDLE done = me ? me->OrpcEvent : nullptr;
-    if (me && !done)
-        done = me->OrpcEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    /* nested apartment callbacks must each retain their own completion event. */
+    HANDLE done = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!done)
         return E_OUTOFMEMORY;
-    ResetEvent(done);
     APT_ITEM item = {nullptr, function, context, done, a};
     AcquireSRWLockExclusive(&g_queue_lock);
+    if (a->Dead) {
+        ReleaseSRWLockExclusive(&g_queue_lock);
+        CloseHandle(done);
+        return RPC_E_DISCONNECTED_HR;
+    }
     APT_ITEM **link = &q->Head;
     while (*link)
         link = &(*link)->Next;
@@ -215,9 +220,11 @@ HRESULT OrpcRunInApartment(APARTMENT *a, ORPC_RUN function, void *context)
     if (a->Window)
         PostMessageW(a->Window, WM_ORPC, 0, 0);
     HANDLE waits[2] = {done, a->Thread};
-    DWORD got = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-    if (got == WAIT_OBJECT_0)
+    DWORD got = OrpcWait(2, waits, INFINITE, me ? me->Apartment : nullptr);
+    if (got == WAIT_OBJECT_0) {
+        CloseHandle(done);
         return S_OK;
+    }
     /* the thread went away with the call still queued. */
     AcquireSRWLockExclusive(&g_queue_lock);
     for (link = &q->Head; *link; link = &(*link)->Next)
@@ -226,6 +233,7 @@ HRESULT OrpcRunInApartment(APARTMENT *a, ORPC_RUN function, void *context)
             break;
         }
     ReleaseSRWLockExclusive(&g_queue_lock);
+    CloseHandle(done);
     return RPC_E_SERVER_DIED_DNE_HR;
 }
 

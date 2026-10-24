@@ -21,6 +21,16 @@
 #define AFD_MAX_INTERFACES 64
 #define AFD_CONFIG_SIZE 65536
 
+#define IOCTL_AFD_NATIVE_POLL 0x12024
+#define AFD_POLL_RECEIVE 0x01
+#define AFD_POLL_SEND 0x04
+#define AFD_POLL_DISCONNECT 0x08
+#define AFD_POLL_ABORT 0x10
+#define AFD_POLL_LOCAL_CLOSE 0x20
+#define AFD_POLL_CONNECT 0x40
+#define AFD_POLL_ACCEPT 0x80
+#define AFD_POLL_CONNECT_FAIL 0x100
+
 #define WSAEWOULDBLOCK 10035
 #define WSAEALREADY 10037
 #define WSAEINVAL 10022
@@ -133,6 +143,25 @@ typedef struct AFD_SOCKET {
     ULONG PollEvents, PollRevents; /* the last one */
 } AFD_SOCKET;
 
+typedef struct AFD_NATIVE_ENTRY {
+    PFILE_OBJECT File;
+    ULONG64 Handle;
+    ULONG Events;
+} AFD_NATIVE_ENTRY;
+
+typedef struct AFD_NATIVE_POLL {
+    LIST_ENTRY Links;
+    AFD_REQUEST *Request;
+    PVOID Output;
+    PUCHAR Image;
+    ULONG Count, PointerSize;
+    ULONG64 Deadline;
+    BOOLEAN Unique;
+    AFD_NATIVE_ENTRY Entries[];
+} AFD_NATIVE_POLL;
+
+static ULONG native_interest(AFD_SOCKET *socket);
+
 /* a thread in select or WSAPoll, woken whenever the worker ran. */
 typedef struct AFD_POLLER {
     LIST_ENTRY Links;
@@ -152,6 +181,7 @@ static KMUTEX g_lock;
 static KEVENT g_work;
 static LIST_ENTRY g_sockets;
 static LIST_ENTRY g_pollers;
+static LIST_ENTRY g_native_polls;
 static LIST_ENTRY g_resolvers;
 static PUCHAR g_bounce;
 /* host arguments live in the kernel image, which is physically contiguous. */
@@ -695,7 +725,7 @@ static BOOLEAN run_list(AFD_SOCKET *s, LIST_ENTRY *list, AFD_SOCKET **moved)
 /* the host events that pending requests and the event selection wait for. */
 static ULONG wants(AFD_SOCKET *s)
 {
-    ULONG w = 0;
+    ULONG w = native_interest(s);
     if (!IsListEmpty(&s->Receivers) || !IsListEmpty(&s->Accepters))
         w |= MIME_NET_READ;
     if (!IsListEmpty(&s->Senders) || s->State == MIME_AFD_STATE_CONNECTING)
@@ -751,10 +781,258 @@ static void wake_pollers(void)
         KeSetEvent(&CONTAINING_RECORD(e, AFD_POLLER, Links)->Wake, IO_NO_INCREMENT, FALSE);
 }
 
+/* native afd polls keep their socket references until completion, including after the last handle closes. */
+static ULONG native_interest(AFD_SOCKET *socket)
+{
+    ULONG interest = 0;
+    for (PLIST_ENTRY link = g_native_polls.Flink; link != &g_native_polls; link = link->Flink) {
+        AFD_NATIVE_POLL *poll = CONTAINING_RECORD(link, AFD_NATIVE_POLL, Links);
+        for (ULONG i = 0; i < poll->Count; ++i) {
+            AFD_NATIVE_ENTRY *entry = &poll->Entries[i];
+            if (entry->File->FsContext != socket)
+                continue;
+            if (entry->Events & (AFD_POLL_RECEIVE | AFD_POLL_DISCONNECT | AFD_POLL_ABORT | AFD_POLL_ACCEPT))
+                interest |= MIME_NET_READ;
+            if (entry->Events & (AFD_POLL_SEND | AFD_POLL_CONNECT | AFD_POLL_CONNECT_FAIL))
+                interest |= MIME_NET_WRITE;
+        }
+    }
+    return interest;
+}
+
+static void free_native_poll(AFD_NATIVE_POLL *poll)
+{
+    for (ULONG i = 0; i < poll->Count; ++i)
+        if (poll->Entries[i].File)
+            ObDereferenceObject(poll->Entries[i].File);
+    ExFreePool(poll->Image);
+    ExFreePool(poll);
+}
+
+static ULONG native_events(AFD_SOCKET *socket, ULONG wanted, NTSTATUS *status)
+{
+    *status = STATUS_SUCCESS;
+    if (socket->Closed)
+        return AFD_POLL_LOCAL_CLOSE;
+    ULONG interest = 0, events = 0;
+    if (wanted & (AFD_POLL_RECEIVE | AFD_POLL_DISCONNECT | AFD_POLL_ABORT | AFD_POLL_ACCEPT))
+        interest |= MIME_NET_READ;
+    if (wanted & (AFD_POLL_SEND | AFD_POLL_CONNECT | AFD_POLL_CONNECT_FAIL))
+        interest |= MIME_NET_WRITE;
+    ULONG ready = poll_socket(socket, interest, FALSE);
+    if (socket->Type == SOCK_DGRAM || socket->State == MIME_AFD_STATE_CONNECTED) {
+        if (ready & MIME_NET_READ)
+            events |= AFD_POLL_RECEIVE;
+        if ((ready & MIME_NET_WRITE) && !socket->ShutWrite && !socket->Broken)
+            events |= AFD_POLL_SEND;
+    }
+    if (socket->State == MIME_AFD_STATE_CONNECTED)
+        events |= AFD_POLL_CONNECT;
+    if (socket->State == MIME_AFD_STATE_LISTENING && (ready & MIME_NET_READ))
+        events |= AFD_POLL_ACCEPT;
+    if (socket->Hup || socket->ShutRead)
+        events |= AFD_POLL_DISCONNECT;
+    if (socket->Broken)
+        events |= AFD_POLL_ABORT;
+    if (socket->ConnectFailed) {
+        events |= AFD_POLL_CONNECT_FAIL;
+        if (wanted & AFD_POLL_CONNECT_FAIL)
+            *status = MimeAfdStatus(socket->ConnectError);
+    }
+    return events & wanted;
+}
+
+static ULONG collect_native_poll(AFD_NATIVE_POLL *poll)
+{
+    ULONG count = 0;
+    for (ULONG i = 0; i < poll->Count; ++i) {
+        AFD_NATIVE_ENTRY *entry = &poll->Entries[i];
+        NTSTATUS status;
+        ULONG events = native_events(entry->File->FsContext, entry->Events, &status);
+        if (!events)
+            continue;
+        PUCHAR out = poll->Image + 16 + count * (poll->PointerSize + 8);
+        memcpy(out, &entry->Handle, poll->PointerSize);
+        memcpy(out + poll->PointerSize, &events, 4);
+        memcpy(out + poll->PointerSize + 4, &status, 4);
+        ++count;
+    }
+    memcpy(poll->Image + 8, &count, 4);
+    return count;
+}
+
+static NTSTATUS finish_native_poll(AFD_NATIVE_POLL *poll, NTSTATUS status, ULONG count)
+{
+    AFD_REQUEST *request = poll->Request;
+    ULONG size = 16 + count * (poll->PointerSize + 8);
+    if (NT_SUCCESS(status)) {
+        NTSTATUS copied = attach_copy(request->Process, poll->Output, poll->Image, size, TRUE);
+        if (!NT_SUCCESS(copied))
+            status = copied;
+    }
+    free_native_poll(poll);
+    return immediate(request, status, NT_SUCCESS(status) ? size : 0);
+}
+
+static void service_native_polls(void)
+{
+    PLIST_ENTRY link = g_native_polls.Flink;
+    while (link != &g_native_polls) {
+        AFD_NATIVE_POLL *poll = CONTAINING_RECORD(link, AFD_NATIVE_POLL, Links);
+        link = link->Flink;
+        ULONG count = collect_native_poll(poll);
+        if (!count && (poll->Deadline == (~0ull) || poll->Deadline > now()))
+            continue;
+        RemoveEntryList(&poll->Links);
+        finish_native_poll(poll, count ? STATUS_SUCCESS : STATUS_TIMEOUT, count);
+    }
+}
+
+static BOOLEAN native_poll_timeout(LARGE_INTEGER *timeout)
+{
+    ULONG64 deadline = (~0ull);
+    for (PLIST_ENTRY link = g_native_polls.Flink; link != &g_native_polls; link = link->Flink) {
+        AFD_NATIVE_POLL *poll = CONTAINING_RECORD(link, AFD_NATIVE_POLL, Links);
+        if (poll->Deadline < deadline)
+            deadline = poll->Deadline;
+    }
+    if (deadline == (~0ull))
+        return FALSE;
+    ULONG64 current = now();
+    ULONG64 remaining = deadline <= current ? 0 : deadline - current;
+    if (remaining > 0x7fffffffffffffffull)
+        remaining = 0x7fffffffffffffffull;
+    timeout->QuadPart = -(LONGLONG)remaining;
+    return TRUE;
+}
+
+static BOOLEAN cancel_native_polls(PFILE_OBJECT file, PETHREAD thread, PVOID iosb, BOOLEAN cleanup)
+{
+    BOOLEAN found = FALSE;
+    PLIST_ENTRY link = g_native_polls.Flink;
+    while (link != &g_native_polls) {
+        AFD_NATIVE_POLL *poll = CONTAINING_RECORD(link, AFD_NATIVE_POLL, Links);
+        link = link->Flink;
+        AFD_REQUEST *request = poll->Request;
+        if (request->File != file || (!cleanup && request->Process != PsCurrentProcess()) ||
+            (thread && request->Thread != thread) ||
+            (iosb && ((ULONG_PTR)request->Iosb & ~(ULONG_PTR)1) != (ULONG_PTR)iosb))
+            continue;
+        RemoveEntryList(&poll->Links);
+        finish_native_poll(poll, STATUS_CANCELLED, 0);
+        found = TRUE;
+    }
+    return found;
+}
+
+static NTSTATUS native_poll(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
+                            PVOID input, ULONG in_len, PVOID output, ULONG out_len)
+{
+    UCHAR header[16];
+    if (in_len < sizeof(header) || out_len < in_len)
+        return STATUS_INVALID_PARAMETER;
+    NTSTATUS status = KiCopyFromUser(header, input, sizeof(header));
+    if (!NT_SUCCESS(status))
+        return status;
+    LONGLONG timeout;
+    ULONG count;
+    memcpy(&timeout, header, 8);
+    memcpy(&count, header + 8, 4);
+    ULONG pointer_size = PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386 ? 4 : 8;
+    ULONG entry_size = pointer_size + 8;
+    if (!count || count > AFD_MAX_POLL || count > (in_len - 16) / entry_size ||
+        (header[12] && ((ULONG64)timeout >> 32) != 0x7fffffff))
+        return STATUS_INVALID_PARAMETER;
+    AFD_REQUEST *request = new_request(file, AFD_RECV, 0, event, apc, context, iosb, &status);
+    if (!request)
+        return status;
+    AFD_NATIVE_POLL *poll = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*poll) + count * sizeof(*poll->Entries),
+                                          KI_TAG('A', 'f', 'd', 'N'));
+    if (!poll)
+        return immediate(request, STATUS_INSUFFICIENT_RESOURCES, 0);
+    memset(poll, 0, sizeof(*poll) + count * sizeof(*poll->Entries));
+    poll->Request = request;
+    poll->Count = count;
+    poll->PointerSize = pointer_size;
+    poll->Output = output;
+    poll->Unique = header[12] != 0;
+    poll->Image = ExAllocatePool2(POOL_FLAG_NON_PAGED, 16 + count * entry_size, KI_TAG('A', 'f', 'd', 'N'));
+    if (!poll->Image) {
+        ExFreePool(poll);
+        return immediate(request, STATUS_INSUFFICIENT_RESOURCES, 0);
+    }
+    status = KiCopyFromUser(poll->Image, input, 16 + count * entry_size);
+    for (ULONG i = 0; NT_SUCCESS(status) && i < count; ++i) {
+        PUCHAR in = poll->Image + 16 + i * entry_size;
+        AFD_NATIVE_ENTRY *entry = &poll->Entries[i];
+        memcpy(&entry->Handle, in, pointer_size);
+        memcpy(&entry->Events, in + pointer_size, 4);
+        status = ObReferenceHandle((HANDLE)(ULONG_PTR)entry->Handle, IoFileObjectTypeObject, KeGetPreviousMode(),
+                                   (PVOID *)&entry->File, nullptr);
+        if (NT_SUCCESS(status) && (entry->File->DeviceObject != g_device || !entry->File->FsContext))
+            status = STATUS_OBJECT_TYPE_MISMATCH;
+    }
+    if (!NT_SUCCESS(status)) {
+        free_native_poll(poll);
+        return immediate(request, status, 0);
+    }
+    ULONG64 current = now();
+    if (timeout == 0x7fffffffffffffffLL) {
+        poll->Deadline = (~0ull);
+    } else if (timeout < 0) {
+        ULONG64 duration = 0 - (ULONG64)timeout;
+        poll->Deadline = duration > (~0ull) - current ? (~0ull) : current + duration;
+    } else {
+        LARGE_INTEGER system_time;
+        KeQuerySystemTime(&system_time);
+        poll->Deadline = timeout <= system_time.QuadPart ? current : current + timeout - system_time.QuadPart;
+    }
+    lock();
+    if (((AFD_SOCKET *)file->FsContext)->Closed) {
+        unlock();
+        free_native_poll(poll);
+        return immediate(request, ((NTSTATUS)0xc0000128L), 0);
+    }
+    if (poll->Unique) {
+        PLIST_ENTRY link = g_native_polls.Flink;
+        while (link != &g_native_polls) {
+            AFD_NATIVE_POLL *old = CONTAINING_RECORD(link, AFD_NATIVE_POLL, Links);
+            link = link->Flink;
+            BOOLEAN overlap = FALSE;
+            if (old->Unique)
+                for (ULONG i = 0; i < count; ++i)
+                    for (ULONG j = 0; j < old->Count; ++j)
+                        overlap |= poll->Entries[i].File == old->Entries[j].File;
+            if (overlap) {
+                RemoveEntryList(&old->Links);
+                finish_native_poll(old, STATUS_SUCCESS, 0);
+            }
+        }
+    }
+    ULONG ready = collect_native_poll(poll);
+    if (ready || !timeout) {
+        status = finish_native_poll(poll, STATUS_SUCCESS, ready);
+        unlock();
+        return status;
+    }
+    request->Pending = TRUE;
+    InsertTailList(&g_native_polls, &poll->Links);
+    for (ULONG i = 0; i < count; ++i)
+        service(poll->Entries[i].File->FsContext);
+    KeSetEvent(&g_work, IO_NO_INCREMENT, FALSE);
+    unlock();
+    return STATUS_PENDING;
+}
+
 static void NTAPI worker(PVOID context)
 {
     for (;;) {
-        KeWaitForSingleObject(&g_work, Executive, KernelMode, FALSE, nullptr);
+        LARGE_INTEGER timeout;
+        lock();
+        service_native_polls();
+        BOOLEAN finite = native_poll_timeout(&timeout);
+        unlock();
+        KeWaitForSingleObject(&g_work, Executive, KernelMode, FALSE, finite ? &timeout : nullptr);
         lock();
         for (;;) {
             ULONG64 n = 0;
@@ -1538,6 +1816,8 @@ NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID cont
     if (!s)
         return STATUS_INVALID_HANDLE;
     switch (code) {
+    case IOCTL_AFD_NATIVE_POLL:
+        return native_poll(file, event, apc, context, iosb, input, in_len, output, out_len);
     case IOCTL_AFD_SEND:
     case IOCTL_AFD_RECV:
         return transfer(file, s, code == IOCTL_AFD_SEND, event, apc, context, iosb, input, in_len);
@@ -1635,6 +1915,7 @@ NTSTATUS AfdCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb)
     BOOLEAN found = FALSE;
     lock();
     if (s) {
+        found |= cancel_native_polls(file, thread, iosb, FALSE);
         found |= cancel_list(&s->Receivers, file, thread, iosb);
         found |= cancel_list(&s->Senders, file, thread, iosb);
         found |= cancel_list(&s->Accepters, file, thread, iosb);
@@ -1695,6 +1976,8 @@ static NTSTATUS NTAPI afd_cleanup(PDEVICE_OBJECT device, PIRP irp)
     if (s) {
         lock();
         s->Closed = TRUE;
+        cancel_native_polls(file, nullptr, nullptr, TRUE);
+        service_native_polls();
         fail_list(&s->Receivers, STATUS_AFD_CANCELLED);
         fail_list(&s->Senders, STATUS_AFD_CANCELLED);
         fail_list(&s->Connects, STATUS_AFD_CANCELLED);
@@ -1753,6 +2036,7 @@ void IopInitializeAfd(void)
     KeInitializeEvent(&g_work, SynchronizationEvent, FALSE);
     InitializeListHead(&g_sockets);
     InitializeListHead(&g_pollers);
+    InitializeListHead(&g_native_polls);
     InitializeListHead(&g_resolvers);
     g_bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, AFD_CHUNK, KI_TAG('A', 'f', 'd', 'B'));
     if (!g_bounce) {

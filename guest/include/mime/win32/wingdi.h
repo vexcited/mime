@@ -1154,6 +1154,7 @@ WINGDIAPI int WINAPI AbortDoc(HDC dc);
 WINGDIAPI int WINAPI SetAbortProc(HDC dc, ABORTPROC proc);
 WINGDIAPI HDC WINAPI ResetDCW(HDC dc, const void *mode);
 WINGDIAPI HDC WINAPI ResetDCA(HDC dc, const void *mode);
+WINGDIAPI int WINAPI DrawEscape(HDC dc, int escape, int in_size, LPCSTR in);
 WINGDIAPI int WINAPI ExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out);
 WINGDIAPI int WINAPI Escape(HDC dc, int escape, int in_size, LPCSTR in, LPVOID out);
 WINGDIAPI LONG WINAPI GetBitmapBits(HBITMAP bitmap, LONG size, LPVOID bits);
