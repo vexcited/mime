@@ -9,8 +9,8 @@
 /* guessed keyboard and mouse handles and names; Windows values depend on hardware. */
 #define KEYBOARD_HANDLE ((HANDLE)(ULONG_PTR)0x10041)
 #define MOUSE_HANDLE ((HANDLE)(ULONG_PTR)0x10043)
-static const WCHAR KEYBOARD_NAME[] = L"\\\\?\\ACPI#MIME0303#0#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}";
-static const WCHAR MOUSE_NAME[] = L"\\\\?\\ACPI#MIME0F13#0#{378de44c-56ef-11d1-bc8c-00a0c91405dd}";
+static const WCHAR KEYBOARD_NAME[] = L"\\\\?\\ACPI#PNP0303#4&38a0320a&0#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}";
+static const WCHAR MOUSE_NAME[] = L"\\\\?\\ACPI#PNP0F13#4&38a0320a&0#{378de44c-56ef-11d1-bc8c-00a0c91405dd}";
 
 #define MAX_REGISTRATIONS 64
 #define RING 1024
