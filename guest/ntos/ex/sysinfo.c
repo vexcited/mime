@@ -262,6 +262,50 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
     smb_word(&b, 0xFFFF); /* no second family field */
     smb_end(&b);
 
+
+    /* types 16 and 17, the memory array and its devices, what a physical memory reader walks. */
+    ULONG64 ram_mb = HalBootInfo->ram_size >> 20;
+    smb_begin(&b, 16, 0x0010);
+    smb_byte(&b, 0x03); /* system board */
+    smb_byte(&b, 0x03); /* system memory */
+    smb_byte(&b, 0x03); /* no error correction */
+    smb_dword(&b, ram_mb > 0xFFFFFFFFu ? 0xFFFFFFFFu : (ULONG)ram_mb); /* maximum capacity, keeper bytes */
+    smb_word(&b, 0xFFFE); /* no error information handle */
+    smb_word(&b, 1);      /* one device for the installed memory */
+    smb_qword(&b, 0);     /* no extended maximum capacity */
+    smb_end(&b);
+
+    for (ULONG slot = 0; slot < 1; slot++) {
+        ULONG64 device_mb = ram_mb;
+        smb_begin(&b, 17, (USHORT)(0x0011 + slot));
+        smb_word(&b, 0x0010); /* the array */
+        smb_word(&b, 0xFFFE); /* no error information handle */
+        smb_word(&b, 64);     /* total width */
+        smb_word(&b, 64);     /* data width */
+        USHORT encoded = device_mb > 0x7FFF ? 0x7FFF : (USHORT)device_mb;
+        smb_word(&b, encoded);
+        smb_dword(&b, device_mb > 0x7FFF ? (ULONG)device_mb : 0);
+        smb_byte(&b, 0x0E); /* row of chips, the memory is soldered */
+        smb_byte(&b, 0);    /* no device set */
+        smb_byte(&b, smb_string(&b, slot ? "Row 2" : "Row 1"));
+        smb_byte(&b, 0x9A); /* manufactured and populated */
+        smb_byte(&b, 0x23); /* LPDDR5 */
+        smb_word(&b, 0x2002); /* double data rate */
+        smb_word(&b, 6400);   /* MT/s */
+        smb_byte(&b, smb_string(&b, HalBootInfo->system_manufacturer));
+        smb_byte(&b, 0); /* no serial */
+        smb_byte(&b, 0); /* no asset tag */
+        smb_byte(&b, 0); /* no part number */
+        smb_byte(&b, 0); /* unknown rank */
+        smb_qword(&b, 0);
+        smb_word(&b, 0);
+        smb_word(&b, 0);
+        smb_word(&b, 0);
+        smb_word(&b, 6400);
+        smb_word(&b, 6400);
+        smb_end(&b);
+    }
+
     /* the end of the table. */
     smb_begin(&b, 127, 0x0005);
     smb_end(&b);
@@ -389,7 +433,7 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
     if (header.Action != SystemFirmwareTable_Get || header.TableId != 0)
         return STATUS_INVALID_PARAMETER;
 
-    UCHAR stack_table[512];
+    UCHAR stack_table[2048];
     PUCHAR table = stack_table;
     ULONG table_size = smb_build(table, sizeof(stack_table));
     ULONG data_size = sizeof(RAW_SMBIOS_DATA) - 1 + table_size;
