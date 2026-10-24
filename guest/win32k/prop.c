@@ -26,7 +26,7 @@ HANDLE PropGetData(WND *w, ATOM atom)
 /* DWM properties stored by dwmapi affect the host window. */
 static void prop_changed(WND *w, ATOM atom)
 {
-    if (atom == AtomFind(L"MimeDwmCorner") && WndIsTopLevel(w))
+    if (atom == AtomFind(L"DwmCorner") && WndIsTopLevel(w))
         WndUpdateHostConfig(w, FALSE);
 
 }

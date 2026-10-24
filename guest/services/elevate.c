@@ -50,13 +50,13 @@ static DWORD token_dword(HANDLE token, DWORD klass, DWORD fallback)
     return value;
 }
 
-/* the host's user always consents unless HKLM\Software\Mime\Elevation has Decline set. */
+/* the host's user always consents unless the policy declines raising programs. */
 static BOOL consent_given(void)
 {
     HKEY key;
     DWORD declined = 0, size = sizeof(declined), type = 0;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Mime\\Elevation", 0, KEY_READ, &key) == ERROR_SUCCESS) {
-        if (RegQueryValueExW(key, L"Decline", nullptr, &type, (BYTE *)&declined, &size) != ERROR_SUCCESS || type != REG_DWORD)
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, KEY_READ, &key) == ERROR_SUCCESS) {
+        if (RegQueryValueExW(key, L"DeclineElevationPrompts", nullptr, &type, (BYTE *)&declined, &size) != ERROR_SUCCESS || type != REG_DWORD)
             declined = 0;
         RegCloseKey(key);
     }

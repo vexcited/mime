@@ -410,7 +410,7 @@ static BOOL register_class(void)
         return TRUE;
     wc.lpfnWndProc = service_proc;
     wc.hInstance = g_ctf_module;
-    wc.lpszClassName = L"MimeTsfSink";
+    wc.lpszClassName = L"TsfSink";
     if (!RegisterClassW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
         return FALSE;
     registered = 1;
@@ -428,7 +428,7 @@ void ServiceThreadAttach(TM *tm)
     svc->Sink.lpVtbl = &sink_vtbl;
     svc->Refs = 1;
     svc->Tm = tm;
-    svc->Window = CreateWindowExW(0, L"MimeTsfSink", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, g_ctf_module, nullptr);
+    svc->Window = CreateWindowExW(0, L"TsfSink", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, g_ctf_module, nullptr);
     if (!svc->Window) {
         CtfFree(svc);
         return;

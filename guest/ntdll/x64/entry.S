@@ -1,10 +1,10 @@
 /*
  * user mode entry points of the x64 ntdll, reached from the x64 kernel, or
- * from mimex86.dll the way the x64 kernel would reach them.
+ * from xta64.dll the way the x64 kernel would reach them.
  *
  * KiUserExceptionDispatcher  rcx = &EXCEPTION_RECORD, rdx = &CONTEXT
  * KiUserApcDispatcher        rsp = &CONTEXT, the routine and its arguments in the home slots,
- *                            unused by mimex86.dll, which calls apc routines itself
+ *                            unused by xta64.dll, which calls apc routines itself
  * KiUserCallbackDispatcher   ecx = api index, rdx = arguments, r8d = argument length
  * LdrInitializeThunk         rcx = &CONTEXT of the new thread, rdx = ntdll base
  */

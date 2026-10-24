@@ -219,7 +219,7 @@ static BOOL parse(COMMAND *command, PCWSTR line)
                 command->LogMode = log_mode(L"iwearucmop", &command->LogAttributes);
             line = next_word(line, argument, RTL_NUMBER_OF(argument), &start);
             command->LogPath = copy_text(argument);
-        } else if (match(option, L"mime-ca-server")) {
+        } else if (match(option, L"ca-server")) {
             command->Action = ACTION_SERVER;
             line = next_word(line, argument, RTL_NUMBER_OF(argument), &start);
             command->Pipe = copy_text(argument);

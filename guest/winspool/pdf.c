@@ -227,7 +227,7 @@ BOOL PdfFinish(PdfWriter *w)
     w->Offsets[0] = w->Offset;
     putf(w, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
     w->Offsets[2] = w->Offset;
-    putf(w, "3 0 obj\n<< /Producer (Mime) /Title ");
+    putf(w, "3 0 obj\n<< /Producer (Microsoft: Print To PDF) /Title ");
     put_title(w, w->Title);
     putf(w, " >>\nendobj\n");
     ULONGLONG xref = w->Offset;

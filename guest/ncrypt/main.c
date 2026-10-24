@@ -289,7 +289,7 @@ static BOOL key_path(LPCWSTR name, DWORD flags, WCHAR *path)
     if (!got || got >= MAX_PATH)
         return FALSE;
     SIZE_T length = wcslen(base);
-    static const WCHAR tail[] = L"\\Microsoft\\Crypto\\Keys\\mime-";
+    static const WCHAR tail[] = L"\\Microsoft\\Crypto\\Keys\\";
     if (length + wcslen(tail) + wcslen(name) * 4 + 1 >= MAX_PATH)
         return FALSE;
     memcpy(path, base, length * sizeof(WCHAR));

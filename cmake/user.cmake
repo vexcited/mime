@@ -183,7 +183,7 @@ endforeach()
 # the x86 and x64 translator, mapped into emulated processes on arm64. it imports nothing.
 if(MIME_GUEST_ARCH STREQUAL "arm64")
     mime_glob(sources guest/mimex86/*.c guest/mimex86/*.S)
-    mime_dll(mimex86 arm64 BASE 0x7FFD00000000 ENTRY /noentry SOURCES ${sources}
+    mime_dll(xta64 arm64 BASE 0x7FFD00000000 ENTRY /noentry SOURCES ${sources}
         OBJECTS arm64-ntsyscalls ${MIME_RUNTIME_arm64} OPTIONS -fno-math-errno
         FLAGS /export:RtlUserThreadStart=MxUserThreadStart NOIMPLIB)
 endif()

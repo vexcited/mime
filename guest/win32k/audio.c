@@ -38,7 +38,7 @@ static NTSTATUS alloc_slot(AUDIO_SLOT *s)
     if (!s->Kernel)
         return STATUS_NO_MEMORY;
     s->Pa = (ULONG64)MmGetPhysicalAddress(s->Kernel).QuadPart;
-    NTSTATUS status = MimeMmCreatePhysicalSection(s->Pa, MIME_AUDIO_STREAM_SIZE, &s->Section);
+    NTSTATUS status = MmCreatePhysicalSection(s->Pa, MIME_AUDIO_STREAM_SIZE, &s->Section);
     if (NT_SUCCESS(status))
         status = MmMapSharedSectionUser(s->Section, PsGetCurrentProcess(), &s->User, TRUE);
     if (!NT_SUCCESS(status))

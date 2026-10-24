@@ -398,7 +398,7 @@ static UINT start_host(void)
     if (g_host_pipe)
         return ERROR_SUCCESS;
     WCHAR name[96], directory[MAX_PATH], command[MAX_PATH + 160];
-    _snwprintf(name, RTL_NUMBER_OF(name), L"\\\\.\\pipe\\mime-msi-%u-%u", GetCurrentProcessId(), GetTickCount());
+    _snwprintf(name, RTL_NUMBER_OF(name), L"\\\\.\\pipe\\msihost-%u-%u", GetCurrentProcessId(), GetTickCount());
     UINT length = GetSystemWow64DirectoryW(directory, RTL_NUMBER_OF(directory));
     if (!length || length + 16 >= RTL_NUMBER_OF(directory))
         return ERROR_NOT_SUPPORTED;
@@ -406,7 +406,7 @@ static UINT start_host(void)
                                    0, nullptr);
     if (pipe == INVALID_HANDLE_VALUE)
         return GetLastError();
-    _snwprintf(command, RTL_NUMBER_OF(command), L"\"%s\\msiexec.exe\" /mime-ca-server %s", directory, name);
+    _snwprintf(command, RTL_NUMBER_OF(command), L"\"%s\\msiexec.exe\" /ca-server %s", directory, name);
     STARTUPINFOW startup = {.cb = sizeof(startup)};
     PROCESS_INFORMATION process;
     if (!CreateProcessW(nullptr, command, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {

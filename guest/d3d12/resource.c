@@ -1121,7 +1121,7 @@ static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap 
         if (resource->import_blob) {
             type = resource->import_blob->type_index;
             size = resource->import_blob->memory_size;
-            if (vk->vkMimeShareImportMemory(vk->device, resource->import_share.id, resource->image, size, type,
+            if (vk->vkMxShareImportMemory(vk->device, resource->import_share.id, resource->image, size, type,
                                             &resource->own_memory) != VK_SUCCESS)
                 return E_FAIL;
         } else {

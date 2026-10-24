@@ -569,7 +569,7 @@ static RPC_STATUS endpoint_create(PCWSTR protseq, PCWSTR endpoint, ULONG max_cal
         if (!_wcsicmp(protseq, L"ncalrpc"))
             random_name(L"LRPC-", e->Endpoint, ARRAYSIZE(e->Endpoint));
         else
-            random_name(L"\\pipe\\mime-", e->Endpoint, ARRAYSIZE(e->Endpoint));
+            random_name(L"\\pipe\\rpc-", e->Endpoint, ARRAYSIZE(e->Endpoint));
     }
     status = RpcpPipeName(e->Protseq, e->Endpoint, e->PipeName, ARRAYSIZE(e->PipeName));
     if (status) {

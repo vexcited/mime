@@ -735,7 +735,7 @@ HRESULT D12FenceShare(D12Fence *fence, const SECURITY_ATTRIBUTES *attributes, LP
         blob.adapter = device->adapter_luid;
         hr = MimeShareCreate(&fence->share, MIME_GFXSHARE_SYNC, &blob, sizeof(blob), 0, name, attributes);
         if (SUCCEEDED(hr) &&
-            device->vk.vkMimeShareExportSemaphore(device->vk.device, fence->semaphore, fence->share.id) != VK_SUCCESS) {
+            device->vk.vkMxShareExportSemaphore(device->vk.device, fence->semaphore, fence->share.id) != VK_SUCCESS) {
             MimeShareClose(&fence->share);
             hr = E_FAIL;
         } else if (SUCCEEDED(hr)) {
@@ -781,7 +781,7 @@ HRESULT D12FenceOpen(D12Device *device, HANDLE handle, D12Fence **out)
         type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
         VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
         if (device->vk.vkCreateSemaphore(device->vk.device, &info, nullptr, &fence->semaphore) != VK_SUCCESS ||
-            device->vk.vkMimeShareImportSemaphore(device->vk.device, fence->semaphore, own.id) != VK_SUCCESS) {
+            device->vk.vkMxShareImportSemaphore(device->vk.device, fence->semaphore, own.id) != VK_SUCCESS) {
             if (fence->semaphore)
                 device->vk.vkDestroySemaphore(device->vk.device, fence->semaphore, nullptr);
             fence->semaphore = VK_NULL_HANDLE;

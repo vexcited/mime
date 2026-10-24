@@ -1,7 +1,7 @@
 /*
  * a window's taskbar state: progress, overlay icon, thumbnail toolbar, tooltip, clip and registered tabs. there is
- * no taskbar, so the settings are only kept. progress is also stored as window properties, "MimeTaskbarProgress"
- * for the state and "MimeTaskbarValue" for the value from 0 to 65534, for a host that shows progress.
+ * no taskbar, so the settings are only kept. progress is also stored as window properties, "TaskbarProgress"
+ * for the state and "TaskbarValue" for the value from 0 to 65534, for a host that shows progress.
  */
 #include "explorerframe_private.h"
 #include <mime/shellclient.h>
@@ -123,8 +123,8 @@ static HRESULT STDMETHODCALLTYPE tl_mark_fullscreen(ITaskbarList3 *This, HWND wi
  */
 static void send_progress(HWND window)
 {
-    ULONG_PTR state = (ULONG_PTR)GetPropW(window, L"MimeTaskbarProgress");
-    ULONG_PTR value = (ULONG_PTR)GetPropW(window, L"MimeTaskbarValue");
+    ULONG_PTR state = (ULONG_PTR)GetPropW(window, L"TaskbarProgress");
+    ULONG_PTR value = (ULONG_PTR)GetPropW(window, L"TaskbarValue");
     MimeShellWindow w;
     MimeShellClear(&w, sizeof(w));
     w.op = MIME_SHELL_LAUNCHER;
@@ -150,14 +150,14 @@ static HRESULT STDMETHODCALLTYPE tl_progress_value(ITaskbarList3 *This, HWND win
         if (value > 0xFFFFFFFFull)
             return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
     }
-    SetPropW(window, L"MimeTaskbarValue", (HANDLE)(ULONG_PTR)value);
+    SetPropW(window, L"TaskbarValue", (HANDLE)(ULONG_PTR)value);
     send_progress(window);
     return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE tl_progress_state(ITaskbarList3 *This, HWND window, TBPFLAG flags)
 {
-    SetPropW(window, L"MimeTaskbarProgress", (HANDLE)(ULONG_PTR)flags);
+    SetPropW(window, L"TaskbarProgress", (HANDLE)(ULONG_PTR)flags);
     send_progress(window);
     return S_OK;
 }

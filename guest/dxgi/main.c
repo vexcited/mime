@@ -12,36 +12,38 @@ static INIT_ONCE g_vulkan_once = INIT_ONCE_STATIC_INIT;
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
 
 /*
- * the user mode driver version as windows numbers it, read by programs
- * through CheckInterfaceSupport. nvidia's end in the last digit of the major
- * version and the minor, so 580.95 is 32.0.15.8095.
+ * the user mode driver version as windows numbers it, read by programs through CheckInterfaceSupport. the
+ * adreno package of the reference computer is 31.0.63.7.
  */
-static LARGE_INTEGER umd_version(const VkPhysicalDeviceProperties *p)
+static LARGE_INTEGER umd_version(void)
 {
     LARGE_INTEGER v;
-    UINT a = 31, b = 0, c, d;
-    if (p->vendorID == 0x10DE) {
-        UINT n = (p->driverVersion >> 22) * 100 + ((p->driverVersion >> 14) & 0xFF);
-        a = 32;
-        c = 10 + n / 10000;
-        d = n % 10000;
-    } else {
-        c = VK_API_VERSION_MAJOR(p->driverVersion) * 100 + VK_API_VERSION_MINOR(p->driverVersion);
-        d = VK_API_VERSION_PATCH(p->driverVersion);
-    }
-    v.HighPart = (a << 16) | b;
-    v.LowPart = (c << 16) | (d & 0xFFFF);
+    v.HighPart = (31 << 16);
+    v.LowPart = (63 << 16) | 7;
     return v;
+}
+
+/*
+ * the adapter presents the processor and firmware profile of the machine, a
+ * qualcomm adreno x1-85 of the reference computer, whatever the host gpu the
+ * connection is made to. its pci and acpi ids are the ones of the chip.
+ */
+static void identify(const VkPhysicalDeviceProperties *p, DXGI_ADAPTER_DESC3 *desc)
+{
+    static const WCHAR name[] = L"Qualcomm(R) Adreno(TM) X1-85 GPU";
+    memcpy(desc->Description, name, sizeof(name));
+    desc->VendorId = 0x5143;
+    desc->DeviceId = 0x0C36;
+    desc->SubSysId = 0x10280C69;
+    desc->Revision = 0x0086;
+    (void)p;
 }
 
 static void describe(DxgiGpu *gpu, UINT index)
 {
     DXGI_ADAPTER_DESC3 *desc = &gpu->desc;
     memset(desc, 0, sizeof(*desc));
-    MultiByteToWideChar(CP_UTF8, 0, gpu->properties.deviceName, -1, desc->Description, 128);
-    desc->Description[127] = 0;
-    desc->VendorId = gpu->properties.vendorID;
-    desc->DeviceId = gpu->properties.deviceID;
+    identify(&gpu->properties, desc);
     for (UINT i = 0; i < gpu->memory.memoryHeapCount; i++) {
         const VkMemoryHeap *heap = &gpu->memory.memoryHeaps[i];
         if (heap->flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
@@ -60,7 +62,7 @@ static void describe(DxgiGpu *gpu, UINT index)
                   DXGI_ADAPTER_FLAG3_KEYED_MUTEX_CONFORMANCE;
     desc->GraphicsPreemptionGranularity = DXGI_GRAPHICS_PREEMPTION_PIXEL_BOUNDARY;
     desc->ComputePreemptionGranularity = DXGI_COMPUTE_PREEMPTION_DISPATCH_BOUNDARY;
-    gpu->umd_version = umd_version(&gpu->properties);
+    gpu->umd_version = umd_version();
 }
 
 /* discrete gpus first, like windows lists the one driving the display, since games pick the first. */
@@ -106,7 +108,7 @@ static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
     static const char *const extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
     VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "dxgi";
-    app.pEngineName = "mime";
+    app.pEngineName = "DirectX";
     app.apiVersion = version;
     VkInstanceCreateInfo info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     info.pApplicationInfo = &app;

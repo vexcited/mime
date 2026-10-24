@@ -13,7 +13,7 @@ typedef struct SCROLL_DATA {
     UINT Arrows; /* ESB_DISABLE_* flags. */
 } SCROLL_DATA;
 
-static const WCHAR *const g_scroll_prop[3] = {L"MimeScrollH", L"MimeScrollV", L"MimeScrollCtl"};
+static const WCHAR *const g_scroll_prop[3] = {L"ScrollH", L"ScrollV", L"ScrollCtl"};
 
 /* a fresh bar has the range 0 to 100, like on windows. */
 static const SCROLL_DATA g_scroll_default = {0, 100, 0, 0, 0, ESB_ENABLE_BOTH};

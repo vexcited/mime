@@ -970,7 +970,7 @@ typedef struct _ETHREAD {
 
 /*
  * the dll the kernel maps into every process and enters user mode through: ntdll.dll for arm64 programs,
- * the mimex86.dll translator for x86 and x64 ones. its exports are cached when loaded at boot.
+ * the xta64.dll translator for x86 and x64 ones. its exports are cached when loaded at boot.
  */
 typedef struct _PSP_SYSTEM_DLL {
     PSECTION Section;

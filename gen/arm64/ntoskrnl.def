@@ -202,7 +202,7 @@ EXPORTS
     MimeFsRomSecurity @17 NONAME
     MimeFsSecurityChanged @18 NONAME
     MimeFsStoreSecurity @19 NONAME
-    MimeMmCreatePhysicalSection @20 NONAME
+    MmCreatePhysicalSection @20 NONAME
     MimePadEvent @21 NONAME
     MimePadHidInfo @22 NONAME
     MimePnpAddDevice @23 NONAME
@@ -259,7 +259,7 @@ EXPORTS
     MmIsAddressValid
     MmLoadSystemImage
     MmMapPagesInSystem
-    MimeMmMapWritableSection
+    MmMapWritableSection
     MmMapSharedSectionUser
     MmMapViewInSystemSpace
     MmQueryVmCounters

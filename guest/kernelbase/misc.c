@@ -309,7 +309,7 @@ static BOOL kernel_atoms(void)
     LONG state = __atomic_load_n(&g_kernel_atoms, __ATOMIC_ACQUIRE);
     if (state < 0) {
         USHORT atom = 0;
-        NTSTATUS status = NtFindAtom(L"MimeAtomProbe", sizeof(L"MimeAtomProbe") - sizeof(WCHAR), &atom);
+        NTSTATUS status = NtFindAtom(L"AtomProbe", sizeof(L"AtomProbe") - sizeof(WCHAR), &atom);
         state = status == STATUS_NOT_IMPLEMENTED ? 0 : 1;
         __atomic_store_n(&g_kernel_atoms, state, __ATOMIC_RELEASE);
     }

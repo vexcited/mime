@@ -8,7 +8,7 @@
 
 VkResult mvk_memory_imported(VkDeviceMemory memory, VkDeviceSize size);
 
-VKAPI_ATTR VkResult VKAPI_CALL vkMimeShareExportMemory(VkDevice device, VkDeviceMemory memory, uint64_t id)
+VKAPI_ATTR VkResult VKAPI_CALL vkMxShareExportMemory(VkDevice device, VkDeviceMemory memory, uint64_t id)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_SHARE_EXPORT_MEMORY);
     mvk_put_u64(e, (uint64_t)memory);
@@ -19,7 +19,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkMimeShareExportMemory(VkDevice device, VkDevice
     return result;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL vkMimeShareImportMemory(VkDevice device, uint64_t id, VkImage dedicated,
+VKAPI_ATTR VkResult VKAPI_CALL vkMxShareImportMemory(VkDevice device, uint64_t id, VkImage dedicated,
                                                        VkDeviceSize size, uint32_t type_index, VkDeviceMemory *memory)
 {
     uint64_t memory_id = mvk_new_id();
@@ -43,7 +43,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkMimeShareImportMemory(VkDevice device, uint64_t
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL vkMimeShareExportSemaphore(VkDevice device, VkSemaphore semaphore, uint64_t id)
+VKAPI_ATTR VkResult VKAPI_CALL vkMxShareExportSemaphore(VkDevice device, VkSemaphore semaphore, uint64_t id)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_SHARE_EXPORT_SEMAPHORE);
     mvk_put_u64(e, (uint64_t)semaphore);
@@ -54,7 +54,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkMimeShareExportSemaphore(VkDevice device, VkSem
     return result;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL vkMimeShareImportSemaphore(VkDevice device, VkSemaphore semaphore, uint64_t id)
+VKAPI_ATTR VkResult VKAPI_CALL vkMxShareImportSemaphore(VkDevice device, VkSemaphore semaphore, uint64_t id)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_SHARE_IMPORT_SEMAPHORE);
     mvk_put_u64(e, (uint64_t)semaphore);
@@ -66,9 +66,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkMimeShareImportSemaphore(VkDevice device, VkSem
 }
 
 const MvkProc mvk_share_procs[] = {
-    {"vkMimeShareExportMemory", (PFN_vkVoidFunction)vkMimeShareExportMemory},
-    {"vkMimeShareImportMemory", (PFN_vkVoidFunction)vkMimeShareImportMemory},
-    {"vkMimeShareExportSemaphore", (PFN_vkVoidFunction)vkMimeShareExportSemaphore},
-    {"vkMimeShareImportSemaphore", (PFN_vkVoidFunction)vkMimeShareImportSemaphore},
+    {"vkMxShareExportMemory", (PFN_vkVoidFunction)vkMxShareExportMemory},
+    {"vkMxShareImportMemory", (PFN_vkVoidFunction)vkMxShareImportMemory},
+    {"vkMxShareExportSemaphore", (PFN_vkVoidFunction)vkMxShareExportSemaphore},
+    {"vkMxShareImportSemaphore", (PFN_vkVoidFunction)vkMxShareImportSemaphore},
     {nullptr, nullptr},
 };

@@ -610,7 +610,7 @@ void IoInitialize(void)
 
     NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Ntfs", MimeFsDriverEntry, nullptr);
     if (!NT_SUCCESS(status))
-        KiLogPrintf("mimefs failed to start: %08x", status);
+        KiLogPrintf("file system failed to start: %08x", status);
     ObCreateSymbolicLink(L"\\GLOBAL??\\C:", L"\\Device\\HarddiskVolume1");
     ObCreateSymbolicLink(L"\\GLOBAL??\\Z:", L"\\Device\\HarddiskVolume2");
     ObCreateSymbolicLink(L"\\GLOBAL??\\SystemRoot", L"\\Device\\HarddiskVolume1\\Windows");

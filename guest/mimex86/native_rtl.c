@@ -1,5 +1,5 @@
 /*
- * ntdll's heap and synchronization code built into mimex86 under other
+ * ntdll's heap and synchronization code built into xta64 under other
  * names. native.c runs the x64 ntdll exports with them: both builds share
  * the same structures and lock protocol, so x64 code that still runs its
  * own copy works on the same heaps and locks.

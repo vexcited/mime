@@ -7,7 +7,7 @@
 #include <mime/mvk_video.h>
 
 /* fills at most capacity profiles; count gets the total. */
-VKAPI_ATTR VkResult VKAPI_CALL vkMimeVideoGetCaps(VkDevice device, uint32_t *count, MvkVideoCaps *caps, uint32_t capacity)
+VKAPI_ATTR VkResult VKAPI_CALL vkMxVideoGetCaps(VkDevice device, uint32_t *count, MvkVideoCaps *caps, uint32_t capacity)
 {
     *count = 0;
     MvkEncoder *e = mvk_call_begin(MVK_OP_VIDEO_CAPS);
@@ -27,7 +27,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkMimeVideoGetCaps(VkDevice device, uint32_t *cou
     return result;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL vkMimeVideoCreateSession(VkDevice device, const MvkVideoSessionInfo *info, uint64_t *session)
+VKAPI_ATTR VkResult VKAPI_CALL vkMxVideoCreateSession(VkDevice device, const MvkVideoSessionInfo *info, uint64_t *session)
 {
     uint64_t id = mvk_new_id();
     MvkEncoder *e = mvk_call_begin(MVK_OP_VIDEO_CREATE);
@@ -48,7 +48,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkMimeVideoCreateSession(VkDevice device, const M
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL vkMimeVideoDestroySession(VkDevice device, uint64_t session)
+VKAPI_ATTR void VKAPI_CALL vkMxVideoDestroySession(VkDevice device, uint64_t session)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_VIDEO_DESTROY);
     mvk_put_u64(e, session);
@@ -57,7 +57,7 @@ VKAPI_ATTR void VKAPI_CALL vkMimeVideoDestroySession(VkDevice device, uint64_t s
 }
 
 /* no reply: the host runs it in order and signals the semaphore. */
-VKAPI_ATTR VkResult VKAPI_CALL vkMimeVideoDecode(VkDevice device, const MvkVideoDecodeInfo *info, uint64_t picture_image,
+VKAPI_ATTR VkResult VKAPI_CALL vkMxVideoDecode(VkDevice device, const MvkVideoDecodeInfo *info, uint64_t picture_image,
                                                  uint32_t picture_layer)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_VIDEO_DECODE);
@@ -88,9 +88,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkMimeVideoDecode(VkDevice device, const MvkVideo
 
 /* for vkGetDeviceProcAddr. */
 const MvkProc mvk_video_procs[] = {
-    {"vkMimeVideoGetCaps", (PFN_vkVoidFunction)vkMimeVideoGetCaps},
-    {"vkMimeVideoCreateSession", (PFN_vkVoidFunction)vkMimeVideoCreateSession},
-    {"vkMimeVideoDestroySession", (PFN_vkVoidFunction)vkMimeVideoDestroySession},
-    {"vkMimeVideoDecode", (PFN_vkVoidFunction)vkMimeVideoDecode},
+    {"vkMxVideoGetCaps", (PFN_vkVoidFunction)vkMxVideoGetCaps},
+    {"vkMxVideoCreateSession", (PFN_vkVoidFunction)vkMxVideoCreateSession},
+    {"vkMxVideoDestroySession", (PFN_vkVoidFunction)vkMxVideoDestroySession},
+    {"vkMxVideoDecode", (PFN_vkVoidFunction)vkMxVideoDecode},
     {nullptr, nullptr},
 };

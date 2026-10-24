@@ -106,8 +106,8 @@ void D3dVideoProbe(D3dDevice *device)
     if (!device->video_probed) {
         device->video_probed = TRUE;
         UINT count = 0;
-        if (device->has_video && device->vk.vkMimeVideoGetCaps &&
-            device->vk.vkMimeVideoGetCaps(device->vk.device, &count, device->video_caps,
+        if (device->has_video && device->vk.vkMxVideoGetCaps &&
+            device->vk.vkMxVideoGetCaps(device->vk.device, &count, device->video_caps,
                                           RTL_NUMBER_OF(device->video_caps)) == VK_SUCCESS)
             device->video_count = D3D_MIN(count, RTL_NUMBER_OF(device->video_caps));
         for (UINT i = 0; i < RTL_NUMBER_OF(PROFILES); i++)
@@ -199,8 +199,8 @@ static ULONG STDMETHODCALLTYPE decoder_release(ID3D11VideoDecoder *iface)
         return refs;
     D3dDevice *device = d->child.device;
     /* the host waits for its queue, so pending decodes finish before the session goes. */
-    if (d->session && device->vk.vkMimeVideoDestroySession)
-        device->vk.vkMimeVideoDestroySession(device->vk.device, d->session);
+    if (d->session && device->vk.vkMxVideoDestroySession)
+        device->vk.vkMxVideoDestroySession(device->vk.device, d->session);
     for (UINT i = 0; i < BUFFER_TYPES; i++)
         if (d->buffers[i].data)
             VirtualFree(d->buffers[i].data, 0, MEM_RELEASE);
@@ -558,7 +558,7 @@ static HRESULT STDMETHODCALLTYPE vd_CreateVideoDecoder(ID3D11VideoDevice1 *iface
     d->config = *config;
     d->profile = p;
     MvkVideoSessionInfo info = {p->codec, p->profile, p->depth, desc->SampleWidth, desc->SampleHeight};
-    VkResult result = device->vk.vkMimeVideoCreateSession(device->vk.device, &info, &d->session);
+    VkResult result = device->vk.vkMxVideoCreateSession(device->vk.device, &info, &d->session);
     if (result != VK_SUCCESS) {
         D3dLog("d3d11: the host did not make a video decoder (%d)", result);
         d->session = 0;
@@ -943,7 +943,7 @@ static HRESULT STDMETHODCALLTYPE vc_DecoderEndFrame(ID3D11VideoContext1 *iface, 
             info.slice_count = d->slice_count;
             info.bitstream = d->bits;
             info.bitstream_size = d->bits_size;
-            if (device->vk.vkMimeVideoDecode(device->vk.device, &info, (UINT64)v->resource->tex.image,
+            if (device->vk.vkMxVideoDecode(device->vk.device, &info, (UINT64)v->resource->tex.image,
                                              v->desc.Texture2D.ArraySlice) != VK_SUCCESS) {
                 D3dLog("d3d11: a video frame was not sent to the host");
                 hr = E_FAIL;

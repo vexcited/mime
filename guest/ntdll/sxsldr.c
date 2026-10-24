@@ -27,7 +27,7 @@ static void NTAPI data_notification(ULONG type, PACTIVATION_CONTEXT context, con
                                     PVOID notification_context, PVOID notification_data, PBOOLEAN disable)
 {
     if (type == ACTIVATION_CONTEXT_NOTIFICATION_DESTROY)
-        MimeSxsFreeActivationContextData((PVOID)data);
+        RtlFreeActivationContextData((PVOID)data);
     else if (disable)
         *disable = TRUE;
 }
@@ -54,11 +54,11 @@ NTSTATUS LdrpSxsProbeDll(PVOID base, PCWSTR full_path, PACTIVATION_CONTEXT *cont
         if (NT_SUCCESS(status)) {
             MIME_SXS_GENERATE request = {.Flags = 0x88, .Source = full_path, .ResourceName = (PCWSTR)2, .Module = base};
             PVOID data;
-            status = MimeSxsGenerateActivationContext(&request, &data);
+            status = RtlGenerateActivationContext(&request, &data);
             if (NT_SUCCESS(status)) {
                 status = RtlCreateActivationContext(0, data, 0, data_notification, nullptr, context);
                 if (!NT_SUCCESS(status))
-                    MimeSxsFreeActivationContextData(data);
+                    RtlFreeActivationContextData(data);
             }
         }
     }
@@ -303,7 +303,7 @@ NTSTATUS LdrpSxsInitializeProcess(PVOID image, PCWSTR image_path)
         return STATUS_SUCCESS;
     /* the program's manifest: resource 1, or <program>.manifest beside it. */
     MIME_SXS_GENERATE request = {.Source = image_path, .ResourceName = (PCWSTR)1, .Module = image};
-    NTSTATUS status = MimeSxsGenerateActivationContext(&request, &data);
+    NTSTATUS status = RtlGenerateActivationContext(&request, &data);
     if (status == STATUS_RESOURCE_DATA_NOT_FOUND || status == STATUS_RESOURCE_TYPE_NOT_FOUND ||
         status == STATUS_RESOURCE_NAME_NOT_FOUND || status == STATUS_RESOURCE_LANG_NOT_FOUND)
         return STATUS_SUCCESS;

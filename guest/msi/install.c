@@ -281,7 +281,7 @@ UINT MimeMsiBackupFile(MIME_MSI_PACKAGE *package, PCWSTR path, BOOL *existed)
     change->Backup = MimeMsiAllocate(capacity * sizeof(WCHAR));
     UINT error = change->Backup ? ERROR_FILE_EXISTS : ERROR_NOT_ENOUGH_MEMORY;
     for (ULONG attempt = 0; change->Backup && attempt < 128; attempt++) {
-        _snwprintf(change->Backup, capacity, L"%s.mime-%08x-%08x.bak", path, GetCurrentProcessId(), ++package->BackupCounter);
+        _snwprintf(change->Backup, capacity, L"%s.%08x-%08x.bak", path, GetCurrentProcessId(), ++package->BackupCounter);
         if (CopyFileW(path, change->Backup, TRUE)) {
             error = ERROR_SUCCESS;
             break;
@@ -1033,7 +1033,7 @@ static UINT target_open(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *file, INS
         else {
             error = ERROR_FILE_EXISTS;
             for (ULONG attempt = 0; attempt < 128; attempt++) {
-                _snwprintf(change->Backup, capacity, L"%s.mime-%08x-%08x.bak", file->Target,
+                _snwprintf(change->Backup, capacity, L"%s.%08x-%08x.bak", file->Target,
                            GetCurrentProcessId(), ++package->BackupCounter);
                 if (CopyFileW(file->Target, change->Backup, TRUE)) {
                     error = ERROR_SUCCESS;

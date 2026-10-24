@@ -69,7 +69,7 @@ HRESULT D12ResourceShare(D12Resource *r, const SECURITY_ATTRIBUTES *attributes, 
         hr = MimeShareCreate(&r->share, MIME_GFXSHARE_RESOURCE, r->share_blob, sizeof(*r->share_blob), 0, name,
                              attributes);
         if (SUCCEEDED(hr) &&
-            device->vk.vkMimeShareExportMemory(device->vk.device, r->own_memory, r->share.id) != VK_SUCCESS) {
+            device->vk.vkMxShareExportMemory(device->vk.device, r->own_memory, r->share.id) != VK_SUCCESS) {
             MimeShareClose(&r->share);
             hr = E_FAIL;
         }

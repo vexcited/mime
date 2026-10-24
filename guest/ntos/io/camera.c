@@ -193,7 +193,7 @@ static void add_camera(CAMERA *c, const MimeCameraInfo *info)
     MimePnpAddDevice(c->Parent, nullptr, &usb);
     MimePnpAddDevice(c->Instance, c->Parent, &video);
     WCHAR device[40];
-    _snwprintf(device, RTL_NUMBER_OF(device), L"\\Device\\MimeCamera%u", (ULONG)(c - g_cameras));
+    _snwprintf(device, RTL_NUMBER_OF(device), L"\\Device\\Camera%u", (ULONG)(c - g_cameras));
     /* the categories usbvideo registers its interface in, each with the reference string "global". */
     static const GUID *const categories[] = {&KSCATEGORY_CAPTURE, &KSCATEGORY_RENDER, &KSCATEGORY_VIDEO,
                                              &KSCATEGORY_RENDER_EXT, &KSCATEGORY_VIDEO_CAMERA};
@@ -375,7 +375,7 @@ static NTSTATUS open_stream(CAMERA_FILE *f, CAMERA *c, const MimeCameraOpen *req
     f->Size = size;
     f->Pa = (ULONG64)MmGetPhysicalAddress(block).QuadPart;
     f->Event = event;
-    status = MimeMmCreatePhysicalSection(f->Pa, size, &f->Section);
+    status = MmCreatePhysicalSection(f->Pa, size, &f->Section);
     if (NT_SUCCESS(status))
         status = MmMapSharedSectionUser(f->Section, PsGetCurrentProcess(), &f->User, TRUE);
     if (NT_SUCCESS(status)) {
@@ -566,7 +566,7 @@ static NTSTATUS NTAPI CameraDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING r
     driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = camera_control;
     for (ULONG i = 0; i < MIME_CAMERA_MAX; i++) {
         WCHAR buffer[32];
-        _snwprintf(buffer, RTL_NUMBER_OF(buffer), L"\\Device\\MimeCamera%u", i);
+        _snwprintf(buffer, RTL_NUMBER_OF(buffer), L"\\Device\\Camera%u", i);
         UNICODE_STRING name;
         RtlInitUnicodeString(&name, buffer);
         NTSTATUS status = IoCreateDevice(driver, sizeof(CAMERA_DEVICE), &name, MIME_CAMERA_DEVICE_TYPE, 0, FALSE,
@@ -592,7 +592,7 @@ void IopInitializeCameras(void)
     g_page_pa = (ULONG64)MmGetPhysicalAddress(g_page).QuadPart;
     g_formats_pa = (ULONG64)MmGetPhysicalAddress(g_formats).QuadPart;
     PDRIVER_OBJECT driver;
-    NTSTATUS status = IoCreateDriver(L"\\Driver\\MimeCamera", CameraDriverEntry, &driver);
+    NTSTATUS status = IoCreateDriver(L"\\Driver\\camera", CameraDriverEntry, &driver);
     if (!NT_SUCCESS(status)) {
         KiLogPrintf("cameras failed to start: %08x", status);
         return;

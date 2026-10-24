@@ -54,9 +54,9 @@ EXPORTS
     LdrShutdownThread@0
     LdrUnloadDll@4
     LdrUnlockLoaderLock@8
-    MimeSxsFreeActivationContextData@4
-    MimeSxsGenerateActivationContext@8
-    MimeSxsInheritActivationContext@8
+    RtlFreeActivationContextData@4
+    RtlGenerateActivationContext@8
+    RtlInheritActivationContext@8
     NtAccessCheck@32
     NtAddAtom@12
     NtAddAtomEx@16

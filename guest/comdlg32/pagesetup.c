@@ -381,7 +381,7 @@ static BOOL command(PAGEDLG *d, WORD id, WORD code)
 static INT_PTR init_dialog(HWND hwnd, PAGEDLG *d)
 {
     d->Dialog = hwnd;
-    SetPropW(hwnd, L"MimePageDlg", d);
+    SetPropW(hwnd, L"PageDlg", d);
     fill_paper(d);
     refresh_preview(d);
     CheckRadioButton(hwnd, PSD_PORTRAIT, PSD_LANDSCAPE,
@@ -416,7 +416,7 @@ static INT_PTR init_dialog(HWND hwnd, PAGEDLG *d)
 
 static INT_PTR CALLBACK page_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    PAGEDLG *d = (PAGEDLG *)GetPropW(hwnd, L"MimePageDlg");
+    PAGEDLG *d = (PAGEDLG *)GetPropW(hwnd, L"PageDlg");
     if (!d) {
         if (message == WM_INITDIALOG)
             return init_dialog(hwnd, (PAGEDLG *)lparam);
@@ -439,7 +439,7 @@ static INT_PTR CALLBACK page_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
         }
         return FALSE;
     case WM_DESTROY:
-        RemovePropW(hwnd, L"MimePageDlg");
+        RemovePropW(hwnd, L"PageDlg");
         return FALSE;
     }
     return FALSE;

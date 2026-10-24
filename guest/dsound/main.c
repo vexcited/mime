@@ -14,7 +14,7 @@ HINSTANCE DsModule;
 
 /* mmdevapi's endpoint {0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}, whose guid is the device's. */
 const GUID DsDeviceGuid = {0x6d696d65, 0x0000, 0x4000, {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
-const WCHAR DsDeviceName[] = L"Speakers (Mime Audio)";
+const WCHAR DsDeviceName[] = L"Speakers (Qualcomm Audio)";
 const WCHAR DsDeviceModule[] = L"{0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}";
 
 static LONG g_objects;

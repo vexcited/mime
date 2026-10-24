@@ -1,6 +1,6 @@
 /*
  * opengl32 for x64 programs: every GL and wgl function is a stub calling the native opengl32.dll in the same process
- * through mimex86, see mime/mx64.h. this part loads the native image and answers wglGetProcAddress with the stubs.
+ * through xta64, see mime/mx64.h. this part loads the native image and answers wglGetProcAddress with the stubs.
  */
 #include <mime/nt.h>
 #include <mime/mx64.h>
@@ -15,7 +15,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
     if (reason != DLL_PROCESS_ATTACH)
         return TRUE;
     g_self = instance;
-    return NT_SUCCESS(MxNativeLoad(MX_NATIVE_OPENGL32, L"opengl32.dll", "MimeX64Thunks"));
+    return NT_SUCCESS(MxNativeLoad(MX_NATIVE_OPENGL32, L"opengl32.dll", "OpenGL32X64Thunks"));
 }
 
 PROC WINAPI wglGetProcAddress(LPCSTR name)

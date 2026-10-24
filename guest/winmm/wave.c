@@ -8,7 +8,7 @@
 
 #include "../lib/audio/output.h"
 
-#define DEVICE_NAME L"Speakers (Mime Audio)"
+#define DEVICE_NAME L"Speakers (Qualcomm Audio)"
 #define MAPPER_NAME L"Microsoft Sound Mapper"
 #define FEED_MS 5
 

@@ -601,7 +601,7 @@ static IPH_SNAPSHOT *build(void)
         switch (l->Type) {
         case MIME_AFD_LINK_ETHERNET:
             a->type = IF_TYPE_ETHERNET_CSMACD;
-            kind = a->hardware ? "Mime Ethernet Adapter" : "Mime Virtual Ethernet Adapter";
+            kind = a->hardware ? "Qualcomm(R) Wi-Fi/BT Combo Chipset" : "Virtual Ethernet Adapter";
             if (a->hardware) {
                 append_number(a->alias, RTL_NUMBER_OF(a->alias), L"Ethernet ", ++ethernet);
                 if (ethernet == 1)
@@ -614,22 +614,22 @@ static IPH_SNAPSHOT *build(void)
             break;
         case MIME_AFD_LINK_WIRELESS:
             a->type = IF_TYPE_IEEE80211;
-            kind = "Mime Wi-Fi Adapter";
+            kind = "Wi-Fi Adapter";
             append_number(a->alias, RTL_NUMBER_OF(a->alias), L"Wi-Fi ", ++wireless);
             if (wireless == 1)
                 a->alias[5] = 0;
             break;
         case MIME_AFD_LINK_TUNNEL:
             a->type = IF_TYPE_PROP_VIRTUAL;
-            kind = "Mime Tunnel Adapter";
+            kind = "Tunnel Adapter";
             break;
         case MIME_AFD_LINK_PPP:
             a->type = IF_TYPE_PPP;
-            kind = "Mime PPP Adapter";
+            kind = "PPP Adapter";
             break;
         default:
             a->type = IF_TYPE_OTHER;
-            kind = "Mime Network Adapter";
+            kind = "Network Adapter";
             break;
         }
         if (!a->alias[0])
@@ -647,8 +647,8 @@ static IPH_SNAPSHOT *build(void)
             memcpy(a->description, wide, (wcslen(wide) + 1) * sizeof(WCHAR));
         a->luid.Info.IfType = a->type;
         a->luid.Info.NetLuidIndex = 32768 + a->index;
-        name_guid(&a->guid, "mime adapter ", a->host);
-        name_guid(&a->network, "mime network ", a->host);
+        name_guid(&a->guid, "adapter ", a->host);
+        name_guid(&a->network, "network ", a->host);
         guid_string(a->name, &a->guid);
         a->zones[1] = a->zones[2] = a->zones[3] = a->index;
         for (int k = 4; k < 14; k++)

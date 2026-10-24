@@ -786,7 +786,7 @@ static void subclass(CCDLG *d, int id, WNDPROC proc)
 static INT_PTR init_dialog(HWND hwnd, CCDLG *d)
 {
     d->Dialog = hwnd;
-    SetPropW(hwnd, L"MimeColorDlg", d);
+    SetPropW(hwnd, L"ColorDlg", d);
     memcpy(d->Boxes, g_basic, sizeof(g_basic));
     if (d->Cc->lpCustColors)
         memcpy(&d->Boxes[BASIC_COLORS], d->Cc->lpCustColors, 16 * sizeof(COLORREF));
@@ -843,7 +843,7 @@ static INT_PTR init_dialog(HWND hwnd, CCDLG *d)
 
 static INT_PTR CALLBACK color_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    CCDLG *d = (CCDLG *)GetPropW(hwnd, L"MimeColorDlg");
+    CCDLG *d = (CCDLG *)GetPropW(hwnd, L"ColorDlg");
     if (!d) {
         if (message == WM_INITDIALOG)
             return init_dialog(hwnd, (CCDLG *)lparam);
@@ -874,7 +874,7 @@ static INT_PTR CALLBACK color_proc(HWND hwnd, UINT message, WPARAM wparam, LPARA
             DeleteObject(d->Rainbow);
             d->Rainbow = nullptr;
         }
-        RemovePropW(hwnd, L"MimeColorDlg");
+        RemovePropW(hwnd, L"ColorDlg");
         return FALSE;
     }
     return FALSE;

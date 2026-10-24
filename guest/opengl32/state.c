@@ -509,15 +509,15 @@ GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
     GL_CONTEXT_OR_RETURN(nullptr);
     switch (name) {
     case GL_VENDOR:
-        return (const GLubyte *)"Mime";
+        return (const GLubyte *)"Qualcomm";
     case GL_RENDERER:
-        return (const GLubyte *)"Mime Metal";
+        return (const GLubyte *)"Qualcomm Adreno X1-85";
     case GL_VERSION:
         if (ctx->major == 4)
-            return (const GLubyte *)(ctx->minor ? "4.1 Mime" : "4.0 Mime");
+            return (const GLubyte *)(ctx->minor ? "4.1 - Build 31.0.63.7" : "4.0 - Build 31.0.63.7");
         if (ctx->major == 3 && ctx->minor >= 2)
-            return (const GLubyte *)(ctx->minor == 3 ? "3.3 Mime" : "3.2 Mime");
-        return (const GLubyte *)"3.0 Mime";
+            return (const GLubyte *)(ctx->minor == 3 ? "3.3 - Build 31.0.63.7" : "3.2 - Build 31.0.63.7");
+        return (const GLubyte *)"3.0 - Build 31.0.63.7";
     case GL_SHADING_LANGUAGE_VERSION:
         if (ctx->major == 4)
             return (const GLubyte *)"4.10";

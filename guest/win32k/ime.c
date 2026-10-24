@@ -146,7 +146,7 @@ static void set_preedit(ULONG length, LONG begin, LONG end)
 /* a window that ImmAssociateContext gave no context does not take part. */
 static BOOLEAN ime_disabled(WND *w)
 {
-    ATOM atom = AtomFind(L"MimeImmContext");
+    ATOM atom = AtomFind(L"ImmContext");
     return atom && PropGetData(w, atom) == (HANDLE)1;
 }
 

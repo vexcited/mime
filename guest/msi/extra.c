@@ -87,7 +87,7 @@ static BOOL component_registered(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *tabl
     if (!guid || !*guid || !MimeMsiPackGuid(guid, component) ||
         !MimeMsiPackGuid(MimeMsiGetProperty(package, L"ProductCode"), product))
         return FALSE;
-    _snwprintf(path, RTL_NUMBER_OF(path), L"Software\\Mime\\Installer\\Components\\%s", component);
+    _snwprintf(path, RTL_NUMBER_OF(path), L"Software\\Classes\\Installer\\Components\\%s", component);
     HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     for (ULONG i = 0; i < 2; i++) {
         HKEY key;
@@ -1176,7 +1176,7 @@ static PWSTR search_component(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, 
     WCHAR packed[33], path[128];
     if (!guid || !MimeMsiPackGuid(guid, packed))
         return nullptr;
-    _snwprintf(path, RTL_NUMBER_OF(path), L"Software\\Mime\\Installer\\Components\\%s", packed);
+    _snwprintf(path, RTL_NUMBER_OF(path), L"Software\\Classes\\Installer\\Components\\%s", packed);
     HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     for (ULONG i = 0; i < 2; i++) {
         HKEY key;

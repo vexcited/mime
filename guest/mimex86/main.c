@@ -1,5 +1,5 @@
 /*
- * mimex86.dll runs x64 and x86 user mode on the native arm64 kernel.
+ * xta64.dll runs x64 and x86 user mode on the native arm64 kernel.
  * it maps the matching ntdll, interprets guest instructions, and delivers
  * exceptions, callbacks and apcs through that runtime. x86 system calls
  * convert pointer widths and structure layouts before entering the kernel.
@@ -148,12 +148,12 @@ void Mx32Unsupported(ULONG number)
         if (__atomic_fetch_or(&reported[number / 32], bit, __ATOMIC_RELAXED) & bit)
             return;
     }
-    mx_print("mimex86: unsupported x86 service %04x", number);
+    mx_print("xta64: unsupported x86 service %04x", number);
 }
 
 static DECLSPEC_NORETURN void mx_fatal(NTSTATUS status, const char *what)
 {
-    mx_print("mimex86: %s (%08x)", what, (ULONG)status);
+    mx_print("xta64: %s (%08x)", what, (ULONG)status);
     NtTerminateProcess(NtCurrentProcess(), status);
     for (;;)
         ;
@@ -302,7 +302,7 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
     X86Cpu *c = &f->cpu;
     PNT_TIB tib = &NtCurrentTeb()->NtTib;
     if (context->Rsp <= (ULONG64)tib->StackLimit + 0x1000 || context->Rsp > (ULONG64)tib->StackBase) {
-        mx_print("mimex86: exception %08x at %p with an invalid stack pointer %p", (ULONG)record->ExceptionCode,
+        mx_print("xta64: exception %08x at %p with an invalid stack pointer %p", (ULONG)record->ExceptionCode,
                  record->ExceptionAddress, (PVOID)context->Rsp);
         if (record->ExceptionCode == STATUS_ACCESS_VIOLATION)
             mx_print("  address %p", (PVOID)record->ExceptionInformation[1]);
@@ -680,7 +680,7 @@ static void env_syscall(X86Cpu *c)
             memcpy(&ctx, (PVOID)(ULONG_PTR)a[1], sizeof(ctx));
             if (a[2])
                 raise_in_x86(t->frame, &record, &ctx);
-            mx_print("mimex86: unhandled x86 exception %08x at %08x", (ULONG)record.Code, record.Address);
+            mx_print("xta64: unhandled x86 exception %08x at %08x", (ULONG)record.Code, record.Address);
             /* words of the x86 stack that look like return addresses into images, for the report. */
             for (ULONG p = ctx.Esp & ~3u, n = 0; n < 96; p += 4, n++) {
                 MEMORY_BASIC_INFORMATION info;
@@ -751,7 +751,7 @@ static void env_syscall(X86Cpu *c)
         memcpy(&ctx, (void *)a[1], sizeof(ctx));
         if ((BOOLEAN)a[2])
             raise_in_x64(t->frame, &record, &ctx);
-        mx_print("mimex86: unhandled exception %08x at %p, rsp %p", (ULONG)record.ExceptionCode,
+        mx_print("xta64: unhandled exception %08x at %p, rsp %p", (ULONG)record.ExceptionCode,
                  record.ExceptionAddress, (PVOID)ctx.Rsp);
         if (record.ExceptionCode == STATUS_ACCESS_VIOLATION && record.NumberParameters >= 2)
             mx_print("  %s of address %p", record.ExceptionInformation[0] == 1 ? "write" :
@@ -1066,7 +1066,7 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserExceptionDispatcher(EXCEPTION_RECORD *rec
 {
     MX_THREAD *t = current_thread();
     if (!t || !t->frame) {
-        mx_print("mimex86: exception %08x at %p outside of x64 code", (ULONG)record->ExceptionCode,
+        mx_print("xta64: exception %08x at %p outside of x64 code", (ULONG)record->ExceptionCode,
                  (PVOID)context->Pc);
         mx_fatal(record->ExceptionCode, "unhandled native exception");
     }

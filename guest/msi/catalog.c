@@ -5,7 +5,7 @@ UINT MimeMsiCatalogPath(PCWSTR product, WCHAR path[96])
     WCHAR packed[33];
     if (!MimeMsiPackGuid(product, packed))
         return ERROR_INVALID_PARAMETER;
-    _snwprintf(path, 96, L"Software\\Mime\\Installer\\Products\\%s", packed);
+    _snwprintf(path, 96, L"Software\\Classes\\Installer\\Products\\%s", packed);
     return ERROR_SUCCESS;
 }
 

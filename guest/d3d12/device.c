@@ -167,12 +167,12 @@ static HRESULT create_vulkan_device(D12Device *device, IDXGIAdapter *adapter, co
 #define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
     D12_VK_DEVICE_FUNCS(X)
 #undef X
-    vk->vkMimeShareExportMemory = (PFN_vkMimeShareExportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareExportMemory");
-    vk->vkMimeShareImportMemory = (PFN_vkMimeShareImportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareImportMemory");
-    vk->vkMimeShareExportSemaphore =
-        (PFN_vkMimeShareExportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareExportSemaphore");
-    vk->vkMimeShareImportSemaphore =
-        (PFN_vkMimeShareImportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareImportSemaphore");
+    vk->vkMxShareExportMemory = (PFN_vkMxShareExportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMxShareExportMemory");
+    vk->vkMxShareImportMemory = (PFN_vkMxShareImportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMxShareImportMemory");
+    vk->vkMxShareExportSemaphore =
+        (PFN_vkMxShareExportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMxShareExportSemaphore");
+    vk->vkMxShareImportSemaphore =
+        (PFN_vkMxShareImportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMxShareImportSemaphore");
 #define COPY(field) device->field = p->field
     COPY(has_depth_clip);
     COPY(has_custom_border);

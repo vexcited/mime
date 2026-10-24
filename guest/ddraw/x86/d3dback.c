@@ -45,7 +45,7 @@ DbDevice *DbDeviceGet(void)
     if (!d3d)
         return nullptr;
     WNDCLASSW wc = {0, window_proc, 0, 0, GetModuleHandleW(nullptr)};
-    wc.lpszClassName = L"MimeDirect3DImmediate";
+    wc.lpszClassName = L"Direct3DImmediate";
     RegisterClassW(&wc);
     g_dev.window = CreateWindowExW(0, wc.lpszClassName, wc.lpszClassName, WS_POPUP, 0, 0, 1, 1, nullptr, nullptr,
                                    wc.hInstance, nullptr);

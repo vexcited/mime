@@ -137,7 +137,7 @@ static BOOL run_elevated(LPCWSTR application, LPWSTR command, LPCWSTR directory,
                          PROCESS_INFORMATION *process)
 {
     HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
-    LAUNCH_ELEVATED launch = advapi32 ? (LAUNCH_ELEVATED)GetProcAddress(advapi32, "MimeLaunchElevated") : nullptr;
+    LAUNCH_ELEVATED launch = advapi32 ? (LAUNCH_ELEVATED)GetProcAddress(advapi32, "LaunchElevated") : nullptr;
     if (!launch) {
         SetLastError(ERROR_ELEVATION_REQUIRED);
         return FALSE;

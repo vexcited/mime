@@ -573,7 +573,7 @@ static void draw_collate(const PRINTSTATE *s, const DRAWITEMSTRUCT *di)
 static INT_PTR init_dialog(HWND hwnd, PRINTSTATE *s)
 {
     s->Dialog = hwnd;
-    SetPropW(hwnd, L"MimePrintDlg", s);
+    SetPropW(hwnd, L"PrintDlg", s);
     s->Services.Interface.lpVtbl = &g_services_vtbl;
     s->Services.State = s;
     fill_printers(s);
@@ -616,7 +616,7 @@ static INT_PTR init_dialog(HWND hwnd, PRINTSTATE *s)
 
 static INT_PTR CALLBACK print_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    PRINTSTATE *s = (PRINTSTATE *)GetPropW(hwnd, L"MimePrintDlg");
+    PRINTSTATE *s = (PRINTSTATE *)GetPropW(hwnd, L"PrintDlg");
     if (!s) {
         if (message == WM_INITDIALOG)
             return init_dialog(hwnd, (PRINTSTATE *)lparam);
@@ -644,7 +644,7 @@ static INT_PTR CALLBACK print_proc(HWND hwnd, UINT message, WPARAM wparam, LPARA
         }
         return FALSE;
     case WM_DESTROY:
-        RemovePropW(hwnd, L"MimePrintDlg");
+        RemovePropW(hwnd, L"PrintDlg");
         return FALSE;
     }
     return FALSE;

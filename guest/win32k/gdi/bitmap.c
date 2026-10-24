@@ -429,7 +429,7 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
                 status = STATUS_ACCESS_DENIED;
             } else {
                 SIZE_T view_size = size + (offset & 0xffff);
-                status = MimeMmMapWritableSection(object, PsGetCurrentProcess(), &view_base,
+                status = MmMapWritableSection(object, PsGetCurrentProcess(), &view_base,
                                                    offset & ~0xffffull, &view_size);
                 if (NT_SUCCESS(status))
                     user = (PUCHAR)view_base + (offset & 0xffff);

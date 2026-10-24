@@ -10,7 +10,7 @@
 
 /* exclusive mode is per process here, where Windows holds it machine wide with a mutex. */
 static DDRAW *g_exclusive;
-static const WCHAR WINDOW_PROC_PROP[] = L"MimeDDrawWindowProc";
+static const WCHAR WINDOW_PROC_PROP[] = L"DDrawWindowProc";
 static const WCHAR DEVICE_CLASS[] = L"DirectDrawDeviceWnd";
 
 DDRAW *DdExclusiveOwner(void)

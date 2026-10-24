@@ -266,7 +266,7 @@ static void build_driver(SpoolPack *p, const SpoolPrinter *pr, DWORD level, void
     case 3: {
         DRIVER_INFO_3W *i = SpoolPackStruct(p, level == 2 ? sizeof(DRIVER_INFO_2W) : sizeof(DRIVER_INFO_3W));
         LPWSTR name = SpoolPackString(p, pr->Driver), env = SpoolPackString(p, SpoolNativeEnvironment());
-        _snwprintf(file, ARRAYSIZE(file), L"%ls\\mimepdf.dll", directory);
+        _snwprintf(file, ARRAYSIZE(file), L"%ls\\PSCRIPT5.DLL", directory);
         LPWSTR path = SpoolPackString(p, file), data = SpoolPackString(p, file), config = SpoolPackString(p, file);
         LPWSTR help = nullptr, depend = nullptr, monitor = nullptr, datatype = nullptr;
         if (level == 3) {

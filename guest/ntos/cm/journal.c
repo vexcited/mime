@@ -190,7 +190,7 @@ static NTSTATUS replay(PVOID *compact)
 void CmpJournalInitialize(void)
 {
     CmpJournalSkippedCount = 0;
-    UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\??\\C:\\Windows\\System32\\config\\mime-registry.log");
+    UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\??\\C:\\Windows\\System32\\config\\registry.journal");
     OBJECT_ATTRIBUTES attributes;
     InitializeObjectAttributes(&attributes, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
     HANDLE handle;

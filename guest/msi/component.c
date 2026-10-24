@@ -1,6 +1,6 @@
 #include "msi_private.h"
 
-static constexpr WCHAR component_catalog[] = L"Software\\Mime\\Installer\\Components";
+static constexpr WCHAR component_catalog[] = L"Software\\Classes\\Installer\\Components";
 
 /* a registry key path: the root as two digits, a colon, then the key and the value name. */
 static UINT registry_key_path(MIME_MSI_PACKAGE *package, PCWSTR registry_key, BOOL is64, PWSTR *out)

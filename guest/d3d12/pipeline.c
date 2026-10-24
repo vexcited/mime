@@ -77,7 +77,7 @@ static HRESULT STDMETHODCALLTYPE pipeline_get_cached_blob(ID3D12PipelineState *i
 {
     if (!blob)
         return E_POINTER;
-    static const char tag[] = "mime";
+    static const char tag[] = "D12S";
     return D12CreateBlob(tag, sizeof(tag), blob);
 }
 

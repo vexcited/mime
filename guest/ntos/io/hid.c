@@ -362,11 +362,11 @@ static void arrived(const MimeInputEvent *ev)
     };
     WCHAR device[32];
     MimePnpAddDevice(p->UsbInstance, nullptr, &USB);
-    _snwprintf(device, RTL_NUMBER_OF(device), L"\\Device\\MimePadXusb%u", p->Slot);
+    _snwprintf(device, RTL_NUMBER_OF(device), L"\\Device\\XusbPad%u", p->Slot);
     MimePnpAddInterface(p->UsbInstance, &GUID_DEVINTERFACE_XUSB, device);
     MimePnpAddDevice(p->GameInstance, p->UsbInstance, &game);
     MimePnpAddDevice(p->HidInstance, p->GameInstance, &HID);
-    _snwprintf(device, RTL_NUMBER_OF(device), L"\\Device\\MimePadHid%u", p->Slot);
+    _snwprintf(device, RTL_NUMBER_OF(device), L"\\Device\\HidGamePad%u", p->Slot);
     MimePnpAddInterface(p->HidInstance, &GUID_DEVINTERFACE_HID, device);
 }
 
@@ -1005,7 +1005,7 @@ static NTSTATUS NTAPI PadDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING regi
     for (ULONG i = 0; i < MAX_PADS; i++) {
         for (ULONG kind = KIND_HID; kind <= KIND_XUSB; kind++) {
             WCHAR buffer[32];
-            _snwprintf(buffer, RTL_NUMBER_OF(buffer), kind == KIND_HID ? L"\\Device\\MimePadHid%u" : L"\\Device\\MimePadXusb%u",
+            _snwprintf(buffer, RTL_NUMBER_OF(buffer), kind == KIND_HID ? L"\\Device\\HidGamePad%u" : L"\\Device\\XusbPad%u",
                        i);
             UNICODE_STRING name;
             RtlInitUnicodeString(&name, buffer);
@@ -1041,7 +1041,7 @@ void IopInitializePads(void)
     parse.Collection[0].Preparsed = nullptr;
     HidpFreeParse(&parse);
     PDRIVER_OBJECT driver;
-    status = IoCreateDriver(L"\\Driver\\MimePad", PadDriverEntry, &driver);
+    status = IoCreateDriver(L"\\Driver\\xinputhid", PadDriverEntry, &driver);
     if (!NT_SUCCESS(status)) {
         KiLogPrintf("game controllers failed to start: %08x", status);
         return;

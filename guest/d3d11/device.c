@@ -217,12 +217,12 @@ static HRESULT acquire_vulkan_device(D3dDevice *device, IDXGIAdapter *adapter, c
 #define X(name) vk->name = (PFN_##name)vk->vkGetDeviceProcAddr(vk->device, #name);
     D3D_VK_DEVICE_FUNCS(X)
 #undef X
-    vk->vkMimeShareExportMemory = (PFN_vkMimeShareExportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareExportMemory");
-    vk->vkMimeShareImportMemory = (PFN_vkMimeShareImportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareImportMemory");
-    vk->vkMimeShareExportSemaphore =
-        (PFN_vkMimeShareExportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareExportSemaphore");
-    vk->vkMimeShareImportSemaphore =
-        (PFN_vkMimeShareImportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMimeShareImportSemaphore");
+    vk->vkMxShareExportMemory = (PFN_vkMxShareExportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMxShareExportMemory");
+    vk->vkMxShareImportMemory = (PFN_vkMxShareImportMemory)vk->vkGetDeviceProcAddr(vk->device, "vkMxShareImportMemory");
+    vk->vkMxShareExportSemaphore =
+        (PFN_vkMxShareExportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMxShareExportSemaphore");
+    vk->vkMxShareImportSemaphore =
+        (PFN_vkMxShareImportSemaphore)vk->vkGetDeviceProcAddr(vk->device, "vkMxShareImportSemaphore");
     /* direct3d 11 submits on the first queue, whose lock the process's other devices also take. */
     device->queue = (VkQueue)shared.vk->Queues[0];
     device->queue_lock = &shared.vk->QueueLocks[0];
@@ -249,12 +249,12 @@ static HRESULT acquire_vulkan_device(D3dDevice *device, IDXGIAdapter *adapter, c
     /* direct3d 11 has no depth bounds, and the device may enable them for direct3d 12. */
     device->has_depth_bounds = FALSE;
     if (device->has_video) {
-        vk->vkMimeVideoGetCaps = (PFN_vkMimeVideoGetCaps)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoGetCaps");
-        vk->vkMimeVideoCreateSession =
-            (PFN_vkMimeVideoCreateSession)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoCreateSession");
-        vk->vkMimeVideoDestroySession =
-            (PFN_vkMimeVideoDestroySession)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoDestroySession");
-        vk->vkMimeVideoDecode = (PFN_vkMimeVideoDecode)vk->vkGetDeviceProcAddr(vk->device, "vkMimeVideoDecode");
+        vk->vkMxVideoGetCaps = (PFN_vkMxVideoGetCaps)vk->vkGetDeviceProcAddr(vk->device, "vkMxVideoGetCaps");
+        vk->vkMxVideoCreateSession =
+            (PFN_vkMxVideoCreateSession)vk->vkGetDeviceProcAddr(vk->device, "vkMxVideoCreateSession");
+        vk->vkMxVideoDestroySession =
+            (PFN_vkMxVideoDestroySession)vk->vkGetDeviceProcAddr(vk->device, "vkMxVideoDestroySession");
+        vk->vkMxVideoDecode = (PFN_vkMxVideoDecode)vk->vkGetDeviceProcAddr(vk->device, "vkMxVideoDecode");
     }
     return S_OK;
 }

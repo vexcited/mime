@@ -194,7 +194,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiLongHoldTicks = HalHnsToCounter(1000);
     if (boot->magic != MIME_BOOT_MAGIC || boot->version != MIME_ABI_VERSION)
         HalPanic("boot information mismatch between the vmm and the kernel");
-    KiLogPrintf("Mime NT kernel %u.%u build %u (%s), %llu MiB of memory", MIME_NT_MAJOR_VERSION,
+    KiLogPrintf("Windows NT kernel %u.%u build %u (%s), %llu MiB of memory", MIME_NT_MAJOR_VERSION,
                 MIME_NT_MINOR_VERSION, MIME_NT_BUILD_NUMBER, MIME_ARCH_NAME, boot->ram_size >> 20);
 
     KiOptions = (strstr(boot->cmdline, "nofastfault") ? KI_OPT_NO_FAST_FAULT : 0) |

@@ -106,8 +106,8 @@ void CmpCompactFinish(PVOID context, PFILE_OBJECT *journal, ULONG64 *offset, ULO
         return;
     }
 
-    static const WCHAR scratch[] = L"\\??\\C:\\Windows\\System32\\config\\mime-registry.log.new";
-    static const WCHAR journal_name[] = L"\\??\\C:\\Windows\\System32\\config\\mime-registry.log";
+    static const WCHAR scratch[] = L"\\??\\C:\\Windows\\System32\\config\\registry.journal.new";
+    static const WCHAR journal_name[] = L"\\??\\C:\\Windows\\System32\\config\\registry.journal";
     UNICODE_STRING path;
     RtlInitUnicodeString(&path, scratch);
     OBJECT_ATTRIBUTES attributes;

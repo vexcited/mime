@@ -109,7 +109,7 @@ static HRESULT ensure(D3dResource *r, BOOL legacy, LPCWSTR name, const SECURITY_
                                  name, attributes);
     if (FAILED(hr))
         return hr;
-    if (device->vk.vkMimeShareExportMemory(device->vk.device, r->tex.alloc.memory, r->share.id) != VK_SUCCESS) {
+    if (device->vk.vkMxShareExportMemory(device->vk.device, r->tex.alloc.memory, r->share.id) != VK_SUCCESS) {
         MimeShareClose(&r->share);
         return E_FAIL;
     }
@@ -544,7 +544,7 @@ static HRESULT STDMETHODCALLTYPE fence_create_shared_handle(ID3D11Fence *iface, 
         blob.adapter = adapter_luid(device);
         hr = MimeShareCreate(&f->share, MIME_GFXSHARE_SYNC, &blob, sizeof(blob), 0, name, attributes);
         if (SUCCEEDED(hr) &&
-            device->vk.vkMimeShareExportSemaphore(device->vk.device, f->semaphore, f->share.id) != VK_SUCCESS) {
+            device->vk.vkMxShareExportSemaphore(device->vk.device, f->semaphore, f->share.id) != VK_SUCCESS) {
             MimeShareClose(&f->share);
             hr = E_FAIL;
         } else if (SUCCEEDED(hr)) {
@@ -665,7 +665,7 @@ HRESULT D3dOpenSharedFence(D3dDevice *device, HANDLE handle, REFIID riid, void *
         type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
         VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
         if (device->vk.vkCreateSemaphore(device->vk.device, &info, nullptr, &f->semaphore) != VK_SUCCESS ||
-            device->vk.vkMimeShareImportSemaphore(device->vk.device, f->semaphore, own.id) != VK_SUCCESS) {
+            device->vk.vkMxShareImportSemaphore(device->vk.device, f->semaphore, own.id) != VK_SUCCESS) {
             if (f->semaphore)
                 device->vk.vkDestroySemaphore(device->vk.device, f->semaphore, nullptr);
             f->semaphore = VK_NULL_HANDLE;

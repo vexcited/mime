@@ -6,7 +6,7 @@
 #include "msi_private.h"
 #include <mime/win32/winver.h>
 
-static constexpr WCHAR g_catalog[] = L"Software\\Mime\\Installer\\Products";
+static constexpr WCHAR g_catalog[] = L"Software\\Classes\\Installer\\Products";
 static constexpr WCHAR g_everyone[] = L"S-1-1-0";
 
 /* whether the sid covers this process's user: no sid, everyone, or the user itself. */

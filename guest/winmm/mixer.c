@@ -5,7 +5,7 @@
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
 
-#define DEVICE_NAME L"Speakers (Mime Audio)"
+#define DEVICE_NAME L"Speakers (Qualcomm Audio)"
 #define LINE_ID 0xFFFF0000u
 #define VOLUME_ID 1
 #define MUTE_ID 2

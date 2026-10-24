@@ -258,7 +258,7 @@ HRESULT D3dAllocImageShared(D3dDevice *device, VkImage image, UINT64 import_id, 
     if (import_id) {
         type = blob->type_index;
         size = blob->memory_size;
-        if (vk->vkMimeShareImportMemory(vk->device, import_id, image, size, type, &memory) != VK_SUCCESS)
+        if (vk->vkMxShareImportMemory(vk->device, import_id, image, size, type, &memory) != VK_SUCCESS)
             return E_FAIL;
     } else {
         int picked = pick_type(device, D3D_MEMORY_DEVICE, req.memoryTypeBits);

@@ -73,9 +73,9 @@ static HRESULT table_open(void)
     HRESULT hr = S_OK;
     AcquireSRWLockExclusive(&g_open_lock);
     if (!g_table) {
-        HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Global\\MimeComClassTableLock");
+        HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Global\\ComClassTableLock");
         HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(CLASS_TABLE),
-                                            L"Global\\MimeComClassTable");
+                                            L"Global\\ComClassTable");
         CLASS_TABLE *table = section ? MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(CLASS_TABLE)) : nullptr;
         if (!mutex || !table) {
             if (section)

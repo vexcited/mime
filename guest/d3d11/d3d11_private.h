@@ -175,11 +175,11 @@
     X(vkCmdDrawIndirectByteCountEXT)
 
 /* video decoding through private commands of mime's vulkan-1.dll, see include/mime/mvk_video.h. */
-typedef VkResult(VKAPI_PTR *PFN_vkMimeVideoGetCaps)(VkDevice device, uint32_t *count, MvkVideoCaps *caps, uint32_t capacity);
-typedef VkResult(VKAPI_PTR *PFN_vkMimeVideoCreateSession)(VkDevice device, const MvkVideoSessionInfo *info,
+typedef VkResult(VKAPI_PTR *PFN_vkMxVideoGetCaps)(VkDevice device, uint32_t *count, MvkVideoCaps *caps, uint32_t capacity);
+typedef VkResult(VKAPI_PTR *PFN_vkMxVideoCreateSession)(VkDevice device, const MvkVideoSessionInfo *info,
                                                           uint64_t *session);
-typedef void(VKAPI_PTR *PFN_vkMimeVideoDestroySession)(VkDevice device, uint64_t session);
-typedef VkResult(VKAPI_PTR *PFN_vkMimeVideoDecode)(VkDevice device, const MvkVideoDecodeInfo *info,
+typedef void(VKAPI_PTR *PFN_vkMxVideoDestroySession)(VkDevice device, uint64_t session);
+typedef VkResult(VKAPI_PTR *PFN_vkMxVideoDecode)(VkDevice device, const MvkVideoDecodeInfo *info,
                                                    uint64_t picture_image, uint32_t picture_layer);
 
 typedef struct D3dVk {
@@ -192,15 +192,15 @@ typedef struct D3dVk {
     D3D_VK_DEVICE_FUNCS(X)
 #undef X
     /* NULL when the host cannot decode video. */
-    PFN_vkMimeVideoGetCaps vkMimeVideoGetCaps;
-    PFN_vkMimeVideoCreateSession vkMimeVideoCreateSession;
-    PFN_vkMimeVideoDestroySession vkMimeVideoDestroySession;
-    PFN_vkMimeVideoDecode vkMimeVideoDecode;
+    PFN_vkMxVideoGetCaps vkMxVideoGetCaps;
+    PFN_vkMxVideoCreateSession vkMxVideoCreateSession;
+    PFN_vkMxVideoDestroySession vkMxVideoDestroySession;
+    PFN_vkMxVideoDecode vkMxVideoDecode;
     /* memory and semaphores shared with other devices, see mime/mvk_share.h. */
-    PFN_vkMimeShareExportMemory vkMimeShareExportMemory;
-    PFN_vkMimeShareImportMemory vkMimeShareImportMemory;
-    PFN_vkMimeShareExportSemaphore vkMimeShareExportSemaphore;
-    PFN_vkMimeShareImportSemaphore vkMimeShareImportSemaphore;
+    PFN_vkMxShareExportMemory vkMxShareExportMemory;
+    PFN_vkMxShareImportMemory vkMxShareImportMemory;
+    PFN_vkMxShareExportSemaphore vkMxShareExportSemaphore;
+    PFN_vkMxShareImportSemaphore vkMxShareImportSemaphore;
 } D3dVk;
 
 /* ------------------------------------------------------------------ formats */

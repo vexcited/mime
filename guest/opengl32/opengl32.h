@@ -3,7 +3,7 @@
  *
  * the dll keeps the whole GL state in the process and sends Metal level commands to the host through the process's
  * gpu channel, see mime/gpu.h. it has no imports, so the same native image also serves x64 programs: their
- * opengl32.dll forwards every call here through mimex86's native calls, see mime/mx64.h.
+ * opengl32.dll forwards every call here through xta64's native calls, see mime/mx64.h.
  *
  * GL names objects per share group; the host only knows channel wide ids, which the device hands out. rows of every
  * image are kept bottom first, as GL orders them.

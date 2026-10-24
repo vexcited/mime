@@ -117,7 +117,7 @@ typedef struct PAGE_INFO {
 #define PI_FONT 2
 #define PI_TITLE 4
 
-static const WCHAR g_prop[] = L"MimePropSheet";
+static const WCHAR g_prop[] = L"PropSheet";
 
 static const int g_normal_buttons[] = {IDOK, IDCANCEL, IDC_APPLYNOW, IDHELP, 0};
 static const int g_wizard_buttons[] = {IDC_BACK, IDC_NEXT, IDC_FINISH, IDCANCEL, IDHELP, 0};

@@ -272,7 +272,7 @@ static void resolve_app_id(DESTINATION_LIST *l, WCHAR *id)
         HeapFree(GetProcessHeap(), 0, explicit_id);
     }
     if (!id[0])
-        wcscpy(id, L"Mime.Process");
+        wcscpy(id, L"Windows.Shell.Process");
 }
 
 static HRESULT STDMETHODCALLTYPE dl_set_app_id(ICustomDestinationList *This, LPCWSTR app_id)

@@ -71,7 +71,7 @@ typedef struct CONTROLLER {
 
 static const WCHAR QUEUE_CLASS[] = L"Windows.System.DispatcherQueue";
 static const WCHAR CONTROLLER_CLASS[] = L"Windows.System.DispatcherQueueController";
-static const WCHAR WINDOW_CLASS[] = L"MimeDispatcherQueue";
+static const WCHAR WINDOW_CLASS[] = L"DispatcherQueue";
 static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
 
 static LRESULT CALLBACK queue_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)

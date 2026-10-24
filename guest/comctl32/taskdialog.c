@@ -715,8 +715,8 @@ static void build_page(TD_STATE *td)
             expanded = collapsed;
         }
         SetWindowTextW(td->Expando, td->Expanded ? expanded : collapsed);
-        SetPropW(td->Expando, L"MimeTdCollapsed", collapsed);
-        SetPropW(td->Expando, L"MimeTdExpanded", expanded);
+        SetPropW(td->Expando, L"TdCollapsed", collapsed);
+        SetPropW(td->Expando, L"TdExpanded", expanded);
     }
     if (c->dwFlags & TDF_CALLBACK_TIMER) {
         td->TimerStart = GetTickCount();
@@ -730,7 +730,7 @@ static void toggle_expando(TD_STATE *td)
     HWND info = td->Expanded_ ? td->Expanded_ : td->ExpandedFooter;
     if (info)
         ShowWindow(info, td->Expanded ? SW_SHOW : SW_HIDE);
-    SetWindowTextW(td->Expando, GetPropW(td->Expando, td->Expanded ? L"MimeTdExpanded" : L"MimeTdCollapsed"));
+    SetWindowTextW(td->Expando, GetPropW(td->Expando, td->Expanded ? L"TdExpanded" : L"TdCollapsed"));
     size_dialog(td, FALSE);
     check(td, notify(td, TDN_EXPANDO_BUTTON_CLICKED, (WPARAM)td->Expanded, 0));
 }

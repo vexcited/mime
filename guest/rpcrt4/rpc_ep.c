@@ -40,9 +40,9 @@ static RPC_STATUS table_open(void)
         /* everyone gets full access to both. */
         PSECURITY_DESCRIPTOR sd = RpcpEveryoneDescriptor(0x1F0001), section_sd = RpcpEveryoneDescriptor(0xF001F);
         SECURITY_ATTRIBUTES sa = {sizeof(sa), sd, FALSE}, section_sa = {sizeof(section_sa), section_sd, FALSE};
-        HANDLE mutex = CreateMutexW(&sa, FALSE, L"Global\\MimeRpcEndpointMapperLock");
+        HANDLE mutex = CreateMutexW(&sa, FALSE, L"Global\\RpcEpMapperLock");
         HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, &section_sa, PAGE_READWRITE, 0, sizeof(EP_TABLE),
-                                            L"Global\\MimeRpcEndpointMapper");
+                                            L"Global\\RpcEpMapper");
         HeapFree(GetProcessHeap(), 0, sd);
         HeapFree(GetProcessHeap(), 0, section_sd);
         EP_TABLE *table = section ? MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(EP_TABLE)) : nullptr;

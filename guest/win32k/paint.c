@@ -61,7 +61,7 @@ static uint32_t corner_radius(WND *w, const FRAME_METRICS *m)
 {
     if (w->Style & WS_MAXIMIZE)
         return 0;
-    switch ((ULONG_PTR)PropGetData(w, AtomFind(L"MimeDwmCorner"))) {
+    switch ((ULONG_PTR)PropGetData(w, AtomFind(L"DwmCorner"))) {
     case 1 + 1: /* DWMWCP_DONOTROUND */
         return 0;
     case 2 + 1: /* DWMWCP_ROUND */

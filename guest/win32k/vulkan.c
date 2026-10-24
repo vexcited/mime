@@ -42,7 +42,7 @@ static NTSTATUS alloc_block(VK_BLOCK *b, SIZE_T size)
     if (!b->Kernel)
         return STATUS_NO_MEMORY;
     b->Pa = (ULONG64)MmGetPhysicalAddress(b->Kernel).QuadPart;
-    NTSTATUS status = MimeMmCreatePhysicalSection(b->Pa, size, &b->Section);
+    NTSTATUS status = MmCreatePhysicalSection(b->Pa, size, &b->Section);
     if (NT_SUCCESS(status))
         status = MmMapSharedSectionUser(b->Section, PsGetCurrentProcess(), &b->User, TRUE);
     if (!NT_SUCCESS(status))

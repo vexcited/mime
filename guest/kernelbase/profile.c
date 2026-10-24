@@ -317,7 +317,7 @@ static BOOL save_profile(PCWSTR path, PCWSTR text, SIZE_T length, BOOL unicode)
         WideCharToMultiByte(CP_ACP, 0, text, (int)length, (PSTR)bytes, encoded, nullptr, nullptr);
     HANDLE file = INVALID_HANDLE_VALUE;
     for (ULONG i = 0; i < 32 && file == INVALID_HANDLE_VALUE; i++) {
-        KbFormat(temporary, path_size, L"%s.mime-%u-%u.tmp", path, GetCurrentProcessId(),
+        KbFormat(temporary, path_size, L"%s.%u.%u.tmp", path, GetCurrentProcessId(),
                  (ULONG)InterlockedIncrement(&temporary_id));
         file = CreateFileW(temporary, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_EXISTS)
@@ -439,7 +439,7 @@ static BOOL write_locked(PCWSTR filename, BOOL (*writer)(const void *, PCWSTR), 
     PWSTR path = profile_path(filename);
     if (!path)
         return FALSE;
-    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\MimeIniFiles");
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\{3f5c1e8a-2b4d-4c9a-9e1f-6b7d8c5a4e2f}");
     BOOL result = FALSE;
     if (mutex) {
         DWORD wait = WaitForSingleObject(mutex, INFINITE);

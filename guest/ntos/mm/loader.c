@@ -1,6 +1,6 @@
 /*
  * kernel mode image loader for drivers, and the system dlls mapped into
- * every process: ntdll.dll, and mimex86.dll for x86 and x64 programs.
+ * every process: ntdll.dll, and xta64.dll for x86 and x64 programs.
  */
 #include "../ntos.h"
 
@@ -308,7 +308,7 @@ NTSTATUS PspInitializeSystemDll(void)
         return status;
     /* x86 and x64 programs run on arm64 only when the translator is present; x64 runs x86 through wow64. */
     if (MIME_NATIVE_MACHINE != IMAGE_FILE_MACHINE_AMD64 &&
-        !NT_SUCCESS(load_system_dll(L"\\SystemRoot\\System32\\mimex86.dll", &PspX86SystemDll)))
+        !NT_SUCCESS(load_system_dll(L"\\SystemRoot\\System32\\xta64.dll", &PspX86SystemDll)))
         memset(&PspX86SystemDll, 0, sizeof(PspX86SystemDll));
     if (MIME_NATIVE_MACHINE == IMAGE_FILE_MACHINE_AMD64) {
         UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\SystemRoot\\SysWOW64\\ntdll.dll");

@@ -1259,7 +1259,7 @@ static NTSTATUS generate(const MIME_SXS_GENERATE *request, const void *text, SIZ
     return status;
 }
 
-NTDLL_EXPORT NTSTATUS NTAPI MimeSxsGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data)
+NTDLL_EXPORT NTSTATUS NTAPI RtlGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data)
 {
     if (!request || !request->Source || !data)
         return STATUS_INVALID_PARAMETER;
@@ -1272,7 +1272,7 @@ NTSTATUS SxspGenerateFromText(const void *text, SIZE_T size, PCWSTR path, PVOID 
     return generate(&request, text, size, data);
 }
 
-NTDLL_EXPORT void NTAPI MimeSxsFreeActivationContextData(PVOID data)
+NTDLL_EXPORT void NTAPI RtlFreeActivationContextData(PVOID data)
 {
     if (!data)
         return;

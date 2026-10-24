@@ -741,7 +741,7 @@ static void hide(const FONTDLG *d, int id)
 static INT_PTR init_dialog(HWND hwnd, FONTDLG *d)
 {
     d->Dialog = hwnd;
-    SetPropW(hwnd, L"MimeFontDlg", d);
+    SetPropW(hwnd, L"FontDlg", d);
     if (d->Flags & CF_SCREENFONTS) {
         HDC screen = GetDC(nullptr);
         enumerate(d, screen, SCREEN_FONTTYPE);
@@ -981,7 +981,7 @@ static void measure_item(HWND hwnd, MEASUREITEMSTRUCT *mi)
 
 static INT_PTR CALLBACK font_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    FONTDLG *d = (FONTDLG *)GetPropW(hwnd, L"MimeFontDlg");
+    FONTDLG *d = (FONTDLG *)GetPropW(hwnd, L"FontDlg");
     /* the combo boxes ask for item heights while the controls are created. */
     if (message == WM_MEASUREITEM && (!d || !d->Hook)) {
         measure_item(hwnd, (MEASUREITEMSTRUCT *)lparam);
@@ -1047,7 +1047,7 @@ static INT_PTR CALLBACK font_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
             DeleteObject(d->Sample);
             d->Sample = nullptr;
         }
-        RemovePropW(hwnd, L"MimeFontDlg");
+        RemovePropW(hwnd, L"FontDlg");
         return FALSE;
     }
     return FALSE;

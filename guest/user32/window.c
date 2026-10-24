@@ -630,7 +630,7 @@ typedef struct OWNED_POPUPS {
     BOOL Show;
 } OWNED_POPUPS;
 
-static constexpr WCHAR g_hidden_popup[] = L"MimeHiddenPopup";
+static constexpr WCHAR g_hidden_popup[] = L"HiddenPopup";
 
 static BOOL CALLBACK show_owned_popup(HWND hwnd, LPARAM param)
 {

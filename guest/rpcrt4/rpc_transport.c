@@ -20,7 +20,7 @@ RPC_STATUS RpcpPipeName(PCWSTR protseq, PCWSTR endpoint, PWSTR name, SIZE_T coun
         if (count < 9 + 10 + n + 1)
             return RPC_S_STRING_TOO_LONG;
         wcscpy(name, prefix);
-        wcscat(name, L"mime-lrpc-");
+        wcscat(name, L"lrpc-");
         wcscat(name, endpoint);
         return RPC_S_OK;
     }

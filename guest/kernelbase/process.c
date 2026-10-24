@@ -198,7 +198,7 @@ HANDLE WINAPI CreateRemoteThreadEx(HANDLE process, LPSECURITY_ATTRIBUTES sa, SIZ
     BOOL known = NT_SUCCESS(NtQueryInformationThread(handle, ThreadBasicInformation, &info, sizeof(info), nullptr));
     if (inherit) {
         if (known)
-            MimeSxsInheritActivationContext(info.ClientId.UniqueThread, context);
+            RtlInheritActivationContext(info.ClientId.UniqueThread, context);
         RtlReleaseActivationContext(context);
         if (!(flags & CREATE_SUSPENDED))
             NtResumeThread(handle, nullptr);

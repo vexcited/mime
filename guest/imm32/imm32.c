@@ -23,7 +23,7 @@ WINUSERAPI UINT WINAPI RegisterWindowMessageW(LPCWSTR name);
  * window property holding the associated context, 1 means an explicit NULL association. its name is a registered
  * atom that win32k looks up to find the windows that opted out of input methods.
  */
-#define IMM_PROP_NAME L"MimeImmContext"
+#define IMM_PROP_NAME L"ImmContext"
 static LPCWSTR imm_prop(void)
 {
     static UINT atom;

@@ -1120,7 +1120,7 @@ NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base, PVOID *sec
     return STATUS_SUCCESS;
 }
 
-NTSTATUS NTAPI MimeMmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *section)
+NTSTATUS NTAPI MmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *section)
 {
     PSECTION s;
     NTSTATUS status = ObCreateObject(MmSectionType, nullptr, KernelMode, sizeof(SECTION), (PVOID *)&s);
@@ -1142,7 +1142,7 @@ NTSTATUS NTAPI MimeMmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *secti
     return STATUS_SUCCESS;
 }
 
-NTSTATUS NTAPI MimeMmMapWritableSection(PVOID object, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *size)
+NTSTATUS NTAPI MmMapWritableSection(PVOID object, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *size)
 {
     PSECTION section = object;
     if (section->Flags & SEC_IMAGE)

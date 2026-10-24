@@ -17,7 +17,7 @@ static void NTAPI notification(ULONG type, PACTIVATION_CONTEXT context, const vo
                                PVOID notification_data, PBOOLEAN disable)
 {
     if (type == ACTIVATION_CONTEXT_NOTIFICATION_DESTROY)
-        MimeSxsFreeActivationContextData((PVOID)data);
+        RtlFreeActivationContextData((PVOID)data);
     else if (disable)
         *disable = TRUE;
 }
@@ -166,7 +166,7 @@ HANDLE WINAPI CreateActCtxW(PCACTCTXW actctx)
         .ProcessorArchitecture = arch,
         .LangId = (flags & ACTCTX_FLAG_LANGID_VALID) ? actctx->wLangId : 0,
     };
-    status = MimeSxsGenerateActivationContext(&request, &data);
+    status = RtlGenerateActivationContext(&request, &data);
     if (!NT_SUCCESS(status))
         goto done;
     if (flags & ACTCTX_FLAG_SET_PROCESS_DEFAULT) {
@@ -187,7 +187,7 @@ HANDLE WINAPI CreateActCtxW(PCACTCTXW actctx)
     result = context;
 done:
     if (data)
-        MimeSxsFreeActivationContextData(data);
+        RtlFreeActivationContextData(data);
     KbFree(source);
     KbFree(directory);
     KbFree(module_path);

@@ -130,12 +130,12 @@ void MimeSessionInterrupt(ULONG bits)
  */
 static NTSTATUS choose_token(PCUNICODE_STRING image, ULONG level, BOOLEAN *elevated)
 {
-    static const WCHAR key[] = L"\\REGISTRY\\MACHINE\\SOFTWARE\\Mime\\Elevation";
+    static const WCHAR key[] = L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System";
     *elevated = FALSE;
     if (level < 2)
         return STATUS_SUCCESS;
     ULONG type = 0, length = sizeof(ULONG), declined = 0;
-    if (!NT_SUCCESS(CmQueryValue(key, L"Decline", &type, &declined, &length)) || type != 4 /* REG_DWORD */ ||
+    if (!NT_SUCCESS(CmQueryValue(key, L"DeclineElevationPrompts", &type, &declined, &length)) || type != 4 /* REG_DWORD */ ||
         length < sizeof(ULONG))
         declined = 0;
     if (declined) {

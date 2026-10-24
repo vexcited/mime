@@ -560,7 +560,7 @@ typedef struct INHERITANCE {
 static INHERITANCE *g_inheritances;
 static RTL_SRWLOCK g_inheritance_lock;
 
-NTDLL_EXPORT NTSTATUS NTAPI MimeSxsInheritActivationContext(HANDLE thread_id, PACTIVATION_CONTEXT context)
+NTDLL_EXPORT NTSTATUS NTAPI RtlInheritActivationContext(HANDLE thread_id, PACTIVATION_CONTEXT context)
 {
     INHERITANCE *i = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, sizeof(*i));
     if (!i)

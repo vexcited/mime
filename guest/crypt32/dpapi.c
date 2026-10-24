@@ -385,7 +385,7 @@ static BOOL preferred_master_key(BOOL machine, MASTER_KEY *out)
     _snwprintf(path, RTL_NUMBER_OF(path), L"%ls\\Preferred", dir);
     path[RTL_NUMBER_OF(path) - 1] = 0;
     /* processes creating the first key at once must agree on one. */
-    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\MimeDataProtectionMasterKeys");
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\DataProtectionMasterKeys");
     if (mutex)
         WaitForSingleObject(mutex, INFINITE);
     BYTE preferred[24];

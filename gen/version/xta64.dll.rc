@@ -12,11 +12,11 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "CompanyName", "Microsoft Corporation"
-            VALUE "FileDescription", "x86 and x64 Processor Translator"
+            VALUE "FileDescription", "x64 Emulation"
             VALUE "FileVersion", "10.0.26100.9457 (WinBuild.160101.0800)"
-            VALUE "InternalName", "mimex86.dll"
+            VALUE "InternalName", "xta64.dll"
             VALUE "LegalCopyright", "The Mime authors"
-            VALUE "OriginalFilename", "mimex86.dll"
+            VALUE "OriginalFilename", "xta64.dll"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9457"
         END

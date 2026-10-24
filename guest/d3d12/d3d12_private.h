@@ -220,10 +220,10 @@ typedef struct D12Vk {
     D12_VK_DEVICE_FUNCS(X)
 #undef X
     /* mime's vulkan-1.dll extensions to share memory and semaphores with other processes. */
-    PFN_vkMimeShareExportMemory vkMimeShareExportMemory;
-    PFN_vkMimeShareImportMemory vkMimeShareImportMemory;
-    PFN_vkMimeShareExportSemaphore vkMimeShareExportSemaphore;
-    PFN_vkMimeShareImportSemaphore vkMimeShareImportSemaphore;
+    PFN_vkMxShareExportMemory vkMxShareExportMemory;
+    PFN_vkMxShareImportMemory vkMxShareImportMemory;
+    PFN_vkMxShareExportSemaphore vkMxShareExportSemaphore;
+    PFN_vkMxShareImportSemaphore vkMxShareImportSemaphore;
 } D12Vk;
 
 /* ------------------------------------------------------------------ objects */

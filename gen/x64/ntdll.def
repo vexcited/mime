@@ -1034,9 +1034,9 @@ EXPORTS
     LdrShutdownThread
     LdrUnloadDll
     LdrUnlockLoaderLock
-    MimeSxsFreeActivationContextData
-    MimeSxsGenerateActivationContext
-    MimeSxsInheritActivationContext
+    RtlFreeActivationContextData
+    RtlGenerateActivationContext
+    RtlInheritActivationContext
     RtlAbsoluteToSelfRelativeSD
     RtlAcquirePebLock
     RtlAcquirePrivilege

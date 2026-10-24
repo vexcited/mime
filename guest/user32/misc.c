@@ -1077,12 +1077,11 @@ WINUSERAPI BOOL WINAPI EnumDisplayDevicesW(LPCWSTR device, DWORD index, PDISPLAY
         if (index >= count)
             return FALSE;
         wcscpy(d.DeviceName, list[index].Device);
-        wcscpy(d.DeviceString, L"Mime Display Adapter");
+        wcscpy(d.DeviceString, L"Qualcomm(R) Adreno(TM) X1-85 GPU");
         d.StateFlags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | (index == 0 ? DISPLAY_DEVICE_PRIMARY_DEVICE : 0);
-        wsprintfW(number, L"%04u", index);
-        wcscpy(d.DeviceID, L"ROOT\\MIME\\");
+        wcscpy(d.DeviceID, L"ACPI\\VEN_QCOM&DEV_0C36&SUBSYS_10280C69&REV_0086\\");
         wcscat(d.DeviceID, number);
-        wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000000-0000-0000-0000-000000000000}\\");
+        wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{b3f36b7e-6a4d-5a41-9e2c-4d8fa1c7e903}\\");
         wcscat(d.DeviceKey, number);
     } else {
         ULONG which = 0;
@@ -1096,11 +1095,11 @@ WINUSERAPI BOOL WINAPI EnumDisplayDevicesW(LPCWSTR device, DWORD index, PDISPLAY
         d.StateFlags = DISPLAY_DEVICE_ACTIVE | DISPLAY_DEVICE_ATTACHED;
         wsprintfW(number, L"%04u", which);
         if (flags & EDD_GET_DEVICE_INTERFACE_NAME) {
-            wcscpy(d.DeviceID, L"\\\\?\\DISPLAY#MIME0000#1&00000000&0&UID");
-            wcscat(d.DeviceID, number + 3);
+            wcscpy(d.DeviceID, L"\\\\?\\DISPLAY#MS_0025#5&2f3c1a9b&0&UID");
+            wcscat(d.DeviceID, number);
             wcscat(d.DeviceID, L"#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}");
         } else {
-            wcscpy(d.DeviceID, L"MONITOR\\MIME0000\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\");
+            wcscpy(d.DeviceID, L"MONITOR\\MS_0025\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\");
             wcscat(d.DeviceID, number);
         }
         wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\");

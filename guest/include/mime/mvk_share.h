@@ -9,14 +9,14 @@
 #include <vulkan/vulkan_core.h>
 
 /* keeps memory allocated with VkExportMemoryAllocateInfo for opaque descriptors under the id. */
-typedef VkResult(VKAPI_PTR *PFN_vkMimeShareExportMemory)(VkDevice device, VkDeviceMemory memory, uint64_t id);
+typedef VkResult(VKAPI_PTR *PFN_vkMxShareExportMemory)(VkDevice device, VkDeviceMemory memory, uint64_t id);
 /* new device memory from the one kept under the id, with the exporter's size and type. */
-typedef VkResult(VKAPI_PTR *PFN_vkMimeShareImportMemory)(VkDevice device, uint64_t id, VkImage dedicated,
+typedef VkResult(VKAPI_PTR *PFN_vkMxShareImportMemory)(VkDevice device, uint64_t id, VkImage dedicated,
                                                          VkDeviceSize size, uint32_t type_index,
                                                          VkDeviceMemory *memory);
 /* the timeline semaphore must be created with VkExportSemaphoreCreateInfo for opaque descriptors. */
-typedef VkResult(VKAPI_PTR *PFN_vkMimeShareExportSemaphore)(VkDevice device, VkSemaphore semaphore, uint64_t id);
+typedef VkResult(VKAPI_PTR *PFN_vkMxShareExportSemaphore)(VkDevice device, VkSemaphore semaphore, uint64_t id);
 /* makes the semaphore, a timeline of the device, share the payload kept under the id. */
-typedef VkResult(VKAPI_PTR *PFN_vkMimeShareImportSemaphore)(VkDevice device, VkSemaphore semaphore, uint64_t id);
+typedef VkResult(VKAPI_PTR *PFN_vkMxShareImportSemaphore)(VkDevice device, VkSemaphore semaphore, uint64_t id);
 
 #endif

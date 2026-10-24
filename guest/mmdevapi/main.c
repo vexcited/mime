@@ -4,13 +4,13 @@
  */
 #include "mmdevapi_private.h"
 
-static constexpr WCHAR DEVICE_ID[] = L"{0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}";
-static constexpr WCHAR CAPTURE_ID[] = L"{0.0.1.00000000}.{6d696d65-0000-4000-8000-000000000002}";
-static constexpr WCHAR DEVICE_NAME[] = L"Speakers (Mime Audio)";
+static constexpr WCHAR DEVICE_ID[] = L"{0.0.0.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f01}";
+static constexpr WCHAR CAPTURE_ID[] = L"{0.0.1.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f02}";
+static constexpr WCHAR DEVICE_NAME[] = L"Speakers (Qualcomm Audio)";
 static constexpr WCHAR DEVICE_DESC[] = L"Speakers";
-static constexpr WCHAR CAPTURE_NAME[] = L"Microphone (Mime Audio)";
+static constexpr WCHAR CAPTURE_NAME[] = L"Microphone (Qualcomm Audio)";
 static constexpr WCHAR CAPTURE_DESC[] = L"Microphone";
-static constexpr WCHAR INTERFACE_NAME[] = L"Mime Audio";
+static constexpr WCHAR INTERFACE_NAME[] = L"Qualcomm Audio";
 
 /* the compiler references it from code using floating point, without a crt to define it. */
 int _fltused = 0x9875;
