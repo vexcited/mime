@@ -65,6 +65,7 @@ static void fill_identity(MimeVm *vm)
     mime_strlcpy(boot->system_manufacturer, hw->manufacturer, sizeof(boot->system_manufacturer));
     mime_strlcpy(boot->system_product, hw->product, sizeof(boot->system_product));
     mime_strlcpy(boot->system_family, hw->family, sizeof(boot->system_family));
+    mime_strlcpy(boot->system_sku, hw->sku, sizeof(boot->system_sku));
     mime_strlcpy(boot->bios_vendor, hw->bios_vendor, sizeof(boot->bios_vendor));
     mime_strlcpy(boot->bios_version, hw->bios_version, sizeof(boot->bios_version));
     mime_strlcpy(boot->bios_date, hw->bios_date, sizeof(boot->bios_date));

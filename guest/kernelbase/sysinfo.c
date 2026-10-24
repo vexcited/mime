@@ -750,9 +750,10 @@ BOOL WINAPI GetSystemPowerStatus(LPSYSTEM_POWER_STATUS status)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
+    /* the reference machine is a laptop on the mains with its battery in and charging. */
     status->ACLineStatus = 1;
-    status->BatteryFlag = 128;
-    status->BatteryLifePercent = 255;
+    status->BatteryFlag = 8;
+    status->BatteryLifePercent = 87;
     status->SystemStatusFlag = 0;
     status->BatteryLifeTime = (DWORD)-1;
     status->BatteryFullLifeTime = (DWORD)-1;
@@ -805,6 +806,148 @@ BOOL WINAPI GetFirmwareType(PDWORD type)
     }
     *type = 2; /* FirmwareTypeUefi. */
     return TRUE;
+}
+
+
+/* the uefi variables of the machine, read by programs and drivers for the secure boot state. */
+static BOOL parse_guid(PCWSTR text, GUID *guid)
+{
+    static const WCHAR pattern[] = L"{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}";
+    WCHAR digits[32];
+    ULONG at = 0;
+    if (!text || text[0] != '{')
+        return FALSE;
+    for (ULONG i = 0; pattern[i]; i++) {
+        if (pattern[i] == 'x') {
+            WCHAR c = text[i];
+            if (!c || at >= 32)
+                return FALSE;
+            digits[at++] = c;
+        } else if (text[i] != pattern[i]) {
+            return FALSE;
+        }
+    }
+    if (text[38] != 0 || at != 32)
+        return FALSE;
+    BYTE bytes[16];
+    for (ULONG i = 0; i < 16; i++) {
+        ULONG hi = digits[i * 2], lo = digits[i * 2 + 1];
+        hi = hi >= 'a' ? hi - 'a' + 10 : hi >= 'A' ? hi - 'A' + 10 : hi - '0';
+        lo = lo >= 'a' ? lo - 'a' + 10 : lo >= 'A' ? lo - 'A' + 10 : lo - '0';
+        if (hi > 15 || lo > 15)
+            return FALSE;
+        bytes[i] = (BYTE)(hi << 4 | lo);
+    }
+    guid->Data1 = (ULONG)bytes[0] << 24 | (ULONG)bytes[1] << 16 | (ULONG)bytes[2] << 8 | bytes[3];
+    guid->Data2 = (USHORT)(bytes[4] << 8 | bytes[5]);
+    guid->Data3 = (USHORT)(bytes[6] << 8 | bytes[7]);
+    memcpy(guid->Data4, bytes + 8, 8);
+    return TRUE;
+}
+
+static DWORD firmware_get(PCWSTR name, PCWSTR guid_text, PVOID buffer, DWORD size, LPDWORD attributes)
+{
+    GUID guid;
+    if (!name || !guid_text || !parse_guid(guid_text, &guid)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    UNICODE_STRING variable;
+    variable.Buffer = (PWCH)name;
+    variable.Length = (USHORT)(wcslen(name) * sizeof(WCHAR));
+    variable.MaximumLength = (USHORT)(variable.Length + sizeof(WCHAR));
+    DWORD needed = size;
+    DWORD attrs = 0;
+    NTSTATUS status = NtQuerySystemEnvironmentValueEx(&variable, &guid, buffer, &needed, &attrs);
+    if (status == STATUS_BUFFER_TOO_SMALL) {
+        KbSetError(ERROR_INSUFFICIENT_BUFFER);
+        return needed;
+    }
+    if (!NT_SUCCESS(status)) {
+        KbSetError(status == STATUS_VARIABLE_NOT_FOUND ? ERROR_ENVVAR_NOT_FOUND : RtlNtStatusToDosError(status));
+        return 0;
+    }
+    if (attributes)
+        *attributes = attrs;
+    return needed;
+}
+
+DWORD WINAPI GetFirmwareEnvironmentVariableW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size)
+{
+    return firmware_get(name, guid, buffer, size, nullptr);
+}
+
+DWORD WINAPI GetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size)
+{
+    WCHAR wide_name[256], wide_guid[64];
+    if (!name || !guid || !MultiByteToWideChar(CP_ACP, 0, name, -1, wide_name, RTL_NUMBER_OF(wide_name)) ||
+        !MultiByteToWideChar(CP_ACP, 0, guid, -1, wide_guid, RTL_NUMBER_OF(wide_guid))) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    return firmware_get(wide_name, wide_guid, buffer, size, nullptr);
+}
+
+DWORD WINAPI GetFirmwareEnvironmentVariableExW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size, PDWORD attributes)
+{
+    return firmware_get(name, guid, buffer, size, attributes);
+}
+
+DWORD WINAPI GetFirmwareEnvironmentVariableExA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size, PDWORD attributes)
+{
+    WCHAR wide_name[256], wide_guid[64];
+    if (!name || !guid || !MultiByteToWideChar(CP_ACP, 0, name, -1, wide_name, RTL_NUMBER_OF(wide_name)) ||
+        !MultiByteToWideChar(CP_ACP, 0, guid, -1, wide_guid, RTL_NUMBER_OF(wide_guid))) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    return firmware_get(wide_name, wide_guid, buffer, size, attributes);
+}
+
+static BOOL firmware_set(PCWSTR name, PCWSTR guid_text, PVOID buffer, DWORD size)
+{
+    GUID guid;
+    if (!name || !guid_text || !parse_guid(guid_text, &guid)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UNICODE_STRING variable = {(USHORT)(wcslen(name) * sizeof(WCHAR)), (USHORT)((wcslen(name) + 1) * sizeof(WCHAR)),
+                               (PWCH)name};
+    NTSTATUS status = NtSetSystemEnvironmentValueEx(&variable, &guid, buffer, 0);
+    if (!NT_SUCCESS(status)) {
+        KbSetError(status == STATUS_VARIABLE_NOT_FOUND ? ERROR_ENVVAR_NOT_FOUND : RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+    (void)size;
+    return TRUE;
+}
+
+BOOL WINAPI SetFirmwareEnvironmentVariableW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size)
+{
+    return firmware_set(name, guid, buffer, size);
+}
+
+BOOL WINAPI SetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size)
+{
+    WCHAR wide_name[256], wide_guid[64];
+    if (!name || !guid || !MultiByteToWideChar(CP_ACP, 0, name, -1, wide_name, RTL_NUMBER_OF(wide_name)) ||
+        !MultiByteToWideChar(CP_ACP, 0, guid, -1, wide_guid, RTL_NUMBER_OF(wide_guid))) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return firmware_set(wide_name, wide_guid, buffer, size);
+}
+
+BOOL WINAPI SetFirmwareEnvironmentVariableExA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size, DWORD attributes)
+{
+    (void)attributes;
+    return SetFirmwareEnvironmentVariableA(name, guid, buffer, size);
+}
+
+BOOL WINAPI SetFirmwareEnvironmentVariableExW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size, DWORD attributes)
+{
+    (void)attributes;
+    return SetFirmwareEnvironmentVariableW(name, guid, buffer, size);
 }
 
 BOOL WINAPI Beep(DWORD frequency, DWORD duration)

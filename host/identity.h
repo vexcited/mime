@@ -26,6 +26,7 @@ typedef struct MimeHardwareProfile {
     const char *manufacturer;
     const char *product;
     const char *family;
+    const char *sku;
     const char *bios_vendor;
     const char *bios_version;
     const char *bios_date;

@@ -127,6 +127,8 @@ void NtQuerySection(void);
 void NtQuerySecurityObject(void);
 void NtQuerySymbolicLinkObject(void);
 void NtQuerySystemInformation(void);
+void NtQuerySystemEnvironmentValueEx(void);
+void NtSetSystemEnvironmentValueEx(void);
 void NtQuerySystemTime(void);
 void NtQueryTimerResolution(void);
 void NtQueryValueKey(void);
@@ -548,6 +550,12 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtQuerySystemInformation
     KiRegisterService(MIME_SVC_NtQuerySystemInformation, (void *)NtQuerySystemInformation, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtQuerySystemEnvironmentValueEx
+    KiRegisterService(MIME_SVC_NtQuerySystemEnvironmentValueEx, (void *)NtQuerySystemEnvironmentValueEx, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtSetSystemEnvironmentValueEx
+    KiRegisterService(MIME_SVC_NtSetSystemEnvironmentValueEx, (void *)NtSetSystemEnvironmentValueEx, STACK_ARGS(4));
 #endif
 #ifdef MIME_SVC_NtQuerySystemTime
     KiRegisterService(MIME_SVC_NtQuerySystemTime, (void *)NtQuerySystemTime, STACK_ARGS(1));

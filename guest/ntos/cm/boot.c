@@ -195,10 +195,11 @@ static void hardware(void)
 static void firmware(void)
 {
     static const PCWSTR bios = L"\\REGISTRY\\MACHINE\\HARDWARE\\DESCRIPTION\\System\\BIOS";
-    WCHAR manufacturer[64], product[64], family[64], vendor[64], version[64], date[16], serial[24];
+    WCHAR manufacturer[64], product[64], family[64], sku[48], vendor[64], version[64], date[16], serial[24];
     widen(manufacturer, RTL_NUMBER_OF(manufacturer), HalBootInfo->system_manufacturer);
     widen(product, RTL_NUMBER_OF(product), HalBootInfo->system_product);
     widen(family, RTL_NUMBER_OF(family), HalBootInfo->system_family);
+    widen(sku, RTL_NUMBER_OF(sku), HalBootInfo->system_sku);
     widen(vendor, RTL_NUMBER_OF(vendor), HalBootInfo->bios_vendor);
     widen(version, RTL_NUMBER_OF(version), HalBootInfo->bios_version);
     widen(date, RTL_NUMBER_OF(date), HalBootInfo->bios_date);
@@ -206,6 +207,8 @@ static void firmware(void)
     set_sz(bios, L"SystemManufacturer", REG_SZ, manufacturer);
     set_sz(bios, L"SystemProductName", REG_SZ, product);
     set_sz(bios, L"SystemFamily", REG_SZ, family);
+    set_sz(bios, L"SystemSKU", REG_SZ, sku);
+    set_sz(bios, L"SystemVersion", REG_SZ, L"1");
     set_sz(bios, L"BIOSVendor", REG_SZ, vendor);
     set_sz(bios, L"BIOSVersion", REG_SZ, version);
     set_sz(bios, L"BIOSReleaseDate", REG_SZ, date);
@@ -218,6 +221,8 @@ static void firmware(void)
     static const PCWSTR sysinfo = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\SystemInformation";
     set_sz(sysinfo, L"SystemManufacturer", REG_SZ, manufacturer);
     set_sz(sysinfo, L"SystemProductName", REG_SZ, product);
+    set_sz(sysinfo, L"SystemSKU", REG_SZ, sku);
+    set_sz(sysinfo, L"SystemVersion", REG_SZ, L"1");
 }
 
 /* windows setup draws this guid at install time. */

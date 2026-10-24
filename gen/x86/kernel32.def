@@ -476,6 +476,14 @@ EXPORTS
     GetFinalPathNameByHandleA=_Kernel32Thunk_GetFinalPathNameByHandleA@16
     GetFinalPathNameByHandleW=_Kernel32Thunk_GetFinalPathNameByHandleW@16
     GetFirmwareType=_Kernel32Thunk_GetFirmwareType@4
+    GetFirmwareEnvironmentVariableA=_GetFirmwareEnvironmentVariableA@16
+    GetFirmwareEnvironmentVariableExA=_GetFirmwareEnvironmentVariableExA@20
+    GetFirmwareEnvironmentVariableExW=_GetFirmwareEnvironmentVariableExW@20
+    GetFirmwareEnvironmentVariableW=_GetFirmwareEnvironmentVariableW@16
+    SetFirmwareEnvironmentVariableA=_SetFirmwareEnvironmentVariableA@16
+    SetFirmwareEnvironmentVariableExA=_SetFirmwareEnvironmentVariableExA@20
+    SetFirmwareEnvironmentVariableExW=_SetFirmwareEnvironmentVariableExW@20
+    SetFirmwareEnvironmentVariableW=_SetFirmwareEnvironmentVariableW@16
     GetFullPathNameA=_Kernel32Thunk_GetFullPathNameA@16
     GetFullPathNameW=_Kernel32Thunk_GetFullPathNameW@16
     GetGeoInfoA=_Kernel32Thunk_GetGeoInfoA@20

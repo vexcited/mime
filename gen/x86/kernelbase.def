@@ -397,6 +397,14 @@ EXPORTS
     GetFinalPathNameByHandleA=_GetFinalPathNameByHandleA@16
     GetFinalPathNameByHandleW=_GetFinalPathNameByHandleW@16
     GetFirmwareType=_GetFirmwareType@4
+    GetFirmwareEnvironmentVariableA=_GetFirmwareEnvironmentVariableA@16
+    GetFirmwareEnvironmentVariableW=_GetFirmwareEnvironmentVariableW@16
+    GetFirmwareEnvironmentVariableExA=_GetFirmwareEnvironmentVariableExA@20
+    GetFirmwareEnvironmentVariableExW=_GetFirmwareEnvironmentVariableExW@20
+    SetFirmwareEnvironmentVariableA=_SetFirmwareEnvironmentVariableA@16
+    SetFirmwareEnvironmentVariableW=_SetFirmwareEnvironmentVariableW@16
+    SetFirmwareEnvironmentVariableExA=_SetFirmwareEnvironmentVariableExA@20
+    SetFirmwareEnvironmentVariableExW=_SetFirmwareEnvironmentVariableExW@20
     GetFullPathNameA=_GetFullPathNameA@16
     GetFullPathNameW=_GetFullPathNameW@16
     GetGeoInfoA=_GetGeoInfoA@20

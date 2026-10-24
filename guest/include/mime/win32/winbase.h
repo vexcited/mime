@@ -2342,6 +2342,18 @@ WINBASEAPI BOOL WINAPI PowerSetRequest(HANDLE request, int type);
 WINBASEAPI BOOL WINAPI PowerClearRequest(HANDLE request, int type);
 WINBASEAPI BOOL WINAPI IsNativeVhdBoot(PBOOL native);
 WINBASEAPI BOOL WINAPI GetFirmwareType(PDWORD type);
+WINBASEAPI DWORD WINAPI GetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size);
+WINBASEAPI DWORD WINAPI GetFirmwareEnvironmentVariableW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size);
+WINBASEAPI DWORD WINAPI GetFirmwareEnvironmentVariableExA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size,
+                                                          PDWORD attributes);
+WINBASEAPI DWORD WINAPI GetFirmwareEnvironmentVariableExW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size,
+                                                          PDWORD attributes);
+WINBASEAPI BOOL WINAPI SetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size);
+WINBASEAPI BOOL WINAPI SetFirmwareEnvironmentVariableW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size);
+WINBASEAPI BOOL WINAPI SetFirmwareEnvironmentVariableExA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size,
+                                                         DWORD attributes);
+WINBASEAPI BOOL WINAPI SetFirmwareEnvironmentVariableExW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size,
+                                                         DWORD attributes);
 WINBASEAPI BOOL WINAPI Beep(DWORD frequency, DWORD duration);
 
 /* ------------------------------------------------------------------ environment */

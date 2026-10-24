@@ -2081,6 +2081,54 @@ Kernel32Thunk_GetFirmwareType:
     adrp    x16, __imp_GetFirmwareType
     ldr     x16, [x16, :lo12:__imp_GetFirmwareType]
     br      x16
+    .globl  Kernel32Thunk_GetFirmwareEnvironmentVariableA
+    .p2align 4
+Kernel32Thunk_GetFirmwareEnvironmentVariableA:
+    adrp    x16, __imp_GetFirmwareEnvironmentVariableA
+    ldr     x16, [x16, :lo12:__imp_GetFirmwareEnvironmentVariableA]
+    br      x16
+    .globl  Kernel32Thunk_GetFirmwareEnvironmentVariableExA
+    .p2align 4
+Kernel32Thunk_GetFirmwareEnvironmentVariableExA:
+    adrp    x16, __imp_GetFirmwareEnvironmentVariableExA
+    ldr     x16, [x16, :lo12:__imp_GetFirmwareEnvironmentVariableExA]
+    br      x16
+    .globl  Kernel32Thunk_GetFirmwareEnvironmentVariableExW
+    .p2align 4
+Kernel32Thunk_GetFirmwareEnvironmentVariableExW:
+    adrp    x16, __imp_GetFirmwareEnvironmentVariableExW
+    ldr     x16, [x16, :lo12:__imp_GetFirmwareEnvironmentVariableExW]
+    br      x16
+    .globl  Kernel32Thunk_GetFirmwareEnvironmentVariableW
+    .p2align 4
+Kernel32Thunk_GetFirmwareEnvironmentVariableW:
+    adrp    x16, __imp_GetFirmwareEnvironmentVariableW
+    ldr     x16, [x16, :lo12:__imp_GetFirmwareEnvironmentVariableW]
+    br      x16
+    .globl  Kernel32Thunk_SetFirmwareEnvironmentVariableA
+    .p2align 4
+Kernel32Thunk_SetFirmwareEnvironmentVariableA:
+    adrp    x16, __imp_SetFirmwareEnvironmentVariableA
+    ldr     x16, [x16, :lo12:__imp_SetFirmwareEnvironmentVariableA]
+    br      x16
+    .globl  Kernel32Thunk_SetFirmwareEnvironmentVariableExA
+    .p2align 4
+Kernel32Thunk_SetFirmwareEnvironmentVariableExA:
+    adrp    x16, __imp_SetFirmwareEnvironmentVariableExA
+    ldr     x16, [x16, :lo12:__imp_SetFirmwareEnvironmentVariableExA]
+    br      x16
+    .globl  Kernel32Thunk_SetFirmwareEnvironmentVariableExW
+    .p2align 4
+Kernel32Thunk_SetFirmwareEnvironmentVariableExW:
+    adrp    x16, __imp_SetFirmwareEnvironmentVariableExW
+    ldr     x16, [x16, :lo12:__imp_SetFirmwareEnvironmentVariableExW]
+    br      x16
+    .globl  Kernel32Thunk_SetFirmwareEnvironmentVariableW
+    .p2align 4
+Kernel32Thunk_SetFirmwareEnvironmentVariableW:
+    adrp    x16, __imp_SetFirmwareEnvironmentVariableW
+    ldr     x16, [x16, :lo12:__imp_SetFirmwareEnvironmentVariableW]
+    br      x16
     .globl  Kernel32Thunk_GetFullPathNameA
     .p2align 4
 Kernel32Thunk_GetFullPathNameA:

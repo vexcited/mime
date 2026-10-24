@@ -1387,6 +1387,38 @@ _Kernel32Thunk_GetFinalPathNameByHandleW@16:
     .p2align 4
 _Kernel32Thunk_GetFirmwareType@4:
     jmp     *__imp__GetFirmwareType@4
+    .globl  _Kernel32Thunk_GetFirmwareEnvironmentVariableA@16
+    .p2align 4
+_Kernel32Thunk_GetFirmwareEnvironmentVariableA@16:
+    jmp     *__imp__GetFirmwareEnvironmentVariableA@16
+    .globl  _Kernel32Thunk_GetFirmwareEnvironmentVariableExA@20
+    .p2align 4
+_Kernel32Thunk_GetFirmwareEnvironmentVariableExA@20:
+    jmp     *__imp__GetFirmwareEnvironmentVariableExA@20
+    .globl  _Kernel32Thunk_GetFirmwareEnvironmentVariableExW@20
+    .p2align 4
+_Kernel32Thunk_GetFirmwareEnvironmentVariableExW@20:
+    jmp     *__imp__GetFirmwareEnvironmentVariableExW@20
+    .globl  _Kernel32Thunk_GetFirmwareEnvironmentVariableW@16
+    .p2align 4
+_Kernel32Thunk_GetFirmwareEnvironmentVariableW@16:
+    jmp     *__imp__GetFirmwareEnvironmentVariableW@16
+    .globl  _Kernel32Thunk_SetFirmwareEnvironmentVariableA@16
+    .p2align 4
+_Kernel32Thunk_SetFirmwareEnvironmentVariableA@16:
+    jmp     *__imp__SetFirmwareEnvironmentVariableA@16
+    .globl  _Kernel32Thunk_SetFirmwareEnvironmentVariableExA@20
+    .p2align 4
+_Kernel32Thunk_SetFirmwareEnvironmentVariableExA@20:
+    jmp     *__imp__SetFirmwareEnvironmentVariableExA@20
+    .globl  _Kernel32Thunk_SetFirmwareEnvironmentVariableExW@20
+    .p2align 4
+_Kernel32Thunk_SetFirmwareEnvironmentVariableExW@20:
+    jmp     *__imp__SetFirmwareEnvironmentVariableExW@20
+    .globl  _Kernel32Thunk_SetFirmwareEnvironmentVariableW@16
+    .p2align 4
+_Kernel32Thunk_SetFirmwareEnvironmentVariableW@16:
+    jmp     *__imp__SetFirmwareEnvironmentVariableW@16
     .globl  _Kernel32Thunk_GetFullPathNameA@16
     .p2align 4
 _Kernel32Thunk_GetFullPathNameA@16:

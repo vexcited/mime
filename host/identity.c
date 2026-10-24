@@ -103,6 +103,7 @@ const MimeHardwareProfile *mime_hardware_profile(void)
     profile.manufacturer = manufacturer[0] ? manufacturer : "System manufacturer";
     profile.product = product[0] ? product : "System Product Name";
     profile.family = family[0] ? family : "To be filled by O.E.M.";
+    profile.sku = "";
     profile.bios_vendor = bios_vendor[0] ? bios_vendor : "American Megatrends Inc.";
     profile.bios_version = bios_version[0] ? bios_version : "1.0";
     profile.bios_date = bios_date[0] ? bios_date : "01/01/2024";
@@ -121,8 +122,9 @@ const MimeHardwareProfile *mime_hardware_profile(void)
         /* qualcomm oryon: implementer 0x51, part 0x001. */
         .cpu_midr = 0x511F0012ull,
         .manufacturer = "Microsoft Corporation",
-        .product = "Surface Laptop 7",
+        .product = "Microsoft Surface Laptop, 7th Edition",
         .family = "Surface",
+        .sku = "Surface_Laptop_7th_Edition_2036",
         .bios_vendor = "Microsoft Corporation",
         .bios_version = "1.14.140.0",
         .bios_date = "03/03/2025",

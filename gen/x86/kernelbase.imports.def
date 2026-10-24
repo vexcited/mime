@@ -397,6 +397,14 @@ EXPORTS
     GetFinalPathNameByHandleA@16
     GetFinalPathNameByHandleW@16
     GetFirmwareType@4
+    GetFirmwareEnvironmentVariableA@16
+    GetFirmwareEnvironmentVariableW@16
+    GetFirmwareEnvironmentVariableExA@20
+    GetFirmwareEnvironmentVariableExW@20
+    SetFirmwareEnvironmentVariableA@16
+    SetFirmwareEnvironmentVariableW@16
+    SetFirmwareEnvironmentVariableExA@20
+    SetFirmwareEnvironmentVariableExW@20
     GetFullPathNameA@16
     GetFullPathNameW@16
     GetGeoInfoA@20

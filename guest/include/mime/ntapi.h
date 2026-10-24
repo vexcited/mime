@@ -115,6 +115,10 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQueryPerformanceCounter(PLARGE_INTEGER counter, PL
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T length, PSIZE_T returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtQuerySystemEnvironmentValueEx(PUNICODE_STRING name, PGUID guid, PVOID buffer, PULONG size,
+                                                            PULONG attributes);
+NTSYSCALLAPI NTSTATUS NTAPI NtSetSystemEnvironmentValueEx(PUNICODE_STRING name, PGUID guid, PVOID buffer,
+                                                          ULONG attributes);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetSystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length);
 NTSYSCALLAPI NTSTATUS NTAPI NtShutdownSystem(SHUTDOWN_ACTION action);
 NTSYSCALLAPI NTSTATUS NTAPI NtInitiatePowerAction(ULONG action, ULONG lightest_state, ULONG flags, BOOLEAN asynchronous);

@@ -172,6 +172,8 @@ EXPORTS
     NtQuerySecurityObject@20
     NtQuerySymbolicLinkObject@12
     NtQuerySystemInformation@16
+    NtQuerySystemEnvironmentValueEx@20
+    NtSetSystemEnvironmentValueEx@16
     NtQuerySystemTime@4
     NtQueryTimerResolution@12
     NtQueryValueKey@24

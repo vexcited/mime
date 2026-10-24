@@ -16,6 +16,7 @@ EXPORTS
     ExFreePool
     ExFreePoolWithTag
     ExGetPreviousMode
+    ExGetFirmwareEnvironmentVariable
     ExInitialize
     ExInitializeFastMutex
     ExInitializePool

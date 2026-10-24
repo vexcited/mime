@@ -15,7 +15,7 @@
 
 #include <stdint.h>
 
-#define MIME_ABI_VERSION 3
+#define MIME_ABI_VERSION 4
 
 /* guest physical layout. */
 #ifdef __x86_64__
@@ -311,6 +311,7 @@ typedef struct MimeBootInfo {
     char system_manufacturer[64];
     char system_product[64];
     char system_family[64];
+    char system_sku[48];        /* the surface sku of the model. */
     char bios_vendor[64];
     char bios_version[64];
     char bios_date[16];         /* mm/dd/yyyy, as firmware reports it. */
