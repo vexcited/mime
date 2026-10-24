@@ -407,8 +407,8 @@ static uint64_t env_timestamp(X86Cpu *c)
     ULONG64 count, frequency;
     __asm__ volatile("mrs %0, cntvct_el0" : "=r"(count));
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
-    /* the reported processor runs at 3.2 GHz. */
-    return frequency ? count * (3200000000ull / frequency) : count;
+    /* the reported processor runs at 3.8 GHz. */
+    return frequency ? count * (3800000000ull / frequency) : count;
 }
 
 /*

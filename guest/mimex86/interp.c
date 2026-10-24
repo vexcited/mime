@@ -643,16 +643,18 @@ static void cpuid(X86Cpu *c)
 {
     uint32_t leaf = (uint32_t)c->r[X86_RAX], sub = (uint32_t)c->r[X86_RCX];
     uint32_t r[4] = {0, 0, 0, 0}; /* eax, ebx, ecx, edx */
-    static const char brand[] = "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+    /* the processor of the machine, as the x64 emulation of windows reports an arm64 one: the qualcomm vendor
+     * and the armv8 family of the oryon. */
+    static const char brand[] = "Qualcomm(R) Snapdragon(TM) X Elite - X1E-80-100\0\0\0\0\0\0\0\0\0\0\0\0";
     switch (leaf) {
     case 0:
         r[0] = 0x16;
-        r[1] = 0x756E6547; /* Genu */
-        r[3] = 0x49656E69; /* ineI */
-        r[2] = 0x6C65746E; /* ntel */
+        r[1] = 0x6C617551; /* Qual */
+        r[3] = 0x6D6D6F63; /* comm */
+        r[2] = 0x20202020;
         break;
     case 1:
-        r[0] = 0x000906EA; /* family 6, model 0x9e, stepping 10 */
+        r[0] = 0x00000812; /* family 8, model 1, stepping 2 of the oryon */
         r[1] = (8u << 8) | (1u << 16);
         r[2] = (1u << 0) | (1u << 9) | (1u << 13) | (1u << 19) | (1u << 23); /* sse3 ssse3 cx16 sse4.1 popcnt */
         r[3] = 0x078BFBFFu & ~(1u << 28); /* fpu .. sse2, without htt */
