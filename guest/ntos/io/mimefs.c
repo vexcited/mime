@@ -1396,7 +1396,11 @@ static NTSTATUS storage_query(PIRP irp, PIO_STACK_LOCATION stack, MIMEFS_VOLUME 
         return complete(irp, STATUS_INVALID_PARAMETER, 0);
 
     static const char vendor[] = "NVMe    ";
+#if defined(__aarch64__)
     static const char product[] = "KBG40ZNS1T02 NVMe KIOXIA 1024GB";
+#else
+    static const char product[] = "SAMSUNG MZVL21T0HCLR-00BL2";
+#endif
     static const char revision[] = "AGXA0101";
     char serial[16];
     drive_serial((PUCHAR)serial);

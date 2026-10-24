@@ -6,11 +6,18 @@
 
 static constexpr WCHAR DEVICE_ID[] = L"{0.0.0.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f01}";
 static constexpr WCHAR CAPTURE_ID[] = L"{0.0.1.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f02}";
-static constexpr WCHAR DEVICE_NAME[] = L"Speakers (Qualcomm Audio)";
+#if defined(__aarch64__)
+#define AUDIO_BRAND L"Qualcomm Audio"
+#else
+#define AUDIO_BRAND L"Realtek(R) Audio"
+#endif
+#define AUDIO_SPEAKERS L"Speakers (" AUDIO_BRAND L")"
+#define AUDIO_MICROPHONE L"Microphone (" AUDIO_BRAND L")"
+static constexpr WCHAR DEVICE_NAME[] = AUDIO_SPEAKERS;
 static constexpr WCHAR DEVICE_DESC[] = L"Speakers";
-static constexpr WCHAR CAPTURE_NAME[] = L"Microphone (Qualcomm Audio)";
+static constexpr WCHAR CAPTURE_NAME[] = AUDIO_MICROPHONE;
 static constexpr WCHAR CAPTURE_DESC[] = L"Microphone";
-static constexpr WCHAR INTERFACE_NAME[] = L"Qualcomm Audio";
+static constexpr WCHAR INTERFACE_NAME[] = AUDIO_BRAND;
 
 /* the compiler references it from code using floating point, without a crt to define it. */
 int _fltused = 0x9875;

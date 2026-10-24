@@ -8,7 +8,11 @@
 
 #include "../lib/audio/output.h"
 
+#if defined(__aarch64__)
 #define DEVICE_NAME L"Speakers (Qualcomm Audio)"
+#else
+#define DEVICE_NAME L"Speakers (Realtek(R) Audio)"
+#endif
 #define MAPPER_NAME L"Microsoft Sound Mapper"
 #define FEED_MS 5
 

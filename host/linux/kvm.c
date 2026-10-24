@@ -8,6 +8,7 @@
 #include "../audio/audio.h"
 #include "../camera/camera.h"
 #include "../gpu/gpu.h"
+#include "../identity.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -89,8 +90,8 @@ static uint32_t host_cpu_count(void)
     long n = sysconf(_SC_NPROCESSORS_ONLN);
     if (n < 1)
         n = 1;
-    /* twelve at most, the cores the firm tables of the reference machine describe. */
-    return (uint32_t)MIME_MIN((uint64_t)n, MIME_MIN(MIME_VMM_MAX_VCPUS, 12));
+    /* the logical processors the firm tables of the reference laptop describe, at most. */
+    return (uint32_t)MIME_MIN((uint64_t)n, MIME_MIN(MIME_VMM_MAX_VCPUS, 22));
 }
 
 /* checks whether transparent huge pages are always enabled or enabled on request. */
@@ -209,6 +210,54 @@ static uint32_t add_hyperv_leaves(MimeVm *vm, struct kvm_cpuid_entry2 *out, uint
 }
 
 /*
+ * the guest reports the reference machine's processor instead of the host's: its vendor, family, model, stepping
+ * and brand string. every feature bit stays the host's, since the guest runs the host's instructions, except the
+ * avx512 bits, which the reference model does not have.
+ */
+static void spoof_model(struct kvm_cpuid2 *cpuid)
+{
+    const MimeHardwareProfile *profile = mime_hardware_profile();
+    if (!profile || !profile->cpu_vendor || strlen(profile->cpu_vendor) != 12)
+        return;
+    for (uint32_t i = 0; i < cpuid->nent; i++) {
+        struct kvm_cpuid_entry2 *e = &cpuid->entries[i];
+        switch (e->function) {
+        case 0:
+            cpuid_vendor(e, profile->cpu_vendor);
+            break;
+        case 1:
+            e->eax = (profile->cpu_family << 8) | (profile->cpu_model << 4) | profile->cpu_stepping;
+            if (profile->cpu_family >= 0xF)
+                e->eax |= ((profile->cpu_family - 0xF) << 20) | ((profile->cpu_model >> 4) << 16);
+            break;
+        case 7:
+            if (e->index == 0) {
+                e->ebx &= ~((1u << 16) | (1u << 17) | (1u << 30) | (1u << 31)); /* avx512 f, dq, bw, ifma */
+                e->ecx &= ~((1u << 1) | (1u << 6) | (1u << 11) | (1u << 12) | (1u << 14) | (1u << 16) |
+                            (1u << 17) | (1u << 21));
+                e->edx &= ~((1u << 8) | (1u << 9) | (1u << 21) | (1u << 22) | (1u << 26) | (1u << 27) |
+                            (1u << 30) | (1u << 31));
+            }
+            break;
+        case 0x80000002:
+        case 0x80000003:
+        case 0x80000004: {
+            char brand[48] = {};
+            mime_strlcpy(brand, profile->cpu_name, sizeof(brand));
+            const size_t at = (size_t)(e->function - 0x80000002) * 16;
+            memcpy(&e->eax, brand + at, 4);
+            memcpy(&e->ebx, brand + at + 4, 4);
+            memcpy(&e->ecx, brand + at + 8, 4);
+            memcpy(&e->edx, brand + at + 12, 4);
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
+/*
  * exposes the host CPU features KVM supports, including x2APIC and TSC deadline timers. advertises Hyper-V when
  * supported, otherwise no hypervisor.
  */
@@ -244,6 +293,7 @@ static bool load_cpuid(MimeVm *vm)
             e->ecx = hv ? e->ecx | (1u << 31) : e->ecx & ~(1u << 31);
     }
     g_cpuid->nent = out + hv;
+    spoof_model(g_cpuid);
     mime_info("processor: %s hypervisor", hv ? "microsoft's" : "no");
     return true;
 }

@@ -4,7 +4,11 @@
  * machine and user identity, hardware description, processor variables.
  */
 #include "cm.h"
+#ifdef __aarch64__
 #include "../ex/acpi_tables.h"
+#else
+#include "../ex/acpi_tables_x64.h"
+#endif
 
 #define NT_CURRENT_VERSION L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"
 #define CONTROL L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control"
@@ -239,11 +243,19 @@ static void display_adapter(void)
     for (ULONG i = 0; i < RTL_NUMBER_OF(keys); i++) {
         if (!CmpOpenPath(keys[i], TRUE))
             continue;
+#if defined(__aarch64__)
         set_sz(keys[i], L"DriverDesc", REG_SZ, L"Qualcomm(R) Adreno(TM) X1-85 GPU");
         set_sz(keys[i], L"ProviderName", REG_SZ, L"Qualcomm");
         set_sz(keys[i], L"MatchingDeviceId", REG_SZ, L"ACPI\\VEN_QCOM&DEV_0C36&SUBSYS_10280C69&REV_0086");
         set_sz(keys[i], L"InfPath", REG_SZ, L"oem12.inf");
         set_sz(keys[i], L"InfSection", REG_SZ, L"qcdx8380_DevDesc");
+#else
+        set_sz(keys[i], L"DriverDesc", REG_SZ, L"Intel(R) Arc(TM) Graphics");
+        set_sz(keys[i], L"ProviderName", REG_SZ, L"Intel Corporation");
+        set_sz(keys[i], L"MatchingDeviceId", REG_SZ, L"PCI\\VEN_8086&DEV_7D55&SUBSYS_20331414");
+        set_sz(keys[i], L"InfPath", REG_SZ, L"oem4.inf");
+        set_sz(keys[i], L"InfSection", REG_SZ, L"iigd_dch");
+#endif
     }
 }
 

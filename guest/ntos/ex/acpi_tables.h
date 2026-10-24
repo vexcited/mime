@@ -8,11 +8,14 @@
 #ifndef ACPI_TABLES_H
 #define ACPI_TABLES_H
 
+#ifndef ACPI_TABLE_INFO_DEFINED
+#define ACPI_TABLE_INFO_DEFINED
 typedef struct ACPI_TABLE_INFO {
     ULONG Signature;
     const UCHAR *Data;
     ULONG Size;
 } ACPI_TABLE_INFO;
+#endif
 
 static const UCHAR acpi_facp[] =
     "\106\101\103\120\024\001\000\000\005\173\121\103\117\115\040\040"

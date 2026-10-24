@@ -601,7 +601,11 @@ static IPH_SNAPSHOT *build(void)
         switch (l->Type) {
         case MIME_AFD_LINK_ETHERNET:
             a->type = IF_TYPE_ETHERNET_CSMACD;
+#if defined(__aarch64__)
             kind = a->hardware ? "Realtek USB GbE Family Controller" : "Virtual Ethernet Adapter";
+#else
+            kind = a->hardware ? "Intel(R) Ethernet Connection I219-V" : "Virtual Ethernet Adapter";
+#endif
             if (a->hardware) {
                 append_number(a->alias, RTL_NUMBER_OF(a->alias), L"Ethernet ", ++ethernet);
                 if (ethernet == 1)
@@ -614,7 +618,11 @@ static IPH_SNAPSHOT *build(void)
             break;
         case MIME_AFD_LINK_WIRELESS:
             a->type = IF_TYPE_IEEE80211;
+#if defined(__aarch64__)
             kind = "Qualcomm(R) FastConnect 7800";
+#else
+            kind = "Intel(R) Wi-Fi 6E AX211 160MHz";
+#endif
             append_number(a->alias, RTL_NUMBER_OF(a->alias), L"Wi-Fi ", ++wireless);
             if (wireless == 1)
                 a->alias[5] = 0;

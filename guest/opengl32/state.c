@@ -504,20 +504,51 @@ GLAPI void APIENTRY glFinish(void)
 
 /* ---------------------------------------------------------------- strings */
 
+#if defined(__aarch64__)
+/* the reference machine's gpu. */
+#define GL_VENDOR_TEXT "Qualcomm"
+#define GL_RENDERER_TEXT "Qualcomm Adreno X1-85"
+#define GL_BUILD_TEXT "31.0.63.7"
+#else
+/* on x64 the host gpu is real hardware: its vendor decides what the strings name. */
+#define GL_BUILD_TEXT "31.0.101.5333"
+static const char *gl_vendor_text(void)
+{
+    uint32_t regs[4];
+    __asm__ volatile("cpuid" : "=a"(regs[0]), "=b"(regs[1]), "=c"(regs[2]), "=d"(regs[3]) : "a"(0), "c"(0));
+    if (*(const uint32_t *)"Auth" == regs[1] && *(const uint32_t *)"enti" == regs[3])
+        return "AuthenticAMD";
+    return "Intel";
+}
+
+static const char *gl_renderer_text(void)
+{
+    const char *vendor = gl_vendor_text();
+    return vendor[0] == 'A' ? "AMD Radeon(TM) Graphics" : "Intel(R) Arc(TM) Graphics";
+}
+#endif
+
 GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
 {
     GL_CONTEXT_OR_RETURN(nullptr);
     switch (name) {
+#ifdef __aarch64__
     case GL_VENDOR:
-        return (const GLubyte *)"Qualcomm";
+        return (const GLubyte *)GL_VENDOR_TEXT;
     case GL_RENDERER:
-        return (const GLubyte *)"Qualcomm Adreno X1-85";
+        return (const GLubyte *)GL_RENDERER_TEXT;
+#else
+    case GL_VENDOR:
+        return (const GLubyte *)gl_vendor_text();
+    case GL_RENDERER:
+        return (const GLubyte *)gl_renderer_text();
+#endif
     case GL_VERSION:
         if (ctx->major == 4)
-            return (const GLubyte *)(ctx->minor ? "4.1 - Build 31.0.63.7" : "4.0 - Build 31.0.63.7");
+            return (const GLubyte *)(ctx->minor ? "4.1 - Build " GL_BUILD_TEXT : "4.0 - Build " GL_BUILD_TEXT);
         if (ctx->major == 3 && ctx->minor >= 2)
-            return (const GLubyte *)(ctx->minor == 3 ? "3.3 - Build 31.0.63.7" : "3.2 - Build 31.0.63.7");
-        return (const GLubyte *)"3.0 - Build 31.0.63.7";
+            return (const GLubyte *)(ctx->minor == 3 ? "3.3 - Build " GL_BUILD_TEXT : "3.2 - Build " GL_BUILD_TEXT);
+        return (const GLubyte *)"3.0 - Build " GL_BUILD_TEXT;
     case GL_SHADING_LANGUAGE_VERSION:
         if (ctx->major == 4)
             return (const GLubyte *)"4.10";

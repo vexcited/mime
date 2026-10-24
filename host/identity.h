@@ -21,8 +21,12 @@ typedef struct MimeIdentity {
  */
 typedef struct MimeHardwareProfile {
     const char *cpu_name;
+    const char *cpu_vendor; /* the cpuid vendor of an x64 machine */
     uint32_t cpu_mhz;
     uint64_t cpu_midr;
+    uint32_t cpu_family;  /* cpuid family, model and stepping of an x64 machine */
+    uint32_t cpu_model;
+    uint32_t cpu_stepping;
     const char *manufacturer;
     const char *product;
     const char *family;

@@ -1,6 +1,10 @@
 /* system information and time services. */
 #include "../ntos.h"
+#ifdef __aarch64__
 #include "acpi_tables.h"
+#else
+#include "acpi_tables_x64.h"
+#endif
 
 NTSTATUS NTAPI NtQuerySystemTime(PLARGE_INTEGER time)
 {

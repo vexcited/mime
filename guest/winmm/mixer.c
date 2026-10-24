@@ -5,7 +5,11 @@
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
 
+#if defined(__aarch64__)
 #define DEVICE_NAME L"Speakers (Qualcomm Audio)"
+#else
+#define DEVICE_NAME L"Speakers (Realtek(R) Audio)"
+#endif
 #define LINE_ID 0xFFFF0000u
 #define VOLUME_ID 1
 #define MUTE_ID 2

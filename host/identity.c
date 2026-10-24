@@ -46,67 +46,26 @@ static void make_machine_uuid(char *out, size_t size)
 }
 
 #ifdef __linux__
-/* a line of a sysfs file, empty when it cannot be read. */
-static void read_line(const char *path, char *out, size_t size)
-{
-    out[0] = 0;
-    FILE *f = fopen(path, "r");
-    if (!f)
-        return;
-    if (fgets(out, (int)size, f)) {
-        size_t n = strlen(out);
-        while (n && (out[n - 1] == '\n' || out[n - 1] == ' '))
-            out[--n] = 0;
-    }
-    fclose(f);
-}
-
-/*
- * reads the CPUID brand string directly. Windows preserves trailing spaces, which Linux trims, but skips leading
- * spaces.
- */
-static void cpu_brand(char *out, size_t size)
-{
-    uint32_t regs[12];
-    for (uint32_t i = 0; i < 3; i++)
-        __asm__ volatile("cpuid"
-                         : "=a"(regs[i * 4]), "=b"(regs[i * 4 + 1]), "=c"(regs[i * 4 + 2]), "=d"(regs[i * 4 + 3])
-                         : "a"(0x80000002 + i), "c"(0));
-    char brand[49];
-    memcpy(brand, regs, 48);
-    brand[48] = 0;
-    const char *p = brand;
-    while (*p == ' ')
-        p++;
-    mime_strlcpy(out, p, size);
-}
 
 /* on PCs, exposes the host processor and firmware tables to the guest. */
 const MimeHardwareProfile *mime_hardware_profile(void)
 {
-    static char cpu[64], manufacturer[64], product[64], family[64], bios_vendor[64], bios_version[64], bios_date[16];
-    static MimeHardwareProfile profile;
-    if (profile.cpu_name)
-        return &profile;
-    cpu_brand(cpu, sizeof(cpu));
-    read_line("/sys/class/dmi/id/sys_vendor", manufacturer, sizeof(manufacturer));
-    read_line("/sys/class/dmi/id/product_name", product, sizeof(product));
-    read_line("/sys/class/dmi/id/product_family", family, sizeof(family));
-    read_line("/sys/class/dmi/id/bios_vendor", bios_vendor, sizeof(bios_vendor));
-    read_line("/sys/class/dmi/id/bios_version", bios_version, sizeof(bios_version));
-    read_line("/sys/class/dmi/id/bios_date", bios_date, sizeof(bios_date));
-    char mhz[32];
-    read_line("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", mhz, sizeof(mhz));
-    profile.cpu_name = cpu;
-    profile.cpu_mhz = (uint32_t)(strtoull(mhz, nullptr, 10) / 1000);
-    profile.cpu_midr = 0;
-    profile.manufacturer = manufacturer[0] ? manufacturer : "System manufacturer";
-    profile.product = product[0] ? product : "System Product Name";
-    profile.family = family[0] ? family : "To be filled by O.E.M.";
-    profile.sku = "";
-    profile.bios_vendor = bios_vendor[0] ? bios_vendor : "American Megatrends Inc.";
-    profile.bios_version = bios_version[0] ? bios_version : "1.0";
-    profile.bios_date = bios_date[0] ? bios_date : "01/01/2024";
+    static const MimeHardwareProfile profile = {
+        .cpu_name = "Intel(R) Core(TM) Ultra 7 165H",
+        .cpu_vendor = "GenuineIntel",
+        .cpu_mhz = 5000,
+        /* meteor lake: family 6, model 0xaa, stepping 3. */
+        .cpu_family = 6,
+        .cpu_model = 0xAA,
+        .cpu_stepping = 3,
+        .manufacturer = "Microsoft Corporation",
+        .product = "Microsoft Surface Laptop 6 for Business",
+        .family = "Surface",
+        .sku = "Surface_Laptop_6_for_Business_2033",
+        .bios_vendor = "Microsoft Corporation",
+        .bios_version = "1.11.138.0",
+        .bios_date = "03/12/2024",
+    };
     return &profile;
 }
 #else
@@ -118,9 +77,13 @@ const MimeHardwareProfile *mime_hardware_profile(void)
 {
     static const MimeHardwareProfile profile = {
         .cpu_name = "Qualcomm(R) Snapdragon(TM) X Elite - X1E-80-100",
+        .cpu_vendor = "Qualcomm",
         .cpu_mhz = 3800,
         /* qualcomm oryon: implementer 0x51, part 0x001. */
         .cpu_midr = 0x511F0012ull,
+        .cpu_family = 8,
+        .cpu_model = 1,
+        .cpu_stepping = 2,
         .manufacturer = "Microsoft Corporation",
         .product = "Microsoft Surface Laptop, 7th Edition",
         .family = "Surface",
