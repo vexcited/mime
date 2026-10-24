@@ -375,21 +375,20 @@ static void acpi_description(void)
         widen(wide_sig, RTL_NUMBER_OF(wide_sig), signature);
         widen(oem, RTL_NUMBER_OF(oem), (const char *)table->Data + 10);
         widen(table_id, RTL_NUMBER_OF(table_id), (const char *)table->Data + 16);
-        WCHAR path[160] = {};
-        _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"%ls\\%ls\\%ls\\00000000", root, wide_sig, oem);
-        /* the table id may hold a space: keep it, the instance is the leaf. */
-        WCHAR with_id[180] = {};
-        _snwprintf(with_id, RTL_NUMBER_OF(with_id) - 1, L"%ls\\%ls\\%ls\\00000000", root, wide_sig, oem, table_id);
-        if (!CmpOpenPath(with_id, TRUE))
+        /* the instance, then the data key, where the four byte words of the header are named by their offset. */
+        WCHAR instance[180] = {};
+        _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"%ls\\%ls\\%ls\\%ls\\00000001", root, wide_sig, oem, table_id);
+        WCHAR path[200] = {};
+        _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"%ls\\00000000", instance);
+        if (!CmpOpenPath(path, TRUE))
             continue;
         for (ULONG at = 0; at + 4 <= 36; at += 4) {
             WCHAR name[9];
             _snwprintf(name, RTL_NUMBER_OF(name), L"%08x", at);
             ULONG word;
             memcpy(&word, table->Data + at, sizeof(word));
-            set_dword(with_id, name, word);
+            set_dword(path, name, word);
         }
-        (void)path;
     }
 }
 
