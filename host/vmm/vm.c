@@ -3,6 +3,7 @@
 
 #include "../identity.h"
 #include "../rom.h"
+#include "../gpu/gpu.h"
 
 #include <unistd.h>
 
@@ -209,6 +210,8 @@ void mime_vm_destroy(MimeVm *vm)
     }
     mime_fs_close_all(vm);
     mime_net_close_all();
+    /* vulkan connections import guest memory into the driver: they go before it is unmapped. */
+    mime_vk_close_all();
     mime_lazy_free(&vm->rom);
     hv_vm_destroy();
     if (vm->ram && vm->ram != MAP_FAILED)

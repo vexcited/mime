@@ -8,7 +8,7 @@
  */
 #include "../gpu/gpu.h"
 #include "../gpu/shader.h"
-#include "mvk_host.h"
+#include "../vulkan/mvk_host.h"
 
 #include <glslang/Include/glslang_c_interface.h>
 #include <glslang/Public/resource_limits_c.h>

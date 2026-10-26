@@ -40,10 +40,32 @@ endif()
 target_include_directories(shaderc PRIVATE third_party/glslang third_party/glslang/glslang third_party)
 set_target_properties(shaderc PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
+set(vulkan_gen ${MIME_GEN}/vulkan)
+add_library(mvk-host OBJECT ${vulkan_gen}/mvk_structs.c ${vulkan_gen}/mvk_host_commands.c)
+target_include_directories(mvk-host PRIVATE third_party/khronos ${vulkan_gen} host/vulkan include)
+target_compile_options(mvk-host PRIVATE ${host_warnings} -Wno-unused-variable -Wno-unused-function)
+set_target_properties(mvk-host PROPERTIES C_STANDARD 23 C_EXTENSIONS ${host_gnu})
+if(NOT APPLE)
+    target_compile_definitions(mvk-host PRIVATE _GNU_SOURCE)
+endif()
+mime_glob(vulkan_host_sources host/vulkan/*.c)
+set_source_files_properties(host/vulkan/gamma.c PROPERTIES
+    INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/glslang")
+set_source_files_properties(host/vulkan/vulkan.c host/vulkan/vkshare.c host/vulkan/vkwsi.c host/vulkan/video.c
+    host/vulkan/video_h264.c host/vulkan/video_h265.c host/vulkan/video_vp9.c host/vulkan/video_av1.c PROPERTIES
+    COMPILE_OPTIONS -Wno-missing-field-initializers
+    INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen}")
+
 if(APPLE)
     mime_glob(host_sources host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c host/camera/*.c)
 
-    add_executable(mime ${host_sources} ${MIME_BUILD_GEN}/rom.S $<TARGET_OBJECTS:shaderc>)
+    mime_glob(vkmetal_sources host/vkmetal/*.c host/vkmetal/*.cpp)
+    set_source_files_properties(${vkmetal_sources} PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
+        INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${CMAKE_SOURCE_DIR}/third_party/SPIRV-Cross")
+    set_source_files_properties(host/vkmetal/msl.cpp PROPERTIES COMPILE_OPTIONS "-std=c++17;-Wno-missing-field-initializers")
+
+    add_executable(mime ${host_sources} ${vulkan_host_sources} ${vkmetal_sources} ${MIME_BUILD_GEN}/rom.S
+        $<TARGET_OBJECTS:mvk-host> $<TARGET_OBJECTS:shaderc>)
     set_source_files_properties(host/gpu/gpu.c host/gpu/shader.c PROPERTIES COMPILE_OPTIONS -fblocks
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party;${CMAKE_SOURCE_DIR}/third_party/glslang")
     target_link_libraries(mime PRIVATE "-framework Hypervisor" "-framework AppKit" "-framework QuartzCore"
@@ -62,25 +84,12 @@ else()
     list(FILTER host_sources EXCLUDE REGEX "/host/vmm/(vm|vcpu|lazy|loader|window)[.]c$")
     list(APPEND host_sources host/gpu/shader.c host/ui/pe_icon.c)
 
-    set(vulkan_gen ${MIME_GEN}/vulkan)
-    add_library(mvk-host OBJECT ${vulkan_gen}/mvk_structs.c ${vulkan_gen}/mvk_host_commands.c)
-    target_include_directories(mvk-host PRIVATE third_party/khronos ${vulkan_gen} host/linux include)
-    target_compile_options(mvk-host PRIVATE ${host_warnings} -Wno-unused-variable -Wno-unused-function)
-    target_compile_definitions(mvk-host PRIVATE _GNU_SOURCE)
-    target_link_libraries(mvk-host PRIVATE PkgConfig::HOST_LIBS)
-    set_target_properties(mvk-host PROPERTIES C_STANDARD 23 C_EXTENSIONS ON)
-
-    add_executable(mime ${host_sources} ${MIME_BUILD_GEN}/rom.S $<TARGET_OBJECTS:mvk-host> $<TARGET_OBJECTS:shaderc>)
+    add_executable(mime ${host_sources} ${vulkan_host_sources} ${MIME_BUILD_GEN}/rom.S $<TARGET_OBJECTS:mvk-host>
+        $<TARGET_OBJECTS:shaderc>)
     set_source_files_properties(host/gpu/shader.c PROPERTIES
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party;${CMAKE_SOURCE_DIR}/third_party/glslang")
     set_source_files_properties(host/linux/gpu.c PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen};${CMAKE_SOURCE_DIR}/third_party/glslang")
-    set_source_files_properties(host/linux/gamma.c PROPERTIES
-        INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/glslang")
-    set_source_files_properties(host/linux/vulkan.c host/linux/vkshare.c host/linux/vkwsi.c host/linux/video.c host/linux/video_h264.c
-        host/linux/video_h265.c host/linux/video_vp9.c host/linux/video_av1.c PROPERTIES
-        COMPILE_OPTIONS -Wno-missing-field-initializers
-        INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen}")
     target_compile_definitions(mime PRIVATE _GNU_SOURCE)
     target_link_libraries(mime PRIVATE PkgConfig::HOST_LIBS Threads::Threads m)
     if(HOST_SDBUS_FOUND)

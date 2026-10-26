@@ -7,6 +7,10 @@
 #include "mvk_host.h"
 #include "video.h"
 
+#ifdef __APPLE__
+#include "../vkmetal/vkmetal.h"
+#endif
+
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
@@ -395,6 +399,16 @@ uint64_t mvk_dispatch_id(const void *object)
 
 /* ------------------------------------------------------------------ instance and devices. */
 
+#ifdef __APPLE__
+/* mime's own Vulkan driver on Metal 4 runs in this process, see host/vkmetal. */
+static bool load_library(MvkConnection *c)
+{
+    if (!c->library)
+        c->library = dlopen(nullptr, RTLD_NOW);
+    c->gipa = vkm_GetInstanceProcAddr;
+    return c->library != nullptr;
+}
+#else
 static bool load_library(MvkConnection *c)
 {
     if (c->library)
@@ -407,6 +421,7 @@ static bool load_library(MvkConnection *c)
     c->gipa = (PFN_vkGetInstanceProcAddr)dlsym(c->library, "vkGetInstanceProcAddr");
     return c->gipa != nullptr;
 }
+#endif
 
 static bool host_has(const VkExtensionProperties *list, uint32_t count, const char *name)
 {
@@ -563,7 +578,7 @@ static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkR
     enumerate(nullptr, &count, nullptr);
     VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
     enumerate(nullptr, &count, list);
-    const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 8));
+    const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 12));
     uint32_t n = 0;
     for (uint32_t i = 0; i < info.enabledExtensionCount; i++)
         if (host_has(list, count, info.ppEnabledExtensionNames[i]) &&
@@ -573,9 +588,9 @@ static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkR
     for (const char *const *x = mvk_wsi_instance_extensions; *x; x++)
         if (host_has(list, count, *x))
             names[n++] = *x;
-    free(list);
     info.enabledLayerCount = 0;
     info.ppEnabledLayerNames = nullptr;
+    free(list);
     info.enabledExtensionCount = n;
     info.ppEnabledExtensionNames = names;
     PFN_vkCreateInstance create = (PFN_vkCreateInstance)b->gipa(nullptr, "vkCreateInstance");
@@ -965,6 +980,14 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
                 independent = true;
             }
         }
+        /* a driver that is not fully conformant says so through an extension that must be on. */
+        if (host_has(list, count, "VK_KHR_portability_subset")) {
+            bool named = false;
+            for (uint32_t i = 0; i < n; i++)
+                named |= !strcmp(names[i], "VK_KHR_portability_subset");
+            if (!named)
+                names[n++] = "VK_KHR_portability_subset";
+        }
         c->host_import = host_has(list, count, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
         if (c->host_import)
             names[n++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
@@ -974,6 +997,13 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
             names[n++] = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
             names[n++] = VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
         }
+#ifdef __APPLE__
+        /* on macOS they cross as Metal textures and shared events, see vkshare.c. */
+        if (host_has(list, count, "VK_EXT_external_memory_metal") && host_has(list, count, "VK_EXT_metal_objects")) {
+            names[n++] = "VK_EXT_external_memory_metal";
+            names[n++] = "VK_EXT_metal_objects";
+        }
+#endif
         /* the presenter's swapchains, whether the guest presents or not. */
         bool swapchain = false;
         for (uint32_t i = 0; i < n; i++)
@@ -1030,6 +1060,7 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
                 g_create_buffer = c->fn.vkCreateBuffer;
                 c->fn.vkCreateBuffer = create_importable_buffer;
             }
+            mvk_share_device_created(c);
             if (video)
                 mvk_video_device_created(c, gdpa, unified, independent, video_codecs);
             bind(c, id, (uint64_t)(uintptr_t)c->device);
@@ -3058,7 +3089,11 @@ static void *connection_main(void *arg)
             /* a short spin catches the next call of a busy guest without a kick. */
             uint64_t until = mime_now_ns() + 50000;
             while (put == get && mime_now_ns() < until) {
+#if defined(__x86_64__)
                 __builtin_ia32_pause();
+#else
+                __asm__ volatile("yield");
+#endif
                 put = __atomic_load_n(&h->put, __ATOMIC_ACQUIRE);
             }
             if (put == get) {
@@ -3140,14 +3175,17 @@ bool mvk_internal_instance(MvkConnection *c, uint32_t api)
     enumerate(nullptr, &count, nullptr);
     VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
     enumerate(nullptr, &count, list);
-    const char *names[8];
+    const char *names[12];
     uint32_t n = 0;
     for (const char *const *x = mvk_wsi_instance_extensions; *x && n < 8; x++)
         if (host_has(list, count, *x))
             names[n++] = *x;
-    free(list);
     VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "mime", 1, "mime", 1, api};
-    VkInstanceCreateInfo info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0, &app, 0, nullptr, n, names};
+    VkInstanceCreateInfo info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0, &app, 0, nullptr, 0, names};
+    info.enabledLayerCount = 0;
+    info.ppEnabledLayerNames = nullptr;
+    info.enabledExtensionCount = n;
+    free(list);
     PFN_vkCreateInstance create = (PFN_vkCreateInstance)c->gipa(nullptr, "vkCreateInstance");
     if (create(&info, nullptr, &c->instance) != VK_SUCCESS)
         return false;
@@ -3320,9 +3358,8 @@ void mime_vk_close_all(void)
  * temporary device, taking 70 ms. retain an instance so closing the last guest connection does not unload the
  * driver.
  */
-static void *warm_main(void *arg)
+static void *warm_run(void)
 {
-    mime_set_thread_name("mime-vk-warm");
     uint64_t began = mime_now_ns();
     __atomic_store_n(&g_warm_began, began, __ATOMIC_RELEASE);
     MvkConnection warm = {};
@@ -3387,6 +3424,21 @@ static void *warm_main(void *arg)
 
 static pthread_t g_warm_thread;
 static bool g_warm_started;
+/* the warm up thread ended, for a join with a time limit. */
+static pthread_mutex_t g_warm_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_warm_ended_cond = PTHREAD_COND_INITIALIZER;
+static bool g_warm_ended;
+
+static void *warm_main(void *arg)
+{
+    mime_set_thread_name("mime-vk-warm");
+    warm_run();
+    pthread_mutex_lock(&g_warm_lock);
+    g_warm_ended = true;
+    pthread_cond_broadcast(&g_warm_ended_cond);
+    pthread_mutex_unlock(&g_warm_lock);
+    return nullptr;
+}
 
 void mime_vk_warm_up(void)
 {
@@ -3410,6 +3462,15 @@ static void warm_wait(void)
     struct timespec limit;
     clock_gettime(CLOCK_REALTIME, &limit);
     limit.tv_sec += 3;
-    if (pthread_timedjoin_np(g_warm_thread, nullptr, &limit) != 0)
+    pthread_mutex_lock(&g_warm_lock);
+    while (!g_warm_ended && pthread_cond_timedwait(&g_warm_ended_cond, &g_warm_lock, &limit) == 0) {
+    }
+    bool ended = g_warm_ended;
+    pthread_mutex_unlock(&g_warm_lock);
+    if (ended) {
+        pthread_join(g_warm_thread, nullptr);
+    } else {
+        pthread_detach(g_warm_thread);
         mime_warn("vulkan: the warm up of the driver did not end in time");
+    }
 }

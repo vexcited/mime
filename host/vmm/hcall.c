@@ -469,7 +469,6 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_GPU_CLOSE:
         mime_gpu_close(regs[1]);
         break;
-#ifdef __linux__
     case MIME_HC_VK_OPEN:
         status = mime_vk_open(vm, regs[1], regs[2], &value);
         break;
@@ -482,7 +481,6 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_GFX_SHARE_FREE:
         mime_vk_share_free(regs[1]);
         break;
-#endif
     case MIME_HC_AUDIO_OPEN:
         status = mime_audio_open(vm, regs[1], regs[2], &value);
         break;

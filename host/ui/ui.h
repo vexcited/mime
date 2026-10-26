@@ -54,10 +54,10 @@ void mime_ui_gamma(const uint16_t *ramp);
 void mime_ui_beep(uint32_t type);
 
 /*
- * places a CAMetalLayer over a window-relative rectangle in guest pixels, flipping OpenGL bottom-first rows
- * upright. window_id 0 hides it.
+ * places a CAMetalLayer over a window-relative rectangle in guest pixels. a flipped layer shows OpenGL bottom-first
+ * rows upright. window_id 0 hides it.
  */
-void *mime_ui_metal_layer_create(void *device);
+void *mime_ui_metal_layer_create(void *device, bool flipped);
 void mime_ui_metal_layer_place(void *layer, uint32_t window_id, int32_t x, int32_t y, uint32_t width,
                                uint32_t height, bool sync);
 void mime_ui_metal_layer_destroy(void *layer);

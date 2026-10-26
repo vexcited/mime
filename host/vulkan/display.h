@@ -1,15 +1,16 @@
 /* native display handles and guest frame surfaces for the Vulkan presenter. */
-#ifndef MIME_LINUX_DISPLAY_H
-#define MIME_LINUX_DISPLAY_H
+#ifndef MIME_VULKAN_DISPLAY_H
+#define MIME_VULKAN_DISPLAY_H
 
 #include "../ui/ui.h"
 
 
 typedef struct MimeUiNative {
-    bool x11;        /* else Wayland. */
-    bool subsurface; /* a surface over the client area alone, the frame drawn by SDL around it. */
+    bool x11;        /* else Wayland, or Metal on macOS. */
+    bool metal;
+    bool subsurface; /* a surface over the client area alone, the frame drawn by the window system around it. */
     void *display;
-    void *surface;   /* the wl_surface. */
+    void *surface;   /* the wl_surface, or the CAMetalLayer. */
     uint64_t window; /* the X11 window. */
 } MimeUiNative;
 
@@ -25,7 +26,8 @@ typedef struct MimeUiFrame {
 } MimeUiFrame;
 
 /*
- * Wayland uses a client-area subsurface excluded from SDL rendering; X11 uses the whole window and draws its frame.
+ * Wayland uses a client-area subsurface excluded from SDL rendering, macOS a Metal layer over the client area; X11
+ * uses the whole window and draws its frame.
  * attach waits for the main thread. client coordinates are window-relative guest pixels.
  */
 bool mime_ui_vk_attach(uint32_t id, MimeRect client, MimeUiNative *native);

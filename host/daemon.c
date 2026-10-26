@@ -5,9 +5,7 @@
 #include "mime_cli.h"
 #include "ui/ui.h"
 #include "vmm/vmm.h"
-#ifdef __linux__
 #include "gpu/gpu.h"
-#endif
 
 #include <errno.h>
 #include <fcntl.h>
@@ -738,13 +736,11 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     mime_ui_init(on_input, nullptr);
     mime_ui_desktop_start(g_paths);
     uint64_t ui_ns = mime_now_ns();
-#ifdef __linux__
     /*
      * overlaps the driver's roughly 200 ms startup with guest boot and application startup. begin after loading
      * desktop libraries to avoid the driver's 15 ms loader lock delay.
      */
     mime_vk_warm_up();
-#endif
     mime_ui_get_display(&g_vm.boot->display);
     __atomic_store_n(&g_vm.boot->display_ready, 1, __ATOMIC_RELEASE);
     mime_info("display %ux%u at %u dpi", g_vm.boot->display.width, g_vm.boot->display.height,

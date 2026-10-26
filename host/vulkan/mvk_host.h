@@ -167,6 +167,8 @@ void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s);
 
 
 /* vkshare.c: memory and semaphores shared across process devices. */
+/* after the device is made: the driver calls the guest's sharing requests go through. */
+void mvk_share_device_created(MvkConnection *c);
 void mvk_share_export_memory(MvkCall *call);
 void mvk_share_import_memory(MvkCall *call);
 void mvk_share_export_semaphore(MvkCall *call);

@@ -5,8 +5,8 @@
  * SDL video calls run on the main thread, which initializes it. vCPU threads copy presented pixels into
  * staging buffers and queue other work for the main loop.
  */
-#include "display.h"
-#include "gamma.h"
+#include "../vulkan/display.h"
+#include "../vulkan/gamma.h"
 #include "ui_internal.h"
 
 #include <SDL3/SDL.h>

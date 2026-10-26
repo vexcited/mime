@@ -7,6 +7,7 @@
  */
 #include "ui.h"
 #include "app_identity.h"
+#include "../vulkan/display.h"
 
 #include <CoreGraphics/CoreGraphics.h>
 #include <IOSurface/IOSurface.h>
@@ -1376,6 +1377,8 @@ static void destroy_main(void *arg)
         return;
     }
     pthread_mutex_unlock(&g_windows_lock);
+    /* a vulkan presenter lets go of the window's layer before it goes. */
+    mime_vk_window_lost(id_);
     restore_host_cursor();
     mime_app_window_remove(id_);
     g_pointer_in_guest = false;
@@ -1547,6 +1550,7 @@ static void config_main(void *arg)
     } else {
         MSG_V_DBL(w->content, "setBorderWidth:", 0.0);
     }
+
     if (cropping_changed) {
         pthread_mutex_lock(&w->lock);
         w->dirty = w->surface != nullptr;
@@ -2202,6 +2206,7 @@ static void metal_relayout(uint32_t window_id)
 
 typedef struct MetalCreate {
     void *device;
+    bool flipped;
     id layer;
 } MetalCreate;
 
@@ -2214,13 +2219,19 @@ static void metal_create_main(void *arg)
     MSG_V_ID(m->layer, "setDevice:", (id)m->device);
     MSG_V_INT(m->layer, "setPixelFormat:", 80); /* MTLPixelFormatBGRA8Unorm */
     MSG_V_BOOL(m->layer, "setFramebufferOnly:", NO);
+    MSG_V_DBL(m->layer, "setContentsScale:", g_scale);
+    MSG_V_BOOL(m->layer, "setOpaque:", YES);
+    if (m->flipped) {
+        CATransform3D flip = {1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        ((void (*)(id, SEL, CATransform3D))objc_msgSend)(m->layer, SEL_("setTransform:"), flip);
+    }
     MSG_V(ca, "commit");
 }
 
 /* on the main thread: a thread without a run loop never commits the layer's implicit transaction. */
-void *mime_ui_metal_layer_create(void *device)
+void *mime_ui_metal_layer_create(void *device, bool flipped)
 {
-    MetalCreate m = {device, nil};
+    MetalCreate m = {device, flipped, nil};
     if (pthread_main_np())
         metal_create_main(&m);
     else
@@ -2238,17 +2249,8 @@ static void metal_place_main(void *arg)
         else if (!g_metal[i].layer && !free_slot)
             free_slot = &g_metal[i];
     }
-    if (!m && free_slot) {
+    if (!m && free_slot)
         m = free_slot;
-        id ca = CLS("CATransaction");
-        MSG_V(ca, "begin");
-        MSG_V_BOOL(ca, "setDisableActions:", YES);
-        MSG_V_DBL(p->layer, "setContentsScale:", g_scale);
-        MSG_V_BOOL(p->layer, "setOpaque:", YES);
-        CATransform3D flip = {1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-        ((void (*)(id, SEL, CATransform3D))objc_msgSend)(p->layer, SEL_("setTransform:"), flip);
-        MSG_V(ca, "commit");
-    }
     if (m) {
         *m = *p;
         metal_layout(m);
@@ -2277,6 +2279,116 @@ static void metal_destroy_main(void *arg)
 void mime_ui_metal_layer_destroy(void *layer)
 {
     on_main(metal_destroy_main, layer);
+}
+
+/* ---------------------------------------------------------------- Vulkan presenters. */
+
+/* the layer each window's vulkan presenter draws in, over the client area; host/vulkan/vkwsi.c. */
+typedef struct VkLayer {
+    uint32_t window_id;
+    void *layer;
+    MimeRect place;
+} VkLayer;
+
+static VkLayer g_vk_layers[MAX_METAL_LAYERS];
+static pthread_mutex_t g_vk_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static VkLayer *vk_layer(uint32_t window_id)
+{
+    for (int i = 0; i < MAX_METAL_LAYERS; i++)
+        if (g_vk_layers[i].layer && g_vk_layers[i].window_id == window_id)
+            return &g_vk_layers[i];
+    return nullptr;
+}
+
+static void vk_place(void *layer, uint32_t window_id, MimeRect r)
+{
+    mime_ui_metal_layer_place(layer, window_id, r.left, r.top, (uint32_t)MIME_MAX(r.right - r.left, 1),
+                              (uint32_t)MIME_MAX(r.bottom - r.top, 1), true);
+}
+
+/* the first placement is done before the first frame, which would go nowhere on a layer outside the window. */
+static void vk_place_now(void *layer, uint32_t window_id, MimeRect r)
+{
+    MetalLayer *p = mime_xmalloc(sizeof(*p));
+    *p = (MetalLayer){layer, window_id, r.left, r.top, (uint32_t)MIME_MAX(r.right - r.left, 1),
+                      (uint32_t)MIME_MAX(r.bottom - r.top, 1), true};
+    if (pthread_main_np())
+        metal_place_main(p);
+    else
+        dispatch_sync_f(dispatch_get_main_queue(), p, metal_place_main);
+}
+
+/* the Vulkan driver sets the layer's device and pixel format with the first swapchain on it. */
+bool mime_ui_vk_attach(uint32_t id_, MimeRect client, MimeUiNative *native)
+{
+    pthread_mutex_lock(&g_windows_lock);
+    bool exists = find_window(id_) != nullptr;
+    pthread_mutex_unlock(&g_windows_lock);
+    if (!exists)
+        return false;
+    pthread_mutex_lock(&g_vk_lock);
+    VkLayer *v = vk_layer(id_);
+    bool made = false;
+    for (int i = 0; i < MAX_METAL_LAYERS && !v; i++)
+        if (!g_vk_layers[i].layer) {
+            v = &g_vk_layers[i];
+            *v = (VkLayer){id_, mime_ui_metal_layer_create(nullptr, false), client};
+            made = true;
+        }
+    void *layer = v ? v->layer : nullptr;
+    pthread_mutex_unlock(&g_vk_lock);
+    if (!layer)
+        return false;
+    if (made)
+        vk_place_now(layer, id_, client);
+    *native = (MimeUiNative){.metal = true, .subsurface = true, .surface = layer};
+    return true;
+}
+
+void mime_ui_vk_detach(uint32_t id_)
+{
+    pthread_mutex_lock(&g_vk_lock);
+    VkLayer *v = vk_layer(id_);
+    void *layer = v ? v->layer : nullptr;
+    if (v)
+        memset(v, 0, sizeof(*v));
+    pthread_mutex_unlock(&g_vk_lock);
+    if (layer)
+        mime_ui_metal_layer_destroy(layer);
+}
+
+/* guest pixels are the window's backing pixels, so the client area is the drawable as it is. */
+bool mime_ui_vk_frame(uint32_t id_, MimeRect client, MimeUiFrame *frame)
+{
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(id_);
+    if (!w) {
+        pthread_mutex_unlock(&g_windows_lock);
+        return false;
+    }
+    *frame = (MimeUiFrame){.subsurface = true, .scale = 1.0};
+    /* a layer keeps the last drawable presented to it, so a frame before the window appears shows with it. */
+    frame->shown = !(w->config.flags & MIME_WIN_MINIMIZED);
+    frame->visible = w->config.visible;
+    frame->host = w->config.visible;
+    pthread_mutex_unlock(&g_windows_lock);
+    frame->pixel_width = (uint32_t)MIME_MAX(client.right - client.left, 0);
+    frame->pixel_height = (uint32_t)MIME_MAX(client.bottom - client.top, 0);
+    pthread_mutex_lock(&g_vk_lock);
+    VkLayer *v = vk_layer(id_);
+    if (v && memcmp(&v->place, &client, sizeof(client))) {
+        v->place = client;
+        vk_place(v->layer, id_, client);
+    }
+    pthread_mutex_unlock(&g_vk_lock);
+    return true;
+}
+
+/* the window system draws the guest's surface around the layer, nothing to copy. */
+bool mime_ui_vk_copy(uint32_t id_, uint8_t *dst, uint32_t width, uint32_t height, MimeRect *dirty)
+{
+    return false;
 }
 
 /*

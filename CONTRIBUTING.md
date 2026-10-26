@@ -18,6 +18,8 @@ brew install llvm lld cmake ninja
 export PATH="$(brew --prefix llvm)/bin:$PATH"
 ```
 
+Direct3D and Vulkan programs draw with the Mac's GPU through Mime's own Vulkan driver on Metal 4, built into the `mime` binary from [host/vkmetal](host/vkmetal/). It needs macOS 26 or later; on older systems, Direct3D only has its software device.
+
 ### Linux
 
 Running Mime requires x86_64 Linux with KVM enabled and read/write access to `/dev/kvm`.

@@ -1,7 +1,8 @@
 /*
  * guest swapchains render into host images. a present blits one into a host window swapchain and draws the
- * guest frame around it. a presenter owns the window surface until its last swapchain is destroyed, then
- * returns it to SDL.
+ * guest frame around it, or on Wayland and macOS into a surface over the client area alone, a Metal layer on
+ * macOS. a presenter owns the window surface until its last swapchain is destroyed, then returns it to the
+ * window system.
  *
  * acquire and present have no replies. each image has a binary semaphore signaled by its present blit; the
  * next acquire waits for it before signaling the guest.
@@ -21,6 +22,9 @@ typedef unsigned long Window;
 typedef unsigned long VisualID;
 #include <vulkan/vulkan_wayland.h>
 #include <vulkan/vulkan_xlib.h>
+#ifdef __APPLE__
+#include <vulkan/vulkan_metal.h>
+#endif
 
 #include <math.h>
 #include <stdlib.h>
@@ -35,8 +39,12 @@ typedef unsigned long VisualID;
 
 const char *const mvk_wsi_instance_extensions[] = {
     VK_KHR_SURFACE_EXTENSION_NAME,
+#ifdef __APPLE__
+    VK_EXT_METAL_SURFACE_EXTENSION_NAME,
+#else
     VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,
     VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
+#endif
     nullptr,
 };
 
@@ -200,6 +208,9 @@ typedef struct MvkWsi {
     PFN_vkGetPhysicalDeviceSurfacePresentModesKHR SurfacePresentModes;
     PFN_vkCreateWaylandSurfaceKHR CreateWaylandSurface;
     PFN_vkCreateXlibSurfaceKHR CreateXlibSurface;
+#ifdef __APPLE__
+    PFN_vkCreateMetalSurfaceEXT CreateMetalSurface;
+#endif
     PFN_vkCreateSwapchainKHR CreateSwapchain;
     PFN_vkDestroySwapchainKHR DestroySwapchain;
     PFN_vkGetSwapchainImagesKHR GetSwapchainImages;
@@ -229,6 +240,9 @@ static MvkWsi *wsi_of(MvkConnection *c)
     INSTANCE(SurfacePresentModes, "vkGetPhysicalDeviceSurfacePresentModesKHR");
     INSTANCE(CreateWaylandSurface, "vkCreateWaylandSurfaceKHR");
     INSTANCE(CreateXlibSurface, "vkCreateXlibSurfaceKHR");
+#ifdef __APPLE__
+    INSTANCE(CreateMetalSurface, "vkCreateMetalSurfaceEXT");
+#endif
     DEVICE(CreateSwapchain, "vkCreateSwapchainKHR");
     DEVICE(DestroySwapchain, "vkDestroySwapchainKHR");
     DEVICE(GetSwapchainImages, "vkGetSwapchainImagesKHR");
@@ -609,6 +623,13 @@ static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect client)
     if (p->generation == generation && !p->surface) {
         MvkWsi *w = c->wsi;
         VkResult r = VK_ERROR_EXTENSION_NOT_PRESENT;
+#ifdef __APPLE__
+        if (native.metal && w->CreateMetalSurface) {
+            VkMetalSurfaceCreateInfoEXT info = {VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT, nullptr, 0,
+                                                native.surface};
+            r = w->CreateMetalSurface(c->instance, &info, nullptr, &p->surface);
+        } else
+#endif
         if (native.x11 && w->CreateXlibSurface) {
             VkXlibSurfaceCreateInfoKHR info = {VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR, nullptr, 0, native.display,
                                                (Window)native.window};

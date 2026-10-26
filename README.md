@@ -15,7 +15,7 @@ mime down
 Mime runs its own Windows-compatible kernel and DLLs inside a virtual machine.
 Windows programs use those DLLs and system calls to access files, create windows and do their work.
 
-- The [host](host/), connects the virtual machine to macOS or Linux. The `mime` command talks over a Unix socket to `mime-vmm`, a background process running the same binary. It uses [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor) on macOS and KVM on x86_64 Linux to run the guest kernel.
+- The [host](host/), connects the virtual machine to macOS or Linux. The `mime` command talks over a Unix socket to `mime-vmm`, a background process running the same binary. It uses [Hypervisor.framework](https://developer.apple.com/documentation/hypervisor) on macOS and KVM on x86_64 Linux to run the guest kernel. Graphics run on the host's GPU: the guest's Direct3D is translated to Vulkan, whose calls the host runs on its Vulkan driver, Mime's own on Metal 4 on macOS.
 - The [guest kernel](guest/ntos/), manages processes, threads, memory, files and the registry. It loads `win32k.sys` to handle window management, input and GDI drawing. When it needs host services, such as file access, window display, networking, audio or GPU work, it makes hypercalls through Mime's [host interface](include/mime/abi.h).
 - The [Windows DLLs](guest/), implement the APIs programs expect. They use `ntdll.dll` and `win32u.dll` to make system calls into the guest kernel when needed.
 
