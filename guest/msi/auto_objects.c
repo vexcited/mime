@@ -397,7 +397,7 @@ AUTO_OBJECT *AutoNewSummaryInfo(MSIHANDLE handle)
 
 static HRESULT database_state(AUTO_OBJECT *object, AUTO_ARGS *args)
 {
-    return AutoSetInt(args, AutoApiGetDatabaseState(object->Handle));
+    return AutoSetInt(args, MsiGetDatabaseState(object->Handle));
 }
 
 static HRESULT database_summary(AUTO_OBJECT *object, AUTO_ARGS *args)
@@ -505,7 +505,7 @@ static HRESULT database_enable_preview(AUTO_OBJECT *object, AUTO_ARGS *args)
 static HRESULT database_table_persistent(AUTO_OBJECT *object, AUTO_ARGS *args)
 {
     AUTO_STRING_ARG(args, 1, table);
-    return AutoSetInt(args, AutoApiDatabaseIsTablePersistent(object->Handle, table));
+    return AutoSetInt(args, (int)MsiDatabaseIsTablePersistentW(object->Handle, table));
 }
 
 static HRESULT database_create_transform_summary(AUTO_OBJECT *object, AUTO_ARGS *args)

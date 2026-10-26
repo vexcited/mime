@@ -6,16 +6,6 @@
 
 #define UNSUPPORTED ERROR_CALL_NOT_IMPLEMENTED
 
-MSIHANDLE AutoApiGetLastErrorRecord(void)
-{
-    return 0;
-}
-
-int AutoApiGetDatabaseState(MSIHANDLE database)
-{
-    return -1;
-}
-
 UINT AutoApiDatabaseCommit(MSIHANDLE database)
 {
     return UNSUPPORTED;
@@ -44,11 +34,6 @@ UINT AutoApiDatabaseGenerateTransform(MSIHANDLE database, MSIHANDLE reference, P
 UINT AutoApiCreateTransformSummaryInfo(MSIHANDLE database, MSIHANDLE reference, PCWSTR file, int errors, int validation)
 {
     return UNSUPPORTED;
-}
-
-int AutoApiDatabaseIsTablePersistent(MSIHANDLE database, PCWSTR table)
-{
-    return -1;
 }
 
 UINT AutoApiEnableUIPreview(MSIHANDLE database, MSIHANDLE *preview)
@@ -174,17 +159,7 @@ UINT AutoApiGetShortcutTarget(PCWSTR shortcut, WCHAR product[39], WCHAR feature[
     return UNSUPPORTED;
 }
 
-UINT AutoApiGetFileHash(PCWSTR path, DWORD options, DWORD hash[4])
-{
-    return UNSUPPORTED;
-}
-
 UINT AutoApiGetFileSignature(PCWSTR path, DWORD flags, BOOL hash, BYTE **data, DWORD *size)
-{
-    return UNSUPPORTED;
-}
-
-UINT AutoApiGetProductCode(PCWSTR component, WCHAR product[39])
 {
     return UNSUPPORTED;
 }
@@ -197,39 +172,6 @@ UINT AutoApiSourceListClearAll(PCWSTR product, PCWSTR user, DWORD reserved)
 UINT AutoApiSourceListForceResolution(PCWSTR product, PCWSTR user, DWORD reserved)
 {
     return UNSUPPORTED;
-}
-
-UINT AutoApiGetProductInfoEx(PCWSTR product, PCWSTR sid, DWORD context, PCWSTR property, LPWSTR out, LPDWORD size)
-{
-    return UNSUPPORTED;
-}
-
-UINT AutoApiQueryComponentState(PCWSTR product, PCWSTR sid, DWORD context, PCWSTR component, INSTALLSTATE *state)
-{
-    return UNSUPPORTED;
-}
-
-UINT AutoApiQueryFeatureStateEx(PCWSTR product, PCWSTR sid, DWORD context, PCWSTR feature, INSTALLSTATE *state)
-{
-    return UNSUPPORTED;
-}
-
-UINT AutoApiEnumClientsEx(PCWSTR component, PCWSTR sid, DWORD contexts, DWORD index, WCHAR product[39],
-                          DWORD *context, LPWSTR out_sid, LPDWORD sid_size)
-{
-    return UNSUPPORTED;
-}
-
-UINT AutoApiEnumComponentsEx(PCWSTR sid, DWORD contexts, DWORD index, WCHAR component[39], DWORD *context,
-                             LPWSTR out_sid, LPDWORD sid_size)
-{
-    return UNSUPPORTED;
-}
-
-INSTALLSTATE AutoApiGetComponentPathEx(PCWSTR product, PCWSTR component, PCWSTR sid, DWORD context, LPWSTR path,
-                                       LPDWORD size)
-{
-    return INSTALLSTATE_UNKNOWN;
 }
 
 UINT AutoApiGetPatchFileList(PCWSTR product, PCWSTR patches, DWORD *count, MSIHANDLE **records)

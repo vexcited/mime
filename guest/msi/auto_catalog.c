@@ -421,10 +421,10 @@ static HRESULT product_state(AUTO_OBJECT *object, AUTO_ARGS *args)
     if (product->State == -2) {
         DWORD size = 0;
         product->State = -1;
-        if (AutoApiGetProductInfoEx(product->Code, product->Sid, product->Context, L"InstalledProductName", nullptr,
+        if (MsiGetProductInfoExW(product->Code, product->Sid, (MSIINSTALLCONTEXT)product->Context, L"InstalledProductName", nullptr,
                                     &size)) {
             size = 0;
-            if (!AutoApiGetProductInfoEx(product->Code, product->Sid, product->Context, L"ProductName", nullptr,
+            if (!MsiGetProductInfoExW(product->Code, product->Sid, (MSIINSTALLCONTEXT)product->Context, L"ProductName", nullptr,
                                          &size))
                 product->State = 1;
         } else {
@@ -442,7 +442,7 @@ static HRESULT product_install_property(AUTO_OBJECT *object, AUTO_ARGS *args)
     AutoTextBegin(&text, 100);
     UINT error;
     do
-        error = AutoApiGetProductInfoEx(product->Code, product->Sid, product->Context, property, text.Buffer,
+        error = MsiGetProductInfoExW(product->Code, product->Sid, (MSIINSTALLCONTEXT)product->Context, property, text.Buffer,
                                         &text.Size);
     while (error == ERROR_MORE_DATA && AutoTextGrow(&text));
     HRESULT hr = error ? (HRESULT)error : AutoSetString(args, text.Buffer);
@@ -455,7 +455,7 @@ static HRESULT product_component_state(AUTO_OBJECT *object, AUTO_ARGS *args)
     AUTO_PRODUCT *product = (AUTO_PRODUCT *)object;
     AUTO_STRING_ARG(args, 1, component);
     INSTALLSTATE state = INSTALLSTATE_BROKEN;
-    UINT error = AutoApiQueryComponentState(product->Code, product->Sid, product->Context, component, &state);
+    UINT error = MsiQueryComponentStateW(product->Code, product->Sid, (MSIINSTALLCONTEXT)product->Context, component, &state);
     return error ? (HRESULT)error : AutoSetInt(args, state);
 }
 
@@ -464,7 +464,7 @@ static HRESULT product_feature_state(AUTO_OBJECT *object, AUTO_ARGS *args)
     AUTO_PRODUCT *product = (AUTO_PRODUCT *)object;
     AUTO_STRING_ARG(args, 1, feature);
     INSTALLSTATE state = INSTALLSTATE_BROKEN;
-    UINT error = AutoApiQueryFeatureStateEx(product->Code, product->Sid, product->Context, feature, &state);
+    UINT error = MsiQueryFeatureStateExW(product->Code, product->Sid, (MSIINSTALLCONTEXT)product->Context, feature, &state);
     return error ? (HRESULT)error : AutoSetInt(args, state);
 }
 

@@ -113,9 +113,20 @@ EXPORTS
     MsiGetPatchInfoExW @244
     MsiDeterminePatchSequenceW @254
     MsiEnumPatchesExW @270
-    DllGetVersion @177
-    QueryInstanceCount @290
-    DllCanUnloadNow @291
-    DllGetClassObject @292
-    DllRegisterServer @293
-    DllUnregisterServer @294
+    DllGetVersion @182
+    QueryInstanceCount @295
+    DllCanUnloadNow @296
+    DllGetClassObject @297
+    DllRegisterServer @298
+    DllUnregisterServer @299
+    MsiGetProductInfoExW @248
+    MsiQueryFeatureStateExW @252
+    MsiQueryComponentStateW @250
+    MsiGetComponentPathExW @294
+    MsiEnumClientsExW @292
+    MsiEnumComponentsExW @290
+    MsiGetProductCodeW @66
+    MsiGetDatabaseState @52
+    MsiDatabaseIsTablePersistentW @165
+    MsiGetLastErrorRecord @48
+    MsiGetFileHashW @219

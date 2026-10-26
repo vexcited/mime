@@ -254,4 +254,27 @@ MSIAPI UINT WINAPI MsiGetPatchInfoExW(LPCWSTR patch, LPCWSTR product, LPCWSTR si
                                       LPCWSTR property, LPWSTR value, LPDWORD size);
 MSIAPI UINT WINAPI MsiExtractPatchXMLDataW(LPCWSTR patch, DWORD reserved, LPWSTR xml, LPDWORD size);
 
+
+MSIAPI UINT WINAPI MsiGetProductInfoExW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context, LPCWSTR property,
+                                        LPWSTR value, LPDWORD size);
+MSIAPI UINT WINAPI MsiQueryFeatureStateExW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context, LPCWSTR feature,
+                                           INSTALLSTATE *state);
+MSIAPI UINT WINAPI MsiQueryComponentStateW(LPCWSTR product, LPCWSTR sid, MSIINSTALLCONTEXT context, LPCWSTR component,
+                                           INSTALLSTATE *state);
+MSIAPI INSTALLSTATE WINAPI MsiGetComponentPathExW(LPCWSTR product, LPCWSTR component, LPCWSTR sid,
+                                                  MSIINSTALLCONTEXT context, LPWSTR path, LPDWORD size);
+MSIAPI UINT WINAPI MsiEnumClientsExW(LPCWSTR component, LPCWSTR sid, DWORD contexts, DWORD index, WCHAR product[39],
+                                     MSIINSTALLCONTEXT *context, LPWSTR user_sid, LPDWORD sid_size);
+MSIAPI UINT WINAPI MsiEnumComponentsExW(LPCWSTR sid, DWORD contexts, DWORD index, WCHAR component[39],
+                                        MSIINSTALLCONTEXT *context, LPWSTR user_sid, LPDWORD sid_size);
+MSIAPI UINT WINAPI MsiGetProductCodeW(LPCWSTR component, LPWSTR product);
+MSIAPI int WINAPI MsiGetDatabaseState(MSIHANDLE database);
+MSIAPI MSICONDITION WINAPI MsiDatabaseIsTablePersistentW(MSIHANDLE database, LPCWSTR table);
+MSIAPI MSIHANDLE WINAPI MsiGetLastErrorRecord(void);
+typedef struct MSIFILEHASHINFO {
+    ULONG dwFileHashInfoSize;
+    ULONG dwData[4];
+} MSIFILEHASHINFO;
+MSIAPI UINT WINAPI MsiGetFileHashW(LPCWSTR path, DWORD options, MSIFILEHASHINFO *hash);
+
 #endif

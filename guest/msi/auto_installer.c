@@ -272,7 +272,7 @@ static HRESULT installer_version(AUTO_OBJECT *object, AUTO_ARGS *args)
 
 static HRESULT installer_last_error_record(AUTO_OBJECT *object, AUTO_ARGS *args)
 {
-    MSIHANDLE record = AutoApiGetLastErrorRecord();
+    MSIHANDLE record = MsiGetLastErrorRecord();
     return AutoSetObject(args, record ? AutoNewRecord(record) : nullptr);
 }
 
@@ -943,11 +943,11 @@ static HRESULT installer_components_ex(AUTO_OBJECT *object, AUTO_ARGS *args)
     UINT error;
     for (DWORD index = 0;; index++) {
         WCHAR component[39];
-        DWORD context = 0;
+        MSIINSTALLCONTEXT context = MSIINSTALLCONTEXT_NONE;
         AutoTextReset(&user);
         user.Buffer[0] = 0;
         do
-            error = AutoApiEnumComponentsEx(sid, (DWORD)contexts, index, component, &context, user.Buffer, &user.Size);
+            error = MsiEnumComponentsExW(sid, (DWORD)contexts, index, component, &context, user.Buffer, &user.Size);
         while (error == ERROR_MORE_DATA && AutoTextGrow(&user));
         if (error)
             break;
@@ -982,11 +982,11 @@ static HRESULT installer_component_clients_ex(AUTO_OBJECT *object, AUTO_ARGS *ar
     UINT error;
     for (DWORD index = 0;; index++) {
         WCHAR product[39];
-        DWORD context = 0;
+        MSIINSTALLCONTEXT context = MSIINSTALLCONTEXT_NONE;
         AutoTextReset(&user);
         user.Buffer[0] = 0;
         do
-            error = AutoApiEnumClientsEx(component, sid, (DWORD)contexts, index, product, &context, user.Buffer,
+            error = MsiEnumClientsExW(component, sid, (DWORD)contexts, index, product, &context, user.Buffer,
                                          &user.Size);
         while (error == ERROR_MORE_DATA && AutoTextGrow(&user));
         if (error)
@@ -1020,7 +1020,7 @@ static HRESULT installer_component_path_ex(AUTO_OBJECT *object, AUTO_ARGS *args)
     AutoTextBegin(&text, 260);
     INSTALLSTATE state;
     do
-        state = AutoApiGetComponentPathEx(product, component, sid, (DWORD)context, text.Buffer, &text.Size);
+        state = MsiGetComponentPathExW(product, component, sid, (MSIINSTALLCONTEXT)context, text.Buffer, &text.Size);
     while (state == INSTALLSTATE_MOREDATA && AutoTextGrow(&text));
     AUTO_OBJECT *result = AutoNewComponentPath(component, text.Buffer, state);
     AutoTextEnd(&text);
@@ -1109,15 +1109,15 @@ static HRESULT installer_file_hash(AUTO_OBJECT *object, AUTO_ARGS *args)
 {
     AUTO_STRING_ARG(args, 1, path);
     AUTO_INT_ARG(args, 2, options);
-    DWORD hash[4] = {};
-    UINT error = AutoApiGetFileHash(path, (DWORD)options, hash);
+    MSIFILEHASHINFO hash = {sizeof(MSIFILEHASHINFO)};
+    UINT error = MsiGetFileHashW(path, (DWORD)options, &hash);
     if (error)
         return (HRESULT)error;
     MSIHANDLE record = MsiCreateRecord(4);
     if (!record)
         return DISP_E_TYPEMISMATCH;
     for (UINT i = 0; i < 4; i++)
-        MsiRecordSetInteger(record, i + 1, (int)hash[i]);
+        MsiRecordSetInteger(record, i + 1, (int)hash.dwData[i]);
     return AutoSetObject(args, AutoNewRecord(record));
 }
 
@@ -1188,7 +1188,7 @@ static HRESULT installer_product_code(AUTO_OBJECT *object, AUTO_ARGS *args)
 {
     AUTO_STRING_ARG(args, 1, component);
     WCHAR product[39];
-    UINT error = AutoApiGetProductCode(component, product);
+    UINT error = MsiGetProductCodeW(component, product);
     return error ? (HRESULT)error : AutoSetString(args, product);
 }
 

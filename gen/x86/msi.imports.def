@@ -1,10 +1,10 @@
 LIBRARY msi.dll
 EXPORTS
-    DllCanUnloadNow@0 @291
-    DllGetClassObject@12 @292
-    DllGetVersion@4 @177
-    DllRegisterServer@0 @293
-    DllUnregisterServer@0 @294
+    DllCanUnloadNow@0 @296
+    DllGetClassObject@12 @297
+    DllGetVersion@4 @182
+    DllRegisterServer@0 @298
+    DllUnregisterServer@0 @299
     MsiApplyPatchW@16 @175
     MsiCloseAllHandles@0 @7
     MsiCloseHandle@4 @8
@@ -16,13 +16,16 @@ EXPORTS
     MsiCustomActionServer@4
     MsiDatabaseApplyTransformW@12 @19
     MsiDatabaseGetPrimaryKeysW@12 @26
+    MsiDatabaseIsTablePersistentW@8 @165
     MsiDatabaseOpenViewA@12 @31
     MsiDatabaseOpenViewW@12 @32
     MsiDeterminePatchSequenceW@20 @254
     MsiDoActionA@8 @33
     MsiDoActionW@8 @34
     MsiEnableLogW@12 @169
+    MsiEnumClientsExW@32 @292
     MsiEnumClientsW@12 @37
+    MsiEnumComponentsExW@28 @290
     MsiEnumComponentsW@8 @41
     MsiEnumFeaturesW@16 @43
     MsiEnumPatchesExW@40 @270
@@ -38,18 +41,24 @@ EXPORTS
     MsiFormatRecordA@16 @170
     MsiFormatRecordW@16 @171
     MsiGetActiveDatabase@4 @49
+    MsiGetComponentPathExW@24 @294
     MsiGetComponentPathW@16 @173
     MsiGetComponentStateA@16 @50
     MsiGetComponentStateW@16 @51
+    MsiGetDatabaseState@4 @52
     MsiGetFeatureCostW@20 @54
     MsiGetFeatureInfoW@28 @56
     MsiGetFeatureStateW@16 @58
+    MsiGetFileHashW@12 @219
     MsiGetFileVersionW@20 @195
     MsiGetLanguage@4 @63
+    MsiGetLastErrorRecord@0 @48
     MsiGetMode@8 @64
     MsiGetPatchInfoExW@28 @244
     MsiGetPatchInfoW@16 @179
+    MsiGetProductCodeW@8 @66
     MsiGetProductInfoA@16 @67
+    MsiGetProductInfoExW@24 @248
     MsiGetProductInfoW@16 @70
     MsiGetPropertyA@16 @73
     MsiGetPropertyW@16 @74
@@ -71,6 +80,8 @@ EXPORTS
     MsiOpenPackageW@8 @94
     MsiOpenProductW@8 @96
     MsiProcessMessage@12 @103
+    MsiQueryComponentStateW@20 @250
+    MsiQueryFeatureStateExW@20 @252
     MsiQueryFeatureStateW@8 @111
     MsiQueryProductStateA@4 @112
     MsiQueryProductStateW@4 @113
@@ -118,4 +129,4 @@ EXPORTS
     MsiViewGetColumnInfo@12 @166
     MsiViewGetErrorW@12 @162
     MsiViewModify@12 @163
-    QueryInstanceCount@0 @290
+    QueryInstanceCount@0 @295

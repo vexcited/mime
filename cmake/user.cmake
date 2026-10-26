@@ -206,7 +206,8 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     onecorecommonproxystub:0x7FEFF0000000 onecoreuapcommonproxystub:0x7FEFE0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
-    set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet)
+    set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet ${arch}-lib-crypto:guest/lib/crypto/hash.c)
+    set(includes_msi guest/lib)
     set(libs_sfc_os ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
     set(objects_cabinet ${arch}-lib-cabinet)
     foreach(msxml msxml3 msxml6)

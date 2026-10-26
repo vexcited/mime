@@ -147,8 +147,6 @@ void AutoTextEnd(AUTO_TEXT *text);
  * installer functions the objects call that the installer proper has not got everywhere yet, in auto_api.c.
  * the ones that return an error return ERROR_CALL_NOT_IMPLEMENTED until they are implemented.
  */
-MSIHANDLE AutoApiGetLastErrorRecord(void);
-int AutoApiGetDatabaseState(MSIHANDLE database);
 UINT AutoApiDatabaseCommit(MSIHANDLE database);
 UINT AutoApiDatabaseImport(MSIHANDLE database, PCWSTR folder, PCWSTR file);
 UINT AutoApiDatabaseExport(MSIHANDLE database, PCWSTR table, PCWSTR folder, PCWSTR file);
@@ -156,7 +154,6 @@ UINT AutoApiDatabaseMerge(MSIHANDLE database, MSIHANDLE merge, PCWSTR table);
 UINT AutoApiDatabaseGenerateTransform(MSIHANDLE database, MSIHANDLE reference, PCWSTR file);
 UINT AutoApiCreateTransformSummaryInfo(MSIHANDLE database, MSIHANDLE reference, PCWSTR file, int errors,
                                        int validation);
-int AutoApiDatabaseIsTablePersistent(MSIHANDLE database, PCWSTR table);
 UINT AutoApiEnableUIPreview(MSIHANDLE database, MSIHANDLE *preview);
 UINT AutoApiSummaryInfoSetProperty(MSIHANDLE summary, UINT id, UINT type, int number, FILETIME *time, PCWSTR text);
 UINT AutoApiSummaryInfoPersist(MSIHANDLE summary);
@@ -185,21 +182,10 @@ UINT AutoApiAdvertiseProduct(PCWSTR package, PCWSTR script, BOOL user, PCWSTR tr
                              DWORD platform, DWORD options);
 UINT AutoApiAdvertiseScript(PCWSTR script, DWORD flags, BOOL remove);
 UINT AutoApiGetShortcutTarget(PCWSTR shortcut, WCHAR product[39], WCHAR feature[39], WCHAR component[39]);
-UINT AutoApiGetFileHash(PCWSTR path, DWORD options, DWORD hash[4]);
 /* the encoded certificate of a signed file, or its hash, in memory to free with LocalFree. */
 UINT AutoApiGetFileSignature(PCWSTR path, DWORD flags, BOOL hash, BYTE **data, DWORD *size);
-UINT AutoApiGetProductCode(PCWSTR component, WCHAR product[39]);
 UINT AutoApiSourceListClearAll(PCWSTR product, PCWSTR user, DWORD reserved);
 UINT AutoApiSourceListForceResolution(PCWSTR product, PCWSTR user, DWORD reserved);
-UINT AutoApiGetProductInfoEx(PCWSTR product, PCWSTR sid, DWORD context, PCWSTR property, LPWSTR out, LPDWORD size);
-UINT AutoApiQueryComponentState(PCWSTR product, PCWSTR sid, DWORD context, PCWSTR component, INSTALLSTATE *state);
-UINT AutoApiQueryFeatureStateEx(PCWSTR product, PCWSTR sid, DWORD context, PCWSTR feature, INSTALLSTATE *state);
-UINT AutoApiEnumClientsEx(PCWSTR component, PCWSTR sid, DWORD contexts, DWORD index, WCHAR product[39],
-                          DWORD *context, LPWSTR out_sid, LPDWORD sid_size);
-UINT AutoApiEnumComponentsEx(PCWSTR sid, DWORD contexts, DWORD index, WCHAR component[39], DWORD *context,
-                             LPWSTR out_sid, LPDWORD sid_size);
-INSTALLSTATE AutoApiGetComponentPathEx(PCWSTR product, PCWSTR component, PCWSTR sid, DWORD context, LPWSTR path,
-                                       LPDWORD size);
 UINT AutoApiGetPatchFileList(PCWSTR product, PCWSTR patches, DWORD *count, MSIHANDLE **records);
 UINT AutoApiSourceListEnumMediaDisks(PCWSTR product, PCWSTR sid, DWORD context, DWORD options, DWORD index,
                                      DWORD *disk, LPWSTR label, LPDWORD label_size, LPWSTR prompt,
