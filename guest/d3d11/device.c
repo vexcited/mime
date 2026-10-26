@@ -241,6 +241,7 @@ static HRESULT acquire_vulkan_device(D3dDevice *device, IDXGIAdapter *adapter, c
     COPY(has_logic_op);
     COPY(has_geometry);
     COPY(has_tessellation);
+    COPY(has_null_descriptor);
     COPY(has_video);
     COPY(has_vrs);
     COPY(has_conservative);

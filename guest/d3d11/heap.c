@@ -147,6 +147,85 @@ void D3dHeapWriteBuffers(D3dDevice *device, UINT index, VkBuffer buffer, VkDevic
 }
 
 /* the heap is sized by the gpu's limits. direct3d allows only 4096 sampler states. */
+#define NULL_BUFFER_SIZE 256
+
+/*
+ * without null descriptors, as on macOS, index 0 of each array holds a zeroed 1x1 image and a zeroed buffer,
+ * which read zeros like direct3d's unbound slots. shaders that read another kind of image than 2d there get no
+ * defined result.
+ */
+static HRESULT null_stand_ins(D3dDevice *device)
+{
+    D3dVk *vk = &device->vk;
+    VkImageCreateInfo image = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image.imageType = VK_IMAGE_TYPE_2D;
+    image.format = VK_FORMAT_R8G8B8A8_UNORM;
+    image.extent = (VkExtent3D){1, 1, 1};
+    image.mipLevels = image.arrayLayers = 1;
+    image.samples = VK_SAMPLE_COUNT_1_BIT;
+    image.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    if (vk->vkCreateImage(vk->device, &image, nullptr, &device->null_image) != VK_SUCCESS ||
+        FAILED(D3dAllocImage(device, device->null_image, &device->null_image_memory)))
+        return E_FAIL;
+    VkImageViewCreateInfo view = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view.image = device->null_image;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = image.format;
+    view.subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (vk->vkCreateImageView(vk->device, &view, nullptr, &device->null_image_view) != VK_SUCCESS)
+        return E_FAIL;
+    if (FAILED(D3dAllocBuffer(device, D3D_MEMORY_DEVICE, NULL_BUFFER_SIZE, 256, &device->null_buffer)))
+        return E_FAIL;
+    for (UINT i = 0; i < 2; i++) {
+        VkBufferViewCreateInfo texel = {VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO};
+        texel.buffer = device->null_buffer.buffer;
+        texel.format = VK_FORMAT_R32_UINT;
+        texel.offset = device->null_buffer.offset;
+        texel.range = NULL_BUFFER_SIZE;
+        if (vk->vkCreateBufferView(vk->device, &texel, nullptr, &device->null_texel_views[i]) != VK_SUCCESS)
+            return E_FAIL;
+    }
+    VkCommandBuffer cmd = D3dInitCommands(device);
+    VkImageMemoryBarrier2 to_clear = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+    to_clear.dstStageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
+    to_clear.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    to_clear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_clear.srcQueueFamilyIndex = to_clear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_clear.image = device->null_image;
+    to_clear.subresourceRange = view.subresourceRange;
+    VkDependencyInfo dependency = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dependency.imageMemoryBarrierCount = 1;
+    dependency.pImageMemoryBarriers = &to_clear;
+    vk->vkCmdPipelineBarrier2(cmd, &dependency);
+    VkClearColorValue zero = {};
+    vk->vkCmdClearColorImage(cmd, device->null_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1,
+                             &view.subresourceRange);
+    vk->vkCmdFillBuffer(cmd, device->null_buffer.buffer, device->null_buffer.offset, NULL_BUFFER_SIZE, 0);
+    VkImageMemoryBarrier2 to_use = to_clear;
+    to_use.srcStageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
+    to_use.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    to_use.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    to_use.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+    to_use.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_use.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkMemoryBarrier2 buffer_ready = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    buffer_ready.srcStageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
+    buffer_ready.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    buffer_ready.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    buffer_ready.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    dependency.pImageMemoryBarriers = &to_use;
+    dependency.memoryBarrierCount = 1;
+    dependency.pMemoryBarriers = &buffer_ready;
+    vk->vkCmdPipelineBarrier2(cmd, &dependency);
+    D3dInitDone(device);
+    D3dHeapWriteImage(device, D3D_HEAP_SAMPLED_IMAGE, 0, device->null_image_view);
+    D3dHeapWriteImage(device, D3D_HEAP_STORAGE_IMAGE, 0, device->null_image_view);
+    D3dHeapWriteTexel(device, D3D_HEAP_UNIFORM_TEXEL, 0, device->null_texel_views[0]);
+    D3dHeapWriteTexel(device, D3D_HEAP_STORAGE_TEXEL, 0, device->null_texel_views[1]);
+    D3dHeapWriteBuffer(device, 0, device->null_buffer.buffer, device->null_buffer.offset, NULL_BUFFER_SIZE);
+    return S_OK;
+}
+
 HRESULT D3dHeapInit(D3dDevice *device)
 {
     D3dVk *vk = &device->vk;
@@ -220,12 +299,16 @@ HRESULT D3dHeapInit(D3dDevice *device)
     if (vk->vkCreatePipelineLayout(vk->device, &pipeline, nullptr, &device->pipeline_layout) != VK_SUCCESS)
         return E_FAIL;
 
+    if (device->has_null_descriptor) {
+        D3dHeapWriteImage(device, D3D_HEAP_SAMPLED_IMAGE, 0, VK_NULL_HANDLE);
+        D3dHeapWriteImage(device, D3D_HEAP_STORAGE_IMAGE, 0, VK_NULL_HANDLE);
+        D3dHeapWriteTexel(device, D3D_HEAP_UNIFORM_TEXEL, 0, VK_NULL_HANDLE);
+        D3dHeapWriteTexel(device, D3D_HEAP_STORAGE_TEXEL, 0, VK_NULL_HANDLE);
+        D3dHeapWriteBuffer(device, 0, VK_NULL_HANDLE, 0, VK_WHOLE_SIZE);
+    } else if (FAILED(null_stand_ins(device))) {
+        return E_FAIL;
+    }
     /* the null sampler is direct3d's default sampler state. */
-    D3dHeapWriteImage(device, D3D_HEAP_SAMPLED_IMAGE, 0, VK_NULL_HANDLE);
-    D3dHeapWriteImage(device, D3D_HEAP_STORAGE_IMAGE, 0, VK_NULL_HANDLE);
-    D3dHeapWriteTexel(device, D3D_HEAP_UNIFORM_TEXEL, 0, VK_NULL_HANDLE);
-    D3dHeapWriteTexel(device, D3D_HEAP_STORAGE_TEXEL, 0, VK_NULL_HANDLE);
-    D3dHeapWriteBuffer(device, 0, VK_NULL_HANDLE, 0, VK_WHOLE_SIZE);
     VkSamplerCreateInfo sampler = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler.magFilter = sampler.minFilter = VK_FILTER_LINEAR;
     sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -404,6 +487,14 @@ void D3dCollectGarbage(D3dDevice *device)
 
 void D3dHeapDestroy(D3dDevice *device)
 {
+    D3dVk *vk = &device->vk;
+    for (UINT i = 0; i < 2; i++)
+        if (device->null_texel_views[i])
+            vk->vkDestroyBufferView(vk->device, device->null_texel_views[i], nullptr);
+    if (device->null_image_view)
+        vk->vkDestroyImageView(vk->device, device->null_image_view, nullptr);
+    if (device->null_image)
+        vk->vkDestroyImage(vk->device, device->null_image, nullptr);
     for (UINT i = 0; i < D3D_HEAP_KINDS; i++) {
         HeapFree(GetProcessHeap(), 0, device->heap.freed[i].index);
         HeapFree(GetProcessHeap(), 0, device->heap.freed[i].serial);

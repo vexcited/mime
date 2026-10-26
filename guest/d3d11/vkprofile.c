@@ -298,11 +298,12 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     VkPhysicalDeviceVulkan13Features *f13 = &r->f13;
 
     /* the minimum each api needs. */
-    BOOL core = r->robust.nullDescriptor && f13->dynamicRendering && f13->synchronization2 && f12->timelineSemaphore &&
-                f12->hostQueryReset && f12->runtimeDescriptorArray && f12->descriptorBindingPartiallyBound;
+    BOOL core = f13->dynamicRendering && f13->synchronization2 && f12->timelineSemaphore && f12->hostQueryReset &&
+                f12->runtimeDescriptorArray && f12->descriptorBindingPartiallyBound;
+    p->has_null_descriptor = r->robust.nullDescriptor;
     p->d3d11 = ok11 && core && r->object.shaderObject && f12->descriptorBindingSampledImageUpdateAfterBind &&
                f12->descriptorBindingUniformBufferUpdateAfterBind;
-    p->d3d12 = ok12 && core && r->db.descriptorBuffer && r->mutable_type.mutableDescriptorType &&
+    p->d3d12 = ok12 && core && r->robust.nullDescriptor && r->db.descriptorBuffer && r->mutable_type.mutableDescriptorType &&
                f12->bufferDeviceAddress && f12->shaderSampledImageArrayNonUniformIndexing &&
                base.properties.limits.maxPushConstantsSize >= MIME_VK_D3D12_PUSH_SIZE;
     if (!p->d3d11)

@@ -1334,8 +1334,10 @@ static void emit_buffers(D3dContext *c, VkCommandBuffer cmd)
         } else if (!r) {
             continue;
         }
+        /* the stride again, which the vertex input already gives: some drivers read it here. */
+        VkDeviceSize stride = c->vb_stride[i];
         if (buffer)
-            vk->vkCmdBindVertexBuffers2(cmd, i, 1, &buffer, &offset, &size, nullptr);
+            vk->vkCmdBindVertexBuffers2(cmd, i, 1, &buffer, &offset, &size, &stride);
     }
     if (c->ib && (c->ia_dirty || c->ib_version != c->ib->buf.version) && c->ib_offset < c->ib->buf.size) {
         VkBuffer buffer;

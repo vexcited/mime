@@ -650,6 +650,7 @@ struct D3dDevice {
     BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_line_rasterization;
     BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
+    BOOL has_null_descriptor;
     BOOL has_video;
     /* features the shared device enables for direct3d 12, whose state shader objects need before every draw. */
     BOOL has_vrs, has_conservative, has_mesh;
@@ -705,6 +706,11 @@ struct D3dDevice {
     VkDescriptorPool heap_pool;
     VkDescriptorPool table_pool;
     VkSampler null_sampler;
+    /* zeroed stand-ins for null descriptors when the gpu has none, see heap.c. */
+    VkImage null_image;
+    VkImageView null_image_view;
+    D3dAllocation null_image_memory, null_buffer;
+    VkBufferView null_texel_views[2];
 
     /* the device's own work, initial data and image layouts, submitted before the context's. */
     CRITICAL_SECTION init_lock;

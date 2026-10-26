@@ -25,6 +25,8 @@ typedef struct MimeVkProfile {
     BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
     BOOL has_video;
+    /* descriptors may be null; else direct3d 11 writes zeroed stand-ins into its unbound slots. */
+    BOOL has_null_descriptor;
 
     BOOL has_conservative, has_patch_points, has_unused_attachments;
     /* shader model 6: 16-bit arithmetic, wave operations in every stage, mesh and amplification shaders. */
