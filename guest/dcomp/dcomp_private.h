@@ -262,6 +262,10 @@ typedef struct DcOutput {
     IDXGISwapChain1 *swapchain;
     ID3D11Texture2D *back;
     ID3D11RenderTargetView *rtv;
+    /* what the cpu composes into when the tree's device has no gpu, put on the window by gdi. */
+    HDC dc;
+    HBITMAP bitmap, old_bitmap;
+    BYTE *bits;
     UINT width, height;
     BOOL composed;
 } DcOutput;

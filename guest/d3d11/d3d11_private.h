@@ -1097,4 +1097,8 @@ HRESULT D3dVideoCreateOutputView(D3dDevice *device, ID3D11Resource *resource,
 /* writes to the kernel debugger log. */
 void D3dLog(const char *format, ...);
 
+/* warp.c: the device for warp on a machine without a gpu. */
+HRESULT D3dCreateSoftwareDevice(UINT flags, const D3D_FEATURE_LEVEL *levels, UINT count, ID3D11Device **device,
+                                D3D_FEATURE_LEVEL *level);
+
 #endif

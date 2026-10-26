@@ -112,4 +112,16 @@ typedef struct IMimeDXGICompositionSource IMimeDXGICompositionSource;
 MIME_COM_INTERFACE(IMimeDXGICompositionSource)
 MIME_DEFINE_GUID(IID_IMimeDXGICompositionSource, 0x9C4E1D07, 0x5B2A, 0x4F83, 0xA6, 0xD1, 0x2E, 0x70, 0x38, 0xB5, 0xC9, 0x1F);
 
+/*
+ * implemented by the textures of the software device direct3d 11 gives for warp when the machine has no gpu: the
+ * pixels, 32 bits each, which dcomp.dll composes on the cpu. Lock holds the device until Unlock.
+ */
+typedef struct IMimeSoftwareTexture IMimeSoftwareTexture;
+#define IMimeSoftwareTexture_METHODS(T)                                                                                \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *Lock)(T * This, const BYTE **bits, UINT *pitch);                                        \
+    void(STDMETHODCALLTYPE *Unlock)(T * This);
+MIME_COM_INTERFACE(IMimeSoftwareTexture)
+MIME_DEFINE_GUID(IID_IMimeSoftwareTexture, 0x2F8A61C3, 0x47E9, 0x4B0D, 0x93, 0x5C, 0x1A, 0xE4, 0x76, 0x0B, 0xD2, 0x58);
+
 #endif

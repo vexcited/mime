@@ -260,8 +260,11 @@ BOOLEAN HostMoveSize(WND *w, ULONG edge)
 void HostPresent(WND *w, const RECT *dirty)
 {
     ScreenSerial++;
-    /* windows without a redirection bitmap show application-composed contents, never their GDI surface. */
-    if (w->ExStyle & WS_EX_NOREDIRECTIONBITMAP)
+    /*
+     * windows without a redirection bitmap show application-composed contents, never their GDI surface, unless
+     * dcomp.dll composes them on the cpu into that surface for want of a gpu.
+     */
+    if ((w->ExStyle & WS_EX_NOREDIRECTIONBITMAP) && !PropGetData(w, MIME_PROP_COMPOSITION))
         return;
     SURFACE *s = LayerPrepare(w, dirty);
     if (!s || !host_buffers())

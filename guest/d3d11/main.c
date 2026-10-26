@@ -1,6 +1,6 @@
 /*
- * d3d11.dll exports. every driver type gets the hardware device. the debug layer is missing, as on a pc without
- * the graphics tools.
+ * d3d11.dll exports. every driver type gets the hardware device, and warp gets the software device of warp.c when
+ * there is no gpu. the debug layer is missing, as on a pc without the graphics tools.
  */
 #include "d3d11_private.h"
 
@@ -49,6 +49,19 @@ D3D11API HRESULT WINAPI D3D11CreateDevice(IDXGIAdapter *adapter, D3D_DRIVER_TYPE
     if (adapter)
         adapter->lpVtbl->AddRef(adapter);
     else if (FAILED(hr = first_adapter(&adapter))) {
+        if (type == D3D_DRIVER_TYPE_WARP) {
+            ID3D11Device *warp;
+            hr = D3dCreateSoftwareDevice(flags, levels, count, &warp, level);
+            if (FAILED(hr))
+                return hr;
+            if (context)
+                warp->lpVtbl->GetImmediateContext(warp, context);
+            if (device)
+                *device = warp;
+            else
+                warp->lpVtbl->Release(warp);
+            return device ? S_OK : S_FALSE;
+        }
         D3dLog("d3d11: no device, no adapter, %08lx", (unsigned long)hr);
         return hr;
     }
@@ -95,16 +108,21 @@ D3D11API HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D
         IDXGIDevice *dxgi = nullptr;
         IDXGIAdapter *parent = nullptr;
         IDXGIFactory *factory = nullptr;
-        d->lpVtbl->QueryInterface(d, &IID_IDXGIDevice, (void **)&dxgi);
-        dxgi->lpVtbl->GetAdapter(dxgi, &parent);
-        hr = parent->lpVtbl->GetParent(parent, &IID_IDXGIFactory, (void **)&factory);
+        /* the software device has no adapter to make window swap chains with. */
+        hr = d->lpVtbl->QueryInterface(d, &IID_IDXGIDevice, (void **)&dxgi);
+        if (SUCCEEDED(hr))
+            hr = dxgi->lpVtbl->GetAdapter(dxgi, &parent);
+        if (SUCCEEDED(hr))
+            hr = parent->lpVtbl->GetParent(parent, &IID_IDXGIFactory, (void **)&factory);
         if (SUCCEEDED(hr)) {
             DXGI_SWAP_CHAIN_DESC copy = *desc;
             hr = factory->lpVtbl->CreateSwapChain(factory, (IUnknown *)d, &copy, swapchain);
             factory->lpVtbl->Release(factory);
         }
-        parent->lpVtbl->Release(parent);
-        dxgi->lpVtbl->Release(dxgi);
+        if (parent)
+            parent->lpVtbl->Release(parent);
+        if (dxgi)
+            dxgi->lpVtbl->Release(dxgi);
         if (FAILED(hr)) {
             if (context && *context) {
                 (*context)->lpVtbl->Release(*context);

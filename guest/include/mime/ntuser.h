@@ -568,6 +568,12 @@ W32KAPI ULONG NTAPI NtUserShutdownBlockReasonQuery(HWND hwnd, LPWSTR buffer, PUL
 W32KAPI ULONG NTAPI NtUserPrepareForLogoff(void);
 W32KAPI LONG NTAPI NtUserMimeExitWindows(ULONG flags, ULONG reason);
 
+/*
+ * the property dcomp.dll sets on a root window it composes on the cpu for want of a gpu, so win32k shows its surface
+ * although the window has no redirection bitmap. an integer atom, the same in user32's and win32k's tables.
+ */
+#define MIME_PROP_COMPOSITION ((ATOM)0xBFFE)
+
 /* ------------------------------------------------------------------ gpu */
 
 /* where a window dc renders in its host window, see mime/gpu.h. */

@@ -3,9 +3,12 @@
  * content as a quad into the back buffer of a swap chain on the window, and
  * presents it. drawing is recorded on a deferred context and run on the
  * immediate context without disturbing the state the program left on it.
+ * a tree whose device has no gpu is composed by the cpu into a bitmap that
+ * gdi puts on the window.
  */
 #include "dcomp_private.h"
 #include "dcomp_dxbc.h"
+#include <mime/ntuser.h>
 
 static const GUID IID_ID3D11Texture2D_ = {0x6F15AAF2, 0xD208, 0x4E89, {0x9A, 0xB4, 0x48, 0x95, 0x35, 0xD3, 0x4F, 0x9C}};
 static const GUID IID_ID3D11Multithread_ = {0x9B7E4E00, 0x342C, 0x4106, {0xA1, 0x9F, 0x4F, 0x27, 0x04, 0xF6, 0x89, 0xF0}};
@@ -13,6 +16,7 @@ static const GUID IID_ID3D11Multithread_ = {0x9B7E4E00, 0x342C, 0x4106, {0xA1, 0
 #define CB_REGISTERS 32
 #define MAX_CLIPS 4
 #define MAX_DEPTH 64
+#define D_MIN(a, b) ((a) < (b) ? (a) : (b))
 
 enum { BLEND_OVER, BLEND_INVERT, BLEND_MIN, BLENDS };
 
@@ -162,6 +166,12 @@ void DcOutputRelease(DcOutput *output)
     release((IUnknown *)output->back);
     release((IUnknown *)output->swapchain);
     release((IUnknown *)output->device);
+    if (output->dc) {
+        SelectObject(output->dc, output->old_bitmap);
+        DeleteDC(output->dc);
+    }
+    if (output->bitmap)
+        DeleteObject(output->bitmap);
     memset(output, 0, sizeof(*output));
 }
 
@@ -245,6 +255,8 @@ typedef struct DcBuild {
     DcGpu *gpu;
     UINT64 now;
     UINT width, height;
+    /* the bitmap the cpu composes into, instead of the gpu's draw list. */
+    BYTE *bits;
     DcDraw *draws;
     UINT draw_count, draw_capacity;
     BOOL failed;
@@ -305,8 +317,14 @@ static DcDraw *add_draw(DcBuild *c)
 }
 
 /* draws the shown part of a content's frame as a quad, with the clips and look gathered by the walk. */
+static void draw_software(DcBuild *c, const DcWalk *w, DcContent *content);
+
 static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *w, DcContent *content)
 {
+    if (c->bits) {
+        draw_software(c, w, content);
+        return;
+    }
     DcFrame frame;
     if (!DcContentFrame(content, c->gpu->device, &frame))
         return;
@@ -465,6 +483,165 @@ static void walk(DcBuild *c, const DcVisual *visual, const DcWalk *parent, UINT 
         walk(c, s->children[i], &w, depth + 1);
 }
 
+/* ------------------------------------------------------------------ the cpu */
+
+/* the destination pixels of an axis-aligned clip, from its space through the visual's matrix; false for others. */
+static BOOL clip_pixels(const DcClipState *clip, const float m[16], float r[4])
+{
+    if (clip->m[1] != 0.0f || clip->m[2] != 0.0f || clip->m[0] == 0.0f || clip->m[3] == 0.0f)
+        return FALSE;
+    float x0 = (clip->rect[0] - clip->m[4]) / clip->m[0], x1 = (clip->rect[2] - clip->m[4]) / clip->m[0];
+    float y0 = (clip->rect[1] - clip->m[5]) / clip->m[3], y1 = (clip->rect[3] - clip->m[5]) / clip->m[3];
+    x0 = m[0] * x0 + m[12];
+    x1 = m[0] * x1 + m[12];
+    y0 = m[5] * y0 + m[13];
+    y1 = m[5] * y1 + m[13];
+    r[0] = x0 < x1 ? x0 : x1;
+    r[2] = x0 < x1 ? x1 : x0;
+    r[1] = y0 < y1 ? y0 : y1;
+    r[3] = y0 < y1 ? y1 : y0;
+    return TRUE;
+}
+
+/*
+ * draws a swap chain frame of the software device over the bitmap: scaled and moved, with opacity and
+ * axis-aligned clips. rotations, color effects and blend modes other than source over are not drawn.
+ */
+static void draw_software(DcBuild *c, const DcWalk *w, DcContent *content)
+{
+    MIME_COMPOSITION_FRAME frame;
+    if (content->kind != DCC_SWAPCHAIN || content->source->lpVtbl->GetFrame(content->source, &frame) != S_OK)
+        return;
+    IMimeSoftwareTexture *texture;
+    HRESULT hr = frame.Texture->lpVtbl->QueryInterface(frame.Texture, &IID_IMimeSoftwareTexture, (void **)&texture);
+    frame.Texture->lpVtbl->Release(frame.Texture);
+    if (FAILED(hr))
+        return;
+    float width = (float)(frame.Source.right - frame.Source.left);
+    float height = (float)(frame.Source.bottom - frame.Source.top);
+    float m[16], step[16];
+    DcMatrixIdentity(m);
+    m[0] = width;
+    m[5] = height;
+    DcMatrixIdentity(step);
+    step[0] = frame.Matrix._11;
+    step[5] = frame.Matrix._22;
+    step[12] = frame.Matrix._31;
+    step[13] = frame.Matrix._32;
+    DcMatrixMultiply(m, m, step);
+    DcMatrixMultiply(m, m, w->matrix);
+    UINT opacity = w->opacity >= 1.0f ? 255 : w->opacity <= 0.0f ? 0 : (UINT)(w->opacity * 255.0f + 0.5f);
+    if (width <= 0 || height <= 0 || !opacity || !is_affine(m) || m[1] != 0.0f || m[4] != 0.0f || m[0] <= 0.0f ||
+        m[5] <= 0.0f) {
+        texture->lpVtbl->Release(texture);
+        return;
+    }
+    float x0 = m[12], y0 = m[13], sx = width / m[0], sy = height / m[5];
+    float r[4] = {x0, y0, x0 + m[0], y0 + m[5]};
+    for (UINT i = 0; i < w->clip_count; i++) {
+        float clip[4];
+        if (!clip_pixels(&w->clips[i], w->matrix, clip))
+            continue;
+        r[0] = r[0] > clip[0] ? r[0] : clip[0];
+        r[1] = r[1] > clip[1] ? r[1] : clip[1];
+        r[2] = r[2] < clip[2] ? r[2] : clip[2];
+        r[3] = r[3] < clip[3] ? r[3] : clip[3];
+    }
+    int left = (int)(r[0] + 0.5f), top = (int)(r[1] + 0.5f), right = (int)(r[2] + 0.5f), bottom = (int)(r[3] + 0.5f);
+    left = left < 0 ? 0 : left;
+    top = top < 0 ? 0 : top;
+    right = right > (int)c->width ? (int)c->width : right;
+    bottom = bottom > (int)c->height ? (int)c->height : bottom;
+    BOOL rgba = frame.ViewFormat == DXGI_FORMAT_R8G8B8A8_UNORM;
+    BOOL opaque = frame.AlphaMode == DXGI_ALPHA_MODE_IGNORE || frame.ViewFormat == DXGI_FORMAT_B8G8R8X8_UNORM;
+    const BYTE *bits;
+    UINT pitch;
+    if (left < right && top < bottom && SUCCEEDED(texture->lpVtbl->Lock(texture, &bits, &pitch))) {
+        for (int y = top; y < bottom; y++) {
+            int v = frame.Source.top + (int)(((float)y + 0.5f - y0) * sy);
+            v = v < frame.Source.top ? frame.Source.top : v >= frame.Source.bottom ? frame.Source.bottom - 1 : v;
+            const BYTE *row = bits + (SIZE_T)v * pitch;
+            BYTE *d = c->bits + ((SIZE_T)y * c->width + (SIZE_T)left) * 4;
+            for (int x = left; x < right; x++, d += 4) {
+                int u = frame.Source.left + (int)(((float)x + 0.5f - x0) * sx);
+                u = u < frame.Source.left ? frame.Source.left : u >= frame.Source.right ? frame.Source.right - 1 : u;
+                const BYTE *p = row + (SIZE_T)u * 4;
+                UINT b = rgba ? p[2] : p[0], g = p[1], red = rgba ? p[0] : p[2], a = opaque ? 255 : p[3];
+                if (opacity != 255) {
+                    b = b * opacity / 255;
+                    g = g * opacity / 255;
+                    red = red * opacity / 255;
+                    a = a * opacity / 255;
+                }
+                if (a == 255) {
+                    d[0] = (BYTE)b;
+                    d[1] = (BYTE)g;
+                    d[2] = (BYTE)red;
+                    d[3] = 255;
+                } else if (a) {
+                    /* premultiplied source over. */
+                    UINT keep = 255 - a;
+                    d[0] = (BYTE)D_MIN(255u, b + d[0] * keep / 255);
+                    d[1] = (BYTE)D_MIN(255u, g + d[1] * keep / 255);
+                    d[2] = (BYTE)D_MIN(255u, red + d[2] * keep / 255);
+                    d[3] = (BYTE)D_MIN(255u, a + d[3] * keep / 255);
+                }
+            }
+        }
+        texture->lpVtbl->Unlock(texture);
+    }
+    texture->lpVtbl->Release(texture);
+}
+
+/* the whole tree into the bitmap, which then goes to the window. */
+static HRESULT compose_software(DcTarget *t, UINT width, UINT height)
+{
+    DcOutput *o = &t->output;
+    if (o->bits && (o->width != width || o->height != height))
+        DcOutputRelease(o);
+    if (!o->bits) {
+        BITMAPINFO info = {};
+        info.bmiHeader.biSize = sizeof(info.bmiHeader);
+        info.bmiHeader.biWidth = (LONG)width;
+        info.bmiHeader.biHeight = -(LONG)height;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        o->dc = CreateCompatibleDC(nullptr);
+        o->bitmap = o->dc ? CreateDIBSection(o->dc, &info, DIB_RGB_COLORS, (void **)&o->bits, nullptr, 0) : nullptr;
+        if (!o->bitmap) {
+            DcOutputRelease(o);
+            return E_OUTOFMEMORY;
+        }
+        o->old_bitmap = SelectObject(o->dc, o->bitmap);
+        o->width = width;
+        o->height = height;
+    }
+    memset(o->bits, 0, (SIZE_T)width * height * 4);
+    DcBuild c = {t, nullptr, DcNow(), width, height, o->bits};
+    if (t->root_committed) {
+        DcWalk w = {};
+        DcMatrixIdentity(w.matrix);
+        w.opacity = 1.0f;
+        w.interpolation = DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR;
+        w.composite = DCOMPOSITION_COMPOSITE_MODE_SOURCE_OVER;
+        w.backface = DCOMPOSITION_BACKFACE_VISIBILITY_VISIBLE;
+        walk(&c, t->root_committed, &w, 0);
+    }
+    GdiFlush();
+    HDC dc = GetDC(t->hwnd);
+    if (!dc)
+        return E_FAIL;
+    BitBlt(dc, 0, 0, (int)width, (int)height, o->dc, 0, 0, SRCCOPY);
+    ReleaseDC(t->hwnd, dc);
+    /* a window without a redirection bitmap shows its surface once it is known to hold the composition. */
+    HWND root = GetAncestor(t->hwnd, GA_ROOT);
+    if (root && !GetPropW(root, MAKEINTATOM(MIME_PROP_COMPOSITION)))
+        SetPropW(root, MAKEINTATOM(MIME_PROP_COMPOSITION), (HANDLE)1);
+    o->composed = TRUE;
+    return S_OK;
+}
+
 /* ------------------------------------------------------------------ composing */
 
 /* for a device made without one: the first device that can draw some content of the tree. */
@@ -516,6 +693,10 @@ HRESULT DcCompose(DcTarget *t)
         d3d = tree_device(t->root_committed, 0);
     if (!d3d)
         return S_FALSE;
+    IDXGIDevice *dxgi;
+    if (FAILED(d3d->lpVtbl->QueryInterface(d3d, &IID_IDXGIDevice, (void **)&dxgi)))
+        return compose_software(t, width, height);
+    dxgi->lpVtbl->Release(dxgi);
     DcGpu *gpu = gpu_for(d, d3d);
     if (!gpu || !ensure_output(t, gpu, width, height))
         return E_FAIL;
@@ -630,11 +811,17 @@ void WINAPI DcSourceNotify(void *context, IUnknown *source)
 HRESULT DcReadTarget(DcTarget *t, const RECT *rect, void *pixels, UINT pitch)
 {
     DcOutput *o = &t->output;
-    if (!o->composed || !o->back)
+    if (!o->composed || (!o->back && !o->bits))
         return S_FALSE;
     RECT whole = {0, 0, (LONG)o->width, (LONG)o->height}, r = rect ? *rect : whole, clipped;
     if (!IntersectRect(&clipped, &r, &whole) || !EqualRect(&clipped, &r))
         return E_INVALIDARG;
+    if (o->bits) {
+        for (LONG y = r.top; y < r.bottom; y++)
+            memcpy((BYTE *)pixels + (SIZE_T)(y - r.top) * pitch, o->bits + ((SIZE_T)y * o->width + (SIZE_T)r.left) * 4,
+                   (SIZE_T)(r.right - r.left) * 4);
+        return S_OK;
+    }
     DcGpu *gpu = gpu_for(t->base.device, o->device);
     if (!gpu)
         return E_FAIL;
