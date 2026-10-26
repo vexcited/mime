@@ -703,31 +703,71 @@ extern OSStatus UCKeyTranslate(const void *layout, UInt16 code, UInt16 action, U
 extern UInt8 LMGetKbdType(void);
 
 /*
- * returns the letter typed by a key in the current macOS layout, or 0 for other keys. Windows maps letter
- * keys to their active-layout virtual keys, so Ctrl+Z follows Z on AZERTY and QWERTZ too.
+ * the character a key types in the current macOS layout with shift alone, or 0 for keys without text. the
+ * option, command and control modifiers are left out, so the result is the plain character windows sees.
  */
-static uint32_t layout_letter(uint16_t mac)
+static uint32_t layout_char(uint16_t mac, bool shift)
 {
     TISInputSourceRef source = TISCopyCurrentKeyboardLayoutInputSource();
     if (!source)
         return 0;
     CFDataRef data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
-    uint32_t letter = 0;
+    uint32_t ch = 0;
     if (data) {
         UInt32 dead = 0;
-        UniChar ch[4];
+        UniChar chars[4];
         UniCharCount n = 0;
-        if (UCKeyTranslate(CFDataGetBytePtr(data), mac, 0 /* kUCKeyActionDown */, 0, LMGetKbdType(),
-                           1 /* kUCKeyTranslateNoDeadKeysMask */, &dead, 4, &n, ch) == 0 &&
-            n == 1) {
-            if (ch[0] >= 'a' && ch[0] <= 'z')
-                letter = ch[0] - 32;
-            else if (ch[0] >= 'A' && ch[0] <= 'Z')
-                letter = ch[0];
-        }
+        if (UCKeyTranslate(CFDataGetBytePtr(data), mac, 0 /* kUCKeyActionDown */, shift ? 2 : 0, LMGetKbdType(),
+                           1 /* kUCKeyTranslateNoDeadKeysMask */, &dead, 4, &n, chars) == 0 &&
+            n == 1)
+            ch = chars[0];
     }
     CFRelease(source);
-    return letter;
+    return ch;
+}
+
+/*
+ * returns the letter typed by a key in the current macOS layout, or 0 for other keys. Windows maps letter
+ * keys to their active-layout virtual keys, so Ctrl+Z follows Z on AZERTY and QWERTZ too.
+ */
+static uint32_t layout_letter(uint16_t mac)
+{
+    uint32_t ch = layout_char(mac, false);
+    if (ch >= 'a' && ch <= 'z')
+        return ch - 32;
+    return (ch >= 'A' && ch <= 'Z') ? ch : 0;
+}
+
+/*
+ * the character the windows keyboard driver makes of Ctrl and a key: the C0 code of a letter, and the
+ * control codes of the punctuation keys that have one. other keys keep their character.
+ */
+static uint32_t control_char(uint32_t ch)
+{
+    if (ch >= 'a' && ch <= 'z')
+        return ch - 'a' + 1;
+    if (ch >= 'A' && ch <= 'Z')
+        return ch - 'A' + 1;
+    switch (ch) {
+    case '2':
+    case '@': return 0x00;
+    case '3':
+    case '[': return 0x1B;
+    case '4':
+    case '\\': return 0x1C;
+    case '5':
+    case ']': return 0x1D;
+    case '6':
+    case '^': return 0x1E;
+    case '7':
+    case '-':
+    case '_': return 0x1F;
+    case '8': return 0x7F;
+    case 0x0D: return 0x0A;
+    case 0x09: return 0x09;
+    case ' ': return 0x20;
+    }
+    return ch;
 }
 
 static const KeyMap *map_key(uint16_t mac)
@@ -768,15 +808,36 @@ static void view_key_down(id self, SEL sel, id event)
 {
     emit_key(self, event, MIME_INPUT_KEY_DOWN);
     UiWindow *w = find_by_nswindow(MSG_ID(self, "window"));
+    if (!w)
+        return;
     NSUInteger flags = MSG_UINT(event, "modifierFlags");
-    if (!w || (flags & (NSEventModifierFlagControl | NSEventModifierFlagCommand)))
-        return;
-    id chars = MSG_ID(event, "characters");
-    const char *utf8 = ((const char *(*)(id, SEL))objc_msgSend)(chars, SEL_("UTF8String"));
-    if (!utf8)
-        return;
+    bool control = (flags & (NSEventModifierFlagControl | NSEventModifierFlagCommand)) != 0;
+    bool alt = (flags & NSEventModifierFlagOption) != 0;
+    uint16_t code = ((uint16_t(*)(id, SEL))objc_msgSend)(event, SEL_("keyCode"));
+    bool shift = (flags & NSEventModifierFlagShift) != 0;
+    /* the keypad enter types 0x03, which is also Ctrl+C, so it becomes a return first. */
+    uint32_t base = code == 0x4C ? '\r' : layout_char(code, shift);
     uint16_t buf[32];
-    size_t n = mime_utf8_to_utf16(buf, MIME_ARRAY_COUNT(buf), utf8);
+    size_t n = 0;
+    bool plain = false;
+    if (control && !alt) {
+        /* windows makes a control character of Ctrl and a key, which its controls read as commands. */
+        uint32_t c = code == 0x33 ? 0x08 : control_char(base);
+        if (c)
+            buf[n++] = (uint16_t)c;
+        plain = true;
+    } else if (alt && !control) {
+        /* Alt and a key is a mnemonic, so it carries the plain character, not the option one. */
+        if (base)
+            buf[n++] = (uint16_t)base;
+        plain = true;
+    } else {
+        id chars = MSG_ID(event, "characters");
+        const char *utf8 = ((const char *(*)(id, SEL))objc_msgSend)(chars, SEL_("UTF8String"));
+        if (!utf8)
+            return;
+        n = mime_utf8_to_utf16(buf, MIME_ARRAY_COUNT(buf), utf8);
+    }
     for (size_t i = 0; i < n; i++) {
         uint32_t c = buf[i];
         /* function keys arrive as private use characters; they only produce key events. */
@@ -784,7 +845,7 @@ static void view_key_down(id self, SEL sel, id event)
             continue;
         if (c == 0x7F)
             c = 0x08;
-        if (c == '\r' || c == 0x03)
+        if (c == '\r' || (c == 0x03 && !plain))
             c = '\r';
         MimeInputEvent ev = {};
         ev.type = MIME_INPUT_CHAR;
