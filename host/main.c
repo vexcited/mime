@@ -9,7 +9,9 @@ static void usage(void)
 {
     printf("mime %s, windows compatibility machine\n\n", MIME_VERSION_STRING);
     printf("usage:\n");
-    printf("  mime setup [windows.iso] [--image N] [--locale NAME]   import assets from a windows iso\n");
+    printf("  mime setup [windows.iso] [--image N] [--locale NAME] [--overwrite]\n");
+    printf("                                         import assets from a windows iso; on a drive already set up\n");
+    printf("                                         only the missing files are added, --overwrite replaces all\n");
     printf("  mime up                                start the machine\n");
     printf("  mime run [--wait] <target> [args]      open a program, host or C:\\ paths, an app by its id or name, or\n");
     printf("                                         anything the windows run box opens: a name like notepad, a\n");

@@ -46,6 +46,24 @@ static const ExtractRule g_rules[] = {
     {"Windows/System32/config/DEFAULT", "Windows/System32/config/DEFAULT", false},
     /* the template of new user profiles, with its NTUSER.DAT hive. */
     {"Users/Default", "Users/Default", false},
+    /* the in-box .NET Framework 4.8.x, 64-bit and 32-bit, its assembly caches and its pregenerated native images. */
+    {"Windows/Microsoft.NET", "Windows/Microsoft.NET", true},
+    {"Windows/assembly", "Windows/assembly", true},
+#define NETFX_RUNTIME(name)                                                                                  \
+    {"Windows/System32/" name, "Windows/System32/" name, true},                                              \
+    {"Windows/SysWOW64/" name, "Windows/SysWOW64/" name, true}
+    NETFX_RUNTIME("clrhost.dll"),
+    NETFX_RUNTIME("mscorier.dll"),
+    NETFX_RUNTIME("mscories.dll"),
+    NETFX_RUNTIME("netfxperf.dll"),
+    NETFX_RUNTIME("msvcp120_clr0400.dll"),
+    NETFX_RUNTIME("msvcp140_clr0400.dll"),
+    NETFX_RUNTIME("msvcr100_clr0400.dll"),
+    NETFX_RUNTIME("msvcr120_clr0400.dll"),
+    NETFX_RUNTIME("ucrtbase_clr0400.dll"),
+    NETFX_RUNTIME("vcruntime140_clr0400.dll"),
+    NETFX_RUNTIME("vcruntime140_1_clr0400.dll"),
+#undef NETFX_RUNTIME
 };
 
 static const char *const g_skeleton[] = {
@@ -97,16 +115,6 @@ static void report_progress(ExtractStats *stats, bool force)
     fflush(stdout);
 }
 
-static uint64_t measure(MimeWim *wim, const MimeWimDentry *d)
-{
-    if (!(d->attributes & MIME_FILE_ATTRIBUTE_DIRECTORY))
-        return mime_wim_blob_size(wim, d->hash);
-    uint64_t total = 0;
-    for (const MimeWimDentry *c = d->first_child; c; c = c->next_sibling)
-        total += measure(wim, c);
-    return total;
-}
-
 typedef struct PendingFile {
     const MimeWimDentry *dentry;
     char *host_path;
@@ -116,6 +124,8 @@ typedef struct PendingFile {
 typedef struct PendingList {
     PendingFile *items;
     size_t count, capacity;
+    uint64_t kept; /* files left alone because the drive already has them. */
+    bool keep_existing;
 } PendingList;
 
 /* creates directories immediately and queues file extraction. */
@@ -136,6 +146,11 @@ static bool collect_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_
         }
         return true;
     }
+    struct stat existing;
+    if (list->keep_existing && lstat(host_path, &existing) == 0) {
+        list->kept++;
+        return true;
+    }
     char parent[MIME_PATH_MAX];
     mime_strlcpy(parent, host_path, sizeof(parent));
     char *slash = strrchr(parent, '/');
@@ -154,19 +169,39 @@ static bool collect_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_
     return true;
 }
 
+/* equal contents end up next to each other. */
 static int compare_pending(const void *a, const void *b)
 {
     const PendingFile *x = a, *y = b;
-    return x->order < y->order ? -1 : x->order > y->order;
+    if (x->order != y->order)
+        return x->order < y->order ? -1 : 1;
+    return memcmp(x->dentry->hash, y->dentry->hash, sizeof(x->dentry->hash));
 }
 
-/* extracts in WIM order so a compressed chunk is read once for all its files. */
+static bool has_contents(const MimeWimDentry *d)
+{
+    static const uint8_t empty[sizeof(d->hash)];
+    return memcmp(d->hash, empty, sizeof(empty)) != 0;
+}
+
+/*
+ * extracts in WIM order so a compressed chunk is read once for all its files. Windows keeps one copy of a
+ * file under several names as hard links, so the later names of a content become links to the first one.
+ */
 static bool extract_pending(MimeWim *wim, PendingList *list, ExtractStats *stats)
 {
     qsort(list->items, list->count, sizeof(PendingFile), compare_pending);
+    const PendingFile *first = nullptr;
     for (size_t i = 0; i < list->count; i++) {
         const PendingFile *f = &list->items[i];
-        if (!mime_wim_extract_file(wim, f->dentry, f->host_path)) {
+        bool linked = false;
+        if (first && has_contents(f->dentry) && memcmp(first->dentry->hash, f->dentry->hash, sizeof(f->dentry->hash)) == 0) {
+            unlink(f->host_path);
+            linked = link(first->host_path, f->host_path) == 0;
+        } else {
+            first = f;
+        }
+        if (!linked && !mime_wim_extract_file(wim, f->dentry, f->host_path)) {
             mime_error("failed to extract %s", f->host_path);
             return false;
         }
@@ -211,7 +246,7 @@ static void trim(char *s)
 
 static bool prompt_iso(char *out, size_t size)
 {
-    printf("mime needs a Windows 11 installation ISO to import fonts, the theme and system resources.\n");
+    printf("mime needs a Windows 11 installation ISO to import fonts, the theme, system resources and the .NET Framework.\n");
     printf("Path to the ISO: ");
     fflush(stdout);
     if (!fgets(out, (int)size, stdin))
@@ -256,8 +291,11 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
     char iso[MIME_PATH_MAX] = {};
     uint32_t image_index = 0;
     const char *locale_name = nullptr;
+    bool overwrite = false;
     for (int i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--overwrite") == 0) {
+            overwrite = true;
+        } else if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
             image_index = (uint32_t)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--locale") == 0 && i + 1 < argc) {
             locale_name = argv[++i];
@@ -289,6 +327,7 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
     }
     if (!mime_paths_ensure(paths))
         return 1;
+    bool already_set_up = mime_is_setup(paths);
     if (locale_name)
         mime_identity_set_locale(paths, locale_name);
 
@@ -332,8 +371,13 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
         }
     }
 
+    /*
+     * on a drive that is already set up only the missing files are added, so the registry hives, the user
+     * profiles and everything the programs wrote stay as they are.
+     */
+    bool add_only = already_set_up && !overwrite;
     ExtractStats stats = {};
-    PendingList pending = {};
+    PendingList pending = {.keep_existing = add_only};
     const MimeWimDentry *sources[MIME_ARRAY_COUNT(g_rules)];
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_rules); i++) {
         sources[i] = mime_wim_lookup(wim, g_rules[i].source);
@@ -341,9 +385,9 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
             mime_error("%s not found in the image", g_rules[i].source);
             goto fail;
         }
-        if (sources[i])
-            stats.total_bytes += measure(wim, sources[i]);
     }
+    if (add_only)
+        printf("The drive is already set up, adding the files it lacks and keeping the others.\n");
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_rules); i++) {
         if (!sources[i])
             continue;
@@ -354,6 +398,9 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
             goto fail;
         }
     }
+    for (size_t i = 0; i < pending.count; i++)
+        stats.total_bytes += mime_wim_blob_size(wim, pending.items[i].dentry->hash);
+    uint64_t kept = pending.kept;
     bool extracted = extract_pending(wim, &pending, &stats);
     free_pending(&pending);
     if (!extracted) {
@@ -367,9 +414,14 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
 
     if (!mime_prepare_drive(paths))
         goto fail;
-    write_stamp(paths, iso, &info);
-    printf("Setup complete. C: drive is at %s\n", paths->drive_c);
-    printf("Start the machine with `mime up`, then `mime run <program.exe>`.\n");
+    if (add_only) {
+        printf("Added %llu files, %llu were already there. C: drive is at %s\n", (unsigned long long)stats.files,
+               (unsigned long long)kept, paths->drive_c);
+    } else {
+        write_stamp(paths, iso, &info);
+        printf("Setup complete. C: drive is at %s\n", paths->drive_c);
+        printf("Start the machine with `mime up`, then `mime run <program.exe>`.\n");
+    }
 
     mime_wim_close(wim);
     mime_udf_file_free(&ctx.file);
