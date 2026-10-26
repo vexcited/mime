@@ -2629,8 +2629,8 @@ ADVAPI BOOL WINAPI SetServiceBits(SERVICE_STATUS_HANDLE handle, DWORD bits, BOOL
  * what ShellExecute provides: window, desktop and title. error 0 means a process was created, ERROR_CANCELLED that
  * the machine policy refused, or that the token has no administrator behind it.
  */
-ADVAPI DWORD WINAPI MimeLaunchElevated(LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD creation_flags,
-                                       const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation)
+ADVAPI DWORD WINAPI LaunchElevated(LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD creation_flags,
+                                   const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation)
 {
     if (!command_line || !info)
         return ERROR_INVALID_PARAMETER;

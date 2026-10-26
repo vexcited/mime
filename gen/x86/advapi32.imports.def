@@ -395,7 +395,7 @@ EXPORTS
     MakeAbsoluteSD@44
     MakeSelfRelativeSD@12
     MapGenericMask@8
-    MimeLaunchElevated@28
+    LaunchElevated@28
     NotifyBootConfigStatus@4
     NotifyChangeEventLog@8
     NotifyServiceStatusChange@12
