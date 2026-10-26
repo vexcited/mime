@@ -551,7 +551,6 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
     for (ULONG depth = 0; depth < 4096; depth++) {
         if (!c.Rip || !frame_in_stack(c.Rsp))
             break;
-        CONTEXT frame_context = c;
         PEXCEPTION_ROUTINE handler = unwind_frame(UNW_FLAG_EHANDLER, &c, &dc);
         if (!handler)
             continue;
@@ -559,7 +558,8 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
             record->ExceptionFlags |= EXCEPTION_STACK_INVALID;
             break;
         }
-        dc.ContextRecord = &frame_context;
+        /* the context the dispatcher context holds is the caller's, the working context after this frame was unwound. */
+        dc.ContextRecord = &c;
         dc.TargetIp = 0;
         dc.ScopeIndex = 0;
         dc.HistoryTable = nullptr;
@@ -587,11 +587,10 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
             break;
         case ExceptionCollidedUnwind:
             /*
-             * the handler replaced the context of the frame in the dispatcher context, as the runtime of the .NET
-             * Framework does for the stubs it puts between a fault and the code that faulted. The frame is
-             * dispatched again from that context, whose function has handlers of its own.
+             * the handler replaced the working context in the dispatcher context with the context of another
+             * frame, as the runtime of the .NET Framework does for the stubs it puts between a fault and the code
+             * that faulted. The walk goes on from that context, whose function has handlers of its own.
              */
-            c = frame_context;
             break;
         default: {
             DbgPrint("ntdll: the handler %p of frame %p returned %d for exception %08x\n", (PVOID)handler,
@@ -682,6 +681,7 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
         if (target)
             record->ExceptionFlags |= EXCEPTION_TARGET_UNWIND;
         if (handler) {
+            /* unlike the dispatch, the frame's own context, before it is unwound. */
             dc.ContextRecord = &c;
             dc.TargetIp = (ULONG64)target_ip;
             dc.HistoryTable = history;
@@ -690,8 +690,8 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
             record->ExceptionFlags &= ~(EXCEPTION_COLLIDED_UNWIND | EXCEPTION_TARGET_UNWIND);
             if (r == ExceptionCollidedUnwind) {
                 /*
-                 * the handler left the context of the frame in the dispatcher context, which is c, changed. The
-                 * frame is unwound again from that context, which the handlers of its function are told of.
+                 * the handler left the context of another frame in the dispatcher context, which is c. That frame
+                 * is unwound from there, and its handlers are told of the collision.
                  */
                 record->ExceptionFlags |= EXCEPTION_COLLIDED_UNWIND;
                 continue;
