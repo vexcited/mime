@@ -546,6 +546,7 @@ void AfdDumpStats(void)
     }
     for (PLIST_ENTRY e = g_sockets.Flink; e != &g_sockets; e = e->Flink)
         CONTAINING_RECORD(e, AFD_SOCKET, Links)->Polls = 0;
+
     for (int i = 0; i < 16; i++) {
         ULONG k = g_poll_kinds[i].Key;
         if (g_poll_kinds[i].Count > 100)
@@ -793,7 +794,12 @@ static ULONG native_interest(AFD_SOCKET *socket)
                 continue;
             if (entry->Events & (AFD_POLL_RECEIVE | AFD_POLL_DISCONNECT | AFD_POLL_ABORT | AFD_POLL_ACCEPT))
                 interest |= MIME_NET_READ;
-            if (entry->Events & (AFD_POLL_SEND | AFD_POLL_CONNECT | AFD_POLL_CONNECT_FAIL))
+            /*
+             * a connect ends when the socket turns writable, so its events watch for writing only while one runs:
+             * async libraries ask for AFD_POLL_CONNECT_FAIL on every poll, and a connected socket is always writable.
+             */
+            if ((entry->Events & AFD_POLL_SEND) ||
+                ((entry->Events & (AFD_POLL_CONNECT | AFD_POLL_CONNECT_FAIL)) && socket->State == MIME_AFD_STATE_CONNECTING))
                 interest |= MIME_NET_WRITE;
         }
     }
@@ -817,7 +823,8 @@ static ULONG native_events(AFD_SOCKET *socket, ULONG wanted, NTSTATUS *status)
     ULONG interest = 0, events = 0;
     if (wanted & (AFD_POLL_RECEIVE | AFD_POLL_DISCONNECT | AFD_POLL_ABORT | AFD_POLL_ACCEPT))
         interest |= MIME_NET_READ;
-    if (wanted & (AFD_POLL_SEND | AFD_POLL_CONNECT | AFD_POLL_CONNECT_FAIL))
+    if ((wanted & AFD_POLL_SEND) ||
+        ((wanted & (AFD_POLL_CONNECT | AFD_POLL_CONNECT_FAIL)) && socket->State == MIME_AFD_STATE_CONNECTING))
         interest |= MIME_NET_WRITE;
     ULONG ready = poll_socket(socket, interest, FALSE);
     if (socket->Type == SOCK_DGRAM || socket->State == MIME_AFD_STATE_CONNECTED) {
