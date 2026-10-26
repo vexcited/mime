@@ -10,6 +10,7 @@
 #include "wim.h"
 
 #include <errno.h>
+#include <fnmatch.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,33 @@ typedef struct ExtractRule {
     const char *destination; /* path relative to drive_c. */
     bool optional;
 } ExtractRule;
+
+/* paths below the source of a rule that are left out. */
+typedef struct SkipRule {
+    const char *source;
+    const char *const *patterns; /* shell patterns, null terminated. */
+} SkipRule;
+
+/* the Edge WebView2 runtime without the Copilot app, the sign in helpers and the update resiliency copies. */
+static const char *const g_webview_skip[] = {
+    "*/*/ResiliencyLinks",
+    "*/*/undocked_copilot",
+    "*/*/VisualElements",
+    "*/*/identity_proxy",
+    "*/*/edge_game_assist",
+    "*/*/edge_feedback",
+    "*/*/BHO",
+    "*/*/Installer/copilot_setup.exe",
+    "*/*/Copilot.dat",
+    "*/*/copilotapp.exe",
+    "*/*/mscopilot.exe",
+    "*/*/copilot_overlay_*.pak",
+    nullptr,
+};
+
+static const SkipRule g_skips[] = {
+    {"Program Files (x86)/Microsoft/EdgeWebView", g_webview_skip},
+};
 
 /*
  * system code is reimplemented; data comes from the user's Windows copy. binaries containing resources are
@@ -64,6 +92,8 @@ static const ExtractRule g_rules[] = {
     NETFX_RUNTIME("vcruntime140_clr0400.dll"),
     NETFX_RUNTIME("vcruntime140_1_clr0400.dll"),
 #undef NETFX_RUNTIME
+    /* the in-box Edge WebView2 runtime, which the registry of the image declares installed. */
+    {"Program Files (x86)/Microsoft/EdgeWebView", "Program Files (x86)/Microsoft/EdgeWebView", true},
 };
 
 static const char *const g_skeleton[] = {
@@ -128,8 +158,27 @@ typedef struct PendingList {
     bool keep_existing;
 } PendingList;
 
+static const char *const *skip_patterns(const char *source)
+{
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(g_skips); i++) {
+        if (strcmp(g_skips[i].source, source) == 0)
+            return g_skips[i].patterns;
+    }
+    return nullptr;
+}
+
+static bool is_skipped(const char *const *skip, const char *relative)
+{
+    for (; skip && *skip; skip++) {
+        if (fnmatch(*skip, relative, FNM_PATHNAME | FNM_CASEFOLD) == 0)
+            return true;
+    }
+    return false;
+}
+
 /* creates directories immediately and queues file extraction. */
-static bool collect_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_path, PendingList *list)
+static bool collect_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_path, const char *relative,
+                         const char *const *skip, PendingList *list)
 {
     if (d->attributes & MIME_FILE_ATTRIBUTE_REPARSE_POINT)
         return true;
@@ -140,8 +189,14 @@ static bool collect_tree(MimeWim *wim, const MimeWimDentry *d, const char *host_
         }
         for (const MimeWimDentry *c = d->first_child; c; c = c->next_sibling) {
             char child[MIME_PATH_MAX];
+            char child_relative[MIME_PATH_MAX] = "";
+            if (skip) {
+                snprintf(child_relative, sizeof(child_relative), "%s%s%s", relative, relative[0] ? "/" : "", c->name);
+                if (is_skipped(skip, child_relative))
+                    continue;
+            }
             mime_path_join(child, sizeof(child), host_path, c->name);
-            if (!collect_tree(wim, c, child, list))
+            if (!collect_tree(wim, c, child, child_relative, skip, list))
                 return false;
         }
         return true;
@@ -246,7 +301,7 @@ static void trim(char *s)
 
 static bool prompt_iso(char *out, size_t size)
 {
-    printf("mime needs a Windows 11 installation ISO to import fonts, the theme, system resources and the .NET Framework.\n");
+    printf("mime needs a Windows 11 installation ISO to import fonts, the theme, system resources, the .NET Framework and the WebView2 runtime.\n");
     printf("Path to the ISO: ");
     fflush(stdout);
     if (!fgets(out, (int)size, stdin))
@@ -393,7 +448,7 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
             continue;
         char dst[MIME_PATH_MAX];
         mime_path_join(dst, sizeof(dst), paths->drive_c, g_rules[i].destination);
-        if (!collect_tree(wim, sources[i], dst, &pending)) {
+        if (!collect_tree(wim, sources[i], dst, "", skip_patterns(g_rules[i].source), &pending)) {
             free_pending(&pending);
             goto fail;
         }
