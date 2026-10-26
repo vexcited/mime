@@ -67,7 +67,7 @@ set(MIME_X86_DLLS
 set(base ntdll kernel32)
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
-set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4)
+set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4 msvcrt)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
 set(wic_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)

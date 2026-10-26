@@ -28,6 +28,14 @@ EXPORTS
     GetRecordInfoFromGuids@24 @322
     GetRecordInfoFromTypeInfo@8 @323
     GetVarConversionLocaleSetting@4 @326
+    HWND_UserFree64@8 @449
+    HWND_UserFree@8 @445
+    HWND_UserMarshal64@12 @450
+    HWND_UserMarshal@12 @446
+    HWND_UserSize64@12 @451
+    HWND_UserSize@12 @447
+    HWND_UserUnmarshal64@12 @452
+    HWND_UserUnmarshal@12 @448
     LHashValOfNameSys@12 @165
     LHashValOfNameSysA@12 @166
     LPSAFEARRAY_Marshal@16 @296
@@ -153,6 +161,11 @@ EXPORTS
     VarBstrFromUI2@16 @230
     VarBstrFromUI4@16 @231
     VarBstrFromUI8@20 @369
+    VarCyAbs@12 @306
+    VarCyAdd@20 @299
+    VarCyCmp@16 @311
+    VarCyCmpR8@16 @312
+    VarCyFix@12 @307
     VarCyFromBool@8 @106
     VarCyFromDate@12 @103
     VarCyFromDec@8 @228
@@ -168,6 +181,13 @@ EXPORTS
     VarCyFromUI2@8 @226
     VarCyFromUI4@8 @227
     VarCyFromUI8@12 @367
+    VarCyInt@12 @308
+    VarCyMul@20 @303
+    VarCyMulI4@16 @304
+    VarCyMulI8@20 @329
+    VarCyNeg@12 @309
+    VarCyRound@16 @310
+    VarCySub@20 @305
     VarDateFromBool@8 @96
     VarDateFromCy@12 @93
     VarDateFromDec@8 @224
@@ -185,6 +205,12 @@ EXPORTS
     VarDateFromUI8@12 @365
     VarDateFromUdate@12 @330
     VarDateFromUdateEx@16 @319
+    VarDecAbs@8 @182
+    VarDecAdd@12 @177
+    VarDecCmp@8 @204
+    VarDecCmpR8@12 @298
+    VarDecDiv@12 @178
+    VarDecFix@8 @187
     VarDecFromBool@8 @199
     VarDecFromCy@12 @196
     VarDecFromDate@12 @195
@@ -200,6 +226,11 @@ EXPORTS
     VarDecFromUI2@8 @242
     VarDecFromUI4@8 @243
     VarDecFromUI8@12 @375
+    VarDecInt@8 @188
+    VarDecMul@12 @179
+    VarDecNeg@8 @189
+    VarDecRound@12 @203
+    VarDecSub@12 @181
     VarI1FromBool@8 @253
     VarI1FromCy@12 @250
     VarI1FromDate@12 @249
@@ -261,6 +292,7 @@ EXPORTS
     VarI8FromUI8@12 @427
     VarNumFromParseNum@16 @47
     VarParseNumFromStr@20 @46
+    VarR4CmpR8@12 @316
     VarR4FromBool@8 @76
     VarR4FromCy@12 @72
     VarR4FromDate@12 @73
@@ -291,6 +323,8 @@ EXPORTS
     VarR8FromUI2@8 @218
     VarR8FromUI4@8 @219
     VarR8FromUI8@12 @363
+    VarR8Pow@20 @315
+    VarR8Round@16 @317
     VarUI1FromBool@8 @138
     VarUI1FromCy@12 @134
     VarUI1FromDate@12 @135
@@ -360,11 +394,3 @@ EXPORTS
     VariantTimeToDosDateTime@16 @13
     VariantTimeToSystemTime@12 @185
     VectorFromBstr@8 @413
-    HWND_UserFree@8 @445
-    HWND_UserFree64@8 @449
-    HWND_UserMarshal@12 @446
-    HWND_UserMarshal64@12 @450
-    HWND_UserSize@12 @447
-    HWND_UserSize64@12 @451
-    HWND_UserUnmarshal@12 @448
-    HWND_UserUnmarshal64@12 @452

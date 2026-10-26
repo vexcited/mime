@@ -368,3 +368,29 @@ EXPORTS
     HWND_UserMarshal64=ole32.HWND_UserMarshal64 @450
     HWND_UserSize64=ole32.HWND_UserSize64 @451
     HWND_UserUnmarshal64=ole32.HWND_UserUnmarshal64 @452
+    VarDecAdd @177
+    VarDecDiv @178
+    VarDecMul @179
+    VarDecSub @181
+    VarDecAbs @182
+    VarDecFix @187
+    VarDecInt @188
+    VarDecNeg @189
+    VarDecRound @203
+    VarDecCmp @204
+    VarDecCmpR8 @298
+    VarCyAdd @299
+    VarCyMul @303
+    VarCyMulI4 @304
+    VarCySub @305
+    VarCyAbs @306
+    VarCyFix @307
+    VarCyInt @308
+    VarCyNeg @309
+    VarCyRound @310
+    VarCyCmp @311
+    VarCyCmpR8 @312
+    VarR8Pow @315
+    VarR4CmpR8 @316
+    VarR8Round @317
+    VarCyMulI8 @329

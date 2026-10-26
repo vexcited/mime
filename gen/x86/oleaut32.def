@@ -153,6 +153,11 @@ EXPORTS
     VarBstrFromUI2=_VarBstrFromUI2@16 @230
     VarBstrFromUI4=_VarBstrFromUI4@16 @231
     VarBstrFromUI8=_VarBstrFromUI8@20 @369
+    VarCyAbs=_VarCyAbs@12 @306
+    VarCyAdd=_VarCyAdd@20 @299
+    VarCyCmp=_VarCyCmp@16 @311
+    VarCyCmpR8=_VarCyCmpR8@16 @312
+    VarCyFix=_VarCyFix@12 @307
     VarCyFromBool=_VarCyFromBool@8 @106
     VarCyFromDate=_VarCyFromDate@12 @103
     VarCyFromDec=_VarCyFromDec@8 @228
@@ -168,6 +173,13 @@ EXPORTS
     VarCyFromUI2=_VarCyFromUI2@8 @226
     VarCyFromUI4=_VarCyFromUI4@8 @227
     VarCyFromUI8=_VarCyFromUI8@12 @367
+    VarCyInt=_VarCyInt@12 @308
+    VarCyMul=_VarCyMul@20 @303
+    VarCyMulI4=_VarCyMulI4@16 @304
+    VarCyMulI8=_VarCyMulI8@20 @329
+    VarCyNeg=_VarCyNeg@12 @309
+    VarCyRound=_VarCyRound@16 @310
+    VarCySub=_VarCySub@20 @305
     VarDateFromBool=_VarDateFromBool@8 @96
     VarDateFromCy=_VarDateFromCy@12 @93
     VarDateFromDec=_VarDateFromDec@8 @224
@@ -185,6 +197,12 @@ EXPORTS
     VarDateFromUI8=_VarDateFromUI8@12 @365
     VarDateFromUdate=_VarDateFromUdate@12 @330
     VarDateFromUdateEx=_VarDateFromUdateEx@16 @319
+    VarDecAbs=_VarDecAbs@8 @182
+    VarDecAdd=_VarDecAdd@12 @177
+    VarDecCmp=_VarDecCmp@8 @204
+    VarDecCmpR8=_VarDecCmpR8@12 @298
+    VarDecDiv=_VarDecDiv@12 @178
+    VarDecFix=_VarDecFix@8 @187
     VarDecFromBool=_VarDecFromBool@8 @199
     VarDecFromCy=_VarDecFromCy@12 @196
     VarDecFromDate=_VarDecFromDate@12 @195
@@ -200,6 +218,11 @@ EXPORTS
     VarDecFromUI2=_VarDecFromUI2@8 @242
     VarDecFromUI4=_VarDecFromUI4@8 @243
     VarDecFromUI8=_VarDecFromUI8@12 @375
+    VarDecInt=_VarDecInt@8 @188
+    VarDecMul=_VarDecMul@12 @179
+    VarDecNeg=_VarDecNeg@8 @189
+    VarDecRound=_VarDecRound@12 @203
+    VarDecSub=_VarDecSub@12 @181
     VarI1FromBool=_VarI1FromBool@8 @253
     VarI1FromCy=_VarI1FromCy@12 @250
     VarI1FromDate=_VarI1FromDate@12 @249
@@ -261,6 +284,7 @@ EXPORTS
     VarI8FromUI8=_VarI8FromUI8@12 @427
     VarNumFromParseNum=_VarNumFromParseNum@16 @47
     VarParseNumFromStr=_VarParseNumFromStr@20 @46
+    VarR4CmpR8=_VarR4CmpR8@12 @316
     VarR4FromBool=_VarR4FromBool@8 @76
     VarR4FromCy=_VarR4FromCy@12 @72
     VarR4FromDate=_VarR4FromDate@12 @73
@@ -291,6 +315,8 @@ EXPORTS
     VarR8FromUI2=_VarR8FromUI2@8 @218
     VarR8FromUI4=_VarR8FromUI4@8 @219
     VarR8FromUI8=_VarR8FromUI8@12 @363
+    VarR8Pow=_VarR8Pow@20 @315
+    VarR8Round=_VarR8Round@16 @317
     VarUI1FromBool=_VarUI1FromBool@8 @138
     VarUI1FromCy=_VarUI1FromCy@12 @134
     VarUI1FromDate=_VarUI1FromDate@12 @135
