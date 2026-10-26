@@ -46,6 +46,9 @@ static SIZE_T collapse(PWSTR path, SIZE_T root)
                     out--;
             }
         } else {
+            /* a component ending in a single period loses it: "Discord Inc.\x" is "Discord Inc\x". */
+            if (end < len && path[end - 1] == '.' && path[end - 2] != '.')
+                n--;
             memmove(path + out, path + in, n * sizeof(WCHAR));
             out += n;
             if (end < len)
