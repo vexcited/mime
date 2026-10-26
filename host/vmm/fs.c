@@ -475,14 +475,21 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
         mime_fswatch_self(path, MIME_FSWATCH_CREATE);
         if (want_dir) {
             if (mkdir(path, 0755) != 0) {
+                int error = errno;
                 mime_fswatch_self(path, MIME_FSWATCH_UNDO_CREATE);
-                return errno_status(errno);
+                /* a parent that is not there makes the path missing, not the name. */
+                req->action_out = error == ENOENT ? 1 : 0;
+                return errno_status(error);
             }
             fd = open_quiet(path, O_RDONLY | O_DIRECTORY, 0);
         } else {
             fd = open(path, O_RDWR | O_CREAT | O_EXCL | private_flags, private_registry ? 0600 : 0644);
-            if (fd < 0)
+            if (fd < 0) {
+                int error = errno;
                 mime_fswatch_self(path, MIME_FSWATCH_UNDO_CREATE);
+                req->action_out = error == ENOENT ? 1 : 0;
+                errno = error;
+            }
         }
         action = FILE_CREATED;
     }

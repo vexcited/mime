@@ -73,7 +73,7 @@ static HRESULT table_open(void)
     HRESULT hr = S_OK;
     AcquireSRWLockExclusive(&g_open_lock);
     if (!g_table) {
-        PSECURITY_DESCRIPTOR mutex_sd = OleEveryoneDescriptor(0x1F0001), section_sd = OleEveryoneDescriptor(0xF001F);
+        PSECURITY_DESCRIPTOR mutex_sd = OleUserDescriptor(0x1F0001), section_sd = OleUserDescriptor(0xF001F);
         SECURITY_ATTRIBUTES mutex_sa = {sizeof(mutex_sa), mutex_sd, FALSE}, section_sa = {sizeof(section_sa), section_sd, FALSE};
         HANDLE mutex = CreateMutexW(&mutex_sa, FALSE, L"Global\\ComClassTableLock");
         HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, &section_sa, PAGE_READWRITE, 0, sizeof(CLASS_TABLE),

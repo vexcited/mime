@@ -1580,3 +1580,7 @@ EXPORTS
     VerQueryValueA=version.VerQueryValueA
     VerQueryValueW=version.VerQueryValueW
     VerSetConditionMask=ntdll.VerSetConditionMask
+    ContinueDebugEvent=_ContinueDebugEvent@12
+    DebugSetProcessKillOnExit=_DebugSetProcessKillOnExit@4
+    WaitForDebugEvent=_WaitForDebugEvent@8
+    WaitForDebugEventEx=_WaitForDebugEventEx@8

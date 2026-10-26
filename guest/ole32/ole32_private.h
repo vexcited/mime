@@ -5,6 +5,7 @@
 #define WINOLEAPI DECLSPEC_EXPORT
 #include <mime/win32/ole2.h>
 #include <mime/win32/propidl.h>
+#include <mime/ntapi.h>
 #include <rtl.h>
 
 /* user32 exports that winuser.h does not declare yet. */
@@ -106,7 +107,7 @@ BOOL OleParseGuid(LPCOLESTR string, GUID *guid);
 /* the user's registrations come before the machine's. */
 LSTATUS OleOpenClassesKey(LPCWSTR subkey, REGSAM access, HKEY *key);
 /* HKCR\CLSID\{clsid} or one of its subkeys. */
-PSECURITY_DESCRIPTOR OleEveryoneDescriptor(ULONG mask);
+PSECURITY_DESCRIPTOR OleUserDescriptor(ULONG mask);
 LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key);
 
 /* com.c */

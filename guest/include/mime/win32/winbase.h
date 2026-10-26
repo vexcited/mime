@@ -2451,6 +2451,19 @@ WINBASEAPI BOOL WINAPI IsDebuggerPresent(void);
 WINBASEAPI BOOL WINAPI CheckRemoteDebuggerPresent(HANDLE process, PBOOL present);
 WINBASEAPI void WINAPI DebugBreak(void);
 WINBASEAPI BOOL WINAPI DebugBreakProcess(HANDLE process);
+/* the event a debugger waits for, its union of what happened held as words. */
+typedef struct _DEBUG_EVENT {
+    DWORD dwDebugEventCode;
+    DWORD dwProcessId;
+    DWORD dwThreadId;
+    union {
+        ULONG_PTR Words[20];
+    } u;
+} DEBUG_EVENT, *LPDEBUG_EVENT;
+WINBASEAPI BOOL WINAPI WaitForDebugEvent(LPDEBUG_EVENT event, DWORD milliseconds);
+WINBASEAPI BOOL WINAPI WaitForDebugEventEx(LPDEBUG_EVENT event, DWORD milliseconds);
+WINBASEAPI BOOL WINAPI ContinueDebugEvent(DWORD process, DWORD thread, DWORD status);
+WINBASEAPI BOOL WINAPI DebugSetProcessKillOnExit(BOOL kill);
 WINBASEAPI BOOL WINAPI DebugActiveProcess(DWORD id);
 WINBASEAPI BOOL WINAPI DebugActiveProcessStop(DWORD id);
 WINBASEAPI DECLSPEC_NORETURN void WINAPI FatalAppExitW(UINT action, LPCWSTR message);

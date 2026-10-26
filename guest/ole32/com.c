@@ -898,14 +898,16 @@ WINOLEAPI HRESULT WINAPI CoLockObjectExternal(IUnknown *object, BOOL lock, BOOL 
 
 /*
  * the tables of classes and of the running objects are named objects every program of the machine opens, the processes
- * of the same user with and without the rights of an administrator among them: the one that made them must not
- * keep the other out, so the descriptor lets everyone have what the mask says and the interfaces decide who may call.
- * the descriptor is absolute: the header, then an acl of one allowed entry for the world.
+ * of the same user with and without the rights of an administrator among them: the one that made them must not keep the
+ * other out. The descriptor gives what the mask says to the user of the process, to the system and to the administrators,
+ * which is all the processes that have a right to the objects, and not to the restricted processes of a sandbox, which
+ * hold a token of the user but are not asked for one of his own sids. It is absolute: the header, then an acl.
  */
-PSECURITY_DESCRIPTOR OleEveryoneDescriptor(ULONG mask)
+PSECURITY_DESCRIPTOR OleUserDescriptor(ULONG mask)
 {
-    static const BYTE world_sid[12] = {1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0};
-    BYTE *sd = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 128);
+    static const BYTE system_sid[12] = {1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0};
+    static const BYTE admins_sid[16] = {1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 0x20, 0x02, 0, 0};
+    BYTE *sd = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 512);
     if (!sd)
         return nullptr;
     struct {
@@ -914,14 +916,34 @@ PSECURITY_DESCRIPTOR OleEveryoneDescriptor(ULONG mask)
         PVOID Owner, Group, Sacl, Dacl;
     } *header = (void *)sd;
     BYTE *acl = sd + 64, *ace = acl + 8;
+    BYTE user[256];
+    HANDLE token;
+    ULONG returned;
+    const BYTE *user_sid = nullptr;
+    if (NtOpenProcessToken(NtCurrentProcess(), 0x8, &token) >= 0) {
+        if (NtQueryInformationToken(token, 1, user, sizeof(user), &returned) >= 0)
+            user_sid = *(BYTE **)user;
+        NtClose(token);
+    }
+    const BYTE *sids[3] = {user_sid, system_sid, admins_sid};
+    USHORT count = 0;
+    for (int i = 0; i < 3; i++) {
+        if (!sids[i])
+            continue;
+        USHORT length = (USHORT)(8 + 8 + sids[i][1] * 4);
+        ace[0] = 0;
+        ace[1] = 0;
+        *(USHORT *)(ace + 2) = length;
+        *(ULONG *)(ace + 4) = mask;
+        memcpy(ace + 8, sids[i], 8 + sids[i][1] * 4);
+        ace += length;
+        count++;
+    }
     header->Revision = 1;
     header->Control = 0x0004; /* a dacl is present. */
     header->Dacl = acl;
     acl[0] = 2;
-    *(USHORT *)(acl + 2) = (USHORT)(8 + 8 + sizeof(world_sid));
-    *(USHORT *)(acl + 4) = 1;
-    *(USHORT *)(ace + 2) = (USHORT)(8 + sizeof(world_sid));
-    *(ULONG *)(ace + 4) = mask;
-    memcpy(ace + 8, world_sid, sizeof(world_sid));
+    *(USHORT *)(acl + 2) = (USHORT)(ace - acl);
+    *(USHORT *)(acl + 4) = count;
     return sd;
 }

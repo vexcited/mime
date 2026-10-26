@@ -1629,3 +1629,7 @@ EXPORTS
     GetBinaryTypeW=_GetBinaryTypeW@8
     GetBinaryType=_GetBinaryType@8
     SetSystemPowerState=_SetSystemPowerState@8
+    ContinueDebugEvent=_Kernel32Thunk_ContinueDebugEvent@12
+    DebugSetProcessKillOnExit=_Kernel32Thunk_DebugSetProcessKillOnExit@4
+    WaitForDebugEvent=_Kernel32Thunk_WaitForDebugEvent@8
+    WaitForDebugEventEx=kernelbase.WaitForDebugEventEx

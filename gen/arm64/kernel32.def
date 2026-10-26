@@ -1598,3 +1598,7 @@ EXPORTS
     RtlRaiseException=ntdll.RtlRaiseException
     RtlPcToFileHeader=ntdll.RtlPcToFileHeader
     VerSetConditionMask=ntdll.VerSetConditionMask
+    ContinueDebugEvent=Kernel32Thunk_ContinueDebugEvent
+    DebugSetProcessKillOnExit=Kernel32Thunk_DebugSetProcessKillOnExit
+    WaitForDebugEvent=Kernel32Thunk_WaitForDebugEvent
+    WaitForDebugEventEx=kernelbase.WaitForDebugEventEx

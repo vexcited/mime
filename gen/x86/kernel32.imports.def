@@ -1481,3 +1481,7 @@ GetBinaryTypeA@8
 GetBinaryTypeW@8
 GetBinaryType@8
 SetSystemPowerState@8
+    ContinueDebugEvent@12
+    DebugSetProcessKillOnExit@4
+    WaitForDebugEvent@8
+    WaitForDebugEventEx@8

@@ -1432,3 +1432,7 @@ EXPORTS
     TraceMessageVa@24
     UnregisterTraceGuids@8
     VerSetConditionMask@16
+    ContinueDebugEvent@12
+    DebugSetProcessKillOnExit@4
+    WaitForDebugEvent@8
+    WaitForDebugEventEx@8

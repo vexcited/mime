@@ -7661,3 +7661,21 @@ Kernel32Thunk_lstrlenW:
     adrp    x16, __imp_lstrlenW
     ldr     x16, [x16, :lo12:__imp_lstrlenW]
     br      x16
+    .globl  Kernel32Thunk_ContinueDebugEvent
+    .p2align 4
+Kernel32Thunk_ContinueDebugEvent:
+    adrp    x16, __imp_ContinueDebugEvent
+    ldr     x16, [x16, :lo12:__imp_ContinueDebugEvent]
+    br      x16
+    .globl  Kernel32Thunk_DebugSetProcessKillOnExit
+    .p2align 4
+Kernel32Thunk_DebugSetProcessKillOnExit:
+    adrp    x16, __imp_DebugSetProcessKillOnExit
+    ldr     x16, [x16, :lo12:__imp_DebugSetProcessKillOnExit]
+    br      x16
+    .globl  Kernel32Thunk_WaitForDebugEvent
+    .p2align 4
+Kernel32Thunk_WaitForDebugEvent:
+    adrp    x16, __imp_WaitForDebugEvent
+    ldr     x16, [x16, :lo12:__imp_WaitForDebugEvent]
+    br      x16

@@ -194,6 +194,38 @@ BOOL WINAPI DebugActiveProcessStop(DWORD id)
     return FALSE;
 }
 
+/*
+ * a program that waits for the events of the processes it debugs has to have attached to one, and nothing can attach: the
+ * kernel has no debug objects, DebugActiveProcess is not supported. Without a debug object the answer is the one of a thread
+ * that has none, an invalid handle.
+ */
+BOOL WINAPI WaitForDebugEvent(LPDEBUG_EVENT event, DWORD milliseconds)
+{
+    if (!event) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    KbSetError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+BOOL WINAPI WaitForDebugEventEx(LPDEBUG_EVENT event, DWORD milliseconds)
+{
+    return WaitForDebugEvent(event, milliseconds);
+}
+
+BOOL WINAPI ContinueDebugEvent(DWORD process, DWORD thread, DWORD status)
+{
+    KbSetError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+BOOL WINAPI DebugSetProcessKillOnExit(BOOL kill)
+{
+    KbSetError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
 void WINAPI FatalAppExitW(UINT action, LPCWSTR message)
 {
     static const WCHAR prefix[] = L"FatalAppExit: ";

@@ -5107,3 +5107,15 @@ _Kernel32Thunk_lstrlenA@4:
     .p2align 4
 _Kernel32Thunk_lstrlenW@4:
     jmp     *__imp__lstrlenW@4
+    .globl  _Kernel32Thunk_ContinueDebugEvent@12
+    .p2align 4
+_Kernel32Thunk_ContinueDebugEvent@12:
+    jmp     *__imp__ContinueDebugEvent@12
+    .globl  _Kernel32Thunk_DebugSetProcessKillOnExit@4
+    .p2align 4
+_Kernel32Thunk_DebugSetProcessKillOnExit@4:
+    jmp     *__imp__DebugSetProcessKillOnExit@4
+    .globl  _Kernel32Thunk_WaitForDebugEvent@8
+    .p2align 4
+_Kernel32Thunk_WaitForDebugEvent@8:
+    jmp     *__imp__WaitForDebugEvent@8
