@@ -190,6 +190,15 @@ LRESULT HookCall(int id, W32THREAD *t, int code, WPARAM wparam, LPARAM lparam, U
     return h ? call_hook(h, code, wparam, lparam, size) : 0;
 }
 
+/* WH_CBT runs in the thread acting on its own window, a nonzero answer prevents the action. */
+BOOLEAN HookCbt(WND *w, int code, WPARAM wparam, LPARAM lparam, ULONG size)
+{
+    W32THREAD *t = W32GetThread();
+    if (!t || (w && w->Thread != t) || !HookActive(WH_CBT, t))
+        return FALSE;
+    return HookCall(WH_CBT, t, code, wparam, lparam, size, nullptr) != 0;
+}
+
 static void destroy_hook(HOOK *h)
 {
     h->Header.Destroyed = TRUE;

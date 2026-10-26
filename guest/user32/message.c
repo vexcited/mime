@@ -380,6 +380,9 @@ WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPA
         GlobalUnlock(copy);
         return (LRESULT)copy;
     }
+    /* a WH_CBT hook may prevent a system command. */
+    if (msg == WM_SYSCOMMAND && NtUserCallTwoParam(wparam, lparam, MIME_TWOPARAM_CBTSYSCOMMAND))
+        return 0;
     if (UserDefMoveSize(hwnd, msg, wparam, lparam, &result) || UserDefScrollBars(hwnd, msg, wparam, lparam, &result) ||
         UserDefSystemMenu(hwnd, msg, wparam, lparam, &result))
         return result;

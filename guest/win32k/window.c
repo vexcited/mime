@@ -841,6 +841,8 @@ void WndShow(WND *w, int cmd)
         break;
     }
     BOOLEAN state_changed = old_state != new_state;
+    if (state_changed && (HookCbt(w, HCBT_MINMAX, (WPARAM)WndHandle(w), cmd, 0) || !alive(w)))
+        goto done;
     if (state_changed && (old_state & WS_MINIMIZE)) {
         LRESULT restore = MsgSend(w, WM_QUERYOPEN, 0, 0);
         if (!restore || !alive(w)) {
@@ -985,6 +987,10 @@ void WndActivate(WND *w, BOOLEAN click)
         return;
     }
     UserReference(&w->Header);
+    CBTACTIVATESTRUCT activate = {click, WndHandle(old)};
+    if (HookCbt(w, HCBT_ACTIVATE, (WPARAM)WndHandle(w), (LPARAM)&activate, sizeof(activate)) || !alive(w))
+        goto done;
+    old = InputForeground;
     if (old && alive(old)) {
         UserReference(&old->Header);
         MsgSend(old, WM_NCACTIVATE, FALSE, (LPARAM)WndHandle(w));
@@ -1025,6 +1031,14 @@ void WndSetFocus(WND *w)
     HWND old_h = t->Focus;
     if (old_h == WndHandle(w))
         return;
+    if (w)
+        UserReference(&w->Header);
+    BOOLEAN refused = HookCbt(w, HCBT_SETFOCUS, (WPARAM)WndHandle(w), (LPARAM)old_h, 0) || (w && !alive(w));
+    if (w)
+        UserDereference(&w->Header);
+    if (refused)
+        return;
+    old_h = t->Focus;
     if (w) {
         UserReference(&w->Header);
         WND *top = WndTopLevel(w);
@@ -1302,6 +1316,37 @@ static PVOID build_createstruct(WND *w, LPVOID param, HWND parent, int x, int y,
     return buf;
 }
 
+/*
+ * HCBT_CREATEWND comes before the first message. the hook may change the place, the size and the window it goes
+ * after, or refuse the window.
+ */
+static BOOLEAN cbt_create(WND *w, LPVOID param, HWND parent, int placed[4], PCWSTR name, PCWSTR class_name,
+                          HWND *after)
+{
+    ULONG cs_size;
+    PUCHAR cs = build_createstruct(w, param, parent, placed[0], placed[1], placed[2], placed[3], name, class_name,
+                                   &cs_size);
+    if (!cs)
+        return FALSE;
+    ULONG size = sizeof(CBT_CREATEWNDW) + cs_size;
+    PUCHAR data = W32Alloc(size);
+    if (!data) {
+        W32Free(cs);
+        return FALSE;
+    }
+    CBT_CREATEWNDW *cbt = (CBT_CREATEWNDW *)data;
+    cbt->lpcs = nullptr;
+    cbt->hwndInsertAfter = *after;
+    memcpy(cbt + 1, cs, cs_size);
+    W32Free(cs);
+    BOOLEAN refused = HookCbt(w, HCBT_CREATEWND, (WPARAM)WndHandle(w), (LPARAM)data, size);
+    const CREATESTRUCTW *out = (const CREATESTRUCTW *)(cbt + 1);
+    placed[0] = out->x, placed[1] = out->y, placed[2] = out->cx, placed[3] = out->cy;
+    *after = cbt->hwndInsertAfter;
+    W32Free(data);
+    return !refused;
+}
+
 HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNICODE_STRING user_name, DWORD style,
                                 int x, int y, int cx, int cy, HWND parent_h, HMENU menu, HINSTANCE instance,
                                 LPVOID param, DWORD flags)
@@ -1423,7 +1468,8 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     if (cy < 0)
         cy = 0;
 
-    link_window(parent, w, (style & WS_CHILD) ? HWND_BOTTOM : HWND_TOP);
+    HWND after = (style & WS_CHILD) ? HWND_BOTTOM : HWND_TOP;
+    link_window(parent, w, after);
     RECT rect = {x, y, x + cx, y + cy};
     parent_to_screen(parent, &rect);
     w->WindowRect = rect;
@@ -1432,6 +1478,22 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     if (parent == desktop && t && t->Process && t->Process->DpiAwareness >= 2 && !message_only)
         w->Dpi = MonitorDpiOfRect(&rect);
     UserReference(&w->Header);
+
+    if (HookActive(WH_CBT, t)) {
+        PCWSTR hook_class = cls->Name ? cls->Name : L"";
+        int placed[4] = {x, y, cx, cy};
+        if (!cbt_create(w, param, parent_h, placed, name, hook_class, &after) || !alive(w))
+            goto fail;
+        if (after != ((style & WS_CHILD) ? HWND_BOTTOM : HWND_TOP)) {
+            unlink_window(w);
+            link_window(parent, w, after);
+        }
+        x = placed[0], y = placed[1], cx = W32Max(placed[2], 0), cy = W32Max(placed[3], 0);
+        rect = (RECT){x, y, x + cx, y + cy};
+        parent_to_screen(parent, &rect);
+        w->WindowRect = rect;
+        w->ClientRect = rect;
+    }
 
     if ((style & WS_THICKFRAME) || !(style & (WS_POPUP | WS_CHILD))) {
         MINMAXINFO mmi;
@@ -1532,8 +1594,12 @@ BOOL NTAPI NtUserDestroyWindow(HWND hwnd)
     if (can_touch(w)) {
         W32THREAD *t = W32GetThread();
         if (w->Thread == t) {
-            WndDestroy(w);
-            ok = TRUE;
+            UserReference(&w->Header);
+            if (!HookCbt(w, HCBT_DESTROYWND, (WPARAM)hwnd, 0, 0) && alive(w)) {
+                WndDestroy(w);
+                ok = TRUE;
+            }
+            UserDereference(&w->Header);
         }
     }
     UserLeave();

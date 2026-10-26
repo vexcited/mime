@@ -104,7 +104,11 @@ typedef struct MIME_SENDASYNC_ARGS {
     LRESULT Result;
 } MIME_SENDASYNC_ARGS;
 
-/* with a DataSize, lparam points to Data, a copy of the hook structure. */
+/*
+ * with a DataSize, lparam points to Data, a copy of the hook structure. for HCBT_CREATEWND it is CBT_CREATEWNDW, then
+ * the CREATESTRUCTW it points to, then its strings: lpcs is 0 and lpszName and lpszClass are byte offsets from the
+ * CREATESTRUCTW, 0 for NULL.
+ */
 typedef struct MIME_HOOKPROC_ARGS {
     HOOKPROC Proc;
     int Id;
@@ -186,6 +190,8 @@ enum {
     MIME_TWOPARAM_WINDOWFROMPOINT,      /* x, y */
     MIME_TWOPARAM_GETMONITORS,          /* MIME_MONITOR_INFO array, its capacity -> the number of monitors. */
     MIME_TWOPARAM_HOSTMOVESIZE,         /* window, 0 or a WMSZ_* edge: the host moves or sizes it under the pointer -> TRUE when it does. */
+    MIME_TWOPARAM_CBTSYSCOMMAND,        /* SC_* command, its lparam -> TRUE when a WH_CBT hook prevents it. */
+    MIME_TWOPARAM_CBTMOVESIZE,          /* window, RECT pointer of the place a move or size loop ends at. */
 };
 
 /* what MIME_TWOPARAM_GETMONITORS returns per monitor. */

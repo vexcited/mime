@@ -45,9 +45,53 @@ static ULONG low(ULONG_PTR v)
 }
 
 /* converts hook data to the x86 layout and returns its size, or 0 for an unknown hook. */
-static ULONG hook_data32(int id, const UCHAR *in, ULONG size, UCHAR *out)
+/* the x86 CBT_CREATEWND and the CREATESTRUCT after it. */
+typedef struct CBTCREATE32 {
+    ULONG Lpcs, After;
+    CREATESTRUCT32 Cs;
+} CBTCREATE32;
+
+static ULONG cbt_data32(int code, const UCHAR *in, ULONG size, UCHAR *out)
+{
+    switch (code) {
+    case HCBT_CREATEWND: {
+        const CBT_CREATEWNDW *cbt = (const void *)in;
+        const CREATESTRUCTW *cs = (const void *)(cbt + 1);
+        if (size < sizeof(*cbt) + sizeof(*cs))
+            return 0;
+        ULONG shift = sizeof(CREATESTRUCTW) - sizeof(CREATESTRUCT32);
+        CBTCREATE32 *small = (void *)out;
+        *small = (CBTCREATE32){0, low((ULONG_PTR)cbt->hwndInsertAfter),
+                               {low((ULONG_PTR)cs->lpCreateParams), low((ULONG_PTR)cs->hInstance),
+                                low((ULONG_PTR)cs->hMenu), low((ULONG_PTR)cs->hwndParent), cs->cy, cs->cx, cs->y, cs->x,
+                                cs->style, cs->lpszName ? low((ULONG_PTR)cs->lpszName) - shift : 0,
+                                cs->lpszClass ? low((ULONG_PTR)cs->lpszClass) - shift : 0, cs->dwExStyle}};
+        ULONG strings = size - sizeof(*cbt) - sizeof(*cs);
+        memcpy(small + 1, cs + 1, strings);
+        return sizeof(*small) + strings;
+    }
+    case HCBT_ACTIVATE: {
+        const CBTACTIVATESTRUCT *a = (const void *)in;
+        if (size < sizeof(*a))
+            return 0;
+        ULONG v[2] = {(ULONG)a->fMouse, low((ULONG_PTR)a->hWndActive)};
+        memcpy(out, v, sizeof(v));
+        return sizeof(v);
+    }
+    case HCBT_MOVESIZE:
+        if (size < sizeof(RECT))
+            return 0;
+        memcpy(out, in, sizeof(RECT));
+        return sizeof(RECT);
+    }
+    return 0;
+}
+
+static ULONG hook_data32(int id, int code, const UCHAR *in, ULONG size, UCHAR *out)
 {
     switch (id) {
+    case WH_CBT:
+        return cbt_data32(code, in, size, out);
     case WH_KEYBOARD_LL: {
         const KBDLLHOOKSTRUCT *k = (const void *)in;
         if (size < sizeof(*k))
@@ -102,9 +146,22 @@ static ULONG hook_data32(int id, const UCHAR *in, ULONG size, UCHAR *out)
     }
 }
 
-/* copies what the hook changed back into the kernel's copy. only a message can change. */
-static void hook_data64(int id, const UCHAR *in, ULONG size, UCHAR *out, ULONG out_size)
+/* copies what the hook changed back into the kernel's copy: a message, a window's place or a rectangle. */
+static void hook_data64(int id, int code, const UCHAR *in, ULONG size, UCHAR *out, ULONG out_size)
 {
+    if (id == WH_CBT && code == HCBT_CREATEWND && size >= sizeof(CBTCREATE32) &&
+        out_size >= sizeof(CBT_CREATEWNDW) + sizeof(CREATESTRUCTW)) {
+        const CBTCREATE32 *small = (const void *)in;
+        CBT_CREATEWNDW *cbt = (void *)out;
+        CREATESTRUCTW *cs = (void *)(cbt + 1);
+        cbt->hwndInsertAfter = lay_handle(small->After);
+        cs->x = small->Cs.X, cs->y = small->Cs.Y, cs->cx = small->Cs.Cx, cs->cy = small->Cs.Cy;
+        return;
+    }
+    if (id == WH_CBT && code == HCBT_MOVESIZE && size >= sizeof(RECT) && out_size >= sizeof(RECT)) {
+        memcpy(out, in, sizeof(RECT));
+        return;
+    }
     if (id != WH_GETMESSAGE || size < sizeof(MSG32) || out_size < sizeof(MSG))
         return;
     const MSG32 *m = (const void *)in;
@@ -149,11 +206,12 @@ static BOOLEAN marshal_hook(ULONG *stack, PVOID arguments, ULONG length, MX_CALL
     const MIME_HOOKPROC_ARGS *in = arguments;
     if (in->DataSize > length - sizeof(*in))
         return FALSE;
-    *stack = (*stack - sizeof(HOOKPROC32) - 64 - 32) & ~15u;
+    /* the x86 data is never larger than the native one. */
+    *stack = (*stack - sizeof(HOOKPROC32) - (in->DataSize > 64 ? in->DataSize : 64) - 32) & ~15u;
     HOOKPROC32 *out = (void *)(ULONG_PTR)*stack;
     *out = (HOOKPROC32){low((ULONG_PTR)in->Proc), in->Id, in->Code, low(in->Wparam), low(in->Lparam), in->Ansi, 0};
     if (in->DataSize) {
-        out->DataSize = hook_data32(in->Id, in->Data, in->DataSize, out->Data);
+        out->DataSize = hook_data32(in->Id, in->Code, in->Data, in->DataSize, out->Data);
         /* an unknown structure would reach the hook in the wrong layout, so it gets none. */
         if (!out->DataSize)
             out->Lparam = 0;
@@ -309,7 +367,7 @@ PVOID Mx32CallbackResult(const MX_CALLBACK32 *callback, PVOID result, ULONG *len
         if (bytes > *length - 12)
             return nullptr;
         if (bytes)
-            hook_data64(args->Id, (const UCHAR *)(small + 3), bytes, args->Data, args->DataSize);
+            hook_data64(args->Id, args->Code, (const UCHAR *)(small + 3), bytes, args->Data, args->DataSize);
         /* the header overlaps the arguments it follows. */
         ULONG size = args->DataSize;
         MIME_CALLBACK_RESULT *out = (void *)(args->Data - sizeof(*out));

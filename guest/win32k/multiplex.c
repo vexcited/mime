@@ -148,6 +148,18 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         r = w && WndIsTopLevel(w) && HostMoveSize(w, (ULONG)param2);
         break;
     }
+    case MIME_TWOPARAM_CBTSYSCOMMAND:
+        r = HookCbt(nullptr, HCBT_SYSCOMMAND, param1, (LPARAM)param2, 0);
+        break;
+    case MIME_TWOPARAM_CBTMOVESIZE: {
+        WND *w = WndLookup((HWND)param1);
+        RECT rect;
+        if (w && NT_SUCCESS(MimeCopyFromUser(&rect, (PVOID)param2, sizeof(rect)))) {
+            HookCbt(w, HCBT_MOVESIZE, param1, (LPARAM)&rect, sizeof(rect));
+            MimeCopyToUser((PVOID)param2, &rect, sizeof(rect));
+        }
+        break;
+    }
     case MIME_TWOPARAM_GETMONITORINFO:
     case MIME_TWOPARAM_GETMONITORS:
         r = MonitorCall(param1, param2, routine);

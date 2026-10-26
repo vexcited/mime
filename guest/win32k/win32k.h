@@ -872,6 +872,7 @@ BOOLEAN HookActive(int id, W32THREAD *t);
 /* calls the first hook of the chain the thread sees; data is the lparam structure, size 0 for a value. */
 LRESULT HookCall(int id, W32THREAD *t, int code, WPARAM wparam, LPARAM lparam, ULONG size, BOOLEAN *called);
 LRESULT HookInvoke(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG size); /* in the current thread. */
+BOOLEAN HookCbt(WND *w, int code, WPARAM wparam, LPARAM lparam, ULONG size); /* TRUE when the hook prevents it. */
 HOOK *HookLookup(HHOOK handle);
 void HookRemoveThread(W32THREAD *t);
 

@@ -322,6 +322,18 @@ static void move_size(HWND hwnd, WPARAM command, LPARAM lparam)
     }
     if (GetCapture() == hwnd)
         ReleaseCapture();
+    /* a WH_CBT hook sees where the window ends and may change it. */
+    RECT end;
+    if (!cancel && GetWindowRect(hwnd, &end)) {
+        RECT hooked = end;
+        NtUserCallTwoParam((ULONG_PTR)hwnd, (ULONG_PTR)&hooked, MIME_TWOPARAM_CBTMOVESIZE);
+        if (memcmp(&hooked, &end, sizeof(end))) {
+            if (ms.Parent)
+                MapWindowPoints(nullptr, ms.Parent, (POINT *)&hooked, 2);
+            SetWindowPos(hwnd, nullptr, hooked.left, hooked.top, hooked.right - hooked.left, hooked.bottom - hooked.top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
     if (IsWindow(hwnd)) {
         SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
         POINT pt;

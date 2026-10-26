@@ -119,10 +119,46 @@ static NTSTATUS CALLBACK callback_send_async(MIME_SENDASYNC_ARGS *args, ULONG le
     return NtCallbackReturn(&res, sizeof(res), STATUS_SUCCESS);
 }
 
+/* HCBT_CREATEWND data holds offsets in place of its pointers, see MIME_HOOKPROC_ARGS. */
+static LRESULT call_cbt_create(MIME_HOOKPROC_ARGS *args)
+{
+    CBT_CREATEWNDW *cbt = (CBT_CREATEWNDW *)args->Data;
+    CREATESTRUCTW *cs = (CREATESTRUCTW *)(cbt + 1);
+    LPCWSTR name = cs->lpszName, klass = cs->lpszClass;
+    if (name)
+        cs->lpszName = (LPCWSTR)((PUCHAR)cs + (ULONG_PTR)name);
+    if (klass)
+        cs->lpszClass = (LPCWSTR)((PUCHAR)cs + (ULONG_PTR)klass);
+    LRESULT result;
+    if (args->Ansi) {
+        CREATESTRUCTA csa;
+        memcpy(&csa, cs, sizeof(csa));
+        csa.lpszName = UserWtoA(cs->lpszName);
+        csa.lpszClass = UserWtoA(cs->lpszClass);
+        CBT_CREATEWNDA cbta = {&csa, cbt->hwndInsertAfter};
+        result = args->Proc(args->Code, args->Wparam, (LPARAM)&cbta);
+        UserFreeConverted(csa.lpszName, cs->lpszName);
+        UserFreeConverted(csa.lpszClass, cs->lpszClass);
+        cs->x = csa.x, cs->y = csa.y, cs->cx = csa.cx, cs->cy = csa.cy;
+        cbt->hwndInsertAfter = cbta.hwndInsertAfter;
+    } else {
+        cbt->lpcs = cs;
+        result = args->Proc(args->Code, args->Wparam, (LPARAM)cbt);
+        cbt->lpcs = nullptr;
+    }
+    cs->lpszName = name;
+    cs->lpszClass = klass;
+    return result;
+}
+
 static NTSTATUS CALLBACK callback_hook_proc(MIME_HOOKPROC_ARGS *args, ULONG length)
 {
     ULONG size = args->DataSize;
-    LRESULT result = args->Proc(args->Code, args->Wparam, size ? (LPARAM)args->Data : args->Lparam);
+    LRESULT result;
+    if (args->Id == WH_CBT && args->Code == HCBT_CREATEWND && size >= sizeof(CBT_CREATEWNDW) + sizeof(CREATESTRUCTW))
+        result = call_cbt_create(args);
+    else
+        result = args->Proc(args->Code, args->Wparam, size ? (LPARAM)args->Data : args->Lparam);
     if (size) {
         /* the result header goes right before the data, like for window procedures. */
         MIME_CALLBACK_RESULT *res = (MIME_CALLBACK_RESULT *)((PUCHAR)args->Data - sizeof(MIME_CALLBACK_RESULT));

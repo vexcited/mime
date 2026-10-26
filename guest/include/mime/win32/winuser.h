@@ -1550,6 +1550,32 @@ typedef struct tagMOUSEHOOKSTRUCTEX {
 #define MSGF_DIALOGBOX 0
 #define MSGF_MESSAGEBOX 1
 
+#define HCBT_MOVESIZE 0
+#define HCBT_MINMAX 1
+#define HCBT_QS 2
+#define HCBT_CREATEWND 3
+#define HCBT_DESTROYWND 4
+#define HCBT_ACTIVATE 5
+#define HCBT_CLICKSKIPPED 6
+#define HCBT_KEYSKIPPED 7
+#define HCBT_SYSCOMMAND 8
+#define HCBT_SETFOCUS 9
+
+typedef struct tagCBT_CREATEWNDA {
+    struct tagCREATESTRUCTA *lpcs;
+    HWND hwndInsertAfter;
+} CBT_CREATEWNDA, *LPCBT_CREATEWNDA;
+
+typedef struct tagCBT_CREATEWNDW {
+    struct tagCREATESTRUCTW *lpcs;
+    HWND hwndInsertAfter;
+} CBT_CREATEWNDW, *LPCBT_CREATEWNDW;
+
+typedef struct tagCBTACTIVATESTRUCT {
+    BOOL fMouse;
+    HWND hWndActive;
+} CBTACTIVATESTRUCT, *LPCBTACTIVATESTRUCT;
+
 /* ------------------------------------------------------------------ user32 exports */
 
 WINUSERAPI HHOOK WINAPI SetWindowsHookExW(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread);
