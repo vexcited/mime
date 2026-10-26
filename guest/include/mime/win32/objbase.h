@@ -219,6 +219,8 @@ WINOLEAPI DWORD WINAPI CoGetCurrentProcess(void);
 WINOLEAPI HRESULT WINAPI CoCreateInstance(REFCLSID clsid, IUnknown *outer, DWORD context, REFIID riid, void **object);
 WINOLEAPI HRESULT WINAPI CoCreateInstanceEx(REFCLSID clsid, IUnknown *outer, DWORD context, COSERVERINFO *server,
                                             DWORD count, MULTI_QI *results);
+WINOLEAPI HRESULT WINAPI CoCreateInstanceFromApp(REFCLSID clsid, IUnknown *outer, DWORD context, PVOID reserved,
+                                                 DWORD count, MULTI_QI *results);
 WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *server, REFIID riid, void **object);
 WINOLEAPI HINSTANCE WINAPI CoLoadLibrary(LPOLESTR file, BOOL auto_free);
 WINOLEAPI void WINAPI CoFreeLibrary(HINSTANCE library);
@@ -236,6 +238,7 @@ WINOLEAPI HRESULT WINAPI StringFromIID(REFIID iid, LPOLESTR *string);
 WINOLEAPI HRESULT WINAPI CLSIDFromString(LPCOLESTR string, LPCLSID clsid);
 WINOLEAPI HRESULT WINAPI IIDFromString(LPCOLESTR string, LPIID iid);
 WINOLEAPI HRESULT WINAPI CLSIDFromProgID(LPCOLESTR progid, LPCLSID clsid);
+WINOLEAPI HRESULT WINAPI CLSIDFromProgIDEx(LPCOLESTR progid, LPCLSID clsid);
 WINOLEAPI HRESULT WINAPI ProgIDFromCLSID(REFCLSID clsid, LPOLESTR *progid);
 WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object, DWORD context, DWORD flags,
                                                DWORD *cookie);

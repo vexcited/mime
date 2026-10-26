@@ -271,6 +271,7 @@ WINOLEAUTAPI HRESULT WINAPI VarDecMul(const DECIMAL *left, const DECIMAL *right,
         memset(result, 0, sizeof(*result));
         return S_OK;
     }
+    BOOL wide = a.w[1] || a.w[2] || b.w[1] || b.w[2];
     for (ULONG i = 0; i < 3; i++) {
         ULONGLONG carry = 0;
         for (ULONG j = 0; j < 3; j++) {
@@ -279,6 +280,11 @@ WINOLEAUTAPI HRESULT WINAPI VarDecMul(const DECIMAL *left, const DECIMAL *right,
             carry = cur >> 32;
         }
         product.w[i + 3] += (ULONG)carry;
+    }
+    /* a product of large operands that is zero is a plain zero. */
+    if (wide && big_is_zero(&product)) {
+        memset(result, 0, sizeof(*result));
+        return S_OK;
     }
     if (!fit_decimal(&product, &scale))
         return DISP_E_OVERFLOW;
@@ -294,7 +300,7 @@ static int digits_that_fit(const BIG *q, LONG scale)
 {
     /* the upper 64 bits of the largest number that stays in 96 bits after that many digits. */
     static const ULONGLONG limits[10] = {0,
-                                         0,
+                                         0x1999999999999999ull,
                                          0x028f5c28f5c28f5cull,
                                          0x004189374bc6a7efull,
                                          0x00068db8bac710cbull,
@@ -304,11 +310,13 @@ static int digits_that_fit(const BIG *q, LONG scale)
                                          0x0000002af31dc461ull,
                                          0x000000044b82fa09ull};
     int fit = 0;
-    if (q->w[2] <= 0x19999999 && scale < 28) {
+    if (scale < 28) {
         ULONGLONG top = ((ULONGLONG)q->w[2] << 32) | q->w[1];
         int most = scale > 19 ? (int)(28 - scale) : 9;
-        fit = 1;
-        for (int k = most; k > 1; k--) {
+        /* a small quotient takes nine digits at once, whatever the scale: a negative one is brought up by them. */
+        if (scale <= 19 && top < limits[9])
+            return 9;
+        for (int k = most; k > 0; k--) {
             if (top < limits[k]) {
                 fit = k;
                 break;

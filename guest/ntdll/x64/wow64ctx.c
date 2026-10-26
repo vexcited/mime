@@ -66,9 +66,16 @@ static NTSTATUS wow64_context(HANDLE thread, I386_CONTEXT *context, BOOLEAN sett
             context->EFlags = native.EFlags;
             fix_segments(context);
         } else {
-            for (int i = 0; i < 9; i++)
-                *natives[i] = *regs[i];
-            native.EFlags = context->EFlags;
+            /* only the registers the flags name are set, the rest of the structure may be anything. */
+            ULONG flags = context->ContextFlags;
+            if ((flags & CONTEXT_I386_INTEGER) == CONTEXT_I386_INTEGER)
+                for (int i = 0; i < 6; i++)
+                    *natives[i] = *regs[i];
+            if ((flags & CONTEXT_I386_CONTROL) == CONTEXT_I386_CONTROL) {
+                for (int i = 6; i < 9; i++)
+                    *natives[i] = *regs[i];
+                native.EFlags = context->EFlags;
+            }
             status = NtSetContextThread(thread, &native);
         }
         NtClose(target.Process);

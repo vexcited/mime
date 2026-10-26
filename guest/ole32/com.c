@@ -403,6 +403,12 @@ WINOLEAPI HRESULT WINAPI CLSIDFromProgID(LPCOLESTR progid, LPCLSID clsid)
     return S_OK;
 }
 
+/* the same lookup with the extra step for programs of the store, which Mime does not have. */
+WINOLEAPI HRESULT WINAPI CLSIDFromProgIDEx(LPCOLESTR progid, LPCLSID clsid)
+{
+    return CLSIDFromProgID(progid, clsid);
+}
+
 WINOLEAPI HRESULT WINAPI ProgIDFromCLSID(REFCLSID clsid, LPOLESTR *progid)
 {
     if (!progid)
@@ -946,4 +952,11 @@ PSECURITY_DESCRIPTOR OleUserDescriptor(ULONG mask)
     *(USHORT *)(acl + 2) = (USHORT)(ace - acl);
     *(USHORT *)(acl + 4) = count;
     return sd;
+}
+
+/* creation for a program of the store: the class is made on this machine as CoCreateInstanceEx does. */
+WINOLEAPI HRESULT WINAPI CoCreateInstanceFromApp(REFCLSID clsid, IUnknown *outer, DWORD context, PVOID reserved,
+                                                 DWORD count, MULTI_QI *results)
+{
+    return CoCreateInstanceEx(clsid, outer, context, nullptr, count, results);
 }

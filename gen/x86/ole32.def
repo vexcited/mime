@@ -1,6 +1,7 @@
 LIBRARY ole32.dll
 EXPORTS
     CLSIDFromProgID=_CLSIDFromProgID@8
+    CLSIDFromProgIDEx=_CLSIDFromProgIDEx@8
     CLSIDFromString=_CLSIDFromString@8
     CoAddRefServerProcess=_CoAddRefServerProcess@0
     CoAllowSetForegroundWindow=_CoAllowSetForegroundWindow@8
@@ -9,6 +10,7 @@ EXPORTS
     CoCreateGuid=_CoCreateGuid@4
     CoCreateInstance=_CoCreateInstance@20
     CoCreateInstanceEx=_CoCreateInstanceEx@24
+    CoCreateInstanceFromApp=_CoCreateInstanceFromApp@24
     CoDecrementMTAUsage=_CoDecrementMTAUsage@4
     CoDisableCallCancellation=_CoDisableCallCancellation@4
     CoDisconnectObject=_CoDisconnectObject@8
