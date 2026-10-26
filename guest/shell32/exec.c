@@ -1,8 +1,9 @@
 /*
  * launching documents and programs, and command line splitting.
  *
- * ShellExecute starts executables with CreateProcess and other files through their type's open command. there is
- * no explorer yet, so folders and urls without a registered handler fail with SE_ERR_NOASSOC, as windows does for a
+ * ShellExecute starts executables with CreateProcess, shortcuts through their target and other files through their
+ * type's open command. a bare program name is also looked up under App Paths, as the run box does. there is no
+ * explorer yet, so folders and urls without a registered handler fail with SE_ERR_NOASSOC, as windows does for a
  * type nobody handles.
  */
 #include "shell32_private.h"
@@ -56,10 +57,10 @@ static BOOL is_url(LPCWSTR file, WCHAR *scheme, SIZE_T chars)
     return TRUE;
 }
 
-static BOOL read_default(LPCWSTR subkey, LPWSTR out, DWORD chars)
+static BOOL read_value(HKEY root, LPCWSTR subkey, LPWSTR out, DWORD chars)
 {
     HKEY key;
-    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, subkey, 0, KEY_READ, &key))
+    if (RegOpenKeyExW(root, subkey, 0, KEY_READ, &key))
         return FALSE;
     WCHAR raw[1024];
     DWORD type, bytes = sizeof(raw) - sizeof(WCHAR);
@@ -76,6 +77,44 @@ static BOOL read_default(LPCWSTR subkey, LPWSTR out, DWORD chars)
         return FALSE;
     wcscpy(out, raw);
     return TRUE;
+}
+
+static BOOL read_default(LPCWSTR subkey, LPWSTR out, DWORD chars)
+{
+    return read_value(HKEY_CLASSES_ROOT, subkey, out, chars);
+}
+
+/* a program registered under App Paths by its name, with or without .exe, the user's registration first. */
+static BOOL app_path(LPCWSTR name, LPWSTR path, DWORD chars)
+{
+    static const HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    WCHAR subkey[MAX_PATH + 64], value[MAX_PATH];
+    if (wcslen(name) + 8 >= MAX_PATH)
+        return FALSE;
+    for (UINT i = 0; i < RTL_NUMBER_OF(roots); i++) {
+        for (UINT exe = 0; exe < 2; exe++) {
+            if (exe && has_extension(name, L".exe"))
+                break;
+            _snwprintf(subkey, RTL_NUMBER_OF(subkey), L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\%ls%ls",
+                       name, exe ? L".exe" : L"");
+            subkey[RTL_NUMBER_OF(subkey) - 1] = 0;
+            if (!read_value(roots[i], subkey, value, RTL_NUMBER_OF(value)))
+                continue;
+            LPCWSTR start = value;
+            SIZE_T length = wcslen(value);
+            if (length >= 2 && value[0] == L'"' && value[length - 1] == L'"') {
+                start++;
+                length -= 2;
+            }
+            if (!length || length >= chars)
+                continue;
+            memcpy(path, start, length * sizeof(WCHAR));
+            path[length] = 0;
+            if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
+                return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 /* type is a key such as "txtfile" or "http". */
@@ -197,6 +236,103 @@ static BOOL run_association(SHELLEXECUTEINFOW *info, LPCWSTR type, LPCWSTR verb,
     return TRUE;
 }
 
+typedef HRESULT(WINAPI *CO_CREATE)(REFCLSID, IUnknown *, DWORD, REFIID, void **);
+typedef HRESULT(WINAPI *CO_INIT)(void *, DWORD);
+typedef void(WINAPI *CO_UNINIT)(void);
+
+static void *ole_proc(const char *name)
+{
+    HMODULE ole = LoadLibraryW(L"ole32.dll");
+    return ole ? (void *)GetProcAddress(ole, name) : nullptr;
+}
+
+typedef struct SHORTCUT {
+    WCHAR Target[MAX_PATH];
+    WCHAR Arguments[1024];
+    WCHAR Directory[MAX_PATH];
+    int Show;
+} SHORTCUT;
+
+/* reads a shortcut's target, arguments, folder and window state, in a multithreaded apartment if the thread has none. */
+static BOOL read_shortcut(LPCWSTR path, SHORTCUT *shortcut)
+{
+    memset(shortcut, 0, sizeof(*shortcut));
+    CO_CREATE create = (CO_CREATE)ole_proc("CoCreateInstance");
+    if (!create)
+        return FALSE;
+    CO_UNINIT uninit = nullptr;
+    IShellLinkW *link = nullptr;
+    HRESULT hr = create(&CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, (void **)&link);
+    if (hr == CO_E_NOTINITIALIZED) {
+        CO_INIT init = (CO_INIT)ole_proc("CoInitializeEx");
+        uninit = (CO_UNINIT)ole_proc("CoUninitialize");
+        if (!init || !uninit || FAILED(init(nullptr, COINIT_MULTITHREADED)))
+            return FALSE;
+        hr = create(&CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, (void **)&link);
+    }
+    BOOL ok = FALSE;
+    IPersistFile *file = nullptr;
+    if (SUCCEEDED(hr) && SUCCEEDED(link->lpVtbl->QueryInterface(link, &IID_IPersistFile, (void **)&file)) &&
+        SUCCEEDED(file->lpVtbl->Load(file, path, STGM_READ))) {
+        if (link->lpVtbl->GetPath(link, shortcut->Target, MAX_PATH, nullptr, 0) != S_OK || !shortcut->Target[0]) {
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            if (SUCCEEDED(link->lpVtbl->GetIDList(link, &pidl)) && pidl &&
+                !ShPathFromIdList(pidl, shortcut->Target, MAX_PATH))
+                shortcut->Target[0] = 0;
+            ShFree(pidl);
+        }
+        link->lpVtbl->GetArguments(link, shortcut->Arguments, RTL_NUMBER_OF(shortcut->Arguments));
+        link->lpVtbl->GetWorkingDirectory(link, shortcut->Directory, MAX_PATH);
+        link->lpVtbl->GetShowCmd(link, &shortcut->Show);
+        ok = shortcut->Target[0] != 0;
+    }
+    if (file)
+        file->lpVtbl->Release(file);
+    if (link)
+        link->lpVtbl->Release(link);
+    if (uninit)
+        uninit();
+    return ok;
+}
+
+/* the shell opens a shortcut by running its target, the caller's parameters after the shortcut's own. */
+static BOOL run_shortcut(SHELLEXECUTEINFOW *info, LPCWSTR path, LPCWSTR parameters)
+{
+    SHORTCUT *shortcut = ShAlloc(sizeof(*shortcut));
+    if (!shortcut)
+        return fail(info, ERROR_OUTOFMEMORY);
+    if (!read_shortcut(path, shortcut) || has_extension(shortcut->Target, L".lnk")) {
+        ShFree(shortcut);
+        return fail(info, ERROR_FILE_NOT_FOUND);
+    }
+    SIZE_T size = wcslen(shortcut->Arguments) + wcslen(parameters) + 2;
+    LPWSTR arguments = ShAlloc(size * sizeof(WCHAR));
+    if (!arguments) {
+        ShFree(shortcut);
+        return fail(info, ERROR_OUTOFMEMORY);
+    }
+    _snwprintf(arguments, size, shortcut->Arguments[0] && parameters[0] ? L"%ls %ls" : L"%ls%ls", shortcut->Arguments,
+               parameters);
+    arguments[size - 1] = 0;
+    SHELLEXECUTEINFOW target = *info;
+    target.fMask &= ~SEE_MASK_IDLIST;
+    target.lpIDList = nullptr;
+    target.lpFile = shortcut->Target;
+    target.lpParameters = arguments;
+    if (shortcut->Directory[0])
+        target.lpDirectory = shortcut->Directory;
+    if (shortcut->Show && info->nShow == SW_SHOWNORMAL)
+        target.nShow = shortcut->Show;
+    BOOL ok = ShellExecuteExW(&target);
+    DWORD error = GetLastError();
+    info->hInstApp = target.hInstApp;
+    info->hProcess = target.hProcess;
+    ShFree(arguments);
+    ShFree(shortcut);
+    SetLastError(error);
+    return ok;
+}
+
 SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
 {
     if (!info || info->cbSize != sizeof(*info)) {
@@ -245,6 +381,8 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
         DWORD n = SearchPathW(nullptr, target, L".exe", MAX_PATH, path, nullptr);
         if (n && n < MAX_PATH)
             attributes = GetFileAttributesW(path);
+        else if (app_path(target, path, MAX_PATH))
+            attributes = GetFileAttributesW(path);
     }
     if (attributes == INVALID_FILE_ATTRIBUTES) {
         DWORD error = GetLastError();
@@ -252,6 +390,8 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
     }
     if (attributes & FILE_ATTRIBUTE_DIRECTORY)
         return run_association(info, L"Folder", verb, path, parameters);
+    if (has_extension(path, L".lnk") && !_wcsicmp(verb, L"open"))
+        return run_shortcut(info, path, parameters);
 
     if (has_extension(path, L".exe") || has_extension(path, L".com")) {
         if (_wcsicmp(verb, L"open") && _wcsicmp(verb, L"runas"))

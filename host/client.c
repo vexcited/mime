@@ -744,8 +744,8 @@ static bool is_program(const char *path)
 }
 
 /*
- * programs start directly. anything else is opened the way the run box opens it: a program found on the path or
- * under App Paths, a document with its program, a shortcut, a url.
+ * programs start directly. anything else goes to openwith: an app by its id or name, or what the run box opens, a
+ * program found on the path or under App Paths, a document with its program, a shortcut, a url.
  */
 int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
 {
@@ -787,25 +787,17 @@ int mime_cmd_apps(const MimePaths *paths, int argc, char **argv)
 {
     if (argc == 0)
         return run_openwith(paths, "apps", false, nullptr, 0, nullptr);
-    if (strcmp(argv[0], "uninstall") == 0 && argc == 2)
-        return run_openwith(paths, "uninstall", false, nullptr, 1, argv + 1);
-    fprintf(stderr, "usage: mime apps\n       mime apps uninstall <id>\n");
+    if (argc == 1 && strcmp(argv[0], "--installed") == 0)
+        return run_openwith(paths, "installed", false, nullptr, 0, nullptr);
+    fprintf(stderr, "usage: mime apps [--installed]\n");
     return 2;
 }
 
-int mime_cmd_start(const MimePaths *paths, int argc, char **argv)
+int mime_cmd_uninstall(const MimePaths *paths, int argc, char **argv)
 {
-    if (argc == 1 && strcmp(argv[0], "menu") == 0)
-        return run_openwith(paths, "startmenu", false, nullptr, 0, nullptr);
-    bool wait = false;
-    if (argc > 0 && strcmp(argv[0], "--wait") == 0) {
-        wait = true;
-        argc--;
-        argv++;
-    }
-    if (argc < 1) {
-        fprintf(stderr, "usage: mime start menu\n       mime start [--wait] <id> [args...]\n");
+    if (argc != 1) {
+        fprintf(stderr, "usage: mime uninstall <id>\n");
         return 2;
     }
-    return run_openwith(paths, "start", wait, nullptr, argc, argv);
+    return run_openwith(paths, "uninstall", false, nullptr, 1, argv);
 }

@@ -1,17 +1,19 @@
 /*
  * openwith.exe: what the mime command asks of the machine.
  *
- *   open [--wait] <file> [arguments]   opens like the run box: programs, App Paths names, documents, shortcuts, urls
- *   apps                               lists the programs installed, as the installed apps settings show them
- *   uninstall <id>                     runs a program's uninstaller and waits for it
- *   startmenu                          lists the start menu shortcuts of the user
- *   start [--wait] <id> [arguments]    opens a start menu shortcut
+ *   open [--wait] <target> [arguments]   opens an app by its id or name, or anything the run box opens: programs,
+ *                                        App Paths names, documents, shortcuts, urls
+ *   apps                                 lists the apps, the start menu's shortcuts, as open takes them
+ *   installed                            lists the programs installed, as the installed apps settings show them
+ *   uninstall <id>                       runs the uninstaller of an installed program, or of the one an app belongs
+ *                                        to, and waits for it
  *
  * a console program opened here shares this console and its exit code becomes ours. a window program is left
  * running unless --wait is given. exit codes: 1 failure, 2 bad command line.
  */
 #include <mime/win32/shellapi.h>
 #include <mime/win32/shlobj.h>
+#include <mime/win32/shobjidl.h>
 #include <rtl.h>
 #include <stdarg.h>
 
@@ -166,8 +168,8 @@ static BOOL is_console_process(HANDLE process)
     return *(WORD *)(header + pe + 0x5C) == IMAGE_SUBSYSTEM_WINDOWS_CUI;
 }
 
-/* opens like the run box, then waits for console programs, or for any with wait. */
-static int shell_open(const WCHAR *file, const WCHAR *parameters, BOOL wait)
+/* opens like the run box, the error is left for the caller. */
+static BOOL shell_execute(const WCHAR *file, const WCHAR *parameters, HANDLE *process)
 {
     SHELLEXECUTEINFOW info = {sizeof(info)};
     info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
@@ -175,242 +177,37 @@ static int shell_open(const WCHAR *file, const WCHAR *parameters, BOOL wait)
     info.lpFile = file;
     info.lpParameters = parameters && parameters[0] ? parameters : nullptr;
     info.nShow = SW_SHOWNORMAL;
-    if (!ShellExecuteExW(&info)) {
-        WCHAR text[256];
-        err(L"openwith: cannot open '%ls': %ls\n", file, error_text(GetLastError(), text, RTL_NUMBER_OF(text)));
-        return EXIT_FAILED;
-    }
-    if (!info.hProcess)
+    if (!ShellExecuteExW(&info))
+        return FALSE;
+    *process = info.hProcess;
+    return TRUE;
+}
+
+/* waits for console programs, or for any with wait. */
+static int finish(HANDLE process, BOOL wait)
+{
+    if (!process)
         return 0;
     DWORD code = 0;
-    if (wait || is_console_process(info.hProcess)) {
-        WaitForSingleObject(info.hProcess, INFINITE);
-        GetExitCodeProcess(info.hProcess, &code);
+    if (wait || is_console_process(process)) {
+        WaitForSingleObject(process, INFINITE);
+        GetExitCodeProcess(process, &code);
     }
-    CloseHandle(info.hProcess);
+    CloseHandle(process);
     return (int)code;
 }
 
-static int command_open(int argc, WCHAR **argv)
+static int shell_open(const WCHAR *file, const WCHAR *parameters, BOOL wait)
 {
-    BOOL wait = FALSE;
-    if (argc && !wcscmp(argv[0], L"--wait")) {
-        wait = TRUE;
-        argc--;
-        argv++;
-    }
-    if (argc < 1) {
-        err(L"usage: openwith open [--wait] <file> [arguments]\n");
-        return EXIT_USAGE;
-    }
-    static WCHAR parameters[8192];
-    join_arguments(parameters, RTL_NUMBER_OF(parameters), argc - 1, argv + 1);
-    return shell_open(argv[0], parameters, wait);
-}
-
-/* ------------------------------------------------------------------ installed apps */
-
-typedef struct APP {
-    WCHAR Id[256];
-    WCHAR Name[256];
-    WCHAR Version[64];
-    WCHAR Publisher[256];
-    WCHAR Uninstall[1024];
-    BOOL Msi;
-} APP;
-
-static BOOL query_string(HKEY key, const WCHAR *name, WCHAR *out, DWORD chars)
-{
-    WCHAR raw[1024];
-    DWORD type, bytes = sizeof(raw) - sizeof(WCHAR);
-    out[0] = 0;
-    if (RegQueryValueExW(key, name, nullptr, &type, (BYTE *)raw, &bytes) ||
-        (type != REG_SZ && type != REG_EXPAND_SZ))
-        return FALSE;
-    raw[bytes / sizeof(WCHAR)] = 0;
-    if (type == REG_EXPAND_SZ) {
-        DWORD n = ExpandEnvironmentStringsW(raw, out, chars);
-        if (!n || n > chars)
-            out[0] = 0;
-    } else {
-        lstrcpynW(out, raw, (int)chars);
-    }
-    return out[0] != 0;
-}
-
-static DWORD query_dword(HKEY key, const WCHAR *name)
-{
-    DWORD value = 0, type, bytes = sizeof(value);
-    if (RegQueryValueExW(key, name, nullptr, &type, (BYTE *)&value, &bytes) || type != REG_DWORD)
-        return 0;
-    return value;
-}
-
-/* what the installed apps settings leave out: components, updates and entries nobody can remove. */
-static BOOL read_app(HKEY root, const WCHAR *id, APP *app)
-{
-    memset(app, 0, sizeof(*app));
-    lstrcpynW(app->Id, id, RTL_NUMBER_OF(app->Id));
-    if (!query_string(root, L"DisplayName", app->Name, RTL_NUMBER_OF(app->Name)))
-        return FALSE;
-    if (query_dword(root, L"SystemComponent") == 1)
-        return FALSE;
+    HANDLE process = nullptr;
+    if (shell_execute(file, parameters, &process))
+        return finish(process, wait);
     WCHAR text[256];
-    if (query_string(root, L"ParentKeyName", text, RTL_NUMBER_OF(text)))
-        return FALSE;
-    if (query_string(root, L"ReleaseType", text, RTL_NUMBER_OF(text)) &&
-        (!_wcsicmp(text, L"Update") || !_wcsicmp(text, L"Hotfix") || !_wcsicmp(text, L"Security Update")))
-        return FALSE;
-    query_string(root, L"DisplayVersion", app->Version, RTL_NUMBER_OF(app->Version));
-    query_string(root, L"Publisher", app->Publisher, RTL_NUMBER_OF(app->Publisher));
-    app->Msi = query_dword(root, L"WindowsInstaller") == 1;
-    query_string(root, L"UninstallString", app->Uninstall, RTL_NUMBER_OF(app->Uninstall));
-    return app->Msi || app->Uninstall[0];
+    err(L"openwith: cannot open '%ls': %ls\n", file, error_text(GetLastError(), text, RTL_NUMBER_OF(text)));
+    return EXIT_FAILED;
 }
 
-/* the machine's 64 and 32-bit registrations, then the user's; an id is listed once, first come. */
-static APP *list_apps(UINT *count)
-{
-    static const struct {
-        HKEY Root;
-        REGSAM View;
-    } places[] = {{HKEY_LOCAL_MACHINE, KEY_WOW64_64KEY}, {HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY}, {HKEY_CURRENT_USER, 0}};
-    APP *apps = nullptr;
-    UINT capacity = 0;
-    *count = 0;
-    for (UINT p = 0; p < RTL_NUMBER_OF(places); p++) {
-        HKEY uninstall;
-        if (RegOpenKeyExW(places[p].Root, UNINSTALL_KEY, 0, KEY_READ | places[p].View, &uninstall))
-            continue;
-        WCHAR id[256];
-        for (DWORD i = 0;; i++) {
-            DWORD chars = RTL_NUMBER_OF(id);
-            LSTATUS status = RegEnumKeyExW(uninstall, i, id, &chars, nullptr, nullptr, nullptr, nullptr);
-            if (status == ERROR_NO_MORE_ITEMS)
-                break;
-            if (status)
-                continue;
-            BOOL seen = FALSE;
-            for (UINT k = 0; k < *count && !seen; k++)
-                seen = !_wcsicmp(apps[k].Id, id);
-            HKEY key;
-            if (seen || RegOpenKeyExW(uninstall, id, 0, KEY_READ, &key))
-                continue;
-            APP *bigger = grow(apps, *count, &capacity, sizeof(APP));
-            if (bigger) {
-                apps = bigger;
-                if (read_app(key, id, &apps[*count]))
-                    (*count)++;
-            }
-            RegCloseKey(key);
-        }
-        RegCloseKey(uninstall);
-    }
-    /* by name, as the settings sort them. */
-    for (UINT i = 1; i < *count; i++) {
-        APP item = apps[i];
-        UINT j = i;
-        for (; j && _wcsicmp(apps[j - 1].Name, item.Name) > 0; j--)
-            apps[j] = apps[j - 1];
-        apps[j] = item;
-    }
-    return apps;
-}
-
-static int command_apps(int argc, WCHAR **argv)
-{
-    if (argc) {
-        err(L"usage: openwith apps\n");
-        return EXIT_USAGE;
-    }
-    UINT count;
-    APP *apps = list_apps(&count);
-    if (!count) {
-        out(L"No apps are installed.\n");
-        return 0;
-    }
-    SIZE_T id = 2, name = 4, version = 7;
-    for (UINT i = 0; i < count; i++) {
-        id = MAX(id, wcslen(apps[i].Id));
-        name = MAX(name, wcslen(apps[i].Name));
-        version = MAX(version, wcslen(apps[i].Version));
-    }
-    column(L"ID", id, FALSE);
-    column(L"NAME", name, FALSE);
-    column(L"VERSION", version, FALSE);
-    column(L"PUBLISHER", 0, TRUE);
-    for (UINT i = 0; i < count; i++) {
-        column(apps[i].Id, id, FALSE);
-        column(apps[i].Name, name, FALSE);
-        column(apps[i].Version, version, FALSE);
-        column(apps[i].Publisher, 0, TRUE);
-    }
-    HeapFree(GetProcessHeap(), 0, apps);
-    return 0;
-}
-
-typedef DWORD(WINAPI *LAUNCH_ELEVATED)(LPCWSTR application, LPCWSTR command, LPCWSTR directory, DWORD flags,
-                                       const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *kind);
-
-/* like the settings, an uninstaller that needs administrator rights gets them through the broker. */
-static BOOL start_command(WCHAR *command, PROCESS_INFORMATION *process)
-{
-    STARTUPINFOW startup = {sizeof(startup)};
-    if (CreateProcessW(nullptr, command, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, process))
-        return TRUE;
-    if (GetLastError() != ERROR_ELEVATION_REQUIRED)
-        return FALSE;
-    HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
-    LAUNCH_ELEVATED launch = advapi32 ? (LAUNCH_ELEVATED)(void *)GetProcAddress(advapi32, "LaunchElevated") : nullptr;
-    if (!launch)
-        return FALSE;
-    DWORD error = launch(nullptr, command, nullptr, 0, &startup, process, nullptr);
-    SetLastError(error);
-    return !error;
-}
-
-static int command_uninstall(int argc, WCHAR **argv)
-{
-    if (argc != 1) {
-        err(L"usage: openwith uninstall <id>\n");
-        return EXIT_USAGE;
-    }
-    UINT count;
-    APP *apps = list_apps(&count);
-    APP *app = nullptr;
-    for (UINT i = 0; i < count && !app; i++)
-        if (!_wcsicmp(apps[i].Id, argv[0]))
-            app = &apps[i];
-    if (!app) {
-        err(L"openwith: no installed app has the id '%ls', see `mime apps`\n", argv[0]);
-        HeapFree(GetProcessHeap(), 0, apps);
-        return EXIT_FAILED;
-    }
-    /* windows installer products are removed by their product code. */
-    static WCHAR command[2048];
-    if (app->Msi)
-        _snwprintf(command, RTL_NUMBER_OF(command), L"msiexec.exe /x %ls", app->Id);
-    else
-        lstrcpynW(command, app->Uninstall, RTL_NUMBER_OF(command));
-    out(L"Uninstalling %ls...\n", app->Name);
-    PROCESS_INFORMATION process;
-    if (!start_command(command, &process)) {
-        WCHAR text[256];
-        err(L"openwith: cannot run the uninstaller '%ls': %ls\n", command,
-            error_text(GetLastError(), text, RTL_NUMBER_OF(text)));
-        HeapFree(GetProcessHeap(), 0, apps);
-        return EXIT_FAILED;
-    }
-    CloseHandle(process.hThread);
-    WaitForSingleObject(process.hProcess, INFINITE);
-    DWORD code = 0;
-    GetExitCodeProcess(process.hProcess, &code);
-    CloseHandle(process.hProcess);
-    HeapFree(GetProcessHeap(), 0, apps);
-    return (int)code;
-}
-
-/* ------------------------------------------------------------------ start menu */
+/* ------------------------------------------------------------------ apps */
 
 typedef struct ENTRY {
     WCHAR Id[MAX_PATH];
@@ -493,6 +290,7 @@ static void scan_folder(MENU *menu, const WCHAR *root, const WCHAR *relative)
     FindClose(find);
 }
 
+/* the apps are the start menu's shortcuts, by id. */
 static void list_menu(MENU *menu)
 {
     static const int folders[] = {CSIDL_PROGRAMS, CSIDL_COMMON_PROGRAMS};
@@ -511,16 +309,53 @@ static void list_menu(MENU *menu)
     }
 }
 
-static int command_startmenu(int argc, WCHAR **argv)
+static ENTRY *find_by_id(MENU *menu, const WCHAR *id)
+{
+    for (UINT i = 0; i < menu->Count; i++)
+        if (!_wcsicmp(menu->Entries[i].Id, id))
+            return &menu->Entries[i];
+    return nullptr;
+}
+
+static BOOL has_name(const ENTRY *entry, const WCHAR *name)
+{
+    WCHAR wanted[MAX_PATH], own[MAX_PATH];
+    make_id(name, wanted, RTL_NUMBER_OF(wanted));
+    make_id(entry->Name, own, RTL_NUMBER_OF(own));
+    return wanted[0] && !_wcsicmp(own, wanted);
+}
+
+/* an app by its own name, matches counts the apps that have it. */
+static ENTRY *find_by_name(MENU *menu, const WCHAR *name, UINT *matches)
+{
+    ENTRY *found = nullptr;
+    *matches = 0;
+    for (UINT i = 0; i < menu->Count; i++) {
+        if (has_name(&menu->Entries[i], name)) {
+            found = &menu->Entries[i];
+            (*matches)++;
+        }
+    }
+    return found;
+}
+
+static void list_ids_named(MENU *menu, const WCHAR *name)
+{
+    for (UINT i = 0; i < menu->Count; i++)
+        if (has_name(&menu->Entries[i], name))
+            err(L"  %ls\n", menu->Entries[i].Id);
+}
+
+static int command_apps(int argc, WCHAR **argv)
 {
     if (argc) {
-        err(L"usage: openwith startmenu\n");
+        err(L"usage: openwith apps\n");
         return EXIT_USAGE;
     }
     MENU menu;
     list_menu(&menu);
     if (!menu.Count) {
-        out(L"The start menu is empty.\n");
+        out(L"No apps are in the start menu.\n");
         return 0;
     }
     SIZE_T id = 2;
@@ -536,8 +371,11 @@ static int command_startmenu(int argc, WCHAR **argv)
     return 0;
 }
 
-/* an entry by its id, else by its own name when only one has it. */
-static int command_start(int argc, WCHAR **argv)
+/*
+ * a path or a url goes to the run box. a bare name is an app id first, then what the run box finds under App Paths
+ * and on the path, then an app's own name.
+ */
+static int command_open(int argc, WCHAR **argv)
 {
     BOOL wait = FALSE;
     if (argc && !wcscmp(argv[0], L"--wait")) {
@@ -546,49 +384,374 @@ static int command_start(int argc, WCHAR **argv)
         argv++;
     }
     if (argc < 1) {
-        err(L"usage: openwith start [--wait] <id> [arguments]\n");
+        err(L"usage: openwith open [--wait] <target> [arguments]\n");
         return EXIT_USAGE;
     }
+    const WCHAR *target = argv[0];
+    static WCHAR parameters[8192];
+    join_arguments(parameters, RTL_NUMBER_OF(parameters), argc - 1, argv + 1);
+    if (wcschr(target, L'\\') || wcschr(target, L':'))
+        return shell_open(target, parameters, wait);
     MENU menu;
     list_menu(&menu);
-    ENTRY *found = nullptr;
-    for (UINT i = 0; i < menu.Count && !found; i++)
-        if (!_wcsicmp(menu.Entries[i].Id, argv[0]))
-            found = &menu.Entries[i];
+    int result = EXIT_FAILED;
+    HANDLE process = nullptr;
     UINT matches = 0;
-    if (!found) {
-        WCHAR wanted[MAX_PATH];
-        make_id(argv[0], wanted, RTL_NUMBER_OF(wanted));
-        for (UINT i = 0; i < menu.Count; i++) {
-            WCHAR name[MAX_PATH];
-            make_id(menu.Entries[i].Name, name, RTL_NUMBER_OF(name));
-            if (!_wcsicmp(name, wanted)) {
-                found = &menu.Entries[i];
-                matches++;
-            }
-        }
-    }
-    int result;
-    if (matches > 1) {
-        err(L"openwith: '%ls' names several start menu entries, use one of their ids:\n", argv[0]);
-        WCHAR wanted[MAX_PATH];
-        make_id(argv[0], wanted, RTL_NUMBER_OF(wanted));
-        for (UINT i = 0; i < menu.Count; i++) {
-            WCHAR name[MAX_PATH];
-            make_id(menu.Entries[i].Name, name, RTL_NUMBER_OF(name));
-            if (!_wcsicmp(name, wanted))
-                err(L"  %ls\n", menu.Entries[i].Id);
-        }
-        result = EXIT_FAILED;
-    } else if (!found) {
-        err(L"openwith: no start menu entry has the id '%ls', see `mime start menu`\n", argv[0]);
-        result = EXIT_FAILED;
+    ENTRY *entry = find_by_id(&menu, target);
+    if (entry) {
+        result = shell_open(entry->Path, parameters, wait);
+    } else if (shell_execute(target, parameters, &process)) {
+        result = finish(process, wait);
+    } else if (GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND) {
+        WCHAR text[256];
+        err(L"openwith: cannot open '%ls': %ls\n", target, error_text(GetLastError(), text, RTL_NUMBER_OF(text)));
+    } else if ((entry = find_by_name(&menu, target, &matches)) && matches == 1) {
+        result = shell_open(entry->Path, parameters, wait);
+    } else if (matches > 1) {
+        err(L"openwith: '%ls' names several apps, use one of their ids:\n", target);
+        list_ids_named(&menu, target);
     } else {
-        static WCHAR parameters[8192];
-        join_arguments(parameters, RTL_NUMBER_OF(parameters), argc - 1, argv + 1);
-        result = shell_open(found->Path, parameters, wait);
+        err(L"openwith: no app, program or file is named '%ls', see `mime apps`\n", target);
     }
     HeapFree(GetProcessHeap(), 0, menu.Entries);
+    return result;
+}
+
+/* ------------------------------------------------------------------ installed programs */
+
+typedef struct PROGRAM {
+    WCHAR Id[256];
+    WCHAR Name[256];
+    WCHAR Version[64];
+    WCHAR Publisher[256];
+    WCHAR Uninstall[1024];
+    WCHAR Location[MAX_PATH];
+    WCHAR Icon[MAX_PATH];
+    BOOL Msi;
+} PROGRAM;
+
+static BOOL query_string(HKEY key, const WCHAR *name, WCHAR *out, DWORD chars)
+{
+    WCHAR raw[1024];
+    DWORD type, bytes = sizeof(raw) - sizeof(WCHAR);
+    out[0] = 0;
+    if (RegQueryValueExW(key, name, nullptr, &type, (BYTE *)raw, &bytes) ||
+        (type != REG_SZ && type != REG_EXPAND_SZ))
+        return FALSE;
+    raw[bytes / sizeof(WCHAR)] = 0;
+    if (type == REG_EXPAND_SZ) {
+        DWORD n = ExpandEnvironmentStringsW(raw, out, chars);
+        if (!n || n > chars)
+            out[0] = 0;
+    } else {
+        lstrcpynW(out, raw, (int)chars);
+    }
+    return out[0] != 0;
+}
+
+static DWORD query_dword(HKEY key, const WCHAR *name)
+{
+    DWORD value = 0, type, bytes = sizeof(value);
+    if (RegQueryValueExW(key, name, nullptr, &type, (BYTE *)&value, &bytes) || type != REG_DWORD)
+        return 0;
+    return value;
+}
+
+/* what the installed apps settings leave out: components, updates and entries nobody can remove. */
+static BOOL read_program(HKEY root, const WCHAR *id, PROGRAM *program)
+{
+    memset(program, 0, sizeof(*program));
+    lstrcpynW(program->Id, id, RTL_NUMBER_OF(program->Id));
+    if (!query_string(root, L"DisplayName", program->Name, RTL_NUMBER_OF(program->Name)))
+        return FALSE;
+    if (query_dword(root, L"SystemComponent") == 1)
+        return FALSE;
+    WCHAR text[256];
+    if (query_string(root, L"ParentKeyName", text, RTL_NUMBER_OF(text)))
+        return FALSE;
+    if (query_string(root, L"ReleaseType", text, RTL_NUMBER_OF(text)) &&
+        (!_wcsicmp(text, L"Update") || !_wcsicmp(text, L"Hotfix") || !_wcsicmp(text, L"Security Update")))
+        return FALSE;
+    query_string(root, L"DisplayVersion", program->Version, RTL_NUMBER_OF(program->Version));
+    query_string(root, L"Publisher", program->Publisher, RTL_NUMBER_OF(program->Publisher));
+    program->Msi = query_dword(root, L"WindowsInstaller") == 1;
+    query_string(root, L"UninstallString", program->Uninstall, RTL_NUMBER_OF(program->Uninstall));
+    query_string(root, L"InstallLocation", program->Location, RTL_NUMBER_OF(program->Location));
+    query_string(root, L"DisplayIcon", program->Icon, RTL_NUMBER_OF(program->Icon));
+    return program->Msi || program->Uninstall[0];
+}
+
+/* the machine's 64 and 32-bit registrations, then the user's; an id is listed once, first come. */
+static PROGRAM *list_programs(UINT *count)
+{
+    static const struct {
+        HKEY Root;
+        REGSAM View;
+    } places[] = {{HKEY_LOCAL_MACHINE, KEY_WOW64_64KEY}, {HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY}, {HKEY_CURRENT_USER, 0}};
+    PROGRAM *programs = nullptr;
+    UINT capacity = 0;
+    *count = 0;
+    for (UINT p = 0; p < RTL_NUMBER_OF(places); p++) {
+        HKEY uninstall;
+        if (RegOpenKeyExW(places[p].Root, UNINSTALL_KEY, 0, KEY_READ | places[p].View, &uninstall))
+            continue;
+        WCHAR id[256];
+        for (DWORD i = 0;; i++) {
+            DWORD chars = RTL_NUMBER_OF(id);
+            LSTATUS status = RegEnumKeyExW(uninstall, i, id, &chars, nullptr, nullptr, nullptr, nullptr);
+            if (status == ERROR_NO_MORE_ITEMS)
+                break;
+            if (status)
+                continue;
+            BOOL seen = FALSE;
+            for (UINT k = 0; k < *count && !seen; k++)
+                seen = !_wcsicmp(programs[k].Id, id);
+            HKEY key;
+            if (seen || RegOpenKeyExW(uninstall, id, 0, KEY_READ, &key))
+                continue;
+            PROGRAM *bigger = grow(programs, *count, &capacity, sizeof(PROGRAM));
+            if (bigger) {
+                programs = bigger;
+                if (read_program(key, id, &programs[*count]))
+                    (*count)++;
+            }
+            RegCloseKey(key);
+        }
+        RegCloseKey(uninstall);
+    }
+    /* by name, as the settings sort them. */
+    for (UINT i = 1; i < *count; i++) {
+        PROGRAM item = programs[i];
+        UINT j = i;
+        for (; j && _wcsicmp(programs[j - 1].Name, item.Name) > 0; j--)
+            programs[j] = programs[j - 1];
+        programs[j] = item;
+    }
+    return programs;
+}
+
+static int command_installed(int argc, WCHAR **argv)
+{
+    if (argc) {
+        err(L"usage: openwith installed\n");
+        return EXIT_USAGE;
+    }
+    UINT count;
+    PROGRAM *programs = list_programs(&count);
+    if (!count) {
+        out(L"No programs are installed.\n");
+        return 0;
+    }
+    SIZE_T id = 2, name = 4, version = 7;
+    for (UINT i = 0; i < count; i++) {
+        id = MAX(id, wcslen(programs[i].Id));
+        name = MAX(name, wcslen(programs[i].Name));
+        version = MAX(version, wcslen(programs[i].Version));
+    }
+    column(L"ID", id, FALSE);
+    column(L"NAME", name, FALSE);
+    column(L"VERSION", version, FALSE);
+    column(L"PUBLISHER", 0, TRUE);
+    for (UINT i = 0; i < count; i++) {
+        column(programs[i].Id, id, FALSE);
+        column(programs[i].Name, name, FALSE);
+        column(programs[i].Version, version, FALSE);
+        column(programs[i].Publisher, 0, TRUE);
+    }
+    HeapFree(GetProcessHeap(), 0, programs);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ uninstall */
+
+/* whether path is folder or inside it. */
+static BOOL is_within(const WCHAR *path, const WCHAR *folder)
+{
+    SIZE_T n = wcslen(folder);
+    while (n && folder[n - 1] == L'\\')
+        n--;
+    return n && !_wcsnicmp(path, folder, n) && (!path[n] || path[n] == L'\\');
+}
+
+/* a folder one program owns: not a drive's root, not inside windows, not a common folder or one above it. */
+static BOOL is_owned(const WCHAR *folder)
+{
+    static const int common[] = {CSIDL_PROGRAM_FILES, CSIDL_PROGRAM_FILESX86, CSIDL_LOCAL_APPDATA, CSIDL_APPDATA,
+                                 CSIDL_COMMON_APPDATA};
+    if (wcslen(folder) <= 3 || folder[1] != L':')
+        return FALSE;
+    WCHAR path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_WINDOWS, nullptr, SHGFP_TYPE_CURRENT, path)) &&
+        is_within(folder, path))
+        return FALSE;
+    for (UINT i = 0; i < RTL_NUMBER_OF(common); i++)
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, common[i], nullptr, SHGFP_TYPE_CURRENT, path)) &&
+            is_within(path, folder))
+            return FALSE;
+    return TRUE;
+}
+
+/* the folder of a command's program: "C:\App\uninst.exe" /S, C:\App\uninst.exe /S and C:\App\app.exe,0 give C:\App. */
+static void program_folder(const WCHAR *command, WCHAR *folder, SIZE_T chars)
+{
+    const WCHAR *p = command;
+    WCHAR end = L',';
+    if (*p == L'"') {
+        p++;
+        end = L'"';
+    }
+    SIZE_T n = 0;
+    for (; *p && *p != end && n + 1 < chars; p++) {
+        folder[n++] = *p;
+        if (n >= 4 && !_wcsnicmp(folder + n - 4, L".exe", 4))
+            break;
+    }
+    folder[n] = 0;
+    WCHAR *slash = wcsrchr(folder, L'\\');
+    if (slash)
+        *slash = 0;
+    else
+        folder[0] = 0;
+}
+
+/* the length of the most precise folder of a program that holds path, 0 when none does. */
+static SIZE_T owner_length(const PROGRAM *program, const WCHAR *path)
+{
+    WCHAR folders[3][MAX_PATH];
+    lstrcpynW(folders[0], program->Location, MAX_PATH);
+    program_folder(program->Icon, folders[1], MAX_PATH);
+    program_folder(program->Uninstall, folders[2], MAX_PATH);
+    SIZE_T best = 0;
+    for (UINT i = 0; i < RTL_NUMBER_OF(folders); i++)
+        if (is_owned(folders[i]) && is_within(path, folders[i]))
+            best = MAX(best, wcslen(folders[i]));
+    return best;
+}
+
+/* the program a shortcut points into, the error is told here. */
+static PROGRAM *find_owner(PROGRAM *programs, UINT count, const ENTRY *entry)
+{
+    WCHAR target[MAX_PATH] = {0};
+    IShellLinkW *link = nullptr;
+    IPersistFile *file = nullptr;
+    BOOL com = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
+    if (SUCCEEDED(CoCreateInstance(&CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, (void **)&link)) &&
+        SUCCEEDED(link->lpVtbl->QueryInterface(link, &IID_IPersistFile, (void **)&file)) &&
+        SUCCEEDED(file->lpVtbl->Load(file, entry->Path, STGM_READ)))
+        link->lpVtbl->GetPath(link, target, MAX_PATH, nullptr, 0);
+    if (file)
+        file->lpVtbl->Release(file);
+    if (link)
+        link->lpVtbl->Release(link);
+    if (com)
+        CoUninitialize();
+    if (!target[0]) {
+        err(L"openwith: the app '%ls' does not point to a program, see `mime apps --installed`\n", entry->Id);
+        return nullptr;
+    }
+    PROGRAM *owner = nullptr;
+    SIZE_T best = 0;
+    UINT ties = 0;
+    for (UINT i = 0; i < count; i++) {
+        SIZE_T length = owner_length(&programs[i], target);
+        if (length && length == best)
+            ties++;
+        if (length > best) {
+            best = length;
+            owner = &programs[i];
+            ties = 0;
+        }
+    }
+    if (!owner) {
+        err(L"openwith: no installed program owns the app '%ls', see `mime apps --installed`\n", entry->Id);
+        return nullptr;
+    }
+    if (ties) {
+        err(L"openwith: several installed programs own the app '%ls', use one of their ids:\n", entry->Id);
+        for (UINT i = 0; i < count; i++)
+            if (owner_length(&programs[i], target) == best)
+                err(L"  %ls\n", programs[i].Id);
+        return nullptr;
+    }
+    return owner;
+}
+
+typedef DWORD(WINAPI *LAUNCH_ELEVATED)(LPCWSTR application, LPCWSTR command, LPCWSTR directory, DWORD flags,
+                                       const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *kind);
+
+/* like the settings, an uninstaller that needs administrator rights gets them through the broker. */
+static BOOL start_command(WCHAR *command, PROCESS_INFORMATION *process)
+{
+    STARTUPINFOW startup = {sizeof(startup)};
+    if (CreateProcessW(nullptr, command, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, process))
+        return TRUE;
+    if (GetLastError() != ERROR_ELEVATION_REQUIRED)
+        return FALSE;
+    HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
+    LAUNCH_ELEVATED launch = advapi32 ? (LAUNCH_ELEVATED)(void *)GetProcAddress(advapi32, "LaunchElevated") : nullptr;
+    if (!launch)
+        return FALSE;
+    DWORD error = launch(nullptr, command, nullptr, 0, &startup, process, nullptr);
+    SetLastError(error);
+    return !error;
+}
+
+static int run_uninstaller(const PROGRAM *program)
+{
+    /* windows installer products are removed by their product code. */
+    static WCHAR command[2048];
+    if (program->Msi)
+        _snwprintf(command, RTL_NUMBER_OF(command), L"msiexec.exe /x %ls", program->Id);
+    else
+        lstrcpynW(command, program->Uninstall, RTL_NUMBER_OF(command));
+    out(L"Uninstalling %ls...\n", program->Name);
+    PROCESS_INFORMATION process;
+    if (!start_command(command, &process)) {
+        WCHAR text[256];
+        err(L"openwith: cannot run the uninstaller '%ls': %ls\n", command,
+            error_text(GetLastError(), text, RTL_NUMBER_OF(text)));
+        return EXIT_FAILED;
+    }
+    CloseHandle(process.hThread);
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD code = 0;
+    GetExitCodeProcess(process.hProcess, &code);
+    CloseHandle(process.hProcess);
+    return (int)code;
+}
+
+/* an installed program by its id, else the program an app's shortcut points into. */
+static int command_uninstall(int argc, WCHAR **argv)
+{
+    if (argc != 1) {
+        err(L"usage: openwith uninstall <id>\n");
+        return EXIT_USAGE;
+    }
+    UINT count;
+    PROGRAM *programs = list_programs(&count);
+    PROGRAM *program = nullptr;
+    for (UINT i = 0; i < count && !program; i++)
+        if (!_wcsicmp(programs[i].Id, argv[0]))
+            program = &programs[i];
+    if (!program) {
+        MENU menu;
+        list_menu(&menu);
+        UINT matches = 1;
+        ENTRY *entry = find_by_id(&menu, argv[0]);
+        if (!entry)
+            entry = find_by_name(&menu, argv[0], &matches);
+        if (matches > 1) {
+            err(L"openwith: '%ls' names several apps, use one of their ids:\n", argv[0]);
+            list_ids_named(&menu, argv[0]);
+        } else if (!entry) {
+            err(L"openwith: no installed program or app has the id '%ls', see `mime apps --installed`\n", argv[0]);
+        } else {
+            program = find_owner(programs, count, entry);
+        }
+        HeapFree(GetProcessHeap(), 0, menu.Entries);
+    }
+    int result = program ? run_uninstaller(program) : EXIT_FAILED;
+    HeapFree(GetProcessHeap(), 0, programs);
     return result;
 }
 
@@ -600,17 +763,15 @@ void entry(void)
     WCHAR **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     int code = EXIT_USAGE;
     if (!argv || argc < 2)
-        err(L"usage: openwith open|apps|uninstall|startmenu|start ...\n");
+        err(L"usage: openwith open|apps|installed|uninstall ...\n");
     else if (!wcscmp(argv[1], L"open"))
         code = command_open(argc - 2, argv + 2);
     else if (!wcscmp(argv[1], L"apps"))
         code = command_apps(argc - 2, argv + 2);
+    else if (!wcscmp(argv[1], L"installed"))
+        code = command_installed(argc - 2, argv + 2);
     else if (!wcscmp(argv[1], L"uninstall"))
         code = command_uninstall(argc - 2, argv + 2);
-    else if (!wcscmp(argv[1], L"startmenu"))
-        code = command_startmenu(argc - 2, argv + 2);
-    else if (!wcscmp(argv[1], L"start"))
-        code = command_start(argc - 2, argv + 2);
     else
         err(L"openwith: unknown command '%ls'\n", argv[1]);
     ExitProcess((UINT)code);

@@ -7,6 +7,9 @@ Mime is at an early stage, you should build from source for now.
 ```sh
 mime setup ~/windows[_arm64].iso
 mime run ~/program.exe
+mime run notepad          # anything the windows run box opens
+mime apps                 # the start menu's apps, `mime run <id>` opens one
+mime uninstall <id>       # an app's id, or a program's from `mime apps --installed`
 mime down
 ```
 

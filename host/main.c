@@ -11,8 +11,13 @@ static void usage(void)
     printf("usage:\n");
     printf("  mime setup [windows.iso] [--image N] [--locale NAME]   import assets from a windows iso\n");
     printf("  mime up                                start the machine\n");
-    printf("  mime run [--wait] <program.exe> [args] run a program, host or C:\\ paths; --wait waits for\n");
-    printf("                                         a gui program instead of returning like cmd.exe\n");
+    printf("  mime run [--wait] <target> [args]      open a program, host or C:\\ paths, an app by its id or name, or\n");
+    printf("                                         anything the windows run box opens: a name like notepad, a\n");
+    printf("                                         document, a shortcut, a url; --wait waits for a gui program\n");
+    printf("                                         instead of returning like cmd.exe\n");
+    printf("  mime apps                              list the apps mime run opens by id, the start menu's entries\n");
+    printf("  mime apps --installed                  list the installed programs\n");
+    printf("  mime uninstall <id>                    run the uninstaller of an installed program, or of an app\n");
     printf("  mime down [--force] [--timeout secs]   shut the machine down, programs get to close first; --force\n");
     printf("                                         ends them all at once\n");
     printf("  mime status                            show machine state\n");
@@ -45,6 +50,10 @@ int main(int argc, char **argv)
         return mime_cmd_up(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "run") == 0)
         return mime_cmd_run(&paths, argc - 2, argv + 2);
+    if (strcmp(cmd, "apps") == 0)
+        return mime_cmd_apps(&paths, argc - 2, argv + 2);
+    if (strcmp(cmd, "uninstall") == 0)
+        return mime_cmd_uninstall(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "down") == 0)
         return mime_cmd_down(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "status") == 0)

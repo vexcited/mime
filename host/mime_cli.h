@@ -8,6 +8,8 @@ int mime_cmd_up(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_run(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_down(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_status(const MimePaths *paths, int argc, char **argv);
+int mime_cmd_apps(const MimePaths *paths, int argc, char **argv);
+int mime_cmd_uninstall(const MimePaths *paths, int argc, char **argv);
 
 /* entry point of the background machine process, see instance.h. */
 int mime_vmm_main(const MimePaths *paths, int lock_fd);
