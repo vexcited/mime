@@ -403,6 +403,21 @@ void KiSystemService(PKTRAP_FRAME frame)
                                     (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, text);
                 }
             }
+#ifdef __x86_64__
+            /* what a raise is for: the record, and where the context says it is. */
+            if (!strcmp(service_name(table, index), "NtRaiseException")) {
+                EXCEPTION_RECORD raised;
+                CONTEXT raised_context;
+                if (NT_SUCCESS(KiCopyFromUser(&raised, (PVOID)args[0], sizeof(raised))) &&
+                    NT_SUCCESS(KiCopyFromUser(&raised_context, (PVOID)args[1], offsetof(CONTEXT, Rip) + 8)))
+                    KiLogPrintf("svc %u.%u   code %08x flags %x at %llx, %u parameters %llx %llx, context rip %llx rsp %llx",
+                                (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
+                                (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, (ULONG)raised.ExceptionCode,
+                                raised.ExceptionFlags, (ULONG64)(ULONG_PTR)raised.ExceptionAddress,
+                                raised.NumberParameters, (ULONG64)raised.ExceptionInformation[0],
+                                (ULONG64)raised.ExceptionInformation[1], raised_context.Rip, raised_context.Rsp);
+            }
+#endif
             if (KiTraceStackService[0] && !strcmp(service_name(table, index), KiTraceStackService))
                 KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
         }

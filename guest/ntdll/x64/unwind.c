@@ -585,7 +585,17 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
             if (dc.EstablisherFrame > nested_frame)
                 nested_frame = dc.EstablisherFrame;
             break;
+        case ExceptionCollidedUnwind:
+            /*
+             * the handler replaced the context of the frame in the dispatcher context, as the runtime of the .NET
+             * Framework does for the stubs it puts between a fault and the code that faulted. The frame is
+             * dispatched again from that context, whose function has handlers of its own.
+             */
+            c = frame_context;
+            break;
         default: {
+            DbgPrint("ntdll: the handler %p of frame %p returned %d for exception %08x\n", (PVOID)handler,
+                     (PVOID)dc.EstablisherFrame, (int)r, (ULONG)record->ExceptionCode);
             EXCEPTION_RECORD invalid = {};
             invalid.ExceptionCode = STATUS_INVALID_DISPOSITION;
             invalid.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
@@ -679,8 +689,12 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
             EXCEPTION_DISPOSITION r = handler(record, (PVOID)dc.EstablisherFrame, &c, &dc);
             record->ExceptionFlags &= ~(EXCEPTION_COLLIDED_UNWIND | EXCEPTION_TARGET_UNWIND);
             if (r == ExceptionCollidedUnwind) {
-                /* another unwind went through this frame, continue from where it stopped. */
+                /*
+                 * the handler left the context of the frame in the dispatcher context, which is c, changed. The
+                 * frame is unwound again from that context, which the handlers of its function are told of.
+                 */
                 record->ExceptionFlags |= EXCEPTION_COLLIDED_UNWIND;
+                continue;
             } else if (r != ExceptionContinueSearch) {
                 RtlRaiseStatus(STATUS_INVALID_DISPOSITION);
             }

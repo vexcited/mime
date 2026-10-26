@@ -15,7 +15,11 @@ void KbRaiseExceptionWithContext(DWORD code, DWORD flags, DWORD count, const ULO
     record.ExceptionCode = (NTSTATUS)code;
     record.ExceptionFlags = flags & EXCEPTION_NONCONTINUABLE;
     record.ExceptionRecord = nullptr;
+#if defined(__x86_64__)
+    record.ExceptionAddress = (PVOID)context->Rip;
+#else
     record.ExceptionAddress = (PVOID)RaiseException;
+#endif
     if (arguments && count) {
         if (count > EXCEPTION_MAXIMUM_PARAMETERS)
             count = EXCEPTION_MAXIMUM_PARAMETERS;

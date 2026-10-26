@@ -138,6 +138,7 @@ EXPORTS
     DrawMenuBar=_DrawMenuBar@4
     DrawStateW=_DrawStateW@40
     DrawTextA=_DrawTextA@20
+    DrawTextExA=_DrawTextExA@24
     DrawTextExW=_DrawTextExW@24
     DrawTextW=_DrawTextW@20
     EmptyClipboard=_EmptyClipboard@0
@@ -212,6 +213,7 @@ EXPORTS
     GetCursor=_GetCursor@0
     GetCursorInfo=_GetCursorInfo@4
     GetCursorPos=_GetCursorPos@4
+    GetPhysicalCursorPos=_GetPhysicalCursorPos@4
     GetDC=_GetDC@4
     GetDCEx=_GetDCEx@12
     GetDesktopWindow=_GetDesktopWindow@0
@@ -591,6 +593,7 @@ EXPORTS
     VkKeyScanExA=_VkKeyScanExA@8
     VkKeyScanExW=_VkKeyScanExW@8
     VkKeyScanW=_VkKeyScanW@4
+    OemKeyScan=_OemKeyScan@4
     WaitForInputIdle=_WaitForInputIdle@8
     WaitMessage=_WaitMessage@0
     WinHelpW=_WinHelpW@16

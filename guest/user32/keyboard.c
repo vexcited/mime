@@ -342,6 +342,22 @@ WINUSERAPI SHORT WINAPI VkKeyScanW(WCHAR ch)
     return VkKeyScanExW(ch, US_LAYOUT);
 }
 
+WINUSERAPI BOOL WINAPI OemToCharBuffW(LPCSTR source, LPWSTR destination, DWORD count);
+
+/* the scan code and the shift state of a character of the OEM code page, the other way round of VkKeyScan. */
+WINUSERAPI DWORD WINAPI OemKeyScan(WORD oem)
+{
+    CHAR oem_char = (CHAR)(oem & 0xFF);
+    WCHAR wide;
+    if (!OemToCharBuffW(&oem_char, &wide, 1))
+        return 0xFFFFFFFF;
+    SHORT scan = VkKeyScanW(wide);
+    if (scan == -1)
+        return 0xFFFFFFFF;
+    UINT code = MapVirtualKeyW(scan & 0xFF, MAPVK_VK_TO_VSC);
+    return ((DWORD)((scan >> 8) & 0xFF) << 16) | code;
+}
+
 WINUSERAPI int WINAPI GetKeyboardLayoutList(int count, HKL *list)
 {
     if (count <= 0)

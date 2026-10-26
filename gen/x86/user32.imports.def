@@ -138,6 +138,7 @@ EXPORTS
     DrawMenuBar@4
     DrawStateW@40
     DrawTextA@20
+    DrawTextExA@24
     DrawTextExW@24
     DrawTextW@20
     EmptyClipboard@0
@@ -212,6 +213,7 @@ EXPORTS
     GetCursor@0
     GetCursorInfo@4
     GetCursorPos@4
+    GetPhysicalCursorPos@4
     GetDC@4
     GetDCEx@12
     GetDesktopWindow@0
@@ -591,6 +593,7 @@ EXPORTS
     VkKeyScanExA@8
     VkKeyScanExW@8
     VkKeyScanW@4
+    OemKeyScan@4
     WaitForInputIdle@8
     WaitMessage@0
     WinHelpW@16

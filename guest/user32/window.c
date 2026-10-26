@@ -947,6 +947,12 @@ WINUSERAPI BOOL WINAPI GetCursorPos(LPPOINT point)
     return NtUserGetCursorPos(point);
 }
 
+/* the cursor in physical pixels, which are the logical ones while a process is not scaled by the system. */
+WINUSERAPI BOOL WINAPI GetPhysicalCursorPos(LPPOINT point)
+{
+    return GetCursorPos(point);
+}
+
 WINUSERAPI BOOL WINAPI SetCursorPos(int x, int y)
 {
     return (BOOL)NtUserCallTwoParam((ULONG_PTR)x, (ULONG_PTR)y, MIME_TWOPARAM_SETCURSORPOS);

@@ -907,6 +907,17 @@ WINUSERAPI int WINAPI DrawTextA(HDC dc, LPCSTR text, int count, LPRECT rect, UIN
     return r;
 }
 
+WINUSERAPI int WINAPI DrawTextExA(HDC dc, LPSTR text, int count, LPRECT rect, UINT format, LPDRAWTEXTPARAMS params)
+{
+    int n;
+    LPWSTR w = UserAtoWn(text, count, &n);
+    if (!w)
+        return 0;
+    int r = DrawTextExW(dc, w, n, rect, format & ~DT_MODIFYSTRING, params);
+    UserFree(w);
+    return r;
+}
+
 WINUSERAPI LONG WINAPI TabbedTextOutW(HDC dc, int x, int y, LPCWSTR text, int count, int tabs, const INT *positions,
                                       int origin)
 {
