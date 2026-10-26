@@ -7,6 +7,8 @@ static constexpr BYTE oid_cab[] = {0x2b,6,1,4,1,0x82,0x37,2,1,25};
 static constexpr BYTE oid_cab_enhanced[] = {0x2b,6,1,4,1,0x82,0x37,2,1,28};
 static constexpr BYTE oid_sip_info[] = {0x2b,6,1,4,1,0x82,0x37,2,1,30};
 static constexpr BYTE oid_counter[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,6};
+static constexpr BYTE oid_token[] = {0x2b,6,1,4,1,0x82,0x37,3,3,1};
+static constexpr BYTE oid_token_info[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,0x10,1,4};
 static constexpr BYTE oid_time[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,5};
 static constexpr BYTE oid_rsa_sha1[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,5};
 static constexpr BYTE oid_rsa_sha256[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,11};
@@ -206,6 +208,17 @@ static BOOL asn_time(WT_DER time, FILETIME *out)
     const BYTE *t = time.value.data;
     DWORD v[5], size = time.value.size;
     SYSTEMTIME st = {};
+    /* time stamp services give GeneralizedTime with a fraction of a second, which is dropped. */
+    if (time.tag == 0x18 && size > 16 && t[14] == '.' && t[size - 1] == 'Z') {
+        for (DWORD i = 15; i < size - 1; i++)
+            if (t[i] < '0' || t[i] > '9')
+                return FALSE;
+        BYTE whole[15];
+        memcpy(whole, t, 14);
+        whole[14] = 'Z';
+        time.value = (WT_BYTES){whole, 15};
+        return asn_time(time, out);
+    }
     if (time.tag == 0x17 && (size == 13 || size == 11)) {
         DWORD year;
         if (!two_digits(t, &year))
@@ -238,9 +251,112 @@ static BOOL asn_time(WT_DER time, FILETIME *out)
 }
 
 /*
- * a countersignature timestamps the signer's signature, using its digest as the message digest. verification to a
- * root trusted at that time allows a signing certificate that has since expired.
+ * the signer of a time stamp signs attributes holding the digest of what it stamped: the signer's signature for a
+ * countersignature, the token info for an RFC 3161 token. a countersignature also signs the time. the signer's
+ * certificate must chain to a root trusted at that time.
  */
+static BOOL stamp_signer(WT_DER info, WT_BYTES digested, HCERTSTORE store, FILETIME *when, BOOL signed_time)
+{
+    WT_BYTES input = info.value;
+    WT_DER version, sid, issuer, serial, digest_alg, signed_attrs, sign_alg, encrypted, junk;
+    if (!WtTake(&input, 2, &version) || version.value.size != 1 || version.value.data[0] != 1 ||
+        !WtTake(&input, 0x30, &sid) || !WtTake(&sid.value, 0x30, &issuer) || !WtTake(&sid.value, 2, &serial) ||
+        sid.value.size || !serial.value.size || (serial.value.data[0] & 0x80) ||
+        !WtTake(&input, 0x30, &digest_alg) || !WtTake(&input, 0xa0, &signed_attrs) ||
+        !WtTake(&input, 0x30, &sign_alg) || !WtTake(&input, 4, &encrypted) ||
+        (input.size && !WtTake(&input, 0xa1, &junk)) || input.size)
+        return FALSE;
+    ALG_ID alg = algorithm(digest_alg);
+    if (!alg || !rsa_algorithm(sign_alg, alg))
+        return FALSE;
+    BOOL have_time = !signed_time, have_digest = FALSE;
+    WT_BYTES list = signed_attrs.value;
+    while (list.size) {
+        WT_DER item, item_oid, item_values, value;
+        if (!WtTake(&list, 0x30, &item) || !WtTake(&item.value, 6, &item_oid) ||
+            !WtTake(&item.value, 0x31, &item_values) || item.value.size)
+            return FALSE;
+        if (signed_time && WtOid(item_oid, oid_time, sizeof(oid_time))) {
+            if (have_time ||
+                (!WtTake(&item_values.value, 0x17, &value) && !WtTake(&item_values.value, 0x18, &value)) ||
+                item_values.value.size || !asn_time(value, when))
+                return FALSE;
+            have_time = TRUE;
+        } else if (WtOid(item_oid, oid_digest, sizeof(oid_digest))) {
+            if (have_digest || !WtTake(&item_values.value, 4, &value) || item_values.value.size ||
+                !hash_matches(alg, digested, value.value))
+                return FALSE;
+            have_digest = TRUE;
+        }
+    }
+    if (!have_time || !have_digest)
+        return FALSE;
+    PCCERT_CONTEXT cert = find_cert(store, issuer, serial);
+    if (!cert)
+        return FALSE;
+    BOOL ok = signature(signed_attrs, encrypted, alg, cert) == 0;
+    if (ok) {
+        CERT_CHAIN_PARA para = {};
+        para.cbSize = sizeof(para);
+        PCCERT_CHAIN_CONTEXT chain = nullptr;
+        ok = CertGetCertificateChain(nullptr, cert, when, store, &para, 0, nullptr, &chain);
+        if (ok) {
+            CERT_CHAIN_POLICY_PARA policy = {sizeof(policy)};
+            CERT_CHAIN_POLICY_STATUS status = {sizeof(status)};
+            ok = CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_BASE, chain, &policy, &status) &&
+                 !status.dwError;
+            CertFreeCertificateChain(chain);
+        }
+    }
+    CertFreeCertificateContext(cert);
+    return ok;
+}
+
+/*
+ * an RFC 3161 token is signed data whose content is the token info: a policy, the imprint of the stamped signature
+ * and the time. its certificates join the store to find the service's.
+ */
+static BOOL token_time(WT_DER value, WT_DER stamped, HCERTSTORE store, FILETIME *when)
+{
+    WT_DER envelope, wrapper, data, version, algorithms, content_info, content_wrapper, content, certs, signers, one;
+    WT_BYTES input = value.value;
+    if (!WtTake(&input, 0x30, &envelope) || input.size || !take_oid(&envelope.value, oid_signed, sizeof(oid_signed)) ||
+        !WtTake(&envelope.value, 0xa0, &wrapper) || envelope.value.size || !WtTake(&wrapper.value, 0x30, &data) ||
+        wrapper.value.size || !WtTake(&data.value, 2, &version) || !WtTake(&data.value, 0x31, &algorithms) ||
+        !WtTake(&data.value, 0x30, &content_info) ||
+        !take_oid(&content_info.value, oid_token_info, sizeof(oid_token_info)) ||
+        !WtTake(&content_info.value, 0xa0, &content_wrapper) || content_info.value.size ||
+        !WtTake(&content_wrapper.value, 4, &content) || content_wrapper.value.size)
+        return FALSE;
+    /* the certificates may be followed by other choices, such as attribute certificates, which are skipped. */
+    if (WtTake(&data.value, 0xa0, &certs)) {
+        for (DWORD count = 0; certs.value.size; count++) {
+            WT_DER cert;
+            if (count == 64 || !WtTake(&certs.value, certs.value.data[0], &cert) ||
+                (cert.tag == 0x30 &&
+                 !CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING, cert.encoded.data, cert.encoded.size,
+                                                   CERT_STORE_ADD_USE_EXISTING, nullptr)))
+                return FALSE;
+        }
+    }
+    WT_DER crls;
+    WtTake(&data.value, 0xa1, &crls);
+    if (!WtTake(&data.value, 0x31, &signers) || data.value.size || !WtTake(&signers.value, 0x30, &one) ||
+        signers.value.size)
+        return FALSE;
+    WT_DER info, info_version, policy, imprint, imprint_alg, hashed, serial, time;
+    WT_BYTES token = content.value;
+    if (!WtTake(&token, 0x30, &info) || token.size || !WtTake(&info.value, 2, &info_version) ||
+        !WtTake(&info.value, 6, &policy) || !WtTake(&info.value, 0x30, &imprint) ||
+        !WtTake(&imprint.value, 0x30, &imprint_alg) || !WtTake(&imprint.value, 4, &hashed) || imprint.value.size ||
+        !WtTake(&info.value, 2, &serial) || !WtTake(&info.value, 0x18, &time))
+        return FALSE;
+    ALG_ID alg = algorithm(imprint_alg);
+    return alg && hash_matches(alg, stamped.value, hashed.value) && asn_time(time, when) &&
+           stamp_signer(one, content.value, store, when, FALSE);
+}
+
+/* the time of a countersignature or of an RFC 3161 token, when it is valid. */
 static BOOL stamp_time(WT_DER attributes, WT_DER stamped, HCERTSTORE store, FILETIME *when)
 {
     WT_BYTES attrs = attributes.value;
@@ -249,65 +365,13 @@ static BOOL stamp_time(WT_DER attributes, WT_DER stamped, HCERTSTORE store, FILE
         if (!WtTake(&attrs, 0x30, &attribute) || !WtTake(&attribute.value, 6, &oid) ||
             !WtTake(&attribute.value, 0x31, &values) || attribute.value.size)
             return FALSE;
-        if (!WtOid(oid, oid_counter, sizeof(oid_counter)))
-            continue;
-        WT_BYTES input;
-        WT_DER version, sid, issuer, serial, digest_alg, signed_attrs, sign_alg, encrypted, junk;
-        if (!WtTake(&values.value, 0x30, &info) || values.value.size)
-            return FALSE;
-        input = info.value;
-        if (!WtTake(&input, 2, &version) || version.value.size != 1 || version.value.data[0] != 1 ||
-            !WtTake(&input, 0x30, &sid) || !WtTake(&sid.value, 0x30, &issuer) || !WtTake(&sid.value, 2, &serial) ||
-            sid.value.size || !serial.value.size || (serial.value.data[0] & 0x80) ||
-            !WtTake(&input, 0x30, &digest_alg) || !WtTake(&input, 0xa0, &signed_attrs) ||
-            !WtTake(&input, 0x30, &sign_alg) || !WtTake(&input, 4, &encrypted) ||
-            (input.size && !WtTake(&input, 0xa1, &junk)) || input.size)
-            return FALSE;
-        ALG_ID alg = algorithm(digest_alg);
-        if (!alg || !rsa_algorithm(sign_alg, alg))
-            return FALSE;
-        BOOL have_time = FALSE, have_digest = FALSE;
-        WT_BYTES list = signed_attrs.value;
-        while (list.size) {
-            WT_DER item, item_oid, item_values, value;
-            if (!WtTake(&list, 0x30, &item) || !WtTake(&item.value, 6, &item_oid) ||
-                !WtTake(&item.value, 0x31, &item_values) || item.value.size)
+        if (WtOid(oid, oid_counter, sizeof(oid_counter))) {
+            if (!WtTake(&values.value, 0x30, &info) || values.value.size)
                 return FALSE;
-            if (WtOid(item_oid, oid_time, sizeof(oid_time))) {
-                if (have_time ||
-                    (!WtTake(&item_values.value, 0x17, &value) && !WtTake(&item_values.value, 0x18, &value)) ||
-                    item_values.value.size || !asn_time(value, when))
-                    return FALSE;
-                have_time = TRUE;
-            } else if (WtOid(item_oid, oid_digest, sizeof(oid_digest))) {
-                if (have_digest || !WtTake(&item_values.value, 4, &value) || item_values.value.size ||
-                    !hash_matches(alg, stamped.value, value.value))
-                    return FALSE;
-                have_digest = TRUE;
-            }
+            return stamp_signer(info, stamped.value, store, when, TRUE);
         }
-        if (!have_time || !have_digest)
-            return FALSE;
-        PCCERT_CONTEXT cert = find_cert(store, issuer, serial);
-        if (!cert)
-            return FALSE;
-        BOOL ok = signature(signed_attrs, encrypted, alg, cert) == 0;
-        if (ok) {
-            /* the service's certificate must chain to a trusted root as of the time it stamped. */
-            CERT_CHAIN_PARA para = {};
-            para.cbSize = sizeof(para);
-            PCCERT_CHAIN_CONTEXT chain = nullptr;
-            ok = CertGetCertificateChain(nullptr, cert, when, store, &para, 0, nullptr, &chain);
-            if (ok) {
-                CERT_CHAIN_POLICY_PARA policy = {sizeof(policy)};
-                CERT_CHAIN_POLICY_STATUS status = {sizeof(status)};
-                ok = CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_BASE, chain, &policy, &status) &&
-                     !status.dwError;
-                CertFreeCertificateChain(chain);
-            }
-        }
-        CertFreeCertificateContext(cert);
-        return ok;
+        if (WtOid(oid, oid_token, sizeof(oid_token)))
+            return token_time(values, stamped, store, when);
     }
     return FALSE;
 }
