@@ -696,6 +696,16 @@ static void sync_mouse_state(W32THREAD *t, const MimeInputEvent *ev, WPARAM stat
     sync_sides(t, (ev->modifiers & MIME_MOD_ALT) != 0, VK_LMENU, VK_RMENU, VK_MENU);
 }
 
+/*
+ * a window of another thread under a window of this one, such as the browser a program hosts in a window of its own, has
+ * its mouse messages from the queue of its own thread: this thread received the event for the top level window and hands
+ * the message on.
+ */
+static BOOLEAN of_another_thread(W32THREAD *t, const WND *w)
+{
+    return w->Thread && w->Thread != t;
+}
+
 static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max,
                                BOOLEAN remove, BOOLEAN *consumed)
 {
@@ -744,6 +754,14 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
             w = focus;
         wparam = MAKEWPARAM((WORD)qm->Msg.wParam, (SHORT)ev->wheel);
         lparam = MAKELPARAM(pt.x, pt.y);
+        if (of_another_thread(t, w)) {
+            if (remove) {
+                sync_mouse_state(t, ev, qm->Msg.wParam);
+                QueuePost(w->Thread, WndHandle(w), msg, wparam, lparam);
+                *consumed = TRUE;
+            }
+            return FALSE;
+        }
         BOOLEAN matches = emit(out, WndHandle(w), msg, wparam, lparam, ev, filter, min, max);
         if (matches && remove)
             sync_mouse_state(t, ev, qm->Msg.wParam);
@@ -820,7 +838,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
             }
         }
         if (!w->Header.Destroyed && !capture) {
-            track_mouse(t, w, hit);
+            track_mouse(of_another_thread(t, w) ? w->Thread : t, w, hit);
             if (ev->type != MIME_INPUT_MOUSE_UP)
                 MsgSend(w, WM_SETCURSOR, (WPARAM)WndHandle(w), MAKELPARAM(hit, msg));
         } else if (!w->Header.Destroyed) {
@@ -830,12 +848,18 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
             track_mouse(t, under, under && RectContains(&under->ClientRect, pt.x, pt.y) ? HTCLIENT : HTNOWHERE);
         }
         BOOLEAN dead = w->Header.Destroyed;
+        BOOLEAN handed_on = !dead && !capture && of_another_thread(t, w);
+        if (handed_on)
+            QueuePost(w->Thread, WndHandle(w), msg, wparam, lparam);
         UserDereference(&w->Header);
-        if (dead) {
+        if (dead || handed_on) {
             *consumed = TRUE;
             return FALSE;
         }
     }
+    /* a message that is only looked at is not handed on, it stays where it is. */
+    if (!remove && !capture && of_another_thread(t, w))
+        return FALSE;
     return emit(out, WndHandle(w), msg, wparam, lparam, ev, filter, min, max);
 }
 
