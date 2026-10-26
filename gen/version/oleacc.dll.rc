@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Active Accessibility Core Component"
             VALUE "FileVersion", "7.2.26100.9278 (WinBuild.160101.0800)"
             VALUE "InternalName", "OLEACC"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "OLEACC.DLL"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9278"

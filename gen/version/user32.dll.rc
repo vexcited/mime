@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Multi-User Windows USER API Client DLL"
             VALUE "FileVersion", "10.0.26100.9444 (WinBuild.160101.0800)"
             VALUE "InternalName", "user32"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "user32"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9444"

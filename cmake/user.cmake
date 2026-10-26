@@ -355,6 +355,15 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     endif()
 endforeach()
 
+mime_glob(openwith_sources guest/openwith/*.c)
+mime_objects(${MIME_GUEST_ARCH}-openwith ${MIME_GUEST_ARCH} SOURCES ${openwith_sources})
+mime_link(${MIME_OUT_${MIME_GUEST_ARCH}}/openwith.exe ${MIME_GUEST_ARCH}
+    OBJECTS ${MIME_GUEST_ARCH}-openwith ${MIME_GUEST_ARCH}-chkstk
+    LIBS ${MIME_LIB_${MIME_GUEST_ARCH}}/ntdll.lib ${MIME_LIB_${MIME_GUEST_ARCH}}/kernel32.lib
+        ${MIME_LIB_${MIME_GUEST_ARCH}}/advapi32.lib ${MIME_LIB_${MIME_GUEST_ARCH}}/shell32.lib
+    FLAGS /subsystem:console,10.0 /entry:entry /base:0x7FF6A7000000 /highentropyva /dynamicbase /stack:0x100000,0x4000
+    RESOURCE openwith.exe ROM ${MIME_ROM_${MIME_GUEST_ARCH}}/openwith.exe GROUPS guest)
+
 mime_glob(regsvr32_sources guest/regsvr32/*.c)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
@@ -420,15 +429,19 @@ else()
         INCLUDES ${opengl32_includes} DEF ${MIME_GEN}/opengl32/native.def NOIMPLIB)
 endif()
 
-if(MIME_GUEST_ARCH STREQUAL "x64")
-    mime_glob(MIME_VULKAN_SOURCES guest/vulkan-1/*.c)
-    set(MIME_VULKAN_GEN_SOURCES mvk_structs.c mvk_guest_commands.c mvk_guest_out.c mvk_guest_procs.c)
-    list(TRANSFORM MIME_VULKAN_GEN_SOURCES PREPEND ${MIME_GEN}/vulkan/)
-    set(MIME_VULKAN_OPTIONS -DMVK_GUEST=1 -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable)
-    set(MIME_VULKAN_INCLUDES third_party/khronos ${MIME_GEN}/vulkan)
-    mime_dll(vulkan-1 x64 BASE 0x7FF420000000 SOURCES ${MIME_VULKAN_SOURCES} ${MIME_VULKAN_GEN_SOURCES}
-        OBJECTS x64-chkstk OPTIONS ${MIME_VULKAN_OPTIONS} INCLUDES ${MIME_VULKAN_INCLUDES}
+# vulkan, forwarded over the wire to the host's driver: the system's on linux, mime's own on metal on macos.
+mime_glob(MIME_VULKAN_SOURCES guest/vulkan-1/*.c)
+set(MIME_VULKAN_GEN_SOURCES mvk_structs.c mvk_guest_commands.c mvk_guest_out.c mvk_guest_procs.c)
+list(TRANSFORM MIME_VULKAN_GEN_SOURCES PREPEND ${MIME_GEN}/vulkan/)
+set(MIME_VULKAN_OPTIONS -DMVK_GUEST=1 -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable)
+set(MIME_VULKAN_INCLUDES third_party/khronos ${MIME_GEN}/vulkan)
+foreach(arch IN LISTS MIME_USER_ARCHS)
+    mime_dll(vulkan-1 ${arch} BASE 0x7FF710000000 SOURCES ${MIME_VULKAN_SOURCES} ${MIME_VULKAN_GEN_SOURCES}
+        OBJECTS ${arch}-chkstk OPTIONS ${MIME_VULKAN_OPTIONS} INCLUDES ${MIME_VULKAN_INCLUDES}
         IMPORTS ntdll kernel32 win32u user32 DEF ${MIME_GEN}/vulkan/mvk_exports.def)
+endforeach()
+
+if(MIME_GUEST_ARCH STREQUAL "x64")
 
     mime_objects(x64-wow32 x64 SOURCES guest/xta64/wow32.c guest/xta64/wow32_query.c guest/xta64/wow32_win32k.c
         guest/xta64/wow32_callback.c

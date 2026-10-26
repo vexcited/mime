@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "MSXML 6.0"
             VALUE "FileVersion", "6.30.26100.9278"
             VALUE "InternalName", "MSXML6.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "MSXML6.dll"
             VALUE "ProductName", "Microsoft XML Core Services"
             VALUE "ProductVersion", "6.30.26100.9278"

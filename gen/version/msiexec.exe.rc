@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Windows\256 installer"
             VALUE "FileVersion", "5.0.26100.8875 (WinBuild.160101.0800)"
             VALUE "InternalName", "msiexec"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "msiexec.exe"
             VALUE "ProductName", "Windows Installer - Unicode"
             VALUE "ProductVersion", "5.0.26100.8875"

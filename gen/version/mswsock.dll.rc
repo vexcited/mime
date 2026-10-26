@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Microsoft Windows Sockets 2.0 Service Provider"
             VALUE "FileVersion", "10.0.26100.9278 (WinBuild.160101.0800)"
             VALUE "InternalName", "mswsock.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "mswsock.dll"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9278"

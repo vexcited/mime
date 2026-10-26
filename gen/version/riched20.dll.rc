@@ -16,7 +16,7 @@ BEGIN
             VALUE "FileDescription", "Rich Text Edit Control, v3.1"
             VALUE "FileVersion", "5.31.23.1231"
             VALUE "InternalName", "riched20"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "riched20.dll"
             VALUE "ProductName", "Microsoft RichEdit Control, version 3.1"
             VALUE "ProductVersion", "3.1"

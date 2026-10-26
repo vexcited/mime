@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Microsoft\256 Cabinet File API"
             VALUE "FileVersion", "5.00 (WinBuild.160101.0800)"
             VALUE "InternalName", "cabinet.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "cabinet.dll"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "5.00"

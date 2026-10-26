@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Microsoft Common Controller API"
             VALUE "FileVersion", "9.18.944.0"
             VALUE "InternalName", "XInput1_3.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "XInput1_3.dll"
             VALUE "ProductName", "Microsoft\256 DirectX for Windows\256"
             VALUE "ProductVersion", "9.18.944.0"

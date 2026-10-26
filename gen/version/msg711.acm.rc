@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Microsoft CCITT G.711 (A-Law and u-Law) CODEC for MSACM"
             VALUE "FileVersion", "10.0.26100.1150 (WinBuild.160101.0800)"
             VALUE "InternalName", "Microsoft CCITT G.711 (A-Law and u-Law) CODEC for MSACM"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "msg711.acm"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.1150"

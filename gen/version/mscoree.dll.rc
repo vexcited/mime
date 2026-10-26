@@ -1,6 +1,6 @@
 1 VERSIONINFO
-FILEVERSION 0, 1, 0, 0
-PRODUCTVERSION 0, 1, 0, 0
+FILEVERSION 4, 8, 9195, 0
+PRODUCTVERSION 4, 8, 9195, 0
 FILEFLAGSMASK 0x3F
 FILEFLAGS 0x0
 FILEOS 0x40004
@@ -11,14 +11,14 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName", "The Mime authors"
-            VALUE "FileDescription", "Mime CLR activation shim"
-            VALUE "FileVersion", "0.1.0.0"
+            VALUE "CompanyName", "Microsoft Corporation"
+            VALUE "FileDescription", "Microsoft .NET Runtime Execution Engine"
+            VALUE "FileVersion", "4.8.9195.0"
             VALUE "InternalName", "mscoree.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "mscoree.dll"
-            VALUE "ProductName", "Mime"
-            VALUE "ProductVersion", "0.1.0.0"
+            VALUE "ProductName", "Microsoft\256 .NET Framework"
+            VALUE "ProductVersion", "4.8.9195.0"
         END
     END
     BLOCK "VarFileInfo"

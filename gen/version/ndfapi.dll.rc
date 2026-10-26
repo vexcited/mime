@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Network Diagnostic Framework Client API"
             VALUE "FileVersion", "10.0.26100.9278 (WinBuild.160101.0800)"
             VALUE "InternalName", "ndfapi.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "ndfapi.dll"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9278"

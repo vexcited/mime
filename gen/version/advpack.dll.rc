@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "ADVPACK"
             VALUE "FileVersion", "11.00.26100.8115 (WinBuild.160101.0800)"
             VALUE "InternalName", "ADVPACK.DLL"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "ADVPACK.DLL"
             VALUE "ProductName", "Internet Explorer"
             VALUE "ProductVersion", "11.00.26100.8115"

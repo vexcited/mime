@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Direct3D 10.1 Runtime"
             VALUE "FileVersion", "10.0.26100.1882 (WinBuild.160101.0800)"
             VALUE "InternalName", "D3D10_1Core.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "D3D10_1Core.dll"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.1882"

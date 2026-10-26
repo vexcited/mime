@@ -1527,7 +1527,7 @@ void D9SlotSemantic(UINT slot, const char **name, UINT *index)
     } else if (slot == 10) {
         *name = "FOG", *index = 0;
     } else {
-        *name = "MIMEVARYING", *index = slot;
+        *name = "VARYING", *index = slot;
     }
 }
 
@@ -1613,7 +1613,7 @@ static void declare(Tx *t, D9Code *d)
         if (t->reads_point_coord) {
             DWORD sv = SV_MIME_POINT_COORD;
             dcl(d, OP_DCL_INPUT_PS_SIV | INTERP_LINEAR << 11, D9Dst(OPERAND_INPUT, D9_SLOT_POINT_COORD, 3), &sv, 1);
-            add_element(&t->inputs, "MIMEPOINTCOORD", 0, SV_MIME_POINT_COORD, 3, D9_SLOT_POINT_COORD, 3);
+            add_element(&t->inputs, "POINTCOORD", 0, SV_MIME_POINT_COORD, 3, D9_SLOT_POINT_COORD, 3);
         }
         UINT targets = info->major < 2 ? 1 : info->written & 0xF;
         for (UINT i = 0; i < 4; i++)

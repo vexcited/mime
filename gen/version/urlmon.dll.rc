@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "OLE32 Extensions for Win32"
             VALUE "FileVersion", "11.00.26100.9444 (WinBuild.160101.0800)"
             VALUE "InternalName", "UrlMon.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "UrlMon.dll"
             VALUE "ProductName", "Internet Explorer"
             VALUE "ProductVersion", "11.00.26100.9444"

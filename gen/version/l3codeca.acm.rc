@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "MPEG Layer-3 Audio Codec for MSACM"
             VALUE "FileVersion", "1, 9, 0, 0401"
             VALUE "InternalName", "l3codec.acm"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "l3codec.acm"
             VALUE "ProductName", "MPEG Layer-3 Audio Codec for MSACM"
             VALUE "ProductVersion", "1, 0, 0, 0"

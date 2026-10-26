@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Power Profile Helper DLL"
             VALUE "FileVersion", "10.0.26100.3912 (WinBuild.160101.0800)"
             VALUE "InternalName", "POWRPROF"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "POWRPROF.DLL"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.3912"

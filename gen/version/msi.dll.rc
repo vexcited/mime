@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Windows Installer"
             VALUE "FileVersion", "5.0.26100.9444"
             VALUE "InternalName", "msi"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "msi.dll"
             VALUE "ProductName", "Windows Installer - Unicode"
             VALUE "ProductVersion", "5.0.26100.9444"

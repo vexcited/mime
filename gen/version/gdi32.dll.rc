@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "GDI Client DLL"
             VALUE "FileVersion", "10.0.26100.8328 (WinBuild.160101.0800)"
             VALUE "InternalName", "gdi32"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "gdi32"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.8328"

@@ -13,7 +13,7 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "Vulkan Loader"
             VALUE "FileVersion", "1.3.300.0"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "ProductName", "Vulkan Runtime"
             VALUE "ProductVersion", "1.3.300.0"
         END

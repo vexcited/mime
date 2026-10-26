@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Microsoft Property System"
             VALUE "FileVersion", "7.0.26100.9278 (WinBuild.160101.0800)"
             VALUE "InternalName", "propsys.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "propsys.dll"
             VALUE "ProductName", "Windows\256 Search"
             VALUE "ProductVersion", "7.0.26100.9278"
