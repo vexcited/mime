@@ -70,6 +70,24 @@ uint32_t x86_arith_flags(X86Cpu *c)
             f |= X86_OF;
         f |= (a ^ b ^ res) & X86_AF;
         break;
+    case X86_LF_SHL:
+        if (b <= (uint64_t)size * 8 && (a >> (size * 8 - b)) & 1)
+            f |= X86_CF;
+        if (!(res & sign) != !(f & X86_CF))
+            f |= X86_OF;
+        break;
+    case X86_LF_SHR:
+        if (b <= (uint64_t)size * 8 && (a >> (b - 1)) & 1)
+            f |= X86_CF;
+        if (a & sign)
+            f |= X86_OF;
+        break;
+    case X86_LF_SAR: {
+        int64_t sa = (int64_t)x86_sext(a, size);
+        if ((sa >> (b - 1 < (uint64_t)size * 8 ? b - 1 : (uint64_t)size * 8 - 1)) & 1)
+            f |= X86_CF;
+        break;
+    }
     }
     return f;
 }

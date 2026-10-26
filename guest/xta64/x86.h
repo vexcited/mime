@@ -45,6 +45,9 @@ enum {
     X86_LF_DEC = 5,
     X86_LF_ADC = 6,  /* carry in from LfCarry. */
     X86_LF_SBB = 7,
+    X86_LF_SHL = 8,  /* LfB is the count, not zero. */
+    X86_LF_SHR = 9,
+    X86_LF_SAR = 10,
 };
 #define X86_LF(op, size_log2) (((op) << 2) | (size_log2))
 
@@ -75,8 +78,19 @@ typedef struct X86Env {
     void (*code_changed)(X86Cpu *cpu, uint64_t address, uint64_t size);
     /* a block was decoded from the code at address. */
     void (*code_seen)(X86Cpu *cpu, uint64_t address);
+    /* the readable region decoded code at address came from, or 0 when unknown. */
+    int (*code_bounds)(X86Cpu *cpu, uint64_t address, uint64_t *start, uint64_t *end);
     void (*suspend)(X86Cpu *cpu);
 } X86Env;
+
+/*
+ * the code change that made epoch e sits at code_ranges[e % X86_CODE_LOG]. an empty range drops every block, and so
+ * does falling more than the log behind.
+ */
+#define X86_CODE_LOG 64
+typedef struct X86CodeRange {
+    uint64_t start, end;
+} X86CodeRange;
 
 struct X86Cpu {
     uint64_t r[16];
@@ -114,11 +128,14 @@ struct X86Cpu {
     void *user;          /* the environment's per thread data. */
     void *blocks;
     const volatile uint32_t *code_epoch; /* bumped by the environment when code may have changed, or NULL. */
+    const X86CodeRange *code_ranges;     /* the range each epoch changed, or NULL. */
     uint32_t blocks_epoch;
     uint64_t *trace;     /* when set, the start of the last X86_TRACE_SIZE blocks run. */
     uint32_t *trace_pos;
     uint64_t steps;      /* executed instructions, for statistics. */
     const void *jit_block; /* the translated block running, for faults in its code. */
+    void *exit_slot;       /* the chain slot translated code last left through unlinked, or null. */
+    void *targets;         /* X86Target entries: translated code by address, for exits to computed addresses. */
 };
 
 typedef struct X86Insn {
@@ -198,9 +215,10 @@ extern uint32_t x86_jit_threshold;
 
 /*
  * a native fault at pc while the cpu ran: when pc is in translated code,
- * insn_rip becomes the x86 instruction it belongs to.
+ * insn_rip becomes the x86 instruction it belongs to and the registers the
+ * code kept in native ones come back from x, the faulting context's.
  */
-void x86_jit_fault(X86Cpu *cpu, uint64_t pc);
+void x86_jit_fault(X86Cpu *cpu, uint64_t pc, const uint64_t *x);
 
 /* fxsave layout, used by fxsave, fxrstor and thread contexts. */
 void x86_fxsave(X86Cpu *cpu, uint8_t *area);

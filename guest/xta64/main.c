@@ -69,6 +69,7 @@ static struct {
 } g_guest;
 
 static volatile uint32_t g_code_epoch = 1;
+static X86CodeRange g_code_ranges[X86_CODE_LOG];
 
 static X86Env g_env;
 
@@ -115,6 +116,7 @@ PVOID MxCurrentTeb32(void)
 {
     return current_thread()->teb32;
 }
+
 
 static void mx_print(const char *format, ...)
 {
@@ -262,6 +264,7 @@ static void init_frame(MX_FRAME *f, MX_THREAD *t)
     f->cpu.gs_base = (ULONG64)NtCurrentTeb();
     f->cpu.blocks = t->blocks;
     f->cpu.code_epoch = &g_code_epoch;
+    f->cpu.code_ranges = g_code_ranges;
     f->cpu.blocks_epoch = g_code_epoch;
     f->cpu.exit_rip = g_guest.is32 ? 0xFFFF0000u : MX_EXIT_ADDRESS;
     f->cpu.user = t;
@@ -438,11 +441,18 @@ static void code_unlock(void)
     __atomic_store_n(&g_code_lock, 0, __ATOMIC_RELEASE);
 }
 
+/* an empty range drops every block. */
 static void env_code_changed(X86Cpu *c, uint64_t address, uint64_t size)
 {
     code_lock();
-    g_code_count = 0;
-    g_code_overflow = FALSE;
+    /* the blocks left keep their regions. */
+    if (!size) {
+        g_code_count = 0;
+        g_code_overflow = FALSE;
+    }
+    X86CodeRange *r = &g_code_ranges[(g_code_epoch + 1) % X86_CODE_LOG];
+    r->start = address;
+    r->end = address + size;
     __atomic_add_fetch(&g_code_epoch, 1, __ATOMIC_SEQ_CST);
     code_unlock();
 }
@@ -470,7 +480,20 @@ static void env_code_seen(X86Cpu *c, uint64_t address)
     code_unlock();
 }
 
-/* drops the blocks when [start, end) holds decoded code. */
+static int env_code_bounds(X86Cpu *c, uint64_t address, uint64_t *start, uint64_t *end)
+{
+    LONG n = __atomic_load_n(&g_code_count, __ATOMIC_ACQUIRE);
+    for (LONG i = 0; i < n; i++) {
+        if (address >= g_code[i].Start && address < g_code[i].End) {
+            *start = g_code[i].Start;
+            *end = g_code[i].End;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* drops the blocks in [start, end) when it holds decoded code. */
 static void code_range_changed(X86Cpu *c, ULONG64 start, ULONG64 end)
 {
     BOOLEAN hit = g_code_overflow;
@@ -478,7 +501,7 @@ static void code_range_changed(X86Cpu *c, ULONG64 start, ULONG64 end)
     for (LONG i = 0; i < n && !hit; i++)
         hit = start < g_code[i].End && g_code[i].Start < end;
     if (hit)
-        env_code_changed(c, start, end - start);
+        env_code_changed(c, start, g_code_overflow ? 0 : end - start);
 }
 
 /* the whole allocation a free or an unmap at base releases. */
@@ -702,6 +725,23 @@ static void env_syscall(X86Cpu *c)
             c->rip = c->exit_rip;
             return;
         }
+        /* the range a free, unmap or protection change touches, taken before the call changes it. */
+        ULONG64 range_start = 0, range_end = 0;
+        BOOLEAN own = a[0] == 0xFFFFFFFFu;
+        if (own && number == MIME_SVC_NtFreeVirtualMemory && a[1] && a[2]) {
+            ULONG base = *(const ULONG *)(ULONG_PTR)a[1], size = *(const ULONG *)(ULONG_PTR)a[2];
+            if (size)
+                range_start = base & ~0xFFFull, range_end = ((ULONG64)base + size + 0xFFF) & ~0xFFFull;
+            else
+                allocation_range(base, &range_start, &range_end);
+        } else if (own && number == MIME_SVC_NtUnmapViewOfSection) {
+            allocation_range(a[1], &range_start, &range_end);
+        } else if (own && number == MIME_SVC_NtProtectVirtualMemory && a[1] && a[2]) {
+            ULONG base = *(const ULONG *)(ULONG_PTR)a[1], size = *(const ULONG *)(ULONG_PTR)a[2];
+            range_start = base & ~0xFFFull, range_end = ((ULONG64)base + size + 0xFFF) & ~0xFFFull;
+        } else if (own && number == MIME_SVC_NtFlushInstructionCache) {
+            range_start = a[1], range_end = (ULONG64)a[1] + (a[2] ? a[2] : 1);
+        }
         PULONG last_error = (PULONG)((PUCHAR)t->teb32 + 0x34);
         NtCurrentTeb()->LastErrorValue = *last_error;
         NtCurrentTeb()->ExceptionCode = 0;
@@ -718,9 +758,27 @@ static void env_syscall(X86Cpu *c)
         }
         if (status == STATUS_NOT_IMPLEMENTED)
             Mx32Unsupported(number);
-        if (number == MIME_SVC_NtFreeVirtualMemory || number == MIME_SVC_NtUnmapViewOfSection ||
-            number == MIME_SVC_NtProtectVirtualMemory || number == MIME_SVC_NtFlushInstructionCache)
-            env_code_changed(c, 0, 0);
+        switch (number) {
+        case MIME_SVC_NtFlushInstructionCache:
+        case MIME_SVC_NtFreeVirtualMemory:
+        case MIME_SVC_NtUnmapViewOfSection:
+            if (!own)
+                break;
+            if (range_end > range_start)
+                code_range_changed(c, range_start, range_end);
+            else
+                env_code_changed(c, 0, 0);
+            break;
+        case MIME_SVC_NtProtectVirtualMemory:
+            if (NT_SUCCESS(status) && own) {
+                ULONG old = a[4] ? *(const ULONG *)(ULONG_PTR)a[4] : 0;
+                if ((a[3] | old) & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
+                    code_range_changed(c, range_start, range_end);
+            }
+            break;
+        default:
+            break;
+        }
         return;
     }
     ULONG64 a[16];
@@ -957,6 +1015,7 @@ static void process_init(void)
     g_env.timestamp = env_timestamp;
     g_env.code_changed = env_code_changed;
     g_env.code_seen = env_code_seen;
+    g_env.code_bounds = env_code_bounds;
     g_env.suspend = env_suspend;
     PIMAGE_DOS_HEADER dos = NtCurrentPeb()->ImageBaseAddress;
     PIMAGE_NT_HEADERS32 nt = (void *)((PUCHAR)dos + dos->e_lfanew);
@@ -1075,7 +1134,7 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserExceptionDispatcher(EXCEPTION_RECORD *rec
     memcpy(&x64, record, sizeof(x64));
     x64.ExceptionRecord = nullptr;
     /* the faulting instruction runs again if the program resumes. */
-    x86_jit_fault(&f->cpu, context->Pc);
+    x86_jit_fault(&f->cpu, context->Pc, context->X);
     f->cpu.rip = f->cpu.insn_rip;
     if (x64.ExceptionCode == STATUS_ACCESS_VIOLATION && x64.NumberParameters >= 2 && x64.ExceptionInformation[0] == 8)
         x64.ExceptionInformation[0] = 0; /* the translator executes nothing from the faulting page. */

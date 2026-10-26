@@ -322,6 +322,12 @@ static uint64_t shift(X86Cpu *c, int op, int size, uint64_t v, unsigned count)
     return res;
 }
 
+/* group 2 for translated code, which keeps the flags exact through it: op and size come as op << 8 | size. */
+uint64_t x86_jit_shift(X86Cpu *c, uint32_t op_size, uint64_t v, uint64_t count)
+{
+    return shift(c, (int)(op_size >> 8), (int)(op_size & 0xFF), v, (unsigned)count);
+}
+
 /* shld when left, shrd otherwise. */
 static uint64_t double_shift(X86Cpu *c, int size, uint64_t dst, uint64_t src, unsigned count, int left)
 {
@@ -1500,24 +1506,39 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
 /* ------------------------------------------------------------ block cache */
 
 #define BLOCK_MAX 32
+#define JIT_BATCH 16      /* translations made visible together. */
+#define JIT_BATCH_AGE 64   /* runs of waiting blocks before the batch is made visible anyway. */
 #define BLOCK_BUCKETS 16384
+#define PAGE_BUCKETS 4096
+
+/* a chain slot linked to a block, unlinked when the block is dropped. */
+typedef struct X86Link {
+    struct X86Link *next;
+    X86ChainSlot *slot;
+} X86Link;
 
 typedef struct X86Block {
     struct X86Block *next;
+    struct X86Block *page_next; /* the next block starting in a page of the same page bucket. */
     uint64_t rip;
+    uint64_t end;           /* the address after the last instruction. */
     X86Native native;
     struct X86Block *fallback; /* x64 code of a native block, for when the native function declines. */
     struct X86Block *succ[2];  /* the blocks that last followed this one, to skip the hash lookup. */
     uint64_t succ_rip[2];
     uint32_t *jit;          /* translated arm64 code. */
+    uint32_t *jit_ready;    /* translated code waiting for the next batch to become visible to fetch. */
     uint16_t *jit_offsets;  /* code offset of each instruction and of the end. */
+    X86Link *links;
     uint32_t runs;          /* runs before translation, ~0u once translation failed. */
     uint32_t count;
+    uint32_t dropped;       /* the code changed: the block only lives on in references to it. */
     X86Insn insns[];
 } X86Block;
 
 typedef struct X86BlockCache {
     X86Block *buckets[BLOCK_BUCKETS];
+    X86Block *pages[PAGE_BUCKETS]; /* the blocks by the page they start in, to find the ones a code change hits. */
     uint8_t *arena;
     size_t arena_used;
     size_t arena_size;
@@ -1525,6 +1546,14 @@ typedef struct X86BlockCache {
     uint8_t *code;              /* the code arena being filled. */
     size_t code_used;
     struct X86BlockArena *code_arenas;
+    /*
+     * blocks translated since the instruction caches last caught up: the barriers that make code visible cost more
+     * than the block's translation, so one pass covers a batch while its blocks run interpreted a little longer.
+     */
+    struct X86Block *pending[JIT_BATCH];
+    uint32_t pending_count, pending_age;
+    uint8_t *pending_start;
+    uint32_t drops;             /* bumped when blocks are dropped, for runs holding on to some. */
 } X86BlockCache;
 
 typedef struct X86BlockArena {
@@ -1622,23 +1651,30 @@ static X86Native native_at(uint64_t rip)
     return nullptr;
 }
 
+static uint32_t block_bucket(uint64_t rip) { return (uint32_t)((rip ^ (rip >> 14)) & (BLOCK_BUCKETS - 1)); }
+
+static uint32_t page_bucket(uint64_t page) { return (uint32_t)((page ^ (page >> 12)) & (PAGE_BUCKETS - 1)); }
+
+static void insert(X86BlockCache *bc, X86Block *b)
+{
+    uint32_t h = block_bucket(b->rip), p = page_bucket(b->rip >> 12);
+    b->next = bc->buckets[h];
+    bc->buckets[h] = b;
+    b->page_next = bc->pages[p];
+    bc->pages[p] = b;
+}
+
 static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow_native)
 {
     X86Native native = allow_native ? native_at(rip) : nullptr;
     if (native) {
         X86Block *b = cache_alloc(bc, sizeof(X86Block));
+        __builtin_memset(b, 0, sizeof(*b));
         b->rip = rip;
+        b->end = rip + 1;
         b->native = native;
-        b->fallback = nullptr;
-        b->succ[0] = b->succ[1] = nullptr;
-        b->succ_rip[0] = b->succ_rip[1] = 0;
-        b->jit = nullptr;
-        b->jit_offsets = nullptr;
         b->runs = ~0u;
-        b->count = 0;
-        uint32_t h = (uint32_t)((rip ^ (rip >> 14)) & (BLOCK_BUCKETS - 1));
-        b->next = bc->buckets[h];
-        bc->buckets[h] = b;
+        insert(bc, b);
         return b;
     }
     X86Insn buf[BLOCK_MAX];
@@ -1658,24 +1694,20 @@ static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow
         if (x86_ends_block(&buf[n++]))
             break;
     }
-    if (c->env && c->env->code_seen)
+    if (c->env && c->env->code_seen) {
         c->env->code_seen(c, rip);
+        /* a block running on into the next page may cross into another region. */
+        if (pc > rip && ((pc - 1) ^ rip) >> 12)
+            c->env->code_seen(c, pc - 1);
+    }
     X86Block *b = cache_alloc(bc, sizeof(X86Block) + n * sizeof(X86Insn));
+    __builtin_memset(b, 0, sizeof(*b));
     b->rip = rip;
-    b->native = nullptr;
-    b->fallback = nullptr;
-    b->succ[0] = b->succ[1] = nullptr;
-    b->succ_rip[0] = b->succ_rip[1] = 0;
-    b->jit = nullptr;
-    b->jit_offsets = nullptr;
-    b->runs = 0;
+    b->end = pc;
     b->count = n;
     __builtin_memcpy(b->insns, buf, n * sizeof(X86Insn));
-    if (!allow_native)
-        return b;
-    uint32_t h = (uint32_t)((rip ^ (rip >> 14)) & (BLOCK_BUCKETS - 1));
-    b->next = bc->buckets[h];
-    bc->buckets[h] = b;
+    if (allow_native)
+        insert(bc, b);
     return b;
 }
 
@@ -1721,6 +1753,8 @@ void x86_free_blocks(X86Cpu *c)
 
 void x86_flush_blocks(X86Cpu *c)
 {
+    if (c->targets)
+        __builtin_memset(c->targets, 0, X86_TARGET_COUNT * sizeof(X86Target));
     X86BlockCache *bc = c->blocks;
     if (!bc)
         return;
@@ -1731,14 +1765,87 @@ void x86_flush_blocks(X86Cpu *c)
         a = next;
     }
     free_code(bc);
+    uint32_t drops = bc->drops;
     __builtin_memset(bc, 0, sizeof(*bc));
+    bc->drops = drops + 1;
+}
+
+static int overlaps(const X86Block *b, uint64_t start, uint64_t end) { return b->rip < end && start < b->end; }
+
+static void drop_block(X86Cpu *c, X86Block *b)
+{
+    b->dropped = 1;
+    for (X86Link *l = b->links; l; l = l->next)
+        __atomic_store_n(&l->slot->code, nullptr, __ATOMIC_RELAXED);
+    b->links = nullptr;
+    X86Target *t = c->targets ? (X86Target *)c->targets + x86_target_index(b->rip) : nullptr;
+    if (t && t->block == b)
+        t->rip = 0;
+}
+
+/* the blocks starting in one page bucket that overlap [start, end) leave the cache. */
+static void drop_bucket(X86Cpu *c, X86BlockCache *bc, uint32_t p, uint64_t start, uint64_t end)
+{
+    for (X86Block **q = &bc->pages[p]; *q;) {
+        X86Block *b = *q;
+        if (!overlaps(b, start, end) && !(b->fallback && overlaps(b->fallback, start, end))) {
+            q = &b->page_next;
+            continue;
+        }
+        *q = b->page_next;
+        X86Block **h = &bc->buckets[block_bucket(b->rip)];
+        while (*h != b)
+            h = &(*h)->next;
+        *h = b->next;
+        drop_block(c, b);
+        if (b->fallback)
+            drop_block(c, b->fallback);
+        bc->drops++;
+    }
+}
+
+/* drops the blocks with code in [start, end), keeping the others and their translations. */
+static void drop_blocks(X86Cpu *c, uint64_t start, uint64_t end)
+{
+    X86BlockCache *bc = c->blocks;
+    if (!bc)
+        return;
+    /* a block starts at most BLOCK_MAX longest instructions before the range. */
+    uint64_t first = (start > BLOCK_MAX * 15 ? start - BLOCK_MAX * 15 : 0) >> 12, last = (end - 1) >> 12;
+    if (last - first >= PAGE_BUCKETS) {
+        for (uint32_t p = 0; p < PAGE_BUCKETS; p++)
+            drop_bucket(c, bc, p, start, end);
+        return;
+    }
+    for (uint64_t page = first; page <= last; page++)
+        drop_bucket(c, bc, page_bucket(page), start, end);
+}
+
+/* catches up with the code changes made since the blocks were last checked. */
+static void code_changed(X86Cpu *c)
+{
+    uint32_t seen = c->blocks_epoch, now = __atomic_load_n(c->code_epoch, __ATOMIC_ACQUIRE);
+    c->blocks_epoch = now;
+    int all = !c->code_ranges || now - seen >= X86_CODE_LOG;
+    for (uint32_t k = 1; !all && k <= now - seen; k++) {
+        const X86CodeRange *r = &c->code_ranges[(seen + k) % X86_CODE_LOG];
+        uint64_t start = __atomic_load_n(&r->start, __ATOMIC_RELAXED), end = __atomic_load_n(&r->end, __ATOMIC_RELAXED);
+        if (end <= start)
+            all = 1;
+        else
+            drop_blocks(c, start, end);
+    }
+    /* the log moved on while it was read. */
+    if (!all && __atomic_load_n(c->code_epoch, __ATOMIC_ACQUIRE) - seen >= X86_CODE_LOG)
+        all = 1;
+    if (all)
+        x86_flush_blocks(c);
 }
 
 static inline X86Block *lookup(X86Cpu *c, uint64_t rip)
 {
     X86BlockCache *bc = block_cache(c);
-    uint32_t h = (uint32_t)((rip ^ (rip >> 14)) & (BLOCK_BUCKETS - 1));
-    for (X86Block *b = bc->buckets[h]; b; b = b->next) {
+    for (X86Block *b = bc->buckets[block_bucket(rip)]; b; b = b->next) {
         if (b->rip == rip)
             return b;
     }
@@ -1749,9 +1856,9 @@ static inline X86Block *lookup(X86Cpu *c, uint64_t rip)
 static inline X86Block *next_block(X86Cpu *c, X86Block *prev, uint64_t rip)
 {
     if (prev) {
-        if (prev->succ_rip[0] == rip && prev->succ[0])
+        if (prev->succ_rip[0] == rip && prev->succ[0] && !prev->succ[0]->dropped)
             return prev->succ[0];
-        if (prev->succ_rip[1] == rip && prev->succ[1]) {
+        if (prev->succ_rip[1] == rip && prev->succ[1] && !prev->succ[1]->dropped) {
             /* most recent first. */
             X86Block *b = prev->succ[1];
             prev->succ[1] = prev->succ[0];
@@ -1781,14 +1888,31 @@ uint32_t x86_jit_threshold = 16;
 #define CODE_ARENA_SIZE (4u << 20)
 #define JIT_MAX_WORDS 8192u
 
+/* makes the pending translations visible to instruction fetch and runnable. */
+static void jit_publish(X86BlockCache *bc)
+{
+    if (!bc->pending_count)
+        return;
+    x86_code_write_end(bc->pending_start, (size_t)(bc->code + bc->code_used - bc->pending_start));
+    for (uint32_t k = 0; k < bc->pending_count; k++) {
+        X86Block *b = bc->pending[k];
+        b->jit = b->jit_ready;
+        b->jit_ready = nullptr;
+    }
+    bc->pending_count = 0;
+    bc->pending_age = 0;
+    bc->pending_start = nullptr;
+}
+
 /* a block that fails to translate keeps being interpreted. */
 static void jit_block(X86Cpu *c, X86Block *b)
 {
     X86BlockCache *bc = block_cache(c);
     b->runs = ~0u;
-    if (!c->mode64 || !b->count || b->count > 64)
+    if (!b->count || b->count > 64)
         return;
     if (!bc->code || bc->code_used + JIT_MAX_WORDS * 4 > CODE_ARENA_SIZE) {
+        jit_publish(bc); /* a batch stays within one arena. */
         X86BlockArena *a = x86_alloc_code(CODE_ARENA_SIZE);
         if (!a)
             return;
@@ -1804,42 +1928,57 @@ static void jit_block(X86Cpu *c, X86Block *b)
     uint32_t *code = (uint32_t *)(bc->code + bc->code_used);
     x86_code_write_begin();
     uint32_t words = x86_jit_translate(c, b->rip, b->insns, b->count, code, JIT_MAX_WORDS, offsets);
-    x86_code_write_end(code, words * 4);
     if (!words)
         return;
     bc->code_used += (words * 4 + 63) & ~(size_t)63;
     b->jit_offsets = offsets;
-    b->jit = code;
+    b->jit_ready = code;
+    if (!bc->pending_count)
+        bc->pending_start = (uint8_t *)code;
+    bc->pending[bc->pending_count++] = b;
+    if (bc->pending_count == JIT_BATCH)
+        jit_publish(bc);
 }
 
-void x86_jit_fault(X86Cpu *c, uint64_t pc)
+void x86_jit_fault(X86Cpu *c, uint64_t pc, const uint64_t *x)
 {
     const X86Block *b = c->jit_block;
     if (!b || pc < (uint64_t)(uintptr_t)b->jit)
         return;
     uint64_t offset = (pc - (uint64_t)(uintptr_t)b->jit) / 4;
-    if (offset < b->jit_offsets[b->count])
+    if (offset < b->jit_offsets[b->count]) {
         c->insn_rip = x86_jit_fault_rip(b->rip, b->insns, b->count, b->jit_offsets, (uint32_t)offset);
+        /* translated code keeps rax to rdi in x20 to x27. */
+        for (int k = 0; k < 8; k++)
+            c->r[k] = x[20 + k];
+    }
 }
 
 void x86_run(X86Cpu *c)
 {
     X86Block *prev = nullptr;
+    X86ChainSlot *pending = nullptr; /* the slot the last translated run left through, to link to what follows. */
     c->jit_block = nullptr; /* in case a fault in translated code restarted the run. */
+    uint32_t drops = block_cache(c)->drops;
     while (c->rip != c->exit_rip) {
         if (c->suspend_pending && *c->suspend_pending && c->env->suspend) {
             c->env->suspend(c);
             prev = nullptr;
+            pending = nullptr;
         }
-        if (c->code_epoch && *c->code_epoch != c->blocks_epoch) {
-            c->blocks_epoch = *c->code_epoch;
-            x86_flush_blocks(c);
+        if (c->code_epoch && *c->code_epoch != c->blocks_epoch)
+            code_changed(c);
+        /* nested runs share the blocks, so this run's may have gone too. */
+        if (block_cache(c)->drops != drops) {
+            drops = ((X86BlockCache *)c->blocks)->drops;
             prev = nullptr;
+            pending = nullptr;
         }
         if (c->trace)
             c->trace[(*c->trace_pos)++ % X86_TRACE_SIZE] = c->rip;
         X86Block *b = next_block(c, prev, c->rip);
         if (b->native) {
+            pending = nullptr;
             c->insn_rip = c->rip;
             if (b->native(c)) {
                 c->steps++;
@@ -1850,17 +1989,49 @@ void x86_run(X86Cpu *c)
                 b->fallback = translate(c, block_cache(c), c->rip, 0);
             b = b->fallback;
         }
-        const X86Insn *i = b->insns, *end = i + b->count, *start;
         if (!b->jit && b->runs < ~0u && ++b->runs > x86_jit_threshold)
             jit_block(c, b);
+        else if (b->jit_ready && ++((X86BlockCache *)c->blocks)->pending_age > JIT_BATCH_AGE)
+            jit_publish(c->blocks);
+        if (b->jit) {
+            /* computed exits find it here next time, without coming back. */
+            if (!c->targets)
+                c->targets = x86_alloc(X86_TARGET_COUNT * sizeof(X86Target));
+            if (c->targets) {
+                X86Target *t = (X86Target *)c->targets + x86_target_index(b->rip);
+                if (t->rip != b->rip) {
+                    t->rip = 0;
+                    t->block = b;
+                    t->code = b->jit + X86_JIT_PROLOGUE;
+                    __atomic_store_n(&t->rip, b->rip, __ATOMIC_RELEASE);
+                }
+            }
+        }
+        if (pending) {
+            /* chained blocks run without passing here, so the trace only shows where runs entered. */
+            if (b->jit && pending->rip == b->rip) {
+                X86Link *l = cache_alloc(c->blocks, sizeof(X86Link));
+                l->slot = pending;
+                l->next = b->links;
+                b->links = l;
+                pending->block = b;
+                __atomic_store_n(&pending->code, b->jit + X86_JIT_PROLOGUE, __ATOMIC_RELEASE);
+            }
+            pending = nullptr;
+        }
+        uint32_t first = 0;
         if (b->jit) {
             c->jit_block = b;
-            uint32_t ran = ((uint32_t (*)(X86Cpu *))(void *)b->jit)(c);
+            c->exit_slot = nullptr;
+            first = ((uint32_t (*)(X86Cpu *))(void *)b->jit)(c);
+            /* chained exits ran on into other blocks: the last one is where the run stopped. */
+            b = (X86Block *)c->jit_block;
             c->jit_block = nullptr;
-            c->steps += ran;
-            i += ran;
+            c->steps += first;
+            if (first == b->count)
+                pending = c->exit_slot;
         }
-        start = i;
+        const X86Insn *i = b->insns + first, *end = b->insns + b->count, *start = i;
         uint64_t expected = c->rip;
         for (; i < end; i++) {
             if (c->rip != expected)
