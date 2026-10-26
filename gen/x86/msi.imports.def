@@ -1,5 +1,10 @@
 LIBRARY msi.dll
 EXPORTS
+    DllCanUnloadNow@0 @291
+    DllGetClassObject@12 @292
+    DllGetVersion@4 @177
+    DllRegisterServer@0 @293
+    DllUnregisterServer@0 @294
     MsiApplyPatchW@16 @175
     MsiCloseAllHandles@0 @7
     MsiCloseHandle@4 @8
@@ -113,3 +118,4 @@ EXPORTS
     MsiViewGetColumnInfo@12 @166
     MsiViewGetErrorW@12 @162
     MsiViewModify@12 @163
+    QueryInstanceCount@0 @290

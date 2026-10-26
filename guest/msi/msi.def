@@ -113,3 +113,9 @@ EXPORTS
     MsiGetPatchInfoExW @244
     MsiDeterminePatchSequenceW @254
     MsiEnumPatchesExW @270
+    DllGetVersion @177
+    QueryInstanceCount @290
+    DllCanUnloadNow @291
+    DllGetClassObject @292
+    DllRegisterServer @293
+    DllUnregisterServer @294

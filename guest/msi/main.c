@@ -1,6 +1,8 @@
 #include "msi_private.h"
 
+int _fltused = 0x9875;
 SRWLOCK MimeMsiLock;
+HMODULE MimeMsiModule;
 static struct {
     MIME_MSI_OBJECT *Object;
     USHORT Generation;
@@ -80,6 +82,8 @@ UINT WINAPI MsiCloseAllHandles(void)
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
 {
+    if (reason == DLL_PROCESS_ATTACH)
+        MimeMsiModule = instance;
     if (reason == DLL_PROCESS_DETACH && !reserved) {
         MimeMsiShutDownHost();
         MimeMsiCloseLog();

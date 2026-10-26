@@ -154,6 +154,9 @@ UINT WINAPI MsiOpenDatabaseW(LPCWSTR path, LPCWSTR persist, MSIHANDLE *out)
     if (!path || !out)
         return ERROR_INVALID_PARAMETER;
     *out = 0;
+    /* a number below the addresses is a mode of opening, and one that is no mode is refused. */
+    if ((ULONG_PTR)persist < 0x10000 && ((ULONG_PTR)persist & ~(ULONG_PTR)MSIDBOPEN_PATCHFILE) > 4)
+        return ERROR_INVALID_PARAMETER;
     if (persist != MSIDBOPEN_READONLY)
         return ERROR_CALL_NOT_IMPLEMENTED;
     MIME_MSI_DATABASE *database;

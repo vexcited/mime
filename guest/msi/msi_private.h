@@ -273,5 +273,6 @@ UINT MimeMsiSetScopeFolders(MIME_MSI_PACKAGE *package);
 BOOL MimeMsiIs64BitPackage(MIME_MSI_PACKAGE *package);
 
 WINBASEAPI BOOL WINAPI GetUserNameW(LPWSTR buffer, LPDWORD size);
+WINBASEAPI LSTATUS WINAPI RegConnectRegistryW(LPCWSTR machine, HKEY key, HKEY *result);
 
 #endif

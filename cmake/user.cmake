@@ -217,7 +217,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_advpack ${arch}-lib-cabinet)
     set(libs_advpack ${MIME_LIB_${arch}}/version.lib ${MIME_LIB_${arch}}/advapi32.lib)
     set(libs_msi ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/shell32.lib ${MIME_LIB_${arch}}/ole32.lib
-        ${MIME_LIB_${arch}}/version.lib)
+        ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/version.lib)
     set(objects_winmm ${arch}-lib-audio)
     set(objects_dsound ${arch}-lib-audio)
     set(objects_dinput8 ${arch}-lib-dinput)
