@@ -38,6 +38,7 @@ typedef struct MimeVcpu {
     uint64_t handle; /* hv_vcpu_t */
     void *exit_info; /* hv_vcpu_exit_t */
     uint64_t vtimer_offset;
+    volatile bool profile_pending; /* the profiler kicked it for a sample. */
 #endif
     pthread_t thread;
     /* where a secondary starts, set by MIME_HC_CPU_START. */

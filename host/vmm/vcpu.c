@@ -1,8 +1,11 @@
 #include "vmm.h"
+#include "../gpu/gpu.h"
 
 #include <Hypervisor/Hypervisor.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
 
 #define EC_WFX 0x01
@@ -138,7 +141,82 @@ static void dump_backtrace(MimeVcpu *vcpu)
 
 static volatile bool g_dump_requested;
 
-void mime_vcpu_toggle_profile(void) {}
+/*
+ * a sampling profiler: kill -PROF starts it and stops it. while on, a thread kicks every vCPU each millisecond and
+ * the vCPU records where it was, with ttbr0 telling the guest processes apart; stopping writes the samples to
+ * profile.txt in the state directory, one "vcpu pc cpsr ttbr0 lr" line each, to symbolize with the guest's binaries.
+ */
+typedef struct ProfileSample {
+    uint64_t pc, ttbr0, lr;
+    uint32_t cpsr, vcpu;
+} ProfileSample;
+
+#define PROFILE_SAMPLES (1u << 22)
+
+static volatile bool g_profiling;
+static ProfileSample *g_samples;
+static uint32_t g_sample_count;
+static MimeVm *g_profile_vm;
+
+void mime_vcpu_toggle_profile(void)
+{
+    g_profiling = !g_profiling;
+}
+
+static void profile_record(MimeVcpu *vcpu)
+{
+    vcpu->profile_pending = false;
+    uint32_t at = __atomic_fetch_add(&g_sample_count, 1, __ATOMIC_RELAXED);
+    if (!g_samples || at >= PROFILE_SAMPLES)
+        return;
+    g_samples[at] = (ProfileSample){get_reg(vcpu, HV_REG_PC), get_sys(vcpu, HV_SYS_REG_TTBR0_EL1),
+                                    get_reg(vcpu, HV_REG_LR), (uint32_t)get_reg(vcpu, HV_REG_CPSR), vcpu->index};
+}
+
+static void profile_write(void)
+{
+    char path[MIME_PATH_MAX];
+    snprintf(path, sizeof(path), "%s/profile.txt", mime_daemon_paths()->state);
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return;
+    uint32_t n = g_sample_count < PROFILE_SAMPLES ? g_sample_count : PROFILE_SAMPLES;
+    for (uint32_t i = 0; i < n; i++)
+        fprintf(f, "%u %llx %x %llx %llx\n", g_samples[i].vcpu, (unsigned long long)g_samples[i].pc, g_samples[i].cpsr,
+                (unsigned long long)g_samples[i].ttbr0, (unsigned long long)g_samples[i].lr);
+    fclose(f);
+    mime_info("profile: %u samples in %s", n, path);
+}
+
+static void *profile_main(void *arg)
+{
+    MimeVm *vm = arg;
+    bool was = false;
+    pthread_setname_np("mime-profile");
+    for (;;) {
+        if (g_profiling) {
+            if (!was) {
+                if (!g_samples)
+                    g_samples = calloc(PROFILE_SAMPLES, sizeof(*g_samples));
+                g_sample_count = 0;
+                was = true;
+                mime_info("profile: sampling");
+            }
+            for (uint32_t i = 0; i < vm->vcpu_count; i++) {
+                vm->vcpus[i].profile_pending = true;
+                mime_vcpu_kick(&vm->vcpus[i]);
+            }
+            usleep(1000);
+        } else {
+            if (was) {
+                was = false;
+                profile_write();
+            }
+            usleep(50000);
+        }
+    }
+    return nullptr;
+}
 
 /* async-signal context: only sets a flag and forces the vCPUs out of the guest. */
 void mime_vcpu_request_dump(MimeVm *vm)
@@ -256,6 +334,12 @@ static void *vcpu_main(void *arg)
         pthread_cond_wait(&vm->vcpu_cond, &vm->lock);
     pthread_mutex_unlock(&vm->lock);
     if (vcpu->index == 0) {
+        if (!g_profile_vm) {
+            pthread_t t;
+            g_profile_vm = vm;
+            pthread_create(&t, nullptr, profile_main, vm);
+            pthread_detach(t);
+        }
         set_sys(vcpu, HV_SYS_REG_SP_EL1, vm->boot_stack_top);
         set_reg(vcpu, HV_REG_PC, vm->kernel_entry);
         set_reg(vcpu, HV_REG_X0, MIME_KVA_PHYSMAP + MIME_RAM_BASE + 0x1000);
@@ -285,9 +369,12 @@ static void *vcpu_main(void *arg)
             break;
         case HV_EXIT_REASON_CANCELED:
             vcpu->exits_canceled++;
+            if (vcpu->profile_pending)
+                profile_record(vcpu);
             if (g_dump_requested) {
                 g_dump_requested = false;
                 dump_state(vcpu, "state dump requested");
+                mime_vk_dump_stats();
             }
             break;
         default:
