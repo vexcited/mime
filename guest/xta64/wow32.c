@@ -98,6 +98,15 @@ BOOLEAN MxFillPeb32(PVOID memory)
     out->StandardInput = (ULONG)(ULONG_PTR)pp->StandardInput;
     out->StandardOutput = (ULONG)(ULONG_PTR)pp->StandardOutput;
     out->StandardError = (ULONG)(ULONG_PTR)pp->StandardError;
+    out->ConsoleFlags = pp->ConsoleFlags;
+    out->StartingX = pp->StartingX;
+    out->StartingY = pp->StartingY;
+    out->CountX = pp->CountX;
+    out->CountY = pp->CountY;
+    out->CountCharsX = pp->CountCharsX;
+    out->CountCharsY = pp->CountCharsY;
+    out->FillAttribute = pp->FillAttribute;
+    out->WindowFlags = pp->WindowFlags;
     out->ShowWindowFlags = pp->ShowWindowFlags;
     out->ImagePathName = copy_string32(&cursor, &pp->ImagePathName);
     out->CommandLine = copy_string32(&cursor, &pp->CommandLine);
@@ -668,6 +677,41 @@ static void redirect_file32(OBJECT_ATTRIBUTES *oa, UNICODE_STRING *name, WCHAR *
     *name = moved;
 }
 
+/* the same for the image a process is made from, named by a dos path in its parameters. */
+static void redirect_image32(RTL_USER_PROCESS_PARAMETERS *pp, WCHAR *nt, SIZE_T nt_chars, WCHAR *moved, SIZE_T moved_chars)
+{
+    SIZE_T chars = pp->ImagePathName.Length / sizeof(WCHAR);
+    if (!pp->ImagePathName.Buffer || chars < 3 || chars + 5 > nt_chars || pp->ImagePathName.Buffer[1] != ':')
+        return;
+    memcpy(nt, L"\\??\\", 4 * sizeof(WCHAR));
+    memcpy(nt + 4, pp->ImagePathName.Buffer, chars * sizeof(WCHAR));
+    nt[4 + chars] = 0;
+    UNICODE_STRING name = {(USHORT)((4 + chars) * sizeof(WCHAR)), (USHORT)((5 + chars) * sizeof(WCHAR)), nt};
+    OBJECT_ATTRIBUTES oa = {sizeof(oa), nullptr, &name, OBJ_CASE_INSENSITIVE};
+    redirect_file32(&oa, &name, moved, moved_chars);
+    if (name.Buffer == nt)
+        return;
+    pp->ImagePathName.Buffer = name.Buffer + 4;
+    pp->ImagePathName.Length = (USHORT)(name.Length - 4 * sizeof(WCHAR));
+    pp->ImagePathName.MaximumLength = (USHORT)(name.MaximumLength - 4 * sizeof(WCHAR));
+}
+
+/* a 64-bit image cannot be mapped into a 32-bit process, the loader is told it is not an image of this kind of program. */
+static NTSTATUS too_high32(HANDLE process, PVOID base)
+{
+    NTSTATUS status = STATUS_NO_MEMORY;
+    if (process == NtCurrentProcess()) {
+        const IMAGE_DOS_HEADER *dos = base;
+        if (dos->e_magic == 0x5A4D && dos->e_lfanew > 0 && dos->e_lfanew < 0x1000) {
+            const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)((PUCHAR)base + dos->e_lfanew);
+            if (nt->Signature == 0x00004550 && nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+                status = STATUS_INVALID_IMAGE_FORMAT;
+        }
+    }
+    NtUnmapViewOfSection(process, base);
+    return status;
+}
+
 NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 {
     UNICODE_STRING name;
@@ -876,6 +920,9 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         }
         RTL_USER_PROCESS_PARAMETERS pp;
         parameters64(pointer32(a[8]), &pp);
+        /* the image of a program in System32 is the one of SysWOW64, as the files are. */
+        WCHAR image_nt[MAX_PATH + 8], image_moved[MAX_PATH * 2];
+        redirect_image32(&pp, image_nt, RTL_NUMBER_OF(image_nt), image_moved, RTL_NUMBER_OF(image_moved));
         UNICODE_STRING process_name, thread_name;
         OBJECT_ATTRIBUTES process_oa = attributes32(a[4], &process_name);
         OBJECT_ATTRIBUTES thread_oa = attributes32(a[5], &thread_name);
@@ -1219,10 +1266,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             return STATUS_NO_MEMORY;
         status = NtMapViewOfSection(handle32(a[0]), handle32(a[1]), &base, a[3], a[4], pointer32(a[5]), &size,
                                     a[7], a[8], a[9]);
-        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull) {
-            NtUnmapViewOfSection(handle32(a[1]), base);
-            return STATUS_NO_MEMORY;
-        }
+        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull)
+            return too_high32(handle32(a[1]), base);
         if (NT_SUCCESS(status)) {
             store32(a[2], (ULONG_PTR)base);
             store32(a[6], size);
@@ -1244,10 +1289,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         status = NtMapViewOfSectionEx(handle32(a[0]), handle32(a[1]), &base, pointer32(a[3]), &size, a[5], a[6], ext,
                                       a[8]);
         Mx32FreeScratch(block);
-        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull) {
-            NtUnmapViewOfSection(handle32(a[1]), base);
-            return STATUS_NO_MEMORY;
-        }
+        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull)
+            return too_high32(handle32(a[1]), base);
         if (NT_SUCCESS(status)) {
             store32(a[2], (ULONG_PTR)base);
             store32(a[4], size);
