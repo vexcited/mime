@@ -23,6 +23,7 @@ EXPORTS
     ILCreateFromPathA @189
     ILLoadFromStreamEx @846
     SHCreateItemWithParent @346
+    SHCreateLocalServerRunDll @347
     SHCreateShellItemArray @351
     SHCreateShellItemArrayFromIDLists @353
     SHCreateShellItemArrayFromShellItem @354

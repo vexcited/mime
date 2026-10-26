@@ -1,10 +1,15 @@
 /*
- * explorerframe.dll: CLSID_TaskbarList, a window's taskbar button state.
+ * explorerframe.dll: CLSID_TaskbarList, a window's taskbar button state, and the class factory of the list of the
+ * shell's windows.
  */
 #include "explorerframe_private.h"
 
+HINSTANCE g_explorerframe;
+
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
+    if (reason == DLL_PROCESS_ATTACH)
+        g_explorerframe = instance;
     return TRUE;
 }
 
@@ -39,7 +44,13 @@ DECLSPEC_EXPORT HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, vo
     *object = nullptr;
     if (!clsid || !riid)
         return E_INVALIDARG;
-    if (!IsEqualCLSID(clsid, &CLSID_TaskbarList))
+    static const CLSID shell_windows_factory = {0xD92BD3B9, 0x99A0, 0x4334, {0xA4, 0x97, 0x11, 0xBC, 0xB0, 0x93, 0xE9, 0xD2}};
+    IClassFactory *factory;
+    if (IsEqualCLSID(clsid, &CLSID_TaskbarList))
+        factory = TaskbarListFactory();
+    else if (IsEqualCLSID(clsid, &shell_windows_factory))
+        factory = ShellWindowsFactory();
+    else
         return CLASS_E_CLASSNOTAVAILABLE;
-    return TaskbarListFactory()->lpVtbl->QueryInterface(TaskbarListFactory(), riid, object);
+    return factory->lpVtbl->QueryInterface(factory, riid, object);
 }

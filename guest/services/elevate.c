@@ -4,6 +4,9 @@
  *
  * the process gets the caller's linked token, in the caller's session, with the caller as parent. an already
  * elevated caller gets its own token.
+ *
+ * the same broker starts the servers a class says run as the interactive user, as dcom's launcher does: the process
+ * gets the limited half of an elevated caller's token, or the caller's own when it is not elevated.
  */
 #include "services.h"
 
@@ -96,6 +99,31 @@ static HANDLE elevated_token(HANDLE caller, DWORD *error, DWORD *elevation)
     return primary;
 }
 
+/* a primary token with the rights of the user without those of an administrator, or NULL with an error. */
+static HANDLE limited_token(HANDLE caller, DWORD *error)
+{
+    DWORD type = token_dword(caller, TokenElevationType_, ELEVATION_DEFAULT);
+    HANDLE source = caller;
+    LINKED_TOKEN linked = {};
+    DWORD returned;
+    if (type == ELEVATION_FULL) {
+        /* the filtered half of the pair, a primary token as the system asks for it. */
+        if (!GetTokenInformation(caller, TokenLinkedToken_, &linked, sizeof(linked), &returned)) {
+            *error = GetLastError();
+            return nullptr;
+        }
+        source = linked.Token;
+    }
+    HANDLE primary = nullptr;
+    if (!DuplicateTokenEx(source, TOKEN_ALL_ACCESS, nullptr, SecurityImpersonation_, TokenPrimary, &primary)) {
+        *error = GetLastError();
+        primary = nullptr;
+    }
+    if (linked.Token)
+        CloseHandle(linked.Token);
+    return primary;
+}
+
 /* the returned handles live in the client's process. */
 DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *q, ELEVATE_RESULT *out)
 {
@@ -104,18 +132,29 @@ DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *q, ELEVATE_RE
     if (!caller)
         return error;
     DWORD elevation = ELEVATION_DEFAULT;
-    HANDLE token = elevated_token(caller, &error, &elevation);
-    CloseHandle(caller);
-    if (!token) {
-        SvcLog("elevation: %ls for process %lu is refused, the token has no administrator: %lu", q->CommandLine, pid, error);
-        return error;
+    HANDLE token;
+    if (q->Unelevated) {
+        token = limited_token(caller, &error);
+        CloseHandle(caller);
+        if (!token) {
+            SvcLog("interactive user: %ls for process %lu has no token to give: %lu", q->CommandLine, pid, error);
+            return error;
+        }
+        SvcLog("interactive user: %ls is started for process %lu with the unelevated token", q->CommandLine, pid);
+    } else {
+        token = elevated_token(caller, &error, &elevation);
+        CloseHandle(caller);
+        if (!token) {
+            SvcLog("elevation: %ls for process %lu is refused, the token has no administrator: %lu", q->CommandLine, pid, error);
+            return error;
+        }
+        if (!consent_given()) {
+            SvcLog("elevation: %ls for process %lu was declined by the policy of the machine", q->CommandLine, pid);
+            CloseHandle(token);
+            return ERROR_CANCELLED;
+        }
+        SvcLog("elevation: %ls for process %lu is approved without a prompt (no consent interface here)", q->CommandLine, pid);
     }
-    if (!consent_given()) {
-        SvcLog("elevation: %ls for process %lu was declined by the policy of the machine", q->CommandLine, pid);
-        CloseHandle(token);
-        return ERROR_CANCELLED;
-    }
-    SvcLog("elevation: %ls for process %lu is approved without a prompt (no consent interface here)", q->CommandLine, pid);
 
     HANDLE client = OpenProcess(PROCESS_DUP_HANDLE_ | PROCESS_CREATE_PROCESS_ | PROCESS_QUERY_LIMITED_INFORMATION_, FALSE, pid);
     if (!client) {

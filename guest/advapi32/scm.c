@@ -2623,14 +2623,9 @@ ADVAPI BOOL WINAPI SetServiceBits(SERVICE_STATUS_HANDLE handle, DWORD bits, BOOL
 
 /* ------------------------------------------------------------------ elevation */
 
-/*
- * starts a process with administrator rights. services.exe, standing in for the windows appinfo service, creates it
- * with the caller's linked token and the caller as parent, and returns handles in this process. the startup info is
- * what ShellExecute provides: window, desktop and title. error 0 means a process was created, ERROR_CANCELLED that
- * the machine policy refused, or that the token has no administrator behind it.
- */
-ADVAPI DWORD WINAPI LaunchElevated(LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD creation_flags,
-                                   const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation)
+/* the request both launches send to the broker, and its answer. */
+static DWORD launch_for_broker(UINT32 operation, LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD creation_flags,
+                                const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation)
 {
     if (!command_line || !info)
         return ERROR_INVALID_PARAMETER;
@@ -2639,7 +2634,7 @@ ADVAPI DWORD WINAPI LaunchElevated(LPCWSTR application, LPCWSTR command_line, LP
     if (error)
         return error;
     SCM_WRITER w;
-    ScmWriterInit(&w, SCM_OP_LAUNCH_ELEVATED);
+    ScmWriterInit(&w, operation);
     ScmPutString(&w, application);
     ScmPutString(&w, command_line);
     ScmPutString(&w, directory);
@@ -2664,4 +2659,28 @@ ADVAPI DWORD WINAPI LaunchElevated(LPCWSTR application, LPCWSTR command_line, LP
     reply_free(&reply);
     AdvSetError(error);
     return error;
+}
+
+/*
+ * starts a process with administrator rights. services.exe, standing in for the windows appinfo service, creates it
+ * with the caller's linked token and the caller as parent, and returns handles in this process. the startup info is
+ * what ShellExecute provides: window, desktop and title. error 0 means a process was created, ERROR_CANCELLED that
+ * the machine policy refused, or that the token has no administrator behind it.
+ */
+ADVAPI DWORD WINAPI LaunchElevated(LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD creation_flags,
+                                   const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation)
+{
+    return launch_for_broker(SCM_OP_LAUNCH_ELEVATED, application, command_line, directory, creation_flags, startup, info,
+                             elevation);
+}
+
+/*
+ * the same for a process that must not be elevated: a server that runs as the interactive user, which takes the limited
+ * half of an elevated caller's token and the caller's own token otherwise. ole32 asks for it when a class says so.
+ */
+ADVAPI DWORD WINAPI LaunchUnelevated(LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD creation_flags,
+                                     const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation)
+{
+    return launch_for_broker(SCM_OP_LAUNCH_UNELEVATED, application, command_line, directory, creation_flags, startup, info,
+                             elevation);
 }

@@ -106,6 +106,7 @@ BOOL OleParseGuid(LPCOLESTR string, GUID *guid);
 /* the user's registrations come before the machine's. */
 LSTATUS OleOpenClassesKey(LPCWSTR subkey, REGSAM access, HKEY *key);
 /* HKCR\CLSID\{clsid} or one of its subkeys. */
+PSECURITY_DESCRIPTOR OleEveryoneDescriptor(ULONG mask);
 LSTATUS OleOpenClassKey(REFCLSID clsid, LPCWSTR subkey, REGSAM access, HKEY *key);
 
 /* com.c */

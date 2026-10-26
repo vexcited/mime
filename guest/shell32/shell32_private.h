@@ -35,6 +35,11 @@ LPWSTR ShDuplicate(LPCWSTR text);
 /* NULL stays NULL. */
 LPWSTR ShWiden(LPCSTR text);
 
+/* dragdrop.c, automation.c and localserver.c. */
+HRESULT ShDragDropClassObject(REFCLSID clsid, REFIID riid, void **object);
+HRESULT ShAutomationClassObject(REFCLSID clsid, REFIID riid, void **object);
+extern HINSTANCE g_shell32;
+
 /* pidl.c */
 BOOL ShPathFromIdList(PCUIDLIST_ABSOLUTE pidl, LPWSTR path, DWORD chars);
 PIDLIST_ABSOLUTE ShIdListFromPath(LPCWSTR path);

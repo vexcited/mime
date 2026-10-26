@@ -76,6 +76,10 @@ function(mime_dll name arch)
     if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
         set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
     endif()
+    # a library of types that is laid out for the processor of the dll.
+    if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}_${arch}.rc)
+        set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}_${arch}.rc)
+    endif()
     if(arch STREQUAL "x86")
         set(def ${arg_DEF})
         set(imports_def ${arg_IMPORTS_DEF})
@@ -198,7 +202,8 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     dcomp:0x7FF030000000 prntvpt:0x7FF020000000 psapi:0x7FF0E0000000 lz32:0x7FF0F0000000
     activeds:0x7FF070000000 advpack:0x7FF110000000 mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000 coremessaging:0x7FF090000000
     cabinet:0x7FF740000000 sfc:0x7FF750000000 sfc_os:0x7FF760000000 msxml3:0x7FF780000000 msxml6:0x7FF790000000
-    windowscodecs:0x7FF7A0000000)
+    windowscodecs:0x7FF7A0000000
+    onecorecommonproxystub:0x7FEFF0000000 onecoreuapcommonproxystub:0x7FEFE0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet)
@@ -274,7 +279,10 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_msacm32 ${MIME_LIB_${arch}}/winmm.lib)
     set(libs_setupapi ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
     set(objects_setupapi ${arch}-lib-cabinet)
-    set(libs_shell32 ${MIME_LIB_${arch}}/kernelbase.lib)
+    set(libs_shell32 ${MIME_LIB_${arch}}/kernelbase.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
+    set(libs_onecorecommonproxystub ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
+    set(libs_onecoreuapcommonproxystub ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
+    set(libs_explorerframe ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/shell32.lib)
     set(libs_propsys ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_shcore ${MIME_LIB_${arch}}/ole32.lib)
     set(libs_comdlg32 ${MIME_LIB_${arch}}/comctl32.lib ${MIME_LIB_${arch}}/shell32.lib

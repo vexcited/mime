@@ -7,5 +7,6 @@
 WINUSERAPI HICON WINAPI CopyIcon(HICON icon);
 
 IClassFactory *TaskbarListFactory(void);
+IClassFactory *ShellWindowsFactory(void);
 
 #endif

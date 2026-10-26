@@ -73,9 +73,13 @@ static HRESULT table_open(void)
     HRESULT hr = S_OK;
     AcquireSRWLockExclusive(&g_open_lock);
     if (!g_table) {
-        HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Global\\ComClassTableLock");
-        HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(CLASS_TABLE),
+        PSECURITY_DESCRIPTOR mutex_sd = OleEveryoneDescriptor(0x1F0001), section_sd = OleEveryoneDescriptor(0xF001F);
+        SECURITY_ATTRIBUTES mutex_sa = {sizeof(mutex_sa), mutex_sd, FALSE}, section_sa = {sizeof(section_sa), section_sd, FALSE};
+        HANDLE mutex = CreateMutexW(&mutex_sa, FALSE, L"Global\\ComClassTableLock");
+        HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, &section_sa, PAGE_READWRITE, 0, sizeof(CLASS_TABLE),
                                             L"Global\\ComClassTable");
+        HeapFree(GetProcessHeap(), 0, mutex_sd);
+        HeapFree(GetProcessHeap(), 0, section_sd);
         CLASS_TABLE *table = section ? MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(CLASS_TABLE)) : nullptr;
         if (!mutex || !table) {
             if (section)
@@ -240,6 +244,55 @@ static BOOL local_server_command(REFCLSID clsid, WCHAR *out, DWORD chars)
     return TRUE;
 }
 
+/* a value of a key below HKCR, in the text a program can compare, false when it is not a string. */
+static BOOL class_text(LPCWSTR key_path, LPCWSTR name, WCHAR *out, DWORD chars)
+{
+    HKEY key;
+    if (OleOpenClassesKey(key_path, KEY_READ, &key))
+        return FALSE;
+    DWORD type, bytes = (chars - 1) * sizeof(WCHAR);
+    LSTATUS status = RegQueryValueExW(key, name, nullptr, &type, (BYTE *)out, &bytes);
+    RegCloseKey(key);
+    if (status || type != REG_SZ)
+        return FALSE;
+    out[bytes / sizeof(WCHAR)] = 0;
+    return TRUE;
+}
+
+/* the AppID of the class says RunAs, and what it says is the user who is logged on. */
+static BOOL runs_as_interactive_user(REFCLSID clsid)
+{
+    WCHAR path[96], appid[64], runas[48];
+    wcscpy(path, L"CLSID\\");
+    OleFormatGuid(clsid, path + 6);
+    if (!class_text(path, L"AppID", appid, RTL_NUMBER_OF(appid)) || wcslen(appid) > 38)
+        return FALSE;
+    wcscpy(path, L"AppID\\");
+    wcscat(path, appid);
+    return class_text(path, L"RunAs", runas, RTL_NUMBER_OF(runas)) && !_wcsicmp(runas, L"Interactive User");
+}
+
+typedef DWORD(WINAPI *LAUNCH_UNELEVATED)(LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD flags,
+                                         const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation);
+
+/*
+ * starts the server. a class that runs as the interactive user gets the process of that user's own rights, which for a
+ * program that is elevated is its token without the administrator half, from the broker in services.exe, the place
+ * dcom's launcher service has on windows. a machine that has none starts it as the caller does.
+ */
+static BOOL start_server(REFCLSID clsid, WCHAR *command, PROCESS_INFORMATION *info)
+{
+    STARTUPINFOW startup = {sizeof(startup)};
+    if (runs_as_interactive_user(clsid)) {
+        HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
+        LAUNCH_UNELEVATED launch = advapi32 ? (LAUNCH_UNELEVATED)(void *)GetProcAddress(advapi32, "LaunchUnelevated") : nullptr;
+        DWORD elevation;
+        if (launch && launch(nullptr, command, nullptr, 0, &startup, info, &elevation) == ERROR_SUCCESS)
+            return TRUE;
+    }
+    return CreateProcessW(nullptr, command, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, info);
+}
+
 /* copies a served class's reference out of the table, false if the class is not served. */
 static BOOL find_class(REFCLSID clsid, BYTE *objref, ULONG *size)
 {
@@ -275,9 +328,8 @@ HRESULT OrpcClassGet(REFCLSID clsid, REFIID iid, void **object)
         WCHAR command[MAX_PATH + 96];
         if (!local_server_command(clsid, command, RTL_NUMBER_OF(command)))
             return REGDB_E_CLASSNOTREG;
-        STARTUPINFOW startup = {sizeof(startup)};
         PROCESS_INFORMATION info;
-        if (!CreateProcessW(nullptr, command, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &info))
+        if (!start_server(clsid, command, &info))
             return LS_E_EXEC_FAILURE;
         CloseHandle(info.hThread);
         process = info.hProcess;

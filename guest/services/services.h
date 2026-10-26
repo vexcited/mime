@@ -337,6 +337,7 @@ typedef struct ELEVATE_REQUEST {
     WCHAR *Application, *CommandLine, *Directory, *Desktop, *Title;
     DWORD CreationFlags, StartupFlags, Show;
     void *Environment; /* the caller's, used when the user's cannot be built. */
+    BOOL Unelevated;   /* the limited half of the caller's token instead of the whole one. */
 } ELEVATE_REQUEST;
 
 typedef struct ELEVATE_RESULT {

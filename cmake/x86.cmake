@@ -40,7 +40,7 @@ mime_dll(user32 x86 BASE 0x72000000 SOURCES ${sources} OBJECTS x86-chkstk x86-li
 
 set(all_five ntdll kernel32 user32 gdi32 win32u)
 set(MIME_X86_DLLS
-    shlwapi:0x71000000:all_five shell32:0x70000000:all_five winmm:0x6f000000:all_five version:0x6e000000:all_five
+    shlwapi:0x71000000:all_five shell32:0x70000000:shell32_imports winmm:0x6f000000:all_five version:0x6e000000:all_five
     advapi32:0x6d000000:all_five sechost:0x0F000000:base ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
     netapi32:0x6a000000:all_five wtsapi32:0x69000000:all_five secur32:0x68000000:all_five
     crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:ole32_imports oleaut32:0x64000000:oleaut32_imports
@@ -51,7 +51,7 @@ set(MIME_X86_DLLS
     cfgmgr32:0x39000000:base setupapi:0x46000000:setup dwrite:0x45000000:all_five msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
     dinput8:0x3B000000:all_five dinput:0x3A000000:all_five hid:0x38000000:base xinput1_4:0x37000000:xinput
     xinput1_3:0x36000000:xinput xinput1_2:0x35000000:xinput xinput1_1:0x34000000:xinput xinput9_1_0:0x33000000:base
-    winhttp:0x2C000000:http windows_storage:0x15000000:storage_imports explorerframe:0x14000000:all_five
+    winhttp:0x2C000000:http windows_storage:0x15000000:storage_imports explorerframe:0x14000000:explorerframe_imports
     dwmapi:0x13000000:all_five prntvpt:0x11000000:all_five psapi:0x0D000000:base lz32:0x0C000000:base wsock32:0x0B000000:http mswsock:0x0A000000:base
     propsys:0x2B000000:propsys_imports shcore:0x2A000000:shcore_imports powrprof:0x29000000:all_five
     bcryptprimitives:0x28000000:all_five pdh:0x27000000:all_five wevtapi:0x26000000:all_five tbs:0x25000000:all_five
@@ -62,7 +62,8 @@ set(MIME_X86_DLLS
     mfcaptureengine:0x12100000:mfce_imports
     schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports
     cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
-    dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports)
+    dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports
+    onecorecommonproxystub:0x02000000:proxy_imports onecoreuapcommonproxystub:0x01000000:proxy_imports)
 set(base ntdll kernel32)
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
@@ -70,6 +71,9 @@ set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
 set(wic_imports ntdll kernel32 user32 gdi32 win32u ole32)
 set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)
+set(proxy_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4)
+set(shell32_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
+set(explorerframe_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32 shell32)
 set(dialog_imports ntdll kernel32 user32 gdi32 win32u comctl32 shell32 shlwapi ole32 advapi32)
 set(storage_imports ntdll kernel32 user32 gdi32 win32u ole32 shell32 shlwapi propsys)
 set(comctl ntdll kernel32 user32 gdi32 win32u uxtheme)

@@ -1,0 +1,6 @@
+LIBRARY onecoreuapcommonproxystub.dll
+EXPORTS
+    DllCanUnloadNow
+    DllGetClassObject
+    DllRegisterServer
+    DllUnregisterServer

@@ -5,6 +5,7 @@
  */
 #include "orpc.h"
 #include <mime/win32/notificationactivationcallback.h>
+#include <mime/win32/shobjidl.h>
 
 /* named by the generated proxy file: local forms of methods whose wire form differs. */
 HRESULT STDMETHODCALLTYPE ISequentialStream_Read_Proxy(ISequentialStream *This, void *pv, ULONG cb, ULONG *read);

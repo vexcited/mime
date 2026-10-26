@@ -53,6 +53,8 @@ enum {
     SCM_OP_SET_BITS,
     /* mime's own: launching an elevated process, which windows asks of the appinfo service. */
     SCM_OP_LAUNCH_ELEVATED = 96,
+    /* a process with the unelevated token of the caller, which dcom's launcher gives a server that runs as the interactive user. */
+    SCM_OP_LAUNCH_UNELEVATED,
 };
 
 /* controls the manager sends down a service process's channel, besides SERVICE_CONTROL_*. */

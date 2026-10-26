@@ -895,3 +895,33 @@ WINOLEAPI HRESULT WINAPI CoLockObjectExternal(IUnknown *object, BOOL lock, BOOL 
         object->lpVtbl->Release(object);
     return S_OK;
 }
+
+/*
+ * the tables of classes and of the running objects are named objects every program of the machine opens, the processes
+ * of the same user with and without the rights of an administrator among them: the one that made them must not
+ * keep the other out, so the descriptor lets everyone have what the mask says and the interfaces decide who may call.
+ * the descriptor is absolute: the header, then an acl of one allowed entry for the world.
+ */
+PSECURITY_DESCRIPTOR OleEveryoneDescriptor(ULONG mask)
+{
+    static const BYTE world_sid[12] = {1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0};
+    BYTE *sd = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 128);
+    if (!sd)
+        return nullptr;
+    struct {
+        BYTE Revision, Sbz1;
+        USHORT Control;
+        PVOID Owner, Group, Sacl, Dacl;
+    } *header = (void *)sd;
+    BYTE *acl = sd + 64, *ace = acl + 8;
+    header->Revision = 1;
+    header->Control = 0x0004; /* a dacl is present. */
+    header->Dacl = acl;
+    acl[0] = 2;
+    *(USHORT *)(acl + 2) = (USHORT)(8 + 8 + sizeof(world_sid));
+    *(USHORT *)(acl + 4) = 1;
+    *(USHORT *)(ace + 2) = (USHORT)(8 + sizeof(world_sid));
+    *(ULONG *)(ace + 4) = mask;
+    memcpy(ace + 8, world_sid, sizeof(world_sid));
+    return sd;
+}

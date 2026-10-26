@@ -88,11 +88,13 @@ function(mime_resource name arch)
     endif()
     set(base ${MIME_BUILD_GEN}/res/${MIME_MACHINE_${arch}}/${name})
     set(inputs ${version} ${ARGN})
+    # the files a script includes, such as the type libraries of the shell dlls.
+    file(GLOB includes CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/guest/*/*.tlb)
     add_custom_command(OUTPUT ${base}.res
         COMMAND ${CMAKE_COMMAND} -E make_directory ${MIME_BUILD_GEN}/res/${MIME_MACHINE_${arch}}
-        COMMAND ${CMAKE_COMMAND} -DOUTPUT=${base}.rc "-DINPUTS=${inputs}" -P ${CMAKE_SOURCE_DIR}/cmake/concat.cmake
+        COMMAND ${CMAKE_COMMAND} -DOUTPUT=${base}.rc "-DINPUTS=${inputs}" -DROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/cmake/concat.cmake
         COMMAND ${MIME_LLVM_RC} -no-preprocess -c 1252 -fo ${base}.res -- ${base}.rc
-        DEPENDS ${inputs} cmake/concat.cmake VERBATIM)
+        DEPENDS ${inputs} ${includes} cmake/concat.cmake VERBATIM)
 endfunction()
 
 set(MIME_LINK_FLAGS /nologo /debug:dwarf /build-id /nodefaultlib /opt:ref /incremental:no /filealign:0x1000

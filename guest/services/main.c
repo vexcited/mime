@@ -1001,8 +1001,8 @@ static DWORD op_control(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     return error;
 }
 
-/* SCM_OP_LAUNCH_ELEVATED: answers with the ids and with handles in the client's process. */
-static DWORD op_launch_elevated(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
+/* SCM_OP_LAUNCH_ELEVATED and SCM_OP_LAUNCH_UNELEVATED: answers with the ids and with handles in the client's process. */
+static DWORD op_launch_elevated(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *w, BOOL unelevated)
 {
     (void)cl;
     BOOL present;
@@ -1015,6 +1015,7 @@ static DWORD op_launch_elevated(CONN *c, CLIENT *cl, SCM_READER *r, SCM_WRITER *
     q.CreationFlags = ScmGetU32(r);
     q.StartupFlags = ScmGetU32(r);
     q.Show = ScmGetU32(r);
+    q.Unelevated = unelevated;
     DWORD error = ERROR_INVALID_PARAMETER;
     if (!r->Failed && command_line && *command_line) {
         ELEVATE_RESULT out = {};
@@ -1347,7 +1348,10 @@ static DWORD handle_request(CONN *c, DWORD op, SCM_READER *r, SCM_WRITER *w, KEE
             error = ERROR_SUCCESS;
             break;
         case SCM_OP_LAUNCH_ELEVATED:
-            error = op_launch_elevated(c, cl, r, w);
+            error = op_launch_elevated(c, cl, r, w, FALSE);
+            break;
+        case SCM_OP_LAUNCH_UNELEVATED:
+            error = op_launch_elevated(c, cl, r, w, TRUE);
             break;
         case SCM_OP_NOTIFY_ATTACH:
             error = ERROR_SUCCESS;

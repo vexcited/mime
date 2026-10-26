@@ -396,6 +396,7 @@ EXPORTS
     MakeSelfRelativeSD=_MakeSelfRelativeSD@12
     MapGenericMask=_MapGenericMask@8
     LaunchElevated=_LaunchElevated@28
+    LaunchUnelevated=_LaunchUnelevated@28
     NotifyBootConfigStatus=_NotifyBootConfigStatus@4
     NotifyChangeEventLog=_NotifyChangeEventLog@8
     NotifyServiceStatusChange=_NotifyServiceStatusChange@12

@@ -426,6 +426,26 @@ static void acpi_description(void)
     }
 }
 
+/*
+ * the type libraries of the shell's automation, which windows keeps in shell32.dll and ieframe.dll. Mime has the first in
+ * its own shell32 and the second, the part its shell windows use, in explorerframe.dll, so the registry names those files,
+ * for both kinds of programs.
+ */
+static void typelib_file(PCWSTR key, PCWSTR kind, PCWSTR path)
+{
+    WCHAR full[200];
+    _snwprintf(full, RTL_NUMBER_OF(full) - 1, L"\\REGISTRY\\MACHINE\\SOFTWARE\\Classes\\TypeLib\\%ls\\0\\%ls", key, kind);
+    set_sz(full, L"", REG_SZ, path);
+}
+
+static void typelibs(void)
+{
+    typelib_file(L"{50A7E9B0-70EF-11D1-B75A-00A0C90564FE}\\1.0", L"win32", L"C:\\Windows\\SysWOW64\\shell32.dll");
+    typelib_file(L"{50A7E9B0-70EF-11D1-B75A-00A0C90564FE}\\1.0", L"win64", L"C:\\Windows\\System32\\shell32.dll");
+    typelib_file(L"{EAB22AC0-30C1-11CF-A7EB-0000C05BAE0B}\\1.1", L"win32", L"C:\\Windows\\SysWOW64\\explorerframe.dll");
+    typelib_file(L"{EAB22AC0-30C1-11CF-A7EB-0000C05BAE0B}\\1.1", L"win64", L"C:\\Windows\\System32\\explorerframe.dll");
+}
+
 void CmpSpecialize(void)
 {
     WCHAR computer[16], user[24], sid[96] = {};
@@ -446,5 +466,6 @@ void CmpSpecialize(void)
     locale(sid);
     hardware();
     processor_environment();
+    typelibs();
     CmpUnlock();
 }

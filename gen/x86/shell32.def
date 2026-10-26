@@ -53,6 +53,7 @@ EXPORTS
     SHCreateItemFromParsingName=_SHCreateItemFromParsingName@16
     SHCreateItemInKnownFolder=_SHCreateItemInKnownFolder@20
     SHCreateItemWithParent=_SHCreateItemWithParent@20 @346
+    SHCreateLocalServerRunDll=_SHCreateLocalServerRunDll@16 @347
     SHCreateShellItemArray=_SHCreateShellItemArray@20 @351
     SHCreateShellItemArrayFromIDLists=_SHCreateShellItemArrayFromIDLists@12 @353
     SHCreateShellItemArrayFromShellItem=_SHCreateShellItemArrayFromShellItem@12 @354

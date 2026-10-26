@@ -664,21 +664,12 @@ static const IClassFactoryVtbl g_factory_vtbl = {
 };
 static IClassFactory g_factory = {&g_factory_vtbl};
 
-SHSTDAPI HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void **object)
+/* the class factory of the drag and drop helper, for DllGetClassObject. */
+HRESULT ShDragDropClassObject(REFCLSID clsid, REFIID riid, void **object)
 {
-    if (!object)
-        return E_POINTER;
-    *object = nullptr;
-    if (!clsid || !riid)
-        return E_INVALIDARG;
     if (!IsEqualCLSID(clsid, &CLSID_DragDropHelper))
         return CLASS_E_CLASSNOTAVAILABLE;
     return g_factory.lpVtbl->QueryInterface(&g_factory, riid, object);
-}
-
-SHSTDAPI HRESULT WINAPI DllCanUnloadNow(void)
-{
-    return S_FALSE;
 }
 
 /* ------------------------------------------------------------------ SHDoDragDrop */
