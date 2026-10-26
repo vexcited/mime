@@ -26,9 +26,17 @@ HANDLE PropGetData(WND *w, ATOM atom)
 /* DWM properties stored by dwmapi affect the host window. */
 static void prop_changed(WND *w, ATOM atom)
 {
-    if (atom == AtomFind(L"DwmCorner") && WndIsTopLevel(w))
+    if (!WndIsTopLevel(w))
+        return;
+    if (atom == AtomFind(L"DwmCorner") || atom == AtomFind(L"DwmDarkMode") ||
+        atom == AtomFind(L"DwmBorderColor") || atom == AtomFind(L"DwmCaptionColor") ||
+        atom == AtomFind(L"DwmTextColor")) {
+        if (atom != AtomFind(L"DwmCorner"))
+            w->Flags |= WNDF_FRAME_DIRTY;
         WndUpdateHostConfig(w, FALSE);
-
+        if (w->Thread)
+            QueueWake(w->Thread, QS_PAINT);
+    }
 }
 
 BOOL NTAPI NtUserSetProp(HWND hwnd, ATOM atom, HANDLE data)

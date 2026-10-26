@@ -407,12 +407,76 @@ static int dpi_slot(UINT dpi)
 /* ------------------------------------------------------------------ painting */
 
 #define CAPTION_COLOR RGB(0xFF, 0xFF, 0xFF)
+#define CAPTION_DARK RGB(0x20, 0x20, 0x20)
 #define TEXT_ACTIVE RGB(0x00, 0x00, 0x00)
+#define TEXT_ACTIVE_DARK RGB(0xFF, 0xFF, 0xFF)
 #define TEXT_INACTIVE RGB(0x99, 0x99, 0x99)
+#define TEXT_INACTIVE_DARK RGB(0x9A, 0x9A, 0x9A)
 #define CLOSE_HOT RGB(0xC4, 0x2B, 0x1C)
 #define CLOSE_PRESSED RGB(0xC8, 0x40, 0x31)
 #define BUTTON_HOT RGB(0xE9, 0xE9, 0xE9)
 #define BUTTON_PRESSED RGB(0xED, 0xED, 0xED)
+#define BUTTON_HOT_DARK RGB(0x2D, 0x2D, 0x2D)
+#define BUTTON_PRESSED_DARK RGB(0x33, 0x33, 0x33)
+
+/* dwm color attributes are stored as the value plus one, so zero means unset. */
+static BOOLEAN dwm_color(WND *w, PCWSTR name, ULONG *out)
+{
+    ULONG_PTR v = (ULONG_PTR)PropGetData(w, AtomFind(name));
+    if (!v)
+        return FALSE;
+    *out = (ULONG)(v - 1);
+    return TRUE;
+}
+
+static BOOLEAN dark_frame(WND *w)
+{
+    return PropGetData(w, AtomFind(L"DwmDarkMode")) != nullptr;
+}
+
+typedef struct FRAME_COLORS {
+    ULONG Caption, Border, TextActive, TextInactive, CloseHot, ClosePressed, ButtonHot, ButtonPressed;
+} FRAME_COLORS;
+
+/* the resize border takes the window background, as the app paints over the caption. */
+static BOOLEAN background_color(WND *w, ULONG *out)
+{
+    HBRUSH b = w->Class ? w->Class->Background : nullptr;
+    if ((ULONG_PTR)b && (ULONG_PTR)b <= COLOR_MENUBAR + 1)
+        b = MetricsSysColorBrush((int)(ULONG_PTR)b - 1);
+    BRUSH *brush = b ? (BRUSH *)GdiLookup(b, GDI_TYPE_BRUSH) : nullptr;
+    if (!brush)
+        return FALSE;
+    *out = brush->Color;
+    return TRUE;
+}
+
+static void frame_colors(WND *w, FRAME_COLORS *c)
+{
+    BOOLEAN dark = dark_frame(w);
+    c->Caption = dark ? CAPTION_DARK : CAPTION_COLOR;
+    c->Border = c->Caption;
+    c->TextActive = dark ? TEXT_ACTIVE_DARK : TEXT_ACTIVE;
+    c->TextInactive = dark ? TEXT_INACTIVE_DARK : TEXT_INACTIVE;
+    c->CloseHot = CLOSE_HOT;
+    c->ClosePressed = CLOSE_PRESSED;
+    c->ButtonHot = dark ? BUTTON_HOT_DARK : BUTTON_HOT;
+    c->ButtonPressed = dark ? BUTTON_PRESSED_DARK : BUTTON_PRESSED;
+    ULONG custom;
+    BOOLEAN caption_set = dwm_color(w, L"DwmCaptionColor", &custom);
+    if (caption_set)
+        c->Caption = c->Border = custom;
+    if (dwm_color(w, L"DwmTextColor", &custom))
+        c->TextActive = c->TextInactive = custom;
+    else {
+        ULONG cap = c->Caption;
+        ULONG lum = ((cap & 0xFF) * 299 + ((cap >> 8) & 0xFF) * 587 + ((cap >> 16) & 0xFF) * 114) / 1000;
+        c->TextActive = lum < 128 ? TEXT_ACTIVE_DARK : TEXT_ACTIVE;
+        c->TextInactive = lum < 128 ? TEXT_INACTIVE_DARK : TEXT_INACTIVE;
+    }
+    if (!caption_set && background_color(w, &custom))
+        c->Border = custom;
+}
 
 static FONT_INSTANCE *caption_font(UINT dpi)
 {
@@ -512,7 +576,8 @@ static void draw_fallback_glyph(SURFACE *s, const REGION *clip, int button, BOOL
     }
 }
 
-static void draw_button(WND *w, SURFACE *s, const REGION *clip, POINT origin, int button, UINT dpi, BOOLEAN active)
+static void draw_button(WND *w, SURFACE *s, const REGION *clip, POINT origin, int button, UINT dpi, BOOLEAN active,
+                        const FRAME_COLORS *colors)
 {
     RECT br;
     FrameGetButtonRect(w, button, &br);
@@ -527,8 +592,8 @@ static void draw_button(WND *w, SURFACE *s, const REGION *clip, POINT origin, in
     int frame = disabled ? 3 : pressed ? 2 : hot ? 1 : 0;
 
     if (hot || pressed) {
-        ULONG fill = ColorToPixel(button == CAPTION_CLOSE ? (pressed ? CLOSE_PRESSED : CLOSE_HOT)
-                                                          : (pressed ? BUTTON_PRESSED : BUTTON_HOT));
+        ULONG fill = ColorToPixel(button == CAPTION_CLOSE ? (pressed ? colors->ClosePressed : colors->CloseHot)
+                                                          : (pressed ? colors->ButtonPressed : colors->ButtonHot));
         DrawFillRect(s, clip, &br, fill);
     }
 
@@ -562,8 +627,8 @@ static void draw_button(WND *w, SURFACE *s, const REGION *clip, POINT origin, in
     }
     COLORREF c = disabled ? RGB(0xC0, 0xC0, 0xC0)
                  : (button == CAPTION_CLOSE && hot) ? RGB(0xFF, 0xFF, 0xFF)
-                 : active ? TEXT_ACTIVE
-                          : TEXT_INACTIVE;
+                 : active ? colors->TextActive
+                          : colors->TextInactive;
     draw_fallback_glyph(s, clip, button, maximized, &br, ColorToPixel(c), dpi);
 }
 
@@ -626,14 +691,21 @@ void FramePaint(WND *w)
 
     load_theme();
     BOOLEAN active = (w->Flags & WNDF_ACTIVE_FRAME) != 0;
+    FRAME_COLORS colors;
+    frame_colors(w, &colors);
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, dpi, &m);
     RECT vis;
     FrameGetVisibleRect(w, &vis);
     RectOffset(&vis, origin.x, origin.y);
 
-    /* the whole non client area takes the caption color; the host draws the border line over it. */
-    DrawFillRect(s, &clip, &window, ColorToPixel(CAPTION_COLOR));
+    /* the resize border takes the window background, the caption the caption color; the host draws the border line over it. */
+    DrawFillRect(s, &clip, &window, ColorToPixel(colors.Border));
+    if (FrameHasCaption(w->Style, w->ExStyle)) {
+        RECT caption = {vis.left + 1, vis.top, vis.right - 1, origin.y + m.Top};
+        if (caption.bottom > caption.top && caption.right > caption.left)
+            DrawFillRect(s, &clip, &caption, ColorToPixel(colors.Caption));
+    }
 
     if (FrameHasCaption(w->Style, w->ExStyle)) {
         LONG caption_top = vis.top;
@@ -660,11 +732,11 @@ void FramePaint(WND *w)
             ULONG n = fit_title(fi, w->Text, w->TextLength, right - x, title, RTL_NUMBER_OF(title));
             LONG text_h = fi->Metrics.tmAscent + fi->Metrics.tmDescent;
             LONG baseline = caption_top + (caption_bottom - caption_top - text_h) / 2 + fi->Metrics.tmAscent;
-            draw_text(s, &clip, fi, x, baseline, title, n, right, ColorToPixel(active ? TEXT_ACTIVE : TEXT_INACTIVE));
+            draw_text(s, &clip, fi, x, baseline, title, n, right, ColorToPixel(active ? colors.TextActive : colors.TextInactive));
         }
         static const int buttons[] = {CAPTION_CLOSE, CAPTION_MAX, CAPTION_MIN, CAPTION_HELP};
         for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++)
-            draw_button(w, s, &clip, origin, buttons[i], dpi, active);
+            draw_button(w, s, &clip, origin, buttons[i], dpi, active, &colors);
     }
     RgnFree(&clip);
     /* drawn straight into the surface, so the present needs to know. */
@@ -673,8 +745,45 @@ void FramePaint(WND *w)
         PaintPresent(top);
 }
 
-/* ------------------------------------------------------------------ mouse */
+/*
+ * the visible 1 pixel border takes the color just inside it, so a dark program does not show the light
+ * frame the caption color would give. runs before the present, after the program painted.
+ */
+void FrameBleed(WND *w)
+{
+    SURFACE *s = w->Surface;
+    if (!s || !WndIsTopLevel(w))
+        return;
+    FRAME_METRICS m;
+    FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
+    if (!m.VisibleInset)
+        return;
+    RECT vis;
+    FrameGetVisibleRect(w, &vis);
+    LONG left = vis.left, right = vis.right - 1, bottom = vis.bottom - 1;
+    if (left < 0 || right >= s->Width || bottom <= 0 || bottom >= s->Height || right <= left)
+        return;
+    for (LONG x = left; x <= right; x++) {
+        ULONG *dst = (ULONG *)(s->Bits + (SIZE_T)bottom * s->Stride);
+        ULONG *src = (ULONG *)(s->Bits + (SIZE_T)(bottom - 1) * s->Stride);
+        dst[x] = src[x];
+    }
+    for (LONG y = vis.top; y <= bottom; y++) {
+        ULONG *row = (ULONG *)(s->Bits + (SIZE_T)y * s->Stride);
+        row[left] = row[left + 1];
+        row[right] = row[right - 1];
+    }
+    /* a window without a caption has no title bar to keep, so its top frame takes the client too. */
+    if (!FrameHasCaption(w->Style, w->ExStyle) && vis.top + m.Top < s->Height) {
+        ULONG *src = (ULONG *)(s->Bits + (SIZE_T)(vis.top + m.Top) * s->Stride);
+        for (LONG y = vis.top; y < vis.top + m.Top; y++) {
+            ULONG *row = (ULONG *)(s->Bits + (SIZE_T)y * s->Stride);
+            memcpy(row + left, src + left, (SIZE_T)(right - left + 1) * sizeof(ULONG));
+        }
+    }
+}
 
+/* ------------------------------------------------------------------ mouse */
 static void repaint_buttons(WND *w)
 {
     if (WndIsVisible(w))

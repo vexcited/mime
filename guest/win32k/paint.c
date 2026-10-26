@@ -204,8 +204,19 @@ void HostConfigure(WND *w, BOOLEAN activate)
     c->corner_radius = corner_radius(w, &m);
     if (w->Flags & WNDF_ACTIVE_FRAME)
         c->flags |= MIME_WIN_ACTIVE;
-    if (m.Border && !(w->Style & WS_MAXIMIZE))
-        c->border_color = (w->Flags & WNDF_ACTIVE_FRAME) ? 0x3b000000u : 0x26000000u;
+    if (m.Border && !(w->Style & WS_MAXIMIZE)) {
+        BOOLEAN dark = PropGetData(w, AtomFind(L"DwmDarkMode")) != nullptr;
+        c->border_color = dark ? ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x664C4C4Cu : 0x404C4C4Cu)
+                               : ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x3b000000u : 0x26000000u);
+        ULONG_PTR v = (ULONG_PTR)PropGetData(w, AtomFind(L"DwmBorderColor"));
+        if (v) {
+            uint32_t color = (uint32_t)(v - 1);
+            if (color == 0xFFFFFFFEu)
+                c->border_color = 0;
+            else if (color != 0xFFFFFFFFu)
+                c->border_color = 0xFF000000u | ((color & 0xFF) << 16) | (color & 0xFF00) | ((color >> 16) & 0xFF);
+        }
+    }
     if (fullscreen) {
         c->corner_radius = 0;
         c->border_color = 0;
@@ -324,6 +335,19 @@ void PaintPresent(WND *top)
         return;
     RECT dirty = s->Dirty;
     s->Dirty = (RECT){0, 0, 0, 0};
+    /* the border only changes when the program painted against the client edge. */
+    RECT client = top->ClientRect;
+    RectOffset(&client, -top->WindowRect.left, -top->WindowRect.top);
+    if (dirty.left <= client.left || dirty.right >= client.right || dirty.top <= client.top ||
+        dirty.bottom >= client.bottom) {
+        FrameBleed(top);
+        RECT vis;
+        FrameGetVisibleRect(top, &vis);
+        dirty.left = W32Min(dirty.left, vis.left);
+        dirty.top = W32Min(dirty.top, vis.top);
+        dirty.right = W32Max(dirty.right, vis.right);
+        dirty.bottom = W32Max(dirty.bottom, vis.bottom);
+    }
     HostPresent(top, &dirty);
     if (!(top->Flags & WNDF_PRESENTED)) {
         top->Flags |= WNDF_PRESENTED;

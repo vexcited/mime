@@ -768,6 +768,7 @@ void FrameAdjustRect(RECT *r, DWORD style, DWORD ex_style, UINT dpi);
 void FrameClientFromWindow(RECT *r, DWORD style, DWORD ex_style, UINT dpi);
 LRESULT FrameHitTest(WND *w, POINT pt);
 void FramePaint(WND *w);
+void FrameBleed(WND *w);
 void FrameGetButtonRect(WND *w, int button, RECT *r); /* window relative. */
 void FrameGetVisibleRect(WND *w, RECT *r);              /* window relative. */
 ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max); /* window relative caption areas. */
