@@ -1,0 +1,15 @@
+LIBRARY imagehlp.dll
+EXPORTS
+    CheckSumMappedFile@16
+    ImageAddCertificate@12
+    ImageDirectoryEntryToData@16
+    ImageDirectoryEntryToDataEx@20
+    ImageEnumerateCertificates@20
+    ImageGetCertificateData@16
+    ImageGetCertificateHeader@12
+    ImageNtHeader@4
+    ImageRemoveCertificate@8
+    ImageRvaToSection@12
+    ImageRvaToVa@16
+    MapFileAndCheckSumA@12
+    MapFileAndCheckSumW@12

@@ -21,7 +21,7 @@ mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel
     OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS kernelbase ntdll DEF ${gen86}/kernel32.def
     IMPORTS_DEF ${gen86}/kernel32.imports.def)
 
-mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c OBJECTS x86-chkstk IMPORTS ntdll kernel32)
+mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c guest/mscoree/x86/common.S ${gen86}/mscoree_thunks.S OBJECTS x86-chkstk IMPORTS ntdll kernel32)
 
 set(sources ${stubs86}/win32u_syscalls.S)
 set(imports)
@@ -61,7 +61,7 @@ set(MIME_X86_DLLS
     mfplat:0x12400000:mfplat_imports mf:0x12200000:mf_imports mfreadwrite:0x12000000:mfreadwrite_imports
     mfcaptureengine:0x12100000:mfce_imports
     schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports
-    cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
+    imagehlp:0x02000000:base cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
     dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports
     onecorecommonproxystub:0x02000000:proxy_imports onecoreuapcommonproxystub:0x01000000:proxy_imports)
 set(base ntdll kernel32)

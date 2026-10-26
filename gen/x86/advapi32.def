@@ -527,6 +527,8 @@ EXPORTS
     StopTraceW=_StopTraceW@16
     SubscribeServiceChangeNotifications=_SubscribeServiceChangeNotifications@20
     SystemFunction036=_SystemFunction036@8
+    SystemFunction040=_SystemFunction040@12
+    SystemFunction041=_SystemFunction041@12
     TraceConfigureLastBranchRecord=_TraceConfigureLastBranchRecord@16
     TraceQueryInformation=_TraceQueryInformation@20
     TraceSetInformation=_TraceSetInformation@20

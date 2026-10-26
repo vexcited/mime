@@ -12,6 +12,11 @@ typedef void(WINAPI *REGISTER_SHIM)(SHIM_CLEANUP cleanup, SHIM_SET_VERSION set_v
 typedef void(WINAPI *REGISTER_CLEANUP)(SHIM_CLEANUP cleanup);
 typedef void(WINAPI *SET_SHELL_INSTANCE)(HINSTANCE instance);
 
+#ifndef __aarch64__
+#include "mscoree_thunks.h"
+static PVOID g_thunk_targets[RTL_NUMBER_OF(g_thunk_names)];
+#endif
+
 static RTL_CRITICAL_SECTION g_initialize_lock = RTL_CRITICAL_SECTION_INIT;
 static LONG g_initialize_state;
 static HINSTANCE g_instance;
@@ -391,4 +396,37 @@ INT WINAPI _CorExeMain(void)
     }
     DbgPrint("mscoree: .NET runtime provider unavailable (%08x)\n", (ULONG)CLR_E_SHIM_RUNTIMELOAD);
     return CLR_E_SHIM_RUNTIMELOAD;
+}
+
+/* the runtime function behind a thunk, null when there is no runtime or it lacks the function. */
+#ifndef __aarch64__
+PVOID __cdecl mscoree_resolve(ULONG index)
+{
+    PVOID target = __atomic_load_n(&g_thunk_targets[index], __ATOMIC_ACQUIRE);
+    if (target)
+        return target;
+    HMODULE provider = provider_module();
+    if (!provider)
+        return nullptr;
+    target = (PVOID)GetProcAddress(provider, g_thunk_names[index]);
+    if (target)
+        __atomic_store_n(&g_thunk_targets[index], target, __ATOMIC_RELEASE);
+    return target;
+}
+#endif
+
+HRESULT WINAPI GetCLRMetaHost(REFIID iid, PVOID *object)
+{
+    static const GUID metahost = {0x9280188d, 0x0e8e, 0x4867, {0xb3, 0x0c, 0x7f, 0xa8, 0x38, 0x84, 0xe8, 0xde}};
+    return CLRCreateInstance(&metahost, iid, object);
+}
+
+/* the loader asks whether a managed image is fit to be mapped, Mime's loader has made that decision already. */
+HRESULT WINAPI _CorValidateImage(PVOID *image, PCWSTR name)
+{
+    return image && *image ? S_OK : E_INVALIDARG;
+}
+
+void WINAPI _CorImageUnloading(PVOID image)
+{
 }

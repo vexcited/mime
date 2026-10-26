@@ -506,6 +506,54 @@ NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *
     return STATUS_SUCCESS;
 }
 
+/* reads image bytes through the pages of an image section, false when a page is out of the image. */
+static BOOLEAN read_image_rva(PSECTION s, ULONG rva, void *out, ULONG length)
+{
+    PUCHAR bytes = out;
+    while (length) {
+        ULONG page = rva >> PAGE_SHIFT, in = rva & (PAGE_SIZE - 1);
+        ULONG n = PAGE_SIZE - in < length ? PAGE_SIZE - in : length;
+        ULONG64 pa = page < s->PageCount ? MiSectionPage(s, page) : 0;
+        if (!pa)
+            return FALSE;
+        memcpy(bytes, (const UCHAR *)HalPhysmap(pa) + in, n);
+        bytes += n;
+        rva += n;
+        length -= n;
+    }
+    return TRUE;
+}
+
+#define COR_DIRECTORY 14
+#define COR_FLAG_ILONLY 0x00000001
+#define COR_FLAG_32BITREQUIRED 0x00000002
+#define COR_FLAG_NATIVE_ENTRYPOINT 0x00000010
+
+/*
+ * a 32-bit image that holds managed code only and does not ask for 32 bits, what compilers make for any processor.
+ * Windows starts such a program in a process of the processor's own width, where the runtime compiles it for that
+ * width; the image header says 32 bits only because the format has no other way to write a neutral one.
+ */
+BOOLEAN MiImageIsPortableIl(PSECTION s)
+{
+    if (!(s->Flags & SEC_IMAGE) || s->Image.Machine != IMAGE_FILE_MACHINE_I386)
+        return FALSE;
+    IMAGE_DOS_HEADER dos;
+    if (!read_image_rva(s, 0, &dos, sizeof(dos)) || dos.e_lfanew < 0 || dos.e_lfanew > 0x400)
+        return FALSE;
+    IMAGE_NT_HEADERS32 nt;
+    if (!read_image_rva(s, (ULONG)dos.e_lfanew, &nt, sizeof(nt)) || nt.OptionalHeader.NumberOfRvaAndSizes <= COR_DIRECTORY)
+        return FALSE;
+    IMAGE_DATA_DIRECTORY directory = nt.OptionalHeader.DataDirectory[COR_DIRECTORY];
+    if (!directory.VirtualAddress || directory.Size < 20)
+        return FALSE;
+    ULONG header[5];
+    if (!read_image_rva(s, directory.VirtualAddress, header, sizeof(header)))
+        return FALSE;
+    ULONG flags = header[4];
+    return (flags & COR_FLAG_ILONLY) && !(flags & (COR_FLAG_32BITREQUIRED | COR_FLAG_NATIVE_ENTRYPOINT));
+}
+
 static UCHAR protect_of(ULONG chars)
 {
     BOOLEAN x = (chars & IMAGE_SCN_MEM_EXECUTE) != 0, w = (chars & IMAGE_SCN_MEM_WRITE) != 0;

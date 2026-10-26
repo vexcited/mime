@@ -260,7 +260,9 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         ObDereferenceObject(section);
         return STATUS_INVALID_IMAGE_FORMAT;
     }
-    PPSP_SYSTEM_DLL system_dll = PspSystemDllForMachine(section->Image.Machine);
+    /* managed code for any processor runs in a process of the machine's width. */
+    USHORT machine = MiImageIsPortableIl(section) ? MIME_NATIVE_MACHINE : section->Image.Machine;
+    PPSP_SYSTEM_DLL system_dll = PspSystemDllForMachine(machine);
     if (!system_dll) {
         ObDereferenceObject(section);
         return STATUS_INVALID_IMAGE_FORMAT;
@@ -287,7 +289,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     process->SessionId = SepTokenSessionId(process);
     process->ImageSection = section;
     process->SystemDll = system_dll;
-    process->Machine = section->Image.Machine;
+    process->Machine = machine;
     if (process->Machine == IMAGE_FILE_MACHINE_I386)
         process->AddressSpace.AllocationLimit = 0x7FFF0000;
     process->MimeRequestId = request_id;
