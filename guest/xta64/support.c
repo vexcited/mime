@@ -84,15 +84,19 @@ void x86_code_write_begin(void)
 {
 }
 
-/* cleans the written lines to the point of unification, then drops them from the instruction caches. */
+/*
+ * cleans the written lines to the point of unification, then drops them from the instruction caches. ctr_el0's
+ * idc bit says the clean is not needed for instruction fetch to see the data, which the barrier alone orders.
+ */
 void x86_code_write_end(void *p, size_t size)
 {
     uint64_t ctr;
     __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
     uintptr_t dline = 4u << ((ctr >> 16) & 15), iline = 4u << (ctr & 15);
     uintptr_t start = (uintptr_t)p, end = start + size;
-    for (uintptr_t a = start & ~(dline - 1); a < end; a += dline)
-        __asm__ volatile("dc cvau, %0" ::"r"(a) : "memory");
+    if (!(ctr & (1ull << 28)))
+        for (uintptr_t a = start & ~(dline - 1); a < end; a += dline)
+            __asm__ volatile("dc cvau, %0" ::"r"(a) : "memory");
     __asm__ volatile("dsb ish" ::: "memory");
     for (uintptr_t a = start & ~(iline - 1); a < end; a += iline)
         __asm__ volatile("ic ivau, %0" ::"r"(a) : "memory");
