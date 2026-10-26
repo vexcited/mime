@@ -60,6 +60,7 @@ EXPORTS
     MsiGetProductInfoA@16 @67
     MsiGetProductInfoExW@24 @248
     MsiGetProductInfoW@16 @70
+    MsiGetProductPropertyW@16 @72
     MsiGetPropertyA@16 @73
     MsiGetPropertyW@16 @74
     MsiGetSourcePathA@16 @75
@@ -123,6 +124,7 @@ EXPORTS
     MsiSourceListSetInfoW@24 @268
     MsiSummaryInfoGetPropertyCount@8 @149
     MsiSummaryInfoGetPropertyW@28 @150
+    MsiVerifyDiskSpace@4 @142
     MsiViewClose@4 @158
     MsiViewExecute@8 @159
     MsiViewFetch@8 @160

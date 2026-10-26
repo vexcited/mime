@@ -164,7 +164,7 @@ static HRESULT WINAPI auto_invoke(IDispatch *self, DISPID id, REFIID iid, LCID l
         }
     if (!entry || !(flags & entry->Flags))
         return DISP_E_MEMBERNOTFOUND;
-    if (!params)
+    if (!params || params->cNamedArgs > params->cArgs || (params->cArgs && !params->rgvarg))
         return E_INVALIDARG;
     AUTO_ARGS args = {params->cArgs, params->cNamedArgs, params->rgdispidNamedArgs, params->rgvarg,
                       (flags & (DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF)) ? nullptr : result, flags};
@@ -451,7 +451,8 @@ void AutoTextBegin(AUTO_TEXT *text, DWORD size)
 BOOL AutoTextGrow(AUTO_TEXT *text)
 {
     DWORD size = text->Size + 1;
-    if (size > 0x1000000)
+    /* a size that asks for no more room than there is means the function did not say how much it needs. */
+    if (size > 0x1000000 || size <= text->Capacity)
         return FALSE;
     PWSTR buffer = MimeMsiAllocate((SIZE_T)size * sizeof(WCHAR));
     if (!buffer)

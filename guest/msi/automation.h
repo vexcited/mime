@@ -161,8 +161,6 @@ UINT AutoApiGetFeatureValidStates(MSIHANDLE session, PCWSTR feature, DWORD *stat
 UINT AutoApiSetComponentState(MSIHANDLE session, PCWSTR component, INSTALLSTATE state);
 UINT AutoApiEnumComponentCosts(MSIHANDLE session, PCWSTR component, DWORD index, INSTALLSTATE state, LPWSTR drive,
                                LPDWORD drive_size, int *cost, int *temporary);
-UINT AutoApiGetProductProperty(MSIHANDLE session, PCWSTR property, LPWSTR out, LPDWORD size);
-UINT AutoApiVerifyDiskSpace(MSIHANDLE session);
 UINT AutoApiSetFeatureAttributes(MSIHANDLE session, PCWSTR feature, DWORD attributes);
 UINT AutoApiCollectUserInfo(PCWSTR product);
 UINT AutoApiApplyMultiplePatches(PCWSTR patches, PCWSTR product, PCWSTR command);

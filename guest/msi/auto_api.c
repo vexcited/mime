@@ -67,16 +67,6 @@ UINT AutoApiEnumComponentCosts(MSIHANDLE session, PCWSTR component, DWORD index,
     return UNSUPPORTED;
 }
 
-UINT AutoApiGetProductProperty(MSIHANDLE session, PCWSTR property, LPWSTR out, LPDWORD size)
-{
-    return UNSUPPORTED;
-}
-
-UINT AutoApiVerifyDiskSpace(MSIHANDLE session)
-{
-    return UNSUPPORTED;
-}
-
 UINT AutoApiSetFeatureAttributes(MSIHANDLE session, PCWSTR feature, DWORD attributes)
 {
     return UNSUPPORTED;

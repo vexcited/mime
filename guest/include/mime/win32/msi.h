@@ -277,4 +277,7 @@ typedef struct MSIFILEHASHINFO {
 } MSIFILEHASHINFO;
 MSIAPI UINT WINAPI MsiGetFileHashW(LPCWSTR path, DWORD options, MSIFILEHASHINFO *hash);
 
+MSIAPI UINT WINAPI MsiGetProductPropertyW(MSIHANDLE session, LPCWSTR property, LPWSTR value, LPDWORD size);
+MSIAPI UINT WINAPI MsiVerifyDiskSpace(MSIHANDLE session);
+
 #endif

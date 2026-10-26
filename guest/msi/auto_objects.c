@@ -777,7 +777,7 @@ static HRESULT session_set_install_level(AUTO_OBJECT *object, AUTO_ARGS *args)
 /* enough room answers true, and so does an error that the volumes are out of space. */
 static HRESULT session_verify_disk_space(AUTO_OBJECT *object, AUTO_ARGS *args)
 {
-    UINT error = AutoApiVerifyDiskSpace(object->Handle);
+    UINT error = MsiVerifyDiskSpace(object->Handle);
     if (error && error != ERROR_DISK_FULL)
         return (HRESULT)error;
     return AutoSetBool(args, !error);
@@ -790,7 +790,7 @@ static HRESULT session_product_property(AUTO_OBJECT *object, AUTO_ARGS *args)
     AutoTextBegin(&text, 256);
     UINT error;
     do
-        error = AutoApiGetProductProperty(object->Handle, property, text.Buffer, &text.Size);
+        error = MsiGetProductPropertyW(object->Handle, property, text.Buffer, &text.Size);
     while (error == ERROR_MORE_DATA && AutoTextGrow(&text));
     HRESULT hr = error ? (HRESULT)error : AutoSetString(args, text.Buffer);
     AutoTextEnd(&text);

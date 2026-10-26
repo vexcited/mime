@@ -60,6 +60,7 @@ EXPORTS
     MsiGetProductInfoA=_MsiGetProductInfoA@16 @67
     MsiGetProductInfoExW=_MsiGetProductInfoExW@24 @248
     MsiGetProductInfoW=_MsiGetProductInfoW@16 @70
+    MsiGetProductPropertyW=_MsiGetProductPropertyW@16 @72
     MsiGetPropertyA=_MsiGetPropertyA@16 @73
     MsiGetPropertyW=_MsiGetPropertyW@16 @74
     MsiGetSourcePathA=_MsiGetSourcePathA@16 @75
@@ -123,6 +124,7 @@ EXPORTS
     MsiSourceListSetInfoW=_MsiSourceListSetInfoW@24 @268
     MsiSummaryInfoGetPropertyCount=_MsiSummaryInfoGetPropertyCount@8 @149
     MsiSummaryInfoGetPropertyW=_MsiSummaryInfoGetPropertyW@28 @150
+    MsiVerifyDiskSpace=_MsiVerifyDiskSpace@4 @142
     MsiViewClose=_MsiViewClose@4 @158
     MsiViewExecute=_MsiViewExecute@8 @159
     MsiViewFetch=_MsiViewFetch@8 @160

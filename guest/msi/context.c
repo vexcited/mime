@@ -286,3 +286,62 @@ UINT WINAPI MsiGetFileHashW(LPCWSTR path, DWORD options, MSIFILEHASHINFO *hash)
     memcpy(hash->dwData, digest, sizeof(digest));
     return ERROR_SUCCESS;
 }
+
+/* ------------------------------------------------------------------ the product of a session */
+
+/* a property of the package as it is stored, the Property table of the database, whatever the session did to it since. */
+UINT WINAPI MsiGetProductPropertyW(MSIHANDLE session, LPCWSTR property, LPWSTR value, LPDWORD size)
+{
+    if (!property || (value && !size))
+        return ERROR_INVALID_PARAMETER;
+    MSIHANDLE database = MsiGetActiveDatabase(session);
+    if (!database)
+        return ERROR_INVALID_HANDLE;
+    MSIHANDLE view = 0, parameter = MsiCreateRecord(1), row = 0;
+    UINT error = parameter && !MsiRecordSetStringW(parameter, 1, property) ? ERROR_SUCCESS : ERROR_FUNCTION_FAILED;
+    if (!error)
+        error = MsiDatabaseOpenViewW(database, L"SELECT `Value` FROM `Property` WHERE `Property` = ?", &view);
+    if (!error)
+        error = MsiViewExecute(view, parameter);
+    WCHAR empty[1] = L"";
+    PWSTR text = empty;
+    if (!error) {
+        error = MsiViewFetch(view, &row);
+        if (error == ERROR_NO_MORE_ITEMS)
+            error = ERROR_SUCCESS;
+        else if (!error) {
+            DWORD length = 0;
+            error = MsiRecordGetStringW(row, 1, empty, &length);
+            if (error == ERROR_MORE_DATA) {
+                length++;
+                text = MimeMsiAllocate((SIZE_T)length * sizeof(WCHAR));
+                error = text ? MsiRecordGetStringW(row, 1, text, &length) : ERROR_NOT_ENOUGH_MEMORY;
+            }
+        }
+    }
+    if (!error) {
+        if (value)
+            error = MimeMsiCopyString(text, value, size);
+        else if (size)
+            *size = (DWORD)wcslen(text);
+    }
+    if (text != empty)
+        MimeMsiFree(text);
+    if (row)
+        MsiCloseHandle(row);
+    if (view)
+        MsiCloseHandle(view);
+    if (parameter)
+        MsiCloseHandle(parameter);
+    MsiCloseHandle(database);
+    return error;
+}
+
+/* the volumes of the machine are taken to have room: the installer here costs no volume. */
+UINT WINAPI MsiVerifyDiskSpace(MSIHANDLE session)
+{
+    AcquireSRWLockShared(&MimeMsiLock);
+    MIME_MSI_OBJECT *package = MimeMsiGetHandle(session, MIME_MSI_KIND_PACKAGE);
+    ReleaseSRWLockShared(&MimeMsiLock);
+    return package ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
+}

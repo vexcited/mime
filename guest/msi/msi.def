@@ -130,3 +130,5 @@ EXPORTS
     MsiDatabaseIsTablePersistentW @165
     MsiGetLastErrorRecord @48
     MsiGetFileHashW @219
+    MsiGetProductPropertyW @72
+    MsiVerifyDiskSpace @142
