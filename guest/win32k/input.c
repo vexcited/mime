@@ -863,11 +863,30 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
     return emit(out, WndHandle(w), msg, wparam, lparam, ev, filter, min, max);
 }
 
+W32THREAD *InputFocusOwner;
+
+/*
+ * a window of another thread with the focus inside the foreground window, such as the page of a browser a program hosts:
+ * the keys are for the thread that holds the focus, as Windows gives them once the threads of a window and its child
+ * share their input. The thread that set the focus last holds it.
+ */
+static W32THREAD *foreign_focus_thread(W32THREAD *t)
+{
+    W32THREAD *owner = InputFocusOwner;
+    if (!owner || owner == t || owner->Destroying || !InputForeground)
+        return nullptr;
+    WND *focus = WndLookup(owner->Focus);
+    if (!focus || focus->Thread != owner || WndTopLevel(focus) != InputForeground)
+        return nullptr;
+    return owner;
+}
+
 static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max,
                              BOOLEAN remove, BOOLEAN *consumed)
 {
     const MimeInputEvent *ev = &qm->Input;
-    WND *target = WndLookup(t->Focus);
+    W32THREAD *owner = foreign_focus_thread(t);
+    WND *target = WndLookup(owner ? owner->Focus : t->Focus);
     BOOLEAN to_active = FALSE;
     if (!target) {
         target = WndLookup(t->Active);
@@ -883,6 +902,13 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
         WCHAR ch = ev->ch <= 0xFFFF ? (WCHAR)ev->ch : L'?';
         UINT msg = sys && alt ? WM_SYSCHAR : WM_CHAR;
         LPARAM lparam = 1 | ((LPARAM)(ev->scancode & 0xFF) << 16) | (alt ? (1 << 29) : 0);
+        if (owner) {
+            if (remove) {
+                QueuePost(owner, WndHandle(target), msg, ch, lparam);
+                *consumed = TRUE;
+            }
+            return FALSE;
+        }
         return emit(out, WndHandle(target), msg, ch, lparam, ev, filter, min, max);
     }
     BOOLEAN down = ev->type == MIME_INPUT_KEY_DOWN;
@@ -896,17 +922,25 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
         lparam |= (LPARAM)3 << 30;
     else if (ev->flags & 2)
         lparam |= (LPARAM)1 << 30;
-    if (!MsgFilterMatches(WndHandle(target), msg, filter, min, max))
+    if (!owner && !MsgFilterMatches(WndHandle(target), msg, filter, min, max))
+        return FALSE;
+    if (owner && !remove)
         return FALSE;
     if (remove) {
-        set_key_state(t, ev->vk, down);
-        sync_sides(t, (ev->modifiers & MIME_MOD_SHIFT) != 0, VK_LSHIFT, VK_RSHIFT, VK_SHIFT);
-        sync_sides(t, (ev->modifiers & MIME_MOD_CONTROL) != 0, VK_LCONTROL, VK_RCONTROL, VK_CONTROL);
-        sync_sides(t, alt, VK_LMENU, VK_RMENU, VK_MENU);
-        if (ev->modifiers & MIME_MOD_CAPS)
-            t->KeyState[VK_CAPITAL] |= 1;
-        else
-            t->KeyState[VK_CAPITAL] &= ~1;
+        /* both threads see the keys that go down, the one that gets them and the one that is the queue's. */
+        for (int i = 0; i < 2; i++) {
+            W32THREAD *state = i ? owner : t;
+            if (!state)
+                continue;
+            set_key_state(state, ev->vk, down);
+            sync_sides(state, (ev->modifiers & MIME_MOD_SHIFT) != 0, VK_LSHIFT, VK_RSHIFT, VK_SHIFT);
+            sync_sides(state, (ev->modifiers & MIME_MOD_CONTROL) != 0, VK_LCONTROL, VK_RCONTROL, VK_CONTROL);
+            sync_sides(state, alt, VK_LMENU, VK_RMENU, VK_MENU);
+            if (ev->modifiers & MIME_MOD_CAPS)
+                state->KeyState[VK_CAPITAL] |= 1;
+            else
+                state->KeyState[VK_CAPITAL] &= ~1;
+        }
     }
     UINT vk = ev->vk;
     /* applications see the generic modifier keys. */
@@ -916,6 +950,11 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
         vk = VK_CONTROL;
     else if (vk == VK_LMENU || vk == VK_RMENU)
         vk = VK_MENU;
+    if (owner) {
+        QueuePost(owner, WndHandle(target), msg, vk, lparam);
+        *consumed = TRUE;
+        return FALSE;
+    }
     return emit(out, WndHandle(target), msg, vk, lparam, ev, filter, min, max);
 }
 

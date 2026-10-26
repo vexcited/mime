@@ -1051,6 +1051,10 @@ void WndSetFocus(WND *w)
     }
     WND *old = WndLookup(old_h);
     t->Focus = WndHandle(w);
+    if (w)
+        InputFocusOwner = t;
+    else if (InputFocusOwner == t)
+        InputFocusOwner = nullptr;
     ImeFocusChanged();
     if (old)
         MsgSend(old, WM_KILLFOCUS, (WPARAM)WndHandle(w), 0);

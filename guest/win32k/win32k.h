@@ -888,6 +888,8 @@ extern BOOLEAN InputPointerOutside; /* the host said the last pointer event was 
 extern HANDLE InputThreadId, InputProcessId;
 extern UCHAR InputAsyncKeys[256];
 extern WND *InputForeground;
+/* the thread that set the focus last, for a foreground window that has windows of several threads. */
+extern W32THREAD *InputFocusOwner;
 void InputSetForeground(WND *w);
 void InputSetCapture(W32THREAD *t, WND *w, ULONG nc_hit);
 extern BOOLEAN InputCursorHidden; /* the host shows no cursor. */
