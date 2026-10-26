@@ -364,6 +364,20 @@ static void free_handle(MimeVm *vm, uint64_t h)
     free(fh);
 }
 
+/* windows refuses to mark a directory that still has entries for deletion. */
+static bool dir_empty(const char *path)
+{
+    DIR *d = opendir(path);
+    if (!d)
+        return true;
+    struct dirent *e;
+    bool empty = true;
+    while (empty && (e = readdir(d)))
+        empty = !strcmp(e->d_name, ".") || !strcmp(e->d_name, "..");
+    closedir(d);
+    return empty;
+}
+
 /* sets an open file's timestamps and read-only attribute. */
 static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
 {
@@ -1084,6 +1098,8 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         MimeFsHandle *fh = get_handle(vm, a[1]);
         if (!fh)
             status = MIME_HC_STATUS_INVALID;
+        else if (a[2] && fh->is_dir && fh->host_path && !dir_empty(fh->host_path))
+            status = MIME_HC_STATUS_NOT_EMPTY;
         else
             fh->delete_on_close = a[2] != 0;
         break;

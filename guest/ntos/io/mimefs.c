@@ -914,15 +914,20 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         return complete(irp, host_status(hs, FALSE), 0);
     }
     case FileDispositionInformation:
-        if (length < 1)
+    case FileDispositionInformationEx: {
+        BOOLEAN ex = stack->Parameters.SetFile.FileInformationClass == FileDispositionInformationEx;
+        if (length < (ex ? sizeof(ULONG) : 1))
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
-        fcb->DeleteOnClose = ((PFILE_DISPOSITION_INFORMATION)in)->DeleteFile;
+        BOOLEAN remove = ex ? (*(PULONG)in & 1) != 0 : ((PFILE_DISPOSITION_INFORMATION)in)->DeleteFile;
+        /* a directory with entries cannot be marked, the caller learns it now and not at the close. */
+        if (remove && fcb->Directory && fcb->HostHandle &&
+            HalHypercallUnlocked(MIME_HC_FS_DELETE, fcb->HostHandle, 1, 0, 0, 0, 0, nullptr) == MIME_HC_STATUS_NOT_EMPTY)
+            return complete(irp, STATUS_DIRECTORY_NOT_EMPTY, 0);
+        if (!remove && fcb->Directory && fcb->HostHandle)
+            HalHypercallUnlocked(MIME_HC_FS_DELETE, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
+        fcb->DeleteOnClose = remove;
         return complete(irp, STATUS_SUCCESS, 0);
-    case FileDispositionInformationEx:
-        if (length < sizeof(ULONG))
-            return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
-        fcb->DeleteOnClose = (*(PULONG)in & 1) != 0;
-        return complete(irp, STATUS_SUCCESS, 0);
+    }
     case FileRenameInformation:
     case FileRenameInformationEx: {
         PFILE_OBJECT file = stack->FileObject;
