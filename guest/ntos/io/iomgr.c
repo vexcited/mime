@@ -458,8 +458,12 @@ static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     if (!NT_SUCCESS(status))
         return status;
     if (OBJECT_TO_HEADER(found)->Type != IoFileObjectTypeObject) {
+        /* a query of attributes at a directory of the object namespace, such as \??\, names no file: the programs that
+           walk a path up to its root, as the sandbox of chromium does, expect a name error from it. */
+        NTSTATUS mismatch = stat_only && OBJECT_TO_HEADER(found)->Type == ObDirectoryType ? STATUS_OBJECT_NAME_INVALID
+                                                                                          : STATUS_OBJECT_TYPE_MISMATCH;
         ObDereferenceObject(found);
-        return STATUS_OBJECT_TYPE_MISMATCH;
+        return mismatch;
     }
     ULONG attrs = attributes->Attributes;
     if (mode == UserMode)
