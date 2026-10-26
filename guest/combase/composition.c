@@ -259,6 +259,9 @@ static void destroy(WRT_OBJECT *base)
     }
     CbFree(object->Children);
     release_object(object->Root);
+    /* a collection holds its container, a visual only points at its parent. */
+    if (object->Kind == K_COLLECTION)
+        release_object(object->Parent);
     release_object(object->Owner);
     CbFree(object);
 }

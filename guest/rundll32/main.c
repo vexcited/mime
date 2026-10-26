@@ -3,7 +3,8 @@
  *
  *   rundll32 [/sta] library,entry arguments
  *
- * the entry is called as void CALLBACK entry(HWND stub, HINSTANCE rundll32, LPWSTR or LPSTR arguments, int show).
+ * the entry is a CALLBACK function that gets a stub window, the instance of rundll32, the arguments as wide or ansi text
+ * and the show command.
  * the program always ends with exit code 0, whatever happened.
  */
 #include <mime/win32/ole2.h>
