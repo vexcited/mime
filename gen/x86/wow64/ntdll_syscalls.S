@@ -679,6 +679,20 @@ _NtQuerySystemInformation@16:
     calll *%edx
     retl $16
     .p2align 4, 0x90
+    .globl _NtQuerySystemEnvironmentValueEx@20
+_NtQuerySystemEnvironmentValueEx@20:
+    movl $0x16d, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $20
+    .p2align 4, 0x90
+    .globl _NtSetSystemEnvironmentValueEx@16
+_NtSetSystemEnvironmentValueEx@16:
+    movl $0x1bb, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $16
+    .p2align 4, 0x90
     .globl _NtSetSystemInformation@12
 _NtSetSystemInformation@12:
     movl $0x1bc, %eax
