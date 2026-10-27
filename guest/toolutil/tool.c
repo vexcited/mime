@@ -701,7 +701,7 @@ static void split(const WCHAR *line)
             } else {
                 for (int i = 0; i < slashes; i++)
                     *out++ = L'\\';
-                if (*p)
+                if (!slashes && *p)
                     *out++ = *p++;
             }
         }

@@ -1,4 +1,5 @@
 #include "proc.h"
+#include <stddef.h>
 #include <mime/win32/winuser.h>
 #include <mime/win32/winsvc.h>
 
@@ -100,6 +101,43 @@ WINBASEAPI BOOL WINAPI K32EnumProcessModulesEx(HANDLE process, HMODULE *modules,
 WINBASEAPI DWORD WINAPI K32GetModuleBaseNameW(HANDLE process, HMODULE module, LPWSTR name, DWORD size);
 
 /* the names of the modules of a process, separated by commas, or null when they cannot be read. */
+/* the loader's list of another process, read from its memory: the names in load order. */
+static WCHAR *modules_from_memory(HANDLE process)
+{
+    PROCESS_BASIC_INFORMATION info;
+    if (NtQueryInformationProcess(process, ProcessBasicInformation, &info, sizeof(info), nullptr) < 0 ||
+        !info.PebBaseAddress)
+        return nullptr;
+    PVOID loader;
+    SIZE_T got;
+    if (NtReadVirtualMemory(process, (BYTE *)info.PebBaseAddress + offsetof(PEB, Ldr), &loader, sizeof(loader), &got) < 0 ||
+        !loader)
+        return nullptr;
+    LIST_ENTRY head;
+    PVOID head_address = (BYTE *)loader + offsetof(PEB_LDR_DATA, InLoadOrderModuleList);
+    if (NtReadVirtualMemory(process, head_address, &head, sizeof(head), &got) < 0)
+        return nullptr;
+    TU_STR text = {};
+    PVOID at = head.Flink;
+    for (int i = 0; i < 2048 && at && at != head_address; i++) {
+        LDR_DATA_TABLE_ENTRY entry;
+        if (NtReadVirtualMemory(process, at, &entry, sizeof(entry), &got) < 0)
+            break;
+        if (entry.BaseDllName.Buffer && entry.BaseDllName.Length && entry.BaseDllName.Length < 1024) {
+            WCHAR name[512];
+            if (NtReadVirtualMemory(process, entry.BaseDllName.Buffer, name, entry.BaseDllName.Length, &got) >= 0) {
+                if (text.length)
+                    tu_str_putc(&text, L',');
+                tu_str_append(&text, name, entry.BaseDllName.Length / sizeof(WCHAR));
+            }
+        }
+        at = entry.InLoadOrderLinks.Flink;
+    }
+    WCHAR *result = text.length ? tu_dup(tu_str_text(&text)) : nullptr;
+    tu_str_free(&text);
+    return result;
+}
+
 WCHAR *proc_modules(DWORD pid)
 {
     HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION_ | PROCESS_VM_READ_, FALSE, pid);
@@ -108,7 +146,7 @@ WCHAR *proc_modules(DWORD pid)
     DWORD needed = 0;
     HMODULE modules[1024];
     WCHAR *result = nullptr;
-    if (K32EnumProcessModulesEx(process, modules, sizeof(modules), &needed, LIST_MODULES_ALL_)) {
+    if (pid == GetCurrentProcessId() && K32EnumProcessModulesEx(process, modules, sizeof(modules), &needed, LIST_MODULES_ALL_)) {
         DWORD count = needed / sizeof(HMODULE);
         if (count > TU_ARRAY(modules))
             count = TU_ARRAY(modules);
@@ -123,6 +161,8 @@ WCHAR *proc_modules(DWORD pid)
         }
         result = tu_dup(tu_str_text(&text));
         tu_str_free(&text);
+    } else {
+        result = modules_from_memory(process);
     }
     CloseHandle(process);
     return result;

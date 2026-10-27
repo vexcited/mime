@@ -939,9 +939,9 @@ static DWORD cmd_config(SCSESSION *s, const WCHAR *name, WCHAR **args, int count
     BOOL set_start = o.Start != (DWORD)-1;
     if ((result = open_service(s, name, (set_start ? 1 : 0) + SERVICE_CHANGE_CONFIG_, nullptr)))
         goto done;
+    /* the delayed flag only fits an automatic start, so it is changed once the start type is. */
     DWORD old_delayed = 0;
-    BOOL delayed_changed = FALSE;
-    if (set_start) {
+    if (set_start && o.Start == SERVICE_AUTO_START) {
         DWORD needed = 0;
         if (!QueryServiceConfig2W(s->service, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, (LPBYTE)&old_delayed, 4, &needed)) {
             DWORD error = GetLastError();
@@ -949,19 +949,19 @@ static DWORD cmd_config(SCSESSION *s, const WCHAR *name, WCHAR **args, int count
                 result = api_failed(L"QueryServiceConfig2 (delayed autostart flag)", error);
                 goto done;
             }
-        } else if ((DWORD)o.Delayed != old_delayed) {
-            SERVICE_DELAYED_AUTO_START_INFO info = {o.Delayed};
-            if (!ChangeServiceConfig2W(s->service, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, &info) && GetLastError()) {
-                result = last_failed(L"ChangeServiceConfig2 (delayed autostart flag)");
-                goto done;
-            }
-            delayed_changed = TRUE;
         }
     }
     DWORD tag = 0;
     if (ChangeServiceConfigW(s->service, o.Type, o.Start, o.ErrorControl, o.BinaryPath, o.Group,
                              o.WantTag ? &tag : nullptr, o.Dependencies, o.StartName, o.Password, o.Display) ||
         !GetLastError()) {
+        if (set_start && o.Start == SERVICE_AUTO_START && (DWORD)o.Delayed != old_delayed) {
+            SERVICE_DELAYED_AUTO_START_INFO info = {o.Delayed};
+            if (!ChangeServiceConfig2W(s->service, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, &info) && GetLastError()) {
+                result = last_failed(L"ChangeServiceConfig2 (delayed autostart flag)");
+                goto done;
+            }
+        }
         success(L"ChangeServiceConfig");
         if (o.WantTag)
             say(L"[SC] Tag = %lu\n", tag);
@@ -974,11 +974,6 @@ static DWORD cmd_config(SCSESSION *s, const WCHAR *name, WCHAR **args, int count
             tu_puts(L"This error may occur if another service is already using a Named \n"
                     L"Pipe or RPC trigger for the same endpoint or interface as the\n"
                     L"given service.\n");
-        if (delayed_changed) {
-            SERVICE_DELAYED_AUTO_START_INFO info = {old_delayed};
-            if (!ChangeServiceConfig2W(s->service, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, &info) && GetLastError())
-                result = last_failed(L"ChangeServiceConfig2 (delayed autostart flag)");
-        }
     }
 done:
     tu_free(o.Dependencies);

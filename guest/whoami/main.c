@@ -152,6 +152,18 @@ static WCHAR *account_name(PSID sid, int *use, BOOL lower)
         }
         kind = 8;
     }
+    /* the logon session has a name windows builds from the numbers of its sid. */
+    if (kind == 8 && text.length > 8 && !wcsncmp(text.data, L"S-1-5-5-", 8)) {
+        const WCHAR *numbers = text.data + 8;
+        const WCHAR *dash = wcschr(numbers, L'-');
+        if (dash) {
+            TU_STR name = {};
+            tu_str_format(&name, L"NT AUTHORITY\\LogonSessionId_%.*s_%s", (int)(dash - numbers), numbers, dash + 1);
+            tu_str_free(&text);
+            text = name;
+            kind = 11;
+        }
+    }
     if (use)
         *use = kind;
     if (lower)
@@ -297,8 +309,13 @@ static int show_groups(int format, BOOL no_header)
         int use;
         WCHAR *name = account_name(groups->Groups[i].Sid, &use, FALSE), *sid = sid_text(groups->Groups[i].Sid);
         TU_STR attributes = {};
-        attribute_text(groups->Groups[i].Attributes, &attributes);
-        const WCHAR *row[4] = {name, type_text(use, groups->Groups[i].Attributes), sid, tu_str_text(&attributes)};
+        DWORD flags = groups->Groups[i].Attributes;
+        /* the integrity label counts as mandatory and enabled. */
+        if (use == 10 || !wcsncmp(sid, L"S-1-16-", 7))
+            flags |= SE_GROUP_MANDATORY_ | SE_GROUP_ENABLED_BY_DEFAULT_ | SE_GROUP_ENABLED_;
+        attribute_text(flags, &attributes);
+        const WCHAR *row[4] = {name, !wcsncmp(sid, L"S-1-16-", 7) ? L"Label" : type_text(use, groups->Groups[i].Attributes), sid,
+                               tu_str_text(&attributes)};
         tu_table_row(&table, row);
         tu_free(name);
         tu_free(sid);

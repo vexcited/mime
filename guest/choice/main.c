@@ -252,7 +252,7 @@ int tool_main(void)
         }
         int c = next_char(input, console, left);
         if (c < 0) {
-            tu_print(L"%c\n", choices[default_index]);
+            tu_print(L"%c\n", case_sensitive ? choices[default_index] : tu_upper(choices[default_index]));
             if (console)
                 SetConsoleMode(input, mode);
             return default_index + 1;
@@ -265,7 +265,7 @@ int tool_main(void)
         }
         for (SIZE_T i = 0; i < count; i++) {
             if (case_sensitive ? choices[i] == (WCHAR)c : tu_upper(choices[i]) == tu_upper((WCHAR)c)) {
-                tu_print(L"%c\n", (WCHAR)c);
+                tu_print(L"%c\n", case_sensitive ? choices[i] : tu_upper(choices[i]));
                 if (console)
                     SetConsoleMode(input, mode);
                 return (int)i + 1;
