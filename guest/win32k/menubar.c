@@ -553,6 +553,19 @@ void MenuBarPaint(WND *w, SURFACE *s, const REGION *clip, POINT origin)
     UserDereference(&m->Header);
 }
 
+/* the selection of the icon of the system menu, under the icon. */
+void MenuBarPaintIcon(WND *w, SURFACE *s, const REGION *clip, const RECT *area)
+{
+    if (!w->MenuIcon)
+        return;
+    if (FrameThemed() || FrameIsDark(w)) {
+        COLORREF accent = FrameIsDark(w) ? RGB(0xFF, 0xFF, 0xFF) : SELECT_COLOR;
+        blend_pixel(s, clip, area, accent, 51);
+    } else {
+        DrawFillRect(s, clip, area, ColorToPixel(MetricsSysColor(COLOR_MENUHILIGHT)));
+    }
+}
+
 /* repaint after the state of the loop changed. */
 void MenuBarRedraw(WND *w)
 {
@@ -591,6 +604,14 @@ ULONG_PTR MenuBarCall(WND *w, PVOID user_request)
         break;
     }
     case MIME_MENUBAR_STATE: {
+        /* item -2 is the icon of the system menu, which the frame draws as selected. */
+        BOOLEAN icon = req.Item == -2;
+        if (icon)
+            req.Item = -1;
+        if (icon != w->MenuIcon) {
+            w->MenuIcon = icon;
+            MenuBarRedraw(w);
+        }
         LONG hot = req.Item + 1, pushed = req.Pushed + 1;
         if (hot < 0)
             hot = 0;

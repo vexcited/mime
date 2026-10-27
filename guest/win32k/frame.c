@@ -730,6 +730,8 @@ void FramePaint(WND *w)
             LONG size = MetricsGet(SM_CXSMICON, dpi);
             LONG ix = vis.left + scale(8, dpi);
             LONG iy = caption_top + (caption_bottom - caption_top - size) / 2;
+            RECT selection = {vis.left + 1, caption_top, ix + size + scale(8, dpi), caption_bottom};
+            MenuBarPaintIcon(w, s, &clip, &selection);
             HDC hdc = PaintGetDC(w, nullptr, DCX_WINDOW);
             DC *dc = DcLookup(hdc);
             if (dc) {

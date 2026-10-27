@@ -255,7 +255,7 @@ enum {
 enum {
     MIME_MENUBAR_RECT = 1, /* Item 0 the bar, 1 and up an item, the rectangle in screen coordinates -> TRUE when there is one. */
     MIME_MENUBAR_HIT,      /* Point in screen coordinates -> TRUE when it is on the bar, Item the item or -1. */
-    MIME_MENUBAR_STATE,    /* Item the selected item, Pushed the item whose popup is open, both -1 for none: the bar is drawn again. */
+    MIME_MENUBAR_STATE,    /* Item the selected item, Pushed the item whose popup is open, both -1 for none, an Item of -2 the icon of the system menu: the frame is drawn again. */
     MIME_MENUBAR_AREA,     /* the bar and its line, screen coordinates. */
     MIME_MENUBAR_CUES,     /* Item nonzero: Alt is down and the bar shows its mnemonics, zero: it stops. */
 };

@@ -732,7 +732,7 @@ static void set_bar_state(LOOP *l)
     MIME_MENUBAR req;
     memset(&req, 0, sizeof(req));
     req.Op = MIME_MENUBAR_STATE;
-    req.Item = in_range(l->BarSel, l->BarCount) ? l->BarSel : -1;
+    req.Item = l->BarSel == SYSTEM_ICON ? -2 : in_range(l->BarSel, l->BarCount) ? l->BarSel : -1;
     req.Pushed = (l->Dropped && l->Depth > 0 && req.Item >= 0) ? req.Item : -1;
     NtUserCallHwndParam(l->BarWindow, (ULONG_PTR)&req, MIME_HWNDPARAM_MENUBAR);
 }

@@ -707,6 +707,7 @@ typedef struct WND {
     LONG MenuPushed;         /* bar item whose popup is open, plus one. */
     UCHAR UiState;           /* UISF_HIDEFOCUS and UISF_HIDEACCEL, set while the keyboard cues are hidden. */
     BOOLEAN MenuCues;        /* Alt is down, so the bar shows its mnemonics whatever the keyboard cues say. */
+    BOOLEAN MenuIcon;        /* the menu loop has the system menu icon selected. */
     REGION *Shape;     /* SetWindowRgn, window relative, NULL for none. */
     ULONG LayerFlags;  /* LWA_* for SetLayeredWindowAttributes, MIME_LAYER_UPDATE for UpdateLayeredWindow. */
     COLORREF LayerKey;
@@ -949,6 +950,7 @@ BOOLEAN MenuBarArea(WND *w, RECT *screen);
 LONG MenuBarHit(WND *w, POINT screen);
 void MenuBarPaint(WND *w, SURFACE *s, const REGION *clip, POINT origin);
 void MenuBarRedraw(WND *w);
+void MenuBarPaintIcon(WND *w, SURFACE *s, const REGION *clip, const RECT *area);
 ULONG_PTR MenuBarCall(WND *w, PVOID user_request);
 extern WND *MenuBarCalcWindow;               /* the window a WM_NCCALCSIZE from the window manager is for. */
 void MenuWindowSetMenu(WND *w, HMENU menu); /* a top level window's menu bar, with the count of its users. */
