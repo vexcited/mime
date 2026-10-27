@@ -2,3 +2,4 @@ LIBRARY CoreMessaging.dll
 EXPORTS
     CreateDispatcherQueueController @18
     GetDispatcherQueueForCurrentThread @23
+    ServiceMain @30

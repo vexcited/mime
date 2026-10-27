@@ -89,6 +89,10 @@ pid_t mime_instance_launch(const MimePaths *paths, int lock_fd)
 
     char exe[MIME_PATH_MAX];
     snprintf(exe, sizeof(exe), "%s/mime", paths->exe_dir);
+    /* the log of the last run stays beside the new one. */
+    char previous[MIME_PATH_MAX];
+    snprintf(previous, sizeof(previous), "%s.1", paths->logfile);
+    rename(paths->logfile, previous);
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);

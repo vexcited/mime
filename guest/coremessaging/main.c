@@ -6,6 +6,7 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
 #include <mime/winrt_object.h>
+#include <mime/svcstub.h>
 
 int _fltused = 0x9875;
 
@@ -280,4 +281,13 @@ __declspec(dllexport) HRESULT WINAPI GetDispatcherQueueForCurrentThread(void **r
         return E_POINTER;
     *result = nullptr;
     return S_OK;
+}
+
+/*
+ * the CoreMessagingRegistrar service. queues here never cross processes, so it has nothing to register and only
+ * reports that it runs: its failure action restarts the machine.
+ */
+void WINAPI ServiceMain(DWORD argc, LPWSTR *argv)
+{
+    svc_stub_run(argc, argv);
 }
