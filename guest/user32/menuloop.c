@@ -698,7 +698,7 @@ LRESULT CALLBACK MenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 /* the flags of WM_MENUSELECT for an item. */
 static UINT select_flags(const ITEM *it, BOOL system, BOOL mouse)
 {
-    UINT f = (it->Type & 0x0B64) | (it->State & 0x8B) | MF_HILITE;
+    UINT f = (it->Type & 0x4B64) | (it->State & 0x8B) | MF_HILITE;
     if (it->SubMenu)
         f |= MF_POPUP;
     if (system)
@@ -1378,6 +1378,26 @@ static void key_down(LOOP *l, UINT vk)
         /* the key that ends the menu must not open it again when it comes up. */
         NtUserCallTwoParam(0, 0, MIME_TWOPARAM_ALTALONE);
         end_loop(l);
+        break;
+    case VK_F1:
+        /* the window is asked for help on the selected item. */
+        if (l->Notify) {
+            HMENU menu = l->Depth > 0 ? l->Levels[l->Depth - 1].Menu : l->BarMenu;
+            int hot = l->Depth > 0 ? l->Levels[l->Depth - 1].Hot : l->BarSel;
+            ITEM *items = l->Depth > 0 ? l->Levels[l->Depth - 1].Items : l->BarItems;
+            int count = l->Depth > 0 ? l->Levels[l->Depth - 1].Count : l->BarCount;
+            if (menu && in_range(hot, count)) {
+                HELPINFO help;
+                memset(&help, 0, sizeof(help));
+                help.cbSize = sizeof(help);
+                help.iContextType = HELPINFO_MENUITEM;
+                help.iCtrlId = (int)items[hot].Id;
+                help.hItemHandle = (HANDLE)menu;
+                help.dwContextId = GetMenuContextHelpId(menu);
+                GetCursorPos(&help.MousePos);
+                SendMessageW(l->Owner, WM_HELP, 0, (LPARAM)&help);
+            }
+        }
         break;
     case VK_TAB:
     case VK_SHIFT:
