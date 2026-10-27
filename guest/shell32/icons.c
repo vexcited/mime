@@ -1,9 +1,8 @@
 /*
  * icons: where a file's icon comes from, loading an icon at a size, stock icons, and IExtractIcon over a file name.
  *
- * system art lives in imageres.dll, which Windows 11 keeps in SystemResources as imageres.dll.mun. a path naming a
- * library without icons is looked up there too. shell32.dll has no icons of its own here, so its indexes, which are
- * the stock icon numbers, come from the stock table.
+ * system art lives in imageres.dll, which carries the icons by the ids Windows 11 gives them. shell32.dll has no icons
+ * of its own here, so its indexes, which are the stock icon numbers, come from the stock table.
  */
 #include "shell32_private.h"
 
@@ -44,7 +43,7 @@ static const STOCK_ICON g_stock[] = {
     {SIID_SERVERSHARE, 143, ART_FOLDER},
     {SIID_PRINTERFAX, 76, ART_DOC},
     {SIID_DRIVEUNKNOWN, 75, ART_DRIVE},
-    {SIID_DRIVEDVD, 56, ART_DRIVE_OPTICAL},
+    {SIID_DRIVEDVD, 37, ART_DRIVE_OPTICAL},
     {SIID_MEDIADVD, 56, ART_DRIVE_OPTICAL},
     {SIID_AUDIOFILES, 131, ART_DOC},
     {SIID_IMAGEFILES, 132, ART_DOC},
@@ -193,18 +192,6 @@ static HICON load_group(HMODULE module, int index, int cx, int cy)
     return icon;
 }
 
-/* "<windows>\SystemResources\<name>.mun" for a library, where Windows 11 keeps its icons. */
-static BOOL resource_file(LPCWSTR path, WCHAR *out)
-{
-    WCHAR windir[MAX_PATH];
-    LPCWSTR name = base_name(path);
-    if (!windows_directory(windir, MAX_PATH) || wcslen(windir) + wcslen(name) + 22 >= MAX_PATH)
-        return FALSE;
-    _snwprintf(out, MAX_PATH, L"%ls\\SystemResources\\%ls.mun", windir, name);
-    out[MAX_PATH - 1] = 0;
-    return GetFileAttributesW(out) != INVALID_FILE_ATTRIBUTES;
-}
-
 static HICON load_stock(int siid, int cx, int cy);
 
 /* shell32.dll icon indexes are the stock icons of the same number. */
@@ -213,27 +200,11 @@ static BOOL is_shell32(LPCWSTR path)
     return !_wcsicmp(base_name(path), L"shell32.dll");
 }
 
-/* a name may stand for an icon library that only exists in SystemResources. */
+/* the library a program names, searched for like a library is. */
 BOOL ShIconFindFile(LPCWSTR file, WCHAR *path)
 {
     DWORD n = SearchPathW(nullptr, file, nullptr, MAX_PATH, path, nullptr);
-    if (n && n < MAX_PATH)
-        return TRUE;
-    WCHAR alternative[MAX_PATH];
-    if (!resource_file(file, alternative))
-        return FALSE;
-    if (wcschr(file, L'\\')) {
-        if (wcslen(file) >= MAX_PATH)
-            return FALSE;
-        wcscpy(path, file);
-        return TRUE;
-    }
-    WCHAR windir[MAX_PATH];
-    if (!windows_directory(windir, MAX_PATH) || wcslen(windir) + wcslen(file) + 10 >= MAX_PATH)
-        return FALSE;
-    _snwprintf(path, MAX_PATH, L"%ls\\System32\\%ls", windir, file);
-    path[MAX_PATH - 1] = 0;
-    return TRUE;
+    return n && n < MAX_PATH;
 }
 
 UINT ShIconCount(LPCWSTR path)
@@ -246,14 +217,6 @@ UINT ShIconCount(LPCWSTR path)
     if (module) {
         count = count_groups(module);
         close_module(module, owned);
-    }
-    WCHAR alternative[MAX_PATH];
-    if (!count && resource_file(path, alternative)) {
-        module = open_module(alternative, &owned);
-        if (module) {
-            count = count_groups(module);
-            close_module(module, owned);
-        }
     }
     if (!count && is_shell32(path))
         count = SIID_MAX_ICONS;
@@ -273,14 +236,6 @@ HICON ShIconLoad(LPCWSTR path, int index, int cx, int cy)
     if (module) {
         icon = load_group(module, index, cx, cy);
         close_module(module, owned);
-    }
-    WCHAR alternative[MAX_PATH];
-    if (!icon && resource_file(path, alternative)) {
-        module = open_module(alternative, &owned);
-        if (module) {
-            icon = load_group(module, index, cx, cy);
-            close_module(module, owned);
-        }
     }
     if (!icon && is_shell32(path) && index >= 0)
         icon = load_stock(index, cx, cy);
@@ -421,18 +376,10 @@ static HICON load_stock(int siid, int cx, int cy)
     if (resource && windows_directory(path, MAX_PATH) && wcslen(path) + 24 < MAX_PATH) {
         wcscat(path, L"\\System32\\imageres.dll");
         BOOL owned;
-        WCHAR alternative[MAX_PATH];
         HMODULE module = open_module(path, &owned);
         if (module) {
             icon = (HICON)LoadImageW(module, MAKEINTRESOURCEW(resource), IMAGE_ICON, cx, cy, 0);
             close_module(module, owned);
-        }
-        if (!icon && resource_file(path, alternative)) {
-            module = open_module(alternative, &owned);
-            if (module) {
-                icon = (HICON)LoadImageW(module, MAKEINTRESOURCEW(resource), IMAGE_ICON, cx, cy, 0);
-                close_module(module, owned);
-            }
         }
     }
     return icon ? icon : draw_stock(siid, cx, cy);

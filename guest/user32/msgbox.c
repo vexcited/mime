@@ -11,7 +11,7 @@
 #endif
 #define MB_ICON_STATIC_ID 20
 
-/* the session button strings: user32.dll.mui string 800 + i, control id i + 1. */
+/* the button strings: string 800 + i of user32, control id i + 1. */
 #define MB_STRING_COUNT 11
 #define MB_STRING_BASE 800
 

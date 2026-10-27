@@ -1,6 +1,7 @@
 /* each guest application gets a named native dock proxy for the shared vm. */
 #include "app_identity.h"
 #include "pe_icon.h"
+#include "../rom.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
@@ -144,17 +145,10 @@ static bool write_plist(const char *path, const char *name, const char *identifi
 
 static void write_fallback_icon(const char *destination)
 {
-    static const struct {
-        const char *file;
-        int32_t group;
-    } sources[] = {{"imageres.dll.mun", 15}, {"user32.dll.mun", 100}};
-    for (size_t i = 0; i < MIME_ARRAY_COUNT(sources); i++) {
-        char path[MIME_PATH_MAX];
-        void *icon;
-        size_t size;
-        if (!format_path(path, sizeof(path), "%s/Windows/SystemResources/%s", g_paths.drive_c, sources[i].file) ||
-            !mime_pe_icon_read(path, sources[i].group, &icon, &size))
-            continue;
+    const MimeRomEntry *entry = mime_rom_find("\\Windows\\System32\\imageres.dll");
+    void *icon;
+    size_t size;
+    if (entry && mime_pe_icon_extract((const uint8_t *)mime_rom + entry->offset, entry->size, 15, &icon, &size)) {
         bool written = mime_write_file(destination, icon, size);
         free(icon);
         if (written)

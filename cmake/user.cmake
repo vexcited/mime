@@ -76,6 +76,10 @@ function(mime_dll name arch)
     if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
         set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
     endif()
+    # the icons, cursors, bitmaps and message tables the libraries carry, generated into gen/resources.
+    if(NOT script AND EXISTS ${MIME_GEN}/resources/${name}.rc)
+        set(script RESOURCE_SCRIPT ${MIME_GEN}/resources/${name}.rc)
+    endif()
     # a library of types that is laid out for the processor of the dll.
     if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}_${arch}.rc)
         set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}_${arch}.rc)
@@ -173,6 +177,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     mime_dll(user32 ${arch} BASE 0x7FF900000000 SOURCES ${sources}
         OBJECTS ${arch}-chkstk ${arch}-lib-png ${arch}-lib-msstyles OPTIONS -DMIME_BUILD_USER32 INCLUDES guest/lib
         IMPORTS ntdll kernel32 win32u gdi32 FLAGS /subsystem:windows,10.0)
+
+    # the icons of the system, found by their numbers in the way Windows 11 keeps them.
+    mime_dll(imageres ${arch} BASE 0x7FF7D0000000 ENTRY /noentry NOIMPLIB DEF ${CMAKE_SOURCE_DIR}/guest/imageres/imageres.def)
 endforeach()
 
 if(MIME_GUEST_ARCH STREQUAL "arm64")

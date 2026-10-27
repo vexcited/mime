@@ -110,16 +110,9 @@ LRESULT CALLBACK MessageWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 LRESULT CALLBACK DesktopProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK MenuProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
-typedef struct USER_RESFILE USER_RESFILE;
-USER_RESFILE *UserResOpen(PCWSTR path);
-const void *UserResFind(USER_RESFILE *f, LPCWSTR type, LPCWSTR name, WORD lang, DWORD *size);
-USER_RESFILE *UserSystemResources(void); /* SystemResources\user32.dll.mun */
-USER_RESFILE *UserStringResources(void); /* en-US\user32.dll.mui */
-USER_RESFILE *UserImageResources(void);  /* SystemResources\imageres.dll.mun */
 HICON UserLoadIconWithScaleDown(HINSTANCE instance, LPCWSTR name, int cx, int cy);
 int UserLoadSystemString(UINT id, LPWSTR buffer, int max);
-HICON UserLoadIconFromResources(USER_RESFILE *file, HINSTANCE module, LPCWSTR name, int cx, int cy, BOOL icon,
-                                UINT flags);
+HICON UserLoadIconFromResources(HINSTANCE module, LPCWSTR name, int cx, int cy, BOOL icon, ULONG object_flags);
 
 typedef enum THEME_PART {
     THEME_PUSHBUTTON = 1,

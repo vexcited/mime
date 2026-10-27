@@ -1,222 +1,9 @@
 /*
- * string tables, icons and cursors. user32's own resources are read straight from SystemResources\user32.dll.mun and
- * en-US\user32.dll.mui.
+ * string tables, icons and cursors. the system's own resources are in this library: its icons, cursors, bitmaps and
+ * strings, which LoadIcon, LoadCursor, LoadBitmap and LoadString of a null instance or of user32 read.
  */
 #include "user32_private.h"
 #include <png/png.h>
-
-/* ------------------------------------------------------------------ raw pe resource files */
-
-/*
- * files are read on demand: imageres.dll.mun is tens of megabytes and only a few of its resources are used. found
- * resources are cached for the life of the process because callers keep pointers to them.
- */
-typedef struct USER_RESDATA {
-    struct USER_RESDATA *Next;
-    ULONG Offset;
-    DWORD Size;
-    UCHAR Data[];
-} USER_RESDATA;
-
-struct USER_RESFILE {
-    HANDLE File;
-    ULONG64 Size;
-    ULONG ResourceOffset; /* file offset of the resource directory. */
-    ULONG Sections;
-    IMAGE_SECTION_HEADER *Section;
-    RTL_CRITICAL_SECTION Lock;
-    USER_RESDATA *Cache;
-};
-
-static BOOL read_at(USER_RESFILE *f, ULONG64 offset, void *buffer, DWORD length)
-{
-    if (offset > f->Size || length > f->Size - offset)
-        return FALSE;
-    OVERLAPPED ov = {};
-    ov.Offset = (DWORD)offset;
-    ov.OffsetHigh = (DWORD)(offset >> 32);
-    DWORD read = 0;
-    return ReadFile(f->File, buffer, length, &read, &ov) && read == length;
-}
-
-static ULONG rva_to_offset(USER_RESFILE *f, ULONG rva)
-{
-    for (ULONG i = 0; i < f->Sections; i++) {
-        const IMAGE_SECTION_HEADER *s = &f->Section[i];
-        ULONG size = s->Misc.VirtualSize > s->SizeOfRawData ? s->Misc.VirtualSize : s->SizeOfRawData;
-        if (rva >= s->VirtualAddress && rva < s->VirtualAddress + size)
-            return rva - s->VirtualAddress + s->PointerToRawData;
-    }
-    return 0;
-}
-
-USER_RESFILE *UserResOpen(PCWSTR path)
-{
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (h == INVALID_HANDLE_VALUE)
-        return nullptr;
-    USER_RESFILE *f = UserAlloc(sizeof(*f));
-    if (!f) {
-        CloseHandle(h);
-        return nullptr;
-    }
-    memset(f, 0, sizeof(*f));
-    f->File = h;
-    DWORD high = 0;
-    DWORD low = GetFileSize(h, &high);
-    f->Size = low == INVALID_FILE_SIZE ? 0 : ((ULONG64)high << 32) | low;
-
-    /* .mun files are resource only images and may use either optional header kind. */
-    IMAGE_DOS_HEADER dos;
-    struct {
-        DWORD Signature;
-        IMAGE_FILE_HEADER FileHeader;
-        WORD Magic;
-    } nt;
-    if (read_at(f, 0, &dos, sizeof(dos)) && dos.e_magic == IMAGE_DOS_SIGNATURE &&
-        read_at(f, (ULONG)dos.e_lfanew, &nt, sizeof(nt)) && nt.Signature == IMAGE_NT_SIGNATURE &&
-        nt.FileHeader.NumberOfSections <= 96) {
-        ULONG64 optional = (ULONG)dos.e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER);
-        ULONG directories = nt.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC ? 112 : nt.Magic == 0x10b ? 96 : 0;
-        IMAGE_DATA_DIRECTORY dir = {};
-        if (directories && nt.FileHeader.SizeOfOptionalHeader >= directories + 3 * sizeof(dir))
-            read_at(f, optional + directories + IMAGE_DIRECTORY_ENTRY_RESOURCE * sizeof(dir), &dir, sizeof(dir));
-        ULONG count = nt.FileHeader.NumberOfSections;
-        f->Section = dir.VirtualAddress && count ? UserAlloc(count * sizeof(IMAGE_SECTION_HEADER)) : nullptr;
-        if (f->Section &&
-            read_at(f, optional + nt.FileHeader.SizeOfOptionalHeader, f->Section, count * sizeof(IMAGE_SECTION_HEADER))) {
-            f->Sections = count;
-            f->ResourceOffset = rva_to_offset(f, dir.VirtualAddress);
-        }
-    }
-    if (!f->ResourceOffset) {
-        UserFree(f->Section);
-        UserFree(f);
-        CloseHandle(h);
-        return nullptr;
-    }
-    RtlInitializeCriticalSection(&f->Lock);
-    return f;
-}
-
-/* returns the OffsetToData of the matching entry, or 0. */
-static ULONG find_entry(USER_RESFILE *f, ULONG dir_offset, LPCWSTR name)
-{
-    IMAGE_RESOURCE_DIRECTORY dir;
-    if (!read_at(f, dir_offset, &dir, sizeof(dir)))
-        return 0;
-    ULONG count = (ULONG)dir.NumberOfNamedEntries + dir.NumberOfIdEntries;
-    if (!count)
-        return 0;
-    IMAGE_RESOURCE_DIRECTORY_ENTRY *e = UserAlloc(count * sizeof(*e));
-    if (!e || !read_at(f, dir_offset + sizeof(dir), e, count * sizeof(*e))) {
-        UserFree(e);
-        return 0;
-    }
-    ULONG found = 0;
-    if (!name) {
-        found = e[0].OffsetToData;
-    } else {
-        SIZE_T name_len = IS_INTRESOURCE(name) ? 0 : wcslen(name);
-        for (ULONG i = 0; i < count && !found; i++) {
-            if (IS_INTRESOURCE(name)) {
-                if (!(e[i].Name & 0x80000000u) && e[i].Name == (ULONG)(ULONG_PTR)name)
-                    found = e[i].OffsetToData;
-            } else if (e[i].Name & 0x80000000u) {
-                ULONG off = f->ResourceOffset + (e[i].Name & 0x7FFFFFFFu);
-                WORD len;
-                WCHAR text[64];
-                if (read_at(f, off, &len, sizeof(len)) && len == name_len && len <= ARRAYSIZE(text) &&
-                    read_at(f, off + 2, text, len * sizeof(WCHAR)) && !_wcsnicmp(text, name, len))
-                    found = e[i].OffsetToData;
-            }
-        }
-    }
-    UserFree(e);
-    return found;
-}
-
-const void *UserResFind(USER_RESFILE *f, LPCWSTR type, LPCWSTR name, WORD lang, DWORD *size)
-{
-    if (!f)
-        return nullptr;
-    ULONG t = find_entry(f, f->ResourceOffset, type);
-    if (!(t & 0x80000000u))
-        return nullptr;
-    ULONG n = find_entry(f, f->ResourceOffset + (t & 0x7FFFFFFFu), name);
-    if (!(n & 0x80000000u))
-        return nullptr;
-    ULONG lang_dir = f->ResourceOffset + (n & 0x7FFFFFFFu);
-    ULONG l = lang ? find_entry(f, lang_dir, (LPCWSTR)(ULONG_PTR)lang) : 0;
-    if (!l)
-        l = find_entry(f, lang_dir, nullptr);
-    if (!l || (l & 0x80000000u))
-        return nullptr;
-    IMAGE_RESOURCE_DATA_ENTRY d;
-    if (!read_at(f, f->ResourceOffset + l, &d, sizeof(d)))
-        return nullptr;
-    ULONG off = rva_to_offset(f, d.OffsetToData);
-    if (!off)
-        return nullptr;
-
-    RtlEnterCriticalSection(&f->Lock);
-    USER_RESDATA *r = f->Cache;
-    while (r && r->Offset != off)
-        r = r->Next;
-    if (!r) {
-        r = UserAlloc(sizeof(*r) + d.Size);
-        if (r && read_at(f, off, r->Data, d.Size)) {
-            r->Offset = off;
-            r->Size = d.Size;
-            r->Next = f->Cache;
-            f->Cache = r;
-        } else {
-            UserFree(r);
-            r = nullptr;
-        }
-    }
-    RtlLeaveCriticalSection(&f->Lock);
-    if (!r)
-        return nullptr;
-    if (size)
-        *size = r->Size;
-    return r->Data;
-}
-
-static USER_RESFILE *open_cached(USER_RESFILE **slot, BOOL *tried, PCWSTR relative)
-{
-    if (!*tried) {
-        *tried = TRUE;
-        WCHAR path[MAX_PATH];
-        UINT n = GetWindowsDirectoryW(path, MAX_PATH);
-        if (n && n + wcslen(relative) < MAX_PATH) {
-            wcscpy(path + n, relative);
-            *slot = UserResOpen(path);
-        }
-    }
-    return *slot;
-}
-
-USER_RESFILE *UserSystemResources(void)
-{
-    static USER_RESFILE *file;
-    static BOOL tried;
-    return open_cached(&file, &tried, L"\\SystemResources\\user32.dll.mun");
-}
-
-USER_RESFILE *UserImageResources(void)
-{
-    static USER_RESFILE *file;
-    static BOOL tried;
-    return open_cached(&file, &tried, L"\\SystemResources\\imageres.dll.mun");
-}
-
-USER_RESFILE *UserStringResources(void)
-{
-    static USER_RESFILE *file;
-    static BOOL tried;
-    return open_cached(&file, &tried, L"\\System32\\en-US\\user32.dll.mui");
-}
 
 /* ------------------------------------------------------------------ strings */
 
@@ -244,16 +31,14 @@ static int copy_string_from_table(const WORD *table, DWORD size, UINT id, LPWSTR
 
 int UserLoadSystemString(UINT id, LPWSTR buffer, int max)
 {
-    DWORD size;
-    const WORD *table = UserResFind(UserStringResources(), RTW_STRING, MAKEINTRESOURCEW((id >> 4) + 1), 0, &size);
-    if (!table)
-        table = UserResFind(UserSystemResources(), RTW_STRING, MAKEINTRESOURCEW((id >> 4) + 1), 0, &size);
+    HRSRC res = FindResourceExW(User32Instance, RTW_STRING, MAKEINTRESOURCEW((id >> 4) + 1), 0);
+    const WORD *table = res ? LockResource(LoadResource(User32Instance, res)) : nullptr;
     if (!table) {
         if (buffer && max > 0)
             buffer[0] = 0;
         return 0;
     }
-    return copy_string_from_table(table, size, id, buffer, max);
+    return copy_string_from_table(table, SizeofResource(User32Instance, res), id, buffer, max);
 }
 
 WINUSERAPI int WINAPI LoadStringW(HINSTANCE instance, UINT id, LPWSTR buffer, int max)
@@ -500,35 +285,116 @@ static ULONG_PTR name_key(LPCWSTR name)
     return h | 0x10000;
 }
 
-HICON UserLoadIconFromResources(USER_RESFILE *file, HINSTANCE module, LPCWSTR name, int cx, int cy, BOOL icon,
-                                UINT flags)
+/* the frame of an animated cursor that comes first, a cursor file inside the RIFF chunks. */
+static BOOL find_frame(const UCHAR *p, const UCHAR *end, const UCHAR **frame, DWORD *frame_size)
 {
-    const void *group;
-    DWORD size;
-    HRSRC res = nullptr;
+    while (end - p >= 8) {
+        DWORD length = *(const DWORD *)(p + 4);
+        const UCHAR *body = p + 8;
+        if ((SIZE_T)(end - body) < length)
+            length = (DWORD)(end - body);
+        if (!memcmp(p, "icon", 4)) {
+            *frame = body;
+            *frame_size = length;
+            return TRUE;
+        }
+        if (!memcmp(p, "LIST", 4) && length >= 4 && !memcmp(body, "fram", 4) &&
+            find_frame(body + 4, body + length, frame, frame_size))
+            return TRUE;
+        p = body + ((length + 1) & ~1u);
+    }
+    return FALSE;
+}
+
+typedef struct FILE_ICON_ENTRY {
+    BYTE Width, Height, Colors, Reserved;
+    WORD Planes, BitCount;
+    DWORD Bytes, Offset;
+} FILE_ICON_ENTRY;
+
+/*
+ * an icon or cursor file is a directory of images, and the one nearest the requested size is taken, as from a
+ * resource group. a cursor's hot spot is in the directory entry, where an icon has planes and bits. an animated
+ * cursor shows its first frame.
+ */
+static HICON load_icon_data(const UCHAR *data, DWORD size, int cx, int cy, BOOL icon, ULONG object_flags)
+{
+    if (size >= 12 && !memcmp(data, "RIFF", 4) && !memcmp(data + 8, "ACON", 4)) {
+        const UCHAR *frame;
+        DWORD frame_size;
+        if (!find_frame(data + 12, data + size, &frame, &frame_size)) {
+            SetLastError(ERROR_INVALID_DATA);
+            return nullptr;
+        }
+        data = frame;
+        size = frame_size;
+    }
+    /* a size of 0 picks the image that suits the system size and keeps its own size. */
+    int want_cx = cx ? cx : GetSystemMetrics(icon ? SM_CXICON : SM_CXCURSOR);
+    int want_cy = cy ? cy : GetSystemMetrics(icon ? SM_CYICON : SM_CYCURSOR);
+    const WORD *directory = (const WORD *)data;
+    if (size < 6 || directory[0] != 0 || (directory[1] != 1 && directory[1] != 2) || !directory[2] ||
+        6 + (SIZE_T)directory[2] * 16 > size) {
+        SetLastError(ERROR_INVALID_DATA);
+        return nullptr;
+    }
+    WORD kind = directory[1], count = directory[2];
+    const FILE_ICON_ENTRY *entries = (const FILE_ICON_ENTRY *)(data + 6);
+    int best = -1, best_score = 0x7FFFFFFF;
+    for (int i = 0; i < count; i++) {
+        const FILE_ICON_ENTRY *e = &entries[i];
+        if ((SIZE_T)e->Offset + e->Bytes > size || e->Bytes == 0)
+            continue;
+        int w = e->Width ? e->Width : 256, h = e->Height ? e->Height : 256;
+        int dist = w >= want_cx ? (w - want_cx) * 2 : (want_cx - w) * 3;
+        dist += h >= want_cy ? (h - want_cy) * 2 : (want_cy - h) * 3;
+        int score = dist * 64 - (kind == 1 ? e->BitCount : 0);
+        if (score < best_score) {
+            best_score = score;
+            best = i;
+        }
+    }
+    if (best < 0) {
+        SetLastError(ERROR_INVALID_DATA);
+        return nullptr;
+    }
+    ICON_IMAGE image;
+    POINT hotspot = {0, 0};
+    if (kind == 2) {
+        hotspot.x = entries[best].Planes;
+        hotspot.y = entries[best].BitCount;
+    }
+    if (!decode_icon_image(data + entries[best].Offset, entries[best].Bytes, &image)) {
+        SetLastError(ERROR_INVALID_DATA);
+        return nullptr;
+    }
+    scale_image(&image, cx, cy, &hotspot);
+    HICON result = create_icon_object(&image, icon, hotspot, object_flags);
+    UserFree(image.Pixels);
+    return result;
+}
+
+/* the group of an icon or cursor in a module's resources, an animated cursor included. */
+HICON UserLoadIconFromResources(HINSTANCE module, LPCWSTR name, int cx, int cy, BOOL icon, ULONG object_flags)
+{
     LPCWSTR group_type = icon ? RTW_GROUP_ICON : RTW_GROUP_CURSOR;
     LPCWSTR image_type = icon ? RTW_ICON : RTW_CURSOR;
-    if (file) {
-        group = UserResFind(file, group_type, name, 0, &size);
-    } else {
-        res = FindResourceW(module, name, group_type);
-        group = res ? LockResource(LoadResource(module, res)) : nullptr;
-        size = res ? SizeofResource(module, res) : 0;
+    HRSRC res = FindResourceW(module, name, group_type);
+    const void *group = res ? LockResource(LoadResource(module, res)) : nullptr;
+    DWORD size = res ? SizeofResource(module, res) : 0;
+    if (!group) {
+        if (icon)
+            return nullptr;
+        res = FindResourceW(module, name, MAKEINTRESOURCEW(21) /* RT_ANICURSOR. */);
+        const UCHAR *ani = res ? LockResource(LoadResource(module, res)) : nullptr;
+        return ani ? load_icon_data(ani, SizeofResource(module, res), cx, cy, FALSE, object_flags) : nullptr;
     }
-    if (!group)
-        return nullptr;
     WORD id = pick_icon(group, size, cx, cy, icon);
     if (!id)
         return nullptr;
-    const UCHAR *data;
-    DWORD data_size;
-    if (file) {
-        data = UserResFind(file, image_type, MAKEINTRESOURCEW(id), 0, &data_size);
-    } else {
-        res = FindResourceW(module, MAKEINTRESOURCEW(id), image_type);
-        data = res ? LockResource(LoadResource(module, res)) : nullptr;
-        data_size = res ? SizeofResource(module, res) : 0;
-    }
+    res = FindResourceW(module, MAKEINTRESOURCEW(id), image_type);
+    const UCHAR *data = res ? LockResource(LoadResource(module, res)) : nullptr;
+    DWORD data_size = res ? SizeofResource(module, res) : 0;
     if (!data)
         return nullptr;
     POINT hotspot = {0, 0};
@@ -543,7 +409,7 @@ HICON UserLoadIconFromResources(USER_RESFILE *file, HINSTANCE module, LPCWSTR na
     if (!decode_icon_image(data, data_size, &img))
         return nullptr;
     scale_image(&img, cx, cy, &hotspot);
-    HICON h = create_icon_object(&img, icon, hotspot, 0);
+    HICON h = create_icon_object(&img, icon, hotspot, object_flags);
     UserFree(img.Pixels);
     return h;
 }
@@ -584,16 +450,13 @@ static HICON load_shared(HINSTANCE module, LPCWSTR name, int cx, int cy, BOOL ic
 
     HICON h = nullptr;
     if (system && !icon) {
-        /* system cursors are shown by the host with its native cursor. */
-        h = NtUserCreateEmptyCurObject(FALSE);
-        if (h) {
-            MIME_CURSOR_DATA d = {(ULONG)cx, (ULONG)cy, 0, 0, FALSE, MIME_CURSORF_SYSTEM | (ULONG)(ULONG_PTR)name, nullptr, nullptr};
-            NtUserSetCursorIconData(h, nullptr, nullptr, &d);
-        }
+        /* the host shows a system cursor with its native cursor, the picture here is what programs read from it. */
+        ULONG system_flags = MIME_CURSORF_SYSTEM | (ULONG)(ULONG_PTR)name;
+        h = UserLoadIconFromResources(User32Instance, name, cx, cy, FALSE, system_flags);
     } else if (system) {
-        h = UserLoadIconFromResources(UserSystemResources(), nullptr, system_icon_resource(name), cx, cy, icon, flags);
+        h = UserLoadIconFromResources(User32Instance, system_icon_resource(name), cx, cy, icon, 0);
     } else {
-        h = UserLoadIconFromResources(nullptr, module, name, cx, cy, icon, flags);
+        h = UserLoadIconFromResources(module, name, cx, cy, icon, 0);
     }
     if (!h)
         return nullptr;
@@ -609,42 +472,18 @@ static HICON load_shared(HINSTANCE module, LPCWSTR name, int cx, int cy, BOOL ic
 }
 
 /*
- * LoadIconWithScaleDown of comctl32 v6, used by the themed Static for SS_ICON. IDI_ values come from imageres, where
- * the windows 11 artwork lives, and the image is never shared.
+ * LoadIconWithScaleDown of comctl32 v6, used by the themed Static for SS_ICON. a null instance reads the IDI_ values
+ * from user32, and the image is never shared.
  */
 HICON UserLoadIconWithScaleDown(HINSTANCE instance, LPCWSTR name, int cx, int cy)
 {
     /* user32 itself has no resources with the IDI_ values. */
     if (instance == User32Instance && IS_INTRESOURCE(name) && (ULONG_PTR)name >= 32512 && (ULONG_PTR)name <= 32518)
         return nullptr;
-    if (!instance && IS_INTRESOURCE(name)) {
-        WORD id = 0;
-        switch ((ULONG_PTR)name) {
-        case 32512: /* IDI_APPLICATION */
-        case 32517: /* IDI_WINLOGO */
-            id = 15;
-            break;
-        case 32513: /* IDI_HAND */
-            id = 98;
-            break;
-        case 32514: /* IDI_QUESTION */
-            id = 99;
-            break;
-        case 32515: /* IDI_EXCLAMATION */
-            id = 84;
-            break;
-        case 32516: /* IDI_ASTERISK */
-            id = 81;
-            break;
-        case 32518: /* IDI_SHIELD */
-            id = 78;
-            break;
-        }
-        if (id) {
-            HICON h = UserLoadIconFromResources(UserImageResources(), nullptr, MAKEINTRESOURCEW(id), cx, cy, TRUE, 0);
-            if (h)
-                return h;
-        }
+    if (!instance && IS_INTRESOURCE(name) && (ULONG_PTR)name >= 32512 && (ULONG_PTR)name <= 32518) {
+        HICON h = UserLoadIconFromResources(User32Instance, system_icon_resource(name), cx, cy, TRUE, 0);
+        if (h)
+            return h;
     }
     return LoadImageW(instance, name, IMAGE_ICON, cx, cy, 0);
 }
@@ -669,65 +508,13 @@ static UCHAR *read_file(LPCWSTR path, DWORD *size)
     return data;
 }
 
-typedef struct FILE_ICON_ENTRY {
-    BYTE Width, Height, Colors, Reserved;
-    WORD Planes, BitCount;
-    DWORD Bytes, Offset;
-} FILE_ICON_ENTRY;
-
-/*
- * an icon or cursor file is a directory of images, and the one nearest the requested size is taken, as from a
- * resource group. a cursor's hot spot is in the directory entry, where an icon has planes and bits.
- */
 static HICON load_icon_file(LPCWSTR path, int cx, int cy, BOOL icon)
 {
-    /* a size of 0 picks the image that suits the system size and keeps its own size. */
-    int want_cx = cx ? cx : GetSystemMetrics(icon ? SM_CXICON : SM_CXCURSOR);
-    int want_cy = cy ? cy : GetSystemMetrics(icon ? SM_CYICON : SM_CYCURSOR);
     DWORD size;
     UCHAR *data = read_file(path, &size);
     if (!data)
         return nullptr;
-    HICON result = nullptr;
-    const WORD *directory = (const WORD *)data;
-    WORD kind = directory[1], count = directory[2];
-    if (directory[0] != 0 || (kind != 1 && kind != 2) || !count || 6 + (SIZE_T)count * 16 > size) {
-        SetLastError(ERROR_INVALID_DATA);
-        goto done;
-    }
-    const FILE_ICON_ENTRY *entries = (const FILE_ICON_ENTRY *)(data + 6);
-    int best = -1, best_score = 0x7FFFFFFF;
-    for (int i = 0; i < count; i++) {
-        const FILE_ICON_ENTRY *e = &entries[i];
-        if ((SIZE_T)e->Offset + e->Bytes > size || e->Bytes == 0)
-            continue;
-        int w = e->Width ? e->Width : 256, h = e->Height ? e->Height : 256;
-        int dist = w >= want_cx ? (w - want_cx) * 2 : (want_cx - w) * 3;
-        dist += h >= want_cy ? (h - want_cy) * 2 : (want_cy - h) * 3;
-        int score = dist * 64 - (kind == 1 ? e->BitCount : 0);
-        if (score < best_score) {
-            best_score = score;
-            best = i;
-        }
-    }
-    if (best < 0) {
-        SetLastError(ERROR_INVALID_DATA);
-        goto done;
-    }
-    ICON_IMAGE image;
-    POINT hotspot = {0, 0};
-    if (kind == 2) {
-        hotspot.x = entries[best].Planes;
-        hotspot.y = entries[best].BitCount;
-    }
-    if (!decode_icon_image(data + entries[best].Offset, entries[best].Bytes, &image)) {
-        SetLastError(ERROR_INVALID_DATA);
-        goto done;
-    }
-    scale_image(&image, cx, cy, &hotspot);
-    result = create_icon_object(&image, icon, hotspot, 0);
-    UserFree(image.Pixels);
-done:
+    HICON result = load_icon_data(data, size, cx, cy, icon, 0);
     UserFree(data);
     return result;
 }
@@ -790,6 +577,9 @@ WINUSERAPI HANDLE WINAPI LoadImageW(HINSTANCE instance, LPCWSTR name, UINT type,
         return load_icon_file(name, cx, cy, icon);
     }
     if (type == IMAGE_BITMAP) {
+        /* the OBM_ bitmaps of the system are user32's own. */
+        if (!instance)
+            instance = User32Instance;
         HRSRC res = FindResourceW(instance, name, RTW_BITMAP);
         const BITMAPINFO *bi = res ? LockResource(LoadResource(instance, res)) : nullptr;
         if (!bi)
@@ -819,7 +609,7 @@ WINUSERAPI HANDLE WINAPI LoadImageW(HINSTANCE instance, LPCWSTR name, UINT type,
         cy = GetSystemMetricsForDpi(icon ? SM_CYICON : SM_CYCURSOR, dpi);
     if ((flags & LR_SHARED) || !instance || instance == User32Instance)
         return load_shared(instance, name, cx, cy, icon, flags);
-    return UserLoadIconFromResources(nullptr, instance, name, cx, cy, icon, flags);
+    return UserLoadIconFromResources(instance, name, cx, cy, icon, 0);
 }
 
 WINUSERAPI HANDLE WINAPI LoadImageA(HINSTANCE instance, LPCSTR name, UINT type, int cx, int cy, UINT flags)
@@ -830,13 +620,9 @@ WINUSERAPI HANDLE WINAPI LoadImageA(HINSTANCE instance, LPCSTR name, UINT type, 
     return h;
 }
 
-/* the system OBM_ bitmaps of a NULL instance are not available. */
+/* a null instance names the system bitmaps, OBM_CLOSE and the others. */
 WINUSERAPI HBITMAP WINAPI LoadBitmapW(HINSTANCE instance, LPCWSTR name)
 {
-    if (!instance) {
-        SetLastError(ERROR_RESOURCE_NAME_NOT_FOUND);
-        return nullptr;
-    }
     return LoadImageW(instance, name, IMAGE_BITMAP, 0, 0, 0);
 }
 

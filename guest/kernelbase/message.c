@@ -5,86 +5,24 @@
 
 /* ------------------------------------------------------------------ system messages */
 
-typedef struct BUILTIN_MESSAGE {
-    DWORD Id;
-    PCWSTR Text;
-} BUILTIN_MESSAGE;
-
-/* fallback when kernelbase.dll.mui and its message table are missing. */
-static const BUILTIN_MESSAGE g_builtin[] = {
-    {0, L"The operation completed successfully.\r\n"},
-    {1, L"Incorrect function.\r\n"},
-    {2, L"The system cannot find the file specified.\r\n"},
-    {3, L"The system cannot find the path specified.\r\n"},
-    {4, L"The system cannot open the file.\r\n"},
-    {5, L"Access is denied.\r\n"},
-    {6, L"The handle is invalid.\r\n"},
-    {8, L"Not enough memory resources are available to process this command.\r\n"},
-    {13, L"The data is invalid.\r\n"},
-    {14, L"Not enough memory resources are available to complete this operation.\r\n"},
-    {18, L"There are no more files.\r\n"},
-    {32, L"The process cannot access the file because it is being used by another process.\r\n"},
-    {38, L"Reached the end of the file.\r\n"},
-    {50, L"The request is not supported.\r\n"},
-    {80, L"The file exists.\r\n"},
-    {87, L"The parameter is incorrect.\r\n"},
-    {109, L"The pipe has been ended.\r\n"},
-    {112, L"There is not enough space on the disk.\r\n"},
-    {120, L"This function is not supported on this system.\r\n"},
-    {122, L"The data area passed to a system call is too small.\r\n"},
-    {123, L"The filename, directory name, or volume label syntax is incorrect.\r\n"},
-    {126, L"The specified module could not be found.\r\n"},
-    {127, L"The specified procedure could not be found.\r\n"},
-    {145, L"The directory is not empty.\r\n"},
-    {183, L"Cannot create a file when that file already exists.\r\n"},
-    {203, L"The system could not find the environment option that was entered.\r\n"},
-    {234, L"More data is available.\r\n"},
-    {258, L"The wait operation timed out.\r\n"},
-    {259, L"No more data is available.\r\n"},
-    {267, L"The directory name is invalid.\r\n"},
-    {317, L"The system cannot find message text for message number 0x%1 in the message file for %2.\r\n"},
-    {998, L"Invalid access to memory location.\r\n"},
-    {1168, L"Element not found.\r\n"},
-    {1460, L"This operation returned because the timeout period expired.\r\n"},
-};
-
-static HMODULE g_system_messages;
-static RTL_RUN_ONCE g_system_messages_once;
-
-static ULONG NTAPI load_system_messages(PRTL_RUN_ONCE once, PVOID parameter, PVOID *context)
-{
-    WCHAR path[MAX_PATH + 64];
-    UINT n = GetSystemDirectoryW(path, MAX_PATH);
-    if (n && n < MAX_PATH) {
-        wcscat(path, L"\\en-US\\kernelbase.dll.mui");
-        g_system_messages = LoadLibraryExW(path, nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
-    }
-    return TRUE;
-}
-
+/* the system messages are the message table in the resources of this library. */
 static BOOL find_system_message(DWORD id, DWORD lang, LPWSTR *text, BOOL *allocated)
 {
+    static PVOID image;
+    if (!image)
+        RtlPcToFileHeader((PVOID)find_system_message, &image);
     DWORD saved = GetLastError();
-    RtlRunOnceExecuteOnce(&g_system_messages_once, load_system_messages, nullptr, nullptr);
-    KbSetError(saved);
     *allocated = FALSE;
-    if (g_system_messages) {
-        if (KbFindMessage(g_system_messages, id, lang, text, allocated))
-            return TRUE;
-        if (HRESULT_FACILITY(id) == FACILITY_WIN32 && (id & 0x80000000) &&
-            KbFindMessage(g_system_messages, HRESULT_CODE(id), lang, text, allocated))
-            return TRUE;
-        if (GetLastError() == ERROR_RESOURCE_LANG_NOT_FOUND)
-            return FALSE;
+    BOOL found = KbFindMessage((HMODULE)image, id, lang, text, allocated);
+    /* an error code made into a failure value has the text of the code. */
+    if (!found && HRESULT_FACILITY(id) == FACILITY_WIN32 && (id & 0x80000000))
+        found = KbFindMessage((HMODULE)image, HRESULT_CODE(id), lang, text, allocated);
+    if (found) {
+        KbSetError(saved);
+        return TRUE;
     }
-    DWORD code = (HRESULT_FACILITY(id) == FACILITY_WIN32 && (id & 0x80000000)) ? HRESULT_CODE(id) : id;
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_builtin); i++) {
-        if (g_builtin[i].Id == code) {
-            *text = (LPWSTR)g_builtin[i].Text;
-            return TRUE;
-        }
-    }
-    KbSetError(ERROR_MR_MID_NOT_FOUND);
+    if (GetLastError() != ERROR_RESOURCE_LANG_NOT_FOUND)
+        KbSetError(ERROR_MR_MID_NOT_FOUND);
     return FALSE;
 }
 

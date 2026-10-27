@@ -37,6 +37,7 @@ mime_dll(gdi32 x86 BASE 0x73000000 SOURCES ${sources} guest/kernelbase/features.
 mime_sources(sources user32 x86)
 mime_dll(user32 x86 BASE 0x72000000 SOURCES ${sources} OBJECTS x86-chkstk x86-lib-png x86-lib-msstyles
     OPTIONS -DMIME_BUILD_USER32 INCLUDES guest/lib IMPORTS ntdll kernel32 win32u gdi32)
+mime_dll(imageres x86 BASE 0x6C000000 ENTRY /noentry NOIMPLIB DEF ${CMAKE_SOURCE_DIR}/guest/imageres/imageres.def)
 
 set(all_five ntdll kernel32 user32 gdi32 win32u)
 set(MIME_X86_DLLS

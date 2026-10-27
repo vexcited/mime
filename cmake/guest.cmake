@@ -88,8 +88,15 @@ function(mime_resource name arch)
     endif()
     set(base ${MIME_BUILD_GEN}/res/${MIME_MACHINE_${arch}}/${name})
     set(inputs ${version} ${ARGN})
-    # the files a script includes, such as the type libraries of the shell dlls.
+    # the files a script includes, such as the type libraries of the shell dlls and the icons of the resource scripts
+    # in gen/resources.
     file(GLOB includes CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/guest/*/*.tlb)
+    if(inputs MATCHES "gen/resources/")
+        file(GLOB_RECURSE assets CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/gen/resources/*.ico
+            ${CMAKE_SOURCE_DIR}/gen/resources/*.cur ${CMAKE_SOURCE_DIR}/gen/resources/*.ani
+            ${CMAKE_SOURCE_DIR}/gen/resources/*.bmp ${CMAKE_SOURCE_DIR}/gen/resources/*.bin)
+        list(APPEND includes ${assets})
+    endif()
     add_custom_command(OUTPUT ${base}.res
         COMMAND ${CMAKE_COMMAND} -E make_directory ${MIME_BUILD_GEN}/res/${MIME_MACHINE_${arch}}
         COMMAND ${CMAKE_COMMAND} -DOUTPUT=${base}.rc "-DINPUTS=${inputs}" -DROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/cmake/concat.cmake

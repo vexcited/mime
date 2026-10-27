@@ -52,17 +52,12 @@ static const SkipRule g_skips[] = {
 };
 
 /*
- * system code is reimplemented; data comes from the user's Windows copy. binaries containing resources are
- * stored as SystemResources/<name>.mun, following Windows resource-only companion files.
+ * system code is reimplemented; data comes from the user's Windows copy. the icons, cursors, strings and message
+ * tables of the system libraries are Mime's own and are not taken from it.
  */
 static const ExtractRule g_rules[] = {
     {"Windows/Fonts", "Windows/Fonts", false},
     {"Windows/Resources/Themes/aero", "Windows/Resources/Themes/aero", false},
-    {"Windows/System32/user32.dll", "Windows/SystemResources/user32.dll.mun", false},
-    {"Windows/System32/en-US/user32.dll.mui", "Windows/System32/en-US/user32.dll.mui", false},
-    {"Windows/SystemResources/imageres.dll.mun", "Windows/SystemResources/imageres.dll.mun", true},
-    {"Windows/System32/en-US/kernelbase.dll.mui", "Windows/System32/en-US/kernelbase.dll.mui", true},
-    {"Windows/System32/en-US/kernel32.dll.mui", "Windows/System32/en-US/kernel32.dll.mui", true},
     {"Windows/Media", "Windows/Media", true},
     /* Windows sort order data. */
     {"Windows/Globalization/Sorting/SortDefault.nls", "Windows/Globalization/Sorting/SortDefault.nls", true},
