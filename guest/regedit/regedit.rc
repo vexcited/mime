@@ -1,0 +1,8 @@
+1 24 "@MIME_ROOT@/guest/regedit/regedit.manifest"
+
+STRINGTABLE
+BEGIN
+    16 "Registry Editor"
+    309 "Registration Entries"
+    310 "Mer&ge"
+END
