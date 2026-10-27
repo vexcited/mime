@@ -30,6 +30,9 @@ typedef struct ITEM {
     int Top;
     int Height;
     int BitmapWidth;
+    int Left;         /* the column the item is in, in the window. */
+    int Cx;           /* and its width. */
+    BOOL RuleBefore;  /* the item starts a column that has a line before it. */
 } ITEM;
 
 struct LOOP;
@@ -44,6 +47,7 @@ typedef struct LEVEL {
     int Left, Top, Width, Height; /* on the screen. */
     int Gutter;                   /* the width of the column of check marks and bitmaps. */
     BOOL Scrollable;              /* the items are taller than the screen, so they scroll between two arrows. */
+    int Columns;
     int Content;                  /* the height of all the items. */
     int Scroll;                   /* how far the items have moved up. */
     int Arrow;                    /* the height of an arrow zone, 0 when the menu does not scroll. */
@@ -276,6 +280,12 @@ static int bitmap_pixels(HBITMAP bitmap, int *height, UINT dpi)
 
 /* ------------------------------------------------------------------ the popup windows */
 
+#define MAX_COLUMNS 8
+
+/*
+ * the items go down a column, and an item with MFT_MENUBREAK or MFT_MENUBARBREAK starts the next one (the second with a
+ * line before it). the columns have the width of their widest item.
+ */
 static BOOL level_measure(LOOP *l, LEVEL *lv)
 {
     HDC dc = GetDC(nullptr);
@@ -285,10 +295,21 @@ static BOOL level_measure(LOOP *l, LEVEL *lv)
     int item_height = tm.tmHeight + scale(10, l->Dpi);
     if (item_height < scale(24, l->Dpi))
         item_height = scale(24, l->Dpi);
-    int label_width = 0, accel_width = 0, bitmap_width = 0;
-    int y = scale(4, l->Dpi);
+    int label_width[MAX_COLUMNS] = {}, accel_width[MAX_COLUMNS] = {}, column_height[MAX_COLUMNS] = {};
+    int bitmap_width = 0, column = 0;
+    int pad = scale(4, l->Dpi);
+    int y = pad;
     for (int i = 0; i < lv->Count; i++) {
         ITEM *it = &lv->Items[i];
+        if (i > 0 && (it->Type & (MFT_MENUBREAK | MFT_MENUBARBREAK)) && column < MAX_COLUMNS - 1) {
+            column_height[column] = y + pad;
+            column++;
+            y = pad;
+            it->RuleBefore = (it->Type & MFT_MENUBARBREAK) != 0;
+        } else {
+            it->RuleBefore = FALSE;
+        }
+        it->Left = column; /* the index for now, the position when the widths are known. */
         it->Top = y;
         it->Height = item_height;
         if (it->Type & MFT_SEPARATOR) {
@@ -297,21 +318,21 @@ static BOOL level_measure(LOOP *l, LEVEL *lv)
             MEASUREITEMSTRUCT mi = {ODT_MENU, 0, it->Id, 0, (UINT)item_height, it->Data};
             SendMessageW(l->Owner, WM_MEASUREITEM, 0, (LPARAM)&mi);
             it->Height = (int)mi.itemHeight;
-            if ((int)mi.itemWidth > label_width)
-                label_width = (int)mi.itemWidth;
+            if ((int)mi.itemWidth > label_width[column])
+                label_width[column] = (int)mi.itemWidth;
         } else {
             int label;
             const WCHAR *accel;
             split_accelerator(it->Text, &label, &accel);
             RECT r = {0, 0, 0, 0};
             DrawTextW(dc, it->Text, label, &r, DT_SINGLELINE | DT_CALCRECT);
-            if (r.right > label_width)
-                label_width = r.right;
+            if (r.right > label_width[column])
+                label_width[column] = r.right;
             if (accel) {
                 SIZE sz;
                 GetTextExtentPoint32W(dc, accel, (int)wcslen(accel), &sz);
-                if (sz.cx > accel_width)
-                    accel_width = sz.cx;
+                if (sz.cx > accel_width[column])
+                    accel_width[column] = sz.cx;
             }
             if (it->Bitmap) {
                 int h;
@@ -324,16 +345,34 @@ static BOOL level_measure(LOOP *l, LEVEL *lv)
         }
         y += it->Height;
     }
+    column_height[column] = y + pad;
     SelectObject(dc, old);
     ReleaseDC(nullptr, dc);
     lv->Gutter = scale(36, l->Dpi);
     if (bitmap_width && bitmap_width + scale(16, l->Dpi) > lv->Gutter)
         lv->Gutter = bitmap_width + scale(16, l->Dpi);
-    lv->Width = lv->Gutter + label_width + (accel_width ? scale(32, l->Dpi) + accel_width : 0) + scale(32, l->Dpi);
-    if (lv->Width < scale(120, l->Dpi))
-        lv->Width = scale(120, l->Dpi);
-    lv->Height = y + scale(4, l->Dpi);
+    int left[MAX_COLUMNS] = {}, width[MAX_COLUMNS] = {};
+    int total = 0, tallest = 0;
+    for (int c = 0; c <= column; c++) {
+        width[c] = lv->Gutter + label_width[c] + (accel_width[c] ? scale(32, l->Dpi) + accel_width[c] : 0) +
+                   scale(32, l->Dpi);
+        if (width[c] < scale(120, l->Dpi))
+            width[c] = scale(120, l->Dpi);
+        left[c] = total;
+        total += width[c];
+        if (column_height[c] > tallest)
+            tallest = column_height[c];
+    }
+    for (int i = 0; i < lv->Count; i++) {
+        ITEM *it = &lv->Items[i];
+        int c = it->Left;
+        it->Left = left[c];
+        it->Cx = width[c];
+    }
+    lv->Width = total;
+    lv->Height = tallest;
     lv->Content = lv->Height;
+    lv->Columns = column + 1;
     return TRUE;
 }
 
@@ -491,7 +530,13 @@ static void paint_level(LOOP *l, LEVEL *lv, HDC dc)
         int top = item_top(lv, it);
         if (lv->Scrollable && (top + it->Height <= lv->Arrow || top >= lv->Height - lv->Arrow))
             continue;
-        RECT r = {pad, top, lv->Width - pad, top + it->Height};
+        RECT r = {it->Left + pad, top, it->Left + it->Cx - pad, top + it->Height};
+        if (it->RuleBefore && (i == 0 || lv->Items[i - 1].Left != it->Left)) {
+            RECT rule = {it->Left, pad, it->Left + 1, lv->Height - pad};
+            HBRUSH rule_brush = CreateSolidBrush(themed ? RGB(0xD7, 0xD7, 0xD7) : GetSysColor(COLOR_3DSHADOW));
+            FillRect(dc, &rule, rule_brush);
+            DeleteObject(rule_brush);
+        }
         if (it->Type & MFT_SEPARATOR) {
             RECT line = {r.left + scale(8, l->Dpi), (r.top + r.bottom) / 2, r.right - scale(8, l->Dpi),
                          (r.top + r.bottom) / 2 + 1};
@@ -702,7 +747,7 @@ static void fit_height(LOOP *l, LEVEL *lv)
     lv->Scrollable = FALSE;
     lv->Arrow = 0;
     if (GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi) &&
-        lv->Content > mi.rcMonitor.bottom - mi.rcMonitor.top) {
+        lv->Content > mi.rcMonitor.bottom - mi.rcMonitor.top && lv->Columns == 1) {
         lv->Scrollable = TRUE;
         lv->Arrow = scale(16, l->Dpi);
         lv->Height = mi.rcMonitor.bottom - mi.rcMonitor.top;
@@ -716,7 +761,7 @@ static void place_popup(LOOP *l, LEVEL *lv, int *x, int *y, const RECT *exclude,
     BOOL have_area = GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi);
     RECT area = (flags & TPM_WORKAREA) ? mi.rcWork : mi.rcMonitor;
     /* a menu taller than the screen scrolls between two arrows. */
-    if (have_area && lv->Height > area.bottom - area.top) {
+    if (have_area && lv->Height > area.bottom - area.top && lv->Columns == 1) {
         lv->Scrollable = TRUE;
         lv->Arrow = scale(16, l->Dpi);
         lv->Height = area.bottom - area.top;
@@ -1012,8 +1057,9 @@ static void open_submenu(LOOP *l, int level, int item, BOOL select_first)
         return;
     /* the first item of the submenu is level with its item. */
     int row = item_top(parent, it);
-    int x = parent->Left + parent->Width - scale(3, l->Dpi), y = parent->Top + row - scale(4, l->Dpi);
-    RECT around = {parent->Left, parent->Top + row, parent->Left + parent->Width, parent->Top + row + it->Height};
+    int x = parent->Left + it->Left + it->Cx - scale(3, l->Dpi), y = parent->Top + row - scale(4, l->Dpi);
+    RECT around = {parent->Left + it->Left, parent->Top + row, parent->Left + it->Left + it->Cx,
+                   parent->Top + row + it->Height};
     if (!level_create(l, sub, parent->System, item, x, y, &around, 0, FALSE))
         return;
     if (select_first) {
@@ -1050,9 +1096,10 @@ static BOOL screen_point_in_level(const LEVEL *lv, POINT pt, int *item)
         *item = ARROW_DOWN;
         return TRUE;
     }
+    int x = pt.x - lv->Left;
     for (int i = 0; i < lv->Count; i++) {
         int top = item_top(lv, &lv->Items[i]);
-        if (y >= top && y < top + lv->Items[i].Height) {
+        if (y >= top && y < top + lv->Items[i].Height && x >= lv->Items[i].Left && x < lv->Items[i].Left + lv->Items[i].Cx) {
             *item = i;
             break;
         }
@@ -1438,6 +1485,8 @@ static void mouse_message(LOOP *l, const MSG *msg)
             LEVEL *lv = &l->Levels[level];
             if (in_range(item, lv->Count))
                 SendMessageW(l->Owner, WM_MENURBUTTONUP, (WPARAM)item, (LPARAM)lv->Menu);
+        } else if (right && hit == HIT_BAR && l->Notify && in_range(item, l->BarCount)) {
+            SendMessageW(l->Owner, WM_MENURBUTTONUP, (WPARAM)item, (LPARAM)l->BarMenu);
         }
         BOOL was_down = l->ButtonDown;
         l->ButtonDown = FALSE;
@@ -1948,7 +1997,7 @@ WINUSERAPI BOOL WINAPI GetMenuBarInfo(HWND hwnd, LONG object, LONG item, PMENUBA
                 info->rcBar = (RECT){lv->Left, lv->Top, lv->Left + lv->Width, lv->Top + lv->Height};
             } else {
                 ITEM *it = &lv->Items[item - 1];
-                info->rcBar = (RECT){lv->Left, lv->Top + item_top(lv, it), lv->Left + lv->Width,
+                info->rcBar = (RECT){lv->Left + it->Left, lv->Top + item_top(lv, it), lv->Left + it->Left + it->Cx,
                                  lv->Top + item_top(lv, it) + it->Height};
             }
             info->fBarFocused = d == l->Depth - 1;
@@ -1973,7 +2022,7 @@ WINUSERAPI BOOL WINAPI GetMenuItemRect(HWND window, HMENU menu, UINT item, LPREC
         LEVEL *lv = &l->Levels[d];
         if (lv->Menu == menu && item < (UINT)lv->Count) {
             ITEM *it = &lv->Items[item];
-            *rect = (RECT){lv->Left, lv->Top + item_top(lv, it), lv->Left + lv->Width,
+            *rect = (RECT){lv->Left + it->Left, lv->Top + item_top(lv, it), lv->Left + it->Left + it->Cx,
                            lv->Top + item_top(lv, it) + it->Height};
             return TRUE;
         }
@@ -2092,6 +2141,11 @@ BOOL UserDefMenu(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *res
         if (g_char_guard.Window == hwnd && GetTickCount() - g_char_guard.Tick < 2000 &&
             CharUpperW((LPWSTR)(ULONG_PTR)ch) == (LPWSTR)(ULONG_PTR)g_char_guard.Char) {
             guard_clear();
+            *result = 0;
+            return TRUE;
+        }
+        if (ch == L'\r' && IsIconic(hwnd)) {
+            PostMessageW(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
             *result = 0;
             return TRUE;
         }

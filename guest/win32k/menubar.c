@@ -518,6 +518,10 @@ void MenuBarPaint(WND *w, SURFACE *s, const REGION *clip, POINT origin)
             RECT br = {x, r.top, x + bw, r.bottom};
             if (callback_bitmap(it->Bitmap)) {
                 draw_owner(w, s, clip, it, m, &br, ods, origin, ODA_DRAWENTIRE);
+                /* the window may have changed the menu in its answers. */
+                if (m->Header.Destroyed || i >= m->Count)
+                    break;
+                it = &m->Items[i];
             } else {
                 if (!(it->Type & MFT_SEPARATOR) && !it->TextLength)
                     br = (RECT){r.left, r.top, r.right, r.bottom}; /* a bitmap alone fills the item. */
