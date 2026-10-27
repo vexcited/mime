@@ -37,6 +37,10 @@ void proc_load_users(PROC_LIST *list);
 void proc_load_windows(PROC_LIST *list);
 void proc_load_services(PROC_LIST *list);
 PROC_ENTRY *proc_find(PROC_LIST *list, DWORD pid);
+/* the names of the modules a process has loaded, separated by commas, or null when they cannot be read. */
+WCHAR *proc_modules(DWORD pid);
+/* some name of the comma separated list fits the pattern. */
+BOOL proc_list_matches(const WCHAR *list, const WCHAR *pattern);
 /* the session's name in the form the tools print it. */
 const WCHAR *proc_session_name(DWORD session);
 

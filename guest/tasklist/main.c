@@ -9,13 +9,7 @@
  */
 #include "proc.h"
 
-#define PROCESS_QUERY_INFORMATION_ 0x0400
-#define PROCESS_VM_READ_ 0x0010
-#define LIST_MODULES_ALL_ 3
 #define RPC_S_SERVER_UNAVAILABLE_ 1722
-
-WINBASEAPI BOOL WINAPI K32EnumProcessModulesEx(HANDLE process, HMODULE *modules, DWORD size, LPDWORD needed, DWORD filter);
-WINBASEAPI DWORD WINAPI K32GetModuleBaseNameW(HANDLE process, HMODULE module, LPWSTR name, DWORD size);
 
 static const WCHAR kUsage[] =
     L"\nTASKLIST [/S system [/U username [/P [password]]]]\n"
@@ -181,51 +175,6 @@ static void add_wrapped(TU_TABLE *t, int format, const WCHAR *const *head, int h
     tu_str_free(&line);
 }
 
-/* the names of the modules of a process, separated by commas, or null when they cannot be read. */
-static WCHAR *modules_of(DWORD pid)
-{
-    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION_ | PROCESS_VM_READ_, FALSE, pid);
-    if (!process)
-        return nullptr;
-    DWORD needed = 0;
-    HMODULE modules[1024];
-    WCHAR *result = nullptr;
-    if (K32EnumProcessModulesEx(process, modules, sizeof(modules), &needed, LIST_MODULES_ALL_)) {
-        DWORD count = needed / sizeof(HMODULE);
-        if (count > TU_ARRAY(modules))
-            count = TU_ARRAY(modules);
-        TU_STR text = {};
-        for (DWORD i = 0; i < count; i++) {
-            WCHAR name[260];
-            if (!K32GetModuleBaseNameW(process, modules[i], name, TU_ARRAY(name)))
-                continue;
-            if (text.length)
-                tu_str_putc(&text, L',');
-            tu_str_puts(&text, name);
-        }
-        result = tu_dup(tu_str_text(&text));
-        tu_str_free(&text);
-    }
-    CloseHandle(process);
-    return result;
-}
-
-static BOOL module_listed(const WCHAR *list, const WCHAR *pattern)
-{
-    BOOL found = FALSE;
-    WCHAR *copy = tu_dup(list);
-    for (WCHAR *s = copy; s;) {
-        WCHAR *comma = wcschr(s, L',');
-        if (comma)
-            *comma = 0;
-        if (tu_wild(pattern, s))
-            found = TRUE;
-        s = comma ? comma + 1 : nullptr;
-    }
-    tu_free(copy);
-    return found;
-}
-
 int tool_main(void)
 {
     BOOL verbose = FALSE, services = FALSE, modules = FALSE, apps = FALSE, no_header = FALSE, have_password = FALSE;
@@ -338,8 +287,8 @@ int tool_main(void)
         TU_STR pid = {}, session = {}, memory = {}, cpu = {};
         WCHAR *module_text = nullptr;
         if (modules) {
-            module_text = modules_of(p->Pid);
-            if (module_pattern && (!module_text || !module_listed(module_text, module_pattern))) {
+            module_text = proc_modules(p->Pid);
+            if (module_pattern && (!module_text || !proc_list_matches(module_text, module_pattern))) {
                 tu_free(module_text);
                 continue;
             }

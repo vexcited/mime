@@ -92,6 +92,58 @@ PROC_ENTRY *proc_find(PROC_LIST *list, DWORD pid)
     return nullptr;
 }
 
+#define PROCESS_QUERY_INFORMATION_ 0x0400
+#define PROCESS_VM_READ_ 0x0010
+#define LIST_MODULES_ALL_ 3
+
+WINBASEAPI BOOL WINAPI K32EnumProcessModulesEx(HANDLE process, HMODULE *modules, DWORD size, LPDWORD needed, DWORD filter);
+WINBASEAPI DWORD WINAPI K32GetModuleBaseNameW(HANDLE process, HMODULE module, LPWSTR name, DWORD size);
+
+/* the names of the modules of a process, separated by commas, or null when they cannot be read. */
+WCHAR *proc_modules(DWORD pid)
+{
+    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION_ | PROCESS_VM_READ_, FALSE, pid);
+    if (!process)
+        return nullptr;
+    DWORD needed = 0;
+    HMODULE modules[1024];
+    WCHAR *result = nullptr;
+    if (K32EnumProcessModulesEx(process, modules, sizeof(modules), &needed, LIST_MODULES_ALL_)) {
+        DWORD count = needed / sizeof(HMODULE);
+        if (count > TU_ARRAY(modules))
+            count = TU_ARRAY(modules);
+        TU_STR text = {};
+        for (DWORD i = 0; i < count; i++) {
+            WCHAR name[260];
+            if (!K32GetModuleBaseNameW(process, modules[i], name, TU_ARRAY(name)))
+                continue;
+            if (text.length)
+                tu_str_putc(&text, L',');
+            tu_str_puts(&text, name);
+        }
+        result = tu_dup(tu_str_text(&text));
+        tu_str_free(&text);
+    }
+    CloseHandle(process);
+    return result;
+}
+
+BOOL proc_list_matches(const WCHAR *list, const WCHAR *pattern)
+{
+    BOOL found = FALSE;
+    WCHAR *copy = tu_dup(list);
+    for (WCHAR *s = copy; s;) {
+        WCHAR *comma = wcschr(s, L',');
+        if (comma)
+            *comma = 0;
+        if (tu_wild(pattern, s))
+            found = TRUE;
+        s = comma ? comma + 1 : nullptr;
+    }
+    tu_free(copy);
+    return found;
+}
+
 /* ------------------------------------------------------------------ users */
 
 static WCHAR *user_of_process(DWORD pid)
@@ -408,7 +460,11 @@ BOOL proc_filter_match(const PROC_FILTERS *filters, PROC_ENTRY *p)
             default: break;
             }
             BOOL any = FALSE;
-            if (f->Field == FILTER_SERVICES && p->Services) {
+            if (f->Field == FILTER_MODULES) {
+                WCHAR *modules = proc_modules(p->Pid);
+                any = modules && proc_list_matches(modules, f->Value);
+                tu_free(modules);
+            } else if (f->Field == FILTER_SERVICES && p->Services) {
                 /* any one of the services matches. */
                 WCHAR *copy = tu_dup(p->Services);
                 for (WCHAR *s = copy; s;) {

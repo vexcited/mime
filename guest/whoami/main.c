@@ -13,6 +13,7 @@
 #define TokenUser_ 1
 #define TokenGroups_ 2
 #define TokenPrivileges_ 3
+#define TokenIntegrityLevel_ 25
 
 #define SE_GROUP_MANDATORY_ 0x1
 #define SE_GROUP_ENABLED_BY_DEFAULT_ 0x2
@@ -250,6 +251,37 @@ static void attribute_text(DWORD a, TU_STR *out)
     }
 }
 
+/* the integrity level is a group of the token in windows' lists, which scripts look for as S-1-16-12288. */
+static BOOL integrity_present(const GROUPS_ *groups, PSID label)
+{
+    WCHAR *wanted = sid_text(label);
+    BOOL found = FALSE;
+    for (DWORD i = 0; i < groups->Count && !found; i++) {
+        WCHAR *text = sid_text(groups->Groups[i].Sid);
+        found = !wcscmp(text, wanted);
+        tu_free(text);
+    }
+    tu_free(wanted);
+    return found;
+}
+
+static const WCHAR *integrity_name(const WCHAR *sid)
+{
+    static const struct {
+        const WCHAR *Sid;
+        const WCHAR *Name;
+    } levels[] = {{L"S-1-16-0", L"Mandatory Label\\Untrusted Mandatory Level"},
+                  {L"S-1-16-4096", L"Mandatory Label\\Low Mandatory Level"},
+                  {L"S-1-16-8192", L"Mandatory Label\\Medium Mandatory Level"},
+                  {L"S-1-16-8448", L"Mandatory Label\\Medium Plus Mandatory Level"},
+                  {L"S-1-16-12288", L"Mandatory Label\\High Mandatory Level"},
+                  {L"S-1-16-16384", L"Mandatory Label\\System Mandatory Level"}};
+    for (int i = 0; i < (int)TU_ARRAY(levels); i++)
+        if (!wcscmp(sid, levels[i].Sid))
+            return levels[i].Name;
+    return sid;
+}
+
 static int show_groups(int format, BOOL no_header)
 {
     GROUPS_ *groups = token_info(TokenGroups_);
@@ -272,6 +304,19 @@ static int show_groups(int format, BOOL no_header)
         tu_free(sid);
         tu_str_free(&attributes);
     }
+    SID_ATTR *label = token_info(TokenIntegrityLevel_);
+    if (label && label->Sid && !integrity_present(groups, label->Sid)) {
+        int use;
+        WCHAR *sid = sid_text(label->Sid), *name = account_name(label->Sid, &use, FALSE);
+        TU_STR attributes = {};
+        attribute_text(SE_GROUP_MANDATORY_ | SE_GROUP_ENABLED_BY_DEFAULT_ | SE_GROUP_ENABLED_, &attributes);
+        const WCHAR *row[4] = {!wcscmp(name, sid) ? integrity_name(sid) : name, L"Label", sid, tu_str_text(&attributes)};
+        tu_table_row(&table, row);
+        tu_free(name);
+        tu_free(sid);
+        tu_str_free(&attributes);
+    }
+    tu_free(label);
     title(L"GROUP INFORMATION", format);
     tu_table_print(&table, format, no_header);
     tu_table_free(&table);

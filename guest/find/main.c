@@ -130,6 +130,24 @@ static DWORD search(const FIND_OPTIONS *o, HANDLE h, const WCHAR *header, BOOL c
     return matches;
 }
 
+/* the text to find has to be in double quotes on the command line itself. */
+static BOOL text_is_quoted(void)
+{
+    const WCHAR *p = tu_tail;
+    for (;;) {
+        while (*p == L' ' || *p == L'\t')
+            p++;
+        if (!*p)
+            return FALSE;
+        if (*p == L'"')
+            return TRUE;
+        if (*p != L'/')
+            return FALSE;
+        while (*p && *p != L' ' && *p != L'\t')
+            p++;
+    }
+}
+
 static int bad_parameter(void)
 {
     tu_eprint(L"FIND: Parameter format not correct\n");
@@ -195,7 +213,7 @@ int tool_main(void)
             files[file_count++] = (WCHAR *)a;
         }
     }
-    if (!text)
+    if (!text || !text_is_quoted())
         return bad_parameter();
     /* the text as the output's code page has it. */
     {

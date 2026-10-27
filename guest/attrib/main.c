@@ -228,7 +228,7 @@ int tool_main(void)
         const WCHAR *pattern = spec + dir_length;
         if (!*pattern)
             pattern = L"*";
-        if (!process(&s, directory, pattern, !has_wildcards(pattern), 0)) {
+        if (!process(&s, directory, pattern, !has_wildcards(pattern) && !s.Recurse, 0)) {
             DWORD attributes = GetFileAttributesW(directory[0] ? directory : L".");
             if (dir_length && attributes == INVALID_FILE_ATTRIBUTES)
                 tu_print(L"Path not found - %s\n", spec);
