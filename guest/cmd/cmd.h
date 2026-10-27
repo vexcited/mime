@@ -339,6 +339,8 @@ BOOL wild_match(const WCHAR *pattern, const WCHAR *name);
 BOOL has_wildcards(const WCHAR *s);
 void format_number_commas(ULONGLONG v, STR *out);
 void format_date_time(const FILETIME *ft, STR *out);
+void format_date(const SYSTEMTIME *st, BOOL with_day, STR *out);
+void format_time_short(const SYSTEMTIME *st, STR *out);
 int compare_names(const WCHAR *a, const WCHAR *b);
 WIN32_FIND_DATAW *find_all_sorted(const WCHAR *spec, SIZE_T *count);
 WCHAR **list_matching(const WCHAR *spec, SIZE_T *count, BOOL with_folders);

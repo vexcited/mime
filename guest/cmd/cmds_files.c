@@ -771,6 +771,30 @@ int internal_copy(const WCHAR *args, NODE *node)
         dest_is_dir = (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) ||
                       (dl && (dest_text[dl - 1] == L'\\' || dest_text[dl - 1] == L'/'));
     }
+    /* the empty device as the only source makes an empty file. */
+    if (source_count == 1 && dest_text && !plus_between) {
+        WCHAR *only = unquote(operands[0]);
+        BOOL is_nul = !_wcsicmp(only, L"nul") || !_wcsicmp(only, L"nul:");
+        xfree(only);
+        if (is_nul) {
+            HANDLE out = CreateFileW(dest_is_dir ? L"nul" : dest_text, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            int status = 0;
+            if (out == INVALID_HANDLE_VALUE) {
+                fail_last_error();
+                status = 1;
+            } else {
+                CloseHandle(out);
+            }
+            out_fmt(L"%9d file(s) copied.\r\n", status ? 0 : 1);
+            for (int i = 0; i < count; i++)
+                xfree(operands[i]);
+            xfree(dest_text);
+            str_free(&dest_full);
+            str_free(&sources_list);
+            return status;
+        }
+    }
     /* collect source files. */
     STR names;
     str_init(&names);

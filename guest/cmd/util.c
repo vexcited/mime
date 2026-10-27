@@ -553,20 +553,49 @@ void format_number_commas(ULONGLONG v, STR *out)
     }
 }
 
+/* a date the way the interpreter shows it: day and month with two digits, the order and separator of the locale. */
+void format_date(const SYSTEMTIME *st, BOOL with_day, STR *out)
+{
+    WCHAR order[4] = L"0", separator[8] = L"/";
+    GetLocaleInfoW(LOCALE_USER_DEFAULT, LOCALE_IDATE, order, NUM(order));
+    GetLocaleInfoW(LOCALE_USER_DEFAULT, LOCALE_SDATE, separator, NUM(separator));
+    if (!separator[0])
+        wcscpy(separator, L"/");
+    if (with_day) {
+        WCHAR day[16];
+        if (GetDateFormatW(LOCALE_USER_DEFAULT, 0, st, L"ddd", day, NUM(day))) {
+            str_adds(out, day);
+            str_addc(out, L' ');
+        }
+    }
+    if (order[0] == L'1')
+        str_fmt(out, L"%02u%ls%02u%ls%04u", st->wDay, separator, st->wMonth, separator, st->wYear);
+    else if (order[0] == L'2')
+        str_fmt(out, L"%04u%ls%02u%ls%02u", st->wYear, separator, st->wMonth, separator, st->wDay);
+    else
+        str_fmt(out, L"%02u%ls%02u%ls%04u", st->wMonth, separator, st->wDay, separator, st->wYear);
+}
+
+/* the hour and minute with am or pm when the locale counts twelve hours. */
+void format_time_short(const SYSTEMTIME *st, STR *out)
+{
+    WCHAR itime[4] = L"0", time[64];
+    GetLocaleInfoW(LOCALE_USER_DEFAULT, LOCALE_ITIME, itime, NUM(itime));
+    if (GetTimeFormatW(LOCALE_USER_DEFAULT, 0, st, itime[0] == L'0' ? L"hh:mm tt" : L"HH:mm", time, NUM(time)))
+        str_adds(out, time);
+    else
+        str_fmt(out, L"%02u:%02u", st->wHour, st->wMinute);
+}
+
 void format_date_time(const FILETIME *ft, STR *out)
 {
     FILETIME local;
     SYSTEMTIME st;
     if (!FileTimeToLocalFileTime(ft, &local) || !FileTimeToSystemTime(&local, &st))
         return;
-    WCHAR date[64], time[64];
-    if (!GetDateFormatW(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, nullptr, date, NUM(date)))
-        _snwprintf(date, NUM(date), L"%02u/%02u/%04u", st.wMonth, st.wDay, st.wYear);
-    if (!GetTimeFormatW(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, time, NUM(time)))
-        _snwprintf(time, NUM(time), L"%02u:%02u", st.wHour, st.wMinute);
-    str_adds(out, date);
+    format_date(&st, FALSE, out);
     str_addc(out, L' ');
-    str_adds(out, time);
+    format_time_short(&st, out);
 }
 
 int compare_names(const WCHAR *a, const WCHAR *b)

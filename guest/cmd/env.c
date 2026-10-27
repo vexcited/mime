@@ -72,12 +72,7 @@ BOOL env_dynamic(const WCHAR *name, STR *value)
     if (!_wcsicmp(name, L"DATE")) {
         SYSTEMTIME st;
         GetLocalTime(&st);
-        WCHAR day[16], date[64];
-        if (!GetDateFormatW(LOCALE_USER_DEFAULT, 0, &st, L"ddd", day, NUM(day)))
-            day[0] = 0;
-        if (!GetDateFormatW(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, nullptr, date, NUM(date)))
-            _snwprintf(date, NUM(date), L"%02u/%02u/%04u", st.wMonth, st.wDay, st.wYear);
-        str_fmt(value, L"%ls %ls", day, date);
+        format_date(&st, TRUE, value);
         return TRUE;
     }
     if (!_wcsicmp(name, L"TIME")) {

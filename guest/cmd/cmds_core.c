@@ -7,12 +7,7 @@ static void prompt_date(STR *out)
 {
     SYSTEMTIME st;
     GetLocalTime(&st);
-    WCHAR day[16], date[64];
-    if (!GetDateFormatW(LOCALE_USER_DEFAULT, 0, &st, L"ddd", day, NUM(day)))
-        day[0] = 0;
-    if (!GetDateFormatW(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, nullptr, date, NUM(date)))
-        _snwprintf(date, NUM(date), L"%02u/%02u/%04u", st.wMonth, st.wDay, st.wYear);
-    str_fmt(out, L"%ls %ls", day, date);
+    format_date(&st, TRUE, out);
 }
 
 static void version_string(STR *out)
@@ -670,10 +665,11 @@ int internal_time(const WCHAR *args, NODE *node)
     SYSTEMTIME st;
     GetLocalTime(&st);
     if (g.ext && !_wcsnicmp(p, L"/t", 2)) {
-        WCHAR t[64];
-        if (!GetTimeFormatW(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, t, NUM(t)))
-            _snwprintf(t, NUM(t), L"%02u:%02u", st.wHour, st.wMinute);
-        out_fmt(L"%ls\r\n", t);
+        STR t;
+        str_init(&t);
+        format_time_short(&st, &t);
+        out_fmt(L"%ls\r\n", str_get(&t));
+        str_free(&t);
         return 0;
     }
     out_fmt(L"The current time is: %2u:%02u:%02u.%02u\r\n", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds / 10);

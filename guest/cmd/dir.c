@@ -133,30 +133,12 @@ static void date_time_text(const FILETIME *ft, STR *out)
     FILETIME local;
     SYSTEMTIME st;
     if (!FileTimeToLocalFileTime(ft, &local) || !FileTimeToSystemTime(&local, &st)) {
-        str_adds(out, L"                  ");
+        str_adds(out, L"                    ");
         return;
     }
-    WCHAR date[64], time[64], pattern[64], fmt[128];
-    int n = GetLocaleInfoW(LOCALE_USER_DEFAULT, LOCALE_SSHORTDATE, pattern, NUM(pattern));
-    if (n > 0) {
-        /* single letter months and days are zero padded in a listing. */
-        SIZE_T d = 0;
-        for (const WCHAR *c = pattern; *c && d + 3 < NUM(fmt); c++) {
-            fmt[d++] = *c;
-            if ((*c == L'M' || *c == L'd') && c[1] != *c && (c == pattern || c[-1] != *c))
-                fmt[d++] = *c;
-        }
-        fmt[d] = 0;
-        if (!GetDateFormatW(LOCALE_USER_DEFAULT, 0, &st, fmt, date, NUM(date)))
-            n = 0;
-    }
-    if (n <= 0)
-        _snwprintf(date, NUM(date), L"%02u/%02u/%04u", st.wMonth, st.wDay, st.wYear);
-    WCHAR itime[4] = L"0";
-    GetLocaleInfoW(LOCALE_USER_DEFAULT, LOCALE_ITIME, itime, NUM(itime));
-    if (!GetTimeFormatW(LOCALE_USER_DEFAULT, 0, &st, itime[0] == L'0' ? L"hh:mm tt" : L"HH:mm", time, NUM(time)))
-        _snwprintf(time, NUM(time), L"%02u:%02u", st.wHour, st.wMinute);
-    str_fmt(out, L"%ls  %ls", date, time);
+    format_date(&st, FALSE, out);
+    str_adds(out, L"  ");
+    format_time_short(&st, out);
 }
 
 static void number_text(ULONGLONG v, BOOL commas, STR *out)
