@@ -948,7 +948,7 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
         st->EndOfFile.QuadPart = (LONGLONG)info->size;
         st->FileAttributes = info->attributes ? info->attributes : FILE_ATTRIBUTE_NORMAL;
         st->NumberOfLinks = info->links ? info->links : 1;
-        st->EffectiveAccess = fcb->Rom ? 0x1200A9 /* read and execute */
+        st->EffectiveAccess = fcb->Rom ? 0x1200A9 /* read and execute. */
                                        : MimeFsMaximumAccess(fcb->Volume, fcb->HostHandle, &file->FileName, fcb->Directory);
         written = need;
         break;
