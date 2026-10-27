@@ -877,6 +877,15 @@ static NTSTATUS create_container_token(HANDLE base, const KB_SECURITY_CAPABILITI
  * desktop and the c runtime data. There is no console window to make, so a new console is the creator's and
  * DETACHED_PROCESS gives none.
  */
+/* the path of a program, which may be one a feature on demand holds and is fetched now. */
+static DWORD find_image(PCWSTR name, PWSTR full)
+{
+    DWORD n = SearchPathW(nullptr, name, L".exe", MAX_PATH, full, nullptr);
+    if (!n && MimeFeatureFault(name))
+        n = SearchPathW(nullptr, name, L".exe", MAX_PATH, full, nullptr);
+    return n;
+}
+
 static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
                            LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit, DWORD flags, LPVOID environment,
                            LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info,
@@ -958,7 +967,7 @@ static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_lin
             return FALSE;
         }
         wcscpy(executable, application);
-        n = SearchPathW(nullptr, executable, L".exe", MAX_PATH, full, nullptr);
+        n = find_image(executable, full);
         if (!n || n >= MAX_PATH) {
             KbSetError(ERROR_FILE_NOT_FOUND);
             return FALSE;
@@ -981,7 +990,7 @@ static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_lin
                 len++;
             }
             executable[len] = 0;
-            n = SearchPathW(nullptr, executable, L".exe", MAX_PATH, full, nullptr);
+            n = find_image(executable, full);
             if (!n || n >= MAX_PATH) {
                 KbSetError(ERROR_FILE_NOT_FOUND);
                 return FALSE;
@@ -1000,7 +1009,7 @@ static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_lin
                 }
                 memcpy(executable, source, len * sizeof(WCHAR));
                 executable[len] = 0;
-                n = SearchPathW(nullptr, executable, L".exe", MAX_PATH, full, nullptr);
+                n = find_image(executable, full);
                 if (n && n < MAX_PATH) {
                     DWORD attributes = GetFileAttributesW(full);
                     if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY))

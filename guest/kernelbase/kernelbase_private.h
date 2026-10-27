@@ -4,6 +4,7 @@
 
 #include <mime/win32/winbase.h>
 #include <mime/win32/winnls.h>
+#include <mime/feature.h>
 
 FORCEINLINE PPEB KbPeb(void)
 {

@@ -51,6 +51,14 @@ static void set_filetime(FILETIME *ft, LONGLONG v)
     ft->dwHighDateTime = (DWORD)((ULONGLONG)v >> 32);
 }
 
+/* whether the file is one a feature on demand holds and the feature arrived, so that the program looks again. */
+static BOOL feature_arrived(const UNICODE_STRING *nt, NTSTATUS status)
+{
+    if (status != STATUS_OBJECT_NAME_NOT_FOUND && status != STATUS_OBJECT_PATH_NOT_FOUND)
+        return FALSE;
+    return MimeFeatureFault(nt->Buffer);
+}
+
 static NTSTATUS open_path(LPCWSTR path, ACCESS_MASK access, ULONG share, ULONG options, PHANDLE handle)
 {
     UNICODE_STRING nt;
@@ -60,6 +68,8 @@ static NTSTATUS open_path(LPCWSTR path, ACCESS_MASK access, ULONG share, ULONG o
     InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtOpenFile(handle, access | SYNCHRONIZE, &oa, &iosb, share, options | FILE_SYNCHRONOUS_IO_NONALERT);
+    if (!NT_SUCCESS(status) && feature_arrived(&nt, status))
+        status = NtOpenFile(handle, access | SYNCHRONIZE, &oa, &iosb, share, options | FILE_SYNCHRONOUS_IO_NONALERT);
     RtlFreeUnicodeString(&nt);
     return status;
 }
@@ -164,6 +174,12 @@ HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_AT
     NTSTATUS status = NtCreateFile(&handle, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES, &oa, &iosb, nullptr,
                                    flags & FILE_ATTRIBUTE_VALID_FLAGS & ~(DWORD)FILE_ATTRIBUTE_DIRECTORY, share,
                                    nt_disposition, options, nullptr, 0);
+    /* a program that opens what is not there may be waiting for a feature on demand. */
+    if (!NT_SUCCESS(status) && (nt_disposition == FILE_OPEN || nt_disposition == FILE_OVERWRITE) &&
+        feature_arrived(&nt, status))
+        status = NtCreateFile(&handle, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES, &oa, &iosb, nullptr,
+                              flags & FILE_ATTRIBUTE_VALID_FLAGS & ~(DWORD)FILE_ATTRIBUTE_DIRECTORY, share,
+                              nt_disposition, options, nullptr, 0);
     RtlFreeUnicodeString(&nt);
     if (!NT_SUCCESS(status)) {
         if (status == STATUS_OBJECT_NAME_COLLISION)
@@ -846,6 +862,8 @@ DWORD WINAPI GetFileAttributesW(LPCWSTR name)
     InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     FILE_NETWORK_OPEN_INFORMATION info;
     NTSTATUS status = NtQueryFullAttributesFile(&oa, &info);
+    if (!NT_SUCCESS(status) && feature_arrived(&nt, status))
+        status = NtQueryFullAttributesFile(&oa, &info);
     RtlFreeUnicodeString(&nt);
     if (!NT_SUCCESS(status)) {
         set_path_status(status);
@@ -880,6 +898,8 @@ BOOL WINAPI GetFileAttributesExW(LPCWSTR name, GET_FILEEX_INFO_LEVELS level, LPV
     InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     FILE_NETWORK_OPEN_INFORMATION net;
     NTSTATUS status = NtQueryFullAttributesFile(&oa, &net);
+    if (!NT_SUCCESS(status) && feature_arrived(&nt, status))
+        status = NtQueryFullAttributesFile(&oa, &net);
     RtlFreeUnicodeString(&nt);
     if (!NT_SUCCESS(status))
         return set_path_status(status);

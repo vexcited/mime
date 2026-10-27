@@ -470,6 +470,10 @@ HMODULE WINAPI LoadLibraryExW(LPCWSTR name, HANDLE file, DWORD flags)
     ULONG ldr_flags = (flags & DONT_RESOLVE_DLL_REFERENCES) ? 2 : 0;
     PVOID base = nullptr;
     NTSTATUS status = LdrLoadDll(search, &ldr_flags, &us, &base);
+    /* a library of a feature on demand that is not there yet. */
+    if (!NT_SUCCESS(status) && (status == STATUS_DLL_NOT_FOUND || status == STATUS_OBJECT_NAME_NOT_FOUND ||
+                                status == STATUS_OBJECT_PATH_NOT_FOUND) && MimeFeatureFault(name))
+        status = LdrLoadDll(search, &ldr_flags, &us, &base);
     KbFree(search);
     if (!NT_SUCCESS(status)) {
         set_load_error(status);
