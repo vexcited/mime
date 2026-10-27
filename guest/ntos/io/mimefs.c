@@ -1047,15 +1047,6 @@ static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MI
     return status;
 }
 
-/* whether the program may add a name to the file, which a hard link does to it, though its handle was not opened for that. */
-NTSTATUS MimeFsCheckLinkSource(PFILE_OBJECT file)
-{
-    MIMEFS_FCB *fcb = IopIsMimeFs(file) ? file->FsContext : nullptr;
-    if (!fcb || fcb->Rom || fcb->StatOnly || fcb->Directory)
-        return STATUS_SUCCESS;
-    return MimeFsCheckRight(fcb->Volume, fcb->HostHandle, &file->FileName, FALSE, FILE_WRITE_ATTRIBUTES);
-}
-
 /* the volume relative name of a leaf in a directory, or in the directory of the file when none is given. */
 static PWCHAR name_in_directory(PFILE_OBJECT file, PFILE_OBJECT dir, const WCHAR *leaf, ULONG leaf_chars, PULONG chars)
 {
@@ -1115,6 +1106,12 @@ static NTSTATUS link_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MIME
         return STATUS_FILE_IS_A_DIRECTORY;
     if (fcb->StatOnly)
         return STATUS_ACCESS_DENIED;
+    /* the file's own descriptor has to allow writing its attributes, whatever the handle was opened for. */
+    if ((stack->Flags & SL_LINK_CHECK_SOURCE) && !fcb->Rom) {
+        NTSTATUS allowed = MimeFsCheckRight(fcb->Volume, fcb->HostHandle, &file->FileName, FALSE, FILE_WRITE_ATTRIBUTES);
+        if (!NT_SUCCESS(allowed))
+            return allowed;
+    }
     PFILE_OBJECT dir = stack->Parameters.SetFile.FileObject;
     MIMEFS_FCB *dfcb = dir ? dir->FsContext : nullptr;
     if (dir && (!dfcb || dir->DeviceObject != device))

@@ -417,18 +417,14 @@ static NTSTATUS retarget_file(PFILE_OBJECT file, PUCHAR buf, ULONG length, FILE_
     if (slash == chars)
         return STATUS_OBJECT_NAME_INVALID;
 
-    /* a link of a file that a program may not write the attributes of is refused before anything is opened. */
-    if (link && user && !(granted & FILE_WRITE_ATTRIBUTES)) {
-        NTSTATUS allowed = MimeFsCheckLinkSource(file);
-        if (!NT_SUCCESS(allowed))
-            return allowed;
-    }
-
     IO_STACK_LOCATION params;
     memset(&params, 0, sizeof(params));
     params.Parameters.SetFile.Length = length;
     params.Parameters.SetFile.FileInformationClass = klass;
     params.Parameters.SetFile.ReplaceIfExists = replace;
+    /* a program that opened the file without the right to write its attributes is held to the descriptor for a link. */
+    if (link && user && !(granted & FILE_WRITE_ATTRIBUTES))
+        params.Flags |= SL_LINK_CHECK_SOURCE;
     IO_STATUS_BLOCK ignored = {};
     if (!root && name[0] != '\\') {
         /* a name of the file's own directory has no directory part. */

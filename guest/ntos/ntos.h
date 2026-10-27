@@ -1326,7 +1326,6 @@ NTSTATUS FsNotifyCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
 /* mimefs.c: whether a file object is on a host backed volume, and the volume of an open directory. */
 BOOLEAN IopIsMimeFs(PFILE_OBJECT file);
 NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_handle);
-NTSTATUS MimeFsCheckLinkSource(PFILE_OBJECT file);
 
 /* hid.c: game controller hid and xusb devices. */
 BOOLEAN IopIsPad(PFILE_OBJECT file);

@@ -300,6 +300,8 @@ typedef LARGE_INTEGER PHYSICAL_ADDRESS, *PPHYSICAL_ADDRESS;
 #define SL_CASE_SENSITIVE 0x80
 /* a create from user mode, which the file system checks against the file's descriptor. */
 #define SL_FORCE_ACCESS_CHECK 0x01
+/* in the request of a link: the file system asks the descriptor of the file for FILE_WRITE_ATTRIBUTES, as the handle lacks it. */
+#define SL_LINK_CHECK_SOURCE 0x02
 /* mime private: a create that only wants the name's attributes, which the file system may answer without a handle. */
 #define SL_OPEN_STAT_ONLY 0x10
 

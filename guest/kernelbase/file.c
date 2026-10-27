@@ -1943,6 +1943,8 @@ typedef struct NAME_FIND {
     FILE_LINKS_INFORMATION *Links;
     PUCHAR Cursor; /* the entry of the next name, or the end of the entries. */
     ULONG Size;    /* the bytes the file system wrote. */
+    LONGLONG ParentId;                /* the directory last named, which the next names are most likely in. */
+    FILE_NAME_INFORMATION *Parent;
 } NAME_FIND;
 
 BOOL WINAPI FindClose(HANDLE find)
@@ -1953,6 +1955,7 @@ BOOL WINAPI FindClose(HANDLE find)
         if (names->File && names->File != INVALID_HANDLE_VALUE)
             NtClose(names->File);
         KbFree(names->Links);
+        KbFree(names->Parent);
         KbFree(names);
         return TRUE;
     }
@@ -2274,9 +2277,22 @@ static BOOL give_link_name(NAME_FIND *f, LPDWORD length, PWSTR buffer)
     FILE_NAME_INFORMATION *parent = nullptr;
     PCWSTR leaf = entry->FileName;
     ULONG leaf_chars = entry->FileNameLength;
-    NTSTATUS status = find_parent(f->File, entry->ParentFileId, &parent);
-    if (!NT_SUCCESS(status))
-        status = own_name(f->File, entry, &parent, &leaf, &leaf_chars);
+    NTSTATUS status = STATUS_SUCCESS;
+    BOOL owned = FALSE;
+    /* names of one directory are listed together, and its path is asked of the file system once. */
+    if (f->Parent && f->ParentId == entry->ParentFileId) {
+        parent = f->Parent;
+    } else {
+        status = find_parent(f->File, entry->ParentFileId, &parent);
+        if (NT_SUCCESS(status)) {
+            KbFree(f->Parent);
+            f->Parent = parent;
+            f->ParentId = entry->ParentFileId;
+        } else {
+            status = own_name(f->File, entry, &parent, &leaf, &leaf_chars);
+            owned = TRUE;
+        }
+    }
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     ULONG parent_chars = parent->FileNameLength / sizeof(WCHAR);
@@ -2286,7 +2302,8 @@ static BOOL give_link_name(NAME_FIND *f, LPDWORD length, PWSTR buffer)
     DWORD have = *length;
     *length = need;
     if (have < need) {
-        KbFree(parent);
+        if (owned)
+            KbFree(parent);
         KbSetError(ERROR_MORE_DATA);
         return FALSE;
     }
@@ -2296,7 +2313,8 @@ static BOOL give_link_name(NAME_FIND *f, LPDWORD length, PWSTR buffer)
         buffer[at++] = L'\\';
     memcpy(buffer + at, leaf, leaf_chars * sizeof(WCHAR));
     buffer[at + leaf_chars] = 0;
-    KbFree(parent);
+    if (owned)
+        KbFree(parent);
     f->Cursor = entry->NextEntryOffset ? f->Cursor + entry->NextEntryOffset : (PUCHAR)f->Links + f->Size;
     return TRUE;
 }
