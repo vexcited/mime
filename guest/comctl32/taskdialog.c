@@ -252,7 +252,7 @@ static int text_width(HWND hwnd, HFONT font, LPCWSTR text)
 
 static int dlu_x(TD_STATE *td, int dlu)
 {
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     HDC dc = GetDC(td->Hwnd);
     HGDIOBJ old = SelectObject(dc, td->ContentFont);
     GetTextMetricsW(dc, &tm);

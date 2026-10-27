@@ -200,7 +200,7 @@ static void set_font(EDIT *e, HFONT font)
     e->font = font;
     HGDIOBJ old;
     HDC dc = text_dc(e, &old);
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     SIZE size;
     GetTextExtentPoint32W(dc, L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 52, &size);

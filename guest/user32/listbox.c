@@ -56,7 +56,7 @@ static int system_font_height(void)
 {
     HDC dc = GetDC(nullptr);
     HGDIOBJ old = SelectObject(dc, GetStockObject(SYSTEM_FONT));
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     SelectObject(dc, old);
     ReleaseDC(nullptr, dc);
@@ -69,7 +69,7 @@ static void char_size(HWND hwnd, HFONT font, int *cx, int *cy)
     static const WCHAR LETTERS[] = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     HDC dc = GetDC(hwnd);
     HGDIOBJ old = font ? SelectObject(dc, font) : nullptr;
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     SIZE size;
     if (GetTextMetricsW(dc, &tm) && GetTextExtentPoint32W(dc, LETTERS, 52, &size)) {
         *cx = (size.cx / 26 + 1) / 2;

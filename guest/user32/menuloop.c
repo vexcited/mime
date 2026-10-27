@@ -290,7 +290,7 @@ static BOOL level_measure(LOOP *l, LEVEL *lv)
 {
     HDC dc = GetDC(nullptr);
     HGDIOBJ old = SelectObject(dc, l->Font);
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     int item_height = tm.tmHeight + scale(10, l->Dpi);
     if (item_height < scale(24, l->Dpi))

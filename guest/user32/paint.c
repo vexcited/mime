@@ -801,7 +801,7 @@ WINUSERAPI int WINAPI DrawTextExW(HDC dc, LPWSTR text, int count, LPRECT rect, U
         return 0;
     if (count < 0)
         count = (int)wcslen(text);
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     int line_height = tm.tmHeight + ((format & DT_EXTERNALLEADING) ? tm.tmExternalLeading : 0);
     int tab_width = tm.tmAveCharWidth * ((format & DT_TABSTOP) ? (int)((format >> 8) & 0xFF) : 8);
@@ -921,7 +921,7 @@ WINUSERAPI int WINAPI DrawTextExA(HDC dc, LPSTR text, int count, LPRECT rect, UI
 WINUSERAPI LONG WINAPI TabbedTextOutW(HDC dc, int x, int y, LPCWSTR text, int count, int tabs, const INT *positions,
                                       int origin)
 {
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     int tab_width = tabs > 0 && positions ? positions[0] : tm.tmAveCharWidth * 8;
     draw_tabbed(dc, x, y, text, count, DT_EXPANDTABS | DT_NOCLIP, tab_width, nullptr);
@@ -930,7 +930,7 @@ WINUSERAPI LONG WINAPI TabbedTextOutW(HDC dc, int x, int y, LPCWSTR text, int co
 
 WINUSERAPI DWORD WINAPI GetTabbedTextExtentW(HDC dc, LPCWSTR text, int count, int tabs, const INT *positions)
 {
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     int tab_width = tabs > 0 && positions ? positions[0] : tm.tmAveCharWidth * 8;
     return MAKELONG(text_width(dc, text, count, DT_EXPANDTABS, tab_width), tm.tmHeight);

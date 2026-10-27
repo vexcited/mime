@@ -41,7 +41,7 @@ static int item_height(TAB *t)
         return t->FixedHeight;
     HDC dc = GetDC(t->Hwnd);
     HGDIOBJ old = SelectObject(dc, tab_font(t));
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     SelectObject(dc, old);
     ReleaseDC(t->Hwnd, dc);
@@ -63,7 +63,7 @@ static int min_width(TAB *t)
         return t->MinWidth;
     HDC dc = GetDC(t->Hwnd);
     HGDIOBJ old = SelectObject(dc, tab_font(t));
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     SelectObject(dc, old);
     ReleaseDC(t->Hwnd, dc);

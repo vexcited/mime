@@ -156,7 +156,7 @@ static void measure_font(LISTVIEW *lv)
 {
     HDC dc = GetDC(lv->Hwnd);
     HGDIOBJ old = SelectObject(dc, lv->Font);
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     lv->FontHeight = tm.tmHeight;
     lv->AveChar = tm.tmAveCharWidth;

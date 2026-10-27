@@ -226,7 +226,7 @@ static void paint_check(HWND hwnd, BUTTON *b, HDC dc, RECT *client, BOOL focused
 static void paint_group(HWND hwnd, BUTTON *b, HDC dc, RECT *client, BOOL disabled)
 {
     HBRUSH bg = parent_brush(hwnd, dc, WM_CTLCOLORSTATIC);
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     RECT frame = *client;
     frame.top += tm.tmHeight / 2;

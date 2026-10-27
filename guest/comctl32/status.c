@@ -54,7 +54,7 @@ static int bar_height(STATUS *s)
 {
     HDC dc = GetDC(s->Hwnd);
     HGDIOBJ old = SelectObject(dc, status_font(s));
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     SelectObject(dc, old);
     ReleaseDC(s->Hwnd, dc);

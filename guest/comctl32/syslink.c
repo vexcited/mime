@@ -206,7 +206,7 @@ static void reload(SYSLINK *s)
 /* wraps the words to width, returns the height. */
 static int layout(SYSLINK *s, HDC dc, int width)
 {
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     SIZE space;
     GetTextExtentPoint32W(dc, L" ", 1, &space);

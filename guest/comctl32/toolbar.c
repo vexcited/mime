@@ -67,7 +67,7 @@ static int text_extent(TOOLBAR *t, LPCWSTR text, int *cy)
     HDC dc = GetDC(t->Hwnd);
     HGDIOBJ old = SelectObject(dc, tb_font(t));
     SIZE size = {};
-    TEXTMETRICW tm;
+    TEXTMETRICW tm = {};
     GetTextMetricsW(dc, &tm);
     if (text && *text)
         GetTextExtentPoint32W(dc, text, (int)wcslen(text), &size);
