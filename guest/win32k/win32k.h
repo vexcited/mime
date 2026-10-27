@@ -1023,6 +1023,7 @@ ULONG MenuFlattenForHost(HMENU handle, MimeTrayItem *items, ULONG *ids, ULONG ma
 void WndCheckMonitorDpi(WND *w);
 UINT WndHostDpi(WND *w);
 int MetricsGet(int index, UINT dpi);
+BOOLEAN MetricsKeyboardCues(void);
 COLORREF MetricsSysColor(int index);
 
 /* screen and desktop DC surface, composed from windows before reads, screen.c. */

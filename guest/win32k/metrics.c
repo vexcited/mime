@@ -263,6 +263,14 @@ static void fill_nonclient(NONCLIENTMETRICSW *m, UINT dpi)
 }
 
 /* data is a user pointer; the caller holds the user lock. */
+/* SPI_SETKEYBOARDCUES: the mnemonics and focus rectangles show without the keyboard having been used. */
+static BOOLEAN g_keyboard_cues;
+
+BOOLEAN MetricsKeyboardCues(void)
+{
+    return g_keyboard_cues;
+}
+
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi)
 {
     if (!dpi)
@@ -317,6 +325,11 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
         b = TRUE;
         return NT_SUCCESS(MimeCopyToUser(data, &b, sizeof(b)));
     case SPI_GETKEYBOARDCUES:
+        b = g_keyboard_cues;
+        return NT_SUCCESS(MimeCopyToUser(data, &b, sizeof(b)));
+    case SPI_SETKEYBOARDCUES:
+        g_keyboard_cues = data != nullptr;
+        return TRUE;
     case SPI_GETSNAPTODEFBUTTON:
     case SPI_GETSCREENREADER:
     case SPI_GETSHOWSOUNDS:

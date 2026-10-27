@@ -1454,7 +1454,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     } else {
         MenuWindowSetMenu(w, menu);
         /* the keyboard cues of a top level window are hidden until the keyboard is used. */
-        w->UiState = UISF_HIDEFOCUS | UISF_HIDEACCEL;
+        w->UiState = MetricsKeyboardCues() ? 0 : UISF_HIDEFOCUS | UISF_HIDEACCEL;
     }
     if (name)
         w->Text = W32StrDup(name, name_chars), w->TextLength = w->Text ? (ULONG)name_chars : 0;
