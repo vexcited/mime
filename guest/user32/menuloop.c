@@ -64,6 +64,9 @@ typedef struct LOOP {
     BOOL Keyboard;
     BOOL Cues;
     BOOL ButtonDown;
+    BOOL DownSeen;      /* a button went down in the loop, as opposed to the one that opened the menu. */
+    DWORD StartTick;
+    POINT StartPoint;
     BOOL IdlePending;
     BOOL ByMouse;       /* the last selection came from the mouse. */
     UINT Dpi;
@@ -1138,6 +1141,21 @@ static void key_down(LOOP *l, UINT vk)
 
 /* ------------------------------------------------------------------ the loop */
 
+static int absi(int v)
+{
+    return v < 0 ? -v : v;
+}
+
+static int pt_distance_x(const LOOP *l, POINT pt)
+{
+    return pt.x - l->StartPoint.x;
+}
+
+static int pt_distance_y(const LOOP *l, POINT pt)
+{
+    return pt.y - l->StartPoint.y;
+}
+
 static void mouse_message(LOOP *l, const MSG *msg)
 {
     POINT pt = msg->pt;
@@ -1173,6 +1191,7 @@ static void mouse_message(LOOP *l, const MSG *msg)
     case WM_RBUTTONDBLCLK:
     case WM_NCRBUTTONDOWN:
         l->ButtonDown = TRUE;
+        l->DownSeen = TRUE;
         if (hit == HIT_NONE) {
             end_loop(l);
         } else if (hit == HIT_LEVEL) {
@@ -1214,7 +1233,11 @@ static void mouse_message(LOOP *l, const MSG *msg)
         if (right && !(l->Flags & TPM_RIGHTBUTTON))
             break;
         if (hit == HIT_NONE) {
-            end_loop(l);
+            /* the button that opened the menu comes up next to where it went down, which leaves the menu there. */
+            int drag = GetSystemMetrics(SM_CXDRAG);
+            BOOL near_start = absi(pt_distance_x(l, msg->pt)) <= drag && absi(pt_distance_y(l, msg->pt)) <= drag;
+            if (l->DownSeen || !(near_start || GetTickCount() - l->StartTick < GetDoubleClickTime()))
+                end_loop(l);
         } else if (hit == HIT_LEVEL) {
             LEVEL *lv = &l->Levels[level];
             if (in_range(item, lv->Count) && selectable(&lv->Items[item]) && !lv->Items[item].SubMenu) {
@@ -1352,7 +1375,9 @@ static BOOL start_common(LOOP *l, HWND owner)
     l->Cues = !(ui & UISF_HIDEACCEL);
     l->ButtonDown = (GetKeyState(VK_LBUTTON) & 0x8000) || (GetKeyState(VK_RBUTTON) & 0x8000);
     l->StartActive = GetActiveWindow();
-    GetCursorPos(&l->LastMouse);
+    l->StartTick = GetTickCount();
+    GetCursorPos(&l->StartPoint);
+    l->LastMouse = l->StartPoint;
     return TRUE;
 }
 

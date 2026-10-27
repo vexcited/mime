@@ -50,22 +50,7 @@ static int g_dpi = 96;
 static int g_split;
 static BOOL g_dragging;
 static BOOL g_list_active; /* the list was used last, so delete and rename mean values. */
-static HMENU g_new_menu, g_edit_menu;
-static HWND g_buttons[8];
-#define IDM_NEW_POPUP 200
-
-typedef struct BUTTON_SPEC {
-    PCWSTR Text;
-    UINT Id;
-    int Width;
-} BUTTON_SPEC;
-
-static const BUTTON_SPEC g_button_specs[] = {
-    {L"Import...", IDM_IMPORT, 84},  {L"Export...", IDM_EXPORT, 84}, {L"New", IDM_NEW_POPUP, 64},
-    {L"Modify...", IDM_MODIFY, 84}, {L"Delete", IDM_DELETE, 70},    {L"Rename", IDM_RENAME, 74},
-    {L"Refresh", IDM_REFRESH, 74},
-};
-#define BUTTON_ROW 30
+static HMENU g_edit_menu;
 
 static int scale(int value)
 {
@@ -694,12 +679,12 @@ static void lay_out(void)
 {
     RECT client;
     GetClientRect(g_window, &client);
-    int buttons = scale(BUTTON_ROW), address = scale(26), status_height = 0;
+    int address = scale(26), status_height = 0;
     RECT status_rect;
     SendMessageW(g_status, WM_SIZE, 0, 0);
     if (GetWindowRect(g_status, &status_rect))
         status_height = status_rect.bottom - status_rect.top;
-    int body = client.bottom - buttons - address - status_height;
+    int body = client.bottom - address - status_height;
     if (body < 0)
         body = 0;
     int bar = scale(5);
@@ -709,14 +694,9 @@ static void lay_out(void)
         g_split = scale(80);
     if (g_split > client.right - scale(80))
         g_split = client.right - scale(80);
-    int x = scale(2);
-    for (int i = 0; i < (int)RTL_NUMBER_OF(g_button_specs); i++) {
-        MoveWindow(g_buttons[i], x, scale(2), scale(g_button_specs[i].Width), buttons - scale(4), TRUE);
-        x += scale(g_button_specs[i].Width + 4);
-    }
-    MoveWindow(g_address, 0, buttons, client.right, address, TRUE);
-    MoveWindow(g_tree, 0, buttons + address, g_split, body, TRUE);
-    MoveWindow(g_list, g_split + bar, buttons + address, client.right - g_split - bar, body, TRUE);
+    MoveWindow(g_address, 0, 0, client.right, address, TRUE);
+    MoveWindow(g_tree, 0, address, g_split, body, TRUE);
+    MoveWindow(g_list, g_split + bar, address, client.right - g_split - bar, body, TRUE);
 }
 
 static HTREEITEM tree_hit(void)
@@ -1130,15 +1110,6 @@ static void command(UINT id)
     case IDM_REFRESH:
         refresh();
         break;
-    case IDM_NEW_POPUP:
-        for (int i = 0; i < (int)RTL_NUMBER_OF(g_button_specs); i++) {
-            if (g_button_specs[i].Id == IDM_NEW_POPUP) {
-                RECT r;
-                GetWindowRect(g_buttons[i], &r);
-                TrackPopupMenu(g_new_menu, TPM_LEFTALIGN, r.left, r.bottom, 0, g_window, nullptr);
-            }
-        }
-        break;
     case IDM_ABOUT:
         RegeditBox(g_window, L"Registry Editor\n\nMime's registry editor.", MB_ICONINFORMATION);
         break;
@@ -1165,7 +1136,6 @@ static HMENU build_menu(void)
     AppendMenuW(fresh, MF_STRING, IDM_NEW_MULTI, L"&Multi-String Value");
     AppendMenuW(fresh, MF_STRING, IDM_NEW_EXPAND, L"&Expandable String Value");
     HMENU edit = CreatePopupMenu();
-    g_new_menu = fresh;
     g_edit_menu = edit;
     AppendMenuW(edit, MF_POPUP, (UINT_PTR)fresh, L"&New");
     AppendMenuW(edit, MF_SEPARATOR, 0, nullptr);
@@ -1192,10 +1162,8 @@ static void make_font(void)
     g_font = nullptr;
     if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0))
         g_font = CreateFontIndirectW(&metrics.lfMessageFont);
-    HWND all[4 + 8] = {g_tree, g_list, g_status, g_address};
-    for (int i = 0; i < (int)RTL_NUMBER_OF(g_button_specs); i++)
-        all[4 + i] = g_buttons[i];
-    for (int i = 0; i < 4 + (int)RTL_NUMBER_OF(g_button_specs); i++)
+    HWND all[4] = {g_tree, g_list, g_status, g_address};
+    for (int i = 0; i < 4; i++)
         if (all[i] && g_font)
             SendMessageW(all[i], WM_SETFONT, (WPARAM)g_font, TRUE);
 }
@@ -1275,9 +1243,6 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
             column.cx = scale(widths[i]);
             ListView_InsertColumn(g_list, i, &column);
         }
-        for (int i = 0; i < (int)RTL_NUMBER_OF(g_button_specs); i++)
-            g_buttons[i] = CreateWindowExW(0, L"BUTTON", g_button_specs[i].Text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                                           0, 0, 10, 10, window, (HMENU)(UINT_PTR)g_button_specs[i].Id, instance, nullptr);
         make_font();
         populate_roots();
         return 0;
