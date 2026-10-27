@@ -68,12 +68,6 @@ static const ExtractRule g_rules[] = {
     {"Windows/Globalization/Sorting/SortDefault.nls", "Windows/Globalization/Sorting/SortDefault.nls", true},
     /* GS wavetable synthesizer sound set. */
     {"Windows/System32/drivers/gm.dls", "Windows/System32/drivers/gm.dls", true},
-    /* the registry hives of a fresh install, which the kernel loads and specializes at boot. */
-    {"Windows/System32/config/SYSTEM", "Windows/System32/config/SYSTEM", false},
-    {"Windows/System32/config/SOFTWARE", "Windows/System32/config/SOFTWARE", false},
-    {"Windows/System32/config/DEFAULT", "Windows/System32/config/DEFAULT", false},
-    /* the template of new user profiles, with its NTUSER.DAT hive. */
-    {"Users/Default", "Users/Default", false},
     /* the in-box .NET Framework 4.8.x, 64-bit and 32-bit, its assembly caches and its pregenerated native images. */
     {"Windows/Microsoft.NET", "Windows/Microsoft.NET", true},
     {"Windows/assembly", "Windows/assembly", true},
@@ -94,23 +88,6 @@ static const ExtractRule g_rules[] = {
 #undef NETFX_RUNTIME
     /* the in-box Edge WebView2 runtime, which the registry of the image declares installed. */
     {"Program Files (x86)/Microsoft/EdgeWebView", "Program Files (x86)/Microsoft/EdgeWebView", true},
-};
-
-static const char *const g_skeleton[] = {
-    "Windows/System32/en-US",
-    "Windows/Globalization/Sorting",
-    "Windows/SystemResources",
-    "Windows/Fonts",
-    "Windows/Temp",
-    "Program Files",
-    "Program Files (x86)",
-#ifdef __aarch64__
-    "Program Files (Arm)", /* arm64 windows only. */
-#endif
-    "ProgramData",
-    "Users/Public",
-    "Windows/System32/config",
-    "Windows/System32/drivers",
 };
 
 typedef struct UdfReaderCtx {
@@ -417,17 +394,8 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
         goto fail;
     }
 
-    for (size_t i = 0; i < MIME_ARRAY_COUNT(g_skeleton); i++) {
-        char dir[MIME_PATH_MAX];
-        mime_path_join(dir, sizeof(dir), paths->drive_c, g_skeleton[i]);
-        if (!mime_mkdir_p(dir, 0755)) {
-            mime_error("cannot create %s: %s", dir, strerror(errno));
-            goto fail;
-        }
-    }
-
     /*
-     * on a drive that is already set up only the missing files are added, so the registry hives, the user
+     * on a drive that is already set up only the missing files are added, so the user
      * profiles and everything the programs wrote stay as they are.
      */
     bool add_only = already_set_up && !overwrite;

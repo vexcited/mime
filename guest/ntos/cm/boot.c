@@ -1,5 +1,5 @@
 /*
- * specializes the iso's template hives for this installation, as windows setup
+ * specializes the template hives for this installation, as windows setup
  * does once and the kernel and session manager redo at each boot: version data,
  * machine and user identity, hardware description, processor variables.
  */
@@ -11,6 +11,7 @@
 #endif
 
 #define NT_CURRENT_VERSION L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"
+#define NT_CURRENT_VERSION_32 L"\\REGISTRY\\MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion"
 #define CONTROL L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control"
 #define ENVIRONMENT CONTROL L"\\Session Manager\\Environment"
 
@@ -49,57 +50,53 @@ static void widen(PWCHAR out, ULONG count, PCSTR text)
     out[i] = 0;
 }
 
-/* windows 11 keeps the windows 10 product names here. */
-static PCWSTR product_name(PCWSTR edition)
+#ifdef __aarch64__
+/* the data names the x64 system's native folders and build, an arm64 system has its own. */
+static void native_names(void)
 {
-    static const struct {
-        PCWSTR Edition, Name;
-    } names[] = {
-        {L"Core", L"Windows 10 Home"},
-        {L"CoreN", L"Windows 10 Home N"},
-        {L"CoreSingleLanguage", L"Windows 10 Home Single Language"},
-        {L"Professional", L"Windows 10 Pro"},
-        {L"ProfessionalN", L"Windows 10 Pro N"},
-        {L"ProfessionalEducation", L"Windows 10 Pro Education"},
-        {L"ProfessionalWorkstation", L"Windows 10 Pro for Workstations"},
-        {L"Education", L"Windows 10 Education"},
-        {L"Enterprise", L"Windows 10 Enterprise"},
-    };
-    for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++)
-        if (_wcsicmp(names[i].Edition, edition) == 0)
-            return names[i].Name;
-    return nullptr;
+    set_sz(NT_CURRENT_VERSION, L"BuildLabEx", REG_SZ, L"26100.1.arm64fre.ge_release.240331-1435");
+    PCWSTR root = L"C:\\Windows\\Microsoft.NET\\FrameworkArm64\\";
+    PCWSTR path = L"C:\\Windows\\Microsoft.NET\\FrameworkArm64\\v4.0.30319\\";
+    static const PCWSTR ndp = L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\NET Framework Setup\\NDP\\";
+    WCHAR key[160];
+    set_sz(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\.NETFramework", L"InstallRoot", REG_SZ, root);
+    static const PCWSTR editions[] = {L"v4\\Client", L"v4\\Full"};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(editions); i++) {
+        _snwprintf(key, RTL_NUMBER_OF(key) - 1, L"%ls%ls", ndp, editions[i]);
+        set_sz(key, L"InstallPath", REG_SZ, path);
+    }
+    _snwprintf(key, RTL_NUMBER_OF(key) - 1, L"%lsCDF\\v4.0", ndp);
+    set_sz(key, L"SMSvcHostPath", REG_SZ, path);
+    static const PCWSTR current = L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion";
+    set_sz(current, L"ProgramFilesDir (Arm)", REG_SZ, L"C:\\Program Files (Arm)");
+    set_sz(current, L"CommonFilesDir (Arm)", REG_SZ, L"C:\\Program Files (Arm)\\Common Files");
 }
+#endif
 
+/* the version of the system, in the key of each view, as 32-bit programs read it from their own. */
 static void version_data(PCWSTR user)
 {
-    set_sz(NT_CURRENT_VERSION, L"SystemRoot", REG_SZ, L"C:\\Windows");
-    set_sz(NT_CURRENT_VERSION, L"PathName", REG_SZ, L"C:\\Windows");
-    set_sz(NT_CURRENT_VERSION, L"CurrentType", REG_SZ, L"Multiprocessor Free");
+    static const PCWSTR keys[] = {NT_CURRENT_VERSION, NT_CURRENT_VERSION_32};
     WCHAR build[16] = {};
     _snwprintf(build, RTL_NUMBER_OF(build) - 1, L"%u", MIME_NT_BUILD_NUMBER);
-    set_sz(NT_CURRENT_VERSION, L"CurrentBuild", REG_SZ, build);
-    set_sz(NT_CURRENT_VERSION, L"CurrentBuildNumber", REG_SZ, build);
-    set_dword(NT_CURRENT_VERSION, L"CurrentMajorVersionNumber", MIME_NT_MAJOR_VERSION);
-    set_dword(NT_CURRENT_VERSION, L"CurrentMinorVersionNumber", MIME_NT_MINOR_VERSION);
     ULONG64 installed = HalBootInfo->install_filetime;
-    set_dword(NT_CURRENT_VERSION, L"InstallDate", (ULONG)(installed / 10000000ull - 11644473600ull));
-    set_qword(NT_CURRENT_VERSION, L"InstallTime", installed);
-    set_sz(NT_CURRENT_VERSION, L"RegisteredOwner", REG_SZ, user);
-    set_sz(NT_CURRENT_VERSION, L"RegisteredOrganization", REG_SZ, L"");
-
-    CM_NODE *node = CmpOpenPath(NT_CURRENT_VERSION, FALSE);
-    if (node) {
-        CmpDeleteValue(node, L"PendingInstall", 14);
-        CM_VALUE *edition = CmpFindValue(node, L"EditionID", 9);
-        if (edition && edition->Type == REG_SZ) {
-            WCHAR id[64] = {};
-            memcpy(id, edition->Data, edition->DataLength < sizeof(id) - 2 ? edition->DataLength : sizeof(id) - 2);
-            PCWSTR name = product_name(id);
-            if (name)
-                set_sz(NT_CURRENT_VERSION, L"ProductName", REG_SZ, name);
-        }
+    for (ULONG i = 0; i < RTL_NUMBER_OF(keys); i++) {
+        PCWSTR key = keys[i];
+        set_sz(key, L"SystemRoot", REG_SZ, L"C:\\Windows");
+        set_sz(key, L"PathName", REG_SZ, L"C:\\Windows");
+        set_sz(key, L"CurrentType", REG_SZ, L"Multiprocessor Free");
+        set_sz(key, L"CurrentBuild", REG_SZ, build);
+        set_sz(key, L"CurrentBuildNumber", REG_SZ, build);
+        set_dword(key, L"CurrentMajorVersionNumber", MIME_NT_MAJOR_VERSION);
+        set_dword(key, L"CurrentMinorVersionNumber", MIME_NT_MINOR_VERSION);
+        set_dword(key, L"InstallDate", (ULONG)(installed / 10000000ull - 11644473600ull));
+        set_qword(key, L"InstallTime", installed);
+        set_sz(key, L"RegisteredOwner", REG_SZ, user);
+        set_sz(key, L"RegisteredOrganization", REG_SZ, L"");
     }
+#ifdef __aarch64__
+    native_names();
+#endif
 }
 
 static void identity(PCWSTR computer, PCWSTR user, PCWSTR sid)
@@ -272,6 +269,7 @@ static void machine_guid(void)
         text[pos++] = hex[HalBootInfo->system_uuid[i] & 0xF];
     }
     set_sz(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Cryptography", L"MachineGuid", REG_SZ, text);
+    set_sz(L"\\REGISTRY\\MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Cryptography", L"MachineGuid", REG_SZ, text);
 }
 
 /* in the proleptic Gregorian calendar. */
@@ -426,26 +424,6 @@ static void acpi_description(void)
     }
 }
 
-/*
- * the type libraries of the shell's automation, which windows keeps in shell32.dll and ieframe.dll. Mime has the first in
- * its own shell32 and the second, the part its shell windows use, in explorerframe.dll, so the registry names those files,
- * for both kinds of programs.
- */
-static void typelib_file(PCWSTR key, PCWSTR kind, PCWSTR path)
-{
-    WCHAR full[200];
-    _snwprintf(full, RTL_NUMBER_OF(full) - 1, L"\\REGISTRY\\MACHINE\\SOFTWARE\\Classes\\TypeLib\\%ls\\0\\%ls", key, kind);
-    set_sz(full, L"", REG_SZ, path);
-}
-
-static void typelibs(void)
-{
-    typelib_file(L"{50A7E9B0-70EF-11D1-B75A-00A0C90564FE}\\1.0", L"win32", L"C:\\Windows\\SysWOW64\\shell32.dll");
-    typelib_file(L"{50A7E9B0-70EF-11D1-B75A-00A0C90564FE}\\1.0", L"win64", L"C:\\Windows\\System32\\shell32.dll");
-    typelib_file(L"{EAB22AC0-30C1-11CF-A7EB-0000C05BAE0B}\\1.1", L"win32", L"C:\\Windows\\SysWOW64\\explorerframe.dll");
-    typelib_file(L"{EAB22AC0-30C1-11CF-A7EB-0000C05BAE0B}\\1.1", L"win64", L"C:\\Windows\\System32\\explorerframe.dll");
-}
-
 void CmpSpecialize(void)
 {
     WCHAR computer[16], user[24], sid[96] = {};
@@ -466,6 +444,5 @@ void CmpSpecialize(void)
     locale(sid);
     hardware();
     processor_environment();
-    typelibs();
     CmpUnlock();
 }

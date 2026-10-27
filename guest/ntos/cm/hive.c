@@ -11,6 +11,10 @@ static NTSTATUS read_bytes(CM_HIVE *hive, ULONG64 offset, PVOID buffer, ULONG le
 {
     if (offset + length > hive->Size)
         return STATUS_REGISTRY_CORRUPT;
+    if (hive->Image) {
+        memcpy(buffer, hive->Image + offset, length);
+        return STATUS_SUCCESS;
+    }
     ULONG got = 0;
     NTSTATUS status = IoReadFileObject(hive->File, buffer, length, offset, &got);
     return NT_SUCCESS(status) && got == length ? STATUS_SUCCESS : STATUS_REGISTRY_CORRUPT;
@@ -44,6 +48,10 @@ NTSTATUS CmpOpenHive(PCWSTR path, CM_HIVE **out)
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     hive->File = file;
+    /* the ROM maps its files, the cells are then read in place. */
+    const MimeRomEntry *rom = IoGetRomFile(file);
+    if (rom)
+        hive->Image = HalPhysmap(HalRomPhysical(rom));
     status = IoQueryFileSize(file, &hive->Size);
     UCHAR base[0x30];
     if (NT_SUCCESS(status))

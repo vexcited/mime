@@ -6,58 +6,48 @@
 #include "mime_cli.h"
 #include "rom.h"
 
-#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
-static bool copy_tree(const char *src, const char *dst)
+static bool make_dirs(const MimePaths *paths, const char *root, const char *const *folders, size_t count)
 {
-    DIR *dir = opendir(src);
-    if (!dir)
-        return false;
-    bool ok = mime_mkdir_p(dst, 0755);
-    struct dirent *e;
-    while (ok && (e = readdir(dir))) {
-        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
-            continue;
-        char s[MIME_PATH_MAX], d[MIME_PATH_MAX];
-        mime_path_join(s, sizeof(s), src, e->d_name);
-        mime_path_join(d, sizeof(d), dst, e->d_name);
-        ok = mime_dir_exists(s) ? copy_tree(s, d) : mime_copy_file(s, d);
+    for (size_t i = 0; i < count; i++) {
+        char dir[MIME_PATH_MAX];
+        snprintf(dir, sizeof(dir), "%s/%s/%s", paths->drive_c, root, folders[i]);
+        if (!mime_dir_exists(dir) && !mime_mkdir_p(dir, 0755)) {
+            mime_error("cannot create %s: %s", dir, strerror(errno));
+            return false;
+        }
     }
-    closedir(dir);
-    return ok;
+    return true;
 }
 
-/* new profiles start as a copy of the default one, NTUSER.DAT included. */
+/* the folders of a user profile, the shell folders and the places programs write their data. */
+static bool make_profile(const MimePaths *paths, const char *name)
+{
+    static const char *const folders[] = {
+        "Desktop", "Documents", "Downloads", "Music", "Pictures", "Videos", "Favorites", "Links", "Saved Games",
+        "AppData/Local/Temp", "AppData/LocalLow", "AppData/Local/Microsoft/Windows/INetCache",
+        "AppData/Local/Microsoft/Windows/History", "AppData/Local/Microsoft/Windows/INetCookies",
+        "AppData/Local/Microsoft/Windows/Shell", "AppData/Local/Microsoft/WindowsApps",
+        "AppData/Roaming/Microsoft/Internet Explorer/Quick Launch", "AppData/Roaming/Microsoft/Windows/Network Shortcuts",
+        "AppData/Roaming/Microsoft/Windows/Printer Shortcuts", "AppData/Roaming/Microsoft/Windows/Recent",
+        "AppData/Roaming/Microsoft/Windows/SendTo", "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup",
+        "AppData/Roaming/Microsoft/Windows/Templates",
+    };
+    char root[MIME_PATH_MAX];
+    snprintf(root, sizeof(root), "Users/%s", name);
+    return make_dirs(paths, root, folders, MIME_ARRAY_COUNT(folders));
+}
+
+/* the profile of the user, and the default one new profiles start from. its NTUSER.DAT is in the ROM. */
 static bool create_profile(const MimePaths *paths)
 {
     MimeIdentity id;
     mime_identity_load(paths, &id);
-    char profile[MIME_PATH_MAX], template[MIME_PATH_MAX];
-    snprintf(profile, sizeof(profile), "%s/Users/%s", paths->drive_c, id.user_name);
-    if (mime_dir_exists(profile))
-        return true;
-    snprintf(template, sizeof(template), "%s/Users/Default", paths->drive_c);
-    if (!mime_dir_exists(template)) {
-        mime_error("the default user profile is missing, run `mime setup` again");
-        return false;
-    }
-    if (!copy_tree(template, profile)) {
-        mime_error("cannot create the profile %s: %s", profile, strerror(errno));
-        return false;
-    }
-    static const char *const folders[] = {"Desktop",          "Documents",         "Downloads", "Music",
-                                          "Pictures",         "Videos",            "Favorites", "Links",
-                                          "AppData/Local/Temp", "AppData/LocalLow", "AppData/Roaming"};
-    for (size_t i = 0; i < MIME_ARRAY_COUNT(folders); i++) {
-        char dir[MIME_PATH_MAX];
-        mime_path_join(dir, sizeof(dir), profile, folders[i]);
-        mime_mkdir_p(dir, 0755);
-    }
-    return true;
+    return make_profile(paths, "Default") && make_profile(paths, id.user_name);
 }
 
 /*
@@ -107,15 +97,24 @@ static void create_shared_folders(const MimePaths *paths)
     }
 }
 
+/* what a new C: drive holds before the first program runs, the system files come from the ROM. */
+static bool create_skeleton(const MimePaths *paths)
+{
+    static const char *const folders[] = {
+        "Windows/System32/config", "Windows/System32/drivers", "Windows/System32/en-US", "Windows/SysWOW64",
+        "Windows/Globalization/Sorting", "Windows/SystemResources", "Windows/Fonts", "Windows/Temp", "Program Files",
+        "Program Files (x86)",
+#ifdef __aarch64__
+        "Program Files (Arm)", /* arm64 windows only. */
+#endif
+        "ProgramData", "Users/Public",
+    };
+    return make_dirs(paths, ".", folders, MIME_ARRAY_COUNT(folders));
+}
+
 bool mime_prepare_drive(const MimePaths *paths)
 {
-    char dir[MIME_PATH_MAX];
-    snprintf(dir, sizeof(dir), "%s/Windows/System32", paths->drive_c);
-    if (!mime_mkdir_p(dir, 0755))
-        return false;
-    /* where 32-bit programs see System32, so files they make there have somewhere to go. */
-    snprintf(dir, sizeof(dir), "%s/Windows/SysWOW64", paths->drive_c);
-    if (!mime_mkdir_p(dir, 0755))
+    if (!create_skeleton(paths))
         return false;
     /* copies written by older versions are shadowed by the ROM, remove them. */
     const MimeRomHeader *h = mime_rom_header();
@@ -126,11 +125,6 @@ bool mime_prepare_drive(const MimePaths *paths)
             if (*c == '\\')
                 *c = '/';
         unlink(path);
-    }
-    snprintf(dir, sizeof(dir), "%s/Windows/System32/config/SOFTWARE", paths->drive_c);
-    if (!mime_file_exists(dir)) {
-        mime_error("the registry hives are missing, run `mime setup` again");
-        return false;
     }
     create_name_files(paths);
     create_shared_folders(paths);

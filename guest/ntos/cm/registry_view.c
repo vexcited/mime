@@ -1,4 +1,5 @@
 #include "cm.h"
+#include "shared_keys.h"
 
 static BOOLEAN equal(PCWSTR left, PCWSTR right, ULONG count)
 {
@@ -34,8 +35,9 @@ static ULONG redirect_point(PCWSTR path, ULONG length)
 {
     ULONG classes = classes_root(path, length);
     if (classes) {
-        static const PCWSTR redirected[] = {L"\\CLSID", L"\\DirectShow", L"\\Interface", L"\\Media Type",
-                                             L"\\MediaFoundation"};
+#define CM_WIDE_CLASS(name) L"\\" name,
+        static const PCWSTR redirected[] = {CM_REDIRECTED_CLASSES(CM_WIDE_CLASS)};
+#undef CM_WIDE_CLASS
         for (ULONG i = 0; i < RTL_NUMBER_OF(redirected); i++)
             if (prefix(path + classes, length - classes, redirected[i]))
                 return classes;
@@ -45,35 +47,9 @@ static ULONG redirect_point(PCWSTR path, ULONG length)
     if (!software)
         return 0;
     /* modern windows shares these subtrees across the two software views. */
-    static const PCWSTR shared[] = {
-        L"\\Classes", L"\\Clients", L"\\Policies", L"\\RegisteredApplications",
-        L"\\Microsoft\\COM3", L"\\Microsoft\\Cryptography\\Calais\\Current",
-        L"\\Microsoft\\Cryptography\\Calais\\Readers", L"\\Microsoft\\Cryptography\\Services",
-        L"\\Microsoft\\CTF\\SystemShared", L"\\Microsoft\\CTF\\TIP", L"\\Microsoft\\DFS",
-        L"\\Microsoft\\Driver Signing", L"\\Microsoft\\EnterpriseCertificates", L"\\Microsoft\\EventSystem",
-        L"\\Microsoft\\MSMQ", L"\\Microsoft\\Non-Driver Signing", L"\\Microsoft\\Notepad\\DefaultFonts",
-        L"\\Microsoft\\OLE", L"\\Microsoft\\RAS", L"\\Microsoft\\RPC",
-        L"\\Microsoft\\SOFTWARE\\Microsoft\\Shared Tools\\MSInfo", L"\\Microsoft\\SystemCertificates",
-        L"\\Microsoft\\TermServLicensing", L"\\Microsoft\\TransactionServer",
-        L"\\Microsoft\\Windows\\CurrentVersion\\App Paths",
-        L"\\Microsoft\\Windows\\CurrentVersion\\Control Panel\\Cursors\\Schemes",
-        L"\\Microsoft\\Windows\\CurrentVersion\\Explorer\\AutoplayHandlers",
-        L"\\Microsoft\\Windows\\CurrentVersion\\Explorer\\DriveIcons",
-        L"\\Microsoft\\Windows\\CurrentVersion\\Explorer\\KindMap",
-        L"\\Microsoft\\Windows\\CurrentVersion\\Group Policy",
-        L"\\Microsoft\\Windows\\CurrentVersion\\Policies",
-        L"\\Microsoft\\Windows\\CurrentVersion\\PreviewHandlers", L"\\Microsoft\\Windows\\CurrentVersion\\Setup",
-        L"\\Microsoft\\Windows\\CurrentVersion\\Telephony\\Locations",
-        L"\\Microsoft\\Windows NT\\CurrentVersion\\Console", L"\\Microsoft\\Windows NT\\CurrentVersion\\FontDpi",
-        L"\\Microsoft\\Windows NT\\CurrentVersion\\FontLink", L"\\Microsoft\\Windows NT\\CurrentVersion\\FontMapper",
-        L"\\Microsoft\\Windows NT\\CurrentVersion\\Fonts", L"\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
-        L"\\Microsoft\\Windows NT\\CurrentVersion\\Gre_Initialize",
-        L"\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options",
-        L"\\Microsoft\\Windows NT\\CurrentVersion\\Language Pack",
-        L"\\Microsoft\\Windows NT\\CurrentVersion\\NetworkCards", L"\\Microsoft\\Windows NT\\CurrentVersion\\Perflib",
-        L"\\Microsoft\\Windows NT\\CurrentVersion\\Ports", L"\\Microsoft\\Windows NT\\CurrentVersion\\Print",
-        L"\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList", L"\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones",
-    };
+#define CM_WIDE_ENTRY(path) L"" path,
+    static const PCWSTR shared[] = {CM_SHARED_SOFTWARE_KEYS(CM_WIDE_ENTRY)};
+#undef CM_WIDE_ENTRY
     for (ULONG i = 0; i < RTL_NUMBER_OF(shared); i++)
         if (prefix(path + software, length - software, shared[i]))
             return 0;

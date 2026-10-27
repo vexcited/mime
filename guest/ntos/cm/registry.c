@@ -176,11 +176,6 @@ NTSTATUS CmpLoadValues(CM_NODE *node)
             ExFreePool(data); /* set since boot, that value wins. */
             continue;
         }
-        /* the template hives were captured with the image mounted as X:, setup leaves them on C:. */
-        PWCHAR text = (PWCHAR)data;
-        if ((type == REG_SZ || type == REG_EXPAND_SZ) && length >= 3 * sizeof(WCHAR) && (text[0] == 'X' || text[0] == 'x') &&
-            text[1] == ':' && text[2] == '\\')
-            text[0] = 'C';
         CM_VALUE *v = new_value(name, chars);
         if (!v) {
             ExFreePool(data);
@@ -305,6 +300,7 @@ NTSTATUS CmpSetValue(CM_NODE *node, const WCHAR *name, ULONG chars, ULONG type, 
     v->Type = type;
     v->Data = copy;
     v->DataLength = length;
+    v->Written = TRUE;
     node->LastWrite = changed;
     CmpNotifyChange(node, REG_NOTIFY_CHANGE_LAST_SET);
     return STATUS_SUCCESS;
@@ -346,6 +342,53 @@ static BOOLEAN link_target(CM_NODE *node, PWCHAR *target, ULONG *chars)
     while (*chars && (*target)[*chars - 1] == 0)
         (*chars)--;
     return TRUE;
+}
+
+
+/* ------------------------------------------------------------------ trace */
+
+static BOOLEAN g_trace;
+static ULONG64 g_trace_seen[1 << 16];
+
+static ULONG64 trace_hash(ULONG64 h, const void *data, ULONG bytes)
+{
+    const UCHAR *p = data;
+    for (ULONG i = 0; i < bytes; i++)
+        h = (h ^ p[i]) * 0x100000001B3ull;
+    return h;
+}
+
+/* logs the first time a program touches a key or value: where it was found, the hive, a journal or nowhere. */
+static void trace_registry(char kind, char where, CM_NODE *node, PCWSTR rest, ULONG rest_chars, PCWSTR value, ULONG value_chars)
+{
+    if (!g_trace)
+        return;
+    WCHAR path[300];
+    ULONG chars = node ? CmpFullPath(node, path, RTL_NUMBER_OF(path) - 1) : 0;
+    if (chars > RTL_NUMBER_OF(path) - 1)
+        chars = RTL_NUMBER_OF(path) - 1;
+    if (rest_chars && chars + 1 + rest_chars < RTL_NUMBER_OF(path)) {
+        path[chars++] = '\\';
+        memcpy(path + chars, rest, rest_chars * sizeof(WCHAR));
+        chars += rest_chars;
+    }
+    ULONG64 h = 0xCBF29CE484222325ull;
+    const char *image = PsCurrentProcess()->ImageFileName;
+    h = trace_hash(h, &kind, 1);
+    h = trace_hash(h, image, (ULONG)strlen(image));
+    h = trace_hash(h, path, chars * sizeof(WCHAR));
+    h = trace_hash(h, value, value_chars * sizeof(WCHAR));
+    h = trace_hash(h, &where, 1);
+    ULONG slot = (ULONG)h & (RTL_NUMBER_OF(g_trace_seen) - 1);
+    for (ULONG probe = 0; probe < 64; probe++, slot = (slot + 1) & (RTL_NUMBER_OF(g_trace_seen) - 1)) {
+        if (g_trace_seen[slot] == h)
+            return;
+        if (!g_trace_seen[slot]) {
+            g_trace_seen[slot] = h;
+            break;
+        }
+    }
+    KiLogPrintf("regtrace %c%c %s %.*ls | %.*ls", kind, where, image, chars, path, value_chars, value ? value : L"");
 }
 
 /* ------------------------------------------------------------------ security */
@@ -664,8 +707,21 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
         if (start != root->Node)
             ctx->ByHandle = FALSE;
     }
+    PWCHAR requested = nullptr;
+    if (g_trace) {
+        requested = ExAllocatePool2(POOL_FLAG_NON_PAGED, (len + 1) * sizeof(WCHAR), KI_TAG('C', 'm', 'T', 'r'));
+        if (requested)
+            memcpy(requested, path, len * sizeof(WCHAR));
+    }
     if (NT_SUCCESS(status))
         status = walk(start, path, len, attributes, context, &node);
+    if (requested) {
+        if (NT_SUCCESS(status))
+            trace_registry('O', node->Hive ? 'h' : (node->Flags & CM_NODE_VOLATILE) ? 'v' : 'j', node, nullptr, 0, nullptr, 0);
+        else
+            trace_registry('O', 'm', start, requested, len, nullptr, 0);
+        ExFreePool(requested);
+    }
     /* an existing key is checked against its descriptor; a key the program just made is its own. */
     if (NT_SUCCESS(status) && ctx && ctx->Check && ctx->Disposition != REG_CREATED_NEW_KEY) {
         SD_BLOB *sd;
@@ -1086,6 +1142,7 @@ NTSTATUS NTAPI NtEnumerateKey(HANDLE key, ULONG index, ULONG klass, PVOID info, 
     CM_NODE *child = node->Child;
     for (ULONG i = 0; child && i < index; i++)
         child = child->Next;
+    trace_registry('S', node->Hive ? 'h' : 'j', node, nullptr, 0, nullptr, 0);
     OUT_BUFFER o;
     ULONG fixed;
     status = child ? key_info(child, klass, &o, &fixed) : STATUS_NO_MORE_ENTRIES;
@@ -1109,6 +1166,7 @@ NTSTATUS NTAPI NtQueryValueKey(HANDLE key, PUNICODE_STRING name, ULONG klass, PV
     }
     CmpLoadValues(node);
     CM_VALUE *v = CmpFindValue(node, captured.Buffer, captured.Length / sizeof(WCHAR));
+    trace_registry('V', !v ? 'm' : v->Written ? 'w' : 'h', node, nullptr, 0, captured.Buffer, captured.Length / sizeof(WCHAR));
     OUT_BUFFER o;
     ULONG fixed;
     status = v ? value_info(v, klass, &o, &fixed) : STATUS_OBJECT_NAME_NOT_FOUND;
@@ -1129,6 +1187,7 @@ NTSTATUS NTAPI NtEnumerateValueKey(HANDLE key, ULONG index, ULONG klass, PVOID i
     CM_VALUE *v = node->Values;
     for (ULONG i = 0; v && i < index; i++)
         v = v->Next;
+    trace_registry('E', node->Hive ? 'h' : 'j', node, nullptr, 0, nullptr, 0);
     OUT_BUFFER o;
     ULONG fixed;
     status = v ? value_info(v, klass, &o, &fixed) : STATUS_NO_MORE_ENTRIES;
@@ -1450,6 +1509,7 @@ static void link_key(PCWSTR path, PCWSTR target)
 void CmInitSystem1(void)
 {
     ExInitializeFastMutex(&CmpLock);
+    g_trace = strstr(HalBootInfo->cmdline, "trace-registry") != nullptr;
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = 0xF003F;
     init.ParseProcedure = key_parse;
@@ -1483,12 +1543,11 @@ void CmInitSystem1(void)
     mount(machine, L"SOFTWARE", L"\\SystemRoot\\System32\\config\\SOFTWARE");
     mount(user, L".DEFAULT", L"\\SystemRoot\\System32\\config\\DEFAULT");
 
-    /* the logged on user's hive, which the profile service loads on windows. */
-    WCHAR sid[96] = {}, path[160] = {};
+    /* the logged on user's hive, which the profile service loads on windows. every profile starts as the default one. */
+    WCHAR sid[96] = {};
     _snwprintf(sid, RTL_NUMBER_OF(sid) - 1, L"S-1-5-21-%u-%u-%u-1001", HalBootInfo->user_sid[0], HalBootInfo->user_sid[1],
              HalBootInfo->user_sid[2]);
-    _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\??\\C:\\Users\\%hs\\NTUSER.DAT", HalBootInfo->user_name);
-    g_user_hive = mount(user, sid, path);
+    g_user_hive = mount(user, sid, L"\\??\\C:\\Users\\Default\\NTUSER.DAT");
     g_user_key = user;
     KiBootStamp("hives");
     CmpJournalInitialize();

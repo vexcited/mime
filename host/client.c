@@ -105,10 +105,6 @@ static int machine_up(const MimePaths *paths, bool quiet)
         }
         return wait_ready(paths, 0, quiet);
     }
-    if (!mime_is_setup(paths)) {
-        mime_error("mime is not set up yet, run `mime setup` first");
-        return 1;
-    }
     if (!mime_paths_ensure(paths))
         return 1;
     MimeInstanceHolder holder;

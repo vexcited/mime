@@ -37,9 +37,10 @@
 
 /* ------------------------------------------------------------------ hive.c */
 
-/* a regf hive file, read on demand through the file cache. */
+/* a regf hive file, read on demand through the file cache, or from memory when the ROM carries it. */
 typedef struct CM_HIVE {
     PFILE_OBJECT File;
+    const UCHAR *Image; /* the whole file, for a hive in the ROM */
     ULONG64 Size;
     ULONG RootCell;
     ULONG Minor;
@@ -77,6 +78,7 @@ typedef struct CM_VALUE {
     ULONG Type;
     ULONG DataLength;
     PUCHAR Data;
+    BOOLEAN Written; /* set since boot or by the journal, not read from the hive */
     USHORT NameLength; /* in characters */
     WCHAR Name[];
 } CM_VALUE;
