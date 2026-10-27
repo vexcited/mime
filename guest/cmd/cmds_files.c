@@ -781,34 +781,16 @@ int internal_copy(const WCHAR *args, NODE *node)
         WCHAR *spec = unquote(operands[i]);
         if (has_wildcards(spec)) {
             wildcard_used = TRUE;
-            STR dir, pattern;
-            str_init(&dir);
-            str_init(&pattern);
-            path_split_pattern(spec, &dir, &pattern);
-            WIN32_FIND_DATAW fd;
-            STR fspec;
-            str_init(&fspec);
-            str_adds(&fspec, spec);
-            HANDLE h = FindFirstFileW(fspec.p, &fd);
-            if (h != INVALID_HANDLE_VALUE) {
-                do {
-                    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                        continue;
-                    if (nfiles == files_cap) {
-                        files_cap = files_cap ? files_cap * 2 : 16;
-                        files = xrealloc(files, (SIZE_T)files_cap * sizeof(WCHAR *));
-                    }
-                    STR path;
-                    str_init(&path);
-                    str_adds(&path, dir.p);
-                    str_adds(&path, fd.cFileName);
-                    files[nfiles++] = str_take(&path);
-                } while (FindNextFileW(h, &fd));
-                FindClose(h);
+            SIZE_T found;
+            WCHAR **matches = list_matching(spec, &found, FALSE);
+            for (SIZE_T k = 0; k < found; k++) {
+                if (nfiles == files_cap) {
+                    files_cap = files_cap ? files_cap * 2 : 16;
+                    files = xrealloc(files, (SIZE_T)files_cap * sizeof(WCHAR *));
+                }
+                files[nfiles++] = matches[k];
             }
-            str_free(&fspec);
-            str_free(&dir);
-            str_free(&pattern);
+            xfree(matches);
         } else {
             DWORD attr = GetFileAttributesW(spec);
             if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
@@ -817,26 +799,18 @@ int internal_copy(const WCHAR *args, NODE *node)
                 str_init(&all);
                 str_adds(&all, spec);
                 str_adds(&all, L"\\*");
-                WIN32_FIND_DATAW fd;
-                HANDLE h = FindFirstFileW(all.p, &fd);
-                if (h != INVALID_HANDLE_VALUE) {
+                SIZE_T found;
+                WCHAR **matches = list_matching(str_get(&all), &found, FALSE);
+                if (found)
                     wildcard_used = TRUE;
-                    do {
-                        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                            continue;
-                        if (nfiles == files_cap) {
-                            files_cap = files_cap ? files_cap * 2 : 16;
-                            files = xrealloc(files, (SIZE_T)files_cap * sizeof(WCHAR *));
-                        }
-                        STR path;
-                        str_init(&path);
-                        str_adds(&path, spec);
-                        str_addc(&path, L'\\');
-                        str_adds(&path, fd.cFileName);
-                        files[nfiles++] = str_take(&path);
-                    } while (FindNextFileW(h, &fd));
-                    FindClose(h);
+                for (SIZE_T k = 0; k < found; k++) {
+                    if (nfiles == files_cap) {
+                        files_cap = files_cap ? files_cap * 2 : 16;
+                        files = xrealloc(files, (SIZE_T)files_cap * sizeof(WCHAR *));
+                    }
+                    files[nfiles++] = matches[k];
                 }
+                xfree(matches);
                 str_free(&all);
             } else {
                 if (nfiles == files_cap) {
@@ -1041,12 +1015,13 @@ int internal_move(const WCHAR *args, NODE *node)
     str_init(&pattern);
     path_split_pattern(src_spec, &dir, &pattern);
     BOOL wild = has_wildcards(src_spec);
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW(src_spec, &fd);
+    SIZE_T entry_count;
+    WIN32_FIND_DATAW *entries = find_all_sorted(src_spec, &entry_count);
     BOOL all = yes;
     int matched = 0;
-    if (h != INVALID_HANDLE_VALUE) {
-        do {
+    for (SIZE_T entry_index = 0; entry_index < entry_count; entry_index++) {
+        WIN32_FIND_DATAW fd = entries[entry_index];
+        {
             if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L".."))
                 continue;
             matched++;
@@ -1101,9 +1076,9 @@ int internal_move(const WCHAR *args, NODE *node)
             }
             str_free(&target);
             str_free(&src);
-        } while (FindNextFileW(h, &fd));
-        FindClose(h);
+        }
     }
+    xfree(entries);
     if (!matched) {
         err_s(L"The system cannot find the file specified.\r\n");
         set_errorlevel(1);
@@ -1144,11 +1119,12 @@ int internal_ren(const WCHAR *args, NODE *node)
     str_init(&dir);
     str_init(&pattern);
     path_split_pattern(src_spec, &dir, &pattern);
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW(src_spec, &fd);
+    SIZE_T entry_count;
+    WIN32_FIND_DATAW *entries = find_all_sorted(src_spec, &entry_count);
     int result = 0, matched = 0;
-    if (h != INVALID_HANDLE_VALUE) {
-        do {
+    for (SIZE_T entry_index = 0; entry_index < entry_count; entry_index++) {
+        WIN32_FIND_DATAW fd = entries[entry_index];
+        {
             if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L".."))
                 continue;
             matched++;
@@ -1177,9 +1153,9 @@ int internal_ren(const WCHAR *args, NODE *node)
             }
             str_free(&src);
             str_free(&target);
-        } while (FindNextFileW(h, &fd));
-        FindClose(h);
+        }
     }
+    xfree(entries);
     if (!matched) {
         err_s(L"The system cannot find the file specified.\r\n");
         set_errorlevel(1);
@@ -1280,36 +1256,20 @@ int internal_type(const WCHAR *args, NODE *node)
         }
         WCHAR *spec = unquote(a.v[i]);
         if (has_wildcards(spec)) {
-            STR dir, pattern;
-            str_init(&dir);
-            str_init(&pattern);
-            path_split_pattern(spec, &dir, &pattern);
-            WIN32_FIND_DATAW fd;
-            HANDLE h = FindFirstFileW(spec, &fd);
-            BOOL any = FALSE;
-            if (h != INVALID_HANDLE_VALUE) {
-                do {
-                    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                        continue;
-                    any = TRUE;
-                    STR path;
-                    str_init(&path);
-                    str_adds(&path, dir.p);
-                    str_adds(&path, fd.cFileName);
-                    out_fmt(L"\r\n%ls\r\n\r\n\r\n", path.p);
-                    if (type_file(path.p))
-                        result = 1;
-                    str_free(&path);
-                } while (FindNextFileW(h, &fd));
-                FindClose(h);
+            SIZE_T found;
+            WCHAR **matches = list_matching(spec, &found, FALSE);
+            for (SIZE_T k = 0; k < found; k++) {
+                out_fmt(L"\r\n%ls\r\n\r\n\r\n", matches[k]);
+                if (type_file(matches[k]))
+                    result = 1;
+                xfree(matches[k]);
             }
-            if (!any) {
+            xfree(matches);
+            if (!found) {
                 err_s(L"The system cannot find the file specified.\r\n");
                 set_errorlevel(1);
                 result = 1;
             }
-            str_free(&dir);
-            str_free(&pattern);
         } else {
             if (names > 1)
                 out_fmt(L"\r\n%ls\r\n\r\n\r\n", spec);

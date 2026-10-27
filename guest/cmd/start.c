@@ -165,9 +165,9 @@ int internal_start(const WCHAR *args, NODE *node)
             str_adds(&line, g.self);
             str_adds(&line, L"\" /S /D ");
             str_adds(&line, g.delayed ? L"/V:ON " : L"/V:OFF ");
-            str_adds(&line, o.background ? L"/c\" " : L"/c\" ");
+            str_adds(&line, L"/c\"");
             str_adds(&line, program_text);
-            str_adds(&line, L" \"");
+            str_adds(&line, L"\"");
             command_line = str_take(&line);
             flags |= o.background ? CREATE_NEW_PROCESS_GROUP : CREATE_NEW_CONSOLE;
             ok = create_child_ex(g.self, command_line, flags, g_io.h[0], g_io.h[1], g_io.h[2], o.background, o.title,
@@ -192,10 +192,12 @@ int internal_start(const WCHAR *args, NODE *node)
                 ok = shell_execute(path.p, skip_space(rest), o.directory, show, &process);
                 error = ok ? 0 : GetLastError();
             }
-        } else {
+        } else if (wcspbrk(word, L".:\\/") || GetFileAttributesW(word) != INVALID_FILE_ATTRIBUTES) {
             /* a document, a folder, an address or a name the shell knows. */
             ok = shell_execute(word, skip_space(rest), o.directory, show, &process);
             error = ok ? 0 : GetLastError();
+        } else {
+            error = ERROR_FILE_NOT_FOUND;
         }
         if (!ok && (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)) {
             err_fmt(L"The system cannot find the file %ls.\r\n", word);

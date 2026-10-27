@@ -649,3 +649,80 @@ BOOL is_switch(const WCHAR *tok)
 {
     return tok[0] == L'/' && tok[1];
 }
+
+static int compare_paths(const void *a, const void *b)
+{
+    return compare_names((const WCHAR *)a, (const WCHAR *)b);
+}
+
+/* the full names a pattern matches, sorted, files or also folders. the dot entries are left out. */
+WCHAR **list_matching(const WCHAR *spec, SIZE_T *count, BOOL with_folders)
+{
+    STR dir, pattern;
+    str_init(&dir);
+    str_init(&pattern);
+    path_split_pattern(spec, &dir, &pattern);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(spec, &fd);
+    WCHAR **list = nullptr;
+    SIZE_T n = 0, cap = 0;
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L".."))
+                continue;
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !with_folders)
+                continue;
+            if (n == cap) {
+                cap = cap ? cap * 2 : 16;
+                list = xrealloc(list, cap * sizeof(WCHAR *));
+            }
+            STR full;
+            str_init(&full);
+            str_adds(&full, dir.p);
+            str_adds(&full, fd.cFileName);
+            list[n++] = str_take(&full);
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    str_free(&dir);
+    str_free(&pattern);
+    sort_pointers((void **)list, n, compare_paths);
+    *count = n;
+    return list;
+}
+
+static int compare_found(const void *a, const void *b)
+{
+    return compare_names(((const WIN32_FIND_DATAW *)a)->cFileName, ((const WIN32_FIND_DATAW *)b)->cFileName);
+}
+
+/* everything a pattern matches, sorted by name. */
+WIN32_FIND_DATAW *find_all_sorted(const WCHAR *spec, SIZE_T *count)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(spec, &fd);
+    WIN32_FIND_DATAW *list = nullptr;
+    SIZE_T n = 0, cap = 0;
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (n == cap) {
+                cap = cap ? cap * 2 : 16;
+                list = xrealloc(list, cap * sizeof(*list));
+            }
+            list[n++] = fd;
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    /* a plain insertion sort keeps this small, lists are short. */
+    for (SIZE_T i = 1; i < n; i++) {
+        WIN32_FIND_DATAW key = list[i];
+        SIZE_T j = i;
+        while (j > 0 && compare_found(&list[j - 1], &key) > 0) {
+            list[j] = list[j - 1];
+            j--;
+        }
+        list[j] = key;
+    }
+    *count = n;
+    return list;
+}

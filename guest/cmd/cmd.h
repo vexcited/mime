@@ -139,6 +139,7 @@ typedef struct STATE {
     BOOL nul_node;     /* the last line read was empty, so the prompt needs no blank line before it */
     BOOL call_flag;    /* the command about to run is the target of call */
     DWORD in_cp;
+    BOOL cmd_script;   /* the outermost batch file is a .cmd, whose commands set ERRORLEVEL on success too */
 } STATE;
 
 extern STATE g;
@@ -339,6 +340,8 @@ BOOL has_wildcards(const WCHAR *s);
 void format_number_commas(ULONGLONG v, STR *out);
 void format_date_time(const FILETIME *ft, STR *out);
 int compare_names(const WCHAR *a, const WCHAR *b);
+WIN32_FIND_DATAW *find_all_sorted(const WCHAR *spec, SIZE_T *count);
+WCHAR **list_matching(const WCHAR *spec, SIZE_T *count, BOOL with_folders);
 void sort_pointers(void **items, SIZE_T count, int (*cmp)(const void *, const void *));
 
 /* the tokens of an argument line, split on blanks and ,;= with quotes kept. */

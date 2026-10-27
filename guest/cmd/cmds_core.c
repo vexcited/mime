@@ -437,6 +437,14 @@ int internal_call(const WCHAR *args, NODE *node)
             while (*e && !is_space(*e) && *e != L',' && *e != L';' && *e != L'=')
                 e++;
             WCHAR *label = xdupn(t, (SIZE_T)(e - t));
+            if (g.nest > 3000) {
+                err_fmt(L"******  B A T C H   R E C U R S I O N  exceeds STACK limits ******\r\nRecursion Count=%d\r\n"
+                        L"******       B A T C H   PROCESSING IS   A B O R T E D      ******\r\n",
+                        g.nest);
+                g.abort_all = TRUE;
+                node_free(parsed);
+                return 1;
+            }
             BATCH *parent = g.batch;
             BATCH *b = batch_begin(parent->path, label, e);
             b->offset = parent->offset;
@@ -499,6 +507,7 @@ int internal_ver(const WCHAR *args, NODE *node)
     version_string(&v);
     out_fmt(L"\r\n%ls\r\n", str_get(&v));
     str_free(&v);
+    set_errorlevel(0);
     return 0;
 }
 
@@ -577,6 +586,7 @@ int internal_color(const WCHAR *args, NODE *node)
 int internal_verify(const WCHAR *args, NODE *node)
 {
     const WCHAR *p = skip_space(args);
+    set_errorlevel(0);
     if (!*p) {
         out_fmt(L"VERIFY is %ls.\r\n", g.verify ? L"on" : L"off");
         return 0;

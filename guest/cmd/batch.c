@@ -126,7 +126,10 @@ static void tokenize_args(BATCH *b, const WCHAR *args)
 BATCH *batch_begin(const WCHAR *path, const WCHAR *name, const WCHAR *args)
 {
     BATCH *b = xalloc(sizeof(*b));
-    b->path = xdup(path);
+    /* the file is read again for every line, wherever the current directory goes. */
+    WCHAR full[MAX_PATH * 2];
+    DWORD n = GetFullPathNameW(path, NUM(full), full, nullptr);
+    b->path = n && n < NUM(full) ? xdup(full) : xdup(path);
     b->name = xdup(name);
     const WCHAR *start = skip_space(args);
     STR trimmed;
@@ -385,6 +388,7 @@ int run_batch_loop(BATCH *b)
         str_free(&line);
         if (!node)
             continue;
+        g.nul_node = node->kind == N_EMPTY && node->src && node->src[0] == L':';
         if (g.echo && !g.quiet && node->kind != N_QUIET && node->kind != N_EMPTY && node->src) {
             print_prompt();
             out_s(node->src);
@@ -427,6 +431,10 @@ int run_batch_file(const WCHAR *path, const WCHAR *name, const WCHAR *args, BOOL
     }
     BATCH *b = batch_begin(path, name, args);
     BOOL saved_echo = g.echo;
+    if (!b->parent) {
+        SIZE_T n = wcslen(path);
+        g.cmd_script = n >= 4 && !_wcsicmp(path + n - 4, L".cmd");
+    }
     if (!b->parent)
         b->echo_saved = saved_echo;
     g.nest++;

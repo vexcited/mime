@@ -182,9 +182,7 @@ BOOL find_program(const WCHAR *name, STR *path, int *kind)
     BOOL has_ext = wcschr(file, L'.') != nullptr;
     STR dirs;
     str_init(&dirs);
-    if (has_path) {
-        str_addc(&dirs, L';');
-    } else {
+    if (!has_path) {
         STR no_cwd;
         str_init(&no_cwd);
         if (!env_get(L"NoDefaultCurrentDirectoryInExePath", &no_cwd))
@@ -199,26 +197,25 @@ BOOL find_program(const WCHAR *name, STR *path, int *kind)
         str_free(&pv);
     }
     BOOL found = FALSE;
+    /* a name with a path is tried where it says, the others in each folder. */
     const WCHAR *d = dirs.p ? dirs.p : L"";
     for (;;) {
         const WCHAR *e = wcschr(d, L';');
         SIZE_T len = e ? (SIZE_T)(e - d) : wcslen(d);
-        STR dir;
-        str_init(&dir);
-        str_addn(&dir, d, len);
-        /* quotes around a folder of PATH are not part of its name. */
-        strip_quotes_inplace(dir.p ? dir.p : (WCHAR *)L"");
-        dir.len = dir.p ? wcslen(dir.p) : 0;
         STR base;
         str_init(&base);
-        if (!has_path) {
-            if (len || d == dirs.p) {
-                str_adds(&base, str_get(&dir));
-                if (base.len && base.p[base.len - 1] != L'\\')
-                    str_addc(&base, L'\\');
-            }
+        if (!has_path && len) {
+            STR dir;
+            str_init(&dir);
+            str_addn(&dir, d, len);
+            /* quotes around a folder of PATH are not part of its name. */
+            strip_quotes_inplace(dir.p);
+            str_adds(&base, str_get(&dir));
+            if (base.len && base.p[base.len - 1] != L'\\')
+                str_addc(&base, L'\\');
+            str_free(&dir);
         }
-        if (has_path || base.len || d == dirs.p) {
+        if (has_path || base.len) {
             STR candidate;
             str_init(&candidate);
             str_adds(&candidate, str_get(&base));
@@ -254,8 +251,7 @@ BOOL find_program(const WCHAR *name, STR *path, int *kind)
             str_free(&candidate);
         }
         str_free(&base);
-        str_free(&dir);
-        if (found || !e)
+        if (found || !e || has_path)
             break;
         d = e + 1;
     }
@@ -611,7 +607,7 @@ static int run_external(NODE *n, const WCHAR *text, BOOL as_call)
     /* the program named cmd is this one. */
     if (g.ext && !_wcsicmp(name.p, L"cmd") ) {
         DWORD code;
-        result = spawn_external(g.self, text, 0, TRUE, nullptr, 0, nullptr, &code, FALSE);
+        result = spawn_external(g.self, text, 0, FALSE, nullptr, 0, nullptr, &code, FALSE);
         str_free(&name);
         return result;
     }
@@ -638,7 +634,7 @@ static int run_external(NODE *n, const WCHAR *text, BOOL as_call)
         result = run_batch_file(path.p, name.p, args, as_call);
     } else {
         DWORD code = 0;
-        result = spawn_external(path.p, text, 0, TRUE, nullptr, 0, nullptr, &code, FALSE);
+        result = spawn_external(path.p, text, 0, FALSE, nullptr, 0, nullptr, &code, FALSE);
     }
     str_free(&path);
     str_free(&name);
@@ -681,10 +677,17 @@ int run_cmd_node(NODE *n)
     const CMDDEF *def = name.len ? find_internal(name.p) : nullptr;
     if (def) {
         const WCHAR *args = t + name_len;
-        if (!show_help(name.p, args))
+        if (!show_help(name.p, args)) {
             result = def->fn(args, n);
-        else
+            if (result)
+                set_errorlevel((DWORD)result);
+            else if (g.cmd_script && (!_wcsicmp(name.p, L"set") || !_wcsicmp(name.p, L"path") ||
+                                      !_wcsicmp(name.p, L"dpath") || !_wcsicmp(name.p, L"prompt") ||
+                                      !_wcsicmp(name.p, L"assoc") || !_wcsicmp(name.p, L"ftype")))
+                set_errorlevel(0);
+        } else {
             result = 0;
+        }
     } else {
         result = run_external(n, t, as_call);
     }
@@ -723,9 +726,9 @@ static void build_child_line(STR *line, const WCHAR *text)
     str_adds(line, L"\" /S /D ");
     str_adds(line, g.delayed ? L"/V:ON " : L"/V:OFF ");
     str_adds(line, g.ext ? L"/E:ON " : L"/E:OFF ");
-    str_adds(line, L"/c\" ");
+    str_adds(line, L"/c\"");
     str_adds(line, text);
-    str_adds(line, L" \"");
+    str_adds(line, L"\"");
 }
 
 typedef struct STAGE {
@@ -895,9 +898,9 @@ int run_command_capture(const WCHAR *command, STR *output)
     str_init(&line);
     str_addc(&line, L'"');
     str_adds(&line, g.self);
-    str_adds(&line, L"\" /S /D /c\" ");
+    str_adds(&line, L"\" /S /D /c\"");
     str_adds(&line, command);
-    str_adds(&line, L" \"");
+    str_adds(&line, L"\"");
     PROCESS_INFORMATION pi = {};
     BOOL ok = create_child(g.self, str_get(&line), 0, g_io.h[0], wr, g_io.h[2], nullptr, 0, FALSE, nullptr, &pi);
     str_free(&line);

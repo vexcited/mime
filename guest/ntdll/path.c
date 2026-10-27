@@ -114,9 +114,17 @@ static NTSTATUS full_path(PCWSTR name, PWSTR out, SIZE_T out_chars, SIZE_T *leng
         break;
     case RtlPathTypeDriveRelative: {
         WCHAR drive = (WCHAR)towupper(name[0]);
+        WCHAR variable[4] = {'=', drive, ':', 0};
+        WCHAR kept[MAX_PATH];
+        SIZE_T kept_chars = 0;
         if (cwd->Length >= 2 * sizeof(WCHAR) && towupper(cwd->Buffer[0]) == drive) {
             memcpy(buf, cwd->Buffer, cwd->Length);
             n = cwd->Length / sizeof(WCHAR);
+        } else if (NT_SUCCESS(RtlQueryEnvironmentVariable(nullptr, variable, 3, kept, RTL_NUMBER_OF(kept) - 1, &kept_chars)) &&
+                   kept_chars >= 2 && kept_chars < RTL_NUMBER_OF(kept) && towupper(kept[0]) == drive && kept[1] == ':') {
+            /* the interpreter keeps the directory of each drive in a variable of that drive's name. */
+            memcpy(buf, kept, kept_chars * sizeof(WCHAR));
+            n = kept_chars;
         } else {
             buf[0] = drive;
             buf[1] = ':';
