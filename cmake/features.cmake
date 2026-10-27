@@ -12,7 +12,8 @@ set(features_libs ${MIME_LIB_${features_arch}}/ntdll.lib ${MIME_LIB_${features_a
     ${MIME_LIB_${features_arch}}/wintrust.lib ${MIME_LIB_${features_arch}}/crypt32.lib)
 foreach(features_name features dism fondue)
     mime_link(${MIME_OUT_${features_arch}}/${features_name}.exe ${features_arch}
-        OBJECTS ${features_arch}-features ${features_arch}-toolutil ${features_arch}-chkstk LIBS ${features_libs}
+        OBJECTS ${features_arch}-features ${features_arch}-toolutil ${features_arch}-chkstk ${features_arch}-lib-cbs
+            ${features_arch}-lib-cabinet ${features_arch}-lib-crypto:guest/lib/crypto/hash.c LIBS ${features_libs}
         FLAGS /subsystem:console,10.0 /entry:entry /base:0x7FF6AE000000 /highentropyva /dynamicbase
             /stack:0x100000,0x4000
         ROM ${MIME_ROM_${features_arch}}/${features_name}.exe GROUPS guest)

@@ -262,7 +262,7 @@ static int ensure_parent(INSTALL *I, const char *path)
 
 static void sort_names(NAME_ENTRY *a, unsigned n)
 {
-    for (unsigned gap = n / 2; gap; gap = gap == 2 ? 1 : (unsigned)(gap / 2.2)) {
+    for (unsigned gap = n / 2; gap; gap = gap == 2 ? 1 : gap * 5 / 11) {
         for (unsigned i = gap; i < n; i++) {
             NAME_ENTRY t = a[i];
             unsigned j = i;
@@ -277,7 +277,7 @@ static void sort_names(NAME_ENTRY *a, unsigned n)
 
 static void sort_plans(PLAN *a, unsigned n)
 {
-    for (unsigned gap = n / 2; gap; gap = gap == 2 ? 1 : (unsigned)(gap / 2.2)) {
+    for (unsigned gap = n / 2; gap; gap = gap == 2 ? 1 : gap * 5 / 11) {
         for (unsigned i = gap; i < n; i++) {
             PLAN t = a[i];
             unsigned j = i;
@@ -596,14 +596,25 @@ typedef struct PROGRESS_STATE {
     uint64_t Dummy;
 } PROGRESS_STATE;
 
-static void report(INSTALL *I, bool force)
+/* reports the work done now and then; true when the user cancelled. */
+static bool report(INSTALL *I, bool force)
 {
     if (!I->Progress || !I->Progress->Report)
-        return;
+        return false;
     if (!force && I->Done - I->Reported < (1u << 20))
-        return;
+        return false;
     I->Reported = I->Done;
-    I->Progress->Report(I->Progress->Context, I->Done, I->Total);
+    if (!I->Progress->Report(I->Progress->Context, I->Done, I->Total))
+        return false;
+    if (I->Status == CBS_OK)
+        I->Status = CBS_STOPPED;
+    return true;
+}
+
+static void step(const INSTALL *I, const char *text)
+{
+    if (I->Progress && I->Progress->Step)
+        I->Progress->Step(I->Progress->Context, text);
 }
 
 /* ------------------------------------------------------------------ writing the files */
@@ -729,8 +740,7 @@ static int payload_write(void *context, void *file_context, const uint8_t *data,
     }
     w->Written += length;
     I->Done += length;
-    report(I, false);
-    return 0;
+    return report(I, false) ? 1 : 0;
 }
 
 static int payload_end(void *context, void *file_context, const MIME_CAB_FILE *file)
@@ -920,7 +930,12 @@ static int write_registry(INSTALL *I, const CBS_COMPONENT *c)
         char *name = registry_key(I, c->Id.Arch, key->Name);
         if (!name)
             continue;
-        if (t->CreateKey(t->Context, view, name)) {
+        int created = t->CreateKey(t->Context, view, name);
+        if (created == CBS_DENIED) {
+            log_path(I, "a registry key that is protected stays as it is:", name);
+            continue;
+        }
+        if (created) {
             log_line(I, name);
             return CBS_TARGET_FAILED;
         }
@@ -953,7 +968,12 @@ static int write_registry(INSTALL *I, const CBS_COMPONENT *c)
                 log_line(I, "a registry value of a manifest is not valid");
                 return CBS_BAD;
             }
-            if (t->SetValue(t->Context, view, name, value_name, (uint32_t)value->Type, data, size)) {
+            int set = t->SetValue(t->Context, view, name, value_name, (uint32_t)value->Type, data, size);
+            if (set == CBS_DENIED) {
+                log_path(I, "a registry value that is protected stays as it is:", name);
+                continue;
+            }
+            if (set) {
                 log_line(I, name);
                 return CBS_TARGET_FAILED;
             }
@@ -1038,6 +1058,7 @@ int CbsInstallCabinet(const uint8_t *cabinet, size_t size, const CBS_LAYOUT *lay
         release(&I);
         return CBS_NOT_FOUND;
     }
+    step(&I, "Reading the package");
     MIME_CAB_FILE_SINK manifest_sink = {manifest_begin, manifest_write, manifest_end};
     status = map_cab_status(MimeCabExtract(I.Cab, &manifest_sink, &I));
     if (I.Status != CBS_OK)
@@ -1068,16 +1089,20 @@ int CbsInstallCabinet(const uint8_t *cabinet, size_t size, const CBS_LAYOUT *lay
         }
     }
     if (status == CBS_OK) {
+        step(&I, "Copying the files");
         MIME_CAB_FILE_SINK payload_sink = {payload_begin, payload_write, payload_end};
         status = map_cab_status(MimeCabExtract(I.Cab, &payload_sink, &I));
         if (I.Status != CBS_OK)
             status = I.Status;
     }
+    if (status == CBS_OK)
+        step(&I, "Writing the registry");
     for (unsigned c = 0; c < I.ComponentCount && status == CBS_OK; c++)
         status = write_registry(&I, I.Components[c]);
     if (status == CBS_OK) {
         I.Done = I.Total;
         report(&I, true);
+        status = I.Status;
     }
     release(&I);
     return status;

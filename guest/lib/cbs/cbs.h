@@ -178,7 +178,10 @@ typedef struct CBS_LAYOUT {
     CBS_ARCH Native; /* the processor of the system: x86, amd64 or arm64. */
 } CBS_LAYOUT;
 
-/* what the library asks of the system. every call returns 0 on success; the target keeps its own last error. */
+/* what the library asks of the system. every call returns 0 on success; the target keeps its own last error. the registry
+   calls may also return CBS_DENIED, for a key that is there and that the caller may not change, which is left as it is. */
+#define CBS_DENIED 2
+
 struct CBS_TARGET {
     void *Context;
     /* creates the directory and its parents. */
@@ -204,7 +207,10 @@ struct CBS_TARGET {
 };
 
 typedef struct CBS_PROGRESS {
-    void (*Report)(void *context, uint64_t done, uint64_t total);
+    /* the bytes done of the bytes to do; a non-zero return cancels the installation. */
+    int (*Report)(void *context, uint64_t done, uint64_t total);
+    /* optional: what is being done now. */
+    void (*Step)(void *context, const char *step);
     void *Context;
 } CBS_PROGRESS;
 

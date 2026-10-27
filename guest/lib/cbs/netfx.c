@@ -1,6 +1,6 @@
 /* NetfxInstallFromPackage: the windows side of the servicing library, files and registry of the machine. */
-#include "netfx.h"
 #include "cbs.h"
+#include <mime/feature.h>
 #include "../crypto/crypto.h"
 #include <mime/win32/winnls.h>
 #include <rtl.h>
@@ -255,10 +255,20 @@ static HKEY open_key(WIN_TARGET *w, int view, const char *key, bool create)
     return h;
 }
 
+/* a key that is there and may not be changed is not a failure of the installation. */
+static int registry_fail(WIN_TARGET *w)
+{
+    DWORD error = GetLastError();
+    if (error == ERROR_ACCESS_DENIED)
+        return CBS_DENIED;
+    SetLastError(error);
+    return fail(w);
+}
+
 static int t_create_key(void *context, int view, const char *key)
 {
     WIN_TARGET *w = context;
-    return open_key(w, view, key, true) ? 0 : fail(w);
+    return open_key(w, view, key, true) ? 0 : registry_fail(w);
 }
 
 static int t_set_value(void *context, int view, const char *key, const char *name, uint32_t type, const void *data,
@@ -267,7 +277,7 @@ static int t_set_value(void *context, int view, const char *key, const char *nam
     WIN_TARGET *w = context;
     HKEY h = open_key(w, view, key, true);
     if (!h)
-        return fail(w);
+        return registry_fail(w);
     WCHAR wide_name[256];
     if (name && !to_wide(name, wide_name, 256)) {
         SetLastError(ERROR_BAD_PATHNAME);
@@ -292,7 +302,7 @@ static int t_set_value(void *context, int view, const char *key, const char *nam
         status = RegSetValueExW(h, name ? wide_name : L"", 0, type, data, (DWORD)size);
     if (status != ERROR_SUCCESS) {
         SetLastError((DWORD)status);
-        return fail(w);
+        return registry_fail(w);
     }
     return 0;
 }
@@ -450,13 +460,39 @@ static int pick_cabinet(const CBS_7Z *archive, CBS_ARCH native, unsigned *index)
     return CBS_NOT_FOUND;
 }
 
+/* what the handler tells the caller: the bytes of the two phases, extracting then installing, and the step. */
+typedef struct REPORTER {
+    MIME_FEATURE_PROGRESS Progress;
+    void *Context;
+    uint64_t Base, Span, Scale; /* this phase covers Span of Scale from Base. */
+    uint64_t LastDone, LastTotal;
+    WCHAR Step[64];
+    bool Cancelled;
+} REPORTER;
+
+static void set_step(REPORTER *r, const char *text)
+{
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, r->Step, 64);
+}
+
+/* true when the caller cancelled. done of total is how far the phase is. */
+static bool tell(REPORTER *r, uint64_t done, uint64_t total)
+{
+    r->LastDone = done;
+    r->LastTotal = total;
+    if (!r->Progress)
+        return false;
+    uint64_t position = r->Base + (total ? done * r->Span / total : 0);
+    if (!r->Progress(r->Context, position, r->Scale, r->Step))
+        r->Cancelled = true;
+    return r->Cancelled;
+}
+
 typedef struct EXTRACT_STATE {
     WIN_TARGET *Target;
     OUT_FILE *File;
-    uint64_t Done, Total, Reported;
-    void (*Progress)(void *, ULONG, ULONG);
-    void *Context;
-    uint64_t Scale; /* the total of the two phases. */
+    REPORTER *Reporter;
+    uint64_t Done, Reported, Total;
 } EXTRACT_STATE;
 
 static int extract_sink(void *context, const uint8_t *data, size_t length)
@@ -465,25 +501,24 @@ static int extract_sink(void *context, const uint8_t *data, size_t length)
     if (t_write(e->Target, e->File, data, length))
         return 1;
     e->Done += length;
-    if (e->Progress && e->Done - e->Reported >= (1u << 22)) {
+    if (e->Done - e->Reported >= (1u << 22)) {
         e->Reported = e->Done;
-        e->Progress(e->Context, (ULONG)e->Done, (ULONG)e->Scale);
+        if (tell(e->Reporter, e->Done, e->Total))
+            return 1;
     }
     return 0;
 }
 
-typedef struct PHASE {
-    void (*Progress)(void *, ULONG, ULONG);
-    void *Context;
-    uint64_t Base, Scale;
-} PHASE;
-
-static void install_progress(void *context, uint64_t done, uint64_t total)
+static int install_report(void *context, uint64_t done, uint64_t total)
 {
-    PHASE *p = context;
-    (void)total;
-    if (p->Progress)
-        p->Progress(p->Context, (ULONG)(p->Base + done), (ULONG)p->Scale);
+    return tell(context, done, total) ? 1 : 0;
+}
+
+static void install_step(void *context, const char *step)
+{
+    REPORTER *r = context;
+    set_step(r, step);
+    tell(r, r->LastDone, r->LastTotal);
 }
 
 static CBS_ARCH native_arch(void)
@@ -500,43 +535,116 @@ static CBS_ARCH native_arch(void)
     }
 }
 
-DWORD NetfxInstallFromPackage(PCWSTR package, PCWSTR windows_root, void (*progress)(void *context, ULONG done, ULONG total),
-                              void *context)
+/* the places of the system below the root of the drive, as the manifests' variables stand for them. */
+typedef struct PLACES {
+    char Windows[600], System32[600], SysWow64[600], ProgramData[600], ProgramFiles[600];
+} PLACES;
+
+static bool make_layout(PCWSTR root_wide, CBS_ARCH native, PLACES *p, CBS_LAYOUT *layout)
 {
-    if (!package || !windows_root || !*windows_root)
+    char *root = to_utf8(root_wide);
+    if (!root)
+        return false;
+    size_t n = strlen(root);
+    while (n > 0 && root[n - 1] == '\\')
+        root[--n] = 0;
+    bool fits = n > 0 && n + 40 < sizeof(p->Windows);
+    if (fits) {
+        memcpy(p->Windows, root, n);
+        memcpy(p->Windows + n, "\\Windows", 9);
+        size_t w = n + 8;
+        memcpy(p->System32, p->Windows, w);
+        memcpy(p->System32 + w, "\\System32", 10);
+        memcpy(p->SysWow64, p->Windows, w);
+        memcpy(p->SysWow64 + w, native == CBS_ARCH_X86 ? "\\System32" : "\\SysWOW64", 10);
+        memcpy(p->ProgramData, root, n);
+        memcpy(p->ProgramData + n, "\\ProgramData", 13);
+        memcpy(p->ProgramFiles, root, n);
+        if (native == CBS_ARCH_X86)
+            memcpy(p->ProgramFiles + n, "\\Program Files", 15);
+        else
+            memcpy(p->ProgramFiles + n, "\\Program Files (x86)", 21);
+        memset(layout, 0, sizeof(*layout));
+        layout->Windows = p->Windows;
+        layout->System32 = p->System32;
+        layout->SysWow64 = p->SysWow64;
+        layout->ProgramData = p->ProgramData;
+        layout->ProgramFiles = p->ProgramFiles;
+        layout->Is64Bit = native != CBS_ARCH_X86;
+        layout->Native = native;
+    }
+    CbsFree(root);
+    return fits;
+}
+
+/* writes the cabinet of the archive that is for this processor to a file below the Windows directory. */
+static int extract_cabinet(WIN_TARGET *w, REPORTER *reporter, const CBS_LAYOUT *layout, const VIEW *package,
+                           CBS_ARCH native, WCHAR *cabinet_path)
+{
+    size_t archive_size;
+    const uint8_t *archive_data = find_archive(package->Data, package->Size, &archive_size);
+    CBS_7Z *archive = nullptr;
+    unsigned index = 0;
+    int status = archive_data ? Cbs7zOpen(&archive, archive_data, archive_size) : CBS_BAD;
+    if (status == CBS_OK)
+        status = pick_cabinet(archive, native, &index);
+    if (status != CBS_OK) {
+        Cbs7zClose(archive);
+        return status;
+    }
+    const char *name;
+    uint64_t size;
+    uint32_t crc;
+    bool has_crc;
+    Cbs7zInfo(archive, index, &name, &size, &crc, &has_crc);
+    /* the extraction is the first half of the work and the installation the second. */
+    reporter->Base = 0;
+    reporter->Span = size;
+    reporter->Scale = size * 2;
+    set_step(reporter, "Extracting the package");
+    WCHAR directory[1024];
+    if (!to_wide(layout->Windows, directory, 1000)) {
+        Cbs7zClose(archive);
+        return CBS_BAD;
+    }
+    wcscat(directory, L"\\Temp");
+    wcscpy(cabinet_path, directory);
+    wcscat(cabinet_path, L"\\netfx481.cab");
+    char path[1100];
+    EXTRACT_STATE e = {};
+    e.Target = w;
+    e.Reporter = reporter;
+    e.Total = size;
+    if (create_directory_wide(w, directory) ||
+        !WideCharToMultiByte(CP_UTF8, 0, cabinet_path, -1, path, sizeof(path), nullptr, nullptr))
+        status = CBS_TARGET_FAILED;
+    else if (t_begin(w, path, size, (void **)&e.File))
+        status = CBS_TARGET_FAILED;
+    else {
+        status = Cbs7zExtract(archive, index, extract_sink, &e);
+        if (status == CBS_STOPPED && !reporter->Cancelled)
+            status = CBS_TARGET_FAILED;
+        if (status == CBS_OK && t_end(w, e.File))
+            status = CBS_TARGET_FAILED;
+        else if (status != CBS_OK)
+            t_abort(w, e.File);
+    }
+    Cbs7zClose(archive);
+    reporter->Base = size;
+    reporter->LastDone = reporter->LastTotal = 0;
+    return status;
+}
+
+DWORD NetfxInstallFromPackage(PCWSTR package, PCWSTR root, MIME_FEATURE_PROGRESS progress, void *context)
+{
+    if (!package || !root || !*root)
         return ERROR_INVALID_PARAMETER;
     WIN_TARGET w = {};
-    char *root = to_utf8(windows_root);
-    if (!root)
-        return ERROR_NOT_ENOUGH_MEMORY;
-    size_t root_length = strlen(root);
-    while (root_length > 3 && root[root_length - 1] == '\\')
-        root[--root_length] = 0;
     CBS_ARCH native = native_arch();
-    char system32[600], syswow64[600], program_data[600], program_files[600];
-    const char *drive_end = root[1] == ':' ? root + 2 : root;
-    size_t drive_length = (size_t)(drive_end - root);
-    if (root_length + 24 >= sizeof(system32)) {
-        CbsFree(root);
+    PLACES places;
+    CBS_LAYOUT layout;
+    if (!make_layout(root, native, &places, &layout))
         return ERROR_BAD_PATHNAME;
-    }
-    memcpy(system32, root, root_length);
-    memcpy(system32 + root_length, "\\System32", 10);
-    memcpy(syswow64, root, root_length);
-    memcpy(syswow64 + root_length, native == CBS_ARCH_X86 ? "\\System32" : "\\SysWOW64", 10);
-    memcpy(program_data, root, drive_length);
-    memcpy(program_data + drive_length, "\\ProgramData", 13);
-    memcpy(program_files, root, drive_length);
-    memcpy(program_files + drive_length, native == CBS_ARCH_X86 ? "\\Program Files" : "\\Program Files (x86)",
-           native == CBS_ARCH_X86 ? 15 : 21);
-    CBS_LAYOUT layout = {};
-    layout.Windows = root;
-    layout.System32 = system32;
-    layout.SysWow64 = syswow64;
-    layout.ProgramData = program_data;
-    layout.ProgramFiles = program_files;
-    layout.Is64Bit = native != CBS_ARCH_X86;
-    layout.Native = native;
     CBS_TARGET target = {};
     target.Context = &w;
     target.CreateDirectory = t_create_directory;
@@ -550,74 +658,26 @@ DWORD NetfxInstallFromPackage(PCWSTR package, PCWSTR windows_root, void (*progre
     target.SetValue = t_set_value;
     target.GetDword = t_get_dword;
     target.Log = t_log;
+    REPORTER reporter = {};
+    reporter.Progress = progress;
+    reporter.Context = context;
+    set_step(&reporter, "Reading the package");
 
     VIEW package_view;
     DWORD error = map_file(package, &package_view);
-    if (error != ERROR_SUCCESS) {
-        CbsFree(root);
+    if (error != ERROR_SUCCESS)
         return error;
-    }
     VIEW cabinet_view = {};
-    WCHAR temp_path[1024] = {};
-    PHASE phase = {progress, context, 0, 0};
+    WCHAR cabinet_path[1100] = {};
     int status = CBS_OK;
-    const uint8_t *cabinet = nullptr;
-    size_t cabinet_size = 0;
+    const uint8_t *cabinet = package_view.Data;
+    size_t cabinet_size = package_view.Size;
     if (package_view.Size >= 4 && !memcmp(package_view.Data, "MSCF", 4)) {
-        cabinet = package_view.Data;
-        cabinet_size = package_view.Size;
-        phase.Scale = cabinet_size;
+        reporter.Span = reporter.Scale = cabinet_size;
     } else {
-        size_t archive_size;
-        const uint8_t *archive_data = find_archive(package_view.Data, package_view.Size, &archive_size);
-        CBS_7Z *archive = nullptr;
-        unsigned index = 0;
-        status = archive_data ? Cbs7zOpen(&archive, archive_data, archive_size) : CBS_BAD;
-        if (status == CBS_OK)
-            status = pick_cabinet(archive, native, &index);
+        status = extract_cabinet(&w, &reporter, &layout, &package_view, native, cabinet_path);
         if (status == CBS_OK) {
-            const char *name;
-            uint64_t size;
-            uint32_t crc;
-            bool has_crc;
-            Cbs7zInfo(archive, index, &name, &size, &crc, &has_crc);
-            /* the cabinet goes to the Temp directory of the Windows directory to be mapped. progress counts both phases. */
-            WCHAR temp_directory[1024];
-            if (!to_wide(root, temp_directory, 1000)) {
-                status = CBS_BAD;
-            } else {
-                wcscat(temp_directory, L"\\Temp");
-                if (create_directory_wide(&w, temp_directory))
-                    status = CBS_TARGET_FAILED;
-                wcscpy(temp_path, temp_directory);
-                wcscat(temp_path, L"\\netfx481.cab");
-            }
-            EXTRACT_STATE e = {};
-            e.Target = &w;
-            e.Progress = progress;
-            e.Context = context;
-            e.Scale = size * 2;
-            phase.Base = size;
-            phase.Scale = size * 2;
-            char temp_utf8[1100];
-            if (status == CBS_OK && !WideCharToMultiByte(CP_UTF8, 0, temp_path, -1, temp_utf8, sizeof(temp_utf8), nullptr, nullptr))
-                status = CBS_BAD;
-            if (status == CBS_OK && t_begin(&w, temp_utf8, size, (void **)&e.File))
-                status = CBS_TARGET_FAILED;
-            if (status == CBS_OK) {
-                status = Cbs7zExtract(archive, index, extract_sink, &e);
-                if (status == CBS_STOPPED)
-                    status = CBS_TARGET_FAILED;
-                if (status == CBS_OK) {
-                    if (t_end(&w, e.File))
-                        status = CBS_TARGET_FAILED;
-                } else
-                    t_abort(&w, e.File);
-            }
-        }
-        Cbs7zClose(archive);
-        if (status == CBS_OK) {
-            error = map_file(temp_path, &cabinet_view);
+            error = map_file(cabinet_path, &cabinet_view);
             if (error != ERROR_SUCCESS) {
                 w.Error = error;
                 status = CBS_TARGET_FAILED;
@@ -628,16 +688,19 @@ DWORD NetfxInstallFromPackage(PCWSTR package, PCWSTR windows_root, void (*progre
         }
     }
     if (status == CBS_OK) {
-        CBS_PROGRESS reporter = {install_progress, &phase};
-        status = CbsInstallCabinet(cabinet, cabinet_size, &layout, &target, &reporter);
-        if (status == CBS_OK)
+        CBS_PROGRESS install = {install_report, install_step, &reporter};
+        status = CbsInstallCabinet(cabinet, cabinet_size, &layout, &target, &install);
+        if (status == CBS_OK) {
+            set_step(&reporter, "Writing the registry");
             status = CbsInstallFrameworkRegistry(&layout, &target);
+            if (status == CBS_OK && tell(&reporter, 1, 1))
+                status = CBS_STOPPED;
+        }
     }
     close_key(&w);
     unmap_file(&cabinet_view);
-    if (temp_path[0])
-        DeleteFileW(temp_path);
+    if (cabinet_path[0])
+        DeleteFileW(cabinet_path);
     unmap_file(&package_view);
-    CbsFree(root);
     return error_of(status, &w);
 }
