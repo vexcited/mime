@@ -29,7 +29,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-crt ${arch} SOURCES ${crt_sources} OPTIONS -fno-builtin)
     mime_objects(${arch}-chkstk ${arch} SOURCES ${MIME_CHKSTK_${arch}})
     set(lib_includes guest/lib third_party/SPIRV-Cross)
-    foreach(lib privdata dxbc dxil png pngio jpeg tiff gif bcn vector msstyles compound cabinet audio dinput xinput richedit crypto ttf xmldom cbs)
+    foreach(lib privdata dxbc dxil png pngio jpeg tiff gif bcn vector msstyles compound cabinet audio dinput xinput richedit crypto ttf xmldom cbs lzms)
         mime_glob(lib_sources guest/lib/${lib}/*.c)
         mime_objects(${arch}-lib-${lib} ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes})
     endforeach()
@@ -166,7 +166,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         IMPORTS ntdll kernel32 DEF ${MIME_GEN}/${arch}/mscoree.def)
 
     mime_sources(sources gdi32 ${arch})
-    mime_dll(gdi32 ${arch} BASE 0x7FF800000000 SOURCES ${sources} OBJECTS ${arch}-chkstk
+    mime_dll(gdi32 ${arch} BASE 0x7FF800000000 SOURCES ${sources} guest/kernelbase/features.c OBJECTS ${arch}-chkstk
         OPTIONS -DMIME_BUILD_GDI32 IMPORTS ntdll kernel32 win32u)
 
     mime_sources(sources user32 ${arch})

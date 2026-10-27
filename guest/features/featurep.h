@@ -53,6 +53,8 @@ void RunReport(RUN *run, ULONGLONG done, ULONGLONG total, PCWSTR step);
 void RunSnapshot(RUN *run, FEATURE_STAGE *stage, ULONGLONG *done, ULONGLONG *total, WCHAR *step, SIZE_T chars);
 void FillOps(FEATURE_OPS *ops, RUN *run);
 void WidenName(const char *name, WCHAR *wide, SIZE_T chars);
+DWORD FeatureRequestCount(const FEATURE_DEF *feature);
+void RecordRequest(const FEATURE_DEF *feature, PCWSTR caller);
 BOOL FeatureLoadState(const FEATURE_DEF *feature, FEATURE_STATE *state, DWORD *error);
 /* The version of the feature that is on the drive, empty when none. */
 void FeatureInstalledVersion(RUN *run, const FEATURE_DEF *feature, WCHAR *version, SIZE_T chars);
@@ -68,6 +70,37 @@ void HandlerVersion(RUN *run, const FEATURE_DEF *feature, WCHAR *version, SIZE_T
 
 /* download.c */
 DWORD DownloadPackage(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR destination);
+
+/* ranges.c: parts of a file at an address. */
+typedef struct RANGES RANGES;
+RANGES *RangesOpen(RUN *run, const FEATURE_DEF *feature, PCWSTR url);
+void RangesClose(RANGES *ranges);
+/* Reads length bytes at the offset. */
+DWORD RangesRead(RANGES *ranges, ULONGLONG offset, SIZE_T length, void *buffer);
+/* The size of the file, once a read has told it. */
+ULONGLONG RangesTotal(const RANGES *ranges);
+/* About how many bytes the reads will come to, for the progress. */
+void RangesExpect(RANGES *ranges, ULONGLONG bytes);
+
+/* zip.c and wim.c: the fonts of a feature read out of an archive at an address into a pack in the cache. */
+DWORD AcquireZip(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR destination);
+DWORD AcquireWim(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR destination);
+
+/* pack.c: the file of fonts that the archives are read into. */
+BOOL PackCreate(PCWSTR path, HANDLE *file);
+BOOL PackAppend(HANDLE file, const char *name, const void *data, SIZE_T size);
+BOOL PackFinish(HANDLE file, DWORD count);
+BOOL PackWalk(const BYTE *data, SIZE_T size, BOOL (*entry)(void *context, const char *name, const BYTE *bytes, SIZE_T length),
+              void *context);
+
+/* hashes.c */
+BOOL HashMatches(const BYTE *data, SIZE_T size, const char *sha256, const char *sha1);
+BOOL FileMatches(PCWSTR path, const char *sha256);
+
+/* fonts.c */
+uint32_t FontsInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package);
+uint32_t FontsRemove(RUN *run, const FEATURE_DEF *feature);
+BOOL FontsPresent(RUN *run, const FEATURE_DEF *feature);
 
 /* trust.c */
 DWORD VerifyPackage(RUN *run, const FEATURE_DEF *feature, PCWSTR path);

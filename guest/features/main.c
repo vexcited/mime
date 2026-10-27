@@ -275,6 +275,8 @@ static int change(const OPTIONS *o, const FEATURE_DEF *feature)
         if (*p == L'_')
             *p = L' ';
     run.EnableFlags = dialogs ? FEATURE_ENABLE_ASK : 0;
+    if (o->Ask && !remove)
+        RecordRequest(feature, run.Caller);
     FillOps(&run.Ops, &run);
     HANDLE mutex = lock_feature(feature, run.Console);
     DWORD error = UiRun(&run, work);
@@ -355,6 +357,9 @@ static int show_status(const FEATURE_DEF *feature)
         ErrorMessage(error, message, RTL_NUMBER_OF(message));
         tu_print(L"Last error   : %ls (0x%08X)\n", message, error);
     }
+    DWORD requests = FeatureRequestCount(feature);
+    if (requests)
+        tu_print(L"Requests     : %lu\n", requests);
     return 0;
 }
 

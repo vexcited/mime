@@ -89,7 +89,7 @@ static ULONGLONG header_number(HINTERNET request, DWORD query)
 }
 
 /* The last address of the request must still be Microsoft's, whatever the redirects did. */
-static BOOL final_address_allowed(HINTERNET request)
+static BOOL final_address_allowed(HINTERNET request, const FEATURE_DEF *feature)
 {
     WCHAR url[2048];
     DWORD size = sizeof(url);
@@ -98,7 +98,7 @@ static BOOL final_address_allowed(HINTERNET request)
     char utf8[2048];
     if (!WideCharToMultiByte(CP_UTF8, 0, url, -1, utf8, sizeof(utf8), nullptr, nullptr))
         return FALSE;
-    return FeatureUrlAllowed(utf8);
+    return FeatureUrlAllowedFor(feature, utf8);
 }
 
 /*
@@ -138,9 +138,16 @@ static DWORD transfer(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR p
         error = GetLastError();
         goto done;
     }
-    if (have) {
-        WCHAR headers[400];
-        _snwprintf(headers, RTL_NUMBER_OF(headers), L"Range: bytes=%llu-\r\nIf-Range: %ls\r\n", have, validator);
+    /* The package may be a part of the file, which the feature names. */
+    BOOL ranged = feature->RangeLength != 0;
+    if (ranged && have >= feature->RangeLength)
+        have = 0;
+    if (have || ranged) {
+        WCHAR headers[400], last[32] = L"";
+        if (ranged)
+            _snwprintf(last, RTL_NUMBER_OF(last), L"%llu", feature->RangeOffset + feature->RangeLength - 1);
+        _snwprintf(headers, RTL_NUMBER_OF(headers), L"Range: bytes=%llu-%ls\r\n%ls%ls%ls", feature->RangeOffset + have, last,
+                   have ? L"If-Range: " : L"", have ? validator : L"", have ? L"\r\n" : L"");
         headers[RTL_NUMBER_OF(headers) - 1] = 0;
         WinHttpAddRequestHeaders(t.Request, headers, (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
     }
@@ -149,7 +156,7 @@ static DWORD transfer(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR p
         error = GetLastError();
         goto done;
     }
-    if (!final_address_allowed(t.Request)) {
+    if (!final_address_allowed(t.Request, feature)) {
         /* A redirect to anywhere but Microsoft is no download of this feature. */
         error = ERROR_ACCESS_DENIED;
         goto done;
@@ -158,6 +165,13 @@ static DWORD transfer(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR p
     WinHttpQueryHeaders(t.Request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
                         &status, &size, WINHTTP_NO_HEADER_INDEX);
     BOOL resumed = status == 206 && have;
+    if (ranged && status != 206 && status != 416) {
+        /* A server that sends the whole file when a part is asked for would be read until the limit. */
+        error = ERROR_BAD_NET_RESP;
+        _snwprintf(run->Detail, RTL_NUMBER_OF(run->Detail), L"The server answered %lu to a request for a part of a file.", status);
+        run->Detail[RTL_NUMBER_OF(run->Detail) - 1] = 0;
+        goto done;
+    }
     if (status == 416 && have) {
         /* The server has no more bytes after ours: the file was whole, or it changed. Start over. */
         DeleteFileW(part);
@@ -165,7 +179,7 @@ static DWORD transfer(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR p
         error = ERROR_MORE_DATA;
         goto done;
     }
-    if (status != 200 && !resumed) {
+    if (status != 200 && !resumed && !(ranged && status == 206)) {
         error = status == 404 ? ERROR_FILE_NOT_FOUND : status == 403 || status == 401 ? ERROR_ACCESS_DENIED : ERROR_BAD_NET_RESP;
         _snwprintf(run->Detail, RTL_NUMBER_OF(run->Detail), L"The server answered %lu.", status);
         run->Detail[RTL_NUMBER_OF(run->Detail) - 1] = 0;
@@ -175,6 +189,10 @@ static DWORD transfer(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR p
         have = 0;
     ULONGLONG remaining = header_number(t.Request, WINHTTP_QUERY_CONTENT_LENGTH);
     ULONGLONG total = remaining ? have + remaining : 0;
+    if (ranged && total != feature->RangeLength) {
+        error = ERROR_BAD_NET_RESP;
+        goto done;
+    }
     if (total && total > feature->MaxSize) {
         error = ERROR_FILE_TOO_LARGE;
         goto done;

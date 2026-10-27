@@ -1081,9 +1081,14 @@ WINGDIAPI HPEN WINAPI ExtCreatePen(DWORD style, DWORD width, const LOGBRUSH *lb,
 
 /* ------------------------------------------------------------------ fonts and text */
 
+void GdiAskForFont(const LOGFONTW *lf);
+
 WINGDIAPI HFONT WINAPI CreateFontIndirectW(const LOGFONTW *lf)
 {
-    return lf ? NtGdiHfontCreate(lf, sizeof(*lf), 0, 0, nullptr) : nullptr;
+    if (!lf)
+        return nullptr;
+    GdiAskForFont(lf);
+    return NtGdiHfontCreate(lf, sizeof(*lf), 0, 0, nullptr);
 }
 
 static void logfont_a_to_w(const LOGFONTA *a, LOGFONTW *w)

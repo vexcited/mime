@@ -40,14 +40,22 @@ static const FEATURE_DEF g_catalog[] = {
     },
 };
 
+/* The fonts, in fontcatalog.c. */
+extern const FEATURE_DEF g_font_features[];
+extern const size_t g_font_feature_count;
+
+#define BASE_COUNT (sizeof(g_catalog) / sizeof(g_catalog[0]))
+
 size_t FeatureCount(void)
 {
-    return sizeof(g_catalog) / sizeof(g_catalog[0]);
+    return BASE_COUNT + g_font_feature_count;
 }
 
 const FEATURE_DEF *FeatureAt(size_t index)
 {
-    return index < FeatureCount() ? &g_catalog[index] : nullptr;
+    if (index < BASE_COUNT)
+        return &g_catalog[index];
+    return index < FeatureCount() ? &g_font_features[index - BASE_COUNT] : nullptr;
 }
 
 static int fold(int c)
@@ -68,9 +76,11 @@ const FEATURE_DEF *FeatureFind(const char *name)
     if (!name)
         return nullptr;
     size_t n = strlen(name);
-    for (size_t i = 0; i < FeatureCount(); i++)
-        if (strlen(g_catalog[i].Name) == n && equal_nocase(g_catalog[i].Name, name, n))
-            return &g_catalog[i];
+    for (size_t i = 0; i < FeatureCount(); i++) {
+        const FEATURE_DEF *feature = FeatureAt(i);
+        if (strlen(feature->Name) == n && equal_nocase(feature->Name, name, n))
+            return feature;
+    }
     return nullptr;
 }
 
@@ -79,10 +89,27 @@ const FEATURE_DEF *FeatureFindProviding(const char *family)
     if (!family)
         return nullptr;
     size_t n = strlen(family);
-    for (size_t i = 0; i < FeatureCount(); i++)
-        for (const char *const *name = g_catalog[i].Provides; name && *name; name++)
+    for (size_t i = 0; i < FeatureCount(); i++) {
+        const FEATURE_DEF *feature = FeatureAt(i);
+        for (const char *const *name = feature->Provides; name && *name; name++)
             if (strlen(*name) == n && equal_nocase(*name, family, n))
-                return &g_catalog[i];
+                return feature;
+        for (size_t k = 0; k < feature->FontCount; k++)
+            for (const char *const *name = feature->Fonts[k].Families; name && *name; name++)
+                if (strlen(*name) == n && equal_nocase(*name, family, n))
+                    return feature;
+    }
+    return nullptr;
+}
+
+const FEATURE_FONT *FeatureFindFont(const FEATURE_DEF *feature, const char *file)
+{
+    if (!file)
+        return nullptr;
+    size_t n = strlen(file);
+    for (size_t k = 0; k < feature->FontCount; k++)
+        if (strlen(feature->Fonts[k].File) == n && equal_nocase(feature->Fonts[k].File, file, n))
+            return &feature->Fonts[k];
     return nullptr;
 }
 
@@ -108,6 +135,46 @@ bool FeatureUrlAllowed(const char *url)
     }
     static const char domain[] = ".microsoft.com";
     return n > sizeof(domain) - 1 && equal_nocase(host + n - (sizeof(domain) - 1), domain, sizeof(domain) - 1);
+}
+
+/* The host of an address, without a port, when the address is plain: a name, no user name or brackets. */
+static bool address_host(const char *url, const char *scheme, size_t *start, size_t *length)
+{
+    size_t scheme_length = strlen(scheme);
+    if (!url || strlen(url) <= scheme_length || !equal_nocase(url, scheme, scheme_length))
+        return false;
+    const char *host = url + scheme_length;
+    size_t n = 0;
+    while (host[n] && host[n] != '/' && host[n] != ':' && host[n] != '?' && host[n] != '#') {
+        if (host[n] == '@' || host[n] == '[' || host[n] == '\\')
+            return false;
+        n++;
+    }
+    *start = scheme_length;
+    *length = n;
+    return n > 0;
+}
+
+static bool host_is(const char *url, size_t start, size_t length, const char *domain)
+{
+    size_t d = strlen(domain);
+    /* The domain itself or a name below it. */
+    if (length == d)
+        return equal_nocase(url + start, domain, d);
+    return length > d && url[start + length - d - 1] == '.' && equal_nocase(url + start + length - d, domain, d);
+}
+
+bool FeatureUrlAllowedFor(const FEATURE_DEF *feature, const char *url)
+{
+    if (FeatureUrlAllowed(url))
+        return true;
+    /* Only what a hash decides may come from anywhere else, and each kind of file from one place. */
+    size_t start, length;
+    if (feature->Format == FEATURE_FORMAT_ZIP && address_host(url, "https://", &start, &length))
+        return host_is(url, start, length, "github.com") || host_is(url, start, length, "githubusercontent.com");
+    if (feature->Format == FEATURE_FORMAT_WIM && address_host(url, "http://", &start, &length))
+        return host_is(url, start, length, "delivery.mp.microsoft.com");
+    return false;
 }
 
 bool FeatureSignerMatches(const FEATURE_DEF *feature, const char *signer)

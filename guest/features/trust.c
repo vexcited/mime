@@ -37,17 +37,41 @@ static LONG read_chain(HANDLE state, const FEATURE_DEF *feature)
     return 0;
 }
 
+#define TRUST_E_BAD_DIGEST_ ((DWORD)0x80096010)
+
+/* A file the catalog names the hash of: the whole file has it, whoever made the file. */
+static DWORD verify_pinned(RUN *run, const FEATURE_DEF *feature, PCWSTR path)
+{
+    return FileMatches(path, feature->Sha256) ? ERROR_SUCCESS : TRUST_E_BAD_DIGEST_;
+}
+
+/* A pack of fonts that was read out of an archive: it has the shape, every font in it is checked when it is installed. */
+static DWORD verify_pack(PCWSTR path)
+{
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return GetLastError();
+    DWORD header[3] = {}, got = 0;
+    BOOL ok = ReadFile(file, header, sizeof(header), &got, nullptr) && got == sizeof(header);
+    CloseHandle(file);
+    return ok && header[0] == 0x544E464Du && header[1] == 1 ? ERROR_SUCCESS : ERROR_INVALID_DATA;
+}
+
 DWORD VerifyPackage(RUN *run, const FEATURE_DEF *feature, PCWSTR path)
 {
     WIN32_FILE_ATTRIBUTE_DATA info;
     if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info))
         return GetLastError();
     ULONGLONG size = (ULONGLONG)info.nFileSizeHigh << 32 | info.nFileSizeLow;
+    if (feature->Format == FEATURE_FORMAT_ZIP || feature->Format == FEATURE_FORMAT_WIM)
+        return verify_pack(path);
     if (size < feature->MinSize || size > feature->MaxSize) {
         _snwprintf(run->Detail, RTL_NUMBER_OF(run->Detail), L"The file is %llu bytes, which is not a size this feature has.", size);
         run->Detail[RTL_NUMBER_OF(run->Detail) - 1] = 0;
         return ERROR_INVALID_DATA;
     }
+    if (feature->Format == FEATURE_FORMAT_CABINET)
+        return verify_pinned(run, feature, path);
     WINTRUST_FILE_INFO file = {sizeof(file), path, nullptr, nullptr};
     WINTRUST_DATA data = {.cbStruct = sizeof(data),
                           .dwUIChoice = WTD_UI_NONE,

@@ -190,6 +190,8 @@ uint32_t HandlerAvailable(const FEATURE_DEF *feature)
         /* The stub says it is not supported, the real one refuses a null package for another reason. */
         return NetfxInstallFromPackage(nullptr, nullptr, nullptr, nullptr) == ERROR_NOT_SUPPORTED ? ERROR_NOT_SUPPORTED
                                                                                                      : ERROR_SUCCESS;
+    case FEATURE_HANDLER_FONTS:
+        return ERROR_SUCCESS;
     default:
         return ERROR_NOT_SUPPORTED;
     }
@@ -202,6 +204,8 @@ BOOL HandlerPresent(RUN *run, const FEATURE_DEF *feature)
         return webview2_present(run);
     case FEATURE_HANDLER_NETFX:
         return netfx_present(run);
+    case FEATURE_HANDLER_FONTS:
+        return FontsPresent(run, feature);
     default:
         return FALSE;
     }
@@ -222,6 +226,8 @@ uint32_t HandlerInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package)
         return webview2_install(run, package);
     case FEATURE_HANDLER_NETFX:
         return netfx_install(run, package);
+    case FEATURE_HANDLER_FONTS:
+        return FontsInstall(run, feature, package);
     default:
         return ERROR_NOT_SUPPORTED;
     }
@@ -234,6 +240,8 @@ uint32_t HandlerRemove(RUN *run, const FEATURE_DEF *feature)
         return webview2_remove(run);
     case FEATURE_HANDLER_NETFX:
         return netfx_remove(run);
+    case FEATURE_HANDLER_FONTS:
+        return FontsRemove(run, feature);
     default:
         return ERROR_NOT_SUPPORTED;
     }

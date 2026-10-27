@@ -582,30 +582,8 @@ BOOLEAN FontReadTable(FONT_FACE *f, ULONG tag, ULONG offset, PVOID buffer, ULONG
 
 /* ------------------------------------------------------------------ matching */
 
-typedef struct SUBSTITUTE {
-    PCWSTR From;
-    PCWSTR To;
-} SUBSTITUTE;
-
 /* the FontSubstitutes registry key of windows, plus bitmap faces mapped to outline ones. */
-static const SUBSTITUTE g_substitutes[] = {
-    {L"MS Shell Dlg", L"Microsoft Sans Serif"},
-    {L"MS Shell Dlg 2", L"Tahoma"},
-    {L"MS Sans Serif", L"Microsoft Sans Serif"},
-    {L"Helv", L"Microsoft Sans Serif"},
-    {L"Helvetica", L"Arial"},
-    {L"Tms Rmn", L"Times New Roman"},
-    {L"Times", L"Times New Roman"},
-    {L"MS Serif", L"Times New Roman"},
-    {L"Courier", L"Courier New"},
-    {L"System", L"Segoe UI"},
-    {L"Fixedsys", L"Consolas"},
-    {L"Terminal", L"Consolas"},
-    {L"Small Fonts", L"Segoe UI"},
-    {L"Segoe UI Variable", L"Segoe UI"},
-    {L"Segoe UI Variable Text", L"Segoe UI"},
-    {L"Segoe UI Variable Display", L"Segoe UI"},
-};
+static const MIME_FONT_SUBSTITUTE g_substitutes[] = {MIME_FONT_SUBSTITUTES};
 
 static PCWSTR substitute(PCWSTR name)
 {

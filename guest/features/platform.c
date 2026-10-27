@@ -111,6 +111,30 @@ static void ops_set_declined(void *context, const FEATURE_DEF *feature)
     write_value(key, L"Declined", REG_QWORD, &time, sizeof(time));
 }
 
+/* Counts a request of a program, whatever becomes of it: how often it was asked for, when, and by whom. */
+void RecordRequest(const FEATURE_DEF *feature, PCWSTR caller)
+{
+    WCHAR key[160];
+    state_key(feature, key, RTL_NUMBER_OF(key));
+    DWORD count = 0;
+    read_dword(key, L"Requests", &count);
+    count++;
+    write_value(key, L"Requests", REG_DWORD, &count, sizeof(count));
+    ULONGLONG time = now_filetime();
+    write_value(key, L"LastRequest", REG_QWORD, &time, sizeof(time));
+    if (caller && caller[0])
+        write_value(key, L"LastCaller", REG_SZ, caller, (DWORD)((wcslen(caller) + 1) * sizeof(WCHAR)));
+}
+
+DWORD FeatureRequestCount(const FEATURE_DEF *feature)
+{
+    WCHAR key[160];
+    state_key(feature, key, RTL_NUMBER_OF(key));
+    DWORD count = 0;
+    read_dword(key, L"Requests", &count);
+    return count;
+}
+
 /* ------------------------------------------------------------------ the run */
 
 void RunInit(RUN *run, const FEATURE_DEF *feature)
@@ -203,7 +227,7 @@ static uint32_t ops_acquire(void *context, const FEATURE_DEF *feature, void **pa
         return FEATURE_OK;
     }
     const char *url8 = FeatureUrl(feature, MACHINE_ARCH);
-    if (!url8 || !FeatureUrlAllowed(url8))
+    if (!url8 || !FeatureUrlAllowedFor(feature, url8))
         return ERROR_NOT_SUPPORTED;
     WCHAR url[256], name[64];
     WidenName(url8, url, RTL_NUMBER_OF(url));
@@ -214,10 +238,18 @@ static uint32_t ops_acquire(void *context, const FEATURE_DEF *feature, void **pa
     folder[RTL_NUMBER_OF(folder) - 1] = 0;
     CreateDirectoryW(folder, nullptr);
     CreateDirectoryW(run->Cache, nullptr);
-    _snwprintf(run->Package, RTL_NUMBER_OF(run->Package), L"%ls\\%ls.exe", run->Cache, name);
+    PCWSTR extension = feature->Format == FEATURE_FORMAT_CABINET ? L"cab"
+                       : feature->Format == FEATURE_FORMAT_PROGRAM ? L"exe" : L"pack";
+    _snwprintf(run->Package, RTL_NUMBER_OF(run->Package), L"%ls\\%ls.%ls", run->Cache, name, extension);
     run->Package[RTL_NUMBER_OF(run->Package) - 1] = 0;
     DeleteFileW(run->Package);
-    DWORD error = DownloadPackage(run, feature, url, run->Package);
+    DWORD error;
+    if (feature->Format == FEATURE_FORMAT_ZIP)
+        error = AcquireZip(run, feature, url, run->Package);
+    else if (feature->Format == FEATURE_FORMAT_WIM)
+        error = AcquireWim(run, feature, url, run->Package);
+    else
+        error = DownloadPackage(run, feature, url, run->Package);
     if (error != ERROR_SUCCESS)
         return error;
     run->PackageOwned = TRUE;

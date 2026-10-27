@@ -31,11 +31,31 @@ typedef enum FEATURE_HANDLER {
     FEATURE_HANDLER_NETFX,
     /*
      * A set of fonts of Microsoft, installed into the fonts folder and registered under the Fonts key of the
-     * registry. No entry uses it yet. Only the real files of the real fonts may be installed, never another font
-     * under the name of one.
+     * registry. Only the real files of the real fonts are installed, each checked against the hash the catalog names,
+     * never another font under the name of one.
      */
     FEATURE_HANDLER_FONTS,
 } FEATURE_HANDLER;
+
+/* What the file that is fetched for a feature is, and so how it is checked and read. */
+typedef enum FEATURE_FORMAT {
+    FEATURE_FORMAT_PROGRAM,  /* A program signed by the vendor, run to install the feature. */
+    FEATURE_FORMAT_CABINET,  /* A cabinet whose SHA-256 the catalog names, the fonts are files in it. */
+    FEATURE_FORMAT_ZIP,      /* Files read out of a zip file by range, each with its SHA-256. */
+    FEATURE_FORMAT_WIM,      /* Streams of a Windows image read by range, found by their SHA-1. */
+} FEATURE_FORMAT;
+
+/* A font file of a feature of fonts. The name and the hashes are those of the real file of Microsoft. */
+typedef struct FEATURE_FONT {
+    const char *File;      /* The name in the fonts folder, and in the cabinet or the package that holds it. */
+    const char *Member;    /* The path in a zip file, else null. */
+    const char *Registry;  /* The name of its value under the Fonts key, as in Segoe UI TrueType. */
+    const char *Sha256;    /* In hex. */
+    const char *Sha1;      /* In hex, for the files of a Windows image. */
+    uint32_t Size;
+    /* The family names the name table of the file must have, for every face of it. Null terminated. */
+    const char *const *Families;
+} FEATURE_FONT;
 
 typedef struct FEATURE_DEF {
     const char *Name;        /* The id on the command line. */
@@ -49,6 +69,13 @@ typedef struct FEATURE_DEF {
     FEATURE_HANDLER Handler;
     /* The names a program looks for in a font lookup, for a feature of fonts. Null terminated, or null. */
     const char *const *Provides;
+    FEATURE_FORMAT Format;
+    const char *Sha256;      /* In hex: the file is accepted when it has this hash, whoever signed it. */
+    uint64_t RangeOffset;    /* A part of the file at the address is the package, when the length is not 0. */
+    uint64_t RangeLength;
+    const char *Terms;       /* A sentence about the license of what is fetched, shown with the question. */
+    const FEATURE_FONT *Fonts;
+    size_t FontCount;
 } FEATURE_DEF;
 
 size_t FeatureCount(void);
@@ -57,10 +84,18 @@ const FEATURE_DEF *FeatureAt(size_t index);
 const FEATURE_DEF *FeatureFind(const char *name);
 /* The feature of fonts that has a font family, for a font lookup by name. Null when none does. */
 const FEATURE_DEF *FeatureFindProviding(const char *family);
+/* The font of a feature with a file name, compared without regard to case. */
+const FEATURE_FONT *FeatureFindFont(const FEATURE_DEF *feature, const char *file);
 /* The address of the download for a processor. */
 const char *FeatureUrl(const FEATURE_DEF *feature, FEATURE_ARCH arch);
 /* Whether a download may come from this address: https, and a host of microsoft.com. */
 bool FeatureUrlAllowed(const char *url);
+/*
+ * The same for a feature. What the catalog names the hash of may also come over plain http from the content
+ * delivery of Windows images, and from the release assets of Microsoft's own repositories on GitHub, because the hash
+ * and not the server decides what is accepted.
+ */
+bool FeatureUrlAllowedFor(const FEATURE_DEF *feature, const char *url);
 /* Whether a root certificate, by the SHA-1 of its encoding, is one of the roots Microsoft signs code with. */
 bool FeatureRootPinned(const uint8_t sha1[20]);
 /* Whether the signer named by a certificate is the one the feature expects. */

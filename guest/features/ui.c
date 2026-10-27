@@ -50,7 +50,7 @@ static HRESULT CALLBACK consent_callback(HWND window, UINT message, WPARAM wpara
 static BOOL ask(UI *ui)
 {
     RUN *run = ui->Run;
-    WCHAR feature[96], instruction[160], content[320], download[160], skip[160];
+    WCHAR feature[96], instruction[160], content[640], download[160], skip[160], terms[256] = L"";
     name_of(run, feature, RTL_NUMBER_OF(feature));
     if (run->Caller[0])
         _snwprintf(instruction, RTL_NUMBER_OF(instruction), L"%ls on your PC needs the following feature:", run->Caller);
@@ -65,6 +65,11 @@ static BOOL ask(UI *ui)
                    L"%ls\n\nMime gets it from Microsoft. Nothing is downloaded unless you agree.", feature);
     _snwprintf(download, RTL_NUMBER_OF(download), L"Download and install this feature\nThe program carries on when it is done.");
     _snwprintf(skip, RTL_NUMBER_OF(skip), L"Skip this installation\nNothing is downloaded, the program may not work without it.");
+    if (run->Feature->Terms) {
+        WidenName(run->Feature->Terms, terms, RTL_NUMBER_OF(terms));
+        SIZE_T used = wcslen(content);
+        _snwprintf(content + used, RTL_NUMBER_OF(content) - used, L"\n\n%ls", terms);
+    }
     instruction[RTL_NUMBER_OF(instruction) - 1] = content[RTL_NUMBER_OF(content) - 1] = 0;
     TASKDIALOG_BUTTON buttons[] = {{ID_DOWNLOAD, download}, {ID_SKIP, skip}};
     TASKDIALOGCONFIG config = {.cbSize = sizeof(config),

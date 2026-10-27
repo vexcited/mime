@@ -32,7 +32,7 @@ endif()
 mime_dll(win32u x86 BASE 0x74000000 ENTRY /noentry SOURCES ${sources} IMPORTS ${imports})
 
 mime_sources(sources gdi32 x86)
-mime_dll(gdi32 x86 BASE 0x73000000 SOURCES ${sources} OBJECTS x86-chkstk OPTIONS -DMIME_BUILD_GDI32
+mime_dll(gdi32 x86 BASE 0x73000000 SOURCES ${sources} guest/kernelbase/features.c OBJECTS x86-chkstk OPTIONS -DMIME_BUILD_GDI32
     IMPORTS ntdll kernel32 win32u)
 mime_sources(sources user32 x86)
 mime_dll(user32 x86 BASE 0x72000000 SOURCES ${sources} OBJECTS x86-chkstk x86-lib-png x86-lib-msstyles
