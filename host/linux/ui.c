@@ -968,6 +968,7 @@ static void draw(UiWindow *w)
         }
         w->has_dirty = false;
     }
+    double density = w->logical_width > 0 ? (double)w->pixel_width / w->logical_width : 1.0;
     pthread_mutex_unlock(&w->lock);
     if (!w->texture)
         return;
@@ -976,7 +977,11 @@ static void draw(UiWindow *w)
     SDL_SetRenderDrawColor(w->renderer, 0, 0, 0, w->fullscreen ? 255 : 0);
     SDL_RenderClear(w->renderer);
     SDL_FRect src = {(float)vis.left, (float)vis.top, (float)(vis.right - vis.left), (float)(vis.bottom - vis.top)};
+    /* the renderer draws in pixels, the fit is in window coordinates. */
     Fit fit = window_fit(w);
+    fit.scale *= density;
+    fit.x *= density;
+    fit.y *= density;
     SDL_FRect dst = {(float)(fit.x + (vis.left - host.left) * fit.scale), (float)(fit.y + (vis.top - host.top) * fit.scale),
                      (float)((vis.right - vis.left) * fit.scale), (float)((vis.bottom - vis.top) * fit.scale)};
     SDL_RenderTexture(w->renderer, w->texture, &src, &dst);
