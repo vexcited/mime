@@ -4,6 +4,7 @@
 
 #include "../win32k.h"
 #include "ttf/ttf.h"
+#include <mime/fonts.h>
 
 typedef struct FONT_FILE {
     WCHAR Path[MAX_PATH]; /* nt path, empty for memory fonts. */

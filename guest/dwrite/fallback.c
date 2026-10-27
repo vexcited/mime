@@ -40,7 +40,7 @@ static const WCHAR *const g_cjk[] = {L"Microsoft YaHei", L"Yu Gothic UI", L"MS G
                                      L"Microsoft JhengHei", L"Malgun Gothic", nullptr};
 static const WCHAR *const g_hangul[] = {L"Malgun Gothic", L"Microsoft YaHei", L"Gulim", nullptr};
 static const WCHAR *const g_general[] = {
-    L"Segoe UI", L"Arial", L"Times New Roman", L"Segoe UI Symbol", L"Cambria Math", L"Segoe UI Historic",
+    L"Segoe UI", L"Arial", L"Times New Roman", MIME_FALLBACK_FONT, L"Segoe UI Symbol", L"Cambria Math", L"Segoe UI Historic",
     L"Nirmala UI", L"Ebrima", L"Gadugi", L"Leelawadee UI", L"Myanmar Text", L"Microsoft Himalaya",
     L"Mongolian Baiti", L"Microsoft New Tai Lue", L"Microsoft Tai Le", L"Microsoft PhagsPa", L"Javanese Text",
     L"Sylfaen", L"Segoe UI Emoji", L"Microsoft YaHei", L"Yu Gothic UI", L"Malgun Gothic", L"MS Gothic",

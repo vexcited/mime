@@ -41,8 +41,9 @@ static HRESULT font_for_logfont(DwFactory *factory, const LOGFONTW *lf, IDWriteF
     WCHAR name[LF_FACESIZE + 1];
     memcpy(name, lf->lfFaceName, LF_FACESIZE * sizeof(WCHAR));
     name[LF_FACESIZE] = 0;
+    /* a font without a name is the system's, and if Segoe UI is not installed the open font of the ROM is. */
     if (!name[0])
-        wcscpy(name, L"Segoe UI");
+        wcscpy(name, DwFindFamily(system, L"Segoe UI", &(UINT32){0}) ? L"Segoe UI" : MIME_FALLBACK_FONT);
     DWRITE_FONT_WEIGHT weight = lf->lfWeight ? (DWRITE_FONT_WEIGHT)lf->lfWeight : DWRITE_FONT_WEIGHT_NORMAL;
     if (lf->lfWeight < 0 || lf->lfWeight > 999)
         weight = DWRITE_FONT_WEIGHT_NORMAL;
