@@ -1,8 +1,9 @@
 /*
  * openwith.exe: what the mime command asks of the machine.
  *
- *   open [--wait] <target> [arguments]   opens an app by its id or name, or anything the run box opens: programs,
- *                                        App Paths names, documents, shortcuts, urls
+ *   open [--wait] [--admin] <target> [arguments]
+ *                                        opens an app by its id or name, or anything the run box opens: programs,
+ *                                        App Paths names, documents, shortcuts, urls; --admin opens it elevated
  *   apps                                 lists the apps, the start menu's shortcuts, as open takes them
  *   installed                            lists the programs installed, as the installed apps settings show them
  *   uninstall <id>                       runs the uninstaller of an installed program, or of the one an app belongs
@@ -168,12 +169,15 @@ static BOOL is_console_process(HANDLE process)
     return *(WORD *)(header + pe + 0x5C) == IMAGE_SUBSYSTEM_WINDOWS_CUI;
 }
 
+/* runas with --admin, like the run as administrator command. */
+static const WCHAR *g_verb = L"open";
+
 /* opens like the run box, the error is left for the caller. */
 static BOOL shell_execute(const WCHAR *file, const WCHAR *parameters, HANDLE *process)
 {
     SHELLEXECUTEINFOW info = {sizeof(info)};
-    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
-    info.lpVerb = L"open";
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC | SEE_MASK_NO_CONSOLE;
+    info.lpVerb = g_verb;
     info.lpFile = file;
     info.lpParameters = parameters && parameters[0] ? parameters : nullptr;
     info.nShow = SW_SHOWNORMAL;
@@ -378,13 +382,16 @@ static int command_apps(int argc, WCHAR **argv)
 static int command_open(int argc, WCHAR **argv)
 {
     BOOL wait = FALSE;
-    if (argc && !wcscmp(argv[0], L"--wait")) {
-        wait = TRUE;
-        argc--;
-        argv++;
+    for (; argc && argv[0][0] == L'-' && argv[0][1] == L'-'; argc--, argv++) {
+        if (!wcscmp(argv[0], L"--wait"))
+            wait = TRUE;
+        else if (!wcscmp(argv[0], L"--admin"))
+            g_verb = L"runas";
+        else
+            break;
     }
     if (argc < 1) {
-        err(L"usage: openwith open [--wait] <target> [arguments]\n");
+        err(L"usage: openwith open [--wait] [--admin] <target> [arguments]\n");
         return EXIT_USAGE;
     }
     const WCHAR *target = argv[0];

@@ -180,7 +180,9 @@ DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *q, ELEVATE_RE
     SIZE_T list_size = 0;
     InitializeProcThreadAttributeList(nullptr, 1, 0, &list_size);
     LPPROC_THREAD_ATTRIBUTE_LIST list = list_size ? SvcAlloc(list_size) : nullptr;
-    DWORD flags = CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE | (q->CreationFlags & (CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED | CREATE_DEFAULT_ERROR_MODE_));
+    /* without CREATE_NEW_CONSOLE an elevated console program shares the caller's console, a server never does. */
+    DWORD flags = CREATE_UNICODE_ENVIRONMENT | (q->Unelevated ? CREATE_NEW_CONSOLE : 0) |
+                  (q->CreationFlags & (CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED | CREATE_DEFAULT_ERROR_MODE_));
     if (list && InitializeProcThreadAttributeList(list, 1, 0, &list_size) &&
         UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS_, &client, sizeof(client), nullptr, nullptr)) {
         startup.lpAttributeList = list;

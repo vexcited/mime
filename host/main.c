@@ -13,10 +13,12 @@ static void usage(void)
     printf("                                         import assets from a windows iso; on a drive already set up\n");
     printf("                                         only the missing files are added, --overwrite replaces all\n");
     printf("  mime up                                start the machine\n");
-    printf("  mime run [--wait] <target> [args]      open a program, host or C:\\ paths, an app by its id or name, or\n");
+    printf("  mime run [--wait] [--admin] <target> [args]\n");
+    printf("                                         open a program, host or C:\\ paths, an app by its id or name, or\n");
     printf("                                         anything the windows run box opens: a name like notepad, a\n");
     printf("                                         document, a shortcut, a url; --wait waits for a gui program\n");
-    printf("                                         instead of returning like cmd.exe\n");
+    printf("                                         instead of returning like cmd.exe; --admin runs it as\n");
+    printf("                                         administrator\n");
     printf("  mime apps                              list the apps mime run opens by id, the start menu's entries\n");
     printf("  mime apps --installed                  list the installed programs\n");
     printf("  mime uninstall <id>                    run the uninstaller of an installed program, or of an app\n");

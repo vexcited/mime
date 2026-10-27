@@ -172,7 +172,7 @@ static LPWSTR build_command(LPCWSTR template, LPCWSTR file, LPCWSTR parameters)
 typedef DWORD(WINAPI *LAUNCH_ELEVATED)(LPCWSTR application, LPCWSTR command, LPCWSTR directory, DWORD flags,
                                        const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *kind);
 
-static BOOL run_elevated(LPCWSTR application, LPWSTR command, LPCWSTR directory, STARTUPINFOW *startup,
+static BOOL run_elevated(LPCWSTR application, LPWSTR command, LPCWSTR directory, DWORD flags, STARTUPINFOW *startup,
                          PROCESS_INFORMATION *process)
 {
     HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
@@ -181,7 +181,7 @@ static BOOL run_elevated(LPCWSTR application, LPWSTR command, LPCWSTR directory,
         SetLastError(ERROR_ELEVATION_REQUIRED);
         return FALSE;
     }
-    DWORD error = launch(application, command, directory, 0, startup, process, nullptr);
+    DWORD error = launch(application, command, directory, flags, startup, process, nullptr);
     if (error)
         SetLastError(error);
     return !error;
@@ -199,8 +199,10 @@ static BOOL run(LPCWSTR application, LPWSTR command, LPCWSTR directory, int show
     startup.wShowWindow = (WORD)show;
     BOOL started = !elevate && CreateProcessW(application, command, nullptr, nullptr, FALSE, 0, nullptr, directory,
                                               &startup, &process);
+    /* an elevated console program gets a console of its own, unless the caller asks to share its console. */
     if (!started && (elevate || GetLastError() == ERROR_ELEVATION_REQUIRED))
-        started = run_elevated(application, command, directory, &startup, &process);
+        started = run_elevated(application, command, directory,
+                               (info->fMask & SEE_MASK_NO_CONSOLE) ? 0 : CREATE_NEW_CONSOLE, &startup, &process);
     if (!started)
         return FALSE;
     CloseHandle(process.hThread);

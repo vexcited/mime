@@ -879,8 +879,9 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     PEPROCESS process = nullptr;
     PETHREAD thread = nullptr;
     if (NT_SUCCESS(status))
-        status = create_process(&params, token, 0, creator->Console, TRUE, parent, &process, &thread, process_sd, thread_sd,
-                                KeGetPreviousMode());
+        /* a creator without a console, like the elevation broker, passes on the console of the parent it names. */
+        status = create_process(&params, token, 0, creator->Console ? creator->Console : parent->Console, TRUE, parent,
+                                &process, &thread, process_sd, thread_sd, KeGetPreviousMode());
     free_params(&params);
     if (token)
         ObDereferenceObject(token);

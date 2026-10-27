@@ -719,15 +719,17 @@ static int run_program(const MimePaths *paths, bool wait_gui, int argc, char **a
 #define OPENWITH "C:\\Windows\\System32\\openwith.exe"
 
 /* runs openwith.exe with a command, an optional --wait, then the arguments. */
-static int run_openwith(const MimePaths *paths, const char *command, bool wait, const char *first, int argc,
-                       char **argv)
+static int run_openwith(const MimePaths *paths, const char *command, bool wait, bool admin, const char *first,
+                        int argc, char **argv)
 {
-    char **args = mime_xcalloc((size_t)argc + 5, sizeof(char *));
+    char **args = mime_xcalloc((size_t)argc + 6, sizeof(char *));
     int n = 0;
     args[n++] = OPENWITH;
     args[n++] = (char *)command;
     if (wait)
         args[n++] = "--wait";
+    if (admin)
+        args[n++] = "--admin";
     if (first)
         args[n++] = (char *)first;
     for (int i = 0; i < argc; i++)
@@ -749,21 +751,25 @@ static bool is_program(const char *path)
  */
 int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
 {
-    bool wait_gui = false;
-    while (argc > 0 && strcmp(argv[0], "--wait") == 0) {
-        wait_gui = true;
-        argc--;
-        argv++;
+    bool wait_gui = false, admin = false;
+    for (; argc > 0; argc--, argv++) {
+        if (strcmp(argv[0], "--wait") == 0)
+            wait_gui = true;
+        else if (strcmp(argv[0], "--admin") == 0)
+            admin = true;
+        else
+            break;
     }
     if (argc < 1) {
-        mime_error("usage: mime run [--wait] <program, file, name or url> [args...]");
+        mime_error("usage: mime run [--wait] [--admin] <program, file, name or url> [args...]");
         return 2;
     }
     const char *target = argv[0];
     char guest[MIME_PATH_MAX];
     bool windows = ((target[0] | 0x20) >= 'a' && (target[0] | 0x20) <= 'z') && target[1] == ':';
+    /* elevation goes through the shell's runas verb, so programs go to openwith too. */
     if (windows) {
-        if (is_program(target))
+        if (is_program(target) && !admin)
             return run_program(paths, wait_gui, argc, argv);
     } else {
         char cwd[MIME_PATH_MAX], joined[MIME_PATH_MAX], resolved[PATH_MAX];
@@ -774,21 +780,21 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
         else
             mime_strlcpy(joined, target, sizeof(joined));
         if (realpath(joined, resolved)) {
-            if (is_program(resolved) && !mime_dir_exists(resolved))
+            if (is_program(resolved) && !mime_dir_exists(resolved) && !admin)
                 return run_program(paths, wait_gui, argc, argv);
             mime_paths_to_guest(paths, resolved, guest, sizeof(guest));
             target = guest;
         }
     }
-    return run_openwith(paths, "open", wait_gui, target, argc - 1, argv + 1);
+    return run_openwith(paths, "open", wait_gui, admin, target, argc - 1, argv + 1);
 }
 
 int mime_cmd_apps(const MimePaths *paths, int argc, char **argv)
 {
     if (argc == 0)
-        return run_openwith(paths, "apps", false, nullptr, 0, nullptr);
+        return run_openwith(paths, "apps", false, false, nullptr, 0, nullptr);
     if (argc == 1 && strcmp(argv[0], "--installed") == 0)
-        return run_openwith(paths, "installed", false, nullptr, 0, nullptr);
+        return run_openwith(paths, "installed", false, false, nullptr, 0, nullptr);
     fprintf(stderr, "usage: mime apps [--installed]\n");
     return 2;
 }
@@ -799,5 +805,5 @@ int mime_cmd_uninstall(const MimePaths *paths, int argc, char **argv)
         fprintf(stderr, "usage: mime uninstall <id>\n");
         return 2;
     }
-    return run_openwith(paths, "uninstall", false, nullptr, 1, argv);
+    return run_openwith(paths, "uninstall", false, false, nullptr, 1, argv);
 }
