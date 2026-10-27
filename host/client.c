@@ -862,3 +862,38 @@ int mime_cmd_uninstall(const MimePaths *paths, int argc, char **argv)
     }
     return run_openwith(paths, "uninstall", false, false, nullptr, 1, argv);
 }
+
+/*
+ * the features that are fetched from Microsoft when a program needs them. features.exe in the machine does the work,
+ * the files it is given can be host paths.
+ */
+int mime_cmd_features(const MimePaths *paths, int argc, char **argv)
+{
+    const char *verb = argc > 0 ? argv[0] : "list";
+    bool list = strcmp(verb, "list") == 0;
+    bool name_needed = strcmp(verb, "status") == 0 || strcmp(verb, "enable") == 0 || strcmp(verb, "disable") == 0;
+    if ((argc > 0 && !list && !name_needed) || (list && argc > 1) || (name_needed && argc < 2)) {
+        fprintf(stderr, "usage: mime features [list | status <name> | enable <name> [--source file] | disable <name>]\n");
+        return 2;
+    }
+    /* a source file given as a host path is the same file in the machine. */
+    char **args = mime_xcalloc((size_t)argc + 1, sizeof(char *));
+    char converted[MIME_PATH_MAX];
+    int n = 0;
+    for (int i = 1; i < argc; i++) {
+        args[n++] = argv[i];
+        if (strcmp(argv[i], "--source") == 0 && i + 1 < argc) {
+            char resolved[PATH_MAX];
+            const char *file = argv[++i];
+            if (file[0] != '\0' && !(((file[0] | 0x20) >= 'a' && (file[0] | 0x20) <= 'z') && file[1] == ':') &&
+                realpath(file, resolved)) {
+                mime_paths_to_guest(paths, resolved, converted, sizeof(converted));
+                file = converted;
+            }
+            args[n++] = (char *)file;
+        }
+    }
+    int result = run_openwith(paths, "features", false, false, verb, n, args);
+    free(args);
+    return result;
+}

@@ -22,6 +22,13 @@ static void usage(void)
     printf("  mime apps                              list the apps mime run opens by id, the start menu's entries\n");
     printf("  mime apps --installed                  list the installed programs\n");
     printf("  mime uninstall <id>                    run the uninstaller of an installed program, or of an app\n");
+    printf("  mime features                          list the features mime fetches from Microsoft when a program\n");
+    printf("                                         needs them, the .NET Framework and the WebView2 runtime\n");
+    printf("  mime features enable <name> [--source file]\n");
+    printf("                                         get a feature now; with --source the file is taken from the\n");
+    printf("                                         disk and checked the same way\n");
+    printf("  mime features disable <name>           remove the files of a feature, a program that needs it\n");
+    printf("                                         asks again\n");
     printf("  mime down [--force] [--timeout secs]   shut the machine down, programs get to close first; --force\n");
     printf("                                         ends them all at once\n");
     printf("  mime status                            show machine state\n");
@@ -63,6 +70,8 @@ int main(int argc, char **argv)
         return mime_cmd_apps(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "uninstall") == 0)
         return mime_cmd_uninstall(&paths, argc - 2, argv + 2);
+    if (strcmp(cmd, "features") == 0)
+        return mime_cmd_features(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "down") == 0)
         return mime_cmd_down(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "status") == 0)

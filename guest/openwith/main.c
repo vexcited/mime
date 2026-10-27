@@ -8,6 +8,7 @@
  *   installed                            lists the programs installed, as the installed apps settings show them
  *   uninstall <id>                       runs the uninstaller of an installed program, or of the one an app belongs
  *                                        to, and waits for it
+ *   features <arguments>                 runs features.exe with the arguments and waits, its exit code becomes ours
  *
  * a console program opened here shares this console and its exit code becomes ours. a window program is left
  * running unless --wait is given. exit codes: 1 failure, 2 bad command line.
@@ -762,6 +763,18 @@ static int command_uninstall(int argc, WCHAR **argv)
     return result;
 }
 
+/* ------------------------------------------------------------------ features */
+
+#define FEATURES_PROGRAM L"C:\\Windows\\System32\\features.exe"
+
+/* features.exe asks for the rights it needs itself, the console is shared, so its words reach the host. */
+static int command_features(int argc, WCHAR **argv)
+{
+    static WCHAR parameters[2048];
+    join_arguments(parameters, RTL_NUMBER_OF(parameters), argc, argv);
+    return shell_open(FEATURES_PROGRAM, parameters, TRUE);
+}
+
 /* ------------------------------------------------------------------ entry */
 
 void entry(void)
@@ -770,7 +783,7 @@ void entry(void)
     WCHAR **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     int code = EXIT_USAGE;
     if (!argv || argc < 2)
-        err(L"usage: openwith open|apps|installed|uninstall ...\n");
+        err(L"usage: openwith open|apps|installed|uninstall|features ...\n");
     else if (!wcscmp(argv[1], L"open"))
         code = command_open(argc - 2, argv + 2);
     else if (!wcscmp(argv[1], L"apps"))
@@ -779,6 +792,8 @@ void entry(void)
         code = command_installed(argc - 2, argv + 2);
     else if (!wcscmp(argv[1], L"uninstall"))
         code = command_uninstall(argc - 2, argv + 2);
+    else if (!wcscmp(argv[1], L"features"))
+        code = command_features(argc - 2, argv + 2);
     else
         err(L"openwith: unknown command '%ls'\n", argv[1]);
     ExitProcess((UINT)code);
