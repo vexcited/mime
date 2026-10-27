@@ -85,15 +85,20 @@ static void create_name_files(const MimePaths *paths)
 }
 
 /*
- * creates shared profile and Start Menu folders. shortcut creation may fail if either shared or per-user folders are
- * missing.
+ * creates shared profile, Start Menu and Common Files folders. shortcut creation may fail if either shared or per-user
+ * folders are missing, and installers check they can write to Common Files before they start.
  */
 static void create_shared_folders(const MimePaths *paths)
 {
     static const char *const folders[] = {
         "Users/Public/Desktop",   "Users/Public/Documents", "Users/Public/Downloads", "Users/Public/Music",
         "Users/Public/Pictures",  "Users/Public/Videos",    "ProgramData/Microsoft/Windows/Start Menu/Programs",
-        "ProgramData/Microsoft/Windows/Start Menu/Programs/Startup"};
+        "ProgramData/Microsoft/Windows/Start Menu/Programs/Startup",
+        "Program Files/Common Files", "Program Files (x86)/Common Files",
+#ifdef __aarch64__
+        "Program Files (Arm)/Common Files",
+#endif
+    };
     for (size_t i = 0; i < MIME_ARRAY_COUNT(folders); i++) {
         char dir[MIME_PATH_MAX];
         mime_path_join(dir, sizeof(dir), paths->drive_c, folders[i]);
