@@ -417,11 +417,18 @@ static BOOL part_rect(HWND hwnd, LONG object, RECT *r)
         r->bottom = r->top + GetSystemMetrics(SM_CYCAPTION);
         return TRUE;
     }
-    case OBJID_MENU:
+    case OBJID_MENU: {
+        /* the rows of the bar, where its layout put them. */
+        MENUBARINFO bar = {sizeof(bar)};
+        if (GetMenuBarInfo(hwnd, OBJID_MENU, 0, &bar) && !IsRectEmpty(&bar.rcBar)) {
+            *r = bar.rcBar;
+            return TRUE;
+        }
         *r = client;
         r->bottom = r->top;
         r->top -= GetSystemMetrics(SM_CYMENU);
         return TRUE;
+    }
     case OBJID_VSCROLL:
         *r = client;
         r->left = r->right;
@@ -1442,6 +1449,13 @@ static HRESULT STDMETHODCALLTYPE acc_location(void *self, LONG *left, LONG *top,
         }
         if (kids == KIDS_SCROLL) {
             if (!part_rect(p->hwnd, p->object, &r))
+                return S_FALSE;
+            set_rect(&r, left, top, width, height);
+            return S_OK;
+        }
+        if (kids == KIDS_MENU) {
+            HMENU menu = GetMenu(p->hwnd);
+            if (!menu || !GetMenuItemRect(p->hwnd, menu, (UINT)(id - 1), &r))
                 return S_FALSE;
             set_rect(&r, left, top, width, height);
             return S_OK;
