@@ -523,7 +523,7 @@ static const char *gac_folder(CBS_GAC gac)
     }
 }
 
-/* the folder of the cache a file goes into: below Microsoft.NET\\assembly, by processor, assembly name and version. */
+/* the folder of the cache a file goes into: below Microsoft.NET\\Assembly, by processor, assembly name and version. */
 static char *gac_directory(INSTALL *I, const CBS_COMPONENT *c, const CBS_FILE_ENTRY *file)
 {
     char folder_name[160];
@@ -537,7 +537,7 @@ static char *gac_directory(INSTALL *I, const CBS_COMPONENT *c, const CBS_FILE_EN
     memcpy(folder_name + 5, version, version_length);
     memcpy(folder_name + 5 + version_length, "__", 2);
     memcpy(folder_name + 7 + version_length, token, token_length + 1);
-    char *path = join(I, I->Layout->Windows, "Microsoft.NET\\assembly");
+    char *path = join(I, I->Layout->Windows, "Microsoft.NET\\Assembly");
     path = path ? join(I, path, gac_folder(file->Gac)) : nullptr;
     path = path ? join(I, path, c->Id.Name) : nullptr;
     return path ? join(I, path, folder_name) : nullptr;
@@ -610,10 +610,6 @@ static int plan_component(INSTALL *I, const CBS_COMPONENT *c)
     }
     return CBS_OK;
 }
-
-typedef struct PROGRESS_STATE {
-    uint64_t Dummy;
-} PROGRESS_STATE;
 
 /* reports the work done now and then; true when the user cancelled. */
 static bool report(INSTALL *I, bool force)
