@@ -257,6 +257,7 @@ enum {
     MIME_MENUBAR_HIT,      /* Point in screen coordinates -> TRUE when it is on the bar, Item the item or -1. */
     MIME_MENUBAR_STATE,    /* Item the selected item, Pushed the item whose popup is open, both -1 for none: the bar is drawn again. */
     MIME_MENUBAR_AREA,     /* the bar and its line, screen coordinates. */
+    MIME_MENUBAR_CUES,     /* Item nonzero: Alt is down and the bar shows its mnemonics, zero: it stops. */
 };
 
 typedef struct MIME_MENUBAR {

@@ -706,6 +706,7 @@ typedef struct WND {
     LONG MenuHot;            /* bar item selected by the menu loop, plus one. */
     LONG MenuPushed;         /* bar item whose popup is open, plus one. */
     UCHAR UiState;           /* UISF_HIDEFOCUS and UISF_HIDEACCEL, set while the keyboard cues are hidden. */
+    BOOLEAN MenuCues;        /* Alt is down, so the bar shows its mnemonics whatever the keyboard cues say. */
     REGION *Shape;     /* SetWindowRgn, window relative, NULL for none. */
     ULONG LayerFlags;  /* LWA_* for SetLayeredWindowAttributes, MIME_LAYER_UPDATE for UpdateLayeredWindow. */
     COLORREF LayerKey;

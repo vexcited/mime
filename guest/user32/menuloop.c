@@ -541,7 +541,7 @@ static void set_bar_state(LOOP *l)
 
 /* ------------------------------------------------------------------ levels */
 
-static void place_popup(LOOP *l, LEVEL *lv, int *x, int *y, const RECT *exclude, UINT flags)
+static void place_popup(LOOP *l, LEVEL *lv, int *x, int *y, const RECT *exclude, UINT flags, BOOL from_bar)
 {
     UINT h = flags & (TPM_CENTERALIGN | TPM_RIGHTALIGN);
     if (h == TPM_RIGHTALIGN)
@@ -559,8 +559,9 @@ static void place_popup(LOOP *l, LEVEL *lv, int *x, int *y, const RECT *exclude,
     RECT area = (flags & TPM_WORKAREA) ? mi.rcWork : mi.rcMonitor;
     /* a popup that does not fit opens on the other side of the point or of the excluded rectangle. */
     if (*x + lv->Width > area.right) {
+        /* a popup under a bar item slides left to the edge, one at the side of another opens at its other side. */
         int flipped = (exclude ? exclude->left : *x) - lv->Width;
-        *x = flipped >= area.left ? flipped : area.right - lv->Width;
+        *x = flipped >= area.left && !from_bar ? flipped : area.right - lv->Width;
     }
     if (*y + lv->Height > area.bottom) {
         int flipped = (exclude ? exclude->top : *y) - lv->Height;
@@ -573,7 +574,8 @@ static void place_popup(LOOP *l, LEVEL *lv, int *x, int *y, const RECT *exclude,
     (void)l;
 }
 
-static BOOL level_create(LOOP *l, HMENU menu, BOOL system, int parent_item, int x, int y, const RECT *exclude, UINT flags)
+static BOOL level_create(LOOP *l, HMENU menu, BOOL system, int parent_item, int x, int y, const RECT *exclude, UINT flags,
+                         BOOL from_bar)
 {
     if (l->Depth >= MAX_LEVELS)
         return FALSE;
@@ -589,7 +591,7 @@ static BOOL level_create(LOOP *l, HMENU menu, BOOL system, int parent_item, int 
         return FALSE;
     lv->Serial = (ULONG)NtUserMimeCallMenu(menu, 0, MIME_MENU_SERIAL);
     level_measure(l, lv);
-    place_popup(l, lv, &x, &y, exclude, flags);
+    place_popup(l, lv, &x, &y, exclude, flags, from_bar);
     lv->Left = x;
     lv->Top = y;
     lv->Window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, L"#32768", nullptr, WS_POPUP, x, y,
@@ -773,7 +775,7 @@ static void select_bar(LOOP *l, int item, BOOL open, BOOL mouse)
             icon_anchor(l, &anchor);
             if (l->Notify)
                 SendMessageW(l->Owner, WM_INITMENUPOPUP, (WPARAM)l->SystemMenu, MAKELPARAM(0, 1));
-            if (IsMenu(l->SystemMenu) && level_create(l, l->SystemMenu, TRUE, item, anchor.left, anchor.bottom, &anchor, 0)) {
+            if (IsMenu(l->SystemMenu) && level_create(l, l->SystemMenu, TRUE, item, anchor.left, anchor.bottom, &anchor, 0, TRUE)) {
                 l->Dropped = TRUE;
                 set_bar_state(l);
             }
@@ -784,7 +786,7 @@ static void select_bar(LOOP *l, int item, BOOL open, BOOL mouse)
             HMENU sub = l->BarItems[item].SubMenu;
             if (l->Notify)
                 SendMessageW(l->Owner, WM_INITMENUPOPUP, (WPARAM)sub, MAKELPARAM(item, 0));
-            if (IsMenu(sub) && level_create(l, sub, FALSE, item, r.left, r.bottom, &r, 0)) {
+            if (IsMenu(sub) && level_create(l, sub, FALSE, item, r.left, r.bottom, &r, 0, TRUE)) {
                 l->Dropped = TRUE;
                 set_bar_state(l);
             }
@@ -812,7 +814,7 @@ static void open_submenu(LOOP *l, int level, int item, BOOL select_first)
     /* the first item of the submenu is level with its item. */
     int x = parent->Left + parent->Width - scale(3, l->Dpi), y = parent->Top + it->Top - scale(4, l->Dpi);
     RECT around = {parent->Left, parent->Top + it->Top, parent->Left + parent->Width, parent->Top + it->Top + it->Height};
-    if (!level_create(l, sub, parent->System, item, x, y, &around, 0))
+    if (!level_create(l, sub, parent->System, item, x, y, &around, 0, FALSE))
         return;
     if (select_first) {
         LEVEL *lv = &l->Levels[l->Depth - 1];
@@ -1455,7 +1457,7 @@ WINUSERAPI BOOL WINAPI TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HW
     if (!system && host_menu(menu, hwnd, &loop)) {
         result = TRUE;
     } else if (IsMenu(menu) && level_create(&loop, menu, system, NO_ITEM, x, y, params ? &params->rcExclude : nullptr,
-                                            flags)) {
+                                            flags, FALSE)) {
         loop.Capture = loop.Levels[0].Window;
         loop.TimerWindow = loop.Capture;
         LOOP *previous = g_loop;
@@ -1793,6 +1795,18 @@ BOOL UserDefMenu(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *res
         }
         return FALSE;
     case WM_SYSKEYDOWN: {
+        /* Alt shows the mnemonics of the bar for as long as it is down. */
+        if (wparam == VK_MENU && !(lparam & (1 << 30)) && !(GetKeyState(VK_CONTROL) & 0x8000)) {
+            MIME_MENUBAR cues = {MIME_MENUBAR_CUES, 1};
+            NtUserCallHwndParam(hwnd, (ULONG_PTR)&cues, MIME_HWNDPARAM_MENUBAR);
+            return FALSE;
+        }
+        /* Shift and F10 are the menu key. */
+        if (wparam == VK_F10 && (GetKeyState(VK_SHIFT) & 0x8000)) {
+            SendMessageW(hwnd, WM_CONTEXTMENU, (WPARAM)hwnd, (LPARAM)-1);
+            *result = 0;
+            return TRUE;
+        }
         /* a letter with Alt picks an item of the bar. the translated character that follows is not used again. */
         if (!(lparam & (1 << 29)) || (GetKeyState(VK_CONTROL) & 0x8000) || wparam == VK_MENU)
             return FALSE;
@@ -1825,9 +1839,18 @@ BOOL UserDefMenu(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *res
     }
     case WM_KEYUP:
     case WM_SYSKEYUP:
+        if (wparam == VK_MENU) {
+            MIME_MENUBAR cues = {MIME_MENUBAR_CUES, 0};
+            NtUserCallHwndParam(hwnd, (ULONG_PTR)&cues, MIME_HWNDPARAM_MENUBAR);
+        }
         /* Alt or F10 alone select the menu bar when they come up. */
         if ((wparam == VK_MENU || wparam == VK_F10) && NtUserCallTwoParam(0, 0, MIME_TWOPARAM_ALTALONE)) {
             SendMessageW(hwnd, WM_SYSCOMMAND, SC_KEYMENU, 0);
+            *result = 0;
+            return TRUE;
+        }
+        if (msg == WM_KEYUP && wparam == VK_APPS) {
+            SendMessageW(hwnd, WM_CONTEXTMENU, (WPARAM)hwnd, (LPARAM)-1);
             *result = 0;
             return TRUE;
         }

@@ -479,7 +479,7 @@ void MenuBarPaint(WND *w, SURFACE *s, const REGION *clip, POINT origin)
     DrawFillRect(s, clip, &line_rect, ColorToPixel(line));
 
     FONT_INSTANCE *fi = menu_font(dpi);
-    BOOLEAN cues = !(w->UiState & UISF_HIDEACCEL);
+    BOOLEAN cues = !(w->UiState & UISF_HIDEACCEL) || w->MenuCues;
     for (ULONG i = 0; i < bar->Count && i < m->Count; i++) {
         const MENU_ITEM *it = &m->Items[i];
         RECT r = bar->Items[i];
@@ -600,6 +600,14 @@ ULONG_PTR MenuBarCall(WND *w, PVOID user_request)
         result = 1;
         break;
     }
+    case MIME_MENUBAR_CUES:
+        if ((req.Item != 0) != w->MenuCues) {
+            w->MenuCues = req.Item != 0;
+            if (w->MenuBarHeight)
+                MenuBarRedraw(w);
+        }
+        result = 1;
+        break;
     case MIME_MENUBAR_AREA: {
         RECT area;
         if (MenuBarArea(w, &area)) {
