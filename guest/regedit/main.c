@@ -75,9 +75,9 @@ enum { RESULT_OPEN = 100 };
 
 static const MimeRegSysOptions g_import_options = {0, KEY_ALL_ACCESS, FALSE};
 
-static void import_file(PCWSTR name, BOOL silent)
+void RegeditImportFile(PCWSTR name, BOOL silent, BOOL confirm)
 {
-    if (!silent && box_format(MB_YESNO | MB_ICONEXCLAMATION, MESSAGE_CONFIRM, name) != IDYES)
+    if (confirm && box_format(MB_YESNO | MB_ICONEXCLAMATION, MESSAGE_CONFIRM, name) != IDYES)
         return;
     int result = RESULT_OPEN;
     WCHAR path[MAX_PATH];
@@ -140,7 +140,7 @@ static HKEY open_named_key(PWSTR path)
     return key;
 }
 
-static void export_registry(PCWSTR file, PCWSTR key_name, BOOL ansi)
+void RegeditExport(PCWSTR file, PCWSTR key_name, BOOL ansi)
 {
     if (!file) {
         RegeditBox(nullptr, MESSAGE_NEEDS_FILE, MB_ICONERROR);
@@ -315,7 +315,7 @@ static int parse_command_line(int mode, PWSTR line)
         while (word) {
             WCHAR full[MAX_PATH];
             DWORD n = GetLongPathNameW(word, full, MAX_PATH);
-            import_file(n && n < MAX_PATH ? full : word, silent);
+            RegeditImportFile(n && n < MAX_PATH ? full : word, silent, !silent);
             word = next_word(&p);
         }
         return 1;
@@ -328,7 +328,7 @@ static int parse_command_line(int mode, PWSTR line)
     }
     if (next_word(&p))
         return 2;
-    export_registry(file, key, ansi);
+    RegeditExport(file, key, ansi);
     return 2;
 }
 
