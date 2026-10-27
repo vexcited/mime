@@ -41,8 +41,6 @@ static PCWSTR skip_prefix(PCWSTR path)
 {
     if (path[0] == L'\\' && (path[1] == L'?' || path[1] == L'\\') && path[2] == L'?' && path[3] == L'\\')
         return path + 4;
-    if (path[0] == L'\\' && path[1] == L'\\' && path[2] == L'?' && path[3] == L'\\')
-        return path + 4;
     return path;
 }
 

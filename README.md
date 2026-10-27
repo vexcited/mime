@@ -10,6 +10,8 @@ mime run ~/program.exe
 mime run notepad          # anything the windows run box opens
 mime apps                 # the start menu's apps, `mime run <id>` opens one
 mime uninstall <id>       # an app's id, or a program's from `mime apps --installed`
+mime features             # the .NET Framework and the WebView2 runtime, fetched from Microsoft when a program needs them
+mime features enable <name>
 mime down
 ```
 
