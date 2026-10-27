@@ -877,11 +877,63 @@ static NTSTATUS create_container_token(HANDLE base, const KB_SECURITY_CAPABILITI
  * desktop and the c runtime data. There is no console window to make, so a new console is the creator's and
  * DETACHED_PROCESS gives none.
  */
+static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
+                           LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit, DWORD flags, LPVOID environment,
+                           LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info,
+                           PHANDLE new_token, BOOL batch_retry, BOOL wrap_batch);
+
 BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR command_line,
                                    LPSECURITY_ATTRIBUTES process_sa, LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit,
                                    DWORD flags, LPVOID environment, LPCWSTR directory, LPSTARTUPINFOW startup,
                                    LPPROCESS_INFORMATION info, PHANDLE new_token)
 {
+    return create_process(token, application, command_line, process_sa, thread_sa, inherit, flags, environment,
+                          directory, startup, info, new_token, FALSE, FALSE);
+}
+
+/* a path that names a batch file by its last four characters. */
+static BOOL is_batch_name(PCWSTR path)
+{
+    SIZE_T n = wcslen(path);
+    return n >= 4 && (!_wcsicmp(path + n - 4, L".bat") || !_wcsicmp(path + n - 4, L".cmd"));
+}
+
+/*
+ * a batch file is not an image, the command interpreter runs it: "%ComSpec% /c " and the command line, put inside
+ * quotes when the file was named by a quoted or spaced first word. The interpreter strips them again.
+ */
+static PWSTR batch_command_line(PCWSTR command_line, BOOL wrap)
+{
+    WCHAR interpreter[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"ComSpec", interpreter, MAX_PATH);
+    if (n >= MAX_PATH)
+        return nullptr;
+    if (!n) {
+        DWORD root = GetEnvironmentVariableW(L"SystemRoot", interpreter, 0xF3);
+        if (!root || root >= 0xF3)
+            return nullptr;
+        wcscat(interpreter, L"\\system32\\cmd.exe");
+    }
+    SIZE_T chars = wcslen(interpreter) + 5 + wcslen(command_line) + 3;
+    PWSTR line = KbAlloc(chars * sizeof(WCHAR));
+    if (!line)
+        return nullptr;
+    wcscpy(line, interpreter);
+    wcscat(line, L" /c ");
+    if (wrap)
+        wcscat(line, L"\"");
+    wcscat(line, command_line);
+    if (wrap)
+        wcscat(line, L"\"");
+    return line;
+}
+
+static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_line, LPSECURITY_ATTRIBUTES process_sa,
+                           LPSECURITY_ATTRIBUTES thread_sa, BOOL inherit, DWORD flags, LPVOID environment,
+                           LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION info,
+                           PHANDLE new_token, BOOL batch_retry, BOOL wrap_batch)
+{
+    LPVOID original_environment = environment;
     if (new_token)
         *new_token = nullptr;
     if (!startup || !info || (!application && !command_line)) {
@@ -898,33 +950,87 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
         return FALSE;
     }
     WCHAR executable[MAX_PATH], full[MAX_PATH], cwd[MAX_PATH];
+    BOOL wrap = wrap_batch;
+    DWORD n;
     if (application) {
         if (wcslen(application) >= MAX_PATH) {
             KbSetError(ERROR_FILENAME_EXCED_RANGE);
             return FALSE;
         }
         wcscpy(executable, application);
+        n = SearchPathW(nullptr, executable, L".exe", MAX_PATH, full, nullptr);
+        if (!n || n >= MAX_PATH) {
+            KbSetError(ERROR_FILE_NOT_FOUND);
+            return FALSE;
+        }
     } else {
         PCWSTR source = command_line;
         while (*source == L' ' || *source == L'\t')
             source++;
-        BOOL quoted = *source == L'"';
-        if (quoted)
+        if (*source == L'"') {
+            /* a quoted word is the whole file name. */
+            wrap = TRUE;
             source++;
-        SIZE_T n = 0;
-        while (*source && (quoted ? *source != L'"' : *source != L' ' && *source != L'\t')) {
-            if (n + 1 == MAX_PATH) {
-                KbSetError(ERROR_FILENAME_EXCED_RANGE);
+            SIZE_T len = 0;
+            while (source[len] && source[len] != L'"') {
+                if (len + 1 == MAX_PATH) {
+                    KbSetError(ERROR_FILENAME_EXCED_RANGE);
+                    return FALSE;
+                }
+                executable[len] = source[len];
+                len++;
+            }
+            executable[len] = 0;
+            n = SearchPathW(nullptr, executable, L".exe", MAX_PATH, full, nullptr);
+            if (!n || n >= MAX_PATH) {
+                KbSetError(ERROR_FILE_NOT_FOUND);
                 return FALSE;
             }
-            executable[n++] = *source++;
+        } else {
+            /* the file name ends at a blank, or further on when the shorter name is no file: C:\Program Files\x.exe */
+            PCWSTR end = source;
+            BOOL extended = FALSE;
+            for (;;) {
+                while (*end && *end != L' ' && *end != L'\t')
+                    end++;
+                SIZE_T len = (SIZE_T)(end - source);
+                if (len >= MAX_PATH) {
+                    KbSetError(ERROR_FILENAME_EXCED_RANGE);
+                    return FALSE;
+                }
+                memcpy(executable, source, len * sizeof(WCHAR));
+                executable[len] = 0;
+                n = SearchPathW(nullptr, executable, L".exe", MAX_PATH, full, nullptr);
+                if (n && n < MAX_PATH) {
+                    DWORD attributes = GetFileAttributesW(full);
+                    if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+                        break;
+                }
+                if (!*end) {
+                    KbSetError(ERROR_FILE_NOT_FOUND);
+                    return FALSE;
+                }
+                end++;
+                extended = TRUE;
+            }
+            if (extended) {
+                /* the child gets the name in quotes. */
+                SIZE_T chars = wcslen(executable) + wcslen(end) + 3;
+                PWSTR rewritten = KbAlloc(chars * sizeof(WCHAR));
+                if (!rewritten) {
+                    KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+                    return FALSE;
+                }
+                rewritten[0] = L'"';
+                wcscpy(rewritten + 1, executable);
+                wcscat(rewritten, L"\"");
+                wcscat(rewritten, end);
+                BOOL ok = create_process(token, full, rewritten, process_sa, thread_sa, inherit, flags,
+                                         original_environment, directory, startup, info, new_token, batch_retry, TRUE);
+                KbFree(rewritten);
+                return ok;
+            }
         }
-        executable[n] = 0;
-    }
-    DWORD n = SearchPathW(nullptr, executable, L".exe", MAX_PATH, full, nullptr);
-    if (!n || n >= MAX_PATH) {
-        KbSetError(ERROR_FILE_NOT_FOUND);
-        return FALSE;
     }
     n = directory ? GetFullPathNameW(directory, MAX_PATH, cwd, nullptr) : GetCurrentDirectoryW(MAX_PATH, cwd);
     if (!n || n >= MAX_PATH) {
@@ -1069,6 +1175,15 @@ BOOL WINAPI CreateProcessInternalW(HANDLE token, LPCWSTR application, LPWSTR com
     if (container)
         NtClose(container);
     KbFree(converted);
+    if (status == STATUS_INVALID_IMAGE_NOT_MZ && !batch_retry && is_batch_name(full)) {
+        PWSTR line = batch_command_line(command_line, wrap);
+        if (line) {
+            BOOL ok = create_process(token, nullptr, line, process_sa, thread_sa, inherit, flags,
+                                     original_environment, directory, startup, info, new_token, TRUE, FALSE);
+            KbFree(line);
+            return ok;
+        }
+    }
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     if (process_sa && process_sa->bInheritHandle)

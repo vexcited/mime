@@ -162,6 +162,9 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
     set_z(env, L"PUBLIC", L"C:\\Users\\Public");
     set_z(env, L"SystemDrive", L"C:");
     set_z(env, L"SystemRoot", L"C:\\Windows");
+    /* batch files run through these, a drive whose registry lacks them still works. */
+    set_z(env, L"ComSpec", L"C:\\Windows\\system32\\cmd.exe");
+    set_z(env, L"PATHEXT", L".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC");
     /* only arm64 Windows has separate folders for arm64 programs. */
     if (MIME_NATIVE_ARCHITECTURE == PROCESSOR_ARCHITECTURE_ARM64) {
         set_z(env, L"CommonProgramFiles(Arm)", L"C:\\Program Files (Arm)\\Common Files");
