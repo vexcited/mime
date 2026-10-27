@@ -57,7 +57,7 @@ set_source_files_properties(host/vulkan/vulkan.c host/vulkan/vkshare.c host/vulk
     INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen}")
 
 if(APPLE)
-    mime_glob(host_sources host/*.c host/setup/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c host/camera/*.c)
+    mime_glob(host_sources host/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c host/camera/*.c)
 
     mime_glob(vkmetal_sources host/vkmetal/*.c host/vkmetal/*.cpp)
     set_source_files_properties(${vkmetal_sources} PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
@@ -80,7 +80,7 @@ else()
     pkg_check_modules(HOST_LIBS REQUIRED IMPORTED_TARGET sdl3 wayland-client)
     pkg_check_modules(HOST_SDBUS IMPORTED_TARGET libsystemd)
     find_package(Threads REQUIRED)
-    mime_glob(host_sources host/*.c host/setup/*.c host/linux/*.c host/vmm/*.c host/camera/*.c)
+    mime_glob(host_sources host/*.c host/linux/*.c host/vmm/*.c host/camera/*.c)
     list(FILTER host_sources EXCLUDE REGEX "/host/vmm/(vm|vcpu|lazy|loader|window)[.]c$")
     list(APPEND host_sources host/gpu/shader.c host/ui/pe_icon.c)
 

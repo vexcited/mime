@@ -46,7 +46,6 @@ The guest always runs the build machine's processor, there is no cross build: AR
 ## Running
 
 ```sh
-build/mime setup /path/to/windows.iso
 build/mime run /path/to/program.exe
 build/mime down
 ```

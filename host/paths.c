@@ -77,7 +77,6 @@ bool mime_paths_init(MimePaths *paths)
     snprintf(paths->pidfile, sizeof(paths->pidfile), "%s/mime.pid", paths->runtime);
     lock_path(paths->lockfile, sizeof(paths->lockfile));
     snprintf(paths->logfile, sizeof(paths->logfile), "%s/vmm.log", paths->state);
-    snprintf(paths->setup_stamp, sizeof(paths->setup_stamp), "%s/setup.ini", paths->data);
 
     char exe[MIME_PATH_MAX];
     char resolved[MIME_PATH_MAX];

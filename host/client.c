@@ -1,4 +1,5 @@
 /* machine lifecycle commands: up, run, down, status and config. */
+#include "identity.h"
 #include "instance.h"
 #include "ipc.h"
 #include "mime_cli.h"
@@ -892,4 +893,26 @@ int mime_cmd_features(const MimePaths *paths, int argc, char **argv)
     int result = run_openwith(paths, "features", false, false, verb, n, args);
     free(args);
     return result;
+}
+
+/* the locale of the user, which the machine takes when it starts. */
+int mime_cmd_locale(const MimePaths *paths, int argc, char **argv)
+{
+    if (argc > 1) {
+        fprintf(stderr, "usage: mime locale [name]\n");
+        return 2;
+    }
+    if (argc == 1) {
+        if (!mime_identity_set_locale(paths, argv[0])) {
+            mime_error("%s is not a locale of the system", argv[0]);
+            return 1;
+        }
+        MimeIpcStatus status;
+        if (query_status(paths, &status) && status.ready)
+            printf("The machine takes the locale when it starts again.\n");
+    }
+    MimeIdentity id;
+    mime_identity_load(paths, &id);
+    printf("%s\n", id.locale);
+    return 0;
 }
