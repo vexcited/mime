@@ -26,6 +26,8 @@ typedef struct OPTIONS {
 typedef struct COPY_STATE {
     OPTIONS *Options;
     WCHAR *SourceRoot;
+    /* what the source path is shown as: the way the command line gave it. */
+    WCHAR *DisplayRoot;
     WCHAR *DestinationRoot;
     DWORD Copied;
     int Exit;
@@ -352,10 +354,15 @@ static void copy_one(COPY_STATE *s, const WCHAR *source, const WCHAR *destinatio
         tu_print(L"\n");
     }
     if (!o->Quiet) {
-        if (o->Full)
+        if (o->Full) {
             tu_print(L"%s -> %s\n", source, destination);
-        else
-            tu_print(L"%s\n", source);
+        } else {
+            SIZE_T root = wcslen(s->SourceRoot);
+            if (s->DisplayRoot && wcslen(source) >= root && tu_eq_n(source, s->SourceRoot, root))
+                tu_print(L"%s%s\n", s->DisplayRoot, source + root);
+            else
+                tu_print(L"%s\n", source);
+        }
     }
     if (o->ListOnly) {
         s->Copied++;
@@ -629,6 +636,26 @@ int tool_main(void)
     state.SourceRoot = tu_dup(tu_str_text(&source_dir));
     state.DestinationRoot = tu_dup(tu_str_text(&destination_dir));
     state.DestinationIsFile = destination_file != nullptr;
+    {
+        /* a relative source is shown relative, a directory as given with a separator after it. */
+        BOOL relative = !(source_arg[0] == L'\\' || (source_arg[0] && source_arg[1] == L':'));
+        if (relative) {
+            TU_STR shown = {};
+            SIZE_T last = 0;
+            for (SIZE_T i = 0; source_arg[i]; i++)
+                if (source_arg[i] == L'\\' || source_arg[i] == L'/')
+                    last = i + 1;
+            if (is_directory(source_full) && !has_wildcards(source_arg)) {
+                tu_str_puts(&shown, source_arg);
+                if (shown.length && shown.data[shown.length - 1] != L'\\' && shown.data[shown.length - 1] != L'/')
+                    tu_str_putc(&shown, L'\\');
+            } else {
+                tu_str_append(&shown, source_arg, last);
+            }
+            state.DisplayRoot = tu_dup(tu_str_text(&shown));
+            tu_str_free(&shown);
+        }
+    }
     if (o.TreeOnly && !o.ListOnly)
         make_directories(tu_str_text(&destination_dir)) ;
     copy_directory(&state, tu_str_text(&source_dir), pattern, tu_str_text(&destination_dir), destination_file, 0);
