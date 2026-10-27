@@ -13,7 +13,7 @@ set(MIME_TOOL_LIBS_net advapi32)
 set(MIME_TOOL_OBJECTS_taskkill procutil)
 set(MIME_TOOL_OBJECTS_tasklist procutil)
 
-set(MIME_TOOLS sc taskkill tasklist timeout choice find findstr where whoami hostname setx attrib xcopy net)
+set(MIME_TOOLS sc taskkill tasklist timeout choice find findstr where whoami hostname setx attrib xcopy net fsutil)
 
 set(tool_index 0)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
