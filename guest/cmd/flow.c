@@ -388,7 +388,7 @@ static BOOL keyword_at(const WCHAR *p, const WCHAR *name)
 static BOOL option_keyword_ahead(const WCHAR *p)
 {
     return keyword_at(p, L"eol=") || keyword_at(p, L"skip=") || keyword_at(p, L"delims=") ||
-           keyword_at(p, L"tokens=") || keyword_at(p, L"usebackq");
+           keyword_at(p, L"tokens=") || keyword_at(p, L"useback");
 }
 
 static BOOL parse_for_options(const WCHAR *text, FOROPT *o)
@@ -424,9 +424,11 @@ static BOOL parse_for_options(const WCHAR *text, FOROPT *o)
         } else if (keyword_at(p, L"skip=")) {
             p += 5;
             o->skip = (int)parse_long(p, &p);
-        } else if (keyword_at(p, L"usebackq")) {
+        } else if (keyword_at(p, L"useback")) {
             o->usebackq = TRUE;
-            p += 8;
+            p += 7;
+            if (towlower(*p) == L'q')
+                p++;
         } else if (keyword_at(p, L"delims=")) {
             p += 7;
             const WCHAR *e = p;

@@ -689,7 +689,7 @@ int internal_copy(const WCHAR *args, NODE *node)
             }
             continue;
         }
-        /* pieces around + */
+        /* pieces around +. */
         const WCHAR *p = w;
         BOOL quoted = FALSE;
         STR piece;
@@ -1212,7 +1212,39 @@ static int type_file(const WCHAR *path)
     BOOL console = g_io.con[1];
     char carry[4];
     DWORD carry_len = 0;
+    BOOL first = TRUE, utf16 = FALSE;
     while (ReadFile(f, buf, 32768, &got, nullptr) && got) {
+        if (first) {
+            first = FALSE;
+            /* a file that starts with the byte order mark of utf-16 is text in wide characters. */
+            if (got >= 2 && buf[0] == 0xFF && buf[1] == 0xFE) {
+                utf16 = TRUE;
+                memmove(buf, buf + 2, got - 2);
+                got -= 2;
+            }
+        }
+        if (utf16) {
+            /* an odd byte left over waits for the next block. */
+            DWORD whole = got & ~1u;
+            if (carry_len && whole) {
+                carry[1] = (char)buf[0];
+                WCHAR one = (WCHAR)((unsigned char)carry[0] | ((unsigned char)carry[1] << 8));
+                write_to(g_io.h[1], console, &one, 1);
+                memmove(buf, buf + 1, got - 1);
+                got--;
+                whole = got & ~1u;
+                carry_len = 0;
+            }
+            if (whole)
+                write_to(g_io.h[1], console, (const WCHAR *)buf, whole / 2);
+            if (got & 1) {
+                carry[0] = (char)buf[got - 1];
+                carry_len = 1;
+            }
+            if (g.ctrlc)
+                break;
+            continue;
+        }
         if (console) {
             /* keep a split multibyte character for the next block. */
             unsigned char *data = buf;

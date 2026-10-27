@@ -5,7 +5,7 @@
 
 typedef struct LINEREADER {
     HANDLE file;
-    LONGLONG next_offset; /* of the first byte not consumed yet */
+    LONGLONG next_offset; /* of the first byte not consumed yet. */
     unsigned char *buf;
     DWORD have, at;
     LONGLONG file_size;

@@ -134,7 +134,7 @@ static WCHAR *command_text(const WCHAR *raw, BOOL strip_always)
 
 typedef struct OPTIONS {
     WCHAR *command;
-    BOOL keep_running; /* /k */
+    BOOL keep_running;
     BOOL no_autorun;
     BOOL help;
 } OPTIONS;

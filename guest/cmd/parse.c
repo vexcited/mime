@@ -12,8 +12,8 @@ typedef struct PARSER {
     SIZE_T pos;
     LINESRC *more;
     BOOL colon_is_token;
-    int depth;          /* open parentheses */
-    BOOL block_direct;  /* the innermost construct is a parenthesized block, so a line break separates statements */
+    int depth;          /* open parentheses. */
+    BOOL block_direct;  /* the innermost construct is a parenthesized block, so a line break separates statements. */
     BOOL error;
 } PARSER;
 

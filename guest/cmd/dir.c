@@ -14,7 +14,7 @@ typedef struct DIROPT {
     BOOL attr_given;
     DWORD need, forbid;
     WCHAR order[16];
-    int time_field; /* 0 write, 1 creation, 2 access */
+    int time_field; /* 0 write, 1 creation, 2 access. */
 } DIROPT;
 
 typedef struct TOTALS {
@@ -433,7 +433,7 @@ int internal_dir(const WCHAR *args, NODE *node)
     WCHAR *spec_list[32];
     for (int i = 0; i < a.n; i++) {
         const WCHAR *w = a.v[i];
-        /* switches may be glued: dir/w/s */
+        /* switches may be glued: dir/w/s. */
         if (w[0] == L'/') {
             const WCHAR *p = w;
             while (*p == L'/') {

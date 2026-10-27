@@ -3,8 +3,8 @@
  *
  * a line goes through these stages, as in the documented order of the real interpreter:
  *   1. percent expansion of the whole line when it is read: %% %0..%9 %* %~mods %name% %name:a=b% %name:~s,l%
- *   2. parsing into a tree of statements: quotes, ^ escapes, & && || | ( ) redirections, if, for and rem
- *   3. for variable substitution when a statement runs, then delayed expansion (!name!), then the redirections
+ *   2. parsing into a tree of statements: quotes, ^ escapes, the operators, parentheses, redirections, if, for and rem
+ *   3. for variable substitution when a statement runs, then delayed expansion with !name!, then the redirections
  *   4. dispatch to an internal command, a batch file or a program
  */
 #ifndef MIME_CMD_H
@@ -95,8 +95,8 @@ typedef struct BATCH {
     WCHAR **tok; /* the arguments, %1 is tok[0 + shifted]. */
     int ntok;
     int shifted;
-    WCHAR *name; /* %0 as written */
-    WCHAR *args; /* %* */
+    WCHAR *name; /* %0 as written. */
+    WCHAR *args;
     LONGLONG offset;
     struct BATCH *parent;
     LOCALENV *locals[SETLOCAL_LIMIT];
@@ -114,32 +114,32 @@ typedef struct FORCTX {
 } FORCTX;
 
 typedef struct STATE {
-    BOOL ext;          /* command extensions */
-    BOOL delayed;      /* delayed expansion */
+    BOOL ext;          /* command extensions. */
+    BOOL delayed;      /* delayed expansion. */
     BOOL echo;
-    BOOL quiet;        /* /q */
-    BOOL unicode_out;  /* /u */
-    BOOL single;       /* /c, /s, /r: one command and exit */
+    BOOL quiet;        /* /q. */
+    BOOL unicode_out;  /* /u. */
+    BOOL single;       /* /c, /s, /r: one command and exit. */
     BOOL interactive;
     BOOL verify;
-    BOOL goto_pending; /* a goto or exit /b unwinds the statements of the current batch */
+    BOOL goto_pending; /* a goto or exit /b unwinds the statements of the current batch. */
     DWORD errorlevel;
     DWORD out_cp;
     BATCH *batch;
     FORCTX *forctx;
     WCHAR *cmdline;
-    WCHAR *self;       /* path of this executable */
+    WCHAR *self;       /* path of this executable. */
     int pushd_count;
     WCHAR *pushd[64];
     volatile LONG ctrlc;
     BOOL abort_all;
-    int nest;          /* depth of call levels, for the recursion limit */
+    int nest;          /* depth of call levels, for the recursion limit. */
     WORD default_color;
     BOOL in_pipe_child;
-    BOOL nul_node;     /* the last line read was empty, so the prompt needs no blank line before it */
-    BOOL call_flag;    /* the command about to run is the target of call */
+    BOOL nul_node;     /* the last line read was empty, so the prompt needs no blank line before it. */
+    BOOL call_flag;    /* the command about to run is the target of call. */
     DWORD in_cp;
-    BOOL cmd_script;   /* the outermost batch file is a .cmd, whose commands set ERRORLEVEL on success too */
+    BOOL cmd_script;   /* the outermost batch file is a .cmd, whose commands set ERRORLEVEL on success too. */
 } STATE;
 
 extern STATE g;
@@ -227,20 +227,20 @@ typedef enum CMP_OP { CMP_EQU, CMP_NEQ, CMP_LSS, CMP_LEQ, CMP_GTR, CMP_GEQ } CMP
 typedef struct NODE {
     NODE_KIND kind;
     REDIR *redirs;
-    WCHAR *src; /* the statement as it was written, after percent expansion */
-    /* N_CMD */
-    WCHAR *text; /* command and arguments with the escapes removed */
-    /* N_IF */
+    WCHAR *src; /* the statement as it was written, after percent expansion. */
+
+    WCHAR *text; /* command and arguments with the escapes removed. */
+
     IF_KIND if_kind;
     CMP_OP op;
     BOOL negate, icase;
     WCHAR *lhs, *rhs;
-    /* N_FOR */
+
     int for_flags;
-    WCHAR *for_option; /* /f options or /r root */
+    WCHAR *for_option; /* /f options or /r root. */
     WCHAR for_var;
     WCHAR *for_set;
-    struct NODE *a, *b, *c; /* sub statements: left and right, body and else */
+    struct NODE *a, *b, *c; /* sub statements: left and right, body and else. */
 } NODE;
 
 typedef struct LINESRC LINESRC;
@@ -333,7 +333,7 @@ BOOL change_directory(const WCHAR *path, BOOL switch_drive);
 BOOL get_cwd(STR *out);
 void set_console_color(WORD attr);
 
-/* paths */
+
 void path_split_pattern(const WCHAR *spec, STR *dir, STR *pattern);
 BOOL wild_match(const WCHAR *pattern, const WCHAR *name);
 BOOL has_wildcards(const WCHAR *s);
