@@ -20,6 +20,10 @@ LRESULT CALLBACK ScrollBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         UserTrackScrollBar(hwnd, pt);
         return 0;
     }
+    if (msg == WM_MOUSEMOVE || msg == WM_MOUSELEAVE) {
+        UserScrollBarHover(hwnd, msg == WM_MOUSELEAVE, (POINT){(short)LOWORD(lparam), (short)HIWORD(lparam)});
+        return 0;
+    }
     if (msg == WM_ERASEBKGND)
         return 1;
     if (msg == WM_ENABLE) {

@@ -158,6 +158,7 @@ void UserCaretPaint(HWND hwnd, BOOL begin);
 void UserCaretDestroyed(HWND hwnd);
 HWND UserCaretInfo(RECT *rect);
 void UserDrawScrollBar(HWND hwnd, HDC dc);
+void UserScrollBarHover(HWND hwnd, BOOL leave, POINT client);
 void UserTrackScrollBar(HWND hwnd, POINT screen);
 
 HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGPROC proc, LPARAM param, BOOL ansi,

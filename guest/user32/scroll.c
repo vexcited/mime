@@ -469,12 +469,12 @@ static void layout(HWND hwnd, int bar, const RECT *r, BAR *b)
 
 enum { PART_NONE, PART_ARROW1, PART_PAGE1, PART_THUMB, PART_PAGE2, PART_ARROW2 };
 
-/* the part the mouse holds down while a bar is tracked. */
+/* the part the mouse holds down while a bar is tracked, and the one it is over. */
 static struct {
     HWND Window;
     int Bar;
     int Part;
-} g_held;
+} g_held, g_hover;
 
 /* the parts of the ScrollBar class. */
 enum {
@@ -493,12 +493,13 @@ static void draw_themed(HWND hwnd, int bar, HDC dc, const BAR *b)
 {
     UINT dpi = GetDpiForWindow(hwnd);
     int held = g_held.Window == hwnd && g_held.Bar == bar ? g_held.Part : PART_NONE;
+    int over = g_hover.Window == hwnd && g_hover.Bar == bar && held == PART_NONE ? g_hover.Part : PART_NONE;
     UINT arrows = b->data->Arrows;
     /* up, down, left and right buttons have four states each: normal, hot, pressed and disabled. */
     int base1 = b->vert ? 0 : 8, base2 = b->vert ? 4 : 12;
     BOOL off1 = !b->enabled || (arrows & ESB_DISABLE_LTUP), off2 = !b->enabled || (arrows & ESB_DISABLE_RTDN);
-    int s1 = base1 + (off1 ? 4 : held == PART_ARROW1 ? 3 : 1);
-    int s2 = base2 + (off2 ? 4 : held == PART_ARROW2 ? 3 : 1);
+    int s1 = base1 + (off1 ? 4 : held == PART_ARROW1 ? 3 : over == PART_ARROW1 ? 2 : 1);
+    int s2 = base2 + (off2 ? 4 : held == PART_ARROW2 ? 3 : over == PART_ARROW2 ? 2 : 1);
     UserThemeDraw(L"ScrollBar", dc, SBP_ARROWBTN, s1, &b->arrow1, dpi);
     UserThemeDraw(L"ScrollBar", dc, SBP_ARROWBTN, s2, &b->arrow2, dpi);
     int lower = b->vert ? SBP_LOWERTRACKVERT : SBP_LOWERTRACKHORZ, upper = b->vert ? SBP_UPPERTRACKVERT : SBP_UPPERTRACKHORZ;
@@ -518,8 +519,8 @@ static void draw_themed(HWND hwnd, int bar, HDC dc, const BAR *b)
         UserThemeDraw(L"ScrollBar", dc, lower, held == PART_PAGE1 ? 3 : 1, &before, dpi);
     if (!IsRectEmpty(&after))
         UserThemeDraw(L"ScrollBar", dc, upper, held == PART_PAGE2 ? 3 : 1, &after, dpi);
-    UserThemeDraw(L"ScrollBar", dc, b->vert ? SBP_THUMBBTNVERT : SBP_THUMBBTNHORZ, held == PART_THUMB ? 3 : 1, &b->thumb,
-                  dpi);
+    UserThemeDraw(L"ScrollBar", dc, b->vert ? SBP_THUMBBTNVERT : SBP_THUMBBTNHORZ,
+                  held == PART_THUMB ? 3 : over == PART_THUMB ? 2 : 1, &b->thumb, dpi);
 }
 
 static void draw(HWND hwnd, int bar, HDC dc, const RECT *r)
@@ -717,6 +718,65 @@ void UserTrackScrollBar(HWND hwnd, POINT screen)
     track(hwnd, SB_CTL, screen);
 }
 
+static void hover_redraw(HWND hwnd, int bar)
+{
+    if (bar == SB_CTL)
+        InvalidateRect(hwnd, nullptr, FALSE);
+    else
+        redraw_bar(hwnd, bar);
+}
+
+static void hover_clear(void)
+{
+    HWND old = g_hover.Window;
+    int bar = g_hover.Bar;
+    g_hover.Window = nullptr;
+    if (old && IsWindow(old))
+        hover_redraw(old, bar);
+}
+
+/* the mouse is over a bar of the window, or elsewhere when bar is -1. */
+static void hover_move(HWND hwnd, int bar, POINT screen, BOOL client_area)
+{
+    if (bar < 0 || !UserThemeActive()) {
+        if (g_hover.Window == hwnd)
+            hover_clear();
+        return;
+    }
+    RECT r;
+    if (bar == SB_CTL) {
+        GetClientRect(hwnd, &r);
+        MapWindowPoints(hwnd, nullptr, (POINT *)&r, 2);
+    } else if (!standard_rect(hwnd, bar, &r)) {
+        return;
+    }
+    BAR b;
+    layout(hwnd, bar, &r, &b);
+    int part = part_at(&b, screen);
+    if (g_hover.Window == hwnd && g_hover.Bar == bar && g_hover.Part == part)
+        return;
+    if (g_hover.Window && g_hover.Window != hwnd)
+        hover_clear();
+    g_hover.Window = hwnd;
+    g_hover.Bar = bar;
+    g_hover.Part = part;
+    TRACKMOUSEEVENT track_leave = {sizeof(track_leave), TME_LEAVE | (client_area ? 0 : TME_NONCLIENT), hwnd, 0};
+    TrackMouseEvent(&track_leave);
+    hover_redraw(hwnd, bar);
+}
+
+/* the scroll bar control: the mouse moved over it, or left it. */
+void UserScrollBarHover(HWND hwnd, BOOL leave, POINT client)
+{
+    if (leave) {
+        if (g_hover.Window == hwnd)
+            hover_clear();
+        return;
+    }
+    ClientToScreen(hwnd, &client);
+    hover_move(hwnd, SB_CTL, client, TRUE);
+}
+
 /* the DefWindowProc part for the standard bars. */
 BOOL UserDefScrollBars(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
 {
@@ -725,6 +785,14 @@ BOOL UserDefScrollBars(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESUL
         *result = NtUserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_DEFWINDOWPROC, FALSE);
         draw_standard(hwnd);
         return TRUE;
+    case WM_NCMOUSEMOVE:
+        hover_move(hwnd, wparam == HTVSCROLL ? SB_VERT : wparam == HTHSCROLL ? SB_HORZ : -1,
+                   (POINT){(short)LOWORD(lparam), (short)HIWORD(lparam)}, FALSE);
+        return FALSE;
+    case WM_NCMOUSELEAVE:
+        if (g_hover.Window == hwnd)
+            hover_clear();
+        return FALSE;
     case WM_NCLBUTTONDOWN:
     case WM_NCLBUTTONDBLCLK:
         if (wparam != HTVSCROLL && wparam != HTHSCROLL)
