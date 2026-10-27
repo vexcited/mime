@@ -1,7 +1,8 @@
 /*
  * GS wavetable synth using drivers\gm.dls, with 40 voices at 22050 Hz. supports GM, GS and XG resets, GS part
  * channels, RPNs 0 to 2, a 40 log10 volume and expression curve, and constant-power panning. reverb and chorus are
- * not rendered.
+ * not rendered. a sound set is a DLS collection of 16 bit or ADPCM waves whose articulations may use two envelopes
+ * with delay and hold, two oscillators, a low pass filter and a pitch scale by key.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -20,18 +21,28 @@
 #define SRC_VELOCITY 2
 #define SRC_KEY 3
 #define SRC_EG2 5
+#define SRC_VIBRATO 9
 #define SRC_CC1 0x81
 #define DST_ATTENUATION 1
 #define DST_PITCH 3
 #define DST_PAN 4
 #define DST_LFO_FREQUENCY 0x104
 #define DST_LFO_DELAY 0x105
+#define DST_VIB_FREQUENCY 0x114
+#define DST_VIB_DELAY 0x115
 #define DST_EG1 0x206
 #define DST_EG2 0x30A
+#define DST_FILTER_CUTOFF 0x500
+#define DST_FILTER_Q 0x501
 #define EG_ATTACK 0
 #define EG_DECAY 1
 #define EG_RELEASE 3
 #define EG_SUSTAIN 4
+#define EG_DELAY 5
+#define EG_HOLD 6
+
+#define FILTER_OPEN (13500 << 16) /* in cents, 20 kHz. */
+#define FILTER_BYPASS_CENTS 12300.0f /* about 10 kHz, which the output rate cannot hold. */
 
 #define ABSENT_TIME ((LONG)0x80000000)
 #define DRUMS 0x80000000u
@@ -45,21 +56,26 @@ typedef struct WSMP {
 } WSMP;
 
 typedef struct WAVE {
-    const SHORT *data;
-    DWORD frames, rate;
+    const SHORT *data; /* the samples, decoded the first time a note needs them when the wave is ADPCM. */
+    const BYTE *packed;
+    const SHORT *coefficients; /* seven pairs of the predictors of the ADPCM blocks. */
+    DWORD frames, rate, packed_size, block_size, block_frames, coefficient_count;
+    BOOL owned;
     WSMP wsmp;
 } WAVE;
 
 /* DLS envelope units: time cents and sustain in tenths of a percent. */
 typedef struct ENVELOPE {
-    LONG attack, decay, release, sustain;
-    LONG velocity_attack, key_decay;
+    LONG delay, attack, hold, decay, release, sustain;
+    LONG velocity_attack, key_decay, key_hold;
 } ENVELOPE;
 
 typedef struct ARTICULATION {
     LONG lfo_frequency, lfo_delay;
+    LONG vib_frequency, vib_delay, vib_pitch, vib_cc1_pitch;
     ENVELOPE eg1, eg2;
-    LONG pan, lfo_db, lfo_pitch, cc1_pitch, eg2_pitch;
+    LONG pan, lfo_db, lfo_pitch, cc1_pitch, eg2_pitch, key_pitch;
+    LONG cutoff, resonance, eg2_cutoff, lfo_cutoff, velocity_cutoff;
 } ARTICULATION;
 
 typedef struct REGION {
@@ -80,7 +96,7 @@ typedef struct INSTRUMENT {
 typedef struct EG {
     int stage;
     float level, time;
-    float attack, decay, sustain, release; /* seconds, the sustain in 0 to 1000. */
+    float delay, attack, hold, decay, sustain, release; /* seconds, the sustain in 0 to 1000. */
 } EG;
 
 typedef struct VOICE {
@@ -96,6 +112,10 @@ typedef struct VOICE {
     float cents, ratio, static_db;
     EG eg1, eg2;
     float lfo_phase, lfo_step, lfo_delay;
+    float vib_phase, vib_step, vib_delay;
+    BYTE velocity;
+    BOOL filtered;
+    float b0, b1, b2, a1, a2, z1, z2, filter_gain; /* the low pass filter and its state. */
     float left, right; /* the gains of the last block. */
     DWORD priority;
     UINT64 started;
@@ -274,8 +294,11 @@ static void default_art(ARTICULATION *a)
     memset(a, 0, sizeof(*a));
     a->lfo_frequency = (LONG)(-851.3 * 65536); /* 5 Hz. */
     a->lfo_delay = (LONG)(-7973.0 * 65536);    /* 10 ms. */
-    a->eg1.attack = a->eg1.decay = a->eg1.release = ABSENT_TIME;
-    a->eg2.attack = a->eg2.decay = a->eg2.release = ABSENT_TIME;
+    a->vib_delay = ABSENT_TIME;
+    a->vib_cc1_pitch = 50 << 16;
+    a->cutoff = FILTER_OPEN;
+    a->eg1.delay = a->eg1.attack = a->eg1.hold = a->eg1.decay = a->eg1.release = ABSENT_TIME;
+    a->eg2.delay = a->eg2.attack = a->eg2.hold = a->eg2.decay = a->eg2.release = ABSENT_TIME;
     a->eg1.sustain = a->eg2.sustain = 1000 << 16;
 }
 
@@ -290,7 +313,7 @@ static void parse_art(const CHUNK *c, ARTICULATION *a)
         const BYTE *b = c->data + header + 12 * i;
         WORD source = read16(b), control = read16(b + 2), dest = read16(b + 4);
         LONG scale = (LONG)read32(b + 8);
-        ENVELOPE *eg = dest >= DST_EG2 && dest <= DST_EG2 + 4 ? &a->eg2 : dest >= DST_EG1 && dest <= DST_EG1 + 4 ? &a->eg1
+        ENVELOPE *eg = dest >= DST_EG2 && dest <= DST_EG2 + 6 ? &a->eg2 : dest >= DST_EG1 && dest <= DST_EG1 + 6 ? &a->eg1
                                                                                                                  : nullptr;
         int stage = eg ? dest - (eg == &a->eg2 ? DST_EG2 : DST_EG1) : -1;
         if (source == SRC_NONE && control == SRC_NONE) {
@@ -298,6 +321,14 @@ static void parse_art(const CHUNK *c, ARTICULATION *a)
                 a->lfo_frequency = scale;
             else if (dest == DST_LFO_DELAY)
                 a->lfo_delay = scale;
+            else if (dest == DST_VIB_FREQUENCY)
+                a->vib_frequency = scale;
+            else if (dest == DST_VIB_DELAY)
+                a->vib_delay = scale;
+            else if (dest == DST_FILTER_CUTOFF)
+                a->cutoff = scale;
+            else if (dest == DST_FILTER_Q)
+                a->resonance = scale;
             else if (dest == DST_PAN)
                 a->pan = scale;
             else if (eg && stage == EG_ATTACK)
@@ -308,19 +339,40 @@ static void parse_art(const CHUNK *c, ARTICULATION *a)
                 eg->release = scale;
             else if (eg && stage == EG_SUSTAIN)
                 eg->sustain = scale;
+            else if (eg && stage == EG_DELAY)
+                eg->delay = scale;
+            else if (eg && stage == EG_HOLD)
+                eg->hold = scale;
         } else if (source == SRC_LFO && dest == DST_ATTENUATION) {
             a->lfo_db = scale;
         } else if (source == SRC_LFO && dest == DST_PITCH) {
-            if (control == SRC_CC1)
+            if (control == SRC_CC1) {
                 a->cc1_pitch = scale;
-            else if (control == SRC_NONE)
+                a->vib_cc1_pitch = 0; /* the set brings its own vibrato for the wheel. */
+            } else if (control == SRC_NONE) {
                 a->lfo_pitch = scale;
+            }
+        } else if (source == SRC_VIBRATO && dest == DST_PITCH) {
+            if (control == SRC_CC1)
+                a->vib_cc1_pitch = scale;
+            else if (control == SRC_NONE)
+                a->vib_pitch = scale;
+        } else if (source == SRC_LFO && dest == DST_FILTER_CUTOFF && control == SRC_NONE) {
+            a->lfo_cutoff = scale;
+        } else if (source == SRC_VELOCITY && dest == DST_FILTER_CUTOFF && control == SRC_NONE) {
+            a->velocity_cutoff = scale;
         } else if (source == SRC_VELOCITY && eg && stage == EG_ATTACK) {
             eg->velocity_attack = scale;
         } else if (source == SRC_KEY && eg && stage == EG_DECAY) {
             eg->key_decay = scale;
+        } else if (source == SRC_KEY && eg && stage == EG_HOLD) {
+            eg->key_hold = scale;
+        } else if (source == SRC_KEY && dest == DST_PITCH && control == SRC_NONE) {
+            a->key_pitch = scale;
         } else if (source == SRC_EG2 && dest == DST_PITCH) {
             a->eg2_pitch = scale;
+        } else if (source == SRC_EG2 && dest == DST_FILTER_CUTOFF) {
+            a->eg2_cutoff = scale;
         }
     }
 }
@@ -401,20 +453,89 @@ static BOOL parse_wave(const CHUNK *list, WAVE *w)
 {
     const BYTE *p = list->data + 4, *end = list->data + list->size;
     CHUNK c;
-    BOOL format = FALSE;
+    BOOL format = FALSE, adpcm = FALSE;
+    DWORD frames = 0;
     w->wsmp.unity = 60;
     while (next_chunk(&p, end, &c)) {
         if (c.id == FOURCC('f', 'm', 't', ' ') && c.size >= 16) {
-            format = read16(c.data) == WAVE_FORMAT_PCM && read16(c.data + 2) == 1 && read16(c.data + 14) == 16;
+            WORD tag = read16(c.data);
             w->rate = read32(c.data + 4);
+            if (tag == WAVE_FORMAT_PCM) {
+                format = read16(c.data + 2) == 1 && read16(c.data + 14) == 16;
+            } else if (tag == WAVE_FORMAT_ADPCM && c.size >= 22 && read16(c.data + 2) == 1 && read16(c.data + 14) == 4) {
+                /* the block size, the frames of a block and the seven pairs of predictors that follow. */
+                DWORD pairs = read16(c.data + 20);
+                w->block_size = read16(c.data + 12);
+                w->block_frames = read16(c.data + 18);
+                if (pairs == 7 && c.size >= 22 + 4 * pairs && w->block_size > 7 && w->block_frames > 1) {
+                    w->coefficients = (const SHORT *)(c.data + 22);
+                    format = adpcm = TRUE;
+                }
+            }
+        } else if (c.id == FOURCC('f', 'a', 'c', 't') && c.size >= 4) {
+            frames = read32(c.data);
         } else if (c.id == FOURCC('d', 'a', 't', 'a')) {
-            w->data = (const SHORT *)c.data;
-            w->frames = c.size / 2;
+            if (adpcm) {
+                w->packed = c.data;
+                w->packed_size = c.size;
+            } else {
+                w->data = (const SHORT *)c.data;
+                w->frames = c.size / 2;
+            }
         } else if (c.id == FOURCC('w', 's', 'm', 'p')) {
             parse_wsmp(&c, &w->wsmp);
         }
     }
-    return format && w->data && w->rate;
+    if (adpcm) {
+        /* a wave without a count plays what its blocks hold. */
+        DWORD whole = w->packed_size / w->block_size;
+        DWORD most = whole * w->block_frames;
+        w->frames = frames && frames <= most + w->block_frames ? frames : most;
+        if (!w->packed || !w->frames)
+            return FALSE;
+    }
+    return format && (w->data || w->packed) && w->rate;
+}
+
+/* the 16 bit samples of an ADPCM wave, made once when a note first plays it. */
+static BOOL wave_ready(WAVE *w)
+{
+    if (w->data)
+        return TRUE;
+    if (!w->packed || !w->frames)
+        return FALSE;
+    static const int adapt[16] = {230, 230, 230, 230, 307, 409, 512, 614, 768, 614, 512, 409, 307, 230, 230, 230};
+    SHORT *out = HeapAlloc(GetProcessHeap(), 0, ((SIZE_T)w->frames + w->block_frames) * sizeof(SHORT));
+    if (!out)
+        return FALSE;
+    DWORD done = 0;
+    for (DWORD at = 0; at + 7 <= w->packed_size && done < w->frames; at += w->block_size) {
+        const BYTE *b = w->packed + at;
+        DWORD bytes = w->packed_size - at < w->block_size ? w->packed_size - at : w->block_size;
+        DWORD set = b[0] < 7 ? b[0] : 0;
+        int c1 = w->coefficients[2 * set], c2 = w->coefficients[2 * set + 1];
+        int delta = (SHORT)read16(b + 1), s1 = (SHORT)read16(b + 3), s2 = (SHORT)read16(b + 5);
+        out[done++] = (SHORT)s2;
+        out[done++] = (SHORT)s1;
+        for (DWORD i = 7; i < bytes && done < w->frames + 1; i++) {
+            for (int half = 0; half < 2; half++) {
+                int nibble = half ? b[i] & 15 : b[i] >> 4;
+                int p = (s1 * c1 + s2 * c2) / 256 + (nibble >= 8 ? nibble - 16 : nibble) * delta;
+                p = p > 32767 ? 32767 : p < -32768 ? -32768 : p;
+                s2 = s1;
+                s1 = p;
+                delta = delta * adapt[nibble] / 256;
+                if (delta < 16)
+                    delta = 16;
+                out[done++] = (SHORT)p;
+            }
+        }
+    }
+    while (done < w->frames)
+        out[done++] = 0;
+    w->data = out;
+    w->owned = TRUE;
+    return TRUE;
 }
 
 /* counts storage before allocating each kind once. */
@@ -538,13 +659,16 @@ static void system_reset(SYNTH *s, BOOL gs, BOOL xg)
 
 static void eg_start(EG *eg, const ENVELOPE *e, BYTE key, BYTE velocity)
 {
-    eg->stage = EG_ATTACK;
     eg->time = 0.0f;
     eg->level = 0.0f;
     LONG attack = e->attack == ABSENT_TIME ? ABSENT_TIME : e->attack + (LONG)((LONG64)e->velocity_attack * velocity / 128);
     LONG decay = e->decay == ABSENT_TIME ? ABSENT_TIME : e->decay + (LONG)((LONG64)e->key_decay * key / 128);
+    LONG hold = e->hold == ABSENT_TIME ? ABSENT_TIME : e->hold + (LONG)((LONG64)e->key_hold * key / 128);
+    eg->delay = seconds(e->delay);
     eg->attack = seconds(attack);
+    eg->hold = seconds(hold);
     eg->decay = seconds(decay);
+    eg->stage = eg->delay > 0.0f ? EG_DELAY : EG_ATTACK;
     eg->release = seconds(e->release);
     float sustain = e->sustain / 65536.0f;
     eg->sustain = sustain < 0 ? 0 : sustain > 1000 ? 1000 : sustain;
@@ -560,11 +684,25 @@ static void eg_release(EG *eg)
 static void eg_step(EG *eg, float dt, BOOL volume)
 {
     switch (eg->stage) {
+    case EG_DELAY:
+        eg->time += dt;
+        if (eg->time >= eg->delay) {
+            eg->stage = EG_ATTACK;
+            eg->time = 0.0f;
+        }
+        break;
+    case EG_HOLD:
+        eg->time += dt;
+        if (eg->time >= eg->hold) {
+            eg->stage = EG_DECAY;
+            eg->time = 0.0f;
+        }
+        break;
     case EG_ATTACK:
         eg->time += dt;
         if (eg->time >= eg->attack) {
             eg->level = 1000.0f;
-            eg->stage = EG_DECAY;
+            eg->stage = eg->hold > 0.0f ? EG_HOLD : EG_DECAY;
             eg->time = 0.0f;
         } else {
             float a = eg->time / eg->attack;
@@ -640,8 +778,9 @@ static const INSTRUMENT *find_instrument(SYNTH *s, const PART *p, BYTE key, BYTE
         return in;
     if (p->patch & DRUMS)
         return find_patch(s, DRUMS, key, velocity);
+    /* a variation the sound set lacks plays the capital tone of its program. */
     if (!s->xg)
-        return nullptr;
+        return find_patch(s, p->patch & 0x7F, key, velocity);
     if (((p->patch >> 16) & 0x7F) == 127) {
         in = find_patch(s, p->patch & 0x7F007F, key, velocity);
         return in ? in : find_patch(s, 0x7F0000, key, velocity);
@@ -684,7 +823,7 @@ static void note_on(SYNTH *s, int part, BYTE key, BYTE velocity)
     for (DWORD r = 0; r < in->count; r++) {
         const REGION *region = &in->regions[r];
         if (key < region->key_low || key > region->key_high || velocity < region->vel_low ||
-            velocity > region->vel_high || region->wave >= s->wave_count || !s->waves[region->wave].data)
+            velocity > region->vel_high || region->wave >= s->wave_count || !wave_ready(&s->waves[region->wave]))
             continue;
         for (int i = 0; i < VOICES; i++) {
             VOICE *v = &s->voices[i];
@@ -712,7 +851,8 @@ static void note_on(SYNTH *s, int part, BYTE key, BYTE velocity)
             v->smp.loop = FALSE;
         v->priority = p->priority;
         v->started = s->clock;
-        v->cents = (key - v->smp.unity) * 100.0f + v->smp.fine;
+        v->velocity = velocity;
+        v->cents = (key - v->smp.unity) * 100.0f + v->smp.fine + v->art->key_pitch / 65536.0f * key / 128.0f;
         v->ratio = (float)w->rate / RATE;
         v->static_db = v->smp.db + g_curve[velocity] + s->master_db;
         eg_start(&v->eg1, &v->art->eg1, key, velocity);
@@ -720,6 +860,9 @@ static void note_on(SYNTH *s, int part, BYTE key, BYTE velocity)
         float hz = 440.0f * exp2_approx((v->art->lfo_frequency / 65536.0f - 6900.0f) / 1200.0f);
         v->lfo_step = hz * BLOCK / RATE;
         v->lfo_delay = seconds(v->art->lfo_delay);
+        float vib_hz = 440.0f * exp2_approx((v->art->vib_frequency / 65536.0f - 6900.0f) / 1200.0f);
+        v->vib_step = vib_hz * BLOCK / RATE;
+        v->vib_delay = seconds(v->art->vib_delay);
         v->left = v->right = 0.0f;
     }
 }
@@ -912,19 +1055,59 @@ static void sysex(SYNTH *s, const BYTE *d, DWORD n)
 
 /* ------------------------------------------------------------------ rendering */
 
+/* one turn is 1; the sine comes from the table, which a quarter of a turn on makes the cosine. */
+static float sine_turns(float turns)
+{
+    float x = (turns - (int)turns) * 256.0f;
+    int i = (int)x;
+    return g_sine[i & 255] + (g_sine[(i & 255) + 1] - g_sine[i & 255]) * (x - i);
+}
+
+/* sets the low pass filter of a voice for this block from the cutoff and resonance of its articulation. */
+static void set_filter(VOICE *v, float lfo)
+{
+    const ARTICULATION *a = v->art;
+    float cents = a->cutoff / 65536.0f + v->eg2.level / 1000.0f * a->eg2_cutoff / 65536.0f +
+                  lfo * a->lfo_cutoff / 65536.0f + v->velocity / 127.0f * a->velocity_cutoff / 65536.0f;
+    v->filtered = cents < FILTER_BYPASS_CENTS;
+    if (!v->filtered)
+        return;
+    if (cents < 1500.0f)
+        cents = 1500.0f;
+    float turns = 440.0f * exp2_approx((cents - 6900.0f) / 1200.0f) / RATE;
+    float sine = sine_turns(turns), cosine = sine_turns(turns + 0.25f);
+    /* the resonance in decibels over a flat response; a half of it comes off the level, as a sound set is made for. */
+    float peak_db = a->resonance / 655360.0f;
+    float q = exp2_approx(peak_db * (3.32192809f / 20.0f));
+    if (q < 0.7071f)
+        q = 0.7071f;
+    float alpha = sine / (2.0f * q), a0 = 1.0f + alpha;
+    v->b0 = (1.0f - cosine) / 2.0f / a0;
+    v->b1 = (1.0f - cosine) / a0;
+    v->b2 = v->b0;
+    v->a1 = -2.0f * cosine / a0;
+    v->a2 = (1.0f - alpha) / a0;
+    v->filter_gain = db_to_gain(-peak_db / 2.0f);
+}
+
 static void render_voice(SYNTH *s, VOICE *v, float *mix)
 {
     const PART *p = &s->parts[v->part];
     const ARTICULATION *a = v->art;
-    float dt = (float)BLOCK / RATE, lfo = 0.0f;
+    float dt = (float)BLOCK / RATE, lfo = 0.0f, vib = 0.0f;
     if (v->lfo_delay > 0.0f) {
         v->lfo_delay -= dt;
     } else {
-        float x = v->lfo_phase * 256.0f;
-        int i = (int)x;
-        lfo = g_sine[i & 255] + (g_sine[(i & 255) + 1] - g_sine[i & 255]) * (x - i);
+        lfo = sine_turns(v->lfo_phase);
         v->lfo_phase += v->lfo_step;
         v->lfo_phase -= (int)v->lfo_phase;
+    }
+    if (v->vib_delay > 0.0f) {
+        v->vib_delay -= dt;
+    } else {
+        vib = sine_turns(v->vib_phase);
+        v->vib_phase += v->vib_step;
+        v->vib_phase -= (int)v->vib_phase;
     }
     eg_step(&v->eg1, dt, TRUE);
     eg_step(&v->eg2, dt, FALSE);
@@ -934,6 +1117,7 @@ static void render_voice(SYNTH *s, VOICE *v, float *mix)
     }
     float cents = v->cents + part_tuning(p, v->key) + (float)p->bend_range * p->bend / 8192.0f +
                   lfo * (a->lfo_pitch + a->cc1_pitch * p->mod / 128.0f) / 65536.0f +
+                  vib * (a->vib_pitch + a->vib_cc1_pitch * p->mod / 128.0f) / 65536.0f +
                   v->eg2.level / 1000.0f * a->eg2_pitch / 65536.0f;
     UINT64 step = (UINT64)(v->ratio * exp2_approx(cents / 1200.0f) * 4294967296.0f);
     float db = v->static_db + (v->eg1.level - 1000.0f) * 96.0f / 1000.0f + lfo * a->lfo_db / 655360.0f +
@@ -941,6 +1125,11 @@ static void render_voice(SYNTH *s, VOICE *v, float *mix)
     int pan = p->pan + (int)((LONG64)a->pan * 127 / (1000 * 65536));
     pan = pan < 0 ? 0 : pan > 127 ? 127 : pan;
     float left = db_to_gain(db + g_pan[127 - pan]), right = db_to_gain(db + g_pan[pan]);
+    set_filter(v, lfo);
+    if (v->filtered) {
+        left *= v->filter_gain;
+        right *= v->filter_gain;
+    }
     float dl = (left - v->left) / BLOCK, dr = (right - v->right) / BLOCK, gl = v->left, gr = v->right;
     const SHORT *data = v->wave->data;
     DWORD frames = v->wave->frames;
@@ -958,6 +1147,12 @@ static void render_voice(SYNTH *s, VOICE *v, float *mix)
         if (v->smp.loop && next >= v->smp.loop_end)
             next = v->smp.loop_start;
         float f = (UINT32)v->position / 4294967296.0f, x = data[at] + (data[next] - data[at]) * f;
+        if (v->filtered) {
+            float y = v->b0 * x + v->z1;
+            v->z1 = v->b1 * x - v->a1 * y + v->z2;
+            v->z2 = v->b2 * x - v->a2 * y;
+            x = y;
+        }
         gl += dl;
         gr += dr;
         mix[2 * i] += x * gl;
@@ -1017,6 +1212,10 @@ static void unload(SYNTH *s)
             HeapFree(heap, 0, s->instruments[i].regions);
     HeapFree(heap, 0, s->instruments);
     HeapFree(heap, 0, s->arts);
+    if (s->waves)
+        for (DWORD i = 0; i < s->wave_count; i++)
+            if (s->waves[i].owned)
+                HeapFree(heap, 0, (void *)s->waves[i].data);
     HeapFree(heap, 0, s->waves);
     if (s->image)
         UnmapViewOfFile(s->image);
