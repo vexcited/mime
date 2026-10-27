@@ -39,6 +39,8 @@ static struct {
     BOOLEAN Stopping; /* the machine is going down. */
     ULONG Flags;
     ULONG Reason;
+    ULONG_PTR Requester;     /* the process that asked, for the log. */
+    CHAR RequesterName[16];
     ULONG Control;
     ULONG DelayMs;
     ULONG LimitMs; /* limit for the whole shutdown, 0 for none. */
@@ -432,8 +434,8 @@ static void NTAPI shutdown_thread(PVOID context)
         ExReleaseFastMutex(&g.Lock);
     }
     load_settings(&g.Settings);
-    KiLogPrintf("shutdown: flags %08x reason %08x, hung %u wait to kill %u", g.Flags, g.Reason,
-                g.Settings.HungAppTimeout, g.Settings.WaitToKillTimeout);
+    KiLogPrintf("shutdown: flags %08x reason %08x from process %u (%.15s), hung %u wait to kill %u", g.Flags, g.Reason,
+                (ULONG)g.Requester, g.RequesterName, g.Settings.HungAppTimeout, g.Settings.WaitToKillTimeout);
     if (g.LimitMs) {
         g.Deadline = now_ms() + g.LimitMs;
         PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, limit_thread, (PVOID)(ULONG_PTR)g.LimitMs);
@@ -517,6 +519,9 @@ NTSTATUS MimeShutdownStart(ULONG flags, ULONG reason, ULONG delay_seconds, ULONG
     g.Pending = delay_seconds != 0;
     g.Flags = flags;
     g.Reason = reason;
+    PEPROCESS requester = PsGetCurrentProcess();
+    g.Requester = (ULONG_PTR)requester->UniqueProcessId;
+    memcpy(g.RequesterName, requester->ImageFileName, sizeof(g.RequesterName));
     g.Control = control;
     g.DelayMs = delay_seconds * 1000;
     g.LimitMs = limit_ms;
