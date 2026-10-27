@@ -1571,7 +1571,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 1739079ull, .MaxSize = 1739079ull,
         .DownloadMB = 2,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts0, .FontCount = 14,
     },
     {
@@ -1586,7 +1586,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 496827ull, .MaxSize = 496827ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts1, .FontCount = 4,
     },
     {
@@ -1601,7 +1601,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 103357ull, .MaxSize = 103357ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts2, .FontCount = 1,
     },
     {
@@ -1616,7 +1616,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 132881ull, .MaxSize = 132881ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts3, .FontCount = 1,
     },
     {
@@ -1631,7 +1631,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 1566924ull, .MaxSize = 1566924ull,
         .DownloadMB = 2,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts4, .FontCount = 15,
     },
     {
@@ -1646,7 +1646,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 340372ull, .MaxSize = 340372ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts5, .FontCount = 1,
     },
     {
@@ -1661,7 +1661,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 219740ull, .MaxSize = 219740ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts6, .FontCount = 2,
     },
     {
@@ -1676,7 +1676,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 120507ull, .MaxSize = 120507ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts7, .FontCount = 2,
     },
     {
@@ -1691,7 +1691,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 43883622ull, .MaxSize = 43883622ull,
         .DownloadMB = 42,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts8, .FontCount = 6,
     },
     {
@@ -1706,7 +1706,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 13530376ull, .MaxSize = 13530376ull,
         .DownloadMB = 13,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts9, .FontCount = 2,
     },
     {
@@ -1721,7 +1721,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 388818ull, .MaxSize = 388818ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts10, .FontCount = 12,
     },
     {
@@ -1736,7 +1736,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 53180839ull, .MaxSize = 53180839ull,
         .DownloadMB = 51,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts11, .FontCount = 12,
     },
     {
@@ -1751,7 +1751,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 425046ull, .MaxSize = 425046ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts12, .FontCount = 4,
     },
     {
@@ -1766,7 +1766,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 213301ull, .MaxSize = 213301ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts13, .FontCount = 2,
     },
     {
@@ -1781,7 +1781,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 9748860ull, .MaxSize = 9748860ull,
         .DownloadMB = 10,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts14, .FontCount = 2,
     },
     {
@@ -1796,7 +1796,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 197349ull, .MaxSize = 197349ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts15, .FontCount = 3,
     },
     {
@@ -1811,7 +1811,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 172499ull, .MaxSize = 172499ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts16, .FontCount = 2,
     },
     {
@@ -1826,7 +1826,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 257869ull, .MaxSize = 257869ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts17, .FontCount = 2,
     },
     {
@@ -1841,7 +1841,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 4630807ull, .MaxSize = 4630807ull,
         .DownloadMB = 5,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts18, .FontCount = 84,
     },
     {
@@ -1856,7 +1856,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 430008ull, .MaxSize = 430008ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts19, .FontCount = 2,
     },
     {
@@ -1871,7 +1871,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 79828ull, .MaxSize = 79828ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts20, .FontCount = 1,
     },
     {
@@ -1886,7 +1886,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 303988ull, .MaxSize = 303988ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts21, .FontCount = 4,
     },
     {
@@ -1901,7 +1901,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 516308ull, .MaxSize = 516308ull,
         .DownloadMB = 1,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts22, .FontCount = 4,
     },
     {
@@ -1916,7 +1916,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 1697133ull, .MaxSize = 1697133ull,
         .DownloadMB = 2,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts23, .FontCount = 33,
     },
     {
@@ -1929,7 +1929,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 0ull, .MaxSize = 1099511627776ull,
         .DownloadMB = 69,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts24, .FontCount = 19,
     },
     {
@@ -1942,7 +1942,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 0ull, .MaxSize = 1099511627776ull,
         .DownloadMB = 127,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts25, .FontCount = 43,
     },
     {
@@ -1955,7 +1955,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 0ull, .MaxSize = 1099511627776ull,
         .DownloadMB = 120,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts26, .FontCount = 30,
     },
     {
@@ -1968,7 +1968,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 0ull, .MaxSize = 1099511627776ull,
         .DownloadMB = 57,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts27, .FontCount = 4,
     },
     {
@@ -1981,7 +1981,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 0ull, .MaxSize = 1099511627776ull,
         .DownloadMB = 80,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts28, .FontCount = 26,
     },
     {
@@ -1994,7 +1994,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 0ull, .MaxSize = 1099511627776ull,
         .DownloadMB = 100,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts29, .FontCount = 6,
     },
     {
@@ -2007,7 +2007,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 0ull, .MaxSize = 1099511627776ull,
         .DownloadMB = 57,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts30, .FontCount = 4,
     },
     {
@@ -2020,7 +2020,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 0ull, .MaxSize = 1099511627776ull,
         .DownloadMB = 69,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts31, .FontCount = 4,
     },
     {
@@ -2033,7 +2033,7 @@ const FEATURE_DEF g_font_features[] = {
         .MinSize = 0ull, .MaxSize = 1099511627776ull,
         .DownloadMB = 31,
         .Handler = FEATURE_HANDLER_FONTS,
-        .Terms = "These fonts are Microsoft's, licensed with Windows. Mime gets them from Microsoft's own servers for you, and it is up to you to have the right to use them.",
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
         .Fonts = fonts32, .FontCount = 3,
     },
     {
