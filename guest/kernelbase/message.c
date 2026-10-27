@@ -5,19 +5,20 @@
 
 /* ------------------------------------------------------------------ system messages */
 
-/* the system messages are the message table in the resources of this library. */
+/*
+ * the system messages are the message table in the resources of this library. a failure value of the Win32 facility,
+ * 0x8007xxxx, is looked up as the error code in its low word and never as a whole.
+ */
 static BOOL find_system_message(DWORD id, DWORD lang, LPWSTR *text, BOOL *allocated)
 {
     static PVOID image;
     if (!image)
         RtlPcToFileHeader((PVOID)find_system_message, &image);
     DWORD saved = GetLastError();
+    if ((id & 0xFFFF0000) == 0x80070000)
+        id &= 0xFFFF;
     *allocated = FALSE;
-    BOOL found = KbFindMessage((HMODULE)image, id, lang, text, allocated);
-    /* an error code made into a failure value has the text of the code. */
-    if (!found && HRESULT_FACILITY(id) == FACILITY_WIN32 && (id & 0x80000000))
-        found = KbFindMessage((HMODULE)image, HRESULT_CODE(id), lang, text, allocated);
-    if (found) {
+    if (KbFindMessage((HMODULE)image, id, lang, text, allocated)) {
         KbSetError(saved);
         return TRUE;
     }
