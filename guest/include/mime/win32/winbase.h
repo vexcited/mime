@@ -766,6 +766,23 @@ typedef struct _FILE_ID_INFO {
     FILE_ID_128 FileId;
 } FILE_ID_INFO, *PFILE_ID_INFO;
 
+typedef enum _FILE_ID_TYPE {
+    FileIdType,
+    ObjectIdType,
+    ExtendedFileIdType,
+    MaximumFileIdType
+} FILE_ID_TYPE;
+
+typedef struct FILE_ID_DESCRIPTOR {
+    DWORD dwSize;
+    FILE_ID_TYPE Type;
+    union {
+        LARGE_INTEGER FileId;
+        GUID ObjectId;
+        FILE_ID_128 ExtendedFileId;
+    };
+} FILE_ID_DESCRIPTOR, *LPFILE_ID_DESCRIPTOR;
+
 typedef struct _FILE_ALIGNMENT_INFO {
     ULONG AlignmentRequirement;
 } FILE_ALIGNMENT_INFO, *PFILE_ALIGNMENT_INFO;
@@ -996,6 +1013,8 @@ WINBASEAPI BOOL WINAPI CopyFileA(LPCSTR source, LPCSTR destination, BOOL fail_if
 WINBASEAPI BOOL WINAPI CopyFileExW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE progress, LPVOID data,
                                    LPBOOL cancel, DWORD flags);
 WINBASEAPI BOOL WINAPI CreateHardLinkW(LPCWSTR link, LPCWSTR existing, LPSECURITY_ATTRIBUTES sa);
+WINBASEAPI HANDLE WINAPI OpenFileById(HANDLE volume, LPFILE_ID_DESCRIPTOR id, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD flags);
+WINBASEAPI BOOL WINAPI CreateHardLinkA(LPCSTR link, LPCSTR existing, LPSECURITY_ATTRIBUTES sa);
 WINBASEAPI BOOLEAN WINAPI CreateSymbolicLinkW(LPCWSTR link, LPCWSTR target, DWORD flags);
 WINBASEAPI HANDLE WINAPI FindFirstFileW(LPCWSTR name, LPWIN32_FIND_DATAW data);
 WINBASEAPI HANDLE WINAPI FindFirstFileA(LPCSTR name, LPWIN32_FIND_DATAA data);

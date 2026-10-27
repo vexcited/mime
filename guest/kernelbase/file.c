@@ -1097,6 +1097,53 @@ BOOL WINAPI GetFileInformationByHandleEx(HANDLE file, FILE_INFO_BY_HANDLE_CLASS 
     return TRUE;
 }
 
+/*
+ * opens a file by its id, which the volume handle names the volume of. a file id is 8 bytes, an object id or an extended
+ * file id 16. the flags become the options of the open as CreateFileW's do, and the handle can be asked for no more
+ * than the file system gives.
+ */
+HANDLE WINAPI OpenFileById(HANDLE volume, LPFILE_ID_DESCRIPTOR id, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa,
+                           DWORD flags)
+{
+    if (!id || id->dwSize < sizeof(FILE_ID_DESCRIPTOR) || id->Type > ExtendedFileIdType) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    UNICODE_STRING name = {id->Type == FileIdType ? 8 : 16, id->Type == FileIdType ? 8 : 16, (PWSTR)&id->FileId};
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE, volume, nullptr);
+    ULONG options = FILE_OPEN_BY_FILE_ID;
+    if (!(flags & FILE_FLAG_OVERLAPPED))
+        options |= FILE_SYNCHRONOUS_IO_NONALERT;
+    if (flags & FILE_FLAG_WRITE_THROUGH)
+        options |= FILE_WRITE_THROUGH;
+    if (flags & FILE_FLAG_SEQUENTIAL_SCAN)
+        options |= FILE_SEQUENTIAL_ONLY;
+    if (flags & FILE_FLAG_RANDOM_ACCESS)
+        options |= FILE_RANDOM_ACCESS;
+    if (flags & FILE_FLAG_NO_BUFFERING)
+        options |= FILE_NO_INTERMEDIATE_BUFFERING;
+    if (flags & FILE_FLAG_BACKUP_SEMANTICS)
+        options |= FILE_OPEN_FOR_BACKUP_INTENT;
+    if (flags & FILE_FLAG_DELETE_ON_CLOSE) {
+        options |= FILE_DELETE_ON_CLOSE;
+        access |= DELETE;
+    }
+    if (flags & FILE_FLAG_OPEN_REPARSE_POINT)
+        options |= FILE_OPEN_REPARSE_POINT;
+    if (flags & FILE_FLAG_OPEN_NO_RECALL)
+        options |= 0x00400000;
+    HANDLE file;
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtCreateFile(&file, access | FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb, nullptr, 0, share,
+                                   FILE_OPEN, options, nullptr, 0);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
+        return INVALID_HANDLE_VALUE;
+    }
+    return file;
+}
+
 BOOL WINAPI SetFileInformationByHandle(HANDLE file, FILE_INFO_BY_HANDLE_CLASS klass, LPVOID info, DWORD size)
 {
     if (KbIsPseudoHandle(file)) {
@@ -1640,10 +1687,60 @@ BOOL WINAPI ReplaceFileW(LPCWSTR replaced, LPCWSTR replacement, LPCWSTR backup, 
     return TRUE;
 }
 
+/*
+ * the file is opened for writing its attributes, the one right a name added to it needs, and the link is set through
+ * the open handle. the name is a full path, which the file system opens the directory of.
+ */
 BOOL WINAPI CreateHardLinkW(LPCWSTR link, LPCWSTR existing, LPSECURITY_ATTRIBUTES sa)
 {
-    KbSetError(ERROR_INVALID_FUNCTION);
-    return FALSE;
+    if (!link || !existing) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    HANDLE file;
+    NTSTATUS status = open_path(existing, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                FILE_OPEN_FOR_BACKUP_INTENT | FILE_OPEN_REPARSE_POINT, &file);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    UNICODE_STRING nt_link;
+    if (!RtlDosPathNameToNtPathName_U(link, &nt_link, nullptr, nullptr)) {
+        NtClose(file);
+        KbSetError(ERROR_PATH_NOT_FOUND);
+        return FALSE;
+    }
+    ULONG size = (ULONG)(offsetof(KB_FILE_RENAME_INFORMATION, FileName) + nt_link.Length);
+    KB_FILE_RENAME_INFORMATION *info = KbAllocZero(size);
+    if (!info) {
+        RtlFreeUnicodeString(&nt_link);
+        NtClose(file);
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    info->ReplaceIfExists = FALSE;
+    info->RootDirectory = nullptr;
+    info->FileNameLength = nt_link.Length;
+    memcpy(info->FileName, nt_link.Buffer, nt_link.Length);
+    IO_STATUS_BLOCK iosb;
+    status = NtSetInformationFile(file, &iosb, info, size, FileLinkInformation);
+    KbFree(info);
+    RtlFreeUnicodeString(&nt_link);
+    NtClose(file);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+BOOL WINAPI CreateHardLinkA(LPCSTR link, LPCSTR existing, LPSECURITY_ATTRIBUTES sa)
+{
+    if (!link) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR wide_link = KbAnsiToWide(link), wide_existing = existing ? KbAnsiToWide(existing) : nullptr;
+    BOOL ok = FALSE;
+    if (wide_link && (wide_existing || !existing))
+        ok = CreateHardLinkW(wide_link, wide_existing, sa);
+    KbFree(wide_link);
+    KbFree(wide_existing);
+    return ok;
 }
 
 BOOLEAN WINAPI CreateSymbolicLinkW(LPCWSTR link, LPCWSTR target, DWORD flags)
@@ -1839,12 +1936,13 @@ BOOL WINAPI FindNextFileW(HANDLE find, LPWIN32_FIND_DATAW data)
 
 #define NAME_FIND_MAGIC 0x4E444E46u /* "FNDN". */
 
-/* FindFirstFileNameW's handle: the file's link names, one by one. */
+/* FindFirstFileNameW's handle: the file, kept open for the ids of the directories, and the names it has. */
 typedef struct NAME_FIND {
     ULONG Magic;
-    ULONG Next;
-    ULONG Count;
-    PWSTR Names[1];
+    HANDLE File;
+    FILE_LINKS_INFORMATION *Links;
+    PUCHAR Cursor; /* the entry of the next name, or the end of the entries. */
+    ULONG Size;    /* the bytes the file system wrote. */
 } NAME_FIND;
 
 BOOL WINAPI FindClose(HANDLE find)
@@ -1852,8 +1950,9 @@ BOOL WINAPI FindClose(HANDLE find)
     NAME_FIND *names = find;
     if (names && names != INVALID_HANDLE_VALUE && !((ULONG_PTR)names & 7) && names->Magic == NAME_FIND_MAGIC) {
         names->Magic = 0;
-        for (ULONG i = 0; i < names->Count; i++)
-            KbFree(names->Names[i]);
+        if (names->File && names->File != INVALID_HANDLE_VALUE)
+            NtClose(names->File);
+        KbFree(names->Links);
         KbFree(names);
         return TRUE;
     }
@@ -2087,63 +2186,183 @@ BOOL WINAPI SetFileCompletionNotificationModes(HANDLE file, UCHAR flags)
 
 /* ------------------------------------------------------------------ names of links and compressed sizes */
 
-/* copies the next name into the caller's buffer, or reports the length needed. */
+/*
+ * the path of the directory a link is in, as the file system names it: the file system opens the directory by its id,
+ * with the open file for the volume, and says what it is called. the answer is a FILE_NAME_INFORMATION.
+ */
+static NTSTATUS find_parent(HANDLE file, LONGLONG id, FILE_NAME_INFORMATION **name)
+{
+    UNICODE_STRING id_name = {sizeof(id), sizeof(id), (PWSTR)&id};
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &id_name, OBJ_CASE_INSENSITIVE, file, nullptr);
+    HANDLE directory;
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtCreateFile(&directory, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb, nullptr, FILE_ATTRIBUTE_NORMAL,
+                                   0, FILE_OPEN, FILE_OPEN_BY_FILE_ID | FILE_SYNCHRONOUS_IO_NONALERT, nullptr, 0);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG size = 512;
+    *name = nullptr;
+    for (;;) {
+        FILE_NAME_INFORMATION *buffer = KbAlloc(size);
+        if (!buffer) {
+            status = STATUS_NO_MEMORY;
+            break;
+        }
+        status = NtQueryInformationFile(directory, &iosb, buffer, size, FileNameInformation);
+        if (status == STATUS_BUFFER_OVERFLOW) {
+            size = buffer->FileNameLength + sizeof(ULONG) + sizeof(WCHAR);
+            KbFree(buffer);
+            continue;
+        }
+        if (NT_SUCCESS(status))
+            *name = buffer;
+        else
+            KbFree(buffer);
+        break;
+    }
+    NtClose(directory);
+    return status;
+}
+
+/*
+ * the file's own name, for a file that is the one entry of its list and whose directory the file system cannot open by
+ * id. the name it was opened by is the only name it has.
+ */
+static NTSTATUS own_name(HANDLE file, const FILE_LINK_ENTRY_INFORMATION *entry, FILE_NAME_INFORMATION **parent,
+                         PCWSTR *leaf, ULONG *leaf_chars)
+{
+    ULONG size = 512;
+    for (;;) {
+        FILE_NAME_INFORMATION *buffer = KbAlloc(size);
+        IO_STATUS_BLOCK iosb;
+        if (!buffer)
+            return STATUS_NO_MEMORY;
+        NTSTATUS status = NtQueryInformationFile(file, &iosb, buffer, size, FileNameInformation);
+        if (status == STATUS_BUFFER_OVERFLOW) {
+            size = buffer->FileNameLength + sizeof(ULONG) + sizeof(WCHAR);
+            KbFree(buffer);
+            continue;
+        }
+        if (!NT_SUCCESS(status)) {
+            KbFree(buffer);
+            return status;
+        }
+        ULONG chars = buffer->FileNameLength / sizeof(WCHAR), start = chars;
+        while (start && buffer->FileName[start - 1] != '\\')
+            start--;
+        if (chars - start != entry->FileNameLength || _wcsnicmp(buffer->FileName + start, entry->FileName, chars - start)) {
+            KbFree(buffer);
+            return STATUS_OBJECT_PATH_NOT_FOUND;
+        }
+        /* the directory part, with a backslash kept only for the root. */
+        buffer->FileNameLength = (start > 1 ? start - 1 : start) * sizeof(WCHAR);
+        *parent = buffer;
+        *leaf = entry->FileName;
+        *leaf_chars = entry->FileNameLength;
+        return STATUS_SUCCESS;
+    }
+}
+
+/*
+ * copies the name of the entry at the cursor to the caller's buffer as a path from the volume's root, or reports the
+ * length it needs, which is not an end of the list. the cursor moves on only when the name was given.
+ */
 static BOOL give_link_name(NAME_FIND *f, LPDWORD length, PWSTR buffer)
 {
-    PCWSTR name = f->Names[f->Next];
-    DWORD need = (DWORD)wcslen(name) + 1;
+    const FILE_LINK_ENTRY_INFORMATION *entry = (const FILE_LINK_ENTRY_INFORMATION *)f->Cursor;
+    FILE_NAME_INFORMATION *parent = nullptr;
+    PCWSTR leaf = entry->FileName;
+    ULONG leaf_chars = entry->FileNameLength;
+    NTSTATUS status = find_parent(f->File, entry->ParentFileId, &parent);
+    if (!NT_SUCCESS(status))
+        status = own_name(f->File, entry, &parent, &leaf, &leaf_chars);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    ULONG parent_chars = parent->FileNameLength / sizeof(WCHAR);
+    BOOL root = parent_chars == 1;
+    /* the path, the separator the root already has, the name and the end. */
+    DWORD need = parent_chars + (root ? 0 : 1) + leaf_chars + 1;
     DWORD have = *length;
     *length = need;
     if (have < need) {
+        KbFree(parent);
         KbSetError(ERROR_MORE_DATA);
         return FALSE;
     }
-    memcpy(buffer, name, need * sizeof(WCHAR));
-    f->Next++;
+    memcpy(buffer, parent->FileName, parent_chars * sizeof(WCHAR));
+    DWORD at = parent_chars;
+    if (!root)
+        buffer[at++] = L'\\';
+    memcpy(buffer + at, leaf, leaf_chars * sizeof(WCHAR));
+    buffer[at + leaf_chars] = 0;
+    KbFree(parent);
+    f->Cursor = entry->NextEntryOffset ? f->Cursor + entry->NextEntryOffset : (PUCHAR)f->Links + f->Size;
     return TRUE;
 }
 
 /*
- * the file system only reports the name a file was opened by, so the enumeration holds one link: the path from the
- * volume root.
+ * the names of a file are asked of the file system in one list, and each is turned into a path when the caller asks for
+ * it. an unknown flag, or a name that is no path, fails as windows does; a buffer too small fails the first call with
+ * ERROR_MORE_DATA and the length it needs.
  */
 HANDLE WINAPI FindFirstFileNameW(LPCWSTR path, DWORD flags, LPDWORD length, PWSTR buffer)
 {
-    if (flags || !path || !length || (*length && !buffer)) {
+    if (flags || !length) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return INVALID_HANDLE_VALUE;
     }
-    DWORD attributes = GetFileAttributesW(path);
-    if (attributes == INVALID_FILE_ATTRIBUTES)
-        return INVALID_HANDLE_VALUE;
-    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
-        KbSetError(ERROR_INVALID_PARAMETER);
+    UNICODE_STRING nt;
+    if (!path || !RtlDosPathNameToNtPathName_U(path, &nt, nullptr, nullptr)) {
+        KbSetError(ERROR_PATH_NOT_FOUND);
         return INVALID_HANDLE_VALUE;
     }
-    WCHAR full[MAX_PATH];
-    DWORD full_length = GetFullPathNameW(path, MAX_PATH, full, nullptr);
-    if (!full_length || full_length >= MAX_PATH)
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+    HANDLE file;
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtCreateFile(&file, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb, nullptr, FILE_ATTRIBUTE_NORMAL,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                   FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT, nullptr, 0);
+    RtlFreeUnicodeString(&nt);
+    if (!NT_SUCCESS(status)) {
+        KbSetStatus(status);
         return INVALID_HANDLE_VALUE;
-    PCWSTR link = full;
-    if (full[0] && full[1] == ':')
-        link = full + 2;
+    }
     NAME_FIND *f = KbAllocZero(sizeof(*f));
-    PWSTR copy = KbAlloc((wcslen(link) + 1) * sizeof(WCHAR));
-    if (!f || !copy) {
-        KbFree(f);
-        KbFree(copy);
+    if (!f) {
+        NtClose(file);
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
         return INVALID_HANDLE_VALUE;
     }
-    wcscpy(copy, link);
     f->Magic = NAME_FIND_MAGIC;
-    f->Count = 1;
-    f->Names[0] = copy;
-    if (!give_link_name(f, length, buffer)) {
-        FindClose(f);
-        return INVALID_HANDLE_VALUE;
+    f->File = file;
+    ULONG size = 96;
+    for (int attempt = 0; attempt < 8; attempt++) {
+        KbFree(f->Links);
+        f->Links = KbAlloc(size);
+        if (!f->Links) {
+            status = STATUS_NO_MEMORY;
+            break;
+        }
+        status = NtQueryInformationFile(file, &iosb, f->Links, size, FileHardLinkInformation);
+        /* the names grow with the file's links: the file system says how much room they take. */
+        if (status != STATUS_BUFFER_OVERFLOW || f->Links->BytesNeeded <= size)
+            break;
+        size = f->Links->BytesNeeded;
     }
-    return f;
+    if (NT_SUCCESS(status) && (!iosb.Information || !f->Links->EntriesReturned))
+        status = STATUS_END_OF_FILE;
+    if (NT_SUCCESS(status)) {
+        f->Size = (ULONG)iosb.Information;
+        f->Cursor = (PUCHAR)&f->Links->Entry;
+        if (give_link_name(f, length, buffer))
+            return f;
+    } else {
+        KbSetStatus(status);
+    }
+    FindClose(f);
+    return INVALID_HANDLE_VALUE;
 }
 
 BOOL WINAPI FindNextFileNameW(HANDLE find, LPDWORD length, PWSTR buffer)
@@ -2157,8 +2376,8 @@ BOOL WINAPI FindNextFileNameW(HANDLE find, LPDWORD length, PWSTR buffer)
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (f->Next >= f->Count) {
-        KbSetError(ERROR_HANDLE_EOF);
+    if (f->Cursor == (PUCHAR)f->Links + f->Size) {
+        KbSetStatus(STATUS_END_OF_FILE);
         return FALSE;
     }
     return give_link_name(f, length, buffer);

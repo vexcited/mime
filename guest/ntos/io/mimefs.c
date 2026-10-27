@@ -53,6 +53,8 @@ static NTSTATUS host_status(ULONG64 hs, BOOLEAN path_missing)
     case MIME_HC_STATUS_NO_MEMORY: return STATUS_INSUFFICIENT_RESOURCES;
     case MIME_HC_STATUS_NOT_EMPTY: return STATUS_DIRECTORY_NOT_EMPTY;
     case MIME_HC_STATUS_INVALID: return STATUS_INVALID_PARAMETER;
+    case MIME_HC_STATUS_CROSS_DEVICE: return STATUS_NOT_SAME_DEVICE;
+    case MIME_HC_STATUS_TOO_MANY_LINKS: return STATUS_TOO_MANY_LINKS;
     default: return STATUS_UNSUCCESSFUL;
     }
 }
@@ -324,6 +326,19 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     if (!req)
         return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
     ULONG chars = file->FileName.Length / sizeof(WCHAR);
+    /* an open by id names the file by its 8 or 16 byte id, with or without the backslash that follows the device. */
+    BOOLEAN by_id = (options & FILE_OPEN_BY_FILE_ID) != 0;
+    const WCHAR *name = file->FileName.Buffer;
+    if (by_id) {
+        if (chars && name[0] == '\\' && (chars == 5 || chars == 9)) {
+            name++;
+            chars--;
+        }
+        if (disposition != FILE_OPEN || (chars != 4 && chars != 8)) {
+            ExFreePool(req);
+            return complete(irp, STATUS_INVALID_PARAMETER, 0);
+        }
+    }
     /* the volume itself, opened as \\.\C:, has no name under the device: it answers the ioctls of the drive. */
     if (!chars) {
         ExFreePool(req);
@@ -337,24 +352,24 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         return complete(irp, STATUS_NAME_TOO_LONG, 0);
     }
     /* reject wildcards and the characters ntfs refuses. */
-    for (ULONG i = 0; i < chars; i++) {
+    for (ULONG i = 0; i < chars && !by_id; i++) {
         WCHAR c = file->FileName.Buffer[i];
         if (c == '*' || c == '?' || c == '<' || c == '>' || c == '|' || c == '"' || (c == ':' && i != 1)) {
             ExFreePool(req);
             return complete(irp, STATUS_OBJECT_NAME_INVALID, 0);
         }
     }
-    if (vol->HostVolume == MIME_FS_VOLUME_SYSTEM) {
+    if (vol->HostVolume == MIME_FS_VOLUME_SYSTEM && !by_id) {
         const MimeRomEntry *rom = HalRomFind(file->FileName.Buffer, chars);
         if (rom) {
             ExFreePool(req);
             return create_rom(irp, file, rom, access, options, disposition, security, check);
         }
     }
-    memcpy(req->path, file->FileName.Buffer, chars * sizeof(WCHAR));
+    memcpy(req->path, name, chars * sizeof(WCHAR));
     req->path_chars = chars;
     req->volume = vol->HostVolume;
-    req->flags = 0;
+    req->flags = by_id ? MIME_FS_OPEN_BY_ID : 0;
     if (access & (FILE_READ_DATA | GENERIC_READ | GENERIC_ALL | MAXIMUM_ALLOWED | FILE_EXECUTE | GENERIC_EXECUTE))
         req->flags |= MIME_FS_OPEN_READ;
     if (access & (FILE_WRITE_DATA | FILE_APPEND_DATA | GENERIC_WRITE | GENERIC_ALL))
@@ -366,7 +381,7 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     if (check)
         req->flags |= MIME_FS_OPEN_WANT_SD;
     /* a query by name only needs the attributes: the host answers without making a handle. */
-    BOOLEAN stat_only = (stack->Flags & SL_OPEN_STAT_ONLY) != 0 && disposition == FILE_OPEN &&
+    BOOLEAN stat_only = (stack->Flags & SL_OPEN_STAT_ONLY) != 0 && disposition == FILE_OPEN && !by_id &&
                         !(req->flags & MIME_FS_OPEN_WRITE) && !(file->Flags & FO_DELETE_ON_CLOSE);
     if (stat_only)
         req->flags |= MIME_FS_OPEN_STAT_ONLY;
@@ -406,7 +421,8 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         keep = FsAttrBegin(vol->HostVolume, &file->FileName, &keep_token);
     }
     /* buffered writes for this name are flushed before the host looks at its size, time, or truncates it. */
-    FsWbSyncPath(vol->HostVolume, &file->FileName, FALSE);
+    if (!by_id)
+        FsWbSyncPath(vol->HostVolume, &file->FileName, FALSE);
     /*
      * a file with a section in use is not truncated by an open, as it is not by a size change: a view would read
      * what is gone, and when the pages are the host's that is a fault the host cannot take. the file is first looked
@@ -472,6 +488,24 @@ opened:
     ULONG req_flags = req->flags;
     MimeFsInfo opened = req->info_out;
     BOOLEAN directory = (opened.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    if (by_id) {
+        /* the file object takes the name the host found the id at. */
+        ULONG found = req->path_chars;
+        PWCHAR text = ExAllocatePool2(POOL_FLAG_NON_PAGED, (found + 1) * sizeof(WCHAR), KI_TAG('I', 'o', 'F', 'n'));
+        if (!text) {
+            if (host)
+                HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+            ExFreePool(req);
+            return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+        }
+        memcpy(text, req->path, found * sizeof(WCHAR));
+        text[found] = 0;
+        ExFreePool(file->FileName.Buffer);
+        file->FileName.Buffer = text;
+        file->FileName.Length = (USHORT)(found * sizeof(WCHAR));
+        file->FileName.MaximumLength = (USHORT)((found + 1) * sizeof(WCHAR));
+        chars = found;
+    }
 
     if (check && (!checked || action == FILE_CREATED)) {
         MIMEFS_STORED known = {req->sd_status, req->sd_length, req->sd_distance, req->sd_data};
@@ -677,6 +711,87 @@ static void fill_basic(const MimeFsInfo *i, PFILE_BASIC_INFORMATION b)
     b->FileAttributes = i->attributes ? i->attributes : FILE_ATTRIBUTE_NORMAL;
 }
 
+/*
+ * every name of the file on its volume: the count first, then an entry for each name with the id of its directory, the
+ * way ntfs gives them. what does not fit is counted in BytesNeeded, so the caller can ask again with room for all.
+ */
+static NTSTATUS query_links(PFILE_OBJECT file, MIMEFS_FCB *fcb, PUCHAR out, ULONG length, PULONG written)
+{
+    if (length < 32)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    PFILE_LINKS_INFORMATION header = (PFILE_LINKS_INFORMATION)out;
+    header->BytesNeeded = 8;
+    header->EntriesReturned = 0;
+    PUCHAR raw = nullptr;
+    ULONG64 need = 0;
+    /* a file the rom serves has one name, and no directory of its own to give an id for. */
+    UCHAR rom_name[sizeof(MimeFsLinkName) + 520 * sizeof(WCHAR)];
+    if (fcb->Rom) {
+        ULONG chars = file->FileName.Length / sizeof(WCHAR), start = chars;
+        while (start && file->FileName.Buffer[start - 1] != '\\')
+            start--;
+        chars -= start;
+        if (chars > 255)
+            return STATUS_OBJECT_NAME_INVALID;
+        MimeFsLinkName *record = (MimeFsLinkName *)rom_name;
+        record->size = (ULONG)((sizeof(*record) + chars * sizeof(WCHAR) + 7) & ~7ull);
+        record->name_chars = chars;
+        record->parent_id = 0;
+        memcpy(record->name, file->FileName.Buffer + start, chars * sizeof(WCHAR));
+        raw = rom_name;
+        need = record->size;
+    } else {
+        ULONG64 capacity = 2048;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            raw = ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)capacity, KI_TAG('M', 'f', 'L', 's'));
+            if (!raw)
+                return STATUS_INSUFFICIENT_RESOURCES;
+            ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_LINKS, fcb->HostHandle, HalPhysicalOf(raw), capacity, 0, 0, 0, &need);
+            if (hs != MIME_HC_STATUS_OK) {
+                ExFreePool(raw);
+                return host_status(hs, FALSE);
+            }
+            if (need <= capacity)
+                break;
+            ExFreePool(raw);
+            raw = nullptr;
+            capacity = need;
+        }
+        if (!raw)
+            return STATUS_UNSUCCESSFUL;
+    }
+    ULONG room = length - 8;
+    PUCHAR cursor = out + 8;
+    PFILE_LINK_ENTRY_INFORMATION last = nullptr;
+    BOOLEAN overflow = FALSE;
+    for (ULONG64 at = 0; at < need;) {
+        const MimeFsLinkName *record = (const MimeFsLinkName *)(raw + at);
+        ULONG size = (ULONG)((offsetof(FILE_LINK_ENTRY_INFORMATION, FileName) + record->name_chars * sizeof(WCHAR) + 7) & ~7ull);
+        header->BytesNeeded += size;
+        if (!overflow && room >= size) {
+            PFILE_LINK_ENTRY_INFORMATION entry = (PFILE_LINK_ENTRY_INFORMATION)cursor;
+            memset(entry, 0, size);
+            entry->NextEntryOffset = size;
+            entry->ParentFileId = (LONGLONG)record->parent_id;
+            entry->FileNameLength = record->name_chars;
+            memcpy(entry->FileName, record->name, record->name_chars * sizeof(WCHAR));
+            last = entry;
+            cursor += size;
+            room -= size;
+            header->EntriesReturned++;
+        } else {
+            overflow = TRUE;
+        }
+        at += record->size;
+    }
+    if (last)
+        last->NextEntryOffset = 0;
+    if (!fcb->Rom)
+        ExFreePool(raw);
+    *written = (ULONG)(cursor - out);
+    return overflow ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS;
+}
+
 static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -787,6 +902,58 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
             status = STATUS_BUFFER_OVERFLOW;
         break;
     }
+    case FileStandardLinkInformation: {
+        if (length < sizeof(FILE_STANDARD_LINK_INFORMATION)) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        PFILE_STANDARD_LINK_INFORMATION l = (PFILE_STANDARD_LINK_INFORMATION)out;
+        l->NumberOfAccessibleLinks = l->TotalNumberOfLinks = info->links ? info->links : 1;
+        l->DeletePending = fcb->DeleteOnClose;
+        l->Directory = fcb->Directory;
+        written = sizeof(FILE_STANDARD_LINK_INFORMATION);
+        break;
+    }
+    case FileIdInformation: {
+        if (length < sizeof(FILE_ID_INFORMATION)) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        PFILE_ID_INFORMATION id = (PFILE_ID_INFORMATION)out;
+        MIMEFS_VOLUME *vol = device->DeviceExtension;
+        memset(id, 0, sizeof(*id));
+        id->VolumeSerialNumber = vol->Serial;
+        memcpy(id->FileId, &info->file_id, sizeof(info->file_id));
+        written = sizeof(FILE_ID_INFORMATION);
+        break;
+    }
+    case FileStatInformation:
+    case FileStatLxInformation: {
+        BOOLEAN lx = stack->Parameters.QueryFile.FileInformationClass == FileStatLxInformation;
+        ULONG need = lx ? sizeof(FILE_STAT_LX_INFORMATION) : sizeof(FILE_STAT_INFORMATION);
+        if (length < need) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        memset(out, 0, need);
+        PFILE_STAT_INFORMATION st = (PFILE_STAT_INFORMATION)out;
+        st->FileId.QuadPart = (LONGLONG)info->file_id;
+        st->CreationTime.QuadPart = (LONGLONG)info->creation_time;
+        st->LastAccessTime.QuadPart = (LONGLONG)info->access_time;
+        st->LastWriteTime.QuadPart = (LONGLONG)info->write_time;
+        st->ChangeTime.QuadPart = (LONGLONG)info->change_time;
+        st->AllocationSize.QuadPart = (LONGLONG)info->allocation_size;
+        st->EndOfFile.QuadPart = (LONGLONG)info->size;
+        st->FileAttributes = info->attributes ? info->attributes : FILE_ATTRIBUTE_NORMAL;
+        st->NumberOfLinks = info->links ? info->links : 1;
+        st->EffectiveAccess = fcb->Rom ? 0x1200A9 /* read and execute */
+                                       : MimeFsMaximumAccess(fcb->Volume, fcb->HostHandle, &file->FileName, fcb->Directory);
+        written = need;
+        break;
+    }
+    case FileHardLinkInformation:
+        status = query_links(file, fcb, out, length, &written);
+        break;
     case FileAllInformation: {
         ULONG need = sizeof(FILE_BASIC_INFORMATION) + sizeof(FILE_STANDARD_INFORMATION) + sizeof(FILE_INTERNAL_INFORMATION) +
                      sizeof(ULONG) * 3 + sizeof(LARGE_INTEGER) + sizeof(ULONG) * 2 + sizeof(ULONG);
@@ -799,7 +966,8 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
         PFILE_STANDARD_INFORMATION s = (PFILE_STANDARD_INFORMATION)(out + 40);
         s->AllocationSize.QuadPart = (LONGLONG)info->allocation_size;
         s->EndOfFile.QuadPart = (LONGLONG)info->size;
-        s->NumberOfLinks = 1;
+        s->NumberOfLinks = info->links ? info->links : 1;
+        s->DeletePending = fcb->DeleteOnClose;
         s->Directory = fcb->Directory;
         ((PFILE_INTERNAL_INFORMATION)(out + 64))->IndexNumber.QuadPart = (LONGLONG)info->file_id;
         written = need;
@@ -822,9 +990,10 @@ static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MI
 {
     PFILE_OBJECT dir = stack->Parameters.SetFile.FileObject;
     MIMEFS_FCB *dfcb = dir ? dir->FsContext : nullptr;
-    if (!dfcb || dir->DeviceObject != device)
+    /* no directory is a new name in the file's own. */
+    if (dir && (!dfcb || dir->DeviceObject != device))
         return STATUS_NOT_SAME_DEVICE;
-    if (dfcb->Rom || !dfcb->Directory)
+    if (dir && (dfcb->Rom || !dfcb->Directory))
         return STATUS_NOT_A_DIRECTORY;
     const WCHAR *name = (const WCHAR *)(in + 20);
     ULONG chars = *(PULONG)(in + 16) / sizeof(WCHAR), start = chars;
@@ -847,17 +1016,20 @@ static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MI
         FsWbSyncPath(fcb->Volume, &file->FileName, TRUE);
     else
         FsWbSync(&fcb->Wb);
-    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_RENAME, fcb->HostHandle, dfcb->HostHandle, HalPhysicalOf(text), leaf,
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_RENAME, fcb->HostHandle, dfcb ? dfcb->HostHandle : 0, HalPhysicalOf(text), leaf,
                                       stack->Parameters.SetFile.ReplaceIfExists ? MIME_FS_RENAME_REPLACE : 0, 0, nullptr);
     NTSTATUS status = host_status(hs, FALSE);
     if (NT_SUCCESS(status)) {
         /* the volume relative name: the directory's, a backslash and the leaf. */
-        ULONG base = dir->FileName.Length / sizeof(WCHAR);
-        while (base && dir->FileName.Buffer[base - 1] == '\\')
+        PCUNICODE_STRING where = dir ? &dir->FileName : &file->FileName;
+        ULONG base = where->Length / sizeof(WCHAR);
+        while (!dir && base && where->Buffer[base - 1] != '\\')
+            base--;
+        while (base && where->Buffer[base - 1] == '\\')
             base--;
         PWCHAR full = ExAllocatePool2(POOL_FLAG_NON_PAGED, (base + 1 + leaf + 1) * sizeof(WCHAR), KI_TAG('I', 'o', 'F', 'n'));
         if (full) {
-            memcpy(full, dir->FileName.Buffer, base * sizeof(WCHAR));
+            memcpy(full, where->Buffer, base * sizeof(WCHAR));
             full[base] = '\\';
             memcpy(full + base + 1, text, leaf * sizeof(WCHAR));
             full[base + 1 + leaf] = 0;
@@ -869,6 +1041,132 @@ static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MI
             FsWbNameUnlock();
             if (old)
                 ExFreePool(old);
+        }
+    }
+    ExFreePool(text);
+    return status;
+}
+
+/* whether the program may add a name to the file, which a hard link does to it, though its handle was not opened for that. */
+NTSTATUS MimeFsCheckLinkSource(PFILE_OBJECT file)
+{
+    MIMEFS_FCB *fcb = IopIsMimeFs(file) ? file->FsContext : nullptr;
+    if (!fcb || fcb->Rom || fcb->StatOnly || fcb->Directory)
+        return STATUS_SUCCESS;
+    return MimeFsCheckRight(fcb->Volume, fcb->HostHandle, &file->FileName, FALSE, FILE_WRITE_ATTRIBUTES);
+}
+
+/* the volume relative name of a leaf in a directory, or in the directory of the file when none is given. */
+static PWCHAR name_in_directory(PFILE_OBJECT file, PFILE_OBJECT dir, const WCHAR *leaf, ULONG leaf_chars, PULONG chars)
+{
+    PCUNICODE_STRING base = dir ? &dir->FileName : &file->FileName;
+    ULONG n = base->Length / sizeof(WCHAR);
+    if (!dir) {
+        while (n && base->Buffer[n - 1] != '\\')
+            n--;
+    }
+    while (n && base->Buffer[n - 1] == '\\')
+        n--;
+    PWCHAR full = ExAllocatePool2(POOL_FLAG_NON_PAGED, (n + 1 + leaf_chars + 1) * sizeof(WCHAR), KI_TAG('I', 'o', 'F', 'n'));
+    if (!full)
+        return nullptr;
+    memcpy(full, base->Buffer, n * sizeof(WCHAR));
+    full[n] = '\\';
+    memcpy(full + n + 1, leaf, leaf_chars * sizeof(WCHAR));
+    full[n + 1 + leaf_chars] = 0;
+    *chars = n + 1 + leaf_chars;
+    return full;
+}
+
+static BOOLEAN same_directory(PFILE_OBJECT file, PFILE_OBJECT dir)
+{
+    if (!dir)
+        return TRUE;
+    ULONG a = file->FileName.Length / sizeof(WCHAR), b = dir->FileName.Length / sizeof(WCHAR);
+    while (a && file->FileName.Buffer[a - 1] != '\\')
+        a--;
+    while (a > 1 && file->FileName.Buffer[a - 1] == '\\')
+        a--;
+    while (b > 1 && dir->FileName.Buffer[b - 1] == '\\')
+        b--;
+    if (a != b)
+        return FALSE;
+    for (ULONG i = 0; i < a; i++) {
+        if (fold(file->FileName.Buffer[i]) != fold(dir->FileName.Buffer[i]))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/*
+ * adds a name to the file, in the directory the i/o manager opened or in the file's own. a name that is already there
+ * is an error unless it is to be replaced, and a file that is itself called that keeps its name either way. a file has
+ * 1024 names at most, and it has one security descriptor, which every name shows.
+ */
+static NTSTATUS link_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MIMEFS_FCB *fcb, PIO_STACK_LOCATION stack,
+                                  const UCHAR *in, ULONG length)
+{
+    BOOLEAN ex = stack->Parameters.SetFile.FileInformationClass == FileLinkInformationEx;
+    ULONG flags = ex ? *(const ULONG *)in : (in[0] ? FILE_LINK_REPLACE_IF_EXISTS : 0);
+    /* the bits that mean something to a file system that keeps storage reserves; no other is accepted. */
+    if (flags & ~0x1FBu)
+        return STATUS_NOT_SUPPORTED;
+    if (fcb->Directory)
+        return STATUS_FILE_IS_A_DIRECTORY;
+    if (fcb->StatOnly)
+        return STATUS_ACCESS_DENIED;
+    PFILE_OBJECT dir = stack->Parameters.SetFile.FileObject;
+    MIMEFS_FCB *dfcb = dir ? dir->FsContext : nullptr;
+    if (dir && (!dfcb || dir->DeviceObject != device))
+        return STATUS_NOT_SAME_DEVICE;
+    if (dir && (dfcb->Rom || !dfcb->Directory))
+        return STATUS_NOT_A_DIRECTORY;
+    const WCHAR *name = (const WCHAR *)(in + 20);
+    ULONG chars = *(const ULONG *)(in + 16) / sizeof(WCHAR), start = chars;
+    while (start && name[start - 1] != '\\')
+        start--;
+    ULONG leaf = chars - start;
+    BOOLEAN dots = TRUE;
+    if (!leaf || leaf > 255)
+        return STATUS_OBJECT_NAME_INVALID;
+    for (ULONG i = 0; i < leaf; i++) {
+        WCHAR c = name[start + i];
+        if (c < ' ' || c == '*' || c == '?' || c == '<' || c == '>' || c == '|' || c == '"' || c == ':' || c == '/')
+            return STATUS_OBJECT_NAME_INVALID;
+        if (c != '.')
+            dots = FALSE;
+    }
+    if (dots && leaf <= 2)
+        return STATUS_OBJECT_NAME_INVALID;
+    if (fcb->DeleteOnClose)
+        return STATUS_DELETE_PENDING;
+
+    /* the file gives every name its descriptor: one that only follows the directory is written to it first. */
+    if (!same_directory(file, dir)) {
+        NTSTATUS pinned = MimeFsPinSecurity(fcb->Volume, fcb->HostHandle, &file->FileName);
+        if (!NT_SUCCESS(pinned))
+            return pinned;
+    }
+    PWCHAR text = ExAllocatePool2(POOL_FLAG_NON_PAGED, leaf * sizeof(WCHAR), KI_TAG('M', 'f', 'L', 'k'));
+    if (!text)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memcpy(text, name + start, leaf * sizeof(WCHAR));
+    FsWbSync(&fcb->Wb);
+    ULONG64 host_flags = ((flags & FILE_LINK_REPLACE_IF_EXISTS) ? MIME_FS_LINK_REPLACE : 0) |
+                         ((flags & FILE_LINK_IGNORE_READONLY_ATTRIBUTE) ? MIME_FS_LINK_IGNORE_READONLY : 0);
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_LINK, fcb->HostHandle, dfcb ? dfcb->HostHandle : 0, HalPhysicalOf(text),
+                                      leaf, host_flags, 0, nullptr);
+    NTSTATUS status = host_status(hs, FALSE);
+    if (NT_SUCCESS(status)) {
+        ULONG added_chars;
+        PWCHAR added = name_in_directory(file, dir, text, leaf, &added_chars);
+        MimeFsSecurityChanged();
+        /* the other names of the file, and the one that was linked, have a count the programs have asked about. */
+        FsAttrChanged(fcb->Volume, file->FileName.Buffer, file->FileName.Length / sizeof(WCHAR), FALSE);
+        if (added) {
+            UNICODE_STRING path = {(USHORT)(added_chars * sizeof(WCHAR)), (USHORT)((added_chars + 1) * sizeof(WCHAR)), added};
+            FsNotifyReport(fcb->Volume, &path, FILE_ACTION_ADDED, FILE_NOTIFY_CHANGE_FILE_NAME);
+            ExFreePool(added);
         }
     }
     ExFreePool(text);
@@ -928,6 +1226,11 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         fcb->DeleteOnClose = remove;
         return complete(irp, STATUS_SUCCESS, 0);
     }
+    case FileLinkInformation:
+    case FileLinkInformationEx:
+        if (length < 24)
+            return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
+        return complete(irp, link_in_directory(device, stack->FileObject, fcb, stack, in, length), 0);
     case FileRenameInformation:
     case FileRenameInformationEx: {
         PFILE_OBJECT file = stack->FileObject;

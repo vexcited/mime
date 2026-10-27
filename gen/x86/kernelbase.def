@@ -98,6 +98,7 @@ EXPORTS
     CreateFileMappingNumaW=_CreateFileMappingNumaW@28
     CreateFileMappingW=_CreateFileMappingW@24
     CreateFileW=_CreateFileW@28
+    CreateHardLinkA=_CreateHardLinkA@12
     CreateHardLinkW=_CreateHardLinkW@12
     CreateIoCompletionPort=_CreateIoCompletionPort@16
     CreateJobObjectA=_CreateJobObjectA@8
@@ -777,6 +778,7 @@ EXPORTS
     OpenEventA=_OpenEventA@12
     OpenEventW=_OpenEventW@12
     OpenFile=_OpenFile@12
+    OpenFileById=_OpenFileById@24
     OpenFileMappingA=_OpenFileMappingA@12
     OpenFileMappingFromApp=_OpenFileMappingFromApp@12
     OpenFileMappingW=_OpenFileMappingW@12

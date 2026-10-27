@@ -142,6 +142,7 @@ EXPORTS
     CreateFileMappingNumaW=_Kernel32Thunk_CreateFileMappingNumaW@28
     CreateFileMappingW=_Kernel32Thunk_CreateFileMappingW@24
     CreateFileW=_Kernel32Thunk_CreateFileW@28
+    CreateHardLinkA=_Kernel32Thunk_CreateHardLinkA@12
     CreateHardLinkW=_Kernel32Thunk_CreateHardLinkW@12
     CreateIoCompletionPort=_Kernel32Thunk_CreateIoCompletionPort@16
     CreateJobObjectA=_Kernel32Thunk_CreateJobObjectA@8
@@ -910,6 +911,7 @@ EXPORTS
     OpenEventA=_Kernel32Thunk_OpenEventA@12
     OpenEventW=_Kernel32Thunk_OpenEventW@12
     OpenFile=_Kernel32Thunk_OpenFile@12
+    OpenFileById=_Kernel32Thunk_OpenFileById@24
     OpenFileMappingA=_Kernel32Thunk_OpenFileMappingA@12
     OpenFileMappingFromApp=_Kernel32Thunk_OpenFileMappingFromApp@12
     OpenFileMappingW=_Kernel32Thunk_OpenFileMappingW@12

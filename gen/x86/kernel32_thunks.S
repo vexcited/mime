@@ -299,6 +299,10 @@ _Kernel32Thunk_CreateFileMappingW@24:
     .p2align 4
 _Kernel32Thunk_CreateFileW@28:
     jmp     *__imp__CreateFileW@28
+    .globl  _Kernel32Thunk_CreateHardLinkA@12
+    .p2align 4
+_Kernel32Thunk_CreateHardLinkA@12:
+    jmp     *__imp__CreateHardLinkA@12
     .globl  _Kernel32Thunk_CreateHardLinkW@12
     .p2align 4
 _Kernel32Thunk_CreateHardLinkW@12:
@@ -2759,6 +2763,10 @@ _Kernel32Thunk_OpenEventW@12:
     .p2align 4
 _Kernel32Thunk_OpenFile@12:
     jmp     *__imp__OpenFile@12
+    .globl  _Kernel32Thunk_OpenFileById@24
+    .p2align 4
+_Kernel32Thunk_OpenFileById@24:
+    jmp     *__imp__OpenFileById@24
     .globl  _Kernel32Thunk_OpenFileMappingA@12
     .p2align 4
 _Kernel32Thunk_OpenFileMappingA@12:

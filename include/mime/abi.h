@@ -422,6 +422,8 @@ enum {
     MIME_HC_FS_WARM = 0x61,     /* (pa) maps a file window into the guest's tables ahead of its first reads, without waiting for it */
     MIME_HC_FS_RENAME = 0x60,   /* (handle, directory handle, pa, chars, MIME_FS_RENAME_*) moves a file or directory to a name in a directory */
     MIME_HC_FS_SET_BASIC = 0x66, /* (handle, MimeFsBasic pa) sets the times and the read only attribute the mask names */
+    MIME_HC_FS_LINK = 0x67,     /* handle, directory handle or 0 for the file's own, pa, chars and MIME_FS_LINK_* flags: makes a hard link to the file in a directory, returns the links the file has now. */
+    MIME_HC_FS_LINKS = 0x68,    /* handle, pa and capacity: every name of the file on its volume as MimeFsLinkName records, returns the bytes they need. */
     MIME_HC_FS_WINDOW_LOST = 0xA0, /* (pa of MimeWindowLost) the next range of window pages whose file lost them, after MIME_IRQ_WINDOW */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
@@ -550,6 +552,8 @@ enum {
     MIME_HC_STATUS_NOT_EMPTY = 9,
     MIME_HC_STATUS_UNSUPPORTED = 10,
     MIME_HC_STATUS_NET_ERROR = 11,
+    MIME_HC_STATUS_CROSS_DEVICE = 12,   /* the two names are on different host file systems. */
+    MIME_HC_STATUS_TOO_MANY_LINKS = 13, /* the file has as many names as a volume allows. */
 };
 
 /*
@@ -805,6 +809,7 @@ enum {
     MIME_FS_OPEN_NON_DIRECTORY = 1u << 3, /* must not be a directory. */
     MIME_FS_OPEN_STAT_ONLY = 1u << 4,     /* returns info_out without creating a handle to close. */
     MIME_FS_OPEN_WANT_SD = 1u << 5,       /* also the nearest stored security descriptor, see sd_length: for a guest that checks the open. */
+    MIME_FS_OPEN_BY_ID = 1u << 6,         /* path holds a file id, 8 bytes or 16 with the high half 0, and comes back as the file's volume relative name. */
 };
 
 enum {
@@ -857,6 +862,21 @@ typedef struct MimeWindowLost {
 
 /* MIME_HC_FS_RENAME flags. */
 #define MIME_FS_RENAME_REPLACE 1u /* an existing file of the new name is replaced, a directory never is. */
+
+/* MIME_HC_FS_LINK flags. */
+#define MIME_FS_LINK_REPLACE 1u          /* an existing file of the new name is replaced, a non empty directory is not and an empty one neither. */
+#define MIME_FS_LINK_IGNORE_READONLY 2u  /* a read only file may be replaced. */
+
+/* most names one file can have, as on NTFS. */
+#define MIME_FS_MAX_LINKS 1024u
+
+/* what MIME_HC_FS_LINKS writes: one record per name, each size bytes long, a multiple of 8. */
+typedef struct MimeFsLinkName {
+    uint32_t size;
+    uint32_t name_chars;
+    uint64_t parent_id; /* file id of the directory the name is in. */
+    uint16_t name[];    /* the last component, not terminated. */
+} MimeFsLinkName;
 
 typedef struct MimeFsInfo {
     uint64_t size;

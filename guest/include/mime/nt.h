@@ -208,6 +208,7 @@ typedef struct _GUID {
 #define STATUS_NAME_TOO_LONG ((NTSTATUS)0xC0000106L)
 #define STATUS_NOT_A_DIRECTORY ((NTSTATUS)0xC0000103L)
 #define STATUS_NOT_SAME_DEVICE ((NTSTATUS)0xC00000D4L)
+#define STATUS_TOO_MANY_LINKS ((NTSTATUS)0xC0000265L)
 #define STATUS_PROCESS_IS_TERMINATING ((NTSTATUS)0xC000010AL)
 #define STATUS_TIMER_RESOLUTION_NOT_SET ((NTSTATUS)0xC0000245L)
 #define STATUS_INVALID_IMAGE_NOT_MZ ((NTSTATUS)0xC000012FL)
@@ -463,6 +464,7 @@ FORCEINLINE struct _TEB *NtCurrentTeb(void)
 #define FILE_SYNCHRONOUS_IO_ALERT 0x00000010
 #define FILE_SYNCHRONOUS_IO_NONALERT 0x00000020
 #define FILE_NON_DIRECTORY_FILE 0x00000040
+#define FILE_OPEN_BY_FILE_ID 0x00002000
 #define FILE_DELETE_ON_CLOSE 0x00001000
 #define FILE_OPEN_FOR_BACKUP_INTENT 0x00004000
 #define FILE_OPEN_REPARSE_POINT 0x00200000
@@ -493,6 +495,7 @@ typedef enum _FILE_INFORMATION_CLASS {
     FileAccessInformation = 8,
     FileNameInformation = 9,
     FileRenameInformation = 10,
+    FileLinkInformation = 11,
     FileNamesInformation = 12,
     FileDispositionInformation = 13,
     FilePositionInformation = 14,
@@ -509,8 +512,14 @@ typedef enum _FILE_INFORMATION_CLASS {
     FileIdBothDirectoryInformation = 37,
     FileIdFullDirectoryInformation = 38,
     FileIoCompletionNotificationInformation = 41,
+    FileHardLinkInformation = 46,
+    FileStandardLinkInformation = 54,
+    FileIdInformation = 59,
     FileDispositionInformationEx = 64,
     FileRenameInformationEx = 65,
+    FileStatInformation = 68,
+    FileStatLxInformation = 70,
+    FileLinkInformationEx = 72,
     FileMaximumInformation
 } FILE_INFORMATION_CLASS;
 
@@ -568,6 +577,78 @@ typedef struct _FILE_NAME_INFORMATION {
     ULONG FileNameLength;
     WCHAR FileName[1];
 } FILE_NAME_INFORMATION, *PFILE_NAME_INFORMATION;
+
+/* the names of a file: one entry after another, each NextEntryOffset on from the last, which is 0 for the last. */
+typedef struct _FILE_LINK_ENTRY_INFORMATION {
+    ULONG NextEntryOffset;
+    DECLSPEC_ALIGN(8) LONGLONG ParentFileId;
+    ULONG FileNameLength; /* in characters. */
+    WCHAR FileName[1];
+} FILE_LINK_ENTRY_INFORMATION, *PFILE_LINK_ENTRY_INFORMATION;
+
+typedef struct _FILE_LINKS_INFORMATION {
+    ULONG BytesNeeded;
+    ULONG EntriesReturned;
+    FILE_LINK_ENTRY_INFORMATION Entry;
+} FILE_LINKS_INFORMATION, *PFILE_LINKS_INFORMATION;
+
+typedef struct _FILE_STANDARD_LINK_INFORMATION {
+    ULONG NumberOfAccessibleLinks;
+    ULONG TotalNumberOfLinks;
+    BOOLEAN DeletePending;
+    BOOLEAN Directory;
+} FILE_STANDARD_LINK_INFORMATION, *PFILE_STANDARD_LINK_INFORMATION;
+
+typedef struct _FILE_ID_INFORMATION {
+    ULONGLONG VolumeSerialNumber;
+    UCHAR FileId[16];
+} FILE_ID_INFORMATION, *PFILE_ID_INFORMATION;
+
+typedef struct _FILE_STAT_INFORMATION {
+    LARGE_INTEGER FileId;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER AllocationSize;
+    LARGE_INTEGER EndOfFile;
+    ULONG FileAttributes;
+    ULONG ReparseTag;
+    ULONG NumberOfLinks;
+    ULONG EffectiveAccess;
+} FILE_STAT_INFORMATION, *PFILE_STAT_INFORMATION;
+
+typedef struct _FILE_STAT_LX_INFORMATION {
+    LARGE_INTEGER FileId;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER AllocationSize;
+    LARGE_INTEGER EndOfFile;
+    ULONG FileAttributes;
+    ULONG ReparseTag;
+    ULONG NumberOfLinks;
+    ULONG EffectiveAccess;
+    ULONG LxFlags;
+    ULONG LxUid;
+    ULONG LxGid;
+    ULONG LxMode;
+    ULONG LxDeviceIdMajor;
+    ULONG LxDeviceIdMinor;
+} FILE_STAT_LX_INFORMATION, *PFILE_STAT_LX_INFORMATION;
+
+/* the first bytes of FILE_LINK_INFORMATION and FILE_LINK_INFORMATION_EX, as FILE_RENAME_INFORMATION lays them out. */
+#define FILE_LINK_REPLACE_IF_EXISTS 0x00000001
+#define FILE_LINK_POSIX_SEMANTICS 0x00000002
+#define FILE_LINK_SUPPRESS_STORAGE_RESERVE_INHERITANCE 0x00000008
+#define FILE_LINK_NO_INCREASE_AVAILABLE_SPACE 0x00000010
+#define FILE_LINK_NO_DECREASE_AVAILABLE_SPACE 0x00000020
+#define FILE_LINK_PRESERVE_AVAILABLE_SPACE 0x00000030
+#define FILE_LINK_IGNORE_READONLY_ATTRIBUTE 0x00000040
+#define FILE_LINK_FORCE_RESIZE_TARGET_SR 0x00000080
+#define FILE_LINK_FORCE_RESIZE_SOURCE_SR 0x00000100
+#define FILE_LINK_FORCE_RESIZE_SR 0x00000180
 
 typedef struct _FILE_ATTRIBUTE_TAG_INFORMATION {
     ULONG FileAttributes;

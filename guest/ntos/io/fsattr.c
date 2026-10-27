@@ -375,6 +375,9 @@ void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInf
     ULONG chars = name->Length / sizeof(WCHAR);
     ULONG hash = hash_of(name->Buffer, chars);
     ATTR_ENTRY *fresh = nullptr;
+    /* a file with other names is not kept: a change made through one of them would not reach the entries of the rest. */
+    if (kind == ATTR_KEEP_FILE && info && info->links > 1)
+        kind = ATTR_KEEP_NOTHING;
     if (kind != ATTR_KEEP_NOTHING)
         fresh = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATTR_ENTRY) + chars * sizeof(WCHAR), KI_TAG('F', 's', 'A', 'e'));
     ExAcquireFastMutex(&g_lock);

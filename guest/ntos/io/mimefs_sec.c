@@ -564,3 +564,58 @@ NTSTATUS MimeFsAssignNewFile(ULONG volume, ULONG64 host, PCUNICODE_STRING path, 
     SeSdDereference(sd);
     return status;
 }
+
+/* whether the program has the right to the file the name opens, whatever its handle was opened for. */
+NTSTATUS MimeFsCheckRight(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, ACCESS_MASK want)
+{
+    if (!SeAccessCheckRequired())
+        return STATUS_SUCCESS;
+    SD_BLOB *sd;
+    NTSTATUS status = effective(volume, host, path, 0, directory, nullptr, &sd);
+    if (!NT_SUCCESS(status))
+        return status;
+    ACCESS_MASK granted;
+    status = SeCheckAccess(sd, file_mapping(), want, 0, 0, &granted);
+    SeSdDereference(sd);
+    return status;
+}
+
+/* everything the program may do to the file the name opens. */
+ACCESS_MASK MimeFsMaximumAccess(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory)
+{
+    SD_BLOB *sd;
+    ACCESS_MASK granted = 0;
+    if (!SeAccessCheckRequired())
+        return FILE_ALL_ACCESS;
+    if (!NT_SUCCESS(effective(volume, host, path, 0, directory, nullptr, &sd)))
+        return 0;
+    if (SeCheckAccess(sd, file_mapping(), MAXIMUM_ALLOWED_, 0, 0, &granted) != STATUS_SUCCESS)
+        granted = 0;
+    SeSdDereference(sd);
+    return granted;
+}
+
+/*
+ * a descriptor belongs to the file, not to a name: a file that shows what its directory passes down gets that written
+ * to it before a second name is made in another directory, so both names show the same.
+ */
+NTSTATUS MimeFsPinSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING path)
+{
+    SD_BLOB *stored;
+    ULONG distance = 0;
+    NTSTATUS status = read_stored(host, 0, &stored, &distance);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (stored) {
+        SeSdDereference(stored);
+        if (!distance)
+            return STATUS_SUCCESS;
+    }
+    SD_BLOB *sd;
+    status = effective(volume, host, path, 0, FALSE, nullptr, &sd);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = MimeFsStoreSecurity(host, sd);
+    SeSdDereference(sd);
+    return status;
+}

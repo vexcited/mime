@@ -204,6 +204,14 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8]);
 
 /* fs.c */
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
+/* fslink.c, hard links and ids. */
+uint64_t mime_fs_link(MimeVm *vm, MimeFsHandle *src, MimeFsHandle *dir, const char *leaf, uint32_t flags,
+                      uint64_t *links);
+uint64_t mime_fs_links(MimeVm *vm, MimeFsHandle *file, uint64_t pa, uint64_t capacity, uint64_t *needed);
+bool mime_fs_path_of_id(MimeVm *vm, uint32_t volume, const uint16_t *id, uint32_t chars, char *out, size_t size);
+uint32_t mime_fs_guest_name(MimeVm *vm, uint32_t volume, const char *host, uint16_t *out, size_t capacity);
+bool mime_fs_find_entry(const char *dir, const char *leaf, char *found, size_t size);
+MimeFsHandle *mime_fs_handle(MimeVm *vm, uint64_t h);
 /* Linux directory notifications from host programs; see fswatch.c. */
 enum {
     MIME_FSWATCH_CREATE,

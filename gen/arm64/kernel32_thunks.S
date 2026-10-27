@@ -449,6 +449,12 @@ Kernel32Thunk_CreateFileW:
     adrp    x16, __imp_CreateFileW
     ldr     x16, [x16, :lo12:__imp_CreateFileW]
     br      x16
+    .globl  Kernel32Thunk_CreateHardLinkA
+    .p2align 4
+Kernel32Thunk_CreateHardLinkA:
+    adrp    x16, __imp_CreateHardLinkA
+    ldr     x16, [x16, :lo12:__imp_CreateHardLinkA]
+    br      x16
     .globl  Kernel32Thunk_CreateHardLinkW
     .p2align 4
 Kernel32Thunk_CreateHardLinkW:
@@ -4138,6 +4144,12 @@ Kernel32Thunk_OpenEventW:
 Kernel32Thunk_OpenFile:
     adrp    x16, __imp_OpenFile
     ldr     x16, [x16, :lo12:__imp_OpenFile]
+    br      x16
+    .globl  Kernel32Thunk_OpenFileById
+    .p2align 4
+Kernel32Thunk_OpenFileById:
+    adrp    x16, __imp_OpenFileById
+    ldr     x16, [x16, :lo12:__imp_OpenFileById]
     br      x16
     .globl  Kernel32Thunk_OpenFileMappingA
     .p2align 4

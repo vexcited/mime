@@ -399,7 +399,7 @@ static NTSTATUS file_put_security(PVOID object, PVOID blob)
 
 static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                             ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode,
-                            SD_BLOB *creator, BOOLEAN stat_only)
+                            SD_BLOB *creator, BOOLEAN stat_only, BOOLEAN force_check)
 {
     OPEN_PACKET op;
     memset(&op, 0, sizeof(op));
@@ -411,12 +411,26 @@ static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     op.Options = options;
     op.FileAttributes = file_attributes;
     op.ShareAccess = share;
-    op.UserMode = mode == UserMode;
+    op.UserMode = mode == UserMode || force_check;
     PFILE_OBJECT related = nullptr;
     if (attributes->RootDirectory) {
         NTSTATUS st = ObReferenceHandle(attributes->RootDirectory, nullptr, mode, (PVOID *)&related, nullptr);
         if (!NT_SUCCESS(st))
             return st;
+        if (OBJECT_TO_HEADER(related)->Type == IoFileObjectTypeObject && (options & FILE_OPEN_BY_FILE_ID) &&
+            attributes->ObjectName) {
+            /* a file id is not a path: the file system gets it as it is, and the related file only names the volume. */
+            UNICODE_STRING remaining = *attributes->ObjectName;
+            PVOID found;
+            NTSTATUS st = parse_device(related->DeviceObject, nullptr, attributes->Attributes, &remaining, &remaining, &op, &found);
+            ObDereferenceObject(related);
+            if (iosb)
+                *iosb = op.Iosb;
+            if (!NT_SUCCESS(st))
+                return st;
+            return ObInsertObject(found, op.Checked ? op.GrantedAccess : access,
+                                  mode == UserMode ? (attributes->Attributes & ~OBJ_KERNEL_HANDLE) : attributes->Attributes, handle);
+        }
         if (OBJECT_TO_HEADER(related)->Type == IoFileObjectTypeObject) {
             /* relative opens: prepend the related file name and open on its device. */
             PFILE_OBJECT rel = related;
@@ -471,9 +485,9 @@ static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     return ObInsertObject(found, op.Checked ? op.GrantedAccess : access, attrs, handle);
 }
 
-NTSTATUS IopCreateFileEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
-                         ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode,
-                         BOOLEAN stat_only)
+static NTSTATUS create_file_captured(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+                                     PIO_STATUS_BLOCK iosb, ULONG file_attributes, ULONG share, ULONG disposition,
+                                     ULONG options, KPROCESSOR_MODE mode, BOOLEAN stat_only, BOOLEAN force_check)
 {
     SD_BLOB *creator = nullptr;
     if (attributes->SecurityDescriptor) {
@@ -482,10 +496,25 @@ NTSTATUS IopCreateFileEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES 
             return status;
     }
     NTSTATUS status = create_file(handle, access, attributes, iosb, file_attributes, share, disposition, options, mode,
-                                  creator, stat_only);
+                                  creator, stat_only, force_check);
     if (creator)
         SeSdDereference(creator);
     return status;
+}
+
+NTSTATUS IopCreateFileEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                         ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode,
+                         BOOLEAN stat_only)
+{
+    return create_file_captured(handle, access, attributes, iosb, file_attributes, share, disposition, options, mode,
+                                stat_only, FALSE);
+}
+
+/* a kernel mode open that the file system holds to the descriptors, for the opens made on a program's behalf. */
+NTSTATUS IopCreateFileChecked(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                              ULONG share, ULONG disposition, ULONG options)
+{
+    return create_file_captured(handle, access, attributes, iosb, 0, share, disposition, options, KernelMode, FALSE, TRUE);
 }
 
 NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,

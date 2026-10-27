@@ -179,7 +179,8 @@ static void fill_info(const struct stat *st, const char *name, MimeFsInfo *info)
     info->write_time = ts_to_filetime(ST_MTIME(st));
     info->change_time = ts_to_filetime(ST_CTIME(st));
     info->file_id = (uint64_t)st->st_ino;
-    info->links = (uint32_t)st->st_nlink;
+    /* a directory is one name on ntfs, where the host counts the entries that point back to it. */
+    info->links = dir ? 1 : (uint32_t)st->st_nlink;
     uint32_t attrs = dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_ARCHIVE;
     if (!(st->st_mode & S_IWUSR))
         attrs |= FILE_ATTRIBUTE_READONLY;
@@ -412,13 +413,37 @@ static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
 
 static void open_fill_sd(MimeVm *vm, MimeFsOpen *req, const char *path);
 
+/* an open by id gives the name back, as the guest keeps names. */
+static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path);
+
 static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
 {
     char path[MIME_PATH_MAX];
-    if (req->path_chars > MIME_ARRAY_COUNT(req->path) ||
-        !host_path(vm, req->volume, req->path, req->path_chars, path, sizeof(path)))
+    if (req->path_chars > MIME_ARRAY_COUNT(req->path))
         return MIME_HC_STATUS_INVALID;
+    if (req->flags & MIME_FS_OPEN_BY_ID) {
+        if (!mime_fs_path_of_id(vm, req->volume, req->path, req->path_chars, path, sizeof(path))) {
+            req->action_out = 0;
+            return MIME_HC_STATUS_NOT_FOUND;
+        }
+        uint16_t name[MIME_ARRAY_COUNT(req->path)];
+        uint32_t chars = mime_fs_guest_name(vm, req->volume, path, name, MIME_ARRAY_COUNT(name));
+        if (!chars || chars >= MIME_ARRAY_COUNT(name))
+            return MIME_HC_STATUS_INVALID;
+        uint64_t status = fs_open_path(vm, req, path);
+        if (status == MIME_HC_STATUS_OK) {
+            memcpy(req->path, name, chars * sizeof(uint16_t));
+            req->path_chars = chars;
+        }
+        return status;
+    }
+    if (!host_path(vm, req->volume, req->path, req->path_chars, path, sizeof(path)))
+        return MIME_HC_STATUS_INVALID;
+    return fs_open_path(vm, req, path);
+}
 
+static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path)
+{
     struct stat st;
     bool exists = stat(path, &st) == 0;
     if (req->flags & MIME_FS_OPEN_STAT_ONLY) {
@@ -809,6 +834,34 @@ static uint64_t fs_set_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t le
     return MIME_HC_STATUS_OK;
 }
 
+/* the entry of a directory that has the name in other letters, with its spelling in found. */
+bool mime_fs_find_entry(const char *dir, const char *leaf, char *found, size_t size)
+{
+    bool known;
+    found[0] = 0;
+    if (mime_dir_spelling(dir, leaf, found, &known))
+        return true;
+    if (known || strlen(leaf) >= size)
+        return false;
+    DIR *d = opendir_quiet(dir);
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        if (strlen(e->d_name) == strlen(leaf) && mime_names_same(e->d_name, leaf)) {
+            mime_strlcpy(found, e->d_name, size);
+            break;
+        }
+    }
+    if (d)
+        closedir(d);
+    return found[0] != 0;
+}
+
+/* the handle with the number, for the code that works on two of them. */
+MimeFsHandle *mime_fs_handle(MimeVm *vm, uint64_t h)
+{
+    return get_handle(vm, h);
+}
+
 /*
  * renames a file or directory relative to another handle. case-insensitive replacements use the existing
  * spelling; renaming the same entry uses the requested spelling to support case changes. update open handle
@@ -816,9 +869,21 @@ static uint64_t fs_set_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t le
  */
 static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
 {
-    MimeFsHandle *src = get_handle(vm, a[1]), *dir = get_handle(vm, a[2]);
-    if (!src || !dir || !dir->is_dir || src->volume != dir->volume || !src->host_path || !dir->host_path)
+    MimeFsHandle *src = get_handle(vm, a[1]), *dir = a[2] ? get_handle(vm, a[2]) : nullptr;
+    /* no directory handle is a new name in the file's own directory. */
+    if (!src || !src->host_path || (a[2] && (!dir || !dir->is_dir || src->volume != dir->volume || !dir->host_path)))
         return MIME_HC_STATUS_INVALID;
+    char own_dir[MIME_PATH_MAX];
+    if (!dir) {
+        mime_strlcpy(own_dir, src->host_path, sizeof(own_dir));
+        char *slash = strrchr(own_dir, '/');
+        if (!slash)
+            return MIME_HC_STATUS_INVALID;
+        if (slash == own_dir)
+            slash++;
+        *slash = 0;
+    }
+    const char *dir_path = dir ? dir->host_path : own_dir;
     const uint16_t *wide = a[4] && a[4] < 256 ? mime_vm_phys(vm, a[3], a[4] * 2) : nullptr;
     if (!wide)
         return MIME_HC_STATUS_INVALID;
@@ -832,26 +897,14 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
     if (lstat(src->host_path, &from) != 0)
         return errno_status(errno);
     char target[MIME_PATH_MAX], found[1024] = "";
-    mime_path_join(target, sizeof(target), dir->host_path, leaf);
+    mime_path_join(target, sizeof(target), dir_path, leaf);
     struct stat there;
     bool exists = lstat(target, &there) == 0;
     if (!exists) {
-        bool known;
-        if (!mime_dir_spelling(dir->host_path, leaf, found, &known) && !known) {
-            DIR *d = opendir_quiet(dir->host_path);
-            struct dirent *e;
-            while (d && (e = readdir(d))) {
-                if (strlen(e->d_name) == strlen(leaf) && mime_names_same(e->d_name, leaf)) {
-                    mime_strlcpy(found, e->d_name, sizeof(found));
-                    break;
-                }
-            }
-            if (d)
-                closedir(d);
-        }
+        mime_fs_find_entry(dir_path, leaf, found, sizeof(found));
         if (found[0]) {
             char twin[MIME_PATH_MAX];
-            mime_path_join(twin, sizeof(twin), dir->host_path, found);
+            mime_path_join(twin, sizeof(twin), dir_path, found);
             exists = lstat(twin, &there) == 0;
             if (exists && !(there.st_dev == from.st_dev && there.st_ino == from.st_ino))
                 mime_strlcpy(target, twin, sizeof(target));
@@ -1107,6 +1160,24 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     case MIME_HC_FS_RENAME:
         status = fs_rename(vm, a);
         break;
+    case MIME_HC_FS_LINK: {
+        MimeFsHandle *src = get_handle(vm, a[1]), *dir = a[2] ? get_handle(vm, a[2]) : nullptr;
+        const uint16_t *wide = a[4] && a[4] < 256 ? mime_vm_phys(vm, a[3], a[4] * 2) : nullptr;
+        if (!src || (a[2] && !dir) || !wide) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        char leaf[1024];
+        mime_utf16_to_utf8(leaf, sizeof(leaf), wide, a[4]);
+        uint32_t flags = (uint32_t)a[5];
+        status = mime_fs_link(vm, src, dir, leaf, flags, &regs[1]);
+        break;
+    }
+    case MIME_HC_FS_LINKS: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        status = fh ? mime_fs_links(vm, fh, a[2], a[3], &regs[1]) : MIME_HC_STATUS_INVALID;
+        break;
+    }
     case MIME_HC_FS_MAP: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         pthread_mutex_lock(WINDOW_LOCK(vm));

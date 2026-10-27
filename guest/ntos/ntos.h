@@ -898,6 +898,9 @@ typedef struct _MIMEFS_STORED {
 NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, ACCESS_MASK desired,
                          ULONG options, ULONG disposition, BOOLEAN created, const MIMEFS_STORED *known, ACCESS_MASK *granted);
 NTSTATUS MimeFsCheckRomOpen(ACCESS_MASK desired, ULONG options, ACCESS_MASK *granted);
+NTSTATUS MimeFsCheckRight(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, ACCESS_MASK want);
+ACCESS_MASK MimeFsMaximumAccess(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory);
+NTSTATUS MimeFsPinSecurity(ULONG volume, ULONG64 host, PCUNICODE_STRING path);
 NTSTATUS MimeFsAssignNewFile(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, SD_BLOB *creator,
                              KPROCESSOR_MODE mode);
 
@@ -1151,6 +1154,8 @@ NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES at
 NTSTATUS IopCreateFileEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                          ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode,
                          BOOLEAN stat_only);
+NTSTATUS IopCreateFileChecked(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
+                              ULONG share, ULONG disposition, ULONG options);
 NTSTATUS IopOpenFileObject(PCUNICODE_STRING path, ACCESS_MASK access, ULONG options, PFILE_OBJECT *out);
 NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOID buffer, ULONG length,
                                PIO_STACK_LOCATION params, PIO_STATUS_BLOCK iosb);
@@ -1321,6 +1326,7 @@ NTSTATUS FsNotifyCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
 /* mimefs.c: whether a file object is on a host backed volume, and the volume of an open directory. */
 BOOLEAN IopIsMimeFs(PFILE_OBJECT file);
 NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_handle);
+NTSTATUS MimeFsCheckLinkSource(PFILE_OBJECT file);
 
 /* hid.c: game controller hid and xusb devices. */
 BOOLEAN IopIsPad(PFILE_OBJECT file);

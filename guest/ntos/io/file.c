@@ -390,59 +390,93 @@ NTSTATUS NTAPI ZwQueryInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOI
 }
 
 /*
- * the file system gets the target directory, opened here: the new name up to its last backslash, the rest being the
- * name in it. names are full paths on the same file system, since only ntdll's callers set them.
+ * rename and link give the file system the directory the new name goes in, opened here, and the name in it. a name
+ * that starts with a backslash is a full path, one given with a root directory is relative to that directory, and
+ * one that is neither is a name in the file's own directory, which the file system finds itself. a link is made as the
+ * program that asked, so the directory must allow it to add a file; the kernel's own renames are not held to that.
  */
-static NTSTATUS rename_file(PFILE_OBJECT file, PUCHAR buf, ULONG length, FILE_INFORMATION_CLASS klass)
+static NTSTATUS retarget_file(PFILE_OBJECT file, PUCHAR buf, ULONG length, FILE_INFORMATION_CLASS klass,
+                              ACCESS_MASK granted)
 {
     const ULONG name_offset = 20;
-    if (length < name_offset)
+    BOOLEAN link = klass == FileLinkInformation || klass == FileLinkInformationEx;
+    BOOLEAN user = KeGetPreviousMode() == UserMode;
+    if (length < name_offset || (user && length < 24))
         return STATUS_INFO_LENGTH_MISMATCH;
     ULONG name_length = *(PULONG)(buf + 16);
-    if ((name_length & 1) || name_length > length - name_offset)
-        return STATUS_INFO_LENGTH_MISMATCH;
-    if (*(HANDLE *)(buf + 8))
-        return STATUS_NOT_IMPLEMENTED;
-    BOOLEAN replace = klass == FileRenameInformationEx ? (*(PULONG)buf & 1) != 0 : buf[0] != 0;
+    if (!name_length || (name_length & 1) || name_length > length - name_offset)
+        return STATUS_INVALID_PARAMETER;
+    HANDLE root = *(HANDLE *)(buf + 8);
+    BOOLEAN ex = klass == FileRenameInformationEx || klass == FileLinkInformationEx;
+    BOOLEAN replace = ex ? (*(PULONG)buf & 1) != 0 : buf[0] != 0;
     PWCHAR name = (PWCHAR)(buf + name_offset);
     ULONG chars = name_length / sizeof(WCHAR), slash = chars;
     while (slash && name[slash - 1] != '\\')
         slash--;
-    /* a name with no directory part, or ending in a backslash, is invalid. */
-    if (slash < 2 || slash == chars)
+    /* a name that ends in a backslash has no last part. */
+    if (slash == chars)
         return STATUS_OBJECT_NAME_INVALID;
-    UNICODE_STRING parent = {(USHORT)((slash - 1) * sizeof(WCHAR)), (USHORT)((slash - 1) * sizeof(WCHAR)), name};
-    OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &parent, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
-    HANDLE h;
-    IO_STATUS_BLOCK io;
-    PKTHREAD t = KiCurrentThread();
-    KPROCESSOR_MODE old = t->PreviousMode;
-    t->PreviousMode = KernelMode;
-    NTSTATUS status = IopCreateFile(&h, FILE_TRAVERSE | SYNCHRONIZE, &oa, &io, 0,
-                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
-                                    FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, KernelMode);
-    t->PreviousMode = old;
-    if (!NT_SUCCESS(status))
-        return status == STATUS_OBJECT_NAME_NOT_FOUND ? STATUS_OBJECT_PATH_NOT_FOUND : status;
-    PFILE_OBJECT directory;
-    status = ObReferenceHandle(h, IoFileObjectTypeObject, KernelMode, (PVOID *)&directory, nullptr);
+
+    /* a link of a file that a program may not write the attributes of is refused before anything is opened. */
+    if (link && user && !(granted & FILE_WRITE_ATTRIBUTES)) {
+        NTSTATUS allowed = MimeFsCheckLinkSource(file);
+        if (!NT_SUCCESS(allowed))
+            return allowed;
+    }
+
+    IO_STACK_LOCATION params;
+    memset(&params, 0, sizeof(params));
+    params.Parameters.SetFile.Length = length;
+    params.Parameters.SetFile.FileInformationClass = klass;
+    params.Parameters.SetFile.ReplaceIfExists = replace;
+    IO_STATUS_BLOCK ignored = {};
+    if (!root && name[0] != '\\') {
+        /* a name of the file's own directory has no directory part. */
+        if (slash)
+            return STATUS_OBJECT_NAME_INVALID;
+        return IopSynchronousRequest(file, IRP_MJ_SET_INFORMATION, 0, buf, length, &params, &ignored);
+    }
+
+    PFILE_OBJECT directory = nullptr;
+    HANDLE h = nullptr;
+    NTSTATUS status;
+    if (root && slash <= 1) {
+        /* the leaf is a name in the root directory itself. */
+        status = ObReferenceHandle(root, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)&directory, nullptr);
+    } else {
+        if (!root && slash < 2)
+            return STATUS_OBJECT_NAME_INVALID;
+        UNICODE_STRING parent = {(USHORT)((slash - 1) * sizeof(WCHAR)), (USHORT)((slash - 1) * sizeof(WCHAR)), name};
+        OBJECT_ATTRIBUTES oa;
+        InitializeObjectAttributes(&oa, &parent, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, root, nullptr);
+        IO_STATUS_BLOCK io;
+        PKTHREAD t = KiCurrentThread();
+        KPROCESSOR_MODE old = t->PreviousMode;
+        t->PreviousMode = KernelMode;
+        if (link)
+            status = IopCreateFileChecked(&h, FILE_ADD_FILE | SYNCHRONIZE, &oa, &io,
+                                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                          FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
+        else
+            status = IopCreateFile(&h, FILE_TRAVERSE | SYNCHRONIZE, &oa, &io, 0,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                   FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, KernelMode);
+        t->PreviousMode = old;
+        if (!NT_SUCCESS(status))
+            return status == STATUS_OBJECT_NAME_NOT_FOUND ? STATUS_OBJECT_PATH_NOT_FOUND : status;
+        status = ObReferenceHandle(h, IoFileObjectTypeObject, KernelMode, (PVOID *)&directory, nullptr);
+    }
     if (NT_SUCCESS(status)) {
         if (directory->DeviceObject != file->DeviceObject) {
             status = STATUS_NOT_SAME_DEVICE;
         } else {
-            IO_STACK_LOCATION params;
-            memset(&params, 0, sizeof(params));
-            params.Parameters.SetFile.Length = length;
-            params.Parameters.SetFile.FileInformationClass = klass;
             params.Parameters.SetFile.FileObject = directory;
-            params.Parameters.SetFile.ReplaceIfExists = replace;
-            IO_STATUS_BLOCK ignored = {};
             status = IopSynchronousRequest(file, IRP_MJ_SET_INFORMATION, 0, buf, length, &params, &ignored);
         }
         ObDereferenceObject(directory);
     }
-    ObCloseHandle(h, KernelMode);
+    if (h)
+        ObCloseHandle(h, KernelMode);
     return status;
 }
 
@@ -457,7 +491,7 @@ NTSTATUS IoRenameFileObject(PFILE_OBJECT file, PCWSTR new_name, BOOLEAN replace)
     buf[0] = replace;
     *(PULONG)(buf + 16) = name_length;
     memcpy(buf + 20, new_name, name_length);
-    NTSTATUS status = rename_file(file, buf, size, FileRenameInformation);
+    NTSTATUS status = retarget_file(file, buf, size, FileRenameInformation, 0);
     ExFreePool(buf);
     return status;
 }
@@ -466,7 +500,8 @@ NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID 
                                     FILE_INFORMATION_CLASS klass)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    ACCESS_MASK granted = 0;
+    NTSTATUS status = ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)&file, &granted);
     if (!NT_SUCCESS(status))
         return status;
     PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, length ? length : 1, KI_TAG('I', 'o', 'S', 'i'));
@@ -495,9 +530,10 @@ NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID 
             /* port and key, handled by the i/o manager itself. */
             status = length >= 2 * sizeof(PVOID) ? IopSetCompletion(file, ((HANDLE *)buf)[0], ((PVOID *)buf)[1])
                                                  : STATUS_INFO_LENGTH_MISMATCH;
-        } else if ((klass == FileRenameInformation || klass == FileRenameInformationEx) && file->DeviceObject &&
-                   file->DeviceObject->DeviceType == FILE_DEVICE_DISK_FILE_SYSTEM) {
-            status = rename_file(file, buf, length, klass);
+        } else if ((klass == FileRenameInformation || klass == FileRenameInformationEx || klass == FileLinkInformation ||
+                    klass == FileLinkInformationEx) &&
+                   file->DeviceObject && file->DeviceObject->DeviceType == FILE_DEVICE_DISK_FILE_SYSTEM) {
+            status = retarget_file(file, buf, length, klass, granted);
         } else {
             IO_STACK_LOCATION params;
             memset(&params, 0, sizeof(params));

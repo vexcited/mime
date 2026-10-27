@@ -299,6 +299,10 @@ Kernel32Thunk_CreateFileMappingW:
     .p2align 4
 Kernel32Thunk_CreateFileW:
     jmp     *__imp_CreateFileW(%rip)
+    .globl  Kernel32Thunk_CreateHardLinkA
+    .p2align 4
+Kernel32Thunk_CreateHardLinkA:
+    jmp     *__imp_CreateHardLinkA(%rip)
     .globl  Kernel32Thunk_CreateHardLinkW
     .p2align 4
 Kernel32Thunk_CreateHardLinkW:
@@ -2759,6 +2763,10 @@ Kernel32Thunk_OpenEventW:
     .p2align 4
 Kernel32Thunk_OpenFile:
     jmp     *__imp_OpenFile(%rip)
+    .globl  Kernel32Thunk_OpenFileById
+    .p2align 4
+Kernel32Thunk_OpenFileById:
+    jmp     *__imp_OpenFileById(%rip)
     .globl  Kernel32Thunk_OpenFileMappingA
     .p2align 4
 Kernel32Thunk_OpenFileMappingA:
