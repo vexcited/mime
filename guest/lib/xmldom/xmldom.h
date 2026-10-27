@@ -145,8 +145,9 @@ enum {
 };
 
 #define XF_XMLDECL 0x01   /* the processing instruction is the xml declaration. */
-#define XF_EXPLICIT 0x02  /* written with an end tag, as after its text was set to empty. */
-#define XF_PRESERVE 0x04  /* an element under xml:space preserve. */
+#define XF_EXPLICIT 0x02  /* written with an end tag though empty, as parsed from a start and end tag or after its text was set to empty. */
+#define XF_WS_INSIDE 0x04 /* the parser dropped white space between the start tag and the first child. */
+#define XF_WS_AFTER 0x08  /* the parser dropped white space after the node. */
 
 /*
  * a node is its own com object: the first member is its type's vtable. refs counts com references, subs the

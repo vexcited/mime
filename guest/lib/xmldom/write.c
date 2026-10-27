@@ -58,8 +58,7 @@ typedef struct Scope {
 typedef struct WFrame {
     XNode *node;
     UINT scope;
-    BOOL block;
-    BOOL level;
+    BOOL level; /* the element's children are one level deeper. */
 } WFrame;
 
 typedef struct Writer {
@@ -210,14 +209,6 @@ static const WCHAR *scope_lookup(Writer *w, const WCHAR *prefix, UINT plen)
     return nullptr;
 }
 
-static BOOL has_text_child(XNode *n)
-{
-    for (XNode *c = n->first; c; c = c->next)
-        if (c->type == XN_TEXT || c->type == XN_CDATA || c->type == XN_ENTITYREF)
-            return TRUE;
-    return FALSE;
-}
-
 static void put_name(Writer *w, const WCHAR *s, UINT n)
 {
     xb_put(w->out, s, n);
@@ -292,7 +283,9 @@ static void write_start(Writer *w, XNode *n, BOOL empty)
         UINT alen = xd_atom_len(a->qname);
         if (a->uri && !xd_is_xmlns_attr(a) && a->local) {
             UINT ap = (UINT)(a->local - 1);
-            if (scope_lookup(w, a->qname, ap) != a->uri) {
+            /* the xml prefix is always bound. */
+            BOOL xml_prefix = ap == 3 && a->qname[0] == 'x' && a->qname[1] == 'm' && a->qname[2] == 'l';
+            if (!xml_prefix && scope_lookup(w, a->qname, ap) != a->uri) {
                 const WCHAR *prefix = xd_intern(n->doc, a->qname, ap);
                 xb_puta(b, " xmlns:");
                 put_name(w, a->qname, ap);
@@ -322,7 +315,7 @@ static BOOL write_open(Writer *w, XNode *n)
     switch (n->type) {
     case XN_ELEMENT: {
         UINT mark = w->scope_count;
-        BOOL empty = !n->first && !(n->flags & XF_EXPLICIT);
+        BOOL empty = !n->first && !(n->flags & (XF_EXPLICIT | XF_WS_INSIDE));
         write_start(w, n, empty);
         if (empty)
             return FALSE;
@@ -337,17 +330,15 @@ static BOOL write_open(Writer *w, XNode *n)
         WFrame *f = &w->frames[w->depth++];
         f->node = n;
         f->scope = mark;
-        f->block = w->indent && n->first && !(n->flags & XF_PRESERVE) && !has_text_child(n);
-        f->level = f->block;
-        if (f->block) {
-            w->level++;
-            w->pending = TRUE;
+        f->level = n->first != nullptr;
+        if (w->indent) {
+            /* a line break follows the start tag if white space was dropped there, unless text comes first. */
+            if ((n->flags & XF_WS_INSIDE) && !(n->first && n->first->type == XN_TEXT))
+                w->pending = TRUE;
+            if (f->level)
+                w->level++;
         }
-        if (!n->first) {
-            /* written with an end tag only: nothing to descend into. */
-            return FALSE;
-        }
-        return TRUE;
+        return n->first != nullptr;
     }
     case XN_DOCUMENT:
     case XN_FRAGMENT: {
@@ -362,7 +353,6 @@ static BOOL write_open(Writer *w, XNode *n)
         WFrame *f = &w->frames[w->depth++];
         f->node = n;
         f->scope = w->scope_count;
-        f->block = n->type == XN_DOCUMENT && w->indent;
         f->level = FALSE;
         return n->first != nullptr;
     }
@@ -430,7 +420,7 @@ static void write_close(Writer *w, XNode *n)
 {
     WFrame *f = &w->frames[--w->depth];
     if (n->type == XN_ELEMENT) {
-        if (f->level && w->level)
+        if (f->level && w->indent && w->level)
             w->level--;
         flush_pending(w);
         xb_puta(w->out, "</");
@@ -460,8 +450,18 @@ void xd_write(XNode *root, XBuf *out, BOOL indent, UINT max, const WCHAR *encodi
             if (n == root)
                 goto done;
             XNode *parent = n->parent;
-            if (w.depth && w.frames[w.depth - 1].node == parent && w.frames[w.depth - 1].block)
-                w.pending = TRUE;
+            if (w.indent && w.depth && w.frames[w.depth - 1].node == parent) {
+                /* a document breaks the line after every child, the rest only where white space was dropped. */
+                BOOL break_line;
+                if (parent->type == XN_DOCUMENT)
+                    break_line = TRUE;
+                else if (parent->type == XN_FRAGMENT)
+                    break_line = n->type != XN_TEXT && (n->flags & XF_WS_AFTER);
+                else
+                    break_line = (!n->next || n->next->type != XN_TEXT) && (n->flags & XF_WS_AFTER);
+                if (break_line)
+                    w.pending = TRUE;
+            }
             if (n->next) {
                 n = n->next;
                 break;
@@ -471,7 +471,7 @@ void xd_write(XNode *root, XBuf *out, BOOL indent, UINT max, const WCHAR *encodi
         }
     }
 done:
-    if (root->type == XN_DOCUMENT && w.pending) {
+    if (w.pending) {
         w.level = 0;
         flush_pending(&w);
     }

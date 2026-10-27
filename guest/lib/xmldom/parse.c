@@ -46,6 +46,7 @@ typedef struct Parser {
     const WCHAR *uri_xml;
     const WCHAR *uri_xmlns;
     BOOL strip; /* whitespace-only text is dropped. */
+    BOOL text_ref; /* the pending text holds a reference, which keeps it as text. */
     UINT64 expanded; /* characters produced by entity expansion, which is capped. */
 } Parser;
 
@@ -372,13 +373,22 @@ static void add_node(Parser *ps, XNode *n)
     xd_link(current_parent(ps), n, nullptr);
 }
 
+/* white space dropped after a node, or before the first child, is remembered for the writer. */
+static void note_dropped_space(XNode *parent)
+{
+    if (parent->last)
+        parent->last->flags |= XF_WS_AFTER;
+    else if (parent->type == XN_ELEMENT)
+        parent->flags |= XF_WS_INSIDE;
+}
+
 static void flush_text(Parser *ps)
 {
     XBuf *t = &ps->text;
     if (!t->length)
         return;
     BOOL keep = TRUE;
-    if (ps->strip && !(ps->depth && ps->frames[ps->depth - 1].preserve)) {
+    if (ps->strip && !ps->text_ref && !(ps->depth && ps->frames[ps->depth - 1].preserve)) {
         keep = FALSE;
         for (UINT i = 0; i < t->length; i++) {
             if (!xd_is_space(t->s[i])) {
@@ -394,7 +404,10 @@ static void flush_text(Parser *ps)
             n->length = t->length;
             add_node(ps, n);
         }
+    } else {
+        note_dropped_space(current_parent(ps));
     }
+    ps->text_ref = FALSE;
     t->length = 0;
     if (t->s)
         t->s[0] = 0;
@@ -1063,9 +1076,6 @@ static BOOL parse_start_tag(Parser *ps)
                 preserve = FALSE;
         }
     }
-    if (preserve)
-        el->flags |= XF_PRESERVE;
-
     if (doc->max_depth > 0 && ps->depth + 1 > (UINT)doc->max_depth) {
         xd_free_if_orphan(el);
         return FAIL(XE_MAX_DEPTH, tag_at + 1);
@@ -1125,6 +1135,9 @@ static BOOL parse_end_tag(Parser *ps)
         return FAIL(XE_END_TAG_NO_GT, ps->p);
     ps->p++;
     flush_text(ps);
+    /* an element written with an end tag keeps it when it has no content. */
+    if (!f->node->first)
+        f->node->flags |= XF_EXPLICIT;
     ps->bind_count = f->ns_base;
     ps->depth--;
     return TRUE;
@@ -1211,6 +1224,7 @@ static BOOL parse_content(Parser *ps)
         } else if (*ps->p == '&') {
             if (!parse_reference(ps, &ps->text, FALSE))
                 return FALSE;
+            ps->text_ref = TRUE;
         } else {
             if (!parse_text_run(ps))
                 return FALSE;
@@ -1243,8 +1257,11 @@ static BOOL parse_document(Parser *ps)
     for (;;) {
         const WCHAR *before = ps->p;
         ps->p = skip_space(ps->p, ps->e);
-        if (ps->p > before)
+        if (ps->p > before) {
             any = TRUE;
+            if (doc->node.last)
+                doc->node.last->flags |= XF_WS_AFTER;
+        }
         if (ps->p >= ps->e)
             break;
         any = TRUE;

@@ -484,7 +484,6 @@ BOOL xd_set_text(XNode *n, const WCHAR *text, UINT length)
                 return FALSE;
             xd_node_set_value(t, text, length);
             xd_link(n, t, nullptr);
-            n->flags &= ~XF_EXPLICIT;
         } else {
             n->flags |= XF_EXPLICIT;
         }
