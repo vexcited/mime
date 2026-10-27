@@ -412,10 +412,32 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
     }
 
     /* the extension's type, then its verb's command. */
-    WCHAR type[MAX_PATH];
+    WCHAR type[MAX_PATH], probe[1024];
     LPCWSTR dot = wcsrchr(path, L'.');
-    if (!dot || wcschr(dot, L'\\') || !read_default(dot, type, RTL_NUMBER_OF(type)))
+    BOOL batch = has_extension(path, L".bat") || has_extension(path, L".cmd");
+    BOOL associated = dot && !wcschr(dot, L'\\') && read_default(dot, type, RTL_NUMBER_OF(type)) &&
+                      verb_command(type, verb, probe, RTL_NUMBER_OF(probe));
+    if (!associated && !batch)
         return fail(info, ERROR_NO_ASSOCIATION);
+    if (!associated) {
+        /* a drive without the associations of batch files still runs them, the command interpreter does. */
+        if (batch && (!_wcsicmp(verb, L"open") || !_wcsicmp(verb, L"runas"))) {
+            SIZE_T size = wcslen(path) + wcslen(parameters) + 4;
+            LPWSTR command = ShAlloc(size * sizeof(WCHAR));
+            if (!command)
+                return fail(info, ERROR_OUTOFMEMORY);
+            _snwprintf(command, size, parameters[0] ? L"\"%ls\" %ls" : L"\"%ls\"", path, parameters);
+            command[size - 1] = 0;
+            BOOL ok = run(nullptr, command, info->lpDirectory, info->nShow, info, !_wcsicmp(verb, L"runas"));
+            DWORD error = GetLastError();
+            ShFree(command);
+            if (!ok)
+                return fail(info, error);
+            info->hInstApp = (HINSTANCE)SE_SUCCESS;
+            return TRUE;
+        }
+        return fail(info, ERROR_NO_ASSOCIATION);
+    }
     return run_association(info, type, verb, path, parameters);
 }
 
