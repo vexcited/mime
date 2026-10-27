@@ -83,6 +83,17 @@ static ULONG NTAPI load_style(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
     return TRUE;
 }
 
+/* high contrast turns the visual style off: the controls draw with the system colors. */
+static BOOL high_contrast(void)
+{
+    struct {
+        UINT cbSize;
+        DWORD dwFlags;
+        LPWSTR lpszDefaultScheme;
+    } hc = {sizeof(hc), 0, nullptr};
+    return SystemParametersInfoW(0x0042 /* SPI_GETHIGHCONTRAST */, sizeof(hc), &hc, 0) && (hc.dwFlags & 1 /* HCF_HIGHCONTRASTON */);
+}
+
 BOOL UxThemeLoaded(void)
 {
     RtlRunOnceExecuteOnce(&g_style.Once, load_style, nullptr, nullptr);
@@ -197,7 +208,7 @@ static HTHEME open_theme(HWND hwnd, LPCWSTR class_list, DWORD flags, UINT dpi)
     if (hwnd)
         RemovePropW(hwnd, UX_PROP_THEME);
     DWORD allow = (flags & OTD_NONCLIENT) ? STAP_ALLOW_NONCLIENT : STAP_ALLOW_CONTROLS;
-    if (!UxThemeLoaded() || !(g_app_properties & allow)) {
+    if (!UxThemeLoaded() || !(g_app_properties & allow) || high_contrast()) {
         SetLastError((DWORD)UX_E_NOTFOUND);
         return nullptr;
     }
@@ -335,7 +346,7 @@ THEMEAPI SetWindowThemeAttribute(HWND hwnd, enum WINDOWTHEMEATTRIBUTETYPE type, 
 THEMEAPI_(BOOL) IsThemeActive(void)
 {
     SetLastError(0);
-    return UxThemeLoaded();
+    return UxThemeLoaded() && !high_contrast();
 }
 
 THEMEAPI_(BOOL) IsAppThemed(void)

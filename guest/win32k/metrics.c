@@ -1,4 +1,4 @@
-/* system metrics, colors and SystemParametersInfo, using Windows 11 values scaled to the requested DPI. */
+/* system metrics, colors and SystemParametersInfo, using Windows 10 and 11 values scaled to the requested DPI. */
 #include "win32k.h"
 
 BRUSH *GdiCreateSystemBrush(COLORREF color, int sys_color);
@@ -7,7 +7,7 @@ W32_DISPLAY W32Display;
 
 #define NUM_SYSCOLORS 31
 
-/* Windows 11 light theme. */
+/* the light colors of Windows 10 and 11. */
 static const COLORREF g_default_colors[NUM_SYSCOLORS] = {
     RGB(0xC8, 0xC8, 0xC8), /* COLOR_SCROLLBAR */
     RGB(0x00, 0x00, 0x00), /* COLOR_BACKGROUND */
@@ -41,6 +41,54 @@ static const COLORREF g_default_colors[NUM_SYSCOLORS] = {
     RGB(0x00, 0x78, 0xD7), /* COLOR_MENUHILIGHT */
     RGB(0xF0, 0xF0, 0xF0), /* COLOR_MENUBAR */
 };
+
+/*
+ * the colors of the high contrast black scheme: white on black, the selection black on light blue, hot tracking in
+ * yellow and disabled text in green. the values are what Windows 10 shows, from memory, none was read from a file.
+ */
+static const COLORREF g_high_contrast_colors[NUM_SYSCOLORS] = {
+    RGB(0x00, 0x00, 0x00), /* COLOR_SCROLLBAR */
+    RGB(0x00, 0x00, 0x00), /* COLOR_BACKGROUND */
+    RGB(0x00, 0x00, 0x00), /* COLOR_ACTIVECAPTION */
+    RGB(0x00, 0x00, 0x00), /* COLOR_INACTIVECAPTION */
+    RGB(0x00, 0x00, 0x00), /* COLOR_MENU */
+    RGB(0x00, 0x00, 0x00), /* COLOR_WINDOW */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_WINDOWFRAME */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_MENUTEXT */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_WINDOWTEXT */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_CAPTIONTEXT */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_ACTIVEBORDER */
+    RGB(0x00, 0x00, 0x00), /* COLOR_INACTIVEBORDER */
+    RGB(0x00, 0x00, 0x00), /* COLOR_APPWORKSPACE */
+    RGB(0x1A, 0xEB, 0xFF), /* COLOR_HIGHLIGHT */
+    RGB(0x00, 0x00, 0x00), /* COLOR_HIGHLIGHTTEXT */
+    RGB(0x00, 0x00, 0x00), /* COLOR_BTNFACE */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_BTNSHADOW */
+    RGB(0x3F, 0xF2, 0x3F), /* COLOR_GRAYTEXT */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_BTNTEXT */
+    RGB(0x3F, 0xF2, 0x3F), /* COLOR_INACTIVECAPTIONTEXT */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_BTNHIGHLIGHT */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_3DDKSHADOW */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_3DLIGHT */
+    RGB(0xFF, 0xFF, 0xFF), /* COLOR_INFOTEXT */
+    RGB(0x00, 0x00, 0x00), /* COLOR_INFOBK */
+    RGB(0x00, 0x00, 0x00), /* unused slot 25. */
+    RGB(0xFF, 0xFF, 0x00), /* COLOR_HOTLIGHT */
+    RGB(0x00, 0x00, 0x00), /* COLOR_GRADIENTACTIVECAPTION */
+    RGB(0x00, 0x00, 0x00), /* COLOR_GRADIENTINACTIVECAPTION */
+    RGB(0x1A, 0xEB, 0xFF), /* COLOR_MENUHILIGHT */
+    RGB(0x00, 0x00, 0x00), /* COLOR_MENUBAR */
+};
+
+#define SPI_SETHIGHCONTRAST 0x0043
+#define HCF_HIGHCONTRASTON 0x1
+#define HCF_AVAILABLE 0x2
+static DWORD g_high_contrast_flags;
+
+BOOLEAN MetricsHighContrast(void)
+{
+    return (g_high_contrast_flags & HCF_HIGHCONTRASTON) != 0;
+}
 
 static COLORREF g_colors[NUM_SYSCOLORS];
 static BRUSH *g_brushes[NUM_SYSCOLORS];
@@ -403,9 +451,30 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
         /* validate the size before writing; smaller buffers must fail. */
         if (!NT_SUCCESS(MimeCopyFromUser(&hc.cbSize, data, sizeof(UINT))) || hc.cbSize != sizeof(hc))
             return FALSE;
-        hc.dwFlags = 0x00000002; /* HCF_AVAILABLE */
+        hc.dwFlags = g_high_contrast_flags | HCF_AVAILABLE;
         hc.lpszDefaultScheme = nullptr;
         return NT_SUCCESS(MimeCopyToUser(data, &hc, sizeof(hc)));
+    }
+    case SPI_SETHIGHCONTRAST: {
+        struct {
+            UINT cbSize;
+            DWORD dwFlags;
+            LPWSTR lpszDefaultScheme;
+        } hc;
+        if (!NT_SUCCESS(MimeCopyFromUser(&hc, data, sizeof(hc))) || hc.cbSize != sizeof(hc))
+            return FALSE;
+        /* the scheme is always high contrast black, whatever name is given. */
+        BOOLEAN was = MetricsHighContrast();
+        g_high_contrast_flags = hc.dwFlags & HCF_HIGHCONTRASTON;
+        if (was != MetricsHighContrast()) {
+            for (int i = 0; i < NUM_SYSCOLORS; i++) {
+                g_colors[i] = MetricsHighContrast() ? g_high_contrast_colors[i] : g_default_colors[i];
+                if (g_brushes[i])
+                    g_brushes[i]->Color = g_colors[i];
+            }
+            WndSystemChanged();
+        }
+        return TRUE;
     }
     case SPI_GETANIMATION: {
         struct {

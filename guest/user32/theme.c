@@ -57,7 +57,8 @@ static ULONG NTAPI load_uxtheme(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
     g_ux.ContentRect = (GET_THEME_CONTENT_RECT)(void *)GetProcAddress(ux, "GetThemeBackgroundContentRect");
     g_ux.PartSize = (GET_THEME_PART_SIZE)(void *)GetProcAddress(ux, "GetThemePartSize");
     g_ux.Color = (GET_THEME_COLOR)(void *)GetProcAddress(ux, "GetThemeColor");
-    g_ux.Active = (IS_THEME_ACTIVE)(void *)GetProcAddress(ux, "IsThemeActive");
+    /* IsAppThemed is IsThemeActive and the program's own switches, SetThemeAppProperties. */
+    g_ux.Active = (IS_THEME_ACTIVE)(void *)GetProcAddress(ux, "IsAppThemed");
     g_ux.Transparent = (IS_PART_TRANSPARENT)(void *)GetProcAddress(ux, "IsThemeBackgroundPartiallyTransparent");
     g_ux.Ready = g_ux.Open && g_ux.Draw && g_ux.ContentRect && g_ux.PartSize && g_ux.Color && g_ux.Active;
     return TRUE;

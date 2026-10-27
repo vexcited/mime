@@ -395,7 +395,7 @@ static BOOLEAN load_theme(void)
 static BOOLEAN theme_color(int which, int part, int state, int prop, COLORREF *out)
 {
     uint32_t c;
-    if (!load_theme() || g_theme.Class[which] < 0 ||
+    if (!load_theme() || MetricsHighContrast() || g_theme.Class[which] < 0 ||
         !mime_msstyles_get_color(&g_theme.Theme, g_theme.Class[which], part, state, prop, &c))
         return FALSE;
     *out = (COLORREF)c;
@@ -489,7 +489,7 @@ BOOLEAN FrameIsDark(WND *w)
 /* the visual style is there: the menu bar takes the look of its Menu class instead of the flat system colors. */
 BOOLEAN FrameThemed(void)
 {
-    return load_theme();
+    return load_theme() && !MetricsHighContrast();
 }
 
 typedef struct FRAME_COLORS {
@@ -513,6 +513,13 @@ static void frame_colors(WND *w, FRAME_COLORS *c)
 {
     BOOLEAN dark = dark_frame(w);
     COLORREF v;
+    if (MetricsHighContrast()) {
+        /* the caption and its buttons are drawn in the colors of the system. */
+        c->Caption = c->Border = MetricsSysColor(COLOR_ACTIVECAPTION);
+        c->TextActive = MetricsSysColor(COLOR_CAPTIONTEXT);
+        c->TextInactive = MetricsSysColor(COLOR_INACTIVECAPTIONTEXT);
+        return;
+    }
     c->Caption = FrameThemeColor(FALSE, dark, WP_CAPTION, 1, MIME_TMT_FILLCOLOR, &v) ? v
                  : dark                                                              ? CAPTION_DARK
                                                                                      : CAPTION_COLOR;
@@ -673,10 +680,16 @@ static void draw_button(WND *w, SURFACE *s, const REGION *clip, POINT origin, in
     /* normal, hot, pushed, disabled, inactive. */
     int state = disabled ? 4 : pressed ? 3 : hot ? 2 : active ? 1 : 5;
     COLORREF fill, glyph_color;
-    if ((state == 2 || state == 3) && FrameThemeColor(FALSE, dark, part, state, MIME_TMT_FILLCOLOR, &fill))
+    if (MetricsHighContrast() && (state == 2 || state == 3))
+        DrawFillRect(s, clip, &br, ColorToPixel(MetricsSysColor(COLOR_HIGHLIGHT)));
+    else if ((state == 2 || state == 3) && FrameThemeColor(FALSE, dark, part, state, MIME_TMT_FILLCOLOR, &fill))
         DrawFillRect(s, clip, &br, ColorToPixel(fill));
     glyph_color = disabled ? RGB(0xC0, 0xC0, 0xC0) : active ? colors->TextActive : colors->TextInactive;
-    if (state >= 2 && state <= 4)
+    if (MetricsHighContrast())
+        glyph_color = disabled ? MetricsSysColor(COLOR_GRAYTEXT)
+                      : hot    ? MetricsSysColor(COLOR_HIGHLIGHTTEXT)
+                               : glyph_color;
+    else if (state >= 2 && state <= 4)
         FrameThemeColor(FALSE, dark, part, state, MIME_TMT_TEXTCOLOR, &glyph_color);
     const GLYPH_MASK *mask = glyph_mask(dark, part, state, dpi);
     if (mask)

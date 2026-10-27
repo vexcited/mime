@@ -669,6 +669,30 @@ static void maximized_rect(WND *w, RECT *r)
     r->bottom = r->top + mmi.ptMaxSize.y;
 }
 
+/* a theme change goes to the window and all of its children, a system color change only to the top level ones. */
+static void post_theme_change(WND *w)
+{
+    if (w->Thread)
+        QueuePost(w->Thread, WndHandle(w), WM_THEMECHANGED, 0, 0);
+    for (WND *c = w->FirstChild; c; c = c->Next)
+        if (!(c->Flags & WNDF_DESTROYING))
+            post_theme_change(c);
+}
+
+void WndSystemChanged(void)
+{
+    WND *desktop = WndDesktop();
+    for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next) {
+        if (c->Flags & WNDF_DESTROYING)
+            continue;
+        if (c->Thread)
+            QueuePost(c->Thread, WndHandle(c), WM_SYSCOLORCHANGE, 0, 0);
+        post_theme_change(c);
+        if (c->Style & WS_VISIBLE)
+            WndInvalidateRegion(c, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
+    }
+}
+
 /* resize the desktop to the display and maximized windows to the work area, then notify top level windows. */
 void WndDisplayChanged(void)
 {

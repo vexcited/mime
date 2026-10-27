@@ -778,6 +778,10 @@ LRESULT FrameHitTest(WND *w, POINT pt);
 void FramePaint(WND *w);
 BOOLEAN FrameIsDark(WND *w);
 BOOLEAN FrameThemed(void);
+/* high contrast is on: the system colors are the high contrast ones and the visual style is off. */
+BOOLEAN MetricsHighContrast(void);
+/* the system colors or the visual style changed: every window is told and drawn again. */
+void WndSystemChanged(void);
 /* a color of the Window or Menu class of the visual style, light or dark. */
 BOOLEAN FrameThemeColor(BOOLEAN menu, BOOLEAN dark, int part, int state, int prop, COLORREF *out);
 BOOLEAN FrameBorderColor(BOOLEAN dark, BOOLEAN active, ULONG *argb);

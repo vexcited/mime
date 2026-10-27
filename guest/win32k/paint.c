@@ -207,7 +207,10 @@ void HostConfigure(WND *w, BOOLEAN activate)
     if (m.Border && !(w->Style & WS_MAXIMIZE)) {
         BOOLEAN dark = PropGetData(w, AtomFind(L"DwmDarkMode")) != nullptr;
         ULONG themed;
-        if (FrameBorderColor(dark, (w->Flags & WNDF_ACTIVE_FRAME) != 0, &themed))
+        COLORREF frame = MetricsSysColor(COLOR_WINDOWFRAME);
+        if (MetricsHighContrast())
+            c->border_color = 0xFF000000u | ((frame & 0xFF) << 16) | (frame & 0xFF00) | ((frame >> 16) & 0xFF);
+        else if (FrameBorderColor(dark, (w->Flags & WNDF_ACTIVE_FRAME) != 0, &themed))
             c->border_color = themed;
         else
             c->border_color = dark ? ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x664C4C4Cu : 0x404C4C4Cu)
