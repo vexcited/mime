@@ -36,6 +36,16 @@ static struct {
 } g_mapped_files[WB_MAPPED_FILES];
 static volatile LONG g_mapped_total;
 static LONG g_mapped_overflow; /* uses the table had no room for: meanwhile every file counts as mapped. */
+/*
+ * files with more than one name. a buffer is found by the name its handle was opened by, so a look at the file by another
+ * name has to flush the buffers of these whatever they were opened by.
+ */
+#define WB_LINKED_FILES 64
+static struct {
+    ULONG Volume;
+    ULONG64 FileId;
+} g_linked_files[WB_LINKED_FILES];
+static ULONG g_linked_next;
 static KEVENT g_wake;
 static volatile LONG g_worker;
 static BOOLEAN g_ready;
@@ -155,6 +165,29 @@ void FsWbOpen(FS_WB *wb, ULONG volume, ULONG64 file_id, ULONG64 host, PCUNICODE_
     wb->FileId = file_id;
     wb->Host = host;
     wb->Name = name;
+}
+
+void FsWbNoteLinked(ULONG volume, ULONG64 file_id)
+{
+    ExAcquireFastMutex(&g_lock);
+    BOOLEAN known = FALSE;
+    for (ULONG i = 0; i < WB_LINKED_FILES && !known; i++)
+        known = g_linked_files[i].FileId == file_id && g_linked_files[i].Volume == volume;
+    if (!known) {
+        g_linked_files[g_linked_next % WB_LINKED_FILES].Volume = volume;
+        g_linked_files[g_linked_next++ % WB_LINKED_FILES].FileId = file_id;
+    }
+    ExReleaseFastMutex(&g_lock);
+}
+
+/* lock held. */
+static BOOLEAN linked_locked(ULONG volume, ULONG64 file_id)
+{
+    for (ULONG i = 0; i < WB_LINKED_FILES; i++) {
+        if (g_linked_files[i].FileId == file_id && g_linked_files[i].Volume == volume)
+            return TRUE;
+    }
+    return FALSE;
 }
 
 void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta)
@@ -325,7 +358,8 @@ void FsWbSyncPath(ULONG volume, PCUNICODE_STRING path, BOOLEAN directory)
     ExAcquireFastMutex(&g_lock);
     for (PLIST_ENTRY e = g_kept.Flink; e != &g_kept; e = e->Flink) {
         FS_WB *wb = CONTAINING_RECORD(e, FS_WB, Links);
-        if (wb->Length && wb->Volume == volume && name_matches(wb->Name, path, directory))
+        if (wb->Length && wb->Volume == volume &&
+            (name_matches(wb->Name, path, directory) || (!directory && linked_locked(volume, wb->FileId))))
             flush_locked(wb);
     }
     ExReleaseFastMutex(&g_lock);

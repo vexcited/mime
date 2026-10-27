@@ -545,6 +545,8 @@ opened:
     fcb->Buffered = (req_flags & MIME_FS_OPEN_WRITE) && !(options & (FILE_WRITE_THROUGH | FILE_NO_INTERMEDIATE_BUFFERING));
     if (!fcb->Directory && !fcb->StatOnly)
         FsWbOpen(&fcb->Wb, vol->HostVolume, opened.file_id, host, &file->FileName);
+    if (!fcb->Directory && opened.links > 1)
+        FsWbNoteLinked(vol->HostVolume, opened.file_id);
     if (!fcb->Directory && !fcb->StatOnly) {
         if (req_flags & MIME_FS_OPEN_WRITE || action != FILE_OPENED)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
@@ -1158,6 +1160,7 @@ static NTSTATUS link_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MIME
         ULONG added_chars;
         PWCHAR added = name_in_directory(file, dir, text, leaf, &added_chars);
         MimeFsSecurityChanged();
+        FsWbNoteLinked(fcb->Volume, fcb->FileId);
         /* the other names of the file, and the one that was linked, have a count the programs have asked about. */
         FsAttrChanged(fcb->Volume, file->FileName.Buffer, file->FileName.Length / sizeof(WCHAR), FALSE);
         if (added) {

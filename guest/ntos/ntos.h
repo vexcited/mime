@@ -1234,6 +1234,8 @@ void FsWbClose(FS_WB *wb);
 void FsWbFlushAll(void);
 /* a file with a section or window in use buffers no writes, see io/fswrite.c. */
 void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta);
+/* the file has more than one name, so a look by any name flushes what its handles buffered by the others. */
+void FsWbNoteLinked(ULONG volume, ULONG64 file_id);
 BOOLEAN FsWbIsMapped(ULONG volume, ULONG64 file_id);
 BOOLEAN FsWbAnyMapped(void);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);

@@ -390,6 +390,31 @@ NTSTATUS NTAPI ZwQueryInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOI
 }
 
 /*
+ * a name that is replaced goes as a file deleted does: the program needs the right to delete it, or to delete the
+ * entries of its directory. a name that is not there is nothing to replace.
+ */
+static NTSTATUS check_replaced_name(HANDLE root, PWCHAR name, ULONG bytes)
+{
+    UNICODE_STRING target = {(USHORT)bytes, (USHORT)bytes, name};
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &target, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, root, nullptr);
+    HANDLE h;
+    IO_STATUS_BLOCK io;
+    PKTHREAD t = KiCurrentThread();
+    KPROCESSOR_MODE old = t->PreviousMode;
+    t->PreviousMode = KernelMode;
+    NTSTATUS status = IopCreateFileChecked(&h, DELETE | SYNCHRONIZE, &oa, &io,
+                                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                           FILE_SYNCHRONOUS_IO_NONALERT);
+    t->PreviousMode = old;
+    if (NT_SUCCESS(status)) {
+        ObCloseHandle(h, KernelMode);
+        return STATUS_SUCCESS;
+    }
+    return status == STATUS_ACCESS_DENIED ? status : STATUS_SUCCESS;
+}
+
+/*
  * rename and link give the file system the directory the new name goes in, opened here, and the name in it. a name
  * that starts with a backslash is a full path, one given with a root directory is relative to that directory, and
  * one that is neither is a name in the file's own directory, which the file system finds itself. a link is made as the
@@ -465,6 +490,8 @@ static NTSTATUS retarget_file(PFILE_OBJECT file, PUCHAR buf, ULONG length, FILE_
     if (NT_SUCCESS(status)) {
         if (directory->DeviceObject != file->DeviceObject) {
             status = STATUS_NOT_SAME_DEVICE;
+        } else if (link && user && replace && !NT_SUCCESS(status = check_replaced_name(root, name, name_length))) {
+            /* the program may not delete what the link would replace. */
         } else {
             params.Parameters.SetFile.FileObject = directory;
             status = IopSynchronousRequest(file, IRP_MJ_SET_INFORMATION, 0, buf, length, &params, &ignored);
