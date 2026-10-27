@@ -49,6 +49,23 @@ static HFONT g_font;
 static int g_dpi = 96;
 static int g_split;
 static BOOL g_dragging;
+static BOOL g_list_active; /* the list was used last, so delete and rename mean values. */
+static HMENU g_new_menu, g_edit_menu;
+static HWND g_buttons[8];
+#define IDM_NEW_POPUP 200
+
+typedef struct BUTTON_SPEC {
+    PCWSTR Text;
+    UINT Id;
+    int Width;
+} BUTTON_SPEC;
+
+static const BUTTON_SPEC g_button_specs[] = {
+    {L"Import...", IDM_IMPORT, 84},  {L"Export...", IDM_EXPORT, 84}, {L"New", IDM_NEW_POPUP, 64},
+    {L"Modify...", IDM_MODIFY, 84}, {L"Delete", IDM_DELETE, 70},    {L"Rename", IDM_RENAME, 74},
+    {L"Refresh", IDM_REFRESH, 74},
+};
+#define BUTTON_ROW 30
 
 static int scale(int value)
 {
@@ -522,7 +539,7 @@ static LRESULT CALLBACK value_proc(HWND window, UINT message, WPARAM wparam, LPA
             add_child(window, L"STATIC", L"Value data:", 0, 0, 12, y, 300, 16);
             PWSTR text = data_to_text(d);
             d->DataEdit = add_child(window, L"EDIT", text ? text : L"",
-                                    WS_TABSTOP | WS_VSCROLL | (multi ? ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN : ES_AUTOHSCROLL),
+                                    WS_TABSTOP | (multi ? WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN : ES_AUTOHSCROLL),
                                     ID_DATA, 12, y + 18, 336, multi ? 110 : 22);
             if (text)
                 HeapFree(GetProcessHeap(), 0, text);
@@ -677,22 +694,29 @@ static void lay_out(void)
 {
     RECT client;
     GetClientRect(g_window, &client);
-    int address = scale(26), status_height = 0;
+    int buttons = scale(BUTTON_ROW), address = scale(26), status_height = 0;
     RECT status_rect;
     SendMessageW(g_status, WM_SIZE, 0, 0);
     if (GetWindowRect(g_status, &status_rect))
         status_height = status_rect.bottom - status_rect.top;
-    int body = client.bottom - address - status_height;
+    int body = client.bottom - buttons - address - status_height;
     if (body < 0)
         body = 0;
     int bar = scale(5);
+    if (g_split == 0)
+        g_split = client.right * 35 / 100;
     if (g_split < scale(80))
         g_split = scale(80);
     if (g_split > client.right - scale(80))
         g_split = client.right - scale(80);
-    MoveWindow(g_address, 0, 0, client.right, address, TRUE);
-    MoveWindow(g_tree, 0, address, g_split, body, TRUE);
-    MoveWindow(g_list, g_split + bar, address, client.right - g_split - bar, body, TRUE);
+    int x = scale(2);
+    for (int i = 0; i < (int)RTL_NUMBER_OF(g_button_specs); i++) {
+        MoveWindow(g_buttons[i], x, scale(2), scale(g_button_specs[i].Width), buttons - scale(4), TRUE);
+        x += scale(g_button_specs[i].Width + 4);
+    }
+    MoveWindow(g_address, 0, buttons, client.right, address, TRUE);
+    MoveWindow(g_tree, 0, buttons + address, g_split, body, TRUE);
+    MoveWindow(g_list, g_split + bar, buttons + address, client.right - g_split - bar, body, TRUE);
 }
 
 static HTREEITEM tree_hit(void)
@@ -1089,13 +1113,13 @@ static void command(UINT id)
         modify_value();
         break;
     case IDM_DELETE:
-        if (GetFocus() == g_list)
+        if (g_list_active)
             delete_value();
         else
             delete_key();
         break;
     case IDM_RENAME:
-        if (GetFocus() == g_list)
+        if (g_list_active)
             rename_value();
         else
             rename_key();
@@ -1105,6 +1129,15 @@ static void command(UINT id)
         break;
     case IDM_REFRESH:
         refresh();
+        break;
+    case IDM_NEW_POPUP:
+        for (int i = 0; i < (int)RTL_NUMBER_OF(g_button_specs); i++) {
+            if (g_button_specs[i].Id == IDM_NEW_POPUP) {
+                RECT r;
+                GetWindowRect(g_buttons[i], &r);
+                TrackPopupMenu(g_new_menu, TPM_LEFTALIGN, r.left, r.bottom, 0, g_window, nullptr);
+            }
+        }
         break;
     case IDM_ABOUT:
         RegeditBox(g_window, L"Registry Editor\n\nMime's registry editor.", MB_ICONINFORMATION);
@@ -1132,6 +1165,8 @@ static HMENU build_menu(void)
     AppendMenuW(fresh, MF_STRING, IDM_NEW_MULTI, L"&Multi-String Value");
     AppendMenuW(fresh, MF_STRING, IDM_NEW_EXPAND, L"&Expandable String Value");
     HMENU edit = CreatePopupMenu();
+    g_new_menu = fresh;
+    g_edit_menu = edit;
     AppendMenuW(edit, MF_POPUP, (UINT_PTR)fresh, L"&New");
     AppendMenuW(edit, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(edit, MF_STRING, IDM_MODIFY, L"&Modify...");
@@ -1157,14 +1192,37 @@ static void make_font(void)
     g_font = nullptr;
     if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0))
         g_font = CreateFontIndirectW(&metrics.lfMessageFont);
-    HWND all[] = {g_tree, g_list, g_status, g_address};
-    for (int i = 0; i < 4; i++)
+    HWND all[4 + 8] = {g_tree, g_list, g_status, g_address};
+    for (int i = 0; i < (int)RTL_NUMBER_OF(g_button_specs); i++)
+        all[4 + i] = g_buttons[i];
+    for (int i = 0; i < 4 + (int)RTL_NUMBER_OF(g_button_specs); i++)
         if (all[i] && g_font)
             SendMessageW(all[i], WM_SETFONT, (WPARAM)g_font, TRUE);
 }
 
 static LRESULT notify(NMHDR *header)
 {
+    if (header->code == NM_SETFOCUS || header->code == NM_CLICK || header->code == NM_RCLICK) {
+        if (header->hwndFrom == g_list)
+            g_list_active = TRUE;
+        else if (header->hwndFrom == g_tree)
+            g_list_active = FALSE;
+    }
+    if (header->code == NM_RCLICK && (header->hwndFrom == g_tree || header->hwndFrom == g_list)) {
+        POINT p;
+        GetCursorPos(&p);
+        if (header->hwndFrom == g_tree) {
+            TVHITTESTINFO hit = {};
+            POINT client = p;
+            ScreenToClient(g_tree, &client);
+            hit.pt = client;
+            HTREEITEM item = (HTREEITEM)SendMessageW(g_tree, TVM_HITTEST, 0, (LPARAM)&hit);
+            if (item)
+                SendMessageW(g_tree, TVM_SELECTITEM, TVGN_CARET, (LPARAM)item);
+        }
+        TrackPopupMenu(g_edit_menu, TPM_LEFTALIGN, p.x, p.y, 0, g_window, nullptr);
+        return 0;
+    }
     if (header->hwndFrom == g_tree) {
         if (header->code == TVN_ITEMEXPANDINGW) {
             NMTREEVIEWW *tv = (NMTREEVIEWW *)header;
@@ -1217,8 +1275,10 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
             column.cx = scale(widths[i]);
             ListView_InsertColumn(g_list, i, &column);
         }
+        for (int i = 0; i < (int)RTL_NUMBER_OF(g_button_specs); i++)
+            g_buttons[i] = CreateWindowExW(0, L"BUTTON", g_button_specs[i].Text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                           0, 0, 10, 10, window, (HMENU)(UINT_PTR)g_button_specs[i].Id, instance, nullptr);
         make_font();
-        g_split = scale(300);
         populate_roots();
         return 0;
     }
@@ -1319,10 +1379,22 @@ void RegeditRun(void)
                                   CW_USEDEFAULT, 960, 640, nullptr, build_menu(), instance, nullptr);
     if (!window)
         return;
+    {
+        UINT dpi = GetDpiForWindow(window);
+        if (dpi > 96)
+            SetWindowPos(window, nullptr, 0, 0, MulDiv(960, (int)dpi, 96), MulDiv(640, (int)dpi, 96), SWP_NOMOVE | SWP_NOZORDER);
+    }
     ShowWindow(window, SW_SHOWDEFAULT);
     UpdateWindow(window);
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (msg.message == WM_KEYDOWN && msg.hwnd == g_address && msg.wParam == VK_RETURN) {
+            WCHAR typed[1200];
+            GetWindowTextW(g_address, typed, RTL_NUMBER_OF(typed));
+            if (!navigate(typed))
+                MessageBeep(MB_ICONERROR);
+            continue;
+        }
         if (msg.message == WM_KEYDOWN && (msg.hwnd == g_tree || msg.hwnd == g_list)) {
             UINT id = msg.wParam == VK_F5 ? IDM_REFRESH : msg.wParam == VK_DELETE ? IDM_DELETE : msg.wParam == VK_F2 ? IDM_RENAME : 0;
             if (id) {
