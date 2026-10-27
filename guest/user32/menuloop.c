@@ -9,6 +9,9 @@
 
 #define MAX_LEVELS 16
 #define OPEN_TIMER 0xFFFD
+#define SCROLL_TIMER 0xFFFC
+#define ARROW_UP (-2)
+#define ARROW_DOWN (-3)
 #define SYSTEM_ICON (-2)
 #define NO_ITEM (-1)
 
@@ -40,6 +43,10 @@ typedef struct LEVEL {
     int Hot;
     int Left, Top, Width, Height; /* on the screen. */
     int Gutter;                   /* the width of the column of check marks and bitmaps. */
+    BOOL Scrollable;              /* the items are taller than the screen, so they scroll between two arrows. */
+    int Content;                  /* the height of all the items. */
+    int Scroll;                   /* how far the items have moved up. */
+    int Arrow;                    /* the height of an arrow zone, 0 when the menu does not scroll. */
     BOOL System;
     ULONG Serial;
     int ParentItem;
@@ -80,6 +87,8 @@ typedef struct LOOP {
     POINT ResultPos;
     POINT LastMouse;
     UINT_PTR Timer;
+    UINT_PTR ScrollTimer;
+    int ScrollLevel, ScrollDir;
     HWND TimerWindow;
     int TimerLevel, TimerItem;
     HWND StartActive;
@@ -255,7 +264,48 @@ static BOOL level_measure(LOOP *l, LEVEL *lv)
     if (lv->Width < scale(120, l->Dpi))
         lv->Width = scale(120, l->Dpi);
     lv->Height = y + scale(4, l->Dpi);
+    lv->Content = lv->Height;
     return TRUE;
+}
+
+/* where an item is in the popup window, as the popup is scrolled. */
+static int item_top(const LEVEL *lv, const ITEM *it)
+{
+    return it->Top - lv->Scroll + lv->Arrow;
+}
+
+static int max_scroll(const LEVEL *lv)
+{
+    int visible = lv->Height - 2 * lv->Arrow;
+    return lv->Content > visible ? lv->Content - visible : 0;
+}
+
+static void scroll_to(LEVEL *lv, int scroll)
+{
+    if (!lv->Scrollable)
+        return;
+    if (scroll > max_scroll(lv))
+        scroll = max_scroll(lv);
+    if (scroll < 0)
+        scroll = 0;
+    if (scroll != lv->Scroll) {
+        lv->Scroll = scroll;
+        if (lv->Window)
+            InvalidateRect(lv->Window, nullptr, FALSE);
+    }
+}
+
+/* the item is made visible: the popup scrolls just enough. */
+static void show_item(LEVEL *lv, int index)
+{
+    if (!lv->Scrollable || index < 0 || index >= lv->Count)
+        return;
+    const ITEM *it = &lv->Items[index];
+    int visible = lv->Height - 2 * lv->Arrow;
+    if (it->Top < lv->Scroll)
+        scroll_to(lv, it->Top - 4);
+    else if (it->Top + it->Height > lv->Scroll + visible)
+        scroll_to(lv, it->Top + it->Height - visible + 4);
 }
 
 static void level_free_items(LEVEL *lv)
@@ -369,7 +419,10 @@ static void paint_level(LOOP *l, LEVEL *lv, HDC dc)
     int pad = scale(4, l->Dpi), right = scale(16, l->Dpi);
     for (int i = 0; i < lv->Count; i++) {
         ITEM *it = &lv->Items[i];
-        RECT r = {pad, it->Top, lv->Width - pad, it->Top + it->Height};
+        int top = item_top(lv, it);
+        if (lv->Scrollable && (top + it->Height <= lv->Arrow || top >= lv->Height - lv->Arrow))
+            continue;
+        RECT r = {pad, top, lv->Width - pad, top + it->Height};
         if (it->Type & MFT_SEPARATOR) {
             RECT line = {r.left + scale(8, l->Dpi), (r.top + r.bottom) / 2, r.right - scale(8, l->Dpi),
                          (r.top + r.bottom) / 2 + 1};
@@ -468,6 +521,34 @@ static void paint_level(LOOP *l, LEVEL *lv, HDC dc)
             DeleteObject(p);
         }
     }
+    if (lv->Scrollable) {
+        /* the arrows cover the ends of the list. */
+        RECT top_zone = {1, 1, lv->Width - 1, lv->Arrow}, bottom_zone = {1, lv->Height - lv->Arrow, lv->Width - 1, lv->Height - 1};
+        HBRUSH face_brush2 = CreateSolidBrush(face);
+        FillRect(dc, &top_zone, face_brush2);
+        FillRect(dc, &bottom_zone, face_brush2);
+        DeleteObject(face_brush2);
+        COLORREF ink = GetSysColor(COLOR_MENUTEXT);
+        HBRUSH ink_brush = CreateSolidBrush(ink);
+        HGDIOBJ ob = SelectObject(dc, ink_brush);
+        HPEN ink_pen = CreatePen(PS_SOLID, 1, ink);
+        HGDIOBJ op = SelectObject(dc, ink_pen);
+        int cx = lv->Width / 2, s = scale(4, l->Dpi);
+        if (lv->Scroll > 0) {
+            int cy = lv->Arrow / 2;
+            POINT tri[3] = {{cx - s, cy + s / 2}, {cx + s, cy + s / 2}, {cx, cy - s / 2}};
+            Polygon(dc, tri, 3);
+        }
+        if (lv->Scroll < max_scroll(lv)) {
+            int cy = lv->Height - lv->Arrow / 2;
+            POINT tri[3] = {{cx - s, cy - s / 2}, {cx + s, cy - s / 2}, {cx, cy + s / 2}};
+            Polygon(dc, tri, 3);
+        }
+        SelectObject(dc, ob);
+        SelectObject(dc, op);
+        DeleteObject(ink_brush);
+        DeleteObject(ink_pen);
+    }
     SelectObject(dc, old_font);
 }
 
@@ -544,8 +625,33 @@ static void set_bar_state(LOOP *l)
 
 /* ------------------------------------------------------------------ levels */
 
+/* a popup that was measured again is cut to its monitor, where it is. */
+static void fit_height(LOOP *l, LEVEL *lv)
+{
+    POINT pt = {lv->Left, lv->Top};
+    MONITORINFO mi = {sizeof(mi)};
+    lv->Scrollable = FALSE;
+    lv->Arrow = 0;
+    if (GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi) &&
+        lv->Content > mi.rcMonitor.bottom - mi.rcMonitor.top) {
+        lv->Scrollable = TRUE;
+        lv->Arrow = scale(16, l->Dpi);
+        lv->Height = mi.rcMonitor.bottom - mi.rcMonitor.top;
+    }
+}
+
 static void place_popup(LOOP *l, LEVEL *lv, int *x, int *y, const RECT *exclude, UINT flags, BOOL from_bar)
 {
+    POINT pt = {*x, *y};
+    MONITORINFO mi = {sizeof(mi)};
+    BOOL have_area = GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi);
+    RECT area = (flags & TPM_WORKAREA) ? mi.rcWork : mi.rcMonitor;
+    /* a menu taller than the screen scrolls between two arrows. */
+    if (have_area && lv->Height > area.bottom - area.top) {
+        lv->Scrollable = TRUE;
+        lv->Arrow = scale(16, l->Dpi);
+        lv->Height = area.bottom - area.top;
+    }
     UINT h = flags & (TPM_CENTERALIGN | TPM_RIGHTALIGN);
     if (h == TPM_RIGHTALIGN)
         *x -= lv->Width;
@@ -555,11 +661,8 @@ static void place_popup(LOOP *l, LEVEL *lv, int *x, int *y, const RECT *exclude,
         *y -= lv->Height;
     else if (flags & TPM_VCENTERALIGN)
         *y -= lv->Height / 2;
-    POINT pt = {*x, *y};
-    MONITORINFO mi = {sizeof(mi)};
-    if (!GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi))
+    if (!have_area)
         return;
-    RECT area = (flags & TPM_WORKAREA) ? mi.rcWork : mi.rcMonitor;
     /* a popup that does not fit opens on the other side of the point or of the excluded rectangle. */
     if (*x + lv->Width > area.right) {
         /* a popup under a bar item slides left to the edge, one at the side of another opens at its other side. */
@@ -574,7 +677,6 @@ static void place_popup(LOOP *l, LEVEL *lv, int *x, int *y, const RECT *exclude,
         *x = area.left;
     if (*y < area.top)
         *y = area.top;
-    (void)l;
 }
 
 static BOOL level_create(LOOP *l, HMENU menu, BOOL system, int parent_item, int x, int y, const RECT *exclude, UINT flags,
@@ -639,6 +741,25 @@ static void kill_open_timer(LOOP *l)
     }
 }
 
+static void stop_scroll(LOOP *l)
+{
+    if (l->ScrollTimer) {
+        KillTimer(l->TimerWindow, l->ScrollTimer);
+        l->ScrollTimer = 0;
+    }
+}
+
+static void start_scroll(LOOP *l, int level, int direction)
+{
+    if (l->ScrollTimer && l->ScrollLevel == level && l->ScrollDir == direction)
+        return;
+    stop_scroll(l);
+    l->ScrollLevel = level;
+    l->ScrollDir = direction;
+    l->ScrollTimer = SCROLL_TIMER;
+    SetTimer(l->TimerWindow, SCROLL_TIMER, 50, nullptr);
+}
+
 static void redraw_level(LEVEL *lv)
 {
     if (lv->Window)
@@ -675,6 +796,8 @@ static void refresh(LOOP *l)
             hot = NO_ITEM;
         lv->Hot = hot;
         level_measure(l, lv);
+        fit_height(l, lv);
+        scroll_to(lv, lv->Scroll);
         SetWindowPos(lv->Window, nullptr, 0, 0, lv->Width, lv->Height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         redraw_level(lv);
     }
@@ -745,6 +868,8 @@ static void select_level_item(LOOP *l, int level, int item, BOOL mouse)
         kill_open_timer(l);
     close_to_depth(l, level + 1);
     lv->Hot = item;
+    if (!mouse)
+        show_item(lv, item);
     redraw_level(lv);
     send_select(l, lv->Menu, item, in_range(item, lv->Count) ? &lv->Items[item] : nullptr, lv->System);
     if (mouse && in_range(item, lv->Count) && lv->Items[item].SubMenu && enabled(&lv->Items[item])) {
@@ -815,8 +940,9 @@ static void open_submenu(LOOP *l, int level, int item, BOOL select_first)
     if (!IsMenu(sub))
         return;
     /* the first item of the submenu is level with its item. */
-    int x = parent->Left + parent->Width - scale(3, l->Dpi), y = parent->Top + it->Top - scale(4, l->Dpi);
-    RECT around = {parent->Left, parent->Top + it->Top, parent->Left + parent->Width, parent->Top + it->Top + it->Height};
+    int row = item_top(parent, it);
+    int x = parent->Left + parent->Width - scale(3, l->Dpi), y = parent->Top + row - scale(4, l->Dpi);
+    RECT around = {parent->Left, parent->Top + row, parent->Left + parent->Width, parent->Top + row + it->Height};
     if (!level_create(l, sub, parent->System, item, x, y, &around, 0, FALSE))
         return;
     if (select_first) {
@@ -845,11 +971,21 @@ static BOOL screen_point_in_level(const LEVEL *lv, POINT pt, int *item)
         return FALSE;
     *item = NO_ITEM;
     int y = pt.y - lv->Top;
-    for (int i = 0; i < lv->Count; i++)
-        if (y >= lv->Items[i].Top && y < lv->Items[i].Top + lv->Items[i].Height) {
+    if (lv->Scrollable && y < lv->Arrow) {
+        *item = ARROW_UP;
+        return TRUE;
+    }
+    if (lv->Scrollable && y >= lv->Height - lv->Arrow) {
+        *item = ARROW_DOWN;
+        return TRUE;
+    }
+    for (int i = 0; i < lv->Count; i++) {
+        int top = item_top(lv, &lv->Items[i]);
+        if (y >= top && y < top + lv->Items[i].Height) {
             *item = i;
             break;
         }
+    }
     return TRUE;
 }
 
@@ -1121,6 +1257,8 @@ static void key_down(LOOP *l, UINT vk)
         break;
     case VK_MENU:
     case VK_F10:
+        /* the key that ends the menu must not open it again when it comes up. */
+        NtUserCallTwoParam(0, 0, MIME_TWOPARAM_ALTALONE);
         end_loop(l);
         break;
     case VK_TAB:
@@ -1172,6 +1310,10 @@ static void mouse_message(LOOP *l, const MSG *msg)
             LEVEL *lv = &l->Levels[level];
             int pick = in_range(item, lv->Count) && selectable(&lv->Items[item]) ? item : NO_ITEM;
             select_level_item(l, level, pick, TRUE);
+            if (item == ARROW_UP || item == ARROW_DOWN)
+                start_scroll(l, level, item == ARROW_UP ? -1 : 1);
+            else
+                stop_scroll(l);
         } else if (hit == HIT_BAR && item != l->BarSel) {
             select_bar(l, item, l->Dropped, TRUE);
         } else if (hit == HIT_ICON && l->BarSel != SYSTEM_ICON) {
@@ -1244,7 +1386,7 @@ static void mouse_message(LOOP *l, const MSG *msg)
                 if (enabled(&lv->Items[item]))
                     execute(l, lv->Menu, item, &lv->Items[item], lv->System);
             }
-        } else if (hit == HIT_BAR) {
+        } else if (hit == HIT_BAR && in_range(item, l->BarCount)) {
             ITEM *it = &l->BarItems[item];
             if (!it->SubMenu && enabled(it)) {
                 if (item != l->BarSel)
@@ -1263,6 +1405,13 @@ static BOOL handle_message(LOOP *l, MSG *msg)
     case WM_QUIT:
         return FALSE;
     case WM_TIMER:
+        if (msg->wParam == SCROLL_TIMER && msg->hwnd == l->TimerWindow) {
+            if (l->ScrollLevel < l->Depth)
+                scroll_to(&l->Levels[l->ScrollLevel], l->Levels[l->ScrollLevel].Scroll + l->ScrollDir * scale(12, l->Dpi));
+            else
+                stop_scroll(l);
+            return TRUE;
+        }
         if (msg->wParam == OPEN_TIMER && msg->hwnd == l->TimerWindow) {
             int level = l->TimerLevel, item = l->TimerItem;
             kill_open_timer(l);
@@ -1286,9 +1435,21 @@ static BOOL handle_message(LOOP *l, MSG *msg)
     case WM_NCRBUTTONUP:
         mouse_message(l, msg);
         return TRUE;
+    case WM_MOUSEWHEEL: {
+        /* the wheel scrolls the popup under the pointer, or the innermost one. */
+        POINT pt = msg->pt;
+        int level, item;
+        if (hit_test(l, pt, &level, &item) != HIT_LEVEL)
+            level = l->Depth - 1;
+        if (level >= 0 && level < l->Depth && l->Levels[level].Scrollable) {
+            LEVEL *lv = &l->Levels[level];
+            int notches = (short)HIWORD(msg->wParam) / 120;
+            scroll_to(lv, lv->Scroll - notches * scale(24, l->Dpi) * 3);
+        }
+        return TRUE;
+    }
     case WM_MBUTTONDOWN:
     case WM_MBUTTONUP:
-    case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL:
         return TRUE;
     case WM_KEYDOWN:
@@ -1375,6 +1536,8 @@ static BOOL start_common(LOOP *l, HWND owner)
     l->Cues = !(ui & UISF_HIDEACCEL);
     l->ButtonDown = (GetKeyState(VK_LBUTTON) & 0x8000) || (GetKeyState(VK_RBUTTON) & 0x8000);
     l->StartActive = GetActiveWindow();
+    if (!l->StartActive)
+        l->StartActive = GetAncestor(owner, GA_ROOT);
     l->StartTick = GetTickCount();
     GetCursorPos(&l->StartPoint);
     l->LastMouse = l->StartPoint;
@@ -1384,6 +1547,7 @@ static BOOL start_common(LOOP *l, HWND owner)
 static void finish(LOOP *l)
 {
     kill_open_timer(l);
+    stop_scroll(l);
     close_to_depth(l, 0);
     l->BarSel = NO_ITEM;
     l->Dropped = FALSE;
@@ -1711,7 +1875,8 @@ WINUSERAPI BOOL WINAPI GetMenuBarInfo(HWND hwnd, LONG object, LONG item, PMENUBA
                 info->rcBar = (RECT){lv->Left, lv->Top, lv->Left + lv->Width, lv->Top + lv->Height};
             } else {
                 ITEM *it = &lv->Items[item - 1];
-                info->rcBar = (RECT){lv->Left, lv->Top + it->Top, lv->Left + lv->Width, lv->Top + it->Top + it->Height};
+                info->rcBar = (RECT){lv->Left, lv->Top + item_top(lv, it), lv->Left + lv->Width,
+                                 lv->Top + item_top(lv, it) + it->Height};
             }
             info->fBarFocused = d == l->Depth - 1;
             info->fFocused = item == 0 || lv->Hot == item - 1;
@@ -1735,7 +1900,8 @@ WINUSERAPI BOOL WINAPI GetMenuItemRect(HWND window, HMENU menu, UINT item, LPREC
         LEVEL *lv = &l->Levels[d];
         if (lv->Menu == menu && item < (UINT)lv->Count) {
             ITEM *it = &lv->Items[item];
-            *rect = (RECT){lv->Left, lv->Top + it->Top, lv->Left + lv->Width, lv->Top + it->Top + it->Height};
+            *rect = (RECT){lv->Left, lv->Top + item_top(lv, it), lv->Left + lv->Width,
+                           lv->Top + item_top(lv, it) + it->Height};
             return TRUE;
         }
     }

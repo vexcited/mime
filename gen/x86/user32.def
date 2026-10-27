@@ -213,6 +213,7 @@ EXPORTS
     GetCursor=_GetCursor@0
     GetCursorInfo=_GetCursorInfo@4
     GetCursorPos=_GetCursorPos@4
+    GetMenuContextHelpId=_GetMenuContextHelpId@4
     GetPhysicalCursorPos=_GetPhysicalCursorPos@4
     GetDC=_GetDC@4
     GetDCEx=_GetDCEx@12
@@ -387,6 +388,9 @@ EXPORTS
     LoadImageA=_LoadImageA@24
     LoadImageW=_LoadImageW@24
     LoadKeyboardLayoutW=_LoadKeyboardLayoutW@8
+    LoadMenuA=_LoadMenuA@8
+    LoadMenuIndirectA=_LoadMenuIndirectA@4
+    LoadMenuIndirectW=_LoadMenuIndirectW@4
     LoadMenuW=_LoadMenuW@8
     LoadStringA=_LoadStringA@16
     LoadStringW=_LoadStringW@16
@@ -509,6 +513,7 @@ EXPORTS
     SetLastErrorEx=_SetLastErrorEx@8
     SetLayeredWindowAttributes=_SetLayeredWindowAttributes@16
     SetMenu=_SetMenu@8
+    SetMenuContextHelpId=_SetMenuContextHelpId@8
     SetMenuDefaultItem=_SetMenuDefaultItem@12
     SetMenuInfo=_SetMenuInfo@8
     SetMenuItemBitmaps=_SetMenuItemBitmaps@20

@@ -213,6 +213,7 @@ EXPORTS
     GetCursor@0
     GetCursorInfo@4
     GetCursorPos@4
+    GetMenuContextHelpId@4
     GetPhysicalCursorPos@4
     GetDC@4
     GetDCEx@12
@@ -387,6 +388,9 @@ EXPORTS
     LoadImageA@24
     LoadImageW@24
     LoadKeyboardLayoutW@8
+    LoadMenuA@8
+    LoadMenuIndirectA@4
+    LoadMenuIndirectW@4
     LoadMenuW@8
     LoadStringA@16
     LoadStringW@16
@@ -509,6 +513,7 @@ EXPORTS
     SetLastErrorEx@8
     SetLayeredWindowAttributes@16
     SetMenu@8
+    SetMenuContextHelpId@8
     SetMenuDefaultItem@12
     SetMenuInfo@8
     SetMenuItemBitmaps@20

@@ -545,3 +545,39 @@ WINUSERAPI HMENU WINAPI LoadMenuW(HINSTANCE instance, LPCWSTR name)
         return nullptr;
     return load_menu_template(data, SizeofResource(instance, res));
 }
+
+WINUSERAPI HMENU WINAPI LoadMenuA(HINSTANCE instance, LPCSTR name)
+{
+    LPWSTR w = UserAtoW(name);
+    HMENU menu = LoadMenuW(instance, w);
+    UserFreeConverted(w, name);
+    return menu;
+}
+
+/* the template has no size, so it is read up to the item that ends it, within 64 KB. */
+WINUSERAPI HMENU WINAPI LoadMenuIndirectW(const MENUTEMPLATEW *template)
+{
+    if (!template) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return load_menu_template((const BYTE *)template, 0x10000);
+}
+
+WINUSERAPI HMENU WINAPI LoadMenuIndirectA(const MENUTEMPLATEA *template)
+{
+    return LoadMenuIndirectW((const MENUTEMPLATEW *)template);
+}
+
+WINUSERAPI DWORD WINAPI GetMenuContextHelpId(HMENU menu)
+{
+    MENUINFO info = {sizeof(info), MIM_HELPID};
+    return GetMenuInfo(menu, &info) ? info.dwContextHelpID : 0;
+}
+
+WINUSERAPI BOOL WINAPI SetMenuContextHelpId(HMENU menu, DWORD id)
+{
+    MENUINFO info = {sizeof(info), MIM_HELPID};
+    info.dwContextHelpID = id;
+    return SetMenuInfo(menu, &info);
+}

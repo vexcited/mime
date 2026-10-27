@@ -2599,6 +2599,12 @@ WINUSERAPI BOOL WINAPI TrackPopupMenu(HMENU menu, UINT flags, int x, int y, int 
                                       const RECT *rect);
 WINUSERAPI BOOL WINAPI TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HWND hwnd, LPTPMPARAMS params);
 WINUSERAPI BOOL WINAPI EndMenu(void);
+WINUSERAPI HMENU WINAPI LoadMenuA(HINSTANCE instance, LPCSTR name);
+typedef void MENUTEMPLATEW, MENUTEMPLATEA;
+WINUSERAPI HMENU WINAPI LoadMenuIndirectW(const MENUTEMPLATEW *template);
+WINUSERAPI HMENU WINAPI LoadMenuIndirectA(const MENUTEMPLATEA *template);
+WINUSERAPI DWORD WINAPI GetMenuContextHelpId(HMENU menu);
+WINUSERAPI BOOL WINAPI SetMenuContextHelpId(HMENU menu, DWORD id);
 WINUSERAPI BOOL WINAPI GetMenuItemRect(HWND window, HMENU menu, UINT item, LPRECT rect);
 WINUSERAPI int WINAPI MenuItemFromPoint(HWND window, HMENU menu, POINT screen);
 WINUSERAPI BOOL WINAPI HiliteMenuItem(HWND window, HMENU menu, UINT item, UINT flags);
