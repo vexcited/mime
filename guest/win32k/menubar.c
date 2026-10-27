@@ -491,7 +491,7 @@ void MenuBarPaint(WND *w, SURFACE *s, const REGION *clip, POINT origin)
                    ((it->State & MFS_CHECKED) ? ODS_CHECKED : 0) | ((it->State & MFS_DEFAULT) ? ODS_DEFAULT : 0) |
                    (cues ? 0 : ODS_NOACCEL) | (selected ? ODS_HOTLIGHT : 0) | ODS_NOFOCUSRECT;
         if (!(w->Flags & WNDF_ACTIVE_FRAME))
-            ods |= 0x80; /* ODS_INACTIVE */
+            ods |= 0x80; /* the window is inactive. */
         if (item_owner_drawn(it)) {
             draw_owner(w, s, clip, it, m, &r, ods, origin, selected ? ODA_SELECT : ODA_DRAWENTIRE);
             continue;

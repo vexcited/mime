@@ -68,7 +68,7 @@ typedef struct LOOP {
     int BarSel;
     BOOL Dropped;       /* a popup of the bar has been opened. */
     BOOL Track;         /* TrackPopupMenu, not a bar. */
-    UINT Flags;         /* TPM_* */
+    UINT Flags;         /* the TPM_ flags of the call. */
     BOOL Notify;
     BOOL Done;
     BOOL Selected;
@@ -283,8 +283,8 @@ static int bitmap_pixels(HBITMAP bitmap, int *height, UINT dpi)
 #define MAX_COLUMNS 8
 
 /*
- * the items go down a column, and an item with MFT_MENUBREAK or MFT_MENUBARBREAK starts the next one (the second with a
- * line before it). the columns have the width of their widest item.
+ * the items go down a column, and an item with MFT_MENUBREAK or MFT_MENUBARBREAK starts the next one. the second kind has
+ * a line before its column. the columns have the width of their widest item.
  */
 static BOOL level_measure(LOOP *l, LEVEL *lv)
 {
