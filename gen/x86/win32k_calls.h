@@ -276,11 +276,6 @@
         return MxCallService(number, v);
     case MIME_SVC_NtUserEndMenu:
         return MxCallService(number, v);
-    case MIME_SVC_NtUserMimeCallMenu:
-        v[0] = a[0];
-        v[1] = a[1];
-        v[2] = a[2];
-        return MxCallService(number, v);
     case MIME_SVC_NtUserShutdownBlockReasonCreate:
         v[0] = (LONG64)(LONG)a[0];
         v[1] = a[1];

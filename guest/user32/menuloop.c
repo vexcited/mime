@@ -753,19 +753,20 @@ static void select_level_item(LOOP *l, int level, int item, BOOL mouse)
 static void select_bar(LOOP *l, int item, BOOL open, BOOL mouse)
 {
     l->ByMouse = mouse;
-    if (item != l->BarSel)
-        close_to_depth(l, 0);
     kill_open_timer(l);
-    l->BarSel = item;
-    if (item == SYSTEM_ICON) {
-        if (l->Notify)
-            SendMessageW(l->Owner, WM_MENUSELECT, MAKEWPARAM(0, MF_POPUP | MF_SYSMENU | MF_HILITE |
-                                                                 (mouse ? MF_MOUSESELECT : 0)),
-                         (LPARAM)l->SystemMenu);
-    } else {
-        send_select(l, l->BarMenu, item, in_range(item, l->BarCount) ? &l->BarItems[item] : nullptr, FALSE);
+    if (item != l->BarSel) {
+        close_to_depth(l, 0);
+        l->BarSel = item;
+        if (item == SYSTEM_ICON) {
+            if (l->Notify)
+                SendMessageW(l->Owner, WM_MENUSELECT, MAKEWPARAM(0, MF_POPUP | MF_SYSMENU | MF_HILITE |
+                                                                     (mouse ? MF_MOUSESELECT : 0)),
+                             (LPARAM)l->SystemMenu);
+        } else {
+            send_select(l, l->BarMenu, item, in_range(item, l->BarCount) ? &l->BarItems[item] : nullptr, FALSE);
+        }
+        set_bar_state(l);
     }
-    set_bar_state(l);
     if (open && l->Depth == 0) {
         if (item == SYSTEM_ICON && l->SystemMenu) {
             RECT anchor;
@@ -1512,6 +1513,13 @@ static void run_window_menu(HWND hwnd, int start, BOOL open, WCHAR ch, BOOL mous
     HMENU system = (style & WS_SYSMENU) ? GetSystemMenu(hwnd, FALSE) : nullptr;
     if (!bar && !system)
         return;
+    if (!bar && ch) {
+        /* nothing to look in: the window may still know the character, else it is a mistake. */
+        LRESULT r = SendMessageW(hwnd, WM_MENUCHAR, MAKEWPARAM(ch, MF_SYSMENU), (LPARAM)system);
+        if (!HIWORD(r))
+            MessageBeep(0);
+        return;
+    }
     LOOP loop;
     start_common(&loop, hwnd);
     loop.Notify = TRUE;
@@ -1537,7 +1545,8 @@ static void run_window_menu(HWND hwnd, int start, BOOL open, WCHAR ch, BOOL mous
     g_loop = &loop;
     if (!bar && start != SYSTEM_ICON)
         start = SYSTEM_ICON;
-    if (start == NO_ITEM && bar)
+    /* Alt alone selects the first item, Alt and a character looks for its item without selecting one. */
+    if (start == NO_ITEM && bar && !ch)
         start = first_valid(loop.BarItems, loop.BarCount, 0, 1);
     if (start != NO_ITEM && !(start == SYSTEM_ICON && !system)) {
         select_bar(&loop, start, open, mouse);
@@ -1552,6 +1561,9 @@ static void run_window_menu(HWND hwnd, int start, BOOL open, WCHAR ch, BOOL mous
         loop.LastChar = ch;
         loop.LastCharTick = GetTickCount();
         handle_char(&loop, ch);
+        /* a character that finds nothing leaves the menu. */
+        if (!loop.Done && loop.BarSel == NO_ITEM && loop.Depth == 0)
+            loop.Done = TRUE;
     }
     if (!loop.Done)
         run(&loop);
@@ -1755,6 +1767,17 @@ WINUSERAPI BOOL WINAPI HiliteMenuItem(HWND window, HMENU menu, UINT item, UINT f
 /* the parts of DefWindowProc that open the menus of a window. */
 BOOL UserDefMenu(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
 {
+    /* the keys of a menu are the top level window's business, so a child gives them to its parent. */
+    BOOL keys = msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_SYSCHAR ||
+                ((msg == WM_KEYUP) && (wparam == VK_MENU || wparam == VK_F10)) ||
+                (msg == WM_SYSCOMMAND && ((wparam & 0xFFF0) == SC_KEYMENU));
+    if (keys && (GetWindowLongW(hwnd, GWL_STYLE) & WS_CHILD)) {
+        HWND parent = GetParent(hwnd);
+        if (parent) {
+            *result = SendMessageW(parent, msg, wparam, lparam);
+            return TRUE;
+        }
+    }
     switch (msg) {
     case WM_NCLBUTTONDOWN:
         if (wparam == HTMENU || wparam == HTSYSMENU) {

@@ -849,6 +849,30 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[1] = (ULONG_PTR)&info;
         return (ULONG)MxCallService(number, v);
     }
+    case MIME_SVC_NtUserMimeCallMenu: {
+        v[0] = a[0];
+        v[1] = a[1];
+        v[2] = a[2];
+        if (a[2] == MIME_MENU_GETINFO) {
+            /* the 28-byte x86 MENUINFO, in and out. */
+            ULONG *p = ptr32(a[1]);
+            if (!p || p[0] != 28)
+                return FALSE;
+            MENUINFO info = {sizeof(info), p[1], p[2], p[3], ptr32(p[4]), p[5], p[6]};
+            v[1] = (ULONG_PTR)&info;
+            ULONG result = (ULONG)MxCallService(number, v);
+            if (result) {
+                p[1] = info.fMask;
+                p[2] = info.dwStyle;
+                p[3] = info.cyMax;
+                p[4] = (ULONG)(ULONG_PTR)info.hbrBack;
+                p[5] = info.dwContextHelpID;
+                p[6] = (ULONG)info.dwMenuData;
+            }
+            return result;
+        }
+        return (ULONG)MxCallService(number, v);
+    }
     case MIME_SVC_NtUserMimeGetMenuItemInfo: {
         ULONG *p = ptr32(a[3]);
         MENUITEMINFOW info;
