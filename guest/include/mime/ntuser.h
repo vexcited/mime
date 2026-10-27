@@ -26,6 +26,9 @@
 #ifndef ERROR_POPUP_ALREADY_ACTIVE
 #define ERROR_POPUP_ALREADY_ACTIVE 1446L
 #endif
+#ifndef ERROR_CHILD_WINDOW_MENU
+#define ERROR_CHILD_WINDOW_MENU 1436L
+#endif
 #ifndef ERROR_INCORRECT_SIZE
 #define ERROR_INCORRECT_SIZE 1462L
 #endif
@@ -192,6 +195,7 @@ enum {
     MIME_TWOPARAM_HOSTMOVESIZE,         /* window, 0 or a WMSZ_* edge: the host moves or sizes it under the pointer -> TRUE when it does. */
     MIME_TWOPARAM_CBTSYSCOMMAND,        /* SC_* command, its lparam -> TRUE when a WH_CBT hook prevents it. */
     MIME_TWOPARAM_CBTMOVESIZE,          /* window, RECT pointer of the place a move or size loop ends at. */
+    MIME_TWOPARAM_ALTALONE,             /* 0, 0 -> TRUE when Alt or F10 went down and nothing else was pressed or clicked since. */
 };
 
 /* what MIME_TWOPARAM_GETMONITORS returns per monitor. */
@@ -244,7 +248,26 @@ enum {
     MIME_HWNDPARAM_SETAFFINITY,         /* WDA_*: how screen captures show the window. */
     MIME_HWNDPARAM_GETAFFINITY,
     MIME_HWNDPARAM_GETCLASSWORD,        /* byte offset into the class extra bytes -> the word there, or ERROR_INVALID_INDEX. */
+    MIME_HWNDPARAM_MENUBAR,             /* MIME_MENUBAR pointer: the layout of the window's menu bar and the state it is drawn in. */
 };
+
+/* what MIME_HWNDPARAM_MENUBAR asks, with only fields of the same size in both processors. */
+enum {
+    MIME_MENUBAR_RECT = 1, /* Item 0 the bar, 1 and up an item, the rectangle in screen coordinates -> TRUE when there is one. */
+    MIME_MENUBAR_HIT,      /* Point in screen coordinates -> TRUE when it is on the bar, Item the item or -1. */
+    MIME_MENUBAR_STATE,    /* Item the selected item, Pushed the item whose popup is open, both -1 for none: the bar is drawn again. */
+    MIME_MENUBAR_AREA,     /* the bar and its line, screen coordinates. */
+};
+
+typedef struct MIME_MENUBAR {
+    ULONG Op;
+    LONG Item;
+    LONG Pushed;
+    ULONG Menu;  /* out: the bar's menu handle. */
+    ULONG Count; /* out: its items. */
+    POINT Point;
+    RECT Rect;
+} MIME_MENUBAR;
 
 typedef struct MIME_SYS_TIMER {
     UINT_PTR Id;
@@ -398,6 +421,8 @@ enum {
     MIME_MENU_DEFAULTITEM, /* param: GMDI_* flags in the low word, bit 16 for by position. */
     MIME_MENU_GETINFO,     /* param: MENUINFO pointer */
     MIME_MENU_SYSTEMWINDOW, /* the window whose system menu this is, NULL for other menus. */
+    MIME_MENU_SERIAL,       /* a number that changes with every edit of the menu. */
+    MIME_MENU_ISPOPUP,      /* nonzero for a popup menu, which a window cannot have as its menu bar. */
 };
 
 /* ------------------------------------------------------------------ clipboard */

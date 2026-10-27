@@ -78,6 +78,7 @@ static inline void UserFreeConverted(const void *converted, const void *original
 /* movesize.c and sysmenu.c. */
 BOOL UserDefMoveSize(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
 BOOL UserDefSystemMenu(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
+BOOL UserDefMenu(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
 
 /* ansi.c: message translation between ansi and unicode. */
 typedef struct CONV {

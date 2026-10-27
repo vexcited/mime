@@ -405,7 +405,8 @@ static LRESULT default_dialog(HWND hwnd, DIALOG *d, UINT msg, WPARAM wparam, LPA
     case WM_UPDATEUISTATE:
         for (HWND c = GetWindow(hwnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
             SendMessageW(c, WM_UPDATEUISTATE, wparam, lparam);
-        return 0;
+        /* the dialog keeps the state too, for its own menu bar. */
+        return DefWindowProcW(hwnd, WM_UPDATEUISTATE, wparam, lparam);
     case WM_GETDLGCODE:
         return 0;
     }
@@ -513,7 +514,9 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
     }
     if (!(style & WS_CHILD) && (style & WS_CAPTION) == 0 && !(style & WS_POPUP))
         style |= WS_POPUP;
-    AdjustWindowRectExForDpi(&r, style, t.Menu != nullptr, ex, dpi);
+    /* the menu the template names is the dialog's menu bar. */
+    HMENU menu = t.Menu && !(style & WS_CHILD) ? LoadMenuW(instance, t.Menu) : nullptr;
+    AdjustWindowRectExForDpi(&r, style, menu != nullptr, ex, dpi);
     int width = r.right - r.left, height = r.bottom - r.top;
     int x = UserMulDiv(t.X, d->BaseX, 4), y = UserMulDiv(t.Y, d->BaseY, 8);
     if (t.Style & DS_CENTER) {
@@ -555,8 +558,9 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
     }
 
     LPCWSTR cls = t.Class ? t.Class : L"#32770";
-    HWND hwnd = CreateWindowExW(ex, cls, t.Caption, style, x, y, width, height, owner,
-                                (HMENU)nullptr, instance, (LPVOID)param);
+    HWND hwnd = CreateWindowExW(ex, cls, t.Caption, style, x, y, width, height, owner, menu, instance, (LPVOID)param);
+    if (!hwnd && menu)
+        DestroyMenu(menu);
     if (!hwnd) {
         if (d->OwnsFont)
             DeleteObject(d->Font);

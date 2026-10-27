@@ -547,6 +547,7 @@ typedef struct W32THREAD {
     struct W32DESKTOP *Desktop;  /* referenced, winsta.c. */
     HANDLE DesktopHandle;
     HWND TsfSink;          /* text services window for host input methods, ime.c. */
+    BOOLEAN AltAlone;      /* Alt or F10 went down and no other key or button has since, for the menu bar. */
 } W32THREAD;
 
 /* caller job restrictions, JOB_OBJECT_UILIMIT_*. */
@@ -700,6 +701,11 @@ typedef struct WND {
     UCHAR CaptionTracking; /* button pressed at mouse-down. */
     DWORD ContextHelpId;
     HMENU SystemMenu;
+    struct MENUBAR *MenuBar; /* layout of the menu bar, menubar.c. */
+    LONG MenuBarHeight;      /* pixels the last WM_NCCALCSIZE reserved for the bar and its line, 0 without a bar. */
+    LONG MenuHot;            /* bar item selected by the menu loop, plus one. */
+    LONG MenuPushed;         /* bar item whose popup is open, plus one. */
+    UCHAR UiState;           /* UISF_HIDEFOCUS and UISF_HIDEACCEL, set while the keyboard cues are hidden. */
     REGION *Shape;     /* SetWindowRgn, window relative, NULL for none. */
     ULONG LayerFlags;  /* LWA_* for SetLayeredWindowAttributes, MIME_LAYER_UPDATE for UpdateLayeredWindow. */
     COLORREF LayerKey;
@@ -768,6 +774,10 @@ void FrameAdjustRect(RECT *r, DWORD style, DWORD ex_style, UINT dpi);
 void FrameClientFromWindow(RECT *r, DWORD style, DWORD ex_style, UINT dpi);
 LRESULT FrameHitTest(WND *w, POINT pt);
 void FramePaint(WND *w);
+BOOLEAN FrameIsDark(WND *w);
+BOOLEAN FrameThemed(void);
+void FrameDrawText(SURFACE *s, const REGION *clip, FONT_INSTANCE *fi, LONG x, LONG baseline, PCWSTR text, ULONG count,
+                   LONG max_right, ULONG pixel);
 void FrameBleed(WND *w);
 void FrameGetButtonRect(WND *w, int button, RECT *r); /* window relative. */
 void FrameGetVisibleRect(WND *w, RECT *r);              /* window relative. */
@@ -930,6 +940,17 @@ void PropFreeWindow(WND *w);
 HANDLE PropGetData(WND *w, ATOM atom);
 void MenuWindowDestroyed(WND *w);
 BOOLEAN MenuCommandEnabled(WND *w, UINT command);
+/* menubar.c. */
+LONG MenuBarCompute(WND *w, LONG x, LONG y, LONG width);
+void MenuBarFree(WND *w);
+BOOLEAN MenuBarRect(WND *w, LONG item, RECT *screen);
+BOOLEAN MenuBarArea(WND *w, RECT *screen);
+LONG MenuBarHit(WND *w, POINT screen);
+void MenuBarPaint(WND *w, SURFACE *s, const REGION *clip, POINT origin);
+void MenuBarRedraw(WND *w);
+ULONG_PTR MenuBarCall(WND *w, PVOID user_request);
+extern WND *MenuBarCalcWindow;               /* the window a WM_NCCALCSIZE from the window manager is for. */
+void MenuWindowSetMenu(WND *w, HMENU menu); /* a top level window's menu bar, with the count of its users. */
 void MenuRefreshWindowState(WND *w);
 void ClipboardWindowDestroyed(WND *w);
 void ClipboardDisown(WND *w);

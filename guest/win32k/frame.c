@@ -220,6 +220,9 @@ LRESULT FrameHitTest(WND *w, POINT pt)
         return HTCLIENT;
     if (w->Style & WS_MINIMIZE)
         return HTCAPTION;
+    RECT bar;
+    if (!(w->Style & WS_CHILD) && MenuBarArea(w, &bar) && RectContains(&bar, pt.x, pt.y))
+        return HTMENU;
     UINT dpi = WndGetDpi(w);
     POINT wp = {pt.x - w->WindowRect.left, pt.y - w->WindowRect.top};
     LONG width = w->WindowRect.right - w->WindowRect.left;
@@ -434,6 +437,17 @@ static BOOLEAN dark_frame(WND *w)
     return PropGetData(w, AtomFind(L"DwmDarkMode")) != nullptr;
 }
 
+BOOLEAN FrameIsDark(WND *w)
+{
+    return dark_frame(w);
+}
+
+/* the visual style is there: the menu bar takes the look of its Menu class instead of the flat system colors. */
+BOOLEAN FrameThemed(void)
+{
+    return load_theme();
+}
+
 typedef struct FRAME_COLORS {
     ULONG Caption, Border, TextActive, TextInactive, CloseHot, ClosePressed, ButtonHot, ButtonPressed;
 } FRAME_COLORS;
@@ -493,8 +507,8 @@ static FONT_INSTANCE *caption_font(UINT dpi)
     return font;
 }
 
-static void draw_text(SURFACE *s, const REGION *clip, FONT_INSTANCE *fi, LONG x, LONG baseline, PCWSTR text,
-                      ULONG count, LONG max_right, ULONG pixel)
+void FrameDrawText(SURFACE *s, const REGION *clip, FONT_INSTANCE *fi, LONG x, LONG baseline, PCWSTR text,
+                   ULONG count, LONG max_right, ULONG pixel)
 {
     for (ULONG i = 0; i < count; i++) {
         const GLYPH *g = FontGetGlyph(fi, text[i]);
@@ -732,12 +746,13 @@ void FramePaint(WND *w)
             ULONG n = fit_title(fi, w->Text, w->TextLength, right - x, title, RTL_NUMBER_OF(title));
             LONG text_h = fi->Metrics.tmAscent + fi->Metrics.tmDescent;
             LONG baseline = caption_top + (caption_bottom - caption_top - text_h) / 2 + fi->Metrics.tmAscent;
-            draw_text(s, &clip, fi, x, baseline, title, n, right, ColorToPixel(active ? colors.TextActive : colors.TextInactive));
+            FrameDrawText(s, &clip, fi, x, baseline, title, n, right, ColorToPixel(active ? colors.TextActive : colors.TextInactive));
         }
         static const int buttons[] = {CAPTION_CLOSE, CAPTION_MAX, CAPTION_MIN, CAPTION_HELP};
         for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++)
             draw_button(w, s, &clip, origin, buttons[i], dpi, active, &colors);
     }
+    MenuBarPaint(w, s, &clip, origin);
     RgnFree(&clip);
     /* drawn straight into the surface, so the present needs to know. */
     SurfaceMarkDirty(s, &window);

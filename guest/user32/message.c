@@ -384,7 +384,7 @@ WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPA
     if (msg == WM_SYSCOMMAND && NtUserCallTwoParam(wparam, lparam, MIME_TWOPARAM_CBTSYSCOMMAND))
         return 0;
     if (UserDefMoveSize(hwnd, msg, wparam, lparam, &result) || UserDefScrollBars(hwnd, msg, wparam, lparam, &result) ||
-        UserDefSystemMenu(hwnd, msg, wparam, lparam, &result))
+        UserDefMenu(hwnd, msg, wparam, lparam, &result) || UserDefSystemMenu(hwnd, msg, wparam, lparam, &result))
         return result;
     if (msg == WM_SYSTIMER && UserCaretTimer(hwnd, wparam))
         return 0;

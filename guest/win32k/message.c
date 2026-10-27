@@ -1689,10 +1689,48 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         RECT r;
         if (!read_lparam(&r, lparam, sizeof(r), user))
             return 0;
+        /* the menu bar sits under the caption, as wide as the window inside its borders and before the scroll bars. */
+        RECT inner = r;
+        FrameClientFromWindow(&inner, w->Style & ~(WS_VSCROLL | WS_HSCROLL), w->ExStyle, dpi);
+        LONG bar = 0;
+        if (!(w->Style & WS_CHILD) && !(w->Style & WS_MINIMIZE))
+            bar = MenuBarCompute(w, inner.left - r.left, inner.top - r.top, inner.right - inner.left);
         FrameClientFromWindow(&r, w->Style, w->ExStyle, dpi);
+        if (bar) {
+            r.top += bar;
+            if (r.bottom < r.top)
+                r.bottom = r.top;
+        }
+        if (MenuBarCalcWindow == w)
+            w->MenuBarHeight = bar;
         write_lparam(lparam, &r, sizeof(r), user);
         return 0;
     }
+
+    case WM_CHANGEUISTATE: {
+        /* the state lives in the top level window, so a child hands the change up. */
+        UINT action = LOWORD(wparam), bits = HIWORD(wparam) & (UISF_HIDEFOCUS | UISF_HIDEACCEL);
+        if ((w->Style & WS_CHILD) && w->Parent && w->Parent != WndDesktop())
+            return MsgSend(w->Parent, msg, wparam, lparam);
+        UCHAR now = action == UIS_SET ? (w->UiState | bits) : action == UIS_CLEAR ? (w->UiState & ~bits) : w->UiState;
+        if (now != w->UiState)
+            MsgSend(w, WM_UPDATEUISTATE, wparam, lparam);
+        return 0;
+    }
+
+    case WM_UPDATEUISTATE: {
+        UINT action = LOWORD(wparam), bits = HIWORD(wparam) & (UISF_HIDEFOCUS | UISF_HIDEACCEL);
+        UCHAR now = action == UIS_SET ? (w->UiState | bits) : action == UIS_CLEAR ? (w->UiState & ~bits) : w->UiState;
+        if (now != w->UiState) {
+            w->UiState = now;
+            if (w->MenuBarHeight)
+                MenuBarRedraw(w);
+        }
+        return 0;
+    }
+
+    case WM_QUERYUISTATE:
+        return w->UiState;
 
     case WM_NCHITTEST: {
         POINT pt = {(SHORT)LOWORD(lparam), (SHORT)HIWORD(lparam)};

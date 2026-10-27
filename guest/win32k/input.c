@@ -733,6 +733,8 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
     UINT msg;
     WPARAM wparam;
     LPARAM lparam;
+    if (remove && ev->type == MIME_INPUT_MOUSE_DOWN)
+        t->AltAlone = FALSE;
     switch (ev->type) {
     case MIME_INPUT_MOUSE_MOVE:
         msg = nc ? WM_NCMOUSEMOVE : WM_MOUSEMOVE;
@@ -940,6 +942,23 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
                 state->KeyState[VK_CAPITAL] |= 1;
             else
                 state->KeyState[VK_CAPITAL] &= ~1;
+        }
+    }
+    if (remove) {
+        /* a menu bar opens on the release of Alt or F10, when no other key or button came between. */
+        for (int i = 0; i < 2; i++) {
+            W32THREAD *state = i ? owner : t;
+            if (!state)
+                continue;
+            if (ev->vk == VK_LMENU || ev->vk == VK_RMENU || ev->vk == VK_MENU) {
+                if (down && !(ev->flags & 2))
+                    state->AltAlone = !(ev->modifiers & MIME_MOD_CONTROL);
+            } else if (ev->vk == VK_F10) {
+                if (down)
+                    state->AltAlone = !(ev->modifiers & MIME_MOD_SHIFT);
+            } else if (down) {
+                state->AltAlone = FALSE;
+            }
         }
     }
     UINT vk = ev->vk;

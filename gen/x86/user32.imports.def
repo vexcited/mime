@@ -331,6 +331,7 @@ EXPORTS
     GetWindowWord@8
     GrayStringW@36
     HideCaret@4
+    HiliteMenuItem@16
     InSendMessage@0
     InSendMessageEx@4
     InflateRect@12
@@ -398,6 +399,7 @@ EXPORTS
     MapVirtualKeyExW@12
     MapVirtualKeyW@8
     MapWindowPoints@16
+    MenuItemFromPoint@16
     MessageBeep@4
     MessageBoxA@16
     MessageBoxExA@20

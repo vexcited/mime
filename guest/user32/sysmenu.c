@@ -18,18 +18,6 @@ static void track(HWND hwnd, int x, int y)
         SendMessageW(hwnd, WM_SYSCOMMAND, cmd, MAKELPARAM(x, y));
 }
 
-/* opens the menu below the icon, for a click on it or Alt+Space. */
-static void track_at_icon(HWND hwnd)
-{
-    RECT r;
-    UINT dpi = GetDpiForWindow(hwnd);
-    if (!GetWindowRect(hwnd, &r))
-        return;
-    LONG style = GetWindowLongW(hwnd, GWL_STYLE);
-    int frame = (style & WS_MAXIMIZE) ? 0 : GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi);
-    track(hwnd, r.left + frame, r.top + frame + GetSystemMetricsForDpi(SM_CYCAPTION, dpi));
-}
-
 BOOL UserDefSystemMenu(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
 {
     switch (msg) {
@@ -51,20 +39,6 @@ BOOL UserDefSystemMenu(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESUL
         *result = 0;
         return TRUE;
     }
-    case WM_NCLBUTTONDOWN:
-        if (wparam == HTSYSMENU) {
-            track_at_icon(hwnd);
-            *result = 0;
-            return TRUE;
-        }
-        return FALSE;
-    case WM_SYSCHAR:
-        if (wparam == ' ' && (GetWindowLongW(hwnd, GWL_STYLE) & WS_SYSMENU)) {
-            track_at_icon(hwnd);
-            *result = 0;
-            return TRUE;
-        }
-        return FALSE;
     }
     return FALSE;
 }

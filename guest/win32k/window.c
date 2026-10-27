@@ -466,10 +466,15 @@ void WndGetMinMaxInfo(WND *w, MINMAXINFO *mmi)
 /* computes the client rectangle for a window rectangle given in parent coordinates. */
 static void calc_client(WND *w, const RECT *window, const RECT *old_window, RECT *client, BOOLEAN full)
 {
+    /* the default processing of the message tells the window how much of the top the menu bar takes. */
+    WND *saved = MenuBarCalcWindow;
+    MenuBarCalcWindow = w;
+    w->MenuBarHeight = 0;
     if (!full) {
         RECT r = *window;
         send_kernel(w, WM_NCCALCSIZE, FALSE, &r, MIME_LPARAM_INOUT, sizeof(r));
         *client = r;
+        MenuBarCalcWindow = saved;
         return;
     }
     struct {
@@ -489,6 +494,7 @@ static void calc_client(WND *w, const RECT *window, const RECT *old_window, RECT
     data.pos.cy = window->bottom - window->top;
     send_kernel(w, WM_NCCALCSIZE, TRUE, &data, MIME_LPARAM_INOUT, sizeof(data));
     *client = data.p.rgrc[0];
+    MenuBarCalcWindow = saved;
 }
 
 /* positioning. */
@@ -1443,7 +1449,13 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     w->MinPosition = (POINT){-1, -1};
     w->MaxPosition = (POINT){-1, -1};
     w->ExStyle = ex_style;
-    w->Id = (UINT_PTR)menu;
+    if (style & WS_CHILD) {
+        w->Id = (UINT_PTR)menu;
+    } else {
+        MenuWindowSetMenu(w, menu);
+        /* the keyboard cues of a top level window are hidden until the keyboard is used. */
+        w->UiState = UISF_HIDEFOCUS | UISF_HIDEACCEL;
+    }
     if (name)
         w->Text = W32StrDup(name, name_chars), w->TextLength = w->Text ? (ULONG)name_chars : 0;
 
@@ -1804,7 +1816,10 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
         return old;
     case GWLP_ID:
         old = (LONG_PTR)w->Id;
-        w->Id = (UINT_PTR)value;
+        if (w->Style & WS_CHILD)
+            w->Id = (UINT_PTR)value;
+        else
+            MenuWindowSetMenu(w, (HMENU)value);
         return old;
     case GWLP_USERDATA:
         old = w->UserData;
@@ -2460,6 +2475,9 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         break;
     case MIME_HWNDPARAM_GETAFFINITY:
         r = w->DisplayAffinity;
+        break;
+    case MIME_HWNDPARAM_MENUBAR:
+        r = MenuBarCall(w, (PVOID)param);
         break;
     case MIME_HWNDPARAM_GETCLASSWORD: {
         /* the atom, or a whole word within the extra bytes. */

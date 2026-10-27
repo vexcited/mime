@@ -14,6 +14,94 @@ static void init_ustring(UNICODE_STRING *s, LPCWSTR text)
 
 /* ------------------------------------------------------------------ classes */
 
+/* the menu a class names is loaded for each top level window created without a menu, so the name is kept here. */
+typedef struct CLASS_MENU {
+    struct CLASS_MENU *Next;
+    ATOM Atom;
+    HINSTANCE Instance;
+    LPWSTR Name; /* a string, or a resource number. */
+} CLASS_MENU;
+
+static CLASS_MENU *g_class_menus;
+static volatile LONG g_class_menu_lock;
+
+static void class_menu_lock(void)
+{
+    while (InterlockedCompareExchange(&g_class_menu_lock, 1, 0))
+        YieldProcessor();
+}
+
+static void class_menu_unlock(void)
+{
+    InterlockedExchange(&g_class_menu_lock, 0);
+}
+
+static void class_menu_remove(ATOM atom, HINSTANCE instance)
+{
+    class_menu_lock();
+    for (CLASS_MENU **p = &g_class_menus; *p; p = &(*p)->Next)
+        if ((*p)->Atom == atom && (*p)->Instance == instance) {
+            CLASS_MENU *dead = *p;
+            *p = dead->Next;
+            if (!IS_INTRESOURCE(dead->Name))
+                UserFree(dead->Name);
+            UserFree(dead);
+            break;
+        }
+    class_menu_unlock();
+}
+
+static void class_menu_add(ATOM atom, HINSTANCE instance, LPCWSTR name)
+{
+    if (!atom || !name)
+        return;
+    CLASS_MENU *entry = UserAlloc(sizeof(*entry));
+    if (!entry)
+        return;
+    entry->Atom = atom;
+    entry->Instance = instance;
+    if (IS_INTRESOURCE(name)) {
+        entry->Name = (LPWSTR)name;
+    } else {
+        SIZE_T n = wcslen(name) + 1;
+        entry->Name = UserAlloc(n * sizeof(WCHAR));
+        if (!entry->Name) {
+            UserFree(entry);
+            return;
+        }
+        memcpy(entry->Name, name, n * sizeof(WCHAR));
+    }
+    class_menu_remove(atom, instance);
+    class_menu_lock();
+    entry->Next = g_class_menus;
+    g_class_menus = entry;
+    class_menu_unlock();
+}
+
+/* the menu bar a new top level window gets from its class, or NULL. */
+static HMENU class_menu_load(HINSTANCE instance, LPCWSTR class_name)
+{
+    if (!g_class_menus)
+        return nullptr;
+    WNDCLASSEXW wc;
+    UNICODE_STRING name;
+    init_ustring(&name, class_name);
+    ATOM atom = (ATOM)NtUserGetClassInfoEx(instance, &name, &wc, nullptr, FALSE);
+    if (!atom)
+        return nullptr;
+    LPWSTR menu_name = nullptr;
+    class_menu_lock();
+    for (CLASS_MENU *e = g_class_menus; e; e = e->Next)
+        if (e->Atom == atom && e->Instance == wc.hInstance) {
+            menu_name = e->Name;
+            break;
+        }
+    class_menu_unlock();
+    if (!menu_name)
+        return nullptr;
+    return LoadMenuW(wc.hInstance, menu_name);
+}
+
 static ATOM register_class(const WNDCLASSEXW *wc, LPCWSTR menu, BOOL ansi)
 {
     if (!wc || wc->cbSize != sizeof(WNDCLASSEXW)) {
@@ -27,6 +115,8 @@ static ATOM register_class(const WNDCLASSEXW *wc, LPCWSTR menu, BOOL ansi)
                                       ansi ? MIME_CLASS_ANSI : 0);
     if (!a)
         SetLastError(ERROR_CLASS_ALREADY_EXISTS);
+    else
+        class_menu_add(a, wc->hInstance, menu);
     return a;
 }
 
@@ -70,7 +160,12 @@ WINUSERAPI BOOL WINAPI UnregisterClassW(LPCWSTR name, HINSTANCE instance)
 {
     UNICODE_STRING s;
     init_ustring(&s, name);
-    return NtUserUnregisterClass(&s, instance);
+    WNDCLASSEXW wc;
+    ATOM atom = g_class_menus ? (ATOM)NtUserGetClassInfoEx(instance, &s, &wc, nullptr, FALSE) : 0;
+    BOOL ok = NtUserUnregisterClass(&s, instance);
+    if (ok && atom)
+        class_menu_remove(atom, wc.hInstance);
+    return ok;
 }
 
 WINUSERAPI BOOL WINAPI UnregisterClassA(LPCSTR name, HINSTANCE instance)
@@ -197,10 +292,23 @@ WINUSERAPI HWND WINAPI CreateWindowExW(DWORD ex_style, LPCWSTR class_name, LPCWS
     UNICODE_STRING cls, title;
     init_ustring(&cls, class_name);
     init_ustring(&title, name ? name : L"");
+    /* a top level window has a menu bar: the one it was given or the one its class names. */
+    HMENU class_menu = nullptr;
+    if (!(style & WS_CHILD)) {
+        if (menu && !IsMenu(menu)) {
+            SetLastError(ERROR_INVALID_MENU_HANDLE);
+            return nullptr;
+        }
+        if (!menu && parent != HWND_MESSAGE)
+            menu = class_menu = class_menu_load(instance, class_name);
+    }
     HWND h = NtUserCreateWindowEx(ex_style, &cls, name ? &title : nullptr, style, x, y, width, height, parent, menu,
                                   instance, param, 0);
-    if (!h)
+    if (!h) {
+        if (class_menu)
+            DestroyMenu(class_menu);
         SetLastError(ERROR_CANNOT_FIND_WND_CLASS);
+    }
     return h;
 }
 

@@ -145,6 +145,7 @@ typedef void(CALLBACK *MSGBOXCALLBACK)(struct tagHELPINFO *info);
 #define WM_MENUCHAR 0x0120
 #define WM_ENTERIDLE 0x0121
 #define WM_MENURBUTTONUP 0x0122
+#define WM_MENUDRAG 0x0123
 #define WM_CHANGEUISTATE 0x0127
 #define WM_UPDATEUISTATE 0x0128
 #define WM_QUERYUISTATE 0x0129
@@ -1549,6 +1550,7 @@ typedef struct tagMOUSEHOOKSTRUCTEX {
 } MOUSEHOOKSTRUCTEX, *LPMOUSEHOOKSTRUCTEX, *PMOUSEHOOKSTRUCTEX;
 #define MSGF_DIALOGBOX 0
 #define MSGF_MESSAGEBOX 1
+#define MSGF_MENU 2
 
 #define HCBT_MOVESIZE 0
 #define HCBT_MINMAX 1
@@ -1725,6 +1727,8 @@ typedef struct tagDROPSTRUCT {
 } DROPSTRUCT, *PDROPSTRUCT, *LPDROPSTRUCT;
 
 #define WM_MENUGETOBJECT 0x0124
+#define WM_UNINITMENUPOPUP 0x0125
+#define WM_MENUCOMMAND 0x0126
 #define WM_MDIGETACTIVE 0x0229
 #define WM_DROPOBJECT 0x022A
 
@@ -2435,6 +2439,12 @@ WINUSERAPI BOOL WINAPI SetWindowContextHelpId(HWND hwnd, DWORD id);
 #define HBMMENU_POPUP_MAXIMIZE ((HBITMAP)10)
 #define HBMMENU_POPUP_MINIMIZE ((HBITMAP)11)
 
+#define MNS_NOCHECK 0x80000000
+#define MNS_MODELESS 0x40000000
+#define MNS_DRAGDROP 0x20000000
+#define MNS_AUTODISMISS 0x10000000
+#define MNS_NOTIFYBYPOS 0x08000000
+#define MNS_CHECKORBMP 0x04000000
 #define MNC_IGNORE 0
 #define MNC_CLOSE 1
 #define MNC_EXECUTE 2
@@ -2589,6 +2599,9 @@ WINUSERAPI BOOL WINAPI TrackPopupMenu(HMENU menu, UINT flags, int x, int y, int 
                                       const RECT *rect);
 WINUSERAPI BOOL WINAPI TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HWND hwnd, LPTPMPARAMS params);
 WINUSERAPI BOOL WINAPI EndMenu(void);
+WINUSERAPI BOOL WINAPI GetMenuItemRect(HWND window, HMENU menu, UINT item, LPRECT rect);
+WINUSERAPI int WINAPI MenuItemFromPoint(HWND window, HMENU menu, POINT screen);
+WINUSERAPI BOOL WINAPI HiliteMenuItem(HWND window, HMENU menu, UINT item, UINT flags);
 
 /* ------------------------------------------------------------------ clipboard */
 

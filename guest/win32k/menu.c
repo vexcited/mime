@@ -1,35 +1,5 @@
 /* menus are drawn and tracked in user32. win32k owns the objects so handles are shared across session threads. */
-#include "win32k.h"
-
-typedef struct MENU_ITEM {
-    UINT Type;
-    UINT State;
-    BOOLEAN StateExplicit;
-    UINT Id;
-    HMENU SubMenu;
-    HBITMAP Checked;
-    HBITMAP Unchecked;
-    HBITMAP Bitmap;
-    ULONG_PTR Data;
-    PWSTR Text;
-    ULONG TextLength;
-} MENU_ITEM;
-
-typedef struct MENU {
-    USER_OBJECT Header;
-    LIST_ENTRY Links;
-    HANDLE OwnerPid;
-    BOOLEAN Popup;
-    WND *SystemOf; /* window that owns this system menu. */
-    ULONG Count;
-    ULONG Capacity;
-    MENU_ITEM *Items;
-    DWORD Style;
-    UINT MaxHeight;
-    HBRUSH Background;
-    DWORD HelpId;
-    ULONG_PTR MenuData;
-} MENU;
+#include "menu.h"
 
 static LIST_ENTRY g_menus = {&g_menus, &g_menus};
 
@@ -37,9 +7,21 @@ static LIST_ENTRY g_menus = {&g_menus, &g_menus};
 #define ITEM_TYPE_MASK (MFT_BITMAP | MFT_MENUBARBREAK | MFT_MENUBREAK | MFT_OWNERDRAW | MFT_RADIOCHECK | \
                         MFT_SEPARATOR | MFT_RIGHTORDER | MFT_RIGHTJUSTIFY)
 
-static MENU *menu_lookup(HMENU h)
+MENU *MenuLookup(HMENU h)
 {
     return (MENU *)UserLookup(h, USER_TYPE_MENU);
+}
+
+static MENU *menu_lookup(HMENU h)
+{
+    return MenuLookup(h);
+}
+
+/* a bar of any window shown with the menu is stale after an edit. */
+static void touch(MENU *m)
+{
+    if (m)
+        m->Serial++;
 }
 
 BOOLEAN MenuCommandEnabled(WND *w, UINT command)
@@ -153,6 +135,7 @@ static MENU_ITEM *find_item(MENU *m, UINT item, BOOLEAN by_position, MENU **owne
 
 static BOOLEAN insert_slot(MENU *m, ULONG pos)
 {
+    touch(m);
     if (m->Count == m->Capacity) {
         ULONG cap = m->Capacity ? m->Capacity * 2 : 8;
         MENU_ITEM *items = W32Alloc(cap * sizeof(MENU_ITEM));
@@ -174,6 +157,7 @@ static BOOLEAN insert_slot(MENU *m, ULONG pos)
 
 static void remove_slot(MENU *m, ULONG pos, BOOLEAN destroy_submenu)
 {
+    touch(m);
     MENU_ITEM *it = &m->Items[pos];
     if (destroy_submenu && it->SubMenu)
         menu_destroy(menu_lookup(it->SubMenu));
@@ -192,6 +176,7 @@ static void set_text(MENU_ITEM *it, PWSTR text, SIZE_T chars)
 /* applies the fields of a MENUITEMINFOW selected by fMask. text is owned by the item afterwards. */
 static BOOLEAN apply_info(MENU *m, MENU_ITEM *it, const MENUITEMINFOW *mii, PWSTR text, SIZE_T chars)
 {
+    touch(m);
     if (mii->fMask & MIIM_TYPE) {
         it->Type = (it->Type & ~ITEM_TYPE_MASK) | (mii->fType & ITEM_TYPE_MASK);
         if (mii->fType & MFT_BITMAP) {
@@ -272,11 +257,27 @@ void MenuWindowDestroyed(WND *w)
         }
     }
     if (!(w->Style & WS_CHILD) && w->Id) {
+        /* the menu goes with the last window that has it. */
         MENU *m = menu_lookup((HMENU)w->Id);
-        if (m)
-            menu_destroy(m);
         w->Id = 0;
+        if (m && m->Users > 0 && --m->Users == 0)
+            menu_destroy(m);
     }
+    MenuBarFree(w);
+}
+
+void MenuWindowSetMenu(WND *w, HMENU menu)
+{
+    MENU *old = w->Id ? menu_lookup((HMENU)w->Id) : nullptr;
+    MENU *m = menu ? menu_lookup(menu) : nullptr;
+    if (old == m && w->Id == (UINT_PTR)menu)
+        return;
+    if (old && old->Users > 0)
+        old->Users--;
+    if (m)
+        m->Users++;
+    w->Id = (UINT_PTR)menu;
+    w->MenuHot = w->MenuPushed = 0;
 }
 
 /* the system menu. */
@@ -554,6 +555,12 @@ ULONG_PTR NTAPI NtUserMimeCallMenu(HMENU menu, ULONG_PTR param, ULONG routine)
         case MIME_MENU_SYSTEMWINDOW:
             r = (ULONG_PTR)WndHandle(m->SystemOf);
             break;
+        case MIME_MENU_SERIAL:
+            r = m->Serial;
+            break;
+        case MIME_MENU_ISPOPUP:
+            r = m->Popup;
+            break;
         case MIME_MENU_DEFAULTITEM: {
             BOOLEAN by_position = (param & 0x10000) != 0;
             UINT flags = (UINT)(param & 0xFFFF);
@@ -609,6 +616,7 @@ ULONG_PTR NTAPI NtUserMimeCallMenu(HMENU menu, ULONG_PTR param, ULONG routine)
 
 static void apply_menu_info(MENU *m, const MENUINFO *mi, int depth)
 {
+    touch(m);
     if (mi->fMask & MIM_STYLE)
         m->Style = mi->dwStyle;
     if (mi->fMask & MIM_MAXHEIGHT)
@@ -682,6 +690,7 @@ UINT NTAPI NtUserEnableMenuItem(HMENU menu, UINT id, UINT flags)
     UINT old = (UINT)-1;
     if (it) {
         old = it->State & (MF_GRAYED | MF_DISABLED);
+        touch(owner);
         it->State = (it->State & ~(MF_GRAYED | MF_DISABLED)) | (flags & (MF_GRAYED | MF_DISABLED));
         it->StateExplicit = TRUE;
         if (owner->SystemOf)
@@ -695,10 +704,12 @@ DWORD NTAPI NtUserCheckMenuItem(HMENU menu, UINT id, UINT flags)
 {
     UserEnter();
     MENU *m = menu_lookup(menu);
-    MENU_ITEM *it = m ? find_item(m, id, (flags & MF_BYPOSITION) != 0, nullptr, nullptr, 0) : nullptr;
+    MENU *owner = nullptr;
+    MENU_ITEM *it = m ? find_item(m, id, (flags & MF_BYPOSITION) != 0, &owner, nullptr, 0) : nullptr;
     DWORD old = (DWORD)-1;
     if (it) {
         old = it->State & MF_CHECKED;
+        touch(owner);
         it->State = (it->State & ~MF_CHECKED) | (flags & MF_CHECKED);
     }
     UserLeave();
@@ -711,6 +722,7 @@ BOOL NTAPI NtUserSetMenuDefaultItem(HMENU menu, UINT item, UINT by_position)
     MENU *m = menu_lookup(menu);
     BOOL ok = FALSE;
     if (m) {
+        touch(m);
         if (item == (UINT)-1) {
             for (ULONG i = 0; i < m->Count; i++)
                 m->Items[i].State &= ~MFS_DEFAULT;
@@ -743,19 +755,20 @@ BOOL NTAPI NtUserSetMenu(HWND hwnd, HMENU menu, BOOL repaint)
     if (!w)
         error = ERROR_INVALID_WINDOW_HANDLE;
     else if (w->Style & WS_CHILD)
-        error = ERROR_INVALID_PARAMETER;
+        error = ERROR_CHILD_WINDOW_MENU;
     else if (menu && !m)
         error = ERROR_INVALID_MENU_HANDLE;
+    else if (m && m->Popup && m->Users == 0 && !m->SystemOf)
+        error = ERROR_INVALID_PARAMETER;
     if (!error) {
-        /* menu bars are not drawn yet: the menu is only recorded for GetMenu. */
-        w->Id = (UINT_PTR)menu;
-        if (m)
-            m->Popup = FALSE;
+        MenuWindowSetMenu(w, menu);
+        /* the frame is calculated again, which gives the bar its room and the client area its new size. */
+        if (repaint && !(w->Style & WS_MINIMIZE))
+            WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
     UserLeave();
     if (error)
         W32SetLastError(error);
-    (void)repaint;
     return !error;
 }
 
@@ -792,6 +805,8 @@ BOOL NTAPI NtUserDrawMenuBar(HWND hwnd)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
+    if (w && !(w->Style & WS_CHILD))
+        WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     UserLeave();
     if (!w)
         W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
