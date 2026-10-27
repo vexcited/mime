@@ -535,13 +535,23 @@ static void *accept_thread(void *arg)
     return nullptr;
 }
 
+/* MIME_DISPLAY_DPI sets the dpi the guest sees, to look at the controls at another scale. */
+static void get_display(MimeDisplayInfo *info)
+{
+    mime_ui_get_display(info);
+    const char *text = getenv("MIME_DISPLAY_DPI");
+    long dpi = text ? strtol(text, nullptr, 10) : 0;
+    if (dpi >= 96 && dpi <= 480)
+        info->dpi = (uint32_t)dpi;
+}
+
 static void on_input(void *ctx, const MimeInputEvent *ev)
 {
     /* the guest reads the new display from its boot information. */
     if (ev->type == MIME_INPUT_DISPLAY) {
         if (!g_vm.boot)
             return;
-        mime_ui_get_display(&g_vm.boot->display);
+        get_display(&g_vm.boot->display);
         __atomic_thread_fence(__ATOMIC_RELEASE);
     }
     mime_vm_queue_input(&g_vm, ev);
@@ -806,7 +816,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
      * desktop libraries to avoid the driver's 15 ms loader lock delay.
      */
     mime_vk_warm_up();
-    mime_ui_get_display(&g_vm.boot->display);
+    get_display(&g_vm.boot->display);
     __atomic_store_n(&g_vm.boot->display_ready, 1, __ATOMIC_RELEASE);
     mime_info("display %ux%u at %u dpi", g_vm.boot->display.width, g_vm.boot->display.height,
               g_vm.boot->display.dpi);

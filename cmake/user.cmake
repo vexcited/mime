@@ -175,7 +175,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
 
     mime_sources(sources user32 ${arch})
     mime_dll(user32 ${arch} BASE 0x7FF900000000 SOURCES ${sources}
-        OBJECTS ${arch}-chkstk ${arch}-lib-png ${arch}-lib-msstyles OPTIONS -DMIME_BUILD_USER32 INCLUDES guest/lib
+        OBJECTS ${arch}-chkstk ${arch}-lib-png OPTIONS -DMIME_BUILD_USER32 INCLUDES guest/lib
         IMPORTS ntdll kernel32 win32u gdi32 FLAGS /subsystem:windows,10.0)
 
     # the icons of the system, found by their numbers in the way Windows 11 keeps them.

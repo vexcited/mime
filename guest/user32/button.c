@@ -134,7 +134,9 @@ static void paint_push(HWND hwnd, BUTTON *b, HDC dc, RECT *client, BOOL focused,
 {
     UINT dpi = UserWindowDpi(hwnd);
     UINT type = button_type(hwnd);
-    BOOL pressed = (b->State & BST_PUSHED) != 0;
+    /* a push-like check box or radio button looks pressed while it is checked. */
+    BOOL pushlike = (GetWindowLongW(hwnd, GWL_STYLE) & BS_PUSHLIKE) && (is_check(type) || is_radio(type));
+    BOOL pressed = (b->State & BST_PUSHED) != 0 || (pushlike && (b->State & BST_CHECKED));
     /* windows 11 shows the default button only while its window is active. */
     BOOL active = GetActiveWindow() == GetAncestor(hwnd, GA_ROOT);
     int state = disabled ? PBS_DISABLED : pressed ? PBS_PRESSED : b->Hot ? PBS_HOT
@@ -268,7 +270,7 @@ static void paint(HWND hwnd, BUTTON *b, HDC dc)
         SendMessageW(GetParent(hwnd), WM_DRAWITEM, (WPARAM)dis.CtlID, (LPARAM)&dis);
     } else if (type == BS_GROUPBOX) {
         paint_group(hwnd, b, dc, &client, disabled);
-    } else if (is_check(type) || is_radio(type)) {
+    } else if ((is_check(type) || is_radio(type)) && !(GetWindowLongW(hwnd, GWL_STYLE) & BS_PUSHLIKE)) {
         paint_check(hwnd, b, dc, &client, focused, disabled);
     } else {
         paint_push(hwnd, b, dc, &client, focused, disabled);

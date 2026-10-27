@@ -57,7 +57,6 @@ static const SkipRule g_skips[] = {
  */
 static const ExtractRule g_rules[] = {
     {"Windows/Fonts", "Windows/Fonts", false},
-    {"Windows/Resources/Themes/aero", "Windows/Resources/Themes/aero", false},
     /* the in-box .NET Framework 4.8.x, 64-bit and 32-bit, its assembly caches and its pregenerated native images. */
     {"Windows/Microsoft.NET", "Windows/Microsoft.NET", true},
     {"Windows/assembly", "Windows/assembly", true},

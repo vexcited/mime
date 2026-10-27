@@ -1,7 +1,6 @@
 /*
- * the window frame, drawn by win32k in the role of the desktop window manager: a windows 11 caption using the
- * caption button images of the DWMWindow atlas in aero.msstyles. the host compositor adds the 1 pixel border and
- * the rounded corners.
+ * the window frame, drawn by win32k in the role of the desktop window manager: a windows 10 caption with the caption
+ * buttons of the Window class of the visual style. the host compositor adds the 1 pixel border.
  *
  * resizable windows keep the invisible resize borders of windows 10 and 11: the window rectangle extends 7 pixels
  * at 96 dpi beyond the visible frame on the left, right and bottom.
@@ -11,6 +10,17 @@
 #include <png/png.h>
 
 #define FRAME_TAG W32_TAG('W', 'f', 'r', 'm')
+
+/* the parts of the Window class the frame draws. */
+enum {
+    WP_CAPTION = 1,
+    WP_FRAMELEFT = 7,
+    WP_MINBUTTON = 15,
+    WP_MAXBUTTON = 17,
+    WP_CLOSEBUTTON = 18,
+    WP_RESTOREBUTTON = 21,
+    WP_HELPBUTTON = 23,
+};
 
 static LONG scale(LONG v, UINT dpi)
 {
@@ -50,7 +60,7 @@ void FrameGetMetrics(DWORD style, DWORD ex_style, UINT dpi, FRAME_METRICS *m)
         m->Caption = caption ? MetricsGet((ex_style & WS_EX_TOOLWINDOW) ? SM_CYSMCAPTION : SM_CYCAPTION, dpi) : 0;
         m->Top = m->Border + m->Caption;
         m->ButtonWidth = scale(46, dpi);
-        m->CornerRadius = scale(8, dpi);
+        m->CornerRadius = 0; /* windows 10 frames are square. */
         return;
     }
     /* child windows keep the classic edges. */
@@ -287,7 +297,7 @@ LRESULT FrameHitTest(WND *w, POINT pt)
     return HTBORDER;
 }
 
-/* ------------------------------------------------------------------ the theme atlas */
+/* ------------------------------------------------------------------ the visual style */
 
 static void *frame_alloc(void *ctx, size_t size)
 {
@@ -304,14 +314,25 @@ static void frame_free(void *ctx, void *p)
 
 static const MimeAllocator g_frame_alloc = {frame_alloc, frame_free, nullptr};
 
+/* the classes of the style the frame and the menus read, light and dark. */
+enum { CLASS_WINDOW, CLASS_WINDOW_DARK, CLASS_MENU, CLASS_MENU_DARK, CLASS_COUNT };
+static const char *const g_class_names[CLASS_COUNT] = {"Window", "DarkMode::Window", "Menu", "DarkMode::Menu"};
+
+/* the coverage of a glyph image, to be tinted when drawn. */
+typedef struct GLYPH_MASK {
+    struct GLYPH_MASK *Next;
+    int32_t ResId, Top;
+    LONG Width, Height;
+    PUCHAR Coverage;
+} GLYPH_MASK;
+
 static struct {
     BOOLEAN Tried;
     BOOLEAN Ready;
     PUCHAR File;
-    PUCHAR Mui;
     MimeMsstyles Theme;
-    int Class;
-    SURFACE *Atlas;
+    int Class[CLASS_COUNT];
+    GLYPH_MASK *Masks;
 } g_theme;
 
 static PUCHAR read_whole_file(PCWSTR path, SIZE_T *size_out)
@@ -349,78 +370,101 @@ static BOOLEAN load_theme(void)
     if (g_theme.Tried)
         return g_theme.Ready;
     g_theme.Tried = TRUE;
-    SIZE_T size = 0, mui_size = 0;
+    SIZE_T size = 0;
     g_theme.File = read_whole_file(L"\\SystemRoot\\Resources\\Themes\\aero\\aero.msstyles", &size);
     if (!g_theme.File) {
         W32Trace("win32k: aero.msstyles not found, using the built in frame\n");
         return FALSE;
     }
-    g_theme.Mui = read_whole_file(L"\\SystemRoot\\Resources\\Themes\\aero\\en-US\\aero.msstyles.mui", &mui_size);
-    if (!mime_msstyles_open(&g_theme.Theme, g_theme.File, size, g_theme.Mui, g_theme.Mui ? mui_size : 0,
-                            &g_frame_alloc)) {
+    if (!mime_msstyles_open(&g_theme.Theme, g_theme.File, size, nullptr, 0, &g_frame_alloc)) {
         W32Trace("win32k: cannot parse aero.msstyles\n");
         return FALSE;
     }
-    g_theme.Class = mime_msstyles_find_class(&g_theme.Theme, nullptr, "DWMWindow");
-    const uint8_t *png = nullptr;
-    uint32_t png_size = 0;
-    if (g_theme.Class < 0 ||
-        !mime_msstyles_get_stream(&g_theme.Theme, g_theme.Class, 0, 0, MIME_TMT_DISKSTREAM, &png, &png_size)) {
-        W32Trace("win32k: no DWMWindow atlas in the theme\n");
+    for (int i = 0; i < CLASS_COUNT; i++)
+        g_theme.Class[i] = mime_msstyles_find_class(&g_theme.Theme, nullptr, g_class_names[i]);
+    /* a style without dark classes shows the light ones. */
+    if (g_theme.Class[CLASS_WINDOW_DARK] < 0)
+        g_theme.Class[CLASS_WINDOW_DARK] = g_theme.Class[CLASS_WINDOW];
+    if (g_theme.Class[CLASS_MENU_DARK] < 0)
+        g_theme.Class[CLASS_MENU_DARK] = g_theme.Class[CLASS_MENU];
+    g_theme.Ready = g_theme.Class[CLASS_WINDOW] >= 0;
+    return g_theme.Ready;
+}
+
+/* a color of the style, as a COLORREF. */
+static BOOLEAN theme_color(int which, int part, int state, int prop, COLORREF *out)
+{
+    uint32_t c;
+    if (!load_theme() || g_theme.Class[which] < 0 ||
+        !mime_msstyles_get_color(&g_theme.Theme, g_theme.Class[which], part, state, prop, &c))
         return FALSE;
-    }
-    MimePngInfo info;
-    if (!mime_png_info(png, png_size, &info))
-        return FALSE;
-    SURFACE *atlas = SurfaceCreate((LONG)info.width, (LONG)info.height, 32, 0);
-    if (!atlas)
-        return FALSE;
-    if (mime_png_decode(png, png_size, &g_frame_alloc, MIME_PNG_PREMULTIPLIED, atlas->Bits, (size_t)atlas->Stride) !=
-        MIME_PNG_OK) {
-        SurfaceDestroy(atlas);
-        return FALSE;
-    }
-    g_theme.Atlas = atlas;
-    g_theme.Ready = TRUE;
+    *out = (COLORREF)c;
     return TRUE;
 }
 
-/* the part rectangle is split vertically into IMAGECOUNT frames, each inset by 1 pixel. */
-static BOOLEAN atlas_frame(int part, int frame, RECT *out)
+BOOLEAN FrameThemeColor(BOOLEAN menu, BOOLEAN dark, int part, int state, int prop, COLORREF *out)
 {
-    MimeMsstylesRect r;
-    if (!mime_msstyles_get_rect(&g_theme.Theme, g_theme.Class, part, 0, MIME_TMT_ATLASRECT, &r))
-        return FALSE;
-    int32_t count = 1;
-    mime_msstyles_get_int(&g_theme.Theme, g_theme.Class, part, 0, MIME_TMT_IMAGECOUNT, &count);
-    if (count < 1)
-        count = 1;
-    if (frame >= count)
-        frame = 0;
-    LONG h = (r.bottom - r.top) / count;
-    *out = (RECT){r.left + 1, r.top + h * frame + 1, r.right - 1, r.top + h * (frame + 1) - 1};
-    return !RectEmpty(out) && out->right <= g_theme.Atlas->Width && out->bottom <= g_theme.Atlas->Height;
+    return theme_color(menu ? (dark ? CLASS_MENU_DARK : CLASS_MENU) : (dark ? CLASS_WINDOW_DARK : CLASS_WINDOW), part,
+                       state, prop, out);
 }
 
-static int dpi_slot(UINT dpi)
+/* the 1 pixel border of the window as the compositor draws it, 0xAARRGGBB. */
+BOOLEAN FrameBorderColor(BOOLEAN dark, BOOLEAN active, ULONG *argb)
 {
-    return dpi <= 96 ? 0 : dpi <= 120 ? 1 : dpi <= 144 ? 2 : 3;
+    COLORREF c;
+    if (!FrameThemeColor(FALSE, dark, WP_FRAMELEFT, active ? 1 : 2, MIME_TMT_BORDERCOLOR, &c))
+        return FALSE;
+    *argb = 0xFF000000u | ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF);
+    return TRUE;
+}
+
+/* the glyph of a caption button for a state at a dpi, as 8 bit coverage. */
+static const GLYPH_MASK *glyph_mask(BOOLEAN dark, int part, int state, UINT dpi)
+{
+    MimeMsstylesImage img;
+    if (!load_theme() || !mime_msstyles_get_image(&g_theme.Theme, g_theme.Class[dark ? CLASS_WINDOW_DARK : CLASS_WINDOW],
+                                                  part, state, dpi, 0, 0, MIME_MSSTYLES_GLYPH, &img))
+        return nullptr;
+    for (GLYPH_MASK *m = g_theme.Masks; m; m = m->Next)
+        if (m->ResId == img.res_id && m->Top == img.src.top)
+            return m;
+    MimePngInfo info;
+    LONG width = img.src.right - img.src.left, height = img.src.bottom - img.src.top;
+    if (!mime_png_info(img.data, img.size, &info) || width <= 0 || height <= 0 || info.width > 1024 ||
+        info.height > 4096 || img.src.right > (LONG)info.width || img.src.bottom > (LONG)info.height)
+        return nullptr;
+    SIZE_T pixels = (SIZE_T)info.width * info.height;
+    PUCHAR argb = frame_alloc(nullptr, pixels * 4);
+    GLYPH_MASK *mask = frame_alloc(nullptr, sizeof(*mask) + (SIZE_T)width * height);
+    if (!argb || !mask || mime_png_decode(img.data, img.size, &g_frame_alloc, MIME_PNG_PREMULTIPLIED, argb,
+                                          (size_t)info.width * 4) != MIME_PNG_OK) {
+        frame_free(nullptr, argb);
+        frame_free(nullptr, mask);
+        return nullptr;
+    }
+    mask->ResId = img.res_id;
+    mask->Top = img.src.top;
+    mask->Width = width;
+    mask->Height = height;
+    mask->Coverage = (PUCHAR)(mask + 1);
+    for (LONG y = 0; y < height; y++)
+        for (LONG x = 0; x < width; x++)
+            mask->Coverage[y * width + x] = argb[((SIZE_T)(img.src.top + y) * info.width + img.src.left + x) * 4 + 3];
+    frame_free(nullptr, argb);
+    mask->Next = g_theme.Masks;
+    g_theme.Masks = mask;
+    return mask;
 }
 
 /* ------------------------------------------------------------------ painting */
 
+/* what the frame draws when the style has no value. */
 #define CAPTION_COLOR RGB(0xFF, 0xFF, 0xFF)
 #define CAPTION_DARK RGB(0x20, 0x20, 0x20)
 #define TEXT_ACTIVE RGB(0x00, 0x00, 0x00)
 #define TEXT_ACTIVE_DARK RGB(0xFF, 0xFF, 0xFF)
 #define TEXT_INACTIVE RGB(0x99, 0x99, 0x99)
 #define TEXT_INACTIVE_DARK RGB(0x9A, 0x9A, 0x9A)
-#define CLOSE_HOT RGB(0xC4, 0x2B, 0x1C)
-#define CLOSE_PRESSED RGB(0xC8, 0x40, 0x31)
-#define BUTTON_HOT RGB(0xE9, 0xE9, 0xE9)
-#define BUTTON_PRESSED RGB(0xED, 0xED, 0xED)
-#define BUTTON_HOT_DARK RGB(0x2D, 0x2D, 0x2D)
-#define BUTTON_PRESSED_DARK RGB(0x33, 0x33, 0x33)
 
 /* dwm color attributes are stored as the value plus one, so zero means unset. */
 static BOOLEAN dwm_color(WND *w, PCWSTR name, ULONG *out)
@@ -449,7 +493,7 @@ BOOLEAN FrameThemed(void)
 }
 
 typedef struct FRAME_COLORS {
-    ULONG Caption, Border, TextActive, TextInactive, CloseHot, ClosePressed, ButtonHot, ButtonPressed;
+    ULONG Caption, Border, TextActive, TextInactive;
 } FRAME_COLORS;
 
 /* the resize border takes the window background, as the app paints over the caption. */
@@ -468,21 +512,25 @@ static BOOLEAN background_color(WND *w, ULONG *out)
 static void frame_colors(WND *w, FRAME_COLORS *c)
 {
     BOOLEAN dark = dark_frame(w);
-    c->Caption = dark ? CAPTION_DARK : CAPTION_COLOR;
+    COLORREF v;
+    c->Caption = FrameThemeColor(FALSE, dark, WP_CAPTION, 1, MIME_TMT_FILLCOLOR, &v) ? v
+                 : dark                                                              ? CAPTION_DARK
+                                                                                     : CAPTION_COLOR;
     c->Border = c->Caption;
-    c->TextActive = dark ? TEXT_ACTIVE_DARK : TEXT_ACTIVE;
-    c->TextInactive = dark ? TEXT_INACTIVE_DARK : TEXT_INACTIVE;
-    c->CloseHot = CLOSE_HOT;
-    c->ClosePressed = CLOSE_PRESSED;
-    c->ButtonHot = dark ? BUTTON_HOT_DARK : BUTTON_HOT;
-    c->ButtonPressed = dark ? BUTTON_PRESSED_DARK : BUTTON_PRESSED;
+    c->TextActive = FrameThemeColor(FALSE, dark, WP_CAPTION, 1, MIME_TMT_TEXTCOLOR, &v) ? v
+                    : dark                                                              ? TEXT_ACTIVE_DARK
+                                                                                        : TEXT_ACTIVE;
+    c->TextInactive = FrameThemeColor(FALSE, dark, WP_CAPTION, 2, MIME_TMT_TEXTCOLOR, &v) ? v
+                      : dark                                                              ? TEXT_INACTIVE_DARK
+                                                                                          : TEXT_INACTIVE;
     ULONG custom;
     BOOLEAN caption_set = dwm_color(w, L"DwmCaptionColor", &custom);
     if (caption_set)
         c->Caption = c->Border = custom;
     if (dwm_color(w, L"DwmTextColor", &custom))
         c->TextActive = c->TextInactive = custom;
-    else {
+    else if (caption_set) {
+        /* a caption of another color takes the text that reads on it. */
         ULONG cap = c->Caption;
         ULONG lum = ((cap & 0xFF) * 299 + ((cap >> 8) & 0xFF) * 587 + ((cap >> 16) & 0xFF) * 114) / 1000;
         c->TextActive = lum < 128 ? TEXT_ACTIVE_DARK : TEXT_ACTIVE;
@@ -548,13 +596,15 @@ static ULONG fit_title(FONT_INSTANCE *fi, PCWSTR text, ULONG count, LONG width, 
     return n;
 }
 
-static void draw_atlas(SURFACE *dst, const REGION *clip, const RECT *dst_rect, const RECT *src)
+/* a glyph of the style tinted with a color. */
+static void draw_glyph(SURFACE *s, const REGION *clip, const GLYPH_MASK *mask, const RECT *button, ULONG pixel)
 {
-    BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    AlphaBlendSurface(dst, clip, dst_rect, g_theme.Atlas, src, blend);
+    LONG x = button->left + (button->right - button->left - mask->Width) / 2;
+    LONG y = button->top + (button->bottom - button->top - mask->Height) / 2;
+    DrawCoverage(s, clip, x, y, mask->Coverage, mask->Width, mask->Height, mask->Width, pixel);
 }
 
-/* fallback glyphs when the theme is missing: 1 pixel strokes scaled to the dpi. */
+/* fallback glyphs when the style is missing: 1 pixel strokes scaled to the dpi. */
 static void draw_fallback_glyph(SURFACE *s, const REGION *clip, int button, BOOLEAN maximized, const RECT *br,
                                 ULONG pixel, UINT dpi)
 {
@@ -603,47 +653,36 @@ static void draw_button(WND *w, SURFACE *s, const REGION *clip, POINT origin, in
                        (button == CAPTION_CLOSE && (w->Flags & WNDF_NOCLOSE)) || (w->Style & WS_DISABLED);
     BOOLEAN hot = !disabled && w->CaptionHot == button && (!w->CaptionTracking || w->CaptionTracking == button);
     BOOLEAN pressed = hot && w->CaptionPressed == button;
-    int frame = disabled ? 3 : pressed ? 2 : hot ? 1 : 0;
-
-    if (hot || pressed) {
-        ULONG fill = ColorToPixel(button == CAPTION_CLOSE ? (pressed ? colors->ClosePressed : colors->CloseHot)
-                                                          : (pressed ? colors->ButtonPressed : colors->ButtonHot));
-        DrawFillRect(s, clip, &br, fill);
-    }
-
     BOOLEAN maximized = (w->Style & WS_MAXIMIZE) != 0;
-    int kind;
+    BOOLEAN dark = dark_frame(w);
+    int part;
     switch (button) {
     case CAPTION_CLOSE:
-        kind = 0;
+        part = WP_CLOSEBUTTON;
         break;
     case CAPTION_HELP:
-        kind = 1;
+        part = WP_HELPBUTTON;
         break;
     case CAPTION_MAX:
-        kind = maximized ? 4 : 2;
+        part = maximized ? WP_RESTOREBUTTON : WP_MAXBUTTON;
         break;
     default:
-        kind = 3;
+        part = WP_MINBUTTON;
         break;
     }
-    if (g_theme.Ready) {
-        int part = (active ? 11 : 64) + kind * 4 + dpi_slot(dpi);
-        RECT src;
-        if (atlas_frame(part, frame, &src)) {
-            LONG gw = src.right - src.left, gh = src.bottom - src.top;
-            LONG x = br.left + (br.right - br.left - gw) / 2;
-            LONG y = br.top + (br.bottom - br.top - gh) / 2;
-            RECT dst = {x, y, x + gw, y + gh};
-            draw_atlas(s, clip, &dst, &src);
-            return;
-        }
-    }
-    COLORREF c = disabled ? RGB(0xC0, 0xC0, 0xC0)
-                 : (button == CAPTION_CLOSE && hot) ? RGB(0xFF, 0xFF, 0xFF)
-                 : active ? colors->TextActive
-                          : colors->TextInactive;
-    draw_fallback_glyph(s, clip, button, maximized, &br, ColorToPixel(c), dpi);
+    /* normal, hot, pushed, disabled, inactive. */
+    int state = disabled ? 4 : pressed ? 3 : hot ? 2 : active ? 1 : 5;
+    COLORREF fill, glyph_color;
+    if ((state == 2 || state == 3) && FrameThemeColor(FALSE, dark, part, state, MIME_TMT_FILLCOLOR, &fill))
+        DrawFillRect(s, clip, &br, ColorToPixel(fill));
+    glyph_color = disabled ? RGB(0xC0, 0xC0, 0xC0) : active ? colors->TextActive : colors->TextInactive;
+    if (state >= 2 && state <= 4)
+        FrameThemeColor(FALSE, dark, part, state, MIME_TMT_TEXTCOLOR, &glyph_color);
+    const GLYPH_MASK *mask = glyph_mask(dark, part, state, dpi);
+    if (mask)
+        draw_glyph(s, clip, mask, &br, ColorToPixel(glyph_color));
+    else
+        draw_fallback_glyph(s, clip, button, maximized, &br, ColorToPixel(glyph_color), dpi);
 }
 
 static void paint_classic_edges(WND *w, SURFACE *s, const REGION *clip, RECT r)

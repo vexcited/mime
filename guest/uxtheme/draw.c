@@ -306,7 +306,8 @@ static BOOL draw_color_image(HDC dc, UX_THEME *theme, int part, int state, const
     MimeMsstylesImage img;
     memset(&img, 0, sizeof(img));
     img.sizing_type = ST_STRETCH;
-    img.margin_scale = 1;
+    /* a thin border stays one pixel up to 175 percent and grows by whole pixels after that. */
+    img.margin_scale = theme->Dpi >= 192 ? (int)theme->Dpi / 96 : 1;
     img.sizing_margins.left = ci.sizing.left + ci.inset.left;
     img.sizing_margins.right = ci.sizing.right + ci.inset.right;
     img.sizing_margins.top = ci.sizing.top + ci.inset.top;
@@ -471,11 +472,10 @@ static void content_margins(UX_THEME *theme, int part, int state, const RECT *bo
     MimeMsstylesMargins mm;
     memset(m, 0, sizeof(*m));
     if (UxPartImage(theme, part, state, bounds, &img)) {
-        int s = img.margin_scale > 0 ? img.margin_scale : 1;
-        m->cxLeftWidth = img.content_margins.left * s;
-        m->cxRightWidth = img.content_margins.right * s;
-        m->cyTopHeight = img.content_margins.top * s;
-        m->cyBottomHeight = img.content_margins.bottom * s;
+        m->cxLeftWidth = UxScale(theme, img.content_margins.left);
+        m->cxRightWidth = UxScale(theme, img.content_margins.right);
+        m->cyTopHeight = UxScale(theme, img.content_margins.top);
+        m->cyBottomHeight = UxScale(theme, img.content_margins.bottom);
     } else if (mime_msstyles_get_margins(&UxStyles, theme->Class, part, state, TMT_CONTENTMARGINS, &mm)) {
         m->cxLeftWidth = UxScale(theme, mm.left);
         m->cxRightWidth = UxScale(theme, mm.right);
@@ -648,9 +648,8 @@ THEMEAPI GetThemePartSize(HTHEME handle, HDC dc, int part, int state, LPCRECT re
     MimeMsstylesImage img;
     if (UxPartImage(theme, part, state, rect, &img)) {
         if (size_type == TS_MIN) {
-            int s = img.margin_scale > 0 ? img.margin_scale : 1;
-            int cx = (img.content_margins.left + img.content_margins.right) * s;
-            int cy = (img.content_margins.top + img.content_margins.bottom) * s;
+            int cx = UxScale(theme, img.content_margins.left + img.content_margins.right);
+            int cy = UxScale(theme, img.content_margins.top + img.content_margins.bottom);
             size->cx = cx < 1 ? 1 : cx;
             size->cy = cy < 1 ? 1 : cy;
         } else if (size_type == TS_TRUE) {
@@ -703,8 +702,12 @@ static BOOL partially_transparent(UX_THEME *theme, int part, int state)
         UX_BITMAP *b = UxGetBitmap(&img);
         return b && frame_has_alpha(b, &img.src);
     }
-    if (UxBackgroundType(theme, part, state) == BT_IMAGEFILE)
+    if (UxBackgroundType(theme, part, state) == BT_IMAGEFILE) {
+        MimeMsstylesColorImage ci;
+        if (mime_msstyles_get_color_image(&UxStyles, theme->Class, part, state, &ci))
+            return (ci.border >> 24) != 0xFF || (ci.fill >> 24) != 0xFF;
         return TRUE;
+    }
     BORDER_FILL bf;
     get_border_fill(theme, part, state, &bf);
     return bf.NoDraw || bf.Type != BT_RECT;

@@ -1606,15 +1606,24 @@ bool mime_msstyles_get_image(const MimeMsstyles *ms, int cls, int part, int stat
         out->min_height = out->frame_height;
     }
 
-    /* uxtheme scales the sizing margins by an integer factor only from 385 dpi up. */
+    /*
+     * margins are in pixels of the 96 dpi image. an image chosen by dpi is drawn with the margins grown by its whole
+     * number scale, so the 192 dpi image of a one pixel border has margins of two pixels. other images follow
+     * uxtheme, which scales the margins by an integer factor only from 385 dpi up.
+     */
     out->margin_scale = 1;
     const MimeMsstylesMargins *m = &out->sizing_margins;
     bool scaled = dpi != 96;
-    bool small = (out->source_shrink || scaled) && dest_w > 0 && dest_h > 0 &&
-                 (dest_w < out->min_width || dest_h < out->min_height);
-    if ((m->left || m->right || m->top || m->bottom) && (out->source_grow || scaled) && !small && dpi >= 385 &&
-        (int32_t)dpi >= 2 * out->min_dpi)
-        out->margin_scale = (int32_t)dpi / out->min_dpi;
+    if (out->image_select_type == MIME_IST_DPI && nk > 0) {
+        if (out->min_dpi >= 192)
+            out->margin_scale = out->min_dpi / 96;
+    } else {
+        bool small = (out->source_shrink || scaled) && dest_w > 0 && dest_h > 0 &&
+                     (dest_w < out->min_width || dest_h < out->min_height);
+        if ((m->left || m->right || m->top || m->bottom) && (out->source_grow || scaled) && !small && dpi >= 385 &&
+            (int32_t)dpi >= 2 * out->min_dpi)
+            out->margin_scale = (int32_t)dpi / out->min_dpi;
+    }
 
     /* TRUESIZE images: the draw size follows the scaling type, the dpi and the destination. */
     out->draw_width = out->frame_width;

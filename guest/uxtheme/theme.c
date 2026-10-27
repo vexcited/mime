@@ -28,7 +28,7 @@ static struct {
     BOOL Ready;
     RTL_CRITICAL_SECTION Lock;
     WCHAR Path[MAX_PATH];
-    const void *File, *Mui;
+    const void *File;
 } g_style;
 
 /* like windows, a handle is a slot index in the low word and a generation in the high word. */
@@ -71,20 +71,15 @@ static ULONG NTAPI load_style(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
 {
     RtlInitializeCriticalSection(&g_handles.Lock);
     RtlInitializeCriticalSection(&g_style.Lock);
-    WCHAR mui[MAX_PATH];
     UINT n = GetWindowsDirectoryW(g_style.Path, MAX_PATH - 64);
     if (!n || n >= MAX_PATH - 64)
         return TRUE;
-    wcscpy(mui, g_style.Path);
     wcscpy(g_style.Path + n, L"\\Resources\\Themes\\aero\\aero.msstyles");
-    wcscpy(mui + n, L"\\Resources\\Themes\\aero\\en-US\\aero.msstyles.mui");
-    SIZE_T size = 0, mui_size = 0;
+    SIZE_T size = 0;
     g_style.File = map_file(g_style.Path, &size);
     if (!g_style.File)
         return TRUE;
-    g_style.Mui = map_file(mui, &mui_size);
-    g_style.Ready = mime_msstyles_open(&UxStyles, g_style.File, size, g_style.Mui, g_style.Mui ? mui_size : 0,
-                                       &UxAllocator);
+    g_style.Ready = mime_msstyles_open(&UxStyles, g_style.File, size, nullptr, 0, &UxAllocator);
     return TRUE;
 }
 

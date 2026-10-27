@@ -80,6 +80,8 @@ void CcEndBuffer(CC_DRAW_BUFFER *b);
 void CcFillSolid(HDC dc, const RECT *rect, COLORREF color);
 HFONT CcIconTitleFont(void);
 BOOL CcFocusCuesHidden(HWND hwnd);
+/* draws the client edge of a window as the border of its theme class, the 2 pixel edge in one pixel of border color. */
+void CcDrawThemedEdge(HWND hwnd, HTHEME theme);
 /* scales 96 dpi pixels to the window's dpi. */
 int CcScale(HWND hwnd, int value);
 

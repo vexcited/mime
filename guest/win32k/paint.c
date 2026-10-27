@@ -206,8 +206,12 @@ void HostConfigure(WND *w, BOOLEAN activate)
         c->flags |= MIME_WIN_ACTIVE;
     if (m.Border && !(w->Style & WS_MAXIMIZE)) {
         BOOLEAN dark = PropGetData(w, AtomFind(L"DwmDarkMode")) != nullptr;
-        c->border_color = dark ? ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x664C4C4Cu : 0x404C4C4Cu)
-                               : ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x3b000000u : 0x26000000u);
+        ULONG themed;
+        if (FrameBorderColor(dark, (w->Flags & WNDF_ACTIVE_FRAME) != 0, &themed))
+            c->border_color = themed;
+        else
+            c->border_color = dark ? ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x664C4C4Cu : 0x404C4C4Cu)
+                                   : ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x3b000000u : 0x26000000u);
         ULONG_PTR v = (ULONG_PTR)PropGetData(w, AtomFind(L"DwmBorderColor"));
         if (v) {
             uint32_t color = (uint32_t)(v - 1);

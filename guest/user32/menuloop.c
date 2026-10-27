@@ -512,14 +512,18 @@ static void draw_item_bitmap(LOOP *l, HDC dc, HBITMAP bitmap, const RECT *area, 
 
 static void paint_level(LOOP *l, LEVEL *lv, HDC dc)
 {
-    /* with the visual style the popup has the Menu class of aero.msstyles: a light gray, a blue selection. */
+    /* with the visual style the popup has the Menu class of the style: a light gray, a blue selection. */
     BOOL themed = UserThemeActive();
+    COLORREF rule_color = themed ? UserThemeColor(L"Menu", 15, 1, 3802, RGB(0xD7, 0xD7, 0xD7)) : GetSysColor(COLOR_3DSHADOW);
+    COLORREF hot_fill = themed ? UserThemeColor(L"Menu", 14, 2, 3802, RGB(0x91, 0xC9, 0xF7)) : GetSysColor(COLOR_MENUHILIGHT);
+    COLORREF grey_hot_fill = themed ? UserThemeColor(L"Menu", 14, 4, 3802, RGB(0xE6, 0xE6, 0xE6)) : hot_fill;
+    COLORREF grey_text = themed ? UserThemeColor(L"Menu", 14, 3, 3803, RGB(0x6D, 0x6D, 0x6D)) : GetSysColor(COLOR_GRAYTEXT);
     RECT all = {0, 0, lv->Width, lv->Height};
-    COLORREF face = themed ? RGB(0xF2, 0xF2, 0xF2) : GetSysColor(COLOR_MENU);
+    COLORREF face = themed ? UserThemeColor(L"Menu", 9, 1, 3802, RGB(0xF2, 0xF2, 0xF2)) : GetSysColor(COLOR_MENU);
     HBRUSH face_brush = CreateSolidBrush(face);
     FillRect(dc, &all, face_brush);
     DeleteObject(face_brush);
-    HBRUSH frame = CreateSolidBrush(RGB(0xCC, 0xCC, 0xCC));
+    HBRUSH frame = CreateSolidBrush(themed ? UserThemeColor(L"Menu", 9, 1, 3801, RGB(0xCC, 0xCC, 0xCC)) : RGB(0xCC, 0xCC, 0xCC));
     FrameRect(dc, &all, frame);
     DeleteObject(frame);
     HGDIOBJ old_font = SelectObject(dc, l->Font);
@@ -533,14 +537,14 @@ static void paint_level(LOOP *l, LEVEL *lv, HDC dc)
         RECT r = {it->Left + pad, top, it->Left + it->Cx - pad, top + it->Height};
         if (it->RuleBefore && (i == 0 || lv->Items[i - 1].Left != it->Left)) {
             RECT rule = {it->Left, pad, it->Left + 1, lv->Height - pad};
-            HBRUSH rule_brush = CreateSolidBrush(themed ? RGB(0xD7, 0xD7, 0xD7) : GetSysColor(COLOR_3DSHADOW));
+            HBRUSH rule_brush = CreateSolidBrush(rule_color);
             FillRect(dc, &rule, rule_brush);
             DeleteObject(rule_brush);
         }
         if (it->Type & MFT_SEPARATOR) {
             RECT line = {r.left + scale(8, l->Dpi), (r.top + r.bottom) / 2, r.right - scale(8, l->Dpi),
                          (r.top + r.bottom) / 2 + 1};
-            HBRUSH rule = CreateSolidBrush(themed ? RGB(0xD7, 0xD7, 0xD7) : GetSysColor(COLOR_3DSHADOW));
+            HBRUSH rule = CreateSolidBrush(rule_color);
             FillRect(dc, &line, rule);
             DeleteObject(rule);
             continue;
@@ -567,14 +571,14 @@ static void paint_level(LOOP *l, LEVEL *lv, HDC dc)
             DeleteObject(clip);
             continue;
         }
-        COLORREF hot_color = themed ? (grey ? RGB(0xE6, 0xE6, 0xE6) : RGB(0x91, 0xC9, 0xF7)) : GetSysColor(COLOR_MENUHILIGHT);
+        COLORREF hot_color = grey ? grey_hot_fill : hot_fill;
         if (hot) {
             HBRUSH fill = CreateSolidBrush(hot_color);
             FillRect(dc, &r, fill);
             DeleteObject(fill);
         }
         COLORREF bg = hot ? hot_color : face;
-        COLORREF color = grey ? (themed ? RGB(0x6D, 0x6D, 0x6D) : GetSysColor(COLOR_GRAYTEXT))
+        COLORREF color = grey ? grey_text
                               : hot && !themed ? GetSysColor(COLOR_HIGHLIGHTTEXT)
                                                : GetSysColor(COLOR_MENUTEXT);
         SetTextColor(dc, color);

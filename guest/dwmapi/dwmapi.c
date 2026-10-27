@@ -4,12 +4,14 @@
  */
 #define MIME_BUILD_DWMAPI
 #include <mime/nt.h>
+#include <mime/ntapi.h>
 #include <mime/ntrtl.h>
 #include <mime/win32/winbase.h>
 #include <mime/win32/dwmapi.h>
 #include <mime/win32/wingdi.h>
 #include <mime/win32/winuser.h>
 
+NTSYSAPI NTSTATUS NTAPI RtlOpenCurrentUser(ACCESS_MASK access, PHANDLE key);
 WINUSERAPI BOOL WINAPI SetPropW(HWND hwnd, LPCWSTR name, HANDLE data);
 WINUSERAPI HANDLE WINAPI GetPropW(HWND hwnd, LPCWSTR name);
 WINUSERAPI HANDLE WINAPI RemovePropW(HWND hwnd, LPCWSTR name);
@@ -207,13 +209,50 @@ DWMAPI DwmFlush(void)
     return S_OK;
 }
 
-/* the windows 11 default accent at the opacity dwm reports. a guess, there is no colorization store yet. */
+typedef struct VALUE_PARTIAL {
+    ULONG TitleIndex, Type, DataLength;
+    UCHAR Data[4];
+} VALUE_PARTIAL;
+
+/* a DWORD of the current user's registry, FALSE when it is missing. */
+static BOOL read_user_dword(LPCWSTR key_path, LPCWSTR name, DWORD *value)
+{
+    HANDLE root, key;
+    if (!NT_SUCCESS(RtlOpenCurrentUser(KEY_READ, &root)))
+        return FALSE;
+    UNICODE_STRING path, value_name;
+    RtlInitUnicodeString(&path, key_path);
+    RtlInitUnicodeString(&value_name, name);
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE, root, nullptr);
+    BOOL ok = FALSE;
+    if (NT_SUCCESS(NtOpenKey(&key, KEY_QUERY_VALUE, &oa))) {
+        VALUE_PARTIAL data;
+        ULONG length;
+        /* KeyValuePartialInformation is 2. */
+        if (NT_SUCCESS(NtQueryValueKey(key, &value_name, 2, &data, sizeof(data), &length)) && data.Type == REG_DWORD &&
+            data.DataLength == 4) {
+            memcpy(value, data.Data, 4);
+            ok = TRUE;
+        }
+        NtClose(key);
+    }
+    NtClose(root);
+    return ok;
+}
+
+/*
+ * the colorization of the window frames: the DWM key of the user, else the blue of Windows 10, 0x0078D7, at the opacity
+ * dwm reports for it. the frames Mime draws do not take the color, a program that asks can use it.
+ */
 DWMAPI DwmGetColorizationColor(DWORD *color, BOOL *opaque_blend)
 {
     if (!color || !opaque_blend)
         return E_INVALIDARG;
-    *color = 0xC40078D4;
-    *opaque_blend = FALSE;
+    DWORD value = 0;
+    if (!read_user_dword(L"Software\\Microsoft\\Windows\\DWM", L"ColorizationColor", color))
+        *color = 0xC40078D7;
+    *opaque_blend = read_user_dword(L"Software\\Microsoft\\Windows\\DWM", L"ColorizationOpaqueBlend", &value) && value;
     return S_OK;
 }
 

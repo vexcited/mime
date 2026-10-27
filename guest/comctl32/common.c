@@ -233,6 +233,23 @@ BOOL CcFocusCuesHidden(HWND hwnd)
     return (SendMessageW(hwnd, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) != 0;
 }
 
+void CcDrawThemedEdge(HWND hwnd, HTHEME theme)
+{
+    if (!theme || !(GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_CLIENTEDGE))
+        return;
+    RECT w;
+    GetWindowRect(hwnd, &w);
+    OffsetRect(&w, -w.left, -w.top);
+    HDC dc = GetWindowDC(hwnd);
+    if (!dc)
+        return;
+    UINT dpi = GetDpiForWindow(hwnd);
+    int ex = GetSystemMetricsForDpi(SM_CXEDGE, dpi), ey = GetSystemMetricsForDpi(SM_CYEDGE, dpi);
+    ExcludeClipRect(dc, w.left + ex, w.top + ey, w.right - ex, w.bottom - ey);
+    DrawThemeBackground(theme, dc, 0, 0, &w, nullptr);
+    ReleaseDC(hwnd, dc);
+}
+
 int CcScale(HWND hwnd, int value)
 {
     UINT dpi = hwnd ? GetDpiForWindow(hwnd) : 96;

@@ -2509,6 +2509,11 @@ LRESULT CALLBACK ListViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         SetWindowLongPtrW(hwnd, 0, 0);
         CcFree(lv);
         return DefWindowProcW(hwnd, msg, wparam, lparam);
+    case WM_NCPAINT: {
+        LRESULT result = DefWindowProcW(hwnd, msg, wparam, lparam);
+        CcDrawThemedEdge(hwnd, lv->Theme);
+        return result;
+    }
     case WM_ERASEBKGND: {
         if (lv->Bk != CLR_NONE) {
             RECT r;

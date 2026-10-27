@@ -160,7 +160,10 @@ static void paint(TRACKBAR *t, HDC dc)
         FillRect(dc, &sel, GetSysColorBrush(COLOR_HIGHLIGHT));
     }
     if (!(t->Style & TBS_NOTICKS)) {
-        HPEN pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_BTNTEXT));
+        COLORREF tick = GetSysColor(COLOR_BTNTEXT);
+        if (t->Theme)
+            GetThemeColor(t->Theme, vertical(t) ? 10 : 9, 1, TMT_BORDERCOLOR, &tick);
+        HPEN pen = CreatePen(PS_SOLID, 1, tick);
         HGDIOBJ old = SelectObject(dc, pen);
         int count = t->TicCount + 2;
         for (int k = 0; k < count; k++) {

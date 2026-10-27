@@ -467,10 +467,69 @@ static void layout(HWND hwnd, int bar, const RECT *r, BAR *b)
     }
 }
 
+enum { PART_NONE, PART_ARROW1, PART_PAGE1, PART_THUMB, PART_PAGE2, PART_ARROW2 };
+
+/* the part the mouse holds down while a bar is tracked. */
+static struct {
+    HWND Window;
+    int Bar;
+    int Part;
+} g_held;
+
+/* the parts of the ScrollBar class. */
+enum {
+    SBP_ARROWBTN = 1,
+    SBP_THUMBBTNHORZ = 2,
+    SBP_THUMBBTNVERT = 3,
+    SBP_LOWERTRACKHORZ = 4,
+    SBP_UPPERTRACKHORZ = 5,
+    SBP_LOWERTRACKVERT = 6,
+    SBP_UPPERTRACKVERT = 7,
+    SBP_SIZEBOXBKGND = 11,
+};
+
+/* a bar drawn with the visual style: arrows, the track in two pieces and the thumb. */
+static void draw_themed(HWND hwnd, int bar, HDC dc, const BAR *b)
+{
+    UINT dpi = GetDpiForWindow(hwnd);
+    int held = g_held.Window == hwnd && g_held.Bar == bar ? g_held.Part : PART_NONE;
+    UINT arrows = b->data->Arrows;
+    /* up, down, left and right buttons have four states each: normal, hot, pressed and disabled. */
+    int base1 = b->vert ? 0 : 8, base2 = b->vert ? 4 : 12;
+    BOOL off1 = !b->enabled || (arrows & ESB_DISABLE_LTUP), off2 = !b->enabled || (arrows & ESB_DISABLE_RTDN);
+    int s1 = base1 + (off1 ? 4 : held == PART_ARROW1 ? 3 : 1);
+    int s2 = base2 + (off2 ? 4 : held == PART_ARROW2 ? 3 : 1);
+    UserThemeDraw(L"ScrollBar", dc, SBP_ARROWBTN, s1, &b->arrow1, dpi);
+    UserThemeDraw(L"ScrollBar", dc, SBP_ARROWBTN, s2, &b->arrow2, dpi);
+    int lower = b->vert ? SBP_LOWERTRACKVERT : SBP_LOWERTRACKHORZ, upper = b->vert ? SBP_UPPERTRACKVERT : SBP_UPPERTRACKHORZ;
+    if (!b->has_thumb) {
+        UserThemeDraw(L"ScrollBar", dc, lower, b->enabled ? 1 : 4, &b->track, dpi);
+        return;
+    }
+    RECT before = b->track, after = b->track;
+    if (b->vert) {
+        before.bottom = b->thumb.top;
+        after.top = b->thumb.bottom;
+    } else {
+        before.right = b->thumb.left;
+        after.left = b->thumb.right;
+    }
+    if (!IsRectEmpty(&before))
+        UserThemeDraw(L"ScrollBar", dc, lower, held == PART_PAGE1 ? 3 : 1, &before, dpi);
+    if (!IsRectEmpty(&after))
+        UserThemeDraw(L"ScrollBar", dc, upper, held == PART_PAGE2 ? 3 : 1, &after, dpi);
+    UserThemeDraw(L"ScrollBar", dc, b->vert ? SBP_THUMBBTNVERT : SBP_THUMBBTNHORZ, held == PART_THUMB ? 3 : 1, &b->thumb,
+                  dpi);
+}
+
 static void draw(HWND hwnd, int bar, HDC dc, const RECT *r)
 {
     BAR b;
     layout(hwnd, bar, r, &b);
+    if (UserThemeActive()) {
+        draw_themed(hwnd, bar, dc, &b);
+        return;
+    }
     UINT arrows = b.data->Arrows;
     UINT first = !b.enabled || (arrows & ESB_DISABLE_LTUP) ? DFCS_INACTIVE : 0;
     UINT second = !b.enabled || (arrows & ESB_DISABLE_RTDN) ? DFCS_INACTIVE : 0;
@@ -526,12 +585,11 @@ static void draw_standard(HWND hwnd)
     }
     if (has_v && has_h) {
         RECT box = {v.left, h.top, v.right, h.bottom};
-        FillRect(dc, &box, GetSysColorBrush(COLOR_3DFACE));
+        if (!UserThemeDraw(L"ScrollBar", dc, SBP_SIZEBOXBKGND, 1, &box, GetDpiForWindow(hwnd)))
+            FillRect(dc, &box, GetSysColorBrush(COLOR_3DFACE));
     }
     ReleaseDC(hwnd, dc);
 }
-
-enum { PART_NONE, PART_ARROW1, PART_PAGE1, PART_THUMB, PART_PAGE2, PART_ARROW2 };
 
 static int part_at(const BAR *b, POINT pt)
 {
@@ -587,6 +645,13 @@ static void track(HWND hwnd, int bar, POINT pt)
     if (!d)
         return;
     SetCapture(hwnd);
+    g_held.Window = hwnd;
+    g_held.Bar = bar;
+    g_held.Part = part;
+    if (bar == SB_CTL)
+        InvalidateRect(hwnd, nullptr, FALSE);
+    else
+        redraw_bar(hwnd, bar);
     if (part != PART_THUMB)
         SendMessageW(target, msg, CODES[part], from);
     DWORD next = GetTickCount() + 400;
@@ -637,6 +702,7 @@ static void track(HWND hwnd, int bar, POINT pt)
     }
     if (GetCapture() == hwnd)
         ReleaseCapture();
+    g_held.Window = nullptr;
     if (part == PART_THUMB)
         SendMessageW(target, msg, MAKEWPARAM(SB_THUMBPOSITION, (WORD)last_pos), from);
     SendMessageW(target, msg, SB_ENDSCROLL, from);

@@ -338,17 +338,20 @@ static HBRUSH area_brush(COMBO *cb, HDC dc)
     return brush;
 }
 
-static void paint_static(COMBO *cb, HDC dc)
+static void paint_static(COMBO *cb, HDC dc, BOOL themed)
 {
     if (cb->no_redraw || !IsWindowVisible(cb->hwnd))
         return;
     BOOL disabled = !IsWindowEnabled(cb->hwnd);
-    SetBkMode(dc, OPAQUE);
+    BOOL highlight = cb->focus && !cb->list_visible;
+    /* the face of a list in the visual style is drawn already, text goes over it. */
+    BOOL over_face = themed && !highlight;
+    SetBkMode(dc, over_face ? TRANSPARENT : OPAQUE);
     HBRUSH brush = area_brush(cb, dc);
     RECT outer = cb->edit_rect;
     InflateRect(&outer, 1, 1);
-    FillRect(dc, &outer, brush);
-    BOOL highlight = cb->focus && !cb->list_visible;
+    if (!over_face)
+        FillRect(dc, &outer, brush);
     int sel = cur_sel(cb);
     HGDIOBJ old = cb->font ? SelectObject(dc, cb->font) : nullptr;
     LRESULT ui = SendMessageW(cb->hwnd, WM_QUERYUISTATE, 0, 0);
@@ -388,7 +391,8 @@ static void paint_static(COMBO *cb, HDC dc)
         } else if (cb->rtl) {
             SetTextAlign(dc, TA_RTLREADING);
         }
-        ExtTextOutW(dc, x, cb->edit_rect.top + 1, ETO_CLIPPED | ETO_OPAQUE, &cb->edit_rect, text ? text : L"",
+        ExtTextOutW(dc, x, cb->edit_rect.top + 1, over_face ? ETO_CLIPPED : ETO_CLIPPED | ETO_OPAQUE, &cb->edit_rect,
+                    text ? text : L"",
                     text ? (UINT)n : 0, nullptr);
         SetTextAlign(dc, align);
         UserFree(text);
@@ -399,8 +403,34 @@ static void paint_static(COMBO *cb, HDC dc)
         SelectObject(dc, old);
 }
 
+/* the combo box in the visual style: a button with an arrow for a list, a field with a button for the others. */
+static void paint_themed(COMBO *cb, HDC dc)
+{
+    UINT dpi = GetDpiForWindow(cb->hwnd);
+    RECT r = {0, 0, cb->cx_combo, cb->cy_combo};
+    BOOL enabled = IsWindowEnabled(cb->hwnd);
+    BOOL pressed = cb->button_pressed || cb->list_visible;
+    if (!cb->editable) {
+        UserThemeDraw(L"Combobox", dc, 5 /* CP_READONLY */, !enabled ? 4 : pressed ? 3 : cb->hot ? 2 : 1, &r, dpi);
+        if (cb->droppable)
+            UserThemeDraw(L"Combobox", dc, 6 /* CP_DROPDOWNBUTTONRIGHT */, enabled ? 1 : 4, &cb->button_rect, dpi);
+        paint_static(cb, dc, TRUE);
+        return;
+    }
+    FillRect(dc, &r, area_brush(cb, dc));
+    UserThemeDraw(L"Combobox", dc, 4 /* CP_BORDER */, !enabled ? 4 : cb->focus ? 3 : 1, &r, dpi);
+    if (cb->droppable)
+        UserThemeDraw(L"Combobox", dc, 6, !enabled ? 4 : pressed ? 3 : 1, &cb->button_rect, dpi);
+    if (!cb->has_edit)
+        paint_static(cb, dc, FALSE);
+}
+
 static void paint(COMBO *cb, HDC dc)
 {
+    if (UserThemeActive()) {
+        paint_themed(cb, dc);
+        return;
+    }
     RECT r = {0, 0, cb->cx_combo, cb->cy_combo};
     DrawEdge(dc, &r, EDGE_SUNKEN, BF_RECT | BF_ADJUST);
     if (cb->droppable) {
@@ -417,7 +447,7 @@ static void paint(COMBO *cb, HDC dc)
         FillRect(dc, &r, area_brush(cb, dc));
         return;
     }
-    paint_static(cb, dc);
+    paint_static(cb, dc, FALSE);
 }
 
 static void press_button(COMBO *cb, BOOL pressed)
@@ -956,7 +986,19 @@ LRESULT CALLBACK ComboBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         button_down(cb, (short)LOWORD(lparam), (short)HIWORD(lparam));
         return 0;
     case WM_MOUSEMOVE:
+        if (!cb->hot && !cb->has_edit && UserThemeActive()) {
+            TRACKMOUSEEVENT track = {sizeof(track), TME_LEAVE, hwnd, 0};
+            TrackMouseEvent(&track);
+            cb->hot = TRUE;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
         mouse_move(cb, (short)LOWORD(lparam), (short)HIWORD(lparam));
+        return 0;
+    case WM_MOUSELEAVE:
+        if (cb->hot) {
+            cb->hot = FALSE;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
         return 0;
     case WM_LBUTTONUP:
         button_up(cb);

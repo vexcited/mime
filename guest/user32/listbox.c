@@ -1888,6 +1888,22 @@ static void integral_height(LISTBOX *lb)
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+/* the client edge follows the focus and the mouse in the visual style. */
+static void frame_changed(LISTBOX *lb)
+{
+    if (!lb->combo && (GetWindowLongW(lb->hwnd, GWL_EXSTYLE) & WS_EX_CLIENTEDGE) && UserThemeActive())
+        RedrawWindow(lb->hwnd, nullptr, nullptr, RDW_FRAME | RDW_INVALIDATE);
+}
+
+static void paint_frame(LISTBOX *lb)
+{
+    DWORD style = (DWORD)GetWindowLongW(lb->hwnd, GWL_STYLE);
+    /* LBCP_BORDER_NOSCROLL, then the ones with a vertical, a horizontal and both scroll bars. */
+    int part = (style & WS_VSCROLL) && (style & WS_HSCROLL) ? 2 : (style & WS_VSCROLL) ? 4 : (style & WS_HSCROLL) ? 1 : 3;
+    int state = !IsWindowEnabled(lb->hwnd) ? 4 : lb->hot ? 3 : lb->caret_enabled ? 2 : 1;
+    UserThemeFieldEdge(lb->hwnd, L"Listbox", part, state);
+}
+
 static LRESULT create(HWND hwnd, LISTBOX *lb, const CREATESTRUCTW *cs)
 {
     DWORD style = (DWORD)cs->style, ex = (DWORD)cs->dwExStyle;
@@ -2060,6 +2076,19 @@ LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return 0;
     case WM_ENABLE:
         InvalidateRect(hwnd, nullptr, TRUE);
+        frame_changed(lb);
+        return 0;
+    case WM_NCPAINT: {
+        LRESULT result = DefWindowProcW(hwnd, msg, wparam, lparam);
+        if (!lb->combo)
+            paint_frame(lb);
+        return result;
+    }
+    case WM_MOUSELEAVE:
+        if (lb->hot) {
+            lb->hot = FALSE;
+            frame_changed(lb);
+        }
         return 0;
     case WM_ERASEBKGND: {
         HDC dc = (HDC)wparam;
@@ -2082,12 +2111,14 @@ LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         g_wheel = 0;
         lb->caret_enabled = TRUE;
         draw_focus(lb, TRUE);
+        frame_changed(lb);
         notify(lb, LBN_SETFOCUS);
         NotifyWinEvent(EVENT_OBJECT_FOCUS, hwnd, OBJID_CLIENT, lb->caret + 1);
         return 0;
     case WM_KILLFOCUS:
         g_wheel = 0;
         draw_focus(lb, FALSE);
+        frame_changed(lb);
         if (lb->captured)
             button_up(lb, UP_RELEASE | UP_NOTIFY | (lb->mouse_down ? UP_SELECTABLE : 0));
         lb->add_mode = FALSE;
@@ -2103,6 +2134,12 @@ LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         button_down(lb, msg, (short)LOWORD(lparam), (short)HIWORD(lparam), wparam);
         return 0;
     case WM_MOUSEMOVE:
+        if (!lb->hot && !lb->combo && (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_CLIENTEDGE) && UserThemeActive()) {
+            TRACKMOUSEEVENT track = {sizeof(track), TME_LEAVE, hwnd, 0};
+            TrackMouseEvent(&track);
+            lb->hot = TRUE;
+            frame_changed(lb);
+        }
         if (lb->captured)
             mouse_move(lb, (short)LOWORD(lparam), (short)HIWORD(lparam));
         return 0;

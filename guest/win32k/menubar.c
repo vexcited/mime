@@ -7,19 +7,32 @@
  * the space it takes SM_CYMENU at the common height.
  */
 #include "menu.h"
+#include <msstyles/msstyles.h>
 
 WND *MenuBarCalcWindow;
 
-/* with the visual style, the Menu class of aero.msstyles: a white bar, a blue selection in two opacities over it. */
+/* what the bar shows when the visual style has no value. */
 #define BAR_COLOR RGB(0xFF, 0xFF, 0xFF)
 #define BAR_LINE RGB(0xF2, 0xF2, 0xF2)
 #define BAR_TEXT RGB(0x00, 0x00, 0x00)
 #define BAR_TEXT_GRAYED RGB(0x6D, 0x6D, 0x6D)
-#define SELECT_COLOR RGB(0x00, 0x8C, 0xFF)
+#define BAR_HOT RGB(0xD9, 0xEB, 0xF9)
+#define BAR_PUSHED RGB(0xBC, 0xDC, 0xF4)
 #define BAR_COLOR_DARK RGB(0x20, 0x20, 0x20)
 #define BAR_LINE_DARK RGB(0x2B, 0x2B, 0x2B)
 #define BAR_TEXT_DARK RGB(0xFF, 0xFF, 0xFF)
 #define BAR_TEXT_GRAYED_DARK RGB(0x8A, 0x8A, 0x8A)
+#define BAR_HOT_DARK RGB(0x3A, 0x3A, 0x3A)
+#define BAR_PUSHED_DARK RGB(0x4C, 0x4C, 0x4C)
+
+/* the parts of the Menu class the bar draws. */
+enum { MENU_BARBACKGROUND = 7, MENU_BARITEM = 8 };
+
+static COLORREF bar_color(BOOLEAN dark, int part, int state, int prop, COLORREF fallback)
+{
+    COLORREF c;
+    return FrameThemeColor(TRUE, dark, part, state, prop, &c) ? c : fallback;
+}
 
 static FONT_INSTANCE *menu_font(UINT dpi)
 {
@@ -287,36 +300,6 @@ BOOLEAN MenuBarArea(WND *w, RECT *screen)
 
 /* ------------------------------------------------------------------ drawing */
 
-static void blend_pixel(SURFACE *s, const REGION *clip, const RECT *r, COLORREF color, ULONG alpha)
-{
-    /* a translucent fill, row by row, in the pixels of the surface. */
-    if (alpha >= 255) {
-        DrawFillRect(s, clip, r, ColorToPixel(color));
-        return;
-    }
-    ULONG src_r = color & 0xFF, src_g = (color >> 8) & 0xFF, src_b = (color >> 16) & 0xFF;
-    for (ULONG i = 0; i < clip->Count; i++) {
-        RECT part;
-        if (!RectIntersect(&part, &clip->Rects[i], r))
-            continue;
-        for (LONG y = part.top; y < part.bottom; y++) {
-            if (y < 0 || y >= s->Height)
-                continue;
-            PULONG row = (PULONG)(s->Bits + (LONG_PTR)y * s->Stride);
-            for (LONG x = part.left; x < part.right && x < s->Width; x++) {
-                if (x < 0)
-                    continue;
-                ULONG d = row[x];
-                ULONG dr = (d >> 16) & 0xFF, dg = (d >> 8) & 0xFF, db = d & 0xFF;
-                dr = (src_r * alpha + dr * (255 - alpha) + 127) / 255;
-                dg = (src_g * alpha + dg * (255 - alpha) + 127) / 255;
-                db = (src_b * alpha + db * (255 - alpha) + 127) / 255;
-                row[x] = (d & 0xFF000000u) | (dr << 16) | (dg << 8) | db;
-            }
-        }
-    }
-}
-
 /* the glyphs of the MDI buttons and the popup system bitmaps, strokes of a pixel scaled to the dpi. */
 static void draw_system_glyph(WND *w, SURFACE *s, const REGION *clip, ULONG_PTR kind, const RECT *r, COLORREF color,
                               UINT dpi, POINT origin)
@@ -456,12 +439,18 @@ void MenuBarPaint(WND *w, SURFACE *s, const REGION *clip, POINT origin)
     UserReference(&m->Header);
     UINT dpi = bar->Dpi;
     BOOLEAN dark = FrameIsDark(w), themed = FrameThemed();
-    COLORREF back, line, text_color, gray_color;
-    if (dark) {
-        back = BAR_COLOR_DARK, line = BAR_LINE_DARK, text_color = BAR_TEXT_DARK, gray_color = BAR_TEXT_GRAYED_DARK;
-    } else if (themed) {
-        back = BAR_COLOR, line = BAR_LINE, text_color = BAR_TEXT, gray_color = BAR_TEXT_GRAYED;
+    COLORREF back, line, text_color, gray_color, hot_color, pushed_color;
+    if (themed || dark) {
+        BOOLEAN active = (w->Flags & WNDF_ACTIVE_FRAME) != 0;
+        int state = active ? 1 : 2;
+        back = bar_color(dark, MENU_BARBACKGROUND, state, MIME_TMT_FILLCOLOR, dark ? BAR_COLOR_DARK : BAR_COLOR);
+        line = bar_color(dark, MENU_BARBACKGROUND, state, MIME_TMT_BORDERCOLOR, dark ? BAR_LINE_DARK : BAR_LINE);
+        text_color = bar_color(dark, MENU_BARITEM, 1, MIME_TMT_TEXTCOLOR, dark ? BAR_TEXT_DARK : BAR_TEXT);
+        gray_color = bar_color(dark, MENU_BARITEM, 4, MIME_TMT_TEXTCOLOR, dark ? BAR_TEXT_GRAYED_DARK : BAR_TEXT_GRAYED);
+        hot_color = bar_color(dark, MENU_BARITEM, 2, MIME_TMT_FILLCOLOR, dark ? BAR_HOT_DARK : BAR_HOT);
+        pushed_color = bar_color(dark, MENU_BARITEM, 3, MIME_TMT_FILLCOLOR, dark ? BAR_PUSHED_DARK : BAR_PUSHED);
     } else {
+        hot_color = pushed_color = 0;
         /* flat menus: the bar color, a line in the face color of a window with edges and in the frame color without. */
         back = MetricsSysColor(COLOR_MENUBAR);
         line = MetricsSysColor((w->ExStyle & (WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE)) ? COLOR_3DFACE : COLOR_WINDOWFRAME);
@@ -497,15 +486,8 @@ void MenuBarPaint(WND *w, SURFACE *s, const REGION *clip, POINT origin)
             continue;
         }
         COLORREF text = grayed ? gray_color : text_color;
-        if (selected && themed) {
-            /* the selection is a thin border and a lighter inside, the pushed one is darker. */
-            COLORREF accent = dark ? RGB(0xFF, 0xFF, 0xFF) : SELECT_COLOR;
-            blend_pixel(s, clip, &r, accent, pushed ? 102 : 51);
-            RECT inner = {r.left + 1, r.top + 1, r.right - 1, r.bottom - 1};
-            if (!RectEmpty(&inner)) {
-                DrawFillRect(s, clip, &inner, ColorToPixel(back));
-                blend_pixel(s, clip, &inner, accent, pushed ? 51 : 26);
-            }
+        if (selected && (themed || dark)) {
+            DrawFillRect(s, clip, &r, ColorToPixel(pushed ? pushed_color : hot_color));
         } else if (selected) {
             DrawFillRect(s, clip, &r, ColorToPixel(MetricsSysColor(COLOR_MENUHILIGHT)));
             if (!grayed)
@@ -559,8 +541,9 @@ void MenuBarPaintIcon(WND *w, SURFACE *s, const REGION *clip, const RECT *area)
     if (!w->MenuIcon)
         return;
     if (FrameThemed() || FrameIsDark(w)) {
-        COLORREF accent = FrameIsDark(w) ? RGB(0xFF, 0xFF, 0xFF) : SELECT_COLOR;
-        blend_pixel(s, clip, area, accent, 51);
+        BOOLEAN dark = FrameIsDark(w);
+        DrawFillRect(s, clip, area, ColorToPixel(bar_color(dark, MENU_BARITEM, 2, MIME_TMT_FILLCOLOR,
+                                                           dark ? BAR_HOT_DARK : BAR_HOT)));
     } else {
         DrawFillRect(s, clip, area, ColorToPixel(MetricsSysColor(COLOR_MENUHILIGHT)));
     }

@@ -25,7 +25,7 @@ typedef struct EDIT {
     HLOCAL handle;
     UINT capacity, len, limit;
     BOOL multi, readonly, wrap, auto_h, auto_v, nohidesel, focus, modified, disabled, in_dialog, combo;
-    BOOL border, flat, rtl, fmt_valid, redraw;
+    BOOL border, flat, rtl, fmt_valid, redraw, hot;
     UINT align;
     WCHAR password;
     int password_width;
@@ -2153,6 +2153,23 @@ static void destroy(EDIT *e)
     UserFree(e);
 }
 
+/* the frame of a field with a client edge follows the focus and the mouse in the visual style. */
+static void frame_changed(EDIT *e)
+{
+    if (e->border && !e->flat && UserThemeActive())
+        RedrawWindow(e->hwnd, nullptr, nullptr, RDW_FRAME | RDW_INVALIDATE);
+}
+
+static void paint_frame(EDIT *e)
+{
+    if (!e->border || e->flat)
+        return;
+    DWORD style = (DWORD)GetWindowLongW(e->hwnd, GWL_STYLE);
+    /* EP_EDITBORDER_NOSCROLL, then the ones with a horizontal, a vertical and both scroll bars. */
+    int part = 6 + ((style & WS_HSCROLL) ? 1 : 0) + ((style & WS_VSCROLL) ? 2 : 0);
+    UserThemeFieldEdge(e->hwnd, L"Edit", part, e->disabled ? 4 : e->focus ? 3 : e->hot ? 2 : 1);
+}
+
 static void set_focus(EDIT *e)
 {
     g_wheel = 0;
@@ -2161,6 +2178,7 @@ static void set_focus(EDIT *e)
         if (!e->nohidesel && e->sel_min != e->sel_max)
             redraw(e, FALSE);
         create_caret(e);
+        frame_changed(e);
     }
     notify(e, EN_SETFOCUS);
 }
@@ -2170,6 +2188,7 @@ static void kill_focus(EDIT *e, HWND to)
     g_wheel = 0;
     if (e->focus) {
         e->focus = FALSE;
+        frame_changed(e);
         DestroyCaret();
         if (!e->nohidesel && e->sel_min != e->sel_max)
             InvalidateRect(e->hwnd, nullptr, e->multi);
@@ -2284,6 +2303,18 @@ LRESULT CALLBACK EditProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     case WM_ENABLE:
         e->disabled = !wparam;
         InvalidateRect(hwnd, nullptr, TRUE);
+        frame_changed(e);
+        return 0;
+    case WM_NCPAINT: {
+        LRESULT result = DefWindowProcW(hwnd, msg, wparam, lparam);
+        paint_frame(e);
+        return result;
+    }
+    case WM_MOUSELEAVE:
+        if (e->hot) {
+            e->hot = FALSE;
+            frame_changed(e);
+        }
         return 0;
     case WM_ERASEBKGND:
         if (e->multi) {
@@ -2356,6 +2387,12 @@ LRESULT CALLBACK EditProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         double_click(e, (short)LOWORD(lparam), (short)HIWORD(lparam), (wparam & MK_SHIFT) != 0);
         return 0;
     case WM_MOUSEMOVE:
+        if (!e->hot && e->border && !e->flat && UserThemeActive()) {
+            TRACKMOUSEEVENT track = {sizeof(track), TME_LEAVE, hwnd, 0};
+            TrackMouseEvent(&track);
+            e->hot = TRUE;
+            frame_changed(e);
+        }
         if (!e->selecting)
             return 1;
         drag(e, (short)LOWORD(lparam), (short)HIWORD(lparam));

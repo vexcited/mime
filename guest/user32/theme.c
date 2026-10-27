@@ -1,231 +1,170 @@
 /*
- * common control visual style: Button parts of aero.msstyles drawn the way
- * uxtheme draws them, with nine grid sizing margins and true size images.
+ * the visual style for the controls of user32: the parts of a class drawn by uxtheme, which is loaded when the first
+ * control asks for it, as Windows does. uxtheme imports user32, so user32 cannot import it.
  */
 #include "user32_private.h"
-#include <msstyles/msstyles.h>
-#include <png/png.h>
 
-static void *theme_alloc(void *ctx, size_t size)
-{
-    return UserAlloc(size);
-}
+/* a handle of uxtheme, which user32 does not include. */
+typedef HANDLE HTHEME;
 
-static void theme_free(void *ctx, void *p)
-{
-    UserFree(p);
-}
+typedef HTHEME(WINAPI *OPEN_THEME_DATA_FOR_DPI)(HWND window, LPCWSTR classes, UINT dpi);
+typedef HRESULT(WINAPI *CLOSE_THEME_DATA)(HTHEME theme);
+typedef HRESULT(WINAPI *DRAW_THEME_BACKGROUND)(HTHEME theme, HDC dc, int part, int state, const RECT *rect,
+                                               const RECT *clip);
+typedef HRESULT(WINAPI *GET_THEME_CONTENT_RECT)(HTHEME theme, HDC dc, int part, int state, const RECT *bounds,
+                                                RECT *content);
+typedef HRESULT(WINAPI *GET_THEME_PART_SIZE)(HTHEME theme, HDC dc, int part, int state, const RECT *rect, int type,
+                                             SIZE *size);
+typedef HRESULT(WINAPI *GET_THEME_COLOR)(HTHEME theme, int part, int state, int prop, COLORREF *color);
+typedef BOOL(WINAPI *IS_THEME_ACTIVE)(void);
+typedef BOOL(WINAPI *IS_PART_TRANSPARENT)(HTHEME theme, int part, int state);
 
-static const MimeAllocator g_alloc = {theme_alloc, theme_free, nullptr};
-
-typedef struct THEME_BITMAP {
-    struct THEME_BITMAP *Next;
-    int32_t ResId;
-    HBITMAP Bitmap;
-    int Width, Height;
-} THEME_BITMAP;
+#define TS_DRAW_SIZE 2
+#define TMT_TEXTCOLOR_ID 3803
 
 static struct {
     RTL_RUN_ONCE Once;
-    BOOL Ready;
-    MimeMsstyles Theme;
-    int Button;
-    THEME_BITMAP *Bitmaps;
     RTL_CRITICAL_SECTION Lock;
-} g_theme;
+    OPEN_THEME_DATA_FOR_DPI Open;
+    CLOSE_THEME_DATA Close;
+    DRAW_THEME_BACKGROUND Draw;
+    GET_THEME_CONTENT_RECT ContentRect;
+    GET_THEME_PART_SIZE PartSize;
+    GET_THEME_COLOR Color;
+    IS_THEME_ACTIVE Active;
+    IS_PART_TRANSPARENT Transparent;
+    BOOL Ready;
+} g_ux;
 
-static PUCHAR read_file(LPCWSTR path, SIZE_T *size)
-{
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (h == INVALID_HANDLE_VALUE)
-        return nullptr;
-    DWORD high = 0, n = GetFileSize(h, &high), read = 0;
-    PUCHAR data = n && !high ? UserAlloc(n) : nullptr;
-    if (data && (!ReadFile(h, data, n, &read, nullptr) || read != n)) {
-        UserFree(data);
-        data = nullptr;
-    }
-    CloseHandle(h);
-    if (data)
-        *size = n;
-    return data;
-}
+#define CACHE_SIZE 24
 
-static ULONG NTAPI load_theme(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
+/* the opened classes by name and dpi. */
+static struct {
+    WCHAR Name[32];
+    UINT Dpi;
+    HTHEME Handle;
+} g_cache[CACHE_SIZE];
+
+static ULONG NTAPI load_uxtheme(PRTL_RUN_ONCE once, PVOID param, PVOID *context)
 {
-    WCHAR path[MAX_PATH], mui[MAX_PATH];
-    UINT n = GetWindowsDirectoryW(path, MAX_PATH - 64);
-    if (!n)
+    RtlInitializeCriticalSection(&g_ux.Lock);
+    HMODULE ux = LoadLibraryW(L"uxtheme.dll");
+    if (!ux)
         return TRUE;
-    wcscpy(mui, path);
-    wcscpy(path + n, L"\\Resources\\Themes\\aero\\aero.msstyles");
-    wcscpy(mui + n, L"\\Resources\\Themes\\aero\\en-US\\aero.msstyles.mui");
-    SIZE_T size = 0, mui_size = 0;
-    PUCHAR file = read_file(path, &size);
-    PUCHAR mui_data = read_file(mui, &mui_size);
-    if (!file)
-        return TRUE;
-    if (!mime_msstyles_open(&g_theme.Theme, file, size, mui_data, mui_data ? mui_size : 0, &g_alloc))
-        return TRUE;
-    g_theme.Button = mime_msstyles_find_class(&g_theme.Theme, nullptr, "Button");
-    RtlInitializeCriticalSection(&g_theme.Lock);
-    g_theme.Ready = g_theme.Button >= 0;
+    g_ux.Open = (OPEN_THEME_DATA_FOR_DPI)(void *)GetProcAddress(ux, "OpenThemeDataForDpi");
+    g_ux.Close = (CLOSE_THEME_DATA)(void *)GetProcAddress(ux, "CloseThemeData");
+    g_ux.Draw = (DRAW_THEME_BACKGROUND)(void *)GetProcAddress(ux, "DrawThemeBackground");
+    g_ux.ContentRect = (GET_THEME_CONTENT_RECT)(void *)GetProcAddress(ux, "GetThemeBackgroundContentRect");
+    g_ux.PartSize = (GET_THEME_PART_SIZE)(void *)GetProcAddress(ux, "GetThemePartSize");
+    g_ux.Color = (GET_THEME_COLOR)(void *)GetProcAddress(ux, "GetThemeColor");
+    g_ux.Active = (IS_THEME_ACTIVE)(void *)GetProcAddress(ux, "IsThemeActive");
+    g_ux.Transparent = (IS_PART_TRANSPARENT)(void *)GetProcAddress(ux, "IsThemeBackgroundPartiallyTransparent");
+    g_ux.Ready = g_ux.Open && g_ux.Draw && g_ux.ContentRect && g_ux.PartSize && g_ux.Color && g_ux.Active;
     return TRUE;
 }
 
 BOOL UserThemeActive(void)
 {
-    RtlRunOnceExecuteOnce(&g_theme.Once, load_theme, nullptr, nullptr);
-    return g_theme.Ready;
+    RtlRunOnceExecuteOnce(&g_ux.Once, load_uxtheme, nullptr, nullptr);
+    return g_ux.Ready && g_ux.Active();
 }
 
-/* decoded images are premultiplied and kept for the life of the process. */
-static THEME_BITMAP *theme_bitmap(const MimeMsstylesImage *img)
-{
-    RtlEnterCriticalSection(&g_theme.Lock);
-    THEME_BITMAP *b = g_theme.Bitmaps;
-    while (b && b->ResId != img->res_id)
-        b = b->Next;
-    RtlLeaveCriticalSection(&g_theme.Lock);
-    if (b)
-        return b;
-    if (!mime_png_is_png(img->data, img->size))
-        return nullptr;
-    MimePngInfo info;
-    uint8_t *pixels;
-    if (mime_png_decode_alloc(img->data, img->size, &g_alloc, MIME_PNG_PREMULTIPLIED, &pixels, &info) != MIME_PNG_OK)
-        return nullptr;
-    BITMAPINFO bi;
-    memset(&bi, 0, sizeof(bi));
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = (LONG)info.width;
-    bi.bmiHeader.biHeight = -(LONG)info.height;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    void *bits;
-    HBITMAP bm = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (bm)
-        memcpy(bits, pixels, (SIZE_T)info.width * info.height * 4);
-    UserFree(pixels);
-    if (!bm)
-        return nullptr;
-    b = UserAlloc(sizeof(*b));
-    if (!b) {
-        DeleteObject(bm);
-        return nullptr;
-    }
-    b->ResId = img->res_id;
-    b->Bitmap = bm;
-    b->Width = (int)info.width;
-    b->Height = (int)info.height;
-    RtlEnterCriticalSection(&g_theme.Lock);
-    b->Next = g_theme.Bitmaps;
-    g_theme.Bitmaps = b;
-    RtlLeaveCriticalSection(&g_theme.Lock);
-    return b;
-}
-
-static void blend(HDC dst, int x, int y, int w, int h, HDC src, int sx, int sy, int sw, int sh)
-{
-    if (w <= 0 || h <= 0 || sw <= 0 || sh <= 0)
-        return;
-    BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    GdiAlphaBlend(dst, x, y, w, h, src, sx, sy, sw, sh, bf);
-}
-
-static BOOL get_image(int part, int state, UINT dpi, const RECT *rect, MimeMsstylesImage *img)
+static HTHEME theme_handle(const WCHAR *name, UINT dpi)
 {
     if (!UserThemeActive())
-        return FALSE;
-    return mime_msstyles_get_image(&g_theme.Theme, g_theme.Button, part, state, dpi, rect ? rect->right - rect->left : 0,
-                                   rect ? rect->bottom - rect->top : 0, 0, img);
+        return nullptr;
+    if (!dpi)
+        dpi = 96;
+    RtlEnterCriticalSection(&g_ux.Lock);
+    int free_slot = -1;
+    for (int i = 0; i < CACHE_SIZE; i++) {
+        if (!g_cache[i].Handle) {
+            if (free_slot < 0)
+                free_slot = i;
+        } else if (g_cache[i].Dpi == dpi && !wcscmp(g_cache[i].Name, name)) {
+            HTHEME h = g_cache[i].Handle;
+            RtlLeaveCriticalSection(&g_ux.Lock);
+            return h;
+        }
+    }
+    HTHEME h = wcslen(name) < RTL_NUMBER_OF(g_cache[0].Name) ? g_ux.Open(nullptr, name, dpi) : nullptr;
+    if (h && free_slot >= 0) {
+        wcscpy(g_cache[free_slot].Name, name);
+        g_cache[free_slot].Dpi = dpi;
+        g_cache[free_slot].Handle = h;
+    } else if (h) {
+        /* a full cache gives the handle away uncached, it is closed with the process. */
+    }
+    RtlLeaveCriticalSection(&g_ux.Lock);
+    return h;
 }
+
+BOOL UserThemeDraw(const WCHAR *name, HDC dc, int part, int state, const RECT *rect, UINT dpi)
+{
+    HTHEME h = theme_handle(name, dpi);
+    return h && SUCCEEDED(g_ux.Draw(h, dc, part, state, rect, nullptr));
+}
+
+BOOL UserThemeContent(const WCHAR *name, int part, int state, const RECT *rect, RECT *content, UINT dpi)
+{
+    HTHEME h = theme_handle(name, dpi);
+    *content = *rect;
+    return h && SUCCEEDED(g_ux.ContentRect(h, nullptr, part, state, rect, content));
+}
+
+BOOL UserThemeSize(const WCHAR *name, int part, int state, UINT dpi, SIZE *size)
+{
+    HTHEME h = theme_handle(name, dpi);
+    return h && SUCCEEDED(g_ux.PartSize(h, nullptr, part, state, nullptr, TS_DRAW_SIZE, size));
+}
+
+COLORREF UserThemeColor(const WCHAR *name, int part, int state, int prop, COLORREF fallback)
+{
+    HTHEME h = theme_handle(name, 96);
+    COLORREF c;
+    return h && SUCCEEDED(g_ux.Color(h, part, state, prop, &c)) ? c : fallback;
+}
+
+/* the Button class, for push buttons, check boxes, radio buttons and group boxes. */
 
 BOOL UserThemeDrawBackground(HDC dc, int part, int state, const RECT *rect, UINT dpi)
 {
-    MimeMsstylesImage img;
-    if (!get_image(part, state, dpi, rect, &img))
-        return FALSE;
-    THEME_BITMAP *b = theme_bitmap(&img);
-    if (!b)
-        return FALSE;
-    HDC mem = CreateCompatibleDC(dc);
-    HGDIOBJ old = SelectObject(mem, b->Bitmap);
-    int sx = img.src.left, sy = img.src.top;
-    int sw = img.src.right - img.src.left, sh = img.src.bottom - img.src.top;
-    int x = rect->left, y = rect->top, w = rect->right - rect->left, h = rect->bottom - rect->top;
-
-    if (img.sizing_type == MIME_ST_TRUESIZE) {
-        int dw = img.draw_width ? img.draw_width : sw, dh = img.draw_height ? img.draw_height : sh;
-        int dx = x, dy = y;
-        if (img.halign == MIME_HA_CENTER)
-            dx = x + (w - dw) / 2;
-        else if (img.halign == MIME_HA_RIGHT)
-            dx = x + w - dw;
-        if (img.valign == MIME_VA_CENTER)
-            dy = y + (h - dh) / 2;
-        else if (img.valign == MIME_VA_BOTTOM)
-            dy = y + h - dh;
-        blend(dc, dx, dy, dw, dh, mem, sx, sy, sw, sh);
-    } else {
-        /* nine grid: corners at their size, edges and center stretched. */
-        int l = img.sizing_margins.left, r = img.sizing_margins.right;
-        int t = img.sizing_margins.top, bo = img.sizing_margins.bottom;
-        if (l + r > w) {
-            l = w * l / (l + r);
-            r = w - l;
-        }
-        if (t + bo > h) {
-            t = h * t / (t + bo);
-            bo = h - t;
-        }
-        int sl = img.sizing_margins.left, sr = img.sizing_margins.right;
-        int st = img.sizing_margins.top, sb = img.sizing_margins.bottom;
-        int cw = w - l - r, ch = h - t - bo, scw = sw - sl - sr, sch = sh - st - sb;
-        blend(dc, x, y, l, t, mem, sx, sy, sl, st);
-        blend(dc, x + l, y, cw, t, mem, sx + sl, sy, scw, st);
-        blend(dc, x + w - r, y, r, t, mem, sx + sw - sr, sy, sr, st);
-        blend(dc, x, y + t, l, ch, mem, sx, sy + st, sl, sch);
-        if (!img.border_only)
-            blend(dc, x + l, y + t, cw, ch, mem, sx + sl, sy + st, scw, sch);
-        blend(dc, x + w - r, y + t, r, ch, mem, sx + sw - sr, sy + st, sr, sch);
-        blend(dc, x, y + h - bo, l, bo, mem, sx, sy + sh - sb, sl, sb);
-        blend(dc, x + l, y + h - bo, cw, bo, mem, sx + sl, sy + sh - sb, scw, sb);
-        blend(dc, x + w - r, y + h - bo, r, bo, mem, sx + sw - sr, sy + sh - sb, sr, sb);
-    }
-    SelectObject(mem, old);
-    DeleteDC(mem);
-    return TRUE;
+    return UserThemeDraw(L"Button", dc, part, state, rect, dpi);
 }
 
 BOOL UserThemeContentRect(int part, int state, const RECT *rect, RECT *content, UINT dpi)
 {
-    MimeMsstylesImage img;
-    *content = *rect;
-    if (!get_image(part, state, dpi, rect, &img))
-        return FALSE;
-    content->left += img.content_margins.left;
-    content->right -= img.content_margins.right;
-    content->top += img.content_margins.top;
-    content->bottom -= img.content_margins.bottom;
-    return TRUE;
+    return UserThemeContent(L"Button", part, state, rect, content, dpi);
 }
 
 BOOL UserThemePartSize(int part, int state, UINT dpi, SIZE *size)
 {
-    MimeMsstylesImage img;
-    if (!get_image(part, state, dpi, nullptr, &img))
-        return FALSE;
-    size->cx = img.draw_width ? img.draw_width : img.src.right - img.src.left;
-    size->cy = img.draw_height ? img.draw_height : img.src.bottom - img.src.top;
-    return TRUE;
+    return UserThemeSize(L"Button", part, state, dpi, size);
 }
 
 COLORREF UserThemeTextColor(int part, int state, COLORREF fallback)
 {
-    uint32_t c;
-    if (UserThemeActive() &&
-        mime_msstyles_get_color(&g_theme.Theme, g_theme.Button, part, state, MIME_TMT_TEXTCOLOR, &c))
-        return (COLORREF)c;
-    return fallback;
+    return UserThemeColor(L"Button", part, state, TMT_TEXTCOLOR_ID, fallback);
+}
+
+/*
+ * the client edge of a field window, an edit or a list box, as the border of the style. the 2 pixel edge takes a
+ * border of one pixel in the color of the state and a pixel of the field color inside it.
+ */
+BOOL UserThemeFieldEdge(HWND hwnd, const WCHAR *name, int part, int state)
+{
+    if (!(GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_CLIENTEDGE) || !UserThemeActive())
+        return FALSE;
+    UINT dpi = GetDpiForWindow(hwnd);
+    RECT w;
+    GetWindowRect(hwnd, &w);
+    OffsetRect(&w, -w.left, -w.top);
+    HDC dc = GetWindowDC(hwnd);
+    if (!dc)
+        return FALSE;
+    int edge = GetSystemMetricsForDpi(SM_CXEDGE, dpi), edge_y = GetSystemMetricsForDpi(SM_CYEDGE, dpi);
+    ExcludeClipRect(dc, w.left + edge, w.top + edge_y, w.right - edge, w.bottom - edge_y);
+    BOOL ok = UserThemeDraw(name, dc, part, state, &w, dpi);
+    ReleaseDC(hwnd, dc);
+    return ok;
 }

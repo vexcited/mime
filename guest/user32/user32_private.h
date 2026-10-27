@@ -131,6 +131,12 @@ enum {
 };
 
 BOOL UserThemeActive(void);
+/* a class of the visual style by name: draw a part, its content rectangle, its size and a color of it. */
+BOOL UserThemeDraw(const WCHAR *name, HDC dc, int part, int state, const RECT *rect, UINT dpi);
+BOOL UserThemeContent(const WCHAR *name, int part, int state, const RECT *rect, RECT *content, UINT dpi);
+BOOL UserThemeSize(const WCHAR *name, int part, int state, UINT dpi, SIZE *size);
+COLORREF UserThemeColor(const WCHAR *name, int part, int state, int prop, COLORREF fallback);
+BOOL UserThemeFieldEdge(HWND hwnd, const WCHAR *name, int part, int state);
 BOOL UserThemeDrawBackground(HDC dc, int part, int state, const RECT *rect, UINT dpi);
 BOOL UserThemeContentRect(int part, int state, const RECT *rect, RECT *content, UINT dpi);
 BOOL UserThemePartSize(int part, int state, UINT dpi, SIZE *size);

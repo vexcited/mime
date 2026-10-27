@@ -46,7 +46,7 @@ typedef struct LISTBOX {
     int mode;
     BOOL redraw, deferred, notify, sort, use_tabs, want_keys, no_integral, multicolumn, disable_noscroll, nosel;
     BOOL has_strings, has_data, vbar, hbar, right, rtl;
-    BOOL caret_enabled, caret_on, mouse_down, captured, double_click, new_state, add_mode, in_insert;
+    BOOL hot, caret_enabled, caret_on, mouse_down, captured, double_click, new_state, add_mode, in_insert;
     int last_vbar[3], last_hbar[3]; /* max, page and position last given to the bars. */
 } LISTBOX;
 
@@ -56,7 +56,7 @@ struct COMBO {
     BOOL editable, droppable, has_edit;
     RECT edit_rect, button_rect;
     int cx_combo, cy_combo, cx_drop, cy_drop;
-    BOOL focus, no_redraw, mouse_down, button_pressed, list_visible, keyboard_sel, extended_ui;
+    BOOL hot, focus, no_redraw, mouse_down, button_pressed, list_visible, keyboard_sel, extended_ui;
     BOOL upper, lower, right, rtl, destroyed, owner_draw;
     HFONT font;
     DWORD list_scroll;         /* WS_VSCROLL and WS_HSCROLL the list gets. */

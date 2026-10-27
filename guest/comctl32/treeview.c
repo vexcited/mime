@@ -858,6 +858,11 @@ LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         SetWindowLongPtrW(hwnd, 0, 0);
         CcFree(tv);
         return DefWindowProcW(hwnd, msg, wparam, lparam);
+    case WM_NCPAINT: {
+        LRESULT result = DefWindowProcW(hwnd, msg, wparam, lparam);
+        CcDrawThemedEdge(hwnd, tv->Theme);
+        return result;
+    }
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT:
