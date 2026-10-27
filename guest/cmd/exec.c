@@ -374,7 +374,8 @@ BOOL shell_execute(const WCHAR *file, const WCHAR *parameters, const WCHAR *dire
         HANDLE hProcess;
     } info = {};
     info.cbSize = sizeof(info);
-    info.fMask = 0x40 /* SEE_MASK_NOCLOSEPROCESS */ | 0x400 /* SEE_MASK_FLAG_NO_UI */;
+    /* keep the process handle and show no dialogs. */
+    info.fMask = 0x40 | 0x400;
     info.lpFile = file;
     info.lpParameters = parameters && parameters[0] ? parameters : nullptr;
     info.lpDirectory = directory;
