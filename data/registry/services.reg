@@ -1,0 +1,67 @@
+; the services Mime runs, as the service control manager reads them, and the keys of the Windows services that programs
+; were seen to check. svchost hosts the four in the groups named in machine.reg, each from its own library.
+
+[HKLM\SYSTEM\CurrentControlSet\Services\DcomLaunch]
+"DisplayName"="DCOM Server Process Launcher"
+"ErrorControl"=dword:00000001
+"Group"="COM Infrastructure"
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k DcomLaunch -p"
+"ObjectName"="LocalSystem"
+"Start"=dword:00000002
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\DcomLaunch\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\System32\\rpcss.dll"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\RpcEptMapper]
+"DisplayName"="RPC Endpoint Mapper"
+"ErrorControl"=dword:00000001
+"Group"="COM Infrastructure"
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k RPCSS -p"
+"ObjectName"="NT AUTHORITY\\NetworkService"
+"Start"=dword:00000002
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\RpcEptMapper\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\System32\\RpcEpMap.dll"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\RpcSs]
+"DependOnService"=multi:"RpcEptMapper","DcomLaunch"
+"DisplayName"="Remote Procedure Call (RPC)"
+"ErrorControl"=dword:00000001
+"Group"="COM Infrastructure"
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k RPCSS -p"
+"ObjectName"="NT AUTHORITY\\NetworkService"
+"Start"=dword:00000002
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\RpcSs\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\System32\\rpcss.dll"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\CoreMessagingRegistrar]
+"DisplayName"="CoreMessaging"
+"ErrorControl"=dword:00000001
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalServiceNoNetwork -p"
+"ObjectName"="NT AUTHORITY\\LocalService"
+"Start"=dword:00000002
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\CoreMessagingRegistrar\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\System32\\CoreMessaging.dll"
+
+; the dns client. the sechost test opens it as a service of the installation and finds it stopped, chrome reads its parameters
+; and those of the network stack, whose domain is empty on a machine outside a domain.
+[HKLM\SYSTEM\CurrentControlSet\Services\Dnscache]
+"DisplayName"="DNS Client"
+"ErrorControl"=dword:00000001
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k NetworkService -p"
+"ObjectName"="NT AUTHORITY\\NetworkService"
+"Start"=dword:00000002
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\{DnsConnections,DnsConnectionsProxies,DnsPolicyConfig}]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters]
+"Domain"=""
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters]

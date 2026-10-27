@@ -1,0 +1,46 @@
+; the default user, the template of every profile, and the settings of the system account. the kernel writes the locale of
+; the user at each boot, see guest/ntos/cm/boot.c.
+
+; the places of the user's folders, read by shell32 and by every program that asks for a known folder.
+[HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders]
+"AppData"=expand:"%USERPROFILE%\\AppData\\Roaming"
+"Desktop"=expand:"%USERPROFILE%\\Desktop"
+"Local AppData"=expand:"%USERPROFILE%\\AppData\\Local"
+"My Music"=expand:"%USERPROFILE%\\Music"
+"My Pictures"=expand:"%USERPROFILE%\\Pictures"
+"My Video"=expand:"%USERPROFILE%\\Videos"
+"Personal"=expand:"%USERPROFILE%\\Documents"
+"Programs"=expand:"%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs"
+"Start Menu"=expand:"%APPDATA%\\Microsoft\\Windows\\Start Menu"
+"{374DE290-123F-4565-9164-39C4925E467B}"=expand:"%USERPROFILE%\\Downloads"
+
+; the region of a machine in the United States, 244 is its geographic identifier. the language is written at each boot.
+[HKCU\Control Panel\International\Geo]
+"Name"="US"
+"Nation"="244"
+
+[HKU\.DEFAULT\Control Panel\International\Geo]
+"Name"="US"
+"Nation"="244"
+
+[HKCU\Control Panel\Cursors]
+"CursorBaseSize"=dword:00000020
+
+; keys that programs open and that are empty on a new profile.
+[HKCU\Control Panel\Accessibility]
+[HKCU\Software\Microsoft\Accessibility]
+[HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections]
+[HKCU\Software\Microsoft\Windows\DWM]
+
+; chrome and the shell read whether windows are translucent.
+[HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize]
+"EnableTransparency"=dword:00000001
+
+; the folders for temporary files of the user and of the system account. every program that makes a temporary file reads them.
+[HKCU\Environment]
+"TEMP"=expand:"%USERPROFILE%\\AppData\\Local\\Temp"
+"TMP"=expand:"%USERPROFILE%\\AppData\\Local\\Temp"
+
+[HKU\.DEFAULT\Environment]
+"TEMP"=expand:"%USERPROFILE%\\AppData\\Local\\Temp"
+"TMP"=expand:"%USERPROFILE%\\AppData\\Local\\Temp"

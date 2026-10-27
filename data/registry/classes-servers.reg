@@ -1,0 +1,642 @@
+; the classes that the libraries of Mime serve from their DllGetClassObject, with the library that answers and its
+; threading model. a class here is one a library gives a factory for, a class no library serves has no key.
+; the 32-bit side is made by regc.
+
+; comdlg32.dll
+; FileOpenDialog
+[HKCR\CLSID\{DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\comdlg32.dll"
+"ThreadingModel"="Apartment"
+
+; FileOpenDialogLegacy
+[HKCR\CLSID\{725F645B-EAED-4FC5-B1C5-D9AD0ACCBA5E}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\comdlg32.dll"
+"ThreadingModel"="Apartment"
+
+; FileSaveDialog
+[HKCR\CLSID\{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\comdlg32.dll"
+"ThreadingModel"="Apartment"
+
+; FileSaveDialogLegacy
+[HKCR\CLSID\{AF02484C-A0A9-4669-9051-058AB12B9195}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\comdlg32.dll"
+"ThreadingModel"="Apartment"
+
+; ddraw.dll
+; DirectDraw
+[HKCR\CLSID\{D7B70EE0-4340-11CF-B063-0020AFC2CD35}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\ddraw.dll"
+"ThreadingModel"="Both"
+
+; DirectDraw7
+[HKCR\CLSID\{3C305196-50DB-11D3-9CFE-00C04FD930C5}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\ddraw.dll"
+"ThreadingModel"="Both"
+
+; DirectDrawClipper
+[HKCR\CLSID\{593817A0-7DB3-11CF-A2DE-00AA00B93356}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\ddraw.dll"
+"ThreadingModel"="Both"
+
+; dinput.dll
+; DirectInput
+[HKCR\CLSID\{25E609E0-B259-11CF-BFC7-444553540000}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\dinput.dll"
+"ThreadingModel"="Both"
+
+; DirectInputDevice
+[HKCR\CLSID\{25E609E1-B259-11CF-BFC7-444553540000}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\dinput.dll"
+"ThreadingModel"="Both"
+
+; dinput8.dll
+; DirectInput8
+[HKCR\CLSID\{25E609E4-B259-11CF-BFC7-444553540000}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\dinput8.dll"
+"ThreadingModel"="Both"
+
+; DirectInputDevice8
+[HKCR\CLSID\{25E609E5-B259-11CF-BFC7-444553540000}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\dinput8.dll"
+"ThreadingModel"="Both"
+
+; dsound.dll
+; DirectSound
+[HKCR\CLSID\{47D4D946-62E8-11CF-93BC-444553540000}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\dsound.dll"
+"ThreadingModel"="Both"
+
+; DirectSound8
+[HKCR\CLSID\{3901CC3F-84B5-4FA4-BA35-AA8172B8A09B}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\dsound.dll"
+"ThreadingModel"="Both"
+
+; DirectSoundCapture
+[HKCR\CLSID\{B0210780-89CD-11D0-AF08-00A0C925CD16}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\dsound.dll"
+"ThreadingModel"="Both"
+
+; DirectSoundCapture8
+[HKCR\CLSID\{E4BCAC13-7F99-4908-9A8E-74E3BF24B6E1}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\dsound.dll"
+"ThreadingModel"="Both"
+
+; DirectSoundFullDuplex
+[HKCR\CLSID\{FEA4300C-7959-4147-B26A-2377B9E7A91D}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\dsound.dll"
+"ThreadingModel"="Both"
+
+; explorerframe.dll
+[HKCR\CLSID\{D92BD3B9-99A0-4334-A497-11BCB093E9D2}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\explorerframe.dll"
+"ThreadingModel"="Apartment"
+
+; TaskbarList
+[HKCR\CLSID\{56FDF344-FD6D-11D0-958A-006097C9A090}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\explorerframe.dll"
+"ThreadingModel"="Apartment"
+
+; mfcaptureengine.dll
+; MFCaptureEngine
+[HKCR\CLSID\{EFCE38D3-8914-4674-A7DF-AE1B3D654B8A}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\mfcaptureengine.dll"
+"ThreadingModel"="Both"
+
+; mmdevapi.dll
+; MMDeviceEnumerator
+[HKCR\CLSID\{BCDE0395-E52F-467C-8E3D-C4579291692E}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\mmdevapi.dll"
+"ThreadingModel"="Both"
+
+; msctf.dll
+; TF_CategoryMgr
+[HKCR\CLSID\{A4B544A1-438D-4B41-9325-869523E2D6C7}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msctf.dll"
+"ThreadingModel"="Both"
+
+; TF_DisplayAttributeMgr
+[HKCR\CLSID\{3CE74DE4-53D3-4D74-8B83-431B3828BA53}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msctf.dll"
+"ThreadingModel"="Both"
+
+; TF_InputProcessorProfiles
+[HKCR\CLSID\{33C53A50-F456-4884-B049-85FD643ECFED}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msctf.dll"
+"ThreadingModel"="Both"
+
+; TF_ThreadMgr
+[HKCR\CLSID\{529A9E6B-6587-4F23-AB9E-9C7D683E3C50}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msctf.dll"
+"ThreadingModel"="Both"
+
+; msi.dll
+; WindowsInstaller
+[HKCR\CLSID\{000C1090-0000-0000-C000-000000000046}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msi.dll"
+"ThreadingModel"="Apartment"
+
+; msxml3.dll
+; DOMDocument2
+[HKCR\CLSID\{F6D90F11-9C73-11D3-B32E-00C04F990BB4}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Apartment"
+
+; DOMDocument30
+[HKCR\CLSID\{F5078F32-C551-11D3-89B9-0000F81FE221}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Apartment"
+
+; DOMDocumentLegacy
+[HKCR\CLSID\{2933BF90-7B36-11D2-B20E-00C04F983E60}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Apartment"
+
+; FreeThreadedDOMDocument2
+[HKCR\CLSID\{F6D90F12-9C73-11D3-B32E-00C04F990BB4}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Both"
+
+; FreeThreadedDOMDocument30
+[HKCR\CLSID\{F5078F33-C551-11D3-89B9-0000F81FE221}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Both"
+
+; FreeThreadedDOMDocumentLegacy
+[HKCR\CLSID\{2933BF91-7B36-11D2-B20E-00C04F983E60}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Both"
+
+; msxml6.dll
+; DOMDocument60
+[HKCR\CLSID\{88D96A05-F192-11D4-A65F-0040963251E5}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml6.dll"
+"ThreadingModel"="Both"
+
+; FreeThreadedDOMDocument60
+[HKCR\CLSID\{88D96A06-F192-11D4-A65F-0040963251E5}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml6.dll"
+"ThreadingModel"="Both"
+
+; shell32.dll
+; ShellFolderView
+[HKCR\CLSID\{62112AA1-EBE4-11CF-A5FB-0020AFE7292D}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\shell32.dll"
+"ThreadingModel"="Apartment"
+
+; DragDropHelper
+[HKCR\CLSID\{4657278A-411B-11D2-839A-00C04FD918D0}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\shell32.dll"
+"ThreadingModel"="Apartment"
+
+; Shell
+[HKCR\CLSID\{13709620-C279-11CE-A49E-444553540000}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\shell32.dll"
+"ThreadingModel"="Apartment"
+
+; windows.storage.dll
+; ApplicationDestinations
+[HKCR\CLSID\{86C14003-4D6B-4EF3-A7B4-0506663B2E68}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+
+; ApplicationDocumentLists
+[HKCR\CLSID\{86BEC222-30F2-47E0-9F25-60D11CD75C28}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+
+; DestinationList
+[HKCR\CLSID\{77F10CF0-3DB5-4966-B520-B7C54FD35ED6}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+
+; EnumerableObjectCollection
+[HKCR\CLSID\{2D3468C1-36A7-43B6-AC24-D3F02FD9607A}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+
+; FileOperation
+[HKCR\CLSID\{3AD05575-8857-4850-9277-11B85BDB8E09}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+
+; ShellLink
+[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+
+; windowscodecs.dll
+; WIC8BIMIPTCDigestMetadataReader
+[HKCR\CLSID\{02805F1E-D5AA-415B-82C5-61C033A988A6}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WIC8BIMIPTCDigestMetadataWriter
+[HKCR\CLSID\{2DB5E62B-0D67-495F-8F9D-C2F0188647AC}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WIC8BIMIPTCMetadataReader
+[HKCR\CLSID\{0010668C-0801-4DA6-A4A4-826522B6D28F}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WIC8BIMIPTCMetadataWriter
+[HKCR\CLSID\{00108226-EE41-44A2-9E9C-4BE4D5B1D2CD}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WIC8BIMResolutionInfoMetadataReader
+[HKCR\CLSID\{5805137A-E348-4F7C-B3CC-6DB9965A0599}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WIC8BIMResolutionInfoMetadataWriter
+[HKCR\CLSID\{4FF2FE0E-E74A-4B71-98C4-AB7DC16707BA}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICAPEMetadataReader
+[HKCR\CLSID\{1767B93A-B021-44EA-920F-863C11F4F768}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICAPEMetadataWriter
+[HKCR\CLSID\{BD6EDFCA-2890-482F-B233-8D7339A1CF8D}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICApp0MetadataReader
+[HKCR\CLSID\{43324B33-A78F-480F-9111-9638AACCC832}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICApp0MetadataWriter
+[HKCR\CLSID\{F3C633A2-46C8-498E-8FBB-CC6F721BBCDE}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICApp13MetadataReader
+[HKCR\CLSID\{AA7E3C50-864C-4604-BC04-8B0B76E637F6}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICApp13MetadataWriter
+[HKCR\CLSID\{7B19A919-A9D6-49E5-BD45-02C34E4E4CD5}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICApp1MetadataReader
+[HKCR\CLSID\{DDE33513-774E-4BCD-AE79-02F4ADFE62FC}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICApp1MetadataWriter
+[HKCR\CLSID\{EE366069-1832-420F-B381-0479AD066F19}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICBmpDecoder
+[HKCR\CLSID\{6B462062-7CBF-400D-9FDB-813DD10F2778}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICBmpEncoder
+[HKCR\CLSID\{69BE8BB4-D66D-47C8-865A-ED1589433782}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICDdsDecoder
+[HKCR\CLSID\{9053699F-A341-429D-9E90-EE437CF80C73}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICDdsEncoder
+[HKCR\CLSID\{A61DDE94-66CE-4AC1-881B-71680588895E}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICDdsMetadataReader
+[HKCR\CLSID\{276C88CA-7533-4A86-B676-66B36080D484}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICDdsMetadataWriter
+[HKCR\CLSID\{FD688BBD-31ED-4DB7-A723-934927D38367}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICDefaultFormatConverter
+[HKCR\CLSID\{1A3F11DC-B514-4B17-8C5F-2154513852F1}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICExifMetadataReader
+[HKCR\CLSID\{D9403860-297F-4A49-BF9B-77898150A442}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICExifMetadataWriter
+[HKCR\CLSID\{C9A14CDA-C339-460B-9078-D4DEBCFABE91}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICGCEMetadataReader
+[HKCR\CLSID\{B92E345D-F52D-41F3-B562-081BC772E3B9}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICGCEMetadataWriter
+[HKCR\CLSID\{AF95DC76-16B2-47F4-B3EA-3C31796693E7}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICGifCommentMetadataReader
+[HKCR\CLSID\{32557D3B-69DC-4F95-836E-F5972B2F6159}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICGifCommentMetadataWriter
+[HKCR\CLSID\{A02797FC-C4AE-418C-AF95-E637C7EAD2A1}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICGifDecoder
+[HKCR\CLSID\{381DDA3C-9CE9-4834-A23E-1F98F8FC52BE}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICGifEncoder
+[HKCR\CLSID\{114F5598-0B22-40A0-86A1-C83EA495ADBD}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICGpsMetadataReader
+[HKCR\CLSID\{3697790B-223B-484E-9925-C4869218F17A}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICGpsMetadataWriter
+[HKCR\CLSID\{CB8C13E4-62B5-4C96-A48B-6BA6ACE39C76}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICIcoDecoder
+[HKCR\CLSID\{C61BFCDF-2E0F-4AAD-A8D7-E06BAFEBCDFE}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICIfdMetadataReader
+[HKCR\CLSID\{8F914656-9D0A-4EB2-9019-0BF96D8A9EE6}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICIfdMetadataWriter
+[HKCR\CLSID\{B1EBFC28-C9BD-47A2-8D33-B948769777A7}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICImagingFactory
+[HKCR\CLSID\{CACAF262-9370-4615-A13B-9F5539DA4C0A}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICImagingFactory2
+[HKCR\CLSID\{317D06E8-5F24-433D-BDF7-79CE68D8ABC2}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICIMDMetadataReader
+[HKCR\CLSID\{7447A267-0015-42C8-A8F1-FB3B94C68361}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICIMDMetadataWriter
+[HKCR\CLSID\{8C89071F-452E-4E95-9682-9D1024627172}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICInteropMetadataReader
+[HKCR\CLSID\{B5C8B898-0074-459F-B700-860D4651EA14}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICInteropMetadataWriter
+[HKCR\CLSID\{122EC645-CD7E-44D8-B186-2C8C20C3B50F}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICIPTCMetadataReader
+[HKCR\CLSID\{03012959-F4F6-44D7-9D09-DAA087A9DB57}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICIPTCMetadataWriter
+[HKCR\CLSID\{1249B20C-5DD0-44FE-B0B3-8F92C8E6D080}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICIRBMetadataReader
+[HKCR\CLSID\{D4DCD3D7-B4C2-47D9-A6BF-B89BA396A4A3}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICIRBMetadataWriter
+[HKCR\CLSID\{5C5C1935-0235-4434-80BC-251BC1EC39C6}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICJpegChrominanceMetadataReader
+[HKCR\CLSID\{50B1904B-F28F-4574-93F4-0BADE82C69E9}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICJpegChrominanceMetadataWriter
+[HKCR\CLSID\{3FF566F0-6E6B-49D4-96E6-B78886692C62}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICJpegCommentMetadataReader
+[HKCR\CLSID\{9F66347C-60C4-4C4D-AB58-D2358685F607}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICJpegCommentMetadataWriter
+[HKCR\CLSID\{E573236F-55B1-4EDA-81EA-9F65DB0290D3}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICJpegDecoder
+[HKCR\CLSID\{9456A480-E88B-43EA-9E73-0B2D9B71B1CA}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICJpegEncoder
+[HKCR\CLSID\{1A34F5C1-4A5A-46DC-B644-1F4567E7A676}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICJpegLuminanceMetadataReader
+[HKCR\CLSID\{356F2F88-05A6-4728-B9A4-1BFBCE04D838}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICJpegLuminanceMetadataWriter
+[HKCR\CLSID\{1D583ABC-8A0E-4657-9982-A380CA58FB4B}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICLSDMetadataReader
+[HKCR\CLSID\{41070793-59E4-479A-A1F7-954ADC2EF5FC}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICLSDMetadataWriter
+[HKCR\CLSID\{73C037E7-E5D9-4954-876A-6DA81D6E5768}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngBkgdMetadataReader
+[HKCR\CLSID\{0CE7A4A6-03E8-4A60-9D15-282EF32EE7DA}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngBkgdMetadataWriter
+[HKCR\CLSID\{68E3F2FD-31AE-4441-BB6A-FD7047525F90}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngChrmMetadataReader
+[HKCR\CLSID\{F90B5F36-367B-402A-9DD1-BC0FD59D8F62}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngChrmMetadataWriter
+[HKCR\CLSID\{E23CE3EB-5608-4E83-BCEF-27B1987E51D7}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngDecoder
+[HKCR\CLSID\{389EA17B-5078-4CDE-B6EF-25C15175C751}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngDecoder2
+[HKCR\CLSID\{E018945B-AA86-4008-9BD4-6777A1E40C11}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngEncoder
+[HKCR\CLSID\{27949969-876A-41D7-9447-568F6A35A4DC}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngGamaMetadataReader
+[HKCR\CLSID\{3692CA39-E082-4350-9E1F-3704CB083CD5}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngGamaMetadataWriter
+[HKCR\CLSID\{FF036D13-5D4B-46DD-B10F-106693D9FE4F}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngHistMetadataReader
+[HKCR\CLSID\{877A0BB7-A313-4491-87B5-2E6D0594F520}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngHistMetadataWriter
+[HKCR\CLSID\{8A03E749-672E-446E-BF1F-2C11D233B6FF}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngIccpMetadataReader
+[HKCR\CLSID\{F5D3E63B-CB0F-4628-A478-6D8244BE36B1}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngIccpMetadataWriter
+[HKCR\CLSID\{16671E5F-0CE6-4CC4-9768-E89FE5018ADE}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngItxtMetadataReader
+[HKCR\CLSID\{AABFB2FA-3E1E-4A8F-8977-5556FB94EA23}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngItxtMetadataWriter
+[HKCR\CLSID\{31879719-E751-4DF8-981D-68DFF67704ED}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngSrgbMetadataReader
+[HKCR\CLSID\{FB40360C-547E-4956-A3B9-D4418859BA66}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngSrgbMetadataWriter
+[HKCR\CLSID\{A6EE35C6-87EC-47DF-9F22-1D5AAD840C82}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngTextMetadataReader
+[HKCR\CLSID\{4B59AFCC-B8C3-408A-B670-89E5FAB6FDA7}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngTextMetadataWriter
+[HKCR\CLSID\{B5EBAFB9-253E-4A72-A744-0762D2685683}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngTimeMetadataReader
+[HKCR\CLSID\{D94EDF02-EFE5-4F0D-85C8-F5A68B3000B1}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICPngTimeMetadataWriter
+[HKCR\CLSID\{1AB78400-B5A3-4D91-8ACE-33FCD1499BE6}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICSubIfdMetadataReader
+[HKCR\CLSID\{50D42F09-ECD1-4B41-B65D-DA1FDAA75663}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICSubIfdMetadataWriter
+[HKCR\CLSID\{8ADE5386-8E9B-4F4C-ACF2-F0008706B238}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICThumbnailMetadataReader
+[HKCR\CLSID\{FB012959-F4F6-44D7-9D09-DAA087A9DB57}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICThumbnailMetadataWriter
+[HKCR\CLSID\{D049B20C-5DD0-44FE-B0B3-8F92C8E6D080}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICTiffDecoder
+[HKCR\CLSID\{B54E85D9-FE23-499F-8B88-6ACEA713752B}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICTiffEncoder
+[HKCR\CLSID\{0131BE10-2001-4C5F-A9B0-CC88FAB64CE8}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICUnknownMetadataReader
+[HKCR\CLSID\{699745C2-5066-4B82-A8E3-D40478DBEC8C}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICUnknownMetadataWriter
+[HKCR\CLSID\{A09CCA86-27BA-4F39-9053-121FA4DC08FC}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"

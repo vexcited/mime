@@ -1,0 +1,76 @@
+; the file types that Mime handles: batch files run by the command interpreter, registry files merged by regedit, installer
+; packages run by msiexec, and the pictures and text the shell names an icon for.
+
+[HKCR\.bat]
+@="batfile"
+[HKCR\batfile\shell\open\command]
+@="\"%1\" %*"
+[HKCR\batfile\shell\runas\command]
+@=expand:"%SystemRoot%\\System32\\cmd.exe /C \"%1\" %*"
+
+[HKCR\.cmd]
+@="cmdfile"
+[HKCR\cmdfile\shell\open\command]
+@="\"%1\" %*"
+[HKCR\cmdfile\shell\runas\command]
+@=expand:"%SystemRoot%\\System32\\cmd.exe /C \"%1\" %*"
+
+[HKCR\.reg]
+@="regfile"
+"Content Type"="text/plain"
+[HKCR\regfile\DefaultIcon]
+@=expand:"%SystemRoot%\\regedit.exe,1"
+[HKCR\regfile\shell\open\command]
+@=expand:"%SystemRoot%\\regedit.exe \"%1\""
+[HKCR\regedit\shell\open\command]
+@=expand:"%SystemRoot%\\regedit.exe \"%1\""
+
+[HKCR\.msi]
+@="Msi.Package"
+"Content Type"="application/x-msi"
+[HKCR\Msi.Package\shell\open\command]
+@=expand:"%SystemRoot%\\System32\\msiexec.exe /i \"%1\" %*"
+
+[HKCR\.txt]
+@="txtfile"
+"Content Type"="text/plain"
+"PerceivedType"="text"
+[HKCR\.log]
+@="txtfile"
+"Content Type"="text/plain"
+"PerceivedType"="text"
+[HKCR\txtfile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\imageres.dll,-102"
+
+[HKCR\.html]
+@="htmlfile"
+"Content Type"="text/html"
+"PerceivedType"="text"
+[HKCR\.htm]
+@="htmlfile"
+"Content Type"="text/html"
+"PerceivedType"="text"
+[HKCR\htmlfile]
+@="HTML Document"
+
+[HKCR\.pdf]
+"Content Type"="application/pdf"
+
+[HKCR\.ico]
+@="icofile"
+"Content Type"="image/x-icon"
+"PerceivedType"="image"
+[HKCR\icofile\DefaultIcon]
+@="%1"
+
+[HKCR\.png]
+@="pngfile"
+"Content Type"="image/png"
+"PerceivedType"="image"
+[HKCR\pngfile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\imageres.dll,-71"
+
+; what the shell looks at for a type that has no program of its own: the type and its kind.
+[HKCR\SystemFileAssociations\{.html,.ico,.png,.txt,image}]
+[HKCR\SystemFileAssociations\text\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\imageres.dll,-102"

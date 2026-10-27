@@ -1,0 +1,36 @@
+; features of Windows 11 that the machine declares as present while their files are fetched when a program first loads
+; them. an installer that reads these keys finds what it looks for and does not install them again. the feature
+; service rewrites what it knows better once it has installed them, such as the version of the runtime.
+; the folders are those of the x64 system, an arm64 system names its own in guest/ntos/cm/boot.c.
+
+; the .NET Framework 4.8.1. the loader of the runtime reads the install roots and the policy, installers read release,
+; version and install of the v4 keys. release 533509 is the version 4.8.1 of Windows 11 version 24H2 and later.
+[HKLM\SOFTWARE\Microsoft\.NETFramework]
+"Enable64Bit"=dword:00000001
+"InstallRoot"="C:\\Windows\\Microsoft.NET\\Framework64\\"
+
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\.NETFramework]
+"InstallRoot"="C:\\Windows\\Microsoft.NET\\Framework\\"
+
+[HKLM\SOFTWARE\Microsoft\.NETFramework\Policy\v4.0]
+"30319"="30319-30319"
+
+[HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\{Client,Full}]
+"Install"=dword:00000001
+"InstallPath"="C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\"
+"Release"=dword:00082405
+"TargetVersion"="4.0.0"
+"Version"="4.8.09221"
+
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\NET Framework Setup\NDP\v4\{Client,Full}]
+"InstallPath"="C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\"
+
+; the WebView2 runtime, in the key where Windows 11 has its updater write it. the loader of WebView2 reads the version
+; and the folder of the runtime here, then looks for msedgewebview2.exe in that folder.
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}]
+"name"="Microsoft Edge WebView2 Runtime"
+"pv"="142.0.3595.53"
+"EBWebView"="C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\142.0.3595.53"
+
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\ClientState\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}]
+"pv"="142.0.3595.53"

@@ -1,0 +1,7 @@
+; the stores of certificates that chrome and crypt32 open, empty. the root certificates the machine trusts come from the
+; host at each boot, see guest/ntos/cm/certs.c.
+
+[HKLM\SOFTWARE\Microsoft\SystemCertificates\{CA,Disallowed,ROOT}\Certificates]
+[HKLM\SOFTWARE\Microsoft\EnterpriseCertificates\{CA,Disallowed}]
+[HKLM\SOFTWARE\Microsoft\EnterpriseCertificates\Root\Certificates]
+[HKLM\SOFTWARE\Policies\Microsoft\SystemCertificates\Root\Certificates]

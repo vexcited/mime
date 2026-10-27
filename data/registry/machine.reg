@@ -1,0 +1,77 @@
+; the machine: what a program reads to know the system it runs on. what is only known at the first boot, the computer name,
+; the user, identifiers, the time zone, the processor, is written by the kernel, see guest/ntos/cm/boot.c. the 32-bit
+; side is made from this one by regc, except where a line below names Wow6432Node.
+;
+; the sources hold what the traced programs read, see docs/registry-inventory.md in the research repository, and what the
+; kernel and the services need. a key a program turns out to need is added here with the program that needs it.
+
+; the version of the system. installers and the installation manager read the build and the display version, the
+; others are what every version check of a program looks for.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion]
+"BuildLab"="26100.ge_release.240331-1435"
+"BuildLabEx"="26100.1.amd64fre.ge_release.240331-1435"
+"CurrentVersion"="6.3"
+"DisplayVersion"="26H2"
+"EditionID"="Professional"
+"InstallationType"="Client"
+"ProductName"="Windows 10 Pro"
+"UBR"=dword:000024f1
+
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion]
+"BuildLabEx"="26100.1.x86fre.ge_release.240331-1435"
+
+; the profiles folders, read by the profile functions and the service control manager.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList]
+"Default"=expand:"%SystemDrive%\\Users\\Default"
+"ProfilesDirectory"=expand:"%SystemDrive%\\Users"
+"ProgramData"=expand:"%SystemDrive%\\ProgramData"
+"Public"=expand:"%SystemDrive%\\Users\\Public"
+
+; which services each svchost group runs, read by svchost when it hosts a group.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost]
+"DcomLaunch"=multi:"DcomLaunch"
+"LocalServiceNoNetwork"=multi:"CoreMessagingRegistrar"
+"RPCSS"=multi:"RpcEptMapper","RpcSs"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalServiceNoNetwork]
+"CoInitializeSecurityParam"=dword:00000001
+
+; the program folders. 32-bit programs read their own, installers read both.
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion]
+"CommonFilesDir"="C:\\Program Files\\Common Files"
+"CommonFilesDir (x86)"="C:\\Program Files (x86)\\Common Files"
+"CommonW6432Dir"="C:\\Program Files\\Common Files"
+"ProgramFilesDir"="C:\\Program Files"
+"ProgramFilesDir (x86)"="C:\\Program Files (x86)"
+"ProgramW6432Dir"="C:\\Program Files"
+
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion]
+"CommonFilesDir"="C:\\Program Files (x86)\\Common Files"
+"ProgramFilesDir"="C:\\Program Files (x86)"
+
+; the shared shell folders, read by shell32 and by installers for the start menu.
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders]
+"Common AppData"=expand:"%ProgramData%"
+"Common Desktop"=expand:"%PUBLIC%\\Desktop"
+"Common Documents"=expand:"%PUBLIC%\\Documents"
+"Common Programs"=expand:"%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs"
+
+; keys that programs open and that are empty on a new machine.
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\{Internet Settings,SideBySide,Uninstall}]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection]
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\OEM]
+[HKLM\SOFTWARE\Microsoft\Cryptography]
+[HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings]
+[HKLM\SOFTWARE\Clients\StartMenuInternet]
+
+; user account control is on. the kernel reads DeclineElevationPrompts here and finds none.
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System]
+"EnableLUA"=dword:00000001
+
+; the command interpreter reads this at its start.
+[HKLM\SOFTWARE\Microsoft\Command Processor]
+"EnableExtensions"=dword:00000001
+
+; the contract of the Windows runtime that chrome checks for.
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\WellKnownContracts]
+"Windows.Foundation.UniversalApiContract"=dword:00130000
