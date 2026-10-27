@@ -868,26 +868,30 @@ int internal_copy(const WCHAR *args, NODE *node)
             }
         }
         BOOL proceed = TRUE;
-        if (GetFileAttributesW(target.p) != INVALID_FILE_ATTRIBUTES && !yes) {
+        /* the first source as the result keeps its content and gets the others after it. */
+        BOOL in_place = same_file(files[0], target.p);
+        if (!in_place && GetFileAttributesW(target.p) != INVALID_FILE_ATTRIBUTES && !yes) {
             int a2 = ask_overwrite(target.p);
             proceed = a2 != 0;
         }
         HANDLE out = INVALID_HANDLE_VALUE;
         if (proceed) {
-            out = CreateFileW(target.p, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
-                              nullptr);
+            out = CreateFileW(target.p, GENERIC_WRITE, FILE_SHARE_READ, nullptr, in_place ? OPEN_EXISTING : CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
             if (out == INVALID_HANDLE_VALUE) {
                 fail_last_error();
                 result = 1;
+            } else if (in_place) {
+                LARGE_INTEGER zero = {};
+                SetFilePointerEx(out, zero, nullptr, FILE_END);
             }
         }
         if (out != INVALID_HANDLE_VALUE) {
             for (int i = 0; i < nfiles; i++) {
-                if (same_file(files[i], target.p)) {
-                    continue;
-                }
                 if (show_names)
                     out_fmt(L"%ls\r\n", files[i]);
+                if (same_file(files[i], target.p))
+                    continue;
                 if (!append_file(out, files[i])) {
                     print_win_error(GetLastError());
                     set_errorlevel(1);
