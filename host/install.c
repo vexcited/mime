@@ -102,7 +102,7 @@ static bool create_skeleton(const MimePaths *paths)
 {
     static const char *const folders[] = {
         "Windows/System32/config", "Windows/System32/drivers", "Windows/System32/en-US", "Windows/SysWOW64",
-        "Windows/Globalization/Sorting", "Windows/SystemResources", "Windows/Fonts", "Windows/Temp", "Program Files",
+        "Windows/Media", "Windows/SystemResources", "Windows/Fonts", "Windows/Temp", "Program Files",
         "Program Files (x86)",
 #ifdef __aarch64__
         "Program Files (Arm)", /* arm64 windows only. */

@@ -480,7 +480,42 @@ WINUSERAPI UINT_PTR WINAPI SetCoalescableTimer(HWND hwnd, UINT_PTR id, UINT elap
     return NtUserSetTimer(hwnd, id, elapse, proc, tolerance);
 }
 
+/* the event of a beep: the icon bits of the type choose it, anything else is the default beep. */
+static const WCHAR *beep_event(UINT type)
+{
+    switch (type & 0xF0) {
+    case MB_ICONHAND: return L"SystemHand";
+    case MB_ICONQUESTION: return L"SystemQuestion";
+    case MB_ICONEXCLAMATION: return L"SystemExclamation";
+    case MB_ICONASTERISK: return L"SystemAsterisk";
+    default: return L".Default";
+    }
+}
+
+typedef BOOL(WINAPI *PLAYSOUNDW)(LPCWSTR, HMODULE, DWORD);
+
+#define BEEP_SOUND_FLAGS (0x00010000 | 0x0001 | 0x0002) /* an alias, asynchronous, no default sound. */
+
+/* plays the sound of the event on a thread of winmm, which a program that never beeps does not load. */
+static void play_beep(UINT type)
+{
+    static PLAYSOUNDW play;
+    BOOL enabled = TRUE;
+    if (!SystemParametersInfoW(SPI_GETBEEP, 0, &enabled, 0) || !enabled)
+        return;
+    if (!play) {
+        HMODULE winmm = LoadLibraryW(L"winmm.dll");
+        play = winmm ? (PLAYSOUNDW)GetProcAddress(winmm, "PlaySoundW") : nullptr;
+        if (!play)
+            return;
+    }
+    play(beep_event(type), nullptr, BEEP_SOUND_FLAGS);
+}
+
 WINUSERAPI BOOL WINAPI MessageBeep(UINT type)
 {
-    return NtUserMessageBeep(type);
+    BOOL ok = NtUserMessageBeep(type);
+    if (ok)
+        play_beep(type);
+    return ok;
 }

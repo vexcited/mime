@@ -104,7 +104,8 @@ static BOOL load_alias(SOUND *s, const WCHAR *alias)
     lstrcatW(key, alias);
     lstrcatW(key, L"\\.Current");
     DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, key, nullptr, RRF_RT_REG_SZ, nullptr, value, &size) || !value[0])
+    if (RegGetValueW(HKEY_CURRENT_USER, key, nullptr, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, value, &size) ||
+        !value[0])
         return FALSE;
     if (!ExpandEnvironmentStringsW(value, path, MAX_PATH))
         return FALSE;
