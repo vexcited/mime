@@ -1,0 +1,3 @@
+LIBRARY RpcEpMap.dll
+EXPORTS
+    ServiceMain

@@ -992,10 +992,14 @@ static DWORD start_dependencies(SERVICE *s, DWORD depth, DWORD reason)
             result = ERROR_SERVICE_DEPENDENCY_FAIL;
     }
     for (const WCHAR *g = s->DepGroups; g && *g && !result; g += wcslen(g) + 1) {
-        /* a group is up when one member runs: all are started and the first one up will do. */
+        /*
+         * a group is up when one member runs: all are started and the first one up will do. a member whose program
+         * or service dll is missing is a windows component mime does not have, and does not count.
+         */
         BOOL members = FALSE, running = FALSE;
         for (SERVICE *m = g_services; m; m = m->Next) {
-            if (m == s || !DbLoadRecord(m) || !m->Group || _wcsicmp(m->Group, g))
+            if (m == s || !DbLoadRecord(m) || !m->Group || _wcsicmp(m->Group, g) ||
+                (!(m->Type & SERVICE_DRIVER) && !RunImageExists(m)))
                 continue;
             members = TRUE;
             if (m->Status.dwCurrentState == SERVICE_RUNNING || m->Status.dwCurrentState == SERVICE_PAUSED)
@@ -1005,7 +1009,7 @@ static DWORD start_dependencies(SERVICE *s, DWORD depth, DWORD reason)
             continue;
         for (SERVICE *m = g_services; m; m = m->Next) {
             if (m == s || !DbLoadRecord(m) || !m->Group || _wcsicmp(m->Group, g) || m->Start == SERVICE_DISABLED ||
-                (m->Type & SERVICE_DRIVER))
+                (m->Type & SERVICE_DRIVER) || !RunImageExists(m))
                 continue;
             if (m->Status.dwCurrentState == SERVICE_STOPPED) {
                 if (start_with_dependencies(m, 0, nullptr, depth + 1, reason) == ERROR_SUCCESS &&

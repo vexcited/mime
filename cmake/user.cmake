@@ -208,7 +208,8 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     activeds:0x7FF070000000 advpack:0x7FF110000000 mfplat:0x7FF060000000 mf:0x7FF050000000 mfreadwrite:0x7FF040000000 mfcaptureengine:0x7FF010000000 coremessaging:0x7FF090000000
     cabinet:0x7FF740000000 sfc:0x7FF750000000 sfc_os:0x7FF760000000 msxml3:0x7FF780000000 msxml6:0x7FF790000000
     windowscodecs:0x7FF7A0000000
-    onecorecommonproxystub:0x7FEFF0000000 onecoreuapcommonproxystub:0x7FEFE0000000)
+    onecorecommonproxystub:0x7FEFF0000000 onecoreuapcommonproxystub:0x7FEFE0000000
+    rpcss:0x7FEFD0000000 rpcepmap:0x7FEFC0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet ${arch}-lib-crypto:guest/lib/crypto/hash.c)
@@ -302,6 +303,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_comctl32 ${MIME_LIB_${arch}}/uxtheme.lib)
     set(libs_msctf ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_oleacc ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
+    foreach(service rpcss rpcepmap)
+        set(libs_${service} ${MIME_LIB_${arch}}/advapi32.lib)
+    endforeach()
     set(includes_dxgi third_party/khronos)
     set(includes_d3d11 third_party/khronos ${MIME_GEN}/shaders)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
@@ -319,6 +323,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
             set(file windows.storage.dll)
         elseif(name STREQUAL "coremessaging")
             set(file CoreMessaging.dll)
+        elseif(name STREQUAL "rpcepmap")
+            set(file RpcEpMap.dll)
         endif()
         mime_glob(sources guest/${name}/*.c guest/${name}/*.cpp guest/${name}/${arch}/*.S)
         mime_dll(${name} ${arch} BASE ${base} FILE ${file} SOURCES ${sources} OBJECTS ${arch}-chkstk ${objects_${name}}

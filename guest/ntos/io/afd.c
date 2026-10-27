@@ -2037,6 +2037,11 @@ static NTSTATUS NTAPI AfdDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING regi
     return IoCreateDevice(driver, 0, &name, FILE_DEVICE_NETWORK, 0, FALSE, &g_device);
 }
 
+static NTSTATUS NTAPI TcpipDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
+{
+    return STATUS_SUCCESS;
+}
+
 void IopInitializeAfd(void)
 {
     KeInitializeMutex(&g_lock, 0);
@@ -2058,4 +2063,8 @@ void IopInitializeAfd(void)
     status = PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, worker, nullptr);
     if (!NT_SUCCESS(status))
         KiLogPrintf("afd has no worker: %08x", status);
+    /* the transport is the host's, its driver object tells services that depend on Tcpip that it runs. */
+    status = IoCreateDriver(L"\\Driver\\Tcpip", TcpipDriverEntry, nullptr);
+    if (!NT_SUCCESS(status))
+        KiLogPrintf("tcpip driver object failed: %08x", status);
 }

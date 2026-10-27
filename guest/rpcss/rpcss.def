@@ -1,0 +1,3 @@
+LIBRARY rpcss.dll
+EXPORTS
+    ServiceMain
