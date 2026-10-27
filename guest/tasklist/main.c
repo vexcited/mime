@@ -327,7 +327,7 @@ int tool_main(void)
     if (!table.rows_count) {
         tu_print(L"INFO: No tasks are running which match the specified criteria.\n");
     } else {
-        if (format == TU_FMT_TABLE && !no_header)
+        if (format == TU_FMT_TABLE)
             tu_puts(L"\n");
         tu_table_print(&table, format, no_header);
     }
