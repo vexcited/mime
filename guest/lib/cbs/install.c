@@ -185,6 +185,17 @@ static char *expand(INSTALL *I, CBS_ARCH arch, const char *in)
     return out;
 }
 
+/* a path that climbs out of the directory it names with a ".." component is not one a manifest has. */
+static bool climbs(const char *path)
+{
+    for (const char *p = path; *p; p++) {
+        bool start = p == path || p[-1] == '\\' || p[-1] == '/';
+        if (start && p[0] == '.' && p[1] == '.' && (!p[2] || p[2] == '\\' || p[2] == '/'))
+            return true;
+    }
+    return false;
+}
+
 /* directory + file name, with one backslash between. */
 static char *join(INSTALL *I, const char *directory, const char *name)
 {
@@ -406,9 +417,13 @@ static void *manifest_begin(void *context, const MIME_CAB_FILE *file)
 static int manifest_write(void *context, void *file_context, const uint8_t *data, size_t length)
 {
     MANIFEST_READ *m = file_context;
-    (void)context;
-    if (m->Used + length > m->Size)
+    if (m->Used + length > m->Size) {
+        /* the cabinet does not end a file whose write failed. */
+        ((INSTALL *)context)->Status = CBS_CORRUPT;
+        CbsFree(m->Data);
+        CbsFree(m);
         return 1;
+    }
     memcpy(m->Data + m->Used, data, length);
     m->Used += length;
     return 0;
@@ -557,6 +572,8 @@ static int plan_component(INSTALL *I, const CBS_COMPONENT *c)
         plan.Size = I->FileSize[entry->Index];
         if (!plan.Path)
             return CBS_MEMORY;
+        if (climbs(plan.Path))
+            return CBS_BAD;
         unsigned index;
         int status = add_plan(I, &plan, &index);
         if (status != CBS_OK)
@@ -565,6 +582,8 @@ static int plan_component(INSTALL *I, const CBS_COMPONENT *c)
             char *link = expand(I, arch, c->Links[file->FirstLink + l]);
             if (!link)
                 return CBS_MEMORY;
+            if (climbs(link))
+                return CBS_BAD;
             status = add_link(I, &I->Plans[index], link);
             if (status != CBS_OK)
                 return status;
@@ -731,16 +750,26 @@ static int payload_write(void *context, void *file_context, const uint8_t *data,
 {
     INSTALL *I = context;
     WRITE *w = file_context;
-    if (w->Failed)
-        return 1;
-    mime_sha256.update(&w->Hash, data, length);
-    if (I->Target->Write(I->Target->Context, w->Handle, data, length)) {
-        I->Status = CBS_TARGET_FAILED;
+    if (w->Failed) {
+        CbsFree(w);
         return 1;
     }
-    w->Written += length;
-    I->Done += length;
-    return report(I, false) ? 1 : 0;
+    mime_sha256.update(&w->Hash, data, length);
+    bool stop = false;
+    if (I->Target->Write(I->Target->Context, w->Handle, data, length)) {
+        I->Status = CBS_TARGET_FAILED;
+        stop = true;
+    } else {
+        w->Written += length;
+        I->Done += length;
+        stop = report(I, false);
+    }
+    if (stop) {
+        /* the cabinet does not end a file whose write stopped, the half written one goes. */
+        I->Target->Abort(I->Target->Context, w->Handle);
+        CbsFree(w);
+    }
+    return stop ? 1 : 0;
 }
 
 static int payload_end(void *context, void *file_context, const MIME_CAB_FILE *file)
@@ -1085,7 +1114,7 @@ int CbsInstallCabinet(const uint8_t *cabinet, size_t size, const CBS_LAYOUT *lay
         const CBS_COMPONENT *component = I.Components[c];
         for (unsigned d = 0; d < component->DirectoryCount && status == CBS_OK; d++) {
             char *directory = expand(&I, component->Id.Arch, component->Directories[d]);
-            status = directory ? ensure_directory(&I, directory) : CBS_MEMORY;
+            status = !directory ? CBS_MEMORY : climbs(directory) ? CBS_BAD : ensure_directory(&I, directory);
         }
     }
     if (status == CBS_OK) {
