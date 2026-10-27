@@ -484,7 +484,7 @@ void MenuBarPaint(WND *w, SURFACE *s, const REGION *clip, POINT origin)
         const MENU_ITEM *it = &m->Items[i];
         RECT r = bar->Items[i];
         RectOffset(&r, origin.x, origin.y);
-        BOOLEAN selected = w->MenuHot == (LONG)i + 1 || w->MenuPushed == (LONG)i + 1;
+        BOOLEAN selected = w->MenuHot == (LONG)i + 1 || w->MenuPushed == (LONG)i + 1 || (it->State & MFS_HILITE) != 0;
         BOOLEAN pushed = w->MenuPushed == (LONG)i + 1;
         BOOLEAN grayed = (it->State & (MFS_GRAYED | MFS_DISABLED)) != 0;
         UINT ods = (selected ? ODS_SELECTED : 0) | (grayed ? ODS_GRAYED | ODS_DISABLED : 0) |

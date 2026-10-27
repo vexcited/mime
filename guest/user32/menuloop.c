@@ -73,6 +73,7 @@ typedef struct LOOP {
     BOOL ButtonDown;
     BOOL DownSeen;      /* a button went down in the loop, as opposed to the one that opened the menu. */
     DWORD StartTick;
+    DWORD Tid;
     POINT StartPoint;
     BOOL IdlePending;
     BOOL ByMouse;       /* the last selection came from the mouse. */
@@ -110,7 +111,75 @@ static void guard_clear(void)
     g_char_guard.Window = nullptr;
 }
 
-static LOOP *volatile g_loop;
+/* the loops that run, in the order they started. one thread has at most one, unless TPM_RECURSE nests them. */
+static LOOP *g_loops[16];
+static volatile LONG g_loops_lock;
+
+static void loops_lock(void)
+{
+    while (InterlockedCompareExchange(&g_loops_lock, 1, 0))
+        YieldProcessor();
+}
+
+static void loops_unlock(void)
+{
+    InterlockedExchange(&g_loops_lock, 0);
+}
+
+static BOOL loop_add(LOOP *l)
+{
+    BOOL added = FALSE;
+    l->Tid = GetCurrentThreadId();
+    loops_lock();
+    for (int i = 0; i < (int)RTL_NUMBER_OF(g_loops) && !added; i++)
+        if (!g_loops[i]) {
+            g_loops[i] = l;
+            added = TRUE;
+        }
+    loops_unlock();
+    return added;
+}
+
+static void loop_remove(LOOP *l)
+{
+    loops_lock();
+    for (int i = 0; i < (int)RTL_NUMBER_OF(g_loops); i++)
+        if (g_loops[i] == l)
+            g_loops[i] = nullptr;
+    loops_unlock();
+}
+
+/* the innermost loop of the calling thread. */
+static LOOP *thread_loop(void)
+{
+    LOOP *found = nullptr;
+    DWORD tid = GetCurrentThreadId();
+    loops_lock();
+    for (int i = 0; i < (int)RTL_NUMBER_OF(g_loops); i++)
+        if (g_loops[i] && g_loops[i]->Tid == tid)
+            found = g_loops[i];
+    loops_unlock();
+    return found;
+}
+
+/* the loop that runs the bar of a window, shows a popup window, or has a popup of a menu on show. */
+static LOOP *loop_matching(HWND window, HMENU menu)
+{
+    LOOP *found = nullptr;
+    loops_lock();
+    for (int i = 0; i < (int)RTL_NUMBER_OF(g_loops) && !found; i++) {
+        LOOP *l = g_loops[i];
+        if (!l)
+            continue;
+        if (window && l->BarWindow == window)
+            found = l;
+        for (int d = 0; l && d < l->Depth && !found; d++)
+            if ((window && l->Levels[d].Window == window) || (menu && l->Levels[d].Menu == menu))
+                found = l;
+    }
+    loops_unlock();
+    return found;
+}
 
 static int scale(int v, UINT dpi)
 {
@@ -431,7 +500,7 @@ static void paint_level(LOOP *l, LEVEL *lv, HDC dc)
             DeleteObject(rule);
             continue;
         }
-        BOOL hot = i == lv->Hot;
+        BOOL hot = i == lv->Hot || (it->State & MFS_HILITE) != 0;
         BOOL grey = (it->State & (MFS_GRAYED | MF_DISABLED)) != 0;
         if (it->Type & MFT_OWNERDRAW) {
             DRAWITEMSTRUCT di;
@@ -876,7 +945,9 @@ static void select_level_item(LOOP *l, int level, int item, BOOL mouse)
         l->Timer = OPEN_TIMER;
         l->TimerLevel = level;
         l->TimerItem = item;
-        SetTimer(l->TimerWindow, OPEN_TIMER, 400, nullptr);
+        DWORD delay = 400;
+        SystemParametersInfoW(SPI_GETMENUSHOWDELAY, 0, &delay, 0);
+        SetTimer(l->TimerWindow, OPEN_TIMER, delay ? delay : 1, nullptr);
     }
 }
 
@@ -1538,6 +1609,7 @@ static BOOL start_common(LOOP *l, HWND owner)
     l->StartActive = GetActiveWindow();
     if (!l->StartActive)
         l->StartActive = GetAncestor(owner, GA_ROOT);
+    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
     l->StartTick = GetTickCount();
     GetCursorPos(&l->StartPoint);
     l->LastMouse = l->StartPoint;
@@ -1620,7 +1692,7 @@ WINUSERAPI BOOL WINAPI TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HW
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return FALSE;
     }
-    if (g_loop && !(flags & TPM_RECURSE)) {
+    if (thread_loop() && !(flags & TPM_RECURSE)) {
         SetLastError(ERROR_POPUP_ALREADY_ACTIVE);
         return FALSE;
     }
@@ -1649,10 +1721,10 @@ WINUSERAPI BOOL WINAPI TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HW
                                             flags, FALSE)) {
         loop.Capture = loop.Levels[0].Window;
         loop.TimerWindow = loop.Capture;
-        LOOP *previous = g_loop;
-        g_loop = &loop;
+        BOOL registered = loop_add(&loop);
         run(&loop);
-        g_loop = previous;
+        if (registered)
+            loop_remove(&loop);
         result = TRUE;
     }
     finish(&loop);
@@ -1679,7 +1751,7 @@ WINUSERAPI BOOL WINAPI TrackPopupMenu(HMENU menu, UINT flags, int x, int y, int 
 
 WINUSERAPI BOOL WINAPI EndMenu(void)
 {
-    LOOP *l = g_loop;
+    LOOP *l = thread_loop();
     if (l) {
         l->Done = TRUE;
         PostMessageW(l->Owner, WM_NULL, 0, 0);
@@ -1693,7 +1765,7 @@ WINUSERAPI BOOL WINAPI EndMenu(void)
  */
 static void run_window_menu(HWND hwnd, int start, BOOL open, WCHAR ch, BOOL mouse, POINT pos)
 {
-    if (g_loop || !IsWindow(hwnd))
+    if (thread_loop() || !IsWindow(hwnd))
         return;
     LONG style = GetWindowLongW(hwnd, GWL_STYLE);
     if (style & WS_CHILD)
@@ -1733,7 +1805,7 @@ static void run_window_menu(HWND hwnd, int start, BOOL open, WCHAR ch, BOOL mous
         loop.BarSerial = (ULONG)NtUserMimeCallMenu(bar, 0, MIME_MENU_SERIAL);
         loop.BarItems = load_items(bar, &loop.BarCount);
     }
-    g_loop = &loop;
+    BOOL registered = loop_add(&loop);
     if (!bar && start != SYSTEM_ICON)
         start = SYSTEM_ICON;
     /* Alt alone selects the first item, Alt and a character looks for its item without selecting one. */
@@ -1758,7 +1830,8 @@ static void run_window_menu(HWND hwnd, int start, BOOL open, WCHAR ch, BOOL mous
     }
     if (!loop.Done)
         run(&loop);
-    g_loop = nullptr;
+    if (registered)
+        loop_remove(&loop);
     finish(&loop);
     post_command(&loop);
 }
@@ -1824,7 +1897,7 @@ WINUSERAPI BOOL WINAPI GetMenuBarInfo(HWND hwnd, LONG object, LONG item, PMENUBA
         req.Item = item;
         if (NtUserCallHwndParam(hwnd, (ULONG_PTR)&req, MIME_HWNDPARAM_MENUBAR))
             info->rcBar = req.Rect;
-        LOOP *l = g_loop;
+        LOOP *l = loop_matching(hwnd, nullptr);
         if (l && l->BarWindow == hwnd) {
             info->fBarFocused = -1;
             if (item == 0) {
@@ -1852,7 +1925,7 @@ WINUSERAPI BOOL WINAPI GetMenuBarInfo(HWND hwnd, LONG object, LONG item, PMENUBA
                                  window.left + frame + GetSystemMetricsForDpi(SM_CXSIZE, dpi),
                                  window.top + frame + GetSystemMetricsForDpi(SM_CYSIZE, dpi)};
         }
-        LOOP *l = g_loop;
+        LOOP *l = loop_matching(hwnd, nullptr);
         if (l && l->BarWindow == hwnd && l->BarSel == SYSTEM_ICON) {
             info->fBarFocused = -1;
             if (item == 0) {
@@ -1865,7 +1938,7 @@ WINUSERAPI BOOL WINAPI GetMenuBarInfo(HWND hwnd, LONG object, LONG item, PMENUBA
     }
     if (object == OBJID_CLIENT) {
         /* a popup window of the loop. */
-        LOOP *l = g_loop;
+        LOOP *l = loop_matching(hwnd, nullptr);
         for (int d = 0; l && d < l->Depth; d++) {
             LEVEL *lv = &l->Levels[d];
             if (lv->Window != hwnd || item > lv->Count)
@@ -1895,7 +1968,7 @@ WINUSERAPI BOOL WINAPI GetMenuItemRect(HWND window, HMENU menu, UINT item, LPREC
         SetLastError(ERROR_INVALID_MENU_HANDLE);
         return FALSE;
     }
-    LOOP *l = g_loop;
+    LOOP *l = loop_matching(nullptr, menu);
     for (int d = 0; l && d < l->Depth; d++) {
         LEVEL *lv = &l->Levels[d];
         if (lv->Menu == menu && item < (UINT)lv->Count) {
@@ -1921,7 +1994,7 @@ WINUSERAPI BOOL WINAPI GetMenuItemRect(HWND window, HMENU menu, UINT item, LPREC
 /* the item at a point of the screen, in the bar of the window or an open popup of the menu. */
 WINUSERAPI int WINAPI MenuItemFromPoint(HWND window, HMENU menu, POINT screen)
 {
-    LOOP *l = g_loop;
+    LOOP *l = loop_matching(nullptr, menu);
     for (int d = 0; l && d < l->Depth; d++) {
         LEVEL *lv = &l->Levels[d];
         int item;
