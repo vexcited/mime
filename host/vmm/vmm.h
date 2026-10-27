@@ -246,6 +246,9 @@ bool mime_window_bus_fault(void *address);
 uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
 uint64_t mime_net_config(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *value);
 void mime_net_close_all(void);
+/* offline, the guest reaches loopback alone and its connections to other hosts are aborted. */
+void mime_net_set_offline(bool offline);
+bool mime_net_offline(void);
 
 /* lazy.c */
 bool mime_lazy_init(MimeLazyRegion *r, uint64_t ipa, uint64_t size, int fd, const void *src, uint64_t src_size);

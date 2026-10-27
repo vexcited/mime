@@ -24,6 +24,7 @@
 #include <poll.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -49,6 +50,8 @@ typedef struct NetSocket {
     bool stream;
     bool listening;
     bool queued; /* in the ring. */
+    bool remote;  /* connected, or connecting, to another host than this one. */
+    bool severed; /* a remote connection aborted when the machine went offline. */
 } NetSocket;
 
 typedef struct NetResolve {
@@ -76,6 +79,7 @@ static uint32_t g_ring[NET_RING];
 static uint32_t g_ring_head, g_ring_tail;
 static NetResolve *g_resolves;
 static uint32_t g_next_resolve;
+static bool g_offline;
 
 static int32_t wsa_error(int e)
 {
@@ -217,6 +221,30 @@ static MimeNetAddr *guest_addr(MimeVm *vm, uint64_t pa)
     return pa ? mime_vm_phys(vm, pa, sizeof(MimeNetAddr)) : nullptr;
 }
 
+static bool loopback(const struct sockaddr_storage *ss)
+{
+    if (ss->ss_family == AF_INET)
+        return ((const uint8_t *)&((const struct sockaddr_in *)ss)->sin_addr)[0] == 127;
+    if (ss->ss_family == AF_INET6) {
+        const struct in6_addr *a = &((const struct sockaddr_in6 *)ss)->sin6_addr;
+        return IN6_IS_ADDR_LOOPBACK(a) || (IN6_IS_ADDR_V4MAPPED(a) && a->s6_addr[12] == 127);
+    }
+    return false;
+}
+
+static bool unspecified(const struct sockaddr_storage *ss)
+{
+    if (ss->ss_family == AF_INET)
+        return ((const struct sockaddr_in *)ss)->sin_addr.s_addr == INADDR_ANY;
+    return ss->ss_family == AF_INET6 && IN6_IS_ADDR_UNSPECIFIED(&((const struct sockaddr_in6 *)ss)->sin6_addr);
+}
+
+/* offline, only this machine answers. */
+static bool reachable(const struct sockaddr_storage *ss)
+{
+    return !__atomic_load_n(&g_offline, __ATOMIC_ACQUIRE) || loopback(ss);
+}
+
 /* ------------------------------------------------------------ the socket table and the ring. */
 
 static NetSocket *lookup(uint64_t id)
@@ -350,6 +378,8 @@ static NetSocket *add_socket(int fd, bool stream)
         s->stream = stream;
         s->listening = false;
         s->queued = false;
+        s->remote = false;
+        s->severed = false;
         return s;
     }
     return nullptr;
@@ -409,6 +439,8 @@ static uint64_t net_send(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, ui
     const void *data = len ? mime_vm_phys(vm, pa, len) : "";
     if (!data)
         return MIME_HC_STATUS_INVALID;
+    if (s->severed)
+        return fail(value, 10053); /* WSAECONNABORTED */
     ssize_t n;
     if (addr_pa) {
         const MimeNetAddr *a = guest_addr(vm, addr_pa);
@@ -416,8 +448,12 @@ static uint64_t net_send(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, ui
         socklen_t sl;
         if (!a || !to_host(a, &ss, &sl))
             return fail(value, 10047);
+        if (!reachable(&ss))
+            return fail(value, 10051); /* WSAENETUNREACH */
         n = sendto(s->fd, data, len, host_flags(flags), (struct sockaddr *)&ss, sl);
     } else {
+        if (s->remote && __atomic_load_n(&g_offline, __ATOMIC_ACQUIRE))
+            return fail(value, 10051);
         n = send(s->fd, data, len, host_flags(flags));
     }
     if (n < 0)
@@ -436,15 +472,25 @@ static uint64_t net_recv(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, ui
     MimeNetAddr *a = nullptr;
     if (addr_pa && !(a = guest_addr(vm, addr_pa)))
         return MIME_HC_STATUS_INVALID;
+    if (s->severed)
+        return fail(value, 10053);
     struct sockaddr_storage ss;
     struct iovec iov = {data, len};
     struct msghdr msg = {};
-    msg.msg_name = &ss;
-    msg.msg_namelen = sizeof(ss);
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    memset(&ss, 0, sizeof(ss));
-    ssize_t n = recvmsg(s->fd, &msg, host_flags(flags));
+    ssize_t n;
+    for (;;) {
+        msg.msg_name = &ss;
+        msg.msg_namelen = sizeof(ss);
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        memset(&ss, 0, sizeof(ss));
+        n = recvmsg(s->fd, &msg, host_flags(flags));
+        /* offline, datagrams from other hosts are dropped. */
+        if (n < 0 || s->stream || !msg.msg_namelen || reachable(&ss))
+            break;
+        if (flags & WIN_MSG_PEEK)
+            recv(s->fd, &dummy, 1, 0);
+    }
     if (n < 0) {
         /* an ICMP port unreachable of a datagram reports as a reset on windows. */
         if (!s->stream && errno == ECONNREFUSED)
@@ -583,6 +629,10 @@ static uint16_t readiness(NetSocket *s, short revents, int32_t *error)
     *error = 0;
     if (revents & POLLNVAL)
         return MIME_NET_INVALID;
+    if (s->severed) {
+        *error = 10053;
+        return MIME_NET_ERROR;
+    }
     if (revents & POLLIN) {
         if (!s->stream || s->listening) {
             r |= MIME_NET_READ;
@@ -720,6 +770,14 @@ static int32_t resolve_error(int e)
     }
 }
 
+static bool localhost(const char *name)
+{
+    size_t n = strlen(name);
+    if (n && name[n - 1] == '.')
+        n--;
+    return (n == 9 && !strncasecmp(name, "localhost", 9)) || (n > 10 && !strncasecmp(name + n - 10, ".localhost", 10));
+}
+
 static void *resolve_thread(void *arg)
 {
     NetResolve *r = arg;
@@ -727,6 +785,9 @@ static void *resolve_thread(void *arg)
     hints.ai_family = r->family;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_ADDRCONFIG;
+    /* offline, there is no server to ask: addresses and localhost alone resolve. */
+    if (__atomic_load_n(&g_offline, __ATOMIC_ACQUIRE) && !localhost(r->name))
+        hints.ai_flags |= AI_NUMERICHOST;
     int e = getaddrinfo(r->name, nullptr, &hints, &list);
     pthread_mutex_lock(&g_lock);
     if (e) {
@@ -847,6 +908,8 @@ static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *
     for (struct ifaddrs *ifa = list; ifa; ifa = ifa->ifa_next) {
         if (!ifa->ifa_addr || (ifa->ifa_addr->sa_family != AF_INET && ifa->ifa_addr->sa_family != AF_INET6))
             continue;
+        if (g_offline && !(ifa->ifa_flags & IFF_LOOPBACK))
+            continue;
         if (n < max) {
             MimeNetInterface *e = &out[n];
             memset(e, 0, sizeof(*e));
@@ -941,6 +1004,8 @@ uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = MIME_HC_STATUS_INVALID;
         else if (!to_host(a, &ss, &sl))
             status = fail(&value, 10047);
+        else if (!unspecified(&ss) && !reachable(&ss))
+            status = fail(&value, 10049); /* WSAEADDRNOTAVAIL, the addresses of the network went away. */
         else if (bind(s->fd, (struct sockaddr *)&ss, sl) < 0)
             status = fail_errno(&value);
         break;
@@ -955,19 +1020,35 @@ uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         const MimeNetAddr *a = guest_addr(vm, regs[2]);
         struct sockaddr_storage ss;
         socklen_t sl;
-        if (!a)
+        if (!a) {
             status = MIME_HC_STATUS_INVALID;
-        else if (!to_host(a, &ss, &sl))
+        } else if (!to_host(a, &ss, &sl)) {
             status = fail(&value, 10047);
-        else if (connect(s->fd, (struct sockaddr *)&ss, sl) < 0)
-            status = fail_errno(&value);
+        } else if (s->severed) {
+            status = fail(&value, 10053);
+        } else if (!reachable(&ss)) {
+            status = fail(&value, 10051);
+        } else {
+            int r = connect(s->fd, (struct sockaddr *)&ss, sl);
+            if (r == 0 || errno == EINPROGRESS)
+                s->remote = !loopback(&ss);
+            if (r < 0)
+                status = fail_errno(&value);
+        }
         break;
     }
     case MIME_HC_NET_ACCEPT: {
         MimeNetAddr *a = guest_addr(vm, regs[2]);
         struct sockaddr_storage ss;
-        socklen_t sl = sizeof(ss);
-        int fd = accept(s->fd, (struct sockaddr *)&ss, &sl);
+        int fd;
+        for (;;) {
+            socklen_t sl = sizeof(ss);
+            fd = accept(s->fd, (struct sockaddr *)&ss, &sl);
+            /* offline, connections from other hosts are refused. */
+            if (fd < 0 || reachable(&ss))
+                break;
+            close(fd);
+        }
         if (fd < 0) {
             status = fail_errno(&value);
             break;
@@ -979,6 +1060,7 @@ uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = fail(&value, 10024);
             break;
         }
+        c->remote = !loopback(&ss);
         if (a)
             from_host((struct sockaddr *)&ss, a);
         value = socket_id(c);
@@ -1036,6 +1118,35 @@ done:
     pthread_mutex_unlock(&g_lock);
     regs[1] = value;
     return status;
+}
+
+bool mime_net_offline(void)
+{
+    return __atomic_load_n(&g_offline, __ATOMIC_ACQUIRE);
+}
+
+/* going offline aborts the connections to other hosts, as a network that goes away does. */
+void mime_net_set_offline(bool offline)
+{
+    pthread_mutex_lock(&g_lock);
+    __atomic_store_n(&g_offline, offline, __ATOMIC_RELEASE);
+    bool raise = false;
+    for (uint32_t i = 0; offline && g_kq >= 0 && i < NET_SLOTS; i++) {
+        NetSocket *s = &g_sockets[i];
+        if (s->fd < 0 || !s->stream || !s->remote || s->severed)
+            continue;
+        s->severed = true;
+        shutdown(s->fd, SHUT_RDWR);
+        if (!s->queued) {
+            s->queued = true;
+            push_ring(socket_id(s));
+            raise = true;
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+    if (raise)
+        mime_vm_raise_irq(g_vm, MIME_IRQ_NET);
+    mime_info("the machine is %s", offline ? "offline" : "online");
 }
 
 void mime_net_close_all(void)

@@ -562,6 +562,17 @@ uint64_t mime_net_config(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *value
     read_addresses(c);
     read_routes(c);
     read_resolver(c);
+    /* offline, the loopback link is all that is left, without a resolver. */
+    if (mime_net_offline()) {
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < c->head.links; i++)
+            if (c->links[i].flags & MIME_NET_IF_LOOPBACK)
+                c->links[kept++] = c->links[i];
+        c->head.links = kept;
+        c->head.servers = 0;
+        c->head.domain[0] = 0;
+        c->head.search[0] = 0;
+    }
     /* drop addresses and routes whose links disappeared during the query. */
     uint32_t kept = 0;
     for (uint32_t i = 0; i < c->head.addresses; i++)

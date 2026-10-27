@@ -108,28 +108,21 @@ static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
         file = CreateFileW(info->pcwszFilePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return owned ? HRESULT_FROM_WIN32(GetLastError()) : E_INVALIDARG;
-    LARGE_INTEGER size, position, zero = {};
-    BYTE *bytes = nullptr;
+    /* the file is mapped, not read, so its position stays and a large cabinet costs no copy. */
+    static const BYTE empty[1];
+    LARGE_INTEGER size;
+    const BYTE *bytes = empty;
+    HANDLE mapping = nullptr;
     LONG result = 0;
-    BOOL restore = FALSE;
     if (!GetFileSizeEx(file, &size))
         result = HRESULT_FROM_WIN32(GetLastError());
-    else if (size.QuadPart < 0 || size.QuadPart > 256 * 1024 * 1024)
+    else if (size.QuadPart < 0 || size.QuadPart > 0xFFFFFFFF)
         result = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
-    else if (!(bytes = LocalAlloc(LMEM_FIXED, size.QuadPart ? (SIZE_T)size.QuadPart : 1)))
-        result = E_OUTOFMEMORY;
-    else if (!SetFilePointerEx(file, zero, &position, FILE_CURRENT))
+    else if (size.QuadPart && (!(mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr)) ||
+                               !(bytes = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0))))
         result = HRESULT_FROM_WIN32(GetLastError());
-    else {
-        restore = !owned;
-        DWORD read;
-        if (!SetFilePointerEx(file, zero, nullptr, FILE_BEGIN) || !ReadFile(file, bytes, (DWORD)size.QuadPart, &read, nullptr))
-            result = HRESULT_FROM_WIN32(GetLastError());
-        else if (read != size.QuadPart)
-            result = HRESULT_FROM_WIN32(ERROR_READ_FAULT);
-    }
-    if (restore && !SetFilePointerEx(file, position, nullptr, FILE_BEGIN) && !result)
-        result = HRESULT_FROM_WIN32(GetLastError());
+    if (mapping)
+        CloseHandle(mapping);
     if (owned)
         CloseHandle(file);
     if (!result)
@@ -137,7 +130,8 @@ static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
                      WtVerifyInstaller(bytes, (DWORD)size.QuadPart, data, chain) :
                  size.QuadPart >= 4 && !memcmp(bytes, "MSCF", 4) ? WtVerifyCab(bytes, (DWORD)size.QuadPart, data, chain)
                                                                   : WtVerifyPe(bytes, (DWORD)size.QuadPart, data, chain);
-    LocalFree(bytes);
+    if (bytes && bytes != empty)
+        UnmapViewOfFile(bytes);
     return result;
 }
 

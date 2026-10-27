@@ -593,8 +593,10 @@ BOOL WINAPI CryptMsgGetAndVerifySigner(HCRYPTMSG handle, DWORD store_count, HCER
     return CrFail(error);
 }
 
-static DWORD read_object(DWORD type, const void *object, BYTE **bytes, DWORD *size)
+/* a blob is copied, a file is mapped, which *mapped tells: signed files such as cabinets can be large. */
+static DWORD read_object(DWORD type, const void *object, BYTE **bytes, DWORD *size, BOOL *mapped)
 {
+    *mapped = FALSE;
     if (!object)
         return ERROR_INVALID_PARAMETER;
     if (type == CERT_QUERY_OBJECT_BLOB) {
@@ -614,19 +616,23 @@ static DWORD read_object(DWORD type, const void *object, BYTE **bytes, DWORD *si
     if (file == INVALID_HANDLE_VALUE)
         return GetLastError();
     LARGE_INTEGER length;
-    DWORD error = 0, read;
+    DWORD error = 0;
+    HANDLE mapping = nullptr;
     if (!GetFileSizeEx(file, &length))
         error = GetLastError();
-    else if (length.QuadPart <= 0 || length.QuadPart > 256 * 1024 * 1024)
+    else if (length.QuadPart <= 0)
+        error = CRYPT_E_NO_MATCH;
+    else if (length.QuadPart > 0xFFFFFFFF)
         error = ERROR_FILE_TOO_LARGE;
-    else if (!(*bytes = CrAlloc((SIZE_T)length.QuadPart)))
-        error = ERROR_OUTOFMEMORY;
-    else if (!ReadFile(file, *bytes, (DWORD)length.QuadPart, &read, nullptr))
+    else if (!(mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr)) ||
+             !(*bytes = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0)))
         error = GetLastError();
-    else if (read != length.QuadPart)
-        error = ERROR_READ_FAULT;
-    else
-        *size = read;
+    else {
+        *size = (DWORD)length.QuadPart;
+        *mapped = TRUE;
+    }
+    if (mapping)
+        CloseHandle(mapping);
     CloseHandle(file);
     return error;
 }
@@ -748,7 +754,8 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
         return CrFail(CRYPT_E_NO_MATCH);
     BYTE *bytes = nullptr;
     DWORD size = 0;
-    DWORD error = read_object(object_type, object, &bytes, &size);
+    BOOL mapped;
+    DWORD error = read_object(object_type, object, &bytes, &size, &mapped);
     DWORD type = CERT_QUERY_CONTENT_PKCS7_SIGNED, offset = 0, length = size;
     if (!error && size >= 2 && word(bytes) == 0x5a4d) {
         type = CERT_QUERY_CONTENT_PKCS7_SIGNED_EMBED;
@@ -760,7 +767,11 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
         BYTE *signature = nullptr;
         if (!embedded_package(bytes, size, &signature, &length)) {
             type = CERT_QUERY_CONTENT_PKCS7_SIGNED_EMBED;
-            CrFree(bytes);
+            if (mapped)
+                UnmapViewOfFile(bytes);
+            else
+                CrFree(bytes);
+            mapped = FALSE;
             bytes = signature;
             size = length;
             offset = 0;
@@ -778,7 +789,10 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
             error = parse_message(message, length);
         }
     }
-    CrFree(bytes);
+    if (mapped)
+        UnmapViewOfFile(bytes);
+    else
+        CrFree(bytes);
     HCERTSTORE store = nullptr;
     if (!error && store_out) {
         store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, nullptr);

@@ -382,6 +382,67 @@ static void serve_run(int fd, uint64_t request)
     close(fd);
 }
 
+/* ------------------------------------------------------------------ settings of this machine session. */
+
+typedef struct Setting {
+    const char *name;
+    const char *values; /* what it takes, for the error of a wrong value. */
+    const char *(*get)(void);
+    bool (*set)(const char *value);
+} Setting;
+
+static const char *get_internet(void)
+{
+    return mime_net_offline() ? "off" : "on";
+}
+
+static bool set_internet(const char *value)
+{
+    if (strcmp(value, "on") && strcmp(value, "off"))
+        return false;
+    mime_net_set_offline(!strcmp(value, "off"));
+    return true;
+}
+
+static const Setting g_settings[] = {
+    {"internet", "on or off", get_internet, set_internet},
+};
+
+static void send_error(int fd, const char *text)
+{
+    mime_ipc_send(fd, MIME_IPC_ERROR, text, (uint32_t)strlen(text) + 1);
+}
+
+static void handle_config(int fd, const char *payload, uint32_t size)
+{
+    const char *name = size ? payload : nullptr;
+    const char *value = name && strlen(name) + 1 < size ? name + strlen(name) + 1 : nullptr;
+    char reply[1024], text[256];
+    size_t length = 0;
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(g_settings); i++) {
+        const Setting *s = &g_settings[i];
+        if (name && strcmp(name, s->name))
+            continue;
+        if (value && !s->set(value)) {
+            snprintf(text, sizeof(text), "%s takes %s", s->name, s->values);
+            send_error(fd, text);
+            return;
+        }
+        const char *current = s->get();
+        if (length + strlen(s->name) + strlen(current) + 2 > sizeof(reply))
+            break;
+        memcpy(reply + length, s->name, strlen(s->name) + 1);
+        length += strlen(s->name) + 1;
+        memcpy(reply + length, current, strlen(current) + 1);
+        length += strlen(current) + 1;
+    }
+    if (name && !length) {
+        snprintf(text, sizeof(text), "unknown setting '%s'", name);
+        send_error(fd, text);
+        return;
+    }
+    mime_ipc_send(fd, MIME_IPC_CONFIG_REPLY, reply, (uint32_t)length);
+}
 
 static void *client_thread(void *arg)
 {
@@ -441,6 +502,10 @@ static void *client_thread(void *arg)
         }
         break;
     }
+    case MIME_IPC_CONFIG:
+        handle_config(fd, payload, h.size);
+        close(fd);
+        break;
     default:
         close(fd);
         break;

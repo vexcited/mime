@@ -25,6 +25,11 @@ static void usage(void)
     printf("  mime down [--force] [--timeout secs]   shut the machine down, programs get to close first; --force\n");
     printf("                                         ends them all at once\n");
     printf("  mime status                            show machine state\n");
+    printf("  mime config                            show the settings of the running machine, they last until\n");
+    printf("                                         it goes down\n");
+    printf("  mime config get <name>                 show one setting\n");
+    printf("  mime config set <name> <value>         change one setting; internet on or off puts the machine\n");
+    printf("                                         online or offline\n");
 }
 
 int main(int argc, char **argv)
@@ -62,6 +67,8 @@ int main(int argc, char **argv)
         return mime_cmd_down(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "status") == 0)
         return mime_cmd_status(&paths, argc - 2, argv + 2);
+    if (strcmp(cmd, "config") == 0)
+        return mime_cmd_config(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "version") == 0 || strcmp(cmd, "--version") == 0) {
         printf("mime %s\n", MIME_VERSION_STRING);
         return 0;

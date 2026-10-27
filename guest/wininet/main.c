@@ -3,6 +3,7 @@
  */
 #include "wininet_private.h"
 #include <mime/stub.h>
+#include <mime/win32/iphlpapi.h>
 #include <mime/win32/shlwapi.h>
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
@@ -10,17 +11,24 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
-/* the host network is reported as a LAN connection. */
+/* the host network is reported as a LAN connection, unless the machine has none at all. */
 DECLSPEC_EXPORT BOOL WINAPI InternetGetConnectedState(LPDWORD flags, DWORD reserved)
 {
+    static DWORD(NETIOAPI_API_ * hint_of)(NL_NETWORK_CONNECTIVITY_HINT *);
+    if (!hint_of) {
+        HMODULE iphlpapi = LoadLibraryW(L"iphlpapi.dll");
+        hint_of = iphlpapi ? (void *)GetProcAddress(iphlpapi, "GetNetworkConnectivityHint") : nullptr;
+    }
+    NL_NETWORK_CONNECTIVITY_HINT hint = {};
+    bool connected = !hint_of || hint_of(&hint) || hint.ConnectivityLevel != NetworkConnectivityLevelHintNone;
     if (flags)
-        *flags = INTERNET_CONNECTION_LAN;
-    return TRUE;
+        *flags = connected ? INTERNET_CONNECTION_LAN : 0;
+    return connected;
 }
 
 /*
- * dialing is a no-op because the machine is always online. reject flags beyond the four dialing flags and nonzero
- * reserved values. like Windows with its remote access library, return TRUE and clear last error.
+ * dialing is a no-op as the machine has no modem. reject flags beyond the four dialing flags and nonzero reserved
+ * values. like Windows with its remote access library, return TRUE and clear last error.
  */
 DECLSPEC_EXPORT BOOL WINAPI InternetAutodial(DWORD flags, HWND window)
 {

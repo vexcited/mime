@@ -11,6 +11,7 @@ enum {
     MIME_IPC_INPUT = 4,  /* bytes for the console of the run, none at end of file. */
     MIME_IPC_SIGNAL = 5, /* uint32 ctrl event: CTRL_C_EVENT, CTRL_BREAK_EVENT. */
     MIME_IPC_RESIZE = 6, /* uint32 columns | rows << 16. */
+    MIME_IPC_CONFIG = 7, /* nothing to list the settings, name\0 to get one, name\0value\0 to set it. */
 
     MIME_IPC_OK = 100,
     MIME_IPC_ERROR = 101,  /* UTF-8 message. */
@@ -21,6 +22,7 @@ enum {
     MIME_IPC_STARTED = 106,      /* uint32 subsystem of the program. */
     MIME_IPC_CONSOLE_MODE = 107, /* uint32 console input mode the terminal follows. */
     MIME_IPC_DEBUG = 108,        /* debug output of the program, UTF-8. */
+    MIME_IPC_CONFIG_REPLY = 109, /* name\0value\0 of each setting asked. */
 };
 
 /* MIME_IPC_STOP payload; older clients omit it. */

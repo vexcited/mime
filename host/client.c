@@ -1,4 +1,4 @@
-/* machine lifecycle commands: up, run, down and status. */
+/* machine lifecycle commands: up, run, down, status and config. */
 #include "instance.h"
 #include "ipc.h"
 #include "mime_cli.h"
@@ -169,6 +169,61 @@ int mime_cmd_status(const MimePaths *paths, int argc, char **argv)
            status.pid, (unsigned long long)(status.uptime_ms / 1000), status.running_programs);
     printf("  C: drive  %s\n  log       %s\n", paths->drive_c, paths->logfile);
     return 0;
+}
+
+/* settings last as long as the machine runs, they live in its process. */
+int mime_cmd_config(const MimePaths *paths, int argc, char **argv)
+{
+    bool get = argc == 2 && strcmp(argv[0], "get") == 0;
+    bool set = argc == 3 && strcmp(argv[0], "set") == 0;
+    if (argc && !get && !set) {
+        fprintf(stderr, "usage: mime config [get <name> | set <name> <value>]\n");
+        return 2;
+    }
+    size_t size = 0;
+    char payload[512];
+    for (int i = 1; i < argc; i++) {
+        size_t length = strlen(argv[i]) + 1;
+        if (size + length > sizeof(payload)) {
+            mime_error("the setting is too long");
+            return 2;
+        }
+        memcpy(payload + size, argv[i], length);
+        size += length;
+    }
+    int fd = mime_ipc_connect(paths->socket);
+    if (fd < 0) {
+        mime_error("the machine is down, start it with `mime up` first");
+        return 1;
+    }
+    MimeIpcHeader h;
+    void *reply;
+    if (!mime_ipc_send(fd, MIME_IPC_CONFIG, payload, (uint32_t)size) || !mime_ipc_recv(fd, &h, &reply)) {
+        close(fd);
+        mime_error("cannot reach the machine");
+        return 1;
+    }
+    close(fd);
+    int r = 0;
+    if (h.type == MIME_IPC_CONFIG_REPLY) {
+        const char *p = reply, *end = p + h.size;
+        while (p < end) {
+            const char *name = p;
+            const char *value = name + strlen(name) + 1;
+            if (value >= end)
+                break;
+            if (get)
+                printf("%s\n", value);
+            else if (!set)
+                printf("%-10s %s\n", name, value);
+            p = value + strlen(value) + 1;
+        }
+    } else {
+        mime_error("%s", h.type == MIME_IPC_ERROR ? (char *)reply : "unexpected answer from the machine");
+        r = 1;
+    }
+    free(reply);
+    return r;
 }
 
 /*

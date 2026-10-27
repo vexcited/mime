@@ -8,6 +8,7 @@ int mime_cmd_up(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_run(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_down(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_status(const MimePaths *paths, int argc, char **argv);
+int mime_cmd_config(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_apps(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_uninstall(const MimePaths *paths, int argc, char **argv);
 
