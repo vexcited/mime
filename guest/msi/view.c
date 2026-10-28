@@ -86,6 +86,9 @@ static void next_token(SQL_TOKEN *token)
         token->Kind = TOKEN_NAME;
         while (name_character(*p) && length < RTL_NUMBER_OF(token->Text) - 1)
             token->Text[length++] = *p++;
+        /* Windows skips a backquote right after a bare name, and SolidWorks queries rely on it. */
+        if (*p == L'`')
+            p++;
     } else if (*p) {
         token->Kind = TOKEN_SYMBOL;
         token->Text[length++] = *p++;
