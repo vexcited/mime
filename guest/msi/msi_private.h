@@ -160,6 +160,7 @@ typedef struct MIME_MSI_PACKAGE {
     BYTE *ComponentInstalled;
     ULONG ComponentRows;
     ULONG SessionKind;
+    struct MIME_MSI_QUEUED_ACTION *Queued;
     struct MIME_MSI_CAHOST *Host;
 } MIME_MSI_PACKAGE;
 
@@ -211,6 +212,7 @@ UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiRunUnlocked(MSIHANDLE handle, MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiFormat(MIME_MSI_PACKAGE *package, PCWSTR template, PWSTR *out);
 UINT MimeMsiComponentState(MIME_MSI_PACKAGE *package, PCWSTR name, INSTALLSTATE *installed, INSTALLSTATE *action);
+UINT MimeMsiComponentChange(MIME_MSI_PACKAGE *package, PCWSTR name, BOOL *local, BOOL *registered);
 BOOL MimeMsiLogEnabled(void);
 UINT MimeMsiFileTargetPath(MIME_MSI_PACKAGE *package, PCWSTR key, PWSTR *out);
 UINT MimeMsiComponentDirectory(MIME_MSI_PACKAGE *package, PCWSTR name, PWSTR *out);
@@ -248,6 +250,11 @@ UINT MimeMsiRemoveFile(MIME_MSI_PACKAGE *package, PCWSTR path);
 UINT MimeMsiRemoveDirectory(MIME_MSI_PACKAGE *package, PCWSTR path);
 UINT MimeMsiDeleteRegistryValue(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, PCWSTR name);
 UINT MimeMsiDeleteRegistryTree(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, ULONG depth);
+typedef UINT (*MIME_MSI_UNDO)(void *context, BOOL rollback);
+typedef UINT (*MIME_MSI_QUEUED)(MIME_MSI_PACKAGE *package, UINT_PTR argument);
+UINT MimeMsiNoteUndo(MIME_MSI_PACKAGE *package, MIME_MSI_UNDO undo, void *context);
+UINT MimeMsiQueueAction(MIME_MSI_PACKAGE *package, MIME_MSI_QUEUED run, UINT_PTR argument);
+UINT MimeMsiServiceAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiCopyInstalledFile(MIME_MSI_PACKAGE *package, PCWSTR source, PCWSTR target);
 UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features, PCWSTR name, ULONG depth, BOOL *selected);
 UINT MimeMsiRegistrationAction(MIME_MSI_PACKAGE *package, PCWSTR action);

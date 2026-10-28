@@ -23,7 +23,25 @@ typedef struct MIME_MSI_CHANGE {
     BYTE *OldData;
     DWORD OldType, OldBytes, View;
     BOOL HadValue, Removed;
+    MIME_MSI_UNDO Undo;
+    void *UndoContext;
 } MIME_MSI_CHANGE;
+
+/* an action that waits for the files, such as starting a service the package has just installed. */
+typedef struct MIME_MSI_QUEUED_ACTION {
+    struct MIME_MSI_QUEUED_ACTION *Next;
+    MIME_MSI_QUEUED Run;
+    UINT_PTR Argument;
+} MIME_MSI_QUEUED_ACTION;
+
+static void free_queue(MIME_MSI_PACKAGE *package)
+{
+    while (package->Queued) {
+        MIME_MSI_QUEUED_ACTION *action = package->Queued;
+        package->Queued = action->Next;
+        MimeMsiFree(action);
+    }
+}
 
 static void free_plan(MIME_MSI_PACKAGE *package)
 {
@@ -137,7 +155,11 @@ UINT MimeMsiFinishTransaction(MIME_MSI_PACKAGE *package, BOOL commit)
         MIME_MSI_CHANGE *change = package->Changes;
         package->Changes = change->Next;
         BOOL restored = TRUE;
-        if (!commit) {
+        if (change->Undo) {
+            UINT status = change->Undo(change->UndoContext, !commit);
+            if (status && !commit && !error)
+                error = status;
+        } else if (!commit) {
             if (change->RegistryKind) {
                 UINT status = restore_registry(change);
                 restored = !status;
@@ -169,6 +191,7 @@ UINT MimeMsiFinishTransaction(MIME_MSI_PACKAGE *package, BOOL commit)
         MimeMsiFree(change);
     }
     free_plan(package);
+    free_queue(package);
     if (package->TransactionActive && commit && !error)
         package->TransactionCommitted = TRUE;
     package->TransactionActive = FALSE;
@@ -262,6 +285,33 @@ UINT MimeMsiNoteNewFile(MIME_MSI_PACKAGE *package, PCWSTR path)
     if (!change)
         return ERROR_NOT_ENOUGH_MEMORY;
     push_change(package, change);
+    return ERROR_SUCCESS;
+}
+
+/* the callback ends the transaction's hold on the context, undoing the work when the install rolls back. */
+UINT MimeMsiNoteUndo(MIME_MSI_PACKAGE *package, MIME_MSI_UNDO undo, void *context)
+{
+    MIME_MSI_CHANGE *change = MimeMsiAllocate(sizeof(*change));
+    if (!change)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    change->Undo = undo;
+    change->UndoContext = context;
+    push_change(package, change);
+    return ERROR_SUCCESS;
+}
+
+/* queued actions run in order once the files are in place. */
+UINT MimeMsiQueueAction(MIME_MSI_PACKAGE *package, MIME_MSI_QUEUED run, UINT_PTR argument)
+{
+    MIME_MSI_QUEUED_ACTION *action = MimeMsiAllocate(sizeof(*action));
+    if (!action)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    action->Run = run;
+    action->Argument = argument;
+    MIME_MSI_QUEUED_ACTION **tail = &package->Queued;
+    while (*tail)
+        tail = &(*tail)->Next;
+    *tail = action;
     return ERROR_SUCCESS;
 }
 
@@ -1331,19 +1381,27 @@ UINT MimeMsiWriteInstalledFile(MIME_MSI_PACKAGE *package, const void *data, SIZE
 
 static UINT execute_files(MIME_MSI_PACKAGE *package)
 {
-    if (!package->FilesQueued)
+    if (!package->FilesQueued && !package->Queued)
         return ERROR_SUCCESS;
     UINT error = ERROR_SUCCESS;
-    /* each cabinet is read once, in the order the plan first names it. */
-    for (MIME_MSI_FILE_PLAN *file = package->Files; file && !error; file = file->Next) {
-        if (!file->Cabinet || file->Done)
-            continue;
-        error = extract_cabinet(package, file->Cabinet);
+    if (package->FilesQueued) {
+        /* each cabinet is read once, in the order the plan first names it. */
+        for (MIME_MSI_FILE_PLAN *file = package->Files; file && !error; file = file->Next) {
+            if (!file->Cabinet || file->Done)
+                continue;
+            error = extract_cabinet(package, file->Cabinet);
+        }
+        for (MIME_MSI_FILE_PLAN *file = package->Files; file && !error; file = file->Next)
+            if (!file->Cabinet)
+                error = copy_planned_file(package, file);
+        free_plan(package);
     }
-    for (MIME_MSI_FILE_PLAN *file = package->Files; file && !error; file = file->Next)
-        if (!file->Cabinet)
-            error = copy_planned_file(package, file);
-    free_plan(package);
+    while (!error && package->Queued) {
+        MIME_MSI_QUEUED_ACTION *action = package->Queued;
+        package->Queued = action->Next;
+        error = action->Run(package, action->Argument);
+        MimeMsiFree(action);
+    }
     if (error) {
         UINT rollback = MimeMsiFinishTransaction(package, FALSE);
         if (rollback)

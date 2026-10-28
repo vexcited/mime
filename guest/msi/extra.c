@@ -139,6 +139,22 @@ static UINT component_action(MIME_MSI_PACKAGE *package, PCWSTR name, ULONG *acti
     return ERROR_SUCCESS;
 }
 
+/* whether the product installs a component, and whether the product had it before the install began. */
+UINT MimeMsiComponentChange(MIME_MSI_PACKAGE *package, PCWSTR name, BOOL *local, BOOL *registered)
+{
+    MIME_MSI_TABLE *table;
+    ULONG row;
+    UINT error = find_component(package, name, &table, &row);
+    PCWSTR directory;
+    if (!error)
+        error = MimeMsiComponentSelected(package, name, &directory, local);
+    if (error)
+        return error;
+    *registered = package->ComponentInstalled && row < package->ComponentRows ? package->ComponentInstalled[row] != 0 :
+                                                                                 component_registered(package, table, row);
+    return ERROR_SUCCESS;
+}
+
 UINT MimeMsiComponentState(MIME_MSI_PACKAGE *package, PCWSTR name, INSTALLSTATE *installed, INSTALLSTATE *action)
 {
     MIME_MSI_TABLE *table;
@@ -1439,5 +1455,6 @@ UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     }
     if (!wcscmp(action, L"RemoveExistingProducts"))
         return MIME_MSI_UNLOCKED_PENDING;
-    return table_action(package, action);
+    UINT result = MimeMsiServiceAction(package, action);
+    return result == UINT32_MAX ? table_action(package, action) : result;
 }
