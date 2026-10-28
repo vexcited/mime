@@ -34,3 +34,4 @@ EXPORTS
     DllCanUnloadNow @278
     SHDoDragDrop @88
     SHCreateStdEnumFmtEtc @74
+    PathResolve @51

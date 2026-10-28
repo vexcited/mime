@@ -33,6 +33,7 @@ EXPORTS
     ILRemoveLastID=_ILRemoveLastID@4 @17
     ILSaveToStream=_ILSaveToStream@8 @27
     IsUserAnAdmin=_IsUserAnAdmin@0 @680
+    PathResolve=_PathResolve@12 @51
     SHAddToRecentDocs=_SHAddToRecentDocs@8
     SHAppBarMessage=_SHAppBarMessage@8
     SHAssocEnumHandlers=_SHAssocEnumHandlers@12
