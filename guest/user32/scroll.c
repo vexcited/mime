@@ -18,6 +18,8 @@ static const WCHAR *const g_scroll_prop[3] = {L"ScrollH", L"ScrollV", L"ScrollCt
 /* a fresh bar has the range 0 to 100, like on windows. */
 static const SCROLL_DATA g_scroll_default = {0, 100, 0, 0, 0, ESB_ENABLE_BOTH};
 
+static BOOL get_bar_info(HWND hwnd, int bar, SCROLLBARINFO *info);
+
 static BOOL own_window(HWND hwnd)
 {
     DWORD pid = 0;
@@ -228,6 +230,10 @@ BOOL UserScrollBarMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRE
         *result = out && valid_info_size(out->cbSize) && get_info(hwnd, SB_CTL, out);
         return TRUE;
     }
+    case SBM_GETSCROLLBARINFO:
+        *result = lparam && ((SCROLLBARINFO *)lparam)->cbSize == sizeof(SCROLLBARINFO) &&
+                  get_bar_info(hwnd, SB_CTL, (SCROLLBARINFO *)lparam);
+        return TRUE;
     case WM_NCDESTROY:
         UserFreeScrollData(hwnd);
         return FALSE;
@@ -563,6 +569,71 @@ static BOOL standard_rect(HWND hwnd, int bar, RECT *r)
     else
         *r = (RECT){c.left, c.bottom, c.right, c.bottom + GetSystemMetricsForDpi(SM_CYHSCROLL, dpi)};
     return TRUE;
+}
+
+/*
+ * where the bar is on the screen and how its parts are placed along it, from the start of the bar, with the states of
+ * the accessibility interface: the arrows, the page areas and the thumb are unavailable when they are disabled, the
+ * page area the thumb touches is invisible and so is every part of a bar the window does not have.
+ */
+static BOOL get_bar_info(HWND hwnd, int bar, SCROLLBARINFO *info)
+{
+    RECT screen;
+    if (bar == SB_CTL) {
+        GetClientRect(hwnd, &screen);
+        MapWindowPoints(hwnd, nullptr, (POINT *)&screen, 2);
+    } else if (!standard_rect(hwnd, bar, &screen)) {
+        memset(&info->rcScrollBar, 0, sizeof(*info) - sizeof(info->cbSize));
+        info->rgstate[0] = STATE_SYSTEM_INVISIBLE;
+        return TRUE;
+    }
+    RECT local = {0, 0, screen.right - screen.left, screen.bottom - screen.top};
+    BAR b;
+    layout(hwnd, bar, &local, &b);
+    memset(&info->rcScrollBar, 0, sizeof(*info) - sizeof(info->cbSize));
+    info->rcScrollBar = screen;
+    info->dxyLineButton = b.vert ? b.arrow1.bottom - b.arrow1.top : b.arrow1.right - b.arrow1.left;
+    RECT thumb = b.has_thumb ? b.thumb : (RECT){b.track.left, b.track.top, b.track.left, b.track.top};
+    info->xyThumbTop = b.vert ? thumb.top : thumb.left;
+    info->xyThumbBottom = b.vert ? thumb.bottom : thumb.right;
+    UINT arrows = b.enabled ? b.data->Arrows : ESB_DISABLE_BOTH;
+    if (arrows & ESB_DISABLE_LTUP)
+        info->rgstate[1] = info->rgstate[2] = STATE_SYSTEM_UNAVAILABLE;
+    if (arrows & ESB_DISABLE_RTDN)
+        info->rgstate[5] = info->rgstate[4] = STATE_SYSTEM_UNAVAILABLE;
+    if ((arrows & ESB_DISABLE_BOTH) == ESB_DISABLE_BOTH)
+        info->rgstate[0] = STATE_SYSTEM_UNAVAILABLE;
+    /* the parts are numbered as the states are. */
+    if (g_held.Window == hwnd && g_held.Bar == bar && g_held.Part >= PART_ARROW1 && g_held.Part <= PART_ARROW2)
+        info->rgstate[g_held.Part] |= STATE_SYSTEM_PRESSED;
+    int start = b.vert ? b.track.top : b.track.left, end = b.vert ? b.track.bottom : b.track.right;
+    if (info->xyThumbTop == start)
+        info->rgstate[2] |= STATE_SYSTEM_INVISIBLE;
+    if (info->xyThumbBottom == end)
+        info->rgstate[4] |= STATE_SYSTEM_INVISIBLE;
+    return TRUE;
+}
+
+WINUSERAPI BOOL WINAPI GetScrollBarInfo(HWND hwnd, LONG object, PSCROLLBARINFO info)
+{
+    if (!info || info->cbSize != sizeof(*info)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    switch (object) {
+    case OBJID_HSCROLL:
+        return get_bar_info(hwnd, SB_HORZ, info);
+    case OBJID_VSCROLL:
+        return get_bar_info(hwnd, SB_VERT, info);
+    case OBJID_CLIENT:
+        return (BOOL)SendMessageW(hwnd, SBM_GETSCROLLBARINFO, 0, (LPARAM)info);
+    }
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return FALSE;
 }
 
 /* drawn after the rest of the frame. */

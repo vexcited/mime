@@ -249,6 +249,8 @@ enum {
     MIME_HWNDPARAM_GETAFFINITY,
     MIME_HWNDPARAM_GETCLASSWORD,        /* byte offset into the class extra bytes -> the word there, or ERROR_INVALID_INDEX. */
     MIME_HWNDPARAM_MENUBAR,             /* MIME_MENUBAR pointer: the layout of the window's menu bar and the state it is drawn in. */
+    MIME_HWNDPARAM_GETCONTEXTHELPID,
+    MIME_HWNDPARAM_SETWINDOWWORD,       /* the word in the low half and the byte offset into the extra bytes above it -> the old word, or -1. */
 };
 
 /* what MIME_HWNDPARAM_MENUBAR asks, with only fields of the same size in both processors. */

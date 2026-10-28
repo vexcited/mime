@@ -472,15 +472,21 @@ WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg)
 
 /* ------------------------------------------------------------------ stubs */
 
-/* there is no help engine, like windows without WinHlp32. */
+/* there is no help engine, like windows without WinHlp32, whose window is never found. closing it is not an error. */
 WINUSERAPI BOOL WINAPI WinHelpW(HWND hwnd, LPCWSTR file, UINT command, ULONG_PTR data)
 {
     (void)hwnd;
     (void)file;
-    (void)command;
     (void)data;
+    if ((command & ~0x8000u) == HELP_QUIT)
+        return TRUE;
     SetLastError(ERROR_NOT_SUPPORTED);
     return FALSE;
+}
+
+WINUSERAPI BOOL WINAPI WinHelpA(HWND hwnd, LPCSTR file, UINT command, ULONG_PTR data)
+{
+    return WinHelpW(hwnd, nullptr, command, data);
 }
 
 
@@ -572,6 +578,29 @@ WINUSERAPI BOOL WINAPI IsHungAppWindow(HWND hwnd)
 WINUSERAPI BOOL WINAPI SetWindowContextHelpId(HWND hwnd, DWORD id)
 {
     return (BOOL)NtUserCallHwndParam(hwnd, id, MIME_HWNDPARAM_SETCONTEXTHELPID);
+}
+
+/* only the extra bytes of the window hold words. */
+WINUSERAPI WORD WINAPI SetWindowWord(HWND hwnd, int index, WORD value)
+{
+    ULONG_PTR old = (ULONG_PTR)-1;
+    if (index >= 0 && index < 0x7FFF)
+        old = NtUserCallHwndParam(hwnd, ((ULONG_PTR)index << 16) | value, MIME_HWNDPARAM_SETWINDOWWORD);
+    if (old == (ULONG_PTR)-1) {
+        SetLastError(ERROR_INVALID_INDEX);
+        return 0;
+    }
+    return (WORD)old;
+}
+
+WINUSERAPI DWORD WINAPI GetWindowContextHelpId(HWND hwnd)
+{
+    return (DWORD)NtUserCallHwndParam(hwnd, 0, MIME_HWNDPARAM_GETCONTEXTHELPID);
+}
+
+/* windows are never ghosted here, they are not found hung. */
+WINUSERAPI void WINAPI DisableProcessWindowsGhosting(void)
+{
 }
 
 /* ------------------------------------------------------------------ window properties */

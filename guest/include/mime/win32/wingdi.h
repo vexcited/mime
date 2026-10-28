@@ -608,6 +608,7 @@ WINGDIAPI DWORD WINAPI GetRegionData(HRGN region, DWORD size, LPRGNDATA data);
 WINGDIAPI int WINAPI SelectClipRgn(HDC dc, HRGN region);
 WINGDIAPI int WINAPI ExtSelectClipRgn(HDC dc, HRGN region, int mode);
 WINGDIAPI int WINAPI GetClipBox(HDC dc, LPRECT rect);
+WINGDIAPI BOOL WINAPI GetDCOrgEx(HDC dc, LPPOINT point);
 WINGDIAPI int WINAPI GetClipRgn(HDC dc, HRGN region);
 WINGDIAPI int WINAPI IntersectClipRect(HDC dc, int left, int top, int right, int bottom);
 WINGDIAPI int WINAPI ExcludeClipRect(HDC dc, int left, int top, int right, int bottom);

@@ -737,9 +737,9 @@ WINUSERAPI BOOL WINAPI GetCursorInfo(PCURSORINFO info)
     return NtUserGetCursorInfo(info);
 }
 
-/* a monochrome cursor from AND and XOR planes, with word aligned rows like CreateBitmap. */
-WINUSERAPI HCURSOR WINAPI CreateCursor(HINSTANCE instance, int hot_x, int hot_y, int width, int height,
-                                       const void *and_plane, const void *xor_plane)
+/* a monochrome cursor or icon from AND and XOR planes, with word aligned rows like CreateBitmap. */
+static HICON create_monochrome(BOOL icon, int hot_x, int hot_y, int width, int height, const void *and_plane,
+                               const void *xor_plane)
 {
     if (width <= 0 || height <= 0 || !and_plane || !xor_plane) {
         SetLastError(ERROR_INVALID_PARAMETER);
@@ -756,11 +756,69 @@ WINUSERAPI HCURSOR WINAPI CreateCursor(HINSTANCE instance, int hot_x, int hot_y,
     UserFree(bits);
     if (!mask)
         return nullptr;
-    ICONINFO info = {FALSE, (DWORD)hot_x, (DWORD)hot_y, mask, nullptr};
-    HCURSOR cursor = CreateIconIndirect(&info);
+    ICONINFO info = {icon, (DWORD)hot_x, (DWORD)hot_y, mask, nullptr};
+    HICON result = CreateIconIndirect(&info);
     DeleteObject(mask);
+    return result;
+}
+
+WINUSERAPI HCURSOR WINAPI CreateCursor(HINSTANCE instance, int hot_x, int hot_y, int width, int height,
+                                       const void *and_plane, const void *xor_plane)
+{
     (void)instance;
-    return cursor;
+    return create_monochrome(FALSE, hot_x, hot_y, width, height, and_plane, xor_plane);
+}
+
+/* a color icon takes a plane of colors and a monochrome mask. */
+WINUSERAPI HICON WINAPI CreateIcon(HINSTANCE instance, int width, int height, BYTE planes, BYTE bits, const BYTE *and_plane,
+                                   const BYTE *xor_plane)
+{
+    (void)instance;
+    if (planes * bits <= 1)
+        return create_monochrome(TRUE, width / 2, height / 2, width, height, and_plane, xor_plane);
+    if (width <= 0 || height <= 0 || !and_plane || !xor_plane) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    HBITMAP color = CreateBitmap(width, height, planes, bits, xor_plane);
+    HBITMAP mask = CreateBitmap(width, height, 1, 1, and_plane);
+    HICON result = nullptr;
+    if (color && mask) {
+        ICONINFO info = {TRUE, (DWORD)(width / 2), (DWORD)(height / 2), mask, color};
+        result = CreateIconIndirect(&info);
+    }
+    DeleteObject(color);
+    DeleteObject(mask);
+    return result;
+}
+
+/* the best image of an icon or cursor directory for the size. a size of 0 is the system's. */
+WINUSERAPI int WINAPI LookupIconIdFromDirectoryEx(PBYTE bits, BOOL icon, int cx, int cy, UINT flags)
+{
+    const GRPICONDIR *dir = (const GRPICONDIR *)bits;
+    if (!dir || dir->Reserved != 0 || dir->Type != (icon ? 1 : 2))
+        return 0;
+    if (!cx)
+        cx = GetSystemMetrics(icon ? SM_CXICON : SM_CXCURSOR);
+    if (!cy)
+        cy = GetSystemMetrics(icon ? SM_CYICON : SM_CYCURSOR);
+    (void)flags;
+    return pick_icon(dir, 6 + dir->Count * sizeof(GRPICONDIRENTRY), cx, cy, icon);
+}
+
+WINUSERAPI int WINAPI LookupIconIdFromDirectory(PBYTE bits, BOOL icon)
+{
+    return LookupIconIdFromDirectoryEx(bits, icon, 0, 0, 0);
+}
+
+WINUSERAPI HCURSOR WINAPI LoadCursorFromFileW(LPCWSTR file)
+{
+    return LoadImageW(nullptr, file, IMAGE_CURSOR, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
+}
+
+WINUSERAPI HCURSOR WINAPI LoadCursorFromFileA(LPCSTR file)
+{
+    return LoadImageA(nullptr, file, IMAGE_CURSOR, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
 }
 
 /*

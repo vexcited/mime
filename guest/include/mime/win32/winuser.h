@@ -2357,6 +2357,7 @@ WINUSERAPI BOOL WINAPI EnumWindows(WNDENUMPROC proc, LPARAM param);
 WINUSERAPI BOOL WINAPI EnumChildWindows(HWND parent, WNDENUMPROC proc, LPARAM param);
 WINUSERAPI int WINAPI DrawTextA(HDC dc, LPCSTR text, int count, LPRECT rect, UINT format);
 WINUSERAPI BOOL WINAPI GetUpdateRect(HWND hwnd, LPRECT rect, BOOL erase);
+WINUSERAPI int WINAPI GetUpdateRgn(HWND hwnd, HRGN region, BOOL erase);
 WINUSERAPI BOOL WINAPI InvertRect(HDC dc, const RECT *r);
 WINUSERAPI int WINAPI MessageBoxIndirectA(const void *params);
 
@@ -3124,6 +3125,13 @@ WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg);
 #define OBJID_MENU ((LONG)0xFFFFFFFD)
 #define OBJID_CLIENT ((LONG)0xFFFFFFFC)
 #endif
+#ifndef OBJID_VSCROLL
+#define OBJID_VSCROLL ((LONG)0xFFFFFFFB)
+#define OBJID_HSCROLL ((LONG)0xFFFFFFFA)
+#endif
+#ifndef STATE_SYSTEM_UNAVAILABLE
+#define STATE_SYSTEM_UNAVAILABLE 0x00000001
+#endif
 
 #ifndef STATE_SYSTEM_PRESSED
 #define STATE_SYSTEM_PRESSED 0x00000008
@@ -3257,6 +3265,92 @@ WINUSERAPI LPARAM WINAPI ReuseDDElParam(LPARAM lparam, UINT msg_in, UINT msg_out
 WINUSERAPI BOOL WINAPI WinHelpW(HWND hwnd, LPCWSTR file, UINT command, ULONG_PTR data);
 WINUSERAPI int WINAPI GetKeyNameTextW(LONG lparam, LPWSTR buffer, int size);
 WINUSERAPI HBITMAP WINAPI LoadBitmapW(HINSTANCE instance, LPCWSTR name);
+
+#define HELP_CONTEXT 0x0001
+#define HELP_QUIT 0x0002
+#define HELP_INDEX 0x0003
+#define HELP_CONTENTS 0x0003
+#define HELP_HELPONHELP 0x0004
+#define HELP_SETINDEX 0x0005
+#define HELP_FINDER 0x000B
+#define HELP_WM_HELP 0x000C
+
+WINUSERAPI BOOL WINAPI WinHelpA(HWND hwnd, LPCSTR file, UINT command, ULONG_PTR data);
+WINUSERAPI LONG WINAPI TabbedTextOutA(HDC dc, int x, int y, LPCSTR text, int count, int tabs, const INT *positions,
+                                      int origin);
+WINUSERAPI DWORD WINAPI GetTabbedTextExtentA(HDC dc, LPCSTR text, int count, int tabs, const INT *positions);
+WINUSERAPI BOOL WINAPI GrayStringA(HDC dc, HBRUSH brush, GRAYSTRINGPROC proc, LPARAM data, int count, int x, int y,
+                                   int cx, int cy);
+WINUSERAPI BOOL WINAPI DrawStateA(HDC dc, HBRUSH brush, DRAWSTATEPROC proc, LPARAM ldata, WPARAM wdata, int x, int y,
+                                  int cx, int cy, UINT flags);
+WINUSERAPI HACCEL WINAPI LoadAcceleratorsA(HINSTANCE instance, LPCSTR name);
+WINUSERAPI HACCEL WINAPI CreateAcceleratorTableA(LPACCEL entries, int count);
+WINUSERAPI int WINAPI CopyAcceleratorTableA(HACCEL accel, LPACCEL entries, int count);
+WINUSERAPI int WINAPI TranslateAcceleratorA(HWND hwnd, HACCEL accel, LPMSG msg);
+WINUSERAPI HBITMAP WINAPI LoadBitmapA(HINSTANCE instance, LPCSTR name);
+WINUSERAPI int WINAPI GetKeyNameTextA(LONG lparam, LPSTR buffer, int size);
+WINUSERAPI SHORT WINAPI VkKeyScanA(CHAR ch);
+WINUSERAPI SHORT WINAPI VkKeyScanExA(CHAR ch, HKL layout);
+WINUSERAPI LRESULT WINAPI DefFrameProcA(HWND hwnd, HWND client, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI LRESULT WINAPI DefMDIChildProcA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+WINUSERAPI DWORD WINAPI GetWindowContextHelpId(HWND hwnd);
+WINUSERAPI void WINAPI DisableProcessWindowsGhosting(void);
+WINUSERAPI BOOL WINAPI GetScrollBarInfo(HWND hwnd, LONG object, PSCROLLBARINFO info);
+WINUSERAPI WORD WINAPI SetWindowWord(HWND hwnd, int index, WORD value);
+
+WINUSERAPI HICON WINAPI CreateIcon(HINSTANCE instance, int width, int height, BYTE planes, BYTE bits,
+                                   const BYTE *and_plane, const BYTE *xor_plane);
+WINUSERAPI int WINAPI LookupIconIdFromDirectory(PBYTE bits, BOOL icon);
+WINUSERAPI int WINAPI LookupIconIdFromDirectoryEx(PBYTE bits, BOOL icon, int cx, int cy, UINT flags);
+WINUSERAPI HCURSOR WINAPI LoadCursorFromFileW(LPCWSTR file);
+WINUSERAPI HCURSOR WINAPI LoadCursorFromFileA(LPCSTR file);
+
+WINUSERAPI BOOL WINAPI ScrollDC(HDC dc, int dx, int dy, const RECT *scroll, const RECT *clip, HRGN update,
+                                LPRECT update_rect);
+WINUSERAPI int WINAPI ExcludeUpdateRgn(HDC dc, HWND hwnd);
+WINUSERAPI BOOL WINAPI DrawCaption(HWND hwnd, HDC dc, const RECT *rect, UINT flags);
+WINUSERAPI BOOL WINAPI PaintDesktop(HDC dc);
+WINUSERAPI UINT WINAPI ArrangeIconicWindows(HWND parent);
+WINUSERAPI WORD WINAPI CascadeWindows(HWND parent, UINT how, const RECT *rect, UINT count, const HWND *kids);
+WINUSERAPI WORD WINAPI TileWindows(HWND parent, UINT how, const RECT *rect, UINT count, const HWND *kids);
+
+DECLARE_HANDLE(HGESTUREINFO);
+#ifndef _POINTS_DEFINED
+#define _POINTS_DEFINED
+typedef struct tagPOINTS {
+    SHORT x;
+    SHORT y;
+} POINTS, *PPOINTS;
+#endif
+typedef struct tagGESTUREINFO {
+    UINT cbSize;
+    DWORD dwFlags;
+    DWORD dwID;
+    HWND hwndTarget;
+    POINTS ptsLocation;
+    DWORD dwInstanceID;
+    DWORD dwSequenceID;
+    ULONGLONG ullArguments;
+    UINT cbExtraArgs;
+} GESTUREINFO, *PGESTUREINFO;
+typedef struct tagGESTURECONFIG {
+    DWORD dwID;
+    DWORD dwWant;
+    DWORD dwBlock;
+} GESTURECONFIG, *PGESTURECONFIG;
+
+WINUSERAPI BOOL WINAPI GetPointerDeviceRects(HANDLE device, RECT *device_rect, RECT *display_rect);
+WINUSERAPI BOOL WINAPI GetPointerFrameTouchInfo(UINT id, UINT *count, void *info);
+WINUSERAPI BOOL WINAPI GetPointerFrameTouchInfoHistory(UINT id, UINT *entries, UINT *count, void *info);
+WINUSERAPI BOOL WINAPI GetPointerPenInfoHistory(UINT id, UINT *entries, void *info);
+WINUSERAPI BOOL WINAPI GetGestureInfo(HGESTUREINFO gesture, PGESTUREINFO info);
+WINUSERAPI BOOL WINAPI CloseGestureInfoHandle(HGESTUREINFO gesture);
+WINUSERAPI BOOL WINAPI SetGestureConfig(HWND hwnd, DWORD reserved, UINT count, PGESTURECONFIG config, UINT size);
+WINUSERAPI BOOL WINAPI SetDisplayAutoRotationPreferences(DWORD orientation);
+WINUSERAPI BOOL WINAPI GetDisplayAutoRotationPreferences(DWORD *orientation);
+WINUSERAPI BOOL WINAPI PhysicalToLogicalPoint(HWND hwnd, LPPOINT point);
+WINUSERAPI BOOL WINAPI LogicalToPhysicalPoint(HWND hwnd, LPPOINT point);
+WINUSERAPI BOOL WINAPI WINNLSEnableIME(HWND hwnd, BOOL enable);
 
 /* ------------------------------------------------------------------ raw input */
 

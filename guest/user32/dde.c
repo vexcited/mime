@@ -585,3 +585,12 @@ WINUSERAPI HDDEDATA WINAPI DdeNameService(DWORD id, HSZ service, HSZ reserved, U
         fail(i, DMLERR_DLL_USAGE);
     return nullptr;
 }
+
+/* no conversation of this process is a server's, so no advise loop is there to post the new data to. */
+WINUSERAPI BOOL WINAPI DdePostAdvise(DWORD id, HSZ topic, HSZ item)
+{
+    AcquireSRWLockShared(&g_lock);
+    DDE_INSTANCE *i = instance_of(id);
+    ReleaseSRWLockShared(&g_lock);
+    return i != nullptr;
+}

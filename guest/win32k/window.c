@@ -2496,6 +2496,16 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         w->ContextHelpId = (DWORD)param;
         r = 1;
         break;
+    case MIME_HWNDPARAM_GETCONTEXTHELPID:
+        r = w->ContextHelpId;
+        break;
+    case MIME_HWNDPARAM_SETWINDOWWORD: {
+        ULONG offset = (ULONG)(param >> 16);
+        r = (ULONG_PTR)-1;
+        if (can_touch(w) && w->Extra && offset + sizeof(WORD) <= w->ExtraSize)
+            r = (WORD)set_long(w, (int)offset, (WORD)param, FALSE, sizeof(WORD));
+        break;
+    }
     case MIME_HWNDPARAM_SETTOUCH:
         w->TouchFlags = (ULONG)param;
         r = 1;

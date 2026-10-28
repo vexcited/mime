@@ -419,6 +419,27 @@ WINUSERAPI LRESULT WINAPI DefMDIChildProcW(HWND hwnd, UINT msg, WPARAM wparam, L
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
+WINUSERAPI LRESULT WINAPI DefFrameProcA(HWND hwnd, HWND client, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    if (client && IsWindow(client)) {
+        switch (msg) {
+        case WM_SIZE:
+            if (wparam != SIZE_MINIMIZED)
+                MoveWindow(client, 0, 0, LOWORD(lparam), HIWORD(lparam), TRUE);
+            return 0;
+        case WM_SETFOCUS:
+            SetFocus(client);
+            return 0;
+        }
+    }
+    return DefWindowProcA(hwnd, msg, wparam, lparam);
+}
+
+WINUSERAPI LRESULT WINAPI DefMDIChildProcA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    return DefWindowProcA(hwnd, msg, wparam, lparam);
+}
+
 /* without MDI children there is no window menu key to translate. */
 WINUSERAPI BOOL WINAPI TranslateMDISysAccel(HWND client, LPMSG msg)
 {

@@ -10,6 +10,7 @@ EXPORTS
     AppendMenuA@16
     AppendMenuW@16
     AreDpiAwarenessContextsEqual@8
+    ArrangeIconicWindows@4
     AttachThreadInput@12
     BeginDeferWindowPos@4
     BeginPaint@8
@@ -22,6 +23,7 @@ EXPORTS
     CallNextHookEx@16
     CallWindowProcA@20
     CallWindowProcW@20
+    CascadeWindows@20
     ChangeClipboardChain@8
     ChangeDisplaySettingsA@8
     ChangeDisplaySettingsExA@20
@@ -57,14 +59,17 @@ EXPORTS
     ClipCursor@4
     CloseClipboard@0
     CloseDesktop@4
+    CloseGestureInfoHandle@4
     CloseTouchInputHandle@4
     CloseWindow@4
     CloseWindowStation@4
+    CopyAcceleratorTableA@12
     CopyAcceleratorTableW@12
     CopyIcon@4
     CopyImage@20
     CopyRect@8
     CountClipboardFormats@0
+    CreateAcceleratorTableA@8
     CreateAcceleratorTableW@8
     CreateCaret@16
     CreateCursor@28
@@ -76,6 +81,7 @@ EXPORTS
     CreateDialogIndirectParamW@20
     CreateDialogParamA@20
     CreateDialogParamW@20
+    CreateIcon@28
     CreateIconFromResource@16
     CreateIconFromResourceEx@28
     CreateIconIndirect@4
@@ -102,12 +108,15 @@ EXPORTS
     DdeInitializeW@16
     DdeKeepStringHandle@8
     DdeNameService@16
+    DdePostAdvise@12
     DdeQueryStringW@20
     DdeUnaccessData@4
     DdeUninitialize@4
     DefDlgProcA@16
     DefDlgProcW@16
+    DefFrameProcA@20
     DefFrameProcW@20
+    DefMDIChildProcA@16
     DefMDIChildProcW@16
     DefRawInputProc@12
     DefWindowProcA@16
@@ -125,18 +134,29 @@ EXPORTS
     DialogBoxIndirectParamW@20
     DialogBoxParamA@20
     DialogBoxParamW@20
+    DisableProcessWindowsGhosting@0
     DispatchMessageA@4
     DispatchMessageW@4
     DisplayConfigGetDeviceInfo@4
     DisplayConfigSetDeviceInfo@4
+    DlgDirListA@20
+    DlgDirListComboBoxA@20
+    DlgDirListComboBoxW@20
+    DlgDirListW@20
+    DlgDirSelectComboBoxExA@16
+    DlgDirSelectComboBoxExW@16
+    DlgDirSelectExA@16
+    DlgDirSelectExW@16
     DragDetect@12
     DrawAnimatedRects@16
+    DrawCaption@16
     DrawEdge@16
     DrawFocusRect@8
     DrawFrameControl@16
     DrawIcon@16
     DrawIconEx@36
     DrawMenuBar@4
+    DrawStateA@40
     DrawStateW@40
     DrawTextA@20
     DrawTextExA@24
@@ -171,6 +191,7 @@ EXPORTS
     EnumWindowStationsW@8
     EnumWindows@8
     EqualRect@8
+    ExcludeUpdateRgn@8
     ExitWindowsEx@8
     FillRect@12
     FindWindowA@8
@@ -214,12 +235,11 @@ EXPORTS
     GetCursor@0
     GetCursorInfo@4
     GetCursorPos@4
-    GetMenuContextHelpId@4
-    GetPhysicalCursorPos@4
     GetDC@4
     GetDCEx@12
     GetDesktopWindow@0
     GetDialogBaseUnits@0
+    GetDisplayAutoRotationPreferences@4
     GetDisplayConfigBufferSizes@12
     GetDlgCtrlID@4
     GetDlgItem@8
@@ -232,9 +252,11 @@ EXPORTS
     GetFocus@0
     GetForegroundWindow@0
     GetGUIThreadInfo@8
+    GetGestureInfo@8
     GetGuiResources@8
     GetIconInfo@8
     GetInputState@0
+    GetKeyNameTextA@12
     GetKeyNameTextW@12
     GetKeyState@4
     GetKeyboardLayout@4
@@ -249,6 +271,7 @@ EXPORTS
     GetMenu@4
     GetMenuBarInfo@16
     GetMenuCheckMarkDimensions@0
+    GetMenuContextHelpId@4
     GetMenuDefaultItem@12
     GetMenuInfo@8
     GetMenuItemCount@4
@@ -270,12 +293,17 @@ EXPORTS
     GetNextDlgTabItem@12
     GetOpenClipboardWindow@0
     GetParent@4
+    GetPhysicalCursorPos@4
     GetPointerDevice@8
+    GetPointerDeviceRects@12
     GetPointerDevices@8
     GetPointerFrameInfo@12
+    GetPointerFrameTouchInfo@12
+    GetPointerFrameTouchInfoHistory@16
     GetPointerInfo@8
     GetPointerInputTransform@12
     GetPointerPenInfo@8
+    GetPointerPenInfoHistory@12
     GetPointerTouchInfo@8
     GetPointerType@8
     GetPriorityClipboardFormat@8
@@ -290,6 +318,7 @@ EXPORTS
     GetRawInputDeviceInfoW@16
     GetRawInputDeviceList@12
     GetRegisteredRawInputDevices@12
+    GetScrollBarInfo@12
     GetScrollInfo@12
     GetScrollPos@8
     GetScrollRange@16
@@ -300,6 +329,7 @@ EXPORTS
     GetSystemMenu@8
     GetSystemMetrics@4
     GetSystemMetricsForDpi@8
+    GetTabbedTextExtentA@20
     GetTabbedTextExtentW@20
     GetThreadDesktop@4
     GetThreadDpiAwarenessContext@0
@@ -313,6 +343,7 @@ EXPORTS
     GetUserObjectInformationW@20
     GetUserObjectSecurity@20
     GetWindow@8
+    GetWindowContextHelpId@4
     GetWindowDC@4
     GetWindowDisplayAffinity@8
     GetWindowDpiAwarenessContext@4
@@ -331,6 +362,7 @@ EXPORTS
     GetWindowTextW@12
     GetWindowThreadProcessId@8
     GetWindowWord@8
+    GrayStringA@36
     GrayStringW@36
     HideCaret@4
     HiliteMenuItem@16
@@ -380,9 +412,13 @@ EXPORTS
     IsWindowVisible@4
     IsZoomed@4
     KillTimer@8
+    LoadAcceleratorsA@8
     LoadAcceleratorsW@8
+    LoadBitmapA@8
     LoadBitmapW@8
     LoadCursorA@8
+    LoadCursorFromFileA@4
+    LoadCursorFromFileW@4
     LoadCursorW@8
     LoadIconA@8
     LoadIconW@8
@@ -397,7 +433,10 @@ EXPORTS
     LoadStringW@16
     LockSetForegroundWindow@4
     LockWindowUpdate@4
+    LogicalToPhysicalPoint@8
     LogicalToPhysicalPointForPerMonitorDPI@8
+    LookupIconIdFromDirectory@8
+    LookupIconIdFromDirectoryEx@20
     MapDialogRect@8
     MapVirtualKeyA@8
     MapVirtualKeyExA@12
@@ -423,6 +462,7 @@ EXPORTS
     MsgWaitForMultipleObjects@20
     MsgWaitForMultipleObjectsEx@20
     NotifyWinEvent@16
+    OemKeyScan@4
     OemToCharA@8
     OemToCharBuffA@12
     OemToCharBuffW@12
@@ -436,8 +476,10 @@ EXPORTS
     OpenWindowStationA@12
     OpenWindowStationW@12
     PackDDElParam@12
+    PaintDesktop@4
     PeekMessageA@20
     PeekMessageW@20
+    PhysicalToLogicalPoint@8
     PhysicalToLogicalPointForPerMonitorDPI@8
     PostMessageA@16
     PostMessageW@16
@@ -478,6 +520,7 @@ EXPORTS
     ReplyMessage@4
     ReuseDDElParam@20
     ScreenToClient@8
+    ScrollDC@28
     ScrollWindow@20
     ScrollWindowEx@32
     SendDlgItemMessageA@20
@@ -505,11 +548,13 @@ EXPORTS
     SetCoalescableTimer@20
     SetCursor@4
     SetCursorPos@8
+    SetDisplayAutoRotationPreferences@4
     SetDlgItemInt@16
     SetDlgItemTextA@12
     SetDlgItemTextW@12
     SetFocus@4
     SetForegroundWindow@4
+    SetGestureConfig@20
     SetKeyboardState@4
     SetLastErrorEx@8
     SetLayeredWindowAttributes@16
@@ -552,6 +597,7 @@ EXPORTS
     SetWindowRgn@12
     SetWindowTextA@8
     SetWindowTextW@8
+    SetWindowWord@12
     SetWindowsHookExA@16
     SetWindowsHookExW@16
     ShowCaret@4
@@ -570,7 +616,9 @@ EXPORTS
     SystemParametersInfoA@16
     SystemParametersInfoForDpi@20
     SystemParametersInfoW@16
+    TabbedTextOutA@32
     TabbedTextOutW@32
+    TileWindows@20
     ToAscii@20
     ToAsciiEx@24
     ToUnicode@24
@@ -578,6 +626,7 @@ EXPORTS
     TrackMouseEvent@4
     TrackPopupMenu@28
     TrackPopupMenuEx@24
+    TranslateAcceleratorA@12
     TranslateAcceleratorW@12
     TranslateMDISysAccel@8
     TranslateMessage@4
@@ -598,12 +647,14 @@ EXPORTS
     UserRealizePalette@4
     ValidateRect@8
     ValidateRgn@8
+    VkKeyScanA@4
     VkKeyScanExA@8
     VkKeyScanExW@8
     VkKeyScanW@4
-    OemKeyScan@4
+    WINNLSEnableIME@8
     WaitForInputIdle@8
     WaitMessage@0
+    WinHelpA@16
     WinHelpW@16
     WindowFromDC@4
     WindowFromPoint@8
