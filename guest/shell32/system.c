@@ -1,6 +1,5 @@
 /* shell helpers outside the namespace: directories, icons, recent documents and the admin check. */
 #include "shell32_private.h"
-#include <mime/stub.h>
 
 typedef BOOL(WINAPI *CHECK_MEMBERSHIP)(HANDLE, PVOID, PBOOL);
 
@@ -96,16 +95,6 @@ SHSTDAPI HRESULT WINAPI SHCreateItemInKnownFolder(REFKNOWNFOLDERID folder, DWORD
     path[MAX_PATH - 1] = 0;
     ShFree(base);
     return SHCreateItemFromParsingName(path, nullptr, riid, object);
-}
-
-/* there is no IShellFolder namespace yet. */
-SHSTDAPI HRESULT WINAPI SHGetDesktopFolder(void **folder)
-{
-    MIME_STUB("shell32");
-    if (!folder)
-        return E_INVALIDARG;
-    *folder = nullptr;
-    return E_NOTIMPL;
 }
 
 /*

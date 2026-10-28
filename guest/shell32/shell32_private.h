@@ -3,6 +3,7 @@
 
 #define SHSTDAPI DECLSPEC_EXPORT
 #include <mime/win32/shobjidl.h>
+#include <mime/win32/shlfolder.h>
 #include <mime/win32/shellapi.h>
 #include <mime/win32/winnls.h>
 #include <rtl.h>
@@ -48,6 +49,22 @@ PIDLIST_ABSOLUTE ShClassList(BYTE sort, const GUID *clsid);
 BOOL ShIsComputerItem(const BYTE *item);
 BOOL ShIdListLastName(PCUIDLIST_ABSOLUTE pidl, LPWSTR name, ULONG chars);
 PIDLIST_ABSOLUTE ShChildList(PCIDLIST_ABSOLUTE folder, const WIN32_FIND_DATAW *find);
+
+/* automation.c */
+HRESULT ShTypeInfo(REFIID iid, ITypeInfo **info);
+const VARIANT *ShPlainVariant(const VARIANT *value);
+LPWSTR ShVariantText(const VARIANT *value);
+HRESULT ShCreateApplication(REFIID riid, void **object);
+
+/* folderauto.c and foldercopy.c */
+HRESULT ShNameSpace(const VARIANT *directory, IDispatch **folder);
+HRESULT ShCopyItem(IShellFolder *folder, PCUITEMID_CHILD child, LPCWSTR directory, DWORD flags, BOOL move);
+HRESULT ShDisplayText(IShellFolder *folder, PCUITEMID_CHILD child, SHGDNF flags, LPWSTR *text);
+HRESULT ShItemDetails(IShellFolder *folder, PCUITEMID_CHILD child, ULONGLONG *size, FILETIME *time);
+HRESULT ShCopyPath(LPCWSTR path, LPCWSTR directory, DWORD flags, BOOL move);
+
+/* namespace.c */
+HRESULT ShBindAbsolute(PCIDLIST_ABSOLUTE pidl, REFIID riid, void **object);
 
 /* item.c */
 SFGAOF ShAttributesFromFile(DWORD attributes);

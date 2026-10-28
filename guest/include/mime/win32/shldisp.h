@@ -24,6 +24,9 @@ MIME_DEFINE_GUID(CLSID_Shell, 0x13709620, 0xC279, 0x11CE, 0xA4, 0x9E, 0x44, 0x45
 MIME_DEFINE_GUID(CLSID_ShellFolderView, 0x62112AA1, 0xEBE4, 0x11CF, 0xA5, 0xFB, 0x00, 0x20, 0xAF, 0xE7, 0x29, 0x2D);
 MIME_DEFINE_GUID(IID_IShellDispatch, 0xD8F015C0, 0xC278, 0x11CE, 0xA4, 0x9E, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00);
 MIME_DEFINE_GUID(IID_IShellDispatch2, 0xA4C6892C, 0x3BA9, 0x11D2, 0x9D, 0xEA, 0x00, 0xC0, 0x4F, 0xB1, 0x61, 0x62);
+MIME_DEFINE_GUID(IID_Folder, 0xBBCBDE60, 0xC3FF, 0x11CE, 0x83, 0x50, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00);
+MIME_DEFINE_GUID(IID_FolderItem, 0xFAC32C80, 0xCBE4, 0x11CE, 0x83, 0x50, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00);
+MIME_DEFINE_GUID(IID_FolderItems, 0x744129E0, 0xCBE5, 0x11CE, 0x83, 0x50, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00);
 MIME_DEFINE_GUID(IID_IShellFolderViewDual, 0xE7A1AF80, 0x4D96, 0x11CF, 0x96, 0x0C, 0x00, 0x80, 0xC7, 0xF4, 0xEE, 0x85);
 MIME_DEFINE_GUID(LIBID_Shell32, 0x50A7E9B0, 0x70EF, 0x11D1, 0xB7, 0x5A, 0x00, 0xA0, 0xC9, 0x05, 0x64, 0xFE);
 MIME_DEFINE_GUID(LIBID_SHDocVw, 0xEAB22AC0, 0x30C1, 0x11CF, 0xA7, 0xEB, 0x00, 0x00, 0xC0, 0x5B, 0xAE, 0x0B);
@@ -168,6 +171,54 @@ typedef struct IShellFolderViewDualVtbl {
 struct IShellFolderViewDual {
     const IShellFolderViewDualVtbl *lpVtbl;
 };
+
+/* the folder, its items and one item of the namespace, the objects NameSpace gives scripts. */
+typedef struct Folder Folder;
+#define Folder_METHODS(T)                                                                                              \
+    IDispatch_METHODS(T)                                                                                               \
+    HRESULT(STDMETHODCALLTYPE *get_Title)(T * This, BSTR * title);                                                     \
+    HRESULT(STDMETHODCALLTYPE *get_Application)(T * This, IDispatch * *application);                                   \
+    HRESULT(STDMETHODCALLTYPE *get_Parent)(T * This, IDispatch * *parent);                                             \
+    HRESULT(STDMETHODCALLTYPE *get_ParentFolder)(T * This, IDispatch * *folder);                                       \
+    HRESULT(STDMETHODCALLTYPE *Items)(T * This, IDispatch * *items);                                                   \
+    HRESULT(STDMETHODCALLTYPE *ParseName)(T * This, BSTR name, IDispatch * *item);                                     \
+    HRESULT(STDMETHODCALLTYPE *NewFolder)(T * This, BSTR name, VARIANT options);                                       \
+    HRESULT(STDMETHODCALLTYPE *MoveHere)(T * This, VARIANT item, VARIANT options);                                     \
+    HRESULT(STDMETHODCALLTYPE *CopyHere)(T * This, VARIANT item, VARIANT options);                                     \
+    HRESULT(STDMETHODCALLTYPE *GetDetailsOf)(T * This, VARIANT item, int column, BSTR * details);
+MIME_COM_INTERFACE(Folder)
+
+typedef struct FolderItems FolderItems;
+#define FolderItems_METHODS(T)                                                                                         \
+    IDispatch_METHODS(T)                                                                                               \
+    HRESULT(STDMETHODCALLTYPE *get_Count)(T * This, LONG * count);                                                     \
+    HRESULT(STDMETHODCALLTYPE *get_Application)(T * This, IDispatch * *application);                                   \
+    HRESULT(STDMETHODCALLTYPE *get_Parent)(T * This, IDispatch * *parent);                                             \
+    HRESULT(STDMETHODCALLTYPE *Item)(T * This, VARIANT index, IDispatch * *item);                                      \
+    HRESULT(STDMETHODCALLTYPE *_NewEnum)(T * This, IUnknown * *enumerator);
+MIME_COM_INTERFACE(FolderItems)
+
+typedef struct FolderItem FolderItem;
+#define FolderItem_METHODS(T)                                                                                          \
+    IDispatch_METHODS(T)                                                                                               \
+    HRESULT(STDMETHODCALLTYPE *get_Application)(T * This, IDispatch * *application);                                   \
+    HRESULT(STDMETHODCALLTYPE *get_Parent)(T * This, IDispatch * *parent);                                             \
+    HRESULT(STDMETHODCALLTYPE *get_Name)(T * This, BSTR * name);                                                       \
+    HRESULT(STDMETHODCALLTYPE *put_Name)(T * This, BSTR name);                                                         \
+    HRESULT(STDMETHODCALLTYPE *get_Path)(T * This, BSTR * path);                                                       \
+    HRESULT(STDMETHODCALLTYPE *get_GetLink)(T * This, IDispatch * *link);                                              \
+    HRESULT(STDMETHODCALLTYPE *get_GetFolder)(T * This, IDispatch * *folder);                                          \
+    HRESULT(STDMETHODCALLTYPE *get_IsLink)(T * This, VARIANT_BOOL * value);                                            \
+    HRESULT(STDMETHODCALLTYPE *get_IsFolder)(T * This, VARIANT_BOOL * value);                                          \
+    HRESULT(STDMETHODCALLTYPE *get_IsFileSystem)(T * This, VARIANT_BOOL * value);                                      \
+    HRESULT(STDMETHODCALLTYPE *get_IsBrowsable)(T * This, VARIANT_BOOL * value);                                       \
+    HRESULT(STDMETHODCALLTYPE *get_ModifyDate)(T * This, DATE * date);                                                 \
+    HRESULT(STDMETHODCALLTYPE *put_ModifyDate)(T * This, DATE date);                                                   \
+    HRESULT(STDMETHODCALLTYPE *get_Size)(T * This, LONG * size);                                                       \
+    HRESULT(STDMETHODCALLTYPE *get_Type)(T * This, BSTR * type);                                                       \
+    HRESULT(STDMETHODCALLTYPE *Verbs)(T * This, IDispatch * *verbs);                                                   \
+    HRESULT(STDMETHODCALLTYPE *InvokeVerb)(T * This, VARIANT verb);
+MIME_COM_INTERFACE(FolderItem)
 
 typedef struct IShellDispatch2 IShellDispatch2;
 typedef struct IShellDispatch2Vtbl {

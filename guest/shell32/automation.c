@@ -16,7 +16,7 @@ static SRWLOCK g_library_lock = SRWLOCK_INIT;
 static ITypeLib *g_library;
 
 /* the type information of one of the interfaces of the library. */
-static HRESULT shell_type_info(REFIID iid, ITypeInfo **info)
+HRESULT ShTypeInfo(REFIID iid, ITypeInfo **info)
 {
     *info = nullptr;
     AcquireSRWLockExclusive(&g_library_lock);
@@ -37,7 +37,7 @@ static HRESULT shell_type_info(REFIID iid, ITypeInfo **info)
 /* ------------------------------------------------------------------ variants */
 
 /* a variant that holds a value, with the reference to one followed. */
-static const VARIANT *plain_variant(const VARIANT *value)
+const VARIANT *ShPlainVariant(const VARIANT *value)
 {
     while (value && value->vt == (VT_VARIANT | VT_BYREF) && value->pvarVal)
         value = value->pvarVal;
@@ -45,9 +45,9 @@ static const VARIANT *plain_variant(const VARIANT *value)
 }
 
 /* the text of a variant, a string or a number written out, a task memory string or NULL when it holds none. */
-static LPWSTR variant_text(const VARIANT *value)
+LPWSTR ShVariantText(const VARIANT *value)
 {
-    value = plain_variant(value);
+    value = ShPlainVariant(value);
     if (!value || value->vt == VT_EMPTY || value->vt == VT_NULL || value->vt == VT_ERROR)
         return nullptr;
     VARIANT text;
@@ -110,14 +110,14 @@ static HRESULT STDMETHODCALLTYPE app_get_type_info(IShellDispatch2 *This, UINT i
         return E_POINTER;
     if (index)
         return DISP_E_BADINDEX;
-    return shell_type_info(&IID_IShellDispatch2, info);
+    return ShTypeInfo(&IID_IShellDispatch2, info);
 }
 
 static HRESULT STDMETHODCALLTYPE app_get_ids_of_names(IShellDispatch2 *This, REFIID riid, LPOLESTR *names, UINT count,
                                                       LCID lcid, DISPID *ids)
 {
     ITypeInfo *info;
-    HRESULT hr = shell_type_info(&IID_IShellDispatch2, &info);
+    HRESULT hr = ShTypeInfo(&IID_IShellDispatch2, &info);
     if (FAILED(hr))
         return hr;
     hr = DispGetIDsOfNames(info, names, count, ids);
@@ -129,7 +129,7 @@ static HRESULT STDMETHODCALLTYPE app_invoke(IShellDispatch2 *This, DISPID id, RE
                                             DISPPARAMS *params, VARIANT *result, EXCEPINFO *exception, UINT *argument)
 {
     ITypeInfo *info;
-    HRESULT hr = shell_type_info(&IID_IShellDispatch2, &info);
+    HRESULT hr = ShTypeInfo(&IID_IShellDispatch2, &info);
     if (FAILED(hr))
         return hr;
     hr = DispInvoke(This, info, id, flags, params, result, exception, argument);
@@ -156,9 +156,9 @@ APP_UNSUPPORTED(windows_none)
 
 static HRESULT STDMETHODCALLTYPE app_name_space(IShellDispatch2 *This, VARIANT directory, IDispatch **folder)
 {
-    if (folder)
-        *folder = nullptr;
-    return E_NOTIMPL;
+    if (!folder)
+        return E_POINTER;
+    return ShNameSpace(&directory, folder);
 }
 
 static HRESULT STDMETHODCALLTYPE app_browse_for_folder(IShellDispatch2 *This, LONG hwnd, BSTR title, LONG options,
@@ -179,7 +179,7 @@ static HRESULT STDMETHODCALLTYPE app_windows(IShellDispatch2 *This, IDispatch **
 /* a folder given by its path or by the number of a special folder, opened with the verb. */
 static HRESULT open_folder(const VARIANT *directory, LPCWSTR verb)
 {
-    directory = plain_variant(directory);
+    directory = ShPlainVariant(directory);
     WCHAR path[MAX_PATH];
     path[0] = 0;
     if (directory && (directory->vt == VT_I2 || directory->vt == VT_I4)) {
@@ -187,7 +187,7 @@ static HRESULT open_folder(const VARIANT *directory, LPCWSTR verb)
         if (FAILED(SHGetFolderPathW(nullptr, id, nullptr, SHGFP_TYPE_CURRENT, path)))
             return S_FALSE;
     } else {
-        LPWSTR text = variant_text(directory);
+        LPWSTR text = ShVariantText(directory);
         if (!text)
             return S_FALSE;
         if (wcslen(text) >= MAX_PATH) {
@@ -253,16 +253,16 @@ static HRESULT STDMETHODCALLTYPE app_is_restricted(IShellDispatch2 *This, BSTR g
 static HRESULT STDMETHODCALLTYPE app_shell_execute(IShellDispatch2 *This, BSTR file, VARIANT arguments, VARIANT directory,
                                                    VARIANT operation, VARIANT show)
 {
-    LPWSTR parameters = variant_text(&arguments);
-    LPWSTR folder = variant_text(&directory);
-    LPWSTR verb = variant_text(&operation);
+    LPWSTR parameters = ShVariantText(&arguments);
+    LPWSTR folder = ShVariantText(&directory);
+    LPWSTR verb = ShVariantText(&operation);
     SHELLEXECUTEINFOW info = {sizeof(info)};
     info.lpFile = file;
     info.lpParameters = parameters;
     info.lpDirectory = folder;
     info.lpVerb = verb;
     info.nShow = SW_SHOWNORMAL;
-    const VARIANT *number = plain_variant(&show);
+    const VARIANT *number = ShPlainVariant(&show);
     if (number && number->vt == VT_I2)
         info.nShow = number->iVal;
     else if (number && number->vt == VT_I4)
@@ -349,7 +349,7 @@ static const IShellDispatch2Vtbl g_app_vtbl = {
     app_show_browser_bar,
 };
 
-static HRESULT create_application(REFIID riid, void **object)
+HRESULT ShCreateApplication(REFIID riid, void **object)
 {
     SHELL_APPLICATION *app = ShAllocZero(sizeof(*app));
     if (!app)
@@ -411,14 +411,14 @@ static HRESULT STDMETHODCALLTYPE view_get_type_info(IShellFolderViewDual *This, 
         return E_POINTER;
     if (index)
         return DISP_E_BADINDEX;
-    return shell_type_info(&IID_IShellFolderViewDual, info);
+    return ShTypeInfo(&IID_IShellFolderViewDual, info);
 }
 
 static HRESULT STDMETHODCALLTYPE view_get_ids_of_names(IShellFolderViewDual *This, REFIID riid, LPOLESTR *names, UINT count,
                                                        LCID lcid, DISPID *ids)
 {
     ITypeInfo *info;
-    HRESULT hr = shell_type_info(&IID_IShellFolderViewDual, &info);
+    HRESULT hr = ShTypeInfo(&IID_IShellFolderViewDual, &info);
     if (FAILED(hr))
         return hr;
     hr = DispGetIDsOfNames(info, names, count, ids);
@@ -430,7 +430,7 @@ static HRESULT STDMETHODCALLTYPE view_invoke(IShellFolderViewDual *This, DISPID 
                                              DISPPARAMS *params, VARIANT *result, EXCEPINFO *exception, UINT *argument)
 {
     ITypeInfo *info;
-    HRESULT hr = shell_type_info(&IID_IShellFolderViewDual, &info);
+    HRESULT hr = ShTypeInfo(&IID_IShellFolderViewDual, &info);
     if (FAILED(hr))
         return hr;
     hr = DispInvoke(This, info, id, flags, params, result, exception, argument);
@@ -443,7 +443,7 @@ static HRESULT STDMETHODCALLTYPE view_get_application(IShellFolderViewDual *This
 {
     if (!application)
         return E_INVALIDARG;
-    return create_application(&IID_IDispatch, (void **)application);
+    return ShCreateApplication(&IID_IDispatch, (void **)application);
 }
 
 /* a view of the desktop has no folder, items or script to give. */
@@ -553,7 +553,7 @@ static HRESULT STDMETHODCALLTYPE factory_lock_server(IClassFactory *This, BOOL l
 static const IClassFactoryVtbl g_factory_vtbl = {
     factory_query_interface, factory_add_ref, factory_release, factory_create_instance, factory_lock_server,
 };
-static CLASS_FACTORY g_application_factory = {{&g_factory_vtbl}, create_application};
+static CLASS_FACTORY g_application_factory = {{&g_factory_vtbl}, ShCreateApplication};
 static CLASS_FACTORY g_view_factory = {{&g_factory_vtbl}, create_folder_view};
 
 HRESULT ShAutomationClassObject(REFCLSID clsid, REFIID riid, void **object)
