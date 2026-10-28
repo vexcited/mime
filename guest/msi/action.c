@@ -10,6 +10,13 @@ static BOOL string_column(const MIME_MSI_TABLE *table, ULONG column, PCWSTR name
 static void action_text(MSIHANDLE handle, PCWSTR action, PWSTR *description, PWSTR *template)
 {
     *description = *template = nullptr;
+    /* most packages have no ActionText table, and a query of it would only fail. */
+    MSIHANDLE database = MsiGetActiveDatabase(handle);
+    MSICONDITION present = database ? MsiDatabaseIsTablePersistentW(database, L"ActionText") : MSICONDITION_NONE;
+    if (database)
+        MsiCloseHandle(database);
+    if (present != MSICONDITION_TRUE && present != MSICONDITION_FALSE)
+        return;
     MSIHANDLE view;
     WCHAR query[512];
     _snwprintf(query, RTL_NUMBER_OF(query), L"SELECT `Description`, `Template` FROM `ActionText` WHERE `Action` = '%s'", action);
