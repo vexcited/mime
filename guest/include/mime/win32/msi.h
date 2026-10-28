@@ -192,6 +192,34 @@ MSIAPI UINT WINAPI MsiEnumClientsW(LPCWSTR component, DWORD index, LPWSTR produc
 MSIAPI INSTALLSTATE WINAPI MsiGetComponentPathW(LPCWSTR product, LPCWSTR component, LPWSTR out, LPDWORD size);
 MSIAPI INSTALLSTATE WINAPI MsiLocateComponentW(LPCWSTR component, LPWSTR out, LPDWORD size);
 MSIAPI INSTALLSTATE WINAPI MsiLocateComponentA(LPCSTR component, LPSTR out, LPDWORD size);
+#define ERROR_INDEX_ABSENT 1611L
+#define MAX_FEATURE_CHARS 38
+typedef enum tagINSTALLMODE {
+    INSTALLMODE_NODETECTION_ANY = -4, INSTALLMODE_NOSOURCERESOLUTION = -3, INSTALLMODE_NODETECTION = -2,
+    INSTALLMODE_EXISTING = -1, INSTALLMODE_DEFAULT = 0
+} INSTALLMODE;
+MSIAPI UINT WINAPI MsiDecomposeDescriptorW(LPCWSTR descriptor, LPWSTR product, LPWSTR feature, LPWSTR component,
+                                           LPDWORD used);
+MSIAPI UINT WINAPI MsiDecomposeDescriptorA(LPCSTR descriptor, LPSTR product, LPSTR feature, LPSTR component,
+                                           LPDWORD used);
+MSIAPI UINT WINAPI MsiProvideComponentW(LPCWSTR product, LPCWSTR feature, LPCWSTR component, DWORD mode, LPWSTR path,
+                                        LPDWORD size);
+MSIAPI UINT WINAPI MsiProvideComponentA(LPCSTR product, LPCSTR feature, LPCSTR component, DWORD mode, LPSTR path,
+                                        LPDWORD size);
+MSIAPI UINT WINAPI MsiProvideComponentFromDescriptorW(LPCWSTR descriptor, LPWSTR path, LPDWORD size, LPDWORD args);
+MSIAPI UINT WINAPI MsiProvideComponentFromDescriptorA(LPCSTR descriptor, LPSTR path, LPDWORD size, LPDWORD args);
+MSIAPI UINT WINAPI MsiProvideQualifiedComponentW(LPCWSTR category, LPCWSTR qualifier, DWORD mode, LPWSTR path,
+                                                 LPDWORD size);
+MSIAPI UINT WINAPI MsiProvideQualifiedComponentA(LPCSTR category, LPCSTR qualifier, DWORD mode, LPSTR path,
+                                                 LPDWORD size);
+MSIAPI UINT WINAPI MsiProvideQualifiedComponentExW(LPCWSTR category, LPCWSTR qualifier, DWORD mode, LPCWSTR product,
+                                                   DWORD unused1, DWORD unused2, LPWSTR path, LPDWORD size);
+MSIAPI UINT WINAPI MsiProvideQualifiedComponentExA(LPCSTR category, LPCSTR qualifier, DWORD mode, LPCSTR product,
+                                                   DWORD unused1, DWORD unused2, LPSTR path, LPDWORD size);
+MSIAPI UINT WINAPI MsiEnumComponentQualifiersW(LPCWSTR category, DWORD index, LPWSTR qualifier, LPDWORD qualifier_size,
+                                               LPWSTR data, LPDWORD data_size);
+MSIAPI UINT WINAPI MsiEnumComponentQualifiersA(LPCSTR category, DWORD index, LPSTR qualifier, LPDWORD qualifier_size,
+                                               LPSTR data, LPDWORD data_size);
 MSIAPI UINT WINAPI MsiEnumProductsW(DWORD index, LPWSTR product);
 MSIAPI UINT WINAPI MsiEnumProductsA(DWORD index, LPSTR product);
 MSIAPI UINT WINAPI MsiRemovePatchesW(LPCWSTR patches, LPCWSTR product, INSTALLTYPE type, LPCWSTR command);

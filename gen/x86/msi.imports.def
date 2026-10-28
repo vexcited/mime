@@ -19,12 +19,16 @@ EXPORTS
     MsiDatabaseIsTablePersistentW@8 @165
     MsiDatabaseOpenViewA@12 @31
     MsiDatabaseOpenViewW@12 @32
+    MsiDecomposeDescriptorA@20 @200
+    MsiDecomposeDescriptorW@20 @201
     MsiDeterminePatchSequenceW@20 @254
     MsiDoActionA@8 @33
     MsiDoActionW@8 @34
     MsiEnableLogW@12 @169
     MsiEnumClientsExW@32 @292
     MsiEnumClientsW@12 @37
+    MsiEnumComponentQualifiersA@24 @38
+    MsiEnumComponentQualifiersW@24 @39
     MsiEnumComponentsExW@28 @290
     MsiEnumComponentsW@8 @41
     MsiEnumFeaturesW@16 @43
@@ -81,6 +85,14 @@ EXPORTS
     MsiOpenPackageW@8 @94
     MsiOpenProductW@8 @96
     MsiProcessMessage@12 @103
+    MsiProvideComponentA@24 @104
+    MsiProvideComponentFromDescriptorA@16 @105
+    MsiProvideComponentFromDescriptorW@16 @106
+    MsiProvideComponentW@24 @107
+    MsiProvideQualifiedComponentA@20 @108
+    MsiProvideQualifiedComponentExA@32 @202
+    MsiProvideQualifiedComponentExW@32 @203
+    MsiProvideQualifiedComponentW@20 @109
     MsiQueryComponentStateW@20 @250
     MsiQueryFeatureStateExW@20 @252
     MsiQueryFeatureStateW@8 @111

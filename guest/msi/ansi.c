@@ -540,3 +540,123 @@ UINT WINAPI MsiViewModify(MSIHANDLE view, int mode, MSIHANDLE record)
     ReleaseSRWLockShared(&MimeMsiLock);
     return known ? ERROR_FUNCTION_FAILED : ERROR_INVALID_HANDLE;
 }
+
+/* ------------------------------------------------------------------ descriptors and qualified components */
+
+#define PATH_CHARS 32768
+
+/* the size is in bytes; without a buffer the caller only learns the size. */
+static UINT path_to_ansi(UINT error, PCWSTR path, LPSTR out, LPDWORD size)
+{
+    if (error || !size)
+        return error;
+    if (!out) {
+        int length = WideCharToMultiByte(CP_ACP, 0, path, -1, nullptr, 0, nullptr, nullptr);
+        *size = length ? (DWORD)length - 1 : 0;
+        return ERROR_SUCCESS;
+    }
+    return copy_ansi(path, out, size);
+}
+
+static void to_ansi(PCWSTR text, LPSTR out, int capacity)
+{
+    if (out)
+        WideCharToMultiByte(CP_ACP, 0, text, -1, out, capacity, nullptr, nullptr);
+}
+
+UINT WINAPI MsiDecomposeDescriptorA(LPCSTR descriptor, LPSTR product, LPSTR feature, LPSTR component, LPDWORD used)
+{
+    PWSTR wide = to_wide(descriptor);
+    if (descriptor && !wide)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    WCHAR wide_product[39], wide_feature[MAX_FEATURE_CHARS + 1], wide_component[39];
+    DWORD length;
+    UINT error = MsiDecomposeDescriptorW(wide, wide_product, wide_feature, wide_component, &length);
+    if (!error) {
+        to_ansi(wide_product, product, 39);
+        to_ansi(wide_feature, feature, MAX_FEATURE_CHARS + 1);
+        to_ansi(wide_component, component, 39);
+        if (used)
+            *used = (DWORD)WideCharToMultiByte(CP_ACP, 0, wide, (int)length, nullptr, 0, nullptr, nullptr);
+    }
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiProvideComponentA(LPCSTR product, LPCSTR feature, LPCSTR component, DWORD mode, LPSTR path,
+                                 LPDWORD size)
+{
+    PWSTR wide_product = to_wide(product), wide_feature = to_wide(feature), wide_component = to_wide(component);
+    PWSTR buffer = MimeMsiAllocate(PATH_CHARS * sizeof(WCHAR));
+    DWORD length = PATH_CHARS;
+    UINT error = !buffer || (product && !wide_product) || (feature && !wide_feature) || (component && !wide_component)
+                     ? ERROR_NOT_ENOUGH_MEMORY
+                     : MsiProvideComponentW(wide_product, wide_feature, wide_component, mode, buffer, &length);
+    error = path_to_ansi(error, buffer, path, size);
+    MimeMsiFree(buffer);
+    MimeMsiFree(wide_product);
+    MimeMsiFree(wide_feature);
+    MimeMsiFree(wide_component);
+    return error;
+}
+
+UINT WINAPI MsiProvideComponentFromDescriptorA(LPCSTR descriptor, LPSTR path, LPDWORD size, LPDWORD args)
+{
+    PWSTR wide = to_wide(descriptor);
+    PWSTR buffer = MimeMsiAllocate(PATH_CHARS * sizeof(WCHAR));
+    DWORD length = PATH_CHARS, offset = 0;
+    UINT error = !buffer || (descriptor && !wide) ? ERROR_NOT_ENOUGH_MEMORY
+                                                  : MsiProvideComponentFromDescriptorW(wide, buffer, &length, &offset);
+    error = path_to_ansi(error, buffer, path, size);
+    if (!error && args)
+        *args = (DWORD)WideCharToMultiByte(CP_ACP, 0, wide, (int)offset, nullptr, 0, nullptr, nullptr);
+    MimeMsiFree(buffer);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiProvideQualifiedComponentExA(LPCSTR category, LPCSTR qualifier, DWORD mode, LPCSTR product,
+                                            DWORD unused1, DWORD unused2, LPSTR path, LPDWORD size)
+{
+    PWSTR wide_category = to_wide(category), wide_qualifier = to_wide(qualifier), wide_product = to_wide(product);
+    PWSTR buffer = MimeMsiAllocate(PATH_CHARS * sizeof(WCHAR));
+    DWORD length = PATH_CHARS;
+    UINT error = !buffer || (category && !wide_category) || (qualifier && !wide_qualifier) || (product && !wide_product)
+                     ? ERROR_NOT_ENOUGH_MEMORY
+                     : MsiProvideQualifiedComponentExW(wide_category, wide_qualifier, mode, wide_product, unused1,
+                                                       unused2, buffer, &length);
+    error = path_to_ansi(error, buffer, path, size);
+    MimeMsiFree(buffer);
+    MimeMsiFree(wide_category);
+    MimeMsiFree(wide_qualifier);
+    MimeMsiFree(wide_product);
+    return error;
+}
+
+UINT WINAPI MsiProvideQualifiedComponentA(LPCSTR category, LPCSTR qualifier, DWORD mode, LPSTR path, LPDWORD size)
+{
+    return MsiProvideQualifiedComponentExA(category, qualifier, mode, nullptr, 0, 0, path, size);
+}
+
+UINT WINAPI MsiEnumComponentQualifiersA(LPCSTR category, DWORD index, LPSTR qualifier, LPDWORD qualifier_size,
+                                        LPSTR data, LPDWORD data_size)
+{
+    if (!qualifier || !qualifier_size || (data && !data_size))
+        return ERROR_INVALID_PARAMETER;
+    PWSTR wide = to_wide(category);
+    PWSTR name = MimeMsiAllocate(PATH_CHARS * sizeof(WCHAR)), text = MimeMsiAllocate(PATH_CHARS * sizeof(WCHAR));
+    DWORD name_length = PATH_CHARS, text_length = PATH_CHARS;
+    UINT error = !name || !text || (category && !wide)
+                     ? ERROR_NOT_ENOUGH_MEMORY
+                     : MsiEnumComponentQualifiersW(wide, index, name, &name_length, text, &text_length);
+    if (!error) {
+        error = copy_ansi(name, qualifier, qualifier_size);
+        UINT data_error = path_to_ansi(ERROR_SUCCESS, text, data, data_size);
+        if (!error)
+            error = data_error;
+    }
+    MimeMsiFree(name);
+    MimeMsiFree(text);
+    MimeMsiFree(wide);
+    return error;
+}

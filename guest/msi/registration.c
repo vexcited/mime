@@ -339,9 +339,10 @@ UINT MimeMsiRegistrationAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     BOOL publish = !wcscmp(action, L"PublishProduct");
     BOOL components = !wcscmp(action, L"ProcessComponents");
     BOOL unpublish = !wcscmp(action, L"UnpublishFeatures");
+    BOOL qualified = !wcscmp(action, L"PublishComponents"), unqualified = !wcscmp(action, L"UnpublishComponents");
     if (unpublish)
         return ERROR_SUCCESS;
-    if (!registration && !features && !publish && !components)
+    if (!registration && !features && !publish && !components && !qualified && !unqualified)
         return UINT32_MAX;
     if (!package->TransactionActive || (package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE))
         return ERROR_FUNCTION_NOT_CALLED;
@@ -362,6 +363,8 @@ UINT MimeMsiRegistrationAction(MIME_MSI_PACKAGE *package, PCWSTR action)
         return ERROR_INSTALL_PACKAGE_INVALID;
     if (components)
         return MimeMsiProcessComponents(package, root);
+    if (qualified || unqualified)
+        return MimeMsiPublishComponents(package, root, qualified, removing_product(package));
     if (registration)
         return register_product(package, root, path);
     if (!package->CatalogRegistered)

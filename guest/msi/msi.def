@@ -132,3 +132,15 @@ EXPORTS
     MsiGetFileHashW @219
     MsiGetProductPropertyW @72
     MsiVerifyDiskSpace @142
+    MsiEnumComponentQualifiersA @38
+    MsiEnumComponentQualifiersW @39
+    MsiProvideComponentA @104
+    MsiProvideComponentFromDescriptorA @105
+    MsiProvideComponentFromDescriptorW @106
+    MsiProvideComponentW @107
+    MsiProvideQualifiedComponentA @108
+    MsiProvideQualifiedComponentW @109
+    MsiDecomposeDescriptorA @200
+    MsiDecomposeDescriptorW @201
+    MsiProvideQualifiedComponentExA @202
+    MsiProvideQualifiedComponentExW @203

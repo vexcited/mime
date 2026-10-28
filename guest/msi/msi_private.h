@@ -252,6 +252,8 @@ UINT MimeMsiCopyInstalledFile(MIME_MSI_PACKAGE *package, PCWSTR source, PCWSTR t
 UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features, PCWSTR name, ULONG depth, BOOL *selected);
 UINT MimeMsiRegistrationAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiProcessComponents(MIME_MSI_PACKAGE *package, HKEY root);
+UINT MimeMsiPublishComponents(MIME_MSI_PACKAGE *package, HKEY root, BOOL publish, BOOL removing);
+UINT MimeMsiDescriptor(PCWSTR product, PCWSTR feature, PCWSTR component, PWSTR *out);
 UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *directory, BOOL *selected);
 UINT MimeMsiRegistryText(HKEY key, PCWSTR name, PWSTR *out);
 UINT MimeMsiCurrentSid(WCHAR sid[256]);

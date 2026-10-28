@@ -1345,8 +1345,6 @@ static const struct {
     PCWSTR Tables[3];
 } TABLE_ACTIONS[] = {
     {L"SetODBCFolders", {L"ODBCDriver", L"ODBCTranslator", L"ODBCDataSource"}},
-    {L"PublishComponents", {L"PublishComponent"}},
-    {L"UnpublishComponents", {L"PublishComponent"}},
     {L"MsiPublishAssemblies", {L"MsiAssembly"}},
     {L"MsiUnpublishAssemblies", {L"MsiAssembly"}},
     {L"RegisterComPlus", {L"Complus"}},
