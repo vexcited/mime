@@ -952,8 +952,10 @@ static UINT validate_cost(MIME_MSI_PACKAGE *package)
         WCHAR root[] = {drive, L':', L'\\', 0};
         if (!cluster[index]) {
             DWORD sectors, bytes, available, total;
-            if (!GetDiskFreeSpaceW(root, &sectors, &bytes, &available, &total))
+            if (!GetDiskFreeSpaceW(root, &sectors, &bytes, &available, &total)) {
+                DbgPrint("msi: the space of %ws for %ws is not known, error %u\n", root, file->Target, GetLastError());
                 return GetLastError();
+            }
             if (!bytes || !sectors || bytes > UINT32_MAX / sectors)
                 return ERROR_INVALID_DATA;
             cluster[index] = bytes * sectors;
@@ -970,8 +972,10 @@ static UINT validate_cost(MIME_MSI_PACKAGE *package)
             if (backup > UINT64_MAX - bytes)
                 return ERROR_INVALID_DATA;
             bytes += backup;
-        } else if (!absent(GetLastError()))
+        } else if (!absent(GetLastError())) {
+            DbgPrint("msi: the target %ws cannot be looked at, error %u\n", file->Target, GetLastError());
             return GetLastError();
+        }
         if (bytes > UINT64_MAX - required[index])
             return ERROR_INVALID_DATA;
         required[index] += bytes;
