@@ -410,7 +410,10 @@ static UINT extension_info(MIME_MSI_PACKAGE *package, BOOL remove)
     UINT error = optional_table(package, L"Extension", &table);
     if (!error)
         error = optional_table(package, L"Verb", &verbs);
-    if (error || !table)
+    if (error || !table || !table->Rows)
+        return error;
+    error = MimeMsiRequireTransaction(package);
+    if (error)
         return error;
     error = MimeMsiLoadTable(package->Database, L"Feature", &features);
     HKEY root = classes_root(package);
@@ -515,7 +518,10 @@ static UINT progid_info(MIME_MSI_PACKAGE *package, BOOL remove)
         error = optional_table(package, L"Class", &classes);
     if (!error)
         error = optional_table(package, L"Extension", &extensions);
-    if (error || !table)
+    if (error || !table || !table->Rows)
+        return error;
+    error = MimeMsiRequireTransaction(package);
+    if (error)
         return error;
     error = MimeMsiLoadTable(package->Database, L"Feature", &features);
     HKEY root = classes_root(package);
@@ -736,10 +742,13 @@ static UINT class_info(MIME_MSI_PACKAGE *package, BOOL remove)
 {
     MIME_MSI_TABLE *table, *features;
     UINT error = optional_table(package, L"Class", &table);
-    if (error || !table)
+    if (error || !table || !table->Rows)
+        return error;
+    error = MimeMsiRequireTransaction(package);
+    if (error)
         return error;
     /* a local server is given by its short path, which a file has once it is there. */
-    if (!remove && table->Rows)
+    if (!remove)
         error = MimeMsiInstallQueuedFiles(package);
     if (error)
         return error;
@@ -779,8 +788,6 @@ UINT MimeMsiClassesAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     for (ULONG i = 0; i < RTL_NUMBER_OF(actions); i++) {
         if (wcscmp(action, actions[i].Name))
             continue;
-        if (!package->TransactionActive || (package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE))
-            return ERROR_FUNCTION_NOT_CALLED;
         return actions[i].Run(package, actions[i].Remove);
     }
     return UINT32_MAX;

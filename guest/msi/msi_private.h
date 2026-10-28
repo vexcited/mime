@@ -272,6 +272,7 @@ int MimeMsiFeatureLevel(MIME_MSI_PACKAGE *package, PCWSTR name, int level);
 UINT MimeMsiInstallQueuedFiles(MIME_MSI_PACKAGE *package);
 UINT MimeMsiCreateRegistryKey(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path);
 UINT MimeMsiTableAction(MIME_MSI_PACKAGE *package, PCWSTR action);
+UINT MimeMsiRequireTransaction(MIME_MSI_PACKAGE *package);
 UINT MimeMsiRebootResult(MIME_MSI_PACKAGE *package);
 UINT MimeMsiClassesAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiFontsAction(MIME_MSI_PACKAGE *package, PCWSTR action);

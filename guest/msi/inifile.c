@@ -179,6 +179,8 @@ static UINT ini_rows(MIME_MSI_PACKAGE *package, PCWSTR name, BOOL removing, BOOL
     UINT error = MimeMsiLoadTable(package->Database, name, &table);
     if (error == ERROR_BAD_QUERY_SYNTAX)
         return ERROR_SUCCESS;
+    if (!error && table->Rows)
+        error = MimeMsiRequireTransaction(package);
     for (ULONG row = 0; !error && row < table->Rows; row++) {
         PCWSTR component = cell_text(package, table, row, L"Component_");
         INSTALLSTATE installed, action;
@@ -196,8 +198,6 @@ UINT MimeMsiIniAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     BOOL write = !wcscmp(action, L"WriteIniValues");
     if (!write && wcscmp(action, L"RemoveIniValues"))
         return UINT32_MAX;
-    if (!package->TransactionActive || (package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE))
-        return ERROR_FUNCTION_NOT_CALLED;
     if (write)
         return ini_rows(package, L"IniFile", FALSE, FALSE);
     UINT error = ini_rows(package, L"IniFile", TRUE, TRUE);

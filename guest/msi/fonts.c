@@ -196,6 +196,8 @@ static UINT font_rows(MIME_MSI_PACKAGE *package, BOOL remove)
     UINT error = MimeMsiLoadTable(package->Database, L"Font", &fonts);
     if (error == ERROR_BAD_QUERY_SYNTAX)
         return ERROR_SUCCESS;
+    if (!error && fonts->Rows)
+        error = MimeMsiRequireTransaction(package);
     if (!error)
         error = MimeMsiLoadTable(package->Database, L"File", &files);
     /* a title is read from the font file, and a font is loaded from it, once it is there. */
@@ -211,7 +213,5 @@ UINT MimeMsiFontsAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     BOOL install = !wcscmp(action, L"RegisterFonts");
     if (!install && wcscmp(action, L"UnregisterFonts"))
         return UINT32_MAX;
-    if (!package->TransactionActive || (package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE))
-        return ERROR_FUNCTION_NOT_CALLED;
     return font_rows(package, !install);
 }

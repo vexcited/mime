@@ -18,6 +18,14 @@ static UINT patch_files(MIME_MSI_PACKAGE *package)
     return table->Rows ? ERROR_CALL_NOT_IMPLEMENTED : ERROR_SUCCESS;
 }
 
+/* an action that changes the machine runs between InstallInitialize and InstallFinalize, once it has a row to act on. */
+UINT MimeMsiRequireTransaction(MIME_MSI_PACKAGE *package)
+{
+    if (!package->TransactionActive || (package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE))
+        return ERROR_FUNCTION_NOT_CALLED;
+    return ERROR_SUCCESS;
+}
+
 UINT MimeMsiTableAction(MIME_MSI_PACKAGE *package, PCWSTR action)
 {
     if (!wcscmp(action, L"PatchFiles"))
