@@ -103,9 +103,16 @@ static MSI_CONDITION_VALUE condition_value(MSI_CONDITION_PARSER *parser)
                 parser->Error = TRUE;
             else
                 value.Number = prefix == L'&' ? action : installed;
-        } else if (prefix == L'$' || prefix == L'?')
-            parser->Error = TRUE;
-        else if (prefix == L'%') {
+        } else if (prefix == L'$' || prefix == L'?') {
+            /* the state of a component the product changes, or the state it had. */
+            INSTALLSTATE installed, action;
+            value.Integer = TRUE;
+            if (!parser->Package || !parser->Token[1] ||
+                MimeMsiComponentState(parser->Package, parser->Token + 1, &installed, &action))
+                parser->Error = TRUE;
+            else
+                value.Number = prefix == L'$' ? action : installed;
+        } else if (prefix == L'%') {
             DWORD length = GetEnvironmentVariableW(parser->Token + 1, nullptr, 0);
             if (length) {
                 value.Text = MimeMsiAllocate((SIZE_T)length * sizeof(WCHAR));
