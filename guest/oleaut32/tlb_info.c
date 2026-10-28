@@ -398,6 +398,15 @@ static HRESULT base_info(TYPEINFO *info, ITypeInfo **base)
     return TlResolveHref(t, ref, base);
 }
 
+static TYPEINFO *ours(ITypeInfo *i);
+
+/* the type that members not found in this one are looked up in. */
+HRESULT TlInfoBase(ITypeInfo *self, ITypeInfo **base)
+{
+    TYPEINFO *info = ours(self);
+    return info ? base_info(info, base) : TYPE_E_ELEMENTNOTFOUND;
+}
+
 static TYPEINFO *ours(ITypeInfo *i)
 {
     TYPEINFO *mine = nullptr;

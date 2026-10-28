@@ -892,13 +892,10 @@ HRESULT TlInvokeOnType(ITypeInfo *self, TL_TYPE *type, BOOL dual_dispatch_view, 
         }
     if (found)
         return invoke_function(self, type, found, instance, flags, params, result, excep, arg_err);
-    /* not found here: pass the same call to the base. */
-    HREFTYPE ref;
-    ITypeInfo2 *info2 = (ITypeInfo2 *)self;
-    if (type->Kind == TKIND_MODULE || FAILED(info2->lpVtbl->GetRefTypeOfImplType(info2, 0, &ref)))
-        return DISP_E_MEMBERNOTFOUND;
+    /* not found here: pass the same call to the base. the dispatch side of a dual interface reports IDispatch as its
+     * base, but the members it inherits come from the interface it derives from. */
     ITypeInfo *base;
-    if (FAILED(info2->lpVtbl->GetRefTypeInfo(info2, ref, &base)))
+    if (type->Kind == TKIND_MODULE || FAILED(TlInfoBase(self, &base)))
         return DISP_E_MEMBERNOTFOUND;
     hr = base->lpVtbl->Invoke(base, instance, id, flags, params, result, excep, arg_err);
     base->lpVtbl->Release(base);

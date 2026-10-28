@@ -252,6 +252,7 @@ HRESULT TlVariantCopy(TL_LIB *lib, VARIANT *to, const VARIANT *from);
 /* loading and registration. */
 HRESULT TlLoadFile(LPCOLESTR path, SYSKIND kind, TL_LIB **lib);
 HRESULT TlSaveMsft(TL_LIB *lib, LPCOLESTR path);
+HRESULT TlInfoBase(ITypeInfo *self, ITypeInfo **base);
 HRESULT TlInvokeOnType(ITypeInfo *self, TL_TYPE *type, BOOL dual_dispatch_view, PVOID instance, MEMBERID id, WORD flags,
                        DISPPARAMS *params, VARIANT *result, EXCEPINFO *excep, UINT *arg_err);
 
