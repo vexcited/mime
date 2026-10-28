@@ -72,6 +72,7 @@ EXPORTS
     CoWaitForMultipleHandles=_CoWaitForMultipleHandles@20
     CreateBindCtx=_CreateBindCtx@8
     CreateDataAdviseHolder=_CreateDataAdviseHolder@4
+    CreateDataCache=_CreateDataCache@16
     CreateFileMoniker=_CreateFileMoniker@8
     CreateGenericComposite=_CreateGenericComposite@12
     CreateILockBytesOnHGlobal=_CreateILockBytesOnHGlobal@12
@@ -166,6 +167,7 @@ EXPORTS
     OleCreateMenuDescriptor=_OleCreateMenuDescriptor@8
     OleCreateStaticFromData=_OleCreateStaticFromData@28
     OleDestroyMenuDescriptor=_OleDestroyMenuDescriptor@4
+    OleDraw=_OleDraw@16
     OleDuplicateData=_OleDuplicateData@12
     OleFlushClipboard=_OleFlushClipboard@0
     OleGetAutoConvert=_OleGetAutoConvert@8
@@ -175,6 +177,7 @@ EXPORTS
     OleIsCurrentClipboard=_OleIsCurrentClipboard@4
     OleIsRunning=_OleIsRunning@4
     OleLoad=_OleLoad@16
+    OleLoadFromStream=_OleLoadFromStream@12
     OleLockRunning=_OleLockRunning@12
     OleQueryCreateFromData=_OleQueryCreateFromData@4
     OleQueryLinkFromData=_OleQueryLinkFromData@4

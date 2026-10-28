@@ -510,6 +510,47 @@ WINOLEAPI HRESULT WINAPI OleSaveToStream(IPersistStream *object, IStream *stream
     return hr;
 }
 
+/* the object behind the class the stream starts with, loaded from the rest of it. */
+WINOLEAPI HRESULT WINAPI OleLoadFromStream(IStream *stream, REFIID riid, void **object)
+{
+    if (!object)
+        return E_INVALIDARG;
+    *object = nullptr;
+    if (!stream)
+        return E_INVALIDARG;
+    CLSID clsid;
+    HRESULT hr = ReadClassStm(stream, &clsid);
+    if (hr != S_OK)
+        return hr;
+    IUnknown *instance;
+    hr = CoCreateInstance(&clsid, nullptr, CLSCTX_SERVER | CLSCTX_NO_CODE_DOWNLOAD, riid, (void **)&instance);
+    if (FAILED(hr))
+        return hr;
+    IPersistStream *persist;
+    hr = instance->lpVtbl->QueryInterface(instance, &IID_IPersistStream, (void **)&persist);
+    if (hr == S_OK) {
+        hr = persist->lpVtbl->Load(persist, stream);
+        persist->lpVtbl->Release(persist);
+        if (hr == S_OK)
+            hr = instance->lpVtbl->QueryInterface(instance, riid, object);
+    }
+    instance->lpVtbl->Release(instance);
+    return hr;
+}
+
+WINOLEAPI HRESULT WINAPI OleDraw(IUnknown *object, DWORD aspect, HDC hdc, LPCRECT rect)
+{
+    if (!object)
+        return E_INVALIDARG;
+    IViewObject *view;
+    if (object->lpVtbl->QueryInterface(object, &IID_IViewObject, (void **)&view) != S_OK)
+        return DV_E_NOIVIEWOBJECT;
+    HRESULT hr = view->lpVtbl->Draw(view, aspect, -1, nullptr, nullptr, nullptr, hdc, (const RECTL *)rect, nullptr,
+                                    nullptr, 0);
+    view->lpVtbl->Release(view);
+    return hr;
+}
+
 static FARPROC gdi_proc(const char *name)
 {
     HMODULE gdi32 = GetModuleHandleW(L"gdi32.dll");
@@ -636,6 +677,12 @@ static HRESULT no_object(void **object)
 
 WINOLEAPI HRESULT WINAPI OleCreate(REFCLSID clsid, REFIID riid, DWORD render, FORMATETC *format,
                                    IOleClientSite *site, IStorage *storage, void **object)
+{
+    MIME_STUB("ole32");
+    return no_object(object);
+}
+
+WINOLEAPI HRESULT WINAPI CreateDataCache(IUnknown *outer, REFCLSID clsid, REFIID riid, void **object)
 {
     MIME_STUB("ole32");
     return no_object(object);

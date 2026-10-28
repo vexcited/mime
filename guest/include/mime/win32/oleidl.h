@@ -25,6 +25,9 @@
 #ifndef OLE_E_NOTRUNNING
 #define OLE_E_NOTRUNNING ((HRESULT)0x80040005L)
 #endif
+#ifndef DV_E_NOIVIEWOBJECT
+#define DV_E_NOIVIEWOBJECT ((HRESULT)0x8004006DL)
+#endif
 #ifndef DV_E_FORMATETC
 #define DV_E_FORMATETC ((HRESULT)0x80040064L)
 #endif
@@ -234,6 +237,26 @@ struct IEnumSTATDATA {
     const IEnumSTATDATAVtbl *lpVtbl;
 };
 
+typedef struct IViewObject IViewObject;
+typedef struct IViewObjectVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IViewObject *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IViewObject *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IViewObject *This);
+    HRESULT(STDMETHODCALLTYPE *Draw)(IViewObject *This, DWORD aspect, LONG index, void *aspect_info,
+                                     DVTARGETDEVICE *device, HDC target, HDC draw, const RECTL *bounds,
+                                     const RECTL *window_bounds, BOOL(STDMETHODCALLTYPE *keep_going)(ULONG_PTR),
+                                     ULONG_PTR argument);
+    HRESULT(STDMETHODCALLTYPE *GetColorSet)(IViewObject *This, DWORD aspect, LONG index, void *aspect_info,
+                                            DVTARGETDEVICE *device, HDC target, LOGPALETTE **colors);
+    HRESULT(STDMETHODCALLTYPE *Freeze)(IViewObject *This, DWORD aspect, LONG index, void *aspect_info, DWORD *freeze);
+    HRESULT(STDMETHODCALLTYPE *Unfreeze)(IViewObject *This, DWORD freeze);
+    HRESULT(STDMETHODCALLTYPE *SetAdvise)(IViewObject *This, DWORD aspects, DWORD flags, IAdviseSink *sink);
+    HRESULT(STDMETHODCALLTYPE *GetAdvise)(IViewObject *This, DWORD *aspects, DWORD *flags, IAdviseSink **sink);
+} IViewObjectVtbl;
+struct IViewObject {
+    const IViewObjectVtbl *lpVtbl;
+};
+
 typedef struct IDataAdviseHolder IDataAdviseHolder, *LPDATAADVISEHOLDER;
 typedef struct IDataAdviseHolderVtbl {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(IDataAdviseHolder *This, REFIID riid, void **object);
@@ -400,6 +423,7 @@ struct IDropTarget {
 };
 
 MIME_DEFINE_GUID(IID_IDataObject, 0x0000010E, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+MIME_DEFINE_GUID(IID_IViewObject, 0x0000010D, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 MIME_DEFINE_GUID(IID_IEnumFORMATETC, 0x00000103, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 MIME_DEFINE_GUID(IID_IDropSource, 0x00000121, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
 MIME_DEFINE_GUID(IID_IDropTarget, 0x00000122, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
