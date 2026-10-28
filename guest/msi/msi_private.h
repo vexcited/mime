@@ -128,6 +128,9 @@ typedef struct MIME_MSI_PROPERTY {
 typedef struct MIME_MSI_FEATURE {
     WCHAR Name[39], Parent[39];
     INSTALLSTATE Installed, Requested;
+    /* the level a Condition row set for this costing. */
+    BOOL LevelSet;
+    int Level;
 } MIME_MSI_FEATURE;
 
 typedef struct MIME_MSI_PACKAGE {
@@ -264,6 +267,15 @@ UINT MimeMsiRegistrationAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiProcessComponents(MIME_MSI_PACKAGE *package, HKEY root);
 UINT MimeMsiPublishComponents(MIME_MSI_PACKAGE *package, HKEY root, BOOL publish, BOOL removing);
 UINT MimeMsiDescriptor(PCWSTR product, PCWSTR feature, PCWSTR component, PWSTR *out);
+UINT MimeMsiProcessConditions(MIME_MSI_PACKAGE *package, BOOL *changed);
+int MimeMsiFeatureLevel(MIME_MSI_PACKAGE *package, PCWSTR name, int level);
+UINT MimeMsiInstallQueuedFiles(MIME_MSI_PACKAGE *package);
+UINT MimeMsiCreateRegistryKey(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path);
+UINT MimeMsiTableAction(MIME_MSI_PACKAGE *package, PCWSTR action);
+UINT MimeMsiRebootResult(MIME_MSI_PACKAGE *package);
+UINT MimeMsiClassesAction(MIME_MSI_PACKAGE *package, PCWSTR action);
+UINT MimeMsiFontsAction(MIME_MSI_PACKAGE *package, PCWSTR action);
+UINT MimeMsiIniAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *directory, BOOL *selected);
 UINT MimeMsiRegistryText(HKEY key, PCWSTR name, PWSTR *out);
 UINT MimeMsiCurrentSid(WCHAR sid[256]);

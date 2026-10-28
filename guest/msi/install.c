@@ -300,6 +300,42 @@ UINT MimeMsiNoteUndo(MIME_MSI_PACKAGE *package, MIME_MSI_UNDO undo, void *contex
     return ERROR_SUCCESS;
 }
 
+/* a key without values, and the parents it needs, which a rollback deletes when this call made them. */
+UINT MimeMsiCreateRegistryKey(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
+{
+    if (!package->TransactionActive || (package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE))
+        return ERROR_FUNCTION_NOT_CALLED;
+    PCWSTR separator = wcsrchr(path, L'\\');
+    if (separator) {
+        PWSTR parent = MimeMsiDuplicate(path);
+        if (!parent)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        parent[separator - path] = 0;
+        UINT status = MimeMsiCreateRegistryKey(package, root, parent);
+        MimeMsiFree(parent);
+        if (status)
+            return status;
+    }
+    MIME_MSI_CHANGE *change = new_change(package, path);
+    if (!change)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    HKEY key;
+    DWORD disposition;
+    UINT error = RegCreateKeyExW(root, path, 0, nullptr, 0, KEY_READ | package->RegistryView, nullptr, &key, &disposition);
+    if (error || disposition != REG_CREATED_NEW_KEY) {
+        if (!error)
+            RegCloseKey(key);
+        MimeMsiFree(change->Path);
+        MimeMsiFree(change);
+        return error;
+    }
+    RegCloseKey(key);
+    change->RegistryKind = 2;
+    change->Root = root;
+    push_change(package, change);
+    return ERROR_SUCCESS;
+}
+
 /* queued actions run in order once the files are in place. */
 UINT MimeMsiQueueAction(MIME_MSI_PACKAGE *package, MIME_MSI_QUEUED run, UINT_PTR argument)
 {
@@ -541,6 +577,7 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
     int level = MimeMsiInteger(features, row, level_column);
     if (level < 0)
         return ERROR_INSTALL_PACKAGE_INVALID;
+    level = MimeMsiFeatureLevel(package, name, level);
     PCWSTR parent = MimeMsiText(package->Database, features, row, parent_column);
     if (parent && *parent) {
         UINT error = MimeMsiFeatureSelected(package, features, parent, depth + 1, selected);
@@ -675,10 +712,8 @@ static UINT reinstall_mode(MIME_MSI_PACKAGE *package, DWORD *out)
     }
     static const struct { PCWSTR Name; DWORD Modes; } tables[] = {
         {L"Registry", REINSTALLMODE_USERDATA | REINSTALLMODE_MACHINEDATA},
-        {L"Class", REINSTALLMODE_MACHINEDATA}, {L"Verb", REINSTALLMODE_MACHINEDATA},
-        {L"PublishComponent", REINSTALLMODE_MACHINEDATA}, {L"ProgId", REINSTALLMODE_MACHINEDATA},
+        {L"PublishComponent", REINSTALLMODE_MACHINEDATA},
         {L"MIME", REINSTALLMODE_MACHINEDATA}, {L"Icon", REINSTALLMODE_MACHINEDATA | REINSTALLMODE_SHORTCUT},
-        {L"Extension", REINSTALLMODE_MACHINEDATA}, {L"AppId", REINSTALLMODE_MACHINEDATA},
         {L"TypeLib", REINSTALLMODE_MACHINEDATA}, {L"ODBCDriver", REINSTALLMODE_MACHINEDATA},
         {L"ODBCDataSource", REINSTALLMODE_MACHINEDATA}, {L"ODBCTranslator", REINSTALLMODE_MACHINEDATA},
         {L"Shortcut", REINSTALLMODE_SHORTCUT}
@@ -788,12 +823,8 @@ static PCWSTR media_cabinet(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *media, in
 
 static UINT plan_files(MIME_MSI_PACKAGE *package)
 {
-    MIME_MSI_TABLE *table, *conditions;
-    UINT error = MimeMsiLoadTable(package->Database, L"Condition", &conditions);
-    if (!error && conditions->Rows)
-        return ERROR_CALL_NOT_IMPLEMENTED;
-    if (error && error != ERROR_BAD_QUERY_SYNTAX)
-        return error;
+    MIME_MSI_TABLE *table;
+    UINT error;
     if (*MimeMsiGetProperty(package, L"ADDSOURCE") || *MimeMsiGetProperty(package, L"ADVERTISE") ||
         (!package->Maintenance && (*MimeMsiGetProperty(package, L"REINSTALL") || *MimeMsiGetProperty(package, L"Installed"))))
         return ERROR_CALL_NOT_IMPLEMENTED;
@@ -1412,6 +1443,12 @@ static UINT execute_files(MIME_MSI_PACKAGE *package)
     return error;
 }
 
+/* an action that reads or loads what the package installs needs the files in place, which they are at InstallFiles. */
+UINT MimeMsiInstallQueuedFiles(MIME_MSI_PACKAGE *package)
+{
+    return execute_files(package);
+}
+
 UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
 {
     if (!wcscmp(action, L"CostInitialize")) {
@@ -1443,7 +1480,13 @@ UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     if (!wcscmp(action, L"CostFinalize")) {
         if (package->CostStage != 2)
             return ERROR_FUNCTION_NOT_CALLED;
-        UINT error = validate_cost(package);
+        BOOL changed;
+        UINT error = MimeMsiProcessConditions(package, &changed);
+        /* the levels decide which files are installed. */
+        if (!error && changed)
+            error = MimeMsiRefreshFilePlan(package);
+        if (!error)
+            error = validate_cost(package);
         if (!error)
             error = MimeMsiPublishDirectories(package);
         if (!error)

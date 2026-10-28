@@ -143,11 +143,16 @@ static UINT run_sequence_row(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_M
     AcquireSRWLockExclusive(&MimeMsiLock);
     MSICONDITION result = MimeMsiEvaluateCondition(package, condition ? condition : L"");
     ReleaseSRWLockExclusive(&MimeMsiLock);
-    if (result == MSICONDITION_ERROR)
+    if (result == MSICONDITION_ERROR) {
+        DbgPrint("msi: condition of %ws does not evaluate: %ws\n", action, condition ? condition : L"");
         return ERROR_INSTALL_FAILURE;
+    }
     if (result == MSICONDITION_FALSE)
         return ERROR_SUCCESS;
-    return MsiDoActionW(handle, action);
+    UINT error = MsiDoActionW(handle, action);
+    if (error && error != ERROR_NO_MORE_ITEMS)
+        DbgPrint("msi: action %ws returned %u\n", action, error);
+    return error;
 }
 
 UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
