@@ -5,7 +5,7 @@
  * SOFTWARE\Microsoft\SystemCertificates\AuthRoot\Certificates\<sha-1>, whose Blob
  * value holds the hash and certificate as serialized store elements. the keys are
  * made before the journal starts, so they are never saved and every boot sees the
- * bundle as it is now. roots the iso's hive or the journal already hold are left alone.
+ * bundle as it is now. roots the default hive or the journal already hold are left alone.
  */
 #include "cm.h"
 #include <crypto/crypto.h>
