@@ -1370,14 +1370,8 @@ static const struct {
     {L"SelfUnregModules", {L"SelfReg"}},
     {L"RegisterTypeLibraries", {L"TypeLib"}},
     {L"UnregisterTypeLibraries", {L"TypeLib"}},
-    {L"RegisterFonts", {L"Font"}},
-    {L"UnregisterFonts", {L"Font"}},
-    {L"RegisterClassInfo", {L"Class"}},
-    {L"UnregisterClassInfo", {L"Class"}},
     {L"RegisterMIMEInfo", {L"MIME"}},
     {L"UnregisterMIMEInfo", {L"MIME"}},
-    {L"WriteIniValues", {L"IniFile"}},
-    {L"RemoveIniValues", {L"IniFile", L"RemoveIniFile"}},
     {L"DuplicateFiles", {L"DuplicateFile"}},
     {L"RemoveDuplicateFiles", {L"DuplicateFile"}},
     {L"MoveFiles", {L"MoveFile"}},
@@ -1455,5 +1449,7 @@ UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     UINT result = MimeMsiServiceAction(package, action);
     if (result == UINT32_MAX)
         result = MimeMsiAssemblyAction(package, action);
+    if (result == UINT32_MAX)
+        result = MimeMsiTableAction(package, action);
     return result == UINT32_MAX ? table_action(package, action) : result;
 }

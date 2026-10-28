@@ -183,6 +183,8 @@ static UINT execute_package(MSIHANDLE handle)
     package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     if (!error && (!package || !package->TransactionCommitted))
         error = ERROR_FUNCTION_NOT_CALLED;
+    if (!error)
+        error = MimeMsiRebootResult(package);
     ReleaseSRWLockExclusive(&MimeMsiLock);
     return error;
 }
