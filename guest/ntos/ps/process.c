@@ -148,7 +148,7 @@ PVOID NTAPI PsGetProcessPeb(PEPROCESS process)
 
 NTSTATUS NTAPI PsGetProcessExitStatus(PEPROCESS process)
 {
-    return process->Exited ? process->ExitStatus : STATUS_PENDING;
+    return process->ExitStatusReady ? process->ExitStatus : STATUS_PENDING;
 }
 
 void NTAPI MmSetProcessCallbackTable(PEPROCESS process, PVOID table)
@@ -253,6 +253,7 @@ void PspProcessExit(PEPROCESS process)
 {
     KiLogPrintf("process %u (%s) exited with status %08x", (ULONG)(ULONG_PTR)process->UniqueProcessId,
                 process->ImageFileName, process->ExitStatus);
+    process->ExitStatusReady = TRUE;
     PspJobProcessExit(process);
     ExReleaseTimerResolution(process);
     PsWin32ProcessCallout(process, FALSE);
@@ -417,7 +418,7 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
     memset(&out, 0, sizeof(out));
     switch ((ULONG)klass) {
     case ProcessBasicInformation:
-        out.basic.ExitStatus = process->Exited ? process->ExitStatus : STATUS_PENDING;
+        out.basic.ExitStatus = process->ExitStatusReady ? process->ExitStatus : STATUS_PENDING;
         out.basic.PebBaseAddress = process->Peb;
         out.basic.AffinityMask = KiProcessAffinity(&process->Pcb);
         out.basic.BasePriority = process->Pcb.BasePriority;

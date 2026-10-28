@@ -1008,6 +1008,8 @@ typedef struct _EPROCESS {
     NTSTATUS ExitStatus;
     BOOLEAN Terminating;
     BOOLEAN Exited;
+    /* the exit status is known once the last thread ends, before the handles close. */
+    BOOLEAN ExitStatusReady;
     BOOLEAN SystemProcess;
     BOOLEAN ParametersInitialized;
     PVOID Win32Process;
