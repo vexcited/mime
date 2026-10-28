@@ -1381,10 +1381,6 @@ static const struct {
     {L"RemoveDuplicateFiles", {L"DuplicateFile"}},
     {L"MoveFiles", {L"MoveFile"}},
     {L"BindImage", {L"BindImage"}},
-    {L"InstallServices", {L"ServiceInstall"}},
-    {L"DeleteServices", {L"ServiceInstall"}},
-    {L"StartServices", {L"ServiceControl"}},
-    {L"StopServices", {L"ServiceControl"}},
     {L"CCPSearch", {L"CCPSearch"}},
     {L"RMCCPSearch", {L"CCPSearch"}},
 };
