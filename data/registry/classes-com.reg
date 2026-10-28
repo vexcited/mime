@@ -119,3 +119,33 @@
 @="CompressedFolder"
 [HKCR\CLSID\{E88DCCE0-B7B3-11D1-A9F0-00AA0060FA31}\ShellFolder]
 "Attributes"=dword:200001a0
+
+; the handlers of AVIFile: the names of the classes, the file types the AVI and wave handlers read and write, and the
+; classes that compress the streams of a type. avifil32 opens a file with the class it finds here for the form type of
+; the file, else for its extension.
+[HKCR\CLSID\{00020000-0000-0000-C000-000000000046}]
+@="Microsoft AVI Files"
+[HKCR\CLSID\{00020000-0000-0000-C000-000000000046}\AVIFile]
+@="7"
+[HKCR\CLSID\{00020001-0000-0000-C000-000000000046}]
+@="AVI Compressed Stream"
+[HKCR\CLSID\{00020003-0000-0000-C000-000000000046}]
+@="Microsoft Wave File"
+[HKCR\CLSID\{00020003-0000-0000-C000-000000000046}\AVIFile]
+@="7"
+[HKCR\CLSID\{0002000F-0000-0000-C000-000000000046}]
+@="ACM Compressed Audio Stream"
+[HKCR\AVIFile\Compressors\auds]
+@="{0002000F-0000-0000-C000-000000000046}"
+[HKCR\AVIFile\Compressors\vids]
+@="{00020001-0000-0000-C000-000000000046}"
+[HKCR\AVIFile\Extensions\AU]
+@="{00020003-0000-0000-C000-000000000046}"
+[HKCR\AVIFile\Extensions\AVI]
+@="{00020000-0000-0000-C000-000000000046}"
+[HKCR\AVIFile\Extensions\WAV]
+@="{00020003-0000-0000-C000-000000000046}"
+[HKCR\AVIFile\RIFFHandlers\AVI]
+@="{00020000-0000-0000-C000-000000000046}"
+[HKCR\AVIFile\RIFFHandlers\WAVE]
+@="{00020003-0000-0000-C000-000000000046}"

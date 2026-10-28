@@ -646,3 +646,18 @@
 [HKCR\CLSID\{A09CCA86-27BA-4F39-9053-121FA4DC08FC}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
 "ThreadingModel"="Both"
+
+; avifil32.dll
+; AVI files, the compressed AVI stream, wave files and the compressed audio stream
+[HKCR\CLSID\{00020000-0000-0000-C000-000000000046}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\avifil32.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{00020001-0000-0000-C000-000000000046}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\avifil32.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{00020003-0000-0000-C000-000000000046}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\avifil32.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{0002000F-0000-0000-C000-000000000046}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\avifil32.dll"
+"ThreadingModel"="Both"
