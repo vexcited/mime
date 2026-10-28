@@ -941,6 +941,7 @@ WINOLEAUTAPI HRESULT WINAPI DispGetParam(DISPPARAMS *params, UINT position, VART
         hr = VariantCopy(value, arg);
     } else if ((arg->vt & VT_BYREF) || vt != VT_VARIANT) {
         VARIANT in;
+        VariantInit(&in);
         hr = VariantCopyInd(&in, arg);
         if (SUCCEEDED(hr)) {
             hr = vt == in.vt ? VariantCopy(value, &in) : VariantChangeType(value, &in, 0, vt);
