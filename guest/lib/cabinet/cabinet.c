@@ -563,7 +563,7 @@ typedef struct LZX {
     uint32_t Repeat[3];
     int BlockType;
     uint32_t BlockRemaining;
-    int RawOdd;
+    int RawOdd, PadPending;
     int HeaderRead;
     uint32_t TranslationSize, Translated;
     uint64_t Produced;
@@ -836,6 +836,12 @@ static int lzx_frame(LZX *z, const uint8_t *in, size_t in_size, size_t out_size,
 {
     BITS *b = &z->Bits;
     bits_start(b, in, in_size);
+    /* the padding after a block that ended with its frame leads the next frame. */
+    if (z->PadPending) {
+        z->PadPending = 0;
+        if (in_size)
+            b->Pointer++;
+    }
     if (!z->HeaderRead) {
         z->HeaderRead = 1;
         if (bits_read(b, 1)) {
@@ -862,8 +868,12 @@ static int lzx_frame(LZX *z, const uint8_t *in, size_t in_size, size_t out_size,
                 z->Window[z->Position++ & mask] = p[i];
             b->Pointer = p + run;
             /* an odd sized uncompressed block is padded to a word. */
-            if (!z->BlockRemaining && z->RawOdd && b->Pointer < b->End)
-                b->Pointer++;
+            if (!z->BlockRemaining && z->RawOdd) {
+                if (b->Pointer < b->End)
+                    b->Pointer++;
+                else
+                    z->PadPending = 1;
+            }
             continue;
         }
         while (run) {
