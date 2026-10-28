@@ -109,3 +109,13 @@
 @="{88D96A06-F192-11D4-A65F-0040963251E5}"
 [HKCR\WindowsInstaller.Installer\CLSID]
 @="{000C1090-0000-0000-C000-000000000046}"
+
+; the compressed folder, the class of zip files, see classes-files.reg.
+[HKCR\CLSID\{E88DCCE0-B7B3-11D1-A9F0-00AA0060FA31}]
+@="CompressedFolder"
+[HKCR\CLSID\{E88DCCE0-B7B3-11D1-A9F0-00AA0060FA31}\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\zipfldr.dll"
+[HKCR\CLSID\{E88DCCE0-B7B3-11D1-A9F0-00AA0060FA31}\ProgID]
+@="CompressedFolder"
+[HKCR\CLSID\{E88DCCE0-B7B3-11D1-A9F0-00AA0060FA31}\ShellFolder]
+"Attributes"=dword:200001a0

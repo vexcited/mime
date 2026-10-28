@@ -97,6 +97,12 @@
 @=expand:"%SystemRoot%\\system32\\explorerframe.dll"
 "ThreadingModel"="Apartment"
 
+; zipfldr.dll
+; CompressedFolder
+[HKCR\CLSID\{E88DCCE0-B7B3-11D1-A9F0-00AA0060FA31}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\zipfldr.dll"
+"ThreadingModel"="Apartment"
+
 ; mfcaptureengine.dll
 ; MFCaptureEngine
 [HKCR\CLSID\{EFCE38D3-8914-4674-A7DF-AE1B3D654B8A}\InprocServer32]

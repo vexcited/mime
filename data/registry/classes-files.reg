@@ -1,5 +1,5 @@
 ; the file types that Mime handles: batch files run by the command interpreter, registry files merged by regedit, installer
-; packages run by msiexec, and the pictures and text the shell names an icon for.
+; packages run by msiexec, zip files the shell opens as folders, and the pictures and text the shell names an icon for.
 
 [HKCR\.bat]
 @="batfile"
@@ -52,6 +52,18 @@
 "PerceivedType"="text"
 [HKCR\htmlfile]
 @="HTML Document"
+
+; zip files are folders of the class CompressedFolder, which the shell opens like a directory, see zipfldr.dll.
+[HKCR\.zip]
+@="CompressedFolder"
+"Content Type"="application/x-zip-compressed"
+"PerceivedType"="compressed"
+[HKCR\CompressedFolder]
+@="Compressed (zipped) Folder"
+[HKCR\CompressedFolder\CLSID]
+@="{E88DCCE0-B7B3-11D1-A9F0-00AA0060FA31}"
+[HKCR\CompressedFolder\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\zipfldr.dll"
 
 [HKCR\.pdf]
 "Content Type"="application/pdf"

@@ -65,8 +65,10 @@ set(MIME_X86_DLLS
     imagehlp:0x02000000:base cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
     dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports
     onecorecommonproxystub:0x02000000:proxy_imports onecoreuapcommonproxystub:0x01000000:proxy_imports
-    feclient:0x03000000:base)
+    feclient:0x03000000:base zipfldr:0x15800000:explorerframe_imports)
 set(base ntdll kernel32)
+set(objects_zipfldr x86-lib-png:guest/lib/png/inflate.c x86-div)
+set(includes_zipfldr guest/lib)
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
 set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4 msvcrt)
