@@ -98,19 +98,25 @@ static MSI_CONDITION_VALUE condition_value(MSI_CONDITION_PARSER *parser)
         else if (prefix == L'&' || prefix == L'!') {
             INSTALLSTATE installed, action;
             value.Integer = TRUE;
-            if (!parser->Package || !parser->Token[1] ||
-                MimeMsiFeatureState(parser->Package, parser->Token + 1, &installed, &action))
+            if (!parser->Package)
                 parser->Error = TRUE;
-            else
+            else if (!parser->Token[1] || MimeMsiFeatureState(parser->Package, parser->Token + 1, &installed, &action)) {
+                /* a feature the package does not have is no error, it has no value. */
+                value.Integer = FALSE;
+                value.Text = MimeMsiDuplicate(L"");
+            } else
                 value.Number = prefix == L'&' ? action : installed;
         } else if (prefix == L'$' || prefix == L'?') {
             /* the state of a component the product changes, or the state it had. */
             INSTALLSTATE installed, action;
             value.Integer = TRUE;
-            if (!parser->Package || !parser->Token[1] ||
-                MimeMsiComponentState(parser->Package, parser->Token + 1, &installed, &action))
+            if (!parser->Package)
                 parser->Error = TRUE;
-            else
+            else if (!parser->Token[1] || MimeMsiComponentState(parser->Package, parser->Token + 1, &installed, &action)) {
+                /* so is a component it does not have. */
+                value.Integer = FALSE;
+                value.Text = MimeMsiDuplicate(L"");
+            } else
                 value.Number = prefix == L'$' ? action : installed;
         } else if (prefix == L'%') {
             DWORD length = GetEnvironmentVariableW(parser->Token + 1, nullptr, 0);
