@@ -1,0 +1,17 @@
+/* the dialog of AVISaveOptions, the layout of the one in Windows. */
+110 DIALOGEX 43, 37, 195, 82
+STYLE 0x90C800C0
+CAPTION "Compression Options"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    CONTROL "&Choose a stream...", -1, "STATIC", 0x50020000, 2, 5, 65, 10
+    CONTROL "", 113, "COMBOBOX", 0x50210003, 2, 18, 134, 61
+    CONTROL "&Options...", 114, "BUTTON", 0x50010000, 145, 17, 44, 14
+    CONTROL "I&nterleave every", 110, "BUTTON", 0x50010003, 3, 42, 68, 11
+    CONTROL "", 111, "EDIT", 0x50810080, 74, 41, 32, 12
+    CONTROL "Frames", 112, "STATIC", 0x50020000, 112, 43, 30, 9
+    CONTROL "Current Format:", -1, "STATIC", 0x50020000, 3, 56, 52, 9
+    CONTROL "This space for rent", 115, "STATIC", 0x50020000, 55, 56, 90, 26
+    CONTROL "OK", 1, "BUTTON", 0x50010001, 147, 42, 40, 14
+    CONTROL "Cancel", 2, "BUTTON", 0x50010000, 147, 61, 40, 14
+END

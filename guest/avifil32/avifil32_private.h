@@ -358,6 +358,7 @@ HRESULT WINAPI AVIMakeCompressedStream(PAVISTREAM *compressed, PAVISTREAM source
                                        const CLSID *handler);
 HRESULT WINAPI AVIMakeFileFromStreams(PAVIFILE *file, int count, PAVISTREAM *streams);
 PGETFRAME WINAPI AVIStreamGetFrameOpen(PAVISTREAM stream, BITMAPINFOHEADER *wanted);
+void *WINAPI AVIStreamGetFrame(PGETFRAME frame, LONG pos);
 LONG WINAPI AVIStreamStart(PAVISTREAM stream);
 LONG WINAPI AVIStreamLength(PAVISTREAM stream);
 LONG WINAPI AVIStreamSampleToTime(PAVISTREAM stream, LONG sample);
