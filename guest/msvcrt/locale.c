@@ -30,14 +30,26 @@ struct lconv {
     char n_sep_by_space;
     char p_sign_posn;
     char n_sign_posn;
+    /* the members that only ucrtbase's callers read, such as msvcp140's wide numpunct. */
+    wchar_t *_W_decimal_point;
+    wchar_t *_W_thousands_sep;
+    wchar_t *_W_int_curr_symbol;
+    wchar_t *_W_currency_symbol;
+    wchar_t *_W_mon_decimal_point;
+    wchar_t *_W_mon_thousands_sep;
+    wchar_t *_W_positive_sign;
+    wchar_t *_W_negative_sign;
 };
 
 static char g_point[] = ".";
 static char g_empty[] = "";
+static wchar_t g_wide_point[] = L".";
+static wchar_t g_wide_empty[] = L"";
 
 static struct lconv g_lconv = {
     g_point, g_empty, g_empty, g_empty, g_empty, g_empty, g_empty, g_empty, g_empty, g_empty,
     CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX,
+    g_wide_point, g_wide_empty, g_wide_empty, g_wide_empty, g_wide_empty, g_wide_empty, g_wide_empty, g_wide_empty,
 };
 
 /* exported c locale data. */
