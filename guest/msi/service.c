@@ -137,6 +137,29 @@ static BOOL parse_number(PCWSTR text, DWORD *value)
     return TRUE;
 }
 
+/* the error the log shows for a service the install could not change, which the action that fails posts. */
+static void report(MIME_MSI_PACKAGE *package, ULONG id, PCWSTR name)
+{
+    static const struct { ULONG Id; PCWSTR Verb, Right; } texts[] = {
+        {1920, L"failed to start", L"start"}, {1921, L"could not be stopped", L"stop"},
+        {1922, L"could not be deleted", L"remove"}, {1923, L"could not be installed", L"install"},
+        {1939, L"could not be configured", L"configure"},
+    };
+    for (ULONG i = 0; i < RTL_NUMBER_OF(texts); i++) {
+        if (texts[i].Id != id)
+            continue;
+        SIZE_T length = wcslen(name) * 2 + 192;
+        PWSTR message = MimeMsiAllocate(length * sizeof(WCHAR));
+        if (!message)
+            return;
+        _snwprintf(message, length, L"Error %u. Service '%s' (%s) %s. Verify that you have sufficient privileges to %s system services.",
+                   id, name, name, texts[i].Verb, texts[i].Right);
+        MimeMsiFree(package->LaunchMessage);
+        package->LaunchMessage = message;
+        return;
+    }
+}
+
 /* ------------------------------------------------------------------ the manager */
 
 static SC_HANDLE open_service(PCWSTR name, DWORD access)
@@ -432,6 +455,7 @@ static UINT configure_services(MIME_MSI_PACKAGE *package)
         }
         if (error) {
             DbgPrint("msi: could not configure service %ws with type %d, error %u\n", name ? name : raw_name, type, error);
+            report(package, 1939, name ? name : raw_name);
             error = ERROR_INSTALL_FAILURE;
         }
         MimeMsiFree(name);
@@ -464,6 +488,7 @@ static UINT configure_services(MIME_MSI_PACKAGE *package)
         }
         if (error) {
             DbgPrint("msi: could not set the failure actions of service %ws, error %u\n", name ? name : raw_name, error);
+            report(package, 1939, name ? name : raw_name);
             error = ERROR_INSTALL_FAILURE;
         }
         MimeMsiFree(name);
@@ -873,8 +898,10 @@ static UINT control_services(MIME_MSI_PACKAGE *package, ULONG kind)
             DbgPrint("msi: service %ws could not be %s, error %u%s\n", name,
                      kind == CONTROL_START ? "started" : kind == CONTROL_STOP ? "stopped" : "deleted", failure,
                      fatal ? "" : ", which is ignored");
-            if (fatal)
+            if (fatal) {
+                report(package, kind == CONTROL_START ? 1920 : kind == CONTROL_STOP ? 1921 : 1922, name);
                 error = ERROR_INSTALL_FAILURE;
+            }
         }
         MimeMsiFree(name);
         MimeMsiFree(arguments);
@@ -1078,8 +1105,10 @@ static UINT install_services(MIME_MSI_PACKAGE *package)
                 BOOL fatal = service.Vital || service.Error > 1;
                 DbgPrint("msi: service %ws could not be installed, error %u%s\n", service.Name, failure,
                          fatal ? "" : ", which is ignored");
-                if (fatal)
+                if (fatal) {
+                    report(package, 1923, service.Name);
                     error = ERROR_INSTALL_FAILURE;
+                }
             }
         }
         install_row_free(&service);
