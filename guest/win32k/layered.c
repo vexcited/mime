@@ -278,6 +278,9 @@ BOOL NTAPI NtUserUpdateLayeredWindow(HWND hwnd, HDC hdst, POINT *user_dst_pos, S
         w->Flags &= ~(WNDF_FRAME_DIRTY | WNDF_INTERNAL_PAINT);
         if (WndIsTopLevel(w))
             WndEnsureSurface(w);
+        /* what the program painted before its first update is not part of the layer. */
+        if (first && w->Surface)
+            memset(w->Surface->Bits, 0, (SIZE_T)w->Surface->Stride * (SIZE_T)w->Surface->Height);
         DC *src = hsrc ? DcLookup(hsrc) : nullptr;
         if (src && src->Surface && w->Surface) {
             RECT area = {0, 0, w->Surface->Width, w->Surface->Height};

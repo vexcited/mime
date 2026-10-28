@@ -403,14 +403,22 @@ void WndEnsureSurface(WND *w)
     if (!s)
         return;
     s->Window = w;
+    LONG copy_width = 0, copy_height = 0;
     if (w->Surface) {
-        LONG copy_width = W32Min(width, w->Surface->Width);
-        LONG copy_height = W32Min(height, w->Surface->Height);
+        copy_width = W32Min(width, w->Surface->Width);
+        copy_height = W32Min(height, w->Surface->Height);
         for (LONG y = 0; y < copy_height; y++)
             memcpy(s->Bits + (SIZE_T)y * s->Stride, w->Surface->Bits + (SIZE_T)y * w->Surface->Stride,
                    (SIZE_T)copy_width * 4);
         PaintRetireSurface(w->Surface);
     }
+    /* the host blends by alpha, so what was never painted is black as on Windows and not see-through. */
+    if (!(w->ExStyle & WS_EX_LAYERED))
+        for (LONG y = 0; y < height; y++) {
+            PULONG row = (PULONG)(s->Bits + (SIZE_T)y * s->Stride);
+            for (LONG x = y < copy_height ? copy_width : 0; x < width; x++)
+                row[x] = 0xFF000000u;
+        }
     w->Surface = s;
     s->Dirty = (RECT){0, 0, width, height};
     if (!(w->Flags & WNDF_HOST_WINDOW)) {
