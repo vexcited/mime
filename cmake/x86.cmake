@@ -64,7 +64,8 @@ set(MIME_X86_DLLS
     schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports
     imagehlp:0x02000000:base cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
     dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports
-    onecorecommonproxystub:0x02000000:proxy_imports onecoreuapcommonproxystub:0x01000000:proxy_imports)
+    onecorecommonproxystub:0x02000000:proxy_imports onecoreuapcommonproxystub:0x01000000:proxy_imports
+    feclient:0x03000000:base)
 set(base ntdll kernel32)
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
