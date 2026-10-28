@@ -1417,11 +1417,17 @@ UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action)
         }
         return error;
     }
-    static const PCWSTR trivial[] = {L"MigrateFeatureStates", L"ValidateProductID", L"ResolveSource", L"AllocateRegistrySpace",
+    static const PCWSTR trivial[] = {L"MigrateFeatureStates", L"ValidateProductID", L"AllocateRegistrySpace",
                                      L"RegisterUser", L"InstallODBC", L"RemoveODBC", L"IsolateComponents"};
     for (ULONG i = 0; i < RTL_NUMBER_OF(trivial); i++)
         if (!wcscmp(action, trivial[i]))
             return ERROR_SUCCESS;
+    if (!wcscmp(action, L"ResolveSource")) {
+        /* the package directory is the source, and it is published as SOURCEDIR for custom actions. */
+        PCWSTR source = MimeMsiGetProperty(package, L"SourceDir");
+        UINT error = MimeMsiSetProperty(package, L"SOURCEDIR", source);
+        return error ? error : MimeMsiSetProperty(package, L"SourcedirProduct", MimeMsiGetProperty(package, L"ProductCode"));
+    }
     if (!wcscmp(action, L"DisableRollback")) {
         package->NoRollback = TRUE;
         return ERROR_SUCCESS;
