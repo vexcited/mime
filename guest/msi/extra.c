@@ -792,9 +792,16 @@ static UINT remove_files(MIME_MSI_PACKAGE *package)
         PCWSTR long_name = wcschr(raw_name, L'|');
         PWSTR pattern = nullptr, folder = nullptr;
         error = MimeMsiFormat(package, long_name ? long_name + 1 : raw_name, &pattern);
-        if (!error)
-            error = MimeMsiDirectoryPath(package, property, FALSE, &folder);
         if (!error) {
+            /* the column names a property, which a directory is only one kind of. a property with no path removes nothing. */
+            error = MimeMsiDirectoryPath(package, property, FALSE, &folder);
+            if (error == ERROR_DIRECTORY) {
+                error = ERROR_SUCCESS;
+                PCWSTR value = MimeMsiGetProperty(package, property);
+                folder = *value ? MimeMsiDuplicate(value) : nullptr;
+            }
+        }
+        if (!error && folder) {
             PWSTR search = MimeMsiJoinPath(folder, L"*");
             WIN32_FIND_DATAW found;
             HANDLE find = search ? FindFirstFileW(search, &found) : INVALID_HANDLE_VALUE;
