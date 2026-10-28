@@ -87,6 +87,9 @@ static UINT wanted(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features, PCWSTR c
     INSTALLSTATE installed, action;
     *out = FALSE;
     UINT error = MimeMsiComponentState(package, component, &installed, &action);
+    /* a row of a component that the package does not have is not there to write. */
+    if (error == ERROR_UNKNOWN_COMPONENT)
+        return ERROR_SUCCESS;
     if (error)
         return error;
     if (remove) {
@@ -736,7 +739,7 @@ static UINT class_info(MIME_MSI_PACKAGE *package, BOOL remove)
     if (error || !table)
         return error;
     /* a local server is given by its short path, which a file has once it is there. */
-    if (!remove)
+    if (!remove && table->Rows)
         error = MimeMsiInstallQueuedFiles(package);
     if (error)
         return error;

@@ -57,11 +57,37 @@ static UINT action_start(MSIHANDLE handle, PCWSTR action)
     return error;
 }
 
-UINT WINAPI MsiDoActionW(MSIHANDLE handle, LPCWSTR action)
+/* the actions of the installer of Windows. an action of any other name that the package has no custom action for is
+   not an error in a sequence, it is skipped. */
+static const PCWSTR STANDARD_ACTIONS[] = {
+    L"ADVERTISE", L"AllocateRegistrySpace", L"AppSearch", L"BindImage", L"CCPSearch", L"CollectUserInfo", L"CostFinalize",
+    L"CostInitialize", L"CreateFolders", L"CreateShortcuts", L"DeleteServices", L"DisableRollback", L"DuplicateFiles",
+    L"ExecuteAction", L"FileCost", L"FindRelatedProducts", L"ForceReboot", L"INSTALL", L"InstallAdminPackage",
+    L"InstallExecute", L"InstallExecuteAgain", L"InstallFiles", L"InstallFinalize", L"InstallInitialize", L"InstallODBC",
+    L"InstallSFPCatalogFile", L"InstallServices", L"InstallValidate", L"IsolateComponents", L"LaunchConditions",
+    L"MigrateFeatureStates", L"MoveFiles", L"MsiConfigureServices", L"MsiPublishAssemblies", L"MsiUnpublishAssemblies",
+    L"PatchFiles", L"ProcessComponents", L"PublishComponents", L"PublishFeatures", L"PublishProduct", L"RMCCPSearch",
+    L"RegisterClassInfo", L"RegisterComPlus", L"RegisterExtensionInfo", L"RegisterFonts", L"RegisterMIMEInfo",
+    L"RegisterProduct", L"RegisterProgIdInfo", L"RegisterTypeLibraries", L"RegisterUser", L"RemoveDuplicateFiles",
+    L"RemoveEnvironmentStrings", L"RemoveExistingProducts", L"RemoveFiles", L"RemoveFolders", L"RemoveIniValues",
+    L"RemoveODBC", L"RemoveRegistryValues", L"RemoveShortcuts", L"ResolveSource", L"SEQUENCE", L"ScheduleReboot",
+    L"SelfRegModules", L"SelfUnregModules", L"SetODBCFolders", L"StartServices", L"StopServices", L"UnpublishComponents",
+    L"UnpublishFeatures", L"UnregisterClassInfo", L"UnregisterComPlus", L"UnregisterExtensionInfo", L"UnregisterFonts",
+    L"UnregisterMIMEInfo", L"UnregisterProgIdInfo", L"UnregisterTypeLibraries", L"ValidateProductID",
+    L"WriteEnvironmentStrings", L"WriteIniValues", L"WriteRegistryValues",
+};
+
+static BOOL standard_name(PCWSTR action)
 {
-    MIME_REMOTE(PROXY_DoActionW, UINT, MIME_ARG(handle), MIME_ARG(action));
-    if (!action || !*action)
-        return ERROR_INVALID_PARAMETER;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(STANDARD_ACTIONS); i++)
+        if (!wcscmp(action, STANDARD_ACTIONS[i]))
+            return TRUE;
+    return FALSE;
+}
+
+/* absent is set when the package has no such action and the installer of Windows knows none of that name. */
+static UINT do_action(MSIHANDLE handle, LPCWSTR action, BOOL *absent)
+{
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     if (package)
@@ -82,6 +108,8 @@ UINT WINAPI MsiDoActionW(MSIHANDLE handle, LPCWSTR action)
         if (error == UINT32_MAX) {
             error = MimeMsiCustomActionLookup(package, action, &row);
             custom = !error;
+            if (error == ERROR_FUNCTION_NOT_CALLED && !standard_name(action))
+                *absent = TRUE;
         }
     }
     ReleaseSRWLockExclusive(&MimeMsiLock);
@@ -133,6 +161,26 @@ UINT WINAPI MsiDoActionW(MSIHANDLE handle, LPCWSTR action)
     return error;
 }
 
+UINT WINAPI MsiDoActionW(MSIHANDLE handle, LPCWSTR action)
+{
+    MIME_REMOTE(PROXY_DoActionW, UINT, MIME_ARG(handle), MIME_ARG(action));
+    BOOL absent = FALSE;
+    if (!action || !*action)
+        return ERROR_INVALID_PARAMETER;
+    return do_action(handle, action, &absent);
+}
+
+static void action_not_found(MSIHANDLE handle, PCWSTR action)
+{
+    DbgPrint("msi: action %ws is not found\n", action);
+    MSIHANDLE record = MsiCreateRecord(1);
+    if (!record)
+        return;
+    if (!MsiRecordSetStringW(record, 0, L"Action not found: [1]") && !MsiRecordSetStringW(record, 1, action))
+        MsiProcessMessage(handle, INSTALLMESSAGE_INFO, record);
+    MsiCloseHandle(record);
+}
+
 static UINT run_sequence_row(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULONG row)
 {
     MIME_MSI_DATABASE *database = package->Database;
@@ -149,7 +197,12 @@ static UINT run_sequence_row(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_M
     }
     if (result == MSICONDITION_FALSE)
         return ERROR_SUCCESS;
-    UINT error = MsiDoActionW(handle, action);
+    BOOL absent = FALSE;
+    UINT error = do_action(handle, action, &absent);
+    if (absent) {
+        action_not_found(handle, action);
+        return ERROR_SUCCESS;
+    }
     if (error && error != ERROR_NO_MORE_ITEMS)
         DbgPrint("msi: action %ws returned %u\n", action, error);
     return error;

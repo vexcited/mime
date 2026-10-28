@@ -472,6 +472,8 @@ UINT WINAPI MsiDatabaseOpenViewW(MSIHANDLE handle, LPCWSTR query, MSIHANDLE *out
     if (error && view)
         destroy_view(&view->Object);
     ReleaseSRWLockExclusive(&MimeMsiLock);
+    if (error)
+        DbgPrint("msi: the query %ws does not open, error %u\n", query, error);
     return error;
 }
 
