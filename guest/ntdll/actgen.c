@@ -346,17 +346,46 @@ static ULONG reference_cultures(const SXS_IDENTITY *ref, PCWSTR cultures[3])
     return n;
 }
 
-static BOOLEAN identity_matches(const SXS_MANIFEST *m, const SXS_IDENTITY *ref)
+static BOOLEAN same_text(PCWSTR a, PCWSTR b)
 {
-    if (!m->HasIdentity || !same_identity_name(m->Identity.Name, ref->Name))
-        return FALSE;
-    return !m->Identity.HasVersion || !memcmp(m->Identity.Version, ref->Version, sizeof(ref->Version));
+    return a && b ? !_wcsicmp(a, b) : a == b;
+}
+
+static PCWSTR language_or_none(PCWSTR language)
+{
+    return language && *language && _wcsicmp(language, L"neutral") ? language : nullptr;
+}
+
+/*
+ * sxs.dll compares the identity of a manifest with the reference it was probed for
+ * attribute by attribute: the same set, the values without regard to case. a neutral
+ * language is no attribute, and a version is required.
+ */
+static BOOLEAN identity_matches(const SXS_IDENTITY *id, const SXS_IDENTITY *want)
+{
+    return same_text(id->Name, want->Name) && same_text(id->Type, want->Type) && same_text(id->Arch, want->Arch) &&
+        same_text(id->Token, want->Token) &&
+        same_text(language_or_none(id->Language), language_or_none(want->Language)) && id->HasVersion &&
+        want->HasVersion && !memcmp(id->Version, want->Version, sizeof(want->Version));
+}
+
+/* the reference as probed in a culture: a wildcard architecture is the process one, a wildcard language the culture. */
+static SXS_IDENTITY probed_identity(const SXS_IDENTITY *ref, PCWSTR language)
+{
+    SXS_IDENTITY want = *ref;
+    if (want.Arch && !wcscmp(want.Arch, L"*"))
+        want.Arch = (PWSTR)PROCESS_ARCH;
+    if (want.Language && !wcscmp(want.Language, L"*"))
+        want.Language = (PWSTR)language;
+    return want;
 }
 
 /*
  * probes a private assembly in the application directory as sxs.dll does:
  * <name>.dll with its manifest as resource 1, <name>.manifest, then the
- * same inside a <name> directory, culture by culture.
+ * same inside a <name> directory, culture by culture. the first candidate that
+ * exists is the assembly: its manifest must parse and, when it has an identity,
+ * describe the reference. a manifest without an identity takes the reference's.
  */
 static NTSTATUS probe_private(GEN *g, const SXS_IDENTITY *ref, GEN_ASSEMBLY **found)
 {
@@ -387,33 +416,48 @@ static NTSTATUS probe_private(GEN *g, const SXS_IDENTITY *ref, GEN_ASSEMBLY **fo
                 SXS_MANIFEST m;
                 NTSTATUS status = kind ? load_manifest_file(path, &m) : load_manifest_image(path, 1, &m);
                 if (NT_SUCCESS(status)) {
-                    if (identity_matches(&m, ref)) {
-                        GEN_ASSEMBLY *a = add_assembly(g);
-                        if (!a) {
-                            SxspFreeManifest(&m);
-                            gen_free(dir);
-                            gen_free(path);
-                            gen_free(sub);
-                            return STATUS_NO_MEMORY;
-                        }
-                        a->Manifest = m;
-                        a->ManifestPath = path;
-                        a->ManifestPathType = ACTCTX_PATH_TYPE_WIN32_FILE;
-                        a->Directory = dir;
-                        a->Private = TRUE;
-                        if (*culture) {
-                            a->Language = gen_strdup(culture);
-                            SIZE_T n = a->Language ? wcslen(a->Language) : 0;
-                            if (n && a->Language[n - 1] == '\\')
-                                a->Language[n - 1] = 0;
-                        }
-                        *found = a;
-                        break;
+                    PWSTR language = nullptr;
+                    if (*culture) {
+                        language = gen_strdup(culture);
+                        SIZE_T n = language ? wcslen(language) : 0;
+                        if (n && language[n - 1] == '\\')
+                            language[n - 1] = 0;
                     }
-                    DbgPrint("sxs: %ls does not describe %ls\n", path, ref->Name);
-                    SxspFreeManifest(&m);
-                } else if (!file_missing(status) && !resource_missing(status) && status != STATUS_INVALID_IMAGE_FORMAT) {
-                    /* a manifest that exists but does not parse fails the whole context. */
+                    SXS_IDENTITY want = probed_identity(ref, language);
+                    if (m.HasIdentity && !identity_matches(&m.Identity, &want)) {
+                        DbgPrint("sxs: %ls does not describe %ls\n", path, ref->Name);
+                        SxspFreeManifest(&m);
+                        gen_free(language);
+                        gen_free(dir);
+                        gen_free(path);
+                        gen_free(sub);
+                        /* a shared assembly would come from winsxs first, which mime does not have. */
+                        return ref->Token ? STATUS_SXS_ASSEMBLY_NOT_FOUND : STATUS_SXS_CANT_GEN_ACTCTX;
+                    }
+                    GEN_ASSEMBLY *a = add_assembly(g);
+                    if (!a) {
+                        SxspFreeManifest(&m);
+                        gen_free(language);
+                        gen_free(dir);
+                        gen_free(path);
+                        gen_free(sub);
+                        return STATUS_NO_MEMORY;
+                    }
+                    if (!m.HasIdentity) {
+                        m.HasIdentity = TRUE;
+                        m.Identity = want;
+                    }
+                    a->Manifest = m;
+                    a->ManifestPath = path;
+                    a->ManifestPathType = ACTCTX_PATH_TYPE_WIN32_FILE;
+                    a->Directory = dir;
+                    a->Private = TRUE;
+                    a->Language = language;
+                    *found = a;
+                    break;
+                }
+                if (!file_missing(status) && !resource_missing(status)) {
+                    /* a manifest that exists but does not load or parse fails the whole context. */
                     DbgPrint("sxs: %ls is not a valid manifest (%08x)\n", path, status);
                     gen_free(dir);
                     gen_free(path);
