@@ -856,6 +856,8 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
         PWSTR source = nullptr, target = nullptr;
         error = MimeMsiDirectoryPath(package, directory, TRUE, &source);
         if (!error)
+            error = MimeMsiAssemblyFolder(package, component_name, &target);
+        if (!error && !target)
             error = MimeMsiDirectoryPath(package, directory, FALSE, &target);
         MIME_MSI_FILE_PLAN *file = !error ? MimeMsiAllocate(sizeof(*file)) : nullptr;
         if (!error && !file)

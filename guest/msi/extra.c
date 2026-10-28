@@ -179,7 +179,8 @@ UINT MimeMsiComponentDirectory(MIME_MSI_PACKAGE *package, PCWSTR name, PWSTR *ou
     PCWSTR directory = cell_text(package, table, row, L"Directory_");
     if (!directory)
         return ERROR_INSTALL_PACKAGE_INVALID;
-    return MimeMsiDirectoryPath(package, directory, FALSE, out);
+    error = MimeMsiAssemblyFolder(package, name, out);
+    return error || *out ? error : MimeMsiDirectoryPath(package, directory, FALSE, out);
 }
 
 UINT MimeMsiFileTargetPath(MIME_MSI_PACKAGE *package, PCWSTR key, PWSTR *out)
@@ -771,6 +772,8 @@ static UINT remove_files(MIME_MSI_PACKAGE *package)
         error = MimeMsiFileTargetPath(package, key, &path);
         if (!error)
             error = MimeMsiRemoveFile(package, path);
+        if (!error)
+            error = MimeMsiAssemblyCleanup(package, component);
         MimeMsiFree(path);
     }
     if (!error)
@@ -1361,8 +1364,6 @@ static const struct {
     PCWSTR Tables[3];
 } TABLE_ACTIONS[] = {
     {L"SetODBCFolders", {L"ODBCDriver", L"ODBCTranslator", L"ODBCDataSource"}},
-    {L"MsiPublishAssemblies", {L"MsiAssembly"}},
-    {L"MsiUnpublishAssemblies", {L"MsiAssembly"}},
     {L"RegisterComPlus", {L"Complus"}},
     {L"UnregisterComPlus", {L"Complus"}},
     {L"SelfRegModules", {L"SelfReg"}},
@@ -1452,5 +1453,7 @@ UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     if (!wcscmp(action, L"RemoveExistingProducts"))
         return MIME_MSI_UNLOCKED_PENDING;
     UINT result = MimeMsiServiceAction(package, action);
+    if (result == UINT32_MAX)
+        result = MimeMsiAssemblyAction(package, action);
     return result == UINT32_MAX ? table_action(package, action) : result;
 }

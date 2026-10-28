@@ -49,7 +49,9 @@ static UINT component_key_path(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR di
     if (key && *key && attributes != MSI_NULL_INTEGER && (attributes & 4))
         return registry_key_path(package, key, !!(attributes & 256), out);
     PWSTR folder = nullptr;
-    UINT error = MimeMsiDirectoryPath(package, directory, FALSE, &folder);
+    UINT error = MimeMsiAssemblyFolder(package, name, &folder);
+    if (!error && !folder)
+        error = MimeMsiDirectoryPath(package, directory, FALSE, &folder);
     if (error)
         return error;
     if (!key || !*key) {
