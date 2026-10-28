@@ -130,6 +130,9 @@ static UINT get_path(MSIHANDLE handle, LPCWSTR name, BOOL source, LPWSTR out, LP
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     PWSTR path = nullptr;
     UINT error = package ? MimeMsiDirectoryPath(package, name, source, &path) : ERROR_INVALID_HANDLE;
+    /* the directory table is loaded by CostInitialize, until then there is no target path to give. */
+    if (!error && !source && !package->CostStage && !package->Maintenance)
+        error = ERROR_DIRECTORY;
     if (!error)
         error = MimeMsiCopyString(path, out, size);
     MimeMsiFree(path);
