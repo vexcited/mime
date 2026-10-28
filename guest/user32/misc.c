@@ -539,6 +539,16 @@ WINUSERAPI BOOL WINAPI FlashWindowEx(PFLASHWINFO info)
     return TRUE;
 }
 
+/* the compositor draws the minimize and restore animations of the host, there is nothing to draw here. */
+WINUSERAPI BOOL WINAPI DrawAnimatedRects(HWND hwnd, int animation, const RECT *from, const RECT *to)
+{
+    if (hwnd && !IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    return TRUE;
+}
+
 WINUSERAPI BOOL WINAPI RegisterHotKey(HWND hwnd, int id, UINT modifiers, UINT vk)
 {
     return TRUE;

@@ -130,6 +130,7 @@ EXPORTS
     DisplayConfigGetDeviceInfo@4
     DisplayConfigSetDeviceInfo@4
     DragDetect@12
+    DrawAnimatedRects@16
     DrawEdge@16
     DrawFocusRect@8
     DrawFrameControl@16

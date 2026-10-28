@@ -130,6 +130,7 @@ EXPORTS
     DisplayConfigGetDeviceInfo=_DisplayConfigGetDeviceInfo@4
     DisplayConfigSetDeviceInfo=_DisplayConfigSetDeviceInfo@4
     DragDetect=_DragDetect@12
+    DrawAnimatedRects=_DrawAnimatedRects@16
     DrawEdge=_DrawEdge@16
     DrawFocusRect=_DrawFocusRect@8
     DrawFrameControl=_DrawFrameControl@16
