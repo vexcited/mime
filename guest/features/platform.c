@@ -162,6 +162,7 @@ void RunReport(RUN *run, ULONGLONG done, ULONGLONG total, PCWSTR step)
     if (step)
         lstrcpynW(run->Step, step, RTL_NUMBER_OF(run->Step));
     LeaveCriticalSection(&run->Lock);
+    ConsoleProgress(run, FALSE);
 }
 
 void RunSnapshot(RUN *run, FEATURE_STAGE *stage, ULONGLONG *done, ULONGLONG *total, WCHAR *step, SIZE_T chars)
@@ -201,13 +202,14 @@ static void ops_stage(void *context, const FEATURE_DEF *feature, FEATURE_STAGE s
     run->Step[0] = 0;
     LeaveCriticalSection(&run->Lock);
     if (run->Console) {
-        static const WCHAR *const texts[] = {L"Collecting feature details", L"Searching for required files",
-                                             L"Checking the files", L"Installing", L"Removing"};
-        tu_print(L"%ls...\n", texts[stage == FEATURE_STAGE_DOWNLOADING ? 1 : stage]);
+        static const WCHAR *const texts[] = {L"Downloading the files", L"Downloading the files", L"Checking the files",
+                                             L"Installing", L"Removing"};
+        ConsoleProgressEnd(run);
+        tu_print(L"%ls...\n", stage == FEATURE_STAGE_COLLECTING && run->Source[0] ? L"Reading the file" : texts[stage]);
         tu_flush();
+        ConsoleProgress(run, TRUE);
     }
-    if (stage != FEATURE_STAGE_COLLECTING)
-        UiStage(run);
+    UiStage(run);
 }
 
 static BOOL file_exists(PCWSTR path)

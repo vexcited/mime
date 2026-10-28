@@ -52,8 +52,39 @@ static void webview2_version(RUN *run, WCHAR *version, SIZE_T chars)
     webview2_find(run, version, chars);
 }
 
-/* A process that ends with an exit code, or a limit. Returns the Win32 error of starting or waiting. */
-static DWORD run_and_wait(RUN *run, PWSTR command_line, DWORD *exit_code, PCWSTR step)
+/* The bytes of the files below a folder. */
+static ULONGLONG folder_bytes(PCWSTR path)
+{
+    WCHAR pattern[MAX_PATH];
+    _snwprintf(pattern, RTL_NUMBER_OF(pattern), L"%ls\\*", path);
+    pattern[RTL_NUMBER_OF(pattern) - 1] = 0;
+    WIN32_FIND_DATAW data;
+    HANDLE find = FindFirstFileExW(pattern, FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+    if (find == INVALID_HANDLE_VALUE)
+        return 0;
+    ULONGLONG bytes = 0;
+    do {
+        if (data.cFileName[0] == L'.' && (!data.cFileName[1] || (data.cFileName[1] == L'.' && !data.cFileName[2])))
+            continue;
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            WCHAR child[MAX_PATH];
+            _snwprintf(child, RTL_NUMBER_OF(child), L"%ls\\%ls", path, data.cFileName);
+            child[RTL_NUMBER_OF(child) - 1] = 0;
+            if (!(data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+                bytes += folder_bytes(child);
+        } else {
+            bytes += (ULONGLONG)data.nFileSizeHigh << 32 | data.nFileSizeLow;
+        }
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+    return bytes;
+}
+
+/*
+ * A process that ends with an exit code, or a limit. Returns the Win32 error of starting or waiting. An installer
+ * tells nothing of how far it is, what it has written to its folder against what the feature takes is the progress.
+ */
+static DWORD run_and_wait(RUN *run, PWSTR command_line, DWORD *exit_code, PCWSTR folder)
 {
     STARTUPINFOW startup = {sizeof(startup)};
     PROCESS_INFORMATION process;
@@ -61,15 +92,17 @@ static DWORD run_and_wait(RUN *run, PWSTR command_line, DWORD *exit_code, PCWSTR
                         &process))
         return GetLastError();
     CloseHandle(process.hThread);
-    ULONGLONG start = GetTickCount64();
+    ULONGLONG start = GetTickCount64(), expected = (ULONGLONG)run->Feature->InstallMB << 20;
     DWORD wait;
     while ((wait = WaitForSingleObject(process.hProcess, 500)) == WAIT_TIMEOUT) {
-        WCHAR text[128];
-        ULONGLONG seconds = (GetTickCount64() - start) / 1000;
-        _snwprintf(text, RTL_NUMBER_OF(text), L"%ls %llu s", step, seconds);
-        text[RTL_NUMBER_OF(text) - 1] = 0;
-        RunReport(run, 0, 0, text);
-        if (seconds > INSTALL_MINUTES * 60) {
+        if (expected) {
+            ULONGLONG written = folder_bytes(folder);
+            /* A version larger than the catalog says stays short of the end until the installer is done. */
+            if (written > expected * 99 / 100)
+                written = expected * 99 / 100;
+            RunReport(run, written, expected, L"Installing the files");
+        }
+        if ((GetTickCount64() - start) / 1000 > INSTALL_MINUTES * 60) {
             TerminateProcess(process.hProcess, ERROR_TIMEOUT);
             break;
         }
@@ -95,8 +128,10 @@ static uint32_t webview2_install(RUN *run, PCWSTR package)
         WCHAR line[MAX_PATH + 40];
         _snwprintf(line, RTL_NUMBER_OF(line), L"\"%ls\" /silent /install", package);
         line[RTL_NUMBER_OF(line) - 1] = 0;
+        WCHAR application[MAX_PATH];
+        webview2_application(run, application, RTL_NUMBER_OF(application));
         DWORD code;
-        DWORD error = run_and_wait(run, line, &code, L"Installing");
+        DWORD error = run_and_wait(run, line, &code, application);
         if (error)
             return error;
         if (code == 0 && webview2_present(run))

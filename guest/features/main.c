@@ -280,6 +280,11 @@ static int change(const OPTIONS *o, const FEATURE_DEF *feature)
     FillOps(&run.Ops, &run);
     HANDLE mutex = lock_feature(feature, run.Console);
     DWORD error = UiRun(&run, work);
+    if (!error && run.BarShown) {
+        run.Finished = TRUE;
+        ConsoleProgress(&run, TRUE);
+    }
+    ConsoleProgressEnd(&run);
     if (mutex) {
         ReleaseMutex(mutex);
         CloseHandle(mutex);

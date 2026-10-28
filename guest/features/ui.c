@@ -109,77 +109,67 @@ void UiStage(RUN *run)
 
 /* ------------------------------------------------------------------ the progress */
 
-static void megabytes(ULONGLONG bytes, WCHAR *text, SIZE_T chars)
+typedef struct PROGRESS_STATE {
+    UI *Ui;
+    METER Meter;
+    BOOL Marquee;
+    LONG Position;
+    BOOL Cancelling, Closing;
+    WCHAR Shown[300];
+} PROGRESS_STATE;
+
+/* The two lines under the instruction, always two so that the window keeps its size. */
+static void progress_content(PROGRESS_STATE *state, WCHAR *text, SIZE_T chars, PROGRESS_VIEW *view)
 {
-    ULONGLONG tenths = bytes * 10 / (1024 * 1024);
-    _snwprintf(text, chars, L"%llu.%llu MB", tenths / 10, tenths % 10);
+    MeterRead(&state->Meter, state->Ui->Run, view);
+    _snwprintf(text, chars, L"%ls\n%ls", view->Line, view->Detail[0] ? view->Detail : L" ");
     text[chars - 1] = 0;
 }
 
-typedef struct PROGRESS_STATE {
-    UI *Ui;
-    BOOL Marquee;
-    WCHAR Shown[200];
-    BOOL Closing;
-} PROGRESS_STATE;
-
-static void progress_text(RUN *run, WCHAR *text, SIZE_T chars, LONG *position, BOOL *known)
+static void set_marquee(HWND window, PROGRESS_STATE *state, BOOL on)
 {
-    FEATURE_STAGE stage;
-    ULONGLONG done, total;
-    WCHAR step[128];
-    RunSnapshot(run, &stage, &done, &total, step, RTL_NUMBER_OF(step));
-    *known = FALSE;
-    *position = 0;
-    switch (stage) {
-    case FEATURE_STAGE_DOWNLOADING:
-    case FEATURE_STAGE_COLLECTING:
-        if (total) {
-            WCHAR a[32], b[32];
-            megabytes(done, a, RTL_NUMBER_OF(a));
-            megabytes(total, b, RTL_NUMBER_OF(b));
-            _snwprintf(text, chars, L"Downloading from Microsoft: %ls of %ls", a, b);
-            *position = (LONG)(done * PROGRESS_RANGE / total);
-            *known = TRUE;
-        } else if (done) {
-            WCHAR a[32];
-            megabytes(done, a, RTL_NUMBER_OF(a));
-            _snwprintf(text, chars, L"Downloading from Microsoft: %ls", a);
-        } else {
-            _snwprintf(text, chars, L"Searching for the files");
-        }
-        break;
-    case FEATURE_STAGE_VERIFYING:
-        _snwprintf(text, chars, L"Checking that the files are Microsoft's");
-        break;
-    case FEATURE_STAGE_INSTALLING:
-        if (total) {
-            _snwprintf(text, chars, L"%ls", step[0] ? step : L"Installing");
-            *position = (LONG)(done * PROGRESS_RANGE / total);
-            *known = TRUE;
-        } else {
-            _snwprintf(text, chars, L"%ls", step[0] ? step : L"Installing");
-        }
-        break;
-    case FEATURE_STAGE_REMOVING:
-        _snwprintf(text, chars, L"Removing the files");
-        break;
+    if (state->Marquee == on)
+        return;
+    state->Marquee = on;
+    /* The style changes first, as on Windows: a bar without it does not slide. */
+    SendMessageW(window, TDM_SET_MARQUEE_PROGRESS_BAR, on, 0);
+    SendMessageW(window, TDM_SET_PROGRESS_BAR_MARQUEE, on, 30);
+    if (!on) {
+        SendMessageW(window, TDM_SET_PROGRESS_BAR_RANGE, 0, MAKELPARAM(0, PROGRESS_RANGE));
+        SendMessageW(window, TDM_SET_PROGRESS_BAR_POS, (WPARAM)state->Position, 0);
     }
-    text[chars - 1] = 0;
+}
+
+static void progress_update(HWND window, PROGRESS_STATE *state)
+{
+    RUN *run = state->Ui->Run;
+    WCHAR text[300];
+    PROGRESS_VIEW view;
+    progress_content(state, text, RTL_NUMBER_OF(text), &view);
+    set_marquee(window, state, !view.Known && !view.Permille);
+    if (!state->Marquee && view.Permille != state->Position) {
+        state->Position = view.Permille;
+        SendMessageW(window, TDM_SET_PROGRESS_BAR_POS, (WPARAM)view.Permille, 0);
+    }
+    if (!state->Cancelling && wcscmp(text, state->Shown)) {
+        lstrcpynW(state->Shown, text, RTL_NUMBER_OF(state->Shown));
+        SendMessageW(window, TDM_UPDATE_ELEMENT_TEXT, TDE_CONTENT, (LPARAM)text);
+    }
+    FEATURE_STAGE stage = run->Stage;
+    BOOL cancellable = run->Cancellable || stage == FEATURE_STAGE_COLLECTING || stage == FEATURE_STAGE_DOWNLOADING;
+    SendMessageW(window, TDM_ENABLE_BUTTON, IDCANCEL, cancellable && !state->Cancelling);
 }
 
 static HRESULT CALLBACK progress_callback(HWND window, UINT message, WPARAM wparam, LPARAM lparam, LONG_PTR data)
 {
     PROGRESS_STATE *state = (PROGRESS_STATE *)data;
     UI *ui = state->Ui;
-    RUN *run = ui->Run;
     switch (message) {
     case TDN_CREATED:
         SendMessageW(window, TDM_SET_PROGRESS_BAR_RANGE, 0, MAKELPARAM(0, PROGRESS_RANGE));
-        SendMessageW(window, TDM_SET_PROGRESS_BAR_MARQUEE, TRUE, 30);
-        state->Marquee = TRUE;
+        progress_update(window, state);
         return 0;
-    case TDN_TIMER: {
+    case TDN_TIMER:
         if (WaitForSingleObject(ui->Done, 0) == WAIT_OBJECT_0) {
             if (!state->Closing) {
                 state->Closing = TRUE;
@@ -187,33 +177,16 @@ static HRESULT CALLBACK progress_callback(HWND window, UINT message, WPARAM wpar
             }
             return 0;
         }
-        WCHAR text[200];
-        LONG position;
-        BOOL known;
-        progress_text(run, text, RTL_NUMBER_OF(text), &position, &known);
-        if (known && state->Marquee) {
-            SendMessageW(window, TDM_SET_PROGRESS_BAR_MARQUEE, FALSE, 0);
-            state->Marquee = FALSE;
-        } else if (!known && !state->Marquee) {
-            SendMessageW(window, TDM_SET_PROGRESS_BAR_MARQUEE, TRUE, 30);
-            state->Marquee = TRUE;
-        }
-        if (known)
-            SendMessageW(window, TDM_SET_PROGRESS_BAR_POS, (WPARAM)position, 0);
-        if (wcscmp(text, state->Shown)) {
-            lstrcpynW(state->Shown, text, RTL_NUMBER_OF(state->Shown));
-            SendMessageW(window, TDM_UPDATE_ELEMENT_TEXT, TDE_CONTENT, (LPARAM)text);
-        }
-        SendMessageW(window, TDM_ENABLE_BUTTON, IDCANCEL, run->Cancellable || run->Stage == FEATURE_STAGE_DOWNLOADING);
+        progress_update(window, state);
         return 0;
-    }
     case TDN_BUTTON_CLICKED:
         if (WaitForSingleObject(ui->Done, 0) == WAIT_OBJECT_0)
             return 0;
         /* A cancel is a request, the window stays until the work has stopped. */
-        InterlockedExchange(&run->Cancel, 1);
-        SendMessageW(window, TDM_UPDATE_ELEMENT_TEXT, TDE_CONTENT, (LPARAM)L"Cancelling...");
-        lstrcpynW(state->Shown, L"Cancelling...", RTL_NUMBER_OF(state->Shown));
+        InterlockedExchange(&ui->Run->Cancel, 1);
+        state->Cancelling = TRUE;
+        SendMessageW(window, TDM_UPDATE_ELEMENT_TEXT, TDE_CONTENT, (LPARAM)L"Cancelling...\nThe step that is running stops first.");
+        SendMessageW(window, TDM_ENABLE_BUTTON, IDCANCEL, FALSE);
         return 1;
     }
     return 0;
@@ -227,13 +200,17 @@ static void show_progress(UI *ui)
     _snwprintf(instruction, RTL_NUMBER_OF(instruction), run->Remove ? L"Removing %ls" : L"Installing %ls", feature);
     instruction[RTL_NUMBER_OF(instruction) - 1] = 0;
     PROGRESS_STATE state = {.Ui = ui};
+    PROGRESS_VIEW view;
+    progress_content(&state, state.Shown, RTL_NUMBER_OF(state.Shown), &view);
     TASKDIALOGCONFIG config = {.cbSize = sizeof(config),
                                .dwFlags = TDF_SHOW_PROGRESS_BAR | TDF_CALLBACK_TIMER,
                                .dwCommonButtons = TDCBF_CANCEL_BUTTON,
                                .pszWindowTitle = TITLE,
                                .pszMainIcon = TD_INFORMATION_ICON,
                                .pszMainInstruction = instruction,
-                               .pszContent = L"Searching for the files",
+                               .pszContent = state.Shown,
+                               /* Wide enough for the longest line of a download, the text changes in place. */
+                               .cxWidth = 260,
                                .pfCallback = progress_callback,
                                .lpCallbackData = (LONG_PTR)&state};
     if (FAILED(TaskDialogIndirect(&config, nullptr, nullptr, nullptr)))

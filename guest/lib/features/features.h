@@ -66,6 +66,7 @@ typedef struct FEATURE_DEF {
     const char *Signer;      /* The common name the signing certificate must have. */
     uint64_t MinSize, MaxSize;
     uint32_t DownloadMB;     /* About how much it is, for the question. */
+    uint32_t InstallMB;      /* About how much it takes on the drive, for the progress of an installer that tells none. */
     FEATURE_HANDLER Handler;
     /* The names a program looks for in a font lookup, for a feature of fonts. Null terminated, or null. */
     const char *const *Provides;

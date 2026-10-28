@@ -22,6 +22,21 @@
 
 struct UI;
 
+/* What a reader of the progress keeps between two reads. */
+typedef struct METER {
+    ULONGLONG RateBytes, RateTick;
+    ULONGLONG Rate;           /* Bytes a second, smoothed. */
+    LONG Permille;
+} METER;
+
+/* The progress as it is shown: the bar in thousandths of the whole request, and two lines of text. */
+typedef struct PROGRESS_VIEW {
+    LONG Permille;
+    BOOL Known;               /* False while nothing tells how far, the bar then slides. */
+    WCHAR Line[128];
+    WCHAR Detail[160];
+} PROGRESS_VIEW;
+
 /* What one request is doing. The worker thread writes the progress, the window reads it. */
 typedef struct RUN {
     const FEATURE_DEF *Feature;
@@ -40,7 +55,11 @@ typedef struct RUN {
     WCHAR Detail[200];        /* What a failure adds to its error. */
     volatile LONG Cancel;
     volatile LONG Cancellable;
-    LONG PrintedPercent;
+    METER ConsoleMeter;
+    ULONGLONG ConsoleTick;
+    LONG PrintedPermille;
+    BOOL BarShown;
+    BOOL Finished;            /* The work ended well, the bar is full. */
     struct UI *Ui;
     FEATURE_OPS Ops;
     uint32_t EnableFlags;
@@ -104,6 +123,12 @@ BOOL FontsPresent(RUN *run, const FEATURE_DEF *feature);
 
 /* trust.c */
 DWORD VerifyPackage(RUN *run, const FEATURE_DEF *feature, PCWSTR path);
+
+/* progress.c */
+void MeterRead(METER *meter, RUN *run, PROGRESS_VIEW *view);
+/* Draws the bar on the console, at most a few times a second unless forced. */
+void ConsoleProgress(RUN *run, BOOL force);
+void ConsoleProgressEnd(RUN *run);
 
 /* ui.c */
 /* Runs the worker. With dialogs the worker is on a thread and the windows are on this one. */

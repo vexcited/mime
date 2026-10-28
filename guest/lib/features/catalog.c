@@ -23,6 +23,7 @@ static const FEATURE_DEF g_catalog[] = {
         .MinSize = 20ull << 20,
         .MaxSize = 600ull << 20,
         .DownloadMB = 215,
+        .InstallMB = 600,
         .Handler = FEATURE_HANDLER_WEBVIEW2,
     },
     {
