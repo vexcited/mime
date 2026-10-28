@@ -157,7 +157,8 @@ UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database)
     database->StringWidth = codepage & 0x80000000u ? 3 : 2;
     codepage &= 0x7FFFFFFFu;
     database->CodePage = codepage;
-    if (!IsValidCodePage(codepage)) {
+    /* 0 is a neutral database, read in the system code page. */
+    if (codepage && !IsValidCodePage(codepage)) {
         error = ERROR_CALL_NOT_IMPLEMENTED;
         goto done;
     }
