@@ -1,0 +1,32 @@
+; the exports of msvfw32.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY MSVFW32.dll
+EXPORTS
+    VideoForWindowsVersion @2
+    DrawDibBegin @3
+    DrawDibChangePalette @4
+    DrawDibClose @5
+    DrawDibDraw @6
+    DrawDibEnd @7
+    DrawDibGetBuffer @8
+    DrawDibGetPalette @9
+    DrawDibOpen @10
+    DrawDibRealize @12
+    DrawDibSetPalette @13
+    DrawDibStart @14
+    DrawDibStop @15
+    GetOpenFileNamePreview=GetOpenFileNamePreviewA @17
+    GetOpenFileNamePreviewA @18
+    GetOpenFileNamePreviewW @19
+    GetSaveFileNamePreviewA @20
+    GetSaveFileNamePreviewW @21
+    ICClose @22
+    ICCompress @23
+    ICCompressorChoose @24
+    ICCompressorFree @25
+    ICDecompress @26
+    ICGetInfo @30
+    ICInfo @33
+    ICLocate @35
+    ICOpen @37
+    ICOpenFunction @38
+    ICSendMessage @40

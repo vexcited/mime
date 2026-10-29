@@ -1,0 +1,31 @@
+LIBRARY msvfw32.dll
+EXPORTS
+    DrawDibBegin=_DrawDibBegin@32 @3
+    DrawDibChangePalette=_DrawDibChangePalette@16 @4
+    DrawDibClose=_DrawDibClose@4 @5
+    DrawDibDraw=_DrawDibDraw@52 @6
+    DrawDibEnd=_DrawDibEnd@4 @7
+    DrawDibGetBuffer=_DrawDibGetBuffer@16 @8
+    DrawDibGetPalette=_DrawDibGetPalette@4 @9
+    DrawDibOpen=_DrawDibOpen@0 @10
+    DrawDibRealize=_DrawDibRealize@12 @12
+    DrawDibSetPalette=_DrawDibSetPalette@8 @13
+    DrawDibStart=_DrawDibStart@8 @14
+    DrawDibStop=_DrawDibStop@4 @15
+    GetOpenFileNamePreview=_GetOpenFileNamePreviewA@4 @17
+    GetOpenFileNamePreviewA=_GetOpenFileNamePreviewA@4 @18
+    GetOpenFileNamePreviewW=_GetOpenFileNamePreviewW@4 @19
+    GetSaveFileNamePreviewA=_GetSaveFileNamePreviewA@4 @20
+    GetSaveFileNamePreviewW=_GetSaveFileNamePreviewW@4 @21
+    ICClose=_ICClose@4 @22
+    ICCompress=ICCompress @23
+    ICCompressorChoose=_ICCompressorChoose@24 @24
+    ICCompressorFree=_ICCompressorFree@4 @25
+    ICDecompress=ICDecompress @26
+    ICGetInfo=_ICGetInfo@12 @30
+    ICInfo=_ICInfo@12 @33
+    ICLocate=_ICLocate@20 @35
+    ICOpen=_ICOpen@12 @37
+    ICOpenFunction=_ICOpenFunction@16 @38
+    ICSendMessage=_ICSendMessage@16 @40
+    VideoForWindowsVersion=_VideoForWindowsVersion@0 @2

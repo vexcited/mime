@@ -65,8 +65,9 @@ set(MIME_X86_DLLS
     imagehlp:0x02000000:base cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
     dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports
     onecorecommonproxystub:0x02000000:proxy_imports onecoreuapcommonproxystub:0x01000000:proxy_imports
-    feclient:0x03000000:base zipfldr:0x15800000:explorerframe_imports avifil32:0x16800000:avifil32_imports glu32:0x16C00000:base normaliz:0x1F800000:base cryptsp:0x1F400000:base shfolder:0x1F000000:base)
+    feclient:0x03000000:base zipfldr:0x15800000:explorerframe_imports avifil32:0x16800000:avifil32_imports glu32:0x16C00000:base msvfw32:0x1FC00000:msvfw32_imports normaliz:0x1F800000:base cryptsp:0x1F400000:base shfolder:0x1F000000:base)
 set(base ntdll kernel32)
+set(msvfw32_imports ntdll kernel32 user32 gdi32 win32u winmm comdlg32)
 set(objects_zipfldr x86-lib-png:guest/lib/png/inflate.c x86-div)
 set(avifil32_imports ntdll kernel32 user32 gdi32 win32u ole32 msacm32)
 set(objects_avifil32 x86-div)

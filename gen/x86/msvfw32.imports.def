@@ -1,0 +1,31 @@
+LIBRARY msvfw32.dll
+EXPORTS
+    DrawDibBegin@32 @3
+    DrawDibChangePalette@16 @4
+    DrawDibClose@4 @5
+    DrawDibDraw@52 @6
+    DrawDibEnd@4 @7
+    DrawDibGetBuffer@16 @8
+    DrawDibGetPalette@4 @9
+    DrawDibOpen@0 @10
+    DrawDibRealize@12 @12
+    DrawDibSetPalette@8 @13
+    DrawDibStart@8 @14
+    DrawDibStop@4 @15
+    GetOpenFileNamePreview@4 @17
+    GetOpenFileNamePreviewA@4 @18
+    GetOpenFileNamePreviewW@4 @19
+    GetSaveFileNamePreviewA@4 @20
+    GetSaveFileNamePreviewW@4 @21
+    ICClose@4 @22
+    ICCompress @23
+    ICCompressorChoose@24 @24
+    ICCompressorFree@4 @25
+    ICDecompress @26
+    ICGetInfo@12 @30
+    ICInfo@12 @33
+    ICLocate@20 @35
+    ICOpen@12 @37
+    ICOpenFunction@16 @38
+    ICSendMessage@16 @40
+    VideoForWindowsVersion@0 @2
