@@ -42,6 +42,7 @@ typedef struct OPTIONS {
     WCHAR Name[96];
     WCHAR Source[MAX_PATH];
     WCHAR Caller[64];
+    DWORD CallerPid;
     BOOL Ask;       /* The form of a program that needs the feature, the user decides. */
     BOOL HideUi;
     BOOL Elevated;  /* Started by the broker for this very request. */
@@ -158,6 +159,9 @@ static BOOL parse(OPTIONS *o)
         } else if (tu_eq(name, L"caller-name")) {
             if (value)
                 lstrcpynW(o->Caller, value, RTL_NUMBER_OF(o->Caller));
+        } else if (tu_eq(name, L"caller-pid")) {
+            for (; value && *value >= L'0' && *value <= L'9'; value++)
+                o->CallerPid = o->CallerPid * 10 + (DWORD)(*value - L'0');
         } else if (tu_eq(name, L"hide-ux")) {
             o->HideUi = TRUE;
         } else if (tu_eq(name, L"elevated")) {
@@ -271,6 +275,7 @@ static int change(const OPTIONS *o, const FEATURE_DEF *feature)
     run.Remove = remove;
     lstrcpynW(run.Source, o->Source, RTL_NUMBER_OF(run.Source));
     lstrcpynW(run.Caller, o->Caller, RTL_NUMBER_OF(run.Caller));
+    run.CallerPid = o->CallerPid;
     for (WCHAR *p = run.Caller; *p; p++)
         if (*p == L'_')
             *p = L' ';
@@ -294,7 +299,7 @@ static int change(const OPTIONS *o, const FEATURE_DEF *feature)
     if (!error) {
         if (!dialogs && !o->HideUi)
             tu_print(remove ? L"%ls is turned off.\n" : L"%ls is turned on.\n", display);
-    } else if (!dialogs || error != FEATURE_ERROR_CANCELLED) {
+    } else if (!dialogs || (error != FEATURE_ERROR_CANCELLED && error != FEATURE_ERROR_ABANDONED)) {
         WCHAR message[300];
         ErrorMessage(error, message, RTL_NUMBER_OF(message));
         tu_eprint(L"features: %ls could not be turned %ls: %ls (0x%08X)\n", display, remove ? L"off" : L"on", message, error);

@@ -61,6 +61,14 @@ static DWORD run_program(PCWSTR arguments, PCWSTR caller)
     line[length++] = L' ';
     for (; *arguments && length < RTL_NUMBER_OF(line) - 2; arguments++)
         line[length++] = *arguments;
+    WCHAR pid[16];
+    UINT digits = 0;
+    for (DWORD id = GetCurrentProcessId(); id || !digits; id /= 10)
+        pid[digits++] = (WCHAR)(L'0' + id % 10);
+    for (PCWSTR flag = L" /caller-pid:"; *flag && length < RTL_NUMBER_OF(line) - 2; flag++)
+        line[length++] = *flag;
+    while (digits && length < RTL_NUMBER_OF(line) - 2)
+        line[length++] = pid[--digits];
     if (caller && *caller) {
         PCWSTR flag = L" /caller-name:";
         for (; *flag; flag++)

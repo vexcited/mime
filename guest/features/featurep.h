@@ -43,6 +43,7 @@ typedef struct RUN {
     BOOL Console;             /* Print the steps. */
     BOOL Dialogs;             /* Ask and show progress in windows. */
     WCHAR Caller[64];
+    DWORD CallerPid;          /* The program that asked, the question goes away with it. */
     WCHAR Source[MAX_PATH];   /* A file to use instead of the download. */
     WCHAR Root[8];            /* The drive root, "C:\". */
     WCHAR Cache[MAX_PATH];

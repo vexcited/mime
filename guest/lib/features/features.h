@@ -13,6 +13,8 @@
 #define FEATURE_OK 0
 #define FEATURE_ERROR_NOT_SUPPORTED 50
 #define FEATURE_ERROR_CANCELLED 1223
+#define FEATURE_ERROR_NO_INTERFACE 1459  /* Nothing could be shown to ask with. */
+#define FEATURE_ERROR_ABANDONED 995      /* The program that asked ended before the answer. */
 #define FEATURE_ERROR_NOT_FOUND 1168
 #define FEATURE_ERROR_ACCESS_DISABLED_BY_POLICY 1260
 #define FEATURE_ERROR_INSTALL_FAILURE 1603

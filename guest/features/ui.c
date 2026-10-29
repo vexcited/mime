@@ -16,8 +16,11 @@ typedef struct UI {
     RUN *Run;
     DWORD (*Worker)(RUN *run);
     HANDLE Thread;
-    HANDLE ConsentAsked, ConsentAnswered, Staged, Done;
+    HANDLE ConsentAsked, ConsentAnswered, QuestionOver, Staged, Done;
+    HWND Question;
     volatile LONG Yes;
+    volatile LONG Abandoned;   /* The program that asked ended while the question was up. */
+    volatile LONG NoInterface; /* The question could not be shown. */
     volatile LONG StageSignalled;
     DWORD Result;
 } UI;
@@ -40,7 +43,11 @@ static void name_of(RUN *run, WCHAR *name, SIZE_T chars)
 static HRESULT CALLBACK consent_callback(HWND window, UINT message, WPARAM wparam, LPARAM lparam, LONG_PTR data)
 {
     UI *ui = (UI *)data;
-    if (message == TDN_BUTTON_CLICKED) {
+    if (message == TDN_CREATED) {
+        ui->Question = window;
+        if (ui->Abandoned)
+            PostMessageW(window, TDM_CLICK_BUTTON, ID_SKIP, 0);
+    } else if (message == TDN_BUTTON_CLICKED) {
         ui->Yes = (int)wparam == ID_DOWNLOAD;
         return 0;
     }
@@ -85,9 +92,28 @@ static BOOL ask(UI *ui)
                                .lpCallbackData = (LONG_PTR)ui};
     int pressed = 0;
     ui->Yes = FALSE;
-    if (FAILED(TaskDialogIndirect(&config, &pressed, nullptr, nullptr)))
+    if (FAILED(TaskDialogIndirect(&config, &pressed, nullptr, nullptr))) {
+        ui->NoInterface = TRUE;
         return FALSE;
+    }
     return pressed == ID_DOWNLOAD;
+}
+
+/* Takes the question away when the program that asked is gone, nobody is left to wait for the answer. */
+static DWORD WINAPI watch_asker(void *parameter)
+{
+    UI *ui = parameter;
+    HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, ui->Run->CallerPid);
+    if (!process)
+        return 0;
+    HANDLE events[2] = {process, ui->QuestionOver};
+    if (WaitForMultipleObjects(2, events, FALSE, INFINITE) == WAIT_OBJECT_0) {
+        ui->Abandoned = TRUE;
+        if (ui->Question)
+            PostMessageW(ui->Question, TDM_CLICK_BUTTON, ID_SKIP, 0);
+    }
+    CloseHandle(process);
+    return 0;
 }
 
 uint32_t UiConsent(RUN *run)
@@ -97,7 +123,11 @@ uint32_t UiConsent(RUN *run)
         return FEATURE_OK;
     SetEvent(ui->ConsentAsked);
     WaitForSingleObject(ui->ConsentAnswered, INFINITE);
-    return ui->Yes ? FEATURE_OK : FEATURE_ERROR_CANCELLED;
+    if (ui->Yes)
+        return FEATURE_OK;
+    if (ui->Abandoned)
+        return FEATURE_ERROR_ABANDONED;
+    return ui->NoInterface ? FEATURE_ERROR_NO_INTERFACE : FEATURE_ERROR_CANCELLED;
 }
 
 void UiStage(RUN *run)
@@ -248,6 +278,7 @@ DWORD UiRun(RUN *run, DWORD (*worker)(RUN *run))
     UI ui = {.Run = run, .Worker = worker};
     ui.ConsentAsked = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     ui.ConsentAnswered = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    ui.QuestionOver = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     ui.Staged = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     ui.Done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     run->Ui = &ui;
@@ -261,7 +292,13 @@ DWORD UiRun(RUN *run, DWORD (*worker)(RUN *run))
     for (;;) {
         DWORD which = WaitForMultipleObjects(3, events, FALSE, INFINITE);
         if (which == WAIT_OBJECT_0) {
+            HANDLE watcher = ui.Run->CallerPid ? CreateThread(nullptr, 0, watch_asker, &ui, 0, nullptr) : nullptr;
             ui.Yes = ask(&ui);
+            SetEvent(ui.QuestionOver);
+            if (watcher) {
+                WaitForSingleObject(watcher, INFINITE);
+                CloseHandle(watcher);
+            }
             SetEvent(ui.ConsentAnswered);
         } else if (which == WAIT_OBJECT_0 + 1) {
             shown = TRUE;
@@ -278,6 +315,7 @@ DWORD UiRun(RUN *run, DWORD (*worker)(RUN *run))
         show_failure(&ui, ui.Result);
     CloseHandle(ui.ConsentAsked);
     CloseHandle(ui.ConsentAnswered);
+    CloseHandle(ui.QuestionOver);
     CloseHandle(ui.Staged);
     CloseHandle(ui.Done);
     return ui.Result;
