@@ -11,5 +11,7 @@ EXPORTS
     ImageRemoveCertificate=_ImageRemoveCertificate@8
     ImageRvaToSection=_ImageRvaToSection@12
     ImageRvaToVa=_ImageRvaToVa@16
+    MapAndLoad=_MapAndLoad@20
     MapFileAndCheckSumA=_MapFileAndCheckSumA@12
     MapFileAndCheckSumW=_MapFileAndCheckSumW@12
+    UnMapAndLoad=_UnMapAndLoad@4

@@ -372,3 +372,173 @@ IMAGEHLP DWORD WINAPI MapFileAndCheckSumA(PCSTR name, PDWORD header_sum, PDWORD 
         return CHECKSUM_UNICODE_FAILURE;
     return MapFileAndCheckSumW(wide, header_sum, check_sum);
 }
+
+/* ------------------------------------------------------------------ mapping an image by name */
+
+typedef struct _LOADED_IMAGE {
+    PSTR ModuleName;
+    HANDLE hFile;
+    PUCHAR MappedAddress;
+    PIMAGE_NT_HEADERS FileHeader;
+    PIMAGE_SECTION_HEADER LastRvaSection;
+    ULONG NumberOfSections;
+    PIMAGE_SECTION_HEADER Sections;
+    ULONG Characteristics;
+    BOOLEAN fSystemImage;
+    BOOLEAN fDOSImage;
+    BOOLEAN fReadOnly;
+    UCHAR Version;
+    LIST_ENTRY Links;
+    ULONG SizeOfImage;
+} LOADED_IMAGE, *PLOADED_IMAGE;
+
+IMAGEHLP BOOL WINAPI UnMapAndLoad(PLOADED_IMAGE image);
+
+/* the headers have to be whole inside the file, or the view is dropped. */
+static BOOL locate_headers(LOADED_IMAGE *image)
+{
+    BYTE *base = image->MappedAddress;
+    BYTE *end = base + image->SizeOfImage;
+    BYTE *nt = nullptr;
+    if (image->SizeOfImage >= 0x40 && *(WORD *)base == IMAGE_DOS_SIGNATURE) {
+        DWORD offset = *(DWORD *)(base + 0x3C);
+        if (!offset) {
+            image->fDOSImage = TRUE;
+        } else if (offset >= 0x40 && offset <= image->SizeOfImage && image->SizeOfImage - offset >= 0x108) {
+            nt = base + offset;
+        }
+    } else if (image->SizeOfImage >= 0x40 && *(WORD *)base == (WORD)IMAGE_NT_SIGNATURE) {
+        nt = base;
+    }
+    if (nt && nt + 264 <= end) {
+        PIMAGE_NT_HEADERS headers = (PIMAGE_NT_HEADERS)nt;
+        image->FileHeader = headers;
+        if (headers->Signature != IMAGE_NT_SIGNATURE) {
+            WORD kind = (WORD)headers->Signature;
+            if (kind == 0x454C || kind == 0x454E)
+                image->fDOSImage = TRUE;
+            UnmapViewOfFile(base);
+            SetLastError(ERROR_INVALID_ACCESS);
+            return FALSE;
+        } else {
+            image->fDOSImage = FALSE;
+            BYTE *optional = nt + 24;
+            BYTE *sections = optional + headers->FileHeader.SizeOfOptionalHeader;
+            WORD magic = headers->OptionalHeader.Magic;
+            BOOL fits = sections <= end;
+            if (fits && magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+                DWORD count = *(DWORD *)(optional + 92);
+                image->fSystemImage = *(DWORD *)(optional + 28) >= 0x80000000;
+                fits = optional + 92 + 4 <= end && optional + 96 + 8 * (ULONG_PTR)count <= end &&
+                       !(optional[2] < 3 && optional[3] < 5);
+            } else if (fits) {
+                image->fSystemImage = FALSE;
+                if (magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+                    DWORD count = *(DWORD *)(optional + 108);
+                    fits = optional + 112 + 8 * (ULONG_PTR)count <= end;
+                }
+            }
+            if (fits && headers->FileHeader.NumberOfSections) {
+                image->Sections = image->LastRvaSection = (PIMAGE_SECTION_HEADER)sections;
+                image->Links.Flink = image->Links.Blink = &image->Links;
+                image->Characteristics = headers->FileHeader.Characteristics;
+                image->NumberOfSections = headers->FileHeader.NumberOfSections;
+                if ((BYTE *)(image->Sections + image->NumberOfSections) <= end)
+                    return TRUE;
+            }
+        }
+    }
+    UnmapViewOfFile(base);
+    SetLastError(ERROR_INVALID_ACCESS);
+    return FALSE;
+}
+
+IMAGEHLP BOOL WINAPI MapAndLoad(PCSTR name, PCSTR path, PLOADED_IMAGE image, BOOL dll, BOOL read_only)
+{
+    if (!image) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    memset(image, 0, sizeof(*image));
+    image->hFile = INVALID_HANDLE_VALUE;
+    char found[MAX_PATH];
+    PCSTR file = name;
+    HANDLE handle;
+    /* the name is tried as it is, and then searched for with the extension of the kind of image. */
+    for (int attempt = 0;; attempt++) {
+        handle = CreateFileA(file, read_only ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (handle != INVALID_HANDLE_VALUE)
+            break;
+        WCHAR wide_path[MAX_PATH], wide_name[MAX_PATH], located[MAX_PATH];
+        BOOL have_path = path && MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, path, -1, wide_path, MAX_PATH) > 0;
+        if (attempt || MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, name, -1, wide_name, MAX_PATH) <= 0)
+            return FALSE;
+        DWORD length = SearchPathW(have_path ? wide_path : nullptr, wide_name, dll ? L".dll" : L".exe", MAX_PATH, located,
+                                   nullptr);
+        if (length - 1 > MAX_PATH - 2 ||
+            WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, located, -1, found, MAX_PATH, nullptr, nullptr) <= 0)
+            return FALSE;
+        file = found;
+    }
+    image->fReadOnly = read_only != 0;
+    image->Version = 1;
+    DWORD size = GetFileSize(handle, nullptr);
+    image->SizeOfImage = size;
+    HANDLE mapping = size != INVALID_FILE_SIZE ?
+                         CreateFileMappingW(handle, nullptr, read_only ? PAGE_READONLY : PAGE_READWRITE, 0, 0, nullptr) :
+                         nullptr;
+    if (mapping) {
+        image->MappedAddress = MapViewOfFile(mapping, read_only ? FILE_MAP_READ : FILE_MAP_WRITE, 0, 0, 0);
+        CloseHandle(mapping);
+    }
+    if (!image->MappedAddress || !locate_headers(image)) {
+        CloseHandle(handle);
+        memset(image, 0, sizeof(*image));
+        image->hFile = INVALID_HANDLE_VALUE;
+        return FALSE;
+    }
+    image->hFile = handle;
+    size_t bytes = strlen(file) + 16;
+    image->ModuleName = HeapAlloc(GetProcessHeap(), 0, bytes);
+    if (!image->ModuleName) {
+        UnMapAndLoad(image);
+        memset(image, 0, sizeof(*image));
+        image->hFile = INVALID_HANDLE_VALUE;
+        return FALSE;
+    }
+    lstrcpyA(image->ModuleName, file);
+    return TRUE;
+}
+
+/* a writable image gets its checksum refreshed, and the file is cut to the size it was mapped with. */
+IMAGEHLP BOOL WINAPI UnMapAndLoad(PLOADED_IMAGE image)
+{
+    if (!image) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (image->MappedAddress) {
+        DWORD header_sum, check_sum;
+        if (!image->fReadOnly && CheckSumMappedFile(image->MappedAddress, image->SizeOfImage, &header_sum, &check_sum)) {
+            WORD magic = image->FileHeader->OptionalHeader.Magic;
+            if (magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC || magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+                image->FileHeader->OptionalHeader.CheckSum = check_sum;
+            FlushViewOfFile(image->MappedAddress, image->SizeOfImage);
+            UnmapViewOfFile(image->MappedAddress);
+            if (image->SizeOfImage != GetFileSize(image->hFile, nullptr)) {
+                LONG high = 0;
+                SetFilePointer(image->hFile, (LONG)image->SizeOfImage, &high, FILE_BEGIN);
+                SetEndOfFile(image->hFile);
+            }
+        } else {
+            UnmapViewOfFile(image->MappedAddress);
+        }
+    }
+    if (image->hFile && image->hFile != INVALID_HANDLE_VALUE)
+        CloseHandle(image->hFile);
+    image->hFile = INVALID_HANDLE_VALUE;
+    if (image->ModuleName)
+        HeapFree(GetProcessHeap(), 0, image->ModuleName);
+    return TRUE;
+}

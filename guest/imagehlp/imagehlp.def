@@ -1,0 +1,20 @@
+; the symbol functions are dbghelp's, which imagehlp forwards to like windows does.
+LIBRARY imagehlp.dll
+EXPORTS
+    StackWalk64=dbghelp.StackWalk64
+    SymCleanup=dbghelp.SymCleanup
+    SymEnumerateModules64=dbghelp.SymEnumerateModules64
+    SymFromAddr=dbghelp.SymFromAddr
+    SymFunctionTableAccess64=dbghelp.SymFunctionTableAccess64
+    SymGetLineFromAddr64=dbghelp.SymGetLineFromAddr64
+    SymGetModuleBase64=dbghelp.SymGetModuleBase64
+    SymGetModuleInfo64=dbghelp.SymGetModuleInfo64
+    SymGetModuleInfoW64=dbghelp.SymGetModuleInfoW64
+    SymGetOptions=dbghelp.SymGetOptions
+    SymGetSearchPath=dbghelp.SymGetSearchPath
+    SymGetSymFromAddr64=dbghelp.SymGetSymFromAddr64
+    SymInitialize=dbghelp.SymInitialize
+    SymLoadModule64=dbghelp.SymLoadModule64
+    SymSetOptions=dbghelp.SymSetOptions
+    SymUnDName64=dbghelp.SymUnDName64
+    SymUnloadModule64=dbghelp.SymUnloadModule64

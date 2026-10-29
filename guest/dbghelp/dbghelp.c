@@ -905,3 +905,102 @@ DBGHELP BOOL WINAPI SymSrvGetFileIndexInfo(PCSTR file, SYMSRV_INDEX_INFO *info, 
     info->age = wide.age;
     return TRUE;
 }
+
+/* ------------------------------------------------------------------ the older forms of the symbol functions */
+
+typedef struct _IMAGEHLP_SYMBOL64 {
+    DWORD SizeOfStruct;
+    DWORD64 Address;
+    DWORD Size;
+    DWORD Flags;
+    DWORD MaxNameLength;
+    CHAR Name[1];
+} IMAGEHLP_SYMBOL64, *PIMAGEHLP_SYMBOL64;
+
+typedef BOOL(WINAPI *PSYM_ENUMMODULES_CALLBACK64)(PCSTR name, DWORD64 base, PVOID context);
+
+DBGHELP BOOL WINAPI SymGetSymFromAddr64(HANDLE process, DWORD64 address, PDWORD64 displacement, PIMAGEHLP_SYMBOL64 symbol)
+{
+    if (!symbol || symbol->SizeOfStruct < sizeof(*symbol) || !symbol->MaxNameLength) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    union {
+        SYMBOL_INFO info;
+        BYTE storage[sizeof(SYMBOL_INFO) + 512];
+    } u = {};
+    u.info.SizeOfStruct = sizeof(SYMBOL_INFO);
+    u.info.MaxNameLen = 512;
+    if (!SymFromAddr(process, address, displacement, &u.info))
+        return FALSE;
+    symbol->Address = u.info.Address;
+    symbol->Size = u.info.Size;
+    symbol->Flags = u.info.Flags;
+    ULONG n = u.info.NameLen < symbol->MaxNameLength - 1 ? u.info.NameLen : symbol->MaxNameLength - 1;
+    memcpy(symbol->Name, u.info.Name, n);
+    symbol->Name[n] = 0;
+    return TRUE;
+}
+
+DBGHELP BOOL WINAPI SymUnDName64(PIMAGEHLP_SYMBOL64 symbol, PSTR out, DWORD size)
+{
+    if (!symbol || !out || !size) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return UnDecorateSymbolName(symbol->Name, out, size, 0) != 0;
+}
+
+/* the modules are the loaded ones of this process, named without the extension. */
+DBGHELP BOOL WINAPI SymEnumerateModules64(HANDLE process, PSYM_ENUMMODULES_CALLBACK64 callback, PVOID context)
+{
+    if (!callback || !own_process(process)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    LIST_ENTRY *head = &NtCurrentPeb()->Ldr->InLoadOrderModuleList;
+    for (LIST_ENTRY *at = head->Flink; at != head; at = at->Flink) {
+        LDR_DATA_TABLE_ENTRY *entry = CONTAINING_RECORD(at, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+        char name[MAX_PATH];
+        int n = WideCharToMultiByte(CP_ACP, 0, entry->BaseDllName.Buffer, entry->BaseDllName.Length / sizeof(WCHAR), name,
+                                    sizeof(name) - 1, nullptr, nullptr);
+        name[n] = 0;
+        char *dot = strrchr(name, '.');
+        if (dot)
+            *dot = 0;
+        if (!callback(name, (DWORD64)(ULONG_PTR)entry->DllBase, context))
+            break;
+    }
+    return TRUE;
+}
+
+/* nothing is read ahead, so loading a module is only learning where it is. */
+DBGHELP DWORD64 WINAPI SymLoadModule64(HANDLE process, HANDLE file, PCSTR image, PCSTR module, DWORD64 base, DWORD size)
+{
+    if (base)
+        return base;
+    HMODULE found = own_process(process) ? GetModuleHandleA(image ? image : module) : nullptr;
+    if (!found)
+        SetLastError(ERROR_MOD_NOT_FOUND);
+    return (DWORD64)(ULONG_PTR)found;
+}
+
+DBGHELP BOOL WINAPI SymUnloadModule64(HANDLE process, DWORD64 base)
+{
+    AcquireSRWLockShared(&g_lock);
+    BOOL known = find_session(process) != nullptr;
+    ReleaseSRWLockShared(&g_lock);
+    if (!known)
+        SetLastError(ERROR_INVALID_HANDLE);
+    return known;
+}
+
+DBGHELP BOOL WINAPI SymGetSearchPath(HANDLE process, PSTR search, DWORD size)
+{
+    WCHAR wide[MAX_PATH];
+    if (!SymGetSearchPathW(process, wide, MAX_PATH))
+        return FALSE;
+    if (search && size && !WideCharToMultiByte(CP_ACP, 0, wide, -1, search, (int)size, nullptr, nullptr))
+        search[size - 1] = 0;
+    return TRUE;
+}
