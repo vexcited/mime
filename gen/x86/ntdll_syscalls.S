@@ -749,6 +749,13 @@ _NtQueryVolumeInformationFile@20:
     int $0x2e
     retl $20
     .p2align 4, 0x90
+    .globl _NtSetVolumeInformationFile@20
+_NtSetVolumeInformationFile@20:
+    movl $0x1c4, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $20
+    .p2align 4, 0x90
     .globl _NtQueueApcThread@20
 _NtQueueApcThread@20:
     movl $0x45, %eax

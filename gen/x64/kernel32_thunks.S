@@ -75,6 +75,18 @@ Kernel32Thunk_AssignProcessToJobObject:
     .p2align 4
 Kernel32Thunk_AttachConsole:
     jmp     *__imp_AttachConsole(%rip)
+    .globl  Kernel32Thunk_BackupRead
+    .p2align 4
+Kernel32Thunk_BackupRead:
+    jmp     *__imp_BackupRead(%rip)
+    .globl  Kernel32Thunk_BackupSeek
+    .p2align 4
+Kernel32Thunk_BackupSeek:
+    jmp     *__imp_BackupSeek(%rip)
+    .globl  Kernel32Thunk_BackupWrite
+    .p2align 4
+Kernel32Thunk_BackupWrite:
+    jmp     *__imp_BackupWrite(%rip)
     .globl  Kernel32Thunk_BaseSetLastNTError
     .p2align 4
 Kernel32Thunk_BaseSetLastNTError:
@@ -91,6 +103,30 @@ Kernel32Thunk_BeginUpdateResourceW:
     .p2align 4
 Kernel32Thunk_BindIoCompletionCallback:
     jmp     *__imp_BindIoCompletionCallback(%rip)
+    .globl  Kernel32Thunk_BuildCommDCBA
+    .p2align 4
+Kernel32Thunk_BuildCommDCBA:
+    jmp     *__imp_BuildCommDCBA(%rip)
+    .globl  Kernel32Thunk_BuildCommDCBAndTimeoutsA
+    .p2align 4
+Kernel32Thunk_BuildCommDCBAndTimeoutsA:
+    jmp     *__imp_BuildCommDCBAndTimeoutsA(%rip)
+    .globl  Kernel32Thunk_BuildCommDCBAndTimeoutsW
+    .p2align 4
+Kernel32Thunk_BuildCommDCBAndTimeoutsW:
+    jmp     *__imp_BuildCommDCBAndTimeoutsW(%rip)
+    .globl  Kernel32Thunk_BuildCommDCBW
+    .p2align 4
+Kernel32Thunk_BuildCommDCBW:
+    jmp     *__imp_BuildCommDCBW(%rip)
+    .globl  Kernel32Thunk_CallNamedPipeA
+    .p2align 4
+Kernel32Thunk_CallNamedPipeA:
+    jmp     *__imp_CallNamedPipeA(%rip)
+    .globl  Kernel32Thunk_CallNamedPipeW
+    .p2align 4
+Kernel32Thunk_CallNamedPipeW:
+    jmp     *__imp_CallNamedPipeW(%rip)
     .globl  Kernel32Thunk_CallbackMayRunLong
     .p2align 4
 Kernel32Thunk_CallbackMayRunLong:
@@ -407,6 +443,10 @@ Kernel32Thunk_CreateSemaphoreExW:
     .p2align 4
 Kernel32Thunk_CreateSemaphoreW:
     jmp     *__imp_CreateSemaphoreW(%rip)
+    .globl  Kernel32Thunk_CreateSymbolicLinkA
+    .p2align 4
+Kernel32Thunk_CreateSymbolicLinkA:
+    jmp     *__imp_CreateSymbolicLinkA(%rip)
     .globl  Kernel32Thunk_CreateSymbolicLinkW
     .p2align 4
 Kernel32Thunk_CreateSymbolicLinkW:
@@ -455,6 +495,10 @@ Kernel32Thunk_CreateToolhelp32Snapshot:
     .p2align 4
 Kernel32Thunk_CreateWaitableTimerA:
     jmp     *__imp_CreateWaitableTimerA(%rip)
+    .globl  Kernel32Thunk_CreateWaitableTimerExA
+    .p2align 4
+Kernel32Thunk_CreateWaitableTimerExA:
+    jmp     *__imp_CreateWaitableTimerExA(%rip)
     .globl  Kernel32Thunk_CreateWaitableTimerExW
     .p2align 4
 Kernel32Thunk_CreateWaitableTimerExW:
@@ -815,6 +859,10 @@ Kernel32Thunk_FindFirstFileNameW:
     .p2align 4
 Kernel32Thunk_FindFirstFileW:
     jmp     *__imp_FindFirstFileW(%rip)
+    .globl  Kernel32Thunk_FindFirstStreamW
+    .p2align 4
+Kernel32Thunk_FindFirstStreamW:
+    jmp     *__imp_FindFirstStreamW(%rip)
     .globl  Kernel32Thunk_FindFirstVolumeW
     .p2align 4
 Kernel32Thunk_FindFirstVolumeW:
@@ -843,6 +891,10 @@ Kernel32Thunk_FindNextFileNameW:
     .p2align 4
 Kernel32Thunk_FindNextFileW:
     jmp     *__imp_FindNextFileW(%rip)
+    .globl  Kernel32Thunk_FindNextStreamW
+    .p2align 4
+Kernel32Thunk_FindNextStreamW:
+    jmp     *__imp_FindNextStreamW(%rip)
     .globl  Kernel32Thunk_FindNextVolumeW
     .p2align 4
 Kernel32Thunk_FindNextVolumeW:
@@ -1407,6 +1459,14 @@ Kernel32Thunk_GetFirmwareEnvironmentVariableExW:
     .p2align 4
 Kernel32Thunk_GetFirmwareEnvironmentVariableW:
     jmp     *__imp_GetFirmwareEnvironmentVariableW(%rip)
+    .globl  Kernel32Thunk_GetThreadSelectorEntry
+    .p2align 4
+Kernel32Thunk_GetThreadSelectorEntry:
+    jmp     *__imp_GetThreadSelectorEntry(%rip)
+    .globl  Kernel32Thunk_ReplaceFileA
+    .p2align 4
+Kernel32Thunk_ReplaceFileA:
+    jmp     *__imp_ReplaceFileA(%rip)
     .globl  Kernel32Thunk_SetFirmwareEnvironmentVariableA
     .p2align 4
 Kernel32Thunk_SetFirmwareEnvironmentVariableA:
@@ -4283,6 +4343,14 @@ Kernel32Thunk_SetUnhandledExceptionFilter:
     .p2align 4
 Kernel32Thunk_SetUserGeoID:
     jmp     *__imp_SetUserGeoID(%rip)
+    .globl  Kernel32Thunk_SetVolumeLabelA
+    .p2align 4
+Kernel32Thunk_SetVolumeLabelA:
+    jmp     *__imp_SetVolumeLabelA(%rip)
+    .globl  Kernel32Thunk_SetVolumeLabelW
+    .p2align 4
+Kernel32Thunk_SetVolumeLabelW:
+    jmp     *__imp_SetVolumeLabelW(%rip)
     .globl  Kernel32Thunk_SetWaitableTimer
     .p2align 4
 Kernel32Thunk_SetWaitableTimer:

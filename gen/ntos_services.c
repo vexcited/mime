@@ -134,6 +134,7 @@ void NtQueryTimerResolution(void);
 void NtQueryValueKey(void);
 void NtQueryVirtualMemory(void);
 void NtQueryVolumeInformationFile(void);
+void NtSetVolumeInformationFile(void);
 void NtQueryWnfStateData(void);
 void NtQueryWnfStateNameInformation(void);
 void NtQueueApcThread(void);
@@ -571,6 +572,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtQueryVolumeInformationFile
     KiRegisterService(MIME_SVC_NtQueryVolumeInformationFile, (void *)NtQueryVolumeInformationFile, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtSetVolumeInformationFile
+    KiRegisterService(MIME_SVC_NtSetVolumeInformationFile, (void *)NtSetVolumeInformationFile, STACK_ARGS(5));
 #endif
 #ifdef MIME_SVC_NtQueryWnfStateData
     KiRegisterService(MIME_SVC_NtQueryWnfStateData, (void *)NtQueryWnfStateData, STACK_ARGS(6));

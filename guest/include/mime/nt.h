@@ -728,11 +728,17 @@ typedef struct _FILE_NAMES_INFORMATION {
 
 typedef enum _FSINFOCLASS {
     FileFsVolumeInformation = 1,
+    FileFsLabelInformation = 2,
     FileFsSizeInformation = 3,
     FileFsDeviceInformation = 4,
     FileFsAttributeInformation = 5,
     FileFsFullSizeInformation = 7,
 } FS_INFORMATION_CLASS;
+
+typedef struct _FILE_FS_LABEL_INFORMATION {
+    ULONG VolumeLabelLength;
+    WCHAR VolumeLabel[1];
+} FILE_FS_LABEL_INFORMATION, *PFILE_FS_LABEL_INFORMATION;
 
 typedef struct _FILE_FS_DEVICE_INFORMATION {
     ULONG DeviceType;

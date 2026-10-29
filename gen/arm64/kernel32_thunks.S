@@ -113,6 +113,24 @@ Kernel32Thunk_AttachConsole:
     adrp    x16, __imp_AttachConsole
     ldr     x16, [x16, :lo12:__imp_AttachConsole]
     br      x16
+    .globl  Kernel32Thunk_BackupRead
+    .p2align 4
+Kernel32Thunk_BackupRead:
+    adrp    x16, __imp_BackupRead
+    ldr     x16, [x16, :lo12:__imp_BackupRead]
+    br      x16
+    .globl  Kernel32Thunk_BackupSeek
+    .p2align 4
+Kernel32Thunk_BackupSeek:
+    adrp    x16, __imp_BackupSeek
+    ldr     x16, [x16, :lo12:__imp_BackupSeek]
+    br      x16
+    .globl  Kernel32Thunk_BackupWrite
+    .p2align 4
+Kernel32Thunk_BackupWrite:
+    adrp    x16, __imp_BackupWrite
+    ldr     x16, [x16, :lo12:__imp_BackupWrite]
+    br      x16
     .globl  Kernel32Thunk_BaseSetLastNTError
     .p2align 4
 Kernel32Thunk_BaseSetLastNTError:
@@ -136,6 +154,42 @@ Kernel32Thunk_BeginUpdateResourceW:
 Kernel32Thunk_BindIoCompletionCallback:
     adrp    x16, __imp_BindIoCompletionCallback
     ldr     x16, [x16, :lo12:__imp_BindIoCompletionCallback]
+    br      x16
+    .globl  Kernel32Thunk_BuildCommDCBA
+    .p2align 4
+Kernel32Thunk_BuildCommDCBA:
+    adrp    x16, __imp_BuildCommDCBA
+    ldr     x16, [x16, :lo12:__imp_BuildCommDCBA]
+    br      x16
+    .globl  Kernel32Thunk_BuildCommDCBAndTimeoutsA
+    .p2align 4
+Kernel32Thunk_BuildCommDCBAndTimeoutsA:
+    adrp    x16, __imp_BuildCommDCBAndTimeoutsA
+    ldr     x16, [x16, :lo12:__imp_BuildCommDCBAndTimeoutsA]
+    br      x16
+    .globl  Kernel32Thunk_BuildCommDCBAndTimeoutsW
+    .p2align 4
+Kernel32Thunk_BuildCommDCBAndTimeoutsW:
+    adrp    x16, __imp_BuildCommDCBAndTimeoutsW
+    ldr     x16, [x16, :lo12:__imp_BuildCommDCBAndTimeoutsW]
+    br      x16
+    .globl  Kernel32Thunk_BuildCommDCBW
+    .p2align 4
+Kernel32Thunk_BuildCommDCBW:
+    adrp    x16, __imp_BuildCommDCBW
+    ldr     x16, [x16, :lo12:__imp_BuildCommDCBW]
+    br      x16
+    .globl  Kernel32Thunk_CallNamedPipeA
+    .p2align 4
+Kernel32Thunk_CallNamedPipeA:
+    adrp    x16, __imp_CallNamedPipeA
+    ldr     x16, [x16, :lo12:__imp_CallNamedPipeA]
+    br      x16
+    .globl  Kernel32Thunk_CallNamedPipeW
+    .p2align 4
+Kernel32Thunk_CallNamedPipeW:
+    adrp    x16, __imp_CallNamedPipeW
+    ldr     x16, [x16, :lo12:__imp_CallNamedPipeW]
     br      x16
     .globl  Kernel32Thunk_CallbackMayRunLong
     .p2align 4
@@ -611,6 +665,12 @@ Kernel32Thunk_CreateSemaphoreW:
     adrp    x16, __imp_CreateSemaphoreW
     ldr     x16, [x16, :lo12:__imp_CreateSemaphoreW]
     br      x16
+    .globl  Kernel32Thunk_CreateSymbolicLinkA
+    .p2align 4
+Kernel32Thunk_CreateSymbolicLinkA:
+    adrp    x16, __imp_CreateSymbolicLinkA
+    ldr     x16, [x16, :lo12:__imp_CreateSymbolicLinkA]
+    br      x16
     .globl  Kernel32Thunk_CreateSymbolicLinkW
     .p2align 4
 Kernel32Thunk_CreateSymbolicLinkW:
@@ -682,6 +742,12 @@ Kernel32Thunk_CreateToolhelp32Snapshot:
 Kernel32Thunk_CreateWaitableTimerA:
     adrp    x16, __imp_CreateWaitableTimerA
     ldr     x16, [x16, :lo12:__imp_CreateWaitableTimerA]
+    br      x16
+    .globl  Kernel32Thunk_CreateWaitableTimerExA
+    .p2align 4
+Kernel32Thunk_CreateWaitableTimerExA:
+    adrp    x16, __imp_CreateWaitableTimerExA
+    ldr     x16, [x16, :lo12:__imp_CreateWaitableTimerExA]
     br      x16
     .globl  Kernel32Thunk_CreateWaitableTimerExW
     .p2align 4
@@ -1223,6 +1289,12 @@ Kernel32Thunk_FindFirstFileW:
     adrp    x16, __imp_FindFirstFileW
     ldr     x16, [x16, :lo12:__imp_FindFirstFileW]
     br      x16
+    .globl  Kernel32Thunk_FindFirstStreamW
+    .p2align 4
+Kernel32Thunk_FindFirstStreamW:
+    adrp    x16, __imp_FindFirstStreamW
+    ldr     x16, [x16, :lo12:__imp_FindFirstStreamW]
+    br      x16
     .globl  Kernel32Thunk_FindFirstVolumeW
     .p2align 4
 Kernel32Thunk_FindFirstVolumeW:
@@ -1264,6 +1336,12 @@ Kernel32Thunk_FindNextFileNameW:
 Kernel32Thunk_FindNextFileW:
     adrp    x16, __imp_FindNextFileW
     ldr     x16, [x16, :lo12:__imp_FindNextFileW]
+    br      x16
+    .globl  Kernel32Thunk_FindNextStreamW
+    .p2align 4
+Kernel32Thunk_FindNextStreamW:
+    adrp    x16, __imp_FindNextStreamW
+    ldr     x16, [x16, :lo12:__imp_FindNextStreamW]
     br      x16
     .globl  Kernel32Thunk_FindNextVolumeW
     .p2align 4
@@ -2110,6 +2188,18 @@ Kernel32Thunk_GetFirmwareEnvironmentVariableExW:
 Kernel32Thunk_GetFirmwareEnvironmentVariableW:
     adrp    x16, __imp_GetFirmwareEnvironmentVariableW
     ldr     x16, [x16, :lo12:__imp_GetFirmwareEnvironmentVariableW]
+    br      x16
+    .globl  Kernel32Thunk_GetThreadSelectorEntry
+    .p2align 4
+Kernel32Thunk_GetThreadSelectorEntry:
+    adrp    x16, __imp_GetThreadSelectorEntry
+    ldr     x16, [x16, :lo12:__imp_GetThreadSelectorEntry]
+    br      x16
+    .globl  Kernel32Thunk_ReplaceFileA
+    .p2align 4
+Kernel32Thunk_ReplaceFileA:
+    adrp    x16, __imp_ReplaceFileA
+    ldr     x16, [x16, :lo12:__imp_ReplaceFileA]
     br      x16
     .globl  Kernel32Thunk_SetFirmwareEnvironmentVariableA
     .p2align 4
@@ -6424,6 +6514,18 @@ Kernel32Thunk_SetUnhandledExceptionFilter:
 Kernel32Thunk_SetUserGeoID:
     adrp    x16, __imp_SetUserGeoID
     ldr     x16, [x16, :lo12:__imp_SetUserGeoID]
+    br      x16
+    .globl  Kernel32Thunk_SetVolumeLabelA
+    .p2align 4
+Kernel32Thunk_SetVolumeLabelA:
+    adrp    x16, __imp_SetVolumeLabelA
+    ldr     x16, [x16, :lo12:__imp_SetVolumeLabelA]
+    br      x16
+    .globl  Kernel32Thunk_SetVolumeLabelW
+    .p2align 4
+Kernel32Thunk_SetVolumeLabelW:
+    adrp    x16, __imp_SetVolumeLabelW
+    ldr     x16, [x16, :lo12:__imp_SetVolumeLabelW]
     br      x16
     .globl  Kernel32Thunk_SetWaitableTimer
     .p2align 4

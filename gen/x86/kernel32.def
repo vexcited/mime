@@ -58,10 +58,19 @@ EXPORTS
     AreFileApisANSI=_Kernel32Thunk_AreFileApisANSI@0
     AssignProcessToJobObject=_Kernel32Thunk_AssignProcessToJobObject@8
     AttachConsole=_Kernel32Thunk_AttachConsole@4
+    BackupRead=_Kernel32Thunk_BackupRead@28
+    BackupSeek=_Kernel32Thunk_BackupSeek@24
+    BackupWrite=_Kernel32Thunk_BackupWrite@28
     BaseSetLastNTError=_Kernel32Thunk_BaseSetLastNTError@4
     Beep=_Kernel32Thunk_Beep@8
     BeginUpdateResourceW=_Kernel32Thunk_BeginUpdateResourceW@8
     BindIoCompletionCallback=_Kernel32Thunk_BindIoCompletionCallback@12
+    BuildCommDCBA=_Kernel32Thunk_BuildCommDCBA@8
+    BuildCommDCBAndTimeoutsA=_Kernel32Thunk_BuildCommDCBAndTimeoutsA@12
+    BuildCommDCBAndTimeoutsW=_Kernel32Thunk_BuildCommDCBAndTimeoutsW@12
+    BuildCommDCBW=_Kernel32Thunk_BuildCommDCBW@8
+    CallNamedPipeA=_Kernel32Thunk_CallNamedPipeA@28
+    CallNamedPipeW=_Kernel32Thunk_CallNamedPipeW@28
     CallbackMayRunLong=_Kernel32Thunk_CallbackMayRunLong@4
     CancelIo=_Kernel32Thunk_CancelIo@4
     CancelIoEx=_Kernel32Thunk_CancelIoEx@8
@@ -174,6 +183,7 @@ EXPORTS
     CreateSemaphoreExA=_Kernel32Thunk_CreateSemaphoreExA@24
     CreateSemaphoreExW=_Kernel32Thunk_CreateSemaphoreExW@24
     CreateSemaphoreW=_Kernel32Thunk_CreateSemaphoreW@16
+    CreateSymbolicLinkA=_Kernel32Thunk_CreateSymbolicLinkA@12
     CreateSymbolicLinkW=_Kernel32Thunk_CreateSymbolicLinkW@12
     CreateThread=_Kernel32Thunk_CreateThread@24
     CreateThreadpool=_Kernel32Thunk_CreateThreadpool@4
@@ -186,6 +196,7 @@ EXPORTS
     CreateTimerQueueTimer=_Kernel32Thunk_CreateTimerQueueTimer@28
     CreateToolhelp32Snapshot=_Kernel32Thunk_CreateToolhelp32Snapshot@8
     CreateWaitableTimerA=_Kernel32Thunk_CreateWaitableTimerA@12
+    CreateWaitableTimerExA=_Kernel32Thunk_CreateWaitableTimerExA@16
     CreateWaitableTimerExW=_Kernel32Thunk_CreateWaitableTimerExW@16
     CreateWaitableTimerW=_Kernel32Thunk_CreateWaitableTimerW@12
     CreateWellKnownSid=kernelbase.CreateWellKnownSid
@@ -305,6 +316,7 @@ EXPORTS
     FindFirstFileNameW=_Kernel32Thunk_FindFirstFileNameW@16
     FindFirstFileW=_Kernel32Thunk_FindFirstFileW@8
     FindFirstFreeAce=kernelbase.FindFirstFreeAce
+    FindFirstStreamW=_Kernel32Thunk_FindFirstStreamW@16
     FindFirstVolumeW=_Kernel32Thunk_FindFirstVolumeW@8
     FindNLSString=_Kernel32Thunk_FindNLSString@28
     FindNLSStringEx=_Kernel32Thunk_FindNLSStringEx@40
@@ -312,6 +324,7 @@ EXPORTS
     FindNextFileA=_Kernel32Thunk_FindNextFileA@8
     FindNextFileNameW=_Kernel32Thunk_FindNextFileNameW@12
     FindNextFileW=_Kernel32Thunk_FindNextFileW@8
+    FindNextStreamW=_Kernel32Thunk_FindNextStreamW@8
     FindNextVolumeW=_Kernel32Thunk_FindNextVolumeW@12
     FindPackagesByPackageFamily=kernelbase.FindPackagesByPackageFamily
     FindResourceA=_Kernel32Thunk_FindResourceA@12
@@ -481,6 +494,8 @@ EXPORTS
     GetFirmwareEnvironmentVariableExA=_GetFirmwareEnvironmentVariableExA@20
     GetFirmwareEnvironmentVariableExW=_GetFirmwareEnvironmentVariableExW@20
     GetFirmwareEnvironmentVariableW=_GetFirmwareEnvironmentVariableW@16
+    GetThreadSelectorEntry=_Kernel32Thunk_GetThreadSelectorEntry@12
+    ReplaceFileA=_Kernel32Thunk_ReplaceFileA@24
     SetFirmwareEnvironmentVariableA=_SetFirmwareEnvironmentVariableA@16
     SetFirmwareEnvironmentVariableExA=_SetFirmwareEnvironmentVariableExA@20
     SetFirmwareEnvironmentVariableExW=_SetFirmwareEnvironmentVariableExW@20
@@ -1344,6 +1359,8 @@ EXPORTS
     SetTokenInformation=kernelbase.SetTokenInformation
     SetUnhandledExceptionFilter=_Kernel32Thunk_SetUnhandledExceptionFilter@4
     SetUserGeoID=_Kernel32Thunk_SetUserGeoID@4
+    SetVolumeLabelA=_Kernel32Thunk_SetVolumeLabelA@8
+    SetVolumeLabelW=_Kernel32Thunk_SetVolumeLabelW@8
     SetWaitableTimer=_Kernel32Thunk_SetWaitableTimer@24
     SetWaitableTimerEx=kernelbase.SetWaitableTimerEx
     SetXStateFeaturesMask=_Kernel32Thunk_SetXStateFeaturesMask@12

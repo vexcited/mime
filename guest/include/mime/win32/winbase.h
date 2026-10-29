@@ -1016,6 +1016,79 @@ WINBASEAPI BOOL WINAPI CreateHardLinkW(LPCWSTR link, LPCWSTR existing, LPSECURIT
 WINBASEAPI HANDLE WINAPI OpenFileById(HANDLE volume, LPFILE_ID_DESCRIPTOR id, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD flags);
 WINBASEAPI BOOL WINAPI CreateHardLinkA(LPCSTR link, LPCSTR existing, LPSECURITY_ATTRIBUTES sa);
 WINBASEAPI BOOLEAN WINAPI CreateSymbolicLinkW(LPCWSTR link, LPCWSTR target, DWORD flags);
+WINBASEAPI BOOLEAN WINAPI CreateSymbolicLinkA(LPCSTR link, LPCSTR target, DWORD flags);
+WINBASEAPI BOOL WINAPI ReplaceFileA(LPCSTR replaced, LPCSTR replacement, LPCSTR backup, DWORD flags, LPVOID exclude,
+                                    LPVOID reserved);
+WINBASEAPI BOOL WINAPI SetVolumeLabelW(LPCWSTR root, LPCWSTR label);
+WINBASEAPI BOOL WINAPI SetVolumeLabelA(LPCSTR root, LPCSTR label);
+
+typedef enum _STREAM_INFO_LEVELS {
+    FindStreamInfoStandard,
+    FindStreamInfoMaxInfoLevel
+} STREAM_INFO_LEVELS;
+
+typedef struct _WIN32_FIND_STREAM_DATA {
+    LARGE_INTEGER StreamSize;
+    WCHAR cStreamName[MAX_PATH + 36];
+} WIN32_FIND_STREAM_DATA, *PWIN32_FIND_STREAM_DATA;
+
+WINBASEAPI HANDLE WINAPI FindFirstStreamW(LPCWSTR path, STREAM_INFO_LEVELS level, LPVOID data, DWORD flags);
+WINBASEAPI BOOL WINAPI FindNextStreamW(HANDLE find, LPVOID data);
+
+#define BACKUP_INVALID 0x00000000
+#define BACKUP_DATA 0x00000001
+#define BACKUP_EA_DATA 0x00000002
+#define BACKUP_SECURITY_DATA 0x00000003
+#define BACKUP_ALTERNATE_DATA 0x00000004
+#define BACKUP_LINK 0x00000005
+#define BACKUP_PROPERTY_DATA 0x00000006
+#define BACKUP_OBJECT_ID 0x00000007
+#define BACKUP_REPARSE_DATA 0x00000008
+#define BACKUP_SPARSE_BLOCK 0x00000009
+#define BACKUP_TXFS_DATA 0x0000000A
+
+typedef struct _WIN32_STREAM_ID {
+    DWORD dwStreamId;
+    DWORD dwStreamAttributes;
+    LARGE_INTEGER Size;
+    DWORD dwStreamNameSize;
+    WCHAR cStreamName[1];
+} WIN32_STREAM_ID, *LPWIN32_STREAM_ID;
+
+WINBASEAPI BOOL WINAPI BackupRead(HANDLE file, LPBYTE buffer, DWORD size, LPDWORD read, BOOL abort,
+                                  BOOL process_security, LPVOID *context);
+WINBASEAPI BOOL WINAPI BackupSeek(HANDLE file, DWORD low, DWORD high, LPDWORD low_seeked, LPDWORD high_seeked,
+                                  LPVOID *context);
+WINBASEAPI BOOL WINAPI BackupWrite(HANDLE file, LPBYTE buffer, DWORD size, LPDWORD written, BOOL abort,
+                                   BOOL process_security, LPVOID *context);
+
+typedef struct _LDT_ENTRY {
+    WORD LimitLow;
+    WORD BaseLow;
+    union {
+        struct {
+            BYTE BaseMid;
+            BYTE Flags1;
+            BYTE Flags2;
+            BYTE BaseHi;
+        } Bytes;
+        struct {
+            DWORD BaseMid : 8;
+            DWORD Type : 5;
+            DWORD Dpl : 2;
+            DWORD Pres : 1;
+            DWORD LimitHi : 4;
+            DWORD Sys : 1;
+            DWORD Reserved_0 : 1;
+            DWORD Default_Big : 1;
+            DWORD Granularity : 1;
+            DWORD BaseHi : 8;
+        } Bits;
+    } HighWord;
+} LDT_ENTRY, *PLDT_ENTRY, *LPLDT_ENTRY;
+
+WINBASEAPI BOOL WINAPI GetThreadSelectorEntry(HANDLE thread, DWORD selector, LPLDT_ENTRY entry);
+WINBASEAPI HANDLE WINAPI CreateWaitableTimerExA(LPSECURITY_ATTRIBUTES sa, LPCSTR name, DWORD flags, DWORD access);
 WINBASEAPI HANDLE WINAPI FindFirstFileW(LPCWSTR name, LPWIN32_FIND_DATAW data);
 WINBASEAPI HANDLE WINAPI FindFirstFileA(LPCSTR name, LPWIN32_FIND_DATAA data);
 WINBASEAPI HANDLE WINAPI FindFirstFileExW(LPCWSTR name, FINDEX_INFO_LEVELS level, LPVOID data,
@@ -2839,6 +2912,19 @@ typedef struct _COMMPROP {
 #define CE_FRAME 0x0008
 #define CE_BREAK 0x0010
 
+#define NOPARITY 0
+#define ODDPARITY 1
+#define EVENPARITY 2
+#define MARKPARITY 3
+#define SPACEPARITY 4
+#define ONESTOPBIT 0
+#define ONE5STOPBITS 1
+#define TWOSTOPBITS 2
+
+WINBASEAPI BOOL WINAPI BuildCommDCBA(LPCSTR definition, LPDCB dcb);
+WINBASEAPI BOOL WINAPI BuildCommDCBW(LPCWSTR definition, LPDCB dcb);
+WINBASEAPI BOOL WINAPI BuildCommDCBAndTimeoutsA(LPCSTR definition, LPDCB dcb, LPCOMMTIMEOUTS timeouts);
+WINBASEAPI BOOL WINAPI BuildCommDCBAndTimeoutsW(LPCWSTR definition, LPDCB dcb, LPCOMMTIMEOUTS timeouts);
 WINBASEAPI BOOL WINAPI GetCommState(HANDLE file, LPDCB dcb);
 WINBASEAPI BOOL WINAPI SetCommState(HANDLE file, LPDCB dcb);
 WINBASEAPI BOOL WINAPI GetCommTimeouts(HANDLE file, LPCOMMTIMEOUTS timeouts);
@@ -2857,6 +2943,10 @@ WINBASEAPI BOOL WINAPI GetCommProperties(HANDLE file, LPCOMMPROP prop);
 WINBASEAPI BOOL WINAPI WaitCommEvent(HANDLE file, LPDWORD mask, LPOVERLAPPED overlapped);
 WINBASEAPI BOOL WINAPI TransactNamedPipe(HANDLE pipe, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size,
                                          LPDWORD read, LPOVERLAPPED overlapped);
+WINBASEAPI BOOL WINAPI CallNamedPipeW(LPCWSTR name, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size, LPDWORD read,
+                                      DWORD timeout);
+WINBASEAPI BOOL WINAPI CallNamedPipeA(LPCSTR name, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size, LPDWORD read,
+                                      DWORD timeout);
 
 #include <mime/win32/winnls.h>
 #include <mime/win32/winactctx.h>

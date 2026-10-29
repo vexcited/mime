@@ -750,6 +750,53 @@ BOOL WINAPI GetVolumeInformationA(LPCSTR root, LPSTR name, DWORD name_size, LPDW
     return TRUE;
 }
 
+/* the label of the volume whose root the path names, or of the current drive. */
+BOOL WINAPI SetVolumeLabelW(LPCWSTR root, LPCWSTR label)
+{
+    WCHAR r[MAX_PATH];
+    if (root) {
+        SIZE_T n = wcslen(root);
+        if (!n || (root[n - 1] != '\\' && root[n - 1] != '/')) {
+            KbSetError(ERROR_INVALID_NAME);
+            return FALSE;
+        }
+    }
+    if (!volume_root(root, r, RTL_NUMBER_OF(r))) {
+        KbSetError(ERROR_PATH_NOT_FOUND);
+        return FALSE;
+    }
+    HANDLE h;
+    NTSTATUS status = open_root(r, &h);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    SIZE_T chars = label ? wcslen(label) : 0;
+    ULONG size = (ULONG)(sizeof(ULONG) + (chars ? chars : 1) * sizeof(WCHAR));
+    FILE_FS_LABEL_INFORMATION *info = KbAllocZero(size);
+    if (!info) {
+        NtClose(h);
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    info->VolumeLabelLength = (ULONG)(chars * sizeof(WCHAR));
+    memcpy(info->VolumeLabel, label, chars * sizeof(WCHAR));
+    IO_STATUS_BLOCK iosb;
+    status = NtSetVolumeInformationFile(h, &iosb, info, size, FileFsLabelInformation);
+    KbFree(info);
+    NtClose(h);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+BOOL WINAPI SetVolumeLabelA(LPCSTR root, LPCSTR label)
+{
+    PWSTR wide_root = root ? KbAnsiToWide(root) : nullptr, wide_label = label ? KbAnsiToWide(label) : nullptr;
+    BOOL ok = FALSE;
+    if ((wide_root || !root) && (wide_label || !label))
+        ok = SetVolumeLabelW(wide_root, wide_label);
+    KbFree(wide_root);
+    KbFree(wide_label);
+    return ok;
+}
+
 BOOL WINAPI GetVolumePathNameW(LPCWSTR path, LPWSTR volume, DWORD size)
 {
     if (!path || !volume || !size) {

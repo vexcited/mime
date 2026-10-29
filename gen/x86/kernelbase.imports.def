@@ -32,10 +32,19 @@ EXPORTS
     AreFileApisANSI@0
     AssignProcessToJobObject@8
     AttachConsole@4
+    BackupRead@28
+    BackupSeek@24
+    BackupWrite@28
     BaseSetLastNTError@4
     Beep@8
     BeginUpdateResourceW@8
     BindIoCompletionCallback@12
+    BuildCommDCBA@8
+    BuildCommDCBAndTimeoutsA@12
+    BuildCommDCBAndTimeoutsW@12
+    BuildCommDCBW@8
+    CallNamedPipeA@28
+    CallNamedPipeW@28
     CallbackMayRunLong@4
     CancelIo@4
     CancelIoEx@8
@@ -126,6 +135,7 @@ EXPORTS
     CreateSemaphoreExA@24
     CreateSemaphoreExW@24
     CreateSemaphoreW@16
+    CreateSymbolicLinkA@12
     CreateSymbolicLinkW@12
     CreateThread@24
     CreateThreadpool@4
@@ -138,6 +148,7 @@ EXPORTS
     CreateTimerQueueTimer@28
     CreateToolhelp32Snapshot@8
     CreateWaitableTimerA@12
+    CreateWaitableTimerExA@16
     CreateWaitableTimerExW@16
     CreateWaitableTimerW@12
     DeactivateActCtx@8
@@ -238,6 +249,7 @@ EXPORTS
     FindFirstFileExW@24
     FindFirstFileNameW@16
     FindFirstFileW@8
+    FindFirstStreamW@16
     FindFirstVolumeW@8
     FindNLSString@28
     FindNLSStringEx@40
@@ -245,6 +257,7 @@ EXPORTS
     FindNextFileA@8
     FindNextFileNameW@12
     FindNextFileW@8
+    FindNextStreamW@8
     FindNextVolumeW@12
     FindPackagesByPackageFamily@28
     FindResourceA@12
@@ -402,6 +415,8 @@ EXPORTS
     GetFirmwareEnvironmentVariableW@16
     GetFirmwareEnvironmentVariableExA@20
     GetFirmwareEnvironmentVariableExW@20
+    GetThreadSelectorEntry@12
+    ReplaceFileA@24
     SetFirmwareEnvironmentVariableA@16
     SetFirmwareEnvironmentVariableW@16
     SetFirmwareEnvironmentVariableExA@20
@@ -1187,6 +1202,8 @@ EXPORTS
     SetTimeZoneInformation@4
     SetUnhandledExceptionFilter@4
     SetUserGeoID@4
+    SetVolumeLabelA@8
+    SetVolumeLabelW@8
     SetWaitableTimer@24
     SetWaitableTimerEx@28
     SetXStateFeaturesMask@12

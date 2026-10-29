@@ -622,3 +622,10 @@ DECLSPEC_EXPORT BOOL WINAPI Wow64SetThreadContext(HANDLE thread, const void *con
 #endif
     return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
+
+/* a thread of this process has no local descriptor table to ask: the 32 bit threads run under the emulator. */
+BOOL WINAPI GetThreadSelectorEntry(HANDLE thread, DWORD selector, LPLDT_ENTRY entry)
+{
+    KbSetError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}

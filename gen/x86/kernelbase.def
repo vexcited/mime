@@ -32,10 +32,19 @@ EXPORTS
     AreFileApisANSI=_AreFileApisANSI@0
     AssignProcessToJobObject=_AssignProcessToJobObject@8
     AttachConsole=_AttachConsole@4
+    BackupRead=_BackupRead@28
+    BackupSeek=_BackupSeek@24
+    BackupWrite=_BackupWrite@28
     BaseSetLastNTError=_BaseSetLastNTError@4
     Beep=_Beep@8
     BeginUpdateResourceW=_BeginUpdateResourceW@8
     BindIoCompletionCallback=_BindIoCompletionCallback@12
+    BuildCommDCBA=_BuildCommDCBA@8
+    BuildCommDCBAndTimeoutsA=_BuildCommDCBAndTimeoutsA@12
+    BuildCommDCBAndTimeoutsW=_BuildCommDCBAndTimeoutsW@12
+    BuildCommDCBW=_BuildCommDCBW@8
+    CallNamedPipeA=_CallNamedPipeA@28
+    CallNamedPipeW=_CallNamedPipeW@28
     CallbackMayRunLong=_CallbackMayRunLong@4
     CancelIo=_CancelIo@4
     CancelIoEx=_CancelIoEx@8
@@ -126,6 +135,7 @@ EXPORTS
     CreateSemaphoreExA=_CreateSemaphoreExA@24
     CreateSemaphoreExW=_CreateSemaphoreExW@24
     CreateSemaphoreW=_CreateSemaphoreW@16
+    CreateSymbolicLinkA=_CreateSymbolicLinkA@12
     CreateSymbolicLinkW=_CreateSymbolicLinkW@12
     CreateThread=_CreateThread@24
     CreateThreadpool=_CreateThreadpool@4
@@ -138,6 +148,7 @@ EXPORTS
     CreateTimerQueueTimer=_CreateTimerQueueTimer@28
     CreateToolhelp32Snapshot=_CreateToolhelp32Snapshot@8
     CreateWaitableTimerA=_CreateWaitableTimerA@12
+    CreateWaitableTimerExA=_CreateWaitableTimerExA@16
     CreateWaitableTimerExW=_CreateWaitableTimerExW@16
     CreateWaitableTimerW=_CreateWaitableTimerW@12
     DeactivateActCtx=_DeactivateActCtx@8
@@ -238,6 +249,7 @@ EXPORTS
     FindFirstFileExW=_FindFirstFileExW@24
     FindFirstFileNameW=_FindFirstFileNameW@16
     FindFirstFileW=_FindFirstFileW@8
+    FindFirstStreamW=_FindFirstStreamW@16
     FindFirstVolumeW=_FindFirstVolumeW@8
     FindNLSString=_FindNLSString@28
     FindNLSStringEx=_FindNLSStringEx@40
@@ -245,6 +257,7 @@ EXPORTS
     FindNextFileA=_FindNextFileA@8
     FindNextFileNameW=_FindNextFileNameW@12
     FindNextFileW=_FindNextFileW@8
+    FindNextStreamW=_FindNextStreamW@8
     FindNextVolumeW=_FindNextVolumeW@12
     FindPackagesByPackageFamily=_FindPackagesByPackageFamily@28
     FindResourceA=_FindResourceA@12
@@ -402,6 +415,8 @@ EXPORTS
     GetFirmwareEnvironmentVariableW=_GetFirmwareEnvironmentVariableW@16
     GetFirmwareEnvironmentVariableExA=_GetFirmwareEnvironmentVariableExA@20
     GetFirmwareEnvironmentVariableExW=_GetFirmwareEnvironmentVariableExW@20
+    GetThreadSelectorEntry=_GetThreadSelectorEntry@12
+    ReplaceFileA=_ReplaceFileA@24
     SetFirmwareEnvironmentVariableA=_SetFirmwareEnvironmentVariableA@16
     SetFirmwareEnvironmentVariableW=_SetFirmwareEnvironmentVariableW@16
     SetFirmwareEnvironmentVariableExA=_SetFirmwareEnvironmentVariableExA@20
@@ -1187,6 +1202,8 @@ EXPORTS
     SetTimeZoneInformation=_SetTimeZoneInformation@4
     SetUnhandledExceptionFilter=_SetUnhandledExceptionFilter@4
     SetUserGeoID=_SetUserGeoID@4
+    SetVolumeLabelA=_SetVolumeLabelA@8
+    SetVolumeLabelW=_SetVolumeLabelW@8
     SetWaitableTimer=_SetWaitableTimer@24
     SetWaitableTimerEx=_SetWaitableTimerEx@28
     SetXStateFeaturesMask=_SetXStateFeaturesMask@12

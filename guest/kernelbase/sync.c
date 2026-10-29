@@ -276,6 +276,16 @@ HANDLE WINAPI CreateWaitableTimerExW(LPSECURITY_ATTRIBUTES sa, LPCWSTR name, DWO
     return finish_create(status, h);
 }
 
+HANDLE WINAPI CreateWaitableTimerExA(LPSECURITY_ATTRIBUTES sa, LPCSTR name, DWORD flags, DWORD access)
+{
+    PWSTR wide = name ? KbAnsiToWide(name) : nullptr;
+    if (name && !wide)
+        return nullptr;
+    HANDLE h = CreateWaitableTimerExW(sa, wide, flags, access);
+    KbFree(wide);
+    return h;
+}
+
 HANDLE WINAPI CreateWaitableTimerW(LPSECURITY_ATTRIBUTES sa, BOOL manual, LPCWSTR name)
 {
     return CreateWaitableTimerExW(sa, name, manual ? CREATE_WAITABLE_TIMER_MANUAL_RESET : 0, TIMER_ALL_ACCESS);

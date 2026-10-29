@@ -718,6 +718,37 @@ NTSTATUS NTAPI NtQueryVolumeInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb
     return status;
 }
 
+NTSTATUS NTAPI NtSetVolumeInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length,
+                                          FS_INFORMATION_CLASS klass)
+{
+    PFILE_OBJECT file;
+    NTSTATUS status = reference_file(handle, &file);
+    if (!NT_SUCCESS(status))
+        return status;
+    PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, length ? length : 1, KI_TAG('I', 'o', 'S', 'v'));
+    if (!buf) {
+        ObDereferenceObject(file);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    if (KeGetPreviousMode() == UserMode)
+        status = KiCopyFromUser(buf, info, length);
+    else
+        memcpy(buf, info, length);
+    IO_STATUS_BLOCK io = {};
+    if (NT_SUCCESS(status)) {
+        IO_STACK_LOCATION params;
+        memset(&params, 0, sizeof(params));
+        params.Parameters.QueryVolume.Length = length;
+        params.Parameters.QueryVolume.FsInformationClass = klass;
+        status = IopSynchronousRequest(file, IRP_MJ_SET_VOLUME_INFORMATION, 0, buf, length, &params, &io);
+    }
+    io.Status = status;
+    store_iosb(iosb, &io);
+    ExFreePool(buf);
+    ObDereferenceObject(file);
+    return status;
+}
+
 NTSTATUS NTAPI NtFlushBuffersFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
 {
     PFILE_OBJECT file;

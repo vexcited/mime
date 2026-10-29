@@ -9,6 +9,7 @@
 
 #define MIMEFS_CHUNK (128 * 1024)
 #define STATUS_USER_MAPPED_FILE ((NTSTATUS)0xC0000243L)
+#define STATUS_INVALID_VOLUME_LABEL ((NTSTATUS)0xC0000086L)
 
 typedef struct MIMEFS_VOLUME {
     ULONG HostVolume;
@@ -1604,6 +1605,28 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
     }
 }
 
+/* a new label lasts as long as the machine runs: the host keeps no label of a volume to change. */
+static NTSTATUS NTAPI mimefs_set_volume(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    MIMEFS_VOLUME *vol = device->DeviceExtension;
+    PUCHAR in = irp->UserBuffer;
+    ULONG length = stack->Parameters.QueryVolume.Length;
+    if (stack->Parameters.QueryVolume.FsInformationClass != FileFsLabelInformation)
+        return complete(irp, STATUS_INVALID_INFO_CLASS, 0);
+    if (length < sizeof(ULONG))
+        return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
+    ULONG bytes = ((PFILE_FS_LABEL_INFORMATION)in)->VolumeLabelLength;
+    if (bytes > length - FIELD_OFFSET(FILE_FS_LABEL_INFORMATION, VolumeLabel))
+        return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
+    ULONG chars = bytes / sizeof(WCHAR);
+    if (chars >= RTL_NUMBER_OF(vol->Label))
+        return complete(irp, STATUS_INVALID_VOLUME_LABEL, 0);
+    memcpy(vol->Label, ((PFILE_FS_LABEL_INFORMATION)in)->VolumeLabel, chars * sizeof(WCHAR));
+    vol->Label[chars] = 0;
+    return complete(irp, STATUS_SUCCESS, 0);
+}
+
 /* the whole descriptor as a reference in the information, see IopGetFileSecurity. */
 static NTSTATUS NTAPI mimefs_query_security(PDEVICE_OBJECT device, PIRP irp)
 {
@@ -1859,6 +1882,7 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
     driver->MajorFunction[IRP_MJ_SET_INFORMATION] = mimefs_set_info;
     driver->MajorFunction[IRP_MJ_DIRECTORY_CONTROL] = mimefs_directory;
     driver->MajorFunction[IRP_MJ_QUERY_VOLUME_INFORMATION] = mimefs_query_volume;
+    driver->MajorFunction[IRP_MJ_SET_VOLUME_INFORMATION] = mimefs_set_volume;
     driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = mimefs_device_control;
     driver->MajorFunction[IRP_MJ_FLUSH_BUFFERS] = mimefs_flush;
     driver->MajorFunction[IRP_MJ_QUERY_SECURITY] = mimefs_query_security;

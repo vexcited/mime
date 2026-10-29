@@ -645,6 +645,7 @@ EXPORTS
     RtlDeactivateActivationContextUnsafeFast=@RtlDeactivateActivationContextUnsafeFast@4
     Wow64Transition DATA
     DbgPrompt=_DbgPrompt@12
+    NtSetVolumeInformationFile=_NtSetVolumeInformationFile@20
     RtlClearBits=_RtlClearBits@12
     RtlFindClearBitsAndSet=_RtlFindClearBitsAndSet@12
     RtlInitializeBitMap=_RtlInitializeBitMap@12

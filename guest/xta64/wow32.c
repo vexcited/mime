@@ -1245,6 +1245,10 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         status = NtQueryVolumeInformationFile(handle32(a[0]), &io, pointer32(a[2]), a[3], a[4]);
         store_iosb32(a[1], &io);
         return status;
+    case MIME_SVC_NtSetVolumeInformationFile:
+        status = NtSetVolumeInformationFile(handle32(a[0]), &io, pointer32(a[2]), a[3], a[4]);
+        store_iosb32(a[1], &io);
+        return status;
     case MIME_SVC_NtQueryAttributesFile:
         oa = attributes32(a[0], &name);
         redirect_file32(&oa, &name, redirected, RTL_NUMBER_OF(redirected));

@@ -434,6 +434,50 @@ WINBASEAPI BOOL WINAPI CreatePipe(PHANDLE read_pipe, PHANDLE write_pipe, LPSECUR
     return TRUE;
 }
 
+/*
+ * connects to a message pipe, waiting for an instance that is free for as long as the time out allows, sends the
+ * message, reads the answer and closes the pipe. a time out of 0 or -1 is the default wait or none at all.
+ */
+WINBASEAPI BOOL WINAPI CallNamedPipeW(LPCWSTR name, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size, LPDWORD read,
+                                      DWORD timeout)
+{
+    DWORD mode = PIPE_READMODE_MESSAGE, elapsed = 0;
+    BOOL timed = timeout != 0 && timeout != 0xFFFFFFFF, expired = FALSE;
+    ULONGLONG start = timed ? GetTickCount64() : 0;
+    HANDLE pipe;
+    for (;;) {
+        pipe = CreateFileW(name, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (pipe != INVALID_HANDLE_VALUE)
+            break;
+        if (expired || GetLastError() != ERROR_PIPE_BUSY)
+            return FALSE;
+        WaitNamedPipeW(name, timeout - elapsed);
+        if (timed) {
+            elapsed = (DWORD)(GetTickCount64() - start);
+            expired = elapsed >= timeout;
+        }
+        if (!timeout)
+            expired = TRUE;
+    }
+    BOOL ok = SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
+    if (ok)
+        ok = TransactNamedPipe(pipe, in, in_size, out, out_size, read, nullptr);
+    CloseHandle(pipe);
+    return ok;
+}
+
+WINBASEAPI BOOL WINAPI CallNamedPipeA(LPCSTR name, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size, LPDWORD read,
+                                      DWORD timeout)
+{
+    PWSTR wide = name ? KbAnsiToWide(name) : nullptr;
+    if (name && !wide)
+        return FALSE;
+    BOOL ok = CallNamedPipeW(wide, in, in_size, out, out_size, read, timeout);
+    KbFree(wide);
+    return ok;
+}
+
 /* one FSCTL_PIPE_TRANSCEIVE request writes the message and reads the answer. */
 WINBASEAPI BOOL WINAPI TransactNamedPipe(HANDLE pipe, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size,
                                          LPDWORD read, LPOVERLAPPED overlapped)

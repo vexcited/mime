@@ -1749,6 +1749,39 @@ BOOLEAN WINAPI CreateSymbolicLinkW(LPCWSTR link, LPCWSTR target, DWORD flags)
     return FALSE;
 }
 
+BOOLEAN WINAPI CreateSymbolicLinkA(LPCSTR link, LPCSTR target, DWORD flags)
+{
+    if (!link || !target) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR wide_link = KbAnsiToWide(link), wide_target = KbAnsiToWide(target);
+    BOOLEAN ok = FALSE;
+    if (wide_link && wide_target)
+        ok = CreateSymbolicLinkW(wide_link, wide_target, flags);
+    KbFree(wide_link);
+    KbFree(wide_target);
+    return ok;
+}
+
+BOOL WINAPI ReplaceFileA(LPCSTR replaced, LPCSTR replacement, LPCSTR backup, DWORD flags, LPVOID exclude,
+                         LPVOID reserved)
+{
+    if (!replaced || !replacement) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PWSTR wide_replaced = KbAnsiToWide(replaced), wide_replacement = KbAnsiToWide(replacement);
+    PWSTR wide_backup = backup ? KbAnsiToWide(backup) : nullptr;
+    BOOL ok = FALSE;
+    if (wide_replaced && wide_replacement && (wide_backup || !backup))
+        ok = ReplaceFileW(wide_replaced, wide_replacement, wide_backup, flags, exclude, reserved);
+    KbFree(wide_replaced);
+    KbFree(wide_replacement);
+    KbFree(wide_backup);
+    return ok;
+}
+
 /* ------------------------------------------------------------------ enumeration */
 
 #define FIND_MAGIC 0x444E4946u /* "FIND". */
@@ -1947,8 +1980,22 @@ typedef struct NAME_FIND {
     FILE_NAME_INFORMATION *Parent;
 } NAME_FIND;
 
+#define STREAM_FIND_MAGIC 0x53444E46u /* "FNDS". */
+
+/* FindFirstStreamW's handle: the streams are not kept, a file system without them has the one stream of the data. */
+typedef struct STREAM_FIND {
+    ULONG Magic;
+    BOOL Given;
+} STREAM_FIND;
+
 BOOL WINAPI FindClose(HANDLE find)
 {
+    STREAM_FIND *streams = find;
+    if (streams && streams != INVALID_HANDLE_VALUE && !((ULONG_PTR)streams & 7) && streams->Magic == STREAM_FIND_MAGIC) {
+        streams->Magic = 0;
+        KbFree(streams);
+        return TRUE;
+    }
     NAME_FIND *names = find;
     if (names && names != INVALID_HANDLE_VALUE && !((ULONG_PTR)names & 7) && names->Magic == NAME_FIND_MAGIC) {
         names->Magic = 0;
@@ -2399,6 +2446,53 @@ BOOL WINAPI FindNextFileNameW(HANDLE find, LPDWORD length, PWSTR buffer)
         return FALSE;
     }
     return give_link_name(f, length, buffer);
+}
+
+/*
+ * a file has the stream of its data and no other, as the file system keeps no alternate streams: its name is ::$DATA and
+ * its size the size of the file. a directory has no stream, which is the end of the file.
+ */
+HANDLE WINAPI FindFirstStreamW(LPCWSTR path, STREAM_INFO_LEVELS level, LPVOID data, DWORD flags)
+{
+    if (!path || level != FindStreamInfoStandard || !data || flags) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    HANDLE file = CreateFileW(path, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return INVALID_HANDLE_VALUE;
+    BY_HANDLE_FILE_INFORMATION info;
+    BOOL ok = GetFileInformationByHandle(file, &info);
+    NtClose(file);
+    if (!ok)
+        return INVALID_HANDLE_VALUE;
+    if (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        KbSetError(ERROR_HANDLE_EOF);
+        return INVALID_HANDLE_VALUE;
+    }
+    STREAM_FIND *f = KbAllocZero(sizeof(*f));
+    if (!f) {
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return INVALID_HANDLE_VALUE;
+    }
+    f->Magic = STREAM_FIND_MAGIC;
+    f->Given = TRUE;
+    WIN32_FIND_STREAM_DATA *out = data;
+    out->StreamSize.QuadPart = (LONGLONG)(((ULONGLONG)info.nFileSizeHigh << 32) | info.nFileSizeLow);
+    wcscpy(out->cStreamName, L"::$DATA");
+    return f;
+}
+
+BOOL WINAPI FindNextStreamW(HANDLE find, LPVOID data)
+{
+    STREAM_FIND *f = find;
+    if (!f || f == INVALID_HANDLE_VALUE || ((ULONG_PTR)f & 7) || f->Magic != STREAM_FIND_MAGIC) {
+        KbSetError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    KbSetError(ERROR_HANDLE_EOF);
+    return FALSE;
 }
 
 #define FILE_COMPRESSION_INFORMATION_CLASS 28
