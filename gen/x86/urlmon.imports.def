@@ -4,6 +4,7 @@ EXPORTS
     CoInternetCombineUrl@28
     CoInternetCompareUrl@12
     CoInternetCreateSecurityManager@12
+    CoInternetGetSession@12
     CoInternetParseUrl@28
     CreateAsyncBindCtx@16
     CreateAsyncBindCtxEx@24
@@ -13,6 +14,9 @@ EXPORTS
     CreateUri@16
     CreateUriWithFragment@20
     FindMimeFromData@32
+    HlinkSimpleNavigateToMoniker@32
+    HlinkSimpleNavigateToString@32
+    IsAsyncMoniker@4
     ObtainUserAgentString@12
     RegisterBindStatusCallback@16
     RevokeBindStatusCallback@8

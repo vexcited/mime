@@ -4,6 +4,7 @@ EXPORTS
     CoInternetCombineUrl=_CoInternetCombineUrl@28
     CoInternetCompareUrl=_CoInternetCompareUrl@12
     CoInternetCreateSecurityManager=_CoInternetCreateSecurityManager@12
+    CoInternetGetSession=_CoInternetGetSession@12
     CoInternetParseUrl=_CoInternetParseUrl@28
     CreateAsyncBindCtx=_CreateAsyncBindCtx@16
     CreateAsyncBindCtxEx=_CreateAsyncBindCtxEx@24
@@ -13,6 +14,9 @@ EXPORTS
     CreateUri=_CreateUri@16
     CreateUriWithFragment=_CreateUriWithFragment@20
     FindMimeFromData=_FindMimeFromData@32
+    HlinkSimpleNavigateToMoniker=_HlinkSimpleNavigateToMoniker@32
+    HlinkSimpleNavigateToString=_HlinkSimpleNavigateToString@32
+    IsAsyncMoniker=_IsAsyncMoniker@4
     ObtainUserAgentString=_ObtainUserAgentString@12
     RegisterBindStatusCallback=_RegisterBindStatusCallback@16
     RevokeBindStatusCallback=_RevokeBindStatusCallback@8
