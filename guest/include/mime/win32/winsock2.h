@@ -939,6 +939,22 @@ WINSOCK_API_LINKAGE int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD i
                                         LPDWORD returned, LPWSAOVERLAPPED overlapped,
                                         LPWSAOVERLAPPED_COMPLETION_ROUTINE routine);
 
+#define CF_ACCEPT 0x0000
+#define CF_REJECT 0x0001
+#define CF_DEFER 0x0002
+
+typedef int(CALLBACK *LPCONDITIONPROC)(LPWSABUF caller_id, LPWSABUF caller_data, void *outbound_qos,
+                                       void *inbound_qos, LPWSABUF callee_id, LPWSABUF callee_data, GROUP *group,
+                                       DWORD_PTR callback_data);
+
+WINSOCK_API_LINKAGE SOCKET WSAAPI WSAAccept(SOCKET s, struct sockaddr *addr, LPINT addrlen, LPCONDITIONPROC condition,
+                                            DWORD_PTR callback_data);
+WINSOCK_API_LINKAGE int WSAAPI WSASendDisconnect(SOCKET s, LPWSABUF outbound_data);
+WINSOCK_API_LINKAGE SOCKET WSAAPI WSAJoinLeaf(SOCKET s, const struct sockaddr *name, int namelen, LPWSABUF caller_data,
+                                              LPWSABUF callee_data, void *outbound_qos, void *inbound_qos, DWORD flags);
+WINSOCK_API_LINKAGE int WSAAPI WSAProviderConfigChange(LPHANDLE notification, LPWSAOVERLAPPED overlapped,
+                                                       LPWSAOVERLAPPED_COMPLETION_ROUTINE routine);
+
 WINSOCK_API_LINKAGE WSAEVENT WSAAPI WSACreateEvent(void);
 WINSOCK_API_LINKAGE BOOL WSAAPI WSACloseEvent(WSAEVENT event);
 WINSOCK_API_LINKAGE BOOL WSAAPI WSASetEvent(WSAEVENT event);

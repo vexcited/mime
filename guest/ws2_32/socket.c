@@ -610,6 +610,75 @@ SOCKET WSAAPI accept(SOCKET s, struct sockaddr *addr, int *addrlen)
     return (SOCKET)h;
 }
 
+/*
+ * the connection is taken before the condition is asked, since a pending one cannot be looked at without accepting it.
+ * so a refusal closes it again, and a deferral cannot be kept waiting and is refused too.
+ */
+SOCKET WSAAPI WSAAccept(SOCKET s, struct sockaddr *addr, LPINT addrlen, LPCONDITIONPROC condition,
+                        DWORD_PTR callback_data)
+{
+    struct sockaddr_storage peer;
+    int peer_size = sizeof(peer);
+    SOCKET accepted = accept(s, (struct sockaddr *)&peer, &peer_size);
+    if (accepted == INVALID_SOCKET)
+        return INVALID_SOCKET;
+    if (condition) {
+        struct sockaddr_storage local;
+        int local_size = sizeof(local);
+        getsockname(accepted, (struct sockaddr *)&local, &local_size);
+        WSABUF caller = {(ULONG)peer_size, (char *)&peer}, callee = {(ULONG)local_size, (char *)&local};
+        WSABUF caller_data = {}, callee_data = {};
+        GROUP group = 0;
+        int verdict = condition(&caller, &caller_data, nullptr, nullptr, &callee, &callee_data, &group, callback_data);
+        if (verdict != CF_ACCEPT) {
+            closesocket(accepted);
+            WSASetLastError(verdict == CF_DEFER ? WSATRY_AGAIN : WSAECONNREFUSED);
+            return INVALID_SOCKET;
+        }
+    }
+    if (addr && addrlen) {
+        int size = *addrlen < peer_size ? *addrlen : peer_size;
+        memcpy(addr, &peer, size);
+        *addrlen = peer_size;
+    }
+    WSASetLastError(0);
+    return accepted;
+}
+
+/* no disconnect data is carried by a stream, so only none can be sent. */
+int WSAAPI WSASendDisconnect(SOCKET s, LPWSABUF outbound_data)
+{
+    if (outbound_data && outbound_data->len)
+        return WsFail(WSAEINVAL);
+    return shutdown(s, SD_SEND);
+}
+
+/* multipoint sessions need a transport made for them, which stream and datagram sockets are not. */
+SOCKET WSAAPI WSAJoinLeaf(SOCKET s, const struct sockaddr *name, int namelen, LPWSABUF caller_data,
+                          LPWSABUF callee_data, void *outbound_qos, void *inbound_qos, DWORD flags)
+{
+    int error;
+    WS_SOCKET *sock = acquire(s, &error);
+    if (!sock) {
+        SetLastError(error);
+        return INVALID_SOCKET;
+    }
+    fail(sock, WSAEINVAL);
+    return INVALID_SOCKET;
+}
+
+/* the protocol catalog never changes while the machine runs, so the change never comes. */
+int WSAAPI WSAProviderConfigChange(LPHANDLE notification, LPWSAOVERLAPPED overlapped,
+                                   LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
+{
+    if (!notification)
+        return WsFail(WSAEFAULT);
+    if (overlapped)
+        return WsFail(WSA_IO_PENDING);
+    for (;;)
+        Sleep(INFINITE);
+}
+
 int WSAAPI shutdown(SOCKET s, int how)
 {
     int error;

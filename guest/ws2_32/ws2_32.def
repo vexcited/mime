@@ -29,10 +29,14 @@ EXPORTS
     GetNameInfoW @33
     InetNtopW @34
     InetPtonW @35
+    WSAAccept @41
     WSAAddressToStringA @42
     WSAAddressToStringW @43
     WSACloseEvent @45
     WSAConnect @46
+    WSAJoinLeaf @79
+    WSAProviderConfigChange @90
+    WSASendDisconnect @97
     WSACreateEvent @50
     gethostbyaddr @51
     gethostbyname @52

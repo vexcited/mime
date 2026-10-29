@@ -13,6 +13,7 @@ EXPORTS
     InetNtopW=_InetNtopW@16 @34
     InetPtonW=_InetPtonW@12 @35
     WEP=_WEP@0 @500
+    WSAAccept=_WSAAccept@20 @41
     WSAAddressToStringA=_WSAAddressToStringA@20 @42
     WSAAddressToStringW=_WSAAddressToStringW@20 @43
     WSAAsyncGetHostByAddr=_WSAAsyncGetHostByAddr@28 @102
@@ -42,6 +43,7 @@ EXPORTS
     WSAHtons=_WSAHtons@12 @75
     WSAIoctl=_WSAIoctl@36 @78
     WSAIsBlocking=_WSAIsBlocking@0 @114
+    WSAJoinLeaf=_WSAJoinLeaf@32 @79
     WSALookupServiceBeginA=_WSALookupServiceBeginA@12 @80
     WSALookupServiceBeginW=_WSALookupServiceBeginW@12 @81
     WSALookupServiceEnd=_WSALookupServiceEnd@4 @82
@@ -50,10 +52,12 @@ EXPORTS
     WSANtohl=_WSANtohl@12 @86
     WSANtohs=_WSANtohs@12 @87
     WSAPoll=_WSAPoll@12 @88
+    WSAProviderConfigChange=_WSAProviderConfigChange@12 @90
     WSARecv=_WSARecv@28 @91
     WSARecvFrom=_WSARecvFrom@36 @93
     WSAResetEvent=_WSAResetEvent@4 @95
     WSASend=_WSASend@28 @96
+    WSASendDisconnect=_WSASendDisconnect@8 @97
     WSASendMsg=_WSASendMsg@24 @98
     WSASendTo=_WSASendTo@36 @99
     WSASetBlockingHook=_WSASetBlockingHook@4 @109
