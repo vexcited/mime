@@ -54,6 +54,7 @@ EXPORTS
     LdrShutdownThread@0
     LdrUnloadDll@4
     LdrUnlockLoaderLock@8
+    RtlAssert@16
     RtlFreeActivationContextData@4
     RtlGenerateActivationContext@8
     RtlInheritActivationContext@8
@@ -85,6 +86,7 @@ EXPORTS
     NtCreateLowBoxToken@36
     NtCreateMutant@16
     NtCreateNamedPipeFile@56
+    NtCreateProfile@36
     NtCreateSection@28
     NtCreateSemaphore@20
     NtCreateSymbolicLinkObject@16
@@ -173,6 +175,7 @@ EXPORTS
     NtQuerySymbolicLinkObject@12
     NtQuerySystemInformation@16
     NtQuerySystemEnvironmentValueEx@20
+    NtSetIntervalProfile@8
     NtSetSystemEnvironmentValueEx@16
     NtQuerySystemTime@4
     NtQueryTimerResolution@12
@@ -214,6 +217,8 @@ EXPORTS
     NtSetWnfProcessNotificationEvent@4
     NtShutdownSystem@4
     NtSignalAndWaitForSingleObject@16
+    NtStartProfile@4
+    NtStopProfile@4
     NtSubscribeWnfStateChange@16
     NtSuspendProcess@4
     NtSuspendThread@8
@@ -550,6 +555,7 @@ EXPORTS
     RtlTestAndPublishWnfStateData@28
     RtlTestProtectedAccess@8
     RtlTimeFieldsToTime@8
+    RtlTimeToElapsedTimeFields@8
     RtlTimeToSecondsSince1970@8
     RtlTimeToSecondsSince1980@8
     RtlTimeToTimeFields@8
@@ -604,6 +610,7 @@ EXPORTS
     _allrem
     _aulldiv
     _aullrem
+    _chkstk
     _snprintf
     _snwprintf
     _stricmp
@@ -616,6 +623,7 @@ EXPORTS
     memcpy
     memmove
     memset
+    sprintf
     strcat
     strchr
     strcmp
@@ -632,6 +640,7 @@ EXPORTS
     towupper
     vDbgPrintEx@16
     vDbgPrintExWithPrefix@20
+    vsprintf
     wcscat
     wcschr
     wcscmp
@@ -650,3 +659,5 @@ EXPORTS
     RtlFindClearBitsAndSet@12
     RtlInitializeBitMap@12
     RtlSetBits@12
+    atoi
+    atol

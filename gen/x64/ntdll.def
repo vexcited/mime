@@ -110,6 +110,7 @@ EXPORTS
     ZwQueryDirectoryFile
     NtQuerySystemInformation
     ZwQuerySystemInformation
+    RtlAssert
     RtlGetNativeSystemInformation
     NtOpenSection
     ZwOpenSection
@@ -1364,6 +1365,7 @@ EXPORTS
     RtlTestAndPublishWnfStateData
     RtlTestProtectedAccess
     RtlTimeFieldsToTime
+    RtlTimeToElapsedTimeFields
     RtlTimeToSecondsSince1970
     RtlTimeToSecondsSince1980
     RtlTimeToTimeFields
@@ -1430,6 +1432,7 @@ EXPORTS
     memcpy
     memmove
     memset
+    sprintf
     strcat
     strchr
     strcmp
@@ -1446,6 +1449,7 @@ EXPORTS
     towupper
     vDbgPrintEx
     vDbgPrintExWithPrefix
+    vsprintf
     wcscat
     wcschr
     wcscmp
@@ -1460,3 +1464,5 @@ EXPORTS
     RtlFindClearBitsAndSet
     RtlInitializeBitMap
     RtlSetBits
+    atoi
+    atol

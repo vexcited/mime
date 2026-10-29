@@ -649,3 +649,62 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlStringFromGUID(const GUID *guid, PUNICODE_STRING 
 {
     return RtlStringFromGUIDEx(guid, string, TRUE);
 }
+
+/* ------------------------------------------------------------------ c library functions that ntdll exports */
+
+NTDLL_EXPORT int __cdecl sprintf(char *buffer, const char *format, ...)
+{
+    va_list arguments;
+    va_start(arguments, format);
+    int written = _vsnprintf(buffer, 0x7FFFFFFF, format, arguments);
+    va_end(arguments);
+    return written;
+}
+
+NTDLL_EXPORT int __cdecl vsprintf(char *buffer, const char *format, va_list arguments)
+{
+    return _vsnprintf(buffer, 0x7FFFFFFF, format, arguments);
+}
+
+/* leading white space, a sign and digits; the digits that follow are left, and overflow wraps. */
+NTDLL_EXPORT int __cdecl atoi(const char *text)
+{
+    while (*text == ' ' || (*text >= 9 && *text <= 13))
+        text++;
+    BOOLEAN negative = *text == '-';
+    if (*text == '-' || *text == '+')
+        text++;
+    unsigned value = 0;
+    while (*text >= '0' && *text <= '9')
+        value = value * 10 + (unsigned)(*text++ - '0');
+    return (int)(negative ? 0u - value : value);
+}
+
+NTDLL_EXPORT long __cdecl atol(const char *text)
+{
+    return (long)atoi(text);
+}
+
+/*
+ * a count of 100 nanosecond units as days, hours, minutes, seconds and milliseconds, the way a duration is given. the
+ * year, month and day of week are not part of it.
+ */
+NTDLL_EXPORT void NTAPI RtlTimeToElapsedTimeFields(PLARGE_INTEGER time, PTIME_FIELDS fields)
+{
+    ULONGLONG milliseconds = (ULONGLONG)time->QuadPart / 10000;
+    ULONGLONG seconds = milliseconds / 1000;
+    fields->Milliseconds = (SHORT)(milliseconds % 1000);
+    fields->Second = (SHORT)(seconds % 60);
+    fields->Minute = (SHORT)(seconds / 60 % 60);
+    fields->Hour = (SHORT)(seconds / 3600 % 24);
+    fields->Day = (SHORT)(seconds / 86400);
+    fields->Year = fields->Month = fields->Weekday = 0;
+}
+
+/* a failed assertion is reported to the debugger and the program goes on. */
+NTDLL_EXPORT void NTAPI RtlAssert(PVOID failed, PVOID file, ULONG line, PCHAR message)
+{
+    DbgPrint("\n*** Assertion failed: %s%s\n***   Source File: %s, line %ld\n\n", message ? message : "", "",
+             file ? (const char *)file : "", line);
+    (void)failed;
+}

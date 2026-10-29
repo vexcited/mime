@@ -54,6 +54,7 @@ EXPORTS
     LdrShutdownThread=_LdrShutdownThread@0
     LdrUnloadDll=_LdrUnloadDll@4
     LdrUnlockLoaderLock=_LdrUnlockLoaderLock@8
+    RtlAssert=_RtlAssert@16
     RtlFreeActivationContextData=_RtlFreeActivationContextData@4
     RtlGenerateActivationContext=_RtlGenerateActivationContext@8
     RtlInheritActivationContext=_RtlInheritActivationContext@8
@@ -85,6 +86,7 @@ EXPORTS
     NtCreateLowBoxToken=_NtCreateLowBoxToken@36
     NtCreateMutant=_NtCreateMutant@16
     NtCreateNamedPipeFile=_NtCreateNamedPipeFile@56
+    NtCreateProfile=_NtCreateProfile@36
     NtCreateSection=_NtCreateSection@28
     NtCreateSemaphore=_NtCreateSemaphore@20
     NtCreateSymbolicLinkObject=_NtCreateSymbolicLinkObject@16
@@ -203,6 +205,7 @@ EXPORTS
     NtSetInformationThread=_NtSetInformationThread@16
     NtSetInformationToken=_NtSetInformationToken@16
     NtSetInformationVirtualMemory=_NtSetInformationVirtualMemory@24
+    NtSetIntervalProfile=_NtSetIntervalProfile@8
     NtSetIoCompletion=_NtSetIoCompletion@20
     NtSetIoCompletionEx=_NtSetIoCompletionEx@24
     NtSetSecurityObject=_NtSetSecurityObject@12
@@ -214,6 +217,8 @@ EXPORTS
     NtSetWnfProcessNotificationEvent=_NtSetWnfProcessNotificationEvent@4
     NtShutdownSystem=_NtShutdownSystem@4
     NtSignalAndWaitForSingleObject=_NtSignalAndWaitForSingleObject@16
+    NtStartProfile=_NtStartProfile@4
+    NtStopProfile=_NtStopProfile@4
     NtSubscribeWnfStateChange=_NtSubscribeWnfStateChange@16
     NtSuspendProcess=_NtSuspendProcess@4
     NtSuspendThread=_NtSuspendThread@8
@@ -550,6 +555,7 @@ EXPORTS
     RtlTestAndPublishWnfStateData=_RtlTestAndPublishWnfStateData@28
     RtlTestProtectedAccess=_RtlTestProtectedAccess@8
     RtlTimeFieldsToTime=_RtlTimeFieldsToTime@8
+    RtlTimeToElapsedTimeFields=_RtlTimeToElapsedTimeFields@8
     RtlTimeToSecondsSince1970=_RtlTimeToSecondsSince1970@8
     RtlTimeToSecondsSince1980=_RtlTimeToSecondsSince1980@8
     RtlTimeToTimeFields=_RtlTimeToTimeFields@8
@@ -604,6 +610,7 @@ EXPORTS
     _allrem=_allrem
     _aulldiv=_aulldiv
     _aullrem=_aullrem
+    _chkstk=_chkstk
     _snprintf=_snprintf
     _snwprintf=_snwprintf
     _stricmp=_stricmp
@@ -616,6 +623,7 @@ EXPORTS
     memcpy=memcpy
     memmove=memmove
     memset=memset
+    sprintf=sprintf
     strcat=strcat
     strchr=strchr
     strcmp=strcmp
@@ -632,6 +640,7 @@ EXPORTS
     towupper=towupper
     vDbgPrintEx=_vDbgPrintEx@16
     vDbgPrintExWithPrefix=_vDbgPrintExWithPrefix@20
+    vsprintf=vsprintf
     wcscat=wcscat
     wcschr=wcschr
     wcscmp=wcscmp
@@ -650,3 +659,5 @@ EXPORTS
     RtlFindClearBitsAndSet=_RtlFindClearBitsAndSet@12
     RtlInitializeBitMap=_RtlInitializeBitMap@12
     RtlSetBits=_RtlSetBits@12
+    atoi=atoi
+    atol=atol
