@@ -57,12 +57,13 @@ static void format_guid(const GUID *guid, WCHAR out[39])
 static BOOL set_provider(const GUID *action, const WCHAR *group, const WCHAR *dll, const WCHAR *function)
 {
     WCHAR id[39], path[128];
-    if (!action || !group || !dll || !function || wcslen(group) + 39 > RTL_NUMBER_OF(path)) {
+    if (!action || !group || !dll || !function || wcslen(group) + 40 > RTL_NUMBER_OF(path)) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
     format_guid(action, id);
     wcscpy(path, group);
+    wcscat(path, L"\\");
     wcscat(path, id);
     HKEY key;
     LSTATUS status = RegCreateKeyExW(HKEY_LOCAL_MACHINE, path, 0, nullptr, 0, KEY_SET_VALUE | KEY_CREATE_SUB_KEY, nullptr,
