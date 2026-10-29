@@ -63,5 +63,7 @@ EXPORTS
     NotifyRouteChange @255
     NotifyRouteChange2 @256
     NotifyUnicastIpAddressChange @259
+    ResolveIpNetEntry2 @279
+    SendARP @282
     if_indextoname @311
     if_nametoindex @312

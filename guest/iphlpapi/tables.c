@@ -527,6 +527,56 @@ ULONG WINAPI GetIpNetTable(PMIB_IPNETTABLE table, PULONG size, BOOL order)
     return ERROR_NO_DATA;
 }
 
+/*
+ * there is no link layer to ask, so only the machine's own addresses resolve, to the hardware address of the adapter
+ * that holds them. any other address is as unreachable as it would be after the requests went unanswered.
+ */
+DWORD NETIOAPI_API_ ResolveIpNetEntry2(PMIB_IPNET_ROW2 row, const SOCKADDR_INET *source)
+{
+    if (!row || !IphValidFamily(row->Address.si_family))
+        return ERROR_INVALID_PARAMETER;
+    const BYTE *wanted = row->Address.si_family == AF_INET ? (const BYTE *)&row->Address.Ipv4.sin_addr :
+                                                              (const BYTE *)&row->Address.Ipv6.sin6_addr;
+    SIZE_T length = row->Address.si_family == AF_INET ? 4 : 16;
+    DWORD error = ERROR_BAD_NET_NAME;
+    IPH_SNAPSHOT *s = IphAcquire();
+    for (ULONG i = 0; i < s->address_count; i++) {
+        const IPH_ADDRESS *address = &s->addresses[i];
+        if (address->family != row->Address.si_family || memcmp(address->bytes, wanted, length))
+            continue;
+        const IPH_ADAPTER *adapter = IphAdapterByIndex(s, address->index);
+        if (!adapter || !adapter->mac_length)
+            break;
+        row->InterfaceIndex = adapter->index;
+        row->InterfaceLuid = adapter->luid;
+        memcpy(row->PhysicalAddress, adapter->mac, adapter->mac_length);
+        row->PhysicalAddressLength = adapter->mac_length;
+        row->State = NlnsPermanent;
+        row->Flags = 0;
+        error = NO_ERROR;
+        break;
+    }
+    IphRelease(s);
+    return error;
+}
+
+DWORD WINAPI SendARP(ULONG destination, ULONG source, PVOID address, PULONG length)
+{
+    MIB_IPNET_ROW2 row = {};
+    row.Address.Ipv4.sin_family = AF_INET;
+    row.Address.Ipv4.sin_addr.S_un.S_addr = destination;
+    DWORD error = ResolveIpNetEntry2(&row, nullptr);
+    if (!error && row.PhysicalAddressLength > *length)
+        error = ERROR_BUFFER_OVERFLOW;
+    if (error) {
+        *length = 0;
+        return error;
+    }
+    memcpy(address, row.PhysicalAddress, row.PhysicalAddressLength);
+    *length = row.PhysicalAddressLength;
+    return NO_ERROR;
+}
+
 /* ------------------------------------------------------------------ tcp and udp */
 
 typedef struct {
