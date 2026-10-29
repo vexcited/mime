@@ -33,6 +33,7 @@ EXPORTS
     ILRemoveLastID@4 @17
     ILSaveToStream@8 @27
     IsUserAnAdmin@0 @680
+    PathMakeUniqueName@20 @47
     PathResolve@12 @51
     SHAddToRecentDocs@8
     SHAppBarMessage@8
@@ -60,10 +61,11 @@ EXPORTS
     SHCreateShellItemArrayFromShellItem@12 @354
     SHCreateStdEnumFmtEtc@12 @74
     SHDefExtractIconA@24
-    SHDefExtractIconW@24
+    SHDefExtractIconW@24 @6
     SHDoDragDrop@20 @88
     SHFileOperationA@4
     SHFileOperationW@4
+    SHGetDataFromIDListW@20 @492
     SHGetDesktopFolder@4
     SHGetFileInfoA@20
     SHGetFileInfoW@20
@@ -73,7 +75,7 @@ EXPORTS
     SHGetFolderPathAndSubDirW@24
     SHGetFolderPathW@20
     SHGetIDListFromObject@8 @507
-    SHGetImageList@12
+    SHGetImageList@12 @727
     SHGetKnownFolderIDList@16
     SHGetKnownFolderItem@20 @514
     SHGetKnownFolderPath@16
@@ -83,6 +85,8 @@ EXPORTS
     SHGetPathFromIDListEx@16
     SHGetPathFromIDListW@8
     SHGetPropertyStoreForWindow@12
+    SHGetSetSettings@12 @68
+    SHGetSettings@8 @534
     SHGetSpecialFolderLocation@12
     SHGetSpecialFolderPathA@16
     SHGetSpecialFolderPathW@16
@@ -93,6 +97,8 @@ EXPORTS
     SHQueryUserNotificationState@4
     SHSimpleIDListFromPath@4 @162
     SetCurrentProcessExplicitAppUserModelID@4
+    ShellAboutA@16 @569
+    ShellAboutW@16 @570
     ShellExecuteA@24
     ShellExecuteExA@4
     ShellExecuteExW@4

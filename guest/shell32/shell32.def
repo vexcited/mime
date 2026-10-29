@@ -35,3 +35,11 @@ EXPORTS
     SHDoDragDrop @88
     SHCreateStdEnumFmtEtc @74
     PathResolve @51
+    SHGetImageList @727
+    SHDefExtractIconW @6
+    SHGetSetSettings @68
+    SHGetSettings @534
+    SHGetDataFromIDListW @492
+    ShellAboutW @570
+    ShellAboutA @569
+    PathMakeUniqueName @47

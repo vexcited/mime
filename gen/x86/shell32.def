@@ -33,6 +33,7 @@ EXPORTS
     ILRemoveLastID=_ILRemoveLastID@4 @17
     ILSaveToStream=_ILSaveToStream@8 @27
     IsUserAnAdmin=_IsUserAnAdmin@0 @680
+    PathMakeUniqueName=_PathMakeUniqueName@20 @47
     PathResolve=_PathResolve@12 @51
     SHAddToRecentDocs=_SHAddToRecentDocs@8
     SHAppBarMessage=_SHAppBarMessage@8
@@ -60,10 +61,11 @@ EXPORTS
     SHCreateShellItemArrayFromShellItem=_SHCreateShellItemArrayFromShellItem@12 @354
     SHCreateStdEnumFmtEtc=_SHCreateStdEnumFmtEtc@12 @74
     SHDefExtractIconA=_SHDefExtractIconA@24
-    SHDefExtractIconW=_SHDefExtractIconW@24
+    SHDefExtractIconW=_SHDefExtractIconW@24 @6
     SHDoDragDrop=_SHDoDragDrop@20 @88
     SHFileOperationA=_SHFileOperationA@4
     SHFileOperationW=_SHFileOperationW@4
+    SHGetDataFromIDListW=_SHGetDataFromIDListW@20 @492
     SHGetDesktopFolder=_SHGetDesktopFolder@4
     SHGetFileInfoA=_SHGetFileInfoA@20
     SHGetFileInfoW=_SHGetFileInfoW@20
@@ -73,7 +75,7 @@ EXPORTS
     SHGetFolderPathAndSubDirW=_SHGetFolderPathAndSubDirW@24
     SHGetFolderPathW=_SHGetFolderPathW@20
     SHGetIDListFromObject=_SHGetIDListFromObject@8 @507
-    SHGetImageList=_SHGetImageList@12
+    SHGetImageList=_SHGetImageList@12 @727
     SHGetKnownFolderIDList=_SHGetKnownFolderIDList@16
     SHGetKnownFolderItem=_SHGetKnownFolderItem@20 @514
     SHGetKnownFolderPath=_SHGetKnownFolderPath@16
@@ -83,6 +85,8 @@ EXPORTS
     SHGetPathFromIDListEx=_SHGetPathFromIDListEx@16
     SHGetPathFromIDListW=_SHGetPathFromIDListW@8
     SHGetPropertyStoreForWindow=_SHGetPropertyStoreForWindow@12
+    SHGetSetSettings=_SHGetSetSettings@12 @68
+    SHGetSettings=_SHGetSettings@8 @534
     SHGetSpecialFolderLocation=_SHGetSpecialFolderLocation@12
     SHGetSpecialFolderPathA=_SHGetSpecialFolderPathA@16
     SHGetSpecialFolderPathW=_SHGetSpecialFolderPathW@16
@@ -93,6 +97,8 @@ EXPORTS
     SHQueryUserNotificationState=_SHQueryUserNotificationState@4
     SHSimpleIDListFromPath=_SHSimpleIDListFromPath@4 @162
     SetCurrentProcessExplicitAppUserModelID=_SetCurrentProcessExplicitAppUserModelID@4
+    ShellAboutA=_ShellAboutA@16 @569
+    ShellAboutW=_ShellAboutW@16 @570
     ShellExecuteA=_ShellExecuteA@24
     ShellExecuteExA=_ShellExecuteExA@4
     ShellExecuteExW=_ShellExecuteExW@4

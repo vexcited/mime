@@ -463,6 +463,79 @@ SHSTDAPI void WINAPI DragAcceptFiles(HWND hwnd, BOOL accept);
 SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEINFOW *info, UINT size, UINT flags);
 SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoA(LPCSTR path, DWORD attributes, SHFILEINFOA *info, UINT size, UINT flags);
 SHSTDAPI HRESULT WINAPI SHGetStockIconInfo(SHSTOCKICONID id, UINT flags, SHSTOCKICONINFO *info);
+#define SSF_SHOWALLOBJECTS 0x00000001
+#define SSF_SHOWEXTENSIONS 0x00000002
+#define SSF_HIDDENFILEEXTS 0x00000004
+#define SSF_SERVERADMINUI 0x00000004
+#define SSF_SHOWCOMPCOLOR 0x00000008
+#define SSF_SORTCOLUMNS 0x00000010
+#define SSF_SHOWSYSFILES 0x00000020
+#define SSF_DOUBLECLICKINWEBVIEW 0x00000080
+#define SSF_SHOWATTRIBCOL 0x00000100
+#define SSF_DESKTOPHTML 0x00000200
+#define SSF_WIN95CLASSIC 0x00000400
+#define SSF_DONTPRETTYPATH 0x00000800
+#define SSF_SHOWINFOTIP 0x00002000
+#define SSF_MAPNETDRVBUTTON 0x00001000
+#define SSF_HIDEICONS 0x00004000
+#define SSF_NOCONFIRMRECYCLE 0x00008000
+#define SSF_FILTER 0x00010000
+#define SSF_WEBVIEW 0x00020000
+#define SSF_SHOWSUPERHIDDEN 0x00040000
+#define SSF_SEPPROCESS 0x00080000
+#define SSF_NONETCRAWLING 0x00100000
+#define SSF_STARTPANELON 0x00200000
+#define SSF_SHOWSTARTPAGE 0x00400000
+#define SSF_AUTOCHECKSELECT 0x00800000
+#define SSF_ICONSONLY 0x01000000
+#define SSF_SHOWTYPEOVERLAY 0x02000000
+#define SSF_SHOWSTATUSBAR 0x04000000
+
+typedef struct _SHELLSTATEW {
+    DWORD fShowAllObjects : 1;
+    DWORD fShowExtensions : 1;
+    DWORD fNoConfirmRecycle : 1;
+    DWORD fShowSysFiles : 1;
+    DWORD fShowCompColor : 1;
+    DWORD fDoubleClickInWebView : 1;
+    DWORD fDesktopHTML : 1;
+    DWORD fWin95Classic : 1;
+    DWORD fDontPrettyPath : 1;
+    DWORD fShowAttribCol : 1;
+    DWORD fMapNetDrvBtn : 1;
+    DWORD fShowInfoTip : 1;
+    DWORD fHideIcons : 1;
+    DWORD fWebView : 1;
+    DWORD fFilter : 1;
+    DWORD fShowSuperHidden : 1;
+    DWORD fNoNetCrawling : 1;
+    DWORD dwWin95Unused;
+    UINT uWin95Unused;
+    LONG lParamSort;
+    int iSortDirection;
+    UINT version;
+    UINT uNotUsed;
+    DWORD fSepProcess : 1;
+    DWORD fStartPanelOn : 1;
+    DWORD fShowStartPage : 1;
+    DWORD fAutoCheckSelect : 1;
+    DWORD fIconsOnly : 1;
+    DWORD fShowTypeOverlay : 1;
+    DWORD fShowStatusBar : 1;
+    DWORD fSpareFlags : 9;
+} SHELLSTATEW, *LPSHELLSTATEW;
+
+typedef struct _SHELLFLAGSTATE {
+    WORD Flags;
+} SHELLFLAGSTATE, *LPSHELLFLAGSTATE;
+
+SHSTDAPI void WINAPI SHGetSetSettings(LPSHELLSTATEW state, DWORD mask, BOOL set);
+SHSTDAPI void WINAPI SHGetSettings(LPSHELLFLAGSTATE state, DWORD mask);
+SHSTDAPI BOOL WINAPI PathMakeUniqueName(PWSTR unique, UINT size, PCWSTR name, PCWSTR long_name, PCWSTR directory);
+SHSTDAPI int WINAPI ShellAboutW(HWND hwnd, PCWSTR title, PCWSTR other, HICON icon);
+SHSTDAPI int WINAPI ShellAboutA(HWND hwnd, PCSTR title, PCSTR other, HICON icon);
+SHSTDAPI BOOL WINAPI PathResolve(PWSTR path, PCWSTR *directories, UINT flags);
+
 struct _IMAGELIST;
 SHSTDAPI HRESULT WINAPI SHGetImageList(int image_list, REFIID riid, void **object);
 SHSTDAPI HRESULT WINAPI SHCreateFileExtractIconW(LPCWSTR file, DWORD attributes, REFIID riid, void **object);
