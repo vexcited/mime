@@ -1,6 +1,25 @@
 LIBRARY mpr.dll
 EXPORTS
+    MultinetGetConnectionPerformanceA@8
+    MultinetGetConnectionPerformanceW@8
+    WNetAddConnection2A@16
+    WNetAddConnection2W@16
+    WNetAddConnection3A@20
+    WNetAddConnection3W@20
+    WNetCancelConnection2A@12
+    WNetCancelConnection2W@12
+    WNetCancelConnectionA@8
     WNetCancelConnectionW@8
+    WNetCloseEnum@4
+    WNetEnumResourceA@16
+    WNetEnumResourceW@16
     WNetGetConnectionA@12
     WNetGetConnectionW@12
+    WNetGetLastErrorA@20
+    WNetGetLastErrorW@20
+    WNetGetUniversalNameA@16
+    WNetGetUniversalNameW@16
+    WNetOpenEnumA@20
+    WNetOpenEnumW@20
+    WNetUseConnectionA@32
     WNetUseConnectionW@32
