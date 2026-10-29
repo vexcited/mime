@@ -42,6 +42,7 @@ EXPORTS
     NDRSContextUnmarshall@8
     NDRSContextUnmarshallEx@12
     NdrAllocate@8
+    NdrAsyncServerCall@4
     NdrByteCountPointerBufferSize@12
     NdrByteCountPointerFree@12
     NdrByteCountPointerMarshall@12
@@ -266,6 +267,8 @@ EXPORTS
     ObjectStublessClient7
     ObjectStublessClient8
     ObjectStublessClient9
+    RpcAsyncCancelCall@8
+    RpcAsyncCompleteCall@8
     RpcAsyncInitializeHandle@8
     RpcBindingCopy@8
     RpcBindingFree@4
@@ -301,6 +304,8 @@ EXPORTS
     RpcEpResolveBinding@8
     RpcEpUnregister@12
     RpcExceptionFilter@4
+    RpcFreeAuthorizationContext@4
+    RpcGetAuthorizationContextForClient@36
     RpcIfIdVectorFree@4
     RpcIfInqId@8
     RpcImpersonateClient@4

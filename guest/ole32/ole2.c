@@ -747,3 +747,14 @@ WINOLEAPI HGLOBAL WINAPI OleGetIconOfClass(REFCLSID clsid, LPOLESTR label, BOOL 
     MIME_STUB("ole32");
     return nullptr;
 }
+
+/*
+ * an object of the first OLE is read from the stream the program supplies, in the format those objects were saved
+ * in, and written as a storage. that format is not read here.
+ */
+WINOLEAPI HRESULT WINAPI OleConvertOLESTREAMToIStorage(void *stream, IStorage *storage, const void *device)
+{
+    if (!stream || !storage)
+        return E_INVALIDARG;
+    return E_NOTIMPL;
+}

@@ -165,6 +165,7 @@ EXPORTS
     IsAccelerator@16
     IsEqualGUID@8
     MkParseDisplayName@16
+    OleConvertOLESTREAMToIStorage@12
     OleCreate@28
     OleCreateFromData@28
     OleCreateFromFile@32

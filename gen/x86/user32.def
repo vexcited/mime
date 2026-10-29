@@ -85,6 +85,8 @@ EXPORTS
     CreateIconFromResource=_CreateIconFromResource@16
     CreateIconFromResourceEx=_CreateIconFromResourceEx@28
     CreateIconIndirect=_CreateIconIndirect@4
+    CreateMDIWindowA=_CreateMDIWindowA@40
+    CreateMDIWindowW=_CreateMDIWindowW@40
     CreateMenu=_CreateMenu@0
     CreatePopupMenu=_CreatePopupMenu@0
     CreateWindowExA=_CreateWindowExA@48

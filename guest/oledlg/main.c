@@ -15,3 +15,40 @@ OLEDLGAPI UINT WINAPI OleUIBusyW(LPOLEUIBUSYW busy)
         return OLEUI_ERR_STRUCTURENULL;
     return OLEUI_CANCEL;
 }
+
+/* each of these is told to the user as cancelled, once the structure is there. */
+static UINT cancelled(const void *dialog)
+{
+    MIME_STUB("oledlg");
+    return dialog ? OLEUI_CANCEL : OLEUI_ERR_STRUCTURENULL;
+}
+
+OLEDLGAPI UINT WINAPI OleUIInsertObjectW(void *insert)
+{
+    return cancelled(insert);
+}
+
+OLEDLGAPI UINT WINAPI OleUIInsertObjectA(void *insert)
+{
+    return cancelled(insert);
+}
+
+OLEDLGAPI UINT WINAPI OleUIPasteSpecialW(void *paste)
+{
+    return cancelled(paste);
+}
+
+OLEDLGAPI UINT WINAPI OleUIPasteSpecialA(void *paste)
+{
+    return cancelled(paste);
+}
+
+OLEDLGAPI UINT WINAPI OleUIObjectPropertiesW(void *properties)
+{
+    return cancelled(properties);
+}
+
+OLEDLGAPI UINT WINAPI OleUIObjectPropertiesA(void *properties)
+{
+    return cancelled(properties);
+}

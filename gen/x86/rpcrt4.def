@@ -42,6 +42,7 @@ EXPORTS
     NDRSContextUnmarshall=_NDRSContextUnmarshall@8
     NDRSContextUnmarshallEx=_NDRSContextUnmarshallEx@12
     NdrAllocate=_NdrAllocate@8
+    NdrAsyncServerCall=_NdrAsyncServerCall@4
     NdrByteCountPointerBufferSize=_NdrByteCountPointerBufferSize@12
     NdrByteCountPointerFree=_NdrByteCountPointerFree@12
     NdrByteCountPointerMarshall=_NdrByteCountPointerMarshall@12
@@ -266,6 +267,8 @@ EXPORTS
     ObjectStublessClient7=ObjectStublessClient7
     ObjectStublessClient8=ObjectStublessClient8
     ObjectStublessClient9=ObjectStublessClient9
+    RpcAsyncCancelCall=_RpcAsyncCancelCall@8
+    RpcAsyncCompleteCall=_RpcAsyncCompleteCall@8
     RpcAsyncInitializeHandle=_RpcAsyncInitializeHandle@8
     RpcBindingCopy=_RpcBindingCopy@8
     RpcBindingFree=_RpcBindingFree@4
@@ -301,6 +304,8 @@ EXPORTS
     RpcEpResolveBinding=_RpcEpResolveBinding@8
     RpcEpUnregister=_RpcEpUnregister@12
     RpcExceptionFilter=_RpcExceptionFilter@4
+    RpcFreeAuthorizationContext=_RpcFreeAuthorizationContext@4
+    RpcGetAuthorizationContextForClient=_RpcGetAuthorizationContextForClient@36
     RpcIfIdVectorFree=_RpcIfIdVectorFree@4
     RpcIfInqId=_RpcIfInqId@8
     RpcImpersonateClient=_RpcImpersonateClient@4

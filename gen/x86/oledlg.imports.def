@@ -1,3 +1,9 @@
 LIBRARY oledlg.dll
 EXPORTS
     OleUIBusyW@4
+    OleUIInsertObjectA@4
+    OleUIInsertObjectW@4
+    OleUIObjectPropertiesA@4
+    OleUIObjectPropertiesW@4
+    OleUIPasteSpecialA@4
+    OleUIPasteSpecialW@4

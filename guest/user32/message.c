@@ -440,6 +440,21 @@ WINUSERAPI LRESULT WINAPI DefMDIChildProcA(HWND hwnd, UINT msg, WPARAM wparam, L
     return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 
+/* a child is made in a window of the MDICLIENT class, and no window can be of it, so none is a client to make one in. */
+WINUSERAPI HWND WINAPI CreateMDIWindowW(LPCWSTR class_name, LPCWSTR title, DWORD style, int x, int y, int width,
+                                        int height, HWND parent, HINSTANCE instance, LPARAM param)
+{
+    SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    return nullptr;
+}
+
+WINUSERAPI HWND WINAPI CreateMDIWindowA(LPCSTR class_name, LPCSTR title, DWORD style, int x, int y, int width,
+                                        int height, HWND parent, HINSTANCE instance, LPARAM param)
+{
+    SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    return nullptr;
+}
+
 /* without MDI children there is no window menu key to translate. */
 WINUSERAPI BOOL WINAPI TranslateMDISysAccel(HWND client, LPMSG msg)
 {
