@@ -402,6 +402,34 @@ static LONG isqrt(LONG64 v)
     return (LONG)x;
 }
 
+/* adds the rows from top to bottom between left and right to the end of the bands, which grow downward. */
+static void append_rows(REGION *r, LONG left, LONG top, LONG right, LONG bottom)
+{
+    if (right <= left || bottom <= top)
+        return;
+    if (r->Count) {
+        RECT *last = &r->Rects[r->Count - 1];
+        if (last->bottom == top && last->left == left && last->right == right) {
+            last->bottom = bottom;
+            return;
+        }
+    }
+    r->Rects[r->Count++] = (RECT){left, top, right, bottom};
+}
+
+/* the corner of a round rectangle takes one band for each scanline, and a million of them is as far as one goes. */
+#define ROUND_RECT_MAX_CORNER 0x100000
+
+/* how far in from the sides the scanline i of a corner starts, for ellipse radii rx and ry. */
+static LONG corner_inset(LONG i, LONG rx, LONG ry)
+{
+    /* distance of this scanline center from the ellipse center, in doubled units. */
+    LONG64 dy = 2 * ((LONG64)ry - i) - 1;
+    LONG64 inner = (LONG64)ry * ry * 4 - dy * dy;
+    LONG dx = (LONG)(((LONG64)rx * isqrt(inner)) / (2 * ry));
+    return rx - dx;
+}
+
 /* a rectangle with elliptic corners of diameters ew and eh, one band per scanline in the corners. */
 BOOLEAN RgnRoundRect(REGION *r, LONG left, LONG top, LONG right, LONG bottom, LONG ew, LONG eh)
 {
@@ -415,29 +443,31 @@ BOOLEAN RgnRoundRect(REGION *r, LONG left, LONG top, LONG right, LONG bottom, LO
         top = bottom;
         bottom = t;
     }
-    ew = W32Min(ew, right - left);
-    eh = W32Min(eh, bottom - top);
+    LONG64 width = (LONG64)right - left, height = (LONG64)bottom - top;
+    LONG64 ew64 = ew < width ? ew : width;
+    LONG64 eh64 = eh < height ? eh : height;
     RgnClear(r);
     if (right <= left || bottom <= top)
         return TRUE;
-    if (ew < 2 || eh < 2) {
+    if (ew64 < 2 || eh64 < 2) {
         RECT rc = {left, top, right, bottom};
         return RgnSetRect(r, &rc);
     }
-    LONG rx = ew / 2, ry = eh / 2;
+    if (eh64 / 2 > ROUND_RECT_MAX_CORNER)
+        return FALSE;
+    LONG rx = (LONG)(ew64 / 2), ry = (LONG)(eh64 / 2);
+    /* the bands are made from the top down: the upper corners, the middle and the lower corners. */
     if (!reserve(r, (ULONG)(2 * ry + 1)))
         return FALSE;
     for (LONG i = 0; i < ry; i++) {
-        /* distance of this scanline center from the ellipse center, in doubled units. */
-        LONG64 dy = 2 * (ry - i) - 1;
-        LONG64 inner = (LONG64)ry * ry * 4 - dy * dy;
-        LONG dx = (LONG)(((LONG64)rx * isqrt(inner)) / (2 * ry));
-        LONG inset = rx - dx;
-        RECT band = {left + inset, top + i, right - inset, top + i + 1};
-        RECT band2 = {left + inset, bottom - i - 1, right - inset, bottom - i};
-        RgnCombineRect(r, r, &band, RGN_OR);
-        RgnCombineRect(r, r, &band2, RGN_OR);
+        LONG inset = corner_inset(i, rx, ry);
+        append_rows(r, left + inset, top + i, right - inset, top + i + 1);
     }
-    RECT middle = {left, top + ry, right, bottom - ry};
-    return RgnCombineRect(r, r, &middle, RGN_OR);
+    append_rows(r, left, top + ry, right, bottom - ry);
+    for (LONG i = ry - 1; i >= 0; i--) {
+        LONG inset = corner_inset(i, rx, ry);
+        append_rows(r, left + inset, bottom - i - 1, right - inset, bottom - i);
+    }
+    update_extents(r);
+    return TRUE;
 }
