@@ -205,3 +205,106 @@ DECLSPEC_EXPORT HINTERNET WINAPI FtpFindFirstFileA(HINTERNET connect, LPCSTR sea
     SetLastError(error);
     return handle;
 }
+
+/* the FTP and Gopher calls fail on the handle or the protocol before they read any name, so the names are not widened. */
+DECLSPEC_EXPORT BOOL WINAPI FtpGetFileA(HINTERNET connect, LPCSTR remote, LPCSTR local, BOOL fail_if_exists,
+                                       DWORD attributes, DWORD flags, DWORD_PTR context)
+{
+    return FtpGetFileW(connect, nullptr, nullptr, fail_if_exists, attributes, flags, context);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FtpPutFileA(HINTERNET connect, LPCSTR local, LPCSTR remote, DWORD flags, DWORD_PTR context)
+{
+    return FtpPutFileW(connect, nullptr, nullptr, flags, context);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FtpDeleteFileA(HINTERNET connect, LPCSTR name)
+{
+    return FtpDeleteFileW(connect, nullptr);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FtpRenameFileA(HINTERNET connect, LPCSTR existing, LPCSTR name)
+{
+    return FtpRenameFileW(connect, nullptr, nullptr);
+}
+
+DECLSPEC_EXPORT HINTERNET WINAPI FtpOpenFileA(HINTERNET connect, LPCSTR name, DWORD access, DWORD flags,
+                                             DWORD_PTR context)
+{
+    return FtpOpenFileW(connect, nullptr, access, flags, context);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FtpCreateDirectoryA(HINTERNET connect, LPCSTR name)
+{
+    return FtpCreateDirectoryW(connect, nullptr);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FtpRemoveDirectoryA(HINTERNET connect, LPCSTR name)
+{
+    return FtpRemoveDirectoryW(connect, nullptr);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FtpSetCurrentDirectoryA(HINTERNET connect, LPCSTR name)
+{
+    return FtpSetCurrentDirectoryW(connect, nullptr);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FtpGetCurrentDirectoryA(HINTERNET connect, LPSTR name, LPDWORD length)
+{
+    return FtpGetCurrentDirectoryW(connect, nullptr, length);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FtpCommandA(HINTERNET connect, BOOL expect_response, DWORD flags, LPCSTR command,
+                                       DWORD_PTR context, HINTERNET *ftp_command)
+{
+    return FtpCommandW(connect, expect_response, flags, nullptr, context, ftp_command);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI InternetFindNextFileA(HINTERNET find, LPVOID data)
+{
+    return InternetFindNextFileW(find, data);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI GopherCreateLocatorA(LPCSTR host, INTERNET_PORT port, LPCSTR display, LPCSTR selector,
+                                                DWORD type, LPSTR locator, LPDWORD length)
+{
+    return GopherCreateLocatorW(nullptr, port, nullptr, nullptr, type, nullptr, length);
+}
+
+DECLSPEC_EXPORT HINTERNET WINAPI GopherFindFirstFileA(HINTERNET connect, LPCSTR locator, LPCSTR search, LPVOID data,
+                                                     DWORD flags, DWORD_PTR context)
+{
+    return GopherFindFirstFileW(connect, nullptr, nullptr, nullptr, flags, context);
+}
+
+DECLSPEC_EXPORT HINTERNET WINAPI GopherOpenFileA(HINTERNET connect, LPCSTR locator, LPCSTR view, DWORD flags,
+                                                DWORD_PTR context)
+{
+    return GopherOpenFileW(connect, nullptr, nullptr, flags, context);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI GopherGetAttributeA(HINTERNET connect, LPCSTR locator, LPCSTR name, LPBYTE buffer,
+                                               DWORD length, LPDWORD returned, GOPHER_ATTRIBUTE_ENUMERATOR enumerator,
+                                               DWORD_PTR context)
+{
+    return GopherGetAttributeW(connect, nullptr, nullptr, buffer, length, returned, enumerator, context);
+}
+
+/* a global or registry setting is applied to the process whatever the handle is. */
+#define ISO_VALID_FLAGS_ 0x3
+
+DECLSPEC_EXPORT BOOL WINAPI InternetSetOptionExW(HINTERNET handle, DWORD option, LPVOID buffer, DWORD length,
+                                                DWORD flags)
+{
+    if (flags & ~ISO_VALID_FLAGS_)
+        return InetFail(ERROR_INVALID_PARAMETER);
+    return InternetSetOptionW(handle, option, buffer, length);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI InternetSetOptionExA(HINTERNET handle, DWORD option, LPVOID buffer, DWORD length,
+                                                DWORD flags)
+{
+    if (flags & ~ISO_VALID_FLAGS_)
+        return InetFail(ERROR_INVALID_PARAMETER);
+    return InternetSetOptionA(handle, option, buffer, length);
+}

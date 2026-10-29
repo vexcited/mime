@@ -9,24 +9,38 @@ EXPORTS
     FindNextUrlCacheEntryA@12
     FindNextUrlCacheEntryExW@24
     FindNextUrlCacheEntryW@12
+    FtpCommandA@24
     FtpCommandW@24
+    FtpCreateDirectoryA@8
     FtpCreateDirectoryW@8
+    FtpDeleteFileA@8
     FtpDeleteFileW@8
     FtpFindFirstFileA@20
     FtpFindFirstFileW@20
+    FtpGetCurrentDirectoryA@12
     FtpGetCurrentDirectoryW@12
+    FtpGetFileA@28
     FtpGetFileSize@8
     FtpGetFileW@28
+    FtpOpenFileA@20
     FtpOpenFileW@20
+    FtpPutFileA@20
     FtpPutFileW@20
+    FtpRemoveDirectoryA@8
     FtpRemoveDirectoryW@8
+    FtpRenameFileA@12
     FtpRenameFileW@12
+    FtpSetCurrentDirectoryA@8
     FtpSetCurrentDirectoryW@8
     GetUrlCacheEntryInfoExW@28
     GetUrlCacheEntryInfoW@12
+    GopherCreateLocatorA@28
     GopherCreateLocatorW@28
+    GopherFindFirstFileA@24
     GopherFindFirstFileW@24
+    GopherGetAttributeA@32
     GopherGetAttributeW@32
+    GopherOpenFileA@20
     GopherOpenFileW@20
     HttpAddRequestHeadersA@16
     HttpAddRequestHeadersW@16
@@ -61,6 +75,7 @@ EXPORTS
     InternetCrackUrlA@16
     InternetCrackUrlW@16
     InternetErrorDlg@20
+    InternetFindNextFileA@8
     InternetFindNextFileW@8
     InternetFreeCookies@8
     InternetGetConnectedState@8
@@ -87,6 +102,8 @@ EXPORTS
     InternetSetCookieW@12
     InternetSetFilePointer@20
     InternetSetOptionA@16
+    InternetSetOptionExA@20
+    InternetSetOptionExW@20
     InternetSetOptionW@16
     InternetSetStatusCallback@8
     InternetSetStatusCallbackA@8
