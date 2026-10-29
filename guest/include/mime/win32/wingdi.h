@@ -2121,6 +2121,50 @@ WINGDIAPI BOOL WINAPI SetBitmapDimensionEx(HBITMAP bitmap, int width, int height
 WINGDIAPI BOOL WINAPI SetTextJustification(HDC dc, int extra, int breaks);
 WINGDIAPI DWORD WINAPI SetMapperFlags(HDC dc, DWORD flags);
 WINGDIAPI BOOL WINAPI SetColorAdjustment(HDC dc, const COLORADJUSTMENT *adjustment);
+WINGDIAPI BOOL WINAPI GetColorAdjustment(HDC dc, LPCOLORADJUSTMENT adjustment);
+
+typedef struct tagRGBTRIPLE {
+    BYTE rgbtBlue;
+    BYTE rgbtGreen;
+    BYTE rgbtRed;
+} RGBTRIPLE, *PRGBTRIPLE, *LPRGBTRIPLE;
+
+typedef struct tagCIEXYZ {
+    LONG ciexyzX;
+    LONG ciexyzY;
+    LONG ciexyzZ;
+} CIEXYZ;
+
+typedef struct tagICEXYZTRIPLE {
+    CIEXYZ ciexyzRed;
+    CIEXYZ ciexyzGreen;
+    CIEXYZ ciexyzBlue;
+} CIEXYZTRIPLE;
+
+typedef struct tagLOGCOLORSPACEW {
+    DWORD lcsSignature;
+    DWORD lcsVersion;
+    DWORD lcsSize;
+    LONG lcsCSType;
+    LONG lcsIntent;
+    CIEXYZTRIPLE lcsEndpoints;
+    DWORD lcsGammaRed;
+    DWORD lcsGammaGreen;
+    DWORD lcsGammaBlue;
+    WCHAR lcsFilename[MAX_PATH];
+} LOGCOLORSPACEW, *LPLOGCOLORSPACEW;
+
+typedef int(CALLBACK *GOBJENUMPROC)(LPVOID object, LPARAM param);
+
+WINGDIAPI int WINAPI EnumObjects(HDC dc, int type, GOBJENUMPROC callback, LPARAM param);
+WINGDIAPI HCOLORSPACE WINAPI CreateColorSpaceW(LPLOGCOLORSPACEW color_space);
+WINGDIAPI BOOL WINAPI DeleteColorSpace(HCOLORSPACE color_space);
+WINGDIAPI HCOLORSPACE WINAPI SetColorSpace(HDC dc, HCOLORSPACE color_space);
+WINGDIAPI BOOL WINAPI GetLogColorSpaceW(HCOLORSPACE color_space, LPLOGCOLORSPACEW buffer, DWORD size);
+WINGDIAPI BOOL WINAPI CheckColorsInGamut(HDC dc, LPRGBTRIPLE colors, LPVOID result, DWORD count);
+WINGDIAPI BOOL WINAPI ColorMatchToTarget(HDC dc, HDC target, DWORD action);
+WINGDIAPI BOOL WINAPI ColorCorrectPalette(HDC dc, HPALETTE palette, DWORD first, DWORD count);
+WINGDIAPI BOOL WINAPI SetICMProfileW(HDC dc, LPWSTR file);
 WINGDIAPI UINT WINAPI GetBoundsRect(HDC dc, LPRECT rect, UINT flags);
 WINGDIAPI BOOL WINAPI ArcTo(HDC dc, int left, int top, int right, int bottom, int x1, int y1, int x2, int y2);
 WINGDIAPI BOOL WINAPI PolyDraw(HDC dc, const POINT *points, const BYTE *types, int count);

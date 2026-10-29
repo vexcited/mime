@@ -1,6 +1,11 @@
 LIBRARY gdi32.dll
 EXPORTS
+    CheckColorsInGamut@16
+    ColorCorrectPalette@16
+    ColorMatchToTarget@12
+    CreateColorSpaceW@4
     CreateICA@16
+    DeleteColorSpace@4
     DrawEscape@16
     AbortDoc@4
     AbortPath@4
@@ -85,6 +90,7 @@ EXPORTS
     EnumFontsW@16
     EnumICMProfilesW@12
     EnumMetaFile@16
+    EnumObjects@16
     EqualRgn@8
     Escape@20
     ExcludeClipRect@20
@@ -132,6 +138,7 @@ EXPORTS
     GetCharacterPlacementW@24
     GetClipBox@8
     GetClipRgn@8
+    GetColorAdjustment@8
     GetCurrentObject@8
     GetCurrentPositionEx@8
     GetDCBrushColor@4
@@ -161,6 +168,7 @@ EXPORTS
     GetKerningPairsA@12
     GetKerningPairsW@12
     GetLayout@4
+    GetLogColorSpaceW@12
     GetMapMode@4
     GetMetaFileA@4
     GetMetaFileBitsEx@12
@@ -274,6 +282,7 @@ EXPORTS
     SetBoundsRect@12
     SetBrushOrgEx@16
     SetColorAdjustment@8
+    SetColorSpace@8
     SetDCBrushColor@8
     SetDCPenColor@8
     SetDIBColorTable@16
@@ -283,6 +292,7 @@ EXPORTS
     SetEnhMetaFileBits@8
     SetGraphicsMode@8
     SetICMMode@8
+    SetICMProfileW@8
     SetLayout@8
     SetMapMode@8
     SetMapperFlags@8

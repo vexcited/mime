@@ -1,6 +1,11 @@
 LIBRARY gdi32.dll
 EXPORTS
+    CheckColorsInGamut=_CheckColorsInGamut@16
+    ColorCorrectPalette=_ColorCorrectPalette@16
+    ColorMatchToTarget=_ColorMatchToTarget@12
+    CreateColorSpaceW=_CreateColorSpaceW@4
     CreateICA=_CreateICA@16
+    DeleteColorSpace=_DeleteColorSpace@4
     DrawEscape=_DrawEscape@16
     AbortDoc=_AbortDoc@4
     AbortPath=_AbortPath@4
@@ -85,6 +90,7 @@ EXPORTS
     EnumFontsW=_EnumFontsW@16
     EnumICMProfilesW=_EnumICMProfilesW@12
     EnumMetaFile=_EnumMetaFile@16
+    EnumObjects=_EnumObjects@16
     EqualRgn=_EqualRgn@8
     Escape=_Escape@20
     ExcludeClipRect=_ExcludeClipRect@20
@@ -132,6 +138,7 @@ EXPORTS
     GetCharacterPlacementW=_GetCharacterPlacementW@24
     GetClipBox=_GetClipBox@8
     GetClipRgn=_GetClipRgn@8
+    GetColorAdjustment=_GetColorAdjustment@8
     GetCurrentObject=_GetCurrentObject@8
     GetCurrentPositionEx=_GetCurrentPositionEx@8
     GetDCBrushColor=_GetDCBrushColor@4
@@ -161,6 +168,7 @@ EXPORTS
     GetKerningPairsA=_GetKerningPairsA@12
     GetKerningPairsW=_GetKerningPairsW@12
     GetLayout=_GetLayout@4
+    GetLogColorSpaceW=_GetLogColorSpaceW@12
     GetMapMode=_GetMapMode@4
     GetMetaFileA=_GetMetaFileA@4
     GetMetaFileBitsEx=_GetMetaFileBitsEx@12
@@ -274,6 +282,7 @@ EXPORTS
     SetBoundsRect=_SetBoundsRect@12
     SetBrushOrgEx=_SetBrushOrgEx@16
     SetColorAdjustment=_SetColorAdjustment@8
+    SetColorSpace=_SetColorSpace@8
     SetDCBrushColor=_SetDCBrushColor@8
     SetDCPenColor=_SetDCPenColor@8
     SetDIBColorTable=_SetDIBColorTable@16
@@ -283,6 +292,7 @@ EXPORTS
     SetEnhMetaFileBits=_SetEnhMetaFileBits@8
     SetGraphicsMode=_SetGraphicsMode@8
     SetICMMode=_SetICMMode@8
+    SetICMProfileW=_SetICMProfileW@8
     SetLayout=_SetLayout@8
     SetMapMode=_SetMapMode@8
     SetMapperFlags=_SetMapperFlags@8

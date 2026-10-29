@@ -563,15 +563,6 @@ WINGDIAPI DWORD WINAPI SetMapperFlags(HDC dc, DWORD flags)
     return dc_valid(dc) ? 0 : GDI_ERROR;
 }
 
-WINGDIAPI BOOL WINAPI SetColorAdjustment(HDC dc, const COLORADJUSTMENT *adjustment)
-{
-    if (!adjustment) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    return dc_valid(dc);
-}
-
 WINGDIAPI UINT WINAPI GetBoundsRect(HDC dc, LPRECT rect, UINT flags)
 {
     UINT result;

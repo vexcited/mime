@@ -680,3 +680,205 @@ WINGDIAPI int WINAPI EnumICMProfilesW(HDC dc, int (CALLBACK *callback)(LPWSTR, L
     }
     return 0;
 }
+
+/* the mode a dc was last given, off for a dc that was never asked. */
+static int icm_mode(HDC dc)
+{
+    int mode = ICM_OFF;
+    RtlAcquireSRWLockExclusive(&g_icm_lock);
+    for (UINT i = 0; i < ICM_MAX; i++)
+        if (g_icm[i].Dc == dc)
+            mode = g_icm[i].Mode;
+    RtlReleaseSRWLockExclusive(&g_icm_lock);
+    return mode;
+}
+
+/*
+ * there are no color spaces: none can be made, so none is a valid handle, and no profile is installed for a device to
+ * convert with. what asks for a conversion says that color management is off, and with it on there is nothing to
+ * convert to.
+ */
+#define ERROR_ICM_NOT_ENABLED_ 2018L
+
+WINGDIAPI HCOLORSPACE WINAPI CreateColorSpaceW(LPLOGCOLORSPACEW color_space)
+{
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return nullptr;
+}
+
+WINGDIAPI BOOL WINAPI DeleteColorSpace(HCOLORSPACE color_space)
+{
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
+WINGDIAPI HCOLORSPACE WINAPI SetColorSpace(HDC dc, HCOLORSPACE color_space)
+{
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return nullptr;
+}
+
+WINGDIAPI BOOL WINAPI GetLogColorSpaceW(HCOLORSPACE color_space, LPLOGCOLORSPACEW buffer, DWORD size)
+{
+    SetLastError(!buffer || size < sizeof(LOGCOLORSPACEW) ? ERROR_INSUFFICIENT_BUFFER : ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
+WINGDIAPI BOOL WINAPI SetICMProfileW(HDC dc, LPWSTR file)
+{
+    SetLastError(dc_valid(dc) ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
+WINGDIAPI BOOL WINAPI CheckColorsInGamut(HDC dc, LPRGBTRIPLE colors, LPVOID result, DWORD count)
+{
+    if (!colors || !result || !count || !dc_valid(dc)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (icm_mode(dc) != ICM_ON) {
+        SetLastError(ERROR_ICM_NOT_ENABLED_);
+        return FALSE;
+    }
+    /* with no destination profile every color is inside. */
+    RtlZeroMemory(result, count);
+    return TRUE;
+}
+
+WINGDIAPI BOOL WINAPI ColorMatchToTarget(HDC dc, HDC target, DWORD action)
+{
+    if (!dc_valid(dc) || !dc_valid(target)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    SetLastError(ERROR_ICM_NOT_ENABLED_);
+    return FALSE;
+}
+
+WINGDIAPI BOOL WINAPI ColorCorrectPalette(HDC dc, HPALETTE palette, DWORD first, DWORD count)
+{
+    if (!dc || !palette || count - 1 > 0xFFFF || first >= 0x10000 || 0x10000 - count < first || !dc_valid(dc)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (icm_mode(dc) != ICM_ON) {
+        SetLastError(ERROR_ICM_NOT_ENABLED_);
+        return FALSE;
+    }
+    /* the entries are converted to the destination profile, which there is none of. */
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ color adjustment and the standard objects */
+
+#define ADJUSTMENT_MAX 32
+
+/* the setting of a dc, kept as it was given for the dc to read back. */
+static struct {
+    HDC Dc;
+    COLORADJUSTMENT Adjustment;
+} g_adjustments[ADJUSTMENT_MAX];
+static RTL_SRWLOCK g_adjustment_lock;
+
+static const COLORADJUSTMENT g_default_adjustment = {sizeof(COLORADJUSTMENT), 0, 0, 10000, 10000, 10000, 0, 10000, 0, 0, 0, 0};
+
+WINGDIAPI BOOL WINAPI SetColorAdjustment(HDC dc, const COLORADJUSTMENT *adjustment)
+{
+    if (!adjustment) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    COLORADJUSTMENT a = *adjustment;
+    if (!dc_valid(dc))
+        return FALSE;
+    /* the same bounds as the system keeps, in the units of the structure. */
+    if (a.caSize != sizeof(a) || a.caIlluminantIndex > 8 || a.caRedGamma < 1344 || a.caRedGamma > 65000 ||
+        a.caGreenGamma < 1344 || a.caGreenGamma > 65000 || a.caBlueGamma < 1344 || a.caBlueGamma > 65000 ||
+        a.caReferenceBlack > 4000 || a.caReferenceWhite < 6000 || a.caReferenceWhite > 10000 || a.caContrast < -100 ||
+        a.caContrast > 100 || a.caBrightness < -100 || a.caBrightness > 100 || a.caColorfulness < -100 ||
+        a.caColorfulness > 100 || a.caRedGreenTint < -100 || a.caRedGreenTint > 100) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    a.caFlags &= 3;
+    BOOL kept = FALSE;
+    RtlAcquireSRWLockExclusive(&g_adjustment_lock);
+    UINT free_slot = ADJUSTMENT_MAX, found = ADJUSTMENT_MAX;
+    for (UINT i = 0; i < ADJUSTMENT_MAX; i++) {
+        if (g_adjustments[i].Dc == dc)
+            found = i;
+        else if (!g_adjustments[i].Dc && free_slot == ADJUSTMENT_MAX)
+            free_slot = i;
+    }
+    UINT slot = found < ADJUSTMENT_MAX ? found : free_slot;
+    if (slot < ADJUSTMENT_MAX) {
+        g_adjustments[slot].Dc = dc;
+        g_adjustments[slot].Adjustment = a;
+        kept = TRUE;
+    }
+    RtlReleaseSRWLockExclusive(&g_adjustment_lock);
+    if (!kept)
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    return kept;
+}
+
+WINGDIAPI BOOL WINAPI GetColorAdjustment(HDC dc, LPCOLORADJUSTMENT adjustment)
+{
+    if (!adjustment) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!dc_valid(dc))
+        return FALSE;
+    *adjustment = g_default_adjustment;
+    RtlAcquireSRWLockExclusive(&g_adjustment_lock);
+    for (UINT i = 0; i < ADJUSTMENT_MAX; i++)
+        if (g_adjustments[i].Dc == dc)
+            *adjustment = g_adjustments[i].Adjustment;
+    RtlReleaseSRWLockExclusive(&g_adjustment_lock);
+    return TRUE;
+}
+
+/*
+ * the pens and brushes a device offers: the twenty colors of the standard palette in five pen styles, and as solid
+ * brushes and in six hatches.
+ */
+WINGDIAPI int WINAPI EnumObjects(HDC dc, int type, GOBJENUMPROC callback, LPARAM param)
+{
+    static const COLORREF colors[20] = {0x000000, 0xFFFFFF, 0x0000FF, 0x00FF00, 0x00FFFF, 0xFF0000, 0xFF00FF,
+                                        0xFFFF00, 0x808080, 0xC0C0C0, 0x000080, 0x008000, 0x008080, 0x800000,
+                                        0x800080, 0x808000, 0xC0DCC0, 0xF0C8A4, 0xF0FBFF, 0xA4A0A0};
+    if (type != OBJ_PEN && type != OBJ_BRUSH) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!dc_valid(dc)) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+    int result = 0;
+    if (type == OBJ_PEN) {
+        for (UINT style = 0; style < 5; style++)
+            for (UINT i = 0; i < RTL_NUMBER_OF(colors); i++) {
+                LOGPEN pen = {style, {0, 0}, colors[i]};
+                result = callback(&pen, param);
+                if (!result)
+                    return 0;
+            }
+        return result;
+    }
+    for (UINT i = 0; i < RTL_NUMBER_OF(colors); i++) {
+        LOGBRUSH brush = {BS_SOLID, colors[i], 0};
+        result = callback(&brush, param);
+        if (!result)
+            return 0;
+    }
+    for (UINT hatch = 0; hatch < 6; hatch++)
+        for (UINT i = 0; i < RTL_NUMBER_OF(colors); i++) {
+            LOGBRUSH brush = {BS_HATCHED, colors[i], hatch};
+            result = callback(&brush, param);
+            if (!result)
+                return 0;
+        }
+    return result;
+}
