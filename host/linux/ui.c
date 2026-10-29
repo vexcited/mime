@@ -707,6 +707,9 @@ static void emit_mouse(SDL_WindowID id, float x, float y, uint32_t type, uint32_
     emit(&ev);
 }
 
+static bool g_pointer_known;
+static int32_t g_pointer_x, g_pointer_y;
+
 /* motion in guest pixels; locked, the device's own counts, as raw input reports them. */
 static void emit_motion(const SDL_MouseMotionEvent *m)
 {
@@ -734,6 +737,14 @@ static void emit_motion(const SDL_MouseMotionEvent *m)
     w->motion_y -= ev.dy;
     if ((ev.flags & 4) && !ev.dx && !ev.dy)
         return;
+    /* a window that appears under a pointer at rest reports it again, which is no move, as Windows posts none. */
+    if (!(ev.flags & 4)) {
+        if (g_pointer_known && ev.x == g_pointer_x && ev.y == g_pointer_y)
+            return;
+        g_pointer_known = true;
+        g_pointer_x = ev.x;
+        g_pointer_y = ev.y;
+    }
     emit(&ev);
 }
 
