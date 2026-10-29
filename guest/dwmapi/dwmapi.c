@@ -340,3 +340,50 @@ DWMAPI DwmInvalidateIconicBitmaps(HWND hwnd)
 {
     return IsWindow(hwnd) ? S_OK : E_INVALIDARG;
 }
+
+/*
+ * a thumbnail would show a live window inside another, which the compositor here does not do. no thumbnail is made,
+ * so none exists to be changed, measured or released, and the windows given are still checked.
+ */
+#define HR_NOT_IMPLEMENTED ((HRESULT)0x80070078)
+#define HR_INVALID_WINDOW ((HRESULT)0x80070578)
+#define HR_INVALID_HANDLE ((HRESULT)0x80070006)
+
+DWMAPI DwmRegisterThumbnail(HWND destination, HWND source, PHANDLE thumbnail)
+{
+    if (!thumbnail)
+        return E_POINTER;
+    *thumbnail = nullptr;
+    if (!IsWindow(destination) || !IsWindow(source))
+        return HR_INVALID_WINDOW;
+    return HR_NOT_IMPLEMENTED;
+}
+
+DWMAPI DwmUnregisterThumbnail(HANDLE thumbnail)
+{
+    return HR_INVALID_HANDLE;
+}
+
+DWMAPI DwmUpdateThumbnailProperties(HANDLE thumbnail, const void *properties)
+{
+    if (!properties)
+        return E_INVALIDARG;
+    return HR_INVALID_HANDLE;
+}
+
+DWMAPI DwmQueryThumbnailSourceSize(HANDLE thumbnail, SIZE *size)
+{
+    if (!size)
+        return E_POINTER;
+    return HR_INVALID_HANDLE;
+}
+
+/* the preview is only taken for a window that asked to be shown as an icon, which nothing here shows. */
+DWMAPI DwmSetIconicLivePreviewBitmap(HWND hwnd, HBITMAP bitmap, POINT *offset, DWORD flags)
+{
+    if (!IsWindow(hwnd))
+        return HR_INVALID_WINDOW;
+    if (!bitmap || (flags & ~1u))
+        return E_INVALIDARG;
+    return S_OK;
+}

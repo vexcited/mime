@@ -11,5 +11,10 @@ EXPORTS
     DwmGetWindowAttribute@16
     DwmInvalidateIconicBitmaps@4
     DwmIsCompositionEnabled@4
+    DwmQueryThumbnailSourceSize@8
+    DwmRegisterThumbnail@12
+    DwmSetIconicLivePreviewBitmap@16
     DwmSetIconicThumbnail@12
     DwmSetWindowAttribute@16
+    DwmUnregisterThumbnail@4
+    DwmUpdateThumbnailProperties@8

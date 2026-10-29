@@ -11,5 +11,10 @@ EXPORTS
     DwmGetWindowAttribute=_DwmGetWindowAttribute@16
     DwmInvalidateIconicBitmaps=_DwmInvalidateIconicBitmaps@4
     DwmIsCompositionEnabled=_DwmIsCompositionEnabled@4
+    DwmQueryThumbnailSourceSize=_DwmQueryThumbnailSourceSize@8
+    DwmRegisterThumbnail=_DwmRegisterThumbnail@12
+    DwmSetIconicLivePreviewBitmap=_DwmSetIconicLivePreviewBitmap@16
     DwmSetIconicThumbnail=_DwmSetIconicThumbnail@12
     DwmSetWindowAttribute=_DwmSetWindowAttribute@16
+    DwmUnregisterThumbnail=_DwmUnregisterThumbnail@4
+    DwmUpdateThumbnailProperties=_DwmUpdateThumbnailProperties@8
