@@ -292,8 +292,8 @@ static void sd_memory_forget(const struct stat *st);
 static bool is_private_registry(MimeVm *vm, const char *path)
 {
     const char *name = path + strlen(vm->paths->drive_c);
-    return !strcasecmp(name, "/Windows/System32/config/mime-registry.log") ||
-           !strcasecmp(name, "/Windows/System32/config/mime-registry.log.new");
+    return !strcasecmp(name, "/Windows/System32/config/registry.journal") ||
+           !strcasecmp(name, "/Windows/System32/config/registry.journal.new");
 }
 
 /*
