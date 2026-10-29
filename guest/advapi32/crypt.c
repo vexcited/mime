@@ -291,6 +291,29 @@ ADVAPI BOOL WINAPI CryptDestroyKey(HCRYPTKEY handle)
     return TRUE;
 }
 
+/* the copy keeps the state of the original, chaining value included, and each is released on its own. */
+ADVAPI BOOL WINAPI CryptDuplicateKey(HCRYPTKEY handle, DWORD *reserved, DWORD flags, HCRYPTKEY *result)
+{
+    KEY *k = (KEY *)handle;
+    if (!k || k->Magic != KEY_MAGIC) {
+        AdvSetError(NTE_BAD_KEY);
+        return FALSE;
+    }
+    if (reserved || flags || !result) {
+        AdvSetError(reserved || flags ? NTE_BAD_FLAGS : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    KEY *copy = AdvAlloc(sizeof(*copy) + k->Size);
+    if (!copy) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    memcpy(copy, k, sizeof(*copy) + k->Size);
+    InterlockedIncrement(&k->Provider->References);
+    *result = (HCRYPTKEY)copy;
+    return TRUE;
+}
+
 /* ---------------------------------------------------------------- hashes */
 
 typedef ULONG_PTR HCRYPTHASH;

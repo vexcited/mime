@@ -221,6 +221,12 @@ ADVAPI BOOL WINAPI BackupEventLogW(HANDLE h, LPCWSTR file)
     return FALSE;
 }
 
+/* the idle task work is done by a service that is not here. */
+ADVAPI DWORD WINAPI ProcessIdleTasks(void)
+{
+    return RPC_S_SERVER_UNAVAILABLE;
+}
+
 ADVAPI BOOL WINAPI BackupEventLogA(HANDLE h, LPCSTR file)
 {
     PWSTR wide = AdvAnsiToWide(file);

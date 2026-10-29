@@ -167,6 +167,7 @@ EXPORTS
     CryptDeriveKey=_CryptDeriveKey@20
     CryptDestroyHash=_CryptDestroyHash@4
     CryptDestroyKey=_CryptDestroyKey@4
+    CryptDuplicateKey=_CryptDuplicateKey@16
     CryptEncrypt=_CryptEncrypt@28
     CryptEnumProvidersA=_CryptEnumProvidersA@24
     CryptEnumProvidersW=_CryptEnumProvidersW@24
@@ -195,6 +196,7 @@ EXPORTS
     DuplicateTokenEx=_DuplicateTokenEx@24
     EnableTrace=_EnableTrace@24
     EnableTraceEx2=_EnableTraceEx2@44
+    EnableTraceEx=_EnableTraceEx@48
     EncodeAttributeName=_EncodeAttributeName@12
     EncryptFileA=_EncryptFileA@4
     EncryptFileW=_EncryptFileW@4
@@ -440,6 +442,7 @@ EXPORTS
     PrivilegeCheck=_PrivilegeCheck@12
     PrivilegedServiceAuditAlarmA=_PrivilegedServiceAuditAlarmA@20
     PrivilegedServiceAuditAlarmW=_PrivilegedServiceAuditAlarmW@20
+    ProcessIdleTasks=_ProcessIdleTasks@0
     ProcessTrace=_ProcessTrace@16
     ProcessTraceAddBufferToBufferStream=_ProcessTraceAddBufferToBufferStream@20
     ProcessTraceBufferDecrementReference=_ProcessTraceBufferDecrementReference@4
