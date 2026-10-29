@@ -292,6 +292,29 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Destroy(HIMAGELIST himl);
 WINCOMMCTRLAPI int WINAPI ImageList_GetImageCount(HIMAGELIST himl);
 WINCOMMCTRLAPI BOOL WINAPI ImageList_SetImageCount(HIMAGELIST himl, UINT count);
 WINCOMMCTRLAPI int WINAPI ImageList_Add(HIMAGELIST himl, HBITMAP image, HBITMAP mask);
+
+typedef struct _COLORMAP {
+    COLORREF from;
+    COLORREF to;
+} COLORMAP, *LPCOLORMAP;
+
+#define CMB_MASKED 0x02
+#define CMB_DIBSECTION 0x04
+
+WINCOMMCTRLAPI HBITMAP WINAPI CreateMappedBitmap(HINSTANCE instance, INT_PTR id, UINT flags, LPCOLORMAP map, int count);
+WINCOMMCTRLAPI BOOL WINAPI InitializeFlatSB(HWND hwnd);
+WINCOMMCTRLAPI HRESULT WINAPI UninitializeFlatSB(HWND hwnd);
+WINCOMMCTRLAPI BOOL WINAPI FlatSB_GetScrollProp(HWND hwnd, int property, LPINT value);
+WINCOMMCTRLAPI BOOL WINAPI FlatSB_SetScrollProp(HWND hwnd, UINT property, INT_PTR value, BOOL redraw);
+WINCOMMCTRLAPI BOOL WINAPI FlatSB_GetScrollPropPtr(HWND hwnd, int property, INT_PTR *value);
+WINCOMMCTRLAPI BOOL WINAPI FlatSB_EnableScrollBar(HWND hwnd, int bar, UINT arrows);
+WINCOMMCTRLAPI BOOL WINAPI FlatSB_ShowScrollBar(HWND hwnd, int bar, BOOL show);
+WINCOMMCTRLAPI BOOL WINAPI FlatSB_GetScrollRange(HWND hwnd, int bar, LPINT min, LPINT max);
+WINCOMMCTRLAPI BOOL WINAPI FlatSB_GetScrollInfo(HWND hwnd, int bar, LPSCROLLINFO info);
+WINCOMMCTRLAPI int WINAPI FlatSB_GetScrollPos(HWND hwnd, int bar);
+WINCOMMCTRLAPI int WINAPI FlatSB_SetScrollPos(HWND hwnd, int bar, int pos, BOOL redraw);
+WINCOMMCTRLAPI int WINAPI FlatSB_SetScrollInfo(HWND hwnd, int bar, LPSCROLLINFO info, BOOL redraw);
+WINCOMMCTRLAPI int WINAPI FlatSB_SetScrollRange(HWND hwnd, int bar, int min, int max, BOOL redraw);
 WINCOMMCTRLAPI int WINAPI ImageList_ReplaceIcon(HIMAGELIST himl, int i, HICON icon);
 WINCOMMCTRLAPI COLORREF WINAPI ImageList_SetBkColor(HIMAGELIST himl, COLORREF color);
 WINCOMMCTRLAPI COLORREF WINAPI ImageList_GetBkColor(HIMAGELIST himl);

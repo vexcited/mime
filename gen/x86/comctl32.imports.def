@@ -1,5 +1,6 @@
 LIBRARY comctl32.dll
 EXPORTS
+    CreateMappedBitmap@20 @8
     CreatePropertySheetPageA@4 @21
     CreatePropertySheetPageW@4 @22
     CreateStatusWindowA@16 @6
@@ -110,6 +111,18 @@ EXPORTS
     CreatePropertySheetPage@4 @12
     CreateStatusWindow@16 @23
     DrawStatusText@16 @30
+    FlatSB_EnableScrollBar@12 @32
+    FlatSB_GetScrollInfo@12 @33
+    FlatSB_GetScrollPos@8 @34
+    FlatSB_GetScrollProp@12 @35
+    FlatSB_GetScrollRange@16 @36
+    FlatSB_SetScrollInfo@16 @37
+    FlatSB_SetScrollPos@16 @38
+    FlatSB_SetScrollProp@16 @39
+    FlatSB_SetScrollRange@20 @40
+    FlatSB_ShowScrollBar@12 @41
     ImageList_AddIcon@8 @45
     ImageList_LoadImage@28 @70
+    InitializeFlatSB@4 @95
     PropertySheet@4 @96
+    UninitializeFlatSB@4 @100

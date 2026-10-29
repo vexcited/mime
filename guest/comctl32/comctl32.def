@@ -113,3 +113,17 @@ EXPORTS
     GetWindowSubclass @411
     RemoveWindowSubclass @412
     DefSubclassProc @413
+    CreateMappedBitmap @8
+    FlatSB_EnableScrollBar @32
+    FlatSB_GetScrollInfo @33
+    FlatSB_GetScrollPos @34
+    FlatSB_GetScrollProp @35
+    FlatSB_GetScrollPropPtr @36
+    FlatSB_GetScrollRange @37
+    FlatSB_SetScrollInfo @38
+    FlatSB_SetScrollPos @39
+    FlatSB_SetScrollProp @40
+    FlatSB_SetScrollRange @41
+    FlatSB_ShowScrollBar @42
+    InitializeFlatSB @96
+    UninitializeFlatSB @101

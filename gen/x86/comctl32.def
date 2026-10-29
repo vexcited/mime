@@ -1,5 +1,6 @@
 LIBRARY comctl32.dll
 EXPORTS
+    CreateMappedBitmap=_CreateMappedBitmap@20 @8
     CreatePropertySheetPageA=_CreatePropertySheetPageA@4 @21
     CreatePropertySheetPageW=_CreatePropertySheetPageW@4 @22
     CreateStatusWindowA=_CreateStatusWindowA@16 @6
@@ -110,6 +111,18 @@ EXPORTS
     CreatePropertySheetPage=_CreatePropertySheetPageA@4 @12
     CreateStatusWindow=_CreateStatusWindowA@16 @23
     DrawStatusText=_DrawStatusTextA@16 @30
+    FlatSB_EnableScrollBar=_FlatSB_EnableScrollBar@12 @32
+    FlatSB_GetScrollInfo=_FlatSB_GetScrollInfo@12 @33
+    FlatSB_GetScrollPos=_FlatSB_GetScrollPos@8 @34
+    FlatSB_GetScrollProp=_FlatSB_GetScrollProp@12 @35
+    FlatSB_GetScrollRange=_FlatSB_GetScrollRange@16 @36
+    FlatSB_SetScrollInfo=_FlatSB_SetScrollInfo@16 @37
+    FlatSB_SetScrollPos=_FlatSB_SetScrollPos@16 @38
+    FlatSB_SetScrollProp=_FlatSB_SetScrollProp@16 @39
+    FlatSB_SetScrollRange=_FlatSB_SetScrollRange@20 @40
+    FlatSB_ShowScrollBar=_FlatSB_ShowScrollBar@12 @41
     ImageList_AddIcon=_CcImageListAddIcon@8 @45
     ImageList_LoadImage=_ImageList_LoadImageA@28 @70
+    InitializeFlatSB=_InitializeFlatSB@4 @95
     PropertySheet=_PropertySheetA@4 @96
+    UninitializeFlatSB=_UninitializeFlatSB@4 @100
