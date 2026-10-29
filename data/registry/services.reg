@@ -61,6 +61,30 @@
 
 [HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\{DnsConnections,DnsConnectionsProxies,DnsPolicyConfig}]
 
+; the drivers of the network stack. the host does the work of both, and their driver objects tell the service control
+; manager that they run, which is what a service that depends on them checks. the system and boot start drivers are
+; never started by the manager, as on Windows.
+[HKLM\SYSTEM\CurrentControlSet\Services\AFD]
+"BootFlags"=dword:00000001
+"Description"="@%systemroot%\\system32\\drivers\\afd.sys,-1000"
+"DisplayName"="@%systemroot%\\system32\\drivers\\afd.sys,-1000"
+"ErrorControl"=dword:00000001
+"Group"="PNP_TDI"
+"ImagePath"=expand:"\\SystemRoot\\system32\\drivers\\afd.sys"
+"Start"=dword:00000001
+"Type"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Tcpip]
+"BootFlags"=dword:00000001
+"Description"="@%SystemRoot%\\system32\\tcpipcfg.dll,-50003"
+"DisplayName"="@%SystemRoot%\\system32\\drivers\\tcpip.sys,-10001"
+"ErrorControl"=dword:00000001
+"Group"="PNP_TDI"
+"ImagePath"=expand:"System32\\drivers\\tcpip.sys"
+"Start"=dword:00000000
+"Tag"=dword:00000003
+"Type"=dword:00000001
+
 [HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters]
 "Domain"=""
 
