@@ -1,6 +1,11 @@
 LIBRARY cabinet.dll
 EXPORTS
     DllGetVersion=_DllGetVersion@4 @2
+    FCIAddFile=FCIAddFile @11
+    FCICreate=FCICreate @10
+    FCIDestroy=FCIDestroy @14
+    FCIFlushCabinet=FCIFlushCabinet @13
+    FCIFlushFolder=FCIFlushFolder @12
     FDICopy=FDICopy @22
     FDICreate=FDICreate @20
     FDIDestroy=FDIDestroy @23
