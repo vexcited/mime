@@ -112,6 +112,8 @@ EXPORTS
     CreateIoCompletionPort@16
     CreateJobObjectA@8
     CreateJobObjectW@8
+    CreateMailslotA@16
+    CreateMailslotW@16
     CreateMemoryResourceNotification@4
     CreateMutexA@12
     CreateMutexExA@16
@@ -415,7 +417,16 @@ EXPORTS
     GetFirmwareEnvironmentVariableW@16
     GetFirmwareEnvironmentVariableExA@20
     GetFirmwareEnvironmentVariableExW@20
+    GetMailslotInfo@20
     GetThreadSelectorEntry@12
+    Heap32First@12
+    Heap32ListFirst@8
+    Heap32ListNext@8
+    Heap32Next@4
+    PssCaptureSnapshot@16
+    PssFreeSnapshot@8
+    PssQuerySnapshot@16
+    ReadFileScatter@20
     ReplaceFileA@24
     SetFirmwareEnvironmentVariableA@16
     SetFirmwareEnvironmentVariableW@16
@@ -1160,6 +1171,7 @@ EXPORTS
     SetLocalTime@4
     SetLocaleInfoA@12
     SetLocaleInfoW@12
+    SetMailslotInfo@8
     SetNamedPipeHandleState@16
     SetPriorityClass@8
     SetProcessAffinityMask@8
@@ -1401,6 +1413,7 @@ EXPORTS
     WriteConsoleW@20
     WriteFile@20
     WriteFileEx@20
+    WriteFileGather@20
     WritePrivateProfileSectionA@12
     WritePrivateProfileSectionW@12
     WritePrivateProfileStringA@16

@@ -355,6 +355,14 @@ _Kernel32Thunk_CreateJobObjectA@8:
     .p2align 4
 _Kernel32Thunk_CreateJobObjectW@8:
     jmp     *__imp__CreateJobObjectW@8
+    .globl  _Kernel32Thunk_CreateMailslotA@16
+    .p2align 4
+_Kernel32Thunk_CreateMailslotA@16:
+    jmp     *__imp__CreateMailslotA@16
+    .globl  _Kernel32Thunk_CreateMailslotW@16
+    .p2align 4
+_Kernel32Thunk_CreateMailslotW@16:
+    jmp     *__imp__CreateMailslotW@16
     .globl  _Kernel32Thunk_CreateMemoryResourceNotification@4
     .p2align 4
 _Kernel32Thunk_CreateMemoryResourceNotification@4:
@@ -1459,10 +1467,46 @@ _Kernel32Thunk_GetFirmwareEnvironmentVariableExW@20:
     .p2align 4
 _Kernel32Thunk_GetFirmwareEnvironmentVariableW@16:
     jmp     *__imp__GetFirmwareEnvironmentVariableW@16
+    .globl  _Kernel32Thunk_GetMailslotInfo@20
+    .p2align 4
+_Kernel32Thunk_GetMailslotInfo@20:
+    jmp     *__imp__GetMailslotInfo@20
     .globl  _Kernel32Thunk_GetThreadSelectorEntry@12
     .p2align 4
 _Kernel32Thunk_GetThreadSelectorEntry@12:
     jmp     *__imp__GetThreadSelectorEntry@12
+    .globl  _Kernel32Thunk_Heap32First@12
+    .p2align 4
+_Kernel32Thunk_Heap32First@12:
+    jmp     *__imp__Heap32First@12
+    .globl  _Kernel32Thunk_Heap32ListFirst@8
+    .p2align 4
+_Kernel32Thunk_Heap32ListFirst@8:
+    jmp     *__imp__Heap32ListFirst@8
+    .globl  _Kernel32Thunk_Heap32ListNext@8
+    .p2align 4
+_Kernel32Thunk_Heap32ListNext@8:
+    jmp     *__imp__Heap32ListNext@8
+    .globl  _Kernel32Thunk_Heap32Next@4
+    .p2align 4
+_Kernel32Thunk_Heap32Next@4:
+    jmp     *__imp__Heap32Next@4
+    .globl  _Kernel32Thunk_PssCaptureSnapshot@16
+    .p2align 4
+_Kernel32Thunk_PssCaptureSnapshot@16:
+    jmp     *__imp__PssCaptureSnapshot@16
+    .globl  _Kernel32Thunk_PssFreeSnapshot@8
+    .p2align 4
+_Kernel32Thunk_PssFreeSnapshot@8:
+    jmp     *__imp__PssFreeSnapshot@8
+    .globl  _Kernel32Thunk_PssQuerySnapshot@16
+    .p2align 4
+_Kernel32Thunk_PssQuerySnapshot@16:
+    jmp     *__imp__PssQuerySnapshot@16
+    .globl  _Kernel32Thunk_ReadFileScatter@20
+    .p2align 4
+_Kernel32Thunk_ReadFileScatter@20:
+    jmp     *__imp__ReadFileScatter@20
     .globl  _Kernel32Thunk_ReplaceFileA@24
     .p2align 4
 _Kernel32Thunk_ReplaceFileA@24:
@@ -4203,6 +4247,10 @@ _Kernel32Thunk_SetLocaleInfoA@12:
     .p2align 4
 _Kernel32Thunk_SetLocaleInfoW@12:
     jmp     *__imp__SetLocaleInfoW@12
+    .globl  _Kernel32Thunk_SetMailslotInfo@8
+    .p2align 4
+_Kernel32Thunk_SetMailslotInfo@8:
+    jmp     *__imp__SetMailslotInfo@8
     .globl  _Kernel32Thunk_SetNamedPipeHandleState@16
     .p2align 4
 _Kernel32Thunk_SetNamedPipeHandleState@16:
@@ -5063,6 +5111,10 @@ _Kernel32Thunk_WriteFile@20:
     .p2align 4
 _Kernel32Thunk_WriteFileEx@20:
     jmp     *__imp__WriteFileEx@20
+    .globl  _Kernel32Thunk_WriteFileGather@20
+    .p2align 4
+_Kernel32Thunk_WriteFileGather@20:
+    jmp     *__imp__WriteFileGather@20
     .globl  _Kernel32Thunk_WritePrivateProfileSectionA@12
     .p2align 4
 _Kernel32Thunk_WritePrivateProfileSectionA@12:

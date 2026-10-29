@@ -355,6 +355,14 @@ Kernel32Thunk_CreateJobObjectA:
     .p2align 4
 Kernel32Thunk_CreateJobObjectW:
     jmp     *__imp_CreateJobObjectW(%rip)
+    .globl  Kernel32Thunk_CreateMailslotA
+    .p2align 4
+Kernel32Thunk_CreateMailslotA:
+    jmp     *__imp_CreateMailslotA(%rip)
+    .globl  Kernel32Thunk_CreateMailslotW
+    .p2align 4
+Kernel32Thunk_CreateMailslotW:
+    jmp     *__imp_CreateMailslotW(%rip)
     .globl  Kernel32Thunk_CreateMemoryResourceNotification
     .p2align 4
 Kernel32Thunk_CreateMemoryResourceNotification:
@@ -1459,10 +1467,46 @@ Kernel32Thunk_GetFirmwareEnvironmentVariableExW:
     .p2align 4
 Kernel32Thunk_GetFirmwareEnvironmentVariableW:
     jmp     *__imp_GetFirmwareEnvironmentVariableW(%rip)
+    .globl  Kernel32Thunk_GetMailslotInfo
+    .p2align 4
+Kernel32Thunk_GetMailslotInfo:
+    jmp     *__imp_GetMailslotInfo(%rip)
     .globl  Kernel32Thunk_GetThreadSelectorEntry
     .p2align 4
 Kernel32Thunk_GetThreadSelectorEntry:
     jmp     *__imp_GetThreadSelectorEntry(%rip)
+    .globl  Kernel32Thunk_Heap32First
+    .p2align 4
+Kernel32Thunk_Heap32First:
+    jmp     *__imp_Heap32First(%rip)
+    .globl  Kernel32Thunk_Heap32ListFirst
+    .p2align 4
+Kernel32Thunk_Heap32ListFirst:
+    jmp     *__imp_Heap32ListFirst(%rip)
+    .globl  Kernel32Thunk_Heap32ListNext
+    .p2align 4
+Kernel32Thunk_Heap32ListNext:
+    jmp     *__imp_Heap32ListNext(%rip)
+    .globl  Kernel32Thunk_Heap32Next
+    .p2align 4
+Kernel32Thunk_Heap32Next:
+    jmp     *__imp_Heap32Next(%rip)
+    .globl  Kernel32Thunk_PssCaptureSnapshot
+    .p2align 4
+Kernel32Thunk_PssCaptureSnapshot:
+    jmp     *__imp_PssCaptureSnapshot(%rip)
+    .globl  Kernel32Thunk_PssFreeSnapshot
+    .p2align 4
+Kernel32Thunk_PssFreeSnapshot:
+    jmp     *__imp_PssFreeSnapshot(%rip)
+    .globl  Kernel32Thunk_PssQuerySnapshot
+    .p2align 4
+Kernel32Thunk_PssQuerySnapshot:
+    jmp     *__imp_PssQuerySnapshot(%rip)
+    .globl  Kernel32Thunk_ReadFileScatter
+    .p2align 4
+Kernel32Thunk_ReadFileScatter:
+    jmp     *__imp_ReadFileScatter(%rip)
     .globl  Kernel32Thunk_ReplaceFileA
     .p2align 4
 Kernel32Thunk_ReplaceFileA:
@@ -4203,6 +4247,10 @@ Kernel32Thunk_SetLocaleInfoA:
     .p2align 4
 Kernel32Thunk_SetLocaleInfoW:
     jmp     *__imp_SetLocaleInfoW(%rip)
+    .globl  Kernel32Thunk_SetMailslotInfo
+    .p2align 4
+Kernel32Thunk_SetMailslotInfo:
+    jmp     *__imp_SetMailslotInfo(%rip)
     .globl  Kernel32Thunk_SetNamedPipeHandleState
     .p2align 4
 Kernel32Thunk_SetNamedPipeHandleState:
@@ -5063,6 +5111,10 @@ Kernel32Thunk_WriteFile:
     .p2align 4
 Kernel32Thunk_WriteFileEx:
     jmp     *__imp_WriteFileEx(%rip)
+    .globl  Kernel32Thunk_WriteFileGather
+    .p2align 4
+Kernel32Thunk_WriteFileGather:
+    jmp     *__imp_WriteFileGather(%rip)
     .globl  Kernel32Thunk_WritePrivateProfileSectionA
     .p2align 4
 Kernel32Thunk_WritePrivateProfileSectionA:

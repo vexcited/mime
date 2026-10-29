@@ -533,6 +533,18 @@ Kernel32Thunk_CreateJobObjectW:
     adrp    x16, __imp_CreateJobObjectW
     ldr     x16, [x16, :lo12:__imp_CreateJobObjectW]
     br      x16
+    .globl  Kernel32Thunk_CreateMailslotA
+    .p2align 4
+Kernel32Thunk_CreateMailslotA:
+    adrp    x16, __imp_CreateMailslotA
+    ldr     x16, [x16, :lo12:__imp_CreateMailslotA]
+    br      x16
+    .globl  Kernel32Thunk_CreateMailslotW
+    .p2align 4
+Kernel32Thunk_CreateMailslotW:
+    adrp    x16, __imp_CreateMailslotW
+    ldr     x16, [x16, :lo12:__imp_CreateMailslotW]
+    br      x16
     .globl  Kernel32Thunk_CreateMemoryResourceNotification
     .p2align 4
 Kernel32Thunk_CreateMemoryResourceNotification:
@@ -2189,11 +2201,65 @@ Kernel32Thunk_GetFirmwareEnvironmentVariableW:
     adrp    x16, __imp_GetFirmwareEnvironmentVariableW
     ldr     x16, [x16, :lo12:__imp_GetFirmwareEnvironmentVariableW]
     br      x16
+    .globl  Kernel32Thunk_GetMailslotInfo
+    .p2align 4
+Kernel32Thunk_GetMailslotInfo:
+    adrp    x16, __imp_GetMailslotInfo
+    ldr     x16, [x16, :lo12:__imp_GetMailslotInfo]
+    br      x16
     .globl  Kernel32Thunk_GetThreadSelectorEntry
     .p2align 4
 Kernel32Thunk_GetThreadSelectorEntry:
     adrp    x16, __imp_GetThreadSelectorEntry
     ldr     x16, [x16, :lo12:__imp_GetThreadSelectorEntry]
+    br      x16
+    .globl  Kernel32Thunk_Heap32First
+    .p2align 4
+Kernel32Thunk_Heap32First:
+    adrp    x16, __imp_Heap32First
+    ldr     x16, [x16, :lo12:__imp_Heap32First]
+    br      x16
+    .globl  Kernel32Thunk_Heap32ListFirst
+    .p2align 4
+Kernel32Thunk_Heap32ListFirst:
+    adrp    x16, __imp_Heap32ListFirst
+    ldr     x16, [x16, :lo12:__imp_Heap32ListFirst]
+    br      x16
+    .globl  Kernel32Thunk_Heap32ListNext
+    .p2align 4
+Kernel32Thunk_Heap32ListNext:
+    adrp    x16, __imp_Heap32ListNext
+    ldr     x16, [x16, :lo12:__imp_Heap32ListNext]
+    br      x16
+    .globl  Kernel32Thunk_Heap32Next
+    .p2align 4
+Kernel32Thunk_Heap32Next:
+    adrp    x16, __imp_Heap32Next
+    ldr     x16, [x16, :lo12:__imp_Heap32Next]
+    br      x16
+    .globl  Kernel32Thunk_PssCaptureSnapshot
+    .p2align 4
+Kernel32Thunk_PssCaptureSnapshot:
+    adrp    x16, __imp_PssCaptureSnapshot
+    ldr     x16, [x16, :lo12:__imp_PssCaptureSnapshot]
+    br      x16
+    .globl  Kernel32Thunk_PssFreeSnapshot
+    .p2align 4
+Kernel32Thunk_PssFreeSnapshot:
+    adrp    x16, __imp_PssFreeSnapshot
+    ldr     x16, [x16, :lo12:__imp_PssFreeSnapshot]
+    br      x16
+    .globl  Kernel32Thunk_PssQuerySnapshot
+    .p2align 4
+Kernel32Thunk_PssQuerySnapshot:
+    adrp    x16, __imp_PssQuerySnapshot
+    ldr     x16, [x16, :lo12:__imp_PssQuerySnapshot]
+    br      x16
+    .globl  Kernel32Thunk_ReadFileScatter
+    .p2align 4
+Kernel32Thunk_ReadFileScatter:
+    adrp    x16, __imp_ReadFileScatter
+    ldr     x16, [x16, :lo12:__imp_ReadFileScatter]
     br      x16
     .globl  Kernel32Thunk_ReplaceFileA
     .p2align 4
@@ -6305,6 +6371,12 @@ Kernel32Thunk_SetLocaleInfoW:
     adrp    x16, __imp_SetLocaleInfoW
     ldr     x16, [x16, :lo12:__imp_SetLocaleInfoW]
     br      x16
+    .globl  Kernel32Thunk_SetMailslotInfo
+    .p2align 4
+Kernel32Thunk_SetMailslotInfo:
+    adrp    x16, __imp_SetMailslotInfo
+    ldr     x16, [x16, :lo12:__imp_SetMailslotInfo]
+    br      x16
     .globl  Kernel32Thunk_SetNamedPipeHandleState
     .p2align 4
 Kernel32Thunk_SetNamedPipeHandleState:
@@ -7594,6 +7666,12 @@ Kernel32Thunk_WriteFile:
 Kernel32Thunk_WriteFileEx:
     adrp    x16, __imp_WriteFileEx
     ldr     x16, [x16, :lo12:__imp_WriteFileEx]
+    br      x16
+    .globl  Kernel32Thunk_WriteFileGather
+    .p2align 4
+Kernel32Thunk_WriteFileGather:
+    adrp    x16, __imp_WriteFileGather
+    ldr     x16, [x16, :lo12:__imp_WriteFileGather]
     br      x16
     .globl  Kernel32Thunk_WritePrivateProfileSectionA
     .p2align 4

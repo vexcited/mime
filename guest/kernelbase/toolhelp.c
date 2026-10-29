@@ -72,6 +72,28 @@ typedef struct tagTHREADENTRY32 {
     DWORD dwFlags;
 } THREADENTRY32, *LPTHREADENTRY32;
 
+typedef struct tagHEAPLIST32 {
+    SIZE_T dwSize;
+    DWORD th32ProcessID;
+    ULONG_PTR th32HeapID;
+    DWORD dwFlags;
+} HEAPLIST32, *PHEAPLIST32;
+
+typedef struct tagHEAPENTRY32 {
+    SIZE_T dwSize;
+    HANDLE hHandle;
+    ULONG_PTR dwAddress;
+    SIZE_T dwBlockSize;
+    DWORD dwFlags;
+    DWORD dwLockCount;
+    DWORD dwResvd;
+    DWORD th32ProcessID;
+    ULONG_PTR th32HeapID;
+} HEAPENTRY32, *PHEAPENTRY32;
+
+#define HF32_DEFAULT 1
+#define LF32_FIXED 0x00000001
+
 /*
  * like on windows, the snapshot lives in a section so its handle can be duplicated. a header with the list counts and
  * offsets is followed by the module, process and thread entries.
@@ -83,12 +105,14 @@ typedef struct SNAPSHOT {
     ULONG ModulePos;
     ULONG ProcessPos;
     ULONG ThreadPos;
-    ULONG Reserved[2];
+    ULONG HeapCount;
+    ULONG HeapPos;
 } SNAPSHOT;
 
 #define SNAPSHOT_MODULES(s) ((MODULEENTRY32W *)((PUCHAR)(s) + sizeof(SNAPSHOT)))
 #define SNAPSHOT_PROCESSES(s) ((PROCESSENTRY32W *)(SNAPSHOT_MODULES(s) + (s)->ModuleCount))
 #define SNAPSHOT_THREADS(s) ((THREADENTRY32 *)(SNAPSHOT_PROCESSES(s) + (s)->ProcessCount))
+#define SNAPSHOT_HEAPS(s) ((HEAPLIST32 *)(SNAPSHOT_THREADS(s) + (s)->ThreadCount))
 
 #define TH32CS_INHERIT 0x80000000u
 #define TH32CS_ALL (TH32CS_SNAPHEAPLIST | TH32CS_SNAPPROCESS | TH32CS_SNAPTHREAD | TH32CS_SNAPMODULE)
@@ -359,8 +383,10 @@ WINBASEAPI HANDLE WINAPI CreateToolhelp32Snapshot(DWORD flags, DWORD pid)
         processes = 0;
     if (!(flags & TH32CS_SNAPTHREAD))
         threads = 0;
+    /* the heaps are listed for this process only, whose block structures can be read. */
+    ULONG heaps = (flags & TH32CS_SNAPHEAPLIST) && pid == self ? NtCurrentPeb()->NumberOfHeaps : 0;
     SIZE_T total = sizeof(SNAPSHOT) + modules.Count * sizeof(MODULEENTRY32W) + processes * sizeof(PROCESSENTRY32W) +
-                   threads * sizeof(THREADENTRY32);
+                   threads * sizeof(THREADENTRY32) + heaps * sizeof(HEAPLIST32);
     LARGE_INTEGER size;
     size.QuadPart = (LONGLONG)total;
     HANDLE section;
@@ -385,6 +411,14 @@ WINBASEAPI HANDLE WINAPI CreateToolhelp32Snapshot(DWORD flags, DWORD pid)
     s->ModuleCount = modules.Count;
     s->ProcessCount = processes;
     s->ThreadCount = threads;
+    s->HeapCount = heaps;
+    for (ULONG i = 0; i < heaps; i++) {
+        HEAPLIST32 *list = &SNAPSHOT_HEAPS(s)[i];
+        list->dwSize = sizeof(*list);
+        list->th32ProcessID = pid;
+        list->th32HeapID = (ULONG_PTR)NtCurrentPeb()->ProcessHeaps[i];
+        list->dwFlags = NtCurrentPeb()->ProcessHeaps[i] == NtCurrentPeb()->ProcessHeap ? HF32_DEFAULT : 0;
+    }
     if (modules.Count)
         memcpy(SNAPSHOT_MODULES(s), modules.Entries, modules.Count * sizeof(MODULEENTRY32W));
     PROCESSENTRY32W *out_process = SNAPSHOT_PROCESSES(s);
@@ -940,3 +974,83 @@ WINBASEAPI BOOL WINAPI DeviceIoControl(HANDLE device, DWORD code, LPVOID in, DWO
     return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
 }
 
+/* ------------------------------------------------------------------ heaps */
+
+static BOOL next_heap(HANDLE handle, PHEAPLIST32 entry, BOOL first)
+{
+    if (!entry || entry->dwSize < sizeof(*entry)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    SNAPSHOT *s = map_snapshot(handle);
+    if (!s)
+        return FALSE;
+    if (first)
+        s->HeapPos = 0;
+    BOOL ok = s->HeapPos < s->HeapCount;
+    if (ok)
+        *entry = SNAPSHOT_HEAPS(s)[s->HeapPos++];
+    else
+        KbSetError(ERROR_NO_MORE_FILES);
+    unmap_snapshot(s);
+    return ok;
+}
+
+WINBASEAPI BOOL WINAPI Heap32ListFirst(HANDLE snapshot, PHEAPLIST32 entry)
+{
+    return next_heap(snapshot, entry, TRUE);
+}
+
+WINBASEAPI BOOL WINAPI Heap32ListNext(HANDLE snapshot, PHEAPLIST32 entry)
+{
+    return next_heap(snapshot, entry, FALSE);
+}
+
+/* the blocks of a heap of this process that are in use, the one after the address given if one is. */
+static BOOL heap_block(PHEAPENTRY32 entry, DWORD pid, ULONG_PTR heap, BOOL after)
+{
+    if (!entry || entry->dwSize < sizeof(*entry) || pid != GetCurrentProcessId()) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PEB *peb = NtCurrentPeb();
+    BOOL known = FALSE;
+    for (ULONG i = 0; i < peb->NumberOfHeaps; i++)
+        known |= (ULONG_PTR)peb->ProcessHeaps[i] == heap;
+    if (!known) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PROCESS_HEAP_ENTRY walk = {};
+    while (HeapWalk((HANDLE)heap, &walk)) {
+        if (!(walk.wFlags & PROCESS_HEAP_ENTRY_BUSY))
+            continue;
+        if (after && (ULONG_PTR)walk.lpData <= entry->dwAddress)
+            continue;
+        entry->hHandle = (HANDLE)heap;
+        entry->dwAddress = (ULONG_PTR)walk.lpData;
+        entry->dwBlockSize = walk.cbData;
+        entry->dwFlags = LF32_FIXED;
+        entry->dwLockCount = 0;
+        entry->dwResvd = 0;
+        entry->th32ProcessID = pid;
+        entry->th32HeapID = heap;
+        return TRUE;
+    }
+    KbSetError(ERROR_NO_MORE_FILES);
+    return FALSE;
+}
+
+WINBASEAPI BOOL WINAPI Heap32First(PHEAPENTRY32 entry, DWORD pid, ULONG_PTR heap)
+{
+    return heap_block(entry, pid, heap, FALSE);
+}
+
+WINBASEAPI BOOL WINAPI Heap32Next(PHEAPENTRY32 entry)
+{
+    if (!entry || entry->dwSize < sizeof(*entry)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return heap_block(entry, entry->th32ProcessID, entry->th32HeapID, TRUE);
+}

@@ -112,6 +112,8 @@ EXPORTS
     CreateIoCompletionPort=_CreateIoCompletionPort@16
     CreateJobObjectA=_CreateJobObjectA@8
     CreateJobObjectW=_CreateJobObjectW@8
+    CreateMailslotA=_CreateMailslotA@16
+    CreateMailslotW=_CreateMailslotW@16
     CreateMemoryResourceNotification=_CreateMemoryResourceNotification@4
     CreateMutexA=_CreateMutexA@12
     CreateMutexExA=_CreateMutexExA@16
@@ -415,7 +417,16 @@ EXPORTS
     GetFirmwareEnvironmentVariableW=_GetFirmwareEnvironmentVariableW@16
     GetFirmwareEnvironmentVariableExA=_GetFirmwareEnvironmentVariableExA@20
     GetFirmwareEnvironmentVariableExW=_GetFirmwareEnvironmentVariableExW@20
+    GetMailslotInfo=_GetMailslotInfo@20
     GetThreadSelectorEntry=_GetThreadSelectorEntry@12
+    Heap32First=_Heap32First@12
+    Heap32ListFirst=_Heap32ListFirst@8
+    Heap32ListNext=_Heap32ListNext@8
+    Heap32Next=_Heap32Next@4
+    PssCaptureSnapshot=_PssCaptureSnapshot@16
+    PssFreeSnapshot=_PssFreeSnapshot@8
+    PssQuerySnapshot=_PssQuerySnapshot@16
+    ReadFileScatter=_ReadFileScatter@20
     ReplaceFileA=_ReplaceFileA@24
     SetFirmwareEnvironmentVariableA=_SetFirmwareEnvironmentVariableA@16
     SetFirmwareEnvironmentVariableW=_SetFirmwareEnvironmentVariableW@16
@@ -1160,6 +1171,7 @@ EXPORTS
     SetLocalTime=_SetLocalTime@4
     SetLocaleInfoA=_SetLocaleInfoA@12
     SetLocaleInfoW=_SetLocaleInfoW@12
+    SetMailslotInfo=_SetMailslotInfo@8
     SetNamedPipeHandleState=_SetNamedPipeHandleState@16
     SetPriorityClass=_SetPriorityClass@8
     SetProcessAffinityMask=_SetProcessAffinityMask@8
@@ -1401,6 +1413,7 @@ EXPORTS
     WriteConsoleW=_WriteConsoleW@20
     WriteFile=_WriteFile@20
     WriteFileEx=_WriteFileEx@20
+    WriteFileGather=_WriteFileGather@20
     WritePrivateProfileSectionA=_WritePrivateProfileSectionA@12
     WritePrivateProfileSectionW=_WritePrivateProfileSectionW@12
     WritePrivateProfileStringA=_WritePrivateProfileStringA@16

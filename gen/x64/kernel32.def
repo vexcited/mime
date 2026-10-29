@@ -156,6 +156,8 @@ EXPORTS
     CreateIoCompletionPort=Kernel32Thunk_CreateIoCompletionPort
     CreateJobObjectA=Kernel32Thunk_CreateJobObjectA
     CreateJobObjectW=Kernel32Thunk_CreateJobObjectW
+    CreateMailslotA=Kernel32Thunk_CreateMailslotA
+    CreateMailslotW=Kernel32Thunk_CreateMailslotW
     CreateMemoryResourceNotification=Kernel32Thunk_CreateMemoryResourceNotification
     CreateMutexA=Kernel32Thunk_CreateMutexA
     CreateMutexExA=Kernel32Thunk_CreateMutexExA
@@ -494,7 +496,16 @@ EXPORTS
     GetFirmwareEnvironmentVariableExA=Kernel32Thunk_GetFirmwareEnvironmentVariableExA
     GetFirmwareEnvironmentVariableExW=Kernel32Thunk_GetFirmwareEnvironmentVariableExW
     GetFirmwareEnvironmentVariableW=Kernel32Thunk_GetFirmwareEnvironmentVariableW
+    GetMailslotInfo=Kernel32Thunk_GetMailslotInfo
     GetThreadSelectorEntry=Kernel32Thunk_GetThreadSelectorEntry
+    Heap32First=Kernel32Thunk_Heap32First
+    Heap32ListFirst=Kernel32Thunk_Heap32ListFirst
+    Heap32ListNext=Kernel32Thunk_Heap32ListNext
+    Heap32Next=Kernel32Thunk_Heap32Next
+    PssCaptureSnapshot=Kernel32Thunk_PssCaptureSnapshot
+    PssFreeSnapshot=Kernel32Thunk_PssFreeSnapshot
+    PssQuerySnapshot=Kernel32Thunk_PssQuerySnapshot
+    ReadFileScatter=Kernel32Thunk_ReadFileScatter
     ReplaceFileA=Kernel32Thunk_ReplaceFileA
     SetFirmwareEnvironmentVariableA=Kernel32Thunk_SetFirmwareEnvironmentVariableA
     SetFirmwareEnvironmentVariableExA=Kernel32Thunk_SetFirmwareEnvironmentVariableExA
@@ -1307,6 +1318,7 @@ EXPORTS
     SetLocalTime=Kernel32Thunk_SetLocalTime
     SetLocaleInfoA=Kernel32Thunk_SetLocaleInfoA
     SetLocaleInfoW=Kernel32Thunk_SetLocaleInfoW
+    SetMailslotInfo=Kernel32Thunk_SetMailslotInfo
     SetNamedPipeHandleState=Kernel32Thunk_SetNamedPipeHandleState
     SetPriorityClass=Kernel32Thunk_SetPriorityClass
     SetPrivateObjectSecurity=kernelbase.SetPrivateObjectSecurity
@@ -1569,6 +1581,7 @@ EXPORTS
     WriteConsoleW=Kernel32Thunk_WriteConsoleW
     WriteFile=Kernel32Thunk_WriteFile
     WriteFileEx=Kernel32Thunk_WriteFileEx
+    WriteFileGather=Kernel32Thunk_WriteFileGather
     WritePrivateProfileSectionA=Kernel32Thunk_WritePrivateProfileSectionA
     WritePrivateProfileSectionW=Kernel32Thunk_WritePrivateProfileSectionW
     WritePrivateProfileStringA=Kernel32Thunk_WritePrivateProfileStringA
