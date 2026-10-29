@@ -1593,6 +1593,7 @@ EXPORTS
     WriteProfileStringA=Kernel32Thunk_WriteProfileStringA
     WriteProfileStringW=Kernel32Thunk_WriteProfileStringW
     ZombifyActCtx=Kernel32Thunk_ZombifyActCtx
+    __chkstk=ntdll.__chkstk
     _lclose=Kernel32Thunk__lclose
     _lcreat=Kernel32Thunk__lcreat
     _llseek=Kernel32Thunk__llseek

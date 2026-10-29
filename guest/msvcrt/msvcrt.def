@@ -12,6 +12,11 @@ EXPORTS
     __dllonexit
     __doserrno
     __dstbias
+    __crtCompareStringA
+    __crtCompareStringW
+    __crtGetStringTypeW
+    __crtLCMapStringA
+    __crtLCMapStringW
     __fpecode
     __getmainargs
     __initenv DATA
