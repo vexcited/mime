@@ -974,15 +974,20 @@ static const WCHAR *syskind_name(SYSKIND kind)
     }
 }
 
-static LSTATUS set_default(HKEY root, const WCHAR *subkey, const WCHAR *name, const WCHAR *value)
+static LSTATUS set_value(HKEY root, REGSAM view, const WCHAR *subkey, const WCHAR *name, const WCHAR *value)
 {
     HKEY key;
-    LSTATUS status = RegCreateKeyExW(root, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
+    LSTATUS status = RegCreateKeyExW(root, subkey, 0, nullptr, 0, KEY_SET_VALUE | view, nullptr, &key, nullptr);
     if (status)
         return status;
     status = RegSetValueExW(key, name, 0, REG_SZ, (const BYTE *)value, (DWORD)((wcslen(value) + 1) * sizeof(WCHAR)));
     RegCloseKey(key);
     return status;
+}
+
+static LSTATUS set_default(HKEY root, const WCHAR *subkey, const WCHAR *name, const WCHAR *value)
+{
+    return set_value(root, 0, subkey, name, value);
 }
 
 static HRESULT register_lib(ITypeLib *lib, LPCOLESTR path, LPCOLESTR help_dir, HKEY root)
@@ -1081,21 +1086,24 @@ static HRESULT register_lib(ITypeLib *lib, LPCOLESTR path, LPCOLESTR help_dir, H
         WCHAR iid_text[40], ikey[100];
         StringFromGUID2(&iid, iid_text, 40);
         wsprintfW(ikey, L"Interface\\%ls", iid_text);
-        if (set_default(root, ikey, nullptr, type_name ? type_name : L"")) {
-            hr = TYPE_E_REGISTRYACCESS;
-        } else {
-            if (proxy) {
-                WCHAR sk[160];
-                wsprintfW(sk, L"%ls\\ProxyStubClsid", ikey);
-                if (set_default(root, sk, nullptr, proxy))
-                    hr = TYPE_E_REGISTRYACCESS;
-                wsprintfW(sk, L"%ls\\ProxyStubClsid32", ikey);
-                if (set_default(root, sk, nullptr, proxy))
-                    hr = TYPE_E_REGISTRYACCESS;
+        /* in the view of the program, then in the 32-bit one, which a 32-bit program has as its own. */
+        for (int pass = 0; pass < 2; pass++) {
+            REGSAM view = pass ? KEY_WOW64_32KEY : 0;
+            if (set_value(root, view, ikey, nullptr, type_name ? type_name : L"")) {
+                hr = TYPE_E_REGISTRYACCESS;
+                continue;
             }
             WCHAR sk[160];
+            if (proxy) {
+                wsprintfW(sk, L"%ls\\ProxyStubClsid", ikey);
+                if (set_value(root, view, sk, nullptr, proxy))
+                    hr = TYPE_E_REGISTRYACCESS;
+                wsprintfW(sk, L"%ls\\ProxyStubClsid32", ikey);
+                if (set_value(root, view, sk, nullptr, proxy))
+                    hr = TYPE_E_REGISTRYACCESS;
+            }
             wsprintfW(sk, L"%ls\\TypeLib", ikey);
-            if (set_default(root, sk, nullptr, guid) || set_default(root, sk, L"Version", version))
+            if (set_value(root, view, sk, nullptr, guid) || set_value(root, view, sk, L"Version", version))
                 hr = TYPE_E_REGISTRYACCESS;
         }
         SysFreeString(type_name);
