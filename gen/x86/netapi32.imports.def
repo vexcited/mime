@@ -1,5 +1,6 @@
 LIBRARY netapi32.dll
 EXPORTS
+    DsGetDcNameA@24
     DsGetDcNameW@24
     DsRoleFreeMemory@4
     DsRoleGetPrimaryDomainInformation@12
@@ -7,20 +8,27 @@ EXPORTS
     NetApiBufferFree@4
     NetApiBufferReallocate@12
     NetApiBufferSize@8
+    NetDfsEnum@24
     NetFreeAadJoinInformation@4
     NetGetAadJoinInformation@8
+    NetGetDCName@12
     NetGetJoinInformation@12
     NetGroupAddUser@12
     NetGroupDelUser@12
+    NetGroupGetUsers@32
     NetLocalGroupAddMembers@20
     NetLocalGroupDelMembers@20
+    NetLocalGroupEnum@28
+    NetLocalGroupGetMembers@32
     NetShareAdd@16
     NetShareDel@12
     NetShareEnum@28
     NetShareGetInfo@16
     NetShareSetInfo@20
     NetUserAdd@16
+    NetUserChangePassword@16
     NetUserDel@8
+    NetUserEnum@32
     NetUserGetGroups@28
     NetUserGetInfo@16
     NetUserGetLocalGroups@32

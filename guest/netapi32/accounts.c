@@ -19,6 +19,7 @@ typedef LPCWSTR LMCSTR;
 #define ERROR_NO_SUCH_DOMAIN_CODE 1355
 
 NETAPI NET_API_STATUS WINAPI NetApiBufferAllocate(DWORD size, LPVOID *buffer);
+NETAPI NET_API_STATUS WINAPI NetApiBufferFree(LPVOID buffer);
 
 static BOOL local_server(LMCSTR server)
 {
@@ -32,17 +33,21 @@ static BOOL local_server(LMCSTR server)
            (GetComputerNameW(computer, &n) && !_wcsicmp(server, computer));
 }
 
-static BOOL logged_on_user(LMCSTR user)
+static BOOL user_name(WCHAR *name, DWORD size)
 {
     typedef BOOL (WINAPI *GET_USER_NAME)(LPWSTR, LPDWORD);
-    WCHAR name[257];
-    DWORD size = RTL_NUMBER_OF(name);
     HMODULE advapi = LoadLibraryW(L"advapi32.dll");
     GET_USER_NAME get = advapi ? (GET_USER_NAME)GetProcAddress(advapi, "GetUserNameW") : nullptr;
-    BOOL known = user && get && get(name, &size) && !_wcsicmp(user, name);
+    BOOL ok = get && get(name, &size);
     if (advapi)
         FreeLibrary(advapi);
-    return known;
+    return ok;
+}
+
+static BOOL logged_on_user(LMCSTR user)
+{
+    WCHAR name[257];
+    return user && user_name(name, RTL_NUMBER_OF(name)) && !_wcsicmp(user, name);
 }
 
 typedef struct NAME_ENTRY {
@@ -88,6 +93,11 @@ static NET_API_STATUS name_list(const NAME_ENTRY *entries, DWORD count, DWORD le
     return NERR_Success;
 }
 
+/* the aliases of the account database, which are the two the account belongs to. */
+static const NAME_ENTRY local_groups[] = {
+    {L"Administrators", L"Administrators have complete and unrestricted access to the computer/domain", 0},
+    {L"Users", L"Users are prevented from making accidental or intentional system-wide changes and can run most applications", 0}};
+
 NETAPI NET_API_STATUS WINAPI NetUserGetLocalGroups(LMCSTR server, LMCSTR user, DWORD level, DWORD flags,
                                                     LPBYTE *buffer, DWORD preferred, LPDWORD entries, LPDWORD total)
 {
@@ -101,9 +111,7 @@ NETAPI NET_API_STATUS WINAPI NetUserGetLocalGroups(LMCSTR server, LMCSTR user, D
         return ERROR_BAD_NETPATH;
     if (!logged_on_user(user))
         return NERR_UserNotFound;
-    static const NAME_ENTRY groups[] = {{L"Administrators", L"Administrators have complete and unrestricted access to the computer/domain", 0},
-                                        {L"Users", L"Users are prevented from making accidental or intentional system-wide changes and can run most applications", 0}};
-    return name_list(groups, RTL_NUMBER_OF(groups), level, TRUE, buffer, entries, total);
+    return name_list(local_groups, RTL_NUMBER_OF(local_groups), level, TRUE, buffer, entries, total);
 }
 
 /* the account has no global groups but None, which every local account has. */
@@ -204,4 +212,173 @@ NETAPI DWORD WINAPI DsGetDcNameW(LMCSTR computer, LMCSTR domain, GUID *guid, LMC
     if (computer && *computer && !local_server(computer))
         return ERROR_BAD_NETPATH;
     return ERROR_NO_SUCH_DOMAIN_CODE;
+}
+
+NETAPI NET_API_STATUS WINAPI NetLocalGroupEnum(LMCSTR server, DWORD level, LPBYTE *buffer, DWORD preferred,
+                                               LPDWORD entries, LPDWORD total, PDWORD_PTR resume)
+{
+    if (!buffer || !entries || !total)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *entries = *total = 0;
+    if (level > 1)
+        return ERROR_INVALID_LEVEL;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    return name_list(local_groups, RTL_NUMBER_OF(local_groups), level, TRUE, buffer, entries, total);
+}
+
+/* the only global group is None, and the account is in it. */
+NETAPI NET_API_STATUS WINAPI NetGroupGetUsers(LMCSTR server, LMCSTR group, DWORD level, LPBYTE *buffer, DWORD preferred,
+                                              LPDWORD entries, LPDWORD total, PDWORD_PTR resume)
+{
+    if (!buffer || !entries || !total || !group)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *entries = *total = 0;
+    if (level > 1)
+        return ERROR_INVALID_LEVEL;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    WCHAR name[257];
+    if (_wcsicmp(group, L"None"))
+        return NERR_GroupNotFound;
+    if (!user_name(name, RTL_NUMBER_OF(name)))
+        return NERR_UserNotFound;
+    /* 7 is SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED. */
+    NAME_ENTRY member = {name, nullptr, 7};
+    return name_list(&member, 1, level, FALSE, buffer, entries, total);
+}
+
+#define ERROR_NO_SUCH_ALIAS_ 1376
+#define SidTypeUser_ 1
+#define SidTypeWellKnownGroup_ 5
+
+typedef struct MEMBER {
+    const BYTE *Sid;
+    DWORD Usage;
+    WCHAR Name[300];
+} MEMBER;
+
+NETAPI NET_API_STATUS WINAPI NetUserGetInfo(LPCWSTR server, LPCWSTR user, DWORD level, LPBYTE *buffer);
+
+/* administrators are the account, and users are whoever is signed in, as they are on a workstation. */
+NETAPI NET_API_STATUS WINAPI NetLocalGroupGetMembers(LMCSTR server, LMCSTR group, DWORD level, LPBYTE *buffer,
+                                                     DWORD preferred, LPDWORD entries, LPDWORD total, PDWORD_PTR resume)
+{
+    if (!buffer || !entries || !total || !group)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *entries = *total = 0;
+    if (level > 3)
+        return ERROR_INVALID_LEVEL;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    static const BYTE interactive[] = {1, 1, 0, 0, 0, 0, 0, 5, 4, 0, 0, 0};
+    static const BYTE authenticated[] = {1, 1, 0, 0, 0, 0, 0, 5, 11, 0, 0, 0};
+    MEMBER members[2] = {};
+    DWORD count = 0;
+    LPBYTE info = nullptr;
+    if (!_wcsicmp(group, L"Administrators")) {
+        WCHAR computer[MAX_COMPUTERNAME_LENGTH + 1], user[257];
+        DWORD n = RTL_NUMBER_OF(computer);
+        if (!GetComputerNameW(computer, &n) || !user_name(user, RTL_NUMBER_OF(user)))
+            return NERR_UserNotFound;
+        NET_API_STATUS status = NetUserGetInfo(nullptr, user, 23, &info);
+        if (status)
+            return status;
+        /* the sid of level 23 is its last field. */
+        members[0].Sid = *(const BYTE **)(info + 3 * sizeof(PVOID) + sizeof(PVOID));
+        members[0].Usage = SidTypeUser_;
+        _snwprintf(members[0].Name, RTL_NUMBER_OF(members[0].Name), L"%ls\\%ls", computer, user);
+        count = 1;
+    } else if (!_wcsicmp(group, L"Users")) {
+        members[0] = (MEMBER){interactive, SidTypeWellKnownGroup_, L"NT AUTHORITY\\INTERACTIVE"};
+        members[1] = (MEMBER){authenticated, SidTypeWellKnownGroup_, L"NT AUTHORITY\\Authenticated Users"};
+        count = 2;
+    } else {
+        return ERROR_NO_SUCH_ALIAS_;
+    }
+    SIZE_T fixed = level == 0 ? sizeof(PVOID) : level == 3 ? sizeof(PVOID) : 3 * sizeof(PVOID);
+    SIZE_T bytes = fixed * count;
+    for (DWORD i = 0; i < count; i++)
+        bytes += 8 + 4 * members[i].Sid[1] + 8 + (wcslen(members[i].Name) + 1) * sizeof(WCHAR);
+    BYTE *memory;
+    NET_API_STATUS status = NetApiBufferAllocate((DWORD)bytes, (LPVOID *)&memory);
+    if (status) {
+        NetApiBufferFree(info);
+        return status;
+    }
+    memset(memory, 0, bytes);
+    BYTE *tail = memory + fixed * count;
+    for (DWORD i = 0; i < count; i++) {
+        PVOID *fields = (PVOID *)(memory + fixed * i);
+        SIZE_T sid_bytes = 8 + 4 * members[i].Sid[1], name_bytes = (wcslen(members[i].Name) + 1) * sizeof(WCHAR);
+        BYTE *sid = (BYTE *)(((ULONG_PTR)tail + 7) & ~(ULONG_PTR)7);
+        memcpy(sid, members[i].Sid, sid_bytes);
+        WCHAR *name = (WCHAR *)(sid + sid_bytes);
+        memcpy(name, members[i].Name, name_bytes);
+        tail = (BYTE *)name + name_bytes;
+        if (level == 3) {
+            fields[0] = name;
+        } else {
+            fields[0] = sid;
+            if (level) {
+                *(DWORD *)&fields[1] = members[i].Usage;
+                fields[2] = name;
+            }
+        }
+    }
+    NetApiBufferFree(info);
+    *buffer = memory;
+    *entries = *total = count;
+    return NERR_Success;
+}
+
+/* the account database is read only, whichever the account. */
+NETAPI NET_API_STATUS WINAPI NetUserChangePassword(LMCSTR domain, LMCSTR user, LMCSTR old_password, LMCSTR new_password)
+{
+    if (!old_password || !new_password)
+        return ERROR_INVALID_PARAMETER;
+    return refuse(domain);
+}
+
+#define NERR_DCNotFound 2453
+
+/* a machine outside a domain has no controller of one to find, which is what asking for the local one answers too. */
+NETAPI NET_API_STATUS WINAPI NetGetDCName(LMCSTR server, LMCSTR domain, LPBYTE *buffer)
+{
+    if (!buffer)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    if (server && *server && !local_server(server))
+        return ERROR_BAD_NETPATH;
+    return NERR_DCNotFound;
+}
+
+NETAPI DWORD WINAPI DsGetDcNameA(LPCSTR computer, LPCSTR domain, GUID *guid, LPCSTR site, ULONG flags, PVOID *info)
+{
+    if (!info)
+        return ERROR_INVALID_PARAMETER;
+    *info = nullptr;
+    WCHAR wide[MAX_COMPUTERNAME_LENGTH + 3] = {};
+    if (computer && *computer &&
+        !MultiByteToWideChar(CP_ACP, 0, computer, -1, wide, RTL_NUMBER_OF(wide)))
+        return ERROR_BAD_NETPATH;
+    return DsGetDcNameW(computer && *computer ? wide : nullptr, nullptr, guid, nullptr, flags, info);
+}
+
+#define RPC_S_SERVER_UNAVAILABLE_ 1722
+
+/* there is no distributed file system service to ask about its namespaces. */
+NETAPI NET_API_STATUS WINAPI NetDfsEnum(LPWSTR name, DWORD level, DWORD preferred, LPBYTE *buffer, LPDWORD entries,
+                                        LPDWORD resume)
+{
+    if (!name || !buffer || !entries)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *entries = 0;
+    if (level < 1 || (level > 4 && level != 200 && level != 300))
+        return ERROR_INVALID_LEVEL;
+    return local_server(name) ? RPC_S_SERVER_UNAVAILABLE_ : ERROR_BAD_NETPATH;
 }

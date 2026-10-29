@@ -22,6 +22,7 @@ typedef LPCWSTR LMCSTR;
 #define TOKEN_QUERY 0x0008
 
 NETAPI NET_API_STATUS WINAPI NetApiBufferAllocate(DWORD size, LPVOID *buffer);
+NETAPI NET_API_STATUS WINAPI NetApiBufferFree(LPVOID buffer);
 
 typedef BOOL(WINAPI *LOOKUP_ACCOUNT_SID)(LPCWSTR, PSID, LPWSTR, LPDWORD, LPWSTR, LPDWORD, PDWORD);
 
@@ -175,6 +176,35 @@ NETAPI NET_API_STATUS WINAPI NetUserGetInfo(LPCWSTR server, LPCWSTR user, DWORD 
         break;
     }
     *buffer = out;
+    return NERR_Success;
+}
+
+#define FILTER_NORMAL_ACCOUNT 0x0002
+
+/* the one account makes a list of one, since the fixed part of an entry is the same as the one of a single account. */
+NETAPI NET_API_STATUS WINAPI NetUserEnum(LPCWSTR server, DWORD level, DWORD filter, LPBYTE *buffer, DWORD preferred,
+                                         LPDWORD entries, LPDWORD total, PDWORD_PTR resume)
+{
+    if (!buffer || !entries || !total)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *entries = *total = 0;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    BYTE sid[68];
+    WCHAR name[256];
+    if (!current_user(sid, sizeof(sid), name, RTL_NUMBER_OF(name)))
+        return NERR_UserNotFound;
+    NET_API_STATUS status = NetUserGetInfo(server, name, level, buffer);
+    if (status)
+        return status;
+    /* asking only for kinds of account the machine has none of leaves the list empty. */
+    if (filter && !(filter & FILTER_NORMAL_ACCOUNT)) {
+        NetApiBufferFree(*buffer);
+        *buffer = nullptr;
+        return NERR_Success;
+    }
+    *entries = *total = 1;
     return NERR_Success;
 }
 
