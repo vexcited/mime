@@ -1,5 +1,6 @@
 LIBRARY gdi32.dll
 EXPORTS
+    CreateICA@16
     DrawEscape@16
     AbortDoc@4
     AbortPath@4
@@ -82,6 +83,7 @@ EXPORTS
     EnumFontFamiliesW@16
     EnumFontsA@16
     EnumFontsW@16
+    EnumICMProfilesW@12
     EnumMetaFile@16
     EqualRgn@8
     Escape@20
@@ -156,6 +158,8 @@ EXPORTS
     GetGraphicsMode@4
     GetICMProfileA@12
     GetICMProfileW@12
+    GetKerningPairsA@12
+    GetKerningPairsW@12
     GetLayout@4
     GetMapMode@4
     GetMetaFileA@4
@@ -212,6 +216,7 @@ EXPORTS
     LPtoDP@12
     LineDDA@24
     LineTo@12
+    MaskBlt@48
     ModifyWorldTransform@12
     MoveToEx@16
     OffsetClipRgn@12
@@ -226,6 +231,7 @@ EXPORTS
     PlayEnhMetaFileRecord@16
     PlayMetaFile@8
     PlayMetaFileRecord@16
+    PlgBlt@40
     PolyBezier@12
     PolyBezierTo@12
     PolyDraw@16
@@ -276,6 +282,7 @@ EXPORTS
     SetDeviceGammaRamp@8
     SetEnhMetaFileBits@8
     SetGraphicsMode@8
+    SetICMMode@8
     SetLayout@8
     SetMapMode@8
     SetMapperFlags@8

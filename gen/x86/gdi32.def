@@ -1,5 +1,6 @@
 LIBRARY gdi32.dll
 EXPORTS
+    CreateICA=_CreateICA@16
     DrawEscape=_DrawEscape@16
     AbortDoc=_AbortDoc@4
     AbortPath=_AbortPath@4
@@ -82,6 +83,7 @@ EXPORTS
     EnumFontFamiliesW=_EnumFontFamiliesW@16
     EnumFontsA=_EnumFontsA@16
     EnumFontsW=_EnumFontsW@16
+    EnumICMProfilesW=_EnumICMProfilesW@12
     EnumMetaFile=_EnumMetaFile@16
     EqualRgn=_EqualRgn@8
     Escape=_Escape@20
@@ -156,6 +158,8 @@ EXPORTS
     GetGraphicsMode=_GetGraphicsMode@4
     GetICMProfileA=_GetICMProfileA@12
     GetICMProfileW=_GetICMProfileW@12
+    GetKerningPairsA=_GetKerningPairsA@12
+    GetKerningPairsW=_GetKerningPairsW@12
     GetLayout=_GetLayout@4
     GetMapMode=_GetMapMode@4
     GetMetaFileA=_GetMetaFileA@4
@@ -212,6 +216,7 @@ EXPORTS
     LPtoDP=_LPtoDP@12
     LineDDA=_LineDDA@24
     LineTo=_LineTo@12
+    MaskBlt=_MaskBlt@48
     ModifyWorldTransform=_ModifyWorldTransform@12
     MoveToEx=_MoveToEx@16
     OffsetClipRgn=_OffsetClipRgn@12
@@ -226,6 +231,7 @@ EXPORTS
     PlayEnhMetaFileRecord=_PlayEnhMetaFileRecord@16
     PlayMetaFile=_PlayMetaFile@8
     PlayMetaFileRecord=_PlayMetaFileRecord@16
+    PlgBlt=_PlgBlt@40
     PolyBezier=_PolyBezier@12
     PolyBezierTo=_PolyBezierTo@12
     PolyDraw=_PolyDraw@16
@@ -276,6 +282,7 @@ EXPORTS
     SetDeviceGammaRamp=_SetDeviceGammaRamp@8
     SetEnhMetaFileBits=_SetEnhMetaFileBits@8
     SetGraphicsMode=_SetGraphicsMode@8
+    SetICMMode=_SetICMMode@8
     SetLayout=_SetLayout@8
     SetMapMode=_SetMapMode@8
     SetMapperFlags=_SetMapperFlags@8

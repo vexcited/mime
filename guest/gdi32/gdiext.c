@@ -543,8 +543,11 @@ static struct {
 } g_origins[ORIGIN_MAX];
 static RTL_SRWLOCK g_origin_lock;
 
+static void forget_icm(HDC dc);
+
 void GdiForgetBrushOrigin(HDC dc)
 {
+    forget_icm(dc);
     RtlAcquireSRWLockExclusive(&g_origin_lock);
     for (UINT i = 0; i < ORIGIN_MAX; i++)
         if (g_origins[i].Dc == dc)
@@ -608,4 +611,72 @@ WINGDIAPI UINT WINAPI SetDIBColorTable(HDC dc, UINT start, UINT count, const RGB
     if (!count)
         return 0;
     return (UINT)NtGdiDoPalette(dc, (WORD)start, (WORD)count, (PVOID)colors, MIME_PAL_SETDIBCOLORTABLE, TRUE);
+}
+
+/* ------------------------------------------------------------------ image color management */
+
+#define ICM_OFF 1
+#define ICM_ON 2
+#define ICM_QUERY 3
+#define ICM_DONE_OUTSIDEDC 4
+#define ICM_MAX 32
+
+/* no color is converted, so color management is a mode that is kept for the device context and read back. */
+static struct {
+    HDC Dc;
+    int Mode;
+} g_icm[ICM_MAX];
+static RTL_SRWLOCK g_icm_lock;
+
+static void forget_icm(HDC dc)
+{
+    RtlAcquireSRWLockExclusive(&g_icm_lock);
+    for (UINT i = 0; i < ICM_MAX; i++)
+        if (g_icm[i].Dc == dc)
+            g_icm[i].Dc = nullptr;
+    RtlReleaseSRWLockExclusive(&g_icm_lock);
+}
+
+WINGDIAPI int WINAPI SetICMMode(HDC dc, int mode)
+{
+    if (mode < ICM_OFF || mode > ICM_DONE_OUTSIDEDC) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!dc_valid(dc))
+        return 0;
+    RtlAcquireSRWLockExclusive(&g_icm_lock);
+    UINT free_slot = ICM_MAX, found = ICM_MAX;
+    for (UINT i = 0; i < ICM_MAX; i++) {
+        if (g_icm[i].Dc == dc)
+            found = i;
+        else if (!g_icm[i].Dc && free_slot == ICM_MAX)
+            free_slot = i;
+    }
+    int current = found < ICM_MAX ? g_icm[found].Mode : ICM_OFF;
+    int result = mode == ICM_QUERY ? current : 1;
+    if (mode != ICM_QUERY) {
+        UINT slot = found < ICM_MAX ? found : free_slot;
+        if (slot < ICM_MAX) {
+            g_icm[slot].Dc = dc;
+            g_icm[slot].Mode = mode == ICM_DONE_OUTSIDEDC ? ICM_OFF : mode;
+        } else {
+            result = 0;
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        }
+    }
+    RtlReleaseSRWLockExclusive(&g_icm_lock);
+    return result;
+}
+
+/* no color profile is installed for any device, so none is listed. */
+WINGDIAPI int WINAPI EnumICMProfilesW(HDC dc, int (CALLBACK *callback)(LPWSTR, LPARAM), LPARAM param)
+{
+    if (!callback || !dc_valid(dc)) {
+        if (callback)
+            return -1;
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return -1;
+    }
+    return 0;
 }

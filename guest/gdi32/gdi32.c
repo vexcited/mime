@@ -189,6 +189,11 @@ WINGDIAPI HDC WINAPI CreateICW(LPCWSTR driver, LPCWSTR device, LPCWSTR output, c
     return create_dc(driver, device, mode, TRUE);
 }
 
+WINGDIAPI HDC WINAPI CreateICA(LPCSTR driver, LPCSTR device, LPCSTR output, const void *mode)
+{
+    return create_dc_a(driver, device, mode, TRUE);
+}
+
 WINGDIAPI BOOL WINAPI DeleteDC(HDC dc)
 {
     if (MfActive(dc))
