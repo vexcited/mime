@@ -1,7 +1,8 @@
 /*
- * the session of the process (CoInternetGetSession), the check for monikers that bind asynchronously, and navigation to
- * an address. the session keeps the options of urlmon and takes no protocol handlers or filters, since binding goes
- * to the protocols of wininet only. navigation is done by the shell, which opens the address in its default program.
+ * the session of the process, made by CoInternetGetSession, the check for monikers that bind asynchronously, and
+ * navigation to an address. the session keeps the options of urlmon and takes no protocol handlers or filters, since
+ * binding goes to the protocols of wininet only. navigation is done by the shell, which opens the address in its
+ * default program.
  */
 #include "urlmon_private.h"
 

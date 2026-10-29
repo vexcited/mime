@@ -500,7 +500,7 @@ ULONG ldap_get_option(LDAP *ld, int option, void *value)
 #define ASYNC_8(name) ULONG name(LDAP *ld, ARG a, ARG b, ARG c, ARG d, ARG e, ARG f, ARG g) { return start_failed(ld); }
 #define ASYNC_11(name) ULONG name(LDAP *ld, ARG a, ARG b, ARG c, ARG d, ARG e, ARG f, ARG g, ARG h, ARG i, ARG j) { return start_failed(ld); }
 
-/* ldap_bind(ld, dn, credentials, method) and ldap_simple_bind(ld, dn, password). */
+/* the binds take a distinguished name, credentials and for ldap_bind the method of authentication. */
 ASYNC_4(ldap_bindA)
 ASYNC_4(ldap_bindW)
 ASYNC_4(ldap_bind)
