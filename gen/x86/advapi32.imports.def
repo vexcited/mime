@@ -48,6 +48,8 @@ EXPORTS
     AuditSetPerUserPolicy@12
     AuditSetSecurity@8
     AuditSetSystemPolicy@8
+    BackupEventLogA@8
+    BackupEventLogW@8
     BuildExplicitAccessWithNameA@20
     BuildExplicitAccessWithNameW@20
     BuildImpersonateExplicitAccessWithNameA@24
@@ -364,6 +366,7 @@ EXPORTS
     LsaDelete@4
     LsaEnumerateAccountRights@16
     LsaEnumerateAccountsWithUserRight@16
+    LsaEnumerateTrustedDomains@20
     LsaFreeMemory@4
     LsaICLookupNames@40
     LsaICLookupNamesWithCreds@40
@@ -410,6 +413,8 @@ EXPORTS
     ObjectOpenAuditAlarmW@48
     ObjectPrivilegeAuditAlarmA@24
     ObjectPrivilegeAuditAlarmW@24
+    OpenBackupEventLogA@8
+    OpenBackupEventLogW@8
     OpenEncryptedFileRawA@12
     OpenEncryptedFileRawW@12
     OpenEventLogA@8
@@ -465,10 +470,14 @@ EXPORTS
     RegConnectRegistryExA@16
     RegConnectRegistryExW@16
     RegConnectRegistryW@12
+    RegCreateKeyTransactedA@44
+    RegCreateKeyTransactedW@44
     RegDisablePredefinedCache@0
     RegDisableReflectionKey@4
     RegEnableReflectionKey@4
     RegGetKeySecurity@16
+    RegOpenKeyTransactedA@28
+    RegOpenKeyTransactedW@28
     RegQueryReflectionKey@8
     RegQueryValueA@16
     RegQueryValueW@16

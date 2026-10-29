@@ -48,6 +48,8 @@ EXPORTS
     AuditSetPerUserPolicy=_AuditSetPerUserPolicy@12
     AuditSetSecurity=_AuditSetSecurity@8
     AuditSetSystemPolicy=_AuditSetSystemPolicy@8
+    BackupEventLogA=_BackupEventLogA@8
+    BackupEventLogW=_BackupEventLogW@8
     BuildExplicitAccessWithNameA=_BuildExplicitAccessWithNameA@20
     BuildExplicitAccessWithNameW=_BuildExplicitAccessWithNameW@20
     BuildImpersonateExplicitAccessWithNameA=_BuildImpersonateExplicitAccessWithNameA@24
@@ -364,6 +366,7 @@ EXPORTS
     LsaDelete=_LsaDelete@4
     LsaEnumerateAccountRights=_LsaEnumerateAccountRights@16
     LsaEnumerateAccountsWithUserRight=_LsaEnumerateAccountsWithUserRight@16
+    LsaEnumerateTrustedDomains=_LsaEnumerateTrustedDomains@20
     LsaFreeMemory=_LsaFreeMemory@4
     LsaICLookupNames=_LsaICLookupNames@40
     LsaICLookupNamesWithCreds=_LsaICLookupNamesWithCreds@40
@@ -410,6 +413,8 @@ EXPORTS
     ObjectOpenAuditAlarmW=_ObjectOpenAuditAlarmW@48
     ObjectPrivilegeAuditAlarmA=_ObjectPrivilegeAuditAlarmA@24
     ObjectPrivilegeAuditAlarmW=_ObjectPrivilegeAuditAlarmW@24
+    OpenBackupEventLogA=_OpenBackupEventLogA@8
+    OpenBackupEventLogW=_OpenBackupEventLogW@8
     OpenEncryptedFileRawA=_OpenEncryptedFileRawA@12
     OpenEncryptedFileRawW=_OpenEncryptedFileRawW@12
     OpenEventLogA=_OpenEventLogA@8
@@ -465,10 +470,14 @@ EXPORTS
     RegConnectRegistryExA=_RegConnectRegistryExA@16
     RegConnectRegistryExW=_RegConnectRegistryExW@16
     RegConnectRegistryW=_RegConnectRegistryW@12
+    RegCreateKeyTransactedA=_RegCreateKeyTransactedA@44
+    RegCreateKeyTransactedW=_RegCreateKeyTransactedW@44
     RegDisablePredefinedCache=_RegDisablePredefinedCache@0
     RegDisableReflectionKey=_RegDisableReflectionKey@4
     RegEnableReflectionKey=_RegEnableReflectionKey@4
     RegGetKeySecurity=_RegGetKeySecurity@16
+    RegOpenKeyTransactedA=_RegOpenKeyTransactedA@28
+    RegOpenKeyTransactedW=_RegOpenKeyTransactedW@28
     RegQueryReflectionKey=_RegQueryReflectionKey@8
     RegQueryValueA=_RegQueryValueA@16
     RegQueryValueW=_RegQueryValueW@16

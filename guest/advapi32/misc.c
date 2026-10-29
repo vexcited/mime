@@ -208,6 +208,59 @@ ADVAPI BOOL WINAPI ClearEventLogA(HANDLE h, LPCSTR backup)
     return ok;
 }
 
+/* a log is never written, so a backup has nothing to hold and there is no file format to read one back from. */
+ADVAPI BOOL WINAPI BackupEventLogW(HANDLE h, LPCWSTR file)
+{
+    if (!event_log(h))
+        return FALSE;
+    if (!file) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    AdvSetError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
+ADVAPI BOOL WINAPI BackupEventLogA(HANDLE h, LPCSTR file)
+{
+    PWSTR wide = AdvAnsiToWide(file);
+    if (file && !wide) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    BOOL ok = BackupEventLogW(h, wide);
+    AdvFree(wide);
+    return ok;
+}
+
+ADVAPI HANDLE WINAPI OpenBackupEventLogW(LPCWSTR server, LPCWSTR file)
+{
+    if (!file) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    if (!AdvIsLocalSystem(server)) {
+        AdvSetError(RPC_S_SERVER_UNAVAILABLE);
+        return nullptr;
+    }
+    DWORD attributes = GetFileAttributesW(file);
+    AdvSetError(attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_NOT_SUPPORTED);
+    return nullptr;
+}
+
+ADVAPI HANDLE WINAPI OpenBackupEventLogA(LPCSTR server, LPCSTR file)
+{
+    if (!file) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    PWSTR s = AdvAnsiToWide(server), f = AdvAnsiToWide(file);
+    HANDLE h = (!server || s) && f ? OpenBackupEventLogW(s, f) : nullptr;
+    AdvFree(s);
+    AdvFree(f);
+    return h;
+}
+
 /* the event never fires since no record is ever added. */
 ADVAPI BOOL WINAPI NotifyChangeEventLog(HANDLE h, HANDLE event)
 {
@@ -650,4 +703,53 @@ ADVAPI LSTATUS WINAPI RegQueryReflectionKey(HKEY key, BOOL *disabled)
     *disabled = FALSE;
     return ERROR_SUCCESS;
 #endif
+}
+
+/* ---------------------------------------------------------------- transacted registry keys */
+
+#define ERROR_INVALID_TRANSACTION_ 6700L
+
+/*
+ * keys cannot be opened or made inside a transaction, because no transaction can be made: the transaction manager
+ * is not there. a handle that is not one fails the way a handle of another kind of object does.
+ */
+static LSTATUS transacted(HANDLE transaction)
+{
+    if (!transaction || transaction == INVALID_HANDLE_VALUE)
+        return ERROR_INVALID_TRANSACTION_;
+    return ERROR_INVALID_HANDLE;
+}
+
+ADVAPI LSTATUS WINAPI RegOpenKeyTransactedW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM access, HKEY *result,
+                                            HANDLE transaction, PVOID extended)
+{
+    if (extended)
+        return ERROR_INVALID_PARAMETER;
+    return transacted(transaction);
+}
+
+ADVAPI LSTATUS WINAPI RegOpenKeyTransactedA(HKEY key, LPCSTR subkey, DWORD options, REGSAM access, HKEY *result,
+                                            HANDLE transaction, PVOID extended)
+{
+    if (extended)
+        return ERROR_INVALID_PARAMETER;
+    return transacted(transaction);
+}
+
+ADVAPI LSTATUS WINAPI RegCreateKeyTransactedW(HKEY key, LPCWSTR subkey, DWORD reserved, LPWSTR key_class, DWORD options,
+                                              REGSAM access, PVOID security, HKEY *result, LPDWORD disposition,
+                                              HANDLE transaction, PVOID extended)
+{
+    if (reserved || extended)
+        return ERROR_INVALID_PARAMETER;
+    return transacted(transaction);
+}
+
+ADVAPI LSTATUS WINAPI RegCreateKeyTransactedA(HKEY key, LPCSTR subkey, DWORD reserved, LPSTR key_class, DWORD options,
+                                              REGSAM access, PVOID security, HKEY *result, LPDWORD disposition,
+                                              HANDLE transaction, PVOID extended)
+{
+    if (reserved || extended)
+        return ERROR_INVALID_PARAMETER;
+    return transacted(transaction);
 }

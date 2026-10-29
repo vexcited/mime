@@ -567,6 +567,20 @@ ADVAPI NTSTATUS WINAPI LsaEnumerateAccountsWithUserRight(LSA_HANDLE handle, PLSA
     return STATUS_NO_MORE_ENTRIES;
 }
 
+/* a machine outside any domain trusts none. */
+ADVAPI NTSTATUS WINAPI LsaEnumerateTrustedDomains(LSA_HANDLE handle, PULONG context, PVOID *buffer, ULONG maximum,
+                                                  PULONG count)
+{
+    if (!policy_of(handle))
+        return STATUS_INVALID_HANDLE;
+    if (!buffer)
+        return STATUS_INVALID_PARAMETER;
+    *buffer = nullptr;
+    if (count)
+        *count = 0;
+    return STATUS_NO_MORE_ENTRIES;
+}
+
 ADVAPI NTSTATUS WINAPI LsaAddAccountRights(LSA_HANDLE handle, PSID account, PLSA_UNICODE_STRING rights, ULONG count)
 {
     (void)account;
