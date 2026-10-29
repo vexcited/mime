@@ -57,6 +57,7 @@ EXPORTS
     CoCreateInstanceEx@24 @262
     CoDecrementMTAUsage@4 @269
     CoDisableCallCancellation@4 @270
+    CoCopyProxy@8 @257
     CoDisconnectObject@8 @272
     CoDoesOtherSideSupportUDTMarshaling@4 @181
     CoDoesOtherSideVariantMarshalingNeedTrailingPadding@4 @180
@@ -98,6 +99,8 @@ EXPORTS
     CoRevokeClassObject@4 @340
     CoRevokeInitializeSpy@8 @343
     CoSetCancelObject@4 @346
+    CoFileTimeNow@4 @274
+    CoQueryProxyBlanket@32 @322
     CoSetProxyBlanket@32 @349
     CoSuspendClassObjects@0 @350
     CoSwitchCallContext@8 @351

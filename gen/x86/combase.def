@@ -57,10 +57,12 @@ EXPORTS
     CoCreateInstanceEx=ole32.CoCreateInstanceEx @262
     CoDecrementMTAUsage=ole32.CoDecrementMTAUsage @269
     CoDisableCallCancellation=ole32.CoDisableCallCancellation @270
+    CoCopyProxy=ole32.CoCopyProxy @257
     CoDisconnectObject=ole32.CoDisconnectObject @272
     CoDoesOtherSideSupportUDTMarshaling=ole32.CoDoesOtherSideSupportUDTMarshaling @181
     CoDoesOtherSideVariantMarshalingNeedTrailingPadding=ole32.CoDoesOtherSideVariantMarshalingNeedTrailingPadding @180
     CoEnableCallCancellation=ole32.CoEnableCallCancellation @273
+    CoFileTimeNow=ole32.CoFileTimeNow @274
     CoFreeUnusedLibraries=ole32.CoFreeUnusedLibraries @275
     CoFreeUnusedLibrariesEx=ole32.CoFreeUnusedLibrariesEx @276
     CoGetApartmentType=ole32.CoGetApartmentType @279
@@ -98,6 +100,7 @@ EXPORTS
     CoRevokeClassObject=ole32.CoRevokeClassObject @340
     CoRevokeInitializeSpy=ole32.CoRevokeInitializeSpy @343
     CoSetCancelObject=ole32.CoSetCancelObject @346
+    CoQueryProxyBlanket=ole32.CoQueryProxyBlanket @322
     CoSetProxyBlanket=ole32.CoSetProxyBlanket @349
     CoSuspendClassObjects=ole32.CoSuspendClassObjects @350
     CoSwitchCallContext=ole32.CoSwitchCallContext @351

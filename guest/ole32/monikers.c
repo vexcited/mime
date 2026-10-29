@@ -352,9 +352,25 @@ static HRESULT STDMETHODCALLTYPE mk_get_display_name(IMoniker *self, IBindCtx *c
 static HRESULT STDMETHODCALLTYPE mk_parse_display_name(IMoniker *self, IBindCtx *context, IMoniker *left, LPOLESTR name,
                                                        ULONG *eaten, IMoniker **out)
 {
-    if (out)
-        *out = nullptr;
-    return MK_E_SYNTAX_;
+    MK *mk = (MK *)self;
+    if (!out || !eaten || !name)
+        return E_INVALIDARG;
+    *out = nullptr;
+    /* after a file the next component is an item, up to the next delimiter. */
+    if (mk->Kind == KIND_ITEM || name[0] != L'!')
+        return MK_E_SYNTAX_;
+    ULONG end = 1;
+    while (name[end] && name[end] != L'!')
+        end++;
+    WCHAR *item = duplicate(name + 1);
+    if (!item)
+        return E_OUTOFMEMORY;
+    item[end - 1] = 0;
+    HRESULT hr = CreateItemMoniker(L"!", item, out);
+    OleFree(item);
+    if (SUCCEEDED(hr))
+        *eaten = end;
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE mk_is_system(IMoniker *self, DWORD *kind)

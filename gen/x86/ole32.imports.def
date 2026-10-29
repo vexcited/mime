@@ -1,11 +1,13 @@
 LIBRARY ole32.dll
 EXPORTS
+    BindMoniker@16
     CLSIDFromProgID@8
     CLSIDFromProgIDEx@8
     CLSIDFromString@8
     CoAddRefServerProcess@0
     CoAllowSetForegroundWindow@8
     CoCancelCall@8
+    CoCopyProxy@8
     CoCreateFreeThreadedMarshaler@8
     CoCreateGuid@4
     CoCreateInstance@20
@@ -17,6 +19,7 @@ EXPORTS
     CoDoesOtherSideSupportUDTMarshaling@4
     CoDoesOtherSideVariantMarshalingNeedTrailingPadding@4
     CoEnableCallCancellation@4
+    CoFileTimeNow@4
     CoFreeLibrary@4
     CoFreeUnusedLibraries@0
     CoFreeUnusedLibrariesEx@8
@@ -47,6 +50,7 @@ EXPORTS
     CoMarshalHresult@8
     CoMarshalInterThreadInterfaceInStream@12
     CoMarshalInterface@24
+    CoQueryProxyBlanket@32
     CoRegisterClassObject@20
     CoRegisterInitializeSpy@8
     CoRegisterMessageFilter@8
@@ -159,6 +163,8 @@ EXPORTS
     HWND_UserUnmarshal@12
     IIDFromString@8
     IsAccelerator@16
+    IsEqualGUID@8
+    MkParseDisplayName@16
     OleCreate@28
     OleCreateFromData@28
     OleCreateFromFile@32

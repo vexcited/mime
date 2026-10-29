@@ -458,6 +458,13 @@ WINOLEAPI HRESULT WINAPI CoInitializeSecurity(PSECURITY_DESCRIPTOR descriptor, L
 WINOLEAPI HRESULT WINAPI CoSetProxyBlanket(IUnknown *proxy, DWORD authn_service, DWORD authz_service,
                                            OLECHAR *server_principal, DWORD authn_level, DWORD imp_level,
                                            void *auth_info, DWORD capabilities);
+WINOLEAPI HRESULT WINAPI CoQueryProxyBlanket(IUnknown *proxy, DWORD *authn_service, DWORD *authz_service,
+                                             OLECHAR **server_principal, DWORD *authn_level, DWORD *imp_level,
+                                             void **auth_info, DWORD *capabilities);
+WINOLEAPI HRESULT WINAPI CoCopyProxy(IUnknown *proxy, IUnknown **copy);
+WINOLEAPI HRESULT WINAPI CoFileTimeNow(FILETIME *time);
+WINOLEAPI HRESULT WINAPI BindMoniker(IMoniker *moniker, DWORD options, REFIID iid, void **result);
+WINOLEAPI HRESULT WINAPI MkParseDisplayName(IBindCtx *context, LPCOLESTR name, ULONG *eaten, IMoniker **moniker);
 
 /* ------------------------------------------------------------------ marshaling */
 

@@ -8,7 +8,9 @@ EXPORTS
     CoCreateGuid=ole32.CoCreateGuid @260
     CoCreateInstance=ole32.CoCreateInstance @261
     CoCreateInstanceEx=ole32.CoCreateInstanceEx @262
+    CoCopyProxy=ole32.CoCopyProxy @257
     CoDisconnectObject=ole32.CoDisconnectObject @272
+    CoFileTimeNow=ole32.CoFileTimeNow @274
     CoFreeUnusedLibraries=ole32.CoFreeUnusedLibraries @275
     CoFreeUnusedLibrariesEx=ole32.CoFreeUnusedLibrariesEx @276
     CoGetApartmentType=ole32.CoGetApartmentType @279
@@ -33,6 +35,7 @@ EXPORTS
     CoResumeClassObjects=ole32.CoResumeClassObjects @337
     CoRevokeClassObject=ole32.CoRevokeClassObject @340
     CoRevokeInitializeSpy=ole32.CoRevokeInitializeSpy @343
+    CoQueryProxyBlanket=ole32.CoQueryProxyBlanket @322
     CoSetProxyBlanket=ole32.CoSetProxyBlanket @349
     CoSuspendClassObjects=ole32.CoSuspendClassObjects @350
     CoTaskMemAlloc=ole32.CoTaskMemAlloc @352

@@ -1,11 +1,13 @@
 LIBRARY ole32.dll
 EXPORTS
+    BindMoniker=_BindMoniker@16
     CLSIDFromProgID=_CLSIDFromProgID@8
     CLSIDFromProgIDEx=_CLSIDFromProgIDEx@8
     CLSIDFromString=_CLSIDFromString@8
     CoAddRefServerProcess=_CoAddRefServerProcess@0
     CoAllowSetForegroundWindow=_CoAllowSetForegroundWindow@8
     CoCancelCall=_CoCancelCall@8
+    CoCopyProxy=_CoCopyProxy@8
     CoCreateFreeThreadedMarshaler=_CoCreateFreeThreadedMarshaler@8
     CoCreateGuid=_CoCreateGuid@4
     CoCreateInstance=_CoCreateInstance@20
@@ -17,6 +19,7 @@ EXPORTS
     CoDoesOtherSideSupportUDTMarshaling=_CoDoesOtherSideSupportUDTMarshaling@4
     CoDoesOtherSideVariantMarshalingNeedTrailingPadding=_CoDoesOtherSideVariantMarshalingNeedTrailingPadding@4
     CoEnableCallCancellation=_CoEnableCallCancellation@4
+    CoFileTimeNow=_CoFileTimeNow@4
     CoFreeLibrary=_CoFreeLibrary@4
     CoFreeUnusedLibraries=_CoFreeUnusedLibraries@0
     CoFreeUnusedLibrariesEx=_CoFreeUnusedLibrariesEx@8
@@ -47,6 +50,7 @@ EXPORTS
     CoMarshalHresult=_CoMarshalHresult@8
     CoMarshalInterThreadInterfaceInStream=_CoMarshalInterThreadInterfaceInStream@12
     CoMarshalInterface=_CoMarshalInterface@24
+    CoQueryProxyBlanket=_CoQueryProxyBlanket@32
     CoRegisterClassObject=_CoRegisterClassObject@20
     CoRegisterInitializeSpy=_CoRegisterInitializeSpy@8
     CoRegisterMessageFilter=_CoRegisterMessageFilter@8
@@ -159,6 +163,8 @@ EXPORTS
     HWND_UserUnmarshal=_HWND_UserUnmarshal@12
     IIDFromString=_IIDFromString@8
     IsAccelerator=_IsAccelerator@16
+    IsEqualGUID=_IsEqualGUID@8
+    MkParseDisplayName=_MkParseDisplayName@16
     OleCreate=_OleCreate@28
     OleCreateFromData=_OleCreateFromData@28
     OleCreateFromFile=_OleCreateFromFile@32
