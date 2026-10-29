@@ -236,6 +236,7 @@ DWORD InetRunOp(INET_OBJECT *request, INET_OP *op);
 /* conn.c. */
 void InetStartup(void);
 DWORD InetConnOpen(INET_OBJECT *request, LPCWSTR host, INTERNET_PORT port, INET_CONN **result);
+extern volatile LONG InetServerReached;
 DWORD InetConnSend(INET_CONN *conn, const void *data, DWORD size, DWORD timeout);
 DWORD InetConnRecv(INET_CONN *conn, void *data, DWORD size, DWORD *got, DWORD timeout);
 DWORD InetConnFill(INET_CONN *conn, DWORD timeout);

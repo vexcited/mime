@@ -154,6 +154,16 @@ DECLSPEC_EXPORT BOOL WINAPI FtpRenameFileW(HINTERNET connect, LPCWSTR existing, 
     return FAIL_FTP(connect);
 }
 
+/* no ftp file handle exists, so the size of one is asked of a handle that is not one. */
+DECLSPEC_EXPORT DWORD WINAPI FtpGetFileSize(HINTERNET file, LPDWORD high)
+{
+    MIME_STUB("wininet");
+    if (high)
+        *high = 0;
+    FailHandle(file, INTERNET_HANDLE_TYPE_FTP_FILE, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
+    return INVALID_FILE_SIZE;
+}
+
 DECLSPEC_EXPORT HINTERNET WINAPI FtpOpenFileW(HINTERNET connect, LPCWSTR name, DWORD access, DWORD flags,
                                              DWORD_PTR context)
 {
@@ -239,4 +249,52 @@ DECLSPEC_EXPORT BOOL WINAPI GetUrlCacheEntryInfoExW(LPCWSTR url, LPVOID info, LP
 DECLSPEC_EXPORT BOOL WINAPI GetUrlCacheEntryInfoW(LPCWSTR url, LPVOID info, LPDWORD size)
 {
     return GetUrlCacheEntryInfoExW(url, info, size, nullptr, nullptr, nullptr, 0);
+}
+
+/*
+ * web sockets are not made: the upgrade is not negotiated for a request, so there is no socket to send on, receive from
+ * or close, and a request has no upgrade to complete.
+ */
+#define INTERNET_HANDLE_TYPE_WEB_SOCKET_ 0x6f
+
+DECLSPEC_EXPORT HINTERNET WINAPI HttpWebSocketCompleteUpgrade(HINTERNET request, DWORD_PTR context)
+{
+    MIME_STUB("wininet");
+    FailHandle(request, INTERNET_HANDLE_TYPE_HTTP_REQUEST, ERROR_INTERNET_INCORRECT_HANDLE_STATE);
+    return nullptr;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketSend(HINTERNET socket, DWORD type, PVOID buffer, DWORD length)
+{
+    MIME_STUB("wininet");
+    if (!buffer != !length)
+        return InetFail(ERROR_INVALID_PARAMETER);
+    return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketReceive(HINTERNET socket, PVOID buffer, DWORD length, DWORD *read, DWORD *type)
+{
+    MIME_STUB("wininet");
+    if (!buffer || !length || !read || !type)
+        return InetFail(ERROR_INVALID_PARAMETER);
+    return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketClose(HINTERNET socket, USHORT status, PVOID reason, DWORD length)
+{
+    MIME_STUB("wininet");
+    return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketShutdown(HINTERNET socket, USHORT status, PVOID reason, DWORD length)
+{
+    MIME_STUB("wininet");
+    return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketQueryCloseStatus(HINTERNET socket, USHORT *status, PVOID reason, DWORD length,
+                                                         DWORD *consumed)
+{
+    MIME_STUB("wininet");
+    return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
 }

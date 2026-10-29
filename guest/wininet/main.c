@@ -26,6 +26,63 @@ DECLSPEC_EXPORT BOOL WINAPI InternetGetConnectedState(LPDWORD flags, DWORD reser
     return connected;
 }
 
+/* there is nothing to attempt, the machine is connected as it is. only the reserved argument is checked. */
+DECLSPEC_EXPORT DWORD WINAPI InternetAttemptConnect(DWORD reserved)
+{
+    return reserved ? ERROR_INVALID_PARAMETER : ERROR_SUCCESS;
+}
+
+#define FLAG_ICC_FORCE_CONNECTION 1
+#define ERROR_NOT_CONNECTED_ 2250
+
+/*
+ * without the flag the answer is whether any server was reached so far. with it a connection is made to the host of the
+ * address, and closed again.
+ */
+DECLSPEC_EXPORT BOOL WINAPI InternetCheckConnectionW(LPCWSTR url, DWORD flags, DWORD reserved)
+{
+    if (reserved)
+        return InetFail(ERROR_INVALID_PARAMETER);
+    if (!(flags & FLAG_ICC_FORCE_CONNECTION)) {
+        if (InetServerReached)
+            return TRUE;
+        return InetFail(ERROR_NOT_CONNECTED_);
+    }
+    if (!url)
+        return InetFail(ERROR_INTERNET_INVALID_OPERATION);
+    WCHAR host[INTERNET_MAX_HOST_NAME_LENGTH];
+    URL_COMPONENTSW parts = {sizeof(parts)};
+    parts.lpszHostName = host;
+    parts.dwHostNameLength = ARRAYSIZE(host);
+    if (!InternetCrackUrlW(url, 0, 0, &parts))
+        return FALSE;
+    INTERNET_PORT port = parts.nPort;
+    if (!port)
+        port = parts.nScheme == INTERNET_SCHEME_HTTPS ? 443 : parts.nScheme == INTERNET_SCHEME_FTP ? 21 : 80;
+    INET_OBJECT probe = {};
+    INET_TIMEOUT(&probe, INTERNET_OPTION_CONNECT_TIMEOUT) = 60000;
+    INET_CONN *conn;
+    DWORD error = InetConnOpen(&probe, host, port, &conn);
+    if (error)
+        return InetFail(error);
+    InetConnClose(nullptr, conn);
+    return TRUE;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI InternetCheckConnectionA(LPCSTR url, DWORD flags, DWORD reserved)
+{
+    if (!url)
+        return InternetCheckConnectionW(nullptr, flags, reserved);
+    PWSTR wide = InetWiden(url, -1);
+    if (!wide)
+        return InetFail(ERROR_NOT_ENOUGH_MEMORY);
+    BOOL ok = InternetCheckConnectionW(wide, flags, reserved);
+    DWORD error = GetLastError();
+    InetFree(wide);
+    SetLastError(error);
+    return ok;
+}
+
 /*
  * dialing is a no-op as the machine has no modem. reject flags beyond the four dialing flags and nonzero reserved
  * values. like Windows with its remote access library, return TRUE and clear last error.

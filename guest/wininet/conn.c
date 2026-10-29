@@ -5,6 +5,9 @@
 #define INET_IDLE_MAX 16
 #define INET_IDLE_TIMEOUT 60000
 
+/* set once any server was connected to, which is what InternetCheckConnection asks without forcing a connection. */
+volatile LONG InetServerReached;
+
 static INIT_ONCE StartupOnce = INIT_ONCE_STATIC_INIT;
 static SRWLOCK PoolLock = SRWLOCK_INIT;
 static INET_CONN *Idle;
@@ -332,5 +335,6 @@ DWORD InetConnOpen(INET_OBJECT *request, LPCWSTR host, INTERNET_PORT port, INET_
     }
     conn->Socket = s;
     *result = conn;
+    InterlockedExchange(&InetServerReached, 1);
     return ERROR_SUCCESS;
 }

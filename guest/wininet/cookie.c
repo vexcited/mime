@@ -553,6 +553,55 @@ DECLSPEC_EXPORT BOOL WINAPI FindNextUrlCacheEntryA(HANDLE handle, LPVOID entry, 
     return InetFail(ERROR_INVALID_HANDLE);
 }
 
+DECLSPEC_EXPORT HANDLE WINAPI FindFirstUrlCacheEntryW(LPCWSTR pattern, LPVOID entry, LPDWORD size)
+{
+    SetLastError(size ? ERROR_NO_MORE_ITEMS : ERROR_INVALID_PARAMETER);
+    return nullptr;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FindNextUrlCacheEntryW(HANDLE handle, LPVOID entry, LPDWORD size)
+{
+    return InetFail(ERROR_INVALID_HANDLE);
+}
+
+DECLSPEC_EXPORT HANDLE WINAPI FindFirstUrlCacheEntryExW(LPCWSTR pattern, DWORD flags, DWORD filter, INT64 group,
+                                                       LPVOID entry, LPDWORD size, LPVOID reserved, LPDWORD reserved2,
+                                                       LPVOID reserved3)
+{
+    SetLastError(size ? ERROR_NO_MORE_ITEMS : ERROR_INVALID_PARAMETER);
+    return nullptr;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI FindNextUrlCacheEntryExW(HANDLE handle, LPVOID entry, LPDWORD size, LPVOID reserved,
+                                                    LPDWORD reserved2, LPVOID reserved3)
+{
+    return InetFail(ERROR_INVALID_HANDLE);
+}
+
+/* there is no entry to delete or to open a stream on. */
+DECLSPEC_EXPORT BOOL WINAPI DeleteUrlCacheEntryW(LPCWSTR url)
+{
+    return InetFail(url ? ERROR_FILE_NOT_FOUND : ERROR_INVALID_PARAMETER);
+}
+
+DECLSPEC_EXPORT HANDLE WINAPI RetrieveUrlCacheEntryStreamW(LPCWSTR url, LPVOID entry, LPDWORD size, BOOL random_read,
+                                                          DWORD reserved)
+{
+    SetLastError(url && size ? ERROR_FILE_NOT_FOUND : ERROR_INVALID_PARAMETER);
+    return nullptr;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI ReadUrlCacheEntryStream(HANDLE stream, DWORD location, LPVOID buffer, LPDWORD length,
+                                                   DWORD reserved)
+{
+    return InetFail(ERROR_INVALID_HANDLE);
+}
+
+DECLSPEC_EXPORT BOOL WINAPI UnlockUrlCacheEntryStream(HANDLE stream, DWORD reserved)
+{
+    return InetFail(ERROR_INVALID_HANDLE);
+}
+
 DECLSPEC_EXPORT BOOL WINAPI FindCloseUrlCache(HANDLE handle)
 {
     return InetFail(ERROR_INVALID_HANDLE);

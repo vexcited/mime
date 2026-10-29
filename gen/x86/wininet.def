@@ -1,15 +1,21 @@
 LIBRARY wininet.dll
 EXPORTS
     DeleteUrlCacheContainerW=_DeleteUrlCacheContainerW@8
+    DeleteUrlCacheEntryW=_DeleteUrlCacheEntryW@4
     FindCloseUrlCache=_FindCloseUrlCache@4
     FindFirstUrlCacheEntryA=_FindFirstUrlCacheEntryA@12
+    FindFirstUrlCacheEntryExW=_FindFirstUrlCacheEntryExW@40
+    FindFirstUrlCacheEntryW=_FindFirstUrlCacheEntryW@12
     FindNextUrlCacheEntryA=_FindNextUrlCacheEntryA@12
+    FindNextUrlCacheEntryExW=_FindNextUrlCacheEntryExW@24
+    FindNextUrlCacheEntryW=_FindNextUrlCacheEntryW@12
     FtpCommandW=_FtpCommandW@24
     FtpCreateDirectoryW=_FtpCreateDirectoryW@8
     FtpDeleteFileW=_FtpDeleteFileW@8
     FtpFindFirstFileA=_FtpFindFirstFileA@20
     FtpFindFirstFileW=_FtpFindFirstFileW@20
     FtpGetCurrentDirectoryW=_FtpGetCurrentDirectoryW@12
+    FtpGetFileSize=_FtpGetFileSize@8
     FtpGetFileW=_FtpGetFileW@28
     FtpOpenFileW=_FtpOpenFileW@20
     FtpPutFileW=_FtpPutFileW@20
@@ -34,10 +40,19 @@ EXPORTS
     HttpSendRequestExA=_HttpSendRequestExA@20
     HttpSendRequestExW=_HttpSendRequestExW@20
     HttpSendRequestW=_HttpSendRequestW@20
+    HttpWebSocketClose=_HttpWebSocketClose@16
+    HttpWebSocketCompleteUpgrade=_HttpWebSocketCompleteUpgrade@8
+    HttpWebSocketQueryCloseStatus=_HttpWebSocketQueryCloseStatus@20
+    HttpWebSocketReceive=_HttpWebSocketReceive@20
+    HttpWebSocketSend=_HttpWebSocketSend@16
+    HttpWebSocketShutdown=_HttpWebSocketShutdown@16
+    InternetAttemptConnect=_InternetAttemptConnect@4
     InternetAutodial=_InternetAutodial@8
     InternetAutodialHangup=_InternetAutodialHangup@4
     InternetCanonicalizeUrlA=_InternetCanonicalizeUrlA@16
     InternetCanonicalizeUrlW=_InternetCanonicalizeUrlW@16
+    InternetCheckConnectionA=_InternetCheckConnectionA@12
+    InternetCheckConnectionW=_InternetCheckConnectionW@12
     InternetCloseHandle=_InternetCloseHandle@4
     InternetCombineUrlA=_InternetCombineUrlA@20
     InternetCombineUrlW=_InternetCombineUrlW@20
@@ -81,3 +96,6 @@ EXPORTS
     InternetTimeToSystemTimeA=_InternetTimeToSystemTimeA@12
     InternetTimeToSystemTimeW=_InternetTimeToSystemTimeW@12
     InternetWriteFile=_InternetWriteFile@16
+    ReadUrlCacheEntryStream=_ReadUrlCacheEntryStream@20
+    RetrieveUrlCacheEntryStreamW=_RetrieveUrlCacheEntryStreamW@20
+    UnlockUrlCacheEntryStream=_UnlockUrlCacheEntryStream@8

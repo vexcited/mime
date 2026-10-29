@@ -1,15 +1,21 @@
 LIBRARY wininet.dll
 EXPORTS
     DeleteUrlCacheContainerW@8
+    DeleteUrlCacheEntryW@4
     FindCloseUrlCache@4
     FindFirstUrlCacheEntryA@12
+    FindFirstUrlCacheEntryExW@40
+    FindFirstUrlCacheEntryW@12
     FindNextUrlCacheEntryA@12
+    FindNextUrlCacheEntryExW@24
+    FindNextUrlCacheEntryW@12
     FtpCommandW@24
     FtpCreateDirectoryW@8
     FtpDeleteFileW@8
     FtpFindFirstFileA@20
     FtpFindFirstFileW@20
     FtpGetCurrentDirectoryW@12
+    FtpGetFileSize@8
     FtpGetFileW@28
     FtpOpenFileW@20
     FtpPutFileW@20
@@ -34,10 +40,19 @@ EXPORTS
     HttpSendRequestExA@20
     HttpSendRequestExW@20
     HttpSendRequestW@20
+    HttpWebSocketClose@16
+    HttpWebSocketCompleteUpgrade@8
+    HttpWebSocketQueryCloseStatus@20
+    HttpWebSocketReceive@20
+    HttpWebSocketSend@16
+    HttpWebSocketShutdown@16
+    InternetAttemptConnect@4
     InternetAutodial@8
     InternetAutodialHangup@4
     InternetCanonicalizeUrlA@16
     InternetCanonicalizeUrlW@16
+    InternetCheckConnectionA@12
+    InternetCheckConnectionW@12
     InternetCloseHandle@4
     InternetCombineUrlA@20
     InternetCombineUrlW@20
@@ -81,3 +96,6 @@ EXPORTS
     InternetTimeToSystemTimeA@12
     InternetTimeToSystemTimeW@12
     InternetWriteFile@16
+    ReadUrlCacheEntryStream@20
+    RetrieveUrlCacheEntryStreamW@20
+    UnlockUrlCacheEntryStream@8
