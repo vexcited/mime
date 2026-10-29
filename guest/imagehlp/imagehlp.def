@@ -18,3 +18,7 @@ EXPORTS
     SymSetOptions=dbghelp.SymSetOptions
     SymUnDName64=dbghelp.SymUnDName64
     SymUnloadModule64=dbghelp.SymUnloadModule64
+    SymGetModuleInfo=dbghelp.SymGetModuleInfo
+    SymGetSymFromAddr=dbghelp.SymGetSymFromAddr
+    SymLoadModule=dbghelp.SymLoadModule
+    SymUnloadModule=dbghelp.SymUnloadModule

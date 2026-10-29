@@ -14,4 +14,25 @@ EXPORTS
     MapAndLoad@20
     MapFileAndCheckSumA@12
     MapFileAndCheckSumW@12
+    StackWalk64
+    SymCleanup
+    SymEnumerateModules64
+    SymFromAddr
+    SymFunctionTableAccess64
+    SymGetLineFromAddr64
+    SymGetModuleBase64
+    SymGetModuleInfo
+    SymGetModuleInfo64
+    SymGetModuleInfoW64
+    SymGetOptions
+    SymGetSearchPath
+    SymGetSymFromAddr
+    SymGetSymFromAddr64
+    SymInitialize
+    SymLoadModule
+    SymLoadModule64
+    SymSetOptions
+    SymUnDName64
+    SymUnloadModule
+    SymUnloadModule64
     UnMapAndLoad@4

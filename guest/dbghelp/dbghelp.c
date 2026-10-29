@@ -3,7 +3,7 @@
  * symbol is the nearest export below the address, which is what dbghelp
  * falls back to without symbol files, and there is no line information.
  * stack walks cover the calling process, using unwind data on x64 and the
- * frame chain on arm64. a minidump holds the system info, the module list
+ * frame chain on x86 and arm64. a minidump holds the system info, the module list
  * and the exception.
  */
 #include <mime/nt.h>
@@ -14,8 +14,10 @@
 
 typedef unsigned int ULONG32;
 
-#ifdef __x86_64__
+#if defined(__x86_64__)
 #define NATIVE_MACHINE 0x8664 /* IMAGE_FILE_MACHINE_AMD64 */
+#elif defined(__i386__)
+#define NATIVE_MACHINE 0x014C /* IMAGE_FILE_MACHINE_I386 */
 #else
 #define NATIVE_MACHINE 0xAA64 /* IMAGE_FILE_MACHINE_ARM64 */
 #endif
@@ -231,8 +233,13 @@ DBGHELP DWORD64 WINAPI SymGetModuleBase64(HANDLE process, DWORD64 address)
 
 DBGHELP PVOID WINAPI SymFunctionTableAccess64(HANDLE process, DWORD64 address)
 {
+#if defined(__x86_64__) || defined(__aarch64__)
     ULONG64 base;
     return own_process(process) ? RtlLookupFunctionEntry(address, &base, nullptr) : nullptr;
+#else
+    /* x86 code has no function table, only the frame pointer. */
+    return nullptr;
+#endif
 }
 
 static BOOL nearest_export(BYTE *base, DWORD64 address, const char **name, DWORD64 *start)
@@ -355,6 +362,17 @@ static BOOL unwind(CONTEXT *c)
         c->Rsp += 8;
     }
     return c->Rip != 0;
+#elif defined(__i386__)
+    /* the frame pointer chain: the caller's pointer sits at the frame and the return address above it. */
+    ULONG frame = c->Ebp;
+    PNT_TIB tib = (PNT_TIB)NtCurrentTeb();
+    if (!frame || (frame & 3) || frame < c->Esp || frame + 8 > (ULONG)(ULONG_PTR)tib->StackBase)
+        return FALSE;
+    ULONG *words = (ULONG *)(ULONG_PTR)frame;
+    c->Eip = words[1];
+    c->Esp = frame + 8;
+    c->Ebp = words[0];
+    return c->Eip != 0;
 #else
     /* an unwound frame's pc is the return address, so the call is the instruction before it. */
     ULONG64 base;
@@ -379,6 +397,10 @@ static void fill_frame(LPSTACKFRAME64 frame, const CONTEXT *c)
     frame->AddrPC.Offset = c->Rip;
     frame->AddrStack.Offset = c->Rsp;
     frame->AddrFrame.Offset = c->Rbp;
+#elif defined(__i386__)
+    frame->AddrPC.Offset = c->Eip;
+    frame->AddrStack.Offset = c->Esp;
+    frame->AddrFrame.Offset = c->Ebp;
 #else
     frame->AddrPC.Offset = c->Pc;
     frame->AddrStack.Offset = c->Sp;
@@ -388,8 +410,10 @@ static void fill_frame(LPSTACKFRAME64 frame, const CONTEXT *c)
     CONTEXT next = *c;
     frame->AddrReturn.Offset = 0;
     if (unwind(&next))
-#ifdef __x86_64__
+#if defined(__x86_64__)
         frame->AddrReturn.Offset = next.Rip;
+#elif defined(__i386__)
+        frame->AddrReturn.Offset = next.Eip;
 #else
         frame->AddrReturn.Offset = next.Pc;
 #endif
@@ -1003,4 +1027,87 @@ DBGHELP BOOL WINAPI SymGetSearchPath(HANDLE process, PSTR search, DWORD size)
     if (search && size && !WideCharToMultiByte(CP_ACP, 0, wide, -1, search, (int)size, nullptr, nullptr))
         search[size - 1] = 0;
     return TRUE;
+}
+
+/* ------------------------------------------------------------------ the forms with 32 bit addresses */
+
+typedef struct _IMAGEHLP_SYMBOL {
+    DWORD SizeOfStruct;
+    DWORD Address;
+    DWORD Size;
+    DWORD Flags;
+    DWORD MaxNameLength;
+    CHAR Name[1];
+} IMAGEHLP_SYMBOL, *PIMAGEHLP_SYMBOL;
+
+typedef struct _IMAGEHLP_MODULE {
+    DWORD SizeOfStruct;
+    DWORD BaseOfImage;
+    DWORD ImageSize;
+    DWORD TimeDateStamp;
+    DWORD CheckSum;
+    DWORD NumSyms;
+    DWORD SymType;
+    CHAR ModuleName[32];
+    CHAR ImageName[256];
+    CHAR LoadedImageName[256];
+} IMAGEHLP_MODULE, *PIMAGEHLP_MODULE;
+
+DBGHELP BOOL WINAPI SymGetSymFromAddr(HANDLE process, DWORD address, PDWORD displacement, PIMAGEHLP_SYMBOL symbol)
+{
+    if (!symbol || symbol->SizeOfStruct < sizeof(*symbol) || !symbol->MaxNameLength) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    union {
+        IMAGEHLP_SYMBOL64 wide;
+        BYTE storage[sizeof(IMAGEHLP_SYMBOL64) + 512];
+    } u = {};
+    u.wide.SizeOfStruct = sizeof(IMAGEHLP_SYMBOL64);
+    u.wide.MaxNameLength = 512;
+    DWORD64 shift = 0;
+    if (!SymGetSymFromAddr64(process, address, &shift, &u.wide))
+        return FALSE;
+    symbol->Address = (DWORD)u.wide.Address;
+    symbol->Size = u.wide.Size;
+    symbol->Flags = u.wide.Flags;
+    DWORD length = (DWORD)strlen(u.wide.Name);
+    DWORD n = length < symbol->MaxNameLength - 1 ? length : symbol->MaxNameLength - 1;
+    memcpy(symbol->Name, u.wide.Name, n);
+    symbol->Name[n] = 0;
+    if (displacement)
+        *displacement = (DWORD)shift;
+    return TRUE;
+}
+
+DBGHELP BOOL WINAPI SymGetModuleInfo(HANDLE process, DWORD address, PIMAGEHLP_MODULE info)
+{
+    if (!info || info->SizeOfStruct < sizeof(*info)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    IMAGEHLP_MODULE64 wide = {.SizeOfStruct = sizeof(wide)};
+    if (!SymGetModuleInfo64(process, address, &wide))
+        return FALSE;
+    memset((BYTE *)info + sizeof(DWORD), 0, sizeof(*info) - sizeof(DWORD));
+    info->BaseOfImage = (DWORD)wide.BaseOfImage;
+    info->ImageSize = wide.ImageSize;
+    info->TimeDateStamp = wide.TimeDateStamp;
+    info->CheckSum = wide.CheckSum;
+    info->NumSyms = wide.NumSyms;
+    info->SymType = wide.SymType;
+    memcpy(info->ModuleName, wide.ModuleName, sizeof(info->ModuleName));
+    memcpy(info->ImageName, wide.ImageName, sizeof(info->ImageName));
+    memcpy(info->LoadedImageName, wide.LoadedImageName, sizeof(info->LoadedImageName));
+    return TRUE;
+}
+
+DBGHELP DWORD WINAPI SymLoadModule(HANDLE process, HANDLE file, PCSTR image, PCSTR module, DWORD base, DWORD size)
+{
+    return (DWORD)SymLoadModule64(process, file, image, module, base, size);
+}
+
+DBGHELP BOOL WINAPI SymUnloadModule(HANDLE process, DWORD base)
+{
+    return SymUnloadModule64(process, base);
 }
