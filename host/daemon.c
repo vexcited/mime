@@ -1,4 +1,5 @@
 /* background process owning the VM, Cocoa run loop and control socket. */
+#include "audio/audio.h"
 #include "camera/camera.h"
 #include "instance.h"
 #include "ipc.h"
@@ -788,6 +789,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     mime_instance_publish(lock_fd, paths);
     atexit(cleanup_files);
 
+    mime_audio_prepare();
     uint64_t ram = mime_vm_default_ram();
     const char *ram_env = getenv("MIME_RAM_MB");
     if (ram_env && atoi(ram_env) >= 256)

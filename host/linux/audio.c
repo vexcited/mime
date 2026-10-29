@@ -7,9 +7,14 @@
 #include <mime/audio.h>
 
 #include <SDL3/SDL.h>
+#include <limits.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
 
 #define MAX_STREAMS 64
 #define CHUNK_BYTES 8192
@@ -23,11 +28,96 @@ typedef struct Stream {
     uint32_t volume;
     bool running;
     bool capture;
+    bool silent; /* no host device: a clock plays the ring into nothing or records silence. */
+    uint64_t paced_ns;
+    uint64_t paced_frames;
 } Stream;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static Stream *g_streams[MAX_STREAMS];
 static bool g_audio;
+static bool g_pacer;
+static bool g_warned;
+
+static bool is_socket(const char *dir, const char *name)
+{
+    char path[PATH_MAX];
+    struct stat st;
+    if (!dir || snprintf(path, sizeof(path), "%s/%s", dir, name) >= (int)sizeof(path))
+        return false;
+    return stat(path, &st) == 0 && S_ISSOCK(st.st_mode);
+}
+
+/*
+ * the sound server listens in the user's own runtime directory. a launcher that points XDG_RUNTIME_DIR elsewhere would
+ * leave SDL without it, so name it directly while the daemon is still single threaded.
+ */
+void mime_audio_prepare(void)
+{
+    char own[64];
+    snprintf(own, sizeof(own), "/run/user/%u", (unsigned)getuid());
+    const char *runtime = getenv("XDG_RUNTIME_DIR");
+    if (runtime && !strcmp(runtime, own))
+        return;
+    if (!getenv("PIPEWIRE_RUNTIME_DIR") && !is_socket(runtime, "pipewire-0") && is_socket(own, "pipewire-0"))
+        setenv("PIPEWIRE_RUNTIME_DIR", own, 1);
+    if (!getenv("PULSE_SERVER") && !is_socket(runtime, "pulse/native") && is_socket(own, "pulse/native")) {
+        char server[96];
+        snprintf(server, sizeof(server), "unix:%s/pulse/native", own);
+        setenv("PULSE_SERVER", server, 1);
+    }
+}
+
+static uint64_t now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+/* moves a silent stream on by the frames its rate owes since the last tick, as a device would. */
+static void pace_stream(Stream *s, uint64_t now)
+{
+    MimeAudioHeader *h = s->hdr;
+    uint64_t due = (now - s->paced_ns) * h->rate / 1000000000ull;
+    if (!due)
+        return;
+    s->paced_ns += due * 1000000000ull / h->rate;
+    s->paced_frames += due;
+    uint64_t played = __atomic_load_n(&h->played, __ATOMIC_RELAXED);
+    uint64_t written = __atomic_load_n(&h->written, __ATOMIC_ACQUIRE);
+    if (s->capture) {
+        uint64_t used = written - played;
+        uint64_t room = used >= s->frames ? 0 : s->frames - used;
+        uint64_t n = MIME_MIN(due, room);
+        for (uint64_t i = 0; i < n; i++)
+            memset(s->ring + (size_t)((written + i) % s->frames) * s->frame_bytes, 0, s->frame_bytes);
+        if (n < due)
+            __atomic_fetch_add(&h->underruns, (uint32_t)(due - n), __ATOMIC_RELAXED);
+        __atomic_store_n(&h->written, written + n, __ATOMIC_RELEASE);
+        return;
+    }
+    uint64_t queued = MIME_MIN(written - played, (uint64_t)s->frames);
+    uint64_t n = MIME_MIN(due, queued);
+    __atomic_store_n(&h->played, played + n, __ATOMIC_RELEASE);
+    if (n < due)
+        __atomic_fetch_add(&h->underruns, 1, __ATOMIC_RELAXED);
+}
+
+static void *pacer(void *arg)
+{
+    struct timespec tick = {0, 5000000};
+    for (;;) {
+        nanosleep(&tick, nullptr);
+        uint64_t now = now_ns();
+        pthread_mutex_lock(&g_lock);
+        for (uint32_t i = 1; i < MAX_STREAMS; i++)
+            if (g_streams[i] && g_streams[i]->silent && g_streams[i]->running)
+                pace_stream(g_streams[i], now);
+        pthread_mutex_unlock(&g_lock);
+    }
+    return nullptr;
+}
 
 /* copies n frames from the ring at frame `at` into out, widening 24 bit samples. */
 static void copy_frames(Stream *s, uint8_t *out, uint32_t at, uint32_t n)
@@ -156,10 +246,6 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
     if (!g_audio)
         g_audio = SDL_InitSubSystem(SDL_INIT_AUDIO);
     pthread_mutex_unlock(&g_lock);
-    if (!g_audio) {
-        mime_warn("audio: no audio (%s)", SDL_GetError());
-        return MIME_HC_STATUS_UNSUPPORTED;
-    }
 
     Stream *s = calloc(1, sizeof(Stream));
     s->hdr = (MimeAudioHeader *)base;
@@ -175,15 +261,23 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
         .channels = (int)h.channels,
         .freq = (int)h.rate,
     };
-    s->stream = s->capture ? SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec, capture_render, s)
-                           : SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, render, s);
+    if (g_audio)
+        s->stream = s->capture ? SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec, capture_render, s)
+                               : SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, render, s);
+    /* without a host device the guest keeps a working one whose sound goes nowhere. */
     if (!s->stream) {
-        mime_warn("audio: cannot open a %u Hz, %u channel, %u bit %s stream (%s)", h.rate, h.channels, h.bits,
-                  s->capture ? "input" : "output", SDL_GetError());
-        destroy(s);
-        return MIME_HC_STATUS_UNSUPPORTED;
+        s->silent = true;
+        if (!__atomic_exchange_n(&g_warned, true, __ATOMIC_RELAXED))
+            mime_warn("audio: no host %s device (%s), the guest's sound is discarded", s->capture ? "input" : "output",
+                      SDL_GetError());
     }
     pthread_mutex_lock(&g_lock);
+    if (s->silent && !g_pacer) {
+        pthread_t thread;
+        g_pacer = pthread_create(&thread, nullptr, pacer, nullptr) == 0;
+        if (g_pacer)
+            pthread_detach(thread);
+    }
     for (uint32_t i = 1; i < MAX_STREAMS; i++) {
         if (!g_streams[i]) {
             g_streams[i] = s;
@@ -203,7 +297,10 @@ uint64_t mime_audio_start(uint64_t stream, uint64_t running)
     Stream *s = stream < MAX_STREAMS ? g_streams[stream] : nullptr;
     bool ok = true;
     if (s && s->running != (running != 0)) {
-        ok = running ? SDL_ResumeAudioStreamDevice(s->stream) : SDL_PauseAudioStreamDevice(s->stream);
+        if (s->silent)
+            s->paced_ns = now_ns();
+        else
+            ok = running ? SDL_ResumeAudioStreamDevice(s->stream) : SDL_PauseAudioStreamDevice(s->stream);
         if (ok)
             s->running = running != 0;
     }

@@ -23,6 +23,10 @@ typedef struct Stream {
 } Stream;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void mime_audio_prepare(void)
+{
+}
 static Stream *g_streams[MAX_STREAMS];
 
 static OSStatus render(void *ref, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *time, UInt32 bus,
