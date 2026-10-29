@@ -10,6 +10,7 @@ EXPORTS
     SetupDecompressOrCopyFileW@12
     SetupDefaultQueueCallbackA@16
     SetupDefaultQueueCallbackW@16
+    SetupDiBuildDriverInfoList@12
     SetupDiCallClassInstaller@12
     SetupDiClassGuidsFromNameA@16
     SetupDiClassGuidsFromNameExA@24
@@ -21,6 +22,7 @@ EXPORTS
     SetupDiDestroyDeviceInfoList@4
     SetupDiEnumDeviceInfo@12
     SetupDiEnumDeviceInterfaces@20
+    SetupDiEnumDriverInfoW@20
     SetupDiGetClassDevsA@16
     SetupDiGetClassDevsExW@28
     SetupDiGetClassDevsW@16
@@ -32,6 +34,9 @@ EXPORTS
     SetupDiGetDevicePropertyW@32
     SetupDiGetDeviceRegistryPropertyA@28
     SetupDiGetDeviceRegistryPropertyW@28
+    SetupDiGetDriverInstallParamsW@16
+    SetupDiOpenClassRegKey@8
+    SetupDiOpenClassRegKeyExW@20
     SetupDiOpenDevRegKey@24
     SetupDiOpenDeviceInfoA@20
     SetupDiOpenDeviceInfoW@20

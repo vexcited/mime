@@ -10,6 +10,7 @@ EXPORTS
     SetupDecompressOrCopyFileW=_SetupDecompressOrCopyFileW@12
     SetupDefaultQueueCallbackA=_SetupDefaultQueueCallbackA@16
     SetupDefaultQueueCallbackW=_SetupDefaultQueueCallbackW@16
+    SetupDiBuildDriverInfoList=_SetupDiBuildDriverInfoList@12
     SetupDiCallClassInstaller=_SetupDiCallClassInstaller@12
     SetupDiClassGuidsFromNameA=_SetupDiClassGuidsFromNameA@16
     SetupDiClassGuidsFromNameExA=_SetupDiClassGuidsFromNameExA@24
@@ -21,6 +22,7 @@ EXPORTS
     SetupDiDestroyDeviceInfoList=_SetupDiDestroyDeviceInfoList@4
     SetupDiEnumDeviceInfo=_SetupDiEnumDeviceInfo@12
     SetupDiEnumDeviceInterfaces=_SetupDiEnumDeviceInterfaces@20
+    SetupDiEnumDriverInfoW=_SetupDiEnumDriverInfoW@20
     SetupDiGetClassDevsA=_SetupDiGetClassDevsA@16
     SetupDiGetClassDevsExW=_SetupDiGetClassDevsExW@28
     SetupDiGetClassDevsW=_SetupDiGetClassDevsW@16
@@ -32,6 +34,9 @@ EXPORTS
     SetupDiGetDevicePropertyW=_SetupDiGetDevicePropertyW@32
     SetupDiGetDeviceRegistryPropertyA=_SetupDiGetDeviceRegistryPropertyA@28
     SetupDiGetDeviceRegistryPropertyW=_SetupDiGetDeviceRegistryPropertyW@28
+    SetupDiGetDriverInstallParamsW=_SetupDiGetDriverInstallParamsW@16
+    SetupDiOpenClassRegKey=_SetupDiOpenClassRegKey@8
+    SetupDiOpenClassRegKeyExW=_SetupDiOpenClassRegKeyExW@20
     SetupDiOpenDevRegKey=_SetupDiOpenDevRegKey@24
     SetupDiOpenDeviceInfoA=_SetupDiOpenDeviceInfoA@20
     SetupDiOpenDeviceInfoW=_SetupDiOpenDeviceInfoW@20

@@ -696,6 +696,107 @@ WINSETUPAPI HKEY WINAPI SetupDiOpenDeviceInterfaceRegKey(HDEVINFO set, PSP_DEVIC
     return f ? interface_key(f, access, FALSE) : INVALID_HANDLE_VALUE;
 }
 
+/*
+ * the key of a class, or the key that holds the classes when none is named. the installer keys are the classes of
+ * devices and the interface keys the classes of device interfaces.
+ */
+#define ERROR_CLASS_KEY_MISSING ((DWORD)0xE0000206)
+#define ERROR_INTERFACE_CLASS_KEY_MISSING ((DWORD)0xE000021E)
+#define DIOCR_INSTALLER 1
+#define DIOCR_INTERFACE 2
+
+WINSETUPAPI HKEY WINAPI SetupDiOpenClassRegKeyExW(const GUID *guid, REGSAM access, DWORD flags, PCWSTR machine,
+                                                  PVOID reserved)
+{
+    if (reserved) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    if (flags != DIOCR_INSTALLER && flags != DIOCR_INTERFACE) {
+        SetLastError(ERROR_INVALID_FLAGS);
+        return INVALID_HANDLE_VALUE;
+    }
+    if (machine && *machine) {
+        SetLastError(ERROR_INVALID_MACHINENAME);
+        return INVALID_HANDLE_VALUE;
+    }
+    WCHAR path[128] = L"SYSTEM\\CurrentControlSet\\Control\\";
+    lstrcatW(path, flags == DIOCR_INSTALLER ? L"Class" : L"DeviceClasses");
+    if (guid) {
+        WCHAR text[48];
+        _snwprintf(text, RTL_NUMBER_OF(text), L"\\{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}", guid->Data1, guid->Data2, guid->Data3,
+                  guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3], guid->Data4[4], guid->Data4[5],
+                  guid->Data4[6], guid->Data4[7]);
+        lstrcatW(path, text);
+    }
+    HKEY key;
+    LSTATUS error = RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, access, &key);
+    if (error) {
+        if (error == ERROR_FILE_NOT_FOUND && guid)
+            SetLastError(flags == DIOCR_INSTALLER ? ERROR_CLASS_KEY_MISSING : ERROR_INTERFACE_CLASS_KEY_MISSING);
+        else
+            SetLastError((DWORD)error);
+        return INVALID_HANDLE_VALUE;
+    }
+    SetLastError(0);
+    return key;
+}
+
+WINSETUPAPI HKEY WINAPI SetupDiOpenClassRegKey(const GUID *guid, REGSAM access)
+{
+    return SetupDiOpenClassRegKeyExW(guid, access, DIOCR_INSTALLER, nullptr, nullptr);
+}
+
+/*
+ * drivers are matched to devices by the information files of installed driver packages, and none is installed here, so
+ * the lists are built empty and have nothing to count, enumerate or describe.
+ */
+WINSETUPAPI BOOL WINAPI SetupDiBuildDriverInfoList(HDEVINFO set, PSP_DEVINFO_DATA device, DWORD type)
+{
+    DEVICE_SET *s = set_of(set);
+    if (!s)
+        return FALSE;
+    if (device && !device_of(s, device))
+        return FALSE;
+    if (type != 1 && type != 2) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (type == 2 && !device) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiEnumDriverInfoW(HDEVINFO set, PSP_DEVINFO_DATA device, DWORD type, DWORD index,
+                                               PVOID driver)
+{
+    DEVICE_SET *s = set_of(set);
+    if (!s)
+        return FALSE;
+    if (device && !device_of(s, device))
+        return FALSE;
+    if ((type != 1 && type != 2 && type != 3) || (type != 1 && !device)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    SetLastError(ERROR_NO_MORE_ITEMS);
+    return FALSE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiGetDriverInstallParamsW(HDEVINFO set, PSP_DEVINFO_DATA device, PVOID driver, PVOID params)
+{
+    DEVICE_SET *s = set_of(set);
+    if (!s)
+        return FALSE;
+    if (device && !device_of(s, device))
+        return FALSE;
+    /* the driver is one of the list, and the list has none. */
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
 /* no class installers run: succeed as for a device already set up. */
 WINSETUPAPI BOOL WINAPI SetupDiCallClassInstaller(DI_FUNCTION function, HDEVINFO set, PSP_DEVINFO_DATA device)
 {

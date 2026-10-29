@@ -1,6 +1,7 @@
 ; setupapi.dll: its functions, and the configuration manager forwarded to cfgmgr32 as windows forwards it.
 LIBRARY setupapi.dll
 EXPORTS
+    SetupDiBuildDriverInfoList
     SetupDiCallClassInstaller
     SetupDiClassGuidsFromNameA
     SetupDiClassGuidsFromNameExA
@@ -12,6 +13,7 @@ EXPORTS
     SetupDiDestroyDeviceInfoList
     SetupDiEnumDeviceInfo
     SetupDiEnumDeviceInterfaces
+    SetupDiEnumDriverInfoW
     SetupDiGetClassDevsA
     SetupDiGetClassDevsExW
     SetupDiGetClassDevsW
@@ -23,6 +25,9 @@ EXPORTS
     SetupDiGetDevicePropertyW
     SetupDiGetDeviceRegistryPropertyA
     SetupDiGetDeviceRegistryPropertyW
+    SetupDiGetDriverInstallParamsW
+    SetupDiOpenClassRegKey
+    SetupDiOpenClassRegKeyExW
     SetupDiOpenDevRegKey
     SetupDiOpenDeviceInfoA
     SetupDiOpenDeviceInfoW
