@@ -650,6 +650,12 @@ BOOL WINAPI CertGetEnhancedKeyUsage(PCCERT_CONTEXT pCertContext, DWORD dwFlags, 
     if (!pCertContext || !pcbUsage)
         return CrFail(E_INVALIDARG);
     const DWORD ext_only = 0x2, prop_only = 0x4;
+    if (dwFlags && !(dwFlags & (ext_only | prop_only)))
+        return CrFail(ERROR_INVALID_PARAMETER);
+    /* no flag, or both, asks for the usages the extension and the property agree on. */
+    BOOL either = !dwFlags || dwFlags == (ext_only | prop_only);
+    if (either)
+        dwFlags = 0;
     CERT_ENHKEY_USAGE *from_ext = nullptr, *from_prop = nullptr;
     DWORD size;
     if (!(dwFlags & prop_only)) {
@@ -668,7 +674,9 @@ BOOL WINAPI CertGetEnhancedKeyUsage(PCCERT_CONTEXT pCertContext, DWORD dwFlags, 
         }
     }
     if (!from_ext && !from_prop) {
-        CrFree(from_ext);
+        /* asking for one source alone fails when it has none, and asking for both leaves every usage valid. */
+        if (!either)
+            return CrFail(CRYPT_E_NOT_FOUND);
         size = sizeof(CERT_ENHKEY_USAGE);
         if (pUsage) {
             if (*pcbUsage < size) {
@@ -704,4 +712,159 @@ BOOL WINAPI CertGetEnhancedKeyUsage(PCCERT_CONTEXT pCertContext, DWORD dwFlags, 
     CrFree(from_ext);
     CrFree(from_prop);
     return ok;
+}
+
+/* ------------------------------------------------------------------ valid usages of several certificates */
+
+#define MAX_USAGES 100
+
+typedef struct {
+    LPSTR items[MAX_USAGES];
+    DWORD count;
+    BOOL used;
+} USAGE_SET;
+
+static CERT_ENHKEY_USAGE *fetch_usage(PCCERT_CONTEXT cert, DWORD flags)
+{
+    DWORD size = 0;
+    if (!CertGetEnhancedKeyUsage(cert, flags, nullptr, &size))
+        return nullptr;
+    CERT_ENHKEY_USAGE *usage = CrAlloc(size);
+    if (usage && !CertGetEnhancedKeyUsage(cert, flags, usage, &size)) {
+        CrFree(usage);
+        return nullptr;
+    }
+    return usage;
+}
+
+static BOOL usage_listed(LPSTR *list, DWORD count, LPCSTR oid)
+{
+    for (DWORD i = 0; i < count; i++)
+        if (list[i] && !strcmp(list[i], oid))
+            return TRUE;
+    return FALSE;
+}
+
+/* the first certificate with usages starts the set and each later one narrows it. */
+static DWORD merge_usages(USAGE_SET *set, const CERT_ENHKEY_USAGE *usage)
+{
+    if (!set->used) {
+        set->used = TRUE;
+        for (DWORD i = 0; i < usage->cUsageIdentifier; i++) {
+            if (i >= MAX_USAGES)
+                return ERROR_MORE_DATA;
+            SIZE_T length = strlen(usage->rgpszUsageIdentifier[i]) + 1;
+            set->items[i] = CrAlloc(length);
+            if (!set->items[i])
+                return ERROR_OUTOFMEMORY;
+            memcpy(set->items[i], usage->rgpszUsageIdentifier[i], length);
+            set->count = i + 1;
+        }
+        return 0;
+    }
+    DWORD kept = 0;
+    for (DWORD i = 0; i < set->count; i++) {
+        if (usage_listed(usage->rgpszUsageIdentifier, usage->cUsageIdentifier, set->items[i])) {
+            set->items[kept++] = set->items[i];
+        } else {
+            CrFree(set->items[i]);
+        }
+    }
+    set->count = kept;
+    return 0;
+}
+
+static void free_usages(USAGE_SET *set)
+{
+    for (DWORD i = 0; i < set->count; i++)
+        CrFree(set->items[i]);
+    set->count = 0;
+}
+
+/*
+ * the usages every certificate allows: those of the extensions, narrowed by those of the properties when both are
+ * there. with no usage in any certificate everything is valid, which is a count of -1.
+ */
+BOOL WINAPI CertGetValidUsages(DWORD count, PCCERT_CONTEXT *certs, int *oid_count, LPSTR *oids, DWORD *oids_size)
+{
+    USAGE_SET extension = {}, property = {};
+    DWORD error = 0;
+    for (DWORD i = 0; !error && i < count; i++) {
+        CERT_ENHKEY_USAGE *from_extension = fetch_usage(certs[i], 2), *from_property = fetch_usage(certs[i], 4);
+        if (from_extension)
+            error = merge_usages(&extension, from_extension);
+        if (!error && from_property)
+            error = merge_usages(&property, from_property);
+        CrFree(from_extension);
+        CrFree(from_property);
+    }
+    LPSTR chosen[MAX_USAGES];
+    DWORD chosen_count = 0;
+    BOOL everything = FALSE;
+    if (!error) {
+        if (!extension.used && !property.used) {
+            everything = TRUE;
+        } else if (!extension.used || !property.used) {
+            USAGE_SET *only = extension.used ? &extension : &property;
+            for (DWORD i = 0; i < only->count; i++)
+                chosen[chosen_count++] = only->items[i];
+        } else {
+            for (DWORD i = 0; i < extension.count; i++)
+                if (usage_listed(property.items, property.count, extension.items[i]))
+                    chosen[chosen_count++] = extension.items[i];
+        }
+    }
+    BOOL ok = FALSE;
+    if (error) {
+        SetLastError(error);
+    } else if (everything) {
+        *oid_count = -1;
+        *oids_size = 0;
+        ok = TRUE;
+    } else {
+        DWORD strings = 0;
+        for (DWORD i = 0; i < chosen_count; i++)
+            strings += (DWORD)strlen(chosen[i]) + 1;
+        DWORD needed = chosen_count * sizeof(LPSTR) + strings;
+        *oid_count = (int)chosen_count;
+        if (!oids) {
+            *oids_size = needed;
+            ok = TRUE;
+        } else if (needed > *oids_size) {
+            *oids_size = needed;
+            SetLastError(ERROR_MORE_DATA);
+        } else {
+            char *text = (char *)(oids + chosen_count);
+            for (DWORD i = 0; i < chosen_count; i++) {
+                oids[i] = text;
+                SIZE_T length = strlen(chosen[i]) + 1;
+                memcpy(text, chosen[i], length);
+                text += length;
+            }
+            ok = TRUE;
+        }
+    }
+    error = GetLastError();
+    free_usages(&extension);
+    free_usages(&property);
+    if (!ok)
+        SetLastError(error);
+    return ok;
+}
+
+/* ------------------------------------------------------------------ revocation lists */
+
+/* stores here keep certificates only, so there is never a list to enumerate or to free. */
+PCCRL_CONTEXT WINAPI CertEnumCRLsInStore(HCERTSTORE store, PCCRL_CONTEXT previous)
+{
+    if (!CrStore(store))
+        SetLastError(E_INVALIDARG);
+    else
+        SetLastError(CRYPT_E_NOT_FOUND);
+    return nullptr;
+}
+
+BOOL WINAPI CertFreeCRLContext(PCCRL_CONTEXT context)
+{
+    return TRUE;
 }

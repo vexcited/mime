@@ -21,6 +21,7 @@ EXPORTS
     CertDuplicateCertificateChain@4
     CertDuplicateCertificateContext@4
     CertDuplicateStore@4
+    CertEnumCRLsInStore@8
     CertEnumCertificateContextProperties@8
     CertEnumCertificatesInStore@8
     CertEnumPhysicalStore@16
@@ -29,6 +30,7 @@ EXPORTS
     CertFindChainInStore@24
     CertFindExtension@12
     CertFindRDNAttr@8
+    CertFreeCRLContext@4
     CertFreeCertificateChain@4
     CertFreeCertificateChainEngine@4
     CertFreeCertificateContext@4
@@ -42,6 +44,7 @@ EXPORTS
     CertGetPublicKeyLength@8
     CertGetStoreProperty@16
     CertGetSubjectCertificateFromStore@12
+    CertGetValidUsages@20
     CertIsRDNAttrsInCertificateName@16
     CertNameToStrA@20
     CertNameToStrW@20
@@ -71,6 +74,7 @@ EXPORTS
     CryptEncodeObject@20
     CryptEncodeObjectEx@28
     CryptFindOIDInfo@12
+    CryptGetMessageCertificates@20
     CryptHashCertificate2@28
     CryptHashCertificate@28
     CryptHashPublicKeyInfo@28
@@ -83,9 +87,12 @@ EXPORTS
     CryptMsgClose@4
     CryptMsgGetAndVerifySigner@24
     CryptMsgGetParam@20
+    CryptMsgOpenToDecode@24
+    CryptMsgUpdate@16
     CryptProtectData@28
     CryptProtectMemory@12
     CryptQueryObject@44
+    CryptSignMessage@28
     CryptStringToBinaryA@28
     CryptStringToBinaryW@28
     CryptUnprotectData@28
@@ -93,6 +100,7 @@ EXPORTS
     CryptUpdateProtectedState@20
     CryptVerifyCertificateSignature@20
     CryptVerifyCertificateSignatureEx@32
+    CryptVerifyDetachedMessageSignature@32
     PFXImportCertStore@12
     PFXIsPFXBlob@4
     PFXVerifyPassword@12

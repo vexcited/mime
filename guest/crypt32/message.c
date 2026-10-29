@@ -4,13 +4,22 @@
 #define MESSAGE_LIMIT (16 * 1024 * 1024)
 #define MESSAGE_ITEMS 256
 #define CRYPT_E_INVALID_INDEX ((DWORD)0x80091008)
+#define CRYPT_E_STREAM_MSG_NOT_READY ((DWORD)0x80091010)
+#define CRYPT_E_NO_SIGNER ((DWORD)0x8009200E)
 
 typedef struct {
     BYTE *bytes;
     der_item encoded, bare, content, certificates, crls, signers;
     char content_oid[256];
     DWORD version, certificate_count, crl_count, signer_count;
+    /* what CryptMsgUpdate collects: the message, then for a detached one the content it signs. */
+    BYTE *pending, *outside;
+    DWORD pending_size, pending_capacity, outside_size, outside_capacity;
+    DWORD state;
+    BOOL detached;
 } MESSAGE;
+
+enum { MESSAGE_READY, MESSAGE_COLLECTING, MESSAGE_CONTENT, MESSAGE_FAILED };
 
 typedef struct {
     BYTE *base;
@@ -256,6 +265,8 @@ static void free_message(MESSAGE *message)
 {
     if (message) {
         CrFree(message->bytes);
+        CrFree(message->pending);
+        CrFree(message->outside);
         CrFree(message);
     }
 }
@@ -306,6 +317,10 @@ static DWORD get_parameter(MESSAGE *message, DWORD type, DWORD index, BYTE *out,
     DWORD length = 0, value = 0;
     der_item item = {};
     BOOL packed = type >= CMSG_SIGNER_INFO_PARAM && type <= CMSG_SIGNER_UNAUTH_ATTR_PARAM;
+    if (message->state == MESSAGE_FAILED)
+        return CRYPT_E_MSG_ERROR;
+    if (message->state != MESSAGE_READY)
+        return CRYPT_E_STREAM_MSG_NOT_READY;
     if (packed || type == CMSG_ENCODED_SIGNER) {
         if (index >= message->signer_count)
             return CRYPT_E_INVALID_INDEX;
@@ -591,6 +606,204 @@ BOOL WINAPI CryptMsgGetAndVerifySigner(HCRYPTMSG handle, DWORD store_count, HCER
     }
     CertCloseStore(own, 0);
     return CrFail(error);
+}
+
+/* ------------------------------------------------------------------ decoding a message as it arrives */
+
+static DWORD append(BYTE **buffer, DWORD *size, DWORD *capacity, const BYTE *data, DWORD count)
+{
+    if (count > MESSAGE_LIMIT - *size)
+        return CRYPT_E_ASN1_LARGE;
+    if (*size + count > *capacity || !*buffer) {
+        DWORD wanted = *size + count;
+        if (wanted < 4096)
+            wanted = 4096;
+        if (wanted < *capacity * 2 && *capacity * 2 <= MESSAGE_LIMIT)
+            wanted = *capacity * 2;
+        BYTE *grown = CrAlloc(wanted);
+        if (!grown)
+            return ERROR_OUTOFMEMORY;
+        if (*size)
+            memcpy(grown, *buffer, *size);
+        CrFree(*buffer);
+        *buffer = grown;
+        *capacity = wanted;
+    }
+    if (count)
+        memcpy(*buffer + *size, data, count);
+    *size += count;
+    return 0;
+}
+
+/*
+ * only signed messages that arrive whole are decoded, with the content following the signature when the message is
+ * detached. messages that are streamed to callbacks, enveloped or hashed are not.
+ */
+HCRYPTMSG WINAPI CryptMsgOpenToDecode(DWORD encoding, DWORD flags, DWORD type, HCRYPTPROV_LEGACY provider,
+                                      CERT_INFO *recipient, void *stream)
+{
+    if (stream) {
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return nullptr;
+    }
+    if ((type != 0 && type != CMSG_SIGNED) || (flags & ~(DWORD)(CMSG_DETACHED_FLAG | 0x8000))) {
+        SetLastError(type > 5 ? E_INVALIDARG : ERROR_NOT_SUPPORTED);
+        return nullptr;
+    }
+    MESSAGE *message = CrAllocZero(sizeof(*message));
+    if (!message) {
+        SetLastError(ERROR_OUTOFMEMORY);
+        return nullptr;
+    }
+    message->state = MESSAGE_COLLECTING;
+    message->detached = (flags & CMSG_DETACHED_FLAG) != 0;
+    HCRYPTMSG handle = publish(message);
+    if (!handle) {
+        free_message(message);
+        SetLastError(ERROR_OUTOFMEMORY);
+    }
+    return handle;
+}
+
+static DWORD update(MESSAGE *message, const BYTE *data, DWORD size, BOOL final)
+{
+    DWORD error;
+    switch (message->state) {
+    case MESSAGE_COLLECTING:
+        error = append(&message->pending, &message->pending_size, &message->pending_capacity, data, size);
+        if (error || !final)
+            return error;
+        if (!message->pending_size)
+            return CRYPT_E_ASN1_EOD;
+        message->bytes = message->pending;
+        message->pending = nullptr;
+        error = parse_message(message, message->pending_size);
+        message->state = error ? MESSAGE_FAILED : message->detached ? MESSAGE_CONTENT : MESSAGE_READY;
+        return error;
+    case MESSAGE_CONTENT:
+        error = append(&message->outside, &message->outside_size, &message->outside_capacity, data, size);
+        if (error || !final)
+            return error;
+        /* the digest is taken over the content as it arrived. */
+        message->content.tag = ASN_OCTETSTRING;
+        message->content.content = message->content.start = message->outside;
+        message->content.length = message->content.total = message->outside_size;
+        message->state = MESSAGE_READY;
+        return 0;
+    default:
+        return CRYPT_E_MSG_ERROR;
+    }
+}
+
+BOOL WINAPI CryptMsgUpdate(HCRYPTMSG handle, const BYTE *data, DWORD size, BOOL final)
+{
+    if (!data && size)
+        return CrFail(E_INVALIDARG);
+    AcquireSRWLockExclusive(&message_lock);
+    MESSAGE *message = lookup(handle);
+    DWORD error = message ? update(message, data, size, final) : ERROR_INVALID_HANDLE;
+    ReleaseSRWLockExclusive(&message_lock);
+    return error ? CrFail(error) : TRUE;
+}
+
+HCERTSTORE WINAPI CryptGetMessageCertificates(DWORD encoding, HCRYPTPROV_LEGACY provider, DWORD flags,
+                                              const BYTE *signed_blob, DWORD size)
+{
+    CRYPT_DATA_BLOB blob = {size, (BYTE *)signed_blob};
+    return CertOpenStore(CERT_STORE_PROV_PKCS7, encoding, provider, flags, &blob);
+}
+
+/*
+ * the certificate of the signer is asked of the caller's callback, or looked up by issuer and serial number among the
+ * message's own, and then the signature is checked with its key.
+ */
+static BOOL verify_signer(const CRYPT_VERIFY_MESSAGE_PARA *para, DWORD index, HCRYPTMSG handle, PCCERT_CONTEXT *out)
+{
+    DWORD count = 0, size = sizeof(count);
+    if (!CryptMsgGetParam(handle, CMSG_SIGNER_COUNT_PARAM, 0, &count, &size))
+        return FALSE;
+    if (index >= count)
+        return CrFail(CRYPT_E_NO_SIGNER);
+    size = 0;
+    if (!CryptMsgGetParam(handle, CMSG_SIGNER_CERT_INFO_PARAM, index, nullptr, &size))
+        return FALSE;
+    CERT_INFO *info = CrAlloc(size);
+    if (!info)
+        return CrFail(ERROR_OUTOFMEMORY);
+    if (!CryptMsgGetParam(handle, CMSG_SIGNER_CERT_INFO_PARAM, index, info, &size)) {
+        CrFree(info);
+        return FALSE;
+    }
+    AcquireSRWLockShared(&message_lock);
+    MESSAGE *message = lookup(handle);
+    HCERTSTORE store = message ? CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, nullptr) : nullptr;
+    for (DWORD k = 0; store && k < message->certificate_count; k++) {
+        der_item cert;
+        if (!item_at(message->certificates, k, &cert))
+            CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING, cert.start, cert.total, CERT_STORE_ADD_ALWAYS,
+                                             nullptr);
+    }
+    ReleaseSRWLockShared(&message_lock);
+    if (!store) {
+        CrFree(info);
+        return CrFail(ERROR_OUTOFMEMORY);
+    }
+    PCCERT_CONTEXT found = para->pfnGetSignerCertificate ?
+                               para->pfnGetSignerCertificate(para->pvGetArg, para->dwMsgAndCertEncodingType, info, store) :
+                               CertGetSubjectCertificateFromStore(store, para->dwMsgAndCertEncodingType, info);
+    CrFree(info);
+    DWORD error = found ? 0 : GetLastError();
+    if (found) {
+        AcquireSRWLockShared(&message_lock);
+        message = lookup(handle);
+        der_item signer;
+        error = message ? item_at(message->signers, index, &signer) : ERROR_INVALID_HANDLE;
+        if (!error)
+            error = verify_signature(message, signer, found);
+        ReleaseSRWLockShared(&message_lock);
+        if (error) {
+            CertFreeCertificateContext(found);
+            found = nullptr;
+        }
+    }
+    CertCloseStore(store, 0);
+    if (!found)
+        return CrFail(error ? error : CRYPT_E_NOT_FOUND);
+    if (out)
+        *out = found;
+    else
+        CertFreeCertificateContext(found);
+    return TRUE;
+}
+
+BOOL WINAPI CryptVerifyDetachedMessageSignature(CRYPT_VERIFY_MESSAGE_PARA *para, DWORD signer_index,
+                                                const BYTE *signature, DWORD signature_size, DWORD count,
+                                                const BYTE *blobs[], DWORD sizes[], PCCERT_CONTEXT *signer)
+{
+    if (signer)
+        *signer = nullptr;
+    if (!para || para->cbSize < sizeof(*para) || (count && (!blobs || !sizes)))
+        return CrFail(E_INVALIDARG);
+    HCRYPTMSG message = CryptMsgOpenToDecode(para->dwMsgAndCertEncodingType, count ? CMSG_DETACHED_FLAG : 0, 0,
+                                             para->hCryptProv, nullptr, nullptr);
+    if (!message)
+        return FALSE;
+    BOOL ok = CryptMsgUpdate(message, signature, signature_size, TRUE);
+    for (DWORD i = 0; ok && i < count; i++)
+        ok = CryptMsgUpdate(message, blobs[i], sizes[i], i + 1 == count);
+    DWORD type = 0, size = sizeof(type);
+    if (ok && !CryptMsgGetParam(message, CMSG_TYPE_PARAM, 0, &type, &size))
+        ok = FALSE;
+    if (ok && type != CMSG_SIGNED) {
+        SetLastError(CRYPT_E_UNEXPECTED_MSG_TYPE);
+        ok = FALSE;
+    }
+    ok = ok && verify_signer(para, signer_index, message, signer);
+    DWORD error = GetLastError();
+    CryptMsgClose(message);
+    if (!ok)
+        SetLastError(error);
+    return ok;
 }
 
 /* a blob is copied, a file is mapped, which *mapped tells: signed files such as cabinets can be large. */

@@ -1181,6 +1181,12 @@ WINCRYPT32API PCERT_EXTENSION WINAPI CertFindExtension(LPCSTR pszObjId, DWORD cE
 WINCRYPT32API PCERT_RDN_ATTR WINAPI CertFindRDNAttr(LPCSTR pszObjId, PCERT_NAME_INFO pName);
 WINCRYPT32API LONG WINAPI CertVerifyTimeValidity(LPFILETIME pTimeToVerify, PCERT_INFO pCertInfo);
 WINCRYPT32API DWORD WINAPI CertGetPublicKeyLength(DWORD dwCertEncodingType, PCERT_PUBLIC_KEY_INFO pPublicKey);
+typedef struct _CRL_CONTEXT CRL_CONTEXT, *PCRL_CONTEXT;
+typedef const CRL_CONTEXT *PCCRL_CONTEXT;
+WINCRYPT32API BOOL WINAPI CertGetValidUsages(DWORD count, PCCERT_CONTEXT *certs, int *oid_count, LPSTR *oids,
+                                             DWORD *oids_size);
+WINCRYPT32API PCCRL_CONTEXT WINAPI CertEnumCRLsInStore(HCERTSTORE store, PCCRL_CONTEXT previous);
+WINCRYPT32API BOOL WINAPI CertFreeCRLContext(PCCRL_CONTEXT context);
 WINCRYPT32API BOOL WINAPI CertGetEnhancedKeyUsage(PCCERT_CONTEXT pCertContext, DWORD dwFlags,
                                                   PCERT_ENHKEY_USAGE pUsage, DWORD *pcbUsage);
 WINCRYPT32API BOOL WINAPI CertGetIntendedKeyUsage(DWORD dwCertEncodingType, PCERT_INFO pCertInfo,
@@ -1342,6 +1348,52 @@ WINCRYPT32API BOOL WINAPI CryptMsgGetParam(HCRYPTMSG message, DWORD type, DWORD 
 WINCRYPT32API BOOL WINAPI CryptMsgClose(HCRYPTMSG message);
 WINCRYPT32API BOOL WINAPI CryptMsgGetAndVerifySigner(HCRYPTMSG message, DWORD store_count, HCERTSTORE *stores, DWORD flags,
                                                      PCCERT_CONTEXT *signer, DWORD *signer_index);
+
+#define CMSG_DETACHED_FLAG 0x00000004
+
+typedef PCCERT_CONTEXT(WINAPI *PFN_CRYPT_GET_SIGNER_CERTIFICATE)(void *arg, DWORD encoding, CERT_INFO *signer_id,
+                                                                  HCERTSTORE message_store);
+
+typedef struct _CRYPT_VERIFY_MESSAGE_PARA {
+    DWORD cbSize;
+    DWORD dwMsgAndCertEncodingType;
+    HCRYPTPROV_LEGACY hCryptProv;
+    PFN_CRYPT_GET_SIGNER_CERTIFICATE pfnGetSignerCertificate;
+    void *pvGetArg;
+} CRYPT_VERIFY_MESSAGE_PARA, *PCRYPT_VERIFY_MESSAGE_PARA;
+
+typedef struct _CRYPT_SIGN_MESSAGE_PARA {
+    DWORD cbSize;
+    DWORD dwMsgEncodingType;
+    PCCERT_CONTEXT pSigningCert;
+    CRYPT_ALGORITHM_IDENTIFIER HashAlgorithm;
+    void *pvHashAuxInfo;
+    DWORD cMsgCert;
+    PCCERT_CONTEXT *rgpMsgCert;
+    DWORD cMsgCrl;
+    const void **rgpMsgCrl;
+    DWORD cAuthAttr;
+    CRYPT_ATTRIBUTE *rgAuthAttr;
+    DWORD cUnauthAttr;
+    CRYPT_ATTRIBUTE *rgUnauthAttr;
+    DWORD dwFlags;
+    DWORD dwInnerContentType;
+} CRYPT_SIGN_MESSAGE_PARA, *PCRYPT_SIGN_MESSAGE_PARA;
+
+#define CRYPT_MESSAGE_BARE_CONTENT_OUT_FLAG 0x00000001
+#define CRYPT_MESSAGE_ENCAPSULATED_CONTENT_OUT_FLAG 0x00000002
+#define CRYPT_MESSAGE_SILENT_KEYSET_FLAG 0x00000040
+
+WINCRYPT32API HCRYPTMSG WINAPI CryptMsgOpenToDecode(DWORD encoding, DWORD flags, DWORD type, HCRYPTPROV_LEGACY provider,
+                                                    CERT_INFO *recipient, void *stream);
+WINCRYPT32API BOOL WINAPI CryptMsgUpdate(HCRYPTMSG message, const BYTE *data, DWORD size, BOOL final);
+WINCRYPT32API HCERTSTORE WINAPI CryptGetMessageCertificates(DWORD encoding, HCRYPTPROV_LEGACY provider, DWORD flags,
+                                                            const BYTE *signed_blob, DWORD size);
+WINCRYPT32API BOOL WINAPI CryptVerifyDetachedMessageSignature(CRYPT_VERIFY_MESSAGE_PARA *para, DWORD signer_index,
+                                                              const BYTE *signature, DWORD signature_size, DWORD count,
+                                                              const BYTE *blobs[], DWORD sizes[], PCCERT_CONTEXT *signer);
+WINCRYPT32API BOOL WINAPI CryptSignMessage(CRYPT_SIGN_MESSAGE_PARA *para, BOOL detached, DWORD count,
+                                           const BYTE *blobs[], DWORD sizes[], BYTE *signed_blob, DWORD *signed_size);
 
 /* CryptAcquireCertificatePrivateKey. */
 #define CRYPT_ACQUIRE_CACHE_FLAG 0x00000001

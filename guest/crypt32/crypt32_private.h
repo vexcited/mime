@@ -144,6 +144,12 @@ ALG_ID CrHashFromOid(LPCSTR oid);
 DWORD CrVerifySignedBlob(const BYTE *encoded, DWORD size, const CERT_PUBLIC_KEY_INFO *key);
 DWORD CrRsaModulusBits(const CERT_PUBLIC_KEY_INFO *key);
 
+/* ------------------------------------------------------------------ private keys, key.c */
+
+BOOL CrSignData(HCRYPTPROV provider, DWORD key_spec, ALG_ID alg, const BYTE *data, DWORD size, BYTE *signature,
+                DWORD *signature_size);
+void CrReleaseProvider(HCRYPTPROV provider);
+
 /* ------------------------------------------------------------------ oids, oid.c */
 
 PCCRYPT_OID_INFO CrFindOid(LPCSTR oid, DWORD group);

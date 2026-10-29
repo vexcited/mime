@@ -21,6 +21,7 @@ EXPORTS
     CertDuplicateCertificateChain=_CertDuplicateCertificateChain@4
     CertDuplicateCertificateContext=_CertDuplicateCertificateContext@4
     CertDuplicateStore=_CertDuplicateStore@4
+    CertEnumCRLsInStore=_CertEnumCRLsInStore@8
     CertEnumCertificateContextProperties=_CertEnumCertificateContextProperties@8
     CertEnumCertificatesInStore=_CertEnumCertificatesInStore@8
     CertEnumPhysicalStore=_CertEnumPhysicalStore@16
@@ -29,6 +30,7 @@ EXPORTS
     CertFindChainInStore=_CertFindChainInStore@24
     CertFindExtension=_CertFindExtension@12
     CertFindRDNAttr=_CertFindRDNAttr@8
+    CertFreeCRLContext=_CertFreeCRLContext@4
     CertFreeCertificateChain=_CertFreeCertificateChain@4
     CertFreeCertificateChainEngine=_CertFreeCertificateChainEngine@4
     CertFreeCertificateContext=_CertFreeCertificateContext@4
@@ -42,6 +44,7 @@ EXPORTS
     CertGetPublicKeyLength=_CertGetPublicKeyLength@8
     CertGetStoreProperty=_CertGetStoreProperty@16
     CertGetSubjectCertificateFromStore=_CertGetSubjectCertificateFromStore@12
+    CertGetValidUsages=_CertGetValidUsages@20
     CertIsRDNAttrsInCertificateName=_CertIsRDNAttrsInCertificateName@16
     CertNameToStrA=_CertNameToStrA@20
     CertNameToStrW=_CertNameToStrW@20
@@ -71,6 +74,7 @@ EXPORTS
     CryptEncodeObject=_CryptEncodeObject@20
     CryptEncodeObjectEx=_CryptEncodeObjectEx@28
     CryptFindOIDInfo=_CryptFindOIDInfo@12
+    CryptGetMessageCertificates=_CryptGetMessageCertificates@20
     CryptHashCertificate2=_CryptHashCertificate2@28
     CryptHashCertificate=_CryptHashCertificate@28
     CryptHashPublicKeyInfo=_CryptHashPublicKeyInfo@28
@@ -83,9 +87,12 @@ EXPORTS
     CryptMsgClose=_CryptMsgClose@4
     CryptMsgGetAndVerifySigner=_CryptMsgGetAndVerifySigner@24
     CryptMsgGetParam=_CryptMsgGetParam@20
+    CryptMsgOpenToDecode=_CryptMsgOpenToDecode@24
+    CryptMsgUpdate=_CryptMsgUpdate@16
     CryptProtectData=_CryptProtectData@28
     CryptProtectMemory=_CryptProtectMemory@12
     CryptQueryObject=_CryptQueryObject@44
+    CryptSignMessage=_CryptSignMessage@28
     CryptStringToBinaryA=_CryptStringToBinaryA@28
     CryptStringToBinaryW=_CryptStringToBinaryW@28
     CryptUnprotectData=_CryptUnprotectData@28
@@ -93,6 +100,7 @@ EXPORTS
     CryptUpdateProtectedState=_CryptUpdateProtectedState@20
     CryptVerifyCertificateSignature=_CryptVerifyCertificateSignature@20
     CryptVerifyCertificateSignatureEx=_CryptVerifyCertificateSignatureEx@32
+    CryptVerifyDetachedMessageSignature=_CryptVerifyDetachedMessageSignature@32
     PFXImportCertStore=_PFXImportCertStore@12
     PFXIsPFXBlob=_PFXIsPFXBlob@4
     PFXVerifyPassword=_PFXVerifyPassword@12

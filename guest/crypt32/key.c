@@ -20,6 +20,10 @@ typedef LONG(WINAPI *OPEN_PROVIDER)(ULONG_PTR *, LPCWSTR, DWORD);
 typedef LONG(WINAPI *OPEN_KEY)(ULONG_PTR, ULONG_PTR *, LPCWSTR, DWORD, DWORD);
 typedef LONG(WINAPI *FREE_OBJECT)(ULONG_PTR);
 typedef LONG(WINAPI *NCRYPT_EXPORT)(ULONG_PTR, ULONG_PTR, LPCWSTR, void *, BYTE *, DWORD, DWORD *, DWORD);
+typedef BOOL(WINAPI *CREATE_HASH)(HCRYPTPROV, ALG_ID, HCRYPTKEY, DWORD, HCRYPTHASH *);
+typedef BOOL(WINAPI *HASH_DATA)(HCRYPTHASH, const BYTE *, DWORD, DWORD);
+typedef BOOL(WINAPI *SIGN_HASH)(HCRYPTHASH, DWORD, LPCWSTR, DWORD, BYTE *, DWORD *);
+typedef BOOL(WINAPI *DESTROY_HASH)(HCRYPTHASH);
 
 static struct {
     ACQUIRE_CONTEXT acquire;
@@ -33,6 +37,10 @@ static struct {
     OPEN_KEY open_key;
     FREE_OBJECT free_object;
     NCRYPT_EXPORT ncrypt_export;
+    CREATE_HASH create_hash;
+    HASH_DATA hash_data;
+    SIGN_HASH sign_hash;
+    DESTROY_HASH destroy_hash;
 } g_api;
 
 static INIT_ONCE g_api_once = INIT_ONCE_STATIC_INIT;
@@ -48,6 +56,10 @@ static BOOL WINAPI load_api(INIT_ONCE *once, void *param, void **context)
         g_api.export_key = (EXPORT_KEY)(void *)GetProcAddress(advapi32, "CryptExportKey");
         g_api.destroy_key = (DESTROY_KEY)(void *)GetProcAddress(advapi32, "CryptDestroyKey");
         g_api.import_key = (IMPORT_KEY)(void *)GetProcAddress(advapi32, "CryptImportKey");
+        g_api.create_hash = (CREATE_HASH)(void *)GetProcAddress(advapi32, "CryptCreateHash");
+        g_api.hash_data = (HASH_DATA)(void *)GetProcAddress(advapi32, "CryptHashData");
+        g_api.sign_hash = (SIGN_HASH)(void *)GetProcAddress(advapi32, "CryptSignHashW");
+        g_api.destroy_hash = (DESTROY_HASH)(void *)GetProcAddress(advapi32, "CryptDestroyHash");
     }
     HMODULE ncrypt = LoadLibraryW(L"ncrypt.dll");
     if (ncrypt) {
@@ -409,4 +421,29 @@ BOOL WINAPI CryptImportPublicKeyInfo(HCRYPTPROV hCryptProv, DWORD dwCertEncoding
                                      HCRYPTKEY *phKey)
 {
     return CryptImportPublicKeyInfoEx(hCryptProv, dwCertEncodingType, pInfo, 0, 0, nullptr, phKey);
+}
+
+/* signs the digest of data with a legacy provider's key. the signature comes out as the provider makes it, little endian. */
+BOOL CrSignData(HCRYPTPROV provider, DWORD key_spec, ALG_ID alg, const BYTE *data, DWORD size, BYTE *signature,
+                DWORD *signature_size)
+{
+    InitOnceExecuteOnce(&g_api_once, load_api, nullptr, nullptr);
+    if (!g_api.create_hash || !g_api.hash_data || !g_api.sign_hash || !g_api.destroy_hash)
+        return CrFail(NTE_PROVIDER_DLL_FAIL);
+    HCRYPTHASH hash;
+    if (!g_api.create_hash(provider, alg, 0, 0, &hash))
+        return FALSE;
+    BOOL ok = g_api.hash_data(hash, data, size, 0) && g_api.sign_hash(hash, key_spec, nullptr, 0, signature, signature_size);
+    DWORD error = GetLastError();
+    g_api.destroy_hash(hash);
+    SetLastError(error);
+    return ok;
+}
+
+/* gives back what CryptAcquireCertificatePrivateKey handed out, when the caller owns it. */
+void CrReleaseProvider(HCRYPTPROV provider)
+{
+    InitOnceExecuteOnce(&g_api_once, load_api, nullptr, nullptr);
+    if (g_api.release)
+        g_api.release(provider, 0);
 }
