@@ -1,0 +1,19 @@
+; the exports of wlanapi.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY wlanapi.dll
+EXPORTS
+    WlanOpenHandle @205
+    WlanCloseHandle @135
+    WlanAllocateMemory @132
+    WlanFreeMemory @148
+    WlanEnumInterfaces @146
+    WlanQueryInterface @228
+    WlanScan @240
+    WlanGetNetworkBssList @157
+    WlanGetAvailableNetworkList @151
+    WlanGetProfileList @162
+    WlanGetProfile @158
+    WlanSetProfile @247
+    WlanDeleteProfile @140
+    WlanConnect @136
+    WlanDisconnect @142
+    WlanRegisterNotification @235

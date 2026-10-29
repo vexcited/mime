@@ -1,0 +1,26 @@
+LIBRARY snmpapi.dll
+EXPORTS
+    SnmpUtilAnsiToUnicode=_SnmpUtilAnsiToUnicode@12 @12
+    SnmpUtilAsnAnyCpy=_SnmpUtilAsnAnyCpy@8 @13
+    SnmpUtilAsnAnyFree=_SnmpUtilAsnAnyFree@4 @14
+    SnmpUtilIdsToA=_SnmpUtilIdsToA@8 @16
+    SnmpUtilMemAlloc=_SnmpUtilMemAlloc@4 @17
+    SnmpUtilMemFree=_SnmpUtilMemFree@4 @18
+    SnmpUtilMemReAlloc=_SnmpUtilMemReAlloc@8 @19
+    SnmpUtilOctetsCmp=_SnmpUtilOctetsCmp@8 @20
+    SnmpUtilOctetsCpy=_SnmpUtilOctetsCpy@8 @21
+    SnmpUtilOctetsFree=_SnmpUtilOctetsFree@4 @22
+    SnmpUtilOctetsNCmp=_SnmpUtilOctetsNCmp@12 @23
+    SnmpUtilOidAppend=_SnmpUtilOidAppend@8 @24
+    SnmpUtilOidCmp=_SnmpUtilOidCmp@8 @25
+    SnmpUtilOidCpy=_SnmpUtilOidCpy@8 @26
+    SnmpUtilOidFree=_SnmpUtilOidFree@4 @27
+    SnmpUtilOidNCmp=_SnmpUtilOidNCmp@12 @28
+    SnmpUtilOidToA=_SnmpUtilOidToA@4 @29
+    SnmpUtilUTF8ToUnicode=_SnmpUtilUTF8ToUnicode@12 @32
+    SnmpUtilUnicodeToAnsi=_SnmpUtilUnicodeToAnsi@12 @33
+    SnmpUtilUnicodeToUTF8=_SnmpUtilUnicodeToUTF8@12 @34
+    SnmpUtilVarBindCpy=_SnmpUtilVarBindCpy@8 @35
+    SnmpUtilVarBindFree=_SnmpUtilVarBindFree@4 @36
+    SnmpUtilVarBindListCpy=_SnmpUtilVarBindListCpy@8 @37
+    SnmpUtilVarBindListFree=_SnmpUtilVarBindListFree@4 @38

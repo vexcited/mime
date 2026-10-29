@@ -1,0 +1,6 @@
+LIBRARY tdh.dll
+EXPORTS
+    TdhGetEventInformation@20 @19
+    TdhGetEventMapInformation@16 @20
+    TdhLoadManifest@4 @27
+    TdhUnloadManifest@4 @34

@@ -1,0 +1,27 @@
+; the exports of snmpapi.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY snmpapi.dll
+EXPORTS
+    SnmpUtilAnsiToUnicode @12
+    SnmpUtilAsnAnyCpy @13
+    SnmpUtilAsnAnyFree @14
+    SnmpUtilIdsToA @16
+    SnmpUtilMemAlloc @17
+    SnmpUtilMemFree @18
+    SnmpUtilMemReAlloc @19
+    SnmpUtilOctetsCmp @20
+    SnmpUtilOctetsCpy @21
+    SnmpUtilOctetsFree @22
+    SnmpUtilOctetsNCmp @23
+    SnmpUtilOidAppend @24
+    SnmpUtilOidCmp @25
+    SnmpUtilOidCpy @26
+    SnmpUtilOidFree @27
+    SnmpUtilOidNCmp @28
+    SnmpUtilOidToA @29
+    SnmpUtilUTF8ToUnicode @32
+    SnmpUtilUnicodeToAnsi @33
+    SnmpUtilUnicodeToUTF8 @34
+    SnmpUtilVarBindCpy @35
+    SnmpUtilVarBindFree @36
+    SnmpUtilVarBindListCpy @37
+    SnmpUtilVarBindListFree @38

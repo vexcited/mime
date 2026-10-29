@@ -1,0 +1,6 @@
+LIBRARY avicap32.dll
+EXPORTS
+    capCreateCaptureWindowA=_capCreateCaptureWindowA@32 @2
+    capCreateCaptureWindowW=_capCreateCaptureWindowW@32 @3
+    capGetDriverDescriptionA=_capGetDriverDescriptionA@20 @4
+    capGetDriverDescriptionW=_capGetDriverDescriptionW@20 @5

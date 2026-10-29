@@ -1,0 +1,11 @@
+; the exports of RstrtMgr.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY RstrtMgr.dll
+EXPORTS
+    RmStartSession @12
+    RmJoinSession @6
+    RmEndSession @3
+    RmRegisterResources @7
+    RmGetList @5
+    RmShutdown @11
+    RmRestart @10
+    RmCancelCurrentTask @2

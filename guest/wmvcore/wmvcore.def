@@ -1,0 +1,7 @@
+; the exports of WMVCORE.DLL of windows with their ordinals, less the ones that are not here yet.
+LIBRARY WMVCORE.DLL
+EXPORTS
+    WMCreateReader @13
+    WMCreateSyncReader @15
+    WMCreateWriter @16
+    WMCreateEditor @10

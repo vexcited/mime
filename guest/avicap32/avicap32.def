@@ -1,0 +1,7 @@
+; the exports of avicap32.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY avicap32.dll
+EXPORTS
+    capCreateCaptureWindowA @2
+    capCreateCaptureWindowW @3
+    capGetDriverDescriptionA @4
+    capGetDriverDescriptionW @5

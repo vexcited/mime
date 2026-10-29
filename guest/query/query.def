@@ -1,0 +1,13 @@
+; the exports of Query.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY Query.dll
+EXPORTS
+    LoadBinaryFilter @1
+    LoadTextFilter @2
+    BindIFilterFromStorage @3
+    BindIFilterFromStream @4
+    DllCanUnloadNow @5
+    DllGetClassObject @6
+    DllRegisterServer @7
+    DllUnregisterServer @8
+    LoadIFilter @9
+    LoadIFilterEx @10

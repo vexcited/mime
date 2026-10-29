@@ -1,0 +1,3 @@
+LIBRARY windows.networking.dll
+EXPORTS
+    SetSocketMediaStreamingMode=_SetSocketMediaStreamingMode@4 @8

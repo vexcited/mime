@@ -1,0 +1,7 @@
+; the exports of tdh.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY tdh.dll
+EXPORTS
+    TdhGetEventInformation @19
+    TdhGetEventMapInformation @20
+    TdhLoadManifest @27
+    TdhUnloadManifest @34

@@ -1,0 +1,6 @@
+LIBRARY wmvcore.dll
+EXPORTS
+    WMCreateEditor=_WMCreateEditor@4 @10
+    WMCreateReader=_WMCreateReader@12 @13
+    WMCreateSyncReader=_WMCreateSyncReader@12 @15
+    WMCreateWriter=_WMCreateWriter@8 @16

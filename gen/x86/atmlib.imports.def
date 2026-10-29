@@ -1,0 +1,12 @@
+LIBRARY atmlib.dll
+EXPORTS
+    ATMGetFontPaths@8 @35
+    ATMGetFontPathsA@8 @36
+    ATMGetFontPathsW@8 @37
+    ATMGetMenuName@8 @41
+    ATMGetMenuNameA@8 @42
+    ATMGetMenuNameW@8 @43
+    ATMGetPostScriptName@8 @50
+    ATMGetPostScriptNameA@8 @51
+    ATMGetPostScriptNameW@8 @52
+    ATMProperlyLoaded@0 @65

@@ -1,0 +1,5 @@
+; the exports of ntdsapi.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY ntdsapi.dll
+EXPORTS
+    DsMakeSpnA @79
+    DsMakeSpnW @80

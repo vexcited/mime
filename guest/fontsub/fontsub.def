@@ -1,0 +1,5 @@
+; the exports of fontsub.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY fontsub.dll
+EXPORTS
+    CreateFontPackage @1
+    MergeFontPackage @2

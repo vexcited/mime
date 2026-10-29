@@ -1,0 +1,26 @@
+LIBRARY snmpapi.dll
+EXPORTS
+    SnmpUtilAnsiToUnicode@12 @12
+    SnmpUtilAsnAnyCpy@8 @13
+    SnmpUtilAsnAnyFree@4 @14
+    SnmpUtilIdsToA@8 @16
+    SnmpUtilMemAlloc@4 @17
+    SnmpUtilMemFree@4 @18
+    SnmpUtilMemReAlloc@8 @19
+    SnmpUtilOctetsCmp@8 @20
+    SnmpUtilOctetsCpy@8 @21
+    SnmpUtilOctetsFree@4 @22
+    SnmpUtilOctetsNCmp@12 @23
+    SnmpUtilOidAppend@8 @24
+    SnmpUtilOidCmp@8 @25
+    SnmpUtilOidCpy@8 @26
+    SnmpUtilOidFree@4 @27
+    SnmpUtilOidNCmp@12 @28
+    SnmpUtilOidToA@4 @29
+    SnmpUtilUTF8ToUnicode@12 @32
+    SnmpUtilUnicodeToAnsi@12 @33
+    SnmpUtilUnicodeToUTF8@12 @34
+    SnmpUtilVarBindCpy@8 @35
+    SnmpUtilVarBindFree@4 @36
+    SnmpUtilVarBindListCpy@8 @37
+    SnmpUtilVarBindListFree@4 @38

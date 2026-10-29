@@ -1,0 +1,4 @@
+LIBRARY ntdsapi.dll
+EXPORTS
+    DsMakeSpnA=_DsMakeSpnA@28 @79
+    DsMakeSpnW=_DsMakeSpnW@28 @80

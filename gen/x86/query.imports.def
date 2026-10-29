@@ -1,0 +1,12 @@
+LIBRARY query.dll
+EXPORTS
+    BindIFilterFromStorage@12 @3
+    BindIFilterFromStream@12 @4
+    DllCanUnloadNow@0 @5
+    DllGetClassObject@12 @6
+    DllRegisterServer@0 @7
+    DllUnregisterServer@0 @8
+    LoadBinaryFilter@4 @1
+    LoadIFilter@12 @9
+    LoadIFilterEx@16 @10
+    LoadTextFilter@8 @2

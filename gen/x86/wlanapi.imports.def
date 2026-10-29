@@ -1,0 +1,18 @@
+LIBRARY wlanapi.dll
+EXPORTS
+    WlanAllocateMemory@4 @132
+    WlanCloseHandle@8 @135
+    WlanConnect@16 @136
+    WlanDeleteProfile@16 @140
+    WlanDisconnect@12 @142
+    WlanEnumInterfaces@12 @146
+    WlanFreeMemory@4 @148
+    WlanGetAvailableNetworkList@20 @151
+    WlanGetNetworkBssList@28 @157
+    WlanGetProfile@28 @158
+    WlanGetProfileList@16 @162
+    WlanOpenHandle@16 @205
+    WlanQueryInterface@28 @228
+    WlanRegisterNotification@28 @235
+    WlanScan@20 @240
+    WlanSetProfile@32 @247
