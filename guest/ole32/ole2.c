@@ -259,6 +259,26 @@ WINOLEAPI HRESULT WINAPI OleRegGetUserType(REFCLSID clsid, DWORD form, LPOLESTR 
     return *user_type ? S_OK : REGDB_E_READREGDB;
 }
 
+/* the classes of ole 1 programs have ids of the form 0003xxxx or 0004xxxx and an Ole1Class key. */
+WINOLEAPI BOOL WINAPI CoIsOle1Class(REFCLSID clsid)
+{
+    if (!clsid || (WORD)(clsid->Data1 >> 16) - 3u > 1u)
+        return FALSE;
+    HKEY class_key, ole1_key;
+    if (OleOpenClassKey(clsid, nullptr, KEY_READ, &class_key))
+        return FALSE;
+    LSTATUS result = RegOpenKeyExW(class_key, L"Ole1Class", 0, KEY_READ, &ole1_key);
+    RegCloseKey(class_key);
+    if (result)
+        return FALSE;
+    WCHAR text[39];
+    DWORD size = sizeof(text), type;
+    result = RegGetValueW(ole1_key, nullptr, nullptr, RRF_RT_REG_SZ | RRF_RT_REG_NONE | RRF_NOEXPAND | RRF_ZEROONFAILURE, &type,
+                          text, &size);
+    RegCloseKey(ole1_key);
+    return result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND;
+}
+
 WINOLEAPI HRESULT WINAPI OleRegGetMiscStatus(REFCLSID clsid, DWORD aspect, DWORD *status)
 {
     if (!status)

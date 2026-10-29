@@ -6,6 +6,7 @@ EXPORTS
     RoFailFastWithErrorContext@4
     RoGetActivationFactory@12
     RoGetApartmentIdentifier@4
+    RoGetBufferMarshaler@4
     RoGetParameterizedTypeInstanceIID@20
     RoFreeParameterizedTypeExtra@4
     RoParameterizedTypeExtraGetTypeSignature@4
@@ -85,6 +86,7 @@ EXPORTS
     CoInitializeEx@8 @308
     CoInitializeSecurity@36 @309
     CoIsHandlerConnected@4 @312
+    CoIsOle1Class@4 @313
     CoLockObjectExternal@12 @314
     CoMarshalHresult@8 @315
     CoMarshalInterThreadInterfaceInStream@12 @316

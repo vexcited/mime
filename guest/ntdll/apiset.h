@@ -154,6 +154,7 @@
     {L"api-ms-win-core-winrt-errorprivate-l1-1", L"combase.dll", 1},
     {L"api-ms-win-core-winrt-l1-1", L"combase.dll", 0},
     {L"api-ms-win-core-winrt-registration-l1-1", L"combase.dll", 0},
+    {L"api-ms-win-core-winrt-robuffer-l1-1", L"combase.dll", 0},
     {L"api-ms-win-core-winrt-roparameterizediid-l1-1", L"combase.dll", 0},
     {L"api-ms-win-core-winrt-string-l1-1", L"combase.dll", 1},
     {L"api-ms-win-core-wow64-l1-1", L"kernelbase.dll", 3},

@@ -45,6 +45,7 @@ EXPORTS
     CoInitializeEx@8
     CoInitializeSecurity@36
     CoIsHandlerConnected@4
+    CoIsOle1Class@4
     CoLoadLibrary@8
     CoLockObjectExternal@12
     CoMarshalHresult@8
@@ -82,6 +83,7 @@ EXPORTS
     CreateILockBytesOnHGlobal@12
     CreateItemMoniker@12
     CreateOleAdviseHolder@4
+    CreatePointerMoniker@8
     CreateStreamOnHGlobal@12
     DcomChannelSetHResult@12
     DoDragDrop@16

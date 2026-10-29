@@ -1,6 +1,7 @@
 /*
- * the item, file and generic composite monikers programs make with CreateItemMoniker, CreateFileMoniker and
- * CreateGenericComposite, with the display names they ask for. anti, pointer and class monikers are missing.
+ * the item, file, pointer and generic composite monikers programs make with CreateItemMoniker, CreateFileMoniker,
+ * CreatePointerMoniker and CreateGenericComposite, with the display names they ask for. anti and class monikers are
+ * missing, and a pointer moniker cannot be marshaled.
  */
 #include "ole32_private.h"
 #include <mime/stub.h>
@@ -8,6 +9,7 @@
 #define MKSYS_GENERICCOMPOSITE 1
 #define MKSYS_FILEMONIKER 2
 #define MKSYS_ITEMMONIKER 4
+#define MKSYS_POINTERMONIKER 5
 #define MK_E_NEEDGENERIC_ ((HRESULT)0x800401E2)
 #define MK_E_SYNTAX_ ((HRESULT)0x800401E4)
 #define MK_E_NOTBINDABLE_ ((HRESULT)0x800401E8)
@@ -15,10 +17,12 @@
 #define MK_E_NOPREFIX_ ((HRESULT)0x800401EE)
 #define MK_S_REDUCED_TO_SELF_ ((HRESULT)0x000401E2)
 #define MK_S_US_ ((HRESULT)0x000401E6)
+#define RPC_E_INVALID_OBJECT_ ((HRESULT)0x80010114)
 
 MIME_DEFINE_GUID(CLSID_FileMoniker_, 0x00000303, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
 MIME_DEFINE_GUID(CLSID_ItemMoniker_, 0x00000304, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
 MIME_DEFINE_GUID(CLSID_CompositeMoniker_, 0x00000309, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
+MIME_DEFINE_GUID(CLSID_PointerMoniker_, 0x00000306, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
 
 /* what an item moniker binds through when it has a moniker to its left. */
 typedef struct IOleItemContainer IOleItemContainer;
@@ -38,7 +42,7 @@ struct IOleItemContainer {
 };
 MIME_DEFINE_GUID(IID_IOleItemContainer_, 0x0000011c, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
 
-typedef enum { KIND_ITEM, KIND_FILE, KIND_COMPOSITE } MK_KIND;
+typedef enum { KIND_ITEM, KIND_FILE, KIND_COMPOSITE, KIND_POINTER } MK_KIND;
 
 typedef struct MK {
     IMoniker Interface;
@@ -47,6 +51,7 @@ typedef struct MK {
     WCHAR *Delimiter; /* item */
     WCHAR *Name;      /* item, file */
     IMoniker *Left, *Right;
+    IUnknown *Unknown; /* pointer */
 } MK;
 
 static const IMonikerVtbl mk_vtable;
@@ -67,8 +72,16 @@ static WCHAR *duplicate(const WCHAR *text)
 
 static const GUID *mk_class(const MK *mk)
 {
-    return mk->Kind == KIND_ITEM ? &CLSID_ItemMoniker_ : mk->Kind == KIND_FILE ? &CLSID_FileMoniker_ :
-                                                                                  &CLSID_CompositeMoniker_;
+    switch (mk->Kind) {
+    case KIND_ITEM:
+        return &CLSID_ItemMoniker_;
+    case KIND_FILE:
+        return &CLSID_FileMoniker_;
+    case KIND_POINTER:
+        return &CLSID_PointerMoniker_;
+    default:
+        return &CLSID_CompositeMoniker_;
+    }
 }
 
 /* ------------------------------------------------------------------ IUnknown, IPersist */
@@ -78,8 +91,10 @@ static HRESULT STDMETHODCALLTYPE mk_query(IMoniker *self, REFIID iid, void **res
     if (!result)
         return E_POINTER;
     *result = nullptr;
+    /* the class id of a pointer moniker is also the way to ask whether an interface is one. */
     if (!IsEqualIID(iid, &IID_IUnknown) && !IsEqualIID(iid, &IID_IPersist) && !IsEqualIID(iid, &IID_IPersistStream) &&
-        !IsEqualIID(iid, &IID_IMoniker))
+        !IsEqualIID(iid, &IID_IMoniker) &&
+        !(((MK *)self)->Kind == KIND_POINTER && IsEqualIID(iid, &CLSID_PointerMoniker_)))
         return E_NOINTERFACE;
     *result = self;
     self->lpVtbl->AddRef(self);
@@ -102,6 +117,8 @@ static ULONG STDMETHODCALLTYPE mk_release(IMoniker *self)
             mk->Left->lpVtbl->Release(mk->Left);
         if (mk->Right)
             mk->Right->lpVtbl->Release(mk->Right);
+        if (mk->Unknown)
+            mk->Unknown->lpVtbl->Release(mk->Unknown);
         OleFree(mk);
     }
     return refs;
@@ -168,6 +185,21 @@ WINOLEAPI HRESULT WINAPI CreateFileMoniker(LPCOLESTR path, IMoniker **moniker)
         mk_release(&mk->Interface);
         return E_OUTOFMEMORY;
     }
+    *moniker = &mk->Interface;
+    return S_OK;
+}
+
+WINOLEAPI HRESULT WINAPI CreatePointerMoniker(LPUNKNOWN unknown, LPMONIKER *moniker)
+{
+    if (!moniker)
+        return E_INVALIDARG;
+    *moniker = nullptr;
+    MK *mk = mk_new(KIND_POINTER);
+    if (!mk)
+        return E_OUTOFMEMORY;
+    mk->Unknown = unknown;
+    if (unknown)
+        unknown->lpVtbl->AddRef(unknown);
     *moniker = &mk->Interface;
     return S_OK;
 }
@@ -317,6 +349,8 @@ static HRESULT STDMETHODCALLTYPE mk_get_display_name(IMoniker *self, IBindCtx *c
         return E_POINTER;
     *name = nullptr;
     WCHAR *text;
+    if (mk->Kind == KIND_POINTER)
+        return E_NOTIMPL;
     if (mk->Kind == KIND_COMPOSITE) {
         WCHAR *a = nullptr, *b = nullptr;
         HRESULT hr = mk->Left->lpVtbl->GetDisplayName(mk->Left, context, nullptr, &a);
@@ -356,6 +390,18 @@ static HRESULT STDMETHODCALLTYPE mk_parse_display_name(IMoniker *self, IBindCtx 
     if (!out || !eaten || !name)
         return E_INVALIDARG;
     *out = nullptr;
+    if (mk->Kind == KIND_POINTER) {
+        /* the object the pointer holds knows the names inside it. */
+        IParseDisplayName *parser;
+        if (!mk->Unknown)
+            return RPC_E_INVALID_OBJECT_;
+        HRESULT hr = mk->Unknown->lpVtbl->QueryInterface(mk->Unknown, &IID_IParseDisplayName_, (void **)&parser);
+        if (SUCCEEDED(hr)) {
+            hr = parser->lpVtbl->ParseDisplayName(parser, context, name, eaten, out);
+            parser->lpVtbl->Release(parser);
+        }
+        return hr;
+    }
     /* after a file the next component is an item, up to the next delimiter. */
     if (mk->Kind == KIND_ITEM || name[0] != L'!')
         return MK_E_SYNTAX_;
@@ -378,8 +424,10 @@ static HRESULT STDMETHODCALLTYPE mk_is_system(IMoniker *self, DWORD *kind)
     MK *mk = (MK *)self;
     if (!kind)
         return E_POINTER;
-    *kind = mk->Kind == KIND_ITEM ? MKSYS_ITEMMONIKER : mk->Kind == KIND_FILE ? MKSYS_FILEMONIKER :
-                                                                                 MKSYS_GENERICCOMPOSITE;
+    *kind = mk->Kind == KIND_ITEM    ? MKSYS_ITEMMONIKER :
+            mk->Kind == KIND_FILE    ? MKSYS_FILEMONIKER :
+            mk->Kind == KIND_POINTER ? MKSYS_POINTERMONIKER :
+                                       MKSYS_GENERICCOMPOSITE;
     return S_OK;
 }
 
@@ -396,6 +444,8 @@ static HRESULT STDMETHODCALLTYPE mk_is_equal(IMoniker *self, IMoniker *other)
     MK *peer = mk_of(other);
     if (!peer || peer->Kind != mk->Kind)
         return S_FALSE;
+    if (mk->Kind == KIND_POINTER)
+        return mk->Unknown == peer->Unknown ? S_OK : S_FALSE;
     if (mk->Kind == KIND_COMPOSITE) {
         IMoniker *a[16], *b[16];
         ULONG na = 0, nb = 0;
@@ -425,7 +475,9 @@ static HRESULT STDMETHODCALLTYPE mk_hash(IMoniker *self, DWORD *hash)
     if (!hash)
         return E_POINTER;
     DWORD value = mk->Kind * 0x9E3779B1u;
-    if (mk->Kind == KIND_COMPOSITE) {
+    if (mk->Kind == KIND_POINTER) {
+        value = (DWORD)(ULONG_PTR)mk->Unknown;
+    } else if (mk->Kind == KIND_COMPOSITE) {
         DWORD a, b;
         mk->Left->lpVtbl->Hash(mk->Left, &a);
         mk->Right->lpVtbl->Hash(mk->Right, &b);
@@ -462,6 +514,11 @@ static HRESULT STDMETHODCALLTYPE mk_bind_to_object(IMoniker *self, IBindCtx *con
             whole->lpVtbl->Release(whole);
         return hr;
     }
+    if (mk->Kind == KIND_POINTER) {
+        if (!mk->Unknown)
+            return ((HRESULT)0x8000FFFF);
+        return mk->Unknown->lpVtbl->QueryInterface(mk->Unknown, iid, object);
+    }
     if (mk->Kind == KIND_ITEM) {
         if (!left)
             return MK_E_SYNTAX_;
@@ -483,7 +540,7 @@ static HRESULT STDMETHODCALLTYPE mk_bind_to_storage(IMoniker *self, IBindCtx *co
     if (!object)
         return E_POINTER;
     *object = nullptr;
-    return MK_E_NOTBINDABLE_;
+    return ((MK *)self)->Kind == KIND_POINTER ? E_NOTIMPL : MK_E_NOTBINDABLE_;
 }
 
 static HRESULT STDMETHODCALLTYPE mk_reduce(IMoniker *self, IBindCtx *context, DWORD how_far, IMoniker **left,
@@ -517,11 +574,14 @@ static HRESULT STDMETHODCALLTYPE mk_enum(IMoniker *self, BOOL forward, IEnumMoni
     if (!enumerator)
         return E_POINTER;
     *enumerator = nullptr;
-    return S_OK;
+    return ((MK *)self)->Kind == KIND_POINTER ? E_NOTIMPL : S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE mk_is_running(IMoniker *self, IBindCtx *context, IMoniker *left, IMoniker *newly)
 {
+    /* what a pointer moniker holds is running by being there. */
+    if (((MK *)self)->Kind == KIND_POINTER)
+        return S_OK;
     if (newly)
         return self->lpVtbl->IsEqual(self, newly) == S_OK ? S_OK : S_FALSE;
     IRunningObjectTable *table;
@@ -535,6 +595,8 @@ static HRESULT STDMETHODCALLTYPE mk_is_running(IMoniker *self, IBindCtx *context
 
 static HRESULT STDMETHODCALLTYPE mk_get_time(IMoniker *self, IBindCtx *context, IMoniker *left, FILETIME *time)
 {
+    if (((MK *)self)->Kind == KIND_POINTER)
+        return E_NOTIMPL;
     IRunningObjectTable *table;
     HRESULT hr = GetRunningObjectTable(0, &table);
     if (FAILED(hr))

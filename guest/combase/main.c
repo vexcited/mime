@@ -87,6 +87,15 @@ ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void 
     return REGDB_E_CLASSNOTREG;
 }
 
+/* the marshaler that carries a Windows.Storage.Streams buffer between apartments is not here. */
+ROAPI HRESULT WINAPI RoGetBufferMarshaler(void **marshaler)
+{
+    if (!marshaler)
+        return E_INVALIDARG;
+    *marshaler = nullptr;
+    return E_NOTIMPL;
+}
+
 ROAPI HRESULT WINAPI RoActivateInstance(HSTRING class_id, IInspectable **instance)
 {
     if (!instance)

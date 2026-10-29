@@ -6,6 +6,7 @@ EXPORTS
     RoFailFastWithErrorContext=_RoFailFastWithErrorContext@4
     RoGetActivationFactory=_RoGetActivationFactory@12
     RoGetApartmentIdentifier=_RoGetApartmentIdentifier@4
+    RoGetBufferMarshaler=_RoGetBufferMarshaler@4
     RoGetParameterizedTypeInstanceIID=_RoGetParameterizedTypeInstanceIID@20
     RoFreeParameterizedTypeExtra=_RoFreeParameterizedTypeExtra@4
     RoParameterizedTypeExtraGetTypeSignature=_RoParameterizedTypeExtraGetTypeSignature@4
@@ -86,6 +87,7 @@ EXPORTS
     CoInitializeEx=ole32.CoInitializeEx @308
     CoInitializeSecurity=ole32.CoInitializeSecurity @309
     CoIsHandlerConnected=ole32.CoIsHandlerConnected @312
+    CoIsOle1Class=ole32.CoIsOle1Class @313
     CoLockObjectExternal=ole32.CoLockObjectExternal @314
     CoMarshalHresult=ole32.CoMarshalHresult @315
     CoMarshalInterThreadInterfaceInStream=ole32.CoMarshalInterThreadInterfaceInStream @316

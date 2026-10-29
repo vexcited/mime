@@ -10,20 +10,6 @@
 #define MK_E_SYNTAX_ ((HRESULT)0x800401E4)
 #define MK_E_CANTOPENFILE_ ((HRESULT)0x800401EA)
 
-MIME_DEFINE_GUID(IID_IParseDisplayName_, 0x0000011a, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
-
-typedef struct IParseDisplayName IParseDisplayName;
-typedef struct IParseDisplayNameVtbl {
-    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IParseDisplayName *This, REFIID riid, void **object);
-    ULONG(STDMETHODCALLTYPE *AddRef)(IParseDisplayName *This);
-    ULONG(STDMETHODCALLTYPE *Release)(IParseDisplayName *This);
-    HRESULT(STDMETHODCALLTYPE *ParseDisplayName)(IParseDisplayName *This, IBindCtx *context, LPOLESTR name,
-                                                 ULONG *eaten, IMoniker **moniker);
-} IParseDisplayNameVtbl;
-struct IParseDisplayName {
-    const IParseDisplayNameVtbl *lpVtbl;
-};
-
 WINOLEAPI BOOL WINAPI IsEqualGUID(REFGUID a, REFGUID b)
 {
     return mime_inline_IsEqualGUID(a, b);

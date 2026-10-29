@@ -133,4 +133,19 @@ void OleHostDragFinish(void);
 /* whether the pointer left the host window the drag began in, which a held button allows. */
 bool OleHostPointerOutside(void);
 
+/* what a moniker asks its object to parse the rest of a display name with. */
+MIME_DEFINE_GUID(IID_IParseDisplayName_, 0x0000011a, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46);
+
+typedef struct IParseDisplayName IParseDisplayName;
+typedef struct IParseDisplayNameVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IParseDisplayName *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IParseDisplayName *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IParseDisplayName *This);
+    HRESULT(STDMETHODCALLTYPE *ParseDisplayName)(IParseDisplayName *This, IBindCtx *context, LPOLESTR name,
+                                                 ULONG *eaten, IMoniker **moniker);
+} IParseDisplayNameVtbl;
+struct IParseDisplayName {
+    const IParseDisplayNameVtbl *lpVtbl;
+};
+
 #endif

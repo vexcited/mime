@@ -53,6 +53,7 @@ EXPORTS
     CoRegisterPSClsid=ole32.CoRegisterPSClsid @331
     CoMarshalHresult=ole32.CoMarshalHresult @315
     CoIsHandlerConnected=ole32.CoIsHandlerConnected @312
+    CoIsOle1Class=ole32.CoIsOle1Class @313
     CoIncrementMTAUsage=ole32.CoIncrementMTAUsage @307
     CoImpersonateClient=ole32.CoImpersonateClient @306
     CoGetTreatAsClass=ole32.CoGetTreatAsClass @305
