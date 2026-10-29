@@ -1,0 +1,11 @@
+; the exports of authz.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY authz.dll
+EXPORTS
+    AuthzInitializeResourceManager @21
+    AuthzFreeResourceManager @11
+    AuthzInitializeContextFromToken @16
+    AuthzInitializeContextFromSid @15
+    AuthzFreeContext @9
+    AuthzFreeHandle @10
+    AuthzAccessCheck @1
+    AuthzGetInformationFromContext @12

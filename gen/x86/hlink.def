@@ -1,0 +1,34 @@
+LIBRARY hlink.dll
+EXPORTS
+    DllCanUnloadNow=_DllCanUnloadNow@0 @13
+    DllGetClassObject=_DllGetClassObject@12 @17
+    DllRegisterServer=_DllRegisterServer@0 @19
+    DllUnregisterServer=_DllUnregisterServer@0 @34
+    HlinkClone=_HlinkClone@20 @7
+    HlinkCreateBrowseContext=_HlinkCreateBrowseContext@12 @6
+    HlinkCreateExtensionServices=_HlinkCreateExtensionServices@28 @32
+    HlinkCreateFromData=_HlinkCreateFromData@24 @5
+    HlinkCreateFromMoniker=_HlinkCreateFromMoniker@32 @3
+    HlinkCreateFromString=_HlinkCreateFromString@32 @4
+    HlinkCreateShortcut=_HlinkCreateShortcut@24 @23
+    HlinkCreateShortcutFromMoniker=_HlinkCreateShortcutFromMoniker@32 @29
+    HlinkCreateShortcutFromString=_HlinkCreateShortcutFromString@32 @27
+    HlinkGetSpecialReference=_HlinkGetSpecialReference@8 @22
+    HlinkGetValueFromParams=_HlinkGetValueFromParams@12 @28
+    HlinkIsShortcut=_HlinkIsShortcut@4 @25
+    HlinkNavigate=_HlinkNavigate@24 @10
+    HlinkNavigateToStringReference=_HlinkNavigateToStringReference@36 @8
+    HlinkOnNavigate=_HlinkOnNavigate@28 @9
+    HlinkOnRenameDocument=_HlinkOnRenameDocument@16 @12
+    HlinkParseDisplayName=_HlinkParseDisplayName@20 @18
+    HlinkPreprocessMoniker=_HlinkPreprocessMoniker@12 @33
+    HlinkQueryCreateFromData=_HlinkQueryCreateFromData@4 @20
+    HlinkResolveMonikerForData=_HlinkResolveMonikerForData@28 @14
+    HlinkResolveShortcut=_HlinkResolveShortcut@24 @24
+    HlinkResolveShortcutToMoniker=_HlinkResolveShortcutToMoniker@12 @30
+    HlinkResolveShortcutToString=_HlinkResolveShortcutToString@12 @26
+    HlinkResolveStringForData=_HlinkResolveStringForData@28 @15
+    HlinkSetSpecialReference=_HlinkSetSpecialReference@8 @21
+    HlinkTranslateURL=_HlinkTranslateURL@12 @31
+    HlinkUpdateStackItem=_HlinkUpdateStackItem@24 @11
+    OleSaveToStreamEx=_OleSaveToStreamEx@12 @16

@@ -1,0 +1,10 @@
+LIBRARY authz.dll
+EXPORTS
+    AuthzAccessCheck@36 @1
+    AuthzFreeContext@4 @9
+    AuthzFreeHandle@4 @10
+    AuthzFreeResourceManager@4 @11
+    AuthzGetInformationFromContext@20 @12
+    AuthzInitializeContextFromSid@32 @15
+    AuthzInitializeContextFromToken@32 @16
+    AuthzInitializeResourceManager@24 @21
