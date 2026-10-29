@@ -122,10 +122,10 @@ typedef struct GL_API {
 
 const GL_API *GluGl(void);
 
-/* math.c */
+/* the trigonometry in math.c. */
 double GluSin(double radians);
 double GluCos(double radians);
 double GluSqrt(double value);
 
-/* mipmap.c */
+/* the pixel layouts in mipmap.c. */
 int GluPixelSize(GLenum format, GLenum type, int *components);
