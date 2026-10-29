@@ -1,0 +1,13 @@
+LIBRARY mscms.dll
+EXPORTS
+    CloseColorProfile@4 @6
+    CreateMultiProfileTransform@24 @26
+    DeleteColorTransform@4 @34
+    GetColorDirectoryA@12 @43
+    GetColorDirectoryW@12 @44
+    GetColorProfileHeader@8 @48
+    IsColorProfileValid@8 @68
+    OpenColorProfileA@16 @69
+    OpenColorProfileW@16 @70
+    TranslateBitmapBits@44 @82
+    TranslateColors@24 @83

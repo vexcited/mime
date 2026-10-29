@@ -1,0 +1,26 @@
+LIBRARY mapi32.dll
+EXPORTS
+    HrGetOneProp@12 @135
+    HrQueryAllRows@24 @75
+    HrSetOneProp@8 @136
+    MAPIAddress@44 @217
+    MAPIAdminProfiles@8 @19
+    MAPIAllocateBuffer@8 @13
+    MAPIAllocateMore@12 @15
+    MAPIDeleteMail@20 @215
+    MAPIDetails@20 @218
+    MAPIFindNext@28 @214
+    MAPIFreeBuffer@4 @17
+    MAPIGetDefaultMalloc@0 @59
+    MAPIInitialize@4 @21
+    MAPILogoff@16 @210
+    MAPILogon@24 @209
+    MAPILogonEx@20 @11
+    MAPIReadMail@24 @213
+    MAPIResolveName@24 @219
+    MAPISaveMail@24 @212
+    MAPISendDocuments@20 @208
+    MAPISendMail@20 @211
+    MAPISendMailW@20 @256
+    MAPIUninitialize@0 @23
+    OpenIMsgOnIStg@44 @198

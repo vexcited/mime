@@ -1,0 +1,27 @@
+; the exports of mapi32.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY mapi32.dll
+EXPORTS
+    MAPIInitialize @21
+    MAPIUninitialize @23
+    MAPILogonEx @11
+    MAPIAdminProfiles @19
+    MAPIAllocateBuffer @13
+    MAPIAllocateMore @15
+    MAPIFreeBuffer @17
+    MAPIGetDefaultMalloc @59
+    HrGetOneProp @135
+    HrSetOneProp @136
+    HrQueryAllRows @75
+    OpenIMsgOnIStg @198
+    MAPILogon @209
+    MAPILogoff @210
+    MAPISendMail @211
+    MAPISendMailW @256
+    MAPISendDocuments @208
+    MAPIResolveName @219
+    MAPIFindNext @214
+    MAPIReadMail @213
+    MAPIDeleteMail @215
+    MAPISaveMail @212
+    MAPIAddress @217
+    MAPIDetails @218

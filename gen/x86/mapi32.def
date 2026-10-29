@@ -1,0 +1,26 @@
+LIBRARY mapi32.dll
+EXPORTS
+    HrGetOneProp=_HrGetOneProp@12 @135
+    HrQueryAllRows=_HrQueryAllRows@24 @75
+    HrSetOneProp=_HrSetOneProp@8 @136
+    MAPIAddress=_MAPIAddress@44 @217
+    MAPIAdminProfiles=_MAPIAdminProfiles@8 @19
+    MAPIAllocateBuffer=_MAPIAllocateBuffer@8 @13
+    MAPIAllocateMore=_MAPIAllocateMore@12 @15
+    MAPIDeleteMail=_MAPIDeleteMail@20 @215
+    MAPIDetails=_MAPIDetails@20 @218
+    MAPIFindNext=_MAPIFindNext@28 @214
+    MAPIFreeBuffer=_MAPIFreeBuffer@4 @17
+    MAPIGetDefaultMalloc=_MAPIGetDefaultMalloc@0 @59
+    MAPIInitialize=_MAPIInitialize@4 @21
+    MAPILogoff=_MAPILogoff@16 @210
+    MAPILogon=_MAPILogon@24 @209
+    MAPILogonEx=_MAPILogonEx@20 @11
+    MAPIReadMail=_MAPIReadMail@24 @213
+    MAPIResolveName=_MAPIResolveName@24 @219
+    MAPISaveMail=_MAPISaveMail@24 @212
+    MAPISendDocuments=_MAPISendDocuments@20 @208
+    MAPISendMail=_MAPISendMail@20 @211
+    MAPISendMailW=_MAPISendMailW@20 @256
+    MAPIUninitialize=_MAPIUninitialize@0 @23
+    OpenIMsgOnIStg=_OpenIMsgOnIStg@44 @198

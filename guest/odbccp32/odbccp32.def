@@ -1,0 +1,17 @@
+; the exports of odbccp32.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY odbccp32.dll
+EXPORTS
+    SQLInstallerError @22
+    SQLSetConfigMode @28
+    SQLGetConfigMode @27
+    SQLWritePrivateProfileString @14
+    SQLGetPrivateProfileString @15
+    SQLInstallDriverEx @26
+    SQLInstallDriverManager @3
+    SQLRemoveDriverManager @17
+    SQLRemoveDriver @20
+    SQLGetInstalledDrivers @4
+    SQLValidDSN @16
+    SQLWriteDSNToIni @8
+    SQLRemoveDSNFromIni @9
+    SQLConfigDataSource @6

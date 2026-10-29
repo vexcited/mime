@@ -1,0 +1,16 @@
+LIBRARY odbccp32.dll
+EXPORTS
+    SQLConfigDataSource=_SQLConfigDataSource@16 @6
+    SQLGetConfigMode=_SQLGetConfigMode@4 @27
+    SQLGetInstalledDrivers=_SQLGetInstalledDrivers@12 @4
+    SQLGetPrivateProfileString=_SQLGetPrivateProfileString@24 @15
+    SQLInstallDriverEx=_SQLInstallDriverEx@28 @26
+    SQLInstallDriverManager=_SQLInstallDriverManager@12 @3
+    SQLInstallerError=_SQLInstallerError@20 @22
+    SQLRemoveDSNFromIni=_SQLRemoveDSNFromIni@4 @9
+    SQLRemoveDriver=_SQLRemoveDriver@12 @20
+    SQLRemoveDriverManager=_SQLRemoveDriverManager@4 @17
+    SQLSetConfigMode=_SQLSetConfigMode@4 @28
+    SQLValidDSN=_SQLValidDSN@4 @16
+    SQLWriteDSNToIni=_SQLWriteDSNToIni@8 @8
+    SQLWritePrivateProfileString=_SQLWritePrivateProfileString@16 @14
