@@ -19,6 +19,7 @@ EXPORTS
     MFCreatePresentationDescriptor
     MFCreateSample
     MFCreateStreamDescriptor
+    MFCreateVideoSampleAllocatorEx
     MFCreateWaveFormatExFromMFMediaType
     MFDeserializeAttributesFromStream
     MFFrameRateToAverageTimePerFrame

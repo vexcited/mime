@@ -5,6 +5,7 @@ EXPORTS
     CLSIDFromString=ole32.CLSIDFromString @115
     CoAddRefServerProcess=ole32.CoAddRefServerProcess @254
     CoCreateFreeThreadedMarshaler=ole32.CoCreateFreeThreadedMarshaler @259
+    CoCreateInstanceFromApp=ole32.CoCreateInstanceFromApp @264
     CoCreateGuid=ole32.CoCreateGuid @260
     CoCreateInstance=ole32.CoCreateInstance @261
     CoCreateInstanceEx=ole32.CoCreateInstanceEx @262

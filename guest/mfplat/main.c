@@ -225,3 +225,12 @@ HRESULT WINAPI MFTEnum(GUID category, UINT32 flags, MFT_REGISTER_TYPE_INFO *inpu
     *clsids = nullptr;
     return S_OK;
 }
+
+/* samples of video surfaces are allocated against a graphics device manager that is not here. */
+HRESULT WINAPI MFCreateVideoSampleAllocatorEx(REFIID iid, void **allocator)
+{
+    if (!allocator)
+        return E_POINTER;
+    *allocator = nullptr;
+    return E_NOTIMPL;
+}

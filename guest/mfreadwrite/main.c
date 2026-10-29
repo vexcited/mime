@@ -951,6 +951,8 @@ static HRESULT reader_init(SourceReader *reader, IMFAttributes *attributes)
     return reader->source->lpVtbl->BeginGetEvent(reader->source, &reader->source_callback, nullptr);
 }
 
+#define MF_E_UNSUPPORTED_BYTESTREAM_TYPE_ ((HRESULT)0xC00D36C4)
+
 HRESULT WINAPI MFCreateSourceReaderFromMediaSource(IMFMediaSource *source, IMFAttributes *attributes,
                                                    IMFSourceReader **out)
 {
@@ -982,4 +984,29 @@ HRESULT WINAPI MFCreateSourceReaderFromMediaSource(IMFMediaSource *source, IMFAt
     }
     *out = &reader->iface;
     return S_OK;
+}
+
+/*
+ * a sink writer encodes samples into a container, which needs the media sinks for the containers and the encoders for
+ * the streams, and none of them is here. a url or byte stream names a container no sink is known for, and a media
+ * sink given would need a writer made around it.
+ */
+HRESULT WINAPI MFCreateSinkWriterFromURL(LPCWSTR url, IMFByteStream *stream, IMFAttributes *attributes, void **writer)
+{
+    if (!writer)
+        return E_POINTER;
+    *writer = nullptr;
+    if (!url && !stream)
+        return E_INVALIDARG;
+    return MF_E_UNSUPPORTED_BYTESTREAM_TYPE_;
+}
+
+HRESULT WINAPI MFCreateSinkWriterFromMediaSink(IUnknown *sink, IMFAttributes *attributes, void **writer)
+{
+    if (!writer)
+        return E_POINTER;
+    *writer = nullptr;
+    if (!sink)
+        return E_INVALIDARG;
+    return E_NOTIMPL;
 }

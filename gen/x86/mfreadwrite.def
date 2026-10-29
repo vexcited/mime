@@ -1,3 +1,5 @@
 LIBRARY mfreadwrite.dll
 EXPORTS
+    MFCreateSinkWriterFromMediaSink=_MFCreateSinkWriterFromMediaSink@12
+    MFCreateSinkWriterFromURL=_MFCreateSinkWriterFromURL@16
     MFCreateSourceReaderFromMediaSource=_MFCreateSourceReaderFromMediaSource@12

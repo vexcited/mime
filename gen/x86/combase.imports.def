@@ -52,6 +52,7 @@ EXPORTS
     CoAddRefServerProcess@0 @254
     CoCancelCall@8 @256
     CoCreateFreeThreadedMarshaler@8 @259
+    CoCreateInstanceFromApp@24 @264
     CoCreateGuid@4 @260
     CoCreateInstance@20 @261
     CoCreateInstanceEx@24 @262
