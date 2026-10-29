@@ -1,6 +1,7 @@
 LIBRARY dnsapi.dll
 EXPORTS
     DnsFree@8
+    DnsQueryConfig@24
     DnsQuery_A@24
     DnsQuery_UTF8@24
     DnsQuery_W@24
