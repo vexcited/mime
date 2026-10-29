@@ -868,8 +868,8 @@ static BOOL load_file(HCERTSTORE store, HANDLE file)
 
 /* ------------------------------------------------------------------ opening and closing */
 
-HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, HCRYPTPROV_LEGACY hCryptProv,
-                                DWORD dwFlags, const void *pvPara)
+static HCERTSTORE open_store(LPCSTR lpszStoreProvider, DWORD dwEncodingType, HCRYPTPROV_LEGACY hCryptProv,
+                             DWORD dwFlags, const void *pvPara)
 {
     ULONG_PTR provider = 0;
     if (IS_INTRESOURCE(lpszStoreProvider)) {
@@ -966,6 +966,17 @@ HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, 
     }
     if (store && provider >= 5 && provider != 11)
         store->flags |= dwFlags & CERT_STORE_READONLY_FLAG;
+    return store;
+}
+
+HCERTSTORE WINAPI CertOpenStore(LPCSTR lpszStoreProvider, DWORD dwEncodingType, HCRYPTPROV_LEGACY hCryptProv,
+                                DWORD dwFlags, const void *pvPara)
+{
+    HCERTSTORE store = open_store(lpszStoreProvider, dwEncodingType, hCryptProv, dwFlags, pvPara);
+    /* a caller that takes what it may have gets the store to read when writing it is refused. */
+    if (!store && (dwFlags & CERT_STORE_MAXIMUM_ALLOWED_FLAG))
+        store = open_store(lpszStoreProvider, dwEncodingType, hCryptProv,
+                           (dwFlags & ~CERT_STORE_MAXIMUM_ALLOWED_FLAG) | CERT_STORE_READONLY_FLAG, pvPara);
     return store;
 }
 
