@@ -266,15 +266,31 @@ static HRESULT STDMETHODCALLTYPE sm_GetSecurityId(IInternetSecurityManager *ifac
     return S_OK;
 }
 
-/* the zone's own policy from the registry, else its template's default. */
+/* some actions share the value of another one. */
+static DWORD policy_value_of(DWORD action)
+{
+    if (action == 0x1202 || action == 0x1203 || action == 0x1204 || action == 0x1401)
+        return 0x1201;
+    if (action == 0x1602 || action == 0x1603)
+        return 0x1601;
+    return action;
+}
+
+/* the group policy of the zone first, then the zone's own value, the machine before the user. */
 static DWORD action_policy(DWORD zone, DWORD action)
 {
+    static const LPCWSTR keys[] = {
+        L"Software\\Policies\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\Zones\\%lu",
+        INTERNET_SETTINGS L"\\Zones\\%lu",
+    };
     WCHAR key[160], value[16];
-    _snwprintf(key, RTL_NUMBER_OF(key), INTERNET_SETTINGS L"\\Zones\\%lu", zone);
-    _snwprintf(value, RTL_NUMBER_OF(value), L"%04lX", action);
-    DWORD policy;
-    if (read_dword(HKEY_CURRENT_USER, key, value, &policy) || read_dword(HKEY_LOCAL_MACHINE, key, value, &policy))
-        return policy;
+    _snwprintf(value, RTL_NUMBER_OF(value), L"%lX", policy_value_of(action));
+    for (int i = 0; i < 2; i++) {
+        DWORD policy;
+        _snwprintf(key, RTL_NUMBER_OF(key), keys[i], zone);
+        if (read_dword(HKEY_LOCAL_MACHINE, key, value, &policy) || read_dword(HKEY_CURRENT_USER, key, value, &policy))
+            return policy;
+    }
     return zone == URLZONE_UNTRUSTED ? URLPOLICY_DISALLOW : URLPOLICY_ALLOW;
 }
 
