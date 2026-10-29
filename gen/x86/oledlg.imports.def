@@ -1,9 +1,22 @@
 LIBRARY oledlg.dll
 EXPORTS
-    OleUIBusyW@4
-    OleUIInsertObjectA@4
-    OleUIInsertObjectW@4
-    OleUIObjectPropertiesA@4
-    OleUIObjectPropertiesW@4
-    OleUIPasteSpecialA@4
-    OleUIPasteSpecialW@4
+    OleUIAddVerbMenuA@36 @1
+    OleUIAddVerbMenuW@36 @13
+    OleUIBusyA@4 @8
+    OleUIBusyW@4 @14
+    OleUIChangeIconA@4 @6
+    OleUIChangeIconW@4 @15
+    OleUIChangeSourceA@4 @12
+    OleUIChangeSourceW@4 @16
+    OleUIConvertA@4 @7
+    OleUIConvertW@4 @17
+    OleUIEditLinksA@4 @5
+    OleUIEditLinksW@4 @18
+    OleUIInsertObjectA@4 @3
+    OleUIInsertObjectW@4 @19
+    OleUIObjectPropertiesA@4 @11
+    OleUIObjectPropertiesW@4 @20
+    OleUIPasteSpecialA@4 @4
+    OleUIPasteSpecialW@4 @21
+    OleUIUpdateLinksA@16 @9
+    OleUIUpdateLinksW@16 @23
