@@ -301,6 +301,10 @@ typedef struct _COLORMAP {
 #define CMB_MASKED 0x02
 #define CMB_DIBSECTION 0x04
 
+WINCOMMCTRLAPI BOOL WINAPI MakeDragList(HWND list);
+WINCOMMCTRLAPI int WINAPI LBItemFromPt(HWND list, POINT point, BOOL scroll);
+WINCOMMCTRLAPI void WINAPI DrawInsert(HWND parent, HWND list, int item);
+
 WINCOMMCTRLAPI HBITMAP WINAPI CreateMappedBitmap(HINSTANCE instance, INT_PTR id, UINT flags, LPCOLORMAP map, int count);
 WINCOMMCTRLAPI BOOL WINAPI InitializeFlatSB(HWND hwnd);
 WINCOMMCTRLAPI HRESULT WINAPI UninitializeFlatSB(HWND hwnd);

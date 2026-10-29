@@ -127,3 +127,6 @@ EXPORTS
     FlatSB_ShowScrollBar @42
     InitializeFlatSB @96
     UninitializeFlatSB @101
+    MakeDragList @13
+    LBItemFromPt @14
+    DrawInsert @15

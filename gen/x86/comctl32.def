@@ -110,6 +110,7 @@ EXPORTS
     _TrackMouseEvent=__TrackMouseEvent@4 @101
     CreatePropertySheetPage=_CreatePropertySheetPageA@4 @12
     CreateStatusWindow=_CreateStatusWindowA@16 @23
+    DrawInsert=_DrawInsert@12 @15
     DrawStatusText=_DrawStatusTextA@16 @30
     FlatSB_EnableScrollBar=_FlatSB_EnableScrollBar@12 @32
     FlatSB_GetScrollInfo=_FlatSB_GetScrollInfo@12 @33
@@ -124,5 +125,7 @@ EXPORTS
     ImageList_AddIcon=_CcImageListAddIcon@8 @45
     ImageList_LoadImage=_ImageList_LoadImageA@28 @70
     InitializeFlatSB=_InitializeFlatSB@4 @95
+    LBItemFromPt=_LBItemFromPt@16 @14
+    MakeDragList=_MakeDragList@4 @13
     PropertySheet=_PropertySheetA@4 @96
     UninitializeFlatSB=_UninitializeFlatSB@4 @100
