@@ -1,0 +1,8 @@
+; the exports of normaliz.dll of windows with their ordinals.
+LIBRARY normaliz.dll
+EXPORTS
+    IdnToAscii=NormIdnToAscii @1
+    IdnToNameprepUnicode=NormIdnToNameprepUnicode @2
+    IdnToUnicode=NormIdnToUnicode @3
+    IsNormalizedString=NormIsNormalizedString @4
+    NormalizeString=NormNormalizeString @5

@@ -1,0 +1,33 @@
+LIBRARY cryptsp.dll
+EXPORTS
+    CryptAcquireContextA=advapi32.CryptAcquireContextA @2
+    CryptAcquireContextW=advapi32.CryptAcquireContextW @3
+    CryptContextAddRef=advapi32.CryptContextAddRef @4
+    CryptCreateHash=advapi32.CryptCreateHash @5
+    CryptDecrypt=advapi32.CryptDecrypt @6
+    CryptDeriveKey=advapi32.CryptDeriveKey @7
+    CryptDestroyHash=advapi32.CryptDestroyHash @8
+    CryptDestroyKey=advapi32.CryptDestroyKey @9
+    CryptDuplicateKey=advapi32.CryptDuplicateKey @11
+    CryptEncrypt=advapi32.CryptEncrypt @12
+    CryptEnumProvidersA=advapi32.CryptEnumProvidersA @15
+    CryptEnumProvidersW=advapi32.CryptEnumProvidersW @16
+    CryptExportKey=advapi32.CryptExportKey @17
+    CryptGenKey=advapi32.CryptGenKey @18
+    CryptGenRandom=advapi32.CryptGenRandom @19
+    CryptGetDefaultProviderA=advapi32.CryptGetDefaultProviderA @20
+    CryptGetDefaultProviderW=advapi32.CryptGetDefaultProviderW @21
+    CryptGetHashParam=advapi32.CryptGetHashParam @22
+    CryptGetKeyParam=advapi32.CryptGetKeyParam @23
+    CryptGetProvParam=advapi32.CryptGetProvParam @24
+    CryptGetUserKey=advapi32.CryptGetUserKey @25
+    CryptHashData=advapi32.CryptHashData @26
+    CryptImportKey=advapi32.CryptImportKey @28
+    CryptReleaseContext=advapi32.CryptReleaseContext @29
+    CryptSetHashParam=advapi32.CryptSetHashParam @30
+    CryptSetKeyParam=advapi32.CryptSetKeyParam @31
+    CryptSetProvParam=advapi32.CryptSetProvParam @32
+    CryptSignHashA=advapi32.CryptSignHashA @37
+    CryptSignHashW=advapi32.CryptSignHashW @38
+    CryptVerifySignatureA=advapi32.CryptVerifySignatureA @39
+    CryptVerifySignatureW=advapi32.CryptVerifySignatureW @40

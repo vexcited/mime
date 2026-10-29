@@ -1,0 +1,5 @@
+; the exports of shfolder.dll of windows, which shell32 answers.
+LIBRARY shfolder.dll
+EXPORTS
+    SHGetFolderPathA=shell32.SHGetFolderPathA @1
+    SHGetFolderPathW=shell32.SHGetFolderPathW @2
