@@ -1,4 +1,5 @@
 #include "msi_private.h"
+#include "automation.h"
 
 /*
  * the ANSI installer functions, which convert their text with the system code page and call the wide ones, and the
@@ -658,5 +659,183 @@ UINT WINAPI MsiEnumComponentQualifiersA(LPCSTR category, DWORD index, LPSTR qual
     MimeMsiFree(name);
     MimeMsiFree(text);
     MimeMsiFree(wide);
+    return error;
+}
+
+INSTALLSTATE WINAPI MsiGetComponentPathA(LPCSTR product, LPCSTR component, LPSTR out, LPDWORD size)
+{
+    if (out && !size)
+        return INSTALLSTATE_INVALIDARG;
+    PWSTR wide_product = to_wide(product), wide_component = to_wide(component);
+    WCHAR buffer[1024];
+    DWORD length = RTL_NUMBER_OF(buffer);
+    INSTALLSTATE state = (product && !wide_product) || (component && !wide_component)
+                             ? INSTALLSTATE_INVALIDARG
+                             : MsiGetComponentPathW(wide_product, wide_component, buffer, &length);
+    if ((state == INSTALLSTATE_LOCAL || state == INSTALLSTATE_SOURCE || state == INSTALLSTATE_ABSENT) && size &&
+        path_to_ansi(ERROR_SUCCESS, buffer, out, size) == ERROR_MORE_DATA)
+        state = INSTALLSTATE_MOREDATA;
+    MimeMsiFree(wide_product);
+    MimeMsiFree(wide_component);
+    return state;
+}
+
+UINT WINAPI MsiGetProductCodeA(LPCSTR component, LPSTR product)
+{
+    if (!product || !component)
+        return ERROR_INVALID_PARAMETER;
+    PWSTR wide = to_wide(component);
+    WCHAR code[39];
+    UINT error = wide ? MsiGetProductCodeW(wide, code) : ERROR_NOT_ENOUGH_MEMORY;
+    if (!error)
+        WideCharToMultiByte(CP_ACP, 0, code, -1, product, 39, nullptr, nullptr);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiGetSummaryInformationA(MSIHANDLE database, LPCSTR path, UINT updates, MSIHANDLE *summary)
+{
+    PWSTR wide = to_wide(path);
+    UINT error = path && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiGetSummaryInformationW(database, wide, updates, summary);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiSummaryInfoGetPropertyA(MSIHANDLE summary, UINT id, PUINT type, int *number, FILETIME *time, LPSTR text,
+                                       LPDWORD size)
+{
+    if (text && !size)
+        return ERROR_INVALID_PARAMETER;
+    DWORD needed = 0;
+    WCHAR probe[1];
+    UINT error = MsiSummaryInfoGetPropertyW(summary, id, type, number, time, text ? probe : nullptr, text ? &needed : nullptr);
+    if (error != ERROR_SUCCESS && error != ERROR_MORE_DATA)
+        return error;
+    if (!text)
+        return ERROR_SUCCESS;
+    PWSTR wide = MimeMsiAllocate(((SIZE_T)needed + 1) * sizeof(WCHAR));
+    DWORD capacity = needed + 1;
+    error = wide ? MsiSummaryInfoGetPropertyW(summary, id, type, number, time, wide, &capacity) : ERROR_NOT_ENOUGH_MEMORY;
+    if (!error)
+        error = copy_ansi(wide, text, size);
+    MimeMsiFree(wide);
+    return error;
+}
+
+/* the summary of a package of this installer is read: it is not opened for changes, and a call that changes it fails. */
+UINT WINAPI MsiSummaryInfoSetPropertyW(MSIHANDLE summary, UINT id, UINT type, int number, FILETIME *time, LPCWSTR text)
+{
+    AcquireSRWLockShared(&MimeMsiLock);
+    BOOL valid = MimeMsiGetHandle(summary, MIME_MSI_KIND_SUMMARY) != nullptr;
+    ReleaseSRWLockShared(&MimeMsiLock);
+    if (!valid)
+        return ERROR_INVALID_HANDLE;
+    return !id || id == 17 || id >= 20 ? ERROR_UNKNOWN_PROPERTY : ERROR_FUNCTION_FAILED;
+}
+
+UINT WINAPI MsiSummaryInfoSetPropertyA(MSIHANDLE summary, UINT id, UINT type, int number, FILETIME *time, LPCSTR text)
+{
+    PWSTR wide = to_wide(text);
+    UINT error = text && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiSummaryInfoSetPropertyW(summary, id, type, number, time, wide);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiSummaryInfoPersist(MSIHANDLE summary)
+{
+    AcquireSRWLockShared(&MimeMsiLock);
+    BOOL valid = MimeMsiGetHandle(summary, MIME_MSI_KIND_SUMMARY) != nullptr;
+    ReleaseSRWLockShared(&MimeMsiLock);
+    return valid ? ERROR_FUNCTION_FAILED : ERROR_INVALID_HANDLE;
+}
+
+/* a database of this installer is read only, so it never has anything to write. */
+UINT WINAPI MsiDatabaseCommit(MSIHANDLE database)
+{
+    AcquireSRWLockShared(&MimeMsiLock);
+    BOOL valid = MimeMsiGetHandle(database, MIME_MSI_KIND_DATABASE) != nullptr;
+    ReleaseSRWLockShared(&MimeMsiLock);
+    return valid ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
+}
+
+static BOOL databases_valid(MSIHANDLE database, MSIHANDLE reference)
+{
+    AcquireSRWLockShared(&MimeMsiLock);
+    BOOL valid = MimeMsiGetHandle(database, MIME_MSI_KIND_DATABASE) && (!reference || MimeMsiGetHandle(reference, MIME_MSI_KIND_DATABASE));
+    ReleaseSRWLockShared(&MimeMsiLock);
+    return valid;
+}
+
+/* a transform is the difference of two databases, which the installer does not compute. */
+UINT WINAPI MsiDatabaseGenerateTransformW(MSIHANDLE database, MSIHANDLE reference, LPCWSTR file, int reserved1,
+                                          int reserved2)
+{
+    if (!databases_valid(database, reference))
+        return ERROR_INVALID_HANDLE;
+    return AutoApiDatabaseGenerateTransform(database, reference, file);
+}
+
+UINT WINAPI MsiDatabaseGenerateTransformA(MSIHANDLE database, MSIHANDLE reference, LPCSTR file, int reserved1,
+                                          int reserved2)
+{
+    PWSTR wide = to_wide(file);
+    UINT error = file && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiDatabaseGenerateTransformW(database, reference, wide, 0, 0);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiCreateTransformSummaryInfoW(MSIHANDLE database, MSIHANDLE reference, LPCWSTR file, int errors,
+                                           int validation)
+{
+    if (!databases_valid(database, reference))
+        return ERROR_INVALID_HANDLE;
+    return AutoApiCreateTransformSummaryInfo(database, reference, file, errors, validation);
+}
+
+UINT WINAPI MsiCreateTransformSummaryInfoA(MSIHANDLE database, MSIHANDLE reference, LPCSTR file, int errors,
+                                           int validation)
+{
+    PWSTR wide = to_wide(file);
+    UINT error = file && !wide ? ERROR_NOT_ENOUGH_MEMORY
+                               : MsiCreateTransformSummaryInfoW(database, reference, wide, errors, validation);
+    MimeMsiFree(wide);
+    return error;
+}
+
+/*
+ * what is installed is found, and what is not there is not restored: the files would come from the source of the
+ * product, which the installer does not resolve.
+ */
+UINT WINAPI MsiInstallMissingComponentW(LPCWSTR product, LPCWSTR component, INSTALLSTATE state)
+{
+    if (!product || !component || wcslen(product) != 38 || wcslen(component) != 38)
+        return ERROR_INVALID_PARAMETER;
+    if (state != INSTALLSTATE_LOCAL && state != INSTALLSTATE_SOURCE && state != INSTALLSTATE_DEFAULT)
+        return ERROR_INVALID_PARAMETER;
+    if (MsiQueryProductStateW(product) == INSTALLSTATE_UNKNOWN)
+        return ERROR_UNKNOWN_PRODUCT;
+    WCHAR path[1024];
+    DWORD length = RTL_NUMBER_OF(path);
+    switch (MsiGetComponentPathW(product, component, path, &length)) {
+    case INSTALLSTATE_LOCAL:
+    case INSTALLSTATE_SOURCE:
+        return ERROR_SUCCESS;
+    case INSTALLSTATE_UNKNOWN:
+        return ERROR_UNKNOWN_COMPONENT;
+    case INSTALLSTATE_INVALIDARG:
+        return ERROR_INVALID_PARAMETER;
+    default:
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    }
+}
+
+UINT WINAPI MsiInstallMissingComponentA(LPCSTR product, LPCSTR component, INSTALLSTATE state)
+{
+    PWSTR wide_product = to_wide(product), wide_component = to_wide(component);
+    UINT error = (product && !wide_product) || (component && !wide_component)
+                     ? ERROR_NOT_ENOUGH_MEMORY
+                     : MsiInstallMissingComponentW(wide_product, wide_component, state);
+    MimeMsiFree(wide_product);
+    MimeMsiFree(wide_component);
     return error;
 }

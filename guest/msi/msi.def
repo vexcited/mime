@@ -144,3 +144,17 @@ EXPORTS
     MsiDecomposeDescriptorW @201
     MsiProvideQualifiedComponentExA @202
     MsiProvideQualifiedComponentExW @203
+    MsiInstallMissingComponentW @84
+    MsiInstallMissingComponentA @83
+    MsiDatabaseCommit @20
+    MsiSummaryInfoGetPropertyA @148
+    MsiSummaryInfoPersist @151
+    MsiSummaryInfoSetPropertyA @152
+    MsiSummaryInfoSetPropertyW @153
+    MsiGetComponentPathA @172
+    MsiCreateTransformSummaryInfoW @186
+    MsiCreateTransformSummaryInfoA @185
+    MsiDatabaseGenerateTransformW @24
+    MsiDatabaseGenerateTransformA @23
+    MsiGetProductCodeA @65
+    MsiGetSummaryInformationA @77

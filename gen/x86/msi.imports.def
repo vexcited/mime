@@ -13,8 +13,13 @@ EXPORTS
     MsiConfigureProductExW@16 @190
     MsiConfigureProductW@12 @16
     MsiCreateRecord@4 @17
+    MsiCreateTransformSummaryInfoA@20 @185
+    MsiCreateTransformSummaryInfoW@20 @186
     MsiCustomActionServer@4
     MsiDatabaseApplyTransformW@12 @19
+    MsiDatabaseCommit@4 @20
+    MsiDatabaseGenerateTransformA@20 @23
+    MsiDatabaseGenerateTransformW@20 @24
     MsiDatabaseGetPrimaryKeysW@12 @26
     MsiDatabaseIsTablePersistentW@8 @165
     MsiDatabaseOpenViewA@12 @31
@@ -45,6 +50,7 @@ EXPORTS
     MsiFormatRecordA@16 @170
     MsiFormatRecordW@16 @171
     MsiGetActiveDatabase@4 @49
+    MsiGetComponentPathA@16 @172
     MsiGetComponentPathExW@24 @294
     MsiGetComponentPathW@16 @173
     MsiGetComponentStateA@16 @50
@@ -60,6 +66,7 @@ EXPORTS
     MsiGetMode@8 @64
     MsiGetPatchInfoExW@28 @244
     MsiGetPatchInfoW@16 @179
+    MsiGetProductCodeA@8 @65
     MsiGetProductCodeW@8 @66
     MsiGetProductInfoA@16 @67
     MsiGetProductInfoExW@24 @248
@@ -69,9 +76,12 @@ EXPORTS
     MsiGetPropertyW@16 @74
     MsiGetSourcePathA@16 @75
     MsiGetSourcePathW@16 @76
+    MsiGetSummaryInformationA@16 @77
     MsiGetSummaryInformationW@16 @78
     MsiGetTargetPathA@16 @79
     MsiGetTargetPathW@16 @80
+    MsiInstallMissingComponentA@12 @83
+    MsiInstallMissingComponentW@12 @84
     MsiInstallProductA@8 @87
     MsiInstallProductW@8 @88
     MsiIsProductElevatedW@8 @215
@@ -134,8 +144,12 @@ EXPORTS
     MsiSourceListEnumSourcesW@28 @264
     MsiSourceListGetInfoW@28 @266
     MsiSourceListSetInfoW@24 @268
+    MsiSummaryInfoGetPropertyA@28 @148
     MsiSummaryInfoGetPropertyCount@8 @149
     MsiSummaryInfoGetPropertyW@28 @150
+    MsiSummaryInfoPersist@4 @151
+    MsiSummaryInfoSetPropertyA@24 @152
+    MsiSummaryInfoSetPropertyW@24 @153
     MsiVerifyDiskSpace@4 @142
     MsiViewClose@4 @158
     MsiViewExecute@8 @159

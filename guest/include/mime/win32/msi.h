@@ -154,6 +154,23 @@ MSIAPI UINT WINAPI MsiGetSummaryInformationW(MSIHANDLE database, LPCWSTR path, U
 MSIAPI UINT WINAPI MsiSummaryInfoGetPropertyW(MSIHANDLE summary, UINT id, PUINT type, int *number,
                                             FILETIME *time, LPWSTR text, LPDWORD size);
 MSIAPI UINT WINAPI MsiSummaryInfoGetPropertyCount(MSIHANDLE summary, PUINT count);
+MSIAPI UINT WINAPI MsiGetSummaryInformationA(MSIHANDLE database, LPCSTR path, UINT updates, MSIHANDLE *summary);
+MSIAPI UINT WINAPI MsiSummaryInfoGetPropertyA(MSIHANDLE summary, UINT id, PUINT type, int *number, FILETIME *time,
+                                            LPSTR text, LPDWORD size);
+MSIAPI UINT WINAPI MsiSummaryInfoSetPropertyW(MSIHANDLE summary, UINT id, UINT type, int number, FILETIME *time,
+                                            LPCWSTR text);
+MSIAPI UINT WINAPI MsiSummaryInfoSetPropertyA(MSIHANDLE summary, UINT id, UINT type, int number, FILETIME *time,
+                                            LPCSTR text);
+MSIAPI UINT WINAPI MsiSummaryInfoPersist(MSIHANDLE summary);
+MSIAPI UINT WINAPI MsiDatabaseCommit(MSIHANDLE database);
+MSIAPI UINT WINAPI MsiDatabaseGenerateTransformW(MSIHANDLE database, MSIHANDLE reference, LPCWSTR file, int reserved1,
+                                               int reserved2);
+MSIAPI UINT WINAPI MsiDatabaseGenerateTransformA(MSIHANDLE database, MSIHANDLE reference, LPCSTR file, int reserved1,
+                                               int reserved2);
+MSIAPI UINT WINAPI MsiCreateTransformSummaryInfoW(MSIHANDLE database, MSIHANDLE reference, LPCWSTR file, int errors,
+                                                int validation);
+MSIAPI UINT WINAPI MsiCreateTransformSummaryInfoA(MSIHANDLE database, MSIHANDLE reference, LPCSTR file, int errors,
+                                                int validation);
 
 #define ERROR_UNKNOWN_PROPERTY 1608L
 MSIAPI UINT WINAPI MsiGetPatchInfoW(LPCWSTR patch, LPCWSTR attribute, LPWSTR out, LPDWORD size);
@@ -296,6 +313,10 @@ MSIAPI UINT WINAPI MsiEnumClientsExW(LPCWSTR component, LPCWSTR sid, DWORD conte
 MSIAPI UINT WINAPI MsiEnumComponentsExW(LPCWSTR sid, DWORD contexts, DWORD index, WCHAR component[39],
                                         MSIINSTALLCONTEXT *context, LPWSTR user_sid, LPDWORD sid_size);
 MSIAPI UINT WINAPI MsiGetProductCodeW(LPCWSTR component, LPWSTR product);
+MSIAPI UINT WINAPI MsiGetProductCodeA(LPCSTR component, LPSTR product);
+MSIAPI INSTALLSTATE WINAPI MsiGetComponentPathA(LPCSTR product, LPCSTR component, LPSTR out, LPDWORD size);
+MSIAPI UINT WINAPI MsiInstallMissingComponentW(LPCWSTR product, LPCWSTR component, INSTALLSTATE state);
+MSIAPI UINT WINAPI MsiInstallMissingComponentA(LPCSTR product, LPCSTR component, INSTALLSTATE state);
 MSIAPI int WINAPI MsiGetDatabaseState(MSIHANDLE database);
 MSIAPI MSICONDITION WINAPI MsiDatabaseIsTablePersistentW(MSIHANDLE database, LPCWSTR table);
 MSIAPI MSIHANDLE WINAPI MsiGetLastErrorRecord(void);
