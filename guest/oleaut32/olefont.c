@@ -189,6 +189,16 @@ static int find_charset(HDC dc, const FONT_SPEC *spec, BOOL charset_leads)
     memcpy(query.lfFaceName, spec->Face, sizeof(spec->Face));
     CHARSET_SEARCH search = {(int)spec->Charset, -1};
     EnumFontFamiliesExW(dc, &query, note_charset, (LPARAM)&search, 0);
+    if (search.Found < 0) {
+        /* A font of Microsoft that the machine lacks is asked for by making one, then looked for again. */
+        LOGFONTW ask = {};
+        memcpy(ask.lfFaceName, spec->Face, sizeof(spec->Face));
+        HFONT font = CreateFontIndirectW(&ask);
+        if (font) {
+            DeleteObject(font);
+            EnumFontFamiliesExW(dc, &query, note_charset, (LPARAM)&search, 0);
+        }
+    }
     return search.Found;
 }
 

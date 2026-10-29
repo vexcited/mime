@@ -710,6 +710,45 @@ WINGDIPAPI GpStatus WINAPI GdipPrivateAddMemoryFont(GpFontCollection *collection
 
 /* ------------------------------------------------------------------ families */
 
+static int CALLBACK note_face(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD type, LPARAM param)
+{
+    *(BOOL *)param = TRUE;
+    return 0;
+}
+
+/*
+ * A family of the Microsoft fonts that a program names and the machine lacks is asked for the way gdi32 asks when a
+ * program makes a font of it. The call returns when the answer is in. True when the family is there afterwards, and
+ * then the installed collection learns it.
+ */
+static BOOL request_family(const WCHAR *name)
+{
+    LOGFONTW lf;
+    memset(&lf, 0, sizeof(lf));
+    lstrcpynW(lf.lfFaceName, name, LF_FACESIZE);
+    HFONT font = CreateFontIndirectW(&lf);
+    if (font)
+        DeleteObject(font);
+    const WCHAR *other = substitute_for(name);
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc)
+        return FALSE;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    BOOL found = FALSE;
+    EnumFontFamiliesExW(dc, &lf, note_face, (LPARAM)&found, 0);
+    if (!found && other) {
+        lstrcpynW(lf.lfFaceName, other, LF_FACESIZE);
+        EnumFontFamiliesExW(dc, &lf, note_face, (LPARAM)&found, 0);
+    }
+    DeleteDC(dc);
+    if (found) {
+        text_lock();
+        installed_build();
+        text_unlock();
+    }
+    return found;
+}
+
 WINGDIPAPI GpStatus WINAPI GdipCreateFontFamilyFromName(const WCHAR *name, GpFontCollection *collection,
                                                         GpFontFamily **family)
 {
@@ -722,6 +761,8 @@ WINGDIPAPI GpStatus WINAPI GdipCreateFontFamilyFromName(const WCHAR *name, GpFon
     GFamily *found;
     if (c->installed) {
         found = gp_family_by_name(name);
+        if (!found && request_family(name))
+            found = gp_family_by_name(name);
     } else {
         text_lock();
         found = collection_find(c, name);
