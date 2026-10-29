@@ -6,3 +6,4 @@ EXPORTS
     DEVICEMODE=DeviceMode
     ADVANCEDSETUPDIALOG=AdvancedSetupDialog
     GetDefaultPrinterW @203
+    GetDefaultPrinterA @201

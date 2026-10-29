@@ -104,7 +104,7 @@ EXPORTS
     FreePrinterNotifyInfo=_FreePrinterNotifyInfo@4
     GetCorePrinterDriversA=_GetCorePrinterDriversA@20
     GetCorePrinterDriversW=_GetCorePrinterDriversW@20
-    GetDefaultPrinterA=_GetDefaultPrinterA@8
+    GetDefaultPrinterA=_GetDefaultPrinterA@8 @201
     GetDefaultPrinterW=_GetDefaultPrinterW@8 @203
     GetFormA=_GetFormA@24
     GetFormW=_GetFormW@24

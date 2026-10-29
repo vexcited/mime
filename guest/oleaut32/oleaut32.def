@@ -394,3 +394,4 @@ EXPORTS
     VarR4CmpR8 @316
     VarR8Round @317
     VarCyMulI8 @329
+    VarCmp @176

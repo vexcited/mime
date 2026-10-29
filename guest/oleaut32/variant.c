@@ -539,3 +539,197 @@ WINOLEAUTAPI HRESULT WINAPI VariantChangeType(VARIANTARG *dest, const VARIANTARG
 {
     return VariantChangeTypeEx(dest, src, LOCALE_USER_DEFAULT, flags, vt);
 }
+
+/* ------------------------------------------------------------------ comparison */
+
+typedef enum { CMP_INT, CMP_CY, CMP_REAL, CMP_DEC } CMP_KIND;
+
+typedef struct {
+    CMP_KIND Kind;
+    LONGLONG Int;
+    CY Cy;
+    double Real;
+    DECIMAL Dec;
+} CMP_NUM;
+
+static BOOL is_comparable_type(VARTYPE vt)
+{
+    return vt <= VT_UNKNOWN + 1 && vt != 15 ? TRUE : vt == VT_I1 || vt == VT_UI1 || vt == VT_I8;
+}
+
+static void load_number(const VARIANT *v, CMP_NUM *n)
+{
+    memset(n, 0, sizeof(*n));
+    switch (v->vt) {
+    case VT_EMPTY:
+        break;
+    case VT_I1:
+        n->Int = v->cVal;
+        break;
+    case VT_UI1:
+        n->Int = v->bVal;
+        break;
+    case VT_I2:
+        n->Int = v->iVal;
+        break;
+    case VT_BOOL:
+        n->Int = v->boolVal;
+        break;
+    case VT_I4:
+        n->Int = v->lVal;
+        break;
+    case VT_I8:
+        n->Int = v->llVal;
+        break;
+    case VT_CY:
+        n->Kind = CMP_CY;
+        n->Cy = v->cyVal;
+        break;
+    case VT_R4:
+        n->Kind = CMP_REAL;
+        n->Real = v->fltVal;
+        break;
+    case VT_R8:
+    case VT_DATE:
+        n->Kind = CMP_REAL;
+        n->Real = v->dblVal;
+        break;
+    case VT_DECIMAL:
+        n->Kind = CMP_DEC;
+        n->Dec = v->decVal;
+        break;
+    }
+}
+
+static HRESULT to_decimal(const CMP_NUM *n, DECIMAL *out)
+{
+    switch (n->Kind) {
+    case CMP_INT:
+        return VarDecFromI8(n->Int, out);
+    case CMP_CY:
+        return VarDecFromCy(n->Cy, out);
+    case CMP_REAL:
+        return VarDecFromR8(n->Real, out);
+    default:
+        *out = n->Dec;
+        return S_OK;
+    }
+}
+
+static double to_real(const CMP_NUM *n)
+{
+    switch (n->Kind) {
+    case CMP_INT:
+        return (double)n->Int;
+    case CMP_CY:
+        return (double)n->Cy.int64 / 10000.0;
+    default:
+        return n->Real;
+    }
+}
+
+static int order(LONGLONG a, LONGLONG b)
+{
+    return a < b ? VARCMP_LT : a == b ? VARCMP_EQ : VARCMP_GT;
+}
+
+/* numbers are compared in the widest of their kinds: exactly for integers and currency, as doubles when one is real. */
+static HRESULT compare_numbers(const CMP_NUM *a, const CMP_NUM *b)
+{
+    if (a->Kind == CMP_DEC || b->Kind == CMP_DEC) {
+        DECIMAL x, y;
+        HRESULT hr = to_decimal(a, &x);
+        if (SUCCEEDED(hr))
+            hr = to_decimal(b, &y);
+        return FAILED(hr) ? hr : VarDecCmp(&x, &y);
+    }
+    if (a->Kind == CMP_REAL || b->Kind == CMP_REAL) {
+        double x = to_real(a), y = to_real(b);
+        return x < y ? VARCMP_LT : x == y ? VARCMP_EQ : VARCMP_GT;
+    }
+    if (a->Kind == CMP_CY || b->Kind == CMP_CY) {
+        LONGLONG x, y;
+        if (a->Kind == CMP_CY)
+            x = a->Cy.int64;
+        else if (a->Int > INT64_MAX / 10000 || a->Int < INT64_MIN / 10000)
+            return DISP_E_OVERFLOW;
+        else
+            x = a->Int * 10000;
+        if (b->Kind == CMP_CY)
+            y = b->Cy.int64;
+        else if (b->Int > INT64_MAX / 10000 || b->Int < INT64_MIN / 10000)
+            return DISP_E_OVERFLOW;
+        else
+            y = b->Int * 10000;
+        return order(x, y);
+    }
+    return order(a->Int, b->Int);
+}
+
+/* an object stands for its default value. */
+static HRESULT unwrap_object(const VARIANT **side, VARIANT *storage, LCID lcid)
+{
+    if ((*side)->vt != VT_DISPATCH)
+        return S_OK;
+    HRESULT hr = (*side)->pdispVal ? AutExtractValueProperty((*side)->pdispVal, lcid, storage) : DISP_E_TYPEMISMATCH;
+    if (FAILED(hr))
+        return hr;
+    *side = storage;
+    return S_OK;
+}
+
+/*
+ * null on either side is null, an error or an unknown object is a mismatch, a string is greater than a number and
+ * the two strings are compared as strings. a type of an array, a reference or one the comparison does not know is
+ * refused, the right one first.
+ */
+WINOLEAUTAPI HRESULT WINAPI VarCmp(LPVARIANT left, LPVARIANT right, LCID lcid, ULONG flags)
+{
+    if (!left || !right)
+        return E_INVALIDARG;
+    VARIANT left_value, right_value;
+    VariantInit(&left_value);
+    VariantInit(&right_value);
+    const VARIANT *l = left, *r = right;
+    HRESULT hr = S_OK;
+    const VARIANT *both[2] = {right, left};
+    for (int i = 0; i < 2; i++) {
+        const VARIANT *side = both[i];
+        if (side->vt & VT_ARRAY || side->vt == VT_RECORD) {
+            hr = DISP_E_TYPEMISMATCH;
+            break;
+        }
+        if (!is_comparable_type(side->vt)) {
+            hr = DISP_E_BADVARTYPE;
+            break;
+        }
+    }
+    if (SUCCEEDED(hr))
+        hr = unwrap_object(&r, &right_value, lcid);
+    if (SUCCEEDED(hr))
+        hr = unwrap_object(&l, &left_value, lcid);
+    if (SUCCEEDED(hr)) {
+        if (l->vt == VT_ERROR || r->vt == VT_ERROR)
+            hr = DISP_E_TYPEMISMATCH;
+        else if (l->vt == VT_NULL || r->vt == VT_NULL)
+            hr = VARCMP_NULL;
+        else if (l->vt == VT_UNKNOWN || r->vt == VT_UNKNOWN || l->vt == VT_VARIANT || r->vt == VT_VARIANT ||
+                 l->vt == VT_DISPATCH || r->vt == VT_DISPATCH)
+            hr = DISP_E_TYPEMISMATCH;
+        else if (l->vt == VT_BSTR && r->vt == VT_BSTR)
+            hr = VarBstrCmp(l->bstrVal, r->bstrVal, lcid, flags);
+        else if (l->vt == VT_BSTR)
+            hr = r->vt == VT_EMPTY ? (SysStringLen(l->bstrVal) ? VARCMP_GT : VARCMP_EQ) : VARCMP_GT;
+        else if (r->vt == VT_BSTR)
+            hr = l->vt == VT_EMPTY ? (SysStringLen(r->bstrVal) ? VARCMP_LT : VARCMP_EQ) : VARCMP_LT;
+        else {
+            CMP_NUM a, b;
+            load_number(l, &a);
+            load_number(r, &b);
+            hr = compare_numbers(&a, &b);
+        }
+    }
+    VariantClear(&left_value);
+    VariantClear(&right_value);
+    return hr;
+}

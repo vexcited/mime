@@ -394,3 +394,4 @@ EXPORTS
     HWND_UserSize64=ole32.HWND_UserSize64 @451
     HWND_UserUnmarshal=ole32.HWND_UserUnmarshal @448
     HWND_UserUnmarshal64=ole32.HWND_UserUnmarshal64 @452
+    VarCmp=_VarCmp@16 @176

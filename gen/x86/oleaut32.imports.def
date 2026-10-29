@@ -161,6 +161,7 @@ EXPORTS
     VarBstrFromUI2@16 @230
     VarBstrFromUI4@16 @231
     VarBstrFromUI8@20 @369
+    VarCmp@16 @176
     VarCyAbs@12 @306
     VarCyAdd@20 @299
     VarCyCmp@16 @311
