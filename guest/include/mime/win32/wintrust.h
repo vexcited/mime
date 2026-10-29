@@ -129,6 +129,26 @@ typedef struct CATALOG_INFO_ {
     WCHAR wszCatalogFile[MAX_PATH];
 } CATALOG_INFO;
 
+typedef struct _CRYPT_TRUST_REG_ENTRY {
+    DWORD cbStruct;
+    WCHAR *pwszDLLName;
+    WCHAR *pwszFunctionName;
+} CRYPT_TRUST_REG_ENTRY;
+
+typedef struct _CRYPT_REGISTER_ACTIONID {
+    DWORD cbStruct;
+    CRYPT_TRUST_REG_ENTRY sInitProvider;
+    CRYPT_TRUST_REG_ENTRY sObjectProvider;
+    CRYPT_TRUST_REG_ENTRY sSignatureProvider;
+    CRYPT_TRUST_REG_ENTRY sCertificateProvider;
+    CRYPT_TRUST_REG_ENTRY sCertificatePolicyProvider;
+    CRYPT_TRUST_REG_ENTRY sFinalPolicyProvider;
+    CRYPT_TRUST_REG_ENTRY sTestPolicyProvider;
+    CRYPT_TRUST_REG_ENTRY sCleanupProvider;
+} CRYPT_REGISTER_ACTIONID;
+
+typedef struct _CRYPT_PROVIDER_FUNCTIONS CRYPT_PROVIDER_FUNCTIONS;
+
 #ifdef MIME_BUILD_WINTRUST
 #define WINTRUSTAPI DECLSPEC_EXPORT
 #else
@@ -136,4 +156,7 @@ typedef struct CATALOG_INFO_ {
 #endif
 WINTRUSTAPI LONG WINAPI WinVerifyTrust(HWND window, GUID *action, PVOID data);
 WINTRUSTAPI HRESULT WINAPI WinVerifyTrustEx(HWND window, GUID *action, WINTRUST_DATA *data);
+WINTRUSTAPI BOOL WINAPI WTHelperCertIsSelfSigned(DWORD encoding, CERT_INFO *cert);
+WINTRUSTAPI BOOL WINAPI WintrustAddActionID(GUID *action, DWORD flags, CRYPT_REGISTER_ACTIONID *info);
+WINTRUSTAPI BOOL WINAPI WintrustLoadFunctionPointers(GUID *action, CRYPT_PROVIDER_FUNCTIONS *functions);
 #endif

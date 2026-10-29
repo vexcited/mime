@@ -8,8 +8,11 @@ EXPORTS
     CryptCATAdminReleaseCatalogContext@12
     CryptCATAdminReleaseContext@8
     CryptCATCatalogInfoFromContext@12
+    WTHelperCertIsSelfSigned@8
     WTHelperGetProvCertFromChain@8
     WTHelperGetProvSignerFromChain@16
     WTHelperProvDataFromStateData@4
     WinVerifyTrust@12
     WinVerifyTrustEx@12
+    WintrustAddActionID@12
+    WintrustLoadFunctionPointers@8
