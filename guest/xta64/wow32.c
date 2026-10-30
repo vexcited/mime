@@ -608,7 +608,8 @@ static NTSTATUS access_check32(const ULONG *a)
  * file system redirection for 32-bit programs, like windows' wow64: a System32 path maps to SysWOW64, where the
  * 32-bit dlls and programs live. Mime differs in a few ways. config, drivers and the folders windows exempts keep
  * their path. a file only System32 has is still found there, since SysWOW64 holds only what Mime builds for 32 bits.
- * a path neither has goes to SysWOW64, so files created in System32 land next to the 32-bit dlls.
+ * a path neither has goes to SysWOW64, so files created in System32 land next to the 32-bit dlls. Sysnative names the
+ * real System32 while redirection is on.
  * Wow64DisableWow64FsRedirection turns it off through a word of the teb, see wow32.h.
  */
 static BOOL redirection_off32(void)
@@ -650,8 +651,20 @@ static void redirect_file32(OBJECT_ATTRIBUTES *oa, UNICODE_STRING *name, WCHAR *
     SIZE_T root_chars = wcslen(root), length = name->Length / sizeof(WCHAR);
     SIZE_T prefix = 4 + root_chars;
     if (length < prefix + 9 || !starts_with_nocase32(name->Buffer, length, L"\\??\\", 4) ||
-        !starts_with_nocase32(name->Buffer + 4, length - 4, root, root_chars) ||
-        !starts_with_nocase32(name->Buffer + prefix, length - prefix, system32, 9))
+        !starts_with_nocase32(name->Buffer + 4, length - 4, root, root_chars))
+        return;
+    /* Sysnative is the real System32, seen only by a 32-bit program whose redirection is on. */
+    static const WCHAR sysnative[] = L"\\Sysnative";
+    if (starts_with_nocase32(name->Buffer + prefix, length - prefix, sysnative, 10) &&
+        (prefix + 10 == length || name->Buffer[prefix + 10] == '\\') && length + 1 <= chars) {
+        memcpy(buffer, name->Buffer, prefix * sizeof(WCHAR));
+        memcpy(buffer + prefix, system32, 9 * sizeof(WCHAR));
+        memcpy(buffer + prefix + 9, name->Buffer + prefix + 10, (length - prefix - 10) * sizeof(WCHAR));
+        buffer[length - 1] = 0;
+        *name = (UNICODE_STRING){(USHORT)((length - 1) * sizeof(WCHAR)), (USHORT)(length * sizeof(WCHAR)), buffer};
+        return;
+    }
+    if (!starts_with_nocase32(name->Buffer + prefix, length - prefix, system32, 9))
         return;
     SIZE_T after = prefix + 9;
     if (after < length && name->Buffer[after] != '\\')
