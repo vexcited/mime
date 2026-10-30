@@ -36,4 +36,5 @@ EXPORTS
     NetValidatePasswordPolicy=_NetValidatePasswordPolicy@20
     NetValidatePasswordPolicyFree=_NetValidatePasswordPolicyFree@4
     NetWkstaGetInfo=_NetWkstaGetInfo@12
+    NetWkstaUserGetInfo=_NetWkstaUserGetInfo@12
     Netbios=_Netbios@4

@@ -1254,6 +1254,7 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
                        ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
 NTSTATUS NpfsCancel(PFILE_OBJECT file, PEPROCESS process, BOOLEAN one, PVOID apc_context);
 void IopInitializeAfd(void);
+void IopInitializeRedirector(void);
 void AfdInterrupt(void);
 BOOLEAN IopIsAfd(PFILE_OBJECT file);
 NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,

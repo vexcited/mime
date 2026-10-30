@@ -638,6 +638,7 @@ void IoInitialize(void)
     IopInitializeNamedPipes();
     IopInitializeConsole();
     IopInitializeAfd();
+    IopInitializeRedirector();
     IopInitializePads();
     IopInitializeCameras();
 

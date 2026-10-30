@@ -65,8 +65,9 @@ set(MIME_X86_DLLS
     imagehlp:0x02000000:base cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
     dnsapi:0x04000000:base msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports
     onecorecommonproxystub:0x02000000:proxy_imports onecoreuapcommonproxystub:0x01000000:proxy_imports
-    feclient:0x03000000:base zipfldr:0x15800000:explorerframe_imports avifil32:0x16800000:avifil32_imports glu32:0x16C00000:base dbghelp:0x32D00000:base odbccp32:0x55500000:base mscms:0x55400000:base mapi32:0x55300000:mapi32_imports hlink:0x55200000:hlink_imports authz:0x55100000:authz_imports wldap32:0x55000000:base ntdsapi:0x32C00000:base query:0x32B00000:all_five fontsub:0x32A00000:base tdh:0x32900000:base windows.networking:0x32800000:base dbgeng:0x32700000:base wmvcore:0x32600000:base atmlib:0x32500000:base avicap32:0x32400000:all_five rstrtmgr:0x32300000:base wlanapi:0x32200000:base snmpapi:0x32100000:base ktmw32:0x32000000:base msvfw32:0x1FC00000:msvfw32_imports normaliz:0x1F800000:base cryptsp:0x1F400000:base shfolder:0x1F000000:base)
+    feclient:0x03000000:base wkscli:0x55600000:wkscli_imports zipfldr:0x15800000:explorerframe_imports avifil32:0x16800000:avifil32_imports glu32:0x16C00000:base dbghelp:0x32D00000:base odbccp32:0x55500000:base mscms:0x55400000:base mapi32:0x55300000:mapi32_imports hlink:0x55200000:hlink_imports authz:0x55100000:authz_imports wldap32:0x55000000:base ntdsapi:0x32C00000:base query:0x32B00000:all_five fontsub:0x32A00000:base tdh:0x32900000:base windows.networking:0x32800000:base dbgeng:0x32700000:base wmvcore:0x32600000:base atmlib:0x32500000:base avicap32:0x32400000:all_five rstrtmgr:0x32300000:base wlanapi:0x32200000:base snmpapi:0x32100000:base ktmw32:0x32000000:base msvfw32:0x1FC00000:msvfw32_imports normaliz:0x1F800000:base cryptsp:0x1F400000:base shfolder:0x1F000000:base)
 set(base ntdll kernel32)
+set(wkscli_imports ntdll kernel32 advapi32 rpcrt4 msvcrt)
 set(msvfw32_imports ntdll kernel32 user32 gdi32 win32u winmm comdlg32)
 set(authz_imports ntdll kernel32 advapi32)
 set(mapi32_imports ntdll kernel32 ole32)

@@ -18,7 +18,6 @@ typedef const WCHAR *LMCSTR;
 #define NERR_Success 0
 #define NERR_ServerNotStarted 2114
 #define MAX_PREFERRED_LENGTH ((DWORD)-1)
-#define PLATFORM_ID_NT 500
 
 typedef enum _NETSETUP_JOIN_STATUS {
     NetSetupUnknownStatus,
@@ -26,19 +25,6 @@ typedef enum _NETSETUP_JOIN_STATUS {
     NetSetupWorkgroupName,
     NetSetupDomainName,
 } NETSETUP_JOIN_STATUS, *PNETSETUP_JOIN_STATUS;
-
-typedef struct _WKSTA_INFO_102 {
-    DWORD wki102_platform_id;
-    LMSTR wki102_computername;
-    LMSTR wki102_langroup;
-    DWORD wki102_ver_major;
-    DWORD wki102_ver_minor;
-    LMSTR wki102_lanroot;
-    DWORD wki102_logged_on_users;
-} WKSTA_INFO_102;
-
-/* the workgroup Windows setup joins; mime records it nowhere else. */
-static constexpr WCHAR g_workgroup[] = L"WORKGROUP";
 
 NETAPI NET_API_STATUS WINAPI NetApiBufferAllocate(DWORD size, LPVOID *buffer)
 {
@@ -91,59 +77,49 @@ static BOOL local_server(LMCSTR server)
            (GetComputerNameW(computer, &n) && !_wcsicmp(server, computer));
 }
 
-NETAPI NET_API_STATUS WINAPI NetGetJoinInformation(LPCWSTR server, LPWSTR *name, PNETSETUP_JOIN_STATUS type)
+/* the workstation calls live in wkscli.dll, which netapi32 loads at the first of them, as Windows does. */
+static HMODULE g_wkscli;
+
+static FARPROC wkscli_function(const char *name, DWORD *error)
 {
-    if (!name || !type)
-        return ERROR_INVALID_PARAMETER;
-    if (!local_server(server))
-        return ERROR_BAD_NETPATH;
-    NET_API_STATUS status = NetApiBufferAllocate(sizeof(g_workgroup), (LPVOID *)name);
-    if (status)
-        return status;
-    memcpy(*name, g_workgroup, sizeof(g_workgroup));
-    *type = NetSetupWorkgroupName;
-    return NERR_Success;
+    *error = NERR_Success;
+    HMODULE module = g_wkscli;
+    if (!module) {
+        module = LoadLibraryExW(L"wkscli.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!module) {
+            *error = GetLastError();
+            return nullptr;
+        }
+        if (InterlockedCompareExchangePointer((PVOID volatile *)&g_wkscli, module, nullptr))
+            FreeLibrary(module);
+        module = g_wkscli;
+    }
+    FARPROC function = GetProcAddress(module, name);
+    if (!function)
+        *error = GetLastError();
+    return function;
 }
 
-/* levels 100, 101 and 102 share their leading fields. */
+NETAPI NET_API_STATUS WINAPI NetGetJoinInformation(LPCWSTR server, LPWSTR *name, PNETSETUP_JOIN_STATUS type)
+{
+    DWORD error;
+    NET_API_STATUS(WINAPI * function)(LPCWSTR, LPWSTR *, PNETSETUP_JOIN_STATUS) =
+        (void *)wkscli_function("NetGetJoinInformation", &error);
+    return function ? function(server, name, type) : error;
+}
+
 NETAPI NET_API_STATUS WINAPI NetWkstaGetInfo(LMSTR server, DWORD level, LPBYTE *buffer)
 {
-    if (!buffer)
-        return ERROR_INVALID_PARAMETER;
-    if (level != 100 && level != 101 && level != 102)
-        return ERROR_INVALID_LEVEL;
-    if (!local_server(server))
-        return ERROR_BAD_NETPATH;
-    WCHAR computer[MAX_COMPUTERNAME_LENGTH + 1];
-    DWORD n = RTL_NUMBER_OF(computer);
-    if (!GetComputerNameW(computer, &n))
-        return GetLastError();
-    SIZE_T fixed = level == 100 ? offsetof(WKSTA_INFO_102, wki102_lanroot)
-                   : level == 101 ? offsetof(WKSTA_INFO_102, wki102_logged_on_users)
-                                  : sizeof(WKSTA_INFO_102);
-    fixed = (fixed + 7) & ~(SIZE_T)7;
-    SIZE_T size = fixed + (n + 1) * sizeof(WCHAR) + sizeof(g_workgroup) + sizeof(WCHAR);
-    WKSTA_INFO_102 *info;
-    NET_API_STATUS status = NetApiBufferAllocate((DWORD)size, (LPVOID *)&info);
-    if (status)
-        return status;
-    memset(info, 0, size);
-    PWSTR text = (PWSTR)((BYTE *)info + fixed);
-    info->wki102_platform_id = PLATFORM_ID_NT;
-    info->wki102_computername = text;
-    memcpy(text, computer, (n + 1) * sizeof(WCHAR));
-    text += n + 1;
-    info->wki102_langroup = text;
-    memcpy(text, g_workgroup, sizeof(g_workgroup));
-    text += RTL_NUMBER_OF(g_workgroup);
-    info->wki102_ver_major = 10;
-    info->wki102_ver_minor = 0;
-    if (level >= 101)
-        info->wki102_lanroot = text; /* empty */
-    if (level == 102)
-        info->wki102_logged_on_users = 1;
-    *buffer = (LPBYTE)info;
-    return NERR_Success;
+    DWORD error;
+    NET_API_STATUS(WINAPI * function)(LMSTR, DWORD, LPBYTE *) = (void *)wkscli_function("NetWkstaGetInfo", &error);
+    return function ? function(server, level, buffer) : error;
+}
+
+NETAPI NET_API_STATUS WINAPI NetWkstaUserGetInfo(LMSTR reserved, DWORD level, LPBYTE *buffer)
+{
+    DWORD error;
+    NET_API_STATUS(WINAPI * function)(LMSTR, DWORD, LPBYTE *) = (void *)wkscli_function("NetWkstaUserGetInfo", &error);
+    return function ? function(reserved, level, buffer) : error;
 }
 
 /* the server service is not running, and other machines cannot be reached. */

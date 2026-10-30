@@ -1,0 +1,4 @@
+LIBRARY nsisvc.dll
+EXPORTS
+    ServiceMain @1
+    SvchostPushServiceGlobals @2

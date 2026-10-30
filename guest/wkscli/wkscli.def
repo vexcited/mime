@@ -1,0 +1,5 @@
+LIBRARY wkscli.dll
+EXPORTS
+    NetGetJoinInformation
+    NetWkstaGetInfo
+    NetWkstaUserGetInfo

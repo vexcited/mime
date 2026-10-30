@@ -30,8 +30,27 @@
 ; which services each svchost group runs, read by svchost when it hosts a group.
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost]
 "DcomLaunch"=multi:"DcomLaunch"
+"LocalService"=multi:"NSI"
 "LocalServiceNoNetwork"=multi:"CoreMessagingRegistrar"
+"NetworkService"=multi:"LanmanWorkstation"
 "RPCSS"=multi:"RpcEptMapper","RpcSs"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalService]
+"AuthenticationCapabilities"=dword:00002000
+"CoInitializeSecurityAllowComCapability"=dword:00000001
+"CoInitializeSecurityAllowCrossContainer"=dword:00000001
+"CoInitializeSecurityAllowInteractiveUsers"=dword:00000001
+"CoInitializeSecurityAllowLowBox"=dword:00000001
+"CoInitializeSecurityParam"=dword:00000001
+"COM_RoSettings"=dword:00000318
+"COM_UnmarshalingPolicy"=dword:00000001
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\NetworkService]
+"AuthenticationCapabilities"=dword:00002000
+"CoInitializeSecurityAllowComCapability"=dword:00000001
+"CoInitializeSecurityParam"=dword:00000001
+"COM_UnmarshalingPolicy"=dword:00000001
+"DefaultRpcStackSize"=dword:0000001c
 
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalServiceNoNetwork]
 "CoInitializeSecurityParam"=dword:00000001
