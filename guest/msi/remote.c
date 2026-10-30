@@ -216,6 +216,8 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
     MESSAGE request = {}, reply = {};
     ULONG kind;
     UINT_PTR result = ERROR_FUNCTION_FAILED;
+    DWORD sizes[2] = {};
+    ULONG size_count = 0;
     put_u32(&request, id);
     ULONG a = 0;
     for (PCSTR p = entry->Signature; *p; p++) {
@@ -226,12 +228,15 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
         case 'B': case 'b': put_u32(&request, args[a++] != 0); break;
         case 'S': {
             DWORD *size = (DWORD *)args[a++];
+            if (size_count < RTL_NUMBER_OF(sizes))
+                sizes[size_count++] = size ? *size : 0;
             put_u32(&request, size != nullptr);
             put_u32(&request, size ? *size : 0);
             break;
         }
         }
     }
+    ULONG s_index = 0;
     AcquireSRWLockExclusive(&g_client_lock);
     BOOL ok = !request.Failed && send_message(g_client_pipe, MESSAGE_CALL, &request) &&
               receive_message(g_client_pipe, &kind, &reply) && kind == MESSAGE_REPLY;
@@ -241,6 +246,7 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
         result = get_u32(&reply);
         a = 0;
         PVOID buffer = nullptr;
+        BOOL buffer_bytes = FALSE;
         for (PCSTR p = entry->Signature; *p; p++) {
             switch (*p) {
             case 'i': case 'W': a++; break;
@@ -259,6 +265,7 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
                 break;
             }
             case 'B': case 'b':
+                buffer_bytes = *p == 'b';
                 buffer = (PVOID)args[a++];
                 break;
             case 'S': {
@@ -266,7 +273,13 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
                 ULONG value = get_u32(&reply);
                 ULONG bytes = get_u32(&reply);
                 const BYTE *data = get_bytes(&reply, bytes);
-                if (buffer && data)
+                /* no more than the caller's buffer holds: a size of 0 asks only for the length, with a buffer that may be
+                   a constant. */
+                ULONG capacity = size ? sizes[s_index] * (buffer_bytes ? 1 : sizeof(WCHAR)) : 0;
+                s_index++;
+                if (bytes > capacity)
+                    bytes = capacity;
+                if (buffer && data && bytes)
                     memcpy(buffer, data, bytes);
                 if (size)
                     *size = value;
