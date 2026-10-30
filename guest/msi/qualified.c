@@ -372,7 +372,7 @@ UINT MimeMsiPublishComponents(MIME_MSI_PACKAGE *package, HKEY root, BOOL publish
 {
     MIME_MSI_TABLE *table, *components;
     UINT error = MimeMsiLoadTable(package->Database, L"PublishComponent", &table);
-    if (error == ERROR_BAD_QUERY_SYNTAX || (!error && !table->Rows))
+    if (error == ERROR_BAD_QUERY_SYNTAX || (!error && !table->Rows) || !MimeMsiModeAllows(package, REINSTALLMODE_MACHINEDATA))
         return ERROR_SUCCESS;
     if (!error)
         error = MimeMsiLoadTable(package->Database, L"Component", &components);

@@ -198,6 +198,7 @@ MSIAPI INSTALLSTATE WINAPI MsiQueryProductStateW(LPCWSTR product);
 #define REINSTALLMODE_SHORTCUT 0x0200
 #define REINSTALLMODE_PACKAGE 0x0400
 MSIAPI UINT WINAPI MsiReinstallProductW(LPCWSTR product, DWORD mode);
+MSIAPI UINT WINAPI MsiReinstallFeatureW(LPCWSTR product, LPCWSTR feature, DWORD mode);
 MSIAPI UINT WINAPI MsiConfigureProductW(LPCWSTR product, int level, INSTALLSTATE state);
 MSIAPI UINT WINAPI MsiConfigureProductExW(LPCWSTR product, int level, INSTALLSTATE state, LPCWSTR command);
 MSIAPI INSTALLSTATE WINAPI MsiQueryFeatureStateW(LPCWSTR product, LPCWSTR feature);

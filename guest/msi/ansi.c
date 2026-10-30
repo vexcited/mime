@@ -353,6 +353,16 @@ UINT WINAPI MsiReinstallProductA(LPCSTR product, DWORD mode)
     return error;
 }
 
+UINT WINAPI MsiReinstallFeatureA(LPCSTR product, LPCSTR feature, DWORD mode)
+{
+    PWSTR wide_product = to_wide(product), wide_feature = to_wide(feature);
+    UINT error = (product && !wide_product) || (feature && !wide_feature) ? ERROR_NOT_ENOUGH_MEMORY :
+                 MsiReinstallFeatureW(wide_product, wide_feature, mode);
+    MimeMsiFree(wide_product);
+    MimeMsiFree(wide_feature);
+    return error;
+}
+
 /* ------------------------------------------------------------------ streams */
 
 UINT WINAPI MsiRecordReadStream(MSIHANDLE handle, UINT field, char *buffer, LPDWORD size)

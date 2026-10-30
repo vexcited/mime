@@ -121,6 +121,8 @@ EXPORTS
     MsiRecordSetStreamW@12 @123
     MsiRecordSetStringA@12 @124
     MsiRecordSetStringW@12 @125
+    MsiReinstallFeatureA@12 @126
+    MsiReinstallFeatureW@12 @129
     MsiReinstallProductA@8 @130
     MsiReinstallProductW@8 @131
     MsiRemovePatchesA@16 @237

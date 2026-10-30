@@ -46,6 +46,11 @@ static UINT restore_directories(MIME_MSI_PACKAGE *package, HKEY product, BOOL va
             error = ERROR_INSTALL_PACKAGE_INVALID;
         else
             error = MimeMsiRegistryText(key, name, &directory);
+        /* a package from a source may have folders the installed one did not. */
+        if (error == ERROR_FILE_NOT_FOUND && package->Recache) {
+            error = ERROR_SUCCESS;
+            continue;
+        }
         if (!error) {
             SIZE_T length = wcslen(directory);
             BOOL absolute = length > 2 && ((directory[1] == L':' && directory[2] == L'\\') ||
@@ -81,6 +86,35 @@ UINT MimeMsiLoadMaintenance(MIME_MSI_PACKAGE *package, HKEY key, PCWSTR product,
         wcscpy(package->MaintenanceProduct, product);
     }
     return error;
+}
+
+/* the letters of REINSTALLMODE in the order of the bits of MsiReinstallProduct. */
+static constexpr WCHAR MODE_LETTERS[] = L"rpoedcamusv";
+
+/* the mode of the install. a package without the property runs as omus, a property replaces the whole mode. */
+UINT MimeMsiReinstallMode(MIME_MSI_PACKAGE *package, DWORD *mode)
+{
+    PCWSTR letters = MimeMsiGetProperty(package, L"REINSTALLMODE");
+    *mode = REINSTALLMODE_FILEOLDERVERSION | REINSTALLMODE_MACHINEDATA | REINSTALLMODE_USERDATA | REINSTALLMODE_SHORTCUT;
+    if (!*letters)
+        return ERROR_SUCCESS;
+    *mode = 0;
+    for (; *letters; letters++) {
+        if (*letters == L' ')
+            continue;
+        WCHAR code = *letters >= L'A' && *letters <= L'Z' ? *letters + L'a' - L'A' : *letters;
+        PCWSTR found = wcschr(MODE_LETTERS, code);
+        if (!found)
+            return ERROR_INSTALL_FAILURE;
+        *mode |= 1u << (found - MODE_LETTERS);
+    }
+    return ERROR_SUCCESS;
+}
+
+BOOL MimeMsiModeAllows(MIME_MSI_PACKAGE *package, DWORD flag)
+{
+    DWORD mode;
+    return MimeMsiReinstallMode(package, &mode) || (mode & flag);
 }
 
 UINT MimeMsiValidateMaintenance(MIME_MSI_PACKAGE *package)

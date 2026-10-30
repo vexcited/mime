@@ -356,3 +356,87 @@ UINT MimeMsiRegisterSource(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_
     ReleaseSRWLockExclusive(&source_lock);
     return error;
 }
+
+/* the directories the product can be read from: the last used source, the network list, then where it was installed from. */
+static UINT source_directory(PCWSTR product, DWORD index, PWSTR out, DWORD size)
+{
+    WCHAR type[4];
+    DWORD length = RTL_NUMBER_OF(type);
+    UINT error = MsiGetProductInfoW(product, L"AssignmentType", type, &length);
+    if (error)
+        return error;
+    MSIINSTALLCONTEXT context = !wcscmp(type, L"1") ? MSIINSTALLCONTEXT_MACHINE : MSIINSTALLCONTEXT_USERUNMANAGED;
+    DWORD at = 0;
+    WCHAR candidate[MAX_PATH];
+    length = RTL_NUMBER_OF(candidate);
+    if (!MsiSourceListGetInfoW(product, nullptr, context, 0, L"LastUsedSource", candidate, &length) && *candidate) {
+        if (at++ == index)
+            return MimeMsiCopyString(candidate, out, &size);
+    }
+    for (DWORD i = 0;; i++) {
+        length = RTL_NUMBER_OF(candidate);
+        error = MsiSourceListEnumSourcesW(product, nullptr, context, MSISOURCETYPE_NETWORK, i, candidate, &length);
+        if (error)
+            break;
+        if (at++ == index)
+            return MimeMsiCopyString(candidate, out, &size);
+    }
+    if (error != ERROR_NO_MORE_ITEMS)
+        return error;
+    length = RTL_NUMBER_OF(candidate);
+    if (!MsiGetProductInfoW(product, L"InstallSource", candidate, &length) && *candidate && at == index)
+        return MimeMsiCopyString(candidate, out, &size);
+    return ERROR_NO_MORE_ITEMS;
+}
+
+/* the package file where a source of the product holds it. */
+UINT MimeMsiFindPackageSource(PCWSTR product, PWSTR path, DWORD size)
+{
+    WCHAR name[MAX_PATH];
+    DWORD length = RTL_NUMBER_OF(name);
+    WCHAR type[4];
+    DWORD type_length = RTL_NUMBER_OF(type);
+    UINT error = MsiGetProductInfoW(product, L"AssignmentType", type, &type_length);
+    if (error)
+        return error;
+    error = MsiSourceListGetInfoW(product, nullptr, !wcscmp(type, L"1") ? MSIINSTALLCONTEXT_MACHINE : MSIINSTALLCONTEXT_USERUNMANAGED,
+                                  0, L"PackageName", name, &length);
+    if (error || !*name)
+        return ERROR_INSTALL_SOURCE_ABSENT;
+    for (DWORD index = 0;; index++) {
+        WCHAR directory[MAX_PATH];
+        error = source_directory(product, index, directory, RTL_NUMBER_OF(directory));
+        if (error)
+            return error == ERROR_NO_MORE_ITEMS ? ERROR_INSTALL_SOURCE_ABSENT : error;
+        PWSTR full = MimeMsiJoinPath(directory, name);
+        if (!full)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        BOOL found = GetFileAttributesW(full) != INVALID_FILE_ATTRIBUTES && wcslen(full) < size;
+        if (found)
+            wcscpy(path, full);
+        MimeMsiFree(full);
+        if (found)
+            return ERROR_SUCCESS;
+    }
+}
+
+/* the file of the package under another source than the one in use, when the source in use lacks it. */
+BOOL MimeMsiFindSourceFile(MIME_MSI_PACKAGE *package, PCWSTR relative, PWSTR *full)
+{
+    PCWSTR product = MimeMsiGetProperty(package, L"ProductCode");
+    if (!package->Maintenance || !*product)
+        return FALSE;
+    for (DWORD index = 0;; index++) {
+        WCHAR directory[MAX_PATH];
+        if (source_directory(product, index, directory, RTL_NUMBER_OF(directory)))
+            return FALSE;
+        PWSTR candidate = MimeMsiJoinPath(directory, relative);
+        if (!candidate)
+            return FALSE;
+        if (GetFileAttributesW(candidate) != INVALID_FILE_ATTRIBUTES) {
+            *full = candidate;
+            return TRUE;
+        }
+        MimeMsiFree(candidate);
+    }
+}

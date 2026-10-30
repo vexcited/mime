@@ -187,7 +187,8 @@ UINT WINAPI MsiEnumFeaturesW(LPCWSTR product, DWORD index, LPWSTR feature, LPWST
     return error;
 }
 
-UINT WINAPI MsiOpenProductW(LPCWSTR product, MSIHANDLE *out)
+/* the product from its cached package, or from the package of a source, which is then cached again. */
+UINT MimeMsiOpenProductEx(PCWSTR product, PCWSTR package, MSIHANDLE *out)
 {
     if (!out)
         return ERROR_INVALID_PARAMETER;
@@ -199,11 +200,11 @@ UINT WINAPI MsiOpenProductW(LPCWSTR product, MSIHANDLE *out)
         return error;
     PWSTR path = nullptr, source = nullptr, transforms = nullptr;
     MSIHANDLE database = 0;
-    error = MimeMsiRegistryText(key, L"LocalPackage", &path);
-    if (!error && (!*path || wcslen(path) > 32760))
+    error = package ? ERROR_SUCCESS : MimeMsiRegistryText(key, L"LocalPackage", &path);
+    if (!error && !package && (!*path || wcslen(path) > 32760))
         error = ERROR_BAD_CONFIGURATION;
     if (!error)
-        error = MsiOpenDatabaseW(path, MSIDBOPEN_READONLY, &database);
+        error = MsiOpenDatabaseW(package ? package : path, MSIDBOPEN_READONLY, &database);
     if (!error)
         error = MimeMsiRestoreTransforms(database, key);
     if (!error)
@@ -213,10 +214,19 @@ UINT WINAPI MsiOpenProductW(LPCWSTR product, MSIHANDLE *out)
         _snwprintf(borrowed, RTL_NUMBER_OF(borrowed), L"#%u", database);
         error = MsiOpenPackageW(borrowed, out);
     }
-    if (!error)
+    if (!error && !package)
         error = MimeMsiRegistryText(key, L"InstallSource", &source);
-    if (!error)
-        error = MsiSetPropertyW(*out, L"SourceDir", source);
+    if (!error && !package) {
+        /* the source is where the package is found, which is not always where it was installed from. */
+        WCHAR found[MAX_PATH];
+        if (!MimeMsiFindPackageSource(product, found, RTL_NUMBER_OF(found))) {
+            PWSTR separator = wcsrchr(found, L'\\');
+            if (separator)
+                separator[1] = 0;
+            error = MsiSetPropertyW(*out, L"SourceDir", found);
+        } else
+            error = MsiSetPropertyW(*out, L"SourceDir", source);
+    }
     if (!error) {
         error = MimeMsiRegistryText(key, L"Transforms", &transforms);
         if (error == ERROR_FILE_NOT_FOUND)
@@ -226,8 +236,10 @@ UINT WINAPI MsiOpenProductW(LPCWSTR product, MSIHANDLE *out)
     }
     if (!error) {
         AcquireSRWLockExclusive(&MimeMsiLock);
-        MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(*out, MIME_MSI_KIND_PACKAGE);
-        error = package ? MimeMsiLoadMaintenance(package, key, product, machine) : ERROR_INVALID_HANDLE;
+        MIME_MSI_PACKAGE *session = (void *)MimeMsiGetHandle(*out, MIME_MSI_KIND_PACKAGE);
+        if (session)
+            session->Recache = package != nullptr;
+        error = session ? MimeMsiLoadMaintenance(session, key, product, machine) : ERROR_INVALID_HANDLE;
         ReleaseSRWLockExclusive(&MimeMsiLock);
     }
     if (error && *out) {
@@ -241,4 +253,9 @@ UINT WINAPI MsiOpenProductW(LPCWSTR product, MSIHANDLE *out)
     MimeMsiFree(transforms);
     RegCloseKey(key);
     return error;
+}
+
+UINT WINAPI MsiOpenProductW(LPCWSTR product, MSIHANDLE *out)
+{
+    return MimeMsiOpenProductEx(product, nullptr, out);
 }

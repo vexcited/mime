@@ -147,7 +147,7 @@ typedef struct MIME_MSI_PACKAGE {
     MIME_MSI_FEATURE *Features;
     ULONG FeatureCount, FeatureRevision;
     BOOL FeatureSelectionReady;
-    BOOL Maintenance, MaintenanceReady, ConfigureDefaults;
+    BOOL Maintenance, MaintenanceReady, ConfigureDefaults, Recache;
     HKEY MaintenanceRoot;
     WCHAR MaintenanceProduct[39];
     BOOL Is64Bit;
@@ -290,6 +290,22 @@ UINT MimeMsiRestorePatches(MSIHANDLE database, HKEY product);
 UINT MimeMsiSaveDirectories(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path);
 UINT MimeMsiLoadMaintenance(MIME_MSI_PACKAGE *package, HKEY key, PCWSTR product, BOOL machine);
 UINT MimeMsiValidateMaintenance(MIME_MSI_PACKAGE *package);
+typedef struct MIME_MSI_FILE_HASH {
+    DWORD Size, Words[4];
+} MIME_MSI_FILE_HASH;
+#define MIME_MSI_FILE_COMPANION 0x10000
+BOOL MimeMsiParseVersion(PCWSTR text, DWORD *high, DWORD *low);
+UINT MimeMsiFileOverwrite(PCWSTR path, PCWSTR version, PCWSTR language, const MIME_MSI_FILE_HASH *hash, DWORD flags,
+                          BOOL *overwrite);
+UINT MimeMsiCompanionOverwrite(PCWSTR parent_path, PCWSTR parent_version, PCWSTR parent_language, PCWSTR path,
+                               const MIME_MSI_FILE_HASH *hash, DWORD flags, BOOL *overwrite);
+UINT MimeMsiReinstallMode(MIME_MSI_PACKAGE *package, DWORD *mode);
+BOOL MimeMsiModeAllows(MIME_MSI_PACKAGE *package, DWORD flag);
+UINT MimeMsiComponentRequested(MIME_MSI_PACKAGE *package, PCWSTR name, BOOL *requested);
+UINT MimeMsiOpenProductEx(PCWSTR product, PCWSTR package, MSIHANDLE *out);
+UINT MimeMsiRecachePackage(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path);
+UINT MimeMsiFindPackageSource(PCWSTR product, PWSTR path, DWORD size);
+BOOL MimeMsiFindSourceFile(MIME_MSI_PACKAGE *package, PCWSTR relative, PWSTR *full);
 UINT MimeMsiLoadFeatures(MIME_MSI_PACKAGE *package);
 UINT MimeMsiRefreshFilePlan(MIME_MSI_PACKAGE *package);
 UINT MimeMsiFeatureState(MIME_MSI_PACKAGE *package, PCWSTR name, INSTALLSTATE *installed, INSTALLSTATE *action);

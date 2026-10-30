@@ -211,27 +211,71 @@ static UINT maintenance_command(MSIHANDLE handle, PCWSTR command)
     return error;
 }
 
+/* whether the mode of the session recaches the package, which asks for it from the source. */
+static BOOL recaches(MSIHANDLE handle)
+{
+    AcquireSRWLockShared(&MimeMsiLock);
+    MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
+    DWORD mode = 0;
+    BOOL recache = package && !MimeMsiReinstallMode(package, &mode) && (mode & REINSTALLMODE_PACKAGE);
+    ReleaseSRWLockShared(&MimeMsiLock);
+    return recache;
+}
+
+/* the installed product as a session of maintenance, from the package at the source when the mode asks for it. */
+static UINT open_installed(PCWSTR product, PCWSTR package, PCWSTR command, MSIHANDLE *out)
+{
+    MSIHANDLE cached = 0;
+    UINT error = MsiOpenProductW(product, &cached);
+    if (!error)
+        error = maintenance_command(cached, command);
+    if (!error && recaches(cached)) {
+        WCHAR found[MAX_PATH];
+        if (!package) {
+            error = MimeMsiFindPackageSource(product, found, RTL_NUMBER_OF(found));
+            package = found;
+        }
+        MSIHANDLE source = 0;
+        if (!error)
+            error = MimeMsiOpenProductEx(product, package, &source);
+        if (!error)
+            error = maintenance_command(source, command);
+        if (error && source)
+            MsiCloseHandle(source);
+        else if (!error) {
+            MsiCloseHandle(cached);
+            cached = source;
+        }
+    }
+    if (error && cached)
+        MsiCloseHandle(cached);
+    *out = error ? 0 : cached;
+    return error;
+}
+
 static UINT reopen_installed(MSIHANDLE *handle, PCWSTR command)
 {
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(*handle, MIME_MSI_KIND_PACKAGE);
     PWSTR product = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"ProductCode")) : nullptr;
+    PWSTR original = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"OriginalDatabase")) : nullptr;
     ReleaseSRWLockShared(&MimeMsiLock);
-    if (!product)
+    if (!product || !original) {
+        MimeMsiFree(product);
+        MimeMsiFree(original);
         return package ? ERROR_NOT_ENOUGH_MEMORY : ERROR_INVALID_HANDLE;
+    }
     UINT error = ERROR_SUCCESS;
     if (MsiQueryProductStateW(product) == INSTALLSTATE_DEFAULT) {
         MSIHANDLE reopened = 0;
-        error = MsiOpenProductW(product, &reopened);
-        if (!error)
-            error = maintenance_command(reopened, command);
+        error = open_installed(product, original, command, &reopened);
         if (!error) {
             MsiCloseHandle(*handle);
             *handle = reopened;
-        } else if (reopened)
-            MsiCloseHandle(reopened);
+        }
     }
     MimeMsiFree(product);
+    MimeMsiFree(original);
     return error;
 }
 
@@ -262,37 +306,47 @@ UINT WINAPI MsiInstallProductW(LPCWSTR path, LPCWSTR command)
     return error;
 }
 
-UINT WINAPI MsiReinstallProductW(LPCWSTR product, DWORD mode)
+/* REINSTALL and REINSTALLMODE for the bits of a mode, which are the letters in the order of the bits. */
+static void reinstall_command(PCWSTR features, DWORD mode, PWSTR command, SIZE_T capacity)
+{
+    static constexpr WCHAR letters[] = L"rpoedcamusv";
+    WCHAR chosen[16] = {};
+    ULONG length = 0;
+    for (ULONG bit = 0; bit < 11; bit++)
+        if (mode & (1u << bit))
+            chosen[length++] = letters[bit];
+    _snwprintf(command, capacity, L"REINSTALL=%s REINSTALLMODE=%s", features, chosen);
+}
+
+static UINT reinstall(PCWSTR product, PCWSTR features, DWORD mode)
 {
     WCHAR packed[33];
-    if (!MimeMsiPackGuid(product, packed) || (mode & ~0x7ff))
+    if (!product || !MimeMsiPackGuid(product, packed) || !features || !mode || (mode & ~0x7ff))
         return ERROR_INVALID_PARAMETER;
-    if (mode & (REINSTALLMODE_FILEOLDERVERSION | REINSTALLMODE_FILEEQUALVERSION | REINSTALLMODE_FILEEXACT |
-                REINSTALLMODE_FILEVERIFY | REINSTALLMODE_PACKAGE))
-        return ERROR_CALL_NOT_IMPLEMENTED;
+    WCHAR command[512];
+    if (wcslen(features) > 400)
+        return ERROR_INVALID_PARAMETER;
+    reinstall_command(features, mode, command, RTL_NUMBER_OF(command));
     if (!begin_install())
         return ERROR_INSTALL_ALREADY_RUNNING;
     MSIHANDLE handle = 0;
-    UINT error = MsiOpenProductW(product, &handle);
-    WCHAR options[8] = {};
-    ULONG length = 0;
-    if (mode & REINSTALLMODE_FILEMISSING) options[length++] = L'p';
-    if (mode & REINSTALLMODE_FILEREPLACE) options[length++] = L'a';
-    if (mode & REINSTALLMODE_USERDATA) options[length++] = L'u';
-    if (mode & REINSTALLMODE_MACHINEDATA) options[length++] = L'm';
-    if (mode & REINSTALLMODE_SHORTCUT) options[length++] = L's';
-    if (!error && !length)
-        error = ERROR_CALL_NOT_IMPLEMENTED;
-    if (!error)
-        error = MsiSetPropertyW(handle, L"REINSTALL", L"ALL");
-    if (!error)
-        error = MsiSetPropertyW(handle, L"REINSTALLMODE", options);
+    UINT error = open_installed(product, nullptr, command, &handle);
     if (!error)
         error = execute_package(handle);
     if (handle)
         MsiCloseHandle(handle);
     end_install();
     return error;
+}
+
+UINT WINAPI MsiReinstallProductW(LPCWSTR product, DWORD mode)
+{
+    return reinstall(product, L"ALL", mode);
+}
+
+UINT WINAPI MsiReinstallFeatureW(LPCWSTR product, LPCWSTR feature, DWORD mode)
+{
+    return feature && *feature && wcslen(feature) <= 38 ? reinstall(product, feature, mode) : ERROR_INVALID_PARAMETER;
 }
 
 UINT WINAPI MsiConfigureProductExW(LPCWSTR product, int level, INSTALLSTATE state, LPCWSTR command)
@@ -306,9 +360,7 @@ UINT WINAPI MsiConfigureProductExW(LPCWSTR product, int level, INSTALLSTATE stat
     if (!begin_install())
         return ERROR_INSTALL_ALREADY_RUNNING;
     MSIHANDLE handle = 0;
-    UINT error = MsiOpenProductW(product, &handle);
-    if (!error)
-        error = maintenance_command(handle, command);
+    UINT error = open_installed(product, nullptr, command, &handle);
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     if (!error && !package)

@@ -62,6 +62,7 @@ EXPORTS
     MsiSourceListGetInfoW @266
     MsiSourceListSetInfoW @268
     MsiReinstallProductW @131
+    MsiReinstallFeatureW @129
     MsiConfigureProductExW @190
     MsiApplyPatchW @175
     MsiViewGetColumnInfo @166
@@ -90,6 +91,7 @@ EXPORTS
     MsiConfigureProductW @16
     MsiConfigureProductA @15
     MsiReinstallProductA @130
+    MsiReinstallFeatureA @126
     MsiRecordReadStream @120
     MsiRecordSetStreamW @123
     MsiRecordSetStreamA @122

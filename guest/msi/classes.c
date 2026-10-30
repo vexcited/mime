@@ -783,6 +783,9 @@ UINT MimeMsiClassesAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     for (ULONG i = 0; i < RTL_NUMBER_OF(actions); i++) {
         if (wcscmp(action, actions[i].Name))
             continue;
+        /* classes are machine data, which only the letter m keeps. */
+        if (!MimeMsiModeAllows(package, REINSTALLMODE_MACHINEDATA))
+            return ERROR_SUCCESS;
         return actions[i].Run(package, actions[i].Remove);
     }
     return UINT32_MAX;

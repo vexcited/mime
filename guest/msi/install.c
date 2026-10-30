@@ -7,9 +7,14 @@ typedef struct MIME_MSI_FILE_PLAN {
     PWSTR Source, Target;
     DWORD Size, Attributes;
     const BYTE *Data;
-    BOOL MissingOnly;
-    PCWSTR Key, Version, Cabinet;
+    PCWSTR Key, Version, Language, Cabinet;
     DWORD Mode;
+    /* a file of the File table is judged by the versioning rules, other data is written whatever is there. */
+    BOOL Judged, Decided, Keep, HasHash;
+    MIME_MSI_FILE_HASH Hash;
+    /* a companion file follows the file its Version column names. */
+    PWSTR ParentTarget;
+    PCWSTR ParentVersion, ParentLanguage;
     BOOL Done;
 } MIME_MSI_FILE_PLAN;
 
@@ -50,6 +55,7 @@ static void free_plan(MIME_MSI_PACKAGE *package)
         package->Files = file->Next;
         MimeMsiFree(file->Source);
         MimeMsiFree(file->Target);
+        MimeMsiFree(file->ParentTarget);
         MimeMsiFree(file);
     }
     package->FilesQueued = FALSE;
@@ -727,58 +733,6 @@ UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *di
     return ERROR_SUCCESS;
 }
 
-static UINT reinstall_mode(MIME_MSI_PACKAGE *package, DWORD *out)
-{
-    *out = 0;
-    PCWSTR mode = MimeMsiGetProperty(package, L"REINSTALLMODE");
-    if (!*mode && *MimeMsiGetProperty(package, L"REINSTALL"))
-        mode = L"omus";
-    for (; *mode; mode++) {
-        WCHAR code = *mode >= L'A' && *mode <= L'Z' ? *mode + L'a' - L'A' : *mode;
-        if (code == L'p')
-            *out |= REINSTALLMODE_FILEMISSING;
-        else if (code == L'a')
-            *out |= REINSTALLMODE_FILEREPLACE;
-        else if (code == L'u')
-            *out |= REINSTALLMODE_USERDATA;
-        else if (code == L'm')
-            *out |= REINSTALLMODE_MACHINEDATA;
-        else if (code == L's')
-            *out |= REINSTALLMODE_SHORTCUT;
-        else if (code == L'o')
-            *out |= REINSTALLMODE_FILEOLDERVERSION;
-        else if (code == L'e')
-            *out |= REINSTALLMODE_FILEEQUALVERSION;
-        else if (code == L'd')
-            *out |= REINSTALLMODE_FILEEXACT;
-        else if (code == L'c')
-            *out |= REINSTALLMODE_FILEVERIFY;
-        else if (code == L'v')
-            *out |= REINSTALLMODE_PACKAGE;
-        else
-            return ERROR_INVALID_PARAMETER;
-    }
-    static const struct { PCWSTR Name; DWORD Modes; } tables[] = {
-        {L"Registry", REINSTALLMODE_USERDATA | REINSTALLMODE_MACHINEDATA},
-        {L"PublishComponent", REINSTALLMODE_MACHINEDATA},
-        {L"MIME", REINSTALLMODE_MACHINEDATA}, {L"Icon", REINSTALLMODE_MACHINEDATA | REINSTALLMODE_SHORTCUT},
-        {L"TypeLib", REINSTALLMODE_MACHINEDATA}, {L"ODBCDriver", REINSTALLMODE_MACHINEDATA},
-        {L"ODBCDataSource", REINSTALLMODE_MACHINEDATA}, {L"ODBCTranslator", REINSTALLMODE_MACHINEDATA},
-        {L"Shortcut", REINSTALLMODE_SHORTCUT}
-    };
-    for (ULONG i = 0; i < RTL_NUMBER_OF(tables); i++) {
-        if (!(*out & tables[i].Modes))
-            continue;
-        MIME_MSI_TABLE *table;
-        UINT error = MimeMsiLoadTable(package->Database, tables[i].Name, &table);
-        if (!error && table->Rows)
-            return ERROR_CALL_NOT_IMPLEMENTED;
-        if (error && error != ERROR_BAD_QUERY_SYNTAX)
-            return error;
-    }
-    return ERROR_SUCCESS;
-}
-
 static UINT maintenance_selection(MIME_MSI_PACKAGE *package)
 {
     UINT error = MimeMsiValidateMaintenance(package);
@@ -811,7 +765,8 @@ static UINT maintenance_selection(MIME_MSI_PACKAGE *package)
     return error;
 }
 
-static UINT component_requested(MIME_MSI_PACKAGE *package, PCWSTR name, DWORD mode, BOOL *requested)
+/* whether the component is installed by this run, because its feature is new or is to be reinstalled. */
+UINT MimeMsiComponentRequested(MIME_MSI_PACKAGE *package, PCWSTR name, BOOL *requested)
 {
     *requested = !package->Maintenance;
     if (*requested)
@@ -842,8 +797,7 @@ static UINT component_requested(MIME_MSI_PACKAGE *package, PCWSTR name, DWORD mo
             if (wcscmp(linked, package->Features[i].Name))
                 continue;
             if (package->Features[i].Installed != INSTALLSTATE_LOCAL ||
-                ((mode & (REINSTALLMODE_FILEMISSING | REINSTALLMODE_FILEREPLACE)) &&
-                 list_contains(MimeMsiGetProperty(package, L"REINSTALL"), linked)))
+                list_contains(MimeMsiGetProperty(package, L"REINSTALL"), linked))
                 *requested = TRUE;
         }
     }
@@ -869,6 +823,53 @@ static PCWSTR media_cabinet(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *media, in
     return cabinet && *cabinet ? cabinet : nullptr;
 }
 
+/* the hash the package gives for a file, which only counts when its options are zero. */
+static UINT file_hash(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *hashes, MIME_MSI_FILE_PLAN *file)
+{
+    if (!hashes || !file->Key)
+        return ERROR_SUCCESS;
+    ULONG key = MimeMsiColumn(hashes, L"File_", TRUE), options = MimeMsiColumn(hashes, L"Options", FALSE);
+    ULONG parts[4] = {MimeMsiColumn(hashes, L"HashPart1", FALSE), MimeMsiColumn(hashes, L"HashPart2", FALSE),
+                      MimeMsiColumn(hashes, L"HashPart3", FALSE), MimeMsiColumn(hashes, L"HashPart4", FALSE)};
+    if (key == UINT32_MAX || options == UINT32_MAX || parts[0] == UINT32_MAX || parts[1] == UINT32_MAX ||
+        parts[2] == UINT32_MAX || parts[3] == UINT32_MAX)
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    for (ULONG row = 0; row < hashes->Rows; row++) {
+        PCWSTR name = MimeMsiText(package->Database, hashes, row, key);
+        int flags = MimeMsiInteger(hashes, row, options);
+        if (!name || wcscmp(name, file->Key) || flags == MSI_NULL_INTEGER || (flags & 0xF))
+            continue;
+        file->HasHash = TRUE;
+        file->Hash.Size = file->Size;
+        for (ULONG i = 0; i < 4; i++)
+            file->Hash.Words[i] = (DWORD)MimeMsiInteger(hashes, row, parts[i]);
+        break;
+    }
+    return ERROR_SUCCESS;
+}
+
+/* a version that is no number names the file whose version the file follows. */
+static UINT file_companion(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULONG key_column, ULONG version_column,
+                           ULONG language_column, MIME_MSI_FILE_PLAN *file)
+{
+    DWORD high, low;
+    if (!file->Version || MimeMsiParseVersion(file->Version, &high, &low))
+        return ERROR_SUCCESS;
+    for (ULONG row = 0; row < table->Rows; row++) {
+        PCWSTR name = MimeMsiText(package->Database, table, row, key_column);
+        if (!name || wcscmp(name, file->Version))
+            continue;
+        UINT error = MimeMsiFileTargetPath(package, name, &file->ParentTarget);
+        if (error)
+            return error;
+        PCWSTR version = MimeMsiText(package->Database, table, row, version_column);
+        file->ParentVersion = version ? version : L"";
+        file->ParentLanguage = language_column == UINT32_MAX ? nullptr : MimeMsiText(package->Database, table, row, language_column);
+        return ERROR_SUCCESS;
+    }
+    return ERROR_INSTALL_PACKAGE_INVALID;
+}
+
 static UINT plan_files(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_TABLE *table;
@@ -879,12 +880,19 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
     error = maintenance_selection(package);
     DWORD mode;
     if (!error)
-        error = reinstall_mode(package, &mode);
+        error = MimeMsiReinstallMode(package, &mode);
     if (error)
         return error;
     error = MimeMsiLoadTable(package->Database, L"File", &table);
     if (error)
         return error;
+    MIME_MSI_TABLE *hashes = nullptr;
+    error = MimeMsiLoadTable(package->Database, L"MsiFileHash", &hashes);
+    if (error == ERROR_BAD_QUERY_SYNTAX)
+        hashes = nullptr;
+    else if (error)
+        return error;
+    ULONG language = MimeMsiColumn(table, L"Language", TRUE);
     ULONG component = MimeMsiColumn(table, L"Component_", TRUE);
     ULONG name = MimeMsiColumn(table, L"FileName", TRUE);
     ULONG size = MimeMsiColumn(table, L"FileSize", FALSE);
@@ -915,7 +923,7 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
             return error;
         if (!selected)
             continue;
-        error = component_requested(package, component_name, mode, &selected);
+        error = MimeMsiComponentRequested(package, component_name, &selected);
         if (error)
             return error;
         if (!selected)
@@ -946,10 +954,18 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
             file->Target = MimeMsiJoinPath(target, filename);
             file->Size = (DWORD)file_size;
             file->Attributes = (DWORD)flags;
-            file->MissingOnly = (mode & REINSTALLMODE_FILEMISSING) && !(mode & REINSTALLMODE_FILEREPLACE);
-            file->Mode = mode;
+            file->Judged = TRUE;
+            file->Mode = mode & (REINSTALLMODE_FILEMISSING | REINSTALLMODE_FILEOLDERVERSION |
+                                 REINSTALLMODE_FILEEQUALVERSION | REINSTALLMODE_FILEEXACT | REINSTALLMODE_FILEREPLACE);
+            /* only a file that is marked for it has its checksum verified. */
+            if (flags & 0x400)
+                file->Mode |= mode & REINSTALLMODE_FILEVERIFY;
             file->Key = MimeMsiText(package->Database, table, row, key_column);
             file->Version = file_version && *file_version ? file_version : nullptr;
+            file->Language = language == UINT32_MAX ? nullptr : MimeMsiText(package->Database, table, row, language);
+            error = file_hash(package, hashes, file);
+            if (!error)
+                error = file_companion(package, table, key_column, version, language, file);
             /* compressed files come from their cabinet, the rest from the source tree. */
             if (media && !(flags & 0x2000) && sequence_column != UINT32_MAX)
                 file->Cabinet = media_cabinet(package, media, MimeMsiInteger(table, row, sequence_column));
@@ -958,20 +974,10 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
             else if (!_wcsicmp(file->Source, file->Target))
                 error = ERROR_INSTALL_PACKAGE_INVALID;
         }
-        BOOL skip = FALSE;
-        if (!error && (mode & REINSTALLMODE_FILEMISSING) && !(mode & REINSTALLMODE_FILEREPLACE)) {
-            DWORD present = GetFileAttributesW(file->Target);
-            if (present != INVALID_FILE_ATTRIBUTES) {
-                if (present & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
-                    error = ERROR_ACCESS_DENIED;
-                else
-                    skip = TRUE;
-            } else if (!absent(GetLastError()))
-                error = GetLastError();
-        }
-        if (file && (error || skip)) {
+        if (file && error) {
             MimeMsiFree(file->Source);
             MimeMsiFree(file->Target);
+            MimeMsiFree(file->ParentTarget);
             MimeMsiFree(file);
         } else if (file) {
             *tail = file;
@@ -1062,63 +1068,30 @@ typedef struct INSTALL_TARGET {
     BOOL Skip;
 } INSTALL_TARGET;
 
-/* packs a file's four version words into one number, FALSE when it has none. */
-static BOOL file_version_of(PCWSTR path, ULONGLONG *version)
+/* whether the versioning rules keep the file that is there. */
+static UINT keeps_existing(MIME_MSI_FILE_PLAN *file, BOOL *keep)
 {
-    DWORD handle;
-    DWORD size = GetFileVersionInfoSizeW(path, &handle);
-    if (!size)
-        return FALSE;
-    void *data = MimeMsiAllocate(size);
-    BOOL found = FALSE;
-    if (data && GetFileVersionInfoW(path, 0, size, data)) {
-        VS_FIXEDFILEINFO *info;
-        UINT length;
-        if (VerQueryValueW(data, L"\\", (void **)&info, &length) && length >= sizeof(*info) && info->dwSignature == 0xFEEF04BD) {
-            *version = ((ULONGLONG)info->dwFileVersionMS << 32) | info->dwFileVersionLS;
-            found = TRUE;
-        }
+    *keep = FALSE;
+    if (!file->Judged)
+        return ERROR_SUCCESS;
+    if (file->Decided) {
+        *keep = file->Keep;
+        return ERROR_SUCCESS;
     }
-    MimeMsiFree(data);
-    return found;
-}
-
-/* parses a version string such as 24.21.0.0 into the same packed number. */
-static ULONGLONG parse_version(PCWSTR text)
-{
-    ULONGLONG parts[4] = {};
-    for (ULONG i = 0; i < 4 && *text; i++) {
-        ULONG number = 0;
-        while (*text >= L'0' && *text <= L'9')
-            number = number * 10 + (ULONG)(*text++ - L'0');
-        parts[i] = number > 0xFFFF ? 0xFFFF : number;
-        if (*text == L'.')
-            text++;
-        else
-            break;
+    BOOL overwrite;
+    UINT error;
+    if (file->ParentTarget)
+        error = MimeMsiCompanionOverwrite(file->ParentTarget, file->ParentVersion, file->ParentLanguage, file->Target,
+                                          file->HasHash ? &file->Hash : nullptr, file->Mode, &overwrite);
+    else
+        error = MimeMsiFileOverwrite(file->Target, file->Version ? file->Version : L"", file->Language,
+                                     file->HasHash ? &file->Hash : nullptr, file->Mode, &overwrite);
+    *keep = !error && !overwrite;
+    if (!error) {
+        file->Decided = TRUE;
+        file->Keep = *keep;
     }
-    return (parts[0] << 48) | (parts[1] << 32) | (parts[2] << 16) | parts[3];
-}
-
-/* whether the file versioning rules keep the existing file. */
-static BOOL keeps_existing(const MIME_MSI_FILE_PLAN *file)
-{
-    DWORD mode = file->Mode;
-    if (mode & REINSTALLMODE_FILEREPLACE)
-        return FALSE;
-    if (file->MissingOnly)
-        return TRUE;
-    if (!file->Version)
-        return FALSE;
-    ULONGLONG installed;
-    if (!file_version_of(file->Target, &installed))
-        return FALSE;
-    ULONGLONG wanted = parse_version(file->Version);
-    if (mode & REINSTALLMODE_FILEEXACT)
-        return installed == wanted;
-    if (mode & REINSTALLMODE_FILEEQUALVERSION)
-        return installed > wanted;
-    return installed >= wanted;
+    return error;
 }
 
 static UINT target_open(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *file, INSTALL_TARGET *target)
@@ -1126,6 +1099,12 @@ static UINT target_open(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *file, INS
     memset(target, 0, sizeof(*target));
     target->File = file;
     target->Output = INVALID_HANDLE_VALUE;
+    BOOL keep;
+    UINT error = keeps_existing(file, &keep);
+    if (error || keep) {
+        target->Skip = keep;
+        return error;
+    }
     PWSTR parent = MimeMsiDuplicate(file->Target);
     if (!parent)
         return ERROR_NOT_ENOUGH_MEMORY;
@@ -1135,7 +1114,7 @@ static UINT target_open(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *file, INS
         return ERROR_BAD_PATHNAME;
     }
     *separator = 0;
-    UINT error = make_directory(package, parent, 0);
+    error = make_directory(package, parent, 0);
     MimeMsiFree(parent);
     if (error)
         return error;
@@ -1143,10 +1122,6 @@ static UINT target_open(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *file, INS
     if (attributes != INVALID_FILE_ATTRIBUTES) {
         if (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
             return ERROR_ACCESS_DENIED;
-        if (keeps_existing(file)) {
-            target->Skip = TRUE;
-            return ERROR_SUCCESS;
-        }
         if (attributes & FILE_ATTRIBUTE_READONLY) {
             /* read only files get replaced too, and stay read only if the package asks. */
             if (!SetFileAttributesW(file->Target, attributes & ~FILE_ATTRIBUTE_READONLY))
@@ -1190,13 +1165,6 @@ static UINT target_open(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *file, INS
                                 attributes == INVALID_FILE_ATTRIBUTES ? CREATE_NEW : OPEN_EXISTING, 0, nullptr);
     if (output == INVALID_HANDLE_VALUE) {
         error = GetLastError();
-        if (file->MissingOnly && (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS)) {
-            DWORD present = GetFileAttributesW(file->Target);
-            if (present != INVALID_FILE_ATTRIBUTES && !(present & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
-                target->Skip = TRUE;
-                error = ERROR_SUCCESS;
-            }
-        }
         if (change->Backup)
             DeleteFileW(change->Backup);
         MimeMsiFree(change->Backup);
@@ -1254,18 +1222,25 @@ static UINT target_close(INSTALL_TARGET *target, const FILETIME *time, UINT erro
 
 static UINT copy_planned_file(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *file)
 {
-    if (file->MissingOnly) {
-        DWORD attributes = GetFileAttributesW(file->Target);
-        if (attributes != INVALID_FILE_ATTRIBUTES)
-            return attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) ? ERROR_ACCESS_DENIED : ERROR_SUCCESS;
-        if (!absent(GetLastError()))
-            return GetLastError();
-    }
+    BOOL keep;
+    UINT error = keeps_existing(file, &keep);
+    if (error || keep)
+        return error;
     HANDLE source = INVALID_HANDLE_VALUE;
-    UINT error = ERROR_SUCCESS;
     FILETIME created = {}, accessed = {}, modified = {};
     if (!file->Data) {
         source = CreateFileW(file->Source, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (source == INVALID_HANDLE_VALUE && absent(GetLastError())) {
+            /* another source of the product may have the file. */
+            PCWSTR root = MimeMsiGetProperty(package, L"SourceDir");
+            SIZE_T length = wcslen(root);
+            PWSTR other = nullptr;
+            if (length && !_wcsnicmp(file->Source, root, length) && MimeMsiFindSourceFile(package, file->Source + length, &other)) {
+                source = CreateFileW(other, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+                MimeMsiFree(other);
+            }
+            SetLastError(source == INVALID_HANDLE_VALUE ? ERROR_FILE_NOT_FOUND : ERROR_SUCCESS);
+        }
         if (source == INVALID_HANDLE_VALUE)
             return GetLastError();
         LARGE_INTEGER size;
@@ -1316,6 +1291,8 @@ typedef struct EXTRACT_CONTEXT {
 typedef struct EXTRACT_FILE {
     INSTALL_TARGET Target;
     BOOL Failed;
+    /* a companion file is looked at when its data comes, after the file it follows is done. */
+    BOOL Pending;
 } EXTRACT_FILE;
 
 static EXTRACT_FILE g_extract_failed = {.Failed = TRUE};
@@ -1342,6 +1319,12 @@ static void *extract_begin(void *context, const MIME_CAB_FILE *file)
             MimeMsiFree(entry);
             return &g_extract_failed;
         }
+        if (plan->ParentTarget) {
+            entry->Pending = TRUE;
+            entry->Target.File = plan;
+            entry->Target.Output = INVALID_HANDLE_VALUE;
+            return entry;
+        }
         extract->Error = target_open(extract->Package, plan, &entry->Target);
         if (extract->Error) {
             MimeMsiFree(entry);
@@ -1356,12 +1339,26 @@ static void *extract_begin(void *context, const MIME_CAB_FILE *file)
     return nullptr;
 }
 
+static UINT extract_open_pending(EXTRACT_CONTEXT *extract, EXTRACT_FILE *entry)
+{
+    MIME_MSI_FILE_PLAN *plan = entry->Target.File;
+    entry->Pending = FALSE;
+    return target_open(extract->Package, plan, &entry->Target);
+}
+
 static int extract_write(void *context, void *file_context, const uint8_t *data, size_t length)
 {
     EXTRACT_CONTEXT *extract = context;
     EXTRACT_FILE *entry = file_context;
     if (entry->Failed)
         return 1;
+    if (entry->Pending) {
+        extract->Error = extract_open_pending(extract, entry);
+        if (extract->Error)
+            return 1;
+    }
+    if (entry->Target.Skip)
+        return 0;
     extract->Error = target_write(&entry->Target, data, length);
     return extract->Error != ERROR_SUCCESS;
 }
@@ -1372,6 +1369,11 @@ static int extract_end(void *context, void *file_context, const MIME_CAB_FILE *f
     EXTRACT_FILE *entry = file_context;
     if (entry->Failed)
         return 1;
+    if (entry->Pending) {
+        extract->Error = extract_open_pending(extract, entry);
+        if (extract->Error)
+            return 1;
+    }
     FILETIME local, utc;
     BOOL has_time = DosDateTimeToFileTime(file->Date, file->Time, &local) && LocalFileTimeToFileTime(&local, &utc);
     extract->Error = target_close(&entry->Target, has_time ? &utc : nullptr, ERROR_SUCCESS);
@@ -1401,6 +1403,11 @@ static UINT extract_cabinet(MIME_MSI_PACKAGE *package, PCWSTR cabinet)
             return ERROR_NOT_ENOUGH_MEMORY;
         HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
         MimeMsiFree(path);
+        PWSTR other = nullptr;
+        if (file == INVALID_HANDLE_VALUE && MimeMsiFindSourceFile(package, cabinet, &other)) {
+            file = CreateFileW(other, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+            MimeMsiFree(other);
+        }
         if (file == INVALID_HANDLE_VALUE)
             return ERROR_INSTALL_SOURCE_ABSENT;
         LARGE_INTEGER length;
@@ -1470,10 +1477,25 @@ static UINT execute_files(MIME_MSI_PACKAGE *package)
         return ERROR_SUCCESS;
     UINT error = ERROR_SUCCESS;
     if (package->FilesQueued) {
+        /* a cabinet or a source file nobody needs is not read, the letters of the mode may keep every file in it. */
+        for (MIME_MSI_FILE_PLAN *file = package->Files; file && !error; file = file->Next) {
+            BOOL keep;
+            if (!file->ParentTarget)
+                error = keeps_existing(file, &keep);
+        }
         /* each cabinet is read once, in the order the plan first names it. */
         for (MIME_MSI_FILE_PLAN *file = package->Files; file && !error; file = file->Next) {
             if (!file->Cabinet || file->Done)
                 continue;
+            BOOL needed = FALSE;
+            for (MIME_MSI_FILE_PLAN *other = file; other; other = other->Next)
+                needed |= other->Cabinet && !wcscmp(other->Cabinet, file->Cabinet) && !other->Keep;
+            if (!needed) {
+                for (MIME_MSI_FILE_PLAN *other = file; other; other = other->Next)
+                    if (other->Cabinet && !wcscmp(other->Cabinet, file->Cabinet))
+                        other->Done = TRUE;
+                continue;
+            }
             error = extract_cabinet(package, file->Cabinet);
         }
         for (MIME_MSI_FILE_PLAN *file = package->Files; file && !error; file = file->Next)

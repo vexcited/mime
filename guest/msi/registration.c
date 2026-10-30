@@ -196,6 +196,46 @@ static UINT unregister_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path
     return error;
 }
 
+/* what the package says about the product, as the list of programs shows it. */
+static UINT write_product_fields(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
+{
+    static const struct { PCWSTR Name, Property; } fields[] = {
+        {L"ProductName", L"ProductName"}, {L"VersionString", L"ProductVersion"},
+        {L"Publisher", L"Manufacturer"}, {L"Language", L"ProductLanguage"},
+        {L"InstallSource", L"SourceDir"}, {L"InstallLocation", L"ARPINSTALLLOCATION"},
+        {L"HelpLink", L"ARPHELPLINK"}, {L"HelpTelephone", L"ARPHELPTELEPHONE"},
+        {L"URLInfoAbout", L"ARPURLINFOABOUT"}, {L"URLUpdateInfo", L"ARPURLUPDATEINFO"},
+        {L"RegOwner", L"USERNAME"}, {L"RegCompany", L"COMPANYNAME"}, {L"ProductID", L"ProductID"}
+    };
+    UINT error = ERROR_SUCCESS;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(fields) && !error; i++)
+        error = write_text(package, root, path, fields[i].Name, MimeMsiGetProperty(package, fields[i].Property));
+    return error;
+}
+
+/* a package that is not the cached one replaces it, and its source becomes the one the product reads from. */
+UINT MimeMsiRecachePackage(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
+{
+    HKEY key;
+    PWSTR cache = nullptr;
+    UINT error = RegOpenKeyExW(root, path, 0, KEY_READ, &key);
+    if (!error) {
+        error = MimeMsiRegistryText(key, L"LocalPackage", &cache);
+        RegCloseKey(key);
+    }
+    if (!error && _wcsicmp(cache, package->Database->Path)) {
+        error = MimeMsiWriteInstalledFile(package, package->Database->Data, package->Database->File.Size, cache);
+        if (!error)
+            error = write_product_fields(package, root, path);
+        if (!error)
+            error = write_text(package, root, path, L"LocalPackage", cache);
+        if (!error)
+            error = MimeMsiRegisterSource(package, root, path);
+    }
+    MimeMsiFree(cache);
+    return error;
+}
+
 static UINT register_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
 {
     if (package->CatalogRegistered)
@@ -210,6 +250,8 @@ static UINT register_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
     }
     if (package->Maintenance) {
         UINT error = MimeMsiValidateMaintenance(package);
+        if (!error && package->Recache)
+            error = MimeMsiRecachePackage(package, root, path);
         if (!error)
             package->CatalogRegistered = TRUE;
         return error;
@@ -228,16 +270,7 @@ static UINT register_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
     UINT error = MimeMsiWriteInstalledFile(package, package->Database->Data, package->Database->File.Size, cache);
     if (error)
         return error;
-    static const struct { PCWSTR Name, Property; } fields[] = {
-        {L"ProductName", L"ProductName"}, {L"VersionString", L"ProductVersion"},
-        {L"Publisher", L"Manufacturer"}, {L"Language", L"ProductLanguage"},
-        {L"InstallSource", L"SourceDir"}, {L"InstallLocation", L"ARPINSTALLLOCATION"},
-        {L"HelpLink", L"ARPHELPLINK"}, {L"HelpTelephone", L"ARPHELPTELEPHONE"},
-        {L"URLInfoAbout", L"ARPURLINFOABOUT"}, {L"URLUpdateInfo", L"ARPURLUPDATEINFO"},
-        {L"RegOwner", L"USERNAME"}, {L"RegCompany", L"COMPANYNAME"}, {L"ProductID", L"ProductID"}
-    };
-    for (ULONG i = 0; i < RTL_NUMBER_OF(fields) && !error; i++)
-        error = write_text(package, root, path, fields[i].Name, MimeMsiGetProperty(package, fields[i].Property));
+    error = write_product_fields(package, root, path);
     if (!error)
         error = write_text(package, root, path, L"LocalPackage", cache);
     PCWSTR filename = wcsrchr(package->Database->Path, L'\\');

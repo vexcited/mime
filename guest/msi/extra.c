@@ -131,8 +131,12 @@ static UINT component_action(MIME_MSI_PACKAGE *package, PCWSTR name, ULONG *acti
         return error;
     BOOL registered = package->ComponentInstalled && row < package->ComponentRows ? package->ComponentInstalled[row] != 0 :
                                                                                      component_registered(package, table, row);
-    *action = selected ? ACTION_LOCAL : registered ? ACTION_ABSENT : ACTION_NONE;
-    return ERROR_SUCCESS;
+    /* a component of a feature that is installed already stays as it is unless the run reinstalls it. */
+    BOOL requested = TRUE;
+    if (selected)
+        error = MimeMsiComponentRequested(package, name, &requested);
+    *action = selected ? (requested ? ACTION_LOCAL : ACTION_NONE) : registered ? ACTION_ABSENT : ACTION_NONE;
+    return error;
 }
 
 /* whether the product installs a component, and whether the product had it before the install began. */
@@ -332,6 +336,10 @@ static UINT write_registry_rows(MIME_MSI_PACKAGE *package)
         HKEY root = registry_root(package, root_number);
         if (!root)
             return ERROR_INSTALL_PACKAGE_INVALID;
+        /* user data is written with the letter u and machine data with m, the scope root follows neither. */
+        if (((root_number == 1 || root_number == 3) && !MimeMsiModeAllows(package, REINSTALLMODE_USERDATA)) ||
+            ((root_number == 0 || root_number == 2) && !MimeMsiModeAllows(package, REINSTALLMODE_MACHINEDATA)))
+            continue;
         error = component_view(package, component, &package->RegistryView);
         PWSTR key = nullptr, name = nullptr, value = nullptr;
         DWORD key_length, name_length, value_length;
@@ -853,7 +861,7 @@ static UINT create_shortcuts(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_TABLE *table;
     UINT error = optional_table(package, L"Shortcut", &table);
-    if (error || !table || !table->Rows)
+    if (error || !table || !table->Rows || !MimeMsiModeAllows(package, REINSTALLMODE_SHORTCUT))
         return error;
     HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     for (ULONG row = 0; row < table->Rows && !error; row++) {
@@ -942,6 +950,8 @@ static UINT remove_shortcuts(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_TABLE *table;
     UINT error = optional_table(package, L"Shortcut", &table);
+    if (!MimeMsiModeAllows(package, REINSTALLMODE_SHORTCUT))
+        table = nullptr;
     for (ULONG row = 0; table && row < table->Rows && !error; row++) {
         PCWSTR component = cell_text(package, table, row, L"Component_");
         ULONG action;
