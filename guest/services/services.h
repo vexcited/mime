@@ -159,6 +159,7 @@ struct SERVICE {
     UINT64 StatusId; /* the handle the service process reports status with. */
     ULONGLONG StateTick;
     DWORD StartError; /* the result of the last start. */
+    DWORD StartState; /* where the service is in the start set being run, SS_*. */
     DWORD OpenHandles;
     DWORD StartPending; /* a thread is starting it. */
     /* for the recovery actions. */
@@ -232,6 +233,20 @@ struct NOTIFY {
     NOTIFY *NextQueued;
 };
 
+/* the states a service goes through in a start set, in windows' order. */
+#define SS_NONE 0
+#define SS_MARKED 1
+#define SS_BUSY 2
+#define SS_STARTED 3
+#define SS_FAILED 4
+
+/* what a start was asked for. */
+#define START_WAIT 0x01
+#define START_CLIENT 0x08
+#define START_AUTO 0x10
+#define START_RESTART 0x40
+#define START_DELAYED 0x80
+
 /* ------------------------------------------------------------------ globals */
 
 extern CRITICAL_SECTION g_lock;
@@ -241,6 +256,8 @@ extern BOOL g_shutdown;
 extern BOOL g_database_ready;
 extern DWORD g_control_timeout, g_handler_timeout, g_autostart_timeout;
 extern BOOL g_autostart_running;
+extern BOOL g_phase1_running;
+extern DWORD g_start_timeout;
 extern ULONGLONG g_stamp;
 
 static inline void SvcCopyName(WCHAR *dst, const WCHAR *src, SIZE_T max)
@@ -289,11 +306,16 @@ void DbDependents(SERVICE *s, SERVICE ***list, DWORD *count, BOOL active_only);
 DWORD DbReadFailureActions(SERVICE *s, SERVICE_FAILURE_ACTIONSW *actions, SC_ACTION *buffer, WCHAR **reboot,
                            WCHAR **command);
 DWORD DbGroupIndex(const WCHAR *group);
+BOOL DbGroupMember(const SERVICE *s, const WCHAR *group);
 DWORD DbServiceSids(SERVICE *s);
 BOOL DbDriverRunning(SERVICE *s);
 
 /* run.c */
-DWORD RunStart(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD reason);
+DWORD RunStart(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD flags);
+DWORD RunStartMany(SERVICE *const *roots, DWORD count, DWORD flags);
+BOOL RunStartableNow(SERVICE *s);
+BOOL RunMarkForStart(SERVICE *s);
+void RunStartTimeoutInit(void);
 DWORD RunControl(SERVICE *s, DWORD control, DWORD event_type, const void *event_data, DWORD event_size, DWORD *result);
 DWORD RunSetStatus(UINT64 status_id, DWORD pid, const SERVICE_STATUS *status);
 DWORD RunOpenChannel(HANDLE pipe, DWORD pid);

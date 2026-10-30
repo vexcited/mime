@@ -7,13 +7,14 @@
 "Failed"=dword:00000000
 "LastKnownGood"=dword:00000001
 
-; the services that want to be told before a shutdown, none of Mime's do.
+; the services that start first with what they need, and the ones that want to be told before a shutdown, none of Mime's do.
 [HKLM\SYSTEM\CurrentControlSet\Control]
+"EarlyStartServices"=multi:"RpcSs","Power","BrokerInfrastructure","SystemEventsBroker","DcomLaunch","RpcEpMapper","LSM","AppIdSvc","AppxSvc"
 "PreshutdownOrder"=multi:
 
-; the groups services start in. services.exe starts the automatic services by this order.
+; the groups services start in, as the install image has them. services.exe starts the automatic services by this order.
 [HKLM\SYSTEM\CurrentControlSet\Control\ServiceGroupOrder]
-"List"=multi:"Base","Pointer Port","Keyboard Port","Pointer Class","Keyboard Class","Video Init","Video","Video Save","File System","Streams Drivers","NDIS Wrapper","COM Infrastructure","UIGroup","PlugPlay","NDIS","TDI","NetBIOSGroup","ShellSvcGroup","SchedulerGroup","SpoolerGroup","AudioGroup","SmartCardGroup","NetworkProvider","RemoteValidation","NetDDEGroup","Parallel arbitrator","Extended Base","PCI Configuration"
+"List"=multi:"System Reserved","EMS","WdfLoadGroup","Boot Bus Extender","System Bus Extender","SCSI miniport","Port","Primary Disk","SCSI Class","SCSI CDROM Class","FSFilter Infrastructure","FSFilter System","FSFilter Bottom","FSFilter Copy Protection","FSFilter Security Enhancer","FSFilter Open File","FSFilter Physical Quota Management","FSFilter Virtualization","FSFilter Encryption","FSFilter Compression","FSFilter Imaging","FSFilter HSM","FSFilter Cluster File System","FSFilter System Recovery","FSFilter Quota Management","FSFilter Content Screener","FSFilter Continuous Backup","FSFilter Replication","FSFilter Anti-Virus","FSFilter Undelete","FSFilter Activity Monitor","FSFilter Top","Filter","Boot File System","Base","Pointer Port","Keyboard Port","Pointer Class","Keyboard Class","Video Init","Video","Video Save","File System","Streams Drivers","NDIS Wrapper","COM Infrastructure","Event Log","PerceptionGroup","ProfSvc_Group","AudioGroup","UIGroup","MS_WindowsLocalValidation","PlugPlay","Cryptography","PNP_TDI","NDIS","TDI","iSCSI","NetBIOSGroup","ShellSvcGroup","SchedulerGroup","SpoolerGroup","SmartCardGroup","NetworkProvider","MS_WindowsRemoteValidation","NetDDEGroup","Parallel arbitrator","Extended Base","PCI Configuration","MS Transactions (type 7)"
 
 ; the service control manager reads this key and takes its defaults for the values it does not find.
 [HKLM\SYSTEM\CurrentControlSet\Control\SCMConfig]

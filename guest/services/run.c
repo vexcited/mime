@@ -274,7 +274,7 @@ static DWORD WINAPI restart_worker(LPVOID context)
             }
             EnterCriticalSection(&g_lock);
         } else if (s->Status.dwCurrentState == SERVICE_STOPPED) {
-            RunStart(s, 0, nullptr, 1);
+            RunStart(s, 0, nullptr, START_RESTART);
         }
     }
     LeaveCriticalSection(&g_lock);
@@ -903,133 +903,552 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
     return ERROR_SUCCESS;
 }
 
-/* waits until the service is running, paused or failed. */
-static DWORD wait_running(SERVICE *s)
+/* ------------------------------------------------------------------ start sets */
+
+/*
+ * services.exe starts a service through a start set: the service, the services it depends on and the members of the
+ * groups it depends on, all of them in turn with what they depend on. The set is sorted by the position of the group
+ * in ServiceGroupOrder, a service after what it depends on in the same group, and is run in batches of one group: the
+ * services of a batch are marked, and each is started once everything it depends on runs. A group that a service
+ * depends on counts as started when one of its members runs, and as failed, with 1068 for the dependent, when none
+ * does, an empty group included.
+ */
+
+BOOL g_phase1_running;
+DWORD g_start_timeout = 50000;
+#define BATCH_MAX 64
+
+typedef struct START_SET {
+    SERVICE **Items;
+    DWORD Count, Capacity;
+    const WCHAR **Groups;
+    DWORD GroupCount, GroupCapacity;
+} START_SET;
+
+static BOOL driver_of(const SERVICE *s)
 {
-    DWORD last_check = s->Status.dwCheckPoint;
-    ULONGLONG deadline = deadline_after(s->Status.dwWaitHint > 2000 ? s->Status.dwWaitHint : 30000);
-    for (;;) {
-        DWORD state = s->Status.dwCurrentState;
-        if (state == SERVICE_RUNNING || state == SERVICE_PAUSED || state == SERVICE_PAUSE_PENDING ||
-            state == SERVICE_CONTINUE_PENDING)
-            return ERROR_SUCCESS;
-        if (state == SERVICE_STOPPED || state == SERVICE_STOP_PENDING)
-            return ERROR_SERVICE_DEPENDENCY_FAIL;
-        if (s->Status.dwCheckPoint != last_check) {
-            last_check = s->Status.dwCheckPoint;
-            DWORD hint = s->Status.dwWaitHint;
-            deadline = deadline_after(hint > 2000 ? hint : 2000);
+    return (s->Type & (SERVICE_DRIVER | SERVICE_ADAPTER)) != 0;
+}
+
+/* the state of the service as the manager sees it: a driver runs while its object exists. */
+static DWORD state_of(SERVICE *s)
+{
+    if (driver_of(s) && !s->Image)
+        return DbDriverRunning(s) ? SERVICE_RUNNING : SERVICE_STOPPED;
+    return s->Status.dwCurrentState;
+}
+
+void RunStartTimeoutInit(void)
+{
+    static BOOL done;
+    if (done)
+        return;
+    done = TRUE;
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control", 0, KEY_READ, &key) == ERROR_SUCCESS) {
+        DWORD timeout;
+        if (DbReadDword(key, L"ServiceStartTimeout", &timeout) && timeout)
+            g_start_timeout = timeout;
+        RegCloseKey(key);
+    }
+}
+
+static BOOL set_has(const START_SET *set, const SERVICE *s)
+{
+    for (DWORD i = 0; i < set->Count; i++)
+        if (set->Items[i] == s)
+            return TRUE;
+    return FALSE;
+}
+
+/* the records of a set are held, so that a deletion that comes meanwhile waits for the set to be done. */
+static void set_push(START_SET *set, SERVICE *s)
+{
+    if (set->Count == set->Capacity) {
+        DWORD capacity = set->Capacity ? set->Capacity * 2 : 16;
+        SERVICE **grown = SvcAlloc(capacity * sizeof(*grown));
+        if (!grown)
+            return;
+        if (set->Count)
+            memcpy(grown, set->Items, set->Count * sizeof(*grown));
+        SvcFree(set->Items);
+        set->Items = grown;
+        set->Capacity = capacity;
+    }
+    set->Items[set->Count++] = s;
+    s->OpenHandles++;
+}
+
+static void set_push_group(START_SET *set, const WCHAR *group)
+{
+    if (set->GroupCount == set->GroupCapacity) {
+        DWORD capacity = set->GroupCapacity ? set->GroupCapacity * 2 : 8;
+        const WCHAR **grown = SvcAlloc(capacity * sizeof(*grown));
+        if (!grown)
+            return;
+        if (set->GroupCount)
+            memcpy(grown, set->Groups, set->GroupCount * sizeof(*grown));
+        SvcFree(set->Groups);
+        set->Groups = grown;
+        set->GroupCapacity = capacity;
+    }
+    set->Groups[set->GroupCount++] = group;
+}
+
+static BOOL set_has_group(const START_SET *set, const WCHAR *group)
+{
+    for (DWORD i = 0; i < set->GroupCount; i++)
+        if (!_wcsicmp(set->Groups[i], group))
+            return TRUE;
+    return FALSE;
+}
+
+static void set_free(START_SET *set)
+{
+    for (DWORD i = 0; i < set->Count; i++)
+        if (set->Items[i]->OpenHandles)
+            set->Items[i]->OpenHandles--;
+    SvcFree(set->Items);
+    SvcFree(set->Groups);
+    *set = (START_SET){};
+    MainCollect();
+}
+
+/* a service not started yet is marked to start now, one already marked or starting counts as marked. */
+BOOL RunMarkForStart(SERVICE *s)
+{
+    if (s->StartState == SS_NONE) {
+        s->StartState = SS_MARKED;
+        s->StartError = 0;
+        return TRUE;
+    }
+    return s->StartState == SS_MARKED || s->StartState == SS_BUSY;
+}
+
+/* whether a service is down, or a driver is on its way up: what a batch takes in. */
+BOOL RunStartableNow(SERVICE *s)
+{
+    DWORD state = state_of(s);
+    return state == SERVICE_STOPPED || (driver_of(s) && state == SERVICE_START_PENDING);
+}
+
+/* what a service is when it joins a set, from what it is now and what became of its last start. */
+static void state_on_joining(SERVICE *s, DWORD flags)
+{
+    if (s->Start == SERVICE_DISABLED) {
+        s->StartState = SS_FAILED;
+        s->StartError = ERROR_SERVICE_DISABLED;
+        return;
+    }
+    if (s->MarkedForDelete) {
+        s->StartState = SS_FAILED;
+        s->StartError = ERROR_SERVICE_MARKED_FOR_DELETE;
+        return;
+    }
+    DWORD state = state_of(s);
+    if (state == SERVICE_STOPPED) {
+        if (s->StartState == SS_MARKED)
+            return;
+        DWORD exit_code = s->Status.dwWin32ExitCode;
+        /* the boot does not try again a service that failed already, unless it failed to start or never ran. */
+        if (!(flags & START_AUTO) || exit_code == ERROR_GEN_FAILURE || exit_code == ERROR_SERVICE_NEVER_STARTED ||
+            !exit_code)
+            s->StartState = SS_NONE;
+        else
+            s->StartState = SS_FAILED;
+    } else if (state == SERVICE_START_PENDING) {
+        s->StartState = driver_of(s) ? SS_NONE : SS_BUSY;
+    } else if (state == SERVICE_STOP_PENDING) {
+        s->StartState = SS_FAILED;
+        s->StartError = ERROR_SERVICE_NOT_ACTIVE;
+    } else {
+        s->StartState = SS_STARTED;
+    }
+}
+
+static void add_to_set(START_SET *set, SERVICE *s, DWORD flags)
+{
+    if (set_has(set, s))
+        return;
+    state_on_joining(s, flags);
+    set_push(set, s);
+    for (const WCHAR *d = s->DepServices; d && *d; d += wcslen(d) + 1) {
+        SERVICE *dep = DbFind(d);
+        if (dep && DbLoadRecord(dep))
+            add_to_set(set, dep, flags);
+    }
+    for (const WCHAR *g = s->DepGroups; g && *g; g += wcslen(g) + 1) {
+        if (set_has_group(set, g))
+            continue;
+        set_push_group(set, g);
+        for (SERVICE *m = g_services; m; m = m->Next)
+            if (DbLoadRecord(m) && DbGroupMember(m, g))
+                add_to_set(set, m, flags);
+    }
+}
+
+static BOOL depends_on(SERVICE *a, SERVICE *b)
+{
+    return a == b || DbDependsOn(a, b, 0);
+}
+
+/* by the position of the group, a service after what it depends on in its group, the ones not listed last. */
+static SERVICE **sort_set(const START_SET *set)
+{
+    SERVICE **list = SvcAlloc((set->Count + 1) * sizeof(*list));
+    if (!list)
+        return nullptr;
+    DWORD n = 0;
+    for (DWORD i = 0; i < set->Count; i++) {
+        SERVICE *x = set->Items[i];
+        DWORD gx = DbGroupIndex(x->Group), pos = 0;
+        while (pos < n) {
+            DWORD gv = DbGroupIndex(list[pos]->Group);
+            if (gv > gx || (gv == gx && depends_on(list[pos], x)))
+                break;
+            pos++;
         }
-        if (!wait_until(deadline))
-            return ERROR_SERVICE_REQUEST_TIMEOUT;
+        memmove(list + pos + 1, list + pos, (n - pos) * sizeof(*list));
+        list[pos] = x;
+        n++;
+    }
+    return list;
+}
+
+/* a start that fails for a reason of the set, not of the program. */
+static void cleanup_failure(SERVICE *s, DWORD error)
+{
+    s->StartState = SS_FAILED;
+    s->StartError = error;
+    if (s->Status.dwWin32ExitCode == ERROR_SERVICE_NEVER_STARTED)
+        s->Status.dwWin32ExitCode = error;
+}
+
+/*
+ * whether a dependency on a service or group in another group is on one that loads later. A service in a group
+ * depends only on what loads before it; one that is in no listed group depends on anything.
+ */
+static BOOL later_group(const WCHAR *mine, const WCHAR *dep, BOOL group_dependency)
+{
+    if (group_dependency) {
+        if (mine && (!_wcsicmp(mine, dep) || (!_wcsicmp(dep, L"TDI") && !_wcsicmp(mine, L"PNP_TDI"))))
+            return TRUE;
+    } else if ((!mine && !dep) || (mine && dep && !_wcsicmp(mine, dep))) {
+        return FALSE;
+    }
+    if (!mine || !dep)
+        return FALSE;
+    DWORD a = DbGroupIndex(mine), b = DbGroupIndex(dep);
+    if (a == (DWORD)-1 || b == (DWORD)-1)
+        return FALSE;
+    return b > a || (!_wcsicmp(dep, L"TDI") && DbGroupIndex(L"PNP_TDI") >= a);
+}
+
+/* the members of a group, and what they say together: 0 while one is still to start, 1 when one runs, else 2. */
+static DWORD group_members(const WCHAR *group, SERVICE ***list)
+{
+    DWORD capacity = 16, n = 0;
+    SERVICE **members = SvcAlloc(capacity * sizeof(*members));
+    for (SERVICE *m = g_services; m && members; m = m->Next) {
+        if (!DbLoadRecord(m) || !DbGroupMember(m, group))
+            continue;
+        if (n == capacity) {
+            capacity *= 2;
+            SERVICE **grown = SvcAlloc(capacity * sizeof(*grown));
+            if (!grown) {
+                SvcFree(members);
+                members = nullptr;
+                break;
+            }
+            memcpy(grown, members, n * sizeof(*grown));
+            SvcFree(members);
+            members = grown;
+        }
+        members[n++] = m;
+    }
+    *list = members;
+    return members ? n : 0;
+}
+
+static DWORD group_state(SERVICE *const *members, DWORD count)
+{
+    BOOL started = FALSE;
+    for (DWORD i = 0; i < count; i++) {
+        const SERVICE *m = members[i];
+        if (m->StartState == SS_NONE) {
+            if (m->Start != SERVICE_DISABLED && !m->MarkedForDelete)
+                return 0;
+        } else if (m->StartState == SS_MARKED || m->StartState == SS_BUSY) {
+            return 0;
+        } else if (m->StartState == SS_STARTED) {
+            started = TRUE;
+        }
+    }
+    return started ? 1 : 2;
+}
+
+/*
+ * whether everything the service depends on runs. What is to start is marked. The flags report to the caller that
+ * nothing can move without a change (stuck), that something is awaited (waiting) and that the order is a circle.
+ */
+static BOOL deps_started(SERVICE *s, BOOL *circular, BOOL *stuck, BOOL *waiting)
+{
+    BOOL ready = TRUE;
+    DWORD error = 0;
+    for (const WCHAR *d = s->DepServices; d && *d; d += wcslen(d) + 1) {
+        SERVICE *dep = DbFind(d);
+        if (!dep || !DbLoadRecord(dep)) {
+            SvcLog("%ls depends on %ls, which is not there", s->Name, d);
+            error = ERROR_SERVICE_DEPENDENCY_DELETED;
+            *stuck = FALSE;
+            ready = FALSE;
+            break;
+        }
+        if (dep->StartState == SS_FAILED) {
+            SvcLog("%ls depends on %ls, which did not start: %lu", s->Name, dep->Name, dep->StartError);
+            error = dep->StartError == ERROR_NOT_SAFEBOOT_SERVICE ? ERROR_NOT_SAFEBOOT_SERVICE
+                                                                  : ERROR_SERVICE_DEPENDENCY_FAIL;
+            *stuck = FALSE;
+            ready = FALSE;
+            break;
+        }
+        if (dep->StartState == SS_NONE) {
+            *circular = later_group(s->Group, dep->Group, FALSE);
+            if (*circular) {
+                SvcLog("%ls depends on %ls, which loads later", s->Name, dep->Name);
+                error = ERROR_CIRCULAR_DEPENDENCY;
+                ready = FALSE;
+                break;
+            }
+            RunMarkForStart(dep);
+            *stuck = FALSE;
+        }
+        if (dep->StartState != SS_STARTED) {
+            ready = FALSE;
+            if (dep->StartState != SS_FAILED) {
+                *waiting = TRUE;
+                if (dep->StartState == SS_MARKED || dep->StartState == SS_BUSY)
+                    *stuck = FALSE;
+            }
+        }
+    }
+    for (const WCHAR *g = s->DepGroups; !error && g && *g; g += wcslen(g) + 1) {
+        SERVICE **members;
+        DWORD count = group_members(g, &members);
+        DWORD state = group_state(members, count);
+        if (state == 2) {
+            SvcLog("%ls depends on the group %ls, which has no member started", s->Name, g);
+            error = ERROR_SERVICE_DEPENDENCY_FAIL;
+            *stuck = FALSE;
+            ready = FALSE;
+        } else if (state == 0) {
+            *circular = later_group(s->Group, g, TRUE);
+            if (*circular) {
+                SvcLog("%ls depends on the group %ls, which loads later", s->Name, g);
+                error = ERROR_CIRCULAR_DEPENDENCY;
+            } else {
+                for (DWORD i = 0; i < count; i++)
+                    RunMarkForStart(members[i]);
+                *waiting = TRUE;
+            }
+            ready = FALSE;
+        }
+        SvcFree(members);
+    }
+    if (error)
+        cleanup_failure(s, error);
+    return ready;
+}
+
+/* a started service is done starting when it runs, and failed when it stopped. */
+static DWORD update_start_state(SERVICE *s)
+{
+    if (s->StartState != SS_BUSY)
+        return s->StartState;
+    DWORD state = state_of(s);
+    if (state == SERVICE_START_PENDING)
+        return s->StartState;
+    s->StartState = state == SERVICE_STOPPED || state == SERVICE_STOP_PENDING ? SS_FAILED : SS_STARTED;
+    return s->StartState;
+}
+
+/* what the manager does to start one service, and where it stands after. */
+static void start_service(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD flags)
+{
+    DWORD error;
+    DWORD state = state_of(s);
+    BOOL boot = (flags & (START_AUTO | START_DELAYED)) != 0;
+    if (s->Start == SERVICE_DISABLED) {
+        error = ERROR_SERVICE_DISABLED;
+    } else if (state == SERVICE_STOPPED || (driver_of(s) && state == SERVICE_START_PENDING)) {
+        /* a program the installation does not have is not started at boot, windows logs an event for each. */
+        if ((flags & START_AUTO) && !driver_of(s) && !RunImageExists(s)) {
+            s->StartError = ERROR_FILE_NOT_FOUND;
+            s->StartState = SS_FAILED;
+            return;
+        }
+        error = launch(s, count, arguments, boot ? 2 : 0);
+    } else {
+        error = ERROR_SERVICE_ALREADY_RUNNING;
+    }
+    s->StartError = error;
+    state = state_of(s);
+    if (!error || error == ERROR_SERVICE_ALREADY_RUNNING) {
+        if (state == SERVICE_START_PENDING)
+            s->StartState = SS_BUSY;
+        else if (state == SERVICE_STOPPED || state == SERVICE_STOP_PENDING)
+            s->StartState = SS_FAILED;
+        else
+            s->StartState = SS_STARTED;
+        return;
+    }
+    if (s->Status.dwWin32ExitCode == ERROR_SERVICE_NEVER_STARTED)
+        s->Status.dwWin32ExitCode = error;
+    s->StartState = SS_FAILED;
+}
+
+/*
+ * no service changed state for the whole timeout: the ones still starting get as long as their wait hint to show that
+ * they go on, and are failed when they do not.
+ */
+static void look_for_hung(SERVICE *const *list, DWORD n)
+{
+    for (DWORD i = 0; i < n; i++) {
+        SERVICE *s = list[i];
+        if (s->StartState != SS_BUSY || s->Status.dwCurrentState != SERVICE_START_PENDING)
+            continue;
+        DWORD checkpoint = s->Status.dwCheckPoint, hint = s->Status.dwWaitHint, step, steps;
+        if (hint <= 100000) {
+            steps = 10;
+            step = hint > 10 ? hint / 10 : 1;
+        } else {
+            step = 10000;
+            steps = hint / 10000;
+        }
+        BOOL moving = FALSE;
+        for (DWORD j = 0; j < steps && !moving && !g_shutdown; j++) {
+            ULONGLONG until = GetTickCount64() + step;
+            for (ULONGLONG now = GetTickCount64(); now < until; now = GetTickCount64())
+                SvcSleepChanged((DWORD)(until - now));
+            moving = s->Status.dwCurrentState != SERVICE_START_PENDING || s->Status.dwCheckPoint > checkpoint;
+        }
+        if (moving || g_shutdown)
+            continue;
+        SvcLog("%ls did not finish starting", s->Name);
+        cleanup_failure(s, ERROR_SERVICE_START_HANG);
+        IMAGE *img = s->Image;
+        if (img && img->Services <= 1 && img->Process && !img->Exited)
+            TerminateProcess(img->Process, ERROR_SERVICE_START_HANG);
+    }
+}
+
+/*
+ * starts the marked services of a list, the ones whose dependencies run first, and waits while any is on its way up.
+ * For a client's request the target is only waited for until it has started, and at boot until it runs.
+ */
+static DWORD start_marked(SERVICE *target, BOOL wait_target, DWORD flags, DWORD count, const WCHAR *const *arguments,
+                          SERVICE *const *list, DWORD n)
+{
+    RunStartTimeoutInit();
+    for (;;) {
+        ULONGLONG stamp = g_stamp;
+        BOOL stuck = TRUE, waiting = FALSE, circular = FALSE;
+        BOOL pass_stuck = TRUE, pass_waiting = FALSE, in_progress = FALSE;
+        for (DWORD i = 0; i < n; i++) {
+            SERVICE *x = list[i];
+            if (x->StartState == SS_MARKED) {
+                if (deps_started(x, &circular, &stuck, &waiting)) {
+                    start_service(x, x == target ? count : 0, x == target ? arguments : nullptr, flags);
+                    if (x == target && !wait_target) {
+                        pass_stuck = stuck;
+                    } else {
+                        stuck = FALSE;
+                        pass_stuck = FALSE;
+                    }
+                    in_progress = x->StartState == SS_BUSY;
+                    pass_waiting = waiting;
+                } else {
+                    pass_stuck = stuck;
+                    pass_waiting = waiting;
+                }
+            } else if (x->StartState == SS_BUSY) {
+                if (target) {
+                    if (x == target) {
+                        if (!wait_target)
+                            continue;
+                    } else if (target->StartState == SS_FAILED) {
+                        continue;
+                    }
+                }
+                DWORD updated = update_start_state(x);
+                if (updated == SS_BUSY) {
+                    in_progress = TRUE;
+                    pass_stuck = FALSE;
+                    stuck = FALSE;
+                    if (x != target) {
+                        pass_waiting = TRUE;
+                        waiting = TRUE;
+                    }
+                } else {
+                    if (updated != SS_STARTED)
+                        pass_stuck = FALSE;
+                    stuck = pass_stuck;
+                }
+            }
+        }
         if (g_shutdown)
             return ERROR_SHUTDOWN_IN_PROGRESS;
-    }
-}
-
-static DWORD start_dependencies(SERVICE *s, DWORD depth, DWORD reason);
-
-static DWORD start_with_dependencies(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD depth, DWORD reason)
-{
-    if (depth > 32)
-        return ERROR_CIRCULAR_DEPENDENCY;
-    if (g_shutdown)
-        return ERROR_SHUTDOWN_IN_PROGRESS;
-    DWORD state = s->Status.dwCurrentState;
-    if (state == SERVICE_STOPPED) {
-        DWORD error = start_dependencies(s, depth, reason);
-        if (error)
-            return error;
-        /* the dependencies took time, another thread may have started it meanwhile. */
-        if (s->Status.dwCurrentState != SERVICE_STOPPED)
-            return depth ? wait_running(s) : ERROR_SERVICE_ALREADY_RUNNING;
-        return launch(s, count, arguments, reason);
-    }
-    if (!depth)
-        return ERROR_SERVICE_ALREADY_RUNNING;
-    return ERROR_SUCCESS;
-}
-
-/* starts the dependencies first and waits for them. */
-static DWORD start_dependencies(SERVICE *s, DWORD depth, DWORD reason)
-{
-    s->StartPending++;
-    DWORD result = ERROR_SUCCESS;
-    for (const WCHAR *d = s->DepServices; d && *d && !result; d += wcslen(d) + 1) {
-        SERVICE *dep = DbFind(d);
-        if (!dep || !DbLoadRecord(dep) || dep->MarkedForDelete) {
-            result = ERROR_SERVICE_DEPENDENCY_DELETED;
-            break;
-        }
-        if (dep->Start == SERVICE_DISABLED && dep->Status.dwCurrentState == SERVICE_STOPPED) {
-            result = ERROR_SERVICE_DEPENDENCY_FAIL;
-            break;
-        }
-        /* one that is stopping is waited for, then started again. */
-        ULONGLONG deadline = deadline_after(30000);
-        while (dep->Status.dwCurrentState == SERVICE_STOP_PENDING && wait_until(deadline))
-            ;
-        DWORD state = dep->Status.dwCurrentState;
-        if (state == SERVICE_STOPPED) {
-            if (dep->Type & SERVICE_DRIVER) {
-                if (!DbDriverRunning(dep))
-                    result = ERROR_SERVICE_DEPENDENCY_FAIL;
-                continue;
+        if (!in_progress || (!pass_waiting && !wait_target)) {
+            if ((pass_stuck && pass_waiting) || circular) {
+                SvcLog("the services to start depend on each other%ls%ls", target ? L" through " : L"",
+                       target ? target->Name : L"");
+                return ERROR_CIRCULAR_DEPENDENCY;
             }
-            DWORD error = start_with_dependencies(dep, 0, nullptr, depth + 1, reason);
-            if (error == ERROR_SERVICE_ALREADY_RUNNING)
-                error = ERROR_SUCCESS;
-            if (error) {
-                result = error == ERROR_SERVICE_DEPENDENCY_DELETED || error == ERROR_CIRCULAR_DEPENDENCY ? error
-                                                                                                        : ERROR_SERVICE_DEPENDENCY_FAIL;
-                break;
-            }
-            state = dep->Status.dwCurrentState;
-        }
-        if (state == SERVICE_START_PENDING)
-            result = wait_running(dep) ? ERROR_SERVICE_DEPENDENCY_FAIL : ERROR_SUCCESS;
-        else if (dep->Status.dwCurrentState == SERVICE_STOPPED)
-            result = ERROR_SERVICE_DEPENDENCY_FAIL;
-    }
-    for (const WCHAR *g = s->DepGroups; g && *g && !result; g += wcslen(g) + 1) {
-        /*
-         * a group is up when one member runs: all are started and the first one up will do. a member whose program
-         * or service dll is missing is a windows component mime does not have, and does not count.
-         */
-        BOOL members = FALSE, running = FALSE;
-        for (SERVICE *m = g_services; m; m = m->Next) {
-            if (m == s || !DbLoadRecord(m) || !m->Group || _wcsicmp(m->Group, g) ||
-                (!(m->Type & SERVICE_DRIVER) && !RunImageExists(m)))
-                continue;
-            members = TRUE;
-            if (m->Status.dwCurrentState == SERVICE_RUNNING || m->Status.dwCurrentState == SERVICE_PAUSED)
-                running = TRUE;
-        }
-        if (!members || running)
+            if (pass_stuck)
+                return ERROR_SUCCESS;
             continue;
-        for (SERVICE *m = g_services; m; m = m->Next) {
-            if (m == s || !DbLoadRecord(m) || !m->Group || _wcsicmp(m->Group, g) || m->Start == SERVICE_DISABLED ||
-                (m->Type & SERVICE_DRIVER) || !RunImageExists(m))
-                continue;
-            if (m->Status.dwCurrentState == SERVICE_STOPPED) {
-                if (start_with_dependencies(m, 0, nullptr, depth + 1, reason) == ERROR_SUCCESS &&
-                    m->Status.dwCurrentState == SERVICE_START_PENDING)
-                    wait_running(m);
-            }
-            if (m->Status.dwCurrentState == SERVICE_RUNNING || m->Status.dwCurrentState == SERVICE_PAUSED) {
-                running = TRUE;
+        }
+        ULONGLONG deadline = deadline_after(g_start_timeout);
+        while (g_stamp == stamp && !g_shutdown) {
+            if (!wait_until(deadline)) {
+                look_for_hung(list, n);
                 break;
             }
         }
-        if (!running)
-            result = ERROR_SERVICE_DEPENDENCY_FAIL;
     }
-    s->StartPending--;
-    return result;
+}
+
+static DWORD start_in_set(SERVICE *target, START_SET *set, DWORD flags, DWORD count, const WCHAR *const *arguments)
+{
+    SERVICE **list = sort_set(set);
+    if (!list)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    DWORD n = set->Count, first_error = 0;
+    BOOL wait_target = !(flags & START_CLIENT) && (g_phase1_running || (flags & START_WAIT));
+    for (DWORD i = 0; i < n;) {
+        DWORD group = DbGroupIndex(list[i]->Group), marked = 0;
+        while (i < n && marked < BATCH_MAX) {
+            SERVICE *x = list[i];
+            if (RunStartableNow(x)) {
+                if (DbGroupIndex(x->Group) != group)
+                    break;
+                if (RunMarkForStart(x))
+                    marked++;
+            }
+            i++;
+        }
+        if (!marked)
+            continue;
+        DWORD error = start_marked(target, wait_target, flags, count, arguments, list, n);
+        if (error && !first_error)
+            first_error = error;
+    }
+    SvcFree(list);
+    return first_error;
 }
 
 /* the lock is held. */
-DWORD RunStart(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD reason)
+DWORD RunStart(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD flags)
 {
     if (g_shutdown)
         return ERROR_SHUTDOWN_IN_PROGRESS;
@@ -1037,13 +1456,27 @@ DWORD RunStart(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD rea
         return ERROR_SERVICE_DISABLED;
     if (s->MarkedForDelete)
         return ERROR_SERVICE_MARKED_FOR_DELETE;
-    if (s->Status.dwCurrentState != SERVICE_STOPPED && !(s->Type & SERVICE_DRIVER))
+    if ((flags & START_DELAYED) && !s->DelayedStart)
+        return ERROR_INVALID_PARAMETER;
+    if (!RunStartableNow(s))
         return ERROR_SERVICE_ALREADY_RUNNING;
-    DWORD error = start_with_dependencies(s, count, arguments, 0, reason);
-    /* a service that never ran replaces its "never started" exit code with the reason. */
-    if (error && error != ERROR_SERVICE_ALREADY_RUNNING && s->Status.dwCurrentState == SERVICE_STOPPED &&
-        s->Status.dwWin32ExitCode == ERROR_SERVICE_NEVER_STARTED)
-        s->Status.dwWin32ExitCode = error;
+    START_SET set = {};
+    add_to_set(&set, s, flags);
+    DWORD error = start_in_set(s, &set, flags, count, arguments);
+    if (!error)
+        error = s->StartError;
+    set_free(&set);
+    return error;
+}
+
+/* the lock is held. the roots and everything they need are started together, at boot. */
+DWORD RunStartMany(SERVICE *const *roots, DWORD count, DWORD flags)
+{
+    START_SET set = {};
+    for (DWORD i = 0; i < count; i++)
+        add_to_set(&set, roots[i], flags);
+    DWORD error = start_in_set(nullptr, &set, flags, 0, nullptr);
+    set_free(&set);
     return error;
 }
 

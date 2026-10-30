@@ -76,25 +76,13 @@ static BOOL autostart_candidate(SERVICE *s)
            !(s->Type & SERVICE_USER_SERVICE) && s->Start == SERVICE_AUTO_START;
 }
 
-/* windows' start order: by group in ServiceGroupOrder order, then by tag, then by name. */
-static int by_group(const void *a, const void *b)
-{
-    SERVICE *x = *(SERVICE *const *)a, *y = *(SERVICE *const *)b;
-    DWORD gx = DbGroupIndex(x->Group), gy = DbGroupIndex(y->Group);
-    if (gx != gy)
-        return gx < gy ? -1 : 1;
-    if (x->Tag != y->Tag)
-        return x->Tag < y->Tag ? -1 : 1;
-    return _wcsicmp(x->Name, y->Name);
-}
-
+/* the lists are sorted by the position of the group in ServiceGroupOrder, services of one group in the order met. */
 static void sort_services(SERVICE **list, DWORD n)
 {
-    /* insertion sort: the lists are short. */
     for (DWORD i = 1; i < n; i++) {
         SERVICE *s = list[i];
-        DWORD j = i;
-        while (j > 0 && by_group(&list[j - 1], &s) > 0) {
+        DWORD key = DbGroupIndex(s->Group), j = i;
+        while (j > 0 && DbGroupIndex(list[j - 1]->Group) > key) {
             list[j] = list[j - 1];
             j--;
         }
@@ -102,23 +90,19 @@ static void sort_services(SERVICE **list, DWORD n)
     }
 }
 
-static void start_list(SERVICE **list, DWORD n, DWORD reason)
+/* the record of a list is held while the lock is let go, and deleted services leave it. */
+static void pin_all(SERVICE **list, DWORD n)
 {
-    for (DWORD i = 0; i < n; i++) {
-        SERVICE *s = list[i];
-        if (g_shutdown)
-            return;
-        if (s->Status.dwCurrentState != SERVICE_STOPPED)
-            continue;
-        /* a service whose program is missing from the installation is skipped; windows logs an event for each. */
-        if (!RunImageExists(s)) {
-            s->StartError = ERROR_FILE_NOT_FOUND;
-            continue;
-        }
-        DWORD error = RunStart(s, 0, nullptr, reason);
-        if (error && error != ERROR_SERVICE_ALREADY_RUNNING)
-            SvcLog("%ls did not start at boot: %lu", s->Name, error);
-    }
+    for (DWORD i = 0; i < n; i++)
+        list[i]->OpenHandles++;
+}
+
+static void unpin_all(SERVICE **list, DWORD n)
+{
+    for (DWORD i = 0; i < n; i++)
+        if (list[i]->OpenHandles)
+            list[i]->OpenHandles--;
+    MainCollect();
 }
 
 typedef struct DELAYED {
@@ -126,6 +110,7 @@ typedef struct DELAYED {
     DWORD Count;
 } DELAYED;
 
+/* the delayed services start one after the other, each with what it needs. */
 static DWORD WINAPI delayed_start(LPVOID context)
 {
     DELAYED *d = context;
@@ -140,8 +125,17 @@ static DWORD WINAPI delayed_start(LPVOID context)
                 break;
             }
     }
-    if (live)
-        start_list(live, n, 2);
+    if (live) {
+        pin_all(live, n);
+        for (DWORD i = 0; i < n && !g_shutdown; i++) {
+            if (live[i]->Status.dwCurrentState != SERVICE_STOPPED)
+                continue;
+            DWORD error = RunStart(live[i], 0, nullptr, START_DELAYED);
+            if (error && error != ERROR_SERVICE_ALREADY_RUNNING)
+                SvcLog("%ls did not start after the boot: %lu", live[i]->Name, error);
+        }
+        unpin_all(live, n);
+    }
     SvcFree(live);
     LeaveCriticalSection(&g_lock);
     SvcFree(d->List);
@@ -159,6 +153,94 @@ static void delayed_timer(void *context)
         SvcFree(d->List);
         SvcFree(d);
     }
+}
+
+/* a service of the second phase starts in a thread of its own, with the services it needs. */
+static DWORD WINAPI auto_worker(LPVOID context)
+{
+    SERVICE *s = context;
+    EnterCriticalSection(&g_lock);
+    DWORD error = RunStart(s, 0, nullptr, START_AUTO);
+    if (error && error != ERROR_SERVICE_ALREADY_RUNNING)
+        SvcLog("%ls did not start at boot: %lu", s->Name, error);
+    if (s->OpenHandles)
+        s->OpenHandles--;
+    LeaveCriticalSection(&g_lock);
+    return 0;
+}
+
+/*
+ * the second phase: the automatic services by group, up to 64 of a group at once. The next batch waits until every
+ * service of this one has started, not until it runs.
+ */
+static void start_second_phase(SERVICE **list, DWORD n)
+{
+    RunStartTimeoutInit();
+    for (DWORD i = 0; i < n && !g_shutdown;) {
+        DWORD group = DbGroupIndex(list[i]->Group);
+        SERVICE *batch[64];
+        DWORD marked = 0;
+        while (i < n && marked < RTL_NUMBER_OF(batch)) {
+            SERVICE *s = list[i];
+            if (RunStartableNow(s)) {
+                if (DbGroupIndex(s->Group) != group)
+                    break;
+                if (RunMarkForStart(s))
+                    batch[marked++] = s;
+            }
+            i++;
+        }
+        HANDLE threads[64];
+        DWORD started = 0;
+        for (DWORD j = 0; j < marked; j++) {
+            SERVICE *s = batch[j];
+            if (s->Status.dwCurrentState != SERVICE_STOPPED || s->StartState == SS_FAILED)
+                continue;
+            s->OpenHandles++;
+            threads[started] = CreateThread(nullptr, 0, auto_worker, s, 0, nullptr);
+            if (threads[started])
+                started++;
+            else
+                s->OpenHandles--;
+        }
+        if (started) {
+            LeaveCriticalSection(&g_lock);
+            if (WaitForMultipleObjects(started, threads, TRUE, g_start_timeout) == WAIT_TIMEOUT)
+                SvcLog("a batch of services did not finish starting in time");
+            for (DWORD j = 0; j < started; j++)
+                CloseHandle(threads[j]);
+            EnterCriticalSection(&g_lock);
+        }
+    }
+}
+
+/* the services Control\EarlyStartServices names, which start first with what they depend on. */
+static DWORD collect_early(SERVICE **list, DWORD n, SERVICE **roots)
+{
+    HKEY key;
+    WCHAR *names = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control", 0, KEY_READ, &key) == ERROR_SUCCESS) {
+        names = DbReadString(key, L"EarlyStartServices", nullptr);
+        RegCloseKey(key);
+    }
+    DWORD count = 0;
+    for (DWORD i = 0; i < n; i++) {
+        BOOL early = !names;
+        for (const WCHAR *name = names; name && *name && !early; name += wcslen(name) + 1)
+            early = !_wcsicmp(name, list[i]->Name);
+        if (early)
+            roots[count++] = list[i];
+    }
+    SvcFree(names);
+    return count;
+}
+
+/* the services the manager starts first by name, when the machine has them. */
+static void start_by_name(const WCHAR *name)
+{
+    SERVICE *s = DbFind(name);
+    if (s && DbLoadRecord(s) && RunImageExists(s) && s->Status.dwCurrentState == SERVICE_STOPPED)
+        RunStart(s, 0, nullptr, START_WAIT);
 }
 
 static DWORD WINAPI autostart_thread(LPVOID unused)
@@ -193,8 +275,22 @@ static DWORD WINAPI autostart_thread(LPVOID unused)
         (*target)[(*count)++] = s;
     }
     if (normal) {
+        pin_all(normal, normal_count);
+        start_by_name(L"PlugPlay");
+        start_by_name(L"Power");
+        /* the first phase: the early services and what they need, one group after the other, each waited for. */
+        SERVICE **roots = SvcAlloc((normal_count + 1) * sizeof(*roots));
+        if (roots) {
+            g_phase1_running = TRUE;
+            DWORD n = collect_early(normal, normal_count, roots);
+            if (n)
+                RunStartMany(roots, n, START_AUTO);
+            g_phase1_running = FALSE;
+            SvcFree(roots);
+        }
         sort_services(normal, normal_count);
-        start_list(normal, normal_count, 2);
+        start_second_phase(normal, normal_count);
+        unpin_all(normal, normal_count);
     }
     g_autostart_running = FALSE;
     g_database_ready = TRUE;

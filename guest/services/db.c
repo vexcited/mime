@@ -256,7 +256,7 @@ BOOL DbDependsOn(SERVICE *s, SERVICE *other, DWORD depth)
     }
     for (const WCHAR *g = s->DepGroups; g && *g; g += wcslen(g) + 1) {
         for (SERVICE *m = g_services; m; m = m->Next) {
-            if (!DbLoadRecord(m) || !m->Group || _wcsicmp(m->Group, g))
+            if (!DbLoadRecord(m) || !DbGroupMember(m, g))
                 continue;
             if (m == other || (m != s && DbDependsOn(m, other, depth + 1)))
                 return TRUE;
@@ -276,8 +276,8 @@ void DbDependents(SERVICE *s, SERVICE ***list, DWORD *count, BOOL active_only)
         BOOL depends = FALSE;
         for (const WCHAR *d = m->DepServices; d && *d && !depends; d += wcslen(d) + 1)
             depends = !_wcsicmp(d, s->Name);
-        for (const WCHAR *g = m->DepGroups; s->Group && g && *g && !depends; g += wcslen(g) + 1)
-            depends = !_wcsicmp(g, s->Group);
+        for (const WCHAR *g = m->DepGroups; g && *g && !depends; g += wcslen(g) + 1)
+            depends = DbGroupMember(s, g);
         if (!depends || (active_only && m->Status.dwCurrentState == SERVICE_STOPPED))
             continue;
         if (n == capacity) {
@@ -298,7 +298,7 @@ void DbDependents(SERVICE *s, SERVICE ***list, DWORD *count, BOOL active_only)
     *count = out ? n : 0;
 }
 
-/* a group's position in ServiceGroupOrder, or past the end for unlisted groups. */
+/* a group's position in ServiceGroupOrder, or all ones for a group that is not listed and for no group. */
 DWORD DbGroupIndex(const WCHAR *group)
 {
     static WCHAR *order;
@@ -313,12 +313,20 @@ DWORD DbGroupIndex(const WCHAR *group)
         }
     }
     if (!group || !*group)
-        return 0x7FFFFFFF;
+        return (DWORD)-1;
     DWORD i = 0;
     for (const WCHAR *g = order; g && *g; g += wcslen(g) + 1, i++)
         if (!_wcsicmp(g, group))
             return i;
-    return 0x7FFFFFF0;
+    return (DWORD)-1;
+}
+
+/* whether the service is in the group. a request for TDI is also met by the members of PNP_TDI. */
+BOOL DbGroupMember(const SERVICE *s, const WCHAR *group)
+{
+    if (!s->Group)
+        return FALSE;
+    return !_wcsicmp(s->Group, group) || (!_wcsicmp(group, L"TDI") && !_wcsicmp(s->Group, L"PNP_TDI"));
 }
 
 /* ------------------------------------------------------------------ failure actions */

@@ -937,7 +937,7 @@ static DWORD op_start(CLIENT *cl, SCM_READER *r)
         } else if (g_lock_holder && g_lock_holder != cl) {
             error = ERROR_SERVICE_DATABASE_LOCKED;
         } else {
-            error = RunStart(h->Service, count, (const WCHAR *const *)args, 0);
+            error = RunStart(h->Service, count, (const WCHAR *const *)args, START_CLIENT);
         }
     }
     for (DWORD i = 0; i < count; i++)
