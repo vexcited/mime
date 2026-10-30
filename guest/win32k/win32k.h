@@ -902,6 +902,7 @@ void InputInitialize(void);
 BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max, BOOLEAN remove,
                        BOOLEAN *consumed);
 extern POINT InputCursorPos;
+extern BOOLEAN InputCursorByProgram; /* a program set the cursor and no hardware has moved it since. */
 extern BOOLEAN InputPointerOutside; /* the host said the last pointer event was outside its window. */
 /* raw input thread owns the desktop window, like the Windows csrss threads. */
 extern HANDLE InputThreadId, InputProcessId;

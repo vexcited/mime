@@ -272,6 +272,7 @@ static BOOLEAN g_key_dropped;
 
 DWORD InputLastTime;
 BOOLEAN InputPointerOutside;
+BOOLEAN InputCursorByProgram;
 
 static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR extra)
 {
@@ -284,6 +285,16 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
     case MIME_INPUT_MOUSE_DOWN:
     case MIME_INPUT_MOUSE_UP:
     case MIME_INPUT_MOUSE_WHEEL: {
+        /*
+         * a program put the cursor where it is, and a host window that the pointer enters without moving does not
+         * take it back: hardware that does not move changes nothing on windows.
+         */
+        if (injected)
+            InputCursorByProgram = TRUE;
+        else if (copy.type == MIME_INPUT_MOUSE_MOVE && !(copy.flags & 4) && !copy.dx && !copy.dy && InputCursorByProgram)
+            return;
+        else
+            InputCursorByProgram = FALSE;
         InputPointerOutside = (copy.flags & 8) != 0;
         /* a locked pointer reports motion alone, which moves the cursor from where it is. */
         POINT pt = (copy.flags & 4) ? (POINT){InputCursorPos.x + copy.dx, InputCursorPos.y + copy.dy}

@@ -122,6 +122,7 @@ void InputUpdatePointer(void)
 /* moving a hidden cursor indicates recentering for relative motion. */
 void InputCursorMoved(void)
 {
+    InputCursorByProgram = TRUE;
     InputCursorPos = InputClampCursor(InputCursorPos);
     W32PROCESS *p = W32GetProcess();
     if (p && InputCursorHidden && InputForeground && InputForeground->Thread &&
