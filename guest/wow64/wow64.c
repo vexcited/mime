@@ -508,7 +508,7 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
     __try {
         handled = special_service(number, a, &result);
     } __except (_exception_code() == STATUS_ACCESS_VIOLATION || _exception_code() == STATUS_IN_PAGE_ERROR ||
-                        _exception_code() == STATUS_GUARD_PAGE_VIOLATION
+                        _exception_code() == STATUS_GUARD_PAGE_VIOLATION || _exception_code() == STATUS_STACK_OVERFLOW
                     ? 1 /* EXCEPTION_EXECUTE_HANDLER */
                     : 0 /* EXCEPTION_CONTINUE_SEARCH */) {
         result = (LONG)_exception_code();
@@ -529,7 +529,7 @@ WOW64API LONG NTAPI Wow64SystemServiceEx(ULONG number, PULONG a)
     __try {
         status = Mx32SystemCall(number, a);
     } __except (_exception_code() == STATUS_ACCESS_VIOLATION || _exception_code() == STATUS_IN_PAGE_ERROR ||
-                        _exception_code() == STATUS_GUARD_PAGE_VIOLATION
+                        _exception_code() == STATUS_GUARD_PAGE_VIOLATION || _exception_code() == STATUS_STACK_OVERFLOW
                     ? 1 /* EXCEPTION_EXECUTE_HANDLER */
                     : 0 /* EXCEPTION_CONTINUE_SEARCH */) {
         status = (NTSTATUS)_exception_code();
